@@ -1,0 +1,10 @@
+[gd_scene load_steps=2 format=3 uid="uid://b08j3dyaxws7r"]
+
+[ext_resource type="Script" uid="uid://c2870no6ydtqc" path="res://main.gd" id="1_qf4ax"]
+
+[node name="MapRender" type="Node2D"]
+script = ExtResource("1_qf4ax")
+
+[node name="MapDisplay" type="TextureRect" parent="."]
+offset_right = 40.0
+offset_bottom = 40.0
