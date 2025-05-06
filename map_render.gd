@@ -4,7 +4,7 @@
 extends Node
 
 # --- Constants ---
-const TILE_SIZE: int = 48         # Pixels
+const TILE_SIZE: int = 24         # Pixels
 const GRID_SIZE: int = 1          # Pixels to reduce each side (used for drawing inside grid lines)
 # FONT_SIZE, FONT_OUTLINE_SIZE - Text rendering recommended via Label nodes instead.
 # @export var font: Font # Export if attempting direct text rendering later.
