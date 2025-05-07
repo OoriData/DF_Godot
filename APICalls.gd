@@ -6,7 +6,7 @@ signal convoy_data_received(data: Variant)
 # Signal to indicate an error occurred during fetching
 signal fetch_error(error_message: String)
 
-const BASE_URL: String = "http://localhost:1337"
+const BASE_URL: String = "http://137.184.246.45:1337"
 
 var _http_request: HTTPRequest
 
@@ -19,7 +19,7 @@ func _ready() -> void:
 
 	# Example usage: Fetch a specific convoy when the scene is ready
 	# You can remove or comment this out later.
-	get_convoy_data("09879aa3-98f6-465b-8b03-a16dcc3b5b24")
+	get_all_in_transit_convoys()
 
 func get_convoy_data(convoy_id: String) -> void:
 	if not convoy_id or convoy_id.is_empty():
@@ -45,6 +45,23 @@ func get_convoy_data(convoy_id: String) -> void:
 		printerr(error_msg)
 		emit_signal("fetch_error", error_msg)
 
+func get_all_in_transit_convoys() -> void:
+	var url: String = "%s/convoy/get_all_in_transit" % [BASE_URL]
+	
+	# Headers for the request
+	var headers: PackedStringArray = [
+		"accept: application/json"
+	]
+	
+	# Make the GET request
+	var error: Error = _http_request.request(url, headers, HTTPClient.METHOD_GET)
+	
+	if error != OK:
+		var error_msg = "APICalls: An error occurred in HTTPRequest for get_all_in_transit_convoys: %s" % error
+		printerr(error_msg)
+		emit_signal("fetch_error", error_msg)
+
+
 # Called when the HTTPRequest has completed.
 func _on_request_completed(result: int, response_code: int, headers: PackedStringArray, body: PackedByteArray) -> void:
 	if result != HTTPRequest.RESULT_SUCCESS:
@@ -66,7 +83,7 @@ func _on_request_completed(result: int, response_code: int, headers: PackedStrin
 			emit_signal("fetch_error", error_msg)
 			return
 			
-		print("APICalls: Successfully fetched and parsed convoy data:")
+		print("APICalls: Successfully fetched and parsed data:")
 		print(json_response) # Print the parsed JSON
 		emit_signal("convoy_data_received", json_response)
 	else:
