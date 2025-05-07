@@ -149,6 +149,9 @@ const DEFAULT_LOWLIGHT_INLINE_COLOR: Color = Color("#00FFFF")
 const LOWLIGHT_INLINE_OFFSET: int = 2
 const LOWLIGHT_INLINE_WIDTH: int = 5
 
+const CONVOY_DOT_COLOR: Color = Color("#FF0000") # Bright red for convoy dots
+const CONVOY_DOT_SIZE: int = 5 # Pixel size of the convoy dot (e.g., 5x5 pixels)
+
 # --- Helper Drawing Functions (Now methods of the class) ---
 
 func _draw_tile_bg(img: Image, tile_data: Dictionary, tile_render_x: int, tile_render_y: int, tile_render_width: int, tile_render_height: int, p_scaled_total_inset: int, grid_x_for_debug: int, grid_y_for_debug: int):
@@ -247,7 +250,8 @@ func render_map(
 		lowlights: Array = [],
 		highlight_color: Color = DEFAULT_HIGHLIGHT_OUTLINE_COLOR,
 		lowlight_color: Color = DEFAULT_LOWLIGHT_INLINE_COLOR,
-		p_viewport_size: Vector2 = Vector2.ZERO
+		p_viewport_size: Vector2 = Vector2.ZERO,
+		p_convoys_data: Array = [] # New parameter for convoy data
 	) -> ImageTexture:
 	if tiles.is_empty() or not tiles[0] is Array or tiles[0].is_empty():
 		printerr("Invalid or empty tiles data provided.")
@@ -343,6 +347,38 @@ func render_map(
 			_draw_highlight_or_lowlight(map_image, x, y, highlights, highlight_color, approx_int_tile_size_for_highlight, scaled_highlight_outline_offset, HIGHLIGHT_OUTLINE_WIDTH)
 
 	# --- Create and return the texture ---
+	# --- Draw Convoys ---
+	if not p_convoys_data.is_empty():
+		print("MapRender: Drawing %s convoys." % p_convoys_data.size())
+		for convoy_data_variant in p_convoys_data:
+			if not convoy_data_variant is Dictionary:
+				printerr("MapRender: Convoy data item is not a dictionary: ", convoy_data_variant)
+				continue
+
+			var convoy_item: Dictionary = convoy_data_variant
+			var convoy_x_variant = convoy_item.get("x")
+			var convoy_y_variant = convoy_item.get("y")
+
+			if typeof(convoy_x_variant) in [TYPE_INT, TYPE_FLOAT] and \
+			   typeof(convoy_y_variant) in [TYPE_INT, TYPE_FLOAT]:
+				
+				var convoy_map_x: float = float(convoy_x_variant)
+				var convoy_map_y: float = float(convoy_y_variant)
+
+				# Calculate pixel center of the tile where convoy is located
+				var center_pixel_x: float = (convoy_map_x + 0.5) * actual_tile_width_f
+				var center_pixel_y: float = (convoy_map_y + 0.5) * actual_tile_height_f
+
+				# Calculate top-left for the dot rect
+				var dot_rect_x: int = int(round(center_pixel_x - CONVOY_DOT_SIZE / 2.0))
+				var dot_rect_y: int = int(round(center_pixel_y - CONVOY_DOT_SIZE / 2.0))
+
+				var dot_rect := Rect2i(dot_rect_x, dot_rect_y, CONVOY_DOT_SIZE, CONVOY_DOT_SIZE)
+				map_image.fill_rect(dot_rect, CONVOY_DOT_COLOR)
+			else:
+				printerr("MapRender: Convoy item has invalid or missing x/y coordinates: ", convoy_item)
+
+
 	var map_texture := ImageTexture.create_from_image(map_image)
 	return map_texture
 
