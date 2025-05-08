@@ -149,8 +149,29 @@ const DEFAULT_LOWLIGHT_INLINE_COLOR: Color = Color("#00FFFF")
 const LOWLIGHT_INLINE_OFFSET: int = 2
 const LOWLIGHT_INLINE_WIDTH: int = 5
 
-const CONVOY_DOT_COLOR: Color = Color("#FF0000") # Bright red for convoy dots
-const CONVOY_DOT_SIZE: int = 5 # Pixel size of the convoy dot (e.g., 5x5 pixels)
+const JOURNEY_LINE_THICKNESS: int = 3 # Pixel thickness of the journey line. Let's try 3px.
+const FLOAT_MATCH_TOLERANCE: float = 0.00001 # Tolerance for matching float coordinates
+
+const PREDEFINED_CONVOY_COLORS: Array[Color] = [
+	Color.RED,          # Red
+	Color.BLUE,         # Blue
+	Color.GREEN,        # Green
+	Color.YELLOW,       # Yellow
+	Color.CYAN,         # Cyan
+	Color.MAGENTA,      # Magenta
+	Color("orange"),    # Orange
+	Color("purple"),    # Purple
+	Color("lime"),      # Lime Green
+	Color("pink")       # Pink
+]
+
+# Arrow dimensions (in pixels)
+const CONVOY_ARROW_FORWARD_LENGTH: float = 10.0 # From center to tip - Increased
+const CONVOY_ARROW_BACKWARD_LENGTH: float = 4.0 # From center to middle of base - Increased
+const CONVOY_ARROW_HALF_WIDTH: float = 6.0    # From center-line to a base corner - Increased
+const CONVOY_ARROW_OUTLINE_THICKNESS: float = 2.0 # Thickness of the black outline
+const MAX_THROB_DARKEN_AMOUNT: float = 0.4 # How much the arrow darkens at its peak (0.0 to 1.0)
+const TRAILING_JOURNEY_DARKEN_FACTOR: float = 0.5 # How much to darken the trailing line (0.0 to 1.0)
 
 # --- Helper Drawing Functions (Now methods of the class) ---
 
@@ -242,6 +263,73 @@ func _draw_highlight_or_lowlight(img: Image, x: int, y: int, coords_list: Array,
 		if rect.size.x > 0 and rect.size.y > 0:
 			img.fill_rect(rect, color)
 
+# Helper function to draw a filled triangle on an Image
+func _draw_filled_triangle_on_image(image: Image, v0: Vector2, v1: Vector2, v2: Vector2, color: Color) -> void:
+	var polygon: PackedVector2Array = [v0, v1, v2]
+
+	# Calculate bounding box of the triangle
+	var min_x: int = floor(min(v0.x, min(v1.x, v2.x)))
+	var max_x: int = ceil(max(v0.x, max(v1.x, v2.x)))
+	var min_y: int = floor(min(v0.y, min(v1.y, v2.y)))
+	var max_y: int = ceil(max(v0.y, max(v1.y, v2.y)))
+
+	# Clamp bounding box to image dimensions
+	min_x = max(0, min_x)
+	max_x = min(image.get_width() - 1, max_x)
+	min_y = max(0, min_y)
+	max_y = min(image.get_height() - 1, max_y)
+
+	for y_coord in range(min_y, max_y + 1):
+		for x_coord in range(min_x, max_x + 1):
+			var current_pixel := Vector2(float(x_coord), float(y_coord))
+			# Check center of the pixel for more accuracy with Geometry2D
+			if Geometry2D.is_point_in_polygon(current_pixel + Vector2(0.5, 0.5), polygon):
+				image.set_pixel(x_coord, y_coord, color)
+
+
+# Helper function to draw a line on an Image with specified thickness
+func _draw_line_on_image(image: Image, start: Vector2i, end: Vector2i, color: Color, thickness: int) -> void:
+	if thickness <= 0:
+		return
+
+	# Basic Bresenham's line algorithm
+	var x1: int = start.x
+	var y1: int = start.y
+	var x2: int = end.x
+	var y2: int = end.y
+
+	var dx: int = abs(x2 - x1)
+	var dy: int = -abs(y2 - y1) # Use negative dy for standard algorithm form
+
+	var sx: int = 1 if x1 < x2 else -1
+	var sy: int = 1 if y1 < y2 else -1
+
+	var err: int = dx + dy # error value e_xy
+	var e2: int
+
+	var current_x: int = x1
+	var current_y: int = y1
+
+	while true:
+		# Draw a small filled rectangle (square) for thickness
+		var brush_offset: int = thickness / 2
+		var rect_x: int = current_x - brush_offset
+		var rect_y: int = current_y - brush_offset
+		
+		# Create a Rect2i for the brush
+		var brush_rect := Rect2i(rect_x, rect_y, thickness, thickness)
+		
+		# Fill the brush rectangle (Image.fill_rect handles bounds checking)
+		image.fill_rect(brush_rect, color)
+
+		# Check for end of line
+		if current_x == x2 and current_y == y2:
+			break
+		e2 = 2 * err
+		if e2 >= dy: # e_xy+e_x > 0
+			err += dy; current_x += sx
+		if e2 <= dx: # e_xy+e_y < 0
+			err += dx; current_y += sy
 
 # --- Main Rendering Function ---
 func render_map(
@@ -251,7 +339,8 @@ func render_map(
 		highlight_color: Color = DEFAULT_HIGHLIGHT_OUTLINE_COLOR,
 		lowlight_color: Color = DEFAULT_LOWLIGHT_INLINE_COLOR,
 		p_viewport_size: Vector2 = Vector2.ZERO,
-		p_convoys_data: Array = [] # New parameter for convoy data
+		p_convoys_data: Array = [], # New parameter for convoy data
+		p_throb_phase: float = 0.0 # For animating convoy icons
 	) -> ImageTexture:
 	if tiles.is_empty() or not tiles[0] is Array or tiles[0].is_empty():
 		printerr("Invalid or empty tiles data provided.")
@@ -350,12 +439,15 @@ func render_map(
 	# --- Draw Convoys ---
 	if not p_convoys_data.is_empty():
 		print("MapRender: Drawing %s convoys." % p_convoys_data.size())
-		for convoy_data_variant in p_convoys_data:
+		for convoy_idx in range(p_convoys_data.size()):
+			var convoy_data_variant = p_convoys_data[convoy_idx]
 			if not convoy_data_variant is Dictionary:
 				printerr("MapRender: Convoy data item is not a dictionary: ", convoy_data_variant)
 				continue
 
 			var convoy_item: Dictionary = convoy_data_variant
+			# Get a unique color for this convoy by cycling through the predefined list
+			var unique_convoy_color: Color = PREDEFINED_CONVOY_COLORS[convoy_idx % PREDEFINED_CONVOY_COLORS.size()]
 			var convoy_x_variant = convoy_item.get("x")
 			var convoy_y_variant = convoy_item.get("y")
 
@@ -369,16 +461,106 @@ func render_map(
 				var center_pixel_x: float = (convoy_map_x + 0.5) * actual_tile_width_f
 				var center_pixel_y: float = (convoy_map_y + 0.5) * actual_tile_height_f
 
-				# Calculate top-left for the dot rect
-				var dot_rect_x: int = int(round(center_pixel_x - CONVOY_DOT_SIZE / 2.0))
-				var dot_rect_y: int = int(round(center_pixel_y - CONVOY_DOT_SIZE / 2.0))
+				var current_convoy_pixel_pos := Vector2(center_pixel_x, center_pixel_y)
 
-				var dot_rect := Rect2i(dot_rect_x, dot_rect_y, CONVOY_DOT_SIZE, CONVOY_DOT_SIZE)
-				map_image.fill_rect(dot_rect, CONVOY_DOT_COLOR)
-			else:
+				var journey_data: Dictionary = convoy_item.get("journey")
+				if journey_data is Dictionary:
+					var route_x_coords: Array = journey_data.get("route_x")
+					var route_y_coords: Array = journey_data.get("route_y")
+
+					if route_x_coords is Array and route_y_coords is Array and route_x_coords.size() == route_y_coords.size():
+						var start_drawing_from_route_index: int = -1
+						var direction_norm := Vector2.UP # Default direction (pointing up on map)
+
+						# Find the index in the route that matches the convoy's current position
+						for i in range(route_x_coords.size()):
+							var route_point_x: float = float(route_x_coords[i])
+							var route_point_y: float = float(route_y_coords[i])
+							if abs(route_point_x - convoy_map_x) < FLOAT_MATCH_TOLERANCE and \
+								abs(route_point_y - convoy_map_y) < FLOAT_MATCH_TOLERANCE:
+								start_drawing_from_route_index = i
+								break
+						
+						# Determine direction for the arrow
+						if start_drawing_from_route_index != -1 and start_drawing_from_route_index + 1 < route_x_coords.size():
+							var next_route_map_x: float = float(route_x_coords[start_drawing_from_route_index + 1])
+							var next_route_map_y: float = float(route_y_coords[start_drawing_from_route_index + 1])
+							var next_route_pixel_x: float = (next_route_map_x + 0.5) * actual_tile_width_f
+							var next_route_pixel_y: float = (next_route_map_y + 0.5) * actual_tile_height_f
+							var target_pixel_for_direction := Vector2(next_route_pixel_x, next_route_pixel_y)
+							
+							var direction_vec = target_pixel_for_direction - current_convoy_pixel_pos
+							if direction_vec.length_squared() > FLOAT_MATCH_TOLERANCE * FLOAT_MATCH_TOLERANCE : # Avoid normalizing zero vector
+								direction_norm = direction_vec.normalized()
+						# else, keep default direction_norm (UP) if no next point or not on route
+
+						# --- Draw Full Journey Line (Trailing part transparent, Leading part opaque) ---
+						if route_x_coords.size() >= 2: # Need at least two points to draw any line segment
+							var leading_line_color: Color = unique_convoy_color
+							var trailing_line_color: Color = unique_convoy_color.darkened(TRAILING_JOURNEY_DARKEN_FACTOR)
+
+							# Initialize previous point for line drawing with the first point of the route
+							var prev_map_x_for_line: float = float(route_x_coords[0])
+							var prev_map_y_for_line: float = float(route_y_coords[0])
+							var prev_pixel_pos_for_line := Vector2i(
+								round((prev_map_x_for_line + 0.5) * actual_tile_width_f),
+								round((prev_map_y_for_line + 0.5) * actual_tile_height_f)
+							)
+
+							# Loop through all subsequent points to draw all segments of the journey
+							for i in range(1, route_x_coords.size()):
+								var next_map_x_for_line: float = float(route_x_coords[i])
+								var next_map_y_for_line: float = float(route_y_coords[i])
+								var next_pixel_pos_for_line := Vector2i(
+									round((next_map_x_for_line + 0.5) * actual_tile_width_f),
+									round((next_map_y_for_line + 0.5) * actual_tile_height_f)
+								)
+
+								var current_segment_color: Color
+								# A segment is "trailing" if its end point (index i) is at or before the convoy's current route index.
+								# If convoy is not found on route (start_drawing_from_route_index == -1), all segments are considered leading/opaque.
+								if start_drawing_from_route_index != -1 and i <= start_drawing_from_route_index:
+									current_segment_color = trailing_line_color
+								else:
+									current_segment_color = leading_line_color
+								
+								_draw_line_on_image(map_image, prev_pixel_pos_for_line, next_pixel_pos_for_line, current_segment_color, JOURNEY_LINE_THICKNESS)
+								
+								prev_pixel_pos_for_line = next_pixel_pos_for_line
+						#else: # Optional: print if not enough points for a line
+							#if route_x_coords.size() < 2:
+								#print("MapRender: Journey route for convoy ", convoy_item.get("convoy_id"), " has less than 2 points, cannot draw line.")
+					#else: # Optional: print if route_x_coords or route_y_coords are invalid
+						#printerr("MapRender: Convoy journey route_x/route_y are invalid or mismatched for convoy: ", convoy_item.get("convoy_id"))
+
+						# --- Draw Convoy Arrow on TOP ---
+						# (Arrow drawing logic remains the same, it will be drawn after all lines)
+						var perp_norm: Vector2 = direction_norm.rotated(PI / 2.0)
+						var v_tip: Vector2 = current_convoy_pixel_pos + direction_norm * CONVOY_ARROW_FORWARD_LENGTH
+						var v_rear_center: Vector2 = current_convoy_pixel_pos - direction_norm * CONVOY_ARROW_BACKWARD_LENGTH
+						var v_base_left: Vector2 = v_rear_center + perp_norm * CONVOY_ARROW_HALF_WIDTH
+						var v_base_right: Vector2 = v_rear_center - perp_norm * CONVOY_ARROW_HALF_WIDTH
+
+						# Calculate vertices for the outline (slightly larger)
+						var outline_forward_len: float = CONVOY_ARROW_FORWARD_LENGTH + CONVOY_ARROW_OUTLINE_THICKNESS
+						var outline_backward_len: float = CONVOY_ARROW_BACKWARD_LENGTH + CONVOY_ARROW_OUTLINE_THICKNESS
+						var outline_half_width: float = CONVOY_ARROW_HALF_WIDTH + CONVOY_ARROW_OUTLINE_THICKNESS
+
+						var ov_tip: Vector2 = current_convoy_pixel_pos + direction_norm * outline_forward_len
+						var ov_rear_center: Vector2 = current_convoy_pixel_pos - direction_norm * outline_backward_len
+						var ov_base_left: Vector2 = ov_rear_center + perp_norm * outline_half_width
+						var ov_base_right: Vector2 = ov_rear_center - perp_norm * outline_half_width
+						_draw_filled_triangle_on_image(map_image, ov_tip, ov_base_left, ov_base_right, Color.BLACK)
+						
+						# Calculate throbbing color for the fill
+						var darken_amount: float = ((sin(p_throb_phase * 2.0 * PI) + 1.0) / 2.0) * MAX_THROB_DARKEN_AMOUNT
+						var throbbing_fill_color: Color = unique_convoy_color.darkened(darken_amount)
+
+						# Draw the main filled arrow
+						_draw_filled_triangle_on_image(map_image, v_tip, v_base_left, v_base_right, throbbing_fill_color)
+			else: # This 'else' corresponds to 'if typeof(convoy_x_variant) ...'
 				printerr("MapRender: Convoy item has invalid or missing x/y coordinates: ", convoy_item)
-
-
+			
 	var map_texture := ImageTexture.create_from_image(map_image)
 	return map_texture
 
