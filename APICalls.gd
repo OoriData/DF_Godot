@@ -49,7 +49,7 @@ func get_convoy_data(convoy_id: String) -> void:
 
 
 func get_all_in_transit_convoys() -> void:
-	var url: String = '%s/convoy/get_all_in_transit' % [BASE_URL]
+	var url: String = '%s/convoy/all_in_transit' % [BASE_URL]
 
 	var headers: PackedStringArray = [# Headers for the request
 		'accept: application/json'
@@ -59,9 +59,9 @@ func get_all_in_transit_convoys() -> void:
 	var error: Error = _http_request.request(url, headers, HTTPClient.METHOD_GET)
 
 	if error != OK:
-		var error_msg = 'APICalls: An error occurred in HTTPRequest for get_all_in_transit_convoys: %s' % error
+		var error_msg = 'APICalls: An error occurred in HTTPRequest for all_in_transit_convoys: %s' % error
 		printerr(error_msg)
-		emit_signal("fetch_error", error_msg)
+		emit_signal('fetch_error', error_msg)
 
 
 # Called when the HTTPRequest has completed.
