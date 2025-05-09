@@ -173,6 +173,7 @@ const CONVOY_ARROW_OUTLINE_THICKNESS: float = 2.0 # Thickness of the black outli
 const MAX_THROB_SIZE_ADDITION: float = 2.0 # How many extra pixels the arrow dimensions can grow
 const JOURNEY_LINE_OUTLINE_EXTRA_THICKNESS_EACH_SIDE: int = 1 # How many extra pixels for the white outline on each side of the journey line
 const MAX_THROB_DARKEN_AMOUNT: float = 0.4 # How much the arrow darkens at its peak (0.0 to 1.0)
+const JOURNEY_LINE_OFFSET_STEP_PIXELS: float = 4.0 # Pixels to offset overlapping journey lines by for each step
 const TRAILING_JOURNEY_DARKEN_FACTOR: float = 0.5 # How much to darken the trailing line (0.0 to 1.0)
 
 # --- Helper Drawing Functions (Now methods of the class) ---
@@ -333,6 +334,134 @@ func _draw_line_on_image(image: Image, start: Vector2i, end: Vector2i, color: Co
 		if e2 <= dx: # e_xy+e_y < 0
 			err += dx; current_y += sy
 
+# Helper to get a canonical string key for a line segment (map coordinates)
+func _get_normalized_segment_key(p1_map: Vector2, p2_map: Vector2) -> String:
+	var sp1: Vector2 = p1_map
+	var sp2: Vector2 = p2_map
+	# Sort points to ensure (A,B) and (B,A) produce the same key
+	if (p1_map.x > p2_map.x) or (abs(p1_map.x - p2_map.x) < FLOAT_MATCH_TOLERANCE and p1_map.y > p2_map.y):
+		sp1 = p2_map
+		sp2 = p1_map
+	return "%.4f,%.4f-%.4f,%.4f" % [sp1.x, sp1.y, sp2.x, sp2.y] # Example: format to 4 decimal places
+
+# Helper to calculate offset for a shared journey line segment
+func _get_journey_segment_offset_vector(
+		p1_map: Vector2, p2_map: Vector2, # map coordinates of the segment
+		p1_pixel: Vector2i, p2_pixel: Vector2i, # pixel coordinates of the segment
+		current_convoy_idx: int,
+		shared_segments_data: Dictionary, # Key: segment_key, Value: Array of convoy_indices
+		base_offset_magnitude: float
+	) -> Vector2:
+
+	var segment_key: String = _get_normalized_segment_key(p1_map, p2_map)
+	var offset_v := Vector2.ZERO
+
+	if shared_segments_data.has(segment_key):
+		var convoy_indices_on_segment: Array = shared_segments_data[segment_key]
+		if convoy_indices_on_segment.size() > 1:
+			# Determine the order of the current convoy for this segment
+			var current_convoy_order_on_segment: int = convoy_indices_on_segment.find(current_convoy_idx)
+
+			if current_convoy_order_on_segment > 0: # Order 0 (first convoy) gets no offset
+				var segment_vec_px: Vector2 = Vector2(p2_pixel - p1_pixel)
+				if segment_vec_px.length_squared() > FLOAT_MATCH_TOLERANCE * FLOAT_MATCH_TOLERANCE:
+					var perp_dir_px: Vector2 = segment_vec_px.normalized().rotated(PI / 2.0)
+					
+					# Offset logic:
+					# Order 1: +1 * base_offset_magnitude
+					# Order 2: -1 * base_offset_magnitude
+					# Order 3: +2 * base_offset_magnitude
+					# Order 4: -2 * base_offset_magnitude
+					# ...and so on
+					var magnitude_multiplier: float = ceil(float(current_convoy_order_on_segment) / 2.0)
+					var sign_multiplier: float = 1.0 if current_convoy_order_on_segment % 2 != 0 else -1.0
+					
+					offset_v = perp_dir_px * sign_multiplier * magnitude_multiplier * base_offset_magnitude
+	return offset_v
+
+# New helper function to calculate the vertices of an offset polyline with mitered/beveled joins
+func _calculate_offset_pixel_path(
+		original_map_coords_path: Array[Vector2], # Array of Vector2 (map coordinates)
+		convoy_idx: int,
+		shared_segments_data: Dictionary,
+		base_offset_pixel_magnitude: float,
+		actual_tile_width_f: float,
+		actual_tile_height_f: float
+	) -> Array[Vector2i]: # Returns Array of Vector2i (offset pixel coordinates)
+
+	if original_map_coords_path.size() < 2:
+		return [] # Not enough points for a path
+
+	# 1. Convert map path to original pixel path (Array of Vector2i)
+	var pixel_coords_path: Array[Vector2i] = []
+	for map_p in original_map_coords_path:
+		pixel_coords_path.append(Vector2i(
+			round((map_p.x + 0.5) * actual_tile_width_f),
+			round((map_p.y + 0.5) * actual_tile_height_f)
+		))
+	
+	var n_points: int = pixel_coords_path.size()
+	# n_points will be >= 2 at this stage
+
+	# 2. Calculate all segment_pixel_offset_vectors (Array of Vector2)
+	var segment_pixel_offset_vectors: Array[Vector2] = []
+	for k in range(n_points - 1): # Iterate through segments
+		var map_pk: Vector2 = original_map_coords_path[k]
+		var map_pkplus1: Vector2 = original_map_coords_path[k+1]
+		var px_pk: Vector2i = pixel_coords_path[k]
+		var px_pkplus1: Vector2i = pixel_coords_path[k+1]
+		
+		var offset_vec: Vector2 = _get_journey_segment_offset_vector(
+			map_pk, map_pkplus1,
+			px_pk, px_pkplus1,
+			convoy_idx,
+			shared_segments_data,
+			base_offset_pixel_magnitude
+		)
+		segment_pixel_offset_vectors.append(offset_vec)
+
+	# 3. Compute final_offset_pixel_vertices (Array of Vector2i)
+	var final_offset_vertices: Array[Vector2i] = []
+	final_offset_vertices.resize(n_points) # Pre-allocate
+
+	# Handle start point
+	final_offset_vertices[0] = pixel_coords_path[0] + Vector2i(round(segment_pixel_offset_vectors[0]))
+
+	# Handle end point
+	# segment_pixel_offset_vectors has (n_points - 1) elements. Last index is (n_points - 2).
+	final_offset_vertices[n_points - 1] = pixel_coords_path[n_points - 1] + Vector2i(round(segment_pixel_offset_vectors[n_points - 2]))
+
+	# Handle intermediate vertices (miter/bevel joins)
+	for k in range(1, n_points - 1): # Loop from second point P_1 to second-to-last point P_{n-2}
+		var P_km1_px: Vector2i = pixel_coords_path[k-1]
+		var P_k_px: Vector2i = pixel_coords_path[k]
+		var P_kp1_px: Vector2i = pixel_coords_path[k+1]
+
+		var offset_vec_prev_s: Vector2 = segment_pixel_offset_vectors[k-1] # Offset for segment (P_km1, P_k)
+		var offset_vec_curr_s: Vector2 = segment_pixel_offset_vectors[k]   # Offset for segment (P_k, P_kp1)
+
+		var dir_prev_orig_s: Vector2 = Vector2(P_k_px - P_km1_px)
+		var dir_curr_orig_s: Vector2 = Vector2(P_kp1_px - P_k_px)
+
+		if dir_prev_orig_s.length_squared() < FLOAT_MATCH_TOLERANCE or dir_curr_orig_s.length_squared() < FLOAT_MATCH_TOLERANCE:
+			final_offset_vertices[k] = P_k_px + Vector2i(round(offset_vec_prev_s)) # Fallback for zero-length segment
+			continue
+
+		if dir_prev_orig_s.normalized().is_equal_approx(dir_curr_orig_s.normalized()): # Collinear, same direction
+			final_offset_vertices[k] = P_k_px + Vector2i(round(offset_vec_prev_s))
+		else:
+			var L1_start_pt: Vector2 = Vector2(P_km1_px) + offset_vec_prev_s
+			var L2_start_pt: Vector2 = Vector2(P_k_px) + offset_vec_curr_s
+			var intersection = Geometry2D.line_intersects_line(L1_start_pt, dir_prev_orig_s, L2_start_pt, dir_curr_orig_s)
+
+			if intersection != null:
+				final_offset_vertices[k] = Vector2i(round(intersection))
+			else: # Parallel lines (e.g., 180-degree turn) or other non-intersection. Fallback to bevel.
+				var p_k_offset_avg: Vector2 = (offset_vec_prev_s + offset_vec_curr_s) / 2.0
+				final_offset_vertices[k] = P_k_px + Vector2i(round(p_k_offset_avg))
+	return final_offset_vertices
+
+
 # --- Main Rendering Function ---
 func render_map(
 		tiles: Array,
@@ -342,7 +471,8 @@ func render_map(
 		lowlight_color: Color = DEFAULT_LOWLIGHT_INLINE_COLOR,
 		p_viewport_size: Vector2 = Vector2.ZERO,
 		p_convoys_data: Array = [], # New parameter for convoy data
-		p_throb_phase: float = 0.0 # For animating convoy icons
+		p_throb_phase: float = 0.0, # For animating convoy icons
+		p_convoy_id_to_color_map: Dictionary = {} # For persistent convoy colors
 	) -> ImageTexture:
 	if tiles.is_empty() or not tiles[0] is Array or tiles[0].is_empty():
 		printerr("Invalid or empty tiles data provided.")
@@ -438,9 +568,43 @@ func render_map(
 			_draw_highlight_or_lowlight(map_image, x, y, highlights, highlight_color, approx_int_tile_size_for_highlight, scaled_highlight_outline_offset, HIGHLIGHT_OUTLINE_WIDTH)
 
 	# --- Create and return the texture ---
+
+	# --- Pre-computation of shared journey segments ---
+	var shared_segments_map_coords: Dictionary = {} # Key: string_segment_key, Value: Array of convoy_indices
+	if not p_convoys_data.is_empty():
+		#print("MapRender: Pre-computing shared journey segments...") # DEBUG
+		for convoy_idx_precompute in range(p_convoys_data.size()):
+			var convoy_data_variant_pre = p_convoys_data[convoy_idx_precompute]
+			if not convoy_data_variant_pre is Dictionary:
+				continue
+			var convoy_item_pre: Dictionary = convoy_data_variant_pre
+			var journey_data_pre: Dictionary = convoy_item_pre.get("journey")
+
+			if journey_data_pre is Dictionary:
+				var route_x_coords_pre: Array = journey_data_pre.get("route_x")
+				var route_y_coords_pre: Array = journey_data_pre.get("route_y")
+
+				if route_x_coords_pre is Array and route_y_coords_pre is Array and \
+				   route_x_coords_pre.size() == route_y_coords_pre.size() and route_x_coords_pre.size() >= 2:
+					
+					for i_pre in range(route_x_coords_pre.size() - 1):
+						var p1_map := Vector2(float(route_x_coords_pre[i_pre]), float(route_y_coords_pre[i_pre]))
+						var p2_map := Vector2(float(route_x_coords_pre[i_pre+1]), float(route_y_coords_pre[i_pre+1]))
+						var segment_key: String = _get_normalized_segment_key(p1_map, p2_map)
+
+						if not shared_segments_map_coords.has(segment_key):
+							shared_segments_map_coords[segment_key] = []
+						if not convoy_idx_precompute in shared_segments_map_coords[segment_key]:
+							shared_segments_map_coords[segment_key].append(convoy_idx_precompute)
+		#print("MapRender: Shared segments pre-computation done. Found %s unique segments with shared convoy info." % shared_segments_map_coords.size()) # DEBUG
+
+
 	# --- Draw Convoys ---
 	if not p_convoys_data.is_empty():
-		print("MapRender: Drawing %s convoys." % p_convoys_data.size())
+		print("MapRender: Processing %s convoys for drawing." % p_convoys_data.size())
+
+		# --- PASS 1: Draw all Journey Lines ---
+		print("MapRender: Pass 1 - Drawing all journey lines.")
 		for convoy_idx in range(p_convoys_data.size()):
 			var convoy_data_variant = p_convoys_data[convoy_idx]
 			if not convoy_data_variant is Dictionary:
@@ -448,8 +612,96 @@ func render_map(
 				continue
 
 			var convoy_item: Dictionary = convoy_data_variant
-			# Get a unique color for this convoy by cycling through the predefined list
-			var unique_convoy_color: Color = PREDEFINED_CONVOY_COLORS[convoy_idx % PREDEFINED_CONVOY_COLORS.size()]
+			var convoy_id = convoy_item.get("convoy_id")
+			var unique_convoy_color: Color = p_convoy_id_to_color_map.get(
+				convoy_id, PREDEFINED_CONVOY_COLORS[convoy_idx % PREDEFINED_CONVOY_COLORS.size()]
+			) # Fallback to old method if ID not in map
+			var convoy_x_variant = convoy_item.get("x")
+			var convoy_y_variant = convoy_item.get("y")
+
+			if typeof(convoy_x_variant) in [TYPE_INT, TYPE_FLOAT] and \
+			   typeof(convoy_y_variant) in [TYPE_INT, TYPE_FLOAT]:
+
+				var journey_data: Dictionary = convoy_item.get("journey")
+				if journey_data is Dictionary:
+					var route_x_coords: Array = journey_data.get("route_x")
+					var route_y_coords: Array = journey_data.get("route_y")
+
+					if route_x_coords is Array and route_y_coords is Array and route_x_coords.size() == route_y_coords.size():
+						var start_drawing_from_route_index: int = -1
+						
+						# Find the index in the route that matches the convoy's current position
+						# This is needed to color leading/trailing parts of the line correctly.
+						var convoy_map_x_for_line: float = float(convoy_x_variant) # Need current pos for this
+						var convoy_map_y_for_line: float = float(convoy_y_variant)
+						for i in range(route_x_coords.size()):
+							var route_point_x: float = float(route_x_coords[i])
+							var route_point_y: float = float(route_y_coords[i])
+							if abs(route_point_x - convoy_map_x_for_line) < FLOAT_MATCH_TOLERANCE and \
+								abs(route_point_y - convoy_map_y_for_line) < FLOAT_MATCH_TOLERANCE:
+								start_drawing_from_route_index = i
+								break
+
+						# --- Draw Full Journey Line (Trailing part transparent, Leading part opaque) ---
+						if route_x_coords.size() >= 2:
+							var original_map_path_for_convoy: Array[Vector2] = []
+							for point_idx in range(route_x_coords.size()):
+								original_map_path_for_convoy.append(Vector2(float(route_x_coords[point_idx]), float(route_y_coords[point_idx])))
+							
+							var offset_pixel_vertices: Array[Vector2i] = _calculate_offset_pixel_path(
+								original_map_path_for_convoy,
+								convoy_idx,
+								shared_segments_map_coords,
+								JOURNEY_LINE_OFFSET_STEP_PIXELS,
+								actual_tile_width_f,
+								actual_tile_height_f
+							)
+
+							if offset_pixel_vertices.size() >= 2:
+								var leading_line_color: Color = unique_convoy_color
+								var trailing_line_color: Color = unique_convoy_color.darkened(TRAILING_JOURNEY_DARKEN_FACTOR)							
+								var outline_total_thickness: int = JOURNEY_LINE_THICKNESS + (2 * JOURNEY_LINE_OUTLINE_EXTRA_THICKNESS_EACH_SIDE)
+
+								# --- Pass 1: Draw the continuous white outline for the entire path ---
+								for j in range(offset_pixel_vertices.size() - 1):
+									var start_px: Vector2i = offset_pixel_vertices[j]
+									var end_px: Vector2i = offset_pixel_vertices[j+1]
+									if start_px == end_px: continue # Skip zero-length segments
+									_draw_line_on_image(map_image, start_px, end_px, Color.WHITE, outline_total_thickness)
+
+								# --- Pass 2: Draw the colored journey line (with trailing/leading variations) on top ---
+								for j in range(offset_pixel_vertices.size() - 1):
+									var start_px: Vector2i = offset_pixel_vertices[j]
+									var end_px: Vector2i = offset_pixel_vertices[j+1]
+									if start_px == end_px: continue # Skip zero-length segments
+									
+									var current_segment_color: Color
+									# Segment (j, j+1) of the offset path corresponds to segment (j, j+1) of original path.
+									# (j+1) is the index of the ENDPOINT of the current original segment.
+									if start_drawing_from_route_index != -1 and (j + 1) <= start_drawing_from_route_index:
+										current_segment_color = trailing_line_color
+									else:
+										current_segment_color = leading_line_color
+									
+									_draw_line_on_image(map_image, start_px, end_px, current_segment_color, JOURNEY_LINE_THICKNESS)
+
+			# else for invalid convoy coordinates (x,y) - error will be printed in Pass 2 if it affects arrow drawing.
+			# For lines, if x/y are invalid, start_drawing_from_route_index remains -1, and all segments are "leading".
+
+		# --- PASS 2: Draw all Convoy Arrows ---
+		print("MapRender: Pass 2 - Drawing all convoy arrows.")
+		for convoy_idx in range(p_convoys_data.size()):
+			var convoy_data_variant = p_convoys_data[convoy_idx]
+			if not convoy_data_variant is Dictionary:
+				# Already handled in Pass 1, but good to be safe or if Pass 1 was skipped for this item.
+				# printerr("MapRender (Pass 2): Convoy data item is not a dictionary: ", convoy_data_variant)
+				continue
+
+			var convoy_item: Dictionary = convoy_data_variant
+			var convoy_id = convoy_item.get("convoy_id")
+			var unique_convoy_color: Color = p_convoy_id_to_color_map.get(
+				convoy_id, PREDEFINED_CONVOY_COLORS[convoy_idx % PREDEFINED_CONVOY_COLORS.size()]
+			) # Fallback to old method if ID not in map
 			var convoy_x_variant = convoy_item.get("x")
 			var convoy_y_variant = convoy_item.get("y")
 
@@ -459,140 +711,111 @@ func render_map(
 				var convoy_map_x: float = float(convoy_x_variant)
 				var convoy_map_y: float = float(convoy_y_variant)
 
-				# Calculate pixel center of the tile where convoy is located
 				var center_pixel_x: float = (convoy_map_x + 0.5) * actual_tile_width_f
 				var center_pixel_y: float = (convoy_map_y + 0.5) * actual_tile_height_f
-
 				var current_convoy_pixel_pos := Vector2(center_pixel_x, center_pixel_y)
+				var convoy_icon_offset_vec := Vector2.ZERO # Initialize offset for the icon
 
-				var journey_data: Dictionary = convoy_item.get("journey")
-				if journey_data is Dictionary:
-					var route_x_coords: Array = journey_data.get("route_x")
-					var route_y_coords: Array = journey_data.get("route_y")
+				var direction_norm := Vector2.UP # Default direction
+				var journey_data_for_arrow: Dictionary = convoy_item.get("journey") # Renamed to avoid conflict if used above
+				if journey_data_for_arrow is Dictionary:
+					var route_x_coords_for_arrow: Array = journey_data_for_arrow.get("route_x")
+					var route_y_coords_for_arrow: Array = journey_data_for_arrow.get("route_y")
 
-					if route_x_coords is Array and route_y_coords is Array and route_x_coords.size() == route_y_coords.size():
-						var start_drawing_from_route_index: int = -1
-						var direction_norm := Vector2.UP # Default direction (pointing up on map)
-
-						# Find the index in the route that matches the convoy's current position
-						for i in range(route_x_coords.size()):
-							var route_point_x: float = float(route_x_coords[i])
-							var route_point_y: float = float(route_y_coords[i])
-							if abs(route_point_x - convoy_map_x) < FLOAT_MATCH_TOLERANCE and \
-								abs(route_point_y - convoy_map_y) < FLOAT_MATCH_TOLERANCE:
-								start_drawing_from_route_index = i
+					if route_x_coords_for_arrow is Array and route_y_coords_for_arrow is Array and \
+					   route_x_coords_for_arrow.size() == route_y_coords_for_arrow.size():
+						
+						var current_route_idx_for_arrow: int = -1
+						for i in range(route_x_coords_for_arrow.size()):
+							var rx: float = float(route_x_coords_for_arrow[i])
+							var ry: float = float(route_y_coords_for_arrow[i])
+							if abs(rx - convoy_map_x) < FLOAT_MATCH_TOLERANCE and \
+							   abs(ry - convoy_map_y) < FLOAT_MATCH_TOLERANCE:
+								current_route_idx_for_arrow = i
 								break
 						
-						# Determine direction for the arrow
-						if start_drawing_from_route_index != -1 and start_drawing_from_route_index + 1 < route_x_coords.size():
-							var next_route_map_x: float = float(route_x_coords[start_drawing_from_route_index + 1])
-							var next_route_map_y: float = float(route_y_coords[start_drawing_from_route_index + 1])
+						# Determine segment for offset and direction
+						if current_route_idx_for_arrow != -1 and current_route_idx_for_arrow + 1 < route_x_coords_for_arrow.size():
+							# Convoy is on a segment heading to a next point
+							var next_route_map_x: float = float(route_x_coords_for_arrow[current_route_idx_for_arrow + 1])
+							var next_route_map_y: float = float(route_y_coords_for_arrow[current_route_idx_for_arrow + 1])
+							
+							var p1_map_for_offset = Vector2(convoy_map_x, convoy_map_y) # Current point
+							var p2_map_for_offset = Vector2(next_route_map_x, next_route_map_y) # Next point
+							
+							# Pixel coordinates for _get_journey_segment_offset_vector
+							var p1_pixel_for_offset = Vector2i(round(current_convoy_pixel_pos))
+							var p2_pixel_for_offset = Vector2i(
+								round((p2_map_for_offset.x + 0.5) * actual_tile_width_f),
+								round((p2_map_for_offset.y + 0.5) * actual_tile_height_f)
+							)
+
+							convoy_icon_offset_vec = _get_journey_segment_offset_vector(
+								p1_map_for_offset, p2_map_for_offset,
+								p1_pixel_for_offset, p2_pixel_for_offset,
+								convoy_idx, shared_segments_map_coords, JOURNEY_LINE_OFFSET_STEP_PIXELS
+							)
+							
 							var next_route_pixel_x: float = (next_route_map_x + 0.5) * actual_tile_width_f
 							var next_route_pixel_y: float = (next_route_map_y + 0.5) * actual_tile_height_f
 							var target_pixel_for_direction := Vector2(next_route_pixel_x, next_route_pixel_y)
 							
-							var direction_vec = target_pixel_for_direction - current_convoy_pixel_pos
-							if direction_vec.length_squared() > FLOAT_MATCH_TOLERANCE * FLOAT_MATCH_TOLERANCE : # Avoid normalizing zero vector
+							var direction_vec = target_pixel_for_direction - current_convoy_pixel_pos # Direction based on original positions
+							if direction_vec.length_squared() > FLOAT_MATCH_TOLERANCE * FLOAT_MATCH_TOLERANCE :
 								direction_norm = direction_vec.normalized()
-						# else, keep default direction_norm (UP) if no next point or not on route
+						elif current_route_idx_for_arrow != -1 and current_route_idx_for_arrow > 0:
+							# Convoy is at the last point, use previous segment for offset
+							var prev_route_map_x: float = float(route_x_coords_for_arrow[current_route_idx_for_arrow - 1])
+							var prev_route_map_y: float = float(route_y_coords_for_arrow[current_route_idx_for_arrow - 1])
 
-						# --- Draw Full Journey Line (Trailing part transparent, Leading part opaque) ---
-						if route_x_coords.size() >= 2: # Need at least two points to draw any line segment
-							var leading_line_color: Color = unique_convoy_color
-							var trailing_line_color: Color = unique_convoy_color.darkened(TRAILING_JOURNEY_DARKEN_FACTOR)							
-							var outline_total_thickness: int = JOURNEY_LINE_THICKNESS + (2 * JOURNEY_LINE_OUTLINE_EXTRA_THICKNESS_EACH_SIDE)
+							var p1_map_for_offset = Vector2(prev_route_map_x, prev_route_map_y) # Previous point
+							var p2_map_for_offset = Vector2(convoy_map_x, convoy_map_y)       # Current (last) point
 
-							# --- Pass 1: Draw the continuous white outline for the entire path ---
-							var prev_map_x_for_line: float = float(route_x_coords[0])
-							var prev_map_y_for_line: float = float(route_y_coords[0])
-							var prev_pixel_pos_for_line := Vector2i(
-								round((prev_map_x_for_line + 0.5) * actual_tile_width_f),
-								round((prev_map_y_for_line + 0.5) * actual_tile_height_f)
+							var p1_pixel_for_offset = Vector2i(
+								round((p1_map_for_offset.x + 0.5) * actual_tile_width_f),
+								round((p1_map_for_offset.y + 0.5) * actual_tile_height_f)
 							)
-							for i in range(1, route_x_coords.size()):
-								var next_map_x_for_line: float = float(route_x_coords[i])
-								var next_map_y_for_line: float = float(route_y_coords[i])
-								var next_pixel_pos_for_line := Vector2i(
-									round((next_map_x_for_line + 0.5) * actual_tile_width_f),
-									round((next_map_y_for_line + 0.5) * actual_tile_height_f)
-								)
-								_draw_line_on_image(map_image, prev_pixel_pos_for_line, next_pixel_pos_for_line, Color.WHITE, outline_total_thickness)
-								prev_pixel_pos_for_line = next_pixel_pos_for_line
-
-							# --- Pass 2: Draw the colored journey line (with trailing/leading variations) on top ---
-							prev_map_x_for_line = float(route_x_coords[0]) # Reset for the second pass
-							prev_map_y_for_line = float(route_y_coords[0]) # Reset for the second pass
-							prev_pixel_pos_for_line = Vector2i(
-								round((prev_map_x_for_line + 0.5) * actual_tile_width_f),
-								round((prev_map_y_for_line + 0.5) * actual_tile_height_f)
+							var p2_pixel_for_offset = Vector2i(round(current_convoy_pixel_pos))
+							convoy_icon_offset_vec = _get_journey_segment_offset_vector(
+								p1_map_for_offset, p2_map_for_offset,
+								p1_pixel_for_offset, p2_pixel_for_offset,
+								convoy_idx, shared_segments_map_coords, JOURNEY_LINE_OFFSET_STEP_PIXELS
 							)
+							# Direction remains default UP as there's no next segment
+				
+				# Apply the calculated offset to the convoy's drawing position
+				var final_convoy_pixel_pos = current_convoy_pixel_pos + convoy_icon_offset_vec
 
-							# Loop through all subsequent points to draw all segments of the journey
-							for i in range(1, route_x_coords.size()):
-								var next_map_x_for_line: float = float(route_x_coords[i])
-								var next_map_y_for_line: float = float(route_y_coords[i])
-								var next_pixel_pos_for_line := Vector2i(
-									round((next_map_x_for_line + 0.5) * actual_tile_width_f),
-									round((next_map_y_for_line + 0.5) * actual_tile_height_f)
-								)
+				# --- Draw Convoy Arrow ---
+				var throb_factor: float = (sin(p_throb_phase * 2.0 * PI) + 1.0) / 2.0
+				var current_size_addition: float = throb_factor * MAX_THROB_SIZE_ADDITION
+				var current_forward_len: float = CONVOY_ARROW_FORWARD_LENGTH + current_size_addition
+				var current_backward_len: float = CONVOY_ARROW_BACKWARD_LENGTH + current_size_addition
+				var current_half_width: float = CONVOY_ARROW_HALF_WIDTH + current_size_addition
+				var current_outline_thickness: float = CONVOY_ARROW_OUTLINE_THICKNESS + (throb_factor * (MAX_THROB_SIZE_ADDITION / 2.0))
 
-								var current_segment_color: Color
-								# A segment is "trailing" if its end point (index i) is at or before the convoy's current route index.
-								# If convoy is not found on route (start_drawing_from_route_index == -1), all segments are considered leading/opaque.
-								if start_drawing_from_route_index != -1 and i <= start_drawing_from_route_index:
-									current_segment_color = trailing_line_color
-								else:
-									current_segment_color = leading_line_color
-								
-								# Draw the main colored line segment
-								_draw_line_on_image(map_image, prev_pixel_pos_for_line, next_pixel_pos_for_line, current_segment_color, JOURNEY_LINE_THICKNESS)
+				var perp_norm: Vector2 = direction_norm.rotated(PI / 2.0)
+				var v_tip: Vector2 = final_convoy_pixel_pos + direction_norm * current_forward_len
+				var v_rear_center: Vector2 = final_convoy_pixel_pos - direction_norm * current_backward_len
+				var v_base_left: Vector2 = v_rear_center + perp_norm * current_half_width
+				var v_base_right: Vector2 = v_rear_center - perp_norm * current_half_width
 
-								prev_pixel_pos_for_line = next_pixel_pos_for_line
-						#else: # Optional: print if not enough points for a line
-							#if route_x_coords.size() < 2:
-								#print("MapRender: Journey route for convoy ", convoy_item.get("convoy_id"), " has less than 2 points, cannot draw line.")
-					#else: # Optional: print if route_x_coords or route_y_coords are invalid
-						#printerr("MapRender: Convoy journey route_x/route_y are invalid or mismatched for convoy: ", convoy_item.get("convoy_id"))
+				var outline_forward_len: float = current_forward_len + current_outline_thickness
+				var outline_backward_len: float = current_backward_len + current_outline_thickness
+				var outline_half_width: float = current_half_width + current_outline_thickness
+				
+				var ov_tip: Vector2 = final_convoy_pixel_pos + direction_norm * outline_forward_len
+				var ov_rear_center: Vector2 = final_convoy_pixel_pos - direction_norm * outline_backward_len
+				var ov_base_left: Vector2 = ov_rear_center + perp_norm * outline_half_width
+				var ov_base_right: Vector2 = ov_rear_center - perp_norm * outline_half_width
+				_draw_filled_triangle_on_image(map_image, round(ov_tip), round(ov_base_left), round(ov_base_right), Color.BLACK)
+										
+				var darken_amount: float = throb_factor * MAX_THROB_DARKEN_AMOUNT
+				var throbbing_fill_color: Color = unique_convoy_color.darkened(darken_amount)
+				_draw_filled_triangle_on_image(map_image, round(v_tip), round(v_base_left), round(v_base_right), throbbing_fill_color)
 
-						# --- Draw Convoy Arrow on TOP ---
-						# (Arrow drawing logic remains the same, it will be drawn after all lines)
-						
-						# Calculate throbbing factor (0.0 to 1.0)
-						var throb_factor: float = (sin(p_throb_phase * 2.0 * PI) + 1.0) / 2.0
-
-						# Calculate current throbbing dimensions
-						var current_size_addition: float = throb_factor * MAX_THROB_SIZE_ADDITION
-						var current_forward_len: float = CONVOY_ARROW_FORWARD_LENGTH + current_size_addition
-						var current_backward_len: float = CONVOY_ARROW_BACKWARD_LENGTH + current_size_addition
-						var current_half_width: float = CONVOY_ARROW_HALF_WIDTH + current_size_addition
-						# Optionally, scale outline thickness too, or keep it fixed. Let's scale it slightly.
-						var current_outline_thickness: float = CONVOY_ARROW_OUTLINE_THICKNESS + (throb_factor * (MAX_THROB_SIZE_ADDITION / 2.0)) # Scale outline less aggressively
-
-						var perp_norm: Vector2 = direction_norm.rotated(PI / 2.0)
-						var v_tip: Vector2 = current_convoy_pixel_pos + direction_norm * current_forward_len
-						var v_rear_center: Vector2 = current_convoy_pixel_pos - direction_norm * current_backward_len
-						var v_base_left: Vector2 = v_rear_center + perp_norm * current_half_width
-						var v_base_right: Vector2 = v_rear_center - perp_norm * current_half_width
-
-						# Calculate vertices for the outline (slightly larger)
-						var outline_forward_len: float = current_forward_len + current_outline_thickness
-						var outline_backward_len: float = current_backward_len + current_outline_thickness
-						var outline_half_width: float = current_half_width + current_outline_thickness
-
-						var ov_tip: Vector2 = current_convoy_pixel_pos + direction_norm * outline_forward_len
-						var ov_rear_center: Vector2 = current_convoy_pixel_pos - direction_norm * outline_backward_len
-						var ov_base_left: Vector2 = ov_rear_center + perp_norm * outline_half_width
-						var ov_base_right: Vector2 = ov_rear_center - perp_norm * outline_half_width
-						_draw_filled_triangle_on_image(map_image, ov_tip, ov_base_left, ov_base_right, Color.BLACK)
-												
-						# Calculate throbbing color for the fill
-						var darken_amount: float = throb_factor * MAX_THROB_DARKEN_AMOUNT
-						var throbbing_fill_color: Color = unique_convoy_color.darkened(darken_amount)
-
-						# Draw the main filled arrow
-						_draw_filled_triangle_on_image(map_image, v_tip, v_base_left, v_base_right, throbbing_fill_color)
 			else: # This 'else' corresponds to 'if typeof(convoy_x_variant) ...'
-				printerr("MapRender: Convoy item has invalid or missing x/y coordinates: ", convoy_item)
+				printerr("MapRender (Pass 2 Arrows): Convoy item has invalid or missing x/y coordinates, cannot draw arrow: ", convoy_item)
 			
 	var map_texture := ImageTexture.create_from_image(map_image)
 	return map_texture
@@ -627,3 +850,6 @@ func truncate_2d_array(matrix: Array, top_left: Vector2i, bottom_right: Vector2i
 			printerr("Row ", y, " is not an array during truncation.")
 
 	return result
+
+func round(v: Vector2) -> Vector2i: # Helper to round Vector2 components to Vector2i
+	return Vector2i(roundi(v.x), roundi(v.y))

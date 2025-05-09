@@ -43,6 +43,9 @@ const PREDEFINED_CONVOY_COLORS: Array[Color] = [ # Copied from map_render.gd
 	Color("pink")       # Pink
 ]
 
+var _convoy_id_to_color_map: Dictionary = {}
+var _last_assigned_color_idx: int = -1 # To cycle through PREDEFINED_CONVOY_COLORS for new convoys
+
 func _ready():
 	print("Main: _ready() called.") # DEBUG
 	# Instantiate the map renderer
@@ -64,7 +67,7 @@ func _ready():
 	# _label_settings.font = load("res://path/to/your/font.ttf") # Optional: load a custom font
 	_label_settings.font_size = 24 # Adjust as needed
 	_label_settings.font_color = Color.WHITE
-	_label_settings.outline_size = 4
+	_label_settings.outline_size = 6 # Increased from 4 for better readability
 	_label_settings.outline_color = Color.BLACK
 
 	map_renderer = MapRenderer.new() # Initialize the class member
@@ -169,9 +172,10 @@ func _update_map_display():
 		[], # lowlights
 		MapRenderer.DEFAULT_HIGHLIGHT_OUTLINE_COLOR,
 		MapRenderer.DEFAULT_LOWLIGHT_INLINE_COLOR,
-		current_viewport_size,
-		_all_convoy_data, # Pass the convoy data
-		_throb_phase # Pass the current throb phase
+		current_viewport_size, # Viewport size
+		_all_convoy_data,      # Pass the convoy data
+		_throb_phase,          # Pass the current throb phase
+		_convoy_id_to_color_map # Pass the color map
 	)
 	print("Main: map_renderer.render_map call completed.") # DEBUG
 
@@ -194,6 +198,7 @@ func _update_map_display():
 	
 	_update_convoy_labels() # Update labels after map is displayed
 
+
 func _on_convoy_data_received(data: Variant) -> void:
 	print("Main: Received convoy data from APICalls.gd!")
 	
@@ -210,6 +215,16 @@ func _on_convoy_data_received(data: Variant) -> void:
 	else:
 		_all_convoy_data = [] # Clear if data is not in expected array format
 		printerr("Main: Received convoy data is not an array or recognized structure. Clearing stored convoy data. Data: ", data)
+
+	# Update convoy ID to color mapping
+	for convoy_item in _all_convoy_data:
+		if convoy_item is Dictionary:
+			var convoy_id = convoy_item.get("convoy_id")
+			if convoy_id and not convoy_id.is_empty(): # Ensure convoy_id is valid
+				if not _convoy_id_to_color_map.has(convoy_id):
+					# This convoy ID is new, assign it the next available color
+					_last_assigned_color_idx = (_last_assigned_color_idx + 1) % PREDEFINED_CONVOY_COLORS.size()
+					_convoy_id_to_color_map[convoy_id] = PREDEFINED_CONVOY_COLORS[_last_assigned_color_idx]
 
 	# Re-render the map with the new convoy data
 	_update_map_display()
@@ -292,8 +307,9 @@ func _update_convoy_labels() -> void:
 		
 		var label_text: String = "%s (%s)" % [convoy_name, progress_percentage_str]
 		
-		# Get the unique color for this convoy
-		var unique_convoy_color: Color = PREDEFINED_CONVOY_COLORS[convoy_idx % PREDEFINED_CONVOY_COLORS.size()]
+		# Get the persistent color for this convoy
+		var current_convoy_id = convoy_data.get("convoy_id")
+		var unique_convoy_color: Color = _convoy_id_to_color_map.get(current_convoy_id, Color.GRAY) # Fallback to gray if ID somehow not in map
 
 		var label := Label.new()
 		label.text = label_text
