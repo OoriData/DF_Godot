@@ -13,6 +13,7 @@ const MapRenderer = preload("res://map_render.gd")
 
 var map_renderer # Will be initialized in _ready()
 var map_tiles: Array = [] # Will hold the loaded tile data
+var _all_settlement_data: Array = [] # To store settlement data for rendering
 var _all_convoy_data: Array = [] # To store convoy data from APICalls
 
 var _refresh_timer: Timer
@@ -22,7 +23,10 @@ const VISUAL_UPDATE_INTERVAL_SECONDS: float = 0.05 # e.g., 20 FPS for visual upd
 var _throb_phase: float = 0.0 # Cycles 0.0 to 1.0 for a 1-second throb
 
 var _convoy_label_container: Node2D
+var _settlement_label_container: Node2D # New container for settlement labels
 var _label_settings: LabelSettings
+var _settlement_label_settings: LabelSettings
+var _default_theme_label_font: Font = null # To store the font for labels
 
 
 const HORIZONTAL_LABEL_OFFSET_FROM_CENTER: float = 20.0 # Pixels to offset label to the right of convoy center
@@ -60,15 +64,34 @@ func _ready():
 		_convoy_label_container = Node2D.new()
 		_convoy_label_container.name = "ConvoyLabelContainer"
 		map_display.add_child(_convoy_label_container)
+		
+		_settlement_label_container = Node2D.new() # Create settlement label container
+		_settlement_label_container.name = "SettlementLabelContainer"
+		map_display.add_child(_settlement_label_container) # Add it as a child
+		
 		print("Main: ConvoyLabelContainer added to MapDisplay.")
+		
+		# Attempt to get the default theme font for Label nodes
+		_default_theme_label_font = map_display.get_theme_font("font", "Label")
+		if _default_theme_label_font:
+			print("Main: Successfully retrieved theme font for Label: ", _default_theme_label_font.resource_path if _default_theme_label_font.resource_path else "Built-in font")
+		else:
+			print("Main: No specific theme font found for 'Label'. Labels will use engine default or font set in LabelSettings.")
 
 	# Setup LabelSettings for convoy labels
 	_label_settings = LabelSettings.new()
-	# _label_settings.font = load("res://path/to/your/font.ttf") # Optional: load a custom font
+	_label_settings.font = _default_theme_label_font # Use the retrieved theme font, or null if none found
 	_label_settings.font_size = 24 # Adjust as needed
 	_label_settings.font_color = Color.WHITE
 	_label_settings.outline_size = 6 # Increased from 4 for better readability
 	_label_settings.outline_color = Color.BLACK
+	
+	# Setup LabelSettings for settlement labels (drawn on image)
+	_settlement_label_settings = LabelSettings.new()
+	_settlement_label_settings.font_size = 18 # Adjust as needed
+	_settlement_label_settings.font_color = Color.WHITE
+	_settlement_label_settings.outline_size = 3 # Adjust as needed
+	_settlement_label_settings.outline_color = Color.BLACK
 
 	map_renderer = MapRenderer.new() # Initialize the class member
 	# --- Load the JSON data ---
@@ -106,6 +129,24 @@ func _ready():
 		printerr("Extracted map_tiles: ", map_tiles) # DEBUG
 		map_tiles = [] # Ensure it's empty if invalid
 		return
+	
+	# Populate _all_settlement_data from map_tiles
+	_all_settlement_data.clear() 
+	for y_idx in range(map_tiles.size()):
+		var row = map_tiles[y_idx]
+		if not row is Array: continue
+		for x_idx in range(row.size()):
+			var tile_data = row[x_idx]
+			if tile_data is Dictionary and tile_data.has("settlements"):
+				var settlements_on_tile = tile_data.get("settlements", [])
+				if settlements_on_tile is Array:
+					for settlement_entry in settlements_on_tile:
+						if settlement_entry is Dictionary and settlement_entry.has("name"):
+							var settlement_info_for_render = settlement_entry.duplicate() 
+							settlement_info_for_render["x"] = x_idx # Ensure we use tile's x for rendering
+							settlement_info_for_render["y"] = y_idx # Ensure we use tile's y for rendering
+							_all_settlement_data.append(settlement_info_for_render)
+							# print("Main: Loaded settlement for render: %s at tile (%s, %s)" % [settlement_info_for_render.get("name"), x_idx, y_idx]) # DEBUG
 
 	# Initial map render and display
 	_update_map_display()
@@ -164,6 +205,7 @@ func _update_map_display():
 	# Get the current viewport size to pass to the renderer
 	var current_viewport_size = get_viewport().get_visible_rect().size
 
+
 	# Call render_map with all parameters, using defaults for highlights/lowlights for now
 	# You can pass actual highlight/lowlight data here if you have it.
 	var map_texture: ImageTexture = map_renderer.render_map(
@@ -197,6 +239,7 @@ func _update_map_display():
 		printerr("Failed to render map texture.")
 	
 	_update_convoy_labels() # Update labels after map is displayed
+	_update_settlement_labels() # Update settlement labels
 
 
 func _on_convoy_data_received(data: Variant) -> void:
@@ -367,3 +410,64 @@ func _update_convoy_labels() -> void:
 		# Add label first, then indicator, so indicator is drawn "on top" if they overlap (though they shouldn't much)
 		_convoy_label_container.add_child(label)
 		_convoy_label_container.add_child(color_indicator)
+
+func _update_settlement_labels() -> void:
+	if not is_instance_valid(_settlement_label_container):
+		printerr("Main: SettlementLabelContainer is not valid. Cannot update labels.")
+		return
+
+	# Clear existing settlement labels
+	for child in _settlement_label_container.get_children():
+		child.queue_free()
+
+	if not map_display or not is_instance_valid(map_display.texture):
+		# print("Main: No map texture on MapDisplay, skipping settlement label update.")
+		return
+
+	if _all_settlement_data.is_empty():
+		# print("Main: No settlement data, skipping settlement label update.")
+		return
+
+	var map_texture_size: Vector2 = map_display.texture.get_size()
+	var map_display_rect_size: Vector2 = map_display.size
+
+	if map_texture_size.x == 0 or map_texture_size.y == 0:
+		printerr("Main: Map texture size is zero, cannot calculate settlement label positions.")
+		return
+
+	# Calculate scaling and offset of the texture within MapDisplay
+	var scale_x_ratio: float = map_display_rect_size.x / map_texture_size.x
+	var scale_y_ratio: float = map_display_rect_size.y / map_texture_size.y
+	var actual_scale: float = min(scale_x_ratio, scale_y_ratio)
+
+	var displayed_texture_width: float = map_texture_size.x * actual_scale
+	var displayed_texture_height: float = map_texture_size.y * actual_scale
+	var offset_x: float = (map_display_rect_size.x - displayed_texture_width) / 2.0
+	var offset_y: float = (map_display_rect_size.y - displayed_texture_height) / 2.0
+
+	if map_tiles.is_empty() or not map_tiles[0] is Array or map_tiles[0].is_empty():
+		printerr("Main: map_tiles data is invalid for settlement labels.")
+		return
+	var map_image_cols: int = map_tiles[0].size()
+	var map_image_rows: int = map_tiles.size()
+	var actual_tile_width_on_texture: float = map_texture_size.x / float(map_image_cols)
+	var actual_tile_height_on_texture: float = map_texture_size.y / float(map_image_rows)
+
+	for settlement_info in _all_settlement_data:
+		var name: String = settlement_info.get("name", "N/A")
+		var tile_x: int = settlement_info.get("x", -1) # tile_x from main.gd's processing
+		var tile_y: int = settlement_info.get("y", -1) # tile_y from main.gd's processing
+		if tile_x < 0 or tile_y < 0: continue
+
+		var label := Label.new()
+		label.text = name
+		label.label_settings = _settlement_label_settings # Use pre-configured LabelSettings
+		
+		_settlement_label_container.add_child(label) # Add to tree to get size
+		var label_size: Vector2 = label.get_minimum_size()
+		_settlement_label_container.remove_child(label) # Remove for final positioning
+
+		var tile_center_tex_x: float = (float(tile_x) + 0.5) * actual_tile_width_on_texture
+		var tile_center_tex_y: float = (float(tile_y) + 0.5) * actual_tile_height_on_texture
+		label.position = Vector2(tile_center_tex_x * actual_scale + offset_x - (label_size.x / 2.0), tile_center_tex_y * actual_scale + offset_y - (label_size.y / 2.0))
+		_settlement_label_container.add_child(label)

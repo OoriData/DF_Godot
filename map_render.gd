@@ -178,9 +178,9 @@ const TRAILING_JOURNEY_DARKEN_FACTOR: float = 0.5 # How much to darken the trail
 
 # --- Helper Drawing Functions (Now methods of the class) ---
 
-func _draw_tile_bg(img: Image, tile_data: Dictionary, tile_render_x: int, tile_render_y: int, tile_render_width: int, tile_render_height: int, p_scaled_total_inset: int, grid_x_for_debug: int, grid_y_for_debug: int):
+func _draw_tile_bg(img: Image, tile_data: Dictionary, tile_render_x: int, tile_render_y: int, tile_render_width: int, tile_render_height: int, p_scaled_total_inset: int, _grid_x_for_debug: int, _grid_y_for_debug: int):
 	var color: Color = ERROR_COLOR # Initialized to ERROR_COLOR
-	var color_source_debug: String = "Initial ERROR_COLOR" # For debugging
+	var _color_source_debug: String = "Initial ERROR_COLOR" # For debugging
 
 	#if grid_x_for_debug == 0 and grid_y_for_debug == 0: # Debug print for the first tile only
 		#print("DEBUG map_render.gd: Processing tile (0,0) data: ", tile_data)
@@ -192,9 +192,9 @@ func _draw_tile_bg(img: Image, tile_data: Dictionary, tile_render_x: int, tile_r
 		# Use .get() again for safety, defaulting to ERROR_COLOR if type not found
 		color = SETTLEMENT_COLORS.get(sett_type, ERROR_COLOR)
 		if color != ERROR_COLOR: # Check if color was actually found
-			color_source_debug = "Settlement: " + sett_type
+			_color_source_debug = "Settlement: " + sett_type
 		else:
-			color_source_debug = "Settlement (type '" + sett_type + "' not in SETTLEMENT_COLORS)"
+			_color_source_debug = "Settlement (type '" + sett_type + "' not in SETTLEMENT_COLORS)"
 			#if grid_x_for_debug == 0 and grid_y_for_debug == 0: print("DEBUG map_render.gd: Tile (0,0) settlement type '", sett_type, "' not found in SETTLEMENT_COLORS.")
 	elif tile_data.has("terrain_difficulty"):
 		# Terrain path
@@ -204,15 +204,15 @@ func _draw_tile_bg(img: Image, tile_data: Dictionary, tile_render_x: int, tile_r
 			# Use .get() again for safety, defaulting to ERROR_COLOR if key not found
 			color = TILE_COLORS.get(difficulty_int, ERROR_COLOR)
 			if color != ERROR_COLOR:
-				color_source_debug = "Terrain: " + str(difficulty_int)
+				_color_source_debug = "Terrain: " + str(difficulty_int)
 			else:
-				color_source_debug = "Terrain (difficulty '" + str(difficulty_int) + "' not in TILE_COLORS)"
+				_color_source_debug = "Terrain (difficulty '" + str(difficulty_int) + "' not in TILE_COLORS)"
 				#if grid_x_for_debug == 0 and grid_y_for_debug == 0: print("DEBUG map_render.gd: Tile (0,0) terrain difficulty '", difficulty_int, "' not found in TILE_COLORS.")
 		else: # Non-numeric terrain difficulty
-			color_source_debug = "Terrain (value is not INT or FLOAT, type: " + str(typeof(difficulty_variant)) + ")"
+			_color_source_debug = "Terrain (value is not INT or FLOAT, type: " + str(typeof(difficulty_variant)) + ")"
 			#if grid_x_for_debug == 0 and grid_y_for_debug == 0: print("DEBUG map_render.gd: Tile (0,0) terrain_difficulty is not INT or FLOAT. Type: ", typeof(difficulty_variant), ", Value: ", difficulty_variant)
 	else: # Neither settlement nor terrain difficulty found
-		color_source_debug = "No 'settlements' or 'terrain_difficulty' key found in tile."
+		_color_source_debug = "No 'settlements' or 'terrain_difficulty' key found in tile."
 		#if grid_x_for_debug == 0 and grid_y_for_debug == 0: print("DEBUG map_render.gd: Tile (0,0) has no 'settlements' or 'terrain_difficulty' key.")
 
 	#if grid_x_for_debug == 0 and grid_y_for_debug == 0: # Debug print for the first tile only
@@ -315,7 +315,7 @@ func _draw_line_on_image(image: Image, start: Vector2i, end: Vector2i, color: Co
 
 	while true:
 		# Draw a small filled rectangle (square) for thickness
-		var brush_offset: int = thickness / 2
+		var brush_offset: int = thickness / 2 # Use integer division
 		var rect_x: int = current_x - brush_offset
 		var rect_y: int = current_y - brush_offset
 		
@@ -529,7 +529,7 @@ func render_map(
 	map_image.fill(GRID_COLOR) # Start with grid color background
 
 
-	var error_color_tile_count: int = 0
+	var _error_color_tile_count: int = 0
 	# --- Render Loop ---
 	for y in rows:
 		for x in cols:
@@ -559,8 +559,8 @@ func render_map(
 			# 2. Draw terrain/settlement layer on top (inset by grid_size + political_border_thickness)
 			var total_inset_for_terrain = scaled_grid_size + scaled_political_border_thickness
 			var chosen_color = _draw_tile_bg(map_image, tile, current_tile_pixel_x, current_tile_pixel_y, current_tile_render_w, current_tile_render_h, total_inset_for_terrain, x, y)
-			if chosen_color == ERROR_COLOR:
-				error_color_tile_count += 1
+			if chosen_color == ERROR_COLOR: # If you want to use this count, remove the underscore from _error_color_tile_count
+				_error_color_tile_count += 1
 			# TODO: _draw_highlight_or_lowlight also needs to be adapted to use the new rendering bounds if full consistency is desired.
 			# For now, it will use an approximated integer tile size for highlights.
 			var approx_int_tile_size_for_highlight = int(round(reference_float_tile_size_for_offsets))
