@@ -11,7 +11,7 @@ config_version=5
 [application]
 
 config/name="Desolate Frontiers"
-config/version="0.1.0"
+config/version="0.1.0.0"
 run/main_scene="uid://b08j3dyaxws7r"
 config/features=PackedStringArray("4.4", "GL Compatibility")
 boot_splash/image="uid://cqbe7cgys44i"
