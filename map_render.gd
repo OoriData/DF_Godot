@@ -170,6 +170,8 @@ const CONVOY_ARROW_FORWARD_LENGTH: float = 10.0 # From center to tip - Increased
 const CONVOY_ARROW_BACKWARD_LENGTH: float = 4.0 # From center to middle of base - Increased
 const CONVOY_ARROW_HALF_WIDTH: float = 6.0    # From center-line to a base corner - Increased
 const CONVOY_ARROW_OUTLINE_THICKNESS: float = 2.0 # Thickness of the black outline
+const MAX_THROB_SIZE_ADDITION: float = 2.0 # How many extra pixels the arrow dimensions can grow
+const JOURNEY_LINE_OUTLINE_EXTRA_THICKNESS_EACH_SIDE: int = 1 # How many extra pixels for the white outline on each side of the journey line
 const MAX_THROB_DARKEN_AMOUNT: float = 0.4 # How much the arrow darkens at its peak (0.0 to 1.0)
 const TRAILING_JOURNEY_DARKEN_FACTOR: float = 0.5 # How much to darken the trailing line (0.0 to 1.0)
 
@@ -497,12 +499,30 @@ func render_map(
 						# --- Draw Full Journey Line (Trailing part transparent, Leading part opaque) ---
 						if route_x_coords.size() >= 2: # Need at least two points to draw any line segment
 							var leading_line_color: Color = unique_convoy_color
-							var trailing_line_color: Color = unique_convoy_color.darkened(TRAILING_JOURNEY_DARKEN_FACTOR)
+							var trailing_line_color: Color = unique_convoy_color.darkened(TRAILING_JOURNEY_DARKEN_FACTOR)							
+							var outline_total_thickness: int = JOURNEY_LINE_THICKNESS + (2 * JOURNEY_LINE_OUTLINE_EXTRA_THICKNESS_EACH_SIDE)
 
-							# Initialize previous point for line drawing with the first point of the route
+							# --- Pass 1: Draw the continuous white outline for the entire path ---
 							var prev_map_x_for_line: float = float(route_x_coords[0])
 							var prev_map_y_for_line: float = float(route_y_coords[0])
 							var prev_pixel_pos_for_line := Vector2i(
+								round((prev_map_x_for_line + 0.5) * actual_tile_width_f),
+								round((prev_map_y_for_line + 0.5) * actual_tile_height_f)
+							)
+							for i in range(1, route_x_coords.size()):
+								var next_map_x_for_line: float = float(route_x_coords[i])
+								var next_map_y_for_line: float = float(route_y_coords[i])
+								var next_pixel_pos_for_line := Vector2i(
+									round((next_map_x_for_line + 0.5) * actual_tile_width_f),
+									round((next_map_y_for_line + 0.5) * actual_tile_height_f)
+								)
+								_draw_line_on_image(map_image, prev_pixel_pos_for_line, next_pixel_pos_for_line, Color.WHITE, outline_total_thickness)
+								prev_pixel_pos_for_line = next_pixel_pos_for_line
+
+							# --- Pass 2: Draw the colored journey line (with trailing/leading variations) on top ---
+							prev_map_x_for_line = float(route_x_coords[0]) # Reset for the second pass
+							prev_map_y_for_line = float(route_y_coords[0]) # Reset for the second pass
+							prev_pixel_pos_for_line = Vector2i(
 								round((prev_map_x_for_line + 0.5) * actual_tile_width_f),
 								round((prev_map_y_for_line + 0.5) * actual_tile_height_f)
 							)
@@ -524,8 +544,9 @@ func render_map(
 								else:
 									current_segment_color = leading_line_color
 								
+								# Draw the main colored line segment
 								_draw_line_on_image(map_image, prev_pixel_pos_for_line, next_pixel_pos_for_line, current_segment_color, JOURNEY_LINE_THICKNESS)
-								
+
 								prev_pixel_pos_for_line = next_pixel_pos_for_line
 						#else: # Optional: print if not enough points for a line
 							#if route_x_coords.size() < 2:
@@ -535,25 +556,37 @@ func render_map(
 
 						# --- Draw Convoy Arrow on TOP ---
 						# (Arrow drawing logic remains the same, it will be drawn after all lines)
+						
+						# Calculate throbbing factor (0.0 to 1.0)
+						var throb_factor: float = (sin(p_throb_phase * 2.0 * PI) + 1.0) / 2.0
+
+						# Calculate current throbbing dimensions
+						var current_size_addition: float = throb_factor * MAX_THROB_SIZE_ADDITION
+						var current_forward_len: float = CONVOY_ARROW_FORWARD_LENGTH + current_size_addition
+						var current_backward_len: float = CONVOY_ARROW_BACKWARD_LENGTH + current_size_addition
+						var current_half_width: float = CONVOY_ARROW_HALF_WIDTH + current_size_addition
+						# Optionally, scale outline thickness too, or keep it fixed. Let's scale it slightly.
+						var current_outline_thickness: float = CONVOY_ARROW_OUTLINE_THICKNESS + (throb_factor * (MAX_THROB_SIZE_ADDITION / 2.0)) # Scale outline less aggressively
+
 						var perp_norm: Vector2 = direction_norm.rotated(PI / 2.0)
-						var v_tip: Vector2 = current_convoy_pixel_pos + direction_norm * CONVOY_ARROW_FORWARD_LENGTH
-						var v_rear_center: Vector2 = current_convoy_pixel_pos - direction_norm * CONVOY_ARROW_BACKWARD_LENGTH
-						var v_base_left: Vector2 = v_rear_center + perp_norm * CONVOY_ARROW_HALF_WIDTH
-						var v_base_right: Vector2 = v_rear_center - perp_norm * CONVOY_ARROW_HALF_WIDTH
+						var v_tip: Vector2 = current_convoy_pixel_pos + direction_norm * current_forward_len
+						var v_rear_center: Vector2 = current_convoy_pixel_pos - direction_norm * current_backward_len
+						var v_base_left: Vector2 = v_rear_center + perp_norm * current_half_width
+						var v_base_right: Vector2 = v_rear_center - perp_norm * current_half_width
 
 						# Calculate vertices for the outline (slightly larger)
-						var outline_forward_len: float = CONVOY_ARROW_FORWARD_LENGTH + CONVOY_ARROW_OUTLINE_THICKNESS
-						var outline_backward_len: float = CONVOY_ARROW_BACKWARD_LENGTH + CONVOY_ARROW_OUTLINE_THICKNESS
-						var outline_half_width: float = CONVOY_ARROW_HALF_WIDTH + CONVOY_ARROW_OUTLINE_THICKNESS
+						var outline_forward_len: float = current_forward_len + current_outline_thickness
+						var outline_backward_len: float = current_backward_len + current_outline_thickness
+						var outline_half_width: float = current_half_width + current_outline_thickness
 
 						var ov_tip: Vector2 = current_convoy_pixel_pos + direction_norm * outline_forward_len
 						var ov_rear_center: Vector2 = current_convoy_pixel_pos - direction_norm * outline_backward_len
 						var ov_base_left: Vector2 = ov_rear_center + perp_norm * outline_half_width
 						var ov_base_right: Vector2 = ov_rear_center - perp_norm * outline_half_width
 						_draw_filled_triangle_on_image(map_image, ov_tip, ov_base_left, ov_base_right, Color.BLACK)
-						
+												
 						# Calculate throbbing color for the fill
-						var darken_amount: float = ((sin(p_throb_phase * 2.0 * PI) + 1.0) / 2.0) * MAX_THROB_DARKEN_AMOUNT
+						var darken_amount: float = throb_factor * MAX_THROB_DARKEN_AMOUNT
 						var throbbing_fill_color: Color = unique_convoy_color.darkened(darken_amount)
 
 						# Draw the main filled arrow
