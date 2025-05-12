@@ -6,8 +6,7 @@ extends Node
 # --- Constants ---
 const BASE_TILE_SIZE_FOR_PROPORTIONS: float = 24.0 # Original tile size, used for scaling calculations
 const GRID_SIZE: int = 1          # Pixels to reduce each side (used for drawing inside grid lines)
-# FONT_SIZE, FONT_OUTLINE_SIZE - Text rendering recommended via Label nodes instead.
-# @export var font: Font # Export if attempting direct text rendering later.
+const DEFAULT_LABEL_COLOR: Color = Color.WHITE
 
 const GRID_COLOR: Color = Color("#202020")   # Background grid color
 const WATER_COLOR: Color = Color("#142C55")
@@ -149,7 +148,7 @@ const DEFAULT_LOWLIGHT_INLINE_COLOR: Color = Color("#00FFFF")
 const LOWLIGHT_INLINE_OFFSET: int = 2
 const LOWLIGHT_INLINE_WIDTH: int = 5
 
-const JOURNEY_LINE_THICKNESS: int = 3 # Pixel thickness of the journey line. Let's try 3px.
+const JOURNEY_LINE_THICKNESS: int = 5 # Pixel thickness of the journey line. Let's try 3px.
 const FLOAT_MATCH_TOLERANCE: float = 0.00001 # Tolerance for matching float coordinates
 
 const PREDEFINED_CONVOY_COLORS: Array[Color] = [
@@ -165,15 +164,18 @@ const PREDEFINED_CONVOY_COLORS: Array[Color] = [
 	Color("pink")       # Pink
 ]
 
+# Icon scaling exponent, similar to FONT_SCALING_EXPONENT in main.gd
+const ICON_SCALING_EXPONENT: float = 0.6 # (1.0 = linear, <1.0 less aggressive shrink/grow)
+
 # Arrow dimensions (in pixels)
-const CONVOY_ARROW_FORWARD_LENGTH: float = 10.0 # From center to tip - Increased
-const CONVOY_ARROW_BACKWARD_LENGTH: float = 4.0 # From center to middle of base - Increased
-const CONVOY_ARROW_HALF_WIDTH: float = 6.0    # From center-line to a base corner - Increased
-const CONVOY_ARROW_OUTLINE_THICKNESS: float = 2.0 # Thickness of the black outline
-const MAX_THROB_SIZE_ADDITION: float = 2.0 # How many extra pixels the arrow dimensions can grow
-const JOURNEY_LINE_OUTLINE_EXTRA_THICKNESS_EACH_SIDE: int = 1 # How many extra pixels for the white outline on each side of the journey line
+const CONVOY_ARROW_FORWARD_LENGTH: float = 22.0 # Increased base size
+const CONVOY_ARROW_BACKWARD_LENGTH: float = 7.0  # Increased base size
+const CONVOY_ARROW_HALF_WIDTH: float = 12.0   # Increased base size
+const CONVOY_ARROW_OUTLINE_THICKNESS: float = 2.5 # Slightly increased base size
+const MAX_THROB_SIZE_ADDITION: float = 3.0   # Increased base size
+const JOURNEY_LINE_OUTLINE_EXTRA_THICKNESS_EACH_SIDE: int = 2 # How many extra pixels for the white outline on each side of the journey line
 const MAX_THROB_DARKEN_AMOUNT: float = 0.4 # How much the arrow darkens at its peak (0.0 to 1.0)
-const JOURNEY_LINE_OFFSET_STEP_PIXELS: float = 4.0 # Pixels to offset overlapping journey lines by for each step
+const JOURNEY_LINE_OFFSET_STEP_PIXELS: float = 6.0 # Increased base offset for overlapping journey lines to prevent overlap
 const TRAILING_JOURNEY_DARKEN_FACTOR: float = 0.5 # How much to darken the trailing line (0.0 to 1.0)
 
 # --- Helper Drawing Functions (Now methods of the class) ---
@@ -471,11 +473,12 @@ func render_map(
 		lowlight_color: Color = DEFAULT_LOWLIGHT_INLINE_COLOR,
 		p_viewport_size: Vector2 = Vector2.ZERO,
 		p_convoys_data: Array = [], # New parameter for convoy data
-		p_throb_phase: float = 0.0, # For animating convoy icons
-		p_convoy_id_to_color_map: Dictionary = {} # For persistent convoy colors
+		p_throb_phase: float = 0.0, # For animating convoy icons,
+		p_convoy_id_to_color_map: Dictionary = {}, # For persistent convoy colors
+		p_hover_info: Dictionary = {} # For hover-dependent labels. E.g., {"type": "settlement", "coords": Vector2i(x,y)} or {"type": "convoy", "id": "convoy_id_val"}
 	) -> ImageTexture:
 	if tiles.is_empty() or not tiles[0] is Array or tiles[0].is_empty():
-		printerr("Invalid or empty tiles data provided.")
+		printerr("MapRender: Invalid or empty tiles data provided.")
 		return null
 
 	var rows: int = tiles.size()
@@ -485,13 +488,15 @@ func render_map(
 	var viewport_size: Vector2
 	if p_viewport_size == Vector2.ZERO: # If no override is provided (or it's explicitly zero)
 		# Try to get viewport size from the tree
-		if not is_inside_tree():
+		if not is_inside_tree(): # This check might be problematic if map_render is just a class instance
 			printerr("MapRender node is not in the scene tree and no p_viewport_size override was given. Cannot determine viewport size.")
 			return null
 		viewport_size = get_viewport().get_visible_rect().size
 	else:
 		# Use the provided viewport size override
 		viewport_size = p_viewport_size
+
+	print("MapRender: render_map called. p_hover_info: ", p_hover_info) # DEBUG - Removed font check as font is no longer a member
 
 	# --- Calculate target image dimensions to fit viewport while maintaining map aspect ratio ---
 	var map_aspect_ratio: float = float(cols) / float(rows)
@@ -514,6 +519,13 @@ func render_map(
 	var actual_tile_width_f: float = image_render_width_f / float(cols)
 	var actual_tile_height_f: float = image_render_height_f / float(rows)
 	var reference_float_tile_size_for_offsets = min(actual_tile_width_f, actual_tile_height_f) # Used for scaling offsets
+
+	# Calculate a general visual element scale factor based on tile rendering size
+	var base_linear_visual_scale: float = 1.0
+	if BASE_TILE_SIZE_FOR_PROPORTIONS > 0.001:
+		base_linear_visual_scale = reference_float_tile_size_for_offsets / BASE_TILE_SIZE_FOR_PROPORTIONS
+	
+	var visual_element_scale_factor: float = pow(base_linear_visual_scale, ICON_SCALING_EXPONENT)
 
 	# Calculate scaled offsets based on current_tile_size
 	var scaled_grid_size: int = max(0, int(round(reference_float_tile_size_for_offsets * (float(GRID_SIZE) / BASE_TILE_SIZE_FOR_PROPORTIONS))))
@@ -565,6 +577,7 @@ func render_map(
 			# For now, it will use an approximated integer tile size for highlights.
 			var approx_int_tile_size_for_highlight = int(round(reference_float_tile_size_for_offsets))
 			_draw_highlight_or_lowlight(map_image, x, y, lowlights, lowlight_color, approx_int_tile_size_for_highlight, scaled_lowlight_inline_offset, LOWLIGHT_INLINE_WIDTH)
+
 			_draw_highlight_or_lowlight(map_image, x, y, highlights, highlight_color, approx_int_tile_size_for_highlight, scaled_highlight_outline_offset, HIGHLIGHT_OUTLINE_WIDTH)
 
 	# --- Create and return the texture ---
@@ -650,17 +663,19 @@ func render_map(
 							
 							var offset_pixel_vertices: Array[Vector2i] = _calculate_offset_pixel_path(
 								original_map_path_for_convoy,
-								convoy_idx,
+								convoy_idx, # Pass convoy_idx
 								shared_segments_map_coords,
-								JOURNEY_LINE_OFFSET_STEP_PIXELS,
+								JOURNEY_LINE_OFFSET_STEP_PIXELS * visual_element_scale_factor, # Pass scaled offset magnitude
 								actual_tile_width_f,
 								actual_tile_height_f
 							)
 
 							if offset_pixel_vertices.size() >= 2:
+								var scaled_journey_line_thickness: int = max(1, roundi(JOURNEY_LINE_THICKNESS * visual_element_scale_factor))
+								var scaled_outline_extra_thickness: int = max(0, roundi(JOURNEY_LINE_OUTLINE_EXTRA_THICKNESS_EACH_SIDE * visual_element_scale_factor))
 								var leading_line_color: Color = unique_convoy_color
 								var trailing_line_color: Color = unique_convoy_color.darkened(TRAILING_JOURNEY_DARKEN_FACTOR)							
-								var outline_total_thickness: int = JOURNEY_LINE_THICKNESS + (2 * JOURNEY_LINE_OUTLINE_EXTRA_THICKNESS_EACH_SIDE)
+								var outline_total_thickness: int = scaled_journey_line_thickness + (2 * scaled_outline_extra_thickness)
 
 								# --- Pass 1: Draw the continuous white outline for the entire path ---
 								for j in range(offset_pixel_vertices.size() - 1):
@@ -683,7 +698,7 @@ func render_map(
 									else:
 										current_segment_color = leading_line_color
 									
-									_draw_line_on_image(map_image, start_px, end_px, current_segment_color, JOURNEY_LINE_THICKNESS)
+									_draw_line_on_image(map_image, start_px, end_px, current_segment_color, scaled_journey_line_thickness)
 
 			# else for invalid convoy coordinates (x,y) - error will be printed in Pass 2 if it affects arrow drawing.
 			# For lines, if x/y are invalid, start_drawing_from_route_index remains -1, and all segments are "leading".
@@ -785,14 +800,19 @@ func render_map(
 				
 				# Apply the calculated offset to the convoy's drawing position
 				var final_convoy_pixel_pos = current_convoy_pixel_pos + convoy_icon_offset_vec
+				
+				# Use the visual_element_scale_factor calculated earlier
 
 				# --- Draw Convoy Arrow ---
 				var throb_factor: float = (sin(p_throb_phase * 2.0 * PI) + 1.0) / 2.0
-				var current_size_addition: float = throb_factor * MAX_THROB_SIZE_ADDITION
-				var current_forward_len: float = CONVOY_ARROW_FORWARD_LENGTH + current_size_addition
-				var current_backward_len: float = CONVOY_ARROW_BACKWARD_LENGTH + current_size_addition
-				var current_half_width: float = CONVOY_ARROW_HALF_WIDTH + current_size_addition
-				var current_outline_thickness: float = CONVOY_ARROW_OUTLINE_THICKNESS + (throb_factor * (MAX_THROB_SIZE_ADDITION / 2.0))
+				
+				var scaled_max_throb_addition: float = MAX_THROB_SIZE_ADDITION * visual_element_scale_factor
+				var current_size_addition: float = throb_factor * scaled_max_throb_addition
+				
+				var current_forward_len: float = (CONVOY_ARROW_FORWARD_LENGTH * visual_element_scale_factor) + current_size_addition
+				var current_backward_len: float = (CONVOY_ARROW_BACKWARD_LENGTH * visual_element_scale_factor) + current_size_addition
+				var current_half_width: float = (CONVOY_ARROW_HALF_WIDTH * visual_element_scale_factor) + current_size_addition
+				var current_outline_thickness: float = (CONVOY_ARROW_OUTLINE_THICKNESS * visual_element_scale_factor) + (throb_factor * (scaled_max_throb_addition / 2.0))
 
 				var perp_norm: Vector2 = direction_norm.rotated(PI / 2.0)
 				var v_tip: Vector2 = final_convoy_pixel_pos + direction_norm * current_forward_len
