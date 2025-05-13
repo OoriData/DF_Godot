@@ -52,6 +52,7 @@ const SETTLEMENT_PANEL_BACKGROUND_COLOR: Color = Color(0.15, 0.12, 0.12, 0.85) #
 
 # This constant is for the old anti-collision logic, may not be needed with single hover labels
 const LABEL_ANTI_COLLISION_Y_SHIFT: float = 5.0
+const LABEL_MAP_EDGE_PADDING: float = 5.0 # Pixels to keep labels from map edge
 const PREDEFINED_CONVOY_COLORS: Array[Color] = [  # Copied from map_render.gd; could these be imported instead?
 	Color.RED,        # Red
 	Color.BLUE,       # Blue
@@ -980,6 +981,24 @@ func _draw_single_convoy_label(convoy_data: Dictionary, existing_label_rects: Ar
 		else:
 			break # No collision, position is good
 
+	# --- Clamp panel position to map display bounds ---
+	# Define the padded bounds within the map display
+	var padded_map_bounds_rect = Rect2(offset_x + LABEL_MAP_EDGE_PADDING, offset_y + LABEL_MAP_EDGE_PADDING, displayed_texture_width - (2 * LABEL_MAP_EDGE_PADDING), displayed_texture_height - (2 * LABEL_MAP_EDGE_PADDING))
+	var panel_pos_changed_by_clamping: bool = false
+
+	if panel.position.x < padded_map_bounds_rect.position.x:
+		panel.position.x = padded_map_bounds_rect.position.x; panel_pos_changed_by_clamping = true
+	if panel.position.x + panel.size.x > padded_map_bounds_rect.position.x + padded_map_bounds_rect.size.x:
+		panel.position.x = (padded_map_bounds_rect.position.x + padded_map_bounds_rect.size.x) - panel.size.x; panel_pos_changed_by_clamping = true
+	if panel.position.y < padded_map_bounds_rect.position.y:
+		panel.position.y = padded_map_bounds_rect.position.y; panel_pos_changed_by_clamping = true
+	if panel.position.y + panel.size.y > padded_map_bounds_rect.position.y + padded_map_bounds_rect.size.y:
+		panel.position.y = (padded_map_bounds_rect.position.y + padded_map_bounds_rect.size.y) - panel.size.y; panel_pos_changed_by_clamping = true
+
+	if panel_pos_changed_by_clamping:
+		label.position = panel.position + label_relative_pos
+		color_indicator.position = panel.position + indicator_relative_pos
+
 	# Add panel first, then label, then indicator
 	_convoy_label_container.add_child(panel)
 	_convoy_label_container.add_child(label)
@@ -1093,6 +1112,26 @@ func _draw_single_settlement_label(settlement_info_for_render: Dictionary) -> Re
 	# Position label inside the panel
 	label.position.x = panel.position.x + current_settlement_panel_padding_h
 	label.position.y = panel.position.y + current_settlement_panel_padding_v # Label's (0,0) pivot at padded top-left
+
+	# --- Clamp panel position to map display bounds ---
+	# Define the padded bounds within the map display
+	var padded_map_bounds_rect = Rect2(offset_x + LABEL_MAP_EDGE_PADDING, offset_y + LABEL_MAP_EDGE_PADDING, displayed_texture_width - (2 * LABEL_MAP_EDGE_PADDING), displayed_texture_height - (2 * LABEL_MAP_EDGE_PADDING))
+	var panel_pos_changed_by_clamping: bool = false
+	var original_panel_pos_for_label_relative_calc = panel.position # Store before clamping for label relative pos
+
+	if panel.position.x < padded_map_bounds_rect.position.x:
+		panel.position.x = padded_map_bounds_rect.position.x; panel_pos_changed_by_clamping = true
+	if panel.position.x + panel.size.x > padded_map_bounds_rect.position.x + padded_map_bounds_rect.size.x:
+		panel.position.x = (padded_map_bounds_rect.position.x + padded_map_bounds_rect.size.x) - panel.size.x; panel_pos_changed_by_clamping = true
+	if panel.position.y < padded_map_bounds_rect.position.y:
+		panel.position.y = padded_map_bounds_rect.position.y; panel_pos_changed_by_clamping = true
+	if panel.position.y + panel.size.y > padded_map_bounds_rect.position.y + padded_map_bounds_rect.size.y:
+		panel.position.y = (padded_map_bounds_rect.position.y + padded_map_bounds_rect.size.y) - panel.size.y; panel_pos_changed_by_clamping = true
+
+	if panel_pos_changed_by_clamping:
+		# Recalculate label position relative to the *new* panel position
+		var label_relative_to_original_panel = label.position - original_panel_pos_for_label_relative_calc
+		label.position = panel.position + label_relative_to_original_panel
 
 	_settlement_label_container.add_child(panel) # Add panel first
 	_settlement_label_container.add_child(label) # Then add label
