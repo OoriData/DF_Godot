@@ -455,9 +455,9 @@ func _update_hover_labels():
 			var convoy_id = convoy_data.get("convoy_id")
 			if convoy_id and _selected_convoy_ids.has(convoy_id):
 				if not drawn_convoy_ids_this_update.has(convoy_id): # Avoid drawing twice if somehow selected and hovered
-					var convoy_label_rect: Rect2 = _draw_single_convoy_label(convoy_data, all_drawn_label_rects_this_update)
-					# if convoy_label_rect != Rect2(): # Optionally add to all_drawn_label_rects_this_update if other things need to avoid these
-					#    all_drawn_label_rects_this_update.append(convoy_label_rect) # For now, convoy labels don't need to avoid each other as much
+					var convoy_panel_rect: Rect2 = _draw_single_convoy_label(convoy_data, all_drawn_label_rects_this_update)
+					if convoy_panel_rect != Rect2(): # If a valid panel was drawn
+						all_drawn_label_rects_this_update.append(convoy_panel_rect) # Add its rect to the list for others to avoid
 					drawn_convoy_ids_this_update.append(convoy_id)
 
 	# STAGE 2b: Process HOVERED convoy (if not already drawn as selected)
@@ -467,9 +467,9 @@ func _update_hover_labels():
 			if not drawn_convoy_ids_this_update.has(hovered_convoy_id): # Only draw if not already drawn as selected
 				for convoy_data in _all_convoy_data:
 					if convoy_data is Dictionary and convoy_data.get('convoy_id') == hovered_convoy_id:
-						var convoy_label_rect: Rect2 = _draw_single_convoy_label(convoy_data, all_drawn_label_rects_this_update)
-						# if convoy_label_rect != Rect2():
-						#    all_drawn_label_rects_this_update.append(convoy_label_rect)
+						var convoy_panel_rect: Rect2 = _draw_single_convoy_label(convoy_data, all_drawn_label_rects_this_update)
+						if convoy_panel_rect != Rect2(): # If a valid panel was drawn
+							all_drawn_label_rects_this_update.append(convoy_panel_rect) # Add its rect for others (though unlikely to be many after this)
 						break # Found the hovered convoy
 
 # The following _update_..._labels functions are no longer used for hover labels
