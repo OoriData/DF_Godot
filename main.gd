@@ -10,6 +10,8 @@ const MapRenderer = preload('res://map_render.gd')
 # IMPORTANT: Adjust the path "$APICallsInstance" to the actual path of your APICalls node
 # in your scene tree relative to the node this script (main.gd) is attached to.
 @onready var api_calls_node: Node = $APICallsInstance # Adjust if necessary
+# IMPORTANT: Adjust this path to where you actually place your detailed view toggle in your scene tree!
+@onready var detailed_view_toggle: CheckBox = $DetailedViewToggleCheckbox # Example path
 
 var map_renderer  # Will be initialized in _ready()
 var map_tiles: Array = []  # Will hold the loaded tile data
@@ -73,6 +75,8 @@ const SETTLEMENT_HOVER_RADIUS_ON_TEXTURE_SQ: float = 400.0  # (20 pixels)^2, adj
 
 var _current_hover_info: Dictionary = {}  # To store what the mouse is currently hovering over
 var _selected_convoy_ids: Array[String] = [] # To store IDs of clicked/selected convoys
+
+var show_detailed_view: bool = true # Single flag for toggling detailed map features (grid & political)
 
 # Emojis for labels
 const CONVOY_STAT_EMOJIS: Dictionary = {
@@ -194,10 +198,17 @@ func _ready():
 	# Initial map render and display
 	map_renderer = MapRenderer.new() # Initialize the class member here
 
-	_update_map_display()
+	# Ensure map_display is correctly sized and positioned before the first render
+	# and before any UI elements dependent on its size/position are placed.
+	if is_instance_valid(map_display):
+		map_display.position = Vector2.ZERO
+		map_display.size = get_viewport_rect().size
+
+	_update_map_display() # Now render the map with map_display correctly sized
 
 	# Connect to the viewport's size_changed signal to re-render on window resize
 	get_viewport().connect('size_changed', Callable(self, '_on_viewport_size_changed'))
+	_on_viewport_size_changed() # Call once at the end of _ready to ensure all initial positions are correct
 
 	print('Main: Attempting to connect to APICallsInstance signals.')  # DEBUG
 	# Connect to the APICalls signal for convoy data
@@ -241,20 +252,38 @@ func _ready():
 	_visual_update_timer.timeout.connect(_on_visual_update_timer_timeout)
 	add_child(_visual_update_timer)
 	_visual_update_timer.start()
+
+	# --- Setup Detailed View Toggle ---
+	if is_instance_valid(detailed_view_toggle):
+		detailed_view_toggle.button_pressed = show_detailed_view # Set initial state
+		_update_detailed_view_toggle_position() # Set initial position
+		detailed_view_toggle.toggled.connect(_on_detailed_view_toggled)
+		print("Main: Detailed View toggle initialized and connected.")
+	else:
+		printerr("Main: DetailedViewToggleCheckbox node not found or invalid. Check the path in main.gd.")
+
 	print('Main: Visual update timer started for every %s seconds.' % VISUAL_UPDATE_INTERVAL_SECONDS)
 	print('Main: Convoy data refresh timer started for every %s seconds.' % REFRESH_INTERVAL_SECONDS)
 
 
 func _on_viewport_size_changed():
-	# This function will be called whenever the window size changes
-	# print('Viewport size changed, re-rendering map.')  # Removed for cleaner log
+	print("Main: _on_viewport_size_changed triggered.") # DEBUG
+	# Ensure map_display is always at the origin of its parent and fills the viewport
+	if is_instance_valid(map_display):
+		map_display.position = Vector2.ZERO
+		map_display.size = get_viewport_rect().size
+		print("Main: map_display reset to position (0,0) and size: ", map_display.size) # DEBUG
+
+	# Update positions of UI elements that depend on viewport/map_display size
 	if is_instance_valid(_refresh_notification_label):
 		_update_refresh_notification_position()
+	if is_instance_valid(detailed_view_toggle):
+		_update_detailed_view_toggle_position()
 	_update_map_display()
 
 
 func _update_map_display():
-	print('Main: _update_map_display() called.')  # DEBUG
+	# print('Main: _update_map_display() called.')  # DEBUG - Can be very noisy
 	if map_tiles.is_empty():
 		printerr('Cannot update map display: map_tiles is empty.')
 		return
@@ -262,7 +291,11 @@ func _update_map_display():
 		printerr('Cannot update map display: map_renderer is not initialized.')
 		return
 
-	print('Main: map_tiles count: ', map_tiles.size(), ' (first row count: ', str(map_tiles[0].size()) if not map_tiles.is_empty() and map_tiles[0] is Array else 'N/A', ')')  # DEBUG
+	if not is_instance_valid(map_display): # Added safety check
+		printerr("Main: map_display is not valid in _update_map_display. Cannot render.")
+		return
+
+	# print('Main: map_tiles count: ', map_tiles.size(), ' (first row count: ', str(map_tiles[0].size()) if not map_tiles.is_empty() and map_tiles[0] is Array else 'N/A', ')')  # DEBUG
 
 	# --- Render the map ---
 	# Get the current viewport size to pass to the renderer
@@ -282,7 +315,9 @@ func _update_map_display():
 		_throb_phase,             # Pass the current throb phase
 		_convoy_id_to_color_map,  # Pass the color map
 		_current_hover_info,      # Pass hover info here
-		_selected_convoy_ids      # Pass selected convoy IDs
+		_selected_convoy_ids,     # Pass selected convoy IDs
+		show_detailed_view,       # Pass detailed view flag for grid
+		show_detailed_view        # Pass detailed view flag for political colors
 	)
 	print('Main: map_renderer.render_map call completed.')  # DEBUG
 
@@ -1323,3 +1358,55 @@ func _update_refresh_notification_position():
 
 	var padding: float = 10.0  # Pixels from the edge
 	_refresh_notification_label.position = Vector2(viewport_size.x - label_size.x - padding, viewport_size.y - label_size.y - padding)
+
+# --- UI Toggle Handler ---
+func _on_detailed_view_toggled(button_pressed: bool) -> void:
+	show_detailed_view = button_pressed
+	print("Main: Detailed view toggled to: ", show_detailed_view)
+	_update_map_display() # Re-render the map
+
+
+func _update_detailed_view_toggle_position() -> void:
+	if not is_instance_valid(detailed_view_toggle):
+		return
+	print("--- Debug: _update_detailed_view_toggle_position ---")
+
+	if not map_display or not is_instance_valid(map_display.texture):
+		printerr("Main: Cannot position detailed_view_toggle, map_display or its texture is invalid.")
+		detailed_view_toggle.visible = false # Hide it if we can't position it
+		return
+	detailed_view_toggle.visible = true # Make sure it's visible if we can position it
+
+	print("map_display.position: ", map_display.position)
+	print("map_display.size: ", map_display.size)
+
+	var map_texture_size: Vector2 = map_display.texture.get_size()
+	var map_display_rect_size: Vector2 = map_display.size
+	if map_texture_size.x <= 0 or map_texture_size.y <= 0: # More robust check
+		printerr("Main: map_texture_size is zero. Aborting toggle position update.")
+		return
+	print("map_texture_size: ", map_texture_size)
+
+	var scale_x_ratio: float = map_display_rect_size.x / map_texture_size.x
+	var scale_y_ratio: float = map_display_rect_size.y / map_texture_size.y
+	var actual_scale: float = min(scale_x_ratio, scale_y_ratio)
+	print("actual_scale: ", actual_scale)
+
+	var displayed_texture_width: float = map_texture_size.x * actual_scale
+	var displayed_texture_height: float = map_texture_size.y * actual_scale
+	print("displayed_texture_width: ", displayed_texture_width, ", displayed_texture_height: ", displayed_texture_height)
+
+	var offset_x: float = (map_display_rect_size.x - displayed_texture_width) / 2.0
+	var offset_y: float = (map_display_rect_size.y - displayed_texture_height) / 2.0
+	print("offset_x: ", offset_x, ", offset_y: ", offset_y)
+
+	var toggle_size: Vector2 = detailed_view_toggle.get_minimum_size() # Get its actual size based on text and font
+	print("toggle_size: ", toggle_size)
+	print("LABEL_MAP_EDGE_PADDING: ", LABEL_MAP_EDGE_PADDING)
+
+	# Position relative to the displayed map texture area, with LABEL_MAP_EDGE_PADDING
+	# offset_x/y are relative to map_display. detailed_view_toggle.position is relative to its parent (this Node2D).
+	var target_x = map_display.position.x + offset_x + displayed_texture_width - toggle_size.x - LABEL_MAP_EDGE_PADDING
+	var target_y = map_display.position.y + offset_y + displayed_texture_height - toggle_size.y - LABEL_MAP_EDGE_PADDING
+	print("Calculated target_x: ", target_x, ", target_y: ", target_y)
+	detailed_view_toggle.position = Vector2(target_x, target_y)

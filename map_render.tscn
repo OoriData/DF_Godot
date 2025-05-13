@@ -12,3 +12,9 @@ offset_bottom = 40.0
 
 [node name="APICallsInstance" type="Node" parent="."]
 script = ExtResource("2_of6aa")
+
+[node name="DetailedViewToggleCheckbox" type="CheckBox" parent="."]
+offset_right = 24.0
+offset_bottom = 24.0
+theme_override_font_sizes/font_size = 40
+text = "Detailed Mode"

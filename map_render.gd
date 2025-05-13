@@ -512,7 +512,9 @@ func render_map(
 		p_throb_phase: float = 0.0,  # For animating convoy icons,
 		p_convoy_id_to_color_map: Dictionary = {},  # For persistent convoy colors
 		p_hover_info: Dictionary = {},  # For hover-dependent labels.
-		p_selected_convoy_ids: Array = [] # New parameter for selected convoy IDs
+		p_selected_convoy_ids: Array = [], # New parameter for selected convoy IDs
+		p_show_grid: bool = true,           # New flag for grid visibility
+		p_show_political: bool = true       # New flag for political color visibility
 	) -> ImageTexture:
 	if tiles.is_empty() or not tiles[0] is Array or tiles[0].is_empty():
 		printerr('MapRender: Invalid or empty tiles data provided.')
@@ -628,23 +630,31 @@ func render_map(
 
 			# 3. Fill the entire tile cell with this darkened color (this forms the grid lines)
 			var full_tile_rect := Rect2i(current_tile_pixel_x, current_tile_pixel_y, current_tile_render_w, current_tile_render_h)
-			if full_tile_rect.size.x > 0 and full_tile_rect.size.y > 0:
-				map_image.fill_rect(full_tile_rect, actual_grid_line_color)
+			if p_show_grid: # Only draw grid background if toggled on
+				if full_tile_rect.size.x > 0 and full_tile_rect.size.y > 0:
+					map_image.fill_rect(full_tile_rect, actual_grid_line_color)
 
-			# 4. Draw political color layer (inset by grid_size, drawn on top of the darkened grid background)
-			_draw_political_inline(map_image, tile, current_tile_pixel_x, current_tile_pixel_y, current_tile_render_w, current_tile_render_h, scaled_grid_size)
+			# Determine inset for political layer based on whether grid is shown
+			var inset_for_political_drawing: int = 0
+			if p_show_grid:
+				inset_for_political_drawing = scaled_grid_size # Use the original scaled_grid_size for potential thickness
+
+			# 4. Draw political color layer (inset by grid_size if grid is shown, drawn on top of the darkened grid background or tile background)
+			if p_show_political: # Only draw political colors if toggled on
+				# The _draw_political_inline function itself checks if the political_color.a > 0.01
+				_draw_political_inline(map_image, tile, current_tile_pixel_x, current_tile_pixel_y, current_tile_render_w, current_tile_render_h, inset_for_political_drawing)
 
 			# 5. Draw terrain/settlement layer on top
-			var inset_for_terrain_content: int
-			if has_visible_political_color:
-				inset_for_terrain_content = scaled_grid_size + scaled_political_border_thickness
-			else:
-				inset_for_terrain_content = scaled_grid_size # Only grid inset if no political layer
+			var inset_for_terrain_content: int = 0
+			if p_show_grid: # If grid is shown, inset by grid size
+				inset_for_terrain_content += scaled_grid_size
+			if p_show_political and has_visible_political_color: # If political is shown AND this tile has political color, inset by political border
+				inset_for_terrain_content += scaled_political_border_thickness
+
 			var chosen_color_from_tile_bg = _draw_tile_bg(map_image, tile, current_tile_pixel_x, current_tile_pixel_y, current_tile_render_w, current_tile_render_h, inset_for_terrain_content, x, y)
 			if chosen_color_from_tile_bg == ERROR_COLOR:  # If you want to use this count, remove the underscore from _error_color_tile_count
 				_error_color_tile_count += 1
-			# TODO: _draw_highlight_or_lowlight also needs to be adapted to use the new rendering bounds if full consistency is desired.
-			# For now, it will use an approximated integer tile size for highlights.
+
 			var approx_int_tile_size_for_highlight = int(round(reference_float_tile_size_for_offsets))
 			_draw_highlight_or_lowlight(map_image, x, y, lowlights, lowlight_color, approx_int_tile_size_for_highlight, scaled_lowlight_inline_offset, LOWLIGHT_INLINE_WIDTH)
 
