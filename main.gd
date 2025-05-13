@@ -743,7 +743,7 @@ func _draw_single_convoy_label(convoy_data: Dictionary, existing_label_rects: Ar
 		current_horizontal_offset = BASE_SELECTED_CONVOY_HORIZONTAL_OFFSET * actual_scale
 	else:
 		current_horizontal_offset = BASE_HORIZONTAL_LABEL_OFFSET_FROM_CENTER * actual_scale
-		
+
 	var current_color_indicator_size: float = BASE_COLOR_INDICATOR_SIZE * actual_scale
 	var current_color_indicator_padding: float = BASE_COLOR_INDICATOR_PADDING * actual_scale
 	var current_panel_corner_radius: float = BASE_CONVOY_PANEL_CORNER_RADIUS * font_render_scale # Scale radius with font scale
@@ -967,7 +967,7 @@ func _draw_single_convoy_label(convoy_data: Dictionary, existing_label_rects: Ar
 			if current_panel_rect.intersects(buffered_existing_rect, true):
 				collides_with_existing = true
 				break
-		
+
 		if collides_with_existing:
 			# Shift panel down.
 			var y_shift_amount = (LABEL_ANTI_COLLISION_Y_SHIFT + label_min_size.y * 0.3) # Shift a bit more aggressively
@@ -983,7 +983,7 @@ func _draw_single_convoy_label(convoy_data: Dictionary, existing_label_rects: Ar
 	_convoy_label_container.add_child(panel)
 	_convoy_label_container.add_child(label)
 	_convoy_label_container.add_child(color_indicator)
-	
+
 	return Rect2(panel.position, panel.size) # Return the panel's final rect
 
 
@@ -1085,7 +1085,7 @@ func _draw_single_settlement_label(settlement_info_for_render: Dictionary) -> Re
 	var tile_center_tex_x: float = (float(tile_x) + 0.5) * actual_tile_width_on_texture
 	var tile_center_tex_y: float = (float(tile_y) + 0.5) * actual_tile_height_on_texture
 	var tile_center_display_y = tile_center_tex_y * actual_scale + offset_y
-	
+
 	panel.position.x = (tile_center_tex_x * actual_scale + offset_x) - (panel.size.x / 2.0)
 	panel.position.y = tile_center_display_y - panel.size.y - current_settlement_offset_above_center
 
@@ -1116,7 +1116,7 @@ func _get_convoy_label_combined_rect(label_node: Label, indicator_node: ColorRec
 	# Label's rect (considering pivot for its actual top-left)
 	var lbl_pos = label_node.position
 	var lbl_pivot = label_node.pivot_offset # This is (0, label_min_size.y / 2.0)
-	var lbl_size = label_node.get_minimum_size() 
+	var lbl_size = label_node.get_minimum_size()
 
 	var label_actual_top_left_x = lbl_pos.x - lbl_pivot.x
 	var label_actual_top_left_y = lbl_pos.y - lbl_pivot.y
@@ -1228,11 +1228,11 @@ func _input(event: InputEvent) -> void:  # Renamed from _gui_input
 			_current_hover_info = new_hover_info
 			# Update only the hover labels based on the new state
 			_update_hover_labels()
-	
+
 	elif event is InputEventMouseButton:
 		if event.button_index == MOUSE_BUTTON_LEFT and not event.pressed: # Left click released
 			var local_mouse_pos = map_display.get_local_mouse_position()
-			
+
 			var map_texture_size: Vector2 = map_display.texture.get_size()
 			var map_display_rect_size: Vector2 = map_display.size
 			if map_texture_size.x == 0 or map_texture_size.y == 0: return
@@ -1263,7 +1263,7 @@ func _input(event: InputEvent) -> void:  # Renamed from _gui_input
 					if (dx * dx) + (dy * dy) < CONVOY_HOVER_RADIUS_ON_TEXTURE_SQ: # Using hover radius for click
 						clicked_on_convoy_id = convoy_data.get("convoy_id", "")
 						break
-			
+
 			if not clicked_on_convoy_id.is_empty(): # Clicked on a convoy
 				if _selected_convoy_ids.has(clicked_on_convoy_id):
 					_selected_convoy_ids.erase(clicked_on_convoy_id) # Untoggle if already selected
