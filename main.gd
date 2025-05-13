@@ -17,9 +17,9 @@ var _all_settlement_data: Array = [] # To store settlement data for rendering
 var _all_convoy_data: Array = [] # To store convoy data from APICalls
 
 var _refresh_timer: Timer
-const REFRESH_INTERVAL_SECONDS: float = 60.0 # 1 minute
+const REFRESH_INTERVAL_SECONDS: float = 60.0 # Changed to 3 minutes
 var _visual_update_timer: Timer
-const VISUAL_UPDATE_INTERVAL_SECONDS: float = 0.05 # e.g., 20 FPS for visual updates
+const VISUAL_UPDATE_INTERVAL_SECONDS: float = .5 # e.g., 20 FPS for visual updates
 var _throb_phase: float = 0.0 # Cycles 0.0 to 1.0 for a 1-second throb
 var _convoy_label_container: Node2D
 var _settlement_label_container: Node2D # New container for settlement labels
@@ -62,6 +62,15 @@ const CONVOY_HOVER_RADIUS_ON_TEXTURE_SQ: float = 625.0 # (25 pixels)^2, adjust a
 const SETTLEMENT_HOVER_RADIUS_ON_TEXTURE_SQ: float = 400.0 # (20 pixels)^2, adjust as needed for settlements
 
 var _current_hover_info: Dictionary = {} # To store what the mouse is currently hovering over
+
+# Emojis for labels
+const CONVOY_STAT_EMOJIS: Dictionary = {
+	"efficiency": "🌿",
+	"top_speed": "🚀",
+	"offroad_capability": "🏔️",
+}
+
+# Emojis for settlement types
 
 const ABBREVIATED_MONTH_NAMES: Array[String] = [
 	"N/A", # Index 0 (unused for months 1-12)
@@ -776,8 +785,8 @@ func _draw_single_convoy_label(convoy_data: Dictionary):
 		progress_percentage_str = "%.1f%%" % percentage # Format to one decimal place
 	
 	# Use BBCode for smaller detail font size
-	var label_text: String = "%s (%s)\nEff: %.1f | Spd: %.1f | Off: %.1f\nETA: %s" % [
-		convoy_name, progress_percentage_str, efficiency, top_speed, offroad_capability, formatted_eta
+	var label_text: String = "%s (%s)\n%s %.1f | %s %.1f | %s %.1f\nETA: %s" % [
+		convoy_name, progress_percentage_str, CONVOY_STAT_EMOJIS.get("efficiency", ""), efficiency, CONVOY_STAT_EMOJIS.get("top_speed", ""), top_speed, CONVOY_STAT_EMOJIS.get("offroad_capability", ""), offroad_capability, formatted_eta
 	]
 	
 	# Dynamically set the font size on the LabelSettings resource itself
@@ -870,6 +879,16 @@ func _draw_single_settlement_label(settlement_info_for_render: Dictionary):
 	var current_settlement_font_size: int = max(MIN_FONT_SIZE, roundi(BASE_SETTLEMENT_FONT_SIZE * font_render_scale))
 	var current_settlement_offset_above_center: float = BASE_SETTLEMENT_OFFSET_ABOVE_TILE_CENTER * actual_scale
 
+	# Emojis for settlement types
+	const SETTLEMENT_EMOJIS: Dictionary = {
+		'dome': '🏙️',
+		'city': '🏢',
+		'city-state': '🏢',
+		'town': '🏘️',
+		'village': '🏠',
+		'military_base': '🪖',
+	}
+
 	# Dynamically set the font size on the LabelSettings resource itself
 	_settlement_label_settings.font_size = current_settlement_font_size
 
@@ -879,8 +898,10 @@ func _draw_single_settlement_label(settlement_info_for_render: Dictionary):
 	if tile_x < 0 or tile_y < 0: return  # Should not happen if called correctly from _update_hover_labels
 	if settlement_name_local == "N/A": return # Skip if name is not available
 
+	var settlement_type = settlement_info_for_render.get("sett_type", "") # Assuming sett_type is available in settlement_info_for_render
+	var settlement_emoji = SETTLEMENT_EMOJIS.get(settlement_type, "") # Get emoji, fallback to empty string
 	var label := Label.new()
-	label.text = settlement_name_local # Use the actual name
+	label.text = settlement_emoji + " " + settlement_name_local if not settlement_emoji.is_empty() else settlement_name_local # Add emoji if found
 	label.label_settings = _settlement_label_settings # Assign the LabelSettings with the updated font_size
 	
 	_settlement_label_container.add_child(label) # Add to tree to get size

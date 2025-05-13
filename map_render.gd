@@ -5,10 +5,10 @@ extends Node
 
 # --- Constants ---
 const BASE_TILE_SIZE_FOR_PROPORTIONS: float = 24.0 # Original tile size, used for scaling calculations
-const GRID_SIZE: int = 1          # Pixels to reduce each side (used for drawing inside grid lines)
+const GRID_SIZE: int = 1        # Pixels to reduce each side (used for drawing inside grid lines)
 const DEFAULT_LABEL_COLOR: Color = Color.WHITE
 
-const GRID_COLOR: Color = Color("#202020")   # Background grid color
+const GRID_COLOR: Color = Color("#303030")   # Background grid color
 const WATER_COLOR: Color = Color("#142C55")
 const ERROR_COLOR: Color = Color("#FF00FF")  # Error/default color
 
@@ -180,6 +180,30 @@ const TRAILING_JOURNEY_DARKEN_FACTOR: float = 0.5 # How much to darken the trail
 
 # --- Helper Drawing Functions (Now methods of the class) ---
 
+func _apply_shade_variation(base_color: Color, is_political_border: bool = false) -> Color:
+	var variation_magnitude: float
+
+	if is_political_border:
+		variation_magnitude = 0.04 # +/- 2% for political borders
+	else:
+		# Check if the base_color is the desert color (TILE_COLORS[4])
+		var water_color_const = TILE_COLORS.get(0) # Get the defined desert color
+		if water_color_const != null and base_color.is_equal_approx(water_color_const):
+			variation_magnitude = 0.04 # +/- 5% for desert terrain tiles
+		else:
+			variation_magnitude = 0 # +/- 2% for other terrains and settlements
+	
+	var random_variation_factor = (randf() * variation_magnitude) - (variation_magnitude / 2.0)
+	
+	var h: float = base_color.h
+	var s: float = base_color.s
+	var v: float = base_color.v
+	var a: float = base_color.a # Preserve alpha
+
+	v = clamp(v + random_variation_factor, 0.0, 1.0) # Add absolute variation to V
+
+	return Color.from_hsv(h, s, v, a)
+
 func _draw_tile_bg(img: Image, tile_data: Dictionary, tile_render_x: int, tile_render_y: int, tile_render_width: int, tile_render_height: int, p_scaled_total_inset: int, _grid_x_for_debug: int, _grid_y_for_debug: int):
 	var color: Color = ERROR_COLOR # Initialized to ERROR_COLOR
 	var _color_source_debug: String = "Initial ERROR_COLOR" # For debugging
@@ -227,9 +251,12 @@ func _draw_tile_bg(img: Image, tile_data: Dictionary, tile_render_x: int, tile_r
 		tile_render_width - p_scaled_total_inset * 2,
 		tile_render_height - p_scaled_total_inset * 2
 	)
+	
+	var varied_color = _apply_shade_variation(color, false) # Not a political border
+	
 	if rect.size.x > 0 and rect.size.y > 0:
-		img.fill_rect(rect, color) # Uses the 'color' variable determined above
-	return color
+		img.fill_rect(rect, varied_color) # Use the varied color for drawing
+	return color # Return the original color for checks like ERROR_COLOR comparison
 
 func _draw_political_inline(img: Image, tile_data: Dictionary, tile_render_x: int, tile_render_y: int, tile_render_width: int, tile_render_height: int, p_scaled_inset_from_edge: int):
 	var region_variant = tile_data.get("region", -999) # Can be float or int from JSON
@@ -250,8 +277,9 @@ func _draw_political_inline(img: Image, tile_data: Dictionary, tile_render_x: in
 			tile_render_width - p_scaled_inset_from_edge * 2,
 			tile_render_height - p_scaled_inset_from_edge * 2
 		)
+		var varied_political_color = _apply_shade_variation(political_color, true) # This IS a political border
 		# Simple approach: Just fill the outer_rect, ignoring precise width.
-		img.fill_rect(outer_rect, political_color) # Draw the border color rect
+		img.fill_rect(outer_rect, varied_political_color) # Draw the border color rect
 
 func _draw_highlight_or_lowlight(img: Image, x: int, y: int, coords_list: Array, color: Color, current_tile_size: int, p_scaled_offset: int, _width: int):
 	var tile_coord := Vector2i(x, y)
