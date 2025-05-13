@@ -844,7 +844,8 @@ func _draw_single_convoy_label(convoy_data: Dictionary, existing_label_rects: Ar
 								   and eta_datetime_local.day == departure_datetime_local.day
 
 			if years_match and months_match and days_match:
-				formatted_eta = 'Today, %s:%s %s' % [eta_hour_str, eta_minute_str, am_pm_str]
+				# formatted_eta = 'Today, %s:%s %s' % [eta_hour_str, eta_minute_str, am_pm_str]
+				formatted_eta = '%s:%s %s' % [eta_hour_str, eta_minute_str, am_pm_str]
 			else:
 				var month_name_str: String = '???'  # Fallback month name
 				if eta_datetime_local.has('month') and eta_datetime_local.month >= 1 and eta_datetime_local.month <= 12:
@@ -865,8 +866,8 @@ func _draw_single_convoy_label(convoy_data: Dictionary, existing_label_rects: Ar
 		progress_percentage_str = '%.1f%%' % percentage  # Format to one decimal place
 
 	# Use BBCode for smaller detail font size
-	var label_text: String = '%s (%s)\n%s %.1f | %s %.1f | %s %.1f\nETA: %s' % [
-		convoy_name, progress_percentage_str, CONVOY_STAT_EMOJIS.get('efficiency', ''), efficiency, CONVOY_STAT_EMOJIS.get('top_speed', ''), top_speed, CONVOY_STAT_EMOJIS.get('offroad_capability', ''), offroad_capability, formatted_eta
+	var label_text: String = '%s \n%s | ETA: %s\n%s %.1f | %s %.1f | %s %.1f' % [
+		convoy_name, progress_percentage_str, formatted_eta, CONVOY_STAT_EMOJIS.get('efficiency', ''), efficiency, CONVOY_STAT_EMOJIS.get('top_speed', ''), top_speed, CONVOY_STAT_EMOJIS.get('offroad_capability', ''), offroad_capability
 	]
 
 	# Dynamically set the font size on the LabelSettings resource itself
@@ -1129,7 +1130,6 @@ func _input(event: InputEvent) -> void:  # Renamed from _gui_input
 	# print('Main: _input event: ', event)  # DEBUG - Can be very noisy
 	if not map_display or not is_instance_valid(map_display.texture):
 		return
-
 
 	if event is InputEventMouseMotion:
 		var local_mouse_pos = map_display.get_local_mouse_position()
