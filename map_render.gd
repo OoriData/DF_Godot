@@ -136,7 +136,6 @@ const POLITICAL_COLORS: Dictionary = {
 }
 
 const POLITICAL_BORDER_VISIBLE_THICKNESS: int = 1  # How thick the political color border around terrain should be (in base pixels)
-const POLITICAL_INLINE_WIDTH: int = 3              # This constant is still not used by the simplified drawing logic
 
 const DEFAULT_HIGHLIGHT_OUTLINE_COLOR: Color = Color('#FFFF00')
 const HIGHLIGHT_OUTLINE_OFFSET: int = -1
