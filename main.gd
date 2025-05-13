@@ -37,9 +37,18 @@ const FONT_SCALING_BASE_TILE_SIZE: float = 24.0  # Should match map_render.gd's 
 const FONT_SCALING_EXPONENT: float = .6  # Adjust for more/less aggressive font scaling (1.0 = linear)
 
 const BASE_HORIZONTAL_LABEL_OFFSET_FROM_CENTER: float = 15.0  # Base pixels to offset label to the right of convoy center (Reduced)
+const BASE_SELECTED_CONVOY_HORIZONTAL_OFFSET: float = 60.0 # Larger offset for selected convoys
 const BASE_SETTLEMENT_OFFSET_ABOVE_TILE_CENTER: float = 10.0  # Base pixels the TOP of the settlement label is above the tile center (after accounting for label height)
 const BASE_COLOR_INDICATOR_SIZE: float = 14.0  # Base size of the square color indicator
 const BASE_COLOR_INDICATOR_PADDING: float = 4.0  # Base padding between color indicator and text
+const BASE_CONVOY_PANEL_CORNER_RADIUS: float = 8.0
+const BASE_CONVOY_PANEL_PADDING_H: float = 8.0 # Horizontal padding inside the panel
+const BASE_CONVOY_PANEL_PADDING_V: float = 5.0 # Vertical padding inside the panel
+const CONVOY_PANEL_BACKGROUND_COLOR: Color = Color(0.12, 0.12, 0.15, 0.88) # Dark grey, slightly transparent
+const BASE_SETTLEMENT_PANEL_CORNER_RADIUS: float = 6.0
+const BASE_SETTLEMENT_PANEL_PADDING_H: float = 6.0
+const BASE_SETTLEMENT_PANEL_PADDING_V: float = 4.0
+const SETTLEMENT_PANEL_BACKGROUND_COLOR: Color = Color(0.15, 0.12, 0.12, 0.85) # Slightly different dark grey for settlements
 
 # This constant is for the old anti-collision logic, may not be needed with single hover labels
 const LABEL_ANTI_COLLISION_Y_SHIFT: float = 5.0
@@ -271,7 +280,8 @@ func _update_map_display():
 		_all_convoy_data,         # Pass the convoy data
 		_throb_phase,             # Pass the current throb phase
 		_convoy_id_to_color_map,  # Pass the color map
-		_current_hover_info       # Pass hover info here
+		_current_hover_info,      # Pass hover info here
+		_selected_convoy_ids      # Pass selected convoy IDs
 	)
 	print('Main: map_renderer.render_map call completed.')  # DEBUG
 
@@ -372,46 +382,94 @@ func _update_hover_labels():
 		for child in _settlement_label_container.get_children():
 			child.queue_free()
 
+
 	if not map_display or not is_instance_valid(map_display.texture):
 		return  # Cannot position labels without a map texture
 
 	var drawn_convoy_ids_this_update: Array[String] = [] # Keep track of what's drawn
+	var drawn_settlement_tile_coords_this_update: Array[Vector2i] = [] # Store Vector2i of tile coords
+	var all_drawn_label_rects_this_update: Array[Rect2] = [] # Store Rect2 of all labels drawn in this update
 
-	# 1. Draw labels for all selected convoys
+	# 1. Process selected convoys (draw convoy label + start/end settlement labels)
+	if not _selected_convoy_ids.is_empty():
+		for convoy_data in _all_convoy_data:
+			var convoy_id = convoy_data.get("convoy_id")
+			if convoy_id and _selected_convoy_ids.has(convoy_id):
+				# STAGE 1a: Draw START/END settlement labels for this selected convoy
+				var journey_data: Dictionary = convoy_data.get('journey')
+				if journey_data is Dictionary:
+					var route_x_coords: Array = journey_data.get('route_x')
+					var route_y_coords: Array = journey_data.get('route_y')
+
+					if route_x_coords is Array and route_y_coords is Array and \
+					   route_x_coords.size() == route_y_coords.size() and not route_x_coords.is_empty():
+
+						# Start settlement
+						var start_tile_x: int = floori(float(route_x_coords[0]))
+						var start_tile_y: int = floori(float(route_y_coords[0]))
+						var start_tile_coords := Vector2i(start_tile_x, start_tile_y)
+
+						if not drawn_settlement_tile_coords_this_update.has(start_tile_coords):
+							var start_settlement_data = _find_settlement_at_tile(start_tile_x, start_tile_y)
+							if start_settlement_data:
+								var settlement_rect: Rect2 = _draw_single_settlement_label(start_settlement_data)
+								if settlement_rect != Rect2():
+									all_drawn_label_rects_this_update.append(settlement_rect)
+								drawn_settlement_tile_coords_this_update.append(start_tile_coords) # Track to avoid re-drawing
+
+						# End settlement
+						if route_x_coords.size() > 0: # Check size, could be a 1-point journey
+							var end_tile_x: int = floori(float(route_x_coords.back()))
+							var end_tile_y: int = floori(float(route_y_coords.back()))
+							var end_tile_coords := Vector2i(end_tile_x, end_tile_y)
+
+							# Only draw if different from start AND not already drawn
+							if end_tile_coords != start_tile_coords and \
+							   not drawn_settlement_tile_coords_this_update.has(end_tile_coords):
+								var end_settlement_data = _find_settlement_at_tile(end_tile_x, end_tile_y)
+								if end_settlement_data:
+									var settlement_rect: Rect2 = _draw_single_settlement_label(end_settlement_data)
+									if settlement_rect != Rect2():
+										all_drawn_label_rects_this_update.append(settlement_rect)
+									drawn_settlement_tile_coords_this_update.append(end_tile_coords) # Track to avoid re-drawing
+
+	# STAGE 1b: Process hovered settlement (if not already drawn as part of a selected convoy's journey)
+	if _current_hover_info.get('type') == 'settlement':
+		var hovered_tile_coords = _current_hover_info.get('coords')  # Expected Vector2i
+		if hovered_tile_coords != null and hovered_tile_coords.x >= 0 and hovered_tile_coords.y >= 0: # Basic check
+			if not drawn_settlement_tile_coords_this_update.has(hovered_tile_coords):
+				var settlement_data_for_hover = _find_settlement_at_tile(hovered_tile_coords.x, hovered_tile_coords.y)
+				if settlement_data_for_hover:
+					var settlement_rect: Rect2 = _draw_single_settlement_label(settlement_data_for_hover)
+					if settlement_rect != Rect2():
+						all_drawn_label_rects_this_update.append(settlement_rect)
+					# drawn_settlement_tile_coords_this_update.append(hovered_tile_coords) # Add if you want to prevent re-drawing if also an endpoint
+
+	# --- STAGE 2: Draw Convoy Labels (Selected then Hovered) ---
+	# These will try to avoid the settlement labels drawn in STAGE 1.
+
+	# STAGE 2a: Draw labels for SELECTED convoys
 	if not _selected_convoy_ids.is_empty():
 		for convoy_data in _all_convoy_data:
 			var convoy_id = convoy_data.get("convoy_id")
 			if convoy_id and _selected_convoy_ids.has(convoy_id):
 				if not drawn_convoy_ids_this_update.has(convoy_id): # Avoid drawing twice if somehow selected and hovered
-					_draw_single_convoy_label(convoy_data)
+					var convoy_label_rect: Rect2 = _draw_single_convoy_label(convoy_data, all_drawn_label_rects_this_update)
+					# if convoy_label_rect != Rect2(): # Optionally add to all_drawn_label_rects_this_update if other things need to avoid these
+					#    all_drawn_label_rects_this_update.append(convoy_label_rect) # For now, convoy labels don't need to avoid each other as much
 					drawn_convoy_ids_this_update.append(convoy_id)
 
-	# Check if we are hovering over a settlement
-	if _current_hover_info.get('type') == 'settlement':
-		var hovered_coords = _current_hover_info.get('coords')  # Expected Vector2i
-		if hovered_coords != null and hovered_coords.x >= 0 and hovered_coords.y >= 0: # Basic check
-			var tile_data = map_tiles[hovered_coords.y][hovered_coords.x]
-			if tile_data is Dictionary and tile_data.has('settlements'):
-				var settlements_on_tile = tile_data.get('settlements', [])
-				if settlements_on_tile is Array and not settlements_on_tile.is_empty():
-					# Assuming the first settlement on the tile is the one to label
-					var settlement_data = settlements_on_tile[0]
-					# We need the settlement_info_for_render format which includes x, y tile coords
-					var settlement_info_for_render = settlement_data.duplicate()
-					settlement_info_for_render['x'] = hovered_coords.x
-					settlement_info_for_render['y'] = hovered_coords.y
-					_draw_single_settlement_label(settlement_info_for_render)
-
-	# Check if we are hovering over a convoy
+	# STAGE 2b: Process HOVERED convoy (if not already drawn as selected)
 	if _current_hover_info.get('type') == 'convoy':
 		var hovered_convoy_id = _current_hover_info.get('id')
 		if hovered_convoy_id != null:
 			if not drawn_convoy_ids_this_update.has(hovered_convoy_id): # Only draw if not already drawn as selected
 				for convoy_data in _all_convoy_data:
 					if convoy_data is Dictionary and convoy_data.get('convoy_id') == hovered_convoy_id:
-						_draw_single_convoy_label(convoy_data)
+						var convoy_label_rect: Rect2 = _draw_single_convoy_label(convoy_data, all_drawn_label_rects_this_update)
+						# if convoy_label_rect != Rect2():
+						#    all_drawn_label_rects_this_update.append(convoy_label_rect)
 						break # Found the hovered convoy
-
 
 # The following _update_..._labels functions are no longer used for hover labels
 # but contain the logic for creating individual labels. We'll extract that logic.
@@ -633,12 +691,12 @@ func _update_settlement_labels() -> void:
 
 
 # New helper function to draw a single convoy label
-func _draw_single_convoy_label(convoy_data: Dictionary):
+func _draw_single_convoy_label(convoy_data: Dictionary, existing_label_rects: Array[Rect2]) -> Rect2:
 	if not is_instance_valid(_convoy_label_container):
 		printerr('Main: ConvoyLabelContainer is not valid. Cannot draw single convoy label.')
-		return
+		return Rect2()
 	if not map_display or not is_instance_valid(map_display.texture):
-		return  # Cannot position labels without a map texture
+		return Rect2()  # Cannot position labels without a map texture
 
 	var map_texture: ImageTexture = map_display.texture
 	var map_texture_size: Vector2 = map_texture.get_size()
@@ -646,7 +704,7 @@ func _draw_single_convoy_label(convoy_data: Dictionary):
 
 	if map_texture_size.x == 0 or map_texture_size.y == 0:
 		printerr('Main: Map texture size is zero, cannot calculate single convoy label position.')
-		return
+		return Rect2()
 
 	# Calculate scaling and offset of the texture within MapDisplay
 	var scale_x_ratio: float = map_display_rect_size.x / map_texture_size.x
@@ -662,7 +720,7 @@ func _draw_single_convoy_label(convoy_data: Dictionary):
 	# Get tile dimensions on the unscaled map texture (needed to convert map coords to texture pixels)
 	if map_tiles.is_empty() or not map_tiles[0] is Array or map_tiles[0].is_empty():
 		printerr('Main: map_tiles data is invalid, cannot calculate single convoy label position accurately.')
-		return
+		return Rect2()
 	var map_image_cols: int = map_tiles[0].size()
 	var map_image_rows: int = map_tiles.size()
 	var actual_tile_width_on_texture: float = map_texture_size.x / float(map_image_cols)
@@ -679,9 +737,18 @@ func _draw_single_convoy_label(convoy_data: Dictionary):
 	var current_convoy_title_font_size: int = max(MIN_FONT_SIZE, roundi(BASE_CONVOY_TITLE_FONT_SIZE * font_render_scale))
 	# var current_convoy_detail_font_size: int = max(MIN_FONT_SIZE, roundi(BASE_CONVOY_DETAIL_FONT_SIZE * font_render_scale)) # No longer needed for label text
 
-	var current_horizontal_offset: float = BASE_HORIZONTAL_LABEL_OFFSET_FROM_CENTER * actual_scale
+	var current_convoy_id_for_offset_check = convoy_data.get("convoy_id") # Get ID for checking selection status
+	var current_horizontal_offset: float
+	if _selected_convoy_ids.has(current_convoy_id_for_offset_check):
+		current_horizontal_offset = BASE_SELECTED_CONVOY_HORIZONTAL_OFFSET * actual_scale
+	else:
+		current_horizontal_offset = BASE_HORIZONTAL_LABEL_OFFSET_FROM_CENTER * actual_scale
+		
 	var current_color_indicator_size: float = BASE_COLOR_INDICATOR_SIZE * actual_scale
 	var current_color_indicator_padding: float = BASE_COLOR_INDICATOR_PADDING * actual_scale
+	var current_panel_corner_radius: float = BASE_CONVOY_PANEL_CORNER_RADIUS * font_render_scale # Scale radius with font scale
+	var current_panel_padding_h: float = BASE_CONVOY_PANEL_PADDING_H * font_render_scale
+	var current_panel_padding_v: float = BASE_CONVOY_PANEL_PADDING_V * font_render_scale
 
 	var convoy_map_x: float = convoy_data.get('x', 0.0)
 	var convoy_map_y: float = convoy_data.get('y', 0.0)
@@ -813,12 +880,13 @@ func _draw_single_convoy_label(convoy_data: Dictionary):
 	print('DEBUG: In _draw_single_convoy_label - label object is: ', label, ', class is: ', label.get_class())  # DEBUG
 	# label.bbcode_enabled = true # Enable BBCode processing
 	label.set('bbcode_enabled', true)  # Alternative way to set the property
+	label.vertical_alignment = VERTICAL_ALIGNMENT_TOP # Align text to the top of the label's box
 	label.text = label_text
 	label.label_settings = _label_settings  # Assign the LabelSettings with the updated font_size
 
 	_convoy_label_container.add_child(label)  # Temporarily add to get size
 	var label_min_size: Vector2 = label.get_minimum_size()
-	label.pivot_offset = Vector2(0, label_min_size.y / 2.0)  # Pivot at left-middle
+	label.pivot_offset = Vector2(0, 0)  # Pivot at top-left
 	_convoy_label_container.remove_child(label)  # Remove before final positioning
 	# The line label.add_theme_font_size_override is no longer needed as LabelSettings.font_size controls the base.
 
@@ -831,40 +899,111 @@ func _draw_single_convoy_label(convoy_data: Dictionary):
 
 	# Position the label's horizontal center to the right of the convoy icon.
 	# Position the label's vertical center aligned with the convoy's vertical center.
-	label.position.x = (convoy_center_on_texture_x * actual_scale + offset_x) + current_horizontal_offset
-	label.position.y = convoy_center_display_y  # Align vertical centers due to pivot_offset
+	label.position.x = (convoy_center_on_texture_x * actual_scale + offset_x) + current_horizontal_offset # Initial X
+	label.position.y = convoy_center_display_y - (label_min_size.y / 2.0) # Initial Y (top edge aligned to convoy center)
 
-	# Create and configure the color indicator
+	# Create and configure the color indicator (relative to label for now)
 	var color_indicator := ColorRect.new()
 	color_indicator.color = unique_convoy_color
 	color_indicator.size = Vector2(current_color_indicator_size, current_color_indicator_size)
-
-	# Position the color indicator to the right of the label, and vertically centered with the label.
 	color_indicator.position.x = label.position.x + label_min_size.x + current_color_indicator_padding
-	color_indicator.position.y = label.position.y - (current_color_indicator_size / 2.0) # Vertically center indicator with the label
+	color_indicator.position.y = label.position.y + (label_min_size.y / 2.0) - (current_color_indicator_size / 2.0) # Center indicator with label's vertical middle
 
-	# Add label first, then indicator, so indicator is drawn "on top" if they overlap
+	# --- Create and configure the background Panel ---
+	var panel := Panel.new()
+	var style_box := StyleBoxFlat.new()
+	style_box.bg_color = CONVOY_PANEL_BACKGROUND_COLOR
+	style_box.corner_radius_top_left = current_panel_corner_radius
+	style_box.corner_radius_top_right = current_panel_corner_radius
+	style_box.corner_radius_bottom_left = current_panel_corner_radius
+	style_box.corner_radius_bottom_right = current_panel_corner_radius
+	panel.add_theme_stylebox_override("panel", style_box)
+
+	# Determine panel size and position based on label and indicator
+	# Label's actual top-left (considering pivot)
+	var label_actual_top_left_x: float = label.position.x # Since pivot.x is 0
+	# var label_actual_top_left_y = label.position.y - label.pivot_offset.y # Old calculation
+
+	# Horizontal bounds
+	var content_min_x: float = label_actual_top_left_x
+	var content_max_x: float = color_indicator.position.x + color_indicator.size.x
+
+	# Vertical bounds - based on current label/indicator positions
+	var label_top_y: float = label.position.y # Since pivot.y is 0
+	var label_bottom_y: float = label_top_y + label_min_size.y
+	var indicator_top_y: float = color_indicator.position.y         # Top edge of the indicator
+	var indicator_bottom_y: float = indicator_top_y + color_indicator.size.y # Bottom edge of the indicator
+	var content_min_y: float = min(label_top_y, indicator_top_y)
+	var content_max_y: float = max(label_bottom_y, indicator_bottom_y)
+
+	panel.position.x = content_min_x - current_panel_padding_h
+	panel.position.y = content_min_y - current_panel_padding_v
+	panel.size.x = (content_max_x - content_min_x) + (2 * current_panel_padding_h)
+	panel.size.y = (content_max_y - content_min_y) + (2 * current_panel_padding_v)
+
+	# --- Reposition label and indicator to be perfectly inside the panel with padding ---
+	# Label's pivot is (0,0) and vertical_alignment is TOP.
+	# Position label's top-left at the panel's top-left padding.
+	label.position.x = panel.position.x + current_panel_padding_h
+	label.position.y = panel.position.y + current_panel_padding_v
+
+	# Reposition indicator relative to the new label position
+	# It should be to the right of the label text, and vertically centered with the label's pivot.
+	color_indicator.position.x = label.position.x + label_min_size.x + current_color_indicator_padding
+	color_indicator.position.y = label.position.y + (label_min_size.y / 2.0) - (color_indicator.size.y / 2.0)
+
+	# Store initial relative positions of label and indicator to the panel's top-left
+	var label_relative_pos: Vector2 = label.position - panel.position
+	var indicator_relative_pos: Vector2 = color_indicator.position - panel.position
+
+	# Anti-collision logic
+	# The panel's rectangle is now the one to check for collisions.
+	var current_panel_rect = Rect2(panel.position, panel.size)
+
+	for _attempt in range(10): # Max 10 attempts to avoid overlap
+		var collides_with_existing: bool = false
+		for existing_rect in existing_label_rects:
+			var buffered_existing_rect = existing_rect.grow_individual(2,2,2,2) # Grow by 2px on each side
+			if current_panel_rect.intersects(buffered_existing_rect, true):
+				collides_with_existing = true
+				break
+		
+		if collides_with_existing:
+			# Shift panel down.
+			var y_shift_amount = (LABEL_ANTI_COLLISION_Y_SHIFT + label_min_size.y * 0.3) # Shift a bit more aggressively
+			panel.position.y += y_shift_amount
+			# Update label and indicator positions relative to the new panel position
+			label.position = panel.position + label_relative_pos
+			color_indicator.position = panel.position + indicator_relative_pos
+			current_panel_rect = Rect2(panel.position, panel.size) # Recalculate panel's rect
+		else:
+			break # No collision, position is good
+
+	# Add panel first, then label, then indicator
+	_convoy_label_container.add_child(panel)
 	_convoy_label_container.add_child(label)
 	_convoy_label_container.add_child(color_indicator)
+	
+	return Rect2(panel.position, panel.size) # Return the panel's final rect
 
 
 # New helper function to draw a single settlement label
-func _draw_single_settlement_label(settlement_info_for_render: Dictionary):
+func _draw_single_settlement_label(settlement_info_for_render: Dictionary) -> Rect2:
 	# This function uses the logic from the old _update_settlement_labels but for a single settlement
 	if not is_instance_valid(_settlement_label_container):
 		printerr('Main: SettlementLabelContainer is not valid. Cannot draw single settlement label.')
-		return
+		return Rect2()
 	if not map_display or not is_instance_valid(map_display.texture):
-		return  # Cannot position labels without a map texture
+		return Rect2()  # Cannot position labels without a map texture
 
-	var map_texture_size: Vector2 = map_display.texture.get_size()
+	var map_texture_size: Vector2 = map_display.texture.get_size() # map_display.texture should be valid here
 	var map_display_rect_size: Vector2 = map_display.size
 
 	if map_texture_size.x == 0 or map_texture_size.y == 0:
 		printerr('Main: Map texture size is zero, cannot calculate single settlement label position.')
-		return
+		return Rect2()
 
-	# Calculate scaling and offset of the texture within MapDisplay
+	# Calculate scaling and offset of the texture within MapDisplay (same logic as convoy label)
 	var scale_x_ratio: float = map_display_rect_size.x / map_texture_size.x
 	var scale_y_ratio: float = map_display_rect_size.y / map_texture_size.y
 	var actual_scale: float = min(scale_x_ratio, scale_y_ratio)
@@ -876,7 +1015,7 @@ func _draw_single_settlement_label(settlement_info_for_render: Dictionary):
 
 	if map_tiles.is_empty() or not map_tiles[0] is Array or map_tiles[0].is_empty():
 		printerr('Main: map_tiles data is invalid for single settlement label.')
-		return
+		return Rect2()
 	var map_image_cols: int = map_tiles[0].size()
 	var map_image_rows: int = map_tiles.size()
 	var actual_tile_width_on_texture: float = map_texture_size.x / float(map_image_cols)
@@ -892,6 +1031,10 @@ func _draw_single_settlement_label(settlement_info_for_render: Dictionary):
 
 	var current_settlement_font_size: int = max(MIN_FONT_SIZE, roundi(BASE_SETTLEMENT_FONT_SIZE * font_render_scale))
 	var current_settlement_offset_above_center: float = BASE_SETTLEMENT_OFFSET_ABOVE_TILE_CENTER * actual_scale
+	var current_settlement_panel_corner_radius: float = BASE_SETTLEMENT_PANEL_CORNER_RADIUS * font_render_scale
+	var current_settlement_panel_padding_h: float = BASE_SETTLEMENT_PANEL_PADDING_H * font_render_scale
+	var current_settlement_panel_padding_v: float = BASE_SETTLEMENT_PANEL_PADDING_V * font_render_scale
+
 
 	# Emojis for settlement types
 	const SETTLEMENT_EMOJIS: Dictionary = {
@@ -909,28 +1052,78 @@ func _draw_single_settlement_label(settlement_info_for_render: Dictionary):
 	var settlement_name_local: String = settlement_info_for_render.get('name', 'N/A')
 	var tile_x: int = settlement_info_for_render.get('x', -1)
 	var tile_y: int = settlement_info_for_render.get('y', -1)
-	if tile_x < 0 or tile_y < 0: return  # Should not happen if called correctly from _update_hover_labels
-	if settlement_name_local == 'N/A': return  # Skip if name is not available
+	if tile_x < 0 or tile_y < 0: return Rect2()
+	if settlement_name_local == 'N/A': return Rect2()
 
 	var settlement_type = settlement_info_for_render.get('sett_type', '')  # Assuming sett_type is available in settlement_info_for_render
 	var settlement_emoji = SETTLEMENT_EMOJIS.get(settlement_type, '')  # Get emoji, fallback to empty string
 	var label := Label.new()
 	label.text = settlement_emoji + ' ' + settlement_name_local if not settlement_emoji.is_empty() else settlement_name_local  # Add emoji if found
+	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER # Center text vertically within the label's own bounds
 	label.label_settings = _settlement_label_settings  # Assign the LabelSettings with the updated font_size
 
 	_settlement_label_container.add_child(label)  # Add to tree to get size
 	var label_size: Vector2 = label.get_minimum_size()
+	# Label pivot is default (0,0) which is top-left. This is fine.
 	_settlement_label_container.remove_child(label)  # Remove for final positioning
-	# The line label.add_theme_font_size_override is no longer needed.
 
+	# --- Create and configure the background Panel ---
+	var panel := Panel.new()
+	var style_box := StyleBoxFlat.new()
+	style_box.bg_color = SETTLEMENT_PANEL_BACKGROUND_COLOR
+	style_box.corner_radius_top_left = current_settlement_panel_corner_radius
+	style_box.corner_radius_top_right = current_settlement_panel_corner_radius
+	style_box.corner_radius_bottom_left = current_settlement_panel_corner_radius
+	style_box.corner_radius_bottom_right = current_settlement_panel_corner_radius
+	panel.add_theme_stylebox_override("panel", style_box)
+
+	# Determine panel size
+	panel.size.x = label_size.x + (2 * current_settlement_panel_padding_h)
+	panel.size.y = label_size.y + (2 * current_settlement_panel_padding_v)
+
+	# Calculate initial panel position (centered above tile, accounting for panel height)
 	var tile_center_tex_x: float = (float(tile_x) + 0.5) * actual_tile_width_on_texture
 	var tile_center_tex_y: float = (float(tile_y) + 0.5) * actual_tile_height_on_texture
-
 	var tile_center_display_y = tile_center_tex_y * actual_scale + offset_y
-	# Position the label's TOP edge 'current_settlement_offset_above_center' pixels ABOVE the tile's center, after accounting for label's own height.
-	label.position = Vector2(tile_center_tex_x * actual_scale + offset_x - (label_size.x / 2.0), tile_center_display_y - label_size.y - current_settlement_offset_above_center)
-	_settlement_label_container.add_child(label)
+	
+	panel.position.x = (tile_center_tex_x * actual_scale + offset_x) - (panel.size.x / 2.0)
+	panel.position.y = tile_center_display_y - panel.size.y - current_settlement_offset_above_center
 
+	# Position label inside the panel
+	label.position.x = panel.position.x + current_settlement_panel_padding_h
+	label.position.y = panel.position.y + current_settlement_panel_padding_v # Label's (0,0) pivot at padded top-left
+
+	_settlement_label_container.add_child(panel) # Add panel first
+	_settlement_label_container.add_child(label) # Then add label
+	return Rect2(panel.position, panel.size) # Return the panel's rect
+
+
+# Helper function to find settlement data at specific tile coordinates
+func _find_settlement_at_tile(tile_x: int, tile_y: int) -> Variant:
+	for settlement_data_entry in _all_settlement_data:
+		if settlement_data_entry is Dictionary:
+			var s_tile_x = settlement_data_entry.get('x', -1) # 'x' is the tile_x stored during _ready
+			var s_tile_y = settlement_data_entry.get('y', -1) # 'y' is the tile_y stored during _ready
+			if s_tile_x == tile_x and s_tile_y == tile_y:
+				return settlement_data_entry # Return the full data needed by _draw_single_settlement_label
+	return null # No settlement found at these coordinates
+
+# Helper function to get the combined screen rectangle of a convoy label and its indicator
+func _get_convoy_label_combined_rect(label_node: Label, indicator_node: ColorRect) -> Rect2:
+	if not is_instance_valid(label_node) or not is_instance_valid(indicator_node):
+		return Rect2()
+
+	# Label's rect (considering pivot for its actual top-left)
+	var lbl_pos = label_node.position
+	var lbl_pivot = label_node.pivot_offset # This is (0, label_min_size.y / 2.0)
+	var lbl_size = label_node.get_minimum_size() 
+
+	var label_actual_top_left_x = lbl_pos.x - lbl_pivot.x
+	var label_actual_top_left_y = lbl_pos.y - lbl_pivot.y
+	var label_actual_rect = Rect2(label_actual_top_left_x, label_actual_top_left_y, lbl_size.x, lbl_size.y)
+
+	var indicator_actual_rect = Rect2(indicator_node.position, indicator_node.size) # ColorRect pivot is top-left
+	return label_actual_rect.merge(indicator_actual_rect)
 
 func _input(event: InputEvent) -> void:  # Renamed from _gui_input
 	# print('Main: _input event: ', event)  # DEBUG - Can be very noisy

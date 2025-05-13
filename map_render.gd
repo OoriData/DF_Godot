@@ -148,6 +148,9 @@ const LOWLIGHT_INLINE_WIDTH: int = 5
 const JOURNEY_LINE_THICKNESS: int = 5         # Pixel thickness of the journey line
 const FLOAT_MATCH_TOLERANCE: float = 0.00001  # Tolerance for matching float coordinates
 
+const SELECTED_JOURNEY_LINE_THICKNESS: int = 9  # Thickness for selected convoy lines
+const SELECTED_JOURNEY_LINE_OUTLINE_EXTRA_THICKNESS_EACH_SIDE: int = 3 # Extra outline for selected
+
 const PREDEFINED_CONVOY_COLORS: Array[Color] = [
 	Color.RED,        # Red
 	Color.BLUE,       # Blue
@@ -508,7 +511,8 @@ func render_map(
 		p_convoys_data: Array = [],  # New parameter for convoy data
 		p_throb_phase: float = 0.0,  # For animating convoy icons,
 		p_convoy_id_to_color_map: Dictionary = {},  # For persistent convoy colors
-		p_hover_info: Dictionary = {}  # For hover-dependent labels. E.g., {'type': 'settlement', 'coords': Vector2i(x,y)} or {'type': 'convoy', 'id': 'convoy_id_val'}
+		p_hover_info: Dictionary = {},  # For hover-dependent labels.
+		p_selected_convoy_ids: Array = [] # New parameter for selected convoy IDs
 	) -> ImageTexture:
 	if tiles.is_empty() or not tiles[0] is Array or tiles[0].is_empty():
 		printerr('MapRender: Invalid or empty tiles data provided.')
@@ -737,11 +741,25 @@ func render_map(
 							)
 
 							if offset_pixel_vertices.size() >= 2:
-								var scaled_journey_line_thickness: int = max(1, roundi(JOURNEY_LINE_THICKNESS * visual_element_scale_factor))
-								var scaled_outline_extra_thickness: int = max(0, roundi(JOURNEY_LINE_OUTLINE_EXTRA_THICKNESS_EACH_SIDE * visual_element_scale_factor))
+								var is_selected: bool = false # Default to not selected
+								if convoy_id != null and not p_selected_convoy_ids.is_empty(): # Check if convoy_id is valid and selected list is not empty
+									is_selected = p_selected_convoy_ids.has(convoy_id)
+
+								var base_line_thickness_to_use: float
+								var base_outline_extra_thickness_to_use: float
+
+								if is_selected:
+									base_line_thickness_to_use = SELECTED_JOURNEY_LINE_THICKNESS
+									base_outline_extra_thickness_to_use = SELECTED_JOURNEY_LINE_OUTLINE_EXTRA_THICKNESS_EACH_SIDE
+								else:
+									base_line_thickness_to_use = JOURNEY_LINE_THICKNESS
+									base_outline_extra_thickness_to_use = JOURNEY_LINE_OUTLINE_EXTRA_THICKNESS_EACH_SIDE
+
+								var current_scaled_journey_line_thickness: int = max(1, roundi(base_line_thickness_to_use * visual_element_scale_factor))
+								var current_scaled_outline_extra_thickness: int = max(0, roundi(base_outline_extra_thickness_to_use * visual_element_scale_factor))
 								var leading_line_color: Color = unique_convoy_color
 								var trailing_line_color: Color = unique_convoy_color.darkened(TRAILING_JOURNEY_DARKEN_FACTOR)
-								var outline_total_thickness: int = scaled_journey_line_thickness + (2 * scaled_outline_extra_thickness)
+								var outline_total_thickness: int = current_scaled_journey_line_thickness + (2 * current_scaled_outline_extra_thickness)
 
 								# --- Pass 1: Draw the continuous white outline for the entire path ---
 								for j in range(offset_pixel_vertices.size() - 1):
@@ -764,7 +782,7 @@ func render_map(
 									else:
 										current_segment_color = leading_line_color
 
-									_draw_line_on_image(map_image, start_px, end_px, current_segment_color, scaled_journey_line_thickness)
+									_draw_line_on_image(map_image, start_px, end_px, current_segment_color, current_scaled_journey_line_thickness)
 
 			# else for invalid convoy coordinates (x,y) - error will be printed in Pass 2 if it affects arrow drawing.
 			# For lines, if x/y are invalid, start_drawing_from_route_index remains -1, and all segments are "leading".
