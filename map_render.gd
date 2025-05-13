@@ -6,6 +6,7 @@ extends Node
 const BASE_TILE_SIZE_FOR_PROPORTIONS: float = 24.0  # Original tile size, used for scaling calculations
 const GRID_SIZE: int = 1  # Pixels to reduce each side (used for drawing inside grid lines)
 const DEFAULT_LABEL_COLOR: Color = Color.WHITE
+const GRID_DARKEN_FACTOR: float = 0.2 # How much to darken the tile color for the grid lines (0.0 to 1.0)
 
 const GRID_COLOR: Color = Color('#303030')   # Background grid color
 const WATER_COLOR: Color = Color('#142C55')
@@ -201,24 +202,14 @@ func _apply_shade_variation(base_color: Color, is_political_border: bool = false
     return Color.from_hsv(h, s, v, a)
 
 
-func _draw_tile_bg(img: Image, tile_data: Dictionary, tile_render_x: int, tile_render_y: int, tile_render_width: int, tile_render_height: int, p_scaled_total_inset: int, _grid_x_for_debug: int, _grid_y_for_debug: int):
-    var color: Color = ERROR_COLOR  # Initialized to ERROR_COLOR
-    var _color_source_debug: String = 'Initial ERROR_COLOR'  # For debugging
-
-    # if grid_x_for_debug == 0 and grid_y_for_debug == 0: # Debug print for the first tile only
-        # print('DEBUG map_render.gd: Processing tile (0,0) data: ', tile_data)
-
-    # Check settlement first - Added 'is Array' check previously
+func _get_base_tile_color(tile_data: Dictionary) -> Color:
+    """ Determines the primary terrain or settlement color for a tile, without variations. """
+    var color: Color = ERROR_COLOR
     if tile_data.has('settlements') and tile_data['settlements'] is Array and not tile_data['settlements'].is_empty():
         var settlement_data = tile_data['settlements'][0]
         var sett_type = settlement_data.get('sett_type', 'MISSING_SETT_TYPE_KEY')
         # Use .get() again for safety, defaulting to ERROR_COLOR if type not found
         color = SETTLEMENT_COLORS.get(sett_type, ERROR_COLOR)
-        if color != ERROR_COLOR:  # Check if color was actually found
-            _color_source_debug ='Settlement:' + sett_type
-        else:
-            _color_source_debug ='Settlement (type "' + sett_type + '" not in SETTLEMENT_COLORS)'
-            # if grid_x_for_debug == 0 and grid_y_for_debug == 0: print('DEBUG map_render.gd: Tile (0,0) settlement type "', sett_type, '" not found in SETTLEMENT_COLORS.')
     elif tile_data.has('terrain_difficulty'):
         # Terrain path
         var difficulty_variant = tile_data['terrain_difficulty']  # Get the value (likely float)
@@ -226,17 +217,29 @@ func _draw_tile_bg(img: Image, tile_data: Dictionary, tile_render_x: int, tile_r
             var difficulty_int : int = int(floor(difficulty_variant))  # Cast float/int to integer
             # Use .get() again for safety, defaulting to ERROR_COLOR if key not found
             color = TILE_COLORS.get(difficulty_int, ERROR_COLOR)
-            if color != ERROR_COLOR:
-                _color_source_debug = 'Terrain: ' + str(difficulty_int)
-            else:
-                _color_source_debug = 'Terrain (difficulty "' + str(difficulty_int) + '" not in TILE_COLORS)'
-                # if grid_x_for_debug == 0 and grid_y_for_debug == 0: print('DEBUG map_render.gd: Tile (0,0) terrain difficulty "', difficulty_int, '" not found in TILE_COLORS.')
-        else:  # Non-numeric terrain difficulty
-            _color_source_debug = 'Terrain (value is not INT or FLOAT, type: ' + str(typeof(difficulty_variant)) + ')'
-            # if grid_x_for_debug == 0 and grid_y_for_debug == 0: print('DEBUG map_render.gd: Tile (0,0) terrain_difficulty is not INT or FLOAT. Type: ', typeof(difficulty_variant), ', Value: ', difficulty_variant)
-    else:  # Neither settlement nor terrain difficulty found
-        _color_source_debug = 'No "settlements" or "terrain_difficulty" key found in tile.'
-        # if grid_x_for_debug == 0 and grid_y_for_debug == 0: print('DEBUG map_render.gd: Tile (0,0) has no 'settlements' or 'terrain_difficulty' key.')
+        # else: color remains ERROR_COLOR if difficulty_variant is not a number
+    # else: color remains ERROR_COLOR if no 'settlements' or 'terrain_difficulty' key
+    return color
+
+func _draw_tile_bg(img: Image, tile_data: Dictionary, tile_render_x: int, tile_render_y: int, tile_render_width: int, tile_render_height: int, p_scaled_total_inset: int, _grid_x_for_debug: int, _grid_y_for_debug: int):
+    var color: Color = ERROR_COLOR  # Initialized to ERROR_COLOR
+    var _color_source_debug: String = 'Initial ERROR_COLOR'  # For debugging
+
+    # if grid_x_for_debug == 0 and grid_y_for_debug == 0: # Debug print for the first tile only
+        # print('DEBUG map_render.gd: Processing tile (0,0) data: ', tile_data)
+
+    color = _get_base_tile_color(tile_data) # Get the base color using the new helper
+
+    # Debugging for color source (can be simplified or removed if _get_base_tile_color is trusted)
+    if color == ERROR_COLOR:
+        if tile_data.has('settlements') and tile_data['settlements'] is Array and not tile_data['settlements'].is_empty():
+            var settlement_data = tile_data['settlements'][0]
+            var sett_type = settlement_data.get('sett_type', 'MISSING_SETT_TYPE_KEY')
+            _color_source_debug ='Settlement (type "' + sett_type + '" not in SETTLEMENT_COLORS or other issue)'
+        elif tile_data.has('terrain_difficulty'):
+            _color_source_debug = 'Terrain (difficulty not in TILE_COLORS or other issue)'
+        else:
+            _color_source_debug = 'No "settlements" or "terrain_difficulty" key, or other issue.'
 
     # if grid_x_for_debug == 0 and grid_y_for_debug == 0:  # Debug print for the first tile only
         # print('DEBUG map_render.gd: Tile (0,0) final color source: ', color_source_debug, ', Resulting Color: ', color)
@@ -569,7 +572,7 @@ func render_map(
     var height: int = image_render_height
     # Create a new image
     var map_image := Image.create(width, height, false, Image.FORMAT_RGB8)
-    map_image.fill(GRID_COLOR)  # Start with grid color background
+    # map_image.fill(GRID_COLOR) # Removed: We will fill each tile's background individually for the new grid effect
 
 
     var _error_color_tile_count: int = 0
@@ -596,13 +599,46 @@ func render_map(
             var current_tile_render_w: int = next_tile_pixel_x - current_tile_pixel_x
             var current_tile_render_h: int = next_tile_pixel_y - current_tile_pixel_y
 
-            # 1. Draw political color layer (inset by grid_size)
+            # --- New Grid Drawing Logic ---
+            # 1. Determine base colors for the current tile (unvaried)
+            var base_terrain_settlement_color: Color = _get_base_tile_color(tile)
+
+            var region_variant = tile.get('region', -999)
+            var region_int: int = -999
+            if typeof(region_variant) == TYPE_FLOAT or typeof(region_variant) == TYPE_INT:
+                region_int = int(floor(region_variant))
+            var base_political_color: Color = POLITICAL_COLORS.get(region_int, ERROR_COLOR)
+
+            var has_visible_political_color: bool = base_political_color.a > 0.01 and base_political_color != ERROR_COLOR
+
+            # 2. Determine the color for this tile's grid background
+            var color_for_grid_lines_base: Color
+            if has_visible_political_color:
+                color_for_grid_lines_base = base_political_color
+            else:
+                color_for_grid_lines_base = base_terrain_settlement_color
+
+            if color_for_grid_lines_base == ERROR_COLOR: # Fallback if chosen color is error
+                color_for_grid_lines_base = GRID_COLOR # Use original GRID_COLOR as a last resort for this tile's grid
+
+            var actual_grid_line_color: Color = color_for_grid_lines_base.darkened(GRID_DARKEN_FACTOR)
+
+            # 3. Fill the entire tile cell with this darkened color (this forms the grid lines)
+            var full_tile_rect := Rect2i(current_tile_pixel_x, current_tile_pixel_y, current_tile_render_w, current_tile_render_h)
+            if full_tile_rect.size.x > 0 and full_tile_rect.size.y > 0:
+                map_image.fill_rect(full_tile_rect, actual_grid_line_color)
+
+            # 4. Draw political color layer (inset by grid_size, drawn on top of the darkened grid background)
             _draw_political_inline(map_image, tile, current_tile_pixel_x, current_tile_pixel_y, current_tile_render_w, current_tile_render_h, scaled_grid_size)
 
-            # 2. Draw terrain/settlement layer on top (inset by grid_size + political_border_thickness)
-            var total_inset_for_terrain = scaled_grid_size + scaled_political_border_thickness
-            var chosen_color = _draw_tile_bg(map_image, tile, current_tile_pixel_x, current_tile_pixel_y, current_tile_render_w, current_tile_render_h, total_inset_for_terrain, x, y)
-            if chosen_color == ERROR_COLOR:  # If you want to use this count, remove the underscore from _error_color_tile_count
+            # 5. Draw terrain/settlement layer on top
+            var inset_for_terrain_content: int
+            if has_visible_political_color:
+                inset_for_terrain_content = scaled_grid_size + scaled_political_border_thickness
+            else:
+                inset_for_terrain_content = scaled_grid_size # Only grid inset if no political layer
+            var chosen_color_from_tile_bg = _draw_tile_bg(map_image, tile, current_tile_pixel_x, current_tile_pixel_y, current_tile_render_w, current_tile_render_h, inset_for_terrain_content, x, y)
+            if chosen_color_from_tile_bg == ERROR_COLOR:  # If you want to use this count, remove the underscore from _error_color_tile_count
                 _error_color_tile_count += 1
             # TODO: _draw_highlight_or_lowlight also needs to be adapted to use the new rendering bounds if full consistency is desired.
             # For now, it will use an approximated integer tile size for highlights.
