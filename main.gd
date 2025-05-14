@@ -123,6 +123,8 @@ func _ready():
 		_convoy_label_container = Node2D.new()
 		_convoy_label_container.name = 'ConvoyLabelContainer'
 		map_display.add_child(_convoy_label_container)
+		_convoy_label_container.z_index = 2  # Convoy labels on top
+
 		print('Main: ConvoyLabelContainer added to MapDisplay.')
 
 		# Attempt to get the default theme font for Label nodes
@@ -1393,7 +1395,7 @@ func _input(event: InputEvent) -> void:  # Renamed from _gui_input
 			# Update map if hover state changed
 			if new_hover_info != _current_hover_info:
 				_current_hover_info = new_hover_info
-				_update_hover_labels()
+				call_deferred("_update_hover_labels") # Defer this update for click stability
 
 	elif event is InputEventMouseButton:
 		if event.button_index == MOUSE_BUTTON_LEFT:
