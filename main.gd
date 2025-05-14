@@ -47,6 +47,7 @@ const BASE_CONVOY_PANEL_CORNER_RADIUS: float = 8.0
 const BASE_CONVOY_PANEL_PADDING_H: float = 8.0 # Horizontal padding inside the panel
 const BASE_CONVOY_PANEL_PADDING_V: float = 5.0 # Vertical padding inside the panel
 const CONVOY_PANEL_BACKGROUND_COLOR: Color = Color(0.12, 0.12, 0.15, 0.88) # Dark grey, slightly transparent
+const BASE_CONVOY_PANEL_BORDER_WIDTH: float = 3.0 # Base width for the panel's colored border
 const BASE_SETTLEMENT_PANEL_CORNER_RADIUS: float = 6.0
 const BASE_SETTLEMENT_PANEL_PADDING_H: float = 6.0
 const BASE_SETTLEMENT_PANEL_PADDING_V: float = 4.0
@@ -81,6 +82,7 @@ var show_detailed_view: bool = true # Single flag for toggling detailed map feat
 var _dragging_panel_node: Panel = null # Panel currently being dragged
 var _drag_offset: Vector2 = Vector2.ZERO # Mouse offset from panel's top-left during drag
 var _convoy_label_user_positions: Dictionary = {} # Stores user-set positions: { "convoy_id": Vector2(x,y) }
+var _current_drag_clamp_rect: Rect2 # Stores the calculated clamping rect (in global coords) for the current drag operation
 
 # Emojis for labels
 const CONVOY_STAT_EMOJIS: Dictionary = {
@@ -802,6 +804,7 @@ func _draw_single_convoy_label(convoy_data: Dictionary, existing_label_rects: Ar
 	var current_color_indicator_padding: float = BASE_COLOR_INDICATOR_PADDING * actual_scale
 	var current_panel_corner_radius: float = BASE_CONVOY_PANEL_CORNER_RADIUS * font_render_scale # Scale radius with font scale
 	var current_panel_padding_h: float = BASE_CONVOY_PANEL_PADDING_H * font_render_scale
+	var current_panel_border_width: int = max(1, roundi(BASE_CONVOY_PANEL_BORDER_WIDTH * font_render_scale))
 	var current_panel_padding_v: float = BASE_CONVOY_PANEL_PADDING_V * font_render_scale
 
 	# Extract additional details
@@ -1003,41 +1006,35 @@ func _draw_single_convoy_label(convoy_data: Dictionary, existing_label_rects: Ar
 	label.position.x = (convoy_center_on_texture_x * actual_scale + offset_x) + current_horizontal_offset # Initial X
 	label.position.y = convoy_center_display_y - (label_min_size.y / 2.0) # Initial Y (top edge aligned to convoy center)
 
-	# Create and configure the color indicator (relative to label for now)
-	var color_indicator := ColorRect.new()
-	color_indicator.color = unique_convoy_color
-	color_indicator.size = Vector2(current_color_indicator_size, current_color_indicator_size)
-	color_indicator.position.x = label.position.x + label_min_size.x + current_color_indicator_padding
-	color_indicator.position.y = label.position.y + (label_min_size.y / 2.0) - (current_color_indicator_size / 2.0) # Center indicator with label's vertical middle
+	# REMOVED: Color indicator is no longer used.
 
 	# --- Create and configure the background Panel ---
 	var panel := Panel.new()
 	var style_box := StyleBoxFlat.new()
-	style_box.bg_color = CONVOY_PANEL_BACKGROUND_COLOR
+	style_box.bg_color = CONVOY_PANEL_BACKGROUND_COLOR # Apply the background color
+	style_box.border_color = unique_convoy_color # Use convoy's color for the border
+	style_box.border_width_left = current_panel_border_width
+	style_box.border_width_top = current_panel_border_width
+	style_box.border_width_right = current_panel_border_width
+	style_box.border_width_bottom = current_panel_border_width
 	style_box.corner_radius_top_left = current_panel_corner_radius
 	style_box.corner_radius_top_right = current_panel_corner_radius
 	style_box.corner_radius_bottom_left = current_panel_corner_radius
 	style_box.corner_radius_bottom_right = current_panel_corner_radius
 	panel.add_theme_stylebox_override("panel", style_box)
 	panel.mouse_filter = Control.MOUSE_FILTER_STOP # Ensure panel can receive mouse events
-	panel.name = str(current_convoy_id) # Use convoy_id as panel name
+	panel.name = str(current_convoy_id) # Use convoy_id as panel name for dragging/user_positions
 
 	# Determine panel size and position based on label and indicator
-	# Label's actual top-left (considering pivot)
-	var label_actual_top_left_x: float = label.position.x # Since pivot.x is 0
-	# var label_actual_top_left_y = label.position.y - label.pivot_offset.y # Old calculation
+	# The initial global `label.position` is where the label's content (top-left) should be.
+	var content_min_x: float = label.position.x # Global X where label content starts
+	var content_max_x: float = label.position.x + label_min_size.x # Global X where label content ends
 
-	# Horizontal bounds
-	var content_min_x: float = label_actual_top_left_x
-	var content_max_x: float = color_indicator.position.x + color_indicator.size.x
-
-	# Vertical bounds - based on current label/indicator positions
-	var label_top_y: float = label.position.y # Since pivot.y is 0
-	var label_bottom_y: float = label_top_y + label_min_size.y
-	var indicator_top_y: float = color_indicator.position.y         # Top edge of the indicator
-	var indicator_bottom_y: float = indicator_top_y + color_indicator.size.y # Bottom edge of the indicator
-	var content_min_y: float = min(label_top_y, indicator_top_y)
-	var content_max_y: float = max(label_bottom_y, indicator_bottom_y)
+	# Vertical bounds - based on label's global position and size
+	# label.position is currently the intended global top-left of the label content.
+	var label_top_y: float = label.position.y # Global Y where label content starts (since pivot is (0,0))
+	var content_min_y: float = label_top_y # Global Y where label content starts
+	var content_max_y: float = label_top_y + label_min_size.y # Global Y where label content ends
 
 	panel.position.x = content_min_x - current_panel_padding_h
 	panel.position.y = content_min_y - current_panel_padding_v
@@ -1050,18 +1047,15 @@ func _draw_single_convoy_label(convoy_data: Dictionary, existing_label_rects: Ar
 	label.position.x = current_panel_padding_h
 	label.position.y = current_panel_padding_v
 
-	# Position indicator relative to the label, also locally within the panel.
-	color_indicator.position.x = label.position.x + label_min_size.x + current_color_indicator_padding
-	color_indicator.position.y = label.position.y + (label_min_size.y / 2.0) - (color_indicator.size.y / 2.0)
+	# REMOVED: Indicator positioning
 
 	# Make children ignore mouse events so the parent panel handles them for dragging
 	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	color_indicator.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	# REMOVED: Indicator mouse_filter
 
 	# Add label and indicator as CHILDREN of the panel
 	panel.add_child(label)
-
-	panel.add_child(color_indicator)
+	# REMOVED: Adding indicator to panel
 
 	# If this convoy is selected AND has a user-defined position, use it and skip anti-collision.
 	if _selected_convoy_ids.has(current_convoy_id) and _convoy_label_user_positions.has(current_convoy_id):
@@ -1282,35 +1276,27 @@ func _input(event: InputEvent) -> void:  # Renamed from _gui_input
 
 	if event is InputEventMouseMotion:
 		# Only update drag position if a panel is being dragged AND the left mouse button is held down
-		if _dragging_panel_node != null and is_instance_valid(_dragging_panel_node) and (event.button_mask & MOUSE_BUTTON_MASK_LEFT):
-			var new_panel_pos = get_global_mouse_position() - _drag_offset
+		if is_instance_valid(_dragging_panel_node) and (event.button_mask & MOUSE_BUTTON_MASK_LEFT):
+			# Calculate the new target global position for the panel's origin
+			var new_global_panel_pos: Vector2 = event.global_position + _drag_offset
 
-			# --- Re-calculate map bounds for clamping during drag ---
-			# This is a bit redundant but ensures clamping uses current map display state
-			# Ensure map_display and its texture are valid before proceeding
-			if is_instance_valid(map_display) and is_instance_valid(map_display.texture):
-				var map_texture_size_drag: Vector2 = map_display.texture.get_size()
-				var map_display_rect_size_drag: Vector2 = map_display.size
-				if map_texture_size_drag.x > 0 and map_texture_size_drag.y > 0:
-					var scale_x_ratio_drag: float = map_display_rect_size_drag.x / map_texture_size_drag.x
-					var scale_y_ratio_drag: float = map_display_rect_size_drag.y / map_texture_size_drag.y
-					var actual_scale_drag: float = min(scale_x_ratio_drag, scale_y_ratio_drag)
-					var displayed_texture_width_drag: float = map_texture_size_drag.x * actual_scale_drag
-					var displayed_texture_height_drag: float = map_texture_size_drag.y * actual_scale_drag
-					var offset_x_drag: float = (map_display_rect_size_drag.x - displayed_texture_width_drag) / 2.0
-					var offset_y_drag: float = (map_display_rect_size_drag.y - displayed_texture_height_drag) / 2.0
-					var padded_map_bounds_drag = Rect2(
-						map_display.position.x + offset_x_drag + LABEL_MAP_EDGE_PADDING,
-						map_display.position.y + offset_y_drag + LABEL_MAP_EDGE_PADDING,
-						displayed_texture_width_drag - (2 * LABEL_MAP_EDGE_PADDING),
-						displayed_texture_height_drag - (2 * LABEL_MAP_EDGE_PADDING)
-					)
-					# Clamp new_panel_pos
-					new_panel_pos.x = clamp(new_panel_pos.x, padded_map_bounds_drag.position.x, padded_map_bounds_drag.position.x + padded_map_bounds_drag.size.x - _dragging_panel_node.size.x)
-					new_panel_pos.y = clamp(new_panel_pos.y, padded_map_bounds_drag.position.y, padded_map_bounds_drag.position.y + padded_map_bounds_drag.size.y - _dragging_panel_node.size.y)
+			# Clamp the new global position using the pre-calculated _current_drag_clamp_rect
+			# This rect defines the valid area for the panel's top-left corner.
+			if _current_drag_clamp_rect.size.x > 0 and _current_drag_clamp_rect.size.y > 0: # Check if clamp rect is valid
+				new_global_panel_pos.x = clamp(
+					new_global_panel_pos.x,
+					_current_drag_clamp_rect.position.x,
+					_current_drag_clamp_rect.position.x + _current_drag_clamp_rect.size.x - _dragging_panel_node.size.x
+				)
+				new_global_panel_pos.y = clamp(
+					new_global_panel_pos.y,
+					_current_drag_clamp_rect.position.y,
+					_current_drag_clamp_rect.position.y + _current_drag_clamp_rect.size.y - _dragging_panel_node.size.y
+				)
 
-			_dragging_panel_node.position = new_panel_pos
-			_convoy_label_user_positions[_dragging_panel_node.name] = new_panel_pos # Store the ID from panel name
+			_dragging_panel_node.global_position = new_global_panel_pos
+			# _convoy_label_user_positions stores the local position relative to _convoy_label_container
+			_convoy_label_user_positions[_dragging_panel_node.name] = _dragging_panel_node.position # Store the local position
 			# Children of _dragging_panel_node will move with it automatically. No _update_hover_labels() here.
 		else: # Not dragging (or button not held), so process hover
 			var local_mouse_pos = map_display.get_local_mouse_position()
@@ -1389,40 +1375,81 @@ func _input(event: InputEvent) -> void:  # Renamed from _gui_input
 	elif event is InputEventMouseButton:
 		if event.button_index == MOUSE_BUTTON_LEFT:
 			if event.pressed: # Mouse button DOWN
+				var clicked_on_draggable_panel: bool = false # Flag to see if we successfully start a drag
+
+				# --- DEBUG: Print click position and panel rects ---
+				print("--- Click at global: ", event.global_position, " ---")
+				if is_instance_valid(_convoy_label_container):
+					for node_debug in _convoy_label_container.get_children():
+						if node_debug is Panel:
+							var panel_debug: Panel = node_debug
+							print("Panel '%s' global_rect: %s. Contains click? %s" % [panel_debug.name, panel_debug.get_global_rect(), panel_debug.get_global_rect().has_point(event.global_position)])
+				# --- END DEBUG ---
+
 				# Check if clicking on an expanded (selected) convoy label panel to START a drag
-				print("Checking for drag start click on convoy panels...") # DEBUG
 				if is_instance_valid(_convoy_label_container):
 					for node in _convoy_label_container.get_children():
-						if node is Panel and node.get_global_rect().has_point(get_global_mouse_position()):
-							var panel_node: Panel = node
-							var panel_global_rect = panel_node.get_global_rect()
-							var global_mouse_pos = get_global_mouse_position()
-							print("  Checking Panel: %s, Global Rect: %s, Mouse Pos: %s" % [panel_node.name, panel_global_rect, global_mouse_pos]) # DEBUG
+						if node is Panel and node.get_global_rect().has_point(event.global_position): # Use event.global_position
+							var panel_node_candidate: Panel = node
+							var panel_global_rect = panel_node_candidate.get_global_rect() # Define panel_global_rect HERE
 							# This inner if was already there, just ensuring the following lines are correctly indented under it.
-							if panel_global_rect.has_point(global_mouse_pos): 
-								var convoy_id_of_panel = panel_node.name # Name should be convoy_id
+							if panel_global_rect.has_point(event.global_position): 
+								var convoy_id_of_panel = panel_node_candidate.name # Name should be convoy_id
 								if _selected_convoy_ids.has(convoy_id_of_panel): # Only draggable if expanded/selected
-									_dragging_panel_node = panel_node
-									_drag_offset = get_global_mouse_position() - panel_node.position
+									_dragging_panel_node = panel_node_candidate
+									# _drag_offset is the vector from the mouse click point to the panel's origin (top-left)
+									_drag_offset = _dragging_panel_node.global_position - event.global_position
 									Input.set_default_cursor_shape(Input.CURSOR_DRAG)
 									# Bring to front (optional, but good for visual feedback)
 									if is_instance_valid(_convoy_label_container) and _dragging_panel_node.get_parent() == _convoy_label_container:
 										_convoy_label_container.move_child(_dragging_panel_node, _convoy_label_container.get_child_count() - 1) # Move to last, draws on top
-									# print("Main: Started dragging panel: ", convoy_id_of_panel) # DEBUG
+									
+									# --- Calculate and store clamping bounds (in global coordinates) for this drag session ---
+									if is_instance_valid(map_display) and is_instance_valid(map_display.texture):
+										var map_texture_size_drag: Vector2 = map_display.texture.get_size()
+										var map_display_rect_size_drag: Vector2 = map_display.size # Size of the TextureRect control
+										var map_display_global_origin: Vector2 = map_display.global_position
+
+										if map_texture_size_drag.x > 0 and map_texture_size_drag.y > 0:
+											var scale_x_ratio_drag: float = map_display_rect_size_drag.x / map_texture_size_drag.x
+											var scale_y_ratio_drag: float = map_display_rect_size_drag.y / map_texture_size_drag.y
+											var actual_scale_drag: float = min(scale_x_ratio_drag, scale_y_ratio_drag)
+											var displayed_texture_width_drag: float = map_texture_size_drag.x * actual_scale_drag
+											var displayed_texture_height_drag: float = map_texture_size_drag.y * actual_scale_drag
+											# offset_x_drag/offset_y_drag are offsets of the *texture* within the *map_display control*
+											var offset_x_texture_in_map_display: float = (map_display_rect_size_drag.x - displayed_texture_width_drag) / 2.0
+											var offset_y_texture_in_map_display: float = (map_display_rect_size_drag.y - displayed_texture_height_drag) / 2.0
+											
+											_current_drag_clamp_rect = Rect2(
+												map_display_global_origin.x + offset_x_texture_in_map_display + LABEL_MAP_EDGE_PADDING,
+												map_display_global_origin.y + offset_y_texture_in_map_display + LABEL_MAP_EDGE_PADDING,
+												displayed_texture_width_drag - (2 * LABEL_MAP_EDGE_PADDING),
+												displayed_texture_height_drag - (2 * LABEL_MAP_EDGE_PADDING)
+											)
+										else: _current_drag_clamp_rect = Rect2() # Invalid texture size
+									else: _current_drag_clamp_rect = Rect2() # Invalid map_display or texture
 									print("  Convoy %s is selected. Initiating drag." % [convoy_id_of_panel]) # DEBUG - Changed from f-string
+									clicked_on_draggable_panel = true
 
 									get_viewport().set_input_as_handled() # Consume the event so map icon click doesn't fire
 									return # Consume click, starting a drag
+				
+				# If we reached here and didn't start a drag, the click was on the map or a non-draggable element.
+				# The event will fall through to be handled by map icon click logic if not consumed.
+				# No explicit 'else' needed here if we only 'return' when a drag starts.
+
 			elif not event.pressed: # Mouse button RELEASED
 				if _dragging_panel_node != null: # If we were dragging, finalize drag
-					# print("Main: Finished dragging panel: ", _dragging_panel_node.name) # DEBUG
+					print("Main: Finished dragging panel: ", _dragging_panel_node.name) # DEBUG
+					_convoy_label_user_positions[_dragging_panel_node.name] = _dragging_panel_node.position # Ensure local position is stored
 					_dragging_panel_node = null
 					Input.set_default_cursor_shape(Input.CURSOR_ARROW)
 					_update_hover_labels() # Call once at the end of drag to ensure anti-collision with other labels is re-checked if needed
 					get_viewport().set_input_as_handled() # Consume the event
 					return # Consume this click release if it was ending a drag
 				else: # This is a simple click release (not a drag release)
-					# Proceed with map icon click logic for toggling selection
+					# This click was not on a draggable panel to start a drag, and it's not ending a drag.
+					# So, it could be a click on a map icon.
 					var local_mouse_pos = map_display.get_local_mouse_position()
 
 					var map_texture_size: Vector2 = map_display.texture.get_size()
@@ -1464,7 +1491,10 @@ func _input(event: InputEvent) -> void:  # Renamed from _gui_input
 							_selected_convoy_ids.append(clicked_on_convoy_id) # Toggle on if not selected
 						_update_hover_labels() # Update display based on new selection state
 						get_viewport().set_input_as_handled() # Consume the click event
-					# If clicked_on_convoy_id is empty, we just do nothing, which is the desired behavior.
+						# No return here, as the event is handled.
+					# else: click was on the map, not on a convoy icon and not starting/ending a drag.
+					# Allow event to propagate if necessary for other map interactions (not currently implemented).
+
 
 
 func _update_refresh_notification_position():
