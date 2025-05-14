@@ -1116,20 +1116,30 @@ func _draw_single_convoy_label(convoy_data: Dictionary, existing_label_rects: Ar
 
 	# --- Clamp panel position to map display bounds ---
 	# Define the padded bounds within the map display
-	var padded_map_bounds_rect = Rect2(offset_x + LABEL_MAP_EDGE_PADDING, offset_y + LABEL_MAP_EDGE_PADDING, displayed_texture_width - (2 * LABEL_MAP_EDGE_PADDING), displayed_texture_height - (2 * LABEL_MAP_EDGE_PADDING))
-	var panel_pos_changed_by_clamping: bool = false
-	var pre_clamp_panel_pos = panel.position # Store before clamping
+	# This now clamps to the viewport bounds, consistent with dragging.
+	var panel_current_global_position: Vector2 = _convoy_label_container.to_global(panel.position)
+	var panel_target_global_position: Vector2 = panel_current_global_position
 
-	if panel.position.x < padded_map_bounds_rect.position.x:
-		panel.position.x = padded_map_bounds_rect.position.x; panel_pos_changed_by_clamping = true
-	if panel.position.x + panel.size.x > padded_map_bounds_rect.position.x + padded_map_bounds_rect.size.x:
-		panel.position.x = (padded_map_bounds_rect.position.x + padded_map_bounds_rect.size.x) - panel.size.x; panel_pos_changed_by_clamping = true
-	if panel.position.y < padded_map_bounds_rect.position.y:
-		panel.position.y = padded_map_bounds_rect.position.y; panel_pos_changed_by_clamping = true
-	if panel.position.y + panel.size.y > padded_map_bounds_rect.position.y + padded_map_bounds_rect.size.y:
-		panel.position.y = (padded_map_bounds_rect.position.y + padded_map_bounds_rect.size.y) - panel.size.y; panel_pos_changed_by_clamping = true
+	var viewport_clamp_rect_global: Rect2 = get_viewport_rect()
+	# Apply padding to the viewport clamp rect
+	var padded_viewport_min_x: float = viewport_clamp_rect_global.position.x + LABEL_MAP_EDGE_PADDING
+	var padded_viewport_min_y: float = viewport_clamp_rect_global.position.y + LABEL_MAP_EDGE_PADDING
+	var padded_viewport_max_x: float = viewport_clamp_rect_global.position.x + viewport_clamp_rect_global.size.x - LABEL_MAP_EDGE_PADDING
+	var padded_viewport_max_y: float = viewport_clamp_rect_global.position.y + viewport_clamp_rect_global.size.y - LABEL_MAP_EDGE_PADDING
 
-	# If clamping changed the panel's position, its children (label, indicator) will move with it.
+	panel_target_global_position.x = clamp(
+		panel_target_global_position.x,
+		padded_viewport_min_x,
+		padded_viewport_max_x - panel.size.x  # Ensure right edge of panel is within max_x
+	)
+	panel_target_global_position.y = clamp(
+		panel_target_global_position.y,
+		padded_viewport_min_y,
+		padded_viewport_max_y - panel.size.y  # Ensure bottom edge of panel is within max_y
+	)
+
+	if not panel_target_global_position.is_equal_approx(panel_current_global_position):
+		panel.position = _convoy_label_container.to_local(panel_target_global_position)
 
 	# Add the fully assembled panel (with its children) to the main label container
 	_convoy_label_container.add_child(panel)
