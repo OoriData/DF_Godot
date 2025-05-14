@@ -138,7 +138,11 @@ func parse_in_transit_convoy_details(raw_convoy_list: Array) -> Array:
 		- top_speed (float)
 		- offroad_capability (float)
 		- vehicle_names (Array[String])
-		- journey (Dictionary) - The entire journey object.
+		- journey (Dictionary) - The entire journey object
+		- fuel, max_fuel, water, max_water, food, max_food (floats)
+		- total_cargo_capacity, total_weight_capacity, total_free_space, total_remaining_capacity (floats)
+		- vehicle_details_list (Array of Dictionaries, each with name, description, efficiency, top_speed, offroad_capability)
+		- all_cargo (Array of cargo details) - The entire all_cargo array.
 	"""
 	var parsed_convoys: Array = []
 	if not raw_convoy_list is Array:
@@ -162,14 +166,38 @@ func parse_in_transit_convoy_details(raw_convoy_list: Array) -> Array:
 		convoy_details['x'] = convoy_data.get('x', 0.0)  # Default to 0.0 if not found
 		convoy_details['y'] = convoy_data.get('y', 0.0)  # Default to 0.0 if not found
 
-		var vehicle_names: Array = []
+		# Add top-level resource and capacity stats
+		convoy_details['fuel'] = convoy_data.get('fuel', 0.0)
+		convoy_details['max_fuel'] = convoy_data.get('max_fuel', 0.0)
+		convoy_details['water'] = convoy_data.get('water', 0.0)
+		convoy_details['max_water'] = convoy_data.get('max_water', 0.0)
+		convoy_details['food'] = convoy_data.get('food', 0.0)
+		convoy_details['max_food'] = convoy_data.get('max_food', 0.0)
+		convoy_details['total_cargo_capacity'] = convoy_data.get('total_cargo_capacity', 0.0)
+		convoy_details['total_weight_capacity'] = convoy_data.get('total_weight_capacity', 0.0)
+		convoy_details['total_free_space'] = convoy_data.get('total_free_space', 0.0)
+		convoy_details['total_remaining_capacity'] = convoy_data.get('total_remaining_capacity', 0.0)
+
+		# Process vehicle details
+		var vehicle_details_list: Array = []
 		var vehicles_raw: Array = convoy_data.get('vehicles', [])
 		if vehicles_raw is Array:
 			for vehicle_data in vehicles_raw:
 				if vehicle_data is Dictionary:
-					vehicle_names.append(vehicle_data.get('name', 'Unknown Vehicle'))
-		convoy_details['vehicle_names'] = vehicle_names
+					var single_vehicle_details: Dictionary = {}
+					single_vehicle_details['name'] = vehicle_data.get('name', 'Unknown Vehicle')
+					# The 'description' at the vehicle level seems like a good summary
+					single_vehicle_details['description'] = vehicle_data.get('description', 'No description available.')
+					single_vehicle_details['efficiency'] = vehicle_data.get('efficiency', 0.0)
+					single_vehicle_details['top_speed'] = vehicle_data.get('top_speed', 0.0)
+					single_vehicle_details['offroad_capability'] = vehicle_data.get('offroad_capability', 0.0)
+					vehicle_details_list.append(single_vehicle_details)
+		convoy_details['vehicle_details_list'] = vehicle_details_list
+
 		convoy_details['journey'] = journey_data  # Store the (potentially modified) journey object
+
+		# Store the entire 'all_cargo' array
+		convoy_details['all_cargo'] = convoy_data.get('all_cargo', [])
 
 		parsed_convoys.append(convoy_details)
 

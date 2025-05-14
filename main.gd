@@ -78,6 +78,10 @@ var _selected_convoy_ids: Array[String] = [] # To store IDs of clicked/selected 
 
 var show_detailed_view: bool = true # Single flag for toggling detailed map features (grid & political)
 
+var _dragging_panel_node: Panel = null # Panel currently being dragged
+var _drag_offset: Vector2 = Vector2.ZERO # Mouse offset from panel's top-left during drag
+var _convoy_label_user_positions: Dictionary = {} # Stores user-set positions: { "convoy_id": Vector2(x,y) }
+
 # Emojis for labels
 const CONVOY_STAT_EMOJIS: Dictionary = {
 	'efficiency': '🌿',
@@ -108,15 +112,15 @@ func _ready():
 		# Explicitly set texture filter for smoother scaling.
 		map_display.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
 
-		# Create a container for convoy labels as a child of MapDisplay
-		_convoy_label_container = Node2D.new()
-		_convoy_label_container.name = 'ConvoyLabelContainer'
-		map_display.add_child(_convoy_label_container)
-
+		# Create settlement label container first, so it's drawn underneath convoy labels
 		_settlement_label_container = Node2D.new()  # Create settlement label container
 		_settlement_label_container.name = 'SettlementLabelContainer'
 		map_display.add_child(_settlement_label_container)  # Add it as a child
 
+		# Create a container for convoy labels as a child of MapDisplay, added after settlements
+		_convoy_label_container = Node2D.new()
+		_convoy_label_container.name = 'ConvoyLabelContainer'
+		map_display.add_child(_convoy_label_container)
 		print('Main: ConvoyLabelContainer added to MapDisplay.')
 
 		# Attempt to get the default theme font for Label nodes
@@ -412,12 +416,14 @@ func _on_visual_update_timer_timeout() -> void:
 func _update_hover_labels():
 	# Clear all existing hover labels
 	if is_instance_valid(_convoy_label_container):
-		for child in _convoy_label_container.get_children():
-			child.queue_free()
+		# If a panel is being dragged, don't clear it.
+		# All other panels (and their children) will be cleared and redrawn.
+		for child_panel_node in _convoy_label_container.get_children():
+			if child_panel_node != _dragging_panel_node: # Don't remove the panel being dragged
+				child_panel_node.queue_free()
 	if is_instance_valid(_settlement_label_container):
 		for child in _settlement_label_container.get_children():
 			child.queue_free()
-
 
 	if not map_display or not is_instance_valid(map_display.texture):
 		return  # Cannot position labels without a map texture
@@ -431,6 +437,9 @@ func _update_hover_labels():
 		for convoy_data in _all_convoy_data:
 			var convoy_id = convoy_data.get("convoy_id")
 			if convoy_id and _selected_convoy_ids.has(convoy_id):
+				# If this convoy's panel is currently being dragged, skip redrawing it here.
+				if is_instance_valid(_dragging_panel_node) and _dragging_panel_node.name == convoy_id:
+					continue
 				# STAGE 1a: Draw START/END settlement labels for this selected convoy
 				var journey_data: Dictionary = convoy_data.get('journey')
 				if journey_data is Dictionary:
@@ -489,6 +498,9 @@ func _update_hover_labels():
 		for convoy_data in _all_convoy_data:
 			var convoy_id = convoy_data.get("convoy_id")
 			if convoy_id and _selected_convoy_ids.has(convoy_id):
+				# If this convoy's panel is currently being dragged, we've already skipped it above.
+				if is_instance_valid(_dragging_panel_node) and _dragging_panel_node.name == convoy_id:
+					continue
 				if not drawn_convoy_ids_this_update.has(convoy_id): # Avoid drawing twice if somehow selected and hovered
 					var convoy_panel_rect: Rect2 = _draw_single_convoy_label(convoy_data, all_drawn_label_rects_this_update)
 					if convoy_panel_rect != Rect2(): # If a valid panel was drawn
@@ -500,12 +512,18 @@ func _update_hover_labels():
 		var hovered_convoy_id = _current_hover_info.get('id')
 		if hovered_convoy_id != null:
 			if not drawn_convoy_ids_this_update.has(hovered_convoy_id): # Only draw if not already drawn as selected
-				for convoy_data in _all_convoy_data:
-					if convoy_data is Dictionary and convoy_data.get('convoy_id') == hovered_convoy_id:
-						var convoy_panel_rect: Rect2 = _draw_single_convoy_label(convoy_data, all_drawn_label_rects_this_update)
-						if convoy_panel_rect != Rect2(): # If a valid panel was drawn
-							all_drawn_label_rects_this_update.append(convoy_panel_rect) # Add its rect for others (though unlikely to be many after this)
-						break # Found the hovered convoy
+				# Only proceed to draw the hovered convoy label if it's NOT currently being dragged.
+				var should_draw_hovered_convoy = true
+				if is_instance_valid(_dragging_panel_node) and _dragging_panel_node.name == hovered_convoy_id:
+					should_draw_hovered_convoy = false # Skip, it's being handled by drag
+
+				if should_draw_hovered_convoy:
+					for convoy_data in _all_convoy_data:
+						if convoy_data is Dictionary and convoy_data.get('convoy_id') == hovered_convoy_id:
+							var convoy_panel_rect: Rect2 = _draw_single_convoy_label(convoy_data, all_drawn_label_rects_this_update)
+							if convoy_panel_rect != Rect2(): # If a valid panel was drawn
+								all_drawn_label_rects_this_update.append(convoy_panel_rect)
+							break # Found the hovered convoy
 
 # The following _update_..._labels functions are no longer used for hover labels
 # but contain the logic for creating individual labels. We'll extract that logic.
@@ -786,17 +804,17 @@ func _draw_single_convoy_label(convoy_data: Dictionary, existing_label_rects: Ar
 	var current_panel_padding_h: float = BASE_CONVOY_PANEL_PADDING_H * font_render_scale
 	var current_panel_padding_v: float = BASE_CONVOY_PANEL_PADDING_V * font_render_scale
 
-	var convoy_map_x: float = convoy_data.get('x', 0.0)
-	var convoy_map_y: float = convoy_data.get('y', 0.0)
-
 	# Extract additional details
 	var efficiency: float = convoy_data.get('efficiency', 0.0)
+	var convoy_map_x: float = convoy_data.get('x', 0.0) # Moved here for clarity
+	var current_convoy_id = convoy_data.get('convoy_id') # Declare once here
 	var top_speed: float = convoy_data.get('top_speed', 0.0)
 	var offroad_capability: float = convoy_data.get('offroad_capability', 0.0)
 	var convoy_name: String = convoy_data.get('convoy_name', 'N/A')
 	var journey_data: Dictionary = convoy_data.get('journey', {})
+	# var current_convoy_id = convoy_data.get('convoy_id') # Get current convoy_id for selection check - Already declared above
+	var convoy_map_y: float = convoy_data.get('y', 0.0) # Keep y for positioning calculations
 	var progress: float = journey_data.get('progress', 0.0)
-
 	# Format ETA
 	var eta_raw_string: String = journey_data.get('eta', 'N/A')
 	var departure_raw_string: String = journey_data.get('departure_time', 'N/A')
@@ -901,22 +919,68 @@ func _draw_single_convoy_label(convoy_data: Dictionary, existing_label_rects: Ar
 		var percentage: float = (progress / length) * 100.0
 		progress_percentage_str = '%.1f%%' % percentage  # Format to one decimal place
 
-	# Use BBCode for smaller detail font size
-	var label_text: String = '%s \n%s | ETA: %s\n%s %.1f | %s %.1f | %s %.1f' % [
-		convoy_name, progress_percentage_str, formatted_eta, CONVOY_STAT_EMOJIS.get('efficiency', ''), efficiency, CONVOY_STAT_EMOJIS.get('top_speed', ''), top_speed, CONVOY_STAT_EMOJIS.get('offroad_capability', ''), offroad_capability
-	]
+	var label_text: String
+	if _selected_convoy_ids.has(current_convoy_id): # Check if this convoy is selected
+		# --- Detailed View ---
+		label_text = "[b]%s[/b]\n" % convoy_name
+		label_text += "Progress: %s | ETA: %s\n" % [progress_percentage_str, formatted_eta]
+		label_text += "Stats: %s%.1f | %s%.1f | %s%.1f\n" % [
+			CONVOY_STAT_EMOJIS.get('efficiency', ''), efficiency,
+			CONVOY_STAT_EMOJIS.get('top_speed', ''), top_speed,
+			CONVOY_STAT_EMOJIS.get('offroad_capability', ''), offroad_capability
+		]
+		label_text += "Fuel: %.1f/%.1f | Water: %.1f/%.1f | Food: %.1f/%.1f\n" % [
+			convoy_data.get("fuel", 0.0), convoy_data.get("max_fuel", 0.0),
+			convoy_data.get("water", 0.0), convoy_data.get("max_water", 0.0),
+			convoy_data.get("food", 0.0), convoy_data.get("max_food", 0.0)
+		]
+		label_text += "Cargo Cap: %.0f (Free: %.0f) | Weight Cap: %.0f (Rem: %.0f)\n" % [
+			convoy_data.get("total_cargo_capacity", 0.0), convoy_data.get("total_free_space", 0.0),
+			convoy_data.get("total_weight_capacity", 0.0), convoy_data.get("total_remaining_capacity", 0.0)
+		]
 
+		label_text += "[u]Vehicles:[/u]\n"
+		var vehicles: Array = convoy_data.get("vehicle_details_list", []) # Using the list from APICalls.gd
+		if vehicles.is_empty():
+			label_text += "  None\n"
+		else:
+			for v_detail in vehicles:
+				label_text += "  - %s (Eff:%.0f, Spd:%.0f, Off:%.0f)\n" % [
+					v_detail.get("name", "N/A"),
+					v_detail.get("efficiency", 0.0), v_detail.get("top_speed", 0.0), v_detail.get("offroad_capability", 0.0)
+				]
+				# Vehicle description can be very long, so decide if you want to include it here.
+				# var v_desc = v_detail.get("description", "")
+				# if not v_desc.is_empty(): label_text += "    %s\n" % v_desc
+
+		label_text += "[u]Cargo Manifest:[/u]\n"
+		var all_cargo_items: Array = convoy_data.get("all_cargo", [])
+		if all_cargo_items.is_empty():
+			label_text += "  Empty\n"
+		else:
+			for cargo_item in all_cargo_items: # Limiting to first few items for brevity on label
+				label_text += "  - %s x%s (W:%.0f)\n" % [
+					cargo_item.get("name", "N/A"), cargo_item.get("quantity", 0), cargo_item.get("weight", 0.0)
+				]
+	else:
+		# --- Summary View (Original) ---
+		label_text = '%s \n%s | ETA: %s\n%s %.1f | %s %.1f | %s %.1f' % [
+			convoy_name, progress_percentage_str, formatted_eta, CONVOY_STAT_EMOJIS.get('efficiency', ''), efficiency, CONVOY_STAT_EMOJIS.get('top_speed', ''), top_speed, CONVOY_STAT_EMOJIS.get('offroad_capability', ''), offroad_capability
+		]
 	# Dynamically set the font size on the LabelSettings resource itself
 	_label_settings.font_size = current_convoy_title_font_size
 
 	# Get the persistent color for this convoy
-	var current_convoy_id = convoy_data.get('convoy_id')
+	# var current_convoy_id = convoy_data.get('convoy_id') # Already declared above - Redundant declaration
 	var unique_convoy_color: Color = _convoy_id_to_color_map.get(current_convoy_id, Color.GRAY)  # Fallback to gray
 
 	var label := Label.new()
-	print('DEBUG: In _draw_single_convoy_label - label object is: ', label, ', class is: ', label.get_class())  # DEBUG
-	# label.bbcode_enabled = true # Enable BBCode processing
-	label.set('bbcode_enabled', true)  # Alternative way to set the property
+	if not is_instance_valid(label):
+		printerr("Main: Failed to create new Label instance in _draw_single_convoy_label.")
+		return Rect2() # Cannot proceed without a valid label
+
+	# label.bbcode_enabled = true # This line was causing the error.
+	label.set("bbcode_enabled", true) # Use the set method instead.
 	label.vertical_alignment = VERTICAL_ALIGNMENT_TOP # Align text to the top of the label's box
 	label.text = label_text
 	label.label_settings = _label_settings  # Assign the LabelSettings with the updated font_size
@@ -955,6 +1019,8 @@ func _draw_single_convoy_label(convoy_data: Dictionary, existing_label_rects: Ar
 	style_box.corner_radius_bottom_left = current_panel_corner_radius
 	style_box.corner_radius_bottom_right = current_panel_corner_radius
 	panel.add_theme_stylebox_override("panel", style_box)
+	panel.mouse_filter = Control.MOUSE_FILTER_STOP # Ensure panel can receive mouse events
+	panel.name = str(current_convoy_id) # Use convoy_id as panel name
 
 	# Determine panel size and position based on label and indicator
 	# Label's actual top-left (considering pivot)
@@ -978,48 +1044,62 @@ func _draw_single_convoy_label(convoy_data: Dictionary, existing_label_rects: Ar
 	panel.size.x = (content_max_x - content_min_x) + (2 * current_panel_padding_h)
 	panel.size.y = (content_max_y - content_min_y) + (2 * current_panel_padding_v)
 
-	# --- Reposition label and indicator to be perfectly inside the panel with padding ---
+	# --- Position label and indicator *locally* within the panel ---
 	# Label's pivot is (0,0) and vertical_alignment is TOP.
-	# Position label's top-left at the panel's top-left padding.
-	label.position.x = panel.position.x + current_panel_padding_h
-	label.position.y = panel.position.y + current_panel_padding_v
+	# Position label's top-left at the panel's inner padding.
+	label.position.x = current_panel_padding_h
+	label.position.y = current_panel_padding_v
 
-	# Reposition indicator relative to the new label position
-	# It should be to the right of the label text, and vertically centered with the label's pivot.
+	# Position indicator relative to the label, also locally within the panel.
 	color_indicator.position.x = label.position.x + label_min_size.x + current_color_indicator_padding
 	color_indicator.position.y = label.position.y + (label_min_size.y / 2.0) - (color_indicator.size.y / 2.0)
 
-	# Store initial relative positions of label and indicator to the panel's top-left
-	var label_relative_pos: Vector2 = label.position - panel.position
-	var indicator_relative_pos: Vector2 = color_indicator.position - panel.position
+	# Make children ignore mouse events so the parent panel handles them for dragging
+	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	color_indicator.mouse_filter = Control.MOUSE_FILTER_IGNORE
 
-	# Anti-collision logic
-	# The panel's rectangle is now the one to check for collisions.
-	var current_panel_rect = Rect2(panel.position, panel.size)
+	# Add label and indicator as CHILDREN of the panel
+	panel.add_child(label)
 
-	for _attempt in range(10): # Max 10 attempts to avoid overlap
-		var collides_with_existing: bool = false
-		for existing_rect in existing_label_rects:
-			var buffered_existing_rect = existing_rect.grow_individual(2,2,2,2) # Grow by 2px on each side
-			if current_panel_rect.intersects(buffered_existing_rect, true):
-				collides_with_existing = true
-				break
+	panel.add_child(color_indicator)
 
-		if collides_with_existing:
-			# Shift panel down.
-			var y_shift_amount = (LABEL_ANTI_COLLISION_Y_SHIFT + label_min_size.y * 0.3) # Shift a bit more aggressively
-			panel.position.y += y_shift_amount
-			# Update label and indicator positions relative to the new panel position
-			label.position = panel.position + label_relative_pos
-			color_indicator.position = panel.position + indicator_relative_pos
-			current_panel_rect = Rect2(panel.position, panel.size) # Recalculate panel's rect
-		else:
-			break # No collision, position is good
+	# If this convoy is selected AND has a user-defined position, use it and skip anti-collision.
+	if _selected_convoy_ids.has(current_convoy_id) and _convoy_label_user_positions.has(current_convoy_id):
+		panel.position = _convoy_label_user_positions[current_convoy_id] # Set panel's global position
+		# print("Main: Using user position for convoy label: ", current_convoy_id, " at ", panel.position) # DEBUG
+	else:
+		# Anti-collision logic (only if not using a user-defined position for the panel)
+		# The panel's rectangle is now the one to check for collisions.
+		var current_panel_rect = Rect2(panel.position, panel.size)
+
+		for _attempt in range(10): # Max 10 attempts to avoid overlap
+			var collides_with_existing: bool = false
+			var colliding_rect_for_shift_calc: Rect2 # Store the rect we collided with
+			for existing_rect in existing_label_rects:
+				var buffered_existing_rect = existing_rect.grow_individual(2,2,2,2)
+				if current_panel_rect.intersects(buffered_existing_rect, true):
+					collides_with_existing = true
+					colliding_rect_for_shift_calc = existing_rect # Store the specific rect that caused collision
+					break
+
+			if collides_with_existing:
+				# Shift panel down.
+				# Make the shift more aggressive, considering the height of the thing it collided with.
+				var shift_based_on_collided_height = 0.0
+				if is_instance_valid(colliding_rect_for_shift_calc) and colliding_rect_for_shift_calc.size.y > 0 : shift_based_on_collided_height = colliding_rect_for_shift_calc.size.y * 0.25 + LABEL_MAP_EDGE_PADDING
+				var y_shift_amount = LABEL_ANTI_COLLISION_Y_SHIFT + max(label_min_size.y * 0.1, shift_based_on_collided_height)
+				panel.position.y += y_shift_amount
+				# Children (label, indicator) will move with the panel automatically
+				# No need to update their positions here if they are children of the panel.
+				current_panel_rect = Rect2(panel.position, panel.size) # Recalculate panel's rect
+			else:
+				break # No collision, position is good
 
 	# --- Clamp panel position to map display bounds ---
 	# Define the padded bounds within the map display
 	var padded_map_bounds_rect = Rect2(offset_x + LABEL_MAP_EDGE_PADDING, offset_y + LABEL_MAP_EDGE_PADDING, displayed_texture_width - (2 * LABEL_MAP_EDGE_PADDING), displayed_texture_height - (2 * LABEL_MAP_EDGE_PADDING))
 	var panel_pos_changed_by_clamping: bool = false
+	var pre_clamp_panel_pos = panel.position # Store before clamping
 
 	if panel.position.x < padded_map_bounds_rect.position.x:
 		panel.position.x = padded_map_bounds_rect.position.x; panel_pos_changed_by_clamping = true
@@ -1030,15 +1110,10 @@ func _draw_single_convoy_label(convoy_data: Dictionary, existing_label_rects: Ar
 	if panel.position.y + panel.size.y > padded_map_bounds_rect.position.y + padded_map_bounds_rect.size.y:
 		panel.position.y = (padded_map_bounds_rect.position.y + padded_map_bounds_rect.size.y) - panel.size.y; panel_pos_changed_by_clamping = true
 
-	if panel_pos_changed_by_clamping:
-		label.position = panel.position + label_relative_pos
-		color_indicator.position = panel.position + indicator_relative_pos
+	# If clamping changed the panel's position, its children (label, indicator) will move with it.
 
-	# Add panel first, then label, then indicator
+	# Add the fully assembled panel (with its children) to the main label container
 	_convoy_label_container.add_child(panel)
-	_convoy_label_container.add_child(label)
-	_convoy_label_container.add_child(color_indicator)
-
 	return Rect2(panel.position, panel.size) # Return the panel's final rect
 
 
@@ -1206,107 +1281,41 @@ func _input(event: InputEvent) -> void:  # Renamed from _gui_input
 		return
 
 	if event is InputEventMouseMotion:
-		var local_mouse_pos = map_display.get_local_mouse_position()
+		# Only update drag position if a panel is being dragged AND the left mouse button is held down
+		if _dragging_panel_node != null and is_instance_valid(_dragging_panel_node) and (event.button_mask & MOUSE_BUTTON_MASK_LEFT):
+			var new_panel_pos = get_global_mouse_position() - _drag_offset
 
-		# --- Convert local_mouse_pos to map texture coordinates ---
-		var map_texture_size: Vector2 = map_display.texture.get_size()
-		var map_display_rect_size: Vector2 = map_display.size
-		if map_texture_size.x == 0 or map_texture_size.y == 0: return
+			# --- Re-calculate map bounds for clamping during drag ---
+			# This is a bit redundant but ensures clamping uses current map display state
+			# Ensure map_display and its texture are valid before proceeding
+			if is_instance_valid(map_display) and is_instance_valid(map_display.texture):
+				var map_texture_size_drag: Vector2 = map_display.texture.get_size()
+				var map_display_rect_size_drag: Vector2 = map_display.size
+				if map_texture_size_drag.x > 0 and map_texture_size_drag.y > 0:
+					var scale_x_ratio_drag: float = map_display_rect_size_drag.x / map_texture_size_drag.x
+					var scale_y_ratio_drag: float = map_display_rect_size_drag.y / map_texture_size_drag.y
+					var actual_scale_drag: float = min(scale_x_ratio_drag, scale_y_ratio_drag)
+					var displayed_texture_width_drag: float = map_texture_size_drag.x * actual_scale_drag
+					var displayed_texture_height_drag: float = map_texture_size_drag.y * actual_scale_drag
+					var offset_x_drag: float = (map_display_rect_size_drag.x - displayed_texture_width_drag) / 2.0
+					var offset_y_drag: float = (map_display_rect_size_drag.y - displayed_texture_height_drag) / 2.0
+					var padded_map_bounds_drag = Rect2(
+						map_display.position.x + offset_x_drag + LABEL_MAP_EDGE_PADDING,
+						map_display.position.y + offset_y_drag + LABEL_MAP_EDGE_PADDING,
+						displayed_texture_width_drag - (2 * LABEL_MAP_EDGE_PADDING),
+						displayed_texture_height_drag - (2 * LABEL_MAP_EDGE_PADDING)
+					)
+					# Clamp new_panel_pos
+					new_panel_pos.x = clamp(new_panel_pos.x, padded_map_bounds_drag.position.x, padded_map_bounds_drag.position.x + padded_map_bounds_drag.size.x - _dragging_panel_node.size.x)
+					new_panel_pos.y = clamp(new_panel_pos.y, padded_map_bounds_drag.position.y, padded_map_bounds_drag.position.y + padded_map_bounds_drag.size.y - _dragging_panel_node.size.y)
 
-		var scale_x_ratio: float = map_display_rect_size.x / map_texture_size.x
-		var scale_y_ratio: float = map_display_rect_size.y / map_texture_size.y
-		var actual_scale: float = min(scale_x_ratio, scale_y_ratio)
-		var displayed_texture_width: float = map_texture_size.x * actual_scale
-		var displayed_texture_height: float = map_texture_size.y * actual_scale
-		var offset_x: float = (map_display_rect_size.x - displayed_texture_width) / 2.0
-		var offset_y: float = (map_display_rect_size.y - displayed_texture_height) / 2.0
-
-		var mouse_on_texture_x = (local_mouse_pos.x - offset_x) / actual_scale
-		var mouse_on_texture_y = (local_mouse_pos.y - offset_y) / actual_scale
-		# print('Main: Mouse on texture: ', mouse_on_texture_x, ', ', mouse_on_texture_y)  # DEBUG
-
-		var new_hover_info: Dictionary = {}
-		var found_hover_element: bool = false
-
-		if map_tiles.is_empty() or not map_tiles[0] is Array or map_tiles[0].is_empty():
-			return  # Cannot determine tile dimensions
-
-		var map_cols: int = map_tiles[0].size()
-		var map_rows: int = map_tiles.size()
-		var actual_tile_width_on_texture: float = map_texture_size.x / float(map_cols)
-		var actual_tile_height_on_texture: float = map_texture_size.y / float(map_rows)
-
-		# 1. Check for Convoy Hover (prioritize so convoy label shows if on a settlement tile)
-		if not _all_convoy_data.is_empty():
-			for convoy_data in _all_convoy_data:
-				if not convoy_data is Dictionary: continue
-
-				var convoy_map_x: float = convoy_data.get('x', -1.0)
-				var convoy_map_y: float = convoy_data.get('y', -1.0)
-				var convoy_id = convoy_data.get('convoy_id')
-
-				if convoy_map_x >= 0.0 and convoy_map_y >= 0.0 and convoy_id != null:  # Ensure consistent spacing and float comparison
-					# Calculate convoy's center pixel position on the unscaled map texture
-					# For more precise hover, that offset calculation would need to be mirrored or results stored.
-					var convoy_center_tex_x: float = (convoy_map_x + 0.5) * actual_tile_width_on_texture
-					var convoy_center_tex_y: float = (convoy_map_y + 0.5) * actual_tile_height_on_texture
-
-					var dx = mouse_on_texture_x - convoy_center_tex_x
-					var dy = mouse_on_texture_y - convoy_center_tex_y
-					var distance_sq = (dx * dx) + (dy * dy)
-					# print('Main: Checking convoy hover for: ', convoy_id, ' at map(', convoy_map_x, ',', convoy_map_y, ') tex(', convoy_center_tex_x, ',', convoy_center_tex_y, ') mouse_dist_sq: ', distance_sq)  # DEBUG
-
-					if distance_sq < CONVOY_HOVER_RADIUS_ON_TEXTURE_SQ:
-						new_hover_info = {'type': 'convoy', 'id': convoy_id}
-						found_hover_element = true
-						print('Main: Convoy HOVERED: ', new_hover_info)  # DEBUG
-						break
-
-		# 2. Check for Settlement Hover (if no convoy was hovered)
-		if not found_hover_element:
-			var closest_settlement_dist_sq: float = SETTLEMENT_HOVER_RADIUS_ON_TEXTURE_SQ + 1.0  # Start greater than radius
-			var best_hovered_settlement_coords: Vector2i = Vector2i(-1, -1)
-
-			for settlement_info in _all_settlement_data:
-				if not settlement_info is Dictionary: continue
-
-				var settlement_tile_x: int = settlement_info.get('x', -1)
-				var settlement_tile_y: int = settlement_info.get('y', -1)
-
-				if settlement_tile_x >= 0 and settlement_tile_y >= 0:
-					# Calculate settlement's center pixel position on the unscaled map texture
-					var settlement_center_tex_x: float = (float(settlement_tile_x) + 0.5) * actual_tile_width_on_texture
-					var settlement_center_tex_y: float = (float(settlement_tile_y) + 0.5) * actual_tile_height_on_texture
-
-					var dx_settlement = mouse_on_texture_x - settlement_center_tex_x
-					var dy_settlement = mouse_on_texture_y - settlement_center_tex_y
-					var distance_sq_settlement = (dx_settlement * dx_settlement) + (dy_settlement * dy_settlement)
-
-					if distance_sq_settlement < SETTLEMENT_HOVER_RADIUS_ON_TEXTURE_SQ:
-						if distance_sq_settlement < closest_settlement_dist_sq:  # Is this closer than a previously found settlement?
-							closest_settlement_dist_sq = distance_sq_settlement
-							best_hovered_settlement_coords = Vector2i(settlement_tile_x, settlement_tile_y)
-							found_hover_element = true  # Mark that we found at least one
-
-			if found_hover_element and best_hovered_settlement_coords.x != -1:  # Check if a valid settlement was found
-				new_hover_info = {
-					'type': 'settlement',
-					'coords': best_hovered_settlement_coords
-				}
-				print('Main: Settlement HOVERED (closest): ', new_hover_info)  # DEBUG
-
-
-		# Update map if hover state changed
-		if new_hover_info != _current_hover_info:
-			# print('Main: Hover changed! new_hover_info: ', new_hover_info, ' _current_hover_info was: ', _current_hover_info)  # DEBUG
-			_current_hover_info = new_hover_info
-			# Update only the hover labels based on the new state
-			_update_hover_labels()
-
-	elif event is InputEventMouseButton:
-		if event.button_index == MOUSE_BUTTON_LEFT and not event.pressed: # Left click released
+			_dragging_panel_node.position = new_panel_pos
+			_convoy_label_user_positions[_dragging_panel_node.name] = new_panel_pos # Store the ID from panel name
+			# Children of _dragging_panel_node will move with it automatically. No _update_hover_labels() here.
+		else: # Not dragging (or button not held), so process hover
 			var local_mouse_pos = map_display.get_local_mouse_position()
 
+			# --- Convert local_mouse_pos to map texture coordinates ---
 			var map_texture_size: Vector2 = map_display.texture.get_size()
 			var map_display_rect_size: Vector2 = map_display.size
 			if map_texture_size.x == 0 or map_texture_size.y == 0: return
@@ -1322,30 +1331,140 @@ func _input(event: InputEvent) -> void:  # Renamed from _gui_input
 			var mouse_on_texture_x = (local_mouse_pos.x - offset_x) / actual_scale
 			var mouse_on_texture_y = (local_mouse_pos.y - offset_y) / actual_scale
 
-			var clicked_on_convoy_id: String = ""
+			var new_hover_info: Dictionary = {}
+			var found_hover_element: bool = false
+
+			if map_tiles.is_empty() or not map_tiles[0] is Array or map_tiles[0].is_empty():
+				return  # Cannot determine tile dimensions
+
+			var map_cols: int = map_tiles[0].size()
+			var map_rows: int = map_tiles.size()
+			var actual_tile_width_on_texture: float = map_texture_size.x / float(map_cols)
+			var actual_tile_height_on_texture: float = map_texture_size.y / float(map_rows)
+
+			# 1. Check for Convoy Hover
 			if not _all_convoy_data.is_empty():
-				var actual_tile_width_on_texture: float = map_texture_size.x / float(map_tiles[0].size()) # Assuming map_tiles is not empty
-				var actual_tile_height_on_texture: float = map_texture_size.y / float(map_tiles.size())
 				for convoy_data in _all_convoy_data:
 					if not convoy_data is Dictionary: continue
-					var convoy_map_x: float = convoy_data.get("x", -1.0)
-					var convoy_map_y: float = convoy_data.get("y", -1.0)
-					var convoy_center_tex_x: float = (convoy_map_x + 0.5) * actual_tile_width_on_texture
-					var convoy_center_tex_y: float = (convoy_map_y + 0.5) * actual_tile_height_on_texture
-					var dx = mouse_on_texture_x - convoy_center_tex_x
-					var dy = mouse_on_texture_y - convoy_center_tex_y
-					if (dx * dx) + (dy * dy) < CONVOY_HOVER_RADIUS_ON_TEXTURE_SQ: # Using hover radius for click
-						clicked_on_convoy_id = convoy_data.get("convoy_id", "")
-						break
+					var convoy_map_x: float = convoy_data.get('x', -1.0)
+					var convoy_map_y: float = convoy_data.get('y', -1.0)
+					var convoy_id = convoy_data.get('convoy_id')
+					if convoy_map_x >= 0.0 and convoy_map_y >= 0.0 and convoy_id != null:
+						var convoy_center_tex_x: float = (convoy_map_x + 0.5) * actual_tile_width_on_texture
+						var convoy_center_tex_y: float = (convoy_map_y + 0.5) * actual_tile_height_on_texture
+						var dx = mouse_on_texture_x - convoy_center_tex_x
+						var dy = mouse_on_texture_y - convoy_center_tex_y
+						if (dx * dx) + (dy * dy) < CONVOY_HOVER_RADIUS_ON_TEXTURE_SQ:
+							new_hover_info = {'type': 'convoy', 'id': convoy_id}
+							found_hover_element = true
+							break
 
-			if not clicked_on_convoy_id.is_empty(): # Clicked on a convoy
-				if _selected_convoy_ids.has(clicked_on_convoy_id):
-					_selected_convoy_ids.erase(clicked_on_convoy_id) # Untoggle if already selected
-				else:
-					_selected_convoy_ids.append(clicked_on_convoy_id) # Toggle on if not selected
-			# Clicking on map background no longer clears all selections by default.
-			# To clear all, you might need a separate button or a different click condition (e.g., right-click).
-			_update_hover_labels() # Update display based on new selection state
+			# 2. Check for Settlement Hover (if no convoy was hovered)
+			if not found_hover_element:
+				var closest_settlement_dist_sq: float = SETTLEMENT_HOVER_RADIUS_ON_TEXTURE_SQ + 1.0
+				var best_hovered_settlement_coords: Vector2i = Vector2i(-1, -1)
+				for settlement_info in _all_settlement_data:
+					if not settlement_info is Dictionary: continue
+					var settlement_tile_x: int = settlement_info.get('x', -1)
+					var settlement_tile_y: int = settlement_info.get('y', -1)
+					if settlement_tile_x >= 0 and settlement_tile_y >= 0:
+						var settlement_center_tex_x: float = (float(settlement_tile_x) + 0.5) * actual_tile_width_on_texture
+						var settlement_center_tex_y: float = (float(settlement_tile_y) + 0.5) * actual_tile_height_on_texture
+						var dx_settlement = mouse_on_texture_x - settlement_center_tex_x
+						var dy_settlement = mouse_on_texture_y - settlement_center_tex_y
+						var distance_sq_settlement = (dx_settlement * dx_settlement) + (dy_settlement * dy_settlement)
+						if distance_sq_settlement < SETTLEMENT_HOVER_RADIUS_ON_TEXTURE_SQ:
+							if distance_sq_settlement < closest_settlement_dist_sq:
+								closest_settlement_dist_sq = distance_sq_settlement
+								best_hovered_settlement_coords = Vector2i(settlement_tile_x, settlement_tile_y)
+								found_hover_element = true
+				if found_hover_element and best_hovered_settlement_coords.x != -1:
+					new_hover_info = {'type': 'settlement', 'coords': best_hovered_settlement_coords}
+
+			# Update map if hover state changed
+			if new_hover_info != _current_hover_info:
+				_current_hover_info = new_hover_info
+				_update_hover_labels()
+
+	elif event is InputEventMouseButton:
+		if event.button_index == MOUSE_BUTTON_LEFT:
+			if event.pressed: # Mouse button DOWN
+				# Check if clicking on an expanded (selected) convoy label panel to START a drag
+				print("Checking for drag start click on convoy panels...") # DEBUG
+				if is_instance_valid(_convoy_label_container):
+					for node in _convoy_label_container.get_children():
+						if node is Panel and node.get_global_rect().has_point(get_global_mouse_position()):
+							var panel_node: Panel = node
+							var panel_global_rect = panel_node.get_global_rect()
+							var global_mouse_pos = get_global_mouse_position()
+							print("  Checking Panel: %s, Global Rect: %s, Mouse Pos: %s" % [panel_node.name, panel_global_rect, global_mouse_pos]) # DEBUG
+							# This inner if was already there, just ensuring the following lines are correctly indented under it.
+							if panel_global_rect.has_point(global_mouse_pos): 
+								var convoy_id_of_panel = panel_node.name # Name should be convoy_id
+								if _selected_convoy_ids.has(convoy_id_of_panel): # Only draggable if expanded/selected
+									_dragging_panel_node = panel_node
+									_drag_offset = get_global_mouse_position() - panel_node.position
+									Input.set_default_cursor_shape(Input.CURSOR_DRAG)
+									# Bring to front (optional, but good for visual feedback)
+									if is_instance_valid(_convoy_label_container) and _dragging_panel_node.get_parent() == _convoy_label_container:
+										_convoy_label_container.move_child(_dragging_panel_node, _convoy_label_container.get_child_count() - 1) # Move to last, draws on top
+									# print("Main: Started dragging panel: ", convoy_id_of_panel) # DEBUG
+									print("  Convoy %s is selected. Initiating drag." % [convoy_id_of_panel]) # DEBUG - Changed from f-string
+
+									get_viewport().set_input_as_handled() # Consume the event so map icon click doesn't fire
+									return # Consume click, starting a drag
+			elif not event.pressed: # Mouse button RELEASED
+				if _dragging_panel_node != null: # If we were dragging, finalize drag
+					# print("Main: Finished dragging panel: ", _dragging_panel_node.name) # DEBUG
+					_dragging_panel_node = null
+					Input.set_default_cursor_shape(Input.CURSOR_ARROW)
+					_update_hover_labels() # Call once at the end of drag to ensure anti-collision with other labels is re-checked if needed
+					get_viewport().set_input_as_handled() # Consume the event
+					return # Consume this click release if it was ending a drag
+				else: # This is a simple click release (not a drag release)
+					# Proceed with map icon click logic for toggling selection
+					var local_mouse_pos = map_display.get_local_mouse_position()
+
+					var map_texture_size: Vector2 = map_display.texture.get_size()
+					var map_display_rect_size: Vector2 = map_display.size
+					if map_texture_size.x == 0 or map_texture_size.y == 0: return
+
+					var scale_x_ratio: float = map_display_rect_size.x / map_texture_size.x
+					var scale_y_ratio: float = map_display_rect_size.y / map_texture_size.y
+					var actual_scale: float = min(scale_x_ratio, scale_y_ratio)
+					var displayed_texture_width: float = map_texture_size.x * actual_scale
+					var displayed_texture_height: float = map_texture_size.y * actual_scale
+					var offset_x: float = (map_display_rect_size.x - displayed_texture_width) / 2.0
+					var offset_y: float = (map_display_rect_size.y - displayed_texture_height) / 2.0
+
+					var mouse_on_texture_x = (local_mouse_pos.x - offset_x) / actual_scale
+					var mouse_on_texture_y = (local_mouse_pos.y - offset_y) / actual_scale
+
+					var clicked_on_convoy_id: String = ""
+					if not _all_convoy_data.is_empty():
+						var actual_tile_width_on_texture: float = map_texture_size.x / float(map_tiles[0].size()) # Assuming map_tiles is not empty
+						var actual_tile_height_on_texture: float = map_texture_size.y / float(map_tiles.size())
+						for convoy_data in _all_convoy_data:
+							if not convoy_data is Dictionary: continue
+							var convoy_map_x: float = convoy_data.get("x", -1.0)
+							var convoy_map_y: float = convoy_data.get("y", -1.0)
+							var convoy_center_tex_x: float = (convoy_map_x + 0.5) * actual_tile_width_on_texture
+							var convoy_center_tex_y: float = (convoy_map_y + 0.5) * actual_tile_height_on_texture
+							var dx = mouse_on_texture_x - convoy_center_tex_x
+							var dy = mouse_on_texture_y - convoy_center_tex_y
+							if (dx * dx) + (dy * dy) < CONVOY_HOVER_RADIUS_ON_TEXTURE_SQ: # Using hover radius for click
+								clicked_on_convoy_id = convoy_data.get("convoy_id", "")
+								break
+
+					if not clicked_on_convoy_id.is_empty(): # Clicked on a convoy map icon
+						if _selected_convoy_ids.has(clicked_on_convoy_id):
+							_selected_convoy_ids.erase(clicked_on_convoy_id) # Untoggle if already selected
+							_convoy_label_user_positions.erase(clicked_on_convoy_id) # Clear user position on deselect
+						else:
+							_selected_convoy_ids.append(clicked_on_convoy_id) # Toggle on if not selected
+						_update_hover_labels() # Update display based on new selection state
+						get_viewport().set_input_as_handled() # Consume the click event
+					# If clicked_on_convoy_id is empty, we just do nothing, which is the desired behavior.
 
 
 func _update_refresh_notification_position():
