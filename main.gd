@@ -1411,7 +1411,7 @@ func _input(event: InputEvent) -> void:  # Renamed from _gui_input
 									# Bring to front (optional, but good for visual feedback)
 									if is_instance_valid(_convoy_label_container) and _dragging_panel_node.get_parent() == _convoy_label_container:
 										_convoy_label_container.move_child(_dragging_panel_node, _convoy_label_container.get_child_count() - 1) # Move to last, draws on top
-									
+
 									# --- Calculate and store clamping bounds (in global coordinates) for this drag session ---
 									if is_instance_valid(map_display) and is_instance_valid(map_display.texture):
 										var map_texture_size_drag: Vector2 = map_display.texture.get_size()
@@ -1427,7 +1427,7 @@ func _input(event: InputEvent) -> void:  # Renamed from _gui_input
 											# offset_x_drag/offset_y_drag are offsets of the *texture* within the *map_display control*
 											var offset_x_texture_in_map_display: float = (map_display_rect_size_drag.x - displayed_texture_width_drag) / 2.0
 											var offset_y_texture_in_map_display: float = (map_display_rect_size_drag.y - displayed_texture_height_drag) / 2.0
-											
+
 											_current_drag_clamp_rect = Rect2(
 												map_display_global_origin.x + offset_x_texture_in_map_display + LABEL_MAP_EDGE_PADDING,
 												map_display_global_origin.y + offset_y_texture_in_map_display + LABEL_MAP_EDGE_PADDING,
@@ -1441,7 +1441,7 @@ func _input(event: InputEvent) -> void:  # Renamed from _gui_input
 
 									get_viewport().set_input_as_handled() # Consume the event so map icon click doesn't fire
 									return # Consume click, starting a drag
-				
+
 				# If we reached here and didn't start a drag, the click was on the map or a non-draggable element.
 				# The event will fall through to be handled by map icon click logic if not consumed.
 				# No explicit 'else' needed here if we only 'return' when a drag starts.
