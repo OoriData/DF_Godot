@@ -186,11 +186,13 @@ func parse_in_transit_convoy_details(raw_convoy_list: Array) -> Array:
 				if vehicle_data is Dictionary:
 					var single_vehicle_details: Dictionary = {}
 					single_vehicle_details['name'] = vehicle_data.get('name', 'Unknown Vehicle')
+					single_vehicle_details['make_model'] = vehicle_data.get('make_model', 'Unknown Make/Model')
 					# The 'description' at the vehicle level seems like a good summary
 					single_vehicle_details['description'] = vehicle_data.get('description', 'No description available.')
 					single_vehicle_details['efficiency'] = vehicle_data.get('efficiency', 0.0)
 					single_vehicle_details['top_speed'] = vehicle_data.get('top_speed', 0.0)
 					single_vehicle_details['offroad_capability'] = vehicle_data.get('offroad_capability', 0.0)
+					single_vehicle_details['cargo'] = vehicle_data.get('cargo', [])
 					vehicle_details_list.append(single_vehicle_details)
 		convoy_details['vehicle_details_list'] = vehicle_details_list
 
