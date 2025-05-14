@@ -1431,28 +1431,14 @@ func _input(event: InputEvent) -> void:  # Renamed from _gui_input
 										_convoy_label_container.move_child(_dragging_panel_node, _convoy_label_container.get_child_count() - 1)
 
 									# --- Calculate and store clamping bounds (in global coordinates) for this drag session ---
-									if is_instance_valid(map_display) and is_instance_valid(map_display.texture):
-										var map_texture_size_drag: Vector2 = map_display.texture.get_size()
-										var map_display_rect_size_drag: Vector2 = map_display.size
-										var map_display_global_origin: Vector2 = map_display.global_position
-
-										if map_texture_size_drag.x > 0 and map_texture_size_drag.y > 0:
-											var scale_x_ratio_drag: float = map_display_rect_size_drag.x / map_texture_size_drag.x
-											var scale_y_ratio_drag: float = map_display_rect_size_drag.y / map_texture_size_drag.y
-											var actual_scale_drag: float = min(scale_x_ratio_drag, scale_y_ratio_drag)
-											var displayed_texture_width_drag: float = map_texture_size_drag.x * actual_scale_drag
-											var displayed_texture_height_drag: float = map_texture_size_drag.y * actual_scale_drag
-											var offset_x_texture_in_map_display: float = (map_display_rect_size_drag.x - displayed_texture_width_drag) / 2.0
-											var offset_y_texture_in_map_display: float = (map_display_rect_size_drag.y - displayed_texture_height_drag) / 2.0
-											
-											_current_drag_clamp_rect = Rect2(
-												map_display_global_origin.x + offset_x_texture_in_map_display + LABEL_MAP_EDGE_PADDING,
-												map_display_global_origin.y + offset_y_texture_in_map_display + LABEL_MAP_EDGE_PADDING,
-												displayed_texture_width_drag - (2 * LABEL_MAP_EDGE_PADDING),
-												displayed_texture_height_drag - (2 * LABEL_MAP_EDGE_PADDING)
-											)
-										else: _current_drag_clamp_rect = Rect2()
-									else: _current_drag_clamp_rect = Rect2()
+									# Clamp to the viewport boundaries, with padding
+									var viewport_rect = get_viewport_rect()
+									_current_drag_clamp_rect = Rect2(
+										viewport_rect.position.x + LABEL_MAP_EDGE_PADDING,
+										viewport_rect.position.y + LABEL_MAP_EDGE_PADDING,
+										viewport_rect.size.x - (2 * LABEL_MAP_EDGE_PADDING),
+										viewport_rect.size.y - (2 * LABEL_MAP_EDGE_PADDING)
+									)
 									
 									print("  Convoy %s is selected. Initiating drag." % [convoy_id_of_panel])
 									clicked_on_draggable_panel = true # Flag that a drag has started
