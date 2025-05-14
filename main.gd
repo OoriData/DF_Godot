@@ -210,6 +210,13 @@ func _ready():
 		map_display.position = Vector2.ZERO
 		map_display.size = get_viewport_rect().size
 
+	# Set Z-indices for global drawing order
+	# Higher z_index is drawn on top.
+	if is_instance_valid(detailed_view_toggle):
+		detailed_view_toggle.z_index = 0 # Base level
+	if is_instance_valid(map_display):
+		map_display.z_index = 1 # Map and its labels above the toggle
+
 	_update_map_display() # Now render the map with map_display correctly sized
 
 	# Connect to the viewport's size_changed signal to re-render on window resize
@@ -251,6 +258,7 @@ func _ready():
 	_refresh_notification_label.add_theme_color_override('font_outline_color', Color.BLACK)
 	_refresh_notification_label.add_theme_constant_override('outline_size', 2)
 	_refresh_notification_label.modulate.a = 0.0  # Start invisible
+	_refresh_notification_label.z_index = 10 # Ensure notification is on top of everything
 	_refresh_notification_label.name = 'RefreshNotificationLabel'
 	add_child(_refresh_notification_label)  # Add as a direct child of this Node2D
 	_update_refresh_notification_position()  # Set initial position
@@ -289,6 +297,10 @@ func _on_viewport_size_changed():
 
 
 func _update_map_display():
+	if is_instance_valid(_dragging_panel_node): # If a panel is being dragged, do not update the map display
+		# print("Main: Drag in progress, skipping _update_map_display") # DEBUG
+		return
+
 	# print('Main: _update_map_display() called.')  # DEBUG - Can be very noisy
 	if map_tiles.is_empty():
 		printerr('Cannot update map display: map_tiles is empty.')
@@ -416,6 +428,10 @@ func _on_visual_update_timer_timeout() -> void:
 
 
 func _update_hover_labels():
+	if is_instance_valid(_dragging_panel_node): # If a panel is being dragged, do not update any labels
+		# print("Main: Drag in progress, skipping _update_hover_labels") # DEBUG
+		return
+
 	# Clear all existing hover labels
 	if is_instance_valid(_convoy_label_container):
 		# If a panel is being dragged, don't clear it.
@@ -1304,7 +1320,7 @@ func _input(event: InputEvent) -> void:  # Renamed from _gui_input
 			_dragging_panel_node.global_position = new_global_panel_pos
 			# _convoy_label_user_positions stores the local position relative to _convoy_label_container
 			_convoy_label_user_positions[_dragging_panel_node.name] = _dragging_panel_node.position # Store the local position
-			# Children of _dragging_panel_node will move with it automatically. No _update_hover_labels() here.
+			return # Consume the mouse motion event to prevent hover logic during drag
 		else: # Not dragging (or button not held), so process hover
 			var local_mouse_pos = map_display.get_local_mouse_position()
 
@@ -1396,26 +1412,26 @@ func _input(event: InputEvent) -> void:  # Renamed from _gui_input
 				# Check if clicking on an expanded (selected) convoy label panel to START a drag
 				print('Checking for drag start click on convoy panels...')  # DEBUG
 				if is_instance_valid(_convoy_label_container):
-					for node in _convoy_label_container.get_children():
-						if node is Panel and node.get_global_rect().has_point(event.global_position):  # Use event.global_position
-							var panel_node_candidate: Panel = node
-							var panel_global_rect = panel_node_candidate.get_global_rect()  # Define panel_global_rect HERE
-							# This inner if was already there, just ensuring the following lines are correctly indented under it.
-							if panel_global_rect.has_point(event.global_position):
-								var convoy_id_of_panel = panel_node_candidate.name  # Name should be convoy_id
-								if _selected_convoy_ids.has(convoy_id_of_panel):  # Only draggable if expanded/selected
+					# Iterate from top-most to bottom-most child visually
+					for i in range(_convoy_label_container.get_child_count() - 1, -1, -1):
+						var node = _convoy_label_container.get_child(i)
+						if node is Panel:
+							var panel_node_candidate: Panel = node # Cast to Panel
+							if panel_node_candidate.get_global_rect().has_point(event.global_position):
+								var convoy_id_of_panel = panel_node_candidate.name # Name should be convoy_id
+								if _selected_convoy_ids.has(convoy_id_of_panel): # Only draggable if expanded/selected
 									_dragging_panel_node = panel_node_candidate
-									# _drag_offset is the vector from the mouse click point to the panel's origin (top-left)
 									_drag_offset = _dragging_panel_node.global_position - event.global_position
 									Input.set_default_cursor_shape(Input.CURSOR_DRAG)
-									# Bring to front (optional, but good for visual feedback)
-									if is_instance_valid(_convoy_label_container) and _dragging_panel_node.get_parent() == _convoy_label_container:
-										_convoy_label_container.move_child(_dragging_panel_node, _convoy_label_container.get_child_count() - 1) # Move to last, draws on top
+									
+									# Bring to front (it's already last due to reverse iteration, but explicit move_child ensures it if order changed)
+									if _dragging_panel_node.get_parent() == _convoy_label_container: # Check parent just in case
+										_convoy_label_container.move_child(_dragging_panel_node, _convoy_label_container.get_child_count() - 1)
 
 									# --- Calculate and store clamping bounds (in global coordinates) for this drag session ---
 									if is_instance_valid(map_display) and is_instance_valid(map_display.texture):
 										var map_texture_size_drag: Vector2 = map_display.texture.get_size()
-										var map_display_rect_size_drag: Vector2 = map_display.size  # Size of the TextureRect control
+										var map_display_rect_size_drag: Vector2 = map_display.size
 										var map_display_global_origin: Vector2 = map_display.global_position
 
 										if map_texture_size_drag.x > 0 and map_texture_size_drag.y > 0:
@@ -1424,22 +1440,22 @@ func _input(event: InputEvent) -> void:  # Renamed from _gui_input
 											var actual_scale_drag: float = min(scale_x_ratio_drag, scale_y_ratio_drag)
 											var displayed_texture_width_drag: float = map_texture_size_drag.x * actual_scale_drag
 											var displayed_texture_height_drag: float = map_texture_size_drag.y * actual_scale_drag
-											# offset_x_drag/offset_y_drag are offsets of the *texture* within the *map_display control*
 											var offset_x_texture_in_map_display: float = (map_display_rect_size_drag.x - displayed_texture_width_drag) / 2.0
 											var offset_y_texture_in_map_display: float = (map_display_rect_size_drag.y - displayed_texture_height_drag) / 2.0
-
+											
 											_current_drag_clamp_rect = Rect2(
 												map_display_global_origin.x + offset_x_texture_in_map_display + LABEL_MAP_EDGE_PADDING,
 												map_display_global_origin.y + offset_y_texture_in_map_display + LABEL_MAP_EDGE_PADDING,
 												displayed_texture_width_drag - (2 * LABEL_MAP_EDGE_PADDING),
 												displayed_texture_height_drag - (2 * LABEL_MAP_EDGE_PADDING)
 											)
-										else: _current_drag_clamp_rect = Rect2()  # Invalid texture size
-									else: _current_drag_clamp_rect = Rect2()  # Invalid map_display or texture
-									print("  Convoy %s is selected. Initiating drag." % [convoy_id_of_panel]) # DEBUG - Changed from f-string
-									clicked_on_draggable_panel = true
+										else: _current_drag_clamp_rect = Rect2()
+									else: _current_drag_clamp_rect = Rect2()
+									
+									print("  Convoy %s is selected. Initiating drag." % [convoy_id_of_panel])
+									clicked_on_draggable_panel = true # Flag that a drag has started
 
-									get_viewport().set_input_as_handled() # Consume the event so map icon click doesn't fire
+									get_viewport().set_input_as_handled()
 									return # Consume click, starting a drag
 
 				# If we reached here and didn't start a drag, the click was on the map or a non-draggable element.
@@ -1452,7 +1468,7 @@ func _input(event: InputEvent) -> void:  # Renamed from _gui_input
 					_convoy_label_user_positions[_dragging_panel_node.name] = _dragging_panel_node.position  # Ensure local position is stored
 					_dragging_panel_node = null
 					Input.set_default_cursor_shape(Input.CURSOR_ARROW)
-					_update_hover_labels() # Call once at the end of drag to ensure anti-collision with other labels is re-checked if needed
+					call_deferred("_update_hover_labels") # Defer update until idle frame for stability
 					get_viewport().set_input_as_handled() # Consume the event
 					return # Consume this click release if it was ending a drag
 				else: # This is a simple click release (not a drag release)
