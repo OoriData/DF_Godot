@@ -21,10 +21,11 @@ var _all_convoy_data: Array = []  # To store convoy data from APICalls
 var _refresh_timer: Timer
 const REFRESH_INTERVAL_SECONDS: float = 60.0  # Changed to 3 minutes
 var _visual_update_timer: Timer
-const VISUAL_UPDATE_INTERVAL_SECONDS: float = .5  # e.g., 20 FPS for visual updates
+const VISUAL_UPDATE_INTERVAL_SECONDS: float = 0.05  # 20 FPS for visual updates (1.0 / 20.0)
 var _throb_phase: float = 0.0  # Cycles 0.0 to 1.0 for a 1-second throb
 var _convoy_label_container: Node2D
 var _settlement_label_container: Node2D  # New container for settlement labels
+var _convoy_connector_lines_container: Node2D # For drawing lines from convoy icons to panels
 var _label_settings: LabelSettings
 var _settlement_label_settings: LabelSettings
 var _refresh_notification_label: Label  # For the "Data Refreshed" notification
@@ -82,7 +83,12 @@ var show_detailed_view: bool = true  # Single flag for toggling detailed map fea
 var _dragging_panel_node: Panel = null  # Panel currently being dragged
 var _drag_offset: Vector2 = Vector2.ZERO  # Mouse offset from panel's top-left during drag
 var _convoy_label_user_positions: Dictionary = {}  # Stores user-set positions: { 'convoy_id': Vector2(x,y) }
+var _dragged_convoy_id_actual_str: String = "" # Stores the actual convoy ID string of the panel being dragged
 var _current_drag_clamp_rect: Rect2  # Stores the calculated clamping rect (in global coords) for the current drag operation
+
+# --- Connector Line constants ---
+const CONNECTOR_LINE_COLOR: Color = Color(0.9, 0.9, 0.9, 0.6) # Semi-transparent light grey
+const CONNECTOR_LINE_WIDTH: float = 1.5 # Screen pixels
 
 # Emojis for labels
 const CONVOY_STAT_EMOJIS: Dictionary = {
@@ -118,6 +124,12 @@ func _ready():
 		_settlement_label_container = Node2D.new()  # Create settlement label container
 		_settlement_label_container.name = 'SettlementLabelContainer'
 		map_display.add_child(_settlement_label_container)  # Add it as a child
+
+		# Create a container for connector lines, drawn after settlements but before convoy labels
+		_convoy_connector_lines_container = Node2D.new()
+		_convoy_connector_lines_container.name = "ConvoyConnectorLinesContainer"
+		map_display.add_child(_convoy_connector_lines_container)
+		_convoy_connector_lines_container.draw.connect(_on_connector_lines_container_draw)
 
 		# Create a container for convoy labels as a child of MapDisplay, added after settlements
 		_convoy_label_container = Node2D.new()
@@ -214,10 +226,11 @@ func _ready():
 
 	# Set Z-indices for global drawing order
 	# Higher z_index is drawn on top.
-	if is_instance_valid(detailed_view_toggle):
-		detailed_view_toggle.z_index = 0 # Base level
 	if is_instance_valid(map_display):
 		map_display.z_index = 1 # Map and its labels above the toggle
+	if is_instance_valid(detailed_view_toggle):
+		detailed_view_toggle.z_index = 2 # Make toggle appear on top of the map_display
+
 
 	_update_map_display() # Now render the map with map_display correctly sized
 
@@ -360,6 +373,8 @@ func _update_map_display():
 
 	# Update labels based on hover state
 	_update_hover_labels()
+	if is_instance_valid(_convoy_connector_lines_container):
+		_convoy_connector_lines_container.queue_redraw()
 
 
 func _on_convoy_data_received(data: Variant) -> void:
@@ -382,13 +397,14 @@ func _on_convoy_data_received(data: Variant) -> void:
 	# Update convoy ID to color mapping
 	for convoy_item in _all_convoy_data:
 		if convoy_item is Dictionary:
-			var convoy_id = convoy_item.get('convoy_id')
-			if convoy_id and not convoy_id.is_empty():  # Ensure convoy_id is valid
-				if not _convoy_id_to_color_map.has(convoy_id):
+			var convoy_id_val = convoy_item.get('convoy_id')
+			if convoy_id_val != null: # Check for null, as ID could be 0
+				var convoy_id_str = str(convoy_id_val)
+				if not convoy_id_str.is_empty() and not _convoy_id_to_color_map.has(convoy_id_str):
 					# This convoy ID is new, assign it the next available color
 					_last_assigned_color_idx = (_last_assigned_color_idx + 1) % PREDEFINED_CONVOY_COLORS.size()
-					_convoy_id_to_color_map[convoy_id] = PREDEFINED_CONVOY_COLORS[_last_assigned_color_idx]
-
+					_convoy_id_to_color_map[convoy_id_str] = PREDEFINED_CONVOY_COLORS[_last_assigned_color_idx]
+					
 	# Re-render the map with the new convoy data
 	_update_map_display()
 
@@ -426,7 +442,9 @@ func _on_visual_update_timer_timeout() -> void:
 	_throb_phase += VISUAL_UPDATE_INTERVAL_SECONDS
 	_throb_phase = fmod(_throb_phase, 1.0)  # Wrap around 1.0
 
-	_update_map_display()  # Re-render the map with the new throb phase
+	call_deferred("_update_map_display")  # Re-render the map with the new throb phase (deferred)
+	if is_instance_valid(_convoy_connector_lines_container):
+		_convoy_connector_lines_container.queue_redraw() # Also redraw lines if throb phase changes positions
 
 
 func _update_hover_labels():
@@ -456,9 +474,16 @@ func _update_hover_labels():
 	if not _selected_convoy_ids.is_empty():
 		for convoy_data in _all_convoy_data:
 			var convoy_id = convoy_data.get('convoy_id')
-			if convoy_id and _selected_convoy_ids.has(convoy_id):
+			var convoy_id_str = str(convoy_id) # Use string for lookup
+			if convoy_id != null and _selected_convoy_ids.has(convoy_id_str):
 				# If this convoy's panel is currently being dragged, skip redrawing it here.
-				if is_instance_valid(_dragging_panel_node) and _dragging_panel_node.name == convoy_id:
+				# Use _dragged_convoy_id_actual_str for comparison.
+				if is_instance_valid(_dragging_panel_node) and _dragged_convoy_id_actual_str == convoy_id_str:
+					# Add the existing dragged panel's rect to all_drawn_label_rects_this_update
+					# so other new labels can avoid it. Its position is local to _convoy_label_container.
+					if _dragging_panel_node.get_parent() == _convoy_label_container:
+						all_drawn_label_rects_this_update.append(Rect2(_dragging_panel_node.position, _dragging_panel_node.size))
+					drawn_convoy_ids_this_update.append(convoy_id_str) # Mark as "drawn" (handled)
 					continue
 				# STAGE 1a: Draw START/END settlement labels for this selected convoy
 				var journey_data: Dictionary = convoy_data.get('journey')
@@ -517,15 +542,21 @@ func _update_hover_labels():
 	if not _selected_convoy_ids.is_empty():
 		for convoy_data in _all_convoy_data:
 			var convoy_id = convoy_data.get('convoy_id')
-			if convoy_id and _selected_convoy_ids.has(convoy_id):
+			var convoy_id_str = str(convoy_id) # Use string for lookup
+			if convoy_id != null and _selected_convoy_ids.has(convoy_id_str):
 				# If this convoy's panel is currently being dragged, we've already skipped it above.
-				if is_instance_valid(_dragging_panel_node) and _dragging_panel_node.name == convoy_id:
+				# (This check is redundant if the above check for selected convoys already handles it,
+				# but kept for clarity in case logic changes. The important part is using _dragged_convoy_id_actual_str)
+				if is_instance_valid(_dragging_panel_node) and _dragged_convoy_id_actual_str == convoy_id_str:
 					continue
-				if not drawn_convoy_ids_this_update.has(convoy_id): # Avoid drawing twice if somehow selected and hovered
+				if not drawn_convoy_ids_this_update.has(convoy_id_str): # Avoid drawing twice if somehow selected and hovered
 					var convoy_panel_rect: Rect2 = _draw_single_convoy_label(convoy_data, all_drawn_label_rects_this_update)
+					# Ensure the panel's name and meta are set correctly after creation, even if add_child renames it.
+					# This is already done in _draw_single_convoy_label, so this is more of a conceptual note.
+
 					if convoy_panel_rect != Rect2(): # If a valid panel was drawn
 						all_drawn_label_rects_this_update.append(convoy_panel_rect) # Add its rect to the list for others to avoid
-					drawn_convoy_ids_this_update.append(convoy_id)
+					drawn_convoy_ids_this_update.append(convoy_id_str)
 
 	# STAGE 2b: Process HOVERED convoy (if not already drawn as selected)
 	if _current_hover_info.get('type') == 'convoy':
@@ -534,8 +565,12 @@ func _update_hover_labels():
 			if not drawn_convoy_ids_this_update.has(hovered_convoy_id): # Only draw if not already drawn as selected
 				# Only proceed to draw the hovered convoy label if it's NOT currently being dragged.
 				var should_draw_hovered_convoy = true
-				if is_instance_valid(_dragging_panel_node) and _dragging_panel_node.name == hovered_convoy_id:
+				if is_instance_valid(_dragging_panel_node) and _dragged_convoy_id_actual_str == hovered_convoy_id:
 					should_draw_hovered_convoy = false # Skip, it's being handled by drag
+					# Add its rect and mark as drawn, similar to selected convoys
+					if _dragging_panel_node.get_parent() == _convoy_label_container:
+						all_drawn_label_rects_this_update.append(Rect2(_dragging_panel_node.position, _dragging_panel_node.size))
+					drawn_convoy_ids_this_update.append(hovered_convoy_id)
 
 				if should_draw_hovered_convoy:
 					for convoy_data in _all_convoy_data:
@@ -544,6 +579,9 @@ func _update_hover_labels():
 							if convoy_panel_rect != Rect2(): # If a valid panel was drawn
 								all_drawn_label_rects_this_update.append(convoy_panel_rect)
 							break # Found the hovered convoy
+	
+	if is_instance_valid(_convoy_connector_lines_container):
+		_convoy_connector_lines_container.queue_redraw()
 
 # The following _update_..._labels functions are no longer used for hover labels
 # but contain the logic for creating individual labels. We'll extract that logic.
@@ -810,10 +848,11 @@ func _draw_single_convoy_label(convoy_data: Dictionary, existing_label_rects: Ar
 
 	var current_convoy_title_font_size: int = max(MIN_FONT_SIZE, roundi(BASE_CONVOY_TITLE_FONT_SIZE * font_render_scale))
 	# var current_convoy_detail_font_size: int = max(MIN_FONT_SIZE, roundi(BASE_CONVOY_DETAIL_FONT_SIZE * font_render_scale)) # No longer needed for label text
-
-	var current_convoy_id_for_offset_check = convoy_data.get('convoy_id') # Get ID for checking selection status
+	
+	var current_convoy_id_orig = convoy_data.get('convoy_id') # Original type
+	var current_convoy_id_str = str(current_convoy_id_orig) # String key for lookups
 	var current_horizontal_offset: float
-	if _selected_convoy_ids.has(current_convoy_id_for_offset_check):
+	if _selected_convoy_ids.has(current_convoy_id_str): # Use string key
 		current_horizontal_offset = BASE_SELECTED_CONVOY_HORIZONTAL_OFFSET * actual_scale
 	else:
 		current_horizontal_offset = BASE_HORIZONTAL_LABEL_OFFSET_FROM_CENTER * actual_scale
@@ -828,12 +867,11 @@ func _draw_single_convoy_label(convoy_data: Dictionary, existing_label_rects: Ar
 	# Extract additional details
 	var efficiency: float = convoy_data.get('efficiency', 0.0)
 	var convoy_map_x: float = convoy_data.get('x', 0.0) # Moved here for clarity
-	var current_convoy_id = convoy_data.get('convoy_id') # Declare once here
+	# current_convoy_id_str is already defined above
 	var top_speed: float = convoy_data.get('top_speed', 0.0)
 	var offroad_capability: float = convoy_data.get('offroad_capability', 0.0)
 	var convoy_name: String = convoy_data.get('convoy_name', 'N/A')
 	var journey_data: Dictionary = convoy_data.get('journey', {})
-	# var current_convoy_id = convoy_data.get('convoy_id') # Get current convoy_id for selection check - Already declared above
 	var convoy_map_y: float = convoy_data.get('y', 0.0) # Keep y for positioning calculations
 	var progress: float = journey_data.get('progress', 0.0)
 	# Format ETA
@@ -941,7 +979,7 @@ func _draw_single_convoy_label(convoy_data: Dictionary, existing_label_rects: Ar
 		progress_percentage_str = '%.1f%%' % percentage  # Format to one decimal place
 
 	var label_text: String
-	if _selected_convoy_ids.has(current_convoy_id): # Check if this convoy is selected
+	if _selected_convoy_ids.has(current_convoy_id_str): # Check if this convoy is selected (use string key)
 		# --- Detailed View ---
 		label_text = '%s\n' % convoy_name
 		label_text += 'Progress 🏁: %s | ETA: %s\n' % [progress_percentage_str, formatted_eta]
@@ -999,8 +1037,7 @@ func _draw_single_convoy_label(convoy_data: Dictionary, existing_label_rects: Ar
 	_label_settings.font_size = current_convoy_title_font_size
 
 	# Get the persistent color for this convoy
-	# var current_convoy_id = convoy_data.get('convoy_id') # Already declared above - Redundant declaration
-	var unique_convoy_color: Color = _convoy_id_to_color_map.get(current_convoy_id, Color.GRAY)  # Fallback to gray
+	var unique_convoy_color: Color = _convoy_id_to_color_map.get(current_convoy_id_str, Color.GRAY)  # Use string key
 
 	var label := Label.new()
 	if not is_instance_valid(label):
@@ -1047,8 +1084,11 @@ func _draw_single_convoy_label(convoy_data: Dictionary, existing_label_rects: Ar
 	style_box.corner_radius_bottom_left = current_panel_corner_radius
 	style_box.corner_radius_bottom_right = current_panel_corner_radius
 	panel.add_theme_stylebox_override('panel', style_box)
-	panel.mouse_filter = Control.MOUSE_FILTER_STOP # Ensure panel can receive mouse events
-	panel.name = str(current_convoy_id) # Use convoy_id as panel name for dragging/user_positions
+	panel.mouse_filter = Control.MOUSE_FILTER_STOP # Ensure panel can receive mouse events for dragging
+	# --- CRITICAL DEBUG for panel naming ---
+	print("Main: _draw_single_convoy_label - About to set panel name. current_convoy_id_orig type: ", typeof(current_convoy_id_orig), ", value: '", current_convoy_id_orig, "' for convoy_name: '", convoy_name, "'")
+	panel.name = current_convoy_id_str # Use string convoy_id as panel name
+	panel.set_meta("convoy_id_str", current_convoy_id_str) # Store string convoy_id in metadata
 
 	# Determine panel size and position based on label and indicator
 	# The initial global `label.position` is where the label's content (top-left) should be.
@@ -1082,9 +1122,9 @@ func _draw_single_convoy_label(convoy_data: Dictionary, existing_label_rects: Ar
 	panel.add_child(label)
 	# REMOVED: Adding indicator to panel
 
-	# If this convoy is selected AND has a user-defined position, use it and skip anti-collision.
-	if _selected_convoy_ids.has(current_convoy_id) and _convoy_label_user_positions.has(current_convoy_id):
-		panel.position = _convoy_label_user_positions[current_convoy_id] # Set panel's global position
+	# If this convoy is selected AND has a user-defined position (use string key), use it and skip anti-collision.
+	if _selected_convoy_ids.has(current_convoy_id_str) and _convoy_label_user_positions.has(current_convoy_id_str):
+		panel.position = _convoy_label_user_positions[current_convoy_id_str] # Set panel's global position
 		# print('Main: Using user position for convoy label: ', current_convoy_id, ' at ', panel.position) # DEBUG
 	else:
 		# Anti-collision logic (only if not using a user-defined position for the panel)
@@ -1143,7 +1183,17 @@ func _draw_single_convoy_label(convoy_data: Dictionary, existing_label_rects: Ar
 
 	# Add the fully assembled panel (with its children) to the main label container
 	_convoy_label_container.add_child(panel)
-	return Rect2(panel.position, panel.size) # Return the panel's final rect
+
+	# Now that the panel is in the tree and its local position is set,
+	# its global_position should be calculated by the engine. Use this for metadata.
+	panel.set_meta("intended_global_rect", Rect2(panel.global_position, panel.size))
+
+	# If this panel had a user-defined position (i.e., its ID is in the dictionary),
+	# update the stored user position with its final, potentially clamped, local position.
+	if _convoy_label_user_positions.has(current_convoy_id_str): # Use string key
+		_convoy_label_user_positions[current_convoy_id_str] = panel.position # Store with string key
+		
+	return Rect2(panel.position, panel.size) # Return the panel's final rect (local to _convoy_label_container)
 
 
 # New helper function to draw a single settlement label
@@ -1330,8 +1380,9 @@ func _input(event: InputEvent) -> void:  # Renamed from _gui_input
 				)
 
 			_dragging_panel_node.global_position = new_global_panel_pos
-			# _convoy_label_user_positions stores the local position relative to _convoy_label_container
-			_convoy_label_user_positions[_dragging_panel_node.name] = _dragging_panel_node.position # Store the local position
+			if is_instance_valid(_convoy_connector_lines_container):
+				_convoy_connector_lines_container.queue_redraw() # Redraw lines during drag
+			# User position will be finalized on mouse release and subsequent redraw.
 			return # Consume the mouse motion event to prevent hover logic during drag
 		else: # Not dragging (or button not held), so process hover
 			var local_mouse_pos = map_display.get_local_mouse_position()
@@ -1368,15 +1419,16 @@ func _input(event: InputEvent) -> void:  # Renamed from _gui_input
 				for convoy_data in _all_convoy_data:
 					if not convoy_data is Dictionary: continue
 					var convoy_map_x: float = convoy_data.get('x', -1.0)
-					var convoy_map_y: float = convoy_data.get('y', -1.0)
-					var convoy_id = convoy_data.get('convoy_id')
-					if convoy_map_x >= 0.0 and convoy_map_y >= 0.0 and convoy_id != null:
+					var convoy_map_y: float = convoy_data.get('y', -1.0)					
+					var convoy_id_val = convoy_data.get('convoy_id')
+					if convoy_map_x >= 0.0 and convoy_map_y >= 0.0 and convoy_id_val != null:
+						var convoy_id_str = str(convoy_id_val) # Use string for hover info
 						var convoy_center_tex_x: float = (convoy_map_x + 0.5) * actual_tile_width_on_texture
 						var convoy_center_tex_y: float = (convoy_map_y + 0.5) * actual_tile_height_on_texture
 						var dx = mouse_on_texture_x - convoy_center_tex_x
 						var dy = mouse_on_texture_y - convoy_center_tex_y
 						if (dx * dx) + (dy * dy) < CONVOY_HOVER_RADIUS_ON_TEXTURE_SQ:
-							new_hover_info = {'type': 'convoy', 'id': convoy_id}
+							new_hover_info = {'type': 'convoy', 'id': convoy_id_str} # Store string ID
 							found_hover_element = true
 							break
 
@@ -1405,7 +1457,9 @@ func _input(event: InputEvent) -> void:  # Renamed from _gui_input
 			# Update map if hover state changed
 			if new_hover_info != _current_hover_info:
 				_current_hover_info = new_hover_info
-				call_deferred("_update_hover_labels") # Defer this update for click stability
+				_update_hover_labels() # Update synchronously for potentially better next-click stability
+				if is_instance_valid(_convoy_connector_lines_container):
+					_convoy_connector_lines_container.queue_redraw()
 
 	elif event is InputEventMouseButton:
 		if event.button_index == MOUSE_BUTTON_LEFT:
@@ -1415,25 +1469,66 @@ func _input(event: InputEvent) -> void:  # Renamed from _gui_input
 				# --- DEBUG: Print click position and panel rects ---
 				print("--- Click at global: ", event.global_position, " ---")
 				if is_instance_valid(_convoy_label_container):
-					for node_debug in _convoy_label_container.get_children():
-						if node_debug is Panel:
-							var panel_debug: Panel = node_debug
-							print("Panel '%s' global_rect: %s. Contains click? %s" % [panel_debug.name, panel_debug.get_global_rect(), panel_debug.get_global_rect().has_point(event.global_position)])
+					for i_debug in range(_convoy_label_container.get_child_count() - 1, -1, -1): # Iterate top-down
+						var node_debug_check = _convoy_label_container.get_child(i_debug)
+						if node_debug_check is Panel:
+							var panel_debug: Panel = node_debug_check
+							if not is_instance_valid(panel_debug): continue
+							var actual_gr = panel_debug.get_global_rect()
+							var meta_gr = panel_debug.get_meta("intended_global_rect", "N/A") # Default to string "N/A" if not found
+							var meta_id = panel_debug.get_meta("convoy_id_str", "N/A")
+							print("Panel Name: '%s', MetaID: '%s' | Actual GR: %s, Meta GR: %s. Click (%s) in Actual GR? %s" % [
+								panel_debug.name, meta_id, actual_gr, meta_gr, event.global_position, actual_gr.has_point(event.global_position)
+							])
+							if meta_gr is Rect2: # Check if meta_gr is actually a Rect2
+								print("    Click (%s) in Meta GR? %s" % [event.global_position, meta_gr.has_point(event.global_position) ])
 				# --- END DEBUG ---
 
 				# Check if clicking on an expanded (selected) convoy label panel to START a drag
-				print('Checking for drag start click on convoy panels...')  # DEBUG
+				# print('Checking for drag start click on convoy panels...')  # DEBUG - Can be noisy, covered by above
 				if is_instance_valid(_convoy_label_container):
 					# Iterate from top-most to bottom-most child visually
 					for i in range(_convoy_label_container.get_child_count() - 1, -1, -1):
 						var node = _convoy_label_container.get_child(i)
 						if node is Panel:
 							var panel_node_candidate: Panel = node # Cast to Panel
-							if panel_node_candidate.get_global_rect().has_point(event.global_position):
-								var convoy_id_of_panel = panel_node_candidate.name # Name should be convoy_id
-								if _selected_convoy_ids.has(convoy_id_of_panel): # Only draggable if expanded/selected
+							if not is_instance_valid(panel_node_candidate):
+								continue # Skip this panel if it's no longer valid
+
+							# Try to use our 'intended_global_rect' from metadata if available, otherwise fallback.
+							var panel_rect_global = panel_node_candidate.get_meta("intended_global_rect", null) # Get meta, default to null
+							if not (panel_rect_global is Rect2): # If meta was not set or not a Rect2, fallback
+								# print("Panel '%s': Meta rect not found or invalid, falling back to get_global_rect()" % panel_node_candidate.name) # DEBUG
+								panel_rect_global = panel_node_candidate.get_global_rect()
+
+							# Grow the rectangle by 2 pixels on all sides for a more lenient hit test
+							var hit_test_rect = panel_rect_global.grow(2.0)
+
+							if hit_test_rect.has_point(event.global_position):
+								# Use metadata for the convoy ID as panel.name can be unreliable immediately after creation
+								var id_from_meta = panel_node_candidate.get_meta("convoy_id_str", "") # This is already a string
+								if id_from_meta.is_empty(): # Fallback, though ideally meta should always be there
+									id_from_meta = panel_node_candidate.name
+								# id_from_meta is now guaranteed to be a string (or empty)
+								if _selected_convoy_ids.has(id_from_meta): # Only draggable if expanded/selected
 									_dragging_panel_node = panel_node_candidate
-									_drag_offset = _dragging_panel_node.global_position - event.global_position
+									_dragged_convoy_id_actual_str = id_from_meta # Store the *correct* convoy ID
+
+									var panel_current_global_pos_for_offset: Vector2
+									# Prioritize the global position stored in metadata at the end of the last draw cycle.
+									# This should be the most stable "true" starting position.
+									var intended_rect = _dragging_panel_node.get_meta("intended_global_rect", null)
+									if intended_rect is Rect2:
+										panel_current_global_pos_for_offset = intended_rect.position
+									elif _convoy_label_user_positions.has(id_from_meta) and is_instance_valid(_convoy_label_container):
+										# Fallback: if metadata somehow missing, calculate from stored user local position.
+										# This should ideally be equivalent to intended_rect.position.
+										var user_local_pos = _convoy_label_user_positions[id_from_meta] # This is the final clamped local pos
+										panel_current_global_pos_for_offset = _convoy_label_container.to_global(user_local_pos)
+									else: # Further fallback: direct global_position (least preferred for consistency after redraws)
+										panel_current_global_pos_for_offset = _dragging_panel_node.global_position
+
+									_drag_offset = panel_current_global_pos_for_offset - event.global_position
 									Input.set_default_cursor_shape(Input.CURSOR_DRAG)
 									
 									# Bring to front (it's already last due to reverse iteration, but explicit move_child ensures it if order changed)
@@ -1450,7 +1545,7 @@ func _input(event: InputEvent) -> void:  # Renamed from _gui_input
 										viewport_rect.size.y - (2 * LABEL_MAP_EDGE_PADDING)
 									)
 									
-									print("  Convoy %s is selected. Initiating drag." % [convoy_id_of_panel])
+									print("  Convoy %s (from meta/name) is selected. Initiating drag." % [id_from_meta])
 									clicked_on_draggable_panel = true # Flag that a drag has started
 
 									get_viewport().set_input_as_handled()
@@ -1462,12 +1557,20 @@ func _input(event: InputEvent) -> void:  # Renamed from _gui_input
 
 			elif not event.pressed: # Mouse button RELEASED
 				if _dragging_panel_node != null: # If we were dragging, finalize drag
-					print('Main: Finished dragging panel: ', _dragging_panel_node.name)  # DEBUG
-					_convoy_label_user_positions[_dragging_panel_node.name] = _dragging_panel_node.position  # Ensure local position is stored
+					# Use the stored _dragged_convoy_id_actual_str as the key
+					if not _dragged_convoy_id_actual_str.is_empty():
+						_convoy_label_user_positions[_dragged_convoy_id_actual_str] = _dragging_panel_node.position
+						print('Main: Finished dragging. Stored position for ID \'%s\' at %s. Panel name was: \'%s\'' % [_dragged_convoy_id_actual_str, _dragging_panel_node.position, _dragging_panel_node.name])
+					else:
+						# This case should ideally not happen if drag started correctly
+						printerr('Main: Drag finished but _dragged_convoy_id_actual_str was empty. Panel name: \'%s\'. Position not reliably saved.' % _dragging_panel_node.name)
+
 					_dragging_panel_node = null
-					Input.set_default_cursor_shape(Input.CURSOR_ARROW)
-					call_deferred("_update_hover_labels") # Defer update until idle frame for stability
+					_dragged_convoy_id_actual_str = "" # Reset the stored ID
+					Input.set_default_cursor_shape(Input.CURSOR_ARROW) # Defer update until idle frame for stability
+					_update_hover_labels() # Update synchronously
 					get_viewport().set_input_as_handled() # Consume the event
+
 					return # Consume this click release if it was ending a drag
 				else: # This is a simple click release (not a drag release)
 					# This click was not on a draggable panel to start a drag, and it's not ending a drag.
@@ -1489,7 +1592,7 @@ func _input(event: InputEvent) -> void:  # Renamed from _gui_input
 					var mouse_on_texture_x = (local_mouse_pos.x - offset_x) / actual_scale
 					var mouse_on_texture_y = (local_mouse_pos.y - offset_y) / actual_scale
 
-					var clicked_on_convoy_id: String = ''
+					var clicked_convoy_id_str_on_map: String = "" # Store the string ID of clicked convoy
 					if not _all_convoy_data.is_empty():
 						var actual_tile_width_on_texture: float = map_texture_size.x / float(map_tiles[0].size()) # Assuming map_tiles is not empty
 						var actual_tile_height_on_texture: float = map_texture_size.y / float(map_tiles.size())
@@ -1497,23 +1600,28 @@ func _input(event: InputEvent) -> void:  # Renamed from _gui_input
 							if not convoy_data is Dictionary: continue
 							var convoy_map_x: float = convoy_data.get('x', -1.0)
 							var convoy_map_y: float = convoy_data.get('y', -1.0)
-							var convoy_center_tex_x: float = (convoy_map_x + 0.5) * actual_tile_width_on_texture
-							var convoy_center_tex_y: float = (convoy_map_y + 0.5) * actual_tile_height_on_texture
-							var dx = mouse_on_texture_x - convoy_center_tex_x
-							var dy = mouse_on_texture_y - convoy_center_tex_y
-							if (dx * dx) + (dy * dy) < CONVOY_HOVER_RADIUS_ON_TEXTURE_SQ: # Using hover radius for click
-								clicked_on_convoy_id = convoy_data.get('convoy_id', '')
-								break
+							var convoy_id_val = convoy_data.get('convoy_id')
+							if convoy_id_val != null:
+								var convoy_center_tex_x: float = (convoy_map_x + 0.5) * actual_tile_width_on_texture
+								var convoy_center_tex_y: float = (convoy_map_y + 0.5) * actual_tile_height_on_texture
+								var dx = mouse_on_texture_x - convoy_center_tex_x
+								var dy = mouse_on_texture_y - convoy_center_tex_y
+								if (dx * dx) + (dy * dy) < CONVOY_HOVER_RADIUS_ON_TEXTURE_SQ: # Using hover radius for click
+									clicked_convoy_id_str_on_map = str(convoy_id_val)
+									break
 
-					if not clicked_on_convoy_id.is_empty(): # Clicked on a convoy map icon
-						if _selected_convoy_ids.has(clicked_on_convoy_id):
-							_selected_convoy_ids.erase(clicked_on_convoy_id) # Untoggle if already selected
-							_convoy_label_user_positions.erase(clicked_on_convoy_id) # Clear user position on deselect
+					if not clicked_convoy_id_str_on_map.is_empty(): # Clicked on a convoy map icon
+						if _selected_convoy_ids.has(clicked_convoy_id_str_on_map):
+							_selected_convoy_ids.erase(clicked_convoy_id_str_on_map) # Untoggle if already selected
+							_convoy_label_user_positions.erase(clicked_convoy_id_str_on_map) # Clear user position on deselect (use string key)
 						else:
-							_selected_convoy_ids.append(clicked_on_convoy_id) # Toggle on if not selected
+							_selected_convoy_ids.append(clicked_convoy_id_str_on_map) # Toggle on if not selected (store string key)
 						_update_hover_labels() # Update display based on new selection state
 						get_viewport().set_input_as_handled() # Consume the click event
 						# No return here, as the event is handled.
+
+
+
 					# else: click was on the map, not on a convoy icon and not starting/ending a drag.
 					# Allow event to propagate if necessary for other map interactions (not currently implemented).
 
@@ -1581,3 +1689,105 @@ func _update_detailed_view_toggle_position() -> void:
 	var target_y = map_display.position.y + offset_y + displayed_texture_height - toggle_size.y - LABEL_MAP_EDGE_PADDING
 	print('Calculated target_x: ', target_x, ', target_y: ', target_y)
 	detailed_view_toggle.position = Vector2(target_x, target_y)
+
+
+func _on_connector_lines_container_draw():
+	if not is_instance_valid(map_display) or not is_instance_valid(map_display.texture): return
+	if map_tiles.is_empty() or not map_tiles[0] is Array or map_tiles[0].is_empty(): return
+	if not is_instance_valid(_convoy_label_container): return
+
+	# Get map scaling/offset info (similar to _draw_single_convoy_label)
+	var map_texture_size: Vector2 = map_display.texture.get_size()
+	var map_display_rect_size: Vector2 = map_display.size
+
+	if map_texture_size.x <= 0.001 or map_texture_size.y <= 0.001: return # Avoid division by zero
+
+	var scale_x_ratio: float = map_display_rect_size.x / map_texture_size.x
+	var scale_y_ratio: float = map_display_rect_size.y / map_texture_size.y
+	var actual_scale: float = min(scale_x_ratio, scale_y_ratio)
+
+	var displayed_texture_width: float = map_texture_size.x * actual_scale
+	var displayed_texture_height: float = map_texture_size.y * actual_scale
+	var offset_x: float = (map_display_rect_size.x - displayed_texture_width) / 2.0
+	var offset_y: float = (map_display_rect_size.y - displayed_texture_height) / 2.0
+
+	var map_image_cols: int = map_tiles[0].size()
+	var map_image_rows: int = map_tiles.size()
+	if map_image_cols == 0 or map_image_rows == 0: return # Avoid division by zero
+
+	var actual_tile_width_on_texture: float = map_texture_size.x / float(map_image_cols)
+	var actual_tile_height_on_texture: float = map_texture_size.y / float(map_image_rows)
+
+	# Iterate through visible panels in _convoy_label_container
+	for node in _convoy_label_container.get_children():
+		if node is Panel:
+			var panel: Panel = node
+			var convoy_id_str = panel.get_meta("convoy_id_str", "")
+			if convoy_id_str.is_empty(): continue
+
+			var convoy_data_for_line = null
+			for cd_idx in range(_all_convoy_data.size()): # Use indexed loop for minor efficiency
+				var cd = _all_convoy_data[cd_idx]
+				if cd is Dictionary and str(cd.get("convoy_id")) == convoy_id_str:
+					convoy_data_for_line = cd
+					break
+			
+			if convoy_data_for_line == null: continue
+
+			# 1. Calculate convoy icon center point (start of line) in map_display's local space
+			var convoy_map_x: float = convoy_data_for_line.get('x', 0.0)
+			var convoy_map_y: float = convoy_data_for_line.get('y', 0.0)
+			var convoy_center_on_texture_x: float = (convoy_map_x + 0.5) * actual_tile_width_on_texture
+			var convoy_center_on_texture_y: float = (convoy_map_y + 0.5) * actual_tile_height_on_texture
+			var line_start_pos = Vector2(
+				convoy_center_on_texture_x * actual_scale + offset_x,
+				convoy_center_on_texture_y * actual_scale + offset_y
+			)
+
+			# 2. Calculate panel connection point (end of line)
+			# Panel.position is local to _convoy_label_container.
+			# Since _convoy_label_container is at (0,0) relative to map_display,
+			# panel.position is effectively in map_display's local space.
+			var panel_rect_local_to_map_display = Rect2(panel.position, panel.size)
+			var panel_center = panel_rect_local_to_map_display.get_center()
+			var line_end_pos: Vector2
+
+			# --- DEBUG: Check the type and value of panel_rect_local_to_map_display ---
+			print("Main: Connector Line - panel_rect_local_to_map_display type: ", typeof(panel_rect_local_to_map_display), ", value: ", panel_rect_local_to_map_display)
+			if not panel_rect_local_to_map_display is Rect2:
+				printerr("Main: CRITICAL - panel_rect_local_to_map_display is NOT a Rect2 object! Skipping line for convoy_id: ", convoy_id_str)
+				continue # Skip drawing this line if the rect is invalid
+			if panel_rect_local_to_map_display.size.x <= 0 or panel_rect_local_to_map_display.size.y <= 0:
+				printerr("Main: WARNING - panel_rect_local_to_map_display has zero or negative size: ", panel_rect_local_to_map_display.size, ". Skipping line for convoy_id: ", convoy_id_str)
+				continue # Skip drawing if panel has no area
+
+			if panel_rect_local_to_map_display.has_point(line_start_pos):
+				# Convoy icon is INSIDE the panel area.
+				if panel_center.is_equal_approx(line_start_pos): # Icon is at panel center
+					# Connect to mid-top of panel.
+					line_end_pos = Vector2(panel_center.x, panel_rect_local_to_map_display.position.y) # Connect to mid-top
+				else:
+					# Icon is inside but not at center. Project from center through icon to boundary.
+					var dir_to_icon = (line_start_pos - panel_center).normalized()
+					# Create a point far outside the panel in that direction.
+					# Multiplying by size.length() * 2 or similar ensures it's well outside.
+					var far_point = panel_center + dir_to_icon * (max(panel_rect_local_to_map_display.size.x, panel_rect_local_to_map_display.size.y) * 2.0)
+					# Manual implementation of clip_point for an external point
+					line_end_pos = Vector2(
+						clamp(far_point.x, panel_rect_local_to_map_display.position.x, panel_rect_local_to_map_display.position.x + panel_rect_local_to_map_display.size.x),
+						clamp(far_point.y, panel_rect_local_to_map_display.position.y, panel_rect_local_to_map_display.position.y + panel_rect_local_to_map_display.size.y)
+					)
+			else: # Convoy icon is outside the panel.
+				# Manual implementation of clip_point for an external point (line_start_pos)
+				line_end_pos = Vector2(
+					clamp(line_start_pos.x, panel_rect_local_to_map_display.position.x, panel_rect_local_to_map_display.position.x + panel_rect_local_to_map_display.size.x),
+					clamp(line_start_pos.y, panel_rect_local_to_map_display.position.y, panel_rect_local_to_map_display.position.y + panel_rect_local_to_map_display.size.y)
+				)
+				
+			# If after all that, line_end_pos is still where line_start_pos is (e.g. icon at center, clip_point returned center)
+			# and it's inside, we might need a default connection point like mid-top.
+			# However, the logic above for "icon at panel center" should handle the primary case.
+			
+			# Draw line only if start and end points are different to avoid zero-length lines or errors
+			if not line_start_pos.is_equal_approx(line_end_pos):
+				_convoy_connector_lines_container.draw_line(line_start_pos, line_end_pos, CONNECTOR_LINE_COLOR, CONNECTOR_LINE_WIDTH, true)
