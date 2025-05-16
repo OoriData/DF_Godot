@@ -516,6 +516,7 @@ func render_map(
 		p_show_grid: bool = true,           # New flag for grid visibility
 		p_show_political: bool = true       # New flag for political color visibility
 	) -> ImageTexture:
+	# print("MapRender: render_map called. p_show_grid: %s, p_show_political: %s" % [p_show_grid, p_show_political]) # DEBUG
 	if tiles.is_empty() or not tiles[0] is Array or tiles[0].is_empty():
 		printerr('MapRender: Invalid or empty tiles data provided.')
 		return null
@@ -535,7 +536,7 @@ func render_map(
 		# Use the provided viewport size override
 		viewport_size = p_viewport_size
 
-	print('MapRender: render_map called. p_hover_info: ', p_hover_info)  # DEBUG - Removed font check as font is no longer a member
+	# print('MapRender: render_map called. p_hover_info: ', p_hover_info)  # DEBUG - Removed font check as font is no longer a member
 
 	# --- Calculate target image dimensions to fit viewport while maintaining map aspect ratio ---
 	var map_aspect_ratio: float = float(cols) / float(rows)
@@ -563,6 +564,10 @@ func render_map(
 	var base_linear_visual_scale: float = 1.0
 	if BASE_TILE_SIZE_FOR_PROPORTIONS > 0.001:
 		base_linear_visual_scale = reference_float_tile_size_for_offsets / BASE_TILE_SIZE_FOR_PROPORTIONS
+	
+	# DEBUG: Print scaling factors (These are calculated once per render)
+	# if rows > 0 and cols > 0: # Print only if map dimensions are valid # DEBUG
+		# print("MapRender: base_linear_visual_scale: ", base_linear_visual_scale) # DEBUG
 
 	var visual_element_scale_factor: float = pow(base_linear_visual_scale, ICON_SCALING_EXPONENT)
 
@@ -571,6 +576,9 @@ func render_map(
 	var scaled_political_border_thickness: int = max(0, int(round(reference_float_tile_size_for_offsets * (float(POLITICAL_BORDER_VISIBLE_THICKNESS) / BASE_TILE_SIZE_FOR_PROPORTIONS))))
 	var scaled_highlight_outline_offset: int = int(round(reference_float_tile_size_for_offsets * (float(HIGHLIGHT_OUTLINE_OFFSET) / BASE_TILE_SIZE_FOR_PROPORTIONS)))  # Can be negative
 	var scaled_lowlight_inline_offset: int = max(0, int(round(reference_float_tile_size_for_offsets * (float(LOWLIGHT_INLINE_OFFSET) / BASE_TILE_SIZE_FOR_PROPORTIONS))))
+	
+	# if rows > 0 and cols > 0: # Print only if map dimensions are valid # DEBUG
+		# print("MapRender: scaled_grid_size: ", scaled_grid_size) # DEBUG
 
 	# Use the calculated image_render_width/height for the Image
 	var width: int = image_render_width
@@ -631,8 +639,15 @@ func render_map(
 			# 3. Fill the entire tile cell with this darkened color (this forms the grid lines)
 			var full_tile_rect := Rect2i(current_tile_pixel_x, current_tile_pixel_y, current_tile_render_w, current_tile_render_h)
 			if p_show_grid: # Only draw grid background if toggled on
-				if full_tile_rect.size.x > 0 and full_tile_rect.size.y > 0:
+				if full_tile_rect.size.x > 0 and full_tile_rect.size.y > 0: # DEBUG
+					# if x == 0 and y == 0: print("MapRender (0,0): Drawing GRID background with color: ", actual_grid_line_color) # DEBUG
 					map_image.fill_rect(full_tile_rect, actual_grid_line_color)
+			elif x == 0 and y == 0: # If grid is OFF, what is the background?
+				if full_tile_rect.size.x > 0 and full_tile_rect.size.y > 0:
+					# If grid is off, the "background" is effectively the terrain/settlement color itself, drawn later.
+					# Or, if you want a default background when grid is off, fill it here.
+					# For now, let's assume terrain/settlement will cover it.
+					pass
 
 			# Determine inset for political layer based on whether grid is shown
 			var inset_for_political_drawing: int = 0
@@ -642,6 +657,7 @@ func render_map(
 			# 4. Draw political color layer (inset by grid_size if grid is shown, drawn on top of the darkened grid background or tile background)
 			if p_show_political: # Only draw political colors if toggled on
 				# The _draw_political_inline function itself checks if the political_color.a > 0.01
+				# if x == 0 and y == 0: print("MapRender (0,0): Calling _draw_political_inline. inset_for_political_drawing: ", inset_for_political_drawing) # DEBUG
 				_draw_political_inline(map_image, tile, current_tile_pixel_x, current_tile_pixel_y, current_tile_render_w, current_tile_render_h, inset_for_political_drawing)
 
 			# 5. Draw terrain/settlement layer on top
@@ -651,6 +667,7 @@ func render_map(
 			if p_show_political and has_visible_political_color: # If political is shown AND this tile has political color, inset by political border
 				inset_for_terrain_content += scaled_political_border_thickness
 
+			# if x == 0 and y == 0: print("MapRender (0,0): Calling _draw_tile_bg. inset_for_terrain_content: ", inset_for_terrain_content) # DEBUG
 			var chosen_color_from_tile_bg = _draw_tile_bg(map_image, tile, current_tile_pixel_x, current_tile_pixel_y, current_tile_render_w, current_tile_render_h, inset_for_terrain_content, x, y)
 			if chosen_color_from_tile_bg == ERROR_COLOR:  # If you want to use this count, remove the underscore from _error_color_tile_count
 				_error_color_tile_count += 1
@@ -694,10 +711,11 @@ func render_map(
 
 	# --- Draw Convoys ---
 	if not p_convoys_data.is_empty():
-		print('MapRender: Processing %s convoys for drawing.' % p_convoys_data.size())
+		# print("MapRender: ==> CONVOY DRAWING SECTION <==") # DEBUG
+		# print('MapRender: Received p_convoys_data.size(): %s for drawing.' % p_convoys_data.size()) # DEBUG
 
 		# --- PASS 1: Draw all Journey Lines ---
-		print('MapRender: Pass 1 - Drawing all journey lines.')
+		# print('MapRender: Pass 1 - Drawing all journey lines.') # DEBUG
 		for convoy_idx in range(p_convoys_data.size()):
 			var convoy_data_variant = p_convoys_data[convoy_idx]
 			if not convoy_data_variant is Dictionary:
@@ -706,6 +724,9 @@ func render_map(
 
 			var convoy_item: Dictionary = convoy_data_variant
 			var convoy_id = convoy_item.get('convoy_id')
+			# if convoy_idx == 0: # Print for the very first convoy being processed in this pass # DEBUG
+				# print("MapRender (Journey Lines): Processing convoy_id: %s, ShortData: %s..." % [convoy_id, str(convoy_item).left(100)]) # DEBUG - Shortened data
+
 			var unique_convoy_color: Color = p_convoy_id_to_color_map.get(
 				convoy_id, PREDEFINED_CONVOY_COLORS[convoy_idx % PREDEFINED_CONVOY_COLORS.size()]
 			)  # Fallback to old method if ID not in map
@@ -798,16 +819,17 @@ func render_map(
 			# For lines, if x/y are invalid, start_drawing_from_route_index remains -1, and all segments are "leading".
 
 		# --- PASS 2: Draw all Convoy Arrows ---
-		print('MapRender: Pass 2 - Drawing all convoy arrows.')
+		# print('MapRender: Pass 2 - Drawing all convoy arrows.') # DEBUG
 		for convoy_idx in range(p_convoys_data.size()):
 			var convoy_data_variant = p_convoys_data[convoy_idx]
 			if not convoy_data_variant is Dictionary:
 				# Already handled in Pass 1, but good to be safe or if Pass 1 was skipped for this item.
 				# printerr('MapRender (Pass 2): Convoy data item is not a dictionary: ', convoy_data_variant)
 				continue
-
 			var convoy_item: Dictionary = convoy_data_variant
 			var convoy_id = convoy_item.get('convoy_id')
+			# if convoy_idx == 0: # Print for the very first convoy being processed in this pass # DEBUG
+				# print("MapRender (Arrows): Processing convoy_id: %s, ShortData: %s..." % [convoy_id, str(convoy_item).left(100)]) # DEBUG - Shortened data
 			var unique_convoy_color: Color = p_convoy_id_to_color_map.get(
 				convoy_id, PREDEFINED_CONVOY_COLORS[convoy_idx % PREDEFINED_CONVOY_COLORS.size()]
 			) # Fallback to old method if ID not in map
@@ -930,6 +952,9 @@ func render_map(
 
 			else:  # This 'else' corresponds to 'if typeof(convoy_x_variant) ...'
 				printerr('MapRender (Pass 2 Arrows): Convoy item has invalid or missing x/y coordinates, cannot draw arrow: ', convoy_item)
+	# else: # p_convoys_data IS empty # DEBUG
+		# print("MapRender: ==> CONVOY DRAWING SECTION SKIPPED (p_convoys_data is empty) <==") # DEBUG
+
 
 	var map_texture := ImageTexture.create_from_image(map_image)
 	return map_texture
