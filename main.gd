@@ -351,7 +351,7 @@ func _update_map_display():
 	# print("  - ui_manager valid: %s, map_display valid: %s, map_tiles empty: %s" % [is_instance_valid(ui_manager), is_instance_valid(map_display), map_tiles.is_empty()]) # DEBUG
 	# print("  - Data counts: Convoys: %s, Settlements: %s" % [_all_convoy_data.size(), _all_settlement_data.size()]) # DEBUG
 	# print("  - Hover: %s, Selected: %s" % [_current_hover_info, _selected_convoy_ids]) # DEBUG
-	
+
 	# Get necessary state from MapInteractionManager for UIManager
 	var user_positions_for_ui = _convoy_label_user_positions # Use the one updated by signal
 	var dragging_panel_for_ui = null
@@ -411,7 +411,7 @@ func _on_convoy_data_received(data: Variant) -> void:
 					# This convoy ID is new, assign it the next available color
 					_last_assigned_color_idx = (_last_assigned_color_idx + 1) % PREDEFINED_CONVOY_COLORS.size()
 					_convoy_id_to_color_map[convoy_id_str] = PREDEFINED_CONVOY_COLORS[_last_assigned_color_idx]
-					
+
 	# Re-render the map with the new convoy data
 	if is_instance_valid(map_interaction_manager) and map_interaction_manager.has_method("update_data_references"):
 		map_interaction_manager.update_data_references(_all_convoy_data, _all_settlement_data, map_tiles)
@@ -450,7 +450,7 @@ func _on_refresh_timer_timeout() -> void:
 
 func _on_visual_update_timer_timeout() -> void:
 	# print("Main: _on_visual_update_timer_timeout() CALLED.") # DEBUG
-	
+
 	var do_visual_update = true
 	if is_instance_valid(map_interaction_manager) and map_interaction_manager.has_method("is_dragging"):
 		if map_interaction_manager.is_dragging():
@@ -460,7 +460,7 @@ func _on_visual_update_timer_timeout() -> void:
 		# Update throb phase for a 1-second cycle
 		_throb_phase += VISUAL_UPDATE_INTERVAL_SECONDS
 		_throb_phase = fmod(_throb_phase, 1.0)  # Wrap around 1.0
-	
+
 	call_deferred("_update_map_display")  # Re-render the map with the new throb phase (deferred)
 	# Connector lines are redrawn by UIManager via its update_ui_elements call
 
@@ -554,7 +554,7 @@ func _update_detailed_view_toggle_position() -> void:
 		detailed_view_toggle.visible = false # Hide it if we can't position it
 		return
 	detailed_view_toggle.visible = true # Make sure it's visible if we CAN position it
-	
+
 	# print('map_display.position: ', map_display.position) # DEBUG
 	# print('map_display.size: ', map_display.size) # DEBUG
 
@@ -636,7 +636,7 @@ func _on_mim_panel_drag_started(convoy_id_str: String, panel_node: Panel):
 
 	if is_instance_valid(ui_manager) and ui_manager.has_method("set_dragging_state"):
 		ui_manager.set_dragging_state(_dragging_panel_node, _dragged_convoy_id_actual_str, true)
-	
+
 	# Bring panel to front
 	if is_instance_valid(ui_manager) and is_instance_valid(ui_manager.convoy_label_container) and \
 	   is_instance_valid(_dragging_panel_node) and _dragging_panel_node.get_parent() == ui_manager.convoy_label_container:
@@ -647,6 +647,6 @@ func _on_mim_panel_drag_updated(convoy_id_str: String, new_panel_local_position:
 	if is_instance_valid(_dragging_panel_node) and _dragged_convoy_id_actual_str == convoy_id_str: # Ensure we're updating the correct panel
 		# _dragging_panel_node is set by _on_mim_panel_drag_started
 		_dragging_panel_node.position = new_panel_local_position # Update the actual panel's local position
-	
+
 	if is_instance_valid(ui_manager) and is_instance_valid(ui_manager.convoy_connector_lines_container):
 		ui_manager.convoy_connector_lines_container.queue_redraw()

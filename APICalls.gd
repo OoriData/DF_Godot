@@ -6,7 +6,7 @@ signal convoy_data_received(parsed_convoy_list: Array)
 # Signal to indicate an error occurred during fetching
 signal fetch_error(error_message: String)
 
-const BASE_URL: String = 'http://137.184.246.45:1337'
+const BASE_URL: String = 'https://df-api.oori.dev:1337'
 
 var _http_request: HTTPRequest
 var convoys_in_transit: Array = []  # This will store the latest parsed list of in-transit convoys

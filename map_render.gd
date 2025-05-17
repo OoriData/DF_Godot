@@ -564,7 +564,7 @@ func render_map(
 	var base_linear_visual_scale: float = 1.0
 	if BASE_TILE_SIZE_FOR_PROPORTIONS > 0.001:
 		base_linear_visual_scale = reference_float_tile_size_for_offsets / BASE_TILE_SIZE_FOR_PROPORTIONS
-	
+
 	# DEBUG: Print scaling factors (These are calculated once per render)
 	# if rows > 0 and cols > 0: # Print only if map dimensions are valid # DEBUG
 		# print("MapRender: base_linear_visual_scale: ", base_linear_visual_scale) # DEBUG
@@ -576,7 +576,7 @@ func render_map(
 	var scaled_political_border_thickness: int = max(0, int(round(reference_float_tile_size_for_offsets * (float(POLITICAL_BORDER_VISIBLE_THICKNESS) / BASE_TILE_SIZE_FOR_PROPORTIONS))))
 	var scaled_highlight_outline_offset: int = int(round(reference_float_tile_size_for_offsets * (float(HIGHLIGHT_OUTLINE_OFFSET) / BASE_TILE_SIZE_FOR_PROPORTIONS)))  # Can be negative
 	var scaled_lowlight_inline_offset: int = max(0, int(round(reference_float_tile_size_for_offsets * (float(LOWLIGHT_INLINE_OFFSET) / BASE_TILE_SIZE_FOR_PROPORTIONS))))
-	
+
 	# if rows > 0 and cols > 0: # Print only if map dimensions are valid # DEBUG
 		# print("MapRender: scaled_grid_size: ", scaled_grid_size) # DEBUG
 
