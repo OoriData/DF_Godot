@@ -14,19 +14,13 @@ const MapRenderer = preload('res://map_render.gd')
 @onready var ui_manager: Node = $UIManagerNode # Adjust path to your UIManager node
 @onready var detailed_view_toggle: CheckBox = $DetailedViewToggleCheckbox # Example path
 @onready var map_interaction_manager: Node = $MapInteractionManager # Path to your MapInteractionManager node
+# IMPORTANT: Adjust the path "$GameTimersNode" to the actual path of your GameTimers node in your scene tree.
+@onready var game_timers_node: Node = $GameTimersNode # Adjust if necessary
 
 var map_renderer  # Will be initialized in _ready()
 var map_tiles: Array = []  # Will hold the loaded tile data
 var _all_settlement_data: Array = []  # To store settlement data for rendering
 var _all_convoy_data: Array = []  # To store convoy data from APICalls
-
-var _refresh_timer: Timer
-const REFRESH_INTERVAL_SECONDS: float = 60.0  # Changed to 3 minutes
-var _visual_update_timer: Timer
-const VISUAL_UPDATE_INTERVAL_SECONDS: float = 1.0 / 60.0  # Target 30 FPS for visual updates
-var _throb_phase: float = 0.0  # Cycles 0.0 to 1.0 for a 1-second throb_
-var _refresh_notification_label: Label  # For the "Data Refreshed" notification
-
 # Constants still needed in main.gd for hover detection or passed to map_renderer
 const LABEL_MAP_EDGE_PADDING: float = 5.0 # Pixels to keep labels from map edge
 const PREDEFINED_CONVOY_COLORS: Array[Color] = [  # Copied from map_render.gd; could these be imported instead?
@@ -41,6 +35,9 @@ const PREDEFINED_CONVOY_COLORS: Array[Color] = [  # Copied from map_render.gd; c
 	Color('lime'),    # Lime Green
 	Color('pink')     # Pink
 ]
+
+var _throb_phase: float = 0.0  # Cycles 0.0 to 1.0 for a 1-second throb_
+var _refresh_notification_label: Label  # For the "Data Refreshed" notification
 
 var _convoy_id_to_color_map: Dictionary = {}
 var _last_assigned_color_idx: int = -1  # To cycle through PREDEFINED_CONVOY_COLORS for new convoys
@@ -207,19 +204,6 @@ func _ready():
 	else:
 		printerr('Main: APICalls node not found at the specified path. Cannot connect signal.')
 
-	# Setup and start the refresh timer
-	_refresh_timer = Timer.new()
-	_refresh_timer.wait_time = REFRESH_INTERVAL_SECONDS
-	_refresh_timer.one_shot = false  # Make it repeat
-	_refresh_timer.timeout.connect(_on_refresh_timer_timeout)
-	add_child(_refresh_timer)  # Add the timer to the scene tree so it processes
-	_refresh_timer.start()
-
-	# Setup and start the visual update timer for animations like throbbing
-	_visual_update_timer = Timer.new()
-	_visual_update_timer.wait_time = VISUAL_UPDATE_INTERVAL_SECONDS
-	_visual_update_timer.one_shot = false  # Make it repeat
-
 	# Setup the refresh notification label
 	_refresh_notification_label = Label.new()
 	_refresh_notification_label.text = 'Data Refreshed!'
@@ -234,10 +218,20 @@ func _ready():
 	add_child(_refresh_notification_label)  # Add as a direct child of this Node2D
 	_update_refresh_notification_position()  # Set initial position
 
-	_visual_update_timer.timeout.connect(_on_visual_update_timer_timeout)
-	add_child(_visual_update_timer)
-	_visual_update_timer.start()
-	# print("Main: _visual_update_timer started. Is processing: ", _visual_update_timer.is_processing(), " Wait time: ", _visual_update_timer.wait_time) # DEBUG
+	# Connect to GameTimers signals
+	if is_instance_valid(game_timers_node):
+		if game_timers_node.has_signal("data_refresh_tick"):
+			game_timers_node.data_refresh_tick.connect(_on_data_refresh_tick)
+			print("Main: Connected to GameTimers.data_refresh_tick")
+		else:
+			printerr("Main: GameTimersNode does not have 'data_refresh_tick' signal.")
+		if game_timers_node.has_signal("visual_update_tick"):
+			game_timers_node.visual_update_tick.connect(_on_visual_update_tick)
+			print("Main: Connected to GameTimers.visual_update_tick")
+		else:
+			printerr("Main: GameTimersNode does not have 'visual_update_tick' signal.")
+	else:
+		printerr("Main: GameTimersNode not found. Timed updates will not work.")
 
 	# --- Setup Detailed View Toggle ---
 	if is_instance_valid(detailed_view_toggle):
@@ -423,7 +417,7 @@ func _on_convoy_data_received(data: Variant) -> void:
 
 
 
-func _on_refresh_timer_timeout() -> void:
+func _on_data_refresh_tick() -> void:
 	# print('Main: Refresh timer timeout. Requesting updated convoy data...')
 	if api_calls_node:
 		api_calls_node.get_all_in_transit_convoys()
@@ -448,7 +442,7 @@ func _on_refresh_timer_timeout() -> void:
 		new_fade_tween.tween_property(_refresh_notification_label, 'modulate:a', 0.0, 1.0)  # Fade out over 1 second
 
 
-func _on_visual_update_timer_timeout() -> void:
+func _on_visual_update_tick() -> void:
 	# print("Main: _on_visual_update_timer_timeout() CALLED.") # DEBUG
 
 	var do_visual_update = true
@@ -458,9 +452,12 @@ func _on_visual_update_timer_timeout() -> void:
 
 	if do_visual_update:
 		# Update throb phase for a 1-second cycle
-		_throb_phase += VISUAL_UPDATE_INTERVAL_SECONDS
-		_throb_phase = fmod(_throb_phase, 1.0)  # Wrap around 1.0
-
+		if is_instance_valid(game_timers_node) and game_timers_node.has_method("get_visual_update_interval"):
+			_throb_phase += game_timers_node.get_visual_update_interval()
+			_throb_phase = fmod(_throb_phase, 1.0)  # Wrap around 1.0
+		else:
+			# Fallback or error if GameTimersNode isn't available, though it should be.
+			printerr("Main: GameTimersNode not found or 'get_visual_update_interval' missing for throb phase calculation.")
 	call_deferred("_update_map_display")  # Re-render the map with the new throb phase (deferred)
 	# Connector lines are redrawn by UIManager via its update_ui_elements call
 
