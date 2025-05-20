@@ -595,8 +595,37 @@ func _update_detailed_view_toggle_position() -> void:
 func _on_mim_hover_changed(new_hover_info: Dictionary):
 	_current_hover_info = new_hover_info
 	# print("Main: MIM hover changed: ", _current_hover_info) # DEBUG
-	_update_map_display() # Update visuals based on new hover
+	# _update_map_display() # OLD: This was causing a full map re-render on hover.
 
+	# NEW: Directly update UI elements without re-rendering the entire map.
+	if is_instance_valid(ui_manager):
+		# Gather necessary arguments for UIManager, similar to how _update_map_display does it,
+		# but specifically for a UI-only update.
+		var user_positions_for_ui = _convoy_label_user_positions
+		var dragging_panel_for_ui = null
+		var dragged_id_for_ui = ""
+		if is_instance_valid(map_interaction_manager):
+			if map_interaction_manager.has_method("get_convoy_label_user_positions"):
+				user_positions_for_ui = map_interaction_manager.get_convoy_label_user_positions()
+			if map_interaction_manager.has_method("get_dragging_panel_node"):
+				dragging_panel_for_ui = map_interaction_manager.get_dragging_panel_node()
+			if map_interaction_manager.has_method("get_dragged_convoy_id_str"):
+				dragged_id_for_ui = map_interaction_manager.get_dragged_convoy_id_str()
+
+		ui_manager.update_ui_elements(
+			map_display,
+			map_tiles,
+			_all_convoy_data,
+			_all_settlement_data,
+			_convoy_id_to_color_map,
+			new_hover_info, # Use the new_hover_info directly
+			_selected_convoy_ids, # Use the current selection state
+			user_positions_for_ui,
+			dragging_panel_for_ui,
+			dragged_id_for_ui
+		)
+	else:
+		printerr("Main (_on_mim_hover_changed): ui_manager is not valid. Cannot update UI.")
 func _on_mim_selection_changed(new_selected_ids: Array):
 	_selected_convoy_ids = new_selected_ids
 	# print("Main: MIM selection changed: ", _selected_convoy_ids) # DEBUG
