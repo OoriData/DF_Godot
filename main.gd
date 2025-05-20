@@ -23,7 +23,7 @@ var _all_convoy_data: Array = []  # To store convoy data from APICalls
 var _refresh_timer: Timer
 const REFRESH_INTERVAL_SECONDS: float = 60.0  # Changed to 3 minutes
 var _visual_update_timer: Timer
-const VISUAL_UPDATE_INTERVAL_SECONDS: float = 0.05  # 20 FPS for visual updates (1.0 / 20.0)
+const VISUAL_UPDATE_INTERVAL_SECONDS: float = 1.0 / 60.0  # Target 30 FPS for visual updates
 var _throb_phase: float = 0.0  # Cycles 0.0 to 1.0 for a 1-second throb_
 var _refresh_notification_label: Label  # For the "Data Refreshed" notification
 
