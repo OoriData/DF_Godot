@@ -3,40 +3,51 @@
 extends Node
 
 # --- Constants ---
-const BASE_TILE_SIZE_FOR_PROPORTIONS: float = 24.0  # Original tile size, used for scaling calculations
-const GRID_SIZE: int = 1  # Pixels to reduce each side (used for drawing inside grid lines)
-const DEFAULT_LABEL_COLOR: Color = Color.WHITE
-const GRID_DARKEN_FACTOR: float = 0.2 # How much to darken the tile color for the grid lines (0.0 to 1.0)
+## The original tile size of the map data, used for scaling calculations of visual elements.
+@export_group("Base Configuration")
+@export var base_tile_size_for_proportions: float = 24.0
+## The thickness of the grid lines in pixels, relative to the base_tile_size_for_proportions.
+@export var grid_size: int = 1
+## Default color for labels if map_render were to draw them (currently unused here).
+@export var default_label_color: Color = Color.WHITE
+## How much to darken the base tile color for the grid lines (0.0 = no change, 1.0 = black).
+@export var grid_darken_factor: float = 0.2
+## Fallback color for grid lines if a tile's base color cannot be determined.
+@export var grid_color: Color = Color('#303030')
+## Default color for water tiles.
+@export var water_color: Color = Color('#142C55')
+## Color used to indicate rendering errors or missing data.
+@export var error_color: Color = Color('#FF00FF')
 
-const GRID_COLOR: Color = Color('#303030')   # Background grid color
-const WATER_COLOR: Color = Color('#142C55')
-const ERROR_COLOR: Color = Color('#FF00FF')  # Error/default color
-
-const TILE_COLORS: Dictionary = {
+## Color mapping for different terrain types. (Note: Dictionaries are editable in inspector but can be clunky)
+@export_group("Tile & Political Colors (Edit in Script)") # Indicate these are better edited in script
+@export var tile_colors: Dictionary = {
 	1: Color('#303030'),   # Highway
 	2: Color('#606060'),   # Road
 	3: Color('#CB8664'),   # Trail
-	4: Color('#F6D0B0'),   # Desert
+	4: Color('#F6D0B0'),   # Desert 
 	5: Color('#3F5D4B'),   # Plains
 	6: Color('#2C412E'),   # Forest
 	7: Color('#2A4B46'),   # Swamp
 	8: Color('#273833'),   # Mountains
 	9: Color('#0F2227'),   # Near Impassable
-	0: WATER_COLOR,        # Impassable/Ocean
+	0: Color('#142C55'),   # Impassable/Ocean (Will be updated from water_color in _ready)
 	-1: Color('#9900FF'),  # Marked
 }
 
-const SETTLEMENT_COLORS: Dictionary = {
+## Color mapping for different settlement types.
+@export var settlement_colors: Dictionary = {
 	'dome': Color('#80A9B6'),
 	'city': Color('#ADADAD'),
-	'town': Color('#A1662F'),
+	'town': Color('#A1662F'), #
 	'city-state': Color('#581B63'),
 	'military_base': Color('#800000'),
 	'village': Color('#613D3D'),
-	'tutorial': WATER_COLOR
+	'tutorial': Color('#142C55') # Will be updated from water_color in _ready)
 }
 
-const POLITICAL_COLORS: Dictionary = {
+## Color mapping for political regions.
+@export var political_colors: Dictionary = {
 	0: Color('#00000000'),  # Null (transparent)
 	1: Color('#00000000'),  # Desolate plains
 	2: Color('#00000000'),  # Desolate forest
@@ -135,21 +146,37 @@ const POLITICAL_COLORS: Dictionary = {
 	172: Color('#FF0000')   # Appalacian Wastelanders
 }
 
-const POLITICAL_BORDER_VISIBLE_THICKNESS: int = 1  # How thick the political color border around terrain should be (in base pixels)
+## How thick the political color border around terrain should be (in base pixels, scaled).
+@export_group("Highlight & Lowlight")
+@export var political_border_visible_thickness: int = 1
+## Default color for the outline around highlighted tiles.
+@export var default_highlight_outline_color: Color = Color('#FFFF00')
+## Offset of the highlight outline from the tile edge (negative for outside, positive for inside). Scaled.
+@export var highlight_outline_offset: int = -1
+## Width of the highlight outline. Scaled.
+@export var highlight_outline_width: int = 9
+## Default color for the inline effect on lowlighted tiles.
+@export var default_lowlight_inline_color: Color = Color('#00FFFF')
+## Offset of the lowlight inline from the tile edge (negative for outside, positive for inside). Scaled.
+@export var lowlight_inline_offset: int = 2
+## Width of the lowlight inline. Scaled.
+@export var lowlight_inline_width: int = 5
 
-const DEFAULT_HIGHLIGHT_OUTLINE_COLOR: Color = Color('#FFFF00')
-const HIGHLIGHT_OUTLINE_OFFSET: int = -1
-const HIGHLIGHT_OUTLINE_WIDTH: int = 9
+## Pixel thickness of the convoy journey lines. Scaled.
+@export_group("Journey Lines")
+@export var journey_line_thickness: int = 5
+## Thickness for selected convoy journey lines. Scaled.
+@export var selected_journey_line_thickness: int = 9
+## Extra thickness on each side for the outline of selected journey lines. Scaled.
+@export var selected_journey_line_outline_extra_thickness_each_side: int = 3
+## Extra thickness on each side for the outline of regular journey lines. Scaled.
+@export var journey_line_outline_extra_thickness_each_side: int = 2
+## Base offset in pixels for separating overlapping journey lines. Scaled.
+@export var journey_line_offset_step_pixels: float = 6.0
+## Factor by which to darken the trailing part of a journey line (0.0 = no change, 1.0 = black).
+@export var trailing_journey_darken_factor: float = 0.5
 
-const DEFAULT_LOWLIGHT_INLINE_COLOR: Color = Color('#00FFFF')
-const LOWLIGHT_INLINE_OFFSET: int = 2
-const LOWLIGHT_INLINE_WIDTH: int = 5
-
-const JOURNEY_LINE_THICKNESS: int = 5         # Pixel thickness of the journey line
 const FLOAT_MATCH_TOLERANCE: float = 0.00001  # Tolerance for matching float coordinates
-
-const SELECTED_JOURNEY_LINE_THICKNESS: int = 9  # Thickness for selected convoy lines
-const SELECTED_JOURNEY_LINE_OUTLINE_EXTRA_THICKNESS_EACH_SIDE: int = 3 # Extra outline for selected
 
 const PREDEFINED_CONVOY_COLORS: Array[Color] = [
 	Color.RED,        # Red
@@ -164,19 +191,33 @@ const PREDEFINED_CONVOY_COLORS: Array[Color] = [
 	Color('pink')     # Pink
 ]
 
-# Icon scaling exponent, similar to FONT_SCALING_EXPONENT in main.gd
-const ICON_SCALING_EXPONENT: float = 0.6  # (1.0 = linear, <1.0 less aggressive shrink/grow)
-
+## Controls how aggressively convoy icons scale with map zoom (1.0 = linear, <1.0 less aggressive).
+@export_group("Convoy Icons & Animation")
+@export var icon_scaling_exponent: float = 0.6
 # Arrow dimensions (in pixels)
-const CONVOY_ARROW_FORWARD_LENGTH: float = 22.0     # Increased base size
-const CONVOY_ARROW_BACKWARD_LENGTH: float = 7.0     # Increased base size
-const CONVOY_ARROW_HALF_WIDTH: float = 12.0         # Increased base size
-const CONVOY_ARROW_OUTLINE_THICKNESS: float = 2.5   # Slightly increased base size
-const MAX_THROB_SIZE_ADDITION: float = 3.0          # Increased base size
-const JOURNEY_LINE_OUTLINE_EXTRA_THICKNESS_EACH_SIDE: int = 2  # How many extra pixels for the white outline on each side of the journey line
-const MAX_THROB_DARKEN_AMOUNT: float = 0.4          # How much the arrow darkens at its peak (0.0 to 1.0)
-const JOURNEY_LINE_OFFSET_STEP_PIXELS: float = 6.0  # Increased base offset for overlapping journey lines to prevent overlap
-const TRAILING_JOURNEY_DARKEN_FACTOR: float = 0.5   # How much to darken the trailing line (0.0 to 1.0)
+## Base forward length of the convoy arrow icon. Scaled.
+@export var convoy_arrow_forward_length: float = 22.0
+## Base backward length of the convoy arrow icon. Scaled.
+@export var convoy_arrow_backward_length: float = 7.0
+## Base half-width of the convoy arrow icon. Scaled.
+@export var convoy_arrow_half_width: float = 12.0
+## Base thickness of the convoy arrow icon's outline. Scaled.
+@export var convoy_arrow_outline_thickness: float = 2.5
+## Maximum additional size (in pixels) for the convoy icon during its throbbing animation. Scaled.
+@export var max_throb_size_addition: float = 3.0
+## Maximum amount the convoy icon darkens at its throbbing peak (0.0 = no change, 1.0 = black).
+@export var max_throb_darken_amount: float = 0.4
+
+
+func _ready():
+	# Ensure that the specific dictionary keys for water use the
+	# current (potentially Inspector-modified) value of self.water_color.
+	# This overrides the literal default set in the declaration if water_color was changed.
+	if tile_colors.has(0):
+		tile_colors[0] = water_color
+	if settlement_colors.has('tutorial'):
+		settlement_colors['tutorial'] = water_color
+
 
 
 # --- Helper Drawing Functions (Now methods of the class) ---
@@ -186,7 +227,7 @@ func _apply_shade_variation(base_color: Color, is_political_border: bool = false
 	if is_political_border:
 		variation_magnitude = 0.04  # +/- 2% for political borders
 	else:
-		var water_color_const = TILE_COLORS.get(0)
+		var water_color_const = tile_colors.get(0) # Use exported variable
 		if water_color_const != null and base_color.is_equal_approx(water_color_const):
 			variation_magnitude = 0.04  # +/- 5% for desert terrain tiles
 		else:
@@ -206,25 +247,25 @@ func _apply_shade_variation(base_color: Color, is_political_border: bool = false
 
 func _get_base_tile_color(tile_data: Dictionary) -> Color:
 	""" Determines the primary terrain or settlement color for a tile, without variations. """
-	var color: Color = ERROR_COLOR
-	if tile_data.has('settlements') and tile_data['settlements'] is Array and not tile_data['settlements'].is_empty():
+	var color: Color = error_color # Use exported instance variable
+	if tile_data.has('settlements') and tile_data['settlements'] is Array and not tile_data['settlements'].is_empty(): # Use exported variable
 		var settlement_data = tile_data['settlements'][0]
 		var sett_type = settlement_data.get('sett_type', 'MISSING_SETT_TYPE_KEY')
 		# Use .get() again for safety, defaulting to ERROR_COLOR if type not found
-		color = SETTLEMENT_COLORS.get(sett_type, ERROR_COLOR)
+		color = settlement_colors.get(sett_type, error_color) # Use exported variable
 	elif tile_data.has('terrain_difficulty'):
 		# Terrain path
 		var difficulty_variant = tile_data['terrain_difficulty']  # Get the value (likely float)
 		if typeof(difficulty_variant) == TYPE_FLOAT or typeof(difficulty_variant) == TYPE_INT:
 			var difficulty_int : int = int(floor(difficulty_variant))  # Cast float/int to integer
 			# Use .get() again for safety, defaulting to ERROR_COLOR if key not found
-			color = TILE_COLORS.get(difficulty_int, ERROR_COLOR)
+			color = tile_colors.get(difficulty_int, error_color) # Use exported variable
 		# else: color remains ERROR_COLOR if difficulty_variant is not a number
 	# else: color remains ERROR_COLOR if no 'settlements' or 'terrain_difficulty' key
 	return color
 
 func _draw_tile_bg(img: Image, tile_data: Dictionary, tile_render_x: int, tile_render_y: int, tile_render_width: int, tile_render_height: int, p_scaled_total_inset: int, _grid_x_for_debug: int, _grid_y_for_debug: int):
-	var color: Color = ERROR_COLOR  # Initialized to ERROR_COLOR
+	var color: Color = self.error_color  # Initialized to error_color (use exported instance variable)
 	var _color_source_debug: String = 'Initial ERROR_COLOR'  # For debugging
 
 	# if grid_x_for_debug == 0 and grid_y_for_debug == 0: # Debug print for the first tile only
@@ -233,7 +274,7 @@ func _draw_tile_bg(img: Image, tile_data: Dictionary, tile_render_x: int, tile_r
 	color = _get_base_tile_color(tile_data) # Get the base color using the new helper
 
 	# Debugging for color source (can be simplified or removed if _get_base_tile_color is trusted)
-	if color == ERROR_COLOR:
+	if color == self.error_color: # Use exported instance variable
 		if tile_data.has('settlements') and tile_data['settlements'] is Array and not tile_data['settlements'].is_empty():
 			var settlement_data = tile_data['settlements'][0]
 			var sett_type = settlement_data.get('sett_type', 'MISSING_SETT_TYPE_KEY')
@@ -269,7 +310,7 @@ func _draw_political_inline(img: Image, tile_data: Dictionary, tile_render_x: in
 	else:
 		# printerr('Tile (', x, ',', y, ') has non-numeric region: ', region_variant, '. Defaulting to -999.')  # x,y not directly available here
 		region_int = -999 # Default if region is not a number
-	var political_color: Color = POLITICAL_COLORS.get(region_int, ERROR_COLOR)
+	var political_color: Color = political_colors.get(region_int, error_color) # Use exported variables
 
 	# Only draw if not fully transparent
 	if political_color.a > 0.01:
@@ -505,8 +546,8 @@ func render_map(
 		tiles: Array,
 		highlights: Array = [],
 		lowlights: Array = [],
-		highlight_color: Color = DEFAULT_HIGHLIGHT_OUTLINE_COLOR,
-		lowlight_color: Color = DEFAULT_LOWLIGHT_INLINE_COLOR,
+		p_highlight_color_override: Color = Color(0,0,0,0), # Use transparent as unassigned
+		p_lowlight_color_override: Color = Color(0,0,0,0),  # Use transparent as unassigned
 		p_viewport_size: Vector2 = Vector2.ZERO,
 		p_convoys_data: Array = [],  # New parameter for convoy data
 		p_throb_phase: float = 0.0,  # For animating convoy icons,
@@ -516,6 +557,10 @@ func render_map(
 		p_show_grid: bool = true,           # New flag for grid visibility
 		p_show_political: bool = true       # New flag for political color visibility
 	) -> ImageTexture:
+	# Use exported defaults if overrides are not provided (or are transparent)
+	var current_highlight_color = default_highlight_outline_color if p_highlight_color_override.a == 0.0 else p_highlight_color_override
+	var current_lowlight_color = default_lowlight_inline_color if p_lowlight_color_override.a == 0.0 else p_lowlight_color_override
+
 	# print("MapRender: render_map called. p_show_grid: %s, p_show_political: %s" % [p_show_grid, p_show_political]) # DEBUG
 	if tiles.is_empty() or not tiles[0] is Array or tiles[0].is_empty():
 		printerr('MapRender: Invalid or empty tiles data provided.')
@@ -562,20 +607,20 @@ func render_map(
 
 	# Calculate a general visual element scale factor based on tile rendering size
 	var base_linear_visual_scale: float = 1.0
-	if BASE_TILE_SIZE_FOR_PROPORTIONS > 0.001:
-		base_linear_visual_scale = reference_float_tile_size_for_offsets / BASE_TILE_SIZE_FOR_PROPORTIONS
+	if base_tile_size_for_proportions > 0.001: # Use exported variable
+		base_linear_visual_scale = reference_float_tile_size_for_offsets / base_tile_size_for_proportions
 
 	# DEBUG: Print scaling factors (These are calculated once per render)
 	# if rows > 0 and cols > 0: # Print only if map dimensions are valid # DEBUG
 		# print("MapRender: base_linear_visual_scale: ", base_linear_visual_scale) # DEBUG
 
-	var visual_element_scale_factor: float = pow(base_linear_visual_scale, ICON_SCALING_EXPONENT)
+	var visual_element_scale_factor: float = pow(base_linear_visual_scale, icon_scaling_exponent) # Use exported variable
 
 	# Calculate scaled offsets based on current_tile_size
-	var scaled_grid_size: int = max(0, int(round(reference_float_tile_size_for_offsets * (float(GRID_SIZE) / BASE_TILE_SIZE_FOR_PROPORTIONS))))
-	var scaled_political_border_thickness: int = max(0, int(round(reference_float_tile_size_for_offsets * (float(POLITICAL_BORDER_VISIBLE_THICKNESS) / BASE_TILE_SIZE_FOR_PROPORTIONS))))
-	var scaled_highlight_outline_offset: int = int(round(reference_float_tile_size_for_offsets * (float(HIGHLIGHT_OUTLINE_OFFSET) / BASE_TILE_SIZE_FOR_PROPORTIONS)))  # Can be negative
-	var scaled_lowlight_inline_offset: int = max(0, int(round(reference_float_tile_size_for_offsets * (float(LOWLIGHT_INLINE_OFFSET) / BASE_TILE_SIZE_FOR_PROPORTIONS))))
+	var scaled_grid_size: int = max(0, int(round(reference_float_tile_size_for_offsets * (float(grid_size) / base_tile_size_for_proportions)))) # Use exported variables
+	var scaled_political_border_thickness: int = max(0, int(round(reference_float_tile_size_for_offsets * (float(political_border_visible_thickness) / base_tile_size_for_proportions)))) # Use exported variables
+	var scaled_highlight_outline_offset: int = int(round(reference_float_tile_size_for_offsets * (float(highlight_outline_offset) / base_tile_size_for_proportions)))  # Can be negative, use exported variables
+	var scaled_lowlight_inline_offset: int = max(0, int(round(reference_float_tile_size_for_offsets * (float(lowlight_inline_offset) / base_tile_size_for_proportions)))) # Use exported variables
 
 	# if rows > 0 and cols > 0: # Print only if map dimensions are valid # DEBUG
 		# print("MapRender: scaled_grid_size: ", scaled_grid_size) # DEBUG
@@ -620,9 +665,8 @@ func render_map(
 			var region_int: int = -999
 			if typeof(region_variant) == TYPE_FLOAT or typeof(region_variant) == TYPE_INT:
 				region_int = int(floor(region_variant))
-			var base_political_color: Color = POLITICAL_COLORS.get(region_int, ERROR_COLOR)
-
-			var has_visible_political_color: bool = base_political_color.a > 0.01 and base_political_color != ERROR_COLOR
+			var base_political_color: Color = political_colors.get(region_int, error_color) # Use exported variables
+			var has_visible_political_color: bool = base_political_color.a > 0.01 and base_political_color != self.error_color # Use exported instance variable
 
 			# 2. Determine the color for this tile's grid background
 			var color_for_grid_lines_base: Color
@@ -630,11 +674,10 @@ func render_map(
 				color_for_grid_lines_base = base_political_color
 			else:
 				color_for_grid_lines_base = base_terrain_settlement_color
+			if color_for_grid_lines_base == self.error_color: # Fallback if chosen color is error (use exported instance variable)
+				color_for_grid_lines_base = grid_color # Use original GRID_COLOR as a last resort for this tile's grid (use exported variable)
 
-			if color_for_grid_lines_base == ERROR_COLOR: # Fallback if chosen color is error
-				color_for_grid_lines_base = GRID_COLOR # Use original GRID_COLOR as a last resort for this tile's grid
-
-			var actual_grid_line_color: Color = color_for_grid_lines_base.darkened(GRID_DARKEN_FACTOR)
+			var actual_grid_line_color: Color = color_for_grid_lines_base.darkened(grid_darken_factor) # Use exported variable
 
 			# 3. Fill the entire tile cell with this darkened color (this forms the grid lines)
 			var full_tile_rect := Rect2i(current_tile_pixel_x, current_tile_pixel_y, current_tile_render_w, current_tile_render_h)
@@ -669,13 +712,13 @@ func render_map(
 
 			# if x == 0 and y == 0: print("MapRender (0,0): Calling _draw_tile_bg. inset_for_terrain_content: ", inset_for_terrain_content) # DEBUG
 			var chosen_color_from_tile_bg = _draw_tile_bg(map_image, tile, current_tile_pixel_x, current_tile_pixel_y, current_tile_render_w, current_tile_render_h, inset_for_terrain_content, x, y)
-			if chosen_color_from_tile_bg == ERROR_COLOR:  # If you want to use this count, remove the underscore from _error_color_tile_count
+			if chosen_color_from_tile_bg == self.error_color:  # If you want to use this count, remove the underscore from _error_color_tile_count (use exported instance variable)
 				_error_color_tile_count += 1
 
 			var approx_int_tile_size_for_highlight = int(round(reference_float_tile_size_for_offsets))
-			_draw_highlight_or_lowlight(map_image, x, y, lowlights, lowlight_color, approx_int_tile_size_for_highlight, scaled_lowlight_inline_offset, LOWLIGHT_INLINE_WIDTH)
+			_draw_highlight_or_lowlight(map_image, x, y, lowlights, current_lowlight_color, approx_int_tile_size_for_highlight, scaled_lowlight_inline_offset, lowlight_inline_width) # Use current_ and exported variable
 
-			_draw_highlight_or_lowlight(map_image, x, y, highlights, highlight_color, approx_int_tile_size_for_highlight, scaled_highlight_outline_offset, HIGHLIGHT_OUTLINE_WIDTH)
+			_draw_highlight_or_lowlight(map_image, x, y, highlights, current_highlight_color, approx_int_tile_size_for_highlight, scaled_highlight_outline_offset, highlight_outline_width) # Use current_ and exported variable
 
 	# --- Create and return the texture ---
 
@@ -766,7 +809,7 @@ func render_map(
 								original_map_path_for_convoy,
 								convoy_idx,  # Pass convoy_idx
 								shared_segments_map_coords,
-								JOURNEY_LINE_OFFSET_STEP_PIXELS * visual_element_scale_factor,  # Pass scaled offset magnitude
+								journey_line_offset_step_pixels * visual_element_scale_factor,  # Pass scaled offset magnitude (use exported variable)
 								actual_tile_width_f,
 								actual_tile_height_f
 							)
@@ -780,16 +823,16 @@ func render_map(
 								var base_outline_extra_thickness_to_use: float
 
 								if is_selected:
-									base_line_thickness_to_use = SELECTED_JOURNEY_LINE_THICKNESS
-									base_outline_extra_thickness_to_use = SELECTED_JOURNEY_LINE_OUTLINE_EXTRA_THICKNESS_EACH_SIDE
+									base_line_thickness_to_use = selected_journey_line_thickness # Use exported variable
+									base_outline_extra_thickness_to_use = selected_journey_line_outline_extra_thickness_each_side # Use exported variable
 								else:
-									base_line_thickness_to_use = JOURNEY_LINE_THICKNESS
-									base_outline_extra_thickness_to_use = JOURNEY_LINE_OUTLINE_EXTRA_THICKNESS_EACH_SIDE
+									base_line_thickness_to_use = journey_line_thickness # Use exported variable
+									base_outline_extra_thickness_to_use = journey_line_outline_extra_thickness_each_side # Use exported variable
 
 								var current_scaled_journey_line_thickness: int = max(1, roundi(base_line_thickness_to_use * visual_element_scale_factor))
 								var current_scaled_outline_extra_thickness: int = max(0, roundi(base_outline_extra_thickness_to_use * visual_element_scale_factor))
 								var leading_line_color: Color = unique_convoy_color
-								var trailing_line_color: Color = unique_convoy_color.darkened(TRAILING_JOURNEY_DARKEN_FACTOR)
+								var trailing_line_color: Color = unique_convoy_color.darkened(trailing_journey_darken_factor) # Use exported variable
 								var outline_total_thickness: int = current_scaled_journey_line_thickness + (2 * current_scaled_outline_extra_thickness)
 
 								# --- Pass 1: Draw the continuous white outline for the entire path ---
@@ -884,7 +927,7 @@ func render_map(
 							convoy_icon_offset_vec = _get_journey_segment_offset_vector(
 								p1_map_for_offset, p2_map_for_offset,
 								p1_pixel_for_offset, p2_pixel_for_offset,
-								convoy_idx, shared_segments_map_coords, JOURNEY_LINE_OFFSET_STEP_PIXELS
+								convoy_idx, shared_segments_map_coords, journey_line_offset_step_pixels # Use exported variable
 							)
 
 							var next_route_pixel_x: float = (next_route_map_x + 0.5) * actual_tile_width_f
@@ -910,7 +953,7 @@ func render_map(
 							convoy_icon_offset_vec = _get_journey_segment_offset_vector(
 								p1_map_for_offset, p2_map_for_offset,
 								p1_pixel_for_offset, p2_pixel_for_offset,
-								convoy_idx, shared_segments_map_coords, JOURNEY_LINE_OFFSET_STEP_PIXELS
+								convoy_idx, shared_segments_map_coords, journey_line_offset_step_pixels # Use exported variable
 							)
 							# Direction remains default UP as there's no next segment
 
@@ -922,13 +965,13 @@ func render_map(
 				# --- Draw Convoy Arrow ---
 				var throb_factor: float = (sin(p_throb_phase * 2.0 * PI) + 1.0) / 2.0
 
-				var scaled_max_throb_addition: float = MAX_THROB_SIZE_ADDITION * visual_element_scale_factor
+				var scaled_max_throb_addition: float = max_throb_size_addition * visual_element_scale_factor # Use exported variable
 				var current_size_addition: float = throb_factor * scaled_max_throb_addition
 
-				var current_forward_len: float = (CONVOY_ARROW_FORWARD_LENGTH * visual_element_scale_factor) + current_size_addition
-				var current_backward_len: float = (CONVOY_ARROW_BACKWARD_LENGTH * visual_element_scale_factor) + current_size_addition
-				var current_half_width: float = (CONVOY_ARROW_HALF_WIDTH * visual_element_scale_factor) + current_size_addition
-				var current_outline_thickness: float = (CONVOY_ARROW_OUTLINE_THICKNESS * visual_element_scale_factor) + (throb_factor * (scaled_max_throb_addition / 2.0))
+				var current_forward_len: float = (convoy_arrow_forward_length * visual_element_scale_factor) + current_size_addition # Use exported variable
+				var current_backward_len: float = (convoy_arrow_backward_length * visual_element_scale_factor) + current_size_addition # Use exported variable
+				var current_half_width: float = (convoy_arrow_half_width * visual_element_scale_factor) + current_size_addition # Use exported variable
+				var current_outline_thickness: float = (convoy_arrow_outline_thickness * visual_element_scale_factor) + (throb_factor * (scaled_max_throb_addition / 2.0)) # Use exported variable
 
 				var perp_norm: Vector2 = direction_norm.rotated(PI / 2.0)
 				var v_tip: Vector2 = final_convoy_pixel_pos + direction_norm * current_forward_len
@@ -946,7 +989,7 @@ func render_map(
 				var ov_base_right: Vector2 = ov_rear_center - perp_norm * outline_half_width
 				_draw_filled_triangle_on_image(map_image, round(ov_tip), round(ov_base_left), round(ov_base_right), Color.BLACK)
 
-				var darken_amount: float = throb_factor * MAX_THROB_DARKEN_AMOUNT
+				var darken_amount: float = throb_factor * max_throb_darken_amount # Use exported variable
 				var throbbing_fill_color: Color = unique_convoy_color.darkened(darken_amount)
 				_draw_filled_triangle_on_image(map_image, round(v_tip), round(v_base_left), round(v_base_right), throbbing_fill_color)
 

@@ -1,28 +1,41 @@
 # main.gd
+@tool 
 extends Node2D
-
-# Preload the map rendering script
-const MapRenderer = preload('res://map_render.gd')
-# Reference the node that will display the map
-@onready var map_display: TextureRect = $MapDisplay
 
 # Reference to your APICalls node.
 # IMPORTANT: Adjust the path "$APICallsInstance" to the actual path of your APICalls node
 # in your scene tree relative to the node this script (main.gd) is attached to.
 @onready var api_calls_node: Node = $APICallsInstance # Adjust if necessary
 # IMPORTANT: Adjust this path to where you actually place your detailed view toggle in your scene tree!
+
+# Node references
+## Reference to the node that has map_render.gd attached. This should be a child of the current node.
+@onready var map_renderer_node: Node = $MapRendererLogic 
+## Reference to the TextureRect that displays the map, child of MapRendererNode. Adjust path if necessary.
+@onready var map_display: TextureRect = $MapDisplay # MapDisplay is a direct child of this node
+
 @onready var ui_manager: Node = $UIManagerNode # Adjust path to your UIManager node
 @onready var detailed_view_toggle: CheckBox = $DetailedViewToggleCheckbox # Example path
 @onready var map_interaction_manager: Node = $MapInteractionManager # Path to your MapInteractionManager node
 # IMPORTANT: Adjust the path "$GameTimersNode" to the actual path of your GameTimers node in your scene tree.
 @onready var game_timers_node: Node = $GameTimersNode # Adjust if necessary
 
-var map_renderer  # Will be initialized in _ready()
 var map_tiles: Array = []  # Will hold the loaded tile data
 var _all_settlement_data: Array = []  # To store settlement data for rendering
 var _all_convoy_data: Array = []  # To store convoy data from APICalls
-# Constants still needed in main.gd for hover detection or passed to map_renderer
-const LABEL_MAP_EDGE_PADDING: float = 5.0 # Pixels to keep labels from map edge
+## The file path to the JSON file containing map data.
+@export var map_data_file_path: String = "res://foo.json"
+
+# Configurable gameplay/UI parameters
+## Pixels to keep UI elements (like the detailed view toggle) from the edge of the displayed map texture.
+@export var label_map_edge_padding: float = 5.0
+## The squared radius (in pixels on the rendered map texture) for convoy hover detection. (e.g., 25*25 = 625).
+@export var convoy_hover_radius_sq: float = 625.0
+## The squared radius (in pixels on the rendered map texture) for settlement hover detection. (e.g., 20*20 = 400).
+@export var settlement_hover_radius_sq: float = 400.0
+
+# This PREDEFINED_CONVOY_COLORS is duplicated in map_render.gd.
+# Consider moving to an Autoload (e.g., GlobalConstants.gd) for a single source of truth.
 const PREDEFINED_CONVOY_COLORS: Array[Color] = [  # Copied from map_render.gd; could these be imported instead?
 	Color.RED,        # Red
 	Color.BLUE,       # Blue
@@ -41,13 +54,12 @@ var _refresh_notification_label: Label  # For the "Data Refreshed" notification
 
 var _convoy_id_to_color_map: Dictionary = {}
 var _last_assigned_color_idx: int = -1  # To cycle through PREDEFINED_CONVOY_COLORS for new convoys
-const CONVOY_HOVER_RADIUS_ON_TEXTURE_SQ: float = 625.0  # (25 pixels)^2, adjust as needed
-const SETTLEMENT_HOVER_RADIUS_ON_TEXTURE_SQ: float = 400.0  # (20 pixels)^2, adjust as needed for settlements
 
 var _current_hover_info: Dictionary = {}  # Will be updated by MapInteractionManager signal
 var _selected_convoy_ids: Array[String] = []  # Will be updated by MapInteractionManager signal
 
-var show_detailed_view: bool = true  # Single flag for toggling detailed map features (grid & political)
+## Initial state for toggling detailed map features (grid & political colors) on or off.
+@export var show_detailed_view: bool = true
 
 var _dragging_panel_node: Panel = null  # Will be updated by MapInteractionManager signal or getter
 var _drag_offset: Vector2 = Vector2.ZERO  # This state will move to MapInteractionManager
@@ -113,12 +125,11 @@ func _ready():
 			printerr("Main: MapInteractionManager does not have initialize method.")
 
 	# --- Load the JSON data ---
-	var file_path = 'res://foo.json'
-	var file = FileAccess.open(file_path, FileAccess.READ)
+	var file = FileAccess.open(map_data_file_path, FileAccess.READ)
 
 	var err_code = FileAccess.get_open_error()
 	if err_code != OK:
-		printerr('Error opening map json file: ', file_path)
+		printerr('Error opening map json file: ', map_data_file_path)
 		printerr('FileAccess error code: ', err_code)  # DEBUG
 		return
 
@@ -129,7 +140,7 @@ func _ready():
 	var json_data = JSON.parse_string(json_string)
 
 	if json_data == null:
-		printerr('Error parsing JSON map data from: ', file_path)
+		printerr('Error parsing JSON map data from: ', map_data_file_path)
 		printerr('JSON string was: ', json_string) # DEBUG
 		return
 
@@ -167,7 +178,9 @@ func _ready():
 							# print('Main: Loaded settlement for render: %s at tile (%s, %s)' % [settlement_info_for_render.get('name'), x_idx, y_idx])  # DEBUG
 
 	# Initial map render and display
-	map_renderer = MapRenderer.new() # Initialize the class member here
+	if not is_instance_valid(map_renderer_node):
+		printerr("Main: MapRendererNode is not valid in _ready(). Map rendering will fail.")
+		# Optionally, you could try to create a fallback instance here if absolutely necessary, but it's better to ensure the scene is set up correctly.
 
 	# Ensure map_display is correctly sized and positioned before the first render
 	# and before any UI elements dependent on its size/position are placed.
@@ -191,47 +204,47 @@ func _ready():
 	get_viewport().connect('size_changed', Callable(self, '_on_viewport_size_changed'))
 	_on_viewport_size_changed() # Call once at the end of _ready to ensure all initial positions are correct
 
-	# print('Main: Attempting to connect to APICallsInstance signals.')  # DEBUG
-	# Connect to the APICalls signal for convoy data
-	if api_calls_node:
-		# print('Main: api_calls_node found.')  # DEBUG
-		if api_calls_node.has_signal('convoy_data_received'):
-			api_calls_node.convoy_data_received.connect(_on_convoy_data_received)
-			print('Main: Successfully connected to APICalls.convoy_data_received signal.')
+	if not Engine.is_editor_hint(): # Don't run these in editor tool mode
+		# print('Main: Attempting to connect to APICallsInstance signals.')  # DEBUG
+		# Connect to the APICalls signal for convoy data
+		if api_calls_node:
+			# print('Main: api_calls_node found.')  # DEBUG
+			if api_calls_node.has_signal('convoy_data_received'):
+				api_calls_node.convoy_data_received.connect(_on_convoy_data_received)
+				print('Main: Successfully connected to APICalls.convoy_data_received signal.')
+			else:
+				printerr('Main: APICalls node does not have "convoy_data_received" signal.')
+				printerr('Main: api_calls_node is: ', api_calls_node)  # DEBUG
 		else:
-			printerr('Main: APICalls node does not have "convoy_data_received" signal.')
-			printerr('Main: api_calls_node is: ', api_calls_node)  # DEBUG
-	else:
-		printerr('Main: APICalls node not found at the specified path. Cannot connect signal.')
+			printerr('Main: APICalls node not found at the specified path. Cannot connect signal.')
 
-	# Setup the refresh notification label
-	_refresh_notification_label = Label.new()
-	_refresh_notification_label.text = 'Data Refreshed!'
-	# Basic styling - you can customize this further
-	_refresh_notification_label.add_theme_font_size_override('font_size', 24)
-	_refresh_notification_label.add_theme_color_override('font_color', Color.LIGHT_GREEN)
-	_refresh_notification_label.add_theme_color_override('font_outline_color', Color.BLACK)
-	_refresh_notification_label.add_theme_constant_override('outline_size', 2)
-	_refresh_notification_label.modulate.a = 0.0  # Start invisible
-	_refresh_notification_label.z_index = 10 # Ensure notification is on top of everything
-	_refresh_notification_label.name = 'RefreshNotificationLabel'
-	add_child(_refresh_notification_label)  # Add as a direct child of this Node2D
-	_update_refresh_notification_position()  # Set initial position
+		# Setup the refresh notification label (only for game, not editor preview)
+		_refresh_notification_label = Label.new()
+		_refresh_notification_label.text = 'Data Refreshed!'
+		_refresh_notification_label.add_theme_font_size_override('font_size', 24)
+		_refresh_notification_label.add_theme_color_override('font_color', Color.LIGHT_GREEN)
+		_refresh_notification_label.add_theme_color_override('font_outline_color', Color.BLACK)
+		_refresh_notification_label.add_theme_constant_override('outline_size', 2)
+		_refresh_notification_label.modulate.a = 0.0  # Start invisible
+		_refresh_notification_label.z_index = 10
+		_refresh_notification_label.name = 'RefreshNotificationLabel'
+		add_child(_refresh_notification_label)
+		_update_refresh_notification_position()
 
-	# Connect to GameTimers signals
-	if is_instance_valid(game_timers_node):
-		if game_timers_node.has_signal("data_refresh_tick"):
-			game_timers_node.data_refresh_tick.connect(_on_data_refresh_tick)
-			print("Main: Connected to GameTimers.data_refresh_tick")
+		# Connect to GameTimers signals
+		if is_instance_valid(game_timers_node):
+			if game_timers_node.has_signal("data_refresh_tick"):
+				game_timers_node.data_refresh_tick.connect(_on_data_refresh_tick)
+				print("Main: Connected to GameTimers.data_refresh_tick")
+			else:
+				printerr("Main: GameTimersNode does not have 'data_refresh_tick' signal.")
+			if game_timers_node.has_signal("visual_update_tick"):
+				game_timers_node.visual_update_tick.connect(_on_visual_update_tick)
+				print("Main: Connected to GameTimers.visual_update_tick")
+			else:
+				printerr("Main: GameTimersNode does not have 'visual_update_tick' signal.")
 		else:
-			printerr("Main: GameTimersNode does not have 'data_refresh_tick' signal.")
-		if game_timers_node.has_signal("visual_update_tick"):
-			game_timers_node.visual_update_tick.connect(_on_visual_update_tick)
-			print("Main: Connected to GameTimers.visual_update_tick")
-		else:
-			printerr("Main: GameTimersNode does not have 'visual_update_tick' signal.")
-	else:
-		printerr("Main: GameTimersNode not found. Timed updates will not work.")
+			printerr("Main: GameTimersNode not found. Timed updates will not work.")
 
 	# --- Setup Detailed View Toggle ---
 	if is_instance_valid(detailed_view_toggle):
@@ -241,9 +254,6 @@ func _ready():
 		# print('Main: Detailed View toggle initialized and connected.')
 	else:
 		printerr('Main: DetailedViewToggleCheckbox node not found or invalid. Check the path in main.gd.')
-
-	# print('Main: Visual update timer started for every %s seconds.' % VISUAL_UPDATE_INTERVAL_SECONDS)
-	# print('Main: Convoy data refresh timer started for every %s seconds.' % REFRESH_INTERVAL_SECONDS)
 
 
 func _on_viewport_size_changed():
@@ -255,7 +265,7 @@ func _on_viewport_size_changed():
 		# print('Main: map_display reset to position (0,0) and size: ', map_display.size) # DEBUG
 
 	# Update positions of UI elements that depend on viewport/map_display size
-	if is_instance_valid(_refresh_notification_label):
+	if not Engine.is_editor_hint() and is_instance_valid(_refresh_notification_label): # Only update in game
 		_update_refresh_notification_position()
 	if is_instance_valid(detailed_view_toggle):
 		_update_detailed_view_toggle_position()
@@ -275,8 +285,8 @@ func _update_map_display():
 	if map_tiles.is_empty():
 		# printerr('Main: _update_map_display - Cannot update map display: map_tiles is empty. Returning.') # DEBUG - Can be noisy if data loads late
 		return
-	if not map_renderer:
-		printerr('Main: _update_map_display - Cannot update map display: map_renderer is not initialized. Returning.') # DEBUG
+	if not is_instance_valid(map_renderer_node):
+		printerr('Main: _update_map_display - Cannot update map display: map_renderer_node is not valid. Returning.') # DEBUG
 		return
 
 	if not is_instance_valid(map_display): # Added safety check
@@ -306,12 +316,12 @@ func _update_map_display():
 	# print("Main: Calling map_renderer.render_map with show_detailed_view = %s" % show_detailed_view) # DEBUG
 	# print('Main: Calling render_map with _current_hover_info: ', _current_hover_info)  # DEBUG
 	# You can pass actual highlight/lowlight data here if you have it.
-	var map_texture: ImageTexture = map_renderer.render_map(
+	var map_texture: ImageTexture = map_renderer_node.render_map(
 		map_tiles,
 		[],  # highlights
 		[],  # lowlights
-		MapRenderer.DEFAULT_HIGHLIGHT_OUTLINE_COLOR,
-		MapRenderer.DEFAULT_LOWLIGHT_INLINE_COLOR,
+		Color(0,0,0,0), # Let map_render use its own default highlight color
+		Color(0,0,0,0), # Let map_render use its own default lowlight color
 		current_viewport_size,    # Viewport size
 		_all_convoy_data,         # Pass the convoy data
 		throb_phase_for_render,   # Pass potentially frozen throb phase
@@ -580,9 +590,9 @@ func _update_detailed_view_toggle_position() -> void:
 	# print('LABEL_MAP_EDGE_PADDING: ', LABEL_MAP_EDGE_PADDING) # DEBUG
 
 	# Position relative to the displayed map texture area, with LABEL_MAP_EDGE_PADDING
-	# offset_x/y are relative to map_display. detailed_view_toggle.position is relative to its parent (this Node2D).
-	var target_x = map_display.position.x + offset_x + displayed_texture_width - toggle_size.x - LABEL_MAP_EDGE_PADDING
-	var target_y = map_display.position.y + offset_y + displayed_texture_height - toggle_size.y - LABEL_MAP_EDGE_PADDING
+	# offset_x/y are relative to map_display. detailed_view_toggle.position is relative to its parent (this Node2D). # Use the exported variable
+	var target_x = map_display.position.x + offset_x + displayed_texture_width - toggle_size.x - label_map_edge_padding
+	var target_y = map_display.position.y + offset_y + displayed_texture_height - toggle_size.y - label_map_edge_padding
 	# print('Calculated target_x: ', target_x, ', target_y: ', target_y) # DEBUG
 	detailed_view_toggle.position = Vector2(target_x, target_y)
 

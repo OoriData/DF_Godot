@@ -28,10 +28,15 @@ var all_convoy_data: Array = []
 var all_settlement_data: Array = []
 var map_tiles: Array = []
 
-# --- Constants (can be moved from main.gd later if specific to interaction) ---
-const CONVOY_HOVER_RADIUS_ON_TEXTURE_SQ: float = 625.0  # (25 pixels)^2
-const SETTLEMENT_HOVER_RADIUS_ON_TEXTURE_SQ: float = 400.0  # (20 pixels)^2
-const LABEL_MAP_EDGE_PADDING: float = 5.0 # For drag clamping
+@export_group("Interaction Thresholds")
+## The squared radius (in pixels on the map texture) for detecting hover over convoys. (e.g., 25*25 = 625).
+@export var convoy_hover_radius_on_texture_sq: float = 625.0
+## The squared radius (in pixels on the map texture) for detecting hover over settlements. (e.g., 20*20 = 400).
+@export var settlement_hover_radius_on_texture_sq: float = 400.0
+
+@export_group("UI Interaction")
+## Padding from the viewport edges (in pixels) used to clamp draggable UI panels.
+@export var label_map_edge_padding: float = 5.0
 
 # --- Internal State Variables (will be moved from main.gd) ---
 var _current_hover_info: Dictionary = {}
@@ -174,14 +179,14 @@ func _handle_mouse_motion(event: InputEventMouseMotion):
 				var convoy_center_tex_y: float = (convoy_map_y + 0.5) * actual_tile_height_on_texture
 				var dx = mouse_on_texture_x - convoy_center_tex_x
 				var dy = mouse_on_texture_y - convoy_center_tex_y
-				if (dx * dx) + (dy * dy) < CONVOY_HOVER_RADIUS_ON_TEXTURE_SQ:
+				if (dx * dx) + (dy * dy) < convoy_hover_radius_on_texture_sq: # Use exported variable
 					new_hover_info = {'type': 'convoy', 'id': convoy_id_str}
 					found_hover_element = true
 					break
 
 	# 2. Check for Settlement Hover (if no convoy was hovered)
 	if not found_hover_element and not all_settlement_data.is_empty():
-		var closest_settlement_dist_sq: float = SETTLEMENT_HOVER_RADIUS_ON_TEXTURE_SQ + 1.0
+		var closest_settlement_dist_sq: float = settlement_hover_radius_on_texture_sq + 1.0 # Use exported variable
 		var best_hovered_settlement_coords: Vector2i = Vector2i(-1, -1)
 		for settlement_info_item in all_settlement_data:
 			if not settlement_info_item is Dictionary: continue
@@ -193,7 +198,7 @@ func _handle_mouse_motion(event: InputEventMouseMotion):
 				var dx_settlement = mouse_on_texture_x - settlement_center_tex_x
 				var dy_settlement = mouse_on_texture_y - settlement_center_tex_y
 				var distance_sq_settlement = (dx_settlement * dx_settlement) + (dy_settlement * dy_settlement)
-				if distance_sq_settlement < SETTLEMENT_HOVER_RADIUS_ON_TEXTURE_SQ:
+				if distance_sq_settlement < settlement_hover_radius_on_texture_sq: # Use exported variable
 					if distance_sq_settlement < closest_settlement_dist_sq:
 						closest_settlement_dist_sq = distance_sq_settlement
 						best_hovered_settlement_coords = Vector2i(settlement_tile_x, settlement_tile_y)
@@ -246,10 +251,10 @@ func _handle_mouse_button(event: InputEventMouseButton):
 								# Calculate and store clamping bounds (in global coordinates)
 								var viewport_rect = get_viewport().get_visible_rect()
 								_current_drag_clamp_rect = Rect2(
-									viewport_rect.position.x + LABEL_MAP_EDGE_PADDING,
-									viewport_rect.position.y + LABEL_MAP_EDGE_PADDING,
-									viewport_rect.size.x - (2 * LABEL_MAP_EDGE_PADDING),
-									viewport_rect.size.y - (2 * LABEL_MAP_EDGE_PADDING)
+									viewport_rect.position.x + label_map_edge_padding, # Use exported variable
+									viewport_rect.position.y + label_map_edge_padding, # Use exported variable
+									viewport_rect.size.x - (2 * label_map_edge_padding), # Use exported variable
+									viewport_rect.size.y - (2 * label_map_edge_padding)  # Use exported variable
 								)
 								
 								emit_signal("panel_drag_started", _dragged_convoy_id_actual_str, _dragging_panel_node)
@@ -313,7 +318,7 @@ func _handle_mouse_button(event: InputEventMouseButton):
 						var convoy_center_tex_y: float = (convoy_map_y + 0.5) * actual_tile_height_on_texture
 						var dx = mouse_on_texture_x - convoy_center_tex_x
 						var dy = mouse_on_texture_y - convoy_center_tex_y
-						if (dx * dx) + (dy * dy) < CONVOY_HOVER_RADIUS_ON_TEXTURE_SQ: # Using hover radius for click
+						if (dx * dx) + (dy * dy) < convoy_hover_radius_on_texture_sq: # Using hover radius for click (use exported variable)
 							clicked_convoy_id_str_on_map = str(convoy_id_val)
 							break
 

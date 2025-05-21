@@ -11,30 +11,55 @@ var label_settings: LabelSettings
 var settlement_label_settings: LabelSettings
 
 # --- UI Constants (copied and consolidated from main.gd) ---
-const BASE_CONVOY_TITLE_FONT_SIZE: int = 64
-const BASE_SETTLEMENT_FONT_SIZE: int = 52
-const MIN_FONT_SIZE: int = 8
-const FONT_SCALING_BASE_TILE_SIZE: float = 24.0 # Should match map_render.gd's BASE_TILE_SIZE_FOR_PROPORTIONS
-const FONT_SCALING_EXPONENT: float = 0.6
+@export_group("Font Scaling")
+## Base font size for convoy titles before scaling.
+@export var base_convoy_title_font_size: int = 64
+## Base font size for settlement labels before scaling.
+@export var base_settlement_font_size: int = 52
+## Minimum font size after scaling.
+@export var min_font_size: int = 8
+## The map tile size that font scaling is based on. Should ideally match map_render's base_tile_size_for_proportions.
+@export var font_scaling_base_tile_size: float = 24.0
+## Exponent for font scaling (1.0 = linear, <1.0 less aggressive shrink/grow).
+@export var font_scaling_exponent: float = 0.6
 
-const BASE_HORIZONTAL_LABEL_OFFSET_FROM_CENTER: float = 15.0
-const BASE_SELECTED_CONVOY_HORIZONTAL_OFFSET: float = 60.0
-const BASE_SETTLEMENT_OFFSET_ABOVE_TILE_CENTER: float = 10.0
-const BASE_COLOR_INDICATOR_SIZE: float = 14.0 # No longer used for convoy panels
-const BASE_COLOR_INDICATOR_PADDING: float = 4.0 # No longer used for convoy panels
-const BASE_CONVOY_PANEL_CORNER_RADIUS: float = 8.0
-const BASE_CONVOY_PANEL_PADDING_H: float = 8.0
-const BASE_CONVOY_PANEL_PADDING_V: float = 5.0
-const CONVOY_PANEL_BACKGROUND_COLOR: Color = Color(0.12, 0.12, 0.15, 0.88)
-const BASE_CONVOY_PANEL_BORDER_WIDTH: float = 3.0
-const BASE_SETTLEMENT_PANEL_CORNER_RADIUS: float = 6.0
-const BASE_SETTLEMENT_PANEL_PADDING_H: float = 6.0
-const BASE_SETTLEMENT_PANEL_PADDING_V: float = 4.0
-const SETTLEMENT_PANEL_BACKGROUND_COLOR: Color = Color(0.15, 0.12, 0.12, 0.85)
+@export_group("Label Offsets")
+## Base horizontal offset from the convoy's center for its label panel. Scaled.
+@export var base_horizontal_label_offset_from_center: float = 15.0
+## Base horizontal offset for selected convoy label panels. Scaled.
+@export var base_selected_convoy_horizontal_offset: float = 60.0
+## Base vertical offset above the settlement's tile center for its label panel. Scaled.
+@export var base_settlement_offset_above_tile_center: float = 10.0
 
-const LABEL_ANTI_COLLISION_Y_SHIFT: float = 5.0
-const LABEL_MAP_EDGE_PADDING: float = 5.0
+@export_group("Convoy Panel Appearance")
+## Corner radius for convoy label panels. Scaled.
+@export var base_convoy_panel_corner_radius: float = 8.0
+## Horizontal padding inside convoy label panels. Scaled.
+@export var base_convoy_panel_padding_h: float = 8.0
+## Vertical padding inside convoy label panels. Scaled.
+@export var base_convoy_panel_padding_v: float = 5.0
+## Background color for convoy label panels.
+@export var convoy_panel_background_color: Color = Color(0.12, 0.12, 0.15, 0.88)
+## Border width for convoy label panels. Scaled.
+@export var base_convoy_panel_border_width: float = 3.0
 
+@export_group("Settlement Panel Appearance")
+## Corner radius for settlement label panels. Scaled.
+@export var base_settlement_panel_corner_radius: float = 6.0
+## Horizontal padding inside settlement label panels. Scaled.
+@export var base_settlement_panel_padding_h: float = 6.0
+## Vertical padding inside settlement label panels. Scaled.
+@export var base_settlement_panel_padding_v: float = 4.0
+## Background color for settlement label panels.
+@export var settlement_panel_background_color: Color = Color(0.15, 0.12, 0.12, 0.85)
+
+@export_group("Label Positioning")
+## Amount to shift a label panel vertically to avoid collision with another.
+@export var label_anti_collision_y_shift: float = 5.0
+## Padding from the viewport edges (in pixels) used to clamp label panels.
+@export var label_map_edge_padding: float = 5.0
+
+# Data constants, not typically exported for Inspector editing
 const CONVOY_STAT_EMOJIS: Dictionary = {
 	'efficiency': '🌿',
 	'top_speed': '🚀',
@@ -57,8 +82,11 @@ const ABBREVIATED_MONTH_NAMES: Array[String] = [
 ]
 
 # --- Connector Line constants ---
-const CONNECTOR_LINE_COLOR: Color = Color(0.9, 0.9, 0.9, 0.6)
-const CONNECTOR_LINE_WIDTH: float = 1.5
+@export_group("Connector Lines")
+## Color for lines connecting convoy icons to their label panels.
+@export var connector_line_color: Color = Color(0.9, 0.9, 0.9, 0.6)
+## Width of the connector lines.
+@export var connector_line_width: float = 1.5
 
 # --- State managed by UIManager ---
 var _dragging_panel_node: Panel = null
@@ -307,28 +335,28 @@ func _draw_single_convoy_label(convoy_data: Dictionary, existing_label_rects: Ar
 	var map_image_rows: int = _map_tiles_data.size()
 	var actual_tile_width_on_texture: float = map_texture_size.x / float(map_image_cols)
 	var actual_tile_height_on_texture: float = map_texture_size.y / float(map_image_rows)
-
 	var effective_tile_size_on_texture: float = min(actual_tile_width_on_texture, actual_tile_height_on_texture)
+	
 	var base_linear_font_scale: float = 1.0
-	if FONT_SCALING_BASE_TILE_SIZE > 0.001:
-		base_linear_font_scale = effective_tile_size_on_texture / FONT_SCALING_BASE_TILE_SIZE
-	var font_render_scale: float = pow(base_linear_font_scale, FONT_SCALING_EXPONENT)
+	if font_scaling_base_tile_size > 0.001: # Use exported variable
+		base_linear_font_scale = effective_tile_size_on_texture / font_scaling_base_tile_size # Use exported variable
+	var font_render_scale: float = pow(base_linear_font_scale, font_scaling_exponent) # Use exported variable
 
-	var current_convoy_title_font_size: int = max(MIN_FONT_SIZE, roundi(BASE_CONVOY_TITLE_FONT_SIZE * font_render_scale))
+	var current_convoy_title_font_size: int = max(min_font_size, roundi(base_convoy_title_font_size * font_render_scale)) # Use exported variables
 	
 	var current_convoy_id_orig = convoy_data.get('convoy_id')
 	var current_convoy_id_str = str(current_convoy_id_orig)
 
 	var current_horizontal_offset: float
 	if _selected_convoy_ids_cache.has(current_convoy_id_str):
-		current_horizontal_offset = BASE_SELECTED_CONVOY_HORIZONTAL_OFFSET * actual_scale
+		current_horizontal_offset = base_selected_convoy_horizontal_offset * actual_scale # Use exported variable
 	else:
-		current_horizontal_offset = BASE_HORIZONTAL_LABEL_OFFSET_FROM_CENTER * actual_scale
+		current_horizontal_offset = base_horizontal_label_offset_from_center * actual_scale # Use exported variable
 
-	var current_panel_corner_radius: float = BASE_CONVOY_PANEL_CORNER_RADIUS * font_render_scale
-	var current_panel_padding_h: float = BASE_CONVOY_PANEL_PADDING_H * font_render_scale
-	var current_panel_border_width: int = max(1, roundi(BASE_CONVOY_PANEL_BORDER_WIDTH * font_render_scale))
-	var current_panel_padding_v: float = BASE_CONVOY_PANEL_PADDING_V * font_render_scale
+	var current_panel_corner_radius: float = base_convoy_panel_corner_radius * font_render_scale # Use exported variable
+	var current_panel_padding_h: float = base_convoy_panel_padding_h * font_render_scale # Use exported variable
+	var current_panel_border_width: int = max(1, roundi(base_convoy_panel_border_width * font_render_scale)) # Use exported variable
+	var current_panel_padding_v: float = base_convoy_panel_padding_v * font_render_scale # Use exported variable
 
 	var efficiency: float = convoy_data.get('efficiency', 0.0)
 	var convoy_map_x: float = convoy_data.get('x', 0.0)
@@ -422,7 +450,7 @@ func _draw_single_convoy_label(convoy_data: Dictionary, existing_label_rects: Ar
 
 	var panel := Panel.new()
 	var style_box := StyleBoxFlat.new()
-	style_box.bg_color = CONVOY_PANEL_BACKGROUND_COLOR
+	style_box.bg_color = convoy_panel_background_color # Use exported variable
 	style_box.border_color = unique_convoy_color
 	style_box.border_width_left = current_panel_border_width
 	style_box.border_width_top = current_panel_border_width
@@ -464,11 +492,11 @@ func _draw_single_convoy_label(convoy_data: Dictionary, existing_label_rects: Ar
 					collides_with_existing = true
 					colliding_rect_for_shift_calc = existing_rect
 					break
-			if collides_with_existing:
+			if collides_with_existing: # Use exported variable
 				var shift_based_on_collided_height = 0.0
 				if is_instance_valid(colliding_rect_for_shift_calc) and colliding_rect_for_shift_calc.size.y > 0:
-					shift_based_on_collided_height = colliding_rect_for_shift_calc.size.y * 0.25 + LABEL_MAP_EDGE_PADDING
-				var y_shift_amount = LABEL_ANTI_COLLISION_Y_SHIFT + max(label_min_size.y * 0.1, shift_based_on_collided_height)
+					shift_based_on_collided_height = colliding_rect_for_shift_calc.size.y * 0.25 + label_map_edge_padding # Use exported variable
+				var y_shift_amount = label_anti_collision_y_shift + max(label_min_size.y * 0.1, shift_based_on_collided_height) # Use exported variable
 				panel.position.y += y_shift_amount
 				current_panel_rect = Rect2(panel.position, panel.size)
 			else:
@@ -495,10 +523,10 @@ func _draw_single_convoy_label(convoy_data: Dictionary, existing_label_rects: Ar
 	# Since convoy_label_container is a direct child of map_display and assumed at (0,0) relative to it,
 	# clamp_rect_local_to_map_display is also the clamp_rect_local_to_convoy_label_container.
 
-	var padded_min_x = clamp_rect_local_to_map_display.position.x + LABEL_MAP_EDGE_PADDING
-	var padded_min_y = clamp_rect_local_to_map_display.position.y + LABEL_MAP_EDGE_PADDING
-	var padded_max_x = clamp_rect_local_to_map_display.position.x + clamp_rect_local_to_map_display.size.x - LABEL_MAP_EDGE_PADDING
-	var padded_max_y = clamp_rect_local_to_map_display.position.y + clamp_rect_local_to_map_display.size.y - LABEL_MAP_EDGE_PADDING
+	var padded_min_x = clamp_rect_local_to_map_display.position.x + label_map_edge_padding # Use exported variable
+	var padded_min_y = clamp_rect_local_to_map_display.position.y + label_map_edge_padding # Use exported variable
+	var padded_max_x = clamp_rect_local_to_map_display.position.x + clamp_rect_local_to_map_display.size.x - label_map_edge_padding # Use exported variable
+	var padded_max_y = clamp_rect_local_to_map_display.position.y + clamp_rect_local_to_map_display.size.y - label_map_edge_padding # Use exported variable
 
 	panel_target_position.x = clamp(panel.position.x, padded_min_x, padded_max_x - panel.size.x)
 	panel_target_position.y = clamp(panel.position.y, padded_min_y, padded_max_y - panel.size.y)
@@ -542,15 +570,15 @@ func _draw_single_settlement_label(settlement_info_for_render: Dictionary) -> Re
 
 	var effective_tile_size_on_texture: float = min(actual_tile_width_on_texture, actual_tile_height_on_texture)
 	var base_linear_font_scale: float = 1.0
-	if FONT_SCALING_BASE_TILE_SIZE > 0.001:
-		base_linear_font_scale = effective_tile_size_on_texture / FONT_SCALING_BASE_TILE_SIZE
-	var font_render_scale: float = pow(base_linear_font_scale, FONT_SCALING_EXPONENT)
+	if font_scaling_base_tile_size > 0.001: # Use exported variable
+		base_linear_font_scale = effective_tile_size_on_texture / font_scaling_base_tile_size # Use exported variable
+	var font_render_scale: float = pow(base_linear_font_scale, font_scaling_exponent) # Use exported variable
 
-	var current_settlement_font_size: int = max(MIN_FONT_SIZE, roundi(BASE_SETTLEMENT_FONT_SIZE * font_render_scale))
-	var current_settlement_offset_above_center: float = BASE_SETTLEMENT_OFFSET_ABOVE_TILE_CENTER * actual_scale
-	var current_settlement_panel_corner_radius: float = BASE_SETTLEMENT_PANEL_CORNER_RADIUS * font_render_scale
-	var current_settlement_panel_padding_h: float = BASE_SETTLEMENT_PANEL_PADDING_H * font_render_scale
-	var current_settlement_panel_padding_v: float = BASE_SETTLEMENT_PANEL_PADDING_V * font_render_scale
+	var current_settlement_font_size: int = max(min_font_size, roundi(base_settlement_font_size * font_render_scale)) # Use exported variables
+	var current_settlement_offset_above_center: float = base_settlement_offset_above_tile_center * actual_scale # Use exported variable
+	var current_settlement_panel_corner_radius: float = base_settlement_panel_corner_radius * font_render_scale # Use exported variable
+	var current_settlement_panel_padding_h: float = base_settlement_panel_padding_h * font_render_scale # Use exported variable
+	var current_settlement_panel_padding_v: float = base_settlement_panel_padding_v * font_render_scale # Use exported variable
 
 	var settlement_name_local: String = settlement_info_for_render.get('name', 'N/A')
 	var tile_x: int = settlement_info_for_render.get('x', -1)
@@ -578,7 +606,7 @@ func _draw_single_settlement_label(settlement_info_for_render: Dictionary) -> Re
 
 	var panel := Panel.new()
 	var style_box := StyleBoxFlat.new()
-	style_box.bg_color = SETTLEMENT_PANEL_BACKGROUND_COLOR
+	style_box.bg_color = settlement_panel_background_color # Use exported variable
 	style_box.corner_radius_top_left = current_settlement_panel_corner_radius
 	style_box.corner_radius_top_right = current_settlement_panel_corner_radius
 	style_box.corner_radius_bottom_left = current_settlement_panel_corner_radius
@@ -610,10 +638,10 @@ func _draw_single_settlement_label(settlement_info_for_render: Dictionary) -> Re
 	var map_display_global_transform = _map_display_node.get_global_transform_with_canvas()
 	var clamp_rect_local_to_map_display = map_display_global_transform.affine_inverse() * viewport_rect_global
 
-	var padded_min_x = clamp_rect_local_to_map_display.position.x + LABEL_MAP_EDGE_PADDING
-	var padded_min_y = clamp_rect_local_to_map_display.position.y + LABEL_MAP_EDGE_PADDING
-	var padded_max_x = clamp_rect_local_to_map_display.position.x + clamp_rect_local_to_map_display.size.x - LABEL_MAP_EDGE_PADDING
-	var padded_max_y = clamp_rect_local_to_map_display.position.y + clamp_rect_local_to_map_display.size.y - LABEL_MAP_EDGE_PADDING
+	var padded_min_x = clamp_rect_local_to_map_display.position.x + label_map_edge_padding # Use exported variable
+	var padded_min_y = clamp_rect_local_to_map_display.position.y + label_map_edge_padding # Use exported variable
+	var padded_max_x = clamp_rect_local_to_map_display.position.x + clamp_rect_local_to_map_display.size.x - label_map_edge_padding # Use exported variable
+	var padded_max_y = clamp_rect_local_to_map_display.position.y + clamp_rect_local_to_map_display.size.y - label_map_edge_padding # Use exported variable
 
 	panel_target_position.x = clamp(panel.position.x, padded_min_x, padded_max_x - panel.size.x)
 	panel_target_position.y = clamp(panel.position.y, padded_min_y, padded_max_y - panel.size.y)
@@ -717,7 +745,7 @@ func _on_connector_lines_container_draw():
 				)
 				
 			if not line_start_pos.is_equal_approx(line_end_pos):
-				convoy_connector_lines_container.draw_line(line_start_pos, line_end_pos, CONNECTOR_LINE_COLOR, CONNECTOR_LINE_WIDTH, true)
+				convoy_connector_lines_container.draw_line(line_start_pos, line_end_pos, connector_line_color, connector_line_width, true) # Use exported variables
 
 
 # --- Helper function for ETA formatting (moved from main.gd) ---
