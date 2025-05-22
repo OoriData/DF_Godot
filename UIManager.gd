@@ -2,6 +2,10 @@ extends Node2D
 
 # References to label containers managed by UIManager
 # These should be children of the Node this script is attached to.
+@export_group("Global UI Scaling")
+## Multiplier to adjust the overall perceived size of UI labels and panels. 1.0 = default.
+@export var ui_overall_scale_multiplier: float = 1.0
+
 @onready var settlement_label_container: Node2D = $SettlementLabelContainer
 @onready var convoy_connector_lines_container: Node2D = $ConvoyConnectorLinesContainer
 @onready var convoy_label_container: Node2D = $ConvoyLabelContainer
@@ -12,52 +16,66 @@ var settlement_label_settings: LabelSettings
 
 # --- UI Constants (copied and consolidated from main.gd) ---
 @export_group("Font Scaling")
-## Base font size for convoy titles before scaling.
-@export var base_convoy_title_font_size: int = 64
-## Base font size for settlement labels before scaling.
-@export var base_settlement_font_size: int = 52
-## Minimum font size after scaling.
-@export var min_font_size: int = 8
+## Target screen font size for convoy titles (if font_render_scale and map_zoom are 1.0). Adjust for desired on-screen readability. (Prev: 12)
+@export var base_convoy_title_font_size: int = 15 # 12 * 1.25
+## Target screen font size for settlement labels (if font_render_scale and map_zoom are 1.0). Adjust for desired on-screen readability. (Prev: 10)
+@export var base_settlement_font_size: int = 13 # 10 * 1.25 = 12.5, rounded to 13
+## Minimum font size to set on the Label node.
+@export var min_node_font_size: int = 8
+## Maximum font size to set on the Label node.
+@export var max_node_font_size: int = 120 # Increased from 60
 ## The map tile size that font scaling is based on. Should ideally match map_render's base_tile_size_for_proportions.
-@export var font_scaling_base_tile_size: float = 24.0
+@export var font_scaling_base_tile_size: float = 24.0 
 ## Exponent for font scaling (1.0 = linear, <1.0 less aggressive shrink/grow).
-@export var font_scaling_exponent: float = 0.6
+@export var font_scaling_exponent: float = 0.6 
 
 @export_group("Label Offsets")
 ## Base horizontal offset from the convoy's center for its label panel. Scaled.
-@export var base_horizontal_label_offset_from_center: float = 15.0
+@export var base_horizontal_label_offset_from_center: float = 15.0 
 ## Base horizontal offset for selected convoy label panels. Scaled.
-@export var base_selected_convoy_horizontal_offset: float = 60.0
+@export var base_selected_convoy_horizontal_offset: float = 60.0 
 ## Base vertical offset above the settlement's tile center for its label panel. Scaled.
-@export var base_settlement_offset_above_tile_center: float = 10.0
+@export var base_settlement_offset_above_tile_center: float = 10.0 
 
 @export_group("Convoy Panel Appearance")
-## Corner radius for convoy label panels. Scaled.
-@export var base_convoy_panel_corner_radius: float = 8.0
-## Horizontal padding inside convoy label panels. Scaled.
-@export var base_convoy_panel_padding_h: float = 8.0
-## Vertical padding inside convoy label panels. Scaled.
-@export var base_convoy_panel_padding_v: float = 5.0
+## Target screen corner radius for convoy label panels. Adjust for desired on-screen look. (Prev: 4.0)
+@export var base_convoy_panel_corner_radius: float = 5.0 # 4.0 * 1.25
+## Target screen horizontal padding inside convoy label panels. Adjust for desired on-screen look. (Prev: 4.0)
+@export var base_convoy_panel_padding_h: float = 5.0 # 4.0 * 1.25
+## Target screen vertical padding inside convoy label panels. Adjust for desired on-screen look. (Prev: 2.0)
+@export var base_convoy_panel_padding_v: float = 2.5 # 2.0 * 1.25
 ## Background color for convoy label panels.
-@export var convoy_panel_background_color: Color = Color(0.12, 0.12, 0.15, 0.88)
-## Border width for convoy label panels. Scaled.
-@export var base_convoy_panel_border_width: float = 3.0
+@export var convoy_panel_background_color: Color = Color(0.12, 0.12, 0.15, 0.88) 
+## Target screen border width for convoy label panels. Adjust for desired on-screen look. (Prev: 1.0)
+@export var base_convoy_panel_border_width: float = 1.25 # 1.0 * 1.25
+## Minimum corner radius to set on the panel node.
+@export var min_node_panel_corner_radius: float = 1.0
+## Maximum corner radius to set on the panel node.
+@export var max_node_panel_corner_radius: float = 32.0 # Increased from 16.0
+## Minimum padding to set on the panel node.
+@export var min_node_panel_padding: float = 1.0
+## Maximum padding to set on the panel node.
+@export var max_node_panel_padding: float = 40.0 # Increased from 20.0
+## Minimum border width to set on the panel node.
+@export var min_node_panel_border_width: int = 1
+## Maximum border width to set on the panel node.
+@export var max_node_panel_border_width: int = 12 # Increased from 6
 
 @export_group("Settlement Panel Appearance")
-## Corner radius for settlement label panels. Scaled.
-@export var base_settlement_panel_corner_radius: float = 6.0
-## Horizontal padding inside settlement label panels. Scaled.
-@export var base_settlement_panel_padding_h: float = 6.0
-## Vertical padding inside settlement label panels. Scaled.
-@export var base_settlement_panel_padding_v: float = 4.0
+## Target screen corner radius for settlement label panels. Adjust for desired on-screen look. (Prev: 3.0)
+@export var base_settlement_panel_corner_radius: float = 3.75 # 3.0 * 1.25
+## Target screen horizontal padding inside settlement label panels. Adjust for desired on-screen look. (Prev: 3.0)
+@export var base_settlement_panel_padding_h: float = 3.75 # 3.0 * 1.25
+## Target screen vertical padding inside settlement label panels. Adjust for desired on-screen look. (Prev: 2.0)
+@export var base_settlement_panel_padding_v: float = 2.5 # 2.0 * 1.25
 ## Background color for settlement label panels.
-@export var settlement_panel_background_color: Color = Color(0.15, 0.12, 0.12, 0.85)
+@export var settlement_panel_background_color: Color = Color(0.15, 0.12, 0.12, 0.85) 
 
 @export_group("Label Positioning")
 ## Amount to shift a label panel vertically to avoid collision with another.
-@export var label_anti_collision_y_shift: float = 5.0
+@export var label_anti_collision_y_shift: float = 5.0 
 ## Padding from the viewport edges (in pixels) used to clamp label panels.
-@export var label_map_edge_padding: float = 5.0
+@export var label_map_edge_padding: float = 5.0 
 
 # Data constants, not typically exported for Inspector editing
 const CONVOY_STAT_EMOJIS: Dictionary = {
@@ -84,9 +102,9 @@ const ABBREVIATED_MONTH_NAMES: Array[String] = [
 # --- Connector Line constants ---
 @export_group("Connector Lines")
 ## Color for lines connecting convoy icons to their label panels.
-@export var connector_line_color: Color = Color(0.9, 0.9, 0.9, 0.6)
+@export var connector_line_color: Color = Color(0.9, 0.9, 0.9, 0.6) 
 ## Width of the connector lines.
-@export var connector_line_width: float = 1.5
+@export var connector_line_width: float = 1.5 
 
 # --- State managed by UIManager ---
 var _dragging_panel_node: Panel = null
@@ -101,7 +119,17 @@ var _map_tiles_data: Array
 var _all_convoy_data_cache: Array
 var _all_settlement_data_cache: Array
 var _convoy_id_to_color_map_cache: Dictionary
+var _convoy_data_by_id_cache: Dictionary # New cache for quick lookup
 var _selected_convoy_ids_cache: Array # Stored as strings
+var _current_map_zoom_cache: float = 1.0 # Cache for current map zoom level
+
+# Cached drawing parameters for connector lines
+var _cached_actual_scale: float = 1.0
+var _cached_offset_x: float = 0.0
+var _cached_offset_y: float = 0.0
+var _cached_actual_tile_width_on_texture: float = 0.0
+var _cached_actual_tile_height_on_texture: float = 0.0
+var _ui_drawing_params_cached: bool = false
 
 
 func _ready():
@@ -156,7 +184,9 @@ func update_ui_elements(
 		selected_convoy_ids: Array, # Expecting array of strings
 		convoy_label_user_positions_from_main: Dictionary, 
 		dragging_panel_node_from_main: Panel, 
-		dragged_convoy_id_str_from_main: String
+		dragged_convoy_id_str_from_main: String,
+		is_light_ui_update: bool = false,
+		current_map_zoom: float = 1.0 # New 12th argument
 	):
 	# Store references to data needed by drawing functions
 	_map_display_node = map_display_node_ref
@@ -166,24 +196,129 @@ func update_ui_elements(
 	_convoy_id_to_color_map_cache = convoy_id_to_color_map
 	_selected_convoy_ids_cache = selected_convoy_ids
 
+	# Rebuild the convoy_data_by_id_cache for faster lookups
+	_convoy_data_by_id_cache.clear()
+	if _all_convoy_data_cache is Array:
+		for convoy_data_item in _all_convoy_data_cache:
+			if convoy_data_item is Dictionary and convoy_data_item.has("convoy_id"):
+				_convoy_data_by_id_cache[str(convoy_data_item.get("convoy_id"))] = convoy_data_item
+
+	_current_map_zoom_cache = current_map_zoom # Cache the zoom level
+
+	# Cache drawing parameters for _on_connector_lines_container_draw
+	if is_instance_valid(_map_display_node) and is_instance_valid(_map_display_node.texture) and \
+	   _map_tiles_data and not _map_tiles_data.is_empty() and _map_tiles_data[0] is Array and not _map_tiles_data[0].is_empty():
+		
+		var map_texture_size: Vector2 = _map_display_node.texture.get_size()
+		var map_display_rect_size: Vector2 = _map_display_node.size
+
+		if map_texture_size.x > 0.001 and map_texture_size.y > 0.001:
+			var scale_x_ratio: float = map_display_rect_size.x / map_texture_size.x
+			var scale_y_ratio: float = map_display_rect_size.y / map_texture_size.y
+			_cached_actual_scale = min(scale_x_ratio, scale_y_ratio)
+
+			var displayed_texture_width: float = map_texture_size.x * _cached_actual_scale
+			var displayed_texture_height: float = map_texture_size.y * _cached_actual_scale
+			_cached_offset_x = (_map_display_node.size.x - displayed_texture_width) / 2.0
+			_cached_offset_y = (_map_display_node.size.y - displayed_texture_height) / 2.0
+
+			var map_image_cols: int = _map_tiles_data[0].size()
+			var map_image_rows: int = _map_tiles_data.size()
+			if map_image_cols > 0 and map_image_rows > 0:
+				_cached_actual_tile_width_on_texture = map_texture_size.x / float(map_image_cols)
+				_cached_actual_tile_height_on_texture = map_texture_size.y / float(map_image_rows)
+				_ui_drawing_params_cached = true
+			else:
+				_ui_drawing_params_cached = false # map_image_cols or rows is zero
+		else:
+			_ui_drawing_params_cached = false # map_texture_size is zero
+	else:
+		_ui_drawing_params_cached = false # map_display_node, texture, or map_tiles_data invalid
 	# Update UIManager's state from what main.gd passes
 	_convoy_label_user_positions = convoy_label_user_positions_from_main
 	_dragging_panel_node = dragging_panel_node_from_main
 	_dragged_convoy_id_actual_str = dragged_convoy_id_str_from_main
 
-	# Call the main label drawing logic
-	_draw_interactive_labels(current_hover_info)
+	if is_light_ui_update:
+		# print("UIManager: Performing LIGHT UI update.") # DEBUG
+		_perform_light_ui_update()
+	else:
+		# print("UIManager: Performing FULL UI update (_draw_interactive_labels).") # DEBUG
+		# Call the main label drawing logic
+		_draw_interactive_labels(current_hover_info)
 
 	# Request redraw for connector lines
 	if is_instance_valid(convoy_connector_lines_container):
 		convoy_connector_lines_container.queue_redraw()
 
 
+func _perform_light_ui_update():
+	"""
+	Called during pan/zoom. Avoids destroying/recreating labels.
+	Focuses on re-clamping existing labels to viewport.
+	"""
+	if not _map_display_node or not is_instance_valid(_map_display_node):
+		printerr("UIManager (_perform_light_ui_update): _map_display_node is invalid.")
+		return
+
+	var viewport_rect_global = get_viewport_rect() # Get once for the entire light update
+
+	if is_instance_valid(convoy_label_container) and convoy_label_container.get_child_count() > 0:
+		var container_global_transform_convoy = convoy_label_container.get_global_transform_with_canvas()
+		var clamp_rect_local_to_convoy_container = container_global_transform_convoy.affine_inverse() * viewport_rect_global
+
+		for panel_node in convoy_label_container.get_children():
+			if panel_node is Panel:
+				_clamp_panel_position_optimized(panel_node, clamp_rect_local_to_convoy_container)
+
+	if is_instance_valid(settlement_label_container) and settlement_label_container.get_child_count() > 0:
+		var container_global_transform_settlement = settlement_label_container.get_global_transform_with_canvas()
+		var clamp_rect_local_to_settlement_container = container_global_transform_settlement.affine_inverse() * viewport_rect_global
+
+		for panel_node in settlement_label_container.get_children():
+			if panel_node is Panel:
+				_clamp_panel_position_optimized(panel_node, clamp_rect_local_to_settlement_container)
+
+func _clamp_panel_position_optimized(panel: Panel, precalculated_clamp_rect_local_to_container: Rect2):
+	"""
+	Helper to clamp a panel's position to the viewport boundaries,
+	using a precalculated clamping rectangle in the panel's parent container's local space.
+	"""
+	if not is_instance_valid(panel):
+		return
+
+	var padded_min_x = precalculated_clamp_rect_local_to_container.position.x + label_map_edge_padding
+	var padded_min_y = precalculated_clamp_rect_local_to_container.position.y + label_map_edge_padding
+	var padded_max_x = precalculated_clamp_rect_local_to_container.position.x + precalculated_clamp_rect_local_to_container.size.x - panel.size.x - label_map_edge_padding
+	var padded_max_y = precalculated_clamp_rect_local_to_container.position.y + precalculated_clamp_rect_local_to_container.size.y - panel.size.y - label_map_edge_padding
+
+	panel.position.x = clamp(panel.position.x, padded_min_x, padded_max_x)
+	panel.position.y = clamp(panel.position.y, padded_min_y, padded_max_y)
+
+func _clamp_panel_position(panel: Panel): # Original function, now less used but kept for potential direct calls
+	"""Helper to clamp a panel's position to the viewport boundaries."""
+	if not is_instance_valid(panel) or not is_instance_valid(panel.get_parent()):
+		return
+
+	var container_node = panel.get_parent() # e.g., ConvoyLabelContainer
+	var viewport_rect_global = get_viewport_rect()
+
+	var container_global_transform = container_node.get_global_transform_with_canvas()
+	var clamp_rect_local_to_container = container_global_transform.affine_inverse() * viewport_rect_global
+
+	var padded_min_x = clamp_rect_local_to_container.position.x + label_map_edge_padding
+	var padded_min_y = clamp_rect_local_to_container.position.y + label_map_edge_padding
+	var padded_max_x = clamp_rect_local_to_container.position.x + clamp_rect_local_to_container.size.x - panel.size.x - label_map_edge_padding
+	var padded_max_y = clamp_rect_local_to_container.position.y + clamp_rect_local_to_container.size.y - panel.size.y - label_map_edge_padding
+
+	panel.position.x = clamp(panel.position.x, padded_min_x, padded_max_x)
+	panel.position.y = clamp(panel.position.y, padded_min_y, padded_max_y)
+
 func _draw_interactive_labels(current_hover_info: Dictionary):
-	print("UIManager: _draw_interactive_labels called. Hover: ", current_hover_info) # DEBUG
-	print("UIManager: Cached convoy data size: ", _all_convoy_data_cache.size() if _all_convoy_data_cache else "N/A") # DEBUG
-	print("UIManager: Cached settlement data size: ", _all_settlement_data_cache.size() if _all_settlement_data_cache else "N/A") # DEBUG
-	print("UIManager: Cached selected IDs: ", _selected_convoy_ids_cache) # DEBUG
+	# print("UIManager: _draw_interactive_labels called. Hover: ", current_hover_info) # DEBUG
+	# print("UIManager: Cached convoy data size: ", _all_convoy_data_cache.size() if _all_convoy_data_cache else "N/A") # DEBUG
+	# print("UIManager: Cached settlement data size: ", _all_settlement_data_cache.size() if _all_settlement_data_cache else "N/A") # DEBUG
+	# print("UIManager: Cached selected IDs: ", _selected_convoy_ids_cache) # DEBUG
 	if is_instance_valid(_dragging_panel_node):
 		# If a panel is being dragged by the UIManager (or externally, if main still handles drag input)
 		# we might still want to update other labels, but not the one being dragged.
@@ -342,21 +477,47 @@ func _draw_single_convoy_label(convoy_data: Dictionary, existing_label_rects: Ar
 		base_linear_font_scale = effective_tile_size_on_texture / font_scaling_base_tile_size # Use exported variable
 	var font_render_scale: float = pow(base_linear_font_scale, font_scaling_exponent) # Use exported variable
 
-	var current_convoy_title_font_size: int = max(min_font_size, roundi(base_convoy_title_font_size * font_render_scale)) # Use exported variables
+	# Adjust base sizes by font_render_scale (for map proportionality)
+	# then divide by map zoom to maintain screen size.
+	var adjusted_base_font_size = base_convoy_title_font_size * ui_overall_scale_multiplier
+	var scaled_target_screen_font_size = adjusted_base_font_size * font_render_scale
+	var node_font_size_before_clamp = scaled_target_screen_font_size / _current_map_zoom_cache
+	var current_convoy_title_font_size: int = clamp(roundi(node_font_size_before_clamp), min_node_font_size, max_node_font_size)
 	
 	var current_convoy_id_orig = convoy_data.get('convoy_id')
 	var current_convoy_id_str = str(current_convoy_id_orig)
 
+	# Horizontal offset is relative to the map, so it scales with `actual_scale` (TextureRect's internal texture scaling)
+	# and will then be further scaled by `_current_map_zoom_cache` because UIManager is a child of MapContainer.
+	# This behavior is likely correct for map-relative offsets.
 	var current_horizontal_offset: float
 	if _selected_convoy_ids_cache.has(current_convoy_id_str):
 		current_horizontal_offset = base_selected_convoy_horizontal_offset * actual_scale # Use exported variable
 	else:
 		current_horizontal_offset = base_horizontal_label_offset_from_center * actual_scale # Use exported variable
 
-	var current_panel_corner_radius: float = base_convoy_panel_corner_radius * font_render_scale # Use exported variable
-	var current_panel_padding_h: float = base_convoy_panel_padding_h * font_render_scale # Use exported variable
-	var current_panel_border_width: int = max(1, roundi(base_convoy_panel_border_width * font_render_scale)) # Use exported variable
-	var current_panel_padding_v: float = base_convoy_panel_padding_v * font_render_scale # Use exported variable
+	# Panel appearance properties (corner radius, padding, border) should maintain screen size.
+	# Scale by font_render_scale for base proportionality, then divide by map zoom.
+	var adjusted_base_corner_radius = base_convoy_panel_corner_radius * ui_overall_scale_multiplier
+	var scaled_target_screen_corner_radius = adjusted_base_corner_radius * font_render_scale
+	var node_corner_radius_before_clamp = scaled_target_screen_corner_radius / _current_map_zoom_cache
+	var current_panel_corner_radius: float = clamp(node_corner_radius_before_clamp, min_node_panel_corner_radius, max_node_panel_corner_radius)
+
+	var adjusted_base_padding_h = base_convoy_panel_padding_h * ui_overall_scale_multiplier
+	var scaled_target_screen_padding_h = adjusted_base_padding_h * font_render_scale
+	var node_padding_h_before_clamp = scaled_target_screen_padding_h / _current_map_zoom_cache
+	var current_panel_padding_h: float = clamp(node_padding_h_before_clamp, min_node_panel_padding, max_node_panel_padding)
+
+	var adjusted_base_padding_v = base_convoy_panel_padding_v * ui_overall_scale_multiplier
+	var scaled_target_screen_padding_v = adjusted_base_padding_v * font_render_scale
+	var node_padding_v_before_clamp = scaled_target_screen_padding_v / _current_map_zoom_cache
+	var current_panel_padding_v: float = clamp(node_padding_v_before_clamp, min_node_panel_padding, max_node_panel_padding)
+
+	var adjusted_base_border_width = base_convoy_panel_border_width * ui_overall_scale_multiplier
+	var scaled_target_screen_border_width = adjusted_base_border_width * font_render_scale
+	var node_border_width_before_clamp = scaled_target_screen_border_width / _current_map_zoom_cache
+	var current_panel_border_width: int = clamp(roundi(node_border_width_before_clamp), min_node_panel_border_width, max_node_panel_border_width)
+
 
 	var efficiency: float = convoy_data.get('efficiency', 0.0)
 	var convoy_map_x: float = convoy_data.get('x', 0.0)
@@ -422,7 +583,8 @@ func _draw_single_convoy_label(convoy_data: Dictionary, existing_label_rects: Ar
 	if not is_instance_valid(label_settings.font):
 		printerr("UIManager (_draw_single_convoy_label): label_settings.font is NOT VALID for convoy: ", convoy_name)
 	else:
-		print("UIManager (_draw_single_convoy_label): label_settings.font is VALID. Size: ", label_settings.font_size, " for convoy: ", convoy_name)
+		# print("UIManager (_draw_single_convoy_label): label_settings.font is VALID. Size: ", label_settings.font_size, " for convoy: ", convoy_name) # DEBUG
+		pass # Add pass to make the else block syntactically correct
 	label_settings.font_size = current_convoy_title_font_size
 	var unique_convoy_color: Color = _convoy_id_to_color_map_cache.get(current_convoy_id_str, Color.GRAY)
 
@@ -436,7 +598,7 @@ func _draw_single_convoy_label(convoy_data: Dictionary, existing_label_rects: Ar
 
 	convoy_label_container.add_child(label_node) # Add temporarily to get size
 	var label_min_size: Vector2 = label_node.get_minimum_size()
-	print("UIManager (_draw_single_convoy_label): Convoy '%s' label_min_size: %s, Text: '%s'" % [convoy_name, label_min_size, label_text.left(50)]) # DEBUG
+	# print("UIManager (_draw_single_convoy_label): Convoy '%s' label_min_size: %s, Text: '%s'" % [convoy_name, label_min_size, label_text.left(50)]) # DEBUG
 	label_node.pivot_offset = Vector2.ZERO # Top-left pivot
 	convoy_label_container.remove_child(label_node) # Remove before final positioning in panel
 
@@ -470,7 +632,7 @@ func _draw_single_convoy_label(convoy_data: Dictionary, existing_label_rects: Ar
 	panel.position.y = initial_label_global_pos_y - current_panel_padding_v
 	panel.size.x = label_min_size.x + (2 * current_panel_padding_h)
 	panel.size.y = label_min_size.y + (2 * current_panel_padding_v)
-	print("UIManager (_draw_single_convoy_label): Convoy '%s' panel initial calculated pos: %s, size: %s" % [convoy_name, panel.position, panel.size]) # DEBUG
+	# print("UIManager (_draw_single_convoy_label): Convoy '%s' panel initial calculated pos: %s, size: %s" % [convoy_name, panel.position, panel.size]) # DEBUG
 
 	# Position label locally within the panel
 	label_node.position.x = current_panel_padding_h
@@ -502,38 +664,10 @@ func _draw_single_convoy_label(convoy_data: Dictionary, existing_label_rects: Ar
 			else:
 				break
 
-	# Clamp panel position to viewport bounds (relative to convoy_label_container, which is child of map_display)
-	# The panel.position is already in the coordinate system of convoy_label_container.
-	# The clamping needs to happen against the viewport rect, transformed to local coords of convoy_label_container.
-	# However, since convoy_label_container is at (0,0) of map_display, and map_display fills viewport,
-	# the viewport rect can be used directly for clamping panel.position IF panel.position was global.
-	# Since panel.position is local to convoy_label_container, and convoy_label_container is child of map_display,
-	# and map_display is child of main scene root, we need to be careful.
-	# Let's assume convoy_label_container is at (0,0) relative to map_display.
-	# And map_display is at (0,0) relative to viewport for simplicity of clamping here.
-	# A more robust solution would get global viewport rect and transform.
-
-	var panel_target_position = panel.position # This is local to convoy_label_container
-	var viewport_rect_global = get_viewport_rect() # Global viewport
-
-	# Convert viewport_rect_global to the local coordinate system of convoy_label_container's parent (map_display)
-	var map_display_global_transform = _map_display_node.get_global_transform_with_canvas()
-	var clamp_rect_local_to_map_display = map_display_global_transform.affine_inverse() * viewport_rect_global
-
-	# Since convoy_label_container is a direct child of map_display and assumed at (0,0) relative to it,
-	# clamp_rect_local_to_map_display is also the clamp_rect_local_to_convoy_label_container.
-
-	var padded_min_x = clamp_rect_local_to_map_display.position.x + label_map_edge_padding # Use exported variable
-	var padded_min_y = clamp_rect_local_to_map_display.position.y + label_map_edge_padding # Use exported variable
-	var padded_max_x = clamp_rect_local_to_map_display.position.x + clamp_rect_local_to_map_display.size.x - label_map_edge_padding # Use exported variable
-	var padded_max_y = clamp_rect_local_to_map_display.position.y + clamp_rect_local_to_map_display.size.y - label_map_edge_padding # Use exported variable
-
-	panel_target_position.x = clamp(panel.position.x, padded_min_x, padded_max_x - panel.size.x)
-	panel_target_position.y = clamp(panel.position.y, padded_min_y, padded_max_y - panel.size.y)
-	panel.position = panel_target_position
-
 	convoy_label_container.add_child(panel)
-	print("UIManager (_draw_single_convoy_label): Convoy '%s' panel ADDED. Final local pos: %s, global_pos: %s, visible: %s" % [convoy_name, panel.position, panel.global_position, panel.visible]) # DEBUG
+	_clamp_panel_position(panel) # Clamp after adding and after anti-collision
+
+	# print("UIManager (_draw_single_convoy_label): Convoy '%s' panel ADDED. Final local pos: %s, global_pos: %s, visible: %s" % [convoy_name, panel.position, panel.global_position, panel.visible]) # DEBUG
 	panel.set_meta("intended_global_rect", Rect2(panel.global_position, panel.size)) # Store for drag start
 
 	# DO NOT RE-ASSIGN _convoy_label_user_positions here. It's read-only in this drawing function.
@@ -574,11 +708,31 @@ func _draw_single_settlement_label(settlement_info_for_render: Dictionary) -> Re
 		base_linear_font_scale = effective_tile_size_on_texture / font_scaling_base_tile_size # Use exported variable
 	var font_render_scale: float = pow(base_linear_font_scale, font_scaling_exponent) # Use exported variable
 
-	var current_settlement_font_size: int = max(min_font_size, roundi(base_settlement_font_size * font_render_scale)) # Use exported variables
+	# Adjust base sizes by font_render_scale (for map proportionality)
+	# then divide by map zoom to maintain screen size.
+	var adjusted_base_settlement_font_size = base_settlement_font_size * ui_overall_scale_multiplier
+	var scaled_target_screen_settlement_font_size = adjusted_base_settlement_font_size * font_render_scale
+	var node_settlement_font_size_before_clamp = scaled_target_screen_settlement_font_size / _current_map_zoom_cache
+	var current_settlement_font_size: int = clamp(roundi(node_settlement_font_size_before_clamp), min_node_font_size, max_node_font_size)
+	
+	# Offset is map-relative, scales with TextureRect's internal scale, then map_container's zoom.
 	var current_settlement_offset_above_center: float = base_settlement_offset_above_tile_center * actual_scale # Use exported variable
-	var current_settlement_panel_corner_radius: float = base_settlement_panel_corner_radius * font_render_scale # Use exported variable
-	var current_settlement_panel_padding_h: float = base_settlement_panel_padding_h * font_render_scale # Use exported variable
-	var current_settlement_panel_padding_v: float = base_settlement_panel_padding_v * font_render_scale # Use exported variable
+
+	# Panel appearance properties should maintain screen size.
+	var adjusted_base_settlement_corner_radius = base_settlement_panel_corner_radius * ui_overall_scale_multiplier
+	var scaled_target_screen_settlement_corner_radius = adjusted_base_settlement_corner_radius * font_render_scale
+	var node_settlement_corner_radius_before_clamp = scaled_target_screen_settlement_corner_radius / _current_map_zoom_cache
+	var current_settlement_panel_corner_radius: float = clamp(node_settlement_corner_radius_before_clamp, min_node_panel_corner_radius, max_node_panel_corner_radius)
+
+	var adjusted_base_settlement_padding_h = base_settlement_panel_padding_h * ui_overall_scale_multiplier
+	var scaled_target_screen_settlement_padding_h = adjusted_base_settlement_padding_h * font_render_scale
+	var node_settlement_padding_h_before_clamp = scaled_target_screen_settlement_padding_h / _current_map_zoom_cache
+	var current_settlement_panel_padding_h: float = clamp(node_settlement_padding_h_before_clamp, min_node_panel_padding, max_node_panel_padding)
+
+	var adjusted_base_settlement_padding_v = base_settlement_panel_padding_v * ui_overall_scale_multiplier
+	var scaled_target_screen_settlement_padding_v = adjusted_base_settlement_padding_v * font_render_scale
+	var node_settlement_padding_v_before_clamp = scaled_target_screen_settlement_padding_v / _current_map_zoom_cache
+	var current_settlement_panel_padding_v: float = clamp(node_settlement_padding_v_before_clamp, min_node_panel_padding, max_node_panel_padding)
 
 	var settlement_name_local: String = settlement_info_for_render.get('name', 'N/A')
 	var tile_x: int = settlement_info_for_render.get('x', -1)
@@ -588,7 +742,8 @@ func _draw_single_settlement_label(settlement_info_for_render: Dictionary) -> Re
 	if not is_instance_valid(settlement_label_settings.font):
 		printerr("UIManager (_draw_single_settlement_label): settlement_label_settings.font is NOT VALID for settlement: ", settlement_name_local)
 	else:
-		print("UIManager (_draw_single_settlement_label): settlement_label_settings.font is VALID. Size: ", current_settlement_font_size, " for settlement: ", settlement_name_local) # Use current_settlement_font_size here
+		# print("UIManager (_draw_single_settlement_label): settlement_label_settings.font is VALID. Size: ", current_settlement_font_size, " for settlement: ", settlement_name_local) # DEBUG
+		pass # Add pass here as well
 	settlement_label_settings.font_size = current_settlement_font_size
 
 	var settlement_type = settlement_info_for_render.get('sett_type', '')
@@ -601,7 +756,7 @@ func _draw_single_settlement_label(settlement_info_for_render: Dictionary) -> Re
 
 	settlement_label_container.add_child(label_node) # Add temporarily
 	var label_size: Vector2 = label_node.get_minimum_size()
-	print("UIManager (_draw_single_settlement_label): Settlement '%s' label_size: %s" % [settlement_name_local, label_size]) # DEBUG
+	# print("UIManager (_draw_single_settlement_label): Settlement '%s' label_size: %s" % [settlement_name_local, label_size]) # DEBUG
 	settlement_label_container.remove_child(label_node) # Remove
 
 	var panel := Panel.new()
@@ -615,7 +770,7 @@ func _draw_single_settlement_label(settlement_info_for_render: Dictionary) -> Re
 
 	panel.size.x = label_size.x + (2 * current_settlement_panel_padding_h)
 	panel.size.y = label_size.y + (2 * current_settlement_panel_padding_v)
-	print("UIManager (_draw_single_settlement_label): Settlement '%s' panel initial calculated size: %s" % [settlement_name_local, panel.size]) # DEBUG
+	# print("UIManager (_draw_single_settlement_label): Settlement '%s' panel initial calculated size: %s" % [settlement_name_local, panel.size]) # DEBUG
 
 	var tile_center_tex_x: float = (float(tile_x) + 0.5) * actual_tile_width_on_texture
 	var tile_center_tex_y: float = (float(tile_y) + 0.5) * actual_tile_height_on_texture
@@ -624,31 +779,17 @@ func _draw_single_settlement_label(settlement_info_for_render: Dictionary) -> Re
 	# Panel position (local to settlement_label_container)
 	panel.position.x = (tile_center_tex_x * actual_scale + offset_x) - (panel.size.x / 2.0)
 	panel.position.y = tile_center_display_y - panel.size.y - current_settlement_offset_above_center
-	print("UIManager (_draw_single_settlement_label): Settlement '%s' panel initial calculated pos: %s" % [settlement_name_local, panel.position]) # DEBUG
+	# print("UIManager (_draw_single_settlement_label): Settlement '%s' panel initial calculated pos: %s" % [settlement_name_local, panel.position]) # DEBUG
 
 	# Label position (local to panel)
 	label_node.position.x = current_settlement_panel_padding_h
 	label_node.position.y = current_settlement_panel_padding_v
 	panel.add_child(label_node) # Add label as child of panel
 
-	# Clamp panel position (local to settlement_label_container)
-	# Similar clamping logic as convoy panels, assuming settlement_label_container is also child of map_display at (0,0)
-	var panel_target_position = panel.position
-	var viewport_rect_global = get_viewport_rect()
-	var map_display_global_transform = _map_display_node.get_global_transform_with_canvas()
-	var clamp_rect_local_to_map_display = map_display_global_transform.affine_inverse() * viewport_rect_global
-
-	var padded_min_x = clamp_rect_local_to_map_display.position.x + label_map_edge_padding # Use exported variable
-	var padded_min_y = clamp_rect_local_to_map_display.position.y + label_map_edge_padding # Use exported variable
-	var padded_max_x = clamp_rect_local_to_map_display.position.x + clamp_rect_local_to_map_display.size.x - label_map_edge_padding # Use exported variable
-	var padded_max_y = clamp_rect_local_to_map_display.position.y + clamp_rect_local_to_map_display.size.y - label_map_edge_padding # Use exported variable
-
-	panel_target_position.x = clamp(panel.position.x, padded_min_x, padded_max_x - panel.size.x)
-	panel_target_position.y = clamp(panel.position.y, padded_min_y, padded_max_y - panel.size.y)
-	panel.position = panel_target_position
-
 	settlement_label_container.add_child(panel)
-	print("UIManager (_draw_single_settlement_label): Settlement '%s' panel ADDED. Final local pos: %s, global_pos: %s, visible: %s" % [settlement_name_local, panel.position, panel.global_position, panel.visible]) # DEBUG
+	_clamp_panel_position(panel) # Clamp after adding. Uses original clamping for full redraw.
+
+	# print("UIManager (_draw_single_settlement_label): Settlement '%s' panel ADDED. Final local pos: %s, global_pos: %s, visible: %s" % [settlement_name_local, panel.position, panel.global_position, panel.visible]) # DEBUG
 	return Rect2(panel.position, panel.size)
 
 
@@ -664,55 +805,41 @@ func _find_settlement_at_tile(tile_x: int, tile_y: int) -> Variant:
 
 
 func _on_connector_lines_container_draw():
-	if not is_instance_valid(_map_display_node) or not is_instance_valid(_map_display_node.texture): return
-	if not _map_tiles_data or _map_tiles_data.is_empty() or not _map_tiles_data[0] is Array or _map_tiles_data[0].is_empty(): return
+	# Use cached drawing parameters
+	if not _ui_drawing_params_cached:
+		# printerr("UIManager: Drawing params not cached for connector lines. Skipping draw.")
+		return
+		
 	if not is_instance_valid(convoy_label_container): return
 	if not _all_convoy_data_cache: return
-
-	var map_texture_size: Vector2 = _map_display_node.texture.get_size()
-	var map_display_rect_size: Vector2 = _map_display_node.size
-
-	if map_texture_size.x <= 0.001 or map_texture_size.y <= 0.001: return
-
-	var scale_x_ratio: float = map_display_rect_size.x / map_texture_size.x
-	var scale_y_ratio: float = map_display_rect_size.y / map_texture_size.y
-	var actual_scale: float = min(scale_x_ratio, scale_y_ratio)
-
-	var displayed_texture_width: float = map_texture_size.x * actual_scale
-	var displayed_texture_height: float = map_texture_size.y * actual_scale
-	var offset_x: float = (_map_display_node.size.x - displayed_texture_width) / 2.0
-	var offset_y: float = (_map_display_node.size.y - displayed_texture_height) / 2.0
-
-	var map_image_cols: int = _map_tiles_data[0].size()
-	var map_image_rows: int = _map_tiles_data.size()
-	if map_image_cols == 0 or map_image_rows == 0: return
-
-	var actual_tile_width_on_texture: float = map_texture_size.x / float(map_image_cols)
-	var actual_tile_height_on_texture: float = map_texture_size.y / float(map_image_rows)
-
+	
+	# Access cached values directly:
+	# _cached_actual_scale
+	# _cached_offset_x
+	# _cached_offset_y
+	# _cached_actual_tile_width_on_texture
+	# _cached_actual_tile_height_on_texture
+	
 	for node in convoy_label_container.get_children():
 		if node is Panel:
 			var panel: Panel = node
 			var convoy_id_str = panel.get_meta("convoy_id_str", "")
 			if convoy_id_str.is_empty(): continue
 
-			var convoy_data_for_line = null
-			for cd in _all_convoy_data_cache:
-				if cd is Dictionary and str(cd.get("convoy_id")) == convoy_id_str:
-					convoy_data_for_line = cd
-					break
-			
-			if convoy_data_for_line == null: continue
+			# Optimized lookup using the new cache
+			var convoy_data_for_line = _convoy_data_by_id_cache.get(convoy_id_str)
+			if convoy_data_for_line == null or not convoy_data_for_line is Dictionary:
+				continue
 
 			var convoy_map_x: float = convoy_data_for_line.get('x', 0.0)
 			var convoy_map_y: float = convoy_data_for_line.get('y', 0.0)
-			var convoy_center_on_texture_x: float = (convoy_map_x + 0.5) * actual_tile_width_on_texture
-			var convoy_center_on_texture_y: float = (convoy_map_y + 0.5) * actual_tile_height_on_texture
+			var convoy_center_on_texture_x: float = (convoy_map_x + 0.5) * _cached_actual_tile_width_on_texture
+			var convoy_center_on_texture_y: float = (convoy_map_y + 0.5) * _cached_actual_tile_height_on_texture
 			
 			# Line start is in map_display's local space (which is also convoy_connector_lines_container's local space)
 			var line_start_pos = Vector2(
-				convoy_center_on_texture_x * actual_scale + offset_x,
-				convoy_center_on_texture_y * actual_scale + offset_y
+				convoy_center_on_texture_x * _cached_actual_scale + _cached_offset_x,
+				convoy_center_on_texture_y * _cached_actual_scale + _cached_offset_y
 			)
 
 			# Panel.position is local to convoy_label_container.

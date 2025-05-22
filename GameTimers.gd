@@ -6,9 +6,9 @@ signal visual_update_tick
 
 @export_group("Timer Intervals") # This helps organize variables in the Inspector
 ## The time in seconds between each attempt to refresh data (e.g., from an API).
-@export var refresh_interval_seconds: float = 60.0 
+@export var refresh_interval_seconds: float = 60.0  
 ## The time in seconds between each visual update tick, used for animations like throbbing. (e.g., 1.0/60.0 for 60 FPS).
-@export var visual_update_interval_seconds: float = 1.0 / 60.0 
+@export var visual_update_interval_seconds: float = 1.0 / 60.0  
 
 var _refresh_timer: Timer
 var _visual_update_timer: Timer

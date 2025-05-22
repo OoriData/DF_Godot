@@ -4,24 +4,24 @@ extends Node
 
 # --- Constants ---
 ## The original tile size of the map data, used for scaling calculations of visual elements.
-@export_group("Base Configuration")
-@export var base_tile_size_for_proportions: float = 24.0
+@export_group("Base Configuration") 
+@export var base_tile_size_for_proportions: float = 24.0 
 ## The thickness of the grid lines in pixels, relative to the base_tile_size_for_proportions.
-@export var grid_size: int = 1
+@export var grid_size: int = 1 
 ## Default color for labels if map_render were to draw them (currently unused here).
-@export var default_label_color: Color = Color.WHITE
+@export var default_label_color: Color = Color.WHITE 
 ## How much to darken the base tile color for the grid lines (0.0 = no change, 1.0 = black).
-@export var grid_darken_factor: float = 0.2
+@export var grid_darken_factor: float = 0.2 
 ## Fallback color for grid lines if a tile's base color cannot be determined.
-@export var grid_color: Color = Color('#303030')
+@export var grid_color: Color = Color('#303030') 
 ## Default color for water tiles.
-@export var water_color: Color = Color('#142C55')
+@export var water_color: Color = Color('#142C55') 
 ## Color used to indicate rendering errors or missing data.
-@export var error_color: Color = Color('#FF00FF')
+@export var error_color: Color = Color('#FF00FF') 
 
 ## Color mapping for different terrain types. (Note: Dictionaries are editable in inspector but can be clunky)
-@export_group("Tile & Political Colors (Edit in Script)") # Indicate these are better edited in script
-@export var tile_colors: Dictionary = {
+@export_group("Tile & Political Colors (Edit in Script)") # Indicate these are better edited in script 
+@export var tile_colors: Dictionary = { 
 	1: Color('#303030'),   # Highway
 	2: Color('#606060'),   # Road
 	3: Color('#CB8664'),   # Trail
@@ -36,7 +36,7 @@ extends Node
 }
 
 ## Color mapping for different settlement types.
-@export var settlement_colors: Dictionary = {
+@export var settlement_colors: Dictionary = { 
 	'dome': Color('#80A9B6'),
 	'city': Color('#ADADAD'),
 	'town': Color('#A1662F'), #
@@ -47,7 +47,7 @@ extends Node
 }
 
 ## Color mapping for political regions.
-@export var political_colors: Dictionary = {
+@export var political_colors: Dictionary = { 
 	0: Color('#00000000'),  # Null (transparent)
 	1: Color('#00000000'),  # Desolate plains
 	2: Color('#00000000'),  # Desolate forest
@@ -147,38 +147,38 @@ extends Node
 }
 
 ## How thick the political color border around terrain should be (in base pixels, scaled).
-@export_group("Highlight & Lowlight")
-@export var political_border_visible_thickness: int = 1
+@export_group("Highlight & Lowlight") 
+@export var political_border_visible_thickness: int = 1 
 ## Default color for the outline around highlighted tiles.
-@export var default_highlight_outline_color: Color = Color('#FFFF00')
+@export var default_highlight_outline_color: Color = Color('#FFFF00') 
 ## Offset of the highlight outline from the tile edge (negative for outside, positive for inside). Scaled.
-@export var highlight_outline_offset: int = -1
+@export var highlight_outline_offset: int = -1 
 ## Width of the highlight outline. Scaled.
-@export var highlight_outline_width: int = 9
+@export var highlight_outline_width: int = 9 
 ## Default color for the inline effect on lowlighted tiles.
-@export var default_lowlight_inline_color: Color = Color('#00FFFF')
+@export var default_lowlight_inline_color: Color = Color('#00FFFF') 
 ## Offset of the lowlight inline from the tile edge (negative for outside, positive for inside). Scaled.
-@export var lowlight_inline_offset: int = 2
+@export var lowlight_inline_offset: int = 2 
 ## Width of the lowlight inline. Scaled.
-@export var lowlight_inline_width: int = 5
+@export var lowlight_inline_width: int = 5 
 
 ## Pixel thickness of the convoy journey lines. Scaled.
-@export_group("Journey Lines")
-@export var journey_line_thickness: int = 5
+@export_group("Journey Lines") 
+@export var journey_line_thickness: int = 5 
 ## Thickness for selected convoy journey lines. Scaled.
-@export var selected_journey_line_thickness: int = 9
+@export var selected_journey_line_thickness: int = 9 
 ## Extra thickness on each side for the outline of selected journey lines. Scaled.
-@export var selected_journey_line_outline_extra_thickness_each_side: int = 3
+@export var selected_journey_line_outline_extra_thickness_each_side: int = 3 
 ## Extra thickness on each side for the outline of regular journey lines. Scaled.
-@export var journey_line_outline_extra_thickness_each_side: int = 2
+@export var journey_line_outline_extra_thickness_each_side: int = 2 
 ## Base offset in pixels for separating overlapping journey lines. Scaled.
-@export var journey_line_offset_step_pixels: float = 6.0
+@export var journey_line_offset_step_pixels: float = 6.0 
 ## Factor by which to darken the trailing part of a journey line (0.0 = no change, 1.0 = black).
-@export var trailing_journey_darken_factor: float = 0.5
+@export var trailing_journey_darken_factor: float = 0.5 
 
 const FLOAT_MATCH_TOLERANCE: float = 0.00001  # Tolerance for matching float coordinates
 
-const PREDEFINED_CONVOY_COLORS: Array[Color] = [
+const PREDEFINED_CONVOY_COLORS: Array[Color] = [ 
 	Color.RED,        # Red
 	Color.BLUE,       # Blue
 	Color.GREEN,      # Green
@@ -192,21 +192,21 @@ const PREDEFINED_CONVOY_COLORS: Array[Color] = [
 ]
 
 ## Controls how aggressively convoy icons scale with map zoom (1.0 = linear, <1.0 less aggressive).
-@export_group("Convoy Icons & Animation")
-@export var icon_scaling_exponent: float = 0.6
+@export_group("Convoy Icons & Animation") 
+@export var icon_scaling_exponent: float = 0.6 
 # Arrow dimensions (in pixels)
 ## Base forward length of the convoy arrow icon. Scaled.
-@export var convoy_arrow_forward_length: float = 22.0
+@export var convoy_arrow_forward_length: float = 22.0 
 ## Base backward length of the convoy arrow icon. Scaled.
-@export var convoy_arrow_backward_length: float = 7.0
+@export var convoy_arrow_backward_length: float = 7.0 
 ## Base half-width of the convoy arrow icon. Scaled.
-@export var convoy_arrow_half_width: float = 12.0
+@export var convoy_arrow_half_width: float = 12.0 
 ## Base thickness of the convoy arrow icon's outline. Scaled.
-@export var convoy_arrow_outline_thickness: float = 2.5
+@export var convoy_arrow_outline_thickness: float = 2.5 
 ## Maximum additional size (in pixels) for the convoy icon during its throbbing animation. Scaled.
-@export var max_throb_size_addition: float = 3.0
+@export var max_throb_size_addition: float = 3.0 
 ## Maximum amount the convoy icon darkens at its throbbing peak (0.0 = no change, 1.0 = black).
-@export var max_throb_darken_amount: float = 0.4
+@export var max_throb_darken_amount: float = 0.4 
 
 
 func _ready():

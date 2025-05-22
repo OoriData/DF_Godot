@@ -30,13 +30,13 @@ var map_tiles: Array = []
 
 @export_group("Interaction Thresholds")
 ## The squared radius (in pixels on the map texture) for detecting hover over convoys. (e.g., 25*25 = 625).
-@export var convoy_hover_radius_on_texture_sq: float = 625.0
+@export var convoy_hover_radius_on_texture_sq: float = 625.0 
 ## The squared radius (in pixels on the map texture) for detecting hover over settlements. (e.g., 20*20 = 400).
-@export var settlement_hover_radius_on_texture_sq: float = 400.0
+@export var settlement_hover_radius_on_texture_sq: float = 400.0 
 
 @export_group("UI Interaction")
 ## Padding from the viewport edges (in pixels) used to clamp draggable UI panels.
-@export var label_map_edge_padding: float = 5.0
+@export var label_map_edge_padding: float = 5.0 
 
 # --- Internal State Variables (will be moved from main.gd) ---
 var _current_hover_info: Dictionary = {}
@@ -231,11 +231,9 @@ func _handle_mouse_button(event: InputEventMouseButton):
 						if not is_instance_valid(panel_node_candidate):
 							continue
 
-						var panel_rect_global = panel_node_candidate.get_meta("intended_global_rect", null)
-						if not (panel_rect_global is Rect2):
-							panel_rect_global = panel_node_candidate.get_global_rect()
-
-						var hit_test_rect = panel_rect_global.grow(2.0)
+						# Always use get_global_rect() for accurate hit testing with scaled panels
+						var panel_rect_global = panel_node_candidate.get_global_rect()
+						var hit_test_rect = panel_rect_global.grow(2.0) # Small buffer for easier clicking
 
 						if hit_test_rect.has_point(event.global_position):
 							var id_from_meta = panel_node_candidate.get_meta("convoy_id_str", "")

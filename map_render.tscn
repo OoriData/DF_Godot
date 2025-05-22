@@ -9,13 +9,24 @@
 
 [node name="MapRender" type="Node2D"]
 script = ExtResource("1_qf4ax")
+min_zoom = 0.1
+max_zoom = 5.0
 
-[node name="MapRenderConfigNode" type="Node" parent="."]
-script = ExtResource("2_mtjdu")
+[node name="MapContainer" type="Node2D" parent="."]
 
-[node name="MapDisplay" type="TextureRect" parent="."]
+[node name="MapDisplay" type="TextureRect" parent="MapContainer"]
 offset_right = 40.0
 offset_bottom = 40.0
+
+[node name="UIManagerNode" type="Node2D" parent="MapContainer"]
+script = ExtResource("3_xagsy")
+ui_overall_scale_multiplier = 1.4
+
+[node name="SettlementLabelContainer" type="Node2D" parent="MapContainer/UIManagerNode"]
+
+[node name="ConvoyLabelContainer" type="Node2D" parent="MapContainer/UIManagerNode"]
+
+[node name="ConvoyConnectorLinesContainer" type="Node2D" parent="MapContainer/UIManagerNode"]
 
 [node name="APICallsInstance" type="Node" parent="."]
 script = ExtResource("2_of6aa")
@@ -25,15 +36,6 @@ offset_right = 24.0
 offset_bottom = 24.0
 theme_override_font_sizes/font_size = 40
 text = "Detailed Mode"
-
-[node name="UIManagerNode" type="Node2D" parent="."]
-script = ExtResource("3_xagsy")
-
-[node name="SettlementLabelContainer" type="Node2D" parent="UIManagerNode"]
-
-[node name="ConvoyLabelContainer" type="Node2D" parent="UIManagerNode"]
-
-[node name="ConvoyConnectorLinesContainer" type="Node2D" parent="UIManagerNode"]
 
 [node name="MapInteractionManager" type="Node" parent="."]
 script = ExtResource("4_b4rp0")
