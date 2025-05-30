@@ -1,0 +1,8 @@
+[gd_scene load_steps=2 format=3 uid="uid://cqlbr0lsg2h7x"]
+
+[ext_resource type="Script" uid="uid://bx2j7qdbu6uid" path="res://ConvoyNode.gd" id="1_ecqi3"]
+
+[node name="ConvoyNode" type="Node2D"]
+script = ExtResource("1_ecqi3")
+
+[node name="Sprite2D" type="Sprite2D" parent="."]

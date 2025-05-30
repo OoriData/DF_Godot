@@ -1,0 +1,20 @@
+[gd_scene load_steps=4 format=3 uid="uid://yme8tiuqxb2b"]
+
+[ext_resource type="PackedScene" uid="uid://b7shrt87ucxid" path="res://MapView.tscn" id="1_pjpa4"]
+[ext_resource type="Script" uid="uid://b6te2by8abr3b" path="res://Menus/menu_manager.gd" id="2_bxsma"]
+[ext_resource type="PackedScene" uid="uid://dkvjop71jseg6" path="res://convoy_list_panel.tscn" id="2_lkrbl"]
+
+[node name="GameRoot" type="Node"]
+
+[node name="MapRender" parent="." instance=ExtResource("1_pjpa4")]
+
+[node name="ConvoyListPanel" parent="MapRender" instance=ExtResource("2_lkrbl")]
+
+[node name="MenuUILayer" type="CanvasLayer" parent="."]
+
+[node name="MenuManager" type="Control" parent="MenuUILayer"]
+layout_mode = 3
+anchors_preset = 0
+offset_right = 40.0
+offset_bottom = 40.0
+script = ExtResource("2_bxsma")

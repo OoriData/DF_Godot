@@ -1,4 +1,4 @@
-[gd_scene load_steps=7 format=3 uid="uid://b08j3dyaxws7r"]
+[gd_scene load_steps=7 format=3 uid="uid://b7shrt87ucxid"]
 
 [ext_resource type="Script" uid="uid://c2870no6ydtqc" path="res://main.gd" id="1_qf4ax"]
 [ext_resource type="Script" uid="uid://cv15frs535pbb" path="res://map_render.gd" id="2_mtjdu"]
@@ -9,33 +9,37 @@
 
 [node name="MapRender" type="Node2D"]
 script = ExtResource("1_qf4ax")
-min_zoom = 0.1
-max_zoom = 5.0
 
 [node name="MapContainer" type="Node2D" parent="."]
 
 [node name="MapDisplay" type="TextureRect" parent="MapContainer"]
+texture_filter = 4
 offset_right = 40.0
 offset_bottom = 40.0
+stretch_mode = 5
 
-[node name="UIManagerNode" type="Node2D" parent="MapContainer"]
+[node name="SettlementLabelContainer" type="Node2D" parent="MapContainer"]
+
+[node name="ConvoyLabelContainer" type="Node2D" parent="MapContainer"]
+
+[node name="ConvoyConnectorLinesContainer" type="Node2D" parent="MapContainer"]
+
+[node name="MapCamera" type="Camera2D" parent="."]
+
+[node name="ScreenSpaceUI" type="CanvasLayer" parent="."]
+
+[node name="UIManagerNode" type="Node2D" parent="ScreenSpaceUI"]
 script = ExtResource("3_xagsy")
 ui_overall_scale_multiplier = 1.4
 
-[node name="SettlementLabelContainer" type="Node2D" parent="MapContainer/UIManagerNode"]
-
-[node name="ConvoyLabelContainer" type="Node2D" parent="MapContainer/UIManagerNode"]
-
-[node name="ConvoyConnectorLinesContainer" type="Node2D" parent="MapContainer/UIManagerNode"]
+[node name="DetailedViewToggleCheckbox" type="CheckBox" parent="ScreenSpaceUI/UIManagerNode"]
+offset_right = 310.0
+offset_bottom = 63.0
+theme_override_font_sizes/font_size = 40
+text = "Detailed Mode"
 
 [node name="APICallsInstance" type="Node" parent="."]
 script = ExtResource("2_of6aa")
-
-[node name="DetailedViewToggleCheckbox" type="CheckBox" parent="."]
-offset_right = 24.0
-offset_bottom = 24.0
-theme_override_font_sizes/font_size = 40
-text = "Detailed Mode"
 
 [node name="MapInteractionManager" type="Node" parent="."]
 script = ExtResource("4_b4rp0")
