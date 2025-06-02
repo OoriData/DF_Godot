@@ -456,25 +456,41 @@ func _draw_filled_circle_on_image(image: Image, center_x: int, center_y: int, ra
 				image.set_pixel(x_px, y_px, p_color)
 
 # This function IS used by map_render.gd for drawing journey lines, and will also be called by main.gd
-func get_normalized_segment_key(p1_map: Vector2, p2_map: Vector2) -> String:
+# Returns a Dictionary: {"key": String, "was_swapped": bool, "sp1_rounded_map": Vector2, "sp2_rounded_map": Vector2}
+# sp1_rounded_map and sp2_rounded_map are the map coordinates after rounding and sorting.
+func get_normalized_segment_key_with_info(p1_map: Vector2, p2_map: Vector2) -> Dictionary:
 	"""
 	Helper to get a canonical string key for a line segment (map coordinates).
 	Rounds coordinates to a fixed precision (e.g., nearest 0.001) to make keys
 	more robust to tiny floating point variations before formatting.
+	Also returns if the input points were swapped for canonical form.
 	"""
-	# Round coordinates to 3 decimal places for key generation
-	var p1_r := Vector2(snapped(p1_map.x, 0.001), snapped(p1_map.y, 0.001))
-	var p2_r := Vector2(snapped(p2_map.x, 0.001), snapped(p2_map.y, 0.001))
+	if not (p1_map is Vector2 and p2_map is Vector2):
+		printerr("get_normalized_segment_key_with_info: Invalid input types. p1_map: ", typeof(p1_map), ", p2_map: ", typeof(p2_map))
+		return {"key": "ERROR_INVALID_INPUT", "was_swapped": false, "sp1_rounded_map": Vector2.ZERO, "sp2_rounded_map": Vector2.ZERO}
+	var p1_map_stable := Vector2(snapped(p1_map.x, 0.000001), snapped(p1_map.y, 0.000001))
+	var p2_map_stable := Vector2(snapped(p2_map.x, 0.000001), snapped(p2_map.y, 0.000001))
 
-	var sp1: Vector2 = p1_r
-	var sp2: Vector2 = p2_r
+	# Then snap to a coarser grid (3 decimal places) for the actual keying logic
+	var p1_r := Vector2(snapped(p1_map_stable.x, 0.001), snapped(p1_map_stable.y, 0.001))
+	var p2_r := Vector2(snapped(p2_map_stable.x, 0.001), snapped(p2_map_stable.y, 0.001))
+
+	var sp1_out: Vector2 = p1_r
+	var sp2_out: Vector2 = p2_r
+	var swapped: bool = false
 	
 	# Sort points to ensure (A,B) and (B,A) produce the same key
 	if (p1_r.x > p2_r.x) or (abs(p1_r.x - p2_r.x) < FLOAT_MATCH_TOLERANCE and p1_r.y > p2_r.y):
-		sp1 = p2_r
-		sp2 = p1_r
-	return '%.4f,%.4f-%.4f,%.4f' % [sp1.x, sp1.y, sp2.x, sp2.y]  # Example: format to 4 decimal places
+		sp1_out = p2_r
+		sp2_out = p1_r
+		swapped = true
+	
+	var key_str = '%.4f,%.4f-%.4f,%.4f' % [sp1_out.x, sp1_out.y, sp2_out.x, sp2_out.y]
+	return {"key": key_str, "was_swapped": swapped, "sp1_rounded_map": sp1_out, "sp2_rounded_map": sp2_out}
 
+# Wrapper for old calls that only need the key string
+func get_normalized_segment_key(p1_map: Vector2, p2_map: Vector2) -> String:
+	return get_normalized_segment_key_with_info(p1_map, p2_map).key
 
 # This function IS used by map_render.gd for drawing journey lines, and will also be called by main.gd
 func get_journey_segment_offset_vector(
@@ -485,45 +501,62 @@ func get_journey_segment_offset_vector(
 		base_offset_magnitude: float
 	) -> Vector2:
 	""" Helper to calculate offset for a shared journey line segment """
-	var segment_key: String = get_normalized_segment_key(p1_map, p2_map) # Use public version
 	var offset_v := Vector2.ZERO
+	var key_info: Dictionary = get_normalized_segment_key_with_info(p1_map, p2_map)
+	var segment_key: String = key_info.key
+	var input_was_swapped_for_canonical: bool = key_info.was_swapped
 
 	if shared_segments_data.has(segment_key):
 		var convoy_indices_on_segment: Array = shared_segments_data[segment_key]
 		var num_lines_on_segment: int = convoy_indices_on_segment.size()
 
 		if num_lines_on_segment > 1: # Only apply offset if more than one line shares the segment
-			# --- DEBUG LOGGING START (conditional) ---
-			var should_debug_this_segment = false
+			# --- DEBUG LOGGING START (NOW UNCONDITIONAL FOR num_lines > 1) ---
+			# var should_debug_this_segment = false # Old conditional
 			# Example: To debug a specific segment key known from previous logs
 			# if segment_key == "149.0000,67.0000-149.0000,68.0000":
 			# 	should_debug_this_segment = true
 			# Or, to debug any segment with 3 or more lines (set to true to enable):
-			if false and num_lines_on_segment >= 3: # Log for segments with 3 or more lines
-				should_debug_this_segment = true
+			# if false and num_lines_on_segment >= 3: # Log for segments with 3 or more lines
+				# should_debug_this_segment = true
 
-			if should_debug_this_segment:
-				print_debug("MapRender Offset Debug for Segment: ", segment_key)
-				print_debug("  - Current Convoy Original Index (param current_convoy_idx): ", current_convoy_idx)
-				print_debug("  - All Convoy Indices On This Segment (from shared_data): ", convoy_indices_on_segment)
-				print_debug("  - Num Lines On This Segment: ", num_lines_on_segment)
+			# if should_debug_this_segment: # Old conditional
+			print_debug("MapRender Offset Calculation for Segment: ", segment_key)
+			print_debug("  - p1_map: ", p1_map, ", p2_map: ", p2_map)
+			print_debug("  - Current Convoy Index (current_convoy_idx): ", current_convoy_idx)
+			print_debug("  - All Convoy Indices On This Segment (convoy_indices_on_segment): ", convoy_indices_on_segment)
+			print_debug("  - Num Lines On This Segment: ", num_lines_on_segment)
 			# --- DEBUG LOGGING END ---
 
 			# Determine the order of the current convoy for this segment
 			var current_convoy_order_on_segment: int = convoy_indices_on_segment.find(current_convoy_idx)
 
 			if current_convoy_order_on_segment != -1: # Ensure the current convoy is actually in the list for this segment
-				var segment_vec_px: Vector2 = Vector2(p2_pixel - p1_pixel)
-				if segment_vec_px.length_squared() > FLOAT_MATCH_TOLERANCE * FLOAT_MATCH_TOLERANCE:
-					var perp_dir_px: Vector2 = segment_vec_px.normalized().rotated(PI / 2.0)
+								# Calculate segment_vec_px based on CANONICAL direction of the segment.
+				# p1_pixel and p2_pixel correspond to the input p1_map and p2_map (convoy's travel direction).
+				var canonical_segment_vec_px: Vector2
+				if input_was_swapped_for_canonical:
+					# Input (p1_map, p2_map) was swapped to get canonical (sp1, sp2).
+					# So, p1_pixel corresponds to the canonical segment's END, and p2_pixel to its START.
+					# Vector from canonical start to canonical end is (p1_pixel - p2_pixel).
+					canonical_segment_vec_px = Vector2(p1_pixel - p2_pixel)
+				else:
+					# Input (p1_map, p2_map) matched canonical (sp1, sp2).
+					# So, p1_pixel corresponds to canonical START, p2_pixel to canonical END.
+					# Vector from canonical start to canonical end is (p2_pixel - p1_pixel).
+					canonical_segment_vec_px = Vector2(p2_pixel - p1_pixel)
+
+				if canonical_segment_vec_px.length_squared() > FLOAT_MATCH_TOLERANCE * FLOAT_MATCH_TOLERANCE:
+					var perp_dir_px: Vector2 = canonical_segment_vec_px.normalized().rotated(PI / 2.0) # This is now canonical
 					var center_offset_factor: float = (float(num_lines_on_segment) - 1.0) / 2.0
 					var line_specific_offset_factor: float = float(current_convoy_order_on_segment) - center_offset_factor
 					offset_v = perp_dir_px * line_specific_offset_factor * base_offset_magnitude # base_offset_magnitude is scaled_journey_line_offset_step_pixels
-					if should_debug_this_segment:
-						print_debug("    - Calculated Order for Current Convoy (find result): ", current_convoy_order_on_segment)
-						print_debug("    - Center Offset Factor: ", center_offset_factor)
-						print_debug("    - Line Specific Offset Factor: ", line_specific_offset_factor)
-						print_debug("    - Final Offset Vector: ", offset_v)
+					# if should_debug_this_segment: # Old conditional
+					print_debug("    - Calculated Order for Current Convoy (current_convoy_order_on_segment): ", current_convoy_order_on_segment)
+					print_debug("    - Perpendicular Vector (perp_dir_px): ", perp_dir_px)
+					print_debug("    - Center Offset Factor: ", center_offset_factor)
+					print_debug("    - Line Specific Offset Factor: ", line_specific_offset_factor)
+					print_debug("    - Final Offset Vector (offset_v): ", offset_v)
 	return offset_v
 
 
@@ -811,7 +844,8 @@ func render_map(
 					for k_segment in range(current_path_tile_coords.size() - 1):
 						var p1_map: Vector2 = current_path_tile_coords[k_segment]
 						var p2_map: Vector2 = current_path_tile_coords[k_segment + 1]
-						var segment_key: String = get_normalized_segment_key(p1_map, p2_map) # Use public version
+						# Only need the key string here
+						var segment_key: String = get_normalized_segment_key_with_info(p1_map, p2_map).key
 						if not shared_segments_data.has(segment_key):
 							shared_segments_data[segment_key] = []
 						shared_segments_data[segment_key].append(convoy_idx_for_offset)

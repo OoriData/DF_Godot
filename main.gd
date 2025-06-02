@@ -651,7 +651,8 @@ func _on_convoy_data_received(data: Variant) -> void:
 						for k_segment in range(route_x_s.size() - 1):
 							var p1_map = Vector2(float(route_x_s[k_segment]), float(route_y_s[k_segment]))
 							var p2_map = Vector2(float(route_x_s[k_segment + 1]), float(route_y_s[k_segment + 1]))
-							var segment_key = map_renderer_node.get_normalized_segment_key(p1_map, p2_map)
+							# Only need the key string here
+							var segment_key = map_renderer_node.get_normalized_segment_key_with_info(p1_map, p2_map).key
 							if not shared_segments_data_for_icons.has(segment_key):
 								shared_segments_data_for_icons[segment_key] = []
 							shared_segments_data_for_icons[segment_key].append(convoy_idx_for_shared_data)
