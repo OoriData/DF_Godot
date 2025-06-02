@@ -86,6 +86,12 @@ var _active_convoy_nodes: Dictionary = {} # { "convoy_id_str": ConvoyNode }
 # var _current_zoom: float = 1.0
 # var min_zoom, max_zoom, zoom_factor_increment are now in MapInteractionManager
 
+# Z-index constants for children of MapContainer
+const MAP_DISPLAY_Z_INDEX = 0
+const CONVOY_NODE_Z_INDEX = 1
+# UIManager's label containers will use a higher Z_INDEX (e.g., 2), set within UIManager.gd
+
+
 func _ready():
 	# print('Main: _ready() called.')  # DEBUG
 
@@ -198,6 +204,8 @@ func _ready():
 			map_interaction_manager.panel_drag_started.connect(_on_mim_panel_drag_started)
 			map_interaction_manager.panel_drag_updated.connect(_on_mim_panel_drag_updated)
 			map_interaction_manager.panel_drag_ended.connect(_on_mim_panel_drag_ended)
+			map_interaction_manager.camera_zoom_changed.connect(_on_mim_camera_zoom_changed)
+			map_interaction_manager.convoy_menu_requested.connect(_on_mim_convoy_menu_requested) # New connection
 		else:
 			printerr("Main: MapInteractionManager does not have initialize method.")
 
@@ -233,7 +241,7 @@ func _ready():
 	# Set Z-indices for global drawing order
 	# Higher z_index is drawn on top.
 	if is_instance_valid(map_display):
-		map_display.z_index = 0 # Base map layer
+		map_display.z_index = MAP_DISPLAY_Z_INDEX # Base map layer
 	if is_instance_valid(ui_manager) and ui_manager is CanvasItem: # Node2D inherits from CanvasItem
 		ui_manager.z_index = 1 # UI Manager and its labels on top of the map
 	if is_instance_valid(detailed_view_toggle):
@@ -459,16 +467,68 @@ func _update_map_display(force_rerender_map_texture: bool = true, is_light_ui_up
 	if force_rerender_map_texture:
 		# This part is for re-rendering dynamic elements INTO the main map texture.
 		# For best performance with frequently changing elements, they should be separate nodes.
+		var highlights_for_render: Array = [] # Initialize as empty		
+		# print("Main: force_rerender_map_texture is TRUE. Generating journey lines for ALL convoys. Selected IDs: ", _selected_convoy_ids) # DEBUG - Commented out
+
+		for convoy_data_item in _all_convoy_data: # Iterate through ALL convoys
+			if convoy_data_item is Dictionary and convoy_data_item.has("convoy_id") and convoy_data_item.has("journey"):
+				var convoy_id_str = str(convoy_data_item.get("convoy_id"))
+				var journey_data: Dictionary = convoy_data_item.get("journey")
+				
+				if journey_data is Dictionary: # Ensure journey_data is a dictionary
+					var route_x: Array = journey_data.get("route_x", [])
+					var route_y: Array = journey_data.get("route_y", [])
+					# print("Main: Convoy ", convoy_id_str, " route_x size: ", route_x.size(), ", route_y size: ", route_y.size()) # DEBUG
+					
+					
+					# Retrieve pre-calculated progress details from the augmented convoy_data_item
+					var convoy_current_segment_start_index: int = convoy_data_item.get("_current_segment_start_idx", -1)
+					var progress_within_current_segment: float = convoy_data_item.get("_progress_in_segment", 0.0)
+					# The complex calculation block for these two variables is no longer needed here.
+
+
+
+					if route_x.size() > 1 and route_x.size() == route_y.size():
+						var path_points: Array[Vector2] = []
+						for i in range(route_x.size()):
+							# Assuming route_x and route_y contain tile coordinates
+							path_points.append(Vector2(float(route_x[i]), float(route_y[i])))
+						# print("Main: Convoy ", convoy_id_str, " generated path_points count: ", path_points.size()) # DEBUG
+
+						var base_convoy_color = _convoy_id_to_color_map.get(convoy_id_str, Color.GRAY) # Default to gray if not found
+						var is_selected: bool = _selected_convoy_ids.has(convoy_id_str)
+						
+						var line_color_for_render = base_convoy_color
+						# Optionally, make selected lines brighter here, or let map_render handle all visual distinction
+						if is_selected:
+							line_color_for_render = base_convoy_color.lightened(0.3) # Example: brighten selected lines
+						else:
+							line_color_for_render = base_convoy_color.darkened(0.2) # Example: slightly darken non-selected
+
+						var highlight_object = {
+							"type": "journey_path", # map_render.gd needs to recognize this type
+							"points": path_points,
+							"color": line_color_for_render,
+							"is_selected": is_selected, # Pass the selection status
+							"convoy_segment_start_idx": convoy_current_segment_start_index, # Pass the calculated index
+							"progress_in_current_segment": progress_within_current_segment # Pass progress within that segment
+						}
+						highlights_for_render.append(highlight_object)
+						# print("Main: Appended journey for convoy ", convoy_id_str, " (Selected: ", is_selected, ") to highlights_for_render.") # DEBUG
+					# else:
+						# print("Main: Convoy ", convoy_id_str, " journey data insufficient to form path.") #DEBUG
+			# else:
+				# print("Main: Skipping convoy item (no ID or journey): ", convoy_data_item) # DEBUG
+
+		# print("Main: Final highlights_for_render before calling map_renderer_node.render_map: ", highlights_for_render) # DEBUG - Commented out, very verbose
+
 		var map_texture: ImageTexture = map_renderer_node.render_map(
 			map_tiles,
-			[],  # highlights
+			highlights_for_render,  # Pass the generated highlights for journey lines
 			[],  # lowlights
 			Color(0,0,0,0), # Let map_render use its own default highlight color
 			Color(0,0,0,0), # Let map_render use its own default lowlight color
 			map_render_target_size,    # Target size for the map texture (full map)
-			# Removed convoy related parameters:
-			# _all_convoy_data, throb_phase_for_render, _convoy_id_to_color_map,
-			# hover_info_for_render (UIManager handles labels), selected_ids_for_render (UIManager handles labels)
 			show_detailed_view,       # Pass detailed view flag for grid
 			show_detailed_view        # Pass detailed view flag for political colors
 		)
@@ -551,23 +611,95 @@ func _on_convoy_data_received(data: Variant) -> void:
 		_all_convoy_data = []  # Clear if data is not in expected array format
 		printerr('Main: Received convoy data is not an array or recognized structure. Clearing stored convoy data. Data: ', data)
 
-	# Update convoy ID to color mapping
-	for convoy_item in _all_convoy_data:
-		if convoy_item is Dictionary:
-			var convoy_id_val = convoy_item.get('convoy_id')
+	# --- Prepare common values for offset calculation (needed for icon offsets) ---
+	var actual_tile_width_f: float = 0.0
+	var actual_tile_height_f: float = 0.0
+	var scaled_journey_line_offset_step_pixels_for_icons: float = 0.0 # This is base_offset_magnitude
+
+	if not map_tiles.is_empty() and map_tiles[0] is Array and not map_tiles[0].is_empty() and \
+	   is_instance_valid(map_display) and map_display.custom_minimum_size.x > 0 and \
+	   is_instance_valid(map_renderer_node):
+		
+		var map_cols: int = map_tiles[0].size()
+		var map_rows: int = map_tiles.size()
+		var full_map_texture_size: Vector2 = map_display.custom_minimum_size
+
+		actual_tile_width_f = full_map_texture_size.x / float(map_cols)
+		actual_tile_height_f = full_map_texture_size.y / float(map_rows)
+		
+		var reference_float_tile_size_for_offsets: float = min(actual_tile_width_f, actual_tile_height_f)
+		var base_tile_size_prop: float = map_renderer_node.base_tile_size_for_proportions
+		var base_linear_visual_scale: float = 1.0
+		if base_tile_size_prop > 0.001:
+			base_linear_visual_scale = reference_float_tile_size_for_offsets / base_tile_size_prop
+		
+		scaled_journey_line_offset_step_pixels_for_icons = map_renderer_node.journey_line_offset_step_pixels * base_linear_visual_scale
+	else:
+		printerr("Main: Cannot calculate common values for icon offset due to missing map_tiles, map_display size, or map_renderer_node.")
+
+	# --- Build shared_segments_data for icon offsetting ---
+	var shared_segments_data_for_icons: Dictionary = {}
+	if actual_tile_width_f > 0: # Only proceed if common values were calculated
+		for convoy_idx_for_shared_data in range(_all_convoy_data.size()):
+			var convoy_item_for_shared = _all_convoy_data[convoy_idx_for_shared_data]
+			if convoy_item_for_shared is Dictionary and convoy_item_for_shared.has("journey"):
+				var journey_data_for_shared: Dictionary = convoy_item_for_shared.get("journey")
+				if journey_data_for_shared is Dictionary:
+					var route_x_s: Array = journey_data_for_shared.get("route_x", [])
+					var route_y_s: Array = journey_data_for_shared.get("route_y", [])
+					if route_x_s.size() >= 2 and route_y_s.size() == route_x_s.size():
+						for k_segment in range(route_x_s.size() - 1):
+							var p1_map = Vector2(float(route_x_s[k_segment]), float(route_y_s[k_segment]))
+							var p2_map = Vector2(float(route_x_s[k_segment + 1]), float(route_y_s[k_segment + 1]))
+							var segment_key = map_renderer_node.get_normalized_segment_key(p1_map, p2_map)
+							if not shared_segments_data_for_icons.has(segment_key):
+								shared_segments_data_for_icons[segment_key] = []
+							shared_segments_data_for_icons[segment_key].append(convoy_idx_for_shared_data)
+
+	# --- Augment convoy data with detailed progress and icon offset information ---
+	var processed_convoy_data_temp: Array = []
+	for convoy_idx in range(_all_convoy_data.size()):
+		var convoy_item_original = _all_convoy_data[convoy_idx]
+		if convoy_item_original is Dictionary:
+			# Make a mutable copy for augmentation if it's not already one
+			var convoy_item_augmented = convoy_item_original.duplicate(true) if not convoy_item_original.has("_current_segment_start_idx") else convoy_item_original
+			
+			# Update convoy ID to color mapping
+			var convoy_id_val = convoy_item_augmented.get('convoy_id')
 			if convoy_id_val != null: # Check for null, as ID could be 0
 				var convoy_id_str = str(convoy_id_val)
 				if not convoy_id_str.is_empty() and not _convoy_id_to_color_map.has(convoy_id_str):
-					# This convoy ID is new, assign it the next available color
 					_last_assigned_color_idx = (_last_assigned_color_idx + 1) % PREDEFINED_CONVOY_COLORS.size()
 					_convoy_id_to_color_map[convoy_id_str] = PREDEFINED_CONVOY_COLORS[_last_assigned_color_idx]
+			
+			# Calculate and store detailed progress information (updates x, y, _current_segment_start_idx, _progress_in_segment)
+			convoy_item_augmented = _calculate_convoy_progress_details(convoy_item_augmented)
 
+			# Calculate and store pixel offset for the icon
+			var icon_offset_v = Vector2.ZERO
+			if actual_tile_width_f > 0 and convoy_item_augmented.has("journey"): # Check if common values are valid
+				var current_seg_idx = convoy_item_augmented.get("_current_segment_start_idx", -1)
+				var journey_d = convoy_item_augmented.get("journey")
+				if journey_d is Dictionary and current_seg_idx != -1 and journey_d.get("route_x", []).size() > current_seg_idx + 1:
+					var r_x = journey_d.get("route_x")
+					var r_y = journey_d.get("route_y")
+					var p1_m = Vector2(float(r_x[current_seg_idx]), float(r_y[current_seg_idx]))
+					var p2_m = Vector2(float(r_x[current_seg_idx + 1]), float(r_y[current_seg_idx + 1]))
+					var p1_px = Vector2i(round((p1_m.x + 0.5) * actual_tile_width_f), round((p1_m.y + 0.5) * actual_tile_height_f))
+					var p2_px = Vector2i(round((p2_m.x + 0.5) * actual_tile_width_f), round((p2_m.y + 0.5) * actual_tile_height_f))
+					icon_offset_v = map_renderer_node.get_journey_segment_offset_vector(p1_m, p2_m, p1_px, p2_px, convoy_idx, shared_segments_data_for_icons, scaled_journey_line_offset_step_pixels_for_icons)
+			convoy_item_augmented["_pixel_offset_for_icon"] = icon_offset_v
+			
+			processed_convoy_data_temp.append(convoy_item_augmented)
+		else: # Should not happen if data format is consistent
+			processed_convoy_data_temp.append(convoy_item_original) 
+	_all_convoy_data = processed_convoy_data_temp # Replace with augmented data
 	# Re-render the map with the new convoy data
 	if is_instance_valid(map_interaction_manager) and map_interaction_manager.has_method("update_data_references"):
 		map_interaction_manager.update_data_references(_all_convoy_data, _all_settlement_data, map_tiles)
 	else:
 		if not is_instance_valid(map_interaction_manager):
-			printerr("Main (_on_convoy_data_received): MapInteractionManager instance is NOT valid. Cannot update its data references. Check node path and name in scene tree and script.")
+			printerr("Main (_on_convoy_data_received): MapInteractionManager instance is NOT valid. Cannot update its data references.")
 		elif not map_interaction_manager.has_method("update_data_references"):
 			printerr("Main (_on_convoy_data_received): MapInteractionManager instance IS valid, but does NOT have method 'update_data_references'. Check script 'MapInteractionManager.gd'.")
 		# else: printerr("Main (_on_convoy_data_received): Cannot update MapInteractionManager data references (unknown reason).") # Fallback
@@ -578,9 +710,10 @@ func _on_convoy_data_received(data: Variant) -> void:
 	else:
 		printerr("Main: Cannot update ConvoyListPanel, node is invalid or method missing.")
 
-	_update_convoy_nodes() # Create/update ConvoyNode instances
-	# Map texture no longer needs re-render for convoy data changes. UI update is still needed for labels.
-	_update_map_display(false, false) # false = don't rerender map texture, false = full UI update for labels
+	_update_convoy_nodes() # Create/update ConvoyNode instances using augmented _all_convoy_data
+	# Map texture DOES need to be re-rendered if journey lines are drawn on it and convoy data changes.
+	# The 'false' for is_light_ui_update means a full UI update for labels etc. will also occur.
+	_update_map_display(true, false)
 
 
 
@@ -620,7 +753,75 @@ func _on_visual_update_tick() -> void:
 	# false = not a light UI update (do full UI update)    
 	# Temporarily set force_rerender_map_texture to false to stop constant full map redraws.
 	# This will stop throb if it's part of map_render. Convoys should be separate nodes.
-	call_deferred("_update_map_display", false, false)
+	call_deferred("_update_map_display", false, false) # false = don't rerender map texture, false = not a light UI update
+
+
+func _calculate_convoy_progress_details(convoy_data_item: Dictionary) -> Dictionary:
+	# This function mirrors the logic from _update_map_display for calculating segment progress
+	# It MODIFIES the convoy_data_item by adding '_current_segment_start_idx', 
+	# '_progress_in_segment', and updates 'x' and 'y' to the precise interpolated tile coordinates.
+	if not (convoy_data_item is Dictionary and convoy_data_item.has("journey")):
+		return convoy_data_item # Return unchanged if no journey data
+
+	var journey_data: Dictionary = convoy_data_item.get("journey")
+	if not (journey_data is Dictionary):
+		return convoy_data_item
+
+	var route_x: Array = journey_data.get("route_x", [])
+	var route_y: Array = journey_data.get("route_y", [])
+	var journey_progress: float = journey_data.get("progress", 0.0)
+
+	var current_segment_start_idx: int = -1
+	var progress_within_segment: float = 0.0
+
+	if route_x.size() >= 2 and route_y.size() == route_x.size():
+		var num_total_segments = route_x.size() - 1
+		var cumulative_dist: float = 0.0
+		var total_path_length: float = 0.0
+
+		for k_calc_idx in range(num_total_segments):
+			var p_s_calc = Vector2(float(route_x[k_calc_idx]), float(route_y[k_calc_idx]))
+			var p_e_calc = Vector2(float(route_x[k_calc_idx+1]), float(route_y[k_calc_idx+1]))
+			total_path_length += p_s_calc.distance_to(p_e_calc)
+
+		if total_path_length <= 0.001: # Handle zero or very short paths
+			current_segment_start_idx = 0
+			progress_within_segment = 0.0
+			if num_total_segments >= 0 : # If there's at least one point (num_total_segments = 0 for 1 point path)
+				convoy_data_item["x"] = float(route_x[0])
+				convoy_data_item["y"] = float(route_y[0])
+		elif journey_progress <= 0.001:
+			current_segment_start_idx = 0
+			progress_within_segment = 0.0
+			convoy_data_item["x"] = float(route_x[0])
+			convoy_data_item["y"] = float(route_y[0])
+		elif journey_progress >= total_path_length - 0.001:
+			current_segment_start_idx = num_total_segments - 1
+			progress_within_segment = 1.0
+			convoy_data_item["x"] = float(route_x[num_total_segments]) # Use last point of the path
+			convoy_data_item["y"] = float(route_y[num_total_segments])
+		else:
+			var found_segment = false
+			for k_idx in range(num_total_segments):
+				var p_start_tile = Vector2(float(route_x[k_idx]), float(route_y[k_idx]))
+				var p_end_tile = Vector2(float(route_x[k_idx+1]), float(route_y[k_idx+1]))
+				var segment_length = p_start_tile.distance_to(p_end_tile)
+				if journey_progress >= cumulative_dist - 0.001 and journey_progress < cumulative_dist + segment_length - 0.001:
+					current_segment_start_idx = k_idx
+					progress_within_segment = (journey_progress - cumulative_dist) / segment_length if segment_length > 0.0001 else 1.0
+					progress_within_segment = clamp(progress_within_segment, 0.0, 1.0)
+					var interpolated_pos_tile = p_start_tile.lerp(p_end_tile, progress_within_segment)
+					convoy_data_item["x"] = interpolated_pos_tile.x
+					convoy_data_item["y"] = interpolated_pos_tile.y
+					found_segment = true; break
+				cumulative_dist += segment_length
+			if not found_segment: # Fallback
+				current_segment_start_idx = num_total_segments - 1; progress_within_segment = 1.0
+				convoy_data_item["x"] = float(route_x[num_total_segments]); convoy_data_item["y"] = float(route_y[num_total_segments])
+
+	convoy_data_item["_current_segment_start_idx"] = current_segment_start_idx
+	convoy_data_item["_progress_in_segment"] = progress_within_segment
+	return convoy_data_item
 
 
 # All label drawing and management is now handled by UIManager.gd
@@ -687,13 +888,8 @@ func _input(event: InputEvent) -> void:  # Renamed from _gui_input
 	# trigger unexpected behavior here if main.gd also tries to process them.
 	pass
 
-	# If MIM didn't handle the event, or if MIM doesn't exist,
-	# any further general input processing for main.gd itself (not related to map/panel interaction)
-	# could go here. For now, there isn't any.
-	# Example:
-	# if event.is_action_pressed("ui_cancel"):
-	#     get_tree().quit()
-
+	# Mouse wheel zoom logic has been removed from main.gd and is now handled by MapInteractionManager.gd
+	
 	# The old drag logic and hover detection that was in main.gd's _input
 	# is now fully handled by MapInteractionManager or by main.gd reacting to
 	# signals from MapInteractionManager.
@@ -844,6 +1040,12 @@ func _on_mim_panel_drag_ended(convoy_id_str: String, final_local_position: Vecto
 	# Panel drag ended, UI needs update, map texture itself doesn't.
 	_update_map_display(false, false)
 
+func _on_mim_camera_zoom_changed(_new_zoom_level: float):
+	# print("Main: Camera zoom changed to: ", new_zoom_level) # DEBUG
+	# A zoom change requires a full UI update to rescale elements, not just a light one.
+	_update_map_display(false, false) # false = don't rerender map texture, false = not a light UI update
+
+
 func _on_mim_panel_drag_started(convoy_id_str: String, panel_node: Panel):
 	print("Main: PanelDragStart: Convoy: %s, PanelNode: %s, IsValid: %s" % [convoy_id_str, panel_node, is_instance_valid(panel_node)])
 	if not is_instance_valid(panel_node):
@@ -945,6 +1147,16 @@ func request_open_convoy_menu_via_manager(convoy_data):
 	if is_instance_valid(menu_manager_ref):
 		menu_manager_ref.request_convoy_menu(convoy_data) # Call a method on MenuManager
 
+# --- Handler for Menu Requests from MapInteractionManager ---
+func _on_mim_convoy_menu_requested(convoy_data: Dictionary):
+	if is_instance_valid(menu_manager_ref):
+		print("Main: MapInteractionManager requested convoy menu for convoy ID: ", convoy_data.get("convoy_id", "N/A")) # DEBUG
+		# This existing function already calls the menu manager correctly
+		request_open_convoy_menu_via_manager(convoy_data)
+	else:
+		printerr("Main: _on_mim_convoy_menu_requested - menu_manager_ref is NOT valid! Cannot request convoy menu.")
+
+
 # --- Signal Handler for Convoy List Panel ---
 func _on_convoy_selected_from_list_panel(convoy_data: Dictionary):
 	if not convoy_data is Dictionary:
@@ -1014,6 +1226,7 @@ func _update_convoy_nodes():
 			_active_convoy_nodes[convoy_id_str].set_convoy_data(convoy_item_data, convoy_color, tile_w, tile_h)
 		else:
 			var new_convoy_node = convoy_node_scene.instantiate()
+			new_convoy_node.z_index = CONVOY_NODE_Z_INDEX # Ensure convoy nodes are above map_display
 			map_container.add_child(new_convoy_node) # Add as child of MapContainer
 			new_convoy_node.set_convoy_data(convoy_item_data, convoy_color, tile_w, tile_h)
 			_active_convoy_nodes[convoy_id_str] = new_convoy_node

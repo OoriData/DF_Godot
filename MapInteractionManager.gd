@@ -18,6 +18,11 @@ signal panel_drag_updated(convoy_id_str: String, new_panel_local_position: Vecto
 # final_panel_local_position is the panel's final position relative to its parent.
 signal panel_drag_ended(convoy_id_str: String, final_panel_local_position: Vector2)
 
+# Emitted when the camera zoom level has changed.
+signal camera_zoom_changed(new_zoom_level: float)
+
+# Emitted when a convoy icon is clicked/tapped, requesting its menu.
+signal convoy_menu_requested(convoy_data: Dictionary)
 
 # --- Node References (to be set by main.gd via initialize method) ---
 var map_display: TextureRect = null
@@ -51,6 +56,8 @@ enum ControlScheme { MOUSE_AND_KEYBOARD, TOUCH }
 @export var min_camera_zoom_level: float = 0.2
 ## Maximum zoom level for the camera.
 @export var max_camera_zoom_level: float = 5.0
+## Enable zooming with the mouse wheel when using Mouse & Keyboard control scheme.
+@export var enable_mouse_wheel_zoom: bool = true
 ## Factor by which to multiply/divide current zoom on each scroll step.
 @export var camera_zoom_factor_increment: float = 1.1
 
@@ -125,9 +132,10 @@ func initialize(
 			camera.drag_left_margin = 0.0; camera.drag_right_margin = 0.0
 			camera.drag_top_margin = 0.0;  camera.drag_bottom_margin = 0.0
 			# To enable smoothing in Godot 4, set the process_callback.
-			# Camera2D.CAMERA2D_PROCESS_PHYSICS is common for smooth game movement.
-			camera.process_callback = Camera2D.CAMERA2D_PROCESS_PHYSICS 
-			camera.set("smoothing_speed", 2.0) # Use set() for properties like this. Adjust speed as needed.
+			camera.process_callback = Camera2D.CAMERA2D_PROCESS_PHYSICS
+			camera.set("smoothing_enabled", true) # Use generic set()
+			camera.set("smoothing_speed", 5.0)    # Use generic set()
+			print("MapInteractionManager: Camera limits and smoothing initialized.") # DEBUG
 		else:
 			printerr("MapInteractionManager: _initial_map_display_size is zero in initialize. Camera limits not set.")
 
@@ -145,12 +153,29 @@ func _unhandled_input(event: InputEvent): # Changed from handle_input
 	   not is_instance_valid(ui_manager) or \
 	   not is_instance_valid(camera):
 		# print("MapInteractionManager: handle_input - Essential nodes not ready. Skipping.")
+		# Ensure event is not spuriously consumed if essential nodes aren't ready
 		return
 
+	# Handle MagnifyGesture (trackpad pinch) first, as it can occur with either scheme.
+	# This is often how trackpad pinch-to-zoom is implemented.
+	if event is InputEventMagnifyGesture:
+		if event.factor != 0: # Avoid division by zero, though unlikely for this event
+			# The previous logic used `1.0 / event.factor`.
+			# If that felt inverted (e.g., spreading fingers zoomed in, but you expected it to zoom out),
+			# using `event.factor` directly will reverse the pinch-to-zoom direction.
+			# Now: spread_fingers (factor > 1) -> zoom_out; pinch_fingers (factor < 1) -> zoom_in.
+			_zoom_camera_at_screen_pos(event.factor, event.position)
+		get_viewport().set_input_as_handled()
+		return # Consumed by magnify gesture
+
+	# If not a magnify gesture, proceed with scheme-specific input
 	match active_control_scheme:
 		ControlScheme.MOUSE_AND_KEYBOARD:
 			_handle_mouse_input(event)
 		ControlScheme.TOUCH:
+			# Note: InputEventMagnifyGesture is now handled globally above,
+			# so it won't be processed again by _handle_touch_input if it was already handled.
+			# _handle_touch_input will now primarily deal with screen touch/drag for panning and taps.
 			_handle_touch_input(event)
 
 	# If event was not handled by scheme-specific camera/pan/zoom,
@@ -217,28 +242,18 @@ func _handle_mouse_input(event: InputEvent):
 		return # Consumed
 
 	# Camera Zooming (Mouse Wheel)
-	if event is InputEventMouseButton:
-		if event.button_index == MOUSE_BUTTON_WHEEL_UP:
+	if enable_mouse_wheel_zoom and event is InputEventMouseButton: # Check the setting here
+		if event.button_index == MOUSE_BUTTON_WHEEL_UP and event.is_pressed():
 			_zoom_camera_at_screen_pos(1.0 / camera_zoom_factor_increment, event.position) # factor < 1 for zoom in
 			get_viewport().set_input_as_handled()
 			return # Consumed
-		elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
+		elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN and event.is_pressed():
 			_zoom_camera_at_screen_pos(camera_zoom_factor_increment, event.position)      # factor > 1 for zoom out
 			get_viewport().set_input_as_handled()
 			return # Consumed
 
-	# Keyboard Zooming (+/- keys)
-	if event is InputEventKey and event.pressed and not event.is_echo():
-		if event.keycode == KEY_EQUAL or event.keycode == KEY_KP_ADD: # '=' is often '+' without shift, KEY_PLUS might also work
-			_zoom_camera_at_screen_pos(1.0 / camera_zoom_factor_increment, get_viewport().get_mouse_position()) # Zoom in towards mouse
-			get_viewport().set_input_as_handled()
-			return # Consumed
-		elif event.keycode == KEY_MINUS || event.keycode == KEY_KP_SUBTRACT:
-			_zoom_camera_at_screen_pos(camera_zoom_factor_increment, get_viewport().get_mouse_position())      # Zoom out from mouse
-			get_viewport().set_input_as_handled()
-			return # Consumed
-	# Mouse button interactions for UI (panel drag, map clicks) are handled by _handle_mouse_button_interactions
-	# called from _unhandled_input if this function doesn't consume the event.
+	# Keyboard Zooming (+/- keys) has been removed.
+
 
 func _handle_touch_input(event: InputEvent):
 	# Touch Panning (Single finger drag)
@@ -267,12 +282,9 @@ func _handle_touch_input(event: InputEvent):
 		return # Consumed
 
 	# Touch Zooming (Pinch Gesture)
-	if event is InputEventMagnifyGesture:
-		# event.factor is the magnification factor.
-		# Our _zoom_camera_at_screen_pos expects a factor where >1 zooms out.
-		_zoom_camera_at_screen_pos(event.factor, event.position)
-		get_viewport().set_input_as_handled()
-		return # Consumed
+	# This is now handled globally at the start of _unhandled_input.
+	# If it were to remain here, the logic would be:
+	# _zoom_camera_at_screen_pos(1.0 / event.factor, event.position)
 
 	# Touch Taps for UI interaction (panel drag start/end, map element click)
 	# This is simplified. Robust touch UI needs careful state management.
@@ -286,17 +298,22 @@ func _handle_panel_drag_motion_only(event: InputEventMouseMotion):
 		# Calculate the new target global position for the panel's origin
 		var new_global_panel_pos: Vector2 = event.global_position + _drag_offset
 
+		var panel_actual_size_for_clamp = _dragging_panel_node.size
+		if panel_actual_size_for_clamp.x <= 0 or panel_actual_size_for_clamp.y <= 0:
+			panel_actual_size_for_clamp = _dragging_panel_node.get_minimum_size()
+
 		# Clamp the new global position using the pre-calculated _current_drag_clamp_rect
-		if _current_drag_clamp_rect.size.x > 0 and _current_drag_clamp_rect.size.y > 0: # Check if clamp rect is valid
+		# Ensure panel_actual_size_for_clamp is also valid before using in subtraction
+		if _current_drag_clamp_rect.size.x > 0 and _current_drag_clamp_rect.size.y > 0 and panel_actual_size_for_clamp.x > 0 and panel_actual_size_for_clamp.y > 0:
 			new_global_panel_pos.x = clamp(
 				new_global_panel_pos.x,
 				_current_drag_clamp_rect.position.x,
-				_current_drag_clamp_rect.position.x + _current_drag_clamp_rect.size.x - _dragging_panel_node.size.x
+				_current_drag_clamp_rect.position.x + _current_drag_clamp_rect.size.x - panel_actual_size_for_clamp.x
 			)
 			new_global_panel_pos.y = clamp(
 				new_global_panel_pos.y,
 				_current_drag_clamp_rect.position.y,
-				_current_drag_clamp_rect.position.y + _current_drag_clamp_rect.size.y - _dragging_panel_node.size.y
+				_current_drag_clamp_rect.position.y + _current_drag_clamp_rect.size.y - panel_actual_size_for_clamp.y
 			)
 
 		_dragging_panel_node.global_position = new_global_panel_pos
@@ -415,8 +432,12 @@ func _handle_mouse_button_interactions(event: InputEventMouseButton):
 						if not is_instance_valid(panel_node_candidate):
 							continue
 
-						# Always use get_global_rect() for accurate hit testing with scaled panels
-						var panel_rect_global = panel_node_candidate.get_global_rect()
+						# Use minimum_size for hit testing if actual size is not yet updated
+						var panel_effective_size = panel_node_candidate.size
+						if panel_effective_size.x <= 0 or panel_effective_size.y <= 0:
+							panel_effective_size = panel_node_candidate.get_minimum_size()
+						
+						var panel_rect_global = Rect2(panel_node_candidate.global_position, panel_effective_size)
 						var hit_test_rect = panel_rect_global.grow(2.0) # Small buffer for easier clicking
 
 						if hit_test_rect.has_point(event.global_position):
@@ -449,7 +470,7 @@ func _handle_mouse_button_interactions(event: InputEventMouseButton):
 		elif not event.pressed: # Mouse button RELEASED
 			# If a drag was in progress (handled by MIM), this would be drag end.
 			if is_instance_valid(_dragging_panel_node):
-				var final_local_position = _dragging_panel_node.position # Position is local to its parent
+				var final_local_position: Vector2 = _dragging_panel_node.position # Position is local to its parent
 				if _dragging_panel_node.get_parent() and is_instance_valid(_dragging_panel_node.get_parent()):
 					final_local_position = _dragging_panel_node.get_parent().to_local(_dragging_panel_node.global_position)
 				
@@ -467,52 +488,15 @@ func _handle_mouse_button_interactions(event: InputEventMouseButton):
 
 			# --- Handle click on map elements (convoys/settlements) ---
 			# Convert screen mouse pos to camera's canvas space (world space)
-			var mouse_world_pos = camera.get_canvas_transform().affine_inverse() * event.global_position
-			# mouse_world_pos is now in the coordinate system of MapContainer.
-			# MapDisplay is at (0,0) in MapContainer and has size _initial_map_display_size.
-			# So mouse_world_pos is effectively mouse_on_texture_x/y if MapDisplay origin is top-left.
+			var mouse_world_pos: Vector2 = camera.get_canvas_transform().affine_inverse() * event.global_position # Keep type hint for mouse_world_pos
+			var clicked_convoy_data = _get_convoy_data_at_world_pos(mouse_world_pos) # Remove Dictionary type hint
 
-			var clicked_convoy_id_str_on_map: String = ""
-			if not all_convoy_data.is_empty() and not map_tiles.is_empty() and map_tiles[0] is Array and not map_tiles[0].is_empty():
-				var map_cols: int = map_tiles[0].size()
-				# var map_rows: int = map_tiles.size() # Unused
-				# Use _initial_map_display_size for tile dimensions in world space
-				var actual_tile_width_on_world: float = _initial_map_display_size.x / float(map_cols)
-				var actual_tile_height_on_world: float = _initial_map_display_size.y / float(map_tiles.size())
-
-				for convoy_data_item in all_convoy_data:
-					if not convoy_data_item is Dictionary: continue
-					var convoy_map_x: float = convoy_data_item.get('x', -1.0)
-					var convoy_map_y: float = convoy_data_item.get('y', -1.0)
-					var convoy_id_val = convoy_data_item.get('convoy_id')
-					if convoy_id_val != null:
-						var convoy_center_world_x: float = (convoy_map_x + 0.5) * actual_tile_width_on_world
-						var convoy_center_world_y: float = (convoy_map_y + 0.5) * actual_tile_height_on_world
-						var dx = mouse_world_pos.x - convoy_center_world_x
-						var dy = mouse_world_pos.y - convoy_center_world_y
-						# Scale hover radius by camera zoom for comparison in world space
-						var scaled_click_radius_sq = convoy_hover_radius_on_texture_sq / (camera.zoom.x * camera.zoom.x) # Assuming uniform zoom
-						if (dx * dx) + (dy * dy) < scaled_click_radius_sq:
-							clicked_convoy_id_str_on_map = str(convoy_id_val)
-							break
-
-			if not clicked_convoy_id_str_on_map.is_empty():
-				var selection_changed_flag = false
-				if _selected_convoy_ids.has(clicked_convoy_id_str_on_map):
-					_selected_convoy_ids.erase(clicked_convoy_id_str_on_map)
-					selection_changed_flag = true
-					# User position is intentionally NOT erased here to remember it for re-selection.
-					print("MIM: Deselected convoy: ", clicked_convoy_id_str_on_map) # DEBUG
-				else:
-					_selected_convoy_ids.append(clicked_convoy_id_str_on_map)
-					selection_changed_flag = true
-					print("MIM: Selected convoy: ", clicked_convoy_id_str_on_map) # DEBUG
-				
-				if selection_changed_flag:
-					emit_signal("selection_changed", _selected_convoy_ids)
-				
-				# Potentially consume the event if a map icon was clicked
+			if clicked_convoy_data != null:
+				emit_signal("convoy_menu_requested", clicked_convoy_data)
+				print("MIM: Clicked convoy for menu: ", clicked_convoy_data.get("convoy_id", "N/A")) # DEBUG
 				get_viewport().set_input_as_handled()
+				return # Click on convoy handled by requesting menu
+
 
 			# TODO: Add settlement click logic if needed
 
@@ -541,21 +525,12 @@ func _handle_tap_interaction(screen_pos: Vector2):
 	if not (is_instance_valid(camera) and is_instance_valid(map_display) and is_instance_valid(map_display.texture)):
 		return
 
-	var world_pos = camera.get_canvas_transform().affine_inverse() * screen_pos
-	# Simplified: Check only for convoy clicks on tap for now.
-	# This logic is similar to the click part of _handle_mouse_button_interactions.
-	var clicked_convoy_id_str_on_map: String = _get_convoy_id_at_world_pos(world_pos)
+	var world_pos: Vector2 = camera.get_canvas_transform().affine_inverse() * screen_pos # Keep type hint for world_pos
+	var clicked_convoy_data = _get_convoy_data_at_world_pos(world_pos) # Remove Dictionary type hint
 
-	if not clicked_convoy_id_str_on_map.is_empty():
-		var selection_changed_flag = false
-		if _selected_convoy_ids.has(clicked_convoy_id_str_on_map):
-			_selected_convoy_ids.erase(clicked_convoy_id_str_on_map)
-			selection_changed_flag = true
-		else:
-			_selected_convoy_ids.append(clicked_convoy_id_str_on_map)
-			selection_changed_flag = true
-		if selection_changed_flag:
-			emit_signal("selection_changed", _selected_convoy_ids)
+	if clicked_convoy_data != null:
+		emit_signal("convoy_menu_requested", clicked_convoy_data)
+		print("MIM: Tapped convoy for menu: ", clicked_convoy_data.get("convoy_id", "N/A")) # DEBUG
 		get_viewport().set_input_as_handled()
 
 func _zoom_camera_at_screen_pos(zoom_adjust_factor: float, screen_zoom_center: Vector2):
@@ -583,6 +558,7 @@ func _zoom_camera_at_screen_pos(zoom_adjust_factor: float, screen_zoom_center: V
 	
 	camera.offset += world_pos_before_zoom - world_pos_after_zoom
 	# Camera's built-in limits will apply. No explicit _constrain_camera_offset call needed.
+	emit_signal("camera_zoom_changed", camera.zoom.x)
 
 
 
@@ -614,12 +590,12 @@ func _constrain_camera_offset():
 		camera.offset.y = _initial_map_display_size.y / 2.0
 	# else: Camera limits will handle vertical clamping
 
-func _get_convoy_id_at_world_pos(world_pos: Vector2) -> String:
-	"""Helper to find a convoy ID at a given world position."""
+func _get_convoy_data_at_world_pos(world_pos: Vector2): # Removed -> Dictionary | null
+	"""Helper to find a convoy's data Dictionary at a given world position."""
 	if all_convoy_data.is_empty() or map_tiles.is_empty() or not map_tiles[0] is Array or map_tiles[0].is_empty():
-		return ""
+		return null
 
-	var map_cols: int = map_tiles[0].size()
+	var map_cols: int = map_tiles[0].size() # Should be safe due to checks above
 	var actual_tile_width_on_world: float = _initial_map_display_size.x / float(map_cols)
 	var actual_tile_height_on_world: float = _initial_map_display_size.y / float(map_tiles.size())
 
@@ -628,12 +604,13 @@ func _get_convoy_id_at_world_pos(world_pos: Vector2) -> String:
 		var convoy_map_x: float = convoy_data_item.get('x', -1.0)
 		var convoy_map_y: float = convoy_data_item.get('y', -1.0)
 		var convoy_id_val = convoy_data_item.get('convoy_id')
-		if convoy_id_val != null:
+		if convoy_id_val != null: # Ensure convoy has an ID and valid coordinates
+
 			var convoy_center_world_x: float = (convoy_map_x + 0.5) * actual_tile_width_on_world
 			var convoy_center_world_y: float = (convoy_map_y + 0.5) * actual_tile_height_on_world
 			var dx = world_pos.x - convoy_center_world_x
 			var dy = world_pos.y - convoy_center_world_y
 			var scaled_hover_radius_sq = convoy_hover_radius_on_texture_sq / (camera.zoom.x * camera.zoom.x)
 			if (dx * dx) + (dy * dy) < scaled_hover_radius_sq:
-				return str(convoy_id_val)
-	return ""
+				return convoy_data_item
+	return null

@@ -12,10 +12,10 @@ var tile_pixel_width_on_full_texture: float = 1.0
 var tile_pixel_height_on_full_texture: float = 1.0
 
 # Arrow drawing constants (can be tweaked or replaced with a sprite texture)
-const ARROW_FORWARD_LENGTH_BASE: float = 10.0
-const ARROW_BACKWARD_LENGTH_BASE: float = 3.0
-const ARROW_HALF_WIDTH_BASE: float = 5.0
-const ARROW_OUTLINE_THICKNESS_BASE: float = 1.5
+const ARROW_FORWARD_LENGTH_BASE: float = 30.0  # Was 10.0
+const ARROW_BACKWARD_LENGTH_BASE: float = 9.0   # Was 3.0
+const ARROW_HALF_WIDTH_BASE: float = 15.0   # Was 5.0
+const ARROW_OUTLINE_THICKNESS_BASE: float = 4.5 # Was 1.5
 const ARROW_DYNAMIC_SCALING_FACTOR: float = 0.7 # Adjust to make arrows smaller/larger relative to base
 
 # Throb animation parameters
@@ -62,47 +62,64 @@ func _update_visuals():
 	if convoy_data.is_empty() or tile_pixel_width_on_full_texture <= 0:
 		return # Added explicit indent
 
-	# 1. Update Position
-	# The position is local to MapContainer.
-	# It's based on the convoy's map coordinates and the pixel size of tiles on the *full* map texture.
-	var map_x: float = convoy_data.get("x", 0.0)
-	var map_y: float = convoy_data.get("y", 0.0)
-	
-	position.x = (map_x + 0.5) * tile_pixel_width_on_full_texture
-	position.y = (map_y + 0.5) * tile_pixel_height_on_full_texture
-
-	# 2. Update Rotation
 	var journey_data: Dictionary = convoy_data.get("journey", {})
 	var route_x: Array = journey_data.get("route_x", [])
 	var route_y: Array = journey_data.get("route_y", [])
-	var current_map_x_float: float = convoy_data.get("x", -1.0) # Ensure float for comparison
-	var current_map_y_float: float = convoy_data.get("y", -1.0)
+	
+	# Get pre-calculated progress details from convoy_data (set by main.gd)
+	var current_segment_idx: int = convoy_data.get("_current_segment_start_idx", -1)
+	var progress_in_segment: float = convoy_data.get("_progress_in_segment", 0.0)
 
+	var final_pixel_pos: Vector2
 	var direction_rad: float = icon_sprite.rotation # Keep current rotation if no new direction
-	if route_x.size() > 1 and route_y.size() == route_x.size():
-		var current_segment_idx: int = -1
-		# Find current segment convoy is on
-		for i in range(route_x.size()):
-			# Compare float versions of coordinates
-			if abs(float(route_x[i]) - current_map_x_float) < 0.001 and \
-			   abs(float(route_y[i]) - current_map_y_float) < 0.001:
-				current_segment_idx = i
-				break
+
+	if current_segment_idx != -1 and \
+	   route_x.size() > current_segment_idx and route_y.size() > current_segment_idx: # Check current_segment_idx is valid for start point
 		
-		if current_segment_idx != -1:
-			if current_segment_idx + 1 < route_x.size(): # Has a next point
-				var next_map_x: float = float(route_x[current_segment_idx + 1])
-				var next_map_y: float = float(route_y[current_segment_idx + 1])
-				var dir_vec := Vector2(next_map_x - current_map_x_float, next_map_y - current_map_y_float)
-				if dir_vec.length_squared() > 0.0001: # Explicit block
-					direction_rad = dir_vec.angle() 
-			elif current_segment_idx > 0: # At the end of path, use previous segment's direction
-				var prev_map_x: float = float(route_x[current_segment_idx - 1])
-				var prev_map_y: float = float(route_y[current_segment_idx - 1])
-				var dir_vec := Vector2(current_map_x_float - prev_map_x, current_map_y_float - prev_map_y)
-				if dir_vec.length_squared() > 0.0001: # Explicit block
-					direction_rad = dir_vec.angle() 
+		var p_start_tile: Vector2
+		var p_end_tile: Vector2
+
+		if route_x.size() > current_segment_idx + 1: # Standard case: segment has a defined end point
+			p_start_tile = Vector2(float(route_x[current_segment_idx]), float(route_y[current_segment_idx]))
+			p_end_tile = Vector2(float(route_x[current_segment_idx + 1]), float(route_y[current_segment_idx + 1]))
+		else: # At the very last point of the path, or path has only one point
+			p_start_tile = Vector2(float(route_x[current_segment_idx]), float(route_y[current_segment_idx]))
+			p_end_tile = p_start_tile # Position at the point, rotation might need previous segment
+			if current_segment_idx > 0: # Try to get rotation from previous segment
+				var p_prev_tile = Vector2(float(route_x[current_segment_idx - 1]), float(route_y[current_segment_idx - 1]))
+				var dir_vec_tile = p_start_tile - p_prev_tile # Use p_start_tile as the "end" for direction
+				if dir_vec_tile.length_squared() > 0.0001:
+					direction_rad = dir_vec_tile.angle()
+
+		# Convert tile coordinates to pixel coordinates (center of tile for path points)
+		var p_start_pixel = Vector2(
+			(p_start_tile.x + 0.5) * tile_pixel_width_on_full_texture,
+			(p_start_tile.y + 0.5) * tile_pixel_height_on_full_texture
+		)
+		var p_end_pixel = Vector2(
+			(p_end_tile.x + 0.5) * tile_pixel_width_on_full_texture,
+			(p_end_tile.y + 0.5) * tile_pixel_height_on_full_texture
+		)
+
+		final_pixel_pos = p_start_pixel.lerp(p_end_pixel, progress_in_segment)
+		
+		# Update rotation only if not at the very end point without a previous segment for direction
+		if not (p_start_tile.is_equal_approx(p_end_tile) and current_segment_idx == 0):
+			var dir_vec_pixel = p_end_pixel - p_start_pixel
+			if dir_vec_pixel.length_squared() > 0.0001:
+				direction_rad = dir_vec_pixel.angle()
+	else: # Fallback: Use the top-level x/y from convoy_data (which should be the interpolated tile coords)
+		var map_x: float = convoy_data.get("x", 0.0)
+		var map_y: float = convoy_data.get("y", 0.0)
+		final_pixel_pos = Vector2(
+			(map_x + 0.5) * tile_pixel_width_on_full_texture,
+			(map_y + 0.5) * tile_pixel_height_on_full_texture
+		)
+
+	var icon_offset_px: Vector2 = convoy_data.get("_pixel_offset_for_icon", Vector2.ZERO)
+	position = final_pixel_pos + icon_offset_px # Apply the lateral offset
 	icon_sprite.rotation = direction_rad
+	
 	
 	# 3. Update Throb & Arrow Drawing (depends on scale from zoom)
 	# The ConvoyNode itself is scaled by MapContainer's zoom.

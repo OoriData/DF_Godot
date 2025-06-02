@@ -43,9 +43,12 @@ script = ExtResource("2_of6aa")
 
 [node name="MapInteractionManager" type="Node" parent="."]
 script = ExtResource("4_b4rp0")
+camera_zoom_factor_increment = 0.9
 
 [node name="GameTimersNode" type="Node" parent="."]
 script = ExtResource("5_b5irg")
 
 [node name="MapRendererLogic" type="Node" parent="."]
 script = ExtResource("2_mtjdu")
+journey_line_thickness = 4
+journey_line_offset_step_pixels = 10.0

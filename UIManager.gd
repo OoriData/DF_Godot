@@ -6,12 +6,14 @@ extends Node2D
 ## Multiplier to adjust the overall perceived size of UI labels and panels. 1.0 = default.
 @export var ui_overall_scale_multiplier: float = 1.0
 
-@onready var settlement_label_container: Node2D = $SettlementLabelContainer
+# Path corrected: From UIManagerNode, up two levels to MapRender, then down to MapContainer/SettlementLabelContainer.
+@onready var settlement_label_container: Node2D = get_node("../../MapContainer/SettlementLabelContainer")
 # Path corrected: From UIManagerNode (child of ScreenSpaceUI, child of MapRender)
 # up to MapRender, then down to MapContainer, then to ConvoyConnectorLinesContainer.
 # Adjust ../../ if UIManagerNode is nested differently under ScreenSpaceUI.
-@onready var convoy_connector_lines_container: Node2D = get_node("../../MapContainer/ConvoyConnectorLinesContainer")
-@onready var convoy_label_container: Node2D = $ConvoyLabelContainer
+@onready var convoy_connector_lines_container: Node2D = get_node("../../MapContainer/ConvoyConnectorLinesContainer") 
+# Path corrected: ConvoyLabelContainer is also under MapContainer.
+@onready var convoy_label_container: Node2D = get_node("../../MapContainer/ConvoyLabelContainer")
 
 # Label settings and default font (will be initialized in _ready)
 var label_settings: LabelSettings
@@ -138,6 +140,9 @@ var _ui_drawing_params_cached: bool = false
 var _active_convoy_panels: Dictionary = {}  # { "convoy_id_str": PanelNode }
 var _active_settlement_panels: Dictionary = {} # { "tile_coord_str": PanelNode }
 
+# Z-index for label containers within MapContainer, relative to MapDisplay and ConvoyNodes
+const LABEL_CONTAINER_Z_INDEX = 2
+
 
 func _ready():
 	# Critical: Ensure child containers are valid and print their status
@@ -147,10 +152,16 @@ func _ready():
 	print("  - convoy_label_container: %s (Valid: %s)" % [convoy_label_container, is_instance_valid(convoy_label_container)])
 
 	# Ensure containers are visible
-	if is_instance_valid(settlement_label_container): settlement_label_container.visible = true
-	if is_instance_valid(convoy_connector_lines_container): convoy_connector_lines_container.visible = true
-	if is_instance_valid(convoy_label_container): convoy_label_container.visible = true
-
+	if is_instance_valid(settlement_label_container):
+		settlement_label_container.visible = true
+		settlement_label_container.z_index = LABEL_CONTAINER_Z_INDEX
+	if is_instance_valid(convoy_connector_lines_container):
+		convoy_connector_lines_container.visible = true
+		convoy_connector_lines_container.z_index = LABEL_CONTAINER_Z_INDEX # Connectors at the same level as labels
+	if is_instance_valid(convoy_label_container):
+		convoy_label_container.visible = true
+		convoy_label_container.z_index = LABEL_CONTAINER_Z_INDEX
+		
 
 	# Initialize label settings
 	label_settings = LabelSettings.new()
@@ -294,10 +305,14 @@ func _clamp_panel_position_optimized(panel: Panel, precalculated_clamp_rect_loca
 	if not is_instance_valid(panel):
 		return
 
+	var panel_actual_size = panel.size
+	if panel_actual_size.x <= 0 or panel_actual_size.y <= 0:
+		panel_actual_size = panel.get_minimum_size()
+
 	var padded_min_x = precalculated_clamp_rect_local_to_container.position.x + label_map_edge_padding
 	var padded_min_y = precalculated_clamp_rect_local_to_container.position.y + label_map_edge_padding
-	var padded_max_x = precalculated_clamp_rect_local_to_container.position.x + precalculated_clamp_rect_local_to_container.size.x - panel.size.x - label_map_edge_padding
-	var padded_max_y = precalculated_clamp_rect_local_to_container.position.y + precalculated_clamp_rect_local_to_container.size.y - panel.size.y - label_map_edge_padding
+	var padded_max_x = precalculated_clamp_rect_local_to_container.position.x + precalculated_clamp_rect_local_to_container.size.x - panel_actual_size.x - label_map_edge_padding
+	var padded_max_y = precalculated_clamp_rect_local_to_container.position.y + precalculated_clamp_rect_local_to_container.size.y - panel_actual_size.y - label_map_edge_padding
 
 	panel.position.x = clamp(panel.position.x, padded_min_x, padded_max_x)
 	panel.position.y = clamp(panel.position.y, padded_min_y, padded_max_y)
@@ -313,10 +328,14 @@ func _clamp_panel_position(panel: Panel): # Original function, now less used but
 	var container_global_transform = container_node.get_global_transform_with_canvas()
 	var clamp_rect_local_to_container = container_global_transform.affine_inverse() * viewport_rect_global
 
+	var panel_actual_size = panel.size
+	if panel_actual_size.x <= 0 or panel_actual_size.y <= 0:
+		panel_actual_size = panel.get_minimum_size()
+
 	var padded_min_x = clamp_rect_local_to_container.position.x + label_map_edge_padding
 	var padded_min_y = clamp_rect_local_to_container.position.y + label_map_edge_padding
-	var padded_max_x = clamp_rect_local_to_container.position.x + clamp_rect_local_to_container.size.x - panel.size.x - label_map_edge_padding
-	var padded_max_y = clamp_rect_local_to_container.position.y + clamp_rect_local_to_container.size.y - panel.size.y - label_map_edge_padding
+	var padded_max_x = clamp_rect_local_to_container.position.x + clamp_rect_local_to_container.size.x - panel_actual_size.x - label_map_edge_padding
+	var padded_max_y = clamp_rect_local_to_container.position.y + clamp_rect_local_to_container.size.y - panel_actual_size.y - label_map_edge_padding
 
 	panel.position.x = clamp(panel.position.x, padded_min_x, padded_max_x)
 	panel.position.y = clamp(panel.position.y, padded_min_y, padded_max_y)
@@ -405,7 +424,11 @@ func _draw_interactive_labels(current_hover_info: Dictionary):
 		if dragged_convoy_data:
 			_update_convoy_panel_content(_dragging_panel_node, dragged_convoy_data)
 		
-		all_drawn_label_rects_this_update.append(Rect2(_dragging_panel_node.position, _dragging_panel_node.size))
+		var dragged_panel_actual_size = _dragging_panel_node.size
+		if dragged_panel_actual_size.x <= 0 or dragged_panel_actual_size.y <= 0:
+			dragged_panel_actual_size = _dragging_panel_node.get_minimum_size()
+		all_drawn_label_rects_this_update.append(Rect2(_dragging_panel_node.position, dragged_panel_actual_size))
+
 		if not drawn_convoy_ids_this_update.has(_dragged_convoy_id_actual_str):
 			drawn_convoy_ids_this_update.append(_dragged_convoy_id_actual_str)
 
@@ -440,7 +463,10 @@ func _draw_interactive_labels(current_hover_info: Dictionary):
 		panel_node.visible = true
 		_position_convoy_panel(panel_node, convoy_data_for_panel, all_drawn_label_rects_this_update)
 		_clamp_panel_position(panel_node)
-		all_drawn_label_rects_this_update.append(Rect2(panel_node.position, panel_node.size))
+		var current_panel_actual_size = panel_node.size
+		if current_panel_actual_size.x <= 0 or current_panel_actual_size.y <= 0:
+			current_panel_actual_size = panel_node.get_minimum_size()
+		all_drawn_label_rects_this_update.append(Rect2(panel_node.position, current_panel_actual_size))
 		if not drawn_convoy_ids_this_update.has(convoy_id_str_to_draw):
 			drawn_convoy_ids_this_update.append(convoy_id_str_to_draw)
 
@@ -479,7 +505,11 @@ func _draw_interactive_labels(current_hover_info: Dictionary):
 		panel_node.visible = true
 		_position_settlement_panel(panel_node, settlement_data_for_panel, all_drawn_label_rects_this_update)
 		_clamp_panel_position(panel_node)
-		all_drawn_label_rects_this_update.append(Rect2(panel_node.position, panel_node.size))
+		
+		var current_settlement_panel_actual_size = panel_node.size
+		if current_settlement_panel_actual_size.x <= 0 or current_settlement_panel_actual_size.y <= 0:
+			current_settlement_panel_actual_size = panel_node.get_minimum_size()
+		all_drawn_label_rects_this_update.append(Rect2(panel_node.position, current_settlement_panel_actual_size))
 		if not drawn_settlement_tile_coords_this_update.has(settlement_coord_to_draw):
 			drawn_settlement_tile_coords_this_update.append(settlement_coord_to_draw)
 
@@ -676,6 +706,19 @@ func _update_convoy_panel_content(panel: Panel, convoy_data: Dictionary):
 	# Reset label position to 0,0 as it's now relative to panel content area
 	label_node.position = Vector2.ZERO 
 
+	# Explicitly set panel's custom_minimum_size
+	# Ensure label has its minimum size calculated based on current text and font
+	label_node.update_minimum_size() # Nudge the label to ensure its min_size is current
+	var label_actual_min_size = label_node.get_minimum_size()
+	var stylebox_margins = style_box.get_minimum_size() # This is Vector2(left+right, top+bottom)
+
+	panel.custom_minimum_size = Vector2(
+		label_actual_min_size.x + stylebox_margins.x,
+		label_actual_min_size.y + stylebox_margins.y
+	)
+
+	# This call might now be redundant but can be kept to ensure layout system is notified.
+	panel.update_minimum_size()
 
 func _position_convoy_panel(panel: Panel, convoy_data: Dictionary, existing_label_rects: Array[Rect2]):
 	if not is_instance_valid(panel) or not _ui_drawing_params_cached:
@@ -740,7 +783,7 @@ func _position_convoy_panel(panel: Panel, convoy_data: Dictionary, existing_labe
 
 func _create_settlement_panel(settlement_info: Dictionary) -> Panel:
 	if not is_instance_valid(settlement_label_container):
-		printerr('UIManager: SettlementLabelContainer is not valid.')
+		printerr('UIManager (_create_settlement_panel): SettlementLabelContainer is not valid. Ensure a Node2D named "SettlementLabelContainer" is a direct child of the UIManagerNode in the scene tree.')
 		return null
 	if not _ui_drawing_params_cached:
 		printerr('UIManager: Drawing params not cached in _create_settlement_panel.')
@@ -821,6 +864,18 @@ func _update_settlement_panel_content(panel: Panel, settlement_info: Dictionary)
 	label_node.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	label_node.position = Vector2.ZERO
 
+	# Explicitly set panel's custom_minimum_size
+	label_node.update_minimum_size() # Nudge the label
+	var label_actual_min_size = label_node.get_minimum_size()
+	var stylebox_margins = style_box.get_minimum_size()
+
+	panel.custom_minimum_size = Vector2(
+		label_actual_min_size.x + stylebox_margins.x,
+		label_actual_min_size.y + stylebox_margins.y
+	)
+
+	# This call might now be redundant.
+	panel.update_minimum_size()
 
 func _position_settlement_panel(panel: Panel, settlement_info: Dictionary, _existing_label_rects: Array[Rect2]):
 	# For settlements, anti-collision is often less critical or handled differently (e.g., fewer labels shown at once).
@@ -903,14 +958,29 @@ func _on_connector_lines_container_draw():
 			# For simplicity, assume UIManagerNode and its children (label containers) are at (0,0) relative to map_display.
 			# So, panel.position can be treated as local to map_display for drawing in connector_lines_container.
 			var panel_rect_local_to_container = Rect2(panel.position, panel.size)
+			var actual_panel_size_for_draw = panel.size
+			if actual_panel_size_for_draw.x <= 0 or actual_panel_size_for_draw.y <= 0:
+				actual_panel_size_for_draw = panel.get_minimum_size() # Fallback to minimum_size
+
+			# Update panel_rect_local_to_container with the potentially corrected size
+			panel_rect_local_to_container.size = actual_panel_size_for_draw
+			
 			var panel_center = panel_rect_local_to_container.get_center()
 			var line_end_pos: Vector2
 
-			if not panel_rect_local_to_container is Rect2 or panel_rect_local_to_container.size.x <= 0 or panel_rect_local_to_container.size.y <= 0:
-				printerr("UIManager: Invalid panel rect for connector line. Convoy ID: ", convoy_id_str)
+			# Check the actual_panel_size_for_draw for validity
+			if actual_panel_size_for_draw.x <= 0 or actual_panel_size_for_draw.y <= 0:
+				var label_node_for_debug : Label = panel.get_meta("label_node_ref")
+				var style_box_for_debug : StyleBoxFlat = panel.get_meta("style_box_ref")
+				var label_min_size_debug = "N/A"
+				if is_instance_valid(label_node_for_debug): label_min_size_debug = str(label_node_for_debug.get_minimum_size()) # This is label's min_size
+				var stylebox_min_size_debug = "N/A"
+				if is_instance_valid(style_box_for_debug): stylebox_min_size_debug = str(style_box_for_debug.get_minimum_size()) # This is StyleBox's own min_size (sum of content margins)
+				printerr("UIManager: Invalid panel size (actual_panel_size_for_draw <=0) for connector line. Convoy ID: %s, Panel: %s, Panel.size: %s (used %s), Panel.min_size: %s, Panel.visible: %s, Label.min_size: %s, StyleBox.content_margins_sum: %s" % [convoy_id_str, panel.name, panel.size, actual_panel_size_for_draw, panel.get_minimum_size(), panel.visible, label_min_size_debug, stylebox_min_size_debug])
 				continue
 
-			if panel_rect_local_to_container.has_point(line_start_pos):
+			# Use panel_rect_local_to_container (which now has the corrected size) for checks
+			if panel_rect_local_to_container.has_point(line_start_pos): 
 				if panel_center.is_equal_approx(line_start_pos):
 					line_end_pos = Vector2(panel_center.x, panel_rect_local_to_container.position.y)
 				else:

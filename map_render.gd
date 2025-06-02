@@ -170,13 +170,17 @@ extends Node
 ## Extra thickness on each side for the outline of selected journey lines. Scaled.
 @export var selected_journey_line_outline_extra_thickness_each_side: int = 3 
 ## Extra thickness on each side for the outline of regular journey lines. Scaled.
-@export var journey_line_outline_extra_thickness_each_side: int = 2 
-## Base offset in pixels for separating overlapping journey lines. Scaled.
-@export var journey_line_offset_step_pixels: float = 6.0 
+@export var journey_line_outline_extra_thickness_each_side: int = 2
+## Base center-to-center offset in pixels for separating parallel journey lines. Scaled.
+## This value should be >= the thickest possible line (including outline) to prevent overlap.
+## Max selected line width = 9 (base) + 2*3 (outline) = 15.
+@export var journey_line_offset_step_pixels: float = 16.0 # Increased from 6.0
+## Color for the outline of journey lines.
+@export var journey_line_outline_color: Color = Color.WHITE 
 ## Factor by which to darken the trailing part of a journey line (0.0 = no change, 1.0 = black).
 @export var trailing_journey_darken_factor: float = 0.5 
 
-# These constants are no longer used by map_render.gd if convoys are separate nodes.
+# This constant IS used by the journey line offsetting logic.
 const FLOAT_MATCH_TOLERANCE: float = 0.00001  # Tolerance for matching float coordinates
 
 const PREDEFINED_CONVOY_COLORS: Array[Color] = [ 
@@ -371,7 +375,8 @@ func _draw_filled_triangle_on_image(image: Image, v0: Vector2, v1: Vector2, v2: 
 
 
 # This function is no longer used by map_render.gd if journey lines are separate nodes or part of ConvoyNode.
-func _draw_line_on_image(image: Image, start: Vector2i, end: Vector2i, color: Color, thickness: int) -> void:
+func _draw_line_on_image(image: Image, start: Vector2i, end: Vector2i, color: Color, thickness: int, cap_style: String = "square") -> void:
+	# print("MapRender: _draw_line_on_image called with start: %s, end: %s, color: %s, thickness: %s" % [start, end, color, thickness]) # DEBUG
 	""" Helper function to draw a line on an Image """
 	if thickness <= 0:
 		return
@@ -382,13 +387,13 @@ func _draw_line_on_image(image: Image, start: Vector2i, end: Vector2i, color: Co
 	var x2: int = end.x
 	var y2: int = end.y
 
-	var dx: int = abs(x2 - x1)
-	var dy: int = -abs(y2 - y1) # Use negative dy for standard algorithm form
+	var dx_abs: int = abs(x2 - x1) # Renamed to avoid conflict
+	var dy_abs: int = -abs(y2 - y1) # Use negative dy for standard algorithm form
 
 	var sx: int = 1 if x1 < x2 else -1
 	var sy: int = 1 if y1 < y2 else -1
 
-	var err: int = dx + dy # error value e_xy
+	var err: int = dx_abs + dy_abs # error value e_xy
 	var e2: int
 
 	var current_x: int = x1
@@ -404,33 +409,75 @@ func _draw_line_on_image(image: Image, start: Vector2i, end: Vector2i, color: Co
 		var brush_rect := Rect2i(rect_x, rect_y, thickness, thickness)
 
 		# Fill the brush rectangle (Image.fill_rect handles bounds checking)
+		# print("MapRender: _draw_line_on_image drawing rect: %s with color %s" % [brush_rect, color]) # DEBUG
 		image.fill_rect(brush_rect, color)
 
 		# Check for end of line
 		if current_x == x2 and current_y == y2:
 			break
 		e2 = 2 * err
-		if e2 >= dy: # e_xy+e_x > 0
-			err += dy; current_x += sx
-		if e2 <= dx: # e_xy+e_y < 0
-			err += dx; current_y += sy
+		if e2 >= dy_abs: # e_xy+e_x > 0
+			err += dy_abs; current_x += sx
+		if e2 <= dx_abs: # e_xy+e_y < 0
+			err += dx_abs; current_y += sy
 
+	# Draw round caps if specified, after the line body is drawn
+	if cap_style == "round":
+		var cap_radius = float(thickness) / 2.0
+		if cap_radius > 0.1: # Only draw caps if they have some meaningful size
+			_draw_filled_circle_on_image(image, start.x, start.y, cap_radius, color)
+			# If the line has length (start != end), draw the end cap too.
+			if not (start.x == end.x and start.y == end.y):
+				_draw_filled_circle_on_image(image, end.x, end.y, cap_radius, color)
 
-# This function is no longer used by map_render.gd if journey lines are separate nodes or part of ConvoyNode.
-func _get_normalized_segment_key(p1_map: Vector2, p2_map: Vector2) -> String:
-	""" Helper to get a canonical string key for a line segment (map coordinates) """
-	var sp1: Vector2 = p1_map
-	var sp2: Vector2 = p2_map
-	# The FLOAT_MATCH_TOLERANCE constant would be needed here if this function were still used.
+# Helper to draw a filled circle on an Image (used for round caps)
+func _draw_filled_circle_on_image(image: Image, center_x: int, center_y: int, radius: float, p_color: Color):
+	if radius <= 0.1: # Don't draw if radius is too small
+		return
+
+	var r_sq = radius * radius
+	# Calculate bounding box for the circle
+	var min_x = floori(float(center_x) - radius)
+	var max_x = ceili(float(center_x) + radius)
+	var min_y = floori(float(center_y) - radius)
+	var max_y = ceili(float(center_y) + radius)
+
+	# Clamp to image bounds
+	min_x = max(0, min_x)
+	max_x = min(image.get_width() - 1, max_x)
+	min_y = max(0, min_y)
+	max_y = min(image.get_height() - 1, max_y)
+
+	for y_px in range(min_y, max_y + 1):
+		for x_px in range(min_x, max_x + 1):
+			var dx_c = float(x_px) - float(center_x) # Distance from center
+			var dy_c = float(y_px) - float(center_y) # Distance from center
+			if dx_c*dx_c + dy_c*dy_c <= r_sq: # If point is within circle
+				image.set_pixel(x_px, y_px, p_color)
+
+# This function IS used by map_render.gd for drawing journey lines, and will also be called by main.gd
+func get_normalized_segment_key(p1_map: Vector2, p2_map: Vector2) -> String:
+	"""
+	Helper to get a canonical string key for a line segment (map coordinates).
+	Rounds coordinates to a fixed precision (e.g., nearest 0.001) to make keys
+	more robust to tiny floating point variations before formatting.
+	"""
+	# Round coordinates to 3 decimal places for key generation
+	var p1_r := Vector2(snapped(p1_map.x, 0.001), snapped(p1_map.y, 0.001))
+	var p2_r := Vector2(snapped(p2_map.x, 0.001), snapped(p2_map.y, 0.001))
+
+	var sp1: Vector2 = p1_r
+	var sp2: Vector2 = p2_r
+	
 	# Sort points to ensure (A,B) and (B,A) produce the same key
-	if (p1_map.x > p2_map.x) or (abs(p1_map.x - p2_map.x) < FLOAT_MATCH_TOLERANCE and p1_map.y > p2_map.y):
-		sp1 = p2_map
-		sp2 = p1_map
+	if (p1_r.x > p2_r.x) or (abs(p1_r.x - p2_r.x) < FLOAT_MATCH_TOLERANCE and p1_r.y > p2_r.y):
+		sp1 = p2_r
+		sp2 = p1_r
 	return '%.4f,%.4f-%.4f,%.4f' % [sp1.x, sp1.y, sp2.x, sp2.y]  # Example: format to 4 decimal places
 
 
-# This function is no longer used by map_render.gd if journey lines are separate nodes or part of ConvoyNode.
-func _get_journey_segment_offset_vector(
+# This function IS used by map_render.gd for drawing journey lines, and will also be called by main.gd
+func get_journey_segment_offset_vector(
 		p1_map: Vector2, p2_map: Vector2,  # map coordinates of the segment
 		p1_pixel: Vector2i, p2_pixel: Vector2i,  # pixel coordinates of the segment
 		current_convoy_idx: int,
@@ -438,31 +485,45 @@ func _get_journey_segment_offset_vector(
 		base_offset_magnitude: float
 	) -> Vector2:
 	""" Helper to calculate offset for a shared journey line segment """
-	var segment_key: String = _get_normalized_segment_key(p1_map, p2_map)
+	var segment_key: String = get_normalized_segment_key(p1_map, p2_map) # Use public version
 	var offset_v := Vector2.ZERO
 
 	if shared_segments_data.has(segment_key):
 		var convoy_indices_on_segment: Array = shared_segments_data[segment_key]
-		if convoy_indices_on_segment.size() > 1:
+		var num_lines_on_segment: int = convoy_indices_on_segment.size()
+
+		if num_lines_on_segment > 1: # Only apply offset if more than one line shares the segment
+			# --- DEBUG LOGGING START (conditional) ---
+			var should_debug_this_segment = false
+			# Example: To debug a specific segment key known from previous logs
+			# if segment_key == "149.0000,67.0000-149.0000,68.0000":
+			# 	should_debug_this_segment = true
+			# Or, to debug any segment with 3 or more lines (set to true to enable):
+			if false and num_lines_on_segment >= 3: # Log for segments with 3 or more lines
+				should_debug_this_segment = true
+
+			if should_debug_this_segment:
+				print_debug("MapRender Offset Debug for Segment: ", segment_key)
+				print_debug("  - Current Convoy Original Index (param current_convoy_idx): ", current_convoy_idx)
+				print_debug("  - All Convoy Indices On This Segment (from shared_data): ", convoy_indices_on_segment)
+				print_debug("  - Num Lines On This Segment: ", num_lines_on_segment)
+			# --- DEBUG LOGGING END ---
+
 			# Determine the order of the current convoy for this segment
-			# The FLOAT_MATCH_TOLERANCE constant would be needed here if this function were still used.
 			var current_convoy_order_on_segment: int = convoy_indices_on_segment.find(current_convoy_idx)
 
-			if current_convoy_order_on_segment > 0: # Order 0 (first convoy) gets no offset
+			if current_convoy_order_on_segment != -1: # Ensure the current convoy is actually in the list for this segment
 				var segment_vec_px: Vector2 = Vector2(p2_pixel - p1_pixel)
 				if segment_vec_px.length_squared() > FLOAT_MATCH_TOLERANCE * FLOAT_MATCH_TOLERANCE:
 					var perp_dir_px: Vector2 = segment_vec_px.normalized().rotated(PI / 2.0)
-
-					# Offset logic:
-					# Order 1: +1 * base_offset_magnitude
-					# Order 2: -1 * base_offset_magnitude
-					# Order 3: +2 * base_offset_magnitude
-					# Order 4: -2 * base_offset_magnitude
-					# ...and so on
-					var magnitude_multiplier: float = ceil(float(current_convoy_order_on_segment) / 2.0)
-					var sign_multiplier: float = 1.0 if current_convoy_order_on_segment % 2 != 0 else -1.0
-
-					offset_v = perp_dir_px * sign_multiplier * magnitude_multiplier * base_offset_magnitude
+					var center_offset_factor: float = (float(num_lines_on_segment) - 1.0) / 2.0
+					var line_specific_offset_factor: float = float(current_convoy_order_on_segment) - center_offset_factor
+					offset_v = perp_dir_px * line_specific_offset_factor * base_offset_magnitude # base_offset_magnitude is scaled_journey_line_offset_step_pixels
+					if should_debug_this_segment:
+						print_debug("    - Calculated Order for Current Convoy (find result): ", current_convoy_order_on_segment)
+						print_debug("    - Center Offset Factor: ", center_offset_factor)
+						print_debug("    - Line Specific Offset Factor: ", line_specific_offset_factor)
+						print_debug("    - Final Offset Vector: ", offset_v)
 	return offset_v
 
 
@@ -499,7 +560,7 @@ func _calculate_offset_pixel_path(
 		var px_pk: Vector2i = pixel_coords_path[k]
 		var px_pkplus1: Vector2i = pixel_coords_path[k+1]
 
-		var offset_vec: Vector2 = _get_journey_segment_offset_vector(
+		var offset_vec: Vector2 = get_journey_segment_offset_vector( # Use public version
 			map_pk, map_pkplus1,
 			px_pk, px_pkplus1,
 			convoy_idx,
@@ -725,7 +786,140 @@ func render_map(
 
 	# --- Create and return the texture ---
 
+	# --- Draw Journey Lines from Highlights ---
+	# This section processes items in the 'highlights' array that are specifically for journey paths.
+	# print("MapRender: Checking for journey_path highlights. p_render_highlights_lowlights: ", p_render_highlights_lowlights) # DEBUG
+	# print("MapRender: Received highlights array: ", highlights) # DEBUG
+	if p_render_highlights_lowlights: # Journey lines are also controlled by this flag for now
+		# Scaled thickness will be determined per line based on selection status
+
+		# --- New: Collect journey paths and build shared_segments_data for offsetting ---
+		var journey_path_objects: Array = []
+		for h_item in highlights:
+			# Ensure h_item is a Dictionary before calling .get()
+			if h_item is Dictionary and h_item.has("type") and h_item.get("type") == "journey_path":
+				journey_path_objects.append(h_item)
+		
+		var shared_segments_data: Dictionary = {}
+		if not journey_path_objects.is_empty():
+			# Build shared_segments_data
+			for convoy_idx_for_offset in range(journey_path_objects.size()):
+				var current_journey_path_object = journey_path_objects[convoy_idx_for_offset]
+				var current_path_tile_coords: Array = current_journey_path_object.get("points", [])
+				# Ensure path has at least 2 points and points are Vector2
+				if current_path_tile_coords.size() >= 2 and (not current_path_tile_coords.is_empty() and current_path_tile_coords[0] is Vector2):
+					for k_segment in range(current_path_tile_coords.size() - 1):
+						var p1_map: Vector2 = current_path_tile_coords[k_segment]
+						var p2_map: Vector2 = current_path_tile_coords[k_segment + 1]
+						var segment_key: String = get_normalized_segment_key(p1_map, p2_map) # Use public version
+						if not shared_segments_data.has(segment_key):
+							shared_segments_data[segment_key] = []
+						shared_segments_data[segment_key].append(convoy_idx_for_offset)
+		
+		var scaled_journey_line_offset_step_pixels: float = journey_line_offset_step_pixels * base_linear_visual_scale
+		# --- End New: Offset calculation setup ---
+
+		var all_paths_render_data: Array = [] # To store data for two-pass rendering
+
+		for convoy_idx_for_offset in range(journey_path_objects.size()):
+			var highlight_item = journey_path_objects[convoy_idx_for_offset]
+			var path_tile_coords: Array = highlight_item.get("points", []) # These are original map tile coordinates
+			# Ensure path has at least 2 points and points are Vector2
+			if path_tile_coords.size() >= 2 and (not path_tile_coords.is_empty() and path_tile_coords[0] is Vector2):
+				var line_color: Color = highlight_item.get("color", Color.WHITE)
+				var is_selected_path: bool = highlight_item.get("is_selected", false)
+				var convoy_seg_start_idx: int = highlight_item.get("convoy_segment_start_idx", -1)
+				var progress_in_curr_seg: float = highlight_item.get("progress_in_current_segment", 0.0) # Default to 0.0
+
+				var base_thickness_for_scaling: int = selected_journey_line_thickness if is_selected_path else journey_line_thickness
+				var scaled_current_line_thickness = max(1, int(round(reference_float_tile_size_for_offsets * (float(base_thickness_for_scaling) / base_tile_size_for_proportions))))
+				
+				var base_extra_thickness_per_side: int = selected_journey_line_outline_extra_thickness_each_side if is_selected_path else journey_line_outline_extra_thickness_each_side
+				var base_total_thickness_for_outline_pass: int = base_thickness_for_scaling + (2 * base_extra_thickness_per_side)
+				var scaled_total_thickness_for_outline_pass: int = max(1, int(round(reference_float_tile_size_for_offsets * (float(base_total_thickness_for_outline_pass) / base_tile_size_for_proportions))))
+
+				var offset_pixel_points: Array[Vector2i] = _calculate_offset_pixel_path(
+					path_tile_coords, # original_map_coords_path (Array[Vector2])
+					convoy_idx_for_offset, # convoy_idx (our temporary index for this render pass)
+					shared_segments_data,
+					scaled_journey_line_offset_step_pixels, # base_offset_pixel_magnitude
+					actual_tile_width_f,
+					actual_tile_height_f
+				)
+				
+				if offset_pixel_points.size() >= 2:
+					all_paths_render_data.append({
+						"points": offset_pixel_points,
+						"outline_thickness": scaled_total_thickness_for_outline_pass,
+						"fill_color": line_color,
+						"fill_thickness": scaled_current_line_thickness,
+						"convoy_seg_start_idx": convoy_seg_start_idx,
+						"progress_in_curr_seg": progress_in_curr_seg
+					})
+
+		# Pass 1: Draw all OUTLINES
+		for path_data in all_paths_render_data:
+			var points: Array[Vector2i] = path_data.points
+			var outline_thick: int = path_data.outline_thickness
+			var seg_start_idx: int = path_data.convoy_seg_start_idx
+			var prog_in_seg: float = path_data.progress_in_curr_seg
+			
+			for i in range(points.size() - 1):
+				var p1: Vector2i = points[i]
+				var p2: Vector2i = points[i+1]
+				
+				var is_behind: bool = (seg_start_idx != -1 and i < seg_start_idx)
+				var is_current: bool = (seg_start_idx != -1 and i == seg_start_idx)
+				
+				var current_outline_color = journey_line_outline_color # Default
+				var darkened_outline_color = journey_line_outline_color.darkened(trailing_journey_darken_factor)
+
+				if is_behind:
+					_draw_line_on_image(map_image, p1, p2, darkened_outline_color, outline_thick, "round")
+				elif is_current:
+					var split_point = Vector2i(Vector2(p1).lerp(Vector2(p2), prog_in_seg))
+					_draw_line_on_image(map_image, p1, split_point, darkened_outline_color, outline_thick, "round")
+					if prog_in_seg < 0.999: # If there's an "ahead" part
+						_draw_line_on_image(map_image, split_point, p2, current_outline_color, outline_thick, "round")
+				else: # Fully ahead or no progress info
+					_draw_line_on_image(map_image, p1, p2, current_outline_color, outline_thick, "round")
+
+		# Pass 2: Draw all FILLS
+		for path_data in all_paths_render_data:
+			var points: Array[Vector2i] = path_data.points
+			var fill_thick: int = path_data.fill_thickness
+			var base_fill_color: Color = path_data.fill_color
+			var seg_start_idx: int = path_data.convoy_seg_start_idx
+			var prog_in_seg: float = path_data.progress_in_curr_seg
+
+			for i in range(points.size() - 1):
+				var p1: Vector2i = points[i]
+				var p2: Vector2i = points[i+1]
+
+				var is_behind: bool = (seg_start_idx != -1 and i < seg_start_idx)
+				var is_current: bool = (seg_start_idx != -1 and i == seg_start_idx)
+
+				var current_fill_color = base_fill_color # Default
+				var darkened_fill_color = base_fill_color.darkened(trailing_journey_darken_factor)
+
+				if is_behind:
+					_draw_line_on_image(map_image, p1, p2, darkened_fill_color, fill_thick)
+				elif is_current:
+					var split_point = Vector2i(Vector2(p1).lerp(Vector2(p2), prog_in_seg))
+					_draw_line_on_image(map_image, p1, split_point, darkened_fill_color, fill_thick)
+					if prog_in_seg < 0.999: # If there's an "ahead" part
+						_draw_line_on_image(map_image, split_point, p2, current_fill_color, fill_thick)
+				else: # Fully ahead or no progress info
+					_draw_line_on_image(map_image, p1, p2, current_fill_color, fill_thick)
+
 	# The entire block for 'if p_render_convoys:' and drawing convoys/journey lines is removed.
+	
+	# --- Hardcoded Line Test (Temporary) ---
+	# print("MapRender: Hardcoded line test section reached.") # DEBUG
+	# _draw_line_on_image(map_image, Vector2i(10, 10), Vector2i(100, 100), Color.RED, 5)
+	# _draw_line_on_image(map_image, Vector2i(10, 100), Vector2i(100, 10), Color.LIME, 3)
+	# --- End Hardcoded Line Test ---
+
 	# ConvoyNode instances handle their own drawing.
 
 	var map_texture := ImageTexture.create_from_image(map_image)
