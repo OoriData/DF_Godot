@@ -63,7 +63,7 @@ enum ControlScheme { MOUSE_AND_KEYBOARD, TOUCH }
 
 var _is_camera_panning: bool = false
 ## Multiplier for camera pan speed when using mouse drag. Higher values increase sensitivity.
-@export var camera_pan_sensitivity: float = 1.0
+@export var camera_pan_sensitivity: float = 7.5
 
 var _last_camera_pan_mouse_screen_position: Vector2
 
@@ -88,7 +88,7 @@ func _ready():
 	# If it were to handle its own input (e.g., if it was a Control node covering the map),
 	# you would set_process_input(true) or set_process_unhandled_input(true) here.
 	# For now, we'll assume main.gd calls handle_input(event).
-	set_process_unhandled_input(true)
+	set_process_input(true) # Changed from _unhandled_input
 	set_process(true) # Enable _process for the hover timer
 
 
@@ -150,11 +150,11 @@ func update_data_references(p_all_convoy_data: Array, p_all_settlement_data: Arr
 	# print("MapInteractionManager: Data references updated.")
 
 
-func _unhandled_input(event: InputEvent): # Changed from handle_input
+func _input(event: InputEvent): # Renamed from _unhandled_input
 	# --- DEBUG: Log some events reaching _unhandled_input ---
 	# This can be very verbose, enable only when actively debugging input issues.
 	# print("MIM _unhandled_input RECEIVED EVENT --- Type: %s, Event: %s" % [event.get_class(), event]) # DEBUG: Performance intensive
-	if event is InputEventMouseButton:
+	if event is InputEventMouseButton and false: # Disabled debug print
 		print("MIM _unhandled_input: MouseButton - button_index: %s, pressed: %s, shift_pressed: %s, global_pos: %s" % [event.button_index, event.pressed, event.is_shift_pressed(), event.global_position]) # DEBUG
 	elif event is InputEventMouseMotion:
 		# print("MIM _unhandled_input: MouseMotion - global_pos: %s, relative: %s, button_mask: %s" % [event.global_position, event.relative, event.button_mask]) # DEBUG # Too verbose
@@ -173,52 +173,63 @@ func _unhandled_input(event: InputEvent): # Changed from handle_input
 		# comment out the return below temporarily.
 		return
 
-	# Handle MagnifyGesture (trackpad pinch) first, as it can occur with either scheme.
-	# This is often how trackpad pinch-to-zoom is implemented.
+	# 1. Always update _last_mouse_motion_event for hover if it's a mouse motion.
+	#    This ensures hover detection in _process() gets the latest position.
+	#    Crucially, we do *not* consume the event here just for hover.
+	if event is InputEventMouseMotion and active_control_scheme == ControlScheme.MOUSE_AND_KEYBOARD:
+		_last_mouse_motion_event = event
+
+	# 2. Handle panel drag motion (which might consume the InputEventMouseMotion).
+	#    This needs to be called for InputEventMouseMotion.
+	#    _handle_panel_drag_motion_only checks internally if dragging.
+	if event is InputEventMouseMotion:
+		_handle_panel_drag_motion_only(event)
+		if get_viewport().is_input_handled():
+			return # Consumed by panel drag motion
+
+	# 3. Handle gestures (Magnify, Pan). These are distinct event types.
 	if event is InputEventMagnifyGesture:
 		if event.factor != 0.0: # Avoid division by zero, though unlikely for this event
-			# print("MIM _unhandled_input: Detected MagnifyGesture. Factor: %s, Position: %s" % [event.factor, event.position]) # DEBUG
-			# The previous logic used `1.0 / event.factor`.
-			# If that felt inverted (e.g., spreading fingers zoomed in, but you expected it to zoom out),
-			# using `event.factor` directly will reverse the pinch-to-zoom direction.
-			# Now: spread_fingers (factor > 1) -> zoom_out; pinch_fingers (factor < 1) -> zoom_in.
 			_zoom_camera_at_screen_pos(event.factor, event.position)
-		get_viewport().set_input_as_handled()
-		return # Consumed by magnify gesture
+			get_viewport().set_input_as_handled()
+		return # MagnifyGesture processed, then done.
 
-	# Handle PanGesture (trackpad scroll/pan)
 	if event is InputEventPanGesture:
-		# print("MIM _unhandled_input: Processing PanGesture for camera pan. Delta: %s" % event.delta) # DEBUG
 		if is_instance_valid(camera) and camera.zoom.x != 0.0:
-			# event.delta is the translation in screen coordinates.
 			camera.offset += event.delta * camera_pan_sensitivity / camera.zoom.x
-			# Camera's built-in limits will constrain the offset.
-		get_viewport().set_input_as_handled()
-		return # Consumed by pan gesture
+			get_viewport().set_input_as_handled()
+		return # PanGesture processed, then done.
 
-	# If not a magnify gesture, proceed with scheme-specific input
+	# If a gesture (or panel drag motion) consumed the event, subsequent logic for that event is skipped.
+	if get_viewport().is_input_handled():
+		return
+
+	# 4. Handle scheme-specific interactions (camera controls, clicks, taps).
 	match active_control_scheme:
 		ControlScheme.MOUSE_AND_KEYBOARD:
-			_handle_mouse_input(event)
+			# This function now consolidates camera controls (MMB pan, wheel zoom)
+			# and primary interactions (LMB clicks for panel drag start/end, map clicks).
+			_handle_mk_scheme_interactions(event)
 		ControlScheme.TOUCH:
-			# Note: InputEventMagnifyGesture is now handled globally above,
-			# so it won't be processed again by _handle_touch_input if it was already handled.
-			# _handle_touch_input will now primarily deal with screen touch/drag for panning and taps.
 			_handle_touch_input(event)
 
-	# If event was not handled by scheme-specific camera/pan/zoom,
-	# let the general UI interaction logic try.
-	# This needs careful separation: mouse hover is mouse-only.
-	# Panel dragging and map element clicks need to be adapted for touch within _handle_touch_input.
-	if not get_viewport().is_input_handled():
-		if event is InputEventMouseMotion and active_control_scheme == ControlScheme.MOUSE_AND_KEYBOARD:
-			# Store the event; actual processing will be throttled in _process
-			_last_mouse_motion_event = event
-			# Panel drag motion still needs to be responsive, so handle that part immediately
-			_handle_panel_drag_motion_only(event)
-		elif event is InputEventMouseButton and active_control_scheme == ControlScheme.MOUSE_AND_KEYBOARD:
-			# Handles panel drag start/end and map element clicks for mouse
-			_handle_mouse_button_interactions(event)
+
+func _handle_mk_scheme_interactions(event: InputEvent):
+	# This function combines logic previously in _handle_mouse_input() and _handle_mouse_button_interactions.
+	# Order matters: camera controls might take precedence over map clicks for the same button.
+
+	# Camera Panning (Middle Mouse Button or Shift + Left Mouse Button) & Camera Zoom (Wheel)
+	# This logic is taken from the original _handle_mouse_input
+	_handle_mouse_camera_controls(event)
+
+	# If camera controls handled the event, don't process further for map/panel clicks.
+	if get_viewport().is_input_handled():
+		return
+
+	# Left Mouse Button interactions (panel drag start/end, map element clicks)
+	# This logic is taken from the original _handle_mouse_button_interactions
+	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
+		_handle_lmb_interactions(event) # New sub-function for clarity
 
 
 func get_current_camera_zoom() -> float:
@@ -240,46 +251,39 @@ func _process(delta: float):
 		_last_mouse_motion_event = null # Clear after processing or if conditions not met
 
 
-func _handle_mouse_input(event: InputEvent):
+func _handle_mouse_camera_controls(event: InputEvent): # Was part of _handle_mouse_input
 	# --- DEBUG: Log some events reaching _handle_mouse_input ---
 	# print("MIM _handle_mouse_input RECEIVED EVENT --- Type: %s, Event: %s" % [event.get_class(), event]) # Verbose
-	if event is InputEventMouseButton:
-		print("MIM _handle_mouse_input: MouseButton - button_index: %s, pressed: %s, shift_pressed: %s, global_pos: %s" % [event.button_index, event.pressed, event.is_shift_pressed(), event.global_position]) # DEBUG
-	# elif event is InputEventMouseMotion:
+	# if event is InputEventMouseButton:
+	# print("MIM _handle_mouse_camera_controls: MouseButton - button_index: %s, pressed: %s, shift_pressed: %s, global_pos: %s" % [event.button_index, event.pressed, event.is_shift_pressed(), event.global_position]) # DEBUG
+	# elif event is InputEventMouseMotion and _is_camera_panning:
 	#     print("MIM _handle_mouse_input: MouseMotion - global_pos: %s, relative: %s, button_mask: %s" % [event.global_position, event.relative, event.button_mask]) # DEBUG
 	# --- END DEBUG ---
 
-	# Camera Panning (Middle Mouse Button)
-	var is_pan_button_pressed = event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_MIDDLE
-	var is_alt_pan_button_pressed = event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.is_shift_pressed()
-	if is_pan_button_pressed or is_alt_pan_button_pressed:
-		var pan_button_type = "Middle Mouse" if is_pan_button_pressed else "Shift+Left Mouse"
+	# Camera Panning (Middle Mouse Button Only)
+	var is_middle_mouse_button_event = event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_MIDDLE
+	if is_middle_mouse_button_event:
 		if event.pressed:
 			_is_camera_panning = true
-			print("MIM _handle_mouse_input: %s pan button event detected. Starting pan." % pan_button_type) # DEBUG
+			# print("MIM _handle_mouse_camera_controls: Middle Mouse pan button event detected. Starting pan.") # DEBUG
 			_last_camera_pan_mouse_screen_position = event.position
-			# Ensure we consume the press event so it doesn't trigger other click logic
-			get_viewport().set_input_as_handled()
 			Input.set_default_cursor_shape(Input.CURSOR_DRAG)
-			get_viewport().set_input_as_handled()
+			get_viewport().set_input_as_handled() # Consume the press event
 		else: # released
-			# Stop panning if we were in panning mode AND
-			# the button being released is either middle mouse OR left mouse (for the shift+left case)
-			if _is_camera_panning and \
-			   (event.button_index == MOUSE_BUTTON_MIDDLE or event.button_index == MOUSE_BUTTON_LEFT):
-				var released_button_type = "Middle Mouse" if event.button_index == MOUSE_BUTTON_MIDDLE else "Left Mouse"
+			# Stop panning if we were in panning mode (initiated by middle mouse)
+			if _is_camera_panning:
 				_is_camera_panning = false
-				print("MIM _handle_mouse_input: %s pan button released. Stopping pan." % released_button_type) # DEBUG
+				# print("MIM _handle_mouse_camera_controls: Middle Mouse pan button released. Stopping pan.") # DEBUG
 				Input.set_default_cursor_shape(Input.CURSOR_ARROW)
-				get_viewport().set_input_as_handled()
-		return # Consumed
+				get_viewport().set_input_as_handled() # Consume the release event
+		return # Consumed by middle mouse button press or release for panning
 
 	if event is InputEventMouseMotion and _is_camera_panning:
 		# --- DEBUG: Log pan motion ---
-		print("MIM _handle_mouse_input: Panning motion detected.") # DEBUG
-		print("  _is_camera_panning: %s" % _is_camera_panning) # DEBUG
-		print("  mouse_delta_screen (relative): %s" % event.relative) # DEBUG
-		# --- END DEBUG ---
+		# print("MIM _handle_mouse_input: Panning motion detected.") # DEBUG
+		# print("  _is_camera_panning: %s" % _is_camera_panning) # DEBUG
+		# print("  mouse_delta_screen (relative): %s" % event.relative) # DEBUG
+		# --- END DEBUG --- #
 		var mouse_delta_screen: Vector2 = event.relative # Use event.relative for direct screen delta
 		if is_instance_valid(camera) and camera.zoom.x != 0.0: # Ensure camera and zoom are valid
 			camera.offset += mouse_delta_screen * camera_pan_sensitivity / camera.zoom.x # Apply pan with sensitivity (inverted direction)
@@ -305,26 +309,27 @@ func _handle_touch_input(event: InputEvent):
 	# Touch Panning (Single finger drag)
 	if event is InputEventScreenTouch:
 		if event.pressed:
-			if _pan_touch_index == -1: # No pan active, start one
+			# Only track the touch index for potential tap, not for panning.
+			# Panning is handled by InputEventPanGesture.
+			if _pan_touch_index == -1: 
 				_pan_touch_index = event.index
-				_is_camera_panning = true # Use the same flag
-				# For touch, relative motion is used, so last position isn't strictly needed for delta
+				# _is_camera_panning = false # Ensure this is not set for single touch
 				get_viewport().set_input_as_handled()
 		else: # released
 			if event.index == _pan_touch_index: # If the finger that started the pan is released
 				_pan_touch_index = -1
-				_is_camera_panning = false
+				# _is_camera_panning = false # Ensure this is not set for single touch
 				get_viewport().set_input_as_handled()
-				# Here, you could check if it was a "tap" (short press, little movement)
-				# and call a tap interaction handler.
+				# Check if it was a "tap" (short press, little movement)
+				# For simplicity, we'll assume any touch release not part of a PanGesture could be a tap.
 				_handle_tap_interaction(event.position) # Example: handle tap for selection
 		return # Consumed
 
 	if event is InputEventScreenDrag and event.index == _pan_touch_index:
-		if _is_camera_panning:
-			camera.offset -= event.relative / camera.zoom.x # event.relative is the change in screen position
-			# Camera's built-in limits will apply.
-			get_viewport().set_input_as_handled()
+		# Single finger drag is no longer used for camera panning.
+		# It could be used for other interactions in the future (e.g., dragging map items if implemented).
+		# For now, we can let it pass or consume it if no other single-drag interaction is planned.
+		# get_viewport().set_input_as_handled() # Optionally consume if no other use
 		return # Consumed
 
 	# Touch Zooming (Pinch Gesture)
@@ -457,8 +462,8 @@ func _perform_hover_detection_only(event: InputEventMouseMotion):
 		# print("MIM: Hover changed to: ", self._current_hover_info) # DEBUG
 
 
-func _handle_mouse_button_interactions(event: InputEventMouseButton):
-	"""Handles MOUSE_BUTTON_LEFT press/release for panel dragging and map element selection."""
+func _handle_lmb_interactions(event: InputEventMouseButton): # Was _handle_mouse_button_interactions
+	"""Handles MOUSE_BUTTON_LEFT press/release for panel dragging and map element selection. Assumes event.button_index == MOUSE_BUTTON_LEFT."""
 	if not (is_instance_valid(camera) and \
 			is_instance_valid(map_display) and \
 			is_instance_valid(map_display.texture)):
@@ -466,85 +471,76 @@ func _handle_mouse_button_interactions(event: InputEventMouseButton):
 
 	if event.button_index == MOUSE_BUTTON_LEFT:
 		if event.pressed:
-			# --- Check for Panel Drag Start ---
-			# This needs access to UIManager's convoy_label_container
-			if is_instance_valid(ui_manager) and ui_manager.has_method("get_node_or_null") and is_instance_valid(ui_manager.convoy_label_container):
-				var convoy_label_container_node = ui_manager.convoy_label_container
-				# Iterate from top-most to bottom-most child visually
-				for i in range(convoy_label_container_node.get_child_count() - 1, -1, -1):
-					var node = convoy_label_container_node.get_child(i)
-					if node is Panel:
-						var panel_node_candidate: Panel = node
-						if not is_instance_valid(panel_node_candidate):
-							continue
+				# --- Check for Panel Drag Start ---
+				if is_instance_valid(ui_manager) and ui_manager.has_method("get_node_or_null") and is_instance_valid(ui_manager.convoy_label_container):
+					var convoy_label_container_node = ui_manager.convoy_label_container
+					for i in range(convoy_label_container_node.get_child_count() - 1, -1, -1):
+						var node = convoy_label_container_node.get_child(i)
+						if node is Panel:
+							var panel_node_candidate: Panel = node
+							if not is_instance_valid(panel_node_candidate):
+								continue
 
-						# Use minimum_size for hit testing if actual size is not yet updated
-						var panel_effective_size = panel_node_candidate.size
-						if panel_effective_size.x <= 0 or panel_effective_size.y <= 0:
-							panel_effective_size = panel_node_candidate.get_minimum_size()
-						
-						var panel_rect_global = Rect2(panel_node_candidate.global_position, panel_effective_size)
-						var hit_test_rect = panel_rect_global.grow(2.0) # Small buffer for easier clicking
+							var panel_effective_size = panel_node_candidate.size
+							if panel_effective_size.x <= 0 or panel_effective_size.y <= 0:
+								panel_effective_size = panel_node_candidate.get_minimum_size()
+							
+							var panel_rect_global = Rect2(panel_node_candidate.global_position, panel_effective_size)
+							var hit_test_rect = panel_rect_global.grow(2.0)
 
-						if hit_test_rect.has_point(event.global_position):
-							var id_from_meta = panel_node_candidate.get_meta("convoy_id_str", "")
-							if id_from_meta.is_empty(): id_from_meta = panel_node_candidate.name
+							if hit_test_rect.has_point(event.global_position):
+								var id_from_meta = panel_node_candidate.get_meta("convoy_id_str", "")
+								if id_from_meta.is_empty(): id_from_meta = panel_node_candidate.name
 
-							if _selected_convoy_ids.has(id_from_meta): # Only draggable if selected
-								_dragging_panel_node = panel_node_candidate
-								_dragged_convoy_id_actual_str = id_from_meta
+								if _selected_convoy_ids.has(id_from_meta):
+									_dragging_panel_node = panel_node_candidate
+									_dragged_convoy_id_actual_str = id_from_meta
+									var panel_current_global_pos_for_offset = panel_rect_global.position
+									_drag_offset = panel_current_global_pos_for_offset - event.global_position
 
-								var panel_current_global_pos_for_offset = panel_rect_global.position # Use the rect's position
-								_drag_offset = panel_current_global_pos_for_offset - event.global_position
-
-								# Calculate and store clamping bounds (in global coordinates)
-								var viewport_rect = get_viewport().get_visible_rect()
-								_current_drag_clamp_rect = Rect2(
-									viewport_rect.position.x + label_map_edge_padding, # Use exported variable
-									viewport_rect.position.y + label_map_edge_padding, # Use exported variable
-									viewport_rect.size.x - (2 * label_map_edge_padding), # Use exported variable
-									viewport_rect.size.y - (2 * label_map_edge_padding)  # Use exported variable
-								)
-								
-								emit_signal("panel_drag_started", _dragged_convoy_id_actual_str, _dragging_panel_node)
-								print("MIM: Panel drag started for convoy: ", _dragged_convoy_id_actual_str) # DEBUG
-								get_viewport().set_input_as_handled() # Consume the event
-								return # Drag started, no further processing for this click in MIM
+									var viewport_rect = get_viewport().get_visible_rect()
+									_current_drag_clamp_rect = Rect2(
+										viewport_rect.position.x + label_map_edge_padding,
+										viewport_rect.position.y + label_map_edge_padding,
+										viewport_rect.size.x - (2 * label_map_edge_padding),
+										viewport_rect.size.y - (2 * label_map_edge_padding)
+									)
+									
+									emit_signal("panel_drag_started", _dragged_convoy_id_actual_str, _dragging_panel_node)
+									# print("MIM: Panel drag started for convoy: ", _dragged_convoy_id_actual_str) # DEBUG
+									get_viewport().set_input_as_handled()
+									return # Drag started
 
 			# If no panel drag started, the click might be on the map (handled on release)
 
 		elif not event.pressed: # Mouse button RELEASED
-			# If a drag was in progress (handled by MIM), this would be drag end.
 			if is_instance_valid(_dragging_panel_node):
-				var final_local_position: Vector2 = _dragging_panel_node.position # Position is local to its parent
+				var final_local_position: Vector2 = _dragging_panel_node.position
 				if _dragging_panel_node.get_parent() and is_instance_valid(_dragging_panel_node.get_parent()):
 					final_local_position = _dragging_panel_node.get_parent().to_local(_dragging_panel_node.global_position)
 				
 				_convoy_label_user_positions[_dragged_convoy_id_actual_str] = final_local_position
 				
 				emit_signal("panel_drag_ended", _dragged_convoy_id_actual_str, final_local_position)
-				print("MIM: Panel drag ended for convoy: ", _dragged_convoy_id_actual_str, " at local pos: ", final_local_position) # DEBUG
+				# print("MIM: Panel drag ended for convoy: ", _dragged_convoy_id_actual_str, " at local pos: ", final_local_position) # DEBUG
 
 				_dragging_panel_node = null
 				_dragged_convoy_id_actual_str = ""
-				# _drag_offset and _current_drag_clamp_rect are reset on next drag start
 				
-				get_viewport().set_input_as_handled() # Consume the event
-				return # Assuming drag release is handled elsewhere or will be handled here later
+				get_viewport().set_input_as_handled()
+				return # Drag ended
 
 			# --- Handle click on map elements (convoys/settlements) ---
-			# Convert screen mouse pos to camera's canvas space (world space)
-			var mouse_world_pos: Vector2 = camera.get_canvas_transform().affine_inverse() * event.global_position # Keep type hint for mouse_world_pos
-			var clicked_convoy_data = _get_convoy_data_at_world_pos(mouse_world_pos) # Remove Dictionary type hint
+			var mouse_world_pos: Vector2 = camera.get_canvas_transform().affine_inverse() * event.global_position
+			var clicked_convoy_data = _get_convoy_data_at_world_pos(mouse_world_pos)
 
 			if clicked_convoy_data != null:
 				emit_signal("convoy_menu_requested", clicked_convoy_data)
-				print("MIM: Clicked convoy for menu: ", clicked_convoy_data.get("convoy_id", "N/A")) # DEBUG
+				# print("MIM: Clicked convoy for menu: ", clicked_convoy_data.get("convoy_id", "N/A")) # DEBUG
 				get_viewport().set_input_as_handled()
-				return # Click on convoy handled by requesting menu
+				return # Click on convoy handled
 
-
-			# TODO: Add settlement click logic if needed
+			# TODO: Add settlement click logic here if needed, similar to convoy click.
 
 
 func get_current_hover_info() -> Dictionary:
