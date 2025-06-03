@@ -25,7 +25,9 @@ extends Node2D
 # IMPORTANT: Adjust the path "$GameTimersNode" to the actual path of your GameTimers node in your scene tree.
 @onready var game_timers_node: Node = $GameTimersNode # Adjust if necessary
 # IMPORTANT: Adjust the path "$ConvoyListPanel" to the actual path of your ConvoyListPanel node. Ensure its type matches.
-@onready var convoy_list_panel_node: PanelContainer = $ConvoyListPanel # Adjust if necessary, e.g. if it's a PanelContainer
+# ConvoyListPanel is now a child of MenuUILayer.
+# ConvoyListPanel's root node type is now expected to be ScrollContainer.
+@onready var convoy_list_panel_node: ScrollContainer = $"../MenuUILayer/ConvoyListPanel"
 # Reference to the MenuManager in GameRoot.tscn
 var menu_manager_ref: Control = null
 
@@ -152,6 +154,7 @@ func _ready():
 		map_display.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 		# print('Main: map_display found and stretch_mode set.')  # DEBUG
 		# Explicitly set texture filter for smoother scaling.
+		map_display.mouse_filter = Control.MOUSE_FILTER_IGNORE # Allow mouse events to pass through for panning/interaction
 		map_display.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
 
 		var theme_font_for_ui = map_display.get_theme_font("font", "Label") # Get font from a Control node
@@ -306,12 +309,31 @@ func _ready():
 		printerr('Main: DetailedViewToggleCheckbox node not found or invalid. Check the path in main.gd.')
 
 	# --- Setup Convoy List Panel ---
+	# More detailed check for ConvoyListPanel path
+	var menu_ui_layer_check_node = get_node_or_null("../MenuUILayer") # Adjusted path for check
+	if is_instance_valid(menu_ui_layer_check_node):
+		print("Main (_ready): Parent 'MenuUILayer' FOUND. Name: '%s', Type: '%s', Visible: %s" % [menu_ui_layer_check_node.name, menu_ui_layer_check_node.get_class(), menu_ui_layer_check_node.visible])
+		if menu_ui_layer_check_node is CanvasLayer:
+			print("Main (_ready): 'MenuUILayer' is a CanvasLayer. Layer ID: %s" % menu_ui_layer_check_node.layer)
+		# --- DEBUG: Force MenuUILayer visible to test ConvoyListPanel visibility ---
+		menu_ui_layer_check_node.visible = true
+	else:
+		printerr("Main (_ready): CRITICAL - Parent node '../MenuUILayer' NOT FOUND relative to '%s'. ConvoyListPanel will not be visible." % self.name)
+
+
+	if not is_instance_valid(menu_ui_layer_check_node):
+		printerr("Main (_ready): Node '../MenuUILayer' NOT FOUND relative to '%s'. The path '../MenuUILayer/ConvoyListPanel' will fail." % self.name)
+	elif not is_instance_valid(menu_ui_layer_check_node.get_node_or_null("ConvoyListPanel")): # Adjusted check
+		printerr("Main (_ready): Child node 'MenuUILayer' WAS FOUND, but it does not have a child named 'ConvoyListPanel'. The path '$MenuUILayer/ConvoyListPanel' will fail.")
+	
 	if is_instance_valid(convoy_list_panel_node):
 		print("Main: ConvoyListPanel node found.")
-		convoy_list_panel_node.visible = true # Explicitly set to visible
+		convoy_list_panel_node.visible = true # Explicitly set to visible (ensure parent MenuUILayer is also visible)
 		# TEMPORARY DEBUG: Force size and position
-		convoy_list_panel_node.custom_minimum_size = Vector2(250, 400) # Keep forced size for now
-		# convoy_list_panel_node.position = Vector2(50, 50) # REMOVE THIS LINE
+		# Ensure the node type is correct as well. If it's not a PanelContainer or compatible, methods might fail.
+		print("Main: ConvoyListPanel node type: ", convoy_list_panel_node.get_class())
+
+		convoy_list_panel_node.custom_minimum_size = Vector2(250, 400) # Keep forced size for now, or set in editor
 		print("Main: ConvoyListPanel TEMPORARILY forced size and position.")
 		# Set z_index to ensure it's drawn above the map and potentially other base UI.
 		# Adjust this value as needed. For example, `2` would put it on the same layer as detailed_view_toggle.
@@ -323,13 +345,30 @@ func _ready():
 			print("Main: Connected to ConvoyListPanel.convoy_selected_from_list signal.")
 		else:
 			printerr("Main: ConvoyListPanel node does not have 'convoy_selected_from_list' signal.")
-		# Initial population (likely with empty data if convoys load async)
+		# Initial population (likely with empty data if convoys load async).
+		# Defer this call to ensure ConvoyListPanel's _ready() and its @onready vars are fully settled.
 		if convoy_list_panel_node.has_method("populate_convoy_list"):
-			print("Main: Populating ConvoyListPanel initially with _all_convoy_data count: ", _all_convoy_data.size()) # DEBUG
-			_update_convoy_list_panel_position() # Set initial position
-			convoy_list_panel_node.populate_convoy_list(_all_convoy_data)
-	else:
-		printerr("Main: ConvoyListPanel node not found or invalid in _ready(). Check the path in main.gd.")
+			print("Main: Scheduling population of ConvoyListPanel initially with _all_convoy_data count: ", _all_convoy_data.size()) # DEBUG
+			convoy_list_panel_node.call_deferred("populate_convoy_list", _all_convoy_data)
+			# Defer position update as well, in case it depends on the panel's size after population.
+			call_deferred("_update_convoy_list_panel_position")
+
+		# --- DEBUG: ConvoyListPanel final state check in main.gd ---
+		print("Main (_ready): ConvoyListPanel final state check:")
+		print("  - IsValid: ", is_instance_valid(convoy_list_panel_node))
+		print("  - Visible: ", convoy_list_panel_node.visible)
+		print("  - Size: ", convoy_list_panel_node.size) # Check actual size after potential layout updates
+		print("  - Custom Min Size: ", convoy_list_panel_node.custom_minimum_size)
+		print("  - Position: ", convoy_list_panel_node.position)
+		print("  - Modulate: ", convoy_list_panel_node.modulate) # Check alpha
+		print("  - Global Position: ", convoy_list_panel_node.global_position)
+		print("  - Z Index: ", convoy_list_panel_node.z_index)
+		if is_instance_valid(convoy_list_panel_node.get_parent()):
+			print("  - Parent Visible: ", convoy_list_panel_node.get_parent().visible)
+			if convoy_list_panel_node.get_parent() is CanvasLayer:
+				print("  - Parent CanvasLayer Layer: ", convoy_list_panel_node.get_parent().layer)
+	else: # This means the @onready var convoy_list_panel_node is null or invalid
+		printerr("Main: ConvoyListPanel node (assigned via @onready var using path '../MenuUILayer/ConvoyListPanel') is NOT VALID in _ready(). Please verify the node path and names in your scene tree are exactly '../MenuUILayer/ConvoyListPanel' relative to the node with main.gd.")
 
 	_on_viewport_size_changed() # Call once at the end of _ready to ensure all initial positions/constraints are correct
 
@@ -349,6 +388,13 @@ func _setup_static_map_and_camera():
 	var map_rows_local = map_tiles.size()
 	var map_cols_local = map_tiles[0].size()
 	var tile_pixel_size: float = map_renderer_node.base_tile_size_for_proportions
+
+	if tile_pixel_size <= 0.001: # Check for zero or very small value
+		printerr("Main: CRITICAL - map_renderer_node.base_tile_size_for_proportions is %s (<= 0.001)." % tile_pixel_size)
+		printerr("Main: This will lead to a zero-sized map and likely an 'affine_invert' error.")
+		printerr("Main: Please ensure 'base_tile_size_for_proportions' is set to a positive value on the MapRendererLogic node in the editor.")
+		tile_pixel_size = 24.0 # Fallback to a sensible default to prevent crash, but the root cause should be fixed in editor.
+		printerr("Main: Fallback: Using default tile_pixel_size for calculations: %s" % tile_pixel_size)
 
 	if tile_pixel_size <= 0:
 		printerr("Main: base_tile_size_for_proportions is invalid (<=0). Cannot calculate map texture size.")
@@ -709,7 +755,7 @@ func _on_convoy_data_received(data: Variant) -> void:
 	if is_instance_valid(convoy_list_panel_node) and convoy_list_panel_node.has_method("populate_convoy_list"):
 		convoy_list_panel_node.populate_convoy_list(_all_convoy_data)
 	else:
-		printerr("Main: Cannot update ConvoyListPanel, node is invalid or method missing.")
+		printerr("Main (_on_convoy_data_received): Cannot update ConvoyListPanel. Node is invalid (current value: %s) or populate_convoy_list method is missing. Ensure the path '../MenuUILayer/ConvoyListPanel' is correct and the node is of the expected type." % convoy_list_panel_node)
 
 	_update_convoy_nodes() # Create/update ConvoyNode instances using augmented _all_convoy_data
 	# Map texture DOES need to be re-rendered if journey lines are drawn on it and convoy data changes.
@@ -931,6 +977,10 @@ func _update_detailed_view_toggle_position() -> void:
 	var viewport_size = get_viewport_rect().size
 	var toggle_size: Vector2 = detailed_view_toggle.get_minimum_size() # Get its actual size based on text and font
 	var padding = label_map_edge_padding # Use the class member
+	
+	# --- DEBUG: Check size of DetailedViewToggleCheckbox ---
+	# If toggle_size.x or toggle_size.y is 0, it might cause an affine_invert error.
+	print("Main: _update_detailed_view_toggle_position - DetailedViewToggleCheckbox minimum_size: %s" % toggle_size)
 
 	detailed_view_toggle.position = Vector2(
 		viewport_size.x - toggle_size.x - padding,
@@ -942,19 +992,24 @@ func _update_convoy_list_panel_position() -> void:
 		return
 
 	var viewport_size = get_viewport_rect().size
-	# Use custom_minimum_size if set, otherwise actual size.
-	# For PanelContainer, actual size is often better after children are populated.
-	# get_minimum_size() is generally safer for initial placement if custom_minimum_size isn't set.
-	var panel_size = convoy_list_panel_node.get_minimum_size()
-	if convoy_list_panel_node.custom_minimum_size != Vector2.ZERO: # If a custom min size is forced
-		panel_size = convoy_list_panel_node.custom_minimum_size
+	# The panel should have a fixed size, defined by its custom_minimum_size.
+	var fixed_panel_size = convoy_list_panel_node.custom_minimum_size
+
+	# If custom_minimum_size was not set or is zero (e.g., if _ready didn't set it yet,
+	# though it should have), fallback to a default.
+	if fixed_panel_size == Vector2.ZERO:
+		fixed_panel_size = Vector2(250, 400) # Default fixed size from _ready
+		convoy_list_panel_node.custom_minimum_size = fixed_panel_size # Ensure it's set
 
 	var padding = label_map_edge_padding # Use the existing padding variable
 
 	convoy_list_panel_node.position = Vector2(
-		viewport_size.x - panel_size.x - padding,  # Position from the right edge
-		(viewport_size.y - panel_size.y) / 2.0     # Centered vertically
+		viewport_size.x - fixed_panel_size.x - padding,  # Position from the right edge
+		(viewport_size.y - fixed_panel_size.y) / 2.0     # Centered vertically
 	)
+	# Explicitly set the size of the panel to its fixed size.
+	# This ensures it doesn't expand even if some other layout property tries to make it.
+	convoy_list_panel_node.size = fixed_panel_size
 
 # _on_connector_lines_container_draw is now handled by UIManager.gd
 
@@ -967,7 +1022,7 @@ func _on_mim_hover_changed(new_hover_info: Dictionary):
 	# NEW: Directly update UI elements without re-rendering the entire map.
 	if is_instance_valid(ui_manager):
 		# Gather necessary arguments for UIManager, similar to how _update_map_display does it,
-		# but specifically for a UI-only update.
+		# but specifically for a UI-only update (which might be light or full depending on context).
 		var user_positions_for_ui = _convoy_label_user_positions # Use main's current understanding
 		# Use main.gd's own drag state as the source of truth for UI updates triggered by hover changes.
 		# This state is set by _on_mim_panel_drag_started and cleared by _on_mim_panel_drag_ended.
@@ -985,7 +1040,7 @@ func _on_mim_hover_changed(new_hover_info: Dictionary):
 		# DEBUG: Log what drag state is being passed to UIManager during a hover change.
 		print("  _on_mim_hover_changed: Passing to UIManager - new_hover_info: %s, dragging_panel: %s, dragged_id: %s" % [new_hover_info, dragging_panel_for_ui, dragged_id_for_ui])
 		
-		ui_manager.update_ui_elements(
+		ui_manager.update_ui_elements( # Call with is_light_ui_update = false (default) to trigger full label logic
 			map_display,
 			map_tiles,
 			_all_convoy_data,
@@ -995,8 +1050,8 @@ func _on_mim_hover_changed(new_hover_info: Dictionary):
 			_selected_convoy_ids, # Use the current selection state
 			user_positions_for_ui,
 			dragging_panel_for_ui,
-			dragged_id_for_ui,
-			true,                 # is_light_ui_update: true for hover changes
+			dragged_id_for_ui, # Pass the ID of the currently dragged panel (or empty)
+			false,                # is_light_ui_update: false to trigger full label logic for hover
 			current_camera_zoom_for_ui         # Pass the current zoom level (12th argument)
 		)
 	else:

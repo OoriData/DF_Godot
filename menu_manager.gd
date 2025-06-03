@@ -57,17 +57,49 @@ func _show_menu(menu_scene_resource, data_to_pass = null, add_to_stack: bool = t
 		return
 
 	add_child(current_active_menu)
-	# Ensure the new menu is sized to fill its parent (MenuManager, which should be a Control node filling the screen)
-	if current_active_menu is Control:
-		current_active_menu.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-		
-	emit_signal("menu_opened", current_active_menu)
 
 	# Pass data to the new menu if it has an initializer function
+	# This might affect its size if content is dynamic.
 	if current_active_menu.has_method("initialize_with_data"):
 		current_active_menu.initialize_with_data(data_to_pass)
 	if data_to_pass: # Optional: store context for "back"
 		current_active_menu.set_meta("menu_data", data_to_pass)
+
+	# Now, set layout. The menu should have its content initialized.
+	if current_active_menu is Control:
+		var menu_node = current_active_menu
+		if menu_scene_resource == convoy_menu_scene:
+			# Specific layout for ConvoyMenu: stick to right-middle of the parent (MenuManager)
+			var menu_size = menu_node.custom_minimum_size # Try this first
+
+			if menu_size.x == 0 or menu_size.y == 0:
+				# If not set, try combined minimum size (more reliable after initialize_with_data)
+				# For Godot 4, ensure children have propagated their sizes if relying on this.
+				# Calling update_minimum_size() can sometimes help, but often sizes are deferred.
+				menu_node.update_minimum_size() # May help ensure sizes are calculated
+				menu_size = menu_node.get_combined_minimum_size()
+				if menu_size.x == 0 or menu_size.y == 0:
+					printerr("MenuManager: ConvoyMenu's size could not be determined (custom_minimum_size and get_combined_minimum_size are zero). Using fallback size (300, 400). This may lead to incorrect layout. Please set custom_minimum_size in ConvoyMenu.tscn or ensure its content defines a size.")
+					if menu_size.x == 0: menu_size.x = 300
+					if menu_size.y == 0: menu_size.y = 400
+			
+			menu_node.anchor_left = 1.0   # Anchor left edge relative to parent's right.
+			menu_node.anchor_right = 1.0  # Anchor right edge relative to parent's right.
+			menu_node.anchor_top = 0.5    # Anchor top edge relative to parent's vertical center.
+			menu_node.anchor_bottom = 0.5 # Anchor bottom edge relative to parent's vertical center.
+
+			# Offsets are relative to the anchor points.
+			# This positions the menu's top-left corner such that the menu is
+			# aligned to the right edge and centered vertically.
+			menu_node.offset_left = -menu_size.x
+			menu_node.offset_right = 0 # Results in width = menu_size.x
+			menu_node.offset_top = -menu_size.y / 2.0
+			menu_node.offset_bottom = menu_size.y / 2.0 # Results in height = menu_size.y
+		else:
+			# Default for other menus: fill the parent (MenuManager)
+			menu_node.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+
+	emit_signal("menu_opened", current_active_menu)
 
 	# Connect signals from the newly instantiated menu
 	# Example: if your menus emit "back_requested" or "open_specific_menu_requested(data)"

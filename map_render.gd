@@ -520,13 +520,13 @@ func get_journey_segment_offset_vector(
 			# if false and num_lines_on_segment >= 3: # Log for segments with 3 or more lines
 				# should_debug_this_segment = true
 
-			# if should_debug_this_segment: # Old conditional
-			print_debug("MapRender Offset Calculation for Segment: ", segment_key)
-			print_debug("  - p1_map: ", p1_map, ", p2_map: ", p2_map)
-			print_debug("  - Current Convoy Index (current_convoy_idx): ", current_convoy_idx)
-			print_debug("  - All Convoy Indices On This Segment (convoy_indices_on_segment): ", convoy_indices_on_segment)
-			print_debug("  - Num Lines On This Segment: ", num_lines_on_segment)
-			# --- DEBUG LOGGING END ---
+			# # if should_debug_this_segment: # Old conditional
+			# print_debug("MapRender Offset Calculation for Segment: ", segment_key)
+			# print_debug("  - p1_map: ", p1_map, ", p2_map: ", p2_map)
+			# print_debug("  - Current Convoy Index (current_convoy_idx): ", current_convoy_idx)
+			# print_debug("  - All Convoy Indices On This Segment (convoy_indices_on_segment): ", convoy_indices_on_segment)
+			# print_debug("  - Num Lines On This Segment: ", num_lines_on_segment)
+			# # --- DEBUG LOGGING END ---
 
 			# Determine the order of the current convoy for this segment
 			var current_convoy_order_on_segment: int = convoy_indices_on_segment.find(current_convoy_idx)
@@ -551,12 +551,12 @@ func get_journey_segment_offset_vector(
 					var center_offset_factor: float = (float(num_lines_on_segment) - 1.0) / 2.0
 					var line_specific_offset_factor: float = float(current_convoy_order_on_segment) - center_offset_factor
 					offset_v = perp_dir_px * line_specific_offset_factor * base_offset_magnitude # base_offset_magnitude is scaled_journey_line_offset_step_pixels
-					# if should_debug_this_segment: # Old conditional
-					print_debug("    - Calculated Order for Current Convoy (current_convoy_order_on_segment): ", current_convoy_order_on_segment)
-					print_debug("    - Perpendicular Vector (perp_dir_px): ", perp_dir_px)
-					print_debug("    - Center Offset Factor: ", center_offset_factor)
-					print_debug("    - Line Specific Offset Factor: ", line_specific_offset_factor)
-					print_debug("    - Final Offset Vector (offset_v): ", offset_v)
+					# # if should_debug_this_segment: # Old conditional
+					# print_debug("    - Calculated Order for Current Convoy (current_convoy_order_on_segment): ", current_convoy_order_on_segment)
+					# print_debug("    - Perpendicular Vector (perp_dir_px): ", perp_dir_px)
+					# print_debug("    - Center Offset Factor: ", center_offset_factor)
+					# print_debug("    - Line Specific Offset Factor: ", line_specific_offset_factor)
+					# print_debug("    - Final Offset Vector (offset_v): ", offset_v)
 	return offset_v
 
 

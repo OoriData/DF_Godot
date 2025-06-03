@@ -62,6 +62,9 @@ enum ControlScheme { MOUSE_AND_KEYBOARD, TOUCH }
 @export var camera_zoom_factor_increment: float = 1.1
 
 var _is_camera_panning: bool = false
+## Multiplier for camera pan speed when using mouse drag. Higher values increase sensitivity.
+@export var camera_pan_sensitivity: float = 1.0
+
 var _last_camera_pan_mouse_screen_position: Vector2
 
 var _pan_touch_index: int = -1 # For tracking which finger started a touch pan
@@ -148,18 +151,33 @@ func update_data_references(p_all_convoy_data: Array, p_all_settlement_data: Arr
 
 
 func _unhandled_input(event: InputEvent): # Changed from handle_input
+	# --- DEBUG: Log some events reaching _unhandled_input ---
+	# This can be very verbose, enable only when actively debugging input issues.
+	# print("MIM _unhandled_input RECEIVED EVENT --- Type: %s, Event: %s" % [event.get_class(), event]) # DEBUG: Performance intensive
+	if event is InputEventMouseButton:
+		print("MIM _unhandled_input: MouseButton - button_index: %s, pressed: %s, shift_pressed: %s, global_pos: %s" % [event.button_index, event.pressed, event.is_shift_pressed(), event.global_position]) # DEBUG
+	elif event is InputEventMouseMotion:
+		# print("MIM _unhandled_input: MouseMotion - global_pos: %s, relative: %s, button_mask: %s" % [event.global_position, event.relative, event.button_mask]) # DEBUG # Too verbose
+		pass
+	elif event is InputEventPanGesture: # DEBUG: Log PanGesture details
+		print("MIM _unhandled_input: PanGesture - delta: %s, position: %s" % [event.delta, event.position]) # DEBUG
+	# --- END DEBUG ---
+
 	if not is_instance_valid(map_display) or \
 	   (is_instance_valid(map_display) and not is_instance_valid(map_display.texture)) or \
 	   not is_instance_valid(ui_manager) or \
 	   not is_instance_valid(camera):
 		# print("MapInteractionManager: handle_input - Essential nodes not ready. Skipping.")
 		# Ensure event is not spuriously consumed if essential nodes aren't ready
+		# If you want to see if events are reaching here even when nodes aren't ready,
+		# comment out the return below temporarily.
 		return
 
 	# Handle MagnifyGesture (trackpad pinch) first, as it can occur with either scheme.
 	# This is often how trackpad pinch-to-zoom is implemented.
 	if event is InputEventMagnifyGesture:
-		if event.factor != 0: # Avoid division by zero, though unlikely for this event
+		if event.factor != 0.0: # Avoid division by zero, though unlikely for this event
+			# print("MIM _unhandled_input: Detected MagnifyGesture. Factor: %s, Position: %s" % [event.factor, event.position]) # DEBUG
 			# The previous logic used `1.0 / event.factor`.
 			# If that felt inverted (e.g., spreading fingers zoomed in, but you expected it to zoom out),
 			# using `event.factor` directly will reverse the pinch-to-zoom direction.
@@ -167,6 +185,16 @@ func _unhandled_input(event: InputEvent): # Changed from handle_input
 			_zoom_camera_at_screen_pos(event.factor, event.position)
 		get_viewport().set_input_as_handled()
 		return # Consumed by magnify gesture
+
+	# Handle PanGesture (trackpad scroll/pan)
+	if event is InputEventPanGesture:
+		# print("MIM _unhandled_input: Processing PanGesture for camera pan. Delta: %s" % event.delta) # DEBUG
+		if is_instance_valid(camera) and camera.zoom.x != 0.0:
+			# event.delta is the translation in screen coordinates.
+			camera.offset += event.delta * camera_pan_sensitivity / camera.zoom.x
+			# Camera's built-in limits will constrain the offset.
+		get_viewport().set_input_as_handled()
+		return # Consumed by pan gesture
 
 	# If not a magnify gesture, proceed with scheme-specific input
 	match active_control_scheme:
@@ -213,14 +241,25 @@ func _process(delta: float):
 
 
 func _handle_mouse_input(event: InputEvent):
+	# --- DEBUG: Log some events reaching _handle_mouse_input ---
+	# print("MIM _handle_mouse_input RECEIVED EVENT --- Type: %s, Event: %s" % [event.get_class(), event]) # Verbose
+	if event is InputEventMouseButton:
+		print("MIM _handle_mouse_input: MouseButton - button_index: %s, pressed: %s, shift_pressed: %s, global_pos: %s" % [event.button_index, event.pressed, event.is_shift_pressed(), event.global_position]) # DEBUG
+	# elif event is InputEventMouseMotion:
+	#     print("MIM _handle_mouse_input: MouseMotion - global_pos: %s, relative: %s, button_mask: %s" % [event.global_position, event.relative, event.button_mask]) # DEBUG
+	# --- END DEBUG ---
+
 	# Camera Panning (Middle Mouse Button)
 	var is_pan_button_pressed = event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_MIDDLE
 	var is_alt_pan_button_pressed = event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.is_shift_pressed()
-
 	if is_pan_button_pressed or is_alt_pan_button_pressed:
+		var pan_button_type = "Middle Mouse" if is_pan_button_pressed else "Shift+Left Mouse"
 		if event.pressed:
 			_is_camera_panning = true
+			print("MIM _handle_mouse_input: %s pan button event detected. Starting pan." % pan_button_type) # DEBUG
 			_last_camera_pan_mouse_screen_position = event.position
+			# Ensure we consume the press event so it doesn't trigger other click logic
+			get_viewport().set_input_as_handled()
 			Input.set_default_cursor_shape(Input.CURSOR_DRAG)
 			get_viewport().set_input_as_handled()
 		else: # released
@@ -228,27 +267,34 @@ func _handle_mouse_input(event: InputEvent):
 			# the button being released is either middle mouse OR left mouse (for the shift+left case)
 			if _is_camera_panning and \
 			   (event.button_index == MOUSE_BUTTON_MIDDLE or event.button_index == MOUSE_BUTTON_LEFT):
+				var released_button_type = "Middle Mouse" if event.button_index == MOUSE_BUTTON_MIDDLE else "Left Mouse"
 				_is_camera_panning = false
+				print("MIM _handle_mouse_input: %s pan button released. Stopping pan." % released_button_type) # DEBUG
 				Input.set_default_cursor_shape(Input.CURSOR_ARROW)
 				get_viewport().set_input_as_handled()
 		return # Consumed
 
 	if event is InputEventMouseMotion and _is_camera_panning:
-		var mouse_delta_screen: Vector2 = event.position - _last_camera_pan_mouse_screen_position
-		camera.offset -= mouse_delta_screen / camera.zoom.x # Assuming uniform zoom
-		_last_camera_pan_mouse_screen_position = event.position
-		# Camera's built-in limits will apply. No explicit _constrain_camera_offset call needed here for panning.
-		get_viewport().set_input_as_handled()
+		# --- DEBUG: Log pan motion ---
+		print("MIM _handle_mouse_input: Panning motion detected.") # DEBUG
+		print("  _is_camera_panning: %s" % _is_camera_panning) # DEBUG
+		print("  mouse_delta_screen (relative): %s" % event.relative) # DEBUG
+		# --- END DEBUG ---
+		var mouse_delta_screen: Vector2 = event.relative # Use event.relative for direct screen delta
+		if is_instance_valid(camera) and camera.zoom.x != 0.0: # Ensure camera and zoom are valid
+			camera.offset += mouse_delta_screen * camera_pan_sensitivity / camera.zoom.x # Apply pan with sensitivity (inverted direction)
+		_last_camera_pan_mouse_screen_position = event.position # Update for next frame if using event.position for delta
+		get_viewport().set_input_as_handled() # Consume the event
 		return # Consumed
 
 	# Camera Zooming (Mouse Wheel)
 	if enable_mouse_wheel_zoom and event is InputEventMouseButton: # Check the setting here
 		if event.button_index == MOUSE_BUTTON_WHEEL_UP and event.is_pressed():
 			_zoom_camera_at_screen_pos(1.0 / camera_zoom_factor_increment, event.position) # factor < 1 for zoom in
-			get_viewport().set_input_as_handled()
+			get_viewport().set_input_as_handled() # Consume the event
 			return # Consumed
 		elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN and event.is_pressed():
-			_zoom_camera_at_screen_pos(camera_zoom_factor_increment, event.position)      # factor > 1 for zoom out
+			_zoom_camera_at_screen_pos(camera_zoom_factor_increment, event.position) # factor > 1 for zoom out
 			get_viewport().set_input_as_handled()
 			return # Consumed
 
