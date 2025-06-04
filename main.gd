@@ -1224,6 +1224,34 @@ func _on_menu_state_changed(menu_node, menu_type: String): # New handler for mod
 		)
 		self.visible = true # Ensure map is visible
 		set_process_input(true) # Ensure map input is active
+
+		# Center camera on the selected convoy
+		var convoy_data = menu_node.get_meta("menu_data")
+		if convoy_data is Dictionary and convoy_data.has("convoy_id"):
+			var convoy_tile_x: float = convoy_data.get("x", -1.0) # Precise, possibly fractional, tile coord
+			var convoy_tile_y: float = convoy_data.get("y", -1.0)
+
+			if convoy_tile_x >= 0.0 and convoy_tile_y >= 0.0 and \
+			   is_instance_valid(map_display) and is_instance_valid(map_display.texture) and \
+			   not map_tiles.is_empty() and map_tiles[0] is Array and not map_tiles[0].is_empty() and \
+			   is_instance_valid(map_container):
+
+				var map_initial_world_size = map_display.custom_minimum_size
+				var map_cols = map_tiles[0].size()
+				var map_rows = map_tiles.size()
+
+				if map_cols > 0 and map_rows > 0 and map_initial_world_size.x > 0 and map_initial_world_size.y > 0:
+					var tile_world_width = map_initial_world_size.x / float(map_cols)
+					var tile_world_height = map_initial_world_size.y / float(map_rows)
+
+					# Calculate the convoy's center position local to MapContainer
+					var convoy_center_local_to_map_container = Vector2(
+						(convoy_tile_x + 0.5) * tile_world_width,
+						(convoy_tile_y + 0.5) * tile_world_height
+					)
+					# Convert to global coordinates and set camera position
+					map_camera.position = map_container.to_global(convoy_center_local_to_map_container)
+					print("Main: Centering camera on convoy %s at world pos %s" % [convoy_data.get("convoy_id", "N/A"), map_camera.position])
 	else: # Other menus might still hide the map or behave as before
 		_is_map_in_partial_view = false # Assuming other menus take full focus or hide map
 		_current_map_display_rect = get_viewport().get_visible_rect()
@@ -1264,7 +1292,7 @@ func request_open_convoy_menu_via_manager(convoy_data):
 # --- Handler for Menu Requests from MapInteractionManager ---
 func _on_mim_convoy_menu_requested(convoy_data: Dictionary):
 	if is_instance_valid(menu_manager_ref):
-		print("Main: MapInteractionManager requested convoy menu for convoy ID: ", convoy_data.get("convoy_id", "N/A")) # DEBUG
+		# print("Main: MapInteractionManager requested convoy menu for convoy ID: ", convoy_data.get("convoy_id", "N/A")) # DEBUG
 		# This existing function already calls the menu manager correctly
 		request_open_convoy_menu_via_manager(convoy_data)
 	else:
@@ -1282,7 +1310,7 @@ func _on_convoy_selected_from_list_panel(convoy_data: Dictionary):
 	if convoy_id_variant != null:
 		convoy_id_str = str(convoy_id_variant)
 
-	print("Main: Convoy selected from list panel, ID: %s. Requesting menu." % convoy_id_str)
+	# print("Main: Convoy selected from list panel, ID: %s. Requesting menu." % convoy_id_str)
 
 	if convoy_id_str.is_empty():
 		_selected_convoy_ids.clear()

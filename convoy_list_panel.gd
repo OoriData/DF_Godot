@@ -94,7 +94,7 @@ func populate_convoy_list(convoys_data: Array) -> void:
 	print("  - list_item_container Global Position: ", list_item_container.global_position)
 
 func _on_convoy_item_pressed(convoy_item_data: Dictionary) -> void:
-	print("ConvoyListPanel: Convoy item pressed, Data: ", convoy_item_data)
+	# print("ConvoyListPanel: Convoy item pressed, Data: ", convoy_item_data)
 	emit_signal("convoy_selected_from_list", convoy_item_data)
 
 ## Highlights a specific convoy in the list.

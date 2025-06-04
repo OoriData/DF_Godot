@@ -30,7 +30,7 @@ func is_any_menu_active() -> bool:
 
 # --- Function to open the Convoy Menu ---
 func open_convoy_menu(convoy_data = null):
-	print("MenuManager: Opening actual ConvoyMenu for data: ", convoy_data)
+	# print("MenuManager: Opening actual ConvoyMenu for data: ", convoy_data)
 	_show_menu(convoy_menu_scene, convoy_data)
 
 # --- Generic menu handling ---

@@ -147,7 +147,7 @@ func initialize(
 func set_current_map_screen_rect(rect: Rect2):
 	_current_map_screen_rect = rect
 	# print("MIM: Map screen rect updated to: ", _current_map_screen_rect) # DEBUG
-	# Trigger a camera constraint update if necessary, e.g., by calling _physics_process or a dedicated method
+	# Trigger a camera constraint update immediately
 	_physics_process(0) # Call with dummy delta to re-evaluate constraints immediately
 
 func update_data_references(p_all_convoy_data: Array, p_all_settlement_data: Array, p_map_tiles: Array):
@@ -194,14 +194,16 @@ func _physics_process(delta: float):
 func _input(event: InputEvent): # Renamed from _unhandled_input
 	# --- DEBUG: Log some events reaching _unhandled_input ---
 	# This can be very verbose, enable only when actively debugging input issues.
-	# print("MIM _unhandled_input RECEIVED EVENT --- Type: %s, Event: %s" % [event.get_class(), event]) # DEBUG: Performance intensive
+	# print("MIM _input RECEIVED EVENT --- Type: %s, Event: %s" % [event.get_class(), event]) # DEBUG: Performance intensive
 	if event is InputEventMouseButton and false: # Disabled debug print
-		print("MIM _unhandled_input: MouseButton - button_index: %s, pressed: %s, shift_pressed: %s, global_pos: %s" % [event.button_index, event.pressed, event.is_shift_pressed(), event.global_position]) # DEBUG
+		# print("MIM _input: MouseButton - button_index: %s, pressed: %s, shift_pressed: %s, global_pos: %s" % [event.button_index, event.pressed, event.is_shift_pressed(), event.global_position]) # DEBUG
+		pass
 	elif event is InputEventMouseMotion:
-		# print("MIM _unhandled_input: MouseMotion - global_pos: %s, relative: %s, button_mask: %s" % [event.global_position, event.relative, event.button_mask]) # DEBUG # Too verbose
+		# print("MIM _input: MouseMotion - global_pos: %s, relative: %s, button_mask: %s" % [event.global_position, event.relative, event.button_mask]) # DEBUG # Too verbose
 		pass
 	elif event is InputEventPanGesture: # DEBUG: Log PanGesture details
-		print("MIM _unhandled_input: PanGesture - delta: %s, position: %s" % [event.delta, event.position]) # DEBUG
+		# print("MIM _unhandled_input: PanGesture - delta: %s, position: %s" % [event.delta, event.position]) # DEBUG
+		pass
 	# --- END DEBUG ---
 
 	if not is_instance_valid(map_display) or \
@@ -307,7 +309,7 @@ func _handle_mouse_camera_controls(event: InputEvent): # Was part of _handle_mou
 	if is_middle_mouse_button_event:
 		if event.pressed:
 			_is_camera_panning = true
-			# print("MIM _handle_mouse_camera_controls: Middle Mouse pan button event detected. Starting pan.") # DEBUG
+			# print("MIM: Middle Mouse pan button event detected. Starting pan.") # DEBUG
 			_last_camera_pan_mouse_screen_position = event.position
 			Input.set_default_cursor_shape(Input.CURSOR_DRAG)
 			get_viewport().set_input_as_handled() # Consume the press event
@@ -315,7 +317,7 @@ func _handle_mouse_camera_controls(event: InputEvent): # Was part of _handle_mou
 			# Stop panning if we were in panning mode (initiated by middle mouse)
 			if _is_camera_panning:
 				_is_camera_panning = false
-				# print("MIM _handle_mouse_camera_controls: Middle Mouse pan button released. Stopping pan.") # DEBUG
+				# print("MIM: Middle Mouse pan button released. Stopping pan.") # DEBUG
 				Input.set_default_cursor_shape(Input.CURSOR_ARROW)
 				get_viewport().set_input_as_handled() # Consume the release event
 		return # Consumed by middle mouse button press or release for panning
@@ -323,7 +325,7 @@ func _handle_mouse_camera_controls(event: InputEvent): # Was part of _handle_mou
 	if event is InputEventMouseMotion and _is_camera_panning:
 		# --- DEBUG: Log pan motion ---
 		# print("MIM _handle_mouse_input: Panning motion detected.") # DEBUG
-		# print("  _is_camera_panning: %s" % _is_camera_panning) # DEBUG
+		# print("  MIM _is_camera_panning: %s" % _is_camera_panning) # DEBUG
 		# print("  mouse_delta_screen (relative): %s" % event.relative) # DEBUG
 		# --- END DEBUG --- #
 		var mouse_delta_screen: Vector2 = event.relative # Use event.relative for direct screen delta
@@ -549,7 +551,7 @@ func _handle_lmb_interactions(event: InputEventMouseButton): # Was _handle_mouse
 									)
 									
 									emit_signal("panel_drag_started", _dragged_convoy_id_actual_str, _dragging_panel_node)
-									# print("MIM: Panel drag started for convoy: ", _dragged_convoy_id_actual_str) # DEBUG
+									print("MIM: Panel drag started for convoy: ", _dragged_convoy_id_actual_str) # Keep this one
 									get_viewport().set_input_as_handled()
 									return # Drag started
 
@@ -564,7 +566,7 @@ func _handle_lmb_interactions(event: InputEventMouseButton): # Was _handle_mouse
 				_convoy_label_user_positions[_dragged_convoy_id_actual_str] = final_local_position
 				
 				emit_signal("panel_drag_ended", _dragged_convoy_id_actual_str, final_local_position)
-				# print("MIM: Panel drag ended for convoy: ", _dragged_convoy_id_actual_str, " at local pos: ", final_local_position) # DEBUG
+				print("MIM: Panel drag ended for convoy: ", _dragged_convoy_id_actual_str, " at local pos: ", final_local_position) # Keep this one
 
 				_dragging_panel_node = null
 				_dragged_convoy_id_actual_str = ""
@@ -578,7 +580,7 @@ func _handle_lmb_interactions(event: InputEventMouseButton): # Was _handle_mouse
 
 			if clicked_convoy_data != null:
 				emit_signal("convoy_menu_requested", clicked_convoy_data)
-				# print("MIM: Clicked convoy for menu: ", clicked_convoy_data.get("convoy_id", "N/A")) # DEBUG
+				print("MIM: Clicked convoy for menu: ", clicked_convoy_data.get("convoy_id", "N/A")) # Keep this one
 				get_viewport().set_input_as_handled()
 				return # Click on convoy handled
 
@@ -614,7 +616,7 @@ func _handle_tap_interaction(screen_pos: Vector2):
 
 	if clicked_convoy_data != null:
 		emit_signal("convoy_menu_requested", clicked_convoy_data)
-		print("MIM: Tapped convoy for menu: ", clicked_convoy_data.get("convoy_id", "N/A")) # DEBUG
+		print("MIM: Tapped convoy for menu: ", clicked_convoy_data.get("convoy_id", "N/A")) # Keep this one
 		get_viewport().set_input_as_handled()
 
 func _zoom_camera_at_screen_pos(zoom_adjust_factor: float, screen_zoom_center: Vector2):
