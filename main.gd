@@ -433,8 +433,11 @@ func _setup_static_map_and_camera():
 
 	# Initialize Camera
 	map_camera.make_current()
-	map_camera.position = Vector2.ZERO # Camera is a child of MapRender, views MapContainer
-	map_camera.offset = map_display.custom_minimum_size / 2.0 # Center camera on the map initially
+	# Set camera's position (center) to the center of the map_display content,
+	# considering map_container's position within MapRender.
+	if is_instance_valid(map_container) and is_instance_valid(map_display):
+		map_camera.position = map_container.position + map_display.custom_minimum_size / 2.0
+	map_camera.offset = Vector2.ZERO # Screen-space offset, keep at zero for primary positioning.
 	map_camera.zoom = Vector2(1.0, 1.0) # Initial zoom
 	# Camera limits will be handled by MapInteractionManager's _constrain_camera_offset
 
@@ -444,8 +447,8 @@ func _setup_static_map_and_camera():
 func _on_viewport_size_changed():
 	# print('Main: _on_viewport_size_changed triggered.') # DEBUG
 	# map_display.size is fixed. map_container.position might need adjustment.
-	if is_instance_valid(map_interaction_manager) and map_interaction_manager.has_method("_constrain_camera_offset"):
-		map_interaction_manager._constrain_camera_offset() # Tell MIM to re-apply camera constraints
+	if is_instance_valid(map_interaction_manager) and map_interaction_manager.has_method("_handle_viewport_resize_constraints"):
+		map_interaction_manager._handle_viewport_resize_constraints() # Tell MIM to re-apply camera and zoom constraints
 
 	# Update positions of UI elements that depend on viewport/map_display size
 	if not Engine.is_editor_hint() and is_instance_valid(_refresh_notification_label): # Only update in game

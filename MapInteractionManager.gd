@@ -123,24 +123,63 @@ func initialize(
 	if not is_instance_valid(camera): printerr("MapInteractionManager: camera is invalid after init!")
 	if not is_instance_valid(map_container_for_bounds): printerr("MapInteractionManager: map_container_for_bounds is invalid after init!")
 	
-	if is_instance_valid(camera):
-		if _initial_map_display_size.x > 0 and _initial_map_display_size.y > 0:
-			camera.limit_left = 0
-			camera.limit_top = 0
-			camera.limit_right = int(round(_initial_map_display_size.x))
-			camera.limit_bottom = int(round(_initial_map_display_size.y))
-			camera.drag_horizontal_enabled = true # Enable built-in limit enforcement
-			camera.drag_vertical_enabled = true   # Enable built-in limit enforcement
-			# Set drag margins to 0 as we are directly manipulating offset or relying on limits.
-			camera.drag_left_margin = 0.0; camera.drag_right_margin = 0.0
-			camera.drag_top_margin = 0.0;  camera.drag_bottom_margin = 0.0
-			# To enable smoothing in Godot 4, set the process_callback.
-			camera.process_callback = Camera2D.CAMERA2D_PROCESS_PHYSICS
-			camera.set("smoothing_enabled", true) # Use generic set()
-			camera.set("smoothing_speed", 5.0)    # Use generic set()
-			print("MapInteractionManager: Camera limits and smoothing initialized.") # DEBUG
-		else:
-			printerr("MapInteractionManager: _initial_map_display_size is zero in initialize. Camera limits not set.")
+	if is_instance_valid(camera): # Basic camera setup
+		camera.drag_horizontal_enabled = true
+		camera.drag_vertical_enabled = true
+		camera.drag_left_margin = 0.0; camera.drag_right_margin = 0.0
+		camera.drag_top_margin = 0.0;  camera.drag_bottom_margin = 0.0
+		camera.process_callback = Camera2D.CAMERA2D_PROCESS_PHYSICS
+		camera.set("smoothing_enabled", true)
+		camera.set("smoothing_speed", 5.0)
+		_update_dynamic_camera_limits() # Set initial dynamic limits
+		print("MapInteractionManager: Camera smoothing and initial dynamic limits initialized.")
+	else:
+		printerr("MapInteractionManager: Camera node is invalid in initialize.")
+
+
+func _update_dynamic_camera_limits():
+	if not (is_instance_valid(camera) and is_instance_valid(map_container_for_bounds) and _initial_map_display_size.x > 0 and _initial_map_display_size.y > 0):
+		# printerr("MIM: Cannot update dynamic camera limits - invalid nodes or map size.")
+		return
+
+	var viewport_size_pixels: Vector2 = get_viewport().get_visible_rect().size
+	if viewport_size_pixels.x <= 0 or viewport_size_pixels.y <= 0:
+		# printerr("MIM: Cannot update dynamic camera limits - invalid viewport size.")
+		return
+
+	var current_zoom: Vector2 = camera.zoom
+	# map_container_for_bounds.position is the map's origin in the camera's parent coordinate system (MapView)
+	var map_origin_in_cam_parent_space: Vector2 = map_container_for_bounds.position
+	var map_size_in_cam_parent_space: Vector2 = _initial_map_display_size
+
+	# Half of the viewport's size in the camera's parent coordinate system (world units)
+	var half_view_world_width: float = (viewport_size_pixels.x * current_zoom.x) / 2.0
+	var half_view_world_height: float = (viewport_size_pixels.y * current_zoom.y) / 2.0
+
+	var new_limit_left = map_origin_in_cam_parent_space.x + half_view_world_width
+	var new_limit_top = map_origin_in_cam_parent_space.y + half_view_world_height
+	var new_limit_right = map_origin_in_cam_parent_space.x + map_size_in_cam_parent_space.x - half_view_world_width
+	var new_limit_bottom = map_origin_in_cam_parent_space.y + map_size_in_cam_parent_space.y - half_view_world_height
+
+	# If the map view is narrower than the viewport (e.g., after max zoom-in on a small map),
+	# the calculated limits might cross. In this case, center the camera.
+	if new_limit_right < new_limit_left:
+		var map_center_x = map_origin_in_cam_parent_space.x + map_size_in_cam_parent_space.x / 2.0
+		new_limit_left = map_center_x
+		new_limit_right = map_center_x
+
+	if new_limit_bottom < new_limit_top:
+		var map_center_y = map_origin_in_cam_parent_space.y + map_size_in_cam_parent_space.y / 2.0
+		new_limit_top = map_center_y
+		new_limit_bottom = map_center_y
+
+	camera.limit_left = floori(new_limit_left)
+	camera.limit_top = floori(new_limit_top)
+	camera.limit_right = ceili(new_limit_right)
+	camera.limit_bottom = ceili(new_limit_bottom)
+	
+	# print("MIM: Dynamic limits updated: L:%s, T:%s, R:%s, B:%s (Zoom: %s, Viewport: %s)" % [camera.limit_left, camera.limit_top, camera.limit_right, camera.limit_bottom, current_zoom, viewport_size_pixels]) # DEBUG
+
 
 func update_data_references(p_all_convoy_data: Array, p_all_settlement_data: Array, p_map_tiles: Array):
 	"""Called by main.gd when core data (convoys, settlements, map_tiles) is updated."""
@@ -196,7 +235,8 @@ func _input(event: InputEvent): # Renamed from _unhandled_input
 
 	if event is InputEventPanGesture:
 		if is_instance_valid(camera) and camera.zoom.x != 0.0:
-			camera.offset += event.delta * camera_pan_sensitivity / camera.zoom.x
+			# Camera "flies" with the pan delta
+			camera.position += event.delta * camera_pan_sensitivity / camera.zoom.x # Use position
 			get_viewport().set_input_as_handled()
 		return # PanGesture processed, then done.
 
@@ -285,8 +325,8 @@ func _handle_mouse_camera_controls(event: InputEvent): # Was part of _handle_mou
 		# print("  mouse_delta_screen (relative): %s" % event.relative) # DEBUG
 		# --- END DEBUG --- #
 		var mouse_delta_screen: Vector2 = event.relative # Use event.relative for direct screen delta
-		if is_instance_valid(camera) and camera.zoom.x != 0.0: # Ensure camera and zoom are valid
-			camera.offset += mouse_delta_screen * camera_pan_sensitivity / camera.zoom.x # Apply pan with sensitivity (inverted direction)
+		if is_instance_valid(camera) and camera.zoom.x != 0.0:
+			camera.position += mouse_delta_screen * camera_pan_sensitivity / camera.zoom.x # Use position, camera "flies" with mouse
 		_last_camera_pan_mouse_screen_position = event.position # Update for next frame if using event.position for delta
 		get_viewport().set_input_as_handled() # Consume the event
 		return # Consumed
@@ -579,32 +619,53 @@ func _zoom_camera_at_screen_pos(zoom_adjust_factor: float, screen_zoom_center: V
 	if not is_instance_valid(camera):
 		return
 
-	var new_zoom_x = clamp(camera.zoom.x * zoom_adjust_factor, min_camera_zoom_level, max_camera_zoom_level)
-	var new_zoom_y = clamp(camera.zoom.y * zoom_adjust_factor, min_camera_zoom_level, max_camera_zoom_level)
+	# var mouse_screen_pos = get_viewport().get_mouse_position() # Use passed screen_zoom_center
+	var effective_max_zoom = _get_effective_max_zoom_out_level()
+	var new_zoom_x = clamp(camera.zoom.x * zoom_adjust_factor, min_camera_zoom_level, effective_max_zoom)
+	var new_zoom_y = clamp(camera.zoom.y * zoom_adjust_factor, min_camera_zoom_level, effective_max_zoom)
 	var new_zoom_vector = Vector2(new_zoom_x, new_zoom_y)
 
 	if camera.zoom.is_equal_approx(new_zoom_vector):
-		return # No significant change in zoom
-
-	# var mouse_screen_pos = get_viewport().get_mouse_position() # Use passed screen_zoom_center
+		# This can happen if already at min/max zoom limit and trying to go further
+		return # No significant change in zoom after clamping
 	
 	# Get the inverse transform before zoom changes
 	var inv_transform_before_zoom: Transform2D = camera.get_canvas_transform().affine_inverse()
 	var world_pos_before_zoom: Vector2 = inv_transform_before_zoom * screen_zoom_center
 
+	var old_zoom_for_signal = camera.zoom.x # Store before changing for the signal
 	camera.zoom = new_zoom_vector
 
 	# Get the inverse transform after zoom has changed
 	var inv_transform_after_zoom: Transform2D = camera.get_canvas_transform().affine_inverse()
 	var world_pos_after_zoom: Vector2 = inv_transform_after_zoom * screen_zoom_center
 	
-	camera.offset += world_pos_before_zoom - world_pos_after_zoom
-	# Camera's built-in limits will apply. No explicit _constrain_camera_offset call needed.
-	emit_signal("camera_zoom_changed", camera.zoom.x)
+	camera.position += world_pos_before_zoom - world_pos_after_zoom # Use position
+	# Camera's built-in limits will apply.
+	if not is_equal_approx(old_zoom_for_signal, camera.zoom.x): # Check if zoom actually changed
+		emit_signal("camera_zoom_changed", camera.zoom.x)
+	_update_dynamic_camera_limits()
 
 
+func _get_effective_max_zoom_out_level() -> float:
+	"""Calculates the maximum camera.zoom value (most zoomed-out) that ensures the map covers the viewport."""
+	var effective_max_zoom = max_camera_zoom_level # Start with user-defined absolute max zoom-out
 
-func _constrain_camera_offset():
+	if is_instance_valid(map_display) and _initial_map_display_size.x > 0 and _initial_map_display_size.y > 0:
+		var viewport_size_pixels = get_viewport().get_visible_rect().size
+		if viewport_size_pixels.x > 0 and viewport_size_pixels.y > 0:
+			var max_zoom_val_for_width_cover = _initial_map_display_size.x / viewport_size_pixels.x
+			var max_zoom_val_for_height_cover = _initial_map_display_size.y / viewport_size_pixels.y
+			
+			var dynamically_calculated_max_zoom_val = max(max_zoom_val_for_width_cover, max_zoom_val_for_height_cover)
+			
+			effective_max_zoom = min(max_camera_zoom_level, dynamically_calculated_max_zoom_val)
+			# Ensure this effective max zoom is not less than the min_camera_zoom_level (most zoomed-in)
+			effective_max_zoom = max(effective_max_zoom, min_camera_zoom_level)
+	
+	return effective_max_zoom
+
+func _handle_viewport_resize_constraints(): # Was _constrain_camera_offset
 	if not is_instance_valid(camera) or not is_instance_valid(map_container_for_bounds) or not is_instance_valid(map_display):
 		return
 	
@@ -617,20 +678,31 @@ func _constrain_camera_offset():
 		else:
 			# printerr("MIM: _constrain_camera_offset - _initial_map_display_size is zero.")
 			return
-	# This function is now largely handled by the camera's built-in limits
-	# which are set during initialize().
-	# If the map is smaller than the viewport at current zoom, we might want to center it.
-	var viewport_size_world = get_viewport().get_visible_rect().size / camera.zoom.x # Assuming uniform zoom
 
-	if _initial_map_display_size.x < viewport_size_world.x:
-		# Center horizontally if map is narrower than viewport
-		camera.offset.x = _initial_map_display_size.x / 2.0
-	# else: Camera limits will handle horizontal clamping
+	# On viewport resize, re-calculate and apply the zoom constraint.
+	var effective_max_zoom = _get_effective_max_zoom_out_level()
+	var zoom_changed_by_resize = false
+	var old_zoom_for_signal = camera.zoom.x
 
-	if _initial_map_display_size.y < viewport_size_world.y:
-		# Center vertically if map is shorter than viewport
-		camera.offset.y = _initial_map_display_size.y / 2.0
-	# else: Camera limits will handle vertical clamping
+	# If current camera zoom exceeds this new max due to resize, clamp it
+	if camera.zoom.x > effective_max_zoom or camera.zoom.y > effective_max_zoom:
+		# Preserve the screen center point during this forced zoom adjustment
+		var screen_center = get_viewport().get_visible_rect().size / 2.0
+		var inv_transform_before_zoom: Transform2D = camera.get_canvas_transform().affine_inverse()
+		var world_pos_before_zoom: Vector2 = inv_transform_before_zoom * screen_center
+		
+		camera.zoom = Vector2(effective_max_zoom, effective_max_zoom)
+		zoom_changed_by_resize = true
+
+		var inv_transform_after_zoom: Transform2D = camera.get_canvas_transform().affine_inverse()
+		var world_pos_after_zoom: Vector2 = inv_transform_after_zoom * screen_center
+		camera.position += world_pos_before_zoom - world_pos_after_zoom
+	
+	if zoom_changed_by_resize and not is_equal_approx(old_zoom_for_signal, camera.zoom.x):
+		emit_signal("camera_zoom_changed", camera.zoom.x)
+
+	_update_dynamic_camera_limits() # Update limits after potential zoom/position change
+	# The Camera2D's built-in limit enforcement (drag_enabled) will handle clamping.
 
 func _get_convoy_data_at_world_pos(world_pos: Vector2): # Removed -> Dictionary | null
 	"""Helper to find a convoy's data Dictionary at a given world position."""
