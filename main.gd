@@ -70,7 +70,15 @@ var _current_hover_info: Dictionary = {}  # Will be updated by MapInteractionMan
 var _selected_convoy_ids: Array[String] = []  # Will be updated by MapInteractionManager signal
 
 ## Initial state for toggling detailed map features (grid & political colors) on or off.
+@export_group("Camera Focusing")
+@export var convoy_focus_zoom_target_tiles_wide: float = 10.0
+## When a convoy menu opens, this percentage of the map view's width is used to shift the convoy leftwards (camera rightwards) from the exact center.
+@export var convoy_menu_map_view_offset_percentage: float = 1
+@export var convoy_focus_zoom_target_tiles_high: float = 7.0 # Allow different aspect ratio for focus
+
+@export_group("Map Display") # Or an existing relevant group
 @export var show_detailed_view: bool = true 
+
 
 var _dragging_panel_node: Panel = null  # Will be updated by MapInteractionManager signal or getter
 var _drag_offset: Vector2 = Vector2.ZERO  # This state will move to MapInteractionManager
@@ -1226,38 +1234,84 @@ func _on_menu_state_changed(menu_node, menu_type: String): # New handler for mod
 		set_process_input(true) # Ensure map input is active
 
 		# Center camera on the selected convoy
+		# Ensure MapInteractionManager knows about the new effective screen rect for the map *before* zoom calculations
+		if is_instance_valid(map_interaction_manager) and map_interaction_manager.has_method("set_current_map_screen_rect"):
+			map_interaction_manager.set_current_map_screen_rect(_current_map_display_rect)
+		else:
+			printerr("Main: Cannot set MIM current map screen rect in _on_menu_state_changed.")
+
+
 		var convoy_data = menu_node.get_meta("menu_data")
 		if convoy_data is Dictionary and convoy_data.has("convoy_id"):
 			var convoy_tile_x: float = convoy_data.get("x", -1.0) # Precise, possibly fractional, tile coord
 			var convoy_tile_y: float = convoy_data.get("y", -1.0)
 
 			if convoy_tile_x >= 0.0 and convoy_tile_y >= 0.0 and \
+			   is_instance_valid(map_camera) and \
 			   is_instance_valid(map_display) and is_instance_valid(map_display.texture) and \
 			   not map_tiles.is_empty() and map_tiles[0] is Array and not map_tiles[0].is_empty() and \
 			   is_instance_valid(map_container):
 
 				var map_initial_world_size = map_display.custom_minimum_size
-				var map_cols = map_tiles[0].size()
-				var map_rows = map_tiles.size()
+				var map_cols: int = map_tiles[0].size()
+				var map_rows: int = map_tiles.size()
 
 				if map_cols > 0 and map_rows > 0 and map_initial_world_size.x > 0 and map_initial_world_size.y > 0:
-					var tile_world_width = map_initial_world_size.x / float(map_cols)
-					var tile_world_height = map_initial_world_size.y / float(map_rows)
+					var tile_world_width: float = map_initial_world_size.x / float(map_cols)
+					var tile_world_height: float = map_initial_world_size.y / float(map_rows)
 
 					# Calculate the convoy's center position local to MapContainer
-					var convoy_center_local_to_map_container = Vector2(
+					var convoy_center_local_to_map_container: Vector2 = Vector2(
 						(convoy_tile_x + 0.5) * tile_world_width,
 						(convoy_tile_y + 0.5) * tile_world_height
 					)
-					# Convert to global coordinates and set camera position
-					map_camera.position = map_container.to_global(convoy_center_local_to_map_container)
-					print("Main: Centering camera on convoy %s at world pos %s" % [convoy_data.get("convoy_id", "N/A"), map_camera.position])
+					var convoy_actual_world_position: Vector2 = map_container.to_global(convoy_center_local_to_map_container)
+
+					# Calculate the target zoom first, as it's needed for the position adjustment
+					var world_width_to_display: float = convoy_focus_zoom_target_tiles_wide * tile_world_width
+					var world_height_to_display: float = convoy_focus_zoom_target_tiles_high * tile_world_height
+					var target_zoom_x: float = _current_map_display_rect.size.x / world_width_to_display
+					var target_zoom_y: float = _current_map_display_rect.size.y / world_height_to_display
+					var final_target_zoom_scalar: float = min(target_zoom_x, target_zoom_y)
+
+					# Adjust the camera's target world position so the convoy appears centered in the partial map view
+					var full_viewport_center: Vector2 = get_viewport().get_visible_rect().get_center()
+					var map_view_rect_center: Vector2 = _current_map_display_rect.get_center()
+					var screen_offset_for_map_view: Vector2 = map_view_rect_center - full_viewport_center
+					
+					# Base calculation to center convoy in the partial map view
+					var base_camera_target_world_position: Vector2 = convoy_actual_world_position
+					if final_target_zoom_scalar > 0.0001: # Avoid division by zero
+						base_camera_target_world_position = convoy_actual_world_position - (screen_offset_for_map_view * 2.0) / final_target_zoom_scalar
+					
+					# Additional shift to move the convoy left in the view (camera moves right)
+					var additional_camera_shift_world_x: float = (convoy_menu_map_view_offset_percentage * _current_map_display_rect.size.x) / final_target_zoom_scalar
+					var camera_target_world_position: Vector2 = base_camera_target_world_position + Vector2(additional_camera_shift_world_x, 0.0)
+					
+					print("Main: Focusing on convoy %s. Actual world pos: %s. Camera target world pos: %s" % [convoy_data.get("convoy_id", "N/A"), convoy_actual_world_position, camera_target_world_position])
+
+					# Calculate and set new zoom level
+					if tile_world_width > 0.001 and tile_world_height > 0.001 and \
+					   convoy_focus_zoom_target_tiles_wide > 0.001 and convoy_focus_zoom_target_tiles_high > 0.001 and \
+					   _current_map_display_rect.size.x > 0.001 and _current_map_display_rect.size.y > 0.001:
+
+						if is_instance_valid(map_interaction_manager) and map_interaction_manager.has_method("focus_camera_and_set_zoom"):
+							# Pass the adjusted camera target position
+							map_interaction_manager.focus_camera_and_set_zoom(camera_target_world_position, final_target_zoom_scalar)
+							print("Main: Requested MIM to focus camera. Camera Target world pos: %s, Target zoom scalar: %s. Actual camera.position after MIM: %s" % [camera_target_world_position, final_target_zoom_scalar, map_camera.position if is_instance_valid(map_camera) else "N/A"])
+						else:
+							printerr("Main: MapInteractionManager invalid or missing set_and_clamp_camera_zoom method.")
+					else:
+						printerr("Main: Cannot calculate convoy focus zoom due to invalid parameters (tile_world_size, target_tiles, or map_display_rect_size).")
 	else: # Other menus might still hide the map or behave as before
 		_is_map_in_partial_view = false # Assuming other menus take full focus or hide map
 		_current_map_display_rect = get_viewport().get_visible_rect()
 		# Original behavior for non-convoy-detail menus (e.g., hide map)
 		self.visible = false
 		set_process_input(false)
+		# When other menus open, ensure MapInteractionManager knows the map is (effectively) full screen or hidden.
+		if is_instance_valid(map_interaction_manager) and map_interaction_manager.has_method("set_current_map_screen_rect"):
+			map_interaction_manager.set_current_map_screen_rect(_current_map_display_rect) # This will be the full viewport rect
 
 	_apply_map_camera_and_ui_layout()
 
@@ -1267,6 +1321,10 @@ func _on_all_menus_closed(): # Renamed from _on_menus_completely_closed for clar
 	_current_map_display_rect = get_viewport().get_visible_rect()
 	self.visible = true
 	set_process_input(true)
+	# When all menus close, ensure MapInteractionManager knows the map is full screen again for its internal calculations (e.g., zoom clamping).
+	if is_instance_valid(map_interaction_manager) and map_interaction_manager.has_method("set_current_map_screen_rect"):
+		map_interaction_manager.set_current_map_screen_rect(_current_map_display_rect)
+
 	_apply_map_camera_and_ui_layout()
 
 func _apply_map_camera_and_ui_layout():

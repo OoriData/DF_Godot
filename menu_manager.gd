@@ -121,7 +121,7 @@ func _show_menu(menu_scene_resource, data_to_pass = null, add_to_stack: bool = t
 			# Default for other menus: fill the parent (MenuManager)
 			menu_node.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 
-	emit_signal("menu_opened", current_active_menu)
+	emit_signal("menu_opened", current_active_menu, menu_type)
 
 	# Connect signals from the newly instantiated menu (passing menu_type with emit)
 	# Example: if your menus emit "back_requested" or "open_specific_menu_requested(data)"

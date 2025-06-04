@@ -671,6 +671,59 @@ func _zoom_camera_at_screen_pos(zoom_adjust_factor: float, screen_zoom_center: V
 	if not is_equal_approx(old_zoom_for_signal, camera.zoom.x): # Check if zoom actually changed
 		emit_signal("camera_zoom_changed", camera.zoom.x)
 
+func set_and_clamp_camera_zoom(target_zoom_scalar: float):
+	if not is_instance_valid(camera):
+		return
+
+	var min_zoom_from_export: float = min_camera_zoom_level
+	var max_zoom_from_export: float = max_camera_zoom_level
+	var effective_min_clamp_val: float = min_zoom_from_export
+	var effective_max_clamp_val: float = max_zoom_from_export
+
+	if _initial_map_display_size.x > 0.001 and _initial_map_display_size.y > 0.001:
+		var viewport_pixel_size: Vector2 = _current_map_screen_rect.size # Uses the MIM's current understanding of the map's screen rect
+		var map_world_size: Vector2 = _initial_map_display_size
+
+		# Ensure map_world_size and viewport_pixel_size are valid before division
+		if map_world_size.x > 0.001 and map_world_size.y > 0.001 and viewport_pixel_size.x > 0.001 and viewport_pixel_size.y > 0.001 :
+			var req_zoom_x_to_fill_viewport: float = viewport_pixel_size.x / map_world_size.x
+			var req_zoom_y_to_fill_viewport: float = viewport_pixel_size.y / map_world_size.y
+			var dynamic_min_zoom_to_prevent_borders: float = max(req_zoom_x_to_fill_viewport, req_zoom_y_to_fill_viewport)
+			effective_min_clamp_val = max(min_zoom_from_export, dynamic_min_zoom_to_prevent_borders)
+			effective_max_clamp_val = max(effective_min_clamp_val, max_zoom_from_export)
+		# else: Fallback to export limits if map_world_size or viewport_pixel_size is invalid for dynamic calculation
+	# else: Fallback to export limits if _initial_map_display_size is invalid
+
+	var clamped_new_zoom_scalar: float = clamp(target_zoom_scalar, effective_min_clamp_val, effective_max_clamp_val)
+	var new_zoom_vector: Vector2 = Vector2(clamped_new_zoom_scalar, clamped_new_zoom_scalar)
+
+	if camera.zoom.is_equal_approx(new_zoom_vector):
+		return # No significant change in zoom after clamping
+
+	var old_zoom_for_signal = camera.zoom.x
+	camera.zoom = new_zoom_vector
+	
+	if not is_equal_approx(old_zoom_for_signal, camera.zoom.x):
+		emit_signal("camera_zoom_changed", camera.zoom.x)
+
+func focus_camera_and_set_zoom(target_world_position: Vector2, target_zoom_scalar: float):
+	if not is_instance_valid(camera):
+		printerr("MIM: focus_camera_and_set_zoom - Camera is invalid.")
+		return
+
+	# 1. Set and clamp zoom first.
+	# This uses _current_map_screen_rect, which main.gd must have set correctly *before* calling this method.
+	set_and_clamp_camera_zoom(target_zoom_scalar) # This updates camera.zoom
+
+	# 2. Set camera position to the desired target.
+	camera.position = target_world_position
+
+	# 3. Immediately apply position clamping based on the new zoom and current map screen rect.
+	#    REMOVED: The immediate call to _physics_process(0) here.
+	#    Now, camera.position remains at target_world_position after this method.
+	#    main.gd's _apply_map_camera_and_ui_layout will use this exact position for its offset.
+	#    MIM's regular _physics_process on the next game tick will then apply clamping if needed.
+
 func _get_convoy_data_at_world_pos(world_pos: Vector2): # Removed -> Dictionary | null
 	"""Helper to find a convoy's data Dictionary at a given world position."""
 	if all_convoy_data.is_empty() or map_tiles.is_empty() or not map_tiles[0] is Array or map_tiles[0].is_empty():
