@@ -8,9 +8,9 @@ var current_active_menu = null
 var menu_stack = [] # To keep track of the navigation path for "back" functionality
 
 ## Emitted when any menu is opened. Passes the menu node instance.
-signal menu_opened(menu_node)
+signal menu_opened(menu_node, menu_type: String)
 ## Emitted when a menu is closed (either by navigating forward or back). Passes the menu node that was closed.
-signal menu_closed(menu_node_was_active)
+signal menu_closed(menu_node_was_active, menu_type: String)
 ## Emitted when the last menu in the stack is closed via "back", meaning no menus are active.
 signal menus_completely_closed
 
@@ -38,10 +38,15 @@ func _show_menu(menu_scene_resource, data_to_pass = null, add_to_stack: bool = t
 	if current_active_menu:
 		if add_to_stack:
 			menu_stack.append({
-				"scene_path": current_active_menu.scene_file_path, # Store path to reinstantiate
-				"data": current_active_menu.get_meta("menu_data", null) # Optional: if menus store their context
+				"scene_path": current_active_menu.scene_file_path,
+				"data": current_active_menu.get_meta("menu_data", null),
+				"type": current_active_menu.get_meta("menu_type", "default")
 			})
-		emit_signal("menu_closed", current_active_menu)
+		
+		var closed_menu_type = current_active_menu.get_meta("menu_type", "default")
+		emit_signal("menu_closed", current_active_menu, closed_menu_type)
+		
+		# emit_signal("menu_closed", current_active_menu) # Old signal
 		current_active_menu.queue_free() # Remove the old menu
 		current_active_menu = null
 
@@ -56,6 +61,13 @@ func _show_menu(menu_scene_resource, data_to_pass = null, add_to_stack: bool = t
 			emit_signal("menus_completely_closed")
 		return
 
+	var menu_type = "default"
+	if menu_scene_resource == convoy_menu_scene:
+		menu_type = "convoy_detail"
+	
+	current_active_menu.set_meta("menu_type", menu_type)
+
+
 	add_child(current_active_menu)
 
 	# Pass data to the new menu if it has an initializer function
@@ -69,6 +81,16 @@ func _show_menu(menu_scene_resource, data_to_pass = null, add_to_stack: bool = t
 	if current_active_menu is Control:
 		var menu_node = current_active_menu
 		if menu_scene_resource == convoy_menu_scene:
+			# Layout for ConvoyMenu: right 2/3rds of the screen
+			menu_node.anchor_left = 1.0 / 3.0
+			menu_node.anchor_right = 1.0
+			menu_node.anchor_top = 0.0
+			menu_node.anchor_bottom = 1.0
+			menu_node.offset_left = 0
+			menu_node.offset_right = 0
+			menu_node.offset_top = 0
+			menu_node.offset_bottom = 0
+		elif false: # Example for a different menu layout if needed in future
 			# Specific layout for ConvoyMenu: stick to right-middle of the parent (MenuManager)
 			var menu_size = menu_node.custom_minimum_size # Try this first
 
@@ -93,7 +115,7 @@ func _show_menu(menu_scene_resource, data_to_pass = null, add_to_stack: bool = t
 			# aligned to the right edge and centered vertically.
 			menu_node.offset_left = -menu_size.x
 			menu_node.offset_right = 0 # Results in width = menu_size.x
-			menu_node.offset_top = -menu_size.y / 2.0
+			menu_node.offset_top = -menu_size.y / 2.0 
 			menu_node.offset_bottom = menu_size.y / 2.0 # Results in height = menu_size.y
 		else:
 			# Default for other menus: fill the parent (MenuManager)
@@ -101,7 +123,7 @@ func _show_menu(menu_scene_resource, data_to_pass = null, add_to_stack: bool = t
 
 	emit_signal("menu_opened", current_active_menu)
 
-	# Connect signals from the newly instantiated menu
+	# Connect signals from the newly instantiated menu (passing menu_type with emit)
 	# Example: if your menus emit "back_requested" or "open_specific_menu_requested(data)"
 	if current_active_menu.has_signal("back_requested"):
 		# Using CONNECT_ONE_SHOT because the menu instance will be freed when closed.
@@ -112,7 +134,7 @@ func _show_menu(menu_scene_resource, data_to_pass = null, add_to_stack: bool = t
 		else:
 			printerr("MenuManager: FAILED to connect 'back_requested' signal. Error code: ", err)
 	else:
-		print("MenuManager: New menu instance does NOT have 'back_requested' signal.")
+		print("MenuManager: New menu instance does NOT have 'back_requested' signal for menu type: ", menu_type)
 
 func go_back():
 	print("MenuManager: go_back() called. Current active menu: ", current_active_menu) # DEBUG
@@ -123,9 +145,10 @@ func go_back():
 			var previous_menu_info = menu_stack.pop_back()
 			var prev_scene_path = previous_menu_info.get("scene_path")
 			var prev_data = previous_menu_info.get("data")
+			# var prev_type = previous_menu_info.get("type", "default") # Type of menu being restored
 			if prev_scene_path:
 				var scene_resource = load(prev_scene_path)
-				if scene_resource:
+				if scene_resource:					
 					_show_menu(scene_resource, prev_data, false)
 					return # Successfully restored a menu
 		print("MenuManager: go_back() - No valid current menu and stack recovery failed or stack empty.") # DEBUG
@@ -135,7 +158,8 @@ func go_back():
 
 	# Current menu is valid, proceed to close it and go back.
 	if menu_stack.is_empty(): # No previous menu in stack, closing the current (last) one
-		emit_signal("menu_closed", current_active_menu)
+		var closed_menu_type = current_active_menu.get_meta("menu_type", "default")
+		emit_signal("menu_closed", current_active_menu, closed_menu_type)
 		print("MenuManager: go_back() - Closing last menu. Emitting 'menus_completely_closed'.") # DEBUG
 		current_active_menu.queue_free()
 		current_active_menu = null
@@ -144,13 +168,15 @@ func go_back():
 
 	# There's a previous menu in the stack. Close current and open previous.
 	print("MenuManager: go_back() - Closing current menu and opening previous from stack.") # DEBUG
-	emit_signal("menu_closed", current_active_menu)
+	var closed_menu_type = current_active_menu.get_meta("menu_type", "default")
+	emit_signal("menu_closed", current_active_menu, closed_menu_type)
 	current_active_menu.queue_free()
 	current_active_menu = null
 	
 	var previous_menu_info = menu_stack.pop_back()
 	var prev_scene_path = previous_menu_info.get("scene_path")
 	var prev_data = previous_menu_info.get("data")
+	# var prev_type = previous_menu_info.get("type", "default") # Type of menu being restored
 
 	if prev_scene_path:
 		var scene_resource = load(prev_scene_path)

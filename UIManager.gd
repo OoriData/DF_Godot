@@ -128,6 +128,7 @@ var _convoy_data_by_id_cache: Dictionary # New cache for quick lookup
 var _selected_convoy_ids_cache: Array # Stored as strings
 var _current_map_zoom_cache: float = 1.0 # Cache for current map zoom level
 
+var _current_map_screen_rect_for_clamping: Rect2
 # Cached drawing parameters for connector lines
 var _cached_actual_scale: float = 1.0
 var _cached_offset_x: float = 0.0
@@ -161,6 +162,7 @@ func _ready():
 	if is_instance_valid(convoy_label_container):
 		convoy_label_container.visible = true
 		convoy_label_container.z_index = LABEL_CONTAINER_Z_INDEX
+	_current_map_screen_rect_for_clamping = get_viewport().get_visible_rect() # Initialize
 		
 
 	# Initialize label settings
@@ -203,8 +205,9 @@ func update_ui_elements(
 		convoy_label_user_positions_from_main: Dictionary, 
 		dragging_panel_node_from_main: Panel, 
 		dragged_convoy_id_str_from_main: String,
+		p_current_map_screen_rect_for_clamping: Rect2, # Moved before optional params
 		is_light_ui_update: bool = false,
-		current_map_zoom: float = 1.0 # New 12th argument
+		current_map_zoom: float = 1.0 # Now 13th argument
 	):
 	# Store references to data needed by drawing functions
 	_map_display_node = map_display_node_ref
@@ -214,6 +217,7 @@ func update_ui_elements(
 	_convoy_id_to_color_map_cache = convoy_id_to_color_map
 	_selected_convoy_ids_cache = selected_convoy_ids
 
+	_current_map_screen_rect_for_clamping = p_current_map_screen_rect_for_clamping
 	# Rebuild the convoy_data_by_id_cache for faster lookups
 	_convoy_data_by_id_cache.clear()
 	if _all_convoy_data_cache is Array:
@@ -279,7 +283,8 @@ func _perform_light_ui_update():
 		printerr("UIManager (_perform_light_ui_update): _map_display_node is invalid.")
 		return
 
-	var viewport_rect_global = get_viewport_rect() # Get once for the entire light update
+	# Use the map's effective screen rect for clamping calculations
+	var viewport_rect_global = _current_map_screen_rect_for_clamping
 
 	if is_instance_valid(convoy_label_container) and convoy_label_container.get_child_count() > 0:
 		var container_global_transform_convoy = convoy_label_container.get_global_transform_with_canvas()
@@ -323,7 +328,8 @@ func _clamp_panel_position(panel: Panel): # Original function, now less used but
 		return
 
 	var container_node = panel.get_parent() # e.g., ConvoyLabelContainer
-	var viewport_rect_global = get_viewport_rect()
+	# Use the map's effective screen rect for clamping calculations
+	var viewport_rect_global = _current_map_screen_rect_for_clamping
 
 	var container_global_transform = container_node.get_global_transform_with_canvas()
 	var clamp_rect_local_to_container = container_global_transform.affine_inverse() * viewport_rect_global

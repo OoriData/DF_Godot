@@ -89,6 +89,10 @@ var _active_convoy_nodes: Dictionary = {} # { "convoy_id_str": ConvoyNode }
 # var min_zoom, max_zoom, zoom_factor_increment are now in MapInteractionManager
 
 # Z-index constants for children of MapContainer
+
+var _current_map_display_rect: Rect2 # The screen rect the map should effectively occupy
+var _is_map_in_partial_view: bool = false
+
 const MAP_DISPLAY_Z_INDEX = 0
 const CONVOY_NODE_Z_INDEX = 1
 # UIManager's label containers will use a higher Z_INDEX (e.g., 2), set within UIManager.gd
@@ -100,20 +104,23 @@ func _ready():
 	# Enable input processing for this Node2D to receive _input events,
 	# including those propagated from its Control children (like MapDisplay).
 	set_process_input(true)
+	_current_map_display_rect = get_viewport().get_visible_rect() # Initial full screen
 	self.visible = true # Ensure this node (MapView) is visible by default
 
 	# Get reference to MenuManager (adjust path if GameRoot node name is different)
 	# Using an absolute path from the scene root for robustness.
 	# Assumes your main scene root is "GameRoot" and MenuManager is at "GameRoot/MenuUILayer/MenuManager"
 	var menu_manager_path = "/root/GameRoot/MenuUILayer/MenuManager"
-	if get_tree().root.has_node(menu_manager_path.trim_prefix("/root/")): # has_node expects relative path from root
+	var root_node = get_tree().root
+	if root_node.has_node(menu_manager_path.trim_prefix("/root/")): # has_node expects relative path from root
 		menu_manager_ref = get_tree().root.get_node(menu_manager_path.trim_prefix("/root/"))
 		if menu_manager_ref.has_signal("menu_opened"):
-			menu_manager_ref.menu_opened.connect(_on_menu_opened)
+			# Connect to the new signal signature
+			menu_manager_ref.menu_opened.connect(_on_menu_state_changed)
 		else:
 			printerr("Main (MapView): MenuManager found but does not have 'menu_opened' signal.")
 		if menu_manager_ref.has_signal("menus_completely_closed"):
-			menu_manager_ref.menus_completely_closed.connect(_on_menus_completely_closed)
+			menu_manager_ref.menus_completely_closed.connect(_on_all_menus_closed)
 		print("Main (MapView): Successfully got reference to MenuManager.")
 	else:
 		printerr("Main (MapView): Could not find MenuManager. Path: GameRoot/MenuUILayer/MenuManager from this node's grandparent.")
@@ -446,11 +453,30 @@ func _setup_static_map_and_camera():
 
 func _on_viewport_size_changed():
 	# print('Main: _on_viewport_size_changed triggered.') # DEBUG
-	# map_display.size is fixed. map_container.position might need adjustment.
+
+	# Recalculate _current_map_display_rect based on new viewport size and _is_map_in_partial_view
+	var full_viewport_rect = get_viewport().get_visible_rect()
+	if _is_map_in_partial_view:
+		_current_map_display_rect = Rect2(
+			full_viewport_rect.position.x,
+			full_viewport_rect.position.y,
+			full_viewport_rect.size.x / 3.0,
+			full_viewport_rect.size.y
+		)
+	else:
+		_current_map_display_rect = full_viewport_rect
+
+	# Apply new camera offset based on the potentially new _current_map_display_rect
+	if is_instance_valid(map_camera):
+		var full_viewport_center = get_viewport().get_visible_rect().size / 2.0
+		var map_rect_center = _current_map_display_rect.position + _current_map_display_rect.size / 2.0
+		map_camera.offset = map_rect_center - full_viewport_center
+
 	if is_instance_valid(map_interaction_manager) and map_interaction_manager.has_method("_handle_viewport_resize_constraints"):
 		map_interaction_manager._handle_viewport_resize_constraints() # Tell MIM to re-apply camera and zoom constraints
+	if is_instance_valid(map_interaction_manager) and map_interaction_manager.has_method("set_current_map_screen_rect"):
+		map_interaction_manager.set_current_map_screen_rect(_current_map_display_rect)
 
-	# Update positions of UI elements that depend on viewport/map_display size
 	if not Engine.is_editor_hint() and is_instance_valid(_refresh_notification_label): # Only update in game
 		_update_refresh_notification_position()
 	if is_instance_valid(detailed_view_toggle):
@@ -458,12 +484,6 @@ func _on_viewport_size_changed():
 	if is_instance_valid(convoy_list_panel_node):
 		_update_convoy_list_panel_position()
 
-	# Map texture doesn't need re-render, but UI elements might need updates
-	# due to clamping changes from pan/zoom constraints.
-	# UIManager's update_ui_elements will handle this.
-	# false = don't re-render map texture, false = not a light UI update (do full UI update)
-	# This ensures UI elements like labels are correctly positioned relative to the (potentially)
-	# newly constrained camera view.
 	call_deferred("_update_map_display", false, false)
 
 func _update_map_display(force_rerender_map_texture: bool = true, is_light_ui_update: bool = false):
@@ -634,9 +654,10 @@ func _update_map_display(force_rerender_map_texture: bool = true, is_light_ui_up
 			user_positions_for_ui,      # Pass the up-to-date user positions
 			dragging_panel_for_ui,      # Pass the currently dragged panel (or null)
 			dragged_id_for_ui,          # Pass the ID of the currently dragged panel (or empty)
+			_current_map_display_rect, # Pass the current map display rect for UIManager clamping
 			is_light_ui_update,         # Pass the light update flag
-			current_camera_zoom_for_ui               # Pass the current zoom level
-		)
+			current_camera_zoom_for_ui  # Pass the current zoom level
+		) 
 		# print("Main: _update_map_display - ui_manager.update_ui_elements() CALL COMPLETED.") # DEBUG
 	else:
 		printerr("Main: _update_map_display - ui_manager IS NOT VALID. CANNOT CALL update_ui_elements.") # DEBUG
@@ -959,12 +980,18 @@ func _update_refresh_notification_position():
 	if not is_instance_valid(_refresh_notification_label):
 		return
 
-	var viewport_size = get_viewport_rect().size
+	# Use _current_map_display_rect for positioning within the map's effective area
 	# Ensure the label has its size calculated based on current text and font settings
 	var label_size = _refresh_notification_label.get_minimum_size()
-
 	var padding = label_map_edge_padding # Use the class member
-	_refresh_notification_label.position = Vector2(viewport_size.x - label_size.x - padding, viewport_size.y - label_size.y - padding)
+	
+	# Position relative to the bottom-right of _current_map_display_rect
+	# The position set is local to _refresh_notification_label's parent.
+	# Assuming parent (MapView node) is at global (0,0) or _current_map_display_rect.position is already accounting for it.
+	_refresh_notification_label.position = Vector2(
+		_current_map_display_rect.position.x + _current_map_display_rect.size.x - label_size.x - padding,
+		_current_map_display_rect.position.y + _current_map_display_rect.size.y - label_size.y - padding
+	)
 
 # --- UI Toggle Handler ---
 func _on_detailed_view_toggled(button_pressed: bool) -> void:
@@ -977,17 +1004,19 @@ func _update_detailed_view_toggle_position() -> void:
 	if not is_instance_valid(detailed_view_toggle):
 		return
 
-	var viewport_size = get_viewport_rect().size
+	# Use _current_map_display_rect for positioning
 	var toggle_size: Vector2 = detailed_view_toggle.get_minimum_size() # Get its actual size based on text and font
 	var padding = label_map_edge_padding # Use the class member
 	
 	# --- DEBUG: Check size of DetailedViewToggleCheckbox ---
 	# If toggle_size.x or toggle_size.y is 0, it might cause an affine_invert error.
-	print("Main: _update_detailed_view_toggle_position - DetailedViewToggleCheckbox minimum_size: %s" % toggle_size)
+	# print("Main: _update_detailed_view_toggle_position - DetailedViewToggleCheckbox minimum_size: %s" % toggle_size) # DEBUG
 
+	# Position relative to the bottom-right of _current_map_display_rect
+	# Position is local to detailed_view_toggle's parent (UIManagerNode)
 	detailed_view_toggle.position = Vector2(
-		viewport_size.x - toggle_size.x - padding,
-		viewport_size.y - toggle_size.y - padding
+		_current_map_display_rect.position.x + _current_map_display_rect.size.x - toggle_size.x - padding,
+		_current_map_display_rect.position.y + _current_map_display_rect.size.y - toggle_size.y - padding
 	)
 
 func _update_convoy_list_panel_position() -> void:
@@ -995,7 +1024,8 @@ func _update_convoy_list_panel_position() -> void:
 		return
 
 	var viewport_size = get_viewport_rect().size
-	# The panel should have a fixed size, defined by its custom_minimum_size.
+	# ConvoyListPanel is on MenuUILayer (CanvasLayer), so its positioning
+	# should remain relative to the full viewport, not _current_map_display_rect.
 	var fixed_panel_size = convoy_list_panel_node.custom_minimum_size
 
 	# If custom_minimum_size was not set or is zero (e.g., if _ready didn't set it yet,
@@ -1053,10 +1083,11 @@ func _on_mim_hover_changed(new_hover_info: Dictionary):
 			_selected_convoy_ids, # Use the current selection state
 			user_positions_for_ui,
 			dragging_panel_for_ui,
-			dragged_id_for_ui, # Pass the ID of the currently dragged panel (or empty)
+			dragged_id_for_ui,                 # Pass the ID of the currently dragged panel (or empty)
+			_current_map_display_rect,         # Pass current map display rect for UIManager clamping
 			false,                # is_light_ui_update: false to trigger full label logic for hover
-			current_camera_zoom_for_ui         # Pass the current zoom level (12th argument)
-		)
+			current_camera_zoom_for_ui         # Pass the current zoom level
+		) 
 	else:
 		printerr("Main (_on_mim_hover_changed): ui_manager is not valid. Cannot update UI.")
 func _on_mim_selection_changed(new_selected_ids: Array):
@@ -1180,25 +1211,49 @@ func _on_mim_panel_drag_updated(convoy_id_str: String, new_panel_local_position:
 
 # --- Menu Interaction Functions ---
 
-func _on_menu_opened(_menu_node_instance):
-	print("Main (MapView): A menu has been opened. Pausing map interactions.")
-	pause_map_interactions()
+func _on_menu_state_changed(menu_node, menu_type: String): # New handler for modified signal
+	print("Main (MapView): Menu state changed. Type: '%s', Node: %s" % [menu_type, menu_node.name if is_instance_valid(menu_node) else "N/A"])
+	if menu_type == "convoy_detail":
+		_is_map_in_partial_view = true
+		var full_viewport_rect = get_viewport().get_visible_rect()
+		_current_map_display_rect = Rect2(
+			full_viewport_rect.position.x,
+			full_viewport_rect.position.y,
+			full_viewport_rect.size.x / 3.0,
+			full_viewport_rect.size.y
+		)
+		self.visible = true # Ensure map is visible
+		set_process_input(true) # Ensure map input is active
+	else: # Other menus might still hide the map or behave as before
+		_is_map_in_partial_view = false # Assuming other menus take full focus or hide map
+		_current_map_display_rect = get_viewport().get_visible_rect()
+		# Original behavior for non-convoy-detail menus (e.g., hide map)
+		self.visible = false
+		set_process_input(false)
 
-func _on_menus_completely_closed():
+	_apply_map_camera_and_ui_layout()
+
+func _on_all_menus_closed(): # Renamed from _on_menus_completely_closed for clarity
 	print("Main (MapView): All menus are closed. Resuming map interactions.")
-	resume_map_interactions()
-
-func pause_map_interactions():
-	self.visible = false # Hide the entire MapView (MapRender node and all its children)
-	set_process_input(false) # Stop _input and _process for MapView
-	# You might also want to explicitly stop timers in GameTimersNode if they affect performance
-	# or trigger unwanted updates while menus are open.
-
-func resume_map_interactions():
+	_is_map_in_partial_view = false
+	_current_map_display_rect = get_viewport().get_visible_rect()
 	self.visible = true
 	set_process_input(true)
+	_apply_map_camera_and_ui_layout()
+
+func _apply_map_camera_and_ui_layout():
+	if not is_instance_valid(map_camera):
+		printerr("Main: MapCamera invalid in _apply_map_camera_and_ui_layout")
+		return
+
+	var full_viewport_center = get_viewport().get_visible_rect().size / 2.0
+	var map_rect_center = _current_map_display_rect.position + _current_map_display_rect.size / 2.0
+	map_camera.offset = map_rect_center - full_viewport_center
+
+	if is_instance_valid(map_interaction_manager) and map_interaction_manager.has_method("set_current_map_screen_rect"):
+		map_interaction_manager.set_current_map_screen_rect(_current_map_display_rect)
+
 	# It's good to refresh the display and UI element positions when resuming
-	_update_map_display(false, false) # false=don't rerender texture, false=not a light update (do full UI update)
 	_on_viewport_size_changed() # Recalculate positions of viewport-dependent UI
 
 # Example: Call this from MapInteractionManager when a convoy is clicked for its menu

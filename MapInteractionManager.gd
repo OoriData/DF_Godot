@@ -81,6 +81,8 @@ var _dragging_panel_node: Panel = null # The actual Panel node being dragged
 var _drag_offset: Vector2 = Vector2.ZERO # Offset from panel origin to mouse click during drag
 var _dragged_convoy_id_actual_str: String = "" # The ID of the convoy whose panel is being dragged
 var _current_drag_clamp_rect: Rect2 # Global screen coordinates for clamping the dragged panel
+var _current_map_screen_rect: Rect2 # The actual screen rect the map is displayed in
+
 
 
 func _ready():
@@ -90,6 +92,10 @@ func _ready():
 	# For now, we'll assume main.gd calls handle_input(event).
 	set_process_input(true) # Changed from _unhandled_input
 	set_process(true) # Enable _process for the hover timer
+	if is_instance_valid(get_viewport()):
+		_current_map_screen_rect = get_viewport().get_visible_rect() # Initialize
+	else:
+		_current_map_screen_rect = Rect2(0,0,1,1) # Fallback, should be updated by main.gd
 
 
 func initialize(
@@ -138,6 +144,11 @@ func initialize(
 	else:
 		printerr("MapInteractionManager: Camera node is invalid in initialize.")
 
+func set_current_map_screen_rect(rect: Rect2):
+	_current_map_screen_rect = rect
+	# print("MIM: Map screen rect updated to: ", _current_map_screen_rect) # DEBUG
+	# Trigger a camera constraint update if necessary, e.g., by calling _physics_process or a dedicated method
+	_physics_process(0) # Call with dummy delta to re-evaluate constraints immediately
 
 func update_data_references(p_all_convoy_data: Array, p_all_settlement_data: Array, p_map_tiles: Array):
 	"""Called by main.gd when core data (convoys, settlements, map_tiles) is updated."""
@@ -157,7 +168,7 @@ func _physics_process(delta: float):
 	# Assuming map_container_for_bounds.position is the top-left of the map
 	# and _initial_map_display_size is the map's size in world units.
 	var map_rect_world = Rect2(map_container_for_bounds.position, _initial_map_display_size)
-	var viewport_size_pixels = get_viewport().get_visible_rect().size
+	var viewport_size_pixels = _current_map_screen_rect.size # Use the effective map screen size
 
 	if camera.zoom.x <= 0 or camera.zoom.y <= 0: # Avoid division by zero
 		return
@@ -528,8 +539,8 @@ func _handle_lmb_interactions(event: InputEventMouseButton): # Was _handle_mouse
 									_dragged_convoy_id_actual_str = id_from_meta
 									var panel_current_global_pos_for_offset = panel_rect_global.position
 									_drag_offset = panel_current_global_pos_for_offset - event.global_position
-
-									var viewport_rect = get_viewport().get_visible_rect()
+									
+									var viewport_rect = _current_map_screen_rect # Use map's effective screen rect for clamping
 									_current_drag_clamp_rect = Rect2(
 										viewport_rect.position.x + label_map_edge_padding,
 										viewport_rect.position.y + label_map_edge_padding,
@@ -617,7 +628,7 @@ func _zoom_camera_at_screen_pos(zoom_adjust_factor: float, screen_zoom_center: V
 	var effective_max_clamp_val: float = max_zoom_from_export
 
 	if _initial_map_display_size.x > 0.001 and _initial_map_display_size.y > 0.001:
-		var viewport_pixel_size: Vector2 = get_viewport().get_visible_rect().size
+		var viewport_pixel_size: Vector2 = _current_map_screen_rect.size # Use effective map screen size
 		var map_world_size: Vector2 = _initial_map_display_size
 
 		# Calculate the zoom level required for the map to fill the viewport width/height.
