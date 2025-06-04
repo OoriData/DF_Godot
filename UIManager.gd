@@ -626,51 +626,16 @@ func _update_convoy_panel_content(panel: Panel, convoy_data: Dictionary):
 	var progress: float = journey_data.get('progress', 0.0)
 
 	var eta_raw_string: String = journey_data.get('eta', 'N/A')
-	var departure_raw_string: String = journey_data.get('departure_time', 'N/A')
-	var formatted_eta: String = _format_eta_string(eta_raw_string, departure_raw_string)
+	var departure_raw_string_for_eta_format: String = journey_data.get('departure_time', 'N/A') # Renamed to avoid conflict
+	var formatted_eta: String = _format_eta_string(eta_raw_string, departure_raw_string_for_eta_format)
 
 	var progress_percentage_str: String = 'N/A'
 	var length: float = journey_data.get('length', 0.0)
 	if length > 0.001:
 		var percentage: float = (progress / length) * 100.0
 		progress_percentage_str = '%.1f%%' % percentage
-
-	var label_text: String
-	if _selected_convoy_ids_cache.has(current_convoy_id_str):
-		label_text = '%s\n' % convoy_name
-		label_text += 'Progress 🏁: %s | ETA: %s\n' % [progress_percentage_str, formatted_eta]
-		label_text += 'Convoy stats: %s %.1f | %s %.1f | %s %.1f\n' % [
-			CONVOY_STAT_EMOJIS.get('efficiency', ''), efficiency,
-			CONVOY_STAT_EMOJIS.get('top_speed', ''), top_speed,
-			CONVOY_STAT_EMOJIS.get('offroad_capability', ''), offroad_capability
-		]
-		label_text += 'Fuel ⛽️: %.1fL / %.0fL | Water 💧: %.1fL / %.0fL | Food 🥪: %.1f / %.0f\n' % [
-			convoy_data.get('fuel', 0.0), convoy_data.get('max_fuel', 0.0),
-			convoy_data.get('water', 0.0), convoy_data.get('max_water', 0.0),
-			convoy_data.get('food', 0.0), convoy_data.get('max_food', 0.0)
-		]
-		label_text += 'Cargo Volume: %.0fL / %.0fL | Cargo Weight: %.0fkg / %.0fkg\n' % [
-			convoy_data.get('total_free_space', 0.0), convoy_data.get('total_cargo_capacity', 0.0),
-			convoy_data.get('total_remaining_capacity', 0.0), convoy_data.get('total_weight_capacity', 0.0),
-		]
-		label_text += 'Vehicles:\n'
-		var vehicles: Array = convoy_data.get('vehicle_details_list', [])
-		if vehicles.is_empty():
-			label_text += '  None\n'
-		else:
-			for v_detail in vehicles:
-				label_text += '%s | 🌿: %.1f | 🚀: %.1f | 🥾: %.1f\n' % [
-					v_detail.get('make_model', 'N/A'),
-					v_detail.get('efficiency', 0.0), v_detail.get('top_speed', 0.0), v_detail.get('offroad_capability', 0.0)
-				]
-				var v_cargo_items: Array = v_detail.get('cargo', [])
-				if not v_cargo_items.is_empty():
-					for cargo_item in v_cargo_items:
-						label_text += '  - x%s %s\n' % [
-							cargo_item.get('quantity', 0), cargo_item.get('name', 'N/A')
-						]
-	else:
-		label_text = '%s \n🏁 %s | ETA: %s\n%s %.1f | %s %.1f | %s %.1f' % [
+	
+	var label_text: String = '%s \n🏁 %s | ETA: %s\n%s %.1f | %s %.1f | %s %.1f' % [
 			convoy_name, progress_percentage_str, formatted_eta,
 			CONVOY_STAT_EMOJIS.get('efficiency', ''), efficiency,
 			CONVOY_STAT_EMOJIS.get('top_speed', ''), top_speed,
