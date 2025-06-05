@@ -12,11 +12,14 @@ config_version=5
 
 config/name="Desolate Frontiers"
 config/version="0.1.0.0"
-run/main_scene="uid://yme8tiuqxb2b"
+run/main_scene="res://Scenes/game_root.tscn"
 config/features=PackedStringArray("4.4", "GL Compatibility")
 run/low_processor_mode=true
-boot_splash/image="uid://cqbe7cgys44i"
-config/icon="uid://cqbe7cgys44i"
+boot_splash/image="res://Assets/df-logo-diamond.png"
+
+[autoload]
+
+GameDataManager="*res://Scripts/GameDataManager.gd"
 
 [display]
 

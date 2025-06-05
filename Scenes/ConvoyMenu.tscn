@@ -1,6 +1,6 @@
 [gd_scene load_steps=2 format=3 uid="uid://baapt2nhy58e7"]
 
-[ext_resource type="Script" uid="uid://df1mt4ur31y62" path="res://Menus/convoy_menu.gd" id="1_f5pu3"]
+[ext_resource type="Script" uid="uid://cyte2x4bpcu4i" path="res://Scripts/convoy_menu.gd" id="1_f5pu3"]
 
 [node name="ConvoyMenu" type="Control"]
 layout_mode = 3

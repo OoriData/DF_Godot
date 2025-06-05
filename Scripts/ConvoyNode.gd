@@ -193,11 +193,11 @@ func _draw_filled_triangle_on_image(image: Image, v0: Vector2, v1: Vector2, v2: 
 	max_y = min(image.get_height() - 1, max_y)
 
 	# Lock the image for potentially faster pixel access if drawing many pixels
-	# image.lock() # Not available in Godot 3.x
+	# image.lock() # Consider using for many pixel operations in Godot 4
 	for y_coord in range(min_y, max_y + 1):
 		for x_coord in range(min_x, max_x + 1):
 			var current_pixel := Vector2(float(x_coord), float(y_coord))
 			# Check center of the pixel for more accuracy with Geometry2D
 			if Geometry2D.is_point_in_polygon(current_pixel + Vector2(0.5, 0.5), polygon):
 				image.set_pixel(x_coord, y_coord, color)
-	# image.unlock() # Not available in Godot 3.x
+	# image.unlock() # Pair with lock()

@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://cqbe7cgys44i"
-path="res://.godot/imported/df-logo-diamond.png-f472e6c246e318d5c17d298baacb0e4d.ctex"
+uid="uid://b53l21whn3h1r"
+path="res://.godot/imported/icon.svg-8193eb3d66a1b5143b8bb4c28c1dc139.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://df-logo-diamond.png"
-dest_files=["res://.godot/imported/df-logo-diamond.png-f472e6c246e318d5c17d298baacb0e4d.ctex"]
+source_file="res://Assets/icon.svg"
+dest_files=["res://.godot/imported/icon.svg-8193eb3d66a1b5143b8bb4c28c1dc139.ctex"]
 
 [params]
 
@@ -32,3 +32,6 @@ process/hdr_as_srgb=false
 process/hdr_clamp_exposure=false
 process/size_limit=0
 detect_3d/compress_to=1
+svg/scale=1.0
+editor/scale_with_editor_scale=false
+editor/convert_colors_with_editor_theme=false
