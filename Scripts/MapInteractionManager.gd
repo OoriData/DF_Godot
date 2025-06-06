@@ -176,7 +176,7 @@ func _physics_process(delta: float):
 
 	# Assuming map_container_for_bounds.position is the top-left of the map
 	# and _initial_map_display_size is the map's size in world units.
-	var map_rect_world = Rect2(map_container_for_bounds.position, _initial_map_display_size)
+	var map_rect_world = Rect2(map_container_for_bounds.global_position, _initial_map_display_size)
 	var viewport_size_pixels = _current_map_screen_rect.size # Use the effective map screen size
 
 	if camera.zoom.x <= 0 or camera.zoom.y <= 0: # Avoid division by zero
