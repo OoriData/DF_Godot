@@ -693,80 +693,9 @@ func _on_gdm_convoy_data_updated(p_augmented_convoy_data: Array) -> void:
 		printerr("Main (_on_gdm_convoy_data_updated): GameDataManager not found or method missing for color map.")
 		_convoy_id_to_color_map.clear() # Should not happen if GDM is set up
 
-	# --- The _pixel_offset_for_icon calculation still needs to happen here (or in ConvoyVisualsManager) ---
-	# This is because it depends on map_display, map_tiles, and map_renderer_node.
-	# --- Prepare common values for offset calculation (needed for icon offsets) ---
-	var actual_tile_width_f: float = 0.0
-	var actual_tile_height_f: float = 0.0
-	var scaled_journey_line_offset_step_pixels_for_icons: float = 0.0 # This is base_offset_magnitude
-
-	if not map_tiles.is_empty() and map_tiles[0] is Array and not map_tiles[0].is_empty() and \
-	   is_instance_valid(map_display) and map_display.custom_minimum_size.x > 0 and \
-	   is_instance_valid(map_renderer_node):
-		
-		var map_cols: int = map_tiles[0].size()
-		var map_rows: int = map_tiles.size()
-		var full_map_texture_size: Vector2 = map_display.custom_minimum_size
-
-		actual_tile_width_f = full_map_texture_size.x / float(map_cols)
-		actual_tile_height_f = full_map_texture_size.y / float(map_rows)
-		
-		var reference_float_tile_size_for_offsets: float = min(actual_tile_width_f, actual_tile_height_f)
-		var base_tile_size_prop: float = map_renderer_node.base_tile_size_for_proportions
-		var base_linear_visual_scale: float = 1.0
-		if base_tile_size_prop > 0.001:
-			base_linear_visual_scale = reference_float_tile_size_for_offsets / base_tile_size_prop
-		
-		scaled_journey_line_offset_step_pixels_for_icons = map_renderer_node.journey_line_offset_step_pixels * base_linear_visual_scale
-	else:
-		printerr("Main: Cannot calculate common values for icon offset due to missing map_tiles, map_display size, or map_renderer_node.")
-
-	# --- Build shared_segments_data for icon offsetting ---
-	var shared_segments_data_for_icons: Dictionary = {}
-	if actual_tile_width_f > 0: # Only proceed if common values were calculated
-		for convoy_idx_for_shared_data in range(_all_convoy_data.size()):
-			var convoy_item_for_shared = _all_convoy_data[convoy_idx_for_shared_data]
-			if convoy_item_for_shared is Dictionary and convoy_item_for_shared.has("journey"):
-				var journey_data_for_shared: Dictionary = convoy_item_for_shared.get("journey")
-				if journey_data_for_shared is Dictionary:
-					var route_x_s: Array = journey_data_for_shared.get("route_x", [])
-					var route_y_s: Array = journey_data_for_shared.get("route_y", [])
-					if route_x_s.size() >= 2 and route_y_s.size() == route_x_s.size():
-						for k_segment in range(route_x_s.size() - 1):
-							var p1_map = Vector2(float(route_x_s[k_segment]), float(route_y_s[k_segment]))
-							var p2_map = Vector2(float(route_x_s[k_segment + 1]), float(route_y_s[k_segment + 1]))
-							# Only need the key string here
-							var segment_key = map_renderer_node.get_normalized_segment_key_with_info(p1_map, p2_map).key
-							if not shared_segments_data_for_icons.has(segment_key):
-								shared_segments_data_for_icons[segment_key] = []
-							shared_segments_data_for_icons[segment_key].append(convoy_idx_for_shared_data)
-
-	# --- Augment convoy data further with _pixel_offset_for_icon ---
-	var processed_convoy_data_temp: Array = []
-	for convoy_idx in range(_all_convoy_data.size()): # Iterate through the already augmented data from GDM
-		var convoy_item_augmented = _all_convoy_data[convoy_idx].duplicate(true) # Work on a copy for this final augmentation step
-		if convoy_item_augmented is Dictionary:
-
-			# Calculate and store pixel offset for the icon
-			var icon_offset_v = Vector2.ZERO
-			if actual_tile_width_f > 0 and convoy_item_augmented.has("journey"): # Check if common values are valid
-				var current_seg_idx = convoy_item_augmented.get("_current_segment_start_idx", -1)
-				var journey_d = convoy_item_augmented.get("journey")
-				if journey_d is Dictionary and current_seg_idx != -1 and journey_d.get("route_x", []).size() > current_seg_idx + 1:
-					var r_x = journey_d.get("route_x")
-					var r_y = journey_d.get("route_y")
-					var p1_m = Vector2(float(r_x[current_seg_idx]), float(r_y[current_seg_idx]))
-					var p2_m = Vector2(float(r_x[current_seg_idx + 1]), float(r_y[current_seg_idx + 1]))
-					var p1_px = Vector2i(round((p1_m.x + 0.5) * actual_tile_width_f), round((p1_m.y + 0.5) * actual_tile_height_f))
-					var p2_px = Vector2i(round((p2_m.x + 0.5) * actual_tile_width_f), round((p2_m.y + 0.5) * actual_tile_height_f))
-					icon_offset_v = map_renderer_node.get_journey_segment_offset_vector(p1_m, p2_m, p1_px, p2_px, convoy_idx, shared_segments_data_for_icons, scaled_journey_line_offset_step_pixels_for_icons)
-			convoy_item_augmented["_pixel_offset_for_icon"] = icon_offset_v
-			
-			processed_convoy_data_temp.append(convoy_item_augmented)
-		# else: # Should not happen if GDM provided valid dictionaries
-			# processed_convoy_data_temp.append(convoy_item_augmented) # Add it anyway
-	_all_convoy_data = processed_convoy_data_temp # Replace with augmented data
-
+	# The _pixel_offset_for_icon calculation and shared_segments_data_for_icons
+	# are now handled by ConvoyVisualsManager.augment_convoy_data_with_offsets
+	
 	if is_instance_valid(map_interaction_manager) and map_interaction_manager.has_method("update_data_references"):
 		map_interaction_manager.update_data_references(_all_convoy_data, _all_settlement_data, map_tiles)
 	else:
@@ -782,7 +711,8 @@ func _on_gdm_convoy_data_updated(p_augmented_convoy_data: Array) -> void:
 
 	# --- Augment convoy data with icon offsets using ConvoyVisualsManager ---
 	if is_instance_valid(convoy_visuals_manager) and convoy_visuals_manager.has_method("augment_convoy_data_with_offsets"):
-		_all_convoy_data = convoy_visuals_manager.augment_convoy_data_with_offsets(_all_convoy_data, map_tiles, map_display)
+		# Pass map_tiles and map_display, as ConvoyVisualsManager will now need them for the full augmentation.
+		_all_convoy_data = convoy_visuals_manager.augment_convoy_data_with_offsets(_all_convoy_data, map_tiles, map_display, map_renderer_node) # Assuming map_renderer_node is also needed by CVM
 	else:
 		printerr("Main: ConvoyVisualsManager not available or missing 'augment_convoy_data_with_offsets' method. Icon offsets will not be calculated.")
 

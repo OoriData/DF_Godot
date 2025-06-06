@@ -7,7 +7,7 @@
 [ext_resource type="Script" uid="uid://bhrh158fxnj1g" path="res://Scripts/UIManager.gd" id="3_xagsy"]
 [ext_resource type="Script" uid="uid://btt1pkuxc2tbe" path="res://Scripts/MapInteractionManager.gd" id="4_b4rp0"]
 [ext_resource type="Script" uid="uid://17krngr1jkib" path="res://Scripts/GameTimers.gd" id="5_b5irg"]
-[ext_resource type="Script" path="res://Scripts/ConvoyVisualsManager.gd" id="8_hvyeg"]
+[ext_resource type="Script" uid="uid://bn8ay5uej4yb1" path="res://Scripts/ConvoyVisualsManager.gd" id="8_hvyeg"]
 
 [node name="MapRender" type="Node2D"]
 script = ExtResource("1_qf4ax")

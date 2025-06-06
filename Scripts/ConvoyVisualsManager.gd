@@ -25,22 +25,25 @@ func initialize(p_map_container: Node2D, p_map_renderer_node: Node):
 func augment_convoy_data_with_offsets(
 		convoy_data_array: Array, # Array of convoy data dictionaries
 		map_tiles: Array,         # For calculating tile dimensions
-		map_display_node: TextureRect # For full map texture size
+		map_display_node: TextureRect, # For full map texture size
+		p_map_renderer_node: Node    # The MapRendererLogic node instance
 	) -> Array:
 	"""
 	Calculates and adds '_pixel_offset_for_icon' to each convoy data dictionary.
 	This logic is moved from main.gd's _on_gdm_convoy_data_updated.
 	"""
-	if not (is_instance_valid(map_display_node) and is_instance_valid(map_display_node.texture) and \
-			is_instance_valid(map_renderer_node) and \
-			map_tiles and not map_tiles.is_empty() and \
-			map_tiles[0] is Array and not map_tiles[0].is_empty()):
-		printerr("ConvoyVisualsManager (augment_convoy_data_with_offsets): Missing necessary data/nodes for offset calculation.")
-		return convoy_data_array # Return original data if prerequisites are missing
-
+	# --- Prepare common values for offset calculation (needed for icon offsets) ---
 	var actual_tile_width_f: float = 0.0
 	var actual_tile_height_f: float = 0.0
-	var scaled_journey_line_offset_step_pixels_for_icons: float = 0.0
+	var scaled_journey_line_offset_step_pixels_for_icons: float = 0.0 # This is base_offset_magnitude
+
+	if not (is_instance_valid(map_display_node) and \
+			is_instance_valid(p_map_renderer_node) and \
+			map_tiles and not map_tiles.is_empty() and \
+			map_tiles[0] is Array and not map_tiles[0].is_empty() and \
+			map_display_node.custom_minimum_size.x > 0): # Check custom_minimum_size for valid texture setup
+		printerr("ConvoyVisualsManager (augment_convoy_data_with_offsets): Missing necessary data/nodes for offset calculation.")
+		return convoy_data_array # Return original data if prerequisites are missing
 
 	var map_cols: int = map_tiles[0].size()
 	var map_rows: int = map_tiles.size()
@@ -49,49 +52,55 @@ func augment_convoy_data_with_offsets(
 	if map_cols > 0 and map_rows > 0 and full_map_texture_size.x > 0:
 		actual_tile_width_f = full_map_texture_size.x / float(map_cols)
 		actual_tile_height_f = full_map_texture_size.y / float(map_rows)
-		
+
 		var reference_float_tile_size_for_offsets: float = min(actual_tile_width_f, actual_tile_height_f)
-		var base_tile_size_prop: float = map_renderer_node.base_tile_size_for_proportions
+		var base_tile_size_prop: float = p_map_renderer_node.base_tile_size_for_proportions
 		var base_linear_visual_scale: float = 1.0
 		if base_tile_size_prop > 0.001:
 			base_linear_visual_scale = reference_float_tile_size_for_offsets / base_tile_size_prop
-		scaled_journey_line_offset_step_pixels_for_icons = map_renderer_node.journey_line_offset_step_pixels * base_linear_visual_scale
+		scaled_journey_line_offset_step_pixels_for_icons = p_map_renderer_node.journey_line_offset_step_pixels * base_linear_visual_scale
 	else:
-		printerr("ConvoyVisualsManager: Cannot calculate common values for icon offset due to invalid map_tiles or map_display size.")
+		printerr("ConvoyVisualsManager (augment_convoy_data_with_offsets): Cannot calculate common values for icon offset due to invalid map_tiles or map_display size.")
 		return convoy_data_array
 
+	# --- Build shared_segments_data for icon offsetting ---
 	var shared_segments_data_for_icons: Dictionary = {}
-	for convoy_idx_for_shared_data in range(convoy_data_array.size()):
-		var convoy_item_for_shared = convoy_data_array[convoy_idx_for_shared_data]
-		if convoy_item_for_shared is Dictionary and convoy_item_for_shared.has("journey"):
-			var journey_data_for_shared: Dictionary = convoy_item_for_shared.get("journey")
-			if journey_data_for_shared is Dictionary:
-				var route_x_s: Array = journey_data_for_shared.get("route_x", [])
-				var route_y_s: Array = journey_data_for_shared.get("route_y", [])
-				if route_x_s.size() >= 2 and route_y_s.size() == route_x_s.size():
-					for k_segment in range(route_x_s.size() - 1):
-						var p1_map = Vector2(float(route_x_s[k_segment]), float(route_y_s[k_segment]))
-						var p2_map = Vector2(float(route_x_s[k_segment + 1]), float(route_y_s[k_segment + 1]))
-						var segment_key = map_renderer_node.get_normalized_segment_key_with_info(p1_map, p2_map).key
-						if not shared_segments_data_for_icons.has(segment_key):
-							shared_segments_data_for_icons[segment_key] = []
-						shared_segments_data_for_icons[segment_key].append(convoy_idx_for_shared_data)
+	if actual_tile_width_f > 0: # Only proceed if common values were calculated
+		for convoy_idx_for_shared_data in range(convoy_data_array.size()):
+			var convoy_item_for_shared = convoy_data_array[convoy_idx_for_shared_data]
+			if convoy_item_for_shared is Dictionary and convoy_item_for_shared.has("journey"):
+				var journey_data_for_shared: Dictionary = convoy_item_for_shared.get("journey")
+				if journey_data_for_shared is Dictionary:
+					var route_x_s: Array = journey_data_for_shared.get("route_x", [])
+					var route_y_s: Array = journey_data_for_shared.get("route_y", [])
+					if route_x_s.size() >= 2 and route_y_s.size() == route_x_s.size():
+						for k_segment in range(route_x_s.size() - 1):
+							var p1_map = Vector2(float(route_x_s[k_segment]), float(route_y_s[k_segment]))
+							var p2_map = Vector2(float(route_x_s[k_segment + 1]), float(route_y_s[k_segment + 1]))
+							var segment_key_info = p_map_renderer_node.get_normalized_segment_key_with_info(p1_map, p2_map)
+							if segment_key_info and segment_key_info.has("key"):
+								var segment_key = segment_key_info.key
+								if not shared_segments_data_for_icons.has(segment_key):
+									shared_segments_data_for_icons[segment_key] = []
+								shared_segments_data_for_icons[segment_key].append(convoy_idx_for_shared_data)
 
+	# --- Augment convoy data further with _pixel_offset_for_icon ---
 	var processed_convoy_data_temp: Array = []
 	for convoy_idx in range(convoy_data_array.size()):
 		var convoy_item_augmented = convoy_data_array[convoy_idx].duplicate(true)
 		if convoy_item_augmented is Dictionary:
 			var icon_offset_v = Vector2.ZERO
-			var current_seg_idx = convoy_item_augmented.get("_current_segment_start_idx", -1)
-			var journey_d = convoy_item_augmented.get("journey")
-			if journey_d is Dictionary and current_seg_idx != -1 and journey_d.get("route_x", []).size() > current_seg_idx + 1:
-				var r_x = journey_d.get("route_x")
-				var r_y = journey_d.get("route_y")
-				var p1_m = Vector2(float(r_x[current_seg_idx]), float(r_y[current_seg_idx]))
-				var p2_m = Vector2(float(r_x[current_seg_idx + 1]), float(r_y[current_seg_idx + 1]))
-				var p1_px = Vector2i(round((p1_m.x + 0.5) * actual_tile_width_f), round((p1_m.y + 0.5) * actual_tile_height_f))
-				var p2_px = Vector2i(round((p2_m.x + 0.5) * actual_tile_width_f), round((p2_m.y + 0.5) * actual_tile_height_f))
-				icon_offset_v = map_renderer_node.get_journey_segment_offset_vector(p1_m, p2_m, p1_px, p2_px, convoy_idx, shared_segments_data_for_icons, scaled_journey_line_offset_step_pixels_for_icons)
+			if actual_tile_width_f > 0 and convoy_item_augmented.has("journey"): # Check if common values are valid
+				var current_seg_idx = convoy_item_augmented.get("_current_segment_start_idx", -1)
+				var journey_d = convoy_item_augmented.get("journey")
+				if journey_d is Dictionary and current_seg_idx != -1 and journey_d.get("route_x", []).size() > current_seg_idx + 1:
+					var r_x = journey_d.get("route_x")
+					var r_y = journey_d.get("route_y")
+					var p1_m = Vector2(float(r_x[current_seg_idx]), float(r_y[current_seg_idx]))
+					var p2_m = Vector2(float(r_x[current_seg_idx + 1]), float(r_y[current_seg_idx + 1]))
+					var p1_px = Vector2i(round((p1_m.x + 0.5) * actual_tile_width_f), round((p1_m.y + 0.5) * actual_tile_height_f))
+					var p2_px = Vector2i(round((p2_m.x + 0.5) * actual_tile_width_f), round((p2_m.y + 0.5) * actual_tile_height_f))
+					icon_offset_v = p_map_renderer_node.get_journey_segment_offset_vector(p1_m, p2_m, p1_px, p2_px, convoy_idx, shared_segments_data_for_icons, scaled_journey_line_offset_step_pixels_for_icons)
 			convoy_item_augmented["_pixel_offset_for_icon"] = icon_offset_v
 			processed_convoy_data_temp.append(convoy_item_augmented)
 	return processed_convoy_data_temp
