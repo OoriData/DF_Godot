@@ -60,11 +60,6 @@ var _selected_convoy_ids: Array[String] = []  # Will be updated by MapInteractio
 @export var convoy_focus_zoom_target_tiles_high: float = 7.0 # Allow different aspect ratio for focus
 
 @export_group("Map Display") # Or an existing relevant group
-@export_group("Camera Focusing")
-@export var convoy_focus_zoom_target_tiles_wide: float = 10.0
-## When a convoy menu opens, this percentage of the map view's width is used to shift the convoy leftwards (camera rightwards) from the exact center.
-@export var convoy_menu_map_view_offset_percentage: float = 1
-@export var convoy_focus_zoom_target_tiles_high: float = 7.0 # Allow different aspect ratio for focus
 
 @export_group("Map Display") # Or an existing relevant group
 @export var show_detailed_view: bool = true 
@@ -115,8 +110,6 @@ func _ready():
 	# Using an absolute path from the scene root for robustness.
 	# Assumes your main scene root is "GameRoot" and MenuManager is at "GameRoot/MenuUILayer/MenuManager"
 	var menu_manager_path = "/root/GameRoot/MenuUILayer/MenuManager"
-	var root_node = get_tree().root
-	if root_node.has_node(menu_manager_path.trim_prefix("/root/")): # has_node expects relative path from root
 	var root_node = get_tree().root
 	if root_node.has_node(menu_manager_path.trim_prefix("/root/")): # has_node expects relative path from root
 		menu_manager_ref = get_tree().root.get_node(menu_manager_path.trim_prefix("/root/"))
@@ -485,27 +478,6 @@ func _on_viewport_size_changed():
 	# Apply new camera offset based on the potentially new _current_map_display_rect
 	if is_instance_valid(map_camera):
 		var full_viewport_center = get_viewport().get_visible_rect().size / 2.0
-		var map_rect_center = _current_map_display_rect.position + _current_map_display_rect.size / 2.0
-		map_camera.offset = map_rect_center - full_viewport_center
-
-
-	# Recalculate _current_map_display_rect based on new viewport size and _is_map_in_partial_view
-	var full_viewport_rect = get_viewport().get_visible_rect()
-	if _is_map_in_partial_view:
-		_current_map_display_rect = Rect2(
-			full_viewport_rect.position.x,
-			full_viewport_rect.position.y,
-			full_viewport_rect.size.x / 3.0,
-			full_viewport_rect.size.y
-		)
-	else:
-		_current_map_display_rect = full_viewport_rect
-
-	# Apply new camera offset based on the potentially new _current_map_display_rect
-	if is_instance_valid(map_camera):
-		var full_viewport_center = get_viewport().get_visible_rect().size / 2.0
-		var map_rect_center = _current_map_display_rect.position + _current_map_display_rect.size / 2.0
-		map_camera.offset = map_rect_center - full_viewport_center
 
 	if is_instance_valid(map_interaction_manager) and map_interaction_manager.has_method("_handle_viewport_resize_constraints"):
 		map_interaction_manager._handle_viewport_resize_constraints() # Tell MIM to re-apply camera and zoom constraints
@@ -521,7 +493,7 @@ func _on_viewport_size_changed():
 	if is_instance_valid(convoy_list_panel_node):
 		_update_convoy_list_panel_position()
 
-	call_deferred("_update_map_display", false, false)
+	_apply_map_camera_and_ui_layout() # Call this to update camera offset and UI after rect change
 
 func _update_map_display(force_rerender_map_texture: bool = true, is_light_ui_update: bool = false):
 	# print("Main: _update_map_display() CALLED - TOP") # DEBUG
@@ -692,15 +664,9 @@ func _update_map_display(force_rerender_map_texture: bool = true, is_light_ui_up
 			dragging_panel_for_ui,      # Pass the currently dragged panel (or null)
 			dragged_id_for_ui,          # Pass the ID of the currently dragged panel (or empty)
 			_current_map_display_rect, # Pass the current map display rect for UIManager clamping
-			_current_map_display_rect, # Pass the current map display rect for UIManager clamping
 			is_light_ui_update,         # Pass the light update flag
 			current_camera_zoom_for_ui  # Pass the current zoom level
 		) 
-			current_camera_zoom_for_ui  # Pass the current zoom level
-		) 
-		# print("Main: _update_map_display - ui_manager.update_ui_elements() CALL COMPLETED.") # DEBUG
-	else:
-		printerr("Main: _update_map_display - ui_manager IS NOT VALID. CANNOT CALL update_ui_elements.") # DEBUG
 
 
 func _on_gdm_convoy_data_updated(p_augmented_convoy_data: Array) -> void:
@@ -994,8 +960,6 @@ func _update_detailed_view_toggle_position() -> void:
 	detailed_view_toggle.position = Vector2(
 		_current_map_display_rect.position.x + _current_map_display_rect.size.x - toggle_size.x - padding,
 		_current_map_display_rect.position.y + _current_map_display_rect.size.y - toggle_size.y - padding
-		_current_map_display_rect.position.x + _current_map_display_rect.size.x - toggle_size.x - padding,
-		_current_map_display_rect.position.y + _current_map_display_rect.size.y - toggle_size.y - padding
 	)
 
 func _update_convoy_list_panel_position() -> void:
@@ -1066,15 +1030,10 @@ func _on_mim_hover_changed(new_hover_info: Dictionary):
 			dragging_panel_for_ui,
 			dragged_id_for_ui,                 # Pass the ID of the currently dragged panel (or empty)
 			_current_map_display_rect,         # Pass current map display rect for UIManager clamping
-			dragged_id_for_ui,                 # Pass the ID of the currently dragged panel (or empty)
-			_current_map_display_rect,         # Pass current map display rect for UIManager clamping
 			false,                # is_light_ui_update: false to trigger full label logic for hover
 			current_camera_zoom_for_ui         # Pass the current zoom level
-		) 
-			current_camera_zoom_for_ui         # Pass the current zoom level
-		) 
-	else:
-		printerr("Main (_on_mim_hover_changed): ui_manager is not valid. Cannot update UI.")
+		)
+	
 func _on_mim_selection_changed(new_selected_ids: Array):
 	_selected_convoy_ids = new_selected_ids
 	# print("Main: MIM selection changed: ", _selected_convoy_ids) # DEBUG
@@ -1313,29 +1272,11 @@ func _apply_map_camera_and_ui_layout():
 	var map_rect_center = _current_map_display_rect.position + _current_map_display_rect.size / 2.0
 	map_camera.offset = map_rect_center - full_viewport_center
 
-	if is_instance_valid(map_interaction_manager) and map_interaction_manager.has_method("set_current_map_screen_rect"):
-		map_interaction_manager.set_current_map_screen_rect(_current_map_display_rect)
 
 	# When all menus close, ensure MapInteractionManager knows the map is full screen again for its internal calculations (e.g., zoom clamping).
 	if is_instance_valid(map_interaction_manager) and map_interaction_manager.has_method("set_current_map_screen_rect"):
 		map_interaction_manager.set_current_map_screen_rect(_current_map_display_rect)
 
-	_apply_map_camera_and_ui_layout()
-
-func _apply_map_camera_and_ui_layout():
-	if not is_instance_valid(map_camera):
-		printerr("Main: MapCamera invalid in _apply_map_camera_and_ui_layout")
-		return
-
-	var full_viewport_center = get_viewport().get_visible_rect().size / 2.0
-	var map_rect_center = _current_map_display_rect.position + _current_map_display_rect.size / 2.0
-	map_camera.offset = map_rect_center - full_viewport_center
-
-	if is_instance_valid(map_interaction_manager) and map_interaction_manager.has_method("set_current_map_screen_rect"):
-		map_interaction_manager.set_current_map_screen_rect(_current_map_display_rect)
-
-	# It's good to refresh the display and UI element positions when resuming
-	_on_viewport_size_changed() # Recalculate positions of viewport-dependent UI
 
 # Example: Call this from MapInteractionManager when a convoy is clicked for its menu
 func request_open_convoy_menu_via_manager(convoy_data):
