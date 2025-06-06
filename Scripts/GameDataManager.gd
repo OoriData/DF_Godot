@@ -34,6 +34,7 @@ const PREDEFINED_CONVOY_COLORS: Array[Color] = [
 
 
 func _ready():
+	print("!!!!!!!!!! GAMEDATAMANAGER _ready() IS RUNNING !!!!!!!!!!") # <-- ADD THIS
 	# Attempt to get APICallsInstance node.
 	# This needs to be robust to different scene setups (e.g., game_root vs. MapView running directly).
 	var path_to_api_calls_str : String = "" # For logging the path used
@@ -69,6 +70,7 @@ func _ready():
 
 
 func _load_map_and_settlement_data():
+	print("GameDataManager: Attempting to load map data from: '", map_data_file_path, "'") # <-- ADD THIS
 	var file = FileAccess.open(map_data_file_path, FileAccess.READ)
 	if FileAccess.get_open_error() != OK:
 		printerr('GameDataManager: Error opening map json file: ', map_data_file_path)
@@ -86,8 +88,8 @@ func _load_map_and_settlement_data():
 		printerr('GameDataManager: JSON data does not contain a "tiles" key.')
 		return
 
-	map_tiles = json_data.get('tiles', [])
-	emit_signal("map_data_loaded", map_tiles)
+	map_tiles = json_data.get('tiles', []) # type: Array
+	map_data_loaded.emit.call_deferred(map_tiles) # Emit deferred
 	print("GameDataManager: Map data loaded. Tiles count: %s" % map_tiles.size())
 
 	# Extract settlement data
@@ -107,7 +109,7 @@ func _load_map_and_settlement_data():
 								settlement_info_for_render['x'] = x_idx
 								settlement_info_for_render['y'] = y_idx
 								all_settlement_data.append(settlement_info_for_render)
-	emit_signal("settlement_data_updated", all_settlement_data)
+	settlement_data_updated.emit.call_deferred(all_settlement_data) # Emit deferred
 	print("GameDataManager: Settlement data extracted. Count: %s" % all_settlement_data.size())
 
 
@@ -151,7 +153,7 @@ func _on_raw_convoy_data_received(raw_data: Variant):
 
 	all_convoy_data = augmented_convoys
 	print('GameDataManager: Processed and stored %s convoy objects.' % all_convoy_data.size())
-	emit_signal("convoy_data_updated", all_convoy_data)
+	convoy_data_updated.emit.call_deferred(all_convoy_data) # Emit deferred
 
 
 func get_convoy_id_to_color_map() -> Dictionary:

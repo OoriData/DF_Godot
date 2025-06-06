@@ -2,7 +2,6 @@ extends Control
 
 # Preload your actual menu scene files here once you create them
 var convoy_menu_scene = preload("res://Scenes/ConvoyMenu.tscn") # Adjusted path if needed
-# var settings_menu_scene = preload("res://menus/SettingsMenu.tscn") # Example for later
 
 var current_active_menu = null
 var menu_stack = [] # To keep track of the navigation path for "back" functionality
