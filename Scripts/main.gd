@@ -94,7 +94,7 @@ const CONVOY_NODE_Z_INDEX = 1
 
 func _ready():
 	# print('Main: _ready() called.')  # DEBUG
-	print("!!!!!!!!!! MAIN.GD _ready() IS RUNNING !!!!!!!!!!")
+	# print("!!!!!!!!!! MAIN.GD _ready() IS RUNNING !!!!!!!!!!") # DEBUG
 
 	# Enable input processing for this Node2D to receive _input events,
 	# including those propagated from its Control children (like MapDisplay).
@@ -114,7 +114,7 @@ func _ready():
 			menu_manager_ref.menu_opened.connect(_on_menu_state_changed)
 		else:
 			printerr("Main (MapView): MenuManager found but does not have 'menu_opened' signal.")
-		if menu_manager_ref.has_signal("menus_completely_closed"):
+		if menu_manager_ref.has_signal("menus_completely_closed"): # Ensure this signal name matches MenuManager
 			menu_manager_ref.menus_completely_closed.connect(_on_all_menus_closed)
 		print("Main (MapView): Successfully got reference to MenuManager.")
 	else:
@@ -137,17 +137,17 @@ func _ready():
 	# --- Connect to GameDataManager signals ---
 	var gdm_node = get_node_or_null("/root/GameDataManager")
 	if is_instance_valid(gdm_node):
-		print("Main: Found GameDataManager via get_node('/root/GameDataManager').")
+		# print("Main: Found GameDataManager via get_node('/root/GameDataManager').")
 		# Check against Engine.has_singleton for diagnostics
 		if Engine.has_singleton("GameDataManager"):
-			print("Main: Engine.has_singleton('GameDataManager') is also TRUE.")
+			# print("Main: Engine.has_singleton('GameDataManager') is also TRUE.")
 			if gdm_node != GameDataManager: # This should ideally not happen
 				printerr("Main: CRITICAL - Node at /root/GameDataManager is NOT the same as global GameDataManager singleton!")
 		else:
 			printerr("Main: WARNING - Engine.has_singleton('GameDataManager') is FALSE, but /root/GameDataManager exists.")
 
 		# Connect signals using the gdm_node reference
-		gdm_node.map_data_loaded.connect(_on_gdm_map_data_loaded)
+		gdm_node.map_data_loaded.connect(_on_gdm_map_data_loaded) # Corrected signal name
 		gdm_node.settlement_data_updated.connect(_on_gdm_settlement_data_updated)
 		gdm_node.convoy_data_updated.connect(_on_gdm_convoy_data_updated)
 		print("Main: Connected to GameDataManager signals (using get_node).")
@@ -191,7 +191,7 @@ func _ready():
 	gdm_node = get_node_or_null("/root/GameDataManager") # Re-fetch or use the one from above if in same scope
 	if is_instance_valid(gdm_node) and gdm_node.has_method("get_convoy_id_to_color_map"):
 		_convoy_id_to_color_map = gdm_node.get_convoy_id_to_color_map()
-		print("Main: Successfully got convoy_id_to_color_map from GameDataManager (via get_node).")
+		# print("Main: Successfully got convoy_id_to_color_map from GameDataManager (via get_node).")
 	else:
 		# This error message will now also cover the case where gdm_node itself is invalid.
 		printerr("Main: GameDataManager Autoload invalid or missing 'get_convoy_id_to_color_map' method. Convoy colors may not be initialized.")
@@ -264,11 +264,11 @@ func _ready():
 		# Connect to GameTimers signals
 		if is_instance_valid(game_timers_node):
 			if game_timers_node.has_signal("data_refresh_tick"):
-				game_timers_node.data_refresh_tick.connect(_on_data_refresh_tick)
-				print("Main: Connected to GameTimers.data_refresh_tick")
+				game_timers_node.data_refresh_tick.connect(_on_data_refresh_tick) # Corrected signal name
+				# print("Main: Connected to GameTimers.data_refresh_tick")
 			else:
 				printerr("Main: GameTimersNode does not have 'data_refresh_tick' signal.")
-			if game_timers_node.has_signal("visual_update_tick"):
+			if game_timers_node.has_signal("visual_update_tick"): # Corrected signal name
 				game_timers_node.visual_update_tick.connect(_on_visual_update_tick)
 				print("Main: Connected to GameTimers.visual_update_tick")
 			else:
@@ -292,10 +292,10 @@ func _ready():
 	# More detailed check for ConvoyListPanel path
 	var menu_ui_layer_check_node = get_node_or_null("../MenuUILayer") # Adjusted path for check
 	if is_instance_valid(menu_ui_layer_check_node):
-		print("Main (_ready): Parent 'MenuUILayer' FOUND. Name: '%s', Type: '%s', Visible: %s" % [menu_ui_layer_check_node.name, menu_ui_layer_check_node.get_class(), menu_ui_layer_check_node.visible])
-		if menu_ui_layer_check_node is CanvasLayer:
-			print("Main (_ready): 'MenuUILayer' is a CanvasLayer. Layer ID: %s" % menu_ui_layer_check_node.layer)
-		# --- DEBUG: Force MenuUILayer visible to test ConvoyListPanel visibility ---
+		# print("Main (_ready): Parent 'MenuUILayer' FOUND. Name: '%s', Type: '%s', Visible: %s" % [menu_ui_layer_check_node.name, menu_ui_layer_check_node.get_class(), menu_ui_layer_check_node.visible])
+		# if menu_ui_layer_check_node is CanvasLayer:
+		# 	print("Main (_ready): 'MenuUILayer' is a CanvasLayer. Layer ID: %s" % menu_ui_layer_check_node.layer)
+		# # --- DEBUG: Force MenuUILayer visible to test ConvoyListPanel visibility ---
 		menu_ui_layer_check_node.visible = true
 	else:
 		printerr("Main (_ready): CRITICAL - Parent node '../MenuUILayer' NOT FOUND relative to '%s'. ConvoyListPanel will not be visible." % self.name)
@@ -307,46 +307,46 @@ func _ready():
 		printerr("Main (_ready): Child node 'MenuUILayer' WAS FOUND, but it does not have a child named 'ConvoyListPanel'. The path '$MenuUILayer/ConvoyListPanel' will fail.")
 	
 	if is_instance_valid(convoy_list_panel_node):
-		print("Main: ConvoyListPanel node found.")
+		# print("Main: ConvoyListPanel node found.")
 		convoy_list_panel_node.visible = true # Explicitly set to visible (ensure parent MenuUILayer is also visible)
 		# TEMPORARY DEBUG: Force size and position
 		# Ensure the node type is correct as well. If it's not a PanelContainer or compatible, methods might fail.
-		print("Main: ConvoyListPanel node type: ", convoy_list_panel_node.get_class())
+		# print("Main: ConvoyListPanel node type: ", convoy_list_panel_node.get_class())
 
 		convoy_list_panel_node.custom_minimum_size = Vector2(250, 400) # Keep forced size for now, or set in editor
-		print("Main: ConvoyListPanel TEMPORARILY forced size and position.")
+		# print("Main: ConvoyListPanel TEMPORARILY forced size and position.")
 		# Set z_index to ensure it's drawn above the map and potentially other base UI.
 		# Adjust this value as needed. For example, `2` would put it on the same layer as detailed_view_toggle.
 		# `3` would put it above the toggle.
 		convoy_list_panel_node.z_index = 2
 
 		if convoy_list_panel_node.has_signal("convoy_selected_from_list"):
-			convoy_list_panel_node.convoy_selected_from_list.connect(_on_convoy_selected_from_list_panel)
-			print("Main: Connected to ConvoyListPanel.convoy_selected_from_list signal.")
+			convoy_list_panel_node.convoy_selected_from_list.connect(_on_convoy_selected_from_list_panel) # Corrected signal name
+			# print("Main: Connected to ConvoyListPanel.convoy_selected_from_list signal.")
 		else:
 			printerr("Main: ConvoyListPanel node does not have 'convoy_selected_from_list' signal.")
 		# Initial population (likely with empty data if convoys load async).
 		# Defer this call to ensure ConvoyListPanel's _ready() and its @onready vars are fully settled.
 		if convoy_list_panel_node.has_method("populate_convoy_list"):
-			print("Main: Scheduling population of ConvoyListPanel initially with _all_convoy_data count: ", _all_convoy_data.size()) # DEBUG
+			# print("Main: Scheduling population of ConvoyListPanel initially with _all_convoy_data count: ", _all_convoy_data.size()) # DEBUG
 			convoy_list_panel_node.call_deferred("populate_convoy_list", []) # Initially empty, will be populated by GDM signal
 			# Defer position update as well, in case it depends on the panel's size after population.
 			call_deferred("_update_convoy_list_panel_position")
 
 		# --- DEBUG: ConvoyListPanel final state check in main.gd ---
-		print("Main (_ready): ConvoyListPanel final state check:")
-		print("  - IsValid: ", is_instance_valid(convoy_list_panel_node))
-		print("  - Visible: ", convoy_list_panel_node.visible)
-		print("  - Size: ", convoy_list_panel_node.size) # Check actual size after potential layout updates
-		print("  - Custom Min Size: ", convoy_list_panel_node.custom_minimum_size)
-		print("  - Position: ", convoy_list_panel_node.position)
-		print("  - Modulate: ", convoy_list_panel_node.modulate) # Check alpha
-		print("  - Global Position: ", convoy_list_panel_node.global_position)
-		print("  - Z Index: ", convoy_list_panel_node.z_index)
-		if is_instance_valid(convoy_list_panel_node.get_parent()):
-			print("  - Parent Visible: ", convoy_list_panel_node.get_parent().visible)
-			if convoy_list_panel_node.get_parent() is CanvasLayer:
-				print("  - Parent CanvasLayer Layer: ", convoy_list_panel_node.get_parent().layer)
+		# print("Main (_ready): ConvoyListPanel final state check:")
+		# print("  - IsValid: ", is_instance_valid(convoy_list_panel_node))
+		# print("  - Visible: ", convoy_list_panel_node.visible)
+		# print("  - Size: ", convoy_list_panel_node.size) # Check actual size after potential layout updates
+		# print("  - Custom Min Size: ", convoy_list_panel_node.custom_minimum_size)
+		# print("  - Position: ", convoy_list_panel_node.position)
+		# print("  - Modulate: ", convoy_list_panel_node.modulate) # Check alpha
+		# print("  - Global Position: ", convoy_list_panel_node.global_position)
+		# print("  - Z Index: ", convoy_list_panel_node.z_index)
+		# if is_instance_valid(convoy_list_panel_node.get_parent()):
+			# print("  - Parent Visible: ", convoy_list_panel_node.get_parent().visible)
+			# if convoy_list_panel_node.get_parent() is CanvasLayer:
+				# print("  - Parent CanvasLayer Layer: ", convoy_list_panel_node.get_parent().layer)
 	else: # This means the @onready var convoy_list_panel_node is null or invalid
 		printerr("Main: ConvoyListPanel node (assigned via @onready var using path '../MenuUILayer/ConvoyListPanel') is NOT VALID in _ready(). Please verify the node path and names in your scene tree are exactly '../MenuUILayer/ConvoyListPanel' relative to the node with main.gd.")
 
@@ -355,7 +355,7 @@ func _ready():
 
 func _on_gdm_map_data_loaded(p_map_tiles: Array):
 	map_tiles = p_map_tiles
-	print("Main: Received map_data_loaded from GameDataManager. Tile rows: %s" % map_tiles.size())
+	# print("Main: Received map_data_loaded from GameDataManager. Tile rows: %s" % map_tiles.size())
 	if map_tiles.is_empty() or not map_tiles[0] is Array or map_tiles[0].is_empty():
 		printerr('Main: Map tiles data from GameDataManager is empty or invalid. Cannot proceed to setup static map.')
 		return
@@ -369,7 +369,7 @@ func _on_gdm_map_data_loaded(p_map_tiles: Array):
 
 func _on_gdm_settlement_data_updated(p_settlement_data: Array):
 	_all_settlement_data = p_settlement_data
-	print("Main: Received settlement_data_updated from GameDataManager. Count: %s" % _all_settlement_data.size())
+	# print("Main: Received settlement_data_updated from GameDataManager. Count: %s" % _all_settlement_data.size())
 	# Update MapInteractionManager
 	if is_instance_valid(map_interaction_manager) and map_interaction_manager.has_method("update_data_references"):
 		map_interaction_manager.update_data_references(_all_convoy_data, _all_settlement_data, map_tiles)
@@ -388,7 +388,7 @@ func _setup_static_map_and_camera():
 		printerr("Main: _setup_static_map_and_camera - map_tiles data is empty or invalid.")
 		return
 
-	print("Main: _setup_static_map_and_camera - Starting map texture generation.") # DEBUG
+	# print("Main: _setup_static_map_and_camera - Starting map texture generation.") # DEBUG
 	var map_rows_local = map_tiles.size()
 	var map_cols_local = map_tiles[0].size()
 	var tile_pixel_size: float = map_renderer_node.base_tile_size_for_proportions
@@ -408,7 +408,7 @@ func _setup_static_map_and_camera():
 	var full_map_height_px = map_rows_local * tile_pixel_size
 	var render_viewport_for_full_map = Vector2(full_map_width_px, full_map_height_px)
 
-	print("Main: Attempting to generate static base map texture of size: ", render_viewport_for_full_map) # DEBUG
+	# print("Main: Attempting to generate static base map texture of size: ", render_viewport_for_full_map) # DEBUG
 	var static_map_texture: ImageTexture = map_renderer_node.render_map(
 		map_tiles,
 		[], # highlights (empty for base static map)
@@ -429,8 +429,8 @@ func _setup_static_map_and_camera():
 		map_display.texture = static_map_texture
 		map_display.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 		map_display.custom_minimum_size = static_map_texture.get_size()
-		# map_display.rect_size = static_map_texture.get_size() # Alternative
-		print("Main: Static map texture applied to MapDisplay. Size: ", map_display.custom_minimum_size)
+		# map_display.rect_size = static_map_texture.get_size()
+		# print("Main: Static map texture applied to MapDisplay. Size: ", map_display.custom_minimum_size)
 	else: # Covers null or invalid static_map_texture
 		printerr("Main: Failed to generate or apply static map texture.")
 		return
@@ -446,7 +446,7 @@ func _setup_static_map_and_camera():
 	_map_and_ui_setup_complete = true # Set flag after setup
 	# Process any deferred convoy data now that setup is complete
 	if not _deferred_convoy_data.is_empty():
-		print("Main: Processing deferred convoy data.")
+		# print("Main: Processing deferred convoy data.")
 		_on_gdm_convoy_data_updated(_deferred_convoy_data) # Call the handler with stored data
 		_deferred_convoy_data.clear() # Clear after processing
 	# Camera limits will be handled by MapInteractionManager's _constrain_camera_offset
@@ -668,11 +668,12 @@ func _update_map_display(force_rerender_map_texture: bool = true, is_light_ui_up
 
 func _on_gdm_convoy_data_updated(p_augmented_convoy_data: Array) -> void:
 	if not _map_and_ui_setup_complete:
-		print("Main (_on_gdm_convoy_data_updated): Map and UI setup not yet complete. Deferring full convoy update.")
+		# print("Main (_on_gdm_convoy_data_updated): Map and UI setup not yet complete. Deferring full convoy update.")
 		# Optionally, store p_augmented_convoy_data and process it once _map_and_ui_setup_complete is true
 		# For now, just return and wait for the next data update after setup.
+		_deferred_convoy_data = p_augmented_convoy_data # Store it
 		return
-	print('Main: Received convoy_data_updated from GameDataManager. Count: %s' % p_augmented_convoy_data.size())
+	# print('Main: Received convoy_data_updated from GameDataManager. Count: %s' % p_augmented_convoy_data.size())
 	_all_convoy_data = p_augmented_convoy_data # Data is already augmented by GDM (colors, progress)
 	
 	# Update the local _convoy_id_to_color_map from GameDataManager
@@ -975,8 +976,8 @@ func _update_convoy_list_panel_position() -> void:
 # --- Signal Handlers for MapInteractionManager ---
 func _on_mim_hover_changed(new_hover_info: Dictionary):
 	_current_hover_info = new_hover_info
-	print("Main: _on_mim_hover_changed. New hover: ", _current_hover_info) # DEBUG
-	# OLD: _update_map_display() was causing a full map re-render on hover.
+	# print("Main: _on_mim_hover_changed. New hover: ", _current_hover_info) # DEBUG
+	# OLD: _update_map_display(true) was causing a full map re-render on hover.
 
 	# NEW: Directly update UI elements without re-rendering the entire map.
 	if is_instance_valid(ui_manager):
@@ -997,7 +998,7 @@ func _on_mim_hover_changed(new_hover_info: Dictionary):
 		if map_interaction_manager.has_method("get_current_camera_zoom"):
 			current_camera_zoom_for_ui = map_interaction_manager.get_current_camera_zoom()
 		# DEBUG: Log what drag state is being passed to UIManager during a hover change.
-		print("  _on_mim_hover_changed: Passing to UIManager - new_hover_info: %s, dragging_panel: %s, dragged_id: %s" % [new_hover_info, dragging_panel_for_ui, dragged_id_for_ui])
+		# print("  _on_mim_hover_changed: Passing to UIManager - new_hover_info: %s, dragging_panel: %s, dragged_id: %s" % [new_hover_info, dragging_panel_for_ui, dragged_id_for_ui])
 		
 		ui_manager.update_ui_elements( # Call with is_light_ui_update = false (default) to trigger full label logic
 			map_display,
@@ -1035,7 +1036,7 @@ func _on_mim_selection_changed(new_selected_ids: Array):
 		convoy_list_panel_node.highlight_convoy_in_list(first_selected_id_str) # Pass empty string if none selected
 
 func _on_mim_panel_drag_ended(convoy_id_str: String, final_local_position: Vector2):
-	print("Main: _on_mim_panel_drag_ended for convoy: %s. Panel node was: %s, IsValid: %s" % [convoy_id_str, _dragging_panel_node, is_instance_valid(_dragging_panel_node)]) # DEBUG
+	# print("Main: _on_mim_panel_drag_ended for convoy: %s. Panel node was: %s, IsValid: %s" % [convoy_id_str, _dragging_panel_node, is_instance_valid(_dragging_panel_node)]) # DEBUG
 	_convoy_label_user_positions[convoy_id_str] = final_local_position # Update main's copy
 
 	# Clear main.gd's internal drag state
@@ -1045,8 +1046,8 @@ func _on_mim_panel_drag_ended(convoy_id_str: String, final_local_position: Vecto
 	_drag_offset = Vector2.ZERO # Reset drag offset
 	
 	# After clearing internal state, print status of the panel that WAS being dragged
-	if is_instance_valid(previously_dragged_panel):
-		print("  DragEnd: Panel %s is still valid. Visible: %s, Pos: %s, GlobalPos: %s, Parent: %s" % [convoy_id_str, previously_dragged_panel.visible, previously_dragged_panel.position, previously_dragged_panel.global_position, previously_dragged_panel.get_parent()])
+	# if is_instance_valid(previously_dragged_panel):
+		# print("  DragEnd: Panel %s is still valid. Visible: %s, Pos: %s, GlobalPos: %s, Parent: %s" % [convoy_id_str, previously_dragged_panel.visible, previously_dragged_panel.position, previously_dragged_panel.global_position, previously_dragged_panel.get_parent()])
 
 	Input.set_default_cursor_shape(Input.CURSOR_ARROW) # Reset cursor
 
@@ -1062,8 +1063,8 @@ func _on_mim_camera_zoom_changed(_new_zoom_level: float):
 	_update_map_display(false, false) # false = don't rerender map texture, false = not a light UI update
 
 
-func _on_mim_panel_drag_started(convoy_id_str: String, panel_node: Panel):
-	print("Main: PanelDragStart: Convoy: %s, PanelNode: %s, IsValid: %s" % [convoy_id_str, panel_node, is_instance_valid(panel_node)])
+func _on_mim_panel_drag_started(convoy_id_str: String, panel_node: Panel): # Corrected signal name
+	# print("Main: PanelDragStart: Convoy: %s, PanelNode: %s, IsValid: %s" % [convoy_id_str, panel_node, is_instance_valid(panel_node)])
 	if not is_instance_valid(panel_node):
 		printerr("Main: PanelDragStart: Attempted to start drag with an invalid panel_node for convoy %s. Aborting drag setup." % convoy_id_str)
 		return
@@ -1076,7 +1077,7 @@ func _on_mim_panel_drag_started(convoy_id_str: String, panel_node: Panel):
 	# Main.gd itself relies on local positions from MIM for updates.
 	if is_instance_valid(_dragging_panel_node):
 		_drag_offset = _dragging_panel_node.global_position - get_global_mouse_position()
-		print("  PanelDragStart: Panel %s initial state before UIM/move_child - Visible: %s, Pos: %s, GlobalPos: %s, Parent: %s" % [convoy_id_str, _dragging_panel_node.visible, _dragging_panel_node.position, _dragging_panel_node.global_position, _dragging_panel_node.get_parent()])
+		# print("  PanelDragStart: Panel %s initial state before UIM/move_child - Visible: %s, Pos: %s, GlobalPos: %s, Parent: %s" % [convoy_id_str, _dragging_panel_node.visible, _dragging_panel_node.position, _dragging_panel_node.global_position, _dragging_panel_node.get_parent()])
 	else: # Should not happen due to check above, but as a safeguard
 		printerr("Main: PanelDragStart: _dragging_panel_node became invalid unexpectedly for convoy %s." % convoy_id_str)
 		_dragging_panel_node = null # Ensure it's null if invalid
@@ -1087,7 +1088,7 @@ func _on_mim_panel_drag_started(convoy_id_str: String, panel_node: Panel):
 
 	if is_instance_valid(ui_manager) and ui_manager.has_method("set_dragging_state"):
 		ui_manager.set_dragging_state(_dragging_panel_node, _dragged_convoy_id_actual_str, true)
-		print("  PanelDragStart: Called ui_manager.set_dragging_state for %s." % convoy_id_str)
+		# print("  PanelDragStart: Called ui_manager.set_dragging_state for %s." % convoy_id_str)
 	else:
 		printerr("Main: PanelDragStart: UIManager or set_dragging_state method not available for %s." % convoy_id_str)
 
@@ -1098,7 +1099,7 @@ func _on_mim_panel_drag_started(convoy_id_str: String, panel_node: Panel):
 			if is_instance_valid(_dragging_panel_node):
 				if _dragging_panel_node.get_parent() == label_container:
 					label_container.move_child(_dragging_panel_node, label_container.get_child_count() - 1)
-					print("  PanelDragStart: Moved panel %s to front of container '%s'." % [convoy_id_str, label_container.name])
+					# print("  PanelDragStart: Moved panel %s to front of container '%s'." % [convoy_id_str, label_container.name])
 				else:
 					printerr("  PanelDragStart: Panel %s parent is NOT the expected label container. Parent: %s, ExpectedContainer: %s" % [convoy_id_str, _dragging_panel_node.get_parent(), label_container])
 			else:
@@ -1108,8 +1109,8 @@ func _on_mim_panel_drag_started(convoy_id_str: String, panel_node: Panel):
 	else:
 		printerr("Main: PanelDragStart: UIManager or get_convoy_label_container_node method not available for move_child operation for %s." % convoy_id_str)
 	
-	if is_instance_valid(_dragging_panel_node):
-		print("  PanelDragStart: Panel %s final state after UIM/move_child - Visible: %s, Pos: %s, GlobalPos: %s, Parent: %s" % [convoy_id_str, _dragging_panel_node.visible, _dragging_panel_node.position, _dragging_panel_node.global_position, _dragging_panel_node.get_parent()])
+	# if is_instance_valid(_dragging_panel_node):
+		# print("  PanelDragStart: Panel %s final state after UIM/move_child - Visible: %s, Pos: %s, GlobalPos: %s, Parent: %s" % [convoy_id_str, _dragging_panel_node.visible, _dragging_panel_node.position, _dragging_panel_node.global_position, _dragging_panel_node.get_parent()])
 
 func _on_mim_panel_drag_updated(convoy_id_str: String, new_panel_local_position: Vector2):
 	# print("Main: MIM panel_drag_updated for convoy: ", convoy_id_str, " to local_pos: ", new_panel_local_position) # DEBUG
@@ -1123,7 +1124,7 @@ func _on_mim_panel_drag_updated(convoy_id_str: String, new_panel_local_position:
 
 	# At this point, _dragging_panel_node should be the correct, valid panel instance.
 	# new_panel_local_position is local to its parent (the convoy_label_container in UIManager).
-	print("Main: PanelDragUpdate for %s. Panel IsValid: %s, Visible: %s. CurrentLocalPos: %s. Attempting NewLocalPos: %s. Parent: %s" % [convoy_id_str, is_instance_valid(_dragging_panel_node), _dragging_panel_node.visible, _dragging_panel_node.position, new_panel_local_position, _dragging_panel_node.get_parent()]) # DEBUG
+	# print("Main: PanelDragUpdate for %s. Panel IsValid: %s, Visible: %s. CurrentLocalPos: %s. Attempting NewLocalPos: %s. Parent: %s" % [convoy_id_str, is_instance_valid(_dragging_panel_node), _dragging_panel_node.visible, _dragging_panel_node.position, new_panel_local_position, _dragging_panel_node.get_parent()]) # DEBUG
 	
 	if is_instance_valid(_dragging_panel_node): # Double check before assigning position
 		_dragging_panel_node.position = new_panel_local_position # Update the actual panel's local position
@@ -1138,7 +1139,7 @@ func _on_mim_panel_drag_updated(convoy_id_str: String, new_panel_local_position:
 # --- Menu Interaction Functions ---
 
 func _on_menu_state_changed(menu_node, menu_type: String): # New handler for modified signal
-	print("Main (MapView): Menu state changed. Type: '%s', Node: %s" % [menu_type, menu_node.name if is_instance_valid(menu_node) else "N/A"])
+	# print("Main (MapView): Menu state changed. Type: '%s', Node: %s" % [menu_type, menu_node.name if is_instance_valid(menu_node) else "N/A"])
 	if menu_type == "convoy_detail":
 		_is_map_in_partial_view = true
 		var full_viewport_rect = get_viewport().get_visible_rect()
@@ -1206,12 +1207,12 @@ func _on_menu_state_changed(menu_node, menu_type: String): # New handler for mod
 					var additional_camera_shift_world_x: float = (convoy_menu_map_view_offset_percentage * _current_map_display_rect.size.x) / final_target_zoom_scalar
 					var camera_target_world_position: Vector2 = base_camera_target_world_position + Vector2(additional_camera_shift_world_x, 0.0)
 					
-					print("Main: Focusing on convoy %s. Actual world pos: %s. Camera target world pos: %s" % [convoy_data.get("convoy_id", "N/A"), convoy_actual_world_position, camera_target_world_position])
+					# print("Main: Focusing on convoy %s. Actual world pos: %s. Camera target world pos: %s" % [convoy_data.get("convoy_id", "N/A"), convoy_actual_world_position, camera_target_world_position])
 
 					# Calculate and set new zoom level
 					if tile_world_width > 0.001 and tile_world_height > 0.001 and \
 					   convoy_focus_zoom_target_tiles_wide > 0.001 and convoy_focus_zoom_target_tiles_high > 0.001 and \
-					   _current_map_display_rect.size.x > 0.001 and _current_map_display_rect.size.y > 0.001:
+					   _current_map_display_rect.size.x > 0.001 and _current_map_display_rect.size.y > 0.001: # Corrected variable name
 
 						if is_instance_valid(map_interaction_manager) and map_interaction_manager.has_method("focus_camera_and_set_zoom"):
 							# Pass the adjusted camera target position
@@ -1234,7 +1235,7 @@ func _on_menu_state_changed(menu_node, menu_type: String): # New handler for mod
 	_apply_map_camera_and_ui_layout()
 
 func _on_all_menus_closed(): # Renamed from _on_menus_completely_closed for clarity
-	print("Main (MapView): All menus are closed. Resuming map interactions.")
+	# print("Main (MapView): All menus are closed. Resuming map interactions.")
 	_is_map_in_partial_view = false
 	_current_map_display_rect = get_viewport().get_visible_rect()
 	self.visible = true

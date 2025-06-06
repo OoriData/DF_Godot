@@ -112,7 +112,7 @@ func initialize(
 	map_display = p_map_display
 	if is_instance_valid(map_display):
 		_initial_map_display_size = map_display.custom_minimum_size # Assuming this is set to full map texture size
-		print("MapInteractionManager: Received map_display.custom_minimum_size in initialize: ", map_display.custom_minimum_size) # DEBUG
+		# print("MapInteractionManager: Received map_display.custom_minimum_size in initialize: ", map_display.custom_minimum_size) # DEBUG
 	ui_manager = p_ui_manager
 	all_convoy_data = p_all_convoy_data
 	all_settlement_data = p_all_settlement_data
@@ -123,7 +123,7 @@ func initialize(
 	camera = p_camera
 	map_container_for_bounds = p_map_container
 
-	print("MapInteractionManager: Initialized with references.")
+	# print("MapInteractionManager: Initialized with references.")
 	if not is_instance_valid(map_display): printerr("MapInteractionManager: map_display is invalid after init!")
 	if not is_instance_valid(ui_manager): printerr("MapInteractionManager: ui_manager is invalid after init!")
 	if not is_instance_valid(camera): printerr("MapInteractionManager: camera is invalid after init!")
@@ -140,7 +140,7 @@ func initialize(
 		camera.process_callback = Camera2D.CAMERA2D_PROCESS_PHYSICS
 		camera.set("smoothing_enabled", true)
 		camera.set("smoothing_speed", 5.0) # Keep smoothing
-		print("MapInteractionManager: Camera smoothing initialized.")
+		# print("MapInteractionManager: Camera smoothing initialized.")
 	else:
 		printerr("MapInteractionManager: Camera node is invalid in initialize.")
 
@@ -155,6 +155,15 @@ func update_data_references(p_all_convoy_data: Array, p_all_settlement_data: Arr
 	all_convoy_data = p_all_convoy_data
 	all_settlement_data = p_all_settlement_data
 	map_tiles = p_map_tiles
+
+	# CRITICAL: Update _initial_map_display_size here, as map_display.custom_minimum_size
+	# is likely set by main.gd after MIM's initialize() but before/during data updates.
+	if is_instance_valid(map_display):
+		var current_map_actual_size = map_display.custom_minimum_size
+		if current_map_actual_size.x > 0 and current_map_actual_size.y > 0:
+			_initial_map_display_size = current_map_actual_size
+			# print("MIM (update_data_references): Updated _initial_map_display_size to: ", _initial_map_display_size) # DEBUG
+
 	# print("MapInteractionManager: Data references updated.")
 
 func _physics_process(delta: float):
@@ -428,6 +437,10 @@ func _perform_hover_detection_only(event: InputEventMouseMotion):
 	if not (is_instance_valid(camera) and is_instance_valid(map_display) and is_instance_valid(map_display.texture)):
 		return
 
+	# DEBUG: Log mouse position
+	# print("MIM:_perform_hover_detection_only - Mouse global pos: ", event.global_position) # Too verbose
+	# print("MIM:_perform_hover_detection_only - Mouse world pos: ", mouse_world_pos) # Too verbose
+
 	var mouse_world_pos = camera.get_canvas_transform().affine_inverse() * event.global_position
 
 	# --- Convert local_mouse_pos to map texture coordinates ---
@@ -457,6 +470,7 @@ func _perform_hover_detection_only(event: InputEventMouseMotion):
 	var actual_tile_width_on_world: float = _initial_map_display_size.x / float(map_cols)
 	var actual_tile_height_on_world: float = _initial_map_display_size.y / float(map_rows)
 
+	# print("MIM:_perform_hover_detection_only - Tile world size: (%s, %s)" % [actual_tile_width_on_world, actual_tile_height_on_world]) # DEBUG
 	# 1. Check for Convoy Hover
 	if not all_convoy_data.is_empty():
 		for convoy_data_item in all_convoy_data:
@@ -470,8 +484,11 @@ func _perform_hover_detection_only(event: InputEventMouseMotion):
 				var convoy_center_world_y: float = (convoy_map_y + 0.5) * actual_tile_height_on_world
 				var dx = mouse_world_pos.x - convoy_center_world_x
 				var dy = mouse_world_pos.y - convoy_center_world_y
-				var scaled_hover_radius_sq = convoy_hover_radius_on_texture_sq / (camera.zoom.x * camera.zoom.x) # Assuming uniform zoom
-				if (dx * dx) + (dy * dy) < scaled_hover_radius_sq:
+				# If convoy_hover_radius_on_texture_sq is defined in texture pixels, and 1 texture pixel = 1 world unit,
+				# then this value is already in world_units_squared and should not be scaled by camera zoom.
+				# print("MIM:_perform_hover_detection_only - Convoy ID: %s, World Pos: (%s, %s), Dist Sq: %s, Radius Sq: %s" % [convoy_id_str, convoy_center_world_x, convoy_center_world_y, (dx*dx)+(dy*dy), convoy_hover_radius_on_texture_sq]) # DEBUG
+				if (dx * dx) + (dy * dy) < convoy_hover_radius_on_texture_sq: # Use exported variable
+					# print("MIM:_perform_hover_detection_only - HOVER DETECTED for Convoy ID: ", convoy_id_str) # DEBUG
 					new_hover_info = {'type': 'convoy', 'id': convoy_id_str}
 					found_hover_element = true
 					break
@@ -490,9 +507,12 @@ func _perform_hover_detection_only(event: InputEventMouseMotion):
 				var dx_settlement = mouse_world_pos.x - settlement_center_world_x
 				var dy_settlement = mouse_world_pos.y - settlement_center_world_y
 				var distance_sq_settlement = (dx_settlement * dx_settlement) + (dy_settlement * dy_settlement)
-				var scaled_settlement_hover_radius_sq = settlement_hover_radius_on_texture_sq / (camera.zoom.x * camera.zoom.x)
-				if distance_sq_settlement < scaled_settlement_hover_radius_sq:
-					if distance_sq_settlement < closest_settlement_dist_sq:
+				# If settlement_hover_radius_on_texture_sq is defined in texture pixels, and 1 texture pixel = 1 world unit,
+				# then this value is already in world_units_squared and should not be scaled by camera zoom.
+				# print("MIM:_perform_hover_detection_only - Settlement Coords: (%s, %s), World Pos: (%s, %s), Dist Sq: %s, Radius Sq: %s" % [settlement_tile_x, settlement_tile_y, settlement_center_world_x, settlement_center_world_y, distance_sq_settlement, settlement_hover_radius_on_texture_sq]) # DEBUG
+				if distance_sq_settlement < settlement_hover_radius_on_texture_sq:
+					if distance_sq_settlement < closest_settlement_dist_sq: # Use exported variable
+						# print("MIM:_perform_hover_detection_only - HOVER DETECTED for Settlement Coords: ", Vector2i(settlement_tile_x, settlement_tile_y)) # DEBUG
 						closest_settlement_dist_sq = distance_sq_settlement
 						best_hovered_settlement_coords = Vector2i(settlement_tile_x, settlement_tile_y)
 						found_hover_element = true
@@ -500,6 +520,7 @@ func _perform_hover_detection_only(event: InputEventMouseMotion):
 			new_hover_info = {'type': 'settlement', 'coords': best_hovered_settlement_coords}
 
 	# Update internal state and emit signal if hover changed
+	# print("MIM:_perform_hover_detection_only - New hover info before check: ", new_hover_info) # DEBUG
 	if new_hover_info != self._current_hover_info:
 		self._current_hover_info = new_hover_info
 		emit_signal("hover_changed", self._current_hover_info)
@@ -551,7 +572,7 @@ func _handle_lmb_interactions(event: InputEventMouseButton): # Was _handle_mouse
 									)
 									
 									emit_signal("panel_drag_started", _dragged_convoy_id_actual_str, _dragging_panel_node)
-									print("MIM: Panel drag started for convoy: ", _dragged_convoy_id_actual_str) # Keep this one
+									# print("MIM: Panel drag started for convoy: ", _dragged_convoy_id_actual_str) # Keep this one
 									get_viewport().set_input_as_handled()
 									return # Drag started
 
@@ -566,7 +587,7 @@ func _handle_lmb_interactions(event: InputEventMouseButton): # Was _handle_mouse
 				_convoy_label_user_positions[_dragged_convoy_id_actual_str] = final_local_position
 				
 				emit_signal("panel_drag_ended", _dragged_convoy_id_actual_str, final_local_position)
-				print("MIM: Panel drag ended for convoy: ", _dragged_convoy_id_actual_str, " at local pos: ", final_local_position) # Keep this one
+				# print("MIM: Panel drag ended for convoy: ", _dragged_convoy_id_actual_str, " at local pos: ", final_local_position) # Keep this one
 
 				_dragging_panel_node = null
 				_dragged_convoy_id_actual_str = ""
@@ -580,7 +601,7 @@ func _handle_lmb_interactions(event: InputEventMouseButton): # Was _handle_mouse
 
 			if clicked_convoy_data != null:
 				emit_signal("convoy_menu_requested", clicked_convoy_data)
-				print("MIM: Clicked convoy for menu: ", clicked_convoy_data.get("convoy_id", "N/A")) # Keep this one
+				# print("MIM: Clicked convoy for menu: ", clicked_convoy_data.get("convoy_id", "N/A")) # Keep this one
 				get_viewport().set_input_as_handled()
 				return # Click on convoy handled
 
@@ -616,7 +637,7 @@ func _handle_tap_interaction(screen_pos: Vector2):
 
 	if clicked_convoy_data != null:
 		emit_signal("convoy_menu_requested", clicked_convoy_data)
-		print("MIM: Tapped convoy for menu: ", clicked_convoy_data.get("convoy_id", "N/A")) # Keep this one
+		# print("MIM: Tapped convoy for menu: ", clicked_convoy_data.get("convoy_id", "N/A")) # Keep this one
 		get_viewport().set_input_as_handled()
 
 func _zoom_camera_at_screen_pos(zoom_adjust_factor: float, screen_zoom_center: Vector2):
@@ -744,7 +765,8 @@ func _get_convoy_data_at_world_pos(world_pos: Vector2): # Removed -> Dictionary 
 			var convoy_center_world_y: float = (convoy_map_y + 0.5) * actual_tile_height_on_world
 			var dx = world_pos.x - convoy_center_world_x
 			var dy = world_pos.y - convoy_center_world_y
-			var scaled_hover_radius_sq = convoy_hover_radius_on_texture_sq / (camera.zoom.x * camera.zoom.x)
-			if (dx * dx) + (dy * dy) < scaled_hover_radius_sq:
+			# Use convoy_hover_radius_on_texture_sq directly, assuming it's a world-space squared radius.
+			# The scaling by camera.zoom was inconsistent with hover detection.
+			if (dx * dx) + (dy * dy) < convoy_hover_radius_on_texture_sq:
 				return convoy_data_item
 	return null

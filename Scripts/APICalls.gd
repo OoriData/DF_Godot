@@ -85,29 +85,31 @@ func _on_request_completed(result: int, response_code: int, headers: PackedStrin
 			emit_signal('fetch_error', error_msg)
 			return
 
-		print('APICalls: Successfully fetched raw data.')
+		# print('APICalls: Successfully fetched raw data.')
 		# Assuming json_response is an Array for get_all_in_transit_convoys
 		if json_response is Array:
 			var parsed_data: Array = parse_in_transit_convoy_details(json_response)
 			self.convoys_in_transit = parsed_data  # Store the parsed data
 
-			print('APICalls: Parsed convoy details:')
+			# print('APICalls: Parsed convoy details:')
 			if parsed_data.is_empty():
-				print('  No in-transit convoys found or data was empty after parsing.')
+				# print('  No in-transit convoys found or data was empty after parsing.')
+				pass
 			else:
 				for convoy_info in parsed_data:
-					print('  Name: ', convoy_info.get('convoy_name'))
-					print('    Current X: ', convoy_info.get('x'))  # For verification
-					print('    Current Y: ', convoy_info.get('y'))  # For verification
-					print('    Progress: ', convoy_info.get('journey', {}).get('progress'))
-					print('    Efficiency: ', convoy_info.get('efficiency'))
-					print('    Top Speed: ', convoy_info.get('top_speed'))
-					print('    Offroad Capability: ', convoy_info.get('offroad_capability'))
-					print('    Vehicle Names: ', convoy_info.get('vehicle_names'))
-					print('    Destination X: ', convoy_info.get('journey', {}).get('dest_x'))
-					print('    Destination Y: ', convoy_info.get('journey', {}).get('dest_y'))
-					print('    Convoy ID: ', convoy_info.get('convoy_id'))
-					print('')
+					# print('  Name: ', convoy_info.get('convoy_name'))
+					# print('    Current X: ', convoy_info.get('x'))
+					# print('    Current Y: ', convoy_info.get('y'))
+					# print('    Progress: ', convoy_info.get('journey', {}).get('progress'))
+					# print('    Efficiency: ', convoy_info.get('efficiency'))
+					# print('    Top Speed: ', convoy_info.get('top_speed'))
+					# print('    Offroad Capability: ', convoy_info.get('offroad_capability'))
+					# print('    Vehicle Names: ', convoy_info.get('vehicle_names'))
+					# print('    Destination X: ', convoy_info.get('journey', {}).get('dest_x'))
+					# print('    Destination Y: ', convoy_info.get('journey', {}).get('dest_y'))
+					# print('    Convoy ID: ', convoy_info.get('convoy_id'))
+					# print('')
+					pass
 			emit_signal('convoy_data_received', parsed_data)
 		else:
 			var error_msg_type = 'APICalls: Expected array from JSON response for all in-transit convoys, got %s.' % typeof(json_response)

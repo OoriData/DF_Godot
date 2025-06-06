@@ -34,7 +34,7 @@ const PREDEFINED_CONVOY_COLORS: Array[Color] = [
 
 
 func _ready():
-	print("!!!!!!!!!! GAMEDATAMANAGER _ready() IS RUNNING !!!!!!!!!!") # <-- ADD THIS
+	# print("!!!!!!!!!! GAMEDATAMANAGER _ready() IS RUNNING !!!!!!!!!!") # DEBUG
 	# Attempt to get APICallsInstance node.
 	# This needs to be robust to different scene setups (e.g., game_root vs. MapView running directly).
 	var path_to_api_calls_str : String = "" # For logging the path used
@@ -52,17 +52,17 @@ func _ready():
 		path_to_api_calls_str = "APICallsInstance"
 		api_calls_node = get_tree().root.get_node(path_to_api_calls_str)
 
-	if is_instance_valid(api_calls_node):
-		print("GameDataManager: Successfully found APICallsInstance at /root/%s" % path_to_api_calls_str)
-	else:
-		printerr("GameDataManager: APICallsInstance node not found. Tried common paths. Convoy data will not be fetched.")
+	# if is_instance_valid(api_calls_node):
+	# 	# print("GameDataManager: Successfully found APICallsInstance at /root/%s" % path_to_api_calls_str)
+	# else:
+	# 	printerr("GameDataManager: APICallsInstance node not found. Tried common paths. Convoy data will not be fetched.")
 
 	_load_map_and_settlement_data()
 
 	if is_instance_valid(api_calls_node):
 		if api_calls_node.has_signal('convoy_data_received'):
 			api_calls_node.convoy_data_received.connect(_on_raw_convoy_data_received)
-			print('GameDataManager: Successfully connected to APICalls.convoy_data_received signal.')
+			# print('GameDataManager: Successfully connected to APICalls.convoy_data_received signal.')
 		else:
 			printerr('GameDataManager: APICalls node does not have "convoy_data_received" signal.')
 	else:
@@ -70,7 +70,7 @@ func _ready():
 
 
 func _load_map_and_settlement_data():
-	print("GameDataManager: Attempting to load map data from: '", map_data_file_path, "'") # <-- ADD THIS
+	# print("GameDataManager: Attempting to load map data from: '", map_data_file_path, "'") # DEBUG
 	var file = FileAccess.open(map_data_file_path, FileAccess.READ)
 	if FileAccess.get_open_error() != OK:
 		printerr('GameDataManager: Error opening map json file: ', map_data_file_path)
@@ -90,7 +90,7 @@ func _load_map_and_settlement_data():
 
 	map_tiles = json_data.get('tiles', []) # type: Array
 	map_data_loaded.emit.call_deferred(map_tiles) # Emit deferred
-	print("GameDataManager: Map data loaded. Tiles count: %s" % map_tiles.size())
+	# print("GameDataManager: Map data loaded. Tiles count: %s" % map_tiles.size())
 
 	# Extract settlement data
 	all_settlement_data.clear()
@@ -110,11 +110,11 @@ func _load_map_and_settlement_data():
 								settlement_info_for_render['y'] = y_idx
 								all_settlement_data.append(settlement_info_for_render)
 	settlement_data_updated.emit.call_deferred(all_settlement_data) # Emit deferred
-	print("GameDataManager: Settlement data extracted. Count: %s" % all_settlement_data.size())
+	# print("GameDataManager: Settlement data extracted. Count: %s" % all_settlement_data.size())
 
 
 func _on_raw_convoy_data_received(raw_data: Variant):
-	print('GameDataManager: Received raw convoy data.')
+	# print('GameDataManager: Received raw convoy data.')
 	var parsed_convoy_list: Array
 
 	if raw_data is Array:
@@ -152,7 +152,7 @@ func _on_raw_convoy_data_received(raw_data: Variant):
 			augmented_convoys.append(convoy_item_original) # Should not happen with consistent API
 
 	all_convoy_data = augmented_convoys
-	print('GameDataManager: Processed and stored %s convoy objects.' % all_convoy_data.size())
+	# print('GameDataManager: Processed and stored %s convoy objects.' % all_convoy_data.size())
 	convoy_data_updated.emit.call_deferred(all_convoy_data) # Emit deferred
 
 
@@ -233,7 +233,7 @@ func request_convoy_data_refresh() -> void:
 	Called by an external system (e.g., a timer in main.gd) to trigger a new fetch
 	of convoy data.
 	"""
-	if is_instance_valid(api_calls_node) and api_calls_node.has_method("fetch_convoy_data"):
-		api_calls_node.fetch_convoy_data()
+	if is_instance_valid(api_calls_node) and api_calls_node.has_method("get_all_in_transit_convoys"):
+		api_calls_node.get_all_in_transit_convoys()
 	else:
 		printerr("GameDataManager: Cannot request convoy data refresh. APICallsInstance is invalid or missing 'fetch_convoy_data' method.")

@@ -147,10 +147,10 @@ const LABEL_CONTAINER_Z_INDEX = 2
 
 func _ready():
 	# Critical: Ensure child containers are valid and print their status
-	print("UIManager _ready: Checking child containers...")
-	print("  - settlement_label_container: %s (Valid: %s)" % [settlement_label_container, is_instance_valid(settlement_label_container)])
-	print("  - convoy_connector_lines_container: %s (Valid: %s)" % [convoy_connector_lines_container, is_instance_valid(convoy_connector_lines_container)])
-	print("  - convoy_label_container: %s (Valid: %s)" % [convoy_label_container, is_instance_valid(convoy_label_container)])
+	# print("UIManager _ready: Checking child containers...")
+	# print("  - settlement_label_container: %s (Valid: %s)" % [settlement_label_container, is_instance_valid(settlement_label_container)])
+	# print("  - convoy_connector_lines_container: %s (Valid: %s)" % [convoy_connector_lines_container, is_instance_valid(convoy_connector_lines_container)])
+	# print("  - convoy_label_container: %s (Valid: %s)" % [convoy_label_container, is_instance_valid(convoy_label_container)])
 
 	# Ensure containers are visible
 	if is_instance_valid(settlement_label_container):
@@ -178,16 +178,16 @@ func _ready():
 
 	if is_instance_valid(convoy_connector_lines_container):
 		convoy_connector_lines_container.draw.connect(_on_connector_lines_container_draw)
-		print("UIManager: Connected to ConvoyConnectorLinesContainer draw signal.")
+		# print("UIManager: Connected to ConvoyConnectorLinesContainer draw signal.")
 	else:
 		printerr("UIManager: ConvoyConnectorLinesContainer not ready or invalid in _ready().")
 
 
 func initialize_font_settings(theme_font_to_use: Font):
 	if theme_font_to_use:
-		label_settings.font = theme_font_to_use
-		settlement_label_settings.font = theme_font_to_use
-		print("UIManager: Using theme font for labels provided by main: ", theme_font_to_use.resource_path if theme_font_to_use.resource_path else "Built-in font")
+		label_settings.font = theme_font_to_use # LabelSettings objects are shared
+		settlement_label_settings.font = theme_font_to_use # LabelSettings objects are shared
+		# print("UIManager: Using theme font for labels provided by main: ", theme_font_to_use.resource_path if theme_font_to_use.resource_path else "Built-in font")
 	else:
 		# If no font is passed, LabelSettings will not have a font set,
 		# and Labels will use their default/themed font.
@@ -368,6 +368,7 @@ func _draw_interactive_labels(current_hover_info: Dictionary):
 	var all_drawn_label_rects_this_update: Array[Rect2] = []
 	
 	# Declare arrays to hold IDs/coords of elements that *should* be visible
+	# print("UIManager:_draw_interactive_labels - current_hover_info: ", current_hover_info) # DEBUG
 	var convoy_ids_to_display: Array[String] = []
 	var settlement_coords_to_display: Array[Vector2i] = []
 
@@ -400,11 +401,13 @@ func _draw_interactive_labels(current_hover_info: Dictionary):
 								   not settlement_coords_to_display.has(end_tile_coords):
 									settlement_coords_to_display.append(end_tile_coords)
 
+	# Ensure hovered settlement coords are added
 	if current_hover_info.get('type') == 'settlement':
 		var hovered_tile_coords = current_hover_info.get('coords')
 		if hovered_tile_coords is Vector2i and hovered_tile_coords.x >= 0 and hovered_tile_coords.y >= 0:
 			if not settlement_coords_to_display.has(hovered_tile_coords):
 				settlement_coords_to_display.append(hovered_tile_coords)
+
 
 	# STAGE 2: Determine Convoy Labels to Display (Selected then Hovered)
 	if not _selected_convoy_ids_cache.is_empty():
@@ -416,12 +419,17 @@ func _draw_interactive_labels(current_hover_info: Dictionary):
 					if not convoy_ids_to_display.has(convoy_id_str):
 						convoy_ids_to_display.append(convoy_id_str)
 
+	# Ensure hovered convoy ID is added as a string
 	if current_hover_info.get('type') == 'convoy':
-		var hovered_convoy_id_str = current_hover_info.get('id') # Assuming ID is already string
-		if hovered_convoy_id_str != null and not hovered_convoy_id_str.is_empty():
-			if not convoy_ids_to_display.has(hovered_convoy_id_str):
-				convoy_ids_to_display.append(hovered_convoy_id_str)
+		var hovered_convoy_id_variant = current_hover_info.get('id')
+		if hovered_convoy_id_variant != null:
+			var hovered_convoy_id_as_string = str(hovered_convoy_id_variant)
+			if not hovered_convoy_id_as_string.is_empty(): # Check after converting to string
+				if not convoy_ids_to_display.has(hovered_convoy_id_as_string):
+					convoy_ids_to_display.append(hovered_convoy_id_as_string)
 
+	# print("UIManager:_draw_interactive_labels - convoy_ids_to_display: ", convoy_ids_to_display) # DEBUG
+	# print("UIManager:_draw_interactive_labels - settlement_coords_to_display: ", settlement_coords_to_display) # DEBUG
 	# STAGE 3: Handle the dragged panel first (ensure its rect is considered and it remains visible)
 	if is_instance_valid(_dragging_panel_node) and _dragging_panel_node.get_parent() == convoy_label_container:
 		_dragging_panel_node.visible = true # Ensure it stays visible
@@ -468,6 +476,7 @@ func _draw_interactive_labels(current_hover_info: Dictionary):
 		_update_convoy_panel_content(panel_node, convoy_data_for_panel)
 		panel_node.visible = true
 		_position_convoy_panel(panel_node, convoy_data_for_panel, all_drawn_label_rects_this_update)
+		# print("UIManager:_draw_interactive_labels - Positioning/Clamping convoy panel for ID: ", convoy_id_str_to_draw, " at pos: ", panel_node.position) # DEBUG
 		_clamp_panel_position(panel_node)
 		var current_panel_actual_size = panel_node.size
 		if current_panel_actual_size.x <= 0 or current_panel_actual_size.y <= 0:
@@ -509,6 +518,7 @@ func _draw_interactive_labels(current_hover_info: Dictionary):
 
 		_update_settlement_panel_content(panel_node, settlement_data_for_panel)
 		panel_node.visible = true
+		# print("UIManager:_draw_interactive_labels - Positioning/Clamping settlement panel for coords: ", settlement_coord_to_draw, " at pos: ", panel_node.position) # DEBUG
 		_position_settlement_panel(panel_node, settlement_data_for_panel, all_drawn_label_rects_this_update)
 		_clamp_panel_position(panel_node)
 		
