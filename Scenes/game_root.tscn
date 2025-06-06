@@ -7,6 +7,9 @@
 [node name="GameRoot" type="Node"]
 
 [node name="MapRender" parent="." instance=ExtResource("1_pjpa4")]
+convoy_focus_zoom_target_tiles_wide = 10.0
+convoy_menu_map_view_offset_percentage = 0.4
+convoy_focus_zoom_target_tiles_high = 7.0
 
 [node name="MenuUILayer" type="CanvasLayer" parent="."]
 
