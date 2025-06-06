@@ -1,4 +1,4 @@
-[gd_scene load_steps=8 format=3 uid="uid://b7shrt87ucxid"]
+[gd_scene load_steps=9 format=3 uid="uid://b7shrt87ucxid"]
 
 [ext_resource type="Script" uid="uid://bx0lqfkbhkuu2" path="res://Scripts/main.gd" id="1_qf4ax"]
 [ext_resource type="Script" uid="uid://008fj565mco8" path="res://Scripts/MapCameraController.gd" id="2_k7gy6"]
@@ -7,6 +7,7 @@
 [ext_resource type="Script" uid="uid://bhrh158fxnj1g" path="res://Scripts/UIManager.gd" id="3_xagsy"]
 [ext_resource type="Script" uid="uid://btt1pkuxc2tbe" path="res://Scripts/MapInteractionManager.gd" id="4_b4rp0"]
 [ext_resource type="Script" uid="uid://17krngr1jkib" path="res://Scripts/GameTimers.gd" id="5_b5irg"]
+[ext_resource type="Script" path="res://Scripts/ConvoyVisualsManager.gd" id="8_hvyeg"]
 
 [node name="MapRender" type="Node2D"]
 script = ExtResource("1_qf4ax")
@@ -60,3 +61,6 @@ script = ExtResource("5_b5irg")
 script = ExtResource("2_mtjdu")
 journey_line_thickness = 4
 journey_line_offset_step_pixels = 10.0
+
+[node name="ConvoyVisualsManager" type="Node" parent="."]
+script = ExtResource("8_hvyeg")

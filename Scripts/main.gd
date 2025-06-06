@@ -22,6 +22,8 @@ extends Node2D
 @onready var ui_manager: Node = $ScreenSpaceUI/UIManagerNode # Corrected path
 @onready var detailed_view_toggle: CheckBox = $ScreenSpaceUI/UIManagerNode/DetailedViewToggleCheckbox # Corrected path
 @onready var map_interaction_manager: Node = $MapInteractionManager # Path to your MapInteractionManager node
+# Reference to the new ConvoyVisualsManager node
+@onready var convoy_visuals_manager: Node = $ConvoyVisualsManager # Adjust path if you place it elsewhere
 # IMPORTANT: Adjust the path "$GameTimersNode" to the actual path of your GameTimers node in your scene tree.
 @onready var game_timers_node: Node = $GameTimersNode # Adjust if necessary
 # IMPORTANT: Adjust the path "$ConvoyListPanel" to the actual path of your ConvoyListPanel node. Ensure its type matches.
@@ -71,10 +73,6 @@ var _drag_offset: Vector2 = Vector2.ZERO  # This state will move to MapInteracti
 var _convoy_label_user_positions: Dictionary = {}  # Will be updated by MapInteractionManager signal
 var _dragged_convoy_id_actual_str: String = "" # Will be updated by MapInteractionManager signal or getter
 
-# --- Convoy Node Management ---
-var convoy_node_scene = preload("res://Scenes/ConvoyNode.tscn") # Ensure this path is correct to your ConvoyNode.tscn
-# var convoy_node_scene = null # Temporarily set to null to test if preload is the issue
-var _active_convoy_nodes: Dictionary = {} # { "convoy_id_str": ConvoyNode }
 
 # --- Panning and Zooming State ---
 # These are now managed by MapInteractionManager and MapCamera
@@ -91,7 +89,6 @@ var _map_and_ui_setup_complete: bool = false # New flag
 var _deferred_convoy_data: Array = [] # To store convoy data if it arrives before map setup
 
 const MAP_DISPLAY_Z_INDEX = 0
-const CONVOY_NODE_Z_INDEX = 1
 # UIManager's label containers will use a higher Z_INDEX (e.g., 2), set within UIManager.gd
 
 
@@ -139,6 +136,8 @@ func _ready():
 		printerr("Main: UIManager node not found or invalid. Path used: $ScreenSpaceUI/UIManagerNode")
 	if not is_instance_valid(map_interaction_manager):
 		printerr("Main: MapInteractionManager node not found or invalid. Path used: $MapInteractionManager")
+	if not is_instance_valid(convoy_visuals_manager):
+		printerr("Main: ConvoyVisualsManager node not found or invalid. Path used: $ConvoyVisualsManager")
 
 	# --- Connect to GameDataManager signals ---
 	var gdm_node = get_node_or_null("/root/GameDataManager")
@@ -229,6 +228,13 @@ func _ready():
 			map_interaction_manager.convoy_menu_requested.connect(_on_mim_convoy_menu_requested) # New connection
 		else:
 			printerr("Main: MapInteractionManager does not have initialize method.")
+
+	# --- Initialize ConvoyVisualsManager ---
+	if is_instance_valid(convoy_visuals_manager) and convoy_visuals_manager.has_method("initialize"):
+		convoy_visuals_manager.initialize(map_container, map_renderer_node)
+		# print("Main: ConvoyVisualsManager initialized.")
+	else:
+		printerr("Main: ConvoyVisualsManager node not found, invalid, or missing 'initialize' method.")
 
 
 	# map_display is now child of map_container, its position is (0,0) relative to map_container
@@ -774,7 +780,13 @@ func _on_gdm_convoy_data_updated(p_augmented_convoy_data: Array) -> void:
 	else:
 		printerr("Main (_on_gdm_convoy_data_updated): Cannot update ConvoyListPanel. Node: %s" % convoy_list_panel_node)
 
-	_update_convoy_nodes() # Create/update ConvoyNode instances using augmented _all_convoy_data
+	# --- Augment convoy data with icon offsets using ConvoyVisualsManager ---
+	if is_instance_valid(convoy_visuals_manager) and convoy_visuals_manager.has_method("augment_convoy_data_with_offsets"):
+		_all_convoy_data = convoy_visuals_manager.augment_convoy_data_with_offsets(_all_convoy_data, map_tiles, map_display)
+	else:
+		printerr("Main: ConvoyVisualsManager not available or missing 'augment_convoy_data_with_offsets' method. Icon offsets will not be calculated.")
+
+	_trigger_convoy_visuals_update() # Create/update ConvoyNode instances using augmented _all_convoy_data
 	# Map texture DOES need to be re-rendered if journey lines are drawn on it and convoy data changes.
 	# The 'false' for is_light_ui_update means a full UI update for labels etc. will also occur.
 	_update_map_display(true, false)
@@ -1327,52 +1339,33 @@ func _on_convoy_selected_from_list_panel(convoy_data: Dictionary):
 		printerr("Main: _on_convoy_selected_from_list_panel - menu_manager_ref is NOT valid! Cannot request convoy menu.")
 
 
-func _update_convoy_nodes():
+func _trigger_convoy_visuals_update():
+	"""
+	Calls the ConvoyVisualsManager to update the ConvoyNode instances on the map.
+	"""
 	if not _map_and_ui_setup_complete:
-		# This function relies on UIManager's cached params which are set up after map is loaded.
-		# print("Main (_update_convoy_nodes): Map and UI setup not yet complete. Skipping convoy node creation/update.")
-		return
-	if not is_instance_valid(map_container) or not is_instance_valid(ui_manager):
-		# printerr("Main: map_container or ui_manager is not valid. Cannot update convoy nodes.") # Temporarily commented
+		# print("Main (_trigger_convoy_visuals_update): Map and UI setup not yet complete. Skipping convoy node update.")
 		return
 
-
-	# These tile pixel dimensions are on the *full, unscaled* map texture.
-	# They are crucial for ConvoyNode to position itself correctly within MapContainer.
-	# We get them from UIManager as it already calculates and caches them.
-	if not ui_manager._ui_drawing_params_cached:
-		# This might happen if _update_convoy_nodes is called before UIManager's first full update.
-		# An initial _update_map_display(true, false) after map load should cache these.
-		printerr("Main: UIManager drawing params not cached. ConvoyNode positions might be incorrect. Waiting for cache.")
-		return 
-
-	var tile_w = ui_manager._cached_actual_tile_width_on_texture
-	var tile_h = ui_manager._cached_actual_tile_height_on_texture
-
-	if tile_w <= 0 or tile_h <= 0: # If UIManager hasn't cached valid values yet
-		printerr("Main: _update_convoy_nodes - Invalid tile dimensions from UIManager cache (w:%s, h:%s). Waiting for valid cache." % [tile_w, tile_h])
+	if not (is_instance_valid(convoy_visuals_manager) and convoy_visuals_manager.has_method("update_convoy_nodes_on_map")):
+		printerr("Main: ConvoyVisualsManager not ready or 'update_convoy_nodes_on_map' method missing.")
 		return
 
-	var current_convoy_ids_from_data: Array[String] = []
-	for convoy_item_data in _all_convoy_data:
-		var convoy_id_val = convoy_item_data.get("convoy_id")
-		if convoy_id_val == null: continue
-		var convoy_id_str = str(convoy_id_val)
-		current_convoy_ids_from_data.append(convoy_id_str)
+	if not (is_instance_valid(ui_manager) and ui_manager._ui_drawing_params_cached):
+		printerr("Main: UIManager drawing params not cached. Cannot provide tile dimensions to ConvoyVisualsManager.")
+		return
 
-		var convoy_color = _convoy_id_to_color_map.get(convoy_id_str, Color.GRAY)
+	var tile_w_on_texture = ui_manager._cached_actual_tile_width_on_texture
+	var tile_h_on_texture = ui_manager._cached_actual_tile_height_on_texture
 
-		if _active_convoy_nodes.has(convoy_id_str):
-			_active_convoy_nodes[convoy_id_str].set_convoy_data(convoy_item_data, convoy_color, tile_w, tile_h)
-		else:
-			var new_convoy_node = convoy_node_scene.instantiate()
-			new_convoy_node.z_index = CONVOY_NODE_Z_INDEX # Ensure convoy nodes are above map_display
-			map_container.add_child(new_convoy_node) # Add as child of MapContainer
-			new_convoy_node.set_convoy_data(convoy_item_data, convoy_color, tile_w, tile_h)
-			_active_convoy_nodes[convoy_id_str] = new_convoy_node
+	if tile_w_on_texture <= 0 or tile_h_on_texture <= 0:
+		printerr("Main: Invalid tile dimensions from UIManager cache for ConvoyVisualsManager (w:%s, h:%s)." % [tile_w_on_texture, tile_h_on_texture])
+		return
 
-	var ids_to_remove: Array = _active_convoy_nodes.keys().filter(func(id_str): return not current_convoy_ids_from_data.has(id_str))
-	for id_str_to_remove in ids_to_remove:
-		if _active_convoy_nodes.has(id_str_to_remove): # Should always be true
-			_active_convoy_nodes[id_str_to_remove].queue_free()
-			_active_convoy_nodes.erase(id_str_to_remove)
+	# _all_convoy_data should already be augmented with _pixel_offset_for_icon by this point
+	convoy_visuals_manager.update_convoy_nodes_on_map(
+		_all_convoy_data,
+		_convoy_id_to_color_map,
+		tile_w_on_texture,
+		tile_h_on_texture
+	)
