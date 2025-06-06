@@ -17,7 +17,8 @@ signal panel_drag_updated(convoy_id_str: String, new_panel_local_position: Vecto
 # Emitted when a convoy panel drag ends.
 # final_panel_local_position is the panel's final position relative to its parent.
 signal panel_drag_ended(convoy_id_str: String, final_panel_local_position: Vector2)
-
+# THIS SIGNAL IS NOW EMITTED BY MapCameraController
+# It is kept here for compatibility if other scripts listen to MIM for it.
 # Emitted when the camera zoom level has changed.
 signal camera_zoom_changed(new_zoom_level: float)
 
@@ -34,6 +35,8 @@ var all_settlement_data: Array = []
 var map_tiles: Array = []
 var camera: Camera2D = null # Will be set by main.gd during initialization
 var map_container_for_bounds: Node2D = null # To get map content dimensions for camera limits
+# Ensure MapCameraController node is a child of MapInteractionManager in the scene
+@onready var map_camera_controller: MapCameraController = $MapCameraController
 
 var _initial_map_display_size: Vector2 = Vector2.ZERO # Store the original full map texture size
 
@@ -51,21 +54,8 @@ enum ControlScheme { MOUSE_AND_KEYBOARD, TOUCH }
 ## Padding from the viewport edges (in pixels) used to clamp draggable UI panels.
 @export var label_map_edge_padding: float = 5.0 
 
-@export_group("Camera Controls")
-## Minimum zoom level for the camera.
-@export var min_camera_zoom_level: float = 0.2
-## Maximum zoom level for the camera.
-@export var max_camera_zoom_level: float = 5.0
-## Enable zooming with the mouse wheel when using Mouse & Keyboard control scheme.
-@export var enable_mouse_wheel_zoom: bool = true
-## Factor by which to multiply/divide current zoom on each scroll step.
-@export var camera_zoom_factor_increment: float = 1.1
+# Camera control exports (min_zoom, max_zoom, sensitivity, etc.) are now in MapCameraController.gd
 
-var _is_camera_panning: bool = false
-## Multiplier for camera pan speed when using mouse drag. Higher values increase sensitivity.
-@export var camera_pan_sensitivity: float = 7.5
-
-var _last_camera_pan_mouse_screen_position: Vector2
 
 var _pan_touch_index: int = -1 # For tracking which finger started a touch pan
 
@@ -130,6 +120,13 @@ func initialize(
 	if not is_instance_valid(map_container_for_bounds): printerr("MapInteractionManager: map_container_for_bounds is invalid after init!")
 	
 	if is_instance_valid(camera): # Basic camera setup
+		if is_instance_valid(map_camera_controller) and map_camera_controller.has_method("initialize"):
+			map_camera_controller.initialize(camera, map_container_for_bounds, _initial_map_display_size, _current_map_screen_rect)
+			if map_camera_controller.has_signal("camera_zoom_changed"):
+				map_camera_controller.camera_zoom_changed.connect(_on_map_camera_controller_zoom_changed)
+		else:
+			printerr("MapInteractionManager: MapCameraController node or its initialize method is invalid.")
+			
 		camera.drag_horizontal_enabled = true
 		camera.drag_left_margin = 0.0
 		camera.drag_right_margin = 0.0
@@ -147,8 +144,9 @@ func initialize(
 func set_current_map_screen_rect(rect: Rect2):
 	_current_map_screen_rect = rect
 	# print("MIM: Map screen rect updated to: ", _current_map_screen_rect) # DEBUG
-	# Trigger a camera constraint update immediately
-	_physics_process(0) # Call with dummy delta to re-evaluate constraints immediately
+	if is_instance_valid(map_camera_controller) and map_camera_controller.has_method("update_map_dimensions"):
+		map_camera_controller.update_map_dimensions(_initial_map_display_size, _current_map_screen_rect)
+	# The camera controller's _physics_process will handle clamping.
 
 func update_data_references(p_all_convoy_data: Array, p_all_settlement_data: Array, p_map_tiles: Array):
 	"""Called by main.gd when core data (convoys, settlements, map_tiles) is updated."""
@@ -162,43 +160,14 @@ func update_data_references(p_all_convoy_data: Array, p_all_settlement_data: Arr
 		var current_map_actual_size = map_display.custom_minimum_size
 		if current_map_actual_size.x > 0 and current_map_actual_size.y > 0:
 			_initial_map_display_size = current_map_actual_size
+			if is_instance_valid(map_camera_controller) and map_camera_controller.has_method("update_map_dimensions"):
+				map_camera_controller.update_map_dimensions(_initial_map_display_size, _current_map_screen_rect)
 			# print("MIM (update_data_references): Updated _initial_map_display_size to: ", _initial_map_display_size) # DEBUG
 
 	# print("MapInteractionManager: Data references updated.")
 
 func _physics_process(delta: float):
-	"""
-	Performs manual camera clamping to keep the viewport edges within the map bounds.
-	Called after camera position might be updated by physics or smoothing.
-	"""
-	if not is_instance_valid(camera) or not is_instance_valid(map_container_for_bounds) or _initial_map_display_size.x <= 0 or _initial_map_display_size.y <= 0:
-		return # Cannot clamp if essential nodes or map size are invalid
-
-	# Assuming map_container_for_bounds.position is the top-left of the map
-	# and _initial_map_display_size is the map's size in world units.
-	var map_rect_world = Rect2(map_container_for_bounds.global_position, _initial_map_display_size)
-	var viewport_size_pixels = _current_map_screen_rect.size # Use the effective map screen size
-
-	if camera.zoom.x <= 0 or camera.zoom.y <= 0: # Avoid division by zero
-		return
-
-	var viewport_size_world = viewport_size_pixels / camera.zoom
-
-	# Calculate the clamping bounds for the camera's center
-	# The camera center must be offset from the map edge by half the viewport size (in world units)
-	# to ensure the viewport edge aligns with the map edge.
-	var clamp_min_x = map_rect_world.position.x + viewport_size_world.x / 2.0
-	var clamp_max_x = map_rect_world.position.x + map_rect_world.size.x - viewport_size_world.x / 2.0
-	var clamp_min_y = map_rect_world.position.y + viewport_size_world.y / 2.0
-	var clamp_max_y = map_rect_world.position.y + map_rect_world.size.y - viewport_size_world.y / 2.0
-
-	# Handle cases where map is smaller than viewport in a dimension (center the camera on the map)
-	clamp_min_x = min(clamp_min_x, clamp_max_x) # Ensure min <= max, handles map smaller than viewport
-	clamp_min_y = min(clamp_min_y, clamp_max_y) # Ensure min <= max, handles map smaller than viewport
-
-	# Apply clamping to the camera's position
-	camera.position.x = clamp(camera.position.x, clamp_min_x, clamp_max_x)
-	camera.position.y = clamp(camera.position.y, clamp_min_y, clamp_max_y)
+	pass # Camera clamping is now handled by MapCameraController's _physics_process
 
 func _input(event: InputEvent): # Renamed from _unhandled_input
 	# --- DEBUG: Log some events reaching _unhandled_input ---
@@ -240,35 +209,29 @@ func _input(event: InputEvent): # Renamed from _unhandled_input
 	# 2. Handle panel drag motion (which might consume the InputEventMouseMotion).
 	#    This needs to be called for InputEventMouseMotion.
 	#    _handle_panel_drag_motion_only checks internally if dragging.
-	if event is InputEventMouseMotion:
-		_handle_panel_drag_motion_only(event)
-		if get_viewport().is_input_handled():
+	if event is InputEventMouseMotion: # Check if it's a mouse motion event
+		if _handle_panel_drag_motion_only(event): # Now returns true if handled
 			return # Consumed by panel drag motion
 
 	# 3. Handle gestures (Magnify, Pan). These are distinct event types.
-	if event is InputEventMagnifyGesture:
-		if event.factor != 0.0: # Avoid division by zero, though unlikely for this event
-			_zoom_camera_at_screen_pos(event.factor, event.position)
-			get_viewport().set_input_as_handled()
-		return # MagnifyGesture processed, then done.
+	# Also handle M&K camera controls here by passing to MapCameraController
+	if is_instance_valid(map_camera_controller) and map_camera_controller.has_method("handle_input"):
+		if map_camera_controller.handle_input(event):
+			# Event was handled by camera controller (e.g., MMB pan, wheel zoom, gestures)
+			return 
 
-	if event is InputEventPanGesture:
-		if is_instance_valid(camera) and camera.zoom.x != 0.0:
-			# Camera "flies" with the pan delta
-			camera.position += event.delta * camera_pan_sensitivity / camera.zoom.x # Use position
-			get_viewport().set_input_as_handled()
-		return # PanGesture processed, then done.
-
-	# If a gesture (or panel drag motion) consumed the event, subsequent logic for that event is skipped.
-	if get_viewport().is_input_handled():
-		return
+	# If a camera control or panel drag motion consumed the event, subsequent logic for that event is skipped.
+	# This check is no longer needed as the returns above cover consumed events.
+	# if get_viewport().is_input_as_handled(): 
+	# 	return
 
 	# 4. Handle scheme-specific interactions (camera controls, clicks, taps).
 	match active_control_scheme:
 		ControlScheme.MOUSE_AND_KEYBOARD:
 			# This function now consolidates camera controls (MMB pan, wheel zoom)
 			# and primary interactions (LMB clicks for panel drag start/end, map clicks).
-			_handle_mk_scheme_interactions(event)
+			# Camera controls are now handled by map_camera_controller.handle_input above.
+			_handle_mk_scheme_interactions_non_camera(event) # Renamed, only non-camera M&K
 		ControlScheme.TOUCH:
 			_handle_touch_input(event)
 
@@ -276,15 +239,15 @@ func _input(event: InputEvent): # Renamed from _unhandled_input
 func _handle_mk_scheme_interactions(event: InputEvent):
 	# This function combines logic previously in _handle_mouse_input() and _handle_mouse_button_interactions.
 	# Order matters: camera controls might take precedence over map clicks for the same button.
-
+	
 	# Camera Panning (Middle Mouse Button or Shift + Left Mouse Button) & Camera Zoom (Wheel)
 	# This logic is taken from the original _handle_mouse_input
-	_handle_mouse_camera_controls(event)
+	# MOVED to map_camera_controller.handle_input(event)
+	pass
 
-	# If camera controls handled the event, don't process further for map/panel clicks.
-	if get_viewport().is_input_handled():
-		return
 
+func _handle_mk_scheme_interactions_non_camera(event: InputEvent):
+	# This function handles M&K interactions *not* related to direct camera control.
 	# Left Mouse Button interactions (panel drag start/end, map element clicks)
 	# This logic is taken from the original _handle_mouse_button_interactions
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
@@ -293,8 +256,9 @@ func _handle_mk_scheme_interactions(event: InputEvent):
 
 func get_current_camera_zoom() -> float:
 	if is_instance_valid(camera):
-		return camera.zoom.x # Assuming uniform zoom
-	return 1.0
+		if is_instance_valid(map_camera_controller) and map_camera_controller.has_method("get_current_zoom"):
+			return map_camera_controller.get_current_zoom()
+	return 1.0 # Fallback
 
 
 func _process(delta: float):
@@ -304,7 +268,7 @@ func _process(delta: float):
 		_hover_update_timer = 0.0 # Reset timer
 		if is_instance_valid(_last_mouse_motion_event) and \
 		   active_control_scheme == ControlScheme.MOUSE_AND_KEYBOARD and \
-		   not _is_camera_panning and \
+		   (not is_instance_valid(map_camera_controller) or (is_instance_valid(map_camera_controller) and not map_camera_controller.is_panning())) and \
 		   not is_instance_valid(_dragging_panel_node): # Don't do hover if panning or dragging panel
 			_perform_hover_detection_only(_last_mouse_motion_event)
 		_last_mouse_motion_event = null # Clear after processing or if conditions not met
@@ -312,59 +276,8 @@ func _process(delta: float):
 
 func _handle_mouse_camera_controls(event: InputEvent): # Was part of _handle_mouse_input
 	# --- DEBUG: Log some events reaching _handle_mouse_input ---
-	# print("MIM _handle_mouse_input RECEIVED EVENT --- Type: %s, Event: %s" % [event.get_class(), event]) # Verbose
-	# if event is InputEventMouseButton:
-	# print("MIM _handle_mouse_camera_controls: MouseButton - button_index: %s, pressed: %s, shift_pressed: %s, global_pos: %s" % [event.button_index, event.pressed, event.is_shift_pressed(), event.global_position]) # DEBUG
-	# elif event is InputEventMouseMotion and _is_camera_panning:
-	#     print("MIM _handle_mouse_input: MouseMotion - global_pos: %s, relative: %s, button_mask: %s" % [event.global_position, event.relative, event.button_mask]) # DEBUG
-	# --- END DEBUG ---
-
-	# Camera Panning (Middle Mouse Button Only)
-	var is_middle_mouse_button_event = event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_MIDDLE
-	if is_middle_mouse_button_event:
-		if event.pressed:
-			_is_camera_panning = true
-			# print("MIM: Middle Mouse pan button event detected. Starting pan.") # DEBUG
-			# print("MIM: Middle Mouse pan button event detected. Starting pan.") # DEBUG
-			_last_camera_pan_mouse_screen_position = event.position
-			Input.set_default_cursor_shape(Input.CURSOR_DRAG)
-			get_viewport().set_input_as_handled() # Consume the press event
-		else: # released
-			# Stop panning if we were in panning mode (initiated by middle mouse)
-			if _is_camera_panning:
-				_is_camera_panning = false
-				# print("MIM: Middle Mouse pan button released. Stopping pan.") # DEBUG
-				# print("MIM: Middle Mouse pan button released. Stopping pan.") # DEBUG
-				Input.set_default_cursor_shape(Input.CURSOR_ARROW)
-				get_viewport().set_input_as_handled() # Consume the release event
-		return # Consumed by middle mouse button press or release for panning
-
-	if event is InputEventMouseMotion and _is_camera_panning:
-		# --- DEBUG: Log pan motion ---
-		# print("MIM _handle_mouse_input: Panning motion detected.") # DEBUG
-		# print("  MIM _is_camera_panning: %s" % _is_camera_panning) # DEBUG
-		# print("  MIM _is_camera_panning: %s" % _is_camera_panning) # DEBUG
-		# print("  mouse_delta_screen (relative): %s" % event.relative) # DEBUG
-		# --- END DEBUG --- #
-		var mouse_delta_screen: Vector2 = event.relative # Use event.relative for direct screen delta
-		if is_instance_valid(camera) and camera.zoom.x != 0.0:
-			camera.position += mouse_delta_screen * camera_pan_sensitivity / camera.zoom.x # Use position, camera "flies" with mouse
-		_last_camera_pan_mouse_screen_position = event.position # Update for next frame if using event.position for delta		
-		get_viewport().set_input_as_handled() # Consume the event
-		return # Consumed
-
-	# Camera Zooming (Mouse Wheel)
-	if enable_mouse_wheel_zoom and event is InputEventMouseButton: # Check the setting here
-		if event.button_index == MOUSE_BUTTON_WHEEL_UP and event.is_pressed():
-			_zoom_camera_at_screen_pos(1.0 / camera_zoom_factor_increment, event.position) # factor < 1 for zoom in
-			get_viewport().set_input_as_handled() # Consume the event
-			return # Consumed
-		elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN and event.is_pressed():
-			_zoom_camera_at_screen_pos(camera_zoom_factor_increment, event.position) # factor > 1 for zoom out
-			get_viewport().set_input_as_handled()
-			return # Consumed
-
-	# Keyboard Zooming (+/- keys) has been removed.
+	# ALL LOGIC MOVED TO MapCameraController.handle_input()
+	pass
 
 
 func _handle_touch_input(event: InputEvent):
@@ -404,8 +317,8 @@ func _handle_touch_input(event: InputEvent):
 	# For example, detecting a drag start on a panel with touch.
 	# The _handle_tap_interaction above handles map element clicks.
 
-
-func _handle_panel_drag_motion_only(event: InputEventMouseMotion):
+ # Add boolean return type
+func _handle_panel_drag_motion_only(event: InputEventMouseMotion) -> bool:
 	"""Handles ONLY the panel dragging motion part. Called directly from _unhandled_input."""
 	if is_instance_valid(_dragging_panel_node) and (event.button_mask & MOUSE_BUTTON_MASK_LEFT):
 		# Calculate the new target global position for the panel's origin
@@ -435,9 +348,10 @@ func _handle_panel_drag_motion_only(event: InputEventMouseMotion):
 		if is_instance_valid(_dragging_panel_node.get_parent()):
 			var new_local_pos = _dragging_panel_node.get_parent().to_local(new_global_panel_pos)
 			emit_signal("panel_drag_updated", _dragged_convoy_id_actual_str, new_local_pos)
-		get_viewport().set_input_as_handled() # Consume the event
-		return
+		get_viewport().set_input_as_handled()
+		return true # Indicate event was handled
 	# If not dragging a panel, this function does nothing further. Hover is separate.
+	return false # Indicate event was not handled
 
 
 func _perform_hover_detection_only(event: InputEventMouseMotion):
@@ -651,109 +565,29 @@ func _handle_tap_interaction(screen_pos: Vector2):
 		get_viewport().set_input_as_handled()
 
 func _zoom_camera_at_screen_pos(zoom_adjust_factor: float, screen_zoom_center: Vector2):
-	if not is_instance_valid(camera):
-		return
-
-	var min_zoom_from_export: float = min_camera_zoom_level
-	var max_zoom_from_export: float = max_camera_zoom_level
-
-	var effective_min_clamp_val: float = min_zoom_from_export
-	var effective_max_clamp_val: float = max_zoom_from_export
-
-	if _initial_map_display_size.x > 0.001 and _initial_map_display_size.y > 0.001:
-		var viewport_pixel_size: Vector2 = _current_map_screen_rect.size # Use effective map screen size
-		var map_world_size: Vector2 = _initial_map_display_size
-
-		# Calculate the zoom level required for the map to fill the viewport width/height.
-		# This is the smallest numerical zoom value (most zoomed-in) that prevents borders.
-		var req_zoom_x_to_fill_viewport: float = viewport_pixel_size.x / map_world_size.x
-		var req_zoom_y_to_fill_viewport: float = viewport_pixel_size.y / map_world_size.y
-		var dynamic_min_zoom_to_prevent_borders: float = max(req_zoom_x_to_fill_viewport, req_zoom_y_to_fill_viewport)
-
-		# The actual minimum zoom for clamping is the more restrictive of export setting and dynamic calculation.
-		effective_min_clamp_val = max(min_zoom_from_export, dynamic_min_zoom_to_prevent_borders)
-		
-		# Ensure the max clamp value is not less than the (potentially increased) min clamp value.
-		effective_max_clamp_val = max(effective_min_clamp_val, max_zoom_from_export)
+	# MOVED to MapCameraController.zoom_at_screen_pos()
+	if is_instance_valid(map_camera_controller) and map_camera_controller.has_method("zoom_at_screen_pos"):
+		map_camera_controller.zoom_at_screen_pos(zoom_adjust_factor, screen_zoom_center)
 	else:
-		# Fallback if map size is invalid, use only exported limits
-		pass # effective_min_clamp_val and effective_max_clamp_val already set to export limits
-
-	var new_potential_zoom_scalar: float = camera.zoom.x * zoom_adjust_factor
-	var clamped_new_zoom_scalar: float = clamp(new_potential_zoom_scalar, effective_min_clamp_val, effective_max_clamp_val)
-	var new_zoom_vector: Vector2 = Vector2(clamped_new_zoom_scalar, clamped_new_zoom_scalar)
-
-	if camera.zoom.is_equal_approx(new_zoom_vector):
-		# This can happen if already at min/max zoom limit and trying to go further
-		return # No significant change in zoom after clamping
-	
-	var inv_transform_before_zoom: Transform2D = camera.get_canvas_transform().affine_inverse()
-	var world_pos_before_zoom: Vector2 = inv_transform_before_zoom * screen_zoom_center
-
-	var old_zoom_for_signal = camera.zoom.x # Store before changing for the signal
-	camera.zoom = new_zoom_vector
-
-	var inv_transform_after_zoom: Transform2D = camera.get_canvas_transform().affine_inverse()
-	var world_pos_after_zoom: Vector2 = inv_transform_after_zoom * screen_zoom_center
-	
-	camera.position += world_pos_before_zoom - world_pos_after_zoom # Use position
-		
-	# Camera's built-in limits will apply.
-	if not is_equal_approx(old_zoom_for_signal, camera.zoom.x): # Check if zoom actually changed
-		emit_signal("camera_zoom_changed", camera.zoom.x)
+		printerr("MIM: _zoom_camera_at_screen_pos - MapCameraController or method invalid.")
 
 func set_and_clamp_camera_zoom(target_zoom_scalar: float):
-	if not is_instance_valid(camera):
-		return
-
-	var min_zoom_from_export: float = min_camera_zoom_level
-	var max_zoom_from_export: float = max_camera_zoom_level
-	var effective_min_clamp_val: float = min_zoom_from_export
-	var effective_max_clamp_val: float = max_zoom_from_export
-
-	if _initial_map_display_size.x > 0.001 and _initial_map_display_size.y > 0.001:
-		var viewport_pixel_size: Vector2 = _current_map_screen_rect.size # Uses the MIM's current understanding of the map's screen rect
-		var map_world_size: Vector2 = _initial_map_display_size
-
-		# Ensure map_world_size and viewport_pixel_size are valid before division
-		if map_world_size.x > 0.001 and map_world_size.y > 0.001 and viewport_pixel_size.x > 0.001 and viewport_pixel_size.y > 0.001 :
-			var req_zoom_x_to_fill_viewport: float = viewport_pixel_size.x / map_world_size.x
-			var req_zoom_y_to_fill_viewport: float = viewport_pixel_size.y / map_world_size.y
-			var dynamic_min_zoom_to_prevent_borders: float = max(req_zoom_x_to_fill_viewport, req_zoom_y_to_fill_viewport)
-			effective_min_clamp_val = max(min_zoom_from_export, dynamic_min_zoom_to_prevent_borders)
-			effective_max_clamp_val = max(effective_min_clamp_val, max_zoom_from_export)
-		# else: Fallback to export limits if map_world_size or viewport_pixel_size is invalid for dynamic calculation
-	# else: Fallback to export limits if _initial_map_display_size is invalid
-
-	var clamped_new_zoom_scalar: float = clamp(target_zoom_scalar, effective_min_clamp_val, effective_max_clamp_val)
-	var new_zoom_vector: Vector2 = Vector2(clamped_new_zoom_scalar, clamped_new_zoom_scalar)
-
-	if camera.zoom.is_equal_approx(new_zoom_vector):
-		return # No significant change in zoom after clamping
-
-	var old_zoom_for_signal = camera.zoom.x
-	camera.zoom = new_zoom_vector
-	
-	if not is_equal_approx(old_zoom_for_signal, camera.zoom.x):
-		emit_signal("camera_zoom_changed", camera.zoom.x)
+	# MOVED to MapCameraController.set_and_clamp_zoom()
+	if is_instance_valid(map_camera_controller) and map_camera_controller.has_method("set_and_clamp_zoom"):
+		map_camera_controller.set_and_clamp_zoom(target_zoom_scalar)
+	else:
+		printerr("MIM: set_and_clamp_camera_zoom - MapCameraController or method invalid.")
 
 func focus_camera_and_set_zoom(target_world_position: Vector2, target_zoom_scalar: float):
-	if not is_instance_valid(camera):
-		printerr("MIM: focus_camera_and_set_zoom - Camera is invalid.")
-		return
+	# MOVED to MapCameraController.focus_and_set_zoom()
+	if is_instance_valid(map_camera_controller) and map_camera_controller.has_method("focus_and_set_zoom"):
+		map_camera_controller.focus_and_set_zoom(target_world_position, target_zoom_scalar)
+	else:
+		printerr("MIM: focus_camera_and_set_zoom - MapCameraController or method invalid.")
 
-	# 1. Set and clamp zoom first.
-	# This uses _current_map_screen_rect, which main.gd must have set correctly *before* calling this method.
-	set_and_clamp_camera_zoom(target_zoom_scalar) # This updates camera.zoom
-
-	# 2. Set camera position to the desired target.
-	camera.position = target_world_position
-
-	# 3. Immediately apply position clamping based on the new zoom and current map screen rect.
-	#    REMOVED: The immediate call to _physics_process(0) here.
-	#    Now, camera.position remains at target_world_position after this method.
-	#    main.gd's _apply_map_camera_and_ui_layout will use this exact position for its offset.
-	#    MIM's regular _physics_process on the next game tick will then apply clamping if needed.
+func _on_map_camera_controller_zoom_changed(new_zoom_level: float):
+	# Re-emit the signal if other scripts are listening to MIM
+	emit_signal("camera_zoom_changed", new_zoom_level)
 
 func _get_convoy_data_at_world_pos(world_pos: Vector2): # Removed -> Dictionary | null
 	"""Helper to find a convoy's data Dictionary at a given world position."""

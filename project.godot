@@ -16,10 +16,12 @@ run/main_scene="res://Scenes/game_root.tscn"
 config/features=PackedStringArray("4.4", "GL Compatibility")
 run/low_processor_mode=true
 boot_splash/image="res://Assets/df-logo-diamond.png"
+config/icon="uid://cqbe7cgys44i"
 
 [autoload]
 
 GameDataManager="*res://Scripts/GameDataManager.gd"
+DateTimeUtils="*res://Scripts/DateTimeUtils.gd"
 
 [display]
 
