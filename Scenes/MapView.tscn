@@ -1,9 +1,10 @@
-[gd_scene load_steps=9 format=3 uid="uid://b7shrt87ucxid"]
+[gd_scene load_steps=10 format=3 uid="uid://b7shrt87ucxid"]
 
 [ext_resource type="Script" uid="uid://bx0lqfkbhkuu2" path="res://Scripts/main.gd" id="1_qf4ax"]
 [ext_resource type="Script" uid="uid://008fj565mco8" path="res://Scripts/MapCameraController.gd" id="2_k7gy6"]
 [ext_resource type="Script" uid="uid://dhbye55w1c5yk" path="res://Scripts/map_render.gd" id="2_mtjdu"]
 [ext_resource type="Script" uid="uid://db8hk5n6dal5j" path="res://Scripts/APICalls.gd" id="2_of6aa"]
+[ext_resource type="Script" uid="uid://dgg8p152pc05o" path="res://Scripts/ConvoyLabelManager.gd" id="3_t5xx3"]
 [ext_resource type="Script" uid="uid://bhrh158fxnj1g" path="res://Scripts/UIManager.gd" id="3_xagsy"]
 [ext_resource type="Script" uid="uid://btt1pkuxc2tbe" path="res://Scripts/MapInteractionManager.gd" id="4_b4rp0"]
 [ext_resource type="Script" uid="uid://17krngr1jkib" path="res://Scripts/GameTimers.gd" id="5_b5irg"]
@@ -24,6 +25,7 @@ stretch_mode = 5
 [node name="SettlementLabelContainer" type="Node2D" parent="MapContainer"]
 
 [node name="ConvoyLabelContainer" type="Node2D" parent="MapContainer"]
+script = ExtResource("3_t5xx3")
 
 [node name="ConvoyConnectorLinesContainer" type="Node2D" parent="MapContainer"]
 
@@ -40,6 +42,9 @@ offset_right = 310.0
 offset_bottom = 63.0
 theme_override_font_sizes/font_size = 40
 text = "Detailed Mode"
+
+[node name="ConvoyLabelManagerNode" type="Node" parent="ScreenSpaceUI/UIManagerNode"]
+script = ExtResource("3_t5xx3")
 
 [node name="APICallsInstance" type="Node" parent="."]
 script = ExtResource("2_of6aa")

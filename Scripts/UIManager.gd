@@ -11,7 +11,8 @@ extends Node2D
 # Path corrected: From UIManagerNode (child of ScreenSpaceUI, child of MapRender)
 # up to MapRender, then down to MapContainer, then to ConvoyConnectorLinesContainer.
 # Adjust ../../ if UIManagerNode is nested differently under ScreenSpaceUI.
-@onready var convoy_connector_lines_container: Node2D = get_node("../../MapContainer/ConvoyConnectorLinesContainer") 
+@onready var convoy_connector_lines_container: Node2D = get_node("../../MapContainer/ConvoyConnectorLinesContainer")
+# @onready var convoy_label_container: Node2D = get_node("../../MapContainer/ConvoyLabelContainer") # Moved to ConvoyLabelManager
 # Path corrected: ConvoyLabelContainer is also under MapContainer.
 @onready var convoy_label_container: Node2D = get_node("../../MapContainer/ConvoyLabelContainer")
 
@@ -132,7 +133,8 @@ var _cached_actual_tile_height_on_texture: float = 0.0
 var _ui_drawing_params_cached: bool = false
 
 # --- Active Panel Management for Optimization ---
-var _active_convoy_panels: Dictionary = {}  # { "convoy_id_str": PanelNode }
+# var _active_convoy_panels: Dictionary = {}  # { "convoy_id_str": PanelNode } # Moved to ConvoyLabelManager
+@onready var convoy_label_manager: Node = $ConvoyLabelManagerNode # Assuming this path
 var _active_settlement_panels: Dictionary = {} # { "tile_coord_str": PanelNode }
 
 # Z-index for label containers within MapContainer, relative to MapDisplay and ConvoyNodes
@@ -153,9 +155,9 @@ func _ready():
 	if is_instance_valid(convoy_connector_lines_container):
 		convoy_connector_lines_container.visible = true
 		convoy_connector_lines_container.z_index = LABEL_CONTAINER_Z_INDEX # Connectors at the same level as labels
-	if is_instance_valid(convoy_label_container):
-		convoy_label_container.visible = true
-		convoy_label_container.z_index = LABEL_CONTAINER_Z_INDEX
+	# if is_instance_valid(convoy_label_container): # Managed by ConvoyLabelManager
+	# 	convoy_label_container.visible = true
+	# 	convoy_label_container.z_index = LABEL_CONTAINER_Z_INDEX
 	_current_map_screen_rect_for_clamping = get_viewport().get_visible_rect() # Initialize
 		
 
@@ -176,6 +178,13 @@ func _ready():
 	else:
 		printerr("UIManager: ConvoyConnectorLinesContainer not ready or invalid in _ready().")
 
+	# Programmatically assign the convoy_label_container to the ConvoyLabelManager
+	if is_instance_valid(convoy_label_manager) and convoy_label_manager.has_method("set_convoy_label_container"):
+		if is_instance_valid(convoy_label_container):
+			convoy_label_manager.set_convoy_label_container(convoy_label_container)
+		else:
+			printerr("UIManager: Cannot assign convoy_label_container to ConvoyLabelManager because UIManager's own reference to convoy_label_container is invalid.")
+
 
 func initialize_font_settings(theme_font_to_use: Font):
 	if theme_font_to_use:
@@ -186,6 +195,27 @@ func initialize_font_settings(theme_font_to_use: Font):
 		# If no font is passed, LabelSettings will not have a font set,
 		# and Labels will use their default/themed font.
 		print("UIManager: No theme font provided by main. Labels will use their default theme font if LabelSettings.font is not set.")
+	
+	if is_instance_valid(convoy_label_manager) and convoy_label_manager.has_method("initialize_font_settings"):
+		convoy_label_manager.initialize_font_settings(theme_font_to_use, label_settings, 
+													  base_convoy_title_font_size, # Pass the specific base font size for convoys
+													  ui_overall_scale_multiplier, 
+													  font_scaling_base_tile_size, font_scaling_exponent, 
+													  min_node_font_size, max_node_font_size,
+													  _all_convoy_data_cache if _all_convoy_data_cache else [], CONVOY_STAT_EMOJIS)
+
+	if is_instance_valid(convoy_label_manager) and convoy_label_manager.has_method("initialize_style_settings"):
+		convoy_label_manager.initialize_style_settings(
+			base_convoy_panel_corner_radius, min_node_panel_corner_radius, max_node_panel_corner_radius,
+			base_convoy_panel_padding_h, base_convoy_panel_padding_v,
+			min_node_panel_padding, max_node_panel_padding,
+			base_convoy_panel_border_width, min_node_panel_border_width, max_node_panel_border_width,
+			convoy_panel_background_color,
+			base_selected_convoy_horizontal_offset, base_horizontal_label_offset_from_center,
+			label_map_edge_padding, label_anti_collision_y_shift
+		)
+	# else: # DEBUG
+		# printerr("UIManager: ConvoyLabelManager is invalid or missing 'initialize_style_settings'. CLM valid: %s" % is_instance_valid(convoy_label_manager))
 
 
 func update_ui_elements(
@@ -248,20 +278,67 @@ func update_ui_elements(
 				_ui_drawing_params_cached = false # map_image_cols or rows is zero
 		else:
 			_ui_drawing_params_cached = false # map_texture_size is zero
+
+		print("UIManager: In update_ui_elements. UIManager._ui_drawing_params_cached: ", _ui_drawing_params_cached) # DEBUG
+		print("UIManager: convoy_label_manager valid: ", is_instance_valid(convoy_label_manager), ", has update_drawing_parameters: ", convoy_label_manager.has_method("update_drawing_parameters") if is_instance_valid(convoy_label_manager) else "N/A") # DEBUG
+
+		# Pass the calculated drawing parameters to ConvoyLabelManager
+		if is_instance_valid(convoy_label_manager) and convoy_label_manager.has_method("update_drawing_parameters"):
+			# UIManager's _ui_drawing_params_cached ensures tile_width/height_on_texture are valid.
+			# ConvoyLabelManager needs the map_display's global on-screen scale and offset.
+			if _ui_drawing_params_cached and is_instance_valid(_map_display_node):
+				var map_display_global_transform = _map_display_node.get_global_transform_with_canvas()
+				# This is the visual scale of the map_display node on the screen (affected by camera)
+				var clm_actual_scale = map_display_global_transform.get_scale().x # Assuming uniform scale
+				# This is the global screen position of the map_display node's top-left corner
+				var clm_offset = map_display_global_transform.get_origin()
+
+				convoy_label_manager.update_drawing_parameters(
+					_cached_actual_tile_width_on_texture,  # Tile width on original unscaled texture
+					_cached_actual_tile_height_on_texture, # Tile height on original unscaled texture
+					_current_map_zoom_cache,               # Camera zoom (used for inverse scaling of UI elements)
+					clm_actual_scale,                      # Actual visual scale of map_display content on screen
+					clm_offset.x,                          # Actual screen X position of map_display's origin
+					clm_offset.y                           # Actual screen Y position of map_display's origin
+				)
+			else: # DEBUG
+				print("UIManager: Condition NOT MET to call convoy_label_manager.update_drawing_parameters. UIM_cached: %s, map_display_valid: %s" % [_ui_drawing_params_cached, is_instance_valid(_map_display_node)]) # DEBUG
 	else:
 		_ui_drawing_params_cached = false # map_display_node, texture, or map_tiles_data invalid
+		print("UIManager: In update_ui_elements. _map_display_node, texture, or _map_tiles_data invalid. UIManager._ui_drawing_params_cached: false") # DEBUG
+		if is_instance_valid(convoy_label_manager) and convoy_label_manager.has_method("update_drawing_parameters"):
+			# Explicitly tell CLM its params are not valid if UIM's are not.
+			# This might involve setting a flag in CLM or passing invalid values.
+			# For now, we just don't call its update_drawing_parameters if UIM's are bad.
+			pass
+
 	# Update UIManager's state from what main.gd passes
 	_convoy_label_user_positions = convoy_label_user_positions_from_main
 	_dragging_panel_node = dragging_panel_node_from_main
 	_dragged_convoy_id_actual_str = dragged_convoy_id_str_from_main
 
 	if is_light_ui_update:
-		# print("UIManager: Performing LIGHT UI update.") # DEBUG
 		_perform_light_ui_update()
 	else:
-		# print("UIManager: Performing FULL UI update (_draw_interactive_labels).") # DEBUG
-		# Call the main label drawing logic
 		_draw_interactive_labels(current_hover_info)
+		
+	# Delegate convoy label updates to ConvoyLabelManager.
+	# NOTE: The 'update_convoy_labels' method needs to be implemented in ConvoyLabelManager.gd.
+	# Its signature should be adjusted to not expect drawing parameters that are now set
+	# via 'update_drawing_parameters'.
+	if is_instance_valid(convoy_label_manager) and convoy_label_manager.has_method("update_convoy_labels"):
+		convoy_label_manager.update_convoy_labels(
+			_all_convoy_data_cache,
+			_convoy_id_to_color_map_cache,
+			current_hover_info,
+			_selected_convoy_ids_cache,
+			_convoy_label_user_positions, # This state might also move to ConvoyLabelManager
+			_dragging_panel_node,         # Drag state might be passed or ConvoyLabelManager handles its own
+			_dragged_convoy_id_actual_str,
+			_current_map_screen_rect_for_clamping,
+			# Style parameters are no longer passed here as they are set via initialize_style_settings.
+			# CONVOY_STAT_EMOJIS is also set via initialize_font_settings.
+		)
 
 	# Request redraw for connector lines
 	if is_instance_valid(convoy_connector_lines_container):
@@ -280,13 +357,13 @@ func _perform_light_ui_update():
 	# Use the map's effective screen rect for clamping calculations
 	var viewport_rect_global = _current_map_screen_rect_for_clamping
 
-	if is_instance_valid(convoy_label_container) and convoy_label_container.get_child_count() > 0:
-		var container_global_transform_convoy = convoy_label_container.get_global_transform_with_canvas()
-		var clamp_rect_local_to_convoy_container = container_global_transform_convoy.affine_inverse() * viewport_rect_global
+	# if is_instance_valid(convoy_label_container) and convoy_label_container.get_child_count() > 0: # Handled by ConvoyLabelManager
+	# 	var container_global_transform_convoy = convoy_label_container.get_global_transform_with_canvas()
+	# 	var clamp_rect_local_to_convoy_container = container_global_transform_convoy.affine_inverse() * viewport_rect_global
 
-		for panel_node in convoy_label_container.get_children():
-			if panel_node is Panel:
-				_clamp_panel_position_optimized(panel_node, clamp_rect_local_to_convoy_container)
+	# 	for panel_node in convoy_label_container.get_children():
+	# 		if panel_node is Panel:
+	# 			_clamp_panel_position_optimized(panel_node, clamp_rect_local_to_convoy_container)
 
 	if is_instance_valid(settlement_label_container) and settlement_label_container.get_child_count() > 0:
 		var container_global_transform_settlement = settlement_label_container.get_global_transform_with_canvas()
@@ -346,12 +423,8 @@ func _draw_interactive_labels(current_hover_info: Dictionary):
 	# print("UIManager: Cached settlement data size: ", _all_settlement_data_cache.size() if _all_settlement_data_cache else "N/A") # DEBUG
 	# print("UIManager: Cached selected IDs: ", _selected_convoy_ids_cache) # DEBUG
 	if is_instance_valid(_dragging_panel_node):
-		# If a panel is being dragged by the UIManager (or externally, if main still handles drag input)
-		# we might still want to update other labels, but not the one being dragged.
-		# For now, the original logic is to skip all updates if a drag is in progress.
-		# This might change if UIManager fully owns drag input.
-		# For this iteration, we assume main.gd might still gate this call.
-		# If UIManager handles drag, this check might be internal to its input handling.
+		# If a panel is being dragged, UIManager might still need to update settlement labels.
+		# ConvoyLabelManager would internally handle not disturbing the dragged convoy panel.
 		pass # Let's assume main.gd already checked this or UIManager will handle it.
 	
 	if not _ui_drawing_params_cached: # Use the cached flag
@@ -359,7 +432,7 @@ func _draw_interactive_labels(current_hover_info: Dictionary):
 		return
 	var drawn_convoy_ids_this_update: Array[String] = []
 	var drawn_settlement_tile_coords_this_update: Array[Vector2i] = []
-	var all_drawn_label_rects_this_update: Array[Rect2] = []
+	var all_drawn_label_rects_this_update: Array[Rect2] = [] # This will be used by SettlementLabelManager and ConvoyLabelManager internally or passed to them
 	
 	# Declare arrays to hold IDs/coords of elements that *should* be visible
 	# print("UIManager:_draw_interactive_labels - current_hover_info: ", current_hover_info) # DEBUG
@@ -423,70 +496,54 @@ func _draw_interactive_labels(current_hover_info: Dictionary):
 					convoy_ids_to_display.append(hovered_convoy_id_as_string)
 
 	# print("UIManager:_draw_interactive_labels - convoy_ids_to_display: ", convoy_ids_to_display) # DEBUG
-	# print("UIManager:_draw_interactive_labels - settlement_coords_to_display: ", settlement_coords_to_display) # DEBUG
-	# STAGE 3: Handle the dragged panel first (ensure its rect is considered and it remains visible)
-	if is_instance_valid(_dragging_panel_node) and _dragging_panel_node.get_parent() == convoy_label_container:
-		_dragging_panel_node.visible = true # Ensure it stays visible
-		# Its content might need an update if it can change while dragging
-		var dragged_convoy_data = _convoy_data_by_id_cache.get(_dragged_convoy_id_actual_str)
-		if dragged_convoy_data:
-			_update_convoy_panel_content(_dragging_panel_node, dragged_convoy_data)
-		
-		var dragged_panel_actual_size = _dragging_panel_node.size
-		if dragged_panel_actual_size.x <= 0 or dragged_panel_actual_size.y <= 0:
-			dragged_panel_actual_size = _dragging_panel_node.get_minimum_size()
-		all_drawn_label_rects_this_update.append(Rect2(_dragging_panel_node.position, dragged_panel_actual_size))
+	# print("UIManager:_draw_interactive_labels - settlement_coords_to_display: ", settlement_coords_to_display) # DEBUG # This part remains for settlements
 
-		if not drawn_convoy_ids_this_update.has(_dragged_convoy_id_actual_str):
-			drawn_convoy_ids_this_update.append(_dragged_convoy_id_actual_str)
+	# STAGE 3: Handle the dragged panel first (ensure its rect is considered and it remains visible)
+	# This logic will move to ConvoyLabelManager if it handles its own drag state or receives it.
+	# For now, UIManager might still pass _dragging_panel_node to ConvoyLabelManager.
+	# if is_instance_valid(_dragging_panel_node) and _dragging_panel_node.get_parent() == convoy_label_container:
+	# 	_dragging_panel_node.visible = true 
+	# 	var dragged_convoy_data = _convoy_data_by_id_cache.get(_dragged_convoy_id_actual_str)
+	# 	if dragged_convoy_data:
+	# 		_update_convoy_panel_content(_dragging_panel_node, dragged_convoy_data) # This would be a call within ConvoyLabelManager
+		
+	# 	var dragged_panel_actual_size = _dragging_panel_node.size
+	# 	if dragged_panel_actual_size.x <= 0 or dragged_panel_actual_size.y <= 0:
+	# 		dragged_panel_actual_size = _dragging_panel_node.get_minimum_size()
+	# 	all_drawn_label_rects_this_update.append(Rect2(_dragging_panel_node.position, dragged_panel_actual_size))
+
+	# 	if not drawn_convoy_ids_this_update.has(_dragged_convoy_id_actual_str):
+	# 		drawn_convoy_ids_this_update.append(_dragged_convoy_id_actual_str)
 
 	# STAGE 4: Update/Create Convoy Labels
-	for convoy_id_str_to_draw in convoy_ids_to_display:
-		if convoy_id_str_to_draw == _dragged_convoy_id_actual_str and is_instance_valid(_dragging_panel_node):
-			# Dragged panel already handled for rect, visibility, and content update.
-			continue
+	# This entire loop and its helper functions (_create_convoy_panel, _update_convoy_panel_content, _position_convoy_panel)
+	# will move to ConvoyLabelManager.gd.
+	# UIManager will call something like:
+	# convoy_label_manager.process_convoy_labels(convoy_ids_to_display, _convoy_data_by_id_cache, all_drawn_label_rects_this_update)
+	# And ConvoyLabelManager will update `all_drawn_label_rects_this_update` internally.
 
-		var convoy_data_for_panel = _convoy_data_by_id_cache.get(convoy_id_str_to_draw)
-		if not convoy_data_for_panel: continue
-
-		var panel_node: Panel
-		if _active_convoy_panels.has(convoy_id_str_to_draw):
-			panel_node = _active_convoy_panels[convoy_id_str_to_draw]
-			if not is_instance_valid(panel_node): # Should not happen if managed correctly
-				_active_convoy_panels.erase(convoy_id_str_to_draw) # Clean up
-				panel_node = _create_convoy_panel(convoy_data_for_panel)
-				if not is_instance_valid(panel_node): continue
-				_active_convoy_panels[convoy_id_str_to_draw] = panel_node
-				convoy_label_container.add_child(panel_node)
-			elif panel_node.get_parent() != convoy_label_container: # Safety: ensure in correct container
-				if panel_node.get_parent(): panel_node.get_parent().remove_child(panel_node)
-				convoy_label_container.add_child(panel_node)
-		else:
-			panel_node = _create_convoy_panel(convoy_data_for_panel)
-			if not is_instance_valid(panel_node): continue
-			_active_convoy_panels[convoy_id_str_to_draw] = panel_node
-			convoy_label_container.add_child(panel_node)
-
-		_update_convoy_panel_content(panel_node, convoy_data_for_panel)
-		panel_node.visible = true
-		_position_convoy_panel(panel_node, convoy_data_for_panel, all_drawn_label_rects_this_update)
-		# print("UIManager:_draw_interactive_labels - Positioning/Clamping convoy panel for ID: ", convoy_id_str_to_draw, " at pos: ", panel_node.position) # DEBUG
-		_clamp_panel_position(panel_node)
-		var current_panel_actual_size = panel_node.size
-		if current_panel_actual_size.x <= 0 or current_panel_actual_size.y <= 0:
-			current_panel_actual_size = panel_node.get_minimum_size()
-		all_drawn_label_rects_this_update.append(Rect2(panel_node.position, current_panel_actual_size))
-		if not drawn_convoy_ids_this_update.has(convoy_id_str_to_draw):
-			drawn_convoy_ids_this_update.append(convoy_id_str_to_draw)
+	# Example of how it might look if delegated (conceptual):
+	# if is_instance_valid(convoy_label_manager):
+	# 	convoy_label_manager.update_active_labels(
+	# 		convoy_ids_to_display, 
+	# 		_convoy_data_by_id_cache, 
+	# 		all_drawn_label_rects_this_update, # Pass for anti-collision
+	# 		_selected_convoy_ids_cache,
+	# 		_convoy_label_user_positions,
+	# 		_dragging_panel_node, # Pass drag state
+	# 		_dragged_convoy_id_actual_str
+	# 	)
 
 	# STAGE 5: Hide convoy panels that are no longer needed
-	for existing_id_str in _active_convoy_panels.keys():
-		if not drawn_convoy_ids_this_update.has(existing_id_str):
-			var panel_to_hide = _active_convoy_panels[existing_id_str]
-			if is_instance_valid(panel_to_hide):
-				panel_to_hide.visible = false
+	# This logic also moves to ConvoyLabelManager.gd.
+	# for existing_id_str in _active_convoy_panels.keys():
+	# 	if not drawn_convoy_ids_this_update.has(existing_id_str):
+	# 		var panel_to_hide = _active_convoy_panels[existing_id_str]
+	# 		if is_instance_valid(panel_to_hide):
+	# 			panel_to_hide.visible = false
 
 	# STAGE 6: Update/Create Settlement Labels
+	# This part remains in UIManager or moves to a new SettlementLabelManager
 	for settlement_coord_to_draw in settlement_coords_to_display:
 		var settlement_coord_str = "%s_%s" % [settlement_coord_to_draw.x, settlement_coord_to_draw.y]
 		var settlement_data_for_panel = _find_settlement_at_tile(settlement_coord_to_draw.x, settlement_coord_to_draw.y)
@@ -541,219 +598,10 @@ func _draw_interactive_labels(current_hover_info: Dictionary):
 	if is_instance_valid(convoy_connector_lines_container):
 		convoy_connector_lines_container.queue_redraw()
 
-
-func _create_convoy_panel(convoy_data: Dictionary) -> Panel:
-	if not is_instance_valid(convoy_label_container):
-		printerr('UIManager: ConvoyLabelContainer is not valid. Cannot draw single convoy label.')
-		return null
-	if not _ui_drawing_params_cached: # Use cached drawing parameters
-		printerr('UIManager: Drawing params not cached in _create_convoy_panel.')
-		return null
-
-	var current_convoy_id_orig = convoy_data.get('convoy_id')
-	var current_convoy_id_str = str(current_convoy_id_orig)
-
-	var panel := Panel.new()
-	var style_box := StyleBoxFlat.new() # Create once
-	panel.add_theme_stylebox_override('panel', style_box)
-	panel.mouse_filter = Control.MOUSE_FILTER_STOP
-	panel.name = current_convoy_id_str
-	panel.set_meta("convoy_id_str", current_convoy_id_str)
-	panel.set_meta("style_box_ref", style_box) # Store ref to stylebox for updates
-
-	var label_node := Label.new()
-	label_node.set('bbcode_enabled', true)
-	label_node.vertical_alignment = VERTICAL_ALIGNMENT_TOP
-	label_node.label_settings = label_settings # Assign the shared LabelSettings
-	label_node.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	panel.add_child(label_node)
-	panel.set_meta("label_node_ref", label_node) # Store ref to label for updates
-
-	return panel
-
-func _update_convoy_panel_content(panel: Panel, convoy_data: Dictionary):
-	if not is_instance_valid(panel) or not _ui_drawing_params_cached:
-		return
-
-	var label_node: Label = panel.get_meta("label_node_ref")
-	var style_box: StyleBoxFlat = panel.get_meta("style_box_ref")
-	if not is_instance_valid(label_node) or not is_instance_valid(style_box):
-		printerr("UIManager: Panel is missing label_node_ref or style_box_ref metadata.")
-		return
-
-	# --- Font Size Calculation (from original _draw_single_convoy_label) ---
-	var effective_tile_size_on_texture: float = min(_cached_actual_tile_width_on_texture, _cached_actual_tile_height_on_texture)
-	var base_linear_font_scale: float = 1.0
-	if font_scaling_base_tile_size > 0.001: # Use exported variable
-		base_linear_font_scale = effective_tile_size_on_texture / font_scaling_base_tile_size # Use exported variable
-	var font_render_scale: float = pow(base_linear_font_scale, font_scaling_exponent) # Use exported variable
-
-	# Adjust base sizes by font_render_scale (for map proportionality)
-	# then divide by map zoom to maintain screen size.
-	var adjusted_base_font_size = base_convoy_title_font_size * ui_overall_scale_multiplier
-	var scaled_target_screen_font_size = adjusted_base_font_size * font_render_scale
-	var node_font_size_before_clamp = scaled_target_screen_font_size / _current_map_zoom_cache
-	var current_convoy_title_font_size: int = clamp(roundi(node_font_size_before_clamp), min_node_font_size, max_node_font_size)
-	
-	var current_convoy_id_str = str(convoy_data.get('convoy_id')) # Already available on panel.name
-
-	# Panel appearance properties (corner radius, padding, border) should maintain screen size.
-	# Scale by font_render_scale for base proportionality, then divide by map zoom.
-	var adjusted_base_corner_radius = base_convoy_panel_corner_radius * ui_overall_scale_multiplier
-	var scaled_target_screen_corner_radius = adjusted_base_corner_radius * font_render_scale
-	var node_corner_radius_before_clamp = scaled_target_screen_corner_radius / _current_map_zoom_cache
-	var current_panel_corner_radius: float = clamp(node_corner_radius_before_clamp, min_node_panel_corner_radius, max_node_panel_corner_radius)
-
-	var adjusted_base_padding_h = base_convoy_panel_padding_h * ui_overall_scale_multiplier
-	var scaled_target_screen_padding_h = adjusted_base_padding_h * font_render_scale
-	var node_padding_h_before_clamp = scaled_target_screen_padding_h / _current_map_zoom_cache
-	var current_panel_padding_h: float = clamp(node_padding_h_before_clamp, min_node_panel_padding, max_node_panel_padding)
-
-	var adjusted_base_padding_v = base_convoy_panel_padding_v * ui_overall_scale_multiplier
-	var scaled_target_screen_padding_v = adjusted_base_padding_v * font_render_scale
-	var node_padding_v_before_clamp = scaled_target_screen_padding_v / _current_map_zoom_cache
-	var current_panel_padding_v: float = clamp(node_padding_v_before_clamp, min_node_panel_padding, max_node_panel_padding)
-
-	var adjusted_base_border_width = base_convoy_panel_border_width * ui_overall_scale_multiplier
-	var scaled_target_screen_border_width = adjusted_base_border_width * font_render_scale
-	var node_border_width_before_clamp = scaled_target_screen_border_width / _current_map_zoom_cache
-	var current_panel_border_width: int = clamp(roundi(node_border_width_before_clamp), min_node_panel_border_width, max_node_panel_border_width)
-
-	# --- Label Text Generation (from original _draw_single_convoy_label) ---
-	var efficiency: float = convoy_data.get('efficiency', 0.0)
-	var convoy_map_x: float = convoy_data.get('x', 0.0)
-	var top_speed: float = convoy_data.get('top_speed', 0.0)
-	var offroad_capability: float = convoy_data.get('offroad_capability', 0.0)
-	var convoy_name: String = convoy_data.get('convoy_name', 'N/A')
-	var journey_data: Dictionary = convoy_data.get('journey', {})
-	var convoy_map_y: float = convoy_data.get('y', 0.0)
-	var progress: float = journey_data.get('progress', 0.0)
-
-	var eta_raw_string: String = journey_data.get('eta', 'N/A')
-	var departure_raw_string_for_eta_format: String = journey_data.get('departure_time', 'N/A') # Renamed to avoid conflict
-	var formatted_eta: String = DateTimeUtils.format_eta_string(eta_raw_string, departure_raw_string_for_eta_format)
-
-	var progress_percentage_str: String = 'N/A'
-	var length: float = journey_data.get('length', 0.0)
-	if length > 0.001:
-		var percentage: float = (progress / length) * 100.0
-		progress_percentage_str = '%.1f%%' % percentage
-	
-	var label_text: String = '%s \n🏁 %s | ETA: %s\n%s %.1f | %s %.1f | %s %.1f' % [
-			convoy_name, progress_percentage_str, formatted_eta,
-			CONVOY_STAT_EMOJIS.get('efficiency', ''), efficiency,
-			CONVOY_STAT_EMOJIS.get('top_speed', ''), top_speed,
-			CONVOY_STAT_EMOJIS.get('offroad_capability', ''), offroad_capability
-		]
-
-	# Update Label
-	if not is_instance_valid(label_settings.font):
-		printerr("UIManager (_draw_single_convoy_label): label_settings.font is NOT VALID for convoy: ", convoy_name)
-	# LabelSettings object is shared, so just update its font_size property
-	label_settings.font_size = current_convoy_title_font_size
-	label_node.text = label_text
-	# label_node.label_settings = label_settings # Already set at creation
-
-	# Update Panel StyleBox
-	var unique_convoy_color: Color = _convoy_id_to_color_map_cache.get(current_convoy_id_str, Color.GRAY)
-	style_box.bg_color = convoy_panel_background_color # Use exported variable
-	style_box.border_color = unique_convoy_color
-	style_box.border_width_left = current_panel_border_width
-	style_box.border_width_top = current_panel_border_width
-	style_box.border_width_right = current_panel_border_width
-	style_box.border_width_bottom = current_panel_border_width
-	# Content margin (padding)
-	style_box.content_margin_left = current_panel_padding_h
-	style_box.content_margin_right = current_panel_padding_h
-	style_box.content_margin_top = current_panel_padding_v
-	style_box.content_margin_bottom = current_panel_padding_v
-	# Corner radius
-	style_box.corner_radius_top_left = current_panel_corner_radius
-	style_box.corner_radius_top_right = current_panel_corner_radius
-	style_box.corner_radius_bottom_left = current_panel_corner_radius
-	style_box.corner_radius_bottom_right = current_panel_corner_radius
-
-	# The panel's size will automatically adjust to the label's minimum size plus StyleBox content margins.
-	# No need to manually set panel.size or label.position if label is the only child and fills the panel.
-	# Ensure label is set to expand.
-	label_node.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	label_node.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	# Reset label position to 0,0 as it's now relative to panel content area
-	label_node.position = Vector2.ZERO 
-
-	# Explicitly set panel's custom_minimum_size
-	# Ensure label has its minimum size calculated based on current text and font
-	label_node.update_minimum_size() # Nudge the label to ensure its min_size is current
-	var label_actual_min_size = label_node.get_minimum_size()
-	var stylebox_margins = style_box.get_minimum_size() # This is Vector2(left+right, top+bottom)
-
-	panel.custom_minimum_size = Vector2(
-		label_actual_min_size.x + stylebox_margins.x,
-		label_actual_min_size.y + stylebox_margins.y
-	)
-
-	# This call might now be redundant but can be kept to ensure layout system is notified.
-	panel.update_minimum_size()
-
-func _position_convoy_panel(panel: Panel, convoy_data: Dictionary, existing_label_rects: Array[Rect2]):
-	if not is_instance_valid(panel) or not _ui_drawing_params_cached:
-		return
-
-	var label_node: Label = panel.get_meta("label_node_ref")
-	if not is_instance_valid(label_node): return
-
-	var current_convoy_id_str = str(convoy_data.get('convoy_id'))
-	var convoy_map_x: float = convoy_data.get('x', 0.0)
-	var convoy_map_y: float = convoy_data.get('y', 0.0)
-
-	# --- Horizontal Offset Calculation (from original _draw_single_convoy_label) ---
-	var current_horizontal_offset: float
-	if _selected_convoy_ids_cache.has(current_convoy_id_str):
-		current_horizontal_offset = base_selected_convoy_horizontal_offset * _cached_actual_scale # Use exported variable
-	else:
-		current_horizontal_offset = base_horizontal_label_offset_from_center * _cached_actual_scale # Use exported variable
-
-	# --- Positioning Logic (from original _draw_single_convoy_label) ---
-	var label_min_size: Vector2 = label_node.get_minimum_size() # Get after text and font size are set
-
-	# Panel position and size based on label content
-	# The panel's size is now automatically determined by its content (label) and stylebox padding.
-	# We need to calculate the desired top-left position of the panel.
-	var convoy_center_on_texture_x: float = (convoy_map_x + 0.5) * _cached_actual_tile_width_on_texture
-	var convoy_center_on_texture_y: float = (convoy_map_y + 0.5) * _cached_actual_tile_height_on_texture
-	
-	# Position in map_display's local coordinate space (which is UIManagerNode's parent)
-	var panel_desired_x = (convoy_center_on_texture_x * _cached_actual_scale + _cached_offset_x) + current_horizontal_offset
-	var panel_desired_y = (convoy_center_on_texture_y * _cached_actual_scale + _cached_offset_y) - (panel.size.y / 2.0) # panel.size is now valid
-
-	panel.position = Vector2(panel_desired_x, panel_desired_y)
-
-	# Apply user-defined position or anti-collision
-	if _selected_convoy_ids_cache.has(current_convoy_id_str) and _convoy_label_user_positions.has(current_convoy_id_str):
-		panel.position = _convoy_label_user_positions[current_convoy_id_str]
-	else:
-		var current_panel_rect = Rect2(panel.position, panel.size)
-		for _attempt in range(10):
-			var collides_with_existing: bool = false
-			var colliding_rect_for_shift_calc: Rect2
-			for existing_rect in existing_label_rects:
-				var buffered_existing_rect = existing_rect.grow_individual(2,2,2,2)
-				if current_panel_rect.intersects(buffered_existing_rect, true):
-					collides_with_existing = true
-					colliding_rect_for_shift_calc = existing_rect
-					break
-			if collides_with_existing: # Use exported variable
-				var shift_based_on_collided_height = 0.0
-				if is_instance_valid(colliding_rect_for_shift_calc) and colliding_rect_for_shift_calc.size.y > 0:
-					shift_based_on_collided_height = colliding_rect_for_shift_calc.size.y * 0.25 + label_map_edge_padding # Use exported variable
-				var y_shift_amount = label_anti_collision_y_shift + max(label_min_size.y * 0.1, shift_based_on_collided_height) # Use exported variable
-				panel.position.y += y_shift_amount
-				current_panel_rect = Rect2(panel.position, panel.size)
-			else:
-				break
-
-	# Clamping will be done after this function returns, in _draw_interactive_labels
-	panel.set_meta("intended_global_rect", Rect2(panel.global_position, panel.size)) # Store for drag start
+# The following functions related to convoy panels will be moved to ConvoyLabelManager.gd:
+# _create_convoy_panel
+# _update_convoy_panel_content
+# _position_convoy_panel
 
 
 func _create_settlement_panel(settlement_info: Dictionary) -> Panel:
@@ -896,8 +744,9 @@ func _on_connector_lines_container_draw():
 		return
 		
 	if not is_instance_valid(convoy_label_container): return
-	# No longer need _all_convoy_data_cache here, iterate through visible panels
-	
+	# This function will need to get visible convoy panels from ConvoyLabelManager
+	# or ConvoyLabelManager could draw its own connector lines if this container is moved under it.
+	# For now, assume UIManager asks ConvoyLabelManager for the visible panels.
 	# Access cached values directly:
 	# _cached_actual_scale
 	# _cached_offset_x
@@ -905,74 +754,68 @@ func _on_connector_lines_container_draw():
 	# _cached_actual_tile_width_on_texture
 	# _cached_actual_tile_height_on_texture
 	
-	for node in convoy_label_container.get_children():
-		if node is Panel and node.visible: # Only draw for visible panels
-			var panel: Panel = node
-			var convoy_id_str = panel.get_meta("convoy_id_str", "")
-			if convoy_id_str.is_empty(): continue
+	var active_convoy_panels_info: Array = [] # Array of Dictionaries: [{panel: Panel, convoy_data: Dictionary}]
+	if is_instance_valid(convoy_label_manager) and convoy_label_manager.has_method("get_active_convoy_panels_info"):
+		active_convoy_panels_info = convoy_label_manager.get_active_convoy_panels_info()
 
-			# Optimized lookup using the new cache
-			var convoy_data_for_line = _convoy_data_by_id_cache.get(convoy_id_str)
-			if convoy_data_for_line == null or not convoy_data_for_line is Dictionary:
-				continue
+	for panel_info in active_convoy_panels_info:
+		var panel: Panel = panel_info.get("panel")
+		var convoy_data_for_line: Dictionary = panel_info.get("convoy_data")
 
-			var convoy_map_x: float = convoy_data_for_line.get('x', 0.0)
-			var convoy_map_y: float = convoy_data_for_line.get('y', 0.0)
-			var convoy_center_on_texture_x: float = (convoy_map_x + 0.5) * _cached_actual_tile_width_on_texture
-			var convoy_center_on_texture_y: float = (convoy_map_y + 0.5) * _cached_actual_tile_height_on_texture
-			
-			# Line start is in map_display's local space (which is also convoy_connector_lines_container's local space)
-			var line_start_pos = Vector2(
-				convoy_center_on_texture_x * _cached_actual_scale + _cached_offset_x,
-				convoy_center_on_texture_y * _cached_actual_scale + _cached_offset_y
-			)
+		if not is_instance_valid(panel) or not panel.visible or not convoy_data_for_line:
+			continue
 
-			# Panel.position is local to convoy_label_container.
-			# convoy_label_container is sibling to convoy_connector_lines_container.
-			# Both are children of UIManagerNode, and UIManagerNode is child of map_display.
-			# For simplicity, assume UIManagerNode and its children (label containers) are at (0,0) relative to map_display.
-			# So, panel.position can be treated as local to map_display for drawing in connector_lines_container.
-			var panel_rect_local_to_container = Rect2(panel.position, panel.size)
-			var actual_panel_size_for_draw = panel.size
-			if actual_panel_size_for_draw.x <= 0 or actual_panel_size_for_draw.y <= 0:
-				actual_panel_size_for_draw = panel.get_minimum_size() # Fallback to minimum_size
+		var convoy_map_x: float = convoy_data_for_line.get('x', 0.0)
+		var convoy_map_y: float = convoy_data_for_line.get('y', 0.0)
+		var convoy_center_on_texture_x: float = (convoy_map_x + 0.5) * _cached_actual_tile_width_on_texture
+		var convoy_center_on_texture_y: float = (convoy_map_y + 0.5) * _cached_actual_tile_height_on_texture
+		
+		var line_start_pos = Vector2(
+			convoy_center_on_texture_x * _cached_actual_scale + _cached_offset_x,
+			convoy_center_on_texture_y * _cached_actual_scale + _cached_offset_y
+		)
 
-			# Update panel_rect_local_to_container with the potentially corrected size
-			panel_rect_local_to_container.size = actual_panel_size_for_draw
-			
-			var panel_center = panel_rect_local_to_container.get_center()
-			var line_end_pos: Vector2
+		# Assuming convoy_label_container and convoy_connector_lines_container are siblings
+		# and their parent (UIManagerNode) is at (0,0) relative to map_display.
+		# Panel.position is local to its parent (ConvoyLabelContainer).
+		# We need the panel's rect in the coordinate system of ConvoyConnectorLinesContainer.
+		# If they are siblings under UIManagerNode, and UIManagerNode is at (0,0) in MapDisplay,
+		# then panel.global_position can be transformed to local for the connector container.
+		var panel_global_pos = panel.global_position
+		var panel_pos_local_to_connector_container = convoy_connector_lines_container.to_local(panel_global_pos)
+		
+		var panel_rect_in_connector_space = Rect2(panel_pos_local_to_connector_container, panel.size)
+		var actual_panel_size_for_draw = panel.size
+		if actual_panel_size_for_draw.x <= 0 or actual_panel_size_for_draw.y <= 0:
+			actual_panel_size_for_draw = panel.get_minimum_size()
 
-			# Check the actual_panel_size_for_draw for validity
-			if actual_panel_size_for_draw.x <= 0 or actual_panel_size_for_draw.y <= 0:
-				var label_node_for_debug : Label = panel.get_meta("label_node_ref")
-				var style_box_for_debug : StyleBoxFlat = panel.get_meta("style_box_ref")
-				var label_min_size_debug = "N/A"
-				if is_instance_valid(label_node_for_debug): label_min_size_debug = str(label_node_for_debug.get_minimum_size()) # This is label's min_size
-				var stylebox_min_size_debug = "N/A"
-				if is_instance_valid(style_box_for_debug): stylebox_min_size_debug = str(style_box_for_debug.get_minimum_size()) # This is StyleBox's own min_size (sum of content margins)
-				printerr("UIManager: Invalid panel size (actual_panel_size_for_draw <=0) for connector line. Convoy ID: %s, Panel: %s, Panel.size: %s (used %s), Panel.min_size: %s, Panel.visible: %s, Label.min_size: %s, StyleBox.content_margins_sum: %s" % [convoy_id_str, panel.name, panel.size, actual_panel_size_for_draw, panel.get_minimum_size(), panel.visible, label_min_size_debug, stylebox_min_size_debug])
-				continue
+		panel_rect_in_connector_space.size = actual_panel_size_for_draw
+		
+		var panel_center_in_connector_space = panel_rect_in_connector_space.get_center()
+		var line_end_pos: Vector2
 
-			# Use panel_rect_local_to_container (which now has the corrected size) for checks
-			if panel_rect_local_to_container.has_point(line_start_pos): 
-				if panel_center.is_equal_approx(line_start_pos):
-					line_end_pos = Vector2(panel_center.x, panel_rect_local_to_container.position.y)
-				else:
-					var dir_to_icon = (line_start_pos - panel_center).normalized()
-					var far_point = panel_center + dir_to_icon * (max(panel_rect_local_to_container.size.x, panel_rect_local_to_container.size.y) * 2.0)
-					line_end_pos = Vector2(
-						clamp(far_point.x, panel_rect_local_to_container.position.x, panel_rect_local_to_container.end.x),
-						clamp(far_point.y, panel_rect_local_to_container.position.y, panel_rect_local_to_container.end.y)
-					)
+		if actual_panel_size_for_draw.x <= 0 or actual_panel_size_for_draw.y <= 0:
+			# printerr("UIManager: Invalid panel size for connector line. Convoy ID: %s" % convoy_data_for_line.get("convoy_id"))
+			continue
+
+		if panel_rect_in_connector_space.has_point(line_start_pos):
+			if panel_center_in_connector_space.is_equal_approx(line_start_pos):
+				line_end_pos = Vector2(panel_center_in_connector_space.x, panel_rect_in_connector_space.position.y)
 			else:
+				var dir_to_icon = (line_start_pos - panel_center_in_connector_space).normalized()
+				var far_point = panel_center_in_connector_space + dir_to_icon * (max(panel_rect_in_connector_space.size.x, panel_rect_in_connector_space.size.y) * 2.0)
 				line_end_pos = Vector2(
-					clamp(line_start_pos.x, panel_rect_local_to_container.position.x, panel_rect_local_to_container.end.x),
-					clamp(line_start_pos.y, panel_rect_local_to_container.position.y, panel_rect_local_to_container.end.y)
+					clamp(far_point.x, panel_rect_in_connector_space.position.x, panel_rect_in_connector_space.end.x),
+					clamp(far_point.y, panel_rect_in_connector_space.position.y, panel_rect_in_connector_space.end.y)
 				)
-				
-			if not line_start_pos.is_equal_approx(line_end_pos):
-				convoy_connector_lines_container.draw_line(line_start_pos, line_end_pos, connector_line_color, connector_line_width, true) # Use exported variables
+		else:
+			line_end_pos = Vector2(
+				clamp(line_start_pos.x, panel_rect_in_connector_space.position.x, panel_rect_in_connector_space.end.x),
+				clamp(line_start_pos.y, panel_rect_in_connector_space.position.y, panel_rect_in_connector_space.end.y)
+			)
+			
+		if not line_start_pos.is_equal_approx(line_end_pos):
+			convoy_connector_lines_container.draw_line(line_start_pos, line_end_pos, connector_line_color, connector_line_width, true)
 
 # --- Drag and Drop related methods (to be implemented/refined later) ---
 # func start_panel_drag(panel_node: Panel, global_mouse_position: Vector2):
