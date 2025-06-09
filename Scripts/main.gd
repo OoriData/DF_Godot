@@ -58,7 +58,7 @@ var _selected_convoy_ids: Array[String] = []  # Will be updated by MapInteractio
 @export_group("Camera Focusing")
 @export var convoy_focus_zoom_target_tiles_wide: float = 10.0
 ## When a convoy menu opens, this percentage of the map view's width is used to shift the convoy leftwards (camera rightwards) from the exact center.
-@export var convoy_menu_map_view_offset_percentage: float = 1
+@export var convoy_menu_map_view_offset_percentage: float = 0.0 # Set to 0.0 to center convoy in partial view
 @export var convoy_focus_zoom_target_tiles_high: float = 7.0 # Allow different aspect ratio for focus
 
 @export_group("Map Display") # Or an existing relevant group
@@ -149,7 +149,8 @@ func _ready():
 			if gdm_node != GameDataManager: # This should ideally not happen
 				printerr("Main: CRITICAL - Node at /root/GameDataManager is NOT the same as global GameDataManager singleton!")
 		else:
-			printerr("Main: WARNING - Engine.has_singleton('GameDataManager') is FALSE, but /root/GameDataManager exists.")
+			# printerr("Main: WARNING - Engine.has_singleton('GameDataManager') is FALSE, but /root/GameDataManager exists.")
+			pass
 
 		# Connect signals using the gdm_node reference
 		gdm_node.map_data_loaded.connect(_on_gdm_map_data_loaded) # Corrected signal name
@@ -1152,19 +1153,21 @@ func _on_menu_state_changed(menu_node, menu_type: String): # New handler for mod
 					var target_zoom_y: float = _current_map_display_rect.size.y / world_height_to_display
 					var final_target_zoom_scalar: float = min(target_zoom_x, target_zoom_y)
 
-					# Adjust the camera's target world position so the convoy appears centered in the partial map view
-					var full_viewport_center: Vector2 = get_viewport().get_visible_rect().get_center()
-					var map_view_rect_center: Vector2 = _current_map_display_rect.get_center()
-					var screen_offset_for_map_view: Vector2 = map_view_rect_center - full_viewport_center
-					
-					# Base calculation to center convoy in the partial map view
-					var base_camera_target_world_position: Vector2 = convoy_actual_world_position
-					if final_target_zoom_scalar > 0.0001: # Avoid division by zero
-						base_camera_target_world_position = convoy_actual_world_position - (screen_offset_for_map_view * 2.0) / final_target_zoom_scalar
-					
-					# Additional shift to move the convoy left in the view (camera moves right)
-					var additional_camera_shift_world_x: float = (convoy_menu_map_view_offset_percentage * _current_map_display_rect.size.x) / final_target_zoom_scalar
-					var camera_target_world_position: Vector2 = base_camera_target_world_position + Vector2(additional_camera_shift_world_x, 0.0)
+					# Calculate the world-space shift needed to position the convoy according to convoy_menu_map_view_offset_percentage.
+					# This shift is applied to the camera's target.
+					# If convoy_menu_map_view_offset_percentage is 0.0 (for centering), additional_camera_shift_world_x will be 0.0.
+					var additional_camera_shift_world_x: float = 0.0
+					if abs(final_target_zoom_scalar) > 0.0001: # Avoid division by zero
+						var partial_view_width_in_world_units = _current_map_display_rect.size.x / final_target_zoom_scalar
+						additional_camera_shift_world_x = convoy_menu_map_view_offset_percentage * partial_view_width_in_world_units
+					else:
+						printerr("Main: _on_menu_state_changed - final_target_zoom_scalar is too small (%s), cannot calculate additional_camera_shift_world_x." % final_target_zoom_scalar)
+					print("Main: _on_menu_state_changed (convoy_detail) - convoy_menu_map_view_offset_percentage: %s, final_target_zoom_scalar: %s, calculated additional_camera_shift_world_x: %s" % [convoy_menu_map_view_offset_percentage, final_target_zoom_scalar, additional_camera_shift_world_x])
+
+					# The camera should target the convoy's actual world position, plus this menu-induced shift.
+					# The camera.offset (set in _apply_map_camera_and_ui_layout) then positions this target in the partial view.
+					var camera_target_world_position: Vector2 = convoy_actual_world_position + Vector2(additional_camera_shift_world_x, 0.0)
+
 					
 					# print("Main: Focusing on convoy %s. Actual world pos: %s. Camera target world pos: %s" % [convoy_data.get("convoy_id", "N/A"), convoy_actual_world_position, camera_target_world_position])
 
@@ -1176,7 +1179,12 @@ func _on_menu_state_changed(menu_node, menu_type: String): # New handler for mod
 						if is_instance_valid(map_interaction_manager) and map_interaction_manager.has_method("focus_camera_and_set_zoom"):
 							# Pass the adjusted camera target position
 							map_interaction_manager.focus_camera_and_set_zoom(camera_target_world_position, final_target_zoom_scalar)
-							print("Main: Requested MIM to focus camera. Camera Target world pos: %s, Target zoom scalar: %s. Actual camera.position after MIM: %s" % [camera_target_world_position, final_target_zoom_scalar, map_camera.position if is_instance_valid(map_camera) else "N/A"])
+							
+							var cam_pos_str = "N/A"
+							var cam_offset_str = "N/A" # Offset will be set by _apply_map_camera_and_ui_layout shortly
+							if is_instance_valid(map_camera):
+								cam_pos_str = "Local: %s, Global: %s" % [map_camera.position, map_camera.global_position]
+							print("Main: Requested MIM to focus camera. Target world_pos: %s, Target zoom_scalar: %s. Camera pos after MIM: %s" % [camera_target_world_position, final_target_zoom_scalar, cam_pos_str])
 						else:
 							printerr("Main: MapInteractionManager invalid or missing set_and_clamp_camera_zoom method.")
 					else:
@@ -1209,6 +1217,11 @@ func _apply_map_camera_and_ui_layout():
 	if not is_instance_valid(map_camera):
 		printerr("Main: MapCamera invalid in _apply_map_camera_and_ui_layout")
 		return
+
+	# DEBUG: Check _current_map_display_rect and viewport just before offset calculation
+	# print("Main: _apply_map_camera_and_ui_layout - _current_map_display_rect: ", _current_map_display_rect)
+	# print("Main: _apply_map_camera_and_ui_layout - get_viewport().get_visible_rect(): ", get_viewport().get_visible_rect())
+
 
 	var full_viewport_center = get_viewport().get_visible_rect().size / 2.0
 	var map_rect_center = _current_map_display_rect.position + _current_map_display_rect.size / 2.0

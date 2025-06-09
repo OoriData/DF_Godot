@@ -55,7 +55,7 @@ var _label_anti_collision_y_shift: float = 5.0
 func set_convoy_label_container(p_container: Node2D):
 	if not is_instance_valid(p_container):
 		# Updated error message for clarity
-		printerr("ConvoyLabelManager (set_convoy_label_container): Attempted to assign an invalid Control node. Labels cannot be created.")
+		# printerr("ConvoyLabelManager (set_convoy_label_container): Attempted to assign an invalid Control node. Labels cannot be created.")
 		_convoy_label_container_ref = null # Ensure it's null if an invalid one was passed
 	else:
 		_convoy_label_container_ref = p_container
@@ -105,7 +105,7 @@ func update_drawing_parameters(
 	_cached_offset_x = p_map_offset_x # Global X position of the map_display node
 	_cached_offset_y = p_map_offset_y # Global Y position of the map_display node
 	_ui_drawing_params_cached = (p_actual_tile_width_on_texture > 0.0 && p_actual_tile_height_on_texture > 0.0 && p_actual_scale > 0.0001)
-	print("ConvoyLabelManager: update_drawing_parameters called. _ui_drawing_params_cached set to: ", _ui_drawing_params_cached) # DEBUG
+	# print("ConvoyLabelManager: update_drawing_parameters called. _ui_drawing_params_cached set to: ", _ui_drawing_params_cached) # DEBUG
 
 
 func get_active_convoy_panels_info() -> Array:
@@ -124,7 +124,7 @@ func get_active_convoy_panels_info() -> Array:
 
 func _create_convoy_panel(convoy_data: Dictionary) -> Panel:
 	if not is_instance_valid(_convoy_label_container_ref):
-		printerr('ConvoyLabelManager: _convoy_label_container_ref is not valid. Cannot create convoy panel.')
+		# printerr('ConvoyLabelManager: _convoy_label_container_ref is not valid. Cannot create convoy panel.')
 		return null
 
 	var current_convoy_id_orig = convoy_data.get('convoy_id')
@@ -156,7 +156,7 @@ func _update_convoy_panel_content(panel: Panel, convoy_data: Dictionary, p_convo
 	var label_node: Label = panel.get_meta("label_node_ref")
 	var style_box: StyleBoxFlat = panel.get_meta("style_box_ref")
 	if not is_instance_valid(label_node) or not is_instance_valid(style_box):
-		printerr("ConvoyLabelManager: Panel is missing label_node_ref or style_box_ref metadata.")
+		# printerr("ConvoyLabelManager: Panel is missing label_node_ref or style_box_ref metadata.")
 		return
 
 	# Font Size Calculation
@@ -225,8 +225,9 @@ func _update_convoy_panel_content(panel: Panel, convoy_data: Dictionary, p_convo
 
 	# Update Label
 	if not is_instance_valid(_label_settings_ref) or not is_instance_valid(_label_settings_ref.font):
-		printerr("ConvoyLabelManager: _label_settings_ref or its font is NOT VALID for convoy: ", convoy_name)
+		# printerr("ConvoyLabelManager: _label_settings_ref or its font is NOT VALID for convoy: ", convoy_name)
 		# Fallback or return if critical settings are missing
+		pass
 	
 	label_node.add_theme_font_size_override("font_size", current_convoy_title_font_size)
 	label_node.text = label_text
@@ -260,8 +261,7 @@ func _update_convoy_panel_content(panel: Panel, convoy_data: Dictionary, p_convo
 		label_actual_min_size.x + stylebox_margins.x,
 		label_actual_min_size.y + stylebox_margins.y
 	)
-	# DEBUG: Log calculated sizes
-	print("ConvoyLabelManager (_update_convoy_panel_content) for %s: FontSz: %s, LabelMinSize: %s, PanelCustomMinSize: %s" % [panel.name, current_convoy_title_font_size, label_actual_min_size, panel.custom_minimum_size])
+	# print("ConvoyLabelManager (_update_convoy_panel_content) for %s: FontSz: %s, LabelMinSize: %s, PanelCustomMinSize: %s" % [panel.name, current_convoy_title_font_size, label_actual_min_size, panel.custom_minimum_size]) # DEBUG
 
 	panel.update_minimum_size() # Notify panel to update its own minimum size based on custom_minimum_size
 
@@ -278,30 +278,30 @@ func _position_convoy_panel(panel: Panel, convoy_data: Dictionary, existing_labe
 	var convoy_map_x: float = convoy_data.get('x', 0.0)
 	var convoy_map_y: float = convoy_data.get('y', 0.0)
 
-	# Horizontal Offset Calculation
-	var current_horizontal_offset: float
+	# Horizontal Offset Calculation (in world units)
+	var base_offset_value: float
 	if p_selected_convoy_ids.has(current_convoy_id_str):
-		current_horizontal_offset = _base_selected_convoy_horizontal_offset * _cached_actual_scale
+		base_offset_value = _base_selected_convoy_horizontal_offset
 	else:
-		current_horizontal_offset = _base_horizontal_label_offset_from_center * _cached_actual_scale
+		base_offset_value = _base_horizontal_label_offset_from_center
+	var current_horizontal_offset_world: float = base_offset_value * _ui_overall_scale_multiplier
 
 	# Positioning Logic
 	panel.update_minimum_size() # Ensure panel's minimum size is up-to-date
 	var panel_actual_size = panel.size
 	if panel_actual_size.x <= 0 or panel_actual_size.y <= 0:
 		panel_actual_size = panel.get_minimum_size()
+	
+	# Calculate convoy's center in local/world coordinates (relative to _convoy_label_container_ref's origin)
+	# These are based on the unscaled map texture's tile dimensions.
+	var convoy_center_local_x: float = (convoy_map_x + 0.5) * _cached_actual_tile_width_on_texture
+	var convoy_center_local_y: float = (convoy_map_y + 0.5) * _cached_actual_tile_height_on_texture
 
-	var convoy_center_on_texture_x: float = (convoy_map_x + 0.5) * _cached_actual_tile_width_on_texture
-	var convoy_center_on_texture_y: float = (convoy_map_y + 0.5) * _cached_actual_tile_height_on_texture
-	
-	# Calculate desired global position first
-	var panel_desired_global_x = (convoy_center_on_texture_x * _cached_actual_scale + _cached_offset_x) + current_horizontal_offset
-	var panel_desired_global_y = (convoy_center_on_texture_y * _cached_actual_scale + _cached_offset_y) - (panel_actual_size.y / 2.0)
-	var desired_global_pos = Vector2(panel_desired_global_x, panel_desired_global_y)
-	
-	# Convert desired global position to local position for the panel within _convoy_label_container_ref
-	var panel_desired_local_pos = _convoy_label_container_ref.to_local(desired_global_pos)
-	var initial_panel_pos = panel_desired_local_pos # Store before anti-collision
+	# Calculate panel's desired local/world position
+	var panel_desired_local_x = convoy_center_local_x + current_horizontal_offset_world
+	var panel_desired_local_y = convoy_center_local_y - (panel_actual_size.y / 2.0) # Vertically center panel against icon's y
+	var panel_desired_local_pos = Vector2(panel_desired_local_x, panel_desired_local_y)
+	# var initial_panel_pos = panel_desired_local_pos # Store before anti-collision. Debugging this might change.
 	panel.position = panel_desired_local_pos
 
 
@@ -332,9 +332,7 @@ func _position_convoy_panel(panel: Panel, convoy_data: Dictionary, existing_labe
 			else:
 				break # No collision
 
-	# DEBUG: Log positions
-	print("ConvoyLabelManager (_position_convoy_panel) for %s: DesiredGlobal: %s, InitialLocal: %s, FinalLocalPos: %s" % [panel.name, desired_global_pos, initial_panel_pos, panel.position])
-	# panel.set_meta("intended_global_rect", Rect2(panel.global_position, panel_actual_size)) # For MIM drag start
+	# print("ConvoyLabelManager (_position_convoy_panel) for %s: FinalLocalPos: %s" % [panel.name, panel.position]) # DEBUG
 
 
 func _clamp_panel_position(panel: Panel, p_current_map_screen_rect_for_clamping: Rect2):
@@ -376,11 +374,11 @@ func update_convoy_labels(
 	# Style parameters are now member variables, set by initialize_style_settings
 ):
 	if not _ui_drawing_params_cached:
-		print("ConvoyLabelManager (update_convoy_labels): Drawing parameters NOT cached. Bailing out.") # DEBUG
+		# print("ConvoyLabelManager (update_convoy_labels): Drawing parameters NOT cached. Bailing out.") # DEBUG
 		# Hide all active panels if drawing params are invalid, as positions would be wrong.
 		for panel_node in _active_convoy_panels.values():
 			if is_instance_valid(panel_node):
-				print("ConvoyLabelManager (update_convoy_labels): Hiding panel %s due to bad drawing params." % panel_node.name) # DEBUG
+				# print("ConvoyLabelManager (update_convoy_labels): Hiding panel %s due to bad drawing params." % panel_node.name) # DEBUG
 				panel_node.visible = false
 		return
 
@@ -390,7 +388,7 @@ func update_convoy_labels(
 		for convoy_data_item in p_all_convoy_data:
 			if convoy_data_item is Dictionary and convoy_data_item.has("convoy_id"):
 				_convoy_data_by_id_cache[str(convoy_data_item.get("convoy_id"))] = convoy_data_item
-	print("ConvoyLabelManager (update_convoy_labels): _convoy_data_by_id_cache populated. Size: ", _convoy_data_by_id_cache.size()) # DEBUG
+	# print("ConvoyLabelManager (update_convoy_labels): _convoy_data_by_id_cache populated. Size: ", _convoy_data_by_id_cache.size()) # DEBUG
 
 	var drawn_convoy_ids_this_update: Array[String] = []
 	var all_drawn_label_rects_this_update: Array[Rect2] = []
@@ -410,8 +408,7 @@ func update_convoy_labels(
 			var hovered_convoy_id_as_string = str(hovered_convoy_id_variant)
 			if not hovered_convoy_id_as_string.is_empty() and not convoy_ids_to_display.has(hovered_convoy_id_as_string):
 				convoy_ids_to_display.append(hovered_convoy_id_as_string)
-	
-	print("ConvoyLabelManager (update_convoy_labels): Received SelectedIDs: %s, HoverInfo: %s. Resulting convoy_ids_to_display: %s" % [p_selected_convoy_ids, p_current_hover_info, convoy_ids_to_display]) # DEBUG
+	# print("ConvoyLabelManager (update_convoy_labels): Received SelectedIDs: %s, HoverInfo: %s. Resulting convoy_ids_to_display: %s" % [p_selected_convoy_ids, p_current_hover_info, convoy_ids_to_display]) # DEBUG
 
 
 	# Handle the currently dragged panel first (if any)

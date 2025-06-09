@@ -279,8 +279,8 @@ func update_ui_elements(
 		else:
 			_ui_drawing_params_cached = false # map_texture_size is zero
 
-		print("UIManager: In update_ui_elements. UIManager._ui_drawing_params_cached: ", _ui_drawing_params_cached) # DEBUG
-		print("UIManager: convoy_label_manager valid: ", is_instance_valid(convoy_label_manager), ", has update_drawing_parameters: ", convoy_label_manager.has_method("update_drawing_parameters") if is_instance_valid(convoy_label_manager) else "N/A") # DEBUG
+		# print("UIManager: In update_ui_elements. UIManager._ui_drawing_params_cached: ", _ui_drawing_params_cached) # DEBUG
+		# print("UIManager: convoy_label_manager valid: ", is_instance_valid(convoy_label_manager), ", has update_drawing_parameters: ", convoy_label_manager.has_method("update_drawing_parameters") if is_instance_valid(convoy_label_manager) else "N/A") # DEBUG
 
 		# Pass the calculated drawing parameters to ConvoyLabelManager
 		if is_instance_valid(convoy_label_manager) and convoy_label_manager.has_method("update_drawing_parameters"):
@@ -302,10 +302,11 @@ func update_ui_elements(
 					clm_offset.y                           # Actual screen Y position of map_display's origin
 				)
 			else: # DEBUG
-				print("UIManager: Condition NOT MET to call convoy_label_manager.update_drawing_parameters. UIM_cached: %s, map_display_valid: %s" % [_ui_drawing_params_cached, is_instance_valid(_map_display_node)]) # DEBUG
+				# print("UIManager: Condition NOT MET to call convoy_label_manager.update_drawing_parameters. UIM_cached: %s, map_display_valid: %s" % [_ui_drawing_params_cached, is_instance_valid(_map_display_node)]) # DEBUG
+				pass
 	else:
 		_ui_drawing_params_cached = false # map_display_node, texture, or map_tiles_data invalid
-		print("UIManager: In update_ui_elements. _map_display_node, texture, or _map_tiles_data invalid. UIManager._ui_drawing_params_cached: false") # DEBUG
+		# print("UIManager: In update_ui_elements. _map_display_node, texture, or _map_tiles_data invalid. UIManager._ui_drawing_params_cached: false") # DEBUG
 		if is_instance_valid(convoy_label_manager) and convoy_label_manager.has_method("update_drawing_parameters"):
 			# Explicitly tell CLM its params are not valid if UIM's are not.
 			# This might involve setting a flag in CLM or passing invalid values.
