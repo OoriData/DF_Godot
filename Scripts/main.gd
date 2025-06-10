@@ -6,11 +6,11 @@ extends Node2D
 # IMPORTANT: Adjust the path "$APICallsInstance" to the actual path of your APICalls node
 # in your scene tree relative to the node this script (main.gd) is attached to.
 @onready var api_calls_node: Node = $APICallsInstance # Adjust if necessary
-# IMPORTANT: Adjust this path to where you actually place your detailed view toggle in your scene tree!
+# IMPORTANT: Adjust this path to where you actually place your detailed view toggle in your scene tree! # Comment seems misplaced for api_calls_node
 
 # Node references
 ## Reference to the node that has map_render.gd attached. This should be a child of the current node.
-@onready var map_renderer_node: Node = $MapRendererLogic 
+@onready var map_renderer_node: Node = $MapRendererLogic # MapRendererLogic is now a direct child
 ## Reference to the TextureRect that displays the map.
 @onready var map_display: TextureRect = $MapContainer/MapDisplay
 
@@ -101,21 +101,48 @@ func _ready():
 	set_process_input(true)
 	self.visible = true # Ensure this node (MapView) is visible by default
 
+	# --- Explicitly try to get map_renderer_node for detailed diagnostics ---
+	var path_to_map_renderer = NodePath("MapRendererLogic") # Updated path
+	if has_node(path_to_map_renderer):
+		map_renderer_node = get_node(path_to_map_renderer) # Assign to the class variable
+		if not is_instance_valid(map_renderer_node):
+			printerr("Main (_ready): Found node at path 'MapRendererLogic' BUT IT'S NOT A VALID INSTANCE. Node: ", map_renderer_node)
+			map_renderer_node = null # Ensure it's null if invalid
+		else:
+			print("Main (_ready): Successfully got map_renderer_node. Path: MapRendererLogic. Instance: ", map_renderer_node)
+			if map_renderer_node.get_script() == null:
+				printerr("Main (_ready): map_renderer_node (at 'MapRendererLogic') HAS NO SCRIPT ATTACHED!")
+			else:
+				var script_path = map_renderer_node.get_script().resource_path
+				print("Main (_ready): map_renderer_node (at 'MapRendererLogic') script path: ", script_path)
+				if not script_path.ends_with("map_render.gd"):
+					printerr("Main (_ready): WARNING - map_renderer_node (at 'MapRendererLogic') has script '", script_path, "' but expected 'map_render.gd'.")
+	else:
+		printerr("Main (_ready): Node NOT FOUND at path 'MapRendererLogic' relative to %s." % self.get_path())
+		# var parent_node = get_parent() # This part of the diagnostic is less relevant if it's a direct child
+		# if not is_instance_valid(parent_node):
+		# 	printerr("Main (_ready): This node (%s) does not have a valid parent. Path '../MapRendererLogic' cannot be resolved." % self.get_path())
+		# else:
+		# 	printerr("Main (_ready): Parent node is: %s (%s)." % [parent_node.name, parent_node.get_path()])
+		# 	printerr("Main (_ready): Children of parent '%s':" % parent_node.name)
+		# 	for child in parent_node.get_children():
+		# 		printerr("  - Child: '%s' (Type: %s)" % [child.name, child.get_class()])
+		# 	if not parent_node.has_node("MapRendererLogic"):
+		# 		printerr("Main (_ready): Parent node '%s' does NOT have a child named 'MapRendererLogic'. Check spelling/hierarchy." % parent_node.name)
+		map_renderer_node = null # Ensure it's null if not found
+
 	# Get reference to MenuManager (adjust path if GameRoot node name is different)
 	# Using an absolute path from the scene root for robustness.
-	# Assumes your main scene root is "GameRoot" and MenuManager is at "GameRoot/MenuUILayer/MenuManager"
-	var menu_manager_path = "/root/GameRoot/MenuUILayer/MenuManager"
-	var root_node = get_tree().root
-	if root_node.has_node(menu_manager_path.trim_prefix("/root/")): # has_node expects relative path from root
-		menu_manager_ref = get_tree().root.get_node(menu_manager_path.trim_prefix("/root/"))
+	# Assumes your main scene root is named "GameRoot" and MenuManager is at "/root/GameRoot/MenuUILayer/MenuManager"
+	var absolute_menu_manager_path = "/root/GameRoot/MenuUILayer/MenuManager" # Ensure this is the correct absolute path
+	menu_manager_ref = get_node_or_null(absolute_menu_manager_path)
+	
+	if is_instance_valid(menu_manager_ref):
 		if menu_manager_ref.has_signal("menu_opened"):
-			# Connect to the new signal signature
-			# This connection is now primarily for camera focusing logic.
 			menu_manager_ref.menu_opened.connect(_on_menu_opened_for_camera_focus)
 		else:
 			printerr("Main (MapView): MenuManager found but does not have 'menu_opened' signal.")
 		if menu_manager_ref.has_signal("menus_completely_closed"): # Ensure this signal name matches MenuManager
-			# This connection is now primarily for camera state reset if needed.
 			menu_manager_ref.menus_completely_closed.connect(_on_all_menus_closed)
 		print("Main (MapView): Successfully got reference to MenuManager.")
 	else:
@@ -125,7 +152,8 @@ func _ready():
 	if not is_instance_valid(map_camera): # No change here
 		printerr("Main: MapCamera node not found or invalid. Path used: $MapCamera")
 	if not is_instance_valid(map_renderer_node):
-		printerr("Main: MapRendererLogic node not found or invalid. Path used: $MapRendererLogic")
+		# The detailed error is now printed by the explicit get_node block above.
+		printerr("Main: map_renderer_node is STILL NOT VALID after explicit get_node. Check previous errors for details.")
 	if not is_instance_valid(map_display):
 		printerr("Main: MapDisplay node not found or invalid. Path used: $MapContainer/MapDisplay")
 	if not is_instance_valid(map_container):
@@ -212,8 +240,8 @@ func _ready():
 				[], # Initial empty convoy data, will be updated by signal
 				[], # Initial empty settlement data, will be updated by signal
 				[], # Initial empty map_tiles, will be updated by signal
-				map_camera, # Pass Camera2D
-				map_container, # Pass MapContainer for bounds calculation
+				map_camera, # Pass Camera2D for control
+				map_display, # Pass MapDisplay (TextureRect) for bounds calculation
 				_selected_convoy_ids, # Pass current (likely empty) selected IDs
 				_convoy_label_user_positions # Pass current (likely empty) user positions
 			)

@@ -15,7 +15,7 @@ signal camera_zoom_changed(new_zoom_level: float)
 @export var camera_pan_sensitivity: float = 7.5
 
 var camera_node: Camera2D = null
-var map_container_for_bounds_ref: Node2D = null # Used to get map's global_position for clamping
+var map_container_for_bounds_ref: TextureRect = null # Will hold map_display (TextureRect)
 var current_map_world_size_ref: Vector2 = Vector2.ZERO # The actual world size of the map content
 var current_map_screen_rect_ref: Rect2 # The Rect2 on screen where the map is effectively displayed
 
@@ -27,7 +27,7 @@ func _ready():
 	set_physics_process(true) # Enable _physics_process for camera clamping
 
 
-func initialize(p_camera: Camera2D, p_map_container: Node2D, p_map_world_size: Vector2, p_map_screen_rect: Rect2):
+func initialize(p_camera: Camera2D, p_map_container: TextureRect, p_map_world_size: Vector2, p_map_screen_rect: Rect2):
 	camera_node = p_camera
 	map_container_for_bounds_ref = p_map_container
 	current_map_world_size_ref = p_map_world_size
@@ -51,25 +51,53 @@ func _physics_process(_delta: float):
 	   current_map_world_size_ref.y <= 0:
 		return
 
-	var map_rect_world = Rect2(map_container_for_bounds_ref.global_position, current_map_world_size_ref)
-	var viewport_size_pixels = current_map_screen_rect_ref.size
+	var camera_viewport: Viewport = camera_node.get_viewport()
+	if not is_instance_valid(camera_viewport):
+		# Camera is not yet in the scene tree or has no viewport
+		return
+
+	# map_container_for_bounds_ref is now map_display (TextureRect).
+	# Its parent is map_container (Node2D).
+	# Both map_camera and map_container are children of "MapRender" (Node2D with main.gd).
+	# The origin of the map texture in the camera's coordinate system is:
+	# map_container.position + map_display.position
+	var map_display_parent_node: Node2D = map_container_for_bounds_ref.get_parent() as Node2D
+	if not is_instance_valid(map_display_parent_node): return # Should not happen
+	
+	var map_origin_in_camera_space: Vector2 = map_display_parent_node.position + map_container_for_bounds_ref.position
+	# current_map_world_size_ref is the size of map_display.texture.
+	var map_rect_world = Rect2(map_origin_in_camera_space, current_map_world_size_ref)
+	var viewport_render_size_pixels = camera_viewport.size # Use the camera's actual viewport rendering size
 
 	if camera_node.zoom.x <= 0 or camera_node.zoom.y <= 0:
 		return
 
-	var viewport_size_world = viewport_size_pixels / camera_node.zoom
+	var viewport_size_world = Vector2(viewport_render_size_pixels) / camera_node.zoom
+	
+	var target_camera_pos_x: float = camera_node.position.x
+	var target_camera_pos_y: float = camera_node.position.y
 
-	var clamp_min_x = map_rect_world.position.x + viewport_size_world.x / 2.0
-	var clamp_max_x = map_rect_world.position.x + map_rect_world.size.x - viewport_size_world.x / 2.0
-	var clamp_min_y = map_rect_world.position.y + viewport_size_world.y / 2.0
-	var clamp_max_y = map_rect_world.position.y + map_rect_world.size.y - viewport_size_world.y / 2.0
-
-	clamp_min_x = min(clamp_min_x, clamp_max_x)
-	clamp_min_y = min(clamp_min_y, clamp_max_y)
-
-	camera_node.position.x = clamp(camera_node.position.x, clamp_min_x, clamp_max_x)
-	camera_node.position.y = clamp(camera_node.position.y, clamp_min_y, clamp_max_y)
-
+	# Clamp X
+	if viewport_size_world.x < map_rect_world.size.x:
+		# Viewport is narrower than map content, normal clamping
+		var clamp_min_x = map_rect_world.position.x + viewport_render_size_pixels.x / (2.0 * camera_node.zoom.x)
+		var clamp_max_x = map_rect_world.position.x + map_rect_world.size.x - viewport_render_size_pixels.x / (2.0 * camera_node.zoom.x)
+		target_camera_pos_x = clamp(camera_node.position.x, clamp_min_x, clamp_max_x)
+	else:
+		# Viewport is wider than or same width as map content, center camera on map horizontally
+		target_camera_pos_x = map_rect_world.position.x + map_rect_world.size.x / 2.0
+	
+	# Clamp Y
+	if viewport_size_world.y < map_rect_world.size.y:
+		# Viewport is shorter than map content, normal clamping
+		var clamp_min_y = map_rect_world.position.y + viewport_render_size_pixels.y / (2.0 * camera_node.zoom.y)
+		var clamp_max_y = map_rect_world.position.y + map_rect_world.size.y - viewport_render_size_pixels.y / (2.0 * camera_node.zoom.y)
+		target_camera_pos_y = clamp(camera_node.position.y, clamp_min_y, clamp_max_y)
+	else:
+		# Viewport is taller than or same height as map content, center camera on map vertically
+		target_camera_pos_y = map_rect_world.position.y + map_rect_world.size.y / 2.0
+	
+	camera_node.position = Vector2(target_camera_pos_x, target_camera_pos_y)
 
 func handle_input(event: InputEvent) -> bool:
 	if not is_instance_valid(camera_node):
@@ -126,22 +154,48 @@ func handle_input(event: InputEvent) -> bool:
 func zoom_at_screen_pos(zoom_adjust_factor: float, screen_zoom_center: Vector2):
 	if not is_instance_valid(camera_node): return
 
-	# The effective_min_clamp_val will now solely be determined by min_camera_zoom_level.
-	# The dynamic_min_zoom (fitting the map to the panel) is no longer used to restrict zoom out here.
-	# Camera position clamping in _physics_process will handle centering a small map.
-	var effective_min_clamp_val: float = min_camera_zoom_level
+	var camera_viewport: Viewport = camera_node.get_viewport()
+	if not is_instance_valid(camera_viewport):
+		return
+
+	var viewport_render_size_pixels = camera_viewport.size # Use the camera's actual viewport rendering size
+	var map_world_size = current_map_world_size_ref
+
+	var dynamic_min_zoom_val: float = min_camera_zoom_level # Start with the hardcoded minimum
+
+	if map_world_size.x > 0.001 && map_world_size.y > 0.001 && \
+	   viewport_render_size_pixels.x > 0.001 && viewport_render_size_pixels.y > 0.001:
+		var zoom_to_make_width_fit_viewport = viewport_render_size_pixels.x / map_world_size.x
+		var zoom_to_make_height_fit_viewport = viewport_render_size_pixels.y / map_world_size.y
+		# This is the zoom level at which the entire map is contained within the viewport,
+		# touching at least two edges. We don't want to zoom out (reduce zoom value) further than this.
+		var zoom_level_to_contain_map = min(zoom_to_make_width_fit_viewport, zoom_to_make_height_fit_viewport)
+		# The effective minimum zoom should be the greater of the hardcoded limit and the limit to contain the map.
+		dynamic_min_zoom_val = max(min_camera_zoom_level, zoom_level_to_contain_map)
+
+	# Ensure the dynamic minimum doesn't exceed the maximum possible zoom.
+	# This can happen if the map is very small, making zoom_level_to_contain_map very large.
+	# In such cases, min_camera_zoom_level should still be the floor if it's smaller than max_camera_zoom_level.
+	# The actual floor for clamping will be `max(min_camera_zoom_level, zoom_level_to_contain_map)`
+	# but this entire value must not make the lower bound of clamp exceed `max_camera_zoom_level`.
+	var effective_min_clamp_val: float = clamp(dynamic_min_zoom_val, min_camera_zoom_level, max_camera_zoom_level)
 	var effective_max_clamp_val: float = max_camera_zoom_level
 
 	var new_potential_zoom: float = camera_node.zoom.x * zoom_adjust_factor
 	var clamped_zoom: float = clamp(new_potential_zoom, effective_min_clamp_val, effective_max_clamp_val)
 	var new_zoom_vec := Vector2(clamped_zoom, clamped_zoom)
-
+	
 	if camera_node.zoom.is_equal_approx(new_zoom_vec): return
 	
-	var world_pos_before: Vector2 = camera_node.get_canvas_transform().affine_inverse() * screen_zoom_center
+	# screen_zoom_center is a global screen coordinate from the input event.
+	# It needs to be relative to the camera's viewport (the SubViewportContainer).
+	# current_map_screen_rect_ref.position is the global screen position of the SubViewportContainer's top-left corner.
+	var zoom_center_in_viewport_coords: Vector2 = screen_zoom_center - current_map_screen_rect_ref.position
+	
+	var world_pos_before: Vector2 = camera_node.get_canvas_transform().affine_inverse() * zoom_center_in_viewport_coords
 	var old_zoom_val = camera_node.zoom.x
 	camera_node.zoom = new_zoom_vec
-	var world_pos_after: Vector2 = camera_node.get_canvas_transform().affine_inverse() * screen_zoom_center
+	var world_pos_after: Vector2 = camera_node.get_canvas_transform().affine_inverse() * zoom_center_in_viewport_coords
 	camera_node.position += world_pos_before - world_pos_after
 
 	if not is_equal_approx(old_zoom_val, camera_node.zoom.x):
@@ -154,7 +208,7 @@ func set_and_clamp_zoom(target_zoom_scalar: float):
 	var current_zoom = camera_node.zoom.x
 	if current_zoom == 0: return # Avoid division by zero
 	var adjust_factor = target_zoom_scalar / current_zoom
-	zoom_at_screen_pos(adjust_factor, get_viewport().get_visible_rect().size / 2.0)
+	zoom_at_screen_pos(adjust_factor, current_map_screen_rect_ref.get_center())
 
 
 func focus_and_set_zoom(target_world_position: Vector2, target_zoom_scalar: float):

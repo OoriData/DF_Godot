@@ -33,8 +33,8 @@ var ui_manager: Node = null # This will be the UIManagerNode instance
 var all_convoy_data: Array = []
 var all_settlement_data: Array = []
 var map_tiles: Array = []
-var camera: Camera2D = null # Will be set by main.gd during initialization
-var map_container_for_bounds: Node2D = null # To get map content dimensions for camera limits
+var camera: Camera2D = null
+var map_container_for_bounds: TextureRect = null # Changed to TextureRect, will hold map_display
 # Ensure MapCameraController node is a child of MapInteractionManager in the scene
 @onready var map_camera_controller: MapCameraController = $MapCameraController
 
@@ -95,7 +95,7 @@ func initialize(
 		p_all_settlement_data: Array,
 		p_map_tiles: Array,
 		p_camera: Camera2D, # Add camera reference
-		p_map_container: Node2D, # Add map_container reference for bounds
+		p_map_container: TextureRect, # Expecting map_display (TextureRect)
 		p_initial_selected_ids: Array, # Pass initial state if needed
 		p_initial_user_positions: Dictionary # Pass initial state if needed
 	):

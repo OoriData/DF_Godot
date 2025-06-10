@@ -20,8 +20,6 @@ convoy_focus_zoom_target_tiles_high = 7.0
 
 [node name="MapDisplay" type="TextureRect" parent="MapContainer"]
 texture_filter = 4
-offset_right = 40.0
-offset_bottom = 40.0
 mouse_filter = 2
 stretch_mode = 5
 
@@ -54,10 +52,6 @@ script = ExtResource("2_of6aa")
 
 [node name="MapInteractionManager" type="Node" parent="."]
 script = ExtResource("4_b4rp0")
-active_control_scheme = null
-convoy_hover_radius_on_texture_sq = null
-settlement_hover_radius_on_texture_sq = null
-label_map_edge_padding = null
 
 [node name="MapCameraController" type="Node" parent="MapInteractionManager"]
 script = ExtResource("2_k7gy6")
