@@ -3,9 +3,8 @@ class_name MapCameraController
 
 signal camera_zoom_changed(new_zoom_level: float)
 
-@export_group("Camera Controls")
-## Minimum zoom level for the camera.
-@export var min_camera_zoom_level: float = 0.2
+@export_group("Camera Controls") ## Minimum zoom level for the camera.
+@export var min_camera_zoom_level: float = 0.05 # Decreased from 0.2 to allow more zoom-out
 ## Maximum zoom level for the camera.
 @export var max_camera_zoom_level: float = 5.0
 ## Enable zooming with the mouse wheel when using Mouse & Keyboard control scheme.
@@ -127,18 +126,11 @@ func handle_input(event: InputEvent) -> bool:
 func zoom_at_screen_pos(zoom_adjust_factor: float, screen_zoom_center: Vector2):
 	if not is_instance_valid(camera_node): return
 
+	# The effective_min_clamp_val will now solely be determined by min_camera_zoom_level.
+	# The dynamic_min_zoom (fitting the map to the panel) is no longer used to restrict zoom out here.
+	# Camera position clamping in _physics_process will handle centering a small map.
 	var effective_min_clamp_val: float = min_camera_zoom_level
 	var effective_max_clamp_val: float = max_camera_zoom_level
-
-	if current_map_world_size_ref.x > 0.001 and current_map_world_size_ref.y > 0.001 and \
-	   current_map_screen_rect_ref.size.x > 0.001 and current_map_screen_rect_ref.size.y > 0.001:
-		var viewport_pixel_size: Vector2 = current_map_screen_rect_ref.size
-		var map_world_size: Vector2 = current_map_world_size_ref
-		var req_zoom_x: float = viewport_pixel_size.x / map_world_size.x
-		var req_zoom_y: float = viewport_pixel_size.y / map_world_size.y
-		var dynamic_min_zoom: float = max(req_zoom_x, req_zoom_y)
-		effective_min_clamp_val = max(min_camera_zoom_level, dynamic_min_zoom)
-		effective_max_clamp_val = max(effective_min_clamp_val, max_camera_zoom_level)
 
 	var new_potential_zoom: float = camera_node.zoom.x * zoom_adjust_factor
 	var clamped_zoom: float = clamp(new_potential_zoom, effective_min_clamp_val, effective_max_clamp_val)

@@ -27,9 +27,9 @@ extends Node2D
 # IMPORTANT: Adjust the path "$GameTimersNode" to the actual path of your GameTimers node in your scene tree.
 @onready var game_timers_node: Node = $GameTimersNode # Adjust if necessary
 # IMPORTANT: Adjust the path "$ConvoyListPanel" to the actual path of your ConvoyListPanel node. Ensure its type matches.
-# ConvoyListPanel is now a child of MenuUILayer.
+# ConvoyListPanel is a child of MenuUILayer, which is a sibling of MapViewportContainer.
 # ConvoyListPanel's root node type is now expected to be ScrollContainer.
-@onready var convoy_list_panel_node: ScrollContainer = $"../MenuUILayer/ConvoyListPanel"
+@onready var convoy_list_panel_node: ScrollContainer = $"../../MenuUILayer/ConvoyListPanel"
 # Reference to the MenuManager in GameRoot.tscn
 
 var menu_manager_ref: Control = null
@@ -56,14 +56,13 @@ var _selected_convoy_ids: Array[String] = []  # Will be updated by MapInteractio
 
 ## Initial state for toggling detailed map features (grid & political colors) on or off.
 @export_group("Camera Focusing")
-@export var convoy_focus_zoom_target_tiles_wide: float = 10.0
+@export var convoy_focus_zoom_target_tiles_wide: float = 100 # Example: Increased further to zoom out more
 ## When a convoy menu opens, this percentage of the map view's width is used to shift the convoy leftwards (camera rightwards) from the exact center.
 @export var convoy_menu_map_view_offset_percentage: float = 0.0 # Set to 0.0 to center convoy in partial view
-@export var convoy_focus_zoom_target_tiles_high: float = 7.0 # Allow different aspect ratio for focus
+@export var convoy_focus_zoom_target_tiles_high: float = 70.0 # Example: Increased further to zoom out more
 
 @export_group("Map Display") # Or an existing relevant group
 
-@export_group("Map Display") # Or an existing relevant group
 @export var show_detailed_view: bool = true 
 
 
@@ -83,8 +82,9 @@ var _dragged_convoy_id_actual_str: String = "" # Will be updated by MapInteracti
 
 # Z-index constants for children of MapContainer
 
-var _current_map_display_rect: Rect2 # The screen rect the map should effectively occupy
-var _is_map_in_partial_view: bool = false
+# MapView's display rect is now always its own viewport (managed by ViewportContainer).
+# var _current_map_display_rect: Rect2 # Effectively get_viewport().get_visible_rect()
+# var _is_map_in_partial_view: bool = false # This state is now managed by GameScreenManager
 var _map_and_ui_setup_complete: bool = false # New flag
 var _deferred_convoy_data: Array = [] # To store convoy data if it arrives before map setup
 
@@ -99,8 +99,6 @@ func _ready():
 	# Enable input processing for this Node2D to receive _input events,
 	# including those propagated from its Control children (like MapDisplay).
 	set_process_input(true)
-	_current_map_display_rect = get_viewport().get_visible_rect() # Initial full screen
-	_current_map_display_rect = get_viewport().get_visible_rect() # Initial full screen
 	self.visible = true # Ensure this node (MapView) is visible by default
 
 	# Get reference to MenuManager (adjust path if GameRoot node name is different)
@@ -112,12 +110,12 @@ func _ready():
 		menu_manager_ref = get_tree().root.get_node(menu_manager_path.trim_prefix("/root/"))
 		if menu_manager_ref.has_signal("menu_opened"):
 			# Connect to the new signal signature
-			menu_manager_ref.menu_opened.connect(_on_menu_state_changed)
-			# Connect to the new signal signature
-			menu_manager_ref.menu_opened.connect(_on_menu_state_changed)
+			# This connection is now primarily for camera focusing logic.
+			menu_manager_ref.menu_opened.connect(_on_menu_opened_for_camera_focus)
 		else:
 			printerr("Main (MapView): MenuManager found but does not have 'menu_opened' signal.")
 		if menu_manager_ref.has_signal("menus_completely_closed"): # Ensure this signal name matches MenuManager
+			# This connection is now primarily for camera state reset if needed.
 			menu_manager_ref.menus_completely_closed.connect(_on_all_menus_closed)
 		print("Main (MapView): Successfully got reference to MenuManager.")
 	else:
@@ -303,7 +301,7 @@ func _ready():
 
 	# --- Setup Convoy List Panel ---
 	# More detailed check for ConvoyListPanel path
-	var menu_ui_layer_check_node = get_node_or_null("../MenuUILayer") # Adjusted path for check
+	var menu_ui_layer_check_node = get_node_or_null("../../MenuUILayer") # Adjusted path for check
 	if is_instance_valid(menu_ui_layer_check_node):
 		# print("Main (_ready): Parent 'MenuUILayer' FOUND. Name: '%s', Type: '%s', Visible: %s" % [menu_ui_layer_check_node.name, menu_ui_layer_check_node.get_class(), menu_ui_layer_check_node.visible])
 		# if menu_ui_layer_check_node is CanvasLayer:
@@ -312,13 +310,13 @@ func _ready():
 		menu_ui_layer_check_node.visible = true
 	else:
 		printerr("Main (_ready): CRITICAL - Parent node '../MenuUILayer' NOT FOUND relative to '%s'. ConvoyListPanel will not be visible." % self.name)
-
-
-	if not is_instance_valid(menu_ui_layer_check_node):
-		printerr("Main (_ready): Node '../MenuUILayer' NOT FOUND relative to '%s'. The path '../MenuUILayer/ConvoyListPanel' will fail." % self.name)
-	elif not is_instance_valid(menu_ui_layer_check_node.get_node_or_null("ConvoyListPanel")): # Adjusted check
-		printerr("Main (_ready): Child node 'MenuUILayer' WAS FOUND, but it does not have a child named 'ConvoyListPanel'. The path '$MenuUILayer/ConvoyListPanel' will fail.")
 	
+	# The error messages below also need to reflect the new path logic if they trigger.
+	if not is_instance_valid(menu_ui_layer_check_node):
+		printerr("Main (_ready): Node '../../MenuUILayer' NOT FOUND relative to '%s'. The path '../../MenuUILayer/ConvoyListPanel' will fail." % self.name)
+	elif not is_instance_valid(menu_ui_layer_check_node.get_node_or_null("ConvoyListPanel")): # Adjusted check
+		printerr("Main (_ready): Node '../../MenuUILayer' WAS FOUND, but it does not have a child named 'ConvoyListPanel'. The path '../../MenuUILayer/ConvoyListPanel' will fail.")
+
 	if is_instance_valid(convoy_list_panel_node):
 		# print("Main: ConvoyListPanel node found.")
 		convoy_list_panel_node.visible = true # Explicitly set to visible (ensure parent MenuUILayer is also visible)
@@ -361,7 +359,7 @@ func _ready():
 			# if convoy_list_panel_node.get_parent() is CanvasLayer:
 				# print("  - Parent CanvasLayer Layer: ", convoy_list_panel_node.get_parent().layer)
 	else: # This means the @onready var convoy_list_panel_node is null or invalid
-		printerr("Main: ConvoyListPanel node (assigned via @onready var using path '../MenuUILayer/ConvoyListPanel') is NOT VALID in _ready(). Please verify the node path and names in your scene tree are exactly '../MenuUILayer/ConvoyListPanel' relative to the node with main.gd.")
+		printerr("Main: ConvoyListPanel node (assigned via @onready var using path '../../MenuUILayer/ConvoyListPanel') is NOT VALID in _ready(). Please verify the node path and names in your scene tree are exactly '../../MenuUILayer/ConvoyListPanel' relative to the node with main.gd.")
 
 	_on_viewport_size_changed() # Call once at the end of _ready to ensure all initial positions/constraints are correct
 
@@ -422,7 +420,7 @@ func _setup_static_map_and_camera():
 	var render_viewport_for_full_map = Vector2(full_map_width_px, full_map_height_px)
 
 	# print("Main: Attempting to generate static base map texture of size: ", render_viewport_for_full_map) # DEBUG
-	var static_map_texture: ImageTexture = map_renderer_node.render_map(
+	var static_render_result: Dictionary = map_renderer_node.render_map(
 		map_tiles,
 		[], # highlights (empty for base static map)
 		[], # lowlights (empty for base static map)
@@ -438,12 +436,13 @@ func _setup_static_map_and_camera():
 		# p_render_convoys is removed from map_render.gd
 	)
 
-	if is_instance_valid(static_map_texture):
+	if static_render_result and static_render_result.has("texture") and is_instance_valid(static_render_result.texture):
+		var static_map_texture: ImageTexture = static_render_result.texture
 		map_display.texture = static_map_texture
 		map_display.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 		map_display.custom_minimum_size = static_map_texture.get_size()
 		# map_display.rect_size = static_map_texture.get_size()
-		# print("Main: Static map texture applied to MapDisplay. Size: ", map_display.custom_minimum_size)
+		# print("Main: Static map texture applied to MapDisplay. Size: ", map_display.custom_minimum_size) # DEBUG
 	else: # Covers null or invalid static_map_texture
 		printerr("Main: Failed to generate or apply static map texture.")
 		return
@@ -463,44 +462,42 @@ func _setup_static_map_and_camera():
 		_on_gdm_convoy_data_updated(_deferred_convoy_data) # Call the handler with stored data
 		_deferred_convoy_data.clear() # Clear after processing
 	# Camera limits will be handled by MapInteractionManager's _constrain_camera_offset
-
+	
+	# Trigger convoy visuals update even for static map, in case there's deferred data
+	# Icon positions from static_render_result will be empty, which is fine.
+	_trigger_convoy_visuals_update(static_render_result.get("icon_positions", {}))
 	_update_map_display(false) # Perform an initial UI update without re-rendering the map texture
 
 
 func _on_viewport_size_changed():
 	# print('Main: _on_viewport_size_changed triggered.') # DEBUG
 
-	# Recalculate _current_map_display_rect based on new viewport size and _is_map_in_partial_view
-	var full_viewport_rect = get_viewport().get_visible_rect()
-	if _is_map_in_partial_view:
-		_current_map_display_rect = Rect2(
-			full_viewport_rect.position.x,
-			full_viewport_rect.position.y,
-			full_viewport_rect.size.x / 3.0,
-			full_viewport_rect.size.y
-		)
-	else:
-		_current_map_display_rect = full_viewport_rect
-
-	# Apply new camera offset based on the potentially new _current_map_display_rect
+	# MapView's camera should always be centered in its own viewport.
+	# The ViewportContainer handles where this viewport is shown on the main screen.
 	if is_instance_valid(map_camera):
-		var full_viewport_center = get_viewport().get_visible_rect().size / 2.0
+		map_camera.offset = Vector2.ZERO # Camera offset is relative to its viewport center
 
 	if is_instance_valid(map_interaction_manager) and map_interaction_manager.has_method("_handle_viewport_resize_constraints"):
 		map_interaction_manager._handle_viewport_resize_constraints() # Tell MIM to re-apply camera and zoom constraints
 	if is_instance_valid(map_interaction_manager) and map_interaction_manager.has_method("set_current_map_screen_rect"):
-		map_interaction_manager.set_current_map_screen_rect(_current_map_display_rect)
-	if is_instance_valid(map_interaction_manager) and map_interaction_manager.has_method("set_current_map_screen_rect"):
-		map_interaction_manager.set_current_map_screen_rect(_current_map_display_rect)
+		# MIM needs the screen rect *where the map is visible* for mouse coord conversion.
+		# This should be the global rect of the MapViewportContainer.
+		map_interaction_manager.set_current_map_screen_rect(get_map_viewport_container_global_rect())
 
 	if not Engine.is_editor_hint() and is_instance_valid(_refresh_notification_label): # Only update in game
 		_update_refresh_notification_position()
 	if is_instance_valid(detailed_view_toggle):
 		_update_detailed_view_toggle_position()
 	if is_instance_valid(convoy_list_panel_node):
-		_update_convoy_list_panel_position()
+		_update_convoy_list_panel_position() # This needs to use main window rect
 
-	_apply_map_camera_and_ui_layout() # Call this to update camera offset and UI after rect change
+	# _apply_map_camera_and_ui_layout() is simplified as camera offset is now simpler.
+
+func get_map_viewport_container_global_rect() -> Rect2:
+	var mvc = get_parent() # Assuming MapView is direct child of MapViewportContainer
+	if mvc is SubViewportContainer: # This check is correct for Godot 4
+		return mvc.get_global_rect()
+	return get_viewport().get_visible_rect() # Fallback if MapView isn't in a ViewportContainer
 
 func _update_map_display(force_rerender_map_texture: bool = true, is_light_ui_update: bool = false):
 	# print("Main: _update_map_display() CALLED - TOP") # DEBUG
@@ -552,80 +549,98 @@ func _update_map_display(force_rerender_map_texture: bool = true, is_light_ui_up
 	if force_rerender_map_texture:
 		# This part is for re-rendering dynamic elements INTO the main map texture.
 		# For best performance with frequently changing elements, they should be separate nodes.
-		var highlights_for_render: Array = [] # Initialize as empty		
+		var non_selected_highlights: Array = []
+		var selected_highlights: Array = []
 		# print("Main: force_rerender_map_texture is TRUE. Generating journey lines for ALL convoys. Selected IDs: ", _selected_convoy_ids) # DEBUG - Commented out
 
 		for convoy_data_item in _all_convoy_data: # Iterate through ALL convoys
 			if convoy_data_item is Dictionary and convoy_data_item.has("convoy_id") and convoy_data_item.has("journey"):
 				var convoy_id_str = str(convoy_data_item.get("convoy_id"))
 				var journey_data: Dictionary = convoy_data_item.get("journey")
-				
+				var is_selected: bool = _selected_convoy_ids.has(convoy_id_str)
+
 				if journey_data is Dictionary: # Ensure journey_data is a dictionary
 					var route_x: Array = journey_data.get("route_x", [])
 					var route_y: Array = journey_data.get("route_y", [])
 					# print("Main: Convoy ", convoy_id_str, " route_x size: ", route_x.size(), ", route_y size: ", route_y.size()) # DEBUG
-					
-					
+
+
 					# Retrieve pre-calculated progress details from the augmented convoy_data_item
 					var convoy_current_segment_start_index: int = convoy_data_item.get("_current_segment_start_idx", -1)
 					var progress_within_current_segment: float = convoy_data_item.get("_progress_in_segment", 0.0)
 					# The complex calculation block for these two variables is no longer needed here.
 
+					var path_points: Array[Vector2] = []
+					for i in range(route_x.size()):
+						# Assuming route_x and route_y contain tile coordinates
+						path_points.append(Vector2(float(route_x[i]), float(route_y[i])))
+					# print("Main: Convoy ", convoy_id_str, " generated path_points count: ", path_points.size()) # DEBUG
+					var base_convoy_color = _convoy_id_to_color_map.get(convoy_id_str, Color.GRAY) # Default to gray if not found
 
-
-					if route_x.size() > 1 and route_x.size() == route_y.size():
-						var path_points: Array[Vector2] = []
-						for i in range(route_x.size()):
-							# Assuming route_x and route_y contain tile coordinates
-							path_points.append(Vector2(float(route_x[i]), float(route_y[i])))
-						# print("Main: Convoy ", convoy_id_str, " generated path_points count: ", path_points.size()) # DEBUG
-
-						var base_convoy_color = _convoy_id_to_color_map.get(convoy_id_str, Color.GRAY) # Default to gray if not found
-						var is_selected: bool = _selected_convoy_ids.has(convoy_id_str)
-						
-						var line_color_for_render = base_convoy_color
-						# Optionally, make selected lines brighter here, or let map_render handle all visual distinction
-						if is_selected:
-							line_color_for_render = base_convoy_color.lightened(0.3) # Example: brighten selected lines
-						else:
-							line_color_for_render = base_convoy_color.darkened(0.2) # Example: slightly darken non-selected
-
-						var highlight_object = {
-							"type": "journey_path", # map_render.gd needs to recognize this type
+					if is_selected:
+						# Create the selected line object
+						var main_selected_line_obj = {
+							"type": "journey_path",
+							"convoy_id": convoy_id_str, # Ensure convoy_id is passed
 							"points": path_points,
-							"color": line_color_for_render,
-							"is_selected": is_selected, # Pass the selection status
-							"convoy_segment_start_idx": convoy_current_segment_start_index, # Pass the calculated index
-							"progress_in_current_segment": progress_within_current_segment # Pass progress within that segment
+							"color": base_convoy_color.lightened(0.3), # Example: brighten selected lines
+							"is_selected": true,
+							# "width" property is removed; map_render.gd uses its own thickness settings
+							"convoy_segment_start_idx": convoy_current_segment_start_index,
+							"progress_in_current_segment": progress_within_current_segment
 						}
-						highlights_for_render.append(highlight_object)
+						selected_highlights.append(main_selected_line_obj)
+					else:
+						# Create the non-selected line object
+						var non_selected_line_obj = {
+							"type": "journey_path",
+							"convoy_id": convoy_id_str, # Ensure convoy_id is passed
+							"points": path_points,
+							"color": base_convoy_color.darkened(0.2), # Example: slightly darken non-selected
+							"is_selected": false,
+							# "width" property is removed; map_render.gd uses its own thickness settings
+							"convoy_segment_start_idx": convoy_current_segment_start_index,
+							"progress_in_current_segment": progress_within_current_segment
+						}
+						non_selected_highlights.append(non_selected_line_obj)
 						# print("Main: Appended journey for convoy ", convoy_id_str, " (Selected: ", is_selected, ") to highlights_for_render.") # DEBUG
 					# else:
 						# print("Main: Convoy ", convoy_id_str, " journey data insufficient to form path.") #DEBUG
 			# else:
 				# print("Main: Skipping convoy item (no ID or journey): ", convoy_data_item) # DEBUG
 
+		# Combine the lists, with selected highlights last to draw them on top
+		var highlights_for_render: Array = []
+		highlights_for_render.append_array(non_selected_highlights)
+		highlights_for_render.append_array(selected_highlights)
+
 		# print("Main: Final highlights_for_render before calling map_renderer_node.render_map: ", highlights_for_render) # DEBUG - Commented out, very verbose
 
-		var map_texture: ImageTexture = map_renderer_node.render_map(
+		var render_result: Dictionary = map_renderer_node.render_map(
 			map_tiles,
 			highlights_for_render,  # Pass the generated highlights for journey lines
 			[],  # lowlights
 			Color(0,0,0,0), # Let map_render use its own default highlight color
 			Color(0,0,0,0), # Let map_render use its own default lowlight color
 			map_render_target_size,    # Target size for the map texture (full map)
-			show_detailed_view,       # Pass detailed view flag for grid
-			show_detailed_view        # Pass detailed view flag for political colors
+			show_detailed_view, # Pass detailed view flag for grid
+			show_detailed_view, # Pass detailed view flag for political colors
+			true # p_render_highlights_lowlights is true here
 		)
 		# print('Main: map_renderer.render_map call completed.')  # DEBUG
 
 		# --- Display the map ---
-		if map_texture:
+		if render_result and render_result.has("texture") and is_instance_valid(render_result.texture):
+			var map_texture: ImageTexture = render_result.texture
 			# print('Main: map_texture is valid. Size: ', map_texture.get_size(), ' Format: ', map_texture.get_image().get_format() if map_texture.get_image() else 'N/A')  # DEBUG
 			# Generate mipmaps for the texture if the TextureRect's filter uses them.
 			# This improves quality when the texture is scaled down.
 			if map_display and (map_display.texture_filter == CanvasItem.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS or \
 							   map_display.texture_filter == CanvasItem.TEXTURE_FILTER_NEAREST_WITH_MIPMAPS):
+				# Ensure the texture actually has an image to work with
+				if not is_instance_valid(map_texture.get_image()):
+					printerr("Main: Map texture is valid, but its image data is not. Cannot generate mipmaps.")
+					return # Or handle error appropriately
 				var img := map_texture.get_image()
 				if img:  # Ensure image is valid
 					# print('Main: Generating mipmaps for map texture.')  # DEBUG
@@ -634,8 +649,16 @@ func _update_map_display(force_rerender_map_texture: bool = true, is_light_ui_up
 			# No longer need to set map_display.set_size here, stretch_mode handles it.
 			# print('Main: Map (re)rendered and displayed on map_display node.')  # DEBUG
 		else:
-			printerr('Failed to render map texture.')
-
+			printerr('Failed to render map texture or result was invalid.')
+			# If map texture failed, we probably shouldn't update convoy visuals based on it.
+			# However, UI labels might still need an update.
+			# For now, let's ensure icon_positions is empty if texture fails.
+			var icon_positions_from_render = {} # Default to empty
+			if render_result and render_result.has("icon_positions"):
+				icon_positions_from_render = render_result.icon_positions
+			_trigger_convoy_visuals_update(icon_positions_from_render) # Still trigger visuals update
+	else: # Not force_rerender_map_texture
+		_trigger_convoy_visuals_update() # Trigger with default empty icon positions if map not re-rendered
 	# Call UIManager to update all UI elements (labels, connectors)
 	# print("Main: _update_map_display - Preparing to call ui_manager.update_ui_elements.") # DEBUG
 	# print("  - ui_manager valid: %s, map_display valid: %s, map_tiles empty: %s" % [is_instance_valid(ui_manager), is_instance_valid(map_display), map_tiles.is_empty()]) # DEBUG
@@ -666,11 +689,11 @@ func _update_map_display(force_rerender_map_texture: bool = true, is_light_ui_up
 			_all_settlement_data,
 			_convoy_id_to_color_map,
 			hover_info_for_render,
-			selected_ids_for_render, # This is _selected_convoy_ids from MIM
+			selected_ids_for_render,
 			user_positions_for_ui,      # Pass the up-to-date user positions
 			dragging_panel_for_ui,      # Pass the currently dragged panel (or null)
 			dragged_id_for_ui,          # Pass the ID of the currently dragged panel (or empty)
-			_current_map_display_rect, # Pass the current map display rect for UIManager clamping
+			get_map_viewport_container_global_rect(), # Pass the map's actual screen rect for UIManager clamping
 			is_light_ui_update,         # Pass the light update flag
 			current_camera_zoom_for_ui  # Pass the current zoom level
 		) 
@@ -717,9 +740,17 @@ func _on_gdm_convoy_data_updated(p_augmented_convoy_data: Array) -> void:
 	else:
 		printerr("Main: ConvoyVisualsManager not available or missing 'augment_convoy_data_with_offsets' method. Icon offsets will not be calculated.")
 
-	_trigger_convoy_visuals_update() # Create/update ConvoyNode instances using augmented _all_convoy_data
+	# After map is rendered (if it was), get icon positions from the render result.
+	# This part is tricky because _update_map_display can be called with force_rerender_map_texture = false.
+	# For now, assume if _on_gdm_convoy_data_updated is called, we *want* to re-render map for new lines.
+	# The _trigger_convoy_visuals_update will be called within _update_map_display if map is re-rendered.
+	# If map is NOT re-rendered, then icon positions aren't recalculated by map_render.
+	# This implies _trigger_convoy_visuals_update should ideally get positions from map_render's output.
 	# Map texture DOES need to be re-rendered if journey lines are drawn on it and convoy data changes.
-	# The 'false' for is_light_ui_update means a full UI update for labels etc. will also occur.
+	# The 'false' for is_light_ui_update means a full UI update for labels etc. will also occur.	
+	# The _update_map_display call below will handle calling _trigger_convoy_visuals_update
+	# with the icon positions from the render result if the map is re-rendered.
+	# If not re-rendered, _trigger_convoy_visuals_update will be called with empty positions.
 	_update_map_display(true, false)
 
 
@@ -853,26 +884,17 @@ func _update_refresh_notification_position():
 	if not is_instance_valid(_refresh_notification_label):
 		return
 
-	# Use _current_map_display_rect for positioning within the map's effective area
-	# Use _current_map_display_rect for positioning within the map's effective area
+	# Position relative to MapView's own viewport (the ViewportContainer's area)
+	var map_view_rect = get_viewport().get_visible_rect()
 	# Ensure the label has its size calculated based on current text and font settings
 	var label_size = _refresh_notification_label.get_minimum_size()
 	var padding = label_map_edge_padding # Use the class member
 	
-	# Position relative to the bottom-right of _current_map_display_rect
+	# Position relative to the bottom-right of map_view_rect
 	# The position set is local to _refresh_notification_label's parent.
-	# Assuming parent (MapView node) is at global (0,0) or _current_map_display_rect.position is already accounting for it.
 	_refresh_notification_label.position = Vector2(
-		_current_map_display_rect.position.x + _current_map_display_rect.size.x - label_size.x - padding,
-		_current_map_display_rect.position.y + _current_map_display_rect.size.y - label_size.y - padding
-	)
-	
-	# Position relative to the bottom-right of _current_map_display_rect
-	# The position set is local to _refresh_notification_label's parent.
-	# Assuming parent (MapView node) is at global (0,0) or _current_map_display_rect.position is already accounting for it.
-	_refresh_notification_label.position = Vector2(
-		_current_map_display_rect.position.x + _current_map_display_rect.size.x - label_size.x - padding,
-		_current_map_display_rect.position.y + _current_map_display_rect.size.y - label_size.y - padding
+		map_view_rect.position.x + map_view_rect.size.x - label_size.x - padding,
+		map_view_rect.position.y + map_view_rect.size.y - label_size.y - padding
 	)
 
 # --- UI Toggle Handler ---
@@ -886,23 +908,17 @@ func _update_detailed_view_toggle_position() -> void:
 	if not is_instance_valid(detailed_view_toggle):
 		return
 
-	# Use _current_map_display_rect for positioning
-	# Use _current_map_display_rect for positioning
+	# Position relative to MapView's own viewport (the ViewportContainer's area)
+	var map_view_rect = get_viewport().get_visible_rect()
 	var toggle_size: Vector2 = detailed_view_toggle.get_minimum_size() # Get its actual size based on text and font
 	var padding = label_map_edge_padding # Use the class member
 	
-	# --- DEBUG: Check size of DetailedViewToggleCheckbox ---
-	# If toggle_size.x or toggle_size.y is 0, it might cause an affine_invert error.
-	# print("Main: _update_detailed_view_toggle_position - DetailedViewToggleCheckbox minimum_size: %s" % toggle_size) # DEBUG
-	# print("Main: _update_detailed_view_toggle_position - DetailedViewToggleCheckbox minimum_size: %s" % toggle_size) # DEBUG
-
-	# Position relative to the bottom-right of _current_map_display_rect
+	# Position relative to the bottom-right of map_view_rect
 	# Position is local to detailed_view_toggle's parent (UIManagerNode)
-	# Position relative to the bottom-right of _current_map_display_rect
-	# Position is local to detailed_view_toggle's parent (UIManagerNode)
+	# UIManagerNode is a child of ScreenSpaceUI (CanvasLayer) within MapView.
 	detailed_view_toggle.position = Vector2(
-		_current_map_display_rect.position.x + _current_map_display_rect.size.x - toggle_size.x - padding,
-		_current_map_display_rect.position.y + _current_map_display_rect.size.y - toggle_size.y - padding
+		map_view_rect.position.x + map_view_rect.size.x - toggle_size.x - padding,
+		map_view_rect.position.y + map_view_rect.size.y - toggle_size.y - padding
 	)
 
 func _update_convoy_list_panel_position() -> void:
@@ -910,10 +926,8 @@ func _update_convoy_list_panel_position() -> void:
 		return
 
 	var viewport_size = get_viewport_rect().size
-	# ConvoyListPanel is on MenuUILayer (CanvasLayer), so its positioning
-	# should remain relative to the full viewport, not _current_map_display_rect.
-	# ConvoyListPanel is on MenuUILayer (CanvasLayer), so its positioning
-	# should remain relative to the full viewport, not _current_map_display_rect.
+	# ConvoyListPanel is on MenuUILayer (CanvasLayer), so its positioning should be relative to the main game window.
+	var main_window_rect = get_tree().root.get_visible_rect()
 	var fixed_panel_size = convoy_list_panel_node.custom_minimum_size
 
 	# If custom_minimum_size was not set or is zero (e.g., if _ready didn't set it yet,
@@ -925,8 +939,8 @@ func _update_convoy_list_panel_position() -> void:
 	var padding = label_map_edge_padding # Use the existing padding variable
 
 	convoy_list_panel_node.position = Vector2(
-		viewport_size.x - fixed_panel_size.x - padding,  # Position from the right edge
-		(viewport_size.y - fixed_panel_size.y) / 2.0     # Centered vertically
+		main_window_rect.size.x - fixed_panel_size.x - padding,  # Position from the right edge of main window
+		(main_window_rect.size.y - fixed_panel_size.y) / 2.0     # Centered vertically in main window
 	)
 	# Explicitly set the size of the panel to its fixed size.
 	# This ensures it doesn't expand even if some other layout property tries to make it.
@@ -969,11 +983,11 @@ func _on_mim_hover_changed(new_hover_info: Dictionary):
 			_convoy_id_to_color_map,
 			new_hover_info, # Use the new_hover_info directly
 			_selected_convoy_ids, # Use the current selection state
-			user_positions_for_ui,
+			user_positions_for_ui, 
 			dragging_panel_for_ui,
 			dragged_id_for_ui,                 # Pass the ID of the currently dragged panel (or empty)
-			_current_map_display_rect,         # Pass current map display rect for UIManager clamping
-			false,                # is_light_ui_update: false to trigger full label logic for hover
+			get_map_viewport_container_global_rect(), # Pass current map display rect for UIManager clamping
+			false,                             # is_light_ui_update: false to trigger full label logic for hover
 			current_camera_zoom_for_ui         # Pass the current zoom level
 		)
 	
@@ -1098,26 +1112,25 @@ func _on_mim_panel_drag_updated(convoy_id_str: String, new_panel_local_position:
 
 # --- Menu Interaction Functions ---
 
-func _on_menu_state_changed(menu_node, menu_type: String): # New handler for modified signal
+func _on_menu_opened_for_camera_focus(menu_node: Node, menu_type: String):
 	# print("Main (MapView): Menu state changed. Type: '%s', Node: %s" % [menu_type, menu_node.name if is_instance_valid(menu_node) else "N/A"])
-	if menu_type == "convoy_detail":
-		_is_map_in_partial_view = true
-		var full_viewport_rect = get_viewport().get_visible_rect()
-		_current_map_display_rect = Rect2(
-			full_viewport_rect.position.x,
-			full_viewport_rect.position.y,
-			full_viewport_rect.size.x / 3.0,
-			full_viewport_rect.size.y
-		)
-		self.visible = true # Ensure map is visible
-		set_process_input(true) # Ensure map input is active
+	# This function now ONLY handles camera focusing if a convoy menu opens.
+	# The map resizing/repositioning is handled by GameScreenManager.
 
-		# Center camera on the selected convoy
-		# Ensure MapInteractionManager knows about the new effective screen rect for the map *before* zoom calculations
-		if is_instance_valid(map_interaction_manager) and map_interaction_manager.has_method("set_current_map_screen_rect"):
-			map_interaction_manager.set_current_map_screen_rect(_current_map_display_rect)
+	if menu_type == "convoy_detail":
+		# Defer the focusing logic to ensure GameScreenManager has resized the viewport.
+		call_deferred("_execute_convoy_focus_logic", menu_node)
+
+func _execute_convoy_focus_logic(menu_node: Node):
+	# This function contains the logic previously in _on_menu_opened_for_camera_focus
+	# Ensure MapView is already visible and processing input if its ViewportContainer is visible.
+
+	# Ensure MapInteractionManager uses the correct screen rect for the map (the ViewportContainer's rect)
+	if is_instance_valid(map_interaction_manager) and map_interaction_manager.has_method("set_current_map_screen_rect"):
+		if get_map_viewport_container_global_rect().size.x > 0: # Ensure rect is valid
+			map_interaction_manager.set_current_map_screen_rect(get_map_viewport_container_global_rect())
 		else:
-			printerr("Main: Cannot set MIM current map screen rect in _on_menu_state_changed.")
+			printerr("Main: Cannot set MIM current map screen rect in _on_menu_opened_for_camera_focus.")
 
 
 		var convoy_data = menu_node.get_meta("menu_data")
@@ -1131,6 +1144,8 @@ func _on_menu_state_changed(menu_node, menu_type: String): # New handler for mod
 			   not map_tiles.is_empty() and map_tiles[0] is Array and not map_tiles[0].is_empty() and \
 			   is_instance_valid(map_container):
 
+				# This is the rect of MapView's own viewport (e.g., the left 1/3 of the screen)
+				var map_view_current_rect = get_viewport().get_visible_rect()
 				var map_initial_world_size = map_display.custom_minimum_size
 				var map_cols: int = map_tiles[0].size()
 				var map_rows: int = map_tiles.size()
@@ -1138,31 +1153,51 @@ func _on_menu_state_changed(menu_node, menu_type: String): # New handler for mod
 				if map_cols > 0 and map_rows > 0 and map_initial_world_size.x > 0 and map_initial_world_size.y > 0:
 					var tile_world_width: float = map_initial_world_size.x / float(map_cols)
 					var tile_world_height: float = map_initial_world_size.y / float(map_rows)
+					print("FocusDebug: --- Start Convoy Focus ---")
+					print("FocusDebug: convoy_id = ", convoy_data.get("convoy_id", "N/A"))
+					print("FocusDebug: convoy_focus_zoom_target_tiles_wide = ", convoy_focus_zoom_target_tiles_wide)
+					print("FocusDebug: convoy_focus_zoom_target_tiles_high = ", convoy_focus_zoom_target_tiles_high)
+					print("FocusDebug: tile_world_width = ", tile_world_width)
+					print("FocusDebug: tile_world_height = ", tile_world_height)
+					print("FocusDebug: map_view_current_rect.size = ", map_view_current_rect.size)
 
 					# Calculate the convoy's center position local to MapContainer
 					var convoy_center_local_to_map_container: Vector2 = Vector2(
 						(convoy_tile_x + 0.5) * tile_world_width,
 						(convoy_tile_y + 0.5) * tile_world_height
 					)
+					# print("FocusDebug: convoy_center_local_to_map_container = ", convoy_center_local_to_map_container) # Optional debug
 					var convoy_actual_world_position: Vector2 = map_container.to_global(convoy_center_local_to_map_container)
+					# print("FocusDebug: convoy_actual_world_position = ", convoy_actual_world_position) # Optional debug
 
 					# Calculate the target zoom first, as it's needed for the position adjustment
 					var world_width_to_display: float = convoy_focus_zoom_target_tiles_wide * tile_world_width
 					var world_height_to_display: float = convoy_focus_zoom_target_tiles_high * tile_world_height
-					var target_zoom_x: float = _current_map_display_rect.size.x / world_width_to_display
-					var target_zoom_y: float = _current_map_display_rect.size.y / world_height_to_display
+					print("FocusDebug: world_width_to_display = ", world_width_to_display)
+					print("FocusDebug: world_height_to_display = ", world_height_to_display)
+
+					if world_width_to_display <= 0.001 or world_height_to_display <= 0.001 or map_view_current_rect.size.x <= 0.001 or map_view_current_rect.size.y <= 0.001:
+						printerr("FocusDebug: Critical value for zoom calculation is too small. WidthToDisplay: %s, HeightToDisplay: %s, MapViewSize: %s. Aborting zoom." % [world_width_to_display, world_height_to_display, map_view_current_rect.size])
+						return
+
+					var target_zoom_x: float = map_view_current_rect.size.x / world_width_to_display
+					var target_zoom_y: float = map_view_current_rect.size.y / world_height_to_display
+					print("FocusDebug: target_zoom_x (before min) = ", target_zoom_x)
+					print("FocusDebug: target_zoom_y (before min) = ", target_zoom_y)
+
 					var final_target_zoom_scalar: float = min(target_zoom_x, target_zoom_y)
+					print("FocusDebug: final_target_zoom_scalar = ", final_target_zoom_scalar)
 
 					# Calculate the world-space shift needed to position the convoy according to convoy_menu_map_view_offset_percentage.
 					# This shift is applied to the camera's target.
 					# If convoy_menu_map_view_offset_percentage is 0.0 (for centering), additional_camera_shift_world_x will be 0.0.
 					var additional_camera_shift_world_x: float = 0.0
-					if abs(final_target_zoom_scalar) > 0.0001: # Avoid division by zero
-						var partial_view_width_in_world_units = _current_map_display_rect.size.x / final_target_zoom_scalar
+					if abs(final_target_zoom_scalar) > 0.0001: # Avoid division by zero						
+						var partial_view_width_in_world_units = map_view_current_rect.size.x / final_target_zoom_scalar
 						additional_camera_shift_world_x = convoy_menu_map_view_offset_percentage * partial_view_width_in_world_units
 					else:
 						printerr("Main: _on_menu_state_changed - final_target_zoom_scalar is too small (%s), cannot calculate additional_camera_shift_world_x." % final_target_zoom_scalar)
-					print("Main: _on_menu_state_changed (convoy_detail) - convoy_menu_map_view_offset_percentage: %s, final_target_zoom_scalar: %s, calculated additional_camera_shift_world_x: %s" % [convoy_menu_map_view_offset_percentage, final_target_zoom_scalar, additional_camera_shift_world_x])
+					# print("Main: _on_menu_state_changed (convoy_detail) - convoy_menu_map_view_offset_percentage: %s, final_target_zoom_scalar: %s, calculated additional_camera_shift_world_x: %s" % [convoy_menu_map_view_offset_percentage, final_target_zoom_scalar, additional_camera_shift_world_x]) # Original print
 
 					# The camera should target the convoy's actual world position, plus this menu-induced shift.
 					# The camera.offset (set in _apply_map_camera_and_ui_layout) then positions this target in the partial view.
@@ -1174,44 +1209,36 @@ func _on_menu_state_changed(menu_node, menu_type: String): # New handler for mod
 					# Calculate and set new zoom level
 					if tile_world_width > 0.001 and tile_world_height > 0.001 and \
 					   convoy_focus_zoom_target_tiles_wide > 0.001 and convoy_focus_zoom_target_tiles_high > 0.001 and \
-					   _current_map_display_rect.size.x > 0.001 and _current_map_display_rect.size.y > 0.001: # Corrected variable name
+					   map_view_current_rect.size.x > 0.001 and map_view_current_rect.size.y > 0.001:
 
 						if is_instance_valid(map_interaction_manager) and map_interaction_manager.has_method("focus_camera_and_set_zoom"):
 							# Pass the adjusted camera target position
 							map_interaction_manager.focus_camera_and_set_zoom(camera_target_world_position, final_target_zoom_scalar)
-							
+							print("FocusDebug: Called MIM.focus_camera_and_set_zoom with world_pos: ", camera_target_world_position, ", scalar: ", final_target_zoom_scalar)
 							var cam_pos_str = "N/A"
 							var cam_offset_str = "N/A" # Offset will be set by _apply_map_camera_and_ui_layout shortly
+							var cam_zoom_str = "N/A"
 							if is_instance_valid(map_camera):
 								cam_pos_str = "Local: %s, Global: %s" % [map_camera.position, map_camera.global_position]
-							print("Main: Requested MIM to focus camera. Target world_pos: %s, Target zoom_scalar: %s. Camera pos after MIM: %s" % [camera_target_world_position, final_target_zoom_scalar, cam_pos_str])
+								cam_zoom_str = str(map_camera.zoom) # Get current zoom
+							print("FocusDebug: Camera state immediately after MIM call - Pos: %s, Zoom: %s" % [cam_pos_str, cam_zoom_str])
+							# print("Main: Requested MIM to focus camera. Target world_pos: %s, Target zoom_scalar: %s. Camera pos after MIM: %s" % [camera_target_world_position, final_target_zoom_scalar, cam_pos_str]) # Original print
 						else:
 							printerr("Main: MapInteractionManager invalid or missing set_and_clamp_camera_zoom method.")
 					else:
-						printerr("Main: Cannot calculate convoy focus zoom due to invalid parameters (tile_world_size, target_tiles, or map_display_rect_size).")
-	else: # Other menus might still hide the map or behave as before
-		_is_map_in_partial_view = false # Assuming other menus take full focus or hide map
-		_current_map_display_rect = get_viewport().get_visible_rect()
-		# Original behavior for non-convoy-detail menus (e.g., hide map)
-		self.visible = false
-		set_process_input(false)
-		# When other menus open, ensure MapInteractionManager knows the map is (effectively) full screen or hidden.
-		if is_instance_valid(map_interaction_manager) and map_interaction_manager.has_method("set_current_map_screen_rect"):
-			map_interaction_manager.set_current_map_screen_rect(_current_map_display_rect) # This will be the full viewport rect
+						printerr("Main: Cannot calculate convoy focus zoom due to invalid parameters (tile_world_size, target_tiles, or map_view_current_rect.size).")
+	# No need to call _apply_map_camera_and_ui_layout() as GameScreenManager handles map view,
 
-	_apply_map_camera_and_ui_layout()
-
+	# and camera offset within its own viewport should be (0,0).
 func _on_all_menus_closed(): # Renamed from _on_menus_completely_closed for clarity
 	# print("Main (MapView): All menus are closed. Resuming map interactions.")
-	_is_map_in_partial_view = false
-	_current_map_display_rect = get_viewport().get_visible_rect()
-	self.visible = true
-	set_process_input(true)
+	# MapView visibility and input processing are now implicitly handled by its parent SubViewportContainer's state,
+	# which is controlled by GameScreenManager.
+
 	# When all menus close, ensure MapInteractionManager knows the map is full screen again for its internal calculations (e.g., zoom clamping).
 	if is_instance_valid(map_interaction_manager) and map_interaction_manager.has_method("set_current_map_screen_rect"):
-		map_interaction_manager.set_current_map_screen_rect(_current_map_display_rect)
-
-	_apply_map_camera_and_ui_layout()
+		map_interaction_manager.set_current_map_screen_rect(get_map_viewport_container_global_rect())
+	# No need to call _apply_map_camera_and_ui_layout().
 
 func _apply_map_camera_and_ui_layout():
 	if not is_instance_valid(map_camera):
@@ -1219,18 +1246,12 @@ func _apply_map_camera_and_ui_layout():
 		return
 
 	# DEBUG: Check _current_map_display_rect and viewport just before offset calculation
-	# print("Main: _apply_map_camera_and_ui_layout - _current_map_display_rect: ", _current_map_display_rect)
 	# print("Main: _apply_map_camera_and_ui_layout - get_viewport().get_visible_rect(): ", get_viewport().get_visible_rect())
 
+	map_camera.offset = Vector2.ZERO # Camera offset is relative to its viewport center
 
-	var full_viewport_center = get_viewport().get_visible_rect().size / 2.0
-	var map_rect_center = _current_map_display_rect.position + _current_map_display_rect.size / 2.0
-	map_camera.offset = map_rect_center - full_viewport_center
-
-
-	# When all menus close, ensure MapInteractionManager knows the map is full screen again for its internal calculations (e.g., zoom clamping).
 	if is_instance_valid(map_interaction_manager) and map_interaction_manager.has_method("set_current_map_screen_rect"):
-		map_interaction_manager.set_current_map_screen_rect(_current_map_display_rect)
+		map_interaction_manager.set_current_map_screen_rect(get_map_viewport_container_global_rect())
 
 
 # Example: Call this from MapInteractionManager when a convoy is clicked for its menu
@@ -1281,11 +1302,13 @@ func _on_convoy_selected_from_list_panel(convoy_data: Dictionary):
 	else:
 		printerr("Main: _on_convoy_selected_from_list_panel - menu_manager_ref is NOT valid! Cannot request convoy menu.")
 
-
-func _trigger_convoy_visuals_update():
+func _trigger_convoy_visuals_update(icon_positions_map: Dictionary = {}):
 	"""
 	Calls the ConvoyVisualsManager to update the ConvoyNode instances on the map.
+	Optionally takes a map of convoy_id to icon pixel positions.
 	"""
+	# print("Main: _trigger_convoy_visuals_update called. icon_positions_map size: ", icon_positions_map.size()) # DEBUG
+
 	if not _map_and_ui_setup_complete:
 		# print("Main (_trigger_convoy_visuals_update): Map and UI setup not yet complete. Skipping convoy node update.")
 		return
@@ -1310,5 +1333,7 @@ func _trigger_convoy_visuals_update():
 		_all_convoy_data,
 		_convoy_id_to_color_map,
 		tile_w_on_texture,
-		tile_h_on_texture
+		tile_h_on_texture,
+		icon_positions_map, # Pass the calculated icon positions
+		_selected_convoy_ids # Pass the array of selected convoy IDs
 	)

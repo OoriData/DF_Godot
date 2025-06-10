@@ -165,10 +165,10 @@ extends Node
 ## Pixel thickness of the convoy journey lines. Scaled.
 @export_group("Journey Lines") 
 @export var journey_line_thickness: int = 5 
-## Thickness for selected convoy journey lines. Scaled.
-@export var selected_journey_line_thickness: int = 9 
-## Extra thickness on each side for the outline of selected journey lines. Scaled.
-@export var selected_journey_line_outline_extra_thickness_each_side: int = 3 
+## Thickness for selected convoy journey lines. Scaled. (e.g., reduced from 9)
+@export var selected_journey_line_thickness: int = 6 
+## Extra thickness on each side for the outline of selected journey lines. Scaled. (e.g., reduced from 3)
+@export var selected_journey_line_outline_extra_thickness_each_side: int = 1 
 ## Extra thickness on each side for the outline of regular journey lines. Scaled.
 @export var journey_line_outline_extra_thickness_each_side: int = 2
 ## Base center-to-center offset in pixels for separating parallel journey lines. Scaled.
@@ -496,8 +496,8 @@ func get_normalized_segment_key(p1_map: Vector2, p2_map: Vector2) -> String:
 func get_journey_segment_offset_vector(
 		p1_map: Vector2, p2_map: Vector2,  # map coordinates of the segment
 		p1_pixel: Vector2i, p2_pixel: Vector2i,  # pixel coordinates of the segment
-		current_convoy_idx: int,
-		shared_segments_data: Dictionary,  # Key: segment_key, Value: Array of convoy_indices
+		current_convoy_id_str: String, # Changed from current_convoy_idx
+		shared_segments_data: Dictionary,  # Key: segment_key, Value: Array of convoy_id_str (sorted)
 		base_offset_magnitude: float
 	) -> Vector2:
 	""" Helper to calculate offset for a shared journey line segment """
@@ -507,8 +507,8 @@ func get_journey_segment_offset_vector(
 	var input_was_swapped_for_canonical: bool = key_info.was_swapped
 
 	if shared_segments_data.has(segment_key):
-		var convoy_indices_on_segment: Array = shared_segments_data[segment_key]
-		var num_lines_on_segment: int = convoy_indices_on_segment.size()
+		var convoy_ids_on_segment: Array = shared_segments_data[segment_key] # This is sorted list of convoy_id_str
+		var num_lines_on_segment: int = convoy_ids_on_segment.size()
 
 		if num_lines_on_segment > 1: # Only apply offset if more than one line shares the segment
 			# --- DEBUG LOGGING START (NOW UNCONDITIONAL FOR num_lines > 1) ---
@@ -529,7 +529,7 @@ func get_journey_segment_offset_vector(
 			# # --- DEBUG LOGGING END ---
 
 			# Determine the order of the current convoy for this segment
-			var current_convoy_order_on_segment: int = convoy_indices_on_segment.find(current_convoy_idx)
+			var current_convoy_order_on_segment: int = convoy_ids_on_segment.find(current_convoy_id_str)
 
 			if current_convoy_order_on_segment != -1: # Ensure the current convoy is actually in the list for this segment
 								# Calculate segment_vec_px based on CANONICAL direction of the segment.
@@ -563,8 +563,8 @@ func get_journey_segment_offset_vector(
 # This function is no longer used by map_render.gd if journey lines are separate nodes or part of ConvoyNode.
 func _calculate_offset_pixel_path(
 		original_map_coords_path: Array[Vector2],  # Array of Vector2 (map coordinates)
-		convoy_idx: int,
-		shared_segments_data: Dictionary,
+		convoy_id_str_current: String, # Changed from convoy_idx
+		shared_segments_data: Dictionary, # Values are sorted arrays of convoy_id_str
 		base_offset_pixel_magnitude: float,
 		actual_tile_width_f: float,
 		actual_tile_height_f: float
@@ -596,7 +596,7 @@ func _calculate_offset_pixel_path(
 		var offset_vec: Vector2 = get_journey_segment_offset_vector( # Use public version
 			map_pk, map_pkplus1,
 			px_pk, px_pkplus1,
-			convoy_idx,
+			convoy_id_str_current,
 			shared_segments_data,
 			base_offset_pixel_magnitude
 		)
@@ -656,8 +656,8 @@ func render_map(
 		p_show_grid: bool = true,           # New flag for grid visibility
 		p_show_political: bool = true,      # New flag for political color visibility
 		p_render_highlights_lowlights: bool = true # New flag to control highlight/lowlight rendering
-		# p_render_convoys parameter is removed
-	) -> ImageTexture:
+	) -> Dictionary: # Return type changed to Dictionary
+
 	# Use exported defaults if overrides are not provided (or are transparent)
 	var current_highlight_color = default_highlight_outline_color if p_highlight_color_override.a == 0.0 else p_highlight_color_override
 	var current_lowlight_color = default_lowlight_inline_color if p_lowlight_color_override.a == 0.0 else p_lowlight_color_override
@@ -665,18 +665,18 @@ func render_map(
 	# print("MapRender: render_map called. p_show_grid: %s, p_show_political: %s" % [p_show_grid, p_show_political]) # DEBUG
 	if tiles.is_empty() or not tiles[0] is Array or tiles[0].is_empty():
 		printerr('MapRender: Invalid or empty tiles data provided.')
-		return null
+		return {"texture": null, "icon_positions": {}}
 
 	var rows: int = tiles.size()
 	var cols: int = tiles[0].size()
 
 	# Ensure this node is in the scene tree to get viewport
 	var viewport_size: Vector2
-	if p_viewport_size == Vector2.ZERO:  # If no override is provided (or it's explicitly zero)
+	if p_viewport_size.is_equal_approx(Vector2.ZERO):  # If no override is provided (or it's explicitly zero)
 		# Try to get viewport size from the tree
 		if not is_inside_tree():  # This check might be problematic if map_render is just a class instance
 			printerr('MapRender node is not in the scene tree and no p_viewport_size override was given. Cannot determine viewport size.')
-			return null
+			return {}
 		viewport_size = get_viewport().get_visible_rect().size
 	else:
 		# Use the provided viewport size override
@@ -823,49 +823,65 @@ func render_map(
 	# This section processes items in the 'highlights' array that are specifically for journey paths.
 	# print("MapRender: Checking for journey_path highlights. p_render_highlights_lowlights: ", p_render_highlights_lowlights) # DEBUG
 	# print("MapRender: Received highlights array: ", highlights) # DEBUG
+	var convoy_id_to_icon_pixel_pos_map: Dictionary = {}
 	if p_render_highlights_lowlights: # Journey lines are also controlled by this flag for now
 		# Scaled thickness will be determined per line based on selection status
 
 		# --- New: Collect journey paths and build shared_segments_data for offsetting ---
-		var journey_path_objects: Array = []
+		var journey_path_objects: Array = [] # Array of highlight_item Dictionaries
+		# convoy_id_to_render_idx_map is not strictly needed with the new ID-based approach for offsets,
+		# but could be useful if you needed to map back to the original `highlights` array index.
+		# var convoy_id_to_render_idx_map: Dictionary = {} # Maps convoy_id_str to its index in journey_path_objects
 		for h_item in highlights:
 			# Ensure h_item is a Dictionary before calling .get()
 			if h_item is Dictionary and h_item.has("type") and h_item.get("type") == "journey_path":
 				journey_path_objects.append(h_item)
 		
-		var shared_segments_data: Dictionary = {}
+				# var convoy_id_str = h_item.get("convoy_id", "") # Example if using convoy_id_to_render_idx_map
+				# if not convoy_id_str.is_empty():
+				# 	convoy_id_to_render_idx_map[convoy_id_str] = journey_path_objects.size() - 1
+		
+		var shared_segments_data: Dictionary = {} # Key: segment_key, Value: Array of convoy_id_str (sorted)
 		if not journey_path_objects.is_empty():
 			# Build shared_segments_data
-			for convoy_idx_for_offset in range(journey_path_objects.size()):
-				var current_journey_path_object = journey_path_objects[convoy_idx_for_offset]
+			for h_item_for_shared_data in journey_path_objects: # Iterate through the filtered journey_path_objects
+				var current_journey_path_object = h_item_for_shared_data
 				var current_path_tile_coords: Array = current_journey_path_object.get("points", [])
+				var convoy_id_str_for_segment = current_journey_path_object.get("convoy_id", "")
+				if convoy_id_str_for_segment.is_empty(): continue
 				# Ensure path has at least 2 points and points are Vector2
 				if current_path_tile_coords.size() >= 2 and (not current_path_tile_coords.is_empty() and current_path_tile_coords[0] is Vector2):
 					for k_segment in range(current_path_tile_coords.size() - 1):
 						var p1_map: Vector2 = current_path_tile_coords[k_segment]
 						var p2_map: Vector2 = current_path_tile_coords[k_segment + 1]
-						# Only need the key string here
-						var segment_key: String = get_normalized_segment_key_with_info(p1_map, p2_map).key
+						var segment_key_info = get_normalized_segment_key_with_info(p1_map, p2_map)
+						var segment_key = segment_key_info.key
 						if not shared_segments_data.has(segment_key):
 							shared_segments_data[segment_key] = []
-						shared_segments_data[segment_key].append(convoy_idx_for_offset)
+						if not shared_segments_data[segment_key].has(convoy_id_str_for_segment): # Add ID if not present
+							shared_segments_data[segment_key].append(convoy_id_str_for_segment)
+			
+			# Sort the convoy_id_str lists in shared_segments_data for stable ordering
+			for seg_key in shared_segments_data:
+				shared_segments_data[seg_key].sort() # Sorts strings alphabetically
+
 		
 		var scaled_journey_line_offset_step_pixels: float = journey_line_offset_step_pixels * base_linear_visual_scale
 		# --- End New: Offset calculation setup ---
 
-		var all_paths_render_data: Array = [] # To store data for two-pass rendering
-
-		for convoy_idx_for_offset in range(journey_path_objects.size()):
-			var highlight_item = journey_path_objects[convoy_idx_for_offset]
+		for highlight_item in journey_path_objects: # Iterate through the filtered list
 			var path_tile_coords: Array = highlight_item.get("points", []) # These are original map tile coordinates
 			# Ensure path has at least 2 points and points are Vector2
 			if path_tile_coords.size() >= 2 and (not path_tile_coords.is_empty() and path_tile_coords[0] is Vector2):
+				var convoy_id_for_map = highlight_item.get("convoy_id", "") # Get convoy_id
 				var line_color: Color = highlight_item.get("color", Color.WHITE)
 				var is_selected_path: bool = highlight_item.get("is_selected", false)
 				var convoy_seg_start_idx: int = highlight_item.get("convoy_segment_start_idx", -1)
 				var progress_in_curr_seg: float = highlight_item.get("progress_in_current_segment", 0.0) # Default to 0.0
-
-				var base_thickness_for_scaling: int = selected_journey_line_thickness if is_selected_path else journey_line_thickness
+				
+				# Determine base thickness using map_render.gd's own exported variables
+				var base_thickness_for_scaling: int = selected_journey_line_thickness if is_selected_path else self.journey_line_thickness
+				
 				var scaled_current_line_thickness = max(1, int(round(reference_float_tile_size_for_offsets * (float(base_thickness_for_scaling) / base_tile_size_for_proportions))))
 				
 				var base_extra_thickness_per_side: int = selected_journey_line_outline_extra_thickness_each_side if is_selected_path else journey_line_outline_extra_thickness_each_side
@@ -874,7 +890,7 @@ func render_map(
 
 				var offset_pixel_points: Array[Vector2i] = _calculate_offset_pixel_path(
 					path_tile_coords, # original_map_coords_path (Array[Vector2])
-					convoy_idx_for_offset, # convoy_idx (our temporary index for this render pass)
+					convoy_id_for_map,
 					shared_segments_data,
 					scaled_journey_line_offset_step_pixels, # base_offset_pixel_magnitude
 					actual_tile_width_f,
@@ -882,69 +898,72 @@ func render_map(
 				)
 				
 				if offset_pixel_points.size() >= 2:
-					all_paths_render_data.append({
-						"points": offset_pixel_points,
-						"outline_thickness": scaled_total_thickness_for_outline_pass,
-						"fill_color": line_color,
-						"fill_thickness": scaled_current_line_thickness,
-						"convoy_seg_start_idx": convoy_seg_start_idx,
-						"progress_in_curr_seg": progress_in_curr_seg
-					})
+					# Draw OUTLINE for this specific journey path
+					var outline_points: Array[Vector2i] = offset_pixel_points
+					var outline_thick_val: int = scaled_total_thickness_for_outline_pass
+					
+					for i in range(outline_points.size() - 1):
+						var p1: Vector2i = outline_points[i]
+						var p2: Vector2i = outline_points[i+1]
+						
+						var segment_is_behind_progress: bool = (convoy_seg_start_idx != -1 and i < convoy_seg_start_idx)
+						var segment_is_current_progress: bool = (convoy_seg_start_idx != -1 and i == convoy_seg_start_idx)
+						
+						var base_segment_outline_color = Color.BLACK if is_selected_path else journey_line_outline_color
+						var active_part_outline_color = base_segment_outline_color
+						var trailing_part_outline_color = base_segment_outline_color.darkened(trailing_journey_darken_factor)
 
-		# Pass 1: Draw all OUTLINES
-		for path_data in all_paths_render_data:
-			var points: Array[Vector2i] = path_data.points
-			var outline_thick: int = path_data.outline_thickness
-			var seg_start_idx: int = path_data.convoy_seg_start_idx
-			var prog_in_seg: float = path_data.progress_in_curr_seg
-			
-			for i in range(points.size() - 1):
-				var p1: Vector2i = points[i]
-				var p2: Vector2i = points[i+1]
-				
-				var is_behind: bool = (seg_start_idx != -1 and i < seg_start_idx)
-				var is_current: bool = (seg_start_idx != -1 and i == seg_start_idx)
-				
-				var current_outline_color = journey_line_outline_color # Default
-				var darkened_outline_color = journey_line_outline_color.darkened(trailing_journey_darken_factor)
+						if segment_is_behind_progress:
+							_draw_line_on_image(map_image, p1, p2, trailing_part_outline_color, outline_thick_val, "round")
+						elif segment_is_current_progress:
+							# Draw the full segment with "active/ahead" color first
+							_draw_line_on_image(map_image, p1, p2, active_part_outline_color, outline_thick_val, "round")
+							var split_point = Vector2i(Vector2(p1).lerp(Vector2(p2), progress_in_curr_seg))
+							if not convoy_id_for_map.is_empty():
+								convoy_id_to_icon_pixel_pos_map[convoy_id_for_map] = split_point
+							# Then, draw the "trailing" part on top, from p1 to split_point
+							if progress_in_curr_seg > 0.001: # Only if there's a significant trailing part
+								_draw_line_on_image(map_image, p1, split_point, trailing_part_outline_color, outline_thick_val, "round")
+						else: # Fully ahead or no progress info
+							_draw_line_on_image(map_image, p1, p2, active_part_outline_color, outline_thick_val, "round")
 
-				if is_behind:
-					_draw_line_on_image(map_image, p1, p2, darkened_outline_color, outline_thick, "round")
-				elif is_current:
-					var split_point = Vector2i(Vector2(p1).lerp(Vector2(p2), prog_in_seg))
-					_draw_line_on_image(map_image, p1, split_point, darkened_outline_color, outline_thick, "round")
-					if prog_in_seg < 0.999: # If there's an "ahead" part
-						_draw_line_on_image(map_image, split_point, p2, current_outline_color, outline_thick, "round")
-				else: # Fully ahead or no progress info
-					_draw_line_on_image(map_image, p1, p2, current_outline_color, outline_thick, "round")
+					# Draw FILL for this specific journey path
+					var fill_points: Array[Vector2i] = offset_pixel_points # Same points
+					var fill_thick_val: int = scaled_current_line_thickness
+					var base_fill_color_val: Color = line_color # Original color from highlight_item
+					
+					for i in range(fill_points.size() - 1):
+						var p1: Vector2i = fill_points[i]
+						var p2: Vector2i = fill_points[i+1]
 
-		# Pass 2: Draw all FILLS
-		for path_data in all_paths_render_data:
-			var points: Array[Vector2i] = path_data.points
-			var fill_thick: int = path_data.fill_thickness
-			var base_fill_color: Color = path_data.fill_color
-			var seg_start_idx: int = path_data.convoy_seg_start_idx
-			var prog_in_seg: float = path_data.progress_in_curr_seg
+						var segment_is_behind_progress: bool = (convoy_seg_start_idx != -1 and i < convoy_seg_start_idx)
+						var segment_is_current_progress: bool = (convoy_seg_start_idx != -1 and i == convoy_seg_start_idx)
 
-			for i in range(points.size() - 1):
-				var p1: Vector2i = points[i]
-				var p2: Vector2i = points[i+1]
+						var active_part_fill_color = base_fill_color_val
+						var trailing_part_fill_color = base_fill_color_val.darkened(trailing_journey_darken_factor)
 
-				var is_behind: bool = (seg_start_idx != -1 and i < seg_start_idx)
-				var is_current: bool = (seg_start_idx != -1 and i == seg_start_idx)
+						if segment_is_behind_progress:
+							# This segment is entirely behind the convoy. Draw the full segment.
+							_draw_line_on_image(map_image, p1, p2, trailing_part_fill_color, fill_thick_val)
+						elif segment_is_current_progress:
+							# If icon position wasn't set by outline pass (e.g., if outline was skipped for some reason)
+							# ensure it's set here.
+							var split_point = Vector2i(Vector2(p1).lerp(Vector2(p2), progress_in_curr_seg))
+							if not convoy_id_for_map.is_empty() and not convoy_id_to_icon_pixel_pos_map.has(convoy_id_for_map):
+								convoy_id_to_icon_pixel_pos_map[convoy_id_for_map] = split_point
 
-				var current_fill_color = base_fill_color # Default
-				var darkened_fill_color = base_fill_color.darkened(trailing_journey_darken_factor)
+							# Draw the full segment with "active/ahead" color first
+							_draw_line_on_image(map_image, p1, p2, active_part_fill_color, fill_thick_val)
+							# Then, draw the "trailing" part on top, from p1 to split_point
+							if progress_in_curr_seg > 0.001: # Only if there's a significant trailing part
+								_draw_line_on_image(map_image, p1, split_point, trailing_part_fill_color, fill_thick_val)
+						else: # Fully ahead or no progress info
+							# If this is the first segment and convoy is at start (progress 0), icon should be at p1
+							if i == 0 and convoy_seg_start_idx == 0 and progress_in_curr_seg < 0.001:
+								if not convoy_id_for_map.is_empty() and not convoy_id_to_icon_pixel_pos_map.has(convoy_id_for_map):
+									convoy_id_to_icon_pixel_pos_map[convoy_id_for_map] = p1
 
-				if is_behind:
-					_draw_line_on_image(map_image, p1, p2, darkened_fill_color, fill_thick)
-				elif is_current:
-					var split_point = Vector2i(Vector2(p1).lerp(Vector2(p2), prog_in_seg))
-					_draw_line_on_image(map_image, p1, split_point, darkened_fill_color, fill_thick)
-					if prog_in_seg < 0.999: # If there's an "ahead" part
-						_draw_line_on_image(map_image, split_point, p2, current_fill_color, fill_thick)
-				else: # Fully ahead or no progress info
-					_draw_line_on_image(map_image, p1, p2, current_fill_color, fill_thick)
+							_draw_line_on_image(map_image, p1, p2, active_part_fill_color, fill_thick_val)
 
 	# The entire block for 'if p_render_convoys:' and drawing convoys/journey lines is removed.
 	
@@ -957,7 +976,7 @@ func render_map(
 	# ConvoyNode instances handle their own drawing.
 
 	var map_texture := ImageTexture.create_from_image(map_image)
-	return map_texture
+	return {"texture": map_texture, "icon_positions": convoy_id_to_icon_pixel_pos_map}
 
 
 # --- Utility Function (Remains the same) ---

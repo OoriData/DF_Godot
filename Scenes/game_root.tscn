@@ -1,13 +1,21 @@
-[gd_scene load_steps=4 format=3 uid="uid://yme8tiuqxb2b"]
+[gd_scene load_steps=5 format=3 uid="uid://yme8tiuqxb2b"]
 
+[ext_resource type="Script" uid="uid://5wbx2kcuj6e7" path="res://Scripts/GameScreenManager.gd" id="1_mrnkn"]
 [ext_resource type="PackedScene" uid="uid://b7shrt87ucxid" path="res://Scenes/MapView.tscn" id="1_pjpa4"]
 [ext_resource type="Script" uid="uid://c485ikhklo86b" path="res://Scripts/menu_manager.gd" id="2_bxsma"]
 [ext_resource type="PackedScene" uid="uid://dkvjop71jseg6" path="res://Scenes/convoy_list_panel.tscn" id="2_lkrbl"]
 
 [node name="GameRoot" type="Node"]
+script = ExtResource("1_mrnkn")
 
-[node name="MapRender" parent="." instance=ExtResource("1_pjpa4")]
+[node name="MapViewportContainer" type="SubViewportContainer" parent="."]
+offset_right = 40.0
+offset_bottom = 40.0
+
+[node name="MapRender" parent="MapViewportContainer" instance=ExtResource("1_pjpa4")]
+convoy_focus_zoom_target_tiles_wide = 20.0
 convoy_menu_map_view_offset_percentage = 0.4
+convoy_focus_zoom_target_tiles_high = 20.0
 
 [node name="MenuUILayer" type="CanvasLayer" parent="."]
 

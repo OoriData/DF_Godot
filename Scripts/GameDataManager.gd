@@ -38,11 +38,17 @@ func _ready():
 	# Attempt to get APICallsInstance node.
 	# This needs to be robust to different scene setups (e.g., game_root vs. MapView running directly).
 	var path_to_api_calls_str : String = "" # For logging the path used
+	var root_node = get_tree().root
 
-	# Check path when game_root.tscn is the main scene
-	if get_tree().root.has_node("GameRoot/MapRender/APICallsInstance"):
+	# Check path when game_root.tscn is the main scene and MapView is under MapViewportContainer
+	# Assuming the node with main.gd is named "MapView" or "MapRender"
+	if root_node.has_node("GameRoot/MapViewportContainer/MapRender/APICallsInstance"):
+		path_to_api_calls_str = "GameRoot/MapViewportContainer/MapRender/APICallsInstance"
+		api_calls_node = root_node.get_node(path_to_api_calls_str)
+	elif root_node.has_node("GameRoot/MapViewportContainer/MapRender/APICallsInstance"): # Check if node is named MapRender
 		path_to_api_calls_str = "GameRoot/MapRender/APICallsInstance"
-		api_calls_node = get_tree().root.get_node(path_to_api_calls_str)
+		api_calls_node = root_node.get_node(path_to_api_calls_str)
+	# Keep old checks for compatibility if running MapView directly or if APICallsInstance is elsewhere
 	# Check path when MapView.tscn is run directly (and its root is MapRender)
 	elif get_tree().root.has_node("MapRender/APICallsInstance"):
 		path_to_api_calls_str = "MapRender/APICallsInstance"

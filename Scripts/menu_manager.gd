@@ -80,7 +80,8 @@ func _show_menu(menu_scene_resource, data_to_pass = null, add_to_stack: bool = t
 	if current_active_menu is Control:
 		var menu_node = current_active_menu
 		if menu_scene_resource == convoy_menu_scene:
-			# Layout for ConvoyMenu: right 2/3rds of the screen
+			# Layout for ConvoyMenu: right 2/3rds of the screen.
+			# These anchors are relative to MenuManager's own bounds.
 			menu_node.anchor_left = 1.0 / 3.0
 			menu_node.anchor_right = 1.0
 			menu_node.anchor_top = 0.0
