@@ -20,6 +20,7 @@ const COLOR_YELLOW: Color = Color("ffee58") # Material Yellow 400
 const COLOR_RED: Color = Color("ef5350")   # Material Red 400
 const COLOR_BOX_FONT: Color = Color("000000") # Black font for boxes for contrast
 const COLOR_PERFORMANCE_BOX_BG: Color = Color("666666") # Medium Gray
+const COLOR_MENU_BUTTON_GREY_BG: Color = Color("b0b0b0") # Light-Medium Grey for menu buttons
 const COLOR_PERFORMANCE_BOX_FONT: Color = Color.WHITE   # White
 
 # --- @onready vars for new labels ---
@@ -53,6 +54,12 @@ const COLOR_PERFORMANCE_BOX_FONT: Color = Color.WHITE   # White
 @onready var all_cargo_label: Label = $MainVBox/ScrollContainer/ContentVBox/AllCargoLabel
 @onready var back_button: Button = $MainVBox/BackButton
 
+# --- Placeholder Menu Buttons ---
+@onready var vehicle_menu_button: Button = $MainVBox/ScrollContainer/ContentVBox/MenuButtons/VehicleMenuButton
+@onready var journey_menu_button: Button = $MainVBox/ScrollContainer/ContentVBox/MenuButtons/JourneyMenuButton
+@onready var settlement_menu_button: Button = $MainVBox/ScrollContainer/ContentVBox/MenuButtons/SettlementMenuButton
+@onready var cargo_menu_button: Button = $MainVBox/ScrollContainer/ContentVBox/MenuButtons/CargoMenuButton
+
 func _ready():
 	# IMPORTANT: Ensure you have a Button node in your ConvoyMenu.tscn scene
 	# and that its name is "BackButton".
@@ -67,6 +74,27 @@ func _ready():
 			back_button.pressed.connect(_on_back_button_pressed, CONNECT_ONE_SHOT) # Use ONE_SHOT as menu is freed
 	else:
 		printerr("ConvoyMenu: CRITICAL - BackButton node NOT found or is not a Button. Ensure it's named 'BackButton' in ConvoyMenu.tscn.")
+
+	# Connect placeholder menu buttons
+	if is_instance_valid(vehicle_menu_button):
+		if not vehicle_menu_button.is_connected("pressed", Callable(self, "_on_vehicle_menu_button_pressed")):
+			_style_menu_button(vehicle_menu_button)
+			vehicle_menu_button.pressed.connect(_on_vehicle_menu_button_pressed)
+	if is_instance_valid(journey_menu_button):
+		if not journey_menu_button.is_connected("pressed", Callable(self, "_on_journey_menu_button_pressed")):
+			_style_menu_button(journey_menu_button)
+			journey_menu_button.pressed.connect(_on_journey_menu_button_pressed)
+	if is_instance_valid(settlement_menu_button):
+		if not settlement_menu_button.is_connected("pressed", Callable(self, "_on_settlement_menu_button_pressed")):
+			_style_menu_button(settlement_menu_button)
+			settlement_menu_button.pressed.connect(_on_settlement_menu_button_pressed)
+	if is_instance_valid(cargo_menu_button):
+		if not cargo_menu_button.is_connected("pressed", Callable(self, "_on_cargo_menu_button_pressed")):
+			_style_menu_button(cargo_menu_button)
+			cargo_menu_button.pressed.connect(_on_cargo_menu_button_pressed)
+
+	# Initial font size update
+	call_deferred("_update_font_sizes")
 
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_RESIZED:
@@ -301,6 +329,23 @@ func initialize_with_data(data: Dictionary):
 		# Initial font size update after data is populated
 		call_deferred("_update_font_sizes")
 
+# --- Placeholder Button Handlers ---
+func _on_vehicle_menu_button_pressed():
+	print("ConvoyMenu: Vehicle Menu button pressed (Placeholder)")
+	# Implement actual vehicle menu logic or signal emission here
+
+func _on_journey_menu_button_pressed():
+	print("ConvoyMenu: Journey Menu button pressed (Placeholder)")
+	# Implement actual journey menu logic or signal emission here
+
+func _on_settlement_menu_button_pressed():
+	print("ConvoyMenu: Settlement Menu button pressed (Placeholder)")
+	# Implement actual settlement menu logic or signal emission here
+
+func _on_cargo_menu_button_pressed():
+	print("ConvoyMenu: Cargo Menu button pressed (Placeholder)")
+	# Implement actual cargo menu logic or signal emission here
+
 func _get_color_for_percentage(percentage: float) -> Color:
 	if percentage > 0.7:
 		return COLOR_GREEN
@@ -374,7 +419,10 @@ func _update_font_sizes() -> void:
 		speed_text_label, offroad_text_label, efficiency_text_label,
 		cargo_volume_text_label, cargo_weight_text_label,
 		journey_dest_label, journey_progress_label, journey_eta_label,
-		vehicles_label, all_cargo_label
+		vehicles_label, all_cargo_label,
+		# Add text of placeholder buttons if they need scaling
+		# vehicle_menu_button, journey_menu_button, 
+		# settlement_menu_button, cargo_menu_button 
 	]
 	# title_label is handled separately as it's the main convoy name title
 
@@ -387,9 +435,32 @@ func _update_font_sizes() -> void:
 
 	if is_instance_valid(back_button):
 		back_button.add_theme_font_size_override("font_size", new_font_size)
+	
+	# Scale placeholder button fonts if they are valid
+	if is_instance_valid(vehicle_menu_button):
+		vehicle_menu_button.add_theme_font_size_override("font_size", new_font_size)
+	if is_instance_valid(journey_menu_button):
+		journey_menu_button.add_theme_font_size_override("font_size", new_font_size)
+	if is_instance_valid(settlement_menu_button):
+		settlement_menu_button.add_theme_font_size_override("font_size", new_font_size)
+	if is_instance_valid(cargo_menu_button):
+		cargo_menu_button.add_theme_font_size_override("font_size", new_font_size)
 
 	# print("ConvoyMenu: Updated font sizes. Scale: %.2f, Base: %d, Title: %d" % [scale_factor, new_font_size, new_title_font_size]) # DEBUG
 
+
+func _style_menu_button(button_node: Button) -> void:
+	if not is_instance_valid(button_node):
+		return
+
+	var style_box_normal = StyleBoxFlat.new()
+	style_box_normal.bg_color = COLOR_MENU_BUTTON_GREY_BG
+	style_box_normal.corner_radius_top_left = 3
+	style_box_normal.corner_radius_top_right = 3
+	style_box_normal.corner_radius_bottom_left = 3
+	style_box_normal.corner_radius_bottom_right = 3
+	button_node.add_theme_stylebox_override("normal", style_box_normal)
+	button_node.add_theme_color_override("font_color", COLOR_BOX_FONT) # Using black for contrast
 
 # The _update_label function is no longer needed with this simplified structure.
 # You can remove it or comment it out.

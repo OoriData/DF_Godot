@@ -192,18 +192,29 @@ text = "Progress: Current / Total"
 layout_mode = 2
 text = "ETA: Timestamp"
 
-[node name="HSeparator5" type="HSeparator" parent="MainVBox/ScrollContainer/ContentVBox"]
+[node name="MenuButtons" type="HBoxContainer" parent="MainVBox/ScrollContainer/ContentVBox"]
 layout_mode = 2
+size_flags_vertical = 3
 
-[node name="VehiclesLabel" type="Label" parent="MainVBox/ScrollContainer/ContentVBox"]
+[node name="VehicleMenuButton" type="Button" parent="MainVBox/ScrollContainer/ContentVBox/MenuButtons"]
 layout_mode = 2
-text = "Vehicles: [List of vehicle names]"
-autowrap_mode = 2
+size_flags_horizontal = 3
+text = "Vehicles"
 
-[node name="AllCargoLabel" type="Label" parent="MainVBox/ScrollContainer/ContentVBox"]
+[node name="JourneyMenuButton" type="Button" parent="MainVBox/ScrollContainer/ContentVBox/MenuButtons"]
 layout_mode = 2
-text = "Cargo: [Summary of cargo items and quantities]"
-autowrap_mode = 2
+size_flags_horizontal = 3
+text = "Journey"
+
+[node name="SettlementMenuButton" type="Button" parent="MainVBox/ScrollContainer/ContentVBox/MenuButtons"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Settlement"
+
+[node name="CargoMenuButton" type="Button" parent="MainVBox/ScrollContainer/ContentVBox/MenuButtons"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Cargo"
 
 [node name="BackButton" type="Button" parent="MainVBox"]
 layout_mode = 2
