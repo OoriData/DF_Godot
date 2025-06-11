@@ -243,3 +243,49 @@ func request_convoy_data_refresh() -> void:
 		api_calls_node.get_all_in_transit_convoys()
 	else:
 		printerr("GameDataManager: Cannot request convoy data refresh. APICallsInstance is invalid or missing 'fetch_convoy_data' method.")
+
+
+func get_all_settlements_data() -> Array:
+	"""Returns the cached list of all settlement data."""
+	return all_settlement_data
+
+
+func get_settlement_name_from_coords(target_x: int, target_y: int) -> String:
+	"""
+	Finds a settlement name from the loaded map_tiles data using direct x, y coordinates.
+	Assumes map_tiles is structured as map_tiles[y_coord][x_coord].
+	"""
+	if map_tiles.is_empty():
+		printerr("GameDataManager (get_settlement_name_from_coords): Map data not loaded or empty.")
+		return "N/A (Map Data Missing)"
+
+	if target_y >= 0 and target_y < map_tiles.size():
+		var row_array: Array = map_tiles[target_y]
+		if target_x >= 0 and target_x < row_array.size():
+			var tile_data: Dictionary = row_array[target_x]
+
+			# Optional: Verify that the tile's own x,y match the target coordinates
+			# For this direct lookup, it's less critical if the foo.json is consistent.
+			# if tile_data.get("x") != target_x or tile_data.get("y") != target_y:
+			# 	printerr("GameDataManager: Tile coordinate mismatch at index. Expected: ", target_x, ",", target_y, " Got: ", tile_data.get("x"), ",", tile_data.get("y"))
+
+			var settlements_array: Array = tile_data.get("settlements", [])
+			if not settlements_array.is_empty():
+				# Assuming we take the first settlement if multiple exist at the same tile
+				var first_settlement: Dictionary = settlements_array[0]
+				if first_settlement.has("name"):
+					return first_settlement.get("name")
+				else:
+					printerr("GameDataManager: Settlement at (", target_x, ",", target_y, ") has no 'name' key.")
+					return "N/A (Settlement Name Missing)"
+			else:
+				# No settlements at these coordinates
+				return "N/A (No Settlements at Coords)"
+		else:
+			# printerr("GameDataManager: Target X coordinate (", target_x, ") out of bounds for row ", target_y, ".") # Can be noisy
+			return "N/A (X Out of Bounds)"
+	else:
+		# printerr("GameDataManager: Target Y coordinate (", target_y, ") out of bounds.") # Can be noisy
+		return "N/A (Y Out of Bounds)"
+
+	return "N/A (Not Found)" # General fallback

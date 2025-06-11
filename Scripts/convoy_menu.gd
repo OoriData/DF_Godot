@@ -128,23 +128,162 @@ func initialize_with_data(data: Dictionary):
 			_set_progressbar_style(cargo_weight_bar, used_weight, total_weight)
 
 		# --- Populate Journey Details ---
+		# Assuming journey_data contains "destination_name", "progress", "length", and "eta" (as a timestamp)
 		var journey_data: Dictionary = convoy_data_received.get("journey", {})
 		if is_instance_valid(journey_dest_label):
-			journey_dest_label.text = "Destination: (%.1f, %.1f)" % [journey_data.get("dest_x", 0.0), journey_data.get("dest_y", 0.0)]
+			var dest_text: String = "Destination: N/A"
+			if not journey_data.is_empty():
+				# Assuming journey_data contains destination coordinates, e.g., 'dest_coord_x', 'dest_coord_y'
+				# Adjust these keys if your data structure is different.
+				var dest_coord_x_val # Can be float or int
+				var dest_coord_y_val # Can be float or int
+
+				var direct_x = journey_data.get("dest_coord_x")
+				var direct_y = journey_data.get("dest_coord_y")
+
+				if direct_x != null and direct_y != null:
+					dest_coord_x_val = direct_x
+					dest_coord_y_val = direct_y
+				else:
+					# Fallback: Try to get destination from the end of route_x and route_y arrays
+					var route_x_arr: Array = journey_data.get("route_x", [])
+					var route_y_arr: Array = journey_data.get("route_y", [])
+					if not route_x_arr.is_empty() and not route_y_arr.is_empty():
+						if route_x_arr.size() == route_y_arr.size(): # Ensure arrays are consistent
+							dest_coord_x_val = route_x_arr[-1] # Get last element
+							dest_coord_y_val = route_y_arr[-1] # Get last element
+						else:
+							printerr("ConvoyMenu: route_x and route_y arrays have different sizes.")
+							# dest_coord_x_val and dest_coord_y_val remain null (or unassigned)
+					# If still null here, the next check will handle it.
+
+				if dest_coord_x_val != null and dest_coord_y_val != null:
+					var gdm = get_node_or_null("/root/GameDataManager") # Access the GameDataManager singleton
+					if is_instance_valid(gdm):
+						# Convert/round float coordinates to int for map lookup
+						var dest_x_int: int = roundi(float(dest_coord_x_val)) # Cast to float then round to int
+						var dest_y_int: int = roundi(float(dest_coord_y_val))
+						if gdm.has_method("get_settlement_name_from_coords"):
+							var settlement_name: String = gdm.get_settlement_name_from_coords(dest_x_int, dest_y_int)
+							if settlement_name.begins_with("N/A"): # Check if lookup failed
+								dest_text = "Destination: %s (at %.1f, %.1f)" % [settlement_name, dest_coord_x_val, dest_coord_y_val]
+								printerr("ConvoyMenu: Could not find settlement name for coords: ", dest_x_int, ", ", dest_y_int, ". GDM returned: ", settlement_name)
+							else:
+								dest_text = "Destination: %s" % settlement_name
+						else:
+							dest_text = "Destination: GDM Method Error (at %.1f, %.1f)" % [dest_coord_x_val, dest_coord_y_val]
+							printerr("ConvoyMenu: GameDataManager does not have 'get_settlement_name_from_coords' method.")
+					else:
+						dest_text = "Destination: GDM Node Missing (at %.1f, %.1f)" % [dest_coord_x_val, dest_coord_y_val]
+						printerr("ConvoyMenu: GameDataManager node not found.")
+				else:
+					dest_text = "Destination: No coordinates"
+			journey_dest_label.text = dest_text
+
 		if is_instance_valid(journey_progress_label):
-			journey_progress_label.text = "Progress: %.1f / %.1f" % [journey_data.get("progress", 0.0), journey_data.get("length", 0.0)]
+			var progress = journey_data.get("progress", 0.0)
+			var length = journey_data.get("length", 0.0)
+			var progress_percentage = 0.0
+			if length > 0:
+				progress_percentage = (progress / length) * 100.0
+			# Display progress as a percentage
+			journey_progress_label.text = "Progress: %.1f%%" % progress_percentage
+
 		if is_instance_valid(journey_eta_label):
-			# Basic ETA display, you'll want to format this nicely later
-			journey_eta_label.text = "ETA: %s" % journey_data.get("eta", "N/A")
+			# Format ETA timestamp into a readable date/time string
+			var eta_value = journey_data.get("eta") # Get raw value. Can be String, int, float, or null.
+			var eta_display_text = "ETA: N/A" # Default text if ETA is invalid or missing
+
+			if eta_value != null:
+				var eta_timestamp_int: int = -1 
+
+				if eta_value is String:
+					# Try to parse as ISO 8601 string first
+					eta_timestamp_int = Time.get_unix_time_from_datetime_string(eta_value)
+					if eta_timestamp_int == -1: # Time.INVALID_DATETIME_STRING or other error
+						# Fallback: check if it's a string representation of a Unix timestamp
+						if eta_value.is_valid_int():
+							eta_timestamp_int = eta_value.to_int()
+						else:
+							printerr("ConvoyMenu: ETA value ('%s') is a string but not a valid integer or recognized datetime format." % eta_value)
+				elif eta_value is float: # JSON numbers can sometimes be parsed as float
+					eta_timestamp_int = int(eta_value)
+				elif eta_value is int:
+					eta_timestamp_int = eta_value
+				if eta_timestamp_int >= 0: # Valid Unix timestamps are typically non-negative
+					# --- Workaround for timezone issue ---
+					# Calculate the system's current timezone offset from UTC in seconds.
+					var current_sys_utc_ts: int = Time.get_unix_time_from_system()
+					# Get current local time components as the OS sees them.
+					var current_sys_local_dict: Dictionary = Time.get_datetime_dict_from_system(false)
+					# Convert these local components to a Unix timestamp *as if they were UTC*
+					# The 'true' argument tells the function to interpret current_sys_local_dict's values as UTC.
+					var current_sys_local_interpreted_as_utc_ts: int = Time.get_unix_time_from_datetime_dict(current_sys_local_dict)
+					# The offset is the difference between actual UTC and local time (when its numbers are treated as UTC).
+					var timezone_offset_seconds: int = current_sys_utc_ts - current_sys_local_interpreted_as_utc_ts
+
+					# Adjust the ETA's UTC timestamp to a new timestamp that represents the local time.
+					var eta_timestamp_for_local_display: int = eta_timestamp_int - timezone_offset_seconds
+					
+					# Get datetime components from this adjusted timestamp.
+					# Pass 'true' to interpret eta_timestamp_for_local_display as a UTC timestamp to extract its (now local) numbers.
+					var datetime_dict: Dictionary = Time.get_datetime_dict_from_unix_time(eta_timestamp_for_local_display)
+					var month_names = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+					var month_str = "Unk"
+					if datetime_dict.month >= 1 and datetime_dict.month <= 12:
+						month_str = month_names[datetime_dict.month - 1]
+					
+					var day_val = datetime_dict.day
+					var hour_val = datetime_dict.hour
+					var minute_val = datetime_dict.minute
+					
+					var am_pm_str = "AM"
+					if hour_val >= 12:
+						am_pm_str = "PM"
+					if hour_val > 12:
+						hour_val -= 12
+					elif hour_val == 0: # Midnight case
+						hour_val = 12
+					eta_display_text = "ETA: %s %s, %d:%02d %s" % [month_str, day_val, hour_val, minute_val, am_pm_str]
+					journey_eta_label.text = eta_display_text
+					
+					# Calculate time remaining using the original UTC ETA and current system UTC time
+					var current_timestamp = current_sys_utc_ts # Reuse current system UTC timestamp
+					var time_remaining_seconds = eta_timestamp_int - current_timestamp
+					
+					if time_remaining_seconds > 0:
+						var days_remaining = floor(time_remaining_seconds / (24.0 * 3600.0))
+						var hours_remaining = floor(fmod(time_remaining_seconds, (24.0 * 3600.0)) / 3600.0)
+						var minutes_remaining = floor(fmod(time_remaining_seconds, 3600.0) / 60.0)
+						
+						var time_remaining_str_parts = []
+						if days_remaining > 0:
+							time_remaining_str_parts.append("%dd" % days_remaining)
+						if hours_remaining > 0:
+							time_remaining_str_parts.append("%dh" % hours_remaining)
+						if minutes_remaining > 0 or (days_remaining == 0 and hours_remaining == 0): # Show minutes if it's the smallest unit or only unit
+							time_remaining_str_parts.append("%dm" % minutes_remaining)
+						
+						eta_display_text += " (%s remaining)" % " ".join(time_remaining_str_parts)
+					elif time_remaining_seconds <= 0 and time_remaining_seconds > -300: # Consider "Now" if within last 5 mins
+						eta_display_text += " (Now)"
+					else: # ETA has passed
+						eta_display_text += " (Arrived)"
+			journey_eta_label.text = eta_display_text
 
 		# --- Populate Vehicle Manifest (Simplified) ---
 		if is_instance_valid(vehicles_label):
 			var vehicle_list: Array = convoy_data_received.get("vehicle_details_list", [])
-			var vehicle_names: Array = []
+			var vehicle_display_strings: Array = []
 			for vehicle_detail in vehicle_list:
 				if vehicle_detail is Dictionary:
-					vehicle_names.append(vehicle_detail.get("name", "Unknown Vehicle"))
-			vehicles_label.text = "Vehicles: " + ", ".join(vehicle_names)
+					var v_name = vehicle_detail.get("name", "Unknown Vehicle")
+					var v_make_model = vehicle_detail.get("make_model", "")
+					if not v_make_model.is_empty():
+						vehicle_display_strings.append("- %s (%s)" % [v_name, v_make_model])
+					else:
+						vehicle_display_strings.append("- %s" % v_name)
+			vehicles_label.text = "Vehicles:\n" + "\n".join(vehicle_display_strings)
 
 		# --- Populate Cargo Details (Simplified) ---
 		if is_instance_valid(all_cargo_label):

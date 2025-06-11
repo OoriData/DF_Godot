@@ -1290,9 +1290,8 @@ func request_open_convoy_menu_via_manager(convoy_data):
 # --- Handler for Menu Requests from MapInteractionManager ---
 func _on_mim_convoy_menu_requested(convoy_data: Dictionary):
 	if is_instance_valid(menu_manager_ref):
-		# --- LOG CONVOY OBJECT ---
-		print("Convoy data for menu: ", convoy_data)
-		# -------------------------
+		# Log the convoy data object when a menu is requested
+		print("Main: Requesting convoy menu. Convoy Data: ", convoy_data)
 		# print("Main: MapInteractionManager requested convoy menu for convoy ID: ", convoy_data.get("convoy_id", "N/A")) # DEBUG
 		# print("Main: MapInteractionManager requested convoy menu for convoy ID: ", convoy_data.get("convoy_id", "N/A")) # DEBUG
 		# This existing function already calls the menu manager correctly
