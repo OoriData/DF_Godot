@@ -1,54 +1,52 @@
-extends ScrollContainer # Changed from PanelContainer to fulfill the role of a scroller
+extends PanelContainer
 
 # Emitted when a convoy is selected from this list.
 # Passes the full convoy_data dictionary of the selected convoy.
 signal convoy_selected_from_list(convoy_data)
 
-# Reference to the container node that will hold the individual convoy list items.
-# IMPORTANT: Adjust this path to the actual VBoxContainer (or similar) in your convoy_list_panel.tscn
-# The ConvoyItemsContainer is now expected to be a direct child of this ScrollContainer node.
-@onready var list_item_container: VBoxContainer = $ConvoyItemsContainer
+@onready var toggle_button: Button = $MainVBox/ToggleButton
+@onready var list_scroll_container: ScrollContainer = $MainVBox/ListScrollContainer
+@onready var list_item_container: VBoxContainer = $MainVBox/ListScrollContainer/ConvoyItemsContainer
 
-# Optional: If you use a separate scene for each list item
-# var convoy_list_item_scene = preload("res://path/to_your/convoy_list_item.tscn")
+var _panel_style_open: StyleBox
+var _panel_style_closed: StyleBox
 
 func _ready():
-	# --- TEMPORARY DEBUG: List children of the node this script is attached to ---
-	print("ConvoyListPanel _ready: Script is attached to node: '", self.name, "' of type: '", self.get_class(), "'")
-	print("  Children of this node are:")
-	for child_node in get_children():
-		print("    - Child name: '", child_node.name, "', type: '", child_node.get_class(), "'")
-	# --- END TEMPORARY DEBUG ---
-	# You can set the panel to be invisible initially if desired,
-	# and control its visibility from main.gd or elsewhere.
-	# self.visible = false # Example
+	# Store the stylebox that is defined for this panel when it's 'open'.
+	# This will get an override if set in inspector, or the theme's default.
+	_panel_style_open = get_theme_stylebox("panel", "PanelContainer")
+	
+	_panel_style_closed = StyleBoxEmpty.new() # Completely transparent, no drawing
 
-	# --- Detailed Debug Check for list_item_container ---
+	# Hide the list initially
+	list_scroll_container.visible = false
+	toggle_button.pressed.connect(_on_toggle_button_pressed)
+	_update_panel_appearance() # Set initial appearance (closed style, no background)
+	toggle_button.text = "Convoys ▼" # Initial text for closed state
+
 	if not is_instance_valid(list_item_container):
-		printerr("ConvoyListPanel (_ready): list_item_container node (from @onready) NOT FOUND or invalid. Path used: $ConvoyItemsContainer")
-		# Check if ConvoyItemsContainer exists as a direct child
-		var direct_child_check = get_node_or_null("ConvoyItemsContainer")
-		if not is_instance_valid(direct_child_check):
-			printerr("  - ConvoyListPanel (_ready): Child 'ConvoyItemsContainer' NOT FOUND directly under this script's node (which should be a ScrollContainer).")
-		elif not (direct_child_check is VBoxContainer):
-			printerr("  - ConvoyListPanel (_ready): Child 'ConvoyItemsContainer' WAS FOUND, but it is of type '", direct_child_check.get_class(), "', NOT VBoxContainer as expected by the script.")
-		else: # Found, but @onready failed.
-			printerr("  - ConvoyListPanel (_ready): Path '$ConvoyItemsContainer' seems correct and node is VBoxContainer. The @onready var assignment failed for an unknown reason. Check for scene saving issues or editor glitches.")
+		printerr("ConvoyListPanel (_ready): list_item_container node NOT FOUND or invalid. Expected path: $MainVBox/ListScrollContainer/ConvoyItemsContainer")
 	else:
-		print("ConvoyListPanel (_ready): list_item_container successfully initialized via @onready.")
+		# print("ConvoyListPanel (_ready): list_item_container successfully initialized.") # Less verbose
+		pass
 
-	# --- DEBUG: ConvoyListPanel final state check in its own _ready ---
-	print("ConvoyListPanel _ready: Final state check:")
-	print("  - IsValid: ", is_instance_valid(self))
-	print("  - Visible: ", self.visible)
-	print("  - Size: ", self.size)
-	print("  - Custom Min Size: ", self.custom_minimum_size)
-	print("  - Position: ", self.position)
-	print("  - Modulate: ", self.modulate) # Check alpha
-	print("  - Global Position: ", self.global_position)
-	print("  - Z Index: ", self.z_index)
-	# Parent checks are done in main.gd, but you could add them here too if needed.
-	pass
+func _on_toggle_button_pressed() -> void:
+	list_scroll_container.visible = not list_scroll_container.visible
+	_update_panel_appearance()
+
+	if list_scroll_container.visible:
+		toggle_button.text = "Convoys ▲"
+	else:
+		toggle_button.text = "Convoys ▼"
+
+func _update_panel_appearance() -> void:
+	if list_scroll_container.visible: # Open state - show background
+		if is_instance_valid(_panel_style_open):
+			add_theme_stylebox_override("panel", _panel_style_open)
+	else: # Closed state - hide background
+		if is_instance_valid(_panel_style_closed):
+			add_theme_stylebox_override("panel", _panel_style_closed)
+
 ## Populates the list with convoy data.
 func populate_convoy_list(convoys_data: Array) -> void:
 	if not is_instance_valid(list_item_container):
@@ -58,15 +56,16 @@ func populate_convoy_list(convoys_data: Array) -> void:
 	# Clear existing items
 	for child in list_item_container.get_children():
 		child.queue_free()
-	print("ConvoyListPanel: Cleared existing items from list_item_container.") # DEBUG
+	# print("ConvoyListPanel: Cleared existing items.") # DEBUG
 
 	if convoys_data.is_empty():
 		var no_convoys_label = Label.new()
 		no_convoys_label.text = "No convoys available."
 		no_convoys_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		list_item_container.add_child(no_convoys_label)
+		# print("ConvoyListPanel: No convoys available.") # DEBUG
 		return
-	print("ConvoyListPanel: Populating list with %s convoys." % convoys_data.size()) # DEBUG
+	# print("ConvoyListPanel: Populating list with %s convoys." % convoys_data.size()) # DEBUG
 
 	for convoy_item_data in convoys_data:
 		if not convoy_item_data is Dictionary:
@@ -84,19 +83,15 @@ func populate_convoy_list(convoys_data: Array) -> void:
 		# Connect the button's pressed signal to a local handler, binding the full convoy_item_data
 		item_button.pressed.connect(_on_convoy_item_pressed.bind(convoy_item_data))
 		list_item_container.add_child(item_button)
-		print("ConvoyListPanel: Added button for convoy '%s' (ID: %s). Button name: '%s'." % [convoy_name, convoy_id, item_button.name]) # DEBUG
-
-	# --- DEBUG: Check state of list_item_container and children after population ---
-	print("ConvoyListPanel: State check after population:")
-	print("  - list_item_container IsValid: ", is_instance_valid(list_item_container))
-	print("  - list_item_container Child Count: ", list_item_container.get_child_count())
-	print("  - list_item_container Size: ", list_item_container.size) # Should reflect total size of children
-	print("  - list_item_container Global Position: ", list_item_container.global_position)
+		# print("ConvoyListPanel: Added button for convoy '%s' (ID: %s)." % [convoy_name, convoy_id]) # DEBUG
 
 func _on_convoy_item_pressed(convoy_item_data: Dictionary) -> void:
-	# print("ConvoyListPanel: Convoy item pressed, Data: ", convoy_item_data)
 	emit_signal("convoy_selected_from_list", convoy_item_data)
-
+	# If the list is currently open, close it.
+	if list_scroll_container.visible:
+		list_scroll_container.visible = false
+		_update_panel_appearance() # Update panel style to closed (no background)
+		toggle_button.text = "Convoys ▼" # Update button text
 ## Highlights a specific convoy in the list.
 ## Call this from main.gd when a convoy is selected on the map.
 func highlight_convoy_in_list(selected_convoy_id_str: String) -> void:

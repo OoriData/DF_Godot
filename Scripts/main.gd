@@ -29,7 +29,7 @@ extends Node2D
 # IMPORTANT: Adjust the path "$ConvoyListPanel" to the actual path of your ConvoyListPanel node. Ensure its type matches.
 # ConvoyListPanel is a child of MenuUILayer, which is a sibling of MapViewportContainer.
 # ConvoyListPanel's root node type is now expected to be ScrollContainer.
-@onready var convoy_list_panel_node: ScrollContainer = $"../../MenuUILayer/ConvoyListPanel"
+@onready var convoy_list_panel_node: PanelContainer = $"../../MenuUILayer/ConvoyListPanel"
 # Reference to the MenuManager in GameRoot.tscn
 
 var menu_manager_ref: Control = null
@@ -968,7 +968,7 @@ func _update_convoy_list_panel_position() -> void:
 
 	convoy_list_panel_node.position = Vector2(
 		main_window_rect.size.x - fixed_panel_size.x - padding,  # Position from the right edge of main window
-		(main_window_rect.size.y - fixed_panel_size.y) / 2.0     # Centered vertically in main window
+		padding     # Position from the top edge of main window
 	)
 	# Explicitly set the size of the panel to its fixed size.
 	# This ensures it doesn't expand even if some other layout property tries to make it.
