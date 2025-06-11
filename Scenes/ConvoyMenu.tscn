@@ -47,11 +47,15 @@ size_flags_horizontal = 3
 size_flags_vertical = 3
 theme_override_constants/separation = 8
 
-[node name="WaterBox" type="Panel" parent="MainVBox/ScrollContainer/ContentVBox"]
-custom_minimum_size = Vector2(0, 35)
+[node name="ResourceStatsHBox" type="HBoxContainer" parent="MainVBox/ScrollContainer/ContentVBox"]
 layout_mode = 2
 
-[node name="WaterTextLabel" type="Label" parent="MainVBox/ScrollContainer/ContentVBox/WaterBox"]
+[node name="WaterBox" type="Panel" parent="MainVBox/ScrollContainer/ContentVBox/ResourceStatsHBox"]
+custom_minimum_size = Vector2(0, 35)
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="WaterTextLabel" type="Label" parent="MainVBox/ScrollContainer/ContentVBox/ResourceStatsHBox/WaterBox"]
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
@@ -62,11 +66,12 @@ text = "Water: 0 / 0"
 horizontal_alignment = 1
 vertical_alignment = 1
 
-[node name="FoodBox" type="Panel" parent="MainVBox/ScrollContainer/ContentVBox"]
+[node name="FoodBox" type="Panel" parent="MainVBox/ScrollContainer/ContentVBox/ResourceStatsHBox"]
 custom_minimum_size = Vector2(0, 35)
 layout_mode = 2
+size_flags_horizontal = 3
 
-[node name="FoodTextLabel" type="Label" parent="MainVBox/ScrollContainer/ContentVBox/FoodBox"]
+[node name="FoodTextLabel" type="Label" parent="MainVBox/ScrollContainer/ContentVBox/ResourceStatsHBox/FoodBox"]
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
@@ -77,14 +82,34 @@ text = "Food: 0 / 0"
 horizontal_alignment = 1
 vertical_alignment = 1
 
+[node name="FuelBox" type="Panel" parent="MainVBox/ScrollContainer/ContentVBox/ResourceStatsHBox"]
+custom_minimum_size = Vector2(0, 35)
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="FuelTextLabel" type="Label" parent="MainVBox/ScrollContainer/ContentVBox/ResourceStatsHBox/FuelBox"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+text = "Fuel: 0 / 0"
+horizontal_alignment = 1
+vertical_alignment = 1
+
 [node name="HSeparator2" type="HSeparator" parent="MainVBox/ScrollContainer/ContentVBox"]
 layout_mode = 2
 
-[node name="SpeedBox" type="Panel" parent="MainVBox/ScrollContainer/ContentVBox"]
-custom_minimum_size = Vector2(0, 35)
+[node name="PerformanceStatsHBox" type="HBoxContainer" parent="MainVBox/ScrollContainer/ContentVBox"]
 layout_mode = 2
 
-[node name="SpeedTextLabel" type="Label" parent="MainVBox/ScrollContainer/ContentVBox/SpeedBox"]
+[node name="SpeedBox" type="Panel" parent="MainVBox/ScrollContainer/ContentVBox/PerformanceStatsHBox"]
+custom_minimum_size = Vector2(0, 35)
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="SpeedTextLabel" type="Label" parent="MainVBox/ScrollContainer/ContentVBox/PerformanceStatsHBox/SpeedBox"]
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
@@ -95,11 +120,12 @@ text = "Top Speed: 0"
 horizontal_alignment = 1
 vertical_alignment = 1
 
-[node name="OffroadBox" type="Panel" parent="MainVBox/ScrollContainer/ContentVBox"]
+[node name="OffroadBox" type="Panel" parent="MainVBox/ScrollContainer/ContentVBox/PerformanceStatsHBox"]
 custom_minimum_size = Vector2(0, 35)
 layout_mode = 2
+size_flags_horizontal = 3
 
-[node name="OffroadTextLabel" type="Label" parent="MainVBox/ScrollContainer/ContentVBox/OffroadBox"]
+[node name="OffroadTextLabel" type="Label" parent="MainVBox/ScrollContainer/ContentVBox/PerformanceStatsHBox/OffroadBox"]
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
@@ -110,11 +136,12 @@ text = "Offroad: 0"
 horizontal_alignment = 1
 vertical_alignment = 1
 
-[node name="EfficiencyBox" type="Panel" parent="MainVBox/ScrollContainer/ContentVBox"]
+[node name="EfficiencyBox" type="Panel" parent="MainVBox/ScrollContainer/ContentVBox/PerformanceStatsHBox"]
 custom_minimum_size = Vector2(0, 35)
 layout_mode = 2
+size_flags_horizontal = 3
 
-[node name="EfficiencyTextLabel" type="Label" parent="MainVBox/ScrollContainer/ContentVBox/EfficiencyBox"]
+[node name="EfficiencyTextLabel" type="Label" parent="MainVBox/ScrollContainer/ContentVBox/PerformanceStatsHBox/EfficiencyBox"]
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0

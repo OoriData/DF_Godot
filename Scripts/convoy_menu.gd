@@ -19,24 +19,26 @@ const COLOR_GREEN: Color = Color("66bb6a") # Material Green 400
 const COLOR_YELLOW: Color = Color("ffee58") # Material Yellow 400
 const COLOR_RED: Color = Color("ef5350")   # Material Red 400
 const COLOR_BOX_FONT: Color = Color("000000") # Black font for boxes for contrast
+const COLOR_PERFORMANCE_BOX_BG: Color = Color("666666") # Medium Gray
+const COLOR_PERFORMANCE_BOX_FONT: Color = Color.WHITE   # White
 
 # --- @onready vars for new labels ---
 @onready var title_label: Label = $MainVBox/TitleLabel
 
 # Resource/Stat Boxes (Panel and inner Label)
-@onready var fuel_box: Panel = $MainVBox/ScrollContainer/ContentVBox/FuelBox
-@onready var fuel_text_label: Label = $MainVBox/ScrollContainer/ContentVBox/FuelBox/FuelTextLabel
-@onready var water_box: Panel = $MainVBox/ScrollContainer/ContentVBox/WaterBox
-@onready var water_text_label: Label = $MainVBox/ScrollContainer/ContentVBox/WaterBox/WaterTextLabel
-@onready var food_box: Panel = $MainVBox/ScrollContainer/ContentVBox/FoodBox
-@onready var food_text_label: Label = $MainVBox/ScrollContainer/ContentVBox/FoodBox/FoodTextLabel
+@onready var fuel_box: Panel = $MainVBox/ScrollContainer/ContentVBox/ResourceStatsHBox/FuelBox
+@onready var fuel_text_label: Label = $MainVBox/ScrollContainer/ContentVBox/ResourceStatsHBox/FuelBox/FuelTextLabel
+@onready var water_box: Panel = $MainVBox/ScrollContainer/ContentVBox/ResourceStatsHBox/WaterBox
+@onready var water_text_label: Label = $MainVBox/ScrollContainer/ContentVBox/ResourceStatsHBox/WaterBox/WaterTextLabel
+@onready var food_box: Panel = $MainVBox/ScrollContainer/ContentVBox/ResourceStatsHBox/FoodBox
+@onready var food_text_label: Label = $MainVBox/ScrollContainer/ContentVBox/ResourceStatsHBox/FoodBox/FoodTextLabel
 
-@onready var speed_box: Panel = $MainVBox/ScrollContainer/ContentVBox/SpeedBox
-@onready var speed_text_label: Label = $MainVBox/ScrollContainer/ContentVBox/SpeedBox/SpeedTextLabel
-@onready var offroad_box: Panel = $MainVBox/ScrollContainer/ContentVBox/OffroadBox
-@onready var offroad_text_label: Label = $MainVBox/ScrollContainer/ContentVBox/OffroadBox/OffroadTextLabel
-@onready var efficiency_box: Panel = $MainVBox/ScrollContainer/ContentVBox/EfficiencyBox
-@onready var efficiency_text_label: Label = $MainVBox/ScrollContainer/ContentVBox/EfficiencyBox/EfficiencyTextLabel
+@onready var speed_box: Panel = $MainVBox/ScrollContainer/ContentVBox/PerformanceStatsHBox/SpeedBox
+@onready var speed_text_label: Label = $MainVBox/ScrollContainer/ContentVBox/PerformanceStatsHBox/SpeedBox/SpeedTextLabel
+@onready var offroad_box: Panel = $MainVBox/ScrollContainer/ContentVBox/PerformanceStatsHBox/OffroadBox
+@onready var offroad_text_label: Label = $MainVBox/ScrollContainer/ContentVBox/PerformanceStatsHBox/OffroadBox/OffroadTextLabel
+@onready var efficiency_box: Panel = $MainVBox/ScrollContainer/ContentVBox/PerformanceStatsHBox/EfficiencyBox
+@onready var efficiency_text_label: Label = $MainVBox/ScrollContainer/ContentVBox/PerformanceStatsHBox/EfficiencyBox/EfficiencyTextLabel
 
 # Cargo Progress Bars and Labels
 @onready var cargo_volume_text_label: Label = $MainVBox/ScrollContainer/ContentVBox/CargoVolumeContainer/CargoVolumeTextLabel
@@ -103,15 +105,15 @@ func initialize_with_data(data: Dictionary):
 		# Assuming these are rated 0-100 for coloring, adjust max_value if different
 		var top_speed = convoy_data_received.get("top_speed", 0.0)
 		if is_instance_valid(speed_text_label): speed_text_label.text = "Top Speed: %.1f" % top_speed
-		if is_instance_valid(speed_box): _set_resource_box_style(speed_box, speed_text_label, top_speed, 100.0) # Assuming 100 is max for coloring
+		if is_instance_valid(speed_box): _set_fixed_color_box_style(speed_box, speed_text_label, COLOR_PERFORMANCE_BOX_BG, COLOR_PERFORMANCE_BOX_FONT)
 
 		var offroad = convoy_data_received.get("offroad_capability", 0.0)
 		if is_instance_valid(offroad_text_label): offroad_text_label.text = "Offroad: %.1f" % offroad
-		if is_instance_valid(offroad_box): _set_resource_box_style(offroad_box, offroad_text_label, offroad, 100.0) # Assuming 100 is max
+		if is_instance_valid(offroad_box): _set_fixed_color_box_style(offroad_box, offroad_text_label, COLOR_PERFORMANCE_BOX_BG, COLOR_PERFORMANCE_BOX_FONT)
 
 		var efficiency = convoy_data_received.get("efficiency", 0.0)
 		if is_instance_valid(efficiency_text_label): efficiency_text_label.text = "Efficiency: %.1f" % efficiency
-		if is_instance_valid(efficiency_box): _set_resource_box_style(efficiency_box, efficiency_text_label, efficiency, 100.0) # Assuming 100 is max
+		if is_instance_valid(efficiency_box): _set_fixed_color_box_style(efficiency_box, efficiency_text_label, COLOR_PERFORMANCE_BOX_BG, COLOR_PERFORMANCE_BOX_FONT)
 
 		# --- Cargo Volume and Weight Bars ---
 		if is_instance_valid(cargo_volume_text_label) and is_instance_valid(cargo_volume_bar):
@@ -184,6 +186,20 @@ func _set_resource_box_style(panel_node: Panel, label_node: Label, current_value
 	style_box.corner_radius_bottom_right = 3
 	panel_node.add_theme_stylebox_override("panel", style_box)
 	label_node.add_theme_color_override("font_color", COLOR_BOX_FONT)
+
+func _set_fixed_color_box_style(panel_node: Panel, label_node: Label, p_bg_color: Color, p_font_color: Color):
+	if not is_instance_valid(panel_node) or not is_instance_valid(label_node):
+		return
+
+	var style_box = StyleBoxFlat.new()
+	style_box.bg_color = p_bg_color
+	style_box.corner_radius_top_left = 3
+	style_box.corner_radius_top_right = 3
+	style_box.corner_radius_bottom_left = 3
+	style_box.corner_radius_bottom_right = 3
+	panel_node.add_theme_stylebox_override("panel", style_box)
+	label_node.add_theme_color_override("font_color", p_font_color)
+
 
 func _set_progressbar_style(progressbar_node: ProgressBar, current_value: float, max_value: float):
 	if not is_instance_valid(progressbar_node):
