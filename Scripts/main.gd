@@ -1318,16 +1318,34 @@ func request_open_convoy_menu_via_manager(convoy_data):
 
 # --- Handler for Menu Requests from MapInteractionManager ---
 func _on_mim_convoy_menu_requested(convoy_data: Dictionary):
-	if is_instance_valid(menu_manager_ref):
-		# Log the convoy data object when a menu is requested
-		print("Main: Requesting convoy menu. Convoy Data: ", convoy_data)
-		# print("Main: MapInteractionManager requested convoy menu for convoy ID: ", convoy_data.get("convoy_id", "N/A")) # DEBUG
-		# print("Main: MapInteractionManager requested convoy menu for convoy ID: ", convoy_data.get("convoy_id", "N/A")) # DEBUG
-		# This existing function already calls the menu manager correctly
-		request_open_convoy_menu_via_manager(convoy_data)
-	else:
+	if not is_instance_valid(menu_manager_ref):
 		printerr("Main: _on_mim_convoy_menu_requested - menu_manager_ref is NOT valid! Cannot request convoy menu.")
+		return
 
+	# print("Main: Map icon clicked, requesting convoy menu. Convoy Data: ", convoy_data) # DEBUG
+
+	# --- START: Add selection logic similar to _on_convoy_selected_from_list_panel ---
+	var convoy_id_variant = convoy_data.get("convoy_id")
+	var convoy_id_str: String = ""
+	if convoy_id_variant != null:
+		convoy_id_str = str(convoy_id_variant)
+
+	if convoy_id_str.is_empty():
+		_selected_convoy_ids.clear()
+	else:
+		# Set the clicked convoy as the only selected one
+		_selected_convoy_ids = [convoy_id_str]
+
+	# Notify MapInteractionManager about the selection change (if it needs to know)
+	if is_instance_valid(map_interaction_manager) and map_interaction_manager.has_method("set_selected_convoys"):
+		map_interaction_manager.set_selected_convoys(_selected_convoy_ids)
+	
+	# Manually trigger the selection update logic (handles map highlights, convoy list highlighting, etc.)
+	_on_mim_selection_changed(_selected_convoy_ids) 
+	# --- END: Add selection logic ---
+
+	# This existing function already calls the menu manager correctly to open the menu
+	request_open_convoy_menu_via_manager(convoy_data)
 
 # --- Signal Handler for Convoy List Panel ---
 func _on_convoy_selected_from_list_panel(convoy_data: Dictionary):
