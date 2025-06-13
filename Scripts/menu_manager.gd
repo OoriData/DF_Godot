@@ -15,6 +15,10 @@ signal menus_completely_closed
 
 func _ready():
 	# Initially, no menu is shown. You might want to open a main menu here.
+	# Set mouse filter to PASS so that clicks on the MenuManager's background
+	# (i.e., not on an active menu panel like ConvoyMenu) can pass through.
+	# This allows main.gd to detect clicks on the map area when a menu is open.
+	mouse_filter = MOUSE_FILTER_PASS
 	# Example: open_main_menu()
 	pass
 
@@ -191,3 +195,20 @@ func go_back():
 
 func request_convoy_menu(convoy_data): # This is the public API called by main.gd
 	open_convoy_menu(convoy_data)
+
+func close_all_menus():
+	"""
+	Closes all currently open menus and clears the menu stack.
+	Emits 'menus_completely_closed' when done.
+	"""
+	if not is_any_menu_active():
+		# If no menu is considered active, ensure the signal is still emitted
+		# in case the state is inconsistent or this is called to be certain.
+		if menu_stack.is_empty() and not is_instance_valid(current_active_menu):
+			emit_signal("menus_completely_closed")
+		return
+
+	menu_stack.clear() # Prevent go_back from reopening anything
+	go_back() # Call go_back to handle closing the current_active_menu and emitting signals
+	# go_back will eventually emit menus_completely_closed if the stack is now empty
+	# and it closes the last menu.

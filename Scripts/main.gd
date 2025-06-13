@@ -318,6 +318,13 @@ func _ready():
 	# Connect to the viewport's size_changed signal to re-render on window resize
 	get_viewport().size_changed.connect(_on_viewport_size_changed)
 
+	# Ensure the MapViewportContainer (parent of this MapRender node) allows mouse events to pass through.
+	# This is crucial for clicks to reach main.gd when a menu (on a higher CanvasLayer) is open
+	# and has mouse_filter = PASS.
+	var mvc = get_parent()
+	if mvc is SubViewportContainer:
+		mvc.mouse_filter = Control.MOUSE_FILTER_PASS
+		# print("Main: Set MapViewportContainer mouse_filter to PASS.") # DEBUG
 	# --- Setup Detailed View Toggle ---
 	if is_instance_valid(detailed_view_toggle):
 		detailed_view_toggle.button_pressed = show_detailed_view # Set initial state
@@ -870,6 +877,28 @@ func _input(event: InputEvent) -> void:  # Renamed from _gui_input
 	if is_instance_valid(menu_manager_ref) and menu_manager_ref.has_method("is_any_menu_active"):
 		if menu_manager_ref.is_any_menu_active():
 			# Menus on CanvasLayer with MOUSE_FILTER_STOP should handle their own input.
+			# NEW: Check for map click to close active menu
+			if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
+				var map_view_rect: Rect2 = get_map_viewport_container_global_rect()
+				var click_pos: Vector2 = event.global_position
+				var is_on_map: bool = map_view_rect.has_point(click_pos)
+				
+				print_debug("Main _input: Menu active. Click at: ", click_pos, 
+							" MapViewRect: ", map_view_rect, 
+							" IsOnMap: ", is_on_map) # DEBUG
+
+				# Check if the click is within the map's visible area
+				if is_on_map:
+					# Click is on the map area while a menu is open
+					if menu_manager_ref.has_method("close_all_menus"): # Ensure MenuManager has this method
+						print_debug("Main _input: Click IS on map. Closing all menus.") # DEBUG
+						menu_manager_ref.close_all_menus()
+						get_viewport().set_input_as_handled() # Consume the event
+						return # Stop further processing of this input event
+					else:
+						printerr("Main: MenuManager does not have a 'close_all_menus' method.")
+				else:
+					print_debug("Main _input: Click is NOT on map area according to rect. Click won't close menu.") # DEBUG
 			return # Stop further input processing in main.gd
 
 	# VERY IMPORTANT DEBUG: Log all events reaching main.gd's _input

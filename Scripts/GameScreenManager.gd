@@ -41,13 +41,17 @@ func _on_menus_completely_closed():
 func _set_map_view_partial_screen():
 	if not is_instance_valid(map_viewport_container): return
 	# Set MapViewportContainer to occupy the left 1/3 of the screen
-	map_viewport_container.anchor_right = 1.0 / 3.0
+	map_viewport_container.anchor_right = 1.0 / 3.0 # Position right edge at 1/3
+	map_viewport_container.anchor_bottom = 1.0 # Stretch to full height
 	map_viewport_container.offset_right = 0 # Clear any offset
+	map_viewport_container.offset_bottom = 0 # Clear any offset
 	print("GameScreenManager: Map view set to partial (left 1/3).")
 
 func _set_map_view_full_screen():
 	if not is_instance_valid(map_viewport_container): return
 	# Set MapViewportContainer to occupy the full screen
 	map_viewport_container.anchor_right = 1.0
+	map_viewport_container.anchor_bottom = 1.0 # Stretch to full height
 	map_viewport_container.offset_right = 0 # Clear any offset
+	map_viewport_container.offset_bottom = 0 # Clear any offset
 	print("GameScreenManager: Map view set to full screen.")
