@@ -1,6 +1,6 @@
 [gd_scene load_steps=2 format=3 uid="uid://dplk0c1xqbv7x"]
 
-[ext_resource type="Script" path="res://Scripts/convoy_vehicle_menu.gd" id="1_vehicle_script"]
+[ext_resource type="Script" path="res://Scripts/convoy_vehicle_menu.gd" id="1_script"]
 
 [node name="ConvoyVehicleMenu" type="Control"]
 layout_mode = 3
@@ -9,7 +9,7 @@ anchor_right = 1.0
 anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
-script = ExtResource("1_vehicle_script")
+script = ExtResource("1_script")
 
 [node name="ColorRect" type="ColorRect" parent="."]
 layout_mode = 1

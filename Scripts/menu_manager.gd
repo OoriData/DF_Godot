@@ -43,6 +43,8 @@ func open_convoy_menu(convoy_data = null):
 	_show_menu(convoy_menu_scene, convoy_data)
 
 func open_convoy_vehicle_menu(convoy_data = null):
+	print("MenuManager: open_convoy_vehicle_menu called. Convoy Data Received: ")
+	print(convoy_data) # This will print the full dictionary to the console
 	_show_menu(convoy_vehicle_menu_scene, convoy_data)
 
 func open_convoy_journey_menu(convoy_data = null):
@@ -52,6 +54,23 @@ func open_convoy_settlement_menu(convoy_data = null):
 	_show_menu(convoy_settlement_menu_scene, convoy_data)
 
 func open_convoy_cargo_menu(convoy_data = null):
+	print("MenuManager: open_convoy_cargo_menu called. Convoy Data Received: ")
+	print(convoy_data) # This will print the full dictionary to the console
+
+	# # --- Save convoy_data to a file ---
+	# if convoy_data != null:
+	# 	var file_path = "res://Other/convoy_data_example.json"
+	# 	var json_string = JSON.stringify(convoy_data, "\t", true) # Pretty print with tabs
+		
+	# 	var file = FileAccess.open(file_path, FileAccess.WRITE)
+	# 	if FileAccess.get_open_error() == OK:
+	# 		file.store_string(json_string)
+	# 		file.close()
+	# 		print("MenuManager: Convoy data saved to: ", file_path)
+	# 	else:
+	# 		printerr("MenuManager: Error saving convoy data to file. Path: ", file_path, " Error: ", FileAccess.get_open_error())
+	# # --- End save convoy_data to a file ---
+
 	_show_menu(convoy_cargo_menu_scene, convoy_data)
 
 # --- Generic menu handling ---
