@@ -1,7 +1,13 @@
 extends Control
 
 # Preload your actual menu scene files here once you create them
-var convoy_menu_scene = preload("res://Scenes/ConvoyMenu.tscn") # Adjusted path if needed
+var convoy_menu_scene = preload("res://Scenes/ConvoyMenu.tscn")
+# ADD PRELOADS FOR SUB-MENUS (ensure these paths match your new scenes)
+var convoy_vehicle_menu_scene = preload("res://Scenes/ConvoyVehicleMenu.tscn") # Example path
+var convoy_journey_menu_scene = preload("res://Scenes/ConvoyJourneyMenu.tscn") # Example path
+var convoy_settlement_menu_scene = preload("res://Scenes/ConvoySettlementMenu.tscn") # Example path
+var convoy_cargo_menu_scene = preload("res://Scenes/ConvoyCargoMenu.tscn") # Example path
+
 
 var current_active_menu = null
 var menu_stack = [] # To keep track of the navigation path for "back" functionality
@@ -31,10 +37,22 @@ func _unhandled_input(event: InputEvent):
 func is_any_menu_active() -> bool:
 	return current_active_menu != null
 
-# --- Function to open the Convoy Menu ---
+# --- Functions to open specific Convoy Menus ---
 func open_convoy_menu(convoy_data = null):
-	# print("MenuManager: Opening actual ConvoyMenu for data: ", convoy_data)
+	# This opens the main Convoy Overview menu
 	_show_menu(convoy_menu_scene, convoy_data)
+
+func open_convoy_vehicle_menu(convoy_data = null):
+	_show_menu(convoy_vehicle_menu_scene, convoy_data)
+
+func open_convoy_journey_menu(convoy_data = null):
+	_show_menu(convoy_journey_menu_scene, convoy_data)
+
+func open_convoy_settlement_menu(convoy_data = null):
+	_show_menu(convoy_settlement_menu_scene, convoy_data)
+
+func open_convoy_cargo_menu(convoy_data = null):
+	_show_menu(convoy_cargo_menu_scene, convoy_data)
 
 # --- Generic menu handling ---
 func _show_menu(menu_scene_resource, data_to_pass = null, add_to_stack: bool = true):
@@ -65,11 +83,25 @@ func _show_menu(menu_scene_resource, data_to_pass = null, add_to_stack: bool = t
 		return
 
 	var menu_type = "default"
-	if menu_scene_resource == convoy_menu_scene:
-		menu_type = "convoy_detail"
-	
-	current_active_menu.set_meta("menu_type", menu_type)
+	var use_convoy_style_layout = false # Flag to use the 2/3rds screen layout
 
+	if menu_scene_resource == convoy_menu_scene:
+		menu_type = "convoy_overview" # Renamed for clarity
+		use_convoy_style_layout = true
+	elif menu_scene_resource == convoy_vehicle_menu_scene:
+		menu_type = "convoy_vehicle_submenu"
+		use_convoy_style_layout = true
+	elif menu_scene_resource == convoy_journey_menu_scene:
+		menu_type = "convoy_journey_submenu"
+		use_convoy_style_layout = true
+	elif menu_scene_resource == convoy_settlement_menu_scene:
+		menu_type = "convoy_settlement_submenu"
+		use_convoy_style_layout = true
+	elif menu_scene_resource == convoy_cargo_menu_scene:
+		menu_type = "convoy_cargo_submenu"
+		use_convoy_style_layout = true
+
+	current_active_menu.set_meta("menu_type", menu_type)
 
 	add_child(current_active_menu)
 
@@ -82,48 +114,48 @@ func _show_menu(menu_scene_resource, data_to_pass = null, add_to_stack: bool = t
 
 	# Now, set layout. The menu should have its content initialized.
 	if current_active_menu is Control:
-		var menu_node = current_active_menu
-		if menu_scene_resource == convoy_menu_scene:
+		var menu_node_control = current_active_menu # Use a more descriptive variable name
+		if use_convoy_style_layout:
 			# Layout for ConvoyMenu: right 2/3rds of the screen.
 			# These anchors are relative to MenuManager's own bounds.
-			menu_node.anchor_left = 1.0 / 3.0
-			menu_node.anchor_right = 1.0
-			menu_node.anchor_top = 0.0
-			menu_node.anchor_bottom = 1.0
-			menu_node.offset_left = 0
-			menu_node.offset_right = 0
-			menu_node.offset_top = 0
-			menu_node.offset_bottom = 0
+			menu_node_control.anchor_left = 1.0 / 3.0
+			menu_node_control.anchor_right = 1.0
+			menu_node_control.anchor_top = 0.0
+			menu_node_control.anchor_bottom = 1.0
+			menu_node_control.offset_left = 0
+			menu_node_control.offset_right = 0
+			menu_node_control.offset_top = 0
+			menu_node_control.offset_bottom = 0
 		elif false: # Example for a different menu layout if needed in future
 			# Specific layout for ConvoyMenu: stick to right-middle of the parent (MenuManager)
-			var menu_size = menu_node.custom_minimum_size # Try this first
+			var menu_size = menu_node_control.custom_minimum_size # Try this first
 
 			if menu_size.x == 0 or menu_size.y == 0:
 				# If not set, try combined minimum size (more reliable after initialize_with_data)
 				# For Godot 4, ensure children have propagated their sizes if relying on this.
 				# Calling update_minimum_size() can sometimes help, but often sizes are deferred.
-				menu_node.update_minimum_size() # May help ensure sizes are calculated
-				menu_size = menu_node.get_combined_minimum_size()
+				menu_node_control.update_minimum_size() # May help ensure sizes are calculated
+				menu_size = menu_node_control.get_combined_minimum_size()
 				if menu_size.x == 0 or menu_size.y == 0:
 					printerr("MenuManager: ConvoyMenu's size could not be determined (custom_minimum_size and get_combined_minimum_size are zero). Using fallback size (300, 400). This may lead to incorrect layout. Please set custom_minimum_size in ConvoyMenu.tscn or ensure its content defines a size.")
 					if menu_size.x == 0: menu_size.x = 300
 					if menu_size.y == 0: menu_size.y = 400
 			
-			menu_node.anchor_left = 1.0   # Anchor left edge relative to parent's right.
-			menu_node.anchor_right = 1.0  # Anchor right edge relative to parent's right.
-			menu_node.anchor_top = 0.5    # Anchor top edge relative to parent's vertical center.
-			menu_node.anchor_bottom = 0.5 # Anchor bottom edge relative to parent's vertical center.
+			menu_node_control.anchor_left = 1.0   # Anchor left edge relative to parent's right.
+			menu_node_control.anchor_right = 1.0  # Anchor right edge relative to parent's right.
+			menu_node_control.anchor_top = 0.5    # Anchor top edge relative to parent's vertical center.
+			menu_node_control.anchor_bottom = 0.5 # Anchor bottom edge relative to parent's vertical center.
 
 			# Offsets are relative to the anchor points.
 			# This positions the menu's top-left corner such that the menu is
 			# aligned to the right edge and centered vertically.
-			menu_node.offset_left = -menu_size.x
-			menu_node.offset_right = 0 # Results in width = menu_size.x
-			menu_node.offset_top = -menu_size.y / 2.0 
-			menu_node.offset_bottom = menu_size.y / 2.0 # Results in height = menu_size.y
+			menu_node_control.offset_left = -menu_size.x
+			menu_node_control.offset_right = 0 # Results in width = menu_size.x
+			menu_node_control.offset_top = -menu_size.y / 2.0
+			menu_node_control.offset_bottom = menu_size.y / 2.0 # Results in height = menu_size.y
 		else:
 			# Default for other menus: fill the parent (MenuManager)
-			menu_node.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+			menu_node_control.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 
 	emit_signal("menu_opened", current_active_menu, menu_type)
 
@@ -133,15 +165,22 @@ func _show_menu(menu_scene_resource, data_to_pass = null, add_to_stack: bool = t
 		# Using CONNECT_ONE_SHOT because the menu instance will be freed when closed.
 		# If not using ONE_SHOT, ensure to disconnect when the menu is about to be freed.
 		var err = current_active_menu.back_requested.connect(go_back, CONNECT_ONE_SHOT)
-		if err == OK:
-			print("MenuManager: Successfully connected 'back_requested' signal from new menu to go_back().")
-		else:
-			printerr("MenuManager: FAILED to connect 'back_requested' signal. Error code: ", err)
-	else:
-		print("MenuManager: New menu instance does NOT have 'back_requested' signal for menu type: ", menu_type)
+		# if err != OK: printerr("MenuManager: FAILED to connect 'back_requested' signal. Error code: ", err)
+	
+	# Connect signals FOR ConvoyMenu to open submenus.
+	# These connections are made when the ConvoyMenu (type "convoy_overview") is shown.
+	if menu_type == "convoy_overview":
+		if current_active_menu.has_signal("open_vehicle_menu_requested"):
+			current_active_menu.open_vehicle_menu_requested.connect(open_convoy_vehicle_menu, CONNECT_ONE_SHOT)
+		if current_active_menu.has_signal("open_journey_menu_requested"):
+			current_active_menu.open_journey_menu_requested.connect(open_convoy_journey_menu, CONNECT_ONE_SHOT)
+		if current_active_menu.has_signal("open_settlement_menu_requested"):
+			current_active_menu.open_settlement_menu_requested.connect(open_convoy_settlement_menu, CONNECT_ONE_SHOT)
+		if current_active_menu.has_signal("open_cargo_menu_requested"):
+			current_active_menu.open_cargo_menu_requested.connect(open_convoy_cargo_menu, CONNECT_ONE_SHOT)
 
 func go_back():
-	print("MenuManager: go_back() called. Current active menu: ", current_active_menu) # DEBUG
+	# print("MenuManager: go_back() called. Current active menu: ", current_active_menu) # DEBUG
 	if not is_instance_valid(current_active_menu):
 		# This case might happen if ui_cancel is pressed rapidly or if a menu failed to open.
 		# If no menu is active, but stack isn't empty, try to restore from stack.
@@ -155,7 +194,7 @@ func go_back():
 				if scene_resource:					
 					_show_menu(scene_resource, prev_data, false)
 					return # Successfully restored a menu
-		print("MenuManager: go_back() - No valid current menu and stack recovery failed or stack empty.") # DEBUG
+		# print("MenuManager: go_back() - No valid current menu and stack recovery failed or stack empty.") # DEBUG
 		# If still no active menu or stack was empty, ensure menus are considered closed.
 		emit_signal("menus_completely_closed")
 		return
@@ -164,14 +203,14 @@ func go_back():
 	if menu_stack.is_empty(): # No previous menu in stack, closing the current (last) one
 		var closed_menu_type = current_active_menu.get_meta("menu_type", "default")
 		emit_signal("menu_closed", current_active_menu, closed_menu_type)
-		print("MenuManager: go_back() - Closing last menu. Emitting 'menus_completely_closed'.") # DEBUG
+		# print("MenuManager: go_back() - Closing last menu. Emitting 'menus_completely_closed'.") # DEBUG
 		current_active_menu.queue_free()
 		current_active_menu = null
 		emit_signal("menus_completely_closed") # All menus are now closed
 		return
 
 	# There's a previous menu in the stack. Close current and open previous.
-	print("MenuManager: go_back() - Closing current menu and opening previous from stack.") # DEBUG
+	# print("MenuManager: go_back() - Closing current menu and opening previous from stack.") # DEBUG
 	var closed_menu_type = current_active_menu.get_meta("menu_type", "default")
 	emit_signal("menu_closed", current_active_menu, closed_menu_type)
 	current_active_menu.queue_free()

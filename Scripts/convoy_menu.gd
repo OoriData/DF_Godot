@@ -60,6 +60,12 @@ const COLOR_PERFORMANCE_BOX_FONT: Color = Color.WHITE   # White
 @onready var settlement_menu_button: Button = $MainVBox/ScrollContainer/ContentVBox/MenuButtons/SettlementMenuButton
 @onready var cargo_menu_button: Button = $MainVBox/ScrollContainer/ContentVBox/MenuButtons/CargoMenuButton
 
+# --- Signals for Sub-Menu Navigation ---
+signal open_vehicle_menu_requested(convoy_data)
+signal open_journey_menu_requested(convoy_data)
+signal open_settlement_menu_requested(convoy_data)
+signal open_cargo_menu_requested(convoy_data)
+
 func _ready():
 	# IMPORTANT: Ensure you have a Button node in your ConvoyMenu.tscn scene
 	# and that its name is "BackButton".
@@ -331,20 +337,20 @@ func initialize_with_data(data: Dictionary):
 
 # --- Placeholder Button Handlers ---
 func _on_vehicle_menu_button_pressed():
-	print("ConvoyMenu: Vehicle Menu button pressed (Placeholder)")
-	# Implement actual vehicle menu logic or signal emission here
+	print("ConvoyMenu: Vehicle Menu button pressed. Emitting 'open_vehicle_menu_requested'.")
+	emit_signal("open_vehicle_menu_requested", convoy_data_received)
 
 func _on_journey_menu_button_pressed():
-	print("ConvoyMenu: Journey Menu button pressed (Placeholder)")
-	# Implement actual journey menu logic or signal emission here
+	print("ConvoyMenu: Journey Menu button pressed. Emitting 'open_journey_menu_requested'.")
+	emit_signal("open_journey_menu_requested", convoy_data_received)
 
 func _on_settlement_menu_button_pressed():
-	print("ConvoyMenu: Settlement Menu button pressed (Placeholder)")
-	# Implement actual settlement menu logic or signal emission here
+	print("ConvoyMenu: Settlement Menu button pressed. Emitting 'open_settlement_menu_requested'.")
+	emit_signal("open_settlement_menu_requested", convoy_data_received)
 
 func _on_cargo_menu_button_pressed():
-	print("ConvoyMenu: Cargo Menu button pressed (Placeholder)")
-	# Implement actual cargo menu logic or signal emission here
+	print("ConvoyMenu: Cargo Menu button pressed. Emitting 'open_cargo_menu_requested'.")
+	emit_signal("open_cargo_menu_requested", convoy_data_received)
 
 func _get_color_for_percentage(percentage: float) -> Color:
 	if percentage > 0.7:

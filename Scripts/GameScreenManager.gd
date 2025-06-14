@@ -5,6 +5,15 @@ extends Node
 @onready var map_viewport_container: SubViewportContainer = get_node("MapViewportContainer") # This is correct for Godot 4
 @onready var menu_manager: Control = get_node("MenuUILayer/MenuManager")
 
+const PARTIAL_SCREEN_MENU_TYPES: Array[String] = [
+	"convoy_overview",       # Main convoy detail/overview screen
+	"convoy_vehicle_submenu",
+	"convoy_journey_submenu",
+	"convoy_settlement_submenu",
+	"convoy_cargo_submenu"
+]
+
+
 func _ready():
 	if not is_instance_valid(menu_manager):
 		printerr("GameScreenManager: MenuManager node not found. Check path.")
@@ -28,8 +37,8 @@ func _ready():
 	_set_map_view_full_screen()
 
 func _on_menu_opened(_menu_node: Node, menu_type: String):
-	# If a menu type that requires a split view is opened
-	if menu_type == "convoy_detail": # Add other types if needed
+	# If a menu type that requires a split view (map on left 1/3) is opened
+	if menu_type in PARTIAL_SCREEN_MENU_TYPES:
 		_set_map_view_partial_screen()
 	# Else: You might have other logic, e.g., some menus hide the map,
 	# or some menus overlay the full map. For now, only "convoy_detail" shrinks it.
