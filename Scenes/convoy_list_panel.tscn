@@ -3,8 +3,6 @@
 [ext_resource type="Script" uid="uid://pnchtjdqye7r" path="res://Scripts/convoy_list_panel.gd" id="1_7so3h"]
 
 [node name="ConvoyListPanel" type="PanelContainer"]
-grow_horizontal = 2
-grow_vertical = 2
 script = ExtResource("1_7so3h")
 
 [node name="MainVBox" type="VBoxContainer" parent="."]

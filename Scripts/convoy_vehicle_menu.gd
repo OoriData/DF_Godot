@@ -205,48 +205,43 @@ func _display_vehicle_details(vehicle_data: Dictionary):
 	_add_detail_row(active_details_vbox, "  Offroad:", "%.0f" % vehicle_data.get("offroad_capability", 0.0))
 	_add_detail_row(active_details_vbox, "  Efficiency:", "%.0f" % vehicle_data.get("efficiency", 0.0))
 
-	var vehicle_all_items: Array = vehicle_data.get("cargo", [])
-	var items_for_cargo_hold_summary: Array = []
-	var inspectable_parts_found = false
+	var all_items_from_vehicle_data: Array = vehicle_data.get("cargo", [])
+	var vehicle_parts_list: Array = []
+	var general_cargo_list: Array = []
 
-	# Components Section
-	var components_title = Label.new()
-	components_title.text = "Components:"
-	# components_title.add_theme_font_size_override("font_size", 18) # Optional styling for section titles
-	active_details_vbox.add_child(components_title)
-
-	for item_data in vehicle_all_items:
+	# First, sort all items from the vehicle's cargo array into parts or general cargo
+	for item_data in all_items_from_vehicle_data:
 		if item_data is Dictionary:
-			var class_id = item_data.get("class_id")
-			var is_intrinsic = item_data.get("intrinsic_part_id") != null
-			
-			var is_inspectable_part = is_intrinsic or (class_id != null and not class_id in CONSUMABLE_CLASS_IDS)
-
-			if is_inspectable_part:
-				inspectable_parts_found = true
-				var part_name = item_data.get("name", "Unknown Component")
-				_add_inspectable_part_row(active_details_vbox, part_name, item_data)
+			var is_vehicle_part = item_data.get("intrinsic_part_id") != null
+			if is_vehicle_part:
+				vehicle_parts_list.append(item_data)
 			else:
-				items_for_cargo_hold_summary.append(item_data)
+				general_cargo_list.append(item_data)
 
-	if not inspectable_parts_found:
-		var no_components_label = Label.new()
-		no_components_label.text = "  No inspectable components."
-		active_details_vbox.add_child(no_components_label)
+	# Vehicle Parts Section (Intrinsic Components)
+	var parts_title = Label.new()
+	parts_title.text = "Vehicle Parts:"
+	active_details_vbox.add_child(parts_title)
 
+	if not vehicle_parts_list.is_empty():
+		for part_item_data in vehicle_parts_list: # Iterate the new list of parts
+			var part_name = part_item_data.get("name", "Unknown Component")
+			_add_inspectable_part_row(active_details_vbox, part_name, part_item_data)
+	else:
+		var no_parts_label = Label.new()
+		no_parts_label.text = "  No vehicle parts installed."
+		active_details_vbox.add_child(no_parts_label)
 
-	# Cargo Hold Section (now uses items_for_cargo_hold_summary)
+	# Cargo Hold Section (All Non-Intrinsic Items)
 	var cargo_title = Label.new()
-	cargo_title.text = "Cargo Hold (Consumables/Other):"
-	# cargo_title.add_theme_font_size_override("font_size", 18) # Optional styling
+	cargo_title.text = "Cargo Hold:"
 	active_details_vbox.add_child(cargo_title)
-
 	var cargo_summary_label = Label.new()
 	var cargo_display_text = "  Empty"
-	if not items_for_cargo_hold_summary.is_empty():
+	if not general_cargo_list.is_empty(): # Use the new general_cargo_list
 		var cargo_summary_strings = []
 		var cargo_counts: Dictionary = {}
-		for cargo_item in items_for_cargo_hold_summary:
+		for cargo_item in general_cargo_list: # Use the new list of general cargo
 			var item_name = cargo_item.get("name", "Unknown Item")
 			var item_qty = cargo_item.get("quantity", 1) # Default to 1 if not specified (e.g. for non-stackables)
 			cargo_counts[item_name] = cargo_counts.get(item_name, 0) + item_qty
