@@ -883,22 +883,16 @@ func _input(event: InputEvent) -> void:  # Renamed from _gui_input
 				var click_pos: Vector2 = event.global_position
 				var is_on_map: bool = map_view_rect.has_point(click_pos)
 				
-				print_debug("Main _input: Menu active. Click at: ", click_pos, 
-							" MapViewRect: ", map_view_rect, 
-							" IsOnMap: ", is_on_map) # DEBUG
 
 				# Check if the click is within the map's visible area
 				if is_on_map:
 					# Click is on the map area while a menu is open
 					if menu_manager_ref.has_method("close_all_menus"): # Ensure MenuManager has this method
-						print_debug("Main _input: Click IS on map. Closing all menus.") # DEBUG
 						menu_manager_ref.close_all_menus()
 						get_viewport().set_input_as_handled() # Consume the event
 						return # Stop further processing of this input event
 					else:
 						printerr("Main: MenuManager does not have a 'close_all_menus' method.")
-				else:
-					print_debug("Main _input: Click is NOT on map area according to rect. Click won't close menu.") # DEBUG
 			return # Stop further input processing in main.gd
 
 	# VERY IMPORTANT DEBUG: Log all events reaching main.gd's _input
@@ -1170,15 +1164,19 @@ func _on_mim_panel_drag_updated(convoy_id_str: String, new_panel_local_position:
 # --- Menu Interaction Functions ---
 
 func _on_menu_opened_for_camera_focus(menu_node: Node, menu_type: String):
-	# print("Main (MapView): Menu state changed. Type: '%s', Node: %s" % [menu_type, menu_node.name if is_instance_valid(menu_node) else "N/A"])
 	# This function now ONLY handles camera focusing if a convoy menu opens.
 	# The map resizing/repositioning is handled by GameScreenManager.
 
-	if menu_type == "convoy_detail":
+	# MODIFIED: Added "convoy_settlement_submenu" and "convoy_overview"
+	if menu_type == "convoy_detail" or \
+	   menu_type == "convoy_journey_menu" or \
+	   menu_type == "convoy_settlement_submenu" or \
+	   menu_type == "convoy_overview":
 		# Defer the focusing logic to ensure GameScreenManager has resized the viewport.
 		call_deferred("_execute_convoy_focus_logic", menu_node)
 
 func _execute_convoy_focus_logic(menu_node: Node):
+
 	# This function contains the logic previously in _on_menu_opened_for_camera_focus
 	# Ensure MapView is already visible and processing input if its ViewportContainer is visible.
 
@@ -1210,28 +1208,17 @@ func _execute_convoy_focus_logic(menu_node: Node):
 				if map_cols > 0 and map_rows > 0 and map_initial_world_size.x > 0 and map_initial_world_size.y > 0:
 					var tile_world_width: float = map_initial_world_size.x / float(map_cols)
 					var tile_world_height: float = map_initial_world_size.y / float(map_rows)
-					print("FocusDebug: --- Start Convoy Focus ---")
-					print("FocusDebug: convoy_id = ", convoy_data.get("convoy_id", "N/A"))
-					print("FocusDebug: convoy_focus_zoom_target_tiles_wide = ", convoy_focus_zoom_target_tiles_wide)
-					print("FocusDebug: convoy_focus_zoom_target_tiles_high = ", convoy_focus_zoom_target_tiles_high)
-					print("FocusDebug: tile_world_width = ", tile_world_width)
-					print("FocusDebug: tile_world_height = ", tile_world_height)
-					print("FocusDebug: map_view_current_rect.size = ", map_view_current_rect.size)
 
 					# Calculate the convoy's center position local to MapContainer
 					var convoy_center_local_to_map_container: Vector2 = Vector2(
 						(convoy_tile_x + 0.5) * tile_world_width,
 						(convoy_tile_y + 0.5) * tile_world_height
 					)
-					# print("FocusDebug: convoy_center_local_to_map_container = ", convoy_center_local_to_map_container) # Optional debug
-					var convoy_actual_world_position: Vector2 = map_container.to_global(convoy_center_local_to_map_container)
-					# print("FocusDebug: convoy_actual_world_position = ", convoy_actual_world_position) # Optional debug
+					# Calculate convoy's position in MapView's local space (parent of MapCamera and MapContainer)
+					var convoy_position_mapview_local: Vector2 = map_container.position + convoy_center_local_to_map_container
 
-					# Calculate the target zoom first, as it's needed for the position adjustment
 					var world_width_to_display: float = convoy_focus_zoom_target_tiles_wide * tile_world_width
 					var world_height_to_display: float = convoy_focus_zoom_target_tiles_high * tile_world_height
-					print("FocusDebug: world_width_to_display = ", world_width_to_display)
-					print("FocusDebug: world_height_to_display = ", world_height_to_display)
 
 					if world_width_to_display <= 0.001 or world_height_to_display <= 0.001 or map_view_current_rect.size.x <= 0.001 or map_view_current_rect.size.y <= 0.001:
 						printerr("FocusDebug: Critical value for zoom calculation is too small. WidthToDisplay: %s, HeightToDisplay: %s, MapViewSize: %s. Aborting zoom." % [world_width_to_display, world_height_to_display, map_view_current_rect.size])
@@ -1239,11 +1226,8 @@ func _execute_convoy_focus_logic(menu_node: Node):
 
 					var target_zoom_x: float = map_view_current_rect.size.x / world_width_to_display
 					var target_zoom_y: float = map_view_current_rect.size.y / world_height_to_display
-					print("FocusDebug: target_zoom_x (before min) = ", target_zoom_x)
-					print("FocusDebug: target_zoom_y (before min) = ", target_zoom_y)
 
 					var final_target_zoom_scalar: float = min(target_zoom_x, target_zoom_y)
-					print("FocusDebug: final_target_zoom_scalar = ", final_target_zoom_scalar)
 
 					# Calculate the world-space shift needed to position the convoy according to convoy_menu_map_view_offset_percentage.
 					# This shift is applied to the camera's target.
@@ -1258,10 +1242,10 @@ func _execute_convoy_focus_logic(menu_node: Node):
 
 					# The camera should target the convoy's actual world position, plus this menu-induced shift.
 					# The camera.offset (set in _apply_map_camera_and_ui_layout) then positions this target in the partial view.
-					var camera_target_world_position: Vector2 = convoy_actual_world_position + Vector2(additional_camera_shift_world_x, 0.0)
+					var camera_target_mapview_local: Vector2 = convoy_position_mapview_local + Vector2(additional_camera_shift_world_x, 0.0)
 
 					
-					# print("Main: Focusing on convoy %s. Actual world pos: %s. Camera target world pos: %s" % [convoy_data.get("convoy_id", "N/A"), convoy_actual_world_position, camera_target_world_position])
+					# print("Main: Focusing on convoy %s. Base local pos: %s. Camera target local pos: %s" % [convoy_data.get("convoy_id", "N/A"), convoy_position_mapview_local, camera_target_mapview_local])
 
 					# Calculate and set new zoom level
 					if tile_world_width > 0.001 and tile_world_height > 0.001 and \
@@ -1270,16 +1254,13 @@ func _execute_convoy_focus_logic(menu_node: Node):
 
 						if is_instance_valid(map_interaction_manager) and map_interaction_manager.has_method("focus_camera_and_set_zoom"):
 							# Pass the adjusted camera target position
-							map_interaction_manager.focus_camera_and_set_zoom(camera_target_world_position, final_target_zoom_scalar)
-							print("FocusDebug: Called MIM.focus_camera_and_set_zoom with world_pos: ", camera_target_world_position, ", scalar: ", final_target_zoom_scalar)
+							map_interaction_manager.focus_camera_and_set_zoom(camera_target_mapview_local, final_target_zoom_scalar)
 							var cam_pos_str = "N/A"
 							var cam_offset_str = "N/A" # Offset will be set by _apply_map_camera_and_ui_layout shortly
 							var cam_zoom_str = "N/A"
 							if is_instance_valid(map_camera):
 								cam_pos_str = "Local: %s, Global: %s" % [map_camera.position, map_camera.global_position]
 								cam_zoom_str = str(map_camera.zoom) # Get current zoom
-							print("FocusDebug: Camera state immediately after MIM call - Pos: %s, Zoom: %s" % [cam_pos_str, cam_zoom_str])
-							# print("Main: Requested MIM to focus camera. Target world_pos: %s, Target zoom_scalar: %s. Camera pos after MIM: %s" % [camera_target_world_position, final_target_zoom_scalar, cam_pos_str]) # Original print
 						else:
 							printerr("Main: MapInteractionManager invalid or missing set_and_clamp_camera_zoom method.")
 					else:

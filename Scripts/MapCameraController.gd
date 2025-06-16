@@ -203,16 +203,22 @@ func zoom_at_screen_pos(zoom_adjust_factor: float, screen_zoom_center: Vector2):
 
 
 func set_and_clamp_zoom(target_zoom_scalar: float):
-	if not is_instance_valid(camera_node): return
+	if not is_instance_valid(camera_node):
+		return
+		
 	# Simplified: zoom_at_screen_pos handles clamping. Call it with viewport center.
 	var current_zoom = camera_node.zoom.x
-	if current_zoom == 0: return # Avoid division by zero
+	if current_zoom == 0:
+		return # Avoid division by zero
+		
 	var adjust_factor = target_zoom_scalar / current_zoom
+	
 	zoom_at_screen_pos(adjust_factor, current_map_screen_rect_ref.get_center())
 
 
 func focus_and_set_zoom(target_world_position: Vector2, target_zoom_scalar: float):
-	if not is_instance_valid(camera_node): return
+	if not is_instance_valid(camera_node):
+		return
 	set_and_clamp_zoom(target_zoom_scalar) # This will update camera_node.zoom
 	camera_node.position = target_world_position
 	# Clamping of position will be handled by _physics_process on the next frame.

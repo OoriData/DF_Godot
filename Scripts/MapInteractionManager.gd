@@ -581,7 +581,9 @@ func set_and_clamp_camera_zoom(target_zoom_scalar: float):
 func focus_camera_and_set_zoom(target_world_position: Vector2, target_zoom_scalar: float):
 	# MOVED to MapCameraController.focus_and_set_zoom()
 	if is_instance_valid(map_camera_controller) and map_camera_controller.has_method("focus_and_set_zoom"):
+			
 		map_camera_controller.focus_and_set_zoom(target_world_position, target_zoom_scalar)
+		
 	else:
 		printerr("MIM: focus_camera_and_set_zoom - MapCameraController or method invalid.")
 
