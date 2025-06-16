@@ -60,3 +60,4 @@ size_flags_vertical = 3
 [node name="BackButton" type="Button" parent="MainVBox"]
 layout_mode = 2
 size_flags_horizontal = 4
+text = "Back"

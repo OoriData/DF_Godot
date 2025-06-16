@@ -61,24 +61,29 @@ func open_convoy_settlement_menu(convoy_data = null):
 	_show_menu(convoy_settlement_menu_scene, convoy_data)
 
 func open_convoy_cargo_menu(convoy_data = null):
-	print("MenuManager: open_convoy_cargo_menu called. Convoy Data Received: ")
-	print(convoy_data) # This will print the full dictionary to the console
+	if convoy_data == null:
+		printerr("MenuManager: open_convoy_cargo_menu called with null data.")
+		_show_menu(convoy_cargo_menu_scene, {"all_cargo": [], "convoy_name": "Unknown Convoy"}) # Pass empty structure
+		return
 
-	# # --- Save convoy_data to a file ---
-	# if convoy_data != null:
-	# 	var file_path = "res://Other/convoy_data_example.json"
-	# 	var json_string = JSON.stringify(convoy_data, "\t", true) # Pretty print with tabs
-		
-	# 	var file = FileAccess.open(file_path, FileAccess.WRITE)
-	# 	if FileAccess.get_open_error() == OK:
-	# 		file.store_string(json_string)
-	# 		file.close()
-	# 		print("MenuManager: Convoy data saved to: ", file_path)
-	# 	else:
-	# 		printerr("MenuManager: Error saving convoy data to file. Path: ", file_path, " Error: ", FileAccess.get_open_error())
-	# # --- End save convoy_data to a file ---
+	print("MenuManager: open_convoy_cargo_menu called. Original Convoy Data Keys: ", convoy_data.keys())
 
-	_show_menu(convoy_cargo_menu_scene, convoy_data)
+	# Prepare data specifically for ConvoyCargoMenu: aggregate all cargo.
+	var processed_data_for_cargo_menu = convoy_data.duplicate(true) # Start with a copy
+	var all_convoy_items_aggregated: Array = []
+
+	var vehicle_list: Array = convoy_data.get("vehicle_details_list", [])
+	for vehicle_detail in vehicle_list:
+		if vehicle_detail is Dictionary:
+			var vehicle_cargo: Array = vehicle_detail.get("cargo", [])
+			for cargo_item in vehicle_cargo:
+				# We only care about non-intrinsic parts for the general cargo manifest
+				if cargo_item is Dictionary and cargo_item.get("intrinsic_part_id") == null:
+					all_convoy_items_aggregated.append(cargo_item)
+	
+	processed_data_for_cargo_menu["all_cargo"] = all_convoy_items_aggregated
+	print("MenuManager: Processed data for cargo menu. Aggregated items count: ", all_convoy_items_aggregated.size())
+	_show_menu(convoy_cargo_menu_scene, processed_data_for_cargo_menu)
 
 # --- Generic menu handling ---
 func _show_menu(menu_scene_resource, data_to_pass = null, add_to_stack: bool = true):
@@ -208,6 +213,11 @@ func _show_menu(menu_scene_resource, data_to_pass = null, add_to_stack: bool = t
 			current_active_menu.open_settlement_menu_requested.connect(open_convoy_settlement_menu, CONNECT_ONE_SHOT)
 		if current_active_menu.has_signal("open_cargo_menu_requested"):
 			current_active_menu.open_cargo_menu_requested.connect(open_convoy_cargo_menu, CONNECT_ONE_SHOT)
+	# Connect signals FOR ConvoyVehicleMenu
+	elif menu_type == "convoy_vehicle_submenu":
+		if current_active_menu.has_signal("inspect_all_convoy_cargo_requested"):
+			current_active_menu.inspect_all_convoy_cargo_requested.connect(open_convoy_cargo_menu, CONNECT_ONE_SHOT)
+
 
 func go_back():
 	# print("MenuManager: go_back() called. Current active menu: ", current_active_menu) # DEBUG

@@ -2,6 +2,7 @@ extends Control
 
 # Signal that MenuManager will listen for to go back
 signal back_requested
+signal inspect_all_convoy_cargo_requested(convoy_data) # New signal
 
 # @onready variables for UI elements
 @onready var title_label: Label = $MainVBox/TitleLabel
@@ -11,6 +12,7 @@ signal back_requested
 @onready var back_button: Button = $MainVBox/BackButton
 
 var current_vehicle_list: Array = []
+var _current_convoy_data: Dictionary # To store the full convoy data
 
 const CONSUMABLE_CLASS_IDS = [
 	"4ccf7ae4-2297-420c-af71-97eda72dceca", # MRE Boxes
@@ -73,6 +75,7 @@ func initialize_with_data(data: Dictionary):
 	print("ConvoyVehicleMenu: initialize_with_data called. Data keys: ", data.keys())
 
 	if is_instance_valid(title_label):
+		_current_convoy_data = data.duplicate(true) # Store the full convoy data
 		title_label.text = data.get("convoy_name", "Convoy")
 
 	current_vehicle_list = data.get("vehicle_details_list", [])
@@ -232,30 +235,14 @@ func _display_vehicle_details(vehicle_data: Dictionary):
 		no_parts_label.text = "  No vehicle parts installed."
 		active_details_vbox.add_child(no_parts_label)
 
-	# Cargo Hold Section (All Non-Intrinsic Items)
-	var cargo_title = Label.new()
-	cargo_title.text = "Cargo Hold:"
-	active_details_vbox.add_child(cargo_title)
-	var cargo_summary_label = Label.new()
-	var cargo_display_text = "  Empty"
-	if not general_cargo_list.is_empty(): # Use the new general_cargo_list
-		var cargo_summary_strings = []
-		var cargo_counts: Dictionary = {}
-		for cargo_item in general_cargo_list: # Use the new list of general cargo
-			var item_name = cargo_item.get("name", "Unknown Item")
-			var item_qty = cargo_item.get("quantity", 1) # Default to 1 if not specified (e.g. for non-stackables)
-			cargo_counts[item_name] = cargo_counts.get(item_name, 0) + item_qty
-		
-		if not cargo_counts.is_empty():
-			for item_name in cargo_counts:
-				cargo_summary_strings.append("%s x%s" % [item_name, cargo_counts[item_name]])
-			cargo_display_text = "  " + ", ".join(cargo_summary_strings)
-		else:
-			cargo_display_text = "  Contains unidentifiable items."
-	cargo_summary_label.text = cargo_display_text
-	cargo_summary_label.autowrap_mode = TextServer.AUTOWRAP_WORD
-	cargo_summary_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	active_details_vbox.add_child(cargo_summary_label)
+	# Add button to view full convoy cargo manifest
+	var view_cargo_button = Button.new()
+	view_cargo_button.text = "View Full Cargo Manifest"
+	view_cargo_button.size_flags_horizontal = Control.SIZE_SHRINK_CENTER # Center the button
+	view_cargo_button.pressed.connect(_on_view_convoy_cargo_pressed)
+	active_details_vbox.add_child(view_cargo_button)
+
+	# Removed cargo summary label, users will click the button to view cargo.
 
 	print("ConvoyVehicleMenu: VehicleDetailsVBox (active reference) children after add: ", active_details_vbox.get_child_count())
 
@@ -265,6 +252,12 @@ func _display_vehicle_details(vehicle_data: Dictionary):
 		details_scroll_container.call_deferred("update_minimum_size")
 	else:
 		printerr("ConvoyVehicleMenu: details_scroll_container is NOT valid at end of _display_vehicle_details.")
+
+func _on_view_convoy_cargo_pressed():
+	if _current_convoy_data:
+		emit_signal("inspect_all_convoy_cargo_requested", _current_convoy_data)
+	else:
+		printerr("ConvoyVehicleMenu: _current_convoy_data is null, cannot open cargo menu.")
 
 func _on_inspect_part_pressed(part_data: Dictionary):
 	print("ConvoyVehicleMenu: Inspecting part: ", part_data.get("name", "Unknown Part"))
