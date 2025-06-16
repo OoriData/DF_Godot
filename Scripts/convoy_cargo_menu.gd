@@ -58,62 +58,94 @@ func _populate_cargo_list():
 	for child in direct_vbox_ref.get_children():
 		child.queue_free()
 
-	var all_cargo_list: Array = convoy_data_received.get("all_cargo", [])
+	var vehicle_details_list: Array = convoy_data_received.get("vehicle_details_list", [])
 	
-	if all_cargo_list.is_empty():
-		var no_cargo_label = Label.new()
-		no_cargo_label.text = "This convoy is carrying no cargo."
-		no_cargo_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		direct_vbox_ref.add_child(no_cargo_label)
+	if vehicle_details_list.is_empty():
+		var no_vehicles_label = Label.new()
+		no_vehicles_label.text = "No vehicles in this convoy."
+		no_vehicles_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		direct_vbox_ref.add_child(no_vehicles_label)
 		return
 
-	# Aggregate cargo items by name to sum quantities (as seen in ConvoyMenu)
-	var aggregated_cargo: Dictionary = {}
-	# aggregated_cargo will store: { "Item Name": { "quantity": X, "item_data_sample": { ... } } }
+	var any_cargo_found_in_convoy = false
 
-	for cargo_item_data in all_cargo_list:
-		if cargo_item_data is Dictionary:
-			var item_name: String = cargo_item_data.get("name", "Unknown Item")
-			var item_quantity: int = cargo_item_data.get("quantity", 0)
-			if item_quantity > 0: # Only add if quantity is positive
-				if not aggregated_cargo.has(item_name):
-					aggregated_cargo[item_name] = {"quantity": 0, "item_data_sample": cargo_item_data.duplicate(true)} # Store a sample
-				aggregated_cargo[item_name]["quantity"] += item_quantity
+	for vehicle_data in vehicle_details_list:
+		if not vehicle_data is Dictionary:
+			printerr("ConvoyCargoMenu: Invalid vehicle_data entry.")
+			continue
+
+		var vehicle_name_label = Label.new()
+		vehicle_name_label.text = "Vehicle: %s" % vehicle_data.get("name", "Unnamed Vehicle")
+		# vehicle_name_label.add_theme_font_size_override("font_size", 18) # Optional: make header larger
+		# vehicle_name_label.add_theme_font_override("font", preload("res://path/to/your_bold_font.tres")) # Optional: bold
+		direct_vbox_ref.add_child(vehicle_name_label)
+
+		var vehicle_cargo_list: Array = vehicle_data.get("cargo", [])
+		var actual_cargo_for_this_vehicle: Array = []
+		for item in vehicle_cargo_list:
+			if item is Dictionary and item.get("intrinsic_part_id") == null:
+				actual_cargo_for_this_vehicle.append(item)
+		
+		if actual_cargo_for_this_vehicle.is_empty():
+			var no_cargo_in_vehicle_label = Label.new()
+			no_cargo_in_vehicle_label.text = "  No cargo items in this vehicle."
+			direct_vbox_ref.add_child(no_cargo_in_vehicle_label)
 		else:
-			printerr("ConvoyCargoMenu: Encountered non-dictionary item in all_cargo list: ", cargo_item_data)
+			any_cargo_found_in_convoy = true
+			# Aggregate cargo items by name for THIS VEHICLE
+			var aggregated_cargo_for_vehicle: Dictionary = {}
+			for cargo_item_data in actual_cargo_for_this_vehicle:
+				var item_name: String = cargo_item_data.get("name", "Unknown Item")
+				var item_quantity: int = cargo_item_data.get("quantity", 0)
+				if item_quantity > 0:
+					if not aggregated_cargo_for_vehicle.has(item_name):
+						aggregated_cargo_for_vehicle[item_name] = {"quantity": 0, "item_data_sample": cargo_item_data.duplicate(true)}
+					aggregated_cargo_for_vehicle[item_name]["quantity"] += item_quantity
+			
+			if aggregated_cargo_for_vehicle.is_empty(): # Should not happen if actual_cargo_for_this_vehicle was not empty
+				var no_display_cargo_label = Label.new()
+				no_display_cargo_label.text = "  No displayable cargo items in this vehicle."
+				direct_vbox_ref.add_child(no_display_cargo_label)
+			else:
+				for item_name in aggregated_cargo_for_vehicle:
+					var agg_data = aggregated_cargo_for_vehicle[item_name]
+					var quantity = agg_data["quantity"]
+					var item_data_sample_for_inspect = agg_data["item_data_sample"]
 
-	if aggregated_cargo.is_empty(): # Could happen if all quantities were 0 or items malformed
-		var issue_label = Label.new()
-		issue_label.text = "No displayable cargo items (check quantities)."
-		issue_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		direct_vbox_ref.add_child(issue_label)
-		return
+					var hbox = HBoxContainer.new()
+					hbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 
-	for item_name in aggregated_cargo:
-		var agg_data = aggregated_cargo[item_name]
-		var quantity = agg_data["quantity"]
-		var item_data_sample_for_inspect = agg_data["item_data_sample"]
+					var item_label = Label.new()
+					item_label.text = "  %s x %s" % [item_name, quantity] # Indent cargo items
+					item_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+					item_label.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+					item_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 
-		var hbox = HBoxContainer.new()
-		hbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+					var inspect_button = Button.new()
+					inspect_button.text = "Inspect"
+					inspect_button.custom_minimum_size.x = 100
+					inspect_button.custom_minimum_size.y = 30
+					inspect_button.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+					inspect_button.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+					inspect_button.pressed.connect(_on_inspect_cargo_item_pressed.bind(item_data_sample_for_inspect))
 
-		var item_label = Label.new()
-		item_label.text = "%s x %s" % [item_name, quantity]
-		item_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		item_label.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-		item_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+					hbox.add_child(item_label)
+					hbox.add_child(inspect_button)
+					direct_vbox_ref.add_child(hbox)
+		# Add a small separator after each vehicle's section for clarity
+		var separator = HSeparator.new()
+		separator.custom_minimum_size.y = 10 # Make it a bit taller than default
+		direct_vbox_ref.add_child(separator)
 
-		var inspect_button = Button.new()
-		inspect_button.text = "Inspect"
-		inspect_button.custom_minimum_size.x = 100
-		inspect_button.custom_minimum_size.y = 30
-		inspect_button.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-		inspect_button.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-		inspect_button.pressed.connect(_on_inspect_cargo_item_pressed.bind(item_data_sample_for_inspect))
-
-		hbox.add_child(item_label)
-		hbox.add_child(inspect_button)
-		direct_vbox_ref.add_child(hbox)
+	if not any_cargo_found_in_convoy and not vehicle_details_list.is_empty():
+		# This case means there were vehicles, but none of them had any non-part cargo.
+		var no_cargo_overall_label = Label.new()
+		no_cargo_overall_label.text = "This convoy is carrying no cargo items (only vehicle parts)."
+		no_cargo_overall_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		# Insert it after the last vehicle's separator, or at the top if only one vehicle with no cargo.
+		# For simplicity, just add it. If there were vehicle headers, it will appear at the end.
+		# If you want it at the top if *all* vehicles have no cargo, more complex logic is needed.
+		direct_vbox_ref.add_child(no_cargo_overall_label)
 
 func _on_back_button_pressed():
 	# print("ConvoyCargoMenu: Back button pressed. Emitting 'back_requested' signal.") # DEBUG

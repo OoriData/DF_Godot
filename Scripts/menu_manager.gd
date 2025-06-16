@@ -63,27 +63,13 @@ func open_convoy_settlement_menu(convoy_data = null):
 func open_convoy_cargo_menu(convoy_data = null):
 	if convoy_data == null:
 		printerr("MenuManager: open_convoy_cargo_menu called with null data.")
-		_show_menu(convoy_cargo_menu_scene, {"all_cargo": [], "convoy_name": "Unknown Convoy"}) # Pass empty structure
+		# Pass a structure that ConvoyCargoMenu can handle gracefully if data is missing
+		_show_menu(convoy_cargo_menu_scene, {"vehicle_details_list": [], "convoy_name": "Unknown Convoy"})
 		return
 
 	print("MenuManager: open_convoy_cargo_menu called. Original Convoy Data Keys: ", convoy_data.keys())
-
-	# Prepare data specifically for ConvoyCargoMenu: aggregate all cargo.
-	var processed_data_for_cargo_menu = convoy_data.duplicate(true) # Start with a copy
-	var all_convoy_items_aggregated: Array = []
-
-	var vehicle_list: Array = convoy_data.get("vehicle_details_list", [])
-	for vehicle_detail in vehicle_list:
-		if vehicle_detail is Dictionary:
-			var vehicle_cargo: Array = vehicle_detail.get("cargo", [])
-			for cargo_item in vehicle_cargo:
-				# We only care about non-intrinsic parts for the general cargo manifest
-				if cargo_item is Dictionary and cargo_item.get("intrinsic_part_id") == null:
-					all_convoy_items_aggregated.append(cargo_item)
-	
-	processed_data_for_cargo_menu["all_cargo"] = all_convoy_items_aggregated
-	print("MenuManager: Processed data for cargo menu. Aggregated items count: ", all_convoy_items_aggregated.size())
-	_show_menu(convoy_cargo_menu_scene, processed_data_for_cargo_menu)
+	# Pass the convoy_data directly. ConvoyCargoMenu will now handle iterating through vehicles.
+	_show_menu(convoy_cargo_menu_scene, convoy_data.duplicate(true)) # Pass a copy
 
 # --- Generic menu handling ---
 func _show_menu(menu_scene_resource, data_to_pass = null, add_to_stack: bool = true):
