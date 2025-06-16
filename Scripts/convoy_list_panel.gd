@@ -7,16 +7,35 @@ signal convoy_selected_from_list(convoy_data)
 @onready var toggle_button: Button = $MainVBox/ToggleButton
 @onready var list_scroll_container: ScrollContainer = $MainVBox/ListScrollContainer
 @onready var list_item_container: VBoxContainer = $MainVBox/ListScrollContainer/ConvoyItemsContainer
+@onready var main_vbox: VBoxContainer = $MainVBox # Add @onready for MainVBox
+
+# Z-index constants for managing draw order
+# Default z-index is handled by _base_z_index when the panel is closed.
+# Z-index when the list is open. This needs to be higher than MenuManager's MENU_MANAGER_ACTIVE_Z_INDEX (currently 150).
+const EXPANDED_OVERLAY_Z_INDEX = 200
 
 var _panel_style_open: StyleBox
 var _panel_style_closed: StyleBox
+var _base_z_index: int # To store the initial z_index
 
 func _ready():
-	# Store the stylebox that is defined for this panel when it's 'open'.
-	# This will get an override if set in inspector, or the theme's default.
+	_base_z_index = self.z_index # Store the initial z_index (could be set in editor)
 	_panel_style_open = get_theme_stylebox("panel", "PanelContainer")
-	
 	_panel_style_closed = StyleBoxEmpty.new() # Completely transparent, no drawing
+
+	# Critical node checks
+	if not is_instance_valid(toggle_button):
+		printerr("ConvoyListPanel (_ready): toggle_button node NOT FOUND.")
+		return
+	if not is_instance_valid(list_scroll_container):
+		printerr("ConvoyListPanel (_ready): list_scroll_container node NOT FOUND.")
+		return
+	if not is_instance_valid(list_item_container):
+		printerr("ConvoyListPanel (_ready): list_item_container node NOT FOUND.")
+		return
+	if not is_instance_valid(main_vbox):
+		printerr("ConvoyListPanel (_ready): main_vbox node NOT FOUND.")
+		return
 
 	# Hide the list initially
 	list_scroll_container.visible = false
@@ -24,27 +43,87 @@ func _ready():
 	_update_panel_appearance() # Set initial appearance (closed style, no background)
 	toggle_button.text = "Convoys ▼" # Initial text for closed state
 
-	if not is_instance_valid(list_item_container):
-		printerr("ConvoyListPanel (_ready): list_item_container node NOT FOUND or invalid. Expected path: $MainVBox/ListScrollContainer/ConvoyItemsContainer")
+	# Attempt to connect to MenuManager's signal to auto-close this panel
+	var menu_manager_node = get_parent().get_node_or_null("MenuManager") # Assuming MenuManager is a sibling
+	if is_instance_valid(menu_manager_node):
+		if menu_manager_node.has_signal("menu_opened"):
+			menu_manager_node.menu_opened.connect(_on_main_menu_opened)
+			# print("ConvoyListPanel: Successfully connected to MenuManager.menu_opened signal.") # DEBUG
+		else:
+			printerr("ConvoyListPanel: MenuManager found but does not have 'menu_opened' signal.")
 	else:
-		# print("ConvoyListPanel (_ready): list_item_container successfully initialized.") # Less verbose
-		pass
+		printerr("ConvoyListPanel: MenuManager node not found as sibling. Cannot auto-close on menu open. Expected path: ../MenuManager")
+
+	# Initial size update after setup
+	call_deferred("_update_layout_for_parents")
+	
 
 func _on_toggle_button_pressed() -> void:
-	list_scroll_container.visible = not list_scroll_container.visible
-	_update_panel_appearance()
+	if not is_instance_valid(list_scroll_container) or \
+	   not is_instance_valid(main_vbox) or \
+	   not is_instance_valid(toggle_button):
+		printerr("ConvoyListPanel: Critical nodes missing in _on_toggle_button_pressed.")
+		return
 
+	if list_scroll_container.visible: # It's currently open, so we are closing it
+		close_list()
+	else: # It's currently closed, so we are opening it
+		open_list()
+
+func open_list():
+	"""Opens the convoy list."""
 	if list_scroll_container.visible:
-		toggle_button.text = "Convoys ▲"
-	else:
-		toggle_button.text = "Convoys ▼"
+		return # Already open
+
+	list_scroll_container.visible = true
+	toggle_button.text = "Convoys ▲"
+	_update_panel_appearance()
+	call_deferred("_update_layout_for_parents")
+
+func close_list():
+	"""Closes the convoy list if it's open."""
+	if not list_scroll_container.visible:
+		return # Already closed
+	print("ConvoyListPanel: close_list() called.") # DEBUG
+
+	list_scroll_container.visible = false
+	toggle_button.text = "Convoys ▼"
+	_update_panel_appearance()
+	call_deferred("_update_layout_for_parents")
+
+func _update_layout_for_parents():
+	# Request layout update for parent containers
+	if not is_instance_valid(main_vbox): return
+	main_vbox.call_deferred("update_minimum_size")
+	self.call_deferred("update_minimum_size")
+
+func _on_main_menu_opened(_menu_node, _menu_type: String):
+	# If a menu from MenuManager opens, and our panel is currently expanded, close it.
+	# This ensures MenuManager's menus take precedence.
+	print("ConvoyListPanel: _on_main_menu_opened received. List visible: ", list_scroll_container.visible) # DEBUG
+	if list_scroll_container.visible:
+		close_list()
 
 func _update_panel_appearance() -> void:
+	if not is_instance_valid(list_scroll_container): # Guard
+		return
+
 	if list_scroll_container.visible: # Open state - show background
+		print("ConvoyListPanel: _update_panel_appearance() - Setting to OPEN state.") # DEBUG
 		if is_instance_valid(_panel_style_open):
+			z_index = EXPANDED_OVERLAY_Z_INDEX # Draw on top
+			mouse_filter = MOUSE_FILTER_STOP # Stop mouse events when open and visible
 			add_theme_stylebox_override("panel", _panel_style_open)
+		else: # Fallback if style is somehow invalid
+			print("ConvoyListPanel: _update_panel_appearance() - OPEN state, _panel_style_open INVALID.") # DEBUG
+			z_index = EXPANDED_OVERLAY_Z_INDEX
+			mouse_filter = MOUSE_FILTER_STOP
+			remove_theme_stylebox_override("panel") # Use default theme panel
+
 	else: # Closed state - hide background
 		if is_instance_valid(_panel_style_closed):
+			z_index = _base_z_index # Revert to base draw order
+			mouse_filter = MOUSE_FILTER_IGNORE # Ignore mouse events when closed
 			add_theme_stylebox_override("panel", _panel_style_closed)
 
 ## Populates the list with convoy data.
@@ -86,12 +165,16 @@ func populate_convoy_list(convoys_data: Array) -> void:
 		# print("ConvoyListPanel: Added button for convoy '%s' (ID: %s)." % [convoy_name, convoy_id]) # DEBUG
 
 func _on_convoy_item_pressed(convoy_item_data: Dictionary) -> void:
+	if not is_instance_valid(list_scroll_container) or \
+	   not is_instance_valid(main_vbox) or \
+	   not is_instance_valid(toggle_button):
+		printerr("ConvoyListPanel: Critical nodes missing in _on_convoy_item_pressed.")
+		return
+
 	emit_signal("convoy_selected_from_list", convoy_item_data)
-	# If the list is currently open, close it.
-	if list_scroll_container.visible:
-		list_scroll_container.visible = false
-		_update_panel_appearance() # Update panel style to closed (no background)
-		toggle_button.text = "Convoys ▼" # Update button text
+	# Close the list after an item is selected
+	close_list()
+
 ## Highlights a specific convoy in the list.
 ## Call this from main.gd when a convoy is selected on the map.
 func highlight_convoy_in_list(selected_convoy_id_str: String) -> void:

@@ -12,6 +12,10 @@ var convoy_cargo_menu_scene = preload("res://Scenes/ConvoyCargoMenu.tscn") # Exa
 var current_active_menu = null
 var menu_stack = [] # To keep track of the navigation path for "back" functionality
 
+var _base_z_index: int
+# Ensure this Z-index is higher than ConvoyListPanel's EXPANDED_OVERLAY_Z_INDEX (100)
+const MENU_MANAGER_ACTIVE_Z_INDEX = 150 
+
 ## Emitted when any menu is opened. Passes the menu node instance.
 signal menu_opened(menu_node, menu_type: String)
 ## Emitted when a menu is closed (either by navigating forward or back). Passes the menu node that was closed.
@@ -19,12 +23,15 @@ signal menu_closed(menu_node_was_active, menu_type: String)
 ## Emitted when the last menu in the stack is closed via "back", meaning no menus are active.
 signal menus_completely_closed
 
+
+
 func _ready():
 	# Initially, no menu is shown. You might want to open a main menu here.
 	# Set mouse filter to PASS so that clicks on the MenuManager's background
 	# (i.e., not on an active menu panel like ConvoyMenu) can pass through.
 	# This allows main.gd to detect clicks on the map area when a menu is open.
 	mouse_filter = MOUSE_FILTER_PASS
+	_base_z_index = self.z_index # Store initial z_index
 	# Example: open_main_menu()
 	pass
 
@@ -97,6 +104,7 @@ func _show_menu(menu_scene_resource, data_to_pass = null, add_to_stack: bool = t
 		# Attempt to recover by going back if possible, or closing all menus.
 		if not menu_stack.is_empty():
 			go_back() # This will pop from stack and try to show the previous.
+			# If go_back() results in no menu, it will handle z_index reset.
 		else:
 			emit_signal("menus_completely_closed")
 		return
@@ -176,6 +184,9 @@ func _show_menu(menu_scene_resource, data_to_pass = null, add_to_stack: bool = t
 			# Default for other menus: fill the parent (MenuManager)
 			menu_node_control.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 
+	# A menu is now active, ensure MenuManager is drawn on top
+	self.z_index = MENU_MANAGER_ACTIVE_Z_INDEX
+
 	emit_signal("menu_opened", current_active_menu, menu_type)
 
 	# Connect signals from the newly instantiated menu (passing menu_type with emit)
@@ -213,6 +224,7 @@ func go_back():
 				if scene_resource:					
 					_show_menu(scene_resource, prev_data, false)
 					return # Successfully restored a menu
+		# If no menu was restored from stack and current_active_menu was already null
 		# print("MenuManager: go_back() - No valid current menu and stack recovery failed or stack empty.") # DEBUG
 		# If still no active menu or stack was empty, ensure menus are considered closed.
 		emit_signal("menus_completely_closed")
@@ -225,6 +237,7 @@ func go_back():
 		# print("MenuManager: go_back() - Closing last menu. Emitting 'menus_completely_closed'.") # DEBUG
 		current_active_menu.queue_free()
 		current_active_menu = null
+		self.z_index = _base_z_index # Reset z_index as no menus are active
 		emit_signal("menus_completely_closed") # All menus are now closed
 		return
 
@@ -245,11 +258,17 @@ func go_back():
 		if scene_resource:
 			_show_menu(scene_resource, prev_data, false) # false: don't add to stack again
 		else:
+			# Failed to load, so current_active_menu remains null here.
+			# We need to ensure z_index is reset if this path leads to no menus.
 			printerr("MenuManager: Failed to load previous menu scene: ", prev_scene_path, ". Attempting to go back further if possible.")
 			go_back() # Try to go back again, as the loaded scene was invalid.
 	else:
+		# Invalid stack entry, current_active_menu remains null here.
 		printerr("MenuManager: Previous menu info in stack did not have a scene_path. Attempting to go back further.")
 		go_back() # Stack entry was invalid, try to pop next.
+	
+	# If _show_menu was called above, it would have set z_index = MENU_MANAGER_ACTIVE_Z_INDEX.
+	# If go_back() was called recursively, it will handle z_index eventually.
 
 func request_convoy_menu(convoy_data): # This is the public API called by main.gd
 	open_convoy_menu(convoy_data)
@@ -263,6 +282,7 @@ func close_all_menus():
 		# If no menu is considered active, ensure the signal is still emitted
 		# in case the state is inconsistent or this is called to be certain.
 		if menu_stack.is_empty() and not is_instance_valid(current_active_menu):
+			self.z_index = _base_z_index # Ensure z_index is reset
 			emit_signal("menus_completely_closed")
 		return
 
