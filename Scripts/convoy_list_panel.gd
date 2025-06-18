@@ -84,7 +84,7 @@ func close_list():
 	"""Closes the convoy list if it's open."""
 	if not list_scroll_container.visible:
 		return # Already closed
-	print("ConvoyListPanel: close_list() called.") # DEBUG
+	# print("ConvoyListPanel: close_list() called.") # DEBUG
 
 	list_scroll_container.visible = false
 	toggle_button.text = "Convoys ▼"
@@ -100,7 +100,7 @@ func _update_layout_for_parents():
 func _on_main_menu_opened(_menu_node, _menu_type: String):
 	# If a menu from MenuManager opens, and our panel is currently expanded, close it.
 	# This ensures MenuManager's menus take precedence.
-	print("ConvoyListPanel: _on_main_menu_opened received. List visible: ", list_scroll_container.visible) # DEBUG
+	# print("ConvoyListPanel: _on_main_menu_opened received. List visible: ", list_scroll_container.visible) # DEBUG
 	if list_scroll_container.visible:
 		close_list()
 
@@ -110,7 +110,7 @@ func _update_panel_appearance() -> void:
 		return
 
 	if list_scroll_container.visible: # Open state - show background
-		print("ConvoyListPanel: _update_panel_appearance() - Setting to OPEN state.") # DEBUG
+		# print("ConvoyListPanel: _update_panel_appearance() - Setting to OPEN state.") # DEBUG
 		if is_instance_valid(_panel_style_open):
 			z_index = EXPANDED_OVERLAY_Z_INDEX # Draw on top
 			self.mouse_filter = MOUSE_FILTER_STOP # PanelContainer stops mouse events
@@ -118,13 +118,13 @@ func _update_panel_appearance() -> void:
 			add_theme_stylebox_override("panel", _panel_style_open)
 		else: # Fallback if style is somehow invalid
 			print("ConvoyListPanel: _update_panel_appearance() - OPEN state, _panel_style_open INVALID.") # DEBUG
-			z_index = EXPANDED_OVERLAY_Z_INDEX
+			# z_index = EXPANDED_OVERLAY_Z_INDEX # z_index is already set
 			self.mouse_filter = MOUSE_FILTER_STOP
 			main_vbox.mouse_filter = MOUSE_FILTER_STOP
 			remove_theme_stylebox_override("panel") # Use default theme panel
 
 	else: # Closed state - hide background, but keep Z-index high for the toggle button
-		print("ConvoyListPanel: _update_panel_appearance() - Setting to CLOSED state.") # DEBUG
+		# print("ConvoyListPanel: _update_panel_appearance() - Setting to CLOSED state.") # DEBUG
 		if is_instance_valid(_panel_style_closed):
 			z_index = EXPANDED_OVERLAY_Z_INDEX # Keep Z-index high to ensure toggle button is on top
 			self.mouse_filter = MOUSE_FILTER_IGNORE # PanelContainer ignores mouse events
@@ -132,7 +132,7 @@ func _update_panel_appearance() -> void:
 			add_theme_stylebox_override("panel", _panel_style_closed)
 		else: # Fallback if style is somehow invalid, still ensure proper Z and mouse filter
 			z_index = EXPANDED_OVERLAY_Z_INDEX
-			self.mouse_filter = MOUSE_FILTER_IGNORE
+			# self.mouse_filter = MOUSE_FILTER_IGNORE # mouse_filter is already set
 			main_vbox.mouse_filter = MOUSE_FILTER_IGNORE
 			remove_theme_stylebox_override("panel")
 

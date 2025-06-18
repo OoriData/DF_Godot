@@ -109,12 +109,12 @@ func _ready():
 			printerr("Main (_ready): Found node at path 'MapRendererLogic' BUT IT'S NOT A VALID INSTANCE. Node: ", map_renderer_node)
 			map_renderer_node = null # Ensure it's null if invalid
 		else:
-			print("Main (_ready): Successfully got map_renderer_node. Path: MapRendererLogic. Instance: ", map_renderer_node)
+			# print("Main (_ready): Successfully got map_renderer_node. Path: MapRendererLogic. Instance: ", map_renderer_node)
 			if map_renderer_node.get_script() == null:
 				printerr("Main (_ready): map_renderer_node (at 'MapRendererLogic') HAS NO SCRIPT ATTACHED!")
 			else:
 				var script_path = map_renderer_node.get_script().resource_path
-				print("Main (_ready): map_renderer_node (at 'MapRendererLogic') script path: ", script_path)
+				# print("Main (_ready): map_renderer_node (at 'MapRendererLogic') script path: ", script_path)
 				if not script_path.ends_with("map_render.gd"):
 					printerr("Main (_ready): WARNING - map_renderer_node (at 'MapRendererLogic') has script '", script_path, "' but expected 'map_render.gd'.")
 	else:
@@ -144,7 +144,7 @@ func _ready():
 			printerr("Main (MapView): MenuManager found but does not have 'menu_opened' signal.")
 		if menu_manager_ref.has_signal("menus_completely_closed"): # Ensure this signal name matches MenuManager
 			menu_manager_ref.menus_completely_closed.connect(_on_all_menus_closed)
-		print("Main (MapView): Successfully got reference to MenuManager.")
+		# print("Main (MapView): Successfully got reference to MenuManager.")
 	else:
 		printerr("Main (MapView): Could not find MenuManager. Path: GameRoot/MenuUILayer/MenuManager from this node's grandparent.")
 
@@ -181,8 +181,17 @@ func _ready():
 		# Connect signals using the gdm_node reference
 		gdm_node.map_data_loaded.connect(_on_gdm_map_data_loaded) # Corrected signal name
 		gdm_node.settlement_data_updated.connect(_on_gdm_settlement_data_updated)
-		gdm_node.convoy_data_updated.connect(_on_gdm_convoy_data_updated)
-		print("Main: Connected to GameDataManager signals (using get_node).")
+		gdm_node.convoy_data_updated.connect(_on_gdm_convoy_data_updated) # Corrected signal name
+		# print("Main: Connected to GameDataManager signals (using get_node).")
+
+		# Pass APICallsInstance to GameDataManager
+		if gdm_node.has_method("set_api_calls_node_reference"):
+			if is_instance_valid(api_calls_node): # api_calls_node is @onready in main.gd
+				gdm_node.set_api_calls_node_reference(api_calls_node)
+			else:
+				printerr("Main: api_calls_node is not valid, cannot pass to GameDataManager.")
+		else:
+			printerr("Main: GameDataManager does not have set_api_calls_node_reference method.")
 	else:
 		printerr("Main: GameDataManager Autoload NOT FOUND via get_node('/root/GameDataManager') AND Engine.has_singleton was likely false too. Core data will not be loaded.")
 
@@ -309,7 +318,7 @@ func _ready():
 				printerr("Main: GameTimersNode does not have 'data_refresh_tick' signal.")
 			if game_timers_node.has_signal("visual_update_tick"): # Corrected signal name
 				game_timers_node.visual_update_tick.connect(_on_visual_update_tick)
-				print("Main: Connected to GameTimers.visual_update_tick")
+				# print("Main: Connected to GameTimers.visual_update_tick")
 			else:
 				printerr("Main: GameTimersNode does not have 'visual_update_tick' signal.")
 		else:
@@ -1379,16 +1388,10 @@ func _trigger_convoy_visuals_update(icon_positions_map: Dictionary = {}):
 		printerr("Main: ConvoyVisualsManager not ready or 'update_convoy_nodes_on_map' method missing.")
 		return
 
-	if not (is_instance_valid(ui_manager) and ui_manager._ui_drawing_params_cached):
-		printerr("Main: UIManager drawing params not cached. Cannot provide tile dimensions to ConvoyVisualsManager.")
-		return
 
 	var tile_w_on_texture = ui_manager._cached_actual_tile_width_on_texture
 	var tile_h_on_texture = ui_manager._cached_actual_tile_height_on_texture
 
-	if tile_w_on_texture <= 0 or tile_h_on_texture <= 0:
-		printerr("Main: Invalid tile dimensions from UIManager cache for ConvoyVisualsManager (w:%s, h:%s)." % [tile_w_on_texture, tile_h_on_texture])
-		return
 
 	# _all_convoy_data should already be augmented with _pixel_offset_for_icon by this point
 	convoy_visuals_manager.update_convoy_nodes_on_map(
@@ -1399,3 +1402,12 @@ func _trigger_convoy_visuals_update(icon_positions_map: Dictionary = {}):
 		icon_positions_map, # Pass the calculated icon positions
 		_selected_convoy_ids # Pass the array of selected convoy IDs
 	)
+
+func update_map_render_bounds(_new_bounds_global_rect: Rect2) -> void:
+	# This method is called by GameScreenManager when the map's display area changes.
+	# We can simply trigger the existing _on_viewport_size_changed logic,
+	# as it already handles updating MapInteractionManager and UI elements
+	# based on the map's current global rectangle.
+	# The _new_bounds_global_rect parameter isn't directly used here because
+	# _on_viewport_size_changed recalculates it using get_map_viewport_container_global_rect().
+	_on_viewport_size_changed()

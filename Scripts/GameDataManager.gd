@@ -34,45 +34,22 @@ const PREDEFINED_CONVOY_COLORS: Array[Color] = [
 
 
 func _ready():
-	# print("!!!!!!!!!! GAMEDATAMANAGER _ready() IS RUNNING !!!!!!!!!!") # DEBUG
-	# Attempt to get APICallsInstance node.
-	# This needs to be robust to different scene setups (e.g., game_root vs. MapView running directly).
-	var path_to_api_calls_str : String = "" # For logging the path used
-	var root_node = get_tree().root
-
-	# Check path when game_root.tscn is the main scene and MapView is under MapViewportContainer
-	# Assuming the node with main.gd is named "MapView" or "MapRender"
-	if root_node.has_node("GameRoot/MapViewportContainer/MapRender/APICallsInstance"):
-		path_to_api_calls_str = "GameRoot/MapViewportContainer/MapRender/APICallsInstance"
-		api_calls_node = root_node.get_node(path_to_api_calls_str)
-	elif root_node.has_node("GameRoot/MapViewportContainer/MapRender/APICallsInstance"): # Check if node is named MapRender
-		path_to_api_calls_str = "GameRoot/MapRender/APICallsInstance"
-		api_calls_node = root_node.get_node(path_to_api_calls_str)
-	# Keep old checks for compatibility if running MapView directly or if APICallsInstance is elsewhere
-	# Check path when MapView.tscn is run directly (and its root is MapRender)
-	elif get_tree().root.has_node("MapRender/APICallsInstance"):
-		path_to_api_calls_str = "MapRender/APICallsInstance"
-		api_calls_node = get_tree().root.get_node(path_to_api_calls_str)
-	# Fallback: if APICallsInstance were an Autoload or direct child of root (less likely for current setup)
-	elif get_tree().root.has_node("APICallsInstance"):
-		path_to_api_calls_str = "APICallsInstance"
-		api_calls_node = get_tree().root.get_node(path_to_api_calls_str)
-
-	# if is_instance_valid(api_calls_node):
-	# 	# print("GameDataManager: Successfully found APICallsInstance at /root/%s" % path_to_api_calls_str)
-	# else:
-	# 	printerr("GameDataManager: APICallsInstance node not found. Tried common paths. Convoy data will not be fetched.")
-
+	print("GameDataManager _ready(): Truly MINIMAL _ready() EXECUTED. APICalls node setup is deferred.")
+	# Load static map data. This should be safe as it reads from a file.
+	# If _load_map_and_settlement_data itself causes issues, we can comment it too for testing.
 	_load_map_and_settlement_data()
 
+
+func set_api_calls_node_reference(node_ref: Node):
+	api_calls_node = node_ref
 	if is_instance_valid(api_calls_node):
 		if api_calls_node.has_signal('convoy_data_received'):
 			api_calls_node.convoy_data_received.connect(_on_raw_convoy_data_received)
-			# print('GameDataManager: Successfully connected to APICalls.convoy_data_received signal.')
+			print('GameDataManager: Successfully connected to APICalls.convoy_data_received signal (via setter).')
 		else:
-			printerr('GameDataManager: APICalls node does not have "convoy_data_received" signal.')
+			printerr('GameDataManager: APICalls node (via setter) does not have "convoy_data_received" signal.')
 	else:
-		printerr('GameDataManager: APICalls node not found. Cannot connect signal for convoy data.')
+		printerr('GameDataManager: APICalls node (via setter) is invalid. Cannot connect signal for convoy data.')
 
 
 func _load_map_and_settlement_data():
@@ -239,10 +216,22 @@ func request_convoy_data_refresh() -> void:
 	Called by an external system (e.g., a timer in main.gd) to trigger a new fetch
 	of convoy data.
 	"""
-	if is_instance_valid(api_calls_node) and api_calls_node.has_method("get_all_in_transit_convoys"):
-		api_calls_node.get_all_in_transit_convoys()
+	if is_instance_valid(api_calls_node):
+		if not api_calls_node.current_user_id.is_empty() and api_calls_node.has_method("get_user_convoys"):
+			api_calls_node.get_user_convoys(api_calls_node.current_user_id)
+		elif api_calls_node.has_method("get_all_in_transit_convoys"):
+			api_calls_node.get_all_in_transit_convoys()
+		else:
+			printerr("GameDataManager: APICallsInstance is missing 'get_user_convoys' or 'get_all_in_transit_convoys' method.")
 	else:
-		printerr("GameDataManager: Cannot request convoy data refresh. APICallsInstance is invalid or missing 'fetch_convoy_data' method.")
+		printerr("GameDataManager: Cannot request convoy data refresh. APICallsInstance is invalid.")
+
+func trigger_initial_convoy_data_fetch(p_user_id: String) -> void:
+	if is_instance_valid(api_calls_node) and api_calls_node.has_method("get_user_convoys"):
+		api_calls_node.set_user_id(p_user_id) # Ensure APICalls knows the user
+		api_calls_node.get_user_convoys(p_user_id)
+	else:
+		printerr("GameDataManager: Cannot trigger initial convoy data fetch. APICallsInstance is invalid or missing 'get_user_convoys' method.")
 
 
 func get_all_settlements_data() -> Array:

@@ -450,8 +450,19 @@ func _draw_interactive_labels(current_hover_info: Dictionary):
 					# For selected convoys, identify their start and end settlement tiles
 					var journey_data: Dictionary = convoy_data.get('journey')
 					if journey_data is Dictionary:
-						var route_x_coords: Array = journey_data.get('route_x')
-						var route_y_coords: Array = journey_data.get('route_y')
+						# var route_x_coords: Array = journey_data.get('route_x', []) # Old way
+						# var route_y_coords: Array = journey_data.get('route_y', []) # Old way
+
+						var raw_route_x = journey_data.get('route_x')
+						var route_x_coords: Array = []
+						if raw_route_x is Array:
+							route_x_coords = raw_route_x
+
+						var raw_route_y = journey_data.get('route_y')
+						var route_y_coords: Array = []
+						if raw_route_y is Array:
+							route_y_coords = raw_route_y
+							
 						if route_x_coords is Array and route_y_coords is Array and \
 						   route_x_coords.size() == route_y_coords.size() and not route_x_coords.is_empty():
 							

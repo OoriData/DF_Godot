@@ -21,6 +21,19 @@ var current_user_id: String = ""
 
 
 func _ready():
+	# print("GameScreenManager _ready(): STARTING. Attempting to check GameDataManager singleton.") # Original check
+	# if Engine.has_singleton("GameDataManager"):
+		# print("GameScreenManager _ready(): Engine.has_singleton('GameDataManager') is TRUE at start of _ready.")
+	# else:
+		# print("GameScreenManager _ready(): Engine.has_singleton('GameDataManager') is FALSE at start of _ready.")
+	
+	# New check: Try direct access to the Autoload name
+	if GameDataManager != null:
+		print("GameScreenManager _ready(): Direct access to 'GameDataManager' (Autoload) is NOT NULL at start of _ready.")
+	else:
+		print("GameScreenManager _ready(): Direct access to 'GameDataManager' (Autoload) IS NULL at start of _ready.")
+
+
 	if not is_instance_valid(map_camera_controller):
 		printerr("GameScreenManager: MapCameraController node not found. Please check the path in GameScreenManager.gd. Camera controls cannot be managed.")
 
@@ -36,46 +49,46 @@ func _ready():
 	
 	# Programmatically force the LoginScreen to fill the entire viewport.
 	# This should override any settings in the .tscn file or editor inspector.
-	login_screen.set_anchors_preset(Control.PRESET_FULL_RECT)
-	# Ensure grow directions are set to expand.
-	login_screen.grow_horizontal = Control.GROW_DIRECTION_BOTH
-	login_screen.grow_vertical = Control.GROW_DIRECTION_BOTH
-	# Force offsets to zero after setting preset, just in case.
-	login_screen.set_offsets_preset(Control.PRESET_FULL_RECT) # This resets offsets to 0 for the given anchor preset.
+	login_screen.set_anchors_preset(Control.PRESET_FULL_RECT) 
+	login_screen.position = Vector2.ZERO 
+	login_screen.pivot_offset = Vector2.ZERO 
+	# Explicitly set size to match the viewport
+	if is_instance_valid(login_screen.get_parent()):
+		login_screen.size = get_viewport().size # Use viewport size
 
-	print("--- GameScreenManager: Login Screen Setup Diagnostics ---")
-	print("LoginScreen node_path: ", login_screen.get_path())
-	print("LoginScreen visible: ", login_screen.visible)
-	print("LoginScreen modulate: ", login_screen.modulate) # Check modulate/alpha
-	print("LoginScreen global_position: ", login_screen.get_global_rect().position)
-	print("LoginScreen size: ", login_screen.get_global_rect().size)
-	var login_bg = login_screen.get_node_or_null("Background")
-	if is_instance_valid(login_bg) and login_bg is ColorRect:
-		print("LoginScreen/Background visible: ", login_bg.visible)
-		print("LoginScreen/Background global_position: ", login_bg.get_global_rect().position)
-		print("LoginScreen/Background size: ", login_bg.get_global_rect().size)
-		print("LoginScreen/Background color: ", login_bg.color)
-	else:
-		print("LoginScreen/Background node not found or not a ColorRect.")
+
+	# print("--- GameScreenManager: Login Screen Setup Diagnostics ---")
+	# print("LoginScreen node_path: ", login_screen.get_path())
+	# print("LoginScreen visible: ", login_screen.visible)
+	# print("LoginScreen modulate: ", login_screen.modulate) # Check modulate/alpha
+	# print("LoginScreen global_position: ", login_screen.get_global_rect().position)
+	# print("LoginScreen size: ", login_screen.get_global_rect().size)
+	# var login_bg = login_screen.get_node_or_null("Background")
+	# if is_instance_valid(login_bg) and login_bg is ColorRect:
+		# print("LoginScreen/Background visible: ", login_bg.visible)
+		# print("LoginScreen/Background global_position: ", login_bg.get_global_rect().position)
+		# print("LoginScreen/Background size: ", login_bg.get_global_rect().size)
+		# print("LoginScreen/Background color: ", login_bg.color)
+	# else:
+		# print("LoginScreen/Background node not found or not a ColorRect.")
 
 	# Ensure main game UI is hidden initially
 	if is_instance_valid(map_viewport_container):
 		map_viewport_container.visible = false
-		print("MapViewportContainer visible: ", map_viewport_container.visible)
+		# print("MapViewportContainer visible: ", map_viewport_container.visible)
 	if is_instance_valid(menu_ui_layer): # Hide the whole MenuUILayer
 		menu_ui_layer.visible = false
-		print("MenuUILayer visible: ", menu_ui_layer.visible)
+		# print("MenuUILayer visible: ", menu_ui_layer.visible)
 	
 	# Disable camera controls if login screen is active
 	if is_instance_valid(map_camera_controller):
 		map_camera_controller.controls_enabled = false # Disable camera controls during login
 	else:
 		printerr("GameScreenManager: Cannot disable MapCameraController controls during login - controller not found (was checked earlier).")
-
-	if is_instance_valid(map_camera_controller) and is_instance_valid(map_camera_controller.camera_node):
-		print("MapCamera (from MapCameraController) global_position: ", map_camera_controller.camera_node.global_position)
-		print("MapCamera (from MapCameraController) zoom: ", map_camera_controller.camera_node.zoom)
-	print("----------------------------------------------------")
+	# if is_instance_valid(map_camera_controller) and is_instance_valid(map_camera_controller.camera_node):
+		# print("MapCamera (from MapCameraController) global_position: ", map_camera_controller.camera_node.global_position)
+		# print("MapCamera (from MapCameraController) zoom: ", map_camera_controller.camera_node.zoom)
+	# print("----------------------------------------------------")
 
 	# --- MenuManager and MapViewportContainer checks (deferred if login screen is present) ---
 	# These will be fully utilized after login.
@@ -119,17 +132,20 @@ func _initialize_main_game_ui_and_signals():
 
 
 func _on_login_requested(user_id: String) -> void:
-	print("GameScreenManager: Login attempt with User ID: ", user_id)
+	# print("GameScreenManager: Login attempt with User ID: ", user_id)
 	current_user_id = user_id
 	
 	# Pass the user_id to GameDataManager, which should then inform APICalls
-	if Engine.has_singleton("GameDataManager"):
-		var gdm = GameDataManager
-		if gdm.has_method("set_api_user_id"):
-			gdm.set_api_user_id(current_user_id)
+	# Use direct access check here as well.
+	if GameDataManager != null:
+		# print("GameScreenManager (_on_login_requested): GameDataManager is NOT NULL.") # Optional debug
+		if GameDataManager.has_method("trigger_initial_convoy_data_fetch"):
+			GameDataManager.trigger_initial_convoy_data_fetch(current_user_id)
 		else:
-			printerr("GameScreenManager: GameDataManager does not have 'set_api_user_id' method.")
+			printerr("GameScreenManager: GameDataManager does not have 'trigger_initial_convoy_data_fetch' method.")
 	else:
+		# This block will execute if GameDataManager is null from this script's perspective
+		# print("GameScreenManager (_on_login_requested): GameDataManager IS NULL.") # Optional debug
 		printerr("GameScreenManager: GameDataManager singleton not found.")
 
 	login_screen.visible = false
@@ -144,7 +160,7 @@ func _on_menu_opened(_menu_node: Node, menu_type: String):
 	# If other menus open that don't require split screen, the map remains as is.
 
 func _on_menus_completely_closed():
-	print("GameScreenManager: All menus closed, setting map to full screen.")
+	# print("GameScreenManager: All menus closed, setting map to full screen.")
 	_set_map_view_full_screen()
 
 func _set_map_view_partial_screen():
@@ -158,7 +174,7 @@ func _set_map_view_partial_screen():
 	map_viewport_container.offset_bottom = 0 # Clear any offset
 	map_viewport_container.size_flags_horizontal = Control.SIZE_EXPAND_FILL # Ensure it fills
 	map_viewport_container.size_flags_vertical = Control.SIZE_EXPAND_FILL   # Ensure it fills
-	print("GameScreenManager: Map view set to partial (left 1/3).")
+	# print("GameScreenManager: Map view set to partial (left 1/3).")
 	_update_map_render_bounds_after_layout_change()
 
 func _set_map_view_full_screen():
@@ -172,7 +188,7 @@ func _set_map_view_full_screen():
 	map_viewport_container.offset_bottom = 0 # Clear any offset
 	map_viewport_container.size_flags_horizontal = Control.SIZE_EXPAND_FILL # Ensure it fills
 	map_viewport_container.size_flags_vertical = Control.SIZE_EXPAND_FILL   # Ensure it fills
-	print("GameScreenManager: Map view set to full screen.")
+	# print("GameScreenManager: Map view set to full screen.")
 	_update_map_render_bounds_after_layout_change()
 
 func _update_map_render_bounds_after_layout_change():
