@@ -1,9 +1,10 @@
-[gd_scene load_steps=5 format=3 uid="uid://yme8tiuqxb2b"]
+[gd_scene load_steps=6 format=3 uid="uid://yme8tiuqxb2b"]
 
 [ext_resource type="Script" uid="uid://5wbx2kcuj6e7" path="res://Scripts/GameScreenManager.gd" id="1_mrnkn"]
 [ext_resource type="PackedScene" uid="uid://b7shrt87ucxid" path="res://Scenes/MapView.tscn" id="1_pjpa4"]
 [ext_resource type="Script" uid="uid://c485ikhklo86b" path="res://Scripts/menu_manager.gd" id="2_bxsma"]
 [ext_resource type="PackedScene" uid="uid://dkvjop71jseg6" path="res://Scenes/convoy_list_panel.tscn" id="2_lkrbl"]
+[ext_resource type="PackedScene" uid="uid://kpjpc0fnv1nn" path="res://Scenes/LoginScreen.tscn" id="3_xxxxx"]
 
 [node name="GameRoot" type="Node"]
 script = ExtResource("1_mrnkn")
@@ -36,3 +37,5 @@ offset_left = -210.0
 offset_top = 10.0
 offset_right = -10.0
 offset_bottom = 250.0
+
+[node name="LoginScreen" parent="." instance=ExtResource("3_xxxxx")]

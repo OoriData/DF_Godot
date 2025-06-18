@@ -487,7 +487,12 @@ func _setup_static_map_and_camera():
 	# Set camera's position (center) to the center of the map_display content,
 	# considering map_container's position within MapRender.
 	if is_instance_valid(map_container) and is_instance_valid(map_display):
-		map_camera.position = map_container.position + map_display.custom_minimum_size / 2.0
+		# Original line to center camera on the map:
+		# map_camera.position = map_container.position + map_display.custom_minimum_size / 2.0
+		
+		# New line to position camera view at the top-left of the map content:
+		# The camera's position is its center. To see the map's top-left at the viewport's top-left:
+		map_camera.position = map_container.position + (map_camera.get_viewport_rect().size / (2.0 * map_camera.zoom))
 	map_camera.offset = Vector2.ZERO # Screen-space offset, keep at zero for primary positioning.
 	map_camera.zoom = Vector2(1.0, 1.0) # Initial zoom
 	_map_and_ui_setup_complete = true # Set flag after setup
@@ -496,12 +501,11 @@ func _setup_static_map_and_camera():
 		# print("Main: Processing deferred convoy data.")
 		_on_gdm_convoy_data_updated(_deferred_convoy_data) # Call the handler with stored data
 		_deferred_convoy_data.clear() # Clear after processing
-	# Camera limits will be handled by MapInteractionManager's _constrain_camera_offset
-	
-	# Trigger convoy visuals update even for static map, in case there's deferred data
-	# Icon positions from static_render_result will be empty, which is fine.
-	_trigger_convoy_visuals_update(static_render_result.get("icon_positions", {}))
+	# Camera limits will be handled by MapInteractionManager's _constrain_camera_offset	
 	_update_map_display(false) # Perform an initial UI update without re-rendering the map texture
+	# Now that _update_map_display has run (which calls UIManager.update_ui_elements),
+	# UIManager params should be cached. Trigger convoy visuals update.
+	_trigger_convoy_visuals_update(static_render_result.get("icon_positions", {}))
 
 
 func _on_viewport_size_changed():

@@ -1,0 +1,75 @@
+[gd_scene load_steps=4 format=3 uid="uid://kpjpc0fnv1nn"]
+
+[ext_resource type="Script" uid="uid://6h6taey0a4ct" path="res://Scripts/LoginScreen.gd" id="1_abcde"]
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_LineEditBg"]
+bg_color = Color(0.4, 0.4, 0.4, 1)
+border_width_left = 1
+border_width_top = 1
+border_width_right = 1
+border_width_bottom = 1
+border_color = Color(0.6, 0.6, 0.6, 1)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_ButtonBg"]
+bg_color = Color(0.25098, 0.270588, 0.309804, 1)
+border_width_left = 1
+border_width_top = 1
+border_width_right = 1
+border_width_bottom = 1
+border_color = Color(0.4, 0.4, 0.4, 1)
+
+[node name="LoginScreen" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("1_abcde")
+
+[node name="Background" type="ColorRect" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+color = Color(0.14902, 0.168627, 0.207843, 1)
+
+[node name="CenterContainer" type="CenterContainer" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="VBoxContainer" type="VBoxContainer" parent="CenterContainer"]
+layout_mode = 2
+size_flags_horizontal = 4
+
+[node name="UserIDLineEdit" type="LineEdit" parent="CenterContainer/VBoxContainer"]
+custom_minimum_size = Vector2(200, 30)
+layout_mode = 2
+size_flags_horizontal = 4
+theme_override_colors/font_placeholder_color = Color(0.6, 0.6, 0.6, 1)
+theme_override_colors/font_color = Color(0.9, 0.9, 0.9, 1)
+theme_override_styles/normal = SubResource("StyleBoxFlat_LineEditBg")
+placeholder_text = "user_id"
+
+[node name="LoginButton" type="Button" parent="CenterContainer/VBoxContainer"]
+custom_minimum_size = Vector2(100, 30)
+layout_mode = 2
+size_flags_horizontal = 4
+theme_override_colors/font_color = Color(0.95, 0.95, 0.95, 1)
+theme_override_styles/normal = SubResource("StyleBoxFlat_ButtonBg")
+text = "Login"
+
+[node name="StatusLabel" type="Label" parent="CenterContainer/VBoxContainer"]
+custom_minimum_size = Vector2(200, 20)
+layout_mode = 2
+size_flags_horizontal = 4
+theme_override_colors/font_color = Color(1, 0, 0, 1)
+text = "Status messages appear here."
+horizontal_alignment = 1
+autowrap_mode = 2

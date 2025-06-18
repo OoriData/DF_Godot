@@ -14,6 +14,8 @@ signal camera_zoom_changed(new_zoom_level: float)
 ## Multiplier for camera pan speed when using mouse drag or touch pan. Higher values increase sensitivity.
 @export var camera_pan_sensitivity: float = 7.5
 
+var controls_enabled: bool = true
+
 var camera_node: Camera2D = null
 var map_container_for_bounds_ref: TextureRect = null # Will hold map_display (TextureRect)
 var current_map_world_size_ref: Vector2 = Vector2.ZERO # The actual world size of the map content
@@ -45,6 +47,9 @@ func update_map_dimensions(p_map_world_size: Vector2, p_map_screen_rect: Rect2):
 
 
 func _physics_process(_delta: float):
+	if not controls_enabled:
+		return
+
 	if not is_instance_valid(camera_node) or \
 	   not is_instance_valid(map_container_for_bounds_ref) or \
 	   current_map_world_size_ref.x <= 0 or \
@@ -100,6 +105,9 @@ func _physics_process(_delta: float):
 	camera_node.position = Vector2(target_camera_pos_x, target_camera_pos_y)
 
 func handle_input(event: InputEvent) -> bool:
+	if not controls_enabled:
+		return false
+
 	if not is_instance_valid(camera_node):
 		return false
 

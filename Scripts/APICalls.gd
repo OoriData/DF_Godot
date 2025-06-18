@@ -8,6 +8,7 @@ signal fetch_error(error_message: String)
 
 const BASE_URL: String = 'https://df-api.oori.dev:1337'
 
+var current_user_id: String = "" # To store the logged-in user's ID
 var _http_request: HTTPRequest
 var convoys_in_transit: Array = []  # This will store the latest parsed list of in-transit convoys
 
@@ -22,12 +23,20 @@ func _ready() -> void:
 	# The data will be processed in _on_request_completed when it arrives.
 	get_all_in_transit_convoys()
 
+func set_user_id(p_user_id: String) -> void:
+	current_user_id = p_user_id
+	# print("APICalls: User ID set to: ", current_user_id)
+	# Optionally, you could re-fetch data if it's user-dependent and user changes
+	# get_all_in_transit_convoys()
+
 
 func get_convoy_data(convoy_id: String) -> void:
 	if not convoy_id or convoy_id.is_empty():
 		printerr('APICalls: Convoy ID cannot be empty.')
 		emit_signal('fetch_error', 'Convoy ID cannot be empty.')
 		return
+	# Example of how you might use current_user_id if the API required it:
+	# var url: String = '%s/convoy/get?convoy_id=%s&user_id=%s' % [BASE_URL, convoy_id, current_user_id]
 
 	var url: String = '%s/convoy/get?convoy_id=%s' % [BASE_URL, convoy_id]
 
@@ -50,6 +59,8 @@ func get_convoy_data(convoy_id: String) -> void:
 
 func get_all_in_transit_convoys() -> void:
 	var url: String = '%s/convoy/all_in_transit' % [BASE_URL]
+	# Example of how you might use current_user_id if the API required it:
+	# if not current_user_id.is_empty(): url += "?user_id=" + current_user_id
 
 	var headers: PackedStringArray = [  # Headers for the request
 		'accept: application/json'
