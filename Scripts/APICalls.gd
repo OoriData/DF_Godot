@@ -327,11 +327,17 @@ func parse_in_transit_convoy_details(raw_convoy_list: Array) -> Array:
 					var single_vehicle_details: Dictionary = {}
 					single_vehicle_details['name'] = vehicle_data.get('name', 'Unknown Vehicle')
 					single_vehicle_details['make_model'] = vehicle_data.get('make_model', 'Unknown Make/Model')
-					# The 'description' at the vehicle level seems like a good summary
+					# Get the original 'description' field from the raw data
 					single_vehicle_details['description'] = vehicle_data.get('description', 'No description available.')
+					# Add 'base_desc' as a separate, distinct field
+					single_vehicle_details['base_desc'] = vehicle_data.get('base_desc', 'No base description available.')
 					single_vehicle_details['efficiency'] = vehicle_data.get('efficiency', 0.0)
 					single_vehicle_details['top_speed'] = vehicle_data.get('top_speed', 0.0)
 					single_vehicle_details['offroad_capability'] = vehicle_data.get('offroad_capability', 0.0)
+					single_vehicle_details['base_value'] = vehicle_data.get('base_value', 0.0)
+					single_vehicle_details['value'] = vehicle_data.get('value', 0.0) # Add the vehicle's current value
+					single_vehicle_details['color'] = vehicle_data.get('color', 'N/A')
+					single_vehicle_details['shape'] = vehicle_data.get('shape', 'N/A')
 					single_vehicle_details['cargo'] = vehicle_data.get('cargo', [])
 					single_vehicle_details['parts'] = vehicle_data.get('parts', []) # Add the parts array
 					vehicle_details_list.append(single_vehicle_details)

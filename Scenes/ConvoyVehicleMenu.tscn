@@ -47,12 +47,32 @@ item_count = 1
 popup/item_0/text = "No Vehicles Available"
 popup/item_0/id = 0
 
-[node name="DetailsScrollContainer" type="ScrollContainer" parent="MainVBox"]
+[node name="VehicleTabContainer" type="TabContainer" parent="MainVBox"]
 layout_mode = 2
 size_flags_vertical = 3
 
-[node name="VehicleDetailsVBox" type="VBoxContainer" parent="MainVBox/DetailsScrollContainer"]
-unique_name_in_owner = true
+[node name="Overview" type="ScrollContainer" parent="MainVBox/VehicleTabContainer"]
+layout_mode = 2
+
+[node name="OverviewVBox" type="VBoxContainer" parent="MainVBox/VehicleTabContainer/Overview"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+
+[node name="Parts" type="ScrollContainer" parent="MainVBox/VehicleTabContainer"]
+visible = false
+layout_mode = 2
+
+[node name="PartsVBox" type="VBoxContainer" parent="MainVBox/VehicleTabContainer/Parts"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+
+[node name="Cargo" type="ScrollContainer" parent="MainVBox/VehicleTabContainer"]
+visible = false
+layout_mode = 2
+
+[node name="CargoVBox" type="VBoxContainer" parent="MainVBox/VehicleTabContainer/Cargo"]
 layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
