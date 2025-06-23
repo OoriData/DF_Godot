@@ -208,18 +208,19 @@ func _display_vehicle_details(vehicle_data: Dictionary):
 	_add_detail_row(active_details_vbox, "  Offroad:", "%.0f" % vehicle_data.get("offroad_capability", 0.0))
 	_add_detail_row(active_details_vbox, "  Efficiency:", "%.0f" % vehicle_data.get("efficiency", 0.0))
 
-	var all_items_from_vehicle_data: Array = vehicle_data.get("cargo", [])
+	var all_cargo_from_vehicle: Array = vehicle_data.get("cargo", [])
+	var all_parts_from_vehicle: Array = vehicle_data.get("parts", [])
 	var vehicle_parts_list: Array = []
-	var general_cargo_list: Array = []
 
-	# First, sort all items from the vehicle's cargo array into parts or general cargo
-	for item_data in all_items_from_vehicle_data:
-		if item_data is Dictionary:
-			var is_vehicle_part = item_data.get("intrinsic_part_id") != null
-			if is_vehicle_part:
+	# 1. Add all items from the dedicated 'parts' array
+	if all_parts_from_vehicle is Array:
+		vehicle_parts_list.append_array(all_parts_from_vehicle)
+
+	# 2. Add parts that are also listed in the 'cargo' array (e.g., fuel tanks with intrinsic_part_id)
+	if all_cargo_from_vehicle is Array:
+		for item_data in all_cargo_from_vehicle:
+			if item_data is Dictionary and item_data.has("intrinsic_part_id") and item_data.get("intrinsic_part_id") != null:
 				vehicle_parts_list.append(item_data)
-			else:
-				general_cargo_list.append(item_data)
 
 	# Vehicle Parts Section (Intrinsic Components)
 	var parts_title = Label.new()
@@ -227,6 +228,8 @@ func _display_vehicle_details(vehicle_data: Dictionary):
 	active_details_vbox.add_child(parts_title)
 
 	if not vehicle_parts_list.is_empty():
+		# Sort parts by name for a consistent order
+		vehicle_parts_list.sort_custom(func(a, b): return a.get("name", "Z") < b.get("name", "Z"))
 		for part_item_data in vehicle_parts_list: # Iterate the new list of parts
 			var part_name = part_item_data.get("name", "Unknown Component")
 			_add_inspectable_part_row(active_details_vbox, part_name, part_item_data)

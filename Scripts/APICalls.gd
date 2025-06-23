@@ -268,6 +268,22 @@ func parse_in_transit_convoy_details(raw_convoy_list: Array) -> Array:
 		printerr('APICalls: Expected an array for parsing convoy data, got: ', typeof(raw_convoy_list))
 		return parsed_convoys
 
+	# --- START: New code to save raw convoy data to file ---
+	var file_path = "res://Other/raw_convoy_data.json"
+	var file = FileAccess.open(file_path, FileAccess.WRITE)
+	if FileAccess.get_open_error() != OK:
+		printerr("APICalls: Error opening file for raw convoy data: %s. Error: %s" % [file_path, FileAccess.get_open_error()])
+	else:
+		# Use JSON.stringify with a tab for pretty printing, making it easier to read
+		var json_string = JSON.stringify(raw_convoy_list, "\t")
+		if json_string == "":
+			printerr("APICalls: Error converting raw convoy data to JSON string.")
+		else:
+			file.store_string(json_string)
+			file.close()
+			print("APICalls: Raw convoy data saved to: %s" % file_path)
+	# --- END: New code ---
+
 	for convoy_data in raw_convoy_list:
 		if not convoy_data is Dictionary:
 			printerr('APICalls: Expected a dictionary for individual convoy data, got: ', typeof(convoy_data))
@@ -317,6 +333,7 @@ func parse_in_transit_convoy_details(raw_convoy_list: Array) -> Array:
 					single_vehicle_details['top_speed'] = vehicle_data.get('top_speed', 0.0)
 					single_vehicle_details['offroad_capability'] = vehicle_data.get('offroad_capability', 0.0)
 					single_vehicle_details['cargo'] = vehicle_data.get('cargo', [])
+					single_vehicle_details['parts'] = vehicle_data.get('parts', []) # Add the parts array
 					vehicle_details_list.append(single_vehicle_details)
 		convoy_details['vehicle_details_list'] = vehicle_details_list
 
