@@ -2,6 +2,9 @@ extends Control
 
 # Signal that MenuManager will listen for to go back
 signal back_requested
+signal return_to_convoy_overview_requested(convoy_data)
+
+var convoy_data_received: Dictionary
 
 # @onready variables for UI elements
 @onready var title_label: Label = $MainVBox/TitleLabel
@@ -17,8 +20,13 @@ func _ready():
 	if is_instance_valid(back_button):
 		if not back_button.is_connected("pressed", Callable(self, "_on_back_button_pressed")):
 			back_button.pressed.connect(_on_back_button_pressed, CONNECT_ONE_SHOT)
+	
+	# Make the title label clickable to return to the convoy overview
+	if is_instance_valid(title_label):
+		title_label.mouse_filter = Control.MOUSE_FILTER_STOP # Allow it to receive mouse events
+		title_label.gui_input.connect(_on_title_label_gui_input)
 	else:
-		printerr("ConvoyJourneyMenu: CRITICAL - BackButton node NOT found or is not a Button.")
+		printerr("ConvoyJourneyMenu: CRITICAL - TitleLabel node NOT found or is not a Label.")
 
 	# Remove the placeholder label if it exists
 	if content_vbox.has_node("PlaceholderLabel"):
@@ -30,8 +38,18 @@ func _on_back_button_pressed():
 	print("ConvoyJourneyMenu: Back button pressed. Emitting 'back_requested' signal.")
 	emit_signal("back_requested")
 
+func _process(delta: float):
+	pass
+
+func _physics_process(delta: float):
+	pass
+
 func initialize_with_data(data: Dictionary):
 	print("ConvoyJourneyMenu: Initialized with data.") # DEBUG
+
+	# Store the received data for potential use by the title click
+	# Duplicate to avoid modifying the original if needed elsewhere
+	convoy_data_received = data.duplicate()
 
 	if is_instance_valid(title_label):
 		title_label.text = data.get("convoy_name", "Convoy") + " - Journey Details"
@@ -189,3 +207,9 @@ func _format_timestamp_display(timestamp_value, include_remaining_time: bool) ->
 			display_text += " (Arrived)"
 			
 	return display_text
+
+func _on_title_label_gui_input(event: InputEvent):
+	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
+		print("ConvoyJourneyMenu: Title clicked. Emitting 'return_to_convoy_overview_requested'.")
+		emit_signal("return_to_convoy_overview_requested", convoy_data_received)
+		get_viewport().set_input_as_handled()

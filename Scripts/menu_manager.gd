@@ -197,12 +197,25 @@ func _show_menu(menu_scene_resource, data_to_pass = null, add_to_stack: bool = t
 			current_active_menu.open_journey_menu_requested.connect(open_convoy_journey_menu, CONNECT_ONE_SHOT)
 		if current_active_menu.has_signal("open_settlement_menu_requested"):
 			current_active_menu.open_settlement_menu_requested.connect(open_convoy_settlement_menu, CONNECT_ONE_SHOT)
+		# This signal is for the main ConvoyMenu to open its submenus.
+		# The title click functionality is for submenus to return to the main ConvoyMenu.
+		# So, no `return_to_convoy_overview_requested` connection here.
 		if current_active_menu.has_signal("open_cargo_menu_requested"):
 			current_active_menu.open_cargo_menu_requested.connect(open_convoy_cargo_menu, CONNECT_ONE_SHOT)
 	# Connect signals FOR ConvoyVehicleMenu
 	elif menu_type == "convoy_vehicle_submenu":
 		if current_active_menu.has_signal("inspect_all_convoy_cargo_requested"):
 			current_active_menu.inspect_all_convoy_cargo_requested.connect(open_convoy_cargo_menu, CONNECT_ONE_SHOT)
+		if current_active_menu.has_signal("return_to_convoy_overview_requested"):
+			current_active_menu.return_to_convoy_overview_requested.connect(open_convoy_menu, CONNECT_ONE_SHOT)
+	# Connect signals FOR ConvoyJourneyMenu
+	elif menu_type == "convoy_journey_submenu":
+		if current_active_menu.has_signal("return_to_convoy_overview_requested"):
+			current_active_menu.return_to_convoy_overview_requested.connect(open_convoy_menu, CONNECT_ONE_SHOT)
+	# Connect signals FOR ConvoyCargoMenu
+	elif menu_type == "convoy_cargo_submenu":
+		if current_active_menu.has_signal("return_to_convoy_overview_requested"):
+			current_active_menu.return_to_convoy_overview_requested.connect(open_convoy_menu, CONNECT_ONE_SHOT)
 
 
 func go_back():

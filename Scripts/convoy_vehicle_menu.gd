@@ -2,6 +2,9 @@ extends Control
 
 # Signal that MenuManager will listen for to go back
 signal back_requested
+# Signal to open the full cargo manifest for the entire convoy
+signal return_to_convoy_overview_requested(convoy_data)
+signal inspect_all_convoy_cargo_requested(convoy_data)
 
 # @onready variables for UI elements
 @onready var title_label: Label = $MainVBox/TitleLabel
@@ -81,6 +84,11 @@ func _ready():
 			vehicle_option_button.item_selected.connect(_on_vehicle_selected)
 	else:
 		printerr("ConvoyVehicleMenu: CRITICAL - VehicleOptionButton node NOT found.")
+	
+	# Make the title label clickable to return to the convoy overview
+	if is_instance_valid(title_label):
+		title_label.mouse_filter = Control.MOUSE_FILTER_STOP # Allow it to receive mouse events
+		title_label.gui_input.connect(_on_title_label_gui_input)
 
 	# Check new VBox validity
 	if not is_instance_valid(overview_vbox) or not is_instance_valid(parts_vbox) or not is_instance_valid(cargo_vbox):
@@ -196,33 +204,28 @@ func _add_detail_row(parent: Container, label_text: String, value_text: String, 
 func _add_inspectable_item_row(parent: Container, item_name_text: String, item_summary_text: String, item_data: Dictionary):
 	var hbox = HBoxContainer.new()
 	hbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	# Let children determine the row height, but button will have a minimum.
 
 	var name_label = Label.new()
 	name_label.text = "  " + item_name_text # Indent for clarity
-	name_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL 
-	# name_label.size_flags_vertical = Control.SIZE_EXPAND_FILL # Allow label to take natural height
+	# Remove expand flag to keep labels and button together
 	name_label.size_flags_vertical = Control.SIZE_SHRINK_CENTER # Center vertically if row is taller
 	name_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER # Center text in label
-	name_label.mouse_filter = Control.MOUSE_FILTER_IGNORE # Prevent label from stealing clicks
 	
 	# Add a summary label for quick info
 	var summary_label = Label.new()
-	summary_label.text = item_summary_text
-	summary_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	summary_label.text = " " + item_summary_text # Add a space for separation
+	summary_label.add_theme_color_override("font_color", Color.LIGHT_GRAY) # Make summary less prominent
 	summary_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER # Center text in label
 	
 	var inspect_button = Button.new()
 	inspect_button.text = "Inspect"
-	inspect_button.custom_minimum_size.x = 100 # Ensure button is reasonably sized
 	inspect_button.custom_minimum_size.y = 30 # Explicit minimum height for the button
-	inspect_button.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	inspect_button.size_flags_vertical = Control.SIZE_SHRINK_CENTER # Center vertically if row is taller
 	
-	inspect_button.pressed.connect(_on_inspect_part_pressed.bind(item_data))
-	hbox.add_child(name_label) # Add the name label first
-	
+	# This function is only used for cargo, so connect to the cargo inspection handler.
+	inspect_button.pressed.connect(_on_inspect_cargo_pressed.bind(item_data))
 	hbox.add_child(name_label)
+	hbox.add_child(summary_label)
 	hbox.add_child(inspect_button)
 	parent.add_child(hbox)
 
@@ -260,12 +263,13 @@ func _populate_overview_tab(vehicle_data: Dictionary):
 	stats_title.add_theme_color_override("font_color", Color.YELLOW) # Highlight title
 
 	overview_vbox.add_child(stats_title)
-	_add_detail_row(overview_vbox, "  Top Speed:", "%.0f " % vehicle_data.get("top_speed", 0.0))
-	_add_detail_row(overview_vbox, "  Offroad:", "%.0f" % vehicle_data.get("offroad_capability", 0.0))
-	_add_detail_row(overview_vbox, "  Efficiency:", "%.0f" % vehicle_data.get("efficiency", 0.0))
-	_add_detail_row(overview_vbox, "  Cargo Capacity:", "%.0f" % vehicle_data.get("cargo_capacity", 0.0))
-	_add_detail_row(overview_vbox, "  Weight Capacity:", "%.0f" % vehicle_data.get("weight_capacity", 0.0))
-	_add_detail_row(overview_vbox, "  Passenger Seats:", "%d" % vehicle_data.get("passenger_seats", 0))
+	_add_stat_row_with_button(overview_vbox, "  Top Speed:", "%.0f" % vehicle_data.get("top_speed", 0.0), "top_speed", vehicle_data)
+	_add_stat_row_with_button(overview_vbox, "  Offroad:", "%.0f" % vehicle_data.get("offroad_capability", 0.0), "offroad_capability", vehicle_data)
+	_add_stat_row_with_button(overview_vbox, "  Efficiency:", "%.0f" % vehicle_data.get("efficiency", 0.0), "efficiency", vehicle_data)
+	_add_stat_row_with_button(overview_vbox, "  Cargo Capacity:", "%.0f" % vehicle_data.get("cargo_capacity", 0.0), "cargo_capacity", vehicle_data)
+	_add_stat_row_with_button(overview_vbox, "  Weight Capacity:", "%.0f" % vehicle_data.get("weight_capacity", 0.0), "weight_capacity", vehicle_data)
+	_add_stat_row_with_button(overview_vbox, "  Passenger Seats:", "%d" % vehicle_data.get("passenger_seats", 0), "passenger_seats", vehicle_data)
+
 
 func _populate_parts_tab(vehicle_data: Dictionary):
 	if not is_instance_valid(parts_vbox): return
@@ -343,6 +347,24 @@ func _populate_parts_tab(vehicle_data: Dictionary):
 func _populate_cargo_tab(vehicle_data: Dictionary):
 	if not is_instance_valid(cargo_vbox): return
 
+	# --- Button to view full convoy manifest ---
+	var full_manifest_button = Button.new()
+	full_manifest_button.text = "View Full Convoy Cargo Manifest"
+	full_manifest_button.custom_minimum_size.y = 40 # Make it a decent size
+	full_manifest_button.pressed.connect(_on_inspect_all_cargo_pressed)
+	cargo_vbox.add_child(full_manifest_button)
+
+	var separator = HSeparator.new()
+	separator.custom_minimum_size.y = 15
+	cargo_vbox.add_child(separator)
+
+	# --- Title for this vehicle's cargo ---
+	var vehicle_cargo_title = Label.new()
+	vehicle_cargo_title.text = "Cargo in this Vehicle:"
+	vehicle_cargo_title.add_theme_font_size_override("font_size", 16)
+	vehicle_cargo_title.add_theme_color_override("font_color", Color.LIGHT_GRAY)
+	cargo_vbox.add_child(vehicle_cargo_title)
+
 	var all_cargo_from_vehicle: Array = vehicle_data.get("cargo", [])
 	var general_cargo_list: Array = []
 
@@ -353,7 +375,7 @@ func _populate_cargo_tab(vehicle_data: Dictionary):
 
 	if general_cargo_list.is_empty():
 		var no_cargo_label = Label.new()
-		no_cargo_label.text = "This vehicle is not carrying any cargo."
+		no_cargo_label.text = "  No cargo items in this vehicle."
 		cargo_vbox.add_child(no_cargo_label)
 		return
 
@@ -370,6 +392,124 @@ func _populate_cargo_tab(vehicle_data: Dictionary):
 		var agg_data = aggregated_cargo[item_name]
 		var summary_text = "Quantity: %d" % agg_data.quantity
 		_add_inspectable_item_row(cargo_vbox, item_name, summary_text, agg_data.sample)
+
+func _add_stat_row_with_button(parent: Container, label_text: String, stat_value_display: String, stat_type: String, vehicle_data: Dictionary):
+	var hbox = HBoxContainer.new()
+	hbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+
+	var label_node = Label.new()
+	label_node.text = label_text
+	label_node.size_flags_vertical = Control.SIZE_SHRINK_CENTER # Align with button vertically
+
+	var inspect_button = Button.new()
+	inspect_button.text = stat_value_display
+	# Let the button take its natural width and sit next to the label
+	inspect_button.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	inspect_button.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+
+	# Style the button to be lighter and more distinct
+	var style_box = StyleBoxFlat.new()
+	style_box.bg_color = Color(0.4, 0.4, 0.4, 0.8) # A lighter gray
+	style_box.set_content_margin_all(4) # Give it some padding
+	style_box.corner_radius_top_left = 3
+	style_box.corner_radius_top_right = 3
+	style_box.corner_radius_bottom_left = 3
+	style_box.corner_radius_bottom_right = 3
+	inspect_button.add_theme_stylebox_override("normal", style_box)
+
+	inspect_button.pressed.connect(_on_inspect_stat_pressed.bind(stat_type, vehicle_data))
+
+	hbox.add_child(label_node)
+	hbox.add_child(inspect_button)
+	parent.add_child(hbox)
+
+func _on_inspect_stat_pressed(stat_type: String, vehicle_data: Dictionary):
+	var dialog = AcceptDialog.new()
+	dialog.title = "Inspect " + stat_type.capitalize().replace("_", " ")
+
+	var dialog_vbox = VBoxContainer.new()
+	dialog_vbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	dialog_vbox.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	dialog.add_child(dialog_vbox)
+
+	var final_stat_value: float = vehicle_data.get(stat_type, 0.0)
+	var total_modifier: float = 0.0
+	var modifiers_list: Array = [] # [{"part_name": "Engine", "modifier": 10}]
+
+	# Combine parts from 'parts' and 'cargo' (with intrinsic_part_id)
+	var all_vehicle_parts: Array = []
+	if vehicle_data.has("parts") and vehicle_data.get("parts") is Array:
+		all_vehicle_parts.append_array(vehicle_data.get("parts"))
+	if vehicle_data.has("cargo") and vehicle_data.get("cargo") is Array:
+		for item_data in vehicle_data.get("cargo"):
+			if item_data is Dictionary and item_data.has("intrinsic_part_id") and item_data.get("intrinsic_part_id") != null:
+				all_vehicle_parts.append(item_data)
+
+	var modifier_key: String = ""
+	match stat_type:
+		"top_speed": modifier_key = "top_speed_add"
+		"offroad_capability": modifier_key = "offroad_capability_add"
+		"efficiency": modifier_key = "efficiency_add"
+		"cargo_capacity": modifier_key = "cargo_capacity_add"
+		"weight_capacity": modifier_key = "weight_capacity_add"
+		"passenger_seats": # Special case, usually not modified by parts
+			var seats_label = Label.new()
+			seats_label.text = "Passenger Seats: %d\n\nNote: Passenger seats are typically a base property of the vehicle and not modified by individual parts in an additive manner." % final_stat_value
+			seats_label.autowrap_mode = TextServer.AUTOWRAP_WORD
+			seats_label.add_theme_color_override("font_color", Color.LIGHT_GRAY)
+			dialog_vbox.add_child(seats_label)
+			get_tree().root.add_child(dialog)
+			dialog.popup_centered_ratio(0.75)
+			dialog.connect("confirmed", Callable(dialog, "queue_free"))
+			dialog.connect("popup_hide", Callable(dialog, "queue_free"))
+			return
+		_:
+			_add_grid_row(dialog_vbox, "Value", str(final_stat_value))
+			get_tree().root.add_child(dialog)
+			dialog.popup_centered_ratio(0.75)
+			dialog.connect("confirmed", Callable(dialog, "queue_free"))
+			dialog.connect("popup_hide", Callable(dialog, "queue_free"))
+			return
+
+	for part_item_data in all_vehicle_parts:
+		if part_item_data is Dictionary and part_item_data.has(modifier_key):
+			var modifier_value = part_item_data.get(modifier_key)
+			if modifier_value != null and modifier_value != 0:
+				total_modifier += float(modifier_value)
+				modifiers_list.append({"part_name": part_item_data.get("name", "Unknown Part"), "modifier": modifier_value})
+
+	var base_stat_value: float = final_stat_value - total_modifier
+
+	var grid = GridContainer.new()
+	grid.columns = 2
+	grid.add_theme_constant_override("h_separation", 10)
+	grid.add_theme_constant_override("v_separation", 5)
+	dialog_vbox.add_child(grid)
+
+	_add_grid_row(grid, "Base Value", "%.1f" % base_stat_value)
+	_add_grid_row(grid, "Total Modifier", "%+.1f" % total_modifier)
+	_add_grid_row(grid, "Final Value", "%.1f" % final_stat_value)
+
+	if not modifiers_list.is_empty():
+		var modifiers_label = Label.new()
+		modifiers_label.text = "\nModifiers from Parts:"
+		modifiers_label.add_theme_font_size_override("font_size", 16)
+		modifiers_label.add_theme_color_override("font_color", Color.CYAN)
+		dialog_vbox.add_child(modifiers_label)
+
+		for mod_info in modifiers_list:
+			var part_name_label = Label.new()
+			part_name_label.text = "  %s: %+.1f" % [mod_info.part_name, mod_info.modifier]
+			dialog_vbox.add_child(part_name_label)
+	else:
+		var no_mods_label = Label.new()
+		no_mods_label.text = "\nNo part modifiers found for this stat."
+		dialog_vbox.add_child(no_mods_label)
+
+	get_tree().root.add_child(dialog)
+	dialog.popup_centered_ratio(0.75)
+	dialog.connect("confirmed", Callable(dialog, "queue_free"))
+	dialog.connect("popup_hide", Callable(dialog, "queue_free"))
 
 func _get_part_summary_string(part_data: Dictionary) -> String:
 	var summary_parts = []
@@ -404,27 +544,59 @@ func _get_part_summary_string(part_data: Dictionary) -> String:
 
 func _on_inspect_part_pressed(part_data: Dictionary):
 	print("ConvoyVehicleMenu: Inspecting part: ", part_data.get("name", "Unknown Part"))
-
 	var dialog = AcceptDialog.new()
 	dialog.title = "Inspect: " + part_data.get("name", "Component Details")
+	var dialog_vbox = VBoxContainer.new()
+	dialog_vbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	dialog_vbox.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	dialog.add_child(dialog_vbox)
+
+	_populate_part_details_dialog(dialog_vbox, part_data)
+	get_tree().root.add_child(dialog)
+	dialog.popup_centered_ratio(0.75)
+	dialog.connect("confirmed", Callable(dialog, "queue_free"))
+	dialog.connect("popup_hide", Callable(dialog, "queue_free"))
+
+func _on_inspect_cargo_pressed(item_data: Dictionary):
+	print("ConvoyVehicleMenu: Inspecting cargo item: ", item_data.get("name", "Unknown Item"))
+
+	var dialog = AcceptDialog.new()
+	dialog.title = "Inspect Cargo: " + item_data.get("name", "Item Details")
 	
 	var dialog_vbox = VBoxContainer.new()
 	dialog_vbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	dialog_vbox.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	dialog.add_child(dialog_vbox)
 
-	_populate_part_details_dialog(dialog_vbox, part_data) # This function populates dialog_vbox directly
-	# Remove the dialog.dialog_text line as it's no longer used and would cause an error
-	# dialog.dialog_text = details_text 
-	get_tree().root.add_child(dialog) # Add to the scene root to ensure visibility
-	dialog.popup_centered_ratio(0.75) # Make dialog wider
+	# Use a GridContainer for a cleaner look, similar to part inspection
+	var grid = GridContainer.new()
+	grid.columns = 2
+	grid.add_theme_constant_override("h_separation", 10)
+	grid.add_theme_constant_override("v_separation", 5)
+	dialog_vbox.add_child(grid)
+
+	# Iterate through keys to display all relevant data
+	for key in item_data:
+		# Skip some less useful or complex keys for this simple display
+		if key in ["parts", "log", "creation_date", "distributor_id", "origin_sett_id", "packed_vehicle", "pending_deletion", "recipient", "vehicle_id", "vendor_id", "warehouse_id", "class_id", "intrinsic_part_id"]:
+			continue
+		if item_data[key] != null: # Only show non-null values
+			_add_grid_row(grid, key.capitalize().replace("_", " "), str(item_data[key]))
+			
+	get_tree().root.add_child(dialog)
+	dialog.popup_centered_ratio(0.75)
 	dialog.connect("confirmed", Callable(dialog, "queue_free"))
-	dialog.connect("popup_hide", Callable(dialog, "queue_free")) # Also free if closed via 'X' or Esc
+	dialog.connect("popup_hide", Callable(dialog, "queue_free"))
 
-
+func _on_inspect_all_cargo_pressed():
+	if _current_convoy_data:
+		print("ConvoyVehicleMenu: Requesting to open full cargo menu.")
+		emit_signal("inspect_all_convoy_cargo_requested", _current_convoy_data)
+	else:
+		printerr("ConvoyVehicleMenu: _current_convoy_data is not set. Cannot open full cargo manifest.")
 
 func _populate_part_details_dialog(parent_vbox: VBoxContainer, part_data: Dictionary):
-	# Main details
+
 	var main_details_grid = GridContainer.new()
 	main_details_grid.columns = 2
 	main_details_grid.add_theme_constant_override("h_separation", 10)
@@ -554,3 +726,10 @@ func _add_grid_row(grid: GridContainer, key: String, value):
 	value_label.autowrap_mode = TextServer.AUTOWRAP_WORD
 	value_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	grid.add_child(value_label)
+
+func _on_title_label_gui_input(event: InputEvent):
+	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
+		if _current_convoy_data:
+			print("ConvoyVehicleMenu: Title clicked. Emitting 'return_to_convoy_overview_requested'.")
+			emit_signal("return_to_convoy_overview_requested", _current_convoy_data)
+			get_viewport().set_input_as_handled()

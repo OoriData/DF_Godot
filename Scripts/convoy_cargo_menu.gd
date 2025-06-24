@@ -2,6 +2,7 @@ extends Control
 
 signal back_requested
 
+signal return_to_convoy_overview_requested(convoy_data)
 var convoy_data_received: Dictionary
 
 @onready var title_label: Label = $MainVBox/TitleLabel
@@ -12,6 +13,11 @@ func _ready():
 	if is_instance_valid(back_button):
 		if not back_button.is_connected("pressed", Callable(self, "_on_back_button_pressed")):
 			back_button.pressed.connect(_on_back_button_pressed, CONNECT_ONE_SHOT)
+	
+	# Make the title label clickable to return to the convoy overview
+	if is_instance_valid(title_label):
+		title_label.mouse_filter = Control.MOUSE_FILTER_STOP # Allow it to receive mouse events
+		title_label.gui_input.connect(_on_title_label_gui_input)
 	else:
 		printerr("ConvoyCargoMenu: BackButton node not found. Ensure it's named 'BackButton' in the scene.")
 
@@ -179,3 +185,9 @@ func _on_inspect_cargo_item_pressed(item_data: Dictionary):
 
 	dialog.connect("confirmed", Callable(dialog, "queue_free"))
 	dialog.connect("popup_hide", Callable(dialog, "queue_free"))
+
+func _on_title_label_gui_input(event: InputEvent):
+	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
+		print("ConvoyCargoMenu: Title clicked. Emitting 'return_to_convoy_overview_requested'.")
+		emit_signal("return_to_convoy_overview_requested", convoy_data_received)
+		get_viewport().set_input_as_handled()
