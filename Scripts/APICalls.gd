@@ -84,7 +84,7 @@ func get_user_convoys(p_user_id: String) -> void:
 
 	# If we reach here, p_user_id IS a valid UUID. Proceed with local attempt.
 
-	var url: String = '%s/convoy/user_convoys?user_id=%s' % [LOCAL_BASE_URL, p_user_id] # Try LOCAL first
+	var url: String = '%s/convoy/user_convoys?user_id=%s' % [BASE_URL, p_user_id] # Try LOCAL first
 	var headers: PackedStringArray = ['accept: application/json']
 	_is_local_user_attempt = true # This is the initial local attempt
 	

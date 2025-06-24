@@ -58,6 +58,7 @@ func open_convoy_journey_menu(convoy_data = null):
 	_show_menu(convoy_journey_menu_scene, convoy_data)
 
 func open_convoy_settlement_menu(convoy_data = null):
+	print("MenuManager: open_convoy_settlement_menu called. Data is valid: ", convoy_data != null)
 	_show_menu(convoy_settlement_menu_scene, convoy_data)
 
 func open_convoy_cargo_menu(convoy_data = null):
@@ -125,8 +126,14 @@ func _show_menu(menu_scene_resource, data_to_pass = null, add_to_stack: bool = t
 
 	# Pass data to the new menu if it has an initializer function
 	# This might affect its size if content is dynamic.
+	# We connect to the `ready` signal to ensure that the menu is fully initialized
+	# (including all its @onready variables) before we try to pass data to it.
+	# This is more robust than relying on each menu to defer its own initialization.
 	if current_active_menu.has_method("initialize_with_data"):
-		current_active_menu.initialize_with_data(data_to_pass)
+		current_active_menu.ready.connect(
+			current_active_menu.initialize_with_data.bind(data_to_pass),
+			CONNECT_ONE_SHOT
+		)
 	if data_to_pass: # Optional: store context for "back"
 		current_active_menu.set_meta("menu_data", data_to_pass)
 
@@ -196,7 +203,10 @@ func _show_menu(menu_scene_resource, data_to_pass = null, add_to_stack: bool = t
 		if current_active_menu.has_signal("open_journey_menu_requested"):
 			current_active_menu.open_journey_menu_requested.connect(open_convoy_journey_menu, CONNECT_ONE_SHOT)
 		if current_active_menu.has_signal("open_settlement_menu_requested"):
+			print("MenuManager: Attempting to connect 'open_settlement_menu_requested'...")
 			current_active_menu.open_settlement_menu_requested.connect(open_convoy_settlement_menu, CONNECT_ONE_SHOT)
+		else:
+			printerr("MenuManager: FAILED to connect. ConvoyMenu is missing the 'open_settlement_menu_requested' signal declaration.")
 		# This signal is for the main ConvoyMenu to open its submenus.
 		# The title click functionality is for submenus to return to the main ConvoyMenu.
 		# So, no `return_to_convoy_overview_requested` connection here.

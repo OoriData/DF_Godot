@@ -39,17 +39,25 @@ theme_override_font_sizes/font_size = 20
 text = "Settlement Interactions"
 horizontal_alignment = 1
 
-[node name="ScrollContainer" type="ScrollContainer" parent="MainVBox"]
+[node name="VendorTabContainer" type="TabContainer" parent="MainVBox"]
+unique_name_in_owner = true
 layout_mode = 2
 size_flags_vertical = 3
+tab_alignment = 1
 
-[node name="ContentVBox" type="VBoxContainer" parent="MainVBox/ScrollContainer"]
-unique_name_in_owner = true
+[node name="SettlementInfoTab" type="ScrollContainer" parent="VendorTabContainer"]
 layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
+name = "Settlement Info"
+follow_focus = true
 
-[node name="PlaceholderLabel" type="Label" parent="MainVBox/ScrollContainer/ContentVBox"]
+[node name="SettlementContentVBox" type="VBoxContainer" parent="VendorTabContainer/SettlementInfoTab"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="PlaceholderLabel" type="Label" parent="VendorTabContainer/SettlementInfoTab/SettlementContentVBox"]
 layout_mode = 2
 text = "Interactions with the current settlement (trade, quests, etc.) will go here."
 horizontal_alignment = 1
