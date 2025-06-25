@@ -6,7 +6,7 @@ signal back_requested
 # Node references using @onready. Paths are relative to the node this script is attached to.
 # %NodeName syntax is used for nodes with "unique_name_in_owner" enabled.
 # $Path/To/Node is used for direct or indirect children without unique names.
-@onready var title_label = $MainVBox/TitleLabel
+@onready var title_label: Button = $MainVBox/TitleLabel
 @onready var vendor_tab_container = %VendorTabContainer
 @onready var settlement_content_vbox = %SettlementContentVBox
 @onready var back_button = $MainVBox/BackButton
@@ -18,46 +18,96 @@ var _settlement_data: Dictionary
 
 # This function is called by MenuManager to pass the convoy data when the menu is opened.
 func initialize_with_data(data: Dictionary):
-	# This function is now connected to the 'ready' signal by MenuManager,
-	# so we can be sure that all @onready variables are initialized.
 	print("ConvoySettlementMenu: initialize_with_data called.")
 	if not data or not data.has("convoy_id"):
 		printerr("ConvoySettlementMenu: Received invalid or empty convoy data.")
 		_display_error("No convoy data provided.")
 		return
-	
+
+	# Set the main title to the convoy's name
+	title_label.text = data.get("convoy_name", "Settlement Interactions")
 	_convoy_data = data
-	_display_settlement_info()
+
+	
+	# Always defer the display logic to ensure the node is fully ready and in the scene tree,
+	# and all @onready variables and their connections are established.
+	print("ConvoySettlementMenu: initialize_with_data - Deferring _display_settlement_info.")
+	call_deferred("_display_settlement_info")
 
 
 func _ready():
-	# Connect the back button's "pressed" signal to a handler function
-	back_button.pressed.connect(_on_back_button_pressed)
-	# Connect to the tab changed signal for lazy loading of vendor info
-	vendor_tab_container.tab_changed.connect(_on_vendor_tab_changed)
+	print("ConvoySettlementMenu: _ready() started processing.")
+	# Fallback assignment if @onready somehow failed (shouldn't happen with proper setup)
+	if not is_instance_valid(settlement_content_vbox):
+		settlement_content_vbox = get_node_or_null("%SettlementContentVBox")
+		if not is_instance_valid(settlement_content_vbox):
+			printerr("ConvoySettlementMenu: Failed to re-assign settlement_content_vbox in _ready().")
+		else:
+			print("ConvoySettlementMenu: _ready() - settlement_content_vbox re-assigned and is valid.")
+
+	# Explicitly check and potentially re-assign vendor_tab_container
+	if not is_instance_valid(vendor_tab_container):
+		vendor_tab_container = get_node_or_null("%VendorTabContainer")
+		if not is_instance_valid(vendor_tab_container):
+			printerr("ConvoySettlementMenu: Failed to re-assign vendor_tab_container in _ready().")
+		else:
+			print("ConvoySettlementMenu: _ready() - vendor_tab_container re-assigned and is valid.")
+	
+	# Explicitly check if the unique name node is found at _ready()
+	if not get_node_or_null("%SettlementContentVBox"):
+		printerr("ConvoySettlementMenu: CRITICAL - %SettlementContentVBox not found at _ready(). Check scene setup.")
+	# It's crucial to connect signals here for the UI to be interactive.
+	if is_instance_valid(back_button):
+		back_button.pressed.connect(_on_back_button_pressed)
+	else:
+		printerr("ConvoySettlementMenu: BackButton node not found.")
+	
+	if is_instance_valid(vendor_tab_container):
+		vendor_tab_container.tab_changed.connect(_on_vendor_tab_changed)
+
+	# Connect the title label (now a Button) to go back to the convoy menu
+	if is_instance_valid(title_label):
+		if not title_label.is_connected("pressed", Callable(self, "_on_title_label_pressed")):
+			title_label.pressed.connect(_on_title_label_pressed)
 
 
 func _display_error(message: String):
 	_clear_tabs()
 	
-	# Clear the content of the main settlement info tab
-	for child in settlement_content_vbox.get_children():
-		child.queue_free()
+	if is_instance_valid(settlement_content_vbox):
+		# Clear the content of the main settlement info tab
+		for child in settlement_content_vbox.get_children():
+			child.queue_free()
+	else:
+		printerr("ConvoySettlementMenu: settlement_content_vbox is invalid when trying to clear children in _display_error().")
+		# If settlement_content_vbox is null, we can't add children to it directly.
+		# The error message will be displayed in the console.
+		return
+
 	
+
 	title_label.text = "Error"
 	settlement_content_vbox.add_child(create_info_label(message))
 	vendor_tab_container.set_tab_title(0, "Error") # Set title for the first tab (error tab)
 
 func _populate_settlement_info_tab(settlement_data: Dictionary):
-	for child in settlement_content_vbox.get_children():
-		child.queue_free()
+	if is_instance_valid(settlement_content_vbox):
+		for child in settlement_content_vbox.get_children():
+			child.queue_free()
+	else:
+		printerr("ConvoySettlementMenu: settlement_content_vbox is invalid when trying to populate info tab.")
+		return
 	
+	_add_detail_row(settlement_content_vbox, "Name:", settlement_data.get("name", "Unnamed Settlement"))
 	_add_detail_row(settlement_content_vbox, "Type:", settlement_data.get("sett_type", "Unknown Type").capitalize())
 	_add_detail_row(settlement_content_vbox, "ID:", settlement_data.get("sett_id", "N/A"))
 	# Add more general settlement info here if needed in the future.
 	settlement_content_vbox.add_child(create_info_label("\nSelect a vendor tab to see more details."))
 
 func _populate_settlement_info_tab_with_error(message: String):
+	if not is_instance_valid(settlement_content_vbox):
+		printerr("ConvoySettlementMenu: settlement_content_vbox is invalid when trying to populate error tab.")
+		return
 	for child in settlement_content_vbox.get_children():
 		child.queue_free()
 	settlement_content_vbox.add_child(create_info_label(message))
@@ -77,7 +127,12 @@ func _display_settlement_info():
 	var current_convoy_y = roundi(_convoy_data.get("y", -1.0))
 
 	# Get map data directly from the GameDataManager singleton instead of loading it here.
-	var map_tiles = GameDataManager.map_tiles
+	var gdm = get_node_or_null("/root/GameDataManager")
+	if not is_instance_valid(gdm):
+		_display_error("GameDataManager node is not valid or not found in the scene tree.")
+		return
+		
+	var map_tiles = gdm.map_tiles
 	if map_tiles.is_empty():
 		_populate_settlement_info_tab_with_error("Error: Map data not loaded in GameDataManager.")
 		return
@@ -94,13 +149,10 @@ func _display_settlement_info():
 	if target_tile and target_tile.has("settlements") and target_tile.settlements is Array and not target_tile.settlements.is_empty():
 		_settlement_data = target_tile.settlements[0] # Assuming we display info for the first settlement.
 
-		# Update title with settlement name
-		title_label.text = _settlement_data.get("name", "Unnamed Settlement")
-
 		_populate_settlement_info_tab(_settlement_data)
 
 		if _settlement_data.has("vendors") and _settlement_data.vendors is Array and not _settlement_data.vendors.is_empty():
-			print("ConvoySettlementMenu: Found ", _settlement_data.vendors.size(), " vendors in settlement.")
+			# print("ConvoySettlementMenu: Found ", _settlement_data.vendors.size(), " vendors in settlement.") # Debug line
 
 			for vendor in _settlement_data.vendors:
 				_create_vendor_tab(vendor)
@@ -114,7 +166,7 @@ func _display_settlement_info():
 
 	else:
 		title_label.text = "Location: (%d, %d)" % [current_convoy_x, current_convoy_y]
-		_populate_settlement_info_tab_with_error("No settlement found at your current coordinates: (%d, %d)" % [current_convoy_x, current_convoy_y])
+		_populate_settlement_info_tab_with_error("No settlement found at convoy coordinates: (%d, %d)" % [current_convoy_x, current_convoy_y])
 
 func _create_vendor_tab(vendor_data: Dictionary):
 	var vendor_name = vendor_data.get("name", "Unnamed Vendor")
@@ -130,10 +182,18 @@ func _create_vendor_tab(vendor_data: Dictionary):
 	content_vbox.add_theme_constant_override("separation", 8)
 	scroll_container.add_child(content_vbox)
 	
+	if not is_instance_valid(vendor_tab_container):
+		printerr("ConvoySettlementMenu: vendor_tab_container is NULL in _create_vendor_tab.  Check scene and @onready initialization.")
+		scroll_container.queue_free() # Clean up the scroll_container to prevent memory leaks
+		return # Abort adding the tab
+
 	vendor_tab_container.add_child(scroll_container) # Add the new ScrollContainer as a child
 	vendor_tab_container.set_tab_title(vendor_tab_container.get_tab_count() - 1, vendor_name) # Explicitly set the tab title
 	
 func _on_vendor_tab_changed(tab_idx: int):
+	if not is_instance_valid(vendor_tab_container):
+		printerr("ConvoySettlementMenu: vendor_tab_container is invalid in _on_vendor_tab_changed().")
+		return
 	var tab_control = vendor_tab_container.get_tab_control(tab_idx)
 	if not is_instance_valid(tab_control):
 		return
@@ -209,6 +269,9 @@ func _populate_vendor_tab(parent_vbox: VBoxContainer, vendor_data: Dictionary):
 
 func _clear_tabs():
 	# Remove all dynamically added vendor tabs, starting from the end.
+	if not is_instance_valid(vendor_tab_container):
+		printerr("ConvoySettlementMenu: vendor_tab_container is invalid in _clear_tabs().")
+		return
 	# We only remove tabs from index 1 onwards, to keep the "Settlement Info" tab.
 	for i in range(vendor_tab_container.get_tab_count() - 1, 0, -1):
 		var tab = vendor_tab_container.get_child(i)
@@ -246,4 +309,9 @@ func _add_detail_row(parent: Container, label_text: String, value_text: String, 
 
 func _on_back_button_pressed():
 	# MenuManager is connected to this signal and will handle closing the menu.
+	emit_signal("back_requested")
+
+func _on_title_label_pressed():
+	# When the title (which is now a button) is pressed, go back to the convoy menu.
+	print("ConvoySettlementMenu: Title label pressed. Emitting 'back_requested' signal.")
 	emit_signal("back_requested")

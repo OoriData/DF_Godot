@@ -7,7 +7,7 @@ signal convoy_data_received(parsed_convoy_list: Array)
 signal fetch_error(error_message: String)
 
 const BASE_URL: String = 'https://df-api.oori.dev:1337'
-const LOCAL_BASE_URL: String = 'http://localhost:1337' # Added for local attempts
+const LOCAL_BASE_URL: String = 'https://df-api.oori.dev:1337' # Changed to live DB URL
 
 
 var current_user_id: String = "" # To store the logged-in user's ID
@@ -84,11 +84,11 @@ func get_user_convoys(p_user_id: String) -> void:
 
 	# If we reach here, p_user_id IS a valid UUID. Proceed with local attempt.
 
-	var url: String = '%s/convoy/user_convoys?user_id=%s' % [BASE_URL, p_user_id] # Try LOCAL first
+	var url: String = '%s/convoy/user_convoys?user_id=%s' % [LOCAL_BASE_URL, p_user_id] # Try LOCAL first
 	var headers: PackedStringArray = ['accept: application/json']
 	_is_local_user_attempt = true # This is the initial local attempt
 	
-	print("APICalls (get_user_convoys): Requesting user-specific convoys for user_id: %s from LOCAL URL: %s" % [p_user_id, url])
+	print("APICalls (get_user_convoys): Attempting to fetch user-specific convoys for user_id: %s from LOCAL URL: %s" % [p_user_id, url])
 	_last_requested_url = url
 	_current_request_purpose = RequestPurpose.USER_CONVOYS
 	var error: Error = _http_request.request(url, headers, HTTPClient.METHOD_GET)

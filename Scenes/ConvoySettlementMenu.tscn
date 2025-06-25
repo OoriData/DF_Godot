@@ -31,13 +31,14 @@ offset_right = -10.0
 offset_bottom = -10.0
 grow_horizontal = 2
 grow_vertical = 2
+alignment = 0
 theme_override_constants/separation = 10
 
-[node name="TitleLabel" type="Label" parent="MainVBox"]
+[node name="TitleLabel" type="Button" parent="MainVBox"]
+unique_name_in_owner = true
 layout_mode = 2
+size_flags_horizontal = 0
 theme_override_font_sizes/font_size = 20
-text = "Settlement Interactions"
-horizontal_alignment = 1
 
 [node name="VendorTabContainer" type="TabContainer" parent="MainVBox"]
 unique_name_in_owner = true
@@ -57,11 +58,6 @@ unique_name_in_owner = true
 layout_mode = 2
 size_flags_horizontal = 3
 
-[node name="PlaceholderLabel" type="Label" parent="VendorTabContainer/SettlementInfoTab/SettlementContentVBox"]
-layout_mode = 2
-text = "Interactions with the current settlement (trade, quests, etc.) will go here."
-horizontal_alignment = 1
-vertical_alignment = 1
 
 [node name="BackButton" type="Button" parent="MainVBox"]
 layout_mode = 2
