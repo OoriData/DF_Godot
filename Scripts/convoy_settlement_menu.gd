@@ -3,6 +3,9 @@ extends Control
 # Emitted when the user clicks the back button. MenuManager listens for this.
 signal back_requested
 
+# Preload the new panel scene for instancing.
+const VendorTradePanel = preload("res://Scenes/VendorTradePanel.tscn")
+
 # Node references using @onready. Paths are relative to the node this script is attached to.
 # %NodeName syntax is used for nodes with "unique_name_in_owner" enabled.
 # $Path/To/Node is used for direct or indirect children without unique names.
@@ -62,9 +65,6 @@ func _ready():
 	else:
 		printerr("ConvoySettlementMenu: BackButton node not found.")
 	
-	if is_instance_valid(vendor_tab_container):
-		vendor_tab_container.tab_changed.connect(_on_vendor_tab_changed)
-
 	# Connect the title label (now a Button) to go back to the convoy menu
 	if is_instance_valid(title_label):
 		if not title_label.is_connected("pressed", Callable(self, "_on_title_label_pressed")):
@@ -156,13 +156,6 @@ func _display_settlement_info():
 
 			for vendor in _settlement_data.vendors:
 				_create_vendor_tab(vendor)
-				print("ConvoySettlementMenu: Successfully created and added tab for vendor: ", vendor.get("name", "Unnamed Vendor"))
-		
-		# Manually trigger the changed signal for the initially selected tab to populate it.
-		if vendor_tab_container.get_tab_count() > 0:
-			_on_vendor_tab_changed(vendor_tab_container.current_tab)
-			print("ConvoySettlementMenu: Triggered initial tab population for tab index ", vendor_tab_container.current_tab)
-
 
 	else:
 		title_label.text = "Location: (%d, %d)" % [current_convoy_x, current_convoy_y]
@@ -170,102 +163,23 @@ func _display_settlement_info():
 
 func _create_vendor_tab(vendor_data: Dictionary):
 	var vendor_name = vendor_data.get("name", "Unnamed Vendor")
-	
-	var scroll_container = ScrollContainer.new()
-	scroll_container.name = vendor_name
-	scroll_container.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	scroll_container.set_meta("vendor_data", vendor_data)
-	scroll_container.set_meta("is_populated", false) # For lazy loading
+	var vendor_panel_instance = VendorTradePanel.instantiate()
 
-	var content_vbox = VBoxContainer.new()
-	content_vbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	content_vbox.add_theme_constant_override("separation", 8)
-	scroll_container.add_child(content_vbox)
-	
 	if not is_instance_valid(vendor_tab_container):
-		printerr("ConvoySettlementMenu: vendor_tab_container is NULL in _create_vendor_tab.  Check scene and @onready initialization.")
-		scroll_container.queue_free() # Clean up the scroll_container to prevent memory leaks
-		return # Abort adding the tab
-
-	vendor_tab_container.add_child(scroll_container) # Add the new ScrollContainer as a child
-	vendor_tab_container.set_tab_title(vendor_tab_container.get_tab_count() - 1, vendor_name) # Explicitly set the tab title
-	
-func _on_vendor_tab_changed(tab_idx: int):
-	if not is_instance_valid(vendor_tab_container):
-		printerr("ConvoySettlementMenu: vendor_tab_container is invalid in _on_vendor_tab_changed().")
+		printerr("ConvoySettlementMenu: vendor_tab_container is NULL in _create_vendor_tab. Check scene and @onready initialization.")
+		vendor_panel_instance.queue_free() # Clean up to prevent memory leaks
 		return
-	var tab_control = vendor_tab_container.get_tab_control(tab_idx)
-	if not is_instance_valid(tab_control):
-		return
-	
-	# Check if it's a vendor tab (has metadata) and if it's not already populated
-	if tab_control.has_meta("vendor_data") and not tab_control.get_meta("is_populated", false):
-		var vendor_data = tab_control.get_meta("vendor_data")
-		# The tab_control is the ScrollContainer. Its first child is the VBoxContainer for content.
-		if tab_control.get_child_count() > 0:
-			var content_vbox = tab_control.get_child(0)
-			if content_vbox is VBoxContainer:
-				_populate_vendor_tab(content_vbox, vendor_data)
-				tab_control.set_meta("is_populated", true)
 
-func _populate_vendor_tab(parent_vbox: VBoxContainer, vendor_data: Dictionary):
-	# Clear any placeholder content
-	for child in parent_vbox.get_children():
-		child.queue_free()
+	# 1. Add the panel to the scene tree. This is crucial because it triggers the panel's
+	#    _ready() function, which populates all its @onready variables (like vendor_item_list).
+	vendor_tab_container.add_child(vendor_panel_instance)
+	vendor_panel_instance.name = vendor_name # Set the node name for the tab
+	vendor_tab_container.set_tab_title(vendor_tab_container.get_tab_count() - 1, vendor_name)
 
-	# Vendor Description
-	var desc = vendor_data.get("base_desc", "No description available.")
-	if desc.is_empty():
-		desc = "No description available."
-	_add_detail_row(parent_vbox, "Description:", desc, true)
-	
-	# Money
-	_add_detail_row(parent_vbox, "Money:", "$%s" % vendor_data.get("money", 0))
-
-	# Separator
-	var separator1 = HSeparator.new()
-	separator1.custom_minimum_size.y = 10
-	parent_vbox.add_child(separator1)
-
-	# Resources Section
-	var resources_title = Label.new()
-	resources_title.text = "Resources & Services"
-	resources_title.add_theme_font_size_override("font_size", 18)
-	parent_vbox.add_child(resources_title)
-
-	var has_resources = false
-	if vendor_data.get("fuel", 0) > 0:
-		_add_detail_row(parent_vbox, "  Fuel Stock:", "%d L @ $%d/L" % [vendor_data.fuel, vendor_data.get("fuel_price", 0)])
-		has_resources = true
-	if vendor_data.get("water", 0) > 0:
-		_add_detail_row(parent_vbox, "  Water Stock:", "%d L @ $%d/L" % [vendor_data.water, vendor_data.get("water_price", 0)])
-		has_resources = true
-	if vendor_data.get("food", 0) > 0:
-		_add_detail_row(parent_vbox, "  Food Stock:", "%d units @ $%d/unit" % [vendor_data.food, vendor_data.get("food_price", 0)])
-		has_resources = true
-	if vendor_data.get("repair_price", 0) > 0:
-		_add_detail_row(parent_vbox, "  Repair Service:", "$%d per point" % vendor_data.get("repair_price"))
-		has_resources = true
-	
-	if not has_resources:
-		parent_vbox.add_child(create_info_label("  No resources or services available."))
-
-	# Separator
-	var separator2 = HSeparator.new()
-	separator2.custom_minimum_size.y = 10
-	parent_vbox.add_child(separator2)
-
-	# Inventories Section
-	var inventory_title = Label.new()
-	inventory_title.text = "Inventories"
-	inventory_title.add_theme_font_size_override("font_size", 18)
-	parent_vbox.add_child(inventory_title)
-
-	var cargo_inventory = vendor_data.get("cargo_inventory", [])
-	var vehicle_inventory = vendor_data.get("vehicle_inventory", [])
-
-	_add_detail_row(parent_vbox, "  Cargo Items:", "%d items" % cargo_inventory.size())
-	_add_detail_row(parent_vbox, "  Vehicles for Sale:", "%d vehicles" % vehicle_inventory.size())
+	# 2. Now that the panel is in the tree and ready, it's safe to initialize it and connect signals.
+	vendor_panel_instance.initialize(vendor_data, _convoy_data)
+	vendor_panel_instance.item_purchased.connect(_on_item_purchased)
+	vendor_panel_instance.item_sold.connect(_on_item_sold)
 
 func _clear_tabs():
 	# Remove all dynamically added vendor tabs, starting from the end.
@@ -315,3 +229,77 @@ func _on_title_label_pressed():
 	# When the title (which is now a button) is pressed, go back to the convoy menu.
 	print("ConvoySettlementMenu: Title label pressed. Emitting 'back_requested' signal.")
 	emit_signal("back_requested")
+
+
+# --- Transaction Logic ---
+
+func _on_item_purchased(item: Dictionary, quantity: int):
+	var total_cost = item.get("price", 0) * quantity
+
+	# 1. Update convoy data
+	_convoy_data["money"] = _convoy_data.get("money", 0) - total_cost
+	if not _convoy_data.has("cargo_inventory"):
+		_convoy_data["cargo_inventory"] = []
+	# This assumes items don't stack. If they do, you'll need more complex logic.
+	for i in range(quantity):
+		_convoy_data.cargo_inventory.append(item)
+	# TODO: Update convoy cargo weight if you track that.
+
+	# 2. Update vendor data
+	var vendor_name = vendor_tab_container.get_tab_title(vendor_tab_container.current_tab)
+	var vendor_data = _find_vendor_by_name(vendor_name)
+	if vendor_data:
+		vendor_data["money"] = vendor_data.get("money", 0) + total_cost
+		# This is a simple removal. If vendor has quantities, adjust that instead.
+		if vendor_data.has("cargo_inventory"):
+			for i in range(quantity):
+				var item_index = vendor_data.cargo_inventory.find(item)
+				if item_index != -1:
+					vendor_data.cargo_inventory.remove_at(item_index)
+	
+	# 3. Refresh all UIs to show the new state.
+	_refresh_all_vendor_panels()
+
+func _on_item_sold(item: Dictionary, quantity: int):
+	var sell_price = item.get("sell_price", item.get("price", 0) / 2)
+	var total_value = sell_price * quantity
+
+	# 1. Update convoy data
+	_convoy_data["money"] = _convoy_data.get("money", 0) + total_value
+	if _convoy_data.has("cargo_inventory"):
+		for i in range(quantity):
+			var item_index = _convoy_data.cargo_inventory.find(item)
+			if item_index != -1:
+				_convoy_data.cargo_inventory.remove_at(item_index)
+	# TODO: Update convoy cargo weight.
+
+	# 2. Update vendor data
+	var vendor_name = vendor_tab_container.get_tab_title(vendor_tab_container.current_tab)
+	var vendor_data = _find_vendor_by_name(vendor_name)
+	if vendor_data:
+		vendor_data["money"] = vendor_data.get("money", 0) - total_value
+		if not vendor_data.has("cargo_inventory"):
+			vendor_data["cargo_inventory"] = []
+		for i in range(quantity):
+			vendor_data.cargo_inventory.append(item)
+
+	# 3. Refresh all UIs.
+	_refresh_all_vendor_panels()
+
+func _refresh_all_vendor_panels():
+	# This ensures that changes (like convoy money/inventory) are reflected across all tabs.
+	for i in range(vendor_tab_container.get_tab_count()):
+		var tab_content = vendor_tab_container.get_tab_control(i)
+		# Check if it's one of our vendor panels by checking its type or methods.
+		if tab_content is Control and tab_content.has_method("initialize"):
+			var vendor_name = vendor_tab_container.get_tab_title(i)
+			var vendor_data = _find_vendor_by_name(vendor_name)
+			if vendor_data:
+				tab_content.initialize(vendor_data, _convoy_data)
+
+func _find_vendor_by_name(p_name: String) -> Dictionary:
+	if _settlement_data and _settlement_data.has("vendors"):
+		for vendor in _settlement_data.vendors:
+			if vendor.get("name") == p_name:
+				return vendor
+	return {}

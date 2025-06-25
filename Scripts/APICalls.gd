@@ -345,8 +345,8 @@ func parse_in_transit_convoy_details(raw_convoy_list: Array) -> Array:
 
 		convoy_details['journey'] = journey_data  # Store the (potentially modified) journey object
 
-		# Store the entire 'all_cargo' array
-		convoy_details['all_cargo'] = convoy_data.get('all_cargo', [])
+		# Store the entire 'cargo_inventory' array, aliased from the 'all_cargo' key in the raw API data.
+		convoy_details['cargo_inventory'] = convoy_data.get('all_cargo', [])
 
 		parsed_convoys.append(convoy_details)
 

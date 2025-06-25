@@ -1,0 +1,192 @@
+[gd_scene load_steps=2 format=3 uid="uid://dpsk1w1gqj3h7"]
+
+[ext_resource type="Script" path="res://Scripts/vendor_trade_panel.gd" id="1_script"]
+
+[node name="VendorTradePanel" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("1_script")
+
+[node name="HBoxContainer" type="HBoxContainer" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_constants/separation = 10
+
+[node name="LeftPanel" type="VBoxContainer" parent="HBoxContainer"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_stretch_ratio = 0.3
+
+[node name="TradeModeTabContainer" type="TabContainer" parent="HBoxContainer/LeftPanel"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_vertical = 3
+tab_alignment = 1
+
+[node name="BuyTab" type="VBoxContainer" parent="HBoxContainer/LeftPanel/TradeModeTabContainer"]
+name = "Buy"
+layout_mode = 2
+
+[node name="Label" type="Label" parent="HBoxContainer/LeftPanel/TradeModeTabContainer/BuyTab"]
+layout_mode = 2
+text = "Vendor's Wares"
+
+[node name="VendorItemList" type="ItemList" parent="HBoxContainer/LeftPanel/TradeModeTabContainer/BuyTab"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_vertical = 3
+
+[node name="SellTab" type="VBoxContainer" parent="HBoxContainer/LeftPanel/TradeModeTabContainer"]
+name = "Sell"
+layout_mode = 2
+visible = false
+
+[node name="Label" type="Label" parent="HBoxContainer/LeftPanel/TradeModeTabContainer/SellTab"]
+layout_mode = 2
+text = "Convoy's Cargo"
+
+[node name="ConvoyItemTree" type="Tree" parent="HBoxContainer/LeftPanel/TradeModeTabContainer/SellTab"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_vertical = 3
+hide_root = true
+[node name="VSeparator" type="VSeparator" parent="HBoxContainer"]
+layout_mode = 2
+
+[node name="MiddlePanel" type="VBoxContainer" parent="HBoxContainer"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_stretch_ratio = 0.4
+
+[node name="ItemNameLabel" type="Label" parent="HBoxContainer/MiddlePanel"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "Select an Item"
+theme_override_font_sizes/font_size = 24
+horizontal_alignment = 1
+
+[node name="ItemPreview" type="TextureRect" parent="HBoxContainer/MiddlePanel"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 150)
+layout_mode = 2
+expand_mode = 1
+stretch_mode = 5
+
+[node name="ItemInfoRichText" type="RichTextLabel" parent="HBoxContainer/MiddlePanel"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_vertical = 3
+size_flags_stretch_ratio = 2.0
+bbcode_enabled = true
+text = "Item description and stats here."
+fit_content = true
+
+[node name="HSeparator" type="HSeparator" parent="HBoxContainer/MiddlePanel"]
+layout_mode = 2
+
+[node name="ComparisonPanel" type="PanelContainer" parent="HBoxContainer/MiddlePanel"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_vertical = 3
+
+[node name="VBoxContainer" type="VBoxContainer" parent="HBoxContainer/MiddlePanel/ComparisonPanel"]
+layout_mode = 2
+theme_override_constants/separation = 10
+
+[node name="Label" type="Label" parent="HBoxContainer/MiddlePanel/ComparisonPanel/VBoxContainer"]
+layout_mode = 2
+text = "Comparison"
+horizontal_alignment = 1
+
+[node name="ComparisonGrid" type="GridContainer" parent="HBoxContainer/MiddlePanel/ComparisonPanel/VBoxContainer"]
+layout_mode = 2
+size_flags_vertical = 3
+columns = 2
+
+[node name="Label" type="Label" parent="HBoxContainer/MiddlePanel/ComparisonPanel/VBoxContainer/ComparisonGrid"]
+layout_mode = 2
+text = "Selected"
+
+[node name="Label" type="Label" parent="HBoxContainer/MiddlePanel/ComparisonPanel/VBoxContainer/ComparisonGrid"]
+layout_mode = 2
+text = "Equipped"
+
+[node name="SelectedItemStats" type="RichTextLabel" parent="HBoxContainer/MiddlePanel/ComparisonPanel/VBoxContainer/ComparisonGrid"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+fit_content = true
+
+[node name="EquippedItemStats" type="RichTextLabel" parent="HBoxContainer/MiddlePanel/ComparisonPanel/VBoxContainer/ComparisonGrid"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+fit_content = true
+
+[node name="VSeparator2" type="VSeparator" parent="HBoxContainer"]
+layout_mode = 2
+
+[node name="RightPanel" type="VBoxContainer" parent="HBoxContainer"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_stretch_ratio = 0.3
+theme_override_constants/separation = 10
+
+[node name="TransactionLabel" type="Label" parent="HBoxContainer/RightPanel"]
+layout_mode = 2
+text = "Transaction"
+theme_override_font_sizes/font_size = 20
+
+[node name="HBoxContainer" type="HBoxContainer" parent="HBoxContainer/RightPanel"]
+layout_mode = 2
+
+[node name="Label" type="Label" parent="HBoxContainer/RightPanel/HBoxContainer"]
+layout_mode = 2
+text = "Quantity:"
+
+[node name="QuantitySpinBox" type="SpinBox" parent="HBoxContainer/RightPanel/HBoxContainer"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+min_value = 1.0
+max_value = 99.0
+value = 1.0
+allow_greater = true
+
+[node name="PriceLabel" type="Label" parent="HBoxContainer/RightPanel"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "Total Price: 0"
+
+[node name="ActionButton" type="Button" parent="HBoxContainer/RightPanel"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "Buy"
+
+[node name="HSeparator" type="HSeparator" parent="HBoxContainer/RightPanel"]
+layout_mode = 2
+
+[node name="ConvoyInfoLabel" type="Label" parent="HBoxContainer/RightPanel"]
+layout_mode = 2
+text = "Convoy Info"
+theme_override_font_sizes/font_size = 20
+
+[node name="ConvoyMoneyLabel" type="Label" parent="HBoxContainer/RightPanel"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "Money: 0"
+
+[node name="ConvoyCargoLabel" type="Label" parent="HBoxContainer/RightPanel"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "Cargo: 0/0"
