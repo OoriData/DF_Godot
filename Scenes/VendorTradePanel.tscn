@@ -157,11 +157,16 @@ text = "Quantity:"
 [node name="QuantitySpinBox" type="SpinBox" parent="HBoxContainer/RightPanel/HBoxContainer"]
 unique_name_in_owner = true
 layout_mode = 2
-size_flags_horizontal = 3
-min_value = 1.0
+size_flags_horizontal = 1
+min_value = 0.0
 max_value = 99.0
 value = 1.0
-allow_greater = true
+allow_greater = false
+
+[node name="MaxButton" type="Button" parent="HBoxContainer/RightPanel/HBoxContainer"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "Max"
 
 [node name="PriceLabel" type="Label" parent="HBoxContainer/RightPanel"]
 unique_name_in_owner = true

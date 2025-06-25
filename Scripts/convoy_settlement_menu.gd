@@ -18,6 +18,8 @@ const VendorTradePanel = preload("res://Scenes/VendorTradePanel.tscn")
 var _convoy_data: Dictionary
 # This will be populated once the settlement is found.
 var _settlement_data: Dictionary
+var _all_settlement_data: Array # New: To store all settlement data from GameDataManager
+
 
 # This function is called by MenuManager to pass the convoy data when the menu is opened.
 func initialize_with_data(data: Dictionary):
@@ -132,6 +134,12 @@ func _display_settlement_info():
 		_display_error("GameDataManager node is not valid or not found in the scene tree.")
 		return
 		
+			
+	# Fetch all settlement data from GameDataManager
+	_all_settlement_data = gdm.get_all_settlements_data()
+	if _all_settlement_data.is_empty():
+		_populate_settlement_info_tab_with_error("Error: All settlement data not loaded in GameDataManager.")
+
 	var map_tiles = gdm.map_tiles
 	if map_tiles.is_empty():
 		_populate_settlement_info_tab_with_error("Error: Map data not loaded in GameDataManager.")
@@ -177,7 +185,7 @@ func _create_vendor_tab(vendor_data: Dictionary):
 	vendor_tab_container.set_tab_title(vendor_tab_container.get_tab_count() - 1, vendor_name)
 
 	# 2. Now that the panel is in the tree and ready, it's safe to initialize it and connect signals.
-	vendor_panel_instance.initialize(vendor_data, _convoy_data)
+	vendor_panel_instance.initialize(vendor_data, _convoy_data, _settlement_data, _all_settlement_data) # Pass _all_settlement_data
 	vendor_panel_instance.item_purchased.connect(_on_item_purchased)
 	vendor_panel_instance.item_sold.connect(_on_item_sold)
 
@@ -295,7 +303,7 @@ func _refresh_all_vendor_panels():
 			var vendor_name = vendor_tab_container.get_tab_title(i)
 			var vendor_data = _find_vendor_by_name(vendor_name)
 			if vendor_data:
-				tab_content.initialize(vendor_data, _convoy_data)
+				tab_content.initialize(vendor_data, _convoy_data, _settlement_data, _all_settlement_data) # Pass _all_settlement_data
 
 func _find_vendor_by_name(p_name: String) -> Dictionary:
 	if _settlement_data and _settlement_data.has("vendors"):
