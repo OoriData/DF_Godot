@@ -241,8 +241,7 @@ func _on_title_label_pressed():
 
 # --- Transaction Logic ---
 
-func _on_item_purchased(item: Dictionary, quantity: int):
-	var total_cost = item.get("price", 0) * quantity
+func _on_item_purchased(item: Dictionary, quantity: int, total_cost: float):
 
 	# 1. Update convoy data
 	_convoy_data["money"] = _convoy_data.get("money", 0) - total_cost
@@ -268,9 +267,7 @@ func _on_item_purchased(item: Dictionary, quantity: int):
 	# 3. Refresh all UIs to show the new state.
 	_refresh_all_vendor_panels()
 
-func _on_item_sold(item: Dictionary, quantity: int):
-	var sell_price = item.get("sell_price", item.get("price", 0) / 2)
-	var total_value = sell_price * quantity
+func _on_item_sold(item: Dictionary, quantity: int, total_value: float):
 
 	# 1. Update convoy data
 	_convoy_data["money"] = _convoy_data.get("money", 0) + total_value

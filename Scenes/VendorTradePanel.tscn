@@ -19,6 +19,7 @@ anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
 theme_override_constants/separation = 10
+theme_override_constants/margin_top = 16
 
 [node name="LeftPanel" type="VBoxContainer" parent="HBoxContainer"]
 layout_mode = 2
@@ -31,29 +32,30 @@ layout_mode = 2
 size_flags_vertical = 3
 tab_alignment = 1
 
-[node name="BuyTab" type="VBoxContainer" parent="HBoxContainer/LeftPanel/TradeModeTabContainer"]
+[node name="Buy" type="VBoxContainer" parent="HBoxContainer/LeftPanel/TradeModeTabContainer"]
 name = "Buy"
 layout_mode = 2
 
-[node name="Label" type="Label" parent="HBoxContainer/LeftPanel/TradeModeTabContainer/BuyTab"]
+[node name="Label" type="Label" parent="HBoxContainer/LeftPanel/TradeModeTabContainer/Buy"]
 layout_mode = 2
 text = "Vendor's Wares"
 
-[node name="VendorItemList" type="ItemList" parent="HBoxContainer/LeftPanel/TradeModeTabContainer/BuyTab"]
+[node name="VendorItemTree" type="Tree" parent="HBoxContainer/LeftPanel/TradeModeTabContainer/Buy"]
 unique_name_in_owner = true
 layout_mode = 2
 size_flags_vertical = 3
+hide_root = true
 
-[node name="SellTab" type="VBoxContainer" parent="HBoxContainer/LeftPanel/TradeModeTabContainer"]
+[node name="Sell" type="VBoxContainer" parent="HBoxContainer/LeftPanel/TradeModeTabContainer"]
 name = "Sell"
 layout_mode = 2
 visible = false
 
-[node name="Label" type="Label" parent="HBoxContainer/LeftPanel/TradeModeTabContainer/SellTab"]
+[node name="Label" type="Label" parent="HBoxContainer/LeftPanel/TradeModeTabContainer/Sell"]
 layout_mode = 2
 text = "Convoy's Cargo"
 
-[node name="ConvoyItemTree" type="Tree" parent="HBoxContainer/LeftPanel/TradeModeTabContainer/SellTab"]
+[node name="ConvoyItemTree" type="Tree" parent="HBoxContainer/LeftPanel/TradeModeTabContainer/Sell"]
 unique_name_in_owner = true
 layout_mode = 2
 size_flags_vertical = 3
@@ -71,7 +73,8 @@ unique_name_in_owner = true
 layout_mode = 2
 text = "Select an Item"
 theme_override_font_sizes/font_size = 24
-horizontal_alignment = 1
+horizontal_alignment = 0
+autowrap_mode = 3
 
 [node name="ItemPreview" type="TextureRect" parent="HBoxContainer/MiddlePanel"]
 unique_name_in_owner = true
@@ -80,14 +83,40 @@ layout_mode = 2
 expand_mode = 1
 stretch_mode = 5
 
-[node name="ItemInfoRichText" type="RichTextLabel" parent="HBoxContainer/MiddlePanel"]
-unique_name_in_owner = true
+[node name="InfoScrollContainer" type="ScrollContainer" parent="HBoxContainer/MiddlePanel"]
 layout_mode = 2
 size_flags_vertical = 3
 size_flags_stretch_ratio = 2.0
+
+[node name="InfoVBox" type="VBoxContainer" parent="HBoxContainer/MiddlePanel/InfoScrollContainer"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+
+[node name="ItemInfoRichText" type="RichTextLabel" parent="HBoxContainer/MiddlePanel/InfoScrollContainer/InfoVBox"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_vertical = 3
 bbcode_enabled = true
 text = "Item description and stats here."
+fit_content = false
+
+[node name="DescriptionPanel" type="VBoxContainer" parent="HBoxContainer/MiddlePanel/InfoScrollContainer/InfoVBox"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_constants/separation = 5
+
+[node name="DescriptionToggleButton" type="Button" parent="HBoxContainer/MiddlePanel/InfoScrollContainer/InfoVBox/DescriptionPanel"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "Description (Click to Expand)"
+
+[node name="ItemDescriptionRichText" type="RichTextLabel" parent="HBoxContainer/MiddlePanel/InfoScrollContainer/InfoVBox/DescriptionPanel"]
+unique_name_in_owner = true
+layout_mode = 2
+bbcode_enabled = true
 fit_content = true
+visible = false # Hidden by default
 
 [node name="HSeparator" type="HSeparator" parent="HBoxContainer/MiddlePanel"]
 layout_mode = 2
@@ -168,10 +197,12 @@ unique_name_in_owner = true
 layout_mode = 2
 text = "Max"
 
-[node name="PriceLabel" type="Label" parent="HBoxContainer/RightPanel"]
+[node name="PriceLabel" type="RichTextLabel" parent="HBoxContainer/RightPanel"]
 unique_name_in_owner = true
 layout_mode = 2
 text = "Total Price: 0"
+bbcode_enabled = true
+fit_content = true
 
 [node name="ActionButton" type="Button" parent="HBoxContainer/RightPanel"]
 unique_name_in_owner = true

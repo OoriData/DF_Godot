@@ -1,20 +1,22 @@
 extends Control
 
 # Signals to notify the main menu of transactions
-signal item_purchased(item, quantity)
-signal item_sold(item, quantity)
+signal item_purchased(item, quantity, total_price)
+signal item_sold(item, quantity, total_price)
 
 # --- Node References ---
-@onready var vendor_item_list: ItemList = %VendorItemList
+@onready var vendor_item_tree: Tree = %VendorItemTree
 @onready var convoy_item_tree: Tree = %ConvoyItemTree
 @onready var item_name_label: Label = %ItemNameLabel
 @onready var item_preview: TextureRect = %ItemPreview
 @onready var item_info_rich_text: RichTextLabel = %ItemInfoRichText
 @onready var comparison_panel: PanelContainer = %ComparisonPanel
+@onready var description_toggle_button: Button = %DescriptionToggleButton
+@onready var item_description_rich_text: RichTextLabel = %ItemDescriptionRichText
 @onready var selected_item_stats: RichTextLabel = %SelectedItemStats
 @onready var equipped_item_stats: RichTextLabel = %EquippedItemStats
 @onready var quantity_spinbox: SpinBox = %QuantitySpinBox
-@onready var price_label: Label = %PriceLabel
+@onready var price_label: RichTextLabel = %PriceLabel
 @onready var max_button: Button = %MaxButton
 @onready var action_button: Button = %ActionButton
 @onready var convoy_money_label: Label = %ConvoyMoneyLabel
@@ -31,7 +33,7 @@ var current_mode = "buy" # or "sell"
 
 func _ready() -> void:
 	# Connect signals from UI elements
-	vendor_item_list.item_selected.connect(_on_vendor_item_selected)
+	vendor_item_tree.item_selected.connect(_on_vendor_item_selected)
 	# Use item_selected for Tree to update the inspector on a single click.
 	convoy_item_tree.item_selected.connect(_on_convoy_item_selected)
 	trade_mode_tab_container.tab_changed.connect(_on_tab_changed)
@@ -47,6 +49,10 @@ func _ready() -> void:
 		printerr("VendorTradePanel: 'ActionButton' node not found. Please check the scene file.")
 
 	quantity_spinbox.value_changed.connect(_on_quantity_changed)
+	if is_instance_valid(description_toggle_button):
+		description_toggle_button.pressed.connect(_on_description_toggle_pressed)
+	else:
+		printerr("VendorTradePanel: 'DescriptionToggleButton' node not found. Please check the scene file.")
 
 	# Initially hide comparison panel until an item is selected
 	comparison_panel.hide()
@@ -69,30 +75,38 @@ func initialize(p_vendor_data, p_convoy_data, p_current_settlement_data, p_all_s
 
 # --- UI Population ---
 func _populate_vendor_list() -> void:
-	vendor_item_list.clear()
+	vendor_item_tree.clear()
 	if not vendor_data or not "cargo_inventory" in vendor_data:
 		return
 
-	var aggregated_vendor_cargo: Dictionary = {}
+	var aggregated_missions: Dictionary = {}
+	var aggregated_resources: Dictionary = {}
+	var aggregated_other: Dictionary = {}
 
 	for item in vendor_data.get("cargo_inventory", []):
 		if item.has("intrinsic_part_id") and item.get("intrinsic_part_id") != null:
 			continue
 
-		var item_name = item.get("name", "Unknown Item")
-		if not aggregated_vendor_cargo.has(item_name):
-			aggregated_vendor_cargo[item_name] = {"item_data": item, "total_quantity": 0}
+		var category_dict: Dictionary
+		var mission_vendor_name: String = ""
+		if item.get("recipient") != null:
+			category_dict = aggregated_missions
+			var recipient_id = item.get("recipient")
+			if recipient_id:
+				mission_vendor_name = _get_vendor_name_for_recipient(recipient_id)
+		elif (item.has("food") and item.get("food") != null and item.get("food") > 0) or \
+		   (item.has("water") and item.get("water") != null and item.get("water") > 0) or \
+		   (item.has("fuel") and item.get("fuel") != null and item.get("fuel") > 0):
+			category_dict = aggregated_resources
+		else:
+			category_dict = aggregated_other
 		
-		var item_quantity = int(item.get("quantity", 1.0))
-		aggregated_vendor_cargo[item_name].total_quantity += item_quantity
+		_aggregate_vendor_item(category_dict, item, mission_vendor_name)
 
-	for item_name in aggregated_vendor_cargo:
-		var agg_data = aggregated_vendor_cargo[item_name]
-		var display_text = "%s (x%d)" % [item_name, agg_data.total_quantity]
-		var item_icon = agg_data.item_data.get("icon") if agg_data.item_data.has("icon") else null
-		vendor_item_list.add_item(display_text, item_icon)
-		var index = vendor_item_list.get_item_count() - 1
-		vendor_item_list.set_item_metadata(index, agg_data)
+	var root = vendor_item_tree.create_item()
+	_populate_category(vendor_item_tree, root, "Mission Cargo", aggregated_missions)
+	_populate_category(vendor_item_tree, root, "Resources", aggregated_resources)
+	_populate_category(vendor_item_tree, root, "Other", aggregated_other)
 
 func _populate_convoy_list() -> void:
 	convoy_item_tree.clear()
@@ -125,7 +139,7 @@ func _populate_convoy_list() -> void:
 				category_dict = aggregated_resources
 			else:
 				category_dict = aggregated_other
-			
+
 			# If it's mission cargo, try to find the vendor name
 			if category_dict == aggregated_missions:
 				var recipient_id = item.get("recipient")
@@ -142,18 +156,37 @@ func _populate_convoy_list() -> void:
 
 	# --- POPULATION ---
 	var root = convoy_item_tree.create_item()
-	_populate_category(root, "Mission Cargo", aggregated_missions)
-	_populate_category(root, "Resources", aggregated_resources)
-	_populate_category(root, "Parts", aggregated_parts)
-	_populate_category(root, "Other", aggregated_other)
+	_populate_category(convoy_item_tree, root, "Mission Cargo", aggregated_missions)
+	_populate_category(convoy_item_tree, root, "Resources", aggregated_resources)
+	_populate_category(convoy_item_tree, root, "Parts", aggregated_parts)
+	_populate_category(convoy_item_tree, root, "Other", aggregated_other)
 
-func _aggregate_item(agg_dict: Dictionary, item: Dictionary, vehicle_name: String, p_mission_vendor_name: String = "") -> void:
+func _aggregate_vendor_item(agg_dict: Dictionary, item: Dictionary, p_mission_vendor_name: String = "") -> void:
 	var item_name = item.get("name", "Unknown Item")
 	if not agg_dict.has(item_name):
-		agg_dict[item_name] = {"item_data": item, "total_quantity": 0, "locations": {}, "mission_vendor_name": p_mission_vendor_name}
+		agg_dict[item_name] = {"item_data": item, "total_quantity": 0, "total_weight": 0.0, "total_volume": 0.0, "total_food": 0.0, "total_water": 0.0, "total_fuel": 0.0, "mission_vendor_name": p_mission_vendor_name}
 	
 	var item_quantity = int(item.get("quantity", 1.0))
 	agg_dict[item_name].total_quantity += item_quantity
+	agg_dict[item_name].total_weight += item.get("weight", 0.0)
+	agg_dict[item_name].total_volume += item.get("volume", 0.0)
+	if item.get("food") is float or item.get("food") is int: agg_dict[item_name].total_food += item.get("food")
+	if item.get("water") is float or item.get("water") is int: agg_dict[item_name].total_water += item.get("water")
+	if item.get("fuel") is float or item.get("fuel") is int: agg_dict[item_name].total_fuel += item.get("fuel")
+	
+func _aggregate_item(agg_dict: Dictionary, item: Dictionary, vehicle_name: String, p_mission_vendor_name: String = "") -> void:
+	var item_name = item.get("name", "Unknown Item")
+	if not agg_dict.has(item_name):
+		agg_dict[item_name] = {"item_data": item, "total_quantity": 0, "locations": {}, "mission_vendor_name": p_mission_vendor_name, "total_weight": 0.0, "total_volume": 0.0, "total_food": 0.0, "total_water": 0.0, "total_fuel": 0.0}
+	
+	var item_quantity = int(item.get("quantity", 1.0))
+	agg_dict[item_name].total_quantity += item_quantity
+	agg_dict[item_name].total_weight += item.get("weight", 0.0)
+	agg_dict[item_name].total_volume += item.get("volume", 0.0)
+	if item.get("food") is float or item.get("food") is int: agg_dict[item_name].total_food += item.get("food")
+	if item.get("water") is float or item.get("water") is int: agg_dict[item_name].total_water += item.get("water")
+	if item.get("fuel") is float or item.get("fuel") is int: agg_dict[item_name].total_fuel += item.get("fuel")
+
 	if not agg_dict[item_name].locations.has(vehicle_name):
 		agg_dict[item_name].locations[vehicle_name] = 0
 	agg_dict[item_name].locations[vehicle_name] += item_quantity
@@ -174,7 +207,8 @@ func _on_tab_changed(tab_index: int) -> void:
 	
 	# Clear selection and inspector when switching tabs
 	selected_item = null
-	vendor_item_list.deselect_all()
+	if vendor_item_tree.get_selected():
+		vendor_item_tree.get_selected().deselect(0)
 	if convoy_item_tree.get_selected():
 		convoy_item_tree.get_selected().deselect(0)
 	_clear_inspector()
@@ -183,9 +217,13 @@ func _on_tab_changed(tab_index: int) -> void:
 	if is_instance_valid(max_button):
 		max_button.disabled = true
 
-func _on_vendor_item_selected(index: int) -> void:
-	var item = vendor_item_list.get_item_metadata(index)
-	_handle_new_item_selection(item)
+func _on_vendor_item_selected() -> void:
+	var tree_item = vendor_item_tree.get_selected()
+	if tree_item and tree_item.get_metadata(0) != null:
+		var item = tree_item.get_metadata(0)
+		_handle_new_item_selection(item)
+	else:
+		_handle_new_item_selection(null)
 
 func _on_convoy_item_selected() -> void:
 	var tree_item = convoy_item_tree.get_selected()
@@ -196,11 +234,11 @@ func _on_convoy_item_selected() -> void:
 		# This happens if a category header is clicked, or selection is cleared
 		_handle_new_item_selection(null)
 
-func _populate_category(root_item: TreeItem, category_name: String, agg_dict: Dictionary) -> void:
+func _populate_category(target_tree: Tree, root_item: TreeItem, category_name: String, agg_dict: Dictionary) -> void:
 	if agg_dict.is_empty():
 		return
 
-	var category_item = convoy_item_tree.create_item(root_item)
+	var category_item = target_tree.create_item(root_item)
 	category_item.set_text(0, category_name)
 	category_item.set_selectable(0, false)
 	category_item.set_custom_color(0, Color.GOLD)
@@ -217,7 +255,7 @@ func _populate_category(root_item: TreeItem, category_name: String, agg_dict: Di
 			display_text += " (To: %s)" % agg_data.mission_vendor_name
 		
 		var item_icon = agg_data.item_data.get("icon") if agg_data.item_data.has("icon") else null
-		var tree_child_item = convoy_item_tree.create_item(category_item)
+		var tree_child_item = target_tree.create_item(category_item)
 		tree_child_item.set_text(0, display_text)
 		if item_icon:
 			tree_child_item.set_icon(0, item_icon)
@@ -225,6 +263,10 @@ func _populate_category(root_item: TreeItem, category_name: String, agg_dict: Di
 
 func _handle_new_item_selection(p_selected_item) -> void:
 	selected_item = p_selected_item
+	
+	# DEBUG: Print the raw selected item data
+	print("DEBUG: _handle_new_item_selection - selected_item (aggregated): ", selected_item)
+
 	
 	if selected_item:
 		# When selling or buying, cap the quantity to what is available.
@@ -236,6 +278,11 @@ func _handle_new_item_selection(p_selected_item) -> void:
 
 		_update_inspector()
 		_update_comparison()
+		
+		# DEBUG: Print item_data_source after it's determined in _update_inspector
+		var item_data_source_debug = selected_item.get("item_data", {})
+		print("DEBUG: _handle_new_item_selection - item_data_source (original): ", item_data_source_debug)
+
 		_update_transaction_panel()
 		if is_instance_valid(action_button): action_button.disabled = false
 		if is_instance_valid(max_button): max_button.disabled = false
@@ -277,21 +324,24 @@ func _on_action_button_pressed() -> void:
 		return
 		
 	var quantity = int(quantity_spinbox.value)
+	if quantity <= 0:
+		return # Do not process transactions for zero or negative quantity
+
+	var item_data_source = selected_item.get("item_data")
+	if not item_data_source: return
+
+	var final_unit_price = _get_contextual_unit_price(item_data_source)
+	var total_price = final_unit_price * quantity
+
 	if current_mode == "buy":
-		var item_to_buy = selected_item.get("item_data")
-		if not item_to_buy: return
-		
-		var total_cost = item_to_buy.get("price", 0) * quantity
-		if convoy_data.get("money", 0) >= total_cost:
-			emit_signal("item_purchased", item_to_buy, quantity)
+		if convoy_data.get("money", 0) >= total_price:
+			emit_signal("item_purchased", item_data_source, quantity, total_price)
 		else:
 			# Replace with proper user feedback
 			print("Not enough money!")
 	else: # "sell"
-		# Pass the base item data, not the aggregated structure, so the parent logic doesn't need to change.
-		var item_to_sell = selected_item.get("item_data")
-		if item_to_sell:
-			emit_signal("item_sold", item_to_sell, quantity)
+		# For selling, we don't need a money check here, just emit the signal with the calculated total value.
+		emit_signal("item_sold", item_data_source, quantity, total_price)
 
 func _on_quantity_changed(_value: float) -> void:
 	_update_transaction_panel()
@@ -305,49 +355,106 @@ func _update_inspector() -> void:
 	if current_mode == "sell" or current_mode == "buy":
 		item_data_source = selected_item.get("item_data", {})
 		
-	item_name_label.text = item_data_source.get("name", "No Name")
-	item_preview.texture = item_data_source.get("icon") if item_data_source.has("icon") else null
+	if is_instance_valid(item_name_label):
+		item_name_label.text = item_data_source.get("name", "No Name")
 	
-	# Safely get the description, prioritizing 'base_desc'.
-	# This handles cases where the value might be null, a boolean, or an empty string from the API.
+	var item_icon = item_data_source.get("icon") if item_data_source.has("icon") else null
+	if is_instance_valid(item_preview):
+		item_preview.texture = item_icon
+		item_preview.visible = item_icon != null
+	
+	# --- Description Handling ---
+	# The checks for description_toggle_button and item_description_rich_text are already here.
 	var description_text: String
 	var base_desc_val = item_data_source.get("base_desc")
+	
+	# Ensure description_toggle_button is visible if there's any description
+	if is_instance_valid(description_toggle_button):
+		description_toggle_button.visible = true
+		description_toggle_button.text = "Description (Click to Expand)"
+	if is_instance_valid(item_description_rich_text):
+		item_description_rich_text.visible = false # Always start collapsed
+
 	if base_desc_val is String and not base_desc_val.is_empty():
 		description_text = base_desc_val
 	else:
 		var desc_val = item_data_source.get("description")
-		if desc_val is String and not desc_val.is_empty():
+		# Check if desc_val is a string and not empty, or if it's a boolean 'true' (which can happen from API)
+		# If it's boolean 'true', convert it to a string "true" for display, otherwise use default.
+		if desc_val is String and not desc_val.is_empty(): # Standard string description
 			description_text = desc_val
+		elif desc_val is bool: # Handle any boolean from API by converting it to a string
+			description_text = str(desc_val)
 		else:
 			description_text = "No description available."
-	
-	var bbcode = "[b]Description:[/b]\n%s\n\n" % description_text
+	if is_instance_valid(item_description_rich_text):
+		item_description_rich_text.text = description_text # Assign description here
 
+	var bbcode = "" # Start building the main info text (stats, etc.)
 	# Add mission destination right after the description, if applicable.
-	if current_mode == "sell" and selected_item.has("mission_vendor_name") and not selected_item.mission_vendor_name.is_empty() and selected_item.mission_vendor_name != "Unknown Vendor":
+	if current_mode == "sell" and selected_item.has("mission_vendor_name") and not str(selected_item.mission_vendor_name).is_empty() and selected_item.mission_vendor_name != "Unknown Vendor":
 		bbcode += "[b]Destination:[/b] %s\n\n" % selected_item.mission_vendor_name
 
 	bbcode += "[b]Stats:[/b]\n"
 
-	# Add resource specific stats if available and greater than zero
-	var has_resource_stats = false
-	var food_val = item_data_source.get("food")
-	if (food_val is float or food_val is int) and food_val > 0:
-		bbcode += "- Food: %s\n" % str(food_val)
-		has_resource_stats = true
+	# --- Per Unit Stats ---
+	bbcode += "  [u]Per Unit:[/u]\n"
+	# Ensure item_data_source is valid before accessing its properties
+	if not item_data_source:
+		item_data_source = {} # Default to empty dictionary to prevent further errors
+	var contextual_unit_price = _get_contextual_unit_price(item_data_source)
+	if contextual_unit_price > 0:
+		var price_label_text = "Unit Price"
+		if current_mode == "buy":
+			price_label_text = "Buy Price"
+		elif current_mode == "sell":
+			price_label_text = "Sell Price"
+		bbcode += "    - %s: $%s\n" % [price_label_text, "%.2f" % contextual_unit_price]
+		
+		var price_components = _get_item_price_components(item_data_source)
+		if price_components.resource_unit_value > 0.01:
+			bbcode += "      [color=gray](Item: %.2f + Resources: %.2f)[/color]\n" % [price_components.container_unit_price, price_components.resource_unit_value]
 	
-	var water_val = item_data_source.get("water")
-	if (water_val is float or water_val is int) and water_val > 0:
-		bbcode += "- Water: %s\n" % str(water_val)
-		has_resource_stats = true
+	var unit_weight = item_data_source.get("unit_weight", 0.0)
+	if unit_weight == 0.0 and item_data_source.has("weight") and item_data_source.has("quantity"):
+		var total_weight = item_data_source.get("weight", 0.0)
+		var total_quantity_float = float(item_data_source.get("quantity", 1.0))
+		if total_quantity_float > 0:
+			unit_weight = total_weight / total_quantity_float
+	if unit_weight > 0: bbcode += "    - Weight: %s\n" % str(unit_weight)
 
-	var fuel_val = item_data_source.get("fuel")
-	if (fuel_val is float or fuel_val is int) and fuel_val > 0:
-		bbcode += "- Fuel: %s\n" % str(fuel_val)
-		has_resource_stats = true
+	var unit_volume = item_data_source.get("unit_volume", 0.0)
+	if unit_volume == 0.0 and item_data_source.has("volume") and item_data_source.has("quantity"):
+		var total_volume = item_data_source.get("volume", 0.0)
+		var total_quantity_float = float(item_data_source.get("quantity", 1.0))
+		if total_quantity_float > 0:
+			unit_volume = total_volume / total_quantity_float
+	if unit_volume > 0: bbcode += "    - Volume: %s\n" % str(unit_volume)
 
-	# Add a newline after resource stats if any were added and generic stats follow
-	if has_resource_stats and item_data_source.has("stats") and item_data_source.stats is Dictionary and not item_data_source.stats.is_empty():
+	# --- Total Order Stats ---
+	bbcode += "\n  [u]Total Order:[/u]\n" # Ensure selected_item is valid before accessing its properties
+	if not selected_item:
+		selected_item = {} # Default to empty dictionary to prevent further errors
+	var total_quantity = selected_item.get("total_quantity", 0)
+	if total_quantity > 0: bbcode += "    - Quantity: %d\n" % total_quantity
+	var total_weight = selected_item.get("total_weight", 0.0)
+	if total_weight > 0: bbcode += "    - Total Weight: %s\n" % str(total_weight)
+	var total_volume = selected_item.get("total_volume", 0.0)
+	if total_volume > 0: bbcode += "    - Total Volume: %s\n" % str(total_volume)
+	# Display total resources for the order
+	var total_food = selected_item.get("total_food", 0.0)
+	if total_food > 0: bbcode += "    - Food: %s\n" % str(total_food)
+	var total_water = selected_item.get("total_water", 0.0)
+	if total_water > 0: bbcode += "    - Water: %s\n" % str(total_water)
+	var total_fuel = selected_item.get("total_fuel", 0.0)
+	if total_fuel > 0: bbcode += "    - Fuel: %s\n" % str(total_fuel)
+
+	var delivery_reward_val = item_data_source.get("delivery_reward")
+	if (delivery_reward_val is float or delivery_reward_val is int) and delivery_reward_val > 0:
+		bbcode += "    - Delivery Reward: $%s\n" % str(delivery_reward_val)
+
+	# Add a newline separator if there are also generic stats to display
+	if item_data_source.has("stats") and item_data_source.stats is Dictionary and not item_data_source.stats.is_empty():
 		bbcode += "\n" # Add a separator for readability
 
 	if item_data_source.has("stats") and item_data_source.stats is Dictionary:
@@ -361,7 +468,27 @@ func _update_inspector() -> void:
 		for vehicle_name in locations:
 			bbcode += "- %s: %d\n" % [vehicle_name, locations[vehicle_name]]
 
-	item_info_rich_text.text = bbcode
+	# DEBUG: Print the final bbcode before assignment
+	print("DEBUG: _update_inspector - Final bbcode for ItemInfoRichText:\n", bbcode)
+
+	if is_instance_valid(item_info_rich_text):
+		item_info_rich_text.text = bbcode # This now only contains stats and location info
+
+func _on_description_toggle_pressed() -> void:
+	if is_instance_valid(item_description_rich_text):
+		item_description_rich_text.visible = not item_description_rich_text.visible
+		if is_instance_valid(description_toggle_button):
+			if item_description_rich_text.visible:
+				description_toggle_button.text = "Description (Click to Collapse)"
+			else:
+				description_toggle_button.text = "Description (Click to Expand)"
+	else:
+		if is_instance_valid(description_toggle_button):
+			description_toggle_button.text = "Description (Error: Text field missing)"
+		printerr("VendorTradePanel: 'ItemDescriptionRichText' is invalid in _on_description_toggle_pressed.")
+
+	# Ensure the parent container updates its size if needed
+	get_parent().queue_sort()
 
 func _update_comparison() -> void:
 	# Placeholder for your comparison logic.
@@ -392,34 +519,122 @@ func _update_transaction_panel() -> void:
 	if current_mode == "sell" or current_mode == "buy":
 		item_data_source = selected_item.get("item_data", {})
 	
-	var quantity = int(quantity_spinbox.value)
-	var price: float = 0.0
-	
+	var quantity = int(quantity_spinbox.value) # Ensure integer for display
+	var final_unit_price = _get_contextual_unit_price(item_data_source)
+	var total_price = final_unit_price * quantity
+
+	var price_components = _get_item_price_components(item_data_source)
+	var container_unit_price = price_components.container_unit_price
+	var resource_unit_value = price_components.resource_unit_value
+
+	var total_container_value_display: float = 0.0
+	var total_resource_value_display: float = 0.0
+
 	if current_mode == "buy":
-		# Explicitly check if the price is a number to avoid errors with non-numeric data (like null or booleans).
-		var buy_price_val = item_data_source.get("price")
-		if buy_price_val is float or buy_price_val is int:
-			price = float(buy_price_val)
+		total_container_value_display = container_unit_price * quantity
+		total_resource_value_display = resource_unit_value * quantity
 	else: # "sell"
-		# Prioritize "sell_price" if it's a valid number.
-		var sell_price_val = item_data_source.get("sell_price")
+		# Apply sell price logic to components for display
+		var final_container_sell_price_unit = container_unit_price / 2.0
+		var sell_price_val = item_data_source.get("sell_unit_price")
 		if sell_price_val is float or sell_price_val is int:
-			price = float(sell_price_val)
-		else:
-			# Fallback to calculating from "price" if it's a valid number.
-			var base_price_val = item_data_source.get("price")
-			if base_price_val is float or base_price_val is int:
-				price = float(base_price_val) / 2.0
-	
-	var total_price = price * quantity
-	price_label.text = "Total Price: %d" % total_price
+			final_container_sell_price_unit = float(sell_price_val)
+		
+		total_container_value_display = final_container_sell_price_unit * quantity
+		total_resource_value_display = (resource_unit_value / 2.0) * quantity
+
+	var bbcode_text = ""
+	bbcode_text += "[b]Unit Price:[/b] $%s\n" % ("%.2f" % final_unit_price)
+
+	var is_mission_cargo = current_mode == "sell" and selected_item.has("mission_vendor_name") and not selected_item.mission_vendor_name.is_empty() and selected_item.mission_vendor_name != "Unknown Vendor"
+
+	# Show the breakdown ONLY for mission cargo that also has resources of value.
+	if total_resource_value_display > 0.01 and is_mission_cargo:
+		bbcode_text += "  [color=gray](Item: %.2f + Resources: %.2f)[/color]\n" % [total_container_value_display, total_resource_value_display]
+
+	bbcode_text += "[b]Quantity:[/b] %d\n" % quantity
+	bbcode_text += "[b]Total Price:[/b] $%s" % ("%.2f" % total_price)
+	price_label.text = bbcode_text
 
 func _clear_inspector() -> void:
-	item_name_label.text = "Select an Item"
-	item_preview.texture = null
-	item_info_rich_text.text = ""
-	comparison_panel.hide()
-	price_label.text = "Total Price: 0"
+	if is_instance_valid(item_name_label):
+		item_name_label.text = "Select an Item"
+	if is_instance_valid(item_preview):
+		item_preview.texture = null
+		item_preview.visible = false
+	if is_instance_valid(item_info_rich_text):
+		item_info_rich_text.text = ""
+	
+	if is_instance_valid(item_description_rich_text):
+		item_description_rich_text.text = ""
+		item_description_rich_text.visible = false
+	if is_instance_valid(description_toggle_button):
+		description_toggle_button.visible = false # Hide button if no item selected
+
+	if is_instance_valid(comparison_panel):
+		comparison_panel.hide()
+	if is_instance_valid(price_label):
+		price_label.text = "Total Price: $0.00" # Update default text for RichTextLabel
+
+# New helper function to get the final unit price based on buy/sell context.
+func _get_contextual_unit_price(item_data_source: Dictionary) -> float:
+	var final_unit_price: float = 0.0
+	
+	var price_components = _get_item_price_components(item_data_source)
+	var container_unit_price = price_components.container_unit_price
+	var resource_unit_value = price_components.resource_unit_value
+
+	if current_mode == "buy":
+		final_unit_price = container_unit_price + resource_unit_value
+	else: # "sell"
+		# When selling, the player gets a lower price. Assume 50% unless a specific sell price is defined.
+		var final_container_sell_price = container_unit_price / 2.0
+		var sell_price_val = item_data_source.get("sell_unit_price")
+		if sell_price_val is float or sell_price_val is int:
+			final_container_sell_price = float(sell_price_val)
+		
+		final_unit_price = final_container_sell_price + (resource_unit_value / 2.0)
+	
+	return final_unit_price
+
+# New helper function to calculate the price components of a single unit of an item.
+func _get_item_price_components(item_data: Dictionary) -> Dictionary:
+	var components = {
+		"container_unit_price": 0.0,
+		"resource_unit_value": 0.0
+	}
+
+	# 1. Get base unit price of the container from "unit_price" or "base_unit_price"
+	var unit_price_val = item_data.get("unit_price")
+	if not (unit_price_val is float or unit_price_val is int):
+		unit_price_val = item_data.get("base_unit_price")
+	if unit_price_val is float or unit_price_val is int:
+		components.container_unit_price = float(unit_price_val)
+
+	# 2. Calculate value of resources per unit of item
+	var item_quantity_in_stack = item_data.get("quantity", 1.0)
+	if item_quantity_in_stack <= 0: item_quantity_in_stack = 1.0
+
+	# Resource prices are from the vendor's perspective
+	var food_price = vendor_data.get("food_price", 0.0)
+	var water_price = vendor_data.get("water_price", 0.0)
+	var fuel_price = vendor_data.get("fuel_price", 0.0)
+	
+	var food_in_stack = item_data.get("food")
+	var water_in_stack = item_data.get("water")
+	var fuel_in_stack = item_data.get("fuel")
+
+	var resource_value = 0.0
+	# Use explicit type checks and ensure the vendor actually trades the resource (price > 0)
+	if (food_in_stack is float or food_in_stack is int) and food_price > 0:
+		resource_value += (float(food_in_stack) / item_quantity_in_stack) * food_price
+	if (water_in_stack is float or water_in_stack is int) and water_price > 0:
+		resource_value += (float(water_in_stack) / item_quantity_in_stack) * water_price
+	if (fuel_in_stack is float or fuel_in_stack is int) and fuel_price > 0:
+		resource_value += (float(fuel_in_stack) / item_quantity_in_stack) * fuel_price
+	
+	components.resource_unit_value = resource_value
+	return components
 
 # New helper function to find vendor name by recipient ID
 func _get_vendor_name_for_recipient(recipient_id: String) -> String:
