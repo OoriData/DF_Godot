@@ -171,6 +171,11 @@ func _display_settlement_info():
 
 func _create_vendor_tab(vendor_data: Dictionary):
 	var vendor_name = vendor_data.get("name", "Unnamed Vendor")
+	var settlement_name = _settlement_data.get("name", "")
+	var short_vendor_name = vendor_name
+	if not settlement_name.is_empty():
+		short_vendor_name = vendor_name.replace(settlement_name + " ", "").strip_edges()
+
 	var vendor_panel_instance = VendorTradePanel.instantiate()
 
 	if not is_instance_valid(vendor_tab_container):
@@ -181,8 +186,8 @@ func _create_vendor_tab(vendor_data: Dictionary):
 	# 1. Add the panel to the scene tree. This is crucial because it triggers the panel's
 	#    _ready() function, which populates all its @onready variables (like vendor_item_list).
 	vendor_tab_container.add_child(vendor_panel_instance)
-	vendor_panel_instance.name = vendor_name # Set the node name for the tab
-	vendor_tab_container.set_tab_title(vendor_tab_container.get_tab_count() - 1, vendor_name)
+	vendor_panel_instance.name = vendor_name # Use original full name for the node's name to ensure uniqueness
+	vendor_tab_container.set_tab_title(vendor_tab_container.get_tab_count() - 1, short_vendor_name)
 
 	# 2. Now that the panel is in the tree and ready, it's safe to initialize it and connect signals.
 	vendor_panel_instance.initialize(vendor_data, _convoy_data, _settlement_data, _all_settlement_data) # Pass _all_settlement_data
@@ -253,8 +258,10 @@ func _on_item_purchased(item: Dictionary, quantity: int, total_cost: float):
 	# TODO: Update convoy cargo weight if you track that.
 
 	# 2. Update vendor data
-	var vendor_name = vendor_tab_container.get_tab_title(vendor_tab_container.current_tab)
-	var vendor_data = _find_vendor_by_name(vendor_name)
+	var current_tab_control = vendor_tab_container.get_current_tab_control()
+	if not is_instance_valid(current_tab_control): return
+	var full_vendor_name = current_tab_control.name # Use the node's full name for lookup
+	var vendor_data = _find_vendor_by_name(full_vendor_name)
 	if vendor_data:
 		vendor_data["money"] = vendor_data.get("money", 0) + total_cost
 		# This is a simple removal. If vendor has quantities, adjust that instead.
@@ -279,8 +286,10 @@ func _on_item_sold(item: Dictionary, quantity: int, total_value: float):
 	# TODO: Update convoy cargo weight.
 
 	# 2. Update vendor data
-	var vendor_name = vendor_tab_container.get_tab_title(vendor_tab_container.current_tab)
-	var vendor_data = _find_vendor_by_name(vendor_name)
+	var current_tab_control = vendor_tab_container.get_current_tab_control()
+	if not is_instance_valid(current_tab_control): return
+	var full_vendor_name = current_tab_control.name # Use the node's full name for lookup
+	var vendor_data = _find_vendor_by_name(full_vendor_name)
 	if vendor_data:
 		vendor_data["money"] = vendor_data.get("money", 0) - total_value
 		if not vendor_data.has("cargo_inventory"):
@@ -297,8 +306,8 @@ func _refresh_all_vendor_panels():
 		var tab_content = vendor_tab_container.get_tab_control(i)
 		# Check if it's one of our vendor panels by checking its type or methods.
 		if tab_content is Control and tab_content.has_method("initialize"):
-			var vendor_name = vendor_tab_container.get_tab_title(i)
-			var vendor_data = _find_vendor_by_name(vendor_name)
+			var full_vendor_name = tab_content.name # Use the node's full name for lookup
+			var vendor_data = _find_vendor_by_name(full_vendor_name)
 			if vendor_data:
 				tab_content.initialize(vendor_data, _convoy_data, _settlement_data, _all_settlement_data) # Pass _all_settlement_data
 

@@ -76,11 +76,12 @@ func initialize(p_vendor_data, p_convoy_data, p_current_settlement_data, p_all_s
 # --- UI Population ---
 func _populate_vendor_list() -> void:
 	vendor_item_tree.clear()
-	if not vendor_data or not "cargo_inventory" in vendor_data:
+	if not vendor_data:
 		return
 
 	var aggregated_missions: Dictionary = {}
 	var aggregated_resources: Dictionary = {}
+	var aggregated_vehicles: Dictionary = {}
 	var aggregated_other: Dictionary = {}
 
 	for item in vendor_data.get("cargo_inventory", []):
@@ -103,10 +104,49 @@ func _populate_vendor_list() -> void:
 		
 		_aggregate_vendor_item(category_dict, item, mission_vendor_name)
 
+	# --- Create virtual items for raw resources AFTER processing normal cargo ---
+	if vendor_data.get("fuel", 0) > 0 and vendor_data.get("fuel_price", 0) > 0:
+		var fuel_quantity = vendor_data.get("fuel")
+		var fuel_item = {
+			"name": "Fuel (Bulk)",
+			"base_desc": "Bulk fuel to fill your containers.",
+			"quantity": fuel_quantity,
+			"fuel": fuel_quantity,
+			"is_raw_resource": true
+		}
+		_aggregate_vendor_item(aggregated_resources, fuel_item)
+
+	if vendor_data.get("water", 0) > 0 and vendor_data.get("water_price", 0) > 0:
+		var water_quantity = vendor_data.get("water")
+		var water_item = {
+			"name": "Water (Bulk)",
+			"base_desc": "Bulk water to fill your containers.",
+			"quantity": water_quantity,
+			"water": water_quantity,
+			"is_raw_resource": true
+		}
+		_aggregate_vendor_item(aggregated_resources, water_item)
+
+	if vendor_data.get("food", 0) > 0 and vendor_data.get("food_price", 0) > 0:
+		var food_quantity = vendor_data.get("food")
+		var food_item = {
+			"name": "Food (Bulk)",
+			"base_desc": "Bulk food supplies.",
+			"quantity": food_quantity,
+			"food": food_quantity,
+			"is_raw_resource": true
+		}
+		_aggregate_vendor_item(aggregated_resources, food_item)
+
+	# Process vehicles into their own category
+	for vehicle in vendor_data.get("vehicle_inventory", []):
+		_aggregate_vendor_item(aggregated_vehicles, vehicle)
+
 	var root = vendor_item_tree.create_item()
 	_populate_category(vendor_item_tree, root, "Mission Cargo", aggregated_missions)
-	_populate_category(vendor_item_tree, root, "Resources", aggregated_resources)
+	_populate_category(vendor_item_tree, root, "Vehicles", aggregated_vehicles)
 	_populate_category(vendor_item_tree, root, "Other", aggregated_other)
+	_populate_category(vendor_item_tree, root, "Resources", aggregated_resources)
 
 func _populate_convoy_list() -> void:
 	convoy_item_tree.clear()
@@ -154,12 +194,47 @@ func _populate_convoy_list() -> void:
 				continue
 			_aggregate_item(aggregated_parts, item, vehicle_name) # Parts don't have mission vendors
 
+	# --- Create virtual items for convoy's bulk resources AFTER processing normal cargo ---
+	# Only show sell option if the convoy has the resource AND the vendor is buying it (price > 0)
+	if convoy_data.get("fuel", 0) > 0 and vendor_data.get("fuel_price", 0) > 0:
+		var fuel_quantity = convoy_data.get("fuel")
+		var fuel_item = {
+			"name": "Fuel (Bulk)",
+			"base_desc": "Bulk fuel from your convoy's reserves.",
+			"quantity": fuel_quantity,
+			"fuel": fuel_quantity,
+			"is_raw_resource": true
+		}
+		_aggregate_vendor_item(aggregated_resources, fuel_item)
+
+	if convoy_data.get("water", 0) > 0 and vendor_data.get("water_price", 0) > 0:
+		var water_quantity = convoy_data.get("water")
+		var water_item = {
+			"name": "Water (Bulk)",
+			"base_desc": "Bulk water from your convoy's reserves.",
+			"quantity": water_quantity,
+			"water": water_quantity,
+			"is_raw_resource": true
+		}
+		_aggregate_vendor_item(aggregated_resources, water_item)
+
+	if convoy_data.get("food", 0) > 0 and vendor_data.get("food_price", 0) > 0:
+		var food_quantity = convoy_data.get("food")
+		var food_item = {
+			"name": "Food (Bulk)",
+			"base_desc": "Bulk food supplies from your convoy's reserves.",
+			"quantity": food_quantity,
+			"food": food_quantity,
+			"is_raw_resource": true
+		}
+		_aggregate_vendor_item(aggregated_resources, food_item)
+
 	# --- POPULATION ---
 	var root = convoy_item_tree.create_item()
 	_populate_category(convoy_item_tree, root, "Mission Cargo", aggregated_missions)
-	_populate_category(convoy_item_tree, root, "Resources", aggregated_resources)
 	_populate_category(convoy_item_tree, root, "Parts", aggregated_parts)
 	_populate_category(convoy_item_tree, root, "Other", aggregated_other)
+	_populate_category(convoy_item_tree, root, "Resources", aggregated_resources)
 
 func _aggregate_vendor_item(agg_dict: Dictionary, item: Dictionary, p_mission_vendor_name: String = "") -> void:
 	var item_name = item.get("name", "Unknown Item")
@@ -257,6 +332,16 @@ func _populate_category(target_tree: Tree, root_item: TreeItem, category_name: S
 		var item_icon = agg_data.item_data.get("icon") if agg_data.item_data.has("icon") else null
 		var tree_child_item = target_tree.create_item(category_item)
 		tree_child_item.set_text(0, display_text)
+
+		# For raw resource items, remove the color and use a bold font instead.
+		if agg_data.item_data.get("is_raw_resource", false):
+			var default_font = target_tree.get_theme_font("font")
+			if default_font:
+				var bold_font = FontVariation.new()
+				bold_font.set_base_font(default_font)
+				bold_font.set_variation_embolden(1.0)
+				tree_child_item.set_custom_font(0, bold_font)
+
 		if item_icon:
 			tree_child_item.set_icon(0, item_icon)
 		tree_child_item.set_metadata(0, agg_data)
@@ -604,12 +689,21 @@ func _get_item_price_components(item_data: Dictionary) -> Dictionary:
 		"resource_unit_value": 0.0
 	}
 
-	# 1. Get base unit price of the container from "unit_price" or "base_unit_price"
-	var unit_price_val = item_data.get("unit_price")
-	if not (unit_price_val is float or unit_price_val is int):
-		unit_price_val = item_data.get("base_unit_price")
-	if unit_price_val is float or unit_price_val is int:
-		components.container_unit_price = float(unit_price_val)
+	# 1. Get base unit price of the container. If it's a raw resource, the container price is 0.
+	if item_data.get("is_raw_resource", false):
+		components.container_unit_price = 0.0
+	else:
+		var unit_price_val = item_data.get("unit_price")
+		if not (unit_price_val is float or unit_price_val is int):
+			unit_price_val = item_data.get("base_unit_price")
+		# Add fallbacks for vehicle value fields
+		if not (unit_price_val is float or unit_price_val is int):
+			unit_price_val = item_data.get("value")
+		if not (unit_price_val is float or unit_price_val is int):
+			unit_price_val = item_data.get("base_value")
+
+		if unit_price_val is float or unit_price_val is int:
+			components.container_unit_price = float(unit_price_val)
 
 	# 2. Calculate value of resources per unit of item
 	var item_quantity_in_stack = item_data.get("quantity", 1.0)
@@ -653,9 +747,14 @@ func _get_vendor_name_for_recipient(recipient_id: String) -> String:
 					var vendor_id_str = str(vendor_id)
 					if vendor_id_str == search_id_str:
 						# --- DEBUGGING: Print when a match is found ---
-						var vendor_name = vendor.get("name", "Unknown Vendor")
-						print("  > Found match! Vendor: '%s' in Settlement: '%s'" % [vendor_name, settlement.get("name", "N/A")])
-						return vendor_name
+						var full_vendor_name = vendor.get("name", "Unknown Vendor")
+						var settlement_name = settlement.get("name", "")
+						var short_vendor_name = full_vendor_name
+						if not settlement_name.is_empty():
+							short_vendor_name = full_vendor_name.replace(settlement_name + " ", "").strip_edges()
+
+						print("  > Found match! Vendor: '%s' in Settlement: '%s'" % [full_vendor_name, settlement.get("name", "N/A")])
+						return short_vendor_name
 	
 	# --- DEBUGGING: Print when no match is found after searching everything ---
 	print("  > ID not found in any settlement after checking all vendors.")
