@@ -2,12 +2,6 @@
 @tool 
 extends Node2D
 
-# Reference to your APICalls node.
-# IMPORTANT: Adjust the path "$APICallsInstance" to the actual path of your APICalls node
-# in your scene tree relative to the node this script (main.gd) is attached to.
-@onready var api_calls_node: Node = $APICallsInstance # Adjust if necessary
-# IMPORTANT: Adjust this path to where you actually place your detailed view toggle in your scene tree! # Comment seems misplaced for api_calls_node
-
 # Node references
 ## Reference to the node that has map_render.gd attached. This should be a child of the current node.
 @onready var map_renderer_node: Node = $MapRendererLogic # MapRendererLogic is now a direct child
@@ -87,19 +81,27 @@ var _dragged_convoy_id_actual_str: String = "" # Will be updated by MapInteracti
 # var _is_map_in_partial_view: bool = false # This state is now managed by GameScreenManager
 var _map_and_ui_setup_complete: bool = false # New flag
 var _deferred_convoy_data: Array = [] # To store convoy data if it arrives before map setup
+var _view_is_initialized: bool = false # To track if the view has been set up
+var _is_ready: bool = false # To ensure _initialize_view is not called before _ready
 
 const MAP_DISPLAY_Z_INDEX = 0
 # UIManager's label containers will use a higher Z_INDEX (e.g., 2), set within UIManager.gd
 
 
 func _ready():
+	print("[DIAGNOSTIC_LOG | main.gd] _ready(): Main view is loaded and ready. WAITING to be made visible.")
 	# print('Main: _ready() called.')  # DEBUG
 	# print("!!!!!!!!!! MAIN.GD _ready() IS RUNNING !!!!!!!!!!") # DEBUG
 
 	# Enable input processing for this Node2D to receive _input events,
 	# including those propagated from its Control children (like MapDisplay).
 	set_process_input(true)
-	self.visible = true # Ensure this node (MapView) is visible by default
+	# self.visible = true # Visibility should be controlled by the parent scene/logic.
+
+	# Explicitly disable the map camera on load. It will be enabled in _initialize_view()
+	# when this scene is made visible, preventing it from hijacking the camera from other scenes (e.g., login screen).
+	if is_instance_valid(map_camera):
+		map_camera.enabled = false
 
 	# --- Explicitly try to get map_renderer_node for detailed diagnostics ---
 	var path_to_map_renderer = NodePath("MapRendererLogic") # Updated path
@@ -182,16 +184,6 @@ func _ready():
 		gdm_node.map_data_loaded.connect(_on_gdm_map_data_loaded) # Corrected signal name
 		gdm_node.settlement_data_updated.connect(_on_gdm_settlement_data_updated)
 		gdm_node.convoy_data_updated.connect(_on_gdm_convoy_data_updated) # Corrected signal name
-		# print("Main: Connected to GameDataManager signals (using get_node).")
-
-		# Pass APICallsInstance to GameDataManager
-		if gdm_node.has_method("set_api_calls_node_reference"):
-			if is_instance_valid(api_calls_node): # api_calls_node is @onready in main.gd
-				gdm_node.set_api_calls_node_reference(api_calls_node)
-			else:
-				printerr("Main: api_calls_node is not valid, cannot pass to GameDataManager.")
-		else:
-			printerr("Main: GameDataManager does not have set_api_calls_node_reference method.")
 	else:
 		printerr("Main: GameDataManager Autoload NOT FOUND via get_node('/root/GameDataManager') AND Engine.has_singleton was likely false too. Core data will not be loaded.")
 
@@ -241,20 +233,8 @@ func _ready():
 	if not is_instance_valid(map_interaction_manager):
 		printerr("Main: MapInteractionManager node not found or invalid. Interaction will not work. Path used: $MapInteractionManager")
 	else:
-		# print("Main: MapInteractionManager node found: ", map_interaction_manager)
-		if map_interaction_manager.has_method("initialize"):
-			map_interaction_manager.initialize(
-				map_display, # Pass TextureRect
-				ui_manager,
-				[], # Initial empty convoy data, will be updated by signal
-				[], # Initial empty settlement data, will be updated by signal
-				[], # Initial empty map_tiles, will be updated by signal
-				map_camera, # Pass Camera2D for control
-				map_display, # Pass MapDisplay (TextureRect) for bounds calculation
-				_selected_convoy_ids, # Pass current (likely empty) selected IDs
-				_convoy_label_user_positions # Pass current (likely empty) user positions
-			)
-			# Connect to signals from MapInteractionManager
+		# Defer initialization until map data is loaded. Connect signals now.
+		if map_interaction_manager.has_method("initialize"): # Check for method existence before connecting
 			map_interaction_manager.hover_changed.connect(_on_mim_hover_changed)
 			map_interaction_manager.selection_changed.connect(_on_mim_selection_changed)
 			map_interaction_manager.panel_drag_started.connect(_on_mim_panel_drag_started)
@@ -405,21 +385,70 @@ func _ready():
 	else: # This means the @onready var convoy_list_panel_node is null or invalid
 		printerr("Main: ConvoyListPanel node (assigned via @onready var using path '../../MenuUILayer/ConvoyListPanel') is NOT VALID in _ready(). Please verify the node path and names in your scene tree are exactly '../../MenuUILayer/ConvoyListPanel' relative to the node with main.gd.")
 
-	_on_viewport_size_changed() # Call once at the end of _ready to ensure all initial positions/constraints are correct
+	# Defer initial layout until the node is visible to avoid interfering with other scenes (like a login screen).
+	# _on_viewport_size_changed()
+	_is_ready = true
+	print("[DIAGNOSTIC_LOG | main.gd] _ready(): Finished. _is_ready is now true.")
 
+
+func _notification(what: int) -> void:
+	# This is a critical log to see if the scene is ever made visible.
+	if what == NOTIFICATION_VISIBILITY_CHANGED:
+		print("[DIAGNOSTIC_LOG | main.gd] _notification(): VISIBILITY_CHANGED received. is_visible_in_tree() = %s, _view_is_initialized = %s, _is_ready = %s" % [is_visible_in_tree(), _view_is_initialized, _is_ready])
+		if is_visible_in_tree() and not _view_is_initialized and _is_ready:
+			# This block runs only the first time the node becomes visible.
+			_view_is_initialized = true
+			print("[DIAGNOSTIC_LOG | main.gd] _notification(): View is visible for the first time (after _ready). Calling _initialize_view().")
+			_initialize_view()
+
+func _initialize_view() -> void:
+	"""
+	Performs setup that should only happen once the view is visible.
+	It now checks if map data has been preloaded.
+	"""
+	print("[DIAGNOSTIC_LOG | main.gd] _initialize_view(): Performing initial setup (activating camera, setting UI positions).")
+	if is_instance_valid(map_camera):
+		print("  - Making map_camera current.")
+		map_camera.enabled = true # Explicitly re-enable the camera
+		map_camera.make_current()
+	_on_viewport_size_changed() # Set initial positions of UI elements.
+	
+	# --- Check for preloaded map data ---
+	# The request is now initiated by GameDataManager on game start.
+	var gdm = get_node_or_null("/root/GameDataManager")
+	if is_instance_valid(gdm):
+		if not gdm.map_tiles.is_empty():
+			print("[DIAGNOSTIC_LOG | main.gd] _initialize_view(): Map data was already preloaded. Setting up map immediately.")
+			_on_gdm_map_data_loaded(gdm.map_tiles)
+		else:
+			print("[DIAGNOSTIC_LOG | main.gd] _initialize_view(): Map data not yet preloaded. Waiting for 'map_data_loaded' signal.")
+	else:
+		printerr("[DIAGNOSTIC_LOG | main.gd] _initialize_view(): GameDataManager not found. CANNOT check for map data.")
 
 func _on_gdm_map_data_loaded(p_map_tiles: Array):
 	map_tiles = p_map_tiles
 	# print("Main: Received map_data_loaded from GameDataManager. Tile rows: %s" % map_tiles.size())
 	if map_tiles.is_empty() or not map_tiles[0] is Array or map_tiles[0].is_empty():
-		printerr('Main: Map tiles data from GameDataManager is empty or invalid. Cannot proceed to setup static map.')
+		printerr('[DIAGNOSTIC_LOG | main.gd] _on_gdm_map_data_loaded(): Map tiles data from GameDataManager is EMPTY or INVALID. Cannot proceed to setup static map.')
 		return
 	
 	_setup_static_map_and_camera() # Now that map_tiles are available
 
-	# Update MapInteractionManager with the new map_tiles data
-	if is_instance_valid(map_interaction_manager) and map_interaction_manager.has_method("update_data_references"):
-		map_interaction_manager.update_data_references(_all_convoy_data, _all_settlement_data, map_tiles)
+	# Initialize MapInteractionManager now that we have the map data
+	if is_instance_valid(map_interaction_manager) and map_interaction_manager.has_method("initialize"):
+		print("[DIAGNOSTIC_LOG | main.gd] Initializing MapInteractionManager with loaded map data.")
+		map_interaction_manager.initialize(
+			map_display,
+			ui_manager,
+			_all_convoy_data, # Pass current convoy data (might be empty, will be updated)
+			_all_settlement_data, # Pass current settlement data
+			map_tiles, # CRITICAL: Pass the now-loaded map_tiles
+			map_camera,
+			map_display,
+			_selected_convoy_ids,
+			_convoy_label_user_positions
+		)
+	# The old update_data_references call is now redundant as initialize handles it.
 
 
 func _on_gdm_settlement_data_updated(p_settlement_data: Array):
@@ -433,14 +462,15 @@ func _on_gdm_settlement_data_updated(p_settlement_data: Array):
 	
 
 func _setup_static_map_and_camera():
+	print("[DIAGNOSTIC_LOG | main.gd] _setup_static_map_and_camera(): Starting map texture generation.")
 	if not is_instance_valid(map_renderer_node) or not is_instance_valid(map_display) or not is_instance_valid(map_camera):
-		printerr("Main: _setup_static_map_and_camera - Essential nodes (map_renderer_node, map_display, or map_camera) not ready.")
+		printerr("[DIAGNOSTIC_LOG | main.gd] _setup_static_map_and_camera(): ABORTING - Essential nodes (map_renderer_node, map_display, or map_camera) not ready.")
 		if not is_instance_valid(map_renderer_node): printerr("  - map_renderer_node is invalid.")
 		if not is_instance_valid(map_display): printerr("  - map_display is invalid.")
 		if not is_instance_valid(map_camera): printerr("  - map_camera is invalid.")
 		return
 	if map_tiles.is_empty() or not map_tiles[0] is Array or map_tiles[0].is_empty():
-		printerr("Main: _setup_static_map_and_camera - map_tiles data is empty or invalid.")
+		printerr("[DIAGNOSTIC_LOG | main.gd] _setup_static_map_and_camera(): ABORTING - map_tiles data is empty or invalid.")
 		return
 
 	# print("Main: _setup_static_map_and_camera - Starting map texture generation.") # DEBUG
@@ -463,7 +493,7 @@ func _setup_static_map_and_camera():
 	var full_map_height_px = map_rows_local * tile_pixel_size
 	var render_viewport_for_full_map = Vector2(full_map_width_px, full_map_height_px)
 
-	# print("Main: Attempting to generate static base map texture of size: ", render_viewport_for_full_map) # DEBUG
+	print("[DIAGNOSTIC_LOG | main.gd] _setup_static_map_and_camera(): Calling map_renderer_node.render_map() with target size: %s" % render_viewport_for_full_map)
 	var static_render_result: Dictionary = map_renderer_node.render_map(
 		map_tiles,
 		[], # highlights (empty for base static map)
@@ -485,14 +515,13 @@ func _setup_static_map_and_camera():
 		map_display.texture = static_map_texture
 		map_display.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 		map_display.custom_minimum_size = static_map_texture.get_size()
-		# map_display.rect_size = static_map_texture.get_size()
-		# print("Main: Static map texture applied to MapDisplay. Size: ", map_display.custom_minimum_size) # DEBUG
+		print("[DIAGNOSTIC_LOG | main.gd] _setup_static_map_and_camera(): SUCCESS - Static map texture applied to MapDisplay. Size: %s" % map_display.custom_minimum_size)
 	else: # Covers null or invalid static_map_texture
-		printerr("Main: Failed to generate or apply static map texture.")
+		printerr("[DIAGNOSTIC_LOG | main.gd] _setup_static_map_and_camera(): FAILED - map_renderer_node.render_map() did not return a valid texture.")
 		return
 
 	# Initialize Camera
-	map_camera.make_current()
+	# map_camera.make_current() # This is now deferred to _initialize_view()
 	# Set camera's position (center) to the center of the map_display content,
 	# considering map_container's position within MapRender.
 	if is_instance_valid(map_container) and is_instance_valid(map_display):

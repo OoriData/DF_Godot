@@ -4,6 +4,8 @@ extends Node
 # Signal to indicate when parsed convoy data has been fetched
 signal convoy_data_received(parsed_convoy_list: Array)
 # Signal to indicate an error occurred during fetching
+signal map_data_received(map_data: Dictionary)
+# Signal to indicate an error occurred during fetching
 signal fetch_error(error_message: String)
 
 const BASE_URL: String = 'https://df-api.oori.dev:1337'
@@ -16,8 +18,11 @@ var convoys_in_transit: Array = []  # This will store the latest parsed list of 
 var _last_requested_url: String = "" # To store the URL for logging on error
 var _is_local_user_attempt: bool = false # Flag to track if the current USER_CONVOYS request is the initial local one
 
+# --- Request Queue ---
+var _request_queue: Array = []
+var _is_request_in_progress: bool = false
 
-enum RequestPurpose { NONE, USER_CONVOYS, ALL_CONVOYS }
+enum RequestPurpose { NONE, USER_CONVOYS, ALL_CONVOYS, MAP_DATA }
 var _current_request_purpose: RequestPurpose = RequestPurpose.NONE
 
 func _ready() -> void:
@@ -52,16 +57,45 @@ func get_convoy_data(convoy_id: String) -> void:
 		'accept: application/json'
 	]
 
-	print("APICalls (get_convoy_data): Requesting data for convoy_id: %s from URL: %s" % [convoy_id, url])
-	_last_requested_url = url
-	# This function is for a single convoy, not covered by the user_convoys or all_in_transit logic directly.
-	# For now, we'll assume it doesn't interfere with _current_request_purpose or is used separately.
-	var error: Error = _http_request.request(url, headers, HTTPClient.METHOD_GET)
+	var request_details: Dictionary = {
+		"url": url,
+		"headers": headers,
+		"purpose": RequestPurpose.NONE, # Special case for single convoy, handled in _on_request_completed
+		"method": HTTPClient.METHOD_GET
+	}
+	_request_queue.append(request_details)
+	_process_queue()
 
-	if error != OK:
-		var error_msg = 'APICalls (get_convoy_data): An error occurred in HTTPRequest: %s' % error
-		printerr(error_msg)
-		emit_signal('fetch_error', error_msg)
+func get_map_data(x_min: int = -1, x_max: int = -1, y_min: int = -1, y_max: int = -1) -> void:
+	"""
+	Fetches map data from the backend API.
+	Optional parameters can be used to request a specific region of the map.
+	"""
+	var url: String = '%s/map/get' % BASE_URL
+	var query_params: Array[String] = []
+
+	if x_min != -1:
+		query_params.append("x_min=%d" % x_min)
+	if x_max != -1:
+		query_params.append("x_max=%d" % x_max)
+	if y_min != -1:
+		query_params.append("y_min=%d" % y_min)
+	if y_max != -1:
+		query_params.append("y_max=%d" % y_max)
+
+	if not query_params.is_empty():
+		url += "?" + "&".join(query_params)
+
+	var headers: PackedStringArray = ['accept: application/json']
+
+	var request_details: Dictionary = {
+		"url": url,
+		"headers": headers,
+		"purpose": RequestPurpose.MAP_DATA,
+		"method": HTTPClient.METHOD_GET
+	}
+	_request_queue.append(request_details)
+	_process_queue()
 
 func _is_valid_uuid(uuid_string: String) -> bool:
 	# Basic UUID regex: 8-4-4-4-12 hexadecimal characters
@@ -87,39 +121,59 @@ func get_user_convoys(p_user_id: String) -> void:
 	var url: String = '%s/convoy/user_convoys?user_id=%s' % [LOCAL_BASE_URL, p_user_id] # Try LOCAL first
 	var headers: PackedStringArray = ['accept: application/json']
 	_is_local_user_attempt = true # This is the initial local attempt
-	
-	print("APICalls (get_user_convoys): Attempting to fetch user-specific convoys for user_id: %s from LOCAL URL: %s" % [p_user_id, url])
-	_last_requested_url = url
-	_current_request_purpose = RequestPurpose.USER_CONVOYS
-	var error: Error = _http_request.request(url, headers, HTTPClient.METHOD_GET)
 
-	if error != OK:
-		var error_msg = 'APICalls (get_user_convoys): HTTPRequest initiation failed for local user convoys: %s. URL: %s' % [error, url]
-		printerr(error_msg)
-		_current_request_purpose = RequestPurpose.NONE # Reset purpose as this specific request attempt failed
-
-		_is_local_user_attempt = false # Mark that the local attempt sequence is over (it failed early)
-		printerr("APICalls: Local user convoy request (HTTPRequest initiation) failed. Falling back to remote all_in_transit.")
-		get_all_in_transit_convoys()
-		return # Important: return after initiating fallback
+	var request_details: Dictionary = {
+		"url": url,
+		"headers": headers,
+		"purpose": RequestPurpose.USER_CONVOYS,
+		"method": HTTPClient.METHOD_GET
+	}
+	_request_queue.append(request_details)
+	_process_queue()
 
 func get_all_in_transit_convoys() -> void:
 	var url: String = '%s/convoy/all_in_transit' % [BASE_URL]
-	print("APICalls (get_all_in_transit_convoys): Requesting all in-transit convoys from URL: %s" % url)
-	_last_requested_url = url
-	
 	var headers: PackedStringArray = [  # Headers for the request
 		'accept: application/json'
 	]
-	# Make the GET request
-	var error: Error = _http_request.request(url, headers, HTTPClient.METHOD_GET)
+	var request_details: Dictionary = {
+		"url": url,
+		"headers": headers,
+		"purpose": RequestPurpose.ALL_CONVOYS,
+		"method": HTTPClient.METHOD_GET
+	}
+	_request_queue.append(request_details)
+	_process_queue()
 
-	_current_request_purpose = RequestPurpose.ALL_CONVOYS
+func _complete_current_request() -> void:
+	_current_request_purpose = RequestPurpose.NONE
+	_is_request_in_progress = false
+	_process_queue()
+
+func _process_queue() -> void:
+	if _is_request_in_progress or _request_queue.is_empty():
+		return # Don't start a new request if one is running or queue is empty
+
+	_is_request_in_progress = true
+	var next_request: Dictionary = _request_queue.pop_front()
+
+	_last_requested_url = next_request.get("url", "")
+	_current_request_purpose = next_request.get("purpose", RequestPurpose.NONE)
+	var headers: PackedStringArray = next_request.get("headers", [])
+	var method: int = next_request.get("method", HTTPClient.METHOD_GET)
+
+	var purpose_str: String = RequestPurpose.keys()[_current_request_purpose]
+	print("APICalls (_process_queue): Starting request for purpose '%s'. URL: %s" % [purpose_str, _last_requested_url])
+
+	var error: Error = _http_request.request(_last_requested_url, headers, method)
+
 	if error != OK:
-		var error_msg = 'APICalls: An error occurred in HTTPRequest for all_in_transit_convoys: %s' % error
+		var error_msg = "APICalls (_process_queue): HTTPRequest initiation failed with error code %s for URL: %s" % [error, _last_requested_url]
 		printerr(error_msg)
 		emit_signal('fetch_error', error_msg)
+		_is_request_in_progress = false
 		_current_request_purpose = RequestPurpose.NONE
+		call_deferred("_process_queue") # Try to process the next item in the queue
 
 
 # Called when the HTTPRequest has completed.
@@ -165,7 +219,8 @@ func _on_request_completed(result: int, response_code: int, headers: PackedStrin
 					self.convoys_in_transit = parsed_data
 					emit_signal('convoy_data_received', parsed_data)
 					_current_request_purpose = RequestPurpose.NONE
-					return # IMPORTANT: Return after successful local processing
+					_complete_current_request()
+					return
 
 		if local_attempt_failed_or_empty:
 			printerr("APICalls: Local user convoy request failed (%s). URL: %s. Falling back to remote all_in_transit." % [failure_reason, _last_requested_url])
@@ -182,7 +237,7 @@ func _on_request_completed(result: int, response_code: int, headers: PackedStrin
 		var error_msg_http_fallback = 'APICalls (_on_request_completed - Purpose: %s): Request failed with HTTPRequest result code: %s. URL: %s' % [RequestPurpose.keys()[request_purpose_at_start], result, _last_requested_url]
 		printerr(error_msg_http_fallback)
 		emit_signal('fetch_error', error_msg_http_fallback)
-		_current_request_purpose = RequestPurpose.NONE
+		_complete_current_request()
 		return
 
 	if not (response_code >= 200 and response_code < 300):
@@ -190,7 +245,7 @@ func _on_request_completed(result: int, response_code: int, headers: PackedStrin
 		printerr(error_msg_response_fallback)
 		printerr('  Response body: ', body.get_string_from_utf8())
 		emit_signal('fetch_error', error_msg_response_fallback)
-		_current_request_purpose = RequestPurpose.NONE
+		_complete_current_request()
 		return
 
 	# Successful HTTP response for fallback or direct remote
@@ -199,8 +254,7 @@ func _on_request_completed(result: int, response_code: int, headers: PackedStrin
 		# This part needs to be fleshed out if get_convoy_data is actively used and its response is a Dictionary.
 		# For now, we'll assume it's not the primary flow being addressed.
 		printerr("APICalls (_on_request_completed - Purpose: NONE): Received response for get_convoy_data. Needs specific handling if it's not an Array. URL: %s" % _last_requested_url)
-		# Potentially parse as Dictionary and emit a different signal or handle differently.
-		_current_request_purpose = RequestPurpose.NONE
+		_complete_current_request()
 		return
 
 	# Process Array response (for ALL_CONVOYS or a non-initial USER_CONVOYS)
@@ -213,14 +267,14 @@ func _on_request_completed(result: int, response_code: int, headers: PackedStrin
 			printerr(error_msg_json_fallback)
 			printerr('  Raw Body: %s' % response_body_text)
 			emit_signal('fetch_error', error_msg_json_fallback)
-			_current_request_purpose = RequestPurpose.NONE
+			_complete_current_request()
 			return
 
 		if not json_response is Array:
 			var error_msg_type_fallback = 'APICalls (_on_request_completed - Purpose: %s, Code: %s): Expected array from JSON response, got %s. URL: %s' % [RequestPurpose.keys()[request_purpose_at_start], response_code, typeof(json_response), _last_requested_url]
 			printerr(error_msg_type_fallback)
 			emit_signal('fetch_error', error_msg_type_fallback)
-			_current_request_purpose = RequestPurpose.NONE
+			_complete_current_request()
 			return
 
 		# Successfully parsed array for fallback or direct remote (that expects array)
@@ -233,12 +287,36 @@ func _on_request_completed(result: int, response_code: int, headers: PackedStrin
 				print("  Sample %s Convoy 0: ID: %s, Name: %s" % [log_prefix, parsed_data[0].get("convoy_id", "N/A"), parsed_data[0].get("convoy_name", "N/A")])
 			self.convoys_in_transit = parsed_data
 			emit_signal('convoy_data_received', parsed_data)
-			_current_request_purpose = RequestPurpose.NONE
+			_complete_current_request()
+
+	elif request_purpose_at_start == RequestPurpose.MAP_DATA:
+		if body.is_empty():
+			var error_msg_empty = 'APICalls (_on_request_completed - Purpose: MAP_DATA, Code: %s): Request successful, but the server returned an EMPTY response body. Cannot parse map data. URL: %s' % [response_code, _last_requested_url]
+			printerr(error_msg_empty)
+			emit_signal('fetch_error', error_msg_empty)
+			_complete_current_request()
+			return
+
+		# The server sends custom binary data, not JSON. We need to deserialize it.
+		var deserialized_map_data: Dictionary = Tools.deserialize_map_data(body)
+
+		if deserialized_map_data.is_empty():
+			var error_msg = "APICalls (_on_request_completed - MAP_DATA): Deserialization of binary map data failed. The data might be corrupt or the format has changed."
+			printerr(error_msg)
+			emit_signal('fetch_error', error_msg)
+		else:
+			var tiles_array = deserialized_map_data.get("tiles", [])
+			print("APICalls (_on_request_completed - MAP_DATA): Successfully deserialized binary map data. Rows: %s, Cols: %s. URL: %s" % [tiles_array.size(), tiles_array[0].size() if not tiles_array.is_empty() else 0, _last_requested_url])
+			emit_signal('map_data_received', deserialized_map_data)
+
+		_complete_current_request()
+		return
 
 	# Fallback for any unhandled cases, though ideally all paths are covered.
 	if _current_request_purpose != RequestPurpose.NONE:
 		printerr("APICalls (_on_request_completed): Reached end of function with _current_request_purpose not NONE. Purpose: %s. This might indicate an unhandled logic path." % RequestPurpose.keys()[_current_request_purpose])
-		_current_request_purpose = RequestPurpose.NONE # Ensure reset
+		_complete_current_request() # Ensure reset and queue processing
+
 
 func parse_in_transit_convoy_details(raw_convoy_list: Array) -> Array:
 	"""

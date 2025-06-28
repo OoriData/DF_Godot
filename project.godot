@@ -20,6 +20,7 @@ config/icon="uid://btrbocmbg1efs"
 
 [autoload]
 
+APICalls="*res://Scripts/APICalls.gd"
 GameDataManager="*res://Scripts/GameDataManager.gd"
 DateTimeUtils="*res://Scripts/DateTimeUtils.gd"
 

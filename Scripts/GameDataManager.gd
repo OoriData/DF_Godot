@@ -14,8 +14,6 @@ signal convoy_data_updated(all_convoy_data_list: Array)
 # For now, assuming APICallsInstance will also be an Autoload or accessible globally.
 var api_calls_node: Node = null # Will be fetched in _ready
 
-# --- Configuration ---
-@export var map_data_file_path: String = "res://Other/foo.json"
 
 # --- Data Storage ---
 var map_tiles: Array = []
@@ -34,44 +32,40 @@ const PREDEFINED_CONVOY_COLORS: Array[Color] = [
 
 
 func _ready():
-	print("GameDataManager _ready(): Truly MINIMAL _ready() EXECUTED. APICalls node setup is deferred.")
-	# Load static map data. This should be safe as it reads from a file.
-	# If _load_map_and_settlement_data itself causes issues, we can comment it too for testing.
-	_load_map_and_settlement_data()
+	print("GameDataManager _ready(): Initializing...")
+	# Use call_deferred to ensure all Autoload nodes have completed their _ready functions
+	# before we try to access them. This is a robust way to handle inter-Autoload dependencies.
+	call_deferred("_initiate_preload")
 
-
-func set_api_calls_node_reference(node_ref: Node):
-	api_calls_node = node_ref
+func _initiate_preload():
+	# APICalls is now an Autoload, so we can get it directly.
+	# It should be loaded before GameDataManager in the project settings.
+	api_calls_node = get_node_or_null("/root/APICalls")
 	if is_instance_valid(api_calls_node):
+		# Connect signals directly
 		if api_calls_node.has_signal('convoy_data_received'):
 			api_calls_node.convoy_data_received.connect(_on_raw_convoy_data_received)
-			print('GameDataManager: Successfully connected to APICalls.convoy_data_received signal (via setter).')
-		else:
-			printerr('GameDataManager: APICalls node (via setter) does not have "convoy_data_received" signal.')
+			print('GameDataManager: Connected to APICalls.convoy_data_received signal.')
+		if api_calls_node.has_signal('map_data_received'):
+			api_calls_node.map_data_received.connect(_on_map_data_received_from_api)
+			print('GameDataManager: Connected to APICalls.map_data_received signal.')
+
+		print("GameDataManager: Initiating map data preload on game start.")
+		request_map_data()
 	else:
-		printerr('GameDataManager: APICalls node (via setter) is invalid. Cannot connect signal for convoy data.')
+		printerr("GameDataManager (_initiate_preload): Could not find APICalls Autoload. Map data will not be preloaded.")
 
 
-func _load_map_and_settlement_data():
-	# print("GameDataManager: Attempting to load map data from: '", map_data_file_path, "'") # DEBUG
-	var file = FileAccess.open(map_data_file_path, FileAccess.READ)
-	if FileAccess.get_open_error() != OK:
-		printerr('GameDataManager: Error opening map json file: ', map_data_file_path)
+func _on_map_data_received_from_api(map_data_dict: Dictionary):
+	if not map_data_dict.has("tiles"):
+		printerr("GameDataManager: Received map data dictionary from API, but it's missing the 'tiles' key.")
 		return
 
-	var json_string = file.get_as_text()
-	file.close()
-	var json_data = JSON.parse_string(json_string)
+	var tiles_from_api: Array = map_data_dict.get("tiles", [])
+	print("[DIAGNOSTIC_LOG | GameDataManager.gd] _on_map_data_received_from_api(): Received map data from API. Row count: %s" % tiles_from_api.size())
 
-	if json_data == null:
-		printerr('GameDataManager: Error parsing JSON map data from: ', map_data_file_path)
-		return
-
-	if not json_data is Dictionary or not json_data.has('tiles'):
-		printerr('GameDataManager: JSON data does not contain a "tiles" key.')
-		return
-
-	map_tiles = json_data.get('tiles', []) # type: Array
+	map_tiles = tiles_from_api # Store the tiles array
+	print("  - Emitting 'map_data_loaded' signal with tiles array.")
 	map_data_loaded.emit.call_deferred(map_tiles) # Emit deferred
 	# print("GameDataManager: Map data loaded. Tiles count: %s" % map_tiles.size())
 
@@ -226,9 +220,23 @@ func request_convoy_data_refresh() -> void:
 	else:
 		printerr("GameDataManager: Cannot request convoy data refresh. APICallsInstance is invalid.")
 
+func request_map_data(x_min: int = -1, x_max: int = -1, y_min: int = -1, y_max: int = -1) -> void:
+	"""
+	Triggers a request to the APICalls node to fetch map data from the backend.
+	"""
+	print("[DIAGNOSTIC_LOG | GameDataManager.gd] request_map_data(): A request for map data is being initiated.")
+	if is_instance_valid(api_calls_node) and api_calls_node.has_method("get_map_data"):
+		print("  - Calling APICalls.get_map_data().")
+		api_calls_node.get_map_data(x_min, x_max, y_min, y_max)
+	else:
+		printerr("GameDataManager: Cannot request map data. APICallsInstance is invalid or missing 'get_map_data' method.")
+
+
 func trigger_initial_convoy_data_fetch(p_user_id: String) -> void:
 	if is_instance_valid(api_calls_node) and api_calls_node.has_method("get_user_convoys"):
-		api_calls_node.set_user_id(p_user_id) # Ensure APICalls knows the user
+		# Set the user ID for this and future refreshes.
+		api_calls_node.set_user_id(p_user_id)
+		# Let APICalls handle the validation and fallback logic internally.
 		api_calls_node.get_user_convoys(p_user_id)
 	else:
 		printerr("GameDataManager: Cannot trigger initial convoy data fetch. APICallsInstance is invalid or missing 'get_user_convoys' method.")
