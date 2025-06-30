@@ -1,5 +1,6 @@
-[gd_scene load_steps=2 format=3 uid="uid://c6w2x0y7xqbv1"]
+[gd_scene load_steps=3 format=3 uid="uid://c6w2x0y7xqbv1"]
 
+[ext_resource type="PackedScene" uid="uid://c5w2h7q3g6y0x" path="res://Scenes/UserInfoDisplay.tscn" id="2_component"]
 [ext_resource type="Script" path="res://Scripts/convoy_journey_menu.gd" id="1_script"]
 
 [node name="ConvoyJourneyMenu" type="Control"]
@@ -38,6 +39,9 @@ layout_mode = 2
 theme_override_font_sizes/font_size = 20
 text = "Journey Planner"
 horizontal_alignment = 1
+
+[node name="UserInfoDisplay" parent="MainVBox" instance=ExtResource("2_component")]
+layout_mode = 2
 
 [node name="ScrollContainer" type="ScrollContainer" parent="MainVBox"]
 layout_mode = 2

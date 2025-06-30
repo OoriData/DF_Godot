@@ -24,7 +24,8 @@ const COLOR_MENU_BUTTON_GREY_BG: Color = Color("b0b0b0") # Light-Medium Grey for
 const COLOR_PERFORMANCE_BOX_FONT: Color = Color.WHITE   # White
 
 # --- @onready vars for new labels ---
-@onready var title_label: Label = $MainVBox/TitleLabel
+# Paths updated to reflect the new TopBarHBox container in the scene.
+@onready var title_label: Label = $MainVBox/TopBarHBox/TitleLabel
 
 # Resource/Stat Boxes (Panel and inner Label)
 @onready var fuel_box: Panel = $MainVBox/ScrollContainer/ContentVBox/ResourceStatsHBox/FuelBox
@@ -67,6 +68,10 @@ signal open_settlement_menu_requested(convoy_data)
 signal open_cargo_menu_requested(convoy_data)
 
 func _ready():
+	# --- DIAGNOSTIC: Check if UI nodes are valid ---
+	if not is_instance_valid(title_label):
+		printerr("ConvoyMenu: CRITICAL - TitleLabel node not found. Check the path in the script.")
+
 	# IMPORTANT: Ensure you have a Button node in your ConvoyMenu.tscn scene
 	# and that its name is "BackButton".
 	# The third argument 'false' for find_child means 'owned by this node' is not checked,

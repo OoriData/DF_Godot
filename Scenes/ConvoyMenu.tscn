@@ -1,5 +1,6 @@
-[gd_scene load_steps=2 format=3 uid="uid://baapt2nhy58e7"]
+[gd_scene load_steps=3 format=3 uid="uid://baapt2nhy58e7"]
 
+[ext_resource type="PackedScene" uid="uid://c5w2h7q3g6y0x" path="res://Scenes/UserInfoDisplay.tscn" id="2_26v5c"]
 [ext_resource type="Script" uid="uid://cyte2x4bpcu4i" path="res://Scripts/convoy_menu.gd" id="1_f5pu3"]
 
 [node name="ConvoyMenu" type="Control"]
@@ -33,9 +34,17 @@ grow_horizontal = 2
 grow_vertical = 2
 theme_override_constants/separation = 10
 
-[node name="TitleLabel" type="Label" parent="MainVBox"]
+[node name="TopBarHBox" type="HBoxContainer" parent="MainVBox"]
 layout_mode = 2
+
+[node name="TitleLabel" type="Label" parent="MainVBox/TopBarHBox"]
+layout_mode = 2
+size_flags_horizontal = 3
 theme_override_font_sizes/font_size = 22
+horizontal_alignment = 1
+
+[node name="UserInfoDisplay" parent="MainVBox" instance=ExtResource("2_26v5c")]
+layout_mode = 2
 
 [node name="ScrollContainer" type="ScrollContainer" parent="MainVBox"]
 layout_mode = 2

@@ -7,6 +7,9 @@ signal settlement_data_updated(settlement_data_list: Array)
 # Emitted when convoy data is received and processed.
 # Passes the fully augmented convoy data.
 signal convoy_data_updated(all_convoy_data_list: Array)
+# Emitted when the current user's data (like money) is updated.
+signal user_data_updated(user_data: Dictionary)
+
 
 # --- Node References ---
 # Adjust the path if your APICallsInstance is located differently relative to GameDataManager
@@ -19,6 +22,7 @@ var api_calls_node: Node = null # Will be fetched in _ready
 var map_tiles: Array = []
 var all_settlement_data: Array = []
 var all_convoy_data: Array = [] # Stores augmented convoy data
+var current_user_data: Dictionary = {}
 var convoy_id_to_color_map: Dictionary = {}
 
 # --- Internal State ---
@@ -49,6 +53,9 @@ func _initiate_preload():
 		if api_calls_node.has_signal('map_data_received'):
 			api_calls_node.map_data_received.connect(_on_map_data_received_from_api)
 			print('GameDataManager: Connected to APICalls.map_data_received signal.')
+		if api_calls_node.has_signal('user_data_received'):
+			api_calls_node.user_data_received.connect(_on_user_data_received_from_api)
+			print('GameDataManager: Connected to APICalls.user_data_received signal.')
 
 		print("GameDataManager: Initiating map data preload on game start.")
 		request_map_data()
@@ -88,6 +95,17 @@ func _on_map_data_received_from_api(map_data_dict: Dictionary):
 								all_settlement_data.append(settlement_info_for_render)
 	settlement_data_updated.emit.call_deferred(all_settlement_data) # Emit deferred
 	# print("GameDataManager: Settlement data extracted. Count: %s" % all_settlement_data.size())
+
+
+func _on_user_data_received_from_api(p_user_data: Dictionary):
+	print("GameDataManager: Received user data from API.")
+	if p_user_data.is_empty():
+		printerr("GameDataManager: Received empty user data dictionary.")
+		return
+
+	current_user_data = p_user_data
+	print("  - User money is now: %s" % current_user_data.get("money", "N/A"))
+	user_data_updated.emit.call_deferred(current_user_data)
 
 
 func _on_raw_convoy_data_received(raw_data: Variant):
@@ -231,11 +249,25 @@ func request_map_data(x_min: int = -1, x_max: int = -1, y_min: int = -1, y_max: 
 	else:
 		printerr("GameDataManager: Cannot request map data. APICallsInstance is invalid or missing 'get_map_data' method.")
 
+func request_user_data_refresh() -> void:
+	"""
+	Called to trigger a new fetch of the current user's data (e.g., money).
+	"""
+	if is_instance_valid(api_calls_node):
+		var user_id = api_calls_node.current_user_id
+		if not user_id.is_empty() and api_calls_node.has_method("get_user_data"):
+			api_calls_node.get_user_data(user_id)
+		else:
+			printerr("GameDataManager: Cannot request user data. User ID is not set or APICallsInstance is missing 'get_user_data' method.")
+	else:
+		printerr("GameDataManager: Cannot request user data refresh. APICallsInstance is invalid.")
 
 func trigger_initial_convoy_data_fetch(p_user_id: String) -> void:
 	if is_instance_valid(api_calls_node) and api_calls_node.has_method("get_user_convoys"):
 		# Set the user ID for this and future refreshes.
 		api_calls_node.set_user_id(p_user_id)
+		# Also trigger a fetch for the user's own data (like money)
+		request_user_data_refresh()
 		# Let APICalls handle the validation and fallback logic internally.
 		api_calls_node.get_user_convoys(p_user_id)
 	else:
@@ -245,6 +277,10 @@ func trigger_initial_convoy_data_fetch(p_user_id: String) -> void:
 func get_all_settlements_data() -> Array:
 	"""Returns the cached list of all settlement data."""
 	return all_settlement_data
+
+func get_current_user_data() -> Dictionary:
+	"""Returns the cached user data dictionary."""
+	return current_user_data
 
 
 func get_settlement_name_from_coords(target_x: int, target_y: int) -> String:
@@ -286,3 +322,14 @@ func get_settlement_name_from_coords(target_x: int, target_y: int) -> String:
 		return "N/A (Y Out of Bounds)"
 
 	return "N/A (Not Found)" # General fallback
+
+func update_user_money(amount_delta: float):
+	"""
+	Updates the user's money by a given delta and emits the user_data_updated signal.
+	This should be the single point of entry for all client-side money changes.
+	"""
+	if not current_user_data.has("money"):
+		current_user_data["money"] = 0.0
+	current_user_data["money"] += amount_delta
+	print("GameDataManager: User money updated by %.2f. New total: %.2f" % [amount_delta, current_user_data.money])
+	user_data_updated.emit(current_user_data)

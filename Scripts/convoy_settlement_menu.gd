@@ -248,8 +248,14 @@ func _on_title_label_pressed():
 
 func _on_item_purchased(item: Dictionary, quantity: int, total_cost: float):
 
-	# 1. Update convoy data
-	_convoy_data["money"] = _convoy_data.get("money", 0) - total_cost
+	# 1. Update central user money via GameDataManager
+	var gdm = get_node_or_null("/root/GameDataManager")
+	if is_instance_valid(gdm) and gdm.has_method("update_user_money"):
+		gdm.update_user_money(-total_cost) # Subtract the cost
+	else:
+		printerr("ConvoySettlementMenu: Could not update user money. GameDataManager not found or is missing 'update_user_money' method.")
+		# Fallback to local data modification if GDM fails, but this is not ideal.
+		_convoy_data["money"] = _convoy_data.get("money", 0) - total_cost
 	if not _convoy_data.has("cargo_inventory"):
 		_convoy_data["cargo_inventory"] = []
 	# This assumes items don't stack. If they do, you'll need more complex logic.
@@ -276,8 +282,13 @@ func _on_item_purchased(item: Dictionary, quantity: int, total_cost: float):
 
 func _on_item_sold(item: Dictionary, quantity: int, total_value: float):
 
-	# 1. Update convoy data
-	_convoy_data["money"] = _convoy_data.get("money", 0) + total_value
+	# 1. Update central user money via GameDataManager
+	var gdm = get_node_or_null("/root/GameDataManager")
+	if is_instance_valid(gdm) and gdm.has_method("update_user_money"):
+		gdm.update_user_money(total_value) # Add the value
+	else:
+		printerr("ConvoySettlementMenu: Could not update user money. GameDataManager not found or is missing 'update_user_money' method.")
+		_convoy_data["money"] = _convoy_data.get("money", 0) + total_value
 	if _convoy_data.has("cargo_inventory"):
 		for i in range(quantity):
 			var item_index = _convoy_data.cargo_inventory.find(item)

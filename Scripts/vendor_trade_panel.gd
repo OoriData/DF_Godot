@@ -26,6 +26,7 @@ signal item_sold(item, quantity, total_price)
 # --- Data ---
 var vendor_data # Should be set by the parent
 var convoy_data # Should be set by the parent
+var gdm: Node # GameDataManager instance
 var current_settlement_data # Will hold the current settlement data for local vendor lookup
 var all_settlement_data_global: Array # New: Will hold all settlement data for global vendor lookup
 var selected_item = null
@@ -54,6 +55,14 @@ func _ready() -> void:
 	else:
 		printerr("VendorTradePanel: 'DescriptionToggleButton' node not found. Please check the scene file.")
 
+	# Get GameDataManager and connect to its signal to keep user money updated.
+	gdm = get_node_or_null("/root/GameDataManager")
+	if is_instance_valid(gdm):
+		if not gdm.is_connected("user_data_updated", _on_user_data_updated):
+			gdm.user_data_updated.connect(_on_user_data_updated)
+	else:
+		printerr("VendorTradePanel: Could not find GameDataManager.")
+
 	# Initially hide comparison panel until an item is selected
 	comparison_panel.hide()
 	if is_instance_valid(action_button):
@@ -70,7 +79,7 @@ func initialize(p_vendor_data, p_convoy_data, p_current_settlement_data, p_all_s
 	
 	_populate_vendor_list()
 	_populate_convoy_list()
-	_update_convoy_info()
+	_update_convoy_info_display()
 	_on_tab_changed(trade_mode_tab_container.current_tab)
 
 # --- UI Population ---
@@ -266,14 +275,29 @@ func _aggregate_item(agg_dict: Dictionary, item: Dictionary, vehicle_name: Strin
 		agg_dict[item_name].locations[vehicle_name] = 0
 	agg_dict[item_name].locations[vehicle_name] += item_quantity
 
-func _update_convoy_info() -> void:
-	if not convoy_data:
-		return
-	# Use .get() for safety
-	convoy_money_label.text = "Money: %d" % convoy_data.get("money", 0)
-	var cargo_used = convoy_data.get("cargo_used", 0) # Replace with actual key if different
-	var cargo_max = convoy_data.get("cargo_max", 0)   # Replace with actual key if different
-	convoy_cargo_label.text = "Cargo: %d/%d" % [cargo_used, cargo_max]
+func _update_convoy_info_display() -> void:
+	# This function now updates both the user's money and the convoy's cargo stats.
+	if not is_node_ready(): return
+
+	# Update User Money from GameDataManager
+	if is_instance_valid(gdm):
+		var user_data = gdm.get_current_user_data()
+		var money_amount = user_data.get("money", 0)
+		convoy_money_label.text = "Money: %s" % _format_money(money_amount)
+	else:
+		convoy_money_label.text = "Money: N/A"
+
+	# Update Convoy Cargo from local convoy_data
+	if convoy_data:
+		var used_volume = convoy_data.get("total_cargo_capacity", 0.0) - convoy_data.get("total_free_space", 0.0)
+		var total_volume = convoy_data.get("total_cargo_capacity", 0.0)
+		convoy_cargo_label.text = "Cargo: %.1f / %.1f" % [used_volume, total_volume]
+	else:
+		convoy_cargo_label.text = "Cargo: N/A"
+
+func _on_user_data_updated(user_data: Dictionary):
+	# When user data changes (e.g., after a transaction), refresh the display.
+	_update_convoy_info_display()
 
 # --- Signal Handlers ---
 func _on_tab_changed(tab_index: int) -> void:
@@ -395,7 +419,10 @@ func _on_max_button_pressed() -> void:
 			price = float(buy_price_val)
 		
 		if price > 0:
-			var convoy_money = convoy_data.get("money", 0)
+			var convoy_money = 0
+			if is_instance_valid(gdm):
+				var user_data = gdm.get_current_user_data()
+				convoy_money = user_data.get("money", 0)
 			max_can_afford = floori(convoy_money / price)
 		else:
 			max_can_afford = vendor_stock # Can afford all if free
@@ -419,7 +446,11 @@ func _on_action_button_pressed() -> void:
 	var total_price = final_unit_price * quantity
 
 	if current_mode == "buy":
-		if convoy_data.get("money", 0) >= total_price:
+		var current_money = 0
+		if is_instance_valid(gdm):
+			var user_data = gdm.get_current_user_data()
+			current_money = user_data.get("money", 0)
+		if current_money >= total_price:
 			emit_signal("item_purchased", item_data_source, quantity, total_price)
 		else:
 			# Replace with proper user feedback
@@ -729,6 +760,24 @@ func _get_item_price_components(item_data: Dictionary) -> Dictionary:
 	
 	components.resource_unit_value = resource_value
 	return components
+
+func _format_money(amount: Variant) -> String:
+	"""Formats a number into a currency string, e.g., $1,234,567"""
+	var num: int = 0
+	if amount is int or amount is float:
+		num = int(amount)
+	
+	if amount == null:
+		return "$0"
+	
+	var s = str(num)
+	var mod = s.length() % 3
+	var res = ""
+	if mod != 0:
+		res = s.substr(0, mod)
+	for i in range(mod, s.length(), 3):
+		res += ("," if res.length() > 0 else "") + s.substr(i, 3)
+	return "$%s" % res
 
 # New helper function to find vendor name by recipient ID
 func _get_vendor_name_for_recipient(recipient_id: String) -> String:

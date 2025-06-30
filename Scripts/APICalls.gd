@@ -5,6 +5,8 @@ extends Node
 signal convoy_data_received(parsed_convoy_list: Array)
 # Signal to indicate an error occurred during fetching
 signal map_data_received(map_data: Dictionary)
+# Signal to indicate when user data has been fetched
+signal user_data_received(user_data: Dictionary)
 # Signal to indicate an error occurred during fetching
 signal fetch_error(error_message: String)
 
@@ -22,7 +24,7 @@ var _is_local_user_attempt: bool = false # Flag to track if the current USER_CON
 var _request_queue: Array = []
 var _is_request_in_progress: bool = false
 
-enum RequestPurpose { NONE, USER_CONVOYS, ALL_CONVOYS, MAP_DATA }
+enum RequestPurpose { NONE, USER_CONVOYS, ALL_CONVOYS, MAP_DATA, USER_DATA }
 var _current_request_purpose: RequestPurpose = RequestPurpose.NONE
 
 func _ready() -> void:
@@ -92,6 +94,25 @@ func get_map_data(x_min: int = -1, x_max: int = -1, y_min: int = -1, y_max: int 
 		"url": url,
 		"headers": headers,
 		"purpose": RequestPurpose.MAP_DATA,
+		"method": HTTPClient.METHOD_GET
+	}
+	_request_queue.append(request_details)
+	_process_queue()
+
+func get_user_data(p_user_id: String) -> void:
+	if not _is_valid_uuid(p_user_id):
+		var error_msg = "APICalls (get_user_data): Provided ID '%s' is not a valid UUID." % p_user_id
+		printerr(error_msg)
+		emit_signal('fetch_error', error_msg)
+		return
+
+	var url: String = '%s/user/get?user_id=%s' % [BASE_URL, p_user_id]
+	var headers: PackedStringArray = ['accept: application/json']
+
+	var request_details: Dictionary = {
+		"url": url,
+		"headers": headers,
+		"purpose": RequestPurpose.USER_DATA,
 		"method": HTTPClient.METHOD_GET
 	}
 	_request_queue.append(request_details)
@@ -308,6 +329,28 @@ func _on_request_completed(result: int, response_code: int, headers: PackedStrin
 			var tiles_array = deserialized_map_data.get("tiles", [])
 			print("APICalls (_on_request_completed - MAP_DATA): Successfully deserialized binary map data. Rows: %s, Cols: %s. URL: %s" % [tiles_array.size(), tiles_array[0].size() if not tiles_array.is_empty() else 0, _last_requested_url])
 			emit_signal('map_data_received', deserialized_map_data)
+
+		_complete_current_request()
+		return
+	
+	elif request_purpose_at_start == RequestPurpose.USER_DATA:
+		var response_body_text: String = body.get_string_from_utf8()
+		var json_response = JSON.parse_string(response_body_text)
+
+		if json_response == null:
+			var error_msg_json = 'APICalls (_on_request_completed - USER_DATA): Failed to parse JSON. URL: %s' % _last_requested_url
+			printerr(error_msg_json)
+			printerr('  Raw Body: %s' % response_body_text)
+			emit_signal('fetch_error', error_msg_json)
+		elif not json_response is Dictionary:
+			var error_msg_type = 'APICalls (_on_request_completed - USER_DATA): Expected Dictionary, got %s. URL: %s' % [typeof(json_response), _last_requested_url]
+			printerr(error_msg_type)
+			emit_signal('fetch_error', error_msg_type)
+		else:
+			# SUCCESS with user data
+			print("APICalls (_on_request_completed - USER_DATA): Successfully fetched user data. URL: %s" % _last_requested_url)
+			# print("  - User Money: %s" % json_response.get("money", "N/A"))
+			emit_signal('user_data_received', json_response)
 
 		_complete_current_request()
 		return
