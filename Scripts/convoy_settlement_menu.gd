@@ -72,6 +72,14 @@ func _ready():
 		if not title_label.is_connected("pressed", Callable(self, "_on_title_label_pressed")):
 			title_label.pressed.connect(_on_title_label_pressed)
 
+	# Connect to GameDataManager signals to refresh UI when data updates
+	var gdm = get_node_or_null("/root/GameDataManager")
+	if is_instance_valid(gdm):
+		if not gdm.is_connected("convoy_data_updated", Callable(self, "_on_gdm_convoy_data_updated")):
+			gdm.convoy_data_updated.connect(_on_gdm_convoy_data_updated)
+		if not gdm.is_connected("settlement_data_updated", Callable(self, "_on_gdm_settlement_data_updated")):
+			gdm.settlement_data_updated.connect(_on_gdm_settlement_data_updated)
+
 
 func _display_error(message: String):
 	_clear_tabs()
@@ -186,11 +194,15 @@ func _create_vendor_tab(vendor_data: Dictionary):
 	# 1. Add the panel to the scene tree. This is crucial because it triggers the panel's
 	#    _ready() function, which populates all its @onready variables (like vendor_item_list).
 	vendor_tab_container.add_child(vendor_panel_instance)
-	vendor_panel_instance.name = vendor_name # Use original full name for the node's name to ensure uniqueness
+	vendor_panel_instance.name = vendor_name
 	vendor_tab_container.set_tab_title(vendor_tab_container.get_tab_count() - 1, short_vendor_name)
-
-	# 2. Now that the panel is in the tree and ready, it's safe to initialize it and connect signals.
-	vendor_panel_instance.initialize(vendor_data, _convoy_data, _settlement_data, _all_settlement_data) # Pass _all_settlement_data
+	# Pass deep copies to avoid reference bugs!
+	vendor_panel_instance.initialize(
+		vendor_data.duplicate(true),
+		_convoy_data.duplicate(true),
+		_settlement_data.duplicate(true),
+		_all_settlement_data.duplicate(true)
+	)
 	vendor_panel_instance.item_purchased.connect(_on_item_purchased)
 	vendor_panel_instance.item_sold.connect(_on_item_sold)
 
@@ -247,84 +259,64 @@ func _on_title_label_pressed():
 # --- Transaction Logic ---
 
 func _on_item_purchased(item: Dictionary, quantity: int, total_cost: float):
-
-	# 1. Update central user money via GameDataManager
+	# Only update user money via GameDataManager. Do NOT mutate local convoy/vendor data.
 	var gdm = get_node_or_null("/root/GameDataManager")
 	if is_instance_valid(gdm) and gdm.has_method("update_user_money"):
-		gdm.update_user_money(-total_cost) # Subtract the cost
+		gdm.update_user_money(-total_cost)
 	else:
 		printerr("ConvoySettlementMenu: Could not update user money. GameDataManager not found or is missing 'update_user_money' method.")
-		# Fallback to local data modification if GDM fails, but this is not ideal.
-		_convoy_data["money"] = _convoy_data.get("money", 0) - total_cost
-	if not _convoy_data.has("cargo_inventory"):
-		_convoy_data["cargo_inventory"] = []
-	# This assumes items don't stack. If they do, you'll need more complex logic.
-	for i in range(quantity):
-		_convoy_data.cargo_inventory.append(item)
-	# TODO: Update convoy cargo weight if you track that.
-
-	# 2. Update vendor data
-	var current_tab_control = vendor_tab_container.get_current_tab_control()
-	if not is_instance_valid(current_tab_control): return
-	var full_vendor_name = current_tab_control.name # Use the node's full name for lookup
-	var vendor_data = _find_vendor_by_name(full_vendor_name)
-	if vendor_data:
-		vendor_data["money"] = vendor_data.get("money", 0) + total_cost
-		# This is a simple removal. If vendor has quantities, adjust that instead.
-		if vendor_data.has("cargo_inventory"):
-			for i in range(quantity):
-				var item_index = vendor_data.cargo_inventory.find(item)
-				if item_index != -1:
-					vendor_data.cargo_inventory.remove_at(item_index)
-	
-	# 3. Refresh all UIs to show the new state.
-	_refresh_all_vendor_panels()
+	# Do NOT mutate _convoy_data or vendor data here.
+	# Wait for GameDataManager to emit updated data signals, then refresh UI.
 
 func _on_item_sold(item: Dictionary, quantity: int, total_value: float):
-
-	# 1. Update central user money via GameDataManager
 	var gdm = get_node_or_null("/root/GameDataManager")
 	if is_instance_valid(gdm) and gdm.has_method("update_user_money"):
-		gdm.update_user_money(total_value) # Add the value
+		gdm.update_user_money(total_value)
 	else:
 		printerr("ConvoySettlementMenu: Could not update user money. GameDataManager not found or is missing 'update_user_money' method.")
-		_convoy_data["money"] = _convoy_data.get("money", 0) + total_value
-	if _convoy_data.has("cargo_inventory"):
-		for i in range(quantity):
-			var item_index = _convoy_data.cargo_inventory.find(item)
-			if item_index != -1:
-				_convoy_data.cargo_inventory.remove_at(item_index)
-	# TODO: Update convoy cargo weight.
+	# Do NOT mutate _convoy_data or vendor data here.
+	# Wait for GameDataManager to emit updated data signals, then refresh UI.
 
-	# 2. Update vendor data
-	var current_tab_control = vendor_tab_container.get_current_tab_control()
-	if not is_instance_valid(current_tab_control): return
-	var full_vendor_name = current_tab_control.name # Use the node's full name for lookup
-	var vendor_data = _find_vendor_by_name(full_vendor_name)
-	if vendor_data:
-		vendor_data["money"] = vendor_data.get("money", 0) - total_value
-		if not vendor_data.has("cargo_inventory"):
-			vendor_data["cargo_inventory"] = []
-		for i in range(quantity):
-			vendor_data.cargo_inventory.append(item)
+func _on_gdm_convoy_data_updated(all_convoys_data: Array) -> void:
+	# Find the current convoy and update _convoy_data, then refresh UI
+	if not _convoy_data or not _convoy_data.has("convoy_id"):
+		return
+	var current_id = str(_convoy_data.get("convoy_id"))
+	for convoy in all_convoys_data:
+		if convoy.has("convoy_id") and str(convoy.get("convoy_id")) == current_id:
+			_convoy_data = convoy.duplicate(true)
+			_refresh_all_vendor_panels()
+			break
 
-	# 3. Refresh all UIs.
-	_refresh_all_vendor_panels()
+func _on_gdm_settlement_data_updated(all_settlements_data: Array) -> void:
+	# Find the current settlement and update _settlement_data, then refresh UI
+	if not _settlement_data or not _settlement_data.has("sett_id"):
+		return
+	var current_id = str(_settlement_data.get("sett_id"))
+	for settlement in all_settlements_data:
+		if settlement.has("sett_id") and str(settlement.get("sett_id")) == current_id:
+			_settlement_data = settlement.duplicate(true)
+			_refresh_all_vendor_panels()
+			break
 
 func _refresh_all_vendor_panels():
-	# This ensures that changes (like convoy money/inventory) are reflected across all tabs.
+	# Only call refresh_data, never initialize, and always pass deep copies
 	for i in range(vendor_tab_container.get_tab_count()):
 		var tab_content = vendor_tab_container.get_tab_control(i)
-		# Check if it's one of our vendor panels by checking its type or methods.
-		if tab_content is Control and tab_content.has_method("initialize"):
-			var full_vendor_name = tab_content.name # Use the node's full name for lookup
+		if tab_content is Control and tab_content.has_method("refresh_data"):
+			var full_vendor_name = tab_content.name
 			var vendor_data = _find_vendor_by_name(full_vendor_name)
 			if vendor_data:
-				tab_content.initialize(vendor_data, _convoy_data, _settlement_data, _all_settlement_data) # Pass _all_settlement_data
+				tab_content.refresh_data(
+					vendor_data.duplicate(true),
+					_convoy_data.duplicate(true),
+					_settlement_data.duplicate(true),
+					_all_settlement_data.duplicate(true)
+				)
 
-func _find_vendor_by_name(p_name: String) -> Dictionary:
+func _find_vendor_by_name(vendor_name: String) -> Dictionary:
 	if _settlement_data and _settlement_data.has("vendors"):
 		for vendor in _settlement_data.vendors:
-			if vendor.get("name") == p_name:
+			if vendor.get("name", "") == vendor_name:
 				return vendor
 	return {}

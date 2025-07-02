@@ -633,7 +633,10 @@ func _update_map_display(force_rerender_map_texture: bool = true, is_light_ui_up
 		for convoy_data_item in _all_convoy_data: # Iterate through ALL convoys
 			if convoy_data_item is Dictionary and convoy_data_item.has("convoy_id") and convoy_data_item.has("journey"):
 				var convoy_id_str = str(convoy_data_item.get("convoy_id"))
-				var journey_data: Dictionary = convoy_data_item.get("journey")
+				var journey_data: Dictionary = {}
+				var raw_journey = convoy_data_item.get("journey")
+				if raw_journey is Dictionary:
+					journey_data = raw_journey
 				var is_selected: bool = _selected_convoy_ids.has(convoy_id_str)
 
 				if journey_data is Dictionary: # Ensure journey_data is a dictionary

@@ -71,7 +71,10 @@ func augment_convoy_data_with_offsets(
 				var convoy_id_for_segment = str(convoy_item_for_shared.get("convoy_id", ""))
 				if convoy_id_for_segment.is_empty(): continue
 
-				var journey_data_for_shared: Dictionary = convoy_item_for_shared.get("journey")
+				var journey_data_for_shared: Dictionary = {}
+				var raw_journey = convoy_item_for_shared.get("journey")
+				if raw_journey is Dictionary:
+					journey_data_for_shared = raw_journey				
 				if journey_data_for_shared is Dictionary:
 					var route_x_s: Array = journey_data_for_shared.get("route_x", [])
 					var route_y_s: Array = journey_data_for_shared.get("route_y", [])
@@ -101,8 +104,12 @@ func augment_convoy_data_with_offsets(
 
 			if actual_tile_width_f > 0 and convoy_item_augmented.has("journey"): # Check if common values are valid
 				var current_seg_idx = convoy_item_augmented.get("_current_segment_start_idx", -1)
-				var journey_d = convoy_item_augmented.get("journey")
-				if journey_d is Dictionary and current_seg_idx != -1 and journey_d.get("route_x", []).size() > current_seg_idx + 1:
+				var journey_d: Dictionary = {}
+				var raw_journey = convoy_item_augmented.get("journey")
+				if raw_journey is Dictionary:
+					journey_d = raw_journey
+
+				if current_seg_idx != -1 and journey_d.get("route_x", []).size() > current_seg_idx + 1:
 					var r_x = journey_d.get("route_x")
 					var r_y = journey_d.get("route_y")
 					var p1_m = Vector2(float(r_x[current_seg_idx]), float(r_y[current_seg_idx]))

@@ -123,28 +123,8 @@ func _on_raw_convoy_data_received(raw_data: Variant):
 		return
 
 	var augmented_convoys: Array = []
-	for convoy_item_original in parsed_convoy_list:
-		if convoy_item_original is Dictionary:
-			var convoy_item_augmented = convoy_item_original.duplicate(true)
-
-			# Assign color
-			var convoy_id_val = convoy_item_augmented.get('convoy_id')
-			if convoy_id_val != null:
-				var convoy_id_str = str(convoy_id_val)
-				if not convoy_id_str.is_empty() and not convoy_id_to_color_map.has(convoy_id_str):
-					_last_assigned_color_idx = (_last_assigned_color_idx + 1) % PREDEFINED_CONVOY_COLORS.size()
-					convoy_id_to_color_map[convoy_id_str] = PREDEFINED_CONVOY_COLORS[_last_assigned_color_idx]
-			
-			# Calculate progress details
-			convoy_item_augmented = _calculate_convoy_progress_details(convoy_item_augmented)
-			
-			# Note: _pixel_offset_for_icon calculation is visual-context dependent and will be handled
-			# by the consumer of this data (e.g., main.gd or a ConvoyVisualsManager)
-			# as it requires map_renderer_node and tile pixel dimensions.
-
-			augmented_convoys.append(convoy_item_augmented)
-		else:
-			augmented_convoys.append(convoy_item_original) # Should not happen with consistent API
+	for raw_convoy_item in parsed_convoy_list:
+		augmented_convoys.append(augment_single_convoy(raw_convoy_item))
 
 	all_convoy_data = augmented_convoys
 	# print('GameDataManager: Processed and stored %s convoy objects.' % all_convoy_data.size())
@@ -155,20 +135,53 @@ func get_convoy_id_to_color_map() -> Dictionary:
 	"""Provides the current mapping of convoy IDs to colors."""
 	return convoy_id_to_color_map
 
+func augment_single_convoy(raw_convoy_item: Dictionary) -> Dictionary:
+	"""
+	Takes a single raw convoy dictionary from the API and returns a fully
+	processed ("augmented") version with client-side data like colors and
+	journey progress calculations.
+	"""
+	if not raw_convoy_item is Dictionary:
+		printerr("GameDataManager (augment_single_convoy): Expected a Dictionary, but got %s." % typeof(raw_convoy_item))
+		return {}
+
+	var augmented_item = raw_convoy_item.duplicate(true)
+
+	# Assign color if it's a new convoy
+	var convoy_id_val = augmented_item.get('convoy_id')
+	if convoy_id_val != null:
+		var convoy_id_str = str(convoy_id_val)
+		if not convoy_id_str.is_empty() and not convoy_id_to_color_map.has(convoy_id_str):
+			_last_assigned_color_idx = (_last_assigned_color_idx + 1) % PREDEFINED_CONVOY_COLORS.size()
+			convoy_id_to_color_map[convoy_id_str] = PREDEFINED_CONVOY_COLORS[_last_assigned_color_idx]
+
+	# Calculate precise position and progress details
+	augmented_item = _calculate_convoy_progress_details(augmented_item)
+
+	return augmented_item
+
 
 func _calculate_convoy_progress_details(convoy_data_item: Dictionary) -> Dictionary:
 	# This function MODIFIES the convoy_data_item by adding '_current_segment_start_idx', 
 	# '_progress_in_segment', and updates 'x' and 'y' to the precise interpolated tile coordinates.
-	if not (convoy_data_item is Dictionary and convoy_data_item.has("journey")):
+	if not convoy_data_item is Dictionary:
 		return convoy_data_item
 
-	var journey_data: Dictionary = convoy_data_item.get("journey")
-	if not (journey_data is Dictionary):
+	# --- Data Sanitization ---
+	# Ensure the journey field is a valid, non-null Dictionary. If it's null or not a
+	# dictionary, we set it to an empty one and return, ensuring downstream consumers
+	# never get a null 'journey' and that the object has the expected progress keys.
+	var raw_journey = convoy_data_item.get("journey")
+	if not raw_journey is Dictionary:
+		convoy_data_item["journey"] = {}
+		convoy_data_item["_current_segment_start_idx"] = -1
+		convoy_data_item["_progress_in_segment"] = 0.0
 		return convoy_data_item
 
-	var route_x: Array = journey_data.get("route_x", [])
-	var route_y: Array = journey_data.get("route_y", [])
-	var journey_progress: float = journey_data.get("progress", 0.0)
+	var journey_data_for_shared: Dictionary = raw_journey
+	var route_x: Array = journey_data_for_shared.get("route_x", [])
+	var route_y: Array = journey_data_for_shared.get("route_y", [])
+	var journey_progress: float = journey_data_for_shared.get("progress", 0.0)
 
 	var current_segment_start_idx: int = -1
 	var progress_within_segment: float = 0.0
@@ -333,3 +346,51 @@ func update_user_money(amount_delta: float):
 	current_user_data["money"] += amount_delta
 	print("GameDataManager: User money updated by %.2f. New total: %.2f" % [amount_delta, current_user_data.money])
 	user_data_updated.emit(current_user_data)
+
+func update_single_convoy(raw_updated_convoy: Dictionary) -> void:
+	if not raw_updated_convoy.has("convoy_id"):
+		printerr("GameDataManager: Tried to update convoy but no convoy_id present.")
+		return
+
+	# CRITICAL: Augment the raw convoy data from the API before updating the list.
+	# This ensures it has all the same client-side fields as the other convoys.
+	var augmented_convoy = augment_single_convoy(raw_updated_convoy)
+
+	var updated_id = str(augmented_convoy["convoy_id"])
+	var found = false
+	for i in range(all_convoy_data.size()):
+		var convoy = all_convoy_data[i]
+		if convoy.has("convoy_id") and str(convoy["convoy_id"]) == updated_id:
+			all_convoy_data[i] = augmented_convoy
+			found = true
+			print("GameDataManager: Updated existing convoy data for ID: %s" % updated_id)
+			break
+	if not found:
+		all_convoy_data.append(augmented_convoy)
+		print("GameDataManager: Added new convoy data for ID: %s" % updated_id)
+	convoy_data_updated.emit(all_convoy_data)
+
+func update_single_vendor(new_vendor_data: Dictionary) -> void:
+	if not new_vendor_data.has("vendor_id"):
+		printerr("GameDataManager: Tried to update vendor but no vendor_id present.")
+		return
+
+	var updated_id = str(new_vendor_data["vendor_id"])
+	var found = false
+
+	for settlement in all_settlement_data:
+		if settlement.has("vendors") and settlement.vendors is Array:
+			for i in range(settlement.vendors.size()):
+				var vendor = settlement.vendors[i]
+				if vendor.has("vendor_id") and str(vendor["vendor_id"]) == updated_id:
+					settlement.vendors[i] = new_vendor_data
+					found = true
+					print("GameDataManager: Updated vendor data for ID: %s in settlement: %s" % [updated_id, settlement.get("name", "N/A")])
+					break
+		if found:
+			break
+
+	if found:
+		settlement_data_updated.emit.call_deferred(all_settlement_data)
+	else:
+		printerr("GameDataManager: Vendor ID %s not found in any settlement." % updated_id)

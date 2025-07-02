@@ -10,9 +10,17 @@ signal user_data_received(user_data: Dictionary)
 # Signal to indicate an error occurred during fetching
 signal fetch_error(error_message: String)
 
-const BASE_URL: String = 'https://df-api.oori.dev:1337'
-const LOCAL_BASE_URL: String = 'https://df-api.oori.dev:1337' # Changed to live DB URL
+# --- Vendor Transaction Signals ---
+signal vehicle_bought(result: Dictionary)
+signal vehicle_sold(result: Dictionary)
+signal cargo_bought(result: Dictionary)
+signal cargo_sold(result: Dictionary)
+signal resource_bought(result: Dictionary)
+signal resource_sold(result: Dictionary)
+signal vendor_data_received(vendor_data: Dictionary)
 
+# const BASE_URL: String = 'https://df-api.oori.dev:1337' # Change this to your test or live URL as needed
+const BASE_URL: String = 'http://localhost:1337' # Change this to your test or live URL as needed
 
 var current_user_id: String = "" # To store the logged-in user's ID
 var _http_request: HTTPRequest
@@ -24,8 +32,10 @@ var _is_local_user_attempt: bool = false # Flag to track if the current USER_CON
 var _request_queue: Array = []
 var _is_request_in_progress: bool = false
 
-enum RequestPurpose { NONE, USER_CONVOYS, ALL_CONVOYS, MAP_DATA, USER_DATA }
+enum RequestPurpose { NONE, USER_CONVOYS, ALL_CONVOYS, MAP_DATA, USER_DATA, VENDOR_DATA }
 var _current_request_purpose: RequestPurpose = RequestPurpose.NONE
+
+var _current_patch_signal_name: String = ""
 
 func _ready() -> void:
 	# Create an HTTPRequest node and add it as a child.
@@ -139,7 +149,7 @@ func get_user_convoys(p_user_id: String) -> void:
 
 	# If we reach here, p_user_id IS a valid UUID. Proceed with local attempt.
 
-	var url: String = '%s/convoy/user_convoys?user_id=%s' % [LOCAL_BASE_URL, p_user_id] # Try LOCAL first
+	var url: String = '%s/convoy/user_convoys?user_id=%s' % [BASE_URL, p_user_id] # Use BASE_URL here
 	var headers: PackedStringArray = ['accept: application/json']
 	_is_local_user_attempt = true # This is the initial local attempt
 
@@ -180,6 +190,7 @@ func _process_queue() -> void:
 
 	_last_requested_url = next_request.get("url", "")
 	_current_request_purpose = next_request.get("purpose", RequestPurpose.NONE)
+	_current_patch_signal_name = next_request.get("signal_name", "") # <-- ADD THIS LINE
 	var headers: PackedStringArray = next_request.get("headers", [])
 	var method: int = next_request.get("method", HTTPClient.METHOD_GET)
 
@@ -199,8 +210,44 @@ func _process_queue() -> void:
 
 # Called when the HTTPRequest has completed.
 func _on_request_completed(result: int, response_code: int, headers: PackedStringArray, body: PackedByteArray) -> void:
-	var request_purpose_at_start = _current_request_purpose # Store for logging
+	var request_purpose_at_start = _current_request_purpose
 	var was_initial_local_user_attempt = (_current_request_purpose == RequestPurpose.USER_CONVOYS and _is_local_user_attempt)
+
+	# PATCH transaction responses (purpose == NONE, but signal_name is set)
+	if _current_request_purpose == RequestPurpose.NONE and _current_patch_signal_name != "":
+		var response_body_text = body.get_string_from_utf8()
+		var json_response = JSON.parse_string(response_body_text)
+
+		if json_response is Dictionary:
+			# The response is a PARTIAL convoy update. We need to merge it with the
+			# full convoy object from our cache to avoid data loss downstream.
+			if not json_response.has("convoy_id"):
+				printerr("APICalls: PATCH response missing convoy_id. Cannot update cache. Emitting partial response.")
+				emit_signal(_current_patch_signal_name, json_response)
+			else:
+				var updated_id = str(json_response["convoy_id"])
+				var found_and_updated = false
+				for i in range(self.convoys_in_transit.size()):
+					var existing_convoy = self.convoys_in_transit[i]
+					if existing_convoy.has("convoy_id") and str(existing_convoy["convoy_id"]) == updated_id:
+						# Found it. Merge the partial response into the full object.
+						var updated_full_convoy = _deep_update(existing_convoy, json_response)
+						self.convoys_in_transit[i] = updated_full_convoy # Update the cache
+						
+						print("APICalls: Merged PATCH response for convoy %s. Emitting full updated object." % updated_id)
+						emit_signal(_current_patch_signal_name, updated_full_convoy)
+						found_and_updated = true
+						break
+				
+				if not found_and_updated:
+					printerr("APICalls: Could not find convoy %s in cache to update after PATCH. Emitting partial response." % updated_id)
+					emit_signal(_current_patch_signal_name, json_response)
+		else:
+			printerr("APICalls: Failed to parse PATCH response for %s: %s" % [_current_patch_signal_name, response_body_text])
+			emit_signal('fetch_error', "Failed to parse PATCH response for %s" % _current_patch_signal_name)
+
+		_complete_current_request()
+		return
 
 	# --- Handle initial local user attempt specifically for fallback logic ---
 	if was_initial_local_user_attempt:
@@ -262,10 +309,19 @@ func _on_request_completed(result: int, response_code: int, headers: PackedStrin
 		return
 
 	if not (response_code >= 200 and response_code < 300):
+		var response_text = body.get_string_from_utf8()
 		var error_msg_response_fallback = 'APICalls (_on_request_completed - Purpose: %s): Request failed with response code: %s. URL: %s' % [RequestPurpose.keys()[request_purpose_at_start], response_code, _last_requested_url]
 		printerr(error_msg_response_fallback)
-		printerr('  Response body: ', body.get_string_from_utf8())
-		emit_signal('fetch_error', error_msg_response_fallback)
+		printerr('  Response body: ', response_text)
+		
+		# Try to extract "detail" from JSON error
+		var error_detail = ""
+		var error_json = JSON.parse_string(response_text)
+		if error_json is Dictionary and error_json.has("detail"):
+			error_detail = error_json["detail"]
+			emit_signal('fetch_error', error_detail)
+		else:
+			emit_signal('fetch_error', error_msg_response_fallback)
 		_complete_current_request()
 		return
 
@@ -274,41 +330,51 @@ func _on_request_completed(result: int, response_code: int, headers: PackedStrin
 		# Handle get_convoy_data response (assuming it expects a Dictionary)
 		# This part needs to be fleshed out if get_convoy_data is actively used and its response is a Dictionary.
 		# For now, we'll assume it's not the primary flow being addressed.
-		printerr("APICalls (_on_request_completed - Purpose: NONE): Received response for get_convoy_data. Needs specific handling if it's not an Array. URL: %s" % _last_requested_url)
-		_complete_current_request()
-		return
-
-	# Process Array response (for ALL_CONVOYS or a non-initial USER_CONVOYS)
-	if request_purpose_at_start == RequestPurpose.ALL_CONVOYS or request_purpose_at_start == RequestPurpose.USER_CONVOYS:
-		var response_body_text: String = body.get_string_from_utf8()
-		var json_response = JSON.parse_string(response_body_text)
-
-		if json_response == null:
-			var error_msg_json_fallback = 'APICalls (_on_request_completed - Purpose: %s, Code: %s): Failed to parse JSON response. URL: %s' % [RequestPurpose.keys()[request_purpose_at_start], response_code, _last_requested_url]
-			printerr(error_msg_json_fallback)
-			printerr('  Raw Body: %s' % response_body_text)
-			emit_signal('fetch_error', error_msg_json_fallback)
+		if request_purpose_at_start == RequestPurpose.NONE and _current_patch_signal_name == "":
+			# This is a response from get_convoy_data, which returns a Dictionary.
+			var response_body_text = body.get_string_from_utf8()
+			var json_response = JSON.parse_string(response_body_text)
+			if json_response == null or not json_response is Dictionary:
+				printerr("APICalls (_on_request_completed - Purpose: NONE): Failed to parse convoy data as Dictionary. URL: %s" % _last_requested_url)
+				emit_signal('fetch_error', "Failed to parse convoy data as Dictionary.")
+			else:
+				print("APICalls (_on_request_completed - Purpose: NONE): Successfully fetched single convoy data. URL: %s" % _last_requested_url)
+				# Wrap in array for compatibility with existing signal handlers
+				emit_signal('convoy_data_received', [json_response])
 			_complete_current_request()
 			return
 
-		if not json_response is Array:
-			var error_msg_type_fallback = 'APICalls (_on_request_completed - Purpose: %s, Code: %s): Expected array from JSON response, got %s. URL: %s' % [RequestPurpose.keys()[request_purpose_at_start], response_code, typeof(json_response), _last_requested_url]
-			printerr(error_msg_type_fallback)
-			emit_signal('fetch_error', error_msg_type_fallback)
-			_complete_current_request()
-			return
+		# Process Array response (for ALL_CONVOYS or a non-initial USER_CONVOYS)
+		if request_purpose_at_start == RequestPurpose.ALL_CONVOYS or request_purpose_at_start == RequestPurpose.USER_CONVOYS:
+			var response_body_text: String = body.get_string_from_utf8()
+			var json_response = JSON.parse_string(response_body_text)
 
-		# Successfully parsed array for fallback or direct remote (that expects array)
-		if request_purpose_at_start == RequestPurpose.ALL_CONVOYS or \
-		   (request_purpose_at_start == RequestPurpose.USER_CONVOYS and not was_initial_local_user_attempt): # Second condition should ideally not be met if logic is tight
-			var parsed_data: Array = parse_in_transit_convoy_details(json_response)
-			var log_prefix = "REMOTE_ALL_CONVOYS_FALLBACK" if request_purpose_at_start == RequestPurpose.ALL_CONVOYS else "REMOTE_USER_CONVOYS_DIRECT"
-			print("APICalls (_on_request_completed - %s): Successfully fetched %s convoy(s). URL: %s" % [log_prefix, parsed_data.size(), _last_requested_url])
-			if not parsed_data.is_empty():
-				print("  Sample %s Convoy 0: ID: %s, Name: %s" % [log_prefix, parsed_data[0].get("convoy_id", "N/A"), parsed_data[0].get("convoy_name", "N/A")])
-			self.convoys_in_transit = parsed_data
-			emit_signal('convoy_data_received', parsed_data)
-			_complete_current_request()
+			if json_response == null:
+				var error_msg_json_fallback = 'APICalls (_on_request_completed - Purpose: %s, Code: %s): Failed to parse JSON response. URL: %s' % [RequestPurpose.keys()[request_purpose_at_start], response_code, _last_requested_url]
+				printerr(error_msg_json_fallback)
+				printerr('  Raw Body: %s' % response_body_text)
+				emit_signal('fetch_error', error_msg_json_fallback)
+				_complete_current_request()
+				return
+
+			if not json_response is Array:
+				var error_msg_type_fallback = 'APICalls (_on_request_completed - Purpose: %s, Code: %s): Expected array from JSON response, got %s. URL: %s' % [RequestPurpose.keys()[request_purpose_at_start], response_code, typeof(json_response), _last_requested_url]
+				printerr(error_msg_type_fallback)
+				emit_signal('fetch_error', error_msg_type_fallback)
+				_complete_current_request()
+				return
+
+			# Successfully parsed array for fallback or direct remote (that expects array)
+			if request_purpose_at_start == RequestPurpose.ALL_CONVOYS or \
+			   (request_purpose_at_start == RequestPurpose.USER_CONVOYS and not was_initial_local_user_attempt): # Second condition should ideally not be met if logic is tight
+				var parsed_data: Array = parse_in_transit_convoy_details(json_response)
+				var log_prefix = "REMOTE_ALL_CONVOYS_FALLBACK" if request_purpose_at_start == RequestPurpose.ALL_CONVOYS else "REMOTE_USER_CONVOYS_DIRECT"
+				print("APICalls (_on_request_completed - %s): Successfully fetched %s convoy(s). URL: %s" % [log_prefix, parsed_data.size(), _last_requested_url])
+				if not parsed_data.is_empty():
+					print("  Sample %s Convoy 0: ID: %s, Name: %s" % [log_prefix, parsed_data[0].get("convoy_id", "N/A"), parsed_data[0].get("convoy_name", "N/A")])
+				self.convoys_in_transit = parsed_data
+				emit_signal('convoy_data_received', parsed_data)
+				_complete_current_request()
 
 	elif request_purpose_at_start == RequestPurpose.MAP_DATA:
 		if body.is_empty():
@@ -355,10 +421,82 @@ func _on_request_completed(result: int, response_code: int, headers: PackedStrin
 		_complete_current_request()
 		return
 
+	elif request_purpose_at_start == RequestPurpose.VENDOR_DATA:
+		var response_body_text: String = body.get_string_from_utf8()
+		var json_response = JSON.parse_string(response_body_text)
+
+		if json_response == null or not json_response is Dictionary:
+			var error_msg = 'APICalls (_on_request_completed - VENDOR_DATA): Failed to parse vendor data. URL: %s' % _last_requested_url
+			printerr(error_msg)
+			emit_signal('fetch_error', error_msg)
+		else:
+			print("APICalls (_on_request_completed - VENDOR_DATA): Successfully fetched vendor data. URL: %s" % _last_requested_url)
+			emit_signal('vendor_data_received', json_response)
+
+		_complete_current_request()
+		return
+
 	# Fallback for any unhandled cases, though ideally all paths are covered.
 	if _current_request_purpose != RequestPurpose.NONE:
 		printerr("APICalls (_on_request_completed): Reached end of function with _current_request_purpose not NONE. Purpose: %s. This might indicate an unhandled logic path." % RequestPurpose.keys()[_current_request_purpose])
 		_complete_current_request() # Ensure reset and queue processing
+
+
+
+# --- Vendor Transaction APIs ---
+func buy_vehicle(vendor_id: String, convoy_id: String, vehicle_id: String) -> void:
+	var url = "%s/vendor/vehicle/buy?vendor_id=%s&convoy_id=%s&vehicle_id=%s" % [BASE_URL, vendor_id, convoy_id, vehicle_id]
+	_add_patch_request(url, "vehicle_bought")
+
+func sell_vehicle(vendor_id: String, convoy_id: String, vehicle_id: String) -> void:
+	var url = "%s/vendor/vehicle/sell?vendor_id=%s&convoy_id=%s&vehicle_id=%s" % [BASE_URL, vendor_id, convoy_id, vehicle_id]
+	_add_patch_request(url, "vehicle_sold")
+
+func buy_cargo(vendor_id: String, convoy_id: String, cargo_id: String, quantity: int) -> void:
+	var url = "%s/vendor/cargo/buy?vendor_id=%s&convoy_id=%s&cargo_id=%s&quantity=%d" % [BASE_URL, vendor_id, convoy_id, cargo_id, quantity]
+	_add_patch_request(url, "cargo_bought")
+
+func sell_cargo(vendor_id: String, convoy_id: String, cargo_id: String, quantity: int) -> void:
+	var url = "%s/vendor/cargo/sell?vendor_id=%s&convoy_id=%s&cargo_id=%s&quantity=%d" % [BASE_URL, vendor_id, convoy_id, cargo_id, quantity]
+	_add_patch_request(url, "cargo_sold")
+
+func buy_resource(vendor_id: String, convoy_id: String, resource_type: String, quantity: float) -> void:
+	var url = "%s/vendor/resource/buy?vendor_id=%s&convoy_id=%s&resource_type=%s&quantity=%.3f" % [BASE_URL, vendor_id, convoy_id, resource_type, quantity]
+	_add_patch_request(url, "resource_bought")
+
+func sell_resource(vendor_id: String, convoy_id: String, resource_type: String, quantity: float) -> void:
+	var url = "%s/vendor/resource/sell?vendor_id=%s&convoy_id=%s&resource_type=%s&quantity=%.3f" % [BASE_URL, vendor_id, convoy_id, resource_type, quantity]
+	_add_patch_request(url, "resource_sold")
+
+func _add_patch_request(url: String, signal_name: String) -> void:
+	var headers: PackedStringArray = ['accept: application/json']
+	var request_details: Dictionary = {
+		"url": url,
+		"headers": headers,
+		"purpose": RequestPurpose.NONE, # Always use enum for purpose
+		"signal_name": signal_name,     # Store the signal name separately
+		"method": HTTPClient.METHOD_PATCH
+	}
+	_request_queue.append(request_details)
+	_process_queue()
+
+func _deep_update(target: Dictionary, source: Dictionary) -> Dictionary:
+	"""
+	Recursively merges the 'source' dictionary into the 'target' dictionary.
+	Returns a new dictionary with the merged data. This is crucial for applying
+	partial updates from the API to our full client-side convoy objects.
+	"""
+	var new_dict = target.duplicate(true) # Start with a deep copy of the target
+	for key in source:
+		var source_value = source[key]
+		if new_dict.has(key) and new_dict[key] is Dictionary and source_value is Dictionary:
+			# If both are dictionaries, recurse
+			new_dict[key] = _deep_update(new_dict[key], source_value)
+		else:
+			# Otherwise, overwrite or add the key.
+			# Using duplicate(true) for the value to avoid reference issues with arrays/dicts.
+			new_dict[key] = source_value.duplicate(true) if source_value is Array or source_value is Dictionary else source_value
+	return new_dict
 
 
 func parse_in_transit_convoy_details(raw_convoy_list: Array) -> Array:
@@ -473,3 +611,21 @@ func parse_in_transit_convoy_details(raw_convoy_list: Array) -> Array:
 
 	print("APICalls (parse_in_transit_convoy_details): Successfully parsed %s convoy(s) from raw data." % parsed_convoys.size())
 	return parsed_convoys
+
+func get_vendor_data(vendor_id: String) -> void:
+	if not vendor_id or vendor_id.is_empty():
+		printerr('APICalls (get_vendor_data): Vendor ID cannot be empty.')
+		emit_signal('fetch_error', 'Vendor ID cannot be empty.')
+		return
+
+	var url: String = '%s/vendor/get?vendor_id=%s' % [BASE_URL, vendor_id]
+	var headers: PackedStringArray = ['accept: application/json']
+
+	var request_details: Dictionary = {
+		"url": url,
+		"headers": headers,
+		"purpose": RequestPurpose.VENDOR_DATA,
+		"method": HTTPClient.METHOD_GET
+	}
+	_request_queue.append(request_details)
+	_process_queue()

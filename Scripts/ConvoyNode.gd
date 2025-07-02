@@ -62,7 +62,12 @@ func _update_visuals():
 	if convoy_data.is_empty() or tile_pixel_width_on_full_texture <= 0:
 		return # Added explicit indent
 
-	var journey_data: Dictionary = convoy_data.get("journey", {})
+	# Defensively get the journey data. If the 'journey' key exists but its value is null,
+	# the typed variable assignment will fail. This ensures journey_data is always a valid Dictionary.
+	var raw_journey = convoy_data.get("journey")
+	var journey_data: Dictionary = {}
+	if raw_journey is Dictionary:
+		journey_data = raw_journey
 	var route_x: Array = journey_data.get("route_x", [])
 	var route_y: Array = journey_data.get("route_y", [])
 	
