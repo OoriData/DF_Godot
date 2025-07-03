@@ -215,36 +215,16 @@ func _on_request_completed(result: int, response_code: int, headers: PackedStrin
 
 	# PATCH transaction responses (purpose == NONE, but signal_name is set)
 	if _current_request_purpose == RequestPurpose.NONE and _current_patch_signal_name != "":
-		var response_body_text = body.get_string_from_utf8()
-		var json_response = JSON.parse_string(response_body_text)
-
-		if json_response is Dictionary:
-			# The response is a PARTIAL convoy update. We need to merge it with the
-			# full convoy object from our cache to avoid data loss downstream.
-			if not json_response.has("convoy_id"):
-				printerr("APICalls: PATCH response missing convoy_id. Cannot update cache. Emitting partial response.")
-				emit_signal(_current_patch_signal_name, json_response)
-			else:
-				var updated_id = str(json_response["convoy_id"])
-				var found_and_updated = false
-				for i in range(self.convoys_in_transit.size()):
-					var existing_convoy = self.convoys_in_transit[i]
-					if existing_convoy.has("convoy_id") and str(existing_convoy["convoy_id"]) == updated_id:
-						# Found it. Merge the partial response into the full object.
-						var updated_full_convoy = _deep_update(existing_convoy, json_response)
-						self.convoys_in_transit[i] = updated_full_convoy # Update the cache
-						
-						print("APICalls: Merged PATCH response for convoy %s. Emitting full updated object." % updated_id)
-						emit_signal(_current_patch_signal_name, updated_full_convoy)
-						found_and_updated = true
-						break
-				
-				if not found_and_updated:
-					printerr("APICalls: Could not find convoy %s in cache to update after PATCH. Emitting partial response." % updated_id)
-					emit_signal(_current_patch_signal_name, json_response)
+		# This is a transaction result. We don't care about the response body.
+		# The signal is just a trigger for the UI to request a full data refresh from GameDataManager.
+		# We only emit on success. Errors are handled by the generic error handling below.
+		if result == HTTPRequest.RESULT_SUCCESS and (response_code >= 200 and response_code < 300):
+			print("APICalls: Transaction '%s' successful. Emitting signal." % _current_patch_signal_name)
+			# Emit a simple success payload. The UI will use this as a trigger, not for data.
+			emit_signal(_current_patch_signal_name, {"success": true})
 		else:
-			printerr("APICalls: Failed to parse PATCH response for %s: %s" % [_current_patch_signal_name, response_body_text])
-			emit_signal('fetch_error', "Failed to parse PATCH response for %s" % _current_patch_signal_name)
+			# The generic error handling below will catch this and emit 'fetch_error'.
+			pass
 
 		_complete_current_request()
 		return
@@ -339,8 +319,11 @@ func _on_request_completed(result: int, response_code: int, headers: PackedStrin
 				emit_signal('fetch_error', "Failed to parse convoy data as Dictionary.")
 			else:
 				print("APICalls (_on_request_completed - Purpose: NONE): Successfully fetched single convoy data. URL: %s" % _last_requested_url)
-				# Wrap in array for compatibility with existing signal handlers
-				emit_signal('convoy_data_received', [json_response])
+				# PARSE the single convoy object before emitting.
+				# The parser expects an array, so we wrap the dictionary in an array, parse it,
+				# and the result will be an array with one parsed object.
+				var parsed_data = parse_in_transit_convoy_details([json_response])
+				emit_signal('convoy_data_received', parsed_data)
 			_complete_current_request()
 			return
 

@@ -56,6 +56,9 @@ func _initiate_preload():
 		if api_calls_node.has_signal('user_data_received'):
 			api_calls_node.user_data_received.connect(_on_user_data_received_from_api)
 			print('GameDataManager: Connected to APICalls.user_data_received signal.')
+		if api_calls_node.has_signal('vendor_data_received'):
+			api_calls_node.vendor_data_received.connect(update_single_vendor)
+			print('GameDataManager: Connected to APICalls.vendor_data_received signal.')
 
 		print("GameDataManager: Initiating map data preload on game start.")
 		request_map_data()
@@ -274,6 +277,15 @@ func request_user_data_refresh() -> void:
 			printerr("GameDataManager: Cannot request user data. User ID is not set or APICallsInstance is missing 'get_user_data' method.")
 	else:
 		printerr("GameDataManager: Cannot request user data refresh. APICallsInstance is invalid.")
+
+func request_vendor_data_refresh(vendor_id: String) -> void:
+	"""
+	Called to trigger a new fetch of a specific vendor's data.
+	"""
+	if is_instance_valid(api_calls_node) and api_calls_node.has_method("get_vendor_data"):
+		api_calls_node.get_vendor_data(vendor_id)
+	else:
+		printerr("GameDataManager: Cannot request vendor data. APICallsInstance is invalid or missing 'get_vendor_data' method.")
 
 func trigger_initial_convoy_data_fetch(p_user_id: String) -> void:
 	if is_instance_valid(api_calls_node) and api_calls_node.has_method("get_user_convoys"):

@@ -22,6 +22,7 @@ signal item_sold(item, quantity, total_price)
 @onready var convoy_money_label: Label = %ConvoyMoneyLabel
 @onready var convoy_cargo_label: Label = %ConvoyCargoLabel
 @onready var trade_mode_tab_container: TabContainer = %TradeModeTabContainer
+@onready var loading_panel: Panel = %LoadingPanel # (Add a Panel node in your scene and name it LoadingPanel)
 
 # --- Data ---
 var vendor_data # Should be set by the parent
@@ -31,6 +32,7 @@ var current_settlement_data # Will hold the current settlement data for local ve
 var all_settlement_data_global: Array # New: Will hold all settlement data for global vendor lookup
 var selected_item = null
 var current_mode = "buy" # or "sell"
+var _last_selected_item_id = null # <-- Add this line
 
 func _ready() -> void:
 	# Connect signals from UI elements
@@ -77,13 +79,11 @@ func _ready() -> void:
 	var api = get_node("/root/APICalls")
 	api.vehicle_bought.connect(_on_api_transaction_result)
 	api.vehicle_sold.connect(_on_api_transaction_result)
-	api.cargo_bought.connect(_on_cargo_bought)
+	api.cargo_bought.connect(_on_api_transaction_result)
 	api.cargo_sold.connect(_on_api_transaction_result)
 	api.resource_bought.connect(_on_api_transaction_result)
 	api.resource_sold.connect(_on_api_transaction_result)
 	api.fetch_error.connect(_on_api_transaction_error)
-	api.vendor_data_received.connect(_on_vendor_data_received) # <-- Add this line
-	api.convoy_data_received.connect(_on_convoy_data_received)
 
 # Public method to initialize the panel with data
 func initialize(p_vendor_data, p_convoy_data, p_current_settlement_data, p_all_settlement_data_global) -> void:
@@ -92,9 +92,9 @@ func initialize(p_vendor_data, p_convoy_data, p_current_settlement_data, p_all_s
 	self.current_settlement_data = p_current_settlement_data
 	self.all_settlement_data_global = p_all_settlement_data_global
 
-	var api = get_node("/root/APICalls")
-	if self.vendor_data and self.vendor_data.has("vendor_id"):
-		api.get_vendor_data(self.vendor_data.get("vendor_id"))
+	# Let GameDataManager handle the initial fetch
+	if is_instance_valid(gdm) and self.vendor_data and self.vendor_data.has("vendor_id"):
+		gdm.request_vendor_data_refresh(self.vendor_data.get("vendor_id"))
 
 	_populate_vendor_list()
 	_populate_convoy_list()
@@ -112,35 +112,6 @@ func refresh_data(p_vendor_data, p_convoy_data, p_current_settlement_data, p_all
 	_populate_convoy_list()
 	_update_convoy_info_display()
 	_on_tab_changed(trade_mode_tab_container.current_tab)
-
-func _on_vendor_data_received(new_vendor_data: Dictionary) -> void:
-	if not new_vendor_data or not new_vendor_data.has("vendor_id"):
-		printerr("VendorTradePanel: Received invalid vendor data.")
-		return
-	self.vendor_data = new_vendor_data.duplicate(true)
-	_populate_vendor_list()
-	print("VendorTradePanel: Vendor data refreshed after transaction.")
-	# Also, tell GameDataManager to update the global list
-	var gdm = get_node_or_null("/root/GameDataManager")
-	if is_instance_valid(gdm) and gdm.has_method("update_single_vendor"):
-		gdm.update_single_vendor(new_vendor_data)
-
-func _on_convoy_data_received(convoy_list: Array) -> void:
-	if not convoy_data or not convoy_data.has("convoy_id"):
-		return
-	var current_convoy_id = str(convoy_data.get("convoy_id"))
-	for updated_convoy in convoy_list:
-		if updated_convoy.has("convoy_id") and str(updated_convoy.get("convoy_id")) == current_convoy_id:
-			# Instead of replacing all convoy data, update only the local panel's convoy
-			self.convoy_data = updated_convoy.duplicate(true)
-			_populate_convoy_list()
-			_update_convoy_info_display()
-			print("VendorTradePanel: Convoy data refreshed after transaction.")
-			# Also, tell GameDataManager to update the global list
-			var gdm = get_node_or_null("/root/GameDataManager")
-			if is_instance_valid(gdm) and gdm.has_method("update_single_convoy"):
-				gdm.update_single_convoy(updated_convoy)
-			break
   
 # --- UI Population ---
 func _populate_vendor_list() -> void:
@@ -377,52 +348,40 @@ func _on_user_data_updated(user_data: Dictionary):
 	_update_convoy_info_display()
 
 func _on_gdm_settlement_data_updated(all_settlements_data: Array) -> void:
-	"""
-	Reacts to settlement data updates from GameDataManager, which contains vendor data.
-	This is triggered after a transaction to refresh the vendor's inventory.
-	"""
 	if vendor_data.is_empty() or not vendor_data.has("vendor_id"):
-		return # This panel isn't tracking a specific vendor yet.
-
-	# Update the global list first, as it's used for mission destination lookups.
+		return
 	self.all_settlement_data_global = all_settlements_data
-
 	var current_vendor_id = str(vendor_data.get("vendor_id"))
-	var found_new_vendor_data = false
-
 	for settlement in all_settlements_data:
 		if settlement.has("vendors") and settlement.vendors is Array:
 			for vendor in settlement.vendors:
 				if vendor.has("vendor_id") and str(vendor.get("vendor_id")) == current_vendor_id:
-					# Found our vendor! Update the data and refresh the UI.
-					self.vendor_data = vendor
+					self.vendor_data = vendor # <-- Only update here!
 					_populate_vendor_list()
-					_handle_new_item_selection(null) # Clear inspector and disable buttons
-					print("VendorTradePanel: Refreshed with updated vendor data from GameDataManager.")
-					found_new_vendor_data = true
-					break
-		if found_new_vendor_data:
-			break
+					_handle_new_item_selection(null)
+					return
+	if is_instance_valid(loading_panel):
+		loading_panel.visible = false
 
 func _on_gdm_convoy_data_updated(all_convoys_data: Array) -> void:
-	"""
-	Reacts to updates from the GameDataManager. This is the new source of truth.
-	"""
 	if convoy_data.is_empty() or not convoy_data.has("convoy_id"):
-		return # This panel isn't tracking a specific convoy yet.
-
+		return
 	var current_convoy_id = str(convoy_data.get("convoy_id"))
 	for updated_convoy_data in all_convoys_data:
 		if updated_convoy_data.has("convoy_id") and str(updated_convoy_data.get("convoy_id")) == current_convoy_id:
-			# Found the updated data for our convoy.
-			self.convoy_data = updated_convoy_data # Replace local data with the new, augmented data.
-			
-			# Now refresh the UI with the correct, fully processed data.
+			self.convoy_data = updated_convoy_data # <-- Only update here!
 			_populate_convoy_list()
 			_update_convoy_info_display()
-			_handle_new_item_selection(null) # Clear inspector and disable buttons
-			print("VendorTradePanel: Refreshed with updated convoy data from GameDataManager.")
-			break # Stop searching
+			# Try to restore selection
+			if _last_selected_item_id:
+				_restore_selection(convoy_item_tree, _last_selected_item_id)
+			else:
+				_handle_new_item_selection(null)
+			return
+	if is_instance_valid(loading_panel):
+		loading_panel.visible = false
+
+
 
 # --- Signal Handlers ---
 func _on_tab_changed(tab_index: int) -> void:
@@ -497,6 +456,17 @@ func _populate_category(target_tree: Tree, root_item: TreeItem, category_name: S
 
 func _handle_new_item_selection(p_selected_item) -> void:
 	selected_item = p_selected_item
+
+	# Save the unique ID for later restoration
+	if selected_item and selected_item.has("item_data"):
+		if selected_item.item_data.has("cargo_id"):
+			_last_selected_item_id = selected_item.item_data.cargo_id
+		elif selected_item.item_data.has("vehicle_id"):
+			_last_selected_item_id = selected_item.item_data.vehicle_id
+		else:
+			_last_selected_item_id = null
+	else:
+		_last_selected_item_id = null
 	
 	# DEBUG: Print the raw selected item data
 	print("DEBUG: _handle_new_item_selection - selected_item (aggregated): ", selected_item)
@@ -824,34 +794,18 @@ func _get_contextual_unit_price(item_data_source: Dictionary) -> float:
 	return price
 
 func _on_api_transaction_result(result: Dictionary) -> void:
-	_refresh_convoy_after_transaction()
-	_refresh_vendor_after_transaction()
-	if is_instance_valid(gdm) and gdm.has_method("request_user_data_refresh"):
-		gdm.request_user_data_refresh()
+	if not is_instance_valid(gdm):
+		printerr("VendorTradePanel: Cannot refresh data after transaction, GameDataManager is invalid.")
+		return
+	gdm.request_user_data_refresh()
+	if convoy_data and convoy_data.has("convoy_id"):
+		gdm.request_convoy_data_refresh()
+	if vendor_data and vendor_data.has("vendor_id"):
+		gdm.request_vendor_data_refresh(vendor_data.get("vendor_id"))
 
 func _on_api_transaction_error(error_message: String) -> void:
 	# Called when a transaction fails.
 	printerr("API Transaction Error: ", error_message)
-
-func _on_cargo_bought(updated_convoy: Dictionary) -> void:
-	self.convoy_data = updated_convoy
-	_populate_convoy_list()
-	_update_convoy_info_display()
-	print("VendorTradePanel: Convoy updated immediately after cargo purchase.")
-
-	# Immediately fetch fresh vendor and convoy data from the API
-	_refresh_vendor_after_transaction()
-	_refresh_convoy_after_transaction()
-# Refreshes the convoy data after a transaction
-func _refresh_convoy_after_transaction() -> void:
-	var api = get_node("/root/APICalls")
-	if convoy_data and convoy_data.has("convoy_id"):
-		api.get_convoy_data(convoy_data.get("convoy_id"))
-
-func _refresh_vendor_after_transaction() -> void:
-	var api = get_node("/root/APICalls")
-	if vendor_data and vendor_data.has("vendor_id"):
-		api.get_vendor_data(vendor_data.get("vendor_id"))
 
 # Updates the comparison panel (stub, fill in as needed)
 func _update_comparison() -> void:
@@ -876,10 +830,29 @@ func _format_money(amount) -> String:
 
 # Looks up the vendor name for a recipient ID (stub, fill in as needed)
 func _get_vendor_name_for_recipient(recipient_id) -> String:
-	# You should implement a lookup using all_settlement_data_global or similar
+	for settlement in all_settlement_data_global:
+		if settlement.has("vendors"):
+			for vendor in settlement.vendors:
+				if vendor.get("vendor_id", "") == recipient_id:
+					return vendor.get("name", "Unknown Vendor")
 	return "Unknown Vendor"
 
 # Handler for description toggle button (stub, fill in as needed)
 func _on_description_toggle_pressed() -> void:
 	if is_instance_valid(item_description_rich_text):
 		item_description_rich_text.visible = not item_description_rich_text.visible
+# Helper to restore selection in a tree after data refresh
+func _restore_selection(tree: Tree, item_id):
+	if not tree or not tree.get_root():
+		_handle_new_item_selection(null)
+		return
+	for category in tree.get_root().get_children():
+		for item in category.get_children():
+			var agg_data = item.get_metadata(0)
+			if agg_data and agg_data.has("item_data"):
+				var id = agg_data.item_data.get("cargo_id", agg_data.item_data.get("vehicle_id", null))
+				if id == item_id:
+					item.select(0)
+					_handle_new_item_selection(agg_data)
+					return
+	_handle_new_item_selection(null)	# Helper to restore selection in a tree after data refresh
