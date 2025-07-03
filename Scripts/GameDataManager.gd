@@ -572,17 +572,72 @@ func _aggregate_convoy_items(convoy_data: Dictionary, vendor_data: Dictionary) -
 
 # Helper for aggregation
 func _aggregate_item(agg_dict: Dictionary, item: Dictionary, vehicle_name: String = "", mission_vendor_name: String = "") -> void:
-	var item_name = item.get("name", "Unknown Item")
-	if not agg_dict.has(item_name):
-		agg_dict[item_name] = {"item_data": item, "total_quantity": 0, "locations": {}, "total_weight": 0.0, "total_volume": 0.0, "total_food": 0.0, "total_water": 0.0, "total_fuel": 0.0}
+	# Use cargo_id as aggregation key if present, else fallback to name
+	var agg_key = str(item.get("cargo_id")) if item.has("cargo_id") else item.get("name", "Unknown Item")
+	if not agg_dict.has(agg_key):
+		agg_dict[agg_key] = {
+			"item_data": item,
+			"total_quantity": 0,
+			"locations": {},
+			"mission_vendor_name": mission_vendor_name,
+			"total_weight": 0.0,
+			"total_volume": 0.0,
+			"total_food": 0.0,
+			"total_water": 0.0,
+			"total_fuel": 0.0
+		}
 	var item_quantity = int(item.get("quantity", 1.0))
-	agg_dict[item_name].total_quantity += item_quantity
-	agg_dict[item_name].total_weight += item.get("weight", 0.0)
-	agg_dict[item_name].total_volume += item.get("volume", 0.0)
-	if item.get("food") is float or item.get("food") is int: agg_dict[item_name].total_food += item.get("food")
-	if item.get("water") is float or item.get("water") is int: agg_dict[item_name].total_water += item.get("water")
-	if item.get("fuel") is float or item.get("fuel") is int: agg_dict[item_name].total_fuel += item.get("fuel")
+	agg_dict[agg_key].total_quantity += item_quantity
+	agg_dict[agg_key].total_weight += item.get("weight", 0.0)
+	agg_dict[agg_key].total_volume += item.get("volume", 0.0)
+	if item.get("food") is float or item.get("food") is int: agg_dict[agg_key].total_food += item.get("food")
+	if item.get("water") is float or item.get("water") is int: agg_dict[agg_key].total_water += item.get("water")
+	if item.get("fuel") is float or item.get("fuel") is int: agg_dict[agg_key].total_fuel += item.get("fuel")
 	if vehicle_name != "":
-		if not agg_dict[item_name].locations.has(vehicle_name):
-			agg_dict[item_name].locations[vehicle_name] = 0
-		agg_dict[item_name].locations[vehicle_name] += item_quantity
+		if not agg_dict[agg_key].locations.has(vehicle_name):
+			agg_dict[agg_key].locations[vehicle_name] = 0
+		agg_dict[agg_key].locations[vehicle_name] += item_quantity
+
+func buy_item(convoy_id: String, vendor_id: String, item_data: Dictionary, quantity: int) -> void:
+	if not is_instance_valid(api_calls_node):
+		printerr("GameDataManager: Cannot buy item, APICallsInstance is invalid.")
+		return
+
+	# Check cargo first!
+	if item_data.has("cargo_id"):
+		api_calls_node.buy_cargo(vendor_id, convoy_id, item_data["cargo_id"], quantity)
+	elif item_data.has("vehicle_id"):
+		api_calls_node.buy_vehicle(vendor_id, convoy_id, item_data["vehicle_id"])
+	elif item_data.has("is_raw_resource"):
+		if item_data.has("fuel"):
+			api_calls_node.buy_resource(vendor_id, convoy_id, "fuel", float(quantity))
+		elif item_data.has("water"):
+			api_calls_node.buy_resource(vendor_id, convoy_id, "water", float(quantity))
+		elif item_data.has("food"):
+			api_calls_node.buy_resource(vendor_id, convoy_id, "food", float(quantity))
+		else:
+			printerr("GameDataManager: Unknown raw resource type in buy_item.")
+	else:
+		printerr("GameDataManager: Unknown item type for buy_item.")
+
+func sell_item(convoy_id: String, vendor_id: String, item_data: Dictionary, quantity: int) -> void:
+	if not is_instance_valid(api_calls_node):
+		printerr("GameDataManager: Cannot sell item, APICallsInstance is invalid.")
+		return
+
+	# Check cargo first!
+	if item_data.has("cargo_id"):
+		api_calls_node.sell_cargo(vendor_id, convoy_id, item_data["cargo_id"], quantity)
+	elif item_data.has("vehicle_id"):
+		api_calls_node.sell_vehicle(vendor_id, convoy_id, item_data["vehicle_id"])
+	elif item_data.has("is_raw_resource"):
+		if item_data.has("fuel"):
+			api_calls_node.sell_resource(vendor_id, convoy_id, "fuel", float(quantity))
+		elif item_data.has("water"):
+			api_calls_node.sell_resource(vendor_id, convoy_id, "water", float(quantity))
+		elif item_data.has("food"):
+			api_calls_node.sell_resource(vendor_id, convoy_id, "food", float(quantity))
+		else:
+			printerr("GameDataManager: Unknown raw resource type in sell_item.")
+	else:
+		printerr("GameDataManager: Unknown item type for sell_item.")

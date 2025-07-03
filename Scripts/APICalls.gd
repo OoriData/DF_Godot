@@ -210,17 +210,15 @@ func _process_queue() -> void:
 
 # Called when the HTTPRequest has completed.
 func _on_request_completed(result: int, response_code: int, headers: PackedStringArray, body: PackedByteArray) -> void:
+	print("APICalls: _on_request_completed called. Result: %s, Response code: %s" % [result, response_code])
+
 	var request_purpose_at_start = _current_request_purpose
 	var was_initial_local_user_attempt = (_current_request_purpose == RequestPurpose.USER_CONVOYS and _is_local_user_attempt)
 
 	# PATCH transaction responses (purpose == NONE, but signal_name is set)
 	if _current_request_purpose == RequestPurpose.NONE and _current_patch_signal_name != "":
-		# This is a transaction result. We don't care about the response body.
-		# The signal is just a trigger for the UI to request a full data refresh from GameDataManager.
-		# We only emit on success. Errors are handled by the generic error handling below.
 		if result == HTTPRequest.RESULT_SUCCESS and (response_code >= 200 and response_code < 300):
 			print("APICalls: Transaction '%s' successful. Emitting signal." % _current_patch_signal_name)
-			# Emit a simple success payload. The UI will use this as a trigger, not for data.
 			emit_signal(_current_patch_signal_name, {"success": true})
 		else:
 			# The generic error handling below will catch this and emit 'fetch_error'.
@@ -284,19 +282,30 @@ func _on_request_completed(result: int, response_code: int, headers: PackedStrin
 		return
 
 	if not (response_code >= 200 and response_code < 300):
-		var response_text = body.get_string_from_utf8()
-		var error_msg_response_fallback = 'APICalls (_on_request_completed - Purpose: %s): Request failed with response code: %s. URL: %s' % [RequestPurpose.keys()[request_purpose_at_start], response_code, _last_requested_url]
-		printerr(error_msg_response_fallback)
-		printerr('  Response body: ', response_text)
+		var response_text = ""
+		# Try to decode the body safely
+		if body.size() > 0:
+			# Try utf-8 first
+			response_text = body.get_string_from_utf8()
+			if response_text == "" and body.size() > 0:
+				# Fallback: print as raw bytes if decoding failed
+				response_text = str(body)
+		else:
+			response_text = "[No response body]"
+		
+		print("*** API ERROR RESPONSE BODY ***\n" + response_text + "\n*****************************")
+		printerr("API error response code: ", response_code)
+		printerr("API error response body: ", response_text)
 		
 		# Try to extract "detail" from JSON error
 		var error_detail = ""
-		var error_json = JSON.parse_string(response_text)
-		if error_json is Dictionary and error_json.has("detail"):
-			error_detail = error_json["detail"]
+		var error_json = {}
+		var json_result = JSON.parse_string(response_text)
+		if typeof(json_result) == TYPE_DICTIONARY and json_result.has("detail"):
+			error_detail = json_result["detail"]
 			emit_signal('fetch_error', error_detail)
 		else:
-			emit_signal('fetch_error', error_msg_response_fallback)
+			emit_signal('fetch_error', response_text)
 		_complete_current_request()
 		return
 
@@ -456,6 +465,24 @@ func _add_patch_request(url: String, signal_name: String) -> void:
 		"purpose": RequestPurpose.NONE, # Always use enum for purpose
 		"signal_name": signal_name,     # Store the signal name separately
 		"method": HTTPClient.METHOD_PATCH
+	}
+	_request_queue.append(request_details)
+	_process_queue()
+
+func get_vendor_data(vendor_id: String) -> void:
+	if not vendor_id or vendor_id.is_empty():
+		printerr("APICalls: Vendor ID cannot be empty for get_vendor_data.")
+		emit_signal('fetch_error', 'Vendor ID cannot be empty.')
+		return
+
+	var url: String = '%s/vendor/get?vendor_id=%s' % [BASE_URL, vendor_id]
+	var headers: PackedStringArray = ['accept: application/json']
+
+	var request_details: Dictionary = {
+		"url": url,
+		"headers": headers,
+		"purpose": RequestPurpose.VENDOR_DATA,
+		"method": HTTPClient.METHOD_GET
 	}
 	_request_queue.append(request_details)
 	_process_queue()

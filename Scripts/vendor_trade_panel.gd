@@ -341,21 +341,32 @@ func _aggregate_vendor_item(agg_dict: Dictionary, item: Dictionary, p_mission_ve
 	if item.get("fuel") is float or item.get("fuel") is int: agg_dict[item_name].total_fuel += item.get("fuel")
 	
 func _aggregate_item(agg_dict: Dictionary, item: Dictionary, vehicle_name: String, p_mission_vendor_name: String = "") -> void:
-	var item_name = item.get("name", "Unknown Item")
-	if not agg_dict.has(item_name):
-		agg_dict[item_name] = {"item_data": item, "total_quantity": 0, "locations": {}, "mission_vendor_name": p_mission_vendor_name, "total_weight": 0.0, "total_volume": 0.0, "total_food": 0.0, "total_water": 0.0, "total_fuel": 0.0}
-	
+	# Use cargo_id as aggregation key if present, but store/display by name
+	var agg_key = str(item.get("cargo_id")) if item.has("cargo_id") else item.get("name", "Unknown Item")
+	var display_name = item.get("name", "Unknown Item")
+	if not agg_dict.has(agg_key):
+		agg_dict[agg_key] = {
+			"item_data": item,
+			"display_name": display_name, # <-- Store the name for display
+			"total_quantity": 0,
+			"locations": {},
+			"mission_vendor_name": p_mission_vendor_name,
+			"total_weight": 0.0,
+			"total_volume": 0.0,
+			"total_food": 0.0,
+			"total_water": 0.0,
+			"total_fuel": 0.0
+		}
 	var item_quantity = int(item.get("quantity", 1.0))
-	agg_dict[item_name].total_quantity += item_quantity
-	agg_dict[item_name].total_weight += item.get("weight", 0.0)
-	agg_dict[item_name].total_volume += item.get("volume", 0.0)
-	if item.get("food") is float or item.get("food") is int: agg_dict[item_name].total_food += item.get("food")
-	if item.get("water") is float or item.get("water") is int: agg_dict[item_name].total_water += item.get("water")
-	if item.get("fuel") is float or item.get("fuel") is int: agg_dict[item_name].total_fuel += item.get("fuel")
-
-	if not agg_dict[item_name].locations.has(vehicle_name):
-		agg_dict[item_name].locations[vehicle_name] = 0
-	agg_dict[item_name].locations[vehicle_name] += item_quantity
+	agg_dict[agg_key].total_quantity += item_quantity
+	agg_dict[agg_key].total_weight += item.get("weight", 0.0)
+	agg_dict[agg_key].total_volume += item.get("volume", 0.0)
+	if item.get("food") is float or item.get("food") is int: agg_dict[agg_key].total_food += item.get("food")
+	if item.get("water") is float or item.get("water") is int: agg_dict[agg_key].total_water += item.get("water")
+	if item.get("fuel") is float or item.get("fuel") is int: agg_dict[agg_key].total_fuel += item.get("fuel")
+	if not agg_dict[agg_key].locations.has(vehicle_name):
+		agg_dict[agg_key].locations[vehicle_name] = 0
+	agg_dict[agg_key].locations[vehicle_name] += item_quantity
 
 func _update_convoy_info_display() -> void:
 	# This function now updates both the user's money and the convoy's cargo stats.
@@ -406,11 +417,8 @@ func _on_gdm_convoy_data_updated(all_convoys_data: Array) -> void:
 			self.convoy_data = updated_convoy_data # <-- Only update here!
 			_populate_convoy_list()
 			_update_convoy_info_display()
-			# Try to restore selection
-			if _last_selected_item_id:
-				_restore_selection(convoy_item_tree, _last_selected_item_id)
-			else:
-				_handle_new_item_selection(null)
+			# Always clear selection after a transaction to avoid stale state
+			_handle_new_item_selection(null)
 			return
 	if is_instance_valid(loading_panel):
 		loading_panel.visible = false
@@ -464,9 +472,10 @@ func _populate_category(target_tree: Tree, root_item: TreeItem, category_name: S
 	if category_name != "Mission Cargo":
 		category_item.collapsed = true
 
-	for item_name in agg_dict:
-		var agg_data = agg_dict[item_name]
-		var display_text = "%s (x%d)" % [item_name, agg_data.total_quantity]
+	for agg_key in agg_dict:
+		var agg_data = agg_dict[agg_key]
+		var display_name = agg_data.display_name if agg_data.has("display_name") else agg_key
+		var display_text = "%s (x%d)" % [display_name, agg_data.total_quantity]
 		# Append vendor name for Mission Cargo items
 		if category_name == "Mission Cargo" and agg_data.has("mission_vendor_name") and not agg_data.mission_vendor_name.is_empty() and agg_data.mission_vendor_name != "Unknown Vendor":
 			display_text += " (To: %s)" % agg_data.mission_vendor_name
@@ -494,7 +503,7 @@ func _handle_new_item_selection(p_selected_item) -> void:
 	# Save the unique ID for later restoration
 	if selected_item and selected_item.has("item_data"):
 		if selected_item.item_data.has("cargo_id"):
-			_last_selected_item_id = selected_item.item_data.cargo_id
+			_last_selected_item_id = str(selected_item.item_data.cargo_id)
 		elif selected_item.item_data.has("vehicle_id"):
 			_last_selected_item_id = selected_item.item_data.vehicle_id
 		else:
@@ -574,6 +583,7 @@ func _on_action_button_pressed() -> void:
 	if current_mode == "buy":
 		gdm.buy_item(convoy_id, vendor_id, item_data_source, quantity)
 	else:
+		# Use cargo_id from aggregated item for sell, not just from a single vehicle
 		gdm.sell_item(convoy_id, vendor_id, item_data_source, quantity)
 
 func _on_quantity_changed(_value: float) -> void:
@@ -764,33 +774,28 @@ func _get_item_price_components(item_data_source: Dictionary) -> Dictionary:
 # Returns the price per unit for the given item, depending on buy/sell mode.
 func _get_contextual_unit_price(item_data_source: Dictionary) -> float:
 	var price: float = 0.0
-	if current_mode == "buy":
-		# Prefer explicit unit price, fallback to base_unit_price, then price/quantity, then components
-		if item_data_source.has("unit_price"):
-			price = float(item_data_source.get("unit_price", 0.0))
-		elif item_data_source.has("base_unit_price"):
-			price = float(item_data_source.get("base_unit_price", 0.0))
-		elif item_data_source.has("price") and item_data_source.has("quantity") and item_data_source.get("quantity", 0) > 0:
-			price = float(item_data_source.get("price", 0.0)) / float(item_data_source.get("quantity", 1.0))
-		else:
-			var comps = _get_item_price_components(item_data_source)
-			price = comps.container_unit_price + comps.resource_unit_value
-	else: # sell
-		if item_data_source.has("sell_unit_price"):
-			price = float(item_data_source.get("sell_unit_price", 0.0))
-		else:
-			var comps = _get_item_price_components(item_data_source)
-			price = (comps.container_unit_price / 2.0) + (comps.resource_unit_value / 2.0)
+	if item_data_source.has("unit_price") and item_data_source.unit_price != null:
+		price = float(item_data_source.unit_price)
+	elif item_data_source.has("base_unit_price") and item_data_source.base_unit_price != null:
+		price = float(item_data_source.base_unit_price)
+	elif item_data_source.has("price") and item_data_source.has("quantity") and item_data_source.price != null and item_data_source.quantity > 0:
+		price = float(item_data_source.price) / float(item_data_source.quantity)
+	else:
+		var comps = _get_item_price_components(item_data_source)
+		price = comps.container_unit_price + comps.resource_unit_value
 	return price
 
 func _on_api_transaction_result(result: Dictionary) -> void:
+	print("DEBUG: _on_api_transaction_result called with result: ", result)
 	if not is_instance_valid(gdm):
 		printerr("VendorTradePanel: Cannot refresh data after transaction, GameDataManager is invalid.")
 		return
 	gdm.request_user_data_refresh()
 	if convoy_data and convoy_data.has("convoy_id"):
+		print("DEBUG: Requesting convoy data refresh after transaction.")
 		gdm.request_convoy_data_refresh()
 	if vendor_data and vendor_data.has("vendor_id"):
+		print("DEBUG: Requesting vendor data refresh after transaction.")
 		gdm.request_vendor_data_refresh(vendor_data.get("vendor_id"))
 
 func _on_api_transaction_error(error_message: String) -> void:
