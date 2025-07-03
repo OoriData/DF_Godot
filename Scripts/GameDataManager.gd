@@ -9,6 +9,7 @@ signal settlement_data_updated(settlement_data_list: Array)
 signal convoy_data_updated(all_convoy_data_list: Array)
 # Emitted when the current user's data (like money) is updated.
 signal user_data_updated(user_data: Dictionary)
+signal vendor_panel_data_ready(vendor_panel_data: Dictionary)
 
 
 # --- Node References ---
@@ -112,25 +113,44 @@ func _on_user_data_received_from_api(p_user_data: Dictionary):
 
 
 func _on_raw_convoy_data_received(raw_data: Variant):
-	# print('GameDataManager: Received raw convoy data.')
-	var parsed_convoy_list: Array
+	# Always expect raw convoy data (Array of Dictionaries) from APICalls.
+	var parsed_convoy_list: Array = []
 
+	# Accept both Array and Dictionary (for single convoy fetch)
 	if raw_data is Array:
 		parsed_convoy_list = raw_data
-	elif raw_data is Dictionary and raw_data.has('results') and raw_data['results'] is Array:
-		parsed_convoy_list = raw_data['results']
+	elif raw_data is Dictionary:
+		parsed_convoy_list = [raw_data]
 	else:
 		printerr('GameDataManager: Received convoy data is not in a recognized format. Data: ', raw_data)
 		all_convoy_data = [] # Clear existing data
 		emit_signal("convoy_data_updated", all_convoy_data)
 		return
 
+	# --- ADD THIS LOGGING ---
+	if not parsed_convoy_list.is_empty():
+		var first_convoy = parsed_convoy_list[0]
+		print("GameDataManager: First convoy keys: ", first_convoy.keys())
+		print("GameDataManager: First convoy vehicle_details_list: ", first_convoy.get("vehicle_details_list", []))
+		if first_convoy.has("vehicle_details_list") and first_convoy["vehicle_details_list"].size() > 0:
+			print("GameDataManager: First vehicle keys: ", first_convoy["vehicle_details_list"][0].keys())
+	# --- END LOGGING ---
+
 	var augmented_convoys: Array = []
 	for raw_convoy_item in parsed_convoy_list:
 		augmented_convoys.append(augment_single_convoy(raw_convoy_item))
 
 	all_convoy_data = augmented_convoys
-	# print('GameDataManager: Processed and stored %s convoy objects.' % all_convoy_data.size())
+
+	# --- ADD THIS LOGGING ---
+	if not all_convoy_data.is_empty():
+		var first_aug = all_convoy_data[0]
+		print("GameDataManager: First AUGMENTED convoy keys: ", first_aug.keys())
+		print("GameDataManager: First AUGMENTED vehicle_details_list: ", first_aug.get("vehicle_details_list", []))
+		if first_aug.has("vehicle_details_list") and first_aug["vehicle_details_list"].size() > 0:
+			print("GameDataManager: First AUGMENTED vehicle keys: ", first_aug["vehicle_details_list"][0].keys())
+	# --- END LOGGING ---
+
 	convoy_data_updated.emit.call_deferred(all_convoy_data) # Emit deferred
 
 
@@ -149,6 +169,17 @@ func augment_single_convoy(raw_convoy_item: Dictionary) -> Dictionary:
 		return {}
 
 	var augmented_item = raw_convoy_item.duplicate(true)
+
+	# --- Ensure convoy_name is set correctly ---
+	if not augmented_item.has("convoy_name"):
+		if augmented_item.has("name"):
+			augmented_item["convoy_name"] = str(augmented_item["name"])
+		else:
+			augmented_item["convoy_name"] = "Unnamed Convoy"
+
+	# --- Map vehicles to vehicle_details_list for UI compatibility ---
+	if not augmented_item.has("vehicle_details_list") and augmented_item.has("vehicles"):
+		augmented_item["vehicle_details_list"] = augmented_item["vehicles"]
 
 	# Assign color if it's a new convoy
 	var convoy_id_val = augmented_item.get('convoy_id')
@@ -406,3 +437,152 @@ func update_single_vendor(new_vendor_data: Dictionary) -> void:
 		settlement_data_updated.emit.call_deferred(all_settlement_data)
 	else:
 		printerr("GameDataManager: Vendor ID %s not found in any settlement." % updated_id)
+
+func request_vendor_panel_data(convoy_id: String, vendor_id: String) -> void:
+	var vendor_data = null
+	var convoy_data = null
+	var settlement_data = null
+
+	# Find vendor data
+	for settlement in all_settlement_data:
+		if settlement.has("vendors"):
+			for vendor in settlement.vendors:
+				if str(vendor.get("vendor_id", "")) == str(vendor_id):
+					vendor_data = vendor
+					settlement_data = settlement
+					break
+		if vendor_data:
+			break
+
+	# Find convoy data
+	for convoy in all_convoy_data:
+		if str(convoy.get("convoy_id", "")) == str(convoy_id):
+			convoy_data = convoy
+			break
+
+	# --- Aggregation logic moved here ---
+	var vendor_items = _aggregate_vendor_items(vendor_data)
+	var convoy_items = _aggregate_convoy_items(convoy_data, vendor_data)
+
+	var vendor_panel_data = {
+		"vendor_data": vendor_data,
+		"convoy_data": convoy_data,
+		"settlement_data": settlement_data,
+		"all_settlement_data": all_settlement_data,
+		"user_data": current_user_data,
+		"vendor_items": vendor_items,
+		"convoy_items": convoy_items
+	}
+	vendor_panel_data_ready.emit(vendor_panel_data)
+
+# Aggregates vendor's inventory into categories
+func _aggregate_vendor_items(vendor_data: Dictionary) -> Dictionary:
+	var aggregated = {
+		"missions": {},
+		"resources": {},
+		"vehicles": {},
+		"other": {}
+	}
+	if not vendor_data:
+		return aggregated
+
+	for item in vendor_data.get("cargo_inventory", []):
+		if item.has("intrinsic_part_id") and item.get("intrinsic_part_id") != null:
+			continue
+		var category = "other"
+		if item.get("recipient") != null:
+			category = "missions"
+		elif (item.has("food") and item.get("food", 0) > 0) or (item.has("water") and item.get("water", 0) > 0) or (item.has("fuel") and item.get("fuel", 0) > 0):
+			category = "resources"
+		_aggregate_item(aggregated[category], item)
+
+	# Add bulk resources
+	for res in ["fuel", "water", "food"]:
+		var qty = int(vendor_data.get(res, 0) or 0)
+		var price = float(vendor_data.get(res + "_price", 0) or 0)
+		if qty > 0 and price > 0:
+			var item = {
+				"name": "%s (Bulk)" % res.capitalize(),
+				"quantity": qty,
+				res: qty,
+				"is_raw_resource": true
+			}
+			_aggregate_item(aggregated["resources"], item)
+
+	# Vehicles
+	for vehicle in vendor_data.get("vehicle_inventory", []):
+		_aggregate_item(aggregated["vehicles"], vehicle)
+
+	return aggregated
+
+# Aggregates convoy's inventory into categories
+func _aggregate_convoy_items(convoy_data: Dictionary, vendor_data: Dictionary) -> Dictionary:
+	var aggregated = {
+		"missions": {},
+		"resources": {},
+		"parts": {},
+		"other": {}
+	}
+	if not convoy_data:
+		return aggregated
+
+	var found_any_cargo = false
+	if convoy_data.has("vehicle_details_list"):
+		for vehicle in convoy_data.vehicle_details_list:
+			var vehicle_name = vehicle.get("name", "Unknown Vehicle")
+			for item in vehicle.get("cargo", []):
+				found_any_cargo = true
+				if item.has("intrinsic_part_id") and item.get("intrinsic_part_id") != null:
+					continue
+				var category = "other"
+				if item.get("recipient") != null or item.get("delivery_reward") != null:
+					category = "missions"
+				elif (item.has("food") and item.get("food", 0) > 0) or (item.has("water") and item.get("water", 0) > 0) or (item.has("fuel") and item.get("fuel", 0) > 0):
+					category = "resources"
+				_aggregate_item(aggregated[category], item, vehicle_name)
+			for item in vehicle.get("parts", []):
+				if item.has("intrinsic_part_id") and item.get("intrinsic_part_id") != null:
+					continue
+				_aggregate_item(aggregated["parts"], item, vehicle_name)
+
+	# Fallback: If no cargo found in vehicles, use cargo_inventory
+	if not found_any_cargo and convoy_data.has("cargo_inventory"):
+		for item in convoy_data.cargo_inventory:
+			var category = "other"
+			if item.get("recipient") != null or item.get("delivery_reward") != null:
+				category = "missions"
+			elif (item.has("food") and item.get("food", 0) > 0) or (item.has("water") and item.get("water", 0) > 0) or (item.has("fuel") and item.get("fuel", 0) > 0):
+				category = "resources"
+			_aggregate_item(aggregated[category], item, "Convoy")
+
+	# Add bulk resources
+	for res in ["fuel", "water", "food"]:
+		var qty = int(convoy_data.get(res, 0) or 0)
+		var price = vendor_data and float(vendor_data.get(res + "_price", 0) or 0) or 0
+		if qty > 0 and price > 0:
+			var item = {
+				"name": "%s (Bulk)" % res.capitalize(),
+				"quantity": qty,
+				res: qty,
+				"is_raw_resource": true
+			}
+			_aggregate_item(aggregated["resources"], item)
+
+	return aggregated
+
+# Helper for aggregation
+func _aggregate_item(agg_dict: Dictionary, item: Dictionary, vehicle_name: String = "", mission_vendor_name: String = "") -> void:
+	var item_name = item.get("name", "Unknown Item")
+	if not agg_dict.has(item_name):
+		agg_dict[item_name] = {"item_data": item, "total_quantity": 0, "locations": {}, "total_weight": 0.0, "total_volume": 0.0, "total_food": 0.0, "total_water": 0.0, "total_fuel": 0.0}
+	var item_quantity = int(item.get("quantity", 1.0))
+	agg_dict[item_name].total_quantity += item_quantity
+	agg_dict[item_name].total_weight += item.get("weight", 0.0)
+	agg_dict[item_name].total_volume += item.get("volume", 0.0)
+	if item.get("food") is float or item.get("food") is int: agg_dict[item_name].total_food += item.get("food")
+	if item.get("water") is float or item.get("water") is int: agg_dict[item_name].total_water += item.get("water")
+	if item.get("fuel") is float or item.get("fuel") is int: agg_dict[item_name].total_fuel += item.get("fuel")
+	if vehicle_name != "":
+		if not agg_dict[item_name].locations.has(vehicle_name):
+			agg_dict[item_name].locations[vehicle_name] = 0
+		agg_dict[item_name].locations[vehicle_name] += item_quantity

@@ -255,20 +255,15 @@ func _on_request_completed(result: int, response_code: int, headers: PackedStrin
 				local_attempt_failed_or_empty = true
 				failure_reason = "JSON response was not an array (type: %s)" % typeof(json_response)
 			else:
-				var parsed_data = parse_in_transit_convoy_details(json_response)
-				if parsed_data.is_empty():
-					local_attempt_failed_or_empty = true
-					failure_reason = "received an empty list"
-				else:
-					# SUCCESS with local data
-					print("APICalls (_on_request_completed - LOCAL_USER_CONVOYS): Successfully fetched %s user-specific convoy(s) locally. URL: %s" % [parsed_data.size(), _last_requested_url])
-					if not parsed_data.is_empty(): # Should always be true here due to check above
-						print("  Sample Local User Convoy 0: ID: %s, Name: %s" % [parsed_data[0].get("convoy_id", "N/A"), parsed_data[0].get("convoy_name", "N/A")])
-					self.convoys_in_transit = parsed_data
-					emit_signal('convoy_data_received', parsed_data)
-					_current_request_purpose = RequestPurpose.NONE
-					_complete_current_request()
-					return
+				# SUCCESS with local data
+				print("APICalls (_on_request_completed - LOCAL_USER_CONVOYS): Successfully fetched %s user-specific convoy(s) locally. URL: %s" % [json_response.size(), _last_requested_url])
+				if not json_response.is_empty():
+					print("  Sample Local User Convoy 0: ID: %s" % [json_response[0].get("convoy_id", "N/A")])
+				self.convoys_in_transit = json_response
+				emit_signal('convoy_data_received', json_response)
+				_current_request_purpose = RequestPurpose.NONE
+				_complete_current_request()
+				return
 
 		if local_attempt_failed_or_empty:
 			printerr("APICalls: Local user convoy request failed (%s). URL: %s. Falling back to remote all_in_transit." % [failure_reason, _last_requested_url])
@@ -311,7 +306,6 @@ func _on_request_completed(result: int, response_code: int, headers: PackedStrin
 		# This part needs to be fleshed out if get_convoy_data is actively used and its response is a Dictionary.
 		# For now, we'll assume it's not the primary flow being addressed.
 		if request_purpose_at_start == RequestPurpose.NONE and _current_patch_signal_name == "":
-			# This is a response from get_convoy_data, which returns a Dictionary.
 			var response_body_text = body.get_string_from_utf8()
 			var json_response = JSON.parse_string(response_body_text)
 			if json_response == null or not json_response is Dictionary:
@@ -319,11 +313,8 @@ func _on_request_completed(result: int, response_code: int, headers: PackedStrin
 				emit_signal('fetch_error', "Failed to parse convoy data as Dictionary.")
 			else:
 				print("APICalls (_on_request_completed - Purpose: NONE): Successfully fetched single convoy data. URL: %s" % _last_requested_url)
-				# PARSE the single convoy object before emitting.
-				# The parser expects an array, so we wrap the dictionary in an array, parse it,
-				# and the result will be an array with one parsed object.
-				var parsed_data = parse_in_transit_convoy_details([json_response])
-				emit_signal('convoy_data_received', parsed_data)
+				# Emit as a single-item array for consistency
+				emit_signal('convoy_data_received', [json_response])
 			_complete_current_request()
 			return
 
@@ -347,17 +338,23 @@ func _on_request_completed(result: int, response_code: int, headers: PackedStrin
 				_complete_current_request()
 				return
 
+			# --- ADD THIS LOGGING ---
+			if not json_response.is_empty():
+				var first_convoy = json_response[0]
+				print("APICalls: First convoy keys: ", first_convoy.keys())
+				print("APICalls: First convoy vehicle_details_list: ", first_convoy.get("vehicle_details_list", []))
+				if first_convoy.has("vehicle_details_list") and first_convoy["vehicle_details_list"].size() > 0:
+					print("APICalls: First vehicle keys: ", first_convoy["vehicle_details_list"][0].keys())
+			# --- END LOGGING ---
+
 			# Successfully parsed array for fallback or direct remote (that expects array)
-			if request_purpose_at_start == RequestPurpose.ALL_CONVOYS or \
-			   (request_purpose_at_start == RequestPurpose.USER_CONVOYS and not was_initial_local_user_attempt): # Second condition should ideally not be met if logic is tight
-				var parsed_data: Array = parse_in_transit_convoy_details(json_response)
-				var log_prefix = "REMOTE_ALL_CONVOYS_FALLBACK" if request_purpose_at_start == RequestPurpose.ALL_CONVOYS else "REMOTE_USER_CONVOYS_DIRECT"
-				print("APICalls (_on_request_completed - %s): Successfully fetched %s convoy(s). URL: %s" % [log_prefix, parsed_data.size(), _last_requested_url])
-				if not parsed_data.is_empty():
-					print("  Sample %s Convoy 0: ID: %s, Name: %s" % [log_prefix, parsed_data[0].get("convoy_id", "N/A"), parsed_data[0].get("convoy_name", "N/A")])
-				self.convoys_in_transit = parsed_data
-				emit_signal('convoy_data_received', parsed_data)
-				_complete_current_request()
+			print("APICalls (_on_request_completed - %s): Successfully fetched %s convoy(s). URL: %s" % [RequestPurpose.keys()[request_purpose_at_start], json_response.size(), _last_requested_url])
+			if not json_response.is_empty():
+				print("  Sample Convoy 0: ID: %s" % [json_response[0].get("convoy_id", "N/A")])
+			self.convoys_in_transit = json_response
+			emit_signal('convoy_data_received', json_response)
+			_complete_current_request()
+			return
 
 	elif request_purpose_at_start == RequestPurpose.MAP_DATA:
 		if body.is_empty():
@@ -459,156 +456,6 @@ func _add_patch_request(url: String, signal_name: String) -> void:
 		"purpose": RequestPurpose.NONE, # Always use enum for purpose
 		"signal_name": signal_name,     # Store the signal name separately
 		"method": HTTPClient.METHOD_PATCH
-	}
-	_request_queue.append(request_details)
-	_process_queue()
-
-func _deep_update(target: Dictionary, source: Dictionary) -> Dictionary:
-	"""
-	Recursively merges the 'source' dictionary into the 'target' dictionary.
-	Returns a new dictionary with the merged data. This is crucial for applying
-	partial updates from the API to our full client-side convoy objects.
-	"""
-	var new_dict = target.duplicate(true) # Start with a deep copy of the target
-	for key in source:
-		var source_value = source[key]
-		if new_dict.has(key) and new_dict[key] is Dictionary and source_value is Dictionary:
-			# If both are dictionaries, recurse
-			new_dict[key] = _deep_update(new_dict[key], source_value)
-		else:
-			# Otherwise, overwrite or add the key.
-			# Using duplicate(true) for the value to avoid reference issues with arrays/dicts.
-			new_dict[key] = source_value.duplicate(true) if source_value is Array or source_value is Dictionary else source_value
-	return new_dict
-
-
-func parse_in_transit_convoy_details(raw_convoy_list: Array) -> Array:
-	"""
-	Parses the raw array of in-transit convoy data from the API
-	into a more structured format, extracting specific details.
-
-	Args:
-		raw_convoy_list: An Array of Dictionaries, where each dictionary
-						 is a raw convoy object from the API response.
-
-	Returns:
-		An Array of Dictionaries. Each dictionary represents a convoy and contains:
-		- convoy_id (String)
-		- convoy_name (String)
-		- efficiency (float)
-		- top_speed (float)
-		- offroad_capability (float)
-		- vehicle_names (Array[String])
-		- journey (Dictionary) - The entire journey object
-		- fuel, max_fuel, water, max_water, food, max_food (floats)
-		- total_cargo_capacity, total_weight_capacity, total_free_space, total_remaining_capacity (floats)
-		- vehicle_details_list (Array of Dictionaries, each with name, description, efficiency, top_speed, offroad_capability)
-		- all_cargo (Array of cargo details) - The entire all_cargo array.
-	"""
-	var parsed_convoys: Array = []
-	if not raw_convoy_list is Array:
-		printerr('APICalls: Expected an array for parsing convoy data, got: ', typeof(raw_convoy_list))
-		return parsed_convoys
-
-	# --- START: New code to save raw convoy data to file ---
-	var file_path = "res://Other/raw_convoy_data.json"
-	var file = FileAccess.open(file_path, FileAccess.WRITE)
-	if FileAccess.get_open_error() != OK:
-		printerr("APICalls: Error opening file for raw convoy data: %s. Error: %s" % [file_path, FileAccess.get_open_error()])
-	else:
-		# Use JSON.stringify with a tab for pretty printing, making it easier to read
-		var json_string = JSON.stringify(raw_convoy_list, "\t")
-		if json_string == "":
-			printerr("APICalls: Error converting raw convoy data to JSON string.")
-		else:
-			file.store_string(json_string)
-			file.close()
-			print("APICalls: Raw convoy data saved to: %s" % file_path)
-	# --- END: New code ---
-
-	for convoy_data in raw_convoy_list:
-		if not convoy_data is Dictionary:
-			printerr('APICalls: Expected a dictionary for individual convoy data, got: ', typeof(convoy_data))
-			continue  # Skip this item if it's not a dictionary
-
-		var raw_journey_value = convoy_data.get('journey')
-		var journey_data: Dictionary = {} # Default to an empty dictionary
-		if raw_journey_value is Dictionary: # Check if the retrieved value is actually a dictionary
-			journey_data = raw_journey_value # If yes, assign it
-		# If raw_journey_value was null or not a Dictionary, journey_data remains the safe default {}
-
-
-		var convoy_details: Dictionary = {}
-		convoy_details['convoy_id'] = convoy_data.get('convoy_id', '')  # UUIDs are best handled as Strings in GDScript
-		convoy_details['convoy_name'] = convoy_data.get('name', 'Unknown Convoy')
-		convoy_details['efficiency'] = convoy_data.get('efficiency', 0.0)
-		convoy_details['top_speed'] = convoy_data.get('top_speed', 0.0)
-		convoy_details['offroad_capability'] = convoy_data.get('offroad_capability', 0.0)
-		# Populate top-level x and y directly from the convoy_data object
-		convoy_details['x'] = convoy_data.get('x', 0.0)  # Default to 0.0 if not found
-		convoy_details['y'] = convoy_data.get('y', 0.0)  # Default to 0.0 if not found
-
-		# Add top-level resource and capacity stats
-		convoy_details['fuel'] = convoy_data.get('fuel', 0.0)
-		convoy_details['max_fuel'] = convoy_data.get('max_fuel', 0.0)
-		convoy_details['water'] = convoy_data.get('water', 0.0)
-		convoy_details['max_water'] = convoy_data.get('max_water', 0.0)
-		convoy_details['food'] = convoy_data.get('food', 0.0)
-		convoy_details['max_food'] = convoy_data.get('max_food', 0.0)
-		convoy_details['total_cargo_capacity'] = convoy_data.get('total_cargo_capacity', 0.0)
-		convoy_details['total_weight_capacity'] = convoy_data.get('total_weight_capacity', 0.0)
-		convoy_details['total_free_space'] = convoy_data.get('total_free_space', 0.0)
-		convoy_details['total_remaining_capacity'] = convoy_data.get('total_remaining_capacity', 0.0)
-
-		# Process vehicle details
-		var vehicle_details_list: Array = []
-		var vehicles_raw: Array = convoy_data.get('vehicles', [])
-		if vehicles_raw is Array:
-			for vehicle_data in vehicles_raw:
-				if vehicle_data is Dictionary:
-					var single_vehicle_details: Dictionary = {}
-					single_vehicle_details['name'] = vehicle_data.get('name', 'Unknown Vehicle')
-					single_vehicle_details['make_model'] = vehicle_data.get('make_model', 'Unknown Make/Model')
-					# Get the original 'description' field from the raw data
-					single_vehicle_details['description'] = vehicle_data.get('description', 'No description available.')
-					# Add 'base_desc' as a separate, distinct field
-					single_vehicle_details['base_desc'] = vehicle_data.get('base_desc', 'No base description available.')
-					single_vehicle_details['efficiency'] = vehicle_data.get('efficiency', 0.0)
-					single_vehicle_details['top_speed'] = vehicle_data.get('top_speed', 0.0)
-					single_vehicle_details['offroad_capability'] = vehicle_data.get('offroad_capability', 0.0)
-					single_vehicle_details['base_value'] = vehicle_data.get('base_value', 0.0)
-					single_vehicle_details['value'] = vehicle_data.get('value', 0.0) # Add the vehicle's current value
-					single_vehicle_details['color'] = vehicle_data.get('color', 'N/A')
-					single_vehicle_details['shape'] = vehicle_data.get('shape', 'N/A')
-					single_vehicle_details['cargo'] = vehicle_data.get('cargo', [])
-					single_vehicle_details['parts'] = vehicle_data.get('parts', []) # Add the parts array
-					vehicle_details_list.append(single_vehicle_details)
-		convoy_details['vehicle_details_list'] = vehicle_details_list
-
-		convoy_details['journey'] = journey_data  # Store the (potentially modified) journey object
-
-		# Store the entire 'cargo_inventory' array, aliased from the 'all_cargo' key in the raw API data.
-		convoy_details['cargo_inventory'] = convoy_data.get('all_cargo', [])
-
-		parsed_convoys.append(convoy_details)
-
-	print("APICalls (parse_in_transit_convoy_details): Successfully parsed %s convoy(s) from raw data." % parsed_convoys.size())
-	return parsed_convoys
-
-func get_vendor_data(vendor_id: String) -> void:
-	if not vendor_id or vendor_id.is_empty():
-		printerr('APICalls (get_vendor_data): Vendor ID cannot be empty.')
-		emit_signal('fetch_error', 'Vendor ID cannot be empty.')
-		return
-
-	var url: String = '%s/vendor/get?vendor_id=%s' % [BASE_URL, vendor_id]
-	var headers: PackedStringArray = ['accept: application/json']
-
-	var request_details: Dictionary = {
-		"url": url,
-		"headers": headers,
-		"purpose": RequestPurpose.VENDOR_DATA,
-		"method": HTTPClient.METHOD_GET
 	}
 	_request_queue.append(request_details)
 	_process_queue()

@@ -23,6 +23,10 @@ var _throb_phase: float = 0.0
 const MAX_THROB_SCALE_ADDITION: float = 0.2 # e.g., 20% larger at peak
 const THROB_SPEED: float = 2.0 # Radians per second for sin wave
 
+var gdm: Node = null
+var current_convoy_id: String = ""
+var current_convoy_data: Dictionary = {}
+
 func _ready():
 	# Randomize throb phase slightly to desynchronize convoys
 	_throb_phase = randf_range(0, 2.0 * PI)
@@ -34,6 +38,11 @@ func _ready():
 	var arrow_texture = ImageTexture.create_from_image(arrow_image)
 	icon_sprite.texture = arrow_texture
 	icon_sprite.centered = true # Important for rotation and positioning around the node's origin
+
+	gdm = get_node_or_null("/root/GameDataManager")
+	if is_instance_valid(gdm):
+		if not gdm.is_connected("convoy_data_updated", _on_convoy_data_updated):
+			gdm.convoy_data_updated.connect(_on_convoy_data_updated)
 
 
 func set_convoy_data(p_convoy_data: Dictionary, p_color: Color, p_tile_w: float, p_tile_h: float):
@@ -206,3 +215,27 @@ func _draw_filled_triangle_on_image(image: Image, v0: Vector2, v1: Vector2, v2: 
 			if Geometry2D.is_point_in_polygon(current_pixel + Vector2(0.5, 0.5), polygon):
 				image.set_pixel(x_coord, y_coord, color)
 	# image.unlock() # Pair with lock()
+
+func show_convoy(convoy_id: String) -> void:
+	current_convoy_id = convoy_id
+	# Optionally, request a data refresh if needed:
+	# gdm.request_convoy_data_refresh()
+	_update_display()
+
+func _on_convoy_data_updated(all_convoy_data: Array) -> void:
+	# Find the convoy with the current ID
+	for convoy in all_convoy_data:
+		if str(convoy.get("convoy_id", "")) == str(current_convoy_id):
+			current_convoy_data = convoy
+			_update_display()
+			return
+
+func _update_display() -> void:
+	if current_convoy_data.is_empty():
+		# Hide or clear UI
+		return
+	# Populate your UI fields using current_convoy_data
+	# Example:
+	$ConvoyNameLabel.text = current_convoy_data.get("convoy_name", "Unknown Convoy")
+	$ConvoyStatusLabel.text = current_convoy_data.get("status", "Unknown Status")
+	# ...and so on for other UI elements...

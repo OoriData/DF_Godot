@@ -98,6 +98,13 @@ func _ready():
 	_clear_all_tabs() # Now safe to call
 	_show_initial_detail_message("Initializing...") # Now safe to call
 
+	# Add a reference to GameDataManager
+	var gdm: Node = null
+	gdm = get_node_or_null("/root/GameDataManager")
+	if is_instance_valid(gdm):
+		if not gdm.is_connected("convoy_data_updated", Callable(self, "_on_gdm_convoy_data_updated")):
+			gdm.convoy_data_updated.connect(_on_gdm_convoy_data_updated)
+
 func _on_back_button_pressed():
 	print("ConvoyVehicleMenu: Back button pressed. Emitting 'back_requested' signal.")
 	emit_signal("back_requested")
@@ -130,6 +137,9 @@ func initialize_with_data(data: Dictionary):
 		return
 
 	print("ConvoyVehicleMenu: initialize_with_data called. Data keys: ", data.keys())
+	print("ConvoyVehicleMenu: vehicle_details_list: ", data.get("vehicle_details_list", []))
+	if data.has("vehicle_details_list") and data["vehicle_details_list"].size() > 0:
+		print("ConvoyVehicleMenu: First vehicle keys: ", data["vehicle_details_list"][0].keys())
 
 	if is_instance_valid(title_label):
 		_current_convoy_data = data.duplicate(true) # Store the full convoy data
@@ -733,3 +743,15 @@ func _on_title_label_gui_input(event: InputEvent):
 			print("ConvoyVehicleMenu: Title clicked. Emitting 'return_to_convoy_overview_requested'.")
 			emit_signal("return_to_convoy_overview_requested", _current_convoy_data)
 			get_viewport().set_input_as_handled()
+
+func _on_gdm_convoy_data_updated(all_convoy_data: Array) -> void:
+	# Update _current_convoy_data if this convoy is present in the update
+	if not _current_convoy_data or not _current_convoy_data.has("convoy_id"):
+		return
+	var current_id = str(_current_convoy_data.get("convoy_id"))
+	for convoy in all_convoy_data:
+		if convoy.has("convoy_id") and str(convoy.get("convoy_id")) == current_id:
+			_current_convoy_data = convoy.duplicate(true)
+			# Optionally, refresh the UI if needed
+			initialize_with_data(_current_convoy_data)
+			break

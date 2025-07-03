@@ -20,6 +20,8 @@ var _convoy_data: Dictionary
 var _settlement_data: Dictionary
 var _all_settlement_data: Array # New: To store all settlement data from GameDataManager
 
+# Add a reference to GameDataManager
+var gdm: Node = null
 
 # This function is called by MenuManager to pass the convoy data when the menu is opened.
 func initialize_with_data(data: Dictionary):
@@ -73,7 +75,7 @@ func _ready():
 			title_label.pressed.connect(_on_title_label_pressed)
 
 	# Connect to GameDataManager signals to refresh UI when data updates
-	var gdm = get_node_or_null("/root/GameDataManager")
+	gdm = get_node_or_null("/root/GameDataManager")
 	if is_instance_valid(gdm):
 		if not gdm.is_connected("convoy_data_updated", Callable(self, "_on_gdm_convoy_data_updated")):
 			gdm.convoy_data_updated.connect(_on_gdm_convoy_data_updated)

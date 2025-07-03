@@ -12,6 +12,9 @@ var _active_convoy_nodes: Dictionary = {} # { "convoy_id_str": ConvoyNode }
 var map_container: Node2D 
 var map_renderer_node: Node # For offset calculations
 
+# Add a reference to GameDataManager
+var gdm: Node = null
+
 
 func initialize(p_map_container: Node2D, p_map_renderer_node: Node):
 	map_container = p_map_container
@@ -20,6 +23,24 @@ func initialize(p_map_container: Node2D, p_map_renderer_node: Node):
 		printerr("ConvoyVisualsManager: map_container is invalid during initialization.")
 	if not is_instance_valid(map_renderer_node):
 		printerr("ConvoyVisualsManager: map_renderer_node is invalid during initialization.")
+
+
+func _ready():
+	# Connect to GameDataManager's convoy_data_updated signal
+	gdm = get_node_or_null("/root/GameDataManager")
+	if is_instance_valid(gdm):
+		if not gdm.is_connected("convoy_data_updated", Callable(self, "_on_gdm_convoy_data_updated")):
+			gdm.convoy_data_updated.connect(_on_gdm_convoy_data_updated)
+
+
+# Handler for updated convoy data
+func _on_gdm_convoy_data_updated(all_convoy_data: Array) -> void:
+	# You may need to pass additional parameters (like map_tiles, map_display, etc.)
+	# depending on your setup. Adjust as needed.
+	# Example usage:
+	# var augmented_data = augment_convoy_data_with_offsets(all_convoy_data, ...)
+	# update_convoy_nodes_on_map(augmented_data, ...)
+	pass
 
 
 func augment_convoy_data_with_offsets(

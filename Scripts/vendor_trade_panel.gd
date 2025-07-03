@@ -60,12 +60,8 @@ func _ready() -> void:
 	# Get GameDataManager and connect to its signal to keep user money updated.
 	gdm = get_node_or_null("/root/GameDataManager")
 	if is_instance_valid(gdm):
-		if not gdm.is_connected("user_data_updated", _on_user_data_updated):
-			gdm.user_data_updated.connect(_on_user_data_updated)
-		if not gdm.is_connected("convoy_data_updated", _on_gdm_convoy_data_updated):
-			gdm.convoy_data_updated.connect(_on_gdm_convoy_data_updated)
-		if not gdm.is_connected("settlement_data_updated", _on_gdm_settlement_data_updated):
-			gdm.settlement_data_updated.connect(_on_gdm_settlement_data_updated)
+		if not gdm.is_connected("vendor_panel_data_ready", _on_vendor_panel_data_ready):
+			gdm.vendor_panel_data_ready.connect(_on_vendor_panel_data_ready)
 	else:
 		printerr("VendorTradePanel: Could not find GameDataManager.")
 
@@ -85,7 +81,45 @@ func _ready() -> void:
 	api.resource_sold.connect(_on_api_transaction_result)
 	api.fetch_error.connect(_on_api_transaction_error)
 
-# Public method to initialize the panel with data
+# Request data for the panel (call this when opening the panel)
+func request_panel_data(convoy_id: String, vendor_id: String) -> void:
+	if is_instance_valid(gdm):
+		gdm.request_vendor_panel_data(convoy_id, vendor_id)
+
+# Handler for when GDM emits vendor_panel_data_ready
+func _on_vendor_panel_data_ready(vendor_panel_data: Dictionary) -> void:
+	self.vendor_data = vendor_panel_data.get("vendor_data")
+	self.convoy_data = vendor_panel_data.get("convoy_data")
+	self.current_settlement_data = vendor_panel_data.get("settlement_data")
+	self.all_settlement_data_global = vendor_panel_data.get("all_settlement_data")
+	self.vendor_items = vendor_panel_data.get("vendor_items", {})
+	self.convoy_items = vendor_panel_data.get("convoy_items", {})
+	_update_vendor_ui()
+
+func _update_vendor_ui() -> void:
+	# Use self.vendor_items and self.convoy_items to populate the UI
+	_populate_tree_from_agg(vendor_item_tree, self.vendor_items)
+	_populate_tree_from_agg(convoy_item_tree, self.convoy_items)
+	_update_convoy_info_display()
+
+func _populate_tree_from_agg(tree: Tree, agg: Dictionary) -> void:
+	tree.clear()
+	var root = tree.create_item()
+	for category in ["missions", "vehicles", "parts", "other", "resources"]:
+		if agg.has(category) and not agg[category].is_empty():
+			var category_item = tree.create_item(root)
+			category_item.set_text(0, category.capitalize())
+			category_item.set_selectable(0, false)
+			category_item.set_custom_color(0, Color.GOLD)
+			category_item.collapsed = category != "missions"
+			for item_name in agg[category]:
+				var agg_data = agg[category][item_name]
+				var display_text = "%s (x%d)" % [item_name, agg_data.total_quantity]
+				var tree_child_item = tree.create_item(category_item)
+				tree_child_item.set_text(0, display_text)
+				tree_child_item.set_metadata(0, agg_data)
+
+# --- Data Initialization ---
 func initialize(p_vendor_data, p_convoy_data, p_current_settlement_data, p_all_settlement_data_global) -> void:
 	self.vendor_data = p_vendor_data
 	self.convoy_data = p_convoy_data
@@ -529,63 +563,19 @@ func _on_max_button_pressed() -> void:
 func _on_action_button_pressed() -> void:
 	if not selected_item:
 		return
-
 	var quantity = int(quantity_spinbox.value)
 	if quantity <= 0:
 		return
-
 	var item_data_source = selected_item.get("item_data")
 	if not item_data_source:
 		return
-
-	var final_unit_price = _get_contextual_unit_price(item_data_source)
-	var total_price = final_unit_price * quantity
-
-	var api = get_node("/root/APICalls")
 	var vendor_id = vendor_data.get("vendor_id", "")
 	var convoy_id = convoy_data.get("convoy_id", "")
-
-	# --- VEHICLE TRANSACTIONS ---
-	# Only treat as vehicle if it's a vehicle, not just if it has vehicle_id
-	if item_data_source.has("is_vehicle") and item_data_source.get("is_vehicle", false):
-		var vehicle_id = item_data_source.get("vehicle_id")
-		if current_mode == "buy":
-			api.buy_vehicle(vendor_id, convoy_id, vehicle_id)
-		else:
-			api.sell_vehicle(vendor_id, convoy_id, vehicle_id)
-		return
-
-	# --- RESOURCE TRANSACTIONS ---
-	if item_data_source.get("is_raw_resource", false):
-		var resource_type = ""
-		if item_data_source.has("fuel"):
-			resource_type = "fuel"
-		elif item_data_source.has("water"):
-			resource_type = "water"
-		elif item_data_source.has("food"):
-			resource_type = "food"
-		var resource_quantity = float(quantity)
-		if current_mode == "buy":
-			api.buy_resource(vendor_id, convoy_id, resource_type, resource_quantity)
-		else:
-			api.sell_resource(vendor_id, convoy_id, resource_type, resource_quantity)
-		return
-
-	# --- CARGO TRANSACTIONS ---
-	# If not a vehicle or resource, treat as cargo
-	var cargo_id = item_data_source.get("cargo_id", item_data_source.get("id", ""))
-	if cargo_id != "":
-		if current_mode == "buy":
-			api.buy_cargo(vendor_id, convoy_id, cargo_id, quantity)
-		else:
-			api.sell_cargo(vendor_id, convoy_id, cargo_id, quantity)
-		return
-
-	# Fallback: emit old signals if nothing matched
 	if current_mode == "buy":
-		emit_signal("item_purchased", item_data_source, quantity, total_price)
+		gdm.buy_item(convoy_id, vendor_id, item_data_source, quantity)
 	else:
-		emit_signal("item_sold", item_data_source, quantity, total_price)
+		gdm.sell_item(convoy_id, vendor_id, item_data_source, quantity)
+
 func _on_quantity_changed(_value: float) -> void:
 	_update_transaction_panel()
 

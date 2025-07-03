@@ -304,3 +304,18 @@ func close_all_menus():
 	go_back() # Call go_back to handle closing the current_active_menu and emitting signals
 	# go_back will eventually emit menus_completely_closed if the stack is now empty
 	# and it closes the last menu.
+
+
+# Handler to update the currently active menu if convoy data changes
+func _on_gdm_convoy_data_updated(all_convoy_data: Array) -> void:
+	if not is_instance_valid(current_active_menu):
+		return
+	if current_active_menu.has_method("initialize_with_data"):
+		var menu_data = current_active_menu.get_meta("menu_data", null)
+		if menu_data and menu_data.has("convoy_id"):
+			var current_id = str(menu_data.get("convoy_id"))
+			for convoy in all_convoy_data:
+				if convoy.has("convoy_id") and str(convoy.get("convoy_id")) == current_id:
+					current_active_menu.call_deferred("initialize_with_data", convoy.duplicate(true))
+					current_active_menu.set_meta("menu_data", convoy.duplicate(true))
+					break

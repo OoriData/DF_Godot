@@ -9,6 +9,9 @@ var convoy_data_received: Dictionary
 @onready var cargo_items_vbox: VBoxContainer = $MainVBox/ScrollContainer/CargoItemsVBox
 @onready var back_button: Button = $MainVBox/BackButton
 
+# Add a reference to GameDataManager
+var gdm: Node = null
+
 func _ready():
 	if is_instance_valid(back_button):
 		if not back_button.is_connected("pressed", Callable(self, "_on_back_button_pressed")):
@@ -20,6 +23,11 @@ func _ready():
 		title_label.gui_input.connect(_on_title_label_gui_input)
 	else:
 		printerr("ConvoyCargoMenu: BackButton node not found. Ensure it's named 'BackButton' in the scene.")
+
+	gdm = get_node_or_null("/root/GameDataManager")
+	if is_instance_valid(gdm):
+		if not gdm.is_connected("convoy_data_updated", Callable(self, "_on_gdm_convoy_data_updated")):
+			gdm.convoy_data_updated.connect(_on_gdm_convoy_data_updated)
 
 func initialize_with_data(data: Dictionary):
 	# Ensure this function runs only after the node is fully ready and @onready vars are set.
@@ -191,3 +199,14 @@ func _on_title_label_gui_input(event: InputEvent):
 		print("ConvoyCargoMenu: Title clicked. Emitting 'return_to_convoy_overview_requested'.")
 		emit_signal("return_to_convoy_overview_requested", convoy_data_received)
 		get_viewport().set_input_as_handled()
+
+func _on_gdm_convoy_data_updated(all_convoy_data: Array) -> void:
+	# Update convoy_data_received if this convoy is present in the update
+	if not convoy_data_received or not convoy_data_received.has("convoy_id"):
+		return
+	var current_id = str(convoy_data_received.get("convoy_id"))
+	for convoy in all_convoy_data:
+		if convoy.has("convoy_id") and str(convoy.get("convoy_id")) == current_id:
+			convoy_data_received = convoy.duplicate(true)
+			_populate_cargo_list()
+			break

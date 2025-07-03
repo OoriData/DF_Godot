@@ -185,6 +185,16 @@ func _ready():
 		else:
 			printerr("UIManager: Cannot assign convoy_label_container to ConvoyLabelManager because UIManager's own reference to convoy_label_container is invalid.")
 
+	# Add a reference to GameDataManager
+	var gdm: Node = null
+
+	gdm = get_node_or_null("/root/GameDataManager")
+	if is_instance_valid(gdm):
+		if not gdm.is_connected("convoy_data_updated", Callable(self, "_on_gdm_convoy_data_updated")):
+			gdm.convoy_data_updated.connect(_on_gdm_convoy_data_updated)
+		if not gdm.is_connected("settlement_data_updated", Callable(self, "_on_gdm_settlement_data_updated")):
+			gdm.settlement_data_updated.connect(_on_gdm_settlement_data_updated)
+
 
 func initialize_font_settings(theme_font_to_use: Font):
 	if theme_font_to_use:
@@ -871,3 +881,15 @@ func set_dragging_state(panel_node: Panel, convoy_id_str: String, is_dragging: b
 	else:
 		_dragging_panel_node = null
 		_dragged_convoy_id_actual_str = ""
+
+func _on_gdm_convoy_data_updated(all_convoy_data: Array) -> void:
+	# Update your local cache or UI as needed
+	_all_convoy_data_cache = all_convoy_data
+	# Optionally, trigger a UI update here
+	_draw_interactive_labels({})
+
+func _on_gdm_settlement_data_updated(settlement_data_list: Array) -> void:
+	# Update your local cache or UI as needed
+	_all_settlement_data_cache = settlement_data_list
+	# Optionally, trigger a UI update here
+	_draw_interactive_labels({})

@@ -18,6 +18,9 @@ var _panel_style_open: StyleBox
 var _panel_style_closed: StyleBox
 # var _base_z_index: int # No longer needed as we'll maintain a high z-index
 
+# Add a reference to GameDataManager
+var gdm: Node = null
+
 func _ready():
 	# self.z_index is now consistently managed by _update_panel_appearance
 	_panel_style_open = get_theme_stylebox("panel", "PanelContainer")
@@ -53,6 +56,14 @@ func _ready():
 			printerr("ConvoyListPanel: MenuManager found but does not have 'menu_opened' signal.")
 	else:
 		printerr("ConvoyListPanel: MenuManager node not found as sibling. Cannot auto-close on menu open. Expected path: ../MenuManager")
+
+	# Add this block to connect to GameDataManager's convoy_data_updated signal
+	gdm = get_node_or_null("/root/GameDataManager")
+	if is_instance_valid(gdm):
+		if not gdm.is_connected("convoy_data_updated", _on_convoy_data_updated):
+			gdm.convoy_data_updated.connect(_on_convoy_data_updated)
+		# Optionally, request a refresh if you want the list to populate on startup:
+		# gdm.request_convoy_data_refresh()
 
 	# Initial size update after setup
 	call_deferred("_update_layout_for_parents")
@@ -184,6 +195,10 @@ func _on_convoy_item_pressed(convoy_item_data: Dictionary) -> void:
 	emit_signal("convoy_selected_from_list", convoy_item_data)
 	# Close the list after an item is selected
 	close_list()
+
+# Add this handler to update the list when convoy data changes
+func _on_convoy_data_updated(all_convoy_data: Array) -> void:
+	populate_convoy_list(all_convoy_data)
 
 ## Highlights a specific convoy in the list.
 ## Call this from main.gd when a convoy is selected on the map.
