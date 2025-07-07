@@ -1,49 +1,31 @@
-extends PanelContainer
+extends VBoxContainer
 
 # Emitted when a convoy is selected from this list.
 # Passes the full convoy_data dictionary of the selected convoy.
 signal convoy_selected_from_list(convoy_data)
 
-@onready var toggle_button: Button = $MainVBox/ToggleButton
-@onready var list_scroll_container: ScrollContainer = $MainVBox/ListScrollContainer
-@onready var list_item_container: VBoxContainer = $MainVBox/ListScrollContainer/ConvoyItemsContainer
-@onready var main_vbox: VBoxContainer = $MainVBox # Add @onready for MainVBox
-
-# Z-index constants for managing draw order
-# Default z-index is handled by _base_z_index when the panel is closed.
-# Z-index when the list is open. This needs to be higher than MenuManager's MENU_MANAGER_ACTIVE_Z_INDEX (currently 150).
-const EXPANDED_OVERLAY_Z_INDEX = 200
-
-var _panel_style_open: StyleBox
-var _panel_style_closed: StyleBox
-# var _base_z_index: int # No longer needed as we'll maintain a high z-index
+@onready var toggle_button: Button = $ToggleButton
+@onready var list_scroll_container: ScrollContainer = %ListScrollContainer
+@onready var list_item_container: VBoxContainer = %ConvoyItemsContainer
 
 # Add a reference to GameDataManager
 var gdm: Node = null
 
 func _ready():
-	# self.z_index is now consistently managed by _update_panel_appearance
-	_panel_style_open = get_theme_stylebox("panel", "PanelContainer")
-	_panel_style_closed = StyleBoxEmpty.new() # Completely transparent, no drawing
-
 	# Critical node checks
 	if not is_instance_valid(toggle_button):
 		printerr("ConvoyListPanel (_ready): toggle_button node NOT FOUND.")
 		return
 	if not is_instance_valid(list_scroll_container):
-		printerr("ConvoyListPanel (_ready): list_scroll_container node NOT FOUND.")
+		printerr("ConvoyListPanel (_ready): ListScrollContainer node NOT FOUND. Check unique name in scene.")
 		return
 	if not is_instance_valid(list_item_container):
-		printerr("ConvoyListPanel (_ready): list_item_container node NOT FOUND.")
-		return
-	if not is_instance_valid(main_vbox):
-		printerr("ConvoyListPanel (_ready): main_vbox node NOT FOUND.")
+		printerr("ConvoyListPanel (_ready): ConvoyItemsContainer node NOT FOUND. Check unique name in scene.")
 		return
 
 	# Hide the list initially
 	list_scroll_container.visible = false
 	toggle_button.pressed.connect(_on_toggle_button_pressed)
-	_update_panel_appearance() # Set initial appearance (closed style, no background)
 	toggle_button.text = "Convoys ▼" # Initial text for closed state
 
 	# Attempt to connect to MenuManager's signal to auto-close this panel
@@ -66,13 +48,11 @@ func _ready():
 		# gdm.request_convoy_data_refresh()
 
 	# Initial size update after setup
-	call_deferred("_update_layout_for_parents")
+	call_deferred("update_minimum_size")
 	
 
 func _on_toggle_button_pressed() -> void:
-	if not is_instance_valid(list_scroll_container) or \
-	   not is_instance_valid(main_vbox) or \
-	   not is_instance_valid(toggle_button):
+	if not is_instance_valid(list_scroll_container) or not is_instance_valid(toggle_button):
 		printerr("ConvoyListPanel: Critical nodes missing in _on_toggle_button_pressed.")
 		return
 
@@ -88,8 +68,7 @@ func open_list():
 
 	list_scroll_container.visible = true
 	toggle_button.text = "Convoys ▲"
-	_update_panel_appearance()
-	call_deferred("_update_layout_for_parents")
+	call_deferred("update_minimum_size")
 
 func close_list():
 	"""Closes the convoy list if it's open."""
@@ -99,14 +78,7 @@ func close_list():
 
 	list_scroll_container.visible = false
 	toggle_button.text = "Convoys ▼"
-	_update_panel_appearance()
-	call_deferred("_update_layout_for_parents")
-
-func _update_layout_for_parents():
-	# Request layout update for parent containers
-	if not is_instance_valid(main_vbox): return
-	main_vbox.call_deferred("update_minimum_size")
-	self.call_deferred("update_minimum_size")
+	call_deferred("update_minimum_size")
 
 func _on_main_menu_opened(_menu_node, _menu_type: String):
 	# If a menu from MenuManager opens, and our panel is currently expanded, close it.
@@ -115,42 +87,10 @@ func _on_main_menu_opened(_menu_node, _menu_type: String):
 	if list_scroll_container.visible:
 		close_list()
 
-func _update_panel_appearance() -> void:
-	if not is_instance_valid(list_scroll_container) or not is_instance_valid(main_vbox): # Guard for both nodes
-		printerr("ConvoyListPanel: _update_panel_appearance - Critical node (list_scroll_container or main_vbox) missing.")
-		return
-
-	if list_scroll_container.visible: # Open state - show background
-		# print("ConvoyListPanel: _update_panel_appearance() - Setting to OPEN state.") # DEBUG
-		if is_instance_valid(_panel_style_open):
-			z_index = EXPANDED_OVERLAY_Z_INDEX # Draw on top
-			self.mouse_filter = MOUSE_FILTER_STOP # PanelContainer stops mouse events
-			main_vbox.mouse_filter = MOUSE_FILTER_STOP # MainVBox also stops mouse events
-			add_theme_stylebox_override("panel", _panel_style_open)
-		else: # Fallback if style is somehow invalid
-			print("ConvoyListPanel: _update_panel_appearance() - OPEN state, _panel_style_open INVALID.") # DEBUG
-			# z_index = EXPANDED_OVERLAY_Z_INDEX # z_index is already set
-			self.mouse_filter = MOUSE_FILTER_STOP
-			main_vbox.mouse_filter = MOUSE_FILTER_STOP
-			remove_theme_stylebox_override("panel") # Use default theme panel
-
-	else: # Closed state - hide background, but keep Z-index high for the toggle button
-		# print("ConvoyListPanel: _update_panel_appearance() - Setting to CLOSED state.") # DEBUG
-		if is_instance_valid(_panel_style_closed):
-			z_index = EXPANDED_OVERLAY_Z_INDEX # Keep Z-index high to ensure toggle button is on top
-			self.mouse_filter = MOUSE_FILTER_IGNORE # PanelContainer ignores mouse events
-			main_vbox.mouse_filter = MOUSE_FILTER_IGNORE # MainVBox also ignores mouse events
-			add_theme_stylebox_override("panel", _panel_style_closed)
-		else: # Fallback if style is somehow invalid, still ensure proper Z and mouse filter
-			z_index = EXPANDED_OVERLAY_Z_INDEX
-			# self.mouse_filter = MOUSE_FILTER_IGNORE # mouse_filter is already set
-			main_vbox.mouse_filter = MOUSE_FILTER_IGNORE
-			remove_theme_stylebox_override("panel")
-
 ## Populates the list with convoy data.
 func populate_convoy_list(convoys_data: Array) -> void:
 	if not is_instance_valid(list_item_container):
-		printerr("ConvoyListPanel: populate_convoy_list - list_item_container node not found or invalid. Check path in script and ConvoyListPanel.tscn. Path used: $MainVBox/ListScrollContainer/ConvoyItemsContainer")
+		printerr("ConvoyListPanel: populate_convoy_list - list_item_container node not found or invalid. Check unique name in scene.")
 		return
 
 	# Clear existing items
@@ -186,9 +126,7 @@ func populate_convoy_list(convoys_data: Array) -> void:
 		# print("ConvoyListPanel: Added button for convoy '%s' (ID: %s)." % [convoy_name, convoy_id]) # DEBUG
 
 func _on_convoy_item_pressed(convoy_item_data: Dictionary) -> void:
-	if not is_instance_valid(list_scroll_container) or \
-	   not is_instance_valid(main_vbox) or \
-	   not is_instance_valid(toggle_button):
+	if not is_instance_valid(list_scroll_container) or not is_instance_valid(toggle_button):
 		printerr("ConvoyListPanel: Critical nodes missing in _on_convoy_item_pressed.")
 		return
 
@@ -204,7 +142,7 @@ func _on_convoy_data_updated(all_convoy_data: Array) -> void:
 ## Call this from main.gd when a convoy is selected on the map.
 func highlight_convoy_in_list(selected_convoy_id_str: String) -> void:
 	if not is_instance_valid(list_item_container):
-		printerr("ConvoyListPanel: highlight_convoy_in_list - list_item_container node not found or invalid. Check path in script and ConvoyListPanel.tscn. Path used: $ConvoyItemsContainer")
+		printerr("ConvoyListPanel: highlight_convoy_in_list - list_item_container node not found or invalid. Check unique name in scene.")
 		return
 
 	for child in list_item_container.get_children():

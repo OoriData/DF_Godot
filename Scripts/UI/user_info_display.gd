@@ -1,7 +1,9 @@
-extends PanelContainer
+extends HBoxContainer
 
-@onready var username_label: Label = $UserInfoHBox/UsernameLabel
-@onready var user_money_label: Label = $UserInfoHBox/UserMoneyLabel
+@export var hide_on_convoy_select: bool = false
+
+@onready var username_label: Label = $UsernameLabel
+@onready var user_money_label: Label = $UserMoneyLabel
 
 var gdm: Node
 
@@ -11,15 +13,31 @@ func _ready() -> void:
 		# Use modern Godot 4 signal connection syntax for better clarity and practice.
 		if not gdm.is_connected("user_data_updated", _on_user_data_updated):
 			gdm.user_data_updated.connect(_on_user_data_updated)
+		
+		if hide_on_convoy_select:
+			if gdm.has_signal("convoy_selection_changed"):
+				if not gdm.is_connected("convoy_selection_changed", _on_convoy_selection_changed):
+					gdm.convoy_selection_changed.connect(_on_convoy_selection_changed)
+				# Set initial visibility based on whether a convoy is already selected.
+				# This assumes gdm.get_selected_convoy() exists and returns null if none is selected.
+				if gdm.has_method("get_selected_convoy"):
+					_on_convoy_selection_changed(gdm.get_selected_convoy())
+			else:
+				printerr("UserInfoDisplay: GameDataManager is missing the 'convoy_selection_changed' signal. The top bar display will not hide on convoy selection.")
 	else:
 		printerr("UserInfoDisplay: Could not find GameDataManager.")
 
-	_style_panel()
 	_update_display() # Initial update
 
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_VISIBILITY_CHANGED and is_visible_in_tree():
 		_update_display()
+
+func _on_convoy_selection_changed(selected_convoy: Variant) -> void:
+	# This logic is only connected if hide_on_convoy_select is true.
+	# If a convoy is selected (not null), hide this UI element.
+	# If no convoy is selected (null), show it.
+	visible = (selected_convoy == null)
 
 func _on_user_data_updated(user_data: Dictionary):
 	_update_display()
@@ -34,17 +52,6 @@ func _update_display():
 
 	username_label.text = username
 	user_money_label.text = _format_money(money_amount)
-
-func _style_panel():
-	var panel_style = StyleBoxFlat.new()
-	panel_style.bg_color = Color(0.2, 0.2, 0.2, 0.8) # A dark, semi-transparent grey
-	panel_style.set_border_width_all(1)
-	panel_style.border_color = Color.LIGHT_GRAY
-	panel_style.corner_radius_top_left = 4
-	panel_style.corner_radius_top_right = 4
-	panel_style.corner_radius_bottom_left = 4
-	panel_style.corner_radius_bottom_right = 4
-	add_theme_stylebox_override("panel", panel_style)
 
 func _format_money(amount: Variant) -> String:
 	"""Formats a number into a currency string, e.g., $1,234,567"""

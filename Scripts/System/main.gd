@@ -21,9 +21,9 @@ extends Node2D
 # IMPORTANT: Adjust the path "$GameTimersNode" to the actual path of your GameTimers node in your scene tree.
 @onready var game_timers_node: Node = $GameTimersNode # Adjust if necessary
 # IMPORTANT: Adjust the path "$ConvoyListPanel" to the actual path of your ConvoyListPanel node. Ensure its type matches.
-# ConvoyListPanel is a child of MenuUILayer, which is a sibling of MapViewportContainer.
-# ConvoyListPanel's root node type is now expected to be ScrollContainer.
-@onready var convoy_list_panel_node: PanelContainer = $"../../MenuUILayer/ConvoyListPanel"
+# The ConvoyListPanel's root node type was refactored to VBoxContainer.
+# The ConvoyListPanel is now correctly located inside the TopNavBar.
+@onready var convoy_list_panel_node: VBoxContainer = $ScreenSpaceUI/TopNavBar/ContentHBox/ConvoyListPanel
 # Reference to the MenuManager in GameRoot.tscn
 
 var menu_manager_ref: Control = null
@@ -324,66 +324,17 @@ func _ready():
 		printerr('Main: DetailedViewToggleCheckbox node not found or invalid. Check the path in main.gd.')
 
 	# --- Setup Convoy List Panel ---
-	# More detailed check for ConvoyListPanel path
-	var menu_ui_layer_check_node = get_node_or_null("../../MenuUILayer") # Adjusted path for check
-	if is_instance_valid(menu_ui_layer_check_node):
-		# print("Main (_ready): Parent 'MenuUILayer' FOUND. Name: '%s', Type: '%s', Visible: %s" % [menu_ui_layer_check_node.name, menu_ui_layer_check_node.get_class(), menu_ui_layer_check_node.visible])
-		# if menu_ui_layer_check_node is CanvasLayer:
-		# 	print("Main (_ready): 'MenuUILayer' is a CanvasLayer. Layer ID: %s" % menu_ui_layer_check_node.layer)
-		# # --- DEBUG: Force MenuUILayer visible to test ConvoyListPanel visibility ---
-		menu_ui_layer_check_node.visible = true
-	else:
-		printerr("Main (_ready): CRITICAL - Parent node '../MenuUILayer' NOT FOUND relative to '%s'. ConvoyListPanel will not be visible." % self.name)
-	
-	# The error messages below also need to reflect the new path logic if they trigger.
-	if not is_instance_valid(menu_ui_layer_check_node):
-		printerr("Main (_ready): Node '../../MenuUILayer' NOT FOUND relative to '%s'. The path '../../MenuUILayer/ConvoyListPanel' will fail." % self.name)
-	elif not is_instance_valid(menu_ui_layer_check_node.get_node_or_null("ConvoyListPanel")): # Adjusted check
-		printerr("Main (_ready): Node '../../MenuUILayer' WAS FOUND, but it does not have a child named 'ConvoyListPanel'. The path '../../MenuUILayer/ConvoyListPanel' will fail.")
-
 	if is_instance_valid(convoy_list_panel_node):
-		# print("Main: ConvoyListPanel node found.")
-		convoy_list_panel_node.visible = true # Explicitly set to visible (ensure parent MenuUILayer is also visible)
-		# TEMPORARY DEBUG: Force size and position
-		# Ensure the node type is correct as well. If it's not a PanelContainer or compatible, methods might fail.
-		# print("Main: ConvoyListPanel node type: ", convoy_list_panel_node.get_class())
-
-		convoy_list_panel_node.custom_minimum_size = Vector2(250, 400) # Keep forced size for now, or set in editor
-		# print("Main: ConvoyListPanel TEMPORARILY forced size and position.")
-		# Set z_index to ensure it's drawn above the map and potentially other base UI.
-		# Adjust this value as needed. For example, `2` would put it on the same layer as detailed_view_toggle.
-		# `3` would put it above the toggle.
-		convoy_list_panel_node.z_index = 2
-
 		if convoy_list_panel_node.has_signal("convoy_selected_from_list"):
 			convoy_list_panel_node.convoy_selected_from_list.connect(_on_convoy_selected_from_list_panel) # Corrected signal name
 			# print("Main: Connected to ConvoyListPanel.convoy_selected_from_list signal.")
 		else:
 			printerr("Main: ConvoyListPanel node does not have 'convoy_selected_from_list' signal.")
-		# Initial population (likely with empty data if convoys load async).
-		# Defer this call to ensure ConvoyListPanel's _ready() and its @onready vars are fully settled.
 		if convoy_list_panel_node.has_method("populate_convoy_list"):
 			# print("Main: Scheduling population of ConvoyListPanel initially with _all_convoy_data count: ", _all_convoy_data.size()) # DEBUG
 			convoy_list_panel_node.call_deferred("populate_convoy_list", []) # Initially empty, will be populated by GDM signal
-			# Defer position update as well, in case it depends on the panel's size after population.
-			call_deferred("_update_convoy_list_panel_position")
-
-		# --- DEBUG: ConvoyListPanel final state check in main.gd ---
-		# print("Main (_ready): ConvoyListPanel final state check:")
-		# print("  - IsValid: ", is_instance_valid(convoy_list_panel_node))
-		# print("  - Visible: ", convoy_list_panel_node.visible)
-		# print("  - Size: ", convoy_list_panel_node.size) # Check actual size after potential layout updates
-		# print("  - Custom Min Size: ", convoy_list_panel_node.custom_minimum_size)
-		# print("  - Position: ", convoy_list_panel_node.position)
-		# print("  - Modulate: ", convoy_list_panel_node.modulate) # Check alpha
-		# print("  - Global Position: ", convoy_list_panel_node.global_position)
-		# print("  - Z Index: ", convoy_list_panel_node.z_index)
-		# if is_instance_valid(convoy_list_panel_node.get_parent()):
-			# print("  - Parent Visible: ", convoy_list_panel_node.get_parent().visible)
-			# if convoy_list_panel_node.get_parent() is CanvasLayer:
-				# print("  - Parent CanvasLayer Layer: ", convoy_list_panel_node.get_parent().layer)
 	else: # This means the @onready var convoy_list_panel_node is null or invalid
-		printerr("Main: ConvoyListPanel node (assigned via @onready var using path '../../MenuUILayer/ConvoyListPanel') is NOT VALID in _ready(). Please verify the node path and names in your scene tree are exactly '../../MenuUILayer/ConvoyListPanel' relative to the node with main.gd.")
+		printerr("Main: ConvoyListPanel node is NOT VALID in _ready(). Please verify the node path in main.gd.")
 
 	# Defer initial layout until the node is visible to avoid interfering with other scenes (like a login screen).
 	# _on_viewport_size_changed()
@@ -565,8 +516,6 @@ func _on_viewport_size_changed():
 		_update_refresh_notification_position()
 	if is_instance_valid(detailed_view_toggle):
 		_update_detailed_view_toggle_position()
-	if is_instance_valid(convoy_list_panel_node):
-		_update_convoy_list_panel_position() # This needs to use main window rect
 
 	# _apply_map_camera_and_ui_layout() is simplified as camera offset is now simpler.
 
@@ -1016,31 +965,6 @@ func _update_detailed_view_toggle_position() -> void:
 		map_view_rect.position.x + map_view_rect.size.x - toggle_size.x - padding,
 		map_view_rect.position.y + map_view_rect.size.y - toggle_size.y - padding
 	)
-
-func _update_convoy_list_panel_position() -> void:
-	if not is_instance_valid(convoy_list_panel_node):
-		return
-
-	var viewport_size = get_viewport_rect().size
-	# ConvoyListPanel is on MenuUILayer (CanvasLayer), so its positioning should be relative to the main game window.
-	var main_window_rect = get_tree().root.get_visible_rect()
-	var fixed_panel_size = convoy_list_panel_node.custom_minimum_size
-
-	# If custom_minimum_size was not set or is zero (e.g., if _ready didn't set it yet,
-	# though it should have), fallback to a default.
-	if fixed_panel_size == Vector2.ZERO:
-		fixed_panel_size = Vector2(250, 400) # Default fixed size from _ready
-		convoy_list_panel_node.custom_minimum_size = fixed_panel_size # Ensure it's set
-
-	var padding = label_map_edge_padding # Use the existing padding variable
-
-	convoy_list_panel_node.position = Vector2(
-		main_window_rect.size.x - fixed_panel_size.x - padding,  # Position from the right edge of main window
-		padding     # Position from the top edge of main window
-	)
-	# Explicitly set the size of the panel to its fixed size.
-	# This ensures it doesn't expand even if some other layout property tries to make it.
-	convoy_list_panel_node.size = fixed_panel_size
 
 # _on_connector_lines_container_draw is now handled by UIManager.gd
 

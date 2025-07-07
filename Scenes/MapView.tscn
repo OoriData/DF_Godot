@@ -1,4 +1,4 @@
-[gd_scene load_steps=9 format=3 uid="uid://b7shrt87ucxid"]
+[gd_scene load_steps=12 format=3 uid="uid://b7shrt87ucxid"]
 
 [ext_resource type="Script" uid="uid://bx0lqfkbhkuu2" path="res://Scripts/System/main.gd" id="1_qf4ax"]
 [ext_resource type="Script" uid="uid://008fj565mco8" path="res://Scripts/Map/map_camera_controller.gd" id="2_k7gy6"]
@@ -7,7 +7,21 @@
 [ext_resource type="Script" uid="uid://bhrh158fxnj1g" path="res://Scripts/UI/UI_manager.gd" id="3_xagsy"]
 [ext_resource type="Script" uid="uid://btt1pkuxc2tbe" path="res://Scripts/Map/map_interaction_manager.gd" id="4_b4rp0"]
 [ext_resource type="Script" uid="uid://17krngr1jkib" path="res://Scripts/System/game_timers.gd" id="5_b5irg"]
+[ext_resource type="PackedScene" uid="uid://c5w2h7q3g6y0x" path="res://Scenes/UserInfoDisplay.tscn" id="9_j4x7k"]
+[ext_resource type="PackedScene" uid="uid://dkvjop71jseg6" path="res://Scenes/ConvoyListPanel.tscn" id="10_g5678"]
 [ext_resource type="Script" uid="uid://bn8ay5uej4yb1" path="res://Scripts/Map/convoy_visuals_manager.gd" id="8_hvyeg"]
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_y2q8v"]
+bg_color = Color(0.2, 0.2, 0.2, 0.8)
+border_width_left = 1
+border_width_top = 1
+border_width_right = 1
+border_width_bottom = 1
+border_color = Color(0.8, 0.8, 0.8, 1)
+corner_radius_top_left = 4
+corner_radius_top_right = 4
+corner_radius_bottom_left = 4
+corner_radius_bottom_right = 4
 
 [node name="MapRender" type="Node2D"]
 script = ExtResource("1_qf4ax")
@@ -32,6 +46,25 @@ script = ExtResource("3_t5xx3")
 [node name="MapCamera" type="Camera2D" parent="."]
 
 [node name="ScreenSpaceUI" type="CanvasLayer" parent="."]
+
+[node name="TopNavBar" type="PanelContainer" parent="ScreenSpaceUI"]
+anchors_preset = 10
+anchor_right = 1.0
+offset_bottom = 36.0
+grow_horizontal = 2
+theme_override_styles/panel = SubResource("StyleBoxFlat_y2q8v")
+
+[node name="ContentHBox" type="HBoxContainer" parent="ScreenSpaceUI/TopNavBar"]
+layout_mode = 2
+theme_override_constants/separation = 12
+
+[node name="ConvoyListPanel" parent="ScreenSpaceUI/TopNavBar/ContentHBox" instance=ExtResource("10_g5678")]
+layout_mode = 2
+
+[node name="UserInfoDisplay" parent="ScreenSpaceUI/TopNavBar/ContentHBox" instance=ExtResource("9_j4x7k")]
+layout_mode = 2
+size_flags_horizontal = 3
+hide_on_convoy_select = true
 
 [node name="UIManagerNode" type="Node2D" parent="ScreenSpaceUI"]
 script = ExtResource("3_xagsy")

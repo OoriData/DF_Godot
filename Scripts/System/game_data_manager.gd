@@ -10,6 +10,8 @@ signal convoy_data_updated(all_convoy_data_list: Array)
 # Emitted when the current user's data (like money) is updated.
 signal user_data_updated(user_data: Dictionary)
 signal vendor_panel_data_ready(vendor_panel_data: Dictionary)
+# Emitted when a convoy is selected or deselected in the UI.
+signal convoy_selection_changed(selected_convoy: Variant)
 
 
 # --- Node References ---
@@ -24,6 +26,7 @@ var map_tiles: Array = []
 var all_settlement_data: Array = []
 var all_convoy_data: Array = [] # Stores augmented convoy data
 var current_user_data: Dictionary = {}
+var _selected_convoy = null
 var convoy_id_to_color_map: Dictionary = {}
 
 # --- Internal State ---
@@ -337,6 +340,19 @@ func get_all_settlements_data() -> Array:
 func get_current_user_data() -> Dictionary:
 	"""Returns the cached user data dictionary."""
 	return current_user_data
+
+func select_convoy(convoy: Variant) -> void:
+	"""
+	Sets the currently selected convoy and emits the convoy_selection_changed signal.
+	Pass null to deselect.
+	"""
+	if _selected_convoy != convoy:
+		_selected_convoy = convoy
+		convoy_selection_changed.emit(_selected_convoy)
+
+func get_selected_convoy() -> Variant:
+	"""Returns the currently selected convoy, or null if none is selected."""
+	return _selected_convoy
 
 
 func get_settlement_name_from_coords(target_x: int, target_y: int) -> String:
