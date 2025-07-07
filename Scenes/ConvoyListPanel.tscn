@@ -1,6 +1,6 @@
 [gd_scene load_steps=2 format=3 uid="uid://dkvjop71jseg6"]
 
-[ext_resource type="Script" uid="uid://pnchtjdqye7r" path="res://Scripts/convoy_list_panel.gd" id="1_7so3h"]
+[ext_resource type="Script" uid="uid://pnchtjdqye7r" path="res://Scripts/UI/convoy_list_panel.gd" id="1_7so3h"]
 
 [node name="ConvoyListPanel" type="PanelContainer"]
 script = ExtResource("1_7so3h")

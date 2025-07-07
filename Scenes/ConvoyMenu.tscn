@@ -1,7 +1,7 @@
 [gd_scene load_steps=3 format=3 uid="uid://baapt2nhy58e7"]
 
 [ext_resource type="PackedScene" uid="uid://c5w2h7q3g6y0x" path="res://Scenes/UserInfoDisplay.tscn" id="2_26v5c"]
-[ext_resource type="Script" uid="uid://cyte2x4bpcu4i" path="res://Scripts/convoy_menu.gd" id="1_f5pu3"]
+[ext_resource type="Script" uid="uid://cyte2x4bpcu4i" path="res://Scripts/Menus/convoy_menu.gd" id="1_f5pu3"]
 
 [node name="ConvoyMenu" type="Control"]
 layout_mode = 3

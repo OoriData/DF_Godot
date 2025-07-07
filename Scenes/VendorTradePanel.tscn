@@ -1,6 +1,6 @@
 [gd_scene load_steps=2 format=3 uid="uid://dpsk1w1gqj3h7"]
 
-[ext_resource type="Script" path="res://Scripts/vendor_trade_panel.gd" id="1_script"]
+[ext_resource type="Script" path="res://Scripts/Menus/vendor_trade_panel.gd" id="1_script"]
 
 [node name="VendorTradePanel" type="Control"]
 layout_mode = 3

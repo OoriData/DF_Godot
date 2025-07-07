@@ -1,5 +1,5 @@
 # main.gd
-@tool 
+@tool
 extends Node2D
 
 # Node references

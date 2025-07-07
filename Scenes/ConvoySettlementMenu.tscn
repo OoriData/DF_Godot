@@ -1,7 +1,7 @@
 [gd_scene load_steps=3 format=3 uid="uid://b3x0y7xqbv1c6"]
 
 [ext_resource type="PackedScene" uid="uid://c5w2h7q3g6y0x" path="res://Scenes/UserInfoDisplay.tscn" id="2_component"]
-[ext_resource type="Script" path="res://Scripts/convoy_settlement_menu.gd" id="1_settlement_script"]
+[ext_resource type="Script" path="res://Scripts/Menus/convoy_settlement_menu.gd" id="1_settlement_script"]
 
 [node name="ConvoySettlementMenu" type="Control"]
 layout_mode = 3

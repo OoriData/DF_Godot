@@ -1,6 +1,6 @@
 [gd_scene load_steps=2 format=3 uid="uid://c5w2h7q3g6y0x"]
 
-[ext_resource type="Script" path="res://Scripts/UserInfoDisplay.gd" id="1_83a3p"]
+[ext_resource type="Script" path="res://Scripts/Menus/user_info_display.gd" id="1_83a3p"]
 
 [node name="UserInfoDisplay" type="PanelContainer"]
 script = ExtResource("1_83a3p")
