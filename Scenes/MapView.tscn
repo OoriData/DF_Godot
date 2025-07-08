@@ -1,15 +1,14 @@
-[gd_scene load_steps=12 format=3 uid="uid://b7shrt87ucxid"]
+[gd_scene load_steps=11 format=3 uid="uid://b7shrt87ucxid"]
 
-[ext_resource type="Script" uid="uid://bx0lqfkbhkuu2" path="res://Scripts/System/main.gd" id="1_qf4ax"]
-[ext_resource type="Script" uid="uid://008fj565mco8" path="res://Scripts/Map/map_camera_controller.gd" id="2_k7gy6"]
-[ext_resource type="Script" uid="uid://dhbye55w1c5yk" path="res://Scripts/Map/map_render.gd" id="2_mtjdu"]
-[ext_resource type="Script" uid="uid://dgg8p152pc05o" path="res://Scripts/UI/convoy_label_manager.gd" id="3_t5xx3"]
-[ext_resource type="Script" uid="uid://bhrh158fxnj1g" path="res://Scripts/UI/UI_manager.gd" id="3_xagsy"]
-[ext_resource type="Script" uid="uid://btt1pkuxc2tbe" path="res://Scripts/Map/map_interaction_manager.gd" id="4_b4rp0"]
-[ext_resource type="Script" uid="uid://17krngr1jkib" path="res://Scripts/System/game_timers.gd" id="5_b5irg"]
+[ext_resource type="Script" uid="uid://jgttep14pyof" path="res://Scripts/System/main.gd" id="1_qf4ax"]
+[ext_resource type="Script" uid="uid://x3j2ftwe2pi1" path="res://Scripts/Map/map_camera_controller.gd" id="2_k7gy6"]
+[ext_resource type="Script" uid="uid://dwe8x31pkysrl" path="res://Scripts/Map/map_render.gd" id="2_mtjdu"]
+[ext_resource type="Script" uid="uid://bccf6gvv1urtr" path="res://Scripts/UI/convoy_label_manager.gd" id="3_t5xx3"]
+[ext_resource type="Script" uid="uid://dpn1l2xm7i2x7" path="res://Scripts/UI/UI_manager.gd" id="3_xagsy"]
+[ext_resource type="Script" uid="uid://qi45fv401eyn" path="res://Scripts/Map/map_interaction_manager.gd" id="4_b4rp0"]
+[ext_resource type="Script" uid="uid://crk2s2urriwrg" path="res://Scripts/System/game_timers.gd" id="5_b5irg"]
+[ext_resource type="Script" uid="uid://fqyn0cfdc0rs" path="res://Scripts/Map/convoy_visuals_manager.gd" id="8_hvyeg"]
 [ext_resource type="PackedScene" uid="uid://c5w2h7q3g6y0x" path="res://Scenes/UserInfoDisplay.tscn" id="9_j4x7k"]
-[ext_resource type="PackedScene" uid="uid://dkvjop71jseg6" path="res://Scenes/ConvoyListPanel.tscn" id="10_g5678"]
-[ext_resource type="Script" uid="uid://bn8ay5uej4yb1" path="res://Scripts/Map/convoy_visuals_manager.gd" id="8_hvyeg"]
 
 [sub_resource type="StyleBoxFlat" id="StyleBoxFlat_y2q8v"]
 bg_color = Color(0.2, 0.2, 0.2, 0.8)
@@ -17,11 +16,10 @@ border_width_left = 1
 border_width_top = 1
 border_width_right = 1
 border_width_bottom = 1
-border_color = Color(0.8, 0.8, 0.8, 1)
 corner_radius_top_left = 4
 corner_radius_top_right = 4
-corner_radius_bottom_left = 4
 corner_radius_bottom_right = 4
+corner_radius_bottom_left = 4
 
 [node name="MapRender" type="Node2D"]
 script = ExtResource("1_qf4ax")
@@ -44,6 +42,7 @@ script = ExtResource("3_t5xx3")
 [node name="ConvoyConnectorLinesContainer" type="Node2D" parent="MapContainer"]
 
 [node name="MapCamera" type="Camera2D" parent="."]
+enabled = false
 
 [node name="ScreenSpaceUI" type="CanvasLayer" parent="."]
 
@@ -58,17 +57,17 @@ theme_override_styles/panel = SubResource("StyleBoxFlat_y2q8v")
 layout_mode = 2
 theme_override_constants/separation = 12
 
-[node name="ConvoyListPanel" parent="ScreenSpaceUI/TopNavBar/ContentHBox" instance=ExtResource("10_g5678")]
-layout_mode = 2
-
 [node name="UserInfoDisplay" parent="ScreenSpaceUI/TopNavBar/ContentHBox" instance=ExtResource("9_j4x7k")]
 layout_mode = 2
 size_flags_horizontal = 3
-hide_on_convoy_select = true
 
-[node name="UIManagerNode" type="Node2D" parent="ScreenSpaceUI"]
+[node name="UIManagerNode" type="CanvasLayer" parent="ScreenSpaceUI" node_paths=PackedStringArray("settlement_label_container", "convoy_connector_lines_container", "convoy_label_container", "convoy_label_manager")]
 script = ExtResource("3_xagsy")
 ui_overall_scale_multiplier = 1.4
+settlement_label_container = NodePath("../../MapContainer/SettlementLabelContainer")
+convoy_connector_lines_container = NodePath("../../MapContainer/ConvoyConnectorLinesContainer")
+convoy_label_container = NodePath("../../MapContainer/ConvoyLabelContainer")
+convoy_label_manager = NodePath("ConvoyLabelManagerNode")
 
 [node name="DetailedViewToggleCheckbox" type="CheckBox" parent="ScreenSpaceUI/UIManagerNode"]
 visible = false

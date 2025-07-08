@@ -20,15 +20,12 @@ extends Node2D
 @onready var convoy_visuals_manager: Node = $ConvoyVisualsManager # Adjust path if you place it elsewhere
 # IMPORTANT: Adjust the path "$GameTimersNode" to the actual path of your GameTimers node in your scene tree.
 @onready var game_timers_node: Node = $GameTimersNode # Adjust if necessary
-# IMPORTANT: Adjust the path "$ConvoyListPanel" to the actual path of your ConvoyListPanel node. Ensure its type matches.
-# The ConvoyListPanel's root node type was refactored to VBoxContainer.
-# The ConvoyListPanel is now correctly located inside the TopNavBar.
-@onready var convoy_list_panel_node: VBoxContainer = $ScreenSpaceUI/TopNavBar/ContentHBox/ConvoyListPanel
 # Reference to the MenuManager in GameRoot.tscn
 
 var menu_manager_ref: Control = null
 
 # Data will now be sourced from GameDataManager
+var top_nav_bar_container: Control = null # This will hold the container of the nav bar
 var map_tiles: Array = []
 var _all_settlement_data: Array = []
 var _all_convoy_data: Array = [] # This will store data received from GameDataManager
@@ -183,7 +180,8 @@ func _ready():
 		# Connect signals using the gdm_node reference
 		gdm_node.map_data_loaded.connect(_on_gdm_map_data_loaded) # Corrected signal name
 		gdm_node.settlement_data_updated.connect(_on_gdm_settlement_data_updated)
-		gdm_node.convoy_data_updated.connect(_on_gdm_convoy_data_updated) # Corrected signal name
+		gdm_node.convoy_data_updated.connect(_on_gdm_convoy_data_updated)
+		gdm_node.convoy_selection_changed.connect(_on_gdm_convoy_selection_changed)
 	else:
 		printerr("Main: GameDataManager Autoload NOT FOUND via get_node('/root/GameDataManager') AND Engine.has_singleton was likely false too. Core data will not be loaded.")
 
@@ -214,9 +212,6 @@ func _ready():
 				ui_manager.visible = true # Explicitly set UIManagerNode to visible
 			# for drag state, so direct signal connections from UIManager back to main might not be needed
 			# for the drag functionality itself.
-
-	# --- Initialize MapInteractionManager ---
-	# Initialization of MIM will be deferred until map_data is loaded from GameDataManager
 
 	# --- Settlement data extraction is now handled by GameDataManager ---
 	# Also get the initial convoy_id_to_color_map from the GameDataManager node
@@ -312,6 +307,23 @@ func _ready():
 	# and has mouse_filter = PASS.
 	var mvc = get_parent()
 	if mvc is SubViewportContainer:
+		# Connect to the UserInfoDisplay's signal for opening convoy menus.
+		# Using find_child is more robust than a hardcoded path.
+		var user_info_display_node = find_child("UserInfoDisplay", true, false)
+		if is_instance_valid(user_info_display_node):
+			# The container to measure is the parent of the HBox, which provides the visual "bar"
+			top_nav_bar_container = user_info_display_node.get_parent()
+			if not is_instance_valid(top_nav_bar_container):
+				# Fallback in case UserInfoDisplay has no parent container, though it should.
+				top_nav_bar_container = user_info_display_node
+
+			if not user_info_display_node.is_connected("convoy_menu_requested", _on_user_info_display_convoy_menu_requested):
+				user_info_display_node.convoy_menu_requested.connect(_on_user_info_display_convoy_menu_requested)
+				print("[DIAGNOSTIC_LOG | main.gd] Successfully connected to UserInfoDisplay.convoy_menu_requested signal.")
+		else:
+			printerr("Main (_ready): Could not find UserInfoDisplay node to connect 'convoy_menu_requested' signal.")
+			top_nav_bar_container = null # Ensure it's null if the contents aren't found
+
 		mvc.mouse_filter = Control.MOUSE_FILTER_PASS
 		# print("Main: Set MapViewportContainer mouse_filter to PASS.") # DEBUG
 	# --- Setup Detailed View Toggle ---
@@ -322,19 +334,6 @@ func _ready():
 		# print('Main: Detailed View toggle initialized and connected.')
 	else:
 		printerr('Main: DetailedViewToggleCheckbox node not found or invalid. Check the path in main.gd.')
-
-	# --- Setup Convoy List Panel ---
-	if is_instance_valid(convoy_list_panel_node):
-		if convoy_list_panel_node.has_signal("convoy_selected_from_list"):
-			convoy_list_panel_node.convoy_selected_from_list.connect(_on_convoy_selected_from_list_panel) # Corrected signal name
-			# print("Main: Connected to ConvoyListPanel.convoy_selected_from_list signal.")
-		else:
-			printerr("Main: ConvoyListPanel node does not have 'convoy_selected_from_list' signal.")
-		if convoy_list_panel_node.has_method("populate_convoy_list"):
-			# print("Main: Scheduling population of ConvoyListPanel initially with _all_convoy_data count: ", _all_convoy_data.size()) # DEBUG
-			convoy_list_panel_node.call_deferred("populate_convoy_list", []) # Initially empty, will be populated by GDM signal
-	else: # This means the @onready var convoy_list_panel_node is null or invalid
-		printerr("Main: ConvoyListPanel node is NOT VALID in _ready(). Please verify the node path in main.gd.")
 
 	# Defer initial layout until the node is visible to avoid interfering with other scenes (like a login screen).
 	# _on_viewport_size_changed()
@@ -410,10 +409,6 @@ func _on_gdm_settlement_data_updated(p_settlement_data: Array):
 		map_interaction_manager.update_data_references(_all_convoy_data, _all_settlement_data, map_tiles)
 	# Potentially trigger a UI update if settlements are displayed immediately
 	# _update_map_display(false) # false = don't rerender map texture, only UI
-	
-
-func _setup_static_map_and_camera():
-	print("[DIAGNOSTIC_LOG | main.gd] _setup_static_map_and_camera(): Starting map texture generation.")
 	if not is_instance_valid(map_renderer_node) or not is_instance_valid(map_display) or not is_instance_valid(map_camera):
 		printerr("[DIAGNOSTIC_LOG | main.gd] _setup_static_map_and_camera(): ABORTING - Essential nodes (map_renderer_node, map_display, or map_camera) not ready.")
 		if not is_instance_valid(map_renderer_node): printerr("  - map_renderer_node is invalid.")
@@ -423,6 +418,9 @@ func _setup_static_map_and_camera():
 	if map_tiles.is_empty() or not map_tiles[0] is Array or map_tiles[0].is_empty():
 		printerr("[DIAGNOSTIC_LOG | main.gd] _setup_static_map_and_camera(): ABORTING - map_tiles data is empty or invalid.")
 		return
+
+func _setup_static_map_and_camera():
+	print("[DIAGNOSTIC_LOG | main.gd] _setup_static_map_and_camera(): Starting map texture generation.")
 
 	# print("Main: _setup_static_map_and_camera - Starting map texture generation.") # DEBUG
 	var map_rows_local = map_tiles.size()
@@ -492,9 +490,7 @@ func _setup_static_map_and_camera():
 		_deferred_convoy_data.clear() # Clear after processing
 	# Camera limits will be handled by MapInteractionManager's _constrain_camera_offset	
 	_update_map_display(false) # Perform an initial UI update without re-rendering the map texture
-	# Now that _update_map_display has run (which calls UIManager.update_ui_elements),
-	# UIManager params should be cached. Trigger convoy visuals update.
-	_trigger_convoy_visuals_update(static_render_result.get("icon_positions", {}))
+
 
 
 func _on_viewport_size_changed():
@@ -527,6 +523,8 @@ func get_map_viewport_container_global_rect() -> Rect2:
 
 func _update_map_display(force_rerender_map_texture: bool = true, is_light_ui_update: bool = false):
 	# print("Main: _update_map_display() CALLED - TOP") # DEBUG
+
+	var render_result: Dictionary = {} # Declare at function scope to avoid 'locals()' which doesn't exist.
 
 	# Get dragging state from MapInteractionManager if it's valid
 	var is_currently_dragging: bool = false
@@ -645,7 +643,7 @@ func _update_map_display(force_rerender_map_texture: bool = true, is_light_ui_up
 
 		# print("Main: Final highlights_for_render before calling map_renderer_node.render_map: ", highlights_for_render) # DEBUG - Commented out, very verbose
 
-		var render_result: Dictionary = map_renderer_node.render_map(
+		render_result = map_renderer_node.render_map(
 			map_tiles,
 			highlights_for_render,  # Pass the generated highlights for journey lines
 			[],  # lowlights
@@ -684,10 +682,8 @@ func _update_map_display(force_rerender_map_texture: bool = true, is_light_ui_up
 			# For now, let's ensure icon_positions is empty if texture fails.
 			var icon_positions_from_render = {} # Default to empty
 			if render_result and render_result.has("icon_positions"):
-				icon_positions_from_render = render_result.icon_positions
-			_trigger_convoy_visuals_update(icon_positions_from_render) # Still trigger visuals update
-	else: # Not force_rerender_map_texture
-		_trigger_convoy_visuals_update() # Trigger with default empty icon positions if map not re-rendered
+				icon_positions_from_render = render_result.get("icon_positions", {})
+
 	# Call UIManager to update all UI elements (labels, connectors)
 	# print("Main: _update_map_display - Preparing to call ui_manager.update_ui_elements.") # DEBUG
 	# print("  - ui_manager valid: %s, map_display valid: %s, map_tiles empty: %s" % [is_instance_valid(ui_manager), is_instance_valid(map_display), map_tiles.is_empty()]) # DEBUG
@@ -726,6 +722,12 @@ func _update_map_display(force_rerender_map_texture: bool = true, is_light_ui_up
 			is_light_ui_update,         # Pass the light update flag
 			current_camera_zoom_for_ui  # Pass the current zoom level
 		) 
+	# Now that UIManager has updated and cached its values, trigger the convoy visuals update.
+	# This fixes the race condition where this was called before UIManager had valid tile dimensions.
+	var icon_positions_from_render = {}
+	if render_result and render_result.has("icon_positions"):
+		icon_positions_from_render = render_result.get("icon_positions", {})
+	_trigger_convoy_visuals_update(icon_positions_from_render)
 
 
 func _on_gdm_convoy_data_updated(p_augmented_convoy_data: Array) -> void:
@@ -756,12 +758,6 @@ func _on_gdm_convoy_data_updated(p_augmented_convoy_data: Array) -> void:
 		if not is_instance_valid(map_interaction_manager): printerr("Main (_on_gdm_convoy_data_updated): MIM instance NOT valid.")
 		elif not map_interaction_manager.has_method("update_data_references"): printerr("Main (_on_gdm_convoy_data_updated): MIM missing 'update_data_references'.")
 
-	# Update the convoy list panel
-	if is_instance_valid(convoy_list_panel_node) and convoy_list_panel_node.has_method("populate_convoy_list"):
-		convoy_list_panel_node.populate_convoy_list(_all_convoy_data)
-	else:
-		printerr("Main (_on_gdm_convoy_data_updated): Cannot update ConvoyListPanel. Node: %s" % convoy_list_panel_node)
-
 	# --- Augment convoy data with icon offsets using ConvoyVisualsManager ---
 	if is_instance_valid(convoy_visuals_manager) and convoy_visuals_manager.has_method("augment_convoy_data_with_offsets"):
 		# Pass map_tiles and map_display, as ConvoyVisualsManager will now need them for the full augmentation.
@@ -781,6 +777,18 @@ func _on_gdm_convoy_data_updated(p_augmented_convoy_data: Array) -> void:
 	# with the icon positions from the render result if the map is re-rendered.
 	# If not re-rendered, _trigger_convoy_visuals_update will be called with empty positions.
 	_update_map_display(true, false)
+
+
+func _on_gdm_convoy_selection_changed(selected_convoy_data: Variant):
+	# Update local selection cache from the single source of truth (GDM)
+	if selected_convoy_data:
+		_selected_convoy_ids = [str(selected_convoy_data.get("convoy_id"))]
+	else:
+		_selected_convoy_ids.clear()
+
+	# A selection change requires re-rendering journey lines and UI
+	_update_map_display(true)
+
 
 
 
@@ -1012,22 +1020,14 @@ func _on_mim_hover_changed(new_hover_info: Dictionary):
 		)
 	
 func _on_mim_selection_changed(new_selected_ids: Array):
-	_selected_convoy_ids = new_selected_ids
-	# print("Main: MIM selection changed: ", _selected_convoy_ids) # DEBUG
-
-	# User positions are no longer cleared from _convoy_label_user_positions here.
-	# The UIManager will be responsible for showing/hiding labels based on selection,
-	# and using the stored user position if available when a label is shown.
-	# If ui_manager.clear_convoy_user_position was meant to tell UIManager to forget
-	# its own cached position, that specific call might also need reconsideration based on UIManager's design.	
-	_update_map_display(true) # Force rerender for selection changes (e.g., journey lines, highlights)
-
-	# Update convoy list panel highlighting
-	if is_instance_valid(convoy_list_panel_node) and convoy_list_panel_node.has_method("highlight_convoy_in_list"):
-		var first_selected_id_str = ""
-		if not _selected_convoy_ids.is_empty() and _selected_convoy_ids[0] is String:
-			first_selected_id_str = _selected_convoy_ids[0]
-		convoy_list_panel_node.highlight_convoy_in_list(first_selected_id_str) # Pass empty string if none selected
+	# This signal comes from MapInteractionManager (e.g., user clicks on map)
+	# Instead of setting state here, we tell the central manager.
+	var gdm = get_node_or_null("/root/GameDataManager")
+	if is_instance_valid(gdm) and gdm.has_method("select_convoy_by_id"):
+		var id_to_select = ""
+		if not new_selected_ids.is_empty():
+			id_to_select = new_selected_ids[0] # Assuming single selection
+		gdm.select_convoy_by_id(id_to_select)
 
 func _on_mim_panel_drag_ended(convoy_id_str: String, final_local_position: Vector2):
 	# print("Main: _on_mim_panel_drag_ended for convoy: %s. Panel node was: %s, IsValid: %s" % [convoy_id_str, _dragging_panel_node, is_instance_valid(_dragging_panel_node)]) # DEBUG
@@ -1135,6 +1135,14 @@ func _on_mim_panel_drag_updated(convoy_id_str: String, new_panel_local_position:
 func _on_menu_opened_for_camera_focus(menu_node: Node, menu_type: String):
 	# This function now ONLY handles camera focusing if a convoy menu opens.
 	# The map resizing/repositioning is handled by GameScreenManager.
+	
+	# Instead of hiding the nav bar, push the menu manager down below it.
+	if is_instance_valid(top_nav_bar_container) and is_instance_valid(menu_manager_ref):
+		# Ensure the navbar is visible, in case it was hidden by other logic.
+		top_nav_bar_container.show()
+		# Set the top offset of the menu manager to be the height of the nav bar.
+		menu_manager_ref.offset_top = top_nav_bar_container.size.y
+
 
 	# MODIFIED: Added "convoy_settlement_submenu" and "convoy_overview"
 	if menu_type == "convoy_detail" or \
@@ -1242,6 +1250,10 @@ func _on_all_menus_closed(): # Renamed from _on_menus_completely_closed for clar
 	# MapView visibility and input processing are now implicitly handled by its parent SubViewportContainer's state,
 	# which is controlled by GameScreenManager.
 
+	# Reset the menu manager's offset when all menus are closed.
+	if is_instance_valid(menu_manager_ref):
+		menu_manager_ref.offset_top = 0.0
+
 	# When all menus close, ensure MapInteractionManager knows the map is full screen again for its internal calculations (e.g., zoom clamping).
 	if is_instance_valid(map_interaction_manager) and map_interaction_manager.has_method("set_current_map_screen_rect"):
 		map_interaction_manager.set_current_map_screen_rect(get_map_viewport_container_global_rect())
@@ -1274,60 +1286,33 @@ func _on_mim_convoy_menu_requested(convoy_data: Dictionary):
 
 	# print("Main: Map icon clicked, requesting convoy menu. Convoy Data: ", convoy_data) # DEBUG
 
-	# --- START: Add selection logic similar to _on_convoy_selected_from_list_panel ---
-	var convoy_id_variant = convoy_data.get("convoy_id")
-	var convoy_id_str: String = ""
-	if convoy_id_variant != null:
-		convoy_id_str = str(convoy_id_variant)
-
-	if convoy_id_str.is_empty():
-		_selected_convoy_ids.clear()
-	else:
-		# Set the clicked convoy as the only selected one
-		_selected_convoy_ids = [convoy_id_str]
-
-	# Notify MapInteractionManager about the selection change (if it needs to know)
-	if is_instance_valid(map_interaction_manager) and map_interaction_manager.has_method("set_selected_convoys"):
-		map_interaction_manager.set_selected_convoys(_selected_convoy_ids)
-	
-	# Manually trigger the selection update logic (handles map highlights, convoy list highlighting, etc.)
-	_on_mim_selection_changed(_selected_convoy_ids) 
-	# --- END: Add selection logic ---
+	# --- NEW: Simplified selection logic ---
+	# Tell the GameDataManager to select this convoy. The GDM will then emit
+	# the 'convoy_selection_changed' signal, which will trigger the map update.
+	var gdm = get_node_or_null("/root/GameDataManager")
+	if is_instance_valid(gdm) and gdm.has_method("select_convoy_by_id"):
+		gdm.select_convoy_by_id(str(convoy_data.get("convoy_id", "")))
 
 	# This existing function already calls the menu manager correctly to open the menu
 	request_open_convoy_menu_via_manager(convoy_data)
 
-# --- Signal Handler for Convoy List Panel ---
-func _on_convoy_selected_from_list_panel(convoy_data: Dictionary):
-	if not convoy_data is Dictionary:
-		printerr("Main: Received invalid data from convoy_selected_from_list_panel: ", convoy_data)
-		return
-
-	var convoy_id_variant = convoy_data.get("convoy_id")
-	var convoy_id_str: String = ""
-	if convoy_id_variant != null:
-		convoy_id_str = str(convoy_id_variant)
-
-	# print("Main: Convoy selected from list panel, ID: %s. Requesting menu." % convoy_id_str)
-	# print("Main: Convoy selected from list panel, ID: %s. Requesting menu." % convoy_id_str)
-
-	if convoy_id_str.is_empty():
-		_selected_convoy_ids.clear()
-	else:
-		# If you want list selection to replace map selection:
-		_selected_convoy_ids = [convoy_id_str]
-
-	# Notify MapInteractionManager and update display
-	if is_instance_valid(map_interaction_manager) and map_interaction_manager.has_method("set_selected_convoys"):
-		map_interaction_manager.set_selected_convoys(_selected_convoy_ids) # Assuming MIM has such a method
+func _on_user_info_display_convoy_menu_requested(convoy_id_str: String):
+	"""
+	Handles the request from the top nav bar to open a convoy menu.
+	"""
+	# We have the ID, now we need the full data to open the menu.
+	# We can find it in our local cache `_all_convoy_data`.
+	var convoy_data_to_open = null
+	for convoy_data in _all_convoy_data:
+		if str(convoy_data.get("convoy_id", "")) == convoy_id_str:
+			convoy_data_to_open = convoy_data
+			break
 	
-	_on_mim_selection_changed(_selected_convoy_ids) # Manually trigger the update logic for highlighting and map redraw
-
-	# Request the MenuManager to open the convoy menu with the full data
-	if is_instance_valid(menu_manager_ref):
-		menu_manager_ref.request_convoy_menu(convoy_data)
+	if convoy_data_to_open:
+		# This reuses the same function called when clicking on the map icon.
+		request_open_convoy_menu_via_manager(convoy_data_to_open)
 	else:
-		printerr("Main: _on_convoy_selected_from_list_panel - menu_manager_ref is NOT valid! Cannot request convoy menu.")
+		printerr("Main: Could not find convoy data for ID '%s' in local cache to open menu." % convoy_id_str)
 
 func _trigger_convoy_visuals_update(icon_positions_map: Dictionary = {}):
 	"""

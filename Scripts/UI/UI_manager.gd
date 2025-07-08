@@ -1,4 +1,4 @@
-extends Node2D
+extends CanvasLayer
 
 # References to label containers managed by UIManager
 # These should be children of the Node this script is attached to.
@@ -6,15 +6,11 @@ extends Node2D
 ## Multiplier to adjust the overall perceived size of UI labels and panels. 1.0 = default.
 @export var ui_overall_scale_multiplier: float = 1.0
 
-# Path corrected: From UIManagerNode, up two levels to MapRender, then down to MapContainer/SettlementLabelContainer.
-@onready var settlement_label_container: Node2D = get_node("../../MapContainer/SettlementLabelContainer")
-# Path corrected: From UIManagerNode (child of ScreenSpaceUI, child of MapRender)
-# up to MapRender, then down to MapContainer, then to ConvoyConnectorLinesContainer.
-# Adjust ../../ if UIManagerNode is nested differently under ScreenSpaceUI.
-@onready var convoy_connector_lines_container: Node2D = get_node("../../MapContainer/ConvoyConnectorLinesContainer")
-# @onready var convoy_label_container: Node2D = get_node("../../MapContainer/ConvoyLabelContainer") # Moved to ConvoyLabelManager
-# Path corrected: ConvoyLabelContainer is also under MapContainer.
-@onready var convoy_label_container: Node2D = get_node("../../MapContainer/ConvoyLabelContainer")
+@export_group("Node Dependencies")
+@export var settlement_label_container: Node2D
+@export var convoy_connector_lines_container: Node2D
+@export var convoy_label_container: Node2D
+@export var convoy_label_manager: Node
 
 # Label settings and default font (will be initialized in _ready)
 var label_settings: LabelSettings
@@ -134,7 +130,6 @@ var _ui_drawing_params_cached: bool = false
 
 # --- Active Panel Management for Optimization ---
 # var _active_convoy_panels: Dictionary = {}  # { "convoy_id_str": PanelNode } # Moved to ConvoyLabelManager
-@onready var convoy_label_manager: Node = $ConvoyLabelManagerNode # Assuming this path
 var _active_settlement_panels: Dictionary = {} # { "tile_coord_str": PanelNode }
 
 # Z-index for label containers within MapContainer, relative to MapDisplay and ConvoyNodes
@@ -142,24 +137,26 @@ const LABEL_CONTAINER_Z_INDEX = 2
 
 
 func _ready():
-	# Critical: Ensure child containers are valid and print their status
-	# print("UIManager _ready: Checking child containers...")
-	# print("  - settlement_label_container: %s (Valid: %s)" % [settlement_label_container, is_instance_valid(settlement_label_container)])
-	# print("  - convoy_connector_lines_container: %s (Valid: %s)" % [convoy_connector_lines_container, is_instance_valid(convoy_connector_lines_container)])
-	# print("  - convoy_label_container: %s (Valid: %s)" % [convoy_label_container, is_instance_valid(convoy_label_container)])
+	# --- Critical Dependency Validation ---
+	# Check all exported NodePath dependencies at startup to fail early if not configured in the editor.
+	var dependencies: Dictionary = {
+		"settlement_label_container": settlement_label_container,
+		"convoy_connector_lines_container": convoy_connector_lines_container,
+		"convoy_label_container": convoy_label_container,
+		"convoy_label_manager": convoy_label_manager
+	}
+	for dep_name in dependencies:
+		if not is_instance_valid(dependencies[dep_name]):
+			printerr('UIManager (_ready): The "%s" dependency is not assigned. Please select the UIManagerNode in the scene and assign the correct node to this property in the Inspector.' % dep_name)
 
-	# Ensure containers are visible
+	# --- Initialize Containers ---
 	if is_instance_valid(settlement_label_container):
 		settlement_label_container.visible = true
 		settlement_label_container.z_index = LABEL_CONTAINER_Z_INDEX
 	if is_instance_valid(convoy_connector_lines_container):
 		convoy_connector_lines_container.visible = true
 		convoy_connector_lines_container.z_index = LABEL_CONTAINER_Z_INDEX # Connectors at the same level as labels
-	# if is_instance_valid(convoy_label_container): # Managed by ConvoyLabelManager
-	# 	convoy_label_container.visible = true
-	# 	convoy_label_container.z_index = LABEL_CONTAINER_Z_INDEX
-	_current_map_screen_rect_for_clamping = get_viewport().get_visible_rect() # Initialize
-		
+		convoy_connector_lines_container.draw.connect(_on_connector_lines_container_draw)
 
 	# Initialize label settings
 	label_settings = LabelSettings.new()
@@ -172,18 +169,13 @@ func _ready():
 	settlement_label_settings.outline_size = 3
 	settlement_label_settings.outline_color = Color.BLACK
 
-	if is_instance_valid(convoy_connector_lines_container):
-		convoy_connector_lines_container.draw.connect(_on_connector_lines_container_draw)
-		# print("UIManager: Connected to ConvoyConnectorLinesContainer draw signal.")
-	else:
-		printerr("UIManager: ConvoyConnectorLinesContainer not ready or invalid in _ready().")
+	_current_map_screen_rect_for_clamping = get_viewport().get_visible_rect() # Initialize
 
 	# Programmatically assign the convoy_label_container to the ConvoyLabelManager
 	if is_instance_valid(convoy_label_manager) and convoy_label_manager.has_method("set_convoy_label_container"):
 		if is_instance_valid(convoy_label_container):
 			convoy_label_manager.set_convoy_label_container(convoy_label_container)
-		else:
-			printerr("UIManager: Cannot assign convoy_label_container to ConvoyLabelManager because UIManager's own reference to convoy_label_container is invalid.")
+		# The generic dependency check at the top of _ready() already covers the case where convoy_label_container is invalid.
 
 	# Add a reference to GameDataManager
 	var gdm: Node = null
@@ -627,9 +619,9 @@ func _draw_interactive_labels(current_hover_info: Dictionary):
 
 
 func _create_settlement_panel(settlement_info: Dictionary) -> Panel:
-	if not is_instance_valid(settlement_label_container):
-		printerr('UIManager (_create_settlement_panel): SettlementLabelContainer is not valid. Ensure a Node2D named "SettlementLabelContainer" is a direct child of the UIManagerNode in the scene tree.')
-		return null
+	if not is_instance_valid(settlement_label_container): # This check is now crucial
+		printerr('UIManager (_create_settlement_panel): The "settlement_label_container" dependency is not assigned. Please select the UIManagerNode in the scene and assign the correct node to this property in the Inspector.')
+		return null # Abort creation if the container is missing
 	if not _ui_drawing_params_cached:
 		printerr('UIManager: Drawing params not cached in _create_settlement_panel.')
 		return null

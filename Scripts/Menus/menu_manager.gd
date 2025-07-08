@@ -27,10 +27,11 @@ signal menus_completely_closed
 
 func _ready():
 	# Initially, no menu is shown. You might want to open a main menu here.
-	# Set mouse filter to PASS so that clicks on the MenuManager's background
-	# (i.e., not on an active menu panel like ConvoyMenu) can pass through.
-	# This allows main.gd to detect clicks on the map area when a menu is open.
-	mouse_filter = MOUSE_FILTER_PASS
+	# By default, the manager should be invisible to mouse input, allowing clicks
+	# to pass through to the UI and map underneath. It will be changed to PASS
+	# only when a menu is active.
+	mouse_filter = MOUSE_FILTER_IGNORE
+
 	_base_z_index = self.z_index # Store initial z_index
 	# Example: open_main_menu()
 	pass
@@ -177,6 +178,10 @@ func _show_menu(menu_scene_resource, data_to_pass = null, add_to_stack: bool = t
 			# Default for other menus: fill the parent (MenuManager)
 			menu_node_control.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 
+	# A menu is now active. Allow this manager to receive clicks on its background
+	# so they can be passed up to main.gd to handle closing the menu.
+	mouse_filter = MOUSE_FILTER_PASS
+
 	# A menu is now active, ensure MenuManager is drawn on top
 	self.z_index = MENU_MANAGER_ACTIVE_Z_INDEX
 
@@ -251,6 +256,7 @@ func go_back():
 		# print("MenuManager: go_back() - Closing last menu. Emitting 'menus_completely_closed'.") # DEBUG
 		current_active_menu.queue_free()
 		current_active_menu = null
+		mouse_filter = MOUSE_FILTER_IGNORE # No menus active, become transparent to mouse.
 		self.z_index = _base_z_index # Reset z_index as no menus are active
 		emit_signal("menus_completely_closed") # All menus are now closed
 		return
@@ -296,6 +302,7 @@ func close_all_menus():
 		# If no menu is considered active, ensure the signal is still emitted
 		# in case the state is inconsistent or this is called to be certain.
 		if menu_stack.is_empty() and not is_instance_valid(current_active_menu):
+			mouse_filter = MOUSE_FILTER_IGNORE # Ensure mouse filter is reset.
 			self.z_index = _base_z_index # Ensure z_index is reset
 			emit_signal("menus_completely_closed")
 		return

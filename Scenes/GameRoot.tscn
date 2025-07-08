@@ -1,9 +1,8 @@
-[gd_scene load_steps=6 format=3 uid="uid://yme8tiuqxb2b"]
+[gd_scene load_steps=5 format=3 uid="uid://yme8tiuqxb2b"]
 
 [ext_resource type="Script" uid="uid://n5dg0ersmtll" path="res://Scripts/UI/game_screen_manager.gd" id="1_mrnkn"]
 [ext_resource type="PackedScene" uid="uid://b7shrt87ucxid" path="res://Scenes/MapView.tscn" id="1_pjpa4"]
 [ext_resource type="Script" uid="uid://d35ys110yiewf" path="res://Scripts/Menus/menu_manager.gd" id="2_bxsma"]
-[ext_resource type="PackedScene" uid="uid://dkvjop71jseg6" path="res://Scenes/ConvoyListPanel.tscn" id="2_lkrbl"]
 [ext_resource type="PackedScene" uid="uid://kpjpc0fnv1nn" path="res://Scenes/LoginScreen.tscn" id="3_xxxxx"]
 
 [node name="GameRoot" type="Node"]
@@ -28,14 +27,5 @@ anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
 script = ExtResource("2_bxsma")
-
-[node name="ConvoyListPanel" parent="MenuUILayer" instance=ExtResource("2_lkrbl")]
-anchors_preset = 1
-anchor_left = 1.0
-anchor_right = 1.0
-offset_left = -210.0
-offset_top = 10.0
-offset_right = -10.0
-offset_bottom = 250.0
 
 [node name="LoginScreen" parent="." instance=ExtResource("3_xxxxx")]

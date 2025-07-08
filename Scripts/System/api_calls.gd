@@ -254,7 +254,7 @@ func _on_request_completed(result: int, response_code: int, headers: PackedStrin
 				failure_reason = "JSON response was not an array (type: %s)" % typeof(json_response)
 			else:
 				# SUCCESS with local data
-				print("APICalls (_on_request_completed - LOCAL_USER_CONVOYS): Successfully fetched %s user-specific convoy(s) locally. URL: %s" % [json_response.size(), _last_requested_url])
+				# print("APICalls (_on_request_completed - LOCAL_USER_CONVOYS): Successfully fetched %s user-specific convoy(s) locally. URL: %s" % [json_response.size(), _last_requested_url])
 				if not json_response.is_empty():
 					print("  Sample Local User Convoy 0: ID: %s" % [json_response[0].get("convoy_id", "N/A")])
 				self.convoys_in_transit = json_response

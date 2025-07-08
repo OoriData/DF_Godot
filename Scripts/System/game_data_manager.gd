@@ -11,7 +11,7 @@ signal convoy_data_updated(all_convoy_data_list: Array)
 signal user_data_updated(user_data: Dictionary)
 signal vendor_panel_data_ready(vendor_panel_data: Dictionary)
 # Emitted when a convoy is selected or deselected in the UI.
-signal convoy_selection_changed(selected_convoy: Variant)
+signal convoy_selection_changed(selected_convoy_data: Variant)
 
 
 # --- Node References ---
@@ -26,7 +26,7 @@ var map_tiles: Array = []
 var all_settlement_data: Array = []
 var all_convoy_data: Array = [] # Stores augmented convoy data
 var current_user_data: Dictionary = {}
-var _selected_convoy = null
+var _selected_convoy_id: String = ""
 var convoy_id_to_color_map: Dictionary = {}
 
 # --- Internal State ---
@@ -146,12 +146,12 @@ func _on_raw_convoy_data_received(raw_data: Variant):
 	all_convoy_data = augmented_convoys
 
 	# --- ADD THIS LOGGING ---
-	if not all_convoy_data.is_empty():
-		var first_aug = all_convoy_data[0]
-		print("GameDataManager: First AUGMENTED convoy keys: ", first_aug.keys())
-		print("GameDataManager: First AUGMENTED vehicle_details_list: ", first_aug.get("vehicle_details_list", []))
-		if first_aug.has("vehicle_details_list") and first_aug["vehicle_details_list"].size() > 0:
-			print("GameDataManager: First AUGMENTED vehicle keys: ", first_aug["vehicle_details_list"][0].keys())
+	# if not all_convoy_data.is_empty():
+		# var first_aug = all_convoy_data[0]
+		# print("GameDataManager: First AUGMENTED convoy keys: ", first_aug.keys())
+		# print("GameDataManager: First AUGMENTED vehicle_details_list: ", first_aug.get("vehicle_details_list", []))
+		# if first_aug.has("vehicle_details_list") and first_aug["vehicle_details_list"].size() > 0:
+		# 	print("GameDataManager: First AUGMENTED vehicle keys: ", first_aug["vehicle_details_list"][0].keys())
 	# --- END LOGGING ---
 
 	convoy_data_updated.emit.call_deferred(all_convoy_data) # Emit deferred
@@ -341,18 +341,30 @@ func get_current_user_data() -> Dictionary:
 	"""Returns the cached user data dictionary."""
 	return current_user_data
 
-func select_convoy(convoy: Variant) -> void:
+func select_convoy_by_id(convoy_id_to_select: String, allow_toggle: bool = true) -> void:
 	"""
-	Sets the currently selected convoy and emits the convoy_selection_changed signal.
-	Pass null to deselect.
+	Central method to change the globally selected convoy by its ID.
+	Handles selecting a new convoy. If allow_toggle is true, it will deselect if the same ID is passed again.
 	"""
-	if _selected_convoy != convoy:
-		_selected_convoy = convoy
-		convoy_selection_changed.emit(_selected_convoy)
+	var new_id_to_set = convoy_id_to_select
+	# If the same ID is passed and toggling is allowed, it's a toggle to deselect.
+	if allow_toggle and _selected_convoy_id == convoy_id_to_select:
+		new_id_to_set = ""
+
+	if _selected_convoy_id != new_id_to_set:
+		_selected_convoy_id = new_id_to_set
+		# Emit the signal with the full data of the selected convoy (or null)
+		convoy_selection_changed.emit(get_selected_convoy())
 
 func get_selected_convoy() -> Variant:
-	"""Returns the currently selected convoy, or null if none is selected."""
-	return _selected_convoy
+	"""Returns the full data dictionary of the selected convoy, or null."""
+	if _selected_convoy_id.is_empty():
+		return null
+	for convoy in all_convoy_data:
+		if str(convoy.get("convoy_id")) == _selected_convoy_id:
+			return convoy
+	_selected_convoy_id = "" # Clear invalid ID
+	return null
 
 
 func get_settlement_name_from_coords(target_x: int, target_y: int) -> String:
