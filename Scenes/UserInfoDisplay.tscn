@@ -13,17 +13,21 @@ vertical_alignment = 1
 [node name="VSeparator" type="VSeparator" parent="."]
 layout_mode = 2
 
-[node name="ConvoyMenuButton" type="MenuButton" parent="."]
-layout_mode = 2
-text = "Select Convoy"
-flat = false
-
-[node name="Spacer" type="Control" parent="."]
+[node name="LeftSpacer" type="Control" parent="."]
 layout_mode = 2
 size_flags_horizontal = 3
 
 [node name="UserMoneyLabel" type="Label" parent="."]
 layout_mode = 2
 text = "$0"
-horizontal_alignment = 2
+horizontal_alignment = 1
 vertical_alignment = 1
+
+[node name="RightSpacer" type="Control" parent="."]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="ConvoyMenuButton" type="MenuButton" parent="."]
+layout_mode = 2
+text = "Select Convoy"
+flat = false

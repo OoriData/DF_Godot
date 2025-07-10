@@ -2,9 +2,8 @@ extends CanvasLayer
 
 # References to label containers managed by UIManager
 # These should be children of the Node this script is attached to.
-@export_group("Global UI Scaling")
-## Multiplier to adjust the overall perceived size of UI labels and panels. 1.0 = default.
-@export var ui_overall_scale_multiplier: float = 1.0
+# The global UI scale is now managed by the UIScaleManager singleton.
+var ui_overall_scale_multiplier: float = 1.0
 
 @export_group("Node Dependencies")
 @export var settlement_label_container: Node2D
@@ -187,6 +186,14 @@ func _ready():
 		if not gdm.is_connected("settlement_data_updated", Callable(self, "_on_gdm_settlement_data_updated")):
 			gdm.settlement_data_updated.connect(_on_gdm_settlement_data_updated)
 
+	# Connect to the new UIScaleManager to react to global scale changes.
+	# This manager will be the single source of truth for the UI scale setting.
+	if Engine.has_singleton("ui_scale_manager"):
+		ui_overall_scale_multiplier = ui_scale_manager.get_global_ui_scale()
+		ui_scale_manager.scale_changed.connect(_on_ui_scale_changed)
+	else:
+		printerr("UIManager: ui_scale_manager singleton not found. UI scaling will not be dynamic.")
+
 
 func initialize_font_settings(theme_font_to_use: Font):
 	if theme_font_to_use:
@@ -216,8 +223,6 @@ func initialize_font_settings(theme_font_to_use: Font):
 			base_selected_convoy_horizontal_offset, base_horizontal_label_offset_from_center,
 			label_map_edge_padding, label_anti_collision_y_shift
 		)
-	# else: # DEBUG
-		# printerr("UIManager: ConvoyLabelManager is invalid or missing 'initialize_style_settings'. CLM valid: %s" % is_instance_valid(convoy_label_manager))
 
 
 func update_ui_elements(
@@ -884,4 +889,12 @@ func _on_gdm_settlement_data_updated(settlement_data_list: Array) -> void:
 	# Update your local cache or UI as needed
 	_all_settlement_data_cache = settlement_data_list
 	# Optionally, trigger a UI update here
+	_draw_interactive_labels({})
+
+func _on_ui_scale_changed(new_scale: float):
+	"""Reacts to the global UI scale being changed in the UIScaleManager."""
+	ui_overall_scale_multiplier = new_scale
+	# A full redraw of labels is needed because font sizes, padding, etc., will change.
+	# We pass an empty dictionary for hover_info to avoid issues and force a clean update.
+	# This will propagate the new scale down to the ConvoyLabelManager as well.
 	_draw_interactive_labels({})

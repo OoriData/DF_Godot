@@ -121,7 +121,7 @@ func initialize(
 	
 	if is_instance_valid(camera): # Basic camera setup
 		if is_instance_valid(map_camera_controller) and map_camera_controller.has_method("initialize"):
-			map_camera_controller.initialize(camera, map_container_for_bounds, _initial_map_display_size, _current_map_screen_rect)
+			map_camera_controller.initialize(camera, map_container_for_bounds, _current_map_screen_rect)
 			if map_camera_controller.has_signal("camera_zoom_changed"):
 				map_camera_controller.camera_zoom_changed.connect(_on_map_camera_controller_zoom_changed)
 		else:
@@ -132,8 +132,10 @@ func initialize(
 		camera.drag_right_margin = 0.0
 		camera.drag_top_margin = 0.0
 		camera.drag_vertical_enabled = true
-		camera.drag_left_margin = 0.0; camera.drag_right_margin = 0.0
-		camera.drag_top_margin = 0.0;  camera.drag_bottom_margin = 0.0
+		camera.drag_left_margin = 0.0
+		camera.drag_right_margin = 0.0
+		camera.drag_top_margin = 0.0
+		camera.drag_bottom_margin = 0.0
 		camera.process_callback = Camera2D.CAMERA2D_PROCESS_PHYSICS
 		camera.set("smoothing_enabled", true)
 		camera.set("smoothing_speed", 5.0) # Keep smoothing
@@ -145,7 +147,7 @@ func set_current_map_screen_rect(rect: Rect2):
 	_current_map_screen_rect = rect
 	# print("MIM: Map screen rect updated to: ", _current_map_screen_rect) # DEBUG
 	if is_instance_valid(map_camera_controller) and map_camera_controller.has_method("update_map_dimensions"):
-		map_camera_controller.update_map_dimensions(_initial_map_display_size, _current_map_screen_rect)
+		map_camera_controller.update_map_dimensions(_current_map_screen_rect)
 	# The camera controller's _physics_process will handle clamping.
 
 func update_data_references(p_all_convoy_data: Array, p_all_settlement_data: Array, p_map_tiles: Array):
@@ -161,7 +163,7 @@ func update_data_references(p_all_convoy_data: Array, p_all_settlement_data: Arr
 		if current_map_actual_size.x > 0 and current_map_actual_size.y > 0:
 			_initial_map_display_size = current_map_actual_size
 			if is_instance_valid(map_camera_controller) and map_camera_controller.has_method("update_map_dimensions"):
-				map_camera_controller.update_map_dimensions(_initial_map_display_size, _current_map_screen_rect)
+				map_camera_controller.update_map_dimensions(_current_map_screen_rect)
 			# print("MIM (update_data_references): Updated _initial_map_display_size to: ", _initial_map_display_size) # DEBUG
 
 	# print("MapInteractionManager: Data references updated.")
@@ -591,7 +593,7 @@ func _on_map_camera_controller_zoom_changed(new_zoom_level: float):
 	# Re-emit the signal if other scripts are listening to MIM
 	emit_signal("camera_zoom_changed", new_zoom_level)
 
-func _get_convoy_data_at_world_pos(world_pos: Vector2): # Removed -> Dictionary | null
+func _get_convoy_data_at_world_pos(world_pos: Vector2) -> Variant:
 	"""Helper to find a convoy's data Dictionary at a given world position."""
 	if all_convoy_data.is_empty() or map_tiles.is_empty() or not map_tiles[0] is Array or map_tiles[0].is_empty():
 		return null

@@ -63,7 +63,6 @@ size_flags_horizontal = 3
 
 [node name="UIManagerNode" type="CanvasLayer" parent="ScreenSpaceUI" node_paths=PackedStringArray("settlement_label_container", "convoy_connector_lines_container", "convoy_label_container", "convoy_label_manager")]
 script = ExtResource("3_xagsy")
-ui_overall_scale_multiplier = 1.4
 settlement_label_container = NodePath("../../MapContainer/SettlementLabelContainer")
 convoy_connector_lines_container = NodePath("../../MapContainer/ConvoyConnectorLinesContainer")
 convoy_label_container = NodePath("../../MapContainer/ConvoyLabelContainer")

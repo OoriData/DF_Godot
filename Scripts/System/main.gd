@@ -186,6 +186,8 @@ func _ready():
 		printerr("Main: GameDataManager Autoload NOT FOUND via get_node('/root/GameDataManager') AND Engine.has_singleton was likely false too. Core data will not be loaded.")
 
 
+
+
 	# Instantiate the map renderer
 	# Ensure the MapDisplay TextureRect scales its texture nicely
 	if map_display:
@@ -340,6 +342,11 @@ func _ready():
 	_is_ready = true
 	print("[DIAGNOSTIC_LOG | main.gd] _ready(): Finished. _is_ready is now true.")
 
+
+func _on_ui_scale_changed(new_scale: float):
+	# Force camera bounds update when UI scale changes
+	if is_instance_valid(map_camera) and map_camera.has_method("force_bounds_update"):
+		map_camera.force_bounds_update()
 
 func _notification(what: int) -> void:
 	# This is a critical log to see if the scene is ever made visible.

@@ -1,4 +1,5 @@
 extends Node
+class_name GameScreenManager
 
 # Adjust these paths based on your actual scene tree structure
 # These paths are relative to the node where GameScreenManager.gd is attached (e.g., GameRoot)
@@ -6,7 +7,7 @@ extends Node
 @onready var menu_manager: Control = get_node("MenuUILayer/MenuManager")
 # Path to the MapCameraController node, nested within MapRender (MapView.tscn instance)
 @onready var map_camera_controller: MapCameraController = get_node_or_null("MapViewportContainer/MapRender/MapInteractionManager/MapCameraController") as MapCameraController
-@onready var login_screen:  = get_node("LoginScreen") # Path to your LoginScreen instance
+@onready var login_screen: Control = get_node("LoginScreen") # Path to your LoginScreen instance
 @onready var menu_ui_layer: CanvasLayer = get_node("MenuUILayer") # Get the MenuUILayer itself
 
 const PARTIAL_SCREEN_MENU_TYPES: Array[String] = [
@@ -118,7 +119,7 @@ func _initialize_main_game_ui_and_signals():
 			printerr("GameScreenManager: MenuManager does not have 'menus_completely_closed' signal.")
 
 	# Initial state: map is full screen
-	_set_map_view_full_screen()
+	_set_map_view_layout(1.0)
 	
 	# Ensure main game UI is visible if we skipped login
 	if is_instance_valid(map_viewport_container):
@@ -154,41 +155,26 @@ func _on_login_requested(user_id: String) -> void:
 func _on_menu_opened(_menu_node: Node, menu_type: String):
 	# If a menu type that requires a split view (map on left 1/3) is opened
 	if menu_type in PARTIAL_SCREEN_MENU_TYPES:
-		_set_map_view_partial_screen()
+		_set_map_view_layout(1.0 / 3.0)
 	# Else: You might have other logic, e.g., some menus hide the map,
 	# or some menus overlay the full map. For now, only "convoy_detail" shrinks it.
 	# If other menus open that don't require split screen, the map remains as is.
 
 func _on_menus_completely_closed():
 	# print("GameScreenManager: All menus closed, setting map to full screen.")
-	_set_map_view_full_screen()
+	_set_map_view_layout(1.0)
 
-func _set_map_view_partial_screen():
-	if not is_instance_valid(map_viewport_container): 
-		printerr("GameScreenManager: map_viewport_container invalid in _set_map_view_partial_screen")
-		return
-	# Set MapViewportContainer to occupy the left 1/3 of the screen
-	map_viewport_container.anchor_right = 1.0 / 3.0 # Position right edge at 1/3
-	map_viewport_container.anchor_bottom = 1.0 # Stretch to full height
-	map_viewport_container.offset_right = 0 # Clear any offset
-	map_viewport_container.offset_bottom = 0 # Clear any offset
-	map_viewport_container.size_flags_horizontal = Control.SIZE_EXPAND_FILL # Ensure it fills
-	map_viewport_container.size_flags_vertical = Control.SIZE_EXPAND_FILL   # Ensure it fills
-	# print("GameScreenManager: Map view set to partial (left 1/3).")
-	_update_map_render_bounds_after_layout_change()
-
-func _set_map_view_full_screen():
+func _set_map_view_layout(right_anchor: float):
+	"""Sets the map viewport container's layout based on a given right anchor."""
 	if not is_instance_valid(map_viewport_container):
-		printerr("GameScreenManager: map_viewport_container invalid in _set_map_view_full_screen")
+		printerr("GameScreenManager: map_viewport_container invalid in _set_map_view_layout")
 		return
-	# Set MapViewportContainer to occupy the full screen
-	map_viewport_container.anchor_right = 1.0
+	map_viewport_container.anchor_right = right_anchor
 	map_viewport_container.anchor_bottom = 1.0 # Stretch to full height
 	map_viewport_container.offset_right = 0 # Clear any offset
 	map_viewport_container.offset_bottom = 0 # Clear any offset
 	map_viewport_container.size_flags_horizontal = Control.SIZE_EXPAND_FILL # Ensure it fills
 	map_viewport_container.size_flags_vertical = Control.SIZE_EXPAND_FILL   # Ensure it fills
-	# print("GameScreenManager: Map view set to full screen.")
 	_update_map_render_bounds_after_layout_change()
 
 func _update_map_render_bounds_after_layout_change():

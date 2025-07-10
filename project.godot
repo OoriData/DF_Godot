@@ -20,13 +20,17 @@ config/icon="uid://btrbocmbg1efs"
 
 [autoload]
 
+Tools="*res://Scripts/System/tools.gd"
+DateTimeUtils="*res://Scripts/System/date_time_util.gd"
+ui_scale_manager="*res://Scripts/UI/UI_scale_manager.gd"
 APICalls="*res://Scripts/System/api_calls.gd"
 GameDataManager="*res://Scripts/System/game_data_manager.gd"
-DateTimeUtils="*res://Scripts/System/date_time_util.gd"
 
 [display]
 
 window/size/initial_position_type=2
+window/stretch/mode="canvas_items"
+window/stretch/aspect="expand"
 window/handheld/orientation=6
 
 [rendering]

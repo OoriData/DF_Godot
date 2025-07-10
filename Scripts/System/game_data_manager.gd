@@ -80,7 +80,7 @@ func _on_map_data_received_from_api(map_data_dict: Dictionary):
 
 	map_tiles = tiles_from_api # Store the tiles array
 	print("  - Emitting 'map_data_loaded' signal with tiles array.")
-	map_data_loaded.emit.call_deferred(map_tiles) # Emit deferred
+	map_data_loaded.emit(map_tiles)
 	# print("GameDataManager: Map data loaded. Tiles count: %s" % map_tiles.size())
 
 	# Extract settlement data
@@ -100,7 +100,7 @@ func _on_map_data_received_from_api(map_data_dict: Dictionary):
 								settlement_info_for_render['x'] = x_idx
 								settlement_info_for_render['y'] = y_idx
 								all_settlement_data.append(settlement_info_for_render)
-	settlement_data_updated.emit.call_deferred(all_settlement_data) # Emit deferred
+	settlement_data_updated.emit(all_settlement_data)
 	# print("GameDataManager: Settlement data extracted. Count: %s" % all_settlement_data.size())
 
 
@@ -112,7 +112,7 @@ func _on_user_data_received_from_api(p_user_data: Dictionary):
 
 	current_user_data = p_user_data
 	print("  - User money is now: %s" % current_user_data.get("money", "N/A"))
-	user_data_updated.emit.call_deferred(current_user_data)
+	user_data_updated.emit(current_user_data)
 
 
 func _on_raw_convoy_data_received(raw_data: Variant):
@@ -127,7 +127,7 @@ func _on_raw_convoy_data_received(raw_data: Variant):
 	else:
 		printerr('GameDataManager: Received convoy data is not in a recognized format. Data: ', raw_data)
 		all_convoy_data = [] # Clear existing data
-		emit_signal("convoy_data_updated", all_convoy_data)
+		convoy_data_updated.emit(all_convoy_data)
 		return
 
 	# --- ADD THIS LOGGING ---
@@ -154,7 +154,7 @@ func _on_raw_convoy_data_received(raw_data: Variant):
 		# 	print("GameDataManager: First AUGMENTED vehicle keys: ", first_aug["vehicle_details_list"][0].keys())
 	# --- END LOGGING ---
 
-	convoy_data_updated.emit.call_deferred(all_convoy_data) # Emit deferred
+	convoy_data_updated.emit(all_convoy_data)
 
 
 func get_convoy_id_to_color_map() -> Dictionary:
@@ -262,11 +262,14 @@ func _calculate_convoy_progress_details(convoy_data_item: Dictionary) -> Diction
 					var interpolated_pos_tile = p_start_tile.lerp(p_end_tile, progress_within_segment)
 					convoy_data_item["x"] = interpolated_pos_tile.x
 					convoy_data_item["y"] = interpolated_pos_tile.y
-					found_segment = true; break
+					found_segment = true
+					break
 				cumulative_dist += segment_length
 			if not found_segment:
-				current_segment_start_idx = num_total_segments - 1; progress_within_segment = 1.0
-				convoy_data_item["x"] = float(route_x[num_total_segments]); convoy_data_item["y"] = float(route_y[num_total_segments])
+				current_segment_start_idx = num_total_segments - 1
+				progress_within_segment = 1.0
+				convoy_data_item["x"] = float(route_x[num_total_segments])
+				convoy_data_item["y"] = float(route_y[num_total_segments])
 
 	convoy_data_item["_current_segment_start_idx"] = current_segment_start_idx
 	convoy_data_item["_progress_in_segment"] = progress_within_segment
@@ -462,7 +465,7 @@ func update_single_vendor(new_vendor_data: Dictionary) -> void:
 			break
 
 	if found:
-		settlement_data_updated.emit.call_deferred(all_settlement_data)
+		settlement_data_updated.emit(all_settlement_data)
 	else:
 		printerr("GameDataManager: Vendor ID %s not found in any settlement." % updated_id)
 
@@ -532,9 +535,9 @@ func _aggregate_vendor_items(vendor_data: Dictionary) -> Dictionary:
 			var item = {
 				"name": "%s (Bulk)" % res.capitalize(),
 				"quantity": qty,
-				res: qty,
 				"is_raw_resource": true
 			}
+			item[res] = qty # Add the dynamic key correctly
 			_aggregate_item(aggregated["resources"], item)
 
 	# Vehicles
@@ -591,9 +594,9 @@ func _aggregate_convoy_items(convoy_data: Dictionary, vendor_data: Dictionary) -
 			var item = {
 				"name": "%s (Bulk)" % res.capitalize(),
 				"quantity": qty,
-				res: qty,
 				"is_raw_resource": true
 			}
+			item[res] = qty # Add the dynamic key correctly
 			_aggregate_item(aggregated["resources"], item)
 
 	return aggregated

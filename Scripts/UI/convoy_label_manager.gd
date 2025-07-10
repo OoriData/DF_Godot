@@ -62,9 +62,13 @@ func set_convoy_label_container(p_container: Node2D):
 		_convoy_label_container_ref.visible = true # Set visibility when a valid container is assigned
 
 func _ready():
-	# _ready() can now be used for initializations that do not immediately depend on _convoy_label_container_ref
-	# or it can be left empty if not needed.
-	pass
+	# Connect to the UIScaleManager to react to global scale changes.
+	if Engine.has_singleton("ui_scale_manager"):
+		# The initial value will be set by UIManager via initialize_font_settings,
+		# but we connect here to listen for any subsequent changes.
+		ui_scale_manager.scale_changed.connect(_on_ui_scale_changed)
+	else:
+		printerr("ConvoyLabelManager: ui_scale_manager singleton not found. UI scaling will not be dynamic.")
 
 func initialize_font_settings(p_theme_font: Font, p_label_settings: LabelSettings, 
 							  p_base_convoy_title_fs: int,
@@ -89,6 +93,31 @@ func initialize_font_settings(p_theme_font: Font, p_label_settings: LabelSetting
 		for convoy_data_item in p_all_convoy_data:
 			if convoy_data_item is Dictionary and convoy_data_item.has("convoy_id"):
 				_convoy_data_by_id_cache[str(convoy_data_item.get("convoy_id"))] = convoy_data_item
+
+func initialize_style_settings(
+	p_base_corner_radius: float, p_min_corner_radius: float, p_max_corner_radius: float,
+	p_base_padding_h: float, p_base_padding_v: float,
+	p_min_padding: float, p_max_padding: float,
+	p_base_border_width: float, p_min_border_width: int, p_max_border_width: int,
+	p_bg_color: Color,
+	p_base_selected_offset: float, p_base_offset: float,
+	p_edge_padding: float, p_collision_shift: float
+):
+	_base_convoy_panel_corner_radius = p_base_corner_radius
+	_min_node_panel_corner_radius = p_min_corner_radius
+	_max_node_panel_corner_radius = p_max_corner_radius
+	_base_convoy_panel_padding_h = p_base_padding_h
+	_base_convoy_panel_padding_v = p_base_padding_v
+	_min_node_panel_padding = p_min_padding
+	_max_node_panel_padding = p_max_padding
+	_base_convoy_panel_border_width = p_base_border_width
+	_min_node_panel_border_width = p_min_border_width
+	_max_node_panel_border_width = p_max_border_width
+	_convoy_panel_background_color = p_bg_color
+	_base_selected_convoy_horizontal_offset = p_base_selected_offset
+	_base_horizontal_label_offset_from_center = p_base_offset
+	_label_map_edge_padding = p_edge_padding
+	_label_anti_collision_y_shift = p_collision_shift
 
 func update_drawing_parameters(
 	p_actual_tile_width_on_texture: float,
@@ -481,3 +510,8 @@ func update_convoy_labels(
 			# ids_to_remove_from_active.append(existing_id_str) 
 	# for id_to_remove in ids_to_remove_from_active:
 		# _active_convoy_panels.erase(id_to_remove)
+
+func _on_ui_scale_changed(new_scale: float):
+	_ui_overall_scale_multiplier = new_scale
+	# No redraw logic needed here. UIManager's signal handler will trigger a full update,
+	# which will call update_convoy_labels, and this manager will use the new scale value.

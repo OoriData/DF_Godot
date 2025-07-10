@@ -7,6 +7,10 @@ signal convoy_menu_requested(convoy_id: String)
 @onready var user_money_label: Label = $UserMoneyLabel
 @onready var convoy_menu_button: MenuButton = $ConvoyMenuButton
 
+# Store original font sizes to scale them from a clean base
+var _original_username_font_size: int
+var _original_money_font_size: int
+
 var gdm: Node
 
 func _ready() -> void:
@@ -19,6 +23,17 @@ func _ready() -> void:
 			gdm.convoy_data_updated.connect(_on_convoy_data_updated)
 		if not gdm.is_connected("convoy_selection_changed", _on_convoy_selection_changed):
 			gdm.convoy_selection_changed.connect(_on_convoy_selection_changed)
+
+		# Connect to the global UI scale manager
+		if Engine.has_singleton("ui_scale_manager"):
+			# Store original sizes before applying any scaling
+			_original_username_font_size = username_label.get_theme_font_size("font_size")
+			_original_money_font_size = user_money_label.get_theme_font_size("font_size")
+			ui_scale_manager.scale_changed.connect(_on_ui_scale_changed)
+			# Apply initial scale
+			_on_ui_scale_changed(ui_scale_manager.get_global_ui_scale())
+		else:
+			printerr("UserInfoDisplay: ui_scale_manager singleton not found. UI scaling will not be dynamic.")
 
 	else:
 		printerr("UserInfoDisplay: Could not find GameDataManager.")
@@ -74,6 +89,14 @@ func _on_convoy_menu_item_pressed(index: int) -> void:
 		gdm.select_convoy_by_id(convoy_id_str, false)
 		# Emit a signal to tell the main view to open the corresponding menu.
 		emit_signal("convoy_menu_requested", convoy_id_str)
+
+func _on_ui_scale_changed(new_scale: float) -> void:
+	"""Applies the new global UI scale to the font sizes of the labels."""
+	if _original_username_font_size > 0:
+		username_label.add_theme_font_size_override("font_size", int(_original_username_font_size * new_scale))
+	if _original_money_font_size > 0:
+		user_money_label.add_theme_font_size_override("font_size", int(_original_money_font_size * new_scale))
+
 
 func _update_display():
 	if not is_node_ready() or not is_instance_valid(gdm):
