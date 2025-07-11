@@ -14,6 +14,10 @@ signal vendor_panel_data_ready(vendor_panel_data: Dictionary)
 signal convoy_selection_changed(selected_convoy_data: Variant)
 
 
+# --- Journey Planning Signals ---
+signal route_info_ready(convoy_data: Dictionary, destination_data: Dictionary, route_choices: Array)
+signal journey_started(updated_convoy_data: Dictionary)
+
 # --- Node References ---
 # Adjust the path if your APICallsInstance is located differently relative to GameDataManager
 # when GameDataManager is an Autoload (it will be /root/APICallsInstance if APICallsInstance is also an Autoload or a direct child of root).
@@ -28,6 +32,10 @@ var all_convoy_data: Array = [] # Stores augmented convoy data
 var current_user_data: Dictionary = {}
 var _selected_convoy_id: String = ""
 var convoy_id_to_color_map: Dictionary = {}
+
+# --- Journey Planning State ---
+var _pending_journey_convoy_id: String = ""
+var _pending_journey_destination_data: Dictionary = {}
 
 # --- Internal State ---
 var _last_assigned_color_idx: int = -1
@@ -63,6 +71,12 @@ func _initiate_preload():
 		if api_calls_node.has_signal('vendor_data_received'):
 			api_calls_node.vendor_data_received.connect(update_single_vendor)
 			print('GameDataManager: Connected to APICalls.vendor_data_received signal.')
+		if api_calls_node.has_signal('route_choices_received'):
+			api_calls_node.route_choices_received.connect(_on_api_route_choices_received)
+			print('GameDataManager: Connected to APICalls.route_choices_received signal.')
+		if api_calls_node.has_signal('convoy_sent_on_journey'):
+			api_calls_node.convoy_sent_on_journey.connect(_on_convoy_sent_on_journey)
+			print('GameDataManager: Connected to APICalls.convoy_sent_on_journey signal.')
 
 		print("GameDataManager: Initiating map data preload on game start.")
 		request_map_data()
@@ -470,26 +484,9 @@ func update_single_vendor(new_vendor_data: Dictionary) -> void:
 		printerr("GameDataManager: Vendor ID %s not found in any settlement." % updated_id)
 
 func request_vendor_panel_data(convoy_id: String, vendor_id: String) -> void:
-	var vendor_data = null
-	var convoy_data = null
-	var settlement_data = null
-
-	# Find vendor data
-	for settlement in all_settlement_data:
-		if settlement.has("vendors"):
-			for vendor in settlement.vendors:
-				if str(vendor.get("vendor_id", "")) == str(vendor_id):
-					vendor_data = vendor
-					settlement_data = settlement
-					break
-		if vendor_data:
-			break
-
-	# Find convoy data
-	for convoy in all_convoy_data:
-		if str(convoy.get("convoy_id", "")) == str(convoy_id):
-			convoy_data = convoy
-			break
+	var vendor_data = get_vendor_by_id(vendor_id)
+	var convoy_data = get_convoy_by_id(convoy_id)
+	var settlement_data = get_settlement_for_vendor(vendor_id)
 
 	# --- Aggregation logic moved here ---
 	var vendor_items = _aggregate_vendor_items(vendor_data)
@@ -505,6 +502,56 @@ func request_vendor_panel_data(convoy_id: String, vendor_id: String) -> void:
 		"convoy_items": convoy_items
 	}
 	vendor_panel_data_ready.emit(vendor_panel_data)
+
+# --- Journey Planning ---
+func request_route_choices(convoy_id: String, dest_x: int, dest_y: int) -> void:
+	if is_instance_valid(api_calls_node) and api_calls_node.has_method("find_route"):
+		_pending_journey_convoy_id = convoy_id
+		_pending_journey_destination_data = {"x": dest_x, "y": dest_y, "name": get_settlement_name_from_coords(dest_x, dest_y)}
+		api_calls_node.find_route(convoy_id, dest_x, dest_y)
+
+func start_convoy_journey(convoy_id: String, journey_id: String) -> void:
+	if is_instance_valid(api_calls_node) and api_calls_node.has_method("send_convoy"):
+		api_calls_node.send_convoy(convoy_id, journey_id)
+
+func get_vendor_by_id(vendor_id: String) -> Variant:
+	var vendor_data = null
+	var convoy_data = null
+	var settlement_data = null
+
+	# Find vendor data
+	for settlement in all_settlement_data:
+		if settlement.has("vendors"):
+			for vendor in settlement.vendors:
+				if str(vendor.get("vendor_id", "")) == str(vendor_id):
+					vendor_data = vendor
+					settlement_data = settlement
+					break
+		if vendor_data:
+			break
+
+	return vendor_data
+
+func get_settlement_for_vendor(vendor_id: String) -> Variant:
+	var settlement_data = null
+	for settlement in all_settlement_data:
+		if settlement.has("vendors"):
+			for vendor in settlement.vendors:
+				if str(vendor.get("vendor_id", "")) == str(vendor_id):
+					settlement_data = settlement
+					break
+		if settlement_data:
+
+			break
+	return settlement_data
+
+func get_convoy_by_id(convoy_id: String) -> Variant:
+	if convoy_id.is_empty():
+		return null
+	for convoy in all_convoy_data:
+		if str(convoy.get("convoy_id")) == convoy_id:
+			return convoy
+	return null
 
 # Aggregates vendor's inventory into categories
 func _aggregate_vendor_items(vendor_data: Dictionary) -> Dictionary:
@@ -672,3 +719,25 @@ func sell_item(convoy_id: String, vendor_id: String, item_data: Dictionary, quan
 			printerr("GameDataManager: Unknown raw resource type in sell_item.")
 	else:
 		printerr("GameDataManager: Unknown item type for sell_item.")
+
+func _on_api_route_choices_received(routes: Array) -> void:
+	if _pending_journey_convoy_id.is_empty():
+		printerr("GameDataManager: Received route choices from API, but there was no pending journey request context. Ignoring.")
+		return
+
+	var convoy_data = get_convoy_by_id(_pending_journey_convoy_id)
+	var destination_data = _pending_journey_destination_data
+
+	print("GameDataManager: Received %d route choices. Emitting 'route_info_ready'." % routes.size())
+	emit_signal("route_info_ready", convoy_data, destination_data, routes)
+
+	_pending_journey_convoy_id = ""
+	_pending_journey_destination_data = {}
+
+func _on_convoy_sent_on_journey(updated_convoy_data: Dictionary) -> void:
+	print("GameDataManager: Received confirmation that journey has started. Updating local data.")
+	# Use the existing update function to process and augment the data
+	update_single_convoy(updated_convoy_data)
+	# The update_single_convoy function already emits convoy_data_updated,
+	# but we emit a more specific signal for UI flow with the fully augmented data.
+	emit_signal("journey_started", get_convoy_by_id(str(updated_convoy_data.get("convoy_id"))))

@@ -1,0 +1,146 @@
+[gd_scene load_steps=2 format=3 uid="uid://c53414078170s"]
+
+[ext_resource type="Script" path="res://Scripts/Menus/route_selection_menu.gd" id="1_84q0y"]
+
+[node name="RouteSelectionMenu" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("1_84q0y")
+
+[node name="Background" type="ColorRect" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+color = Color(0, 0, 0, 0.784314)
+
+[node name="MainVBox" type="VBoxContainer" parent="."]
+layout_mode = 1
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -250.0
+offset_top = -300.0
+offset_right = 250.0
+offset_bottom = 300.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_constants/separation = 10
+
+[node name="TitleLabel" type="Label" parent="MainVBox"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 24
+text = "Journey Details"
+horizontal_alignment = 1
+
+[node name="HSeparator" type="HSeparator" parent="MainVBox"]
+layout_mode = 2
+
+[node name="DetailsGrid" type="GridContainer" parent="MainVBox"]
+layout_mode = 2
+theme_override_constants/h_separation = 10
+columns = 2
+
+[node name="DestinationLabel" type="Label" parent="MainVBox/DetailsGrid"]
+layout_mode = 2
+text = "Destination 📍:"
+
+[node name="DestinationValue" type="Label" parent="MainVBox/DetailsGrid"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "N/A"
+horizontal_alignment = 2
+
+[node name="DistanceLabel" type="Label" parent="MainVBox/DetailsGrid"]
+layout_mode = 2
+text = "Distance 🗺️:"
+
+[node name="DistanceValue" type="Label" parent="MainVBox/DetailsGrid"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "N/A"
+horizontal_alignment = 2
+
+[node name="ETALabel" type="Label" parent="MainVBox/DetailsGrid"]
+layout_mode = 2
+text = "ETA ⏰:"
+
+[node name="ETAValue" type="Label" parent="MainVBox/DetailsGrid"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "N/A"
+horizontal_alignment = 2
+autowrap_mode = 2
+
+[node name="HSeparator2" type="HSeparator" parent="MainVBox"]
+layout_mode = 2
+
+[node name="ExpensesGrid" type="GridContainer" parent="MainVBox"]
+layout_mode = 2
+theme_override_constants/h_separation = 10
+columns = 2
+
+[node name="FuelLabel" type="Label" parent="MainVBox/ExpensesGrid"]
+layout_mode = 2
+text = "Fuel Expense:"
+
+[node name="FuelValue" type="Label" parent="MainVBox/ExpensesGrid"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "N/A"
+horizontal_alignment = 2
+
+[node name="WaterLabel" type="Label" parent="MainVBox/ExpensesGrid"]
+layout_mode = 2
+text = "Water Expense:"
+
+[node name="WaterValue" type="Label" parent="MainVBox/ExpensesGrid"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "N/A"
+horizontal_alignment = 2
+
+[node name="FoodLabel" type="Label" parent="MainVBox/ExpensesGrid"]
+layout_mode = 2
+text = "Food Expense:"
+
+[node name="FoodValue" type="Label" parent="MainVBox/ExpensesGrid"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "N/A"
+horizontal_alignment = 2
+
+[node name="HSeparator3" type="HSeparator" parent="MainVBox"]
+layout_mode = 2
+
+[node name="VehicleExpensesVBox" type="VBoxContainer" parent="MainVBox"]
+layout_mode = 2
+
+[node name="PlaceholderLabel" type="Label" parent="MainVBox/VehicleExpensesVBox"]
+layout_mode = 2
+text = "Vehicle expenses loading..."
+horizontal_alignment = 1
+
+[node name="HSeparator4" type="HSeparator" parent="MainVBox"]
+layout_mode = 2
+
+[node name="ButtonsHBox" type="HBoxContainer" parent="MainVBox"]
+layout_mode = 2
+alignment = 1
+
+[node name="BackButton" type="Button" parent="MainVBox/ButtonsHBox"]
+layout_mode = 2
+text = "Cancel"
+
+[node name="EmbarkButton" type="Button" parent="MainVBox/ButtonsHBox"]
+layout_mode = 2
+text = "Embark"
+

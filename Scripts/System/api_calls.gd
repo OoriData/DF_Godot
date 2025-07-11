@@ -19,6 +19,10 @@ signal resource_bought(result: Dictionary)
 signal resource_sold(result: Dictionary)
 signal vendor_data_received(vendor_data: Dictionary)
 
+# --- Journey Planning Signals ---
+signal route_choices_received(routes: Array)
+signal convoy_sent_on_journey(updated_convoy_data: Dictionary)
+
 # const BASE_URL: String = 'https://df-api.oori.dev:1337' # Change this to your test or live URL as needed
 const BASE_URL: String = 'http://localhost:1337' # Change this to your test or live URL as needed
 
@@ -32,7 +36,7 @@ var _is_local_user_attempt: bool = false # Flag to track if the current USER_CON
 var _request_queue: Array = []
 var _is_request_in_progress: bool = false
 
-enum RequestPurpose { NONE, USER_CONVOYS, ALL_CONVOYS, MAP_DATA, USER_DATA, VENDOR_DATA }
+enum RequestPurpose { NONE, USER_CONVOYS, ALL_CONVOYS, MAP_DATA, USER_DATA, VENDOR_DATA, FIND_ROUTE }
 var _current_request_purpose: RequestPurpose = RequestPurpose.NONE
 
 var _current_patch_signal_name: String = ""
@@ -218,14 +222,20 @@ func _on_request_completed(result: int, response_code: int, headers: PackedStrin
 	# PATCH transaction responses (purpose == NONE, but signal_name is set)
 	if _current_request_purpose == RequestPurpose.NONE and _current_patch_signal_name != "":
 		if result == HTTPRequest.RESULT_SUCCESS and (response_code >= 200 and response_code < 300):
-			print("APICalls: Transaction '%s' successful. Emitting signal." % _current_patch_signal_name)
-			emit_signal(_current_patch_signal_name, {"success": true})
-		else:
-			# The generic error handling below will catch this and emit 'fetch_error'.
-			pass
-
-		_complete_current_request()
-		return
+			var response_body_text = body.get_string_from_utf8()
+			var json_response = JSON.parse_string(response_body_text)
+			if json_response == null:
+				var error_msg = "APICalls (PATCH): Failed to parse JSON for '%s'. Body: %s" % [_current_patch_signal_name, response_body_text]
+				printerr(error_msg)
+				emit_signal('fetch_error', error_msg)
+			else:
+				print("APICalls: Transaction '%s' successful. Emitting signal with data." % _current_patch_signal_name)
+				emit_signal(_current_patch_signal_name, json_response)
+			
+			_complete_current_request()
+			return
+		# If the PATCH request failed, it will fall through to the generic error handlers below.
+		# This is intentional, so we don't have to duplicate error handling logic.
 
 	# --- Handle initial local user attempt specifically for fallback logic ---
 	if was_initial_local_user_attempt:
@@ -425,11 +435,50 @@ func _on_request_completed(result: int, response_code: int, headers: PackedStrin
 		_complete_current_request()
 		return
 
+	elif request_purpose_at_start == RequestPurpose.FIND_ROUTE:
+		var response_body_text: String = body.get_string_from_utf8()
+		var json_response = JSON.parse_string(response_body_text)
+
+		if json_response == null:
+			var error_msg_json = 'APICalls (_on_request_completed - FIND_ROUTE): Failed to parse JSON. URL: %s' % _last_requested_url
+			printerr(error_msg_json)
+			printerr('  Raw Body: %s' % response_body_text)
+			emit_signal('fetch_error', error_msg_json)
+		elif not json_response is Array:
+			var error_msg_type = 'APICalls (_on_request_completed - FIND_ROUTE): Expected Array, got %s. URL: %s' % [typeof(json_response), _last_requested_url]
+			printerr(error_msg_type)
+			emit_signal('fetch_error', error_msg_type)
+		else:
+			# SUCCESS with route data
+			print("APICalls (_on_request_completed - FIND_ROUTE): Successfully fetched %d route choices. URL: %s" % [json_response.size(), _last_requested_url])
+			emit_signal('route_choices_received', json_response)
+
+		_complete_current_request()
+		return
+
 	# Fallback for any unhandled cases, though ideally all paths are covered.
 	if _current_request_purpose != RequestPurpose.NONE:
 		printerr("APICalls (_on_request_completed): Reached end of function with _current_request_purpose not NONE. Purpose: %s. This might indicate an unhandled logic path." % RequestPurpose.keys()[_current_request_purpose])
 		_complete_current_request() # Ensure reset and queue processing
 
+
+
+# --- Journey Planning APIs ---
+func find_route(convoy_id: String, dest_x: int, dest_y: int) -> void:
+	var url = "%s/convoy/journey/find_route?convoy_id=%s&dest_x=%d&dest_y=%d" % [BASE_URL, convoy_id, dest_x, dest_y]
+	var headers: PackedStringArray = ['accept: application/json']
+	var request_details: Dictionary = {
+		"url": url,
+		"headers": headers,
+		"purpose": RequestPurpose.FIND_ROUTE,
+		"method": HTTPClient.METHOD_POST,
+	}
+	_request_queue.append(request_details)
+	_process_queue()
+
+func send_convoy(convoy_id: String, journey_id: String) -> void:
+	var url = "%s/convoy/journey/send?convoy_id=%s&journey_id=%s" % [BASE_URL, convoy_id, journey_id]
+	_add_patch_request(url, "convoy_sent_on_journey")
 
 
 # --- Vendor Transaction APIs ---
@@ -464,7 +513,7 @@ func _add_patch_request(url: String, signal_name: String) -> void:
 		"headers": headers,
 		"purpose": RequestPurpose.NONE, # Always use enum for purpose
 		"signal_name": signal_name,     # Store the signal name separately
-		"method": HTTPClient.METHOD_PATCH
+		"method": HTTPClient.METHOD_PATCH,
 	}
 	_request_queue.append(request_details)
 	_process_queue()

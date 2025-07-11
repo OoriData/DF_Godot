@@ -83,3 +83,70 @@ static func parse_iso_to_utc_dict(iso_string: String) -> Dictionary:
 		if components.year > 0 and components.month > 0 and components.day > 0:
 			return components
 	return {} # Return empty if parsing failed
+
+static func format_timestamp_display(timestamp_value, include_remaining_time: bool) -> String:
+	if timestamp_value == null:
+		return "N/A"
+
+	var eta_timestamp_int: int = -1
+
+	if timestamp_value is String:
+		eta_timestamp_int = Time.get_unix_time_from_datetime_string(timestamp_value)
+		if eta_timestamp_int == -1 and timestamp_value.is_valid_int():
+			eta_timestamp_int = timestamp_value.to_int()
+	elif timestamp_value is float:
+		eta_timestamp_int = int(timestamp_value)
+	elif timestamp_value is int:
+		eta_timestamp_int = timestamp_value
+
+	if eta_timestamp_int < 0:
+		return "Invalid Date"
+
+	var current_sys_utc_ts: int = Time.get_unix_time_from_system()
+	var current_sys_local_dict: Dictionary = Time.get_datetime_dict_from_system(false)
+	var current_sys_local_interpreted_as_utc_ts: int = Time.get_unix_time_from_datetime_dict(current_sys_local_dict) # Interprets dict values as if they were UTC
+	var timezone_offset_seconds: int = current_sys_utc_ts - current_sys_local_interpreted_as_utc_ts
+	var timestamp_for_local_display: int = eta_timestamp_int - timezone_offset_seconds
+	var datetime_dict: Dictionary = Time.get_datetime_dict_from_unix_time(timestamp_for_local_display)
+	
+	var month_str = "Unk"
+	if datetime_dict.month >= 1 and datetime_dict.month <= 12:
+		month_str = ABBREVIATED_MONTH_NAMES[datetime_dict.month]
+	
+	var day_val = datetime_dict.day
+	var hour_val = datetime_dict.hour
+	var minute_val = datetime_dict.minute
+	
+	var am_pm_str = "AM"
+	if hour_val >= 12:
+		am_pm_str = "PM"
+	if hour_val > 12:
+		hour_val -= 12
+	elif hour_val == 0:
+		hour_val = 12
+		
+	var display_text = "%s %s, %d:%02d %s" % [month_str, day_val, hour_val, minute_val, am_pm_str]
+
+	if include_remaining_time:
+		var time_remaining_seconds = eta_timestamp_int - current_sys_utc_ts
+		if time_remaining_seconds > 0:
+			var days_remaining = floor(time_remaining_seconds / (24.0 * 3600.0))
+			var hours_remaining = floor(fmod(time_remaining_seconds, (24.0 * 3600.0)) / 3600.0)
+			var minutes_remaining = floor(fmod(time_remaining_seconds, 3600.0) / 60.0)
+			
+			var time_remaining_str_parts = []
+			if days_remaining > 0: time_remaining_str_parts.append("%dd" % days_remaining)
+			if hours_remaining > 0: time_remaining_str_parts.append("%dh" % hours_remaining)
+			if minutes_remaining > 0 or (days_remaining == 0 and hours_remaining == 0):
+				time_remaining_str_parts.append("%dm" % minutes_remaining)
+			
+			if not time_remaining_str_parts.is_empty():
+				display_text += " (%s remaining)" % " ".join(time_remaining_str_parts)
+			else: # Less than a minute
+				display_text += " (Arriving Soon)"
+		elif time_remaining_seconds <= 0 and time_remaining_seconds > -300: # Within last 5 mins
+			display_text += " (Now)"
+		else: # Arrived
+			display_text += " (Arrived)"
+			
+	return display_text

@@ -2,9 +2,11 @@ extends Control
 
 # Signal that MenuManager will listen for to go back
 signal back_requested
+signal find_route_requested(convoy_data, destination_data)
 signal return_to_convoy_overview_requested(convoy_data)
 
 var convoy_data_received: Dictionary
+var _route_selection_menu_instance: Control = null
 
 # @onready variables for UI elements
 @onready var title_label: Label = $MainVBox/TitleLabel
@@ -12,14 +14,14 @@ var convoy_data_received: Dictionary
 @onready var content_vbox: VBoxContainer = $MainVBox/ScrollContainer/ContentVBox
 @onready var back_button: Button = $MainVBox/BackButton
 
-# Constants for formatting
-const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+# Preload the scene for the route selection menu
+const RouteSelectionMenuScene = preload("res://Scenes/RouteSelectionMenu.tscn")
 
 func _ready():
 	# Connect the back button signal
 	if is_instance_valid(back_button):
 		if not back_button.is_connected("pressed", Callable(self, "_on_back_button_pressed")):
-			back_button.pressed.connect(_on_back_button_pressed, CONNECT_ONE_SHOT)
+			back_button.pressed.connect(_on_back_button_pressed)
 	
 	# Make the title label clickable to return to the convoy overview
 	if is_instance_valid(title_label):
@@ -27,6 +29,13 @@ func _ready():
 		title_label.gui_input.connect(_on_title_label_gui_input)
 	else:
 		printerr("ConvoyJourneyMenu: CRITICAL - TitleLabel node NOT found or is not a Label.")
+
+	var gdm = get_node_or_null("/root/GameDataManager")
+	if is_instance_valid(gdm):
+		if not gdm.is_connected("route_info_ready", Callable(self, "_on_route_info_ready")):
+			gdm.route_info_ready.connect(_on_route_info_ready)
+	else:
+		printerr("ConvoyJourneyMenu: Could not connect to GameDataManager signals.")
 
 	# Remove the placeholder label if it exists
 	if content_vbox.has_node("PlaceholderLabel"):
@@ -36,6 +45,10 @@ func _ready():
 
 func _on_back_button_pressed():
 	print("ConvoyJourneyMenu: Back button pressed. Emitting 'back_requested' signal.")
+	# If the route selection menu is open, this back button shouldn't be clickable,
+	# but as a safeguard, we ensure it's closed if we go back.
+	if is_instance_valid(_route_selection_menu_instance):
+		_route_selection_menu_instance.queue_free()
 	emit_signal("back_requested")
 
 func _process(delta: float):
@@ -51,20 +64,18 @@ func initialize_with_data(data: Dictionary):
 	# Duplicate to avoid modifying the original if needed elsewhere
 	convoy_data_received = data.duplicate()
 
-	if is_instance_valid(title_label):
-		title_label.text = data.get("convoy_name", "Convoy") + " - Journey Details"
-
 	for child in content_vbox.get_children():
 		child.queue_free()
 
 	var journey_data: Dictionary = data.get("journey", {})
 	var gdm = get_node_or_null("/root/GameDataManager")
 
+	if is_instance_valid(title_label):
+		var convoy_name = data.get("convoy_name", "Convoy")
+		title_label.text = convoy_name + " - " + ("Journey Details" if not journey_data.is_empty() else "Journey Planner")
+
 	if journey_data.is_empty():
-		var no_journey_label = Label.new()
-		no_journey_label.text = "This convoy is not currently on a journey."
-		no_journey_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		content_vbox.add_child(no_journey_label)
+		_populate_destination_list()
 		return
 
 	# Current Location
@@ -99,13 +110,13 @@ func initialize_with_data(data: Dictionary):
 	# Departure Time
 	var departure_time_str = journey_data.get("departure_time")
 	var departure_label = Label.new()
-	departure_label.text = "Departed: " + _format_timestamp_display(departure_time_str, false)
+	departure_label.text = "Departed: " + DateTimeUtils.format_timestamp_display(departure_time_str, false)
 	content_vbox.add_child(departure_label)
 
 	# ETA and Time Remaining
 	var eta_str = journey_data.get("eta")
 	var eta_label = Label.new()
-	eta_label.text = "ETA: " + _format_timestamp_display(eta_str, true)
+	eta_label.text = "ETA: " + DateTimeUtils.format_timestamp_display(eta_str, true)
 	content_vbox.add_child(eta_label)
 	content_vbox.add_child(HSeparator.new())
 
@@ -129,6 +140,105 @@ func initialize_with_data(data: Dictionary):
 	if is_instance_valid(scroll_container):
 		scroll_container.call_deferred("update_minimum_size")
 
+func _populate_destination_list():
+	var gdm = get_node_or_null("/root/GameDataManager")
+	if not is_instance_valid(gdm) or not gdm.has_method("get_all_settlements_data"):
+		printerr("ConvoyJourneyMenu: GameDataManager not found or method missing. Cannot populate destinations.")
+		var error_label = Label.new()
+		error_label.text = "Error: Could not load destination data."
+		error_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		content_vbox.add_child(error_label)
+		return
+
+	var all_settlements = gdm.get_all_settlements_data()
+	if all_settlements.is_empty():
+		var no_settlements_label = Label.new()
+		no_settlements_label.text = "No known destinations to travel to."
+		no_settlements_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		content_vbox.add_child(no_settlements_label)
+		return
+
+	var convoy_pos = Vector2(convoy_data_received.get("x", 0.0), convoy_data_received.get("y", 0.0))
+
+	# Create a reverse map from vendor_id to settlement_name for quick lookups.
+	var vendor_to_settlement_map: Dictionary = {}
+	for settlement in all_settlements:
+		if settlement.has("vendors") and settlement.vendors is Array:
+			for vendor in settlement.vendors:
+				if vendor.has("vendor_id"):
+					vendor_to_settlement_map[str(vendor.vendor_id)] = settlement.get("name")
+
+	# Find any mission-specific destinations by resolving recipient IDs to settlement names.
+	var mission_destinations: Dictionary = {}
+	if convoy_data_received.has("vehicle_details_list"):
+		for vehicle in convoy_data_received.get("vehicle_details_list", []):
+			if vehicle.has("cargo"):
+				for cargo_item in vehicle.get("cargo", []):
+					var recipient_id = cargo_item.get("recipient")
+					if recipient_id != null:
+						var recipient_id_str = str(recipient_id)
+						if vendor_to_settlement_map.has(recipient_id_str):
+							var settlement_name = vendor_to_settlement_map[recipient_id_str]
+							# Store the name of the first mission cargo item found for this destination.
+							if not mission_destinations.has(settlement_name):
+								mission_destinations[settlement_name] = cargo_item.get("name", "Mission Cargo")
+
+	var header_label = Label.new()
+	header_label.text = "Choose a Destination:"
+	header_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	content_vbox.add_child(header_label)
+	content_vbox.add_child(HSeparator.new())
+
+	var potential_destinations = []
+	for settlement_data in all_settlements:
+		var settlement_pos = Vector2(settlement_data.get("x", 0.0), settlement_data.get("y", 0.0))
+		
+		# Don't list the current location as a destination. Use squared distance for efficiency.
+		if convoy_pos.distance_squared_to(settlement_pos) < 0.01:
+			continue
+		
+		# Exclude "Tutorial City" as it's not an accessible player destination
+		if settlement_data.get("name", "") == "Tutorial City":
+			continue
+		
+		var distance = convoy_pos.distance_to(settlement_pos)
+		potential_destinations.append({"data": settlement_data, "distance": distance})
+
+	# Sort destinations: mission destinations first, then by distance.
+	potential_destinations.sort_custom(func(a, b):
+		var a_name = a.data.get("name", "")
+		var b_name = b.data.get("name", "")
+		var a_is_mission = mission_destinations.has(a_name)
+		var b_is_mission = mission_destinations.has(b_name)
+
+		if a_is_mission and not b_is_mission:
+			return true # a comes before b
+		if not a_is_mission and b_is_mission:
+			return false # b comes before a
+		
+		# If both are missions or both are not, sort by distance
+		return a.distance < b.distance
+	)
+
+	for destination_entry in potential_destinations:
+		var settlement_data = destination_entry.data
+		var distance = destination_entry.distance
+		var dest_button = Button.new()
+		var settlement_name = settlement_data.get("name", "Unknown")
+		var button_text = "%s (%.1f units)" % [settlement_name, distance]
+		if mission_destinations.has(settlement_name):
+			var cargo_name = mission_destinations[settlement_name]
+			button_text = "[%s] %s" % [cargo_name, button_text]
+		dest_button.text = button_text
+		dest_button.pressed.connect(_on_destination_button_pressed.bind(settlement_data))
+		content_vbox.add_child(dest_button)
+
+	if potential_destinations.is_empty():
+		var at_destination_label = Label.new()
+		at_destination_label.text = "This convoy is already at the only known settlement."
+		at_destination_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		content_vbox.add_child(at_destination_label)
+
 func _get_settlement_name(gdm_node, coord_x, coord_y) -> String:
 	if not is_instance_valid(gdm_node) or not gdm_node.has_method("get_settlement_name_from_coords"):
 		printerr("ConvoyJourneyMenu: GameDataManager not available or method missing for settlement name.")
@@ -141,75 +251,49 @@ func _get_settlement_name(gdm_node, coord_x, coord_y) -> String:
 		return "Uncharted Location"
 	return name
 
-func _format_timestamp_display(timestamp_value, include_remaining_time: bool) -> String:
-	if timestamp_value == null:
-		return "N/A"
-
-	var eta_timestamp_int: int = -1
-
-	if timestamp_value is String:
-		eta_timestamp_int = Time.get_unix_time_from_datetime_string(timestamp_value)
-		if eta_timestamp_int == -1 and timestamp_value.is_valid_int():
-			eta_timestamp_int = timestamp_value.to_int()
-	elif timestamp_value is float:
-		eta_timestamp_int = int(timestamp_value)
-	elif timestamp_value is int:
-		eta_timestamp_int = timestamp_value
-
-	if eta_timestamp_int < 0:
-		return "Invalid Date"
-
-	var current_sys_utc_ts: int = Time.get_unix_time_from_system()
-	var current_sys_local_dict: Dictionary = Time.get_datetime_dict_from_system(false)
-	var current_sys_local_interpreted_as_utc_ts: int = Time.get_unix_time_from_datetime_dict(current_sys_local_dict) # Interprets dict values as if they were UTC
-	var timezone_offset_seconds: int = current_sys_utc_ts - current_sys_local_interpreted_as_utc_ts
-	var timestamp_for_local_display: int = eta_timestamp_int - timezone_offset_seconds
-	var datetime_dict: Dictionary = Time.get_datetime_dict_from_unix_time(timestamp_for_local_display)
-	
-	var month_str = "Unk"
-	if datetime_dict.month >= 1 and datetime_dict.month <= 12:
-		month_str = MONTH_NAMES[datetime_dict.month - 1]
-	
-	var day_val = datetime_dict.day
-	var hour_val = datetime_dict.hour
-	var minute_val = datetime_dict.minute
-	
-	var am_pm_str = "AM"
-	if hour_val >= 12:
-		am_pm_str = "PM"
-	if hour_val > 12:
-		hour_val -= 12
-	elif hour_val == 0:
-		hour_val = 12
-		
-	var display_text = "%s %s, %d:%02d %s" % [month_str, day_val, hour_val, minute_val, am_pm_str]
-
-	if include_remaining_time:
-		var time_remaining_seconds = eta_timestamp_int - current_sys_utc_ts
-		if time_remaining_seconds > 0:
-			var days_remaining = floor(time_remaining_seconds / (24.0 * 3600.0))
-			var hours_remaining = floor(fmod(time_remaining_seconds, (24.0 * 3600.0)) / 3600.0)
-			var minutes_remaining = floor(fmod(time_remaining_seconds, 3600.0) / 60.0)
-			
-			var time_remaining_str_parts = []
-			if days_remaining > 0: time_remaining_str_parts.append("%dd" % days_remaining)
-			if hours_remaining > 0: time_remaining_str_parts.append("%dh" % hours_remaining)
-			if minutes_remaining > 0 or (days_remaining == 0 and hours_remaining == 0):
-				time_remaining_str_parts.append("%dm" % minutes_remaining)
-			
-			if not time_remaining_str_parts.is_empty():
-				display_text += " (%s remaining)" % " ".join(time_remaining_str_parts)
-			else: # Less than a minute
-				display_text += " (Arriving Soon)"
-		elif time_remaining_seconds <= 0 and time_remaining_seconds > -300: # Within last 5 mins
-			display_text += " (Now)"
-		else: # Arrived
-			display_text += " (Arrived)"
-			
-	return display_text
-
 func _on_title_label_gui_input(event: InputEvent):
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
 		print("ConvoyJourneyMenu: Title clicked. Emitting 'return_to_convoy_overview_requested'.")
 		emit_signal("return_to_convoy_overview_requested", convoy_data_received)
 		get_viewport().set_input_as_handled()
+
+func _on_destination_button_pressed(destination_data: Dictionary):
+	print("ConvoyJourneyMenu: Destination '%s' selected. Requesting route choices." % destination_data.get("name"))
+	
+	var gdm = get_node_or_null("/root/GameDataManager")
+	if is_instance_valid(gdm) and gdm.has_method("request_route_choices"):
+		var convoy_id = str(convoy_data_received.get("convoy_id"))
+		var dest_x = int(destination_data.get("x"))
+		var dest_y = int(destination_data.get("y"))
+		gdm.request_route_choices(convoy_id, dest_x, dest_y)
+	else:
+		printerr("ConvoyJourneyMenu: Could not find GameDataManager or 'request_route_choices' method.")
+
+	emit_signal("find_route_requested", convoy_data_received, destination_data)
+
+func _on_route_info_ready(convoy_data: Dictionary, destination_data: Dictionary, route_choices: Array):
+	# If a route selection menu already exists for some reason, remove it.
+	if is_instance_valid(_route_selection_menu_instance):
+		_route_selection_menu_instance.queue_free()
+
+	_route_selection_menu_instance = RouteSelectionMenuScene.instantiate()
+	add_child(_route_selection_menu_instance)
+
+	# The `convoy_data` from the signal may be minimal. Use the locally stored
+	# `convoy_data_received` which is guaranteed to have the full vehicle details list.
+	_route_selection_menu_instance.initialize_with_data(convoy_data_received, destination_data, route_choices)
+
+	_route_selection_menu_instance.back_requested.connect(_on_route_selection_back_requested)
+	_route_selection_menu_instance.embark_requested.connect(_on_route_selection_embark_requested)
+
+func _on_route_selection_back_requested():
+	if is_instance_valid(_route_selection_menu_instance):
+		_route_selection_menu_instance.queue_free()
+		_route_selection_menu_instance = null
+	# This menu was never hidden, so no need to re-show it.
+
+func _on_route_selection_embark_requested(convoy_id: String, journey_id: String):
+	var gdm = get_node_or_null("/root/GameDataManager")
+	if is_instance_valid(gdm):
+		gdm.start_convoy_journey(convoy_id, journey_id)
+	# The journey_started signal will be handled elsewhere to close menus/update UI
