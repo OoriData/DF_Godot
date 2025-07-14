@@ -1,5 +1,8 @@
 extends Control
 
+## The UI element at the top of the screen that menus should not overlap.
+@export var user_info_display: Control
+
 # Preload your actual menu scene files here once you create them
 var convoy_menu_scene = preload("res://Scenes/ConvoyMenu.tscn")
 # ADD PRELOADS FOR SUB-MENUS (ensure these paths match your new scenes)
@@ -133,9 +136,14 @@ func _show_menu(menu_scene_resource, data_to_pass = null, add_to_stack: bool = t
 	if data_to_pass: # Optional: store context for "back"
 		current_active_menu.set_meta("menu_data", data_to_pass)
 
-	# Now, set layout. The menu should have its content initialized.
+	# Now, set layout. The menu should have its content initialized. We'll account for the top UI bar.
 	if current_active_menu is Control:
 		var menu_node_control = current_active_menu # Use a more descriptive variable name
+		
+		var top_margin = 0.0
+		if is_instance_valid(user_info_display) and user_info_display.is_visible_in_tree():
+			top_margin = user_info_display.size.y
+			
 		if use_convoy_style_layout:
 			# Layout for ConvoyMenu: right 2/3rds of the screen.
 			# These anchors are relative to MenuManager's own bounds.
@@ -145,7 +153,7 @@ func _show_menu(menu_scene_resource, data_to_pass = null, add_to_stack: bool = t
 			menu_node_control.anchor_bottom = 1.0
 			menu_node_control.offset_left = 0
 			menu_node_control.offset_right = 0
-			menu_node_control.offset_top = 0
+			menu_node_control.offset_top = top_margin
 			menu_node_control.offset_bottom = 0
 		elif false: # Example for a different menu layout if needed in future
 			# Specific layout for ConvoyMenu: stick to right-middle of the parent (MenuManager)
@@ -171,12 +179,14 @@ func _show_menu(menu_scene_resource, data_to_pass = null, add_to_stack: bool = t
 			# This positions the menu's top-left corner such that the menu is
 			# aligned to the right edge and centered vertically.
 			menu_node_control.offset_left = -menu_size.x
-			menu_node_control.offset_right = 0 # Results in width = menu_size.x
-			menu_node_control.offset_top = -menu_size.y / 2.0
-			menu_node_control.offset_bottom = menu_size.y / 2.0 # Results in height = menu_size.y
+			menu_node_control.offset_right = 0 # Results in width = menu_size.x.
+			# Center in the remaining vertical space below the top bar.
+			menu_node_control.offset_top = -menu_size.y / 2.0 + top_margin / 2.0
+			menu_node_control.offset_bottom = menu_size.y / 2.0 + top_margin / 2.0
 		else:
 			# Default for other menus: fill the parent (MenuManager)
 			menu_node_control.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+			menu_node_control.offset_top = top_margin
 
 	# A menu is now active. Allow this manager to receive clicks on its background
 	# so they can be passed up to main.gd to handle closing the menu.
