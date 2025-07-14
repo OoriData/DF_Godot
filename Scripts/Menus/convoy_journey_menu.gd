@@ -13,6 +13,7 @@ var _route_selection_menu_instance: Control = null
 @onready var scroll_container: ScrollContainer = $MainVBox/ScrollContainer
 @onready var content_vbox: VBoxContainer = $MainVBox/ScrollContainer/ContentVBox
 @onready var back_button: Button = $MainVBox/BackButton
+@onready var main_vbox: VBoxContainer = $MainVBox
 
 # Preload the scene for the route selection menu
 const RouteSelectionMenuScene = preload("res://Scenes/RouteSelectionMenu.tscn")
@@ -135,10 +136,6 @@ func initialize_with_data(data: Dictionary):
 	progress_bar.custom_minimum_size.y = 20
 	progress_bar.value = progress_percentage
 	content_vbox.add_child(progress_bar)
-
-	call_deferred("update_minimum_size")
-	if is_instance_valid(scroll_container):
-		scroll_container.call_deferred("update_minimum_size")
 
 func _populate_destination_list():
 	var gdm = get_node_or_null("/root/GameDataManager")
@@ -276,6 +273,9 @@ func _on_route_info_ready(convoy_data: Dictionary, destination_data: Dictionary,
 	if is_instance_valid(_route_selection_menu_instance):
 		_route_selection_menu_instance.queue_free()
 
+	# Hide the main content of this menu so it doesn't show behind the route selection.
+	main_vbox.hide()
+
 	_route_selection_menu_instance = RouteSelectionMenuScene.instantiate()
 	add_child(_route_selection_menu_instance)
 
@@ -290,7 +290,9 @@ func _on_route_selection_back_requested():
 	if is_instance_valid(_route_selection_menu_instance):
 		_route_selection_menu_instance.queue_free()
 		_route_selection_menu_instance = null
-	# This menu was never hidden, so no need to re-show it.
+	
+	# Re-show the main content of this menu.
+	main_vbox.show()
 
 func _on_route_selection_embark_requested(convoy_id: String, journey_id: String):
 	var gdm = get_node_or_null("/root/GameDataManager")

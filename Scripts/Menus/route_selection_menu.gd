@@ -4,13 +4,13 @@ signal embark_requested(convoy_id, journey_id)
 signal back_requested
 
 # --- Node References ---
-@onready var destination_value: Label = $MainVBox/DetailsGrid/DestinationValue
-@onready var distance_value: Label = $MainVBox/DetailsGrid/DistanceValue
-@onready var eta_value: Label = $MainVBox/DetailsGrid/ETAValue
-@onready var fuel_value: Label = $MainVBox/ExpensesGrid/FuelValue
-@onready var water_value: Label = $MainVBox/ExpensesGrid/WaterValue
-@onready var food_value: Label = $MainVBox/ExpensesGrid/FoodValue
-@onready var vehicle_expenses_vbox: VBoxContainer = $MainVBox/VehicleExpensesVBox
+@onready var destination_value: Label = $MainVBox/ColumnsHBox/RightColumn/DetailsGrid/DestinationValue
+@onready var distance_value: Label = $MainVBox/ColumnsHBox/RightColumn/DetailsGrid/DistanceValue
+@onready var eta_value: Label = $MainVBox/ColumnsHBox/RightColumn/DetailsGrid/ETAValue
+@onready var fuel_value: Label = $MainVBox/ColumnsHBox/LeftColumn/ExpensesGrid/FuelValue
+@onready var water_value: Label = $MainVBox/ColumnsHBox/LeftColumn/ExpensesGrid/WaterValue
+@onready var food_value: Label = $MainVBox/ColumnsHBox/LeftColumn/ExpensesGrid/FoodValue
+@onready var vehicle_expenses_vbox: VBoxContainer = $MainVBox/ColumnsHBox/LeftColumn/ScrollContainer/VehicleExpensesVBox
 @onready var back_button: Button = $MainVBox/ButtonsHBox/BackButton
 @onready var embark_button: Button = $MainVBox/ButtonsHBox/EmbarkButton
 
@@ -61,14 +61,8 @@ func _populate_vehicle_expenses():
 	for child in vehicle_expenses_vbox.get_children():
 		child.queue_free()
 
-	# Energy costs are in a dictionary called 'kwh_expenses'.
 	var kwh_expenses_dict: Dictionary = _route_data.get("kwh_expenses", {})
-	if kwh_expenses_dict.is_empty():
-		var no_cost_label = Label.new()
-		no_cost_label.text = "No vehicle energy costs."
-		no_cost_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		vehicle_expenses_vbox.add_child(no_cost_label)
-		return
+	var any_vehicle_shown = false
 
 	for vehicle_id in kwh_expenses_dict:
 		var energy_cost = kwh_expenses_dict[vehicle_id]
@@ -84,7 +78,7 @@ func _populate_vehicle_expenses():
 			continue
 
 		var vehicle_name = vehicle_details.get("name", "Unknown Vehicle")
-		
+
 		# Find the battery in the vehicle's cargo to get energy details.
 		var current_energy = 0.0
 		var max_energy = 1.0 # Default to 1 to avoid division by zero
@@ -100,12 +94,19 @@ func _populate_vehicle_expenses():
 
 		# The actual expense for the journey cannot exceed the energy currently available.
 		var capped_energy_cost = min(energy_cost, current_energy)
+
+		# If the actual, capped expense is zero, don't show this vehicle.
+		if capped_energy_cost <= 0.0:
+			continue
+
 		var remaining_charge = current_energy - capped_energy_cost
 
 		# Choose an emoji based on the remaining charge percentage.
 		var batt_emoji = "🔋" # Default: charged
 		if remaining_charge <= (max_energy * 0.2):
 			batt_emoji = "🪫" # Low battery
+
+		any_vehicle_shown = true
 
 		var expense_label = Label.new()
 		expense_label.text = "%s 🛻 kWh expense: %s kWh %s" % [vehicle_name, _format_resource_value(capped_energy_cost), batt_emoji]
@@ -121,6 +122,12 @@ func _populate_vehicle_expenses():
 		sub_label.text = "(%s / %s kWh)" % [_format_resource_value(remaining_charge), _format_resource_value(max_energy)]
 		sub_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 		vehicle_expenses_vbox.add_child(sub_label)
+
+	if not any_vehicle_shown:
+		var no_cost_label = Label.new()
+		no_cost_label.text = "No vehicle energy costs."
+		no_cost_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		vehicle_expenses_vbox.add_child(no_cost_label)
 
 func _format_resource_value(value: float) -> String:
 	# Display one decimal place for non-zero values under 10, otherwise show as integer.
