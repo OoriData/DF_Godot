@@ -45,6 +45,10 @@ var _refresh_notification_label: Label  # For the "Data Refreshed" notification
 var _current_hover_info: Dictionary = {}  # Will be updated by MapInteractionManager signal
 var _selected_convoy_ids: Array[String] = []  # Will be updated by MapInteractionManager signal
 
+var _route_preview_highlight_data: Array = [] # Stores points for the preview highlight
+var _is_in_route_preview_mode: bool = false # Flag to indicate preview is active
+var _preview_started_this_frame: bool = false # Race condition guard for route preview
+
 ## Initial state for toggling detailed map features (grid & political colors) on or off.
 @export_group("Camera Focusing")
 @export var convoy_focus_zoom_target_tiles_wide: float = 100 # Example: Increased further to zoom out more
@@ -529,6 +533,16 @@ func get_map_viewport_container_global_rect() -> Rect2:
 	return get_viewport().get_visible_rect() # Fallback if MapView isn't in a ViewportContainer
 
 func _update_map_display(force_rerender_map_texture: bool = true, is_light_ui_update: bool = false):
+	# --- FIX for Route Preview ---
+	# If a call comes in to do a cheap update (force_rerender=false) while we are in a state
+	# that has just requested an expensive update (_is_in_route_preview_mode=true), we must
+	# ignore the cheap update. This prevents the visual tick's frequent call with `force_rerender=false`
+	# from cancelling out the single, crucial `force_rerender=true` call needed to show the preview.
+	if _is_in_route_preview_mode and not force_rerender_map_texture:
+		# A preview is active and requires a texture re-render. This call is trying to
+		# update the UI without re-rendering, so we block it to allow the proper re-render to proceed.
+		return
+
 	# print("Main: _update_map_display() CALLED - TOP") # DEBUG
 
 	var render_result: Dictionary = {} # Declare at function scope to avoid 'locals()' which doesn't exist.
@@ -647,6 +661,18 @@ func _update_map_display(force_rerender_map_texture: bool = true, is_light_ui_up
 		var highlights_for_render: Array = []
 		highlights_for_render.append_array(non_selected_highlights)
 		highlights_for_render.append_array(selected_highlights)
+
+		# NEW: Add route preview highlight if active. This is drawn on top of existing lines.
+		if _is_in_route_preview_mode and not _route_preview_highlight_data.is_empty():
+			var preview_line_obj = {
+				"type": "journey_path", # Use the same type as other paths for consistent drawing
+				"points": _route_preview_highlight_data,
+				"color": Color.YELLOW.lightened(0.2), # A distinct, bright color for the preview
+				"is_selected": true, # Use selected styling (e.g., thicker line)
+				"is_preview": true # Custom flag in case map_render.gd wants to treat it differently
+			}
+			highlights_for_render.append(preview_line_obj)
+
 
 		# print("Main: Final highlights_for_render before calling map_renderer_node.render_map: ", highlights_for_render) # DEBUG - Commented out, very verbose
 
@@ -935,9 +961,10 @@ func _process(_delta: float): # Keep _process for potential future needs or if U
 	# via signals or direct calls if necessary.
 	# For now, _update_map_display is called when data changes or on timers.
 	# If UI elements need to react to continuous camera movement (e.g. for culling),
-	# that logic would go into the UIManager or the elements themselves,
-	# potentially driven by a signal from MapInteractionManager if the camera moves.
-	pass
+	# that logic would go into the UIManager or the elements themselves.
+	
+	# Reset the preview start flag at the end of every frame's processing.
+	_preview_started_this_frame = false
 
 
 func _update_refresh_notification_position():
@@ -1153,11 +1180,22 @@ func _on_menu_opened_for_camera_focus(menu_node: Node, menu_type: String):
 
 	# MODIFIED: Added "convoy_settlement_submenu" and "convoy_overview"
 	if menu_type == "convoy_detail" or \
-	   menu_type == "convoy_journey_menu" or \
 	   menu_type == "convoy_settlement_submenu" or \
 	   menu_type == "convoy_overview":
 		# Defer the focusing logic to ensure GameScreenManager has resized the viewport.
+		# NOTE: "convoy_journey_menu" is handled by its own route preview logic, so it's excluded here.
 		call_deferred("_execute_convoy_focus_logic", menu_node)
+
+
+	# NEW: Connect to route preview signals if it's the right menu
+	if menu_type == "convoy_journey_menu": # This is the type for RouteSelectionMenu
+		if menu_node.has_signal("route_preview_started"):
+			if not menu_node.is_connected("route_preview_started", _on_route_preview_started):
+				menu_node.route_preview_started.connect(_on_route_preview_started)
+		if menu_node.has_signal("route_preview_ended"):
+			if not menu_node.is_connected("route_preview_ended", _on_route_preview_ended):
+				menu_node.route_preview_ended.connect(_on_route_preview_ended)
+
 
 func _execute_convoy_focus_logic(menu_node: Node):
 
@@ -1256,6 +1294,8 @@ func _on_all_menus_closed(): # Renamed from _on_menus_completely_closed for clar
 	# print("Main (MapView): All menus are closed. Resuming map interactions.")
 	# MapView visibility and input processing are now implicitly handled by its parent SubViewportContainer's state,
 	# which is controlled by GameScreenManager.
+
+
 
 	# Reset the menu manager's offset when all menus are closed.
 	if is_instance_valid(menu_manager_ref):
@@ -1359,3 +1399,119 @@ func update_map_render_bounds(_new_bounds_global_rect: Rect2) -> void:
 	# The _new_bounds_global_rect parameter isn't directly used here because
 	# _on_viewport_size_changed recalculates it using get_map_viewport_container_global_rect().
 	_on_viewport_size_changed()
+
+# --- Route Preview Handlers ---
+
+func _on_route_preview_started(route_data: Dictionary):
+	"""Handles zooming and highlighting when a route preview is requested."""
+	# Set the single-frame guard flag to true. This prevents a simultaneous `_ended`
+	# signal from clearing the preview state before it can be rendered.
+	_preview_started_this_frame = true
+	
+	_is_in_route_preview_mode = true
+	
+	var journey_details = route_data.get("journey", {})
+	var route_x = journey_details.get("route_x", [])
+	var route_y = journey_details.get("route_y", [])
+
+	if route_x.is_empty() or route_y.is_empty():
+		printerr("Main: Route preview started with no route points.")
+		return
+
+	# 1. Prepare highlight data
+	_route_preview_highlight_data.clear()
+	for i in range(route_x.size()):
+		_route_preview_highlight_data.append(Vector2(float(route_x[i]), float(route_y[i])))
+
+	# 2. Focus camera on the route
+	# We defer this call to ensure the viewport has been resized by GameScreenManager first.
+	call_deferred("_focus_camera_on_route", route_data)
+
+	# 3. Trigger map re-render with the new highlight
+	call_deferred("_update_map_display", true)
+
+func _on_route_preview_ended():
+	"""Handles cleaning up the preview when the menu is closed or a choice is made."""
+	# RACE CONDITION GUARD: If a preview was just started in this same frame,
+	# ignore this 'ended' signal. This handles cases where menu logic might
+	# erroneously fire both signals at once.
+	if _preview_started_this_frame:
+		return
+	if not _is_in_route_preview_mode:
+		return # Avoid redundant updates if already ended
+
+	_is_in_route_preview_mode = false
+	_route_preview_highlight_data.clear()
+
+	# Re-render the map to remove the highlight
+	_update_map_display(true)
+
+	# Optional: Restore camera focus. For now, we'll let the camera stay.
+	# When the menu stack closes, the view will be whatever it was.
+
+func _focus_camera_on_route(route_data: Dictionary):
+	"""Calculates the bounding box of a route and tells the camera to frame it."""
+	var journey_details = route_data.get("journey", {})
+	var route_x = journey_details.get("route_x", [])
+	var route_y = journey_details.get("route_y", [])
+
+	if route_x.is_empty() or route_y.is_empty() or \
+	   not is_instance_valid(map_camera) or \
+	   not is_instance_valid(map_display) or not is_instance_valid(map_display.texture) or \
+	   map_tiles.is_empty() or not map_tiles[0] is Array or map_tiles[0].is_empty() or \
+	   not is_instance_valid(map_container):
+		printerr("Main: Cannot focus on route, essential nodes or data are missing.")
+		return
+
+	# Find bounding box of the route in tile coordinates
+	var min_tile_x = route_x[0]
+	var max_tile_x = route_x[0]
+	var min_tile_y = route_y[0]
+	var max_tile_y = route_y[0]
+
+	for i in range(1, route_x.size()):
+		min_tile_x = min(min_tile_x, route_x[i])
+		max_tile_x = max(max_tile_x, route_x[i])
+		min_tile_y = min(min_tile_y, route_y[i])
+		max_tile_y = max(max_tile_y, route_y[i])
+
+	# Get map and tile dimensions in world space
+	var map_initial_world_size = map_display.custom_minimum_size
+	var map_cols: int = map_tiles[0].size()
+	var map_rows: int = map_tiles.size()
+
+	if map_cols <= 0 or map_rows <= 0 or map_initial_world_size.x <= 0 or map_initial_world_size.y <= 0:
+		printerr("Main: Cannot calculate route focus due to invalid map dimensions.")
+		return
+
+	var tile_world_width: float = map_initial_world_size.x / float(map_cols)
+	var tile_world_height: float = map_initial_world_size.y / float(map_rows)
+
+	# Calculate the route's bounding box center in MapView's local space
+	var route_center_tile_x = (min_tile_x + max_tile_x) / 2.0
+	var route_center_tile_y = (min_tile_y + max_tile_y) / 2.0
+	var route_center_local_to_map_container: Vector2 = Vector2((route_center_tile_x + 0.5) * tile_world_width, (route_center_tile_y + 0.5) * tile_world_height)
+	var camera_target_mapview_local: Vector2 = map_container.position + route_center_local_to_map_container
+
+	# Calculate the required zoom to fit the entire route with some padding
+	var padding_tiles = 4.0 # Add a small border around the route
+	var route_width_in_tiles = (max_tile_x - min_tile_x) + padding_tiles
+	var route_height_in_tiles = (max_tile_y - min_tile_y) + padding_tiles
+
+	var world_width_to_display: float = route_width_in_tiles * tile_world_width
+	var world_height_to_display: float = route_height_in_tiles * tile_world_height
+
+	var map_view_current_rect = get_viewport().get_visible_rect()
+	if world_width_to_display <= 0.001 or world_height_to_display <= 0.001 or map_view_current_rect.size.x <= 0.001 or map_view_current_rect.size.y <= 0.001:
+		printerr("FocusDebug: Critical value for route zoom calculation is too small. Aborting zoom.")
+		return
+
+	var target_zoom_x: float = map_view_current_rect.size.x / world_width_to_display
+	var target_zoom_y: float = map_view_current_rect.size.y / world_height_to_display
+	var final_target_zoom_scalar: float = min(target_zoom_x, target_zoom_y)
+
+	# Tell MapInteractionManager to perform the focus and zoom
+	if is_instance_valid(map_interaction_manager) and map_interaction_manager.has_method("focus_camera_and_set_zoom"):
+		map_interaction_manager.focus_camera_and_set_zoom(camera_target_mapview_local, final_target_zoom_scalar)
+	else:
+		printerr("Main: MapInteractionManager invalid or missing focus_camera_and_set_zoom method.")

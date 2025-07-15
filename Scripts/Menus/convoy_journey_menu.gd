@@ -4,9 +4,16 @@ extends Control
 signal back_requested
 signal find_route_requested(convoy_data, destination_data)
 signal return_to_convoy_overview_requested(convoy_data)
+signal route_preview_started(route_data)
+signal route_preview_ended
 
 var convoy_data_received: Dictionary
 var _route_selection_menu_instance: Control = null
+
+# --- Route Preview State ---
+var _all_route_choices: Array = []
+var _current_route_index: int = 0
+var _destination_data: Dictionary = {}
 
 # @onready variables for UI elements
 @onready var title_label: Label = $MainVBox/TitleLabel
@@ -44,12 +51,18 @@ func _ready():
 		if is_instance_valid(placeholder):
 			placeholder.queue_free()
 
+func _notification(what):
+	if what == NOTIFICATION_PREDELETE:
+		# Ensure preview is cleaned up if this menu is closed unexpectedly.
+		emit_signal("route_preview_ended")
+
 func _on_back_button_pressed():
 	print("ConvoyJourneyMenu: Back button pressed. Emitting 'back_requested' signal.")
 	# If the route selection menu is open, this back button shouldn't be clickable,
 	# but as a safeguard, we ensure it's closed if we go back.
 	if is_instance_valid(_route_selection_menu_instance):
 		_route_selection_menu_instance.queue_free()
+		emit_signal("route_preview_ended") # Clean up the preview
 	emit_signal("back_requested")
 
 func _process(delta: float):
@@ -269,6 +282,11 @@ func _on_destination_button_pressed(destination_data: Dictionary):
 	emit_signal("find_route_requested", convoy_data_received, destination_data)
 
 func _on_route_info_ready(convoy_data: Dictionary, destination_data: Dictionary, route_choices: Array):
+	if route_choices.is_empty():
+		printerr("ConvoyJourneyMenu: Received no route choices. Cannot show preview.")
+		# Optionally, show an error to the user here.
+		return
+
 	# If a route selection menu already exists for some reason, remove it.
 	if is_instance_valid(_route_selection_menu_instance):
 		_route_selection_menu_instance.queue_free()
@@ -276,15 +294,36 @@ func _on_route_info_ready(convoy_data: Dictionary, destination_data: Dictionary,
 	# Hide the main content of this menu so it doesn't show behind the route selection.
 	main_vbox.hide()
 
+	# Store route data for cycling
+	_all_route_choices = route_choices
+	_current_route_index = 0
+	_destination_data = destination_data
+
 	_route_selection_menu_instance = RouteSelectionMenuScene.instantiate()
 	add_child(_route_selection_menu_instance)
 
-	# The `convoy_data` from the signal may be minimal. Use the locally stored
-	# `convoy_data_received` which is guaranteed to have the full vehicle details list.
-	_route_selection_menu_instance.initialize_with_data(convoy_data_received, destination_data, route_choices)
-
+	# Connect signals for cycling, embarking, and going back
 	_route_selection_menu_instance.back_requested.connect(_on_route_selection_back_requested)
 	_route_selection_menu_instance.embark_requested.connect(_on_route_selection_embark_requested)
+
+	# Show the preview for the first route immediately.
+	_show_current_route_preview()
+
+func _show_current_route_preview():
+	"""Updates the route selection menu and tells the map to preview the currently selected route."""
+	if _all_route_choices.is_empty() or not is_instance_valid(_route_selection_menu_instance):
+		return
+
+	# Ensure the index is within the valid range.
+	_current_route_index = clamp(_current_route_index, 0, _all_route_choices.size() - 1)
+	var current_route_data = _all_route_choices[_current_route_index]
+
+	# 1. Update the UI of the route selection menu with the current route's details.
+	_route_selection_menu_instance.display_route_details(convoy_data_received, _destination_data, current_route_data)
+
+	# 2. Emit the signal to make the map show the preview line and focus the camera.
+	# We defer this to ensure the menu UI is fully set up before the map tries to zoom/pan.
+	call_deferred("emit_signal", "route_preview_started", current_route_data)
 
 func _on_route_selection_back_requested():
 	if is_instance_valid(_route_selection_menu_instance):
@@ -293,9 +332,15 @@ func _on_route_selection_back_requested():
 	
 	# Re-show the main content of this menu.
 	main_vbox.show()
+	
+	# Tell the map to stop showing the preview line.
+	emit_signal("route_preview_ended")
 
 func _on_route_selection_embark_requested(convoy_id: String, journey_id: String):
 	var gdm = get_node_or_null("/root/GameDataManager")
 	if is_instance_valid(gdm):
 		gdm.start_convoy_journey(convoy_id, journey_id)
 	# The journey_started signal will be handled elsewhere to close menus/update UI
+
+	# Also end the preview, as the user has now committed to a route.
+	emit_signal("route_preview_ended")

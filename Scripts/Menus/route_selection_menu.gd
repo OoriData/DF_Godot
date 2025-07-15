@@ -22,16 +22,23 @@ func _ready():
 	back_button.pressed.connect(_on_back_button_pressed)
 	embark_button.pressed.connect(_on_embark_button_pressed)
 
-func initialize_with_data(p_convoy_data: Dictionary, p_destination_data: Dictionary, p_route_choices: Array):
-	if p_route_choices.is_empty():
-		printerr("RouteSelectionMenu: Initialized with no route choices. Cannot display.")
+func _notification(what):
+	if what == NOTIFICATION_PREDELETE:
+		# The parent menu is now responsible for cleaning up the preview.
+		pass
+
+func display_route_details(p_convoy_data: Dictionary, p_destination_data: Dictionary, p_route_data: Dictionary):
+	"""Displays the details for a single, specific route."""
+	if p_route_data.is_empty():
+		printerr("RouteSelectionMenu: display_route_details called with no route data. Cannot display.")
 		# In a real scenario, you might show an error message here.
 		queue_free() # Or hide and emit back signal
 		return
 
 	_convoy_data = p_convoy_data
-	# For this prototype, we always select the first route.
-	_route_data = p_route_choices[0]
+	# This menu now only knows about the one route it was given.
+	_route_data = p_route_data
+
 	var journey_details = _route_data.get("journey", {})
 
 	# --- Populate UI ---

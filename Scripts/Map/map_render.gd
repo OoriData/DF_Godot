@@ -167,6 +167,8 @@ extends Node
 @export var journey_line_thickness: int = 5 
 ## Thickness for selected convoy journey lines. Scaled. (e.g., reduced from 9)
 @export var selected_journey_line_thickness: int = 6 
+## Multiplier for the thickness of a journey preview line, based on the selected line thickness.
+@export var journey_preview_line_thickness_multiplier: float = 1.5 
 ## Extra thickness on each side for the outline of selected journey lines. Scaled. (e.g., reduced from 3)
 @export var selected_journey_line_outline_extra_thickness_each_side: int = 1 
 ## Extra thickness on each side for the outline of regular journey lines. Scaled.
@@ -876,15 +878,23 @@ func render_map(
 				var convoy_id_for_map = highlight_item.get("convoy_id", "") # Get convoy_id
 				var line_color: Color = highlight_item.get("color", Color.WHITE)
 				var is_selected_path: bool = highlight_item.get("is_selected", false)
+				var is_preview_path: bool = highlight_item.get("is_preview", false)
 				var convoy_seg_start_idx: int = highlight_item.get("convoy_segment_start_idx", -1)
 				var progress_in_curr_seg: float = highlight_item.get("progress_in_current_segment", 0.0) # Default to 0.0
 				
 				# Determine base thickness using map_render.gd's own exported variables
 				var base_thickness_for_scaling: int = selected_journey_line_thickness if is_selected_path else self.journey_line_thickness
+				var base_extra_thickness_per_side: int = selected_journey_line_outline_extra_thickness_each_side if is_selected_path else journey_line_outline_extra_thickness_each_side
+
+				if is_preview_path:
+					# For previews, we want them to be extra thick.
+					# We'll base it on the selected thickness and multiply it.
+					base_thickness_for_scaling = int(round(float(selected_journey_line_thickness) * journey_preview_line_thickness_multiplier))
+					# Also make the outline a bit beefier for previews
+					base_extra_thickness_per_side = int(round(float(selected_journey_line_outline_extra_thickness_each_side) * journey_preview_line_thickness_multiplier))
 				
 				var scaled_current_line_thickness = max(1, int(round(reference_float_tile_size_for_offsets * (float(base_thickness_for_scaling) / base_tile_size_for_proportions))))
 				
-				var base_extra_thickness_per_side: int = selected_journey_line_outline_extra_thickness_each_side if is_selected_path else journey_line_outline_extra_thickness_each_side
 				var base_total_thickness_for_outline_pass: int = base_thickness_for_scaling + (2 * base_extra_thickness_per_side)
 				var scaled_total_thickness_for_outline_pass: int = max(1, int(round(reference_float_tile_size_for_offsets * (float(base_total_thickness_for_outline_pass) / base_tile_size_for_proportions))))
 
