@@ -101,7 +101,7 @@ func _physics_process(_delta: float):
 	if camera_node.zoom.x <= 0 or camera_node.zoom.y <= 0:
 		return
 
-	# Use the current map screen rect size instead of full viewport size
+	# Always use the full viewport size for clamping
 	var viewport_render_size_pixels: Vector2 = current_map_screen_rect_ref.size
 	var viewport_size_world: Vector2 = viewport_render_size_pixels / camera_node.zoom
 

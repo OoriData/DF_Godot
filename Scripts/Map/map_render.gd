@@ -898,8 +898,12 @@ func render_map(
 				var base_total_thickness_for_outline_pass: int = base_thickness_for_scaling + (2 * base_extra_thickness_per_side)
 				var scaled_total_thickness_for_outline_pass: int = max(1, int(round(reference_float_tile_size_for_offsets * (float(base_total_thickness_for_outline_pass) / base_tile_size_for_proportions))))
 
+				# Ensure path_tile_coords is Array[Vector2] for _calculate_offset_pixel_path
+				var path_tile_coords_v2: Array[Vector2] = []
+				for v in path_tile_coords:
+					path_tile_coords_v2.append(Vector2(v.x, v.y))
 				var offset_pixel_points: Array[Vector2i] = _calculate_offset_pixel_path(
-					path_tile_coords, # original_map_coords_path (Array[Vector2])
+					path_tile_coords_v2, # now Array[Vector2]
 					convoy_id_for_map,
 					shared_segments_data,
 					scaled_journey_line_offset_step_pixels, # base_offset_pixel_magnitude

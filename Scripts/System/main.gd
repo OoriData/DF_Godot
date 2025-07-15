@@ -251,7 +251,7 @@ func _ready():
 		convoy_visuals_manager.initialize(map_container, map_renderer_node)
 		# print("Main: ConvoyVisualsManager initialized.")
 	else:
-		printerr("Main: ConvoyVisualsManager node not found, invalid, or missing 'initialize' method.")
+		printerr("Main: ConvoyVisualsManager node not found or invalid. Path used: $ConvoyVisualsManager")
 
 
 	# map_display is now child of map_container, its position is (0,0) relative to map_container
@@ -346,6 +346,32 @@ func _ready():
 	_is_ready = true
 	print("[DIAGNOSTIC_LOG | main.gd] _ready(): Finished. _is_ready is now true.")
 
+func _focus_camera_on_convoy_or_route(convoy_world_position: Vector2, zoom_scalar: float):
+	# Center the convoy in the visible map area (map viewport)
+	var map_viewport_rect_global: Rect2 = get_map_viewport_container_global_rect()
+	var map_viewport_center_world: Vector2 = map_viewport_rect_global.position + map_viewport_rect_global.size / 2.0
+	print("[DIAGNOSTIC_LOG | main.gd] _focus_camera_on_convoy_or_route:")
+	print("  - map_viewport_rect_global: position = %s, size = %s" % [map_viewport_rect_global.position, map_viewport_rect_global.size])
+	print("  - map_viewport_center_world: %s" % map_viewport_center_world)
+	print("  - convoy_world_position: %s" % convoy_world_position)
+	print("  - zoom_scalar: %s" % zoom_scalar)
+
+	var camera_target_world: Vector2 = convoy_world_position
+	# If a convoy menu is open, offset the camera so the convoy appears in the center of the left 1/3rd
+	if is_instance_valid(menu_manager_ref) and menu_manager_ref.has_method("is_any_menu_active") and menu_manager_ref.is_any_menu_active():
+		var offset_x = map_viewport_rect_global.size.x * (1.0 / 3.0) * 0.5
+		map_viewport_center_world = map_viewport_rect_global.position + Vector2(offset_x, map_viewport_rect_global.size.y * 0.5)
+		var delta = convoy_world_position - map_viewport_center_world
+		# Center the camera so the convoy appears at the center of the left 1/3rd
+		camera_target_world = map_viewport_rect_global.position + Vector2(offset_x, map_viewport_rect_global.size.y * 0.5) + delta
+		print("  - camera_target_world (offset for menu): %s" % camera_target_world)
+	else:
+		print("  - camera_target_world (direct): %s" % camera_target_world)
+
+	if is_instance_valid(map_interaction_manager) and map_interaction_manager.has_method("focus_camera_and_set_zoom"):
+		map_interaction_manager.focus_camera_and_set_zoom(camera_target_world, zoom_scalar)
+	else:
+		printerr("Main: MapInteractionManager invalid or missing focus_camera_and_set_zoom method.")
 
 func _on_ui_scale_changed(new_scale: float):
 	# Force camera bounds update when UI scale changes
@@ -802,12 +828,6 @@ func _on_gdm_convoy_data_updated(p_augmented_convoy_data: Array) -> void:
 	# This part is tricky because _update_map_display can be called with force_rerender_map_texture = false.
 	# For now, assume if _on_gdm_convoy_data_updated is called, we *want* to re-render map for new lines.
 	# The _trigger_convoy_visuals_update will be called within _update_map_display if map is re-rendered.
-	# If map is NOT re-rendered, then icon positions aren't recalculated by map_render.
-	# This implies _trigger_convoy_visuals_update should ideally get positions from map_render's output.
-	# Map texture DOES need to be re-rendered if journey lines are drawn on it and convoy data changes.
-	# The 'false' for is_light_ui_update means a full UI update for labels etc. will also occur.	
-	# The _update_map_display call below will handle calling _trigger_convoy_visuals_update
-	# with the icon positions from the render result if the map is re-rendered.
 	# If not re-rendered, _trigger_convoy_visuals_update will be called with empty positions.
 	_update_map_display(true, false)
 
@@ -816,6 +836,18 @@ func _on_gdm_convoy_selection_changed(selected_convoy_data: Variant):
 	# Update local selection cache from the single source of truth (GDM)
 	if selected_convoy_data:
 		_selected_convoy_ids = [str(selected_convoy_data.get("convoy_id"))]
+		# Center camera on selected convoy in visible map area
+		if selected_convoy_data.has("x") and selected_convoy_data.has("y") and is_instance_valid(map_container) and is_instance_valid(map_display) and not map_tiles.is_empty() and map_tiles[0] is Array and not map_tiles[0].is_empty():
+			var map_initial_world_size = map_display.custom_minimum_size
+			var map_cols: int = map_tiles[0].size()
+			var map_rows: int = map_tiles.size()
+			if map_cols > 0 and map_rows > 0 and map_initial_world_size.x > 0 and map_initial_world_size.y > 0:
+				var tile_world_width: float = map_initial_world_size.x / float(map_cols)
+				var tile_world_height: float = map_initial_world_size.y / float(map_rows)
+				var convoy_center_local_to_map_container: Vector2 = Vector2((float(selected_convoy_data.get("x")) + 0.5) * tile_world_width, (float(selected_convoy_data.get("y")) + 0.5) * tile_world_height)
+				var convoy_world_position: Vector2 = map_container.to_global(convoy_center_local_to_map_container)
+				var default_zoom_scalar: float = 1.0
+				_focus_camera_on_convoy_or_route(convoy_world_position, default_zoom_scalar)
 	else:
 		_selected_convoy_ids.clear()
 
@@ -866,7 +898,7 @@ func _on_visual_update_tick() -> void:
 	# false = not a light UI update (do full UI update)    
 	# Temporarily set force_rerender_map_texture to false to stop constant full map redraws.
 	# This will stop throb if it's part of map_render. ConvoyNodes handle their own throb.
-	call_deferred("_update_map_display", false, false) # false = don't rerender map texture, false = not a light UI update (full UI update)
+	call_deferred("_update_map_display", false, false) # false = don't rerender map texture, false = not a light ui update (full ui update)
 
 
 # All label drawing and management is now handled by UIManager.gd
@@ -1131,7 +1163,7 @@ func _on_mim_panel_drag_started(convoy_id_str: String, panel_node: Panel): # Cor
 				else:
 					printerr("  PanelDragStart: Panel %s parent is NOT the expected label container. Parent: %s, ExpectedContainer: %s" % [convoy_id_str, _dragging_panel_node.get_parent(), label_container])
 			else:
-				printerr("  PanelDragStart: _dragging_panel_node became invalid before move_child for %s." % convoy_id_str)
+				printerr("   PanelDragStart: _dragging_panel_node became invalid before move_child for %s." % convoy_id_str)
 		else:
 			printerr("  PanelDragStart: UIManager's label container node is not valid for %s." % convoy_id_str)
 	else:
@@ -1188,13 +1220,21 @@ func _on_menu_opened_for_camera_focus(menu_node: Node, menu_type: String):
 
 
 	# NEW: Connect to route preview signals if it's the right menu
-	if menu_type == "convoy_journey_menu": # This is the type for RouteSelectionMenu
+	# Print diagnostic info about menu type and node
+	print("Main: _on_menu_opened_for_camera_focus called with menu_type:", menu_type, "node:", menu_node)
+	var is_journey_menu = menu_type == "convoy_journey_menu" or menu_type == "convoy_journey_submenu" or menu_node.get_class() == "ConvoyJourneyMenu"
+	if is_journey_menu:
+		print("Main: Attempting to connect route preview signals for menu node:", menu_node)
 		if menu_node.has_signal("route_preview_started"):
-			if not menu_node.is_connected("route_preview_started", _on_route_preview_started):
+			if not menu_node.is_connected("route_preview_started", Callable(self, "_on_route_preview_started")):
+				print("Main: Connecting route_preview_started signal.")
 				menu_node.route_preview_started.connect(_on_route_preview_started)
 		if menu_node.has_signal("route_preview_ended"):
-			if not menu_node.is_connected("route_preview_ended", _on_route_preview_ended):
+			if not menu_node.is_connected("route_preview_ended", Callable(self, "_on_route_preview_ended")):
+				print("Main: Connecting route_preview_ended signal.")
 				menu_node.route_preview_ended.connect(_on_route_preview_ended)
+	else:
+		print("Main: Skipping route preview signal connection for menu_type:", menu_type, "node class:", menu_node.get_class())
 
 
 func _execute_convoy_focus_logic(menu_node: Node):
@@ -1404,29 +1444,24 @@ func update_map_render_bounds(_new_bounds_global_rect: Rect2) -> void:
 
 func _on_route_preview_started(route_data: Dictionary):
 	"""Handles zooming and highlighting when a route preview is requested."""
+	print("Main: _on_route_preview_started called. Route data:", route_data)
 	# Set the single-frame guard flag to true. This prevents a simultaneous `_ended`
 	# signal from clearing the preview state before it can be rendered.
 	_preview_started_this_frame = true
-	
 	_is_in_route_preview_mode = true
-	
 	var journey_details = route_data.get("journey", {})
 	var route_x = journey_details.get("route_x", [])
 	var route_y = journey_details.get("route_y", [])
-
 	if route_x.is_empty() or route_y.is_empty():
 		printerr("Main: Route preview started with no route points.")
 		return
-
 	# 1. Prepare highlight data
 	_route_preview_highlight_data.clear()
 	for i in range(route_x.size()):
 		_route_preview_highlight_data.append(Vector2(float(route_x[i]), float(route_y[i])))
-
 	# 2. Focus camera on the route
 	# We defer this call to ensure the viewport has been resized by GameScreenManager first.
 	call_deferred("_focus_camera_on_route", route_data)
-
 	# 3. Trigger map re-render with the new highlight
 	call_deferred("_update_map_display", true)
 
@@ -1491,7 +1526,26 @@ func _focus_camera_on_route(route_data: Dictionary):
 	var route_center_tile_x = (min_tile_x + max_tile_x) / 2.0
 	var route_center_tile_y = (min_tile_y + max_tile_y) / 2.0
 	var route_center_local_to_map_container: Vector2 = Vector2((route_center_tile_x + 0.5) * tile_world_width, (route_center_tile_y + 0.5) * tile_world_height)
-	var camera_target_mapview_local: Vector2 = map_container.position + route_center_local_to_map_container
+	print("[ROUTE FOCUS] route_center_tile_x:", route_center_tile_x, "route_center_tile_y:", route_center_tile_y)
+	print("[ROUTE FOCUS] route_center_local_to_map_container:", route_center_local_to_map_container)
+
+
+	# Convert route center from MapContainer local space to global/world coordinates
+	var convoy_world_position: Vector2 = map_container.to_global(route_center_local_to_map_container)
+	print("[ROUTE FOCUS] convoy_world_position:", convoy_world_position)
+
+	# Calculate the center of the visible map area in world coordinates
+	var map_viewport_rect_global: Rect2 = get_map_viewport_container_global_rect()
+	var map_viewport_center_world: Vector2 = map_viewport_rect_global.position + map_viewport_rect_global.size / 2.0
+	print("[ROUTE FOCUS] map_viewport_rect_global:", map_viewport_rect_global)
+	print("[ROUTE FOCUS] map_viewport_center_world:", map_viewport_center_world)
+
+
+	# Calculate offset so convoy appears at the center of the visible map area (map viewport)
+	var offset_to_center: Vector2 = map_viewport_center_world - map_viewport_rect_global.position
+	var camera_target_world: Vector2 = convoy_world_position - offset_to_center
+	print("[ROUTE FOCUS] offset_to_center:", offset_to_center)
+	print("[ROUTE FOCUS] camera_target_world:", camera_target_world)
 
 	# Calculate the required zoom to fit the entire route with some padding
 	var padding_tiles = 4.0 # Add a small border around the route
@@ -1500,8 +1554,10 @@ func _focus_camera_on_route(route_data: Dictionary):
 
 	var world_width_to_display: float = route_width_in_tiles * tile_world_width
 	var world_height_to_display: float = route_height_in_tiles * tile_world_height
+	print("[ROUTE FOCUS] world_width_to_display:", world_width_to_display, "world_height_to_display:", world_height_to_display)
 
 	var map_view_current_rect = get_viewport().get_visible_rect()
+	print("[ROUTE FOCUS] map_view_current_rect:", map_view_current_rect)
 	if world_width_to_display <= 0.001 or world_height_to_display <= 0.001 or map_view_current_rect.size.x <= 0.001 or map_view_current_rect.size.y <= 0.001:
 		printerr("FocusDebug: Critical value for route zoom calculation is too small. Aborting zoom.")
 		return
@@ -1509,9 +1565,11 @@ func _focus_camera_on_route(route_data: Dictionary):
 	var target_zoom_x: float = map_view_current_rect.size.x / world_width_to_display
 	var target_zoom_y: float = map_view_current_rect.size.y / world_height_to_display
 	var final_target_zoom_scalar: float = min(target_zoom_x, target_zoom_y)
+	print("[ROUTE FOCUS] target_zoom_x:", target_zoom_x, "target_zoom_y:", target_zoom_y, "final_target_zoom_scalar:", final_target_zoom_scalar)
 
 	# Tell MapInteractionManager to perform the focus and zoom
 	if is_instance_valid(map_interaction_manager) and map_interaction_manager.has_method("focus_camera_and_set_zoom"):
-		map_interaction_manager.focus_camera_and_set_zoom(camera_target_mapview_local, final_target_zoom_scalar)
+		print("[ROUTE FOCUS] Calling focus_camera_and_set_zoom with:", camera_target_world, final_target_zoom_scalar)
+		map_interaction_manager.focus_camera_and_set_zoom(camera_target_world, final_target_zoom_scalar)
 	else:
 		printerr("Main: MapInteractionManager invalid or missing focus_camera_and_set_zoom method.")

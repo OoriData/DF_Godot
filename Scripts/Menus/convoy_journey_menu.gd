@@ -323,6 +323,7 @@ func _show_current_route_preview():
 
 	# 2. Emit the signal to make the map show the preview line and focus the camera.
 	# We defer this to ensure the menu UI is fully set up before the map tries to zoom/pan.
+	print("ConvoyJourneyMenu: Emitting route_preview_started for route_id:", current_route_data.get("journey", {}).get("journey_id", "N/A"))
 	call_deferred("emit_signal", "route_preview_started", current_route_data)
 
 func _on_route_selection_back_requested():
