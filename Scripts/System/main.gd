@@ -373,6 +373,98 @@ func _focus_camera_on_convoy_or_route(convoy_world_position: Vector2, zoom_scala
 	else:
 		printerr("Main: MapInteractionManager invalid or missing focus_camera_and_set_zoom method.")
 
+func _get_bounding_box_for_points(points: Array) -> Rect2:
+	# Returns a Rect2 that bounds all Vector2 points in the array
+	if points.is_empty():
+		return Rect2(Vector2.ZERO, Vector2.ZERO)
+	var min_x = points[0].x
+	var max_x = points[0].x
+	var min_y = points[0].y
+	var max_y = points[0].y
+	for pt in points:
+		min_x = min(min_x, pt.x)
+		max_x = max(max_x, pt.x)
+		min_y = min(min_y, pt.y)
+		max_y = max(max_y, pt.y)
+	return Rect2(Vector2(min_x, min_y), Vector2(max_x - min_x, max_y - min_y))
+
+# Focus the camera to fit a journey (array of Vector2 points) in view, with optional left-1/3 offset if menu is open
+
+# Focus the camera to fit a journey (array of Vector2 points) in view, with optional left-1/3 offset if menu is open
+func _focus_camera_on_journey(journey_points: Array, extra_padding: float = 32.0):
+	if journey_points.is_empty() or not is_instance_valid(map_camera):
+		return
+	# Convert journey points from tile coordinates to map world units (pixels on map texture)
+	var tile_pixel_size: float = 1.0
+	if is_instance_valid(map_renderer_node) and "base_tile_size_for_proportions" in map_renderer_node:
+		tile_pixel_size = map_renderer_node.base_tile_size_for_proportions
+	var journey_points_world: Array = []
+	for pt in journey_points:
+		if typeof(pt) == TYPE_VECTOR2:
+			journey_points_world.append(Vector2(pt.x * tile_pixel_size, pt.y * tile_pixel_size))
+		else:
+			journey_points_world.append(pt)
+	var bounds: Rect2 = _get_bounding_box_for_points(journey_points_world)
+	if bounds.size.x < 1.0 or bounds.size.y < 1.0:
+		# Avoid degenerate bounds
+		bounds.size = Vector2(10, 10)
+	# Add padding
+	bounds.position -= Vector2(extra_padding, extra_padding)
+	bounds.size += Vector2(extra_padding, extra_padding) * 2.0
+
+	# Use the actual visible map area at zoom=1 from the camera controller for zoom calculation
+	var visible_area_world: Vector2 = Vector2(1, 1)
+	if is_instance_valid(map_interaction_manager) and map_interaction_manager.has_method("map_camera_controller"):
+		var mcc = map_interaction_manager.map_camera_controller
+		if is_instance_valid(mcc) and mcc.has_method("get_visible_map_area"):
+			# Temporarily set zoom to 1 to get the visible area at zoom=1
+			var old_zoom = mcc.camera_node.zoom.x
+			mcc.camera_node.zoom = Vector2(1.0, 1.0)
+			var visible_rect = mcc.get_visible_map_area()
+			visible_area_world = visible_rect.size
+			mcc.camera_node.zoom = Vector2(old_zoom, old_zoom)
+	else:
+		# Fallback to previous logic if controller is not available
+		var viewport_size_pixels: Vector2 = get_map_viewport_container_global_rect().size
+		var map_texture_size: Vector2 = map_display.custom_minimum_size if is_instance_valid(map_display) else Vector2(1, 1)
+		var map_display_size: Vector2 = map_display.size if is_instance_valid(map_display) else Vector2(1, 1)
+		visible_area_world = viewport_size_pixels * (map_texture_size / map_display_size)
+
+	# Compute required zoom to fit bounds (Godot Camera2D: use max, not min, to fit the journey inside the viewport)
+	var zoom_x = bounds.size.x / visible_area_world.x
+	var zoom_y = bounds.size.y / visible_area_world.y
+	var target_zoom = max(zoom_x, zoom_y) * 1.1 # Add 10% padding so the journey isn't at the edge
+	# Clamp zoom to camera's allowed range
+	var min_zoom = 0.05
+	var max_zoom = 5.0
+	if is_instance_valid(map_camera) and map_camera.get_script() != null and map_camera.has_variable("min_camera_zoom_level"):
+		min_zoom = map_camera.min_camera_zoom_level
+		max_zoom = map_camera.max_camera_zoom_level
+	target_zoom = clamp(target_zoom, min_zoom, max_zoom)
+
+	# Center of the journey bounds
+	var journey_center = bounds.position + bounds.size * 0.5
+
+	# If menu is open, offset the camera so the journey is in the left 1/3 of the visible viewport (in world units)
+	var camera_target = journey_center
+	if is_instance_valid(menu_manager_ref) and menu_manager_ref.has_method("is_any_menu_active") and menu_manager_ref.is_any_menu_active():
+		var visible_fraction = 1.0 / 3.0
+		var visible_width_world = visible_area_world.x * visible_fraction
+		var left_visible_center_x = (visible_width_world / 2.0)
+		var shift_x = journey_center.x - left_visible_center_x
+		camera_target.x -= shift_x
+
+	# Debug prints
+	print("[CAMERA DEBUG] bounds=", bounds, ", visible_area_world=", visible_area_world, ", target_zoom=", target_zoom, ", camera_target=", camera_target)
+
+	# Set camera zoom and position using the camera controller
+	if is_instance_valid(map_interaction_manager) and map_interaction_manager.has_method("focus_camera_and_set_zoom"):
+		map_interaction_manager.focus_camera_and_set_zoom(camera_target, target_zoom)
+	elif is_instance_valid(map_camera):
+		map_camera.position = camera_target
+		map_camera.zoom = Vector2(target_zoom, target_zoom)
+
+
 func _on_ui_scale_changed(new_scale: float):
 	# Force camera bounds update when UI scale changes
 	if is_instance_valid(map_camera) and map_camera.has_method("force_bounds_update"):
@@ -558,6 +650,9 @@ func get_map_viewport_container_global_rect() -> Rect2:
 		return mvc.get_global_rect()
 	return get_viewport().get_visible_rect() # Fallback if MapView isn't in a ViewportContainer
 
+
+var _last_route_preview_data: Dictionary = {}
+
 func _update_map_display(force_rerender_map_texture: bool = true, is_light_ui_update: bool = false):
 	# --- FIX for Route Preview ---
 	# If a call comes in to do a cheap update (force_rerender=false) while we are in a state
@@ -565,9 +660,11 @@ func _update_map_display(force_rerender_map_texture: bool = true, is_light_ui_up
 	# ignore the cheap update. This prevents the visual tick's frequent call with `force_rerender=false`
 	# from cancelling out the single, crucial `force_rerender=true` call needed to show the preview.
 	if _is_in_route_preview_mode and not force_rerender_map_texture:
-		# A preview is active and requires a texture re-render. This call is trying to
-		# update the UI without re-rendering, so we block it to allow the proper re-render to proceed.
 		return
+
+	# If we are in route preview mode and have preview data, focus camera using the correct route logic
+	if _is_in_route_preview_mode and typeof(_last_route_preview_data) == TYPE_DICTIONARY and not _last_route_preview_data.is_empty():
+		_focus_camera_on_route(_last_route_preview_data)
 
 	# print("Main: _update_map_display() CALLED - TOP") # DEBUG
 
@@ -1449,6 +1546,7 @@ func _on_route_preview_started(route_data: Dictionary):
 	# signal from clearing the preview state before it can be rendered.
 	_preview_started_this_frame = true
 	_is_in_route_preview_mode = true
+	_last_route_preview_data = route_data.duplicate(true)
 	var journey_details = route_data.get("journey", {})
 	var route_x = journey_details.get("route_x", [])
 	var route_y = journey_details.get("route_y", [])
@@ -1477,6 +1575,7 @@ func _on_route_preview_ended():
 
 	_is_in_route_preview_mode = false
 	_route_preview_highlight_data.clear()
+	_last_route_preview_data.clear()
 
 	# Re-render the map to remove the highlight
 	_update_map_display(true)
@@ -1540,12 +1639,13 @@ func _focus_camera_on_route(route_data: Dictionary):
 	print("[ROUTE FOCUS] map_viewport_rect_global:", map_viewport_rect_global)
 	print("[ROUTE FOCUS] map_viewport_center_world:", map_viewport_center_world)
 
-
-	# Calculate offset so convoy appears at the center of the visible map area (map viewport)
-	var offset_to_center: Vector2 = map_viewport_center_world - map_viewport_rect_global.position
-	var camera_target_world: Vector2 = convoy_world_position - offset_to_center
-	print("[ROUTE FOCUS] offset_to_center:", offset_to_center)
-	print("[ROUTE FOCUS] camera_target_world:", camera_target_world)
+	# Offset the camera target horizontally so the route center appears in the center of the visible map viewport (left 1/3)
+	var window_rect = get_window().get_visible_rect() if has_method("get_window") else get_viewport().get_visible_rect()
+	var window_center = window_rect.position + window_rect.size / 2.0
+	var map_viewport_offset = map_viewport_center_world - window_center
+	# Subtract 0.4 of the X offset so the convoy is further right in the left 1/3 (not under the menu)
+	var camera_target_world: Vector2 = convoy_world_position - Vector2(map_viewport_offset.x * 0.4, 0)
+	print("[ROUTE FOCUS] camera_target_world (0.4 x-offset):", camera_target_world)
 
 	# Calculate the required zoom to fit the entire route with some padding
 	var padding_tiles = 4.0 # Add a small border around the route
