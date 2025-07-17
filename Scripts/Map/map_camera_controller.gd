@@ -10,7 +10,10 @@ signal camera_zoom_changed(new_zoom_level: float)
 @export var camera_zoom_factor_increment: float = 1.1
 @export var camera_pan_sensitivity: float = 7.5
 
+
 var controls_enabled: bool = true
+# If true, disables camera clamping to map bounds (used when menu is open)
+var allow_camera_outside_bounds: bool = false
 
 var camera_node: Camera2D = null
 var map_container_for_bounds_ref: TextureRect = null
@@ -105,28 +108,34 @@ func _physics_process(_delta: float):
 	var viewport_render_size_pixels: Vector2 = current_map_screen_rect_ref.size
 	var viewport_size_world: Vector2 = viewport_render_size_pixels / camera_node.zoom
 
-	# Clamp camera position to map bounds
-	var target_camera_pos_x: float = camera_node.position.x
-	var target_camera_pos_y: float = camera_node.position.y
+	# Only clamp camera position if not allowing camera outside bounds
+	if not allow_camera_outside_bounds:
+		var target_camera_pos_x: float = camera_node.position.x
+		var target_camera_pos_y: float = camera_node.position.y
 
-	# Only constrain if the viewport is smaller than the map
-	if viewport_size_world.x < _cached_map_bounds.size.x:
-		var min_x = _cached_map_bounds.position.x + viewport_size_world.x * 0.5
-		var max_x = _cached_map_bounds.position.x + _cached_map_bounds.size.x - viewport_size_world.x * 0.5
-		target_camera_pos_x = clamp(camera_node.position.x, min_x, max_x)
-	else:
-		# Center the camera if viewport is larger than map
-		target_camera_pos_x = _cached_map_bounds.position.x + _cached_map_bounds.size.x * 0.5
+		# Only constrain if the viewport is smaller than the map
+		if viewport_size_world.x < _cached_map_bounds.size.x:
+			var min_x = _cached_map_bounds.position.x + viewport_size_world.x * 0.5
+			var max_x = _cached_map_bounds.position.x + _cached_map_bounds.size.x - viewport_size_world.x * 0.5
+			target_camera_pos_x = clamp(camera_node.position.x, min_x, max_x)
+		else:
+			# Center the camera if viewport is larger than map
+			target_camera_pos_x = _cached_map_bounds.position.x + _cached_map_bounds.size.x * 0.5
 
-	if viewport_size_world.y < _cached_map_bounds.size.y:
-		var min_y = _cached_map_bounds.position.y + viewport_size_world.y * 0.5
-		var max_y = _cached_map_bounds.position.y + _cached_map_bounds.size.y - viewport_size_world.y * 0.5
-		target_camera_pos_y = clamp(camera_node.position.y, min_y, max_y)
-	else:
-		# Center the camera if viewport is larger than map
-		target_camera_pos_y = _cached_map_bounds.position.y + _cached_map_bounds.size.y * 0.5
+		if viewport_size_world.y < _cached_map_bounds.size.y:
+			var min_y = _cached_map_bounds.position.y + viewport_size_world.y * 0.5
+			var max_y = _cached_map_bounds.position.y + _cached_map_bounds.size.y - viewport_size_world.y * 0.5
+			target_camera_pos_y = clamp(camera_node.position.y, min_y, max_y)
+		else:
+			# Center the camera if viewport is larger than map
+			target_camera_pos_y = _cached_map_bounds.position.y + _cached_map_bounds.size.y * 0.5
 
-	camera_node.position = Vector2(target_camera_pos_x, target_camera_pos_y)
+		camera_node.position = Vector2(target_camera_pos_x, target_camera_pos_y)
+	# If allow_camera_outside_bounds is true, do not clamp or modify camera position at all
+
+# Call this to allow or disallow camera going outside map bounds (e.g. when menu is open)
+func set_allow_camera_outside_bounds(allow: bool):
+	allow_camera_outside_bounds = allow
 
 # Input handling functions (unchanged from your original)
 func handle_input(event: InputEvent) -> bool:

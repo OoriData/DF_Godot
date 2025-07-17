@@ -142,6 +142,11 @@ func initialize(
 		# print("MapInteractionManager: Camera smoothing initialized.")
 	else:
 		printerr("MapInteractionManager: Camera node is invalid in initialize.")
+		
+# Call this to allow or disallow the camera to move outside map bounds (e.g. for journey preview)
+func set_camera_loose_mode(is_loose: bool):
+	if is_instance_valid(map_camera_controller) and map_camera_controller.has_method("set_allow_camera_outside_bounds"):
+		map_camera_controller.set_allow_camera_outside_bounds(is_loose)
 
 func set_current_map_screen_rect(rect: Rect2):
 	_current_map_screen_rect = rect

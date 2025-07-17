@@ -431,10 +431,17 @@ func _focus_camera_on_journey(journey_points: Array, extra_padding: float = 32.0
 		print("[DEBUG] visible_map_rect is too small, aborting.")
 		return
 
+
 	var bbox_with_padding = bbox.grow(extra_padding)
 	print("[DEBUG] bbox_with_padding: %s" % bbox_with_padding)
 
-	# Calculate the zoom so the journey bbox fits inside the left third of the viewport
+	# --- Camera loose mode logic ---
+	# Get the map bounds in world coordinates
+	var map_bounds: Rect2 = Rect2(Vector2.ZERO, Vector2.ZERO)
+	if is_instance_valid(map_display) and is_instance_valid(map_display.texture):
+		map_bounds = Rect2(Vector2(0, 0), map_display.custom_minimum_size)
+
+	# --- Camera loose mode logic and camera/zoom calculation ---
 	var scale_x = visible_map_rect.size.x / bbox_with_padding.size.x
 	var scale_y = visible_map_rect.size.y / bbox_with_padding.size.y
 	var unclamped_zoom = min(scale_x, scale_y)
@@ -448,6 +455,23 @@ func _focus_camera_on_journey(journey_points: Array, extra_padding: float = 32.0
 		max_zoom = mcc.max_camera_zoom_level
 	var target_zoom = clamp(unclamped_zoom, min_zoom, max_zoom)
 	print("[DEBUG] min_zoom: %s, max_zoom: %s, target_zoom (clamped): %s" % [min_zoom, max_zoom, target_zoom])
+
+	var bbox_center = bbox_with_padding.position + bbox_with_padding.size * 0.5
+	var viewport_size_world = visible_map_rect.size / target_zoom
+	var min_x = map_bounds.position.x + viewport_size_world.x * 0.5
+	var max_x = map_bounds.position.x + map_bounds.size.x - viewport_size_world.x * 0.5
+	var min_y = map_bounds.position.y + viewport_size_world.y * 0.5
+	var max_y = map_bounds.position.y + map_bounds.size.y - viewport_size_world.y * 0.5
+	var clamped_x = clamp(bbox_center.x, min_x, max_x)
+	var clamped_y = clamp(bbox_center.y, min_y, max_y)
+	var clamped_camera_pos = Vector2(clamped_x, clamped_y)
+
+	var left_third_rect = get_left_third_world_rect(clamped_camera_pos, visible_map_rect.size / target_zoom)
+	print("[DEBUG] left_third_rect for clamped camera: %s" % left_third_rect)
+
+	var journey_fits_in_left_third := left_third_rect.encloses(bbox_with_padding)
+	if is_instance_valid(map_interaction_manager) and map_interaction_manager.has_method("set_camera_loose_mode"):
+		map_interaction_manager.set_camera_loose_mode(not journey_fits_in_left_third)
 
 	# --- LOGGING: Camera and zoom logic ---
 	var bbox_top_left = bbox_with_padding.position
@@ -482,16 +506,17 @@ func _focus_camera_on_journey(journey_points: Array, extra_padding: float = 32.0
 	print("[DEBUG] bbox_top_left: %s, bbox_size: %s, camera_view_size: %s" % [bbox_top_left, bbox_size, camera_view_size])
 	print("[DEBUG] camera_center (before clamping): %s" % camera_center)
 
-	# Clamp camera position to map bounds (using map_display size)
-	var min_camera_pos = camera_view_size * 0.5
-	var max_camera_pos = map_size - camera_view_size * 0.5
-	print("[DEBUG] min_camera_pos: %s, max_camera_pos: %s" % [min_camera_pos, max_camera_pos])
+	# Clamp camera position to map bounds (using map_display size) ONLY if menu is closed
 	var unclamped_camera_center = camera_center
-	camera_center.x = clamp(camera_center.x, min_camera_pos.x, max_camera_pos.x)
-	camera_center.y = clamp(camera_center.y, min_camera_pos.y, max_camera_pos.y)
-	print("[DEBUG] camera_center (after clamping): %s (unclamped: %s)" % [camera_center, unclamped_camera_center])
-	if camera_center != unclamped_camera_center:
-		print("[DEBUG] Camera center was clamped to map bounds.")
+	if not menu_open:
+		var min_camera_pos = camera_view_size * 0.5
+		var max_camera_pos = map_size - camera_view_size * 0.5
+		print("[DEBUG] min_camera_pos: %s, max_camera_pos: %s" % [min_camera_pos, max_camera_pos])
+		camera_center.x = clamp(camera_center.x, min_camera_pos.x, max_camera_pos.x)
+		camera_center.y = clamp(camera_center.y, min_camera_pos.y, max_camera_pos.y)
+		print("[DEBUG] camera_center (after clamping): %s (unclamped: %s)" % [camera_center, unclamped_camera_center])
+		if camera_center != unclamped_camera_center:
+			print("[DEBUG] Camera center was clamped to map bounds.")
 
 	# --- FINAL: Actually move/zoom the camera ---
 	print("[DEBUG] Setting camera position to: %s, zoom: %s" % [camera_center, target_zoom])
@@ -1594,7 +1619,12 @@ func update_map_render_bounds(_new_bounds_global_rect: Rect2) -> void:
 
 # --- Route Preview Handlers ---
 
+
+# Called when journey/route preview starts
 func _on_route_preview_started(route_data: Dictionary):
+	if is_instance_valid(map_interaction_manager) and map_interaction_manager.has_method("set_camera_loose_mode"):
+		map_interaction_manager.set_camera_loose_mode(true)
+	# ...existing logic for starting route preview...
 	"""Handles zooming and highlighting when a route preview is requested."""
 	print("Main: _on_route_preview_started called. Route data:", route_data)
 	# Set the single-frame guard flag to true. This prevents a simultaneous `_ended`
@@ -1618,7 +1648,12 @@ func _on_route_preview_started(route_data: Dictionary):
 	# 3. Trigger map re-render with the new highlight
 	call_deferred("_update_map_display", true)
 
+
+# Called when journey/route preview ends
 func _on_route_preview_ended():
+	if is_instance_valid(map_interaction_manager) and map_interaction_manager.has_method("set_camera_loose_mode"):
+		map_interaction_manager.set_camera_loose_mode(false)
+	# ...existing logic for ending route preview...
 	"""Handles cleaning up the preview when the menu is closed or a choice is made."""
 	# RACE CONDITION GUARD: If a preview was just started in this same frame,
 	# ignore this 'ended' signal. This handles cases where menu logic might
