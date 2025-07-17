@@ -388,84 +388,138 @@ func _get_bounding_box_for_points(points: Array) -> Rect2:
 		max_y = max(max_y, pt.y)
 	return Rect2(Vector2(min_x, min_y), Vector2(max_x - min_x, max_y - min_y))
 
+
 # Focus the camera to fit a journey (array of Vector2 points) in view, with optional left-1/3 offset if menu is open
 
 # Focus the camera to fit a journey (array of Vector2 points) in view, with optional left-1/3 offset if menu is open
 func _focus_camera_on_journey(journey_points: Array, extra_padding: float = 32.0):
-	if journey_points.is_empty() or not is_instance_valid(map_camera):
+	print("[DEBUG] _focus_camera_on_journey called. journey_points.size = %s" % journey_points.size())
+	print("[DEBUG] journey_points: %s" % journey_points)
+	if journey_points.is_empty():
+		print("[DEBUG] journey_points is empty, aborting.")
 		return
-	# Convert journey points from tile coordinates to map world units (pixels on map texture)
-	var tile_pixel_size: float = 1.0
-	if is_instance_valid(map_renderer_node) and "base_tile_size_for_proportions" in map_renderer_node:
-		tile_pixel_size = map_renderer_node.base_tile_size_for_proportions
-	var journey_points_world: Array = []
-	for pt in journey_points:
-		if typeof(pt) == TYPE_VECTOR2:
-			journey_points_world.append(Vector2(pt.x * tile_pixel_size, pt.y * tile_pixel_size))
-		else:
-			journey_points_world.append(pt)
-	var bounds: Rect2 = _get_bounding_box_for_points(journey_points_world)
-	if bounds.size.x < 1.0 or bounds.size.y < 1.0:
-		# Avoid degenerate bounds
-		bounds.size = Vector2(10, 10)
-	# Add padding
-	bounds.position -= Vector2(extra_padding, extra_padding)
-	bounds.size += Vector2(extra_padding, extra_padding) * 2.0
 
-	# Use the actual visible map area at zoom=1 from the camera controller for zoom calculation
-	var visible_area_world: Vector2 = Vector2(1, 1)
-	if is_instance_valid(map_interaction_manager) and map_interaction_manager.has_method("map_camera_controller"):
-		var mcc = map_interaction_manager.map_camera_controller
-		if is_instance_valid(mcc) and mcc.has_method("get_visible_map_area"):
-			# Temporarily set zoom to 1 to get the visible area at zoom=1
-			var old_zoom = mcc.camera_node.zoom.x
-			mcc.camera_node.zoom = Vector2(1.0, 1.0)
-			var visible_rect = mcc.get_visible_map_area()
-			visible_area_world = visible_rect.size
-			mcc.camera_node.zoom = Vector2(old_zoom, old_zoom)
+	# Convert journey points from tile coordinates to world coordinates
+	var world_points: Array = []
+	if not map_tiles.is_empty() and is_instance_valid(map_display):
+		var map_cols: int = map_tiles[0].size()
+		var map_rows: int = map_tiles.size()
+		var map_size: Vector2 = map_display.custom_minimum_size
+		print("[DEBUG] map_cols: %s, map_rows: %s, map_size: %s" % [map_cols, map_rows, map_size])
+		var tile_w: float = map_size.x / float(map_cols)
+		var tile_h: float = map_size.y / float(map_rows)
+		print("[DEBUG] tile_w: %s, tile_h: %s" % [tile_w, tile_h])
+		for pt in journey_points:
+			# Assume pt is in tile coordinates
+			var world_pt = Vector2((pt.x + 0.5) * tile_w, (pt.y + 0.5) * tile_h)
+			world_points.append(world_pt)
+		print("[DEBUG] Converted journey_points to world_points: %s" % world_points)
 	else:
-		# Fallback to previous logic if controller is not available
-		var viewport_size_pixels: Vector2 = get_map_viewport_container_global_rect().size
-		var map_texture_size: Vector2 = map_display.custom_minimum_size if is_instance_valid(map_display) else Vector2(1, 1)
-		var map_display_size: Vector2 = map_display.size if is_instance_valid(map_display) else Vector2(1, 1)
-		visible_area_world = viewport_size_pixels * (map_texture_size / map_display_size)
+		print("[DEBUG] map_tiles or map_display invalid, aborting.")
+		return
 
-	# Compute required zoom to fit bounds (Godot Camera2D: use max, not min, to fit the journey inside the viewport)
-	var zoom_x = bounds.size.x / visible_area_world.x
-	var zoom_y = bounds.size.y / visible_area_world.y
-	var target_zoom = max(zoom_x, zoom_y) * 1.1 # Add 10% padding so the journey isn't at the edge
-	# Clamp zoom to camera's allowed range
+	var bbox := _get_bounding_box_for_points(world_points)
+	print("[DEBUG] world_points bbox: %s" % bbox)
+	if bbox.size.x < 0.01 or bbox.size.y < 0.01:
+		bbox = Rect2(bbox.position - Vector2(1,1), bbox.size + Vector2(2,2))
+		print("[DEBUG] bbox was too small, expanded to: %s" % bbox)
+
+	# Always use the left 1/3 of the map viewport as the visible map rect
+	var visible_map_rect: Rect2 = get_left_third_map_viewport_rect()
+	print("[DEBUG] Using left_third_map_viewport_rect for visible_map_rect: %s" % visible_map_rect)
+	if visible_map_rect.size.x < 1 or visible_map_rect.size.y < 1:
+		print("[DEBUG] visible_map_rect is too small, aborting.")
+		return
+
+	var bbox_with_padding = bbox.grow(extra_padding)
+	print("[DEBUG] bbox_with_padding: %s" % bbox_with_padding)
+
+	# Calculate the zoom so the journey bbox fits inside the left third of the viewport
+	var scale_x = visible_map_rect.size.x / bbox_with_padding.size.x
+	var scale_y = visible_map_rect.size.y / bbox_with_padding.size.y
+	var unclamped_zoom = min(scale_x, scale_y)
+	print("[DEBUG] scale_x: %s, scale_y: %s, unclamped_zoom: %s" % [scale_x, scale_y, unclamped_zoom])
+
+	var mcc = map_interaction_manager.get_node_or_null("MapCameraController") if is_instance_valid(map_interaction_manager) else null
 	var min_zoom = 0.05
 	var max_zoom = 5.0
-	if is_instance_valid(map_camera) and map_camera.get_script() != null and map_camera.has_variable("min_camera_zoom_level"):
-		min_zoom = map_camera.min_camera_zoom_level
-		max_zoom = map_camera.max_camera_zoom_level
-	target_zoom = clamp(target_zoom, min_zoom, max_zoom)
+	if mcc and "min_camera_zoom_level" in mcc and "max_camera_zoom_level" in mcc:
+		min_zoom = mcc.min_camera_zoom_level
+		max_zoom = mcc.max_camera_zoom_level
+	var target_zoom = clamp(unclamped_zoom, min_zoom, max_zoom)
+	print("[DEBUG] min_zoom: %s, max_zoom: %s, target_zoom (clamped): %s" % [min_zoom, max_zoom, target_zoom])
 
-	# Center of the journey bounds
-	var journey_center = bounds.position + bounds.size * 0.5
+	# --- LOGGING: Camera and zoom logic ---
+	var bbox_top_left = bbox_with_padding.position
+	var bbox_size = bbox_with_padding.size
+	var map_size: Vector2 = map_display.custom_minimum_size if is_instance_valid(map_display) else Vector2(0,0)
+	var viewport_size = get_viewport().size
+	print("[DEBUG] map_size: %s, viewport_size: %s" % [map_size, viewport_size])
+	var camera_center : Vector2
+	var camera_view_size : Vector2
 
-	# If menu is open, offset the camera so the journey is in the left 1/3 of the visible viewport (in world units)
-	var camera_target = journey_center
-	if is_instance_valid(menu_manager_ref) and menu_manager_ref.has_method("is_any_menu_active") and menu_manager_ref.is_any_menu_active():
-		var visible_fraction = 1.0 / 3.0
-		var visible_width_world = visible_area_world.x * visible_fraction
-		var left_visible_center_x = (visible_width_world / 2.0)
-		var shift_x = journey_center.x - left_visible_center_x
-		camera_target.x -= shift_x
+	# Always use left third logic for zoom
+	var zoom_x = viewport_size.x / (3.0 * bbox_size.x)
+	var zoom_y = viewport_size.y / bbox_size.y
+	var zoom = clamp(min(zoom_x, zoom_y), min_zoom, max_zoom)
+	print("[DEBUG] left_third zoom_x: %s, zoom_y: %s, zoom: %s" % [zoom_x, zoom_y, zoom])
+	camera_view_size = viewport_size / zoom
+	print("[DEBUG] left_third camera_view_size: %s" % camera_view_size)
+	# Center camera on journey bbox as usual
+	var camera_center_x = bbox_top_left.x + bbox_size.x / 2.0
+	var camera_center_y = bbox_top_left.y + bbox_size.y / 2.0
+	# If menu is open, offset camera 33% of viewport width to the right (in world units)
+	var menu_open = is_instance_valid(menu_manager_ref) and menu_manager_ref.has_method("is_any_menu_active") and menu_manager_ref.is_any_menu_active()
+	if menu_open:
+		var offset_world = camera_view_size.x * (1.0/3.0)
+		camera_center_x += offset_world
+		print("[DEBUG] menu_open: offsetting camera_center_x by %s (world units)" % offset_world)
+	print("[DEBUG] camera_center_x: %s, camera_center_y: %s" % [camera_center_x, camera_center_y])
+	camera_center = Vector2(camera_center_x, camera_center_y)
+	print("[DEBUG] camera_center (after menu offset): %s, zoom = %s" % [camera_center, zoom])
+	target_zoom = zoom
 
-	# Debug prints
-	print("[CAMERA DEBUG] bounds=", bounds, ", visible_area_world=", visible_area_world, ", target_zoom=", target_zoom, ", camera_target=", camera_target)
+	print("[DEBUG] bbox_top_left: %s, bbox_size: %s, camera_view_size: %s" % [bbox_top_left, bbox_size, camera_view_size])
+	print("[DEBUG] camera_center (before clamping): %s" % camera_center)
 
-	# Set camera zoom and position using the camera controller
-	if is_instance_valid(map_interaction_manager) and map_interaction_manager.has_method("focus_camera_and_set_zoom"):
-		map_interaction_manager.focus_camera_and_set_zoom(camera_target, target_zoom)
-	elif is_instance_valid(map_camera):
-		map_camera.position = camera_target
+	# Clamp camera position to map bounds (using map_display size)
+	var min_camera_pos = camera_view_size * 0.5
+	var max_camera_pos = map_size - camera_view_size * 0.5
+	print("[DEBUG] min_camera_pos: %s, max_camera_pos: %s" % [min_camera_pos, max_camera_pos])
+	var unclamped_camera_center = camera_center
+	camera_center.x = clamp(camera_center.x, min_camera_pos.x, max_camera_pos.x)
+	camera_center.y = clamp(camera_center.y, min_camera_pos.y, max_camera_pos.y)
+	print("[DEBUG] camera_center (after clamping): %s (unclamped: %s)" % [camera_center, unclamped_camera_center])
+	if camera_center != unclamped_camera_center:
+		print("[DEBUG] Camera center was clamped to map bounds.")
+
+	# --- FINAL: Actually move/zoom the camera ---
+	print("[DEBUG] Setting camera position to: %s, zoom: %s" % [camera_center, target_zoom])
+	if is_instance_valid(map_camera):
+		map_camera.position = camera_center
 		map_camera.zoom = Vector2(target_zoom, target_zoom)
+		print("[DEBUG] map_camera.position now: %s, map_camera.zoom: %s" % [map_camera.position, map_camera.zoom])
+	else:
+		print("[DEBUG] map_camera is not valid!")
+
+# Helper: Get the world rect of the left third of the camera's view for a given center and view size
+func get_left_third_world_rect(center: Vector2, view_size: Vector2) -> Rect2:
+	var cam_rect = Rect2(center - view_size * 0.5, view_size)
+	return Rect2(cam_rect.position, Vector2(view_size.x / 3.0, view_size.y))
+
+## Helper: Get the left 1/3rd of the map viewport in global coordinates
+func get_left_third_map_viewport_rect() -> Rect2:
+	if not is_instance_valid(map_display):
+		return Rect2(0,0,0,0)
+	var global_rect = map_display.get_global_rect()
+	var left_third = Rect2(global_rect.position, Vector2(global_rect.size.x / 3.0, global_rect.size.y))
+	return left_third
+
+# Helper: Compute bounding box for an array of Vector2 points
+## Duplicate removed: Only one _get_bounding_box_for_points should exist
 
 
-func _on_ui_scale_changed(new_scale: float):
+func _on_ui_scale_changed(_new_scale: float):
 	# Force camera bounds update when UI scale changes
 	if is_instance_valid(map_camera) and map_camera.has_method("force_bounds_update"):
 		map_camera.force_bounds_update()
@@ -836,7 +890,8 @@ func _update_map_display(force_rerender_map_texture: bool = true, is_light_ui_up
 			# If map texture failed, we probably shouldn't update convoy visuals based on it.
 			# However, UI labels might still need an update.
 			# For now, let's ensure icon_positions is empty if texture fails.
-			var icon_positions_from_render = {} # Default to empty
+			# Removed unused/conflicting declaration of _icon_positions_from_render
+			var icon_positions_from_render = {}
 			if render_result and render_result.has("icon_positions"):
 				icon_positions_from_render = render_result.get("icon_positions", {})
 
@@ -1197,7 +1252,7 @@ func _on_mim_panel_drag_ended(convoy_id_str: String, final_local_position: Vecto
 	_convoy_label_user_positions[convoy_id_str] = final_local_position # Update main's copy
 
 	# Clear main.gd's internal drag state
-	var previously_dragged_panel = _dragging_panel_node
+	var _previously_dragged_panel = _dragging_panel_node
 	_dragging_panel_node = null # Crucial to clear this
 	_dragged_convoy_id_actual_str = ""
 	_drag_offset = Vector2.ZERO # Reset drag offset
@@ -1414,12 +1469,12 @@ func _execute_convoy_focus_logic(menu_node: Node):
 						if is_instance_valid(map_interaction_manager) and map_interaction_manager.has_method("focus_camera_and_set_zoom"):
 							# Pass the adjusted camera target position
 							map_interaction_manager.focus_camera_and_set_zoom(camera_target_mapview_local, final_target_zoom_scalar)
-							var cam_pos_str = "N/A"
-							var cam_offset_str = "N/A" # Offset will be set by _apply_map_camera_and_ui_layout shortly
-							var cam_zoom_str = "N/A"
+							var _cam_pos_str = "N/A"
+							var _cam_offset_str = "N/A" # Offset will be set by _apply_map_camera_and_ui_layout shortly
+							var _cam_zoom_str = "N/A"
 							if is_instance_valid(map_camera):
-								cam_pos_str = "Local: %s, Global: %s" % [map_camera.position, map_camera.global_position]
-								cam_zoom_str = str(map_camera.zoom) # Get current zoom
+								_cam_pos_str = "Local: %s, Global: %s" % [map_camera.position, map_camera.global_position]
+								_cam_zoom_str = str(map_camera.zoom) # Get current zoom
 						else:
 							printerr("Main: MapInteractionManager invalid or missing set_and_clamp_camera_zoom method.")
 					else:
@@ -1584,92 +1639,16 @@ func _on_route_preview_ended():
 	# When the menu stack closes, the view will be whatever it was.
 
 func _focus_camera_on_route(route_data: Dictionary):
-	"""Calculates the bounding box of a route and tells the camera to frame it."""
+	"""Calculates the bounding box of a route and tells the camera to frame it using unified journey logic."""
 	var journey_details = route_data.get("journey", {})
 	var route_x = journey_details.get("route_x", [])
 	var route_y = journey_details.get("route_y", [])
-
-	if route_x.is_empty() or route_y.is_empty() or \
-	   not is_instance_valid(map_camera) or \
-	   not is_instance_valid(map_display) or not is_instance_valid(map_display.texture) or \
-	   map_tiles.is_empty() or not map_tiles[0] is Array or map_tiles[0].is_empty() or \
-	   not is_instance_valid(map_container):
-		printerr("Main: Cannot focus on route, essential nodes or data are missing.")
+	if route_x.is_empty() or route_y.is_empty():
+		printerr("Main: Cannot focus on route, route_x or route_y is empty.")
 		return
-
-	# Find bounding box of the route in tile coordinates
-	var min_tile_x = route_x[0]
-	var max_tile_x = route_x[0]
-	var min_tile_y = route_y[0]
-	var max_tile_y = route_y[0]
-
-	for i in range(1, route_x.size()):
-		min_tile_x = min(min_tile_x, route_x[i])
-		max_tile_x = max(max_tile_x, route_x[i])
-		min_tile_y = min(min_tile_y, route_y[i])
-		max_tile_y = max(max_tile_y, route_y[i])
-
-	# Get map and tile dimensions in world space
-	var map_initial_world_size = map_display.custom_minimum_size
-	var map_cols: int = map_tiles[0].size()
-	var map_rows: int = map_tiles.size()
-
-	if map_cols <= 0 or map_rows <= 0 or map_initial_world_size.x <= 0 or map_initial_world_size.y <= 0:
-		printerr("Main: Cannot calculate route focus due to invalid map dimensions.")
-		return
-
-	var tile_world_width: float = map_initial_world_size.x / float(map_cols)
-	var tile_world_height: float = map_initial_world_size.y / float(map_rows)
-
-	# Calculate the route's bounding box center in MapView's local space
-	var route_center_tile_x = (min_tile_x + max_tile_x) / 2.0
-	var route_center_tile_y = (min_tile_y + max_tile_y) / 2.0
-	var route_center_local_to_map_container: Vector2 = Vector2((route_center_tile_x + 0.5) * tile_world_width, (route_center_tile_y + 0.5) * tile_world_height)
-	print("[ROUTE FOCUS] route_center_tile_x:", route_center_tile_x, "route_center_tile_y:", route_center_tile_y)
-	print("[ROUTE FOCUS] route_center_local_to_map_container:", route_center_local_to_map_container)
-
-
-	# Convert route center from MapContainer local space to global/world coordinates
-	var convoy_world_position: Vector2 = map_container.to_global(route_center_local_to_map_container)
-	print("[ROUTE FOCUS] convoy_world_position:", convoy_world_position)
-
-	# Calculate the center of the visible map area in world coordinates
-	var map_viewport_rect_global: Rect2 = get_map_viewport_container_global_rect()
-	var map_viewport_center_world: Vector2 = map_viewport_rect_global.position + map_viewport_rect_global.size / 2.0
-	print("[ROUTE FOCUS] map_viewport_rect_global:", map_viewport_rect_global)
-	print("[ROUTE FOCUS] map_viewport_center_world:", map_viewport_center_world)
-
-	# Offset the camera target horizontally so the route center appears in the center of the visible map viewport (left 1/3)
-	var window_rect = get_window().get_visible_rect() if has_method("get_window") else get_viewport().get_visible_rect()
-	var window_center = window_rect.position + window_rect.size / 2.0
-	var map_viewport_offset = map_viewport_center_world - window_center
-	# Subtract 0.4 of the X offset so the convoy is further right in the left 1/3 (not under the menu)
-	var camera_target_world: Vector2 = convoy_world_position - Vector2(map_viewport_offset.x * 0.4, 0)
-	print("[ROUTE FOCUS] camera_target_world (0.4 x-offset):", camera_target_world)
-
-	# Calculate the required zoom to fit the entire route with some padding
-	var padding_tiles = 4.0 # Add a small border around the route
-	var route_width_in_tiles = (max_tile_x - min_tile_x) + padding_tiles
-	var route_height_in_tiles = (max_tile_y - min_tile_y) + padding_tiles
-
-	var world_width_to_display: float = route_width_in_tiles * tile_world_width
-	var world_height_to_display: float = route_height_in_tiles * tile_world_height
-	print("[ROUTE FOCUS] world_width_to_display:", world_width_to_display, "world_height_to_display:", world_height_to_display)
-
-	var map_view_current_rect = get_viewport().get_visible_rect()
-	print("[ROUTE FOCUS] map_view_current_rect:", map_view_current_rect)
-	if world_width_to_display <= 0.001 or world_height_to_display <= 0.001 or map_view_current_rect.size.x <= 0.001 or map_view_current_rect.size.y <= 0.001:
-		printerr("FocusDebug: Critical value for route zoom calculation is too small. Aborting zoom.")
-		return
-
-	var target_zoom_x: float = map_view_current_rect.size.x / world_width_to_display
-	var target_zoom_y: float = map_view_current_rect.size.y / world_height_to_display
-	var final_target_zoom_scalar: float = min(target_zoom_x, target_zoom_y)
-	print("[ROUTE FOCUS] target_zoom_x:", target_zoom_x, "target_zoom_y:", target_zoom_y, "final_target_zoom_scalar:", final_target_zoom_scalar)
-
-	# Tell MapInteractionManager to perform the focus and zoom
-	if is_instance_valid(map_interaction_manager) and map_interaction_manager.has_method("focus_camera_and_set_zoom"):
-		print("[ROUTE FOCUS] Calling focus_camera_and_set_zoom with:", camera_target_world, final_target_zoom_scalar)
-		map_interaction_manager.focus_camera_and_set_zoom(camera_target_world, final_target_zoom_scalar)
-	else:
-		printerr("Main: MapInteractionManager invalid or missing focus_camera_and_set_zoom method.")
+	# Convert route_x and route_y arrays to an array of Vector2 points
+	var journey_points: Array = []
+	for i in range(min(route_x.size(), route_y.size())):
+		journey_points.append(Vector2(float(route_x[i]), float(route_y[i])))
+	# Use the robust journey focus logic
+	_focus_camera_on_journey(journey_points)
