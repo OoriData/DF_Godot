@@ -1,9 +1,10 @@
-[gd_scene load_steps=5 format=3 uid="uid://yme8tiuqxb2b"]
+[gd_scene load_steps=6 format=3 uid="uid://yme8tiuqxb2b"]
 
 [ext_resource type="Script" uid="uid://n5dg0ersmtll" path="res://Scripts/UI/game_screen_manager.gd" id="1_mrnkn"]
 [ext_resource type="PackedScene" uid="uid://b7shrt87ucxid" path="res://Scenes/MapView.tscn" id="1_pjpa4"]
 [ext_resource type="Script" uid="uid://d35ys110yiewf" path="res://Scripts/Menus/menu_manager.gd" id="2_bxsma"]
 [ext_resource type="PackedScene" uid="uid://kpjpc0fnv1nn" path="res://Scenes/LoginScreen.tscn" id="3_xxxxx"]
+[ext_resource type="Script" uid="uid://dt1vsmmkmlfpv" path="res://Assets/tiles/generate_tiles.gd" id="5_2m18y"]
 
 [node name="GameRoot" type="Node"]
 script = ExtResource("1_mrnkn")
@@ -29,3 +30,6 @@ grow_vertical = 2
 script = ExtResource("2_bxsma")
 
 [node name="LoginScreen" parent="." instance=ExtResource("3_xxxxx")]
+
+[node name="GenerateTiles" type="Node" parent="."]
+script = ExtResource("5_2m18y")

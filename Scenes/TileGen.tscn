@@ -1,0 +1,35 @@
+[gd_scene load_steps=6 format=3 uid="uid://1ko1y7ko15p3"]
+
+[ext_resource type="Script" uid="uid://n5dg0ersmtll" path="res://Scripts/UI/game_screen_manager.gd" id="1_k53ah"]
+[ext_resource type="PackedScene" uid="uid://b7shrt87ucxid" path="res://Scenes/MapView.tscn" id="2_wm3x3"]
+[ext_resource type="Script" uid="uid://d35ys110yiewf" path="res://Scripts/Menus/menu_manager.gd" id="3_wx668"]
+[ext_resource type="PackedScene" uid="uid://kpjpc0fnv1nn" path="res://Scenes/LoginScreen.tscn" id="4_m7dmd"]
+[ext_resource type="Script" uid="uid://dt1vsmmkmlfpv" path="res://Assets/tiles/generate_tiles.gd" id="5_jnkme"]
+
+[node name="GameRoot" type="Node"]
+script = ExtResource("1_k53ah")
+
+[node name="MapViewportContainer" type="SubViewportContainer" parent="."]
+offset_right = 40.0
+offset_bottom = 40.0
+
+[node name="MapRender" parent="MapViewportContainer" instance=ExtResource("2_wm3x3")]
+convoy_focus_zoom_target_tiles_wide = 20.0
+convoy_menu_map_view_offset_percentage = 0.4
+convoy_focus_zoom_target_tiles_high = 20.0
+
+[node name="MenuUILayer" type="CanvasLayer" parent="."]
+
+[node name="MenuManager" type="Control" parent="MenuUILayer"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("3_wx668")
+
+[node name="LoginScreen" parent="." instance=ExtResource("4_m7dmd")]
+
+[node name="GenerateTiles" type="Node" parent="."]
+script = ExtResource("5_jnkme")
