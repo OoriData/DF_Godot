@@ -1,9 +1,10 @@
-[gd_scene load_steps=11 format=3 uid="uid://b7shrt87ucxid"]
+[gd_scene load_steps=12 format=3 uid="uid://b7shrt87ucxid"]
 
 [ext_resource type="Script" uid="uid://jgttep14pyof" path="res://Scripts/System/main.gd" id="1_qf4ax"]
 [ext_resource type="Script" uid="uid://x3j2ftwe2pi1" path="res://Scripts/Map/map_camera_controller.gd" id="2_k7gy6"]
 [ext_resource type="Script" uid="uid://dwe8x31pkysrl" path="res://Scripts/Map/map_render.gd" id="2_mtjdu"]
 [ext_resource type="Script" uid="uid://bccf6gvv1urtr" path="res://Scripts/UI/convoy_label_manager.gd" id="3_t5xx3"]
+[ext_resource type="TileSet" uid="uid://ddw3ygn52oujd" path="res://Assets/tiles/terrain_tileset.tres" id="3_vvi3b"]
 [ext_resource type="Script" uid="uid://dpn1l2xm7i2x7" path="res://Scripts/UI/UI_manager.gd" id="3_xagsy"]
 [ext_resource type="Script" uid="uid://qi45fv401eyn" path="res://Scripts/Map/map_interaction_manager.gd" id="4_b4rp0"]
 [ext_resource type="Script" uid="uid://crk2s2urriwrg" path="res://Scripts/System/game_timers.gd" id="5_b5irg"]
@@ -40,6 +41,9 @@ stretch_mode = 5
 script = ExtResource("3_t5xx3")
 
 [node name="ConvoyConnectorLinesContainer" type="Node2D" parent="MapContainer"]
+
+[node name="TerrainTileMap" type="TileMapLayer" parent="MapContainer"]
+tile_set = ExtResource("3_vvi3b")
 
 [node name="MapCamera" type="Camera2D" parent="."]
 enabled = false
