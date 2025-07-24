@@ -26,7 +26,7 @@ signal camera_zoom_changed(new_zoom_level: float)
 signal convoy_menu_requested(convoy_data: Dictionary)
 
 # --- Node References (to be set by main.gd via initialize method) ---
-var map_display: TextureRect = null
+var map_display: TileMapLayer = null
 var ui_manager: Node = null # This will be the UIManagerNode instance
 
 # --- Data References (to be set by main.gd via initialize method) ---
@@ -38,7 +38,7 @@ var map_container_for_bounds: TextureRect = null # Changed to TextureRect, will 
 # Ensure MapCameraController node is a child of MapInteractionManager in the scene
 @onready var map_camera_controller: MapCameraController = $MapCameraController
 
-var _initial_map_display_size: Vector2 = Vector2.ZERO # Store the original full map texture size
+
 
 enum ControlScheme { MOUSE_AND_KEYBOARD, TOUCH }
 @export_group("Control Scheme")
@@ -86,47 +86,71 @@ func _ready():
 		_current_map_screen_rect = get_viewport().get_visible_rect() # Initialize
 	else:
 		_current_map_screen_rect = Rect2(0,0,1,1) # Fallback, should be updated by main.gd
+	# --- DIAGNOSTICS: Print visibility state of all relevant map nodes ---
+	var map_display_vis = map_display.visible if is_instance_valid(map_display) else "N/A"
+	var camera_vis = camera.visible if is_instance_valid(camera) else "N/A"
+	print("[VIS] MapInteractionManager: map_display visible:", map_display_vis)
+	print("[VIS] MapInteractionManager: camera visible:", camera_vis)
+	var parent = map_display.get_parent() if is_instance_valid(map_display) else null
+	print("[VIS] MapInteractionManager: map_display parent visible:", parent.visible if is_instance_valid(parent) else "N/A")
+	# Deep diagnostics for map_display (should be TerrainTileMap) and its tileset
+	print("[DIAG] MapInteractionManager _ready: map_display is_instance_valid:", is_instance_valid(map_display))
+	if is_instance_valid(map_display):
+		print("[DIAG] map_display type:", typeof(map_display), " class:", map_display.get_class())
+		print("[DIAG] map_display resource_path:", map_display.resource_path if map_display.has_method("resource_path") else "N/A")
+		print("[DIAG] map_display.tile_set is_instance_valid:", is_instance_valid(map_display.tile_set))
+		if is_instance_valid(map_display.tile_set):
+			print("[DIAG] map_display.tile_set resource_path:", map_display.tile_set.resource_path if map_display.tile_set.has_method("resource_path") else "N/A")
+			print("[DIAG] map_display.tile_set to_string:", str(map_display.tile_set))
+			var ids = []
+			if map_display.tile_set.has_method("get_tiles_ids"):
+				ids = map_display.tile_set.get_tiles_ids()
+			else:
+				for i in range(100):
+					if map_display.tile_set.has_method("has_tile") and map_display.tile_set.has_tile(i):
+						ids.append(i)
+			print("[DIAG] map_display.tile_set ids:", ids)
+		else:
+			print("[DIAG] map_display.tile_set is not valid!")
+	else:
+		print("[DIAG] map_display is not valid!")
 
 
 func initialize(
-		p_map_display: TextureRect,
+		p_tilemap: TileMapLayer,
 		p_ui_manager: Node,
 		p_all_convoy_data: Array,
 		p_all_settlement_data: Array,
 		p_map_tiles: Array,
-		p_camera: Camera2D, # Add camera reference
-		p_map_container: TextureRect, # Expecting map_display (TextureRect)
-		p_initial_selected_ids: Array, # Pass initial state if needed
-		p_initial_user_positions: Dictionary # Pass initial state if needed
+		p_camera: Camera2D,
+		p_initial_selected_ids: Array,
+		p_initial_user_positions: Dictionary
 	):
-	map_display = p_map_display
-	if is_instance_valid(map_display):
-		_initial_map_display_size = map_display.custom_minimum_size # Assuming this is set to full map texture size
-		# print("MapInteractionManager: Received map_display.custom_minimum_size in initialize: ", map_display.custom_minimum_size) # DEBUG
+	# New: Pass TileMapLayer node for bounds
+	map_display = p_tilemap
 	ui_manager = p_ui_manager
 	all_convoy_data = p_all_convoy_data
 	all_settlement_data = p_all_settlement_data
 	map_tiles = p_map_tiles
-	_selected_convoy_ids = p_initial_selected_ids.duplicate(true) # Make a copy
-	_convoy_label_user_positions = p_initial_user_positions.duplicate(true) # Make a copy
-
+	_selected_convoy_ids = p_initial_selected_ids.duplicate(true)
+	_convoy_label_user_positions = p_initial_user_positions.duplicate(true)
 	camera = p_camera
-	map_container_for_bounds = p_map_container
 
-	# print("MapInteractionManager: Initialized with references.")
-	if not is_instance_valid(map_display): printerr("MapInteractionManager: map_display is invalid after init!")
-	if not is_instance_valid(ui_manager): printerr("MapInteractionManager: ui_manager is invalid after init!")
-	if not is_instance_valid(camera): printerr("MapInteractionManager: camera is invalid after init!")
-	if not is_instance_valid(map_container_for_bounds): printerr("MapInteractionManager: map_container_for_bounds is invalid after init!")
-	
-	if is_instance_valid(camera): # Basic camera setup
+	if not is_instance_valid(map_display):
+		printerr("MapInteractionManager: TileMap is invalid after init!")
+	if not is_instance_valid(ui_manager):
+		printerr("MapInteractionManager: ui_manager is invalid after init!")
+	if not is_instance_valid(camera):
+		printerr("MapInteractionManager: camera is invalid after init!")
+
+	# TileMap is now used for bounds and sizing; remove texture-based sizing logic.
+	if is_instance_valid(camera):
 		if is_instance_valid(map_camera_controller) and map_camera_controller.has_method("initialize"):
-			map_camera_controller.initialize(camera, map_container_for_bounds, _current_map_screen_rect)
+			map_camera_controller.initialize(camera, map_display, _current_map_screen_rect)
 			if map_camera_controller.has_signal("camera_zoom_changed"):
 				map_camera_controller.camera_zoom_changed.connect(_on_map_camera_controller_zoom_changed)
 		else:
 			printerr("MapInteractionManager: MapCameraController node or its initialize method is invalid.")
-			
 		camera.drag_horizontal_enabled = true
 		camera.drag_left_margin = 0.0
 		camera.drag_right_margin = 0.0
@@ -138,8 +162,7 @@ func initialize(
 		camera.drag_bottom_margin = 0.0
 		camera.process_callback = Camera2D.CAMERA2D_PROCESS_PHYSICS
 		camera.set("smoothing_enabled", true)
-		camera.set("smoothing_speed", 5.0) # Keep smoothing
-		# print("MapInteractionManager: Camera smoothing initialized.")
+		camera.set("smoothing_speed", 5.0)
 	else:
 		printerr("MapInteractionManager: Camera node is invalid in initialize.")
 		
@@ -161,15 +184,10 @@ func update_data_references(p_all_convoy_data: Array, p_all_settlement_data: Arr
 	all_settlement_data = p_all_settlement_data
 	map_tiles = p_map_tiles
 
-	# CRITICAL: Update _initial_map_display_size here, as map_display.custom_minimum_size
-	# is likely set by main.gd after MIM's initialize() but before/during data updates.
+	# TileMap is now the source of truth for map size and bounds. No texture-based sizing.
 	if is_instance_valid(map_display):
-		var current_map_actual_size = map_display.custom_minimum_size
-		if current_map_actual_size.x > 0 and current_map_actual_size.y > 0:
-			_initial_map_display_size = current_map_actual_size
-			if is_instance_valid(map_camera_controller) and map_camera_controller.has_method("update_map_dimensions"):
-				map_camera_controller.update_map_dimensions(_current_map_screen_rect)
-			# print("MIM (update_data_references): Updated _initial_map_display_size to: ", _initial_map_display_size) # DEBUG
+		if is_instance_valid(map_camera_controller) and map_camera_controller.has_method("update_map_dimensions"):
+			map_camera_controller.update_map_dimensions(_current_map_screen_rect)
 
 	# print("MapInteractionManager: Data references updated.")
 
@@ -364,27 +382,17 @@ func _handle_panel_drag_motion_only(event: InputEventMouseMotion) -> bool:
 func _perform_hover_detection_only(event: InputEventMouseMotion):
 	"""Performs ONLY hover detection. Called from _process via throttle."""
 	# Ensure we are not dragging a panel when performing hover detection
-	if not (is_instance_valid(camera) and is_instance_valid(map_display) and is_instance_valid(map_display.texture)):
+	if not (is_instance_valid(camera) and is_instance_valid(map_display)):
 		return
-
-	# DEBUG: Log mouse position
-	# print("MIM:_perform_hover_detection_only - Mouse global pos: ", event.global_position) # Too verbose
-	# print("MIM:_perform_hover_detection_only - Mouse world pos: ", mouse_world_pos) # Too verbose
 
 	var mouse_world_pos = camera.get_canvas_transform().affine_inverse() * event.global_position
 
-	# --- Convert local_mouse_pos to map texture coordinates ---
-	var map_texture_size: Vector2 = map_display.texture.get_size()
-	var map_display_rect_size: Vector2 = map_display.size
-	if map_texture_size.x == 0 or map_texture_size.y == 0: return
-
-	var scale_x_ratio: float = map_display_rect_size.x / map_texture_size.x
-	# var scale_y_ratio: float = map_display_rect_size.y / map_texture_size.y # Unused
-	# var actual_scale: float = min(scale_x_ratio, scale_y_ratio) # Unused
-	# var displayed_texture_width: float = map_texture_size.x * actual_scale # Unused
-	# var displayed_texture_height: float = map_texture_size.y * actual_scale # Unused
-	# var offset_x: float = (map_display_rect_size.x - displayed_texture_width) / 2.0 # Unused
-	# var offset_y: float = (map_display_rect_size.y - displayed_texture_height) / 2.0 # Unused
+	# Get map bounds from TileMap
+	var used_rect = map_display.get_used_rect()
+	var cell_size = map_display.cell_size
+	# ...existing code...
+	var actual_tile_width_on_world: float = cell_size.x
+	var actual_tile_height_on_world: float = cell_size.y
 
 	var new_hover_info: Dictionary = {}
 	var found_hover_element: bool = false
@@ -395,10 +403,7 @@ func _perform_hover_detection_only(event: InputEventMouseMotion):
 			emit_signal("hover_changed", self._current_hover_info)
 		return
 
-	var map_cols: int = map_tiles[0].size()
-	var map_rows: int = map_tiles.size()
-	var actual_tile_width_on_world: float = _initial_map_display_size.x / float(map_cols)
-	var actual_tile_height_on_world: float = _initial_map_display_size.y / float(map_rows)
+	# ...existing code...
 
 	# print("MIM:_perform_hover_detection_only - Tile world size: (%s, %s)" % [actual_tile_width_on_world, actual_tile_height_on_world]) # DEBUG
 	# 1. Check for Convoy Hover
@@ -603,9 +608,11 @@ func _get_convoy_data_at_world_pos(world_pos: Vector2) -> Variant:
 	if all_convoy_data.is_empty() or map_tiles.is_empty() or not map_tiles[0] is Array or map_tiles[0].is_empty():
 		return null
 
-	var map_cols: int = map_tiles[0].size() # Should be safe due to checks above
-	var actual_tile_width_on_world: float = _initial_map_display_size.x / float(map_cols)
-	var actual_tile_height_on_world: float = _initial_map_display_size.y / float(map_tiles.size())
+	var used_rect = map_display.get_used_rect()
+	var cell_size = map_display.cell_size
+	# ...existing code...
+	var actual_tile_width_on_world: float = cell_size.x
+	var actual_tile_height_on_world: float = cell_size.y
 
 	for convoy_data_item in all_convoy_data:
 		if not convoy_data_item is Dictionary: continue

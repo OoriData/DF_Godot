@@ -16,7 +16,8 @@ var controls_enabled: bool = true
 var allow_camera_outside_bounds: bool = false
 
 var camera_node: Camera2D = null
-var map_container_for_bounds_ref: TextureRect = null
+## Removed old TileMap reference, only using TileMapLayer now
+var tilemap_ref: TileMapLayer = null # Reference to the TileMapLayer node
 var current_map_screen_rect_ref: Rect2 = Rect2()
 
 # Store calculated map bounds to avoid recalculating every frame
@@ -29,57 +30,62 @@ var _last_pan_mouse_screen_position: Vector2 = Vector2.ZERO
 func _ready():
 	set_physics_process(true)
 	get_viewport().connect("size_changed", Callable(self, "_on_viewport_resized"))
+	# Deep diagnostics for tilemap_ref and its tileset
+	print("[DIAG] MapCameraController _ready: camera_node:", camera_node)
+	print("[DIAG] MapCameraController _ready: tilemap_ref is_instance_valid:", is_instance_valid(tilemap_ref))
+	if is_instance_valid(tilemap_ref):
+		print("[DIAG] MapCameraController _ready: tilemap_ref type:", typeof(tilemap_ref), " class:", tilemap_ref.get_class())
+		print("[DIAG] MapCameraController _ready: tilemap_ref resource_path:", tilemap_ref.resource_path if tilemap_ref.has_method("resource_path") else "N/A")
+		print("[DIAG] MapCameraController _ready: tilemap_ref.tile_set is_instance_valid:", is_instance_valid(tilemap_ref.tile_set))
+		if is_instance_valid(tilemap_ref.tile_set):
+			print("[DIAG] MapCameraController _ready: tilemap_ref.tile_set resource_path:", tilemap_ref.tile_set.resource_path if tilemap_ref.tile_set.has_method("resource_path") else "N/A")
+			print("[DIAG] MapCameraController _ready: tilemap_ref.tile_set to_string:", str(tilemap_ref.tile_set))
+			var ids = []
+			if tilemap_ref.tile_set.has_method("get_tiles_ids"):
+				ids = tilemap_ref.tile_set.get_tiles_ids()
+			else:
+				for i in range(100):
+					if tilemap_ref.tile_set.has_method("has_tile") and tilemap_ref.tile_set.has_tile(i):
+						ids.append(i)
+			print("[DIAG] MapCameraController _ready: tilemap_ref.tile_set ids:", ids)
+		else:
+			print("[DIAG] MapCameraController _ready: tilemap_ref.tile_set is not valid!")
+	else:
+		print("[DIAG] MapCameraController _ready: tilemap_ref is not valid!")
 
 func _on_viewport_resized():
 	await get_tree().process_frame
 	_bounds_need_update = true
 	update_map_dimensions(current_map_screen_rect_ref)
 
-func initialize(p_camera: Camera2D, p_map_container: TextureRect, p_map_screen_rect: Rect2):
+func initialize(p_camera: Camera2D, p_tilemap: TileMapLayer, p_map_screen_rect: Rect2):
 	camera_node = p_camera
-	map_container_for_bounds_ref = p_map_container
+	tilemap_ref = p_tilemap # Now expects TileMapLayer
 	current_map_screen_rect_ref = p_map_screen_rect
 	_bounds_need_update = true
 
-	if not is_instance_valid(camera_node):
-		printerr("MapCameraController: Camera node is invalid in initialize.")
-	if not is_instance_valid(map_container_for_bounds_ref):
-		printerr("MapCameraController: Map container for bounds is invalid in initialize.")
+	if is_instance_valid(camera_node):
+		pass
+	else:
+		printerr("[ERROR] Camera node is INVALID in initialize.")
+	if is_instance_valid(tilemap_ref):
+		pass
+	else:
+		printerr("[ERROR] TileMapLayer node is INVALID in initialize.")
 
 func update_map_dimensions(p_map_screen_rect: Rect2):
 	current_map_screen_rect_ref = p_map_screen_rect
 	_bounds_need_update = true
 
 func _update_map_bounds():
-	if not is_instance_valid(map_container_for_bounds_ref) or \
-	   not is_instance_valid(map_container_for_bounds_ref.texture):
+	if not is_instance_valid(tilemap_ref):
 		return
-
-	var texture_size: Vector2 = map_container_for_bounds_ref.texture.get_size()
-	var container_size: Vector2 = map_container_for_bounds_ref.size
-
-	# Compute displayed size preserving aspect ratio
-	var texture_aspect_ratio: float = texture_size.x / texture_size.y
-	var container_aspect_ratio: float = container_size.x / container_size.y
-
-	var displayed_size: Vector2
-	if texture_aspect_ratio > container_aspect_ratio:
-		displayed_size.x = container_size.x
-		displayed_size.y = container_size.x / texture_aspect_ratio
-	else:
-		displayed_size.y = container_size.y
-		displayed_size.x = container_size.y * texture_aspect_ratio
-
-	var offset: Vector2 = (container_size - displayed_size) * 0.5
-
-	# Get the map container's global position and scale
-	var container_global_pos: Vector2 = map_container_for_bounds_ref.global_position
-	var container_scale: Vector2 = map_container_for_bounds_ref.get_global_transform().get_scale()
-	
-	# Calculate the actual displayed map area in world coordinates
-	var map_top_left_world: Vector2 = container_global_pos + (offset * container_scale)
-	var map_size_world: Vector2 = displayed_size * container_scale
-	_cached_map_bounds = Rect2(map_top_left_world, map_size_world)
+	var used_rect = tilemap_ref.get_used_rect()
+	var cell_size = tilemap_ref.tile_set.tile_size
+	var cell_size_vec = Vector2(cell_size)
+	var map_size = Vector2(used_rect.size.x * cell_size_vec.x, used_rect.size.y * cell_size_vec.y)
+	var map_pos = Vector2(used_rect.position) * cell_size_vec
+	_cached_map_bounds = Rect2(map_pos, map_size)
 	_bounds_need_update = false
 
 func _physics_process(_delta: float):
@@ -144,7 +150,21 @@ func handle_input(event: InputEvent) -> bool:
 	if not is_instance_valid(camera_node):
 		return false
 
+	# Trackpad-friendly: allow left mouse drag for panning
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_MIDDLE:
+		if event.pressed:
+			_is_panning_mmb = true
+			_last_pan_mouse_screen_position = event.position
+			Input.set_default_cursor_shape(Input.CURSOR_DRAG)
+			get_viewport().set_input_as_handled()
+			return true
+		elif _is_panning_mmb:
+			_is_panning_mmb = false
+			Input.set_default_cursor_shape(Input.CURSOR_ARROW)
+			get_viewport().set_input_as_handled()
+			return true
+
+	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
 		if event.pressed:
 			_is_panning_mmb = true
 			_last_pan_mouse_screen_position = event.position
@@ -189,17 +209,22 @@ func handle_input(event: InputEvent) -> bool:
 	return false
 
 func zoom_at_screen_pos(zoom_adjust_factor: float, screen_zoom_center: Vector2):
-	if not is_instance_valid(camera_node): return
+	if not is_instance_valid(camera_node):
+		printerr("[ERROR] zoom_at_screen_pos: camera_node not valid, ignoring zoom.")
+		return
 
 	var camera_viewport: Viewport = camera_node.get_viewport()
 	if not is_instance_valid(camera_viewport):
+		printerr("[ERROR] zoom_at_screen_pos: camera_viewport not valid, ignoring zoom.")
 		return
 
 	# Use the current map screen rect size for calculations
 	var viewport_render_size_pixels = current_map_screen_rect_ref.size
 	var map_world_size = Vector2.ZERO
-	if is_instance_valid(map_container_for_bounds_ref) and is_instance_valid(map_container_for_bounds_ref.texture):
-		map_world_size = map_container_for_bounds_ref.texture.get_size()
+	if is_instance_valid(tilemap_ref):
+		var used_rect = tilemap_ref.get_used_rect()
+		var cell_size = tilemap_ref.tile_set.tile_size
+		map_world_size = Vector2(used_rect.size.x * cell_size.x, used_rect.size.y * cell_size.y)
 
 	var dynamic_min_zoom_val: float = min_camera_zoom_level
 
@@ -217,7 +242,8 @@ func zoom_at_screen_pos(zoom_adjust_factor: float, screen_zoom_center: Vector2):
 	var clamped_zoom: float = clamp(new_potential_zoom, effective_min_clamp_val, effective_max_clamp_val)
 	var new_zoom_vec := Vector2(clamped_zoom, clamped_zoom)
 
-	if camera_node.zoom.is_equal_approx(new_zoom_vec): return
+	if camera_node.zoom.is_equal_approx(new_zoom_vec):
+		return
 
 	var zoom_center_in_viewport_coords: Vector2 = screen_zoom_center - current_map_screen_rect_ref.position
 
@@ -239,7 +265,14 @@ func set_and_clamp_zoom(target_zoom_scalar: float):
 		return
 
 	var adjust_factor = target_zoom_scalar / current_zoom
-	zoom_at_screen_pos(adjust_factor, current_map_screen_rect_ref.get_center())
+	# Center on the map if possible
+	var center_pos = Vector2.ZERO
+	if is_instance_valid(tilemap_ref):
+		var used_rect = tilemap_ref.get_used_rect()
+		var cell_size = tilemap_ref.tile_set.tile_size
+		var cell_size_vec = Vector2(cell_size)
+		center_pos = (Vector2(used_rect.position) * cell_size_vec) + (Vector2(used_rect.size.x * cell_size_vec.x, used_rect.size.y * cell_size_vec.y) / 2)
+	zoom_at_screen_pos(adjust_factor, center_pos)
 
 func focus_and_set_zoom(target_world_position: Vector2, target_zoom_scalar: float):
 	if not is_instance_valid(camera_node):
@@ -257,21 +290,46 @@ func is_panning() -> bool:
 func force_bounds_update():
 	_bounds_need_update = true
 
-# Helper function to get the actual visible map area in world coordinates
 func get_visible_map_area() -> Rect2:
 	if not is_instance_valid(camera_node):
 		return Rect2()
-	
 	var viewport_size_pixels = current_map_screen_rect_ref.size
 	var viewport_size_world = viewport_size_pixels / camera_node.zoom
 	var camera_top_left = camera_node.position - viewport_size_world * 0.5
-	
 	return Rect2(camera_top_left, viewport_size_world)
 
-# Debug function to print current bounds info
+func fit_camera_to_tilemap():
+	if not is_instance_valid(camera_node):
+		printerr("[ERROR] Camera node is invalid in fit_camera_to_tilemap.")
+		return
+	if not is_instance_valid(tilemap_ref):
+		printerr("[ERROR] TileMapLayer node is invalid in fit_camera_to_tilemap.")
+		return
+	var used_rect = tilemap_ref.get_used_rect()
+	var cell_size = tilemap_ref.tile_set.tile_size
+	var cell_size_vec = Vector2(cell_size)
+	var map_size = Vector2(used_rect.size.x * cell_size_vec.x, used_rect.size.y * cell_size_vec.y)
+	var viewport_size = current_map_screen_rect_ref.size
+	if map_size.x > 0 and map_size.y > 0 and viewport_size.x > 0 and viewport_size.y > 0:
+		var zoom_x = viewport_size.x / map_size.x
+		var zoom_y = viewport_size.y / map_size.y
+		var target_zoom = min(zoom_x, zoom_y)
+		# Clamp zoom so map never appears smaller than viewport (never < 1.0)
+		var clamped_zoom = max(target_zoom, 1.0)
+		var center_pos = (Vector2(used_rect.position) * cell_size_vec) + (map_size / 2)
+		camera_node.zoom = Vector2(clamped_zoom, clamped_zoom)
+		camera_node.position = center_pos
+		emit_signal("camera_zoom_changed", clamped_zoom)
+	else:
+		printerr("[ERROR] Invalid map or viewport size in fit_camera_to_tilemap.")
+
 func debug_print_bounds():
-	print("Map bounds: ", _cached_map_bounds)
-	print("Camera position: ", camera_node.position if is_instance_valid(camera_node) else "Invalid")
-	print("Camera zoom: ", camera_node.zoom if is_instance_valid(camera_node) else "Invalid")
+	print("TileMap bounds: ", _cached_map_bounds)
+	if is_instance_valid(camera_node):
+		print("Camera position: ", camera_node.position)
+		print("Camera zoom: ", camera_node.zoom)
+	else:
+		print("Camera position: Invalid")
+		print("Camera zoom: Invalid")
 	print("Visible area: ", get_visible_map_area())
 	print("Map screen rect: ", current_map_screen_rect_ref)

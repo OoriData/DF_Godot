@@ -1,0 +1,112 @@
+[gd_resource type="TileSet" load_steps=37 format=3 uid="uid://dm10x6qv8kfpv"]
+
+[ext_resource type="Texture2D" uid="uid://b2atlay5redmg" path="res://Assets/tiles/city-state.png" id="1_n2dx2"]
+[ext_resource type="Texture2D" uid="uid://c2jtq4tgm61f3" path="res://Assets/tiles/city.png" id="2_v3mt6"]
+[ext_resource type="Texture2D" uid="uid://l7x4rrjaupu" path="res://Assets/tiles/near_impassible.png" id="3_cikol"]
+[ext_resource type="Texture2D" uid="uid://cen1ytbw318ss" path="res://Assets/tiles/plains.png" id="4_e8uhe"]
+[ext_resource type="Texture2D" uid="uid://cckea5eg0m1r2" path="res://Assets/tiles/road.png" id="5_gg2cn"]
+[ext_resource type="Texture2D" uid="uid://bwovl7l2puc5g" path="res://Assets/tiles/swamp.png" id="6_thtjh"]
+[ext_resource type="Texture2D" uid="uid://cjt2wihppdawb" path="res://Assets/tiles/town.png" id="7_efjuk"]
+[ext_resource type="Texture2D" uid="uid://hfw7img5li6q" path="res://Assets/tiles/trail.png" id="8_g1t0u"]
+[ext_resource type="Texture2D" uid="uid://m2t06eu0bq37" path="res://Assets/tiles/tutorial.png" id="9_x358u"]
+[ext_resource type="Texture2D" uid="uid://pty6oh8ybkvb" path="res://Assets/tiles/village.png" id="10_ns2jc"]
+[ext_resource type="Texture2D" uid="uid://cu7yestn448or" path="res://Assets/tiles/desert.png" id="11_yq0sf"]
+[ext_resource type="Texture2D" uid="uid://bqd2k686kb1je" path="res://Assets/tiles/dome.png" id="12_r4ptm"]
+[ext_resource type="Texture2D" uid="uid://c5owm7lfa0fw7" path="res://Assets/tiles/forest.png" id="13_iyax0"]
+[ext_resource type="Texture2D" uid="uid://cmru7hhg0mhih" path="res://Assets/tiles/highway.png" id="14_pa6hl"]
+[ext_resource type="Texture2D" uid="uid://4xm6ah3udnrm" path="res://Assets/tiles/impassable.png" id="15_32ins"]
+[ext_resource type="Texture2D" uid="uid://pcbiw8onu02w" path="res://Assets/tiles/marked.png" id="16_ta083"]
+[ext_resource type="Texture2D" uid="uid://mnkoa60kpbd4" path="res://Assets/tiles/military_base.png" id="17_o586k"]
+[ext_resource type="Texture2D" uid="uid://b6tsav7rfc21d" path="res://Assets/tiles/mountains.png" id="18_36evc"]
+
+[sub_resource type="TileSetAtlasSource" id="TileSetAtlasSource_17q6m"]
+texture = ExtResource("1_n2dx2")
+0:0/0 = 0
+
+[sub_resource type="TileSetAtlasSource" id="TileSetAtlasSource_bca8r"]
+texture = ExtResource("2_v3mt6")
+0:0/0 = 0
+
+[sub_resource type="TileSetAtlasSource" id="TileSetAtlasSource_m80ys"]
+texture = ExtResource("3_cikol")
+0:0/0 = 0
+
+[sub_resource type="TileSetAtlasSource" id="TileSetAtlasSource_kyw8a"]
+texture = ExtResource("4_e8uhe")
+0:0/0 = 0
+
+[sub_resource type="TileSetAtlasSource" id="TileSetAtlasSource_qm4l4"]
+texture = ExtResource("5_gg2cn")
+0:0/0 = 0
+
+[sub_resource type="TileSetAtlasSource" id="TileSetAtlasSource_milwu"]
+texture = ExtResource("6_thtjh")
+0:0/0 = 0
+
+[sub_resource type="TileSetAtlasSource" id="TileSetAtlasSource_2anyd"]
+texture = ExtResource("7_efjuk")
+0:0/0 = 0
+
+[sub_resource type="TileSetAtlasSource" id="TileSetAtlasSource_1da37"]
+texture = ExtResource("8_g1t0u")
+0:0/0 = 0
+
+[sub_resource type="TileSetAtlasSource" id="TileSetAtlasSource_bikcm"]
+texture = ExtResource("9_x358u")
+0:0/0 = 0
+
+[sub_resource type="TileSetAtlasSource" id="TileSetAtlasSource_ndoxx"]
+texture = ExtResource("10_ns2jc")
+0:0/0 = 0
+
+[sub_resource type="TileSetAtlasSource" id="TileSetAtlasSource_p1vnq"]
+texture = ExtResource("11_yq0sf")
+0:0/0 = 0
+
+[sub_resource type="TileSetAtlasSource" id="TileSetAtlasSource_30gf0"]
+texture = ExtResource("12_r4ptm")
+0:0/0 = 0
+
+[sub_resource type="TileSetAtlasSource" id="TileSetAtlasSource_wn2rd"]
+texture = ExtResource("13_iyax0")
+0:0/0 = 0
+
+[sub_resource type="TileSetAtlasSource" id="TileSetAtlasSource_pu05c"]
+texture = ExtResource("14_pa6hl")
+0:0/0 = 0
+
+[sub_resource type="TileSetAtlasSource" id="TileSetAtlasSource_yl8pq"]
+texture = ExtResource("15_32ins")
+0:0/0 = 0
+
+[sub_resource type="TileSetAtlasSource" id="TileSetAtlasSource_1aa5h"]
+texture = ExtResource("16_ta083")
+0:0/0 = 0
+
+[sub_resource type="TileSetAtlasSource" id="TileSetAtlasSource_54tit"]
+texture = ExtResource("17_o586k")
+0:0/0 = 0
+
+[sub_resource type="TileSetAtlasSource" id="TileSetAtlasSource_ed02q"]
+texture = ExtResource("18_36evc")
+0:0/0 = 0
+
+[resource]
+sources/0 = SubResource("TileSetAtlasSource_17q6m")
+sources/1 = SubResource("TileSetAtlasSource_bca8r")
+sources/2 = SubResource("TileSetAtlasSource_p1vnq")
+sources/3 = SubResource("TileSetAtlasSource_30gf0")
+sources/4 = SubResource("TileSetAtlasSource_wn2rd")
+sources/5 = SubResource("TileSetAtlasSource_pu05c")
+sources/6 = SubResource("TileSetAtlasSource_yl8pq")
+sources/7 = SubResource("TileSetAtlasSource_1aa5h")
+sources/8 = SubResource("TileSetAtlasSource_54tit")
+sources/9 = SubResource("TileSetAtlasSource_ed02q")
+sources/10 = SubResource("TileSetAtlasSource_m80ys")
+sources/11 = SubResource("TileSetAtlasSource_kyw8a")
+sources/12 = SubResource("TileSetAtlasSource_qm4l4")
+sources/13 = SubResource("TileSetAtlasSource_milwu")
+sources/14 = SubResource("TileSetAtlasSource_2anyd")
+sources/15 = SubResource("TileSetAtlasSource_1da37")
+sources/16 = SubResource("TileSetAtlasSource_bikcm")
+sources/17 = SubResource("TileSetAtlasSource_ndoxx")
