@@ -1,4 +1,3 @@
-# main.gd
 @tool
 extends Node2D
 
@@ -182,7 +181,6 @@ func populate_tilemap_from_data(tile_data_2d: Array) -> void:
 		terrain_tilemap.set_cell(Vector2i(0, 0), entry["source_id"], coords)
 		break # Only set the first available tile as a test
 
-
 func _ready():
 	map_display.texture = sub_viewport.get_texture()
 	print("[DIAGNOSTIC_LOG | main.gd] _ready(): Main view is loaded and ready. WAITING to be made visible.")
@@ -194,6 +192,11 @@ func _ready():
 	# Connect to window resize and update SubViewport size
 	get_viewport().size_changed.connect(_on_window_resized)
 	_update_subviewport_size()
+
+func _is_interactive_control(ctrl: Control) -> bool:
+	# Add more types as needed for your UI
+	return ctrl is Button or ctrl is MenuButton or ctrl is LineEdit or ctrl is CheckBox or ctrl is OptionButton or ctrl is SpinBox or ctrl is Slider
+# main.gd
 
 func _on_window_resized():
 	_update_subviewport_size()
@@ -239,10 +242,10 @@ func _input(event):
 	if get_viewport().gui_get_focus_owner() != null:
 		return
 
-	# NEW: If the event is over any Control node, don't handle it in the map/camera
+	# Only block map/camera input if hovered Control is an interactive widget
 	if event is InputEventMouse and event.position:
 		var ui_under_mouse = get_viewport().gui_get_hovered_control()
-		if ui_under_mouse:
+		if ui_under_mouse and ui_under_mouse.visible and ui_under_mouse.mouse_filter != Control.MOUSE_FILTER_IGNORE and _is_interactive_control(ui_under_mouse):
 			return
 
 	if is_instance_valid(map_camera_controller):

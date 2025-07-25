@@ -775,84 +775,46 @@ func _find_settlement_at_tile(tile_x: int, tile_y: int) -> Variant:
 
 
 func _on_connector_lines_container_draw():
-	# Use cached drawing parameters
+	# Debug: Confirm draw function is called and print key parameters
+	print("[DEBUG] _on_connector_lines_container_draw CALLED")
+	var map_display_size = _map_display_node.size if is_instance_valid(_map_display_node) else "N/A"
+	print("[DEBUG] Container visible:", convoy_connector_lines_container.visible, " map_display size:", map_display_size)
+	print("[DEBUG] Tile size:", _cached_actual_tile_width_on_texture, _cached_actual_tile_height_on_texture, " Scale:", _cached_actual_scale, " Offset:", _cached_offset_x, _cached_offset_y)
 	if not _ui_drawing_params_cached:
-		# printerr("UIManager: Drawing params not cached for connector lines. Skipping draw.")
+		print("[DEBUG] Drawing params not cached, skipping draw.")
 		return
-		
-	if not is_instance_valid(convoy_label_container): return
-	# This function will need to get visible convoy panels from ConvoyLabelManager
-	# or ConvoyLabelManager could draw its own connector lines if this container is moved under it.
-	# For now, assume UIManager asks ConvoyLabelManager for the visible panels.
-	# Access cached values directly:
-	# _cached_actual_scale
-	# _cached_offset_x
-	# _cached_offset_y
-	# _cached_actual_tile_width_on_texture
-	# _cached_actual_tile_height_on_texture
-	
-	var active_convoy_panels_info: Array = [] # Array of Dictionaries: [{panel: Panel, convoy_data: Dictionary}]
-	if is_instance_valid(convoy_label_manager) and convoy_label_manager.has_method("get_active_convoy_panels_info"):
-		active_convoy_panels_info = convoy_label_manager.get_active_convoy_panels_info()
 
-	for panel_info in active_convoy_panels_info:
-		var panel: Panel = panel_info.get("panel")
-		var convoy_data_for_line: Dictionary = panel_info.get("convoy_data")
+	if _all_convoy_data_cache is Array:
+		print("[DEBUG] Convoy count:", _all_convoy_data_cache.size())
+		for convoy in _all_convoy_data_cache:
+			if not (convoy is Dictionary and convoy.has("journey")):
+				continue
+			var journey = convoy["journey"]
+			if not (journey is Dictionary and journey.has("route_x") and journey.has("route_y")):
+				continue
+			var route_x: Array = journey["route_x"]
+			var route_y: Array = journey["route_y"]
+			if route_x.size() < 2 or route_y.size() != route_x.size():
+				continue
 
-		if not is_instance_valid(panel) or not panel.visible or not convoy_data_for_line:
-			continue
+			var points: PackedVector2Array = []
+			for i in range(route_x.size()):
+				var tile_x = float(route_x[i])
+				var tile_y = float(route_y[i])
+				var px = (tile_x + 0.5) * _cached_actual_tile_width_on_texture * _cached_actual_scale + _cached_offset_x
+				var py = (tile_y + 0.5) * _cached_actual_tile_height_on_texture * _cached_actual_scale + _cached_offset_y
+				points.append(Vector2(px, py))
+			if points.size() >= 2:
+				convoy_connector_lines_container.draw_polyline(points, connector_line_color, connector_line_width)
 
-		var convoy_map_x: float = convoy_data_for_line.get('x', 0.0)
-		var convoy_map_y: float = convoy_data_for_line.get('y', 0.0)
-		var convoy_center_on_texture_x: float = (convoy_map_x + 0.5) * _cached_actual_tile_width_on_texture
-		var convoy_center_on_texture_y: float = (convoy_map_y + 0.5) * _cached_actual_tile_height_on_texture
-		
-		var line_start_pos = Vector2(
-			convoy_center_on_texture_x * _cached_actual_scale + _cached_offset_x,
-			convoy_center_on_texture_y * _cached_actual_scale + _cached_offset_y
-		)
-
-		# Assuming convoy_label_container and convoy_connector_lines_container are siblings
-		# and their parent (UIManagerNode) is at (0,0) relative to map_display.
-		# Panel.position is local to its parent (ConvoyLabelContainer).
-		# We need the panel's rect in the coordinate system of ConvoyConnectorLinesContainer.
-		# If they are siblings under UIManagerNode, and UIManagerNode is at (0,0) in MapDisplay,
-		# then panel.global_position can be transformed to local for the connector container.
-		var panel_global_pos = panel.global_position
-		var panel_pos_local_to_connector_container = convoy_connector_lines_container.to_local(panel_global_pos)
-		
-		var panel_rect_in_connector_space = Rect2(panel_pos_local_to_connector_container, panel.size)
-		var actual_panel_size_for_draw = panel.size
-		if actual_panel_size_for_draw.x <= 0 or actual_panel_size_for_draw.y <= 0:
-			actual_panel_size_for_draw = panel.get_minimum_size()
-
-		panel_rect_in_connector_space.size = actual_panel_size_for_draw
-		
-		var panel_center_in_connector_space = panel_rect_in_connector_space.get_center()
-		var line_end_pos: Vector2
-
-		if actual_panel_size_for_draw.x <= 0 or actual_panel_size_for_draw.y <= 0:
-			# printerr("UIManager: Invalid panel size for connector line. Convoy ID: %s" % convoy_data_for_line.get("convoy_id"))
-			continue
-
-		if panel_rect_in_connector_space.has_point(line_start_pos):
-			if panel_center_in_connector_space.is_equal_approx(line_start_pos):
-				line_end_pos = Vector2(panel_center_in_connector_space.x, panel_rect_in_connector_space.position.y)
-			else:
-				var dir_to_icon = (line_start_pos - panel_center_in_connector_space).normalized()
-				var far_point = panel_center_in_connector_space + dir_to_icon * (max(panel_rect_in_connector_space.size.x, panel_rect_in_connector_space.size.y) * 2.0)
-				line_end_pos = Vector2(
-					clamp(far_point.x, panel_rect_in_connector_space.position.x, panel_rect_in_connector_space.end.x),
-					clamp(far_point.y, panel_rect_in_connector_space.position.y, panel_rect_in_connector_space.end.y)
-				)
-		else:
-			line_end_pos = Vector2(
-				clamp(line_start_pos.x, panel_rect_in_connector_space.position.x, panel_rect_in_connector_space.end.x),
-				clamp(line_start_pos.y, panel_rect_in_connector_space.position.y, panel_rect_in_connector_space.end.y)
-			)
-			
-		if not line_start_pos.is_equal_approx(line_end_pos):
-			convoy_connector_lines_container.draw_line(line_start_pos, line_end_pos, connector_line_color, connector_line_width, true)
+	if _all_convoy_data_cache is Array:
+		for convoy in _all_convoy_data_cache:
+			if not (convoy is Dictionary and convoy.has("x") and convoy.has("y")):
+				continue
+			var px = (float(convoy["x"]) + 0.5) * _cached_actual_tile_width_on_texture * _cached_actual_scale + _cached_offset_x
+			var py = (float(convoy["y"]) + 0.5) * _cached_actual_tile_height_on_texture * _cached_actual_scale + _cached_offset_y
+			var color = _convoy_id_to_color_map_cache.get(str(convoy.get("convoy_id", "")), Color(1,1,1,1))
+			convoy_connector_lines_container.draw_circle(Vector2(px, py), 6, color)
 
 # --- Drag and Drop related methods (to be implemented/refined later) ---
 # func start_panel_drag(panel_node: Panel, global_mouse_position: Vector2):
