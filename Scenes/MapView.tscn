@@ -51,6 +51,7 @@ tile_set = ExtResource("3_vvi3b")
 [node name="MapCamera" type="Camera2D" parent="MapContainer/SubViewport"]
 
 [node name="ScreenSpaceUI" type="CanvasLayer" parent="."]
+layer = 10
 
 [node name="TopNavBar" type="PanelContainer" parent="ScreenSpaceUI"]
 anchors_preset = 10

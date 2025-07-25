@@ -14,6 +14,17 @@ var _original_money_font_size: int
 var gdm: Node
 
 func _ready() -> void:
+	# Ensure UserInfoDisplay and all child Control nodes do not block input to ConvoyMenuButton
+	mouse_filter = Control.MOUSE_FILTER_PASS
+	for child in get_children():
+		if child is Control and child != convoy_menu_button:
+			child.mouse_filter = Control.MOUSE_FILTER_PASS
+			print("UserInfoDisplay: Set mouse_filter=PASS on child Control node:", child.name)
+	# Diagnostics for convoy_menu_button
+	print("[DIAG] UserInfoDisplay: convoy_menu_button mouse_filter:", convoy_menu_button.mouse_filter)
+	print("[DIAG] UserInfoDisplay: convoy_menu_button global_position:", convoy_menu_button.global_position, " size:", convoy_menu_button.size)
+	print("[DIAG] UserInfoDisplay: self (UserInfoDisplay) global_position:", global_position, " size:", size)
+	var diag_popup = convoy_menu_button.get_popup()
 	gdm = get_node_or_null("/root/GameDataManager")
 	if is_instance_valid(gdm):
 		# Connect to signals from the GameDataManager
@@ -43,7 +54,51 @@ func _ready() -> void:
 	if not popup.is_connected("id_pressed", _on_convoy_menu_item_pressed):
 		popup.id_pressed.connect(_on_convoy_menu_item_pressed)
 
+	# Debug: print when the button itself is pressed
+	if not convoy_menu_button.is_connected("pressed", _on_convoy_menu_button_pressed_debug):
+		convoy_menu_button.pressed.connect(_on_convoy_menu_button_pressed_debug)
+
+func _on_convoy_menu_button_pressed_debug():
+	print("[DEBUG] ConvoyMenuButton was pressed!")
+
 	_update_display() # Initial update
+
+	# Print the full UI tree and mouse_filter values after a short delay to ensure all UI is loaded
+	await get_tree().process_frame
+	await get_tree().process_frame
+	print("[DIAG] FULL UI TREE (after login):")
+	_print_ui_tree(get_tree().root, 0)
+
+	# Print all CanvasLayer nodes and their layer property
+	print("[DIAG] CanvasLayer order:")
+	_print_canvas_layers(get_tree().root)
+
+	# Print layer property for known CanvasLayer nodes by name
+	var root = get_tree().root
+	var screen_space_ui = root.find_child("ScreenSpaceUI", true, false)
+	var ui_manager_node = root.find_child("UIManagerNode", true, false)
+	var menu_ui_layer = root.find_child("MenuUILayer", true, false)
+	if screen_space_ui and screen_space_ui is CanvasLayer:
+		print("[DIAG] ScreenSpaceUI.layer:", screen_space_ui.layer)
+	if ui_manager_node and ui_manager_node is CanvasLayer:
+		print("[DIAG] UIManagerNode.layer:", ui_manager_node.layer)
+	if menu_ui_layer and menu_ui_layer is CanvasLayer:
+		print("[DIAG] MenuUILayer.layer:", menu_ui_layer.layer)
+
+func _print_canvas_layers(node: Node):
+	if node is CanvasLayer:
+		print("  CanvasLayer:", node.name, "layer=", node.layer)
+	for child in node.get_children():
+		_print_canvas_layers(child)
+
+func _print_ui_tree(node: Node, indent: int):
+	var prefix = "  ".repeat(indent)
+	var mf = ""
+	if node is Control:
+		mf = " mouse_filter=" + str(node.mouse_filter)
+	print("%s- %s (%s)%s" % [prefix, node.name, node.get_class(), mf])
+	for child in node.get_children():
+		_print_ui_tree(child, indent + 1)
 
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_VISIBILITY_CHANGED and is_visible_in_tree():

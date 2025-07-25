@@ -137,6 +137,11 @@ const LABEL_CONTAINER_Z_INDEX = 2
 
 func _ready():
 	# --- Critical Dependency Validation ---
+	# Ensure all child Control nodes do not block input
+	for child in get_children():
+		if child is Control:
+			child.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			print("UIManagerNode: Set mouse_filter=IGNORE on child Control node:", child.name)
 	# Check all exported NodePath dependencies at startup to fail early if not configured in the editor.
 	var dependencies: Dictionary = {
 		"settlement_label_container": settlement_label_container,
@@ -193,6 +198,19 @@ func _ready():
 		ui_scale_manager.scale_changed.connect(_on_ui_scale_changed)
 	else:
 		printerr("UIManager: ui_scale_manager singleton not found. UI scaling will not be dynamic.")
+	
+	# Diagnostic: Print scene tree and mouse_filter values for all UI nodes
+	print("[DIAG] UI_manager.gd: Printing scene tree and mouse_filter values for all UI nodes:")
+	_print_ui_tree(self, 0)
+
+func _print_ui_tree(node: Node, indent: int):
+	var prefix = "  ".repeat(indent)
+	var mf = ""
+	if node is Control:
+		mf = " mouse_filter=" + str(node.mouse_filter)
+	print("%s- %s (%s)%s" % [prefix, node.name, node.get_class(), mf])
+	for child in node.get_children():
+		_print_ui_tree(child, indent + 1)
 
 
 func initialize_font_settings(theme_font_to_use: Font):

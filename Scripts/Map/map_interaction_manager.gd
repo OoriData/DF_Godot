@@ -195,6 +195,9 @@ func _physics_process(delta: float):
 	pass # Camera clamping is now handled by MapCameraController's _physics_process
 
 func _input(event: InputEvent): # Renamed from _unhandled_input
+	# Prevent handling input if a UI element is focused
+	if get_viewport().gui_get_focus_owner() != null:
+		return
 	# --- DEBUG: Log some events reaching _unhandled_input ---
 	# This can be very verbose, enable only when actively debugging input issues.
 	# print("MIM _input RECEIVED EVENT --- Type: %s, Event: %s" % [event.get_class(), event]) # DEBUG: Performance intensive

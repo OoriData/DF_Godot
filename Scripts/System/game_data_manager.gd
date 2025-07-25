@@ -48,7 +48,7 @@ const PREDEFINED_CONVOY_COLORS: Array[Color] = [
 
 
 func _ready():
-	print("GameDataManager _ready(): Initializing...")
+	print("[GameDataManager] _ready: Initializing...")
 	# Use call_deferred to ensure all Autoload nodes have completed their _ready functions
 	# before we try to access them. This is a robust way to handle inter-Autoload dependencies.
 	call_deferred("_initiate_preload")
@@ -61,24 +61,16 @@ func _initiate_preload():
 		# Connect signals directly
 		if api_calls_node.has_signal('convoy_data_received'):
 			api_calls_node.convoy_data_received.connect(_on_raw_convoy_data_received)
-			print('GameDataManager: Connected to APICalls.convoy_data_received signal.')
 		if api_calls_node.has_signal('map_data_received'):
 			api_calls_node.map_data_received.connect(_on_map_data_received_from_api)
-			print('GameDataManager: Connected to APICalls.map_data_received signal.')
 		if api_calls_node.has_signal('user_data_received'):
 			api_calls_node.user_data_received.connect(_on_user_data_received_from_api)
-			print('GameDataManager: Connected to APICalls.user_data_received signal.')
 		if api_calls_node.has_signal('vendor_data_received'):
 			api_calls_node.vendor_data_received.connect(update_single_vendor)
-			print('GameDataManager: Connected to APICalls.vendor_data_received signal.')
 		if api_calls_node.has_signal('route_choices_received'):
 			api_calls_node.route_choices_received.connect(_on_api_route_choices_received)
-			print('GameDataManager: Connected to APICalls.route_choices_received signal.')
 		if api_calls_node.has_signal('convoy_sent_on_journey'):
 			api_calls_node.convoy_sent_on_journey.connect(_on_convoy_sent_on_journey)
-			print('GameDataManager: Connected to APICalls.convoy_sent_on_journey signal.')
-
-		print("GameDataManager: Initiating map data preload on game start.")
 		request_map_data()
 	else:
 		printerr("GameDataManager (_initiate_preload): Could not find APICalls Autoload. Map data will not be preloaded.")
@@ -90,10 +82,7 @@ func _on_map_data_received_from_api(map_data_dict: Dictionary):
 		return
 
 	var tiles_from_api: Array = map_data_dict.get("tiles", [])
-	print("[DIAGNOSTIC_LOG | GameDataManager.gd] _on_map_data_received_from_api(): Received map data from API. Row count: %s" % tiles_from_api.size())
-
 	map_tiles = tiles_from_api # Store the tiles array
-	print("  - Emitting 'map_data_loaded' signal with tiles array.")
 	map_data_loaded.emit(map_tiles)
 	# print("GameDataManager: Map data loaded. Tiles count: %s" % map_tiles.size())
 
@@ -119,13 +108,10 @@ func _on_map_data_received_from_api(map_data_dict: Dictionary):
 
 
 func _on_user_data_received_from_api(p_user_data: Dictionary):
-	print("GameDataManager: Received user data from API.")
 	if p_user_data.is_empty():
 		printerr("GameDataManager: Received empty user data dictionary.")
 		return
-
 	current_user_data = p_user_data
-	print("  - User money is now: %s" % current_user_data.get("money", "N/A"))
 	user_data_updated.emit(current_user_data)
 
 
@@ -144,14 +130,9 @@ func _on_raw_convoy_data_received(raw_data: Variant):
 		convoy_data_updated.emit(all_convoy_data)
 		return
 
-	# --- ADD THIS LOGGING ---
-	if not parsed_convoy_list.is_empty():
-		var first_convoy = parsed_convoy_list[0]
-		print("GameDataManager: First convoy keys: ", first_convoy.keys())
-		print("GameDataManager: First convoy vehicle_details_list: ", first_convoy.get("vehicle_details_list", []))
-		if first_convoy.has("vehicle_details_list") and first_convoy["vehicle_details_list"].size() > 0:
-			print("GameDataManager: First vehicle keys: ", first_convoy["vehicle_details_list"][0].keys())
-	# --- END LOGGING ---
+	# Only print if no convoys found
+	if parsed_convoy_list.is_empty():
+		print("[GameDataManager] No convoys found in raw data.")
 
 	var augmented_convoys: Array = []
 	for raw_convoy_item in parsed_convoy_list:
@@ -208,6 +189,10 @@ func augment_single_convoy(raw_convoy_item: Dictionary) -> Dictionary:
 
 	# Calculate precise position and progress details
 	augmented_item = _calculate_convoy_progress_details(augmented_item)
+
+	# Only print if convoy_name is missing
+	if not raw_convoy_item.has("convoy_name"):
+		print("[GameDataManager] augment_single_convoy: convoy_name missing for convoy_id:", raw_convoy_item.get("convoy_id", "N/A"))
 
 	return augmented_item
 
@@ -309,9 +294,7 @@ func request_map_data(x_min: int = -1, x_max: int = -1, y_min: int = -1, y_max: 
 	"""
 	Triggers a request to the APICalls node to fetch map data from the backend.
 	"""
-	print("[DIAGNOSTIC_LOG | GameDataManager.gd] request_map_data(): A request for map data is being initiated.")
 	if is_instance_valid(api_calls_node) and api_calls_node.has_method("get_map_data"):
-		print("  - Calling APICalls.get_map_data().")
 		api_calls_node.get_map_data(x_min, x_max, y_min, y_max)
 	else:
 		printerr("GameDataManager: Cannot request map data. APICallsInstance is invalid or missing 'get_map_data' method.")
@@ -432,7 +415,7 @@ func update_user_money(amount_delta: float):
 	if not current_user_data.has("money"):
 		current_user_data["money"] = 0.0
 	current_user_data["money"] += amount_delta
-	print("GameDataManager: User money updated by %.2f. New total: %.2f" % [amount_delta, current_user_data.money])
+	# ...existing code...
 	user_data_updated.emit(current_user_data)
 
 func update_single_convoy(raw_updated_convoy: Dictionary) -> void:
@@ -451,11 +434,9 @@ func update_single_convoy(raw_updated_convoy: Dictionary) -> void:
 		if convoy.has("convoy_id") and str(convoy["convoy_id"]) == updated_id:
 			all_convoy_data[i] = augmented_convoy
 			found = true
-			print("GameDataManager: Updated existing convoy data for ID: %s" % updated_id)
 			break
 	if not found:
 		all_convoy_data.append(augmented_convoy)
-		print("GameDataManager: Added new convoy data for ID: %s" % updated_id)
 	convoy_data_updated.emit(all_convoy_data)
 
 func update_single_vendor(new_vendor_data: Dictionary) -> void:

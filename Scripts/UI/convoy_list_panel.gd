@@ -7,8 +7,28 @@ extends VBoxContainer
 
 # Add a reference to GameDataManager
 var gdm: Node = null
+func _input(event):
+	if event is InputEventMouseButton and event.pressed:
+		print("ConvoyListPanel: MouseButton pressed at ", event.position)
+
 
 func _ready():
+	mouse_filter = Control.MOUSE_FILTER_STOP
+	# Diagnostics for parent containers
+	var parent = get_parent()
+	if parent:
+		print("ConvoyListPanel: Parent node:", parent.name, "type:", parent.get_class())
+		if parent.has_method("set_mouse_filter"):
+			parent.mouse_filter = Control.MOUSE_FILTER_PASS
+			print("ConvoyListPanel: Set mouse_filter=PASS on parent:", parent.name)
+		# Check grandparent as well
+		var grandparent = parent.get_parent()
+		if grandparent:
+			print("ConvoyListPanel: Grandparent node:", grandparent.name, "type:", grandparent.get_class())
+			if grandparent.has_method("set_mouse_filter"):
+				grandparent.mouse_filter = Control.MOUSE_FILTER_PASS
+				print("ConvoyListPanel: Set mouse_filter=PASS on grandparent:", grandparent.name)
+	print("ConvoyListPanel: _ready() visible:", visible)
 	# More robust node checks.
 	if not is_instance_valid(toggle_button) or not is_instance_valid(convoy_popup) or not is_instance_valid(list_item_container):
 		printerr("ConvoyListPanel: One or more required child nodes are missing. Check scene setup.")
@@ -26,7 +46,7 @@ func _ready():
 	if is_instance_valid(menu_manager_node):
 		if menu_manager_node.has_signal("menu_opened"):
 			menu_manager_node.menu_opened.connect(_on_main_menu_opened)
-			# print("ConvoyListPanel: Successfully connected to MenuManager.menu_opened signal.") # DEBUG
+			# ...existing code...
 		else:
 			printerr("ConvoyListPanel: MenuManager found but does not have 'menu_opened' signal.")
 	else:
@@ -51,14 +71,16 @@ func _ready():
 		# NEW: Immediately populate with current data from GameDataManager.
 		# This ensures the list is not empty when the game starts.
 		if gdm.has_method("get_all_convoys"):
-			populate_convoy_list(gdm.get_all_convoys())
+			var convoys = gdm.get_all_convoys()
+			populate_convoy_list(convoys)
 		if gdm.has_method("get_selected_convoy"):
-			_on_convoy_selection_changed(gdm.get_selected_convoy())
-
+			var selected = gdm.get_selected_convoy()
+			_on_convoy_selection_changed(selected)
+	else:
+		printerr("ConvoyListPanel: GameDataManager not found in scene tree.")
 
 func _on_toggle_button_pressed() -> void:
 	# DIAGNOSTIC: Print a message to see if this function is ever called.
-	print("ConvoyListPanel: Toggle button pressed!")
 
 	if not is_instance_valid(convoy_popup) or not is_instance_valid(toggle_button):
 		printerr("ConvoyListPanel: Critical nodes missing in _on_toggle_button_pressed.")
@@ -101,6 +123,13 @@ func _on_main_menu_opened(_menu_node, _menu_type: String):
 
 ## Populates the list with convoy data.
 func populate_convoy_list(convoys_data: Array) -> void:
+	print("ConvoyListPanel: populate_convoy_list() called. Visible:", visible, "Parent:", get_parent())
+
+	# Diagnostic: Print node tree under ConvoyItemsContainer to help debug UI population issues
+	if is_instance_valid(list_item_container):
+		print("ConvoyListPanel: ConvoyItemsContainer children:")
+		for child in list_item_container.get_children():
+			print("  -", child.name, "type:", child.get_class())
 	if not is_instance_valid(list_item_container):
 		printerr("ConvoyListPanel: populate_convoy_list - list_item_container node not found or invalid. Check unique name in scene.")
 		return
@@ -108,16 +137,13 @@ func populate_convoy_list(convoys_data: Array) -> void:
 	# Clear existing items
 	for child in list_item_container.get_children():
 		child.queue_free()
-	# print("ConvoyListPanel: Cleared existing items.") # DEBUG
 
 	if convoys_data.is_empty():
 		var no_convoys_label = Label.new()
 		no_convoys_label.text = "No convoys available."
 		no_convoys_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		list_item_container.add_child(no_convoys_label)
-		# print("ConvoyListPanel: No convoys available.") # DEBUG
 		return
-	# print("ConvoyListPanel: Populating list with %s convoys." % convoys_data.size()) # DEBUG
 
 	for convoy_item_data in convoys_data:
 		if not convoy_item_data is Dictionary:
@@ -126,16 +152,12 @@ func populate_convoy_list(convoys_data: Array) -> void:
 
 		var convoy_id = convoy_item_data.get("convoy_id", "N/A")
 		var convoy_name = convoy_item_data.get("convoy_name", "Unknown Convoy")
-		# You can add more details from convoy_item_data to the display string
-
-		# Example: Create a Button for each convoy
 		var item_button = Button.new()
 		item_button.text = "%s" % [convoy_name]
 		item_button.name = "ConvoyButton_%s" % str(convoy_id) # Useful for identification
 		# Connect the button's pressed signal to a local handler, binding the full convoy_item_data
 		item_button.pressed.connect(_on_convoy_item_pressed.bind(convoy_item_data))
 		list_item_container.add_child(item_button)
-		# print("ConvoyListPanel: Added button for convoy '%s' (ID: %s)." % [convoy_name, convoy_id]) # DEBUG
 
 func _on_convoy_item_pressed(convoy_item_data: Dictionary) -> void:
 	if not is_instance_valid(convoy_popup) or not is_instance_valid(toggle_button):
@@ -154,7 +176,8 @@ func _on_convoy_data_updated(all_convoy_data: Array) -> void:
 	populate_convoy_list(all_convoy_data)
 	# After repopulating, ensure the selection highlight and button text are correct.
 	if is_instance_valid(gdm) and gdm.has_method("get_selected_convoy"):
-		_on_convoy_selection_changed(gdm.get_selected_convoy())
+		var selected = gdm.get_selected_convoy()
+		_on_convoy_selection_changed(selected)
 
 
 # NEW: Handles updates when the globally selected convoy changes.

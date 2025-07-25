@@ -235,6 +235,16 @@ func _on_map_data_loaded(map_tiles_data: Array) -> void:
 
 
 func _input(event):
+	# If a UI element is focused, don't handle input globally
+	if get_viewport().gui_get_focus_owner() != null:
+		return
+
+	# NEW: If the event is over any Control node, don't handle it in the map/camera
+	if event is InputEventMouse and event.position:
+		var ui_under_mouse = get_viewport().gui_get_hovered_control()
+		if ui_under_mouse:
+			return
+
 	if is_instance_valid(map_camera_controller):
 		var handled = map_camera_controller.handle_input(event)
 		if handled:
