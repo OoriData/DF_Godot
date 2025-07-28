@@ -168,7 +168,9 @@ func initialize_with_data(data: Dictionary):
 
 		# --- Populate Journey Details ---
 		# Assuming journey_data contains "destination_name", "progress", "length", and "eta" (as a timestamp)
-		var journey_data: Dictionary = convoy_data_received.get("journey", {})
+		var journey_data = convoy_data_received.get("journey")
+		if journey_data == null:
+			journey_data = {}
 		if is_instance_valid(journey_dest_label):
 			var dest_text: String = "Destination: N/A"
 			if not journey_data.is_empty():

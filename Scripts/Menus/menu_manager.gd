@@ -33,8 +33,25 @@ func _ready():
 	visible = false
 	mouse_filter = MOUSE_FILTER_IGNORE
 	_base_z_index = self.z_index # Store initial z_index
+	
+	# Get the GameDataManager and connect to its signal
+	var gdm = get_node_or_null("/root/GameDataManager")
+	if is_instance_valid(gdm):
+		if gdm.has_signal("convoy_selection_changed"):
+			gdm.convoy_selection_changed.connect(_on_gdm_convoy_selection_changed)
+		else:
+			printerr("MenuManager: GameDataManager is missing 'convoy_selection_changed' signal.")
+	else:
+		printerr("MenuManager: Could not find GameDataManager autoload.")
+	
 	# Example: open_main_menu()
 	pass
+
+func _on_gdm_convoy_selection_changed(selected_convoy_data: Variant):
+	# This handler is called when a convoy is selected from the dropdown.
+	# We only want to open the menu if a valid convoy is selected, not when it's deselected (null).
+	if selected_convoy_data:
+		open_convoy_menu(selected_convoy_data)
 
 func _unhandled_input(event: InputEvent):
 	# Global back button (e.g., Escape key)
