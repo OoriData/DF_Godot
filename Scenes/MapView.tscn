@@ -1,27 +1,23 @@
-[gd_scene load_steps=11 format=3 uid="uid://b7shrt87ucxid"]
+[gd_scene load_steps=9 format=3 uid="uid://b7shrt87ucxid"]
 
 [ext_resource type="Script" uid="uid://jgttep14pyof" path="res://Scripts/System/main.gd" id="1_qf4ax"]
 [ext_resource type="Script" uid="uid://x3j2ftwe2pi1" path="res://Scripts/Map/map_camera_controller.gd" id="2_k7gy6"]
 [ext_resource type="Script" uid="uid://bccf6gvv1urtr" path="res://Scripts/UI/convoy_label_manager.gd" id="3_t5xx3"]
 [ext_resource type="TileSet" uid="uid://dm10x6qv8kfpv" path="res://Assets/tiles/tile_set.tres" id="3_vvi3b"]
-[ext_resource type="Script" uid="uid://dpn1l2xm7i2x7" path="res://Scripts/UI/UI_manager.gd" id="3_xagsy"]
 [ext_resource type="Script" uid="uid://qi45fv401eyn" path="res://Scripts/Map/map_interaction_manager.gd" id="4_b4rp0"]
 [ext_resource type="Script" uid="uid://crk2s2urriwrg" path="res://Scripts/System/game_timers.gd" id="5_b5irg"]
 [ext_resource type="Script" uid="uid://fqyn0cfdc0rs" path="res://Scripts/Map/convoy_visuals_manager.gd" id="8_hvyeg"]
-[ext_resource type="PackedScene" uid="uid://c5w2h7q3g6y0x" path="res://Scenes/UserInfoDisplay.tscn" id="9_j4x7k"]
 
-[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_y2q8v"]
-bg_color = Color(0.2, 0.2, 0.2, 0.8)
-border_width_left = 1
-border_width_top = 1
-border_width_right = 1
-border_width_bottom = 1
-corner_radius_top_left = 4
-corner_radius_top_right = 4
-corner_radius_bottom_right = 4
-corner_radius_bottom_left = 4
+[sub_resource type="ViewportTexture" id="ViewportTexture_k7gy6"]
+viewport_path = NodePath("MapContainer/SubViewport")
 
-[node name="MapRender" type="Node2D"]
+[node name="MapRender" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
 script = ExtResource("1_qf4ax")
 convoy_focus_zoom_target_tiles_wide = 10.0
 convoy_menu_map_view_offset_percentage = 1.0
@@ -32,6 +28,7 @@ convoy_focus_zoom_target_tiles_high = 7.0
 [node name="MapDisplay" type="TextureRect" parent="MapContainer"]
 texture_filter = 4
 mouse_filter = 2
+texture = SubResource("ViewportTexture_k7gy6")
 stretch_mode = 5
 metadata/_edit_use_anchors_ = true
 
@@ -49,41 +46,6 @@ size = Vector2i(2650, 1790)
 tile_set = ExtResource("3_vvi3b")
 
 [node name="MapCamera" type="Camera2D" parent="MapContainer/SubViewport"]
-
-[node name="ScreenSpaceUI" type="CanvasLayer" parent="."]
-layer = 10
-
-[node name="TopNavBar" type="PanelContainer" parent="ScreenSpaceUI"]
-anchors_preset = 10
-anchor_right = 1.0
-offset_bottom = 36.0
-grow_horizontal = 2
-theme_override_styles/panel = SubResource("StyleBoxFlat_y2q8v")
-
-[node name="ContentHBox" type="HBoxContainer" parent="ScreenSpaceUI/TopNavBar"]
-layout_mode = 2
-theme_override_constants/separation = 12
-
-[node name="UserInfoDisplay" parent="ScreenSpaceUI/TopNavBar/ContentHBox" instance=ExtResource("9_j4x7k")]
-layout_mode = 2
-size_flags_horizontal = 3
-
-[node name="UIManagerNode" type="CanvasLayer" parent="ScreenSpaceUI" node_paths=PackedStringArray("settlement_label_container", "convoy_connector_lines_container", "convoy_label_container", "convoy_label_manager")]
-script = ExtResource("3_xagsy")
-settlement_label_container = NodePath("../../MapContainer/SettlementLabelContainer")
-convoy_connector_lines_container = NodePath("../../MapContainer/ConvoyConnectorLinesContainer")
-convoy_label_container = NodePath("../../MapContainer/ConvoyLabelContainer")
-convoy_label_manager = NodePath("ConvoyLabelManagerNode")
-
-[node name="DetailedViewToggleCheckbox" type="CheckBox" parent="ScreenSpaceUI/UIManagerNode"]
-visible = false
-offset_right = 310.0
-offset_bottom = 63.0
-theme_override_font_sizes/font_size = 40
-text = "Detailed Mode"
-
-[node name="ConvoyLabelManagerNode" type="Node" parent="ScreenSpaceUI/UIManagerNode"]
-script = ExtResource("3_t5xx3")
 
 [node name="MapInteractionManager" type="Node" parent="."]
 script = ExtResource("4_b4rp0")

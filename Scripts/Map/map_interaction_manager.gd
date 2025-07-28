@@ -123,7 +123,7 @@ func initialize(
 		p_all_settlement_data: Array,
 		p_map_tiles: Array,
 		p_camera: Camera2D,
-		p_initial_selected_ids: Array,
+		p_initial_selected_ids: Array[String],
 		p_initial_user_positions: Dictionary
 	):
 	# New: Pass TileMapLayer node for bounds
@@ -218,10 +218,7 @@ func _input(event: InputEvent): # Renamed from _unhandled_input
 		pass
 	# --- END DEBUG ---
 
-	if not is_instance_valid(map_display) or \
-	   (is_instance_valid(map_display) and not is_instance_valid(map_display.texture)) or \
-	   not is_instance_valid(ui_manager) or \
-	   not is_instance_valid(camera):
+	if not is_instance_valid(map_display) or not is_instance_valid(camera):
 		# print("MapInteractionManager: handle_input - Essential nodes not ready. Skipping.")
 		# Ensure event is not spuriously consumed if essential nodes aren't ready
 		# If you want to see if events are reaching here even when nodes aren't ready,
@@ -392,10 +389,10 @@ func _perform_hover_detection_only(event: InputEventMouseMotion):
 
 	# Get map bounds from TileMap
 	var used_rect = map_display.get_used_rect()
-	var cell_size = map_display.cell_size
+	var tile_size = map_display.tile_set.tile_size
 	# ...existing code...
-	var actual_tile_width_on_world: float = cell_size.x
-	var actual_tile_height_on_world: float = cell_size.y
+	var actual_tile_width_on_world: float = tile_size.x
+	var actual_tile_height_on_world: float = tile_size.y
 
 	var new_hover_info: Dictionary = {}
 	var found_hover_element: bool = false
@@ -468,8 +465,7 @@ func _perform_hover_detection_only(event: InputEventMouseMotion):
 func _handle_lmb_interactions(event: InputEventMouseButton): # Was _handle_mouse_button_interactions
 	"""Handles MOUSE_BUTTON_LEFT press/release for panel dragging and map element selection. Assumes event.button_index == MOUSE_BUTTON_LEFT."""
 	if not (is_instance_valid(camera) and \
-			is_instance_valid(map_display) and \
-			is_instance_valid(map_display.texture)):
+			is_instance_valid(map_display)):
 		return
 
 	if event.button_index == MOUSE_BUTTON_LEFT:
@@ -568,7 +564,7 @@ func get_dragged_convoy_id_str() -> String:
 
 func _handle_tap_interaction(screen_pos: Vector2):
 	"""Handles tap interactions for selecting map elements (for TOUCH scheme)."""
-	if not (is_instance_valid(camera) and is_instance_valid(map_display) and is_instance_valid(map_display.texture)):
+	if not (is_instance_valid(camera) and is_instance_valid(map_display)):
 		return
 
 	var world_pos: Vector2 = camera.get_canvas_transform().affine_inverse() * screen_pos # Keep type hint for world_pos
@@ -612,10 +608,10 @@ func _get_convoy_data_at_world_pos(world_pos: Vector2) -> Variant:
 		return null
 
 	var used_rect = map_display.get_used_rect()
-	var cell_size = map_display.cell_size
+	var tile_size = map_display.tile_set.tile_size
 	# ...existing code...
-	var actual_tile_width_on_world: float = cell_size.x
-	var actual_tile_height_on_world: float = cell_size.y
+	var actual_tile_width_on_world: float = tile_size.x
+	var actual_tile_height_on_world: float = tile_size.y
 
 	for convoy_data_item in all_convoy_data:
 		if not convoy_data_item is Dictionary: continue

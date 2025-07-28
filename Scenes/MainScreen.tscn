@@ -1,0 +1,38 @@
+[gd_scene load_steps=4 format=3 uid="uid://cxciw3malgni0"]
+
+[ext_resource type="PackedScene" uid="uid://c5w2h7q3g6y0x" path="res://Scenes/UserInfoDisplay.tscn" id="1_j4x7k"]
+[ext_resource type="PackedScene" uid="uid://b7shrt87ucxid" path="res://Scenes/MapView.tscn" id="2_pjpa4"]
+[ext_resource type="Script" uid="uid://c6dp007swcck6" path="res://Scripts/UI/main_screen.gd" id="3_abcde"]
+
+[node name="MainScreen" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("3_abcde")
+
+[node name="MainContainer" type="VBoxContainer" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="TopBar" parent="MainContainer" instance=ExtResource("1_j4x7k")]
+layout_mode = 2
+
+[node name="MainContent" type="HBoxContainer" parent="MainContainer"]
+layout_mode = 2
+size_flags_vertical = 3
+
+[node name="MapView" parent="MainContainer/MainContent" instance=ExtResource("2_pjpa4")]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="MenuContainer" type="Control" parent="MainContainer/MainContent"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_stretch_ratio = 0.0

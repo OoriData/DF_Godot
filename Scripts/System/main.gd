@@ -1,5 +1,5 @@
 @tool
-extends Node2D
+extends Control
 
 var terrain_int_to_name = {
 	0: "impassable",
@@ -28,19 +28,18 @@ var settlement_type_to_name = {
 
 
 # Node references
-@onready var sub_viewport = $MapContainer/SubViewport
-@onready var game_data_manager = get_node_or_null("/root/GameDataManager")
-@onready var map_camera_controller: Node = $MapInteractionManager/MapCameraController
+@onready var sub_viewport: SubViewport = $MapContainer/SubViewport
 @onready var map_display: TextureRect = $MapContainer/MapDisplay
 @onready var map_container: Node2D = $MapContainer
-@onready var map_camera: Camera2D = $MapContainer/SubViewport/MapCamera # Reference to the new MapCamera
-@onready var ui_manager: Node = $ScreenSpaceUI/UIManagerNode # Corrected path
-@onready var detailed_view_toggle: CheckBox = $ScreenSpaceUI/UIManagerNode/DetailedViewToggleCheckbox # Corrected path
-@onready var map_interaction_manager: Node = $MapInteractionManager # Path to your MapInteractionManager node
-@onready var convoy_visuals_manager: Node = $ConvoyVisualsManager # Adjust path if you place it elsewhere
-@onready var game_timers_node: Node = $GameTimersNode # Adjust if necessary
-# Reference to the TerrainTileMap (TileMapLayer) node
+@onready var map_camera: Camera2D = $MapContainer/SubViewport/MapCamera
 @onready var terrain_tilemap: TileMapLayer = $MapContainer/SubViewport/TerrainTileMap
+@onready var map_interaction_manager: Node = $MapInteractionManager
+@onready var map_camera_controller: Node = $MapInteractionManager/MapCameraController
+@onready var convoy_visuals_manager: Node = $ConvoyVisualsManager
+@onready var game_timers_node: Node = $GameTimersNode
+
+# Autoloads / Singletons
+@onready var game_data_manager = get_node_or_null("/root/GameDataManager")
 # Reference to the MenuManager in GameRoot.tscn
 
 var menu_manager_ref: Control = null
@@ -208,6 +207,21 @@ func _initialize_view():
 	if is_instance_valid(convoy_visuals_manager):
 		convoy_visuals_manager.initialize(sub_viewport, terrain_tilemap)
 	
+	if is_instance_valid(map_interaction_manager):
+		map_interaction_manager.initialize(
+			terrain_tilemap,
+			null, # ui_manager is no longer used here
+			[], # all_convoy_data
+			[], # all_settlement_data
+			[], # map_tiles
+			map_camera,
+			[] as Array[String], # initial_selected_ids
+			{} # initial_user_positions
+		)
+	
+	if is_instance_valid(map_camera_controller):
+		map_camera_controller.initialize(map_camera, terrain_tilemap, get_viewport_rect())
+
 	_view_is_initialized = true
 	print("[DIAGNOSTIC_LOG | main.gd] _initialize_view(): View is initialized.")
 	
@@ -218,7 +232,18 @@ func _initialize_view():
 		# For now, let's assume the signal connection in ConvoyVisualsManager._ready will handle it
 		pass
 
-	set_process_input(true)
+	# Start with controls disabled. They will be enabled by the GameScreenManager.
+	set_interactive(false)
+
+func set_interactive(is_active: bool):
+	"""Enables or disables all user interaction with the map."""
+	print("main.gd: Setting map interactive state to: ", is_active)
+	set_process_input(is_active)
+	if is_instance_valid(map_camera_controller):
+		# Assuming map_camera_controller has a property to enable/disable its own input handling.
+		map_camera_controller.controls_enabled = is_active
+	else:
+		printerr("main.gd: map_camera_controller is not valid when trying to set interactive state.")
 
 func _is_interactive_control(ctrl: Control) -> bool:
 	# Add more types as needed for your UI
@@ -261,7 +286,8 @@ func _on_map_data_loaded(map_tiles_data: Array) -> void:
 			pass # Diagnostic print logic was here
 	else:
 		print("[DIAG] TerrainTileMap is not valid!")
-	set_process_input(true)
+	# Input processing is now handled by the set_interactive function.
+	# set_process_input(true)
 func _input(event):
 	# If a UI element is focused, don't handle input globally
 	if get_viewport().gui_get_focus_owner() != null:

@@ -2,7 +2,7 @@
 
 [ext_resource type="Script" uid="uid://dt1vsmmkmlfpv" path="res://Assets/tiles/generate_tiles.gd" id="5_iwu5p"]
 
-[node name="GameRoot" type="Node"]
+[node name="GameRoot2" type="Node"]
 
 [node name="GenerateTiles" type="Node" parent="."]
 script = ExtResource("5_iwu5p")
