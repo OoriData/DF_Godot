@@ -7,9 +7,8 @@ extends Node2D
 var convoy_data: Dictionary
 var convoy_color: Color = Color.WHITE
 
-# Map metrics passed from main.gd
-var tile_pixel_width_on_full_texture: float = 1.0
-var tile_pixel_height_on_full_texture: float = 1.0
+# Reference to the TileMap for coordinate conversion
+var terrain_tilemap: TileMapLayer
 
 # Arrow drawing constants (can be tweaked or replaced with a sprite texture)
 const ARROW_FORWARD_LENGTH_BASE: float = 30.0  # Was 10.0
@@ -41,15 +40,15 @@ func _ready():
 
 	gdm = get_node_or_null("/root/GameDataManager")
 	if is_instance_valid(gdm):
-		if not gdm.is_connected("convoy_data_updated", _on_convoy_data_updated):
-			gdm.convoy_data_updated.connect(_on_convoy_data_updated)
+		if not gdm.is_connected("convoy_data_updated", Callable(self, "_on_convoy_data_updated")):
+			gdm.convoy_data_updated.connect(Callable(self, "_on_convoy_data_updated"))
 
 
-func set_convoy_data(p_convoy_data: Dictionary, p_color: Color, p_tile_w: float, p_tile_h: float):
+
+func set_convoy_data(p_convoy_data: Dictionary, p_color: Color, p_terrain_tilemap: TileMapLayer):
 	convoy_data = p_convoy_data
 	convoy_color = p_color
-	tile_pixel_width_on_full_texture = p_tile_w
-	tile_pixel_height_on_full_texture = p_tile_h
+	terrain_tilemap = p_terrain_tilemap # Store the tilemap reference
 	name = "Convoy_" + str(convoy_data.get("convoy_id", "Unknown"))
 	
 	# Initial update of visuals based on new data
@@ -57,22 +56,22 @@ func set_convoy_data(p_convoy_data: Dictionary, p_color: Color, p_tile_w: float,
 
 func _process(delta: float):
 	if convoy_data.is_empty():
-		return # Added explicit indent for clarity, though single-line was valid
+		return
 
 	# Update throb animation
 	_throb_phase += THROB_SPEED * delta
 	# Wrap phase to avoid large numbers, though fmod or just letting it grow is fine for sin
 	if _throb_phase > 2.0 * PI:
-		_throb_phase -= 2.0 * PI # Added explicit indent
+		_throb_phase -= 2.0 * PI
 		
 	_update_visuals()
 
-func _update_visuals():
-	if convoy_data.is_empty() or tile_pixel_width_on_full_texture <= 0:
-		return # Added explicit indent
 
-	# Defensively get the journey data. If the 'journey' key exists but its value is null,
-	# the typed variable assignment will fail. This ensures journey_data is always a valid Dictionary.
+func _update_visuals():
+	if convoy_data.is_empty() or not is_instance_valid(terrain_tilemap):
+		return
+
+	# Defensively get the journey data.
 	var raw_journey = convoy_data.get("journey")
 	var journey_data: Dictionary = {}
 	if raw_journey is Dictionary:
@@ -80,7 +79,7 @@ func _update_visuals():
 	var route_x: Array = journey_data.get("route_x", [])
 	var route_y: Array = journey_data.get("route_y", [])
 	
-	# Get pre-calculated progress details from convoy_data (set by main.gd)
+	# Get pre-calculated progress details from convoy_data
 	var current_segment_idx: int = convoy_data.get("_current_segment_start_idx", -1)
 	var progress_in_segment: float = convoy_data.get("_progress_in_segment", 0.0)
 
@@ -88,63 +87,46 @@ func _update_visuals():
 	var direction_rad: float = icon_sprite.rotation # Keep current rotation if no new direction
 
 	if current_segment_idx != -1 and \
-	   route_x.size() > current_segment_idx and route_y.size() > current_segment_idx: # Check current_segment_idx is valid for start point
+	   route_x.size() > current_segment_idx + 1 and route_y.size() > current_segment_idx + 1:
 		
-		var p_start_tile: Vector2
-		var p_end_tile: Vector2
+		var p_start_tile_coords = Vector2i(route_x[current_segment_idx], route_y[current_segment_idx])
+		var p_end_tile_coords: Vector2i
 
 		if route_x.size() > current_segment_idx + 1: # Standard case: segment has a defined end point
-			p_start_tile = Vector2(float(route_x[current_segment_idx]), float(route_y[current_segment_idx]))
-			p_end_tile = Vector2(float(route_x[current_segment_idx + 1]), float(route_y[current_segment_idx + 1]))
-		else: # At the very last point of the path, or path has only one point
-			p_start_tile = Vector2(float(route_x[current_segment_idx]), float(route_y[current_segment_idx]))
-			p_end_tile = p_start_tile # Position at the point, rotation might need previous segment
+			p_end_tile_coords = Vector2i(route_x[current_segment_idx + 1], route_y[current_segment_idx + 1])
+		else: # At the very last point of the path
+			p_end_tile_coords = p_start_tile_coords
 			if current_segment_idx > 0: # Try to get rotation from previous segment
-				var p_prev_tile = Vector2(float(route_x[current_segment_idx - 1]), float(route_y[current_segment_idx - 1]))
-				var dir_vec_tile = p_start_tile - p_prev_tile # Use p_start_tile as the "end" for direction
+				var p_prev_tile_coords = Vector2i(route_x[current_segment_idx - 1], route_y[current_segment_idx - 1])
+				var dir_vec_tile = p_start_tile_coords - p_prev_tile_coords
 				if dir_vec_tile.length_squared() > 0.0001:
-					direction_rad = dir_vec_tile.angle()
+					direction_rad = (Vector2(dir_vec_tile)).angle()
 
-		# Convert tile coordinates to pixel coordinates (center of tile for path points)
-		var p_start_pixel = Vector2(
-			(p_start_tile.x + 0.5) * tile_pixel_width_on_full_texture,
-			(p_start_tile.y + 0.5) * tile_pixel_height_on_full_texture
-		)
-		var p_end_pixel = Vector2(
-			(p_end_tile.x + 0.5) * tile_pixel_width_on_full_texture,
-			(p_end_tile.y + 0.5) * tile_pixel_height_on_full_texture
-		)
+		# Convert tile coordinates to local pixel coordinates using the tilemap
+		var p_start_pixel = terrain_tilemap.map_to_local(p_start_tile_coords)
+		var p_end_pixel = terrain_tilemap.map_to_local(p_end_tile_coords)
 
 		final_pixel_pos = p_start_pixel.lerp(p_end_pixel, progress_in_segment)
 		
-		# Update rotation only if not at the very end point without a previous segment for direction
-		if not (p_start_tile.is_equal_approx(p_end_tile) and current_segment_idx == 0):
+		# Update rotation
+		if not p_start_pixel.is_equal_approx(p_end_pixel):
 			var dir_vec_pixel = p_end_pixel - p_start_pixel
 			if dir_vec_pixel.length_squared() > 0.0001:
 				direction_rad = dir_vec_pixel.angle()
-	else: # Fallback: Use the top-level x/y from convoy_data (which should be the interpolated tile coords)
+	else: # Fallback: Use the top-level x/y from convoy_data
 		var map_x: float = convoy_data.get("x", 0.0)
 		var map_y: float = convoy_data.get("y", 0.0)
-		final_pixel_pos = Vector2(
-			(map_x + 0.5) * tile_pixel_width_on_full_texture,
-			(map_y + 0.5) * tile_pixel_height_on_full_texture
-		)
+		# This fallback assumes x/y are tile coordinates.
+		final_pixel_pos = terrain_tilemap.map_to_local(Vector2i(int(map_x), int(map_y)))
 
 	var icon_offset_px: Vector2 = convoy_data.get("_pixel_offset_for_icon", Vector2.ZERO)
 	position = final_pixel_pos + icon_offset_px # Apply the lateral offset
 	icon_sprite.rotation = direction_rad
 	
 	
-	# 3. Update Throb & Arrow Drawing (depends on scale from zoom)
-	# The ConvoyNode itself is scaled by MapContainer's zoom.
-	# We want the arrow to maintain a somewhat consistent *on-screen* size appearance,
-	# or scale less aggressively than the map.
-	# For now, let's make the arrow scale with zoom but apply throb.
-	# A more advanced approach would be to get current_screen_scale and adjust base sizes.
-	
+	# 3. Update Throb & Arrow Drawing
 	var throb_scale_multiplier: float = 1.0 + (sin(_throb_phase) * 0.5 + 0.5) * MAX_THROB_SCALE_ADDITION
 	icon_sprite.scale = Vector2(throb_scale_multiplier, throb_scale_multiplier)
-	
 	# Redraw the arrow with current color and throb-influenced size (if needed)
 	# For simplicity, base arrow size is fixed, throb affects sprite scale.
 	_draw_arrow_on_sprite(convoy_color)

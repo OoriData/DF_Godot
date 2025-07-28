@@ -203,75 +203,80 @@ func _calculate_convoy_progress_details(convoy_data_item: Dictionary) -> Diction
 	if not convoy_data_item is Dictionary:
 		return convoy_data_item
 
-	# --- Data Sanitization ---
-	# Ensure the journey field is a valid, non-null Dictionary. If it's null or not a
-	# dictionary, we set it to an empty one and return, ensuring downstream consumers
-	# never get a null 'journey' and that the object has the expected progress keys.
+	var convoy_id_str = str(convoy_data_item.get("convoy_id", "N/A"))
 	var raw_journey = convoy_data_item.get("journey")
-	if not raw_journey is Dictionary:
-		convoy_data_item["journey"] = {}
-		convoy_data_item["_current_segment_start_idx"] = -1
-		convoy_data_item["_progress_in_segment"] = 0.0
-		return convoy_data_item
+	
+	# --- In-Transit Convoy Calculation ---
+	if raw_journey is Dictionary:
+		var journey_data_for_shared: Dictionary = raw_journey
+		var route_x: Array = journey_data_for_shared.get("route_x", [])
+		var route_y: Array = journey_data_for_shared.get("route_y", [])
+		
+		if route_x.size() >= 2 and route_y.size() == route_x.size():
+			var journey_progress: float = journey_data_for_shared.get("progress", 0.0)
+			var num_total_segments = route_x.size() - 1
+			var cumulative_dist: float = 0.0
+			var total_path_length: float = 0.0
 
-	var journey_data_for_shared: Dictionary = raw_journey
-	var route_x: Array = journey_data_for_shared.get("route_x", [])
-	var route_y: Array = journey_data_for_shared.get("route_y", [])
-	var journey_progress: float = journey_data_for_shared.get("progress", 0.0)
+			for k_calc_idx in range(num_total_segments):
+				var p_s_calc = Vector2(float(route_x[k_calc_idx]), float(route_y[k_calc_idx]))
+				var p_e_calc = Vector2(float(route_x[k_calc_idx+1]), float(route_y[k_calc_idx+1]))
+				total_path_length += p_s_calc.distance_to(p_e_calc)
 
-	var current_segment_start_idx: int = -1
-	var progress_within_segment: float = 0.0
-
-	if route_x.size() >= 2 and route_y.size() == route_x.size():
-		var num_total_segments = route_x.size() - 1
-		var cumulative_dist: float = 0.0
-		var total_path_length: float = 0.0
-
-		for k_calc_idx in range(num_total_segments):
-			var p_s_calc = Vector2(float(route_x[k_calc_idx]), float(route_y[k_calc_idx]))
-			var p_e_calc = Vector2(float(route_x[k_calc_idx+1]), float(route_y[k_calc_idx+1]))
-			total_path_length += p_s_calc.distance_to(p_e_calc)
-
-		if total_path_length <= 0.001:
-			current_segment_start_idx = 0
-			progress_within_segment = 0.0
-			if num_total_segments >= 0 :
+			if total_path_length <= 0.001:
 				convoy_data_item["x"] = float(route_x[0])
 				convoy_data_item["y"] = float(route_y[0])
-		elif journey_progress <= 0.001:
-			current_segment_start_idx = 0
-			progress_within_segment = 0.0
-			convoy_data_item["x"] = float(route_x[0])
-			convoy_data_item["y"] = float(route_y[0])
-		elif journey_progress >= total_path_length - 0.001:
-			current_segment_start_idx = num_total_segments - 1
-			progress_within_segment = 1.0
-			convoy_data_item["x"] = float(route_x[num_total_segments])
-			convoy_data_item["y"] = float(route_y[num_total_segments])
-		else:
-			var found_segment = false
-			for k_idx in range(num_total_segments):
-				var p_start_tile = Vector2(float(route_x[k_idx]), float(route_y[k_idx]))
-				var p_end_tile = Vector2(float(route_x[k_idx+1]), float(route_y[k_idx+1]))
-				var segment_length = p_start_tile.distance_to(p_end_tile)
-				if journey_progress >= cumulative_dist - 0.001 and journey_progress < cumulative_dist + segment_length - 0.001:
-					current_segment_start_idx = k_idx
-					progress_within_segment = (journey_progress - cumulative_dist) / segment_length if segment_length > 0.0001 else 1.0
-					progress_within_segment = clamp(progress_within_segment, 0.0, 1.0)
-					var interpolated_pos_tile = p_start_tile.lerp(p_end_tile, progress_within_segment)
-					convoy_data_item["x"] = interpolated_pos_tile.x
-					convoy_data_item["y"] = interpolated_pos_tile.y
-					found_segment = true
-					break
-				cumulative_dist += segment_length
-			if not found_segment:
-				current_segment_start_idx = num_total_segments - 1
-				progress_within_segment = 1.0
+				convoy_data_item["_current_segment_start_idx"] = 0
+				convoy_data_item["_progress_in_segment"] = 0.0
+			elif journey_progress <= 0.001:
+				convoy_data_item["x"] = float(route_x[0])
+				convoy_data_item["y"] = float(route_y[0])
+				convoy_data_item["_current_segment_start_idx"] = 0
+				convoy_data_item["_progress_in_segment"] = 0.0
+			elif journey_progress >= total_path_length - 0.001:
 				convoy_data_item["x"] = float(route_x[num_total_segments])
 				convoy_data_item["y"] = float(route_y[num_total_segments])
+				convoy_data_item["_current_segment_start_idx"] = num_total_segments - 1
+				convoy_data_item["_progress_in_segment"] = 1.0
+			else:
+				var found_segment = false
+				for k_idx in range(num_total_segments):
+					var p_start_tile = Vector2(float(route_x[k_idx]), float(route_y[k_idx]))
+					var p_end_tile = Vector2(float(route_x[k_idx+1]), float(route_y[k_idx+1]))
+					var segment_length = p_start_tile.distance_to(p_end_tile)
+					
+					if journey_progress >= cumulative_dist - 0.001 and journey_progress <= cumulative_dist + segment_length + 0.001:
+						var progress_within_segment = 0.0
+						if segment_length > 0.001:
+							progress_within_segment = (journey_progress - cumulative_dist) / segment_length
+						else:
+							progress_within_segment = 1.0
+						
+						progress_within_segment = clamp(progress_within_segment, 0.0, 1.0)
+						
+						var interpolated_pos = p_start_tile.lerp(p_end_tile, progress_within_segment)
+						convoy_data_item["x"] = interpolated_pos.x
+						convoy_data_item["y"] = interpolated_pos.y
+						convoy_data_item["_current_segment_start_idx"] = k_idx
+						convoy_data_item["_progress_in_segment"] = progress_within_segment
+						found_segment = true
+						break
+					cumulative_dist += segment_length
+					
+				if not found_segment:
+					convoy_data_item["x"] = float(route_x[num_total_segments])
+					convoy_data_item["y"] = float(route_y[num_total_segments])
+					convoy_data_item["_current_segment_start_idx"] = num_total_segments - 1
+					convoy_data_item["_progress_in_segment"] = 1.0
+			return convoy_data_item
 
-	convoy_data_item["_current_segment_start_idx"] = current_segment_start_idx
-	convoy_data_item["_progress_in_segment"] = progress_within_segment
+	# --- Stationary Convoy Handling (or journey with no route) ---
+	if not convoy_data_item.has("x") or not convoy_data_item.has("y"):
+		convoy_data_item["x"] = 0
+		convoy_data_item["y"] = 0
+	
+	convoy_data_item["_current_segment_start_idx"] = -1
+	convoy_data_item["_progress_in_segment"] = 0.0
 	return convoy_data_item
 
 

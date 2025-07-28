@@ -182,16 +182,43 @@ func populate_tilemap_from_data(tile_data_2d: Array) -> void:
 		break # Only set the first available tile as a test
 
 func _ready():
+	# The sub_viewport's texture is now set in the editor, but we can ensure it here.
 	map_display.texture = sub_viewport.get_texture()
 	print("[DIAGNOSTIC_LOG | main.gd] _ready(): Main view is loaded and ready. WAITING to be made visible.")
+	
 	# Connect to GameDataManager's map_data_loaded signal
 	if is_instance_valid(game_data_manager):
-		game_data_manager.map_data_loaded.connect(_on_map_data_loaded)
+		if not game_data_manager.is_connected("map_data_loaded", Callable(self, "_on_map_data_loaded")):
+			game_data_manager.map_data_loaded.connect(Callable(self, "_on_map_data_loaded"))
 	else:
 		printerr("[ERROR] Could not find GameDataManager autoload!")
+
 	# Connect to window resize and update SubViewport size
-	get_viewport().size_changed.connect(_on_window_resized)
+	if not get_viewport().is_connected("size_changed", Callable(self, "_on_window_resized")):
+		get_viewport().size_changed.connect(Callable(self, "_on_window_resized"))
+	
+	# Defer the rest of the initialization to ensure all nodes are ready.
+	call_deferred("_initialize_view")
+
+func _initialize_view():
+	# This function is now called deferred from _ready.
 	_update_subviewport_size()
+
+	# Initialize managers that depend on nodes being ready
+	if is_instance_valid(convoy_visuals_manager):
+		convoy_visuals_manager.initialize(sub_viewport, terrain_tilemap)
+	
+	_view_is_initialized = true
+	print("[DIAGNOSTIC_LOG | main.gd] _initialize_view(): View is initialized.")
+	
+	# Process any convoy data that might have arrived before this point
+	if not _deferred_convoy_data.is_empty():
+		print("[DIAGNOSTIC_LOG | main.gd] Processing deferred convoy data.")
+		# You might need a method in ConvoyVisualsManager to handle this
+		# For now, let's assume the signal connection in ConvoyVisualsManager._ready will handle it
+		pass
+
+	set_process_input(true)
 
 func _is_interactive_control(ctrl: Control) -> bool:
 	# Add more types as needed for your UI
@@ -209,6 +236,8 @@ func _update_subviewport_size():
 		subvp.size = get_viewport().size
 		# print("[INFO] SubViewport size updated to:", subvp.size)
 # Handler for map_data_loaded signal: extracts tile type IDs and populates tilemap
+
+
 func _on_map_data_loaded(map_tiles_data: Array) -> void:
 	if not is_instance_valid(terrain_tilemap):
 		printerr("[ERROR] terrain_tilemap is not valid!")
@@ -229,14 +258,10 @@ func _on_map_data_loaded(map_tiles_data: Array) -> void:
 			print("[DIAG] TerrainTileMap parent SubViewport visible: N/A or not a CanvasItem")
 		# Print a sample of atlas coords used for first 5 tiles in first row
 		if map_tiles_data.size() > 0 and map_tiles_data[0].size() > 0:
-			var sample_row = map_tiles_data[0]
-			for i in range(min(5, sample_row.size())):
-				print("[DIAG] Sample tile[0][", i, "]: ", sample_row[i])
+			pass # Diagnostic print logic was here
 	else:
 		print("[DIAG] TerrainTileMap is not valid!")
 	set_process_input(true)
-
-
 func _input(event):
 	# If a UI element is focused, don't handle input globally
 	if get_viewport().gui_get_focus_owner() != null:

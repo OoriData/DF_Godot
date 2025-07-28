@@ -9,17 +9,20 @@ var convoy_node_scene = preload("res://Scenes/ConvoyNode.tscn") # Ensure this pa
 var _active_convoy_nodes: Dictionary = {} # { "convoy_id_str": ConvoyNode }
 
 # Node references that will be set during initialization
-var map_container: Node2D 
- # map_renderer_node removed: no longer needed
+var convoy_parent_node: Node
+var terrain_tilemap: TileMapLayer # Reference to the tilemap for coordinate conversion
 
 # Add a reference to GameDataManager
 var gdm: Node = null
 
 
-func initialize(p_map_container: Node2D):
-	map_container = p_map_container
-	if not is_instance_valid(map_container):
-		printerr("ConvoyVisualsManager: map_container is invalid during initialization.")
+func initialize(p_convoy_parent_node: Node, p_terrain_tilemap: TileMapLayer):
+	convoy_parent_node = p_convoy_parent_node
+	terrain_tilemap = p_terrain_tilemap
+	if not is_instance_valid(convoy_parent_node):
+		printerr("ConvoyVisualsManager: convoy_parent_node is invalid during initialization.")
+	if not is_instance_valid(terrain_tilemap):
+		printerr("ConvoyVisualsManager: terrain_tilemap is invalid during initialization.")
 
 
 func _ready():
@@ -27,91 +30,77 @@ func _ready():
 	gdm = get_node_or_null("/root/GameDataManager")
 	if is_instance_valid(gdm):
 		if not gdm.is_connected("convoy_data_updated", Callable(self, "_on_gdm_convoy_data_updated")):
-			gdm.convoy_data_updated.connect(_on_gdm_convoy_data_updated)
+			gdm.convoy_data_updated.connect(Callable(self, "_on_gdm_convoy_data_updated"))
 
 
 # Handler for updated convoy data
 func _on_gdm_convoy_data_updated(all_convoy_data: Array) -> void:
-	# You may need to pass additional parameters (like map_tiles, map_display, etc.)
-	# depending on your setup. Adjust as needed.
-	# Example usage:
-	# var augmented_data = augment_convoy_data_with_offsets(all_convoy_data, ...)
-	# update_convoy_nodes_on_map(augmented_data, ...)
-	pass
+	# This function is now the primary trigger for updating convoy visuals.
+	# The augmentation and update logic will be called from here.
+
+	# In a real scenario, this would come from an interaction manager or game state manager.
+	var selected_convoy_ids_list: Array[String] = [] # Placeholder
+	var convoy_id_to_color_map: Dictionary = {}
+	if is_instance_valid(gdm):
+		convoy_id_to_color_map = gdm.get_convoy_id_to_color_map()
+
+	var augmented_data = augment_convoy_data_with_offsets(all_convoy_data)
+	update_convoy_nodes_on_map(augmented_data, convoy_id_to_color_map, selected_convoy_ids_list)
 
 
-func augment_convoy_data_with_offsets(
-		convoy_data_array: Array, # Array of convoy data dictionaries
-		map_tiles: Array,         # For calculating tile dimensions
-		map_display_node: TextureRect # For full map texture size
-	) -> Array:
+func augment_convoy_data_with_offsets(convoy_data_array: Array) -> Array:
 	"""
 	Calculates and adds '_pixel_offset_for_icon' to each convoy data dictionary.
-	This logic is moved from main.gd's _on_gdm_convoy_data_updated.
+	This logic is simplified as we now use the TileMap for coordinate info.
 	"""
-	# --- Prepare common values for offset calculation (needed for icon offsets) ---
-	var actual_tile_width_f: float = 0.0
-	var actual_tile_height_f: float = 0.0
-	var scaled_journey_line_offset_step_pixels_for_icons: float = 0.0 # This is base_offset_magnitude
-
-	if not (is_instance_valid(map_display_node) and \
-			map_tiles and not map_tiles.is_empty() and \
-			map_tiles[0] is Array and not map_tiles[0].is_empty() and \
-			map_display_node.custom_minimum_size.x > 0): # Check custom_minimum_size for valid texture setup
-		printerr("ConvoyVisualsManager (augment_convoy_data_with_offsets): Missing necessary data/nodes for offset calculation.")
-		return convoy_data_array # Return original data if prerequisites are missing
-
-	var map_cols: int = map_tiles[0].size()
-	var map_rows: int = map_tiles.size()
-	var full_map_texture_size: Vector2 = map_display_node.custom_minimum_size
-
-	if map_cols > 0 and map_rows > 0 and full_map_texture_size.x > 0:
-		actual_tile_width_f = full_map_texture_size.x / float(map_cols)
-		actual_tile_height_f = full_map_texture_size.y / float(map_rows)
-		# Use a default offset step if needed (tune as appropriate for your visuals)
-		scaled_journey_line_offset_step_pixels_for_icons = min(actual_tile_width_f, actual_tile_height_f) * 0.2
-	else:
-		printerr("ConvoyVisualsManager (augment_convoy_data_with_offsets): Cannot calculate common values for icon offset due to invalid map_tiles or map_display size.")
+	if not is_instance_valid(terrain_tilemap) or not is_instance_valid(terrain_tilemap.tile_set):
+		printerr("ConvoyVisualsManager: terrain_tilemap or its tile_set is not valid for augmenting data.")
 		return convoy_data_array
+
+	var tile_size = terrain_tilemap.tile_set.tile_size
+	var base_offset_magnitude = min(tile_size.x, tile_size.y) * 0.2
 
 	# --- Build shared_segments_data for icon offsetting ---
 	var shared_segments_data_for_icons: Dictionary = {}
-	if actual_tile_width_f > 0: # Only proceed if common values were calculated
-		for convoy_item_for_shared in convoy_data_array: # Iterate directly through items
-			if convoy_item_for_shared is Dictionary and convoy_item_for_shared.has("journey"):
-				var convoy_id_for_segment = str(convoy_item_for_shared.get("convoy_id", ""))
-				if convoy_id_for_segment.is_empty(): continue
+	for convoy_item_for_shared in convoy_data_array:
+		if convoy_item_for_shared is Dictionary and convoy_item_for_shared.has("journey"):
+			var convoy_id_for_segment = str(convoy_item_for_shared.get("convoy_id", ""))
+			if convoy_id_for_segment.is_empty(): continue
 
-				var journey_data_for_shared: Dictionary = {}
-				var raw_journey = convoy_item_for_shared.get("journey")
-				if raw_journey is Dictionary:
-					journey_data_for_shared = raw_journey				
-				if journey_data_for_shared is Dictionary:
-					var route_x_s: Array = journey_data_for_shared.get("route_x", [])
-					var route_y_s: Array = journey_data_for_shared.get("route_y", [])
-					if route_x_s.size() >= 2 and route_y_s.size() == route_x_s.size():
-						for k_segment in range(route_x_s.size() - 1):
-							var p1_map: Vector2 = Vector2(float(route_x_s[k_segment]), float(route_y_s[k_segment]))
-							var p2_map: Vector2 = Vector2(float(route_x_s[k_segment + 1]), float(route_y_s[k_segment + 1]))
-							var segment_key = str(p1_map) + "-" + str(p2_map)
-							if not shared_segments_data_for_icons.has(segment_key):
-								shared_segments_data_for_icons[segment_key] = []
-							if not shared_segments_data_for_icons[segment_key].has(convoy_id_for_segment):
-								shared_segments_data_for_icons[segment_key].append(convoy_id_for_segment)
-		# Sort the convoy_id_str lists in shared_segments_data_for_icons for stable ordering
-		for seg_key_sort in shared_segments_data_for_icons:
-			shared_segments_data_for_icons[seg_key_sort].sort()
+			var journey_data_for_shared: Dictionary = {}
+			var raw_journey = convoy_item_for_shared.get("journey")
+			if raw_journey is Dictionary:
+				journey_data_for_shared = raw_journey
+			if journey_data_for_shared is Dictionary:
+				var route_x_s: Array = journey_data_for_shared.get("route_x", [])
+				var route_y_s: Array = journey_data_for_shared.get("route_y", [])
+				if route_x_s.size() >= 2 and route_y_s.size() == route_x_s.size():
+					for k_segment in range(route_x_s.size() - 1):
+						var p1_map: Vector2 = Vector2(float(route_x_s[k_segment]), float(route_y_s[k_segment]))
+						var p2_map: Vector2 = Vector2(float(route_x_s[k_segment + 1]), float(route_y_s[k_segment + 1]))
+						# Sort points to make segment key consistent regardless of direction
+						var key_points = [p1_map, p2_map]
+						key_points.sort_custom(func(a, b): return a.x < b.x or (a.x == b.x and a.y < b.y))
+						var segment_key = str(key_points[0]) + "-" + str(key_points[1])
+						
+						if not shared_segments_data_for_icons.has(segment_key):
+							shared_segments_data_for_icons[segment_key] = []
+						if not shared_segments_data_for_icons[segment_key].has(convoy_id_for_segment):
+							shared_segments_data_for_icons[segment_key].append(convoy_id_for_segment)
+	# Sort the convoy_id_str lists in shared_segments_data_for_icons for stable ordering
+	for seg_key_sort in shared_segments_data_for_icons:
+		shared_segments_data_for_icons[seg_key_sort].sort()
 
 	# --- Augment convoy data further with _pixel_offset_for_icon ---
 	var processed_convoy_data_temp: Array = []
-	for convoy_idx in range(convoy_data_array.size()):
-		var convoy_item_augmented = convoy_data_array[convoy_idx].duplicate(true)
+	for convoy_item in convoy_data_array:
+		var convoy_item_augmented = convoy_item.duplicate(true)
 		if convoy_item_augmented is Dictionary:
 			var icon_offset_v = Vector2.ZERO
 			var current_convoy_id_str_for_offset = str(convoy_item_augmented.get("convoy_id", ""))
-			if current_convoy_id_str_for_offset.is_empty(): continue # Should not happen if data is good
+			if current_convoy_id_str_for_offset.is_empty(): continue
 
-			if actual_tile_width_f > 0 and convoy_item_augmented.has("journey"): # Check if common values are valid
+			if convoy_item_augmented.has("journey"):
 				var current_seg_idx = convoy_item_augmented.get("_current_segment_start_idx", -1)
 				var journey_d: Dictionary = {}
 				var raw_journey = convoy_item_augmented.get("journey")
@@ -123,35 +112,38 @@ func augment_convoy_data_with_offsets(
 					var r_y = journey_d.get("route_y")
 					var p1_m = Vector2(float(r_x[current_seg_idx]), float(r_y[current_seg_idx]))
 					var p2_m = Vector2(float(r_x[current_seg_idx + 1]), float(r_y[current_seg_idx + 1]))
-					var p1_px = Vector2i(round((p1_m.x + 0.5) * actual_tile_width_f), round((p1_m.y + 0.5) * actual_tile_height_f))
-					var p2_px = Vector2i(round((p2_m.x + 0.5) * actual_tile_width_f), round((p2_m.y + 0.5) * actual_tile_height_f))
-					# Provide a simple offset for overlapping icons (tune as needed)
-					var overlap_index = shared_segments_data_for_icons.get(str(p1_m) + "-" + str(p2_m), []).find(current_convoy_id_str_for_offset)
+					
+					var key_points = [p1_m, p2_m]
+					key_points.sort_custom(func(a, b): return a.x < b.x or (a.x == b.x and a.y < b.y))
+					var segment_key = str(key_points[0]) + "-" + str(key_points[1])
+					
+					var overlapping_convoys = shared_segments_data_for_icons.get(segment_key, [])
+					var overlap_index = overlapping_convoys.find(current_convoy_id_str_for_offset)
+					
 					if overlap_index != -1:
-						var angle = (PI * 2 * overlap_index) / max(1, shared_segments_data_for_icons[str(p1_m) + "-" + str(p2_m)].size())
-						icon_offset_v = Vector2(cos(angle), sin(angle)) * scaled_journey_line_offset_step_pixels_for_icons
+						var angle = (PI * 2 * overlap_index) / max(1, overlapping_convoys.size())
+						icon_offset_v = Vector2(cos(angle), sin(angle)) * base_offset_magnitude
+			
 			convoy_item_augmented["_pixel_offset_for_icon"] = icon_offset_v
 			processed_convoy_data_temp.append(convoy_item_augmented)
+			
 	return processed_convoy_data_temp
 
 
 func update_convoy_nodes_on_map(
-		augmented_all_convoy_data: Array, # Already contains _pixel_offset_for_icon
+		augmented_all_convoy_data: Array,
 		convoy_id_to_color_map: Dictionary,
-		tile_pixel_width_on_texture: float,
-		tile_pixel_height_on_texture: float,
-		icon_positions_map: Dictionary, # New parameter for precise icon positions
-		selected_convoy_ids_list: Array[String] # New parameter for selected IDs
+		selected_convoy_ids_list: Array[String]
 	):
 	"""
 	Creates, updates, or removes ConvoyNode instances based on the provided data.
-	This logic is moved from main.gd's _update_convoy_nodes.
+	Uses the TileMapLayer for positioning.
 	"""
-	if not is_instance_valid(map_container):
-		printerr("ConvoyVisualsManager: map_container is not valid. Cannot update convoy nodes.")
+	if not is_instance_valid(convoy_parent_node):
+		printerr("ConvoyVisualsManager: convoy_parent_node is not valid. Cannot update convoy nodes.")
 		return
-	if tile_pixel_width_on_texture <= 0 or tile_pixel_height_on_texture <= 0:
-		printerr("ConvoyVisualsManager: Invalid tile dimensions for convoy nodes (w:%s, h:%s)." % [tile_pixel_width_on_texture, tile_pixel_height_on_texture])
+	if not is_instance_valid(terrain_tilemap):
+		printerr("ConvoyVisualsManager: terrain_tilemap is not valid. Cannot update convoy nodes.")
 		return
 
 	var current_convoy_ids_from_data: Array[String] = []
@@ -166,26 +158,18 @@ func update_convoy_nodes_on_map(
 
 		if _active_convoy_nodes.has(convoy_id_str):
 			var existing_node = _active_convoy_nodes[convoy_id_str]
-			existing_node.set_convoy_data(convoy_item_data, convoy_color, tile_pixel_width_on_texture, tile_pixel_height_on_texture)
+			# Pass the tilemap instead of pixel sizes
+			existing_node.set_convoy_data(convoy_item_data, convoy_color, terrain_tilemap)
 			existing_node.z_index = CONVOY_NODE_Z_INDEX + 1 if is_selected else CONVOY_NODE_Z_INDEX
-			# Use precise position from map_render if available. target_pixel_pos can be null.
-			var target_pixel_pos: Variant = icon_positions_map.get(convoy_id_str, null)
-			if target_pixel_pos != null:
-				existing_node.position = Vector2(target_pixel_pos)
+			# Position is now handled entirely within ConvoyNode.gd
 		else:
 			var new_convoy_node = convoy_node_scene.instantiate()
+			convoy_parent_node.add_child(new_convoy_node)
+			# Pass the tilemap instead of pixel sizes
+			new_convoy_node.set_convoy_data(convoy_item_data, convoy_color, terrain_tilemap)
 			new_convoy_node.z_index = CONVOY_NODE_Z_INDEX + 1 if is_selected else CONVOY_NODE_Z_INDEX
-			map_container.add_child(new_convoy_node)
-			new_convoy_node.set_convoy_data(convoy_item_data, convoy_color, tile_pixel_width_on_texture, tile_pixel_height_on_texture)
 			
-			# Ensure name is set for easier debugging if needed
 			new_convoy_node.name = "ConvoyNode_" + convoy_id_str 
-
-			# Use precise position from map_render if available. target_pixel_pos can be null.
-			var target_pixel_pos: Variant = icon_positions_map.get(convoy_id_str, null)
-			if target_pixel_pos != null:
-				new_convoy_node.position = Vector2(target_pixel_pos)
-			# Else, set_convoy_data would have set a position based on tile_x, tile_y and offset.
 			_active_convoy_nodes[convoy_id_str] = new_convoy_node
 
 	var ids_to_remove: Array = _active_convoy_nodes.keys().filter(func(id_str): return not current_convoy_ids_from_data.has(id_str))
