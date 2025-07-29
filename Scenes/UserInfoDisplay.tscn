@@ -1,22 +1,15 @@
 [gd_scene load_steps=3 format=3 uid="uid://c5w2h7q3g6y0x"]
 
-[ext_resource type="Script" path="res://Scripts/UI/user_info_display.gd" id="1_83a3p"]
+[ext_resource type="Script" uid="uid://45xep8fdnf13" path="res://Scripts/UI/user_info_display.gd" id="1_83a3p"]
+[ext_resource type="PackedScene" uid="uid://dkvjop71jseg6" path="res://Scenes/ConvoyListPanel.tscn" id="2_y7b05"]
 
 [node name="UserInfoDisplay" type="HBoxContainer"]
-script = ExtResource("1_83a3p")
-anchor_left = 0.0
-anchor_top = 0.0
+z_index = 10
+anchors_preset = 10
 anchor_right = 1.0
-anchor_bottom = 0.0
-offset_left = 0.0
-offset_top = 0.0
-offset_right = 0.0
 offset_bottom = 60.0
 grow_horizontal = 2
-anchor_right = 1.0
-offset_right = 0.0
-grow_horizontal = 2
-z_index = 10
+script = ExtResource("1_83a3p")
 
 [node name="UsernameLabel" type="Label" parent="."]
 layout_mode = 2
@@ -40,7 +33,5 @@ vertical_alignment = 1
 layout_mode = 2
 size_flags_horizontal = 3
 
-[node name="ConvoyMenuButton" type="MenuButton" parent="."]
+[node name="ConvoyListPanel" parent="." instance=ExtResource("2_y7b05")]
 layout_mode = 2
-text = "Select Convoy"
-flat = false

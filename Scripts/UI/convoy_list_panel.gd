@@ -7,34 +7,66 @@ extends VBoxContainer
 
 # Add a reference to GameDataManager
 var gdm: Node = null
-func _input(event):
-	if event is InputEventMouseButton and event.pressed:
-		print("ConvoyListPanel: MouseButton pressed at ", event.position)
-
 
 func _ready():
-	mouse_filter = Control.MOUSE_FILTER_STOP
-	# Diagnostics for parent containers
+	# Diagnostic: Print ToggleButton's global position, size, and rect
+	if has_node("ToggleButton"):
+		var diag_toggle_button = $ToggleButton
+		print("ConvoyListPanel: ToggleButton FOUND. global_position=", diag_toggle_button.global_position, ", size=", diag_toggle_button.size, ", rect_global=", diag_toggle_button.get_global_rect())
+	else:
+		print("ConvoyListPanel: ToggleButton NOT FOUND in ConvoyListPanel!")
+	# Diagnostic: Print all direct children of ConvoyListPanel, their types, and mouse_filter
+	print("ConvoyListPanel: Child diagnostic for self (", name, "):")
+	for child in get_children():
+		if child is Control:
+			print("  Child '", child.name, "' (", child.get_class(), ") mouse_filter=", child.mouse_filter, " visible=", child.visible)
+		else:
+			print("  Child '", child.name, "' (", child.get_class(), ") [not Control]")
+	# Set mouse_filter=IGNORE on non-interactive siblings in TopBar
+	var topbar_parent = get_parent()
+	if topbar_parent:
+		for sibling in topbar_parent.get_children():
+			if sibling != self and sibling is Control:
+				if sibling.get_class() in ["VSeparator", "Control"]:
+					sibling.mouse_filter = Control.MOUSE_FILTER_IGNORE
+					print("ConvoyListPanel: Set mouse_filter=IGNORE on sibling '", sibling.name, "' (", sibling.get_class(), ")")
+	# Diagnostic: Print all siblings in parent (TopBar), their types, and mouse_filter
 	var parent = get_parent()
 	if parent:
-		print("ConvoyListPanel: Parent node:", parent.name, "type:", parent.get_class())
-		if parent.has_method("set_mouse_filter"):
-			parent.mouse_filter = Control.MOUSE_FILTER_PASS
-			print("ConvoyListPanel: Set mouse_filter=PASS on parent:", parent.name)
-		# Check grandparent as well
-		var grandparent = parent.get_parent()
-		if grandparent:
-			print("ConvoyListPanel: Grandparent node:", grandparent.name, "type:", grandparent.get_class())
-			if grandparent.has_method("set_mouse_filter"):
-				grandparent.mouse_filter = Control.MOUSE_FILTER_PASS
-				print("ConvoyListPanel: Set mouse_filter=PASS on grandparent:", grandparent.name)
-	print("ConvoyListPanel: _ready() visible:", visible)
+		print("ConvoyListPanel: Sibling diagnostic for parent node '", parent.name, "' (", parent.get_class(), "):")
+		for sibling in parent.get_children():
+			if sibling is Control:
+				print("  Sibling '", sibling.name, "' (", sibling.get_class(), ") mouse_filter=", sibling.mouse_filter, " visible=", sibling.visible)
+			else:
+				print("  Sibling '", sibling.name, "' (", sibling.get_class(), ") [not Control]")
+
+	# Set mouse_filter to STOP so this panel receives input
+	mouse_filter = Control.MOUSE_FILTER_STOP
+	print("ConvoyListPanel: Set mouse_filter=STOP on self (should now receive input)")
+
+	# Diagnostic: Print mouse_filter for all parents up to root
+	var node = self
+	var depth = 0
+	while node:
+		if node is Control:
+			print("ConvoyListPanel: Parent at depth ", depth, ": ", node.name, " (", node.get_class(), ") mouse_filter=", node.mouse_filter)
+		node = node.get_parent()
+		depth += 1
+	set_process_input(true)
+func _input(event):
+	if event is InputEventMouseButton and event.pressed:
+		print("ConvoyListPanel: _input() received mouse event: ", event)
+	# Set mouse filter to STOP so this panel receives mouse input (for dropdowns/buttons)
+	mouse_filter = Control.MOUSE_FILTER_STOP
+
 	# More robust node checks.
 	if not is_instance_valid(toggle_button) or not is_instance_valid(convoy_popup) or not is_instance_valid(list_item_container):
 		printerr("ConvoyListPanel: One or more required child nodes are missing. Check scene setup.")
 		return
 
+
 	toggle_button.pressed.connect(_on_toggle_button_pressed)
+	toggle_button.pressed.connect(func(): print("ConvoyListPanel: ToggleButton pressed!")) # DIAGNOSTIC
 	# The popup hides itself when focus is lost. We connect to its signal to update our button.
 	convoy_popup.popup_hide.connect(_on_popup_hide)
 
@@ -56,23 +88,21 @@ func _ready():
 	# Add this block to connect to GameDataManager's convoy_data_updated signal
 	gdm = get_node_or_null("/root/GameDataManager")
 	if is_instance_valid(gdm):
-		if not gdm.is_connected("convoy_data_updated", _on_convoy_data_updated):
-			gdm.convoy_data_updated.connect(_on_convoy_data_updated)
+		if not gdm.is_connected("convoy_data_updated", Callable(self, "_on_convoy_data_updated")):
+			gdm.convoy_data_updated.connect(Callable(self, "_on_convoy_data_updated"))
 		# NEW: Connect to a signal that fires when the selected convoy changes.
 		# This allows the dropdown to update itself from anywhere in the game.
 		if gdm.has_signal("convoy_selection_changed"):
-			if not gdm.is_connected("convoy_selection_changed", _on_convoy_selection_changed):
-				gdm.convoy_selection_changed.connect(_on_convoy_selection_changed)
+			if not gdm.is_connected("convoy_selection_changed", Callable(self, "_on_convoy_selection_changed")):
+				gdm.convoy_selection_changed.connect(Callable(self, "_on_convoy_selection_changed"))
 		else:
 			printerr("ConvoyListPanel: GameDataManager is missing 'convoy_selection_changed' signal.")
 
-		# Optionally, request a refresh if you want the list to populate on startup:
-		# gdm.request_convoy_data_refresh()
-		# NEW: Immediately populate with current data from GameDataManager.
-		# This ensures the list is not empty when the game starts.
+		# Immediately populate with current data from GameDataManager if it's already loaded.
 		if gdm.has_method("get_all_convoys"):
 			var convoys = gdm.get_all_convoys()
-			populate_convoy_list(convoys)
+			if not convoys.is_empty():
+				populate_convoy_list(convoys)
 		if gdm.has_method("get_selected_convoy"):
 			var selected = gdm.get_selected_convoy()
 			_on_convoy_selection_changed(selected)
@@ -89,24 +119,25 @@ func _on_toggle_button_pressed() -> void:
 	if convoy_popup.is_visible():
 		convoy_popup.hide()
 	else:
-		# Set a size for the popup before showing it. This prevents it from
-		# being too small if there are few items, or too large if there are many.
 		var item_count = max(1, list_item_container.get_child_count()) # Avoid 0
 		var popup_height = clamp(item_count * 30 + 10, 50, 300) # e.g., 30px per item + padding
 		convoy_popup.size = Vector2(toggle_button.size.x, popup_height)
 
-		# Show the popup. In Godot 4, we manually set the global position.
-		# The `popup_below_node` function from Godot 3 does not exist.
-		# Since the PopupPanel is embedded in a container, we must set its local `position`, not `global_position`.
-		# We calculate the position relative to its parent container.
-		convoy_popup.position = toggle_button.position + Vector2(0, toggle_button.size.y)
-		convoy_popup.popup()
+
+		# Use popup(Rect2i) for robust positioning in Godot 4.
+		# This positions the popup relative to the viewport, using global coordinates.
+		var button_rect = toggle_button.get_global_rect()
+		# Position the popup to start at the bottom-left of the button.
+		var popup_position = Vector2(button_rect.position.x, button_rect.end.y)
+		convoy_popup.popup(Rect2i(popup_position, convoy_popup.size))
+
 		# Update button text to show it's open
 		if toggle_button.text.ends_with("▼"):
 			toggle_button.text = toggle_button.text.replace("▼", "▲")
 
 func _on_popup_hide() -> void:
 	"""Called when the PopupPanel is hidden for any reason (selection, clicked away)."""
+
 	# Update button text to show it's closed
 	if toggle_button.text.ends_with("▲"):
 		toggle_button.text = toggle_button.text.replace("▲", "▼")

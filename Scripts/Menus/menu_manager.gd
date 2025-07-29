@@ -45,6 +45,7 @@ func _ready():
 		printerr("MenuManager: Could not find GameDataManager autoload.")
 	
 	# Example: open_main_menu()
+	print("MenuManager Initialized: visible=", visible, ", mouse_filter=", mouse_filter)
 	pass
 
 func _on_gdm_convoy_selection_changed(selected_convoy_data: Variant):
@@ -53,9 +54,13 @@ func _on_gdm_convoy_selection_changed(selected_convoy_data: Variant):
 	if selected_convoy_data:
 		open_convoy_menu(selected_convoy_data)
 
-func _unhandled_input(event: InputEvent):
+func _input(event: InputEvent):
+	# Only process input if a menu is active and visible.
+	if not visible or not is_instance_valid(current_active_menu):
+		return
+
 	# Global back button (e.g., Escape key)
-	if event.is_action_pressed("ui_cancel") and is_instance_valid(current_active_menu):
+	if event.is_action_pressed("ui_cancel"):
 		go_back()
 		get_viewport().set_input_as_handled()
 
@@ -177,8 +182,8 @@ func _show_menu(menu_scene_resource, data_to_pass = null, add_to_stack: bool = t
 			menu_node_control.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 			menu_node_control.offset_top = top_margin
 
-	# A menu is now active. Allow this manager to receive clicks on its background
-	mouse_filter = MOUSE_FILTER_PASS
+	# A menu is now active. This manager will now intercept all clicks.
+	mouse_filter = MOUSE_FILTER_STOP
 	self.z_index = MENU_MANAGER_ACTIVE_Z_INDEX
 	emit_signal("menu_opened", current_active_menu, menu_type)
 

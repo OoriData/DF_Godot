@@ -53,6 +53,3 @@ func _on_login_successful(user_id: String) -> void:
 		printerr("GameScreenManager: MainScreen is missing the 'set_map_interactive' method.")
 
 	print("GameScreenManager: Switched to Main Screen.")
-
-func _process(delta):
-	print("DEBUG: MainScreen is processing...")

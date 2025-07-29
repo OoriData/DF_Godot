@@ -145,9 +145,15 @@ func set_allow_camera_outside_bounds(allow: bool):
 
 # Input handling functions (unchanged from your original)
 func handle_input(event: InputEvent) -> bool:
-	# Prevent handling input if a UI element is focused
+	# Prevent handling input if a UI element is focused or the mouse is over an interactive UI control.
 	if get_viewport().gui_get_focus_owner() != null:
 		return false
+	if event is InputEventMouse:
+		var hovered_control = get_viewport().gui_get_hovered_control()
+		if is_instance_valid(hovered_control) and hovered_control.mouse_filter != Control.MOUSE_FILTER_IGNORE:
+			# If the mouse is over a control that is meant to receive input (STOP or PASS),
+			# then the camera should not handle the event.
+			return false
 	if not controls_enabled:
 		return false
 	if not is_instance_valid(camera_node):

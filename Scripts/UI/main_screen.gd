@@ -5,6 +5,7 @@ extends Control
 @onready var map_view = $MainContainer/MainContent/MapView
 @onready var menu_container = $MainContainer/MainContent/MenuContainer
 @onready var top_bar = $MainContainer/TopBar
+@onready var main_container = $MainContainer
 
 # Preload the different menu scenes we might want to show
 var convoy_menu_scene = preload("res://Scenes/ConvoyMenu.tscn")
@@ -13,9 +14,10 @@ var convoy_menu_scene = preload("res://Scenes/ConvoyMenu.tscn")
 
 var current_menu = null
 
-@onready var main_container = $MainContainer
-# ...existing code...
+@onready var main_content = $MainContainer/MainContent
+
 func _ready():
+	mouse_filter = Control.MOUSE_FILTER_PASS
 	# --- Node Validation ---
 	if not is_instance_valid(map_view):
 		printerr("MainScreen Error: 'map_view' node not found. Check path in main_screen.gd.")
@@ -25,10 +27,11 @@ func _ready():
 		printerr("MainScreen Error: 'top_bar' node not found. Check path in main_screen.gd.")
 		return # Cannot connect button if top_bar is missing
 
-	# NEW: Allow mouse input to pass through this container to its children (e.g., MapView).
-	mouse_filter = Control.MOUSE_FILTER_IGNORE
+	# Allow mouse input to pass through containers to their children.
 	if is_instance_valid(main_container):
-		main_container.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		main_container.mouse_filter = Control.MOUSE_FILTER_PASS
+	if is_instance_valid(main_content):
+		main_content.mouse_filter = Control.MOUSE_FILTER_PASS
 
 	# Start with the menu hidden and the map taking up the full width.
 	hide_menu()
