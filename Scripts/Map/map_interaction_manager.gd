@@ -196,8 +196,11 @@ func _physics_process(delta: float):
 
 func _input(event: InputEvent): # Renamed from _unhandled_input
 	# Prevent handling input if a UI element is focused
-	if get_viewport().gui_get_focus_owner() != null:
-		return
+	var focus_owner = get_viewport().gui_get_focus_owner()
+	if is_instance_valid(focus_owner):
+		var map_view = get_node_or_null("/root/MainScreen/MainContainer/MainContent/MapView")
+		if is_instance_valid(map_view) and not map_view.is_ancestor_of(focus_owner) and focus_owner != map_view:
+			return
 	# --- DEBUG: Log some events reaching _unhandled_input ---
 	# This can be very verbose, enable only when actively debugging input issues.
 	# print("MIM _input RECEIVED EVENT --- Type: %s, Event: %s" % [event.get_class(), event]) # DEBUG: Performance intensive

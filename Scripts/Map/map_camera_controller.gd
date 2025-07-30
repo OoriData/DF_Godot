@@ -22,6 +22,7 @@ var current_map_screen_rect_ref: Rect2 = Rect2()
 # Store calculated map bounds to avoid recalculating every frame
 var _cached_map_bounds: Rect2 = Rect2()
 var _bounds_need_update: bool = true
+var _is_menu_open: bool = false
 
 var _is_panning_mmb: bool = false
 var _last_pan_mouse_screen_position: Vector2 = Vector2.ZERO
@@ -104,32 +105,19 @@ func _physics_process(_delta: float):
 
 		var target_camera_pos = camera_node.position
 
-		# If the visible area is larger than the map, allow the camera to move so the right edge is always viewable in the left 1/3rd
-		# Clamp only if the visible area is smaller than the map in that dimension
-		if viewport_size_world.x < _cached_map_bounds.size.x:
+		# If the menu is open and the visible area is larger than the map, center the map.
+		if _is_menu_open and viewport_size_world.x >= _cached_map_bounds.size.x:
+			target_camera_pos.x = _cached_map_bounds.get_center().x
+		else:
+			# Otherwise, clamp the camera's x-position to the map boundaries.
 			target_camera_pos.x = clamp(camera_node.position.x, min_x, max_x)
-		else:
-			# Allow camera to move from left edge to right edge of the map within the visible rect
-			var left_edge = _cached_map_bounds.position.x + viewport_size_world.x * 0.5
-			var right_edge = _cached_map_bounds.position.x + _cached_map_bounds.size.x - viewport_size_world.x * 0.5
-			# If the visible area is much larger, left_edge > right_edge, so swap if needed
-			if left_edge > right_edge:
-				var center = _cached_map_bounds.position.x + _cached_map_bounds.size.x * 0.5
-				target_camera_pos.x = center
-			else:
-				target_camera_pos.x = clamp(camera_node.position.x, left_edge, right_edge)
 
-		if viewport_size_world.y < _cached_map_bounds.size.y:
-			target_camera_pos.y = clamp(camera_node.position.y, min_y, max_y)
+		# Same logic for the y-axis.
+		if _is_menu_open and viewport_size_world.y >= _cached_map_bounds.size.y:
+			target_camera_pos.y = _cached_map_bounds.get_center().y
 		else:
-			# Same logic for Y
-			var top_edge = _cached_map_bounds.position.y + viewport_size_world.y * 0.5
-			var bottom_edge = _cached_map_bounds.position.y + _cached_map_bounds.size.y - viewport_size_world.y * 0.5
-			if top_edge > bottom_edge:
-				var center_y = _cached_map_bounds.position.y + _cached_map_bounds.size.y * 0.5
-				target_camera_pos.y = center_y
-			else:
-				target_camera_pos.y = clamp(camera_node.position.y, top_edge, bottom_edge)
+			# Otherwise, clamp the camera's y-position to the map boundaries.
+			target_camera_pos.y = clamp(camera_node.position.y, min_y, max_y)
 
 		camera_node.position = target_camera_pos
 
@@ -138,20 +126,11 @@ func set_allow_camera_outside_bounds(allow: bool):
 	allow_camera_outside_bounds = allow
 
 # Input handling functions (unchanged from your original)
-func handle_input(event: InputEvent) -> bool:
-	# Prevent handling input if a UI element is focused or the mouse is over an interactive UI control.
-	if get_viewport().gui_get_focus_owner() != null:
-		return false
-	if event is InputEventMouse:
-		var hovered_control = get_viewport().gui_get_hovered_control()
-		if is_instance_valid(hovered_control) and hovered_control.mouse_filter != Control.MOUSE_FILTER_IGNORE:
-			# If the mouse is over a control that is meant to receive input (STOP or PASS),
-			# then the camera should not handle the event.
-			return false
+func _unhandled_input(event: InputEvent) -> void:
 	if not controls_enabled:
-		return false
+		return
 	if not is_instance_valid(camera_node):
-		return false
+		return
 
 	# Trackpad-friendly: allow left mouse drag for panning
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_MIDDLE:
@@ -160,12 +139,12 @@ func handle_input(event: InputEvent) -> bool:
 			_last_pan_mouse_screen_position = event.position
 			Input.set_default_cursor_shape(Input.CURSOR_DRAG)
 			get_viewport().set_input_as_handled()
-			return true
+			return
 		elif _is_panning_mmb:
 			_is_panning_mmb = false
 			Input.set_default_cursor_shape(Input.CURSOR_ARROW)
 			get_viewport().set_input_as_handled()
-			return true
+			return
 
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
 		if event.pressed:
@@ -173,12 +152,12 @@ func handle_input(event: InputEvent) -> bool:
 			_last_pan_mouse_screen_position = event.position
 			Input.set_default_cursor_shape(Input.CURSOR_DRAG)
 			get_viewport().set_input_as_handled()
-			return true
+			return
 		elif _is_panning_mmb:
 			_is_panning_mmb = false
 			Input.set_default_cursor_shape(Input.CURSOR_ARROW)
 			get_viewport().set_input_as_handled()
-			return true
+			return
 
 	if event is InputEventMouseMotion and _is_panning_mmb:
 		var mouse_delta_screen: Vector2 = event.relative
@@ -186,32 +165,30 @@ func handle_input(event: InputEvent) -> bool:
 			# Apply panning sensitivity and scale by zoom level (invert sign for standard behavior)
 			camera_node.position -= mouse_delta_screen * camera_pan_sensitivity / camera_node.zoom.x
 		get_viewport().set_input_as_handled()
-		return true
+		return
 
 	if enable_mouse_wheel_zoom and event is InputEventMouseButton:
 		if event.button_index == MOUSE_BUTTON_WHEEL_UP and event.is_pressed():
 			zoom_at_screen_pos(1.0 / camera_zoom_factor_increment, event.position)
 			get_viewport().set_input_as_handled()
-			return true
+			return
 		elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN and event.is_pressed():
 			zoom_at_screen_pos(camera_zoom_factor_increment, event.position)
 			get_viewport().set_input_as_handled()
-			return true
+			return
 
 	if event is InputEventMagnifyGesture:
 		if event.factor != 0.0:
 			zoom_at_screen_pos(event.factor, event.position)
 			get_viewport().set_input_as_handled()
-			return true
+			return
 
 	if event is InputEventPanGesture:
 		if camera_node.zoom.x != 0.0:
 			# Invert sign for standard panning behavior
 			camera_node.position += event.delta * camera_pan_sensitivity / camera_node.zoom.x
 			get_viewport().set_input_as_handled()
-			return true
-
-	return false
+			return
 
 func zoom_at_screen_pos(zoom_adjust_factor: float, screen_zoom_center: Vector2):
 	if not is_instance_valid(camera_node):
@@ -286,6 +263,22 @@ func get_visible_map_area() -> Rect2:
 	var viewport_size_world = viewport_size_pixels / camera_node.zoom
 	var camera_top_left = camera_node.position - viewport_size_world * 0.5
 	return Rect2(camera_top_left, viewport_size_world)
+
+func on_menu_opened():
+	_is_menu_open = true
+	# Wait a frame for the UI to settle, then update the dimensions.
+	await get_tree().process_frame
+	var map_view_node = get_node_or_null("/root/MainScreen/MainContainer/MainContent/MapView")
+	if is_instance_valid(map_view_node):
+		update_map_dimensions(map_view_node.get_global_rect())
+
+func on_menu_closed():
+	_is_menu_open = false
+	# Wait a frame for the UI to settle, then update the dimensions.
+	await get_tree().process_frame
+	var map_view_node = get_node_or_null("/root/MainScreen/MainContainer/MainContent/MapView")
+	if is_instance_valid(map_view_node):
+		update_map_dimensions(map_view_node.get_global_rect())
 
 func fit_camera_to_tilemap():
 	print("[MCC] fit_camera_to_tilemap: called.")

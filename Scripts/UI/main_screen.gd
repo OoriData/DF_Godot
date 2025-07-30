@@ -1,6 +1,9 @@
 # Scripts/UI/main_screen.gd
 extends Control
 
+signal menu_opened(map_view_rect: Rect2)
+signal menu_closed(map_view_rect: Rect2)
+
 # To these new paths:
 @onready var map_view = $MainContainer/MainContent/MapView
 @onready var menu_container = $MainContainer/MainContent/MenuContainer
@@ -32,6 +35,10 @@ func _ready():
 		main_container.mouse_filter = Control.MOUSE_FILTER_PASS
 	if is_instance_valid(main_content):
 		main_content.mouse_filter = Control.MOUSE_FILTER_PASS
+
+	# Explicitly set the map_view to pass mouse events so the camera can receive them.
+	if is_instance_valid(map_view):
+		map_view.mouse_filter = Control.MOUSE_FILTER_PASS
 
 	# Start with the menu hidden and the map taking up the full width.
 	hide_menu()
@@ -66,13 +73,18 @@ func show_menu(menu_scene):
 		if not current_menu.is_connected("back_requested", Callable(self, "hide_menu")):
 			current_menu.back_requested.connect(hide_menu)
 
-	# Make the menu container visible.
+	# Make the menu container visible and allow mouse events to pass through except for its children.
 	menu_container.visible = true
+	menu_container.mouse_filter = Control.MOUSE_FILTER_PASS
 
 	# Adjust the layout to split the screen.
 	# Map takes 1/3, Menu takes 2/3
 	map_view.size_flags_stretch_ratio = 0.33
 	menu_container.size_flags_stretch_ratio = 0.67
+	
+	# Wait for the layout to update, then emit the signal
+	await get_tree().process_frame
+	emit_signal("menu_opened")
 
 # Call this function to hide the menu panel.
 func hide_menu():
@@ -85,12 +97,17 @@ func hide_menu():
 		current_menu.queue_free()
 		current_menu = null
 
-	# Hide the container.
+	# Hide the container and make sure it doesn't block any input.
 	menu_container.visible = false
+	menu_container.mouse_filter = Control.MOUSE_FILTER_IGNORE
 
 	# Make the map take up the full width again.
 	map_view.size_flags_stretch_ratio = 1
 	menu_container.size_flags_stretch_ratio = 0
+	
+	# Wait for the layout to update, then emit the signal
+	await get_tree().process_frame
+	emit_signal("menu_closed")
 
 # Example function that might be called when a convoy is selected.
 # You would call this from another script, e.g., via a signal.

@@ -142,6 +142,10 @@ func _show_menu(menu_scene_resource, data_to_pass = null, add_to_stack: bool = t
 
 	current_active_menu.set_meta("menu_type", menu_type)
 	add_child(current_active_menu)
+	# Only the menu panel itself should block input, not the entire MenuManager
+	if current_active_menu is Control:
+		current_active_menu.mouse_filter = Control.MOUSE_FILTER_STOP
+	self.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	if current_active_menu.has_method("initialize_with_data"):
 		current_active_menu.call_deferred("initialize_with_data", data_to_pass)
 	if data_to_pass:
@@ -182,8 +186,14 @@ func _show_menu(menu_scene_resource, data_to_pass = null, add_to_stack: bool = t
 			menu_node_control.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 			menu_node_control.offset_top = top_margin
 
+	# --- DIAGNOSTIC TEST: Force all menu layers to ignore input ---
 	# A menu is now active. This manager will now intercept all clicks.
-	mouse_filter = MOUSE_FILTER_STOP
+	# mouse_filter = MOUSE_FILTER_STOP
+	self.mouse_filter = MOUSE_FILTER_IGNORE
+	if is_instance_valid(current_active_menu):
+		current_active_menu.mouse_filter = MOUSE_FILTER_IGNORE
+	# --- END DIAGNOSTIC TEST ---
+
 	self.z_index = MENU_MANAGER_ACTIVE_Z_INDEX
 	emit_signal("menu_opened", current_active_menu, menu_type)
 

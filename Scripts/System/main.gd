@@ -196,26 +196,30 @@ func _ready():
 	if not get_viewport().is_connected("size_changed", Callable(self, "_on_window_resized")):
 		get_viewport().size_changed.connect(Callable(self, "_on_window_resized"))
 
-	# Connect menu open/close signals to update camera clamping area
-	if is_instance_valid(menu_manager_ref):
-		if not menu_manager_ref.is_connected("menu_opened", Callable(self, "_on_menu_opened")):
-			menu_manager_ref.menu_opened.connect(Callable(self, "_on_menu_opened"))
-		if not menu_manager_ref.is_connected("menus_completely_closed", Callable(self, "_on_menus_completely_closed")):
-			menu_manager_ref.menus_completely_closed.connect(Callable(self, "_on_menus_completely_closed"))
+	# Connect menu open/close signals from MainScreen to the camera controller
+	# This assumes main.gd (on MapView) can access MainScreen. A better approach might be a signal bus.
+	var main_screen = get_node_or_null("../../..") # Path from MapView -> HBox -> VBox -> MainScreen
+	if is_instance_valid(main_screen) and main_screen.has_signal("menu_opened"):
+		if not main_screen.is_connected("menu_opened", Callable(map_camera_controller, "on_menu_opened")):
+			main_screen.menu_opened.connect(Callable(map_camera_controller, "on_menu_opened"))
+		if not main_screen.is_connected("menu_closed", Callable(map_camera_controller, "on_menu_closed")):
+			main_screen.menu_closed.connect(Callable(map_camera_controller, "on_menu_closed"))
+	else:
+		printerr("[main.gd] Could not find MainScreen node to connect menu signals.")
 
 	# Defer the rest of the initialization to ensure all nodes are ready.
 	call_deferred("_initialize_view")
 # Called when a menu is opened; restrict camera to left third
-func _on_menu_opened(menu_node, menu_type):
+func _on_menu_opened(map_view_rect: Rect2):
 	if is_instance_valid(map_camera_controller):
-		map_camera_controller.set_map_view_to_left_third()
-		print("[main.gd] _on_menu_opened: set_map_view_to_left_third, rect:", get_viewport().get_visible_rect())
+		map_camera_controller.update_map_dimensions(map_view_rect)
+		print("[main.gd] _on_menu_opened: updated camera controller with rect:", map_view_rect)
 
 # Called when all menus are closed; restore camera to full view
-func _on_menus_completely_closed():
+func _on_menus_completely_closed(map_view_rect: Rect2):
 	if is_instance_valid(map_camera_controller):
-		map_camera_controller.set_map_view_to_full()
-		print("[main.gd] _on_menus_completely_closed: set_map_view_to_full, rect:", get_viewport().get_visible_rect())
+		map_camera_controller.update_map_dimensions(map_view_rect)
+		print("[main.gd] _on_menus_completely_closed: updated camera controller with rect:", map_view_rect)
 
 func _initialize_view():
 	# This function is now called deferred from _ready.
@@ -325,18 +329,5 @@ func _on_map_data_loaded(map_tiles_data: Array) -> void:
 	# Input processing is now handled by the set_interactive function.
 	# set_process_input(true)
 func _input(event):
-	# If a UI element is focused, don't handle input globally
-	if get_viewport().gui_get_focus_owner() != null:
-		return
-
-	# Only block map/camera input if hovered Control is an interactive widget
-	if event is InputEventMouse and event.position:
-		var ui_under_mouse = get_viewport().gui_get_hovered_control()
-		if ui_under_mouse and ui_under_mouse.visible and ui_under_mouse.mouse_filter != Control.MOUSE_FILTER_IGNORE and _is_interactive_control(ui_under_mouse):
-			return
-
-	if is_instance_valid(map_camera_controller):
-		var handled = map_camera_controller.handle_input(event)
-		if handled:
-			return
-	# Optionally, handle other input here if needed
+	if is_instance_valid(sub_viewport):
+		sub_viewport.push_input(event)
