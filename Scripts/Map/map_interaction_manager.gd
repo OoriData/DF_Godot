@@ -173,7 +173,7 @@ func set_camera_loose_mode(is_loose: bool):
 
 func set_current_map_screen_rect(rect: Rect2):
 	_current_map_screen_rect = rect
-	# print("MIM: Map screen rect updated to: ", _current_map_screen_rect) # DEBUG
+	print("[MIM] set_current_map_screen_rect: updating camera controller with rect:", _current_map_screen_rect)
 	if is_instance_valid(map_camera_controller) and map_camera_controller.has_method("update_map_dimensions"):
 		map_camera_controller.update_map_dimensions(_current_map_screen_rect)
 	# The camera controller's _physics_process will handle clamping.

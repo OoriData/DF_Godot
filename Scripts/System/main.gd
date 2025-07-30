@@ -195,9 +195,27 @@ func _ready():
 	# Connect to window resize and update SubViewport size
 	if not get_viewport().is_connected("size_changed", Callable(self, "_on_window_resized")):
 		get_viewport().size_changed.connect(Callable(self, "_on_window_resized"))
-	
+
+	# Connect menu open/close signals to update camera clamping area
+	if is_instance_valid(menu_manager_ref):
+		if not menu_manager_ref.is_connected("menu_opened", Callable(self, "_on_menu_opened")):
+			menu_manager_ref.menu_opened.connect(Callable(self, "_on_menu_opened"))
+		if not menu_manager_ref.is_connected("menus_completely_closed", Callable(self, "_on_menus_completely_closed")):
+			menu_manager_ref.menus_completely_closed.connect(Callable(self, "_on_menus_completely_closed"))
+
 	# Defer the rest of the initialization to ensure all nodes are ready.
 	call_deferred("_initialize_view")
+# Called when a menu is opened; restrict camera to left third
+func _on_menu_opened(menu_node, menu_type):
+	if is_instance_valid(map_camera_controller):
+		map_camera_controller.set_map_view_to_left_third()
+		print("[main.gd] _on_menu_opened: set_map_view_to_left_third, rect:", get_viewport().get_visible_rect())
+
+# Called when all menus are closed; restore camera to full view
+func _on_menus_completely_closed():
+	if is_instance_valid(map_camera_controller):
+		map_camera_controller.set_map_view_to_full()
+		print("[main.gd] _on_menus_completely_closed: set_map_view_to_full, rect:", get_viewport().get_visible_rect())
 
 func _initialize_view():
 	# This function is now called deferred from _ready.
@@ -260,18 +278,36 @@ func _update_subviewport_size():
 	if is_instance_valid(subvp):
 		subvp.size = get_viewport().size
 		# print("[INFO] SubViewport size updated to:", subvp.size)
+		# After resizing, update camera controller's map dimensions
+		if is_instance_valid(map_camera_controller) and map_camera_controller.has_method("update_map_dimensions"):
+			var rect = get_viewport().get_visible_rect()
+			print("[main.gd] _update_subviewport_size: updating camera controller with rect:", rect)
+			map_camera_controller.update_map_dimensions(rect)
 # Handler for map_data_loaded signal: extracts tile type IDs and populates tilemap
 
 
 func _on_map_data_loaded(map_tiles_data: Array) -> void:
+	print("[main.gd] _on_map_data_loaded: map_tiles_data size=", map_tiles_data.size())
 	if not is_instance_valid(terrain_tilemap):
 		printerr("[ERROR] terrain_tilemap is not valid!")
 		return
 	if not map_tiles_data or map_tiles_data.size() == 0:
 		printerr("[ERROR] map_tiles_data is empty or invalid!")
 		return
+	print("[main.gd] Calling populate_tilemap_from_data...")
 	populate_tilemap_from_data(map_tiles_data)
-	print("[SUMMARY] TileMap populated. Used cells:", terrain_tilemap.get_used_cells().size())
+	print("[main.gd] Finished populate_tilemap_from_data.")
+	print("[main.gd] Continuing execution after populate...")
+	# print("[SUMMARY] TileMap populated. Used cells:", terrain_tilemap.get_used_cells().size())
+	print("[main.gd] Checking if map_camera_controller is valid...")
+	if is_instance_valid(map_camera_controller):
+		print("[main.gd] map_camera_controller is valid. Calling fit_camera_to_tilemap...")
+		map_camera_controller.fit_camera_to_tilemap()
+		print("[main.gd] map_camera_controller.fit_camera_to_tilemap() finished. Calling debug_print_bounds...")
+		map_camera_controller.debug_print_bounds()
+		print("[main.gd] debug_print_bounds() finished.")
+	else:
+		print("[main.gd] map_camera_controller is NOT valid.")
 	# --- DIAGNOSTICS: TerrainTileMap state ---
 	if is_instance_valid(terrain_tilemap):
 		print("[DIAG] TerrainTileMap tile_set:", terrain_tilemap.tile_set)
