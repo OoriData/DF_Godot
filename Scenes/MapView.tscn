@@ -11,17 +11,15 @@
 [sub_resource type="ViewportTexture" id="ViewportTexture_k7gy6"]
 viewport_path = NodePath("MapContainer/SubViewport")
 
-[node name="MapRender" type="Control"]
+[node name="Main" type="Control"]
 layout_mode = 3
 anchors_preset = 15
 anchor_right = 1.0
 anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
+mouse_filter = 1
 script = ExtResource("1_qf4ax")
-convoy_focus_zoom_target_tiles_wide = 10.0
-convoy_menu_map_view_offset_percentage = 1.0
-convoy_focus_zoom_target_tiles_high = 7.0
 
 [node name="MapContainer" type="Node2D" parent="."]
 

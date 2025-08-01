@@ -23,10 +23,9 @@ const MENU_MANAGER_ACTIVE_Z_INDEX = 150
 signal menu_opened(menu_node, menu_type: String)
 ## Emitted when a menu is closed (either by navigating forward or back). Passes the menu node that was closed.
 signal menu_closed(menu_node_was_active, menu_type: String)
-## Emitted when the last menu in the stack is closed via "back", meaning no menus are active.
-signal menus_completely_closed
 
-
+## NEW SIGNAL as per new plan. Emitted when menu visibility changes.
+signal menu_visibility_changed(is_open: bool, menu_width_ratio: float)
 
 func _ready():
 	# Initially, no menu is shown. Hide MenuManager so it does not block input.
@@ -67,14 +66,15 @@ func _input(event: InputEvent):
 func is_any_menu_active() -> bool:
 	return current_active_menu != null
 
-# --- Functions to open specific Convoy Menus ---
+### --- Functions to open specific Convoy Menus ---
+# NOTE: _emit_menu_area_changed is called after every menu open/close/navigation event.
+# This ensures the camera always clamps to the correct visible area.
 func open_convoy_menu(convoy_data = null):
-	# This opens the main Convoy Overview menu
 	_show_menu(convoy_menu_scene, convoy_data)
 
 func open_convoy_vehicle_menu(convoy_data = null):
 	print("MenuManager: open_convoy_vehicle_menu called. Convoy Data Received: ")
-	print(convoy_data) # This will print the full dictionary to the console
+	print(convoy_data)
 	_show_menu(convoy_vehicle_menu_scene, convoy_data)
 
 func open_convoy_journey_menu(convoy_data = null):
@@ -87,15 +87,15 @@ func open_convoy_settlement_menu(convoy_data = null):
 func open_convoy_cargo_menu(convoy_data = null):
 	if convoy_data == null:
 		printerr("MenuManager: open_convoy_cargo_menu called with null data.")
-		# Pass a structure that ConvoyCargoMenu can handle gracefully if data is missing
 		_show_menu(convoy_cargo_menu_scene, {"vehicle_details_list": [], "convoy_name": "Unknown Convoy"})
 		return
 
 	print("MenuManager: open_convoy_cargo_menu called. Original Convoy Data Keys: ", convoy_data.keys())
-	# Pass the convoy_data directly. ConvoyCargoMenu will now handle iterating through vehicles.
-	_show_menu(convoy_cargo_menu_scene, convoy_data.duplicate(true)) # Pass a copy
+	_show_menu(convoy_cargo_menu_scene, convoy_data.duplicate(true))
 
-# --- Generic menu handling ---
+
+### --- Generic menu handling ---
+# _emit_menu_area_changed is only called from menu_manager.gd, never from menu scripts.
 
 func _show_menu(menu_scene_resource, data_to_pass = null, add_to_stack: bool = true):
 	# When showing a menu, make MenuManager visible so it can receive input.
@@ -119,7 +119,7 @@ func _show_menu(menu_scene_resource, data_to_pass = null, add_to_stack: bool = t
 		if not menu_stack.is_empty():
 			go_back()
 		else:
-			emit_signal("menus_completely_closed")
+			emit_signal("menu_visibility_changed", false, 0.0)
 		return
 
 	var menu_type = "default"
@@ -157,6 +157,7 @@ func _show_menu(menu_scene_resource, data_to_pass = null, add_to_stack: bool = t
 		if is_instance_valid(user_info_display) and user_info_display.is_visible_in_tree():
 			top_margin = user_info_display.size.y
 		if use_convoy_style_layout:
+			emit_signal("menu_visibility_changed", true, 2.0 / 3.0)
 			menu_node_control.anchor_left = 1.0 / 3.0
 			menu_node_control.anchor_right = 1.0
 			menu_node_control.anchor_top = 0.0
@@ -236,11 +237,10 @@ func go_back():
 				if _scene_resource:
 					_show_menu(_scene_resource, _prev_data, false)
 					return
-		# If no menu was restored from stack and current_active_menu was already null
-		emit_signal("menus_completely_closed")
-		# Hide MenuManager when no menus are active
+		emit_signal("menu_visibility_changed", false, 0.0)
 		visible = false
 		return
+
 
 	if menu_stack.is_empty():
 		var _closed_menu_type = current_active_menu.get_meta("menu_type", "default")
@@ -249,8 +249,7 @@ func go_back():
 		current_active_menu = null
 		mouse_filter = MOUSE_FILTER_IGNORE
 		self.z_index = _base_z_index
-		emit_signal("menus_completely_closed")
-		# Hide MenuManager when no menus are active
+		emit_signal("menu_visibility_changed", false, 0.0)
 		visible = false
 		return
 
@@ -286,7 +285,7 @@ func close_all_menus():
 		if menu_stack.is_empty() and not is_instance_valid(current_active_menu):
 			mouse_filter = MOUSE_FILTER_IGNORE # Ensure mouse filter is reset.
 			self.z_index = _base_z_index # Ensure z_index is reset
-			emit_signal("menus_completely_closed")
+			emit_signal("menu_visibility_changed", false, 0.0)
 		return
 
 	menu_stack.clear() # Prevent go_back from reopening anything

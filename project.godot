@@ -26,6 +26,10 @@ ui_scale_manager="*res://Scripts/UI/UI_scale_manager.gd"
 APICalls="*res://Scripts/System/api_calls.gd"
 GameDataManager="*res://Scripts/System/game_data_manager.gd"
 
+[autoload]
+
+MenuManager="*res://Scripts/Menus/menu_manager.gd"
+
 [display]
 
 window/size/initial_position_type=2
