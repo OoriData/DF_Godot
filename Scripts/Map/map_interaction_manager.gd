@@ -123,6 +123,7 @@ func initialize(
 		p_all_settlement_data: Array,
 		p_map_tiles: Array,
 		p_camera: Camera2D,
+		p_sub_viewport: SubViewport,
 		p_initial_selected_ids: Array[String],
 		p_initial_user_positions: Dictionary
 	):
@@ -146,7 +147,7 @@ func initialize(
 	# TileMap is now used for bounds and sizing; remove texture-based sizing logic.
 	if is_instance_valid(camera):
 		if is_instance_valid(map_camera_controller) and map_camera_controller.has_method("initialize"):
-			map_camera_controller.initialize(camera, map_display)
+			map_camera_controller.initialize(camera, map_display, p_sub_viewport)
 			if map_camera_controller.has_signal("camera_zoom_changed"):
 				map_camera_controller.camera_zoom_changed.connect(_on_map_camera_controller_zoom_changed)
 		else:

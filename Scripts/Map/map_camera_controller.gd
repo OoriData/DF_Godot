@@ -11,17 +11,22 @@ signal camera_zoom_changed(new_zoom_level: float)
 @export var camera_zoom_factor_increment: float = 1.1
 @export var camera_pan_sensitivity: float = 1.0 # Sensitivity for panning with mouse drag
 
+@export var sub_viewport_node: SubViewport = null
+
 var camera_node: Camera2D = null
 var tilemap_ref: TileMapLayer = null
 var map_viewport_rect: Rect2 = Rect2()
 
-func initialize(p_camera: Camera2D, p_tilemap: TileMapLayer):
+func initialize(p_camera: Camera2D, p_tilemap: TileMapLayer, p_sub_viewport: SubViewport):
 	camera_node = p_camera
 	tilemap_ref = p_tilemap
+	sub_viewport_node = p_sub_viewport
 	if not is_instance_valid(camera_node):
 		printerr("[MCC] Initialization failed: Camera2D is null.")
 	if not is_instance_valid(tilemap_ref):
 		printerr("[MCC] Initialization failed: TileMapLayer is null.")
+	if not is_instance_valid(sub_viewport_node):
+		printerr("[MCC] Initialization failed: SubViewport is null.")
 	
 	# Set the initial viewport to the full screen.
 	# This will be adjusted by other scripts if the layout changes.
@@ -32,21 +37,21 @@ func _ready():
 	pass # Initialization is now handled by the initialize function.
 
 
-func update_map_viewport_rect(_new_rect: Rect2):
-	if not is_instance_valid(camera_node):
-		printerr("[MCC] Cannot update, camera is not valid.")
+func update_map_viewport_rect(new_rect: Rect2):
+	if not is_instance_valid(camera_node) or not is_instance_valid(sub_viewport_node):
+		printerr("[MCC] Cannot update, camera or sub_viewport is not valid.")
 		return
 
-	# Always use the SubViewport's size for camera calculations
-	var viewport_node = camera_node.get_viewport()
-	if viewport_node and viewport_node is SubViewport:
-		var vp_size = viewport_node.size
-		map_viewport_rect = Rect2(Vector2.ZERO, vp_size)
-		print("[DFCAM-DEBUG] update_map_viewport_rect: using SubViewport size=", vp_size)
+	# CRITICAL FIX: Synchronize the SubViewport's size with the actual UI control's size.
+	# The size of the control showing the viewport (e.g., TextureRect) dictates the render size.
+	if new_rect.size.x > 0 and new_rect.size.y > 0:
+		sub_viewport_node.size = Vector2i(new_rect.size)
+		map_viewport_rect = Rect2(Vector2.ZERO, new_rect.size)
+		print("[DFCAM-DEBUG] update_map_viewport_rect: Synced SubViewport size to ", sub_viewport_node.size)
 	else:
-		# fallback to previous behavior if not in a SubViewport
-		map_viewport_rect = _new_rect
-		print("[DFCAM-DEBUG] update_map_viewport_rect: fallback to new_rect=", _new_rect.size)
+		# Fallback if the new_rect is invalid, use the existing SubViewport size.
+		map_viewport_rect = Rect2(Vector2.ZERO, sub_viewport_node.size)
+		print("[DFCAM-DEBUG] update_map_viewport_rect: new_rect was invalid, using existing SubViewport size=", sub_viewport_node.size)
 
 	camera_node.offset = Vector2.ZERO
 	_update_camera_limits()
@@ -67,20 +72,22 @@ func _update_camera_limits():
 	var used_rect = tilemap_ref.get_used_rect()
 	var cell_size = tilemap_ref.tile_set.tile_size
 	var map_world_bounds = Rect2(used_rect.position * cell_size, used_rect.size * cell_size)
-	var visible_world_size = map_viewport_rect.size / camera_node.zoom
+	
+	# CRITICAL FIX: Use the camera's viewport rect in world coordinates, which accounts for zoom.
+	var camera_view_rect = camera_node.get_viewport_rect()
 
 
 	# Calculate the min/max center positions so the viewport never shows outside the map
-	var min_x = map_world_bounds.position.x + visible_world_size.x / 2.0
-	var max_x = map_world_bounds.end.x - visible_world_size.x / 2.0
-	var min_y = map_world_bounds.position.y + visible_world_size.y / 2.0
-	var max_y = map_world_bounds.end.y - visible_world_size.y / 2.0
+	var min_x = map_world_bounds.position.x + camera_view_rect.size.x / 2.0
+	var max_x = map_world_bounds.end.x - camera_view_rect.size.x / 2.0
+	var min_y = map_world_bounds.position.y + camera_view_rect.size.y / 2.0
+	var max_y = map_world_bounds.end.y - camera_view_rect.size.y / 2.0
 
 	# If the map is smaller than the viewport, lock to center
-	if visible_world_size.x >= map_world_bounds.size.x:
+	if camera_view_rect.size.x >= map_world_bounds.size.x:
 		min_x = map_world_bounds.get_center().x
 		max_x = map_world_bounds.get_center().x
-	if visible_world_size.y >= map_world_bounds.size.y:
+	if camera_view_rect.size.y >= map_world_bounds.size.y:
 		min_y = map_world_bounds.get_center().y
 		max_y = map_world_bounds.get_center().y
 
@@ -88,14 +95,6 @@ func _update_camera_limits():
 	camera_node.limit_right = int(round(max_x))
 	camera_node.limit_top = int(round(min_y))
 	camera_node.limit_bottom = int(round(max_y))
-
-
-func set_interactive(_is_interactive: bool):
-	# No-op: input is now handled by MainScreen
-	pass
-
-
-## --- New public camera manipulation API ---
 
 # Pan the camera by a delta in screen space (pixels)
 func pan(delta: Vector2):
@@ -120,10 +119,11 @@ func zoom_at_screen_pos(zoom_multiplier: float, screen_zoom_center: Vector2):
 	var world_pos_before = camera_node.get_canvas_transform().affine_inverse() * screen_zoom_center
 
 	camera_node.zoom = Vector2(clamped_zoom, clamped_zoom)
-	_update_camera_limits()
 
 	var world_pos_after = camera_node.get_canvas_transform().affine_inverse() * screen_zoom_center
 	camera_node.position += world_pos_before - world_pos_after
+	
+	_update_camera_limits()
 	_clamp_camera_position()
 
 	print("[DFCAM-DEBUG] zoom_at_screen_pos: zoom_multiplier=", zoom_multiplier, ", clamped_zoom=", clamped_zoom, ", world_pos_before=", world_pos_before, ", world_pos_after=", world_pos_after, ", new_position=", camera_node.position)
@@ -154,8 +154,8 @@ func fit_camera_to_tilemap():
 	target_zoom = clamp(target_zoom, min_camera_zoom_level, max_camera_zoom_level)
 	camera_node.zoom = Vector2(target_zoom, target_zoom)
 	camera_node.offset = Vector2.ZERO
-	_update_camera_limits()
 	camera_node.position = map_world_bounds.get_center()
+	_update_camera_limits()
 	_clamp_camera_position()
 	emit_signal("camera_zoom_changed", target_zoom)
 

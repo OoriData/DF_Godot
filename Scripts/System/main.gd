@@ -85,13 +85,9 @@ func initialize_all_components():
 			self.connect("map_ready_for_focus", Callable(main_screen, "_on_map_ready_for_focus"))
 			print("[Main] Connected self.map_ready_for_focus to main_screen._on_map_ready_for_focus")
 
-	# Initialize MapCameraController
-	if is_instance_valid(map_camera_controller):
-		map_camera_controller.initialize(map_camera, terrain_tilemap)
-
 	# Initialize MapInteractionManager
 	if is_instance_valid(map_interaction_manager):
-		map_interaction_manager.initialize(terrain_tilemap, get_node_or_null("/root/UIManager"), _all_convoy_data, _all_settlement_data, map_tiles, map_camera, _selected_convoy_ids, _convoy_label_user_positions)
+		map_interaction_manager.initialize(terrain_tilemap, get_node_or_null("/root/UIManager"), _all_convoy_data, _all_settlement_data, map_tiles, map_camera, sub_viewport, _selected_convoy_ids, _convoy_label_user_positions)
 		if not map_interaction_manager.is_connected("selection_changed", Callable(self, "_on_selection_changed")):
 			map_interaction_manager.connect("selection_changed", Callable(self, "_on_selection_changed"))
 		if not map_interaction_manager.is_connected("hover_changed", Callable(self, "_on_hover_changed")):
@@ -114,11 +110,6 @@ func _process(_delta: float):
 	var map_view = self
 	if not is_instance_valid(map_view):
 		return
-
-	# Sync SubViewport size with the MapView's actual size.
-	var map_view_size = map_view.size
-	if sub_viewport.size != Vector2i(map_view_size):
-		sub_viewport.size = Vector2i(map_view_size)
 
 	# Update the TextureRect with the SubViewport's texture.
 	if is_instance_valid(map_display):
