@@ -193,8 +193,12 @@ func _on_menu_visibility_changed(is_open: bool, _menu_name: String):
 		menu_container.size_flags_stretch_ratio = 0.0
 		if is_instance_valid(main_map):
 			main_map.size_flags_stretch_ratio = 1.0
+			main_map.show() # Ensure map view is visible
+			# Force map view to fill the parent container
+			if main_map.has_method("set_anchors_and_offsets_preset"):
+				main_map.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 		menu_container.hide()
-		print("[DFCAM-DEBUG] MainScreen: Menu closed, set stretch ratios (menu=0, map=1)")
+		print("[DFCAM-DEBUG] MainScreen: Menu closed, set stretch ratios (menu=0, map=1) and map to full size")
 	if main_content:
 		main_content.queue_sort()
 
