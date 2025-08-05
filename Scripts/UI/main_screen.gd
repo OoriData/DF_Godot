@@ -23,9 +23,9 @@ func initialize(p_map_view: Control, p_camera_controller: Node, p_interaction_ma
 	if is_instance_valid(map_view):
 		if not map_view.is_connected("gui_input", Callable(self, "_on_map_view_gui_input")):
 			map_view.gui_input.connect(Callable(self, "_on_map_view_gui_input"))
-			print("[MainScreen] Connected to map_view's gui_input signal.")
+			print("[DFCAM-DEBUG] MainScreen: Connected to map_view's gui_input signal.")
 	else:
-		printerr("MainScreen: Could not find map_view node to connect its input.")
+		printerr("[DFCAM-DEBUG] MainScreen: Could not find map_view node to connect its input.")
 
 	# If set_map_interactive was called before we were ready, apply the state now.
 	if _interactive_state_is_pending:
@@ -38,13 +38,21 @@ var _is_panning := false
 var _map_ready_for_focus: bool = false
 var _has_fitted_camera: bool = false
 
+
 func _ready():
 	# Defer the initial camera setup to ensure the UI layout is stable.
+	print("[DFCAM-DEBUG] MainScreen: _ready called, deferring initial camera/UI setup.")
 	call_deferred("_initial_camera_and_ui_setup")
 
 	# Connect to the MenuManager's signal that indicates when a menu is opened or closed.
 	var menu_manager = get_node_or_null("/root/MenuManager")
 	if menu_manager:
+		# NEW: Register this screen's menu container with the manager.
+		if menu_manager.has_method("register_menu_container"):
+			menu_manager.register_menu_container(menu_container)
+		else:
+			printerr("MainScreen: CRITICAL - MenuManager is missing 'register_menu_container' method.")
+
 		if not menu_manager.is_connected("menu_visibility_changed", Callable(self, "_on_menu_visibility_changed")):
 			menu_manager.connect("menu_visibility_changed", Callable(self, "_on_menu_visibility_changed"))
 			print("[MainScreen] Successfully connected to MenuManager's menu_visibility_changed signal.")
@@ -59,22 +67,58 @@ func _ready():
 	else:
 		printerr("MainScreen: Could not find ConvoyMenuButton in TopBar.")
 
+	# --- Window/MapView Resize Handling ---
+	# Use _notification for resize events instead of connecting to nonexistent signal
+	# Also connect to map_view's size_changed if available
+	if is_instance_valid(map_view):
+		if not map_view.is_connected("size_changed", Callable(self, "_on_map_view_size_changed")):
+			map_view.connect("size_changed", Callable(self, "_on_map_view_size_changed"))
+# Respond to Control resize events
+func _notification(what):
+	if what == NOTIFICATION_RESIZED:
+		_on_main_screen_size_changed()
+
+
+func _on_main_screen_size_changed():
+	# Called when MainScreen is resized (window resize or layout change)
+	_update_camera_viewport_rect_on_resize()
+
+func _on_map_view_size_changed():
+	# Called when MapView is resized (e.g., due to menu open/close or container resize)
+	_update_camera_viewport_rect_on_resize()
+
+# Call this after the main screen is visible and unpaused to ensure camera is correct
+func force_camera_update():
+	await get_tree().process_frame  # Wait for layout to settle
+	_update_camera_viewport_rect_on_resize()
+
+func _update_camera_viewport_rect_on_resize():
+	if is_instance_valid(map_view) and is_instance_valid(map_camera_controller) and map_camera_controller.has_method("update_map_viewport_rect"):
+		var map_rect = map_view.get_global_rect()
+		print("[DFCAM-DEBUG] MainScreen: Window or MapView resized, updating camera viewport rect=", map_rect)
+		map_camera_controller.update_map_viewport_rect(map_rect)
+		if map_camera_controller.has_method("fit_camera_to_tilemap"):
+			map_camera_controller.fit_camera_to_tilemap()
+
 
 
 func _initial_camera_and_ui_setup():
 	# This function is called deferred from _ready to ensure node sizes are correct.
 	# Wait one frame to be absolutely sure all UI nodes have settled.
 	await get_tree().process_frame
+
+	# NEW: Ensure the menu is hidden on startup by directly hiding the container.
+	# This is safer than calling the full visibility function before the camera is ready.
+	menu_container.hide()
+	print("[DFCAM-DEBUG] MainScreen: Menu container hidden on startup.")
 	
 	# Now that the layout is stable, tell the camera controller the correct viewport.
 	if is_instance_valid(map_camera_controller) and map_camera_controller.has_method("update_map_viewport_rect"):
 		var map_rect = map_view.get_global_rect()
-		print("[MainScreen] Initial setup: Notifying camera of viewport rect: ", map_rect)
+		print("[DFCAM-DEBUG] MainScreen: Initial setup, notifying camera of viewport rect=", map_rect)
 		map_camera_controller.update_map_viewport_rect(map_rect)
-	
-	# If the map data is already loaded, fit the camera now.
-	if _map_ready_for_focus and not _has_fitted_camera:
-		_fit_camera_to_map()
+	else:
+		printerr("[DFCAM-DEBUG] MainScreen: Camera controller not valid or missing update_map_viewport_rect.")
 
 
 func _on_map_view_gui_input(event: InputEvent):
@@ -126,52 +170,54 @@ func _on_map_view_gui_input(event: InputEvent):
 
 # Called by the MenuManager's signal when a menu is opened or closed.
 
-func _on_menu_visibility_changed(is_open: bool, menu_width_ratio: float):
-	print("[MainScreen] Menu visibility changed. Is open: %s, Ratio: %s" % [is_open, menu_width_ratio])
+func _on_menu_visibility_changed(is_open: bool, _menu_name: String):
+	print("[DFCAM-DEBUG] MainScreen: Menu visibility changed. Is open: %s" % is_open)
 
-	# Show/hide the placeholder container that makes space for the menu.
-	menu_container.visible = is_open
 
-	# Adjust the stretch ratio of the map and menu containers to resize them.
+	# The stretch ratio determines how space is distributed in the HBoxContainer.
+	# When the menu is open, we want a 2:1 ratio (menu:map).
+	# When closed, we want a 0:1 ratio, giving the map all the space.
 	if is_open:
-		# The map takes up the remaining space.
-		map_view.size_flags_stretch_ratio = 1.0 - menu_width_ratio
-		menu_container.size_flags_stretch_ratio = menu_width_ratio
+		menu_container.size_flags_stretch_ratio = 2.0
+		if is_instance_valid(map_view):
+			map_view.size_flags_stretch_ratio = 1.0
+		menu_container.show()
+		print("[DFCAM-DEBUG] MainScreen: Menu opened, set stretch ratios (menu=2, map=1)")
 	else:
-		# The map takes up the full width.
-		map_view.size_flags_stretch_ratio = 1.0
 		menu_container.size_flags_stretch_ratio = 0.0
+		if is_instance_valid(map_view):
+			map_view.size_flags_stretch_ratio = 1.0
+		menu_container.hide()
+		print("[DFCAM-DEBUG] MainScreen: Menu closed, set stretch ratios (menu=0, map=1)")
 
 	# Wait for the layout to update before notifying the camera controller.
-	# This ensures the camera gets the correct, new dimensions of the map view.
 	await get_tree().process_frame
 
 	if is_instance_valid(map_camera_controller) and map_camera_controller.has_method("update_map_viewport_rect"):
 		var map_rect = map_view.get_global_rect()
-		print("[MainScreen] Notifying camera of new viewport rect: ", map_rect)
+		print("[DFCAM-DEBUG] MainScreen: Notifying camera of new viewport rect=", map_rect)
 		map_camera_controller.update_map_viewport_rect(map_rect)
 	else:
-		printerr("MainScreen: Could not find MapCameraController or it lacks update_map_viewport_rect method.")
+		printerr("[DFCAM-DEBUG] MainScreen: Could not find MapCameraController or it lacks update_map_viewport_rect method.")
 
 	# After the first layout, if the map is ready, fit the camera
-	if _map_ready_for_focus and not _has_fitted_camera:
-		_fit_camera_to_map()
+	# (Removed call to _fit_camera_to_map() to fix parser error)
+	# if _map_ready_for_focus and not _has_fitted_camera:
+	#     _fit_camera_to_map()
 
 
 # Called when the map_ready_for_focus signal is emitted from main.gd
 func _on_map_ready_for_focus():
-	print("[MainScreen] Received map_ready_for_focus signal.")
+	print("[DFCAM-DEBUG] MainScreen: Received map_ready_for_focus signal.")
 	_map_ready_for_focus = true
-	# If the layout is already done, fit the camera now
+	await get_tree().process_frame  # Wait for UI to settle
 	if is_instance_valid(map_camera_controller) and not _has_fitted_camera:
-		_fit_camera_to_map()
-
-# Helper to fit the camera to the map only once
-func _fit_camera_to_map():
-	if is_instance_valid(map_camera_controller) and map_camera_controller.has_method("fit_camera_to_tilemap"):
+		var map_rect = map_view.get_global_rect()
+		print("[DFCAM-DEBUG] MainScreen: map_ready_for_focus, updating camera viewport rect=", map_rect)
+		map_camera_controller.update_map_viewport_rect(map_rect)
 		map_camera_controller.fit_camera_to_tilemap()
 		_has_fitted_camera = true
-		print("[MainScreen] fit_camera_to_tilemap called.")
+		print("[DFCAM-DEBUG] MainScreen: fit_camera_to_tilemap called.")
 
 
 # Called when the convoy button in the top bar is pressed.

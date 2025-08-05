@@ -9,81 +9,29 @@ extends VBoxContainer
 var gdm: Node = null
 
 func _ready():
-	# Diagnostic: Print ToggleButton's global position, size, and rect
-	if has_node("ToggleButton"):
-		var diag_toggle_button = $ToggleButton
-		print("ConvoyListPanel: ToggleButton FOUND. global_position=", diag_toggle_button.global_position, ", size=", diag_toggle_button.size, ", rect_global=", diag_toggle_button.get_global_rect())
-	else:
-		print("ConvoyListPanel: ToggleButton NOT FOUND in ConvoyListPanel!")
-	# Diagnostic: Print all direct children of ConvoyListPanel, their types, and mouse_filter
-	print("ConvoyListPanel: Child diagnostic for self (", name, "):")
-	for child in get_children():
-		if child is Control:
-			print("  Child '", child.name, "' (", child.get_class(), ") mouse_filter=", child.mouse_filter, " visible=", child.visible)
-		else:
-			print("  Child '", child.name, "' (", child.get_class(), ") [not Control]")
-	# Set mouse_filter=IGNORE on non-interactive siblings in TopBar
-	var topbar_parent = get_parent()
-	if topbar_parent:
-		for sibling in topbar_parent.get_children():
-			if sibling != self and sibling is Control:
-				if sibling.get_class() in ["VSeparator", "Control"]:
-					sibling.mouse_filter = Control.MOUSE_FILTER_IGNORE
-					print("ConvoyListPanel: Set mouse_filter=IGNORE on sibling '", sibling.name, "' (", sibling.get_class(), ")")
-	# Diagnostic: Print all siblings in parent (TopBar), their types, and mouse_filter
-	var parent = get_parent()
-	if parent:
-		print("ConvoyListPanel: Sibling diagnostic for parent node '", parent.name, "' (", parent.get_class(), "):")
-		for sibling in parent.get_children():
-			if sibling is Control:
-				print("  Sibling '", sibling.name, "' (", sibling.get_class(), ") mouse_filter=", sibling.mouse_filter, " visible=", sibling.visible)
-			else:
-				print("  Sibling '", sibling.name, "' (", sibling.get_class(), ") [not Control]")
-
-	# Set mouse_filter to STOP so this panel receives input
-	mouse_filter = Control.MOUSE_FILTER_STOP
-	print("ConvoyListPanel: Set mouse_filter=STOP on self (should now receive input)")
-
-	# Diagnostic: Print mouse_filter for all parents up to root
-	var node = self
-	var depth = 0
-	while node:
-		if node is Control:
-			print("ConvoyListPanel: Parent at depth ", depth, ": ", node.name, " (", node.get_class(), ") mouse_filter=", node.mouse_filter)
-		node = node.get_parent()
-		depth += 1
-	set_process_input(true)
-func _input(event):
-	if event is InputEventMouseButton and event.pressed:
-		print("ConvoyListPanel: _input() received mouse event: ", event)
-	# Set mouse filter to STOP so this panel receives mouse input (for dropdowns/buttons)
-	mouse_filter = Control.MOUSE_FILTER_STOP
-
 	# More robust node checks.
 	if not is_instance_valid(toggle_button) or not is_instance_valid(convoy_popup) or not is_instance_valid(list_item_container):
 		printerr("ConvoyListPanel: One or more required child nodes are missing. Check scene setup.")
 		return
 
+	# Set mouse filter to STOP so this panel receives mouse input (for dropdowns/buttons)
+	mouse_filter = Control.MOUSE_FILTER_STOP
 
 	toggle_button.pressed.connect(_on_toggle_button_pressed)
-	toggle_button.pressed.connect(func(): print("ConvoyListPanel: ToggleButton pressed!")) # DIAGNOSTIC
 	# The popup hides itself when focus is lost. We connect to its signal to update our button.
 	convoy_popup.popup_hide.connect(_on_popup_hide)
 
 	# Attempt to connect to MenuManager's signal to auto-close this panel.
-	# Since this panel is now nested, the path to MenuManager has changed.
-	# Using an absolute path is more robust when nodes are in different branches of the main scene tree.
-	var absolute_menu_manager_path = "/root/GameRoot/MenuUILayer/MenuManager"
-	var menu_manager_node = get_node_or_null(absolute_menu_manager_path)
+	# Since MenuManager is an Autoload, it's globally available.
+	var menu_manager_node = get_node_or_null("/root/MenuManager")
 	if is_instance_valid(menu_manager_node):
 		if menu_manager_node.has_signal("menu_opened"):
 			menu_manager_node.menu_opened.connect(_on_main_menu_opened)
-			# ...existing code...
 		else:
 			printerr("ConvoyListPanel: MenuManager found but does not have 'menu_opened' signal.")
 	else:
 		# The warning message is updated to reflect the new expected structure.
-		printerr("ConvoyListPanel: MenuManager node not found. Cannot auto-close on menu open. Expected path: %s" % absolute_menu_manager_path)
+		printerr("ConvoyListPanel: MenuManager Autoload node not found. Cannot auto-close on menu open. Check Project Settings -> Autoload.")
 
 	# Add this block to connect to GameDataManager's convoy_data_updated signal
 	gdm = get_node_or_null("/root/GameDataManager")

@@ -1,24 +1,12 @@
-[gd_scene load_steps=6 format=3 uid="uid://yme8tiuqxb2b"]
+[gd_scene load_steps=5 format=3 uid="uid://yme8tiuqxb2b"]
 
 [ext_resource type="Script" uid="uid://n5dg0ersmtll" path="res://Scripts/UI/game_screen_manager.gd" id="1_mrnkn"]
-[ext_resource type="Script" uid="uid://d35ys110yiewf" path="res://Scripts/Menus/menu_manager.gd" id="2_bxsma"]
 [ext_resource type="PackedScene" uid="uid://kpjpc0fnv1nn" path="res://Scenes/LoginScreen.tscn" id="3_xxxxx"]
 [ext_resource type="Script" uid="uid://dt1vsmmkmlfpv" path="res://Assets/tiles/generate_tiles.gd" id="5_2m18y"]
 [ext_resource type="PackedScene" uid="uid://cxciw3malgni0" path="res://Scenes/MainScreen.tscn" id="5_qwuey"]
 
 [node name="GameRoot" type="Node"]
 script = ExtResource("1_mrnkn")
-
-[node name="MenuUILayer" type="CanvasLayer" parent="."]
-
-[node name="MenuManager" type="Control" parent="MenuUILayer"]
-layout_mode = 3
-anchors_preset = 15
-anchor_right = 1.0
-anchor_bottom = 1.0
-grow_horizontal = 2
-grow_vertical = 2
-script = ExtResource("2_bxsma")
 
 [node name="LoginScreen" parent="." instance=ExtResource("3_xxxxx")]
 

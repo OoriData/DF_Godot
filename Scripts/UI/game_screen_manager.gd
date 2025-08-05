@@ -52,4 +52,10 @@ func _on_login_successful(user_id: String) -> void:
 	else:
 		printerr("GameScreenManager: MainScreen is missing the 'set_map_interactive' method.")
 
+	# NEW: Force camera update after main screen is visible and unpaused
+	if main_screen.has_method("force_camera_update"):
+		await main_screen.force_camera_update()
+	else:
+		printerr("GameScreenManager: MainScreen is missing the 'force_camera_update' method.")
+
 	print("GameScreenManager: Switched to Main Screen.")

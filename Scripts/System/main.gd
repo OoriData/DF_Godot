@@ -1,6 +1,9 @@
 @tool
 extends Control
 
+# --- Debug Overlay Flag ---
+
+
 # --- Signals ---
 signal map_ready_for_focus
 
@@ -120,6 +123,9 @@ func _process(_delta: float):
 	# Update the TextureRect with the SubViewport's texture.
 	if is_instance_valid(map_display):
 		map_display.texture = sub_viewport.get_texture()
+
+
+
 
 func populate_tilemap_from_data(tile_data_2d: Array):
 	if not is_instance_valid(terrain_tilemap):

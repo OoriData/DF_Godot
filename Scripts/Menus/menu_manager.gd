@@ -15,6 +15,8 @@ var convoy_cargo_menu_scene = preload("res://Scenes/ConvoyCargoMenu.tscn") # Exa
 var current_active_menu = null
 var menu_stack = [] # To keep track of the navigation path for "back" functionality
 
+var _menu_container_host: Control = null
+
 var _base_z_index: int
 # Ensure this Z-index is higher than ConvoyListPanel's EXPANDED_OVERLAY_Z_INDEX (100)
 const MENU_MANAGER_ACTIVE_Z_INDEX = 150 
@@ -25,7 +27,11 @@ signal menu_opened(menu_node, menu_type: String)
 signal menu_closed(menu_node_was_active, menu_type: String)
 
 ## NEW SIGNAL as per new plan. Emitted when menu visibility changes.
-signal menu_visibility_changed(is_open: bool, menu_width_ratio: float)
+signal menu_visibility_changed(is_open: bool, menu_name: String)
+
+func register_menu_container(container: Control):
+	_menu_container_host = container
+	print("[MenuManager] Successfully registered menu container: ", container.name)
 
 func _ready():
 	# Initially, no menu is shown. Hide MenuManager so it does not block input.
@@ -141,7 +147,16 @@ func _show_menu(menu_scene_resource, data_to_pass = null, add_to_stack: bool = t
 		use_convoy_style_layout = true
 
 	current_active_menu.set_meta("menu_type", menu_type)
-	add_child(current_active_menu)
+
+	if not is_instance_valid(_menu_container_host):
+		printerr("MenuManager CRITICAL: No menu container host has been registered. Cannot display menu.")
+		if not menu_stack.is_empty():
+			go_back()
+		else:
+			emit_signal("menu_visibility_changed", false, 0.0)
+		return
+
+	_menu_container_host.add_child(current_active_menu)
 	# Only the menu panel itself should block input, not the entire MenuManager
 	if current_active_menu is Control:
 		current_active_menu.mouse_filter = Control.MOUSE_FILTER_STOP
@@ -157,7 +172,7 @@ func _show_menu(menu_scene_resource, data_to_pass = null, add_to_stack: bool = t
 		if is_instance_valid(user_info_display) and user_info_display.is_visible_in_tree():
 			top_margin = user_info_display.size.y
 		if use_convoy_style_layout:
-			emit_signal("menu_visibility_changed", true, 2.0 / 3.0)
+			emit_signal("menu_visibility_changed", true, "convoy_menu")
 			menu_node_control.anchor_left = 1.0 / 3.0
 			menu_node_control.anchor_right = 1.0
 			menu_node_control.anchor_top = 0.0
@@ -237,7 +252,7 @@ func go_back():
 				if _scene_resource:
 					_show_menu(_scene_resource, _prev_data, false)
 					return
-		emit_signal("menu_visibility_changed", false, 0.0)
+		emit_signal("menu_visibility_changed", false, "")
 		visible = false
 		return
 
@@ -249,7 +264,7 @@ func go_back():
 		current_active_menu = null
 		mouse_filter = MOUSE_FILTER_IGNORE
 		self.z_index = _base_z_index
-		emit_signal("menu_visibility_changed", false, 0.0)
+		emit_signal("menu_visibility_changed", false, "")
 		visible = false
 		return
 
