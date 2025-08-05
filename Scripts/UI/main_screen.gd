@@ -117,6 +117,8 @@ func _initial_camera_and_ui_setup():
 		var map_rect = map_view.get_global_rect()
 		print("[DFCAM-DEBUG] MainScreen: Initial setup, notifying camera of viewport rect=", map_rect)
 		map_camera_controller.update_map_viewport_rect(map_rect)
+		if map_camera_controller.has_method("fit_camera_to_tilemap"):
+			map_camera_controller.fit_camera_to_tilemap()
 	else:
 		printerr("[DFCAM-DEBUG] MainScreen: Camera controller not valid or missing update_map_viewport_rect.")
 
@@ -177,18 +179,24 @@ func _on_menu_visibility_changed(is_open: bool, _menu_name: String):
 	# The stretch ratio determines how space is distributed in the HBoxContainer.
 	# When the menu is open, we want a 2:1 ratio (menu:map).
 	# When closed, we want a 0:1 ratio, giving the map all the space.
+
+	# Always set stretch ratios and force layout update
+	var main_content = menu_container.get_parent()
+	var main_map = main_content.get_node_or_null("Main")
 	if is_open:
 		menu_container.size_flags_stretch_ratio = 2.0
-		if is_instance_valid(map_view):
-			map_view.size_flags_stretch_ratio = 1.0
+		if is_instance_valid(main_map):
+			main_map.size_flags_stretch_ratio = 1.0
 		menu_container.show()
 		print("[DFCAM-DEBUG] MainScreen: Menu opened, set stretch ratios (menu=2, map=1)")
 	else:
 		menu_container.size_flags_stretch_ratio = 0.0
-		if is_instance_valid(map_view):
-			map_view.size_flags_stretch_ratio = 1.0
+		if is_instance_valid(main_map):
+			main_map.size_flags_stretch_ratio = 1.0
 		menu_container.hide()
 		print("[DFCAM-DEBUG] MainScreen: Menu closed, set stretch ratios (menu=0, map=1)")
+	if main_content:
+		main_content.queue_sort()
 
 	# Wait for the layout to update before notifying the camera controller.
 	await get_tree().process_frame
@@ -197,6 +205,8 @@ func _on_menu_visibility_changed(is_open: bool, _menu_name: String):
 		var map_rect = map_view.get_global_rect()
 		print("[DFCAM-DEBUG] MainScreen: Notifying camera of new viewport rect=", map_rect)
 		map_camera_controller.update_map_viewport_rect(map_rect)
+		if map_camera_controller.has_method("fit_camera_to_tilemap"):
+			map_camera_controller.fit_camera_to_tilemap()
 	else:
 		printerr("[DFCAM-DEBUG] MainScreen: Could not find MapCameraController or it lacks update_map_viewport_rect method.")
 
@@ -215,7 +225,8 @@ func _on_map_ready_for_focus():
 		var map_rect = map_view.get_global_rect()
 		print("[DFCAM-DEBUG] MainScreen: map_ready_for_focus, updating camera viewport rect=", map_rect)
 		map_camera_controller.update_map_viewport_rect(map_rect)
-		map_camera_controller.fit_camera_to_tilemap()
+		if map_camera_controller.has_method("fit_camera_to_tilemap"):
+			map_camera_controller.fit_camera_to_tilemap()
 		_has_fitted_camera = true
 		print("[DFCAM-DEBUG] MainScreen: fit_camera_to_tilemap called.")
 

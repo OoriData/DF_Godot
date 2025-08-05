@@ -13,9 +13,18 @@ signal camera_zoom_changed(new_zoom_level: float)
 
 @export var sub_viewport_node: SubViewport = null
 
+
 var camera_node: Camera2D = null
 var tilemap_ref: TileMapLayer = null
 var map_viewport_rect: Rect2 = Rect2()
+# --- New: True map size (in tiles) ---
+var map_size: Vector2i = Vector2i.ZERO
+
+# Set the true map size (in tiles)
+func set_map_size(new_size: Vector2i):
+	map_size = new_size
+	_update_camera_limits()
+	fit_camera_to_tilemap()
 
 func initialize(p_camera: Camera2D, p_tilemap: TileMapLayer, p_sub_viewport: SubViewport):
 	camera_node = p_camera
@@ -66,24 +75,32 @@ func _clamp_camera_position():
 
 
 func _update_camera_limits():
-	if not is_instance_valid(camera_node) or not is_instance_valid(tilemap_ref) or camera_node.zoom.x <= 0:
+	print("[DEBUG] map_size:", map_size)
+	if not is_instance_valid(camera_node) or camera_node.zoom.x <= 0:
 		return
 
-	var used_rect = tilemap_ref.get_used_rect()
-	var cell_size = tilemap_ref.tile_set.tile_size
-	var map_world_bounds = Rect2(used_rect.position * cell_size, used_rect.size * cell_size)
-	
-	# CRITICAL FIX: Use the camera's viewport rect in world coordinates, which accounts for zoom.
+	# Use only the true map size for camera bounds
+	var cell_size = Vector2(16, 16)
+	print("[DEBUG] cell_size:", cell_size)
+	var map_world_bounds: Rect2
+	if map_size.x > 0 and map_size.y > 0:
+		var map_size_vec2 = Vector2(map_size.x, map_size.y)
+		var world_size = Vector2(map_size_vec2.x * cell_size.x, map_size_vec2.y * cell_size.y)
+		map_world_bounds = Rect2(Vector2.ZERO, world_size)
+		print("[DEBUG] map_world_bounds:", map_world_bounds)
+	else:
+		return
+
 	var camera_view_rect = camera_node.get_viewport_rect()
 
 
-	# Calculate the min/max center positions so the viewport never shows outside the map
-	var min_x = map_world_bounds.position.x + camera_view_rect.size.x / 2.0
-	var max_x = map_world_bounds.end.x - camera_view_rect.size.x / 2.0
-	var min_y = map_world_bounds.position.y + camera_view_rect.size.y / 2.0
-	var max_y = map_world_bounds.end.y - camera_view_rect.size.y / 2.0
+	# Allow camera center to reach the edge of the map, but not beyond
+	var min_x = map_world_bounds.position.x
+	var max_x = map_world_bounds.end.x
+	var min_y = map_world_bounds.position.y
+	var max_y = map_world_bounds.end.y
 
-	# If the map is smaller than the viewport, lock to center
+	# If the map is smaller than the viewport, center the camera
 	if camera_view_rect.size.x >= map_world_bounds.size.x:
 		min_x = map_world_bounds.get_center().x
 		max_x = map_world_bounds.get_center().x
@@ -95,6 +112,11 @@ func _update_camera_limits():
 	camera_node.limit_right = int(round(max_x))
 	camera_node.limit_top = int(round(min_y))
 	camera_node.limit_bottom = int(round(max_y))
+
+	print("[DEBUG] camera limits: left=", camera_node.limit_left, 
+		  ", right=", camera_node.limit_right, 
+		  ", top=", camera_node.limit_top, 
+		  ", bottom=", camera_node.limit_bottom)
 
 # Pan the camera by a delta in screen space (pixels)
 func pan(delta: Vector2):
@@ -132,14 +154,22 @@ func zoom_at_screen_pos(zoom_multiplier: float, screen_zoom_center: Vector2):
 
 
 func fit_camera_to_tilemap():
-	if not is_instance_valid(camera_node) or not is_instance_valid(tilemap_ref):
+	if not is_instance_valid(camera_node):
 		return
 
-	var used_rect = tilemap_ref.get_used_rect()
-	var cell_size = tilemap_ref.tile_set.tile_size
-	var map_world_bounds = Rect2(used_rect.position * cell_size, used_rect.size * cell_size)
+	var cell_size = Vector2(16, 16)
+	var map_world_bounds: Rect2
+	print("[DEBUG] map_size:", map_size)
+	print("[DEBUG] cell_size:", cell_size)
+	if map_size.x > 0 and map_size.y > 0:
+		var map_size_vec2 = Vector2(map_size.x, map_size.y)
+		var world_size = Vector2(map_size_vec2.x * cell_size.x, map_size_vec2.y * cell_size.y)
+		map_world_bounds = Rect2(Vector2.ZERO, world_size)
+		print("[DEBUG] map_world_bounds:", map_world_bounds)
+	else:
+		return
 
-	if used_rect.size.x <= 0 or used_rect.size.y <= 0:
+	if map_world_bounds.size.x <= 0 or map_world_bounds.size.y <= 0:
 		return
 
 	var viewport_size = map_viewport_rect.size

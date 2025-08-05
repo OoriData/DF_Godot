@@ -167,9 +167,38 @@ func _on_map_data_loaded(p_map_tiles: Array):
 	if not p_map_tiles or p_map_tiles.size() == 0:
 		printerr("[ERROR] map_tiles_data is empty or invalid!")
 		return
-	
+
+
 	self.map_tiles = p_map_tiles
 	populate_tilemap_from_data(p_map_tiles)
+
+	# Debug: Print node transforms and positions (Godot 4.4 valid properties)
+	if is_instance_valid(terrain_tilemap):
+		print("[DEBUG] terrain_tilemap position:", terrain_tilemap.position, 
+			  " global_position:", terrain_tilemap.global_position, 
+			  " scale:", terrain_tilemap.scale, 
+			  " transform:", terrain_tilemap.transform)
+	if is_instance_valid(sub_viewport):
+		# SubViewport: print only valid property 'size'
+		print("[DEBUG] sub_viewport size:", sub_viewport.size)
+	if is_instance_valid(map_display):
+		print("[DEBUG] map_display position:", map_display.position, " size:", map_display.size)
+
+	# --- Calculate true map size and set it on the camera controller ---
+	var map_height = p_map_tiles.size()
+	var map_width = 0
+	if map_height > 0:
+		# Find the widest row (in case of ragged arrays)
+		for row in p_map_tiles:
+			if row is Array and row.size() > map_width:
+				map_width = row.size()
+	var map_size = Vector2i(map_width, map_height)
+	if is_instance_valid(map_camera_controller) and map_camera_controller.has_method("set_map_size"):
+		map_camera_controller.set_map_size(map_size)
+		print("[main.gd] Set map_camera_controller map_size to ", map_size)
+	else:
+		printerr("[main.gd] map_camera_controller is invalid or missing set_map_size method!")
+
 	print("[main.gd] Emitting map_ready_for_focus signal...")
 	emit_signal("map_ready_for_focus")
 
