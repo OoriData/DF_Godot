@@ -62,7 +62,7 @@ func update_map_viewport_rect(new_rect: Rect2):
 		map_viewport_rect = Rect2(Vector2.ZERO, sub_viewport_node.size)
 		print("[DFCAM-DEBUG] update_map_viewport_rect: new_rect was invalid, using existing SubViewport size=", sub_viewport_node.size)
 
-	camera_node.offset = Vector2.ZERO
+	# camera_node.offset = Vector2.ZERO
 	_update_camera_limits()
 	fit_camera_to_tilemap()
 	print("[DFCAM-DEBUG] update_map_viewport_rect: camera_position=", camera_node.position, ", camera_zoom=", camera_node.zoom)
@@ -70,8 +70,30 @@ func update_map_viewport_rect(new_rect: Rect2):
 func _clamp_camera_position():
 	if not is_instance_valid(camera_node):
 		return
-	camera_node.position.x = clamp(camera_node.position.x, camera_node.limit_left, camera_node.limit_right)
-	camera_node.position.y = clamp(camera_node.position.y, camera_node.limit_top, camera_node.limit_bottom)
+	# Clamp camera so the entire viewport stays within map bounds
+	var cell_size = Vector2(16, 16)
+	var map_width = map_size.x * cell_size.x
+	var map_height = map_size.y * cell_size.y
+	var viewport_size = map_viewport_rect.size
+	var zoom = camera_node.zoom.x
+	var half_viewport_w = viewport_size.x * 0.5 / zoom
+	var half_viewport_h = viewport_size.y * 0.5 / zoom
+
+	var min_x = 0 + half_viewport_w
+	var max_x = map_width - half_viewport_w
+	var min_y = 0 + half_viewport_h
+	var max_y = map_height - half_viewport_h
+
+	# If the map is smaller than the viewport, center the camera
+	if map_width <= viewport_size.x * zoom:
+		min_x = map_width * 0.5
+		max_x = map_width * 0.5
+	if map_height <= viewport_size.y * zoom:
+		min_y = map_height * 0.5
+		max_y = map_height * 0.5
+
+	camera_node.position.x = clamp(camera_node.position.x, min_x, max_x)
+	camera_node.position.y = clamp(camera_node.position.y, min_y, max_y)
 
 
 func _update_camera_limits():
@@ -108,10 +130,10 @@ func _update_camera_limits():
 		min_y = map_world_bounds.get_center().y
 		max_y = map_world_bounds.get_center().y
 
-	camera_node.limit_left = int(round(min_x))
-	camera_node.limit_right = int(round(max_x))
-	camera_node.limit_top = int(round(min_y))
-	camera_node.limit_bottom = int(round(max_y))
+	# camera_node.limit_left = int(round(min_x))
+	# camera_node.limit_right = int(round(max_x))
+	# camera_node.limit_top = int(round(min_y))
+	# camera_node.limit_bottom = int(round(max_y))
 
 	print("[DEBUG] camera limits: left=", camera_node.limit_left, 
 		  ", right=", camera_node.limit_right, 
@@ -183,7 +205,7 @@ func fit_camera_to_tilemap():
 	var target_zoom = min(zoom_x, zoom_y) * 0.95
 	target_zoom = clamp(target_zoom, min_camera_zoom_level, max_camera_zoom_level)
 	camera_node.zoom = Vector2(target_zoom, target_zoom)
-	camera_node.offset = Vector2.ZERO
+	# camera_node.offset = Vector2.ZERO
 	camera_node.position = map_world_bounds.get_center()
 	_update_camera_limits()
 	_clamp_camera_position()
