@@ -2,7 +2,7 @@ extends Node
 
 # Manages the lifecycle and visual properties of ConvoyNode instances on the map.
 
-const CONVOY_NODE_Z_INDEX = 1 # Same as it was in main.gd
+const CONVOY_NODE_Z_INDEX = 10 # Same as it was in main.gd
 
 var convoy_node_scene = preload("res://Scenes/ConvoyNode.tscn") # Ensure this path is correct
 

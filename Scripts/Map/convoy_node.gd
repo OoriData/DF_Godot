@@ -29,7 +29,6 @@ var current_convoy_data: Dictionary = {}
 func _ready():
 	# Randomize throb phase slightly to desynchronize convoys
 	_throb_phase = randf_range(0, 2.0 * PI)
-	
 	# Prepare the sprite for dynamic drawing.
 	# Ensure the texture is large enough for the biggest possible arrow + outline.
 	var max_dim = (ARROW_FORWARD_LENGTH_BASE + ARROW_BACKWARD_LENGTH_BASE + ARROW_OUTLINE_THICKNESS_BASE * 2) * 2
@@ -37,6 +36,17 @@ func _ready():
 	var arrow_texture = ImageTexture.create_from_image(arrow_image)
 	icon_sprite.texture = arrow_texture
 	icon_sprite.centered = true # Important for rotation and positioning around the node's origin
+
+	# Remove static texture test; use dynamic arrow icon
+	# The icon_sprite.texture is already set to arrow_texture above
+	icon_sprite.scale = Vector2.ONE
+
+	# --- Ensure convoy icon is always visible and above the map ---
+	self.z_index = 10
+	icon_sprite.z_index = 10
+	self.visible = true
+	icon_sprite.visible = true
+	icon_sprite.modulate = Color(1,1,1,1)
 
 	gdm = get_node_or_null("/root/GameDataManager")
 	if is_instance_valid(gdm):
@@ -78,7 +88,14 @@ func _update_visuals():
 		journey_data = raw_journey
 	var route_x: Array = journey_data.get("route_x", [])
 	var route_y: Array = journey_data.get("route_y", [])
-	
+
+	# Debug: Print convoy data and route info
+	print("[ConvoyNode] convoy_id:", convoy_data.get("convoy_id"), "route_x:", route_x, "route_y:", route_y)
+	print("[ConvoyNode] convoy_data x:", convoy_data.get("x"), "y:", convoy_data.get("y"))
+	print("[ConvoyNode] terrain_tilemap valid:", is_instance_valid(terrain_tilemap))
+	if is_instance_valid(terrain_tilemap):
+		print("[ConvoyNode] terrain_tilemap used rect:", terrain_tilemap.get_used_rect())
+
 	# Get pre-calculated progress details from convoy_data
 	var current_segment_idx: int = convoy_data.get("_current_segment_start_idx", -1)
 	var progress_in_segment: float = convoy_data.get("_progress_in_segment", 0.0)
@@ -119,23 +136,26 @@ func _update_visuals():
 		# This fallback assumes x/y are tile coordinates.
 		final_pixel_pos = terrain_tilemap.map_to_local(Vector2i(int(map_x), int(map_y)))
 
+	# Debug: Print final calculated pixel position
+	print("[ConvoyNode] final_pixel_pos:", final_pixel_pos)
+
 	var icon_offset_px: Vector2 = convoy_data.get("_pixel_offset_for_icon", Vector2.ZERO)
 	position = final_pixel_pos + icon_offset_px # Apply the lateral offset
 	icon_sprite.rotation = direction_rad
-	
-	
-	# 3. Update Throb & Arrow Drawing
-	var throb_scale_multiplier: float = 1.0 + (sin(_throb_phase) * 0.5 + 0.5) * MAX_THROB_SCALE_ADDITION
-	icon_sprite.scale = Vector2(throb_scale_multiplier, throb_scale_multiplier)
-	# Redraw the arrow with current color and throb-influenced size (if needed)
-	# For simplicity, base arrow size is fixed, throb affects sprite scale.
-	_draw_arrow_on_sprite(convoy_color)
+	# Only apply throb scaling and redraw arrow if using dynamic arrow texture
+	if icon_sprite.texture is ImageTexture:
+		var throb_scale_multiplier: float = 1.0 + (sin(_throb_phase) * 0.5 + 0.5) * MAX_THROB_SCALE_ADDITION
+		icon_sprite.scale = Vector2(throb_scale_multiplier, throb_scale_multiplier)
+		_draw_arrow_on_sprite(convoy_color)
 
 
 func _draw_arrow_on_sprite(fill_color: Color):
+	# If using a static texture for testing, skip dynamic drawing
+	if not icon_sprite.texture is ImageTexture:
+		return
 	var img: Image = icon_sprite.texture.get_image()
 	if not is_instance_valid(img):
-		printerr("ConvoyNode: Cannot get image from icon_sprite texture.") # Already an explicit block
+		printerr("ConvoyNode: Cannot get image from icon_sprite texture.")
 		return
 	
 	img.fill(Color(0,0,0,0)) # Clear with transparent

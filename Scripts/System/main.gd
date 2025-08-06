@@ -97,6 +97,12 @@ func initialize_all_components():
 
 	# Initialize ConvoyVisualsManager
 	if is_instance_valid(convoy_visuals_manager):
+		# Ensure convoy_visuals_manager is a child of SubViewport so icons move with the map
+		if is_instance_valid(sub_viewport):
+			if convoy_visuals_manager.get_parent() != sub_viewport:
+				if convoy_visuals_manager.get_parent():
+					convoy_visuals_manager.get_parent().remove_child(convoy_visuals_manager)
+				sub_viewport.add_child(convoy_visuals_manager)
 		convoy_visuals_manager.initialize(convoy_visuals_manager, terrain_tilemap)
 
 	print("--- Main Initialization Complete ---")

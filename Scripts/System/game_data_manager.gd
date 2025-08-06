@@ -211,7 +211,11 @@ func _calculate_convoy_progress_details(convoy_data_item: Dictionary) -> Diction
 		var journey_data_for_shared: Dictionary = raw_journey
 		var route_x: Array = journey_data_for_shared.get("route_x", [])
 		var route_y: Array = journey_data_for_shared.get("route_y", [])
-		
+
+		# Debug: Print journey route info for this convoy
+		print("[GameDataManager] _calculate_convoy_progress_details convoy_id:", convoy_id_str, "route_x:", route_x, "route_y:", route_y)
+		if convoy_data_item.has("x") and convoy_data_item.has("y"):
+			print("[GameDataManager] convoy_data_item x:", convoy_data_item["x"], "y:", convoy_data_item["y"])
 		if route_x.size() >= 2 and route_y.size() == route_x.size():
 			var journey_progress: float = journey_data_for_shared.get("progress", 0.0)
 			var num_total_segments = route_x.size() - 1
@@ -272,8 +276,17 @@ func _calculate_convoy_progress_details(convoy_data_item: Dictionary) -> Diction
 
 	# --- Stationary Convoy Handling (or journey with no route) ---
 	if not convoy_data_item.has("x") or not convoy_data_item.has("y"):
-		convoy_data_item["x"] = 0
-		convoy_data_item["y"] = 0
+		# Try to use last known tile position if available
+		if convoy_data_item.has("tile_x") and convoy_data_item.has("tile_y"):
+			convoy_data_item["x"] = int(convoy_data_item["tile_x"])
+			convoy_data_item["y"] = int(convoy_data_item["tile_y"])
+		elif convoy_data_item.has("current_tile_x") and convoy_data_item.has("current_tile_y"):
+			convoy_data_item["x"] = int(convoy_data_item["current_tile_x"])
+			convoy_data_item["y"] = int(convoy_data_item["current_tile_y"])
+		else:
+			# Fallback to 0,0 if no position info is available
+			convoy_data_item["x"] = 0
+			convoy_data_item["y"] = 0
 	
 	convoy_data_item["_current_segment_start_idx"] = -1
 	convoy_data_item["_progress_in_segment"] = 0.0

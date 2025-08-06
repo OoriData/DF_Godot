@@ -22,13 +22,10 @@ config/icon="uid://btrbocmbg1efs"
 
 Tools="*res://Scripts/System/tools.gd"
 DateTimeUtils="*res://Scripts/System/date_time_util.gd"
-ui_scale_manager="*res://Scripts/UI/UI_scale_manager.gd"
 APICalls="*res://Scripts/System/api_calls.gd"
 GameDataManager="*res://Scripts/System/game_data_manager.gd"
-
-[autoload]
-
 MenuManager="*res://Scripts/Menus/menu_manager.gd"
+ui_scale_manager="*res://Scripts/UI/UI_scale_manager.gd"
 
 [display]
 
