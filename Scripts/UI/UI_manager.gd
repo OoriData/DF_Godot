@@ -551,10 +551,12 @@ func _position_settlement_panel(panel: Panel, settlement_info: Dictionary, _exis
 
 	# Get the local position of the tile center using TerrainTileMap
 	var tile_center = terrain_tilemap.map_to_local(Vector2i(tile_x, tile_y))
+	# Convert tile_center from SubViewport local space to global canvas coordinates
+	var global_tile_center = terrain_tilemap.to_global(tile_center)
 	var current_settlement_offset_above_center: float = base_settlement_offset_above_tile_center
 	# Position label above the tile center
-	var panel_desired_x = tile_center.x - (panel.size.x / 2.0)
-	var panel_desired_y = tile_center.y - panel.size.y - current_settlement_offset_above_center
+	var panel_desired_x = global_tile_center.x - (panel.size.x / 2.0)
+	var panel_desired_y = global_tile_center.y - panel.size.y - current_settlement_offset_above_center
 	panel.position = Vector2(panel_desired_x, panel_desired_y)
 
 

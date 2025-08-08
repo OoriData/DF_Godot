@@ -70,10 +70,11 @@ func initialize_all_components():
 	if is_instance_valid(game_data_manager):
 		if not game_data_manager.is_connected("map_data_loaded", Callable(self, "_on_map_data_loaded")):
 			game_data_manager.connect("map_data_loaded", Callable(self, "_on_map_data_loaded"))
-		if not game_data_manager.is_connected("convoy_data_loaded", Callable(self, "_on_convoy_data_loaded")):
-			game_data_manager.connect("convoy_data_loaded", Callable(self, "_on_convoy_data_loaded"))
-		if not game_data_manager.is_connected("settlement_data_loaded", Callable(self, "_on_settlement_data_loaded")):
-			game_data_manager.connect("settlement_data_loaded", Callable(self, "_on_settlement_data_loaded"))
+		# FIX: use updated signal names
+		if not game_data_manager.is_connected("convoy_data_updated", Callable(self, "_on_convoy_data_loaded")):
+			game_data_manager.connect("convoy_data_updated", Callable(self, "_on_convoy_data_loaded"))
+		if not game_data_manager.is_connected("settlement_data_updated", Callable(self, "_on_settlement_data_loaded")):
+			game_data_manager.connect("settlement_data_updated", Callable(self, "_on_settlement_data_loaded"))
 	else:
 		printerr("Main: GameDataManager not found.")
 
@@ -119,6 +120,10 @@ func initialize_all_components():
 		if not map_interaction_manager.is_connected("convoy_menu_requested", Callable(self, "_on_convoy_menu_requested")):
 			map_interaction_manager.connect("convoy_menu_requested", Callable(self, "_on_convoy_menu_requested"))
 
+		# Ensure UIManager knows the terrain tilemap explicitly
+		if is_instance_valid(ui_manager_node):
+			ui_manager_node.terrain_tilemap = terrain_tilemap
+
 	# Initialize ConvoyVisualsManager
 	if is_instance_valid(convoy_visuals_manager):
 		# Ensure convoy_visuals_manager is a child of SubViewport so icons move with the map
@@ -144,9 +149,6 @@ func _process(_delta: float):
 	# Update the TextureRect with the SubViewport's texture.
 	if is_instance_valid(map_display):
 		map_display.texture = sub_viewport.get_texture()
-
-
-
 
 func populate_tilemap_from_data(tile_data_2d: Array):
 	if not is_instance_valid(terrain_tilemap):
@@ -231,30 +233,30 @@ func _on_map_data_loaded(p_map_tiles: Array):
 
 	print("[main.gd] Emitting map_ready_for_focus signal...")
 	emit_signal("map_ready_for_focus")
+	# Push initial state to UI (no hover yet)
+	_update_ui_manager(true)
 
 func _on_convoy_data_loaded(p_convoy_data: Array):
 	_all_convoy_data = p_convoy_data
 	if is_instance_valid(map_interaction_manager):
 		map_interaction_manager.update_data_references(_all_convoy_data, _all_settlement_data, map_tiles)
-	if is_instance_valid(convoy_visuals_manager):
-		convoy_visuals_manager.update_convoy_data(_all_convoy_data)
+	_update_ui_manager(false)
 
 func _on_settlement_data_loaded(p_settlement_data: Array):
 	_all_settlement_data = p_settlement_data
 	if is_instance_valid(map_interaction_manager):
 		map_interaction_manager.update_data_references(_all_convoy_data, _all_settlement_data, map_tiles)
-	if is_instance_valid(convoy_visuals_manager):
-		convoy_visuals_manager.update_settlement_data(_all_settlement_data)
+	_update_ui_manager(false)
 
 func _on_selection_changed(selected_ids: Array):
 	_selected_convoy_ids = selected_ids
 	if is_instance_valid(convoy_visuals_manager):
 		convoy_visuals_manager.update_selected_convoys(selected_ids)
+	_update_ui_manager(false)
 
 func _on_hover_changed(hover_info: Dictionary):
 	_current_hover_info = hover_info
-	if is_instance_valid(convoy_visuals_manager):
-		convoy_visuals_manager.update_hover_info(hover_info)
+	_update_ui_manager(true)
 
 func _on_convoy_menu_requested(convoy_data: Dictionary):
 	var menu_manager = get_node_or_null("/root/MenuManager")
@@ -262,3 +264,43 @@ func _on_convoy_menu_requested(convoy_data: Dictionary):
 		menu_manager.open_convoy_menu_with_data(convoy_data)
 	else:
 		printerr("Main: Could not find MenuManager to open convoy menu.")
+
+# --- Helper to push state into UIManager ---
+func _update_ui_manager(is_light_update: bool):
+	var ui_manager_node: Node = get_node_or_null("UIManager")
+	if not is_instance_valid(ui_manager_node):
+		return
+	if not ui_manager_node.has_method("update_ui_elements"):
+		return
+	var color_map: Dictionary = {}
+	if is_instance_valid(game_data_manager) and game_data_manager.has_method("get_convoy_id_to_color_map"):
+		color_map = game_data_manager.get_convoy_id_to_color_map()
+	var dragging_panel_node: Panel = null
+	var dragged_convoy_id_str: String = ""
+	var user_positions: Dictionary = _convoy_label_user_positions
+	var current_zoom: float = 1.0
+	if is_instance_valid(map_interaction_manager):
+		if map_interaction_manager.has_method("get_dragging_panel_node"):
+			dragging_panel_node = map_interaction_manager.get_dragging_panel_node()
+		if map_interaction_manager.has_method("get_dragged_convoy_id_str"):
+			dragged_convoy_id_str = map_interaction_manager.get_dragged_convoy_id_str()
+		if map_interaction_manager.has_method("get_convoy_label_user_positions"):
+			user_positions = map_interaction_manager.get_convoy_label_user_positions()
+		if map_interaction_manager.has_method("get_current_camera_zoom"):
+			current_zoom = map_interaction_manager.get_current_camera_zoom()
+	var clamp_rect: Rect2 = get_viewport().get_visible_rect()
+	if is_instance_valid(map_display) and map_display.has_method("get_global_rect"):
+		clamp_rect = map_display.get_global_rect()
+	ui_manager_node.update_ui_elements(
+		_all_convoy_data,
+		_all_settlement_data,
+		color_map,
+		_current_hover_info,
+		_selected_convoy_ids,
+		user_positions,
+		dragging_panel_node,
+		dragged_convoy_id_str,
+		clamp_rect,
+		is_light_update,
+		current_zoom
+	)
