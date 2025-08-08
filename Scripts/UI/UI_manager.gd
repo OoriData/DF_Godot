@@ -86,13 +86,11 @@ const CONVOY_STAT_EMOJIS: Dictionary = {
 }
 
 const SETTLEMENT_EMOJIS: Dictionary = {
-	'dome': '🏙️',
-	'city': '🏢',
-	'city-state': '🏢',
 	'town': '🏘️',
 	'village': '🏠',
 	'military_base': '🪖',
 }
+
 
 # --- Connector Line constants ---
 @export_group("Connector Lines")
@@ -103,32 +101,19 @@ const SETTLEMENT_EMOJIS: Dictionary = {
 
 # --- State managed by UIManager ---
 var _dragging_panel_node: Panel = null
-var _drag_offset: Vector2 = Vector2.ZERO
 var _convoy_label_user_positions: Dictionary = {} # Stores user-set positions: { 'convoy_id_str': Vector2(x,y) }
 var _dragged_convoy_id_actual_str: String = ""
-var _current_drag_clamp_rect: Rect2
 
 # Data passed from main.gd during updates
-var _map_display_node: TextureRect # Reference to the MapDisplay node from main
-var _map_tiles_data: Array
+@export var terrain_tilemap: TileMapLayer # Reference to the TerrainTileMap node
 var _all_convoy_data_cache: Array
 var _all_settlement_data_cache: Array
 var _convoy_id_to_color_map_cache: Dictionary
 var _convoy_data_by_id_cache: Dictionary # New cache for quick lookup
 var _selected_convoy_ids_cache: Array # Stored as strings
 var _current_map_zoom_cache: float = 1.0 # Cache for current map zoom level
-
 var _current_map_screen_rect_for_clamping: Rect2
-# Cached drawing parameters for connector lines
-var _cached_actual_scale: float = 1.0
-var _cached_offset_x: float = 0.0
-var _cached_offset_y: float = 0.0
-var _cached_actual_tile_width_on_texture: float = 0.0
-var _cached_actual_tile_height_on_texture: float = 0.0
-var _ui_drawing_params_cached: bool = false
 
-# --- Active Panel Management for Optimization ---
-# var _active_convoy_panels: Dictionary = {}  # { "convoy_id_str": PanelNode } # Moved to ConvoyLabelManager
 var _active_settlement_panels: Dictionary = {} # { "tile_coord_str": PanelNode }
 
 # Z-index for label containers within MapContainer, relative to MapDisplay and ConvoyNodes
@@ -136,6 +121,16 @@ const LABEL_CONTAINER_Z_INDEX = 2
 
 
 func _ready():
+	await get_tree().process_frame
+
+
+	print("[DIAG] UIManager _ready: Checking node assignments...")
+	print("  settlement_label_container valid:", is_instance_valid(settlement_label_container))
+	print("  convoy_connector_lines_container valid:", is_instance_valid(convoy_connector_lines_container))
+	print("  convoy_label_container valid:", is_instance_valid(convoy_label_container))
+	print("  convoy_label_manager valid:", is_instance_valid(convoy_label_manager))
+	print("  terrain_tilemap valid:", is_instance_valid(terrain_tilemap))
+	
 	# --- Critical Dependency Validation ---
 	# Ensure all child Control nodes do not block input
 	for child in get_children():
@@ -191,6 +186,15 @@ func _ready():
 		if not gdm.is_connected("settlement_data_updated", Callable(self, "_on_gdm_settlement_data_updated")):
 			gdm.settlement_data_updated.connect(_on_gdm_settlement_data_updated)
 
+	# --- Assign TerrainTileMap node if not set ---
+	if not is_instance_valid(terrain_tilemap):
+		var tilemap_path = "../SubViewport/TerrainTileMap"
+		terrain_tilemap = get_node_or_null(tilemap_path)
+		if is_instance_valid(terrain_tilemap):
+			print("[UIManager DEBUG] TerrainTileMap node found:", terrain_tilemap.name)
+		else:
+			printerr("UIManager: TerrainTileMap node not found at path: ", tilemap_path)
+
 	# Connect to the new UIScaleManager to react to global scale changes.
 	# This manager will be the single source of truth for the UI scale setting.
 	if Engine.has_singleton("ui_scale_manager"):
@@ -198,7 +202,7 @@ func _ready():
 		ui_scale_manager.scale_changed.connect(_on_ui_scale_changed)
 	else:
 		printerr("UIManager: ui_scale_manager singleton not found. UI scaling will not be dynamic.")
-	
+
 	# Diagnostic: Print scene tree and mouse_filter values for all UI nodes
 	print("[DIAG] UI_manager.gd: Printing scene tree and mouse_filter values for all UI nodes:")
 	_print_ui_tree(self, 0)
@@ -244,23 +248,19 @@ func initialize_font_settings(theme_font_to_use: Font):
 
 
 func update_ui_elements(
-		map_display_node_ref: TextureRect,
-		current_map_tiles: Array,
-		all_convoy_data: Array,
-		all_settlement_data: Array,
-		convoy_id_to_color_map: Dictionary,
-		current_hover_info: Dictionary,
-		selected_convoy_ids: Array, # Expecting array of strings
-		convoy_label_user_positions_from_main: Dictionary, 
-		dragging_panel_node_from_main: Panel, 
-		dragged_convoy_id_str_from_main: String,
-		p_current_map_screen_rect_for_clamping: Rect2, # Moved before optional params
-		is_light_ui_update: bool = false,
-		current_map_zoom: float = 1.0 # Now 13th argument
+	all_convoy_data: Array,
+	all_settlement_data: Array,
+	convoy_id_to_color_map: Dictionary,
+	current_hover_info: Dictionary,
+	selected_convoy_ids: Array, # Expecting array of strings
+	convoy_label_user_positions_from_main: Dictionary, 
+	dragging_panel_node_from_main: Panel, 
+	dragged_convoy_id_str_from_main: String,
+	p_current_map_screen_rect_for_clamping: Rect2, # Moved before optional params
+	_is_light_ui_update: bool = false,
+	current_map_zoom: float = 1.0 # Now 13th argument
 	):
 	# Store references to data needed by drawing functions
-	_map_display_node = map_display_node_ref
-	_map_tiles_data = current_map_tiles
 	_all_convoy_data_cache = all_convoy_data
 	_all_settlement_data_cache = all_settlement_data
 	_convoy_id_to_color_map_cache = convoy_id_to_color_map
@@ -276,134 +276,42 @@ func update_ui_elements(
 
 	_current_map_zoom_cache = current_map_zoom # Cache the zoom level
 
-	# Cache drawing parameters for _on_connector_lines_container_draw
-	if is_instance_valid(_map_display_node) and is_instance_valid(_map_display_node.texture) and \
-	   _map_tiles_data and not _map_tiles_data.is_empty() and _map_tiles_data[0] is Array and not _map_tiles_data[0].is_empty():
-		
-		var map_texture_size: Vector2 = _map_display_node.texture.get_size()
-		var map_display_rect_size: Vector2 = _map_display_node.size
-
-		if map_texture_size.x > 0.001 and map_texture_size.y > 0.001:
-			var scale_x_ratio: float = map_display_rect_size.x / map_texture_size.x
-			var scale_y_ratio: float = map_display_rect_size.y / map_texture_size.y
-			_cached_actual_scale = min(scale_x_ratio, scale_y_ratio)
-
-			var displayed_texture_width: float = map_texture_size.x * _cached_actual_scale
-			var displayed_texture_height: float = map_texture_size.y * _cached_actual_scale
-			_cached_offset_x = (_map_display_node.size.x - displayed_texture_width) / 2.0
-			_cached_offset_y = (_map_display_node.size.y - displayed_texture_height) / 2.0
-
-			var map_image_cols: int = _map_tiles_data[0].size()
-			var map_image_rows: int = _map_tiles_data.size()
-			if map_image_cols > 0 and map_image_rows > 0:
-				_cached_actual_tile_width_on_texture = map_texture_size.x / float(map_image_cols)
-				_cached_actual_tile_height_on_texture = map_texture_size.y / float(map_image_rows)
-				_ui_drawing_params_cached = true
-			else:
-				_ui_drawing_params_cached = false # map_image_cols or rows is zero
-		else:
-			_ui_drawing_params_cached = false # map_texture_size is zero
-
-		# print("UIManager: In update_ui_elements. UIManager._ui_drawing_params_cached: ", _ui_drawing_params_cached) # DEBUG
-		# print("UIManager: convoy_label_manager valid: ", is_instance_valid(convoy_label_manager), ", has update_drawing_parameters: ", convoy_label_manager.has_method("update_drawing_parameters") if is_instance_valid(convoy_label_manager) else "N/A") # DEBUG
-
-		# Pass the calculated drawing parameters to ConvoyLabelManager
-		if is_instance_valid(convoy_label_manager) and convoy_label_manager.has_method("update_drawing_parameters"):
-			# UIManager's _ui_drawing_params_cached ensures tile_width/height_on_texture are valid.
-			# ConvoyLabelManager needs the map_display's global on-screen scale and offset.
-			if _ui_drawing_params_cached and is_instance_valid(_map_display_node):
-				var map_display_global_transform = _map_display_node.get_global_transform_with_canvas()
-				# This is the visual scale of the map_display node on the screen (affected by camera)
-				var clm_actual_scale = map_display_global_transform.get_scale().x # Assuming uniform scale
-				# This is the global screen position of the map_display node's top-left corner
-				var clm_offset = map_display_global_transform.get_origin()
-
-				convoy_label_manager.update_drawing_parameters(
-					_cached_actual_tile_width_on_texture,  # Tile width on original unscaled texture
-					_cached_actual_tile_height_on_texture, # Tile height on original unscaled texture
-					_current_map_zoom_cache,               # Camera zoom (used for inverse scaling of UI elements)
-					clm_actual_scale,                      # Actual visual scale of map_display content on screen
-					clm_offset.x,                          # Actual screen X position of map_display's origin
-					clm_offset.y                           # Actual screen Y position of map_display's origin
-				)
-			else: # DEBUG
-				# print("UIManager: Condition NOT MET to call convoy_label_manager.update_drawing_parameters. UIM_cached: %s, map_display_valid: %s" % [_ui_drawing_params_cached, is_instance_valid(_map_display_node)]) # DEBUG
-				pass
-	else:
-		_ui_drawing_params_cached = false # map_display_node, texture, or map_tiles_data invalid
-		# print("UIManager: In update_ui_elements. _map_display_node, texture, or _map_tiles_data invalid. UIManager._ui_drawing_params_cached: false") # DEBUG
-		if is_instance_valid(convoy_label_manager) and convoy_label_manager.has_method("update_drawing_parameters"):
-			# Explicitly tell CLM its params are not valid if UIM's are not.
-			# This might involve setting a flag in CLM or passing invalid values.
-			# For now, we just don't call its update_drawing_parameters if UIM's are bad.
-			pass
-
 	# Update UIManager's state from what main.gd passes
 	_convoy_label_user_positions = convoy_label_user_positions_from_main
 	_dragging_panel_node = dragging_panel_node_from_main
 	_dragged_convoy_id_actual_str = dragged_convoy_id_str_from_main
 
-	if is_light_ui_update:
-		_perform_light_ui_update()
-	else:
-		_draw_interactive_labels(current_hover_info)
-		
+	print("[DIAG] UIManager update_ui_elements: settlement_data count:", _all_settlement_data_cache.size())
+	for s in _all_settlement_data_cache:
+		if s is Dictionary:
+			print("  Settlement:", s.get('name', 'N/A'), "coords:", s.get('x', 'N/A'), s.get('y', 'N/A'))
+	
+	_draw_interactive_labels(current_hover_info)
 	# Delegate convoy label updates to ConvoyLabelManager.
-	# NOTE: The 'update_convoy_labels' method needs to be implemented in ConvoyLabelManager.gd.
-	# Its signature should be adjusted to not expect drawing parameters that are now set
-	# via 'update_drawing_parameters'.
 	if is_instance_valid(convoy_label_manager) and convoy_label_manager.has_method("update_convoy_labels"):
 		convoy_label_manager.update_convoy_labels(
 			_all_convoy_data_cache,
 			_convoy_id_to_color_map_cache,
 			current_hover_info,
 			_selected_convoy_ids_cache,
-			_convoy_label_user_positions, # This state might also move to ConvoyLabelManager
-			_dragging_panel_node,         # Drag state might be passed or ConvoyLabelManager handles its own
+			_convoy_label_user_positions,
+			_dragging_panel_node,
 			_dragged_convoy_id_actual_str,
 			_current_map_screen_rect_for_clamping,
-			# Style parameters are no longer passed here as they are set via initialize_style_settings.
-			# CONVOY_STAT_EMOJIS is also set via initialize_font_settings.
 		)
-
 	# Request redraw for connector lines
 	if is_instance_valid(convoy_connector_lines_container):
 		convoy_connector_lines_container.queue_redraw()
-
-
-func _perform_light_ui_update():
-	"""
-	Called during pan/zoom. Avoids destroying/recreating labels.
-	Focuses on re-clamping existing labels to viewport.
-	"""
-	if not _map_display_node or not is_instance_valid(_map_display_node):
-		printerr("UIManager (_perform_light_ui_update): _map_display_node is invalid.")
-		return
-
-	# Use the map's effective screen rect for clamping calculations
-	var viewport_rect_global = _current_map_screen_rect_for_clamping
-
-	# if is_instance_valid(convoy_label_container) and convoy_label_container.get_child_count() > 0: # Handled by ConvoyLabelManager
-	# 	var container_global_transform_convoy = convoy_label_container.get_global_transform_with_canvas()
-	# 	var clamp_rect_local_to_convoy_container = container_global_transform_convoy.affine_inverse() * viewport_rect_global
-
-	# 	for panel_node in convoy_label_container.get_children():
-	# 		if panel_node is Panel:
-	# 			_clamp_panel_position_optimized(panel_node, clamp_rect_local_to_convoy_container)
-
+	# Called during pan/zoom. Avoids destroying/recreating labels. Focuses on re-clamping existing labels to viewport.
 	if is_instance_valid(settlement_label_container) and settlement_label_container.get_child_count() > 0:
 		var container_global_transform_settlement = settlement_label_container.get_global_transform_with_canvas()
-		var clamp_rect_local_to_settlement_container = container_global_transform_settlement.affine_inverse() * viewport_rect_global
-
+		var clamp_rect_local_to_settlement_container = container_global_transform_settlement.affine_inverse() * _current_map_screen_rect_for_clamping
 		for panel_node in settlement_label_container.get_children():
 			if panel_node is Panel:
 				_clamp_panel_position_optimized(panel_node, clamp_rect_local_to_settlement_container)
 
 func _clamp_panel_position_optimized(panel: Panel, precalculated_clamp_rect_local_to_container: Rect2):
-	"""
-	Helper to clamp a panel's position to the viewport boundaries,
-	using a precalculated clamping rectangle in the panel's parent container's local space.
-	"""
+	# Helper to clamp a panel's position to the viewport boundaries using a precalculated clamping rectangle in the panel's parent container's local space.
 	if not is_instance_valid(panel):
 		return
 
@@ -420,7 +328,7 @@ func _clamp_panel_position_optimized(panel: Panel, precalculated_clamp_rect_loca
 	panel.position.y = clamp(panel.position.y, padded_min_y, padded_max_y)
 
 func _clamp_panel_position(panel: Panel): # Original function, now less used but kept for potential direct calls
-	"""Helper to clamp a panel's position to the viewport boundaries."""
+	# Helper to clamp a panel's position to the viewport boundaries.
 	if not is_instance_valid(panel) or not is_instance_valid(panel.get_parent()):
 		return
 
@@ -444,39 +352,21 @@ func _clamp_panel_position(panel: Panel): # Original function, now less used but
 	panel.position.y = clamp(panel.position.y, padded_min_y, padded_max_y)
 
 func _draw_interactive_labels(current_hover_info: Dictionary):
-	# print("UIManager: _draw_interactive_labels called. Hover: ", current_hover_info) # DEBUG
-	# print("UIManager: Cached convoy data size: ", _all_convoy_data_cache.size() if _all_convoy_data_cache else "N/A") # DEBUG
-	# print("UIManager: Cached settlement data size: ", _all_settlement_data_cache.size() if _all_settlement_data_cache else "N/A") # DEBUG
-	# print("UIManager: Cached selected IDs: ", _selected_convoy_ids_cache) # DEBUG
 	if is_instance_valid(_dragging_panel_node):
-		# If a panel is being dragged, UIManager might still need to update settlement labels.
-		# ConvoyLabelManager would internally handle not disturbing the dragged convoy panel.
 		pass # Let's assume main.gd already checked this or UIManager will handle it.
-	
-	if not _ui_drawing_params_cached: # Use the cached flag
-		printerr("UIManager: MapDisplay node or texture invalid. Cannot draw labels.")
-		return
-	var drawn_convoy_ids_this_update: Array[String] = []
 	var drawn_settlement_tile_coords_this_update: Array[Vector2i] = []
 	var all_drawn_label_rects_this_update: Array[Rect2] = [] # This will be used by SettlementLabelManager and ConvoyLabelManager internally or passed to them
-	
-	# Declare arrays to hold IDs/coords of elements that *should* be visible
-	# print("UIManager:_draw_interactive_labels - current_hover_info: ", current_hover_info) # DEBUG
 	var convoy_ids_to_display: Array[String] = []
 	var settlement_coords_to_display: Array[Vector2i] = []
-
-	# STAGE 1: Draw Settlement Labels (for selected convoys' start/end, then hovered settlement)
+	# Draw Settlement Labels (for selected convoys' start/end, then hovered settlement)
 	if not _selected_convoy_ids_cache.is_empty():
 		for convoy_data in _all_convoy_data_cache:
 			if convoy_data is Dictionary:
 				var convoy_id = convoy_data.get('convoy_id')
 				var convoy_id_str = str(convoy_id)
 				if convoy_id != null and _selected_convoy_ids_cache.has(convoy_id_str):
-					# For selected convoys, identify their start and end settlement tiles
 					var journey_data: Dictionary = convoy_data.get('journey')
 					if journey_data is Dictionary:
-						# var route_x_coords: Array = journey_data.get('route_x', []) # Old way
-						# var route_y_coords: Array = journey_data.get('route_y', []) # Old way
 
 						var raw_route_x = journey_data.get('route_x')
 						var route_x_coords: Array = []
@@ -512,7 +402,7 @@ func _draw_interactive_labels(current_hover_info: Dictionary):
 			if not settlement_coords_to_display.has(hovered_tile_coords):
 				settlement_coords_to_display.append(hovered_tile_coords)
 
-
+	# Determine Convoy Labels to Display (Selected then Hovered)
 	# STAGE 2: Determine Convoy Labels to Display (Selected then Hovered)
 	if not _selected_convoy_ids_cache.is_empty():
 		for convoy_data in _all_convoy_data_cache:
@@ -531,55 +421,6 @@ func _draw_interactive_labels(current_hover_info: Dictionary):
 			if not hovered_convoy_id_as_string.is_empty(): # Check after converting to string
 				if not convoy_ids_to_display.has(hovered_convoy_id_as_string):
 					convoy_ids_to_display.append(hovered_convoy_id_as_string)
-
-	# print("UIManager:_draw_interactive_labels - convoy_ids_to_display: ", convoy_ids_to_display) # DEBUG
-	# print("UIManager:_draw_interactive_labels - settlement_coords_to_display: ", settlement_coords_to_display) # DEBUG # This part remains for settlements
-
-	# STAGE 3: Handle the dragged panel first (ensure its rect is considered and it remains visible)
-	# This logic will move to ConvoyLabelManager if it handles its own drag state or receives it.
-	# For now, UIManager might still pass _dragging_panel_node to ConvoyLabelManager.
-	# if is_instance_valid(_dragging_panel_node) and _dragging_panel_node.get_parent() == convoy_label_container:
-	# 	_dragging_panel_node.visible = true 
-	# 	var dragged_convoy_data = _convoy_data_by_id_cache.get(_dragged_convoy_id_actual_str)
-	# 	if dragged_convoy_data:
-	# 		_update_convoy_panel_content(_dragging_panel_node, dragged_convoy_data) # This would be a call within ConvoyLabelManager
-		
-	# 	var dragged_panel_actual_size = _dragging_panel_node.size
-	# 	if dragged_panel_actual_size.x <= 0 or dragged_panel_actual_size.y <= 0:
-	# 		dragged_panel_actual_size = _dragging_panel_node.get_minimum_size()
-	# 	all_drawn_label_rects_this_update.append(Rect2(_dragging_panel_node.position, dragged_panel_actual_size))
-
-	# 	if not drawn_convoy_ids_this_update.has(_dragged_convoy_id_actual_str):
-	# 		drawn_convoy_ids_this_update.append(_dragged_convoy_id_actual_str)
-
-	# STAGE 4: Update/Create Convoy Labels
-	# This entire loop and its helper functions (_create_convoy_panel, _update_convoy_panel_content, _position_convoy_panel)
-	# will move to ConvoyLabelManager.gd.
-	# UIManager will call something like:
-	# convoy_label_manager.process_convoy_labels(convoy_ids_to_display, _convoy_data_by_id_cache, all_drawn_label_rects_this_update)
-	# And ConvoyLabelManager will update `all_drawn_label_rects_this_update` internally.
-
-	# Example of how it might look if delegated (conceptual):
-	# if is_instance_valid(convoy_label_manager):
-	# 	convoy_label_manager.update_active_labels(
-	# 		convoy_ids_to_display, 
-	# 		_convoy_data_by_id_cache, 
-	# 		all_drawn_label_rects_this_update, # Pass for anti-collision
-	# 		_selected_convoy_ids_cache,
-	# 		_convoy_label_user_positions,
-	# 		_dragging_panel_node, # Pass drag state
-	# 		_dragged_convoy_id_actual_str
-	# 	)
-
-	# STAGE 5: Hide convoy panels that are no longer needed
-	# This logic also moves to ConvoyLabelManager.gd.
-	# for existing_id_str in _active_convoy_panels.keys():
-	# 	if not drawn_convoy_ids_this_update.has(existing_id_str):
-	# 		var panel_to_hide = _active_convoy_panels[existing_id_str]
-	# 		if is_instance_valid(panel_to_hide):
-	# 			panel_to_hide.visible = false
-
-	# STAGE 6: Update/Create Settlement Labels
 	# This part remains in UIManager or moves to a new SettlementLabelManager
 	for settlement_coord_to_draw in settlement_coords_to_display:
 		var settlement_coord_str = "%s_%s" % [settlement_coord_to_draw.x, settlement_coord_to_draw.y]
@@ -591,7 +432,7 @@ func _draw_interactive_labels(current_hover_info: Dictionary):
 			panel_node = _active_settlement_panels[settlement_coord_str]
 			if not is_instance_valid(panel_node):
 				_active_settlement_panels.erase(settlement_coord_str)
-				panel_node = _create_settlement_panel(settlement_data_for_panel)
+				panel_node = _create_settlement_panel()
 				if not is_instance_valid(panel_node): continue
 				_active_settlement_panels[settlement_coord_str] = panel_node
 				settlement_label_container.add_child(panel_node)
@@ -599,7 +440,7 @@ func _draw_interactive_labels(current_hover_info: Dictionary):
 				if panel_node.get_parent(): panel_node.get_parent().remove_child(panel_node)
 				settlement_label_container.add_child(panel_node)
 		else:
-			panel_node = _create_settlement_panel(settlement_data_for_panel)
+			panel_node = _create_settlement_panel()
 			if not is_instance_valid(panel_node): continue
 			_active_settlement_panels[settlement_coord_str] = panel_node
 			settlement_label_container.add_child(panel_node)
@@ -641,13 +482,11 @@ func _draw_interactive_labels(current_hover_info: Dictionary):
 # _position_convoy_panel
 
 
-func _create_settlement_panel(settlement_info: Dictionary) -> Panel:
+func _create_settlement_panel() -> Panel:
 	if not is_instance_valid(settlement_label_container): # This check is now crucial
 		printerr('UIManager (_create_settlement_panel): The "settlement_label_container" dependency is not assigned. Please select the UIManagerNode in the scene and assign the correct node to this property in the Inspector.')
 		return null # Abort creation if the container is missing
-	if not _ui_drawing_params_cached:
-		printerr('UIManager: Drawing params not cached in _create_settlement_panel.')
-		return null
+	# Removed legacy _ui_drawing_params_cached check
 
 	var panel := Panel.new()
 	var style_box := StyleBoxFlat.new()
@@ -664,104 +503,61 @@ func _create_settlement_panel(settlement_info: Dictionary) -> Panel:
 	return panel
 
 func _update_settlement_panel_content(panel: Panel, settlement_info: Dictionary):
-	if not is_instance_valid(panel) or not _ui_drawing_params_cached: return
-
+	if not is_instance_valid(panel): return
 	var label_node: Label = panel.get_meta("label_node_ref")
 	var style_box: StyleBoxFlat = panel.get_meta("style_box_ref")
 	if not is_instance_valid(label_node) or not is_instance_valid(style_box): return
-
-	# --- Font Size & Panel Style Calculations (from original _draw_single_settlement_label) ---
-	var effective_tile_size_on_texture: float = min(_cached_actual_tile_width_on_texture, _cached_actual_tile_height_on_texture)
-	var base_linear_font_scale: float = 1.0
-	if font_scaling_base_tile_size > 0.001:
-		base_linear_font_scale = effective_tile_size_on_texture / font_scaling_base_tile_size
-	var font_render_scale: float = pow(base_linear_font_scale, font_scaling_exponent)
-
-	var adjusted_base_settlement_font_size = base_settlement_font_size * ui_overall_scale_multiplier
-	var scaled_target_screen_settlement_font_size = adjusted_base_settlement_font_size * font_render_scale
-	var node_settlement_font_size_before_clamp = scaled_target_screen_settlement_font_size / _current_map_zoom_cache
-	var current_settlement_font_size: int = clamp(roundi(node_settlement_font_size_before_clamp), min_node_font_size, max_node_font_size)
-
-	var adjusted_base_settlement_corner_radius = base_settlement_panel_corner_radius * ui_overall_scale_multiplier
-	var scaled_target_screen_settlement_corner_radius = adjusted_base_settlement_corner_radius * font_render_scale
-	var node_settlement_corner_radius_before_clamp = scaled_target_screen_settlement_corner_radius / _current_map_zoom_cache
-	var current_settlement_panel_corner_radius: float = clamp(node_settlement_corner_radius_before_clamp, min_node_panel_corner_radius, max_node_panel_corner_radius)
-
-	var adjusted_base_settlement_padding_h = base_settlement_panel_padding_h * ui_overall_scale_multiplier
-	var scaled_target_screen_settlement_padding_h = adjusted_base_settlement_padding_h * font_render_scale
-	var node_settlement_padding_h_before_clamp = scaled_target_screen_settlement_padding_h / _current_map_zoom_cache
-	var current_settlement_panel_padding_h: float = clamp(node_settlement_padding_h_before_clamp, min_node_panel_padding, max_node_panel_padding)
-
-	var adjusted_base_settlement_padding_v = base_settlement_panel_padding_v * ui_overall_scale_multiplier
-	var scaled_target_screen_settlement_padding_v = adjusted_base_settlement_padding_v * font_render_scale
-	var node_settlement_padding_v_before_clamp = scaled_target_screen_settlement_padding_v / _current_map_zoom_cache
-	var current_settlement_panel_padding_v: float = clamp(node_settlement_padding_v_before_clamp, min_node_panel_padding, max_node_panel_padding)
-
-	# --- Label Text Generation ---
+	# Font size and panel sizing use only exported variables and ui_overall_scale_multiplier
+	var current_settlement_font_size: int = clamp(roundi(base_settlement_font_size * ui_overall_scale_multiplier), min_node_font_size, max_node_font_size)
+	var current_settlement_panel_corner_radius: float = clamp(base_settlement_panel_corner_radius * ui_overall_scale_multiplier, min_node_panel_corner_radius, max_node_panel_corner_radius)
+	var current_settlement_panel_padding_h: float = clamp(base_settlement_panel_padding_h * ui_overall_scale_multiplier, min_node_panel_padding, max_node_panel_padding)
+	var current_settlement_panel_padding_v: float = clamp(base_settlement_panel_padding_v * ui_overall_scale_multiplier, min_node_panel_padding, max_node_panel_padding)
 	var settlement_name_local: String = settlement_info.get('name', 'N/A')
-	if settlement_name_local == 'N/A': return # Or handle error
-
+	if settlement_name_local == 'N/A': return
 	if not is_instance_valid(settlement_label_settings.font):
 		printerr("UIManager (_update_settlement_panel_content): settlement_label_settings.font is NOT VALID for settlement: ", settlement_name_local)
 	settlement_label_settings.font_size = current_settlement_font_size
-
 	var settlement_type = settlement_info.get('sett_type', '')
 	var settlement_emoji = SETTLEMENT_EMOJIS.get(settlement_type, '')
 	label_node.text = settlement_emoji + ' ' + settlement_name_local if not settlement_emoji.is_empty() else settlement_name_local
-
-	# --- Update Panel StyleBox ---
 	style_box.bg_color = settlement_panel_background_color
-	style_box.corner_radius_top_left = current_settlement_panel_corner_radius
-	style_box.corner_radius_top_right = current_settlement_panel_corner_radius
-	style_box.corner_radius_bottom_left = current_settlement_panel_corner_radius
-	style_box.corner_radius_bottom_right = current_settlement_panel_corner_radius
+	style_box.corner_radius_top_left = floori(current_settlement_panel_corner_radius)
+	style_box.corner_radius_top_right = floori(current_settlement_panel_corner_radius)
+	style_box.corner_radius_bottom_left = floori(current_settlement_panel_corner_radius)
+	style_box.corner_radius_bottom_right = floori(current_settlement_panel_corner_radius)
 	style_box.content_margin_left = current_settlement_panel_padding_h
 	style_box.content_margin_right = current_settlement_panel_padding_h
 	style_box.content_margin_top = current_settlement_panel_padding_v
 	style_box.content_margin_bottom = current_settlement_panel_padding_v
-
 	label_node.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	label_node.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	label_node.position = Vector2.ZERO
-
-	# Explicitly set panel's custom_minimum_size
-	label_node.update_minimum_size() # Nudge the label
+	label_node.update_minimum_size()
 	var label_actual_min_size = label_node.get_minimum_size()
 	var stylebox_margins = style_box.get_minimum_size()
-
 	panel.custom_minimum_size = Vector2(
 		label_actual_min_size.x + stylebox_margins.x,
 		label_actual_min_size.y + stylebox_margins.y
 	)
-
-	# This call might now be redundant.
 	panel.update_minimum_size()
 
 func _position_settlement_panel(panel: Panel, settlement_info: Dictionary, _existing_label_rects: Array[Rect2]):
 	# For settlements, anti-collision is often less critical or handled differently (e.g., fewer labels shown at once).
-	# This simplified version doesn't implement anti-collision for settlements yet.
-	if not is_instance_valid(panel) or not _ui_drawing_params_cached: return
+	if not is_instance_valid(panel) or not is_instance_valid(terrain_tilemap): return
 
 	var tile_x: int = settlement_info.get('x', -1)
 	var tile_y: int = settlement_info.get('y', -1)
 	if tile_x < 0 or tile_y < 0: return
 
-	# --- Offset Calculation (from original _draw_single_settlement_label) ---
-	var current_settlement_offset_above_center: float = base_settlement_offset_above_tile_center * _cached_actual_scale
-
-	# --- Positioning Logic ---
-	var tile_center_tex_x: float = (float(tile_x) + 0.5) * _cached_actual_tile_width_on_texture
-	var tile_center_tex_y: float = (float(tile_y) + 0.5) * _cached_actual_tile_height_on_texture
-
-	# Position in map_display's local coordinate space
-	var panel_desired_x = (tile_center_tex_x * _cached_actual_scale + _cached_offset_x) - (panel.size.x / 2.0)
-	var panel_desired_y = (tile_center_tex_y * _cached_actual_scale + _cached_offset_y) - panel.size.y - current_settlement_offset_above_center
+	# Get the local position of the tile center using TerrainTileMap
+	var tile_center = terrain_tilemap.map_to_local(Vector2i(tile_x, tile_y))
+	var current_settlement_offset_above_center: float = base_settlement_offset_above_tile_center
+	# Position label above the tile center
+	var panel_desired_x = tile_center.x - (panel.size.x / 2.0)
+	var panel_desired_y = tile_center.y - panel.size.y - current_settlement_offset_above_center
 	panel.position = Vector2(panel_desired_x, panel_desired_y)
 
 
-# Original _draw_single_convoy_label and _draw_single_settlement_label are now replaced by:
-# _create_convoy_panel, _update_convoy_panel_content, _position_convoy_panel
-# _create_settlement_panel, _update_settlement_panel_content, _position_settlement_panel
 
 func _find_settlement_at_tile(tile_x: int, tile_y: int) -> Variant:
 	if not _all_settlement_data_cache: return null # Guard against null cache
@@ -775,17 +571,12 @@ func _find_settlement_at_tile(tile_x: int, tile_y: int) -> Variant:
 
 
 func _on_connector_lines_container_draw():
-	# Debug: Confirm draw function is called and print key parameters
-	print("[DEBUG] _on_connector_lines_container_draw CALLED")
-	var map_display_size = _map_display_node.size if is_instance_valid(_map_display_node) else "N/A"
-	print("[DEBUG] Container visible:", convoy_connector_lines_container.visible, " map_display size:", map_display_size)
-	print("[DEBUG] Tile size:", _cached_actual_tile_width_on_texture, _cached_actual_tile_height_on_texture, " Scale:", _cached_actual_scale, " Offset:", _cached_offset_x, _cached_offset_y)
-	if not _ui_drawing_params_cached:
-		print("[DEBUG] Drawing params not cached, skipping draw.")
+	# Ensure terrain_tilemap is valid before using it
+	if not is_instance_valid(terrain_tilemap):
+		printerr("UIManager (_on_connector_lines_container_draw): terrain_tilemap is not assigned or invalid. Cannot draw connector lines.")
 		return
-
+	# Draw convoy journey lines and icons using TerrainTileMap coordinates
 	if _all_convoy_data_cache is Array:
-		print("[DEBUG] Convoy count:", _all_convoy_data_cache.size())
 		for convoy in _all_convoy_data_cache:
 			if not (convoy is Dictionary and convoy.has("journey")):
 				continue
@@ -796,25 +587,23 @@ func _on_connector_lines_container_draw():
 			var route_y: Array = journey["route_y"]
 			if route_x.size() < 2 or route_y.size() != route_x.size():
 				continue
-
 			var points: PackedVector2Array = []
 			for i in range(route_x.size()):
-				var tile_x = float(route_x[i])
-				var tile_y = float(route_y[i])
-				var px = (tile_x + 0.5) * _cached_actual_tile_width_on_texture * _cached_actual_scale + _cached_offset_x
-				var py = (tile_y + 0.5) * _cached_actual_tile_height_on_texture * _cached_actual_scale + _cached_offset_y
-				points.append(Vector2(px, py))
+				var tile_x = int(route_x[i])
+				var tile_y = int(route_y[i])
+				var tile_pos = terrain_tilemap.map_to_local(Vector2i(tile_x, tile_y))
+				points.append(tile_pos)
 			if points.size() >= 2:
 				convoy_connector_lines_container.draw_polyline(points, connector_line_color, connector_line_width)
-
-	if _all_convoy_data_cache is Array:
+		# Draw convoy icons
 		for convoy in _all_convoy_data_cache:
 			if not (convoy is Dictionary and convoy.has("x") and convoy.has("y")):
 				continue
-			var px = (float(convoy["x"]) + 0.5) * _cached_actual_tile_width_on_texture * _cached_actual_scale + _cached_offset_x
-			var py = (float(convoy["y"]) + 0.5) * _cached_actual_tile_height_on_texture * _cached_actual_scale + _cached_offset_y
+			var tile_x = int(convoy["x"])
+			var tile_y = int(convoy["y"])
+			var tile_pos = terrain_tilemap.map_to_local(Vector2i(tile_x, tile_y))
 			var color = _convoy_id_to_color_map_cache.get(str(convoy.get("convoy_id", "")), Color(1,1,1,1))
-			convoy_connector_lines_container.draw_circle(Vector2(px, py), 6, color)
+			convoy_connector_lines_container.draw_circle(tile_pos, 6, color)
 
 # --- Drag and Drop related methods (to be implemented/refined later) ---
 # func start_panel_drag(panel_node: Panel, global_mouse_position: Vector2):
@@ -872,7 +661,7 @@ func _on_gdm_settlement_data_updated(settlement_data_list: Array) -> void:
 	_draw_interactive_labels({})
 
 func _on_ui_scale_changed(new_scale: float):
-	"""Reacts to the global UI scale being changed in the UIScaleManager."""
+	# Reacts to the global UI scale being changed in the UIScaleManager.
 	ui_overall_scale_multiplier = new_scale
 	# A full redraw of labels is needed because font sizes, padding, etc., will change.
 	# We pass an empty dictionary for hover_info to avoid issues and force a clean update.

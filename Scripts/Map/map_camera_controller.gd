@@ -56,16 +56,16 @@ func update_map_viewport_rect(new_rect: Rect2):
 	if new_rect.size.x > 0 and new_rect.size.y > 0:
 		sub_viewport_node.size = Vector2i(new_rect.size)
 		map_viewport_rect = Rect2(Vector2.ZERO, new_rect.size)
-		print("[DFCAM-DEBUG] update_map_viewport_rect: Synced SubViewport size to ", sub_viewport_node.size)
+		# print("[DFCAM-DEBUG] update_map_viewport_rect: Synced SubViewport size to ", sub_viewport_node.size)
 	else:
 		# Fallback if the new_rect is invalid, use the existing SubViewport size.
 		map_viewport_rect = Rect2(Vector2.ZERO, sub_viewport_node.size)
-		print("[DFCAM-DEBUG] update_map_viewport_rect: new_rect was invalid, using existing SubViewport size=", sub_viewport_node.size)
+		# print("[DFCAM-DEBUG] update_map_viewport_rect: new_rect was invalid, using existing SubViewport size=", sub_viewport_node.size)
 
 	# camera_node.offset = Vector2.ZERO
 	_update_camera_limits()
 	fit_camera_to_tilemap()
-	print("[DFCAM-DEBUG] update_map_viewport_rect: camera_position=", camera_node.position, ", camera_zoom=", camera_node.zoom)
+	# print("[DFCAM-DEBUG] update_map_viewport_rect: camera_position=", camera_node.position, ", camera_zoom=", camera_node.zoom)
 
 func _clamp_camera_position():
 	if not is_instance_valid(camera_node):
@@ -148,7 +148,7 @@ func pan(delta: Vector2):
 		var pan_delta = delta * camera_pan_sensitivity / camera_node.zoom.x
 		camera_node.position += pan_delta
 		_clamp_camera_position()
-		print("[DFCAM-DEBUG] pan: delta=", delta, ", pan_delta=", pan_delta, ", new_position=", camera_node.position)
+		# print("[DFCAM-DEBUG] pan: delta=", delta, ", pan_delta=", pan_delta, ", new_position=", camera_node.position)
 
 # Zoom at a given screen position (in global/screen coordinates)
 func zoom_at_screen_pos(zoom_multiplier: float, screen_zoom_center: Vector2):
@@ -170,7 +170,7 @@ func zoom_at_screen_pos(zoom_multiplier: float, screen_zoom_center: Vector2):
 	_update_camera_limits()
 	_clamp_camera_position()
 
-	print("[DFCAM-DEBUG] zoom_at_screen_pos: zoom_multiplier=", zoom_multiplier, ", clamped_zoom=", clamped_zoom, ", world_pos_before=", world_pos_before, ", world_pos_after=", world_pos_after, ", new_position=", camera_node.position)
+	# print("[DFCAM-DEBUG] zoom_at_screen_pos: zoom_multiplier=", zoom_multiplier, ", clamped_zoom=", clamped_zoom, ", world_pos_before=", world_pos_before, ", world_pos_after=", world_pos_after, ", new_position=", camera_node.position)
 	emit_signal("camera_zoom_changed", camera_node.zoom.x)
 
 

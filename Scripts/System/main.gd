@@ -85,9 +85,33 @@ func initialize_all_components():
 			self.connect("map_ready_for_focus", Callable(main_screen, "_on_map_ready_for_focus"))
 			print("[Main] Connected self.map_ready_for_focus to main_screen._on_map_ready_for_focus")
 
-	# Initialize MapInteractionManager
+	# Initialize MapInteractionManager with correct UIManager node path
 	if is_instance_valid(map_interaction_manager):
-		map_interaction_manager.initialize(terrain_tilemap, get_node_or_null("/root/UIManager"), _all_convoy_data, _all_settlement_data, map_tiles, map_camera, sub_viewport, _selected_convoy_ids, _convoy_label_user_positions)
+		# --- Diagnostics: Print validity and type of terrain_tilemap and map_camera ---
+		print("[DIAG] main.gd: terrain_tilemap valid:", is_instance_valid(terrain_tilemap))
+		if is_instance_valid(terrain_tilemap):
+			print("[DIAG] terrain_tilemap type:", typeof(terrain_tilemap), " class:", terrain_tilemap.get_class())
+			print("[DIAG] terrain_tilemap resource_path:", terrain_tilemap.resource_path if terrain_tilemap.has_method("resource_path") else "N/A")
+		else:
+			printerr("[DIAG] main.gd: terrain_tilemap is NOT valid!")
+		print("[DIAG] main.gd: map_camera valid:", is_instance_valid(map_camera))
+		if is_instance_valid(map_camera):
+			print("[DIAG] map_camera type:", typeof(map_camera), " class:", map_camera.get_class())
+			print("[DIAG] map_camera position:", map_camera.position, " global_position:", map_camera.global_position)
+		else:
+			printerr("[DIAG] main.gd: map_camera is NOT valid!")
+		var ui_manager_node = get_node("UIManager") # UIManager is a sibling of Main in MapView.tscn
+		map_interaction_manager.initialize(
+			terrain_tilemap,
+			ui_manager_node,
+			_all_convoy_data,
+			_all_settlement_data,
+			map_tiles,
+			map_camera,
+			sub_viewport,
+			_selected_convoy_ids,
+			_convoy_label_user_positions
+		)
 		if not map_interaction_manager.is_connected("selection_changed", Callable(self, "_on_selection_changed")):
 			map_interaction_manager.connect("selection_changed", Callable(self, "_on_selection_changed"))
 		if not map_interaction_manager.is_connected("hover_changed", Callable(self, "_on_hover_changed")):

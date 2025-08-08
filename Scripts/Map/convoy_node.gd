@@ -90,11 +90,11 @@ func _update_visuals():
 	var route_y: Array = journey_data.get("route_y", [])
 
 	# Debug: Print convoy data and route info
-	print("[ConvoyNode] convoy_id:", convoy_data.get("convoy_id"), "route_x:", route_x, "route_y:", route_y)
-	print("[ConvoyNode] convoy_data x:", convoy_data.get("x"), "y:", convoy_data.get("y"))
-	print("[ConvoyNode] terrain_tilemap valid:", is_instance_valid(terrain_tilemap))
-	if is_instance_valid(terrain_tilemap):
-		print("[ConvoyNode] terrain_tilemap used rect:", terrain_tilemap.get_used_rect())
+	# print("[ConvoyNode] convoy_id:", convoy_data.get("convoy_id"), "route_x:", route_x, "route_y:", route_y)
+	# print("[ConvoyNode] convoy_data x:", convoy_data.get("x"), "y:", convoy_data.get("y"))
+	# print("[ConvoyNode] terrain_tilemap valid:", is_instance_valid(terrain_tilemap))
+	# if is_instance_valid(terrain_tilemap):
+	# 	print("[ConvoyNode] terrain_tilemap used rect:", terrain_tilemap.get_used_rect())
 
 	# Get pre-calculated progress details from convoy_data
 	var current_segment_idx: int = convoy_data.get("_current_segment_start_idx", -1)
@@ -137,7 +137,7 @@ func _update_visuals():
 		final_pixel_pos = terrain_tilemap.map_to_local(Vector2i(int(map_x), int(map_y)))
 
 	# Debug: Print final calculated pixel position
-	print("[ConvoyNode] final_pixel_pos:", final_pixel_pos)
+	# print("[ConvoyNode] final_pixel_pos:", final_pixel_pos)
 
 	var icon_offset_px: Vector2 = convoy_data.get("_pixel_offset_for_icon", Vector2.ZERO)
 	position = final_pixel_pos + icon_offset_px # Apply the lateral offset

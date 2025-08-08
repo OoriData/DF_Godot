@@ -86,34 +86,6 @@ func _ready():
 		_current_map_screen_rect = get_viewport().get_visible_rect() # Initialize
 	else:
 		_current_map_screen_rect = Rect2(0,0,1,1) # Fallback, should be updated by main.gd
-	# --- DIAGNOSTICS: Print visibility state of all relevant map nodes ---
-	var map_display_vis = map_display.visible if is_instance_valid(map_display) else "N/A"
-	var camera_vis = camera.visible if is_instance_valid(camera) else "N/A"
-	print("[VIS] MapInteractionManager: map_display visible:", map_display_vis)
-	print("[VIS] MapInteractionManager: camera visible:", camera_vis)
-	var parent = map_display.get_parent() if is_instance_valid(map_display) else null
-	print("[VIS] MapInteractionManager: map_display parent visible:", parent.visible if is_instance_valid(parent) else "N/A")
-	# Deep diagnostics for map_display (should be TerrainTileMap) and its tileset
-	print("[DIAG] MapInteractionManager _ready: map_display is_instance_valid:", is_instance_valid(map_display))
-	if is_instance_valid(map_display):
-		print("[DIAG] map_display type:", typeof(map_display), " class:", map_display.get_class())
-		print("[DIAG] map_display resource_path:", map_display.resource_path if map_display.has_method("resource_path") else "N/A")
-		print("[DIAG] map_display.tile_set is_instance_valid:", is_instance_valid(map_display.tile_set))
-		if is_instance_valid(map_display.tile_set):
-			print("[DIAG] map_display.tile_set resource_path:", map_display.tile_set.resource_path if map_display.tile_set.has_method("resource_path") else "N/A")
-			print("[DIAG] map_display.tile_set to_string:", str(map_display.tile_set))
-			var ids = []
-			if map_display.tile_set.has_method("get_tiles_ids"):
-				ids = map_display.tile_set.get_tiles_ids()
-			else:
-				for i in range(100):
-					if map_display.tile_set.has_method("has_tile") and map_display.tile_set.has_tile(i):
-						ids.append(i)
-			print("[DIAG] map_display.tile_set ids:", ids)
-		else:
-			print("[DIAG] map_display.tile_set is not valid!")
-	else:
-		print("[DIAG] map_display is not valid!")
 
 
 func initialize(
@@ -166,6 +138,44 @@ func initialize(
 		camera.set("smoothing_speed", 5.0)
 	else:
 		printerr("MapInteractionManager: Camera node is invalid in initialize.")
+
+	# --- DIAGNOSTICS: Print visibility state of all relevant map nodes (after assignment) ---
+	var map_display_vis = "N/A"
+	if is_instance_valid(map_display) and map_display.has_method("is_visible_in_tree"):
+		map_display_vis = map_display.is_visible_in_tree()
+	print("[VIS] MapInteractionManager: map_display visible:", map_display_vis)
+
+	var camera_vis = "N/A"
+	if is_instance_valid(camera) and camera.has_method("is_visible_in_tree"):
+		camera_vis = camera.is_visible_in_tree()
+	print("[VIS] MapInteractionManager: camera visible:", camera_vis)
+
+	var parent = map_display.get_parent() if is_instance_valid(map_display) else null
+	var parent_vis = "N/A"
+	if is_instance_valid(parent) and parent.has_method("is_visible_in_tree"):
+		parent_vis = parent.is_visible_in_tree()
+	print("[VIS] MapInteractionManager: map_display parent visible:", parent_vis)
+	# Deep diagnostics for map_display (should be TerrainTileMap) and its tileset
+	print("[DIAG] MapInteractionManager initialize: map_display is_instance_valid:", is_instance_valid(map_display))
+	if is_instance_valid(map_display):
+		print("[DIAG] map_display type:", typeof(map_display), " class:", map_display.get_class())
+		print("[DIAG] map_display resource_path:", map_display.resource_path if map_display.has_method("resource_path") else "N/A")
+		print("[DIAG] map_display.tile_set is_instance_valid:", is_instance_valid(map_display.tile_set))
+		if is_instance_valid(map_display.tile_set):
+			print("[DIAG] map_display.tile_set resource_path:", map_display.tile_set.resource_path if map_display.tile_set.has_method("resource_path") else "N/A")
+			print("[DIAG] map_display.tile_set to_string:", str(map_display.tile_set))
+			var ids = []
+			if map_display.tile_set.has_method("get_tiles_ids"):
+				ids = map_display.tile_set.get_tiles_ids()
+			else:
+				for i in range(100):
+					if map_display.tile_set.has_method("has_tile") and map_display.tile_set.has_tile(i):
+						ids.append(i)
+			print("[DIAG] map_display.tile_set ids:", ids)
+		else:
+			print("[DIAG] map_display.tile_set is not valid!")
+	else:
+		print("[DIAG] map_display is not valid!")
 		
 # Call this to allow or disallow the camera to move outside map bounds (e.g. for journey preview)
 func set_camera_loose_mode(is_loose: bool):
@@ -182,7 +192,7 @@ func update_data_references(p_all_convoy_data: Array, p_all_settlement_data: Arr
 
 	# print("MapInteractionManager: Data references updated.")
 
-func _physics_process(delta: float):
+func _physics_process(_delta: float):
 	pass # Camera clamping is now handled by MapCameraController's _physics_process
 
 
