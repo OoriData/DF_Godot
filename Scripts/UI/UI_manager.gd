@@ -285,12 +285,19 @@ func update_ui_elements(
 	_dragging_panel_node = dragging_panel_node_from_main
 	_dragged_convoy_id_actual_str = dragged_convoy_id_str_from_main
 
-	print("[DIAG] UIManager update_ui_elements: settlement_data count:", _all_settlement_data_cache.size())
-	for s in _all_settlement_data_cache:
-		if s is Dictionary:
-			print("  Settlement:", s.get('name', 'N/A'), "coords:", s.get('x', 'N/A'), s.get('y', 'N/A'))
+	# print("[DIAG] UIManager update_ui_elements: settlement_data count:", _all_settlement_data_cache.size())
+	# for s in _all_settlement_data_cache:
+	# 	if s is Dictionary:
+	# 		print("  Settlement:", s.get('name', 'N/A'), "coords:", s.get('x', 'N/A'), s.get('y', 'N/A'))
 	
 	_draw_interactive_labels(current_hover_info)
+	# Provide drawing parameters to ConvoyLabelManager before updating labels
+	if is_instance_valid(convoy_label_manager) \
+			and convoy_label_manager.has_method("update_drawing_parameters") \
+			and is_instance_valid(terrain_tilemap) \
+			and is_instance_valid(terrain_tilemap.tile_set):
+		var ts = terrain_tilemap.tile_set.tile_size
+		convoy_label_manager.update_drawing_parameters(ts.x, ts.y, current_map_zoom, 1.0, 0.0, 0.0)
 	# Delegate convoy label updates to ConvoyLabelManager.
 	if is_instance_valid(convoy_label_manager) and convoy_label_manager.has_method("update_convoy_labels"):
 		convoy_label_manager.update_convoy_labels(
@@ -407,7 +414,16 @@ func _draw_interactive_labels(current_hover_info: Dictionary):
 				settlement_coords_to_display.append(hovered_tile_coords)
 
 	# Determine Convoy Labels to Display (Selected then Hovered)
-	# STAGE 2: Determine Convoy Labels to Display (Selected then Hovered)
+	# Always include hovered convoy ID if present
+	if current_hover_info.get('type') == 'convoy':
+		var hovered_convoy_id_variant = current_hover_info.get('id')
+		if hovered_convoy_id_variant != null:
+			var hovered_convoy_id_as_string = str(hovered_convoy_id_variant)
+			if not hovered_convoy_id_as_string.is_empty():
+				if not convoy_ids_to_display.has(hovered_convoy_id_as_string):
+					convoy_ids_to_display.append(hovered_convoy_id_as_string)
+
+	# Also include selected convoys
 	if not _selected_convoy_ids_cache.is_empty():
 		for convoy_data in _all_convoy_data_cache:
 			if convoy_data is Dictionary:
@@ -416,15 +432,6 @@ func _draw_interactive_labels(current_hover_info: Dictionary):
 				if convoy_id != null and _selected_convoy_ids_cache.has(convoy_id_str):
 					if not convoy_ids_to_display.has(convoy_id_str):
 						convoy_ids_to_display.append(convoy_id_str)
-
-	# Ensure hovered convoy ID is added as a string
-	if current_hover_info.get('type') == 'convoy':
-		var hovered_convoy_id_variant = current_hover_info.get('id')
-		if hovered_convoy_id_variant != null:
-			var hovered_convoy_id_as_string = str(hovered_convoy_id_variant)
-			if not hovered_convoy_id_as_string.is_empty(): # Check after converting to string
-				if not convoy_ids_to_display.has(hovered_convoy_id_as_string):
-					convoy_ids_to_display.append(hovered_convoy_id_as_string)
 	# This part remains in UIManager or moves to a new SettlementLabelManager
 	for settlement_coord_to_draw in settlement_coords_to_display:
 		var settlement_coord_str = "%s_%s" % [settlement_coord_to_draw.x, settlement_coord_to_draw.y]

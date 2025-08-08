@@ -145,8 +145,6 @@ func get_active_convoy_panels_info() -> Array:
 			var convoy_data = _convoy_data_by_id_cache.get(convoy_id_str) # Use the local cache
 			if convoy_data: # Ensure data exists for the active panel
 				active_panels_info.append({"panel": panel_node, "convoy_data": convoy_data})
-			# else:
-				# printerr("ConvoyLabelManager (get_active_convoy_panels_info): Missing convoy_data for active panel ID: ", convoy_id_str)
 	return active_panels_info
 
 # --- Internal Helper Functions (moved from UIManager.gd) ---
@@ -229,15 +227,18 @@ func _update_convoy_panel_content(panel: Panel, convoy_data: Dictionary, p_convo
 	var top_speed: float = convoy_data.get('top_speed', 0.0)
 	var offroad_capability: float = convoy_data.get('offroad_capability', 0.0)
 	var convoy_name: String = convoy_data.get('convoy_name', 'N/A')
-	var journey_data: Dictionary = convoy_data.get('journey', {})
+	var raw_journey = convoy_data.get('journey')
+	var journey_data: Dictionary = {}
+	if raw_journey is Dictionary:
+		journey_data = raw_journey
 	var progress: float = journey_data.get('progress', 0.0)
 
 	var eta_raw_string: String = journey_data.get('eta', 'N/A')
-	var departure_raw_string_for_eta_format: String = journey_data.get('departure_time', 'N/A')
+	var _departure_raw_string_for_eta_format: String = journey_data.get('departure_time', 'N/A')
 	var formatted_eta: String = "N/A" # Default
-	if Engine.has_singleton("DateTimeUtils"):
-		formatted_eta = DateTimeUtils.format_eta_string(eta_raw_string, departure_raw_string_for_eta_format)
-	# else: printerr("ConvoyLabelManager: DateTimeUtils singleton not found for ETA formatting.") # Optional: log once
+	# Avoid static-on-instance warning; fall back to raw string if needed
+	if eta_raw_string != "N/A":
+		formatted_eta = str(eta_raw_string)
 
 	var progress_percentage_str: String = 'N/A'
 	var length: float = journey_data.get('length', 0.0)
@@ -273,10 +274,10 @@ func _update_convoy_panel_content(panel: Panel, convoy_data: Dictionary, p_convo
 	style_box.content_margin_right = current_panel_padding_h
 	style_box.content_margin_top = current_panel_padding_v
 	style_box.content_margin_bottom = current_panel_padding_v
-	style_box.corner_radius_top_left = current_panel_corner_radius
-	style_box.corner_radius_top_right = current_panel_corner_radius
-	style_box.corner_radius_bottom_left = current_panel_corner_radius
-	style_box.corner_radius_bottom_right = current_panel_corner_radius
+	style_box.corner_radius_top_left = floori(current_panel_corner_radius)
+	style_box.corner_radius_top_right = floori(current_panel_corner_radius)
+	style_box.corner_radius_bottom_left = floori(current_panel_corner_radius)
+	style_box.corner_radius_bottom_right = floori(current_panel_corner_radius)
 
 	label_node.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	label_node.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -307,6 +308,9 @@ func _position_convoy_panel(panel: Panel, convoy_data: Dictionary, existing_labe
 	var convoy_map_x: float = convoy_data.get('x', 0.0)
 	var convoy_map_y: float = convoy_data.get('y', 0.0)
 
+	# Diagnostic logging for convoy label placement
+	print("[ConvoyLabelManager] Placing label for convoy_id:", current_convoy_id_str, "x:", convoy_map_x, "y:", convoy_map_y)
+
 	# Horizontal Offset Calculation (in world units)
 	var base_offset_value: float
 	if p_selected_convoy_ids.has(current_convoy_id_str):
@@ -320,7 +324,7 @@ func _position_convoy_panel(panel: Panel, convoy_data: Dictionary, existing_labe
 	var panel_actual_size = panel.size
 	if panel_actual_size.x <= 0 or panel_actual_size.y <= 0:
 		panel_actual_size = panel.get_minimum_size()
-	
+		print("[ConvoyLabelManager] Panel size is zero for convoy_id:", current_convoy_id_str)
 	# Calculate convoy's center in local/world coordinates (relative to _convoy_label_container_ref's origin)
 	# These are based on the unscaled map texture's tile dimensions.
 	var convoy_center_local_x: float = (convoy_map_x + 0.5) * _cached_actual_tile_width_on_texture
@@ -330,14 +334,13 @@ func _position_convoy_panel(panel: Panel, convoy_data: Dictionary, existing_labe
 	var panel_desired_local_x = convoy_center_local_x + current_horizontal_offset_world
 	var panel_desired_local_y = convoy_center_local_y - (panel_actual_size.y / 2.0) # Vertically center panel against icon's y
 	var panel_desired_local_pos = Vector2(panel_desired_local_x, panel_desired_local_y)
-	# var initial_panel_pos = panel_desired_local_pos # Store before anti-collision. Debugging this might change.
+	print("[ConvoyLabelManager] Desired panel position for convoy_id:", current_convoy_id_str, panel_desired_local_pos)
 	panel.position = panel_desired_local_pos
-
 
 	# Apply user-defined position or anti-collision (all in local space of convoy_label_container)
 	if p_selected_convoy_ids.has(current_convoy_id_str) and p_convoy_label_user_positions.has(current_convoy_id_str):
 		panel.position = p_convoy_label_user_positions[current_convoy_id_str] # User positions are local
-	else:
+		print("[ConvoyLabelManager] Using user-defined position for convoy_id:", current_convoy_id_str, panel.position)
 		var current_panel_rect = Rect2(panel.position, panel_actual_size)
 		for _attempt in range(10): # Max attempts
 			var collides_with_existing: bool = false
@@ -402,6 +405,7 @@ func update_convoy_labels(
 	p_current_map_screen_rect_for_clamping: Rect2
 	# Style parameters are now member variables, set by initialize_style_settings
 ):
+
 	if not _ui_drawing_params_cached:
 		# print("ConvoyLabelManager (update_convoy_labels): Drawing parameters NOT cached. Bailing out.") # DEBUG
 		# Hide all active panels if drawing params are invalid, as positions would be wrong.
@@ -499,7 +503,7 @@ func update_convoy_labels(
 		drawn_convoy_ids_this_update.append(convoy_id_str_to_display)
 
 	# Hide panels that are no longer needed
-	var ids_to_remove_from_active: Array[String] = []
+	# var _ids_to_remove_from_active: Array[String] = [] # Keep for future cleanup logic if needed
 	for existing_id_str in _active_convoy_panels.keys():
 		if not drawn_convoy_ids_this_update.has(existing_id_str):
 			var panel_to_hide = _active_convoy_panels[existing_id_str]
@@ -507,8 +511,8 @@ func update_convoy_labels(
 				panel_to_hide.visible = false
 			# Optionally, if you want to fully remove panels not used for a while:
 			# panel_to_hide.queue_free()
-			# ids_to_remove_from_active.append(existing_id_str) 
-	# for id_to_remove in ids_to_remove_from_active:
+			# _ids_to_remove_from_active.append(existing_id_str) 
+	# for id_to_remove in _ids_to_remove_from_active:
 		# _active_convoy_panels.erase(id_to_remove)
 
 func _on_ui_scale_changed(new_scale: float):

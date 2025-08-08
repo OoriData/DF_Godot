@@ -28,6 +28,8 @@ signal convoy_menu_requested(convoy_data: Dictionary)
 # --- Node References (to be set by main.gd via initialize method) ---
 var map_display: TileMapLayer = null
 var ui_manager: Node = null # This will be the UIManagerNode instance
+var _sub_viewport: SubViewport = null
+var _map_texture_rect: TextureRect = null
 
 # --- Data References (to be set by main.gd via initialize method) ---
 var all_convoy_data: Array = []
@@ -77,10 +79,6 @@ var _current_map_screen_rect: Rect2 # The actual screen rect the map is displaye
 
 func _ready():
 	# The MapInteractionManager might not need to process input itself if main.gd forwards it.
-	# If it were to handle its own input (e.g., if it was a Control node covering the map),
-	# you would set_process_input(true) or set_process_unhandled_input(true) here.
-	# For now, we'll assume main.gd calls handle_input(event).
-	# set_process_input(true) # DISABLED - All camera input is now handled by MainScreen.gd
 	set_process(true) # Enable _process for the hover timer
 	if is_instance_valid(get_viewport()):
 		_current_map_screen_rect = get_viewport().get_visible_rect() # Initialize
@@ -108,6 +106,9 @@ func initialize(
 	_selected_convoy_ids = p_initial_selected_ids.duplicate(true)
 	_convoy_label_user_positions = p_initial_user_positions.duplicate(true)
 	camera = p_camera
+	_sub_viewport = p_sub_viewport
+	# Try to get the TextureRect that displays the SubViewport
+	_map_texture_rect = get_node_or_null("../MapContainer/MapDisplay")
 
 	if not is_instance_valid(map_display):
 		printerr("MapInteractionManager: TileMap is invalid after init!")
@@ -333,14 +334,44 @@ func _perform_hover_detection_only(event: InputEventMouseMotion):
 	if not (is_instance_valid(camera) and is_instance_valid(map_display)):
 		return
 
-	var mouse_world_pos = camera.get_canvas_transform().affine_inverse() * event.position
+	# Convert mouse position (main viewport) -> SubViewport screen -> SubViewport world
+	var new_hover_info: Dictionary = {}
+	var found_hover_element: bool = false
+
+	if not is_instance_valid(_sub_viewport) or not is_instance_valid(_map_texture_rect):
+		# Fallback to previous behavior (may be incorrect if SubViewport is used)
+		var mouse_world_pos_fallback = camera.get_canvas_transform().affine_inverse() * event.position
+		return _perform_hover_tests_at_world(mouse_world_pos_fallback)
+
+	var display_rect: Rect2 = _map_texture_rect.get_global_rect()
+	if not display_rect.has_point(event.global_position):
+		# Outside the map area -> clear hover if needed
+		if self._current_hover_info != new_hover_info:
+			self._current_hover_info = new_hover_info
+			emit_signal("hover_changed", self._current_hover_info)
+		return
+
+	# Position within the TextureRect (0..rect.size)
+	var local_in_display: Vector2 = event.global_position - display_rect.position
+	# Map to SubViewport pixel space
+	var sub_size: Vector2i = _sub_viewport.size
+	var sub_screen: Vector2 = Vector2(
+		(local_in_display.x / max(1.0, display_rect.size.x)) * float(sub_size.x),
+		(local_in_display.y / max(1.0, display_rect.size.y)) * float(sub_size.y)
+	)
+	# Convert SubViewport screen -> SubViewport world
+	var mouse_world_pos: Vector2 = camera.get_canvas_transform().affine_inverse() * sub_screen
+
+	_perform_hover_tests_at_world(mouse_world_pos)
+
+func _perform_hover_tests_at_world(mouse_world_pos: Vector2):
+	var new_hover_info: Dictionary = {}
+	var _found_hover_element: bool = false
+
 	# Get map bounds from TileMap
 	var tile_size = map_display.tile_set.tile_size
 	var actual_tile_width_on_world: float = tile_size.x
 	var actual_tile_height_on_world: float = tile_size.y
-
-	var new_hover_info: Dictionary = {}
-	var found_hover_element: bool = false
 
 	if map_tiles.is_empty() or not map_tiles[0] is Array or map_tiles[0].is_empty():
 		if self._current_hover_info != new_hover_info: # If it changed to empty
@@ -348,7 +379,6 @@ func _perform_hover_detection_only(event: InputEventMouseMotion):
 			emit_signal("hover_changed", self._current_hover_info)
 		return
 
-	# print("MIM:_perform_hover_detection_only - Tile world size: (%s, %s)" % [actual_tile_width_on_world, actual_tile_height_on_world]) # DEBUG
 	# 1. Check for Convoy Hover
 	if not all_convoy_data.is_empty():
 		for convoy_data_item in all_convoy_data:
@@ -362,18 +392,14 @@ func _perform_hover_detection_only(event: InputEventMouseMotion):
 				var convoy_center_world_y: float = (convoy_map_y + 0.5) * actual_tile_height_on_world
 				var dx = mouse_world_pos.x - convoy_center_world_x
 				var dy = mouse_world_pos.y - convoy_center_world_y
-				# If convoy_hover_radius_on_texture_sq is defined in texture pixels, and 1 texture pixel = 1 world unit,
-				# then this value is already in world_units_squared and should not be scaled by camera zoom.
-				# print("MIM:_perform_hover_detection_only - Convoy ID: %s, World Pos: (%s, %s), Dist Sq: %s, Radius Sq: %s" % [convoy_id_str, convoy_center_world_x, convoy_center_world_y, (dx*dx)+(dy*dy), convoy_hover_radius_on_texture_sq]) # DEBUG
-				if (dx * dx) + (dy * dy) < convoy_hover_radius_on_texture_sq: # Use exported variable
-					# print("MIM:_perform_hover_detection_only - HOVER DETECTED for Convoy ID: ", convoy_id_str) # DEBUG
+				if (dx * dx) + (dy * dy) < convoy_hover_radius_on_texture_sq:
 					new_hover_info = {'type': 'convoy', 'id': convoy_id_str}
-					found_hover_element = true
+					_found_hover_element = true
 					break
 
-	# 2. Check for Settlement Hover (if no convoy was hovered)
-	if not found_hover_element and not all_settlement_data.is_empty():
-		var closest_settlement_dist_sq: float = settlement_hover_radius_on_texture_sq + 1.0 # Use exported variable
+	# 2. Settlement Hover if none found
+	if not _found_hover_element and not all_settlement_data.is_empty():
+		var closest_settlement_dist_sq: float = settlement_hover_radius_on_texture_sq + 1.0
 		var best_hovered_settlement_coords: Vector2i = Vector2i(-1, -1)
 		for settlement_info_item in all_settlement_data:
 			if not settlement_info_item is Dictionary: continue
@@ -385,24 +411,16 @@ func _perform_hover_detection_only(event: InputEventMouseMotion):
 				var dx_settlement = mouse_world_pos.x - settlement_center_world_x
 				var dy_settlement = mouse_world_pos.y - settlement_center_world_y
 				var distance_sq_settlement = (dx_settlement * dx_settlement) + (dy_settlement * dy_settlement)
-				# If settlement_hover_radius_on_texture_sq is defined in texture pixels, and 1 texture pixel = 1 world unit,
-				# then this value is already in world_units_squared and should not be scaled by camera zoom.
-				# print("MIM:_perform_hover_detection_only - Settlement Coords: (%s, %s), World Pos: (%s, %s), Dist Sq: %s, Radius Sq: %s" % [settlement_tile_x, settlement_tile_y, settlement_center_world_x, settlement_center_world_y, distance_sq_settlement, settlement_hover_radius_on_texture_sq]) # DEBUG
-				if distance_sq_settlement < settlement_hover_radius_on_texture_sq:
-					if distance_sq_settlement < closest_settlement_dist_sq: # Use exported variable
-						# print("MIM:_perform_hover_detection_only - HOVER DETECTED for Settlement Coords: ", Vector2i(settlement_tile_x, settlement_tile_y)) # DEBUG
-						closest_settlement_dist_sq = distance_sq_settlement
-						best_hovered_settlement_coords = Vector2i(settlement_tile_x, settlement_tile_y)
-						found_hover_element = true
-		if found_hover_element and best_hovered_settlement_coords.x != -1:
+				if distance_sq_settlement < settlement_hover_radius_on_texture_sq and distance_sq_settlement < closest_settlement_dist_sq:
+					closest_settlement_dist_sq = distance_sq_settlement
+					best_hovered_settlement_coords = Vector2i(settlement_tile_x, settlement_tile_y)
+					_found_hover_element = true
+		if _found_hover_element and best_hovered_settlement_coords.x != -1:
 			new_hover_info = {'type': 'settlement', 'coords': best_hovered_settlement_coords}
 
-	# Update internal state and emit signal if hover changed
-	# print("MIM:_perform_hover_detection_only - New hover info before check: ", new_hover_info) # DEBUG
 	if new_hover_info != self._current_hover_info:
 		self._current_hover_info = new_hover_info
 		emit_signal("hover_changed", self._current_hover_info)
-		# print("MIM: Hover changed to: ", self._current_hover_info) # DEBUG
 
 
 func _handle_lmb_interactions(event: InputEventMouseButton, p_camera: Camera2D) -> bool: # Was _handle_mouse_button_interactions
@@ -415,7 +433,7 @@ func _handle_lmb_interactions(event: InputEventMouseButton, p_camera: Camera2D) 
 		# --- Check for Panel Drag Start ---
 		if is_instance_valid(ui_manager) and ui_manager.has_method("get_node_or_null") and is_instance_valid(ui_manager.convoy_label_container):
 			var convoy_label_container_node = ui_manager.convoy_label_container
-			for i in range(convoy_label_container_node.get_child_count() - 1, -1, -1):
+			for i in range(convoy_label_container_node.get_child_count() - 1, -1):
 				var node = convoy_label_container_node.get_child(i)
 				if node is Panel:
 					var panel_node_candidate: Panel = node
@@ -474,7 +492,18 @@ func _handle_lmb_interactions(event: InputEventMouseButton, p_camera: Camera2D) 
 			return true # Drag ended
 		else:
 			# --- Handle click on map elements (convoys/settlements) ---
-			var mouse_world_pos: Vector2 = p_camera.get_canvas_transform().affine_inverse() * event.global_position
+			var mouse_world_pos: Vector2
+			if is_instance_valid(_sub_viewport) and is_instance_valid(_map_texture_rect):
+				var display_rect: Rect2 = _map_texture_rect.get_global_rect()
+				var local_in_display: Vector2 = event.global_position - display_rect.position
+				var sub_size: Vector2i = _sub_viewport.size
+				var sub_screen: Vector2 = Vector2(
+					(local_in_display.x / max(1.0, display_rect.size.x)) * float(sub_size.x),
+					(local_in_display.y / max(1.0, display_rect.size.y)) * float(sub_size.y)
+				)
+				mouse_world_pos = camera.get_canvas_transform().affine_inverse() * sub_screen
+			else:
+				mouse_world_pos = p_camera.get_canvas_transform().affine_inverse() * event.global_position
 			var clicked_convoy_data = _get_convoy_data_at_world_pos(mouse_world_pos)
 
 			if clicked_convoy_data != null:
