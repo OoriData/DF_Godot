@@ -46,9 +46,9 @@ enum ControlScheme { MOUSE_AND_KEYBOARD, TOUCH }
 
 @export_group("Interaction Thresholds")
 ## The squared radius (in pixels on the map texture) for detecting hover over convoys. (e.g., 25*25 = 625).
-@export var convoy_hover_radius_on_texture_sq: float = 625.0 
+@export var convoy_hover_radius_on_texture_sq: float = 1600.0 # 40*40, was 25*25
 ## The squared radius (in pixels on the map texture) for detecting hover over settlements. (e.g., 20*20 = 400).
-@export var settlement_hover_radius_on_texture_sq: float = 400.0 
+@export var settlement_hover_radius_on_texture_sq: float = 900.0 # 30*30, was 20*20
 
 @export_group("UI Interaction")
 ## Padding from the viewport edges (in pixels) used to clamp draggable UI panels.
@@ -333,8 +333,7 @@ func _perform_hover_detection_only(event: InputEventMouseMotion):
 	if not (is_instance_valid(camera) and is_instance_valid(map_display)):
 		return
 
-	var mouse_world_pos = camera.get_canvas_transform().affine_inverse() * event.global_position
-
+	var mouse_world_pos = camera.get_canvas_transform().affine_inverse() * event.position
 	# Get map bounds from TileMap
 	var tile_size = map_display.tile_set.tile_size
 	var actual_tile_width_on_world: float = tile_size.x

@@ -88,7 +88,11 @@ const CONVOY_STAT_EMOJIS: Dictionary = {
 const SETTLEMENT_EMOJIS: Dictionary = {
 	'town': '🏘️',
 	'village': '🏠',
+	'city': '🏙️',
+	'city-state': '🏛️',
+	'dome': '🛖',
 	'military_base': '🪖',
+	'tutorial': '📘',
 }
 
 
@@ -549,14 +553,12 @@ func _position_settlement_panel(panel: Panel, settlement_info: Dictionary, _exis
 	var tile_y: int = settlement_info.get('y', -1)
 	if tile_x < 0 or tile_y < 0: return
 
-	# Get the local position of the tile center using TerrainTileMap
+	# Get the local position of the tile center using TerrainTileMap (SubViewport-local)
 	var tile_center = terrain_tilemap.map_to_local(Vector2i(tile_x, tile_y))
-	# Convert tile_center from SubViewport local space to global canvas coordinates
-	var global_tile_center = terrain_tilemap.to_global(tile_center)
 	var current_settlement_offset_above_center: float = base_settlement_offset_above_tile_center
-	# Position label above the tile center
-	var panel_desired_x = global_tile_center.x - (panel.size.x / 2.0)
-	var panel_desired_y = global_tile_center.y - panel.size.y - current_settlement_offset_above_center
+	# Position label above the tile center, centered horizontally
+	var panel_desired_x = tile_center.x - (panel.size.x / 2.0)
+	var panel_desired_y = tile_center.y - panel.size.y - current_settlement_offset_above_center
 	panel.position = Vector2(panel_desired_x, panel_desired_y)
 
 

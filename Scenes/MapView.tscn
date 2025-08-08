@@ -24,10 +24,10 @@ script = ExtResource("1_qf4ax")
 
 [node name="UIManager" type="CanvasLayer" parent="." node_paths=PackedStringArray("settlement_label_container", "convoy_connector_lines_container", "convoy_label_container", "convoy_label_manager", "terrain_tilemap")]
 script = ExtResource("9_g243h")
-settlement_label_container = NodePath("../MapContainer/SettlementLabelContainer")
-convoy_connector_lines_container = NodePath("../MapContainer/ConvoyConnectorLinesContainer")
-convoy_label_container = NodePath("../MapContainer/ConvoyLabelContainer")
-convoy_label_manager = NodePath("../MapContainer/ConvoyLabelContainer")
+settlement_label_container = NodePath("../MapContainer/SubViewport/SettlementLabelContainer")
+convoy_connector_lines_container = NodePath("../MapContainer/SubViewport/ConvoyConnectorLinesContainer")
+convoy_label_container = NodePath("../MapContainer/SubViewport/ConvoyLabelContainer")
+convoy_label_manager = NodePath("../MapContainer/SubViewport/ConvoyLabelContainer")
 terrain_tilemap = NodePath("../MapContainer/SubViewport/TerrainTileMap")
 
 [node name="MapContainer" type="Node2D" parent="."]
@@ -39,13 +39,6 @@ texture = SubResource("ViewportTexture_k7gy6")
 stretch_mode = 5
 metadata/_edit_use_anchors_ = true
 
-[node name="SettlementLabelContainer" type="Node2D" parent="MapContainer"]
-
-[node name="ConvoyLabelContainer" type="Node2D" parent="MapContainer"]
-script = ExtResource("3_t5xx3")
-
-[node name="ConvoyConnectorLinesContainer" type="Node2D" parent="MapContainer"]
-
 [node name="SubViewport" type="SubViewport" parent="MapContainer"]
 size = Vector2i(2650, 1790)
 
@@ -53,6 +46,13 @@ size = Vector2i(2650, 1790)
 tile_set = ExtResource("3_vvi3b")
 
 [node name="MapCamera" type="Camera2D" parent="MapContainer/SubViewport"]
+
+[node name="SettlementLabelContainer" type="Node2D" parent="MapContainer/SubViewport"]
+
+[node name="ConvoyLabelContainer" type="Node2D" parent="MapContainer/SubViewport"]
+script = ExtResource("3_t5xx3")
+
+[node name="ConvoyConnectorLinesContainer" type="Node2D" parent="MapContainer/SubViewport"]
 
 [node name="MapInteractionManager" type="Node" parent="."]
 script = ExtResource("4_b4rp0")
