@@ -18,37 +18,35 @@ var settlement_label_settings: LabelSettings
 # --- UI Constants (copied and consolidated from main.gd) ---
 @export_group("Font Scaling")
 ## Target screen font size for convoy titles (if font_render_scale and map_zoom are 1.0). Adjust for desired on-screen readability. (Prev: 12)
-@export var base_convoy_title_font_size: int = 15 # 12 * 1.25
-## Target screen font size for settlement labels (if font_render_scale and map_zoom are 1.0). Adjust for desired on-screen readability. (Prev: 10)
-@export var base_settlement_font_size: int = 13 # 10 * 1.25 = 12.5, rounded to 13
+@export var base_convoy_title_font_size: int = 29 # 22 * 1.33
+@export var base_settlement_font_size: int = 24 # 18 * 1.33
 ## Minimum font size to set on the Label node.
 @export var min_node_font_size: int = 8
 ## Maximum font size to set on the Label node.
 @export var max_node_font_size: int = 120 # Increased from 60
 ## The map tile size that font scaling is based on. Should ideally match map_render's base_tile_size_for_proportions.
-@export var font_scaling_base_tile_size: float = 24.0 
+@export var font_scaling_base_tile_size: float = 32.0 # 24 * 1.33
 ## Exponent for font scaling (1.0 = linear, <1.0 less aggressive shrink/grow).
 @export var font_scaling_exponent: float = 0.6 
 
 @export_group("Label Offsets")
 ## Base horizontal offset from the convoy's center for its label panel. Scaled.
-@export var base_horizontal_label_offset_from_center: float = 15.0 
+@export var base_horizontal_label_offset_from_center: float = 20.0 # 15 * 1.33
 ## Base horizontal offset for selected convoy label panels. Scaled.
-@export var base_selected_convoy_horizontal_offset: float = 60.0 
+@export var base_selected_convoy_horizontal_offset: float = 80.0 # 60 * 1.33
 ## Base vertical offset above the settlement's tile center for its label panel. Scaled.
-@export var base_settlement_offset_above_tile_center: float = 10.0 
+@export var base_settlement_offset_above_tile_center: float = 13.0 # 10 * 1.33
 
 @export_group("Convoy Panel Appearance")
 ## Target screen corner radius for convoy label panels. Adjust for desired on-screen look. (Prev: 4.0)
-@export var base_convoy_panel_corner_radius: float = 5.0 # 4.0 * 1.25
+@export var base_convoy_panel_corner_radius: float = 6.65 # 5.0 * 1.33
 ## Target screen horizontal padding inside convoy label panels. Adjust for desired on-screen look. (Prev: 4.0)
-@export var base_convoy_panel_padding_h: float = 5.0 # 4.0 * 1.25
-## Target screen vertical padding inside convoy label panels. Adjust for desired on-screen look. (Prev: 2.0)
-@export var base_convoy_panel_padding_v: float = 2.5 # 2.0 * 1.25
+@export var base_convoy_panel_padding_h: float = 13.3 # 10.0 * 1.33
+@export var base_convoy_panel_padding_v: float = 6.65 # 5.0 * 1.33
 ## Background color for convoy label panels.
 @export var convoy_panel_background_color: Color = Color(0.12, 0.12, 0.15, 0.88) 
 ## Target screen border width for convoy label panels. Adjust for desired on-screen look. (Prev: 1.0)
-@export var base_convoy_panel_border_width: float = 1.25 # 1.0 * 1.25
+@export var base_convoy_panel_border_width: float = 1.66 # 1.25 * 1.33
 ## Minimum corner radius to set on the panel node.
 @export var min_node_panel_corner_radius: float = 1.0
 ## Maximum corner radius to set on the panel node.
@@ -64,11 +62,11 @@ var settlement_label_settings: LabelSettings
 
 @export_group("Settlement Panel Appearance")
 ## Target screen corner radius for settlement label panels. Adjust for desired on-screen look. (Prev: 3.0)
-@export var base_settlement_panel_corner_radius: float = 3.75 # 3.0 * 1.25
+@export var base_settlement_panel_corner_radius: float = 4.99 # 3.75 * 1.33
 ## Target screen horizontal padding inside settlement label panels. Adjust for desired on-screen look. (Prev: 3.0)
-@export var base_settlement_panel_padding_h: float = 3.75 # 3.0 * 1.25
+@export var base_settlement_panel_padding_h: float = 4.99 # 3.75 * 1.33
 ## Target screen vertical padding inside settlement label panels. Adjust for desired on-screen look. (Prev: 2.0)
-@export var base_settlement_panel_padding_v: float = 2.5 # 2.0 * 1.25
+@export var base_settlement_panel_padding_v: float = 3.33 # 2.5 * 1.33
 ## Background color for settlement label panels.
 @export var settlement_panel_background_color: Color = Color(0.15, 0.12, 0.12, 0.85) 
 
@@ -101,7 +99,7 @@ const SETTLEMENT_EMOJIS: Dictionary = {
 ## Color for lines connecting convoy icons to their label panels.
 @export var connector_line_color: Color = Color(0.9, 0.9, 0.9, 0.6) 
 ## Width of the connector lines.
-@export var connector_line_width: float = 1.5 
+@export var connector_line_width: float = 2.0 # 1.5 * 1.33
 
 # --- State managed by UIManager ---
 var _dragging_panel_node: Panel = null
@@ -126,7 +124,6 @@ const LABEL_CONTAINER_Z_INDEX = 2
 
 func _ready():
 	await get_tree().process_frame
-
 
 	print("[DIAG] UIManager _ready: Checking node assignments...")
 	print("  settlement_label_container valid:", is_instance_valid(settlement_label_container))
@@ -172,13 +169,22 @@ func _ready():
 	settlement_label_settings.outline_size = 3
 	settlement_label_settings.outline_color = Color.BLACK
 
+	# Ensure a valid Font is assigned to both LabelSettings to avoid "font is NOT VALID" errors.
+	var fallback_font: Font = load("res://Assets/Roboto-VariableFont_wdth,wght.ttf")
+	if not is_instance_valid(fallback_font):
+		fallback_font = ThemeDB.fallback_font
+	if is_instance_valid(fallback_font):
+		if fallback_font is FontFile:
+			(fallback_font as FontFile).oversampling = 2.0
+		label_settings.font = fallback_font
+		settlement_label_settings.font = fallback_font
+
 	_current_map_screen_rect_for_clamping = get_viewport().get_visible_rect() # Initialize
 
 	# Programmatically assign the convoy_label_container to the ConvoyLabelManager
 	if is_instance_valid(convoy_label_manager) and convoy_label_manager.has_method("set_convoy_label_container"):
 		if is_instance_valid(convoy_label_container):
 			convoy_label_manager.set_convoy_label_container(convoy_label_container)
-		# The generic dependency check at the top of _ready() already covers the case where convoy_label_container is invalid.
 
 	# Add a reference to GameDataManager
 	var gdm: Node = null
@@ -200,10 +206,12 @@ func _ready():
 			printerr("UIManager: TerrainTileMap node not found at path: ", tilemap_path)
 
 	# Connect to the new UIScaleManager to react to global scale changes.
-	# This manager will be the single source of truth for the UI scale setting.
-	if Engine.has_singleton("ui_scale_manager"):
-		ui_overall_scale_multiplier = ui_scale_manager.get_global_ui_scale()
-		ui_scale_manager.scale_changed.connect(_on_ui_scale_changed)
+	# Autoloads are nodes under /root; don't use Engine.has_singleton for them.
+	var sm = get_node_or_null("/root/ui_scale_manager")
+	if is_instance_valid(sm):
+		if sm.has_method("get_global_ui_scale"):
+			ui_overall_scale_multiplier = sm.get_global_ui_scale()
+		sm.scale_changed.connect(_on_ui_scale_changed)
 	else:
 		printerr("UIManager: ui_scale_manager singleton not found. UI scaling will not be dynamic.")
 
@@ -519,10 +527,27 @@ func _update_settlement_panel_content(panel: Panel, settlement_info: Dictionary)
 	var style_box: StyleBoxFlat = panel.get_meta("style_box_ref")
 	if not is_instance_valid(label_node) or not is_instance_valid(style_box): return
 	# Font size and panel sizing use only exported variables and ui_overall_scale_multiplier
-	var current_settlement_font_size: int = clamp(roundi(base_settlement_font_size * ui_overall_scale_multiplier), min_node_font_size, max_node_font_size)
-	var current_settlement_panel_corner_radius: float = clamp(base_settlement_panel_corner_radius * ui_overall_scale_multiplier, min_node_panel_corner_radius, max_node_panel_corner_radius)
-	var current_settlement_panel_padding_h: float = clamp(base_settlement_panel_padding_h * ui_overall_scale_multiplier, min_node_panel_padding, max_node_panel_padding)
-	var current_settlement_panel_padding_v: float = clamp(base_settlement_panel_padding_v * ui_overall_scale_multiplier, min_node_panel_padding, max_node_panel_padding)
+	var current_settlement_font_size: int = clamp(
+		roundi((base_settlement_font_size * ui_overall_scale_multiplier) / max(0.0001, _current_map_zoom_cache)),
+		min_node_font_size,
+		max_node_font_size
+	)
+	# Scale panel visuals inversely with zoom so the box scales along with the text
+	var current_settlement_panel_corner_radius: float = clamp(
+		(base_settlement_panel_corner_radius * ui_overall_scale_multiplier) / max(0.0001, _current_map_zoom_cache),
+		min_node_panel_corner_radius,
+		max_node_panel_corner_radius
+	)
+	var current_settlement_panel_padding_h: float = clamp(
+		(base_settlement_panel_padding_h * ui_overall_scale_multiplier) / max(0.0001, _current_map_zoom_cache),
+		min_node_panel_padding,
+		max_node_panel_padding
+	)
+	var current_settlement_panel_padding_v: float = clamp(
+		(base_settlement_panel_padding_v * ui_overall_scale_multiplier) / max(0.0001, _current_map_zoom_cache),
+		min_node_panel_padding,
+		max_node_panel_padding
+	)
 	var settlement_name_local: String = settlement_info.get('name', 'N/A')
 	if settlement_name_local == 'N/A': return
 	if not is_instance_valid(settlement_label_settings.font):
@@ -551,6 +576,7 @@ func _update_settlement_panel_content(panel: Panel, settlement_info: Dictionary)
 		label_actual_min_size.y + stylebox_margins.y
 	)
 	panel.update_minimum_size()
+	panel.reset_size()
 
 func _position_settlement_panel(panel: Panel, settlement_info: Dictionary, _existing_label_rects: Array[Rect2]):
 	# For settlements, anti-collision is often less critical or handled differently (e.g., fewer labels shown at once).

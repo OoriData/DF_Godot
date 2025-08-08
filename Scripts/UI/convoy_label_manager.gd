@@ -30,24 +30,24 @@ var _cached_offset_y: float = 0.0
 var _ui_drawing_params_cached: bool = false # Flag indicating if cache params are valid
 
 # Panel styling parameters
-var _base_convoy_panel_corner_radius: float = 4.0
+var _base_convoy_panel_corner_radius: float = 8.0 # 4.0 * 2.0
 var _min_node_panel_corner_radius: float = 0.0
-var _max_node_panel_corner_radius: float = 20.0
+var _max_node_panel_corner_radius: float = 40.0 # 20.0 * 2.0
 
-var _base_convoy_panel_padding_h: float = 4.0
-var _base_convoy_panel_padding_v: float = 2.0
+var _base_convoy_panel_padding_h: float = 8.0 # 4.0 * 2.0
+var _base_convoy_panel_padding_v: float = 4.0 # 2.0 * 2.0
 var _min_node_panel_padding: float = 0.0
-var _max_node_panel_padding: float = 20.0
+var _max_node_panel_padding: float = 40.0 # 20.0 * 2.0
 
-var _base_convoy_panel_border_width: float = 1.0 # Base value for scaling
+var _base_convoy_panel_border_width: float = 2.0 # 1.0 * 2.0
 var _min_node_panel_border_width: int = 0 # Min clamp for border width
 # _max_node_panel_border_width is already declared above
 
 var _convoy_panel_background_color: Color = Color(0.1, 0.1, 0.1, 0.75)
 
 # Label positioning parameters
-var _base_selected_convoy_horizontal_offset: float = 20.0
-var _base_horizontal_label_offset_from_center: float = 10.0
+var _base_selected_convoy_horizontal_offset: float = 40.0 # 20.0 * 2.0
+var _base_horizontal_label_offset_from_center: float = 20.0 # 10.0 * 2.0
 var _label_map_edge_padding: float = 2.0
 var _label_anti_collision_y_shift: float = 5.0
 
@@ -62,11 +62,13 @@ func set_convoy_label_container(p_container: Node2D):
 		_convoy_label_container_ref.visible = true # Set visibility when a valid container is assigned
 
 func _ready():
-	# Connect to the UIScaleManager to react to global scale changes.
-	if Engine.has_singleton("ui_scale_manager"):
-		# The initial value will be set by UIManager via initialize_font_settings,
-		# but we connect here to listen for any subsequent changes.
-		ui_scale_manager.scale_changed.connect(_on_ui_scale_changed)
+	# Connect to the UIScaleManager (autoloads live under /root, not Engine singletons)
+	var sm = get_node_or_null("/root/ui_scale_manager")
+	if is_instance_valid(sm):
+		# Initialize with current scale and listen for changes
+		if sm.has_method("get_global_ui_scale"):
+			_ui_overall_scale_multiplier = sm.get_global_ui_scale()
+		sm.scale_changed.connect(_on_ui_scale_changed)
 	else:
 		printerr("ConvoyLabelManager: ui_scale_manager singleton not found. UI scaling will not be dynamic.")
 
@@ -78,12 +80,13 @@ func initialize_font_settings(p_theme_font: Font, p_label_settings: LabelSetting
 	_label_settings_ref = p_label_settings # UIManager still owns this, we just use it
 	if is_instance_valid(_label_settings_ref):
 		_label_settings_ref.font = p_theme_font
+	# Double base font size
 	_ui_overall_scale_multiplier = p_ui_scale
 	_font_scaling_base_tile_size = p_font_base_tile_size
-	_base_convoy_title_font_size_ref = p_base_convoy_title_fs
+	_base_convoy_title_font_size_ref = int(p_base_convoy_title_fs * 2.0)
 	_font_scaling_exponent = p_font_exponent
 	_min_node_font_size = p_min_font
-	_max_node_font_size = p_max_font
+	_max_node_font_size = int(p_max_font * 2.0)
 
 	_CONVOY_STAT_EMOJIS_ref = p_convoy_stat_emojis
 
@@ -294,6 +297,7 @@ func _update_convoy_panel_content(panel: Panel, convoy_data: Dictionary, p_convo
 	# print("ConvoyLabelManager (_update_convoy_panel_content) for %s: FontSz: %s, LabelMinSize: %s, PanelCustomMinSize: %s" % [panel.name, current_convoy_title_font_size, label_actual_min_size, panel.custom_minimum_size]) # DEBUG
 
 	panel.update_minimum_size() # Notify panel to update its own minimum size based on custom_minimum_size
+	panel.reset_size() # Ensure the Control actually applies the new minimum size when not inside a Container
 
 
 func _position_convoy_panel(panel: Panel, convoy_data: Dictionary, existing_label_rects: Array[Rect2], 

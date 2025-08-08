@@ -9,7 +9,7 @@ const BASE_RESOLUTION = Vector2(1920, 1080)
 signal scale_changed(new_scale)
 
 
-var _global_ui_scale: float = 1.0
+var _global_ui_scale: float = 1.4
 
 ## The global multiplier for all UI elements. 1.0 is default.
 func get_global_ui_scale() -> float:
