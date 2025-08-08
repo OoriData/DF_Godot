@@ -1,4 +1,3 @@
-
 class_name MapCameraController
 extends Node
 
@@ -117,23 +116,23 @@ func _update_camera_limits():
 
 
 	# Allow camera center to reach the edge of the map, but not beyond
-	var min_x = map_world_bounds.position.x
-	var max_x = map_world_bounds.end.x
-	var min_y = map_world_bounds.position.y
-	var max_y = map_world_bounds.end.y
+	var _min_x = map_world_bounds.position.x
+	var _max_x = map_world_bounds.end.x
+	var _min_y = map_world_bounds.position.y
+	var _max_y = map_world_bounds.end.y
 
 	# If the map is smaller than the viewport, center the camera
 	if camera_view_rect.size.x >= map_world_bounds.size.x:
-		min_x = map_world_bounds.get_center().x
-		max_x = map_world_bounds.get_center().x
+		_min_x = map_world_bounds.get_center().x
+		_max_x = map_world_bounds.get_center().x
 	if camera_view_rect.size.y >= map_world_bounds.size.y:
-		min_y = map_world_bounds.get_center().y
-		max_y = map_world_bounds.get_center().y
+		_min_y = map_world_bounds.get_center().y
+		_max_y = map_world_bounds.get_center().y
 
-	# camera_node.limit_left = int(round(min_x))
-	# camera_node.limit_right = int(round(max_x))
-	# camera_node.limit_top = int(round(min_y))
-	# camera_node.limit_bottom = int(round(max_y))
+	# camera_node.limit_left = int(round(_min_x))
+	# camera_node.limit_right = int(round(_max_x))
+	# camera_node.limit_top = int(round(_min_y))
+	# camera_node.limit_bottom = int(round(_max_y))
 
 	print("[DEBUG] camera limits: left=", camera_node.limit_left, 
 		  ", right=", camera_node.limit_right, 
@@ -213,3 +212,59 @@ func fit_camera_to_tilemap():
 
 func get_current_zoom() -> float:
 	return camera_node.zoom.x if is_instance_valid(camera_node) else 1.0
+
+# --- NEW: Camera focusing helpers ---
+func focus_on_world_pos(world_pos: Vector2):
+	if not is_instance_valid(camera_node):
+		return
+	camera_node.position = world_pos
+	_clamp_camera_position()
+
+func focus_on_tile(tile: Vector2i):
+	var pos := Vector2.ZERO
+	if is_instance_valid(tilemap_ref):
+		pos = tilemap_ref.map_to_local(tile)
+	else:
+		pos = Vector2(tile.x * 16, tile.y * 16)
+	focus_on_world_pos(pos)
+
+func get_convoy_world_position(convoy_data: Dictionary) -> Vector2:
+	if convoy_data.is_empty():
+		return camera_node.position if is_instance_valid(camera_node) else Vector2.ZERO
+	# Prefer journey interpolation if available
+	var final_pixel_pos := Vector2.ZERO
+	var raw_journey = convoy_data.get("journey")
+	var journey_data: Dictionary = {}
+	if raw_journey is Dictionary:
+		journey_data = raw_journey
+	var route_x: Array = journey_data.get("route_x", [])
+	var route_y: Array = journey_data.get("route_y", [])
+	var current_segment_idx: int = convoy_data.get("_current_segment_start_idx", -1)
+	var progress_in_segment: float = convoy_data.get("_progress_in_segment", 0.0)
+
+	if current_segment_idx != -1 and \
+		route_x.size() > current_segment_idx and route_y.size() > current_segment_idx:
+		var start_tile := Vector2i(int(route_x[current_segment_idx]), int(route_y[current_segment_idx]))
+		var end_tile := start_tile
+		if route_x.size() > current_segment_idx + 1 and route_y.size() > current_segment_idx + 1:
+			end_tile = Vector2i(int(route_x[current_segment_idx + 1]), int(route_y[current_segment_idx + 1]))
+		if is_instance_valid(tilemap_ref):
+			var p_start_pixel = tilemap_ref.map_to_local(start_tile)
+			var p_end_pixel = tilemap_ref.map_to_local(end_tile)
+			final_pixel_pos = p_start_pixel.lerp(p_end_pixel, clamp(progress_in_segment, 0.0, 1.0))
+		else:
+			final_pixel_pos = Vector2(start_tile) * 16.0
+	else:
+		# Fallback to top-level x/y as tile coords
+		var map_x: float = convoy_data.get("x", 0.0)
+		var map_y: float = convoy_data.get("y", 0.0)
+		var tile := Vector2i(int(map_x), int(map_y))
+		if is_instance_valid(tilemap_ref):
+			final_pixel_pos = tilemap_ref.map_to_local(tile)
+		else:
+			final_pixel_pos = Vector2(tile) * 16.0
+	return final_pixel_pos
+
+func focus_on_convoy(convoy_data: Dictionary):
+	var pos = get_convoy_world_position(convoy_data)
+	focus_on_world_pos(pos)

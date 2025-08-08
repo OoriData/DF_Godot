@@ -28,6 +28,8 @@ signal menu_closed(menu_node_was_active, menu_type: String)
 
 ## NEW SIGNAL as per new plan. Emitted when menu visibility changes.
 signal menu_visibility_changed(is_open: bool, menu_name: String)
+## NEW: Emitted with convoy_data when opening a convoy-related menu.
+signal convoy_menu_focus_requested(convoy_data: Dictionary)
 
 func register_menu_container(container: Control):
 	_menu_container_host = container
@@ -205,13 +207,18 @@ func _show_menu(menu_scene_resource, data_to_pass = null, add_to_stack: bool = t
 	# --- DIAGNOSTIC TEST: Force all menu layers to ignore input ---
 	# A menu is now active. This manager will now intercept all clicks.
 	# mouse_filter = MOUSE_FILTER_STOP
-	self.mouse_filter = MOUSE_FILTER_IGNORE
+	self.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	if is_instance_valid(current_active_menu):
 		current_active_menu.mouse_filter = MOUSE_FILTER_IGNORE
 	# --- END DIAGNOSTIC TEST ---
 
 	self.z_index = MENU_MANAGER_ACTIVE_Z_INDEX
 	emit_signal("menu_opened", current_active_menu, menu_type)
+
+	# NEW: emit focus request with convoy data if present
+	var menu_data_for_focus: Variant = current_active_menu.get_meta("menu_data", null)
+	if menu_data_for_focus is Dictionary and not (menu_data_for_focus as Dictionary).is_empty():
+		emit_signal("convoy_menu_focus_requested", menu_data_for_focus)
 
 	if current_active_menu.has_signal("back_requested"):
 		current_active_menu.back_requested.connect(go_back, CONNECT_ONE_SHOT)

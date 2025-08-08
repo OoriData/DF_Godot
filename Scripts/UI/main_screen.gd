@@ -56,6 +56,9 @@ func _ready():
 		if not menu_manager.is_connected("menu_visibility_changed", Callable(self, "_on_menu_visibility_changed")):
 			menu_manager.connect("menu_visibility_changed", Callable(self, "_on_menu_visibility_changed"))
 			# print("[MainScreen] Successfully connected to MenuManager's menu_visibility_changed signal.")
+		# Listen for convoy focus requests with data
+		if not menu_manager.is_connected("convoy_menu_focus_requested", Callable(self, "_on_convoy_menu_focus_requested")):
+			menu_manager.connect("convoy_menu_focus_requested", Callable(self, "_on_convoy_menu_focus_requested"))
 	else:
 		printerr("MainScreen: CRITICAL - Could not find MenuManager at /root/MenuManager. Camera adjustments will not work.")
 
@@ -95,9 +98,13 @@ func force_camera_update():
 func _update_camera_viewport_rect_on_resize():
 	if is_instance_valid(map_view) and is_instance_valid(map_camera_controller) and map_camera_controller.has_method("update_map_viewport_rect"):
 		var map_rect = map_view.get_global_rect()
-		# print("[DFCAM-DEBUG] MainScreen: Window or MapView resized, updating camera viewport rect=", map_rect)
 		map_camera_controller.update_map_viewport_rect(map_rect)
-		if map_camera_controller.has_method("fit_camera_to_tilemap"):
+		# Only fit to full map when no menu is open, to avoid overriding convoy focus
+		var menu_manager = get_node_or_null("/root/MenuManager")
+		var menu_open = false
+		if is_instance_valid(menu_manager) and menu_manager.has_method("is_any_menu_active"):
+			menu_open = menu_manager.is_any_menu_active()
+		if not menu_open and map_camera_controller.has_method("fit_camera_to_tilemap"):
 			map_camera_controller.fit_camera_to_tilemap()
 
 
@@ -214,8 +221,20 @@ func _on_menu_visibility_changed(is_open: bool, _menu_name: String):
 		var map_rect = map_view.get_global_rect()
 		# print("[DFCAM-DEBUG] MainScreen: Notifying camera of new viewport rect=", map_rect)
 		map_camera_controller.update_map_viewport_rect(map_rect)
-		if map_camera_controller.has_method("fit_camera_to_tilemap"):
-			map_camera_controller.fit_camera_to_tilemap()
+
+		if is_open:
+			# Focus on the convoy associated with the active menu
+			var menu_manager = get_node_or_null("/root/MenuManager")
+			if is_instance_valid(menu_manager):
+				var active_menu = menu_manager.get("current_active_menu") if menu_manager.has_method("get") else null
+				if active_menu and active_menu.has_meta("menu_data"):
+					var convoy_data = active_menu.get_meta("menu_data")
+					if convoy_data and map_camera_controller.has_method("focus_on_convoy"):
+						map_camera_controller.focus_on_convoy(convoy_data)
+		else:
+			# When closing menus, re-fit to the full tilemap
+			if map_camera_controller.has_method("fit_camera_to_tilemap"):
+				map_camera_controller.fit_camera_to_tilemap()
 	# else:
 	# 	printerr("[DFCAM-DEBUG] MainScreen: Could not find MapCameraController or it lacks update_map_viewport_rect method.")
 
@@ -223,6 +242,14 @@ func _on_menu_visibility_changed(is_open: bool, _menu_name: String):
 	# (Removed call to _fit_camera_to_map() to fix parser error)
 	# if _map_ready_for_focus and not _has_fitted_camera:
 	#     _fit_camera_to_map()
+
+
+# Called when the menu asks specifically to focus on a convoy (with data)
+func _on_convoy_menu_focus_requested(convoy_data: Dictionary):
+	# Ensure layout has settled and camera sees final rect
+	await get_tree().process_frame
+	if is_instance_valid(map_camera_controller) and map_camera_controller.has_method("focus_on_convoy"):
+		map_camera_controller.focus_on_convoy(convoy_data)
 
 
 # Called when the map_ready_for_focus signal is emitted from main.gd
