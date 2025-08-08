@@ -212,7 +212,7 @@ func _on_map_data_loaded(p_map_tiles: Array):
 			  " transform:", terrain_tilemap.transform)
 	if is_instance_valid(sub_viewport):
 		# SubViewport: print only valid property 'size'
-		print("[DEBUG] sub_viewport size:", sub_viewport.size)
+		print("[DEBUG] sub_view_port size:", sub_viewport.size)
 	if is_instance_valid(map_display):
 		print("[DEBUG] map_display position:", map_display.position, " size:", map_display.size)
 
@@ -261,7 +261,7 @@ func _on_hover_changed(hover_info: Dictionary):
 func _on_convoy_menu_requested(convoy_data: Dictionary):
 	var menu_manager = get_node_or_null("/root/MenuManager")
 	if menu_manager:
-		menu_manager.open_convoy_menu_with_data(convoy_data)
+		menu_manager.request_convoy_menu(convoy_data)
 	else:
 		printerr("Main: Could not find MenuManager to open convoy menu.")
 

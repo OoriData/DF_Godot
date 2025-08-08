@@ -140,6 +140,10 @@ func initialize(
 	else:
 		printerr("MapInteractionManager: Camera node is invalid in initialize.")
 
+func _on_map_camera_controller_zoom_changed(new_zoom_level: float) -> void:
+	# This function is called when the camera zoom changes. You can add logic here if needed.
+	# For now, just emit the signal for compatibility.
+	emit_signal("camera_zoom_changed", new_zoom_level)
 	# --- DIAGNOSTICS: Print visibility state of all relevant map nodes (after assignment) ---
 	var map_display_vis = "N/A"
 	if is_instance_valid(map_display) and map_display.has_method("is_visible_in_tree"):
@@ -260,7 +264,7 @@ func _handle_touch_input(event: InputEvent):
 		if event.pressed:
 			# Only track the touch index for potential tap, not for panning.
 			# Panning is handled by InputEventPanGesture.
-			if _pan_touch_index == -1: 
+			if _pan_touch_index == -1:
 				_pan_touch_index = event.index
 				# _is_camera_panning = false # Ensure this is not set for single touch
 				get_viewport().set_input_as_handled()
@@ -271,7 +275,7 @@ func _handle_touch_input(event: InputEvent):
 				get_viewport().set_input_as_handled()
 				# Check if it was a "tap" (short press, little movement)
 				# For simplicity, we'll assume any touch release not part of a PanGesture could be a tap.
-				_handle_tap_interaction(event.position) # Example: handle tap for selection
+				_handle_tap_interaction(event.position) # Handle tap for selection
 		return # Consumed
 
 	if event is InputEventScreenDrag and event.index == _pan_touch_index:
@@ -291,7 +295,11 @@ func _handle_touch_input(event: InputEvent):
 	# For example, detecting a drag start on a panel with touch.
 	# The _handle_tap_interaction above handles map element clicks.
 
- # Add boolean return type
+func _handle_tap_interaction(_position: Vector2) -> void:
+	# Stub for touch tap interaction. Add selection or menu logic here if needed.
+	pass
+
+# Add boolean return type
 func _handle_panel_drag_motion_only(event: InputEventMouseMotion) -> bool:
 	"""Handles ONLY the panel dragging motion part. Called directly from _unhandled_input."""
 	if is_instance_valid(_dragging_panel_node) and (event.button_mask & MOUSE_BUTTON_MASK_LEFT):
@@ -336,7 +344,7 @@ func _perform_hover_detection_only(event: InputEventMouseMotion):
 
 	# Convert mouse position (main viewport) -> SubViewport screen -> SubViewport world
 	var new_hover_info: Dictionary = {}
-	var found_hover_element: bool = false
+	var _found_hover_element_unused: bool = false
 
 	if not is_instance_valid(_sub_viewport) or not is_instance_valid(_map_texture_rect):
 		# Fallback to previous behavior (may be incorrect if SubViewport is used)
@@ -387,13 +395,13 @@ func _perform_hover_tests_at_world(mouse_world_pos: Vector2):
 			var convoy_map_y: float = convoy_data_item.get('y', -1.0)
 			var convoy_id_val = convoy_data_item.get('convoy_id')
 			if convoy_map_x >= 0.0 and convoy_map_y >= 0.0 and convoy_id_val != null:
-				var convoy_id_str = str(convoy_id_val)
+				var _convoy_id_str = str(convoy_id_val)
 				var convoy_center_world_x: float = (convoy_map_x + 0.5) * actual_tile_width_on_world
 				var convoy_center_world_y: float = (convoy_map_y + 0.5) * actual_tile_height_on_world
 				var dx = mouse_world_pos.x - convoy_center_world_x
 				var dy = mouse_world_pos.y - convoy_center_world_y
 				if (dx * dx) + (dy * dy) < convoy_hover_radius_on_texture_sq:
-					new_hover_info = {'type': 'convoy', 'id': convoy_id_str}
+					new_hover_info = {'type': 'convoy', 'id': _convoy_id_str}
 					_found_hover_element = true
 					break
 
@@ -433,7 +441,7 @@ func _handle_lmb_interactions(event: InputEventMouseButton, p_camera: Camera2D) 
 		# --- Check for Panel Drag Start ---
 		if is_instance_valid(ui_manager) and ui_manager.has_method("get_node_or_null") and is_instance_valid(ui_manager.convoy_label_container):
 			var convoy_label_container_node = ui_manager.convoy_label_container
-			for i in range(convoy_label_container_node.get_child_count() - 1, -1):
+			for i in range(convoy_label_container_node.get_child_count() - 1, -1, -1):
 				var node = convoy_label_container_node.get_child(i)
 				if node is Panel:
 					var panel_node_candidate: Panel = node
@@ -443,7 +451,6 @@ func _handle_lmb_interactions(event: InputEventMouseButton, p_camera: Camera2D) 
 					var panel_effective_size = panel_node_candidate.size
 					if panel_effective_size.x <= 0 or panel_effective_size.y <= 0:
 						panel_effective_size = panel_node_candidate.get_minimum_size()
-					
 					var panel_rect_global = Rect2(panel_node_candidate.global_position, panel_effective_size)
 					var hit_test_rect = panel_rect_global.grow(2.0)
 
@@ -451,151 +458,72 @@ func _handle_lmb_interactions(event: InputEventMouseButton, p_camera: Camera2D) 
 						var id_from_meta = panel_node_candidate.get_meta("convoy_id_str", "")
 						if id_from_meta.is_empty(): id_from_meta = panel_node_candidate.name
 
+						# Always emit convoy_menu_requested when a convoy panel is clicked
+						var convoy_data_clicked = null
+						for convoy_data_item in all_convoy_data:
+							if convoy_data_item is Dictionary and str(convoy_data_item.get("convoy_id", "")) == id_from_meta:
+								convoy_data_clicked = convoy_data_item
+								break
+						if convoy_data_clicked:
+							emit_signal("convoy_menu_requested", convoy_data_clicked)
+							return true # Convoy menu opened
+
 						if _selected_convoy_ids.has(id_from_meta):
 							_dragging_panel_node = panel_node_candidate
 							_dragged_convoy_id_actual_str = id_from_meta
 							var panel_current_global_pos_for_offset = panel_rect_global.position
 							_drag_offset = panel_current_global_pos_for_offset - event.global_position
-							
 							var map_view = get_node_or_null("/root/Main/MainScreen/MainContainer/MainContent/MapView")
 							var viewport_rect = _current_map_screen_rect # Use map's effective screen rect for clamping
 							if is_instance_valid(map_view):
 								viewport_rect = map_view.get_global_rect()
-							
 							_current_drag_clamp_rect = Rect2(
 								viewport_rect.position.x + label_map_edge_padding,
 								viewport_rect.position.y + label_map_edge_padding,
 								viewport_rect.size.x - (2 * label_map_edge_padding),
 								viewport_rect.size.y - (2 * label_map_edge_padding)
 							)
-							
 							emit_signal("panel_drag_started", _dragged_convoy_id_actual_str, _dragging_panel_node)
-							# print("MIM: Panel drag started for convoy: ", _dragged_convoy_id_actual_str) # Keep this one
 							return true # Drag started
-
-		# If no panel drag started, the click might be on the map (handled on release)
-
-	elif not event.pressed: # Mouse button RELEASED
+	# ...existing code...
+	elif not event.pressed:
+		# --- Check for Panel Drag End ---
 		if is_instance_valid(_dragging_panel_node):
-			var final_local_position: Vector2 = _dragging_panel_node.position
-			if _dragging_panel_node.get_parent() and is_instance_valid(_dragging_panel_node.get_parent()):
-				final_local_position = _dragging_panel_node.get_parent().to_local(_dragging_panel_node.global_position)
-			
-			_convoy_label_user_positions[_dragged_convoy_id_actual_str] = final_local_position
-			
-			emit_signal("panel_drag_ended", _dragged_convoy_id_actual_str, final_local_position)
-			# print("MIM: Panel drag ended for convoy: ", _dragged_convoy_id_actual_str, " at local pos: ", final_local_position) # Keep this one
+			# Calculate the final position of the dragged panel
+			var final_panel_global_pos = _dragging_panel_node.global_position
 
-			_dragging_panel_node = null
-			_dragged_convoy_id_actual_str = ""
-			
+			# Emit the panel_drag_ended signal with the final position
+			if is_instance_valid(_dragging_panel_node.get_parent()):
+				var final_panel_local_pos = _dragging_panel_node.get_parent().to_local(final_panel_global_pos)
+				emit_signal("panel_drag_ended", _dragged_convoy_id_actual_str, final_panel_local_pos)
+
+			_dragging_panel_node = null # Reset dragging panel
 			return true # Drag ended
 		else:
-			# --- Handle click on map elements (convoys/settlements) ---
-			var mouse_world_pos: Vector2
-			if is_instance_valid(_sub_viewport) and is_instance_valid(_map_texture_rect):
-				var display_rect: Rect2 = _map_texture_rect.get_global_rect()
-				var local_in_display: Vector2 = event.global_position - display_rect.position
-				var sub_size: Vector2i = _sub_viewport.size
-				var sub_screen: Vector2 = Vector2(
-					(local_in_display.x / max(1.0, display_rect.size.x)) * float(sub_size.x),
-					(local_in_display.y / max(1.0, display_rect.size.y)) * float(sub_size.y)
-				)
-				mouse_world_pos = camera.get_canvas_transform().affine_inverse() * sub_screen
-			else:
-				mouse_world_pos = p_camera.get_canvas_transform().affine_inverse() * event.global_position
-			var clicked_convoy_data = _get_convoy_data_at_world_pos(mouse_world_pos)
+			# --- Handle Click on Convoy (if not dragging) ---
+			var clicked_convoy_data = null
+			var mouse_world_pos = camera.get_canvas_transform().affine_inverse() * event.position
+			# Get tile size for world coordinate conversion
+			var tile_size = map_display.tile_set.tile_size
+			var actual_tile_width_on_world: float = tile_size.x
+			var actual_tile_height_on_world: float = tile_size.y
+			for convoy_data_item in all_convoy_data:
+				if convoy_data_item is Dictionary:
+					var convoy_map_x: float = convoy_data_item.get('x', -1.0)
+					var convoy_map_y: float = convoy_data_item.get('y', -1.0)
+					var convoy_id_val = convoy_data_item.get('convoy_id')
+					if convoy_map_x >= 0.0 and convoy_map_y >= 0.0 and convoy_id_val != null:
+						var _convoy_id_str2 = str(convoy_id_val)
+						var convoy_center_world_x: float = (convoy_map_x + 0.5) * actual_tile_width_on_world
+						var convoy_center_world_y: float = (convoy_map_y + 0.5) * actual_tile_height_on_world
+						var dx = mouse_world_pos.x - convoy_center_world_x
+						var dy = mouse_world_pos.y - convoy_center_world_y
+						if (dx * dx) + (dy * dy) < convoy_hover_radius_on_texture_sq:
+							clicked_convoy_data = convoy_data_item
+							break
 
 			if clicked_convoy_data != null:
 				emit_signal("convoy_menu_requested", clicked_convoy_data)
-				# print("MIM: Clicked convoy for menu: ", clicked_convoy_data.get("convoy_id", "N/A")) # Keep this one
 				return true # Click on convoy handled
-
-			# TODO: Add settlement click logic here if needed, similar to convoy click.
-	return false
-
-
-func get_current_hover_info() -> Dictionary:
-	return _current_hover_info
-
-func get_selected_convoy_ids() -> Array[String]:
-	return _selected_convoy_ids
-
-func get_convoy_label_user_positions() -> Dictionary:
-	return _convoy_label_user_positions
-
-func is_dragging() -> bool:
-	return is_instance_valid(_dragging_panel_node)
-
-func get_dragging_panel_node() -> Panel:
-	return _dragging_panel_node
-
-func get_dragged_convoy_id_str() -> String:
-	return _dragged_convoy_id_actual_str
-
-
-func _handle_tap_interaction(screen_pos: Vector2):
-	"""Handles tap interactions for selecting map elements (for TOUCH scheme)."""
-	if not (is_instance_valid(camera) and is_instance_valid(map_display)):
-		return
-
-	var world_pos: Vector2 = camera.get_canvas_transform().affine_inverse() * screen_pos # Keep type hint for world_pos
-	var clicked_convoy_data = _get_convoy_data_at_world_pos(world_pos) # Remove Dictionary type hint
-
-	if clicked_convoy_data != null:
-		emit_signal("convoy_menu_requested", clicked_convoy_data)
-		# print("MIM: Tapped convoy for menu: ", clicked_convoy_data.get("convoy_id", "N/A")) # Keep this one
-		get_viewport().set_input_as_handled()
-
-func _zoom_camera_at_screen_pos(zoom_adjust_factor: float, screen_zoom_center: Vector2):
-	# MOVED to MapCameraController.zoom_at_screen_pos()
-	if is_instance_valid(map_camera_controller) and map_camera_controller.has_method("zoom_at_screen_pos"):
-		map_camera_controller.zoom_at_screen_pos(zoom_adjust_factor, screen_zoom_center)
-	else:
-		printerr("MIM: _zoom_camera_at_screen_pos - MapCameraController or method invalid.")
-
-func set_and_clamp_camera_zoom(target_zoom_scalar: float):
-	# MOVED to MapCameraController.set_and_clamp_zoom()
-	if is_instance_valid(map_camera_controller) and map_camera_controller.has_method("set_and_clamp_zoom"):
-		map_camera_controller.set_and_clamp_zoom(target_zoom_scalar)
-	else:
-		printerr("MIM: set_and_clamp_camera_zoom - MapCameraController or method invalid.")
-
-func focus_camera_and_set_zoom(target_world_position: Vector2, target_zoom_scalar: float):
-	# MOVED to MapCameraController.focus_and_set_zoom()
-	if is_instance_valid(map_camera_controller) and map_camera_controller.has_method("focus_and_set_zoom"):
-			
-		map_camera_controller.focus_and_set_zoom(target_world_position, target_zoom_scalar)
-		
-	else:
-		printerr("MIM: focus_camera_and_set_zoom - MapCameraController or method invalid.")
-
-func _on_map_camera_controller_zoom_changed(new_zoom_level: float):
-	# Re-emit the signal if other scripts are listening to MIM
-	emit_signal("camera_zoom_changed", new_zoom_level)
-
-func _get_convoy_data_at_world_pos(world_pos: Vector2) -> Variant:
-	"""Helper to find a convoy's data Dictionary at a given world position."""
-	if all_convoy_data.is_empty() or map_tiles.is_empty() or not map_tiles[0] is Array or map_tiles[0].is_empty():
-		return null
-
-	var tile_size = map_display.tile_set.tile_size
-	var actual_tile_width_on_world: float = tile_size.x
-	var actual_tile_height_on_world: float = tile_size.y
-
-	for convoy_data_item in all_convoy_data:
-		if not convoy_data_item is Dictionary: continue
-		var convoy_map_x: float = convoy_data_item.get('x', -1.0)
-		var convoy_map_y: float = convoy_data_item.get('y', -1.0)
-		var convoy_id_val = convoy_data_item.get('convoy_id')
-		if convoy_id_val != null: # Ensure convoy has an ID and valid coordinates
-
-			var convoy_center_world_x: float = (convoy_map_x + 0.5) * actual_tile_width_on_world
-			var convoy_center_world_y: float = (convoy_map_y + 0.5) * actual_tile_height_on_world
-			var dx = world_pos.x - convoy_center_world_x
-			var dy = world_pos.y - convoy_center_world_y
-			# Use convoy_hover_radius_on_texture_sq directly, assuming it's a world-space squared radius.
-			# The scaling by camera.zoom was inconsistent with hover detection.
-			if (dx * dx) + (dy * dy) < convoy_hover_radius_on_texture_sq:
-				return convoy_data_item
-	return null
+			# ...existing code...
+	return false # Ensure all code paths return a value
