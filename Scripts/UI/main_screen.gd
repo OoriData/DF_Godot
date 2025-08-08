@@ -137,11 +137,16 @@ func _on_map_view_gui_input(event: InputEvent):
 			Input.set_default_cursor_shape(Input.CURSOR_ARROW)
 			return
 
-	# 2. If the event was not consumed by the interaction manager, handle camera movement.
-	# This means the click was on the map background, not an interactive element.
+	# 2. If the event was not consumed by the interaction manager, handle camera movement and menu closing.
 	if event is InputEventMouseButton:
 		if event.button_index == MOUSE_BUTTON_LEFT:
 			if event.pressed:
+				# Check if any menu is active, and close it if so
+				var menu_manager = get_node_or_null("/root/MenuManager")
+				if menu_manager and menu_manager.has_method("is_any_menu_active") and menu_manager.is_any_menu_active():
+					menu_manager.close_all_menus() # This will close all menus and update layout
+					get_viewport().set_input_as_handled()
+					return
 				_is_panning = true
 				Input.set_default_cursor_shape(Input.CURSOR_DRAG)
 				get_viewport().set_input_as_handled() # Consume the event

@@ -82,6 +82,8 @@ func initialize_with_data(data: Dictionary):
 		child.queue_free()
 
 	var journey_data: Dictionary = data.get("journey", {})
+	if journey_data == null:
+		journey_data = {}
 	var gdm = get_node_or_null("/root/GameDataManager")
 
 	if is_instance_valid(title_label):
@@ -140,7 +142,6 @@ func initialize_with_data(data: Dictionary):
 	var progress_percentage = 0.0
 	if length > 0.001: # Avoid division by zero
 		progress_percentage = (progress / length) * 100.0
-	
 	var progress_text_label = Label.new()
 	progress_text_label.text = "Progress: %.1f / %.1f units (%.1f%%)" % [progress, length, progress_percentage]
 	content_vbox.add_child(progress_text_label)
