@@ -32,8 +32,20 @@ func _on_login_successful(user_id: String) -> void:
 	print("GameScreenManager: Login successful for User ID:", user_id)
 	current_user_id = user_id
 
-	# Optional: You can still trigger your initial data fetch here if needed.
-	if GameDataManager and GameDataManager.has_method("trigger_initial_convoy_data_fetch"):
+	var already_bootstrapped := false
+	if Engine.has_singleton("GameDataManager"):
+		# not typical; fallback path
+		pass
+	if GameDataManager:
+		# Access internal flag safely; if missing, defaults false
+		if GameDataManager.has_method("get"):
+			var val = GameDataManager.get("_user_bootstrap_done")
+			already_bootstrapped = (typeof(val) == TYPE_BOOL and val)
+
+	if already_bootstrapped:
+		print("GameScreenManager: Data bootstrap already performed; skipping manual initial convoy fetch.")
+	elif GameDataManager and GameDataManager.has_method("trigger_initial_convoy_data_fetch"):
+		print("GameScreenManager: Triggering initial convoy data fetch (manual path).")
 		GameDataManager.trigger_initial_convoy_data_fetch(current_user_id)
 
 	# Remove the login screen completely to prevent any input blocking.

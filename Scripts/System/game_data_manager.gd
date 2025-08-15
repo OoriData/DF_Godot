@@ -13,6 +13,10 @@ signal vendor_panel_data_ready(vendor_panel_data: Dictionary)
 # Emitted when a convoy is selected or deselected in the UI.
 signal convoy_selection_changed(selected_convoy_data: Variant)
 
+# New lifecycle / aggregation signals
+signal initial_data_ready  # Fired once after first map + first convoy data loaded
+signal game_data_reset      # Fired when user-auth related data is cleared (logout / expiry)
+
 
 # --- Journey Planning Signals ---
 signal route_info_ready(convoy_data: Dictionary, destination_data: Dictionary, route_choices: Array)
@@ -23,7 +27,6 @@ signal journey_started(updated_convoy_data: Dictionary)
 # when GameDataManager is an Autoload (it will be /root/APICallsInstance if APICallsInstance is also an Autoload or a direct child of root).
 # For now, assuming APICallsInstance will also be an Autoload or accessible globally.
 var api_calls_node: Node = null # Will be fetched in _ready
-
 
 # --- Data Storage ---
 var map_tiles: Array = []
@@ -39,6 +42,11 @@ var _pending_journey_destination_data: Dictionary = {}
 
 # --- Internal State ---
 var _last_assigned_color_idx: int = -1
+var _map_loaded: bool = false
+var _convoys_loaded: bool = false
+var _initial_data_ready_emitted: bool = false
+var _user_bootstrap_done: bool = false
+var _map_request_in_flight: bool = false
 
 # This should be the single source of truth for these colors.
 const PREDEFINED_CONVOY_COLORS: Array[Color] = [
@@ -71,12 +79,80 @@ func _initiate_preload():
 			api_calls_node.route_choices_received.connect(_on_api_route_choices_received)
 		if api_calls_node.has_signal('convoy_sent_on_journey'):
 			api_calls_node.convoy_sent_on_journey.connect(_on_convoy_sent_on_journey)
-		request_map_data()
+		# New auth-related signals
+		if api_calls_node.has_signal('auth_session_received'):
+			api_calls_node.auth_session_received.connect(_on_auth_session_received)
+		if api_calls_node.has_signal('user_id_resolved'):
+			api_calls_node.user_id_resolved.connect(_on_user_id_resolved)
+		if api_calls_node.has_signal('auth_expired'):
+			api_calls_node.auth_expired.connect(_on_auth_expired)
+		# If user already authenticated before this node ready (auto-login path)
+		if api_calls_node.has_method('is_auth_token_valid') and api_calls_node.is_auth_token_valid():
+			# Directly access property (script variable) instead of has_variable (invalid in Godot 4)
+			var existing_id: String = api_calls_node.current_user_id
+			if typeof(existing_id) == TYPE_STRING and existing_id != "":
+				print('[GameDataManager] Detected existing authenticated user id. Bootstrapping data loads.')
+				_on_user_id_resolved(existing_id)
+		else:
+			print('[GameDataManager] No valid auth token at init.')
+		# Removed early request_map_data(); will be triggered after login success or separately by UI.
 	else:
 		printerr("GameDataManager (_initiate_preload): Could not find APICalls Autoload. Map data will not be preloaded.")
 
+func _on_auth_session_received(_token: String) -> void:
+	# After session token, the APICalls will try to resolve DF user id via /auth/me
+	print('[GameDataManager] Auth session received. Awaiting DF user id…')
+
+func _on_user_id_resolved(user_id: String) -> void:
+	if _user_bootstrap_done:
+		print('[GameDataManager] _on_user_id_resolved ignored; bootstrap already done.')
+		return
+	print('[GameDataManager] Resolved DF user id from session: ', user_id)
+	_user_bootstrap_done = true
+	if is_instance_valid(api_calls_node):
+		api_calls_node.set_user_id(user_id)
+		request_user_data_refresh()
+		if api_calls_node.has_method('get_user_convoys'):
+			api_calls_node.get_user_convoys(user_id)
+		# Trigger map load now that auth began (parallel path) if not already loaded
+		if not _map_loaded and not _map_request_in_flight:
+			_map_request_in_flight = true
+			request_map_data()
+
+func _on_auth_expired() -> void:
+	print('[GameDataManager] Auth expired. Resetting user-related state.')
+	reset_user_state()
+
+func reset_user_state(clear_map: bool = false) -> void:
+	# Clear user-associated runtime data while optionally retaining map tiles.
+	current_user_data = {}
+	all_convoy_data = []
+	convoy_id_to_color_map.clear()
+	_selected_convoy_id = ""
+	_last_assigned_color_idx = -1
+	_convoys_loaded = false
+	_initial_data_ready_emitted = false
+	_user_bootstrap_done = false
+	_map_request_in_flight = false
+	if clear_map:
+		map_tiles = []
+		all_settlement_data = []
+		_map_loaded = false
+	convoy_data_updated.emit(all_convoy_data)
+	user_data_updated.emit(current_user_data)
+	game_data_reset.emit()
+
+func _maybe_emit_initial_ready() -> void:
+	if _initial_data_ready_emitted:
+		return
+	if _map_loaded and _convoys_loaded:
+		_initial_data_ready_emitted = true
+		print('[GameDataManager] Initial data ready (map + convoys). Emitting initial_data_ready.')
+		initial_data_ready.emit()
+
 
 func _on_map_data_received_from_api(map_data_dict: Dictionary):
+	_map_request_in_flight = false
 	if not map_data_dict.has("tiles"):
 		printerr("GameDataManager: Received map data dictionary from API, but it's missing the 'tiles' key.")
 		return
@@ -104,6 +180,9 @@ func _on_map_data_received_from_api(map_data_dict: Dictionary):
 								settlement_info_for_render['y'] = y_idx
 								all_settlement_data.append(settlement_info_for_render)
 	settlement_data_updated.emit(all_settlement_data)
+	_map_loaded = true
+	_maybe_emit_initial_ready()
+
 	# print("GameDataManager: Settlement data extracted. Count: %s" % all_settlement_data.size())
 
 
@@ -112,8 +191,39 @@ func _on_user_data_received_from_api(p_user_data: Dictionary):
 		printerr("GameDataManager: Received empty user data dictionary.")
 		return
 	current_user_data = p_user_data
+	# Debug: show top-level keys and try to surface convoy-related fields
+	print("[GameDataManager] User data keys: ", current_user_data.keys())
+	if current_user_data.has("convoys") and current_user_data.convoys is Array:
+		print("[GameDataManager] Found 'convoys' with ", current_user_data.convoys.size(), " entries.")
+	elif current_user_data.has("user_convoys") and current_user_data.user_convoys is Array:
+		print("[GameDataManager] Found 'user_convoys' with ", current_user_data.user_convoys.size(), " entries.")
+
 	user_data_updated.emit(current_user_data)
 
+	# Extract convoy list from the user payload and integrate with existing flow
+	var convoy_list: Array = _extract_convoys_from_user(current_user_data)
+	if convoy_list is Array and not convoy_list.is_empty():
+		print("[GameDataManager] Extracted ", convoy_list.size(), " convoy records from user data. Integrating...")
+		_on_raw_convoy_data_received(convoy_list)
+	else:
+		print("[GameDataManager] No convoy list found in user data. Waiting for next update or different schema.")
+
+# Attempt to find the convoy array in various common fields or nested structures
+func _extract_convoys_from_user(user_dict: Dictionary) -> Array:
+	var fields := [
+		"convoys", "user_convoys", "convoy_list", "convoyData", "convoy_data"
+	]
+	for f in fields:
+		if user_dict.has(f) and user_dict[f] is Array:
+			return user_dict[f]
+	# Look into common nesting containers
+	var nest_keys := ["data", "attributes", "result", "payload"]
+	for nk in nest_keys:
+		if user_dict.has(nk) and user_dict[nk] is Dictionary:
+			var arr := _extract_convoys_from_user(user_dict[nk])
+			if arr is Array and not arr.is_empty():
+				return arr
+	return []
 
 func _on_raw_convoy_data_received(raw_data: Variant):
 	# Always expect raw convoy data (Array of Dictionaries) from APICalls.
@@ -150,6 +260,8 @@ func _on_raw_convoy_data_received(raw_data: Variant):
 	# --- END LOGGING ---
 
 	convoy_data_updated.emit(all_convoy_data)
+	_convoys_loaded = true
+	_maybe_emit_initial_ready()
 
 
 func get_convoy_id_to_color_map() -> Dictionary:
@@ -398,15 +510,8 @@ func get_settlement_name_from_coords(target_x: int, target_y: int) -> String:
 		var row_array: Array = map_tiles[target_y]
 		if target_x >= 0 and target_x < row_array.size():
 			var tile_data: Dictionary = row_array[target_x]
-
-			# Optional: Verify that the tile's own x,y match the target coordinates
-			# For this direct lookup, it's less critical if the foo.json is consistent.
-			# if tile_data.get("x") != target_x or tile_data.get("y") != target_y:
-			# 	printerr("GameDataManager: Tile coordinate mismatch at index. Expected: ", target_x, ",", target_y, " Got: ", tile_data.get("x"), ",", tile_data.get("y"))
-
 			var settlements_array: Array = tile_data.get("settlements", [])
 			if not settlements_array.is_empty():
-				# Assuming we take the first settlement if multiple exist at the same tile
 				var first_settlement: Dictionary = settlements_array[0]
 				if first_settlement.has("name"):
 					return first_settlement.get("name")
@@ -414,16 +519,11 @@ func get_settlement_name_from_coords(target_x: int, target_y: int) -> String:
 					printerr("GameDataManager: Settlement at (", target_x, ",", target_y, ") has no 'name' key.")
 					return "N/A (Settlement Name Missing)"
 			else:
-				# No settlements at these coordinates
 				return "N/A (No Settlements at Coords)"
 		else:
-			# printerr("GameDataManager: Target X coordinate (", target_x, ") out of bounds for row ", target_y, ".") # Can be noisy
 			return "N/A (X Out of Bounds)"
 	else:
-		# printerr("GameDataManager: Target Y coordinate (", target_y, ") out of bounds.") # Can be noisy
 		return "N/A (Y Out of Bounds)"
-
-	return "N/A (Not Found)" # General fallback
 
 func update_user_money(amount_delta: float):
 	"""
@@ -515,20 +615,14 @@ func start_convoy_journey(convoy_id: String, journey_id: String) -> void:
 
 func get_vendor_by_id(vendor_id: String) -> Variant:
 	var vendor_data = null
-	var convoy_data = null
-	var settlement_data = null
-
-	# Find vendor data
 	for settlement in all_settlement_data:
 		if settlement.has("vendors"):
 			for vendor in settlement.vendors:
 				if str(vendor.get("vendor_id", "")) == str(vendor_id):
 					vendor_data = vendor
-					settlement_data = settlement
 					break
 		if vendor_data:
 			break
-
 	return vendor_data
 
 func get_settlement_for_vendor(vendor_id: String) -> Variant:
@@ -740,3 +834,9 @@ func _on_convoy_sent_on_journey(updated_convoy_data: Dictionary) -> void:
 	# The update_single_convoy function already emits convoy_data_updated,
 	# but we emit a more specific signal for UI flow with the fully augmented data.
 	emit_signal("journey_started", get_convoy_by_id(str(updated_convoy_data.get("convoy_id"))))
+
+func get_map_tiles() -> Array:
+	return map_tiles
+
+func get_all_convoy_data() -> Array:
+	return all_convoy_data

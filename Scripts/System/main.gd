@@ -49,6 +49,32 @@ func _ready():
 
 func initialize_all_components():
 	print("--- Main Initialization Start ---")
+	# Ensure SubViewport continuous update (avoid white screen)
+	if is_instance_valid(sub_viewport):
+		if sub_viewport.render_target_update_mode != SubViewport.UPDATE_ALWAYS:
+			sub_viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
+			print('[Main] SubViewport update mode set to UPDATE_ALWAYS')
+		sub_viewport.render_target_clear_mode = SubViewport.CLEAR_MODE_ALWAYS
+	# Camera must be current inside the SubViewport
+	if is_instance_valid(map_camera):
+		if map_camera.has_method('make_current'):
+			map_camera.make_current()
+		elif map_camera.has_method('set_enabled'):
+			map_camera.set_enabled(true)
+		elif map_camera.has_method('set_current'):
+			map_camera.set_current(true)
+		print('[Main] Camera current state after init: ', map_camera.has_method('is_current') and map_camera.is_current())
+	# Add a debug label so we know something renders at 0,0
+	if is_instance_valid(sub_viewport) and sub_viewport.get_node_or_null('DebugMarker') == null:
+		var dbg := Label.new()
+		dbg.name = 'DebugMarker'
+		dbg.text = 'DBG'
+		dbg.position = Vector2(8,8)
+		sub_viewport.add_child(dbg)
+		print('[Main] Added DebugMarker label to SubViewport.')
+	# Force tilemap visible
+	if is_instance_valid(terrain_tilemap):
+		terrain_tilemap.visible = true
 
 	if not is_instance_valid(main_screen):
 		printerr("[Main] FATAL: Could not determine the owner (MainScreen). The scene setup might be incorrect. Cannot proceed with initialization.")
@@ -136,63 +162,122 @@ func initialize_all_components():
 
 	print("--- Main Initialization Complete ---")
 	_map_and_ui_setup_complete = true
+	# Defer replay to ensure layout & SubViewport have valid size
+	call_deferred("_late_replay_preloaded")
+
+func _late_replay_preloaded():
+	if not is_instance_valid(game_data_manager):
+		return
+	await get_tree().process_frame # wait a frame for layout
+	var preloaded_tiles: Array = []
+	if game_data_manager.has_method('get_map_tiles'):
+		preloaded_tiles = game_data_manager.get_map_tiles()
+	if not preloaded_tiles.is_empty():
+		print('[Main][Replay] Map tiles preloaded (size=%d); replaying.' % preloaded_tiles.size())
+		_on_map_data_loaded(preloaded_tiles)
+	var preloaded_convoys: Array = []
+	if game_data_manager.has_method('get_all_convoy_data'):
+		preloaded_convoys = game_data_manager.get_all_convoy_data()
+	if not preloaded_convoys.is_empty():
+		print('[Main][Replay] Convoys preloaded (count=%d); replaying.' % preloaded_convoys.size())
+		_on_convoy_data_loaded(preloaded_convoys)
+	var preloaded_settlements: Array = []
+	if game_data_manager.has_method('get_all_settlements_data'):
+		preloaded_settlements = game_data_manager.get_all_settlements_data()
+	if not preloaded_settlements.is_empty():
+		print('[Main][Replay] Settlements preloaded (count=%d); replaying.' % preloaded_settlements.size())
+		_on_settlement_data_loaded(preloaded_settlements)
+	await get_tree().process_frame # allow TileMap population
+	if is_instance_valid(terrain_tilemap):
+		var used = terrain_tilemap.get_used_cells().size()
+		print('[Main][ReplayDBG] SubViewport size=%s used_cells=%d tex_null=%s' % [str(sub_viewport.size if is_instance_valid(sub_viewport) else Vector2i()), used, str(map_display.texture==null)])
+		if used == 0 and not preloaded_tiles.is_empty():
+			print('[Main][ReplayDBG] TileMap empty after replay; repopulating...')
+			populate_tilemap_from_data(preloaded_tiles)
+	if is_instance_valid(map_display):
+		map_display.texture = sub_viewport.get_texture()
+		if map_display.texture == null:
+			print('[Main][ReplayDBG] Texture still null; adding debug ColorRect')
+			if is_instance_valid(sub_viewport) and sub_viewport.get_node_or_null('ReplayDebugRect') == null:
+				var cr = ColorRect.new()
+				cr.name = 'ReplayDebugRect'
+				cr.color = Color(1,0,1,1)
+				cr.size = Vector2(128,128)
+				sub_viewport.add_child(cr)
+	# Optionally refit camera now that tiles are confirmed
+	if is_instance_valid(map_camera_controller) and map_camera_controller.has_method('fit_camera_to_tilemap'):
+		map_camera_controller.fit_camera_to_tilemap()
+
+var _frame_counter:int = 0
 
 func _process(_delta: float):
 	if not _map_and_ui_setup_complete:
 		return
-
-	# This node (self) is the MapView.
+	_frame_counter += 1
+	if _frame_counter % 60 == 0 and is_instance_valid(map_camera):
+		print('[Main][DBG] frame=%d cam_pos=%s zoom=%s tex_null=%s' % [_frame_counter, str(map_camera.position), str(map_camera.zoom), str(map_display.texture == null)])
 	var map_view = self
 	if not is_instance_valid(map_view):
 		return
-
-	# Update the TextureRect with the SubViewport's texture.
 	if is_instance_valid(map_display):
 		map_display.texture = sub_viewport.get_texture()
 
 func populate_tilemap_from_data(tile_data_2d: Array):
 	if not is_instance_valid(terrain_tilemap):
-		printerr("[ERROR] terrain_tilemap is not valid!")
+		printerr('[ERROR] terrain_tilemap is not valid!')
 		return
 	terrain_tilemap.clear()
 	var tile_set = terrain_tilemap.tile_set
 	if not is_instance_valid(tile_set):
-		printerr("[ERROR] terrain_tilemap.tile_set is not valid!")
+		printerr('[ERROR] terrain_tilemap.tile_set is not valid!')
 		return
-
+	var placed := 0
 	var tile_name_to_source_and_coords := {}
 	for i in range(tile_set.get_source_count()):
 		var source_id = tile_set.get_source_id(i)
 		var source = tile_set.get_source(source_id)
-		if source and source.has_method("get_texture"):
+		if source and source.has_method('get_texture'):
 			var tex = source.get_texture()
 			if tex and tex.resource_path:
 				var texture_name = tex.resource_path.get_file().get_basename()
 				for j in range(source.get_tiles_count()):
 					var coords = source.get_tile_id(j)
-					tile_name_to_source_and_coords[texture_name] = {"source_id": source_id, "coords": coords}
-
+					# store only first coords per texture to avoid overwriting spam
+					if not tile_name_to_source_and_coords.has(texture_name):
+						tile_name_to_source_and_coords[texture_name] = {'source_id': source_id, 'coords': coords}
+	var unknown_names := {}
 	for y in tile_data_2d.size():
 		var row = tile_data_2d[y]
 		for x in row.size():
 			var tile = row[x]
-			var tname = "impassable"
+			var tname = 'impassable'
 			if tile is Dictionary:
-				if tile.has("settlements") and tile["settlements"] is Array and tile["settlements"].size() > 0:
-					var sett_type = tile["settlements"][0].get("sett_type", "town")
-					tname = settlement_type_to_name.get(sett_type, "town")
+				if tile.has('settlements') and tile['settlements'] is Array and tile['settlements'].size() > 0:
+					var sett_type = tile['settlements'][0].get('sett_type', 'town')
+					tname = settlement_type_to_name.get(sett_type, 'town')
 				else:
-					var terrain_int = tile.get("terrain_difficulty", 0)
-					tname = terrain_int_to_name.get(terrain_int, "impassable")
+					var terrain_int = tile.get('terrain_difficulty', 0)
+					tname = terrain_int_to_name.get(terrain_int, 'impassable')
 			else:
-				tname = terrain_int_to_name.get(tile, "impassable")
-
+				var terrain_int2 = int(tile)
+				tname = terrain_int_to_name.get(terrain_int2, 'impassable')
 			if tile_name_to_source_and_coords.has(tname):
 				var entry = tile_name_to_source_and_coords[tname]
-				terrain_tilemap.set_cell(Vector2i(x, y), entry["source_id"], entry["coords"])
+				terrain_tilemap.set_cell(Vector2i(x, y), entry['source_id'], entry['coords'])
+				placed += 1
+			else:
+				unknown_names[tname] = (unknown_names.get(tname, 0) + 1)
+	print('[Main] populate_tilemap_from_data: placed %d tiles; unique textures loaded=%d' % [placed, tile_name_to_source_and_coords.size()])
+	if unknown_names.size() > 0:
+		print('[Main][WARN] Unknown tile names encountered: %s' % str(unknown_names))
+	# Sample a few cells to confirm they are set
+	for sample in [Vector2i(0,0), Vector2i(5,5), Vector2i(10,10)]:
+		var sid = terrain_tilemap.get_cell_source_id(sample)
+		print('[Main][DBG] sample cell %s source_id=%s' % [str(sample), str(sid)])
 
 func _on_map_data_loaded(p_map_tiles: Array):
-	print("[main.gd] _on_map_data_loaded: map_tiles_data size=", p_map_tiles.size())
+	print('[main.gd] _on_map_data_loaded: map_tiles_data size=', p_map_tiles.size())
+	print('[Main][DBG] camera current? ', is_instance_valid(map_camera) and map_camera.is_current())
 	if not is_instance_valid(terrain_tilemap):
 		printerr("[ERROR] terrain_tilemap is not valid!")
 		return
@@ -231,8 +316,22 @@ func _on_map_data_loaded(p_map_tiles: Array):
 	else:
 		printerr("[main.gd] map_camera_controller is invalid or missing set_map_size method!")
 
-	print("[main.gd] Emitting map_ready_for_focus signal...")
-	emit_signal("map_ready_for_focus")
+	# After setting map size, force camera center if controller did not adjust yet
+	if is_instance_valid(terrain_tilemap) and is_instance_valid(map_camera):
+		var tile_set = terrain_tilemap.tile_set
+		if tile_set:
+			var tsize = tile_set.tile_size
+			print('[Main][DBG] tile_size=', tsize)
+			var width_px = map_size.x * tsize.x
+			var height_px = map_size.y * tsize.y
+			var target = Vector2(width_px * 0.5, height_px * 0.5)
+			map_camera.position = target
+			map_camera.zoom = Vector2(1,1)
+			# Limits skipped (Godot 4 constant names differ or controller handles)
+			print('[Main][DBG] Forced camera center to', target, ' map_px=', Vector2(width_px,height_px))
+
+	print('[main.gd] Emitting map_ready_for_focus signal...')
+	emit_signal('map_ready_for_focus')
 	# Push initial state to UI (no hover yet)
 	_update_ui_manager(true)
 
