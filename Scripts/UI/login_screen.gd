@@ -112,10 +112,10 @@ func _on_auth_session_received(_token: String) -> void:
 
 func _on_user_id_resolved(user_id: String) -> void:
 	if user_id == "":
-		status_label.text = "No linked user."
+		status_label.text = "Failed to resolve user."
 		_set_oauth_active(false)
 		return
-	status_label.text = "Welcome."  # Brief indicator
+	status_label.text = "Welcome." 
 	_set_oauth_active(false)
 	emit_signal("login_successful", user_id)
 

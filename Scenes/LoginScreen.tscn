@@ -81,3 +81,22 @@ theme_override_colors/font_color = Color(1, 0, 0, 1)
 text = "Status messages appear here."
 horizontal_alignment = 1
 autowrap_mode = 2
+
+[node name="NewUsernameLineEdit" type="LineEdit" parent="CenterContainer/VBoxContainer"]
+visible = false
+custom_minimum_size = Vector2(200, 30)
+layout_mode = 2
+size_flags_horizontal = 4
+theme_override_colors/font_placeholder_color = Color(0.6, 0.6, 0.6, 1)
+theme_override_colors/font_color = Color(0.9, 0.9, 0.9, 1)
+theme_override_styles/normal = SubResource("StyleBoxFlat_LineEditBg")
+placeholder_text = "Choose username"
+
+[node name="CreateUserButton" type="Button" parent="CenterContainer/VBoxContainer"]
+visible = false
+custom_minimum_size = Vector2(140, 30)
+layout_mode = 2
+size_flags_horizontal = 4
+theme_override_colors/font_color = Color(0.95, 0.95, 0.95, 1)
+theme_override_styles/normal = SubResource("StyleBoxFlat_ButtonBg")
+text = "Create Account"

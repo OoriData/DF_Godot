@@ -13,11 +13,9 @@ signal fetch_error(error_message: String)
 # --- Auth Signals ---
 signal auth_url_received(data: Dictionary)
 signal auth_token_received(data: Dictionary)
-# New auth-related signals for polling flow
 signal auth_status_update(status: String)
 signal auth_session_received(session_token: String)
 signal user_id_resolved(user_id: String)
-# Added lifecycle / error signals
 signal auth_expired
 signal auth_poll_started
 signal auth_poll_finished(success: bool)
@@ -85,8 +83,11 @@ const REQUEST_TIMEOUT_SECONDS := {
 
 var _probe_stalled_count: int = 0
 var _auth_me_resolve_attempts: int = 0
-const AUTH_ME_MAX_ATTEMPTS: int = 15
-const AUTH_ME_RETRY_INTERVAL: float = 1.5
+const AUTH_ME_MAX_ATTEMPTS: int = 5
+const AUTH_ME_RETRY_INTERVAL: float = 0.75
+var _pending_discord_id: String = ""
+var _emitted_new_user_required: bool = false
+var _creating_user: bool = false
 
 func _ready() -> void:
 	# Ensure this autoload keeps processing while login screen pauses the tree
@@ -561,16 +562,8 @@ func _abort_map_request_for_auth():
 
 # Called when the HTTPRequest has completed.
 func _on_request_completed(result: int, response_code: int, _headers: PackedStringArray, body: PackedByteArray) -> void:
-	print("APICalls: _on_request_completed called. Result: %s, Response code: %s" % [result, response_code])
+	print("[APICalls] _on_request_completed() purpose=%s result=%d code=%d url=%s" % [RequestPurpose.keys()[_current_request_purpose], result, response_code, _last_requested_url])
 	var request_purpose_at_start = _current_request_purpose
-	var was_initial_local_user_attempt = (_current_request_purpose == RequestPurpose.USER_CONVOYS and _is_local_user_attempt)
-	# Transient network failure handling specifically for auth status polling
-	if result != HTTPRequest.RESULT_SUCCESS and request_purpose_at_start == RequestPurpose.AUTH_STATUS and _auth_poll.active:
-		print("[APICalls] AUTH_STATUS poll network failure; retrying without counting attempt.")
-		_is_request_in_progress = false
-		_current_request_purpose = RequestPurpose.NONE
-		_schedule_next_auth_status_poll()
-		return
 	# Global 401 handling (auth expired)
 	if response_code == 401 and _auth_bearer_token != "" and request_purpose_at_start != RequestPurpose.AUTH_STATUS:
 		print("[APICalls] Received 401 with auth token present. Treating as expired.")
@@ -594,47 +587,6 @@ func _on_request_completed(result: int, response_code: int, _headers: PackedStri
 			return
 		# If the PATCH request failed, it will fall through to the generic error handlers below.
 		# This is intentional, so we don't have to duplicate error handling logic.
-
-	# --- Handle initial local user attempt specifically for fallback logic ---
-	if was_initial_local_user_attempt:
-		_is_local_user_attempt = false # Consume the flag for this attempt sequence
-
-		var local_attempt_failed_or_empty = false
-		var failure_reason = ""
-
-		if result != HTTPRequest.RESULT_SUCCESS:
-			local_attempt_failed_or_empty = true
-			failure_reason = "HTTPRequest level failure (result: %s)" % result
-		elif not (response_code >= 200 and response_code < 300):
-			local_attempt_failed_or_empty = true
-			failure_reason = "HTTP response code %s" % response_code
-			printerr('  Local attempt response body for error %s: %s' % [response_code, body.get_string_from_utf8()])
-		else: # Successful HTTP response (2xx) from local
-			var response_body_text = body.get_string_from_utf8()
-			var json_response = JSON.parse_string(response_body_text)
-
-			if json_response == null:
-				local_attempt_failed_or_empty = true
-				failure_reason = "JSON parsing failed"
-				printerr('  Local attempt raw body for JSON parse error: %s' % response_body_text)
-			elif not json_response is Array:
-				local_attempt_failed_or_empty = true
-				failure_reason = "JSON response was not an array (type: %s)" % typeof(json_response)
-			else:
-				# SUCCESS with local data
-				# print("APICalls (_on_request_completed - LOCAL_USER_CONVOYS): Successfully fetched %s user-specific convoy(s) locally. URL: %s" % [json_response.size(), _last_requested_url])
-				if not json_response.is_empty():
-					print("  Sample Local User Convoy 0: ID: %s" % [json_response[0].get("convoy_id", "N/A")])
-				self.convoys_in_transit = json_response
-				emit_signal('convoy_data_received', json_response)
-				_current_request_purpose = RequestPurpose.NONE
-				_complete_current_request()
-				return
-
-		if local_attempt_failed_or_empty:
-			printerr("APICalls: Local user convoy request failed (%s). URL: %s. Falling back to remote all_in_transit." % [failure_reason, _last_requested_url])
-			get_all_in_transit_convoys()
-			return # Wait for fallback to complete, do not proceed further in this callback
 
 	# --- Handle fallback (ALL_CONVOYS) or other direct remote requests ---
 	# This block is reached if:
@@ -896,76 +848,72 @@ func _on_request_completed(result: int, response_code: int, _headers: PackedStri
 		var response_body_text: String = body.get_string_from_utf8()
 		var json_response = JSON.parse_string(response_body_text)
 		if json_response == null or not json_response is Dictionary:
-			printerr('APICalls (AUTH_ME): Failed to parse /auth/me response')
+			printerr('[APICalls][AUTH_ME] Failed to parse /auth/me response: ', response_body_text)
 		else:
 			var uid_str: String = str(json_response.get('user_id', ''))
 			if not uid_str.is_empty() and _is_valid_uuid(uid_str):
-				print('[APICalls] Resolved current user id: ', uid_str)
+				print('[APICalls][AUTH_ME] Resolved user id (attempt %d): %s' % [_auth_me_resolve_attempts, uid_str])
 				_auth_me_resolve_attempts = 0
 				emit_signal('user_id_resolved', uid_str)
 			else:
-				print('[APICalls] /auth/me returned no user_id yet (attempt %d/%d). Will retry.' % [_auth_me_resolve_attempts, AUTH_ME_MAX_ATTEMPTS])
+				print('[APICalls][AUTH_ME] Missing/invalid user_id (attempt %d/%d). Body=%s' % [_auth_me_resolve_attempts, AUTH_ME_MAX_ATTEMPTS, response_body_text])
 				if _auth_me_resolve_attempts < AUTH_ME_MAX_ATTEMPTS:
-					_auth_me_requested = false # allow retry
+					_auth_me_requested = false
 					var retry_timer := get_tree().create_timer(AUTH_ME_RETRY_INTERVAL, true)
 					retry_timer.timeout.connect(func(): resolve_current_user_id(true))
 				else:
-					print('[APICalls] Giving up resolving user id after %d attempts.' % AUTH_ME_MAX_ATTEMPTS)
+					printerr('[APICalls][AUTH_ME] Gave up resolving user id after %d attempts.' % AUTH_ME_MAX_ATTEMPTS)
 		_complete_current_request()
 		return
-
-	# Fallback for any unhandled cases, though ideally all paths are covered.
-	if _current_request_purpose != RequestPurpose.NONE:
-		printerr("APICalls (_on_request_completed): Reached end of function with _current_request_purpose not NONE. Purpose: %s. This might indicate an unhandled logic path." % RequestPurpose.keys()[_current_request_purpose])
-		_complete_current_request() # Ensure reset and queue processing
-
-
-# Map parallel callback (ensure defined once)
 func _on_map_request_completed(result: int, response_code: int, _headers: PackedStringArray, body: PackedByteArray) -> void:
-	print('[APICalls][MAP] request_completed result=%d code=%d size=%d' % [result, response_code, body.size()])
+	print('[APICalls][MAP][Parallel] completed result=%d code=%d size=%d' % [result, response_code, body.size()])
 	if result != HTTPRequest.RESULT_SUCCESS:
-		printerr('[APICalls][MAP] HTTPRequest failure result=%d' % result)
-		emit_signal('fetch_error', 'Map request failed (network)')
+		printerr('[APICalls][MAP] Parallel map request failed (result=%d).' % result)
+		emit_signal('fetch_error', 'Map request failed (result)')
 		return
 	if not (response_code >= 200 and response_code < 300):
-		var txt := body.get_string_from_utf8()
-		printerr('[APICalls][MAP] HTTP %d body=%s' % [response_code, txt])
-		emit_signal('fetch_error', 'Map request HTTP %d' % response_code)
+		var body_txt := body.get_string_from_utf8()
+		printerr('[APICalls][MAP] HTTP %d for map request. Body preview=%s' % [response_code, body_txt.left(200)])
+		if response_code == 401 and _auth_bearer_token != '':
+			print('[APICalls][MAP] 401 received; clearing auth and emitting auth_expired.')
+			clear_auth_session_token()
+			emit_signal('auth_expired')
+		else:
+			emit_signal('fetch_error', 'Map request HTTP %d' % response_code)
 		return
 	if body.is_empty():
-		printerr('[APICalls][MAP] Empty body.')
+		printerr('[APICalls][MAP] Empty body for map response.')
 		emit_signal('fetch_error', 'Empty map response')
 		return
-	var deserialized_map_data: Dictionary = preload('res://Scripts/System/tools.gd').deserialize_map_data(body)
-	if deserialized_map_data.is_empty():
-		printerr('[APICalls][MAP] Deserialization failed.')
-		emit_signal('fetch_error', 'Map parse failed')
+	var tools := preload('res://Scripts/System/tools.gd')
+	var deserialized: Dictionary = tools.deserialize_map_data(body)
+	if deserialized.is_empty() or not deserialized.has('tiles'):
+		printerr('[APICalls][MAP] Deserialization returned empty/invalid dict.')
+		emit_signal('fetch_error', 'Map deserialization failed')
 		return
-	var tiles_array = deserialized_map_data.get('tiles', [])
-	print('[APICalls][MAP] Deserialized map. Rows=%d Cols=%d' % [tiles_array.size(), tiles_array[0].size() if not tiles_array.is_empty() else 0])
-	emit_signal('map_data_received', deserialized_map_data)
-
+	print('[APICalls][MAP] Deserialized map: rows=%d cols=%d' % [deserialized.tiles.size(), deserialized.tiles[0].size() if deserialized.tiles.size() > 0 else 0])
+	emit_signal('map_data_received', deserialized)
 func _decode_jwt_expiry(token: String) -> int:
+	if token == "":
+		return 0
 	var parts = token.split('.')
 	if parts.size() < 2:
 		return 0
-	var payload_b64url = parts[1]
-	var b64 = payload_b64url.replace('-', '+').replace('_', '/')
-	var pad_needed = (4 - b64.length() % 4) % 4
-	if pad_needed > 0:
-		b64 += '='.repeat(pad_needed)
-	var bytes = Marshalls.base64_to_raw(b64)
-	if bytes.is_empty():
-		return 0
-	var json_txt = bytes.get_string_from_utf8()
-	var obj = JSON.parse_string(json_txt)
-	if obj == null or not (obj is Dictionary) or not obj.has('exp'):
-		return 0
-	return int(obj['exp'])
+	var payload_b64: String = parts[1]
+	payload_b64 = payload_b64.replace('-', '+').replace('_', '/')
+	while payload_b64.length() % 4 != 0:
+		payload_b64 += "="
+	var raw_bytes := Marshalls.base64_to_raw(payload_b64)
+	var json_text := raw_bytes.get_string_from_utf8()
+	var payload = JSON.parse_string(json_text)
+	if typeof(payload) == TYPE_DICTIONARY and payload.has('exp'):
+		return int(payload['exp'])
+	return 0
 
+# Schedule next auth status poll helper
 func _schedule_next_auth_status_poll():
 	if not _auth_poll.active:
 		return
-	# Use process_always=true so polling continues while tree paused during login screen
-	var timer := get_tree().create_timer(_auth_poll.interval, true)
-	timer.timeout.connect(func(): _enqueue_auth_status_request(_auth_poll.state))
+	var delay: float = max(0.2, float(_auth_poll.interval))
+	var t := get_tree().create_timer(delay, true)
+	t.timeout.connect(func(): _enqueue_auth_status_request(_auth_poll.state))
