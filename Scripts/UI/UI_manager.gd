@@ -86,9 +86,9 @@ const CONVOY_STAT_EMOJIS: Dictionary = {
 const SETTLEMENT_EMOJIS: Dictionary = {
 	'town': '🏘️',
 	'village': '🏠',
-	'city': '🏙️',
+	'city': '🏢',
 	'city-state': '🏛️',
-	'dome': '🛖',
+	'dome': '🏙️',
 	'military_base': '🪖',
 	'tutorial': '📘',
 }

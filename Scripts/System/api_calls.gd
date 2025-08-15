@@ -84,6 +84,9 @@ const REQUEST_TIMEOUT_SECONDS := {
 }
 
 var _probe_stalled_count: int = 0
+var _auth_me_resolve_attempts: int = 0
+const AUTH_ME_MAX_ATTEMPTS: int = 15
+const AUTH_ME_RETRY_INTERVAL: float = 1.5
 
 func _ready() -> void:
 	# Ensure this autoload keeps processing while login screen pauses the tree
@@ -231,17 +234,20 @@ func resolve_current_user_id(force: bool = false) -> void:
 	if _auth_me_requested and not force:
 		print('[APICalls] resolve_current_user_id(): already requested; skipping.')
 		return
+	if force:
+		print('[APICalls] resolve_current_user_id(): forced retry attempt %d' % (_auth_me_resolve_attempts + 1))
 	_auth_me_requested = true
+	_auth_me_resolve_attempts += 1
 	if current_user_id != '' and not force:
 		print('[APICalls] resolve_current_user_id(): already have user id (%s); skipping.' % current_user_id)
 		return
 	var url := '%s/auth/me' % BASE_URL
 	var headers: PackedStringArray = ['accept: application/json']
 	var request_details: Dictionary = {
-		"url": url,
-		"headers": headers,
-		"purpose": RequestPurpose.AUTH_ME,
-		"method": HTTPClient.METHOD_GET
+		'url': url,
+		'headers': headers,
+		'purpose': RequestPurpose.AUTH_ME,
+		'method': HTTPClient.METHOD_GET
 	}
 	_request_queue.append(request_details)
 	_process_queue()
@@ -871,7 +877,11 @@ func _on_request_completed(result: int, response_code: int, _headers: PackedStri
 					set_auth_session_token(token)
 					emit_signal('auth_session_received', token)
 					emit_signal('auth_poll_finished', true)
-					resolve_current_user_id()
+					# RESET and FORCE resolve of user id (previous failed attempt set flag true)
+					_auth_me_requested = false
+					_auth_me_resolve_attempts = 0
+					print('[APICalls][AUTH_STATUS] Forcing /auth/me resolution now that token is set.')
+					resolve_current_user_id(true)
 			else:
 				_auth_poll.active = false
 				_login_in_progress = false
@@ -887,14 +897,20 @@ func _on_request_completed(result: int, response_code: int, _headers: PackedStri
 		var json_response = JSON.parse_string(response_body_text)
 		if json_response == null or not json_response is Dictionary:
 			printerr('APICalls (AUTH_ME): Failed to parse /auth/me response')
-			# not fatal
 		else:
 			var uid_str: String = str(json_response.get('user_id', ''))
 			if not uid_str.is_empty() and _is_valid_uuid(uid_str):
 				print('[APICalls] Resolved current user id: ', uid_str)
+				_auth_me_resolve_attempts = 0
 				emit_signal('user_id_resolved', uid_str)
 			else:
-				print('[APICalls] No linked DF user for this session yet.')
+				print('[APICalls] /auth/me returned no user_id yet (attempt %d/%d). Will retry.' % [_auth_me_resolve_attempts, AUTH_ME_MAX_ATTEMPTS])
+				if _auth_me_resolve_attempts < AUTH_ME_MAX_ATTEMPTS:
+					_auth_me_requested = false # allow retry
+					var retry_timer := get_tree().create_timer(AUTH_ME_RETRY_INTERVAL, true)
+					retry_timer.timeout.connect(func(): resolve_current_user_id(true))
+				else:
+					print('[APICalls] Giving up resolving user id after %d attempts.' % AUTH_ME_MAX_ATTEMPTS)
 		_complete_current_request()
 		return
 
@@ -950,5 +966,6 @@ func _decode_jwt_expiry(token: String) -> int:
 func _schedule_next_auth_status_poll():
 	if not _auth_poll.active:
 		return
-	var timer := get_tree().create_timer(_auth_poll.interval)
+	# Use process_always=true so polling continues while tree paused during login screen
+	var timer := get_tree().create_timer(_auth_poll.interval, true)
 	timer.timeout.connect(func(): _enqueue_auth_status_request(_auth_poll.state))
