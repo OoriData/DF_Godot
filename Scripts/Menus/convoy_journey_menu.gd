@@ -25,6 +25,10 @@ var _destination_data: Dictionary = {}
 # Preload the scene for the route selection menu
 const RouteSelectionMenuScene = preload("res://Scenes/RouteSelectionMenu.tscn")
 
+var _is_request_in_flight: bool = false
+var _loading_label: Label = null
+var _last_requested_destination: Dictionary = {}
+
 func _ready():
 	# Connect the back button signal
 	if is_instance_valid(back_button):
@@ -40,8 +44,13 @@ func _ready():
 
 	var gdm = get_node_or_null("/root/GameDataManager")
 	if is_instance_valid(gdm):
+		print("[ConvoyJourneyMenu] Connecting to GameDataManager signals.")
 		if not gdm.is_connected("route_info_ready", Callable(self, "_on_route_info_ready")):
 			gdm.route_info_ready.connect(_on_route_info_ready)
+		if gdm.has_signal("route_choices_request_started") and not gdm.is_connected("route_choices_request_started", Callable(self, "_on_route_choices_request_started")):
+			gdm.route_choices_request_started.connect(_on_route_choices_request_started)
+		if gdm.has_signal("route_choices_error") and not gdm.is_connected("route_choices_error", Callable(self, "_on_route_choices_error")):
+			gdm.route_choices_error.connect(_on_route_choices_error)
 	else:
 		printerr("ConvoyJourneyMenu: Could not connect to GameDataManager signals.")
 
@@ -65,31 +74,28 @@ func _on_back_button_pressed():
 		emit_signal("route_preview_ended") # Clean up the preview
 	emit_signal("back_requested")
 
-func _process(delta: float):
+func _process(_delta: float):
 	pass
 
-func _physics_process(delta: float):
+func _physics_process(_delta: float):
 	pass
 
 func initialize_with_data(data: Dictionary):
 	print("ConvoyJourneyMenu: Initialized with data.") # DEBUG
-
 	# Store the received data for potential use by the title click
-	# Duplicate to avoid modifying the original if needed elsewhere
 	convoy_data_received = data.duplicate()
-
 	for child in content_vbox.get_children():
 		child.queue_free()
-
-	var journey_data: Dictionary = data.get("journey", {})
-	if journey_data == null:
-		journey_data = {}
+	# SAFELY extract journey data (API may send null)
+	var journey_raw = data.get("journey")
+	var journey_data: Dictionary = {}
+	if journey_raw is Dictionary:
+		journey_data = journey_raw
+	# Access GameDataManager after journey coercion
 	var gdm = get_node_or_null("/root/GameDataManager")
-
 	if is_instance_valid(title_label):
 		var convoy_name = data.get("convoy_name", "Convoy")
 		title_label.text = convoy_name + " - " + ("Journey Details" if not journey_data.is_empty() else "Journey Planner")
-
 	if journey_data.is_empty():
 		_populate_destination_list()
 		return
@@ -126,13 +132,12 @@ func initialize_with_data(data: Dictionary):
 	# Departure Time
 	var departure_time_str = journey_data.get("departure_time")
 	var departure_label = Label.new()
-	departure_label.text = "Departed: " + DateTimeUtils.format_timestamp_display(departure_time_str, false)
+	departure_label.text = "Departed: " + preload("res://Scripts/System/date_time_util.gd").format_timestamp_display(departure_time_str, false)
 	content_vbox.add_child(departure_label)
-
 	# ETA and Time Remaining
 	var eta_str = journey_data.get("eta")
 	var eta_label = Label.new()
-	eta_label.text = "ETA: " + DateTimeUtils.format_timestamp_display(eta_str, true)
+	eta_label.text = "ETA: " + preload("res://Scripts/System/date_time_util.gd").format_timestamp_display(eta_str, true)
 	content_vbox.add_child(eta_label)
 	content_vbox.add_child(HSeparator.new())
 
@@ -152,6 +157,11 @@ func initialize_with_data(data: Dictionary):
 	content_vbox.add_child(progress_bar)
 
 func _populate_destination_list():
+	# Clear potential prior loading state
+	_is_request_in_flight = false
+	_loading_label = null
+	_last_requested_destination = {}
+
 	var gdm = get_node_or_null("/root/GameDataManager")
 	if not is_instance_valid(gdm) or not gdm.has_method("get_all_settlements_data"):
 		printerr("ConvoyJourneyMenu: GameDataManager not found or method missing. Cannot populate destinations.")
@@ -257,10 +267,10 @@ func _get_settlement_name(gdm_node, coord_x, coord_y) -> String:
 	
 	var x_int = roundi(float(coord_x))
 	var y_int = roundi(float(coord_y))
-	var name = gdm_node.get_settlement_name_from_coords(x_int, y_int)
-	if name.begins_with("N/A"):
+	var settlement_name = gdm_node.get_settlement_name_from_coords(x_int, y_int)
+	if settlement_name.begins_with("N/A"):
 		return "Uncharted Location"
-	return name
+	return settlement_name
 
 func _on_title_label_gui_input(event: InputEvent):
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
@@ -269,20 +279,49 @@ func _on_title_label_gui_input(event: InputEvent):
 		get_viewport().set_input_as_handled()
 
 func _on_destination_button_pressed(destination_data: Dictionary):
+	if _is_request_in_flight:
+		return # Ignore multiple clicks while loading
 	print("ConvoyJourneyMenu: Destination '%s' selected. Requesting route choices." % destination_data.get("name"))
-	
+	_last_requested_destination = destination_data
 	var gdm = get_node_or_null("/root/GameDataManager")
 	if is_instance_valid(gdm) and gdm.has_method("request_route_choices"):
 		var convoy_id = str(convoy_data_received.get("convoy_id"))
 		var dest_x = int(destination_data.get("x"))
 		var dest_y = int(destination_data.get("y"))
 		gdm.request_route_choices(convoy_id, dest_x, dest_y)
+		_disable_destination_buttons()
+		_show_loading_indicator("Finding routes...")
 	else:
 		printerr("ConvoyJourneyMenu: Could not find GameDataManager or 'request_route_choices' method.")
+	_emit_find_route(destination_data)
 
+func _emit_find_route(destination_data: Dictionary):
 	emit_signal("find_route_requested", convoy_data_received, destination_data)
 
+func _on_route_choices_request_started(convoy_id: String, _destination_ctx: Dictionary):
+	print("[ConvoyJourneyMenu] route_choices_request_started for convoy_id=", convoy_id)
+	# Verify this is for our convoy
+	if str(convoy_data_received.get("convoy_id")) != str(convoy_id):
+		return
+	_is_request_in_flight = true
+	_show_loading_indicator("Calculating routes...")
+
+func _on_route_choices_error(convoy_id: String, _destination_ctx: Dictionary, error_message: String):
+	print("[ConvoyJourneyMenu] route_choices_error for convoy_id=", convoy_id, " error=", error_message)
+	if str(convoy_data_received.get("convoy_id")) != str(convoy_id):
+		return
+	_is_request_in_flight = false
+	_clear_loading_indicator()
+	_show_error_message(error_message)
+	_enable_destination_buttons()
+
 func _on_route_info_ready(convoy_data: Dictionary, destination_data: Dictionary, route_choices: Array):
+	print("[ConvoyJourneyMenu] route_info_ready for convoy_id=", convoy_data.get("convoy_id"), " routes=", route_choices.size())
+	if str(convoy_data.get("convoy_id")) != str(convoy_data_received.get("convoy_id")):
+		return
+	_clear_loading_indicator()
+	_is_request_in_flight = false
+
 	if route_choices.is_empty():
 		printerr("ConvoyJourneyMenu: Received no route choices. Cannot show preview.")
 		# Optionally, show an error to the user here.
@@ -346,3 +385,32 @@ func _on_route_selection_embark_requested(convoy_id: String, journey_id: String)
 
 	# Also end the preview, as the user has now committed to a route.
 	emit_signal("route_preview_ended")
+
+func _disable_destination_buttons():
+	for child in content_vbox.get_children():
+		if child is Button and child.text != "Back":
+			child.disabled = true
+
+func _enable_destination_buttons():
+	for child in content_vbox.get_children():
+		if child is Button:
+			child.disabled = false
+
+func _show_loading_indicator(text: String):
+	if _loading_label == null:
+		_loading_label = Label.new()
+		_loading_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		_loading_label.autowrap_mode = TextServer.AUTOWRAP_WORD
+		content_vbox.add_child(_loading_label)
+	_loading_label.text = text
+
+func _clear_loading_indicator():
+	if _loading_label and is_instance_valid(_loading_label):
+		_loading_label.queue_free()
+	_loading_label = null
+
+func _show_error_message(msg: String):
+	var err_label = Label.new()
+	err_label.text = "Route Error: %s" % msg
+	err_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	content_vbox.add_child(err_label)

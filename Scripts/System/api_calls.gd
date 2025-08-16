@@ -382,6 +382,27 @@ func get_all_in_transit_convoys() -> void:
 	_request_queue.append(request_details)
 	_process_queue()
 
+# --- Journey Planning Requests ---
+func find_route(convoy_id: String, dest_x: int, dest_y: int) -> void:
+	# Validate convoy_id (must be UUID) and coordinates
+	if convoy_id.is_empty() or not _is_valid_uuid(convoy_id):
+		var err_msg = 'APICalls (find_route): Invalid convoy_id "%s".' % convoy_id
+		printerr(err_msg)
+		emit_signal('fetch_error', err_msg)
+		return
+	var url: String = "%s/convoy/journey/find_route?convoy_id=%s&dest_x=%d&dest_y=%d" % [BASE_URL, convoy_id, dest_x, dest_y]
+	var headers: PackedStringArray = ['accept: application/json']
+	headers = _apply_auth_header(headers)
+	var request_details: Dictionary = {
+		"url": url,
+		"headers": headers,
+		"purpose": RequestPurpose.FIND_ROUTE,
+		"method": HTTPClient.METHOD_GET
+	}
+	print('[APICalls] Queueing find_route request purpose=FIND_ROUTE url=', url)
+	_request_queue.append(request_details)
+	_process_queue()
+# ...existing code...
 func _complete_current_request() -> void:
 	_current_request_purpose = RequestPurpose.NONE
 	_is_request_in_progress = false

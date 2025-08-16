@@ -121,6 +121,12 @@ var _active_settlement_panels: Dictionary = {} # { "tile_coord_str": PanelNode }
 # Z-index for label containers within MapContainer, relative to MapDisplay and ConvoyNodes
 const LABEL_CONTAINER_Z_INDEX = 2
 
+# --- Preview Route Drawing State ---
+var _is_preview_active: bool = false
+var _preview_route_x: Array = []
+var _preview_route_y: Array = []
+var _preview_color: Color = Color(1.0, 0.6, 0.0, 0.85) # Orange highlight
+var _preview_line_width: float = 3.5
 
 func _ready():
 	await get_tree().process_frame
@@ -214,6 +220,14 @@ func _ready():
 		sm.scale_changed.connect(_on_ui_scale_changed)
 	else:
 		printerr("UIManager: ui_scale_manager singleton not found. UI scaling will not be dynamic.")
+
+	# Connect to MenuManager to listen for journey menu openings so we can hook preview signals.
+	var menu_manager = get_node_or_null("/root/MenuManager")
+	if is_instance_valid(menu_manager):
+		if not menu_manager.is_connected("menu_opened", Callable(self, "_on_menu_manager_menu_opened")):
+			menu_manager.menu_opened.connect(_on_menu_manager_menu_opened)
+	else:
+		printerr("UIManager: MenuManager autoload not found; cannot attach journey preview listeners.")
 
 	# Diagnostic: Print scene tree and mouse_filter values for all UI nodes
 	print("[DIAG] UI_manager.gd: Printing scene tree and mouse_filter values for all UI nodes:")
@@ -607,6 +621,35 @@ func _find_settlement_at_tile(tile_x: int, tile_y: int) -> Variant:
 	return null
 
 
+func _on_menu_manager_menu_opened(menu_node: Node, menu_type: String):
+	# When a convoy journey submenu opens, attach to its preview signals.
+	if menu_type == "convoy_journey_submenu" and is_instance_valid(menu_node):
+		if menu_node.has_signal("route_preview_started") and not menu_node.is_connected("route_preview_started", Callable(self, "_on_preview_route_started")):
+			menu_node.route_preview_started.connect(_on_preview_route_started)
+		if menu_node.has_signal("route_preview_ended") and not menu_node.is_connected("route_preview_ended", Callable(self, "_on_preview_route_ended")):
+			menu_node.route_preview_ended.connect(_on_preview_route_ended)
+
+func _on_preview_route_started(route_data: Dictionary):
+	# route_data expected to contain nested 'journey' with route_x / route_y arrays.
+	var journey_dict = route_data.get("journey", {})
+	var rx = journey_dict.get("route_x", [])
+	var ry = journey_dict.get("route_y", [])
+	if rx is Array and ry is Array and rx.size() >= 2 and rx.size() == ry.size():
+		_preview_route_x = rx.duplicate()
+		_preview_route_y = ry.duplicate()
+		_is_preview_active = true
+		if is_instance_valid(convoy_connector_lines_container):
+			convoy_connector_lines_container.queue_redraw()
+	else:
+		printerr("UIManager: Preview route data invalid; cannot draw preview line.")
+
+func _on_preview_route_ended():
+	_is_preview_active = false
+	_preview_route_x.clear()
+	_preview_route_y.clear()
+	if is_instance_valid(convoy_connector_lines_container):
+		convoy_connector_lines_container.queue_redraw()
+
 func _on_connector_lines_container_draw():
 	# Ensure terrain_tilemap is valid before using it
 	if not is_instance_valid(terrain_tilemap):
@@ -641,35 +684,17 @@ func _on_connector_lines_container_draw():
 			var tile_pos = terrain_tilemap.map_to_local(Vector2i(tile_x, tile_y))
 			var color = _convoy_id_to_color_map_cache.get(str(convoy.get("convoy_id", "")), Color(1,1,1,1))
 			convoy_connector_lines_container.draw_circle(tile_pos, 6, color)
+	# --- Preview Route Drawing (after existing routes so it appears on top) ---
+	if _is_preview_active and _preview_route_x.size() >= 2 and _preview_route_x.size() == _preview_route_y.size():
+		var preview_points: PackedVector2Array = []
+		for j in range(_preview_route_x.size()):
+			var px = int(_preview_route_x[j])
+			var py = int(_preview_route_y[j])
+			var ppos = terrain_tilemap.map_to_local(Vector2i(px, py))
+			preview_points.append(ppos)
+		if preview_points.size() >= 2:
+			convoy_connector_lines_container.draw_polyline(preview_points, _preview_color, _preview_line_width)
 
-# --- Drag and Drop related methods (to be implemented/refined later) ---
-# func start_panel_drag(panel_node: Panel, global_mouse_position: Vector2):
-#     _dragging_panel_node = panel_node
-#     _dragged_convoy_id_actual_str = panel_node.get_meta("convoy_id_str", "")
-#     # Calculate drag offset, clamp rect, etc.
-#     # ...
-
-# func update_panel_drag(global_mouse_position: Vector2):
-#     if not is_instance_valid(_dragging_panel_node): return
-#     # Update panel position based on mouse, respecting clamp_rect
-#     # ...
-
-# func end_panel_drag():
-#     if not is_instance_valid(_dragging_panel_node): return
-#     # Store final user position in _convoy_label_user_positions
-#     # _convoy_label_user_positions[_dragged_convoy_id_actual_str] = _dragging_panel_node.position
-#     _dragging_panel_node = null
-#     _dragged_convoy_id_actual_str = ""
-#     # ...
-
-# func _input(event: InputEvent):
-	# UIManager could handle its own input for starting/updating/ending drags
-	# if it's made responsible for that.
-	# For now, main.gd handles input and calls UIManager methods.
-	# pass
-
-
-# Public method to update user positions if main.gd still handles drag input
 func set_convoy_user_position(convoy_id_str: String, position: Vector2):
 	_convoy_label_user_positions[convoy_id_str] = position
 
@@ -686,21 +711,13 @@ func set_dragging_state(panel_node: Panel, convoy_id_str: String, is_dragging: b
 		_dragged_convoy_id_actual_str = ""
 
 func _on_gdm_convoy_data_updated(all_convoy_data: Array) -> void:
-	# Update your local cache or UI as needed
 	_all_convoy_data_cache = all_convoy_data
-	# Optionally, trigger a UI update here
 	_draw_interactive_labels({})
 
 func _on_gdm_settlement_data_updated(settlement_data_list: Array) -> void:
-	# Update your local cache or UI as needed
 	_all_settlement_data_cache = settlement_data_list
-	# Optionally, trigger a UI update here
 	_draw_interactive_labels({})
 
 func _on_ui_scale_changed(new_scale: float):
-	# Reacts to the global UI scale being changed in the UIScaleManager.
 	ui_overall_scale_multiplier = new_scale
-	# A full redraw of labels is needed because font sizes, padding, etc., will change.
-	# We pass an empty dictionary for hover_info to avoid issues and force a clean update.
-	# This will propagate the new scale down to the ConvoyLabelManager as well.
 	_draw_interactive_labels({})

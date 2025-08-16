@@ -51,7 +51,7 @@ func display_route_details(p_convoy_data: Dictionary, p_destination_data: Dictio
 	# ETA for a prospective journey is calculated from delta_t (in minutes).
 	var delta_t_minutes = _route_data.get("delta_t", 0.0)
 	var eta_timestamp = Time.get_unix_time_from_system() + int(delta_t_minutes * 60.0)
-	eta_value.text = DateTimeUtils.format_timestamp_display(eta_timestamp, true)
+	eta_value.text = preload("res://Scripts/System/date_time_util.gd").format_timestamp_display(eta_timestamp, true)
 
 	# Fuel is a dictionary of expenses per vehicle; we need to sum them.
 	var total_fuel_cost = 0.0

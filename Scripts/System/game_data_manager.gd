@@ -20,7 +20,11 @@ signal game_data_reset      # Fired when user-auth related data is cleared (logo
 
 # --- Journey Planning Signals ---
 signal route_info_ready(convoy_data: Dictionary, destination_data: Dictionary, route_choices: Array)
-signal journey_started(updated_convoy_data: Dictionary)
+# Removed unused journey_started signal (was flagged as unused)
+# NEW: emitted when a route choice request starts so UI can show loading
+signal route_choices_request_started(convoy_id: String, destination_data: Dictionary)
+# NEW: emitted if the route choice request fails (API error or empty result)
+signal route_choices_error(convoy_id: String, destination_data: Dictionary, error_message: String)
 
 # --- Node References ---
 # Adjust the path if your APICallsInstance is located differently relative to GameDataManager
@@ -96,6 +100,8 @@ func _initiate_preload():
 		else:
 			print('[GameDataManager] No valid auth token at init.')
 		# Removed early request_map_data(); will be triggered after login success or separately by UI.
+		if api_calls_node.has_signal('fetch_error') and not api_calls_node.fetch_error.is_connected(_on_api_fetch_error):
+			api_calls_node.fetch_error.connect(_on_api_fetch_error)
 	else:
 		printerr("GameDataManager (_initiate_preload): Could not find APICalls Autoload. Map data will not be preloaded.")
 
@@ -604,10 +610,16 @@ func request_vendor_panel_data(convoy_id: String, vendor_id: String) -> void:
 
 # --- Journey Planning ---
 func request_route_choices(convoy_id: String, dest_x: int, dest_y: int) -> void:
+	print("[GameDataManager] request_route_choices convoy_id=%s dest=(%d,%d)" % [convoy_id, dest_x, dest_y])
 	if is_instance_valid(api_calls_node) and api_calls_node.has_method("find_route"):
 		_pending_journey_convoy_id = convoy_id
 		_pending_journey_destination_data = {"x": dest_x, "y": dest_y, "name": get_settlement_name_from_coords(dest_x, dest_y)}
+		route_choices_request_started.emit(convoy_id, _pending_journey_destination_data)
 		api_calls_node.find_route(convoy_id, dest_x, dest_y)
+	else:
+		printerr("GameDataManager: Cannot request route choices; APICalls missing or method not found.")
+		route_choices_error.emit(convoy_id, {"x": dest_x, "y": dest_y}, "Routing service unavailable")
+		return
 
 func start_convoy_journey(convoy_id: String, journey_id: String) -> void:
 	if is_instance_valid(api_calls_node) and api_calls_node.has_method("send_convoy"):
@@ -815,28 +827,31 @@ func sell_item(convoy_id: String, vendor_id: String, item_data: Dictionary, quan
 
 func _on_api_route_choices_received(routes: Array) -> void:
 	if _pending_journey_convoy_id.is_empty():
-		printerr("GameDataManager: Received route choices from API, but there was no pending journey request context. Ignoring.")
+		printerr("GameDataManager: Received route choices but no pending context.")
 		return
-
-	var convoy_data = get_convoy_by_id(_pending_journey_convoy_id)
+	var convoy_id_local = _pending_journey_convoy_id
+	var convoy_data = get_convoy_by_id(convoy_id_local)
 	var destination_data = _pending_journey_destination_data
-
-	print("GameDataManager: Received %d route choices. Emitting 'route_info_ready'." % routes.size())
-	emit_signal("route_info_ready", convoy_data, destination_data, routes)
-
+	print("[GameDataManager] _on_api_route_choices_received convoy_id=%s routes=%d" % [convoy_id_local, routes.size()])
+	if routes.is_empty():
+		printerr("GameDataManager: No route choices returned for convoy %s." % convoy_id_local)
+		route_choices_error.emit(convoy_id_local, destination_data, "No routes available")
+		_pending_journey_convoy_id = ""
+		_pending_journey_destination_data = {}
+		return
+	route_info_ready.emit(convoy_data, destination_data, routes)
 	_pending_journey_convoy_id = ""
 	_pending_journey_destination_data = {}
 
+func _on_api_fetch_error(error_message: String) -> void:
+	if not _pending_journey_convoy_id.is_empty():
+		printerr("[GameDataManager] route choice request failed: %s" % error_message)
+		route_choices_error.emit(_pending_journey_convoy_id, _pending_journey_destination_data, error_message)
+		_pending_journey_convoy_id = ""
+		_pending_journey_destination_data = {}
+
 func _on_convoy_sent_on_journey(updated_convoy_data: Dictionary) -> void:
 	print("GameDataManager: Received confirmation that journey has started. Updating local data.")
-	# Use the existing update function to process and augment the data
 	update_single_convoy(updated_convoy_data)
-	# The update_single_convoy function already emits convoy_data_updated,
-	# but we emit a more specific signal for UI flow with the fully augmented data.
-	emit_signal("journey_started", get_convoy_by_id(str(updated_convoy_data.get("convoy_id"))))
-
-func get_map_tiles() -> Array:
-	return map_tiles
-
-func get_all_convoy_data() -> Array:
-	return all_convoy_data
+	# After updating a convoy, convey updated list via existing convoy_data_updated signal already called inside update_single_convoy.
+	# If UI wants specific journey start handling later, reintroduce a dedicated signal.
