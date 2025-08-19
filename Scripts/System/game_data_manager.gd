@@ -94,6 +94,19 @@ func _initiate_preload():
 			api_calls_node.user_data_received.connect(_on_user_data_received_from_api)
 		if api_calls_node.has_signal('vendor_data_received'):
 			api_calls_node.vendor_data_received.connect(update_single_vendor)
+		# Transaction patch signals that return updated convoy objects (resource buys etc.)
+		if api_calls_node.has_signal('resource_bought') and not api_calls_node.resource_bought.is_connected(_on_resource_transaction):
+			api_calls_node.resource_bought.connect(_on_resource_transaction)
+		if api_calls_node.has_signal('resource_sold') and not api_calls_node.resource_sold.is_connected(_on_resource_transaction):
+			api_calls_node.resource_sold.connect(_on_resource_transaction)
+		if api_calls_node.has_signal('cargo_bought') and not api_calls_node.cargo_bought.is_connected(_on_convoy_transaction):
+			api_calls_node.cargo_bought.connect(_on_convoy_transaction)
+		if api_calls_node.has_signal('cargo_sold') and not api_calls_node.cargo_sold.is_connected(_on_convoy_transaction):
+			api_calls_node.cargo_sold.connect(_on_convoy_transaction)
+		if api_calls_node.has_signal('vehicle_bought') and not api_calls_node.vehicle_bought.is_connected(_on_convoy_transaction):
+			api_calls_node.vehicle_bought.connect(_on_convoy_transaction)
+		if api_calls_node.has_signal('vehicle_sold') and not api_calls_node.vehicle_sold.is_connected(_on_convoy_transaction):
+			api_calls_node.vehicle_sold.connect(_on_convoy_transaction)
 		if api_calls_node.has_signal('route_choices_received'):
 			api_calls_node.route_choices_received.connect(_on_api_route_choices_received)
 		if api_calls_node.has_signal('convoy_sent_on_journey'):
@@ -539,11 +552,39 @@ func request_user_data_refresh() -> void:
 func request_vendor_data_refresh(vendor_id: String) -> void:
 	"""
 	Called to trigger a new fetch of a specific vendor's data.
+	Supports either request_vendor_data() (new) or get_vendor_data() (legacy alias).
 	"""
-	if is_instance_valid(api_calls_node) and api_calls_node.has_method("get_vendor_data"):
+	if not is_instance_valid(api_calls_node):
+		printerr("GameDataManager: Cannot request vendor data. APICallsInstance is invalid.")
+		return
+	if api_calls_node.has_method("request_vendor_data"):
+		api_calls_node.request_vendor_data(vendor_id)
+	elif api_calls_node.has_method("get_vendor_data"):
 		api_calls_node.get_vendor_data(vendor_id)
 	else:
-		printerr("GameDataManager: Cannot request vendor data. APICallsInstance is invalid or missing 'get_vendor_data' method.")
+		printerr("GameDataManager: Cannot request vendor data. APICallsInstance missing both 'request_vendor_data' and 'get_vendor_data'.")
+
+# --- Transaction Handlers ---
+func _on_resource_transaction(result: Dictionary) -> void:
+	# Backend returns the updated convoy object (convoy_after). Integrate it.
+	if result.is_empty():
+		printerr("GameDataManager: resource transaction returned empty result")
+		return
+	# Expect convoy keys like convoy_id, fuel, water, food, money etc.
+	if result.has("convoy_id"):
+		update_single_convoy(result)
+		# Also refresh user money (if money changed) by requesting user data (lightweight)
+		request_user_data_refresh()
+	else:
+		printerr("GameDataManager: resource transaction result missing convoy_id")
+
+func _on_convoy_transaction(result: Dictionary) -> void:
+	# Generic handler for cargo/vehicle buy/sell returning updated convoy
+	if result.is_empty():
+		return
+	if result.has("convoy_id"):
+		update_single_convoy(result)
+		request_user_data_refresh()
 
 func trigger_initial_convoy_data_fetch(p_user_id: String) -> void:
 	if is_instance_valid(api_calls_node) and api_calls_node.has_method("get_user_convoys"):

@@ -48,6 +48,9 @@ func _ready():
 			gdm.convoy_selection_changed.connect(_on_gdm_convoy_selection_changed)
 		else:
 			printerr("MenuManager: GameDataManager is missing 'convoy_selection_changed' signal.")
+		# Connect to convoy data updates so active menus refresh automatically
+		if gdm.has_signal("convoy_data_updated") and not gdm.convoy_data_updated.is_connected(_on_gdm_convoy_data_updated):
+			gdm.convoy_data_updated.connect(_on_gdm_convoy_data_updated)
 	else:
 		printerr("MenuManager: Could not find GameDataManager autoload.")
 	

@@ -388,6 +388,134 @@ func get_all_in_transit_convoys() -> void:
 	_request_queue.append(request_details)
 	_process_queue()
 
+# --- Vendor / Transaction Requests (added) ---
+func request_vendor_data(vendor_id: String) -> void:
+	if vendor_id.is_empty() or not _is_valid_uuid(vendor_id):
+		printerr("APICalls (request_vendor_data): invalid vendor_id %s" % vendor_id)
+		return
+	var url := "%s/vendor/get?vendor_id=%s" % [BASE_URL, vendor_id]
+	var headers: PackedStringArray = ['accept: application/json']
+	headers = _apply_auth_header(headers)
+	var request_details: Dictionary = {
+		"url": url,
+		"headers": headers,
+		"purpose": RequestPurpose.VENDOR_DATA,
+		"method": HTTPClient.METHOD_GET
+	}
+	_request_queue.append(request_details)
+	_process_queue()
+
+# Backwards compatibility alias: older code expects get_vendor_data()
+func get_vendor_data(vendor_id: String) -> void:
+	request_vendor_data(vendor_id)
+
+func buy_cargo(vendor_id: String, convoy_id: String, cargo_id: String, quantity: int) -> void:
+	if vendor_id.is_empty() or convoy_id.is_empty() or cargo_id.is_empty():
+		printerr("APICalls (buy_cargo): missing id(s)")
+		return
+	var url := "%s/vendor/buy_cargo?vendor_id=%s&convoy_id=%s&cargo_id=%s&quantity=%d" % [BASE_URL, vendor_id, convoy_id, cargo_id, quantity]
+	var headers: PackedStringArray = ['accept: application/json']
+	headers = _apply_auth_header(headers)
+	_request_queue.append({
+		"url": url,
+		"headers": headers,
+		"purpose": RequestPurpose.NONE,
+		"method": HTTPClient.METHOD_PATCH,
+		"body": "",
+		"signal_name": "cargo_bought"
+	})
+	_process_queue()
+
+func sell_cargo(vendor_id: String, convoy_id: String, cargo_id: String, quantity: int) -> void:
+	if vendor_id.is_empty() or convoy_id.is_empty() or cargo_id.is_empty():
+		printerr("APICalls (sell_cargo): missing id(s)")
+		return
+	var url := "%s/vendor/sell_cargo?vendor_id=%s&convoy_id=%s&cargo_id=%s&quantity=%d" % [BASE_URL, vendor_id, convoy_id, cargo_id, quantity]
+	var headers: PackedStringArray = ['accept: application/json']
+	headers = _apply_auth_header(headers)
+	_request_queue.append({
+		"url": url,
+		"headers": headers,
+		"purpose": RequestPurpose.NONE,
+		"method": HTTPClient.METHOD_PATCH,
+		"body": "",
+		"signal_name": "cargo_sold"
+	})
+	_process_queue()
+
+func buy_vehicle(vendor_id: String, convoy_id: String, vehicle_id: String) -> void:
+	if vendor_id.is_empty() or convoy_id.is_empty() or vehicle_id.is_empty():
+		printerr("APICalls (buy_vehicle): missing id(s)")
+		return
+	var url := "%s/vendor/buy_vehicle?vendor_id=%s&convoy_id=%s&vehicle_id=%s" % [BASE_URL, vendor_id, convoy_id, vehicle_id]
+	var headers: PackedStringArray = ['accept: application/json']
+	headers = _apply_auth_header(headers)
+	_request_queue.append({
+		"url": url,
+		"headers": headers,
+		"purpose": RequestPurpose.NONE,
+		"method": HTTPClient.METHOD_PATCH,
+		"body": "",
+		"signal_name": "vehicle_bought"
+	})
+	_process_queue()
+
+func sell_vehicle(vendor_id: String, convoy_id: String, vehicle_id: String) -> void:
+	if vendor_id.is_empty() or convoy_id.is_empty() or vehicle_id.is_empty():
+		printerr("APICalls (sell_vehicle): missing id(s)")
+		return
+	var url := "%s/vendor/sell_vehicle?vendor_id=%s&convoy_id=%s&vehicle_id=%s" % [BASE_URL, vendor_id, convoy_id, vehicle_id]
+	var headers: PackedStringArray = ['accept: application/json']
+	headers = _apply_auth_header(headers)
+	_request_queue.append({
+		"url": url,
+		"headers": headers,
+		"purpose": RequestPurpose.NONE,
+		"method": HTTPClient.METHOD_PATCH,
+		"body": "",
+		"signal_name": "vehicle_sold"
+	})
+	_process_queue()
+
+func buy_resource(vendor_id: String, convoy_id: String, resource_type: String, quantity: float) -> void:
+	# Backend route: PATCH /vendor/resource/buy with query params
+	if vendor_id.is_empty() or convoy_id.is_empty() or resource_type.is_empty() or quantity <= 0:
+		printerr("APICalls (buy_resource): invalid args")
+		return
+	# Ensure minimal floating noise (limit to 3 decimals) to keep URLs tidy
+	var qty_str := String.num(quantity, 3).rstrip("0").rstrip(".")
+	var url := "%s/vendor/resource/buy?vendor_id=%s&convoy_id=%s&resource_type=%s&quantity=%s" % [BASE_URL, vendor_id, convoy_id, resource_type, qty_str]
+	var headers: PackedStringArray = ['accept: application/json']
+	headers = _apply_auth_header(headers)
+	_request_queue.append({
+		"url": url,
+		"headers": headers,
+		"purpose": RequestPurpose.NONE,
+		"method": HTTPClient.METHOD_PATCH,
+		"body": "",
+		"signal_name": "resource_bought"
+	})
+	_process_queue()
+
+func sell_resource(vendor_id: String, convoy_id: String, resource_type: String, quantity: float) -> void:
+	# Assuming symmetric backend route PATCH /vendor/resource/sell
+	if vendor_id.is_empty() or convoy_id.is_empty() or resource_type.is_empty() or quantity <= 0:
+		printerr("APICalls (sell_resource): invalid args")
+		return
+	var qty_str := String.num(quantity, 3).rstrip("0").rstrip(".")
+	var url := "%s/vendor/resource/sell?vendor_id=%s&convoy_id=%s&resource_type=%s&quantity=%s" % [BASE_URL, vendor_id, convoy_id, resource_type, qty_str]
+	var headers: PackedStringArray = ['accept: application/json']
+	headers = _apply_auth_header(headers)
+	_request_queue.append({
+		"url": url,
+		"headers": headers,
+		"purpose": RequestPurpose.NONE,
+		"method": HTTPClient.METHOD_PATCH,
+		"body": "",
+		"signal_name": "resource_sold"
+	})
+	_process_queue()
+
 # --- Journey Planning Requests ---
 var _last_route_params: Dictionary = {} # {convoy_id, dest_x, dest_y}
 
