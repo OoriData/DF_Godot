@@ -32,6 +32,7 @@ signal vendor_data_received(vendor_data: Dictionary)
 # --- Journey Planning Signals ---
 signal route_choices_received(routes: Array)
 signal convoy_sent_on_journey(updated_convoy_data: Dictionary)
+signal convoy_journey_canceled(updated_convoy_data: Dictionary)
 
 var BASE_URL: String = 'http://127.0.0.1:1337' # default
 # Allow override via environment (cannot be const due to runtime lookup)
@@ -42,6 +43,7 @@ func _init():
 var current_user_id: String = "" # To store the logged-in user's ID
 var _http_request: HTTPRequest
 var _http_request_map: HTTPRequest  # Dedicated non-queued requester for map data
+var _http_request_route: HTTPRequest # Dedicated requester for route finding (non-queued)
 var convoys_in_transit: Array = []  # This will store the latest parsed list of convoys (either user's or all)
 var _last_requested_url: String = "" # To store the URL for logging on error
 var _is_local_user_attempt: bool = false # Flag to track if the current USER_CONVOYS request is the initial local one
@@ -85,9 +87,6 @@ var _probe_stalled_count: int = 0
 var _auth_me_resolve_attempts: int = 0
 const AUTH_ME_MAX_ATTEMPTS: int = 5
 const AUTH_ME_RETRY_INTERVAL: float = 0.75
-var _pending_discord_id: String = ""
-var _emitted_new_user_required: bool = false
-var _creating_user: bool = false
 
 func _ready() -> void:
 	# Ensure this autoload keeps processing while login screen pauses the tree
@@ -108,6 +107,13 @@ func _ready() -> void:
 	if _http_request_map.request_completed.is_connected(_on_map_request_completed):
 		_http_request_map.request_completed.disconnect(_on_map_request_completed)
 	_http_request_map.request_completed.connect(_on_map_request_completed)
+	# NEW: Dedicated route HTTPRequest (bypasses queue so UI not blocked by long user convoy fetches)
+	_http_request_route = HTTPRequest.new()
+	_http_request_route.name = "RouteHTTPRequest"
+	add_child(_http_request_route)
+	if _http_request_route.request_completed.is_connected(_on_route_request_completed):
+		_http_request_route.request_completed.disconnect(_on_route_request_completed)
+	_http_request_route.request_completed.connect(_on_route_request_completed)
 	_start_request_status_probe()
 	_load_auth_session_token()
 	# Auto-resolve user if we have a still-valid token
@@ -383,26 +389,131 @@ func get_all_in_transit_convoys() -> void:
 	_process_queue()
 
 # --- Journey Planning Requests ---
+var _last_route_params: Dictionary = {} # {convoy_id, dest_x, dest_y}
+
 func find_route(convoy_id: String, dest_x: int, dest_y: int) -> void:
-	# Validate convoy_id (must be UUID) and coordinates
+	# Backend contract: HTTP POST to /convoy/journey/find_route with query params (no JSON body)
+	_last_route_params = {"convoy_id": convoy_id, "dest_x": dest_x, "dest_y": dest_y}
 	if convoy_id.is_empty() or not _is_valid_uuid(convoy_id):
-		var err_msg = 'APICalls (find_route): Invalid convoy_id "%s".' % convoy_id
+		var err_msg = 'APICalls (find_route): Invalid convoy_id "%s" (must be UUID).' % convoy_id
 		printerr(err_msg)
 		emit_signal('fetch_error', err_msg)
 		return
+	if not is_instance_valid(_http_request_route):
+		printerr("APICalls (find_route): _http_request_route not initialized.")
+		emit_signal('fetch_error', 'Internal route requester missing')
+		return
+	if _http_request_route.get_http_client_status() != HTTPClient.STATUS_DISCONNECTED:
+		_http_request_route.cancel_request()
 	var url: String = "%s/convoy/journey/find_route?convoy_id=%s&dest_x=%d&dest_y=%d" % [BASE_URL, convoy_id, dest_x, dest_y]
 	var headers: PackedStringArray = ['accept: application/json']
 	headers = _apply_auth_header(headers)
+	print('[APICalls][FIND_ROUTE] Sending POST (query params) url=%s' % url)
+	var err = _http_request_route.request(url, headers, HTTPClient.METHOD_POST) # empty body; params in query string
+	if err != OK:
+		var err_msg2 = 'APICalls (find_route): HTTPRequest error code %s' % err
+		printerr(err_msg2)
+		emit_signal('fetch_error', err_msg2)
+
+# Send convoy on selected journey
+func send_convoy(convoy_id: String, journey_id: String) -> void:
+	# Validate inputs
+	if convoy_id.is_empty() or not _is_valid_uuid(convoy_id):
+		var err1 = 'APICalls (send_convoy): Invalid convoy_id "%s" (must be UUID).' % convoy_id
+		printerr(err1)
+		emit_signal('fetch_error', err1)
+		return
+	if journey_id.is_empty() or not _is_valid_uuid(journey_id):
+		var err2 = 'APICalls (send_convoy): Invalid journey_id "%s" (must be UUID).' % journey_id
+		printerr(err2)
+		emit_signal('fetch_error', err2)
+		return
+	# Backend expects convoy_id & journey_id as query parameters (422 showed missing query fields)
+	var url := "%s/convoy/journey/send?convoy_id=%s&journey_id=%s" % [BASE_URL, convoy_id, journey_id]
+	var headers: PackedStringArray = ['accept: application/json']
+	headers = _apply_auth_header(headers)
+	var has_auth := _auth_bearer_token != ""
+	print('[APICalls][SEND_JOURNEY] PATCH (query params) ', url, ' auth_present=', has_auth)
 	var request_details: Dictionary = {
 		"url": url,
 		"headers": headers,
-		"purpose": RequestPurpose.FIND_ROUTE,
-		"method": HTTPClient.METHOD_GET
+		"purpose": RequestPurpose.NONE,
+		"method": HTTPClient.METHOD_PATCH,
+		"body": "", # No body; params in query string
+		"signal_name": "convoy_sent_on_journey"
 	}
-	print('[APICalls] Queueing find_route request purpose=FIND_ROUTE url=', url)
 	_request_queue.append(request_details)
 	_process_queue()
-# ...existing code...
+
+# Cancel an in-progress convoy journey (PATCH with query params)
+func cancel_convoy_journey(convoy_id: String, journey_id: String) -> void:
+	if convoy_id.is_empty() or not _is_valid_uuid(convoy_id):
+		var err1 = 'APICalls (cancel_convoy_journey): Invalid convoy_id "%s" (must be UUID).' % convoy_id
+		printerr(err1)
+		emit_signal('fetch_error', err1)
+		return
+	if journey_id.is_empty() or not _is_valid_uuid(journey_id):
+		var err2 = 'APICalls (cancel_convoy_journey): Invalid journey_id "%s" (must be UUID).' % journey_id
+		printerr(err2)
+		emit_signal('fetch_error', err2)
+		return
+	var url := "%s/convoy/journey/cancel?convoy_id=%s&journey_id=%s" % [BASE_URL, convoy_id, journey_id]
+	var headers: PackedStringArray = ['accept: application/json']
+	headers = _apply_auth_header(headers)
+	print('[APICalls][CANCEL_JOURNEY] PATCH (query params) ', url, ' auth_present=', _auth_bearer_token != "")
+	var request_details: Dictionary = {
+		"url": url,
+		"headers": headers,
+		"purpose": RequestPurpose.NONE,
+		"method": HTTPClient.METHOD_PATCH,
+		"body": "",
+		"signal_name": "convoy_journey_canceled"
+	}
+	_request_queue.append(request_details)
+	_process_queue()
+
+func _on_route_request_completed(result: int, response_code: int, _headers: PackedStringArray, body: PackedByteArray) -> void:
+	print('[APICalls][FIND_ROUTE] request_completed result=%d code=%d bytes=%d' % [result, response_code, body.size()])
+	if result != HTTPRequest.RESULT_SUCCESS:
+		var err_msg = 'APICalls (_on_route_request_completed): Network error result=%d code=%d' % [result, response_code]
+		printerr(err_msg)
+		emit_signal('fetch_error', err_msg)
+		return
+	var response_body_text: String = body.get_string_from_utf8()
+	print('[APICalls][FIND_ROUTE] Raw body: ', response_body_text)
+	var json_response = JSON.parse_string(response_body_text)
+	if json_response == null:
+		var error_msg_json = 'APICalls (_on_route_request_completed): Failed to parse JSON.'
+		printerr(error_msg_json)
+		printerr('  Raw Body: %s' % response_body_text)
+		emit_signal('fetch_error', error_msg_json)
+		return
+	# Expected primary shape: Array of route dicts
+	if json_response is Array:
+		print('[APICalls][FIND_ROUTE] Parsed %d route choice(s) (Array).' % json_response.size())
+		emit_signal('route_choices_received', json_response)
+		return
+	if json_response is Dictionary:
+		# Accept wrappers or single journey dict
+		if json_response.has('routes') and json_response['routes'] is Array:
+			var arr: Array = json_response['routes']
+			print('[APICalls][FIND_ROUTE] Parsed %d route choice(s) from routes[] wrapper.' % arr.size())
+			emit_signal('route_choices_received', arr)
+			return
+		elif json_response.has('journey'):
+			print('[APICalls][FIND_ROUTE] Received single route object; wrapping into array.')
+			emit_signal('route_choices_received', [json_response])
+			return
+		elif json_response.has('detail'):
+			# FastAPI style validation error; surface nicely
+			var detail = json_response['detail']
+			var msg = 'Route find failed: %s' % str(detail)
+			printerr('[APICalls][FIND_ROUTE] ' + msg)
+			emit_signal('fetch_error', msg)
+			return
+	var error_msg_type = 'APICalls (_on_route_request_completed): Unexpected route response shape (type=%s).' % typeof(json_response)
+	printerr(error_msg_type)
+	emit_signal('fetch_error', error_msg_type)
 func _complete_current_request() -> void:
 	_current_request_purpose = RequestPurpose.NONE
 	_is_request_in_progress = false
@@ -594,7 +705,10 @@ func _on_request_completed(result: int, response_code: int, _headers: PackedStri
 	# PATCH transaction responses (purpose == NONE, but signal_name is set)
 	if _current_request_purpose == RequestPurpose.NONE and _current_patch_signal_name != "":
 		if result == HTTPRequest.RESULT_SUCCESS and (response_code >= 200 and response_code < 300):
+			print("[APICalls][PATCH_TXN] signal=%s code=%d size=%d url=%s" % [_current_patch_signal_name, response_code, body.size(), _last_requested_url])
 			var response_body_text = body.get_string_from_utf8()
+			var preview = response_body_text.substr(0, 400)
+			print("[APICalls][PATCH_TXN] body_preview=", preview)
 			var json_response = JSON.parse_string(response_body_text)
 			if json_response == null:
 				var error_msg = "APICalls (PATCH): Failed to parse JSON for '%s'. Body: %s" % [_current_patch_signal_name, response_body_text]
@@ -606,8 +720,30 @@ func _on_request_completed(result: int, response_code: int, _headers: PackedStri
 			
 			_complete_current_request()
 			return
-		# If the PATCH request failed, it will fall through to the generic error handlers below.
-		# This is intentional, so we don't have to duplicate error handling logic.
+		else:
+			print("[APICalls][PATCH_TXN] signal=%s FAILED result=%d code=%d url=%s" % [_current_patch_signal_name, result, response_code, _last_requested_url])
+			var fail_body_text := body.get_string_from_utf8()
+			var fail_preview := fail_body_text.substr(0, 400)
+			print("[APICalls][PATCH_TXN] fail_body_preview=", fail_preview)
+			# Try to parse JSON error for clearer feedback (e.g. FastAPI validation 'detail')
+			var fail_json = JSON.parse_string(fail_body_text)
+			if typeof(fail_json) == TYPE_DICTIONARY:
+				var msg_parts: Array = []
+				if fail_json.has("detail"):
+					msg_parts.append(str(fail_json["detail"]))
+				if fail_json.has("error"):
+					msg_parts.append(str(fail_json["error"]))
+				if msg_parts.size() > 0:
+					var combined := "PATCH '" + _current_patch_signal_name + "' failed: " + "; ".join(msg_parts)
+					emit_signal('fetch_error', combined)
+			elif typeof(fail_json) == TYPE_ARRAY and fail_json.size() > 0:
+				# FastAPI may return list of validation issues
+				var first_issue = fail_json[0]
+				if typeof(first_issue) == TYPE_DICTIONARY and first_issue.has("msg"):
+					emit_signal('fetch_error', "PATCH '" + _current_patch_signal_name + "' failed: " + str(first_issue["msg"]))
+			# Complete request now; we've surfaced error
+			_complete_current_request()
+			return
 
 	# --- Handle fallback (ALL_CONVOYS) or other direct remote requests ---
 	# This block is reached if:
@@ -649,59 +785,64 @@ func _on_request_completed(result: int, response_code: int, _headers: PackedStri
 		_complete_current_request()
 		return
 
-	# Successful HTTP response for fallback or direct remote
+	# Successful HTTP response routing by purpose
+	if request_purpose_at_start == RequestPurpose.ALL_CONVOYS or request_purpose_at_start == RequestPurpose.USER_CONVOYS:
+		var response_body_text_convoys: String = body.get_string_from_utf8()
+		var json_response_convoys = JSON.parse_string(response_body_text_convoys)
+		if json_response_convoys == null:
+			var error_msg_json_convoys = 'APICalls (_on_request_completed - Purpose: %s, Code: %s): Failed to parse JSON response. URL: %s' % [RequestPurpose.keys()[request_purpose_at_start], response_code, _last_requested_url]
+			printerr(error_msg_json_convoys)
+			printerr('  Raw Body: %s' % response_body_text_convoys)
+			emit_signal('fetch_error', error_msg_json_convoys)
+			_complete_current_request()
+			return
+		# Accept either an Array of convoys OR a wrapper Dictionary containing a convoys-like key
+		if not (json_response_convoys is Array):
+			if json_response_convoys is Dictionary:
+				var extracted: Array = []
+				var candidate_keys = ["convoys", "user_convoys", "convoys_in_transit"]
+				for k in candidate_keys:
+					if json_response_convoys.has(k) and json_response_convoys[k] is Array:
+						extracted = json_response_convoys[k]
+						print("APICalls: Extracted convoys array from wrapper key '%s' size=%d" % [k, extracted.size()])
+						break
+				if extracted.is_empty():
+					var error_msg_type_convoys = 'APICalls (_on_request_completed - Purpose: %s, Code: %s): Expected convoy array or wrapper with convoys key, got type=%s. URL: %s' % [RequestPurpose.keys()[request_purpose_at_start], response_code, typeof(json_response_convoys), _last_requested_url]
+					printerr(error_msg_type_convoys)
+					emit_signal('fetch_error', error_msg_type_convoys)
+					_complete_current_request()
+					return
+				json_response_convoys = extracted
+			else:
+				var error_msg_type_convoys2 = 'APICalls (_on_request_completed - Purpose: %s, Code: %s): Unexpected convoy response type=%s. URL: %s' % [RequestPurpose.keys()[request_purpose_at_start], response_code, typeof(json_response_convoys), _last_requested_url]
+				printerr(error_msg_type_convoys2)
+				emit_signal('fetch_error', error_msg_type_convoys2)
+				_complete_current_request()
+				return
+		if not json_response_convoys.is_empty():
+			var first_convoy2 = json_response_convoys[0]
+			print("APICalls: First convoy keys: ", first_convoy2.keys())
+			print("APICalls: First convoy vehicle_details_list: ", first_convoy2.get("vehicle_details_list", []))
+			if first_convoy2.has("vehicle_details_list") and first_convoy2["vehicle_details_list"].size() > 0:
+				print("APICalls: First vehicle keys: ", first_convoy2["vehicle_details_list"][0].keys())
+		print("APICalls (_on_request_completed - %s): Successfully fetched %s convoy(s). URL: %s" % [RequestPurpose.keys()[request_purpose_at_start], json_response_convoys.size(), _last_requested_url])
+		if not json_response_convoys.is_empty():
+			print("  Sample Convoy 0: ID: %s" % [json_response_convoys[0].get("convoy_id", "N/A")])
+		self.convoys_in_transit = json_response_convoys
+		emit_signal('convoy_data_received', json_response_convoys)
+		_complete_current_request()
+		return
+
 	if request_purpose_at_start == RequestPurpose.NONE: # Likely get_convoy_data (expects Dictionary)
-		# Handle get_convoy_data response (assuming it expects a Dictionary)
-		# This part needs to be fleshed out if get_convoy_data is actively used and its response is a Dictionary.
-		# For now, we'll assume it's not the primary flow being addressed.
-		if request_purpose_at_start == RequestPurpose.NONE and _current_patch_signal_name == "":
-			var response_body_text = body.get_string_from_utf8()
-			var json_response = JSON.parse_string(response_body_text)
-			if json_response == null or not json_response is Dictionary:
+		if _current_patch_signal_name == "":
+			var response_body_text_single = body.get_string_from_utf8()
+			var json_response_single = JSON.parse_string(response_body_text_single)
+			if json_response_single == null or not json_response_single is Dictionary:
 				printerr("APICalls (_on_request_completed - Purpose: NONE): Failed to parse convoy data as Dictionary. URL: %s" % _last_requested_url)
 				emit_signal('fetch_error', "Failed to parse convoy data as Dictionary.")
 			else:
 				print("APICalls (_on_request_completed - Purpose: NONE): Successfully fetched single convoy data. URL: %s" % _last_requested_url)
-				# Emit as a single-item array for consistency
-				emit_signal('convoy_data_received', [json_response])
-			_complete_current_request()
-			return
-
-		# Process Array response (for ALL_CONVOYS or a non-initial USER_CONVOYS)
-		if request_purpose_at_start == RequestPurpose.ALL_CONVOYS or request_purpose_at_start == RequestPurpose.USER_CONVOYS:
-			var response_body_text: String = body.get_string_from_utf8()
-			var json_response = JSON.parse_string(response_body_text)
-
-			if json_response == null:
-				var error_msg_json_fallback = 'APICalls (_on_request_completed - Purpose: %s, Code: %s): Failed to parse JSON response. URL: %s' % [RequestPurpose.keys()[request_purpose_at_start], response_code, _last_requested_url]
-				printerr(error_msg_json_fallback)
-				printerr('  Raw Body: %s' % response_body_text)
-				emit_signal('fetch_error', error_msg_json_fallback)
-				_complete_current_request()
-				return
-
-			if not json_response is Array:
-				var error_msg_type_fallback = 'APICalls (_on_request_completed - Purpose: %s, Code: %s): Expected array from JSON response, got %s. URL: %s' % [RequestPurpose.keys()[request_purpose_at_start], response_code, typeof(json_response), _last_requested_url]
-				printerr(error_msg_type_fallback)
-				emit_signal('fetch_error', error_msg_type_fallback)
-				_complete_current_request()
-				return
-
-			# --- ADD THIS LOGGING ---
-			if not json_response.is_empty():
-				var first_convoy = json_response[0]
-				print("APICalls: First convoy keys: ", first_convoy.keys())
-				print("APICalls: First convoy vehicle_details_list: ", first_convoy.get("vehicle_details_list", []))
-				if first_convoy.has("vehicle_details_list") and first_convoy["vehicle_details_list"].size() > 0:
-					print("APICalls: First vehicle keys: ", first_convoy["vehicle_details_list"][0].keys())
-			# --- END LOGGING ---
-
-			# Successfully parsed array for fallback or direct remote (that expects array)
-			print("APICalls (_on_request_completed - %s): Successfully fetched %s convoy(s). URL: %s" % [RequestPurpose.keys()[request_purpose_at_start], json_response.size(), _last_requested_url])
-			if not json_response.is_empty():
-				print("  Sample Convoy 0: ID: %s" % [json_response[0].get("convoy_id", "N/A")])
-			self.convoys_in_transit = json_response
-			emit_signal('convoy_data_received', json_response)
+				emit_signal('convoy_data_received', [json_response_single])
 			_complete_current_request()
 			return
 

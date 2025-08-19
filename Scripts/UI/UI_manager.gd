@@ -100,6 +100,8 @@ const SETTLEMENT_EMOJIS: Dictionary = {
 @export var connector_line_color: Color = Color(0.9, 0.9, 0.9, 0.6) 
 ## Width of the connector lines.
 @export var connector_line_width: float = 2.0 # 1.5 * 1.33
+## Extra width (in pixels) added to the white outline under journey / preview lines
+@export var route_line_outline_extra_width: float = 4.0
 
 # --- State managed by UIManager ---
 var _dragging_panel_node: Panel = null
@@ -125,7 +127,8 @@ const LABEL_CONTAINER_Z_INDEX = 2
 var _is_preview_active: bool = false
 var _preview_route_x: Array = []
 var _preview_route_y: Array = []
-var _preview_color: Color = Color(1.0, 0.6, 0.0, 0.85) # Orange highlight
+# Default preview color (fallback) – actual will be per selected convoy color
+var _preview_color: Color = Color(1.0, 0.6, 0.0, 0.85)
 var _preview_line_width: float = 3.5
 
 func _ready():
@@ -638,6 +641,14 @@ func _on_preview_route_started(route_data: Dictionary):
 		_preview_route_x = rx.duplicate()
 		_preview_route_y = ry.duplicate()
 		_is_preview_active = true
+		# Determine convoy color (if convoy_id provided) to match node color
+		var convoy_id_val = route_data.get("convoy_id")
+		if convoy_id_val == null and route_data.has("journey"):
+			# Attempt nested convoy_id in journey
+			convoy_id_val = journey_dict.get("convoy_id")
+		if convoy_id_val != null:
+			var c_color = _convoy_id_to_color_map_cache.get(str(convoy_id_val), _preview_color)
+			_preview_color = c_color
 		if is_instance_valid(convoy_connector_lines_container):
 			convoy_connector_lines_container.queue_redraw()
 	else:
@@ -674,7 +685,12 @@ func _on_connector_lines_container_draw():
 				var tile_pos = terrain_tilemap.map_to_local(Vector2i(tile_x, tile_y))
 				points.append(tile_pos)
 			if points.size() >= 2:
-				convoy_connector_lines_container.draw_polyline(points, connector_line_color, connector_line_width)
+				var convoy_color = _convoy_id_to_color_map_cache.get(str(convoy.get("convoy_id", "")), connector_line_color)
+				var outline_w = max(0.0, connector_line_width + route_line_outline_extra_width)
+				# White underlay for better contrast (larger width)
+				convoy_connector_lines_container.draw_polyline(points, Color(1,1,1,0.95), outline_w)
+				# Colored path matching convoy icon (top stroke)
+				convoy_connector_lines_container.draw_polyline(points, convoy_color, connector_line_width)
 		# Draw convoy icons
 		for convoy in _all_convoy_data_cache:
 			if not (convoy is Dictionary and convoy.has("x") and convoy.has("y")):
@@ -693,6 +709,10 @@ func _on_connector_lines_container_draw():
 			var ppos = terrain_tilemap.map_to_local(Vector2i(px, py))
 			preview_points.append(ppos)
 		if preview_points.size() >= 2:
+			var preview_outline_w = max(0.0, _preview_line_width + route_line_outline_extra_width)
+			# White underlay for preview path (larger outline)
+			convoy_connector_lines_container.draw_polyline(preview_points, Color(1,1,1,0.95), preview_outline_w)
+			# Colored overlay matching convoy color
 			convoy_connector_lines_container.draw_polyline(preview_points, _preview_color, _preview_line_width)
 
 func set_convoy_user_position(convoy_id_str: String, position: Vector2):

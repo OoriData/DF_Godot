@@ -12,6 +12,7 @@ signal user_data_updated(user_data: Dictionary)
 signal vendor_panel_data_ready(vendor_panel_data: Dictionary)
 # Emitted when a convoy is selected or deselected in the UI.
 signal convoy_selection_changed(selected_convoy_data: Variant)
+signal journey_canceled(convoy_data: Dictionary)
 
 # New lifecycle / aggregation signals
 signal initial_data_ready  # Fired once after first map + first convoy data loaded
@@ -52,6 +53,20 @@ var _initial_data_ready_emitted: bool = false
 var _user_bootstrap_done: bool = false
 var _map_request_in_flight: bool = false
 
+# --- Debug Toggles ---
+const VEHICLE_DEBUG_DUMP := true # Set true to print raw & augmented convoy + vehicle data on receipt
+const ROUTE_DEBUG_DUMP := true # Dump route choice structures when received
+const DEBUG_JSON_CHAR_LIMIT := 2500
+
+func _json_snippet(data: Variant, label: String="") -> void:
+	var encoded := JSON.stringify(data, "  ")
+	if encoded.length() > DEBUG_JSON_CHAR_LIMIT:
+		encoded = encoded.substr(0, DEBUG_JSON_CHAR_LIMIT) + "...<truncated>"
+	if label != "":
+		print('[GameDataManager][DEBUG][JSON]', label, '=', encoded)
+	else:
+		print('[GameDataManager][DEBUG][JSON]', encoded)
+
 # This should be the single source of truth for these colors.
 const PREDEFINED_CONVOY_COLORS: Array[Color] = [
 	Color.RED, Color.BLUE, Color.GREEN, Color.YELLOW, Color.CYAN, Color.MAGENTA,
@@ -83,6 +98,8 @@ func _initiate_preload():
 			api_calls_node.route_choices_received.connect(_on_api_route_choices_received)
 		if api_calls_node.has_signal('convoy_sent_on_journey'):
 			api_calls_node.convoy_sent_on_journey.connect(_on_convoy_sent_on_journey)
+		if api_calls_node.has_signal('convoy_journey_canceled') and not api_calls_node.convoy_journey_canceled.is_connected(_on_convoy_journey_canceled):
+			api_calls_node.convoy_journey_canceled.connect(_on_convoy_journey_canceled)
 		# New auth-related signals
 		if api_calls_node.has_signal('auth_session_received'):
 			api_calls_node.auth_session_received.connect(_on_auth_session_received)
@@ -252,7 +269,10 @@ func _on_raw_convoy_data_received(raw_data: Variant):
 
 	var augmented_convoys: Array = []
 	for raw_convoy_item in parsed_convoy_list:
-		augmented_convoys.append(augment_single_convoy(raw_convoy_item))
+		var augmented = augment_single_convoy(raw_convoy_item)
+		augmented_convoys.append(augmented)
+		if VEHICLE_DEBUG_DUMP and raw_convoy_item is Dictionary:
+			_print_convoy_debug_dump(raw_convoy_item, augmented)
 
 	all_convoy_data = augmented_convoys
 
@@ -313,6 +333,74 @@ func augment_single_convoy(raw_convoy_item: Dictionary) -> Dictionary:
 		print("[GameDataManager] augment_single_convoy: convoy_name missing for convoy_id:", raw_convoy_item.get("convoy_id", "N/A"))
 
 	return augmented_item
+
+# --- Debug helper to dump convoy, journey, and vehicle data ---
+func _print_convoy_debug_dump(raw_convoy: Dictionary, augmented_convoy: Dictionary) -> void:
+	var cid_raw = str(raw_convoy.get('convoy_id', ''))
+	print('\n[GameDataManager][DEBUG][ConvoyDump] --- RAW CONVOY START id=', cid_raw, ' ---')
+	print('[GameDataManager][DEBUG][ConvoyDump] Raw keys: ', raw_convoy.keys())
+	if raw_convoy.has('journey') and raw_convoy.journey is Dictionary:
+		print('[GameDataManager][DEBUG][ConvoyDump] Raw journey keys: ', raw_convoy.journey.keys(), ' progress=', raw_convoy.journey.get('progress'), ' length=', raw_convoy.journey.get('length'))
+		print('[GameDataManager][DEBUG][ConvoyDump] Raw journey route sizes rx=', (raw_convoy.journey.get('route_x', []) as Array).size(), ' ry=', (raw_convoy.journey.get('route_y', []) as Array).size())
+	if raw_convoy.has('vehicles') and raw_convoy.vehicles is Array:
+		print('[GameDataManager][DEBUG][ConvoyDump] Raw vehicles count=', raw_convoy.vehicles.size())
+		for v in raw_convoy.vehicles:
+			if not (v is Dictionary):
+				continue
+			var vid = v.get('vehicle_id')
+			var v_keys = v.keys()
+			print('[GameDataManager][DEBUG][ConvoyDump][VehicleRaw] id=', vid, ' name=', v.get('name'), ' keys=', v_keys)
+			# Surface possible battery / energy related fields
+			var energy_fields: Array = []
+			for k in v_keys:
+				var kl = str(k).to_lower()
+				if kl.find('battery') != -1 or kl.find('kwh') != -1 or kl.find('charge') != -1 or kl.find('energy') != -1:
+					energy_fields.append(str(k) + '=' + str(v.get(k)))
+			if not energy_fields.is_empty():
+				print('[GameDataManager][DEBUG][ConvoyDump][VehicleRaw] id=', vid, ' energy_fields: ', energy_fields)
+			if v.has('cargo') and v.cargo is Array and v.cargo.size() > 0:
+				var cargo_energy: Array = []
+				for item in v.cargo:
+					if item is Dictionary:
+						for ck in item.keys():
+							var ckl = str(ck).to_lower()
+							if ckl.find('kwh') != -1 or ckl.find('battery') != -1 or ckl.find('charge') != -1 or ckl.find('energy') != -1:
+								cargo_energy.append(str(ck) + '=' + str(item.get(ck)))
+				if not cargo_energy.is_empty():
+					print('[GameDataManager][DEBUG][ConvoyDump][VehicleRaw] id=', vid, ' cargo_energy_fields: ', cargo_energy)
+	print('[GameDataManager][DEBUG][ConvoyDump] --- RAW CONVOY END id=', cid_raw, ' ---')
+	# Augmented snapshot
+	var cid_aug = str(augmented_convoy.get('convoy_id', cid_raw))
+	print('[GameDataManager][DEBUG][ConvoyDump] --- AUGMENTED CONVOY START id=', cid_aug, ' ---')
+	print('[GameDataManager][DEBUG][ConvoyDump] Aug keys: ', augmented_convoy.keys())
+	if augmented_convoy.has('journey') and augmented_convoy.journey is Dictionary:
+		print('[GameDataManager][DEBUG][ConvoyDump] Aug journey keys: ', augmented_convoy.journey.keys(), ' progress=', augmented_convoy.journey.get('progress'), ' length=', augmented_convoy.journey.get('length'))
+	if augmented_convoy.has('vehicle_details_list') and augmented_convoy.vehicle_details_list is Array:
+		print('[GameDataManager][DEBUG][ConvoyDump] Aug vehicles count=', augmented_convoy.vehicle_details_list.size())
+		for v in augmented_convoy.vehicle_details_list:
+			if not (v is Dictionary):
+				continue
+			var vid2 = v.get('vehicle_id')
+			var v_keys2 = v.keys()
+			print('[GameDataManager][DEBUG][ConvoyDump][VehicleAug] id=', vid2, ' name=', v.get('name'), ' keys=', v_keys2)
+			var energy_fields2: Array = []
+			for k in v_keys2:
+				var kl2 = str(k).to_lower()
+				if kl2.find('battery') != -1 or kl2.find('kwh') != -1 or kl2.find('charge') != -1 or kl2.find('energy') != -1:
+					energy_fields2.append(str(k) + '=' + str(v.get(k)))
+			if not energy_fields2.is_empty():
+				print('[GameDataManager][DEBUG][ConvoyDump][VehicleAug] id=', vid2, ' energy_fields: ', energy_fields2)
+			if v.has('cargo') and v.cargo is Array and v.cargo.size() > 0:
+				var cargo_energy2: Array = []
+				for item in v.cargo:
+					if item is Dictionary:
+						for ck in item.keys():
+							var ckl2 = str(ck).to_lower()
+							if ckl2.find('kwh') != -1 or ckl2.find('battery') != -1 or ckl2.find('charge') != -1 or ckl2.find('energy') != -1:
+								cargo_energy2.append(str(ck) + '=' + str(item.get(ck)))
+				if not cargo_energy2.is_empty():
+					print('[GameDataManager][DEBUG][ConvoyDump][VehicleAug] id=', vid2, ' cargo_energy_fields: ', cargo_energy2)
+	print('[GameDataManager][DEBUG][ConvoyDump] --- AUGMENTED CONVOY END id=', cid_aug, ' ---\n')
 
 
 func _calculate_convoy_progress_details(convoy_data_item: Dictionary) -> Dictionary:
@@ -624,6 +712,14 @@ func request_route_choices(convoy_id: String, dest_x: int, dest_y: int) -> void:
 func start_convoy_journey(convoy_id: String, journey_id: String) -> void:
 	if is_instance_valid(api_calls_node) and api_calls_node.has_method("send_convoy"):
 		api_calls_node.send_convoy(convoy_id, journey_id)
+	else:
+		printerr("GameDataManager: Cannot start journey; APICalls missing send_convoy method.")
+
+func cancel_convoy_journey(convoy_id: String, journey_id: String) -> void:
+	if is_instance_valid(api_calls_node) and api_calls_node.has_method("cancel_convoy_journey"):
+		api_calls_node.cancel_convoy_journey(convoy_id, journey_id)
+	else:
+		printerr("GameDataManager: Cannot cancel journey; APICalls missing cancel_convoy_journey method.")
 
 func get_vendor_by_id(vendor_id: String) -> Variant:
 	var vendor_data = null
@@ -827,14 +923,28 @@ func sell_item(convoy_id: String, vendor_id: String, item_data: Dictionary, quan
 
 func _on_api_route_choices_received(routes: Array) -> void:
 	if _pending_journey_convoy_id.is_empty():
-		printerr("GameDataManager: Received route choices but no pending context.")
 		return
 	var convoy_id_local = _pending_journey_convoy_id
 	var convoy_data = get_convoy_by_id(convoy_id_local)
 	var destination_data = _pending_journey_destination_data
 	print("[GameDataManager] _on_api_route_choices_received convoy_id=%s routes=%d" % [convoy_id_local, routes.size()])
+	if ROUTE_DEBUG_DUMP:
+		for i in range(routes.size()):
+			var r = routes[i]
+			if not (r is Dictionary):
+				continue
+			var journey_dict = r.get('journey', {})
+			var kwh_keys: Array = []
+			if r.has('kwh_expenses') and r.get('kwh_expenses') is Dictionary:
+				kwh_keys = r.get('kwh_expenses').keys()
+			print('[GameDataManager][DEBUG][RouteChoice] idx=', i, ' keys=', r.keys(), ' kwh_keys=', kwh_keys, ' delta_t=', r.get('delta_t'))
+			if journey_dict is Dictionary:
+				print('[GameDataManager][DEBUG][RouteChoice][Journey] origin=(', journey_dict.get('origin_x'), ',', journey_dict.get('origin_y'), ') dest=(', journey_dict.get('dest_x'), ',', journey_dict.get('dest_y'), ') len route_x=', (journey_dict.get('route_x', []) as Array).size(), ' progress=', journey_dict.get('progress'))
+				_json_snippet(journey_dict, 'route['+str(i)+'].journey')
+			if r.has('kwh_expenses'):
+				_json_snippet(r.get('kwh_expenses'), 'route['+str(i)+'].kwh_expenses')
 	if routes.is_empty():
-		printerr("GameDataManager: No route choices returned for convoy %s." % convoy_id_local)
+		print("[GameDataManager] No routes returned; emitting error.")
 		route_choices_error.emit(convoy_id_local, destination_data, "No routes available")
 		_pending_journey_convoy_id = ""
 		_pending_journey_destination_data = {}
@@ -845,7 +955,7 @@ func _on_api_route_choices_received(routes: Array) -> void:
 
 func _on_api_fetch_error(error_message: String) -> void:
 	if not _pending_journey_convoy_id.is_empty():
-		printerr("[GameDataManager] route choice request failed: %s" % error_message)
+		print("[GameDataManager] Routing fetch_error for convoy_id=%s: %s" % [_pending_journey_convoy_id, error_message])
 		route_choices_error.emit(_pending_journey_convoy_id, _pending_journey_destination_data, error_message)
 		_pending_journey_convoy_id = ""
 		_pending_journey_destination_data = {}
@@ -855,3 +965,13 @@ func _on_convoy_sent_on_journey(updated_convoy_data: Dictionary) -> void:
 	update_single_convoy(updated_convoy_data)
 	# After updating a convoy, convey updated list via existing convoy_data_updated signal already called inside update_single_convoy.
 	# If UI wants specific journey start handling later, reintroduce a dedicated signal.
+	# NEW: Force a fresh fetch of this convoy from backend to ensure we have authoritative state
+	var cid := str(updated_convoy_data.get("convoy_id", ""))
+	if cid != "" and is_instance_valid(api_calls_node) and api_calls_node.has_method("get_convoy_data"):
+		print("[GameDataManager] Post-journey send: fetching updated convoy from server convoy_id=", cid)
+		api_calls_node.get_convoy_data(cid)
+
+func _on_convoy_journey_canceled(updated_convoy_data: Dictionary) -> void:
+	print("GameDataManager: Journey cancel confirmed. Updating convoy data.")
+	update_single_convoy(updated_convoy_data)
+	journey_canceled.emit(updated_convoy_data)

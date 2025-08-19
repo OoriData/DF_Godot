@@ -29,6 +29,19 @@ var _is_request_in_flight: bool = false
 var _loading_label: Label = null
 var _last_requested_destination: Dictionary = {}
 
+# New confirmation panel references (created dynamically)
+var _confirmation_panel: VBoxContainer = null
+var _confirm_button: Button = null
+var _change_destination_button: Button = null
+
+# --- Route Cycling and Severity ---
+var _current_route_choice_index: int = 0
+var _route_choices_cache: Array = []
+var _severity_state: String = "none" # none|safety|critical
+var _next_route_button: Button = null
+const ALLOW_HYBRID_ENERGY := true # Show battery usage even if vehicle also has internal combustion
+const SHOW_ENERGY_DEBUG := true # Toggle to display raw data snapshot for kWh logic
+
 func _ready():
 	# Connect the back button signal
 	if is_instance_valid(back_button):
@@ -51,6 +64,8 @@ func _ready():
 			gdm.route_choices_request_started.connect(_on_route_choices_request_started)
 		if gdm.has_signal("route_choices_error") and not gdm.is_connected("route_choices_error", Callable(self, "_on_route_choices_error")):
 			gdm.route_choices_error.connect(_on_route_choices_error)
+		if gdm.has_signal("journey_canceled") and not gdm.is_connected("journey_canceled", Callable(self, "_on_journey_canceled")):
+			gdm.journey_canceled.connect(_on_journey_canceled)
 	else:
 		printerr("ConvoyJourneyMenu: Could not connect to GameDataManager signals.")
 
@@ -155,6 +170,26 @@ func initialize_with_data(data: Dictionary):
 	progress_bar.custom_minimum_size.y = 20
 	progress_bar.value = progress_percentage
 	content_vbox.add_child(progress_bar)
+
+	# Cancel Journey button (in details mode)
+	if journey_data.has("journey_id"):
+		var cancel_btn := Button.new()
+		cancel_btn.text = "Cancel Journey"
+		cancel_btn.theme_type_variation = "DangerButton"
+		cancel_btn.pressed.connect(func():
+			var convoy_id_local := str(convoy_data_received.get("convoy_id"))
+			var journey_id_local := str(journey_data.get("journey_id", ""))
+			if journey_id_local.is_empty():
+				printerr("ConvoyJourneyMenu: Cannot cancel; missing journey_id")
+				return
+			var gdm_cancel := get_node_or_null("/root/GameDataManager")
+			if is_instance_valid(gdm_cancel) and gdm_cancel.has_method("cancel_convoy_journey"):
+				print("[ConvoyJourneyMenu] Cancel Journey pressed convoy="+convoy_id_local+" journey="+journey_id_local)
+				gdm_cancel.cancel_convoy_journey(convoy_id_local, journey_id_local)
+			else:
+				printerr("ConvoyJourneyMenu: GameDataManager missing cancel_convoy_journey method.")
+		)
+		content_vbox.add_child(cancel_btn)
 
 func _populate_destination_list():
 	# Clear potential prior loading state
@@ -324,67 +359,536 @@ func _on_route_info_ready(convoy_data: Dictionary, destination_data: Dictionary,
 
 	if route_choices.is_empty():
 		printerr("ConvoyJourneyMenu: Received no route choices. Cannot show preview.")
-		# Optionally, show an error to the user here.
 		return
-
-	# If a route selection menu already exists for some reason, remove it.
-	if is_instance_valid(_route_selection_menu_instance):
-		_route_selection_menu_instance.queue_free()
-
-	# Hide the main content of this menu so it doesn't show behind the route selection.
-	main_vbox.hide()
-
-	# Store route data for cycling
+	# Extra debug: list kWh expense keys per route
+	for i in range(route_choices.size()):
+		var rc = route_choices[i]
+		if rc is Dictionary and rc.has('kwh_expenses'):
+			var ke = rc.get('kwh_expenses')
+			if ke is Dictionary:
+				print('[ConvoyJourneyMenu][DEBUG] Route', i, 'kwh_expenses keys=', ke.keys())
+			elif ke is Array:
+				print('[ConvoyJourneyMenu][DEBUG] Route', i, 'kwh_expenses is Array size=', ke.size())
+		else:
+			print('[ConvoyJourneyMenu][DEBUG] Route', i, 'has no kwh_expenses key. Keys=', rc.keys())
+	# For now just take the first route as selected; future enhancement could allow cycling.
 	_all_route_choices = route_choices
 	_current_route_index = 0
 	_destination_data = destination_data
+	var selected_route = route_choices[0]
+	# Emit preview signal so map draws line
+	emit_signal("route_preview_started", selected_route)
+	_refresh_convoy_snapshot() # ensure latest vehicle data
+	_show_confirmation_panel(selected_route)
 
-	_route_selection_menu_instance = RouteSelectionMenuScene.instantiate()
-	add_child(_route_selection_menu_instance)
+# --- Formatting helper (re-added after merge overwrote original) ---
+func _format_kwh(val: float) -> String:
+	if val >= 10.0:
+		return str(int(val)) # whole number
+	return '%.1f' % val
 
-	# Connect signals for cycling, embarking, and going back
-	_route_selection_menu_instance.back_requested.connect(_on_route_selection_back_requested)
-	_route_selection_menu_instance.embark_requested.connect(_on_route_selection_embark_requested)
+# Duplicate replaced with alias
+func _fmt_kwh(v: float) -> String:
+	return _format_kwh(v)
 
-	# Show the preview for the first route immediately.
-	_show_current_route_preview()
+# Format travel time from minutes into hours or days+hours.
+# Rules:
+# - Always display hours if under 24h: e.g. 18.5 h
+# - If 24h or more: show D d H.h h (hours with one decimal) e.g. 2d 3.5h
+func _format_travel_time(total_minutes: float) -> String:
+	if total_minutes < 0.0:
+		total_minutes = 0.0
+	var hours: float = total_minutes / 60.0
+	if hours < 24.0:
+		return "%.1f h" % hours
+	var days: int = int(floor(hours / 24.0))
+	var rem_hours: float = hours - float(days) * 24.0
+	return "%dd %.1fh" % [days, rem_hours]
 
-func _show_current_route_preview():
-	"""Updates the route selection menu and tells the map to preview the currently selected route."""
-	if _all_route_choices.is_empty() or not is_instance_valid(_route_selection_menu_instance):
+# --- Helper for energy display ---
+func _fuzz_kwh(v: float) -> float:
+	if v <= 0.0:
+		return 0.0
+	if v < 20.0:
+		return ceil(v)
+	return ceil(v / 10.0) * 10.0
+
+func _extract_battery_item(vehicle: Dictionary) -> Dictionary:
+	# Extended battery detection: look for common key variations inside cargo items
+	# 1) Direct vehicle-level fields
+	var direct_kwh = 0.0
+	var direct_cap = 0.0
+	var direct_found = false
+	for key in vehicle.keys():
+		var k_lower = str(key).to_lower()
+		if k_lower.find('kwh') != -1 or k_lower.find('battery') != -1 or k_lower.find('charge') != -1:
+			var val = vehicle.get(key)
+			if (val is int or val is float) and _coerce_number(val) > 0:
+				direct_kwh = max(direct_kwh, _coerce_number(val))
+				direct_found = true
+		if k_lower.find('capacity') != -1 and (vehicle.get(key) is int or vehicle.get(key) is float):
+			direct_cap = max(direct_cap, _coerce_number(vehicle.get(key)))
+	if direct_found:
+		if direct_cap <= 0: direct_cap = direct_kwh
+		return {"kwh": direct_kwh, "capacity": direct_cap, "_source": "vehicle_fields"}
+	for item in vehicle.get('cargo', []):
+		if not (item is Dictionary):
+			continue
+		# Primary expected keys
+		if item.has('kwh'):
+			var cap_val = 0.0
+			if item.has('capacity'):
+				cap_val = _coerce_number(item.get('capacity'))
+			elif item.has('capacity_kwh'):
+				cap_val = _coerce_number(item.get('capacity_kwh'))
+			elif item.has('max_kwh'):
+				cap_val = _coerce_number(item.get('max_kwh'))
+			elif item.has('max') and (item.get('max') is int or item.get('max') is float):
+				cap_val = _coerce_number(item.get('max'))
+			var kwh_val = _coerce_number(item.get('kwh'))
+			if cap_val <= 0: cap_val = max(kwh_val, 0.0)
+			return {"kwh": kwh_val, "capacity": cap_val, "_source": "cargo_kwh"}
+		# Fallback variants
+		if item.has('battery') and item.battery is Dictionary:
+			var b = item.battery
+			if b.has('kwh') and b.has('capacity'):
+				return {"kwh": _coerce_number(b.get('kwh')), "capacity": _coerce_number(b.get('capacity')), "_source": "cargo_battery_obj"}
+		if item.has('current_kwh') or item.has('energy_kwh'):
+			var k_cur = 0.0
+			if item.has('current_kwh'): k_cur = _coerce_number(item.get('current_kwh'))
+			elif item.has('energy_kwh'): k_cur = _coerce_number(item.get('energy_kwh'))
+			var cap = _coerce_number(item.get('capacity_kwh', item.get('capacity', 0.0)))
+			if cap > 0.0 or k_cur > 0.0:
+				return {"kwh": k_cur, "capacity": (cap if cap > 0 else k_cur), "_source": "cargo_alt_keys"}
+		# Heuristic scan: any numeric field with kwh/charge in name
+		for sub_key in item.keys():
+			var sub_lower = str(sub_key).to_lower()
+			if (sub_lower.find('kwh') != -1 or sub_lower.find('charge') != -1 or sub_lower.find('energy') != -1) and (item.get(sub_key) is int or item.get(sub_key) is float):
+				var valn = _coerce_number(item.get(sub_key))
+				if valn > 0:
+					var cap_guess = valn
+					if item.has('capacity'):
+						cap_guess = max(cap_guess, _coerce_number(item.get('capacity')))
+					elif item.has('capacity_kwh'):
+						cap_guess = max(cap_guess, _coerce_number(item.get('capacity_kwh')))
+					return {"kwh": valn, "capacity": cap_guess, "_source": "heuristic_scan"}
+	return {}
+
+func _refresh_convoy_snapshot():
+	var gdm = get_node_or_null('/root/GameDataManager')
+	if not is_instance_valid(gdm):
 		return
+	if not convoy_data_received.has('convoy_id'):
+		return
+	if gdm.has_method('get_convoy_by_id'):
+		var latest = gdm.get_convoy_by_id(str(convoy_data_received.get('convoy_id')))
+		if latest is Dictionary and not latest.is_empty():
+			# Only update vehicle lists to avoid overwriting selection context
+			if latest.has('vehicle_details_list'):
+				convoy_data_received['vehicle_details_list'] = latest.get('vehicle_details_list')
+			elif latest.has('vehicles'):
+				convoy_data_received['vehicle_details_list'] = latest.get('vehicles')
+			print('[ConvoyJourneyMenu][DEBUG] Refreshed convoy vehicle snapshot. Vehicles now =', (convoy_data_received.get('vehicle_details_list', []) as Array).size())
 
-	# Ensure the index is within the valid range.
-	_current_route_index = clamp(_current_route_index, 0, _all_route_choices.size() - 1)
-	var current_route_data = _all_route_choices[_current_route_index]
+# Numeric coercion (re-added after revert)
+func _coerce_number(v: Variant) -> float:
+	if v is float:
+		return v
+	if v is int:
+		return float(v)
+	if v is String:
+		var s: String = v.strip_edges()
+		if s.is_valid_float():
+			return s.to_float()
+		if s.is_valid_int():
+			return float(int(s))
+	return 0.0
 
-	# 1. Update the UI of the route selection menu with the current route's details.
-	_route_selection_menu_instance.display_route_details(convoy_data_received, _destination_data, current_route_data)
+# Attempt multiple key forms for kWh expense
+func _lookup_kwh_expense(expenses: Dictionary, vehicle_id: Variant) -> float:
+	var keys_to_try: Array = []
+	keys_to_try.append(vehicle_id)
+	keys_to_try.append(str(vehicle_id))
+	if vehicle_id is String and vehicle_id.is_valid_int():
+		keys_to_try.append(int(vehicle_id))
+	elif vehicle_id is int:
+		keys_to_try.append(str(vehicle_id))
+	for k in keys_to_try:
+		if expenses.has(k):
+			var val = _coerce_number(expenses.get(k))
+			print('[ConvoyJourneyMenu][kWhLookup] match key=', k, ' val=', val)
+			return val
+	print('[ConvoyJourneyMenu][kWhLookup] no match for vehicle_id variants=', keys_to_try)
+	return 0.0
 
-	# 2. Emit the signal to make the map show the preview line and focus the camera.
-	# We defer this to ensure the menu UI is fully set up before the map tries to zoom/pan.
-	print("ConvoyJourneyMenu: Emitting route_preview_started for route_id:", current_route_data.get("journey", {}).get("journey_id", "N/A"))
-	call_deferred("emit_signal", "route_preview_started", current_route_data)
+# Diagnostic helper
+func _debug_dump_energy_context(route_data: Dictionary):
+	print('[ConvoyJourneyMenu][DEBUG] ---- Energy Context Dump ----')
+	var kwh_expenses: Dictionary = route_data.get('kwh_expenses', {})
+	print('[ConvoyJourneyMenu][DEBUG] kwh_expenses keys/types:')
+	for k in kwh_expenses.keys():
+		print('  key=', k, ' type=', typeof(k), ' value=', kwh_expenses[k])
+	var vehicles: Array = _get_vehicle_list()
+	print('[ConvoyJourneyMenu][DEBUG] vehicle count=', vehicles.size())
+	for v in vehicles:
+		if not (v is Dictionary):
+			continue
+		var vid = v.get('vehicle_id')
+		var electric_flags = [v.get('electric'), v.get('is_electric'), v.get('electric_powered')]
+		var ic_flag = v.get('internal_combustion')
+		var battery = _extract_battery_item(v)
+		print('  Vehicle id=', vid, ' name=', v.get('name'), ' electric_flags=', electric_flags, ' internal_combustion=', ic_flag, ' battery_found=', not battery.is_empty())
+		if not battery.is_empty():
+			print('    Battery keys=', battery.keys(), ' kwh=', battery.get('kwh'), ' capacity=', battery.get('capacity'))
+	print('[ConvoyJourneyMenu][DEBUG] ---- End Dump ----')
 
-func _on_route_selection_back_requested():
-	if is_instance_valid(_route_selection_menu_instance):
-		_route_selection_menu_instance.queue_free()
-		_route_selection_menu_instance = null
-	
-	# Re-show the main content of this menu.
-	main_vbox.show()
-	
-	# Tell the map to stop showing the preview line.
+# Attempt to resolve kWh expenses dict under variant key names
+func _resolve_kwh_expenses(route_data: Dictionary) -> Dictionary:
+	var direct = route_data.get('kwh_expenses')
+	if direct is Dictionary:
+		return direct
+	if direct is Array:
+		# Convert array of {vehicle_id, kwh?(cost)} into dictionary if possible
+		var built: Dictionary = {}
+		for entry in direct:
+			if entry is Dictionary:
+				var vid = entry.get('vehicle_id')
+				var val = entry.get('kwh') if entry.has('kwh') else entry.get('cost')
+				if vid != null and val != null:
+					built[str(vid)] = _coerce_number(val)
+		if built.size() > 0:
+			print('[ConvoyJourneyMenu][DEBUG] Converted array-form kwh_expenses to dict keys=', built.keys())
+			return built
+	# case variations
+	for key in ['kWh_expenses', 'kwhExpenses', 'kWhExpenses', 'electric_expenses', 'electricity_expenses']:
+		var cand = route_data.get(key)
+		if cand is Dictionary and cand.size() > 0:
+			print('[ConvoyJourneyMenu][DEBUG] Using alt kWh expenses key=', key)
+			return cand
+	# deep search shallow
+	for k in route_data.keys():
+		var v = route_data[k]
+		if v is Dictionary and v.has('kwh_expenses'):
+			var inner = v.get('kwh_expenses')
+			if inner is Dictionary and inner.size() > 0:
+				print('[ConvoyJourneyMenu][DEBUG] Found nested kwh_expenses under key=', k)
+				return inner
+	print('[ConvoyJourneyMenu][DEBUG] No kWh expenses dictionary found; defaulting to empty.')
+	return {}
+
+# Unified vehicle list accessor with fallbacks
+func _get_vehicle_list() -> Array:
+	var primary = convoy_data_received.get('vehicle_details_list')
+	if primary is Array and primary.size() > 0:
+		return primary
+	var alt = convoy_data_received.get('vehicles')
+	if alt is Array and alt.size() > 0:
+		print('[ConvoyJourneyMenu][DEBUG] Using fallback vehicles list (vehicles).')
+		return alt
+	var alt2 = convoy_data_received.get('convoy_vehicles')
+	if alt2 is Array and alt2.size() > 0:
+		print('[ConvoyJourneyMenu][DEBUG] Using fallback vehicles list (convoy_vehicles).')
+		return alt2
+	print('[ConvoyJourneyMenu][DEBUG] No vehicle arrays found (vehicle_details_list / vehicles / convoy_vehicles all empty).')
+	return []
+
+# --- Route Cycling and Severity ---
+func _fuzz_amount(v: float) -> float:
+	# Same fuzz rule as fuzz() in discord code
+	return _fuzz_kwh(v)
+
+func _show_confirmation_panel(route_data: Dictionary):
+	# Cache routes for cycling if not done
+	if _route_choices_cache.is_empty() and not _all_route_choices.is_empty():
+		_route_choices_cache = _all_route_choices.duplicate(true)
+		_current_route_choice_index = 0
+	# Hide current destination list UI
+	for child in content_vbox.get_children():
+		child.visible = false
+	# Build (create if needed)
+	if not is_instance_valid(_confirmation_panel):
+		_confirmation_panel = VBoxContainer.new()
+		_confirmation_panel.name = "ConfirmationPanel"
+		_confirmation_panel.add_theme_constant_override("separation", 10)
+		content_vbox.add_child(_confirmation_panel)
+	# Clear panel for rebuild
+	for child in _confirmation_panel.get_children():
+		child.queue_free()
+	# Title with route index
+	var title = Label.new()
+	title.text = "Confirm Journey (%d / %d)" % [_current_route_choice_index + 1, max(1, _all_route_choices.size())]
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_confirmation_panel.add_child(title)
+	# ---------------- BODY START ----------------
+	var summary = Label.new()
+	summary.autowrap_mode = TextServer.AUTOWRAP_WORD
+	var journey = route_data.get("journey", {})
+	var tiles = (journey.get("route_x", []) as Array).size()
+	var distance_miles = tiles * 30.0
+	var eta_minutes = route_data.get("delta_t", 0.0)
+	var eta_fmt = _format_travel_time(eta_minutes)
+	summary.text = "Destination: %s\nDistance: %.1f miles\nEstimated Travel Time: %s" % [ _destination_data.get("name", "Unknown"), distance_miles, eta_fmt]
+	_confirmation_panel.add_child(summary)
+	var resources_header = Label.new()
+	resources_header.text = "Projected Resource Usage"
+	_confirmation_panel.add_child(resources_header)
+	# --- Resource Summary (Consumption vs Reserves) ---
+	var resources_section = VBoxContainer.new()
+	resources_section.name = "ResourcesSection"
+	_confirmation_panel.add_child(resources_section)
+	var res_title = Label.new()
+	res_title.text = "Convoy Resources"
+	res_title.add_theme_color_override("font_color", Color(0.9,0.9,1))
+	resources_section.add_child(res_title)
+	# Gather consumption from route
+	var fuel_needed: float = 0.0
+	for fk in route_data.get("fuel_expenses", {}):
+		fuel_needed += _coerce_number(route_data.get("fuel_expenses", {})[fk])
+	var water_needed: float = _coerce_number(route_data.get("water_expense", 0.0))
+	var food_needed: float = _coerce_number(route_data.get("food_expense", 0.0))
+	# Gather convoy reserves
+	var fuel_have: float = _coerce_number(convoy_data_received.get("fuel", 0.0))
+	var fuel_max: float = _coerce_number(convoy_data_received.get("max_fuel", 0.0))
+	var water_have: float = _coerce_number(convoy_data_received.get("water", 0.0))
+	var water_max: float = _coerce_number(convoy_data_received.get("max_water", 0.0))
+	var food_have: float = _coerce_number(convoy_data_received.get("food", 0.0))
+	var food_max: float = _coerce_number(convoy_data_received.get("max_food", 0.0))
+
+	# Helper to classify status (assumption: warn if >50% of reserve, critical if need > reserve)
+	var _classify = func(need: float, have: float) -> String:
+		if need <= 0.0:
+			return "ok"
+		if have <= 0.0:
+			return "critical" # any need when none available
+		if need > have + 0.0001:
+			return "critical"
+		if need > 0.5 * have:
+			return "warn"
+		return "ok"
+
+	var fuel_status = _classify.call(fuel_needed, fuel_have)
+	var water_status = _classify.call(water_needed, water_have)
+	var food_status = _classify.call(food_needed, food_have)
+
+	var resource_warning: bool = (fuel_status == "warn" or water_status == "warn" or food_status == "warn")
+	var resource_critical: bool = (fuel_status == "critical" or water_status == "critical" or food_status == "critical")
+
+	# Container panel for contrast (now also housing energy subsection)
+	var res_panel = PanelContainer.new()
+	var sb = StyleBoxFlat.new()
+	sb.bg_color = Color(0.12,0.14,0.18,0.95)
+	if sb.has_method("set_border_width_all"):
+		sb.set_border_width_all(1)
+	else:
+		sb.border_width_left = 1
+		sb.border_width_right = 1
+		sb.border_width_top = 1
+		sb.border_width_bottom = 1
+	sb.border_color = Color(0.25,0.3,0.38)
+	sb.corner_radius_top_left = 4
+	sb.corner_radius_top_right = 4
+	sb.corner_radius_bottom_left = 4
+	sb.corner_radius_bottom_right = 4
+	res_panel.add_theme_stylebox_override("panel", sb)
+	resources_section.add_child(res_panel)
+	var panel_vbox = VBoxContainer.new()
+	panel_vbox.add_theme_constant_override("separation", 8)
+	res_panel.add_child(panel_vbox)
+	# Resource Grid: Resource | Need | Have | Remaining
+	var res_grid = GridContainer.new()
+	res_grid.columns = 4
+	res_grid.add_theme_constant_override("h_separation", 32)
+	panel_vbox.add_child(res_grid)
+	var header_labels = ["Resource", "Need", "Have", "Remaining"]
+	for h in header_labels:
+		var hl = Label.new()
+		hl.text = h
+		hl.add_theme_color_override("font_color", Color(0.75,0.85,0.95))
+		if h != "Resource":
+			hl.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+		res_grid.add_child(hl)
+	var _add_res_row = func(label: String, unit: String, need: float, have: float, _max_v: float, status: String):
+		var icon_lbl = Label.new()
+		icon_lbl.text = label
+		if status == "critical":
+			icon_lbl.add_theme_color_override("font_color", Color(1,0.35,0.35))
+		elif status == "warn":
+			icon_lbl.add_theme_color_override("font_color", Color(1,0.75,0.35))
+		res_grid.add_child(icon_lbl)
+		var need_lbl = Label.new()
+		need_lbl.text = "%.1f%s" % [need, unit]
+		need_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+		res_grid.add_child(need_lbl)
+		var have_lbl = Label.new()
+		have_lbl.text = "%.1f%s" % [have, unit]
+		have_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+		res_grid.add_child(have_lbl)
+		var rem_lbl = Label.new()
+		var remaining = have - need
+		if remaining < 0:
+			rem_lbl.text = "Short %.1f%s" % [abs(remaining), unit]
+			rem_lbl.add_theme_color_override("font_color", Color(1,0.35,0.35))
+		elif status == "warn":
+			rem_lbl.text = "%.1f%s" % [remaining, unit]
+			rem_lbl.add_theme_color_override("font_color", Color(1,0.75,0.35))
+		else:
+			rem_lbl.text = "%.1f%s" % [remaining, unit]
+		rem_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+		res_grid.add_child(rem_lbl)
+	_add_res_row.call("⛽ Fuel", "L", fuel_needed, fuel_have, fuel_max, fuel_status)
+	_add_res_row.call("💧 Water", "L", water_needed, water_have, water_max, water_status)
+	_add_res_row.call("🍖 Food", "", food_needed, food_have, food_max, food_status)
+	# Warning / Critical message (no legend explanation)
+	if resource_critical or resource_warning:
+		var warn_lbl = Label.new()
+		warn_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD
+		if resource_critical:
+			warn_lbl.text = "[CRITICAL] Insufficient reserves for journey." if not resource_warning else "[CRITICAL] Insufficient reserves; high usage on others."
+			warn_lbl.add_theme_color_override("font_color", Color(1,0.4,0.4))
+		elif resource_warning:
+			warn_lbl.text = "[Warning] High consumption (>50%) on at least one reserve."
+			warn_lbl.add_theme_color_override("font_color", Color(1,0.75,0.35))
+		panel_vbox.add_child(warn_lbl)
+	# (Vehicle Energy subsection will be appended later if entries exist)
+	# Resolve kWh expenses and build energy entries (will attach inside panel_vbox)
+	var kwh_expenses: Dictionary = _resolve_kwh_expenses(route_data)
+	var vehicles: Array = _get_vehicle_list()
+	var energy_entries: Array = []
+	var any_critical := false
+	for v in vehicles:
+		if not (v is Dictionary):
+			continue
+		var cap_val: float = _coerce_number(v.get('kwh_capacity', 0.0))
+		if cap_val <= 0.0:
+			continue
+		var vid = v.get('vehicle_id')
+		var used: float = _coerce_number(kwh_expenses.get(str(vid), 0.0))
+		if used <= 0.0:
+			continue
+		var is_ic := bool(v.get('internal_combustion', false))
+		var veh_name := str(v.get('name', 'Vehicle'))
+		var status := "normal"
+		var display_used := used
+		if used > cap_val:
+			if is_ic:
+				status = "discharged"
+				display_used = cap_val
+			else:
+				status = "critical"
+				any_critical = true
+		energy_entries.append({"name": veh_name, "used": display_used, "capacity": cap_val, "raw_used": used, "status": status, "is_ic": is_ic})
+	if not energy_entries.is_empty():
+		panel_vbox.add_child(HSeparator.new())
+		var energy_subtitle = Label.new()
+		energy_subtitle.text = "Vehicle Energy"
+		energy_subtitle.add_theme_color_override("font_color", Color(0.85,0.85,1))
+		panel_vbox.add_child(energy_subtitle)
+		var energy_grid = GridContainer.new()
+		energy_grid.columns = 4
+		energy_grid.add_theme_constant_override("h_separation", 24)
+		panel_vbox.add_child(energy_grid)
+		for e in energy_entries:
+			var icon_lbl = Label.new()
+			match e.status:
+				"critical": icon_lbl.text = "❗"
+				"discharged": icon_lbl.text = "🪫"
+				_:
+					icon_lbl.text = "🔋"
+			energy_grid.add_child(icon_lbl)
+			var name_lbl = Label.new()
+			name_lbl.text = e.name
+			if e.status == "critical":
+				name_lbl.add_theme_color_override("font_color", Color(1,0.4,0.4))
+			elif e.status == "discharged":
+				name_lbl.add_theme_color_override("font_color", Color(1,0.75,0.4))
+			energy_grid.add_child(name_lbl)
+			var bar = ProgressBar.new()
+			bar.min_value = 0
+			bar.max_value = e.capacity
+			bar.value = e.used
+			bar.custom_minimum_size = Vector2(140, 14)
+			if bar.has_method("set_show_percentage"):
+				bar.set("show_percentage", false)
+			var bar_tt = "%s Usage: %.1f / %.1f kWh" % [e.name, e.used, e.capacity]
+			if e.status == "critical":
+				bar_tt += " (Shortfall %.1f kWh)" % (e.raw_used - e.capacity)
+			elif e.status == "discharged":
+				bar_tt += " (Fully Discharged)"
+			bar.tooltip_text = bar_tt
+			energy_grid.add_child(bar)
+			var nums_lbl = Label.new()
+			if e.status == "critical":
+				# Show true need and shortfall for pure electric shortfall
+				nums_lbl.text = "Need: %.1f  Capacity: %.1f  Short: %.1f" % [e.raw_used, e.capacity, e.raw_used - e.capacity]
+			else:
+				# For normal & discharged (IC) cases, cap the displayed need at capacity
+				nums_lbl.text = "Need: %.1f  Capacity: %.1f" % [e.used, e.capacity]
+			energy_grid.add_child(nums_lbl)
+	# Severity state from combined energy + resource evaluation
+	if any_critical or resource_critical:
+		_severity_state = "critical"
+	elif resource_warning:
+		_severity_state = "safety"
+	else:
+		_severity_state = "none"
+	var buttons_hbox = HBoxContainer.new()
+	buttons_hbox.alignment = BoxContainer.ALIGNMENT_CENTER
+	_confirmation_panel.add_child(buttons_hbox)
+	_change_destination_button = Button.new()
+	_change_destination_button.text = "Back"
+	_change_destination_button.pressed.connect(_on_change_destination_pressed)
+	buttons_hbox.add_child(_change_destination_button)
+	if _route_choices_cache.size() > 1:
+		_next_route_button = Button.new()
+		_next_route_button.text = "Next Route"
+		_next_route_button.pressed.connect(func(): _cycle_route(1))
+		buttons_hbox.add_child(_next_route_button)
+	_confirm_button = Button.new()
+	_confirm_button.text = "Confirm Journey"
+	_confirm_button.theme_type_variation = "SuccessButton"
+	_confirm_button.pressed.connect(_on_confirm_journey_pressed.bind(route_data))
+	buttons_hbox.add_child(_confirm_button)
+	_apply_severity_styling()
+	# ---------------- BODY END ----------------
+	_confirmation_panel.visible = true
+
+func _on_change_destination_pressed():
+	# Hide confirmation, re-show destination list
+	if is_instance_valid(_confirmation_panel):
+		_confirmation_panel.visible = false
+	# Stop preview line
 	emit_signal("route_preview_ended")
+	for child in content_vbox.get_children():
+		if child != _confirmation_panel:
+			child.visible = true
 
-func _on_route_selection_embark_requested(convoy_id: String, journey_id: String):
+func _on_confirm_journey_pressed(route_data: Dictionary):
+	var convoy_id = str(convoy_data_received.get("convoy_id"))
+	var journey_id = str(route_data.get("journey", {}).get("journey_id", ""))
+	if journey_id.is_empty():
+		printerr("ConvoyJourneyMenu: Cannot confirm journey; missing journey_id")
+		return
 	var gdm = get_node_or_null("/root/GameDataManager")
 	if is_instance_valid(gdm):
 		gdm.start_convoy_journey(convoy_id, journey_id)
-	# The journey_started signal will be handled elsewhere to close menus/update UI
-
-	# Also end the preview, as the user has now committed to a route.
+	# End preview and go back to overview
 	emit_signal("route_preview_ended")
+	emit_signal("return_to_convoy_overview_requested", convoy_data_received)
+
+func _on_journey_canceled(updated_convoy: Dictionary):
+	# Ensure event is for our convoy
+	if str(updated_convoy.get("convoy_id")) != str(convoy_data_received.get("convoy_id")):
+		return
+	# Update local snapshot
+	convoy_data_received = updated_convoy.duplicate(true)
+	var has_active_journey := convoy_data_received.has("journey") and (convoy_data_received.get("journey") is Dictionary) and not (convoy_data_received.get("journey") as Dictionary).is_empty()
+	# Rebuild UI appropriately: planner only if no active journey remains
+	for child in content_vbox.get_children():
+		child.queue_free()
+	if has_active_journey:
+		initialize_with_data(convoy_data_received) # will show journey details
+	else:
+		initialize_with_data(convoy_data_received) # journey missing -> planner
 
 func _disable_destination_buttons():
 	for child in content_vbox.get_children():
@@ -414,3 +918,27 @@ func _show_error_message(msg: String):
 	err_label.text = "Route Error: %s" % msg
 	err_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	content_vbox.add_child(err_label)
+
+# Severity + route cycling helpers (added)
+func _apply_severity_styling():
+	if not is_instance_valid(_confirm_button):
+		return
+	match _severity_state:
+		"critical":
+			_confirm_button.theme_type_variation = "DangerButton"
+			_confirm_button.text = "🛑 Confirm (Critical)"
+		"safety":
+			_confirm_button.theme_type_variation = "WarningButton"
+			_confirm_button.text = "⚠️ Confirm (Low Reserve)"
+		_:
+			_confirm_button.theme_type_variation = "SuccessButton"
+			_confirm_button.text = "Confirm Journey"
+
+func _cycle_route(delta: int):
+	if _route_choices_cache.is_empty():
+		return
+	_current_route_choice_index = wrapi(_current_route_choice_index + delta, 0, _route_choices_cache.size())
+	emit_signal("route_preview_ended")
+	var route_data: Dictionary = _route_choices_cache[_current_route_choice_index]
+	emit_signal("route_preview_started", route_data)
+	_show_confirmation_panel(route_data)
