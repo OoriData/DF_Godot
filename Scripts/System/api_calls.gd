@@ -478,15 +478,15 @@ func sell_vehicle(vendor_id: String, convoy_id: String, vehicle_id: String) -> v
 	_process_queue()
 
 func buy_resource(vendor_id: String, convoy_id: String, resource_type: String, quantity: float) -> void:
-	# Backend route: PATCH /vendor/resource/buy with query params
+	# Backend route: PATCH /vendor/resource/buy with all fields in query params
 	if vendor_id.is_empty() or convoy_id.is_empty() or resource_type.is_empty() or quantity <= 0:
 		printerr("APICalls (buy_resource): invalid args")
 		return
-	# Ensure minimal floating noise (limit to 3 decimals) to keep URLs tidy
 	var qty_str := String.num(quantity, 3).rstrip("0").rstrip(".")
 	var url := "%s/vendor/resource/buy?vendor_id=%s&convoy_id=%s&resource_type=%s&quantity=%s" % [BASE_URL, vendor_id, convoy_id, resource_type, qty_str]
 	var headers: PackedStringArray = ['accept: application/json']
 	headers = _apply_auth_header(headers)
+	print("[APICalls][buy_resource] PATCH url=", url, " (query only)")
 	_request_queue.append({
 		"url": url,
 		"headers": headers,
@@ -498,7 +498,7 @@ func buy_resource(vendor_id: String, convoy_id: String, resource_type: String, q
 	_process_queue()
 
 func sell_resource(vendor_id: String, convoy_id: String, resource_type: String, quantity: float) -> void:
-	# Assuming symmetric backend route PATCH /vendor/resource/sell
+	# Backend route: PATCH /vendor/resource/sell with all fields in query params
 	if vendor_id.is_empty() or convoy_id.is_empty() or resource_type.is_empty() or quantity <= 0:
 		printerr("APICalls (sell_resource): invalid args")
 		return
@@ -506,6 +506,7 @@ func sell_resource(vendor_id: String, convoy_id: String, resource_type: String, 
 	var url := "%s/vendor/resource/sell?vendor_id=%s&convoy_id=%s&resource_type=%s&quantity=%s" % [BASE_URL, vendor_id, convoy_id, resource_type, qty_str]
 	var headers: PackedStringArray = ['accept: application/json']
 	headers = _apply_auth_header(headers)
+	print("[APICalls][sell_resource] PATCH url=", url, " (query only)")
 	_request_queue.append({
 		"url": url,
 		"headers": headers,

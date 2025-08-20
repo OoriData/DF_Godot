@@ -575,6 +575,11 @@ func _on_resource_transaction(result: Dictionary) -> void:
 		update_single_convoy(result)
 		# Also refresh user money (if money changed) by requesting user data (lightweight)
 		request_user_data_refresh()
+		# Force authoritative single-convoy refetch to eliminate any drift vs backend computed fields
+		var cid := str(result.get("convoy_id", ""))
+		if cid != "" and is_instance_valid(api_calls_node) and api_calls_node.has_method("get_convoy_data"):
+			print("[GameDataManager][ResourceTxn] Forcing post-transaction convoy refetch convoy_id=", cid)
+			api_calls_node.get_convoy_data(cid)
 	else:
 		printerr("GameDataManager: resource transaction result missing convoy_id")
 
@@ -691,6 +696,37 @@ func update_single_convoy(raw_updated_convoy: Dictionary) -> void:
 	if not found:
 		all_convoy_data.append(augmented_convoy)
 	convoy_data_updated.emit(all_convoy_data)
+
+	# Opportunistically sync global user money from convoy (if present) so header updates immediately
+	_maybe_sync_user_money_from_convoy(augmented_convoy)
+
+func _maybe_sync_user_money_from_convoy(convoy_dict: Dictionary) -> void:
+	# Some backend responses (e.g., resource / cargo transactions) may include an up-to-date 'money' field.
+	# If so, mirror it into current_user_data and emit user_data_updated immediately instead of waiting
+	# for the asynchronous user data refetch to complete.
+	if not (convoy_dict is Dictionary):
+		return
+	if not convoy_dict.has("money"):
+		return
+	var new_money_val = convoy_dict.get("money")
+	if not (new_money_val is int or new_money_val is float):
+		return
+	var new_money_f := float(new_money_val)
+	var needs_emit := false
+	if not current_user_data.has("money"):
+		current_user_data["money"] = new_money_f
+		needs_emit = true
+	else:
+		var old_money_f := 0.0
+		var old_raw = current_user_data.get("money")
+		if old_raw is int or old_raw is float:
+			old_money_f = float(old_raw)
+		if abs(old_money_f - new_money_f) > 0.0001:
+			current_user_data["money"] = new_money_f
+			needs_emit = true
+	if needs_emit:
+		print("[GameDataManager][MoneySync] Updated user money from convoy data ->", new_money_f)
+		user_data_updated.emit(current_user_data)
 
 func update_single_vendor(new_vendor_data: Dictionary) -> void:
 	if not new_vendor_data.has("vendor_id"):
@@ -820,14 +856,19 @@ func _aggregate_vendor_items(vendor_data: Dictionary) -> Dictionary:
 	for res in ["fuel", "water", "food"]:
 		var qty = int(vendor_data.get(res, 0) or 0)
 		var price = float(vendor_data.get(res + "_price", 0) or 0)
-		if qty > 0 and price > 0:
+		# We want to show bulk resources whenever qty > 0 even if price == 0 (could be free / placeholder pricing)
+		if qty > 0:
 			var item = {
 				"name": "%s (Bulk)" % res.capitalize(),
 				"quantity": qty,
 				"is_raw_resource": true
 			}
-			item[res] = qty # Add the dynamic key correctly
+			item[res] = qty # dynamic quantity field (fuel/water/food)
+			# Preserve the unit price field so UI pricing helpers can pick it up
+			item[res + "_price"] = price
 			_aggregate_item(aggregated["resources"], item)
+			if VEHICLE_DEBUG_DUMP:
+				print("[GameDataManager][DEBUG][VendorBulk] Added %s qty=%d price=%f" % [res, qty, price])
 
 	# Vehicles
 	for vehicle in vendor_data.get("vehicle_inventory", []):
@@ -878,15 +919,27 @@ func _aggregate_convoy_items(convoy_data: Dictionary, vendor_data: Dictionary) -
 	# Add bulk resources
 	for res in ["fuel", "water", "food"]:
 		var qty = int(convoy_data.get(res, 0) or 0)
-		var price = vendor_data and float(vendor_data.get(res + "_price", 0) or 0) or 0
-		if qty > 0 and price > 0:
+		# Only allow selling this resource if vendor advertises a price (non-null and numeric). 0 is allowed (free) but null/absent blocks.
+		var raw_price_val = null
+		if vendor_data and vendor_data.has(res + "_price"):
+			raw_price_val = vendor_data.get(res + "_price")
+		var has_price := raw_price_val is int or raw_price_val is float
+		var price: float = 0.0
+		if has_price:
+			price = float(raw_price_val)
+		if qty > 0 and has_price:
 			var item = {
 				"name": "%s (Bulk)" % res.capitalize(),
 				"quantity": qty,
 				"is_raw_resource": true
 			}
-			item[res] = qty # Add the dynamic key correctly
+			item[res] = qty
+			item[res + "_price"] = price
 			_aggregate_item(aggregated["resources"], item)
+		elif qty > 0 and not has_price and VEHICLE_DEBUG_DUMP:
+			print("[GameDataManager][DEBUG][ConvoyBulkFilter] Skipping %s: qty=%d vendor has no %s_price" % [res, qty, res])
+			if VEHICLE_DEBUG_DUMP:
+				print("[GameDataManager][DEBUG][ConvoyBulk] Added %s qty=%d price=%f" % [res, qty, price])
 
 	return aggregated
 
@@ -907,6 +960,16 @@ func _aggregate_item(agg_dict: Dictionary, item: Dictionary, vehicle_name: Strin
 			"total_fuel": 0.0
 		}
 	var item_quantity = int(item.get("quantity", 1.0))
+	# For raw bulk resources, prefer the explicit resource amount if larger.
+	if item.get("is_raw_resource", false):
+		if item.has("fuel") and (item.get("fuel") is int or item.get("fuel") is float):
+			item_quantity = max(item_quantity, int(item.get("fuel")))
+		if item.has("water") and (item.get("water") is int or item.get("water") is float):
+			item_quantity = max(item_quantity, int(item.get("water")))
+		if item.has("food") and (item.get("food") is int or item.get("food") is float):
+			item_quantity = max(item_quantity, int(item.get("food")))
+		# Mirror back to item_data so UI picking uses the larger number
+		agg_dict[agg_key].item_data["quantity"] = item_quantity
 	agg_dict[agg_key].total_quantity += item_quantity
 	agg_dict[agg_key].total_weight += item.get("weight", 0.0)
 	agg_dict[agg_key].total_volume += item.get("volume", 0.0)
@@ -951,14 +1014,32 @@ func sell_item(convoy_id: String, vendor_id: String, item_data: Dictionary, quan
 	elif item_data.has("vehicle_id"):
 		api_calls_node.sell_vehicle(vendor_id, convoy_id, item_data["vehicle_id"])
 	elif item_data.has("is_raw_resource"):
-		if item_data.has("fuel"):
-			api_calls_node.sell_resource(vendor_id, convoy_id, "fuel", float(quantity))
-		elif item_data.has("water"):
-			api_calls_node.sell_resource(vendor_id, convoy_id, "water", float(quantity))
-		elif item_data.has("food"):
-			api_calls_node.sell_resource(vendor_id, convoy_id, "food", float(quantity))
+		# Determine resource type & available amount from current convoy snapshot
+		var resource_type := ""
+		if item_data.has("fuel") and (item_data.get("fuel") is int or item_data.get("fuel") is float) and int(item_data.get("fuel")) > 0:
+			resource_type = "fuel"
+		elif item_data.has("water") and (item_data.get("water") is int or item_data.get("water") is float) and int(item_data.get("water")) > 0:
+			resource_type = "water"
+		elif item_data.has("food") and (item_data.get("food") is int or item_data.get("food") is float) and int(item_data.get("food")) > 0:
+			resource_type = "food"
 		else:
-			printerr("GameDataManager: Unknown raw resource type in sell_item.")
+			printerr("GameDataManager: Unknown raw resource type in sell_item (no positive resource field).")
+			return
+		var convoy_snapshot = get_convoy_by_id(convoy_id)
+		var available := 0.0
+		if convoy_snapshot is Dictionary and convoy_snapshot.has(resource_type):
+			var av_val = convoy_snapshot.get(resource_type)
+			if av_val is int or av_val is float:
+				available = float(av_val)
+		# Clamp quantity to available (avoid backend 500 due to invalid over-sell)
+		if quantity > int(available):
+			print("[GameDataManager][SellResource] Clamp requested quantity from", quantity, "to available", int(available), "resource_type=", resource_type, "convoy_id=", convoy_id)
+			quantity = int(available)
+		if quantity <= 0:
+			printerr("[GameDataManager][SellResource] Aborting sell; no available", resource_type, "in convoy.")
+			return
+		print("[GameDataManager][SellResource] Attempting sell resource_type=", resource_type, "qty=", quantity, "available=", available, "convoy_id=", convoy_id, "vendor_id=", vendor_id)
+		api_calls_node.sell_resource(vendor_id, convoy_id, resource_type, float(quantity))
 	else:
 		printerr("GameDataManager: Unknown item type for sell_item.")
 

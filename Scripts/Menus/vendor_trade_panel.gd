@@ -33,6 +33,8 @@ var all_settlement_data_global: Array # New: Will hold all settlement data for g
 var selected_item = null
 var current_mode = "buy" # or "sell"
 var _last_selected_item_id = null # <-- Add this line
+var _last_selected_ref = null # Track last selected aggregated data reference to avoid resetting quantity repeatedly
+var _last_selection_unique_key: String = "" # Used to detect same logical selection even if reference changes
 
 func _ready() -> void:
 	# Connect signals from UI elements
@@ -64,6 +66,10 @@ func _ready() -> void:
 			gdm.vendor_panel_data_ready.connect(_on_vendor_panel_data_ready)
 	else:
 		printerr("VendorTradePanel: Could not find GameDataManager.")
+
+	# Enable wrapping for convoy cargo label so multi-line text keeps panel narrow
+	if is_instance_valid(convoy_cargo_label):
+		convoy_cargo_label.autowrap_mode = TextServer.AUTOWRAP_WORD
 
 	# Initially hide comparison panel until an item is selected
 	comparison_panel.hide()
@@ -114,7 +120,15 @@ func _populate_tree_from_agg(tree: Tree, agg: Dictionary) -> void:
 			category_item.collapsed = category != "missions"
 			for item_name in agg[category]:
 				var agg_data = agg[category][item_name]
-				var display_text = "%s (x%d)" % [item_name, agg_data.total_quantity]
+				var display_qty = agg_data.total_quantity
+				if category == "resources" and agg_data.has("item_data") and agg_data.item_data.get("is_raw_resource", false):
+					# For raw resources prefer the resource amount (fuel/water/food) if larger than total_quantity
+					var res_qty = 0
+					if agg_data.total_fuel > res_qty: res_qty = int(agg_data.total_fuel)
+					if agg_data.total_water > res_qty: res_qty = int(agg_data.total_water)
+					if agg_data.total_food > res_qty: res_qty = int(agg_data.total_food)
+					if res_qty > display_qty: display_qty = res_qty
+				var display_text = "%s (x%d)" % [item_name, display_qty]
 				var tree_child_item = tree.create_item(category_item)
 				tree_child_item.set_text(0, display_text)
 				tree_child_item.set_metadata(0, agg_data)
@@ -158,6 +172,7 @@ func _populate_vendor_list() -> void:
 	var aggregated_vehicles: Dictionary = {}
 	var aggregated_other: Dictionary = {}
 
+	print("DEBUG: vendor_data at start of _populate_vendor_list:", vendor_data)
 	for item in vendor_data.get("cargo_inventory", []):
 		if item.has("intrinsic_part_id") and item.get("intrinsic_part_id") != null:
 			continue
@@ -175,46 +190,72 @@ func _populate_vendor_list() -> void:
 			category_dict = aggregated_resources
 		else:
 			category_dict = aggregated_other
-		
+		print("DEBUG: Aggregating vendor cargo item:", item)
 		_aggregate_vendor_item(category_dict, item, mission_vendor_name)
 
 	# --- Create virtual items for raw resources AFTER processing normal cargo ---
 
-	var fuel_quantity = int(vendor_data.get("fuel", 0) or 0)
-	var fuel_price = float(vendor_data.get("fuel_price", 0) or 0)
-	if fuel_quantity > 0 and fuel_price > 0:
+	print("DEBUG: vendor_data raw resources: fuel=", vendor_data.get("fuel", 0), "water=", vendor_data.get("water", 0), "food=", vendor_data.get("food", 0))
+	# Explicitly coerce numeric values without using 'or' (which can mask None vs 0) and log types
+	var raw_fuel_val = vendor_data.get("fuel", 0)
+	var raw_fuel_price_val = vendor_data.get("fuel_price", 0)
+	print("DEBUG: RAW_FUEL before cast value=", raw_fuel_val, " type=", typeof(raw_fuel_val), " price=", raw_fuel_price_val)
+	var fuel_quantity = int(raw_fuel_val) if (raw_fuel_val is float or raw_fuel_val is int) else 0
+	var fuel_price_is_numeric = raw_fuel_price_val is float or raw_fuel_price_val is int
+	var fuel_price = float(raw_fuel_price_val) if fuel_price_is_numeric else 0.0
+	if fuel_quantity > 0 and fuel_price_is_numeric:
 		var fuel_item = {
 			"name": "Fuel (Bulk)",
 			"base_desc": "Bulk fuel to fill your containers.",
-			"quantity": fuel_quantity,
+			"quantity": fuel_quantity, # force exact resource amount
 			"fuel": fuel_quantity,
+			"fuel_price": fuel_price,
 			"is_raw_resource": true
 		}
+		print("DEBUG: Creating vendor bulk fuel item:", fuel_item)
 		_aggregate_vendor_item(aggregated_resources, fuel_item)
+	elif fuel_quantity > 0:
+		print("DEBUG: Skipping vendor bulk fuel (no numeric fuel_price)")
 
-	var water_quantity = int(vendor_data.get("water", 0) or 0)
-	var water_price = float(vendor_data.get("water_price", 0) or 0)
-	if water_quantity > 0 and water_price > 0:
+	var raw_water_val = vendor_data.get("water", 0)
+	var raw_water_price_val = vendor_data.get("water_price", 0)
+	print("DEBUG: RAW_WATER before cast value=", raw_water_val, " type=", typeof(raw_water_val), " price=", raw_water_price_val)
+	var water_quantity = int(raw_water_val) if (raw_water_val is float or raw_water_val is int) else 0
+	var water_price_is_numeric = raw_water_price_val is float or raw_water_price_val is int
+	var water_price = float(raw_water_price_val) if water_price_is_numeric else 0.0
+	if water_quantity > 0 and water_price_is_numeric:
 		var water_item = {
 			"name": "Water (Bulk)",
 			"base_desc": "Bulk water to fill your containers.",
-			"quantity": water_quantity,
+			"quantity": water_quantity, # force exact resource amount
 			"water": water_quantity,
+			"water_price": water_price,
 			"is_raw_resource": true
 		}
+		print("DEBUG: Creating vendor bulk water item:", water_item)
 		_aggregate_vendor_item(aggregated_resources, water_item)
+	elif water_quantity > 0:
+		print("DEBUG: Skipping vendor bulk water (no numeric water_price)")
 
-	var food_quantity = int(vendor_data.get("food", 0) or 0)
-	var food_price = float(vendor_data.get("food_price", 0) or 0)
-	if food_quantity > 0 and food_price > 0:
+	var raw_food_val = vendor_data.get("food", 0)
+	var raw_food_price_val = vendor_data.get("food_price", 0)
+	print("DEBUG: RAW_FOOD before cast value=", raw_food_val, " type=", typeof(raw_food_val), " price=", raw_food_price_val)
+	var food_quantity = int(raw_food_val) if (raw_food_val is float or raw_food_val is int) else 0
+	var food_price_is_numeric = raw_food_price_val is float or raw_food_price_val is int
+	var food_price = float(raw_food_price_val) if food_price_is_numeric else 0.0
+	if food_quantity > 0 and food_price_is_numeric:
 		var food_item = {
 			"name": "Food (Bulk)",
 			"base_desc": "Bulk food supplies.",
 			"quantity": food_quantity,
 			"food": food_quantity,
+			"food_price": food_price,
 			"is_raw_resource": true
 		}
+		print("DEBUG: Creating vendor bulk food item:", food_item)
 		_aggregate_vendor_item(aggregated_resources, food_item)
+	elif food_quantity > 0:
+		print("DEBUG: Skipping vendor bulk food (no numeric food_price)")
 
 	# Process vehicles into their own category
 	for vehicle in vendor_data.get("vehicle_inventory", []):
@@ -228,6 +269,7 @@ func _populate_vendor_list() -> void:
 
 func _populate_convoy_list() -> void:
 	convoy_item_tree.clear()
+	print("DEBUG: convoy_data at start of _populate_convoy_list:", convoy_data)
 	if not convoy_data:
 		return
 
@@ -285,41 +327,61 @@ func _populate_convoy_list() -> void:
 			_aggregate_item(category_dict, item, "Convoy", mission_vendor_name)
 
 	# --- Create virtual items for convoy's bulk resources AFTER processing normal cargo ---
-	var convoy_fuel_quantity = int(convoy_data.get("fuel", 0) or 0)
-	var vendor_fuel_price = float(vendor_data.get("fuel_price", 0) or 0)
-	if convoy_fuel_quantity > 0 and vendor_fuel_price > 0:
+	# Defensive: avoid 'or 0' which can coerce bools, and log types
+	var raw_convoy_fuel = convoy_data.get("fuel", 0)
+	var raw_convoy_water = convoy_data.get("water", 0)
+	var raw_convoy_food = convoy_data.get("food", 0)
+	var vendor_fuel_price = float(vendor_data.get("fuel_price", 0)) if (vendor_data.get("fuel_price", 0) is float or vendor_data.get("fuel_price", 0) is int) else 0.0
+	var vendor_water_price = float(vendor_data.get("water_price", 0)) if (vendor_data.get("water_price", 0) is float or vendor_data.get("water_price", 0) is int) else 0.0
+	var vendor_food_price = float(vendor_data.get("food_price", 0)) if (vendor_data.get("food_price", 0) is float or vendor_data.get("food_price", 0) is int) else 0.0
+	print("DEBUG: convoy_data raw resources: fuel=", raw_convoy_fuel, " type=", typeof(raw_convoy_fuel), "water=", raw_convoy_water, " type=", typeof(raw_convoy_water), "food=", raw_convoy_food, " type=", typeof(raw_convoy_food))
+	var convoy_fuel_quantity = int(raw_convoy_fuel) if (raw_convoy_fuel is float or raw_convoy_fuel is int) else 0
+	var vendor_fuel_price_numeric = vendor_data.has("fuel_price") and (vendor_data.get("fuel_price") is float or vendor_data.get("fuel_price") is int)
+	if convoy_fuel_quantity > 0 and vendor_fuel_price_numeric:
 		var fuel_item = {
 			"name": "Fuel (Bulk)",
 			"base_desc": "Bulk fuel from your convoy's reserves.",
 			"quantity": convoy_fuel_quantity,
 			"fuel": convoy_fuel_quantity,
+			"fuel_price": vendor_fuel_price,
 			"is_raw_resource": true
 		}
+		print("DEBUG: Creating convoy bulk fuel item:", fuel_item)
 		_aggregate_vendor_item(aggregated_resources, fuel_item)
+	elif convoy_fuel_quantity > 0:
+		print("DEBUG: Skipping convoy bulk fuel (vendor has no numeric fuel_price)")
 
-	var convoy_water_quantity = int(convoy_data.get("water", 0) or 0)
-	var vendor_water_price = float(vendor_data.get("water_price", 0) or 0)
-	if convoy_water_quantity > 0 and vendor_water_price > 0:
+	var convoy_water_quantity = int(raw_convoy_water) if (raw_convoy_water is float or raw_convoy_water is int) else 0
+	var vendor_water_price_numeric = vendor_data.has("water_price") and (vendor_data.get("water_price") is float or vendor_data.get("water_price") is int)
+	if convoy_water_quantity > 0 and vendor_water_price_numeric:
 		var water_item = {
 			"name": "Water (Bulk)",
 			"base_desc": "Bulk water from your convoy's reserves.",
 			"quantity": convoy_water_quantity,
 			"water": convoy_water_quantity,
+			"water_price": vendor_water_price,
 			"is_raw_resource": true
 		}
+		print("DEBUG: Creating convoy bulk water item:", water_item)
 		_aggregate_vendor_item(aggregated_resources, water_item)
+	elif convoy_water_quantity > 0:
+		print("DEBUG: Skipping convoy bulk water (vendor has no numeric water_price)")
 
-	var convoy_food_quantity = int(convoy_data.get("food", 0) or 0)
-	var vendor_food_price = float(vendor_data.get("food_price", 0) or 0)
-	if convoy_food_quantity > 0 and vendor_food_price > 0:
+	var convoy_food_quantity = int(raw_convoy_food) if (raw_convoy_food is float or raw_convoy_food is int) else 0
+	var vendor_food_price_numeric = vendor_data.has("food_price") and (vendor_data.get("food_price") is float or vendor_data.get("food_price") is int)
+	if convoy_food_quantity > 0 and vendor_food_price_numeric:
 		var food_item = {
 			"name": "Food (Bulk)",
 			"base_desc": "Bulk food supplies from your convoy's reserves.",
 			"quantity": convoy_food_quantity,
 			"food": convoy_food_quantity,
+			"food_price": vendor_food_price,
 			"is_raw_resource": true
 		}
+		print("DEBUG: Creating convoy bulk food item:", food_item)
 		_aggregate_vendor_item(aggregated_resources, food_item)
+	elif convoy_food_quantity > 0:
+		print("DEBUG: Skipping convoy bulk food (vendor has no numeric food_price)")
 
 	var root = convoy_item_tree.create_item()
 	_populate_category(convoy_item_tree, root, "Mission Cargo", aggregated_missions)
@@ -333,12 +395,24 @@ func _aggregate_vendor_item(agg_dict: Dictionary, item: Dictionary, p_mission_ve
 		agg_dict[item_name] = {"item_data": item, "total_quantity": 0, "total_weight": 0.0, "total_volume": 0.0, "total_food": 0.0, "total_water": 0.0, "total_fuel": 0.0, "mission_vendor_name": p_mission_vendor_name}
 	
 	var item_quantity = int(item.get("quantity", 1.0))
+	# For raw bulk resources, prefer the explicit resource amount if larger than the generic quantity field.
+	if item.get("is_raw_resource", false):
+		if item.get("fuel", 0) is int or item.get("fuel", 0) is float:
+			item_quantity = max(item_quantity, int(item.get("fuel", 0) or 0))
+		if item.get("water", 0) is int or item.get("water", 0) is float:
+			item_quantity = max(item_quantity, int(item.get("water", 0) or 0))
+		if item.get("food", 0) is int or item.get("food", 0) is float:
+			item_quantity = max(item_quantity, int(item.get("food", 0) or 0))
+		# Mirror back onto the stored item_data so later selection logic sees the larger quantity.
+		agg_dict[item_name].item_data["quantity"] = item_quantity
+	print("DEBUG: _aggregate_vendor_item before add name=", item_name, "incoming quantity=", item.get("quantity"), "parsed=", item_quantity)
 	agg_dict[item_name].total_quantity += item_quantity
 	agg_dict[item_name].total_weight += item.get("weight", 0.0)
 	agg_dict[item_name].total_volume += item.get("volume", 0.0)
 	if item.get("food") is float or item.get("food") is int: agg_dict[item_name].total_food += item.get("food")
 	if item.get("water") is float or item.get("water") is int: agg_dict[item_name].total_water += item.get("water")
 	if item.get("fuel") is float or item.get("fuel") is int: agg_dict[item_name].total_fuel += item.get("fuel")
+	print("DEBUG: _aggregate_vendor_item after add name=", item_name, "total_quantity=", agg_dict[item_name].total_quantity, "total_fuel=", agg_dict[item_name].total_fuel)
 	
 func _aggregate_item(agg_dict: Dictionary, item: Dictionary, vehicle_name: String, p_mission_vendor_name: String = "") -> void:
 	# Use cargo_id as aggregation key if present, but store/display by name
@@ -355,9 +429,19 @@ func _aggregate_item(agg_dict: Dictionary, item: Dictionary, vehicle_name: Strin
 			"total_volume": 0.0,
 			"total_food": 0.0,
 			"total_water": 0.0,
-			"total_fuel": 0.0
+			"total_fuel": 0.0,
+			# Keep a list of the underlying cargo items so we can sell more than a single instance.
+			"items": []
 		}
 	var item_quantity = int(item.get("quantity", 1.0))
+	if item.get("is_raw_resource", false):
+		if item.get("fuel", 0) is int or item.get("fuel", 0) is float:
+			item_quantity = max(item_quantity, int(item.get("fuel", 0) or 0))
+		if item.get("water", 0) is int or item.get("water", 0) is float:
+			item_quantity = max(item_quantity, int(item.get("water", 0) or 0))
+		if item.get("food", 0) is int or item.get("food", 0) is float:
+			item_quantity = max(item_quantity, int(item.get("food", 0) or 0))
+		agg_dict[agg_key].item_data["quantity"] = item_quantity
 	agg_dict[agg_key].total_quantity += item_quantity
 	agg_dict[agg_key].total_weight += item.get("weight", 0.0)
 	agg_dict[agg_key].total_volume += item.get("volume", 0.0)
@@ -367,28 +451,57 @@ func _aggregate_item(agg_dict: Dictionary, item: Dictionary, vehicle_name: Strin
 	if not agg_dict[agg_key].locations.has(vehicle_name):
 		agg_dict[agg_key].locations[vehicle_name] = 0
 	agg_dict[agg_key].locations[vehicle_name] += item_quantity
+	# Track each raw cargo item for selling across multiple underlying stacks
+	agg_dict[agg_key].items.append(item)
 
 func _update_convoy_info_display() -> void:
 	# This function now updates both the user's money and the convoy's cargo stats.
 	if not is_node_ready(): return
 
-	# Update User Money from GameDataManager
-	if is_instance_valid(gdm):
-		var user_data = gdm.get_current_user_data()
-		var money_amount = user_data.get("money", 0)
-		convoy_money_label.text = "Money: %s" % _format_money(money_amount)
-	else:
-		convoy_money_label.text = "Money: N/A"
+	# We are removing the money display per new requirements. Hide or clear the label.
+	if is_instance_valid(convoy_money_label):
+		convoy_money_label.visible = false
 
 	# Update Convoy Cargo from local convoy_data
 	if convoy_data:
 		var used_volume = convoy_data.get("total_cargo_capacity", 0.0) - convoy_data.get("total_free_space", 0.0)
 		var total_volume = convoy_data.get("total_cargo_capacity", 0.0)
-		convoy_cargo_label.text = "Cargo: %.1f / %.1f" % [used_volume, total_volume]
+		# Attempt to find weight stats; fall back to calculating if absent.
+		var weight_capacity: float = -1.0
+		var weight_used: float = -1.0
+		var possible_capacity_keys = ["total_cargo_weight_capacity", "total_weight_capacity", "weight_capacity"]
+		for k in possible_capacity_keys:
+			if convoy_data.has(k):
+				weight_capacity = float(convoy_data.get(k))
+				break
+		# Derive used weight from free weight if available
+		if weight_capacity >= 0.0:
+			var possible_free_keys = ["total_free_weight", "free_weight"]
+			for fk in possible_free_keys:
+				if convoy_data.has(fk):
+					weight_used = weight_capacity - float(convoy_data.get(fk))
+					break
+		# If still unknown, sum cargo + parts weights
+		if weight_used < 0.0 and convoy_data.has("vehicle_details_list"):
+			var sum_weight := 0.0
+			for vehicle in convoy_data.vehicle_details_list:
+				for c in vehicle.get("cargo", []):
+					sum_weight += c.get("weight", 0.0)
+				for p in vehicle.get("parts", []):
+					sum_weight += p.get("weight", 0.0)
+			weight_used = sum_weight
+		# If capacity unknown, attempt an estimate (leave -1 to hide)
+		var weight_segment = ""
+		if weight_used >= 0.0:
+			if weight_capacity >= 0.0:
+				weight_segment = " | Weight: %.1f / %.1f" % [weight_used, weight_capacity]
+			else:
+				weight_segment = " | Weight: %.1f" % weight_used
+		convoy_cargo_label.text = "Volume: %.1f / %.1f%s" % [used_volume, total_volume, weight_segment]
 	else:
 		convoy_cargo_label.text = "Cargo: N/A"
 
-func _on_user_data_updated(user_data: Dictionary):
+func _on_user_data_updated(_user_data: Dictionary):
 	# When user data changes (e.g., after a transaction), refresh the display.
 	_update_convoy_info_display()
 
@@ -476,6 +589,8 @@ func _populate_category(target_tree: Tree, root_item: TreeItem, category_name: S
 		var agg_data = agg_dict[agg_key]
 		var display_name = agg_data.display_name if agg_data.has("display_name") else agg_key
 		var display_text = "%s (x%d)" % [display_name, agg_data.total_quantity]
+		if category_name == "Resources" and ("Fuel" in display_name or "fuel" in display_name):
+			print("DEBUG: _populate_category resource node fuel display_name=", display_name, "total_quantity=", agg_data.total_quantity, "total_fuel=", agg_data.get("total_fuel"))
 		# Append vendor name for Mission Cargo items
 		if category_name == "Mission Cargo" and agg_data.has("mission_vendor_name") and not agg_data.mission_vendor_name.is_empty() and agg_data.mission_vendor_name != "Unknown Vendor":
 			display_text += " (To: %s)" % agg_data.mission_vendor_name
@@ -498,37 +613,59 @@ func _populate_category(target_tree: Tree, root_item: TreeItem, category_name: S
 		tree_child_item.set_metadata(0, agg_data)
 
 func _handle_new_item_selection(p_selected_item) -> void:
+	var previous_key = _last_selection_unique_key
 	selected_item = p_selected_item
-
-	# Save the unique ID for later restoration
+	var new_key: String = ""
 	if selected_item and selected_item.has("item_data"):
-		if selected_item.item_data.has("cargo_id"):
-			_last_selected_item_id = str(selected_item.item_data.cargo_id)
-		elif selected_item.item_data.has("vehicle_id"):
-			_last_selected_item_id = selected_item.item_data.vehicle_id
+		var item_data_local = selected_item.item_data
+		if item_data_local.has("cargo_id") and item_data_local.cargo_id != null:
+			new_key = "cargo:" + str(item_data_local.cargo_id)
+		elif item_data_local.has("vehicle_id") and item_data_local.vehicle_id != null:
+			new_key = "veh:" + str(item_data_local.vehicle_id)
 		else:
-			_last_selected_item_id = null
-	else:
-		_last_selected_item_id = null
-	
-	# DEBUG: Print the raw selected item data
-	print("DEBUG: _handle_new_item_selection - selected_item (aggregated): ", selected_item)
+			if item_data_local.get("fuel",0) > 0 and item_data_local.get("is_raw_resource", false):
+				new_key = "fuel_bulk"
+			elif item_data_local.get("water",0) > 0 and item_data_local.get("is_raw_resource", false):
+				new_key = "water_bulk"
+			elif item_data_local.get("food",0) > 0 and item_data_local.get("is_raw_resource", false):
+				new_key = "food_bulk"
+			else:
+				new_key = "name:" + str(item_data_local.get("name", ""))
+	_last_selected_item_id = new_key
+	_last_selection_unique_key = new_key
+	var is_same_selection = previous_key == new_key
+	_last_selected_ref = selected_item
 
-	
+	print("DEBUG: _handle_new_item_selection - selected_item (aggregated):", selected_item)
+	print("DEBUG: _handle_new_item_selection - new_key:", new_key, "is_same_selection:", is_same_selection)
+
 	if selected_item:
-		# When selling or buying, cap the quantity to what is available.
-		if current_mode == "sell" or current_mode == "buy":
-			quantity_spinbox.max_value = selected_item.get("total_quantity", 99)
+		var stock_qty = selected_item.get("total_quantity", -1)
+		if stock_qty < 0 and selected_item.has("item_data") and selected_item.item_data.has("quantity"):
+			stock_qty = int(selected_item.item_data.get("quantity", 1))
+		if selected_item.has("item_data") and selected_item.item_data.get("is_raw_resource", false):
+			var idata = selected_item.item_data
+			print("DEBUG: selected_item is raw resource, idata:", idata)
+			if idata.get("fuel",0) > 0: stock_qty = int(idata.get("fuel"))
+			elif idata.get("water",0) > 0: stock_qty = int(idata.get("water"))
+			elif idata.get("food",0) > 0: stock_qty = int(idata.get("food"))
+			print("DEBUG: raw resource stock_qty chosen=", stock_qty)
+		print("DEBUG: stock_qty for selected_item:", stock_qty)
+		if stock_qty <= 0:
+			stock_qty = 1
+		quantity_spinbox.max_value = max(1, stock_qty)
+		print("DEBUG: quantity_spinbox.max_value set to:", quantity_spinbox.max_value)
+		if not is_same_selection:
+			quantity_spinbox.value = 1
 		else:
-			quantity_spinbox.max_value = 99 # Fallback
-		quantity_spinbox.value = 1 # Reset to 1 on new selection
+			quantity_spinbox.value = clampi(int(quantity_spinbox.value), 1, int(quantity_spinbox.max_value))
+		print("DEBUG: quantity_spinbox.value set to:", quantity_spinbox.value)
 
 		_update_inspector()
 		_update_comparison()
-		
-		# DEBUG: Print item_data_source after it's determined in _update_inspector
+
 		var item_data_source_debug = selected_item.get("item_data", {})
-		print("DEBUG: _handle_new_item_selection - item_data_source (original): ", item_data_source_debug)
+		print("DEBUG: _handle_new_item_selection - item_data_source (original):", item_data_source_debug)
 
 		_update_transaction_panel()
 		if is_instance_valid(action_button): action_button.disabled = false
@@ -543,16 +680,32 @@ func _on_max_button_pressed() -> void:
 		return
 
 	if current_mode == "sell":
-		# For selling, the max is the total quantity the player has.
-		quantity_spinbox.value = selected_item.get("total_quantity", 1)
+		var sel_qty = selected_item.get("total_quantity", 1)
+		if selected_item.has("item_data") and selected_item.item_data.get("is_raw_resource", false):
+			var idata = selected_item.item_data
+			if idata.get("fuel",0) > 0: sel_qty = int(idata.get("fuel"))
+			elif idata.get("water",0) > 0: sel_qty = int(idata.get("water"))
+			elif idata.get("food",0) > 0: sel_qty = int(idata.get("food"))
+		quantity_spinbox.value = sel_qty
 	elif current_mode == "buy":
 		# For buying, the max is how many the player can afford, limited by vendor stock.
 		var item_data_source = selected_item.get("item_data", {})
 		var vendor_stock = selected_item.get("total_quantity", 0)
+		if item_data_source.get("is_raw_resource", false):
+			if item_data_source.get("fuel",0) > 0: vendor_stock = int(item_data_source.get("fuel"))
+			elif item_data_source.get("water",0) > 0: vendor_stock = int(item_data_source.get("water"))
+			elif item_data_source.get("food",0) > 0: vendor_stock = int(item_data_source.get("food"))
 		
 		var max_can_afford = 9999 # A large number
 		var price: float = 0.0
 		var buy_price_val = item_data_source.get("price")
+		if (buy_price_val == null or (not (buy_price_val is float or buy_price_val is int) or float(buy_price_val) == 0.0)) and item_data_source.get("is_raw_resource", false):
+			if item_data_source.get("fuel",0) > 0:
+				buy_price_val = item_data_source.get("fuel_price", vendor_data.get("fuel_price", 0.0))
+			elif item_data_source.get("water",0) > 0:
+				buy_price_val = item_data_source.get("water_price", vendor_data.get("water_price", 0.0))
+			elif item_data_source.get("food",0) > 0:
+				buy_price_val = item_data_source.get("food_price", vendor_data.get("food_price", 0.0))
 		if buy_price_val is float or buy_price_val is int:
 			price = float(buy_price_val)
 		
@@ -583,8 +736,21 @@ func _on_action_button_pressed() -> void:
 	if current_mode == "buy":
 		gdm.buy_item(convoy_id, vendor_id, item_data_source, quantity)
 	else:
-		# Use cargo_id from aggregated item for sell, not just from a single vehicle
-		gdm.sell_item(convoy_id, vendor_id, item_data_source, quantity)
+		# SELL: Support selling across multiple underlying cargo stacks in the aggregated selection.
+		var remaining = quantity
+		if selected_item.has("items") and selected_item.items is Array and not selected_item.items.is_empty():
+			for cargo_item in selected_item.items:
+				if remaining <= 0:
+					break
+				var available = int(cargo_item.get("quantity", 0))
+				if available <= 0:
+					continue
+				var to_sell = min(available, remaining)
+				gdm.sell_item(convoy_id, vendor_id, cargo_item, to_sell)
+				remaining -= to_sell
+		else:
+			# Fallback: original single-item sale
+			gdm.sell_item(convoy_id, vendor_id, item_data_source, quantity)
 
 func _on_quantity_changed(_value: float) -> void:
 	_update_transaction_panel()
@@ -646,18 +812,18 @@ func _update_inspector() -> void:
 
 	var unit_weight = item_data_source.get("unit_weight", 0.0)
 	if unit_weight == 0.0 and item_data_source.has("weight") and item_data_source.has("quantity"):
-		var total_weight = item_data_source.get("weight", 0.0)
-		var total_quantity_float = float(item_data_source.get("quantity", 1.0))
-		if total_quantity_float > 0:
-			unit_weight = total_weight / total_quantity_float
+		var _total_weight_calc = item_data_source.get("weight", 0.0)
+		var _total_quantity_float_w = float(item_data_source.get("quantity", 1.0))
+		if _total_quantity_float_w > 0:
+			unit_weight = _total_weight_calc / _total_quantity_float_w
 	if unit_weight > 0: bbcode += "    - Weight: %s\n" % str(unit_weight)
 
 	var unit_volume = item_data_source.get("unit_volume", 0.0)
 	if unit_volume == 0.0 and item_data_source.has("volume") and item_data_source.has("quantity"):
-		var total_volume = item_data_source.get("volume", 0.0)
-		var total_quantity_float = float(item_data_source.get("quantity", 1.0))
-		if total_quantity_float > 0:
-			unit_volume = total_volume / total_quantity_float
+		var _total_volume_calc = item_data_source.get("volume", 0.0)
+		var _total_quantity_float_v = float(item_data_source.get("quantity", 1.0))
+		if _total_quantity_float_v > 0:
+			unit_volume = _total_volume_calc / _total_quantity_float_v
 	if unit_volume > 0: bbcode += "    - Volume: %s\n" % str(unit_volume)
 
 	bbcode += "\n  [u]Total Order:[/u]\n"
