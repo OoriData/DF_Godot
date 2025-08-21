@@ -36,6 +36,12 @@ var _last_selected_item_id = null # <-- Add this line
 var _last_selected_ref = null # Track last selected aggregated data reference to avoid resetting quantity repeatedly
 var _last_selection_unique_key: String = "" # Used to detect same logical selection even if reference changes
 
+# Cached convoy cargo stats for transaction projection
+var _convoy_used_weight: float = 0.0
+var _convoy_total_weight: float = 0.0
+var _convoy_used_volume: float = 0.0
+var _convoy_total_volume: float = 0.0
+
 func _ready() -> void:
 	# Connect signals from UI elements
 	vendor_item_tree.item_selected.connect(_on_vendor_item_selected)
@@ -462,7 +468,7 @@ func _update_convoy_info_display() -> void:
 	if is_instance_valid(convoy_money_label):
 		convoy_money_label.visible = false
 
-	# Update Convoy Cargo from local convoy_data
+	# Update Convoy Cargo from local convoy_data and cache stats for projections
 	if convoy_data:
 		var used_volume = convoy_data.get("total_cargo_capacity", 0.0) - convoy_data.get("total_free_space", 0.0)
 		var total_volume = convoy_data.get("total_cargo_capacity", 0.0)
@@ -490,14 +496,19 @@ func _update_convoy_info_display() -> void:
 				for p in vehicle.get("parts", []):
 					sum_weight += p.get("weight", 0.0)
 			weight_used = sum_weight
+		# Cache stats (guard negatives)
+		_convoy_used_volume = max(0.0, used_volume)
+		_convoy_total_volume = max(0.0, total_volume)
+		_convoy_used_weight = max(0.0, weight_used if weight_used >= 0.0 else 0.0)
+		_convoy_total_weight = max(0.0, weight_capacity if weight_capacity >= 0.0 else 0.0)
 		# If capacity unknown, attempt an estimate (leave -1 to hide)
 		var weight_segment = ""
 		if weight_used >= 0.0:
 			if weight_capacity >= 0.0:
-				weight_segment = " | Weight: %.1f / %.1f" % [weight_used, weight_capacity]
+				weight_segment = " | Weight: %.1f / %.1f" % [_convoy_used_weight, _convoy_total_weight]
 			else:
-				weight_segment = " | Weight: %.1f" % weight_used
-		convoy_cargo_label.text = "Volume: %.1f / %.1f%s" % [used_volume, total_volume, weight_segment]
+				weight_segment = " | Weight: %.1f" % _convoy_used_weight
+		convoy_cargo_label.text = "Volume: %.1f / %.1f%s" % [_convoy_used_volume, _convoy_total_volume, weight_segment]
 	else:
 		convoy_cargo_label.text = "Cargo: N/A"
 
@@ -906,7 +917,53 @@ func _update_transaction_panel() -> void:
 		bbcode_text += "  [color=gray](Item: %.2f + Resources: %.2f)[/color]\n" % [total_container_value_display, total_resource_value_display]
 
 	bbcode_text += "[b]Quantity:[/b] %d\n" % quantity
-	bbcode_text += "[b]Total Price:[/b] $%s" % ("%.2f" % total_price)
+	bbcode_text += "[b]Total Price:[/b] $%s\n" % ("%.2f" % total_price)
+
+	# --- Added detailed weight/volume and projected convoy stats ---
+	var unit_weight := 0.0
+	if item_data_source.has("unit_weight"):
+		unit_weight = float(item_data_source.get("unit_weight", 0.0))
+	elif item_data_source.has("weight") and item_data_source.has("quantity") and float(item_data_source.get("quantity", 0.0)) > 0.0:
+		var qw = float(item_data_source.get("quantity", 1.0))
+		if qw > 0.0:
+			unit_weight = float(item_data_source.get("weight", 0.0)) / qw
+	var added_weight = unit_weight * quantity
+
+	var unit_volume := 0.0
+	if item_data_source.has("unit_volume"):
+		unit_volume = float(item_data_source.get("unit_volume", 0.0))
+	elif item_data_source.has("volume") and item_data_source.has("quantity") and float(item_data_source.get("quantity", 0.0)) > 0.0:
+		var qv = float(item_data_source.get("quantity", 1.0))
+		if qv > 0.0:
+			unit_volume = float(item_data_source.get("volume", 0.0)) / qv
+	var added_volume = unit_volume * quantity
+
+	# Adjust direction for sell mode (capacity freed instead of consumed)
+	if current_mode == "sell":
+		added_weight = -added_weight
+		added_volume = -added_volume
+
+	if unit_weight > 0.0: bbcode_text += "[b]Unit Weight:[/b] %.2f\n" % unit_weight
+	if unit_volume > 0.0: bbcode_text += "[b]Unit Volume:[/b] %.2f\n" % unit_volume
+	if abs(added_weight) > 0.0001: bbcode_text += "[b]Total Weight:[/b] %.2f\n" % added_weight
+	if abs(added_volume) > 0.0001: bbcode_text += "[b]Total Volume:[/b] %.2f\n" % added_volume
+
+	# Projected post-transaction stats (only if we have convoy totals)
+	if (_convoy_total_volume > 0.0 or _convoy_total_weight > 0.0):
+		bbcode_text += "[b]After %s:[/b]\n" % ("Purchase" if current_mode == "buy" else "Sale")
+		if _convoy_total_volume > 0.0:
+			var projected_used_volume = clamp(_convoy_used_volume + added_volume, 0.0, 9999999.0)
+			var vol_pct = clamp((projected_used_volume / _convoy_total_volume) * 100.0, 0.0, 999.9)
+			bbcode_text += "  Volume: %.2f / %.2f (%.1f%%)\n" % [projected_used_volume, _convoy_total_volume, vol_pct]
+		if _convoy_total_weight > 0.0:
+			var projected_used_weight = clamp(_convoy_used_weight + added_weight, 0.0, 9999999.0)
+			var wt_pct = clamp((projected_used_weight / _convoy_total_weight) * 100.0, 0.0, 999.9)
+			bbcode_text += "  Weight: %.2f / %.2f (%.1f%%)\n" % [projected_used_weight, _convoy_total_weight, wt_pct]
+
+	# Trim trailing newline
+	if bbcode_text.ends_with("\n"):
+		bbcode_text = bbcode_text.substr(0, bbcode_text.length() - 1)
+	# --- End added detail block ---
 	price_label.text = bbcode_text
 
 # --- Price Calculation Helpers ---
@@ -984,6 +1041,15 @@ func _clear_inspector() -> void:
 	if is_instance_valid(item_description_rich_text):
 		item_description_rich_text.text = ""
 	# Add more UI clearing as needed
+
+# Helper: recompute aggregate convoy cargo stats (not currently used directly; kept for future refactors)
+func _recalculate_convoy_cargo_stats() -> Dictionary:
+	return {
+		"used_weight": _convoy_used_weight,
+		"total_weight": _convoy_total_weight,
+		"used_volume": _convoy_used_volume,
+		"total_volume": _convoy_total_volume
+	}
 
 # Formats money as a string with commas (e.g., 1,234,567)
 func _format_money(amount) -> String:
