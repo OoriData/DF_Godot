@@ -17,11 +17,18 @@ var _spinner_timer: Timer
 var _oauth_in_progress: bool = false
 
 func _ready() -> void:
-	login_button.pressed.connect(_on_login_button_pressed)
+	# Manual user ID login disabled for production. Hide related controls.
+	if is_instance_valid(user_id_line_edit):
+		user_id_line_edit.visible = false
+	if is_instance_valid(login_button):
+		login_button.visible = false
+	# (Disabled) login_button.pressed.connect(_on_login_button_pressed)
 	if is_instance_valid(google_button):
 		google_button.pressed.connect(_on_discord_login_pressed)
 	_connect_api_signals()
-	user_id_line_edit.grab_focus()
+	# Focus now goes to OAuth button if needed
+	if is_instance_valid(google_button):
+		google_button.grab_focus()
 	# Attempt automatic session reuse if token already valid
 	var api = _api()
 	if api and api.is_auth_token_valid():
@@ -54,13 +61,14 @@ func _connect_api_signals() -> void:
 	if api.has_signal("auth_expired") and not api.auth_expired.is_connected(_on_auth_expired):
 		api.auth_expired.connect(_on_auth_expired)
 
-func _on_login_button_pressed() -> void:
-	var user_id: String = user_id_line_edit.text.strip_edges()
-	if user_id.is_empty():
-		status_label.text = "User ID cannot be empty."
-		return
-	status_label.text = "Loading user..."
-	emit_signal("login_successful", user_id)
+# Disabled manual user ID login handler (kept for potential future debugging)
+# func _on_login_button_pressed() -> void:
+# 	var user_id: String = user_id_line_edit.text.strip_edges()
+# 	if user_id.is_empty():
+# 		status_label.text = "User ID cannot be empty."
+# 		return
+# 	status_label.text = "Loading user..."
+# 	emit_signal("login_successful", user_id)
 
 func _on_discord_login_pressed() -> void:
 	if _oauth_in_progress:
@@ -146,10 +154,9 @@ func _set_oauth_active(active: bool) -> void:
 		_spinner_timer.queue_free()
 		_spinner_timer = null
 
-func _input(event: InputEvent) -> void:
-	if event.is_action_pressed("ui_accept") and user_id_line_edit.has_focus():
-		_on_login_button_pressed()
-		get_viewport().set_input_as_handled()
+func _input(_event: InputEvent) -> void:
+	# Manual user ID entry disabled; ignore enter key path.
+	pass
 
 func show_error(message: String) -> void:
 	status_label.text = message
