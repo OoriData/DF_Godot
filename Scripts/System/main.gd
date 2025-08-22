@@ -64,14 +64,6 @@ func initialize_all_components():
 		elif map_camera.has_method('set_current'):
 			map_camera.set_current(true)
 		print('[Main] Camera current state after init: ', map_camera.has_method('is_current') and map_camera.is_current())
-	# Add a debug label so we know something renders at 0,0
-	if is_instance_valid(sub_viewport) and sub_viewport.get_node_or_null('DebugMarker') == null:
-		var dbg := Label.new()
-		dbg.name = 'DebugMarker'
-		dbg.text = 'DBG'
-		dbg.position = Vector2(8,8)
-		sub_viewport.add_child(dbg)
-		print('[Main] Added DebugMarker label to SubViewport.')
 	# Force tilemap visible
 	if is_instance_valid(terrain_tilemap):
 		terrain_tilemap.visible = true
