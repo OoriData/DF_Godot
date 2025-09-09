@@ -206,8 +206,8 @@ func _process(_delta: float):
 	if not _map_and_ui_setup_complete:
 		return
 	_frame_counter += 1
-	if _frame_counter % 60 == 0 and is_instance_valid(map_camera):
-		print('[Main][DBG] frame=%d cam_pos=%s zoom=%s tex_null=%s' % [_frame_counter, str(map_camera.position), str(map_camera.zoom), str(map_display.texture == null)])
+	# if _frame_counter % 60 == 0 and is_instance_valid(map_camera):
+		# print('[Main][DBG] frame=%d cam_pos=%s zoom=%s tex_null=%s' % [_frame_counter, str(map_camera.position), str(map_camera.zoom), str(map_display.texture == null)])
 	var map_view = self
 	if not is_instance_valid(map_view):
 		return
@@ -265,11 +265,11 @@ func populate_tilemap_from_data(tile_data_2d: Array):
 	# Sample a few cells to confirm they are set
 	for sample in [Vector2i(0,0), Vector2i(5,5), Vector2i(10,10)]:
 		var sid = terrain_tilemap.get_cell_source_id(sample)
-		print('[Main][DBG] sample cell %s source_id=%s' % [str(sample), str(sid)])
+		# print('[Main][DBG] sample cell %s source_id=%s' % [str(sample), str(sid)])
 
 func _on_map_data_loaded(p_map_tiles: Array):
 	print('[main.gd] _on_map_data_loaded: map_tiles_data size=', p_map_tiles.size())
-	print('[Main][DBG] camera current? ', is_instance_valid(map_camera) and map_camera.is_current())
+	# print('[Main][DBG] camera current? ', is_instance_valid(map_camera) and map_camera.is_current())
 	if not is_instance_valid(terrain_tilemap):
 		printerr("[ERROR] terrain_tilemap is not valid!")
 		return
@@ -320,7 +320,7 @@ func _on_map_data_loaded(p_map_tiles: Array):
 			map_camera.position = target
 			map_camera.zoom = Vector2(1,1)
 			# Limits skipped (Godot 4 constant names differ or controller handles)
-			print('[Main][DBG] Forced camera center to', target, ' map_px=', Vector2(width_px,height_px))
+			# print('[Main][DBG] Forced camera center to', target, ' map_px=', Vector2(width_px,height_px))
 
 	print('[main.gd] Emitting map_ready_for_focus signal...')
 	emit_signal('map_ready_for_focus')

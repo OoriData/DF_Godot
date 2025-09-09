@@ -2,6 +2,7 @@ extends Control
 
 # Emitted when the user clicks the back button. MenuManager listens for this.
 signal back_requested
+signal open_mechanics_menu_requested(convoy_data)
 
 # Preload the new panel scene for instancing.
 const VendorTradePanel = preload("res://Scenes/VendorTradePanel.tscn")
@@ -14,6 +15,7 @@ const VendorTradePanel = preload("res://Scenes/VendorTradePanel.tscn")
 @onready var vendor_tab_container = %VendorTabContainer
 @onready var settlement_content_vbox = %SettlementContentVBox
 @onready var back_button = $MainVBox/BackButton
+var mechanics_tab_vbox: VBoxContainer = null
 
 # This will be populated by MenuManager with the specific convoy's data.
 var _convoy_data: Dictionary
@@ -214,6 +216,8 @@ func _display_settlement_info():
 
 			for vendor in _settlement_data.vendors:
 				_create_vendor_tab(vendor)
+			# Add Mechanics tab entry point
+			_create_mechanics_tab()
 
 			# After creating vendor tabs compute top up plan
 			_update_top_up_button()
@@ -261,6 +265,30 @@ func _clear_tabs():
 		var tab = vendor_tab_container.get_child(i)
 		vendor_tab_container.remove_child(tab)
 		tab.queue_free()
+	mechanics_tab_vbox = null
+
+func _create_mechanics_tab():
+	if not is_instance_valid(vendor_tab_container):
+		return
+	# Create a simple tab labeled "Mechanic"
+	mechanics_tab_vbox = VBoxContainer.new()
+	mechanics_tab_vbox.name = "Mechanic"
+	vendor_tab_container.add_child(mechanics_tab_vbox)
+	vendor_tab_container.set_tab_title(vendor_tab_container.get_tab_count() - 1, "Mechanic")
+
+	var info = Label.new()
+	info.text = "Service your vehicles, swap and upgrade parts."
+	info.autowrap_mode = TextServer.AUTOWRAP_WORD
+	mechanics_tab_vbox.add_child(info)
+
+	var open_btn = Button.new()
+	open_btn.text = "Open Mechanic"
+	open_btn.custom_minimum_size.y = 36
+	open_btn.pressed.connect(func():
+		if _convoy_data:
+			emit_signal("open_mechanics_menu_requested", _convoy_data)
+	)
+	mechanics_tab_vbox.add_child(open_btn)
 
 func create_info_label(text: String) -> Label:
 	# Helper function to create a new Label node with common properties

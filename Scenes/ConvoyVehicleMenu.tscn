@@ -47,6 +47,14 @@ item_count = 1
 popup/item_0/text = "No Vehicles Available"
 popup/item_0/id = 0
 
+[node name="ActionButtons" type="HBoxContainer" parent="MainVBox"]
+layout_mode = 2
+
+[node name="MechanicButton" type="Button" parent="MainVBox/ActionButtons"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Mechanic"
+
 [node name="VehicleTabContainer" type="TabContainer" parent="MainVBox"]
 layout_mode = 2
 size_flags_vertical = 3

@@ -10,6 +10,8 @@ signal item_sold(item, quantity, total_price)
 @onready var item_name_label: Label = %ItemNameLabel
 @onready var item_preview: TextureRect = %ItemPreview
 @onready var item_info_rich_text: RichTextLabel = %ItemInfoRichText
+@onready var fitment_panel: VBoxContainer = %FitmentPanel
+@onready var fitment_rich_text: RichTextLabel = %FitmentRichText
 @onready var comparison_panel: PanelContainer = %ComparisonPanel
 @onready var description_toggle_button: Button = %DescriptionToggleButton
 @onready var item_description_rich_text: RichTextLabel = %ItemDescriptionRichText
@@ -117,16 +119,52 @@ func _update_vendor_ui() -> void:
 func _populate_tree_from_agg(tree: Tree, agg: Dictionary) -> void:
 	tree.clear()
 	var root = tree.create_item()
+
+	# Build a display copy to re-bucket parts that might have been placed under 'other'
+	var display_agg: Dictionary = {}
+	for cat in agg.keys():
+		if agg[cat] is Dictionary:
+			display_agg[cat] = {}.duplicate() # create empty dict for category
+	# Ensure all expected categories exist
+	for cat in ["missions", "vehicles", "parts", "other", "resources"]:
+		if not display_agg.has(cat):
+			display_agg[cat] = {}
+	# Shallow-copy entries
+	for cat in agg.keys():
+		if agg[cat] is Dictionary:
+			for k in agg[cat].keys():
+				display_agg[cat][k] = agg[cat][k]
+
+	# Move any 'other' entries with a slot to 'parts'
+	if display_agg.has("other") and display_agg["other"] is Dictionary:
+		var move_keys: Array = []
+		for k in display_agg["other"].keys():
+			var entry = display_agg["other"][k]
+			if entry is Dictionary and entry.has("item_data") and entry.item_data is Dictionary:
+				var slot_val = entry.item_data.get("slot") if entry.item_data.has("slot") else null
+				if slot_val != null and String(slot_val) != "":
+					move_keys.append(k)
+		if not move_keys.is_empty():
+			if not display_agg.has("parts") or not (display_agg["parts"] is Dictionary):
+				display_agg["parts"] = {}
+			for mk in move_keys:
+				display_agg["parts"][mk] = display_agg["other"][mk]
+				display_agg["other"].erase(mk)
+
 	for category in ["missions", "vehicles", "parts", "other", "resources"]:
-		if agg.has(category) and not agg[category].is_empty():
+		if display_agg.has(category) and not display_agg[category].is_empty():
 			var category_item = tree.create_item(root)
 			category_item.set_text(0, category.capitalize())
 			category_item.set_selectable(0, false)
 			category_item.set_custom_color(0, Color.GOLD)
 			category_item.collapsed = category != "missions"
-			for item_name in agg[category]:
-				var agg_data = agg[category][item_name]
+			for item_name in display_agg[category]:
+				var agg_data = display_agg[category][item_name]
 				var display_qty = agg_data.total_quantity
+				if category == "parts" and agg_data.has("item_data"):
+					var part_slot = String(agg_data.item_data.get("slot", ""))
+					if not part_slot.is_empty():
+						print("DEBUG: Vendor parts category item:", agg_data.item_data.get("name","?"), "slot=", part_slot)
 				if category == "resources" and agg_data.has("item_data") and agg_data.item_data.get("is_raw_resource", false):
 					# For raw resources prefer the resource amount (fuel/water/food) if larger than total_quantity
 					var res_qty = 0
@@ -176,6 +214,7 @@ func _populate_vendor_list() -> void:
 	var aggregated_missions: Dictionary = {}
 	var aggregated_resources: Dictionary = {}
 	var aggregated_vehicles: Dictionary = {}
+	var aggregated_parts: Dictionary = {}
 	var aggregated_other: Dictionary = {}
 
 	print("DEBUG: vendor_data at start of _populate_vendor_list:", vendor_data)
@@ -194,6 +233,9 @@ func _populate_vendor_list() -> void:
 		   (item.has("water") and item.get("water") != null and item.get("water") > 0) or \
 		   (item.has("fuel") and item.get("fuel") != null and item.get("fuel") > 0):
 			category_dict = aggregated_resources
+		elif item.has("slot") and item.get("slot") != null and String(item.get("slot")).length() > 0:
+			category_dict = aggregated_parts
+			print("DEBUG: Vendor part detected in cargo_inventory name=", item.get("name","?"), " slot=", item.get("slot","?"))
 		else:
 			category_dict = aggregated_other
 		print("DEBUG: Aggregating vendor cargo item:", item)
@@ -270,6 +312,7 @@ func _populate_vendor_list() -> void:
 	var root = vendor_item_tree.create_item()
 	_populate_category(vendor_item_tree, root, "Mission Cargo", aggregated_missions)
 	_populate_category(vendor_item_tree, root, "Vehicles", aggregated_vehicles)
+	_populate_category(vendor_item_tree, root, "Parts", aggregated_parts)
 	_populate_category(vendor_item_tree, root, "Other", aggregated_other)
 	_populate_category(vendor_item_tree, root, "Resources", aggregated_resources)
 
@@ -803,6 +846,46 @@ func _update_inspector() -> void:
 	if is_instance_valid(item_description_rich_text):
 		item_description_rich_text.text = description_text
 
+	# --- Fitment (slot + compatible vehicles) ---
+	if is_instance_valid(fitment_panel) and is_instance_valid(fitment_rich_text):
+		var slot_name: String = ""
+		if item_data_source.has("slot") and item_data_source.get("slot") != null:
+			slot_name = String(item_data_source.get("slot"))
+
+		if not slot_name.is_empty():
+			var lines: Array[String] = []
+			lines.append("[b]Slot:[/b] %s" % slot_name)
+			var compat_list: Array[String] = []
+			if convoy_data and convoy_data.has("vehicle_details_list") and convoy_data.vehicle_details_list is Array:
+				for v in convoy_data.vehicle_details_list:
+					var vname: String = v.get("name", "Vehicle")
+					# Basic compatibility: vehicle supports this slot if any installed part or declared slot matches.
+					var supports := false
+					# If vehicle exposes supported_slots array, use it.
+					if v.has("supported_slots") and v.supported_slots is Array:
+						supports = slot_name in v.supported_slots
+					else:
+						# Fallback: infer from installed parts
+						for p in v.get("parts", []):
+							if String(p.get("slot", "")) == slot_name:
+								supports = true
+								break
+					if supports:
+						compat_list.append(vname)
+			if compat_list.is_empty():
+				lines.append("[color=grey]No compatible convoy vehicles detected.[/color]")
+			else:
+				lines.append("[b]Compatible Vehicles:[/b]")
+				for veh_name in compat_list:
+					lines.append("  • %s" % veh_name)
+			fitment_rich_text.text = "\n".join(lines)
+			fitment_rich_text.visible = true
+			fitment_panel.visible = true
+		else:
+			fitment_rich_text.text = ""
+			fitment_rich_text.visible = false
+			fitment_panel.visible = false
+
 	var bbcode = ""
 	if current_mode == "sell" and selected_item.has("mission_vendor_name") and not str(selected_item.mission_vendor_name).is_empty() and selected_item.mission_vendor_name != "Unknown Vendor":
 		bbcode += "[b]Destination:[/b] %s\n\n" % selected_item.mission_vendor_name
@@ -1040,6 +1123,11 @@ func _clear_inspector() -> void:
 		item_preview.texture = null
 	if is_instance_valid(item_description_rich_text):
 		item_description_rich_text.text = ""
+	if is_instance_valid(fitment_rich_text):
+		fitment_rich_text.text = ""
+		fitment_rich_text.visible = false
+	if is_instance_valid(fitment_panel):
+		fitment_panel.visible = false
 	# Add more UI clearing as needed
 
 # Helper: recompute aggregate convoy cargo stats (not currently used directly; kept for future refactors)

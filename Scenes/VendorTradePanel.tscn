@@ -93,6 +93,23 @@ layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
 
+[node name="FitmentPanel" type="VBoxContainer" parent="HBoxContainer/MiddlePanel/InfoScrollContainer/InfoVBox"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_constants/separation = 5
+
+[node name="Label" type="Label" parent="HBoxContainer/MiddlePanel/InfoScrollContainer/InfoVBox/FitmentPanel"]
+layout_mode = 2
+text = "Fitment"
+horizontal_alignment = 0
+
+[node name="FitmentRichText" type="RichTextLabel" parent="HBoxContainer/MiddlePanel/InfoScrollContainer/InfoVBox/FitmentPanel"]
+unique_name_in_owner = true
+layout_mode = 2
+bbcode_enabled = true
+fit_content = true
+visible = false
+
 [node name="ItemInfoRichText" type="RichTextLabel" parent="HBoxContainer/MiddlePanel/InfoScrollContainer/InfoVBox"]
 unique_name_in_owner = true
 layout_mode = 2

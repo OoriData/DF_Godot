@@ -10,6 +10,7 @@ var convoy_vehicle_menu_scene = preload("res://Scenes/ConvoyVehicleMenu.tscn") #
 var convoy_journey_menu_scene = preload("res://Scenes/ConvoyJourneyMenu.tscn") # Example path
 var convoy_settlement_menu_scene = preload("res://Scenes/ConvoySettlementMenu.tscn") # Example path
 var convoy_cargo_menu_scene = preload("res://Scenes/ConvoyCargoMenu.tscn") # Example path
+var mechanics_menu_scene = preload("res://Scenes/MechanicsMenu.tscn")
 
 
 var current_active_menu = null
@@ -103,6 +104,28 @@ func open_convoy_cargo_menu(convoy_data = null):
 
 	print("MenuManager: open_convoy_cargo_menu called. Original Convoy Data Keys: ", convoy_data.keys())
 	_show_menu(convoy_cargo_menu_scene, convoy_data.duplicate(true))
+
+func open_mechanics_menu(convoy_data = null):
+	# Gate: require the convoy to be in a settlement
+	if convoy_data == null:
+		printerr("MenuManager: open_mechanics_menu called with null data.")
+		return
+	var in_settlement := false
+	# Prefer an explicit flag if present
+	if convoy_data.has("in_settlement"):
+		in_settlement = bool(convoy_data.get("in_settlement"))
+	else:
+		# Fallback: if coords map to a settlement via GameDataManager
+		var gdm = get_node_or_null("/root/GameDataManager")
+		if is_instance_valid(gdm) and gdm.has_method("get_settlement_name_from_coords"):
+			var sx = int(roundf(float(convoy_data.get("x", -9999.0))))
+			var sy = int(roundf(float(convoy_data.get("y", -9999.0))))
+			var sett_name = gdm.get_settlement_name_from_coords(sx, sy)
+			in_settlement = sett_name != null and String(sett_name) != ""
+	if not in_settlement:
+		push_warning("Mechanic is only available in a settlement.")
+		return
+	_show_menu(mechanics_menu_scene, convoy_data)
 
 
 ### --- Generic menu handling ---
@@ -243,12 +266,19 @@ func _show_menu(menu_scene_resource, data_to_pass = null, add_to_stack: bool = t
 			current_active_menu.inspect_all_convoy_cargo_requested.connect(open_convoy_cargo_menu, CONNECT_ONE_SHOT)
 		if current_active_menu.has_signal("return_to_convoy_overview_requested"):
 			current_active_menu.return_to_convoy_overview_requested.connect(open_convoy_menu, CONNECT_ONE_SHOT)
+		# Optional: if vehicle menu exposes "open_mechanics_menu_requested", connect it
+		if current_active_menu.has_signal("open_mechanics_menu_requested"):
+			current_active_menu.open_mechanics_menu_requested.connect(open_mechanics_menu, CONNECT_ONE_SHOT)
 	elif menu_type == "convoy_journey_submenu":
 		if current_active_menu.has_signal("return_to_convoy_overview_requested"):
 			current_active_menu.return_to_convoy_overview_requested.connect(open_convoy_menu, CONNECT_ONE_SHOT)
 	elif menu_type == "convoy_cargo_submenu":
 		if current_active_menu.has_signal("return_to_convoy_overview_requested"):
 			current_active_menu.return_to_convoy_overview_requested.connect(open_convoy_menu, CONNECT_ONE_SHOT)
+	elif menu_type == "convoy_settlement_submenu":
+		# Hook from settlement menu mechanics tab
+		if current_active_menu.has_signal("open_mechanics_menu_requested"):
+			current_active_menu.open_mechanics_menu_requested.connect(open_mechanics_menu, CONNECT_ONE_SHOT)
 
 
 func go_back():

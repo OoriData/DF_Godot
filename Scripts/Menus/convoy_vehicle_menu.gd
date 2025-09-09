@@ -5,6 +5,7 @@ signal back_requested
 # Signal to open the full cargo manifest for the entire convoy
 signal return_to_convoy_overview_requested(convoy_data)
 signal inspect_all_convoy_cargo_requested(convoy_data)
+signal open_mechanics_menu_requested(convoy_data)
 
 # @onready variables for UI elements
 @onready var title_label: Label = $MainVBox/TitleLabel
@@ -14,6 +15,9 @@ signal inspect_all_convoy_cargo_requested(convoy_data)
 @onready var overview_vbox: VBoxContainer = $MainVBox/VehicleTabContainer/Overview/OverviewVBox
 @onready var parts_vbox: VBoxContainer = $MainVBox/VehicleTabContainer/Parts/PartsVBox
 @onready var cargo_vbox: VBoxContainer = $MainVBox/VehicleTabContainer/Cargo/CargoVBox
+@onready var back_to_mechanic_button: Button = $MainVBox/BackButton # repurpose later if needed
+@onready var _menu_buttons_container: Node = null
+@onready var mechanic_button_scene_node: Button = $MainVBox/ActionButtons/MechanicButton
 
 var current_vehicle_list: Array = []
 var _current_convoy_data: Dictionary # To store the full convoy data
@@ -90,6 +94,30 @@ func _ready():
 		title_label.mouse_filter = Control.MOUSE_FILTER_STOP # Allow it to receive mouse events
 		title_label.gui_input.connect(_on_title_label_gui_input)
 
+	# Insert a Mechanics button into the UI under the MenuButtons row if present
+	var buttons_path_candidates = ["MainVBox/ScrollContainer/ContentVBox/MenuButtons", "MainVBox/VehicleTabContainer/Overview/OverviewVBox/MenuButtons"]
+	for p in buttons_path_candidates:
+		var node = get_node_or_null(p)
+		if node != null:
+			_menu_buttons_container = node
+			break
+	if _menu_buttons_container is HBoxContainer:
+		var mech_btn := Button.new()
+		mech_btn.text = "Mechanic"
+		mech_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		mech_btn.pressed.connect(func():
+			if _current_convoy_data:
+				emit_signal("open_mechanics_menu_requested", _current_convoy_data)
+		)
+		_menu_buttons_container.add_child(mech_btn)
+
+	# Also wire the scene MechanicButton if present
+	if is_instance_valid(mechanic_button_scene_node):
+		mechanic_button_scene_node.pressed.connect(func():
+			if _current_convoy_data:
+				emit_signal("open_mechanics_menu_requested", _current_convoy_data)
+		)
+
 	# Check new VBox validity
 	if not is_instance_valid(overview_vbox) or not is_instance_valid(parts_vbox) or not is_instance_valid(cargo_vbox):
 		printerr("ConvoyVehicleMenu: CRITICAL - One or more tab VBox nodes are not valid in _ready()!")
@@ -144,6 +172,7 @@ func initialize_with_data(data: Dictionary):
 	if is_instance_valid(title_label):
 		_current_convoy_data = data.duplicate(true) # Store the full convoy data
 		title_label.text = data.get("convoy_name", "Convoy")
+		_update_mechanic_button_enabled()
 
 	current_vehicle_list = data.get("vehicle_details_list", [])
 
@@ -755,3 +784,18 @@ func _on_gdm_convoy_data_updated(all_convoy_data: Array) -> void:
 			# Optionally, refresh the UI if needed
 			initialize_with_data(_current_convoy_data)
 			break
+
+func _update_mechanic_button_enabled():
+	var enabled := false
+	if _current_convoy_data and _current_convoy_data is Dictionary:
+		if _current_convoy_data.has("in_settlement"):
+			enabled = bool(_current_convoy_data.get("in_settlement"))
+		else:
+			var gdm = get_node_or_null("/root/GameDataManager")
+			if is_instance_valid(gdm) and gdm.has_method("get_settlement_name_from_coords"):
+				var sx = int(roundf(float(_current_convoy_data.get("x", -9999.0))))
+				var sy = int(roundf(float(_current_convoy_data.get("y", -9999.0))))
+				var s_name = gdm.get_settlement_name_from_coords(sx, sy)
+				enabled = s_name != null and String(s_name) != ""
+	if is_instance_valid(mechanic_button_scene_node):
+		mechanic_button_scene_node.disabled = not enabled

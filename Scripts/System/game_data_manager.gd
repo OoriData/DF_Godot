@@ -837,6 +837,7 @@ func _aggregate_vendor_items(vendor_data: Dictionary) -> Dictionary:
 		"missions": {},
 		"resources": {},
 		"vehicles": {},
+		"parts": {},
 		"other": {}
 	}
 	if not vendor_data:
@@ -846,10 +847,29 @@ func _aggregate_vendor_items(vendor_data: Dictionary) -> Dictionary:
 		if item.has("intrinsic_part_id") and item.get("intrinsic_part_id") != null:
 			continue
 		var category = "other"
-		if item.get("recipient") != null:
+		var is_mission := item.get("recipient") != null
+		var is_resource: bool = (item.has("food") and item.get("food", 0) > 0) or (item.has("water") and item.get("water", 0) > 0) or (item.has("fuel") and item.get("fuel", 0) > 0)
+		var is_part: bool = item.has("slot") and item.get("slot") != null and String(item.get("slot")).length() > 0
+		if is_mission:
 			category = "missions"
-		elif (item.has("food") and item.get("food", 0) > 0) or (item.has("water") and item.get("water", 0) > 0) or (item.has("fuel") and item.get("fuel", 0) > 0):
+		elif is_resource:
 			category = "resources"
+		elif is_part:
+			category = "parts"
+			if VEHICLE_DEBUG_DUMP:
+				print("[GameDataManager][DEBUG][VendorParts] Detected part in vendor cargo name=", item.get("name","?"), " slot=", item.get("slot","?"))
+		elif item.has("parts") and item.get("parts") is Array and not (item.get("parts") as Array).is_empty():
+			# Normalize a vendor cargo container that embeds a single part; lift slot up for categorization
+			var nested_parts: Array = item.get("parts")
+			var first_part: Dictionary = nested_parts[0]
+			var norm_item: Dictionary = item.duplicate(true)
+			if not norm_item.has("slot") and first_part.has("slot"):
+				norm_item["slot"] = first_part.get("slot")
+			category = "parts"
+			if VEHICLE_DEBUG_DUMP:
+				print("[GameDataManager][DEBUG][VendorParts] Container with nested part name=", norm_item.get("name","?"), " slot=", norm_item.get("slot","?"))
+			_aggregate_item(aggregated[category], norm_item)
+			continue
 		_aggregate_item(aggregated[category], item)
 
 	# Add bulk resources
