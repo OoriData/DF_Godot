@@ -43,6 +43,13 @@ text = "Mechanic"
 layout_mode = 2
 size_flags_horizontal = 3
 
+[node name="VendorHintLabel" type="Label" parent="MainVBox"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Highlighted Swap buttons mean the mechanic has parts for that slot."
+theme_override_font_sizes/font_size = 12
+theme_override_colors/font_color = Color(0.75, 0.9, 0.75, 1)
+
 [node name="TabContainer" type="TabContainer" parent="MainVBox"]
 layout_mode = 2
 size_flags_vertical = 3

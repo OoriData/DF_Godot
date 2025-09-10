@@ -21,17 +21,26 @@ signal auth_poll_started
 signal auth_poll_finished(success: bool)
 
 # --- Vendor Transaction Signals ---
+@warning_ignore("unused_signal")
 signal vehicle_bought(result: Dictionary)
+@warning_ignore("unused_signal")
 signal vehicle_sold(result: Dictionary)
+@warning_ignore("unused_signal")
 signal cargo_bought(result: Dictionary)
+@warning_ignore("unused_signal")
 signal cargo_sold(result: Dictionary)
+@warning_ignore("unused_signal")
 signal resource_bought(result: Dictionary)
+@warning_ignore("unused_signal")
 signal resource_sold(result: Dictionary)
 signal vendor_data_received(vendor_data: Dictionary)
+signal part_compatibility_checked(payload: Dictionary) # { vehicle_id, part_cargo_id, data }
 
 # --- Journey Planning Signals ---
 signal route_choices_received(routes: Array)
+@warning_ignore("unused_signal")
 signal convoy_sent_on_journey(updated_convoy_data: Dictionary)
+@warning_ignore("unused_signal")
 signal convoy_journey_canceled(updated_convoy_data: Dictionary)
 
 var BASE_URL: String = 'http://127.0.0.1:1337' # default
@@ -45,6 +54,7 @@ var current_user_id: String = "" # To store the logged-in user's ID
 var _http_request: HTTPRequest
 var _http_request_map: HTTPRequest  # Dedicated non-queued requester for map data
 var _http_request_route: HTTPRequest # Dedicated requester for route finding (non-queued)
+var _http_request_mech_pool: Array = [] # ephemeral HTTPRequest nodes for part compatibility checks
 var convoys_in_transit: Array = []  # This will store the latest parsed list of convoys (either user's or all)
 var _last_requested_url: String = "" # To store the URL for logging on error
 var _is_local_user_attempt: bool = false # Flag to track if the current USER_CONVOYS request is the initial local one
@@ -115,8 +125,26 @@ func _ready() -> void:
 	if _http_request_route.request_completed.is_connected(_on_route_request_completed):
 		_http_request_route.request_completed.disconnect(_on_route_request_completed)
 	_http_request_route.request_completed.connect(_on_route_request_completed)
+
+	# No persistent requester for mechanics; we will create ephemeral HTTPRequest nodes per request
 	_start_request_status_probe()
 	_load_auth_session_token()
+	# Proactively connect to GameDataManager if available so mechanics pipeline receives compat responses
+	_call_deferred_connect_gdm()
+func _call_deferred_connect_gdm() -> void:
+	call_deferred("_try_connect_gdm")
+
+func _try_connect_gdm() -> void:
+	var gdm = get_node_or_null("/root/GameDataManager")
+	if is_instance_valid(gdm):
+		if gdm.has_method("_on_part_compatibility_checked"):
+			if not is_connected("part_compatibility_checked", gdm._on_part_compatibility_checked):
+				print("[APICalls] Wiring part_compatibility_checked -> GameDataManager._on_part_compatibility_checked")
+				part_compatibility_checked.connect(gdm._on_part_compatibility_checked)
+		else:
+			print("[APICalls] GameDataManager missing handler _on_part_compatibility_checked; skipping auto-wire")
+	else:
+		print("[APICalls] GameDataManager not present at ready; will rely on GDM to connect.")
 	# Auto-resolve user if we have a still-valid token
 	if is_auth_token_valid():
 		print("[APICalls] Auto-login attempt with persisted session token.")
@@ -405,6 +433,56 @@ func request_vendor_data(vendor_id: String) -> void:
 	}
 	_request_queue.append(request_details)
 	_process_queue()
+
+# --- Mechanics / Part Compatibility ---
+func check_vehicle_part_compatibility(vehicle_id: String, part_cargo_id: String) -> void:
+	if vehicle_id.is_empty() or part_cargo_id.is_empty():
+		print("[PartCompatAPI] SKIP: empty id(s) vehicle=", vehicle_id, " part_cargo_id=", part_cargo_id)
+		return
+	var url := "%s/vehicle/part/check_compatibility?vehicle_id=%s&part_cargo_id=%s" % [BASE_URL, vehicle_id, part_cargo_id]
+	var headers: PackedStringArray = ['accept: application/json']
+	headers = _apply_auth_header(headers)
+	var req := HTTPRequest.new()
+	req.name = "PartCompatRequest_%s_%s" % [vehicle_id.substr(0, 8), part_cargo_id.substr(0, 8)]
+	add_child(req)
+	_http_request_mech_pool.append(req)
+	if req.request_completed.is_connected(_on_part_compat_request_completed):
+		req.request_completed.disconnect(_on_part_compat_request_completed)
+	# Bind the requester and identifiers so handler can emit a useful payload
+	req.request_completed.connect(_on_part_compat_request_completed.bind(req, vehicle_id, part_cargo_id))
+	print("[PartCompatAPI] REQUEST vehicle=", vehicle_id, " part_cargo_id=", part_cargo_id, " url=", url)
+	var err := req.request(url, headers, HTTPClient.METHOD_GET)
+	if err != OK:
+		var emsg := "[PartCompatAPI] Request error err=%d url=%s" % [err, url]
+		print(emsg)
+		emit_signal('fetch_error', emsg)
+
+func _on_part_compat_request_completed(result: int, response_code: int, _headers: PackedStringArray, body: PackedByteArray, requester: HTTPRequest, vehicle_id: String, part_cargo_id: String) -> void:
+	print("[PartCompatAPI] COMPLETE vehicle=", vehicle_id, " part=", part_cargo_id, " result=", result, " code=", response_code, " bytes=", body.size())
+	var text := body.get_string_from_utf8()
+	var data: Variant = {}
+	var json := JSON.new()
+	var parse_err := json.parse(text)
+	if parse_err == OK:
+		data = json.data
+	else:
+		var emsg := "[PartCompatAPI] Parse error: %s for vehicle=%s part=%s body=%s" % [str(parse_err), vehicle_id, part_cargo_id, text]
+		print(emsg)
+		emit_signal('fetch_error', emsg)
+	var payload := {
+		"vehicle_id": vehicle_id,
+		"part_cargo_id": part_cargo_id,
+		"http_result": result,
+		"status": response_code,
+		"data": data
+	}
+	print("[PartCompatAPI] RESPONSE payload=", payload)
+	emit_signal('part_compatibility_checked', payload)
+	# Cleanup requester
+	if is_instance_valid(requester):
+		if requester in _http_request_mech_pool:
+			_http_request_mech_pool.erase(requester)
+		requester.queue_free()
 
 # Backwards compatibility alias: older code expects get_vendor_data()
 func get_vendor_data(vendor_id: String) -> void:

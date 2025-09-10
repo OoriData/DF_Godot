@@ -14,6 +14,7 @@ signal changes_committed(convoy_id: String, vehicle_id: String, swaps: Array, es
 @onready var pending_vbox: VBoxContainer = $MainVBox/TabContainer/Pending/PendingVBox
 @onready var back_button: Button = $MainVBox/BottomBar/BackButton
 @onready var apply_button: Button = $MainVBox/BottomBar/ApplyButton
+@onready var vendor_hint_label: Label = $MainVBox/VendorHintLabel
 
 # State
 var _convoy: Dictionary = {}
@@ -23,6 +24,10 @@ var _selected_vehicle_idx: int = -1
 # Pending swaps: [{slot, from_part, to_part, source: "inventory"|"vendor", price: float}]
 var _pending_swaps: Array = []
 var _gdm: Node = null
+var _slot_vendor_availability: Dictionary = {}
+var _compat_cache: Dictionary = {} # key: part_cargo_id -> payload
+var _current_swap_ctx: Dictionary = {} # { dialog: AcceptDialog, vehicle_id: String, row_map: { cargo_id: HBoxContainer } }
+var _cargo_to_slot: Dictionary = {} # cargo_id -> slot_name for vendor candidates
 
 func _ready():
 	if is_instance_valid(back_button):
@@ -33,6 +38,11 @@ func _ready():
 		vehicle_option_button.item_selected.connect(_on_vehicle_selected)
 	_refresh_apply_state()
 	_gdm = get_node_or_null("/root/GameDataManager")
+	if is_instance_valid(_gdm) and _gdm.has_signal("part_compatibility_ready") and not _gdm.part_compatibility_ready.is_connected(_on_part_compatibility_ready):
+		_gdm.part_compatibility_ready.connect(_on_part_compatibility_ready)
+	# Also listen for precomputed vendor slot availability to pre-highlight Swap buttons
+	if is_instance_valid(_gdm) and _gdm.has_signal("mechanic_vendor_slot_availability") and not _gdm.mechanic_vendor_slot_availability.is_connected(_on_mechanic_vendor_slot_availability):
+		_gdm.mechanic_vendor_slot_availability.connect(_on_mechanic_vendor_slot_availability)
 
 func initialize_with_data(data: Dictionary):
 	if not is_node_ready():
@@ -41,11 +51,21 @@ func initialize_with_data(data: Dictionary):
 	_convoy = data.duplicate(true)
 	title_label.text = "Mechanic — %s" % _convoy.get("convoy_name", "Convoy")
 	_vehicles = _convoy.get("vehicle_details_list", [])
+	# Proactively warm mechanics data: ask GDM to fetch vendor inventories at this settlement
+	if _gdm == null:
+		_gdm = get_node_or_null("/root/GameDataManager")
+	if is_instance_valid(_gdm) and _gdm.has_method("warm_mechanics_data_for_convoy"):
+		_gdm.warm_mechanics_data_for_convoy(_convoy)
 	_populate_vehicle_dropdown()
 	if not _vehicles.is_empty():
 		vehicle_option_button.select(0)
 		_on_vehicle_selected(0)
 	_refresh_apply_state()
+
+func _exit_tree() -> void:
+	# End mechanics session to stop auto re-probes targeting this convoy when menu is closed
+	if is_instance_valid(_gdm) and _gdm.has_method("end_mechanics_probe_session"):
+		_gdm.end_mechanics_probe_session()
 
 func _populate_vehicle_dropdown():
 	vehicle_option_button.clear()
@@ -65,8 +85,15 @@ func _on_vehicle_selected(index: int):
 	if index < 0 or index >= _vehicles.size():
 		return
 	_selected_vehicle_idx = index
+	_refresh_slot_vendor_availability()
 	_rebuild_parts_tab(_vehicles[index])
 	_rebuild_pending_tab()
+	# Fire UI-side vendor compatibility checks immediately for this vehicle for better logs/feedback
+	_start_vendor_compat_checks_for_vehicle(_vehicles[index])
+	# Ask GDM to probe across all vehicles/vendors for this convoy so highlights can be ready next time
+	if is_instance_valid(_gdm) and _gdm.has_method("probe_mechanic_vendor_availability_for_convoy"):
+		_gdm.probe_mechanic_vendor_availability_for_convoy(_convoy)
+
 
 func _rebuild_parts_tab(vehicle_data: Dictionary):
 	_clear_parts_ui()
@@ -99,16 +126,125 @@ func _rebuild_parts_tab(vehicle_data: Dictionary):
 		for part in by_slot[slot_name]:
 			var row = HBoxContainer.new()
 			row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			row.set_meta("slot_name", slot_name)
 			var name_label = Label.new()
 			name_label.text = "  " + String(part.get("name", "Unknown Part"))
 			name_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 			var change_btn = Button.new()
+			change_btn.name = "SwapButton"
 			change_btn.text = "Swap…"
 			change_btn.custom_minimum_size.y = 30
+			_style_swap_button(change_btn, slot_name)
 			change_btn.pressed.connect(_on_swap_part_pressed.bind(slot_name, part))
 			row.add_child(name_label)
 			row.add_child(change_btn)
 			parts_vbox.add_child(row)
+
+func _refresh_slot_vendor_availability():
+	_slot_vendor_availability.clear()
+	# Build a set of slots that have at least one vendor part available in the current settlement
+	var slot_set := {}
+	var slots: Array = []
+	# Scan a sample of common slots from installed parts to reduce work
+	if _selected_vehicle_idx >= 0 and _selected_vehicle_idx < _vehicles.size():
+		var v = _vehicles[_selected_vehicle_idx]
+		for p in v.get("parts", []):
+			var s = String(p.get("slot", ""))
+			if not s.is_empty() and not slot_set.has(s):
+				slot_set[s] = true
+				slots.append(s)
+		for c in v.get("cargo", []):
+			if c is Dictionary and c.get("intrinsic_part_id") != null:
+				var cs = String(c.get("slot", ""))
+				if not cs.is_empty() and not slot_set.has(cs):
+					slot_set[cs] = true
+					slots.append(cs)
+	# For each slot, check vendor parts
+	for s in slots:
+		var vendor_parts = _collect_vendor_parts_for_slot(s)
+		_slot_vendor_availability[s] = not vendor_parts.is_empty()
+	_slot_vendor_availability.clear()
+	# Build a set of slots to track; initialize to false (we'll flip to true when backend confirms)
+	var slot_set2 := {}
+	var slots2: Array = []
+	if _selected_vehicle_idx >= 0 and _selected_vehicle_idx < _vehicles.size():
+		var v = _vehicles[_selected_vehicle_idx]
+		for p in v.get("parts", []):
+			var s_val = p.get("slot", "")
+			var s: String = s_val if typeof(s_val) == TYPE_STRING else ""
+			if s != "" and not slot_set2.has(s):
+				slot_set2[s] = true
+				slots2.append(s)
+		for c in v.get("cargo", []):
+			if c is Dictionary and c.get("intrinsic_part_id") != null:
+				var cs_val = c.get("slot", "")
+				var cs: String = cs_val if typeof(cs_val) == TYPE_STRING else ""
+				if cs != "" and not slot_set2.has(cs):
+					slot_set2[cs] = true
+					slots2.append(cs)
+	for s in slots2:
+		_slot_vendor_availability[s] = false
+
+func _restyle_swap_buttons_for_slot(slot_name: String) -> void:
+	for child in parts_vbox.get_children():
+		if child is HBoxContainer and child.has_meta("slot_name") and String(child.get_meta("slot_name")) == slot_name:
+			var swap_btn: Button = child.get_child(child.get_child_count()-1) if child.get_child_count() > 0 else null
+			if swap_btn is Button:
+				_style_swap_button(swap_btn, slot_name)
+
+func _start_vendor_compat_checks_for_vehicle(vehicle: Dictionary) -> void:
+	# For each tracked slot, request backend compatibility for vendor parts at this settlement
+	var vehicle_id: String = str(vehicle.get("vehicle_id", ""))
+	if vehicle_id == "":
+		return
+	for s in _slot_vendor_availability.keys():
+		var vendor_parts = _collect_vendor_parts_for_slot(s)
+		for entry in vendor_parts:
+			var cand: Dictionary = entry.get("part", {})
+			var cid_val = cand.get("cargo_id", null)
+			if typeof(cid_val) != TYPE_STRING or cid_val == "":
+				continue
+			var cid: String = cid_val
+			_cargo_to_slot[cid] = s
+			if _compat_cache.has(cid):
+				var cached: Dictionary = _compat_cache[cid]
+				var ok := false
+				var data: Dictionary = cached.get("data", {}) if cached.get("data") is Dictionary else {}
+				if data.has("compatible"):
+					ok = bool(data.get("compatible"))
+				elif data.has("fitment") and data.get("fitment") is Dictionary and data.fitment.has("compatible"):
+					ok = bool(data.fitment.get("compatible"))
+				if ok and not bool(_slot_vendor_availability.get(s, false)):
+					_slot_vendor_availability[s] = true
+					_restyle_swap_buttons_for_slot(s)
+				continue
+			if is_instance_valid(_gdm):
+				print("[PartCompatUI] REQUEST vehicle=", vehicle_id, " slot=", s, " cargo_id=", cid)
+				_gdm.request_part_compatibility(vehicle_id, cid)
+
+func _style_swap_button(btn: Button, slot_name: String):
+	var available: bool = bool(_slot_vendor_availability.get(slot_name, false))
+	if available:
+		# Soft green highlight with border
+		var sb = StyleBoxFlat.new()
+		sb.bg_color = Color(0.12, 0.25, 0.12, 1.0)
+		sb.border_color = Color(0.35, 0.8, 0.35, 1.0)
+		sb.border_width_left = 2
+		sb.border_width_top = 2
+		sb.border_width_right = 2
+		sb.border_width_bottom = 2
+		sb.corner_radius_top_left = 6
+		sb.corner_radius_top_right = 6
+		sb.corner_radius_bottom_left = 6
+		sb.corner_radius_bottom_right = 6
+		btn.add_theme_stylebox_override("normal", sb)
+		btn.add_theme_color_override("font_color", Color(0.85, 1.0, 0.85))
+		btn.tooltip_text = "Vendor has parts for this slot"
+		if is_instance_valid(vendor_hint_label): vendor_hint_label.visible = true
+	else:
+		# Default style; keep tooltip blank
+		btn.remove_theme_stylebox_override("normal")
+		btn.remove_theme_color_override("font_color")
 
 func _rebuild_pending_tab():
 	for c in pending_vbox.get_children():
@@ -161,6 +297,8 @@ func _on_swap_part_pressed(slot_name: String, current_part: Dictionary):
 	root.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	root.add_theme_constant_override("separation", 8)
 	chooser.add_child(root)
+	var veh_id: String = str(vehicle.get("vehicle_id", ""))
+	_current_swap_ctx = {"dialog": chooser, "vehicle_id": veh_id, "row_map": {}}
 
 	# Header: current part summary
 	var header = HBoxContainer.new()
@@ -215,6 +353,17 @@ func _on_swap_part_pressed(slot_name: String, current_part: Dictionary):
 	for v in _collect_vendor_parts_for_slot(slot_name):
 		all_candidates.append(v) # expects {part, source:"vendor", price}
 
+	# Kick off compatibility checks for each candidate using backend, log responses when they arrive
+	var vehicle_id: String = str(vehicle.get("vehicle_id", ""))
+	if is_instance_valid(_gdm) and not vehicle_id.is_empty():
+		for entry in all_candidates:
+			var cand: Dictionary = entry.get("part", {})
+			var cargo_id: String = str(cand.get("cargo_id", ""))
+			if cargo_id == "":
+				continue
+			if not _compat_cache.has(cargo_id):
+				_gdm.request_part_compatibility(vehicle_id, cargo_id)
+
 	if all_candidates.is_empty():
 		var none = Label.new()
 		none.text = "No parts found for this slot in convoy inventory or shop."
@@ -224,8 +373,12 @@ func _on_swap_part_pressed(slot_name: String, current_part: Dictionary):
 			var cand: Dictionary = entry.get("part", {})
 			var source: String = String(entry.get("source", "inventory"))
 			var price: float = float(entry.get("price", 0.0))
+			# Temporarily rely on existing UI grouping, but backend results will be printed for accuracy
 			var comp_ok := _is_part_compatible(vehicle, slot_name, cand)
 			var row = _make_candidate_row(cand, source, price, comp_ok)
+			var cid2: String = str(cand.get("cargo_id", ""))
+			if cid2 != "":
+				_current_swap_ctx["row_map"][cid2] = row
 			if comp_ok:
 				# attach select handler
 				var select_btn: Button = row.get_node_or_null("SelectBtn")
@@ -249,6 +402,9 @@ func _on_swap_part_pressed(slot_name: String, current_part: Dictionary):
 	chooser.popup_centered_ratio(0.8)
 	chooser.connect("confirmed", Callable(chooser, "queue_free"))
 	chooser.connect("popup_hide", Callable(chooser, "queue_free"))
+	chooser.connect("popup_hide", func():
+		_current_swap_ctx.clear()
+	)
 
 func _collect_candidate_parts_for_slot(slot_name: String) -> Array:
 	var out: Array = []
@@ -275,6 +431,8 @@ func _collect_vendor_parts_for_slot(slot_name: String) -> Array:
 	var settlements: Array = []
 	if _gdm.has_method("get_all_settlements_data"):
 		settlements = _gdm.get_all_settlements_data()
+	if settlements.is_empty():
+		print("[PartCompatUI] No settlements loaded; cannot collect vendor parts for slot=", slot_name, " at (", sx, ",", sy, ")")
 
 	var settlement_match: Dictionary = {}
 	for s in settlements:
@@ -285,10 +443,13 @@ func _collect_vendor_parts_for_slot(slot_name: String) -> Array:
 			break
 
 	if settlement_match.is_empty():
+		print("[PartCompatUI] No settlement match at (", sx, ",", sy, ") while collecting vendor parts for slot=", slot_name)
 		return results
 
 	# Scan vendors at this settlement
 	var vendors: Array = settlement_match.get("vendors", [])
+	if vendors.is_empty():
+		print("[PartCompatUI] Settlement has no vendors at (", sx, ",", sy, ")")
 	for vendor in vendors:
 		if not (vendor is Dictionary):
 			continue
@@ -311,11 +472,17 @@ func _collect_vendor_parts_for_slot(slot_name: String) -> Array:
 				var nested_parts: Array = item.get("parts")
 				# Use the first nested part as representative for slot matching
 				var first_part: Dictionary = nested_parts[0]
-				var pslot = String(first_part.get("slot", ""))
+				var slot_val = first_part.get("slot", "")
+				var pslot: String = slot_val if typeof(slot_val) == TYPE_STRING else ""
 				if pslot == slot_name:
-					# Prefer the nested part for display (has the stats), use container for price if needed
-					results.append({"part": first_part, "source": "vendor", "price": price_f})
-
+					# Prefer the nested part for display (has the stats), but attach the container cargo_id for backend checks/purchases
+					var display_part: Dictionary = first_part.duplicate(true)
+					var cont_id_val: String = str(item.get("cargo_id", ""))
+					if cont_id_val != "":
+						display_part["cargo_id"] = cont_id_val
+					results.append({"part": display_part, "source": "vendor", "price": price_f})
+	if results.is_empty():
+		print("[PartCompatUI] No vendor parts found for slot=", slot_name, " at (", sx, ",", sy, ")")
 	return results
 
 func _extract_price_from_dict(d: Dictionary) -> float:
@@ -359,6 +526,11 @@ func _make_candidate_row(part: Dictionary, source: String, price: float, compati
 	hb.name = "Row"
 	hb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	hb.add_theme_constant_override("separation", 8)
+	# Track cargo id on the row for later updates
+	var mid_val = part.get("cargo_id", null)
+	if typeof(mid_val) == TYPE_STRING and mid_val != "":
+		var cargo_id: String = mid_val
+		hb.set_meta("cargo_id", cargo_id)
 
 	# Source badge
 	var badge = Label.new()
@@ -388,6 +560,14 @@ func _make_candidate_row(part: Dictionary, source: String, price: float, compati
 	name_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD
 	hb.add_child(name_lbl)
 
+	# Compatibility status label (updated asynchronously from backend)
+	var compat_lbl = Label.new()
+	compat_lbl.name = "CompatLabel"
+	compat_lbl.text = "Checking…"
+	compat_lbl.add_theme_color_override("font_color", Color(0.9, 0.9, 0.6))
+	compat_lbl.tooltip_text = "Awaiting backend check"
+	hb.add_child(compat_lbl)
+
 	# Price (if vendor)
 	if source == "vendor":
 		var price_lbl = Label.new()
@@ -401,6 +581,43 @@ func _make_candidate_row(part: Dictionary, source: String, price: float, compati
 	btn.text = "Select" if compatible else "Incompatible"
 	hb.add_child(btn)
 	return hb
+
+func _update_row_from_compat_payload(payload: Dictionary) -> void:
+	if _current_swap_ctx.is_empty():
+		return
+	var vehicle_id_ctx: String = str(_current_swap_ctx.get("vehicle_id", ""))
+	var vid: String = str(payload.get("vehicle_id", ""))
+	if vehicle_id_ctx == "" or vid == "" or vid != vehicle_id_ctx:
+		return
+	var cid: String = str(payload.get("part_cargo_id", ""))
+	if cid == "":
+		return
+	var row_map: Dictionary = _current_swap_ctx.get("row_map", {})
+	if not row_map.has(cid):
+		return
+	var row: HBoxContainer = row_map[cid]
+	if not is_instance_valid(row):
+		return
+	var compat_lbl: Label = row.get_node_or_null("CompatLabel")
+	var btn: Button = row.get_node_or_null("SelectBtn")
+	var data: Dictionary = payload.get("data", {}) if payload.get("data") is Dictionary else {}
+	var compatible := false
+	var reason := ""
+	if data.has("compatible"):
+		compatible = bool(data.get("compatible"))
+	elif data.has("fitment") and data.get("fitment") is Dictionary and data.fitment.has("compatible"):
+		compatible = bool(data.fitment.get("compatible"))
+		reason = String(data.fitment.get("reason", ""))
+	if is_instance_valid(compat_lbl):
+		compat_lbl.text = "Compatible" if compatible else "Not compatible"
+		compat_lbl.add_theme_color_override("font_color", Color(0.6, 1.0, 0.6) if compatible else Color(1.0, 0.6, 0.6))
+		if reason != "":
+			compat_lbl.tooltip_text = reason
+		else:
+			compat_lbl.tooltip_text = ""
+	if is_instance_valid(btn):
+		btn.text = "Select" if compatible else "Incompatible"
+		btn.disabled = not compatible
 
 func _part_summary(part: Dictionary) -> String:
 	var bits: Array[String] = []
@@ -452,7 +669,7 @@ func _debug_swap_open_dump(slot_name: String, current_part: Dictionary, vehicle:
 	print("\n==== Mechanics Swap Debug ====")
 	_debug_snippet({
 		"slot": slot_name,
-		"vehicle_id": String(vehicle.get("vehicle_id", "")),
+		"vehicle_id": (vehicle.get("vehicle_id", "") if typeof(vehicle.get("vehicle_id", "")) == TYPE_STRING else ""),
 		"vehicle_make_model": vehicle.get("make_model", vehicle.get("model", "")),
 	}, "Context")
 	_debug_snippet(current_part, "Current Part")
@@ -480,3 +697,28 @@ func _show_info(where: VBoxContainer, text: String):
 func _refresh_apply_state():
 	var has_changes = not _pending_swaps.is_empty()
 	apply_button.disabled = not has_changes
+
+func _on_part_compatibility_ready(payload: Dictionary) -> void:
+	# Cache result and log with a clear keyword for filtering
+	var part_cargo_id := str(payload.get("part_cargo_id", ""))
+	if part_cargo_id != "":
+		_compat_cache[part_cargo_id] = payload
+	# Dual logs: concise keyword + structured snippet
+	print("[PartCompatUI] payload=", payload)
+	_debug_snippet(payload, "PartCompatUI.payload")
+	_update_row_from_compat_payload(payload)
+
+func _on_mechanic_vendor_slot_availability(vehicle_id: String, slot_availability: Dictionary) -> void:
+	# Only apply for the currently selected vehicle
+	if _selected_vehicle_idx < 0 or _selected_vehicle_idx >= _vehicles.size():
+		return
+	var sel_v = _vehicles[_selected_vehicle_idx]
+	var vid: String = str(sel_v.get("vehicle_id", ""))
+	if vid == "" or vehicle_id != vid:
+		return
+	# Merge availability and restyle
+	for s in slot_availability.keys():
+		var flag := bool(slot_availability[s])
+		if flag and not bool(_slot_vendor_availability.get(s, false)):
+			_slot_vendor_availability[s] = true
+			_restyle_swap_buttons_for_slot(s)

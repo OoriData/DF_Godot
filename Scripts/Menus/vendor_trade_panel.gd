@@ -135,14 +135,22 @@ func _populate_tree_from_agg(tree: Tree, agg: Dictionary) -> void:
 			for k in agg[cat].keys():
 				display_agg[cat][k] = agg[cat][k]
 
-	# Move any 'other' entries with a slot to 'parts'
+	# Move any 'other' entries that look like parts to 'parts' (slot on item or nested parts[] slot)
 	if display_agg.has("other") and display_agg["other"] is Dictionary:
 		var move_keys: Array = []
 		for k in display_agg["other"].keys():
 			var entry = display_agg["other"][k]
 			if entry is Dictionary and entry.has("item_data") and entry.item_data is Dictionary:
-				var slot_val = entry.item_data.get("slot") if entry.item_data.has("slot") else null
-				if slot_val != null and String(slot_val) != "":
+				var slot_text := ""
+				if entry.item_data.has("slot") and entry.item_data.get("slot") != null:
+					slot_text = String(entry.item_data.get("slot"))
+				elif entry.item_data.has("parts") and entry.item_data.get("parts") is Array and not (entry.item_data.get("parts") as Array).is_empty():
+					var nested_first: Dictionary = (entry.item_data.get("parts") as Array)[0]
+					if nested_first.has("slot") and nested_first.get("slot") != null:
+						slot_text = String(nested_first.get("slot"))
+				if not slot_text.is_empty():
+					# Inject inferred slot back to item_data so inspector/fitment panel can use it
+					display_agg["other"][k].item_data["slot"] = slot_text
 					move_keys.append(k)
 		if not move_keys.is_empty():
 			if not display_agg.has("parts") or not (display_agg["parts"] is Dictionary):
@@ -233,13 +241,59 @@ func _populate_vendor_list() -> void:
 		   (item.has("water") and item.get("water") != null and item.get("water") > 0) or \
 		   (item.has("fuel") and item.get("fuel") != null and item.get("fuel") > 0):
 			category_dict = aggregated_resources
-		elif item.has("slot") and item.get("slot") != null and String(item.get("slot")).length() > 0:
-			category_dict = aggregated_parts
-			print("DEBUG: Vendor part detected in cargo_inventory name=", item.get("name","?"), " slot=", item.get("slot","?"))
 		else:
-			category_dict = aggregated_other
+			# Robust part detection: top-level slot OR nested parts[] with slot OR part-like hints
+			var part_slot: String = ""
+			if item.has("slot") and item.get("slot") != null and String(item.get("slot")).length() > 0:
+				part_slot = String(item.get("slot"))
+			elif item.has("parts") and item.get("parts") is Array and not (item.get("parts") as Array).is_empty():
+				var nested_parts: Array = item.get("parts")
+				var first_part: Dictionary = nested_parts[0]
+				var slot_val = first_part.get("slot", "")
+				if typeof(slot_val) == TYPE_STRING and String(slot_val).length() > 0:
+					part_slot = String(slot_val)
+			# Heuristic fallback if still no slot: check flags/types/stats that imply a part
+			var likely_part := false
+			if part_slot != "":
+				likely_part = true
+			elif item.has("is_part") and item.get("is_part"):
+				likely_part = true
+			else:
+				var type_s := String(item.get("type", "")).to_lower()
+				var itype_s := String(item.get("item_type", "")).to_lower()
+				if type_s == "part" or itype_s == "part":
+					likely_part = true
+				else:
+					var stat_keys := ["top_speed_add", "efficiency_add", "offroad_capability_add", "cargo_capacity_add", "weight_capacity_add", "fuel_capacity", "kwh_capacity"]
+					for sk in stat_keys:
+						if item.has(sk) and item[sk] != null:
+							likely_part = true
+							break
+
+			if likely_part:
+				category_dict = aggregated_parts
+				# Use a display copy and inject inferred slot so UI shows fitment
+				var item_disp: Dictionary = item
+				if part_slot != "":
+					item_disp = item.duplicate(true)
+					item_disp["slot"] = part_slot
+				print("DEBUG: Vendor part detected name=", item.get("name","?"), " inferred_slot=", part_slot)
+			else:
+				category_dict = aggregated_other
 		print("DEBUG: Aggregating vendor cargo item:", item)
-		_aggregate_vendor_item(category_dict, item, mission_vendor_name)
+		# Aggregate the display copy when we inferred a slot
+		if category_dict == aggregated_parts and (item.has("slot") or (item.has("parts") and item.get("parts") is Array)):
+			var use_item: Dictionary = item
+			if item.has("slot"):
+				use_item = item
+			elif item.has("parts") and item.get("parts") is Array and not (item.get("parts") as Array).is_empty():
+				var nested_first: Dictionary = (item.get("parts") as Array)[0]
+				if nested_first.has("slot") and String(nested_first.get("slot", "")).length() > 0:
+					use_item = item.duplicate(true)
+					use_item["slot"] = String(nested_first.get("slot"))
+			_aggregate_vendor_item(category_dict, use_item, mission_vendor_name)
+		else:
+			_aggregate_vendor_item(category_dict, item, mission_vendor_name)
 
 	# --- Create virtual items for raw resources AFTER processing normal cargo ---
 
@@ -789,6 +843,9 @@ func _on_action_button_pressed() -> void:
 	var convoy_id = convoy_data.get("convoy_id", "")
 	if current_mode == "buy":
 		gdm.buy_item(convoy_id, vendor_id, item_data_source, quantity)
+		# Emit local signal for UI listeners
+		var unit_price = _get_contextual_unit_price(item_data_source)
+		emit_signal("item_purchased", item_data_source, quantity, unit_price * quantity)
 	else:
 		# SELL: Support selling across multiple underlying cargo stacks in the aggregated selection.
 		var remaining = quantity
@@ -805,6 +862,9 @@ func _on_action_button_pressed() -> void:
 		else:
 			# Fallback: original single-item sale
 			gdm.sell_item(convoy_id, vendor_id, item_data_source, quantity)
+		# Emit local signal for UI listeners
+		var sell_unit_price = _get_contextual_unit_price(item_data_source) / 2.0
+		emit_signal("item_sold", item_data_source, quantity, sell_unit_price * quantity)
 
 func _on_quantity_changed(_value: float) -> void:
 	_update_transaction_panel()
