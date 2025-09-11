@@ -11,7 +11,7 @@ signal convoy_data_updated(all_convoy_data_list: Array)
 signal user_data_updated(user_data: Dictionary)
 signal vendor_panel_data_ready(vendor_panel_data: Dictionary)
 # Mechanics / part compatibility relay
-signal part_compatibility_ready(payload: Dictionary) # { vehicle_id, part_cargo_id, data }
+signal part_compatibility_ready(payload: Dictionary) # { vehicle_id, part_id, data }
 signal mechanic_vendor_slot_availability(vehicle_id: String, slot_availability: Dictionary)
 # Emitted when a convoy is selected or deselected in the UI.
 signal convoy_selection_changed(selected_convoy_data: Variant)
@@ -55,19 +55,73 @@ var _convoys_loaded: bool = false
 var _initial_data_ready_emitted: bool = false
 var _user_bootstrap_done: bool = false
 var _map_request_in_flight: bool = false
-var _mech_vendor_cargo_slot: Dictionary = {} # cargo_id -> slot_name
+var _mech_vendor_cargo_slot: Dictionary = {} # part_id -> slot_name (best-effort until backend fitment confirms)
 var _mech_vendor_availability: Dictionary = {} # vehicle_id -> { slot_name: bool }
 var _mech_probe_last_candidate_ids: Array = [] # last set of cargo_ids checked
 var _mech_probe_last_vehicle_ids: Array = [] # last set of vehicle_ids checked
 var _mech_probe_last_coords: Dictionary = {} # {x:int, y:int}
 var _mech_active_convoy_id: String = "" # convoy id that opened Mechanics; used to auto re-probe on vendor updates
 var _mech_wait_convoy_id: String = "" # convoy id waiting for settlements to load for warm-up
+var _cargo_detail_cache: Dictionary = {} # cargo_id -> full cargo Dictionary from /cargo/get
+var _cargo_enrichment_pending: Dictionary = {} # cargo_id -> true while request in-flight
+var _mech_probe_pending_cargo_ids: Dictionary = {} # cargo_id -> true expected to enrich this probe
 
 # --- Debug Toggles ---
 const VEHICLE_DEBUG_DUMP := true # Set true to print raw & augmented convoy + vehicle data on receipt
 const ROUTE_DEBUG_DUMP := true # Dump route choice structures when received
 const DEBUG_JSON_CHAR_LIMIT := 2500
 const MECH_DEBUG_FORCE_SAMPLE := true # Force one sample compat request if no vendor parts found
+
+# --- Heuristics for detecting parts by name/description (fallback when no explicit slot/type) ---
+func _looks_like_vehicle_part(item: Dictionary) -> Dictionary:
+	var name_l := String(item.get("name", "")).to_lower()
+	var desc_l := String(item.get("base_desc", item.get("description", ""))).to_lower()
+	var text := name_l + "\n" + desc_l
+	# Core part-ish keywords
+	var kw_any := [
+		"cvt", "transmission", "gearbox", "clutch",
+		"differential", "limited slip", "lsd", "welded diff",
+		"axle", "double-wishbone", "wishbone", "suspension", "shock", "spring", "strut",
+		"fuel cell", "fuel tank", "battery", "kwh",
+		"engine", "motor",
+		"radiator", "cooler", "intercooler",
+		"turbo", "supercharger",
+		"brake", "rotor", "caliper", "drum",
+		"wheel", "tire", "tyre", "spare",
+		"body", "chassis", "frame", "bed"
+	]
+	var likely := false
+	for kw in kw_any:
+		if text.find(kw) != -1:
+			likely = true
+			break
+
+	# Try weak slot guess mapping for faster UI grouping; backend will confirm via fitment.slot.
+	var slot_guess := ""
+	if likely:
+		if text.find("cvt") != -1 or text.find("transmission") != -1 or text.find("gearbox") != -1 or text.find("clutch") != -1:
+			slot_guess = "transmission"
+		elif text.find("differential") != -1 or text.find("lsd") != -1 or text.find("welded diff") != -1:
+			slot_guess = "differential"
+		elif text.find("double-wishbone") != -1 or text.find("suspension") != -1 or text.find("shock") != -1 or text.find("spring") != -1 or text.find("strut") != -1 or text.find("axle") != -1:
+			slot_guess = "suspension"
+		elif text.find("fuel cell") != -1 or text.find("fuel tank") != -1:
+			slot_guess = "fuel_tank"
+		elif text.find("battery") != -1 or text.find("kwh") != -1:
+			slot_guess = "battery"
+		elif text.find("engine") != -1 or text.find("motor") != -1:
+			slot_guess = "engine"
+		elif text.find("radiator") != -1 or text.find("cooler") != -1:
+			slot_guess = "cooling"
+		elif text.find("turbo") != -1 or text.find("supercharger") != -1:
+			slot_guess = "forced_induction"
+		elif text.find("brake") != -1 or text.find("rotor") != -1 or text.find("caliper") != -1 or text.find("drum") != -1:
+			slot_guess = "brakes"
+		elif text.find("wheel") != -1 or text.find("tire") != -1 or text.find("tyre") != -1 or text.find("spare") != -1:
+			slot_guess = "spare_tire" if text.find("spare") != -1 else "wheel"
+		elif text.find("body") != -1 or text.find("chassis") != -1 or text.find("frame") != -1 or text.find("bed") != -1:
+			slot_guess = "body"
+	return {"likely": likely, "slot_guess": slot_guess}
 
 func _json_snippet(data: Variant, label: String="") -> void:
 	var encoded := JSON.stringify(data, "  ")
@@ -134,6 +188,9 @@ func _initiate_preload():
 		# Mechanics: part compatibility
 		if api_calls_node.has_signal('part_compatibility_checked') and not api_calls_node.part_compatibility_checked.is_connected(_on_part_compatibility_checked):
 			api_calls_node.part_compatibility_checked.connect(_on_part_compatibility_checked)
+		# Mechanics: cargo enrichment
+		if api_calls_node.has_signal('cargo_data_received') and not api_calls_node.cargo_data_received.is_connected(_on_cargo_data_received):
+			api_calls_node.cargo_data_received.connect(_on_cargo_data_received)
 		# If user already authenticated before this node ready (auto-login path)
 		if api_calls_node.has_method('is_auth_token_valid') and api_calls_node.is_auth_token_valid():
 			# Directly access property (script variable) instead of has_variable (invalid in Godot 4)
@@ -592,6 +649,78 @@ func request_part_compatibility(vehicle_id: String, part_cargo_id: String) -> vo
 	else:
 		printerr("[PartCompatGDM] APICalls missing check_vehicle_part_compatibility")
 
+# Public: return enriched cargo (full object from /cargo/get) if available; empty dict otherwise
+func get_enriched_cargo(cargo_id: String) -> Dictionary:
+	if cargo_id == "":
+		return {}
+	if _cargo_detail_cache.has(cargo_id):
+		var d: Variant = _cargo_detail_cache[cargo_id]
+		return d if d is Dictionary else {}
+	return {}
+
+# Public: ensure that a cargo_id is queued for enrichment if not already cached
+func ensure_cargo_details(cargo_id: String) -> void:
+	_ensure_cargo_enrichment(cargo_id)
+
+# Ensure we have full cargo data; if not cached or already pending, request /cargo/get
+func _ensure_cargo_enrichment(cargo_id: String) -> void:
+	if cargo_id == "":
+		return
+	if _cargo_detail_cache.has(cargo_id):
+		return
+	if _cargo_enrichment_pending.has(cargo_id):
+		return
+	if not is_instance_valid(api_calls_node):
+		return
+	if api_calls_node.has_method("get_cargo"):
+		print("[PartCompatGDM] ENRICH cargo/get dispatch cargo_id=", cargo_id)
+		_cargo_enrichment_pending[cargo_id] = true
+		api_calls_node.get_cargo(cargo_id)
+	else:
+		printerr("[PartCompatGDM] APICalls missing get_cargo; cannot enrich cargo ", cargo_id)
+
+# After receiving full cargo details, cache, infer slot, and dispatch compat checks across probed vehicles
+func _on_cargo_data_received(cargo: Dictionary) -> void:
+	if not (cargo is Dictionary):
+		return
+	var cid: String = str(cargo.get("cargo_id", cargo.get("id", "")))
+	if cid == "":
+		return
+	_cargo_detail_cache[cid] = cargo
+	if _cargo_enrichment_pending.has(cid):
+		_cargo_enrichment_pending.erase(cid)
+	var slot_name := ""
+	if cargo.has("slot") and cargo.get("slot") != null and String(cargo.get("slot")).length() > 0:
+		slot_name = String(cargo.get("slot"))
+	elif cargo.has("parts") and (cargo.get("parts") is Array) and not ((cargo.get("parts") as Array).is_empty()):
+		var p0: Dictionary = (cargo.get("parts") as Array)[0]
+		if p0 is Dictionary and p0.has("slot"):
+			slot_name = String(p0.get("slot", ""))
+	if slot_name != "":
+		_mech_vendor_cargo_slot[cid] = slot_name
+		print("[PartCompatGDM] ENRICH cargo_id=", cid, " slot=", slot_name)
+	# If this cargo was observed during the current probe, dispatch compat only if it is a vehicle part
+	if _mech_probe_last_vehicle_ids.size() > 0 and _mech_probe_pending_cargo_ids.has(cid):
+		var is_vehicle_part := false
+		if slot_name != "":
+			is_vehicle_part = true
+		elif cargo.has("parts") and (cargo.get("parts") is Array) and not ((cargo.get("parts") as Array).is_empty()):
+			is_vehicle_part = true
+		if is_vehicle_part:
+			_dispatch_compat_for_cargo(cid)
+		else:
+			print("[PartCompatGDM] ENRICH cargo_id=", cid, " not a vehicle part; skipping compat dispatch")
+		_mech_probe_pending_cargo_ids.erase(cid)
+
+func _dispatch_compat_for_cargo(cargo_id: String) -> void:
+	if cargo_id == "":
+		return
+	for veh_id in _mech_probe_last_vehicle_ids:
+		request_part_compatibility(String(veh_id), cargo_id)
+	# Track in snapshot
+	if not (_mech_probe_last_candidate_ids.has(cargo_id)):
+		_mech_probe_last_candidate_ids.append(cargo_id)
+
 func _on_part_compatibility_checked(payload: Dictionary) -> void:
 	# Relay to UI; include a JSON snippet for quick filtering
 	_json_snippet(payload, "PartCompatGDM.payload")
@@ -634,6 +763,7 @@ func probe_mechanic_vendor_availability_for_convoy(convoy: Dictionary) -> void:
 	_mech_probe_last_candidate_ids.clear()
 	_mech_probe_last_vehicle_ids.clear()
 	_mech_probe_last_coords = {"x": sx, "y": sy}
+	_mech_probe_pending_cargo_ids.clear()
 	var vehicles: Array = convoy.get("vehicle_details_list", []) if convoy.has("vehicle_details_list") else convoy.get("vehicles", [])
 	if vehicles.is_empty():
 		print("[PartCompatGDM] PROBE: convoy has no vehicles; aborting")
@@ -655,7 +785,7 @@ func probe_mechanic_vendor_availability_for_convoy(convoy: Dictionary) -> void:
 	# Collect vendor candidates by slot and map cargo_id -> slot; also collect slotless part candidates
 	var vendor_parts_by_slot: Dictionary = {}
 	var any_candidate_ids: Array = []
-	var sample_cargo_id: String = ""
+	var sample_part_cargo_id: String = ""
 	_mech_vendor_cargo_slot.clear()
 	var vendors: Array = settlement_match.get("vendors", [])
 	if vendors.is_empty():
@@ -667,28 +797,35 @@ func probe_mechanic_vendor_availability_for_convoy(convoy: Dictionary) -> void:
 			continue
 		var cargo_inv: Array = vendor.get("cargo_inventory", [])
 		if cargo_inv.is_empty():
-			if vendor.has("vendor_id"):
-				print("[PartCompatGDM] PROBE: vendor has empty cargo; vendor_id=", str(vendor.get("vendor_id")))
-			else:
-				print("[PartCompatGDM] PROBE: vendor has empty cargo; keys=", vendor.keys())
-		# If inventory is missing/empty, trigger a refresh for this vendor
-		if (cargo_inv.is_empty() or cargo_inv.size() == 0) and vendor.has("vendor_id") and is_instance_valid(api_calls_node):
-			var vid := str(vendor.get("vendor_id", ""))
+			# Log basic vendor identity and keys to aid debugging
+			var vk = vendor.keys()
+			var vid_log := ""
+			if vendor.has("vendor_id"): vid_log = str(vendor.get("vendor_id"))
+			print("[PartCompatGDM] PROBE: vendor has empty cargo; vendor_id=", vid_log, " keys=", vk)
+		# If inventory is missing/empty, trigger a refresh for this vendor using best-effort id key detection
+		if (cargo_inv.is_empty() or cargo_inv.size() == 0) and is_instance_valid(api_calls_node):
+			var vid := ""
+			var id_keys := ["vendor_id", "id", "vendorId", "vendorID", "_id"]
+			for k in id_keys:
+				if vendor.has(k):
+					vid = str(vendor.get(k, ""))
+					if vid != "":
+						break
 			if vid != "":
 				print("[PartCompatGDM] PROBE: refreshing vendor inventory vendor_id=", vid)
 				request_vendor_data_refresh(vid)
+		else:
+			print("[PartCompatGDM] PROBE: vendor cargo count=", cargo_inv.size())
 		for item in cargo_inv:
 			if not (item is Dictionary):
 				continue
-			# Capture a first-available cargo id to use as a debug sample if needed
-			if sample_cargo_id == "":
-				var s_cid := str(item.get("cargo_id", ""))
-				if s_cid != "" and item.get("intrinsic_part_id") == null:
-					sample_cargo_id = s_cid
 			if item.get("intrinsic_part_id") != null:
 				continue
 			var _price_f = 0.0 # unused here
+			# Prefer cargo_id for compatibility API
 			var cid_any: String = str(item.get("cargo_id", ""))
+			if cid_any == "":
+				cid_any = str(item.get("part_id", ""))
 			# Heuristic: detect likely parts even without explicit slot
 			var is_likely_part := false
 			if item.has("is_part") and item.get("is_part"):
@@ -702,16 +839,42 @@ func probe_mechanic_vendor_availability_for_convoy(convoy: Dictionary) -> void:
 				if item.has(sk) and item[sk] != null:
 					is_likely_part = true
 					break
+			# Name/description-based fallback using sample data patterns (e.g., CVT Kit, Differentials, Fuel Cell, Box Truck Body)
+			if not is_likely_part:
+				var name_heur = _looks_like_vehicle_part(item)
+				if name_heur.get("likely", false):
+					is_likely_part = true
+					# If we got a slot guess, record it for grouping; backend fitment will confirm/override
+					var s_guess := String(name_heur.get("slot_guess", ""))
+					if s_guess != "" and cid_any != "":
+						if not vendor_parts_by_slot.has(s_guess):
+							vendor_parts_by_slot[s_guess] = []
+						# Shallow copy to avoid mutating original vendor cargo
+						var guessed_item = item.duplicate(true)
+						guessed_item["slot"] = s_guess
+						vendor_parts_by_slot[s_guess].append(guessed_item)
+						_mech_vendor_cargo_slot[cid_any] = s_guess
+						if sample_part_cargo_id == "":
+							sample_part_cargo_id = cid_any
+			# If cargo item contains a parts list, print it for debugging
+			if item.has("parts") and item.get("parts") is Array:
+				var parts_arr: Array = item.get("parts")
+				var preview := []
+				for p in parts_arr:
+					if p is Dictionary:
+						preview.append({"name": p.get("name", ""), "slot": p.get("slot", ""), "part_id": p.get("part_id", "")})
+				print("[PartCompatGDM] PROBE cargo.parts vendor=", str(vendor.get("vendor_id", "")), " cargo_id=", str(item.get("cargo_id", "")), " parts=", preview)
 			# Top-level part with slot
 			if item.has("slot") and item.get("slot") != null and String(item.get("slot")).length() > 0:
 				var s_name = String(item.get("slot"))
 				if not vendor_parts_by_slot.has(s_name):
 					vendor_parts_by_slot[s_name] = []
 				vendor_parts_by_slot[s_name].append(item)
-				var cid_t: String = str(item.get("cargo_id", ""))
-				if cid_t != "":
-					_mech_vendor_cargo_slot[cid_t] = s_name
-					any_candidate_ids.append(cid_t)
+				if cid_any != "":
+					_mech_vendor_cargo_slot[cid_any] = s_name
+					any_candidate_ids.append(cid_any)
+					if sample_part_cargo_id == "":
+						sample_part_cargo_id = cid_any
 				continue
 			# Container with nested parts[]
 			if item.has("parts") and item.get("parts") is Array and not (item.get("parts") as Array).is_empty():
@@ -724,49 +887,75 @@ func probe_mechanic_vendor_availability_for_convoy(convoy: Dictionary) -> void:
 						vendor_parts_by_slot[pslot] = []
 					# Attach container cargo_id to nested part for compat check
 					var display_part: Dictionary = first_part.duplicate(true)
-					var cont_id_val: String = str(item.get("cargo_id", ""))
-					if cont_id_val != "":
-						display_part["cargo_id"] = cont_id_val
-						_mech_vendor_cargo_slot[cont_id_val] = pslot
-						any_candidate_ids.append(cont_id_val)
+					var cont_or_part_id: String = str(item.get("cargo_id", ""))
+					if cont_or_part_id == "":
+						cont_or_part_id = str(first_part.get("part_id", ""))
+					if cont_or_part_id != "":
+						display_part["cargo_id"] = cont_or_part_id
+						_mech_vendor_cargo_slot[cont_or_part_id] = pslot
+						any_candidate_ids.append(cont_or_part_id)
+						if sample_part_cargo_id == "":
+							sample_part_cargo_id = cont_or_part_id
 					vendor_parts_by_slot[pslot].append(display_part)
-				elif is_likely_part and cid_any != "":
-					# Container seems to hold a part but no explicit slot on first part; still consider
-					any_candidate_ids.append(cid_any)
-					continue
-			elif is_likely_part and cid_any != "":
-				# No explicit slot but looks like a part; include cargo id for backend fitment inference
-				any_candidate_ids.append(cid_any)
+			# If still no explicit slot/parts, request cargo enrichment and wait; don't add to candidates yet
+			elif cid_any != "":
+				_mech_probe_pending_cargo_ids[cid_any] = true
+				_ensure_cargo_enrichment(cid_any)
+
+		# Fallback: if we still found nothing for this vendor, re-run using aggregator logic (same as VendorTradePanel)
+		if (not vendor_parts_by_slot.keys().size() > 0) and any_candidate_ids.is_empty():
+			var agg := _aggregate_vendor_items(vendor)
+			if agg.has("parts") and (agg["parts"] is Dictionary) and not (agg["parts"] as Dictionary).is_empty():
+				var moved := 0
+				for pname in agg["parts"].keys():
+					var entry = agg["parts"][pname]
+					if entry is Dictionary and entry.has("item_data") and (entry.item_data is Dictionary):
+						var pd: Dictionary = entry.item_data
+						var slot_name := String(pd.get("slot", ""))
+						var cid_f := str(pd.get("cargo_id", ""))
+						if cid_f == "": cid_f = str(pd.get("part_id", ""))
+						if slot_name != "" and cid_f != "":
+							if not vendor_parts_by_slot.has(slot_name): vendor_parts_by_slot[slot_name] = []
+							vendor_parts_by_slot[slot_name].append(pd)
+							_mech_vendor_cargo_slot[cid_f] = slot_name
+							any_candidate_ids.append(cid_f)
+							if sample_part_cargo_id == "": sample_part_cargo_id = cid_f
+							moved += 1
+				if moved > 0:
+					print("[PartCompatGDM] PROBE fallback aggregator detected ", moved, " part(s) for vendor.")
 	# Summarize what we'll check
-	if vendor_parts_by_slot.is_empty() and not any_candidate_ids.is_empty():
-		print("[PartCompatGDM] PROBE: found ", any_candidate_ids.size(), " vendor part(s) without explicit slots; will infer slot from fitment. candidate_ids(sample)=", any_candidate_ids.slice(0, min(5, any_candidate_ids.size())))
-	elif vendor_parts_by_slot.is_empty():
-		print("[PartCompatGDM] PROBE: no vendor parts found at settlement (", sx, ",", sy, ")")
-		# DEBUG: Force a single compatibility request so we can observe API response shape
-		if MECH_DEBUG_FORCE_SAMPLE and sample_cargo_id != "" and vehicles.size() > 0:
-			var first_vehicle: Dictionary = vehicles[0]
-			if first_vehicle is Dictionary:
-				var vdbg := str(first_vehicle.get("vehicle_id", ""))
-				if vdbg != "":
-					print("[PartCompatGDM][DEBUG] Forcing sample compatibility check: vehicle=", vdbg, " cargo_id=", sample_cargo_id, " (no parts found)")
-					request_part_compatibility(vdbg, sample_cargo_id)
-		return
+	if vendor_parts_by_slot.is_empty():
+		if not any_candidate_ids.is_empty():
+			print("[PartCompatGDM] PROBE: found ", any_candidate_ids.size(), " vendor part candidate id(s) without explicit slots; backend will infer slot. candidates(sample)=", any_candidate_ids.slice(0, min(5, any_candidate_ids.size())))
+		else:
+			print("[PartCompatGDM] PROBE: no vendor parts found at settlement (", sx, ",", sy, ")")
+			# DEBUG: Force a single compatibility request so we can observe API response shape
+			if MECH_DEBUG_FORCE_SAMPLE and sample_part_cargo_id != "" and vehicles.size() > 0:
+				var first_vehicle: Dictionary = vehicles[0]
+				if first_vehicle is Dictionary:
+					var vdbg := str(first_vehicle.get("vehicle_id", ""))
+					if vdbg != "":
+						print("[PartCompatGDM][DEBUG] Forcing sample compatibility check: vehicle=", vdbg, " part_cargo_id=", sample_part_cargo_id, " (no parts found)")
+						request_part_compatibility(vdbg, sample_part_cargo_id)
+			# If no candidates at all, nothing to do
+			if any_candidate_ids.is_empty():
+				return
 	else:
 		var total_parts := 0
 		for k in vendor_parts_by_slot.keys():
 			total_parts += (vendor_parts_by_slot[k] as Array).size()
 		print("[PartCompatGDM] PROBE: found ", total_parts, " parts across ", vendor_parts_by_slot.size(), " slot(s) to check")
 
-	# Build a unique set of all cargo_ids to check (slot-known + slot-unknown)
+	# Build a unique set of all part_cargo_ids to check (only those with known/inferred slots)
 	var all_cargo_ids: Dictionary = {}
 	for sname in vendor_parts_by_slot.keys():
 		for p in (vendor_parts_by_slot[sname] as Array):
 			if p is Dictionary:
 				var cidk: String = str(p.get("cargo_id", ""))
+				if cidk == "":
+					cidk = str(p.get("part_id", ""))
 				if cidk != "":
 					all_cargo_ids[cidk] = true
-	for cidu in any_candidate_ids:
-		all_cargo_ids[cidu] = true
 
 	# Initialize and dispatch checks per vehicle for all candidate cargo_ids
 	for veh in vehicles:
@@ -778,8 +967,8 @@ func probe_mechanic_vendor_availability_for_convoy(convoy: Dictionary) -> void:
 		# Initialize/reset availability dict for this vehicle for this probe
 		_mech_vendor_availability[veh_id] = {}
 		_mech_probe_last_vehicle_ids.append(veh_id)
-		for cid in all_cargo_ids.keys():
-			request_part_compatibility(veh_id, cid)
+		for cid_out in all_cargo_ids.keys():
+			request_part_compatibility(veh_id, cid_out)
 	# Cache candidate ids after dispatch
 	_mech_probe_last_candidate_ids = all_cargo_ids.keys()
 

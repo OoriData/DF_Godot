@@ -38,6 +38,12 @@ var _last_selected_item_id = null # <-- Add this line
 var _last_selected_ref = null # Track last selected aggregated data reference to avoid resetting quantity repeatedly
 var _last_selection_unique_key: String = "" # Used to detect same logical selection even if reference changes
 
+# Backend compatibility cache (per vehicle + part uid), shared semantics with Mechanics menu
+var _compat_cache: Dictionary = {} # key: vehicle_id||part_uid -> payload
+
+# Optional: cache install prices per vehicle+part (for future UI use)
+var _install_price_cache: Dictionary = {} # key: vehicle_id||part_uid -> float
+
 # Cached convoy cargo stats for transaction projection
 var _convoy_used_weight: float = 0.0
 var _convoy_total_weight: float = 0.0
@@ -72,6 +78,9 @@ func _ready() -> void:
 	if is_instance_valid(gdm):
 		if not gdm.is_connected("vendor_panel_data_ready", _on_vendor_panel_data_ready):
 			gdm.vendor_panel_data_ready.connect(_on_vendor_panel_data_ready)
+		# Hook backend part compatibility so vendor UI can display the same truth as mechanics
+		if gdm.has_signal("part_compatibility_ready") and not gdm.part_compatibility_ready.is_connected(_on_part_compatibility_ready):
+			gdm.part_compatibility_ready.connect(_on_part_compatibility_ready)
 	else:
 		printerr("VendorTradePanel: Could not find GameDataManager.")
 
@@ -776,6 +785,17 @@ func _handle_new_item_selection(p_selected_item) -> void:
 		print("DEBUG: _handle_new_item_selection - item_data_source (original):", item_data_source_debug)
 
 		_update_transaction_panel()
+		# Fire backend compatibility checks for this item against all convoy vehicles (to align with Mechanics)
+		if selected_item and selected_item.has("item_data") and convoy_data and convoy_data.has("vehicle_details_list"):
+			var idata = selected_item.item_data
+			var uid := String(idata.get("cargo_id", idata.get("part_id", "")))
+			if uid != "":
+				for v in convoy_data.vehicle_details_list:
+					var vid := String(v.get("vehicle_id", ""))
+					if vid != "" and is_instance_valid(gdm) and gdm.has_method("request_part_compatibility"):
+						var key := _compat_key(vid, uid)
+						if not _compat_cache.has(key):
+							gdm.request_part_compatibility(vid, uid)
 		if is_instance_valid(action_button): action_button.disabled = false
 		if is_instance_valid(max_button): max_button.disabled = false
 	else:
@@ -906,45 +926,49 @@ func _update_inspector() -> void:
 	if is_instance_valid(item_description_rich_text):
 		item_description_rich_text.text = description_text
 
-	# --- Fitment (slot + compatible vehicles) ---
+	# --- Fitment (slot + compatible vehicles via backend) ---
 	if is_instance_valid(fitment_panel) and is_instance_valid(fitment_rich_text):
 		var slot_name: String = ""
 		if item_data_source.has("slot") and item_data_source.get("slot") != null:
 			slot_name = String(item_data_source.get("slot"))
+		# Resolve a part UID to query (prefer cargo_id; fallback part_id)
+		var part_uid: String = ""
+		if item_data_source.has("cargo_id") and item_data_source.get("cargo_id") != null:
+			part_uid = String(item_data_source.get("cargo_id"))
+		elif item_data_source.has("part_id") and item_data_source.get("part_id") != null:
+			part_uid = String(item_data_source.get("part_id"))
 
+		var lines: Array[String] = []
 		if not slot_name.is_empty():
-			var lines: Array[String] = []
 			lines.append("[b]Slot:[/b] %s" % slot_name)
-			var compat_list: Array[String] = []
-			if convoy_data and convoy_data.has("vehicle_details_list") and convoy_data.vehicle_details_list is Array:
-				for v in convoy_data.vehicle_details_list:
-					var vname: String = v.get("name", "Vehicle")
-					# Basic compatibility: vehicle supports this slot if any installed part or declared slot matches.
-					var supports := false
-					# If vehicle exposes supported_slots array, use it.
-					if v.has("supported_slots") and v.supported_slots is Array:
-						supports = slot_name in v.supported_slots
-					else:
-						# Fallback: infer from installed parts
-						for p in v.get("parts", []):
-							if String(p.get("slot", "")) == slot_name:
-								supports = true
-								break
-					if supports:
-						compat_list.append(vname)
-			if compat_list.is_empty():
-				lines.append("[color=grey]No compatible convoy vehicles detected.[/color]")
-			else:
-				lines.append("[b]Compatible Vehicles:[/b]")
-				for veh_name in compat_list:
-					lines.append("  • %s" % veh_name)
-			fitment_rich_text.text = "\n".join(lines)
-			fitment_rich_text.visible = true
-			fitment_panel.visible = true
 		else:
-			fitment_rich_text.text = ""
-			fitment_rich_text.visible = false
-			fitment_panel.visible = false
+			lines.append("[b]Slot:[/b] (unknown)")
+
+		var compat_lines: Array[String] = []
+		if convoy_data and convoy_data.has("vehicle_details_list") and convoy_data.vehicle_details_list is Array:
+			for v in convoy_data.vehicle_details_list:
+				var vid: String = String(v.get("vehicle_id", ""))
+				if vid == "" or part_uid == "":
+					continue
+				# Build cache key and request on-demand if missing
+				var key := _compat_key(vid, part_uid)
+				if not _compat_cache.has(key) and is_instance_valid(gdm) and gdm.has_method("request_part_compatibility"):
+					gdm.request_part_compatibility(vid, part_uid)
+				var compat_ok: bool = _compat_payload_is_compatible(_compat_cache.get(key, {}))
+				var vname: String = v.get("name", "Vehicle")
+				if compat_ok:
+					compat_lines.append("  • %s" % vname)
+
+		if compat_lines.is_empty():
+			lines.append("[color=grey]No compatible convoy vehicles detected by server.[/color]")
+		else:
+			lines.append("[b]Compatible Vehicles:[/b]")
+			for ln in compat_lines:
+				lines.append(ln)
+
+		fitment_rich_text.text = "\n".join(lines)
+		fitment_rich_text.visible = true
+		fitment_panel.visible = true
 
 	var bbcode = ""
 	if current_mode == "sell" and selected_item.has("mission_vendor_name") and not str(selected_item.mission_vendor_name).is_empty() and selected_item.mission_vendor_name != "Unknown Vendor":
@@ -1108,6 +1132,53 @@ func _update_transaction_panel() -> void:
 		bbcode_text = bbcode_text.substr(0, bbcode_text.length() - 1)
 	# --- End added detail block ---
 	price_label.text = bbcode_text
+
+# --- Compatibility plumbing (align with Mechanics) ---
+func _compat_key(vehicle_id: String, part_uid: String) -> String:
+	return "%s||%s" % [vehicle_id, part_uid]
+
+func _on_part_compatibility_ready(payload: Dictionary) -> void:
+	# Cache payload
+	var part_cargo_id := String(payload.get("part_cargo_id", ""))
+	var vehicle_id := String(payload.get("vehicle_id", ""))
+	if part_cargo_id != "" and vehicle_id != "":
+		var key := _compat_key(vehicle_id, part_cargo_id)
+		_compat_cache[key] = payload
+		# Extract and remember install price for potential future display
+		var price := _extract_install_price(payload)
+		if price >= 0.0:
+			_install_price_cache[key] = price
+	# If current selection references this part, refresh inspector for updated fitment
+	if selected_item and selected_item.has("item_data"):
+		var idata: Dictionary = selected_item.item_data
+		var uid := String(idata.get("cargo_id", idata.get("part_id", "")))
+		if uid != "" and uid == part_cargo_id:
+			_update_inspector()
+
+func _compat_payload_is_compatible(payload: Variant) -> bool:
+	if not (payload is Dictionary):
+		return false
+	var pd: Dictionary = payload
+	var status := int(pd.get("status", 0))
+	var data_any = pd.get("data")
+	if data_any is Dictionary:
+		var dd: Dictionary = data_any
+		if dd.has("compatible"):
+			return bool(dd.get("compatible"))
+		if dd.has("fitment") and dd.get("fitment") is Dictionary:
+			var fit: Dictionary = dd.get("fitment")
+			return bool(fit.get("compatible", false))
+	elif data_any is Array and status >= 200 and status < 300:
+		return (data_any as Array).size() > 0
+	return false
+
+func _extract_install_price(payload: Dictionary) -> float:
+	var d = payload.get("data")
+	if d is Dictionary and (d as Dictionary).has("installation_price"):
+		return float((d as Dictionary).get("installation_price", 0.0))
+	if d is Array and (d as Array).size() > 0 and (d[0] is Dictionary) and (d[0] as Dictionary).has("installation_price"):
+		return float((d[0] as Dictionary).get("installation_price", 0.0))
+	return -1.0
 
 # --- Price Calculation Helpers ---
 

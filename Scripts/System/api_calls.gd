@@ -34,7 +34,8 @@ signal resource_bought(result: Dictionary)
 @warning_ignore("unused_signal")
 signal resource_sold(result: Dictionary)
 signal vendor_data_received(vendor_data: Dictionary)
-signal part_compatibility_checked(payload: Dictionary) # { vehicle_id, part_cargo_id, data }
+signal part_compatibility_checked(payload: Dictionary) # { vehicle_id, part_id, data }
+signal cargo_data_received(cargo: Dictionary)
 
 # --- Journey Planning Signals ---
 signal route_choices_received(routes: Array)
@@ -64,7 +65,7 @@ var _request_queue: Array = []
 var _is_request_in_progress: bool = false
 
 # Add AUTH_STATUS, AUTH_ME to purposes
-enum RequestPurpose { NONE, USER_CONVOYS, ALL_CONVOYS, MAP_DATA, USER_DATA, VENDOR_DATA, FIND_ROUTE, AUTH_URL, AUTH_TOKEN, AUTH_STATUS, AUTH_ME }
+enum RequestPurpose { NONE, USER_CONVOYS, ALL_CONVOYS, MAP_DATA, USER_DATA, VENDOR_DATA, FIND_ROUTE, AUTH_URL, AUTH_TOKEN, AUTH_STATUS, AUTH_ME, CARGO_DATA }
 var _current_request_purpose: RequestPurpose = RequestPurpose.NONE
 
 var _current_patch_signal_name: String = ""
@@ -92,6 +93,7 @@ const REQUEST_TIMEOUT_SECONDS := {
 	RequestPurpose.AUTH_URL: 5.0,
 	RequestPurpose.AUTH_STATUS: 5.0,
 	RequestPurpose.AUTH_ME: 5.0,
+	RequestPurpose.CARGO_DATA: 5.0,
 }
 
 var _probe_stalled_count: int = 0
@@ -434,6 +436,23 @@ func request_vendor_data(vendor_id: String) -> void:
 	_request_queue.append(request_details)
 	_process_queue()
 
+# --- Cargo detail by ID ---
+func get_cargo(cargo_id: String) -> void:
+	if cargo_id.is_empty() or not _is_valid_uuid(cargo_id):
+		printerr("APICalls (get_cargo): invalid cargo_id %s" % cargo_id)
+		return
+	var url := "%s/cargo/get?cargo_id=%s" % [BASE_URL, cargo_id]
+	var headers: PackedStringArray = ['accept: application/json']
+	headers = _apply_auth_header(headers)
+	var request_details: Dictionary = {
+		"url": url,
+		"headers": headers,
+		"purpose": RequestPurpose.CARGO_DATA,
+		"method": HTTPClient.METHOD_GET
+	}
+	_request_queue.append(request_details)
+	_process_queue()
+
 # --- Mechanics / Part Compatibility ---
 func check_vehicle_part_compatibility(vehicle_id: String, part_cargo_id: String) -> void:
 	if vehicle_id.is_empty() or part_cargo_id.is_empty():
@@ -448,7 +467,7 @@ func check_vehicle_part_compatibility(vehicle_id: String, part_cargo_id: String)
 	_http_request_mech_pool.append(req)
 	if req.request_completed.is_connected(_on_part_compat_request_completed):
 		req.request_completed.disconnect(_on_part_compat_request_completed)
-	# Bind the requester and identifiers so handler can emit a useful payload
+	# Bind the requester and identifiers so handler can emit a useful payload (vehicle_id, part_id)
 	req.request_completed.connect(_on_part_compat_request_completed.bind(req, vehicle_id, part_cargo_id))
 	print("[PartCompatAPI] REQUEST vehicle=", vehicle_id, " part_cargo_id=", part_cargo_id, " url=", url)
 	var err := req.request(url, headers, HTTPClient.METHOD_GET)
@@ -1110,6 +1129,19 @@ func _on_request_completed(result: int, response_code: int, _headers: PackedStri
 			print("APICalls (_on_request_completed - VENDOR_DATA): Successfully fetched vendor data. URL: %s" % _last_requested_url)
 			emit_signal('vendor_data_received', json_response)
 
+		_complete_current_request()
+		return
+
+	elif request_purpose_at_start == RequestPurpose.CARGO_DATA:
+		var response_body_text: String = body.get_string_from_utf8()
+		var json_response = JSON.parse_string(response_body_text)
+		if json_response == null or not json_response is Dictionary:
+			var error_msg = 'APICalls (_on_request_completed - CARGO_DATA): Failed to parse cargo data. URL: %s' % _last_requested_url
+			printerr(error_msg)
+			emit_signal('fetch_error', error_msg)
+		else:
+			print("APICalls (_on_request_completed - CARGO_DATA): Successfully fetched cargo data. URL: %s" % _last_requested_url)
+			emit_signal('cargo_data_received', json_response)
 		_complete_current_request()
 		return
 
