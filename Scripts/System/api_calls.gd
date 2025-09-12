@@ -36,6 +36,10 @@ signal resource_sold(result: Dictionary)
 signal vendor_data_received(vendor_data: Dictionary)
 signal part_compatibility_checked(payload: Dictionary) # { vehicle_id, part_id, data }
 signal cargo_data_received(cargo: Dictionary)
+@warning_ignore("unused_signal")
+signal vehicle_part_attached(result: Dictionary)
+@warning_ignore("unused_signal")
+signal vehicle_part_added(result: Dictionary)
 
 # --- Journey Planning Signals ---
 signal route_choices_received(routes: Array)
@@ -612,6 +616,64 @@ func sell_resource(vendor_id: String, convoy_id: String, resource_type: String, 
 		"method": HTTPClient.METHOD_PATCH,
 		"body": "",
 		"signal_name": "resource_sold"
+	})
+	_process_queue()
+
+# --- Mechanics / Part Attach ---
+func attach_vehicle_part(vehicle_id: String, part_cargo_id: String) -> void:
+	# Endpoint: PATCH /vehicle/part/attach?vehicle_id=<uuid>&part_cargo_id=<uuid>
+	if vehicle_id.is_empty() or not _is_valid_uuid(vehicle_id):
+		printerr("[APICalls][attach_vehicle_part] Invalid vehicle_id '%s'" % vehicle_id)
+		emit_signal('fetch_error', "Invalid vehicle_id for part attach")
+		return
+	if part_cargo_id.is_empty() or not _is_valid_uuid(part_cargo_id):
+		printerr("[APICalls][attach_vehicle_part] Invalid part_cargo_id '%s'" % part_cargo_id)
+		emit_signal('fetch_error', "Invalid part_cargo_id for part attach")
+		return
+	var url := "%s/vehicle/part/attach?vehicle_id=%s&part_cargo_id=%s" % [BASE_URL, vehicle_id, part_cargo_id]
+	var headers: PackedStringArray = ['accept: application/json']
+	headers = _apply_auth_header(headers)
+	print("[APICalls][attach_vehicle_part] PATCH url=", url, " auth_present=", _auth_bearer_token != "")
+	_request_queue.append({
+		"url": url,
+		"headers": headers,
+		"purpose": RequestPurpose.NONE,
+		"method": HTTPClient.METHOD_PATCH,
+		"body": "",
+		"signal_name": "vehicle_part_attached"
+	})
+	_process_queue()
+
+# --- Mechanics / Vendor Add Part (purchase + install) ---
+func add_vehicle_part(vendor_id: String, convoy_id: String, vehicle_id: String, part_cargo_id: String) -> void:
+	# Endpoint: PATCH /vendor/vehicle/part/add with query params
+	if vendor_id.is_empty() or not _is_valid_uuid(vendor_id):
+		printerr("[APICalls][add_vehicle_part] Invalid vendor_id '%s'" % vendor_id)
+		emit_signal('fetch_error', "Invalid vendor_id for add part")
+		return
+	if convoy_id.is_empty() or not _is_valid_uuid(convoy_id):
+		printerr("[APICalls][add_vehicle_part] Invalid convoy_id '%s'" % convoy_id)
+		emit_signal('fetch_error', "Invalid convoy_id for add part")
+		return
+	if vehicle_id.is_empty() or not _is_valid_uuid(vehicle_id):
+		printerr("[APICalls][add_vehicle_part] Invalid vehicle_id '%s'" % vehicle_id)
+		emit_signal('fetch_error', "Invalid vehicle_id for add part")
+		return
+	if part_cargo_id.is_empty() or not _is_valid_uuid(part_cargo_id):
+		printerr("[APICalls][add_vehicle_part] Invalid part_cargo_id '%s'" % part_cargo_id)
+		emit_signal('fetch_error', "Invalid part_cargo_id for add part")
+		return
+	var url := "%s/vendor/vehicle/part/add?vendor_id=%s&convoy_id=%s&vehicle_id=%s&part_cargo_id=%s" % [BASE_URL, vendor_id, convoy_id, vehicle_id, part_cargo_id]
+	var headers: PackedStringArray = ['accept: application/json']
+	headers = _apply_auth_header(headers)
+	print("[APICalls][add_vehicle_part] PATCH url=", url, " auth_present=", _auth_bearer_token != "")
+	_request_queue.append({
+		"url": url,
+		"headers": headers,
+		"purpose": RequestPurpose.NONE,
+		"method": HTTPClient.METHOD_PATCH,
+		"body": "",
+		"signal_name": "vehicle_part_added"
 	})
 	_process_queue()
 

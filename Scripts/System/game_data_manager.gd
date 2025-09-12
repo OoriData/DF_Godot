@@ -172,6 +172,11 @@ func _initiate_preload():
 			api_calls_node.vehicle_bought.connect(_on_convoy_transaction)
 		if api_calls_node.has_signal('vehicle_sold') and not api_calls_node.vehicle_sold.is_connected(_on_convoy_transaction):
 			api_calls_node.vehicle_sold.connect(_on_convoy_transaction)
+		# Mechanics: vehicle part attach returns updated vehicle; handle and refresh convoy
+		if api_calls_node.has_signal('vehicle_part_attached') and not api_calls_node.vehicle_part_attached.is_connected(_on_vehicle_part_attached):
+			api_calls_node.vehicle_part_attached.connect(_on_vehicle_part_attached)
+		if api_calls_node.has_signal('vehicle_part_added') and not api_calls_node.vehicle_part_added.is_connected(_on_vehicle_part_added):
+			api_calls_node.vehicle_part_added.connect(_on_vehicle_part_added)
 		if api_calls_node.has_signal('route_choices_received'):
 			api_calls_node.route_choices_received.connect(_on_api_route_choices_received)
 		if api_calls_node.has_signal('convoy_sent_on_journey'):
@@ -648,6 +653,114 @@ func request_part_compatibility(vehicle_id: String, part_cargo_id: String) -> vo
 		api_calls_node.check_vehicle_part_compatibility(vehicle_id, part_cargo_id)
 	else:
 		printerr("[PartCompatGDM] APICalls missing check_vehicle_part_compatibility")
+
+# Apply mechanic swaps (ordered for a specific vehicle). Each entry should contain to_part with cargo_id or part_id.
+func apply_mechanic_swaps(convoy_id: String, vehicle_id: String, ordered_swaps: Array, vendor_id: String = "") -> void:
+	if not is_instance_valid(api_calls_node):
+		printerr("[GameDataManager][MechanicApply] APICalls missing; cannot apply swaps")
+		return
+	print("[GameDataManager][MechanicApply] BEGIN convoy=", convoy_id, " vehicle=", vehicle_id, " vendor=", vendor_id, " swaps=", ordered_swaps.size())
+	# Remember active convoy for follow-up refreshes
+	if convoy_id != "":
+		_mech_active_convoy_id = convoy_id
+	var applied := 0
+	for s in ordered_swaps:
+		if not (s is Dictionary):
+			continue
+		var vid := String(s.get("vehicle_id", ""))
+		if vid == "" or (vehicle_id != "" and vid != vehicle_id):
+			continue
+		var to_part: Dictionary = s.get("to_part", {})
+		var part_id := String(to_part.get("cargo_id", ""))
+		if part_id == "":
+			part_id = String(to_part.get("part_id", ""))
+		if part_id == "":
+			printerr("[GameDataManager][MechanicApply] Swap missing cargo/part id; skipping entry")
+			continue
+		var swap_vendor_id := String(s.get("vendor_id", ""))
+		var effective_vendor := swap_vendor_id if swap_vendor_id != "" else vendor_id
+		if effective_vendor != "" and api_calls_node.has_method("add_vehicle_part"):
+			print("[GameDataManager][MechanicApply] ADD via vendor queue vendor=", effective_vendor, " convoy=", convoy_id, " vehicle=", vid, " part=", part_id)
+			api_calls_node.add_vehicle_part(effective_vendor, convoy_id, vid, part_id)
+			applied += 1
+		elif api_calls_node.has_method("attach_vehicle_part"):
+			print("[GameDataManager][MechanicApply] ATTACH queue vehicle=", vid, " part=", part_id)
+			api_calls_node.attach_vehicle_part(vid, part_id)
+			applied += 1
+		else:
+			printerr("[GameDataManager][MechanicApply] No attach/add method available")
+	print("[GameDataManager][MechanicApply] QUEUED ", applied, " attach request(s)")
+
+func _on_vehicle_part_attached(result: Dictionary) -> void:
+	# Backend returns updated vehicle dictionary. We will refresh the owning convoy.
+	print("[GameDataManager][MechanicApply] vehicle_part_attached result keys=", result.keys())
+	var target_convoy_id := _mech_active_convoy_id
+	if target_convoy_id == "":
+		# Try to find convoy by vehicle_id if possible
+		var vid := String(result.get("vehicle_id", ""))
+		if vid != "":
+			for c in all_convoy_data:
+				if not (c is Dictionary):
+					continue
+				var vlist: Array = c.get("vehicle_details_list", [])
+				for v in vlist:
+					if String(v.get("vehicle_id", "")) == vid:
+						target_convoy_id = String(c.get("convoy_id", ""))
+						break
+				if target_convoy_id != "":
+					break
+	if target_convoy_id != "" and is_instance_valid(api_calls_node) and api_calls_node.has_method("get_convoy_data"):
+		print("[GameDataManager][MechanicApply] Refreshing convoy after attach convoy_id=", target_convoy_id)
+		api_calls_node.get_convoy_data(target_convoy_id)
+	else:
+		printerr("[GameDataManager][MechanicApply] Could not resolve convoy to refresh after attach.")
+
+func _on_vehicle_part_added(result: Dictionary) -> void:
+	# Backend returns updated convoy dict (convoy_after). Update state and user money immediately.
+	if not (result is Dictionary):
+		return
+	print("[GameDataManager][MechanicApply] vehicle_part_added keys=", result.keys())
+	var updated_convoy: Dictionary = {}
+	# Accept multiple common shapes: top-level convoy, or nested under convoy_after / convoy
+	if result.has("convoy_id"):
+		updated_convoy = result
+	elif result.has("convoy_after") and (result.get("convoy_after") is Dictionary):
+		updated_convoy = result.get("convoy_after")
+	elif result.has("convoy") and (result.get("convoy") is Dictionary):
+		updated_convoy = result.get("convoy")
+	else:
+		# Best-effort: scan for any nested dictionary with a convoy_id
+		for v in result.values():
+			if v is Dictionary and v.has("convoy_id"):
+				updated_convoy = v
+				break
+	if not updated_convoy.is_empty() and updated_convoy.has("convoy_id"):
+		# Log money delta if available
+		var prev_money := 0.0
+		if current_user_data.has("money"):
+			var pm = current_user_data.get("money")
+			if pm is int or pm is float:
+				prev_money = float(pm)
+		update_single_convoy(updated_convoy)
+		_maybe_sync_user_money_from_convoy(updated_convoy)
+		if updated_convoy.has("money") and (updated_convoy.get("money") is int or updated_convoy.get("money") is float):
+			var new_money := float(updated_convoy.get("money"))
+			var delta := new_money - prev_money
+			print("[GameDataManager][MoneySync] Convoy money now=", new_money, " (delta=", String.num(delta, 2), ")")
+		# Optional: backend may include a top-level user_after with authoritative money
+		if result.has("user_after") and (result.get("user_after") is Dictionary):
+			var ua: Dictionary = result.get("user_after")
+			if ua.has("money") and (ua.get("money") is int or ua.get("money") is float):
+				var ua_money := float(ua.get("money"))
+				var need_emit := false
+				if not current_user_data.has("money") or abs(float(current_user_data.get("money", 0.0)) - ua_money) > 0.0001:
+					current_user_data["money"] = ua_money
+					need_emit = true
+				if need_emit:
+					print("[GameDataManager][MoneySync] Synced from user_after money=", ua_money)
+					user_data_updated.emit(current_user_data)
+	else:
+		printerr("[GameDataManager][MechanicApply] vehicle_part_added response missing convoy_after/convoy with convoy_id; cannot update list.")
 
 # Public: return enriched cargo (full object from /cargo/get) if available; empty dict otherwise
 func get_enriched_cargo(cargo_id: String) -> Dictionary:

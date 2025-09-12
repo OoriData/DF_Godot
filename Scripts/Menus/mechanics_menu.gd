@@ -74,7 +74,12 @@ func _update_row_price_from_cache(row: HBoxContainer) -> void:
 	var price_lbl: Label = row.get_node_or_null("PriceLabel")
 	if not is_instance_valid(price_lbl):
 		return
-	var vendor_price := float(row.get_meta("vendor_price", 0.0))
+	# Displayed part price should reflect the part's value
+	var vendor_price := 0.0
+	if row.has_meta("part_dict"):
+		vendor_price = _get_part_value(row.get_meta("part_dict", {}))
+	else:
+		vendor_price = float(row.get_meta("vendor_price", 0.0))
 	var veh_id := String(row.get_meta("vehicle_id", ""))
 	var part_uid := String(row.get_meta("part_uid", ""))
 	var install_price := _get_install_price_from_cache(veh_id, part_uid)
@@ -418,7 +423,8 @@ func _rebuild_pending_tab():
 		return
 	# Compute per-vehicle schedules and costs
 	var schedules: Dictionary = _compute_pending_schedules()
-	var grand_purchase_total: float = 0.0
+	var grand_parts_cost: float = 0.0
+	var grand_install_cost: float = 0.0
 	for vid in schedules.keys():
 		var entries: Array = schedules[vid]
 		for e in entries:
@@ -457,18 +463,25 @@ func _rebuild_pending_tab():
 			title_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD
 			left_vb.add_child(title_lbl)
 
-			var vendor_price := float(e.get("vendor_price", 0.0))
+			# Use the part's value as the Part price in cart
+			var _vendor_price := float(e.get("vendor_price", 0.0))
 			var install_cost := float(e.get("install_cost", 0.0))
 			var part_value := float(e.get("part_value", 0.0))
 			var removable_flag := bool(e.get("removable", false))
-			var detail_lbl = Label.new()
-			var price_part = _format_price_label(vendor_price, install_cost)
-			var value_note = "+Value $%s" % ("%.2f" % part_value)
+			# Costs line: Part (value) + Installation = Total
+			var costs_lbl = Label.new()
+			costs_lbl.text = _format_price_label(part_value, install_cost)
+			costs_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD
+			left_vb.add_child(costs_lbl)
+
+			# Value line: clearly separated
+			var value_lbl = Label.new()
+			var value_text = "Vehicle Value +$%s" % ("%.2f" % part_value)
 			if removable_flag:
-				value_note += " (removable)"
-			detail_lbl.text = "%s  |  %s" % [price_part, value_note]
-			detail_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD
-			left_vb.add_child(detail_lbl)
+				value_text += " (removable)"
+			value_lbl.text = value_text
+			value_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD
+			left_vb.add_child(value_lbl)
 
 			# Optional stat deltas
 			var swap_ref_local = e.get("swap_ref")
@@ -500,11 +513,24 @@ func _rebuild_pending_tab():
 			right_vb.add_child(remove_btn)
 
 			pending_vbox.add_child(panel)
-			grand_purchase_total += vendor_price + install_cost + part_value
-	var total_label_purchase = Label.new()
-	total_label_purchase.text = "Purchase Total (incl. part value): $%s" % ("%.2f" % grand_purchase_total)
-	total_label_purchase.add_theme_font_size_override("font_size", 16)
-	pending_vbox.add_child(total_label_purchase)
+			grand_parts_cost += part_value
+			grand_install_cost += install_cost
+	# Summary: Parts cost, Installation, Total (suffix $ style)
+	var parts_label = Label.new()
+	parts_label.text = "Parts cost : %s$" % ("%.2f" % grand_parts_cost)
+	parts_label.add_theme_font_size_override("font_size", 16)
+	pending_vbox.add_child(parts_label)
+
+	var install_label = Label.new()
+	install_label.text = "Installation : %s$" % ("%.2f" % grand_install_cost)
+	install_label.add_theme_font_size_override("font_size", 16)
+	pending_vbox.add_child(install_label)
+
+	var total_label = Label.new()
+	var grand_total := grand_parts_cost + grand_install_cost
+	total_label.text = "total : %s$" % ("%.2f" % grand_total)
+	total_label.add_theme_font_size_override("font_size", 16)
+	pending_vbox.add_child(total_label)
 	_refresh_apply_state()
 
 func _get_vehicle_value(vid: String) -> float:
@@ -644,7 +670,7 @@ func _on_swap_part_pressed(slot_name: String, current_part: Dictionary):
 	for c in _collect_candidate_parts_for_slot(slot_name):
 		all_candidates.append({"part": c, "source": "inventory", "price": 0.0})
 	for v in _collect_vendor_parts_for_slot(slot_name):
-		all_candidates.append(v) # expects {part, source:"vendor", price}
+		all_candidates.append(v) # expects {part, source:"vendor", price, vendor_id?}
 
 	# Kick off compatibility checks for each candidate using backend, log responses when they arrive
 	var vehicle_id: String = str(vehicle.get("vehicle_id", ""))
@@ -669,6 +695,7 @@ func _on_swap_part_pressed(slot_name: String, current_part: Dictionary):
 			var cand: Dictionary = entry.get("part", {})
 			var source: String = String(entry.get("source", "inventory"))
 			var price: float = float(entry.get("price", 0.0))
+			var vendor_id_for_entry: String = String(entry.get("vendor_id", ""))
 			# Seed from backend cache if available for this vehicle+part
 			var comp_ok := _is_part_compatible(vehicle, slot_name, cand)
 			var row = _make_candidate_row(cand, source, price, comp_ok)
@@ -705,7 +732,7 @@ func _on_swap_part_pressed(slot_name: String, current_part: Dictionary):
 				var select_btn: Button = row.get_node_or_null("SelectBtn")
 				if is_instance_valid(select_btn) and not _is_part_id_already_pending(id2):
 					select_btn.pressed.connect(func():
-						_add_pending_swap(slot_name, current_part, cand, source, price)
+						_add_pending_swap(slot_name, current_part, cand, source, price, vendor_id_for_entry)
 						chooser.queue_free()
 						_rebuild_pending_tab()
 					)
@@ -758,7 +785,7 @@ func _collect_vendor_parts_for_slot(slot_name: String) -> Array:
 	return out
 
 func _collect_all_vendor_part_candidates() -> Array:
-	# Return items as [{ part: Dictionary, source: "vendor", price: float }]
+	# Return items as [{ part: Dictionary, source: "vendor", price: float, vendor_id: String }]
 	var results: Array = []
 	if _gdm == null:
 		_gdm = get_node_or_null("/root/GameDataManager")
@@ -792,6 +819,7 @@ func _collect_all_vendor_part_candidates() -> Array:
 	for vendor in vendors:
 		if not (vendor is Dictionary):
 			continue
+		var vendor_id_local := String(vendor.get("vendor_id", ""))
 		var cargo_inv: Array = vendor.get("cargo_inventory", [])
 		for item in cargo_inv:
 			if not (item is Dictionary):
@@ -813,7 +841,7 @@ func _collect_all_vendor_part_candidates() -> Array:
 			# Case 1: top-level part with slot on source_item
 			var slot_detected := _get_slot_from_item(source_item)
 			if slot_detected != "":
-				results.append({"part": source_item, "source": "vendor", "price": price_f})
+				results.append({"part": source_item, "source": "vendor", "price": price_f, "vendor_id": vendor_id_local})
 				continue
 			# Case 2: container with nested parts[] (on source_item)
 			if source_item.has("parts") and (source_item.get("parts") is Array) and not ((source_item.get("parts") as Array).is_empty()):
@@ -827,7 +855,7 @@ func _collect_all_vendor_part_candidates() -> Array:
 						cont_id_val = str(first_part.get("part_id", ""))
 					if cont_id_val != "":
 						display_part["cargo_id"] = cont_id_val
-					results.append({"part": display_part, "source": "vendor", "price": price_f})
+					results.append({"part": display_part, "source": "vendor", "price": price_f, "vendor_id": vendor_id_local})
 					continue
 			# Case 3: no slot/parts even after enrichment — skip until enrichment returns
 			# We rely on enrichment callback + compatibility flow to surface viable parts later
@@ -900,7 +928,7 @@ func _extract_unit_price(d: Dictionary) -> float:
 func _extract_price_from_dict(d: Dictionary) -> float:
 	return _extract_unit_price(d)
 
-func _add_pending_swap(slot_name: String, from_part: Dictionary, to_part: Dictionary, source: String, price: float):
+func _add_pending_swap(slot_name: String, from_part: Dictionary, to_part: Dictionary, source: String, price: float, vendor_id: String = ""):
 	# Prevent adding the same cargo item twice across vehicles/slots
 	if _is_part_already_pending(to_part):
 		print("[MechanicsMenu] Skipping add: part already in cart ", _get_part_unique_id(to_part))
@@ -914,6 +942,7 @@ func _add_pending_swap(slot_name: String, from_part: Dictionary, to_part: Dictio
 		"to_part": to_part.duplicate(true),
 		"source": source,
 		"price": price,
+	"vendor_id": vendor_id,
 		"vehicle_id": vehicle_id,
 	})
 	# Ensure install price will be available in totals; request compat if not cached
@@ -944,13 +973,36 @@ func _on_apply_pressed():
 	for s in _pending_swaps:
 		if String(s.get("vehicle_id", "")) != vehicle_id:
 			ordered_swaps.append(s)
-	# Emit sorted list with computed total charge (vendor + install)
+	# Try to discover vendor_id at the current settlement for mechanic work
+	var vendor_id := ""
+	if is_instance_valid(_gdm) and _gdm.has_method("get_all_settlements_data"):
+		var sx := int(roundf(float(_convoy.get("x", -99999.0))))
+		var sy := int(roundf(float(_convoy.get("y", -99999.0))))
+		var settlements: Array = _gdm.get_all_settlements_data()
+		for s in settlements:
+			if not (s is Dictionary):
+				continue
+			if int(s.get("x", 123456)) == sx and int(s.get("y", 123456)) == sy:
+				var vendors: Array = s.get("vendors", [])
+				if not vendors.is_empty():
+					# Heuristic: pick first vendor in settlement for mechanics work. Adjust if backend supplies specific vendor.
+					var v0: Dictionary = vendors[0]
+					vendor_id = String(v0.get("vendor_id", ""))
+					break
+
+	# Emit for observers
 	emit_signal("changes_committed", convoy_id, vehicle_id, ordered_swaps, total_cost)
+	# Fire backend API calls now via GameDataManager
+	if is_instance_valid(_gdm) and _gdm.has_method("apply_mechanic_swaps"):
+		print("[MechanicsMenu][Apply] Applying ", ordered_swaps.size(), " swap(s) vend=", vendor_id, " vehicle=", vehicle_id, " convoy=", convoy_id, " total=$", "%.2f" % total_cost)
+		_gdm.apply_mechanic_swaps(convoy_id, vehicle_id, ordered_swaps, vendor_id)
+	else:
+		printerr("[MechanicsMenu][Apply] GameDataManager missing apply_mechanic_swaps; cannot apply.")
 	# Prototype: just clear changes after emit
 	_pending_swaps.clear()
 	_rebuild_pending_tab()
 
-func _make_candidate_row(part: Dictionary, source: String, price: float, compatible: bool) -> HBoxContainer:
+func _make_candidate_row(part: Dictionary, source: String, _price: float, compatible: bool) -> HBoxContainer:
 	var hb = HBoxContainer.new()
 	hb.name = "Row"
 	hb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -1012,7 +1064,8 @@ func _make_candidate_row(part: Dictionary, source: String, price: float, compati
 	var price_lbl = Label.new()
 	price_lbl.name = "PriceLabel"
 	# Store metas so we can update when install price arrives from compat
-	hb.set_meta("vendor_price", price)
+	var part_price := _get_part_value(part)
+	hb.set_meta("vendor_price", part_price)
 	var veh_ctx := ""
 	if not _current_swap_ctx.is_empty():
 		veh_ctx = String(_current_swap_ctx.get("vehicle_id", ""))
@@ -1023,7 +1076,7 @@ func _make_candidate_row(part: Dictionary, source: String, price: float, compati
 	if install_price <= 0.0:
 		var removable := _is_part_removable(part)
 		install_price = 0.0 if removable else (_get_vehicle_value(veh_ctx) * 0.10)
-	var price_text := _format_price_label(price, install_price)
+	var price_text := _format_price_label(part_price, install_price)
 	price_lbl.text = price_text
 	price_lbl.add_theme_color_override("font_color", Color(0.85, 1.0, 0.85))
 	hb.add_child(price_lbl)
