@@ -315,6 +315,13 @@ func go_back():
 	var _previous_menu_info2 = menu_stack.pop_back()
 	var _prev_scene_path2 = _previous_menu_info2.get("scene_path")
 	var _prev_data2 = _previous_menu_info2.get("data")
+	# Replace with freshest convoy data if available
+	if _prev_data2 is Dictionary and _prev_data2.has("convoy_id"):
+		var gdm2 = get_node_or_null("/root/GameDataManager")
+		if is_instance_valid(gdm2) and gdm2.has_method("get_convoy_by_id"):
+			var latest = gdm2.get_convoy_by_id(str(_prev_data2.get("convoy_id")))
+			if latest is Dictionary and not latest.is_empty():
+				_prev_data2 = latest.duplicate(true)
 	if _prev_scene_path2:
 		var _scene_resource2 = load(_prev_scene_path2)
 		if _scene_resource2:
@@ -362,3 +369,17 @@ func _on_gdm_convoy_data_updated(all_convoy_data: Array) -> void:
 					current_active_menu.call_deferred("initialize_with_data", convoy.duplicate(true))
 					current_active_menu.set_meta("menu_data", convoy.duplicate(true))
 					break
+	# Also update any stacked menu data snapshots so Back restores fresh data
+	if not menu_stack.is_empty():
+		for i in range(menu_stack.size()):
+			var entry = menu_stack[i]
+			if typeof(entry) != TYPE_DICTIONARY:
+				continue
+			var data_snap = entry.get("data", null)
+			if data_snap is Dictionary and data_snap.has("convoy_id"):
+				var cid = str(data_snap.get("convoy_id"))
+				for convoy2 in all_convoy_data:
+					if convoy2.has("convoy_id") and str(convoy2.get("convoy_id")) == cid:
+						entry["data"] = convoy2.duplicate(true)
+						menu_stack[i] = entry
+						break

@@ -692,28 +692,54 @@ func apply_mechanic_swaps(convoy_id: String, vehicle_id: String, ordered_swaps: 
 	print("[GameDataManager][MechanicApply] QUEUED ", applied, " attach request(s)")
 
 func _on_vehicle_part_attached(result: Dictionary) -> void:
-	# Backend returns updated vehicle dictionary. We will refresh the owning convoy.
+	# Backend returns updated vehicle dictionary. Update the convoy immediately and emit, then optionally refresh.
 	print("[GameDataManager][MechanicApply] vehicle_part_attached result keys=", result.keys())
+	var vid := String(result.get("vehicle_id", ""))
 	var target_convoy_id := _mech_active_convoy_id
+	var updated_locally := false
+	# Try to find convoy by vehicle_id if needed
 	if target_convoy_id == "":
-		# Try to find convoy by vehicle_id if possible
-		var vid := String(result.get("vehicle_id", ""))
 		if vid != "":
 			for c in all_convoy_data:
 				if not (c is Dictionary):
 					continue
-				var vlist: Array = c.get("vehicle_details_list", [])
-				for v in vlist:
-					if String(v.get("vehicle_id", "")) == vid:
+				var vlist0: Array = c.get("vehicle_details_list", [])
+				for v0 in vlist0:
+					if String(v0.get("vehicle_id", "")) == vid:
 						target_convoy_id = String(c.get("convoy_id", ""))
 						break
 				if target_convoy_id != "":
 					break
+	# Patch convoy in-place if we can locate it and emit update immediately
+	if vid != "" and target_convoy_id != "":
+		for i in range(all_convoy_data.size()):
+			var conv: Dictionary = all_convoy_data[i]
+			if not (conv is Dictionary):
+				continue
+			if String(conv.get("convoy_id", "")) != target_convoy_id:
+				continue
+			var vlist: Array = conv.get("vehicle_details_list", [])
+			var replaced := false
+			for j in range(vlist.size()):
+				var vdict: Dictionary = vlist[j]
+				if String(vdict.get("vehicle_id", "")) == vid:
+					vlist[j] = result # use server-returned vehicle immediately
+					replaced = true
+					break
+			if replaced:
+				conv["vehicle_details_list"] = vlist
+				all_convoy_data[i] = conv
+				convoy_data_updated.emit(all_convoy_data)
+				updated_locally = true
+				print("[GameDataManager][MechanicApply] Updated convoy ", target_convoy_id, " with returned vehicle ", vid, " and emitted update.")
+				break
+	# Optionally also refresh from server to ensure authoritative state
 	if target_convoy_id != "" and is_instance_valid(api_calls_node) and api_calls_node.has_method("get_convoy_data"):
-		print("[GameDataManager][MechanicApply] Refreshing convoy after attach convoy_id=", target_convoy_id)
+		if not updated_locally:
+			print("[GameDataManager][MechanicApply] Refreshing convoy after attach convoy_id=", target_convoy_id)
 		api_calls_node.get_convoy_data(target_convoy_id)
-	else:
-		printerr("[GameDataManager][MechanicApply] Could not resolve convoy to refresh after attach.")
+	elif not updated_locally:
+		printerr("[GameDataManager][MechanicApply] Could not resolve convoy to update/refresh after attach.")
 
 func _on_vehicle_part_added(result: Dictionary) -> void:
 	# Backend returns updated convoy dict (convoy_after). Update state and user money immediately.

@@ -193,6 +193,9 @@ func _ready():
 	# Also listen for precomputed vendor slot availability to pre-highlight Swap buttons
 	if is_instance_valid(_gdm) and _gdm.has_signal("mechanic_vendor_slot_availability") and not _gdm.mechanic_vendor_slot_availability.is_connected(_on_mechanic_vendor_slot_availability):
 		_gdm.mechanic_vendor_slot_availability.connect(_on_mechanic_vendor_slot_availability)
+	# Listen for convoy updates so the mechanics UI reflects changes immediately
+	if is_instance_valid(_gdm) and _gdm.has_signal("convoy_data_updated") and not _gdm.convoy_data_updated.is_connected(_on_gdm_convoy_data_updated):
+		_gdm.convoy_data_updated.connect(_on_gdm_convoy_data_updated)
 
 func _close_open_swap_dialog() -> void:
 	# Ensure any open swap chooser is closed before we rebuild UI or switch vehicles
@@ -228,6 +231,38 @@ func _exit_tree() -> void:
 		_gdm.end_mechanics_probe_session()
 	# Also ensure any open chooser is closed to avoid dangling node references
 	_close_open_swap_dialog()
+	# Disconnect update signal to avoid duplicate connections on reopen
+	if is_instance_valid(_gdm) and _gdm.has_signal("convoy_data_updated") and _gdm.convoy_data_updated.is_connected(_on_gdm_convoy_data_updated):
+		_gdm.convoy_data_updated.disconnect(_on_gdm_convoy_data_updated)
+
+func _on_gdm_convoy_data_updated(all_convoys: Array) -> void:
+	# Refresh this menu when our convoy is updated.
+	if _convoy.is_empty():
+		return
+	var target_id := String(_convoy.get("convoy_id", ""))
+	if target_id == "":
+		return
+	var selected_vehicle_id := ""
+	if _selected_vehicle_idx >= 0 and _selected_vehicle_idx < _vehicles.size():
+		selected_vehicle_id = String(_vehicles[_selected_vehicle_idx].get("vehicle_id", ""))
+	for c in all_convoys:
+		if not (c is Dictionary):
+			continue
+		if String(c.get("convoy_id", "")) == target_id:
+			_convoy = (c as Dictionary).duplicate(true)
+			_vehicles = _convoy.get("vehicle_details_list", [])
+			# Restore previous selection if possible
+			var new_index := 0
+			if selected_vehicle_id != "":
+				for i in range(_vehicles.size()):
+					if String(_vehicles[i].get("vehicle_id", "")) == selected_vehicle_id:
+						new_index = i
+						break
+			_populate_vehicle_dropdown()
+			if _vehicles.size() > 0:
+				_on_vehicle_selected(new_index)
+			_refresh_apply_state()
+			break
 
 func _populate_vehicle_dropdown():
 	vehicle_option_button.clear()
@@ -426,7 +461,13 @@ func _rebuild_pending_tab():
 	var grand_parts_cost: float = 0.0
 	var grand_install_cost: float = 0.0
 	for vid in schedules.keys():
+		# Vehicle-level Changes Overview (before first row for this vehicle)
 		var entries: Array = schedules[vid]
+		var before_stats := _extract_vehicle_stats_by_id(vid)
+		var after_stats := _compute_projected_stats_for_vehicle(vid, entries)
+		var overview_panel := _make_stat_overview_panel(vid, before_stats, after_stats)
+		if is_instance_valid(overview_panel):
+			pending_vbox.add_child(overview_panel)
 		for e in entries:
 			# Panel row with multiline text and right-aligned Remove button
 			var panel = PanelContainer.new()
@@ -532,6 +573,161 @@ func _rebuild_pending_tab():
 	total_label.add_theme_font_size_override("font_size", 16)
 	pending_vbox.add_child(total_label)
 	_refresh_apply_state()
+
+func _extract_vehicle_stats_by_id(vehicle_id: String) -> Dictionary:
+	for v in _vehicles:
+		if String(v.get("vehicle_id", "")) == vehicle_id:
+			return _extract_vehicle_stats(v)
+	return {
+		"top_speed": 0.0,
+		"efficiency": 0.0,
+		"offroad_capability": 0.0,
+		"cargo_capacity": 0.0,
+		"weight_capacity": 0.0,
+		"fuel_capacity": 0.0,
+		"kwh_capacity": 0.0,
+		"value": 0.0,
+	}
+
+func _extract_vehicle_stats(v: Dictionary) -> Dictionary:
+	# Read common base stats, defaulting to 0 when missing
+	var out := {
+		"top_speed": _to_float(v.get("top_speed", 0.0)),
+		"efficiency": _to_float(v.get("efficiency", 0.0)),
+		"offroad_capability": _to_float(v.get("offroad_capability", 0.0)),
+		"cargo_capacity": _to_float(v.get("cargo_capacity", 0.0)),
+		"weight_capacity": _to_float(v.get("weight_capacity", 0.0)),
+		"fuel_capacity": _to_float(v.get("fuel_capacity", 0.0)),
+		"kwh_capacity": _to_float(v.get("kwh_capacity", 0.0)),
+		"value": _to_float(v.get("value", 0.0)),
+	}
+	return out
+
+func _extract_part_effects(p: Dictionary) -> Dictionary:
+	# Normalize effects contributed by a part; treat *_add as additive and include capacity fields
+	return {
+		"top_speed": _to_float(p.get("top_speed_add", 0.0)),
+		"efficiency": _to_float(p.get("efficiency_add", 0.0)),
+		"offroad_capability": _to_float(p.get("offroad_capability_add", 0.0)),
+		"cargo_capacity": _to_float(p.get("cargo_capacity_add", 0.0)),
+		"weight_capacity": _to_float(p.get("weight_capacity_add", 0.0)),
+		# Some parts may carry absolute capacities; treat as additive deltas when present
+		"fuel_capacity": _to_float(p.get("fuel_capacity", 0.0)),
+		"kwh_capacity": _to_float(p.get("kwh_capacity", 0.0)),
+		# value handled separately in schedule, but keep 0 here for stats-only math
+		"value": 0.0,
+	}
+
+func _compute_projected_stats_for_vehicle(vehicle_id: String, schedule_entries: Array) -> Dictionary:
+	var stats := _extract_vehicle_stats_by_id(vehicle_id).duplicate(true)
+	for e in schedule_entries:
+		var swap_ref = e.get("swap_ref")
+		if not (swap_ref is Dictionary):
+			continue
+		var from_p: Dictionary = (swap_ref as Dictionary).get("from_part", {})
+		var to_p: Dictionary = (swap_ref as Dictionary).get("to_part", {})
+		var from_eff := _extract_part_effects(from_p)
+		var to_eff := _extract_part_effects(to_p)
+		for k in stats.keys():
+			# Subtract old part contribution, then add new part
+				stats[k] = _to_float(stats.get(k, 0.0)) - _to_float(from_eff.get(k, 0.0)) + _to_float(to_eff.get(k, 0.0))
+	# Project value using the schedule totals (outside the loop so empty schedules still return)
+	var base_val := _to_float(stats.get("value", 0.0))
+	var add_val := 0.0
+	for e2 in schedule_entries:
+		add_val += _to_float(e2.get("part_value", 0.0))
+	stats["value"] = base_val + add_val
+	return stats
+
+func _make_stat_overview_panel(vehicle_id: String, before_stats: Dictionary, after_stats: Dictionary) -> PanelContainer:
+	var panel = PanelContainer.new()
+	var sb = StyleBoxFlat.new()
+	sb.bg_color = Color(0.10, 0.10, 0.12, 1.0)
+	sb.border_color = Color(0.35, 0.35, 0.5, 1.0)
+	sb.border_width_left = 1
+	sb.border_width_top = 1
+	sb.border_width_right = 1
+	sb.border_width_bottom = 1
+	sb.corner_radius_top_left = 6
+	sb.corner_radius_top_right = 6
+	sb.corner_radius_bottom_left = 6
+	sb.corner_radius_bottom_right = 6
+	panel.add_theme_stylebox_override("panel", sb)
+	panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+
+	var vb = VBoxContainer.new()
+	vb.add_theme_constant_override("separation", 4)
+	panel.add_child(vb)
+
+	# Header with vehicle name
+	var vname := "Vehicle"
+	for v in _vehicles:
+		if String(v.get("vehicle_id", "")) == vehicle_id:
+			vname = String(v.get("name", v.get("make_model", "Vehicle")))
+			break
+	var hdr = Label.new()
+	hdr.text = "%s — Changes Overview" % vname
+	hdr.add_theme_font_size_override("font_size", 15)
+	hdr.add_theme_color_override("font_color", Color(0.9, 0.95, 1.0))
+	vb.add_child(hdr)
+
+	var labels := {
+		"top_speed": "Top Speed",
+		"efficiency": "Efficiency",
+		"offroad_capability": "Off-road",
+		"cargo_capacity": "Cargo Cap",
+		"weight_capacity": "Weight Cap",
+		"fuel_capacity": "Fuel Cap",
+		"kwh_capacity": "Battery kWh",
+		"value": "Vehicle value ($)",
+	}
+	for k in labels.keys():
+		var before := _to_float(before_stats.get(k, 0.0))
+		var after := _to_float(after_stats.get(k, 0.0))
+		var delta := after - before
+		# Show only lines that have non-zero deltas, except include Value always if there are entries
+		var must_show: bool = abs(delta) > 0.0001 or k == "value"
+		if not must_show:
+			continue
+		var row = HBoxContainer.new()
+		row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		row.add_theme_constant_override("separation", 6)
+		var name_lbl = Label.new()
+		name_lbl.text = String(labels[k]) + ":"
+		name_lbl.custom_minimum_size.x = 140
+		var values_lbl = Label.new()
+		var arrow := " → "
+		if k == "value":
+			values_lbl.text = "$%s%s$%s (%s%s)" % ["%.0f" % before, arrow, "%.0f" % after, "+" if delta > 0.0 else ("" if delta == 0.0 else ""), "%.0f" % delta]
+		else:
+			values_lbl.text = "%s%s%s (%s%s)" % ["%.0f" % before, arrow, "%.0f" % after, "+" if delta > 0.0 else ("" if delta == 0.0 else ""), "%.0f" % delta]
+		# Color delta: green positive, red negative, neutral grey
+		var color := Color(0.85, 0.85, 0.95)
+		if delta > 0.0:
+			color = Color(0.6, 1.0, 0.6)
+		elif delta < 0.0:
+			color = Color(1.0, 0.6, 0.6)
+		values_lbl.add_theme_color_override("font_color", color)
+		row.add_child(name_lbl)
+		row.add_child(values_lbl)
+		vb.add_child(row)
+
+	return panel
+
+func _to_float(v: Variant, default_val: float = 0.0) -> float:
+	if v == null:
+		return default_val
+	match typeof(v):
+		TYPE_FLOAT:
+			return v
+		TYPE_INT:
+			return v * 1.0
+		TYPE_BOOL:
+			return 1.0 if v else 0.0
+		TYPE_STRING:
+			return String(v).to_float()
+		_:
+			return default_val
 
 func _get_vehicle_value(vid: String) -> float:
 	for v in _vehicles:
