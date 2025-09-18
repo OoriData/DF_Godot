@@ -15,6 +15,7 @@ signal changes_committed(convoy_id: String, vehicle_id: String, swaps: Array, es
 @onready var back_button: Button = $MainVBox/BottomBar/BackButton
 @onready var apply_button: Button = $MainVBox/BottomBar/ApplyButton
 @onready var vendor_hint_label: Label = $MainVBox/VendorHintLabel
+@onready var _overlay: ColorRect = $ColorRect
 
 # State
 var _convoy: Dictionary = {}
@@ -30,6 +31,31 @@ var _current_swap_ctx: Dictionary = {} # { dialog: AcceptDialog, vehicle_id: Str
 var _cargo_to_slot: Dictionary = {} # cargo_id -> slot_name for vendor candidates
 var _all_vendor_candidates_cache: Array = [] # cached vendor part candidates at current settlement
 var _install_price_cache: Dictionary = {} # key: vehicle_id||part_uid -> float
+
+# Developer toggle: when true, emit detailed cost audit lines to the console
+var _cost_audit_enabled: bool = true
+var _show_cost_breakdown: bool = false
+var _breakdown_toggle: CheckButton = null
+
+# When embedded inside another menu/tab, we hide redundant chrome.
+var embedded_mode: bool = false
+
+func set_embedded_mode(val: bool) -> void:
+	embedded_mode = val
+	_apply_embedded_mode_visibility()
+
+func _apply_embedded_mode_visibility() -> void:
+	# Hide header and vehicle selector when embedded to match Vehicle menu tab style
+	if is_instance_valid(title_label):
+		title_label.visible = not embedded_mode
+	if is_instance_valid(vehicle_option_button):
+		vehicle_option_button.visible = not embedded_mode
+	# Back button is redundant inside a tab; keep Apply visible
+	if is_instance_valid(back_button):
+		back_button.visible = not embedded_mode
+	# Remove dark overlay when embedded inside a tab for visual consistency
+	if is_instance_valid(_overlay):
+		_overlay.visible = not embedded_mode
 
 func _get_slot_from_item(item: Dictionary) -> String:
 	# Accept alternative slot key names; backend may vary
@@ -64,9 +90,75 @@ func _set_install_price(vehicle_id: String, part_uid: String, price: float) -> v
 	# Update any pending swap entries
 	_refresh_pending_prices_for_part(vehicle_id, part_uid)
 
+func _log_cost_audit(tag: String, fields: Dictionary) -> void:
+	if not _cost_audit_enabled:
+		return
+	var payload := fields.duplicate(true)
+	payload["tag"] = tag
+	print("[CostAudit] ", JSON.stringify(payload))
+
+func _estimate_install_price(vehicle_id: String, part: Dictionary) -> float:
+	# Mirror backend: removable => 0; else round(10% vehicle + 25% abs(part.value))
+	if _is_part_removable(part):
+		return 0.0
+	if vehicle_id == "":
+		return 0.0
+	var v10: float = _get_vehicle_value(vehicle_id) * 0.10
+	var p25: float = abs(_get_part_value(part)) * 0.25
+	return _round_install(v10 + p25)
+
 func _format_price_label(vendor_price: float, install_price: float) -> String:
 	var total := vendor_price + install_price
 	return "Part $%s + Installation $%s = $%s" % ["%.2f" % vendor_price, "%.2f" % install_price, "%.2f" % total]
+
+func _make_breakdown_text(vehicle_id: String, part: Dictionary, install_price: float, use_server: bool) -> String:
+	if not _show_cost_breakdown:
+		return ""
+	if vehicle_id == "" or part.is_empty():
+		return ""
+	var v10: float = _get_vehicle_value(vehicle_id) * 0.10
+	var p25: float = abs(_get_part_value(part)) * 0.25
+	var round_note := "banker’s" # ties-to-even
+	var source := "server" if use_server else "estimate"
+	return "(10%%=$%s, 25%%=$%s, %s: $%s, %s)" % ["%.0f" % v10, "%.0f" % p25, source, "%.0f" % install_price, round_note]
+
+func _attach_or_update_breakdown_label(row: HBoxContainer, text: String) -> void:
+	if not is_instance_valid(row):
+		return
+	var existing: Label = row.get_node_or_null("BreakdownLabel")
+	if not _show_cost_breakdown:
+		if is_instance_valid(existing):
+			existing.queue_free()
+		return
+	if not is_instance_valid(existing):
+		var lbl = Label.new()
+		lbl.name = "BreakdownLabel"
+		lbl.add_theme_color_override("font_color", Color(0.75, 0.85, 1.0))
+		lbl.autowrap_mode = TextServer.AUTOWRAP_WORD
+		# Insert before the SelectBtn at the end
+		var insert_at: int = max(0, row.get_child_count() - 1)
+		row.add_child(lbl)
+		row.move_child(lbl, insert_at)
+		existing = lbl
+	existing.text = text
+
+func _update_all_breakdown_labels() -> void:
+	# Update any open chooser rows when toggled
+	if _current_swap_ctx.is_empty():
+		return
+	var row_map: Dictionary = _current_swap_ctx.get("row_map", {})
+	for k in row_map.keys():
+		var row: HBoxContainer = row_map[k]
+		if not is_instance_valid(row):
+			continue
+		var veh_id := String(row.get_meta("vehicle_id", "")) if row.has_meta("vehicle_id") else ""
+		var part_uid := String(row.get_meta("part_uid", "")) if row.has_meta("part_uid") else ""
+		var part_dict: Dictionary = row.get_meta("part_dict", {}) if row.has_meta("part_dict") else {}
+		var server_val := _get_install_price_from_cache(veh_id, part_uid)
+		var use_server := server_val > 0.0
+		var install_price := server_val if use_server else _estimate_install_price(veh_id, part_dict)
+		var text := _make_breakdown_text(veh_id, part_dict, install_price, use_server)
+		_attach_or_update_breakdown_label(row, text)
 
 func _update_row_price_from_cache(row: HBoxContainer) -> void:
 	if not is_instance_valid(row):
@@ -74,25 +166,42 @@ func _update_row_price_from_cache(row: HBoxContainer) -> void:
 	var price_lbl: Label = row.get_node_or_null("PriceLabel")
 	if not is_instance_valid(price_lbl):
 		return
-	# Displayed part price should reflect the part's value
 	var vendor_price := 0.0
-	if row.has_meta("part_dict"):
-		vendor_price = _get_part_value(row.get_meta("part_dict", {}))
-	else:
+	if row.has_meta("vendor_price"):
 		vendor_price = float(row.get_meta("vendor_price", 0.0))
+	if vendor_price <= 0.0 and row.has_meta("part_dict"):
+		# Try vendor listing style fields
+		vendor_price = _extract_price_from_dict(row.get_meta("part_dict", {}))
+	# Final fallback for vendor-sourced rows: intrinsic part value
+	if vendor_price <= 0.0 and row.has_meta("source") and String(row.get_meta("source", "")) == "vendor" and row.has_meta("part_dict"):
+		var pd_fallback: Dictionary = row.get_meta("part_dict", {})
+		vendor_price = _get_part_value(pd_fallback)
 	var veh_id := String(row.get_meta("vehicle_id", ""))
 	var part_uid := String(row.get_meta("part_uid", ""))
 	var install_price := _get_install_price_from_cache(veh_id, part_uid)
-	# Fallback to estimation if cache isn't available: 10% of current vehicle value for non-removable; 0 for removable
+	# Fallback to estimation if cache isn't available: 10% of current vehicle value + 25% of abs(part.value) for non-removable; 0 for removable
 	if install_price <= 0.0:
 		var part_ctx: Dictionary = row.get_meta("part_dict", {}) if row.has_meta("part_dict") else {}
 		var removable := _is_part_removable(part_ctx)
 		if removable:
 			install_price = 0.0
 		elif veh_id != "":
-			install_price = _get_vehicle_value(veh_id) * 0.10
+			install_price = _estimate_install_price(veh_id, part_ctx)
+			_log_cost_audit("row_update_fallback", {
+				"vehicle_id": veh_id,
+				"part_uid": part_uid,
+				"removable": removable,
+				"vehicle_value": _get_vehicle_value(veh_id),
+				"part_value": _get_part_value(part_ctx),
+				"install_price": install_price,
+			})
 	var price_text := _format_price_label(vendor_price, install_price)
 	price_lbl.text = price_text
+	# Update breakdown label for this row if enabled
+	var part_ctx2: Dictionary = row.get_meta("part_dict", {}) if row.has_meta("part_dict") else {}
+	var use_server2 := _get_install_price_from_cache(veh_id, part_uid) > 0.0
+	var breakdown_txt2 := _make_breakdown_text(veh_id, part_ctx2, install_price, use_server2)
+	_attach_or_update_breakdown_label(row, breakdown_txt2)
 
 func _refresh_pending_prices_for_part(vehicle_id: String, part_uid: String) -> void:
 	# If any pending entries match this part and vehicle, refresh the pending UI
@@ -120,6 +229,39 @@ func _maybe_cache_install_price_from_payload(payload: Dictionary) -> void:
 			install_price = float((first as Dictionary).get("installation_price", 0.0))
 	if install_price >= 0.0:
 		_set_install_price(vehicle_id, part_uid, install_price)
+		# Try to enrich with part name/slot/value from payload or current row map
+		var part_name := ""
+		var part_slot := ""
+		var part_val_log := 0.0
+		if data_any is Dictionary:
+			if (data_any as Dictionary).has("name"): part_name = String((data_any as Dictionary).get("name", ""))
+			if (data_any as Dictionary).has("slot"): part_slot = String((data_any as Dictionary).get("slot", ""))
+			if (data_any as Dictionary).has("value"): part_val_log = float((data_any as Dictionary).get("value", 0.0))
+		elif data_any is Array and (data_any as Array).size() > 0 and (data_any[0] is Dictionary):
+			var d0: Dictionary = data_any[0]
+			if d0.has("name"): part_name = String(d0.get("name", ""))
+			if d0.has("slot"): part_slot = String(d0.get("slot", ""))
+			if d0.has("value"): part_val_log = float(d0.get("value", 0.0))
+		# Fall back to current chooser row_map if open
+		if part_name == "" or part_slot == "" or part_val_log == 0.0:
+			if not _current_swap_ctx.is_empty():
+				var row_map2: Dictionary = _current_swap_ctx.get("row_map", {})
+				if row_map2.has(part_uid):
+					var row2: HBoxContainer = row_map2[part_uid]
+					if is_instance_valid(row2) and row2.has_meta("part_dict"):
+						var pd: Dictionary = row2.get_meta("part_dict", {})
+						if part_name == "" and pd.has("name"): part_name = String(pd.get("name", ""))
+						if part_slot == "" and pd.has("slot"): part_slot = String(pd.get("slot", ""))
+						if part_val_log == 0.0 and pd.has("value") and pd.get("value") != null:
+							part_val_log = float(pd.get("value", 0.0))
+		_log_cost_audit("server_install_price", {
+			"vehicle_id": vehicle_id,
+			"part_uid": part_uid,
+			"server_install_price": install_price,
+			"part_name": part_name,
+			"slot": part_slot,
+			"part_value": part_val_log,
+		})
 
 # Summarize stat deltas between parts for quick UI badges
 func _delta_sign(v: float) -> String:
@@ -186,6 +328,10 @@ func _ready():
 		apply_button.pressed.connect(_on_apply_pressed)
 	if is_instance_valid(vehicle_option_button):
 		vehicle_option_button.item_selected.connect(_on_vehicle_selected)
+	# If we're embedded in a tab, ensure chrome matches
+	_apply_embedded_mode_visibility()
+	# Rename the 'Pending' tab to 'Cart' for better UX wording
+	_rename_pending_tab_to_cart()
 	_refresh_apply_state()
 	_gdm = get_node_or_null("/root/GameDataManager")
 	if is_instance_valid(_gdm) and _gdm.has_signal("part_compatibility_ready") and not _gdm.part_compatibility_ready.is_connected(_on_part_compatibility_ready):
@@ -196,6 +342,44 @@ func _ready():
 	# Listen for convoy updates so the mechanics UI reflects changes immediately
 	if is_instance_valid(_gdm) and _gdm.has_signal("convoy_data_updated") and not _gdm.convoy_data_updated.is_connected(_on_gdm_convoy_data_updated):
 		_gdm.convoy_data_updated.connect(_on_gdm_convoy_data_updated)
+
+	# Add an on-screen developer toggle for cost breakdowns
+	var main_vb: VBoxContainer = null
+	if is_instance_valid(title_label):
+		var p := title_label.get_parent()
+		if p is VBoxContainer:
+			main_vb = p
+	if is_instance_valid(main_vb):
+		var row = HBoxContainer.new()
+		row.name = "DevTogglesRow"
+		row.add_theme_constant_override("separation", 8)
+		var cb = CheckButton.new()
+		cb.name = "BreakdownToggle"
+		cb.text = "Show cost breakdown"
+		cb.button_pressed = _show_cost_breakdown
+		cb.toggled.connect(func(pressed: bool):
+			_show_cost_breakdown = pressed
+			_update_all_breakdown_labels()
+			_rebuild_pending_tab()
+		)
+		row.add_child(cb)
+		# Insert after the vendor hint label if present; otherwise append before bottom bar
+		var inserted := false
+		if is_instance_valid(vendor_hint_label):
+			var idx := vendor_hint_label.get_index()
+			main_vb.add_child(row)
+			row.get_parent().move_child(row, idx + 1)
+			inserted = true
+		if not inserted:
+			main_vb.add_child(row)
+		_breakdown_toggle = cb
+
+func _rename_pending_tab_to_cart() -> void:
+	if not is_instance_valid(tab_container) or not is_instance_valid(pending_scroll):
+		return
+	var idx := tab_container.get_tab_idx_from_control(pending_scroll)
+	if idx >= 0:
+		tab_container.set_tab_title(idx, "Cart")
 
 func _close_open_swap_dialog() -> void:
 	# Ensure any open swap chooser is closed before we rebuild UI or switch vehicles
@@ -212,7 +396,8 @@ func initialize_with_data(data: Dictionary):
 		call_deferred("initialize_with_data", data)
 		return
 	_convoy = data.duplicate(true)
-	title_label.text = "Mechanic — %s" % _convoy.get("convoy_name", "Convoy")
+	if is_instance_valid(title_label):
+		title_label.text = "Mechanic — %s" % _convoy.get("convoy_name", "Convoy")
 	_vehicles = _convoy.get("vehicle_details_list", [])
 	# Proactively warm mechanics data: ask GDM to fetch vendor inventories at this settlement
 	if _gdm == null:
@@ -221,7 +406,8 @@ func initialize_with_data(data: Dictionary):
 		_gdm.warm_mechanics_data_for_convoy(_convoy)
 	_populate_vehicle_dropdown()
 	if not _vehicles.is_empty():
-		vehicle_option_button.select(0)
+		if is_instance_valid(vehicle_option_button):
+			vehicle_option_button.select(0)
 		_on_vehicle_selected(0)
 	_refresh_apply_state()
 
@@ -234,6 +420,18 @@ func _exit_tree() -> void:
 	# Disconnect update signal to avoid duplicate connections on reopen
 	if is_instance_valid(_gdm) and _gdm.has_signal("convoy_data_updated") and _gdm.convoy_data_updated.is_connected(_on_gdm_convoy_data_updated):
 		_gdm.convoy_data_updated.disconnect(_on_gdm_convoy_data_updated)
+
+# Allow parent to set the selected vehicle index directly (to keep tabs in sync)
+func set_selected_vehicle_index(idx: int) -> void:
+	if _vehicles.is_empty():
+		return
+	var safe_idx = clamp(idx, 0, _vehicles.size() - 1)
+	if safe_idx == _selected_vehicle_idx:
+		return
+	_selected_vehicle_idx = safe_idx
+	if is_instance_valid(vehicle_option_button):
+		vehicle_option_button.select(safe_idx)
+	_on_vehicle_selected(safe_idx)
 
 func _on_gdm_convoy_data_updated(all_convoys: Array) -> void:
 	# Refresh this menu when our convoy is updated.
@@ -454,7 +652,7 @@ func _rebuild_pending_tab():
 	for c in pending_vbox.get_children():
 		c.queue_free()
 	if _pending_swaps.size() == 0:
-		_show_info(pending_vbox, "No pending changes. Select Swap… to choose a replacement part.")
+		_show_info(pending_vbox, "Your cart is empty. Select Swap… to add a part.")
 		return
 	# Compute per-vehicle schedules and costs
 	var schedules: Dictionary = _compute_pending_schedules()
@@ -504,20 +702,23 @@ func _rebuild_pending_tab():
 			title_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD
 			left_vb.add_child(title_lbl)
 
-			# Use the part's value as the Part price in cart
-			var _vendor_price := float(e.get("vendor_price", 0.0))
+			# Resolve the effective part cost the player pays (prefer vendor price; fallback for vendor items)
+			var _vendor_price := _effective_part_cost_for_entry(e)
 			var install_cost := float(e.get("install_cost", 0.0))
 			var part_value := float(e.get("part_value", 0.0))
 			var removable_flag := bool(e.get("removable", false))
 			# Costs line: Part (value) + Installation = Total
 			var costs_lbl = Label.new()
-			costs_lbl.text = _format_price_label(part_value, install_cost)
+			# Show what the player pays: effective part cost + installation
+			costs_lbl.text = _format_price_label(_vendor_price, install_cost)
 			costs_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD
 			left_vb.add_child(costs_lbl)
 
 			# Value line: clearly separated
 			var value_lbl = Label.new()
-			var value_text = "Vehicle Value +$%s" % ("%.2f" % part_value)
+			var value_delta := float(e.get("value_delta", part_value))
+			var sign_str := "+" if value_delta >= 0.0 else ""
+			var value_text = "Vehicle Value %s$%s" % [sign_str, "%.2f" % value_delta]
 			if removable_flag:
 				value_text += " (removable)"
 			value_lbl.text = value_text
@@ -554,25 +755,42 @@ func _rebuild_pending_tab():
 			right_vb.add_child(remove_btn)
 
 			pending_vbox.add_child(panel)
-			grand_parts_cost += part_value
+			# Cart parts cost sums effective price (inventory parts typically 0)
+			grand_parts_cost += _vendor_price
 			grand_install_cost += install_cost
 	# Summary: Parts cost, Installation, Total (suffix $ style)
 	var parts_label = Label.new()
-	parts_label.text = "Parts cost : %s$" % ("%.2f" % grand_parts_cost)
+	parts_label.text = "Parts cost: $%s" % ("%.2f" % grand_parts_cost)
 	parts_label.add_theme_font_size_override("font_size", 16)
 	pending_vbox.add_child(parts_label)
 
 	var install_label = Label.new()
-	install_label.text = "Installation : %s$" % ("%.2f" % grand_install_cost)
+	install_label.text = "Installation: $%s" % ("%.2f" % grand_install_cost)
 	install_label.add_theme_font_size_override("font_size", 16)
 	pending_vbox.add_child(install_label)
 
 	var total_label = Label.new()
 	var grand_total := grand_parts_cost + grand_install_cost
-	total_label.text = "total : %s$" % ("%.2f" % grand_total)
+	total_label.text = "Total: $%s" % ("%.2f" % grand_total)
 	total_label.add_theme_font_size_override("font_size", 16)
 	pending_vbox.add_child(total_label)
 	_refresh_apply_state()
+
+func _effective_part_cost_for_entry(e: Dictionary) -> float:
+	# Player pays intrinsic part value only when acquiring from vendor. Inventory parts are free (already owned).
+	var sref_any = e.get("swap_ref", {})
+	if not (sref_any is Dictionary):
+		return 0.0
+	var sref: Dictionary = sref_any
+	if String(sref.get("source", "")) != "vendor":
+		return 0.0
+	return _get_part_value(sref.get("to_part", {}))
+
+func _effective_price_for_swap(s: Dictionary) -> float:
+	# Scheduling heuristic: order vendor swaps by intrinsic value (cheaper first) to minimize cumulative install.
+	if String(s.get("source", "")) != "vendor":
+		return 0.0
+	return _get_part_value(s.get("to_part", {}))
 
 func _extract_vehicle_stats_by_id(vehicle_id: String) -> Dictionary:
 	for v in _vehicles:
@@ -631,12 +849,14 @@ func _compute_projected_stats_for_vehicle(vehicle_id: String, schedule_entries: 
 		for k in stats.keys():
 			# Subtract old part contribution, then add new part
 				stats[k] = _to_float(stats.get(k, 0.0)) - _to_float(from_eff.get(k, 0.0)) + _to_float(to_eff.get(k, 0.0))
-	# Project value using the schedule totals (outside the loop so empty schedules still return)
-	var base_val := _to_float(stats.get("value", 0.0))
-	var add_val := 0.0
+	# Project value using the same rounding as backend's value property (ties-to-even per Python round)
+	var base_val := _round_bankers(_to_float(stats.get("value", 0.0)))
+	var running := base_val
 	for e2 in schedule_entries:
-		add_val += _to_float(e2.get("part_value", 0.0))
-	stats["value"] = base_val + add_val
+		# Use value delta (to.value - from.value) when available; fallback to part_value
+		var step_delta := _to_float(e2.get("value_delta", e2.get("part_value", 0.0)))
+		running = _round_bankers(running + step_delta)
+	stats["value"] = running
 	return stats
 
 func _make_stat_overview_panel(vehicle_id: String, before_stats: Dictionary, after_stats: Dictionary) -> PanelContainer:
@@ -736,10 +956,44 @@ func _get_vehicle_value(vid: String) -> float:
 	return 0.0
 
 func _get_part_value(part: Dictionary) -> float:
-	# Prefer explicit part 'value'; fallback to vendor unit price
-	if part.has("value") and part.value != null:
-		return float(part.value)
-	return _extract_unit_price(part)
+	# Intrinsic part value (distinct from any vendor listing price). Backend install cost uses part.value.
+	# Provide fallbacks for alternate schema keys and container wrapping.
+	var keys: Array = ["value", "base_value", "part_value", "market_value"]
+	for k in keys:
+		if part.has(k) and part.get(k) != null:
+			var v: Variant = part.get(k)
+			if (v is float or v is int):
+				var f := float(v)
+				if abs(f) > 0.000001: # use first non-zero encountered
+					return f
+	# Recurse into first nested part if this is a cargo container wrapping a part
+	if part.has("parts") and part.get("parts") is Array and not (part.get("parts") as Array).is_empty():
+		var nested: Array = part.get("parts")
+		var first = nested[0]
+		if first is Dictionary:
+			return _get_part_value(first)
+	# Allow legitimate zero value
+	if part.has("value") and part.get("value") != null:
+		return float(part.get("value"))
+	return 0.0
+
+func _round_install(x: float) -> float:
+	# Wrapper to centralize rounding semantics for install cost. Currently uses banker's rounding.
+	return _round_bankers(x)
+
+func _round_bankers(x: float) -> float:
+	# Python's round() uses banker's rounding (ties to even) at integer precision.
+	# Implement ties-to-even for .5 at integer boundary.
+	var f: float = floor(x)
+	var diff: float = x - f
+	if is_equal_approx(diff, 0.5):
+		var fi: int = int(f)
+		if (fi % 2) == 0:
+			return float(fi)
+		else:
+			return float(fi + 1)
+	else:
+		return round(x)
 
 func _is_part_removable(part: Dictionary) -> bool:
 	return bool(part.get("removable", false))
@@ -754,7 +1008,7 @@ func _compute_pending_schedules() -> Dictionary:
 		if not per_vehicle.has(vid):
 			per_vehicle[vid] = []
 		per_vehicle[vid].append(s)
-	# Build schedules with ordering: non-removable by value asc, then removable
+	# Build schedules with ordering: non-removable by vendor price asc, then removable
 	var out: Dictionary = {}
 	for vid in per_vehicle.keys():
 		var swaps: Array = per_vehicle[vid]
@@ -766,21 +1020,50 @@ func _compute_pending_schedules() -> Dictionary:
 				rem.append(s)
 			else:
 				non_rem.append(s)
+		# Order to minimize install: primary key = part value (lower first), tie-breaker = effective price
 		non_rem.sort_custom(func(a, b):
 			var va := _get_part_value(a.get("to_part", {}))
 			var vb := _get_part_value(b.get("to_part", {}))
-			return va < vb
+			if va != vb:
+				return va < vb
+			var ap := self._effective_price_for_swap(a)
+			var bp := self._effective_price_for_swap(b)
+			return ap < bp
 		)
+		# Final order: cheapest non-removable first (ascending by vendor price), then removable parts
+		# Final order: cheapest non-removable first (ascending by part value), then removable parts
 		var ordered: Array = non_rem + rem
 		var schedule: Array = []
 		var cur_val := _get_vehicle_value(vid)
 		for s in ordered:
 			var to_p: Dictionary = s.get("to_part", {})
-			var pv := _get_part_value(to_p)
+			var to_val := _get_part_value(to_p)
+			var from_p: Dictionary = s.get("from_part", {})
+			var from_val := _get_part_value(from_p)
+			var delta_val := to_val - from_val
+			var pv := to_val
 			var removable := _is_part_removable(to_p)
-			var install_cost := 0.0 if removable else (cur_val * 0.10)
-			# After computing install, vehicle value increases by part value
-			cur_val += pv
+			var install_cost := 0.0
+			if not removable:
+				var vehicle_value_mod := cur_val * 0.10
+				# Backend uses absolute part.value for the 25% component (not delta)
+				var part_value_mod: float = abs(to_val) * 0.25
+				install_cost = _round_install(vehicle_value_mod + part_value_mod)
+				_log_cost_audit("schedule_step", {
+					"vehicle_id": vid,
+					"slot": String(s.get("slot","slot")),
+					"vehicle_value_pre": cur_val,
+					"to_value": to_val,
+					"from_value": from_val,
+					"delta_value": delta_val,
+					"v10": vehicle_value_mod,
+					"p25": part_value_mod,
+					"install_cost": install_cost,
+					"removable": removable,
+				})
+			# After computing install, backend increases vehicle value by the delta of the new part
+			# and Python property rounds the resulting vehicle value; mirror that per-step using delta.
+			cur_val = _round_bankers(cur_val + delta_val)
 			var entry := {
 				"swap_ref": s,
 				"slot": String(s.get("slot","slot")),
@@ -788,12 +1071,37 @@ func _compute_pending_schedules() -> Dictionary:
 				"to_name": String(to_p.get("name", "New")),
 				"vendor_price": float(s.get("price", 0.0)),
 				"install_cost": float(install_cost),
-				"part_value": float(pv),
+				"part_value": float(pv), # absolute new part value
+				"value_delta": float(delta_val), # value change used in projections
 				"removable": removable,
 			}
 			schedule.append(entry)
 		out[vid] = schedule
+		# Optional: debug dump of per-step costs (disabled by default)
+		if false:
+			_debug_dump_schedule(vid, schedule)
 	return out
+
+func _debug_dump_schedule(vehicle_id: String, schedule_entries: Array) -> void:
+	print("[MechanicsMenu][DEBUG] Schedule for ", vehicle_id)
+	var base := _get_vehicle_value(vehicle_id)
+	var running := base
+	for e in schedule_entries:
+		var s = e.get("swap_ref", {})
+		var to_p: Dictionary = (s as Dictionary).get("to_part", {})
+		var to_val := _get_part_value(to_p)
+		var from_p: Dictionary = (s as Dictionary).get("from_part", {})
+		var from_val := _get_part_value(from_p)
+		var delta_val := to_val - from_val
+		var removable := _is_part_removable(to_p)
+		var v10 := running * 0.10
+		# Backend: 25% uses absolute to_part.value
+		var p25: float = abs(to_val) * 0.25
+		var inst: float = 0.0
+		if not removable:
+			inst = _round_install(v10 + p25)
+		print("  pre=", running, " delta=", delta_val, " 10%=", v10, " 25%=", p25, " install=", inst, " post=", running + delta_val)
+		running += delta_val
 
 func _on_swap_part_pressed(slot_name: String, current_part: Dictionary):
 	# Pretty chooser with grouping and compatibility hints
@@ -862,6 +1170,10 @@ func _on_swap_part_pressed(slot_name: String, current_part: Dictionary):
 	scroll.add_child(lists_vb)
 	root.add_child(scroll)
 
+	# Stash containers for dynamic re-parenting when backend results arrive
+	_current_swap_ctx["compatible_box"] = compatible_box
+	_current_swap_ctx["incompatible_box"] = incompatible_box
+
 	var all_candidates: Array = []
 	for c in _collect_candidate_parts_for_slot(slot_name):
 		all_candidates.append({"part": c, "source": "inventory", "price": 0.0})
@@ -879,7 +1191,9 @@ func _on_swap_part_pressed(slot_name: String, current_part: Dictionary):
 				cid_req = str(cand.get("part_id", ""))
 			if cid_req == "":
 				continue
-			if not _compat_cache.has(cid_req):
+			# Use per-vehicle cache key
+			var ck := "%s||%s" % [vehicle_id, cid_req]
+			if not _compat_cache.has(ck):
 				_gdm.request_part_compatibility(vehicle_id, cid_req)
 
 	if all_candidates.is_empty():
@@ -893,7 +1207,8 @@ func _on_swap_part_pressed(slot_name: String, current_part: Dictionary):
 			var price: float = float(entry.get("price", 0.0))
 			var vendor_id_for_entry: String = String(entry.get("vendor_id", ""))
 			# Seed from backend cache if available for this vehicle+part
-			var comp_ok := _is_part_compatible(vehicle, slot_name, cand)
+			# Start with a light local check: slot match only; backend refines
+			var comp_ok := (_get_slot_from_item(cand) == slot_name)
 			var row = _make_candidate_row(cand, source, price, comp_ok)
 			var id2: String = str(cand.get("cargo_id", ""))
 			if id2 == "":
@@ -1037,7 +1352,11 @@ func _collect_all_vendor_part_candidates() -> Array:
 			# Case 1: top-level part with slot on source_item
 			var slot_detected := _get_slot_from_item(source_item)
 			if slot_detected != "":
-				results.append({"part": source_item, "source": "vendor", "price": price_f, "vendor_id": vendor_id_local})
+				# Duplicate so we can inject price metadata for robust fallback rendering
+				var part_for_row: Dictionary = source_item.duplicate(true)
+				if (not part_for_row.has("unit_price")) and price_f > 0.0:
+					part_for_row["unit_price"] = price_f
+				results.append({"part": part_for_row, "source": "vendor", "price": price_f, "vendor_id": vendor_id_local})
 				continue
 			# Case 2: container with nested parts[] (on source_item)
 			if source_item.has("parts") and (source_item.get("parts") is Array) and not ((source_item.get("parts") as Array).is_empty()):
@@ -1051,6 +1370,9 @@ func _collect_all_vendor_part_candidates() -> Array:
 						cont_id_val = str(first_part.get("part_id", ""))
 					if cont_id_val != "":
 						display_part["cargo_id"] = cont_id_val
+					# Also carry a price on the displayed part for robust fallback
+					if price_f > 0.0 and not display_part.has("unit_price"):
+						display_part["unit_price"] = price_f
 					results.append({"part": display_part, "source": "vendor", "price": price_f, "vendor_id": vendor_id_local})
 					continue
 			# Case 3: no slot/parts even after enrichment — skip until enrichment returns
@@ -1164,7 +1486,8 @@ func _on_apply_pressed():
 	for e in schedule_for_vehicle:
 		var s = e.get("swap_ref")
 		ordered_swaps.append(s)
-		total_cost += float(e.get("vendor_price", 0.0)) + float(e.get("install_cost", 0.0))
+		var part_cost := _effective_part_cost_for_entry(e)
+		total_cost += part_cost + float(e.get("install_cost", 0.0))
 	# Keep swaps for other vehicles in their original order at the end
 	for s in _pending_swaps:
 		if String(s.get("vehicle_id", "")) != vehicle_id:
@@ -1260,8 +1583,15 @@ func _make_candidate_row(part: Dictionary, source: String, _price: float, compat
 	var price_lbl = Label.new()
 	price_lbl.name = "PriceLabel"
 	# Store metas so we can update when install price arrives from compat
-	var part_price := _get_part_value(part)
+	var part_price := float(_price)
+	if part_price <= 0.0:
+		# Attempt to derive a vendor-listed price first
+		part_price = _extract_price_from_dict(part)
+	# If still zero and this is a vendor-sourced item, fall back to intrinsic value for display
+	if part_price <= 0.0 and source == "vendor":
+		part_price = _get_part_value(part)
 	hb.set_meta("vendor_price", part_price)
+	hb.set_meta("source", source)
 	var veh_ctx := ""
 	if not _current_swap_ctx.is_empty():
 		veh_ctx = String(_current_swap_ctx.get("vehicle_id", ""))
@@ -1271,11 +1601,41 @@ func _make_candidate_row(part: Dictionary, source: String, _price: float, compat
 	var install_price := _get_install_price_from_cache(veh_ctx, uid_ctx)
 	if install_price <= 0.0:
 		var removable := _is_part_removable(part)
-		install_price = 0.0 if removable else (_get_vehicle_value(veh_ctx) * 0.10)
+		install_price = 0.0 if removable else _estimate_install_price(veh_ctx, part)
+	# Cost audit for initial row render
+	_log_cost_audit("row_init", {
+		"phase": "init",
+		"vehicle_id": veh_ctx,
+		"part_uid": uid_ctx,
+		"vendor_price": part_price,
+		"install_price": install_price,
+		"removable": _is_part_removable(part),
+		"vehicle_value": _get_vehicle_value(veh_ctx),
+		"part_value": _get_part_value(part),
+	})
 	var price_text := _format_price_label(part_price, install_price)
 	price_lbl.text = price_text
 	price_lbl.add_theme_color_override("font_color", Color(0.85, 1.0, 0.85))
 	hb.add_child(price_lbl)
+	if part_price <= 0.0:
+		_log_cost_audit("vendor_price_zero_row_init", {
+			"part_uid": uid_ctx,
+			"vehicle_id": veh_ctx,
+			"price_fields_present": [
+				part.has("unit_price"), part.has("base_unit_price"), part.has("price"), part.has("container_price")
+			],
+			"raw_price_fields": {
+				"unit_price": part.get("unit_price", null),
+				"base_unit_price": part.get("base_unit_price", null),
+				"price": part.get("price", null),
+				"container_price": part.get("container_price", null),
+			}
+		})
+
+	# Optional cost breakdown label (developer toggle)
+	var use_server_init := _get_install_price_from_cache(veh_ctx, uid_ctx) > 0.0
+	var breakdown_txt := _make_breakdown_text(veh_ctx, part, install_price, use_server_init)
+	_attach_or_update_breakdown_label(hb, breakdown_txt)
 
 	# Select button
 	var btn = Button.new()
@@ -1349,6 +1709,25 @@ func _update_row_from_compat_payload(payload: Dictionary) -> void:
 		btn.text = "Select" if compatible else "Incompatible"
 		btn.disabled = not compatible
 
+	# Move the row to the appropriate container based on final backend decision
+	var compat_box: VBoxContainer = _current_swap_ctx.get("compatible_box", null)
+	var incomp_box: VBoxContainer = _current_swap_ctx.get("incompatible_box", null)
+	if is_instance_valid(compat_box) and is_instance_valid(incomp_box) and is_instance_valid(row):
+		var parent := row.get_parent()
+		if compatible and parent != compat_box:
+			if is_instance_valid(parent):
+				parent.remove_child(row)
+			compat_box.add_child(row)
+		elif (not compatible) and parent != incomp_box:
+			if is_instance_valid(parent):
+				parent.remove_child(row)
+			incomp_box.add_child(row)
+		# Hide incompatible section if it only has its header
+		if incomp_box.get_child_count() <= 1:
+			incomp_box.visible = false
+		else:
+			incomp_box.visible = true
+
 	# Final override: if this item is already in the cart, mark accordingly regardless of compat
 	if _is_part_id_already_pending(cid):
 		if is_instance_valid(compat_lbl):
@@ -1374,8 +1753,9 @@ func _part_summary(part: Dictionary) -> String:
 	return "" if bits.is_empty() else "(" + ", ".join(bits) + ")"
 
 func _is_part_compatible(vehicle: Dictionary, slot_name: String, part: Dictionary) -> bool:
-	# Baseline rule: slot must match and part must be removable/bolt-on if required
-	if String(part.get("slot", "")) != slot_name:
+	# Baseline rule: slot must match (be robust to alternative keys)
+	var pslot := _get_slot_from_item(part)
+	if pslot != slot_name:
 		return false
 	# If part has explicit requirements, attempt a naive check
 	if part.has("requirements") and part.requirements is Array and not (part.requirements as Array).is_empty():
@@ -1390,7 +1770,7 @@ func _is_part_compatible(vehicle: Dictionary, slot_name: String, part: Dictionar
 	return true
 
 func _compat_reason(_vehicle: Dictionary, slot_name: String, part: Dictionary) -> String:
-	if String(part.get("slot", "")) != slot_name:
+	if _get_slot_from_item(part) != slot_name:
 		return "Different slot (needs %s)." % slot_name
 	if part.has("requirements") and part.requirements is Array and not (part.requirements as Array).is_empty():
 		return "Doesn't meet part requirements."

@@ -33,6 +33,9 @@ grow_horizontal = 2
 grow_vertical = 2
 theme_override_constants/separation = 10
 
+# Note: When embedded in a tab, the script hides TitleLabel, VehicleOptionButton,
+# and BackButton to better match the style of other tabs.
+
 [node name="TitleLabel" type="Label" parent="MainVBox"]
 layout_mode = 2
 size_flags_horizontal = 3

@@ -5,7 +5,6 @@ signal back_requested
 # Signal to open the full cargo manifest for the entire convoy
 signal return_to_convoy_overview_requested(convoy_data)
 signal inspect_all_convoy_cargo_requested(convoy_data)
-signal open_mechanics_menu_requested(convoy_data)
 
 # @onready variables for UI elements
 @onready var title_label: Label = $MainVBox/TitleLabel
@@ -18,6 +17,7 @@ signal open_mechanics_menu_requested(convoy_data)
 @onready var back_to_mechanic_button: Button = $MainVBox/BackButton # repurpose later if needed
 @onready var _menu_buttons_container: Node = null
 @onready var mechanic_button_scene_node: Button = $MainVBox/ActionButtons/MechanicButton
+@onready var mechanics_embed: Node = $MainVBox/VehicleTabContainer/Service/MechanicsEmbed
 
 var current_vehicle_list: Array = []
 var _current_convoy_data: Dictionary # To store the full convoy data
@@ -94,29 +94,21 @@ func _ready():
 		title_label.mouse_filter = Control.MOUSE_FILTER_STOP # Allow it to receive mouse events
 		title_label.gui_input.connect(_on_title_label_gui_input)
 
-	# Insert a Mechanics button into the UI under the MenuButtons row if present
+	# Old mechanic buttons are deprecated in favor of the Service tab
+	# If one exists in the scene or overview, hide/skip wiring it.
 	var buttons_path_candidates = ["MainVBox/ScrollContainer/ContentVBox/MenuButtons", "MainVBox/VehicleTabContainer/Overview/OverviewVBox/MenuButtons"]
 	for p in buttons_path_candidates:
 		var node = get_node_or_null(p)
 		if node != null:
 			_menu_buttons_container = node
 			break
-	if _menu_buttons_container is HBoxContainer:
-		var mech_btn := Button.new()
-		mech_btn.text = "Mechanic"
-		mech_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		mech_btn.pressed.connect(func():
-			if _current_convoy_data:
-				emit_signal("open_mechanics_menu_requested", _current_convoy_data)
-		)
-		_menu_buttons_container.add_child(mech_btn)
-
-	# Also wire the scene MechanicButton if present
+	# Ensure scene Mechanic button is hidden
 	if is_instance_valid(mechanic_button_scene_node):
-		mechanic_button_scene_node.pressed.connect(func():
-			if _current_convoy_data:
-				emit_signal("open_mechanics_menu_requested", _current_convoy_data)
-		)
+		mechanic_button_scene_node.visible = false
+
+	# Configure embedded mechanics menu to fit tab chrome
+	if is_instance_valid(mechanics_embed) and mechanics_embed.has_method("set_embedded_mode"):
+		mechanics_embed.set_embedded_mode(true)
 
 	# Check new VBox validity
 	if not is_instance_valid(overview_vbox) or not is_instance_valid(parts_vbox) or not is_instance_valid(cargo_vbox):
@@ -176,6 +168,10 @@ func initialize_with_data(data: Dictionary):
 
 	current_vehicle_list = data.get("vehicle_details_list", [])
 
+	# Initialize the Service tab mechanics with the same convoy data
+	if is_instance_valid(mechanics_embed) and mechanics_embed.has_method("initialize_with_data"):
+		mechanics_embed.initialize_with_data(data)
+
 	if is_instance_valid(vehicle_option_button):
 		print("ConvoyVehicleMenu: Populating VehicleOptionButton. Number of vehicles from data: ", current_vehicle_list.size())
 		vehicle_option_button.clear()
@@ -216,6 +212,9 @@ func _on_vehicle_selected(index: int):
 	print("ConvoyVehicleMenu: Attempting to display data for vehicle at index ", index, ": ", selected_vehicle_data)
 	if selected_vehicle_data is Dictionary:
 		_display_vehicle_details(selected_vehicle_data)
+		# Keep Service tab mechanics selection in sync
+		if is_instance_valid(mechanics_embed) and mechanics_embed.has_method("set_selected_vehicle_index"):
+			mechanics_embed.set_selected_vehicle_index(index)
 	else:
 		printerr("ConvoyVehicleMenu: Vehicle data at index ", index, " is not a Dictionary: ", typeof(selected_vehicle_data))
 		_show_initial_detail_message("Error: Could not load vehicle data.")
