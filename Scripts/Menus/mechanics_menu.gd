@@ -98,18 +98,20 @@ func _log_cost_audit(tag: String, fields: Dictionary) -> void:
 	print("[CostAudit] ", JSON.stringify(payload))
 
 func _estimate_install_price(vehicle_id: String, part: Dictionary) -> float:
-	# Mirror backend: removable => 0; else round(10% vehicle + 25% abs(part.value))
+	# Simple one-off estimate using current vehicle value (does NOT include speculative earlier cart changes).
+	# For cart sequencing we compute a more accurate stepwise projection in _compute_pending_schedules().
 	if _is_part_removable(part):
 		return 0.0
 	if vehicle_id == "":
 		return 0.0
 	var v10: float = _get_vehicle_value(vehicle_id) * 0.10
-	var p25: float = abs(_get_part_value(part)) * 0.25
+	var p25: float = _get_part_value(part) * 0.25
 	return _round_install(v10 + p25)
 
 func _format_price_label(vendor_price: float, install_price: float) -> String:
 	var total := vendor_price + install_price
 	return "Part $%s + Installation $%s = $%s" % ["%.2f" % vendor_price, "%.2f" % install_price, "%.2f" % total]
+
 
 func _make_breakdown_text(vehicle_id: String, part: Dictionary, install_price: float, use_server: bool) -> String:
 	if not _show_cost_breakdown:
@@ -117,7 +119,7 @@ func _make_breakdown_text(vehicle_id: String, part: Dictionary, install_price: f
 	if vehicle_id == "" or part.is_empty():
 		return ""
 	var v10: float = _get_vehicle_value(vehicle_id) * 0.10
-	var p25: float = abs(_get_part_value(part)) * 0.25
+	var p25: float = _get_part_value(part) * 0.25
 	var round_note := "banker’s" # ties-to-even
 	var source := "server" if use_server else "estimate"
 	return "(10%%=$%s, 25%%=$%s, %s: $%s, %s)" % ["%.0f" % v10, "%.0f" % p25, source, "%.0f" % install_price, round_note]
@@ -1020,12 +1022,20 @@ func _compute_pending_schedules() -> Dictionary:
 				rem.append(s)
 			else:
 				non_rem.append(s)
-		# Order to minimize install: primary key = part value (lower first), tie-breaker = effective price
+		# Order non-removable parts to minimize cumulative install cost.
+		# Heuristic: ascending by (to_part.value - from_part.value) first (lower delta means lower subsequent base),
+		# then by intrinsic to_part.value, then by vendor acquisition cost heuristic.
 		non_rem.sort_custom(func(a, b):
-			var va := _get_part_value(a.get("to_part", {}))
-			var vb := _get_part_value(b.get("to_part", {}))
-			if va != vb:
-				return va < vb
+			var a_to := _get_part_value(a.get("to_part", {}))
+			var a_from := _get_part_value(a.get("from_part", {}))
+			var b_to := _get_part_value(b.get("to_part", {}))
+			var b_from := _get_part_value(b.get("from_part", {}))
+			var a_delta := a_to - a_from
+			var b_delta := b_to - b_from
+			if a_delta != b_delta:
+				return a_delta < b_delta
+			if a_to != b_to:
+				return a_to < b_to
 			var ap := self._effective_price_for_swap(a)
 			var bp := self._effective_price_for_swap(b)
 			return ap < bp
@@ -1035,6 +1045,7 @@ func _compute_pending_schedules() -> Dictionary:
 		var ordered: Array = non_rem + rem
 		var schedule: Array = []
 		var cur_val := _get_vehicle_value(vid)
+		# Track cumulative projected vehicle value for downstream installs.
 		for s in ordered:
 			var to_p: Dictionary = s.get("to_part", {})
 			var to_val := _get_part_value(to_p)
@@ -1045,9 +1056,9 @@ func _compute_pending_schedules() -> Dictionary:
 			var removable := _is_part_removable(to_p)
 			var install_cost := 0.0
 			if not removable:
+				# IMPORTANT: installation cost uses vehicle value BEFORE adding this part (cur_val)
 				var vehicle_value_mod := cur_val * 0.10
-				# Backend uses absolute part.value for the 25% component (not delta)
-				var part_value_mod: float = abs(to_val) * 0.25
+				var part_value_mod: float = to_val * 0.25
 				install_cost = _round_install(vehicle_value_mod + part_value_mod)
 				_log_cost_audit("schedule_step", {
 					"vehicle_id": vid,
@@ -1061,8 +1072,7 @@ func _compute_pending_schedules() -> Dictionary:
 					"install_cost": install_cost,
 					"removable": removable,
 				})
-			# After computing install, backend increases vehicle value by the delta of the new part
-			# and Python property rounds the resulting vehicle value; mirror that per-step using delta.
+			# Update projected vehicle value AFTER install (base + delta), rounding to mirror backend value property
 			cur_val = _round_bankers(cur_val + delta_val)
 			var entry := {
 				"swap_ref": s,
