@@ -515,7 +515,8 @@ func buy_cargo(vendor_id: String, convoy_id: String, cargo_id: String, quantity:
 	if vendor_id.is_empty() or convoy_id.is_empty() or cargo_id.is_empty():
 		printerr("APICalls (buy_cargo): missing id(s)")
 		return
-	var url := "%s/vendor/buy_cargo?vendor_id=%s&convoy_id=%s&cargo_id=%s&quantity=%d" % [BASE_URL, vendor_id, convoy_id, cargo_id, quantity]
+	# New route shape (consistent with resource/vehicle routes): /vendor/cargo/buy
+	var url := "%s/vendor/cargo/buy?vendor_id=%s&convoy_id=%s&cargo_id=%s&quantity=%d" % [BASE_URL, vendor_id, convoy_id, cargo_id, quantity]
 	var headers: PackedStringArray = ['accept: application/json']
 	headers = _apply_auth_header(headers)
 	_request_queue.append({
@@ -532,7 +533,8 @@ func sell_cargo(vendor_id: String, convoy_id: String, cargo_id: String, quantity
 	if vendor_id.is_empty() or convoy_id.is_empty() or cargo_id.is_empty():
 		printerr("APICalls (sell_cargo): missing id(s)")
 		return
-	var url := "%s/vendor/sell_cargo?vendor_id=%s&convoy_id=%s&cargo_id=%s&quantity=%d" % [BASE_URL, vendor_id, convoy_id, cargo_id, quantity]
+	# New route shape: /vendor/cargo/sell
+	var url := "%s/vendor/cargo/sell?vendor_id=%s&convoy_id=%s&cargo_id=%s&quantity=%d" % [BASE_URL, vendor_id, convoy_id, cargo_id, quantity]
 	var headers: PackedStringArray = ['accept: application/json']
 	headers = _apply_auth_header(headers)
 	_request_queue.append({
@@ -1010,6 +1012,29 @@ func _on_request_completed(result: int, response_code: int, _headers: PackedStri
 			_complete_current_request()
 			return
 		else:
+			# Optional compatibility fallback: if we tried new cargo route and got 404, retry legacy path once.
+			if response_code == 404 and _last_requested_url.find("/vendor/cargo/") != -1 and (_current_patch_signal_name == "cargo_bought" or _current_patch_signal_name == "cargo_sold"):
+				var legacy_url := _last_requested_url
+				legacy_url = legacy_url.replace("/vendor/cargo/buy?", "/vendor/buy_cargo?")
+				legacy_url = legacy_url.replace("/vendor/cargo/sell?", "/vendor/sell_cargo?")
+				if legacy_url != _last_requested_url:
+					print("[APICalls][PATCH_TXN][Fallback] 404 on new cargo route; retrying legacy URL=", legacy_url)
+					# Mark current attempt ended and enqueue fallback
+					_is_request_in_progress = false
+					_current_request_purpose = RequestPurpose.NONE
+					# Rebuild headers with auth
+					var headers: PackedStringArray = ['accept: application/json']
+					headers = _apply_auth_header(headers)
+					_request_queue.push_front({
+						"url": legacy_url,
+						"headers": headers,
+						"purpose": RequestPurpose.NONE,
+						"method": HTTPClient.METHOD_PATCH,
+						"body": "",
+						"signal_name": _current_patch_signal_name
+					})
+					_process_queue()
+					return
 			print("[APICalls][PATCH_TXN] signal=%s FAILED result=%d code=%d url=%s" % [_current_patch_signal_name, result, response_code, _last_requested_url])
 			var fail_body_text := body.get_string_from_utf8()
 			var fail_preview := fail_body_text.substr(0, 400)

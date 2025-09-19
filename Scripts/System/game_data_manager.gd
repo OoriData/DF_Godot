@@ -671,25 +671,52 @@ func apply_mechanic_swaps(convoy_id: String, vehicle_id: String, ordered_swaps: 
 		if vid == "" or (vehicle_id != "" and vid != vehicle_id):
 			continue
 		var to_part: Dictionary = s.get("to_part", {})
-		var part_id := String(to_part.get("cargo_id", ""))
-		if part_id == "":
-			part_id = String(to_part.get("part_id", ""))
-		if part_id == "":
+		# Prefer cargo_id for attach and part_id for vendor add; compute both if available
+		var cargo_id_str := String(to_part.get("cargo_id", ""))
+		var part_id_str := String(to_part.get("part_id", ""))
+		# Some vendor payloads may use "id" for the part identifier
+		if part_id_str == "":
+			part_id_str = String(to_part.get("id", ""))
+		# If neither id is present, we cannot proceed
+		if cargo_id_str == "" and part_id_str == "":
 			printerr("[GameDataManager][MechanicApply] Swap missing cargo/part id; skipping entry")
 			continue
 		var swap_vendor_id := String(s.get("vendor_id", ""))
 		var effective_vendor := swap_vendor_id if swap_vendor_id != "" else vendor_id
-		if effective_vendor != "" and api_calls_node.has_method("add_vehicle_part"):
-			print("[GameDataManager][MechanicApply] ADD via vendor queue vendor=", effective_vendor, " convoy=", convoy_id, " vehicle=", vid, " part=", part_id)
-			api_calls_node.add_vehicle_part(effective_vendor, convoy_id, vid, part_id)
+		# Determine source and whether this can be self-installed (removable)
+		var source := String(s.get("source", ""))
+		source = source.to_lower()
+		var removable := false
+		var rv: Variant = to_part.get("removable", false)
+		if rv is bool:
+			removable = rv
+		elif rv is int:
+			removable = int(rv) != 0
+		elif rv is String:
+			var rvs := String(rv).to_lower()
+			removable = (rvs == "true" or rvs == "1" or rvs == "yes")
+
+		var prefer_attach := (source == "inventory" and removable and cargo_id_str != "")
+
+		if prefer_attach and api_calls_node.has_method("attach_vehicle_part"):
+			print("[GameDataManager][MechanicApply] ATTACH queue reason=inventory+removable vehicle=", vid, " cargo=", cargo_id_str)
+			api_calls_node.attach_vehicle_part(vid, cargo_id_str)
 			applied += 1
-		elif api_calls_node.has_method("attach_vehicle_part"):
-			print("[GameDataManager][MechanicApply] ATTACH queue vehicle=", vid, " part=", part_id)
-			api_calls_node.attach_vehicle_part(vid, part_id)
+		elif effective_vendor != "" and api_calls_node.has_method("add_vehicle_part"):
+			# New API requires part_cargo_id (vendor cargo id) — do not pass part_id here
+			if cargo_id_str == "":
+				printerr("[GameDataManager][MechanicApply] Vendor ADD requires cargo_id (part_cargo_id) but it's missing; skipping entry for vehicle=", vid)
+				continue
+			print("[GameDataManager][MechanicApply] ADD via vendor queue vendor=", effective_vendor, " convoy=", convoy_id, " vehicle=", vid, " cargo=", cargo_id_str, " reason=", ("vendor-source" if source == "vendor" else ("non-removable or missing cargo")))
+			api_calls_node.add_vehicle_part(effective_vendor, convoy_id, vid, cargo_id_str)
+			applied += 1
+		elif api_calls_node.has_method("attach_vehicle_part") and cargo_id_str != "":
+			print("[GameDataManager][MechanicApply] ATTACH fallback (no vendor or add unavailable) vehicle=", vid, " cargo=", cargo_id_str)
+			api_calls_node.attach_vehicle_part(vid, cargo_id_str)
 			applied += 1
 		else:
-			printerr("[GameDataManager][MechanicApply] No attach/add method available")
-	print("[GameDataManager][MechanicApply] QUEUED ", applied, " attach request(s)")
+			printerr("[GameDataManager][MechanicApply] No attach/add method available or missing identifiers for vehicle=", vid)
+	print("[GameDataManager][MechanicApply] QUEUED ", applied, " mechanic request(s)")
 
 func _on_vehicle_part_attached(result: Dictionary) -> void:
 	# Backend returns updated vehicle dictionary. Update the convoy immediately and emit, then optionally refresh.

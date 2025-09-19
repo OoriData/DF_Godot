@@ -254,7 +254,7 @@ func initialize_with_data(data: Dictionary):
 				if eta_timestamp_int >= 0: # Valid Unix timestamps are typically non-negative
 					# --- Workaround for timezone issue ---
 					# Calculate the system's current timezone offset from UTC in seconds.
-					var current_sys_utc_ts: int = Time.get_unix_time_from_system()
+					var current_sys_utc_ts: int = int(Time.get_unix_time_from_system())
 					# Get current local time components as the OS sees them.
 					var current_sys_local_dict: Dictionary = Time.get_datetime_dict_from_system(false)
 					# Convert these local components to a Unix timestamp *as if they were UTC*
