@@ -226,6 +226,12 @@ unique_name_in_owner = true
 layout_mode = 2
 text = "Buy"
 
+[node name="InstallButton" type="Button" parent="HBoxContainer/RightPanel"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "Install"
+visible = false
+
 [node name="HSeparator" type="HSeparator" parent="HBoxContainer/RightPanel"]
 layout_mode = 2
 

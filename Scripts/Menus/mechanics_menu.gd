@@ -275,8 +275,13 @@ func _update_row_price_from_cache(row: HBoxContainer) -> void:
 				"part_value": _get_part_value(part_ctx),
 				"install_price": install_price,
 			})
-	var price_text := _format_price_label(vendor_price, install_price)
-	price_lbl.text = price_text
+	# If this row represents an inventory part, only show installation cost; otherwise show full vendor breakdown
+	var src := String(row.get_meta("source", "")) if row.has_meta("source") else ""
+	if src != "vendor":
+		price_lbl.text = "Installation $%s" % ["%.2f" % install_price]
+	else:
+		var price_text := _format_price_label(vendor_price, install_price)
+		price_lbl.text = price_text
 	# Update breakdown label for this row if enabled
 	var part_ctx2: Dictionary = row.get_meta("part_dict", {}) if row.has_meta("part_dict") else {}
 	var use_server2 := _get_install_price_from_cache(veh_id, part_uid) > 0.0
@@ -489,6 +494,52 @@ func initialize_with_data(data: Dictionary):
 		if is_instance_valid(vehicle_option_button):
 			vehicle_option_button.select(0)
 		_on_vehicle_selected(0)
+
+	# If called with a vendor prefill, add the part to the cart immediately
+	if data.has("_mechanic_prefill") and data._mechanic_prefill is Dictionary:
+		var pre: Dictionary = data._mechanic_prefill
+		var part: Dictionary = pre.get("part", {})
+		var qty: int = int(pre.get("quantity", 1))
+		var vendor_id: String = String(pre.get("vendor_id", ""))
+		if not part.is_empty():
+			# Choose a target vehicle: prefer first compatible one if slot present
+			var chosen_vehicle_idx := 0
+			var slot_name: String = String(part.get("slot", ""))
+			if slot_name == "" and part.has("parts") and part.get("parts") is Array and not (part.get("parts") as Array).is_empty():
+				var p0: Dictionary = (part.get("parts") as Array)[0]
+				slot_name = String(p0.get("slot", ""))
+			# Find a vehicle that has this slot
+			if slot_name != "" and not _vehicles.is_empty():
+				for i in range(_vehicles.size()):
+					var v: Dictionary = _vehicles[i]
+					var has_slot := false
+					for ip in v.get("parts", []):
+						if String(ip.get("slot", "")) == slot_name:
+							has_slot = true
+							break
+					if has_slot:
+						chosen_vehicle_idx = i
+						break
+			# Switch selection if needed
+			if chosen_vehicle_idx != _selected_vehicle_idx and chosen_vehicle_idx >= 0 and chosen_vehicle_idx < _vehicles.size():
+				set_selected_vehicle_index(chosen_vehicle_idx)
+			# Build a minimal from_part by finding currently installed in slot
+			var from_part: Dictionary = {}
+			if slot_name != "" and _selected_vehicle_idx >= 0 and _selected_vehicle_idx < _vehicles.size():
+				for ip2 in _vehicles[_selected_vehicle_idx].get("parts", []):
+					if String(ip2.get("slot", "")) == slot_name:
+						from_part = ip2
+						break
+			# Add requested quantity times; prevent duplicates via internal dedupe
+			for _i in range(max(1, qty)):
+				_add_pending_swap(slot_name if slot_name != "" else "other", from_part, part, "vendor", _extract_price_from_dict(part), vendor_id)
+			# Switch to Cart tab
+			_rename_pending_tab_to_cart()
+			if is_instance_valid(tab_container) and is_instance_valid(pending_scroll):
+				var cart_idx := tab_container.get_tab_idx_from_control(pending_scroll)
+				if cart_idx >= 0:
+					tab_container.current_tab = cart_idx
+			_rebuild_pending_tab()
 	_refresh_apply_state()
 
 func _exit_tree() -> void:
@@ -893,15 +944,14 @@ func _rebuild_pending_tab():
 			var install_cost := float(e.get("install_cost", 0.0))
 			var part_value := float(e.get("part_value", 0.0))
 			var removable_flag := bool(e.get("removable", false))
-			# Costs line: Part (value) + Installation = Total
+			# Costs line
 			var costs_lbl = Label.new()
-			# Show what the player pays: effective part cost + installation
-			if sref_any is Dictionary and String((sref_any as Dictionary).get("source", "")) != "vendor":
-				# Inventory: make it obvious there is no part cost charged
-				var total_c := install_cost
-				costs_lbl.text = "Inventory Part + Installation $%s = $%s" % ["%.2f" % install_cost, "%.2f" % total_c]
-			else:
+			var is_vendor := sref_any is Dictionary and String((sref_any as Dictionary).get("source", "")) == "vendor"
+			if is_vendor:
 				costs_lbl.text = _format_price_label(_vendor_price, install_cost)
+			else:
+				# Inventory: only installation cost
+				costs_lbl.text = "Installation $%s" % ["%.2f" % install_cost]
 			costs_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD
 			left_vb.add_child(costs_lbl)
 
@@ -949,22 +999,28 @@ func _rebuild_pending_tab():
 			# Cart parts cost sums effective price (inventory parts typically 0)
 			grand_parts_cost += _vendor_price
 			grand_install_cost += install_cost
-	# Summary: Parts cost, Installation, Total (suffix $ style)
-	var parts_label = Label.new()
-	parts_label.text = "Parts cost: $%s" % ("%.2f" % grand_parts_cost)
-	parts_label.add_theme_font_size_override("font_size", 16)
-	pending_vbox.add_child(parts_label)
+	# Summary: If there are vendor parts, show full breakdown; otherwise show only installation
+	if grand_parts_cost > 0.0:
+		var parts_label = Label.new()
+		parts_label.text = "Parts cost: $%s" % ("%.2f" % grand_parts_cost)
+		parts_label.add_theme_font_size_override("font_size", 16)
+		pending_vbox.add_child(parts_label)
 
-	var install_label = Label.new()
-	install_label.text = "Installation: $%s" % ("%.2f" % grand_install_cost)
-	install_label.add_theme_font_size_override("font_size", 16)
-	pending_vbox.add_child(install_label)
+		var install_label = Label.new()
+		install_label.text = "Installation: $%s" % ("%.2f" % grand_install_cost)
+		install_label.add_theme_font_size_override("font_size", 16)
+		pending_vbox.add_child(install_label)
 
-	var total_label = Label.new()
-	var grand_total := grand_parts_cost + grand_install_cost
-	total_label.text = "Total: $%s" % ("%.2f" % grand_total)
-	total_label.add_theme_font_size_override("font_size", 16)
-	pending_vbox.add_child(total_label)
+		var total_label = Label.new()
+		var grand_total := grand_parts_cost + grand_install_cost
+		total_label.text = "Total: $%s" % ("%.2f" % grand_total)
+		total_label.add_theme_font_size_override("font_size", 16)
+		pending_vbox.add_child(total_label)
+	else:
+		var install_label = Label.new()
+		install_label.text = "Installation: $%s" % ("%.2f" % grand_install_cost)
+		install_label.add_theme_font_size_override("font_size", 16)
+		pending_vbox.add_child(install_label)
 	_refresh_apply_state()
 
 func _effective_part_cost_for_entry(e: Dictionary) -> float:
@@ -1823,8 +1879,8 @@ func _make_candidate_row(part: Dictionary, source: String, _price: float, compat
 	if source == "vendor":
 		price_text = _format_price_label(part_price, install_price)
 	else:
-		# Convoy inventory: no part charge, only installation
-		price_text = "Convoy Part (no part cost) + Installation $%s = $%s" % ["%.2f" % install_price, "%.2f" % install_price]
+		# Inventory: only installation is charged
+		price_text = "Installation $%s" % ["%.2f" % install_price]
 	price_lbl.text = price_text
 	price_lbl.add_theme_color_override("font_color", Color(0.85, 1.0, 0.85))
 	hb.add_child(price_lbl)

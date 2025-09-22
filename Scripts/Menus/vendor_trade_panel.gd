@@ -3,6 +3,7 @@ extends Control
 # Signals to notify the main menu of transactions
 signal item_purchased(item, quantity, total_price)
 signal item_sold(item, quantity, total_price)
+signal install_requested(item, quantity, vendor_id)
 
 # --- Node References ---
 @onready var vendor_item_tree: Tree = %VendorItemTree
@@ -21,6 +22,7 @@ signal item_sold(item, quantity, total_price)
 @onready var price_label: RichTextLabel = %PriceLabel
 @onready var max_button: Button = %MaxButton
 @onready var action_button: Button = %ActionButton
+@onready var install_button: Button = %InstallButton
 @onready var convoy_money_label: Label = %ConvoyMoneyLabel
 @onready var convoy_cargo_label: Label = %ConvoyCargoLabel
 @onready var trade_mode_tab_container: TabContainer = %TradeModeTabContainer
@@ -66,6 +68,13 @@ func _ready() -> void:
 		action_button.pressed.connect(_on_action_button_pressed)
 	else:
 		printerr("VendorTradePanel: 'ActionButton' node not found. Please check the scene file.")
+
+	if is_instance_valid(install_button):
+		install_button.visible = false
+		install_button.disabled = true
+		install_button.pressed.connect(_on_install_button_pressed)
+	else:
+		printerr("VendorTradePanel: 'InstallButton' node not found. Please check the scene file.")
 
 	quantity_spinbox.value_changed.connect(_on_quantity_changed)
 	if is_instance_valid(description_toggle_button):
@@ -672,6 +681,8 @@ func _on_tab_changed(tab_index: int) -> void:
 	if is_instance_valid(max_button):
 		max_button.disabled = true
 
+	_update_install_button_state()
+
 func _on_vendor_item_selected() -> void:
 	var tree_item = vendor_item_tree.get_selected()
 	if tree_item and tree_item.get_metadata(0) != null:
@@ -679,6 +690,7 @@ func _on_vendor_item_selected() -> void:
 		_handle_new_item_selection(item)
 	else:
 		_handle_new_item_selection(null)
+	_update_install_button_state()
 
 func _on_convoy_item_selected() -> void:
 	var tree_item = convoy_item_tree.get_selected()
@@ -688,6 +700,7 @@ func _on_convoy_item_selected() -> void:
 	else:
 		# This happens if a category header is clicked, or selection is cleared
 		_handle_new_item_selection(null)
+	_update_install_button_state()
 
 func _populate_category(target_tree: Tree, root_item: TreeItem, category_name: String, agg_dict: Dictionary) -> void:
 	if agg_dict.is_empty():
@@ -785,6 +798,7 @@ func _handle_new_item_selection(p_selected_item) -> void:
 		print("DEBUG: _handle_new_item_selection - item_data_source (original):", item_data_source_debug)
 
 		_update_transaction_panel()
+		_update_install_button_state()
 		# Fire backend compatibility checks for this item against all convoy vehicles (to align with Mechanics)
 		if selected_item and selected_item.has("item_data") and convoy_data and convoy_data.has("vehicle_details_list"):
 			var idata = selected_item.item_data
@@ -802,6 +816,7 @@ func _handle_new_item_selection(p_selected_item) -> void:
 		_clear_inspector()
 		if is_instance_valid(action_button): action_button.disabled = true
 		if is_instance_valid(max_button): max_button.disabled = true
+		_update_install_button_state()
 
 func _on_max_button_pressed() -> void:
 	if not selected_item:
@@ -888,6 +903,7 @@ func _on_action_button_pressed() -> void:
 
 func _on_quantity_changed(_value: float) -> void:
 	_update_transaction_panel()
+	_update_install_button_state()
 
 # --- Inspector and Transaction UI Updates ---
 func _update_inspector() -> void:
@@ -1132,6 +1148,41 @@ func _update_transaction_panel() -> void:
 		bbcode_text = bbcode_text.substr(0, bbcode_text.length() - 1)
 	# --- End added detail block ---
 	price_label.text = bbcode_text
+	_update_install_button_state()
+
+func _looks_like_part(item_data_source: Dictionary) -> bool:
+	if item_data_source.has("slot") and item_data_source.get("slot") != null:
+		return true
+	if item_data_source.has("intrinsic_part_id"):
+		return true
+	if item_data_source.has("parts") and item_data_source.get("parts") is Array and not (item_data_source.get("parts") as Array).is_empty():
+		var first_p: Dictionary = (item_data_source.get("parts") as Array)[0]
+		if first_p.has("slot") and first_p.get("slot") != null:
+			return true
+	if item_data_source.has("is_part") and bool(item_data_source.get("is_part")):
+		return true
+	return false
+
+func _update_install_button_state() -> void:
+	if not is_instance_valid(install_button):
+		return
+	var is_buy_mode := trade_mode_tab_container.current_tab == 0
+	var can_install := false
+	if is_buy_mode and selected_item and selected_item.has("item_data"):
+		var idata: Dictionary = selected_item.item_data
+		can_install = _looks_like_part(idata)
+	install_button.visible = can_install
+	install_button.disabled = not can_install
+
+func _on_install_button_pressed() -> void:
+	if not selected_item or not selected_item.has("item_data"):
+		return
+	var idata: Dictionary = selected_item.item_data
+	var qty := int(quantity_spinbox.value)
+	if qty <= 0:
+		qty = 1
+	var vend_id := String(vendor_data.get("vendor_id", "")) if vendor_data else ""
+	emit_signal("install_requested", idata, qty, vend_id)
 
 # --- Compatibility plumbing (align with Mechanics) ---
 func _compat_key(vehicle_id: String, part_uid: String) -> String:

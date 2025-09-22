@@ -40,6 +40,8 @@ signal cargo_data_received(cargo: Dictionary)
 signal vehicle_part_attached(result: Dictionary)
 @warning_ignore("unused_signal")
 signal vehicle_part_added(result: Dictionary)
+@warning_ignore("unused_signal")
+signal vehicle_part_detached(result: Dictionary)
 
 # --- Journey Planning Signals ---
 signal route_choices_received(routes: Array)
@@ -643,6 +645,31 @@ func attach_vehicle_part(vehicle_id: String, part_cargo_id: String) -> void:
 		"method": HTTPClient.METHOD_PATCH,
 		"body": "",
 		"signal_name": "vehicle_part_attached"
+	})
+	_process_queue()
+
+# --- Mechanics / Part Detach ---
+func detach_vehicle_part(vehicle_id: String, part_id: String) -> void:
+	# Endpoint: PATCH /vehicle/part/detach?vehicle_id=<uuid>&part_id=<uuid>
+	if vehicle_id.is_empty() or not _is_valid_uuid(vehicle_id):
+		printerr("[APICalls][detach_vehicle_part] Invalid vehicle_id '%s'" % vehicle_id)
+		emit_signal('fetch_error', "Invalid vehicle_id for part detach")
+		return
+	if part_id.is_empty() or not _is_valid_uuid(part_id):
+		printerr("[APICalls][detach_vehicle_part] Invalid part_id '%s'" % part_id)
+		emit_signal('fetch_error', "Invalid part_id for part detach")
+		return
+	var url := "%s/vehicle/part/detach?vehicle_id=%s&part_id=%s" % [BASE_URL, vehicle_id, part_id]
+	var headers: PackedStringArray = ['accept: application/json']
+	headers = _apply_auth_header(headers)
+	print("[APICalls][detach_vehicle_part] PATCH url=", url, " auth_present=", _auth_bearer_token != "")
+	_request_queue.append({
+		"url": url,
+		"headers": headers,
+		"purpose": RequestPurpose.NONE,
+		"method": HTTPClient.METHOD_PATCH,
+		"body": "",
+		"signal_name": "vehicle_part_detached"
 	})
 	_process_queue()
 

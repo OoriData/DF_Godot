@@ -216,8 +216,7 @@ func _display_settlement_info():
 
 			for vendor in _settlement_data.vendors:
 				_create_vendor_tab(vendor)
-			# Add Mechanics tab entry point
-			_create_mechanics_tab()
+			# Removed the old Mechanics tab vendor. Mechanics is now accessed via Install on parts within each vendor.
 
 			# After creating vendor tabs compute top up plan
 			_update_top_up_button()
@@ -254,6 +253,9 @@ func _create_vendor_tab(vendor_data: Dictionary):
 	)
 	vendor_panel_instance.item_purchased.connect(_on_item_purchased)
 	vendor_panel_instance.item_sold.connect(_on_item_sold)
+	# Forward install requests to open mechanics with a prefilled cart
+	if vendor_panel_instance.has_signal("install_requested"):
+		vendor_panel_instance.install_requested.connect(_on_install_requested)
 
 func _clear_tabs():
 	# Remove all dynamically added vendor tabs, starting from the end.
@@ -267,28 +269,33 @@ func _clear_tabs():
 		tab.queue_free()
 	mechanics_tab_vbox = null
 
-func _create_mechanics_tab():
-	if not is_instance_valid(vendor_tab_container):
+## Mechanics tab removed: Mechanics is now opened contextually via Install from vendor part purchase.
+
+func _on_install_requested(item: Dictionary, quantity: int, vendor_id_from_panel: String = "") -> void:
+	# Build a prefill payload for Mechanics and navigate there
+	if not _convoy_data or not _convoy_data.has("convoy_id"):
 		return
-	# Create a simple tab labeled "Mechanic"
-	mechanics_tab_vbox = VBoxContainer.new()
-	mechanics_tab_vbox.name = "Mechanic"
-	vendor_tab_container.add_child(mechanics_tab_vbox)
-	vendor_tab_container.set_tab_title(vendor_tab_container.get_tab_count() - 1, "Mechanic")
+	# Prefer vendor_id provided by the panel; fallback to what's embedded in item or lookup by mission vendor name
+	var effective_vendor_id := vendor_id_from_panel
+	if effective_vendor_id == "":
+		effective_vendor_id = String(item.get("vendor_id", ""))
+	if effective_vendor_id == "" and item.has("mission_vendor_name"):
+		var found := _find_vendor_by_name(String(item.get("mission_vendor_name", "")))
+		if found is Dictionary and found.has("vendor_id"):
+			effective_vendor_id = String(found.get("vendor_id", ""))
 
-	var info = Label.new()
-	info.text = "Service your vehicles, swap and upgrade parts."
-	info.autowrap_mode = TextServer.AUTOWRAP_WORD
-	mechanics_tab_vbox.add_child(info)
-
-	var open_btn = Button.new()
-	open_btn.text = "Open Mechanic"
-	open_btn.custom_minimum_size.y = 36
-	open_btn.pressed.connect(func():
-		if _convoy_data:
-			emit_signal("open_mechanics_menu_requested", _convoy_data)
-	)
-	mechanics_tab_vbox.add_child(open_btn)
+	var payload := {
+		"_mechanic_prefill": {
+			"part": item.duplicate(true),
+			"quantity": int(quantity),
+			"vendor_id": effective_vendor_id
+		}
+	}
+	var next_data := _convoy_data.duplicate(true)
+	# Attach the payload fields to convoy data; mechanics will consume _mechanic_prefill
+	for k in payload.keys():
+		next_data[k] = payload[k]
+	emit_signal("open_mechanics_menu_requested", next_data)
 
 func create_info_label(text: String) -> Label:
 	# Helper function to create a new Label node with common properties

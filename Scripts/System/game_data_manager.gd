@@ -177,6 +177,9 @@ func _initiate_preload():
 			api_calls_node.vehicle_part_attached.connect(_on_vehicle_part_attached)
 		if api_calls_node.has_signal('vehicle_part_added') and not api_calls_node.vehicle_part_added.is_connected(_on_vehicle_part_added):
 			api_calls_node.vehicle_part_added.connect(_on_vehicle_part_added)
+		# Mechanics: vehicle part detach returns updated vehicle; handle and refresh convoy
+		if api_calls_node.has_signal('vehicle_part_detached') and not api_calls_node.vehicle_part_detached.is_connected(_on_vehicle_part_detached):
+			api_calls_node.vehicle_part_detached.connect(_on_vehicle_part_detached)
 		if api_calls_node.has_signal('route_choices_received'):
 			api_calls_node.route_choices_received.connect(_on_api_route_choices_received)
 		if api_calls_node.has_signal('convoy_sent_on_journey'):
@@ -814,6 +817,69 @@ func _on_vehicle_part_added(result: Dictionary) -> void:
 					user_data_updated.emit(current_user_data)
 	else:
 		printerr("[GameDataManager][MechanicApply] vehicle_part_added response missing convoy_after/convoy with convoy_id; cannot update list.")
+
+# Public API: request detach of a removable installed part; backend returns updated vehicle
+func detach_vehicle_part(convoy_id: String, vehicle_id: String, part_id: String) -> void:
+	if not is_instance_valid(api_calls_node):
+		printerr("[GameDataManager][Detach] APICalls missing; cannot detach part")
+		return
+	# Track active convoy for refresh logic, similar to attach
+	if convoy_id != "":
+		_mech_active_convoy_id = convoy_id
+	print("[GameDataManager][Detach] Request detach vehicle=", vehicle_id, " part=", part_id)
+	if api_calls_node.has_method("detach_vehicle_part"):
+		api_calls_node.detach_vehicle_part(vehicle_id, part_id)
+	else:
+		printerr("[GameDataManager][Detach] APICalls missing detach_vehicle_part method")
+
+func _on_vehicle_part_detached(result: Dictionary) -> void:
+	# Backend returns updated vehicle dictionary. Update convoy immediately and optionally refresh.
+	if not (result is Dictionary):
+		return
+	print("[GameDataManager][Detach] vehicle_part_detached keys=", result.keys())
+	var vid := String(result.get("vehicle_id", ""))
+	var target_convoy_id := _mech_active_convoy_id
+	var updated_locally := false
+	if target_convoy_id == "" and vid != "":
+		for c in all_convoy_data:
+			if not (c is Dictionary):
+				continue
+			var vlist0: Array = c.get("vehicle_details_list", [])
+			for v0 in vlist0:
+				if String(v0.get("vehicle_id", "")) == vid:
+					target_convoy_id = String(c.get("convoy_id", ""))
+					break
+			if target_convoy_id != "":
+				break
+	if vid != "" and target_convoy_id != "":
+		for i in range(all_convoy_data.size()):
+			var conv: Dictionary = all_convoy_data[i]
+			if not (conv is Dictionary):
+				continue
+			if String(conv.get("convoy_id", "")) != target_convoy_id:
+				continue
+			var vlist: Array = conv.get("vehicle_details_list", [])
+			var replaced := false
+			for j in range(vlist.size()):
+				var vdict: Dictionary = vlist[j]
+				if String(vdict.get("vehicle_id", "")) == vid:
+					vlist[j] = result
+					replaced = true
+					break
+			if replaced:
+				conv["vehicle_details_list"] = vlist
+				all_convoy_data[i] = conv
+				convoy_data_updated.emit(all_convoy_data)
+				updated_locally = true
+				print("[GameDataManager][Detach] Updated convoy ", target_convoy_id, " with returned vehicle ", vid, " and emitted update.")
+				break
+	# Optionally refresh authoritative state
+	if target_convoy_id != "" and is_instance_valid(api_calls_node) and api_calls_node.has_method("get_convoy_data"):
+		if not updated_locally:
+			print("[GameDataManager][Detach] Refreshing convoy after detach convoy_id=", target_convoy_id)
+		api_calls_node.get_convoy_data(target_convoy_id)
+	elif not updated_locally:
+		printerr("[GameDataManager][Detach] Could not resolve convoy to update/refresh after detach.")
 
 # Public: return enriched cargo (full object from /cargo/get) if available; empty dict otherwise
 func get_enriched_cargo(cargo_id: String) -> Dictionary:
