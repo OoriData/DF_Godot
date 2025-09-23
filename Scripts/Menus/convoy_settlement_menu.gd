@@ -3,6 +3,7 @@ extends Control
 # Emitted when the user clicks the back button. MenuManager listens for this.
 signal back_requested
 signal open_mechanics_menu_requested(convoy_data)
+signal open_warehouse_menu_requested(convoy_data)
 
 # Preload the new panel scene for instancing.
 const VendorTradePanel = preload("res://Scenes/VendorTradePanel.tscn")
@@ -12,6 +13,7 @@ const VendorTradePanel = preload("res://Scenes/VendorTradePanel.tscn")
 # $Path/To/Node is used for direct or indirect children without unique names.
 @onready var title_label: Button = $MainVBox/TopBarHBox/TitleLabel
 @onready var top_up_button: Button = $MainVBox/TopBarHBox/TopUpButton
+@onready var top_bar_hbox: HBoxContainer = $MainVBox/TopBarHBox
 @onready var vendor_tab_container = %VendorTabContainer
 @onready var settlement_content_vbox = %SettlementContentVBox
 @onready var back_button = $MainVBox/BackButton
@@ -91,6 +93,19 @@ func _ready():
 			top_up_button.pressed.connect(_on_top_up_button_pressed)
 		_update_top_up_button()
 		_style_top_up_button()
+
+	# Add a Warehouse button to the top bar (only once)
+	if is_instance_valid(top_bar_hbox):
+		var existing_btn: Button = top_bar_hbox.get_node_or_null("WarehouseButton")
+		if existing_btn == null:
+			var warehouse_btn := Button.new()
+			warehouse_btn.name = "WarehouseButton"
+			warehouse_btn.text = "Warehouse"
+			warehouse_btn.tooltip_text = "View or buy a Warehouse in this settlement"
+			warehouse_btn.size_flags_horizontal = Control.SIZE_SHRINK_END
+			top_bar_hbox.add_child(warehouse_btn)
+
+			warehouse_btn.pressed.connect(_on_warehouse_button_pressed)
 
 	# Connect to GameDataManager signals to refresh UI when data updates
 	gdm = get_node_or_null("/root/GameDataManager")
@@ -296,6 +311,25 @@ func _on_install_requested(item: Dictionary, quantity: int, vendor_id_from_panel
 	for k in payload.keys():
 		next_data[k] = payload[k]
 	emit_signal("open_mechanics_menu_requested", next_data)
+
+func _on_warehouse_button_pressed() -> void:
+	# Open the Warehouse menu for this convoy/settlement context
+	if not (_convoy_data is Dictionary) or not _convoy_data.has("convoy_id"):
+		push_warning("Convoy data unavailable; cannot open Warehouse menu.")
+		return
+	var payload := _convoy_data.duplicate(true)
+	# Attach settlement snapshot if available so WarehouseMenu knows where we are
+	if _settlement_data is Dictionary and not _settlement_data.is_empty():
+		payload["settlement"] = _settlement_data.duplicate(true)
+	else:
+		# Try to resolve from GameDataManager for current coordinates
+		var sx = int(roundf(float(_convoy_data.get("x", -9999.0))))
+		var sy = int(roundf(float(_convoy_data.get("y", -9999.0))))
+		if is_instance_valid(gdm) and gdm.has_method("get_settlement_name_from_coords"):
+			var sett_name := String(gdm.get_settlement_name_from_coords(sx, sy))
+			if sett_name != "":
+				payload["settlement_name"] = sett_name
+	emit_signal("open_warehouse_menu_requested", payload)
 
 func create_info_label(text: String) -> Label:
 	# Helper function to create a new Label node with common properties

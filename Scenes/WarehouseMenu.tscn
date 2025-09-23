@@ -1,0 +1,194 @@
+[gd_scene load_steps=2 format=3 uid="uid://warehouse_menu_scene"]
+
+[ext_resource type="Script" path="res://Scripts/Menus/warehouse_menu.gd" id="1"]
+
+[node name="WarehouseMenu" type="Control"]
+layout_mode = 3
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 2
+script = ExtResource("1")
+
+[node name="MainVBox" type="VBoxContainer" parent="."]
+layout_mode = 2
+anchor_right = 1.0
+anchor_bottom = 1.0
+size_flags_vertical = 3
+custom_minimum_size = Vector2(0, 300)
+
+[node name="TopBarHBox" type="HBoxContainer" parent="MainVBox"]
+layout_mode = 2
+size_flags_horizontal = 3
+alignment = 1
+
+[node name="TitleLabel" type="Label" parent="MainVBox/TopBarHBox"]
+layout_mode = 2
+text = "Warehouse"
+size_flags_horizontal = 3
+
+[node name="BuyButton" type="Button" parent="MainVBox/TopBarHBox"]
+layout_mode = 2
+text = "Buy"
+
+[node name="BackButton" type="Button" parent="MainVBox"]
+layout_mode = 2
+text = "Back"
+size_flags_horizontal = 3
+
+[node name="Body" type="VBoxContainer" parent="MainVBox"]
+layout_mode = 2
+size_flags_vertical = 3
+
+[node name="OwnedTabs" type="TabContainer" parent="MainVBox/Body"]
+layout_mode = 2
+size_flags_vertical = 3
+
+[node name="Overview" type="VBoxContainer" parent="MainVBox/Body/OwnedTabs"]
+layout_mode = 2
+size_flags_vertical = 3
+
+[node name="SummaryLabel" type="Label" parent="MainVBox/Body/OwnedTabs/Overview"]
+layout_mode = 2
+text = "Warehouse summary will appear here."
+
+[node name="ExpandCargoHBox" type="HBoxContainer" parent="MainVBox/Body/OwnedTabs/Overview"]
+layout_mode = 2
+
+[node name="ExpandCargoLabel" type="Label" parent="MainVBox/Body/OwnedTabs/Overview/ExpandCargoHBox"]
+layout_mode = 2
+text = "Expand Cargo by:"
+
+[node name="ExpandCargoAmount" type="SpinBox" parent="MainVBox/Body/OwnedTabs/Overview/ExpandCargoHBox"]
+layout_mode = 2
+min_value = 1.0
+max_value = 1000000.0
+step = 1.0
+value = 10.0
+
+[node name="ExpandCargoBtn" type="Button" parent="MainVBox/Body/OwnedTabs/Overview/ExpandCargoHBox"]
+layout_mode = 2
+text = "Expand Cargo"
+
+[node name="ExpandVehicleHBox" type="HBoxContainer" parent="MainVBox/Body/OwnedTabs/Overview"]
+layout_mode = 2
+
+[node name="ExpandVehicleLabel" type="Label" parent="MainVBox/Body/OwnedTabs/Overview/ExpandVehicleHBox"]
+layout_mode = 2
+text = "Expand Vehicle slots by:"
+
+[node name="ExpandVehicleAmount" type="SpinBox" parent="MainVBox/Body/OwnedTabs/Overview/ExpandVehicleHBox"]
+layout_mode = 2
+min_value = 1.0
+max_value = 1000000.0
+step = 1.0
+value = 1.0
+
+[node name="ExpandVehicleBtn" type="Button" parent="MainVBox/Body/OwnedTabs/Overview/ExpandVehicleHBox"]
+layout_mode = 2
+text = "Expand Vehicle"
+
+[node name="Cargo" type="VBoxContainer" parent="MainVBox/Body/OwnedTabs"]
+layout_mode = 2
+size_flags_vertical = 3
+
+[node name="StoreFromConvoyLabel" type="Label" parent="MainVBox/Body/OwnedTabs/Cargo"]
+layout_mode = 2
+text = "Store cargo from convoy"
+
+[node name="CargoStoreHBox" type="HBoxContainer" parent="MainVBox/Body/OwnedTabs/Cargo"]
+layout_mode = 2
+
+[node name="CargoIdInputStore" type="LineEdit" parent="MainVBox/Body/OwnedTabs/Cargo/CargoStoreHBox"]
+layout_mode = 2
+placeholder_text = "cargo_id"
+
+[node name="CargoQtyStore" type="SpinBox" parent="MainVBox/Body/OwnedTabs/Cargo/CargoStoreHBox"]
+layout_mode = 2
+min_value = 1.0
+max_value = 1000000.0
+step = 1.0
+value = 1.0
+
+[node name="StoreCargoBtn" type="Button" parent="MainVBox/Body/OwnedTabs/Cargo/CargoStoreHBox"]
+layout_mode = 2
+text = "Store"
+
+[node name="RetrieveFromWarehouseLabel" type="Label" parent="MainVBox/Body/OwnedTabs/Cargo"]
+layout_mode = 2
+text = "Retrieve cargo from warehouse"
+
+[node name="CargoRetrieveHBox" type="HBoxContainer" parent="MainVBox/Body/OwnedTabs/Cargo"]
+layout_mode = 2
+
+[node name="CargoIdInputRetrieve" type="LineEdit" parent="MainVBox/Body/OwnedTabs/Cargo/CargoRetrieveHBox"]
+layout_mode = 2
+placeholder_text = "cargo_id"
+
+[node name="CargoQtyRetrieve" type="SpinBox" parent="MainVBox/Body/OwnedTabs/Cargo/CargoRetrieveHBox"]
+layout_mode = 2
+min_value = 1.0
+max_value = 1000000.0
+step = 1.0
+value = 1.0
+
+[node name="RetrieveCargoBtn" type="Button" parent="MainVBox/Body/OwnedTabs/Cargo/CargoRetrieveHBox"]
+layout_mode = 2
+text = "Retrieve"
+
+[node name="Vehicles" type="VBoxContainer" parent="MainVBox/Body/OwnedTabs"]
+layout_mode = 2
+size_flags_vertical = 3
+
+[node name="VehicleStoreLabel" type="Label" parent="MainVBox/Body/OwnedTabs/Vehicles"]
+layout_mode = 2
+text = "Store vehicle from convoy"
+
+[node name="VehicleStoreHBox" type="HBoxContainer" parent="MainVBox/Body/OwnedTabs/Vehicles"]
+layout_mode = 2
+
+[node name="VehicleIdInputStore" type="LineEdit" parent="MainVBox/Body/OwnedTabs/Vehicles/VehicleStoreHBox"]
+layout_mode = 2
+placeholder_text = "vehicle_id"
+
+[node name="StoreVehicleBtn" type="Button" parent="MainVBox/Body/OwnedTabs/Vehicles/VehicleStoreHBox"]
+layout_mode = 2
+text = "Store"
+
+[node name="VehicleRetrieveLabel" type="Label" parent="MainVBox/Body/OwnedTabs/Vehicles"]
+layout_mode = 2
+text = "Retrieve vehicle from warehouse"
+
+[node name="VehicleRetrieveHBox" type="HBoxContainer" parent="MainVBox/Body/OwnedTabs/Vehicles"]
+layout_mode = 2
+
+[node name="VehicleIdInputRetrieve" type="LineEdit" parent="MainVBox/Body/OwnedTabs/Vehicles/VehicleRetrieveHBox"]
+layout_mode = 2
+placeholder_text = "vehicle_id"
+
+[node name="RetrieveVehicleBtn" type="Button" parent="MainVBox/Body/OwnedTabs/Vehicles/VehicleRetrieveHBox"]
+layout_mode = 2
+text = "Retrieve"
+
+[node name="Actions" type="VBoxContainer" parent="MainVBox/Body/OwnedTabs"]
+layout_mode = 2
+size_flags_vertical = 3
+
+[node name="SpawnConvoyLabel" type="Label" parent="MainVBox/Body/OwnedTabs/Actions"]
+layout_mode = 2
+text = "Spawn new convoy from warehouse"
+
+[node name="SpawnHBox" type="HBoxContainer" parent="MainVBox/Body/OwnedTabs/Actions"]
+layout_mode = 2
+
+[node name="SpawnNameInput" type="LineEdit" parent="MainVBox/Body/OwnedTabs/Actions/SpawnHBox"]
+layout_mode = 2
+placeholder_text = "convoy name"
+
+[node name="SpawnConvoyBtn" type="Button" parent="MainVBox/Body/OwnedTabs/Actions/SpawnHBox"]
+layout_mode = 2
+text = "Spawn"
+
+[node name="InfoLabel" type="Label" parent="MainVBox/Body"]
+layout_mode = 2
+text = "Loading..."
+

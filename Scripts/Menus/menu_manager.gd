@@ -11,6 +11,7 @@ var convoy_journey_menu_scene = preload("res://Scenes/ConvoyJourneyMenu.tscn") #
 var convoy_settlement_menu_scene = preload("res://Scenes/ConvoySettlementMenu.tscn") # Example path
 var convoy_cargo_menu_scene = preload("res://Scenes/ConvoyCargoMenu.tscn") # Example path
 var mechanics_menu_scene = preload("res://Scenes/MechanicsMenu.tscn")
+var warehouse_menu_scene = load("res://Scenes/WarehouseMenu.tscn")
 
 
 var current_active_menu = null
@@ -95,6 +96,9 @@ func open_convoy_journey_menu(convoy_data = null):
 func open_convoy_settlement_menu(convoy_data = null):
 	print("MenuManager: open_convoy_settlement_menu called. Data is valid: ", convoy_data != null)
 	_show_menu(convoy_settlement_menu_scene, convoy_data)
+
+func open_warehouse_menu(convoy_data = null):
+	_show_menu(warehouse_menu_scene, convoy_data)
 
 func open_convoy_cargo_menu(convoy_data = null):
 	if convoy_data == null:
@@ -279,6 +283,9 @@ func _show_menu(menu_scene_resource, data_to_pass = null, add_to_stack: bool = t
 		# Hook from settlement menu mechanics tab
 		if current_active_menu.has_signal("open_mechanics_menu_requested"):
 			current_active_menu.open_mechanics_menu_requested.connect(open_mechanics_menu, CONNECT_ONE_SHOT)
+		# Also forward Warehouse open requests
+		if current_active_menu.has_signal("open_warehouse_menu_requested"):
+			current_active_menu.open_warehouse_menu_requested.connect(open_warehouse_menu, CONNECT_ONE_SHOT)
 
 
 func go_back():

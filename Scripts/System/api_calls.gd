@@ -50,6 +50,24 @@ signal convoy_sent_on_journey(updated_convoy_data: Dictionary)
 @warning_ignore("unused_signal")
 signal convoy_journey_canceled(updated_convoy_data: Dictionary)
 
+# --- Warehouse Signals ---
+@warning_ignore("unused_signal")
+signal warehouse_created(result: Variant) # API returns UUID or dict; treat as Variant
+@warning_ignore("unused_signal")
+signal warehouse_received(warehouse_data: Dictionary)
+@warning_ignore("unused_signal")
+signal warehouse_expanded(result: Variant)
+@warning_ignore("unused_signal")
+signal warehouse_cargo_stored(result: Variant)
+@warning_ignore("unused_signal")
+signal warehouse_cargo_retrieved(result: Variant)
+@warning_ignore("unused_signal")
+signal warehouse_vehicle_stored(result: Variant)
+@warning_ignore("unused_signal")
+signal warehouse_vehicle_retrieved(result: Variant)
+@warning_ignore("unused_signal")
+signal warehouse_convoy_spawned(result: Variant)
+
 var BASE_URL: String = 'http://127.0.0.1:1337' # default
 # var BASE_URL: String = 'https://df-api.oori.dev:1337' # default
 # Allow override via environment (cannot be const due to runtime lookup)
@@ -71,7 +89,7 @@ var _request_queue: Array = []
 var _is_request_in_progress: bool = false
 
 # Add AUTH_STATUS, AUTH_ME to purposes
-enum RequestPurpose { NONE, USER_CONVOYS, ALL_CONVOYS, MAP_DATA, USER_DATA, VENDOR_DATA, FIND_ROUTE, AUTH_URL, AUTH_TOKEN, AUTH_STATUS, AUTH_ME, CARGO_DATA }
+enum RequestPurpose { NONE, USER_CONVOYS, ALL_CONVOYS, MAP_DATA, USER_DATA, VENDOR_DATA, FIND_ROUTE, AUTH_URL, AUTH_TOKEN, AUTH_STATUS, AUTH_ME, CARGO_DATA, WAREHOUSE_GET }
 var _current_request_purpose: RequestPurpose = RequestPurpose.NONE
 
 var _current_patch_signal_name: String = ""
@@ -100,6 +118,7 @@ const REQUEST_TIMEOUT_SECONDS := {
 	RequestPurpose.AUTH_STATUS: 5.0,
 	RequestPurpose.AUTH_ME: 5.0,
 	RequestPurpose.CARGO_DATA: 5.0,
+	RequestPurpose.WAREHOUSE_GET: 5.0,
 }
 
 var _probe_stalled_count: int = 0
@@ -457,6 +476,137 @@ func get_cargo(cargo_id: String) -> void:
 		"method": HTTPClient.METHOD_GET
 	}
 	_request_queue.append(request_details)
+	_process_queue()
+
+# --- Warehouse requests ---
+func warehouse_new(sett_id: String) -> void:
+	if sett_id.is_empty() or not _is_valid_uuid(sett_id):
+		printerr("APICalls (warehouse_new): invalid sett_id %s" % sett_id)
+		return
+	var url := "%s/warehouse/new?sett_id=%s" % [BASE_URL, sett_id]
+	var headers: PackedStringArray = ['accept: application/json']
+	headers = _apply_auth_header(headers)
+	_request_queue.append({
+		"url": url,
+		"headers": headers,
+		"purpose": RequestPurpose.NONE,
+		"method": HTTPClient.METHOD_POST,
+		"body": "",
+		"signal_name": "warehouse_created"
+	})
+	_process_queue()
+
+func get_warehouse(warehouse_id: String) -> void:
+	if warehouse_id.is_empty() or not _is_valid_uuid(warehouse_id):
+		printerr("APICalls (get_warehouse): invalid warehouse_id %s" % warehouse_id)
+		return
+	var url := "%s/warehouse/get?warehouse_id=%s" % [BASE_URL, warehouse_id]
+	var headers: PackedStringArray = ['accept: application/json']
+	headers = _apply_auth_header(headers)
+	_request_queue.append({
+		"url": url,
+		"headers": headers,
+		"purpose": RequestPurpose.WAREHOUSE_GET,
+		"method": HTTPClient.METHOD_GET
+	})
+	_process_queue()
+
+# --- Warehouse action PATCH wrappers ---
+func _build_query(params: Dictionary) -> String:
+	if params.is_empty():
+		return ""
+	var parts: Array[String] = []
+	for k in params.keys():
+		var key := String(k)
+		var val := str(params[k])
+		# Basic URI encoding for safety
+		var enc_key := key.uri_encode()
+		var enc_val := val.uri_encode()
+		parts.append("%s=%s" % [enc_key, enc_val])
+	return "?" + "&".join(parts)
+
+func warehouse_expand(params: Dictionary) -> void:
+	var url := "%s/warehouse/expand%s" % [BASE_URL, _build_query(params)]
+	var headers: PackedStringArray = ['accept: application/json']
+	headers = _apply_auth_header(headers)
+	_request_queue.append({
+		"url": url,
+		"headers": headers,
+		"purpose": RequestPurpose.NONE,
+		"method": HTTPClient.METHOD_PATCH,
+		"body": "",
+		"signal_name": "warehouse_expanded"
+	})
+	_process_queue()
+
+func warehouse_cargo_store(params: Dictionary) -> void:
+	var url := "%s/warehouse/cargo/store%s" % [BASE_URL, _build_query(params)]
+	var headers: PackedStringArray = ['accept: application/json']
+	headers = _apply_auth_header(headers)
+	_request_queue.append({
+		"url": url,
+		"headers": headers,
+		"purpose": RequestPurpose.NONE,
+		"method": HTTPClient.METHOD_PATCH,
+		"body": "",
+		"signal_name": "warehouse_cargo_stored"
+	})
+	_process_queue()
+
+func warehouse_cargo_retrieve(params: Dictionary) -> void:
+	var url := "%s/warehouse/cargo/retrieve%s" % [BASE_URL, _build_query(params)]
+	var headers: PackedStringArray = ['accept: application/json']
+	headers = _apply_auth_header(headers)
+	_request_queue.append({
+		"url": url,
+		"headers": headers,
+		"purpose": RequestPurpose.NONE,
+		"method": HTTPClient.METHOD_PATCH,
+		"body": "",
+		"signal_name": "warehouse_cargo_retrieved"
+	})
+	_process_queue()
+
+func warehouse_vehicle_store(params: Dictionary) -> void:
+	var url := "%s/warehouse/vehicle/store%s" % [BASE_URL, _build_query(params)]
+	var headers: PackedStringArray = ['accept: application/json']
+	headers = _apply_auth_header(headers)
+	_request_queue.append({
+		"url": url,
+		"headers": headers,
+		"purpose": RequestPurpose.NONE,
+		"method": HTTPClient.METHOD_PATCH,
+		"body": "",
+		"signal_name": "warehouse_vehicle_stored"
+	})
+	_process_queue()
+
+func warehouse_vehicle_retrieve(params: Dictionary) -> void:
+	var url := "%s/warehouse/vehicle/retrieve%s" % [BASE_URL, _build_query(params)]
+	var headers: PackedStringArray = ['accept: application/json']
+	headers = _apply_auth_header(headers)
+	_request_queue.append({
+		"url": url,
+		"headers": headers,
+		"purpose": RequestPurpose.NONE,
+		"method": HTTPClient.METHOD_PATCH,
+		"body": "",
+		"signal_name": "warehouse_vehicle_retrieved"
+	})
+	_process_queue()
+
+func warehouse_convoy_spawn(params: Dictionary) -> void:
+	var url := "%s/warehouse/convoy/spawn%s" % [BASE_URL, _build_query(params)]
+	var headers: PackedStringArray = ['accept: application/json']
+	headers = _apply_auth_header(headers)
+	_request_queue.append({
+		"url": url,
+		"headers": headers,
+		"purpose": RequestPurpose.NONE,
+		"method": HTTPClient.METHOD_PATCH,
+		"body": "",
+		"signal_name": "warehouse_convoy_spawned"
+	})
 	_process_queue()
 
 # --- Mechanics / Part Compatibility ---
@@ -1029,9 +1179,9 @@ func _on_request_completed(result: int, response_code: int, _headers: PackedStri
 			print("[APICalls][PATCH_TXN] body_preview=", preview)
 			var json_response = JSON.parse_string(response_body_text)
 			if json_response == null:
-				var error_msg = "APICalls (PATCH): Failed to parse JSON for '%s'. Body: %s" % [_current_patch_signal_name, response_body_text]
-				printerr(error_msg)
-				emit_signal('fetch_error', error_msg)
+				# Accept plain-text bodies (e.g., UUID) by emitting the raw string
+				print("[APICalls][PATCH_TXN] Non-JSON success body; emitting raw text for signal '%s'." % _current_patch_signal_name)
+				emit_signal(_current_patch_signal_name, response_body_text)
 			else:
 				print("APICalls: Transaction '%s' successful. Emitting signal with data." % _current_patch_signal_name)
 				emit_signal(_current_patch_signal_name, json_response)
@@ -1256,6 +1406,19 @@ func _on_request_completed(result: int, response_code: int, _headers: PackedStri
 		else:
 			print("APICalls (_on_request_completed - CARGO_DATA): Successfully fetched cargo data. URL: %s" % _last_requested_url)
 			emit_signal('cargo_data_received', json_response)
+		_complete_current_request()
+		return
+
+	elif request_purpose_at_start == RequestPurpose.WAREHOUSE_GET:
+		var response_body_text_w: String = body.get_string_from_utf8()
+		var json_w = JSON.parse_string(response_body_text_w)
+		if json_w == null or not json_w is Dictionary:
+			var error_msg_w = 'APICalls (_on_request_completed - WAREHOUSE_GET): Failed to parse warehouse data. URL: %s' % _last_requested_url
+			printerr(error_msg_w)
+			emit_signal('fetch_error', error_msg_w)
+		else:
+			print("APICalls (_on_request_completed - WAREHOUSE_GET): Successfully fetched warehouse data. URL: %s" % _last_requested_url)
+			emit_signal('warehouse_received', json_w)
 		_complete_current_request()
 		return
 
