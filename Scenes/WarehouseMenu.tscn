@@ -30,10 +30,6 @@ size_flags_horizontal = 3
 layout_mode = 2
 text = "Buy"
 
-[node name="BackButton" type="Button" parent="MainVBox"]
-layout_mode = 2
-text = "Back"
-size_flags_horizontal = 3
 
 [node name="Body" type="VBoxContainer" parent="MainVBox"]
 layout_mode = 2
@@ -51,45 +47,61 @@ size_flags_vertical = 3
 layout_mode = 2
 text = "Warehouse summary will appear here."
 
+[node name="OverviewCargoHBox" type="HBoxContainer" parent="MainVBox/Body/OwnedTabs/Overview"]
+layout_mode = 2
+
+[node name="OverviewCargoLabel" type="Label" parent="MainVBox/Body/OwnedTabs/Overview/OverviewCargoHBox"]
+layout_mode = 2
+text = "Cargo Usage"
+
+[node name="OverviewCargoBar" type="ProgressBar" parent="MainVBox/Body/OwnedTabs/Overview/OverviewCargoHBox"]
+layout_mode = 2
+size_flags_horizontal = 3
+value = 0.0
+max_value = 1.0
+
+[node name="OverviewVehicleHBox" type="HBoxContainer" parent="MainVBox/Body/OwnedTabs/Overview"]
+layout_mode = 2
+
+[node name="OverviewVehicleLabel" type="Label" parent="MainVBox/Body/OwnedTabs/Overview/OverviewVehicleHBox"]
+layout_mode = 2
+text = "Vehicles"
+
+[node name="OverviewVehicleBar" type="ProgressBar" parent="MainVBox/Body/OwnedTabs/Overview/OverviewVehicleHBox"]
+layout_mode = 2
+size_flags_horizontal = 3
+value = 0.0
+max_value = 1.0
+
 [node name="ExpandCargoHBox" type="HBoxContainer" parent="MainVBox/Body/OwnedTabs/Overview"]
 layout_mode = 2
 
 [node name="ExpandCargoLabel" type="Label" parent="MainVBox/Body/OwnedTabs/Overview/ExpandCargoHBox"]
 layout_mode = 2
-text = "Expand Cargo by:"
-
-[node name="ExpandCargoAmount" type="SpinBox" parent="MainVBox/Body/OwnedTabs/Overview/ExpandCargoHBox"]
-layout_mode = 2
-min_value = 1.0
-max_value = 1000000.0
-step = 1.0
-value = 10.0
+text = "Upgrade Cargo Capacity"
 
 [node name="ExpandCargoBtn" type="Button" parent="MainVBox/Body/OwnedTabs/Overview/ExpandCargoHBox"]
 layout_mode = 2
-text = "Expand Cargo"
+text = "Upgrade Cargo"
 
 [node name="ExpandVehicleHBox" type="HBoxContainer" parent="MainVBox/Body/OwnedTabs/Overview"]
 layout_mode = 2
 
 [node name="ExpandVehicleLabel" type="Label" parent="MainVBox/Body/OwnedTabs/Overview/ExpandVehicleHBox"]
 layout_mode = 2
-text = "Expand Vehicle slots by:"
-
-[node name="ExpandVehicleAmount" type="SpinBox" parent="MainVBox/Body/OwnedTabs/Overview/ExpandVehicleHBox"]
-layout_mode = 2
-min_value = 1.0
-max_value = 1000000.0
-step = 1.0
-value = 1.0
+text = "Upgrade Vehicle Slots"
 
 [node name="ExpandVehicleBtn" type="Button" parent="MainVBox/Body/OwnedTabs/Overview/ExpandVehicleHBox"]
 layout_mode = 2
-text = "Expand Vehicle"
+text = "Upgrade Vehicle"
 
 [node name="Cargo" type="VBoxContainer" parent="MainVBox/Body/OwnedTabs"]
 layout_mode = 2
 size_flags_vertical = 3
+
+[node name="CargoUsageLabel" type="Label" parent="MainVBox/Body/OwnedTabs/Cargo"]
+layout_mode = 2
+text = "Cargo: 0 / 0 L"
 
 [node name="StoreFromConvoyLabel" type="Label" parent="MainVBox/Body/OwnedTabs/Cargo"]
 layout_mode = 2
@@ -98,9 +110,9 @@ text = "Store cargo from convoy"
 [node name="CargoStoreHBox" type="HBoxContainer" parent="MainVBox/Body/OwnedTabs/Cargo"]
 layout_mode = 2
 
-[node name="CargoIdInputStore" type="LineEdit" parent="MainVBox/Body/OwnedTabs/Cargo/CargoStoreHBox"]
+[node name="CargoStoreDropdown" type="OptionButton" parent="MainVBox/Body/OwnedTabs/Cargo/CargoStoreHBox"]
 layout_mode = 2
-placeholder_text = "cargo_id"
+size_flags_horizontal = 3
 
 [node name="CargoQtyStore" type="SpinBox" parent="MainVBox/Body/OwnedTabs/Cargo/CargoStoreHBox"]
 layout_mode = 2
@@ -120,9 +132,13 @@ text = "Retrieve cargo from warehouse"
 [node name="CargoRetrieveHBox" type="HBoxContainer" parent="MainVBox/Body/OwnedTabs/Cargo"]
 layout_mode = 2
 
-[node name="CargoIdInputRetrieve" type="LineEdit" parent="MainVBox/Body/OwnedTabs/Cargo/CargoRetrieveHBox"]
+[node name="CargoRetrieveDropdown" type="OptionButton" parent="MainVBox/Body/OwnedTabs/Cargo/CargoRetrieveHBox"]
 layout_mode = 2
-placeholder_text = "cargo_id"
+size_flags_horizontal = 3
+
+[node name="CargoRetrieveVehicleDropdown" type="OptionButton" parent="MainVBox/Body/OwnedTabs/Cargo/CargoRetrieveHBox"]
+layout_mode = 2
+size_flags_horizontal = 3
 
 [node name="CargoQtyRetrieve" type="SpinBox" parent="MainVBox/Body/OwnedTabs/Cargo/CargoRetrieveHBox"]
 layout_mode = 2
@@ -135,6 +151,22 @@ value = 1.0
 layout_mode = 2
 text = "Retrieve"
 
+[node name="CargoInventorySpacer" type="Control" parent="MainVBox/Body/OwnedTabs/Cargo"]
+layout_mode = 2
+custom_minimum_size = Vector2(0, 8)
+
+[node name="CargoInventoryPanel" type="PanelContainer" parent="MainVBox/Body/OwnedTabs/Cargo"]
+layout_mode = 2
+size_flags_vertical = 3
+
+[node name="CargoGridScroll" type="ScrollContainer" parent="MainVBox/Body/OwnedTabs/Cargo/CargoInventoryPanel"]
+layout_mode = 2
+size_flags_vertical = 3
+
+[node name="CargoGrid" type="GridContainer" parent="MainVBox/Body/OwnedTabs/Cargo/CargoInventoryPanel/CargoGridScroll"]
+layout_mode = 2
+columns = 4
+
 [node name="Vehicles" type="VBoxContainer" parent="MainVBox/Body/OwnedTabs"]
 layout_mode = 2
 size_flags_vertical = 3
@@ -146,9 +178,9 @@ text = "Store vehicle from convoy"
 [node name="VehicleStoreHBox" type="HBoxContainer" parent="MainVBox/Body/OwnedTabs/Vehicles"]
 layout_mode = 2
 
-[node name="VehicleIdInputStore" type="LineEdit" parent="MainVBox/Body/OwnedTabs/Vehicles/VehicleStoreHBox"]
+[node name="VehicleStoreDropdown" type="OptionButton" parent="MainVBox/Body/OwnedTabs/Vehicles/VehicleStoreHBox"]
 layout_mode = 2
-placeholder_text = "vehicle_id"
+size_flags_horizontal = 3
 
 [node name="StoreVehicleBtn" type="Button" parent="MainVBox/Body/OwnedTabs/Vehicles/VehicleStoreHBox"]
 layout_mode = 2
@@ -161,34 +193,58 @@ text = "Retrieve vehicle from warehouse"
 [node name="VehicleRetrieveHBox" type="HBoxContainer" parent="MainVBox/Body/OwnedTabs/Vehicles"]
 layout_mode = 2
 
-[node name="VehicleIdInputRetrieve" type="LineEdit" parent="MainVBox/Body/OwnedTabs/Vehicles/VehicleRetrieveHBox"]
+[node name="VehicleRetrieveDropdown" type="OptionButton" parent="MainVBox/Body/OwnedTabs/Vehicles/VehicleRetrieveHBox"]
 layout_mode = 2
-placeholder_text = "vehicle_id"
+size_flags_horizontal = 3
 
 [node name="RetrieveVehicleBtn" type="Button" parent="MainVBox/Body/OwnedTabs/Vehicles/VehicleRetrieveHBox"]
 layout_mode = 2
 text = "Retrieve"
 
-[node name="Actions" type="VBoxContainer" parent="MainVBox/Body/OwnedTabs"]
+[node name="SpawnFromVehicleLabel" type="Label" parent="MainVBox/Body/OwnedTabs/Vehicles"]
+layout_mode = 2
+text = "Spawn convoy from stored vehicle"
+
+[node name="SpawnHBox" type="HBoxContainer" parent="MainVBox/Body/OwnedTabs/Vehicles"]
+layout_mode = 2
+
+[node name="SpawnVehicleDropdown" type="OptionButton" parent="MainVBox/Body/OwnedTabs/Vehicles/SpawnHBox"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="SpawnNameInput" type="LineEdit" parent="MainVBox/Body/OwnedTabs/Vehicles/SpawnHBox"]
+layout_mode = 2
+placeholder_text = "Enter new convoy name..."
+custom_minimum_size = Vector2(240, 0)
+tooltip_text = "Type the name for the new convoy you are spawning from the selected stored vehicle."
+
+[node name="SpawnConvoyBtn" type="Button" parent="MainVBox/Body/OwnedTabs/Vehicles/SpawnHBox"]
+layout_mode = 2
+text = "Spawn"
+
+[node name="VehicleInventorySpacer" type="Control" parent="MainVBox/Body/OwnedTabs/Vehicles"]
+layout_mode = 2
+custom_minimum_size = Vector2(0, 8)
+
+[node name="VehicleInventoryPanel" type="PanelContainer" parent="MainVBox/Body/OwnedTabs/Vehicles"]
 layout_mode = 2
 size_flags_vertical = 3
 
-[node name="SpawnConvoyLabel" type="Label" parent="MainVBox/Body/OwnedTabs/Actions"]
+[node name="VehicleGridScroll" type="ScrollContainer" parent="MainVBox/Body/OwnedTabs/Vehicles/VehicleInventoryPanel"]
 layout_mode = 2
-text = "Spawn new convoy from warehouse"
+size_flags_vertical = 3
 
-[node name="SpawnHBox" type="HBoxContainer" parent="MainVBox/Body/OwnedTabs/Actions"]
+[node name="VehicleGrid" type="GridContainer" parent="MainVBox/Body/OwnedTabs/Vehicles/VehicleInventoryPanel/VehicleGridScroll"]
 layout_mode = 2
+columns = 4
 
-[node name="SpawnNameInput" type="LineEdit" parent="MainVBox/Body/OwnedTabs/Actions/SpawnHBox"]
-layout_mode = 2
-placeholder_text = "convoy name"
-
-[node name="SpawnConvoyBtn" type="Button" parent="MainVBox/Body/OwnedTabs/Actions/SpawnHBox"]
-layout_mode = 2
-text = "Spawn"
 
 [node name="InfoLabel" type="Label" parent="MainVBox/Body"]
 layout_mode = 2
 text = "Loading..."
+
+[node name="BackButton" type="Button" parent="MainVBox"]
+layout_mode = 2
+text = "Back"
+size_flags_horizontal = 3
 

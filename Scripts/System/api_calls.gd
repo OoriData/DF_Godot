@@ -596,9 +596,18 @@ func warehouse_vehicle_retrieve(params: Dictionary) -> void:
 	_process_queue()
 
 func warehouse_convoy_spawn(params: Dictionary) -> void:
-	var url := "%s/warehouse/convoy/spawn%s" % [BASE_URL, _build_query(params)]
+	# Normalize param naming: prefer 'new_convoy_name' per latest API spec.
+	# If only legacy 'name' provided, map it to 'new_convoy_name'. If both provided, keep new_convoy_name.
+	var effective: Dictionary = params.duplicate()
+	if not effective.has("new_convoy_name") and effective.has("name"):
+		effective["new_convoy_name"] = effective.get("name", "")
+	# Avoid sending both if server rejects duplicates; remove 'name' now.
+	if effective.has("name"):
+		effective.erase("name")
+	var url := "%s/warehouse/convoy/spawn%s" % [BASE_URL, _build_query(effective)]
 	var headers: PackedStringArray = ['accept: application/json']
 	headers = _apply_auth_header(headers)
+	print("[APICalls][Enqueue] warehouse_convoy_spawn url=", url, " queue_len_before=", _request_queue.size(), " in_progress=", _is_request_in_progress)
 	_request_queue.append({
 		"url": url,
 		"headers": headers,
@@ -607,7 +616,37 @@ func warehouse_convoy_spawn(params: Dictionary) -> void:
 		"body": "",
 		"signal_name": "warehouse_convoy_spawned"
 	})
+	print("[APICalls][Enqueue] warehouse_convoy_spawn appended queue_len_after=", _request_queue.size())
 	_process_queue()
+
+# TEMP diagnostic: bypass queue to see if HTTP call itself works
+func warehouse_convoy_spawn_direct(params: Dictionary) -> void:
+	var effective: Dictionary = params.duplicate()
+	if not effective.has("new_convoy_name") and effective.has("name"):
+		effective["new_convoy_name"] = effective.get("name", "")
+	if effective.has("name"):
+		effective.erase("name")
+	var url := "%s/warehouse/convoy/spawn%s" % [BASE_URL, _build_query(effective)]
+	var headers: PackedStringArray = ['accept: application/json']
+	headers = _apply_auth_header(headers)
+	print("[APICalls][Direct] warehouse_convoy_spawn_direct url=", url)
+	var req := HTTPRequest.new()
+	add_child(req)
+	req.request_completed.connect(func(result:int, code:int, _h:PackedStringArray, body:PackedByteArray):
+		print("[APICalls][Direct] completion result=", result, " code=", code, " bytes=", body.size())
+		var text := body.get_string_from_utf8()
+		print("[APICalls][Direct] body=", text.substr(0, 300))
+		# Attempt to parse JSON
+		var json := JSON.new()
+		if json.parse(text) == OK:
+			emit_signal("warehouse_convoy_spawned", json.data)
+		else:
+			emit_signal("warehouse_convoy_spawned", text)
+			print("[APICalls][Direct] emitted raw text for warehouse_convoy_spawned")
+	)
+	var err := req.request(url, headers, HTTPClient.METHOD_PATCH, "")
+	if err != OK:
+		printerr("[APICalls][Direct] request failed err=", err)
 
 # --- Mechanics / Part Compatibility ---
 func check_vehicle_part_compatibility(vehicle_id: String, part_cargo_id: String) -> void:
@@ -1163,6 +1202,8 @@ func _abort_map_request_for_auth():
 # Called when the HTTPRequest has completed.
 func _on_request_completed(result: int, response_code: int, _headers: PackedStringArray, body: PackedByteArray) -> void:
 	print("[APICalls] _on_request_completed() purpose=%s result=%d code=%d url=%s" % [RequestPurpose.keys()[_current_request_purpose], result, response_code, _last_requested_url])
+	if _current_patch_signal_name == "warehouse_convoy_spawned":
+		print("[APICalls][SpawnConvoy] completion result=%d http_code=%d body_bytes=%d" % [result, response_code, body.size()])
 	var request_purpose_at_start = _current_request_purpose
 	# Global 401 handling (auth expired)
 	if response_code == 401 and _auth_bearer_token != "" and request_purpose_at_start != RequestPurpose.AUTH_STATUS:
