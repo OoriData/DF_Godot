@@ -1476,7 +1476,13 @@ func _on_swap_part_pressed(slot_name: String, current_part: Dictionary):
 				if _compat_cache.has(cache_key):
 					_update_row_from_compat_payload(_compat_cache[cache_key])
 				# Attach context for dynamic price updates and refresh price
-				row.set_meta("vehicle_id", String(vehicle.get("vehicle_id", "")))
+				# Guard: vehicle must be a Dictionary; otherwise diagnose why
+				var _veh_id_val := ""
+				if typeof(vehicle) == TYPE_DICTIONARY:
+					_veh_id_val = str(vehicle.get("vehicle_id", ""))
+				else:
+					print("[MechanicsMenu][Diag] Unexpected vehicle type when setting meta. typeof=", typeof(vehicle), " value=", vehicle)
+				row.set_meta("vehicle_id", _veh_id_val)
 				row.set_meta("part_uid", id2)
 				# Set delta label vs current part
 				var delta_lbl: Label = row.get_node_or_null("DeltaLabel")
@@ -2028,7 +2034,19 @@ func _is_part_compatible(vehicle: Dictionary, slot_name: String, part: Dictionar
 	if part.has("requirements") and part.requirements is Array and not (part.requirements as Array).is_empty():
 		# Look for simple string requirements that match vehicle fields (model/class) if present
 		var reqs: Array = part.requirements
-		var vmodel = String(vehicle.get("make_model", vehicle.get("model", ""))).to_lower()
+		# Guard vehicle dictionary before casting; diagnose abnormal types to catch the 'String constructor: vehicle' error.
+		var vmodel := ""
+		if typeof(vehicle) == TYPE_DICTIONARY:
+			var _mm = vehicle.get("make_model", null)
+			var _model = vehicle.get("model", "")
+			# Use str() instead of String() to avoid constructor issues if values are unexpected types.
+			if _mm != null and str(_mm) != "":
+				vmodel = str(_mm).to_lower()
+			else:
+				vmodel = str(_model).to_lower()
+		else:
+			print("[MechanicsMenu][Diag] vehicle not Dictionary in _is_part_compatible typeof=", typeof(vehicle), " value=", vehicle)
+			vmodel = str(vehicle).to_lower()
 		for r in reqs:
 			if r is String and not r.is_empty():
 				var rlow = r.to_lower()

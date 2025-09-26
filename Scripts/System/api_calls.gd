@@ -517,18 +517,57 @@ func _build_query(params: Dictionary) -> String:
 		return ""
 	var parts: Array[String] = []
 	for k in params.keys():
-		var key := String(k)
-		var val := str(params[k])
-		# Basic URI encoding for safety
-		var enc_key := key.uri_encode()
-		var enc_val := val.uri_encode()
+		var key_type := typeof(k)
+		var key_str := ""
+		match key_type:
+			TYPE_STRING, TYPE_INT, TYPE_FLOAT, TYPE_BOOL:
+				key_str = str(k)
+			_:
+				print("[APICalls][Diag][_build_query] Non-primitive key encountered typeof=", key_type, " value=", k)
+				key_str = str(k)
+		var val_raw = params.get(k, "")
+		var val_str := ""
+		var val_type := typeof(val_raw)
+		match val_type:
+			TYPE_STRING, TYPE_INT, TYPE_FLOAT, TYPE_BOOL:
+				val_str = str(val_raw)
+			_:
+				# Avoid hitting String(<complex>) pitfalls; log and stringify
+				print("[APICalls][Diag][_build_query] Non-primitive value typeof=", val_type, " key=", key_str, " value=", val_raw)
+				val_str = str(val_raw)
+		var enc_key := key_str.uri_encode()
+		var enc_val := val_str.uri_encode()
 		parts.append("%s=%s" % [enc_key, enc_val])
 	return "?" + "&".join(parts)
 
 func warehouse_expand(params: Dictionary) -> void:
-	var url := "%s/warehouse/expand%s" % [BASE_URL, _build_query(params)]
+	print("[APICalls][warehouse_expand] invoked params=", params, " types=", _diagnose_param_types(params))
+	var wid_raw = params.get("warehouse_id", "")
+	var expand_type_raw = params.get("expand_type", "")
+	var amount_raw = params.get("amount", 1)
+	# Accept alt key names defensively
+	if expand_type_raw == "" and params.has("type"):
+		expand_type_raw = params.get("type")
+	if expand_type_raw == "" and params.has("expand"):
+		expand_type_raw = params.get("expand")
+	if amount_raw == 1 and params.has("units"):
+		amount_raw = params.get("units")
+	var wid := str(wid_raw)
+	var expand_type := str(expand_type_raw)
+	var amount := str(amount_raw)
+	if wid == "":
+		printerr("[APICalls][warehouse_expand] Missing warehouse_id in params raw=", wid_raw)
+		return
+	if expand_type == "":
+		printerr("[APICalls][warehouse_expand] Missing expand_type in params raw=", expand_type_raw)
+		return
+	var query_dict := {"warehouse_id": wid, "expand_type": expand_type, "amount": amount, "type": expand_type, "expand": expand_type}
+	print("[APICalls][warehouse_expand] Prepared query wid=", wid, " expand_type=", expand_type, " amount=", amount, " final_query_dict=", query_dict)
+	var url := "%s/warehouse/expand%s" % [BASE_URL, _build_query(query_dict)]
+	print("[APICalls][warehouse_expand] Enqueue URL=", url)
 	var headers: PackedStringArray = ['accept: application/json']
 	headers = _apply_auth_header(headers)
+	_current_patch_signal_name = "warehouse_expanded"
 	_request_queue.append({
 		"url": url,
 		"headers": headers,
@@ -537,7 +576,92 @@ func warehouse_expand(params: Dictionary) -> void:
 		"body": "",
 		"signal_name": "warehouse_expanded"
 	})
+	print("[APICalls][warehouse_expand] Queue length now=", _request_queue.size())
 	_process_queue()
+
+# Alternative expansion using JSON body (fallback if query version shows no effect)
+func warehouse_expand_json(params: Dictionary) -> void:
+	print("[APICalls][warehouse_expand_json] invoked params=", params, " types=", _diagnose_param_types(params))
+	var wid_raw = params.get("warehouse_id", "")
+	var expand_type_raw = params.get("expand_type", params.get("type", params.get("expand", "")))
+	var amount_raw = params.get("amount", params.get("units", 1))
+	var wid := str(wid_raw)
+	var expand_type := str(expand_type_raw)
+	var amount := int(amount_raw)
+	if wid == "" or not _is_valid_uuid(wid):
+		printerr("[APICalls][warehouse_expand_json] Missing/invalid warehouse_id=", wid)
+		return
+	if expand_type == "":
+		printerr("[APICalls][warehouse_expand_json] Missing expand_type")
+		return
+	var url := "%s/warehouse/expand" % BASE_URL
+	var headers: PackedStringArray = ['accept: application/json', 'content-type: application/json']
+	headers = _apply_auth_header(headers)
+	var body_dict := {"warehouse_id": wid, "expand_type": expand_type, "amount": amount}
+	var body_json := JSON.stringify(body_dict)
+	_current_patch_signal_name = "warehouse_expanded"
+	_request_queue.append({
+		"url": url,
+		"headers": headers,
+		"purpose": RequestPurpose.NONE,
+		"method": HTTPClient.METHOD_PATCH,
+		"body": body_json,
+		"signal_name": "warehouse_expanded"
+	})
+	print("[APICalls][warehouse_expand_json] Enqueued JSON PATCH url=", url, " body=", body_json)
+	_process_queue()
+
+# Preferred v2 expansion using explicit field names cargo_capacity_upgrade / vehicle_capacity_upgrade
+func warehouse_expand_v2(warehouse_id: String, cargo_units: int, vehicle_units: int) -> void:
+	# Always send both fields (0 where not upgrading) so backend can't misinterpret omission.
+	if warehouse_id == "" or not _is_valid_uuid(warehouse_id):
+		printerr("[APICalls][warehouse_expand_v2] Invalid warehouse_id=", warehouse_id)
+		return
+	var cargo_u := int(max(0, cargo_units))
+	var vehicle_u := int(max(0, vehicle_units))
+	print("[APICalls][warehouse_expand_v2] wid=", warehouse_id, " cargo_units=", cargo_u, " vehicle_units=", vehicle_u)
+	var q_params := {
+		"warehouse_id": warehouse_id,
+		"cargo_capacity_upgrade": str(cargo_u),
+		"vehicle_capacity_upgrade": str(vehicle_u)
+	}
+	var url_query := _build_query(q_params)
+	var url := "%s/warehouse/expand%s" % [BASE_URL, url_query]
+	var headers: PackedStringArray = ['accept: application/json']
+	headers = _apply_auth_header(headers)
+	_current_patch_signal_name = "warehouse_expanded"
+	_request_queue.append({
+		"url": url,
+		"headers": headers,
+		"purpose": RequestPurpose.NONE,
+		"method": HTTPClient.METHOD_PATCH,
+		"body": "",
+		"signal_name": "warehouse_expanded"
+	})
+	print("[APICalls][warehouse_expand_v2] Enqueued URL=", url)
+	_process_queue()
+	# Also enqueue JSON fallback immediately (optional) if first returns no change we can trigger manually
+	var body_dict := {
+		"warehouse_id": warehouse_id,
+		"cargo_capacity_upgrade": cargo_u,
+		"vehicle_capacity_upgrade": vehicle_u
+	}
+	var body_json := JSON.stringify(body_dict)
+	_request_queue.append({
+		"url": "%s/warehouse/expand" % BASE_URL,
+		"headers": _apply_auth_header(['accept: application/json', 'content-type: application/json']),
+		"purpose": RequestPurpose.NONE,
+		"method": HTTPClient.METHOD_PATCH,
+		"body": body_json,
+		"signal_name": "warehouse_expanded"
+	})
+	print("[APICalls][warehouse_expand_v2] (Queued JSON fallback second) body=", body_json, " queue_len=", _request_queue.size())
+
+func _diagnose_param_types(d: Dictionary) -> Dictionary:
+	var out: Dictionary = {}
+	for k in d.keys():
+		out[str(k)] = typeof(d.get(k))
+	return out
 
 func warehouse_cargo_store(params: Dictionary) -> void:
 	var url := "%s/warehouse/cargo/store%s" % [BASE_URL, _build_query(params)]

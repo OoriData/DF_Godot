@@ -19,6 +19,7 @@ signal back_requested
 @onready var retrieve_cargo_btn: Button = $MainVBox/Body/OwnedTabs/Cargo/CargoRetrieveHBox/RetrieveCargoBtn
 @onready var cargo_usage_label: Label = $MainVBox/Body/OwnedTabs/Cargo/CargoUsageLabel
 @onready var cargo_grid: GridContainer = $MainVBox/Body/OwnedTabs/Cargo/CargoInventoryPanel/CargoGridScroll/CargoGrid
+@onready var cargo_inventory_panel: Control = $MainVBox/Body/OwnedTabs/Cargo/CargoInventoryPanel
 @onready var vehicle_store_dd: OptionButton = $MainVBox/Body/OwnedTabs/Vehicles/VehicleStoreHBox/VehicleStoreDropdown
 @onready var store_vehicle_btn: Button = $MainVBox/Body/OwnedTabs/Vehicles/VehicleStoreHBox/StoreVehicleBtn
 @onready var vehicle_retrieve_dd: OptionButton = $MainVBox/Body/OwnedTabs/Vehicles/VehicleRetrieveHBox/VehicleRetrieveDropdown
@@ -27,10 +28,13 @@ signal back_requested
 @onready var spawn_name_input: LineEdit = $MainVBox/Body/OwnedTabs/Vehicles/SpawnHBox/SpawnNameInput
 @onready var spawn_convoy_btn: Button = $MainVBox/Body/OwnedTabs/Vehicles/SpawnHBox/SpawnConvoyBtn
 @onready var vehicle_grid: GridContainer = $MainVBox/Body/OwnedTabs/Vehicles/VehicleInventoryPanel/VehicleGridScroll/VehicleGrid
+@onready var vehicle_inventory_panel: Control = $MainVBox/Body/OwnedTabs/Vehicles/VehicleInventoryPanel
 @onready var expand_cargo_label: Label = $MainVBox/Body/OwnedTabs/Overview/ExpandCargoHBox/ExpandCargoLabel
 @onready var expand_vehicle_label: Label = $MainVBox/Body/OwnedTabs/Overview/ExpandVehicleHBox/ExpandVehicleLabel
 @onready var overview_cargo_bar: ProgressBar = $MainVBox/Body/OwnedTabs/Overview/OverviewCargoHBox/OverviewCargoBar
 @onready var overview_vehicle_bar: ProgressBar = $MainVBox/Body/OwnedTabs/Overview/OverviewVehicleHBox/OverviewVehicleBar
+@onready var overview_cargo_label: Label = $MainVBox/Body/OwnedTabs/Overview/OverviewCargoHBox/OverviewCargoLabel
+@onready var overview_vehicle_label: Label = $MainVBox/Body/OwnedTabs/Overview/OverviewVehicleHBox/OverviewVehicleLabel
 
 var _convoy_data: Dictionary
 var _settlement: Dictionary
@@ -39,6 +43,15 @@ var gdm: Node
 var api: Node
 var _is_loading: bool = false
 var _pending_action_refresh: bool = false
+var _last_known_wid: String = "" # Remember last successfully loaded warehouse_id for unconditional refresh after actions
+var _upgrade_in_progress: bool = false # When true, disable upgrade buttons until fresh warehouse data arrives
+var _pre_expand_cargo_cap: int = -1
+var _pre_expand_vehicle_cap: int = -1
+var _last_expand_type: String = "" # "cargo" or "vehicle" when an expansion attempt is active
+var _last_expand_used_json: bool = false # Tracks whether we've already retried with JSON body
+var _optimistic_money_active: bool = false
+var _optimistic_money_before: float = 0.0
+var _optimistic_money_after: float = 0.0
 
 
 # Track last-seen dropdown contents to avoid reshuffling
@@ -70,6 +83,27 @@ func _ready():
 	print("[WarehouseMenu] _ready()")
 	gdm = get_node_or_null("/root/GameDataManager")
 	api = get_node_or_null("/root/APICalls")
+	_ensure_inventory_headers()
+	# Remove top title per request
+	if is_instance_valid(title_label):
+		title_label.visible = false
+		title_label.text = ""
+	# Diagnostics: verify expand buttons and signal connections
+	if is_instance_valid(expand_cargo_btn):
+		print("[WarehouseMenu][Diag] Found expand_cargo_btn path=", expand_cargo_btn.get_path(), " disabled=", expand_cargo_btn.disabled)
+	else:
+		print("[WarehouseMenu][Diag][WARN] expand_cargo_btn NOT found at expected path.")
+	if is_instance_valid(expand_vehicle_btn):
+		print("[WarehouseMenu][Diag] Found expand_vehicle_btn path=", expand_vehicle_btn.get_path(), " disabled=", expand_vehicle_btn.disabled)
+	else:
+		print("[WarehouseMenu][Diag][WARN] expand_vehicle_btn NOT found at expected path.")
+	# Attach raw press test callbacks (secondary) to confirm signal emission even if handler not firing
+	if is_instance_valid(expand_cargo_btn) and not expand_cargo_btn.pressed.is_connected(_diag_expand_cargo_pressed):
+		expand_cargo_btn.pressed.connect(_diag_expand_cargo_pressed)
+	if is_instance_valid(expand_vehicle_btn) and not expand_vehicle_btn.pressed.is_connected(_diag_expand_vehicle_pressed):
+		expand_vehicle_btn.pressed.connect(_diag_expand_vehicle_pressed)
+	# Schedule a deferred re-check to ensure connections after scene tree stabilization
+	call_deferred("_post_ready_expand_diag")
 	if is_instance_valid(back_button):
 		back_button.pressed.connect(func(): emit_signal("back_requested"))
 	if is_instance_valid(buy_button):
@@ -103,8 +137,13 @@ func _ready():
 
 	# Wire UI buttons
 	if is_instance_valid(expand_cargo_btn):
+		# Add gui_input logging even if disabled to see attempted clicks
+		if not expand_cargo_btn.gui_input.is_connected(_on_expand_button_gui_input):
+			expand_cargo_btn.gui_input.connect(_on_expand_button_gui_input.bind("cargo"))
 		expand_cargo_btn.pressed.connect(_on_expand_cargo)
 	if is_instance_valid(expand_vehicle_btn):
+		if not expand_vehicle_btn.gui_input.is_connected(_on_expand_button_gui_input):
+			expand_vehicle_btn.gui_input.connect(_on_expand_button_gui_input.bind("vehicle"))
 		expand_vehicle_btn.pressed.connect(_on_expand_vehicle)
 	if is_instance_valid(store_cargo_btn):
 		store_cargo_btn.pressed.connect(_on_store_cargo)
@@ -118,6 +157,14 @@ func _ready():
 		spawn_convoy_btn.pressed.connect(_on_spawn_convoy)
 		print("[WarehouseMenu][Debug] Connected spawn_convoy_btn pressed signal path=", spawn_convoy_btn.get_path())
 	_update_ui()
+
+func _set_expand_buttons_enabled(enabled: bool) -> void:
+	# Central helper so we can uniformly toggle & log state
+	if is_instance_valid(expand_cargo_btn):
+		expand_cargo_btn.disabled = not enabled
+	if is_instance_valid(expand_vehicle_btn):
+		expand_vehicle_btn.disabled = not enabled
+	print("[WarehouseMenu][UpgradeState] set_expand_buttons_enabled enabled=", enabled, " in_progress=", _upgrade_in_progress)
 
 func initialize_with_data(data: Dictionary) -> void:
 	# Guard: avoid expensive re-initialization if convoy and settlement unchanged
@@ -281,6 +328,12 @@ func _on_api_warehouse_received(warehouse_data: Dictionary) -> void:
 	_warehouse = warehouse_data.duplicate(true)
 	_is_loading = false
 	_pending_action_refresh = false
+	_upgrade_in_progress = false
+	if _warehouse.has("warehouse_id"):
+		_last_known_wid = str(_warehouse.get("warehouse_id", ""))
+	# Re-enable upgrade buttons if pricing allows
+	_update_expand_buttons()
+	_set_expand_buttons_enabled(true)
 	# Re-enable spawn button after any warehouse update (covers convoy spawn completion)
 	if is_instance_valid(spawn_convoy_btn):
 		spawn_convoy_btn.disabled = false
@@ -298,6 +351,71 @@ func _on_api_warehouse_received(warehouse_data: Dictionary) -> void:
 	print("[WarehouseMenu][Debug] cargo_inventory type=", typeof(cargo_inv), " size=", cargo_inv_size)
 	print("[WarehouseMenu][Debug] all_cargo type=", typeof(all_cargo), " size=", all_cargo_size)
 	print("[WarehouseMenu][Debug] vehicle_inventory type=", typeof(veh_inv), " size=", veh_inv_size)
+	# Capacity diagnostics after refresh
+	var cargo_cap := int(_warehouse.get("cargo_storage_capacity", 0))
+	var veh_cap := int(_warehouse.get("vehicle_storage_capacity", 0))
+	print("[WarehouseMenu][AfterRefresh] cargo_cap=", cargo_cap, " vehicle_cap=", veh_cap)
+	# If this refresh followed an expansion attempt, compute delta
+	if _last_expand_type != "":
+		var cargo_delta := -99999
+		var veh_delta := -99999
+		if _pre_expand_cargo_cap >= 0:
+			cargo_delta = cargo_cap - _pre_expand_cargo_cap
+		if _pre_expand_vehicle_cap >= 0:
+			veh_delta = veh_cap - _pre_expand_vehicle_cap
+		print("[WarehouseMenu][UpgradeDelta] attempt_type=", _last_expand_type, " cargo_delta=", cargo_delta, " vehicle_delta=", veh_delta, " used_json=", _last_expand_used_json)
+		var no_change := false
+		if _last_expand_type == "cargo" and cargo_delta <= 0:
+			no_change = true
+		elif _last_expand_type == "vehicle" and veh_delta <= 0:
+			no_change = true
+		if no_change:
+			# Decide on retry with JSON body if we have not yet tried it
+			if not _last_expand_used_json and is_instance_valid(api) and api.has_method("warehouse_expand_json"):
+				print("[WarehouseMenu][UpgradeDelta][NoChange] Retrying expansion using JSON body fallback.")
+				if is_instance_valid(info_label):
+					info_label.text = "Expansion had no visible effect. Retrying (JSON)..."
+				_upgrade_in_progress = true
+				_set_expand_buttons_enabled(false)
+				_pending_action_refresh = true
+				_last_expand_used_json = true
+				# Re-dispatch expansion using JSON body
+				var wid_retry := ""
+				if _warehouse is Dictionary and _warehouse.has("warehouse_id"):
+					wid_retry = str(_warehouse.get("warehouse_id", ""))
+				elif _last_known_wid != "":
+					wid_retry = _last_known_wid
+				if wid_retry != "":
+					api.warehouse_expand_json({"warehouse_id": wid_retry, "expand_type": _last_expand_type, "amount": 1})
+					_schedule_refresh_fallback()
+			else:
+				# Second failure (JSON already used) – give up and notify
+				print("[WarehouseMenu][UpgradeDelta][NoChangeAfterJSON] Expansion still shows no delta.")
+				# Refund optimistic deduction if we applied one globally
+				if _optimistic_money_active:
+					var refund := _optimistic_money_before - _optimistic_money_after
+					if refund > 0.0 and is_instance_valid(gdm) and gdm.has_method("update_user_money"):
+						print("[WarehouseMenu][Optimistic][Refund] Refunding", refund, "due to failed expansion")
+						gdm.update_user_money(refund)
+					# Clear optimistic markers
+					_optimistic_money_active = false
+					_optimistic_money_before = 0.0
+					_optimistic_money_after = 0.0
+				if is_instance_valid(info_label):
+					info_label.text = "Expansion request completed but capacity unchanged." 
+				_last_expand_type = "" # reset so we don't loop
+		else:
+			# Success path – clear tracking
+			_last_expand_type = ""
+			_last_expand_used_json = false
+			_pre_expand_cargo_cap = -1
+			_pre_expand_vehicle_cap = -1
+	# Clear optimistic deduction when warehouse refresh arrives (user refresh should follow separately)
+	if _optimistic_money_active:
+		print("[WarehouseMenu][Optimistic] Clearing optimistic deduction on warehouse refresh")
+		_optimistic_money_active = false
+		_optimistic_money_before = 0.0
+		_optimistic_money_after = 0.0
 	_update_ui()
 	# Optionally refresh user/convoys if needed
 	if is_instance_valid(gdm):
@@ -319,13 +437,22 @@ func _on_api_error(msg: String) -> void:
 		info_label.text = str(msg)
 
 func _on_api_warehouse_action(_result: Variant) -> void:
-	# After any action, reload warehouse and refresh UI
-	print("[WarehouseMenu][ActionComplete] result_type=", typeof(_result))
-	if not (_warehouse is Dictionary) or _warehouse.is_empty():
-		return
-	var wid := str(_warehouse.get("warehouse_id", ""))
+	# After any action, reload warehouse even if we currently have no local _warehouse data.
+	var wid := ""
+	if _warehouse is Dictionary and _warehouse.has("warehouse_id"):
+		wid = str(_warehouse.get("warehouse_id", ""))
+	if wid == "" and _last_known_wid != "":
+		wid = _last_known_wid
+	print("[WarehouseMenu][ActionComplete] result_type=", typeof(_result), " chosen_wid=", wid, " had_local=", (_warehouse is Dictionary and not _warehouse.is_empty()), " last_known=", _last_known_wid)
 	if wid == "" or not is_instance_valid(api):
+		print("[WarehouseMenu][ActionComplete] Abort refresh: missing wid or api invalid")
 		return
+	# Skip early user data refresh for expansion actions to avoid flicker overriding optimistic deduction
+	var skip_early_user_refresh := _last_expand_type != "" # still tracking an expansion attempt
+	if not skip_early_user_refresh:
+		if is_instance_valid(gdm) and gdm.has_method("request_user_data_refresh"):
+			print("[WarehouseMenu][ActionComplete] Triggering early user data refresh for non-expansion action")
+			gdm.request_user_data_refresh()
 	_is_loading = true
 	_update_ui()
 	api.get_warehouse(wid)
@@ -356,12 +483,18 @@ func _refresh_warehouse() -> void:
 
 # --- UI action handlers ---
 func _on_expand_cargo():
-	if not (_warehouse is Dictionary) or _warehouse.is_empty():
-		print("[WarehouseMenu][ExpandCargo] Blocked: warehouse not loaded")
+	print("[WarehouseMenu][ExpandCargo] Handler ENTER")
+	var wid := ""
+	if _warehouse is Dictionary and _warehouse.has("warehouse_id"):
+		wid = str(_warehouse.get("warehouse_id", ""))
+	elif _last_known_wid != "":
+		wid = _last_known_wid
+	if wid == "":
+		print("[WarehouseMenu][ExpandCargo] Blocked: no warehouse id (local + last_known empty)")
 		if is_instance_valid(info_label):
 			info_label.text = "Cannot upgrade: warehouse not loaded yet."
 		return
-	var wid := str(_warehouse.get("warehouse_id", ""))
+	print("[WarehouseMenu][ExpandCargo] Click received wid=", wid, " has_local=", (_warehouse is Dictionary and not _warehouse.is_empty()), " last_known=", _last_known_wid)
 	var amt := 1
 	var per_unit := _get_upgrade_price_per_unit()
 	if per_unit <= 0:
@@ -372,17 +505,49 @@ func _on_expand_cargo():
 		return
 	if wid != "" and is_instance_valid(api):
 		info_label.text = "Expanding cargo..."
-		api.warehouse_expand({"warehouse_id": wid, "expand_type": "cargo", "amount": amt})
+		print("[WarehouseMenu][ExpandCargo] Dispatch api.warehouse_expand params=", {"warehouse_id": wid, "expand_type": "cargo", "amount": amt, "unit_price": per_unit})
+		# Record baseline before dispatch
+		_pre_expand_cargo_cap = int(_warehouse.get("cargo_storage_capacity", -1)) if (_warehouse is Dictionary) else -1
+		_pre_expand_vehicle_cap = int(_warehouse.get("vehicle_storage_capacity", -1)) if (_warehouse is Dictionary) else -1
+		_last_expand_type = "cargo"
+		_last_expand_used_json = false
+		# Optimistic funds deduction (only once until next authoritative user refresh)
+		if not _optimistic_money_active:
+			_optimistic_money_before = _get_user_money() # already respects any active optimistic state (should be inactive here)
+			_optimistic_money_after = max(0.0, _optimistic_money_before - float(per_unit))
+			_optimistic_money_active = true
+			print("[WarehouseMenu][Optimistic] Cargo upgrade: deduct", per_unit, "from", _optimistic_money_before, "=>", _optimistic_money_after)
+			# Also update global user data immediately so other UI panels reflect change
+			if is_instance_valid(gdm) and gdm.has_method("update_user_money"):
+				print("[WarehouseMenu][Optimistic][Global] Applying global money deduction=", per_unit)
+				gdm.update_user_money(-float(per_unit))
+			_update_expand_buttons()
+			_update_upgrade_labels()
+		_upgrade_in_progress = true
+		_set_expand_buttons_enabled(false)
+		_pending_action_refresh = true
+		_schedule_refresh_fallback()
+		if api.has_method("warehouse_expand_v2"):
+			print("[WarehouseMenu][ExpandCargo] Using v2 expansion (cargo_capacity_upgrade=1, vehicle_capacity_upgrade=0)")
+			api.warehouse_expand_v2(wid, 1, 0)
+		else:
+			api.warehouse_expand({"warehouse_id": wid, "expand_type": "cargo", "amount": amt})
 	else:
 		print("[WarehouseMenu][ExpandCargo] Blocked: invalid state wid=", wid, " api_valid=", is_instance_valid(api))
 
 func _on_expand_vehicle():
-	if not (_warehouse is Dictionary) or _warehouse.is_empty():
-		print("[WarehouseMenu][ExpandVehicle] Blocked: warehouse not loaded")
+	print("[WarehouseMenu][ExpandVehicle] Handler ENTER")
+	var wid := ""
+	if _warehouse is Dictionary and _warehouse.has("warehouse_id"):
+		wid = str(_warehouse.get("warehouse_id", ""))
+	elif _last_known_wid != "":
+		wid = _last_known_wid
+	if wid == "":
+		print("[WarehouseMenu][ExpandVehicle] Blocked: no warehouse id (local + last_known empty)")
 		if is_instance_valid(info_label):
 			info_label.text = "Cannot upgrade: warehouse not loaded yet."
 		return
-	var wid := str(_warehouse.get("warehouse_id", ""))
+	print("[WarehouseMenu][ExpandVehicle] Click received wid=", wid, " has_local=", (_warehouse is Dictionary and not _warehouse.is_empty()), " last_known=", _last_known_wid)
 	var amt := 1
 	var per_unit := _get_upgrade_price_per_unit()
 	if per_unit <= 0:
@@ -393,9 +558,77 @@ func _on_expand_vehicle():
 		return
 	if wid != "" and is_instance_valid(api):
 		info_label.text = "Expanding vehicle slots..."
-		api.warehouse_expand({"warehouse_id": wid, "expand_type": "vehicle", "amount": amt})
+		print("[WarehouseMenu][ExpandVehicle] Dispatch api.warehouse_expand params=", {"warehouse_id": wid, "expand_type": "vehicle", "amount": amt, "unit_price": per_unit})
+		# Record baseline before dispatch
+		_pre_expand_cargo_cap = int(_warehouse.get("cargo_storage_capacity", -1)) if (_warehouse is Dictionary) else -1
+		_pre_expand_vehicle_cap = int(_warehouse.get("vehicle_storage_capacity", -1)) if (_warehouse is Dictionary) else -1
+		_last_expand_type = "vehicle"
+		_last_expand_used_json = false
+		# Optimistic funds deduction
+		if not _optimistic_money_active:
+			_optimistic_money_before = _get_user_money()
+			_optimistic_money_after = max(0.0, _optimistic_money_before - float(per_unit))
+			_optimistic_money_active = true
+			print("[WarehouseMenu][Optimistic] Vehicle upgrade: deduct", per_unit, "from", _optimistic_money_before, "=>", _optimistic_money_after)
+			# Also update global user data immediately so other UI panels reflect change
+			if is_instance_valid(gdm) and gdm.has_method("update_user_money"):
+				print("[WarehouseMenu][Optimistic][Global] Applying global money deduction=", per_unit)
+				gdm.update_user_money(-float(per_unit))
+			_update_expand_buttons()
+			_update_upgrade_labels()
+		_upgrade_in_progress = true
+		_set_expand_buttons_enabled(false)
+		_pending_action_refresh = true
+		_schedule_refresh_fallback()
+		if api.has_method("warehouse_expand_v2"):
+			print("[WarehouseMenu][ExpandVehicle] Using v2 expansion (cargo_capacity_upgrade=0, vehicle_capacity_upgrade=1)")
+			api.warehouse_expand_v2(wid, 0, 1)
+		else:
+			api.warehouse_expand({"warehouse_id": wid, "expand_type": "vehicle", "amount": amt})
 	else:
 		print("[WarehouseMenu][ExpandVehicle] Blocked: invalid state wid=", wid, " api_valid=", is_instance_valid(api))
+
+func _diag_expand_cargo_pressed():
+	var state := "n/a"
+	if is_instance_valid(expand_cargo_btn):
+		state = str(expand_cargo_btn.disabled)
+	print("[WarehouseMenu][Diag] expand_cargo_btn raw pressed. disabled=", state)
+
+func _diag_expand_vehicle_pressed():
+	var state := "n/a"
+	if is_instance_valid(expand_vehicle_btn):
+		state = str(expand_vehicle_btn.disabled)
+	print("[WarehouseMenu][Diag] expand_vehicle_btn raw pressed. disabled=", state)
+
+func _on_expand_button_gui_input(ev: InputEvent, kind: String):
+	# Capture mouse button presses even when button is disabled (pressed signal won't emit)
+	if ev is InputEventMouseButton and ev.pressed and ev.button_index == MOUSE_BUTTON_LEFT:
+		var disabled_state := "?"
+		if kind == "cargo" and is_instance_valid(expand_cargo_btn):
+			disabled_state = str(expand_cargo_btn.disabled)
+		elif kind == "vehicle" and is_instance_valid(expand_vehicle_btn):
+			disabled_state = str(expand_vehicle_btn.disabled)
+		print("[WarehouseMenu][Diag][gui_input] kind=", kind, " left_click. disabled=", disabled_state)
+
+func _post_ready_expand_diag():
+	# Reconnect primary handlers if somehow disconnected; then dump state again
+	if is_instance_valid(expand_cargo_btn):
+		if not expand_cargo_btn.pressed.is_connected(_on_expand_cargo):
+			print("[WarehouseMenu][Diag] Reconnecting _on_expand_cargo (deferred)")
+			expand_cargo_btn.pressed.connect(_on_expand_cargo)
+		print("[WarehouseMenu][Diag] Post-ready cargo disabled=", expand_cargo_btn.disabled)
+	else:
+		print("[WarehouseMenu][Diag][PostReady] Missing expand_cargo_btn")
+	if is_instance_valid(expand_vehicle_btn):
+		if not expand_vehicle_btn.pressed.is_connected(_on_expand_vehicle):
+			print("[WarehouseMenu][Diag] Reconnecting _on_expand_vehicle (deferred)")
+			expand_vehicle_btn.pressed.connect(_on_expand_vehicle)
+		print("[WarehouseMenu][Diag] Post-ready vehicle disabled=", expand_vehicle_btn.disabled)
+	else:
+		print("[WarehouseMenu][Diag][PostReady] Missing expand_vehicle_btn")
+	# Self-test: do NOT actually trigger expansion, just log readiness
+	var per_unit := _get_upgrade_price_per_unit()
+	print("[WarehouseMenu][Diag] Self-test per_unit=", per_unit, " warehouse_loaded=", (_warehouse is Dictionary and not _warehouse.is_empty()))
 
 func _on_store_cargo():
 	if not (_warehouse is Dictionary) or _warehouse.is_empty():
@@ -627,6 +860,9 @@ func _resolve_settlement_from_data(d: Dictionary) -> Dictionary:
 	return result
 
 func _get_user_money() -> float:
+	# If we applied an optimistic deduction, surface that immediately so tooltips & labels reflect it.
+	if _optimistic_money_active:
+		return _optimistic_money_after
 	if is_instance_valid(gdm) and gdm.has_method("get_current_user_data"):
 		var user: Dictionary = gdm.get_current_user_data()
 		if typeof(user) == TYPE_DICTIONARY:
@@ -652,12 +888,17 @@ func _update_expand_buttons() -> void:
 	var total := int(per_unit) * 1
 	var available := per_unit > 0
 	print("[WarehouseMenu][UpgradeState] update_buttons sett_type=", _get_settlement_type(), " per_unit=", per_unit, " funds=", funds, " available=", available)
+	var base_disabled := not available
+	var disabled_reason := ""
+	if _upgrade_in_progress:
+		base_disabled = true
+		disabled_reason = " (upgrade in progress)"
 	if is_instance_valid(expand_cargo_btn):
-		expand_cargo_btn.disabled = not available
-		expand_cargo_btn.tooltip_text = ("Upgrades not available" if not available else "Cost: %s (per unit %s)\nYour funds: %s" % [_format_money(total), _format_money(per_unit), _format_money(funds)])
+		expand_cargo_btn.disabled = base_disabled
+		expand_cargo_btn.tooltip_text = ("Upgrades not available" if not available else "Cost: %s (per unit %s)\nYour funds: %s%s" % [_format_money(total), _format_money(per_unit), _format_money(funds), disabled_reason])
 	if is_instance_valid(expand_vehicle_btn):
-		expand_vehicle_btn.disabled = not available
-		expand_vehicle_btn.tooltip_text = ("Upgrades not available" if not available else "Cost: %s (per unit %s)\nYour funds: %s" % [_format_money(total), _format_money(per_unit), _format_money(funds)])
+		expand_vehicle_btn.disabled = base_disabled
+		expand_vehicle_btn.tooltip_text = ("Upgrades not available" if not available else "Cost: %s (per unit %s)\nYour funds: %s%s" % [_format_money(total), _format_money(per_unit), _format_money(funds), disabled_reason])
 
 func _update_upgrade_labels() -> void:
 	if not (_warehouse is Dictionary) or _warehouse.is_empty():
@@ -802,6 +1043,10 @@ func _update_overview_bars() -> void:
 			overview_cargo_bar.value = 0
 		if is_instance_valid(overview_vehicle_bar):
 			overview_vehicle_bar.value = 0
+		if is_instance_valid(overview_cargo_label):
+			overview_cargo_label.text = "Cargo Usage: 0 / 0 L"
+		if is_instance_valid(overview_vehicle_label):
+			overview_vehicle_label.text = "Vehicles: 0 / 0"
 		return
 	# Cargo bar
 	var cap_cargo := float(_warehouse.get("cargo_storage_capacity", 0))
@@ -816,6 +1061,8 @@ func _update_overview_bars() -> void:
 	if is_instance_valid(overview_cargo_bar):
 		overview_cargo_bar.max_value = cap_cargo
 		overview_cargo_bar.value = clamp(display_used_cargo, 0.0, cap_cargo)
+	if is_instance_valid(overview_cargo_label):
+		overview_cargo_label.text = "Cargo Usage: %s / %s L" % [str(int(used_cargo)), str(int(cap_cargo))]
 	# Vehicle bar (derive from counts if capacity key exists, else hide)
 	var veh_list: Array = []
 	if _warehouse.has("vehicle_storage"):
@@ -833,6 +1080,8 @@ func _update_overview_bars() -> void:
 	if is_instance_valid(overview_vehicle_bar):
 		overview_vehicle_bar.max_value = veh_cap
 		overview_vehicle_bar.value = clamp(display_veh_used, 0.0, veh_cap)
+	if is_instance_valid(overview_vehicle_label):
+		overview_vehicle_label.text = "Vehicles: %s / %s" % [str(int(veh_used)), str(int(veh_cap))]
 
 func _render_cargo_grid() -> void:
 	if not is_instance_valid(cargo_grid):
@@ -842,6 +1091,7 @@ func _render_cargo_grid() -> void:
 		c.queue_free()
 	if not (_warehouse is Dictionary):
 		return
+	# (Banner handled outside grid via _ensure_inventory_headers)
 	var wh_items: Array = []
 	if _warehouse.has("cargo_storage"):
 		wh_items = _warehouse.get("cargo_storage", [])
@@ -850,6 +1100,12 @@ func _render_cargo_grid() -> void:
 	elif _warehouse.has("all_cargo"):
 		wh_items = _warehouse.get("all_cargo", [])
 	# Render simple boxes (no icons) with name + qty
+	if wh_items.is_empty():
+		var empty_label := Label.new()
+		empty_label.text = "(No cargo stored)"
+		empty_label.modulate = Color(0.8,0.8,0.8)
+		cargo_grid.add_child(empty_label)
+		return
 	for wi in wh_items:
 		if wi is Dictionary:
 			var item_name := String(wi.get("name", "Item"))
@@ -870,11 +1126,18 @@ func _render_vehicle_grid() -> void:
 		c.queue_free()
 	if not (_warehouse is Dictionary):
 		return
+	# (Banner handled outside grid via _ensure_inventory_headers)
 	var wh_vehicles: Array = []
 	if _warehouse.has("vehicle_storage"):
 		wh_vehicles = _warehouse.get("vehicle_storage", [])
 	elif _warehouse.has("vehicle_inventory"):
 		wh_vehicles = _warehouse.get("vehicle_inventory", [])
+	if wh_vehicles.is_empty():
+		var empty_label := Label.new()
+		empty_label.text = "(No vehicles stored)"
+		empty_label.modulate = Color(0.8,0.8,0.8)
+		vehicle_grid.add_child(empty_label)
+		return
 	for v in wh_vehicles:
 		if v is Dictionary:
 			var vehicle_name := String(v.get("name", "Vehicle"))
@@ -948,6 +1211,35 @@ func _get_warehouse_cargo_quantity_by_id(cargo_id: String) -> int:
 			total += int(wi.get("quantity", 0))
 	return total
 
+# Creates a small styled banner panel for inventory headers
+func _make_inventory_label(text: String, node_name: String) -> Label:
+	var l := Label.new()
+	l.name = node_name
+	l.text = text
+	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+	return l
+
+# Ensure inventory labels exist above grids (only created once)
+func _ensure_inventory_headers() -> void:
+	# Place labels as siblings BEFORE the inventory panels so they read like true titles.
+	if is_instance_valid(cargo_inventory_panel) and cargo_inventory_panel.get_parent():
+		var parent = cargo_inventory_panel.get_parent()
+		# Remove any internal label previously added inside the panel
+		var internal = cargo_inventory_panel.get_node_or_null("CargoInventoryLabel")
+		if internal: internal.queue_free()
+		if parent.get_node_or_null("CargoInventoryLabel") == null:
+			var lbl = _make_inventory_label("Current Cargo Inventory", "CargoInventoryLabel")
+			parent.add_child(lbl)
+			parent.move_child(lbl, parent.get_children().find(cargo_inventory_panel))
+	if is_instance_valid(vehicle_inventory_panel) and vehicle_inventory_panel.get_parent():
+		var parent_v = vehicle_inventory_panel.get_parent()
+		var internal_v = vehicle_inventory_panel.get_node_or_null("VehicleInventoryLabel")
+		if internal_v: internal_v.queue_free()
+		if parent_v.get_node_or_null("VehicleInventoryLabel") == null:
+			var lbl2 = _make_inventory_label("Current Vehicle Inventory", "VehicleInventoryLabel")
+			parent_v.add_child(lbl2)
+			parent_v.move_child(lbl2, parent_v.get_children().find(vehicle_inventory_panel))
+
 # Helpers for stable dropdown population and cargo aggregation
 func _set_option_button_items(dd: OptionButton, items: Array, last_ids_ref: Array) -> void:
 	if not is_instance_valid(dd):
@@ -970,6 +1262,13 @@ func _set_option_button_items(dd: OptionButton, items: Array, last_ids_ref: Arra
 	for it2 in items:
 		dd.add_item(String(it2.get("label","")))
 		dd.set_item_metadata(dd.item_count - 1, String(it2.get("id","")))
+	# Empty placeholder
+	if dd.item_count == 0:
+		dd.add_item("-- None --")
+		dd.set_item_metadata(0, "")
+		dd.disabled = true
+	else:
+		dd.disabled = false
 	# Restore selection if possible
 	if prev_selected_id != "":
 		for j in range(dd.item_count):
