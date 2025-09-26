@@ -16,6 +16,10 @@ layout_mode = 2
 text = "Player"
 vertical_alignment = 1
 
+[node name="SettingsButton" type="Button" parent="."]
+layout_mode = 2
+text = "Options"
+
 [node name="VSeparator" type="VSeparator" parent="."]
 layout_mode = 2
 

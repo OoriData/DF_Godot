@@ -130,6 +130,7 @@ var _preview_route_y: Array = []
 # Default preview color (fallback) – actual will be per selected convoy color
 var _preview_color: Color = Color(1.0, 0.6, 0.0, 0.85)
 var _preview_line_width: float = 3.5
+var _high_contrast_enabled: bool = false
 
 func _ready():
 	await get_tree().process_frame
@@ -236,6 +237,15 @@ func _ready():
 	print("[DIAG] UI_manager.gd: Printing scene tree and mouse_filter values for all UI nodes:")
 	_print_ui_tree(self, 0)
 
+	# --- Settings integration from SettingsManager ---
+	var settings_mgr = get_node_or_null("/root/SettingsManager")
+	if is_instance_valid(settings_mgr):
+		_high_contrast_enabled = bool(settings_mgr.get_value("access.high_contrast", false))
+
+		_apply_accessibility_visuals()
+		if not settings_mgr.is_connected("setting_changed", Callable(self, "_on_setting_changed")):
+			settings_mgr.setting_changed.connect(_on_setting_changed)
+
 func _print_ui_tree(node: Node, indent: int):
 	var prefix = "  ".repeat(indent)
 	var mf = ""
@@ -244,6 +254,14 @@ func _print_ui_tree(node: Node, indent: int):
 	print("%s- %s (%s)%s" % [prefix, node.name, node.get_class(), mf])
 	for child in node.get_children():
 		_print_ui_tree(child, indent + 1)
+
+func _on_setting_changed(key: String, value: Variant) -> void:
+	match key:
+		"access.high_contrast":
+			_high_contrast_enabled = bool(value)
+			_apply_accessibility_visuals()
+		_:
+			pass
 
 
 func initialize_font_settings(theme_font_to_use: Font):
@@ -255,14 +273,20 @@ func initialize_font_settings(theme_font_to_use: Font):
 		# If no font is passed, LabelSettings will not have a font set,
 		# and Labels will use their default/themed font.
 		print("UIManager: No theme font provided by main. Labels will use their default theme font if LabelSettings.font is not set.")
-	
-	if is_instance_valid(convoy_label_manager) and convoy_label_manager.has_method("initialize_font_settings"):
-		convoy_label_manager.initialize_font_settings(theme_font_to_use, label_settings, 
-													  base_convoy_title_font_size, # Pass the specific base font size for convoys
-													  ui_overall_scale_multiplier, 
-													  font_scaling_base_tile_size, font_scaling_exponent, 
-													  min_node_font_size, max_node_font_size,
-													  _all_convoy_data_cache if _all_convoy_data_cache else [], CONVOY_STAT_EMOJIS)
+
+func _apply_accessibility_visuals():
+	if not is_instance_valid(label_settings) or not is_instance_valid(settlement_label_settings):
+		return
+	if _high_contrast_enabled:
+		label_settings.outline_size = 8
+		settlement_label_settings.outline_size = 5
+		convoy_panel_background_color.a = 0.95
+		settlement_panel_background_color.a = 0.95
+	else:
+		label_settings.outline_size = 6
+		settlement_label_settings.outline_size = 3
+		convoy_panel_background_color.a = 0.88
+		settlement_panel_background_color.a = 0.85
 
 	if is_instance_valid(convoy_label_manager) and convoy_label_manager.has_method("initialize_style_settings"):
 		convoy_label_manager.initialize_style_settings(

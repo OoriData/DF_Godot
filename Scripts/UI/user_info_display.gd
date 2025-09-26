@@ -1,10 +1,13 @@
 extends HBoxContainer
 
 ## Emitted when a convoy is selected from the dropdown, requesting its menu to be opened.
+@warning_ignore("unused_signal")
 signal convoy_menu_requested(convoy_id: String)
 
 @onready var username_label: Label = $UsernameLabel
 @onready var user_money_label: Label = $UserMoneyLabel
+@onready var settings_button: Button = $SettingsButton
+var _settings_menu_instance: Window
 
 # Store original font sizes to scale them from a clean base
 var _original_username_font_size: int
@@ -24,19 +27,24 @@ func _ready() -> void:
 		if not gdm.is_connected("user_data_updated", _on_user_data_updated):
 			gdm.user_data_updated.connect(_on_user_data_updated)
 
-		# Connect to the global UI scale manager
-		if Engine.has_singleton("ui_scale_manager"):
+		# Connect to the global UI scale manager (autoload under /root)
+		var usm = get_node_or_null("/root/ui_scale_manager")
+		if is_instance_valid(usm):
 			# Store original sizes before applying any scaling
 			_original_username_font_size = username_label.get_theme_font_size("font_size")
 			_original_money_font_size = user_money_label.get_theme_font_size("font_size")
-			ui_scale_manager.scale_changed.connect(_on_ui_scale_changed)
+			usm.scale_changed.connect(_on_ui_scale_changed)
 			# Apply initial scale
-			_on_ui_scale_changed(ui_scale_manager.get_global_ui_scale())
+			_on_ui_scale_changed(usm.get_global_ui_scale())
 		else:
-			printerr("UserInfoDisplay: ui_scale_manager singleton not found. UI scaling will not be dynamic.")
+			printerr("UserInfoDisplay: ui_scale_manager autoload not found at /root/ui_scale_manager. UI scaling will not be dynamic.")
 
 	else:
 		printerr("UserInfoDisplay: Could not find GameDataManager.")
+
+	# Settings button hookup
+	if is_instance_valid(settings_button):
+		settings_button.pressed.connect(_on_settings_button_pressed)
 
 
 
@@ -59,7 +67,7 @@ func _notification(what: int) -> void:
 	if what == NOTIFICATION_VISIBILITY_CHANGED and is_visible_in_tree():
 		_update_display()
 
-func _on_user_data_updated(user_data: Dictionary):
+func _on_user_data_updated(_user_data: Dictionary):
 	_update_display()
 
 
@@ -99,3 +107,23 @@ func _format_money(amount: Variant) -> String:
 	for i in range(mod, s.length(), 3):
 		res += ("," if res.length() > 0 else "") + s.substr(i, 3)
 	return "$%s" % res
+
+func _on_settings_button_pressed():
+	# Lazy-load the settings menu
+	if not is_instance_valid(_settings_menu_instance):
+		var scene: PackedScene = load("res://Scenes/SettingsMenu.tscn")
+		if scene:
+			_settings_menu_instance = scene.instantiate()
+			# Add to the root so it behaves like a popup window
+			get_tree().root.add_child(_settings_menu_instance)
+			_settings_menu_instance.title = "Options"
+			_settings_menu_instance.min_size = Vector2(600, 480)
+		else:
+			push_error("Failed to load SettingsMenu.tscn")
+			return
+	# Popup centered each time
+	if _settings_menu_instance:
+		if _settings_menu_instance.has_method("popup_centered"):
+			_settings_menu_instance.popup_centered(Vector2i(720, 560))
+		else:
+			_settings_menu_instance.show()

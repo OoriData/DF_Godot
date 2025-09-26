@@ -38,6 +38,13 @@ var _is_panning := false
 var _map_ready_for_focus: bool = false
 var _has_fitted_camera: bool = false
 
+# --- Options snapshot (from SettingsManager) ---
+var _opt_invert_pan := false
+var _opt_invert_zoom := false
+var _opt_gestures_enabled := true
+var _opt_click_closes_menus := true
+var _opt_menu_ratio_open := 2.0
+
 
 func _ready():
 	# Defer the initial camera setup to ensure the UI layout is stable.
@@ -76,6 +83,13 @@ func _ready():
 	if is_instance_valid(map_view):
 		if not map_view.is_connected("size_changed", Callable(self, "_on_map_view_size_changed")):
 			map_view.connect("size_changed", Callable(self, "_on_map_view_size_changed"))
+
+	# --- Load Options from SettingsManager and subscribe ---
+	var sm = get_node_or_null("/root/SettingsManager")
+	if is_instance_valid(sm):
+		_apply_settings_snapshot()
+		if not sm.is_connected("setting_changed", Callable(self, "_on_setting_changed")):
+			sm.setting_changed.connect(_on_setting_changed)
 # Respond to Control resize events
 func _notification(what):
 	if what == NOTIFICATION_RESIZED:
@@ -148,7 +162,7 @@ func _on_map_view_gui_input(event: InputEvent):
 	if event is InputEventMouseButton:
 		if event.button_index == MOUSE_BUTTON_LEFT:
 			if event.pressed:
-				# Check if any menu is active, and close it if so
+				# Close any open menu when clicking the map
 				var menu_manager = get_node_or_null("/root/MenuManager")
 				if menu_manager and menu_manager.has_method("is_any_menu_active") and menu_manager.is_any_menu_active():
 					menu_manager.close_all_menus() # This will close all menus and update layout
@@ -162,23 +176,37 @@ func _on_map_view_gui_input(event: InputEvent):
 				Input.set_default_cursor_shape(Input.CURSOR_ARROW)
 				get_viewport().set_input_as_handled() # Consume the event
 		elif event.button_index == MOUSE_BUTTON_WHEEL_UP and event.pressed:
-			map_camera_controller.zoom_at_screen_pos(map_camera_controller.camera_zoom_factor_increment, event.position)
+			var inc: float = float(map_camera_controller.camera_zoom_factor_increment)
+			var factor: float = (1.0 / inc) if _opt_invert_zoom else inc
+			map_camera_controller.zoom_at_screen_pos(factor, event.position)
 			get_viewport().set_input_as_handled()
 		elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN and event.pressed:
-			map_camera_controller.zoom_at_screen_pos(1.0 / map_camera_controller.camera_zoom_factor_increment, event.position)
+			var inc2: float = float(map_camera_controller.camera_zoom_factor_increment)
+			var factor2: float = inc2 if _opt_invert_zoom else (1.0 / inc2)
+			map_camera_controller.zoom_at_screen_pos(factor2, event.position)
 			get_viewport().set_input_as_handled()
 
 	elif event is InputEventMouseMotion:
 		if _is_panning:
-			# The camera's pan function expects a screen-space delta (invert for natural feel)
-			map_camera_controller.pan(-event.relative)
+			# The camera's pan function expects a screen-space delta
+			var delta: Vector2 = event.relative
+			if not _opt_invert_pan:
+				delta = -delta
+			map_camera_controller.pan(delta)
 			get_viewport().set_input_as_handled()
 	elif event is InputEventMagnifyGesture:
-		map_camera_controller.zoom_at_screen_pos(event.factor, event.position)
+		if _opt_gestures_enabled:
+			var f: float = float(event.factor)
+			var z: float = f if not _opt_invert_zoom else (1.0 / max(0.0001, f))
+			map_camera_controller.zoom_at_screen_pos(z, event.position)
 		get_viewport().set_input_as_handled()
 	elif event is InputEventPanGesture:
 		# The camera's pan function expects a screen-space delta
-		map_camera_controller.pan(event.delta)
+		if _opt_gestures_enabled:
+			var d: Vector2 = event.delta
+			if not _opt_invert_pan:
+				d = -d
+			map_camera_controller.pan(d)
 		get_viewport().set_input_as_handled()
 
 
@@ -196,7 +224,7 @@ func _on_menu_visibility_changed(is_open: bool, _menu_name: String):
 	var main_content = menu_container.get_parent()
 	var main_map = main_content.get_node_or_null("Main")
 	if is_open:
-		menu_container.size_flags_stretch_ratio = 2.0
+		menu_container.size_flags_stretch_ratio = _opt_menu_ratio_open
 		if is_instance_valid(main_map):
 			main_map.size_flags_stretch_ratio = 1.0
 		menu_container.show()
@@ -242,6 +270,39 @@ func _on_menu_visibility_changed(is_open: bool, _menu_name: String):
 	# (Removed call to _fit_camera_to_map() to fix parser error)
 	# if _map_ready_for_focus and not _has_fitted_camera:
 	#     _fit_camera_to_map()
+
+
+# --- Settings integration ---
+func _apply_settings_snapshot():
+	var sm = get_node_or_null("/root/SettingsManager")
+	if not is_instance_valid(sm):
+		return
+	_opt_invert_pan = bool(sm.get_value("controls.invert_pan", _opt_invert_pan))
+	_opt_invert_zoom = bool(sm.get_value("controls.invert_zoom", _opt_invert_zoom))
+	_opt_gestures_enabled = bool(sm.get_value("controls.gestures_enabled", _opt_gestures_enabled))
+	_opt_click_closes_menus = bool(sm.get_value("ui.click_closes_menus", _opt_click_closes_menus))
+	_opt_menu_ratio_open = float(sm.get_value("ui.menu_open_ratio", _opt_menu_ratio_open))
+
+func _on_setting_changed(key: String, _value: Variant) -> void:
+	match key:
+		"controls.invert_pan", "controls.invert_zoom", "controls.gestures_enabled", "ui.click_closes_menus":
+			_apply_settings_snapshot()
+		"ui.menu_open_ratio":
+			_apply_settings_snapshot()
+			_apply_menu_ratio_if_open()
+
+func _apply_menu_ratio_if_open():
+	# If the menu container is visible, update its stretch ratio live
+	if not is_instance_valid(menu_container):
+		return
+	if menu_container.visible:
+		var main_content = menu_container.get_parent()
+		var main_map = main_content.get_node_or_null("Main") if is_instance_valid(main_content) else null
+		menu_container.size_flags_stretch_ratio = _opt_menu_ratio_open
+		if is_instance_valid(main_map):
+			main_map.size_flags_stretch_ratio = 1.0
+		if is_instance_valid(main_content):
+			main_content.queue_sort()
 
 
 # Called when the menu asks specifically to focus on a convoy (with data)

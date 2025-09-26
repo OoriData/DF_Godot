@@ -26,6 +26,7 @@ APICalls="*res://Scripts/System/api_calls.gd"
 GameDataManager="*res://Scripts/System/game_data_manager.gd"
 MenuManager="*res://Scripts/Menus/menu_manager.gd"
 ui_scale_manager="*res://Scripts/UI/UI_scale_manager.gd"
+SettingsManager="*res://Scripts/System/settings_manager.gd"
 
 [display]
 

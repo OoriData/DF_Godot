@@ -44,6 +44,7 @@ var _min_node_panel_border_width: int = 0 # Min clamp for border width
 # _max_node_panel_border_width is already declared above
 
 var _convoy_panel_background_color: Color = Color(0.1, 0.1, 0.1, 0.75)
+var _high_contrast_enabled: bool = false
 
 # Label positioning parameters
 var _base_selected_convoy_horizontal_offset: float = 40.0 # 20.0 * 2.0
@@ -71,6 +72,15 @@ func _ready():
 		sm.scale_changed.connect(_on_ui_scale_changed)
 	else:
 		printerr("ConvoyLabelManager: ui_scale_manager singleton not found. UI scaling will not be dynamic.")
+
+	# Subscribe to SettingsManager for high-contrast updates and get initial value
+	var settings := get_node_or_null("/root/SettingsManager")
+	if is_instance_valid(settings):
+		if settings.has_method("get_value"):
+			_high_contrast_enabled = bool(settings.get_value("access.high_contrast", false))
+		# Use Callable to avoid duplicate connection errors in hot-reload
+		if not settings.setting_changed.is_connected(_on_setting_changed):
+			settings.setting_changed.connect(_on_setting_changed)
 
 func initialize_font_settings(p_theme_font: Font, p_label_settings: LabelSettings, 
 							  p_base_convoy_title_fs: int,
@@ -267,7 +277,7 @@ func _update_convoy_panel_content(panel: Panel, convoy_data: Dictionary, p_convo
 
 	# Update Panel StyleBox
 	var unique_convoy_color: Color = p_convoy_id_to_color_map.get(current_convoy_id_str, Color.GRAY)
-	style_box.bg_color = _convoy_panel_background_color
+	style_box.bg_color = Color(0, 0, 0, 0.95) if _high_contrast_enabled else _convoy_panel_background_color
 	style_box.border_color = unique_convoy_color
 	style_box.border_width_left = current_panel_border_width
 	style_box.border_width_top = current_panel_border_width
@@ -281,6 +291,9 @@ func _update_convoy_panel_content(panel: Panel, convoy_data: Dictionary, p_convo
 	style_box.corner_radius_top_right = floori(current_panel_corner_radius)
 	style_box.corner_radius_bottom_left = floori(current_panel_corner_radius)
 	style_box.corner_radius_bottom_right = floori(current_panel_corner_radius)
+
+	# Apply high-contrast text overrides when enabled
+	_apply_label_contrast_overrides(label_node)
 
 	label_node.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	label_node.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -298,6 +311,40 @@ func _update_convoy_panel_content(panel: Panel, convoy_data: Dictionary, p_convo
 
 	panel.update_minimum_size() # Notify panel to update its own minimum size based on custom_minimum_size
 	panel.reset_size() # Ensure the Control actually applies the new minimum size when not inside a Container
+
+
+func _apply_label_contrast_overrides(label_node: Label) -> void:
+	if not is_instance_valid(label_node):
+		return
+	if _high_contrast_enabled:
+		# Bright text with subtle black outline for legibility on any background
+		label_node.add_theme_color_override("font_color", Color(1, 1, 1, 1))
+		label_node.add_theme_color_override("font_outline_color", Color(0, 0, 0, 1))
+		label_node.add_theme_constant_override("outline_size", 2)
+	else:
+		# Revert to theme/LabelSettings defaults
+		if label_node.has_theme_color_override("font_color"):
+			label_node.remove_theme_color_override("font_color")
+		if label_node.has_theme_color_override("font_outline_color"):
+			label_node.remove_theme_color_override("font_outline_color")
+		if label_node.has_theme_constant_override("outline_size"):
+			label_node.remove_theme_constant_override("outline_size")
+
+
+func _on_setting_changed(key: String, value: Variant) -> void:
+	if key != "access.high_contrast":
+		return
+	_high_contrast_enabled = bool(value)
+	# Update all active panels' visuals immediately
+	for panel in _active_convoy_panels.values():
+		if not is_instance_valid(panel):
+			continue
+		var style_box: StyleBoxFlat = panel.get_meta("style_box_ref")
+		if is_instance_valid(style_box):
+			style_box.bg_color = Color(0, 0, 0, 0.95) if _high_contrast_enabled else _convoy_panel_background_color
+		var label_node: Label = panel.get_meta("label_node_ref")
+		_apply_label_contrast_overrides(label_node)
+		panel.queue_redraw()
 
 
 func _position_convoy_panel(panel: Panel, convoy_data: Dictionary, existing_label_rects: Array[Rect2], 
