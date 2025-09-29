@@ -1,0 +1,39 @@
+[gd_scene load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://Scripts/UI/new_convoy_dialog.gd" id="1"]
+
+[node name="NewConvoyDialog" type="PanelContainer"]
+custom_minimum_size = Vector2(420, 180)
+script = ExtResource("1")
+
+[node name="VBox" type="VBoxContainer" parent="."]
+layout_mode = 2
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+alignment = 1
+
+[node name="Title" type="Label" parent="VBox"]
+text = "Welcome to Desolate Frontiers!  \nLets start by naming your first convoy."
+horizontal_alignment = 1
+
+[node name="NameEdit" type="LineEdit" parent="VBox"]
+placeholder_text = "Convoy name"
+max_length = 40
+
+[node name="ErrorLabel" type="Label" parent="VBox"]
+visible = false
+horizontal_alignment = 1
+modulate = Color(1, 0.6, 0.6)
+
+[node name="Buttons" type="HBoxContainer" parent="VBox"]
+alignment = 1
+
+[node name="CancelButton" type="Button" parent="VBox/Buttons"]
+text = "Cancel"
+
+[node name="CreateButton" type="Button" parent="VBox/Buttons"]
+text = "Create"
+theme_type_variation = "SuccessButton"

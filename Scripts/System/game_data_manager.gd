@@ -199,6 +199,9 @@ func _initiate_preload():
 		# Mechanics: cargo enrichment
 		if api_calls_node.has_signal('cargo_data_received') and not api_calls_node.cargo_data_received.is_connected(_on_cargo_data_received):
 			api_calls_node.cargo_data_received.connect(_on_cargo_data_received)
+		# Onboarding: listen for newly created convoy
+		if api_calls_node.has_signal('convoy_created') and not api_calls_node.convoy_created.is_connected(_on_convoy_created):
+			api_calls_node.convoy_created.connect(_on_convoy_created)
 		# If user already authenticated before this node ready (auto-login path)
 		if api_calls_node.has_method('is_auth_token_valid') and api_calls_node.is_auth_token_valid():
 			# Directly access property (script variable) instead of has_variable (invalid in Godot 4)
@@ -225,6 +228,7 @@ func _on_user_id_resolved(user_id: String) -> void:
 	print('[GameDataManager] Resolved DF user id from session: ', user_id)
 	_user_bootstrap_done = true
 	if is_instance_valid(api_calls_node):
+		# After login, if user has no convoys yet, UI will prompt creation.
 		api_calls_node.set_user_id(user_id)
 		request_user_data_refresh()
 		if api_calls_node.has_method('get_user_convoys'):
@@ -237,6 +241,37 @@ func _on_user_id_resolved(user_id: String) -> void:
 func _on_auth_expired() -> void:
 	print('[GameDataManager] Auth expired. Resetting user-related state.')
 	reset_user_state()
+
+# --- Public helper: expose current convoy list ---
+func get_all_convoy_data() -> Array:
+	return all_convoy_data
+
+# --- Onboarding: create a new convoy by name ---
+func create_new_convoy(convoy_name: String) -> void:
+	if not is_instance_valid(api_calls_node):
+		printerr("GameDataManager.create_new_convoy: APICalls not available")
+		return
+	if not api_calls_node.has_method('create_convoy'):
+		printerr("GameDataManager.create_new_convoy: APICalls.create_convoy missing")
+		return
+	print('[GameDataManager] create_new_convoy name="', convoy_name, '"')
+	api_calls_node.create_convoy(convoy_name)
+
+func _on_convoy_created(result: Dictionary) -> void:
+	# Expect result to contain new convoy or at least success indicator
+	# Refresh user + convoy data; server will return the new convoy next fetch
+	print('[GameDataManager] convoy_created received: keys=', (result.keys() if typeof(result)==TYPE_DICTIONARY else []))
+	# Force-refresh user data (bypass one-time guard) and convoys
+	if is_instance_valid(api_calls_node):
+		var uid := String(api_calls_node.current_user_id)
+		if uid != "" and api_calls_node.has_method('refresh_user_data'):
+			api_calls_node.refresh_user_data(uid)
+	# Also refresh convoy list for the user right away
+	request_convoy_data_refresh()
+	# If API also returns a convoy_id, try to select it
+	var new_id := String(result.get('convoy_id', ''))
+	if new_id != "":
+		select_convoy_by_id(new_id, false)
 
 func reset_user_state(clear_map: bool = false) -> void:
 	# Clear user-associated runtime data while optionally retaining map tiles.

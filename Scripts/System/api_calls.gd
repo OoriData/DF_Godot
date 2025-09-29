@@ -49,6 +49,8 @@ signal route_choices_received(routes: Array)
 signal convoy_sent_on_journey(updated_convoy_data: Dictionary)
 @warning_ignore("unused_signal")
 signal convoy_journey_canceled(updated_convoy_data: Dictionary)
+@warning_ignore("unused_signal")
+signal convoy_created(result: Dictionary)
 
 # --- Warehouse Signals ---
 @warning_ignore("unused_signal")
@@ -399,6 +401,25 @@ func get_user_data(p_user_id: String) -> void:
 		"purpose": RequestPurpose.USER_DATA,
 		"method": HTTPClient.METHOD_GET
 	}
+	_request_queue.append(request_details)
+	_process_queue()
+
+# Force a user data refresh regardless of the one-time guard. Useful after creation events.
+func refresh_user_data(p_user_id: String) -> void:
+	if not _is_valid_uuid(p_user_id):
+		var error_msg = "APICalls (refresh_user_data): Provided ID '%s' is not a valid UUID." % p_user_id
+		printerr(error_msg)
+		emit_signal('fetch_error', error_msg)
+		return
+	var url: String = '%s/user/get?user_id=%s' % [BASE_URL, p_user_id]
+	var headers: PackedStringArray = ['accept: application/json']
+	var request_details: Dictionary = {
+		"url": url,
+		"headers": headers,
+		"purpose": RequestPurpose.USER_DATA,
+		"method": HTTPClient.METHOD_GET
+	}
+	print('[APICalls] refresh_user_data(): enqueue URL=', url)
 	_request_queue.append(request_details)
 	_process_queue()
 
@@ -1756,6 +1777,112 @@ func _decode_jwt_expiry(token: String) -> int:
 
 # Schedule next auth status poll helper
 func _schedule_next_auth_status_poll():
+	if not _auth_poll.active:
+		return
+	# Use a one-shot timer to delay the next status request
+	var t := Timer.new()
+	t.process_mode = Node.PROCESS_MODE_ALWAYS
+	t.one_shot = true
+	t.wait_time = max(0.2, float(_auth_poll.interval))
+	add_child(t)
+	t.timeout.connect(func():
+		if _auth_poll.active:
+			_enqueue_auth_status_request(_auth_poll.state)
+		t.queue_free()
+	)
+	t.start()
+
+# --- New Convoy Creation (Direct POST) ---
+func create_convoy(convoy_name: String) -> void:
+	# Use documented endpoint first; fall back only if needed.
+	var primary_url := "%s/convoy/new" % [BASE_URL]
+	print("[APICalls][create_convoy] Dispatching POST to ", primary_url, " name=", convoy_name)
+	_post_convoy_create(convoy_name, primary_url, 0, false)
+
+func _post_convoy_create(convoy_name: String, url: String, retry_stage: int, is_retry: bool) -> void:
+	# Uses a dedicated HTTPRequest to avoid queue coupling for onboarding UX
+	var requester := HTTPRequest.new()
+	add_child(requester)
+	requester.request_completed.connect(_on_create_convoy_completed.bind(requester, convoy_name, url, retry_stage, is_retry))
+	var headers: PackedStringArray = ["accept: application/json"]
+	headers = _apply_auth_header(headers)
+
+	var effective_url := url
+	var method := HTTPClient.METHOD_POST
+	var body_str := ""
+
+	if url.ends_with("/convoy/new"):
+		# Server expects query params for user_id and convoy_name
+		var params: Dictionary = {}
+		if current_user_id != "":
+			params["user_id"] = current_user_id
+		params["convoy_name"] = String(convoy_name)
+		effective_url = "%s%s" % [url, _build_query(params)]
+		print("[APICalls][create_convoy] Using query params url=", effective_url)
+	else:
+		# Legacy/alternate endpoint: send JSON body
+		headers.append("Content-Type: application/json")
+		var body := {}
+		match retry_stage:
+			0:
+				body = {"name": String(convoy_name)}
+			1:
+				body = {"convoy_name": String(convoy_name)}
+				if current_user_id != "":
+					body["user_id"] = current_user_id
+			2:
+				body = {"new_convoy_name": String(convoy_name)}
+				if current_user_id != "":
+					body["user_id"] = current_user_id
+			_:
+				body = {"name": String(convoy_name)}
+		body_str = JSON.stringify(body)
+		print("[APICalls][create_convoy] Using JSON body for ", url, " body=", body)
+
+	var err = requester.request(effective_url, headers, method, body_str)
+	if err != OK:
+		var msg = "[APICalls][create_convoy] request() failed err=%d url=%s" % [err, effective_url]
+		push_error(msg)
+		emit_signal("fetch_error", msg)
+		requester.queue_free()
+
+func _on_create_convoy_completed(result: int, response_code: int, _headers: PackedStringArray, body: PackedByteArray, requester: HTTPRequest, convoy_name: String, url_used: String, retry_stage: int, was_retry: bool) -> void:
+	if is_instance_valid(requester):
+		requester.queue_free()
+	var ok := (result == HTTPRequest.RESULT_SUCCESS) and (response_code >= 200 and response_code < 300)
+	var payload: Variant = null
+	var raw_text := ""
+	if body.size() > 0:
+		raw_text = body.get_string_from_utf8()
+		var parse = JSON.new()
+		if parse.parse(raw_text) == OK:
+			payload = parse.get_data()
+	if ok:
+		if typeof(payload) == TYPE_DICTIONARY:
+			print("[APICalls][create_convoy] Success http=", response_code, " payload keys=", payload.keys())
+			emit_signal("convoy_created", payload)
+		elif typeof(payload) == TYPE_STRING:
+			print("[APICalls][create_convoy] Success (UUID string) http=", response_code, " uuid=", payload)
+			emit_signal("convoy_created", {"convoy_id": payload})
+		else:
+			print("[APICalls][create_convoy] Success http=", response_code, " non-JSON or unexpected type; raw=", raw_text.substr(0, 200))
+			emit_signal("convoy_created", {"raw": raw_text})
+	else:
+		print("[APICalls][create_convoy] Failure result=", result, " http=", response_code, " url=", url_used, " was_retry=", was_retry, " body=", (raw_text.substr(0, 300) if raw_text != "" else "<empty>"))
+		# If the primary endpoint failed (e.g., 404/405/400), try alternate '/convoy/new' once
+		if not was_retry and (response_code == 404 or response_code == 405 or response_code == 400) and not url_used.ends_with("/convoy/new"):
+			var alt_url := "%s/convoy/new" % [BASE_URL]
+			print("[APICalls][create_convoy] Retrying with alternate endpoint ", alt_url)
+			_post_convoy_create(convoy_name, alt_url, 0, true)
+			return
+		# If validation failed on new endpoint, try alternate payload shapes (limited attempts)
+		if url_used.ends_with("/convoy/new") and response_code == 422 and retry_stage < 2:
+			var next_stage := retry_stage + 1
+			print("[APICalls][create_convoy] 422 Unprocessable. Retrying payload variant stage=", next_stage)
+			_post_convoy_create(convoy_name, url_used, next_stage, true)
+			return
+		var err_msg := "APICalls.create_convoy failed http=%d url=%s" % [response_code, url_used]
+		emit_signal("fetch_error", err_msg)
 	if not _auth_poll.active:
 		return
 	var delay: float = max(0.2, float(_auth_poll.interval))
