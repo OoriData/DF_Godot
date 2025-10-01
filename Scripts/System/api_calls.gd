@@ -887,7 +887,8 @@ func buy_vehicle(vendor_id: String, convoy_id: String, vehicle_id: String) -> vo
 	if vendor_id.is_empty() or convoy_id.is_empty() or vehicle_id.is_empty():
 		printerr("APICalls (buy_vehicle): missing id(s)")
 		return
-	var url := "%s/vendor/buy_vehicle?vendor_id=%s&convoy_id=%s&vehicle_id=%s" % [BASE_URL, vendor_id, convoy_id, vehicle_id]
+	# Backend route: PATCH /vendor/vehicle/buy
+	var url := "%s/vendor/vehicle/buy?vendor_id=%s&convoy_id=%s&vehicle_id=%s" % [BASE_URL, vendor_id, convoy_id, vehicle_id]
 	var headers: PackedStringArray = ['accept: application/json']
 	headers = _apply_auth_header(headers)
 	_request_queue.append({

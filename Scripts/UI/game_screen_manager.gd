@@ -70,4 +70,10 @@ func _on_login_successful(user_id: String) -> void:
 	else:
 		printerr("GameScreenManager: MainScreen is missing the 'force_camera_update' method.")
 
+	# NEW: Ensure tutorial UI is bounded to the map region immediately after layout settles
+	if main_screen.has_method("refresh_tutorial_bounds"):
+		main_screen.refresh_tutorial_bounds()
+	else:
+		printerr("GameScreenManager: MainScreen is missing the 'refresh_tutorial_bounds' method.")
+
 	print("GameScreenManager: Switched to Main Screen.")

@@ -4,6 +4,7 @@ extends Control
 signal back_requested
 signal open_mechanics_menu_requested(convoy_data)
 signal open_warehouse_menu_requested(convoy_data)
+signal tabs_ready
 
 # Preload the new panel scene for instancing.
 const VendorTradePanel = preload("res://Scenes/VendorTradePanel.tscn")
@@ -227,14 +228,27 @@ func _display_settlement_info():
 		_populate_settlement_info_tab(_settlement_data)
 
 		if _settlement_data.has("vendors") and _settlement_data.vendors is Array and not _settlement_data.vendors.is_empty():
-			# print("ConvoySettlementMenu: Found ", _settlement_data.vendors.size(), " vendors in settlement.") # Debug line
+			# Ensure vendor tabs are created in a deterministic order so tutorial steps remain consistent.
+			var vendors_sorted: Array = _settlement_data.vendors.duplicate(true)
+			vendors_sorted.sort_custom(func(a, b):
+				var ka:Array = _vendor_order_key(a)
+				var kb:Array = _vendor_order_key(b)
+				if ka[0] == kb[0]:
+					# Tie-breaker: alphabetical by short name (case-insensitive)
+					var na := String(a.get("name", "")).to_lower()
+					var nb := String(b.get("name", "")).to_lower()
+					return na < nb
+				return int(ka[0]) < int(kb[0])
+			)
 
-			for vendor in _settlement_data.vendors:
+			for vendor in vendors_sorted:
 				_create_vendor_tab(vendor)
 			# Removed the old Mechanics tab vendor. Mechanics is now accessed via Install on parts within each vendor.
 
 			# After creating vendor tabs compute top up plan
 			_update_top_up_button()
+			# Notify listeners (e.g., tutorial) that tabs are built and ready
+			tabs_ready.emit()
 
 	else:
 		title_label.text = "Location: (%d, %d)" % [current_convoy_x, current_convoy_y]
@@ -259,6 +273,10 @@ func _create_vendor_tab(vendor_data: Dictionary):
 	vendor_tab_container.add_child(vendor_panel_instance)
 	vendor_panel_instance.name = vendor_name
 	vendor_tab_container.set_tab_title(vendor_tab_container.get_tab_count() - 1, short_vendor_name)
+	# Log tab creation and category for debugging/tutorial targeting
+	var created_index: int = int(vendor_tab_container.get_tab_count() - 1)
+	var cat_idx: int = int(_vendor_category_index(vendor_data))
+	print("[ConvoySettlementMenu] Added vendor tab index=", created_index, " title='", short_vendor_name, "' full_name='", vendor_name, "' category_idx=", cat_idx)
 	# Pass deep copies to avoid reference bugs!
 	vendor_panel_instance.initialize(
 		vendor_data.duplicate(true),
@@ -283,6 +301,229 @@ func _clear_tabs():
 		vendor_tab_container.remove_child(tab)
 		tab.queue_free()
 	mechanics_tab_vbox = null
+
+# --- Tutorial helper: return the global rect of the Dealership tab header ---
+func tutorial_get_dealership_tab_rect_global() -> Rect2:
+	if not is_instance_valid(vendor_tab_container):
+		return Rect2()
+	var tc: TabContainer = vendor_tab_container
+	var tab_bar: Control = null
+	if tc.has_method("get_tab_bar"):
+		tab_bar = tc.call("get_tab_bar")
+	if tab_bar == null:
+		# Try common child paths
+		tab_bar = tc.find_child("TabBar", true, false)
+	if tab_bar == null:
+		for ch in tc.get_children():
+			if ch is Control and String(ch.get_class()).to_lower().find("tabbar") != -1:
+				tab_bar = ch
+				break
+	if tab_bar == null or not tab_bar.has_method("get_tab_rect"):
+		print("[ConvoySettlementMenu][Tutor] TabBar not found or missing get_tab_rect; cannot compute dealership tab rect.")
+		return Rect2()
+	var count := tc.get_tab_count()
+	print("[ConvoySettlementMenu][Tutor] Tab count=", count)
+	var dealership_index := -1
+	# Determine dealership tab by inspecting the underlying vendor panel's vendor data
+	for i in range(count):
+		var tab_ctrl: Node = tc.get_tab_control(i)
+		if tab_ctrl == null:
+			continue
+		# The tab content is the VendorTradePanel instance; it should have its original vendor name in 'name'
+		var full_vendor_name := String(tab_ctrl.name)
+		var vendor_dict := _find_vendor_by_name(full_vendor_name)
+		if vendor_dict is Dictionary and not vendor_dict.is_empty():
+			var v_idx := _vendor_category_index(vendor_dict)
+			var title_dbg := String(tc.get_tab_title(i))
+			print("[ConvoySettlementMenu][Tutor] Tab i=", i, " title='", title_dbg, "' full_name='", full_vendor_name, "' category_idx=", v_idx)
+			if v_idx == 2:
+				dealership_index = i
+				break
+		else:
+			print("[ConvoySettlementMenu][Tutor] Tab i=", i, " full_name='", full_vendor_name, "' did not resolve to vendor_dict")
+	if dealership_index == -1:
+		# Extra debug of titles to help diagnose
+		var titles: Array = []
+		for i in range(count):
+			titles.append(String(tc.get_tab_title(i)))
+		print("[ConvoySettlementMenu][Tutor] Dealership tab not found by vendor classification. Titles=", titles)
+		return Rect2()
+	var rect_local: Rect2 = tab_bar.call("get_tab_rect", dealership_index)
+	if rect_local.size == Vector2.ZERO:
+		print("[ConvoySettlementMenu][Tutor] get_tab_rect returned zero size for index=", dealership_index)
+		return Rect2()
+	var pos_global: Vector2 = tab_bar.get_global_transform() * rect_local.position
+	var result := Rect2(pos_global, rect_local.size)
+	print("[ConvoySettlementMenu][Tutor] Dealership tab index=", dealership_index, " rect_local=", rect_local, " rect_global=", result)
+	return result
+
+# --- Tutorial helper: return the index of the Dealership tab ---
+func tutorial_get_dealership_tab_index() -> int:
+	if not is_instance_valid(vendor_tab_container):
+		return -1
+	var tc: TabContainer = vendor_tab_container
+	var count := tc.get_tab_count()
+	var dealership_index := -1
+	for i in range(count):
+		var tab_ctrl: Node = tc.get_tab_control(i)
+		if tab_ctrl == null:
+			continue
+		var full_vendor_name := String(tab_ctrl.name)
+		var vendor_dict := _find_vendor_by_name(full_vendor_name)
+		if vendor_dict is Dictionary and not vendor_dict.is_empty():
+			var v_idx := _vendor_category_index(vendor_dict)
+			if v_idx == 2:
+				dealership_index = i
+				break
+	print("[ConvoySettlementMenu][Tutor] tutorial_get_dealership_tab_index -> ", dealership_index)
+	return dealership_index
+
+# --- Tutorial helper: create a proxy Control over the dealership tab header for reliable highlighting ---
+var _tutor_tab_proxy: Control = null
+var _tutor_tab_proxy_updater: Callable = Callable() # to disconnect on clear
+var _tutor_tab_proxy_tabbar: Control = null
+
+func tutorial_build_dealership_tab_highlight_proxy() -> Control:
+	if not is_instance_valid(vendor_tab_container):
+		return null
+	var tc2: TabContainer = vendor_tab_container
+	var tab_bar2: Control = null
+	if tc2.has_method("get_tab_bar"):
+		tab_bar2 = tc2.call("get_tab_bar")
+	if tab_bar2 == null:
+		tab_bar2 = tc2.find_child("TabBar", true, false)
+	if tab_bar2 == null or not tab_bar2.has_method("get_tab_rect"):
+		return null
+	var idx2 := int(tutorial_get_dealership_tab_index())
+	if idx2 < 0:
+		return null
+	var rl2: Rect2 = tab_bar2.call("get_tab_rect", idx2)
+	if rl2.size == Vector2.ZERO:
+		return null
+	tutorial_clear_tab_highlight_proxy()
+	var proxy := Control.new()
+	proxy.name = "TutorTabProxy"
+	# Ignore mouse so it never blocks clicks; keep as child of TabBar so it tracks layout
+	proxy.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	proxy.anchor_left = 0
+	proxy.anchor_right = 0
+	proxy.anchor_top = 0
+	proxy.anchor_bottom = 0
+	proxy.position = rl2.position
+	proxy.size = rl2.size
+	tab_bar2.add_child(proxy)
+	proxy.z_index = 1000
+	# Keep proxy sticky to the tab header by updating on TabBar size/visibility changes
+	var updater := func():
+		if is_instance_valid(tab_bar2):
+			var rnow: Rect2 = tab_bar2.call("get_tab_rect", idx2)
+			proxy.position = rnow.position
+			proxy.size = rnow.size
+	# Store references so we can disconnect later
+	_tutor_tab_proxy_updater = updater
+	_tutor_tab_proxy_tabbar = tab_bar2
+	# Connect supported signals; avoid duplicate connects
+	if is_instance_valid(tab_bar2):
+		if not tab_bar2.resized.is_connected(updater):
+			tab_bar2.resized.connect(updater)
+		if not tab_bar2.visibility_changed.is_connected(updater):
+			tab_bar2.visibility_changed.connect(updater)
+	# One immediate update in case the rect changed after creation
+	updater.call()
+	_tutor_tab_proxy = proxy
+	return proxy
+
+func tutorial_clear_tab_highlight_proxy() -> void:
+	if is_instance_valid(_tutor_tab_proxy):
+		var parent := _tutor_tab_proxy.get_parent()
+		if parent:
+			parent.remove_child(_tutor_tab_proxy)
+		_tutor_tab_proxy.queue_free()
+	# Disconnect updater signals to avoid leaks
+	if is_instance_valid(_tutor_tab_proxy_tabbar) and _tutor_tab_proxy_updater.is_valid():
+		if _tutor_tab_proxy_tabbar.resized.is_connected(_tutor_tab_proxy_updater):
+			_tutor_tab_proxy_tabbar.resized.disconnect(_tutor_tab_proxy_updater)
+		if _tutor_tab_proxy_tabbar.visibility_changed.is_connected(_tutor_tab_proxy_updater):
+			_tutor_tab_proxy_tabbar.visibility_changed.disconnect(_tutor_tab_proxy_updater)
+	_tutor_tab_proxy = null
+	_tutor_tab_proxy_updater = Callable()
+	_tutor_tab_proxy_tabbar = null
+
+# --- Tutorial helper: global rect covering all vendor tab headers (union) ---
+func tutorial_get_tab_bar_rect_global() -> Rect2:
+	if not is_instance_valid(vendor_tab_container):
+		return Rect2()
+	var tc: TabContainer = vendor_tab_container
+	var tab_bar: Control = null
+	if tc.has_method("get_tab_bar"):
+		tab_bar = tc.call("get_tab_bar")
+	if tab_bar == null:
+		tab_bar = tc.find_child("TabBar", true, false)
+	if tab_bar == null:
+		for ch in tc.get_children():
+			if ch is Control and String(ch.get_class()).to_lower().find("tabbar") != -1:
+				tab_bar = ch
+				break
+	if tab_bar == null or not tab_bar.has_method("get_tab_rect"):
+		return Rect2()
+	var count := tc.get_tab_count()
+	if count <= 0:
+		return Rect2()
+	var has_any := false
+	var ul := Vector2(1.0/0.0, 1.0/0.0) # +INF
+	var br := Vector2(-1.0/0.0, -1.0/0.0) # -INF
+	for i in range(count):
+		var rl: Rect2 = tab_bar.call("get_tab_rect", i)
+		if rl.size == Vector2.ZERO:
+			continue
+		var pg: Vector2 = tab_bar.get_global_transform() * rl.position
+		ul.x = min(ul.x, pg.x)
+		ul.y = min(ul.y, pg.y)
+		br.x = max(br.x, pg.x + rl.size.x)
+		br.y = max(br.y, pg.y + rl.size.y)
+		has_any = true
+	return Rect2(ul, br - ul) if has_any else Rect2()
+
+# --- Tutorial helper: info for each vendor tab header ---
+# Returns Array of { index:int, title:String, rect:Rect2, category_idx:int }
+func tutorial_get_vendor_tab_headers_info() -> Array:
+	var result: Array = []
+	if not is_instance_valid(vendor_tab_container):
+		return result
+	var tc: TabContainer = vendor_tab_container
+	var tab_bar: Control = null
+	if tc.has_method("get_tab_bar"):
+		tab_bar = tc.call("get_tab_bar")
+	if tab_bar == null:
+		tab_bar = tc.find_child("TabBar", true, false)
+	if tab_bar == null:
+		for ch in tc.get_children():
+			if ch is Control and String(ch.get_class()).to_lower().find("tabbar") != -1:
+				tab_bar = ch
+				break
+	if tab_bar == null or not tab_bar.has_method("get_tab_rect"):
+		return result
+	var count := tc.get_tab_count()
+	for i in range(count):
+		# Skip the Settlement Info tab at index 0
+		if i == 0:
+			continue
+		var tab_ctrl: Node = tc.get_tab_control(i)
+		var full_vendor_name := String(tab_ctrl.name) if tab_ctrl != null else ""
+		var vendor_dict := _find_vendor_by_name(full_vendor_name)
+		var cat_idx := -1
+		if vendor_dict is Dictionary and not vendor_dict.is_empty():
+			cat_idx = _vendor_category_index(vendor_dict)
+		var rect_local: Rect2 = tab_bar.call("get_tab_rect", i)
+		var pos_global: Vector2 = tab_bar.get_global_transform() * rect_local.position
+		var rect_global := Rect2(pos_global, rect_local.size)
+		result.append({
+			"index": i,
+			"title": String(tc.get_tab_title(i)),
+			"rect": rect_global,
+			"category_idx": cat_idx
+		})
+	return result
 
 ## Mechanics tab removed: Mechanics is now opened contextually via Install from vendor part purchase.
 
@@ -459,6 +700,97 @@ func _find_vendor_by_name(vendor_name: String) -> Dictionary:
 			if vendor.get("name", "") == vendor_name:
 				return vendor
 	return {}
+
+
+# --- Vendor ordering helpers ---
+# Classify a vendor into a category index for deterministic tab ordering.
+# Lower index sorts first. Chosen order:
+#   0: Settlement Info (implicit, not part of vendors array)
+#   1: Missions (delivery/quest-like)
+#   2: Dealership / Vehicles (vendors offering vehicles)
+#   3: Parts (sells parts/accessories)
+#   4: Resources (fuel/water/food bulk)
+#   9: Other/Unknown
+func _vendor_category_index(vendor: Dictionary) -> int:
+	if vendor.is_empty():
+		return 9
+	# Heuristics based on inventory and known fields
+	var inv: Array = []
+	if vendor.has("cargo_inventory") and (vendor.get("cargo_inventory") is Array):
+		inv = vendor.get("cargo_inventory")
+	# If the backend/model provides a dedicated vehicle inventory, prefer that as an authoritative signal
+	var veh_inv: Array = vendor.get("vehicle_inventory", []) if vendor.has("vehicle_inventory") else []
+	if veh_inv is Array and not veh_inv.is_empty():
+		return 2
+	var has_mission := false
+	var has_vehicle := false
+	var has_part := false
+	var has_resource := false
+	# Strong name-based override for dealership
+	var vname := String(vendor.get("name", "")).to_lower()
+	if vname.find("dealership") != -1 or vname.find("dealer") != -1:
+		has_vehicle = true
+	for item in inv:
+		if not (item is Dictionary):
+			continue
+		if item.get("recipient") != null:
+			has_mission = true
+		# Vehicle: explicit type or vehicle-like stats
+		var t := String(item.get("type", "")).to_lower()
+		# Treat as vehicle only on clear indicators; avoid mission cargo or resource entries
+		var looks_vehicle := false
+		if t == "vehicle":
+			looks_vehicle = true
+		elif item.has("vehicle_id") and item.get("recipient") == null:
+			looks_vehicle = true
+		elif item.has("stats") and (item.get("stats") is Dictionary):
+			var stats: Dictionary = item.get("stats")
+			var vehish := ["top_speed","max_speed","speed","efficiency","offroad_capability","cargo_capacity","weight_capacity","fuel_capacity","kwh_capacity","passenger_capacity"]
+			for k in vehish:
+				if stats.has(k):
+					looks_vehicle = true
+					break
+		if looks_vehicle:
+			has_vehicle = true
+		# Part indicators
+		if item.has("slot") and item.get("slot") != null:
+			has_part = true
+		# Resource indicators
+		var food_v = item.get("food") if item.has("food") else null
+		var water_v = item.get("water") if item.has("water") else null
+		var fuel_v = item.get("fuel") if item.has("fuel") else null
+		if (food_v is int or food_v is float) and float(food_v) > 0:
+			has_resource = true
+		elif (water_v is int or water_v is float) and float(water_v) > 0:
+			has_resource = true
+		elif (fuel_v is int or fuel_v is float) and float(fuel_v) > 0:
+			has_resource = true
+
+	# Quick check for explicit resource price fields on vendor
+	var has_resource_prices := vendor.has("fuel_price") or vendor.has("water_price") or vendor.has("food_price")
+
+	if has_mission:
+		return 1
+	if has_vehicle:
+		return 2
+	if has_part:
+		return 3
+	if has_resource or has_resource_prices:
+		return 4
+	return 9
+
+func _vendor_short_display_name(vendor: Dictionary) -> String:
+	var vendor_name = String(vendor.get("name", ""))
+	var settlement_name = String(_settlement_data.get("name", ""))
+	if settlement_name != "":
+		return vendor_name.replace(settlement_name + " ", "").strip_edges()
+	return vendor_name
+
+func _vendor_order_key(vendor: Dictionary) -> Array:
+	# Return [category_index, short_name_lower]
+	var idx := _vendor_category_index(vendor)
+	var short_name := _vendor_short_display_name(vendor).to_lower()
+	return [idx, short_name]
 
 
 # --- Top Up Feature ---

@@ -264,7 +264,7 @@ func populate_tilemap_from_data(tile_data_2d: Array):
 		print('[Main][WARN] Unknown tile names encountered: %s' % str(unknown_names))
 	# Sample a few cells to confirm they are set
 	for sample in [Vector2i(0,0), Vector2i(5,5), Vector2i(10,10)]:
-		var sid = terrain_tilemap.get_cell_source_id(sample)
+		var _sid = terrain_tilemap.get_cell_source_id(sample)
 		# print('[Main][DBG] sample cell %s source_id=%s' % [str(sample), str(sid)])
 
 func _on_map_data_loaded(p_map_tiles: Array):

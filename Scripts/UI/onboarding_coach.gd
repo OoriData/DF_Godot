@@ -1,0 +1,418 @@
+extends Control
+
+# A lightweight overlay coach for onboarding steps.
+# Usage: add as a child to an overlay layer and call show_buy_vehicle_step(callback_open_settlement)
+
+signal dismissed
+
+var _panel: Panel = null
+var _message_label: Label = null
+var _action_button: Button = null
+var _secondary_button: Button = null
+var _side_panel: Panel = null
+var _side_label: RichTextLabel = null
+var _side_bounds_global: Rect2 = Rect2()
+var _side_total_steps: int = 0
+var _side_current_step: int = 0
+var _avoid_rects_global: Array = [] # Array of Rect2 in global coords to avoid overlapping
+var _highlight_panel: Panel = null
+var _highlight_target: WeakRef = null
+var _highlight_margin: int = 6
+var _highlight_active: bool = false
+var _highlight_host: Control = null # Optional external layer to host highlight panel (not clipped)
+var _highlight_mode: String = "none" # "control" or "rect"
+
+func _ready() -> void:
+	mouse_filter = Control.MOUSE_FILTER_IGNORE
+	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+
+func _ensure_panel() -> void:
+	if is_instance_valid(_panel):
+		return
+	_panel = Panel.new()
+	_panel.name = "CoachPanel"
+	_panel.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	_panel.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	_panel.custom_minimum_size = Vector2(560, 160)
+	_panel.mouse_filter = Control.MOUSE_FILTER_PASS
+
+	# Style
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color(0.08, 0.09, 0.12, 0.98)
+	sb.corner_radius_top_left = 10
+	sb.corner_radius_top_right = 10
+	sb.corner_radius_bottom_left = 10
+	sb.corner_radius_bottom_right = 10
+	sb.border_color = Color(0.35, 0.55, 0.90)
+	sb.border_width_left = 2
+	sb.border_width_right = 2
+	sb.border_width_top = 2
+	sb.border_width_bottom = 2
+	_panel.add_theme_stylebox_override("panel", sb)
+
+	var v := VBoxContainer.new()
+	v.anchor_left = 0.5
+	v.anchor_top = 0.5
+	v.anchor_right = 0.5
+	v.anchor_bottom = 0.5
+	v.offset_left = -260
+	v.offset_top = -70
+	v.offset_right = 260
+	v.offset_bottom = 70
+	v.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	v.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	v.add_theme_constant_override("separation", 12)
+
+	_message_label = Label.new()
+	_message_label.autowrap_mode = TextServer.AUTOWRAP_WORD
+	_message_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_message_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_message_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_message_label.text = ""
+
+	var buttons := HBoxContainer.new()
+	buttons.alignment = BoxContainer.ALIGNMENT_CENTER
+	buttons.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	buttons.add_theme_constant_override("separation", 10)
+
+	_action_button = Button.new()
+	_action_button.text = "Let's go"
+	_action_button.custom_minimum_size = Vector2(140, 34)
+
+	_secondary_button = Button.new()
+	_secondary_button.text = "Not now"
+	_secondary_button.custom_minimum_size = Vector2(120, 30)
+
+	buttons.add_child(_action_button)
+	buttons.add_child(_secondary_button)
+
+	v.add_child(_message_label)
+	v.add_child(buttons)
+	_panel.add_child(v)
+	# Center the panel within this overlay
+	_panel.anchor_left = 0.5
+	_panel.anchor_top = 0.5
+	_panel.anchor_right = 0.5
+	_panel.anchor_bottom = 0.5
+	_panel.offset_left = -300
+	_panel.offset_top = -100
+	_panel.offset_right = 300
+	_panel.offset_bottom = 100
+	add_child(_panel)
+
+func _wire_buttons(primary_cb: Callable) -> void:
+	if is_instance_valid(_action_button):
+		for c in _action_button.get_signal_connection_list("pressed"):
+			_action_button.disconnect("pressed", c.callable)
+		if primary_cb.is_null():
+			_action_button.disabled = true
+		else:
+			_action_button.disabled = false
+			_action_button.pressed.connect(func():
+				hide()
+				if primary_cb and not primary_cb.is_null():
+					primary_cb.call()
+				dismissed.emit()
+			)
+	if is_instance_valid(_secondary_button):
+		for c in _secondary_button.get_signal_connection_list("pressed"):
+			_secondary_button.disconnect("pressed", c.callable)
+		_secondary_button.pressed.connect(func():
+			hide()
+			dismissed.emit()
+		)
+
+func show_buy_vehicle_step(primary_cb: Callable) -> void:
+	_ensure_panel()
+	show()
+	if is_instance_valid(_panel):
+		_panel.show()
+	if is_instance_valid(_message_label):
+		_message_label.text = "Nice! Your convoy is created. Next, let's buy your first vehicle. We'll open the settlement vendors and go to the dealership."
+	_action_button.text = "Open vendors"
+	_secondary_button.text = "Maybe later"
+	_wire_buttons(primary_cb)
+
+func _ensure_hint() -> void:
+	pass # deprecated
+
+func show_hint_near_control(_target: Control, _message: String, _offset: Vector2 = Vector2(0, -80)) -> void:
+	pass # deprecated
+
+func hide_hint() -> void:
+	pass # deprecated
+
+func _ensure_side_panel() -> void:
+	if is_instance_valid(_side_panel):
+		return
+	_side_panel = Panel.new()
+	_side_panel.name = "CoachSidePanel"
+	_side_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color(0.08, 0.09, 0.12, 0.98)
+	sb.corner_radius_top_left = 10
+	sb.corner_radius_top_right = 10
+	sb.corner_radius_bottom_left = 10
+	sb.corner_radius_bottom_right = 10
+	sb.border_color = Color(0.40, 0.60, 0.90)
+	sb.border_width_left = 2
+	sb.border_width_right = 2
+	sb.border_width_top = 2
+	sb.border_width_bottom = 2
+	_side_panel.add_theme_stylebox_override("panel", sb)
+	# Allow width to shrink fully with the map area; keep a modest min height
+	_side_panel.custom_minimum_size = Vector2(0, 100)
+	# Anchor left side, some margin from top/left
+	_side_panel.anchor_left = 0.0
+	_side_panel.anchor_top = 0.0
+	_side_panel.anchor_right = 0.0
+	_side_panel.anchor_bottom = 0.0
+	# Position will be set by _reposition_side_panel() using bounds
+	_side_panel.offset_left = 24
+	_side_panel.offset_top = 120
+
+	var vb := VBoxContainer.new()
+	vb.anchor_left = 0
+	vb.anchor_top = 0
+	vb.anchor_right = 1
+	vb.anchor_bottom = 1
+	vb.offset_left = 16
+	vb.offset_top = 12
+	vb.offset_right = -16
+	vb.offset_bottom = -12
+	vb.add_theme_constant_override("separation", 8)
+
+	_side_label = RichTextLabel.new()
+	# Disable fit_content so the label doesn't force the panel to grow; we'll manage size and enable scrolling
+	_side_label.fit_content = false
+	_side_label.bbcode_enabled = true
+	_side_label.autowrap_mode = TextServer.AUTOWRAP_WORD
+	_side_label.scroll_active = false
+	vb.add_child(_side_label)
+
+	_side_panel.add_child(vb)
+	add_child(_side_panel)
+	_side_panel.hide()
+
+func show_left_panel_message(message: String) -> void:
+	_ensure_side_panel()
+	show()
+	_side_panel.show()
+	if is_instance_valid(_side_label):
+		_side_label.text = message
+
+func show_step_message(step_index: int, total_steps: int, message: String) -> void:
+	_ensure_side_panel()
+	_side_current_step = step_index
+	_side_total_steps = total_steps
+	var header := "[b]Step %d/%d[/b]\n" % [max(1, step_index), max(1, total_steps)]
+	show_left_panel_message(header + message)
+	_reposition_side_panel()
+
+func hide_left_panel() -> void:
+	if is_instance_valid(_side_panel):
+		_side_panel.hide()
+
+# Allow main screen to define the area (in global coords) where the side panel should live (map area),
+# to avoid overlapping the right menu panel when it's open.
+func set_side_panel_bounds_by_global_rect(bounds: Rect2) -> void:
+	_side_bounds_global = bounds
+	_reposition_side_panel()
+
+func set_side_panel_avoid_rects_global(rects: Array) -> void:
+	# rects expected to be Array[Rect2]
+	_avoid_rects_global = rects
+	_reposition_side_panel()
+
+func _reposition_side_panel() -> void:
+	if not is_instance_valid(_side_panel):
+		return
+	# If no bounds provided, keep default offsets
+	if _side_bounds_global.size == Vector2.ZERO:
+		return
+	# Convert global bounds into this overlay's local coordinates
+	var inv := get_global_transform().affine_inverse()
+	var top_left_local := inv * _side_bounds_global.position
+	var size_local := _side_bounds_global.size
+	var margin := Vector2(24, 24)
+	# Compute the full available space within map bounds (minus margins)
+	var available_w: float = max(0.0, size_local.x - (margin.x * 2.0))
+	var available_h: float = max(0.0, size_local.y - (margin.y * 2.0))
+	# Make a small box: prefer a compact width and never exceed available space
+	var preferred_w: float = 360.0
+	# Let it shrink as needed: cap only by available space
+	var panel_w: float = min(preferred_w, available_w)
+	var padding_x: float = 24.0 # VBox left+right offsets (approx)
+	var padding_y: float = 20.0 # VBox top+bottom offsets (approx)
+	var min_panel_h: float = 100.0
+	var max_panel_h: float = available_h
+	# Update width immediately so the RichTextLabel can reflow for content height calculation
+	_side_panel.size.x = panel_w
+	# Estimate content height based on label's content at this width
+	var content_h: float = 0.0
+	if is_instance_valid(_side_label):
+		var label_w: float = max(0.0, panel_w - padding_x)
+		_side_label.size.x = label_w
+		# Prefer precise API when available
+		if _side_label.has_method("get_content_height"):
+			content_h = float(_side_label.call("get_content_height"))
+		else:
+			content_h = _side_label.get_minimum_size().y
+	var desired_h: float = content_h + padding_y
+	var panel_h: float = clamp(desired_h, min_panel_h, max_panel_h)
+	# If content doesn't fit vertically, enable scrolling to avoid overflow
+	if is_instance_valid(_side_label):
+		_side_label.scroll_active = desired_h > max_panel_h
+		_side_label.size = Vector2(max(0.0, panel_w - padding_x), max(0.0, panel_h - padding_y))
+	_side_panel.size = Vector2(panel_w, panel_h)
+
+	# Convert avoid rects to local space
+	var avoid_local: Array = []
+	for r in _avoid_rects_global:
+		if r is Rect2:
+			var tl: Vector2 = inv * r.position
+			avoid_local.append(Rect2(tl, r.size))
+
+	# Candidate Y positions: top, middle, bottom within bounds; prefer left side
+	var left_x := top_left_local.x + margin.x
+	var top_y := top_left_local.y + margin.y
+	var mid_y: float = top_left_local.y + max(margin.y, (size_local.y - panel_h) * 0.5)
+	var bot_y: float = top_left_local.y + max(margin.y, size_local.y - panel_h - margin.y)
+	# Always keep the panel on the left side of the map to avoid the right menu visually
+	var candidates := [Vector2(left_x, top_y), Vector2(left_x, mid_y), Vector2(left_x, bot_y)]
+
+	var chosen: Vector2 = candidates[0]
+	for c in candidates:
+		var test_rect := Rect2(c, _side_panel.size)
+		var hits := false
+		for ar in avoid_local:
+			if test_rect.intersects(ar):
+				hits = true
+				break
+		if not hits:
+			chosen = c
+			break
+	_side_panel.position = chosen
+
+# --- Generic highlight overlay ---
+func _ensure_highlight_panel() -> void:
+	if is_instance_valid(_highlight_panel):
+		return
+	_highlight_panel = Panel.new()
+	_highlight_panel.name = "CoachHighlight"
+	_highlight_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_highlight_panel.z_index = 10000
+	# Default to top-level when used with explicit global-rect highlighting.
+	_highlight_panel.top_level = true
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color(0, 0, 0, 0.0)
+	sb.border_color = Color(1.0, 0.85, 0.2, 0.95)
+	sb.border_width_left = 3
+	sb.border_width_top = 3
+	sb.border_width_right = 3
+	sb.border_width_bottom = 3
+	sb.corner_radius_top_left = 10
+	sb.corner_radius_top_right = 10
+	sb.corner_radius_bottom_left = 10
+	sb.corner_radius_bottom_right = 10
+	_highlight_panel.add_theme_stylebox_override("panel", sb)
+	var host: Node = _highlight_host if is_instance_valid(_highlight_host) else self
+	host.add_child(_highlight_panel)
+	_highlight_panel.hide()
+
+func set_highlight_host(host: Control) -> void:
+	_highlight_host = host
+	# If the panel already exists under old parent, reparent to new host
+	if is_instance_valid(_highlight_panel) and _highlight_panel.get_parent() != _highlight_host:
+		_highlight_panel.get_parent().remove_child(_highlight_panel)
+		_highlight_host.add_child(_highlight_panel)
+
+func highlight_control(target: Control) -> void:
+	if not is_instance_valid(target):
+		clear_highlight()
+		return
+	_ensure_highlight_panel()
+	_highlight_target = weakref(target)
+	_highlight_mode = "control"
+	_highlight_active = false # anchors will keep it attached; no per-frame needed
+	show()
+	# Reparent highlight panel under the TARGET so it shares the exact viewport/layer and tracks size automatically
+	if _highlight_panel.get_parent() != target:
+		var prev_parent := _highlight_panel.get_parent()
+		if prev_parent:
+			prev_parent.remove_child(_highlight_panel)
+		target.add_child(_highlight_panel)
+	# Use non-top-level so anchors/offsets are relative to the target
+	_highlight_panel.top_level = false
+	# Anchor to the target's full rect and expand by margin using negative offsets
+	_highlight_panel.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_highlight_panel.offset_left = -_highlight_margin
+	_highlight_panel.offset_top = -_highlight_margin
+	_highlight_panel.offset_right = _highlight_margin
+	_highlight_panel.offset_bottom = _highlight_margin
+	# Ensure it's drawn above target content
+	_highlight_panel.z_index = max(_highlight_panel.z_index, 10000)
+	_highlight_panel.show()
+	set_process(false)
+
+func clear_highlight() -> void:
+	_highlight_active = false
+	_highlight_mode = "none"
+	_highlight_target = null
+	if is_instance_valid(_highlight_panel):
+		_highlight_panel.hide()
+		# Restore to host (top-level) to be ready for global-rect highlights next time
+		var host: Node = _highlight_host if is_instance_valid(_highlight_host) else self
+		if _highlight_panel.get_parent() != host:
+			var prev_parent := _highlight_panel.get_parent()
+			if prev_parent:
+				prev_parent.remove_child(_highlight_panel)
+			host.add_child(_highlight_panel)
+		_highlight_panel.top_level = true
+	set_process(false)
+
+func _process(_delta: float) -> void:
+	if not _highlight_active:
+		return
+	_update_highlight_rect()
+
+func _update_highlight_rect() -> void:
+	if _highlight_target == null:
+		clear_highlight()
+		return
+	var t: Object = _highlight_target.get_ref()
+	if t == null or not (t is Control) or not (t as Control).is_inside_tree():
+		clear_highlight()
+		return
+	# Only used for legacy/global rect following. Control-based highlight uses anchors and needs no updates.
+	if _highlight_mode == "control":
+		return
+	var ctrl := t as Control
+	var grect: Rect2 = ctrl.get_global_rect()
+	var top_left: Vector2 = grect.position
+	var rect_size: Vector2 = grect.size
+	if is_instance_valid(_highlight_panel):
+		_highlight_panel.position = top_left - Vector2(_highlight_margin, _highlight_margin)
+		_highlight_panel.size = rect_size + Vector2(_highlight_margin * 2, _highlight_margin * 2)
+
+# Highlight by explicit global rectangle (for tab buttons, etc.)
+func highlight_global_rect(global_rect: Rect2) -> void:
+	_ensure_highlight_panel()
+	_highlight_target = null
+	_highlight_mode = "rect"
+	_highlight_active = true
+	show()
+	_highlight_panel.show()
+	# Convert rect from GLOBAL space to the highlight host's local space (parent of highlight panel)
+	# With top-level, directly use global rect coordinates for positioning
+	# Ensure the highlight panel is under the overlay host and top-level for viewport coords
+	var host: Node = _highlight_host if is_instance_valid(_highlight_host) else self
+	if _highlight_panel.get_parent() != host:
+		var prev_parent := _highlight_panel.get_parent()
+		if prev_parent:
+			prev_parent.remove_child(_highlight_panel)
+		host.add_child(_highlight_panel)
+	_highlight_panel.top_level = true
+	var top_left: Vector2 = global_rect.position
+	_highlight_panel.position = top_left - Vector2(_highlight_margin, _highlight_margin)
+	_highlight_panel.size = global_rect.size + Vector2(_highlight_margin * 2, _highlight_margin * 2)
