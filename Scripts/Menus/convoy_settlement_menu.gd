@@ -323,35 +323,22 @@ func tutorial_get_dealership_tab_rect_global() -> Rect2:
 		return Rect2()
 	var count := tc.get_tab_count()
 	print("[ConvoySettlementMenu][Tutor] Tab count=", count)
-	var dealership_index := -1
-	# Determine dealership tab by inspecting the underlying vendor panel's vendor data
-	for i in range(count):
-		var tab_ctrl: Node = tc.get_tab_control(i)
-		if tab_ctrl == null:
-			continue
-		# The tab content is the VendorTradePanel instance; it should have its original vendor name in 'name'
-		var full_vendor_name := String(tab_ctrl.name)
-		var vendor_dict := _find_vendor_by_name(full_vendor_name)
-		if vendor_dict is Dictionary and not vendor_dict.is_empty():
-			var v_idx := _vendor_category_index(vendor_dict)
-			var title_dbg := String(tc.get_tab_title(i))
-			print("[ConvoySettlementMenu][Tutor] Tab i=", i, " title='", title_dbg, "' full_name='", full_vendor_name, "' category_idx=", v_idx)
-			if v_idx == 2:
-				dealership_index = i
-				break
-		else:
-			print("[ConvoySettlementMenu][Tutor] Tab i=", i, " full_name='", full_vendor_name, "' did not resolve to vendor_dict")
-	if dealership_index == -1:
+	# Always use the absolute TabContainer index (includes 'Settlement Info' at 0)
+	var dealership_index := int(tutorial_get_dealership_tab_index())
+	if dealership_index < 0 or dealership_index >= count:
 		# Extra debug of titles to help diagnose
 		var titles: Array = []
 		for i in range(count):
 			titles.append(String(tc.get_tab_title(i)))
-		print("[ConvoySettlementMenu][Tutor] Dealership tab not found by vendor classification. Titles=", titles)
+		print("[ConvoySettlementMenu][Tutor] Invalid dealership index=", dealership_index, " Titles=", titles)
 		return Rect2()
 	var rect_local: Rect2 = tab_bar.call("get_tab_rect", dealership_index)
 	if rect_local.size == Vector2.ZERO:
-		print("[ConvoySettlementMenu][Tutor] get_tab_rect returned zero size for index=", dealership_index)
-		return Rect2()
+		await get_tree().process_frame
+		rect_local = tab_bar.call("get_tab_rect", dealership_index)
+		if rect_local.size == Vector2.ZERO:
+			print("[ConvoySettlementMenu][Tutor] get_tab_rect still zero after wait; index=", dealership_index)
+			return Rect2()
 	var pos_global: Vector2 = tab_bar.get_global_transform() * rect_local.position
 	var result := Rect2(pos_global, rect_local.size)
 	print("[ConvoySettlementMenu][Tutor] Dealership tab index=", dealership_index, " rect_local=", rect_local, " rect_global=", result)
@@ -363,20 +350,45 @@ func tutorial_get_dealership_tab_index() -> int:
 		return -1
 	var tc: TabContainer = vendor_tab_container
 	var count := tc.get_tab_count()
-	var dealership_index := -1
-	for i in range(count):
-		var tab_ctrl: Node = tc.get_tab_control(i)
-		if tab_ctrl == null:
-			continue
-		var full_vendor_name := String(tab_ctrl.name)
-		var vendor_dict := _find_vendor_by_name(full_vendor_name)
-		if vendor_dict is Dictionary and not vendor_dict.is_empty():
-			var v_idx := _vendor_category_index(vendor_dict)
-			if v_idx == 2:
-				dealership_index = i
+	var dealer_abs := -1
+	var path_used := "title-exact"
+	# 1) Primary: exact tab title match (case-insensitive) to 'Dealership'
+	for t in range(count):
+		var title_ci := String(tc.get_tab_title(t)).strip_edges().to_lower()
+		if title_ci == "dealership":
+			dealer_abs = t
+			break
+	# 2) Fallback by vendor full name containing 'dealership'
+	if dealer_abs == -1:
+		path_used = "name-fallback"
+		for j in range(count):
+			var tab_ctrl2: Node = tc.get_tab_control(j)
+			if tab_ctrl2 == null:
+				continue
+			var full_name2 := String(tab_ctrl2.name).to_lower()
+			if full_name2.find("dealership") != -1:
+				dealer_abs = j
 				break
-	print("[ConvoySettlementMenu][Tutor] tutorial_get_dealership_tab_index -> ", dealership_index)
-	return dealership_index
+	# 3) Final fallback: vendor classification (inventory-based)
+	if dealer_abs == -1:
+		path_used = "classification"
+		for i in range(count):
+			var tab_ctrl: Node = tc.get_tab_control(i)
+			if tab_ctrl == null:
+				continue
+			var full_vendor_name := String(tab_ctrl.name)
+			var vendor_dict := _find_vendor_by_name(full_vendor_name)
+			if vendor_dict is Dictionary and not vendor_dict.is_empty():
+				var v_idx := _vendor_category_index(vendor_dict)
+				if v_idx == 2:
+					dealer_abs = i
+					break
+	# One-time debug print of titles to verify absolute mapping
+	var titles_dbg: Array = []
+	for k in range(count):
+		titles_dbg.append(String(tc.get_tab_title(k)))
+	print("[ConvoySettlementMenu][Tutor] tutorial_get_dealership_tab_index -> ", dealer_abs, " via=", path_used, " titles=", titles_dbg)
+	return dealer_abs
 
 # --- Tutorial helper: create a proxy Control over the dealership tab header for reliable highlighting ---
 var _tutor_tab_proxy: Control = null
@@ -399,7 +411,10 @@ func tutorial_build_dealership_tab_highlight_proxy() -> Control:
 		return null
 	var rl2: Rect2 = tab_bar2.call("get_tab_rect", idx2)
 	if rl2.size == Vector2.ZERO:
-		return null
+		await get_tree().process_frame
+		rl2 = tab_bar2.call("get_tab_rect", idx2)
+		if rl2.size == Vector2.ZERO:
+			return null
 	tutorial_clear_tab_highlight_proxy()
 	var proxy := Control.new()
 	proxy.name = "TutorTabProxy"
@@ -505,9 +520,6 @@ func tutorial_get_vendor_tab_headers_info() -> Array:
 		return result
 	var count := tc.get_tab_count()
 	for i in range(count):
-		# Skip the Settlement Info tab at index 0
-		if i == 0:
-			continue
 		var tab_ctrl: Node = tc.get_tab_control(i)
 		var full_vendor_name := String(tab_ctrl.name) if tab_ctrl != null else ""
 		var vendor_dict := _find_vendor_by_name(full_vendor_name)
@@ -740,8 +752,6 @@ func _vendor_category_index(vendor: Dictionary) -> int:
 		# Treat as vehicle only on clear indicators; avoid mission cargo or resource entries
 		var looks_vehicle := false
 		if t == "vehicle":
-			looks_vehicle = true
-		elif item.has("vehicle_id") and item.get("recipient") == null:
 			looks_vehicle = true
 		elif item.has("stats") and (item.get("stats") is Dictionary):
 			var stats: Dictionary = item.get("stats")

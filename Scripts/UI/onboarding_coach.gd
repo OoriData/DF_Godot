@@ -21,6 +21,9 @@ var _highlight_margin: int = 6
 var _highlight_active: bool = false
 var _highlight_host: Control = null # Optional external layer to host highlight panel (not clipped)
 var _highlight_mode: String = "none" # "control" or "rect"
+var _last_step_index: int = 0
+var _last_total_steps: int = 0
+var _last_message: String = ""
 
 func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -29,6 +32,7 @@ func _ready() -> void:
 func _ensure_panel() -> void:
 	if is_instance_valid(_panel):
 		return
+	print("[Coach] _ensure_panel: creating coach panel")
 	_panel = Panel.new()
 	_panel.name = "CoachPanel"
 	_panel.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
@@ -122,6 +126,12 @@ func _wire_buttons(primary_cb: Callable) -> void:
 			dismissed.emit()
 		)
 
+func hide_main_panel() -> void:
+	# Hide the central coach panel; side panel can still be used for step-by-step hints
+	if is_instance_valid(_panel):
+		print("[Coach] hide_main_panel: hiding center panel (side panel unaffected)")
+		_panel.hide()
+
 func show_buy_vehicle_step(primary_cb: Callable) -> void:
 	_ensure_panel()
 	show()
@@ -144,7 +154,10 @@ func hide_hint() -> void:
 
 func _ensure_side_panel() -> void:
 	if is_instance_valid(_side_panel):
+		# Keep this noisy to debug lifecycle
+		print("[Coach] _ensure_side_panel: already exists; visible=", _side_panel.visible)
 		return
+	print("[Coach] _ensure_side_panel: creating side panel")
 	_side_panel = Panel.new()
 	_side_panel.name = "CoachSidePanel"
 	_side_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -199,29 +212,73 @@ func show_left_panel_message(message: String) -> void:
 	show()
 	_side_panel.show()
 	if is_instance_valid(_side_label):
-		_side_label.text = message
+		print("[Coach] show_left_panel_message: len=", message.length(), " visible=", _side_panel.visible)
+		# Ensure label is fully visible and ready to draw
+		_side_label.visible = true
+		_side_label.modulate = Color(1, 1, 1, 1)
+		_side_label.bbcode_enabled = true
+		# Prefer bbcode_text to ensure correct parsing and content height when bbcode_enabled=true
+		if _side_label.bbcode_enabled:
+			_side_label.bbcode_text = message
+		else:
+			_side_label.text = message
+		# Make sure all characters are visible (in case a typewriter effect was applied elsewhere)
+		if _side_label.has_method("set_visible_characters"):
+			_side_label.set_visible_characters(-1)
+		elif _side_label.has_variable("visible_characters"):
+			_side_label.visible_characters = -1
+		# Force reflow and repaint; then finalize on a deferred tick
+		if _side_label.has_method("reset_size"):
+			_side_label.reset_size()
+		_side_label.queue_redraw()
+		call_deferred("_reposition_side_panel")
 
 func show_step_message(step_index: int, total_steps: int, message: String) -> void:
 	_ensure_side_panel()
+	# Ensure the central (modal) coach panel stays hidden during step-by-step walkthrough
+	hide_main_panel()
 	_side_current_step = step_index
 	_side_total_steps = total_steps
+	_last_step_index = step_index
+	_last_total_steps = total_steps
+	_last_message = message
 	var header := "[b]Step %d/%d[/b]\n" % [max(1, step_index), max(1, total_steps)]
+	print("[Coach] show_step_message: step=", step_index, "/", total_steps, " msgLen=", message.length())
 	show_left_panel_message(header + message)
 	_reposition_side_panel()
+	# Also schedule a deferred reposition to catch any late layout changes (e.g., after menu close)
+	call_deferred("_reposition_side_panel")
+	# Defensive: on step 1 only, re-apply the text shortly after to avoid any frame-race where bbcode hasn't flushed
+	if step_index == 1:
+		var tm := Timer.new()
+		tm.one_shot = true
+		tm.wait_time = 0.05
+		add_child(tm)
+		tm.timeout.connect(func():
+			if is_instance_valid(_side_label):
+				var hdr := "[b]Step %d/%d[/b]\n" % [max(1, _last_step_index), max(1, _last_total_steps)]
+				show_left_panel_message(hdr + _last_message)
+				_reposition_side_panel()
+			tm.queue_free()
+		)
+		tm.start()
 
 func hide_left_panel() -> void:
 	if is_instance_valid(_side_panel):
+		print("[Coach] hide_left_panel: hiding side panel")
 		_side_panel.hide()
 
 # Allow main screen to define the area (in global coords) where the side panel should live (map area),
 # to avoid overlapping the right menu panel when it's open.
 func set_side_panel_bounds_by_global_rect(bounds: Rect2) -> void:
 	_side_bounds_global = bounds
+	print("[Coach] set_side_panel_bounds_by_global_rect: pos=", bounds.position, " size=", bounds.size)
 	_reposition_side_panel()
 
 func set_side_panel_avoid_rects_global(rects: Array) -> void:
 	# rects expected to be Array[Rect2]
 	_avoid_rects_global = rects
+	print("[Coach] set_side_panel_avoid_rects_global: count=", rects.size())
 	_reposition_side_panel()
 
 func _reposition_side_panel() -> void:
@@ -229,6 +286,7 @@ func _reposition_side_panel() -> void:
 		return
 	# If no bounds provided, keep default offsets
 	if _side_bounds_global.size == Vector2.ZERO:
+		print("[Coach] _reposition_side_panel: skipped (no bounds)")
 		return
 	# Convert global bounds into this overlay's local coordinates
 	var inv := get_global_transform().affine_inverse()
@@ -265,6 +323,7 @@ func _reposition_side_panel() -> void:
 		_side_label.scroll_active = desired_h > max_panel_h
 		_side_label.size = Vector2(max(0.0, panel_w - padding_x), max(0.0, panel_h - padding_y))
 	_side_panel.size = Vector2(panel_w, panel_h)
+	print("[Coach] _reposition_side_panel: panel_w=", panel_w, " panel_h=", panel_h, " avail=", Vector2(available_w, available_h))
 
 	# Convert avoid rects to local space
 	var avoid_local: Array = []
@@ -293,6 +352,7 @@ func _reposition_side_panel() -> void:
 			chosen = c
 			break
 	_side_panel.position = chosen
+	print("[Coach] _reposition_side_panel: final pos=", chosen)
 
 # --- Generic highlight overlay ---
 func _ensure_highlight_panel() -> void:
@@ -305,16 +365,20 @@ func _ensure_highlight_panel() -> void:
 	# Default to top-level when used with explicit global-rect highlighting.
 	_highlight_panel.top_level = true
 	var sb := StyleBoxFlat.new()
-	sb.bg_color = Color(0, 0, 0, 0.0)
-	sb.border_color = Color(1.0, 0.85, 0.2, 0.95)
-	sb.border_width_left = 3
-	sb.border_width_top = 3
-	sb.border_width_right = 3
-	sb.border_width_bottom = 3
+	sb.bg_color = Color(1.0, 0.85, 0.2, 0.10) # subtle translucent fill so it's visible on light/dark
+	sb.border_color = Color(1.0, 0.85, 0.2, 1.0)
+	sb.border_width_left = 4
+	sb.border_width_top = 4
+	sb.border_width_right = 4
+	sb.border_width_bottom = 4
 	sb.corner_radius_top_left = 10
 	sb.corner_radius_top_right = 10
 	sb.corner_radius_bottom_left = 10
 	sb.corner_radius_bottom_right = 10
+	# Add a soft shadow to make the highlight pop above busy UI
+	sb.shadow_color = Color(0, 0, 0, 0.35)
+	sb.shadow_size = 8
+	sb.shadow_offset = Vector2(0, 2)
 	_highlight_panel.add_theme_stylebox_override("panel", sb)
 	var host: Node = _highlight_host if is_instance_valid(_highlight_host) else self
 	host.add_child(_highlight_panel)
@@ -324,11 +388,13 @@ func set_highlight_host(host: Control) -> void:
 	_highlight_host = host
 	# If the panel already exists under old parent, reparent to new host
 	if is_instance_valid(_highlight_panel) and _highlight_panel.get_parent() != _highlight_host:
+		print("[Coach] set_highlight_host: reparenting highlight panel to new host")
 		_highlight_panel.get_parent().remove_child(_highlight_panel)
 		_highlight_host.add_child(_highlight_panel)
 
 func highlight_control(target: Control) -> void:
 	if not is_instance_valid(target):
+		print("[Coach] highlight_control: target invalid; clearing")
 		clear_highlight()
 		return
 	_ensure_highlight_panel()
@@ -353,6 +419,7 @@ func highlight_control(target: Control) -> void:
 	# Ensure it's drawn above target content
 	_highlight_panel.z_index = max(_highlight_panel.z_index, 10000)
 	_highlight_panel.show()
+	print("[Coach] highlight_control: attached to ", target.name, " margin=", _highlight_margin)
 	set_process(false)
 
 func clear_highlight() -> void:
@@ -369,6 +436,7 @@ func clear_highlight() -> void:
 				prev_parent.remove_child(_highlight_panel)
 			host.add_child(_highlight_panel)
 		_highlight_panel.top_level = true
+	print("[Coach] clear_highlight: done")
 	set_process(false)
 
 func _process(_delta: float) -> void:
@@ -416,3 +484,4 @@ func highlight_global_rect(global_rect: Rect2) -> void:
 	var top_left: Vector2 = global_rect.position
 	_highlight_panel.position = top_left - Vector2(_highlight_margin, _highlight_margin)
 	_highlight_panel.size = global_rect.size + Vector2(_highlight_margin * 2, _highlight_margin * 2)
+	print("[Coach] highlight_global_rect: rect=", global_rect, " margin=", _highlight_margin)
