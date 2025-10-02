@@ -945,15 +945,20 @@ func _maybe_run_vendor_walkthrough() -> void:
 										var rect_global := Rect2(bar_global_pos + rect_local.position, rect_local.size)
 										_buy_vehicle_coach.call_deferred("highlight_global_rect", rect_global)
 										print("[Onboarding] Highlighting Dealership tab via TabBar rect=", rect_global)
-						# Also listen for a direct click on the dealership tab header (even if already selected)
-						var tab_bar: Control = null
-						if tc.has_method("get_tab_bar"):
-							tab_bar = tc.call("get_tab_bar")
-						if tab_bar == null:
-							tab_bar = tc.find_child("TabBar", true, false)
-						if tab_bar and not tab_bar.is_connected("gui_input", Callable(self, "_on_vendor_tab_bar_gui_input_for_walkthrough")):
-							tab_bar.gui_input.connect(_on_vendor_tab_bar_gui_input_for_walkthrough)
-							print("[Onboarding] step3: connected TabBar gui_input for single-click advance")
+					# Ensure we listen for tab switches so we can re-guide immediately if user moves away
+					var tc2: TabContainer = tabs
+					if tc2 and tc2.has_signal("tab_changed") and not tc2.is_connected("tab_changed", Callable(self, "_on_vendor_tab_changed_for_walkthrough")):
+						tc2.tab_changed.connect(_on_vendor_tab_changed_for_walkthrough)
+						print("[Onboarding] step3: connected TabContainer tab_changed")
+					# Also listen for a direct click on the dealership tab header (even if already selected)
+					var tab_bar: Control = null
+					if tc2 and tc2.has_method("get_tab_bar"):
+						tab_bar = tc2.call("get_tab_bar")
+					if tab_bar == null and tc2:
+						tab_bar = tc2.find_child("TabBar", true, false)
+					if tab_bar and not tab_bar.is_connected("gui_input", Callable(self, "_on_vendor_tab_bar_gui_input_for_walkthrough")):
+						tab_bar.gui_input.connect(_on_vendor_tab_bar_gui_input_for_walkthrough)
+						print("[Onboarding] step3: connected TabBar gui_input for single-click advance")
 		"hint_vendor_vehicles":
 			print("[Onboarding] step4: inside dealership; highlighting Vehicles header / waiting for buy")
 			var mm3 = get_node_or_null("/root/MenuManager")
@@ -1123,11 +1128,51 @@ func _on_vendor_tab_changed_for_walkthrough(tab_index: int) -> void:
 			_buy_vehicle_coach.call_deferred("clear_highlight")
 		if is_instance_valid(_tutorial_director) and _tutorial_director.has_method("goto"):
 			_tutorial_director.call("goto", "hint_vendor_tab")
-			# Immediately render to ensure the dealership tab header gets highlighted right away
+			# Immediately render so the dealership tab header gets highlighted right away
 			_maybe_run_vendor_walkthrough()
 		else:
 			_walkthrough_state = "hint_vendor_tab"
 			_maybe_run_vendor_walkthrough()
+
+		# Additionally, re-apply the highlight immediately to avoid any timing gaps
+		# Prefer helper-provided global rect for the Dealership tab header
+		if is_instance_valid(_buy_vehicle_coach) and _buy_vehicle_coach.has_method("highlight_global_rect"):
+			var target_rect := Rect2()
+			if menu and menu.has_method("tutorial_get_dealership_tab_rect_global"):
+				target_rect = menu.call("tutorial_get_dealership_tab_rect_global")
+			if target_rect.size != Vector2.ZERO:
+				_buy_vehicle_coach.call_deferred("highlight_global_rect", target_rect)
+				print("[Onboarding] step3: immediate re-highlight of Dealership tab=", target_rect)
+			else:
+				# Best-effort fallback via TabBar if helper didn't return a rect yet
+				if tabs is TabContainer:
+					var tc_local: TabContainer = tabs
+					var tab_bar: Control = null
+					if tc_local.has_method("get_tab_bar"):
+						tab_bar = tc_local.call("get_tab_bar")
+					if tab_bar == null:
+						tab_bar = tc_local.find_child("TabBar", true, false)
+					if is_instance_valid(tab_bar) and menu and menu.has_method("tutorial_get_dealership_tab_index") and tab_bar.has_method("get_tab_rect"):
+						var di2: int = int(menu.call("tutorial_get_dealership_tab_index"))
+						if di2 != -1:
+							var rloc: Rect2 = tab_bar.call("get_tab_rect", di2)
+							if rloc.size != Vector2.ZERO:
+								var bar_pos: Vector2 = (tab_bar as Control).get_global_rect().position
+								var rglob := Rect2(bar_pos + rloc.position, rloc.size)
+								_buy_vehicle_coach.call_deferred("highlight_global_rect", rglob)
+								print("[Onboarding] step3: immediate fallback highlight via TabBar=", rglob)
+
+		# Ensure TabBar click handler is wired for single-click advance if user clicks the dealership header
+		if tabs is TabContainer:
+			var tc_click: TabContainer = tabs
+			var tb_click: Control = null
+			if tc_click.has_method("get_tab_bar"):
+				tb_click = tc_click.call("get_tab_bar")
+			if tb_click == null:
+				tb_click = tc_click.find_child("TabBar", true, false)
+			if tb_click and not tb_click.is_connected("gui_input", Callable(self, "_on_vendor_tab_bar_gui_input_for_walkthrough")):
+				tb_click.gui_input.connect(_on_vendor_tab_bar_gui_input_for_walkthrough)
+				print("[Onboarding] step3: ensured TabBar gui_input connection on tab change")
 
 # When a vehicle is selected in vendor list, highlight the Buy button
 func _on_vendor_vehicle_selected_for_walkthrough() -> void:
