@@ -16,9 +16,6 @@ var _pending_interactive_state: bool = false
 @onready var _onboarding_layer: Control = Control.new()
 @onready var _highlight_layer: Control = Control.new()
 var _highlight_canvas: CanvasLayer = null
-var _new_convoy_dialog: Control = null
-const NEW_CONVOY_DIALOG_SCENE_PATH := "res://Scenes/NewConvoyDialog.tscn"
-@export var new_convoy_dialog_scene: PackedScene = null
 
 # Track the convoy dropdown popup for dynamic avoidance during tutorial coaching
 var _convoy_dropdown_popup: Control = null
@@ -28,12 +25,13 @@ const ONBOARDING_COACH_SCRIPT_PATH := "res://Scripts/UI/onboarding_coach.gd"
 const TUTORIAL_DIRECTOR_SCRIPT_PATH := "res://Scripts/UI/tutorial_director.gd"
 var _buy_vehicle_coach: Control = null
 var _buy_vehicle_coach_dismissed: bool = false
+var _welcome_shown: bool = false
 var _walkthrough_state: String = "" # "hint_convoy_button" -> "hint_settlement_button" -> "done"
 var _walkthrough_messages := {
-	"hint_convoy_button": "Select your convoy from the dropdown in the top bar to open the Convoy menu.",
-	"hint_settlement_button": "Click the Settlement button to open settlement interactions.",
-	"hint_vendor_tab": "Click the Dealership tab. Tabs switch between different vendors in this settlement.",
-	"hint_vendor_vehicles": "Select the Vehicles category, choose a vehicle, and press Buy."
+	"hint_convoy_button": "Use the convoy selector in the top bar to open the Convoy menu. This dropdown lets you switch between convoys and focuses the UI on the one you pick.",
+	"hint_settlement_button": "This is the Convoy menu—where you can inspect vehicles, cargo, routes, and more. For now, click the [b]Settlement[/b] button to interact with the current settlement.",
+	"hint_vendor_tab": "Welcome to the settlement vendors. You can buy and sell with different vendors here. Switch to the [b]Dealership[/b] tab to shop for vehicles.",
+	"hint_vendor_vehicles": "Dealership: Browse available vehicles, compare stats, and buy one to add it to your convoy. Select the [b]Vehicles[/b] category, choose a model, then press [b]Buy[/b]."
 }
 
 # Tutorial director manages step order and back/forward navigation
@@ -472,105 +470,14 @@ func _check_or_prompt_new_convoy(all_convoys: Array = []):
 	# Gate the prompt strictly by tutorial stage: only when stage == 1 and user has no convoys
 	if tutorial_stage != 1:
 		print("[Onboarding] Tutorial stage is not 1; suppressing first-convoy prompt.")
-		_hide_new_convoy_dialog()
 		return
 
 	if has_any:
-		_hide_new_convoy_dialog()
 		return
 
-	_show_new_convoy_dialog()
-
-func _show_new_convoy_dialog():
-	print("[Onboarding] _show_new_convoy_dialog invoked.")
-	_ensure_onboarding_layer()
-	if not is_instance_valid(_new_convoy_dialog):
-		var scene_res: Resource = new_convoy_dialog_scene if new_convoy_dialog_scene != null else load(NEW_CONVOY_DIALOG_SCENE_PATH)
-		if scene_res == null or not (scene_res is PackedScene):
-			printerr("[Onboarding] WARN: Could not load PackedScene for NewConvoyDialog (export unset or load failed). Building inline fallback…")
-			_new_convoy_dialog = _build_inline_new_convoy_dialog()
-		else:
-			var scene: PackedScene = scene_res
-			print("[Onboarding] Instantiating NewConvoyDialog scene…")
-			_new_convoy_dialog = scene.instantiate()
-		_onboarding_layer.add_child(_new_convoy_dialog)
-		print("[Onboarding] NewConvoyDialog added to overlay.")
-		_new_convoy_dialog.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
-		# Center with a fixed size
-		_new_convoy_dialog.custom_minimum_size = Vector2(420, 180)
-		# Connect signals
-		if _new_convoy_dialog.has_signal("create_requested"):
-			_new_convoy_dialog.connect("create_requested", Callable(self, "_on_new_convoy_create"))
-		if _new_convoy_dialog.has_signal("canceled"):
-			_new_convoy_dialog.connect("canceled", Callable(self, "_on_new_convoy_canceled"))
-	if _new_convoy_dialog.has_method("open"):
-		print("[Onboarding] Opening NewConvoyDialog…")
-		_new_convoy_dialog.call_deferred("open")
-	else:
-		printerr("[Onboarding] WARN: Dialog missing 'open' method; forcing visible true.")
-		_new_convoy_dialog.visible = true
-
-func _build_inline_new_convoy_dialog() -> Control:
-	var dlg := PanelContainer.new()
-	dlg.name = "NewConvoyDialog"
-	dlg.custom_minimum_size = Vector2(420, 180)
-	# Build structure before attaching script and adding to tree
-	var v := VBoxContainer.new()
-	v.name = "VBox"
-	v.anchors_preset = Control.PRESET_FULL_RECT
-	v.grow_horizontal = Control.GROW_DIRECTION_BOTH
-	v.grow_vertical = Control.GROW_DIRECTION_BOTH
-	v.alignment = BoxContainer.ALIGNMENT_CENTER
-	dlg.add_child(v)
-
-	var title := Label.new()
-	title.name = "Title"
-	title.text = "Welcome to Desolate Frontiers!  \nLets start by naming your first convoy."
-	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	v.add_child(title)
-
-	var name_edit := LineEdit.new()
-	name_edit.name = "NameEdit"
-	name_edit.placeholder_text = "Convoy name"
-	name_edit.max_length = 40
-	v.add_child(name_edit)
-
-	var error_label := Label.new()
-	error_label.name = "ErrorLabel"
-	error_label.visible = false
-	error_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	error_label.modulate = Color(1, 0.6, 0.6)
-	v.add_child(error_label)
-
-	var buttons := HBoxContainer.new()
-	buttons.name = "Buttons"
-	buttons.alignment = BoxContainer.ALIGNMENT_CENTER
-	v.add_child(buttons)
-
-	var cancel_btn := Button.new()
-	cancel_btn.name = "CancelButton"
-	cancel_btn.text = "Cancel"
-	buttons.add_child(cancel_btn)
-
-	var create_btn := Button.new()
-	create_btn.name = "CreateButton"
-	create_btn.text = "Create"
-	buttons.add_child(create_btn)
-
-	# Attach behavior script
-	var script_res := load("res://Scripts/UI/new_convoy_dialog.gd")
-	if script_res:
-		dlg.set_script(script_res)
-	else:
-		printerr("[Onboarding] ERROR: Failed to load dialog behavior script at res://Scripts/UI/new_convoy_dialog.gd")
-		# Fallback barebones behavior: wire buttons directly
-		create_btn.pressed.connect(func():
-			var nm := name_edit.text.strip_edges()
-			if nm.length() >= 3:
-				_on_new_convoy_create(nm)
-		)
-		cancel_btn.pressed.connect(_on_new_convoy_canceled)
-	return dlg
+	# When there are no convoys and the tutorial stage applies, the inline coach naming
+	# will be shown by _maybe_show_buy_vehicle_coach() which is already called by callers.
+	# Nothing to do here.
 
 func _ensure_onboarding_layer():
 	# Ensure the overlay exists and is a child of the Map view, clipped to its bounds.
@@ -658,27 +565,7 @@ func _ensure_highlight_layer():
 	_highlight_layer.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	_highlight_layer.mouse_filter = Control.MOUSE_FILTER_IGNORE
 
-func _hide_new_convoy_dialog():
-	if is_instance_valid(_new_convoy_dialog) and _new_convoy_dialog.has_method("close"):
-		_new_convoy_dialog.call_deferred("close")
-
-func _on_new_convoy_create(convoy_name: String):
-	# Disable dialog while creating
-	if is_instance_valid(_new_convoy_dialog) and _new_convoy_dialog.has_method("set_busy"):
-		_new_convoy_dialog.call_deferred("set_busy", true)
-	var gdm = get_node_or_null("/root/GameDataManager")
-	if is_instance_valid(gdm) and gdm.has_method("create_new_convoy"):
-		gdm.create_new_convoy(convoy_name)
-		# Close the dialog immediately; backend will refresh data and the gating
-		# logic will prevent reopening once a convoy exists.
-		_hide_new_convoy_dialog()
-	else:
-		printerr("MainScreen: GameDataManager missing create_new_convoy; cannot create convoy.")
-
-func _on_new_convoy_canceled():
-	# Keep dialog open on cancel for onboarding; optional: hide
-	pass
-	#     _fit_camera_to_map()
+## Legacy NewConvoyDialog helpers removed; inline naming is now handled by the coach panel.
 
 
 # --- Onboarding coach: Buy first vehicle ---
@@ -753,8 +640,11 @@ func _maybe_show_buy_vehicle_coach() -> void:
 		if convoys is Array and convoys.size() > 0 and typeof(convoys[0]) == TYPE_DICTIONARY:
 			convoy = convoys[0]
 	if convoy.is_empty():
-		# No convoy yet; nothing to do
-		_hide_buy_vehicle_coach()
+		# No convoy yet; inline create in the welcome coach
+		_ensure_coach()
+		if is_instance_valid(_buy_vehicle_coach) and _buy_vehicle_coach.has_method("show_convoy_naming"):
+			var prompt := "Welcome to Desolate Frontiers!\n\nLet's start by naming your first convoy."
+			_buy_vehicle_coach.call_deferred("show_convoy_naming", prompt, Callable(self, "_on_inline_create_convoy"), "Create")
 		return
 	# Check if convoy has any vehicles
 	var has_vehicles := false
@@ -766,13 +656,32 @@ func _maybe_show_buy_vehicle_coach() -> void:
 		_hide_buy_vehicle_coach()
 		return
 
-	# At this point we have a convoy with zero vehicles; start guided walkthrough (don't auto-open vendors)
+	# At this point we have a convoy with zero vehicles.
+	# Show a short welcome modal once, then begin the 4-step walkthrough at step 1.
+	_ensure_coach()
+	if not _welcome_shown and is_instance_valid(_buy_vehicle_coach) and _buy_vehicle_coach.has_method("show_welcome"):
+		var welcome_msg := "Welcome to Desolate Frontiers!\n\nFirst things first, let's get you started with a vehicle."
+		_buy_vehicle_coach.call_deferred("show_welcome", welcome_msg, Callable(self, "_start_buy_vehicle_walkthrough"), "Start", "")
+		return
+
+	# If welcome already shown (or unsupported), ensure the walkthrough is running on step 1.
+	_start_buy_vehicle_walkthrough()
+
+func _start_buy_vehicle_walkthrough() -> void:
+	_welcome_shown = true
 	_ensure_tutorial_director()
 	if is_instance_valid(_tutorial_director) and _tutorial_director.has_method("start"):
 		_tutorial_director.call("start", "hint_convoy_button")
 	else:
 		_walkthrough_state = "hint_convoy_button"
 		_maybe_run_vendor_walkthrough()
+
+func _on_inline_create_convoy(convoy_name: String) -> void:
+	var gdm = get_node_or_null("/root/GameDataManager")
+	if is_instance_valid(gdm) and gdm.has_method("create_new_convoy"):
+		gdm.create_new_convoy(convoy_name)
+	# After creation, proceed to the buy-vehicle walkthrough
+	_start_buy_vehicle_walkthrough()
 
 func _open_settlement_menu_for_selected_convoy() -> void:
 	var gdm = get_node_or_null("/root/GameDataManager")

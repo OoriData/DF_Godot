@@ -24,6 +24,11 @@ var _highlight_mode: String = "none" # "control" or "rect"
 var _last_step_index: int = 0
 var _last_total_steps: int = 0
 var _last_message: String = ""
+var _name_box: VBoxContainer = null
+var _name_edit: LineEdit = null
+var _name_error: Label = null
+var _name_min_len: int = 3
+var _submit_cb: Callable
 
 func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -74,6 +79,20 @@ func _ensure_panel() -> void:
 	_message_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_message_label.text = ""
 
+	# Optional naming UI (hidden by default)
+	_name_box = VBoxContainer.new()
+	_name_box.visible = false
+	_name_box.add_theme_constant_override("separation", 6)
+	_name_edit = LineEdit.new()
+	_name_edit.placeholder_text = "Convoy name"
+	_name_edit.max_length = 40
+	_name_error = Label.new()
+	_name_error.modulate = Color(1, 0.6, 0.6)
+	_name_error.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_name_error.visible = false
+	_name_box.add_child(_name_edit)
+	_name_box.add_child(_name_error)
+
 	var buttons := HBoxContainer.new()
 	buttons.alignment = BoxContainer.ALIGNMENT_CENTER
 	buttons.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
@@ -91,6 +110,7 @@ func _ensure_panel() -> void:
 	buttons.add_child(_secondary_button)
 
 	v.add_child(_message_label)
+	v.add_child(_name_box)
 	v.add_child(buttons)
 	_panel.add_child(v)
 	# Center the panel within this overlay
@@ -104,7 +124,7 @@ func _ensure_panel() -> void:
 	_panel.offset_bottom = 100
 	add_child(_panel)
 
-func _wire_buttons(primary_cb: Callable) -> void:
+func _wire_buttons(primary_cb: Callable, wire_secondary: bool = true) -> void:
 	if is_instance_valid(_action_button):
 		for c in _action_button.get_signal_connection_list("pressed"):
 			_action_button.disconnect("pressed", c.callable)
@@ -116,15 +136,19 @@ func _wire_buttons(primary_cb: Callable) -> void:
 				hide()
 				if primary_cb and not primary_cb.is_null():
 					primary_cb.call()
-				dismissed.emit()
 			)
 	if is_instance_valid(_secondary_button):
+		# Reset any previous connections
 		for c in _secondary_button.get_signal_connection_list("pressed"):
 			_secondary_button.disconnect("pressed", c.callable)
-		_secondary_button.pressed.connect(func():
-			hide()
-			dismissed.emit()
-		)
+		if wire_secondary:
+			_secondary_button.show()
+			_secondary_button.pressed.connect(func():
+				hide()
+				dismissed.emit()
+			)
+		else:
+			_secondary_button.hide()
 
 func hide_main_panel() -> void:
 	# Hide the central coach panel; side panel can still be used for step-by-step hints
@@ -139,9 +163,95 @@ func show_buy_vehicle_step(primary_cb: Callable) -> void:
 		_panel.show()
 	if is_instance_valid(_message_label):
 		_message_label.text = "Nice! Your convoy is created. Next, let's buy your first vehicle. We'll open the settlement vendors and go to the dealership."
+	# Ensure naming UI is hidden for this mode
+	if is_instance_valid(_name_box):
+		_name_box.visible = false
 	_action_button.text = "Open vendors"
 	_secondary_button.text = "Maybe later"
-	_wire_buttons(primary_cb)
+	_wire_buttons(primary_cb, true)
+
+# Show a central welcome panel with custom text and a primary callback
+func show_welcome(message: String, primary_cb: Callable, primary_text: String = "Let's go", secondary_text: String = "Not now") -> void:
+	_ensure_panel()
+	show()
+	if is_instance_valid(_panel):
+		_panel.show()
+	if is_instance_valid(_message_label):
+		_message_label.text = message
+	# Ensure naming UI is hidden for welcome
+	if is_instance_valid(_name_box):
+		_name_box.visible = false
+	if is_instance_valid(_action_button):
+		_action_button.text = primary_text
+	var use_secondary := true
+	if is_instance_valid(_secondary_button):
+		_secondary_button.text = secondary_text
+		# If no secondary text provided, hide the secondary button entirely
+		if String(secondary_text).strip_edges() == "":
+			use_secondary = false
+	_wire_buttons(primary_cb, use_secondary)
+
+# Show the convoy naming UI within the central panel. Calls on_submit(name) when valid.
+func show_convoy_naming(prompt_text: String, on_submit: Callable, button_text: String = "Create", min_length: int = 3) -> void:
+	_ensure_panel()
+	show()
+	if is_instance_valid(_panel):
+		_panel.show()
+	if is_instance_valid(_message_label):
+		_message_label.text = prompt_text
+	_name_min_len = int(min_length)
+	_submit_cb = on_submit
+	if is_instance_valid(_name_box):
+		_name_box.visible = true
+	if is_instance_valid(_name_edit):
+		_name_edit.text = ""
+		_name_edit.editable = true
+		_name_edit.grab_focus()
+		_name_edit.text_changed.connect(func(_t: String):
+			_validate_name_and_update()
+		)
+		_name_edit.text_submitted.connect(func(_t: String):
+			_attempt_submit_name()
+		)
+	if is_instance_valid(_name_error):
+		_name_error.visible = false
+		_name_error.text = ""
+	if is_instance_valid(_action_button):
+		_action_button.text = button_text
+	# One-button mode
+	_wire_buttons(func():
+		_attempt_submit_name()
+	, false)
+	_validate_name_and_update()
+
+func _validate_name_and_update() -> void:
+	if not is_instance_valid(_name_edit) or not is_instance_valid(_action_button):
+		return
+	var nm := String(_name_edit.text).strip_edges()
+	var ok := nm.length() >= _name_min_len
+	_action_button.disabled = not ok
+	if is_instance_valid(_name_error):
+		if ok:
+			_name_error.visible = false
+			_name_error.text = ""
+		else:
+			_name_error.visible = true
+			_name_error.text = "Name must be at least %d characters" % _name_min_len
+
+func _attempt_submit_name() -> void:
+	if not is_instance_valid(_name_edit):
+		return
+	var nm := String(_name_edit.text).strip_edges()
+	if nm.length() < _name_min_len:
+		_validate_name_and_update()
+		return
+	# Disable UI briefly
+	if is_instance_valid(_action_button):
+		_action_button.disabled = true
+	_name_edit.editable = false
+	# Call submit callback
+	if _submit_cb and not _submit_cb.is_null():
+		_submit_cb.call(nm)
 
 func _ensure_hint() -> void:
 	pass # deprecated
