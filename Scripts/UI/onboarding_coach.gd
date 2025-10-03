@@ -29,6 +29,7 @@ var _name_edit: LineEdit = null
 var _name_error: Label = null
 var _name_min_len: int = 3
 var _submit_cb: Callable
+var _naming_submit_in_progress: bool = false
 
 func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -201,18 +202,20 @@ func show_convoy_naming(prompt_text: String, on_submit: Callable, button_text: S
 		_message_label.text = prompt_text
 	_name_min_len = int(min_length)
 	_submit_cb = on_submit
+	_naming_submit_in_progress = false
 	if is_instance_valid(_name_box):
 		_name_box.visible = true
 	if is_instance_valid(_name_edit):
 		_name_edit.text = ""
 		_name_edit.editable = true
 		_name_edit.grab_focus()
-		_name_edit.text_changed.connect(func(_t: String):
-			_validate_name_and_update()
-		)
-		_name_edit.text_submitted.connect(func(_t: String):
-			_attempt_submit_name()
-		)
+		# Disconnect any prior connections to avoid duplicate handlers
+		for c in _name_edit.get_signal_connection_list("text_changed"):
+			_name_edit.disconnect("text_changed", c.callable)
+		for c in _name_edit.get_signal_connection_list("text_submitted"):
+			_name_edit.disconnect("text_submitted", c.callable)
+		_name_edit.text_changed.connect(func(_t: String): _validate_name_and_update())
+		_name_edit.text_submitted.connect(func(_t: String): _attempt_submit_name())
 	if is_instance_valid(_name_error):
 		_name_error.visible = false
 		_name_error.text = ""
@@ -241,6 +244,8 @@ func _validate_name_and_update() -> void:
 func _attempt_submit_name() -> void:
 	if not is_instance_valid(_name_edit):
 		return
+	if _naming_submit_in_progress:
+		return
 	var nm := String(_name_edit.text).strip_edges()
 	if nm.length() < _name_min_len:
 		_validate_name_and_update()
@@ -249,6 +254,7 @@ func _attempt_submit_name() -> void:
 	if is_instance_valid(_action_button):
 		_action_button.disabled = true
 	_name_edit.editable = false
+	_naming_submit_in_progress = true
 	# Call submit callback
 	if _submit_cb and not _submit_cb.is_null():
 		_submit_cb.call(nm)

@@ -298,6 +298,11 @@ func _on_map_view_gui_input(event: InputEvent):
 	if event is InputEventMouseButton:
 		if event.button_index == MOUSE_BUTTON_LEFT:
 			if event.pressed:
+				# Any click on the map (not handled elsewhere) should clear the current convoy selection
+				var gdm = get_node_or_null("/root/GameDataManager")
+				if is_instance_valid(gdm) and gdm.has_method("select_convoy_by_id"):
+					# Pass empty string to deselect and disable toggle semantics
+					gdm.select_convoy_by_id("", false)
 				# Close any open menu when clicking the map
 				var menu_manager = get_node_or_null("/root/MenuManager")
 				if menu_manager and menu_manager.has_method("is_any_menu_active") and menu_manager.is_any_menu_active():
@@ -374,6 +379,10 @@ func _on_menu_visibility_changed(is_open: bool, _menu_name: String):
 			if main_map.has_method("set_anchors_and_offsets_preset"):
 				main_map.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 		menu_container.hide()
+		# When leaving any menu, ensure no convoy remains selected
+		var gdm2 = get_node_or_null("/root/GameDataManager")
+		if is_instance_valid(gdm2) and gdm2.has_method("select_convoy_by_id"):
+			gdm2.select_convoy_by_id("", false)
 		# print("[DFCAM-DEBUG] MainScreen: Menu closed, set stretch ratios (menu=0, map=1) and map to full size")
 	if main_content:
 		main_content.queue_sort()
@@ -622,6 +631,21 @@ func _on_vehicle_bought(_result: Dictionary) -> void:
 	_buy_vehicle_coach_dismissed = true
 	_hide_buy_vehicle_coach()
 	_clear_walkthrough()
+	# Advance tutorial stage to 2 via API
+	var gdm = get_node_or_null("/root/GameDataManager")
+	var api = get_node_or_null("/root/APICalls")
+	if is_instance_valid(gdm) and is_instance_valid(api) and api.has_method("update_user_metadata") and gdm.has_method("get_current_user_data"):
+		var u: Dictionary = gdm.get_current_user_data()
+		var user_id := String(u.get("user_id", "")) if typeof(u) == TYPE_DICTIONARY else ""
+		if user_id != "":
+			var md: Dictionary = {}
+			if typeof(u) == TYPE_DICTIONARY:
+				var existing_md = u.get("metadata", {})
+				if typeof(existing_md) == TYPE_DICTIONARY:
+					md = existing_md.duplicate()
+			# Set tutorial stage to 2 (int)
+			md["tutorial"] = 2
+			api.call_deferred("update_user_metadata", user_id, md)
 
 func _maybe_show_buy_vehicle_coach() -> void:
 	if _buy_vehicle_coach_dismissed:
@@ -643,6 +667,9 @@ func _maybe_show_buy_vehicle_coach() -> void:
 		# No convoy yet; inline create in the welcome coach
 		_ensure_coach()
 		if is_instance_valid(_buy_vehicle_coach) and _buy_vehicle_coach.has_method("show_convoy_naming"):
+			# Guard to avoid reopening if already presenting
+			if not has_meta("inline_convoy_naming_shown"):
+				set_meta("inline_convoy_naming_shown", true)
 			var prompt := "Welcome to Desolate Frontiers!\n\nLet's start by naming your first convoy."
 			_buy_vehicle_coach.call_deferred("show_convoy_naming", prompt, Callable(self, "_on_inline_create_convoy"), "Create")
 		return
@@ -679,7 +706,10 @@ func _start_buy_vehicle_walkthrough() -> void:
 func _on_inline_create_convoy(convoy_name: String) -> void:
 	var gdm = get_node_or_null("/root/GameDataManager")
 	if is_instance_valid(gdm) and gdm.has_method("create_new_convoy"):
-		gdm.create_new_convoy(convoy_name)
+		# Prevent duplicate creations by ensuring we only call once per show
+		if not has_meta("inline_convoy_create_called"):
+			set_meta("inline_convoy_create_called", true)
+			gdm.create_new_convoy(convoy_name)
 	# After creation, proceed to the buy-vehicle walkthrough
 	_start_buy_vehicle_walkthrough()
 
@@ -809,6 +839,14 @@ func _maybe_run_vendor_walkthrough() -> void:
 						# Clear any stale proxy (we don't use it anymore but clean up previous sessions)
 						if menu and menu.has_method("tutorial_clear_tab_highlight_proxy"):
 							menu.call_deferred("tutorial_clear_tab_highlight_proxy")
+
+						# If user is already on the dealership tab during step 3, wire vehicle-selected to advance to step 4.
+						if on_dealership and tc.get_tab_count() > current_idx:
+							var dealer_panel: Node = tc.get_tab_control(current_idx)
+							if is_instance_valid(dealer_panel) and dealer_panel.has_signal("tutorial_vehicle_selected"):
+								if not dealer_panel.is_connected("tutorial_vehicle_selected", Callable(self, "_on_vendor_vehicle_selected_for_walkthrough")):
+									dealer_panel.connect("tutorial_vehicle_selected", Callable(self, "_on_vendor_vehicle_selected_for_walkthrough"))
+									print("[Onboarding] step3: connected vehicle_selected while already on dealership → will auto-advance to step 4")
 
 						var did_highlight := false
 						# Preferred: helper-provided global rect (works whether selected or not)
@@ -1085,6 +1123,16 @@ func _on_vendor_tab_changed_for_walkthrough(tab_index: int) -> void:
 
 # When a vehicle is selected in vendor list, highlight the Buy button
 func _on_vendor_vehicle_selected_for_walkthrough() -> void:
+	# If a vehicle is selected while we're still on step 3, advance to step 4 immediately.
+	if _walkthrough_state != "hint_vendor_vehicles":
+		if is_instance_valid(_tutorial_director) and _tutorial_director.has_method("goto"):
+			_tutorial_director.call("goto", "hint_vendor_vehicles")
+			# Ensure the UI updates this frame
+			_maybe_run_vendor_walkthrough()
+		else:
+			_walkthrough_state = "hint_vendor_vehicles"
+			_maybe_run_vendor_walkthrough()
+
 	var mm = get_node_or_null("/root/MenuManager")
 	if not is_instance_valid(mm) or not mm.current_active_menu:
 		return

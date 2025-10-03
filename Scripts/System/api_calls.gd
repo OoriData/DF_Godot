@@ -1889,3 +1889,40 @@ func _on_create_convoy_completed(result: int, response_code: int, _headers: Pack
 	var delay: float = max(0.2, float(_auth_poll.interval))
 	var t := get_tree().create_timer(delay, true)
 	t.timeout.connect(func(): _enqueue_auth_status_request(_auth_poll.state))
+
+# --- User metadata update ---
+func update_user_metadata(user_id: String, new_metadata: Dictionary) -> void:
+	if user_id == "" or not _is_valid_uuid(user_id):
+		printerr("[APICalls][update_user_metadata] invalid user_id: ", user_id)
+		return
+	var url := "%s/user/update_metadata" % [BASE_URL]
+	var headers: PackedStringArray = ['accept: application/json', 'content-type: application/json']
+	headers = _apply_auth_header(headers)
+	var body_dict := {"user_id": user_id, "new_metadata": new_metadata}
+	var body_json := JSON.stringify(body_dict)
+	var req := HTTPRequest.new()
+	req.name = "UpdateUserMetadataRequest"
+	add_child(req)
+	if req.request_completed.is_connected(_on_update_user_metadata_completed):
+		req.request_completed.disconnect(_on_update_user_metadata_completed)
+	req.request_completed.connect(_on_update_user_metadata_completed.bind(req, user_id))
+	print("[APICalls][update_user_metadata] PATCH url=", url, " body_keys=", body_dict.keys())
+	var err := req.request(url, headers, HTTPClient.METHOD_PATCH, body_json)
+	if err != OK:
+		var emsg := "[APICalls][update_user_metadata] request() failed err=%d" % err
+		push_error(emsg)
+		emit_signal('fetch_error', emsg)
+		req.queue_free()
+
+func _on_update_user_metadata_completed(result: int, response_code: int, _headers: PackedStringArray, body: PackedByteArray, requester: HTTPRequest, user_id: String) -> void:
+	if is_instance_valid(requester):
+		requester.queue_free()
+	var ok := (result == HTTPRequest.RESULT_SUCCESS) and (response_code >= 200 and response_code < 300)
+	var text := body.get_string_from_utf8()
+	if ok:
+		print("[APICalls][update_user_metadata] Success http=", response_code)
+		# Refresh user data so listeners see updated tutorial stage
+		refresh_user_data(user_id)
+	else:
+		printerr("[APICalls][update_user_metadata] Failed result=", result, " http=", response_code, " body=", text.left(200))
+		emit_signal('fetch_error', 'Failed to update user metadata')
