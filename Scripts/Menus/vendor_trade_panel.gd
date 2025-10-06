@@ -186,7 +186,8 @@ func _populate_tree_from_agg(tree: Tree, agg: Dictionary) -> void:
 			category_item.set_text(0, category.capitalize())
 			category_item.set_selectable(0, false)
 			category_item.set_custom_color(0, Color.GOLD)
-			category_item.collapsed = category != "missions"
+			# Keep 'resources' open by default to support tutorial and avoid flicker
+			category_item.collapsed = not (category == "missions" or category == "resources")
 			for item_name in display_agg[category]:
 				var agg_data = display_agg[category][item_name]
 				var display_qty = agg_data.total_quantity
@@ -236,6 +237,8 @@ func refresh_data(p_vendor_data, p_convoy_data, p_current_settlement_data, p_all
   
 # --- UI Population ---
 func _populate_vendor_list() -> void:
+	# Capture current expand/collapse and selection state so we can restore after repopulating
+	var _prev_tree_state := _capture_vendor_tree_state()
 	vendor_item_tree.clear()
 	if not vendor_data:
 		return
@@ -390,6 +393,67 @@ func _populate_vendor_list() -> void:
 	_populate_category(vendor_item_tree, root, "Parts", aggregated_parts)
 	_populate_category(vendor_item_tree, root, "Other", aggregated_other)
 	_populate_category(vendor_item_tree, root, "Resources", aggregated_resources)
+
+	# Restore previous expand/collapse and selection state (prevents immediate re-collapse while interacting)
+	_restore_vendor_tree_state(_prev_tree_state)
+
+## Capture expand/collapse and selection state of the vendor tree
+func _capture_vendor_tree_state() -> Dictionary:
+	var state := {"categories": {}, "selected": {}}
+	if not is_instance_valid(vendor_item_tree):
+		return state
+	var root := vendor_item_tree.get_root()
+	if root == null:
+		return state
+	for cat in root.get_children():
+		if cat == null:
+			continue
+		var cat_name := str(cat.get_text(0))
+		state.categories[cat_name] = {"collapsed": cat.collapsed}
+	# Selected item path (category + text)
+	var sel := vendor_item_tree.get_selected()
+	if sel:
+		var stext := str(sel.get_text(0))
+		var parent := sel.get_parent()
+		var cat_name := ""
+		if parent != null and parent != root:
+			cat_name = str(parent.get_text(0))
+		state.selected = {"cat": cat_name, "text": stext}
+	return state
+
+## Restore expand/collapse and selection state captured earlier
+func _restore_vendor_tree_state(state: Dictionary) -> void:
+	if not is_instance_valid(vendor_item_tree):
+		return
+	var root := vendor_item_tree.get_root()
+	if root == null:
+		return
+	if state.has("categories"):
+		for cat in root.get_children():
+			if cat == null:
+				continue
+			var cat_name := str(cat.get_text(0))
+			if state.categories.has(cat_name):
+				var collapsed := bool(state.categories[cat_name].get("collapsed", cat.collapsed))
+				# Keep Resources expanded to avoid flicker/retraction during tutorial and user interaction
+				if cat_name.to_lower() == "resources":
+					collapsed = false
+				cat.collapsed = collapsed
+	# Restore selection if possible
+	if state.has("selected"):
+		var want_cat := str(state.selected.get("cat", ""))
+		var want_text := str(state.selected.get("text", ""))
+		for cat in root.get_children():
+			if cat == null:
+				continue
+			if want_cat == "" or str(cat.get_text(0)) == want_cat:
+				for it in cat.get_children():
+					if it != null and str(it.get_text(0)) == want_text:
+						# Ensure the category is expanded when reselecting
+						cat.collapsed = false
+						it.select(0)
+						vendor_item_tree.scroll_to_item(it)
+						return
 
 func _populate_convoy_list() -> void:
 	convoy_item_tree.clear()
@@ -645,7 +709,7 @@ func _on_gdm_settlement_data_updated(all_settlements_data: Array) -> void:
 				if vendor.has("vendor_id") and str(vendor.get("vendor_id")) == current_vendor_id:
 					self.vendor_data = vendor # <-- Only update here!
 					_populate_vendor_list()
-					_handle_new_item_selection(null)
+					# Do NOT clear selection here; preserving it prevents immediate collapse after user click
 					return
 	if is_instance_valid(loading_panel):
 		loading_panel.visible = false
@@ -718,7 +782,7 @@ func _populate_category(target_tree: Tree, root_item: TreeItem, category_name: S
 	category_item.set_custom_color(0, Color.GOLD)
 
 	# By default, collapse all categories except for "Mission Cargo".
-	if category_name != "Mission Cargo":
+	if category_name != "Mission Cargo" and category_name != "Resources":
 		category_item.collapsed = true
 
 	for agg_key in agg_dict:
@@ -1117,14 +1181,23 @@ func _update_transaction_panel() -> void:
 		if is_instance_valid(quantity_spinbox):
 			quantity_spinbox.value = 1
 		var vehicle_price := _get_contextual_unit_price(item_data_source)
-		price_label.text = "[b]Price:[/b] $%s" % ("%.2f" % vehicle_price)
+		# Show this as Current Value for clarity
+		var base_val_hint := ""
+		var bv = item_data_source.get("base_value")
+		if (bv is float or bv is int) and float(bv) > 0.0 and float(bv) != float(vehicle_price):
+			base_val_hint = "\n[color=gray](Base Value: $%s)[/color]" % ("%.2f" % float(bv))
+		price_label.text = "[b]Current Value:[/b] $%s%s" % ["%.2f" % vehicle_price, base_val_hint]
 		return
 
 	print("DEBUG: item_data_source for price calculation: ", item_data_source)
 
 	var quantity = int(quantity_spinbox.value)
 	var final_unit_price = _get_contextual_unit_price(item_data_source)
-	var total_price = final_unit_price * quantity
+	# In sell mode, display prices at 50% for transparency
+	var display_unit_price: float = float(final_unit_price)
+	if current_mode == "sell":
+		display_unit_price = final_unit_price / 2.0
+	var total_price = display_unit_price * quantity
 
 	if typeof(final_unit_price) != TYPE_FLOAT and typeof(final_unit_price) != TYPE_INT:
 		final_unit_price = 0.0
@@ -1150,7 +1223,12 @@ func _update_transaction_panel() -> void:
 		total_resource_value_display = (resource_unit_value / 2.0) * quantity
 
 	var bbcode_text = ""
-	bbcode_text += "[b]Unit Price:[/b] $%s\n" % ("%.2f" % final_unit_price)
+	var unit_label := "Unit Price:"
+	if current_mode == "buy":
+		unit_label = "Buy Price:"
+	elif current_mode == "sell":
+		unit_label = "Sell Price:"
+	bbcode_text += "[b]%s[/b] $%s\n" % [unit_label, "%.2f" % display_unit_price]
 
 	var is_mission_cargo = current_mode == "sell" and selected_item.has("mission_vendor_name") and not selected_item.mission_vendor_name.is_empty() and selected_item.mission_vendor_name != "Unknown Vendor"
 
@@ -1361,8 +1439,14 @@ func _get_item_price_components(item_data_source: Dictionary) -> Dictionary:
 # Returns the price per unit for the given item, depending on buy/sell mode.
 func _get_contextual_unit_price(item_data_source: Dictionary) -> float:
 	var price: float = 0.0
-	# Vehicles: prefer base_value as the purchase price
+	# Vehicles: prefer current value ("value"), fallback to market_value, then base_value
 	if _is_vehicle(item_data_source):
+		var cv = item_data_source.get("value")
+		if (cv is float or cv is int) and float(cv) > 0.0:
+			return float(cv)
+		var mv = item_data_source.get("market_value")
+		if (mv is float or mv is int) and float(mv) > 0.0:
+			return float(mv)
 		var bv = item_data_source.get("base_value")
 		if bv is float or bv is int:
 			return float(bv)
@@ -1471,8 +1555,41 @@ func tutorial_highlight_category(category_name: String) -> void:
 			continue
 		var label := str(it.get_text(0))
 		if label.to_lower() == category_name.to_lower():
+			# Ensure category is expanded for visibility
+			it.collapsed = false
 			it.select(0)
 			vendor_item_tree.scroll_to_item(it)
+			return
+
+## Expands a top-level category in the vendor tree without changing selection
+func tutorial_expand_category(category_name: String) -> void:
+	if not is_instance_valid(vendor_item_tree):
+		return
+	var root := vendor_item_tree.get_root()
+	if root == null:
+		return
+	for it in root.get_children():
+		if it == null:
+			continue
+		var label := str(it.get_text(0))
+		if label.to_lower() == category_name.to_lower():
+			it.collapsed = false
+			vendor_item_tree.scroll_to_item(it)
+			return
+
+## Convenience for stage 2: expand Resources and keep it open
+func tutorial_open_resources() -> void:
+	if not is_instance_valid(vendor_item_tree):
+		return
+	var root := vendor_item_tree.get_root()
+	if root == null:
+		return
+	for cat in root.get_children():
+		if cat == null:
+			continue
+		if str(cat.get_text(0)).to_lower() == "resources":
+			cat.collapsed = false
+			vendor_item_tree.scroll_to_item(cat)
 			return
 
 # --- Tutorial rectangle helpers ---
@@ -1488,6 +1605,8 @@ func tutorial_get_category_header_rect_global(category_name: String) -> Rect2:
 			continue
 		var label := str(it.get_text(0))
 		if label.to_lower() == category_name.to_lower():
+			# Ensure it's expanded so the row has measurable size and doesn't immediately collapse
+			it.collapsed = false
 			var row_rect: Rect2 = vendor_item_tree.get_item_area_rect(it, 0)
 			# Convert from tree local to global
 			var top_left := vendor_item_tree.get_global_transform() * row_rect.position
@@ -1504,3 +1623,59 @@ func tutorial_get_buy_button_global_rect() -> Rect2:
 # Preferred: return the Control for the Buy button so callers can track it live
 func tutorial_get_buy_button_control() -> Control:
 	return action_button if is_instance_valid(action_button) else null
+
+# --- Stage 2 helpers: selection and rects for item rows and quantity control ---
+## Sets the quantity SpinBox value safely for tutorial use
+func tutorial_set_quantity(qty: int) -> void:
+	if not is_instance_valid(quantity_spinbox):
+		return
+	var q := int(qty)
+	if q < int(quantity_spinbox.min_value):
+		q = int(quantity_spinbox.min_value)
+	if q > int(quantity_spinbox.max_value):
+		q = int(quantity_spinbox.max_value)
+	quantity_spinbox.value = q
+
+## Selects an item whose display text starts with the given prefix in the vendor tree (buy tab)
+func tutorial_select_item_by_prefix(prefix: String) -> void:
+	if not is_instance_valid(vendor_item_tree):
+		return
+	var root := vendor_item_tree.get_root()
+	if root == null:
+		return
+	for cat in root.get_children():
+		for it in cat.get_children():
+			var label := str(it.get_text(0))
+			if label.begins_with(prefix):
+				it.select(0)
+				vendor_item_tree.scroll_to_item(it)
+				# Trigger selection handler
+				_on_vendor_item_selected()
+				return
+
+## Returns the global rect of an item row matching an exact display text (or startswith if exact not found)
+func tutorial_get_item_row_rect_global(display_text: String) -> Rect2:
+	if not is_instance_valid(vendor_item_tree):
+		return Rect2()
+	var root := vendor_item_tree.get_root()
+	if root == null:
+		return Rect2()
+	var fallback: Rect2 = Rect2()
+	for cat in root.get_children():
+		for it in cat.get_children():
+			var label := str(it.get_text(0))
+			if label == display_text or label.begins_with(display_text):
+				var rlocal: Rect2 = vendor_item_tree.get_item_area_rect(it, 0)
+				var gpos := vendor_item_tree.get_global_transform() * rlocal.position
+				return Rect2(gpos, rlocal.size)
+			elif fallback == Rect2() and label.to_lower().find(display_text.to_lower()) != -1:
+				var rlocal2: Rect2 = vendor_item_tree.get_item_area_rect(it, 0)
+				var gpos2 := vendor_item_tree.get_global_transform() * rlocal2.position
+				fallback = Rect2(gpos2, rlocal2.size)
+	return fallback
+
+## Returns the global rect of the quantity spinbox (right panel)
+func tutorial_get_quantity_spinbox_rect_global() -> Rect2:
+	if not is_instance_valid(quantity_spinbox):
+		return Rect2()
+	return quantity_spinbox.get_global_rect()

@@ -132,6 +132,22 @@ func _json_snippet(data: Variant, label: String="") -> void:
 	else:
 		print('[GameDataManager][DEBUG][JSON]', encoded)
 
+# --- Small numeric helpers to safely handle nulls and non-numeric values ---
+func _is_positive_number(v: Variant) -> bool:
+	return (v is int or v is float) and float(v) > 0.0
+
+func _to_int_safe(v: Variant, default_val: int = 0) -> int:
+	if v is int:
+		return int(v)
+	if v is float:
+		return int(v)
+	return default_val
+
+func _to_float_safe(v: Variant, default_val: float = 0.0) -> float:
+	if v is int or v is float:
+		return float(v)
+	return default_val
+
 # This should be the single source of truth for these colors.
 const PREDEFINED_CONVOY_COLORS: Array[Color] = [
 	Color.RED, Color.BLUE, Color.GREEN, Color.YELLOW, Color.CYAN, Color.MAGENTA,
@@ -1552,7 +1568,12 @@ func _aggregate_vendor_items(vendor_data: Dictionary) -> Dictionary:
 			continue
 		var category = "other"
 		var is_mission := item.get("recipient") != null
-		var is_resource: bool = (item.has("food") and item.get("food", 0) > 0) or (item.has("water") and item.get("water", 0) > 0) or (item.has("fuel") and item.get("fuel", 0) > 0)
+		# Use safe numeric check to avoid comparing Nil to int
+		var is_resource: bool = (
+			(item.has("food") and _is_positive_number(item.get("food"))) or
+			(item.has("water") and _is_positive_number(item.get("water"))) or
+			(item.has("fuel") and _is_positive_number(item.get("fuel")))
+		)
 		var is_part: bool = item.has("slot") and item.get("slot") != null and String(item.get("slot")).length() > 0
 		if is_mission:
 			category = "missions"
@@ -1578,8 +1599,8 @@ func _aggregate_vendor_items(vendor_data: Dictionary) -> Dictionary:
 
 	# Add bulk resources
 	for res in ["fuel", "water", "food"]:
-		var qty = int(vendor_data.get(res, 0) or 0)
-		var price = float(vendor_data.get(res + "_price", 0) or 0)
+		var qty = _to_int_safe(vendor_data.get(res))
+		var price = _to_float_safe(vendor_data.get(res + "_price"))
 		# We want to show bulk resources whenever qty > 0 even if price == 0 (could be free / placeholder pricing)
 		if qty > 0:
 			var item = {
@@ -1622,7 +1643,7 @@ func _aggregate_convoy_items(convoy_data: Dictionary, vendor_data: Dictionary) -
 				var category = "other"
 				if item.get("recipient") != null or item.get("delivery_reward") != null:
 					category = "missions"
-				elif (item.has("food") and item.get("food", 0) > 0) or (item.has("water") and item.get("water", 0) > 0) or (item.has("fuel") and item.get("fuel", 0) > 0):
+				elif (item.has("food") and _is_positive_number(item.get("food"))) or (item.has("water") and _is_positive_number(item.get("water"))) or (item.has("fuel") and _is_positive_number(item.get("fuel"))):
 					category = "resources"
 				_aggregate_item(aggregated[category], item, vehicle_name)
 			for item in vehicle.get("parts", []):
@@ -1636,13 +1657,13 @@ func _aggregate_convoy_items(convoy_data: Dictionary, vendor_data: Dictionary) -
 			var category = "other"
 			if item.get("recipient") != null or item.get("delivery_reward") != null:
 				category = "missions"
-			elif (item.has("food") and item.get("food", 0) > 0) or (item.has("water") and item.get("water", 0) > 0) or (item.has("fuel") and item.get("fuel", 0) > 0):
+			elif (item.has("food") and _is_positive_number(item.get("food"))) or (item.has("water") and _is_positive_number(item.get("water"))) or (item.has("fuel") and _is_positive_number(item.get("fuel"))):
 				category = "resources"
 			_aggregate_item(aggregated[category], item, "Convoy")
 
 	# Add bulk resources
 	for res in ["fuel", "water", "food"]:
-		var qty = int(convoy_data.get(res, 0) or 0)
+		var qty = _to_int_safe(convoy_data.get(res))
 		# Only allow selling this resource if vendor advertises a price (non-null and numeric). 0 is allowed (free) but null/absent blocks.
 		var raw_price_val = null
 		if vendor_data and vendor_data.has(res + "_price"):

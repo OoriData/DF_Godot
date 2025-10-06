@@ -1898,15 +1898,16 @@ func update_user_metadata(user_id: String, new_metadata: Dictionary) -> void:
 	var url := "%s/user/update_metadata" % [BASE_URL]
 	var headers: PackedStringArray = ['accept: application/json', 'content-type: application/json']
 	headers = _apply_auth_header(headers)
-	var body_dict := {"user_id": user_id, "new_metadata": new_metadata}
-	var body_json := JSON.stringify(body_dict)
+	# Backend expects the request body to be the raw metadata dictionary itself (no wrappers).
+	# Send only the fields to update, e.g., {"tutorial": 2}.
+	var body_json := JSON.stringify(new_metadata)
 	var req := HTTPRequest.new()
 	req.name = "UpdateUserMetadataRequest"
 	add_child(req)
 	if req.request_completed.is_connected(_on_update_user_metadata_completed):
 		req.request_completed.disconnect(_on_update_user_metadata_completed)
 	req.request_completed.connect(_on_update_user_metadata_completed.bind(req, user_id))
-	print("[APICalls][update_user_metadata] PATCH url=", url, " body_keys=", body_dict.keys())
+	print("[APICalls][update_user_metadata] PATCH url=", url, " body_keys=", new_metadata.keys())
 	var err := req.request(url, headers, HTTPClient.METHOD_PATCH, body_json)
 	if err != OK:
 		var emsg := "[APICalls][update_user_metadata] request() failed err=%d" % err

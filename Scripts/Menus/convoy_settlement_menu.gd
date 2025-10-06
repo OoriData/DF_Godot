@@ -233,12 +233,23 @@ func _display_settlement_info():
 			vendors_sorted.sort_custom(func(a, b):
 				var ka:Array = _vendor_order_key(a)
 				var kb:Array = _vendor_order_key(b)
-				if ka[0] == kb[0]:
-					# Tie-breaker: alphabetical by short name (case-insensitive)
-					var na := String(a.get("name", "")).to_lower()
-					var nb := String(b.get("name", "")).to_lower()
-					return na < nb
-				return int(ka[0]) < int(kb[0])
+				# 1) Primary: category index (lower first)
+				if int(ka[0]) != int(kb[0]):
+					return int(ka[0]) < int(kb[0])
+				# 2) Secondary (within-category): optional subpriority (lower first) if provided
+				var a_has_sub := ka.size() > 1 and typeof(ka[1]) == TYPE_INT
+				var b_has_sub := kb.size() > 1 and typeof(kb[1]) == TYPE_INT
+				if a_has_sub or b_has_sub:
+					if a_has_sub and not b_has_sub:
+						return true
+					if b_has_sub and not a_has_sub:
+						return false
+					if int(ka[1]) != int(kb[1]):
+						return int(ka[1]) < int(kb[1])
+				# 3) Tertiary: alphabetical by short display name
+				var na := _vendor_short_display_name(a).to_lower()
+				var nb := _vendor_short_display_name(b).to_lower()
+				return na < nb
 			)
 
 			for vendor in vendors_sorted:
@@ -524,8 +535,29 @@ func tutorial_get_vendor_tab_headers_info() -> Array:
 		var full_vendor_name := String(tab_ctrl.name) if tab_ctrl != null else ""
 		var vendor_dict := _find_vendor_by_name(full_vendor_name)
 		var cat_idx := -1
+		var has_fuel := false
+		var has_water := false
+		var has_food := false
+		var short_name_ci := ""
 		if vendor_dict is Dictionary and not vendor_dict.is_empty():
 			cat_idx = _vendor_category_index(vendor_dict)
+			# Compute simple resource capability flags (price presence OR inventory quantities)
+			short_name_ci = _vendor_short_display_name(vendor_dict).to_lower()
+			if vendor_dict.has("fuel_price") or (vendor_dict.has("fuel") and (vendor_dict.get("fuel") is int or vendor_dict.get("fuel") is float) and float(vendor_dict.get("fuel")) > 0.0):
+				has_fuel = true
+			if vendor_dict.has("water_price") or (vendor_dict.has("water") and (vendor_dict.get("water") is int or vendor_dict.get("water") is float) and float(vendor_dict.get("water")) > 0.0):
+				has_water = true
+			if vendor_dict.has("food_price") or (vendor_dict.has("food") and (vendor_dict.get("food") is int or vendor_dict.get("food") is float) and float(vendor_dict.get("food")) > 0.0):
+				has_food = true
+			if vendor_dict.has("cargo_inventory") and (vendor_dict.get("cargo_inventory") is Array):
+				for it in (vendor_dict.get("cargo_inventory") as Array):
+					if it is Dictionary:
+						var fv = it.get("fuel") if it.has("fuel") else null
+						var wv = it.get("water") if it.has("water") else null
+						var fd = it.get("food") if it.has("food") else null
+						if (fv is int or fv is float) and float(fv) > 0.0: has_fuel = true
+						if (wv is int or wv is float) and float(wv) > 0.0: has_water = true
+						if (fd is int or fd is float) and float(fd) > 0.0: has_food = true
 		var rect_local: Rect2 = tab_bar.call("get_tab_rect", i)
 		var pos_global: Vector2 = tab_bar.get_global_transform() * rect_local.position
 		var rect_global := Rect2(pos_global, rect_local.size)
@@ -533,9 +565,162 @@ func tutorial_get_vendor_tab_headers_info() -> Array:
 			"index": i,
 			"title": String(tc.get_tab_title(i)),
 			"rect": rect_global,
-			"category_idx": cat_idx
+			"category_idx": cat_idx,
+			"has_fuel": has_fuel,
+			"has_water": has_water,
+			"has_food": has_food,
+			"short_name": short_name_ci
 		})
 	return result
+
+# Tutorial helper: choose the best index for Market (bulk food/water)
+func tutorial_get_best_market_tab_index() -> int:
+	if not is_instance_valid(vendor_tab_container):
+		return -1
+	var info: Array = tutorial_get_vendor_tab_headers_info()
+	# 1) Strongest: exact tab title 'Market' (case-insensitive), regardless of category
+	for e in info:
+		if not (e is Dictionary):
+			continue
+		var title_ci := String(e.get("title", "")).strip_edges().to_lower()
+		if title_ci == "market":
+			return int(e.get("index", -1))
+	# 2) Category-based resources tabs with additional preferences
+	var best_any := -1
+	var prefer_name := -1
+	var prefer_both := -1
+	var prefer_some := -1
+	for e in info:
+		if not (e is Dictionary):
+			continue
+		if int(e.get("category_idx", -1)) != 4:
+			continue
+		var idx := int(e.get("index", -1))
+		if idx == -1:
+			continue
+		if best_any == -1:
+			best_any = idx
+		var title_ci2 := String(e.get("title", "")).to_lower()
+		var short_ci := String(e.get("short_name", "")).to_lower()
+		if prefer_name == -1 and (title_ci2.find("market") != -1 or short_ci.find("market") != -1):
+			prefer_name = idx
+		var has_w := bool(e.get("has_water", false))
+		var has_f := bool(e.get("has_food", false))
+		if prefer_both == -1 and has_w and has_f:
+			prefer_both = idx
+		if prefer_some == -1 and (has_w or has_f):
+			prefer_some = idx
+	# Priority: named Market > has both water+food > has water/food > any resources
+	if prefer_name != -1:
+		return prefer_name
+	if prefer_both != -1:
+		return prefer_both
+	if prefer_some != -1:
+		return prefer_some
+	return best_any
+
+# --- Tutorial helper: return the index of the Market/Resources tab ---
+func tutorial_get_market_tab_index() -> int:
+	# Wrapper for clarity; uses best-guess selection for Market/Resources tab
+	return tutorial_get_best_market_tab_index()
+
+# --- Tutorial helper: return the global rect of the Market tab header ---
+func tutorial_get_market_tab_rect_global() -> Rect2:
+	if not is_instance_valid(vendor_tab_container):
+		return Rect2()
+	var tc: TabContainer = vendor_tab_container
+	var tab_bar: Control = null
+	if tc.has_method("get_tab_bar"):
+		tab_bar = tc.call("get_tab_bar")
+	if tab_bar == null:
+		tab_bar = tc.find_child("TabBar", true, false)
+	if tab_bar == null or not tab_bar.has_method("get_tab_rect"):
+		return Rect2()
+	var market_index := int(tutorial_get_market_tab_index())
+	if market_index < 0 or market_index >= tc.get_tab_count():
+		return Rect2()
+	var rect_local: Rect2 = tab_bar.call("get_tab_rect", market_index)
+	if rect_local.size == Vector2.ZERO:
+		await get_tree().process_frame
+		rect_local = tab_bar.call("get_tab_rect", market_index)
+		if rect_local.size == Vector2.ZERO:
+			return Rect2()
+	var pos_global: Vector2 = tab_bar.get_global_transform() * rect_local.position
+	return Rect2(pos_global, rect_local.size)
+
+# --- Tutorial helper: create a proxy Control over the Market tab header for reliable highlighting ---
+var _tutor_market_tab_proxy: Control = null
+var _tutor_market_tab_proxy_updater: Callable = Callable()
+var _tutor_market_tab_proxy_tabbar: Control = null
+
+func tutorial_build_market_tab_highlight_proxy() -> Control:
+	if not is_instance_valid(vendor_tab_container):
+		return null
+	var tc2: TabContainer = vendor_tab_container
+	var tab_bar2: Control = null
+	if tc2.has_method("get_tab_bar"):
+		tab_bar2 = tc2.call("get_tab_bar")
+	if tab_bar2 == null:
+		tab_bar2 = tc2.find_child("TabBar", true, false)
+	if tab_bar2 == null or not tab_bar2.has_method("get_tab_rect"):
+		return null
+	var idx2 := int(tutorial_get_market_tab_index())
+	if idx2 < 0:
+		return null
+	var rl2: Rect2 = tab_bar2.call("get_tab_rect", idx2)
+	if rl2.size == Vector2.ZERO:
+		await get_tree().process_frame
+		rl2 = tab_bar2.call("get_tab_rect", idx2)
+		if rl2.size == Vector2.ZERO:
+			return null
+	tutorial_clear_market_tab_highlight_proxy()
+	var proxy := Control.new()
+	proxy.name = "TutorMarketTabProxy"
+	# Ignore mouse so it never blocks clicks; keep as child of TabBar so it tracks layout
+	proxy.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	proxy.anchor_left = 0
+	proxy.anchor_right = 0
+	proxy.anchor_top = 0
+	proxy.anchor_bottom = 0
+	proxy.position = rl2.position
+	proxy.size = rl2.size
+	tab_bar2.add_child(proxy)
+	proxy.z_index = 1000
+	# Keep proxy sticky to the tab header by updating on TabBar size/visibility changes
+	var updater := func():
+		if is_instance_valid(tab_bar2):
+			var rnow: Rect2 = tab_bar2.call("get_tab_rect", idx2)
+			proxy.position = rnow.position
+			proxy.size = rnow.size
+	# Store references so we can disconnect later
+	_tutor_market_tab_proxy_updater = updater
+	_tutor_market_tab_proxy_tabbar = tab_bar2
+	# Connect supported signals; avoid duplicate connects
+	if is_instance_valid(tab_bar2):
+		if not tab_bar2.resized.is_connected(updater):
+			tab_bar2.resized.connect(updater)
+		if not tab_bar2.visibility_changed.is_connected(updater):
+			tab_bar2.visibility_changed.connect(updater)
+	# One immediate update in case the rect changed after creation
+	updater.call()
+	_tutor_market_tab_proxy = proxy
+	return proxy
+
+func tutorial_clear_market_tab_highlight_proxy() -> void:
+	if is_instance_valid(_tutor_market_tab_proxy):
+		var parent := _tutor_market_tab_proxy.get_parent()
+		if parent:
+			parent.remove_child(_tutor_market_tab_proxy)
+		_tutor_market_tab_proxy.queue_free()
+	# Disconnect updater signals to avoid leaks
+	if is_instance_valid(_tutor_market_tab_proxy_tabbar) and _tutor_market_tab_proxy_updater.is_valid():
+		if _tutor_market_tab_proxy_tabbar.resized.is_connected(_tutor_market_tab_proxy_updater):
+			_tutor_market_tab_proxy_tabbar.resized.disconnect(_tutor_market_tab_proxy_updater)
+		if _tutor_market_tab_proxy_tabbar.visibility_changed.is_connected(_tutor_market_tab_proxy_updater):
+			_tutor_market_tab_proxy_tabbar.visibility_changed.disconnect(_tutor_market_tab_proxy_updater)
+	_tutor_market_tab_proxy = null
+	_tutor_market_tab_proxy_updater = Callable()
+	_tutor_market_tab_proxy_tabbar = null
 
 ## Mechanics tab removed: Mechanics is now opened contextually via Install from vendor part purchase.
 
@@ -797,10 +982,54 @@ func _vendor_short_display_name(vendor: Dictionary) -> String:
 	return vendor_name
 
 func _vendor_order_key(vendor: Dictionary) -> Array:
-	# Return [category_index, short_name_lower]
+	# Return a sortable key. Base: [category_index, (optional) subpriority, short_name_lower]
 	var idx := _vendor_category_index(vendor)
 	var short_name := _vendor_short_display_name(vendor).to_lower()
+	# Within Resources category (4), prefer Market-like vendors over fuel-only (e.g., Gas Station)
+	if idx == 4:
+		var title_ci := short_name
+		var caps := _vendor_resource_capabilities(vendor)
+		var has_w := bool(caps.get("has_water", false))
+		var has_f := bool(caps.get("has_food", false))
+		var subprio := 3 # default: fuel-only or unknown
+		if title_ci.find("market") != -1:
+			subprio = 0
+		elif has_w and has_f:
+			subprio = 1
+		elif has_w or has_f:
+			subprio = 2
+		return [idx, subprio, short_name]
 	return [idx, short_name]
+
+# Compute simple resource capability flags for a vendor
+func _vendor_resource_capabilities(vendor: Dictionary) -> Dictionary:
+	var has_fuel := false
+	var has_water := false
+	var has_food := false
+	if vendor is Dictionary and not vendor.is_empty():
+		# Price fields imply the vendor sells the resource
+		if vendor.has("fuel_price"): has_fuel = true
+		if vendor.has("water_price"): has_water = true
+		if vendor.has("food_price"): has_food = true
+		# Direct stock fields
+		if vendor.has("fuel") and (vendor.fuel is int or vendor.fuel is float) and float(vendor.fuel) > 0.0:
+			has_fuel = true
+		if vendor.has("water") and (vendor.water is int or vendor.water is float) and float(vendor.water) > 0.0:
+			has_water = true
+		if vendor.has("food") and (vendor.food is int or vendor.food is float) and float(vendor.food) > 0.0:
+			has_food = true
+		# Cargo inventory scan
+		if vendor.has("cargo_inventory") and (vendor.get("cargo_inventory") is Array):
+			for it in (vendor.get("cargo_inventory") as Array):
+				if it is Dictionary:
+					var fv = it.get("fuel") if it.has("fuel") else null
+					var wv = it.get("water") if it.has("water") else null
+					var fd = it.get("food") if it.has("food") else null
+					if (fv is int or fv is float) and float(fv) > 0.0: has_fuel = true
+					if (wv is int or wv is float) and float(wv) > 0.0: has_water = true
+					if (fd is int or fd is float) and float(fd) > 0.0: has_food = true
+	return {"has_fuel": has_fuel, "has_water": has_water, "has_food": has_food}
+
 
 
 # --- Top Up Feature ---
