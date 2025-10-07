@@ -460,6 +460,10 @@ func augment_single_convoy(raw_convoy_item: Dictionary) -> Dictionary:
 	if not augmented_item.has("vehicle_details_list") and augmented_item.has("vehicles"):
 		augmented_item["vehicle_details_list"] = augmented_item["vehicles"]
 
+	# --- Normalize cargo list: prefer vehicle cargo, else map all_cargo to cargo_inventory for UI fallbacks ---
+	if not augmented_item.has("cargo_inventory") and augmented_item.has("all_cargo") and augmented_item.get("all_cargo") is Array:
+		augmented_item["cargo_inventory"] = augmented_item["all_cargo"]
+
 	# Assign color if it's a new convoy
 	var convoy_id_val = augmented_item.get('convoy_id')
 	if convoy_id_val != null:
@@ -1276,26 +1280,62 @@ func _on_resource_transaction(result: Dictionary) -> void:
 	if result.is_empty():
 		printerr("GameDataManager: resource transaction returned empty result")
 		return
-	# Expect convoy keys like convoy_id, fuel, water, food, money etc.
+	# Accept common shapes: top-level convoy, convoy_after, or nested convoy dict
+	var updated_convoy: Dictionary = {}
 	if result.has("convoy_id"):
-		update_single_convoy(result)
-		# Also refresh user money (if money changed) by requesting user data (lightweight)
-		request_user_data_refresh()
-		# Force authoritative single-convoy refetch to eliminate any drift vs backend computed fields
-		var cid := str(result.get("convoy_id", ""))
-		if cid != "" and is_instance_valid(api_calls_node) and api_calls_node.has_method("get_convoy_data"):
-			print("[GameDataManager][ResourceTxn] Forcing post-transaction convoy refetch convoy_id=", cid)
-			api_calls_node.get_convoy_data(cid)
+		updated_convoy = result
+	elif result.has("convoy_after") and (result.get("convoy_after") is Dictionary):
+		updated_convoy = result.get("convoy_after")
+	elif result.has("convoy") and (result.get("convoy") is Dictionary):
+		updated_convoy = result.get("convoy")
 	else:
-		printerr("GameDataManager: resource transaction result missing convoy_id")
+		for v in result.values():
+			if v is Dictionary and v.has("convoy_id"):
+				updated_convoy = v
+				break
+	if updated_convoy.is_empty() or not updated_convoy.has("convoy_id"):
+		printerr("GameDataManager: resource transaction result missing convoy data with convoy_id")
+		return
+	update_single_convoy(updated_convoy)
+	# Also refresh user money (if money changed) by requesting user data (lightweight)
+	request_user_data_refresh()
+	# Force authoritative single-convoy refetch to eliminate any drift vs backend computed fields
+	var cid := str(updated_convoy.get("convoy_id", ""))
+	if cid != "" and is_instance_valid(api_calls_node) and api_calls_node.has_method("get_convoy_data"):
+		print("[GameDataManager][ResourceTxn] Forcing post-transaction convoy refetch convoy_id=", cid)
+		api_calls_node.get_convoy_data(cid)
 
 func _on_convoy_transaction(result: Dictionary) -> void:
-	# Generic handler for cargo/vehicle buy/sell returning updated convoy
+	# Generic handler for cargo/vehicle buy/sell returning updated convoy (accept multiple shapes)
 	if result.is_empty():
 		return
+	var updated_convoy: Dictionary = {}
 	if result.has("convoy_id"):
-		update_single_convoy(result)
+		updated_convoy = result
+	elif result.has("convoy_after") and (result.get("convoy_after") is Dictionary):
+		updated_convoy = result.get("convoy_after")
+	elif result.has("convoy") and (result.get("convoy") is Dictionary):
+		updated_convoy = result.get("convoy")
+	else:
+		for v in result.values():
+			if v is Dictionary and v.has("convoy_id"):
+				updated_convoy = v
+				break
+	if updated_convoy.is_empty() or not updated_convoy.has("convoy_id"):
+		# If server returned only a user_after or other metadata, still try a refresh to pull convoy
 		request_user_data_refresh()
+		if is_instance_valid(api_calls_node) and api_calls_node.has_method("get_user_convoys") and api_calls_node.current_user_id != "":
+			api_calls_node.get_user_convoys(api_calls_node.current_user_id)
+		return
+	update_single_convoy(updated_convoy)
+	request_user_data_refresh()
+	# Also sync money immediately if present
+	_maybe_sync_user_money_from_convoy(updated_convoy)
+	# Optional authoritative refresh of just this convoy
+	var cid := str(updated_convoy.get("convoy_id", ""))
+	if cid != "" and is_instance_valid(api_calls_node) and api_calls_node.has_method("get_convoy_data"):
+		print("[GameDataManager][Txn] Forcing post-transaction convoy refetch convoy_id=", cid)
+		api_calls_node.get_convoy_data(cid)
 
 func trigger_initial_convoy_data_fetch(p_user_id: String) -> void:
 	if is_instance_valid(api_calls_node) and api_calls_node.has_method("get_user_convoys"):
@@ -1651,9 +1691,14 @@ func _aggregate_convoy_items(convoy_data: Dictionary, vendor_data: Dictionary) -
 					continue
 				_aggregate_item(aggregated["parts"], item, vehicle_name)
 
-	# Fallback: If no cargo found in vehicles, use cargo_inventory
-	if not found_any_cargo and convoy_data.has("cargo_inventory"):
-		for item in convoy_data.cargo_inventory:
+	# Fallback: If no cargo found in vehicles, use cargo_inventory (or all_cargo if provided by API)
+	if not found_any_cargo and (convoy_data.has("cargo_inventory") or convoy_data.has("all_cargo")):
+		var cargo_list: Array = []
+		if convoy_data.has("cargo_inventory") and convoy_data.cargo_inventory is Array:
+			cargo_list = convoy_data.cargo_inventory
+		elif convoy_data.has("all_cargo") and convoy_data.all_cargo is Array:
+			cargo_list = convoy_data.all_cargo
+		for item in cargo_list:
 			var category = "other"
 			if item.get("recipient") != null or item.get("delivery_reward") != null:
 				category = "missions"

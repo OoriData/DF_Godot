@@ -50,21 +50,20 @@ Because we always set the step based on actual UI context, the tutorial naturall
   1. s2_hint_convoy_button
   2. s2_hint_settlement_button
   3. s2_hint_market_tab
-  4. s2_hint_resources_category
-  5. s2_hint_select_water
-  6. s2_hint_buy_water
-  7. s2_hint_select_food
-  8. s2_hint_buy_food
+  4. s2_hint_select_water
+  5. s2_hint_buy_water
+  6. s2_hint_select_food
+  7. s2_hint_buy_food
 
-- Stage 2 transitions (mirrors Stage 1’s context-driven approach):
+- Stage 2 transitions (mirrors Stage 1’s context-driven approach, with a bridge if already in the settlement menu):
   - When Convoy Overview opens → goto("s2_hint_settlement_button").
   - When Settlement submenu opens → goto("s2_hint_market_tab").
-  - When user selects the Market/Resources vendor tab → goto("s2_hint_resources_category").
-  - When leaving the Resources tab → goto("s2_hint_market_tab").
-  - When “Water (Bulk)” selected → goto("s2_hint_buy_water").
+  - If Stage 2 begins while the settlement menu is already open, start at the most relevant step: if the Market tab is active → goto("s2_hint_select_water"), otherwise → goto("s2_hint_market_tab").
+  - When user selects the Market tab → goto("s2_hint_select_water").
+  - When “Water Jerry Cans” selected → goto("s2_hint_buy_water").
   - On a successful water purchase → goto("s2_hint_select_food").
-  - When “Food (Bulk)” selected → goto("s2_hint_buy_food").
-  - On a successful food purchase → Stage 2 completes and user.metadata.tutorial is advanced to 3.
+  - When “MRE Boxes” selected → goto("s2_hint_buy_food").
+  - On a successful food purchase (quantity ≥ 2) → Stage 2 completes and user.metadata.tutorial is advanced to 3.
 
 ## Rendering a Step
 
@@ -79,9 +78,11 @@ Stage 2 rendering uses the same pattern. Main targets:
 - Top bar controls (convoy button / dropdown) for s2_hint_convoy_button.
 - Convoy menu Settlement button for s2_hint_settlement_button.
 - Market tab header for s2_hint_market_tab. Highlight is computed via ConvoySettlementMenu.tutorial_get_vendor_tab_headers_info() by picking the tab with category_idx == 4 (Resources). Fallbacks compute a global rect from the TabBar if needed.
-- Vendor panel “Resources” top-level category header for s2_hint_resources_category using tutorial_get_category_header_rect_global("Resources").
-- “Water (Bulk)” and “Food (Bulk)” rows highlighted via vendor_trade_panel.gd helper tutorial_get_item_row_rect_global(), optionally auto-selected via tutorial_select_item_by_prefix().
+- “Water Jerry Cans” and “MRE Boxes” rows highlighted via vendor_trade_panel.gd helper tutorial_get_item_row_rect_global(), optionally auto-selected via tutorial_select_item_by_prefix().
 - Quantity SpinBox + Buy button highlighted together for the buy steps using the union of tutorial_get_quantity_spinbox_rect_global() and tutorial_get_buy_button_global_rect() (or the control itself via tutorial_get_buy_button_control()).
+
+Stage 1 rendering tweak:
+- In the Dealership step, instead of highlighting the "Vehicles" category header, we expand Vehicles and highlight the first vehicle row. This reduces ambiguity and moves the player directly to a specific vehicle to buy. Helpers used: vendor_trade_panel.gd tutorial_open_vehicles() and tutorial_get_first_vehicle_row_rect_global().
 
 ## Adding or Reordering Steps
 
@@ -139,7 +140,7 @@ Stage 2 completion and guards:
 Stage 2 additions:
 - Market/Resources tab header: Use ConvoySettlementMenu.tutorial_get_vendor_tab_headers_info() to find the tab whose category_idx == 4, then highlight its rect.
 - Resources category header: Use vendor panel tutorial_get_category_header_rect_global("Resources").
-- Row highlights: Use vendor panel tutorial_get_item_row_rect_global("Water (Bulk)") or ("Food (Bulk)") to highlight and/or tutorial_select_item_by_prefix to auto-select the row.
+- Row highlights: Use vendor panel tutorial_get_item_row_rect_global("Water Jerry Cans") or ("MRE Boxes") to highlight and/or tutorial_select_item_by_prefix to auto-select the row.
 - Quantity + Buy controls: Union of tutorial_get_quantity_spinbox_rect_global() and tutorial_get_buy_button_global_rect() (or highlight the Buy control directly via tutorial_get_buy_button_control()).
 
 ## Troubleshooting

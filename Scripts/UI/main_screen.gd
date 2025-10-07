@@ -36,11 +36,10 @@ var _walkthrough_messages := {
 	"s2_hint_convoy_button": "Now that you have a vehicle, your crew needs [b]Water[/b] and [b]Food[/b]. Open the convoy menu from the top bar to visit the settlement vendors.",
 	"s2_hint_settlement_button": "From the Convoy menu, press [b]Settlement[/b] to visit vendors at your current location.",
 	"s2_hint_market_tab": "Go to the [b]Market[/b] tab.",
-	"s2_hint_resources_category": "In the Market, expand/select the [b]Resources[/b] dropdown.",
-	"s2_hint_select_water": "Select [b]Water Jerry Cans[/b] from Resources.",
+	"s2_hint_select_water": "In the Market, select [b]Water Jerry Cans[/b]",
 	"s2_hint_buy_water": "Set quantity to [b]2[/b] and press [b]Buy[/b] to purchase Water Jerry Cans.",
 	"s2_hint_select_food": "Now select [b]MRE Boxes[/b] from Resources.",
-	"s2_hint_buy_food": "Set quantity to [b]2[/b] and press [b]Buy[/b] to purchase MREs."
+	"s2_hint_buy_food": "Set quantity to [b]2[/b] and press [b]Buy[/b] to purchase MRE Boxes."
 }
 
 # Tutorial director manages step order and back/forward navigation
@@ -50,6 +49,9 @@ var _s2_progress := {
 	"bought_water": false,
 	"bought_food": false
 }
+
+# Prevent multiple Stage 2 initializations causing flashing
+var _s2_started: bool = false
 
 # Stage 2 wiring: track vendor tree connection to detect user clicks on Resources/Water/MRE
 var _s2_vendor_tree: Tree = null
@@ -688,6 +690,9 @@ func _on_vehicle_bought(_result: Dictionary) -> void:
 	_buy_vehicle_coach_dismissed = true
 	_hide_buy_vehicle_coach()
 	_clear_walkthrough()
+	# Immediately clear any lingering highlight (e.g., Buy button) before Stage 2 begins
+	if is_instance_valid(_buy_vehicle_coach) and _buy_vehicle_coach.has_method("clear_highlight"):
+		_buy_vehicle_coach.call_deferred("clear_highlight")
 	# Advance tutorial stage to 2 via API
 	var gdm = get_node_or_null("/root/GameDataManager")
 	var api = get_node_or_null("/root/APICalls")
@@ -706,7 +711,10 @@ func _on_vehicle_bought(_result: Dictionary) -> void:
 	_current_tutorial_stage = 2
 	_s2_progress["bought_water"] = false
 	_s2_progress["bought_food"] = false
-	# Optionally start Stage 2 immediately
+	# Optionally start Stage 2 immediately; small delay to let UI settle and prevent highlight flicker
+	await get_tree().process_frame
+	var t := get_tree().create_timer(0.15)
+	await t.timeout
 	call_deferred("_maybe_start_stage2_walkthrough")
 
 func _maybe_show_buy_vehicle_coach() -> void:
@@ -955,32 +963,6 @@ func _maybe_run_vendor_walkthrough() -> void:
 					# Wire tab change listener
 					if tabs_m.has_signal("tab_changed") and not tabs_m.is_connected("tab_changed", Callable(self, "_on_vendor_tab_changed_for_walkthrough")):
 						tabs_m.tab_changed.connect(_on_vendor_tab_changed_for_walkthrough)
-		"s2_hint_resources_category":
-			var mm_rc = get_node_or_null("/root/MenuManager")
-			if is_instance_valid(mm_rc) and mm_rc.current_active_menu:
-				var menu_rc = mm_rc.current_active_menu
-				var tabs_rc = menu_rc.get_node_or_null("%VendorTabContainer")
-				if tabs_rc == null:
-					tabs_rc = menu_rc.get_node_or_null("VendorTabContainer")
-				if is_instance_valid(tabs_rc):
-					# Determine if on resources tab
-					var res_idx := _get_resources_tab_index(menu_rc, tabs_rc)
-					if res_idx != -1 and int(tabs_rc.current_tab) == res_idx:
-						var vendor_panel_rc: Node = tabs_rc.get_tab_control(res_idx)
-						if is_instance_valid(vendor_panel_rc):
-							if _buy_vehicle_coach.has_method("show_step_message"):
-								_buy_vehicle_coach.call_deferred("show_step_message", idx, total_steps, _walkthrough_messages.get(_walkthrough_state, ""))
-							# Highlight the Resources category header (retry if the tree hasn't populated yet)
-							_call_highlight_resources_category_with_retries(vendor_panel_rc)
-							# Wire selection listener so clicking Resources/MRE/Water advances to Buy Water
-							_ensure_stage2_vendor_tree_listener(vendor_panel_rc)
-					else:
-						# Not on resources yet → revert to market tab step
-						if is_instance_valid(_tutorial_director) and _tutorial_director.has_method("goto"):
-							_tutorial_director.call("goto", "s2_hint_market_tab")
-						else:
-							_walkthrough_state = "s2_hint_market_tab"
-							_maybe_run_vendor_walkthrough()
 		"s2_hint_select_water":
 			var mm_sw = get_node_or_null("/root/MenuManager")
 			if is_instance_valid(mm_sw) and mm_sw.current_active_menu:
@@ -993,22 +975,17 @@ func _maybe_run_vendor_walkthrough() -> void:
 					if res_idx2 != -1 and int(tabs_sw.current_tab) == res_idx2:
 						var vendor_panel_sw: Node = tabs_sw.get_tab_control(res_idx2)
 						if is_instance_valid(vendor_panel_sw):
-							# Ensure Resources category is opened before selecting
+							# Keep Resources visible but let the user perform the selection in this step
 							if vendor_panel_sw.has_method("tutorial_open_resources"):
 								vendor_panel_sw.call_deferred("tutorial_open_resources")
-							# Try to select and highlight Water Jerry Cans with retries for tree population
-							if vendor_panel_sw.has_method("tutorial_select_item_by_prefix"):
-								vendor_panel_sw.call_deferred("tutorial_select_item_by_prefix", "Water Jerry Cans")
+							# Highlight the Water Jerry Cans row and show the message; do NOT auto-goto
 							_call_highlight_item_row_with_retries(vendor_panel_sw, "Water Jerry Cans")
 							if _buy_vehicle_coach.has_method("show_step_message"):
 								_buy_vehicle_coach.call_deferred("show_step_message", idx, total_steps, _walkthrough_messages.get(_walkthrough_state, ""))
-							# Proceed to the Buy step where we highlight quantity and Buy
-							if is_instance_valid(_tutorial_director) and _tutorial_director.has_method("goto"):
-								_tutorial_director.call_deferred("goto", "s2_hint_buy_water")
-								call_deferred("_maybe_run_vendor_walkthrough")
-							else:
-								_walkthrough_state = "s2_hint_buy_water"
-								call_deferred("_maybe_run_vendor_walkthrough")
+							# Ensure selection listener is wired for this panel
+							_ensure_stage2_vendor_tree_listener(vendor_panel_sw)
+							# If the user already clicked Water Jerry Cans while on the previous step, gently auto-advance after confirming selection
+							_maybe_auto_step_after_select(vendor_panel_sw, "water jerry", "s2_hint_buy_water")
 					else:
 						# Not on resources
 						if is_instance_valid(_tutorial_director) and _tutorial_director.has_method("goto"):
@@ -1031,27 +1008,20 @@ func _maybe_run_vendor_walkthrough() -> void:
 							# Keep Resources open while buying
 							if vendor_panel_bw.has_method("tutorial_open_resources"):
 								vendor_panel_bw.call_deferred("tutorial_open_resources")
-							# Ensure quantity is set to 2 (help the player)
-							if vendor_panel_bw.has_method("tutorial_set_quantity"):
-								vendor_panel_bw.call_deferred("tutorial_set_quantity", 2)
-							# Highlight quantity and Buy button
-							var union := Rect2()
-							var qrect := Rect2()
-							if vendor_panel_bw.has_method("tutorial_get_quantity_spinbox_rect_global"):
-								qrect = vendor_panel_bw.call("tutorial_get_quantity_spinbox_rect_global")
-							var brect := Rect2()
-							if vendor_panel_bw.has_method("tutorial_get_buy_button_global_rect"):
-								brect = vendor_panel_bw.call("tutorial_get_buy_button_global_rect")
-							if qrect.size != Vector2.ZERO and brect.size != Vector2.ZERO:
-								var ul := Vector2(min(qrect.position.x, brect.position.x), min(qrect.position.y, brect.position.y))
-								var br := Vector2(max(qrect.position.x+qrect.size.x, brect.position.x+brect.size.x), max(qrect.position.y+qrect.size.y, brect.position.y+brect.size.y))
-								union = Rect2(ul, br-ul)
-							elif brect.size != Vector2.ZERO:
-								union = brect
-							if union.size != Vector2.ZERO and _buy_vehicle_coach.has_method("highlight_global_rect"):
-								_buy_vehicle_coach.call_deferred("highlight_global_rect", union)
+							# First, highlight only the SpinBox up (increment) button to prompt the user
+							var inc_rect := Rect2()
+							if vendor_panel_bw.has_method("tutorial_get_quantity_increment_rect_global"):
+								inc_rect = vendor_panel_bw.call("tutorial_get_quantity_increment_rect_global")
+							if inc_rect.size == Vector2.ZERO and vendor_panel_bw.has_method("tutorial_get_quantity_spinbox_rect_global"):
+								# Fallback: highlight the whole spinbox if we can't isolate the up button
+								inc_rect = vendor_panel_bw.call("tutorial_get_quantity_spinbox_rect_global")
+							if inc_rect.size != Vector2.ZERO and _buy_vehicle_coach.has_method("highlight_global_rect"):
+								_buy_vehicle_coach.call_deferred("highlight_global_rect", inc_rect)
 							if _buy_vehicle_coach.has_method("show_step_message"):
 								_buy_vehicle_coach.call_deferred("show_step_message", idx, total_steps, _walkthrough_messages.get(_walkthrough_state, ""))
+							# Listen for quantity changes to switch highlight to Buy when qty >= 2
+							if vendor_panel_bw.has_signal("tutorial_quantity_changed") and not vendor_panel_bw.is_connected("tutorial_quantity_changed", Callable(self, "_on_vendor_quantity_changed_stage2")):
+								vendor_panel_bw.connect("tutorial_quantity_changed", Callable(self, "_on_vendor_quantity_changed_stage2"))
 							# Listen for local item_purchased to advance precisely
 							if vendor_panel_bw.has_signal("item_purchased") and not vendor_panel_bw.is_connected("item_purchased", Callable(self, "_on_vendor_item_purchased_stage2")):
 								vendor_panel_bw.connect("item_purchased", Callable(self, "_on_vendor_item_purchased_stage2"))
@@ -1067,15 +1037,16 @@ func _maybe_run_vendor_walkthrough() -> void:
 					if res_idx4 != -1 and int(tabs_sf.current_tab) == res_idx4:
 						var vendor_panel_sf: Node = tabs_sf.get_tab_control(res_idx4)
 						if is_instance_valid(vendor_panel_sf):
+							# Keep Resources open and highlight MRE Boxes for selection; do not auto-select
 							if vendor_panel_sf.has_method("tutorial_open_resources"):
 								vendor_panel_sf.call_deferred("tutorial_open_resources")
-							if vendor_panel_sf.has_method("tutorial_select_item_by_prefix"):
-								vendor_panel_sf.call_deferred("tutorial_select_item_by_prefix", "MRE Boxes")
 							_call_highlight_item_row_with_retries(vendor_panel_sf, "MRE Boxes")
 							if _buy_vehicle_coach.has_method("show_step_message"):
 								_buy_vehicle_coach.call_deferred("show_step_message", idx, total_steps, _walkthrough_messages.get(_walkthrough_state, ""))
-							# Wire selection listener so clicking Resources/MRE/Water advances to Buy Water
+							# Wire selection listener so clicking the list advances appropriately
 							_ensure_stage2_vendor_tree_listener(vendor_panel_sf)
+							# If the user already selected MRE Boxes, auto-advance to buy step
+							_maybe_auto_step_after_select(vendor_panel_sf, "mre", "s2_hint_buy_food")
 					else:
 						if is_instance_valid(_tutorial_director) and _tutorial_director.has_method("goto"):
 							_tutorial_director.call("goto", "s2_hint_market_tab")
@@ -1286,15 +1257,26 @@ func _maybe_run_vendor_walkthrough() -> void:
 					var tab_idx: int = int(tabs2.current_tab)
 					var vendor_panel: Node = tabs2.get_tab_control(tab_idx)
 					if vendor_panel:
-						# Prefer highlighting just the Vehicles header row if helper is available
-						if vendor_panel.has_method("tutorial_get_category_header_rect_global") and _buy_vehicle_coach.has_method("highlight_global_rect"):
-							var header_rect: Rect2 = vendor_panel.call("tutorial_get_category_header_rect_global", "Vehicles")
-							if header_rect.size != Vector2.ZERO:
-								_buy_vehicle_coach.call_deferred("highlight_global_rect", header_rect)
-								print("[Onboarding] step4: highlighting Vehicles header=", header_rect)
-							else:
-								# If Vehicles header not present yet, do not highlight arbitrary panels
-								print("[Onboarding] Vehicles category header not found; waiting for selection.")
+						# Open Vehicles category and highlight up to three vehicle rows
+						if vendor_panel.has_method("tutorial_open_vehicles"):
+							vendor_panel.call_deferred("tutorial_open_vehicles")
+						var row_rects: Array = []
+						if vendor_panel.has_method("tutorial_get_vehicle_row_rects_global"):
+							row_rects = vendor_panel.call("tutorial_get_vehicle_row_rects_global", 3)
+						if not row_rects.is_empty() and _buy_vehicle_coach and _buy_vehicle_coach.has_method("highlight_global_rect"):
+							# Single continuous highlight: union of up to three vehicle rows
+							var ul: Vector2 = row_rects[0].position
+							var br: Vector2 = row_rects[0].position + row_rects[0].size
+							for r in row_rects:
+								ul.x = min(ul.x, r.position.x)
+								ul.y = min(ul.y, r.position.y)
+								br.x = max(br.x, r.position.x + r.size.x)
+								br.y = max(br.y, r.position.y + r.size.y)
+							var union := Rect2(ul, br - ul)
+							_buy_vehicle_coach.call_deferred("highlight_global_rect", union)
+							print("[Onboarding] step4: highlighting single union rect for vehicle rows=", union)
+						else:
+							print("[Onboarding] Vehicle rows not found yet; waiting for selection.")
 						# Update step message for final step
 						if _buy_vehicle_coach.has_method("show_step_message"):
 							_buy_vehicle_coach.call_deferred("show_step_message", total_steps, total_steps, _walkthrough_messages.get(_walkthrough_state, ""))
@@ -1320,10 +1302,8 @@ func _ensure_stage2_vendor_tree_listener(vendor_panel: Node) -> void:
 # Handler: when user clicks Resources/MRE Boxes/Water Jerry Cans, jump to Buy Water step
 
 func _on_vendor_item_selected_for_walkthrough() -> void:
+	# Stage 2 only
 	if _current_tutorial_stage != 2:
-		return
-	var step_now := _walkthrough_state
-	if step_now not in ["s2_hint_market_tab", "s2_hint_resources_category", "s2_hint_select_water", "s2_hint_buy_water"]:
 		return
 	if not is_instance_valid(_s2_vendor_tree):
 		return
@@ -1332,15 +1312,36 @@ func _on_vendor_item_selected_for_walkthrough() -> void:
 		return
 	var text := String(sel.get_text(0)).strip_edges().to_lower()
 	var parent_text := String(sel.get_parent().get_text(0)).strip_edges().to_lower() if sel.get_parent() else ""
-	var clicked_resources := (text == "resources" or parent_text == "resources")
-	var clicked_water := (text.begins_with("water jerry cans") or parent_text.begins_with("water jerry cans"))
-	var clicked_mre := (text.begins_with("mre") or parent_text.begins_with("mre"))
-	if clicked_resources or clicked_water or clicked_mre:
-		if is_instance_valid(_tutorial_director) and _tutorial_director.has_method("goto"):
-			_tutorial_director.call_deferred("goto", "s2_hint_buy_water")
-		else:
-			_walkthrough_state = "s2_hint_buy_water"
-		call_deferred("_maybe_run_vendor_walkthrough")
+	var _clicked_resources := (text == "resources" or parent_text == "resources")
+	# Detect water/food in a tolerant way (supports "Water (Bulk)" / "Food (Bulk)" / MRE)
+	var clicked_water := text.find("water jerry") != -1 or parent_text.find("water jerry") != -1 or text.begins_with("water (bulk)") or parent_text.begins_with("water (bulk)") or text.find("water") != -1 or parent_text.find("water") != -1
+	var clicked_food := text.find("mre") != -1 or parent_text.find("mre") != -1 or text.begins_with("mre boxes") or parent_text.begins_with("mre boxes") or text.begins_with("food (bulk)") or parent_text.begins_with("food (bulk)") or text.find("food") != -1 or parent_text.find("food") != -1
+
+	match _walkthrough_state:
+		"s2_hint_market_tab":
+			# Once on Market, any click in the Vendor Wares moves us to "select water" step
+			if is_instance_valid(_tutorial_director) and _tutorial_director.has_method("goto"):
+				_tutorial_director.call_deferred("goto", "s2_hint_select_water")
+			else:
+				_walkthrough_state = "s2_hint_select_water"
+			call_deferred("_maybe_run_vendor_walkthrough")
+		"s2_hint_select_water":
+			if clicked_water:
+				if is_instance_valid(_tutorial_director) and _tutorial_director.has_method("goto"):
+					_tutorial_director.call_deferred("goto", "s2_hint_buy_water")
+				else:
+					_walkthrough_state = "s2_hint_buy_water"
+				call_deferred("_maybe_run_vendor_walkthrough")
+		"s2_hint_select_food":
+			if clicked_food:
+				if is_instance_valid(_tutorial_director) and _tutorial_director.has_method("goto"):
+					_tutorial_director.call_deferred("goto", "s2_hint_buy_food")
+				else:
+					_walkthrough_state = "s2_hint_buy_food"
+				call_deferred("_maybe_run_vendor_walkthrough")
+		_:
+			pass
+
 	# Ensure panel respects current bounds and menu avoidance immediately after showing/updating a step
 	_update_coach_bounds_and_avoid()
 
@@ -1458,18 +1459,18 @@ func _on_vendor_tab_changed_for_walkthrough(tab_index: int) -> void:
 	# Determine path depending on current tutorial stage
 	if _current_tutorial_stage == 2:
 		# Resources tab selection logic via headers info helper
-		var is_resources := false
 		var res_idx := _get_resources_tab_index(menu, tabs)
-		is_resources = (res_idx == tab_index and res_idx != -1)
-		if tab_index >= 1 and is_resources:
+		var on_market := (res_idx == tab_index and res_idx != -1)
+		if tab_index >= 1 and on_market:
+			# Go straight to the Water Jerry Cans selection step
 			if is_instance_valid(_tutorial_director) and _tutorial_director.has_method("goto"):
-				_tutorial_director.call("goto", "s2_hint_resources_category")
+				_tutorial_director.call("goto", "s2_hint_select_water")
 				_maybe_run_vendor_walkthrough()
 			else:
-				_walkthrough_state = "s2_hint_resources_category"
+				_walkthrough_state = "s2_hint_select_water"
 				_maybe_run_vendor_walkthrough()
 		else:
-			# Keep guiding to Market/Resources tab
+			# Keep guiding to Market tab
 			if is_instance_valid(_buy_vehicle_coach) and _buy_vehicle_coach.has_method("clear_highlight"):
 				_buy_vehicle_coach.call_deferred("clear_highlight")
 			if is_instance_valid(_tutorial_director) and _tutorial_director.has_method("goto"):
@@ -1617,6 +1618,24 @@ func _on_vendor_vehicle_selected_for_walkthrough() -> void:
 			if buy_rect.size != Vector2.ZERO:
 				_buy_vehicle_coach.call_deferred("highlight_global_rect", buy_rect)
 
+# Disconnect any Stage 1 dealership listeners so they don't re-assert highlights when Stage 2 begins
+func _cleanup_stage1_walkthrough_listeners() -> void:
+	var mm = get_node_or_null("/root/MenuManager")
+	if not is_instance_valid(mm) or not mm.current_active_menu:
+		return
+	var menu = mm.current_active_menu
+	var tabs = menu.get_node_or_null("%VendorTabContainer")
+	if tabs == null:
+		tabs = menu.get_node_or_null("VendorTabContainer")
+	if not (tabs is TabContainer):
+		return
+	# Disconnect vehicle-selected from current tab control if connected
+	var tab_idx: int = int((tabs as TabContainer).current_tab)
+	var vendor_panel: Node = (tabs as TabContainer).get_tab_control(tab_idx)
+	if is_instance_valid(vendor_panel) and vendor_panel.has_signal("tutorial_vehicle_selected"):
+		if vendor_panel.is_connected("tutorial_vehicle_selected", Callable(self, "_on_vendor_vehicle_selected_for_walkthrough")):
+			vendor_panel.disconnect("tutorial_vehicle_selected", Callable(self, "_on_vendor_vehicle_selected_for_walkthrough"))
+
 
 # Intercept clicks on vendor TabBar to detect when the dealership tab header is clicked, then advance
 func _on_vendor_tab_bar_gui_input_for_walkthrough(event: InputEvent) -> void:
@@ -1639,7 +1658,7 @@ func _on_vendor_tab_bar_gui_input_for_walkthrough(event: InputEvent) -> void:
 	if menu and menu.has_method("tutorial_get_dealership_tab_index"):
 		dealership_idx = int(menu.call("tutorial_get_dealership_tab_index"))
 
-	# Stage 2: also detect clicks on the Market tab header to advance even if already selected
+	# Stage 2: detect clicks on the Market tab header to advance even if already selected
 	var market_idx := -1
 	if _current_tutorial_stage == 2 and menu:
 		if menu.has_method("tutorial_get_market_tab_index"):
@@ -1671,11 +1690,12 @@ func _on_vendor_tab_bar_gui_input_for_walkthrough(event: InputEvent) -> void:
 			if mrect_local.has_point(mb.position):
 				if int(tc.current_tab) != market_idx:
 					tc.current_tab = market_idx
+				# Directly advance to select water (we removed resources gating)
 				if is_instance_valid(_tutorial_director) and _tutorial_director.has_method("goto"):
-					_tutorial_director.call("goto", "s2_hint_resources_category")
+					_tutorial_director.call("goto", "s2_hint_select_water")
 					_maybe_run_vendor_walkthrough()
 				else:
-					_walkthrough_state = "s2_hint_resources_category"
+					_walkthrough_state = "s2_hint_select_water"
 					_maybe_run_vendor_walkthrough()
 				return
 	# Otherwise, on mouse release, check if the selection ended up on the dealership and advance
@@ -1692,10 +1712,10 @@ func _on_vendor_tab_bar_gui_input_for_walkthrough(event: InputEvent) -> void:
 		# Stage 2 release fallback
 		if _current_tutorial_stage == 2 and market_idx != -1 and int(tc.current_tab) == market_idx:
 			if is_instance_valid(_tutorial_director) and _tutorial_director.has_method("goto"):
-				_tutorial_director.call("goto", "s2_hint_resources_category")
+				_tutorial_director.call("goto", "s2_hint_select_water")
 				_maybe_run_vendor_walkthrough()
 			else:
-				_walkthrough_state = "s2_hint_resources_category"
+				_walkthrough_state = "s2_hint_select_water"
 				_maybe_run_vendor_walkthrough()
 
 # --- Stage 2 helpers and handlers ---
@@ -1769,6 +1789,9 @@ func _maybe_start_stage2_walkthrough() -> void:
 					has_vehicle = true
 					break
 	if stage == 2 and has_vehicle:
+		# If already started in this session, don't restart
+		if _s2_started:
+			return
 		_current_tutorial_stage = 2
 		_s2_progress["bought_water"] = false
 		_s2_progress["bought_food"] = false
@@ -1776,30 +1799,53 @@ func _maybe_start_stage2_walkthrough() -> void:
 		_buy_vehicle_coach_dismissed = false
 		_ensure_coach()
 		_ensure_tutorial_director()
+		# Clean up any Level 1 dealership listeners that might re-assert a Buy highlight
+		_cleanup_stage1_walkthrough_listeners()
+		# Clear any lingering highlight from Stage 1 right away
+		if is_instance_valid(_buy_vehicle_coach) and _buy_vehicle_coach.has_method("clear_highlight"):
+			_buy_vehicle_coach.call_deferred("clear_highlight")
+		# Clear any lingering highlight from Stage 1
+		if is_instance_valid(_buy_vehicle_coach) and _buy_vehicle_coach.has_method("clear_highlight"):
+			_buy_vehicle_coach.call_deferred("clear_highlight")
 		# Define Stage 2 steps on the director and start
 		if is_instance_valid(_tutorial_director) and _tutorial_director.has_method("set_steps"):
 			var steps2 := [
 				{"id": "s2_hint_convoy_button"},
 				{"id": "s2_hint_settlement_button"},
 				{"id": "s2_hint_market_tab"},
-				{"id": "s2_hint_resources_category"},
 				{"id": "s2_hint_select_water"},
 				{"id": "s2_hint_buy_water"},
 				{"id": "s2_hint_select_food"},
 				{"id": "s2_hint_buy_food"},
 			]
 			_tutorial_director.call("set_steps", steps2)
+		# Bridge: if we're already inside the settlement vendor menu, skip convoy/settlement steps
+		var mm := get_node_or_null("/root/MenuManager")
+		var start_id := "s2_hint_convoy_button"
+		if is_instance_valid(mm) and mm.current_active_menu:
+			var menu = mm.current_active_menu
+			var tabs = menu.get_node_or_null("%VendorTabContainer")
+			if tabs == null:
+				tabs = menu.get_node_or_null("VendorTabContainer")
+			if tabs and tabs is TabContainer:
+				var res_idx := _get_resources_tab_index(menu, tabs)
+				if res_idx != -1 and int(tabs.current_tab) == res_idx:
+					start_id = "s2_hint_select_water"
+				elif res_idx != -1:
+					start_id = "s2_hint_market_tab"
+		# Start at computed start_id
 		if is_instance_valid(_tutorial_director) and _tutorial_director.has_method("start"):
-			_tutorial_director.call("start", "s2_hint_convoy_button")
+			_tutorial_director.call("start", start_id)
 		else:
-			_walkthrough_state = "s2_hint_convoy_button"
+			_walkthrough_state = start_id
 			_maybe_run_vendor_walkthrough()
+		_s2_started = true
 
 func _on_vendor_item_purchased_stage2(item: Dictionary, quantity: int, _total_cost: float) -> void:
 	var name_s := String(item.get("name", ""))
 	var name_l := name_s.to_lower()
-	var is_water_jerry := name_l.find("water jerry") != -1 or name_l.find("jerry can") != -1
-	var is_mre := name_l.find("mre") != -1
+	var is_water_jerry := name_l.find("water jerry") != -1 or name_l.find("jerry can") != -1 or name_l.find("water (bulk)") != -1
+	var is_mre := name_l.find("mre") != -1 or name_l.find("food (bulk)") != -1
 	if _current_tutorial_stage != 2:
 		return
 	# Require at least 2 of the specified items
@@ -1814,6 +1860,43 @@ func _on_vendor_item_purchased_stage2(item: Dictionary, quantity: int, _total_co
 	if _s2_progress["bought_water"] and not _s2_progress["bought_food"] and is_mre and quantity >= 2:
 		_s2_progress["bought_food"] = true
 		_finish_stage2_tutorial()
+
+func _on_vendor_quantity_changed_stage2(qty: int) -> void:
+	# Only act during Stage 2, step s2_hint_buy_water or s2_hint_buy_food
+	if _current_tutorial_stage != 2:
+		return
+	if _walkthrough_state not in ["s2_hint_buy_water", "s2_hint_buy_food"]:
+		return
+	if qty < 2:
+		return
+	# Highlight the Buy button now that the desired quantity is set
+	var mm = get_node_or_null("/root/MenuManager")
+	if not is_instance_valid(mm) or not mm.current_active_menu:
+		return
+	var menu = mm.current_active_menu
+	var tabs = menu.get_node_or_null("%VendorTabContainer")
+	if tabs == null:
+		tabs = menu.get_node_or_null("VendorTabContainer")
+	if not is_instance_valid(tabs):
+		return
+	var tab_idx := _get_resources_tab_index(menu, tabs)
+	if tab_idx == -1 or int(tabs.current_tab) != tab_idx:
+		return
+	var vendor_panel: Node = tabs.get_tab_control(tab_idx)
+	if vendor_panel == null:
+		return
+	# Prefer control highlight for robustness
+	if is_instance_valid(_buy_vehicle_coach) and _buy_vehicle_coach.has_method("clear_highlight"):
+		_buy_vehicle_coach.call_deferred("clear_highlight")
+	if vendor_panel.has_method("tutorial_get_buy_button_control") and _buy_vehicle_coach and _buy_vehicle_coach.has_method("highlight_control"):
+		var btn: Control = vendor_panel.call("tutorial_get_buy_button_control")
+		if is_instance_valid(btn):
+			_buy_vehicle_coach.call_deferred("highlight_control", btn)
+			return
+	if vendor_panel.has_method("tutorial_get_buy_button_global_rect") and _buy_vehicle_coach and _buy_vehicle_coach.has_method("highlight_global_rect"):
+		var r: Rect2 = vendor_panel.call("tutorial_get_buy_button_global_rect")
+		if r.size != Vector2.ZERO:
+			_buy_vehicle_coach.call_deferred("highlight_global_rect", r)
 
 func _on_any_resource_or_cargo_bought(_result: Dictionary) -> void:
 	# Disable coarse advancement during Stage 2; we only advance on exact purchases captured via item_purchased.
@@ -1837,6 +1920,7 @@ func _finish_stage2_tutorial() -> void:
 			merged_md2["tutorial"] = prev_tutorial2 + 1
 			api.call_deferred("update_user_metadata", user_id, merged_md2)
 	_current_tutorial_stage = 0
+	_s2_started = false
 
 func _render_walkthrough_step(step_id: String, _index: int, _total: int) -> void:
 	# Centralized render for the current step; keeps legacy behavior but uses provided index/total
@@ -1882,6 +1966,29 @@ func _call_highlight_item_row_with_retries(vendor_panel: Node, display_text: Str
 		return
 	await get_tree().process_frame
 	_call_highlight_item_row_with_retries(vendor_panel, display_text, attempts - 1)
+
+# If the desired item is already selected (e.g., user clicked fast on previous step), auto-advance.
+func _maybe_auto_step_after_select(vendor_panel: Node, target_substr: String, next_step_id: String) -> void:
+	if _current_tutorial_stage != 2:
+		return
+	if _walkthrough_state not in ["s2_hint_select_water", "s2_hint_select_food"]:
+		return
+	if not is_instance_valid(vendor_panel):
+		return
+	var tree: Tree = vendor_panel.find_child("VendorItemTree", true, false)
+	if tree == null:
+		return
+	var sel := tree.get_selected()
+	if sel == null:
+		return
+	var t := String(sel.get_text(0)).strip_edges().to_lower()
+	var pt := String(sel.get_parent().get_text(0)).strip_edges().to_lower() if sel.get_parent() else ""
+	if t.find(target_substr) != -1 or pt.find(target_substr) != -1:
+		if is_instance_valid(_tutorial_director) and _tutorial_director.has_method("goto"):
+			_tutorial_director.call_deferred("goto", next_step_id)
+		else:
+			_walkthrough_state = next_step_id
+		call_deferred("_maybe_run_vendor_walkthrough")
 
 
 # --- Settings integration ---

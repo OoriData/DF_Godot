@@ -16,11 +16,13 @@ var _side_total_steps: int = 0
 var _side_current_step: int = 0
 var _avoid_rects_global: Array = [] # Array of Rect2 in global coords to avoid overlapping
 var _highlight_panel: Panel = null
+var _highlight_panels: Array = [] # Optional extra panels for multi-rect highlighting
 var _highlight_target: WeakRef = null
 var _highlight_margin: int = 6
 var _highlight_active: bool = false
 var _highlight_host: Control = null # Optional external layer to host highlight panel (not clipped)
 var _highlight_mode: String = "none" # "control" or "rect"
+var _multi_rect_mode: bool = false
 var _last_step_index: int = 0
 var _last_total_steps: int = 0
 var _last_message: String = ""
@@ -477,6 +479,7 @@ func _ensure_highlight_panel() -> void:
 	_highlight_panel = Panel.new()
 	_highlight_panel.name = "CoachHighlight"
 	_highlight_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_highlight_panel.focus_mode = Control.FOCUS_NONE
 	_highlight_panel.z_index = 10000
 	# Default to top-level when used with explicit global-rect highlighting.
 	_highlight_panel.top_level = true
@@ -499,6 +502,36 @@ func _ensure_highlight_panel() -> void:
 	var host: Node = _highlight_host if is_instance_valid(_highlight_host) else self
 	host.add_child(_highlight_panel)
 	_highlight_panel.hide()
+	# Ensure it's tracked for multi-rect usage as panel 0
+	if _highlight_panels.is_empty():
+		_highlight_panels.append(_highlight_panel)
+
+func _create_extra_highlight_panel() -> Panel:
+	var p := Panel.new()
+	p.name = "CoachHighlightExtra"
+	p.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	p.focus_mode = Control.FOCUS_NONE
+	p.z_index = 10000
+	p.top_level = true
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color(1.0, 0.85, 0.2, 0.10)
+	sb.border_color = Color(1.0, 0.85, 0.2, 1.0)
+	sb.border_width_left = 4
+	sb.border_width_top = 4
+	sb.border_width_right = 4
+	sb.border_width_bottom = 4
+	sb.corner_radius_top_left = 10
+	sb.corner_radius_top_right = 10
+	sb.corner_radius_bottom_left = 10
+	sb.corner_radius_bottom_right = 10
+	sb.shadow_color = Color(0, 0, 0, 0.35)
+	sb.shadow_size = 8
+	sb.shadow_offset = Vector2(0, 2)
+	p.add_theme_stylebox_override("panel", sb)
+	var host: Node = _highlight_host if is_instance_valid(_highlight_host) else self
+	host.add_child(p)
+	p.hide()
+	return p
 
 func set_highlight_host(host: Control) -> void:
 	_highlight_host = host
@@ -514,37 +547,41 @@ func highlight_control(target: Control) -> void:
 		clear_highlight()
 		return
 	_ensure_highlight_panel()
+	# Use a global-rect following highlight to guarantee full click-through on the target.
 	_highlight_target = weakref(target)
-	_highlight_mode = "control"
-	_highlight_active = false # anchors will keep it attached; no per-frame needed
+	_highlight_mode = "rect"  # treat as a rect highlight that follows the control each frame
+	_highlight_active = true
+	_multi_rect_mode = false
 	show()
-	# Reparent highlight panel under the TARGET so it shares the exact viewport/layer and tracks size automatically
-	if _highlight_panel.get_parent() != target:
+	# Ensure the highlight panel lives under the overlay host as a top-level control (viewport coords)
+	var host: Node = _highlight_host if is_instance_valid(_highlight_host) else self
+	if _highlight_panel.get_parent() != host:
 		var prev_parent := _highlight_panel.get_parent()
 		if prev_parent:
 			prev_parent.remove_child(_highlight_panel)
-		target.add_child(_highlight_panel)
-	# Use non-top-level so anchors/offsets are relative to the target
-	_highlight_panel.top_level = false
-	# Anchor to the target's full rect and expand by margin using negative offsets
-	_highlight_panel.set_anchors_preset(Control.PRESET_FULL_RECT)
-	_highlight_panel.offset_left = -_highlight_margin
-	_highlight_panel.offset_top = -_highlight_margin
-	_highlight_panel.offset_right = _highlight_margin
-	_highlight_panel.offset_bottom = _highlight_margin
-	# Ensure it's drawn above target content
+		host.add_child(_highlight_panel)
+	_highlight_panel.top_level = true
+	# Position/size now based on the target's current global rect
+	var grect: Rect2 = target.get_global_rect()
+	_highlight_panel.position = grect.position - Vector2(_highlight_margin, _highlight_margin)
+	_highlight_panel.size = grect.size + Vector2(_highlight_margin * 2, _highlight_margin * 2)
 	_highlight_panel.z_index = max(_highlight_panel.z_index, 10000)
 	_highlight_panel.show()
-	print("[Coach] highlight_control: attached to ", target.name, " margin=", _highlight_margin)
-	set_process(false)
+	print("[Coach] highlight_control: following ", target.name, " margin=", _highlight_margin)
+	set_process(true)
 
 func clear_highlight() -> void:
 	_highlight_active = false
 	_highlight_mode = "none"
 	_highlight_target = null
+	_multi_rect_mode = false
+	# Hide all panels if present
+	if not _highlight_panels.is_empty():
+		for p in _highlight_panels:
+			if is_instance_valid(p):
+				p.hide()
+	# Also keep base panel restored to host for single-rect usage next time
 	if is_instance_valid(_highlight_panel):
-		_highlight_panel.hide()
-		# Restore to host (top-level) to be ready for global-rect highlights next time
 		var host: Node = _highlight_host if is_instance_valid(_highlight_host) else self
 		if _highlight_panel.get_parent() != host:
 			var prev_parent := _highlight_panel.get_parent()
@@ -585,6 +622,7 @@ func highlight_global_rect(global_rect: Rect2) -> void:
 	_highlight_target = null
 	_highlight_mode = "rect"
 	_highlight_active = true
+	_multi_rect_mode = false
 	show()
 	_highlight_panel.show()
 	# Convert rect from GLOBAL space to the highlight host's local space (parent of highlight panel)
@@ -601,3 +639,42 @@ func highlight_global_rect(global_rect: Rect2) -> void:
 	_highlight_panel.position = top_left - Vector2(_highlight_margin, _highlight_margin)
 	_highlight_panel.size = global_rect.size + Vector2(_highlight_margin * 2, _highlight_margin * 2)
 	print("[Coach] highlight_global_rect: rect=", global_rect, " margin=", _highlight_margin)
+
+# Highlight multiple explicit global rectangles at once (e.g., several list rows)
+func highlight_global_rects(global_rects: Array) -> void:
+	if global_rects == null or global_rects.size() == 0:
+		clear_highlight()
+		return
+	_ensure_highlight_panel()
+	# Ensure we have enough panels
+	var needed := int(global_rects.size())
+	while _highlight_panels.size() < needed:
+		var extra := _create_extra_highlight_panel()
+		_highlight_panels.append(extra)
+	# Show required count and hide any extras
+	_highlight_active = true
+	_highlight_mode = "rect"
+	_multi_rect_mode = true
+	show()
+	var host: Node = _highlight_host if is_instance_valid(_highlight_host) else self
+	for i in _highlight_panels.size():
+		var p: Panel = _highlight_panels[i]
+		if not is_instance_valid(p):
+			continue
+		if i < needed:
+			# Ensure under host and top-level
+			if p.get_parent() != host:
+				var prev_parent := p.get_parent()
+				if prev_parent:
+					prev_parent.remove_child(p)
+				host.add_child(p)
+			p.top_level = true
+			var r: Rect2 = global_rects[i]
+			p.position = r.position - Vector2(_highlight_margin, _highlight_margin)
+			p.size = r.size + Vector2(_highlight_margin * 2, _highlight_margin * 2)
+			p.z_index = max(p.z_index, 10000)
+			p.show()
+		else:
+			p.hide()
+	# When using explicit rects, per-frame following is not required
+	set_process(false)

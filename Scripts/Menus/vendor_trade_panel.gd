@@ -6,6 +6,8 @@ signal item_sold(item, quantity, total_price)
 signal install_requested(item, quantity, vendor_id)
 # Tutorial signal: emitted when a vehicle entry is selected in the vendor tree
 signal tutorial_vehicle_selected
+# Tutorial signal: emitted when the quantity SpinBox changes (for onboarding cues)
+signal tutorial_quantity_changed(qty)
 
 # --- Node References ---
 @onready var vendor_item_tree: Tree = %VendorItemTree
@@ -30,6 +32,7 @@ signal tutorial_vehicle_selected
 @onready var trade_mode_tab_container: TabContainer = %TradeModeTabContainer
 @onready var loading_panel: Panel = %LoadingPanel # (Add a Panel node in your scene and name it LoadingPanel)
 @onready var quantity_row: HBoxContainer = get_node_or_null("HBoxContainer/RightPanel/HBoxContainer")
+@onready var right_panel: VBoxContainer = get_node_or_null("HBoxContainer/RightPanel")
 
 # --- Data ---
 var vendor_data # Should be set by the parent
@@ -42,6 +45,9 @@ var current_mode = "buy" # or "sell"
 var _last_selected_item_id = null # <-- Add this line
 var _last_selected_ref = null # Track last selected aggregated data reference to avoid resetting quantity repeatedly
 var _last_selection_unique_key: String = "" # Used to detect same logical selection even if reference changes
+var _pending_select_prefix: String = "" # Tutorial: select this item by prefix when tree is ready
+var _did_tutorial_auto_select_once: bool = false # Prevent repeated auto-select during tutorial
+var _suspend_quantity_handler: bool = false # Prevent recursion when setting SpinBox programmatically
 
 # Backend compatibility cache (per vehicle + part uid), shared semantics with Mechanics menu
 var _compat_cache: Dictionary = {} # key: vehicle_id||part_uid -> payload
@@ -68,9 +74,22 @@ func _ready() -> void:
 		printerr("VendorTradePanel: 'MaxButton' node not found. Please check the scene file.")
 
 	if is_instance_valid(action_button):
+		print("VTP-DEBUG: ActionButton present; connecting signals…")
 		action_button.pressed.connect(_on_action_button_pressed)
+		# Also trace low-level input to detect if clicks are reaching the button even when disabled
+		if not action_button.is_connected("gui_input", Callable(self, "_on_action_button_gui_input")):
+			action_button.gui_input.connect(_on_action_button_gui_input)
+		# button_down gives a pre-pressed hook
+		if not action_button.is_connected("button_down", Callable(self, "_on_action_button_button_down")):
+			action_button.button_down.connect(_on_action_button_button_down)
 	else:
 		printerr("VendorTradePanel: 'ActionButton' node not found. Please check the scene file.")
+
+	# Trace input arriving at the vendor panel and right side panel (to detect if clicks are blocked before button)
+	if not self.is_connected("gui_input", Callable(self, "_on_self_gui_input")):
+		self.gui_input.connect(_on_self_gui_input)
+	if is_instance_valid(right_panel) and not right_panel.is_connected("gui_input", Callable(self, "_on_right_panel_gui_input")):
+		right_panel.gui_input.connect(_on_right_panel_gui_input)
 
 	if is_instance_valid(install_button):
 		install_button.visible = false
@@ -88,11 +107,19 @@ func _ready() -> void:
 	# Get GameDataManager and connect to its signal to keep user money updated.
 	gdm = get_node_or_null("/root/GameDataManager")
 	if is_instance_valid(gdm):
-		if not gdm.is_connected("vendor_panel_data_ready", _on_vendor_panel_data_ready):
+		# Vendor panel aggregate payloads (initial fill and refreshes)
+		if gdm.has_signal("vendor_panel_data_ready") and not gdm.vendor_panel_data_ready.is_connected(_on_vendor_panel_data_ready):
 			gdm.vendor_panel_data_ready.connect(_on_vendor_panel_data_ready)
 		# Hook backend part compatibility so vendor UI can display the same truth as mechanics
 		if gdm.has_signal("part_compatibility_ready") and not gdm.part_compatibility_ready.is_connected(_on_part_compatibility_ready):
 			gdm.part_compatibility_ready.connect(_on_part_compatibility_ready)
+		# Keep the panel in sync with global data changes after transactions
+		if gdm.has_signal("user_data_updated") and not gdm.user_data_updated.is_connected(_on_user_data_updated):
+			gdm.user_data_updated.connect(_on_user_data_updated)
+		if gdm.has_signal("convoy_data_updated") and not gdm.convoy_data_updated.is_connected(_on_gdm_convoy_data_updated):
+			gdm.convoy_data_updated.connect(_on_gdm_convoy_data_updated)
+		if gdm.has_signal("settlement_data_updated") and not gdm.settlement_data_updated.is_connected(_on_gdm_settlement_data_updated):
+			gdm.settlement_data_updated.connect(_on_gdm_settlement_data_updated)
 	else:
 		printerr("VendorTradePanel: Could not find GameDataManager.")
 
@@ -103,7 +130,8 @@ func _ready() -> void:
 	# Initially hide comparison panel until an item is selected
 	comparison_panel.hide()
 	if is_instance_valid(action_button):
-		action_button.disabled = true
+		print("VTP-DEBUG: Initializing ActionButton state…")
+		_update_action_button_enabled("_ready:init")
 	if is_instance_valid(max_button):
 		max_button.disabled = true
 
@@ -115,6 +143,15 @@ func _ready() -> void:
 	api.resource_bought.connect(_on_api_transaction_result)
 	api.resource_sold.connect(_on_api_transaction_result)
 	api.fetch_error.connect(_on_api_transaction_error)
+
+	# One-time sanity check of QuantitySpinBox configuration
+	if is_instance_valid(quantity_spinbox):
+		print("VTP-DEBUG: QuantitySpinBox init value=", int(quantity_spinbox.value), " min=", int(quantity_spinbox.min_value), " max=", int(quantity_spinbox.max_value))
+		if quantity_spinbox.min_value < 1.0:
+			print("VTP-DEBUG: WARNING: QuantitySpinBox.min_value < 1 (", quantity_spinbox.min_value, ") — zero quantity can disable Buy. This is allowed but tracked.")
+
+	# Dump initial button state after wiring
+	_debug_dump_button_state("_ready")
 
 # Request data for the panel (call this when opening the panel)
 func request_panel_data(convoy_id: String, vendor_id: String) -> void:
@@ -396,6 +433,12 @@ func _populate_vendor_list() -> void:
 
 	# Restore previous expand/collapse and selection state (prevents immediate re-collapse while interacting)
 	_restore_vendor_tree_state(_prev_tree_state)
+
+	# Tutorial: if a deferred selection by prefix was requested before data was ready, try it now
+	if not _pending_select_prefix.is_empty():
+		print("VTP-DEBUG: tutorial deferred select prefix=", _pending_select_prefix)
+		_tutorial_try_select_prefix(_pending_select_prefix)
+		_pending_select_prefix = ""
 
 ## Capture expand/collapse and selection state of the vendor tree
 func _capture_vendor_tree_state() -> Dictionary:
@@ -733,8 +776,17 @@ func _on_gdm_convoy_data_updated(all_convoys_data: Array) -> void:
 
 # --- Signal Handlers ---
 func _on_tab_changed(tab_index: int) -> void:
-	current_mode = "buy" if tab_index == 0 else "sell"
+	var new_mode := "buy" if tab_index == 0 else "sell"
+	var prev_mode: String = String(current_mode)
+	current_mode = new_mode
 	action_button.text = "Buy" if current_mode == "buy" else "Sell"
+	print("VTP-DEBUG: _on_tab_changed -> index=", tab_index, " current_mode=", current_mode, " action_button.text=", action_button.text)
+	if prev_mode == current_mode:
+		# Redundant tab change signal; avoid clearing selection
+		if is_instance_valid(action_button):
+			_update_action_button_enabled("_on_tab_changed(redundant)")
+		_update_quantity_controls_visibility()
+		return
 	
 	# Clear selection and inspector when switching tabs
 	selected_item = null
@@ -744,7 +796,7 @@ func _on_tab_changed(tab_index: int) -> void:
 		convoy_item_tree.get_selected().deselect(0)
 	_clear_inspector()
 	if is_instance_valid(action_button):
-		action_button.disabled = true
+		_update_action_button_enabled("_on_tab_changed")
 	if is_instance_valid(max_button):
 		max_button.disabled = true
 
@@ -758,6 +810,7 @@ func _on_vendor_item_selected() -> void:
 		_handle_new_item_selection(item)
 	else:
 		_handle_new_item_selection(null)
+	_debug_dump_button_state("_on_vendor_item_selected")
 	_update_install_button_state()
 	_update_quantity_controls_visibility()
 
@@ -769,6 +822,7 @@ func _on_convoy_item_selected() -> void:
 	else:
 		# This happens if a category header is clicked, or selection is cleared
 		_handle_new_item_selection(null)
+	_debug_dump_button_state("_on_convoy_item_selected")
 	_update_install_button_state()
 	_update_quantity_controls_visibility()
 
@@ -859,7 +913,12 @@ func _handle_new_item_selection(p_selected_item) -> void:
 		quantity_spinbox.max_value = max(1, stock_qty)
 		print("DEBUG: quantity_spinbox.max_value set to:", quantity_spinbox.max_value)
 		if not is_same_selection:
-			quantity_spinbox.value = 1
+			# If this selection was triggered by the tutorial auto-select after a quantity change,
+			# preserve the current quantity instead of resetting to 1 to avoid tutorial flicker.
+			if _did_tutorial_auto_select_once:
+				quantity_spinbox.value = clampi(int(quantity_spinbox.value), 1, int(quantity_spinbox.max_value))
+			else:
+				quantity_spinbox.value = 1
 		else:
 			quantity_spinbox.value = clampi(int(quantity_spinbox.value), 1, int(quantity_spinbox.max_value))
 		print("DEBUG: quantity_spinbox.value set to:", quantity_spinbox.value)
@@ -883,13 +942,17 @@ func _handle_new_item_selection(p_selected_item) -> void:
 						var key := _compat_key(vid, uid)
 						if not _compat_cache.has(key):
 							gdm.request_part_compatibility(vid, uid)
-		if is_instance_valid(action_button): action_button.disabled = false
+		if is_instance_valid(action_button):
+			print("VTP-DEBUG: _handle_new_item_selection -> item selected, updating ActionButton state")
 		if is_instance_valid(max_button): max_button.disabled = false
 	else:
 		_clear_inspector()
-		if is_instance_valid(action_button): action_button.disabled = true
+		if is_instance_valid(action_button):
+			print("VTP-DEBUG: _handle_new_item_selection -> no selection, updating ActionButton state")
 		if is_instance_valid(max_button): max_button.disabled = true
 		_update_install_button_state()
+
+	_update_action_button_enabled("_handle_new_item_selection")
 
 func _on_max_button_pressed() -> void:
 	if not selected_item:
@@ -940,15 +1003,19 @@ func _on_max_button_pressed() -> void:
 
 func _on_action_button_pressed() -> void:
 	if not selected_item:
+		print("VTP-DEBUG: _on_action_button_pressed but no selected_item — ignoring")
 		return
 	var quantity = int(quantity_spinbox.value)
 	if quantity <= 0:
+		print("VTP-DEBUG: _on_action_button_pressed quantity<=0 (", quantity, ") — ignoring")
 		return
 	var item_data_source = selected_item.get("item_data")
 	if not item_data_source:
+		print("VTP-DEBUG: _on_action_button_pressed missing item_data_source — ignoring")
 		return
 	var vendor_id = vendor_data.get("vendor_id", "")
 	var convoy_id = convoy_data.get("convoy_id", "")
+	print("VTP-DEBUG: _on_action_button_pressed mode=", current_mode, " qty=", quantity, " item=", String(item_data_source.get("name","?")), " vendor=", vendor_id, " convoy=", convoy_id)
 	if current_mode == "buy":
 		gdm.buy_item(convoy_id, vendor_id, item_data_source, quantity)
 		# Emit local signal for UI listeners
@@ -975,8 +1042,37 @@ func _on_action_button_pressed() -> void:
 		emit_signal("item_sold", item_data_source, quantity, sell_unit_price * quantity)
 
 func _on_quantity_changed(_value: float) -> void:
+	# Avoid re-entrancy when we set SpinBox programmatically
+	if _suspend_quantity_handler:
+		return
+	# Defensive: if selection was lost due to any async refresh, restore the last known selection
+	if selected_item == null and _last_selected_ref != null:
+		selected_item = _last_selected_ref
+	# Tutorial assist: if user interacts with quantity but nothing is selected, try auto-select once
+	if selected_item == null and not _did_tutorial_auto_select_once:
+		_did_tutorial_auto_select_once = true
+		var desired_q := int(_value)
+		if is_instance_valid(quantity_spinbox):
+			desired_q = int(quantity_spinbox.value)
+		print("VTP-DEBUG: No selection on quantity change; attempting tutorial auto-select 'Water (Bulk)' and preserving qty=", desired_q)
+		tutorial_select_item_by_prefix("Water (Bulk)")
+		# Restore user-desired quantity without triggering recursive handling
+		if is_instance_valid(quantity_spinbox):
+			_suspend_quantity_handler = true
+			quantity_spinbox.value = clampi(desired_q, 1, int(quantity_spinbox.max_value))
+			_suspend_quantity_handler = false
 	_update_transaction_panel()
 	_update_install_button_state()
+	# Also ensure the action button reflects current quantity/selection
+	if is_instance_valid(action_button):
+		print("VTP-DEBUG: _on_quantity_changed value=", int(_value), " spin=", (int(quantity_spinbox.value) if is_instance_valid(quantity_spinbox) else -1), " selected_item?=", (selected_item != null))
+		_update_action_button_enabled("_on_quantity_changed")
+	# Emit tutorial signal so onboarding can react to quantity milestones (e.g., qty == 2)
+	if is_instance_valid(quantity_spinbox):
+		emit_signal("tutorial_quantity_changed", int(quantity_spinbox.value))
+	else:
+		emit_signal("tutorial_quantity_changed", int(_value))
+	_debug_dump_button_state("_on_quantity_changed")
 
 # --- Inspector and Transaction UI Updates ---
 func _update_inspector() -> void:
@@ -1169,8 +1265,12 @@ func _update_inspector() -> void:
 		item_info_rich_text.text = bbcode
 
 func _update_transaction_panel() -> void:
+	# Defensive: if selection was lost due to async UI updates, restore it
+	if not selected_item and _last_selected_ref != null:
+		selected_item = _last_selected_ref
 	if not selected_item:
 		price_label.text = "Total Price: $0"
+		print("VTP-DEBUG: _update_transaction_panel no selection — setting price to $0")
 		return
 
 	var item_data_source = selected_item.item_data if selected_item.has("item_data") and not selected_item.item_data.is_empty() else selected_item
@@ -1189,7 +1289,7 @@ func _update_transaction_panel() -> void:
 		price_label.text = "[b]Current Value:[/b] $%s%s" % ["%.2f" % vehicle_price, base_val_hint]
 		return
 
-	print("DEBUG: item_data_source for price calculation: ", item_data_source)
+	print("VTP-DEBUG: item_data_source for price calculation:", item_data_source)
 
 	var quantity = int(quantity_spinbox.value)
 	var final_unit_price = _get_contextual_unit_price(item_data_source)
@@ -1198,6 +1298,7 @@ func _update_transaction_panel() -> void:
 	if current_mode == "sell":
 		display_unit_price = final_unit_price / 2.0
 	var total_price = display_unit_price * quantity
+	print("VTP-DEBUG: pricing mode=", current_mode, " unit=", display_unit_price, " qty=", quantity, " total=", total_price)
 
 	if typeof(final_unit_price) != TYPE_FLOAT and typeof(final_unit_price) != TYPE_INT:
 		final_unit_price = 0.0
@@ -1287,6 +1388,71 @@ func _update_transaction_panel() -> void:
 	price_label.text = bbcode_text
 	_update_install_button_state()
 	_update_quantity_controls_visibility()
+	# Keep the Buy/Sell button enabled when a valid item is selected and quantity >= 1
+	if is_instance_valid(action_button):
+		_update_action_button_enabled("_update_transaction_panel")
+
+func _update_action_button_enabled(origin: String = "") -> void:
+	if not is_instance_valid(action_button):
+		return
+	var q := int(quantity_spinbox.value) if is_instance_valid(quantity_spinbox) else 0
+	var reason := ""
+	if selected_item == null:
+		reason = "Select an item from the list."
+	elif q < 1:
+		reason = "Increase quantity (must be at least 1)."
+	action_button.disabled = reason != ""
+	if reason == "":
+		action_button.tooltip_text = "Click to %s" % ("Buy" if current_mode == "buy" else "Sell")
+	else:
+		action_button.tooltip_text = "Disabled: %s" % reason
+	print("VTP-DEBUG: ", origin, " -> set ActionButton.disabled=", action_button.disabled, " reason=", (reason if reason != "" else "<none>"))
+	_debug_dump_button_state(origin)
+
+# --- Debug helpers ---
+func _on_action_button_gui_input(event: InputEvent) -> void:
+	# Log raw input arriving at the ActionButton to detect overlay interception or disabled state behavior
+	var _ev_str := str(event)
+	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
+		var btn := event as InputEventMouseButton
+		var disabled_str := "<na>"
+		if is_instance_valid(action_button):
+			disabled_str = str(action_button.disabled)
+		print("VTP-DEBUG: ActionButton.gui_input left ", ("pressed" if btn.pressed else "released"), " at ", btn.position, " disabled=", disabled_str)
+		_debug_dump_button_state("gui_input")
+	elif event is InputEventMouseMotion:
+		# Keep motion logs sparse; uncomment if needed
+		pass
+
+func _on_action_button_button_down() -> void:
+	var disabled_str := "<na>"
+	if is_instance_valid(action_button):
+		disabled_str = str(action_button.disabled)
+	print("VTP-DEBUG: ActionButton.button_down fired (disabled=", disabled_str, ")")
+
+func _on_self_gui_input(event: InputEvent) -> void:
+	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
+		var btn := event as InputEventMouseButton
+		print("VTP-DEBUG: VendorTradePanel.gui_input left ", ("pressed" if btn.pressed else "released"), " at ", btn.position)
+
+func _on_right_panel_gui_input(event: InputEvent) -> void:
+	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
+		var btn := event as InputEventMouseButton
+		print("VTP-DEBUG: RightPanel.gui_input left ", ("pressed" if btn.pressed else "released"), " at ", btn.position)
+
+func _debug_dump_button_state(origin: String = "") -> void:
+	if not is_instance_valid(action_button):
+		print("VTP-DEBUG: ", origin, " -> ActionButton invalid")
+		return
+	var btn_rect := action_button.get_global_rect()
+	var spin_v := int(quantity_spinbox.value) if is_instance_valid(quantity_spinbox) else -1
+	var spin_min := int(quantity_spinbox.min_value) if is_instance_valid(quantity_spinbox) else -1
+	var spin_max := int(quantity_spinbox.max_value) if is_instance_valid(quantity_spinbox) else -1
+	var sel_name := "<none>"
+	if selected_item and selected_item.has("item_data"):
+		sel_name = String(selected_item.item_data.get("name", "?"))
+	print("VTP-DEBUG: ", origin, " -> mode=", current_mode, " btn(disabled=", action_button.disabled, ", visible=", action_button.visible, ", z=", action_button.z_index, ") rect=", btn_rect,
+		" spin(value=", spin_v, ", min=", spin_min, ", max=", spin_max, ") selection=", sel_name)
 
 func _update_quantity_controls_visibility() -> void:
 	# Hide quantity controls when buying a vehicle, otherwise show them
@@ -1307,6 +1473,9 @@ func _update_quantity_controls_visibility() -> void:
 
 func _looks_like_part(item_data_source: Dictionary) -> bool:
 	# Avoid misclassifying vehicles (which often have parts[]) as parts
+	# Never treat raw resources (Fuel/Water/Food bulk) as parts
+	if item_data_source.has("is_raw_resource") and bool(item_data_source.get("is_raw_resource")):
+		return false
 	if _is_vehicle(item_data_source):
 		return false
 	if item_data_source.has("slot") and item_data_source.get("slot") != null:
@@ -1638,6 +1807,18 @@ func tutorial_set_quantity(qty: int) -> void:
 
 ## Selects an item whose display text starts with the given prefix in the vendor tree (buy tab)
 func tutorial_select_item_by_prefix(prefix: String) -> void:
+	# If tree isn't ready, defer selection until after population
+	if not is_instance_valid(vendor_item_tree) or vendor_item_tree.get_root() == null:
+		_pending_select_prefix = prefix
+		print("VTP-DEBUG: tutorial_select_item_by_prefix deferred; tree not ready. prefix=", prefix)
+		return
+	_tutorial_try_select_prefix(prefix)
+
+func tutorial_defer_select_item_by_prefix(prefix: String) -> void:
+	_pending_select_prefix = prefix
+	print("VTP-DEBUG: tutorial_defer_select_item_by_prefix set prefix=", prefix)
+
+func _tutorial_try_select_prefix(prefix: String) -> void:
 	if not is_instance_valid(vendor_item_tree):
 		return
 	var root := vendor_item_tree.get_root()
@@ -1651,6 +1832,7 @@ func tutorial_select_item_by_prefix(prefix: String) -> void:
 				vendor_item_tree.scroll_to_item(it)
 				# Trigger selection handler
 				_on_vendor_item_selected()
+				print("VTP-DEBUG: tutorial selected by prefix '", prefix, "' -> ", label)
 				return
 
 ## Returns the global rect of an item row matching an exact display text (or startswith if exact not found)
@@ -1679,3 +1861,73 @@ func tutorial_get_quantity_spinbox_rect_global() -> Rect2:
 	if not is_instance_valid(quantity_spinbox):
 		return Rect2()
 	return quantity_spinbox.get_global_rect()
+
+## Returns the global rect approximating the SpinBox's increment (up) button area
+## Useful for tutorials to direct users to increase the quantity themselves.
+func tutorial_get_quantity_increment_rect_global() -> Rect2:
+	if not is_instance_valid(quantity_spinbox):
+		return Rect2()
+	var r: Rect2 = quantity_spinbox.get_global_rect()
+	if r.size == Vector2.ZERO:
+		return Rect2()
+	# Try to use a theme metric; otherwise fall back to a heuristic width for the up/down control cluster
+	var updown_w: float = 0.0
+	if quantity_spinbox.has_theme_constant("updown"):
+		updown_w = float(quantity_spinbox.get_theme_constant("updown"))
+	if updown_w <= 0.0:
+		updown_w = clamp(r.size.x * 0.3, 16.0, 28.0)
+	var up_h: float = r.size.y * 0.5
+	var pos := Vector2(r.position.x + r.size.x - updown_w, r.position.y)
+	return Rect2(pos, Vector2(updown_w, up_h))
+
+## Convenience for stage 1: expand Vehicles and keep it open
+func tutorial_open_vehicles() -> void:
+	if not is_instance_valid(vendor_item_tree):
+		return
+	var root := vendor_item_tree.get_root()
+	if root == null:
+		return
+	for cat in root.get_children():
+		if str(cat.get_text(0)).strip_edges().to_lower() == "vehicles":
+			cat.collapsed = false
+			vendor_item_tree.scroll_to_item(cat)
+			return
+
+## Returns the global rect of the first vehicle row under the Vehicles category, if available
+func tutorial_get_first_vehicle_row_rect_global() -> Rect2:
+	if not is_instance_valid(vendor_item_tree):
+		return Rect2()
+	var root := vendor_item_tree.get_root()
+	if root == null:
+		return Rect2()
+	for cat in root.get_children():
+		if str(cat.get_text(0)).strip_edges().to_lower() == "vehicles":
+			var child := cat.get_first_child()
+			while child != null and child.is_selectable(0) == false:
+				child = child.get_next()
+			if child != null:
+				var rlocal: Rect2 = vendor_item_tree.get_item_area_rect(child, 0)
+				var gpos := vendor_item_tree.get_global_transform() * rlocal.position
+				return Rect2(gpos, rlocal.size)
+			break
+	return Rect2()
+
+## Returns an Array of up to the first N vehicle row global rects
+func tutorial_get_vehicle_row_rects_global(max_count: int = 3) -> Array:
+	var rects: Array = []
+	if not is_instance_valid(vendor_item_tree):
+		return rects
+	var root := vendor_item_tree.get_root()
+	if root == null:
+		return rects
+	for cat in root.get_children():
+		if str(cat.get_text(0)).strip_edges().to_lower() == "vehicles":
+			var child := cat.get_first_child()
+			while child != null and rects.size() < max_count:
+				if child.is_selectable(0):
+					var rlocal: Rect2 = vendor_item_tree.get_item_area_rect(child, 0)
+					var gpos := vendor_item_tree.get_global_transform() * rlocal.position
+					rects.append(Rect2(gpos, rlocal.size))
+				child = child.get_next()
+			break
+	return rects
