@@ -63,6 +63,7 @@ var _convoy_total_volume: float = 0.0
 # --- Refresh coalescing (avoid multiple jarring repaints on rapid signals) ---
 var _refresh_requests_queued: bool = false
 var _inflight_transaction: bool = false
+var _vendor_ui_update_pending: bool = false # coalesce vendor_panel_data_ready bursts
 
 
 func _ready() -> void:
@@ -170,6 +171,14 @@ func _on_vendor_panel_data_ready(vendor_panel_data: Dictionary) -> void:
 	self.all_settlement_data_global = vendor_panel_data.get("all_settlement_data")
 	self.vendor_items = vendor_panel_data.get("vendor_items", {})
 	self.convoy_items = vendor_panel_data.get("convoy_items", {})
+	# Coalesce multiple ready signals into a single UI update to avoid visible flashing
+	if _vendor_ui_update_pending:
+		return
+	_vendor_ui_update_pending = true
+	call_deferred("_apply_vendor_ui_update_once")
+
+func _apply_vendor_ui_update_once() -> void:
+	_vendor_ui_update_pending = false
 	_update_vendor_ui()
 
 func _update_vendor_ui() -> void:
@@ -754,9 +763,11 @@ func _on_gdm_settlement_data_updated(all_settlements_data: Array) -> void:
 		if settlement.has("vendors") and settlement.vendors is Array:
 			for vendor in settlement.vendors:
 				if vendor.has("vendor_id") and str(vendor.get("vendor_id")) == current_vendor_id:
-					self.vendor_data = vendor # <-- Only update here!
-					_populate_vendor_list()
-					# Do NOT clear selection here; preserving it prevents immediate collapse after user click
+					# Only update the vendor_data payload; avoid full repaint here to reduce flicker.
+					# The authoritative repaint happens when GameDataManager emits vendor_panel_data_ready.
+					self.vendor_data = vendor
+					# Keep resources/labels up-to-date without rebuilding trees
+					_update_convoy_info_display()
 					return
 	if is_instance_valid(loading_panel):
 		loading_panel.visible = false
@@ -767,8 +778,8 @@ func _on_gdm_convoy_data_updated(all_convoys_data: Array) -> void:
 	var current_convoy_id = str(convoy_data.get("convoy_id"))
 	for updated_convoy_data in all_convoys_data:
 		if updated_convoy_data.has("convoy_id") and str(updated_convoy_data.get("convoy_id")) == current_convoy_id:
-			self.convoy_data = updated_convoy_data # <-- Only update here!
-			_populate_convoy_list()
+			# Update local cache and only update labels; avoid repopulating lists to prevent visible flashes
+			self.convoy_data = updated_convoy_data
 			_update_convoy_info_display()
 			# Preserve selection if possible to avoid UI flicker during tutorial
 			if _last_selected_ref != null and selected_item == null:
@@ -781,21 +792,8 @@ func _on_gdm_convoy_data_updated(all_convoys_data: Array) -> void:
 				if sid == null:
 					sid = selected_item.item_data.get("vehicle_id")
 				if sid != null:
-					# Attempt to restore by scanning current convoy items
-					var tree := convoy_item_tree
-					if is_instance_valid(tree) and tree.get_root() != null:
-						for cat in tree.get_root().get_children():
-							for it in cat.get_children():
-								var md = it.get_metadata(0)
-								if md and md.has("item_data"):
-									var cid = md.item_data.get("cargo_id", md.item_data.get("vehicle_id", null))
-									if cid == sid:
-										it.select(0)
-										_handle_new_item_selection(md)
-										still_valid = true
-										break
-							if still_valid:
-								break
+					# Defer heavy selection restore until next authoritative vendor_panel_data_ready repaint
+					still_valid = true
 			if not still_valid:
 				_handle_new_item_selection(null)
 			return

@@ -12,6 +12,7 @@ var _id_to_index: Dictionary = {}
 var _last_emit_time: int = 0 # microseconds
 var _emit_cooldown_usec: int = 180000 # ~0.18s debounce to prevent flicker
 var _pending_step_id: String = "" # coalesce rapid gotos
+var _emit_generation: int = 0 # bumps whenever steps or immediate transitions change, to cancel stale timers
 
 func set_steps(steps: Array) -> void:
     # steps is an ordered array of dictionaries with at least an 'id' key
@@ -32,6 +33,7 @@ func set_steps(steps: Array) -> void:
     # Reset throttle state when steps change
     _pending_step_id = ""
     _last_emit_time = 0
+    _emit_generation += 1
 
 func start(first_step_id: String = "") -> void:
     if _steps.is_empty():
@@ -105,11 +107,16 @@ func _emit_current_throttled() -> void:
     else:
         # Schedule a single emit at the end of the cooldown with the most recent index
         var remaining_sec := float(_emit_cooldown_usec - (now_us - _last_emit_time)) / 1000000.0
+        var gen_at_schedule := _emit_generation
         var t := Timer.new()
         t.one_shot = true
         t.wait_time = max(0.01, remaining_sec)
         add_child(t)
         t.timeout.connect(func():
+            # Drop this emit if a newer generation has started (steps changed or immediate jump)
+            if gen_at_schedule != _emit_generation:
+                t.queue_free()
+                return
             if _index >= 0 and _index < _steps.size():
                 _last_emit_time = Time.get_ticks_usec()
                 var id2 := String(_steps[_index].get("id", ""))
@@ -118,3 +125,28 @@ func _emit_current_throttled() -> void:
             t.queue_free()
         )
         t.start()
+
+# --- Immediate (non-throttled) helpers ---
+# These bypass the debounce when we need to render a new step instantly (e.g., L1→L2 handoff)
+func force_start(first_step_id: String = "") -> void:
+    if _steps.is_empty():
+        push_warning("TutorialDirector.force_start: no steps defined")
+        return
+    if first_step_id != "" and _id_to_index.has(first_step_id):
+        _index = int(_id_to_index[first_step_id])
+    else:
+        _index = max(0, _index)
+    _pending_step_id = ""
+    _emit_generation += 1
+    _emit_current()
+
+func force_goto(step_id: String) -> void:
+    if _steps.is_empty():
+        return
+    if _id_to_index.has(step_id):
+        _index = int(_id_to_index[step_id])
+        _pending_step_id = ""
+        _emit_generation += 1
+        _emit_current()
+    else:
+        push_warning("TutorialDirector.force_goto: unknown step id: %s" % step_id)

@@ -7,6 +7,8 @@ This document describes how the tutorial steps are orchestrated, how the coach U
 - Scripts/UI/tutorial_director.gd
   - A small state machine that owns the ordered list of tutorial steps.
   - Supports next, prev, and goto(step_id) so the UI can fluidly move forward or backward.
+  - Debounced emissions (to avoid flicker): step changed signals are throttled to a safe cadence.
+  - Immediate jump APIs for critical transitions: force_start(step_id?) and force_goto(step_id) emit without debounce.
   - Emits step_changed(step_id, index, total) whenever the current step changes.
 
 - Scripts/UI/onboarding_coach.gd
@@ -17,9 +19,10 @@ This document describes how the tutorial steps are orchestrated, how the coach U
 - Scripts/UI/main_screen.gd
   - Mediates between game UI state and the tutorial.
   - Creates the OnboardingLayer, the Coach, and the TutorialDirector.
-  - Subscribes to UI/game events (menu opened, closed, tab changes, purchases) and calls the director.goto(step_id) accordingly.
-  - Renders the current step by calling coach.show_step_message(...) and placing highlights.
-  - Stage 2 (Resources) flow is orchestrated here too. It sets a stage-specific ordered list of step ids when user.metadata.tutorial == 2 and at least one vehicle exists, and advances based on UI transitions and purchase signals.
+  - Subscribes to UI/game events (menu opened, closed, tab changes, purchases) and calls the director to advance steps.
+  - Renders the current step via coach.show_step_message(...) and highlight functions.
+  - Bridges Stage 1 → Stage 2 using a transition guard that prevents non-target steps from flashing during the handoff.
+  - Stage 2 (Resources) flow is orchestrated here; when user.metadata.tutorial == 2 and at least one vehicle exists, it installs a Stage 2 step list and uses immediate step start to avoid cycling.
 
 - Scenes/OnboardingLayer.tscn and Scripts/UI/onboarding_overlay_root.gd
   - A simple overlay Control that hosts the coach and director.
@@ -55,10 +58,10 @@ Because we always set the step based on actual UI context, the tutorial naturall
   6. s2_hint_select_food
   7. s2_hint_buy_food
 
-- Stage 2 transitions (mirrors Stage 1’s context-driven approach, with a bridge if already in the settlement menu):
+- Stage 2 transitions (with a smooth bridge from Stage 1):
   - When Convoy Overview opens → goto("s2_hint_settlement_button").
   - When Settlement submenu opens → goto("s2_hint_market_tab").
-  - If Stage 2 begins while the settlement menu is already open, start at the most relevant step: if the Market tab is active → goto("s2_hint_select_water"), otherwise → goto("s2_hint_market_tab").
+  - When Stage 2 starts (after buying a vehicle), we begin at "s2_hint_market_tab" using an immediate (non-throttled) start; this avoids cycling through earlier steps.
   - When user selects the Market tab → goto("s2_hint_select_water").
   - When “Water Jerry Cans” selected → goto("s2_hint_buy_water").
   - On a successful water purchase → goto("s2_hint_select_food").
@@ -74,7 +77,7 @@ The director emits step_changed(step_id, index, total). main_screen.gd handles t
 
 The coach side panel is positioned within the map’s bounds and avoids overlapping menus/popups using set_side_panel_bounds_by_global_rect(...) and set_side_panel_avoid_rects_global(...), updated whenever layout changes.
 
-Stage 2 rendering uses the same pattern. Main targets:
+- Stage 2 rendering uses the same pattern. Main targets:
 - Top bar controls (convoy button / dropdown) for s2_hint_convoy_button.
 - Convoy menu Settlement button for s2_hint_settlement_button.
 - Market tab header for s2_hint_market_tab. Highlight is computed via ConvoySettlementMenu.tutorial_get_vendor_tab_headers_info() by picking the tab with category_idx == 4 (Resources). Fallbacks compute a global rect from the TabBar if needed.
@@ -82,7 +85,11 @@ Stage 2 rendering uses the same pattern. Main targets:
 - Quantity SpinBox + Buy button highlighted together for the buy steps using the union of tutorial_get_quantity_spinbox_rect_global() and tutorial_get_buy_button_global_rect() (or the control itself via tutorial_get_buy_button_control()).
 
 Stage 1 rendering tweak:
-- In the Dealership step, instead of highlighting the "Vehicles" category header, we expand Vehicles and highlight the first vehicle row. This reduces ambiguity and moves the player directly to a specific vehicle to buy. Helpers used: vendor_trade_panel.gd tutorial_open_vehicles() and tutorial_get_first_vehicle_row_rect_global().
+- In the Dealership step, we expand Vehicles and highlight the vehicles list area to make the target obvious. Implementation prefers a single union rect over the first 3 rows (or a helper union) via vendor_trade_panel.gd: tutorial_get_vehicle_row_rects_global(3) → union, fallback tutorial_get_vehicles_union_rect_global(3).
+
+Highlight lifecycle and stability:
+- Highlights are not blanket-cleared at the start of a render; we clear only immediately before applying a new highlight. This keeps persistent callouts visible between steps/ticks.
+- The highlight overlay is hosted on a top-level global layer so it can sit above menus and remains attached to controls across layout changes.
 
 ## Adding or Reordering Steps
 
@@ -110,6 +117,9 @@ _tutorial_director.set_steps(steps)
 
 Tip: Prefer using director.goto(...) over manual state variables; it ensures the director re-emits step_changed so the coach refreshes reliably.
 
+Instant transitions:
+- For critical UX jumps (like Stage 1 → Stage 2), use director.force_start(step_id?) or director.force_goto(step_id) to bypass debounce and render the intended step immediately without cycling.
+
 Stage 2 (Resources) specifics:
 - Steps are set on the director when entering Stage 2 (user.metadata.tutorial == 2 and at least one vehicle), e.g., in main_screen.gd via a helper like _maybe_start_stage2_walkthrough().
 - Messages for s2_* step ids must exist in _walkthrough_messages.
@@ -120,8 +130,8 @@ Stage 2 (Resources) specifics:
 
 ## Guard Conditions and Exit
 
-- If a vehicle gets purchased, main_screen.gd dismisses the coach and clears the walkthrough.
-- When menus fully close, the tutorial resets to the first step unless the user dismissed it.
+- When a vehicle is purchased, we transition directly into Stage 2. The coach stays visible, Stage 1 listeners are cleaned up, and a transition guard prevents non-target steps from flashing.
+- When menus fully close, the tutorial resets to the first step unless the user dismissed it (outside transitions).
 
 You can also listen to director.finished if you want to record completion or start a second tutorial track.
 
@@ -150,6 +160,10 @@ Stage 2 additions:
   - OnboardingLayer is parented under the Map view and is visible.
   - _update_coach_bounds_and_avoid() is called after layout changes so the side panel is inside the map area.
 - Highlight not appearing: Ensure highlight_host is set (main_screen ensures this), and that the target Control is valid/inside_tree.
+
+Stage 1 → Stage 2 transition polish:
+- If you observe a rare highlight “pop” due to late layout reflows, add a one-frame keep-alive to re-apply the final highlight after the UI settles.
+- Menu/tab handlers are temporarily gated during the handoff to avoid step churn; ensure your custom code paths respect the _transitioning_to_stage2 guard.
 
 Stage 2 tips:
 - If the Market/Resources tab rect is not available on first frame, wait for ConvoySettlementMenu.tabs_ready and re-query tutorial_get_vendor_tab_headers_info().

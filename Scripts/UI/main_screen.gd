@@ -53,6 +53,10 @@ var _s2_progress := {
 # Prevent multiple Stage 2 initializations causing flashing
 var _s2_started: bool = false
 var _walkthrough_rendering: bool = false # re-entrancy guard
+var _transitioning_to_stage2: bool = false # suppress noisy renders during L1→L2 handoff
+var _walkthrough_reset_timer: SceneTreeTimer = null # debounce timer for idle reset
+var _walkthrough_reset_pending: bool = false
+var _transition_target_step_id: String = "" # while transitioning, only this step is allowed to render
 
 # Stage 2 wiring: track vendor tree connection to detect user clicks on Resources/Water/MRE
 var _s2_vendor_tree: Tree = null
@@ -233,6 +237,8 @@ func _ready():
 
 	# Proactively check once after layout settles (in case no signals fire yet)
 	call_deferred("_check_or_prompt_new_convoy")
+	# Also proactively try to show the Stage 1 coach if applicable (in case no early signals fire)
+	call_deferred("_maybe_show_buy_vehicle_coach")
 	# Also initialize tutorial stage and attempt Stage 2 start if applicable
 	_current_tutorial_stage = _get_user_tutorial_stage()
 	call_deferred("_maybe_start_stage2_walkthrough")
@@ -480,6 +486,9 @@ func _on_initial_data_ready():
 func _on_convoy_data_updated(all_convoys: Array):
 	print("[Onboarding] convoy_data_updated received; convoys passed count=", (all_convoys.size() if all_convoys is Array else -1))
 	_current_tutorial_stage = _get_user_tutorial_stage()
+	# During L1→L2 transition, suppress extra renders to avoid flicker
+	if _transitioning_to_stage2:
+		return
 	_check_or_prompt_new_convoy(all_convoys)
 	# After convoys update, consider showing the next coach (buy a vehicle)
 	_maybe_show_buy_vehicle_coach()
@@ -498,9 +507,11 @@ func _on_user_data_updated(_user: Dictionary):
 			var stage = int(t) if typeof(t) in [TYPE_INT, TYPE_FLOAT] else -1
 			print("[Onboarding] user.metadata.tutorial=", stage)
 	print("[Onboarding] user object:", user_dump)
-	_check_or_prompt_new_convoy()
-	_maybe_show_buy_vehicle_coach()
-	_maybe_run_vendor_walkthrough()
+	# Suppress noisy renders while transitioning to Stage 2
+	if not _transitioning_to_stage2:
+		_check_or_prompt_new_convoy()
+		_maybe_show_buy_vehicle_coach()
+		_maybe_run_vendor_walkthrough()
 	# Refresh current stage and maybe start Stage 2
 	_current_tutorial_stage = _get_user_tutorial_stage()
 	_maybe_start_stage2_walkthrough()
@@ -675,6 +686,9 @@ func _ensure_coach() -> void:
 			print("[Onboarding] _ensure_coach: connected menu_visibility_changed for walkthrough reset")
 
 func _on_tutorial_step_changed(step_id: String, index: int, total: int) -> void:
+	# During L1→L2 transition, ignore any step changes that are not the chosen Stage 2 target
+	if _transitioning_to_stage2 and step_id != _transition_target_step_id:
+		return
 	# Mirror old state var for backward compatibility, then render that step
 	_walkthrough_state = step_id
 	_render_walkthrough_step(step_id, index, total)
@@ -687,11 +701,14 @@ func _on_buy_vehicle_coach_dismissed() -> void:
 	_buy_vehicle_coach_dismissed = true
 
 func _on_vehicle_bought(_result: Dictionary) -> void:
-	# Hide/dismiss when a vehicle is purchased
-	_buy_vehicle_coach_dismissed = true
-	_hide_buy_vehicle_coach()
-	_clear_walkthrough()
-	# Immediately clear any lingering highlight (e.g., Buy button) before Stage 2 begins
+	# Smooth L1→L2 handoff: immediately enter Stage 2 and freeze non-target renders
+	_current_tutorial_stage = 2
+	_transitioning_to_stage2 = true
+	_transition_target_step_id = ""
+	_buy_vehicle_coach_dismissed = false
+	# Proactively remove Stage 1 listeners so they cannot re-assert highlights
+	_cleanup_stage1_walkthrough_listeners()
+	# Clear any lingering highlight (e.g., Buy button) before Stage 2 begins
 	if is_instance_valid(_buy_vehicle_coach) and _buy_vehicle_coach.has_method("clear_highlight"):
 		_buy_vehicle_coach.call_deferred("clear_highlight")
 	# Advance tutorial stage to 2 via API
@@ -709,14 +726,67 @@ func _on_vehicle_bought(_result: Dictionary) -> void:
 			merged_md["tutorial"] = prev_tutorial + 1
 			api.call_deferred("update_user_metadata", user_id, merged_md)
 	# Prepare Stage 2 state
-	_current_tutorial_stage = 2
 	_s2_progress["bought_water"] = false
 	_s2_progress["bought_food"] = false
-	# Optionally start Stage 2 immediately; small delay to let UI settle and prevent highlight flicker
-	await get_tree().process_frame
-	var t := get_tree().create_timer(0.15)
-	await t.timeout
+	# Preselect Market tab and expand Resources so we can land directly on Select Water
+	# Always begin Stage 2 at the Market step; let the user click/select next
+	var will_start_at := "s2_hint_market_tab"
+	_transition_target_step_id = will_start_at
+	# Pre-show Stage 2 message and placeholder highlight immediately
+	_pre_show_stage2(will_start_at)
+	# Start Stage 2 now (non-throttled via force_start inside _maybe_start_stage2_walkthrough)
 	call_deferred("_maybe_start_stage2_walkthrough")
+
+## Helper removed: no longer preselects Resources during the bridge
+
+## Helper: Show Stage 2 message and a best-effort placeholder highlight instantly
+func _pre_show_stage2(step_id: String) -> void:
+	_ensure_coach()
+	if not is_instance_valid(_buy_vehicle_coach):
+		return
+	# Stage 2 index mapping (1-based)
+	var idx_map := {
+		"s2_hint_convoy_button": 1,
+		"s2_hint_settlement_button": 2,
+		"s2_hint_market_tab": 3,
+		"s2_hint_select_water": 4,
+		"s2_hint_buy_water": 5,
+		"s2_hint_select_food": 6,
+		"s2_hint_buy_food": 7,
+	}
+	var total_steps2 := 7
+	var idx := int(idx_map.get(step_id, 3))
+	if _buy_vehicle_coach.has_method("show_step_message"):
+		_buy_vehicle_coach.call_deferred("show_step_message", idx, total_steps2, _walkthrough_messages.get(step_id, ""))
+	# Placeholder highlight according to the intended step
+	var mm = get_node_or_null("/root/MenuManager")
+	if not is_instance_valid(mm) or not mm.current_active_menu:
+		return
+	var menu = mm.current_active_menu
+	var tabs = menu.get_node_or_null("%VendorTabContainer")
+	if tabs == null:
+		tabs = menu.get_node_or_null("VendorTabContainer")
+	if not is_instance_valid(tabs):
+		return
+	if step_id == "s2_hint_market_tab":
+		# Try helper-provided rect; fallback to TabBar geometry
+		var r := Rect2()
+		if menu.has_method("tutorial_get_market_tab_rect_global"):
+			r = menu.call("tutorial_get_market_tab_rect_global")
+		if r.size == Vector2.ZERO and tabs is TabContainer:
+			var tc: TabContainer = tabs
+			var market_idx := _get_resources_tab_index(menu, tc)
+			var tab_bar: Control = null
+			if tc.has_method("get_tab_bar"):
+				tab_bar = tc.call("get_tab_bar")
+			if tab_bar == null:
+				tab_bar = tc.find_child("TabBar", true, false)
+			if is_instance_valid(tab_bar) and market_idx != -1 and tab_bar.has_method("get_tab_rect"):
+				var rloc: Rect2 = tab_bar.call("get_tab_rect", market_idx)
+				var bar_pos: Vector2 = (tab_bar as Control).get_global_rect().position
+				r = Rect2(bar_pos + rloc.position, rloc.size)
+		if r.size != Vector2.ZERO and _buy_vehicle_coach.has_method("highlight_global_rect"):
+			_buy_vehicle_coach.call_deferred("highlight_global_rect", r)
 
 func _maybe_show_buy_vehicle_coach() -> void:
 	if _buy_vehicle_coach_dismissed:
@@ -814,6 +884,10 @@ func _maybe_run_vendor_walkthrough() -> void:
 	if _walkthrough_rendering:
 		return
 	_walkthrough_rendering = true
+	# During Stage 2 transition, only allow the chosen target step to render; drop others
+	if _transitioning_to_stage2 and _walkthrough_state != _transition_target_step_id:
+		_walkthrough_rendering = false
+		return
 	if _buy_vehicle_coach_dismissed:
 		print("[Onboarding] _maybe_run_vendor_walkthrough: dismissed; abort")
 		_walkthrough_rendering = false
@@ -842,6 +916,7 @@ func _maybe_run_vendor_walkthrough() -> void:
 		"s2_hint_convoy_button":
 			if is_instance_valid(_buy_vehicle_coach) and _buy_vehicle_coach.has_method("show_step_message"):
 				_buy_vehicle_coach.call_deferred("show_step_message", idx, total_steps, _walkthrough_messages.get(_walkthrough_state, ""))
+				call_deferred("_update_coach_bounds_and_avoid")
 			await get_tree().process_frame
 			var rects_s2: Array = []
 			if is_instance_valid(top_bar):
@@ -870,14 +945,21 @@ func _maybe_run_vendor_walkthrough() -> void:
 				if is_instance_valid(sbtn2):
 					if _buy_vehicle_coach.has_method("show_step_message"):
 						_buy_vehicle_coach.call_deferred("show_step_message", idx, total_steps, _walkthrough_messages.get(_walkthrough_state, ""))
+						call_deferred("_update_coach_bounds_and_avoid")
 					if _buy_vehicle_coach.has_method("highlight_control"):
 						_buy_vehicle_coach.call_deferred("highlight_control", sbtn2)
 		"s2_hint_market_tab":
 			var mm_m = get_node_or_null("/root/MenuManager")
 			if is_instance_valid(mm_m) and mm_m.current_active_menu:
+				# Immediate text render BEFORE any awaits so player sees instructions even if tabs_ready delays
+				if is_instance_valid(_buy_vehicle_coach) and _buy_vehicle_coach.has_method("show_step_message"):
+					_buy_vehicle_coach.call_deferred("show_step_message", idx, total_steps, _walkthrough_messages.get(_walkthrough_state, ""))
+					call_deferred("_update_coach_bounds_and_avoid")
 				# Wait until tabs are ready
 				if mm_m.current_active_menu.has_signal("tabs_ready"):
 					await mm_m.current_active_menu.tabs_ready
+				# Give the layout one more frame to settle measured rects
+				await get_tree().process_frame
 				var menu_m = mm_m.current_active_menu
 				var tabs_m = menu_m.get_node_or_null("%VendorTabContainer")
 				if tabs_m == null:
@@ -885,6 +967,7 @@ func _maybe_run_vendor_walkthrough() -> void:
 				if is_instance_valid(tabs_m):
 					if _buy_vehicle_coach.has_method("show_step_message"):
 						_buy_vehicle_coach.call_deferred("show_step_message", idx, total_steps, _walkthrough_messages.get(_walkthrough_state, ""))
+						call_deferred("_update_coach_bounds_and_avoid")
 					# Prefer the menu's Market helpers for index and rect
 					var target_rect := Rect2()
 					var market_idx := -1
@@ -894,6 +977,11 @@ func _maybe_run_vendor_walkthrough() -> void:
 						market_idx = int(menu_m.call("tutorial_get_best_market_tab_index"))
 					if menu_m.has_method("tutorial_get_market_tab_rect_global"):
 						target_rect = menu_m.call("tutorial_get_market_tab_rect_global")
+					# If the helper rect is still zero, wait a frame and try once more
+					if target_rect.size == Vector2.ZERO:
+						await get_tree().process_frame
+						if menu_m.has_method("tutorial_get_market_tab_rect_global"):
+							target_rect = menu_m.call("tutorial_get_market_tab_rect_global")
 					# If helpers didn't provide, fall back to header info priorities
 					if (market_idx == -1 or target_rect.size == Vector2.ZERO) and menu_m.has_method("tutorial_get_vendor_tab_headers_info"):
 						var info: Array = menu_m.call("tutorial_get_vendor_tab_headers_info")
@@ -954,7 +1042,9 @@ func _maybe_run_vendor_walkthrough() -> void:
 							tab_bar2 = tabs_m.find_child("TabBar", true, false)
 						if tab_bar2 != null and tab_bar2.has_method("get_tab_rect"):
 							var rect_local2: Rect2 = tab_bar2.call("get_tab_rect", market_idx)
-							target_rect = Rect2(tab_bar2.get_global_transform() * rect_local2.position, rect_local2.size)
+							# Compose global rect from TabBar position + local rect
+							var bar_pos2: Vector2 = (tab_bar2 as Control).get_global_rect().position
+							target_rect = Rect2(bar_pos2 + rect_local2.position, rect_local2.size)
 					# Ensure TabBar click handler is wired during Stage 2 to allow advancing on clicks even if already selected
 					var tab_bar_click: Control = null
 					if tabs_m.has_method("get_tab_bar"):
@@ -963,14 +1053,28 @@ func _maybe_run_vendor_walkthrough() -> void:
 						tab_bar_click = tabs_m.find_child("TabBar", true, false)
 					if tab_bar_click and not tab_bar_click.is_connected("gui_input", Callable(self, "_on_vendor_tab_bar_gui_input_for_walkthrough")):
 						tab_bar_click.gui_input.connect(_on_vendor_tab_bar_gui_input_for_walkthrough)
-					if target_rect.size != Vector2.ZERO and _buy_vehicle_coach.has_method("highlight_global_rect"):
+					# Prefer a stable proxy over a raw rect to survive layout shifts
+					var used_proxy := false
+					if menu_m.has_method("tutorial_build_market_tab_highlight_proxy") and _buy_vehicle_coach.has_method("highlight_control"):
+						var proxy_ctrl: Control = menu_m.call("tutorial_build_market_tab_highlight_proxy")
+						if is_instance_valid(proxy_ctrl):
+							_buy_vehicle_coach.call_deferred("highlight_control", proxy_ctrl)
+							used_proxy = true
+					# Fallback to rect highlight when proxy isn't available
+					if not used_proxy and target_rect.size != Vector2.ZERO and _buy_vehicle_coach.has_method("highlight_global_rect"):
 						_buy_vehicle_coach.call_deferred("highlight_global_rect", target_rect)
+						# Re-apply one frame later to correct any late layout shifts
+						call_deferred("_reapply_market_tab_highlight_once")
 					# Wire tab change listener
 					if tabs_m.has_signal("tab_changed") and not tabs_m.is_connected("tab_changed", Callable(self, "_on_vendor_tab_changed_for_walkthrough")):
 						tabs_m.tab_changed.connect(_on_vendor_tab_changed_for_walkthrough)
 		"s2_hint_select_water":
 			var mm_sw = get_node_or_null("/root/MenuManager")
 			if is_instance_valid(mm_sw) and mm_sw.current_active_menu:
+				# Immediate text render so user gets guidance even if resources tab rects need a frame
+				if is_instance_valid(_buy_vehicle_coach) and _buy_vehicle_coach.has_method("show_step_message"):
+					_buy_vehicle_coach.call_deferred("show_step_message", idx, total_steps, _walkthrough_messages.get(_walkthrough_state, ""))
+					call_deferred("_update_coach_bounds_and_avoid")
 				var menu_sw = mm_sw.current_active_menu
 				var tabs_sw = menu_sw.get_node_or_null("%VendorTabContainer")
 				if tabs_sw == null:
@@ -1383,6 +1487,8 @@ func _on_settlement_tabs_ready_for_walkthrough() -> void:
 
 
 func _on_menu_opened_for_walkthrough(_menu_node: Node, menu_type: String) -> void:
+	if _transitioning_to_stage2:
+		return
 	print("[Onboarding] _on_menu_opened_for_walkthrough: type=", menu_type, " state=", _walkthrough_state)
 	if menu_type == "convoy_overview":
 		# Whenever convoy overview opens, set step based on stage
@@ -1422,18 +1528,69 @@ func _on_menu_opened_for_walkthrough(_menu_node: Node, menu_type: String) -> voi
 		_maybe_run_vendor_walkthrough()
 
 func _on_menu_closed_for_walkthrough(_menu_node: Node, _menu_type: String) -> void:
+	if _transitioning_to_stage2:
+		return
 	# When all menus are closed, we're back on the map.
 	var mm = get_node_or_null("/root/MenuManager")
 	if not is_instance_valid(mm) or not mm.is_any_menu_active():
-		print("[Onboarding] _on_menu_closed_for_walkthrough: no active menus → reset to step1")
-		_reset_walkthrough_to_step1()
+		print("[Onboarding] _on_menu_closed_for_walkthrough: no active menus → schedule reset debounce")
+		_schedule_walkthrough_reset_if_idle()
 
 func _on_menu_visibility_changed_for_walkthrough(is_open: bool, _menu_name: String) -> void:
+	if _transitioning_to_stage2:
+		return
 	print("[Onboarding] _on_menu_visibility_changed_for_walkthrough: is_open=", is_open, " state=", _walkthrough_state)
+	# Visibility can toggle during UI refresh (e.g., vendor tabs rebuild). Only reset
+	# when there are truly no active menus. Always update coach bounds/avoid.
+	var mm = get_node_or_null("/root/MenuManager")
 	if not is_open:
-		_reset_walkthrough_to_step1()
+		if is_instance_valid(mm) and mm.has_method("is_any_menu_active"):
+			if not mm.is_any_menu_active():
+				print("[Onboarding] visibility change -> schedule reset debounce (no active menus)")
+				_schedule_walkthrough_reset_if_idle()
+		else:
+			print("[Onboarding] visibility change (no mm) -> schedule reset debounce")
+			_schedule_walkthrough_reset_if_idle()
+	_update_coach_bounds_and_avoid()
+	if is_open and _walkthrough_reset_timer != null and _walkthrough_reset_pending:
+		# Cancel pending reset because a menu reopened
+		_walkthrough_reset_pending = false
+		_walkthrough_reset_timer = null
+		print("[Onboarding] cancel pending walkthrough reset (menu reopened)")
+
+func _schedule_walkthrough_reset_if_idle() -> void:
+	if _walkthrough_reset_pending:
+		return
+	# Don't bother if we're already at step1 or no state
+	if _walkthrough_state == "" or _walkthrough_state in ["hint_convoy_button", "s2_hint_convoy_button"]:
+		# Still schedule? skip to reduce noise.
+		return
+	_walkthrough_reset_pending = true
+	var prev_state := _walkthrough_state
+	_walkthrough_reset_timer = get_tree().create_timer(0.18) # ~3 frames at 60fps
+	print("[Onboarding] debounce reset scheduled from state=", prev_state)
+	_walkthrough_reset_timer.timeout.connect(func():
+		# Timer fired; re-check conditions
+		_walkthrough_reset_timer = null
+		if not _walkthrough_reset_pending:
+			return
+		_walkthrough_reset_pending = false
+		if _transitioning_to_stage2:
+			print("[Onboarding] debounce reset aborted (transitioning stage2)")
+			return
+		var mm2 = get_node_or_null("/root/MenuManager")
+		if is_instance_valid(mm2) and mm2.has_method("is_any_menu_active") and mm2.is_any_menu_active():
+			print("[Onboarding] debounce reset aborted (menu active again)")
+			return
+		if _walkthrough_state == "" or _walkthrough_state in ["hint_convoy_button", "s2_hint_convoy_button"]:
+			print("[Onboarding] debounce reset unnecessary (already at step1 or cleared)")
+			return
+		print("[Onboarding] debounce reset firing; reverting to step1 from state=", prev_state)
+		_reset_walkthrough_to_step1())
 
 func _reset_walkthrough_to_step1() -> void:
+	if _transitioning_to_stage2:
+		return
 	# If user dismissed the coach, hide it to avoid a blank box; otherwise reset to step 1.
 	print("[Onboarding] _reset_walkthrough_to_step1: dismissed=", _buy_vehicle_coach_dismissed)
 	if _buy_vehicle_coach_dismissed:
@@ -1471,12 +1628,12 @@ func _clear_walkthrough() -> void:
 	if is_instance_valid(_buy_vehicle_coach):
 		if _buy_vehicle_coach.has_method("hide_hint"):
 			_buy_vehicle_coach.call_deferred("hide_hint")
-		if _buy_vehicle_coach.has_method("hide_left_panel"):
-			_buy_vehicle_coach.call_deferred("hide_left_panel")
 		if _buy_vehicle_coach.has_method("clear_highlight"):
 			_buy_vehicle_coach.call_deferred("clear_highlight")
 
 func _on_vendor_tab_changed_for_walkthrough(tab_index: int) -> void:
+	if _transitioning_to_stage2:
+		return
 	# Index 0 is usually the Settlement Info tab; vendor tabs start at 1
 	var mm = get_node_or_null("/root/MenuManager")
 	if not is_instance_valid(mm) or not mm.current_active_menu:
@@ -1569,6 +1726,38 @@ func _on_vendor_tab_changed_for_walkthrough(tab_index: int) -> void:
 		else:
 			_walkthrough_state = "hint_vendor_tab"
 			_maybe_run_vendor_walkthrough()
+
+
+# Re-apply the Market tab highlight a frame later to correct potential offset
+func _reapply_market_tab_highlight_once() -> void:
+	await get_tree().process_frame
+	var mm = get_node_or_null("/root/MenuManager")
+	if not is_instance_valid(mm) or not mm.current_active_menu:
+		return
+	var menu = mm.current_active_menu
+	var tabs = menu.get_node_or_null("%VendorTabContainer")
+	if tabs == null:
+		tabs = menu.get_node_or_null("VendorTabContainer")
+	if not is_instance_valid(tabs):
+		return
+	var rect := Rect2()
+	if menu.has_method("tutorial_get_market_tab_rect_global"):
+		rect = menu.call("tutorial_get_market_tab_rect_global")
+	if rect.size == Vector2.ZERO and (tabs is TabContainer):
+		var tc: TabContainer = tabs
+		var idx := _get_resources_tab_index(menu, tc)
+		if idx != -1:
+			var tab_bar: Control = null
+			if tc.has_method("get_tab_bar"):
+				tab_bar = tc.call("get_tab_bar")
+			if tab_bar == null:
+				tab_bar = tc.find_child("TabBar", true, false)
+			if is_instance_valid(tab_bar) and tab_bar.has_method("get_tab_rect"):
+				var rloc: Rect2 = tab_bar.call("get_tab_rect", idx)
+				var bar_pos: Vector2 = (tab_bar as Control).get_global_rect().position
+				rect = Rect2(bar_pos + rloc.position, rloc.size)
+	if rect.size != Vector2.ZERO and is_instance_valid(_buy_vehicle_coach) and _buy_vehicle_coach.has_method("highlight_global_rect"):
+		_buy_vehicle_coach.call_deferred("highlight_global_rect", rect)
 
 		# Additionally, re-apply the highlight immediately to avoid any timing gaps
 		# Prefer helper-provided global rect for the Dealership tab header
@@ -1695,6 +1884,8 @@ func _cleanup_stage1_walkthrough_listeners() -> void:
 
 # Intercept clicks on vendor TabBar to detect when the dealership tab header is clicked, then advance
 func _on_vendor_tab_bar_gui_input_for_walkthrough(event: InputEvent) -> void:
+	if _transitioning_to_stage2:
+		return
 	if not (event is InputEventMouseButton):
 		return
 	var mb := event as InputEventMouseButton
@@ -1860,9 +2051,6 @@ func _maybe_start_stage2_walkthrough() -> void:
 		# Clear any lingering highlight from Stage 1 right away
 		if is_instance_valid(_buy_vehicle_coach) and _buy_vehicle_coach.has_method("clear_highlight"):
 			_buy_vehicle_coach.call_deferred("clear_highlight")
-		# Clear any lingering highlight from Stage 1
-		if is_instance_valid(_buy_vehicle_coach) and _buy_vehicle_coach.has_method("clear_highlight"):
-			_buy_vehicle_coach.call_deferred("clear_highlight")
 		# Define Stage 2 steps on the director and start
 		if is_instance_valid(_tutorial_director) and _tutorial_director.has_method("set_steps"):
 			var steps2 := [
@@ -1889,13 +2077,20 @@ func _maybe_start_stage2_walkthrough() -> void:
 					start_id = "s2_hint_select_water"
 				elif res_idx != -1:
 					start_id = "s2_hint_market_tab"
-		# Start at computed start_id
-		if is_instance_valid(_tutorial_director) and _tutorial_director.has_method("start"):
-			_tutorial_director.call("start", start_id)
+		# Start at computed start_id (non-throttled to avoid intermediate step flashes)
+		var start_now := start_id
+		if _transitioning_to_stage2 and _transition_target_step_id != "":
+			start_now = _transition_target_step_id
+		if is_instance_valid(_tutorial_director) and _tutorial_director.has_method("force_start"):
+			_tutorial_director.call("force_start", start_now)
+		elif is_instance_valid(_tutorial_director) and _tutorial_director.has_method("start"):
+			_tutorial_director.call("start", start_now)
 		else:
 			_walkthrough_state = start_id
 			_maybe_run_vendor_walkthrough()
 		_s2_started = true
+		# Transition complete; resume normal update handlers
+		_transitioning_to_stage2 = false
 
 func _on_vendor_item_purchased_stage2(item: Dictionary, quantity: int, _total_cost: float) -> void:
 	var name_s := String(item.get("name", ""))
@@ -1984,7 +2179,8 @@ func _render_walkthrough_step(step_id: String, _index: int, _total: int) -> void
 	_ensure_coach()
 	if not is_instance_valid(_buy_vehicle_coach):
 		return
-	# Hide main panel to prefer side panel during step-by-step
+	# Hide main panel to prefer side panel during step-by-step (but don't hide the left panel)
+	# During Stage 2 transition or Stage 2 proper, avoid calling hide_left_panel inadvertently.
 	if _buy_vehicle_coach.has_method("hide_main_panel"):
 		_buy_vehicle_coach.call_deferred("hide_main_panel")
 	# Delegate to existing runner which handles highlighting, but will use index/total via _maybe_run_vendor_walkthrough

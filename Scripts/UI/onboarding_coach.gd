@@ -26,12 +26,36 @@ var _multi_rect_mode: bool = false
 var _last_step_index: int = 0
 var _last_total_steps: int = 0
 var _last_message: String = ""
+var _last_full_bbcode: String = "" # cached last rendered (header + message) to allow watchdog restore
 var _name_box: VBoxContainer = null
 var _name_edit: LineEdit = null
 var _name_error: Label = null
 var _name_min_len: int = 3
 var _submit_cb: Callable
 var _naming_submit_in_progress: bool = false
+
+# Debug instrumentation toggle (set to false to silence)
+var _debug_tracing: bool = true
+
+func _debug_trace_side_label(prefix: String) -> void:
+	if not _debug_tracing:
+		return
+	var path_str := "(not in tree)"
+	if is_inside_tree():
+		path_str = str(get_path())
+	if is_instance_valid(_side_label):
+		var vis_chars := -999
+		if _side_label.has_method("get_visible_characters"):
+			vis_chars = _side_label.get_visible_characters()
+		print("[CoachDbg]", prefix, " id=", get_instance_id(), " path=", path_str,
+			" panelVisible=", (is_instance_valid(_side_panel) and _side_panel.visible),
+			" labelVisible=", _side_label.visible,
+			" textLen=", _side_label.text.length(),
+			" visChars=", vis_chars,
+			" labelSize=", _side_label.size,
+			" panelSize=", (is_instance_valid(_side_panel) and _side_panel.size))
+	else:
+		print("[CoachDbg]", prefix, " id=", get_instance_id(), " path=", path_str, " (side label invalid)")
 
 func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -274,11 +298,20 @@ func _ensure_side_panel() -> void:
 	if is_instance_valid(_side_panel):
 		# Keep this noisy to debug lifecycle
 		print("[Coach] _ensure_side_panel: already exists; visible=", _side_panel.visible)
+		# If highlight host now exists but side panel still under old parent, reparent
+		if is_instance_valid(_highlight_host) and _side_panel.get_parent() != _highlight_host:
+			print("[Coach] _ensure_side_panel: late reparent side panel to highlight host")
+			_side_panel.get_parent().remove_child(_side_panel)
+			_highlight_host.add_child(_side_panel)
+			_side_panel.move_to_front()
 		return
 	print("[Coach] _ensure_side_panel: creating side panel")
 	_side_panel = Panel.new()
 	_side_panel.name = "CoachSidePanel"
 	_side_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	# Side panel will inherit layering from its host (optionally a CanvasLayer host)
+	_side_panel.top_level = false
+	_side_panel.z_index = 0
 	var sb := StyleBoxFlat.new()
 	sb.bg_color = Color(0.08, 0.09, 0.12, 0.98)
 	sb.corner_radius_top_left = 10
@@ -322,7 +355,12 @@ func _ensure_side_panel() -> void:
 	vb.add_child(_side_label)
 
 	_side_panel.add_child(vb)
-	add_child(_side_panel)
+	# Prefer highlight host if already assigned so panel renders in overlay
+	if is_instance_valid(_highlight_host):
+		print("[Coach] _ensure_side_panel: adding side panel under highlight host early")
+		_highlight_host.add_child(_side_panel)
+	else:
+		add_child(_side_panel)
 	_side_panel.hide()
 
 func show_left_panel_message(message: String) -> void:
@@ -330,26 +368,36 @@ func show_left_panel_message(message: String) -> void:
 	show()
 	_side_panel.show()
 	if is_instance_valid(_side_label):
-		print("[Coach] show_left_panel_message: len=", message.length(), " visible=", _side_panel.visible)
+		# Ensure correct parent each show in case host assigned after initial build
+		if is_instance_valid(_highlight_host) and _side_panel.get_parent() != _highlight_host:
+			print("[Coach] show_left_panel_message: reparent side panel before show")
+			_side_panel.get_parent().remove_child(_side_panel)
+			_highlight_host.add_child(_side_panel)
+			_side_panel.move_to_front()
+		# Defensive: detect unexpected truncation of the last full message (possible external interference)
+		if _last_full_bbcode != "" and message.length() < _last_full_bbcode.length() and _last_full_bbcode.begins_with(message):
+			print("[CoachWarn] truncated message detected (", message.length(), "<", _last_full_bbcode.length(), ") restoring full text")
+			message = _last_full_bbcode
+		var path_display := str(get_path()) if is_inside_tree() else "<no tree>"
+		print("[Coach] show_left_panel_message: len=", message.length(), " visible=", _side_panel.visible, " path=", path_display,
+			" panel_z=", _side_panel.z_index, " top_level=", _side_panel.top_level)
 		# Ensure label is fully visible and ready to draw
 		_side_label.visible = true
 		_side_label.modulate = Color(1, 1, 1, 1)
 		_side_label.bbcode_enabled = true
-		# Prefer bbcode_text to ensure correct parsing and content height when bbcode_enabled=true
-		if _side_label.bbcode_enabled:
-			_side_label.bbcode_text = message
-		else:
-			_side_label.text = message
+		# In Godot 4 RichTextLabel uses .text even when bbcode_enabled=true (bbcode_text property was removed)
+		_side_label.text = message
+		# Bring panel to front defensively
+		_side_panel.move_to_front()
 		# Make sure all characters are visible (in case a typewriter effect was applied elsewhere)
 		if _side_label.has_method("set_visible_characters"):
 			_side_label.set_visible_characters(-1)
-		elif _side_label.has_variable("visible_characters"):
-			_side_label.visible_characters = -1
 		# Force reflow and repaint; then finalize on a deferred tick
 		if _side_label.has_method("reset_size"):
 			_side_label.reset_size()
 		_side_label.queue_redraw()
 		call_deferred("_reposition_side_panel")
+		_debug_trace_side_label("after_show_left_panel_message")
 
 func show_step_message(step_index: int, total_steps: int, message: String) -> void:
 	_ensure_side_panel()
@@ -365,10 +413,27 @@ func show_step_message(step_index: int, total_steps: int, message: String) -> vo
 	_last_message = message
 	var header := "[b]Step %d/%d[/b]\n" % [max(1, step_index), max(1, total_steps)]
 	print("[Coach] show_step_message: step=", step_index, "/", total_steps, " msgLen=", message.length())
-	show_left_panel_message(header + message)
+	var full := header + message
+	_last_full_bbcode = full
+	show_left_panel_message(full)
 	_reposition_side_panel()
 	# Also schedule a deferred reposition to catch any late layout changes (e.g., after menu close)
 	call_deferred("_reposition_side_panel")
+	# Instrumentation: snapshot several frames after to see if text gets wiped
+	if _debug_tracing:
+		var delays := [0.0, 0.05, 0.1, 0.2]
+		for d in delays:
+			var tm_snap := Timer.new()
+			tm_snap.one_shot = true
+			tm_snap.wait_time = d
+			add_child(tm_snap)
+			var label_step := step_index
+			var label_total := total_steps
+			tm_snap.timeout.connect(func():
+				_debug_trace_side_label("snapshot t=" + str(d) + " step=" + str(label_step) + "/" + str(label_total))
+				tm_snap.queue_free()
+			)
+			tm_snap.start()
 	# Defensive: on step 1 only, re-apply the text shortly after to avoid any frame-race where bbcode hasn't flushed
 	if step_index == 1:
 		var tm := Timer.new()
@@ -538,11 +603,17 @@ func _create_extra_highlight_panel() -> Panel:
 
 func set_highlight_host(host: Control) -> void:
 	_highlight_host = host
-	# If the panel already exists under old parent, reparent to new host
+	# Reparent highlight panel if needed
 	if is_instance_valid(_highlight_panel) and _highlight_panel.get_parent() != _highlight_host:
 		print("[Coach] set_highlight_host: reparenting highlight panel to new host")
 		_highlight_panel.get_parent().remove_child(_highlight_panel)
 		_highlight_host.add_child(_highlight_panel)
+	# Reparent side panel into the same host so it shares the CanvasLayer (ensures visibility above menus)
+	if is_instance_valid(_side_panel) and _side_panel.get_parent() != _highlight_host:
+		print("[Coach] set_highlight_host: reparenting side panel to host")
+		_side_panel.get_parent().remove_child(_side_panel)
+		_highlight_host.add_child(_side_panel)
+		_side_panel.move_to_front()
 
 func highlight_control(target: Control) -> void:
 	if not is_instance_valid(target):
@@ -596,9 +667,15 @@ func clear_highlight() -> void:
 	set_process(false)
 
 func _process(_delta: float) -> void:
-	if not _highlight_active:
-		return
-	_update_highlight_rect()
+	# Highlight follow update
+	if _highlight_active:
+		_update_highlight_rect()
+	# Watchdog: if side panel visible but label lost its content unexpectedly, reapply cached message.
+	if _last_full_bbcode != "" and is_instance_valid(_side_panel) and _side_panel.visible and is_instance_valid(_side_label):
+		var empty := _side_label.text.length() == 0
+		if empty:
+			print("[Coach] watchdog: restoring missing step text (len=", _last_full_bbcode.length(), ")")
+			show_left_panel_message(_last_full_bbcode)
 
 func _update_highlight_rect() -> void:
 	if _highlight_target == null:

@@ -15,8 +15,9 @@ const VendorTradePanel = preload("res://Scenes/VendorTradePanel.tscn")
 @onready var title_label: Button = $MainVBox/TopBarHBox/TitleLabel
 @onready var top_up_button: Button = $MainVBox/TopBarHBox/TopUpButton
 @onready var top_bar_hbox: HBoxContainer = $MainVBox/TopBarHBox
-@onready var vendor_tab_container = %VendorTabContainer
-@onready var settlement_content_vbox = %SettlementContentVBox
+# Use explicit paths to avoid unique-name ownership issues at runtime
+@onready var vendor_tab_container: TabContainer = $MainVBox/VendorTabContainer
+@onready var settlement_content_vbox: VBoxContainer = $MainVBox/VendorTabContainer/SettlementInfoTab/SettlementContentVBox
 @onready var back_button = $MainVBox/BackButton
 var mechanics_tab_vbox: VBoxContainer = null
 
@@ -60,25 +61,11 @@ func initialize_with_data(data: Dictionary):
 
 func _ready():
 	print("ConvoySettlementMenu: _ready() started processing.")
-	# Fallback assignment if @onready somehow failed (shouldn't happen with proper setup)
-	if not is_instance_valid(settlement_content_vbox):
-		settlement_content_vbox = get_node_or_null("%SettlementContentVBox")
-		if not is_instance_valid(settlement_content_vbox):
-			printerr("ConvoySettlementMenu: Failed to re-assign settlement_content_vbox in _ready().")
-		else:
-			print("ConvoySettlementMenu: _ready() - settlement_content_vbox re-assigned and is valid.")
-
-	# Explicitly check and potentially re-assign vendor_tab_container
+	# Ensure critical sub-nodes exist (fallbacks using absolute paths)
 	if not is_instance_valid(vendor_tab_container):
-		vendor_tab_container = get_node_or_null("%VendorTabContainer")
-		if not is_instance_valid(vendor_tab_container):
-			printerr("ConvoySettlementMenu: Failed to re-assign vendor_tab_container in _ready().")
-		else:
-			print("ConvoySettlementMenu: _ready() - vendor_tab_container re-assigned and is valid.")
-	
-	# Explicitly check if the unique name node is found at _ready()
-	if not get_node_or_null("%SettlementContentVBox"):
-		printerr("ConvoySettlementMenu: CRITICAL - %SettlementContentVBox not found at _ready(). Check scene setup.")
+		vendor_tab_container = get_node_or_null("MainVBox/VendorTabContainer")
+	if not is_instance_valid(settlement_content_vbox):
+		settlement_content_vbox = get_node_or_null("MainVBox/VendorTabContainer/SettlementInfoTab/SettlementContentVBox")
 	# It's crucial to connect signals here for the UI to be interactive.
 	if is_instance_valid(back_button):
 		back_button.pressed.connect(_on_back_button_pressed)
@@ -254,7 +241,38 @@ func _display_settlement_info():
 				return na < nb
 			)
 
+			# Deduplicate vendors by vendor_id (fallback: by name), and also by short name for Dealership to avoid duplicates
+			var seen_ids := {}
+			var seen_names := {}
+			var seen_dealer_short_names := {}
 			for vendor in vendors_sorted:
+				var vid := ""
+				if vendor is Dictionary and vendor.has("vendor_id") and vendor.get("vendor_id") != null:
+					vid = str(vendor.get("vendor_id"))
+				var vname := String(vendor.get("name", ""))
+				var dup := false
+				# Extra: avoid duplicate Dealership tabs by short display name
+				var cat_idx_local := int(_vendor_category_index(vendor))
+				if cat_idx_local == 2:
+					var short_ci := _vendor_short_display_name(vendor).strip_edges().to_lower()
+					if short_ci != "":
+						if seen_dealer_short_names.has(short_ci):
+							dup = true
+						else:
+							seen_dealer_short_names[short_ci] = true
+				if vid != "":
+					if seen_ids.has(vid):
+						dup = true
+					else:
+						seen_ids[vid] = true
+				elif vname != "":
+					if seen_names.has(vname):
+						dup = true
+					else:
+						seen_names[vname] = true
+				if dup:
+					print("[ConvoySettlementMenu] Skipping duplicate vendor tab for:", (vid if vid != "" else vname))
+					continue
 				_create_vendor_tab(vendor)
 			# Removed the old Mechanics tab vendor. Mechanics is now accessed via Install on parts within each vendor.
 
@@ -262,6 +280,8 @@ func _display_settlement_info():
 			_update_top_up_button()
 			# Notify listeners (e.g., tutorial) that tabs are built and ready
 			tabs_ready.emit()
+			# Extra: emit once more on the next frame to stabilize listeners (reduces coach text flicker)
+			call_deferred("emit_signal", "tabs_ready")
 
 	else:
 		title_label.text = "Location: (%d, %d)" % [current_convoy_x, current_convoy_y]
@@ -273,6 +293,15 @@ func _create_vendor_tab(vendor_data: Dictionary):
 	var short_vendor_name = vendor_name
 	if not settlement_name.is_empty():
 		short_vendor_name = vendor_name.replace(settlement_name + " ", "").strip_edges()
+
+	# Guard: if a tab with the same short title already exists, skip creating another
+	if is_instance_valid(vendor_tab_container):
+		var short_ci: String = String(short_vendor_name).strip_edges().to_lower()
+		for i in range(vendor_tab_container.get_tab_count()):
+			var t := String(vendor_tab_container.get_tab_title(i)).strip_edges().to_lower()
+			if t == short_ci:
+				print("[ConvoySettlementMenu] Skipping vendor tab; title already exists:", short_vendor_name)
+				return
 
 	var vendor_panel_instance = VendorTradePanel.instantiate()
 
@@ -304,11 +333,11 @@ func _create_vendor_tab(vendor_data: Dictionary):
 		vendor_panel_instance.install_requested.connect(_on_install_requested)
 
 func _clear_tabs():
-	# Remove all dynamically added vendor tabs, starting from the end.
+	# Remove all dynamically added vendor tabs, starting from the end, preserving index 0.
 	if not is_instance_valid(vendor_tab_container):
 		printerr("ConvoySettlementMenu: vendor_tab_container is invalid in _clear_tabs().")
 		return
-	# We only remove tabs from index 1 onwards, to keep the "Settlement Info" tab.
+	# We only remove tabs from index 1 onwards, to keep the scene-authored first tab
 	for i in range(vendor_tab_container.get_tab_count() - 1, 0, -1):
 		var tab = vendor_tab_container.get_child(i)
 		vendor_tab_container.remove_child(tab)
