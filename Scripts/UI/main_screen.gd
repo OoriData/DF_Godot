@@ -52,6 +52,7 @@ var _s2_progress := {
 
 # Prevent multiple Stage 2 initializations causing flashing
 var _s2_started: bool = false
+var _walkthrough_rendering: bool = false # re-entrancy guard
 
 # Stage 2 wiring: track vendor tree connection to detect user clicks on Resources/Water/MRE
 var _s2_vendor_tree: Tree = null
@@ -810,20 +811,24 @@ func _open_settlement_menu_for_selected_convoy() -> void:
 		printerr("[Onboarding] Could not open settlement menu: MenuManager missing or method absent.")
 
 func _maybe_run_vendor_walkthrough() -> void:
+	if _walkthrough_rendering:
+		return
+	_walkthrough_rendering = true
 	if _buy_vehicle_coach_dismissed:
 		print("[Onboarding] _maybe_run_vendor_walkthrough: dismissed; abort")
+		_walkthrough_rendering = false
 		return
 	if _walkthrough_state == "":
 		print("[Onboarding] _maybe_run_vendor_walkthrough: no state; abort")
+		_walkthrough_rendering = false
 		return
 	_ensure_coach()
 	if not is_instance_valid(_buy_vehicle_coach):
 		print("[Onboarding] _maybe_run_vendor_walkthrough: coach invalid; abort")
+		_walkthrough_rendering = false
 		return
 	print("[Onboarding] _maybe_run_vendor_walkthrough: state=", _walkthrough_state)
-	# Always clear any previous highlight before applying the current step's highlight
-	if _buy_vehicle_coach.has_method("clear_highlight"):
-		_buy_vehicle_coach.call_deferred("clear_highlight")
+	# Note: do not clear existing highlight here; only clear right before drawing a new one
 	var total_steps := 4
 	var idx := 1
 	if is_instance_valid(_tutorial_director):
@@ -1131,6 +1136,8 @@ func _maybe_run_vendor_walkthrough() -> void:
 					if _buy_vehicle_coach.has_method("show_step_message"):
 						_buy_vehicle_coach.call_deferred("show_step_message", step_idx2, total_steps, _walkthrough_messages.get(_walkthrough_state, ""))
 					if _buy_vehicle_coach.has_method("highlight_control"):
+						if _buy_vehicle_coach.has_method("clear_highlight"):
+							_buy_vehicle_coach.call_deferred("clear_highlight")
 						_buy_vehicle_coach.call_deferred("highlight_control", sbtn)
 		"hint_vendor_tab":
 			print("[Onboarding] step3: preparing dealership tab highlight…")
@@ -1165,6 +1172,18 @@ func _maybe_run_vendor_walkthrough() -> void:
 						if menu and menu.has_method("tutorial_clear_tab_highlight_proxy"):
 							menu.call_deferred("tutorial_clear_tab_highlight_proxy")
 
+						# NEW: If the dealership tab is already open by default, skip highlighting the tab
+						# and auto-advance to the vehicles list highlight (step 4).
+						if on_dealership:
+							if is_instance_valid(_tutorial_director) and _tutorial_director.has_method("goto"):
+								_tutorial_director.call_deferred("goto", "hint_vendor_vehicles")
+							else:
+								_walkthrough_state = "hint_vendor_vehicles"
+								call_deferred("_maybe_run_vendor_walkthrough")
+							# Release the render guard and exit early; step 4 will render next frame
+							_walkthrough_rendering = false
+							return
+
 						# If user is already on the dealership tab during step 3, wire vehicle-selected to advance to step 4.
 						if on_dealership and tc.get_tab_count() > current_idx:
 							var dealer_panel: Node = tc.get_tab_control(current_idx)
@@ -1181,6 +1200,8 @@ func _maybe_run_vendor_walkthrough() -> void:
 								await get_tree().process_frame
 								target = menu.call("tutorial_get_dealership_tab_rect_global")
 							if target.size != Vector2.ZERO:
+								if _buy_vehicle_coach.has_method("clear_highlight"):
+									_buy_vehicle_coach.call_deferred("clear_highlight")
 								_buy_vehicle_coach.call_deferred("highlight_global_rect", target)
 								print("[Onboarding] Highlighting Dealership tab header (helper rect)", (" while on_dealership" if on_dealership else " while off_dealership"), "=", target)
 								did_highlight = true
@@ -1215,6 +1236,8 @@ func _maybe_run_vendor_walkthrough() -> void:
 									if rect_local.size != Vector2.ZERO:
 										var bar_global_pos: Vector2 = (tab_bar_fallback as Control).get_global_rect().position
 										var rect_global := Rect2(bar_global_pos + rect_local.position, rect_local.size)
+										if _buy_vehicle_coach.has_method("clear_highlight"):
+											_buy_vehicle_coach.call_deferred("clear_highlight")
 										_buy_vehicle_coach.call_deferred("highlight_global_rect", rect_global)
 										print("[Onboarding] Highlighting Dealership tab via TabBar rect=", rect_global)
 					# Ensure we listen for tab switches so we can re-guide immediately if user moves away
@@ -1257,26 +1280,33 @@ func _maybe_run_vendor_walkthrough() -> void:
 					var tab_idx: int = int(tabs2.current_tab)
 					var vendor_panel: Node = tabs2.get_tab_control(tab_idx)
 					if vendor_panel:
-						# Open Vehicles category and highlight up to three vehicle rows
+						# Open Vehicles category and highlight the Vehicles list as a single union area
 						if vendor_panel.has_method("tutorial_open_vehicles"):
 							vendor_panel.call_deferred("tutorial_open_vehicles")
-						var row_rects: Array = []
+						# Prefer highlighting exactly the first three vehicle rows
+						var union_rect: Rect2 = Rect2()
+						var row_rects_pref: Array = []
 						if vendor_panel.has_method("tutorial_get_vehicle_row_rects_global"):
-							row_rects = vendor_panel.call("tutorial_get_vehicle_row_rects_global", 3)
-						if not row_rects.is_empty() and _buy_vehicle_coach and _buy_vehicle_coach.has_method("highlight_global_rect"):
-							# Single continuous highlight: union of up to three vehicle rows
-							var ul: Vector2 = row_rects[0].position
-							var br: Vector2 = row_rects[0].position + row_rects[0].size
-							for r in row_rects:
+							row_rects_pref = vendor_panel.call("tutorial_get_vehicle_row_rects_global", 3)
+						if not row_rects_pref.is_empty():
+							var ul: Vector2 = row_rects_pref[0].position
+							var br: Vector2 = row_rects_pref[0].position + row_rects_pref[0].size
+							for r in row_rects_pref:
 								ul.x = min(ul.x, r.position.x)
 								ul.y = min(ul.y, r.position.y)
 								br.x = max(br.x, r.position.x + r.size.x)
 								br.y = max(br.y, r.position.y + r.size.y)
-							var union := Rect2(ul, br - ul)
-							_buy_vehicle_coach.call_deferred("highlight_global_rect", union)
-							print("[Onboarding] step4: highlighting single union rect for vehicle rows=", union)
+							union_rect = Rect2(ul, br - ul)
+						# Fallback: broader helper union (but limited to 3 rows)
+						if union_rect.size == Vector2.ZERO and vendor_panel.has_method("tutorial_get_vehicles_union_rect_global"):
+							union_rect = vendor_panel.call("tutorial_get_vehicles_union_rect_global", 3)
+						if _buy_vehicle_coach and union_rect.size != Vector2.ZERO and _buy_vehicle_coach.has_method("highlight_global_rect"):
+							if _buy_vehicle_coach.has_method("clear_highlight"):
+								_buy_vehicle_coach.call_deferred("clear_highlight")
+							_buy_vehicle_coach.call_deferred("highlight_global_rect", union_rect)
+							print("[Onboarding] step4: highlighting Vehicles list union rect=", union_rect)
 						else:
-							print("[Onboarding] Vehicle rows not found yet; waiting for selection.")
+							print("[Onboarding] Vehicles union rect not available; waiting for selection.")
 						# Update step message for final step
 						if _buy_vehicle_coach.has_method("show_step_message"):
 							_buy_vehicle_coach.call_deferred("show_step_message", total_steps, total_steps, _walkthrough_messages.get(_walkthrough_state, ""))
@@ -1286,6 +1316,7 @@ func _maybe_run_vendor_walkthrough() -> void:
 								vendor_panel.connect("tutorial_vehicle_selected", Callable(self, "_on_vendor_vehicle_selected_for_walkthrough"))
 								print("[Onboarding] step4: connected vehicle_selected → will highlight Buy on selection")
 
+	_walkthrough_rendering = false
 # Ensure we listen to item selections within the vendor panel during Stage 2
 func _ensure_stage2_vendor_tree_listener(vendor_panel: Node) -> void:
 	if _s2_vendor_tree_connected:
@@ -1607,16 +1638,41 @@ func _on_vendor_vehicle_selected_for_walkthrough() -> void:
 	# In our UI, the tab control IS the vendor panel (VendorTradePanel). Use it directly.
 	var vendor_panel: Node = tab_ctrl
 	if vendor_panel and _buy_vehicle_coach:
-		# Prefer highlighting the actual control for robustness; fallback to rect.
-		if vendor_panel.has_method("tutorial_get_buy_button_control") and _buy_vehicle_coach.has_method("highlight_control"):
-			var buy_btn: Control = vendor_panel.call("tutorial_get_buy_button_control")
-			if is_instance_valid(buy_btn):
-				_buy_vehicle_coach.call_deferred("highlight_control", buy_btn)
-				return
-		if _buy_vehicle_coach.has_method("highlight_global_rect") and vendor_panel.has_method("tutorial_get_buy_button_global_rect"):
-			var buy_rect: Rect2 = vendor_panel.call("tutorial_get_buy_button_global_rect")
-			if buy_rect.size != Vector2.ZERO:
-				_buy_vehicle_coach.call_deferred("highlight_global_rect", buy_rect)
+		# Build a set of rects: selected vehicle row(s) if available, plus the Buy button
+		var rects: Array = []
+		# 1) Selected vehicle row: try to compute a rect around the selected item in VendorItemTree
+		var tree: Tree = vendor_panel.find_child("VendorItemTree", true, false)
+		if tree and tree is Tree:
+			var sel := tree.get_selected()
+			if sel != null:
+				# Approximate row rect using cell rect if available, else node rect via Control.get_item_rect
+				if tree.has_method("get_item_rect"):
+					var r_local: Rect2 = tree.get_item_rect(sel)
+					var t_global := tree.get_global_rect().position
+					rects.append(Rect2(t_global + r_local.position, r_local.size))
+		# 2) Buy button rect or control
+		var buy_rect: Rect2 = Rect2()
+		var buy_btn_ctrl: Control = null
+		if vendor_panel.has_method("tutorial_get_buy_button_control"):
+			buy_btn_ctrl = vendor_panel.call("tutorial_get_buy_button_control")
+		if buy_btn_ctrl == null and vendor_panel.has_method("tutorial_get_buy_button_global_rect"):
+			buy_rect = vendor_panel.call("tutorial_get_buy_button_global_rect")
+		# Emit highlight: prefer multi-rects; if none gathered yet and we have a control, use it
+		if _buy_vehicle_coach.has_method("highlight_global_rects") and not rects.is_empty():
+			if buy_btn_ctrl and buy_btn_ctrl is Control:
+				rects.append((buy_btn_ctrl as Control).get_global_rect())
+			elif buy_rect.size != Vector2.ZERO:
+				rects.append(buy_rect)
+			if _buy_vehicle_coach.has_method("clear_highlight"):
+				_buy_vehicle_coach.call_deferred("clear_highlight")
+			_buy_vehicle_coach.call_deferred("highlight_global_rects", rects)
+			return
+		# Fallbacks: highlight control or single rect
+		if buy_btn_ctrl and _buy_vehicle_coach.has_method("highlight_control"):
+			_buy_vehicle_coach.call_deferred("highlight_control", buy_btn_ctrl)
+			return
+		if buy_rect.size != Vector2.ZERO and _buy_vehicle_coach.has_method("highlight_global_rect"):
+			_buy_vehicle_coach.call_deferred("highlight_global_rect", buy_rect)
 
 # Disconnect any Stage 1 dealership listeners so they don't re-assert highlights when Stage 2 begins
 func _cleanup_stage1_walkthrough_listeners() -> void:

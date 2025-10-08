@@ -28,6 +28,8 @@ var _all_settlement_data: Array # New: To store all settlement data from GameDat
 
 # Add a reference to GameDataManager
 var gdm: Node = null
+# Debounce flags to avoid rapid repeated refresh causing flicker
+var _ui_refresh_pending: bool = false
 
 # Cached computed top-up plan
 var _top_up_plan: Dictionary = {
@@ -837,8 +839,7 @@ func _on_gdm_convoy_data_updated(all_convoys_data: Array) -> void:
 	for convoy in all_convoys_data:
 		if convoy.has("convoy_id") and str(convoy.get("convoy_id")) == current_id:
 			_convoy_data = convoy.duplicate(true)
-			_refresh_all_vendor_panels()
-			_update_top_up_button()
+			_debounced_ui_refresh()
 			break
 
 func _on_gdm_settlement_data_updated(all_settlements_data: Array) -> void:
@@ -849,8 +850,7 @@ func _on_gdm_settlement_data_updated(all_settlements_data: Array) -> void:
 	for settlement in all_settlements_data:
 		if settlement.has("sett_id") and str(settlement.get("sett_id")) == current_id:
 			_settlement_data = settlement.duplicate(true)
-			_refresh_all_vendor_panels()
-			_update_top_up_button()
+			_debounced_ui_refresh()
 			break
 
 # --- Direct API transaction handlers ---
@@ -861,18 +861,32 @@ func _on_api_resource_txn(_result: Dictionary) -> void:
 		# Also refresh user data (money changes)
 		gdm.request_user_data_refresh()
 	# Re-enable top-up button after a short delay so updated values incorporated.
-	call_deferred("_post_txn_update_ui")
+	_schedule_post_txn_update_ui()
 
 func _on_api_other_txn(_result: Dictionary) -> void:
 	# Cargo / vehicle transactions also alter convoy state.
 	_on_api_resource_txn(_result)
 
 func _post_txn_update_ui():
-	_refresh_all_vendor_panels()
 	_update_top_up_button()
 	if is_instance_valid(top_up_button) and top_up_button.disabled:
 		top_up_button.disabled = false
 		_update_top_up_button()
+
+# Debounced refresh to coalesce multiple data change signals
+func _debounced_ui_refresh() -> void:
+	if _ui_refresh_pending:
+		return
+	_ui_refresh_pending = true
+	call_deferred("_perform_ui_refresh")
+
+func _perform_ui_refresh() -> void:
+	_ui_refresh_pending = false
+	_update_top_up_button()
+
+func _schedule_post_txn_update_ui() -> void:
+	# Small delay to allow GDM to propagate new data; avoids thrash
+	call_deferred("_post_txn_update_ui")
 
 func _refresh_all_vendor_panels():
 	# Only call refresh_data, never initialize, and always pass deep copies

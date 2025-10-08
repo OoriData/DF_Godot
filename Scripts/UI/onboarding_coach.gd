@@ -355,6 +355,9 @@ func show_step_message(step_index: int, total_steps: int, message: String) -> vo
 	_ensure_side_panel()
 	# Ensure the central (modal) coach panel stays hidden during step-by-step walkthrough
 	hide_main_panel()
+	# Skip re-render if identical content arrives repeatedly within a short window
+	if _last_step_index == step_index and _last_total_steps == total_steps and _last_message == message and is_instance_valid(_side_panel) and _side_panel.visible:
+		return
 	_side_current_step = step_index
 	_side_total_steps = total_steps
 	_last_step_index = step_index

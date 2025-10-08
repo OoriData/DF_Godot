@@ -9,6 +9,9 @@ signal finished
 var _steps: Array = [] # Array[Dictionary]: { id: String, title?: String }
 var _index: int = -1
 var _id_to_index: Dictionary = {}
+var _last_emit_time: int = 0 # microseconds
+var _emit_cooldown_usec: int = 180000 # ~0.18s debounce to prevent flicker
+var _pending_step_id: String = "" # coalesce rapid gotos
 
 func set_steps(steps: Array) -> void:
     # steps is an ordered array of dictionaries with at least an 'id' key
@@ -26,6 +29,9 @@ func set_steps(steps: Array) -> void:
         _index = -1
     elif _index < 0 or _index >= _steps.size():
         _index = 0
+    # Reset throttle state when steps change
+    _pending_step_id = ""
+    _last_emit_time = 0
 
 func start(first_step_id: String = "") -> void:
     if _steps.is_empty():
@@ -35,14 +41,14 @@ func start(first_step_id: String = "") -> void:
         _index = int(_id_to_index[first_step_id])
     else:
         _index = max(0, _index)
-    _emit_current()
+    _emit_current_throttled()
 
 func next() -> void:
     if _steps.is_empty():
         return
     if _index < _steps.size() - 1:
         _index += 1
-        _emit_current()
+        _emit_current_throttled()
     else:
         finished.emit()
 
@@ -51,9 +57,9 @@ func prev() -> void:
         return
     if _index > 0:
         _index -= 1
-        _emit_current()
+        _emit_current_throttled()
     else:
-        _emit_current() # stay on first but re-emit to allow UI refresh
+        _emit_current_throttled() # stay on first but re-emit to allow UI refresh
 
 func goto(step_id: String) -> void:
     if _steps.is_empty():
@@ -62,7 +68,9 @@ func goto(step_id: String) -> void:
         var new_index: int = int(_id_to_index[step_id])
         if new_index != _index:
             _index = new_index
-        _emit_current()
+        # Coalesce bursts of goto calls
+        _pending_step_id = step_id
+        _emit_current_throttled()
     else:
         push_warning("TutorialDirector.goto: unknown step id: %s" % step_id)
 
@@ -83,3 +91,30 @@ func _emit_current() -> void:
         return
     var id := String(_steps[_index].get("id", ""))
     step_changed.emit(id, _index + 1, _steps.size())
+
+func _emit_current_throttled() -> void:
+    # Debounce step_changed emissions to avoid rapid UI oscillation from multiple sources.
+    if _index < 0 or _index >= _steps.size():
+        return
+    var now_us: int = Time.get_ticks_usec()
+    if _last_emit_time == 0 or now_us - _last_emit_time >= _emit_cooldown_usec:
+        _last_emit_time = now_us
+        var id_now := String(_steps[_index].get("id", ""))
+        _pending_step_id = ""
+        step_changed.emit(id_now, _index + 1, _steps.size())
+    else:
+        # Schedule a single emit at the end of the cooldown with the most recent index
+        var remaining_sec := float(_emit_cooldown_usec - (now_us - _last_emit_time)) / 1000000.0
+        var t := Timer.new()
+        t.one_shot = true
+        t.wait_time = max(0.01, remaining_sec)
+        add_child(t)
+        t.timeout.connect(func():
+            if _index >= 0 and _index < _steps.size():
+                _last_emit_time = Time.get_ticks_usec()
+                var id2 := String(_steps[_index].get("id", ""))
+                _pending_step_id = ""
+                step_changed.emit(id2, _index + 1, _steps.size())
+            t.queue_free()
+        )
+        t.start()

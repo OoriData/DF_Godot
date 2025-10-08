@@ -60,6 +60,10 @@ var _convoy_used_weight: float = 0.0
 var _convoy_total_weight: float = 0.0
 var _convoy_used_volume: float = 0.0
 var _convoy_total_volume: float = 0.0
+# --- Refresh coalescing (avoid multiple jarring repaints on rapid signals) ---
+var _refresh_requests_queued: bool = false
+var _inflight_transaction: bool = false
+
 
 func _ready() -> void:
 	# Connect signals from UI elements
@@ -479,7 +483,7 @@ func _restore_vendor_tree_state(state: Dictionary) -> void:
 			if state.categories.has(cat_name):
 				var collapsed := bool(state.categories[cat_name].get("collapsed", cat.collapsed))
 				# Keep Resources expanded to avoid flicker/retraction during tutorial and user interaction
-				if cat_name.to_lower() == "resources":
+				if cat_name.strip_edges().to_lower() == "resources":
 					collapsed = false
 				cat.collapsed = collapsed
 	# Restore selection if possible
@@ -766,8 +770,34 @@ func _on_gdm_convoy_data_updated(all_convoys_data: Array) -> void:
 			self.convoy_data = updated_convoy_data # <-- Only update here!
 			_populate_convoy_list()
 			_update_convoy_info_display()
-			# Always clear selection after a transaction to avoid stale state
-			_handle_new_item_selection(null)
+			# Preserve selection if possible to avoid UI flicker during tutorial
+			if _last_selected_ref != null and selected_item == null:
+				selected_item = _last_selected_ref
+			# If the previously selected item no longer exists, clear selection
+			var still_valid := false
+			if selected_item and selected_item.has("item_data"):
+				# Use explicit Variant typing to avoid inference issues when values may be null or mixed types
+				var sid: Variant = selected_item.item_data.get("cargo_id")
+				if sid == null:
+					sid = selected_item.item_data.get("vehicle_id")
+				if sid != null:
+					# Attempt to restore by scanning current convoy items
+					var tree := convoy_item_tree
+					if is_instance_valid(tree) and tree.get_root() != null:
+						for cat in tree.get_root().get_children():
+							for it in cat.get_children():
+								var md = it.get_metadata(0)
+								if md and md.has("item_data"):
+									var cid = md.item_data.get("cargo_id", md.item_data.get("vehicle_id", null))
+									if cid == sid:
+										it.select(0)
+										_handle_new_item_selection(md)
+										still_valid = true
+										break
+							if still_valid:
+								break
+			if not still_valid:
+				_handle_new_item_selection(null)
 			return
 	if is_instance_valid(loading_panel):
 		loading_panel.visible = false
@@ -1017,6 +1047,7 @@ func _on_action_button_pressed() -> void:
 	var convoy_id = convoy_data.get("convoy_id", "")
 	print("VTP-DEBUG: _on_action_button_pressed mode=", current_mode, " qty=", quantity, " item=", String(item_data_source.get("name","?")), " vendor=", vendor_id, " convoy=", convoy_id)
 	if current_mode == "buy":
+		_inflight_transaction = true
 		gdm.buy_item(convoy_id, vendor_id, item_data_source, quantity)
 		# Emit local signal for UI listeners
 		var unit_price = _get_contextual_unit_price(item_data_source)
@@ -1032,10 +1063,12 @@ func _on_action_button_pressed() -> void:
 				if available <= 0:
 					continue
 				var to_sell = min(available, remaining)
+				_inflight_transaction = true
 				gdm.sell_item(convoy_id, vendor_id, cargo_item, to_sell)
 				remaining -= to_sell
 		else:
 			# Fallback: original single-item sale
+			_inflight_transaction = true
 			gdm.sell_item(convoy_id, vendor_id, item_data_source, quantity)
 		# Emit local signal for UI listeners
 		var sell_unit_price = _get_contextual_unit_price(item_data_source) / 2.0
@@ -1401,7 +1434,11 @@ func _update_action_button_enabled(origin: String = "") -> void:
 		reason = "Select an item from the list."
 	elif q < 1:
 		reason = "Increase quantity (must be at least 1)."
-	action_button.disabled = reason != ""
+	# Keep button enabled during in-flight refresh if selection/qty still valid
+	if _inflight_transaction and reason == "":
+		action_button.disabled = false
+	else:
+		action_button.disabled = reason != ""
 	if reason == "":
 		action_button.tooltip_text = "Click to %s" % ("Buy" if current_mode == "buy" else "Sell")
 	else:
@@ -1472,22 +1509,34 @@ func _update_quantity_controls_visibility() -> void:
 			quantity_spinbox.value = 1
 
 func _looks_like_part(item_data_source: Dictionary) -> bool:
-	# Avoid misclassifying vehicles (which often have parts[]) as parts
-	# Never treat raw resources (Fuel/Water/Food bulk) as parts
+	# Strictly identify installable vehicle parts only. Normal cargo/resources must not qualify.
+	# 1) Raw resources (Fuel/Water/Food) are never parts
 	if item_data_source.has("is_raw_resource") and bool(item_data_source.get("is_raw_resource")):
 		return false
+	# 2) Vehicles are not parts
 	if _is_vehicle(item_data_source):
 		return false
-	if item_data_source.has("slot") and item_data_source.get("slot") != null:
-		return true
-	if item_data_source.has("intrinsic_part_id"):
-		return true
+	# 3) Mission/delivery cargo should not be installable
+	if item_data_source.has("recipient") or item_data_source.has("delivery_reward"):
+		return false
+	# 4) Containers with their own parts are not single parts
 	if item_data_source.has("parts") and item_data_source.get("parts") is Array and not (item_data_source.get("parts") as Array).is_empty():
-		var first_p: Dictionary = (item_data_source.get("parts") as Array)[0]
-		if first_p.has("slot") and first_p.get("slot") != null:
-			return true
+		return false
+	# 5) Explicit identifiers that clearly mark parts
+	if item_data_source.has("intrinsic_part_id") and item_data_source.get("intrinsic_part_id") != null:
+		return true
 	if item_data_source.has("is_part") and bool(item_data_source.get("is_part")):
 		return true
+	if item_data_source.has("part_uid") or item_data_source.has("part_id"):
+		return true
+	var t := String(item_data_source.get("type", "")).to_lower()
+	if t == "part":
+		return true
+	# 6) A 'slot' by itself is too weak (can be inferred). Only accept if not a stack and not container-like.
+	if item_data_source.has("slot") and item_data_source.get("slot") != null:
+		var looks_like_stack := item_data_source.has("quantity") and int(item_data_source.get("quantity", 0)) > 1
+		if not looks_like_stack:
+			return true
 	return false
 
 func _is_vehicle(item_data_source: Dictionary) -> bool:
@@ -1632,20 +1681,35 @@ func _get_contextual_unit_price(item_data_source: Dictionary) -> float:
 
 func _on_api_transaction_result(result: Dictionary) -> void:
 	print("DEBUG: _on_api_transaction_result called with result: ", result)
-	if not is_instance_valid(gdm):
-		printerr("VendorTradePanel: Cannot refresh data after transaction, GameDataManager is invalid.")
-		return
-	gdm.request_user_data_refresh()
-	if convoy_data and convoy_data.has("convoy_id"):
-		print("DEBUG: Requesting convoy data refresh after transaction.")
-		gdm.request_convoy_data_refresh()
-	if vendor_data and vendor_data.has("vendor_id"):
-		print("DEBUG: Requesting vendor data refresh after transaction.")
-		gdm.request_vendor_data_refresh(vendor_data.get("vendor_id"))
+	_inflight_transaction = false
+	_queue_coalesced_refresh_requests()
 
 func _on_api_transaction_error(error_message: String) -> void:
 	# Called when a transaction fails.
 	printerr("API Transaction Error: ", error_message)
+	_inflight_transaction = false
+
+# Coalesce multiple transaction-driven refresh requests into a single burst
+func _queue_coalesced_refresh_requests() -> void:
+	if _refresh_requests_queued:
+		return
+	_refresh_requests_queued = true
+	# Defer to end of frame so multiple signals (user, convoy, vendor) collapse
+	call_deferred("_fire_coalesced_refresh_requests")
+
+func _fire_coalesced_refresh_requests() -> void:
+	_refresh_requests_queued = false
+	if not is_instance_valid(gdm):
+		printerr("VendorTradePanel: Cannot refresh data after transaction, GameDataManager is invalid.")
+		return
+	# Request updates once; panel will repaint when GDM emits signals
+	gdm.request_user_data_refresh()
+	if convoy_data and convoy_data.has("convoy_id"):
+		print("DEBUG: (coalesced) Requesting convoy data refresh after transaction.")
+		gdm.request_convoy_data_refresh()
+	if vendor_data and vendor_data.has("vendor_id"):
+		print("DEBUG: (coalesced) Requesting vendor data refresh after transaction.")
+		gdm.request_vendor_data_refresh(vendor_data.get("vendor_id"))
 
 # Updates the comparison panel (stub, fill in as needed)
 func _update_comparison() -> void:
@@ -1931,3 +1995,42 @@ func tutorial_get_vehicle_row_rects_global(max_count: int = 3) -> Array:
 				child = child.get_next()
 			break
 	return rects
+
+## Returns a single global rect that covers the entire Vehicles list area (header + rows if any)
+func tutorial_get_vehicles_union_rect_global(max_rows: int = 8) -> Rect2:
+	if not is_instance_valid(vendor_item_tree):
+		return Rect2()
+	var root := vendor_item_tree.get_root()
+	if root == null:
+		return Rect2()
+	# Find the Vehicles category and ensure it's expanded
+	var veh_cat: TreeItem = null
+	for cat in root.get_children():
+		if str(cat.get_text(0)).strip_edges().to_lower() == "vehicles":
+			veh_cat = cat
+			cat.collapsed = false
+			break
+	if veh_cat == null:
+		return Rect2()
+	# Start with the header row rect
+	var header_local: Rect2 = vendor_item_tree.get_item_area_rect(veh_cat, 0)
+	var header_global_pos: Vector2 = vendor_item_tree.get_global_transform() * header_local.position
+	var union_top_left: Vector2 = header_global_pos
+	var union_bottom_right: Vector2 = header_global_pos + header_local.size
+	# Expand union to include up to N child rows (if any)
+	var count := 0
+	var child := veh_cat.get_first_child()
+	while child != null and count < int(max_rows):
+		if child.is_selectable(0):
+			var rlocal: Rect2 = vendor_item_tree.get_item_area_rect(child, 0)
+			var gpos := vendor_item_tree.get_global_transform() * rlocal.position
+			union_top_left.x = min(union_top_left.x, gpos.x)
+			union_top_left.y = min(union_top_left.y, gpos.y)
+			union_bottom_right.x = max(union_bottom_right.x, gpos.x + rlocal.size.x)
+			union_bottom_right.y = max(union_bottom_right.y, gpos.y + rlocal.size.y)
+			count += 1
+		child = child.get_next()
+	var size := union_bottom_right - union_top_left
+	if size == Vector2.ZERO:
+		return Rect2()
+	return Rect2(union_top_left, size)
