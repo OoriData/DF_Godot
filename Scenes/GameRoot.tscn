@@ -1,9 +1,10 @@
-[gd_scene load_steps=5 format=3 uid="uid://yme8tiuqxb2b"]
+[gd_scene load_steps=6 format=3 uid="uid://yme8tiuqxb2b"]
 
 [ext_resource type="Script" uid="uid://n5dg0ersmtll" path="res://Scripts/UI/game_screen_manager.gd" id="1_mrnkn"]
 [ext_resource type="PackedScene" uid="uid://kpjpc0fnv1nn" path="res://Scenes/LoginScreen.tscn" id="3_xxxxx"]
 [ext_resource type="Script" uid="uid://dt1vsmmkmlfpv" path="res://Assets/tiles/generate_tiles.gd" id="5_2m18y"]
 [ext_resource type="PackedScene" uid="uid://cxciw3malgni0" path="res://Scenes/MainScreen.tscn" id="5_qwuey"]
+[ext_resource type="Script" uid="uid://qrf1jogqc0pb" path="res://Scripts/UI/tutorial_manager.gd" id="6_tutor"]
 
 [node name="GameRoot" type="Node"]
 script = ExtResource("1_mrnkn")
@@ -14,3 +15,6 @@ script = ExtResource("1_mrnkn")
 script = ExtResource("5_2m18y")
 
 [node name="MainScreen" parent="." instance=ExtResource("5_qwuey")]
+
+[node name="TutorialManager" type="Node" parent="."]
+script = ExtResource("6_tutor")

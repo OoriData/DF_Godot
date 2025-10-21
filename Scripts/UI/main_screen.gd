@@ -45,6 +45,11 @@ func initialize(p_map_view: Control, p_camera_controller: Node, p_interaction_ma
 	move_child(_onboarding_layer, get_child_count()-1)
 	_onboarding_layer.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 
+# --- Tutorial / Onboarding helpers ---
+# Provide a stable accessor for an overlay layer that tutorial can attach to.
+func get_onboarding_layer() -> Control:
+	_ensure_onboarding_layer()
+	return _onboarding_layer
 
 # Camera input state
 var _is_panning := false
