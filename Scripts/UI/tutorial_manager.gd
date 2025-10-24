@@ -21,6 +21,19 @@ var _level: int = 0
 var _step: int = 0
 var _steps: Array = [] # Array of Dictionaries defining steps for current level
 var _started: bool = false
+var _resolver: Node = null # Scripts/UI/target_resolver.gd instance
+
+# Persistence
+const PROGRESS_PATH := "user://tutorial_progress.json"
+var _resume_requested: bool = true
+
+# Overlay scope: "map" (default under MapView onboarding layer) or "ui" (full MainScreen)
+var _overlay_scope: String = "map"
+
+# Mirror overlay gating enum values for convenience
+const GATING_NONE := 0
+const GATING_SOFT := 1
+const GATING_HARD := 2
 
 # Simple contract (kept tiny for first pass):
 # Step schema: { id: String, copy: String, action: String, target: Dictionary }
@@ -37,6 +50,16 @@ func _ready() -> void:
 			_gdm.connect("initial_data_ready", Callable(self, "_on_initial_data_ready"))
 		if _gdm.has_signal("convoy_data_updated"):
 			_gdm.connect("convoy_data_updated", Callable(self, "_on_convoy_data_updated"))
+	# MenuManager hooks (for event-driven steps)
+	var mm := get_node_or_null("/root/MenuManager")
+	if mm:
+		if mm.has_signal("menu_opened") and not mm.is_connected("menu_opened", Callable(self, "_on_menu_opened")):
+			mm.connect("menu_opened", Callable(self, "_on_menu_opened"))
+	# Resolver instance
+	_resolver = preload("res://Scripts/UI/target_resolver.gd").new()
+	add_child(_resolver)
+	# Load persisted progress if any
+	_load_progress()
 	# Do not create overlay yet; only when the tutorial actually starts
 	# Try starting after a short defer so MainScreen can show onboarding modal first
 	_try_start_deferred()
@@ -54,7 +77,7 @@ func _emit_changed() -> void:
 	emit_signal("tutorial_step_changed", _level, _step)
 	if _step >= 0 and _step < _steps.size():
 		var step: Dictionary = _steps[_step]
-		print("[Tutorial] Advancing to step ", step.get("id", str(_step)), " (action=", step.get("action", "message"), ")")
+		print("[Tutorial] step:", step.get("id", str(_step)), " action=", step.get("action", "message"), " lock=", step.get("lock", ""))
 
 func _try_start_deferred():
 	call_deferred("_maybe_start")
@@ -73,9 +96,10 @@ func _maybe_start() -> void:
 		has_any_convoys = (conv is Array) and (conv.size() > 0)
 	if not has_any_convoys:
 		return
-	# Initialize and run
-	_level = start_level
-	_steps = _build_level_steps(_level)
+	# Initialize and run (prefer external steps if available)
+	if _level <= 0:
+		_level = start_level
+	_steps = _load_steps_for_level(_level)
 	_step = 0
 	_started = true
 	_emit_started()
@@ -84,7 +108,11 @@ func _maybe_start() -> void:
 func _is_new_convoy_dialog_visible() -> bool:
 	if _main_screen == null:
 		return false
-	var dlg := _main_screen.get_node_or_null("OnboardingLayer/NewConvoyDialog")
+	# Look for the dialog anywhere under the onboarding layer (it may be wrapped in a CenterContainer)
+	var layer := _main_screen.get_node_or_null("OnboardingLayer")
+	if not is_instance_valid(layer):
+		return false
+	var dlg := layer.find_child("NewConvoyDialog", true, false)
 	return is_instance_valid(dlg) and dlg.visible
 
 func _build_level_steps(level: int) -> Array:
@@ -102,8 +130,54 @@ func _build_level_steps(level: int) -> Array:
 					id = "l1_open_convoy_menu",
 					copy = "Open the convoy menu using the convoy dropdown in the top bar.",
 					action = "highlight",
-					target = { hint = "topbar_convoy_button" }
+					target = { resolver = "button_with_text", text_contains = "Convoy" },
+					lock = "soft"
 				},
+				{
+					id = "l1_open_settlement",
+					copy = "Click the Settlement button to view available vendors.",
+					action = "await_settlement_menu",
+					target = { resolver = "button_with_text", text_contains = "Settlement" },
+					lock = "soft"
+				},
+				{
+					id = "l1_open_dealership",
+					copy = "In the settlement, go to the Dealership tab.",
+					action = "await_dealership_tab",
+					target = { resolver = "tab_title_contains", token = "Dealership" },
+					lock = "soft"
+				},
+				{
+					id = "l1_choose_vehicle",
+					copy = "Choose one of the available vehicles in the Dealership.",
+					action = "message",
+					target = {}
+				},
+				{
+					id = "l1_buy_vehicle",
+					copy = "Press Buy to purchase your chosen vehicle.",
+					action = "await_vehicle_purchase",
+					target = { resolver = "vendor_action_button", which = "buy" },
+					lock = "soft"
+				},
+			]
+		2:
+			return [
+				{ id = "l2_intro", copy = "Let’s plan a journey. Open the Journey menu from your convoy.", action = "message", target = {} },
+				{ id = "l2_pick_destination", copy = "Choose a nearby settlement as your destination.", action = "highlight", target = { hint = "map_destinations" } },
+				{ id = "l2_review_routes", copy = "Review the suggested route and confirm when ready.", action = "highlight", target = { hint = "route_confirm" } },
+			]
+		3:
+			return [
+				{ id = "l3_resources_intro", copy = "Manage your resources: fuel, water, and food.", action = "message", target = {} },
+				{ id = "l3_open_settlement", copy = "Visit a settlement and open the Market/Gas tab.", action = "await_settlement_menu", target = {} },
+				{ id = "l3_top_up", copy = "Use Top Up to automatically buy what you need.", action = "message", target = {} },
+			]
+		4:
+			return [
+				{ id = "l4_parts_intro", copy = "Upgrade vehicles with parts for better performance.", action = "message", target = {} },
+				{ id = "l4_open_dealership", copy = "Open the Dealership again to browse parts.", action = "await_dealership_tab", target = { tab_contains = "Dealership" } },
+				{ id = "l4_buy_install_hint", copy = "Buy a part and use Install to open Mechanics.", action = "message", target = {} },
 			]
 		_:
 			return []
@@ -113,39 +187,58 @@ func _ensure_overlay() -> Node:
 		return _overlay
 	# Ask main_screen for its onboarding layer if available
 	var layer: Node = null
+	# Prefer the MainScreen's onboarding layer which is already scoped to MapView bounds
 	if _main_screen and _main_screen.has_method("get_onboarding_layer"):
 		layer = _main_screen.call("get_onboarding_layer")
-	else:
-		layer = _main_screen
+	elif _main_screen:
+		# Fallback to MapView root or MainScreen if accessor missing
+		var map_root: Control = _main_screen.get_node_or_null("MainContainer/MainContent/Main")
+		layer = map_root if is_instance_valid(map_root) else _main_screen
 	if layer == null:
 		push_warning("[Tutorial] No host layer for overlay; creating under root")
 		layer = get_tree().get_root()
 	_overlay = preload("res://Scripts/UI/tutorial_overlay.gd").new()
 	layer.add_child(_overlay)
+	if layer is Node:
+		layer.move_child(_overlay, layer.get_child_count() - 1)
+	_overlay_scope = "map"
+	# Nudge to top within its parent for safety
+	if _overlay and _overlay.has_method("bring_to_front"):
+		_overlay.call_deferred("bring_to_front")
 	# Ensure it spans full screen
 	if _overlay is Control:
 		_overlay.set_anchors_preset(Control.PRESET_FULL_RECT)
-		# Configure safe-area inset based on TopBar height if available
-		var top_h := 0
-		if _main_screen:
-			var top_bar: Control = _main_screen.get_node_or_null("MainContainer/TopBar")
-			if is_instance_valid(top_bar):
-				top_h = int(top_bar.size.y)
+		# Configure safe-area inset based on local parent (MapView has no top bar)
 		if _overlay.has_method("set_safe_area_insets"):
-			_overlay.call("set_safe_area_insets", top_h + 10)
+			# When overlay sits over MapView, set minimal inset; TopBar is outside.
+			_overlay.call("set_safe_area_insets", 8)
+		# Log placement for debugging and verify size after layout
+		_overlay.call_deferred("_debug_log_placement")
+		call_deferred("_verify_overlay_size")
 	return _overlay
+
+func _verify_overlay_size() -> void:
+	# If the overlay's parent (onboarding layer) hasn't been sized yet, we may be at (0,0).
+	# In that case, temporarily reparent to full MainScreen scope so highlights work.
+	var ov := _overlay as Control
+	var ms: Control = _main_screen as Control
+	if ov == null or ms == null:
+		return
+	var rect := ov.get_global_rect()
+	if rect.size.x <= 1.0 or rect.size.y <= 1.0:
+		print("[Tutorial] Overlay size is zero; switching to UI scope as a fallback.")
+		_attach_overlay_scope("ui")
+		# Re-log placement after switching
+		ov.call_deferred("_debug_log_placement")
 
 func _configure_overlay_insets_deferred() -> void:
 	call_deferred("_configure_overlay_insets")
 
 func _configure_overlay_insets() -> void:
 	var ov = _ensure_overlay()
-	if ov and ov.has_method("set_safe_area_insets") and _main_screen:
-		var top_bar: Control = _main_screen.get_node_or_null("MainContainer/TopBar")
-		var top_h := 0
-		if is_instance_valid(top_bar):
-			top_h = int(top_bar.size.y)
-		ov.call("set_safe_area_insets", top_h + 10)
+	if ov and ov.has_method("set_safe_area_insets"):
+		# Minimal inset because overlay is scoped to MapView area
+		ov.call("set_safe_area_insets", 8)
 
 func _run_current_step() -> void:
 	if _step < 0 or _step >= _steps.size():
@@ -155,24 +248,61 @@ func _run_current_step() -> void:
 	var action := String(step.get("action", "message"))
 	match action:
 		"message":
-			_show_message(step.get("copy", ""))
+			_show_message(step.get("copy", ""), true)
 		"highlight":
-			# For first pass, just show the copy with a subtle hint.
-			_show_message(step.get("copy", ""))
-			# Future: resolve target and call _overlay.highlight_rect(rect)
+			_show_message(step.get("copy", ""), true)
+			_apply_lock(step)
+			_resolve_and_highlight(step)
+		"await_menu_open":
+			_show_message(step.get("copy", ""), false)
+			_apply_lock(step)
+			_resolve_and_highlight(step)
+			_awaiting_menu_open = true
+		"await_settlement_menu":
+			_show_message(step.get("copy", ""), false)
+			# Resolve highlight first; only hard-lock once we have a valid target rect
+			var ok := _resolve_and_highlight(step) # highlight Settlement button if target provided
+			if ok:
+				_apply_lock(step)
+			else:
+				# Avoid full lockout if we haven't resolved the button yet
+				_gate_map(GATING_SOFT)
+			_watch_for_settlement_menu()
+		"await_dealership_tab":
+			_show_message(step.get("copy", ""), false)
+			_apply_lock(step)
+			_hint_dealership_tab(step.get("target", {}))
+			_resolve_and_highlight(step) # try to highlight tab container as a hint
+			_watch_for_dealership_selected(step.get("target", {}))
+		"await_vehicle_purchase":
+			_show_message(step.get("copy", ""), false)
+			_apply_lock(step)
+			_resolve_and_highlight(step)
+			_watch_for_vehicle_purchase()
 		_:
-			_show_message(step.get("copy", ""))
+			_show_message(step.get("copy", ""), true)
 
-func _show_message(text: String) -> void:
+func _show_message(text: String, show_continue: bool = true) -> void:
 	var ov = _ensure_overlay()
 	if ov and ov.has_method("show_message"):
-		ov.call("show_message", text, true, func(): _advance())
+		if show_continue:
+			ov.call("show_message", text, true, func(): _advance())
+		else:
+			ov.call("show_message", text, false, Callable())
 	else:
 		# Fallback if overlay not loaded
 		print("[Tutorial] ", text, " [Click to continue]")
 
 func _advance() -> void:
+	# Clear any existing highlight before moving on
+	if _overlay and is_instance_valid(_overlay):
+		if _overlay.has_method("clear_highlight_and_gating"):
+			_overlay.call("clear_highlight_and_gating")
+		elif _overlay.has_method("clear_highlight"):
+			_overlay.call("clear_highlight")
 	_step += 1
+	_awaiting_menu_open = false
+	_save_progress()
 	_emit_changed()
 	_run_current_step()
 
@@ -182,3 +312,342 @@ func _emit_finished() -> void:
 	if _overlay and is_instance_valid(_overlay):
 		_overlay.call_deferred("queue_free")
 		_overlay = null
+	# Mark progress complete for this level
+	_save_progress(true)
+
+# ---- Internal watchers and helpers ----
+
+func _get_settlement_menu() -> Node:
+	# Find an instance of ConvoySettlementMenu anywhere in the tree
+	var root := get_tree().get_root()
+	if root == null:
+		return null
+	var found := root.find_child("ConvoySettlementMenu", true, false)
+	return found
+
+func _watch_for_settlement_menu() -> void:
+	# Poll briefly until the settlement menu appears, then advance.
+	var timer := get_tree().create_timer(0.4)
+	timer.timeout.connect(func():
+		var menu := _get_settlement_menu()
+		if is_instance_valid(menu):
+			_advance()
+		else:
+			_watch_for_settlement_menu()
+	)
+
+func _get_vendor_tab_container() -> TabContainer:
+	var menu := _get_settlement_menu()
+	if not is_instance_valid(menu):
+		return null
+	var tabs: TabContainer = menu.get_node_or_null("MainVBox/VendorTabContainer")
+	return tabs
+
+func _hint_dealership_tab(target: Dictionary) -> void:
+	# Respect current step's gating; do not override here.
+	# Previously forced HARD which blocked the highlighted tab. Left empty on purpose.
+	pass
+	# If we ever expand overlay to cover the full UI, we could compute the tab rect and highlight:
+	# var menu := _get_settlement_menu(); if is_instance_valid(menu) and menu.has_method("get_vendor_tab_rect_by_title_contains"): ...
+
+func _watch_for_dealership_selected(target: Dictionary) -> void:
+	var want := String(target.get("tab_contains", "Dealership"))
+	var timer := get_tree().create_timer(0.5)
+	timer.timeout.connect(func():
+		var tabs := _get_vendor_tab_container()
+		if is_instance_valid(tabs):
+			var idx := tabs.current_tab
+			if idx >= 0:
+				var title := tabs.get_tab_title(idx)
+				if title.findn(want) != -1:
+					_advance()
+					return
+		_watch_for_dealership_selected(target)
+	)
+
+var _vehicle_bought_flag := false
+
+func _watch_for_vehicle_purchase() -> void:
+	# Prefer APICalls signal if available; otherwise, observe convoy data updates.
+	if not _vehicle_bought_flag:
+		var api := get_node_or_null("/root/APICallsInstance")
+		if api and api.has_signal("vehicle_bought") and not api.is_connected("vehicle_bought", Callable(self, "_on_vehicle_bought")):
+			api.connect("vehicle_bought", Callable(self, "_on_vehicle_bought"))
+	# Try to hint the Buy button if present
+	_hint_buy_button()
+	# Start polling convoy data as a fallback
+	_poll_convoy_has_vehicle()
+
+func _on_vehicle_bought(_payload: Dictionary) -> void:
+	_vehicle_bought_flag = true
+	_advance()
+
+func _poll_convoy_has_vehicle() -> void:
+	if _vehicle_bought_flag:
+		return
+	var timer := get_tree().create_timer(0.6)
+	timer.timeout.connect(func():
+		var has_vehicle := false
+		if _gdm:
+			if _gdm.has_method("get_all_convoy_data"):
+				var all: Array = _gdm.get_all_convoy_data()
+				if all is Array:
+					for c in all:
+						if c is Dictionary:
+							# Look for common keys that indicate a vehicle presence
+							if c.has("vehicles") and c["vehicles"] is Array and c["vehicles"].size() > 0:
+								has_vehicle = true
+								break
+							if c.has("vehicle") and c["vehicle"]:
+								has_vehicle = true
+								break
+		if has_vehicle:
+			_vehicle_bought_flag = true
+			_advance()
+		else:
+			_poll_convoy_has_vehicle()
+	)
+
+func _get_active_vendor_panel_node() -> Node:
+	var tabs := _get_vendor_tab_container()
+	if not is_instance_valid(tabs):
+		return null
+	var idx := tabs.current_tab
+	if idx < 0:
+		return null
+	var container := tabs.get_child(idx) if idx < tabs.get_child_count() else null
+	if not is_instance_valid(container):
+		return null
+	# Look for a VendorTradePanel child
+	var panel := container.find_child("VendorTradePanel", true, false)
+	return panel
+
+func _hint_buy_button() -> void:
+	# Respect current step's gating; do not override here to keep the Buy button clickable.
+	pass
+
+# --- Target resolution & highlight helpers ---
+var _highlight_timer: SceneTreeTimer = null
+var _active_highlight_step: Dictionary = {}
+var _awaiting_menu_open: bool = false
+
+func _apply_lock(step: Dictionary) -> void:
+	var lock := String(step.get("lock", "soft"))
+	match lock:
+		"hard":
+			print("[Tutorial] gating=HARD for step", step.get("id", ""))
+			_gate_map(GATING_HARD)
+		"soft":
+			print("[Tutorial] gating=SOFT for step", step.get("id", ""))
+			_gate_map(GATING_SOFT)
+		_:
+			print("[Tutorial] gating=NONE for step", step.get("id", ""))
+			_gate_map(GATING_NONE)
+
+func _resolve_and_highlight(step: Dictionary) -> bool:
+	var ov := _ensure_overlay()
+	if ov == null:
+		return false
+	var target: Dictionary = step.get("target", {})
+	if _resolver == null:
+		return false
+	var res: Dictionary = _resolver.call("resolve", target)
+	if res.get("ok", false):
+		var node: Node = res.get("node")
+		var rect: Rect2 = res.get("rect", Rect2())
+		_maybe_switch_overlay_scope_for_rect(rect)
+		if ov.has_method("highlight_node"):
+			ov.call("highlight_node", node, rect)
+		elif ov.has_method("set_highlight_rect"): # Fallback for safety
+			ov.call("set_highlight_rect", rect)
+		print("[Tutorial] Highlight step=", step.get("id", ""), " rect=", rect, " node=", node)
+		return true
+	else:
+		# Guardrail: if not found, clear highlight and downgrade lock after a short delay
+		if ov.has_method("clear_highlight"):
+			ov.call("clear_highlight")
+		print("[Tutorial] Highlight resolve failed for step=", step.get("id", ""), " reason=", res.get("reason", ""))
+		# Start/continue retry loop
+	_start_highlight_retry(step)
+	return false
+
+func _start_highlight_retry(step: Dictionary) -> void:
+	_active_highlight_step = step.duplicate(true)
+	if _highlight_timer != null:
+		return
+	_highlight_timer = get_tree().create_timer(0.6, false)
+	_highlight_timer.timeout.connect(_on_highlight_retry)
+
+func _on_highlight_retry() -> void:
+	_highlight_timer = null
+	if _active_highlight_step.is_empty():
+		return
+	# Re-resolve, but if still failing a few times, relax lock
+	var ov := _ensure_overlay()
+	var target: Dictionary = _active_highlight_step.get("target", {})
+	var res: Dictionary = _resolver.call("resolve", target)
+	if res.get("ok", false):
+		var node: Node = res.get("node")
+		var rect: Rect2 = res.get("rect", Rect2())
+		if ov and ov.has_method("highlight_node"):
+			ov.call("highlight_node", node, rect)
+		elif ov and ov.has_method("set_highlight_rect"): # Fallback
+			ov.call("set_highlight_rect", rect)
+		# Now that we have a rect, enforce the intended gating level
+		var lock := String(_active_highlight_step.get("lock", "soft"))
+		match lock:
+			"hard":
+				_gate_map(GATING_HARD)
+			"soft":
+				_gate_map(GATING_SOFT)
+			_:
+				_gate_map(GATING_NONE)
+		# Keep trying periodically to follow dynamic UI if it moves
+		_highlight_timer = get_tree().create_timer(1.2, false)
+		_highlight_timer.timeout.connect(_on_highlight_retry)
+	else:
+		# After two consecutive failures, downgrade lock to avoid player lockout
+		var lock := String(_active_highlight_step.get("lock", "soft"))
+		if lock == "hard":
+			_gate_map(GATING_SOFT)
+		# Try again soon in case UI just rebuilt
+		_highlight_timer = get_tree().create_timer(1.0, false)
+		_highlight_timer.timeout.connect(_on_highlight_retry)
+
+# Scope switching: reparent overlay to cover Map (default) or full UI
+func _maybe_switch_overlay_scope_for_rect(rect: Rect2) -> void:
+	var ms: Control = _main_screen as Control
+	if ms == null:
+		return
+	var map_host: Control = null
+	if _main_screen and _main_screen.has_method("get_onboarding_layer"):
+		map_host = _main_screen.call("get_onboarding_layer")
+	map_host = map_host if is_instance_valid(map_host) else ms
+	var map_rect := map_host.get_global_rect() if map_host is Control else Rect2(Vector2.ZERO, Vector2.ZERO)
+	var ui_rect := ms.get_global_rect() if ms is Control else Rect2(Vector2.ZERO, Vector2.ZERO)
+	var intersects_map := rect.intersection(map_rect).has_area()
+	var want := "map" if intersects_map else "ui"
+	print("[Tutorial] Scope pick: target_rect=", rect, " map_rect=", map_rect, " ui_rect=", ui_rect, " -> ", want)
+	if want != _overlay_scope:
+		_attach_overlay_scope(want)
+
+func _attach_overlay_scope(scope: String) -> void:
+	var ov := _ensure_overlay() as Control
+	if ov == null:
+		return
+	var ms: Control = _main_screen as Control
+	if ms == null:
+		return
+	if scope == "map":
+		# Parent under onboarding layer (covers MapView area only)
+		var host: Control = null
+		if _main_screen and _main_screen.has_method("get_onboarding_layer"):
+			host = _main_screen.call("get_onboarding_layer")
+		host = host if is_instance_valid(host) else ms
+		if ov.get_parent() != host:
+			if ov.get_parent(): ov.get_parent().remove_child(ov)
+			host.add_child(ov)
+		host.move_child(ov, host.get_child_count() - 1)
+		ov.set_anchors_preset(Control.PRESET_FULL_RECT)
+		if ov.has_method("set_safe_area_insets"):
+			ov.call("set_safe_area_insets", 8)
+		_overlay_scope = "map"
+	else:
+		# Parent under full MainScreen to cover full UI; offset below TopBar
+		if ov.get_parent() != ms:
+			if ov.get_parent(): ov.get_parent().remove_child(ov)
+			ms.add_child(ov)
+		ms.move_child(ov, ms.get_child_count() - 1)
+		ov.set_anchors_preset(Control.PRESET_FULL_RECT)
+		if ov.has_method("set_safe_area_insets"):
+			ov.call("set_safe_area_insets", _get_top_bar_inset())
+		_overlay_scope = "ui"
+	# Ensure on top
+	if ov.has_method("bring_to_front"):
+		ov.call_deferred("bring_to_front")
+	print("[Tutorial] Attached overlay scope=", scope, " parent=", (ov.get_parent().name if ov.get_parent() else "<none>"))
+
+func _get_top_bar_inset() -> int:
+	var ms: Control = _main_screen as Control
+	if ms == null:
+		return 0
+	var top: Control = ms.get_node_or_null("MainContainer/TopBar")
+	if top:
+		return int(round(top.size.y))
+	return 0
+
+# --- MenuManager integration ---
+func _on_menu_opened(menu_node: Node, menu_type: String) -> void:
+	if not _awaiting_menu_open:
+		return
+	var t := (menu_type if typeof(menu_type) == TYPE_STRING else "")
+	var is_convoy := false
+	if t.to_lower().find("convoy") != -1:
+		is_convoy = true
+	elif is_instance_valid(menu_node) and String(menu_node.name).to_lower().find("convoymenu") != -1:
+		is_convoy = true
+	if is_convoy:
+		_advance()
+
+# --- External steps & persistence ---
+func _load_steps_for_level(level: int) -> Array:
+	# Try JSON from res://Other/tutorial_steps.json
+	var path := "res://Other/tutorial_steps.json"
+	var txt := ""
+	var f := FileAccess.open(path, FileAccess.READ)
+	if f:
+		txt = f.get_as_text()
+		f.close()
+	var data: Variant = JSON.parse_string(txt)
+	if typeof(data) == TYPE_DICTIONARY:
+		var levels: Dictionary = data as Dictionary
+		if levels.has(str(level)) and levels[str(level)] is Array:
+			return levels[str(level)]
+	# Fallback to built-in
+	return _build_level_steps(level)
+
+func _load_progress() -> void:
+	var f := FileAccess.open(PROGRESS_PATH, FileAccess.READ)
+	if f == null:
+		return
+	var txt := f.get_as_text()
+	f.close()
+	var obj: Variant = JSON.parse_string(txt)
+	if typeof(obj) != TYPE_DICTIONARY:
+		return
+	var level := int(obj.get("level", 0))
+	var step := int(obj.get("step", 0))
+	if level > 0:
+		_level = level
+		_steps = _load_steps_for_level(_level)
+		_step = clamp(step, 0, max(0, _steps.size() - 1))
+
+func _save_progress(finished_level: bool = false) -> void:
+	var obj := {
+		"level": _level,
+		"step": _step,
+		"finished": finished_level
+	}
+	var txt := JSON.stringify(obj)
+	var f := FileAccess.open(PROGRESS_PATH, FileAccess.WRITE)
+	if f:
+		f.store_string(txt)
+		f.close()
+
+# --- Map gating helpers ---
+func _gate_map(mode: int) -> void:
+	var ov := _ensure_overlay()
+	if ov and ov.has_method("set_gating_mode"):
+		ov.call("set_gating_mode", mode)
+
+# Generic: highlight a Control node within the map overlay (only works if node lives under MapView)
+func _highlight_node_in_map(node: Node, gating_mode: int = GATING_SOFT) -> void:
+	var ov := _ensure_overlay()
+	if not ov:
+		return
+	if ov.has_method("set_highlight_for_node"):
+		ov.call("set_highlight_for_node", node, 6)
+	if ov.has_method("set_gating_mode"):
+		ov.call("set_gating_mode", gating_mode)
+	if ov.has_method("bring_to_front"):
+		ov.call_deferred("bring_to_front")

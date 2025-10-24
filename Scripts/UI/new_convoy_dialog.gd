@@ -22,7 +22,9 @@ func open():
 	visible = true
 	modulate = Color(1,1,1,1)
 	set_process_unhandled_input(true)
-	await get_tree().process_frame
+	var tree = get_tree()
+	if is_instance_valid(tree):
+		await tree.process_frame
 	if is_instance_valid(name_edit):
 		name_edit.grab_focus()
 

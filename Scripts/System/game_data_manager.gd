@@ -1535,6 +1535,10 @@ func get_convoy_by_id(convoy_id: String) -> Variant:
 			return convoy
 	return null
 
+# Safe numeric checker to handle nulls and non-numeric values from API
+func _is_positive_number(v: Variant) -> bool:
+	return (v is float or v is int) and float(v) > 0.0
+
 # Aggregates vendor's inventory into categories
 func _aggregate_vendor_items(vendor_data: Dictionary) -> Dictionary:
 	var aggregated = {
@@ -1552,7 +1556,12 @@ func _aggregate_vendor_items(vendor_data: Dictionary) -> Dictionary:
 			continue
 		var category = "other"
 		var is_mission := item.get("recipient") != null
-		var is_resource: bool = (item.has("food") and item.get("food", 0) > 0) or (item.has("water") and item.get("water", 0) > 0) or (item.has("fuel") and item.get("fuel", 0) > 0)
+		# Guard against null values in resource fields (API may send null instead of 0)
+		var is_resource: bool = (
+			(item.has("food") and _is_positive_number(item.get("food"))) or
+			(item.has("water") and _is_positive_number(item.get("water"))) or
+			(item.has("fuel") and _is_positive_number(item.get("fuel")))
+		)
 		var is_part: bool = item.has("slot") and item.get("slot") != null and String(item.get("slot")).length() > 0
 		if is_mission:
 			category = "missions"
@@ -1622,7 +1631,7 @@ func _aggregate_convoy_items(convoy_data: Dictionary, vendor_data: Dictionary) -
 				var category = "other"
 				if item.get("recipient") != null or item.get("delivery_reward") != null:
 					category = "missions"
-				elif (item.has("food") and item.get("food", 0) > 0) or (item.has("water") and item.get("water", 0) > 0) or (item.has("fuel") and item.get("fuel", 0) > 0):
+				elif (item.has("food") and _is_positive_number(item.get("food"))) or (item.has("water") and _is_positive_number(item.get("water"))) or (item.has("fuel") and _is_positive_number(item.get("fuel"))):
 					category = "resources"
 				_aggregate_item(aggregated[category], item, vehicle_name)
 			for item in vehicle.get("parts", []):
@@ -1636,7 +1645,7 @@ func _aggregate_convoy_items(convoy_data: Dictionary, vendor_data: Dictionary) -
 			var category = "other"
 			if item.get("recipient") != null or item.get("delivery_reward") != null:
 				category = "missions"
-			elif (item.has("food") and item.get("food", 0) > 0) or (item.has("water") and item.get("water", 0) > 0) or (item.has("fuel") and item.get("fuel", 0) > 0):
+			elif (item.has("food") and _is_positive_number(item.get("food"))) or (item.has("water") and _is_positive_number(item.get("water"))) or (item.has("fuel") and _is_positive_number(item.get("fuel"))):
 				category = "resources"
 			_aggregate_item(aggregated[category], item, "Convoy")
 

@@ -1353,3 +1353,47 @@ func _restore_selection(tree: Tree, item_id):
 					_handle_new_item_selection(agg_data)
 					return
 	_handle_new_item_selection(null)	# Helper to restore selection in a tree after data refresh
+
+# --- Tutorial helpers: target resolution for highlight/gating ---
+
+# Expose the primary action button (Buy/Sell) for highlighting
+func get_action_button_node() -> Button:
+	return action_button
+
+# Ensure the Buy tab is selected
+func focus_buy_tab() -> void:
+	if is_instance_valid(trade_mode_tab_container):
+		trade_mode_tab_container.current_tab = 0
+
+# Find the rect of a vendor item in the tree by display text contains (case-insensitive)
+func get_vendor_item_rect_by_text_contains(substr: String) -> Rect2:
+	if not is_instance_valid(vendor_item_tree):
+		return Rect2()
+	var root := vendor_item_tree.get_root()
+	if root == null:
+		return Rect2()
+	var needle := substr.to_lower()
+	var found: TreeItem = null
+	var q := [root]
+	while not q.is_empty():
+		var it: TreeItem = q.pop_back()
+		if it != null:
+			var txt := String(it.get_text(0))
+			if txt.to_lower().find(needle) != -1:
+				found = it
+				break
+			# enqueue children
+			var child := it.get_first_child()
+			while child != null:
+				q.push_back(child)
+				child = child.get_next()
+	if found == null:
+		return Rect2()
+	# Ensure the item is visible (expand parents) so rect is meaningful
+	var parent := found.get_parent()
+	while parent != null:
+		parent.collapsed = false
+		parent = parent.get_parent()
+	var local_r: Rect2 = vendor_item_tree.get_item_rect(found, 0, false)
+	var tree_global := vendor_item_tree.get_global_rect()
+	return Rect2(tree_global.position + local_r.position, local_r.size)

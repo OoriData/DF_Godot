@@ -39,16 +39,27 @@ func initialize(p_map_view: Control, p_camera_controller: Node, p_interaction_ma
 	# Ensure an overlay layer exists for onboarding modals
 	if is_instance_valid(_onboarding_layer) == false:
 		_onboarding_layer = Control.new()
-	_onboarding_layer.name = "OnboardingLayer"
-	_onboarding_layer.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	add_child(_onboarding_layer)
-	move_child(_onboarding_layer, get_child_count()-1)
-	_onboarding_layer.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		_onboarding_layer.name = "OnboardingLayer"
+		_onboarding_layer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		# Parent the onboarding layer to the map_view so it only covers the map area
+		var parent: Node = map_view if is_instance_valid(map_view) else self
+		if _onboarding_layer.get_parent() != parent:
+			if is_instance_valid(_onboarding_layer.get_parent()):
+				_onboarding_layer.get_parent().remove_child(_onboarding_layer)
+			parent.add_child(_onboarding_layer)
+			parent.move_child(_onboarding_layer, parent.get_child_count() - 1)
+		_onboarding_layer.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+
+	# Ensure overlay layer lives under the MapView even if it was created earlier
+	_reparent_onboarding_layer_to_map()
+	_update_onboarding_layer_rect_to_map()
 
 # --- Tutorial / Onboarding helpers ---
 # Provide a stable accessor for an overlay layer that tutorial can attach to.
 func get_onboarding_layer() -> Control:
 	_ensure_onboarding_layer()
+	# Keep parenting correct in case this accessor is called before MapView is ready
+	_reparent_onboarding_layer_to_map()
 	return _onboarding_layer
 
 # Camera input state
@@ -130,10 +141,12 @@ func _notification(what):
 func _on_main_screen_size_changed():
 	# Called when MainScreen is resized (window resize or layout change)
 	_update_camera_viewport_rect_on_resize()
+	_update_onboarding_layer_rect_to_map()
 
 func _on_map_view_size_changed():
 	# Called when MapView is resized (e.g., due to menu open/close or container resize)
 	_update_camera_viewport_rect_on_resize()
+	_update_onboarding_layer_rect_to_map()
 
 # Call this after the main screen is visible and unpaused to ensure camera is correct
 func force_camera_update():
@@ -174,6 +187,9 @@ func _initial_camera_and_ui_setup():
 	# else:
 	# 	printerr("[DFCAM-DEBUG] MainScreen: Camera controller not valid or missing update_map_viewport_rect.")
 
+
+	# After initial layout, fit onboarding layer to the map display rect
+	_update_onboarding_layer_rect_to_map()
 
 func _on_map_view_gui_input(event: InputEvent):
 	if not is_instance_valid(map_camera_controller):
@@ -378,10 +394,13 @@ func _show_new_convoy_dialog():
 			var scene: PackedScene = scene_res
 			print("[Onboarding] Instantiating NewConvoyDialog scene…")
 			_new_convoy_dialog = scene.instantiate()
-		_onboarding_layer.add_child(_new_convoy_dialog)
+		# Always add dialogs under a CenterContainer so they stay centered
+		var host: Node = _onboarding_layer.get_node_or_null("Center") if is_instance_valid(_onboarding_layer) else null
+		if not is_instance_valid(host):
+			host = _onboarding_layer
+		host.add_child(_new_convoy_dialog)
 		print("[Onboarding] NewConvoyDialog added to overlay.")
-		_new_convoy_dialog.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
-		# Center with a fixed size
+		# Let CenterContainer handle centering; ensure a reasonable minimum size
 		_new_convoy_dialog.custom_minimum_size = Vector2(420, 180)
 		# Connect signals
 		if _new_convoy_dialog.has_signal("create_requested"):
@@ -462,10 +481,61 @@ func _ensure_onboarding_layer():
 	if not is_instance_valid(_onboarding_layer):
 		_onboarding_layer = Control.new()
 		_onboarding_layer.name = "OnboardingLayer"
-	if _onboarding_layer.get_parent() != self:
-		add_child(_onboarding_layer)
-		move_child(_onboarding_layer, get_child_count()-1)
+		# Prefer to parent under the map_view (falls back to MainScreen if unavailable)
+		var parent: Node = map_view if is_instance_valid(map_view) else self
+		if _onboarding_layer.get_parent() != parent:
+			if is_instance_valid(_onboarding_layer.get_parent()):
+				_onboarding_layer.get_parent().remove_child(_onboarding_layer)
+			parent.add_child(_onboarding_layer)
+			parent.move_child(_onboarding_layer, parent.get_child_count() - 1)
 		_onboarding_layer.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		# Ensure a CenterContainer exists to center any onboarding dialogs/content
+		var center := _onboarding_layer.get_node_or_null("Center")
+		if not is_instance_valid(center):
+			center = CenterContainer.new()
+			center.name = "Center"
+			_onboarding_layer.add_child(center)
+			if center is Control:
+				center.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+				center.mouse_filter = Control.MOUSE_FILTER_PASS
+
+func _reparent_onboarding_layer_to_map() -> void:
+	# Ensure onboarding layer is under map_view and sized later
+	if not is_instance_valid(_onboarding_layer):
+		return
+	var parent: Node = map_view if is_instance_valid(map_view) else self
+	if _onboarding_layer.get_parent() != parent:
+		if is_instance_valid(_onboarding_layer.get_parent()):
+			_onboarding_layer.get_parent().remove_child(_onboarding_layer)
+		parent.add_child(_onboarding_layer)
+	parent.move_child(_onboarding_layer, parent.get_child_count() - 1)
+
+# Compute MapDisplay rect and size/position onboarding layer to match it (in map_view local coords)
+func _update_onboarding_layer_rect_to_map() -> void:
+	if not is_instance_valid(map_view):
+		return
+	# Find the MapDisplay TextureRect inside the MapView scene
+	var map_display: Control = map_view.get_node_or_null("MapContainer/MapDisplay")
+	if not is_instance_valid(map_display):
+		# Fallback: use entire map_view bounds
+		if is_instance_valid(_onboarding_layer):
+			_onboarding_layer.set_anchors_preset(Control.PRESET_TOP_LEFT)
+			_onboarding_layer.position = Vector2.ZERO
+			_onboarding_layer.custom_minimum_size = map_view.size
+			_onboarding_layer.size = map_view.size
+		return
+	# Convert MapDisplay's global rect into map_view local space
+	var rect: Rect2 = map_display.get_global_rect()
+	var inv := map_view.get_global_transform().affine_inverse()
+	var local_pos: Vector2 = inv * rect.position
+	# Apply to onboarding layer (manual sizing, not full-rect anchors)
+	if is_instance_valid(_onboarding_layer):
+		_onboarding_layer.set_anchors_preset(Control.PRESET_TOP_LEFT)
+		_onboarding_layer.position = local_pos
+		_onboarding_layer.custom_minimum_size = rect.size
+		_onboarding_layer.size = rect.size
+		# Keep overlay content clipped to this region
+		_onboarding_layer.clip_contents = true
 
 func _hide_new_convoy_dialog():
 	if is_instance_valid(_new_convoy_dialog) and _new_convoy_dialog.has_method("close"):

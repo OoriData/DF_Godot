@@ -1,0 +1,229 @@
+# Scripts/UI/target_resolver.gd
+# Resolves tutorial target specs into concrete nodes and highlight rects.
+# Designed to be resilient to dynamic UI. Where exact rects are unavailable,
+# falls back to the closest stable container control.
+extends Node
+
+class_name TutorialTargetResolver
+
+func _safe_get_node(path: String) -> Node:
+	if path.is_empty():
+		return null
+	var n := get_tree().get_root().get_node_or_null(path)
+	return n
+
+func resolve(target: Dictionary) -> Dictionary:
+	# Returns { ok: bool, node: Node, rect: Rect2, reason: String }
+	if target == null:
+		return { ok = false, node = null, rect = Rect2(), reason = "no-target" }
+
+	# Normalize keys
+	var kind := String(target.get("resolver", target.get("type", "auto")))
+	print("[TutorialResolver] kind=", kind, " target=", target)
+	match kind:
+		"node_path":
+			var r = _resolve_node_path(target)
+			_print_resolve_result(kind, r)
+			return r
+		"tab_title_contains":
+			var r = _resolve_vendor_tab_contains(target)
+			_print_resolve_result(kind, r)
+			return r
+		"button_with_text":
+			var r = _resolve_button_with_text(target)
+			_print_resolve_result(kind, r)
+			return r
+		"vendor_tree_item_by_text":
+			var r = _resolve_vendor_tree_item_by_text(target)
+			_print_resolve_result(kind, r)
+			return r
+		"vendor_action_button":
+			var r = _resolve_vendor_action_button(target)
+			_print_resolve_result(kind, r)
+			return r
+		"journey_action_button":
+			var r = _resolve_journey_action_button(target)
+			_print_resolve_result(kind, r)
+			return r
+		"auto":
+			# Attempt best-effort common targets
+			var r = _resolve_auto(target)
+			_print_resolve_result(kind, r)
+			return r
+		_:
+			return { ok = false, node = null, rect = Rect2(), reason = "unknown-resolver:" + kind }
+
+func _print_resolve_result(kind: String, r: Dictionary) -> void:
+	if r.get("ok", false):
+		var node: Node = r.get("node")
+		print("[TutorialResolver] OK kind=", kind, " node=", (node.get_path() if node else NodePath("<null>")), " rect=", r.get("rect"))
+	else:
+		print("[TutorialResolver] FAIL kind=", kind, " reason=", r.get("reason", ""))
+
+func _rect_for_control(ctrl: Control, local_rect: Rect2 = Rect2()) -> Rect2:
+	if ctrl == null:
+		return Rect2()
+	var base := ctrl.get_global_rect()
+	if local_rect.size != Vector2.ZERO or local_rect.position != Vector2.ZERO:
+		return Rect2(base.position + local_rect.position, local_rect.size)
+	return base
+
+func _resolve_node_path(target: Dictionary) -> Dictionary:
+	var path := String(target.get("path", ""))
+	var node := _safe_get_node(path)
+	if node == null:
+		return { ok = false, node = null, rect = Rect2(), reason = "node-not-found:" + path }
+	var rect := Rect2()
+	if node is Control:
+		rect = (node as Control).get_global_rect()
+	return { ok = true, node = node, rect = rect }
+
+func _get_settlement_menu() -> Node:
+	return get_tree().get_root().find_child("ConvoySettlementMenu", true, false)
+
+func _get_vendor_panel() -> Node:
+	var menu := _get_settlement_menu()
+	if menu == null:
+		return null
+	# Look for a VendorTradePanel descendant
+	return menu.find_child("VendorTradePanel", true, false)
+
+func _resolve_vendor_tab_contains(target: Dictionary) -> Dictionary:
+	var token := String(target.get("token", target.get("tab_contains", "Dealership")))
+	var menu := _get_settlement_menu()
+	if menu == null:
+		return { ok = false, node = null, rect = Rect2(), reason = "settlement-menu-missing" }
+	var tabs: TabContainer = menu.get_node_or_null("MainVBox/VendorTabContainer")
+	if tabs == null:
+		return { ok = false, node = menu, rect = Rect2(), reason = "vendor-tabs-missing" }
+	# Try to resolve to the TabContainer header area (approx.)
+	var idx := -1
+	for i in range(tabs.get_tab_count()):
+		var title := tabs.get_tab_title(i)
+		if title.findn(token) != -1:
+			idx = i
+			break
+	if idx == -1:
+		return { ok = false, node = tabs, rect = _rect_for_control(tabs), reason = "tab-not-found:" + token }
+	# Godot doesn't expose individual tab button rects; return container rect as a fallback
+	return { ok = true, node = tabs, rect = _rect_for_control(tabs) }
+
+func _resolve_button_with_text(target: Dictionary) -> Dictionary:
+	var token := String(target.get("text_contains", target.get("token", "")))
+	if token.is_empty():
+		return { ok = false, node = null, rect = Rect2(), reason = "no-token" }
+	# Search common menu roots
+	var roots := [
+		get_tree().get_root().find_child("ConvoySettlementMenu", true, false),
+		get_tree().get_root().find_child("ConvoyJourneyMenu", true, false),
+		get_tree().get_root().find_child("ConvoyMenu", true, false),
+		# Top bar containers
+		get_tree().get_root().find_child("UserInfoDisplay", true, false),
+		get_tree().get_root().find_child("MainScreen", true, false),
+	]
+	for r in roots:
+		if r == null:
+			continue
+		var btn := _find_button_with_text(r, token)
+		if btn:
+			return { ok = true, node = btn, rect = _rect_for_control(btn) }
+	# Fallback: global search for any visible Button containing token; pick the top-most (smallest y)
+	var best_btn: Button = null
+	var best_y := INF
+	var root_node := get_tree().get_root()
+	var queue := [root_node]
+	while queue.size() > 0:
+		var n: Node = queue.pop_back()
+		if n is Button:
+			var b: Button = n
+			if b.is_visible_in_tree() and b.text.findn(token) != -1:
+				var rect := b.get_global_rect()
+				if rect.position.y < best_y:
+					best_y = rect.position.y
+					best_btn = b
+		for c in n.get_children():
+			queue.push_front(c)
+	if best_btn != null:
+		return { ok = true, node = best_btn, rect = _rect_for_control(best_btn) }
+	return { ok = false, node = null, rect = Rect2(), reason = "button-not-found:" + token }
+
+func _find_button_with_text(root: Node, token: String) -> Button:
+	if root is Button:
+		var b: Button = root
+		if b.text.findn(token) != -1:
+			return b
+	for c in root.get_children():
+		var found := _find_button_with_text(c, token)
+		if found:
+			return found
+	return null
+
+func _resolve_vendor_tree_item_by_text(target: Dictionary) -> Dictionary:
+	var token := String(target.get("text_contains", target.get("token", "")))
+	var panel := _get_vendor_panel()
+	if panel == null:
+		return { ok = false, node = null, rect = Rect2(), reason = "vendor-panel-missing" }
+	var tree: Tree = panel.get_node_or_null("%VendorItemTree")
+	if tree == null:
+		return { ok = false, node = panel, rect = _rect_for_control(panel), reason = "vendor-tree-missing" }
+	var item := _find_tree_item_contains(tree, token)
+	if item == null:
+		return { ok = false, node = tree, rect = _rect_for_control(tree), reason = "tree-item-not-found:" + token }
+	var area := tree.get_item_area_rect(item, 0)
+	return { ok = true, node = tree, rect = _rect_for_control(tree, area) }
+
+func _find_tree_item_contains(tree: Tree, token: String) -> TreeItem:
+	var root := tree.get_root()
+	if root == null:
+		return null
+	var stack := [root]
+	while stack.size() > 0:
+		var it: TreeItem = stack.pop_back()
+		for col in range(0, tree.get_column_count()):
+			var txt := String(it.get_text(col))
+			if txt.findn(token) != -1:
+				return it
+		var child := it.get_first_child()
+		while child:
+			stack.push_back(child)
+			child = child.get_next()
+	return null
+
+func _resolve_vendor_action_button(target: Dictionary) -> Dictionary:
+	var which := String(target.get("which", "buy")) # buy|max|install|action
+	var panel := _get_vendor_panel()
+	if panel == null:
+		return { ok = false, node = null, rect = Rect2(), reason = "vendor-panel-missing" }
+	var btn: Control = null
+	match which:
+		"buy", "action":
+			btn = panel.get_node_or_null("%ActionButton")
+		"max":
+			btn = panel.get_node_or_null("%MaxButton")
+		"install":
+			btn = panel.get_node_or_null("%InstallButton")
+		_:
+			btn = panel.get_node_or_null("%ActionButton")
+	if btn == null:
+		return { ok = false, node = panel, rect = _rect_for_control(panel), reason = "vendor-action-btn-missing:" + which }
+	return { ok = true, node = btn, rect = _rect_for_control(btn) }
+
+func _resolve_journey_action_button(target: Dictionary) -> Dictionary:
+	var token := String(target.get("text_contains", target.get("token", "Embark")))
+	var menu := get_tree().get_root().find_child("ConvoyJourneyMenu", true, false)
+	if menu == null:
+		return { ok = false, node = null, rect = Rect2(), reason = "journey-menu-missing" }
+	var btn := _find_button_with_text(menu, token)
+	if btn == null:
+		return { ok = false, node = menu, rect = _rect_for_control(menu), reason = "journey-btn-not-found:" + token }
+	return { ok = true, node = btn, rect = _rect_for_control(btn) }
+
+func _resolve_auto(target: Dictionary) -> Dictionary:
+	# Heuristics based on provided hints
+	if target.has("tab_contains") or target.get("token", "").findn("Dealership") != -1:
+		return _resolve_vendor_tab_contains(target)
+	if String(target.get("hint", "")).findn("buy") != -1:
+		return _resolve_vendor_action_button({ which = "buy" })
+	if String(target.get("hint", "")).findn("max") != -1:
+		return _resolve_vendor_action_button({ which = "max" })
+	return { ok = false, node = null, rect = Rect2(), reason = "auto-no-match" }

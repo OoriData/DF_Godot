@@ -942,3 +942,20 @@ func _cycle_route(delta: int):
 	var route_data: Dictionary = _route_choices_cache[_current_route_choice_index]
 	emit_signal("route_preview_started", route_data)
 	_show_confirmation_panel(route_data)
+
+# --- Tutorial helpers: find UI targets for highlighting ---
+
+# Returns the global rect of a destination button whose label contains the given text
+func get_destination_button_rect_by_label_contains(substr: String) -> Rect2:
+	var needle := substr.to_lower()
+	for child in content_vbox.get_children():
+		if child is Button:
+			var txt := String((child as Button).text)
+			if txt.to_lower().find(needle) != -1:
+				var ctrl := child as Control
+				return ctrl.get_global_rect()
+	return Rect2()
+
+# Expose confirm button node for highlight/gating during confirmation step
+func get_confirm_button_node() -> Button:
+	return _confirm_button

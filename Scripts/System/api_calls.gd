@@ -887,7 +887,8 @@ func buy_vehicle(vendor_id: String, convoy_id: String, vehicle_id: String) -> vo
 	if vendor_id.is_empty() or convoy_id.is_empty() or vehicle_id.is_empty():
 		printerr("APICalls (buy_vehicle): missing id(s)")
 		return
-	var url := "%s/vendor/buy_vehicle?vendor_id=%s&convoy_id=%s&vehicle_id=%s" % [BASE_URL, vendor_id, convoy_id, vehicle_id]
+	# Use new route shape consistent with others: /vendor/vehicle/buy
+	var url := "%s/vendor/vehicle/buy?vendor_id=%s&convoy_id=%s&vehicle_id=%s" % [BASE_URL, vendor_id, convoy_id, vehicle_id]
 	var headers: PackedStringArray = ['accept: application/json']
 	headers = _apply_auth_header(headers)
 	_request_queue.append({
@@ -904,7 +905,8 @@ func sell_vehicle(vendor_id: String, convoy_id: String, vehicle_id: String) -> v
 	if vendor_id.is_empty() or convoy_id.is_empty() or vehicle_id.is_empty():
 		printerr("APICalls (sell_vehicle): missing id(s)")
 		return
-	var url := "%s/vendor/sell_vehicle?vendor_id=%s&convoy_id=%s&vehicle_id=%s" % [BASE_URL, vendor_id, convoy_id, vehicle_id]
+	# Use new route shape consistent with others: /vendor/vehicle/sell
+	var url := "%s/vendor/vehicle/sell?vendor_id=%s&convoy_id=%s&vehicle_id=%s" % [BASE_URL, vendor_id, convoy_id, vehicle_id]
 	var headers: PackedStringArray = ['accept: application/json']
 	headers = _apply_auth_header(headers)
 	_request_queue.append({
@@ -1375,7 +1377,7 @@ func _on_request_completed(result: int, response_code: int, _headers: PackedStri
 			_complete_current_request()
 			return
 		else:
-			# Optional compatibility fallback: if we tried new cargo route and got 404, retry legacy path once.
+			# Optional compatibility fallback: if we tried new cargo/vehicle routes and got 404, retry legacy path once.
 			if response_code == 404 and _last_requested_url.find("/vendor/cargo/") != -1 and (_current_patch_signal_name == "cargo_bought" or _current_patch_signal_name == "cargo_sold"):
 				var legacy_url := _last_requested_url
 				legacy_url = legacy_url.replace("/vendor/cargo/buy?", "/vendor/buy_cargo?")
@@ -1391,6 +1393,32 @@ func _on_request_completed(result: int, response_code: int, _headers: PackedStri
 					_request_queue.push_front({
 						"url": legacy_url,
 						"headers": headers,
+						"purpose": RequestPurpose.NONE,
+						"method": HTTPClient.METHOD_PATCH,
+						"body": "",
+						"signal_name": _current_patch_signal_name
+					})
+					_process_queue()
+					return
+			# Vehicle route fallback: try alternate naming between /vendor/vehicle/buy|sell and /vendor/buy_vehicle|sell_vehicle
+			if response_code == 404 and (_current_patch_signal_name == "vehicle_bought" or _current_patch_signal_name == "vehicle_sold"):
+				var alt_url := _last_requested_url
+				# New -> legacy
+				alt_url = alt_url.replace("/vendor/vehicle/buy?", "/vendor/buy_vehicle?")
+				alt_url = alt_url.replace("/vendor/vehicle/sell?", "/vendor/sell_vehicle?")
+				# If no change, try legacy -> new
+				if alt_url == _last_requested_url:
+					alt_url = alt_url.replace("/vendor/buy_vehicle?", "/vendor/vehicle/buy?")
+					alt_url = alt_url.replace("/vendor/sell_vehicle?", "/vendor/vehicle/sell?")
+				if alt_url != _last_requested_url:
+					print("[APICalls][PATCH_TXN][Fallback] 404 on vehicle route; retrying alternate URL=", alt_url)
+					_is_request_in_progress = false
+					_current_request_purpose = RequestPurpose.NONE
+					var headers2: PackedStringArray = ['accept: application/json']
+					headers2 = _apply_auth_header(headers2)
+					_request_queue.push_front({
+						"url": alt_url,
+						"headers": headers2,
 						"purpose": RequestPurpose.NONE,
 						"method": HTTPClient.METHOD_PATCH,
 						"body": "",

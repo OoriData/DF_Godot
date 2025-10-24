@@ -723,3 +723,49 @@ func _style_top_up_button():
 # allowing us to supply a high-contrast, fully opaque tooltip. This improves readability beyond simple
 # theme overrides, which may not always apply depending on global theme inheritance.
 ## Custom tooltip now handled directly by TopUpButton script (top_up_button_tooltip.gd)
+
+# --- Tutorial helper methods: stable target resolution for tabs/panels ---
+
+# Return the TabBar used by the VendorTabContainer (if available)
+func get_vendor_tab_bar() -> Node:
+	if is_instance_valid(vendor_tab_container) and vendor_tab_container.has_method("get_tab_bar"):
+		return vendor_tab_container.get_tab_bar()
+	return null
+
+# Find the rect of a vendor tab whose title contains the given substring (case-insensitive)
+func get_vendor_tab_rect_by_title_contains(substr: String) -> Rect2:
+	if not is_instance_valid(vendor_tab_container):
+		return Rect2()
+	var bar = get_vendor_tab_bar()
+	if bar == null:
+		return Rect2()
+	var needle := substr.to_lower()
+	for i in range(vendor_tab_container.get_tab_count()):
+		var title := String(vendor_tab_container.get_tab_title(i))
+		if title.to_lower().find(needle) != -1:
+			if bar.has_method("get_tab_rect"):
+				var local_r: Rect2 = bar.get_tab_rect(i)
+				var bar_global := (bar as Control).get_global_rect()
+				return Rect2(bar_global.position + local_r.position, local_r.size)
+			# Fallback to whole bar rect if API not present
+			return (bar as Control).get_global_rect()
+	return Rect2()
+
+# Select a vendor tab by title contains; returns true if selection changed
+func select_vendor_tab_by_title_contains(substr: String) -> bool:
+	if not is_instance_valid(vendor_tab_container):
+		return false
+	var needle := substr.to_lower()
+	for i in range(vendor_tab_container.get_tab_count()):
+		var title := String(vendor_tab_container.get_tab_title(i))
+		if title.to_lower().find(needle) != -1:
+			if vendor_tab_container.current_tab != i:
+				vendor_tab_container.current_tab = i
+			return true
+	return false
+
+# Return the active vendor panel node (content of the current tab)
+func get_active_vendor_panel_node() -> Node:
+	if not is_instance_valid(vendor_tab_container):
+		return null
+	return vendor_tab_container.get_tab_control(vendor_tab_container.current_tab)
