@@ -15,6 +15,7 @@ var _continue_button: Button = null
 var _on_continue_cb: Callable = Callable()
 var _highlight_rect: Rect2 = Rect2()
 var _has_highlight: bool = false
+var _local_highlight_rect: Rect2 = Rect2() # Cached local-space rect for drawing
 var _safe_top_inset: int = 0
 var _panel: PanelContainer = null
 
@@ -34,8 +35,9 @@ var _shield_right: Control
 var _shield_center: Control # used only for HARD lock (blocks the hole)
 
 func _ready() -> void:
-	# Let input pass through by default; we use blocker children to stop input around the highlight.
-	mouse_filter = Control.MOUSE_FILTER_PASS
+	# By default, when the overlay is visible but has no highlight, it should block all input.
+	# When a highlight is active, this will be changed to IGNORE to let input pass through the "hole".
+	mouse_filter = Control.MOUSE_FILTER_STOP
 	visible = false # hidden until explicitly shown
 	# Ensure we render on top of all other UI. The TopBar (UserInfoDisplay) has a z_index of 10.
 	z_index = 100
@@ -44,23 +46,16 @@ func _ready() -> void:
 	# Initial layout sizing within map area
 	_relayout_panel()
 	_layout_blockers()
+	# We only need _process when a highlight is active; start disabled
+	set_process(false)
 
 # Ensure the UI nodes exist (safe to call multiple times)
 func _ensure_ui_built() -> void:
 	if _message_label != null and _continue_button != null and _panel != null:
 		return
-	# Only add background once: check if there's already a ColorRect child
-	var has_bg := false
-	for c in get_children():
-		if c is ColorRect:
-			has_bg = true
-			break
-	if not has_bg:
-		var bg := ColorRect.new()
-		bg.color = OVERLAY_COLOR
-		bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		bg.set_anchors_preset(Control.PRESET_FULL_RECT)
-		add_child(bg)
+	# The background is now drawn in the _draw() function to allow for a "hole"
+	# to be cut out for the highlight. We no longer add a permanent ColorRect background.
+
 	if _panel == null:
 		_panel = PanelContainer.new()
 		_panel.custom_minimum_size = Vector2(320, 160)
@@ -137,88 +132,43 @@ func show_message(text: String, show_continue: bool = true, on_continue: Callabl
 	visible = true
 	_relayout_panel()
 	_layout_blockers()
-
-func _on_managed_node_popup() -> void:
-	if not is_instance_valid(_managed_node):
-		return
-
-	if _managed_node.has_method("get_popup"):
-		var popup: PopupMenu = _managed_node.get_popup()
-		if is_instance_valid(popup):
-			# Popups are Windows, which are CanvasItems. They have a z_index.
-			# Put it on top of everything.
-			popup.z_index = self.z_index + 2
-			print("[TutorialOverlay] Promoted popup z_index to ", popup.z_index)
-
-# New function to bring a node to the front and handle its popups
+	
+# Sets the highlight area without modifying the target node.
 func highlight_node(node: Node, rect: Rect2) -> void:
-	# First, clear any previously managed node to restore its state
+	# Clear any previous state.
 	_reset_managed_node()
 
 	# Set the rect for drawing the visual highlight and positioning blockers
 	_highlight_rect = rect
 	_has_highlight = rect.has_area()
+
+	# When a highlight is active, the overlay control itself should ignore mouse events,
+	# allowing them to pass through to the controls underneath (in the "hole").
+	# The child "shield" controls will be responsible for blocking input around the hole.
+	self.mouse_filter = Control.MOUSE_FILTER_IGNORE if _has_highlight else Control.MOUSE_FILTER_STOP
+
+	
+	# We keep a reference to the node, but we no longer modify it with top_level or z_index.
+	# This avoids all layout-related bugs where the node's position would reset.
+	if node is Control:
+		_managed_node = node as Control
+		# Track target rect changes caused by late layout/containers resizing
+		if _managed_node and _managed_node.has_signal("resized") and not _managed_node.is_connected("resized", Callable(self, "_on_managed_node_resized")):
+			_managed_node.resized.connect(_on_managed_node_resized)
+		# Start per-frame syncing while highlight is active
+		set_process(true)
+
+	print("[TutorialOverlay] Highlighting rect for node: ", node, " rect: ", rect)
+
 	queue_redraw()
 	_layout_blockers()
 
-	if node is Control:
-		_managed_node = node as Control
-
-		# Capture global position BEFORE making it top-level, as setting top_level
-		# removes it from the layout, which can cause its position to reset.
-		var original_global_position = _managed_node.global_position
-
-		# Store original state
-		_original_state = {
-			"z_index": _managed_node.z_index,
-			"top_level": _managed_node.top_level,
-			"mouse_filter": _managed_node.mouse_filter,
-		}
-
-		# Promote the node
-		_managed_node.z_index = self.z_index + 1
-		_managed_node.top_level = true
-		# After making it top-level, explicitly restore its global position.
-		_managed_node.global_position = original_global_position
-
-		# Ensure it's clickable. STOP is safest as it's now the top interactive element.
-		_managed_node.mouse_filter = Control.MOUSE_FILTER_STOP
-
-		print("[TutorialOverlay] Managing node: ", _managed_node.name, " new z_index: ", _managed_node.z_index)
-
-		# --- Special handling for nodes with popups ---
-		if _managed_node.has_method("get_popup"):
-			var popup: PopupMenu = _managed_node.get_popup()
-			if is_instance_valid(popup) and popup.has_signal("about_to_popup"):
-				var callable = Callable(self, "_on_managed_node_popup")
-				if not popup.is_connected("about_to_popup", callable):
-					popup.connect("about_to_popup", callable)
-					# Store the connection so we can disconnect it later
-					_managed_node_popup_connection = {"popup": popup, "callable": callable}
-					print("[TutorialOverlay] Connected to popup signal for ", _managed_node.name)
-	else:
-		print("[TutorialOverlay] Warning: Highlight target is not a Control node. Cannot use top_level. Node: ", node)
-
 
 func _reset_managed_node() -> void:
-	# Disconnect any popup signals we connected
-	if _managed_node_popup_connection.has("popup"):
-		var popup: PopupMenu = _managed_node_popup_connection.get("popup")
-		var callable: Callable = _managed_node_popup_connection.get("callable")
-		if is_instance_valid(popup) and popup.is_connected("about_to_popup", callable):
-			popup.disconnect("about_to_popup", callable)
-			print("[TutorialOverlay] Disconnected popup signal.")
-	_managed_node_popup_connection.clear()
-
-	# Restore the node's original state
-	if is_instance_valid(_managed_node) and not _original_state.is_empty():
-		print("[TutorialOverlay] Resetting managed node: ", _managed_node.name)
-		_managed_node.z_index = _original_state.get("z_index", 0)
-		_managed_node.top_level = _original_state.get("top_level", false)
-		_managed_node.mouse_filter = _original_state.get("mouse_filter", Control.MOUSE_FILTER_PASS)
-
+	# Since we no longer modify the node, we just need to clear our internal references.
 	_managed_node = null
 	_original_state.clear()
+	_managed_node_popup_connection.clear() # Clear any lingering state from old logic
 
 # Convenience helper: set highlight around a specific Control/node (uses its global rect)
 func set_highlight_for_node(node: Node, padding: int = 6) -> void:
@@ -244,9 +194,36 @@ func set_highlight_for_node(node: Node, padding: int = 6) -> void:
 
 func clear_highlight() -> void:
 	_has_highlight = false
+	# When no highlight is active, the overlay should block all input.
+	self.mouse_filter = Control.MOUSE_FILTER_STOP
+
 	_reset_managed_node()
 	queue_redraw()
 	_layout_blockers()
+	# Stop per-frame syncing when no highlight
+	set_process(false)
+
+func _on_managed_node_resized() -> void:
+	# Re-sync the highlight rect on target node resize
+	_update_highlight_from_managed_node()
+
+func _process(_delta: float) -> void:
+	# Follow the target node if it moves after initial layout
+	if _has_highlight and is_instance_valid(_managed_node):
+		_update_highlight_from_managed_node()
+	elif _has_highlight and not is_instance_valid(_managed_node):
+		# Target disappeared; clear to avoid stale hole at (0,0)
+		clear_highlight()
+
+func _update_highlight_from_managed_node() -> void:
+	if not is_instance_valid(_managed_node):
+		return
+	var new_rect := _managed_node.get_global_rect()
+	# Only update if it actually changed to avoid churn
+	if new_rect.position != _highlight_rect.position or new_rect.size != _highlight_rect.size:
+		_highlight_rect = new_rect
+		queue_redraw()
+		_layout_blockers()
 
 # Configure input gating behavior:
 # - GatingMode.NONE: no input blocking by the overlay (except panel itself)
@@ -282,12 +259,27 @@ func _draw() -> void:
 	if visible:
 		var border_col := Color(1, 0, 0, 0.25)
 		draw_rect(Rect2(Vector2.ZERO, size), border_col, false, 2.0)
+
 	if not _has_highlight:
+		# No highlight, just draw the overlay over the whole area
+		draw_rect(Rect2(Vector2.ZERO, size), OVERLAY_COLOR)
 		return
-	# Convert global rect to local space if parent is not root
-	var top_left := get_global_transform().affine_inverse() * _highlight_rect.position
-	var r := Rect2(top_left, _highlight_rect.size)
-	# Draw outline rectangle highlight
+
+	# Use the local-space rectangle calculated and cached by _layout_blockers().
+	# This ensures the drawn highlight is perfectly synchronized with the input shields.
+	var r := _local_highlight_rect
+
+	# Draw the overlay as four rectangles around the highlight area, creating a "hole".
+	# Top rectangle
+	draw_rect(Rect2(0, 0, size.x, r.position.y), OVERLAY_COLOR)
+	# Bottom rectangle
+	draw_rect(Rect2(0, r.end.y, size.x, size.y - r.end.y), OVERLAY_COLOR)
+	# Left rectangle
+	draw_rect(Rect2(0, r.position.y, r.position.x, r.size.y), OVERLAY_COLOR)
+	# Right rectangle
+	draw_rect(Rect2(r.end.x, r.position.y, size.x - r.end.x, r.size.y), OVERLAY_COLOR)
+
+	# Draw the yellow outline rectangle around the hole
 	var color := Color(1, 0.8, 0.2, 0.9)
 	draw_rect(r.grow(4), color, false, 3)
 	draw_rect(r, Color(1, 1, 1, 0.9), false, 2)
@@ -334,14 +326,18 @@ func _layout_blockers() -> void:
 		return
 
 	# Compute highlight rect in local coordinates
-	var r_local := Rect2(Vector2.ZERO, Vector2.ZERO)
+	_local_highlight_rect = Rect2(Vector2.ZERO, Vector2.ZERO)
 	if _has_highlight:
-		var top_left := get_global_transform().affine_inverse() * _highlight_rect.position
-		r_local = Rect2(top_left, _highlight_rect.size)
 
-	# Clamp to overlay bounds
+		# Convert the global rect to this control's local space and cache it
+		# for both the shields and the _draw function. Since Control does not have to_local(),
+		# we use subtraction with global_position.
+		var top_left := _highlight_rect.position - self.global_position
+		_local_highlight_rect = Rect2(top_left, _highlight_rect.size)
+
+	# Clamp the calculated local rect to the overlay's bounds for safety
 	var full := Rect2(Vector2.ZERO, size)
-	var r := r_local.intersection(full)
+	var r := _local_highlight_rect.intersection(full)
 
 	# Lay out perimeter shields creating a "hole" over r
 	_shield_top.position = Vector2(0, 0)

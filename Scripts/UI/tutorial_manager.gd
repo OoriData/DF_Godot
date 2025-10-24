@@ -457,9 +457,10 @@ func _resolve_and_highlight(step: Dictionary) -> bool:
 		var rect: Rect2 = res.get("rect", Rect2())
 		_maybe_switch_overlay_scope_for_rect(rect)
 		if ov.has_method("highlight_node"):
-			ov.call("highlight_node", node, rect)
+			# DEFERRED CALL: Wait until idle time in the current frame for layouts to settle.
+			ov.call_deferred("highlight_node", node, rect)
 		elif ov.has_method("set_highlight_rect"): # Fallback for safety
-			ov.call("set_highlight_rect", rect)
+			ov.call_deferred("set_highlight_rect", rect)
 		print("[Tutorial] Highlight step=", step.get("id", ""), " rect=", rect, " node=", node)
 		return true
 	else:
@@ -490,9 +491,10 @@ func _on_highlight_retry() -> void:
 		var node: Node = res.get("node")
 		var rect: Rect2 = res.get("rect", Rect2())
 		if ov and ov.has_method("highlight_node"):
-			ov.call("highlight_node", node, rect)
+			# DEFERRED CALL: Wait until idle time for layouts to settle.
+			ov.call_deferred("highlight_node", node, rect)
 		elif ov and ov.has_method("set_highlight_rect"): # Fallback
-			ov.call("set_highlight_rect", rect)
+			ov.call_deferred("set_highlight_rect", rect)
 		# Now that we have a rect, enforce the intended gating level
 		var lock := String(_active_highlight_step.get("lock", "soft"))
 		match lock:
@@ -502,16 +504,18 @@ func _on_highlight_retry() -> void:
 				_gate_map(GATING_SOFT)
 			_:
 				_gate_map(GATING_NONE)
-		# Keep trying periodically to follow dynamic UI if it moves
-		_highlight_timer = get_tree().create_timer(1.2, false)
+		# Keep trying periodically to follow dynamic UI if it moves; use a faster cadence
+		# to quickly catch post-layout repositioning, then the overlay's own per-frame
+		# syncing will keep the rect accurate between retries.
+		_highlight_timer = get_tree().create_timer(0.4, false)
 		_highlight_timer.timeout.connect(_on_highlight_retry)
 	else:
 		# After two consecutive failures, downgrade lock to avoid player lockout
 		var lock := String(_active_highlight_step.get("lock", "soft"))
 		if lock == "hard":
 			_gate_map(GATING_SOFT)
-		# Try again soon in case UI just rebuilt
-		_highlight_timer = get_tree().create_timer(1.0, false)
+		# Try again soon in case UI just rebuilt (faster retry to beat layout races)
+		_highlight_timer = get_tree().create_timer(0.3, false)
 		_highlight_timer.timeout.connect(_on_highlight_retry)
 
 # Scope switching: reparent overlay to cover Map (default) or full UI

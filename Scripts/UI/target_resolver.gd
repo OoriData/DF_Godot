@@ -112,6 +112,23 @@ func _resolve_button_with_text(target: Dictionary) -> Dictionary:
 	var token := String(target.get("text_contains", target.get("token", "")))
 	if token.is_empty():
 		return { ok = false, node = null, rect = Rect2(), reason = "no-token" }
+
+	# Special-case: when searching for the Settlement button, prefer the ConvoyMenu's
+	# explicit button node to avoid ambiguous matches and ensure stable rects.
+	if token.to_lower().find("settlement") != -1:
+		var convoy_menu := get_tree().get_root().find_child("ConvoyMenu", true, false)
+		if convoy_menu:
+			var btn_path := "MainVBox/ScrollContainer/ContentVBox/MenuButtons/SettlementMenuButton"
+			var btn_node := convoy_menu.get_node_or_null(btn_path)
+			if btn_node == null:
+				# Fallback: search by name anywhere under ConvoyMenu
+				btn_node = convoy_menu.find_child("SettlementMenuButton", true, false)
+			if btn_node and btn_node is Button:
+				var rect_direct := _rect_for_control(btn_node)
+				# Guard against unstable/zero rects immediately after menu instantiation
+				if not rect_direct.has_area() or rect_direct.position.length_squared() < 1.0:
+					return { ok = false, node = btn_node, rect = rect_direct, reason = "unstable-layout-direct" }
+				return { ok = true, node = btn_node, rect = rect_direct }
 	# Search common menu roots
 	var roots := [
 		get_tree().get_root().find_child("ConvoySettlementMenu", true, false),
@@ -126,7 +143,17 @@ func _resolve_button_with_text(target: Dictionary) -> Dictionary:
 			continue
 		var btn := _find_button_with_text(r, token)
 		if btn:
-			return { ok = true, node = btn, rect = _rect_for_control(btn) }
+			var rect := _rect_for_control(btn)
+			# Guard against unstable layouts where the button is found but its rect has no size yet.
+			# A rect with no area indicates the layout containers have not positioned it.
+			# Failing the resolution here forces the TutorialManager to retry after a short delay.
+			# We also check for a near-zero position, which is highly suspect for a dynamically
+			# created menu item that has not been placed by its parent container yet.
+			if not rect.has_area() or rect.position.length_squared() < 1.0:
+				# Failing the resolution here forces the TutorialManager to retry after a short delay,
+				# giving the layout engine time to work.
+				return { ok = false, node = btn, rect = rect, reason = "unstable-layout" }
+			return { ok = true, node = btn, rect = rect }
 	# Fallback: global search for any visible Button containing token; pick the top-most (smallest y)
 	var best_btn: Button = null
 	var best_y := INF
@@ -144,7 +171,12 @@ func _resolve_button_with_text(target: Dictionary) -> Dictionary:
 		for c in n.get_children():
 			queue.push_front(c)
 	if best_btn != null:
-		return { ok = true, node = best_btn, rect = _rect_for_control(best_btn) }
+		var rect := _rect_for_control(best_btn)
+		# Also apply unstable layout check to the fallback result.
+		if not rect.has_area() or rect.position.length_squared() < 1.0:
+			return { ok = false, node = best_btn, rect = rect, reason = "unstable-layout-fallback" }
+		return { ok = true, node = best_btn, rect = rect }
+
 	return { ok = false, node = null, rect = Rect2(), reason = "button-not-found:" + token }
 
 func _find_button_with_text(root: Node, token: String) -> Button:
