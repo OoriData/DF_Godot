@@ -6,6 +6,8 @@ extends Node
 
 class_name TutorialTargetResolver
 
+const VENDOR_TRADE_PANEL_SCRIPT_PATH = "res://Scripts/Menus/vendor_trade_panel.gd"
+
 func _safe_get_node(path: String) -> Node:
 	if path.is_empty():
 		return null
@@ -27,6 +29,10 @@ func resolve(target: Dictionary) -> Dictionary:
 			return r
 		"tab_title_contains":
 			var r = _resolve_vendor_tab_contains(target)
+			_print_resolve_result(kind, r)
+			return r
+		"vendor_trade_panel":
+			var r = _resolve_vendor_trade_panel(target)
 			_print_resolve_result(kind, r)
 			return r
 		"button_with_text":
@@ -81,12 +87,28 @@ func _resolve_node_path(target: Dictionary) -> Dictionary:
 func _get_settlement_menu() -> Node:
 	return get_tree().get_root().find_child("ConvoySettlementMenu", true, false)
 
-func _get_vendor_panel() -> Node:
+func _find_node_by_script(start_node: Node, script_path: String) -> Node:
+	var queue = [start_node]
+	while not queue.is_empty():
+		var current = queue.pop_front()
+		if current.get_script() and current.get_script().resource_path == script_path:
+			if current is Control and current.is_visible_in_tree():
+				return current
+		for child in current.get_children():
+			queue.append(child)
+	return null
+
+func _get_vendor_trade_panel() -> Node:
 	var menu := _get_settlement_menu()
 	if menu == null:
 		return null
-	# Look for a VendorTradePanel descendant
-	return menu.find_child("VendorTradePanel", true, false)
+	# The active panel is the direct child of the current tab in the TabContainer.
+	if menu.has_method("get_active_vendor_panel_node"):
+		var panel = menu.call("get_active_vendor_panel_node")
+		if is_instance_valid(panel):
+			return panel
+	# Fallback: search for any visible node with the vendor trade panel script.
+	return _find_node_by_script(menu, VENDOR_TRADE_PANEL_SCRIPT_PATH)
 
 func _resolve_vendor_tab_contains(target: Dictionary) -> Dictionary:
 	var token := String(target.get("token", target.get("tab_contains", "Dealership")))
@@ -192,7 +214,7 @@ func _find_button_with_text(root: Node, token: String) -> Button:
 
 func _resolve_vendor_tree_item_by_text(target: Dictionary) -> Dictionary:
 	var token := String(target.get("text_contains", target.get("token", "")))
-	var panel := _get_vendor_panel()
+	var panel := _get_vendor_trade_panel()
 	if panel == null:
 		return { ok = false, node = null, rect = Rect2(), reason = "vendor-panel-missing" }
 	var tree: Tree = panel.get_node_or_null("%VendorItemTree")
@@ -223,7 +245,7 @@ func _find_tree_item_contains(tree: Tree, token: String) -> TreeItem:
 
 func _resolve_vendor_action_button(target: Dictionary) -> Dictionary:
 	var which := String(target.get("which", "buy")) # buy|max|install|action
-	var panel := _get_vendor_panel()
+	var panel := _get_vendor_trade_panel()
 	if panel == null:
 		return { ok = false, node = null, rect = Rect2(), reason = "vendor-panel-missing" }
 	var btn: Control = null
@@ -259,3 +281,21 @@ func _resolve_auto(target: Dictionary) -> Dictionary:
 	if String(target.get("hint", "")).findn("max") != -1:
 		return _resolve_vendor_action_button({ which = "max" })
 	return { ok = false, node = null, rect = Rect2(), reason = "auto-no-match" }
+
+func _resolve_vendor_trade_panel(_target: Dictionary) -> Dictionary:
+	var panel := _get_vendor_trade_panel()
+	if not is_instance_valid(panel):
+		return { ok = false, node = null, rect = Rect2(), reason = "vendor-trade-panel-not-found" }
+	if not panel is Control:
+		return { ok = false, node = panel, rect = Rect2(), reason = "vendor-trade-panel-not-a-control" }
+	
+	# --- START DEBUG LOGS ---
+	print("  [DEBUG][resolve_vendor_trade_panel] Found panel: ", panel.name, " path: ", panel.get_path())
+	print("  [DEBUG][resolve_vendor_trade_panel] Panel visible in tree: ", panel.is_visible_in_tree())
+	var rect := (panel as Control).get_global_rect()
+	print("  [DEBUG][resolve_vendor_trade_panel] Panel global_rect: ", rect)
+	# --- END DEBUG LOGS ---
+
+	if not rect.has_area():
+		return { ok = false, node = panel, rect = rect, reason = "vendor-trade-panel-unstable-layout" }
+	return { ok = true, node = panel, rect = rect }

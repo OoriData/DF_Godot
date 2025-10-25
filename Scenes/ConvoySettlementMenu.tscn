@@ -60,18 +60,6 @@ size_flags_vertical = 3
 tab_alignment = 1
 clip_tabs = false
 
-[node name="SettlementInfoTab" type="ScrollContainer" parent="VendorTabContainer"]
-layout_mode = 2
-size_flags_horizontal = 3
-size_flags_vertical = 3
-name = "Settlement Info"
-follow_focus = true
-
-[node name="SettlementContentVBox" type="VBoxContainer" parent="VendorTabContainer/SettlementInfoTab"]
-unique_name_in_owner = true
-layout_mode = 2
-size_flags_horizontal = 3
-
 
 [node name="BackButton" type="Button" parent="MainVBox"]
 layout_mode = 2

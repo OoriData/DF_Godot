@@ -148,16 +148,12 @@ func _build_level_steps(level: int) -> Array:
 					lock = "soft"
 				},
 				{
-					id = "l1_choose_vehicle",
-					copy = "Choose one of the available vehicles in the Dealership.",
-					action = "message",
-					target = {}
-				},
-				{
 					id = "l1_buy_vehicle",
-					copy = "Press Buy to purchase your chosen vehicle.",
+					copy = "Choose one of the available vehicles from the list, then press 'Buy' to purchase it.",
 					action = "await_vehicle_purchase",
-					target = { resolver = "vendor_action_button", which = "buy" },
+					# By targeting the whole panel, we create a highlight "hole" for the entire trade UI.
+					# The user can now click on items in the list and the buy button.
+					target = { resolver = "vendor_trade_panel" },
 					lock = "soft"
 				},
 			]
@@ -244,8 +240,44 @@ func _run_current_step() -> void:
 	if _step < 0 or _step >= _steps.size():
 		_emit_finished()
 		return
-	var step: Dictionary = _steps[_step]
+	# --- START DEBUG LOG ---
+	# Log the entire step dictionary to verify its contents, especially the 'target'.
+	# This will show if it's being overridden by an external JSON file.
+	print("[Tutorial][DEBUG] Running step: ", _steps[_step])
+	# --- END DEBUG LOG ---
+	var step: Dictionary = _steps[_step].duplicate() # Use a copy to allow modification
 	var action := String(step.get("action", "message"))
+	var id := String(step.get("id", ""))
+
+	# FIX: The external tutorial JSON splits "choose vehicle" and "buy vehicle" into two steps.
+	# This causes the highlight of the vendor panel to appear one step too late.
+	# To correct this, we'll hijack the "l1_choose_vehicle" step to perform the "await_vehicle_purchase" action.
+	# This shows the panel highlight and removes the "Continue" button at the correct time.
+	# We also combine the instructional text from the next step, so the user has full context.
+	# We then skip the original "l1_buy_vehicle" step, as it becomes redundant.
+	if id == "l1_choose_vehicle":
+		# Combine copy from the next step ("l1_buy_vehicle") into this one.
+		if _step + 1 < _steps.size():
+			var next_step: Dictionary = _steps[_step + 1]
+			if next_step.get("id", "") == "l1_buy_vehicle":
+				step["copy"] = str(step.get("copy", "")) + " " + str(next_step.get("copy", ""))
+		# Change the action to be interactive, which also hides the "Continue" button.
+		action = "await_vehicle_purchase"
+	elif id == "l1_buy_vehicle":
+		_advance() # This step's action is now performed by l1_choose_vehicle, so we skip it.
+		return
+
+	# FIX: The external tutorial JSON splits "choose vehicle" and "buy vehicle" into two steps.
+	# This causes the highlight of the vendor panel to appear one step too late.
+	# To correct this, we'll hijack the "l1_choose_vehicle" step to perform the "await_vehicle_purchase" action.
+	# This will show the panel highlight at the correct time.
+	# We then skip the original "l1_buy_vehicle" step, as it becomes redundant.
+	if id == "l1_choose_vehicle":
+		action = "await_vehicle_purchase"
+	elif id == "l1_buy_vehicle":
+		_advance() # This step's action is now performed by l1_choose_vehicle, so we skip it.
+		return
+
 	match action:
 		"message":
 			_show_message(step.get("copy", ""), true)
@@ -260,24 +292,44 @@ func _run_current_step() -> void:
 			_awaiting_menu_open = true
 		"await_settlement_menu":
 			_show_message(step.get("copy", ""), false)
-			# Resolve highlight first; only hard-lock once we have a valid target rect
-			var ok := _resolve_and_highlight(step) # highlight Settlement button if target provided
-			if ok:
-				_apply_lock(step)
-			else:
-				# Avoid full lockout if we haven't resolved the button yet
-				_gate_map(GATING_SOFT)
+			# Apply lock mode from the step definition before trying to resolve the highlight.
+			# This ensures the overlay knows how to behave if resolution fails and needs to retry.
+			_apply_lock(step)
+			_resolve_and_highlight(step) # highlight Settlement button if target provided
 			_watch_for_settlement_menu()
 		"await_dealership_tab":
+			# First, check if the tab is already open. This is the "fail safe" the user mentioned.
+			var tabs := _get_vendor_tab_container()
+			if is_instance_valid(tabs):
+				var idx := tabs.current_tab
+				if idx >= 0:
+					var title := tabs.get_tab_title(idx)
+					var want := String(step.get("target", {}).get("token", "Dealership"))
+					if title.findn(want) != -1:
+						# The tab is already open. Defer advance to let UI settle before next step.
+						call_deferred("_advance")
+						return
+
+			# If the tab is not yet open, proceed with the normal highlight and watch logic.
 			_show_message(step.get("copy", ""), false)
+			# Apply lock mode before resolving. This is crucial for the overlay to handle
+			# resolution retries correctly without blocking the whole screen.
 			_apply_lock(step)
-			_hint_dealership_tab(step.get("target", {}))
 			_resolve_and_highlight(step) # try to highlight tab container as a hint
+			_hint_dealership_tab(step.get("target", {}))
 			_watch_for_dealership_selected(step.get("target", {}))
 		"await_vehicle_purchase":
 			_show_message(step.get("copy", ""), false)
 			_apply_lock(step)
-			_resolve_and_highlight(step)
+			# --- START FIX ---
+			# The goal for this step is ALWAYS to highlight the entire vendor panel to allow free interaction.
+			# The log shows that a specific button is being highlighted, which suggests the step's 'target'
+			# is being overridden (likely by an external tutorial_steps.json file).
+			# To fix this definitively, we will ignore the step's target and force the correct one.
+			var corrected_step := step.duplicate(true)
+			corrected_step["target"] = { "resolver": "vendor_trade_panel" }
+			_resolve_and_highlight(corrected_step)
+			# --- END FIX ---
 			_watch_for_vehicle_purchase()
 		_:
 			_show_message(step.get("copy", ""), true)
@@ -331,7 +383,10 @@ func _watch_for_settlement_menu() -> void:
 	timer.timeout.connect(func():
 		var menu := _get_settlement_menu()
 		if is_instance_valid(menu):
-			_advance()
+			# The menu has appeared. We need to wait for its internal layout to settle
+			# before the next step tries to resolve targets within it. Deferring the
+			# advance call pushes it to the next idle frame, solving the race condition.
+			call_deferred("_advance")
 		else:
 			_watch_for_settlement_menu()
 	)
@@ -360,17 +415,32 @@ func _watch_for_dealership_selected(target: Dictionary) -> void:
 			if idx >= 0:
 				var title := tabs.get_tab_title(idx)
 				if title.findn(want) != -1:
-					_advance()
+					# The correct tab is selected. However, the TabContainer needs time to resize
+					# its newly visible child (the VendorTradePanel). Advancing immediately, even
+					# with call_deferred, can happen before the layout is calculated, causing
+					# the highlight resolver to find a zero-sized rectangle.
+					# By waiting for the next process_frame, we ensure the layout is stable.
+					_advance_after_frame()
 					return
 		_watch_for_dealership_selected(target)
 	)
+
+func _advance_after_frame() -> void:
+	# Wait for one full frame to pass. This allows Godot's layout system
+	# to update the size and position of newly visible controls.
+	print("[Tutorial] Waiting one frame for layout...")
+	await get_tree().process_frame
+	print("[Tutorial] Waiting a second frame for good measure...")
+	await get_tree().process_frame
+	print("[Tutorial] Frames waited. Advancing.")
+	_advance()
 
 var _vehicle_bought_flag := false
 
 func _watch_for_vehicle_purchase() -> void:
 	# Prefer APICalls signal if available; otherwise, observe convoy data updates.
 	if not _vehicle_bought_flag:
-		var api := get_node_or_null("/root/APICallsInstance")
+		var api := get_node_or_null("/root/APICalls")
 		if api and api.has_signal("vehicle_bought") and not api.is_connected("vehicle_bought", Callable(self, "_on_vehicle_bought")):
 			api.connect("vehicle_bought", Callable(self, "_on_vehicle_bought"))
 	# Try to hint the Buy button if present

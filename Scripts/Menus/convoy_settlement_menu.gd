@@ -15,8 +15,9 @@ const VendorTradePanel = preload("res://Scenes/VendorTradePanel.tscn")
 @onready var top_up_button: Button = $MainVBox/TopBarHBox/TopUpButton
 @onready var top_bar_hbox: HBoxContainer = $MainVBox/TopBarHBox
 @onready var vendor_tab_container = %VendorTabContainer
-@onready var settlement_content_vbox = %SettlementContentVBox
-@onready var back_button = $MainVBox/BackButton
+# The node 'SettlementInfoTab' is renamed to 'Settlement Info' by its 'name' property in the scene file.
+# The SettlementInfoTab has been removed. All tabs are now dynamically generated.
+@onready var back_button: Button = $MainVBox/BackButton
 var mechanics_tab_vbox: VBoxContainer = null
 
 # This will be populated by MenuManager with the specific convoy's data.
@@ -57,25 +58,6 @@ func initialize_with_data(data: Dictionary):
 
 func _ready():
 	print("ConvoySettlementMenu: _ready() started processing.")
-	# Fallback assignment if @onready somehow failed (shouldn't happen with proper setup)
-	if not is_instance_valid(settlement_content_vbox):
-		settlement_content_vbox = get_node_or_null("%SettlementContentVBox")
-		if not is_instance_valid(settlement_content_vbox):
-			printerr("ConvoySettlementMenu: Failed to re-assign settlement_content_vbox in _ready().")
-		else:
-			print("ConvoySettlementMenu: _ready() - settlement_content_vbox re-assigned and is valid.")
-
-	# Explicitly check and potentially re-assign vendor_tab_container
-	if not is_instance_valid(vendor_tab_container):
-		vendor_tab_container = get_node_or_null("%VendorTabContainer")
-		if not is_instance_valid(vendor_tab_container):
-			printerr("ConvoySettlementMenu: Failed to re-assign vendor_tab_container in _ready().")
-		else:
-			print("ConvoySettlementMenu: _ready() - vendor_tab_container re-assigned and is valid.")
-	
-	# Explicitly check if the unique name node is found at _ready()
-	if not get_node_or_null("%SettlementContentVBox"):
-		printerr("ConvoySettlementMenu: CRITICAL - %SettlementContentVBox not found at _ready(). Check scene setup.")
 	# It's crucial to connect signals here for the UI to be interactive.
 	if is_instance_valid(back_button):
 		back_button.pressed.connect(_on_back_button_pressed)
@@ -142,44 +124,8 @@ func _ready():
 
 func _display_error(message: String):
 	_clear_tabs()
-	
-	if is_instance_valid(settlement_content_vbox):
-		# Clear the content of the main settlement info tab
-		for child in settlement_content_vbox.get_children():
-			child.queue_free()
-	else:
-		printerr("ConvoySettlementMenu: settlement_content_vbox is invalid when trying to clear children in _display_error().")
-		# If settlement_content_vbox is null, we can't add children to it directly.
-		# The error message will be displayed in the console.
-		return
-
-	
-
-	title_label.text = "Error"
-	settlement_content_vbox.add_child(create_info_label(message))
-	vendor_tab_container.set_tab_title(0, "Error") # Set title for the first tab (error tab)
-
-func _populate_settlement_info_tab(settlement_data: Dictionary):
-	if is_instance_valid(settlement_content_vbox):
-		for child in settlement_content_vbox.get_children():
-			child.queue_free()
-	else:
-		printerr("ConvoySettlementMenu: settlement_content_vbox is invalid when trying to populate info tab.")
-		return
-	
-	_add_detail_row(settlement_content_vbox, "Name:", settlement_data.get("name", "Unnamed Settlement"))
-	_add_detail_row(settlement_content_vbox, "Type:", settlement_data.get("sett_type", "Unknown Type").capitalize())
-	_add_detail_row(settlement_content_vbox, "ID:", settlement_data.get("sett_id", "N/A"))
-	# Add more general settlement info here if needed in the future.
-	settlement_content_vbox.add_child(create_info_label("\nSelect a vendor tab to see more details."))
-
-func _populate_settlement_info_tab_with_error(message: String):
-	if not is_instance_valid(settlement_content_vbox):
-		printerr("ConvoySettlementMenu: settlement_content_vbox is invalid when trying to populate error tab.")
-		return
-	for child in settlement_content_vbox.get_children():
-		child.queue_free()
-	settlement_content_vbox.add_child(create_info_label(message))
+	# Display the error in the main title label. The tab container will be empty.
+	title_label.text = message
 
 
 func _display_settlement_info():
@@ -205,11 +151,11 @@ func _display_settlement_info():
 	# Fetch all settlement data from GameDataManager
 	_all_settlement_data = gdm.get_all_settlements_data()
 	if _all_settlement_data.is_empty():
-		_populate_settlement_info_tab_with_error("Error: All settlement data not loaded in GameDataManager.")
+		_display_error("Error: All settlement data not loaded in GameDataManager.")
 
 	var map_tiles = gdm.map_tiles
 	if map_tiles.is_empty():
-		_populate_settlement_info_tab_with_error("Error: Map data not loaded in GameDataManager.")
+		_display_error("Error: Map data not loaded in GameDataManager.")
 		return
 
 	var target_tile = null
@@ -224,21 +170,22 @@ func _display_settlement_info():
 	if target_tile and target_tile.has("settlements") and target_tile.settlements is Array and not target_tile.settlements.is_empty():
 		_settlement_data = target_tile.settlements[0] # Assuming we display info for the first settlement.
 
-		_populate_settlement_info_tab(_settlement_data)
-
 		if _settlement_data.has("vendors") and _settlement_data.vendors is Array and not _settlement_data.vendors.is_empty():
 			# print("ConvoySettlementMenu: Found ", _settlement_data.vendors.size(), " vendors in settlement.") # Debug line
 
 			for vendor in _settlement_data.vendors:
 				_create_vendor_tab(vendor)
-			# Removed the old Mechanics tab vendor. Mechanics is now accessed via Install on parts within each vendor.
-
+			
+			# After creating all tabs, try to select the "Dealership" tab for the tutorial.
+			# Deferring ensures the tabs are fully in the tree before we try to switch.
+			call_deferred("select_vendor_tab_by_title_contains", "Dealership")
+			
 			# After creating vendor tabs compute top up plan
 			_update_top_up_button()
 
 	else:
 		title_label.text = "Location: (%d, %d)" % [current_convoy_x, current_convoy_y]
-		_populate_settlement_info_tab_with_error("No settlement found at convoy coordinates: (%d, %d)" % [current_convoy_x, current_convoy_y])
+		_display_error("No settlement found at convoy coordinates: (%d, %d)" % [current_convoy_x, current_convoy_y])
 
 func _create_vendor_tab(vendor_data: Dictionary):
 	var vendor_name = vendor_data.get("name", "Unnamed Vendor")
@@ -277,8 +224,8 @@ func _clear_tabs():
 	if not is_instance_valid(vendor_tab_container):
 		printerr("ConvoySettlementMenu: vendor_tab_container is invalid in _clear_tabs().")
 		return
-	# We only remove tabs from index 1 onwards, to keep the "Settlement Info" tab.
-	for i in range(vendor_tab_container.get_tab_count() - 1, 0, -1):
+	# Remove all dynamically added tabs.
+	for i in range(vendor_tab_container.get_tab_count() - 1, -1, -1):
 		var tab = vendor_tab_container.get_child(i)
 		vendor_tab_container.remove_child(tab)
 		tab.queue_free()

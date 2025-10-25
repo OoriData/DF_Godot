@@ -10,6 +10,7 @@ var map_camera_controller: Node = null
 var map_interaction_manager: Node = null
 var _interactive_state_is_pending: bool = false
 var _pending_interactive_state: bool = false
+var _map_is_interactive: bool = true # New flag to control map input
 
 @onready var menu_container = $MainContainer/MainContent/MenuContainer
 @onready var top_bar = $MainContainer/TopBar
@@ -79,6 +80,8 @@ func _ready():
 	# Defer the initial camera setup to ensure the UI layout is stable.
 	# print("[DFCAM-DEBUG] MainScreen: _ready called, deferring initial camera/UI setup.")
 	call_deferred("_initial_camera_and_ui_setup")
+	# Defer signal connections to ensure child scenes are also ready.
+	call_deferred("_connect_deferred_signals")
 
 	# Connect to the MenuManager's signal that indicates when a menu is opened or closed.
 	var menu_manager = get_node_or_null("/root/MenuManager")
@@ -97,14 +100,6 @@ func _ready():
 			menu_manager.connect("convoy_menu_focus_requested", Callable(self, "_on_convoy_menu_focus_requested"))
 	else:
 		printerr("MainScreen: CRITICAL - Could not find MenuManager at /root/MenuManager. Camera adjustments will not work.")
-
-	# Connect the button in the top bar to a function that asks the MenuManager to open the menu.
-	var convoy_button = top_bar.find_child("ConvoyMenuButton")
-	if convoy_button:
-		if not convoy_button.is_connected("pressed", Callable(self, "on_convoy_button_pressed")):
-			convoy_button.pressed.connect(on_convoy_button_pressed)
-	else:
-		printerr("MainScreen: Could not find ConvoyMenuButton in TopBar.")
 
 	# --- Window/MapView Resize Handling ---
 	# Use _notification for resize events instead of connecting to nonexistent signal
@@ -133,6 +128,17 @@ func _ready():
 	# Proactively check once after layout settles (in case no signals fire yet)
 	call_deferred("_check_or_prompt_new_convoy")
 # Respond to Control resize events
+
+func _connect_deferred_signals():
+	# Connect the button in the top bar to a function that asks the MenuManager to open the menu.
+	# This is deferred to ensure the TopBar and its instanced children (like ConvoyListPanel) are fully ready.
+	var convoy_button = top_bar.find_child("ConvoyMenuButton", true, false)
+	if convoy_button:
+		if not convoy_button.is_connected("pressed", Callable(self, "on_convoy_button_pressed")):
+			convoy_button.pressed.connect(on_convoy_button_pressed)
+	else:
+		printerr("MainScreen: Could not find ConvoyMenuButton in TopBar (deferred search).")
+
 func _notification(what):
 	if what == NOTIFICATION_RESIZED:
 		_on_main_screen_size_changed()
@@ -628,16 +634,11 @@ func on_convoy_button_pressed():
 
 
 func set_map_interactive(is_interactive: bool):
-	if is_instance_valid(map_camera_controller):
-		# If the controller is valid, apply the setting immediately.
-		if map_camera_controller.has_method("set_interactive"):
-			map_camera_controller.set_interactive(is_interactive)
-			print("MainScreen: MapView interaction set to: %s" % is_interactive)
-		else:
-			printerr("MainScreen: MapCameraController is valid but is missing 'set_interactive' method.")
-	else:
-		# If the controller is NOT valid, it means we've been called before initialize().
-		# We store the desired state to be applied later.
-		_interactive_state_is_pending = true
-		_pending_interactive_state = is_interactive
-		print("MainScreen: MapCameraController not ready. Storing pending interactive state: %s" % is_interactive)
+	# This function is called by other parts of the system (like menus) to enable/disable map panning and zooming.
+	# It now controls a local flag which is checked in _on_map_view_gui_input.
+	_map_is_interactive = is_interactive
+	print("MainScreen: Map interaction set to: %s" % is_interactive)
+	# If disabling interaction while panning, reset the state.
+	if not is_interactive and _is_panning:
+		_is_panning = false
+		Input.set_default_cursor_shape(Input.CURSOR_ARROW)

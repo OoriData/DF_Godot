@@ -145,8 +145,14 @@ func highlight_node(node: Node, rect: Rect2) -> void:
 	# When a highlight is active, the overlay control itself should ignore mouse events,
 	# allowing them to pass through to the controls underneath (in the "hole").
 	# The child "shield" controls will be responsible for blocking input around the hole.
-	self.mouse_filter = Control.MOUSE_FILTER_IGNORE if _has_highlight else Control.MOUSE_FILTER_STOP
-
+	if _has_highlight:
+		self.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	else:
+		# No highlight. Defer to the logic in clear_highlight to set the mouse filter
+		# based on the current gating mode. This prevents locking the screen during
+		# soft-gated highlight resolution retries.
+		clear_highlight()
+		return # clear_highlight handles the rest
 	
 	# We keep a reference to the node, but we no longer modify it with top_level or z_index.
 	# This avoids all layout-related bugs where the node's position would reset.
@@ -194,9 +200,13 @@ func set_highlight_for_node(node: Node, padding: int = 6) -> void:
 
 func clear_highlight() -> void:
 	_has_highlight = false
-	# When no highlight is active, the overlay should block all input.
-	self.mouse_filter = Control.MOUSE_FILTER_STOP
-
+	# When no highlight is active, the overlay should block all input,
+	# UNLESS we are in SOFT gating mode. In soft mode, we assume a highlight
+	# is expected to appear (e.g. during a resolution retry), so we don't block.
+	if _gating_mode == GatingMode.SOFT:
+		self.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	else:
+		self.mouse_filter = Control.MOUSE_FILTER_STOP
 	_reset_managed_node()
 	queue_redraw()
 	_layout_blockers()
