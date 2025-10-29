@@ -57,18 +57,6 @@ var _convoy_total_volume: float = 0.0
 func _ready() -> void:
 	# Connect signals from UI elements
 	vendor_item_tree.item_selected.connect(_on_vendor_item_selected)
-	# --- START VISUAL DIAGNOSTIC for focus changes ---
-	# We will change the background color of the tree to visually confirm focus events,
-	# as print statements might be getting lost in the output overflow.
-	var normal_stylebox = vendor_item_tree.get_theme_stylebox("panel")
-	if normal_stylebox:
-		var focus_stylebox = normal_stylebox.duplicate()
-		focus_stylebox.bg_color = Color.DARK_CYAN # A very obvious color
-		vendor_item_tree.add_theme_stylebox_override("focus", focus_stylebox)
-		print("[VendorPanel][DIAGNOSTIC] Added visual focus indicator to VendorItemTree.")
-	vendor_item_tree.focus_entered.connect(func(): print("[VendorPanel][FOCUS] VendorItemTree focus ENTERED."))
-	vendor_item_tree.focus_exited.connect(func(): print("[VendorPanel][FOCUS] VendorItemTree focus EXITED."))
-	# --- END VISUAL DIAGNOSTIC ---
 	# Use item_selected for Tree to update the inspector on a single click.
 	convoy_item_tree.item_selected.connect(_on_convoy_item_selected)
 	trade_mode_tab_container.tab_changed.connect(_on_tab_changed)
@@ -145,7 +133,7 @@ func _on_vendor_panel_data_ready(vendor_panel_data: Dictionary) -> void:
 	var prev_tree := _last_selected_tree
 	_update_vendor_ui()
 	# Try to restore selection in the appropriate tree
-    if typeof(prev_selected_id) == TYPE_STRING and not String(prev_selected_id).is_empty():
+	if typeof(prev_selected_id) == TYPE_STRING and not String(prev_selected_id).is_empty():
 		if prev_tree == "vendor":
 			_restore_selection(vendor_item_tree, prev_selected_id)
 		elif prev_tree == "convoy":
