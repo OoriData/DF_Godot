@@ -17,7 +17,7 @@ func _safe_get_node(path: String) -> Node:
 func resolve(target: Dictionary) -> Dictionary:
 	# Returns { ok: bool, node: Node, rect: Rect2, reason: String }
 	if target == null:
-		return { ok = false, node = null, rect = Rect2(), reason = "no-target" }
+		return { "ok": false, "node": null, "rect": Rect2(), "reason": "no-target" }
 
 	# Normalize keys
 	var kind := String(target.get("resolver", target.get("type", "auto")))
@@ -47,8 +47,20 @@ func resolve(target: Dictionary) -> Dictionary:
 			var r = _resolve_vendor_action_button(target)
 			_print_resolve_result(kind, r)
 			return r
+		"top_up_button":
+			var r = _resolve_top_up_button(target)
+			_print_resolve_result(kind, r)
+			return r
 		"journey_action_button":
 			var r = _resolve_journey_action_button(target)
+			_print_resolve_result(kind, r)
+			return r
+		"journey_destination_button":
+			var r = _resolve_journey_destination_button(target)
+			_print_resolve_result(kind, r)
+			return r
+		"journey_confirm_button":
+			var r = _resolve_journey_confirm_button(target)
 			_print_resolve_result(kind, r)
 			return r
 		"auto":
@@ -57,7 +69,7 @@ func resolve(target: Dictionary) -> Dictionary:
 			_print_resolve_result(kind, r)
 			return r
 		_:
-			return { ok = false, node = null, rect = Rect2(), reason = "unknown-resolver:" + kind }
+			return { "ok": false, "node": null, "rect": Rect2(), "reason": "unknown-resolver:" + kind }
 
 func _print_resolve_result(kind: String, r: Dictionary) -> void:
 	if r.get("ok", false):
@@ -86,6 +98,9 @@ func _resolve_node_path(target: Dictionary) -> Dictionary:
 
 func _get_settlement_menu() -> Node:
 	return get_tree().get_root().find_child("ConvoySettlementMenu", true, false)
+
+func _get_journey_menu() -> Node:
+	return get_tree().get_root().find_child("ConvoyJourneyMenu", true, false)
 
 func _find_node_by_script(start_node: Node, script_path: String) -> Node:
 	var queue = [start_node]
@@ -262,15 +277,84 @@ func _resolve_vendor_action_button(target: Dictionary) -> Dictionary:
 		return { ok = false, node = panel, rect = _rect_for_control(panel), reason = "vendor-action-btn-missing:" + which }
 	return { ok = true, node = btn, rect = _rect_for_control(btn) }
 
+func _resolve_top_up_button(_target: Dictionary) -> Dictionary:
+	var menu := _get_settlement_menu()
+	if not is_instance_valid(menu):
+		return { ok = false, node = null, rect = Rect2(), reason = "settlement-menu-missing" }
+	
+	var btn: Button = menu.get_node_or_null("MainVBox/TopBarHBox/TopUpButton")
+	if not is_instance_valid(btn):
+		return { ok = false, node = menu, rect = _rect_for_control(menu), reason = "top-up-button-not-found" }
+	
+	var rect := _rect_for_control(btn)
+	if not rect.has_area():
+		return { ok = false, node = btn, rect = rect, reason = "unstable-layout" }
+	
+	return { ok = true, node = btn, rect = rect }
+
 func _resolve_journey_action_button(target: Dictionary) -> Dictionary:
 	var token := String(target.get("text_contains", target.get("token", "Embark")))
-	var menu := get_tree().get_root().find_child("ConvoyJourneyMenu", true, false)
+	var menu := _get_journey_menu()
 	if menu == null:
 		return { ok = false, node = null, rect = Rect2(), reason = "journey-menu-missing" }
 	var btn := _find_button_with_text(menu, token)
 	if btn == null:
 		return { ok = false, node = menu, rect = _rect_for_control(menu), reason = "journey-btn-not-found:" + token }
 	return { ok = true, node = btn, rect = _rect_for_control(btn) }
+
+func _resolve_journey_destination_button(target: Dictionary) -> Dictionary:
+	var token := String(target.get("text_contains", ""))
+	var menu := _get_journey_menu()
+	if not is_instance_valid(menu):
+		return { ok = false, node = null, rect = Rect2(), reason = "journey-menu-missing" }
+
+	var content_vbox: VBoxContainer = menu.get_node_or_null("MainVBox/ScrollContainer/ContentVBox")
+	if not is_instance_valid(content_vbox):
+		return { ok = false, node = menu, rect = _rect_for_control(menu), reason = "journey-menu-content-missing" }
+
+	var found_button: Button = null
+	var needle := token.to_lower()
+
+	for child in content_vbox.get_children():
+		if child is Button:
+			var b := child as Button
+			if b.text == "Back": continue # Skip back button
+
+			if token.is_empty(): # if no token, find first button that is not "Back"
+				found_button = b
+				break
+			
+			var txt := String(b.text).to_lower()
+			if txt.find(needle) != -1:
+				found_button = b
+				break
+	
+	if not is_instance_valid(found_button):
+		return { ok = false, node = menu, rect = _rect_for_control(menu), reason = "destination-button-not-found:" + token }
+
+	var rect := _rect_for_control(found_button)
+	if not rect.has_area():
+		return { ok = false, node = found_button, rect = rect, reason = "unstable-layout" }
+	
+	return { ok = true, node = found_button, rect = rect }
+
+func _resolve_journey_confirm_button(_target: Dictionary) -> Dictionary:
+	var menu := _get_journey_menu()
+	if not is_instance_valid(menu):
+		return { ok = false, node = null, rect = Rect2(), reason = "journey-menu-missing" }
+	
+	if not menu.has_method("get_confirm_button_node"):
+		return { ok = false, node = menu, rect = _rect_for_control(menu), reason = "journey-menu-missing-helper" }
+	
+	var btn: Button = menu.call("get_confirm_button_node")
+	if not is_instance_valid(btn):
+		return { ok = false, node = menu, rect = _rect_for_control(menu), reason = "journey-confirm-button-not-found" }
+	
+	var rect := _rect_for_control(btn)
+	if not rect.has_area():
+		return { ok = false, node = btn, rect = rect, reason = "unstable-layout" }
+	
+	return { ok = true, node = btn, rect = rect }
 
 func _resolve_auto(target: Dictionary) -> Dictionary:
 	# Heuristics based on provided hints
@@ -296,6 +380,12 @@ func _resolve_vendor_trade_panel(_target: Dictionary) -> Dictionary:
 	print("  [DEBUG][resolve_vendor_trade_panel] Panel global_rect: ", rect)
 	# --- END DEBUG LOGS ---
 
-	if not rect.has_area():
-		return { ok = false, node = panel, rect = rect, reason = "vendor-trade-panel-unstable-layout" }
+	# Guard against unstable layouts where the panel is found but its rect has no size yet,
+	# or it's at a near-zero position which is highly suspect for a dynamically placed UI element.
+	# Failing the resolution forces the TutorialManager to retry after a short delay,
+	# giving the layout engine time to work.
+	if not rect.has_area() or rect.position.length_squared() < 1.0:
+		var reason := "vendor-trade-panel-unstable-layout (size=" + str(rect.size) + " pos=" + str(rect.position) + ")"
+		return { ok = false, node = panel, rect = rect, reason = reason }
+
 	return { ok = true, node = panel, rect = rect }

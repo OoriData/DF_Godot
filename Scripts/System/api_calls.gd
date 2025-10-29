@@ -30,6 +30,8 @@ signal cargo_bought(result: Dictionary)
 @warning_ignore("unused_signal")
 signal cargo_sold(result: Dictionary)
 @warning_ignore("unused_signal")
+signal user_metadata_updated(result: Dictionary)
+@warning_ignore("unused_signal")
 signal resource_bought(result: Dictionary)
 @warning_ignore("unused_signal")
 signal resource_sold(result: Dictionary)
@@ -463,6 +465,28 @@ func get_all_in_transit_convoys() -> void:
 		"method": HTTPClient.METHOD_GET
 	}
 	_request_queue.append(request_details)
+	_process_queue()
+
+func update_user_metadata(user_id: String, metadata: Dictionary) -> void:
+	if user_id.is_empty() or not _is_valid_uuid(user_id):
+		printerr("APICalls (update_user_metadata): invalid user_id %s" % user_id)
+		return
+	
+	var url := "%s/user/update?user_id=%s" % [BASE_URL, user_id]
+	var headers: PackedStringArray = ['accept: application/json', 'content-type: application/json']
+	headers = _apply_auth_header(headers)
+	
+	var body_dict := {"metadata": metadata}
+	var body_json := JSON.stringify(body_dict)
+	
+	_request_queue.append({
+		"url": url,
+		"headers": headers,
+		"purpose": RequestPurpose.NONE,
+		"method": HTTPClient.METHOD_PATCH,
+		"body": body_json,
+		"signal_name": "user_metadata_updated"
+	})
 	_process_queue()
 
 # --- Vendor / Transaction Requests (added) ---

@@ -39,6 +39,8 @@ var current_mode = "buy" # or "sell"
 var _last_selected_item_id = null # <-- Add this line
 var _last_selected_ref = null # Track last selected aggregated data reference to avoid resetting quantity repeatedly
 var _last_selection_unique_key: String = "" # Used to detect same logical selection even if reference changes
+var _last_selected_tree: String = "" # "vendor" or "convoy"; used to restore selection after refreshes
+var _last_selected_restore_id: String = "" # Raw cargo_id or vehicle_id string for restoring selection
 
 # Backend compatibility cache (per vehicle + part uid), shared semantics with Mechanics menu
 var _compat_cache: Dictionary = {} # key: vehicle_id||part_uid -> payload
@@ -55,6 +57,18 @@ var _convoy_total_volume: float = 0.0
 func _ready() -> void:
 	# Connect signals from UI elements
 	vendor_item_tree.item_selected.connect(_on_vendor_item_selected)
+	# --- START VISUAL DIAGNOSTIC for focus changes ---
+	# We will change the background color of the tree to visually confirm focus events,
+	# as print statements might be getting lost in the output overflow.
+	var normal_stylebox = vendor_item_tree.get_theme_stylebox("panel")
+	if normal_stylebox:
+		var focus_stylebox = normal_stylebox.duplicate()
+		focus_stylebox.bg_color = Color.DARK_CYAN # A very obvious color
+		vendor_item_tree.add_theme_stylebox_override("focus", focus_stylebox)
+		print("[VendorPanel][DIAGNOSTIC] Added visual focus indicator to VendorItemTree.")
+	vendor_item_tree.focus_entered.connect(func(): print("[VendorPanel][FOCUS] VendorItemTree focus ENTERED."))
+	vendor_item_tree.focus_exited.connect(func(): print("[VendorPanel][FOCUS] VendorItemTree focus EXITED."))
+	# --- END VISUAL DIAGNOSTIC ---
 	# Use item_selected for Tree to update the inspector on a single click.
 	convoy_item_tree.item_selected.connect(_on_convoy_item_selected)
 	trade_mode_tab_container.tab_changed.connect(_on_tab_changed)
@@ -126,7 +140,16 @@ func _on_vendor_panel_data_ready(vendor_panel_data: Dictionary) -> void:
 	self.all_settlement_data_global = vendor_panel_data.get("all_settlement_data")
 	self.vendor_items = vendor_panel_data.get("vendor_items", {})
 	self.convoy_items = vendor_panel_data.get("convoy_items", {})
+	# Preserve current selection across refreshes when possible
+	var prev_selected_id := _last_selected_restore_id
+	var prev_tree := _last_selected_tree
 	_update_vendor_ui()
+	# Try to restore selection in the appropriate tree
+    if typeof(prev_selected_id) == TYPE_STRING and not String(prev_selected_id).is_empty():
+		if prev_tree == "vendor":
+			_restore_selection(vendor_item_tree, prev_selected_id)
+		elif prev_tree == "convoy":
+			_restore_selection(convoy_item_tree, prev_selected_id)
 
 func _update_vendor_ui() -> void:
 	# Use self.vendor_items and self.convoy_items to populate the UI
@@ -183,7 +206,8 @@ func _populate_tree_from_agg(tree: Tree, agg: Dictionary) -> void:
 			category_item.set_text(0, category.capitalize())
 			category_item.set_selectable(0, false)
 			category_item.set_custom_color(0, Color.GOLD)
-			category_item.collapsed = category != "missions"
+			# Let the Tree control manage the collapsed state.
+			# category_item.collapsed = category != "missions"
 			for item_name in display_agg[category]:
 				var agg_data = display_agg[category][item_name]
 				var display_qty = agg_data.total_quantity
@@ -226,10 +250,22 @@ func refresh_data(p_vendor_data, p_convoy_data, p_current_settlement_data, p_all
 	self.current_settlement_data = p_current_settlement_data
 	self.all_settlement_data_global = p_all_settlement_data_global
 
+	# Preserve current selection context for restore after repopulation
+	var prev_selected_id := _last_selected_restore_id
+	var prev_tree := _last_selected_tree
+
 	_populate_vendor_list()
 	_populate_convoy_list()
 	_update_convoy_info_display()
-	_on_tab_changed(trade_mode_tab_container.current_tab)
+	# Do not forcibly clear selection; instead, restore it if we know what was selected
+	if typeof(prev_selected_id) == TYPE_STRING and not String(prev_selected_id).is_empty():
+		if prev_tree == "vendor":
+			_restore_selection(vendor_item_tree, prev_selected_id)
+		elif prev_tree == "convoy":
+			_restore_selection(convoy_item_tree, prev_selected_id)
+	# Keep buttons and panels in sync
+	_update_transaction_panel()
+	_update_install_button_state()
   
 # --- UI Population ---
 func _populate_vendor_list() -> void:
@@ -636,13 +672,20 @@ func _on_gdm_settlement_data_updated(all_settlements_data: Array) -> void:
 		return
 	self.all_settlement_data_global = all_settlements_data
 	var current_vendor_id = str(vendor_data.get("vendor_id"))
+	var prev_selected_id := _last_selected_restore_id
+	var prev_tree := _last_selected_tree
 	for settlement in all_settlements_data:
 		if settlement.has("vendors") and settlement.vendors is Array:
 			for vendor in settlement.vendors:
 				if vendor.has("vendor_id") and str(vendor.get("vendor_id")) == current_vendor_id:
 					self.vendor_data = vendor # <-- Only update here!
 					_populate_vendor_list()
-					_handle_new_item_selection(null)
+					# Try to restore prior selection if possible
+					if typeof(prev_selected_id) == TYPE_STRING and not String(prev_selected_id).is_empty():
+						if prev_tree == "vendor":
+							_restore_selection(vendor_item_tree, prev_selected_id)
+						elif prev_tree == "convoy":
+							_restore_selection(convoy_item_tree, prev_selected_id)
 					return
 	if is_instance_valid(loading_panel):
 		loading_panel.visible = false
@@ -651,13 +694,19 @@ func _on_gdm_convoy_data_updated(all_convoys_data: Array) -> void:
 	if convoy_data.is_empty() or not convoy_data.has("convoy_id"):
 		return
 	var current_convoy_id = str(convoy_data.get("convoy_id"))
+	var prev_selected_id := _last_selected_restore_id
+	var prev_tree := _last_selected_tree
 	for updated_convoy_data in all_convoys_data:
 		if updated_convoy_data.has("convoy_id") and str(updated_convoy_data.get("convoy_id")) == current_convoy_id:
 			self.convoy_data = updated_convoy_data # <-- Only update here!
 			_populate_convoy_list()
 			_update_convoy_info_display()
-			# Always clear selection after a transaction to avoid stale state
-			_handle_new_item_selection(null)
+			# Try to restore prior selection if possible
+			if typeof(prev_selected_id) == TYPE_STRING and not String(prev_selected_id).is_empty():
+				if prev_tree == "vendor":
+					_restore_selection(vendor_item_tree, prev_selected_id)
+				elif prev_tree == "convoy":
+					_restore_selection(convoy_item_tree, prev_selected_id)
 			return
 	if is_instance_valid(loading_panel):
 		loading_panel.visible = false
@@ -685,22 +734,22 @@ func _on_tab_changed(tab_index: int) -> void:
 
 func _on_vendor_item_selected() -> void:
 	var tree_item = vendor_item_tree.get_selected()
-	if tree_item and tree_item.get_metadata(0) != null:
-		var item = tree_item.get_metadata(0)
-		_handle_new_item_selection(item)
-	else:
-		_handle_new_item_selection(null)
-	_update_install_button_state()
+	# --- START TUTORIAL DEBUG LOG ---
+	var item_text = tree_item.get_text(0) if is_instance_valid(tree_item) else "<none>"
+	print("[VendorPanel][LOG] _on_vendor_item_selected. Item: '%s'" % item_text)
+	# --- END TUTORIAL DEBUG LOG ---
+	_last_selected_tree = "vendor"
+	var item = tree_item.get_metadata(0) if tree_item and tree_item.get_metadata(0) != null else null
+	# Defer handling to the next idle frame. This is critical to prevent a race condition
+	# where the panel resizes in the same frame as the input, causing the Tree to lose focus and deselect the item.
+	call_deferred("_handle_new_item_selection", item)
 
 func _on_convoy_item_selected() -> void:
 	var tree_item = convoy_item_tree.get_selected()
-	if tree_item and tree_item.get_metadata(0) != null:
-		var item = tree_item.get_metadata(0)
-		_handle_new_item_selection(item)
-	else:
-		# This happens if a category header is clicked, or selection is cleared
-		_handle_new_item_selection(null)
-	_update_install_button_state()
+	_last_selected_tree = "convoy"
+	var item = tree_item.get_metadata(0) if tree_item and tree_item.get_metadata(0) != null else null
+	# Defer handling to prevent UI race conditions, same as for the vendor tree.
+	call_deferred("_handle_new_item_selection", item)
 
 func _populate_category(target_tree: Tree, root_item: TreeItem, category_name: String, agg_dict: Dictionary) -> void:
 	if agg_dict.is_empty():
@@ -711,9 +760,8 @@ func _populate_category(target_tree: Tree, root_item: TreeItem, category_name: S
 	category_item.set_selectable(0, false)
 	category_item.set_custom_color(0, Color.GOLD)
 
-	# By default, collapse all categories except for "Mission Cargo".
-	if category_name != "Mission Cargo":
-		category_item.collapsed = true
+	# Let the Tree control manage the collapsed state by not setting the
+	# `collapsed` property here.
 
 	for agg_key in agg_dict:
 		var agg_data = agg_dict[agg_key]
@@ -746,12 +794,15 @@ func _handle_new_item_selection(p_selected_item) -> void:
 	var previous_key = _last_selection_unique_key
 	selected_item = p_selected_item
 	var new_key: String = ""
+	var restore_id: String = ""
 	if selected_item and selected_item.has("item_data"):
 		var item_data_local = selected_item.item_data
 		if item_data_local.has("cargo_id") and item_data_local.cargo_id != null:
 			new_key = "cargo:" + str(item_data_local.cargo_id)
+			restore_id = str(item_data_local.cargo_id)
 		elif item_data_local.has("vehicle_id") and item_data_local.vehicle_id != null:
 			new_key = "veh:" + str(item_data_local.vehicle_id)
+			restore_id = str(item_data_local.vehicle_id)
 		else:
 			if item_data_local.get("fuel",0) > 0 and item_data_local.get("is_raw_resource", false):
 				new_key = "fuel_bulk"
@@ -765,9 +816,15 @@ func _handle_new_item_selection(p_selected_item) -> void:
 	_last_selection_unique_key = new_key
 	var is_same_selection = previous_key == new_key
 	_last_selected_ref = selected_item
+	_last_selected_restore_id = restore_id
 
-	print("DEBUG: _handle_new_item_selection - selected_item (aggregated):", selected_item)
-	print("DEBUG: _handle_new_item_selection - new_key:", new_key, "is_same_selection:", is_same_selection)
+	# --- START: Reduced logging to prevent output overflow ---
+	var item_summary_for_log = "null"
+	if selected_item and selected_item.has("item_data"):
+		var item_name_for_log = selected_item.item_data.get("name", "<no_name>")
+		item_summary_for_log = "Item(name='%s', key='%s')" % [item_name_for_log, new_key]
+	print("DEBUG: _handle_new_item_selection - selected_item: ", item_summary_for_log, " is_same_selection: ", is_same_selection)
+	# --- END: Reduced logging ---
 
 	if selected_item:
 		var stock_qty = selected_item.get("total_quantity", -1)
@@ -795,15 +852,21 @@ func _handle_new_item_selection(p_selected_item) -> void:
 		_update_comparison()
 
 		var item_data_source_debug = selected_item.get("item_data", {})
-		print("DEBUG: _handle_new_item_selection - item_data_source (original):", item_data_source_debug)
 
+		# --- START: Reduced logging to prevent output overflow ---
+		var item_name_for_log_debug = item_data_source_debug.get("name", "<no_name>")
+		var item_id_for_log_debug = item_data_source_debug.get("cargo_id", item_data_source_debug.get("vehicle_id", "<no_id>"))
+		print("DEBUG: _handle_new_item_selection - item_data_source (original): name='%s', id='%s'" % [item_name_for_log_debug, item_id_for_log_debug])
+		# --- END: Reduced logging ---
+		
 		_update_transaction_panel()
 		_update_install_button_state()
 		# Fire backend compatibility checks for this item against all convoy vehicles (to align with Mechanics)
 		if selected_item and selected_item.has("item_data") and convoy_data and convoy_data.has("vehicle_details_list"):
 			var idata = selected_item.item_data
 			var uid := String(idata.get("cargo_id", idata.get("part_id", "")))
-			if uid != "":
+			# Only request compatibility for items that look like vehicle parts.
+			if uid != "" and _looks_like_part(idata):
 				for v in convoy_data.vehicle_details_list:
 					var vid := String(v.get("vehicle_id", ""))
 					if vid != "" and is_instance_valid(gdm) and gdm.has_method("request_part_compatibility"):
@@ -907,6 +970,10 @@ func _on_quantity_changed(_value: float) -> void:
 
 # --- Inspector and Transaction UI Updates ---
 func _update_inspector() -> void:
+	# --- START TUTORIAL DEBUG LOG ---
+	var old_size = size
+	print("[VendorPanel][LOG] _update_inspector called. Current panel size: %s" % str(old_size))
+	# --- END TUTORIAL DEBUG LOG ---
 	if not selected_item:
 		return
 
@@ -943,48 +1010,8 @@ func _update_inspector() -> void:
 		item_description_rich_text.text = description_text
 
 	# --- Fitment (slot + compatible vehicles via backend) ---
-	if is_instance_valid(fitment_panel) and is_instance_valid(fitment_rich_text):
-		var slot_name: String = ""
-		if item_data_source.has("slot") and item_data_source.get("slot") != null:
-			slot_name = String(item_data_source.get("slot"))
-		# Resolve a part UID to query (prefer cargo_id; fallback part_id)
-		var part_uid: String = ""
-		if item_data_source.has("cargo_id") and item_data_source.get("cargo_id") != null:
-			part_uid = String(item_data_source.get("cargo_id"))
-		elif item_data_source.has("part_id") and item_data_source.get("part_id") != null:
-			part_uid = String(item_data_source.get("part_id"))
-
-		var lines: Array[String] = []
-		if not slot_name.is_empty():
-			lines.append("[b]Slot:[/b] %s" % slot_name)
-		else:
-			lines.append("[b]Slot:[/b] (unknown)")
-
-		var compat_lines: Array[String] = []
-		if convoy_data and convoy_data.has("vehicle_details_list") and convoy_data.vehicle_details_list is Array:
-			for v in convoy_data.vehicle_details_list:
-				var vid: String = String(v.get("vehicle_id", ""))
-				if vid == "" or part_uid == "":
-					continue
-				# Build cache key and request on-demand if missing
-				var key := _compat_key(vid, part_uid)
-				if not _compat_cache.has(key) and is_instance_valid(gdm) and gdm.has_method("request_part_compatibility"):
-					gdm.request_part_compatibility(vid, part_uid)
-				var compat_ok: bool = _compat_payload_is_compatible(_compat_cache.get(key, {}))
-				var vname: String = v.get("name", "Vehicle")
-				if compat_ok:
-					compat_lines.append("  • %s" % vname)
-
-		if compat_lines.is_empty():
-			lines.append("[color=grey]No compatible convoy vehicles detected by server.[/color]")
-		else:
-			lines.append("[b]Compatible Vehicles:[/b]")
-			for ln in compat_lines:
-				lines.append(ln)
-
-		fitment_rich_text.text = "\n".join(lines)
-		fitment_rich_text.visible = true
-		fitment_panel.visible = true
+	# This is now handled by its own function to allow for targeted updates.
+	_update_fitment_panel()
 
 	var bbcode = ""
 	if current_mode == "sell" and selected_item.has("mission_vendor_name") and not str(selected_item.mission_vendor_name).is_empty() and selected_item.mission_vendor_name != "Unknown Vendor":
@@ -1053,6 +1080,62 @@ func _update_inspector() -> void:
 
 	if is_instance_valid(item_info_rich_text):
 		item_info_rich_text.text = bbcode
+	call_deferred("_log_size_after_update")
+
+func _update_fitment_panel() -> void:
+	# --- Fitment (slot + compatible vehicles via backend) ---
+	if is_instance_valid(fitment_panel) and is_instance_valid(fitment_rich_text):
+		if not selected_item:
+			fitment_panel.visible = false
+			return
+
+		var item_data_source = selected_item.item_data if selected_item.has("item_data") and not selected_item.item_data.is_empty() else selected_item
+
+		var slot_name: String = ""
+		if item_data_source.has("slot") and item_data_source.get("slot") != null:
+			slot_name = String(item_data_source.get("slot"))
+		# Resolve a part UID to query (prefer cargo_id; fallback part_id)
+		var part_uid: String = ""
+		if item_data_source.has("cargo_id") and item_data_source.get("cargo_id") != null:
+			part_uid = String(item_data_source.get("cargo_id"))
+		elif item_data_source.has("part_id") and item_data_source.get("part_id") != null:
+			part_uid = String(item_data_source.get("part_id"))
+
+		# Only show fitment panel for items that look like parts.
+		if not _looks_like_part(item_data_source):
+			fitment_panel.visible = false
+			return
+
+		var lines: Array[String] = []
+		if not slot_name.is_empty():
+			lines.append("[b]Slot:[/b] %s" % slot_name)
+		else:
+			lines.append("[b]Slot:[/b] (unknown)")
+
+		var compat_lines: Array[String] = []
+		if convoy_data and convoy_data.has("vehicle_details_list") and convoy_data.vehicle_details_list is Array:
+			for v in convoy_data.vehicle_details_list:
+				var vid: String = String(v.get("vehicle_id", ""))
+				if vid == "" or part_uid == "":
+					continue
+				# Build cache key and request on-demand if missing
+				# NOTE: Request is sent from _handle_new_item_selection. This function only displays results.
+				var key := _compat_key(vid, part_uid)
+				var compat_ok: bool = _compat_payload_is_compatible(_compat_cache.get(key, {}))
+				var vname: String = v.get("name", "Vehicle")
+				if compat_ok:
+					compat_lines.append("  • %s" % vname)
+
+		if compat_lines.is_empty():
+			lines.append("[color=grey]No compatible convoy vehicles detected by server.[/color]")
+		else:
+			lines.append("[b]Compatible Vehicles:[/b]")
+			for ln in compat_lines:
+				lines.append(ln)
+
+		fitment_rich_text.text = "\n".join(lines)
+		fitment_rich_text.visible = true
+		fitment_panel.visible = true
 
 func _update_transaction_panel() -> void:
 	if not selected_item:
@@ -1061,7 +1144,11 @@ func _update_transaction_panel() -> void:
 
 	var item_data_source = selected_item.item_data if selected_item.has("item_data") and not selected_item.item_data.is_empty() else selected_item
 
-	print("DEBUG: item_data_source for price calculation: ", item_data_source)
+	# --- START: Reduced logging to prevent output overflow ---
+	var item_name_for_log = item_data_source.get("name", "<no_name>")
+	var item_id_for_log = item_data_source.get("cargo_id", item_data_source.get("vehicle_id", "<no_id>"))
+	print("DEBUG: item_data_source for price calculation: name='%s', id='%s'" % [item_name_for_log, item_id_for_log])
+	# --- END: Reduced logging ---
 
 	var quantity = int(quantity_spinbox.value)
 	var final_unit_price = _get_contextual_unit_price(item_data_source)
@@ -1204,7 +1291,9 @@ func _on_part_compatibility_ready(payload: Dictionary) -> void:
 		var idata: Dictionary = selected_item.item_data
 		var uid := String(idata.get("cargo_id", idata.get("part_id", "")))
 		if uid != "" and uid == part_cargo_id:
-			_update_inspector()
+			# This was causing a recursive loop.
+			# Only update the part of the UI that depends on this data.
+			_update_fitment_panel()
 
 func _compat_payload_is_compatible(payload: Variant) -> bool:
 	if not (payload is Dictionary):
@@ -1339,6 +1428,10 @@ func _on_description_toggle_pressed() -> void:
 	if is_instance_valid(item_description_rich_text):
 		item_description_rich_text.visible = not item_description_rich_text.visible
 # Helper to restore selection in a tree after data refresh
+
+func _log_size_after_update():
+	print("[VendorPanel][LOG] _update_inspector finished. New panel size: %s" % str(size))
+
 func _restore_selection(tree: Tree, item_id):
 	if not tree or not tree.get_root():
 		_handle_new_item_selection(null)
@@ -1348,7 +1441,9 @@ func _restore_selection(tree: Tree, item_id):
 			var agg_data = item.get_metadata(0)
 			if agg_data and agg_data.has("item_data"):
 				var id = agg_data.item_data.get("cargo_id", agg_data.item_data.get("vehicle_id", null))
-				if id == item_id:
+				var id_str := str(id)
+				var target_str := str(item_id)
+				if id_str == target_str:
 					item.select(0)
 					_handle_new_item_selection(agg_data)
 					return

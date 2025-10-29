@@ -158,20 +158,42 @@ func highlight_node(node: Node, rect: Rect2) -> void:
 	# This avoids all layout-related bugs where the node's position would reset.
 	if node is Control:
 		_managed_node = node as Control
-		# Track target rect changes caused by late layout/containers resizing
-		if _managed_node and _managed_node.has_signal("resized") and not _managed_node.is_connected("resized", Callable(self, "_on_managed_node_resized")):
-			_managed_node.resized.connect(_on_managed_node_resized)
-		# Start per-frame syncing while highlight is active
+		# --- START FIX for UI Race Condition ---
+		# DISABLED: Connecting to the `resized` signal of a UI panel that resizes itself
+		# in response to interaction (like selecting an item) creates a race condition.
+		# The resize triggers an overlay update, which can steal focus and deselect the item.
+		# For static UI panels in tutorials, we accept that the highlight may become
+		# slightly inaccurate if the panel resizes, in favor of not breaking input.
+		#
+		# if _managed_node and _managed_node.has_signal("resized") and not _managed_node.is_connected("resized", Callable(self, "_on_managed_node_resized")):
+		# 	_managed_node.resized.connect(_on_managed_node_resized)
+		#
+		# For static UI panels, both `_process` and the `resized` signal are too aggressive.
+		# We set the highlight once and disable all reactive updates.
+		# --- END FIX ---
+		set_process(false)
+	else:
+		# For non-Control nodes (like sprites), they might move every frame.
 		set_process(true)
 
 	print("[TutorialOverlay] Highlighting rect for node: ", node, " rect: ", rect)
 
-	queue_redraw()
-	_layout_blockers()
+	# DEFER the redraw and layout to the *next frame*. This is a more robust fix
+	# for the race condition than call_deferred, which only waits for the current frame's idle time.
+	# A one-shot timer with time=0 waits for the next `_process` tick, cleanly separating
+	# the input event from the overlay's redraw reaction.
+	get_tree().create_timer(0).timeout.connect(func():
+		if not is_instance_valid(self): return
+		self.queue_redraw()
+		self._layout_blockers()
+	)
 
 
 func _reset_managed_node() -> void:
-	# Since we no longer modify the node, we just need to clear our internal references.
+	# Since we no longer connect to the resized signal for Control nodes,
+	# we can simplify this. We just need to clear our internal references.
+	# if is_instance_valid(_managed_node) and _managed_node.has_signal("resized") and _managed_node.is_connected("resized", Callable(self, "_on_managed_node_resized")):
+	# 	_managed_node.resized.disconnect(_on_managed_node_resized)
 	_managed_node = null
 	_original_state.clear()
 	_managed_node_popup_connection.clear() # Clear any lingering state from old logic
@@ -210,7 +232,7 @@ func clear_highlight() -> void:
 	_reset_managed_node()
 	queue_redraw()
 	_layout_blockers()
-	# Stop per-frame syncing when no highlight
+	# Always disable the process loop when no highlight is active.
 	set_process(false)
 
 func _on_managed_node_resized() -> void:
@@ -231,9 +253,20 @@ func _update_highlight_from_managed_node() -> void:
 	var new_rect := _managed_node.get_global_rect()
 	# Only update if it actually changed to avoid churn
 	if new_rect.position != _highlight_rect.position or new_rect.size != _highlight_rect.size:
+		# --- START TUTORIAL DEBUG LOG ---
+		print("[TutorialOverlay][LOG] _update_highlight_from_managed_node: Detected rect change.")
+		print("  - Old rect: %s" % str(_highlight_rect))
+		print("  - New rect: %s" % str(new_rect))
+		# --- END TUTORIAL DEBUG LOG ---
 		_highlight_rect = new_rect
-		queue_redraw()
-		_layout_blockers()
+		# Defer the redraw and blocker layout. This is critical to prevent race conditions.
+		# When a user clicks a UI element that causes the highlighted node to resize (like selecting
+		# an item in a list, which shows an inspector panel), this function is called immediately.
+		# If we redraw synchronously, we can interfere with the input event processing of the
+		# node that was just clicked, causing it to lose focus or its selection state.
+		call_deferred("queue_redraw")
+		call_deferred("_layout_blockers")
+		print("[TutorialOverlay][LOG] Deferred redraw and layout.")
 
 # Configure input gating behavior:
 # - GatingMode.NONE: no input blocking by the overlay (except panel itself)
@@ -318,6 +351,10 @@ func bring_to_front() -> void:
 
 # Internal: position blocker controls to enforce the current gating mode
 func _layout_blockers() -> void:
+	# --- START TUTORIAL DEBUG LOG ---
+	print("[TutorialOverlay][LOG] _layout_blockers called. Gating mode: %d, Has highlight: %s" % [_gating_mode, str(_has_highlight)])
+	# --- END TUTORIAL DEBUG LOG ---
+
 	# If shields don't exist yet, ensure they're created
 	if _shield_top == null or _shield_bottom == null or _shield_left == null or _shield_right == null or _shield_center == null:
 		return

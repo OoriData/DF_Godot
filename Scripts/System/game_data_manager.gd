@@ -159,6 +159,8 @@ func _initiate_preload():
 			api_calls_node.user_data_received.connect(_on_user_data_received_from_api)
 		if api_calls_node.has_signal('vendor_data_received'):
 			api_calls_node.vendor_data_received.connect(update_single_vendor)
+		if api_calls_node.has_signal('user_metadata_updated') and not api_calls_node.user_metadata_updated.is_connected(_on_user_metadata_updated):
+			api_calls_node.user_metadata_updated.connect(_on_user_metadata_updated)
 		# Transaction patch signals that return updated convoy objects (resource buys etc.)
 		if api_calls_node.has_signal('resource_bought') and not api_calls_node.resource_bought.is_connected(_on_resource_transaction):
 			api_calls_node.resource_bought.connect(_on_resource_transaction)
@@ -291,6 +293,16 @@ func reset_user_state(clear_map: bool = false) -> void:
 	convoy_data_updated.emit(all_convoy_data)
 	user_data_updated.emit(current_user_data)
 	game_data_reset.emit()
+
+func _on_user_metadata_updated(updated_user_data: Dictionary):
+	if updated_user_data.is_empty():
+		printerr("GameDataManager: Received empty data on user metadata update.")
+		return
+	
+	# The full user object is often returned, so we can just use the existing handler.
+	# This ensures convoy lists and other user data are also refreshed from the same response.
+	_on_user_data_received_from_api(updated_user_data)
+	print("[GameDataManager] User metadata updated and local cache synced.")
 
 func _maybe_emit_initial_ready() -> void:
 	if _initial_data_ready_emitted:
@@ -1292,6 +1304,26 @@ func trigger_initial_convoy_data_fetch(p_user_id: String) -> void:
 	else:
 		printerr("GameDataManager: Cannot trigger initial convoy data fetch. APICallsInstance is invalid or missing 'get_user_convoys' method.")
 
+func update_user_tutorial_stage(new_stage: int) -> void:
+	if not is_instance_valid(api_calls_node):
+		printerr("GameDataManager: Cannot update tutorial stage, APICalls node is invalid.")
+		return
+	if not api_calls_node.has_method("update_user_metadata"):
+		printerr("GameDataManager: APICalls node is missing 'update_user_metadata' method.")
+		return
+
+	var user_id: String = api_calls_node.current_user_id
+	if user_id.is_empty():
+		printerr("GameDataManager: Cannot update tutorial stage, no user_id.")
+		return
+
+	# Preserve existing metadata
+	var new_metadata := {}
+	if current_user_data.has("metadata") and current_user_data.metadata is Dictionary:
+		new_metadata = current_user_data.metadata.duplicate(true)
+	
+	new_metadata["tutorial"] = new_stage
+	api_calls_node.update_user_metadata(user_id, new_metadata)
 
 func get_all_settlements_data() -> Array:
 	"""Returns the cached list of all settlement data."""
@@ -1715,6 +1747,14 @@ func _aggregate_item(agg_dict: Dictionary, item: Dictionary, vehicle_name: Strin
 		agg_dict[agg_key].locations[vehicle_name] += item_quantity
 
 func buy_item(convoy_id: String, vendor_id: String, item_data: Dictionary, quantity: int) -> void:
+	# --- START DIAGNOSTIC LOG ---
+	# This log helps us trace what part of the code is initiating a purchase.
+	var item_name_for_log = item_data.get("name", "<no_name>")
+	var cargo_id_for_log = item_data.get("cargo_id", "<no_cargo_id>")
+	print("[GDM][buy_item] CALLED. Item: '%s', cargo_id: '%s', quantity: %d" % [item_name_for_log, cargo_id_for_log, quantity])
+	print_stack()
+	# --- END DIAGNOSTIC LOG ---
+
 	if not is_instance_valid(api_calls_node):
 		printerr("GameDataManager: Cannot buy item, APICallsInstance is invalid.")
 		return

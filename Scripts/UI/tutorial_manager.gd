@@ -35,6 +35,12 @@ const GATING_NONE := 0
 const GATING_SOFT := 1
 const GATING_HARD := 2
 
+# --- Polling state for _process ---
+var _is_polling_for_tab: bool = false
+var _polling_tab_target: Dictionary = {}
+var _polling_tab_timer: float = 0.0
+const _POLL_TAB_INTERVAL: float = 0.5
+
 # Simple contract (kept tiny for first pass):
 # Step schema: { id: String, copy: String, action: String, target: Dictionary }
 # action: "message" | "navigate" | "highlight" (future)
@@ -55,14 +61,21 @@ func _ready() -> void:
 	if mm:
 		if mm.has_signal("menu_opened") and not mm.is_connected("menu_opened", Callable(self, "_on_menu_opened")):
 			mm.connect("menu_opened", Callable(self, "_on_menu_opened"))
-	# Resolver instance
-	_resolver = preload("res://Scripts/UI/target_resolver.gd").new()
+	# Resolver instance (using class_name)
+	_resolver = TutorialTargetResolver.new()
 	add_child(_resolver)
 	# Load persisted progress if any
 	_load_progress()
 	# Do not create overlay yet; only when the tutorial actually starts
 	# Try starting after a short defer so MainScreen can show onboarding modal first
 	_try_start_deferred()
+
+func _process(delta: float) -> void:
+	if _is_polling_for_tab:
+		_polling_tab_timer -= delta
+		if _polling_tab_timer <= 0.0:
+			_polling_tab_timer = _POLL_TAB_INTERVAL
+			_check_for_tab_selected_poll()
 
 func _on_initial_data_ready() -> void:
 	_maybe_start()
@@ -89,18 +102,37 @@ func _maybe_start() -> void:
 	if _is_new_convoy_dialog_visible():
 		# print("[Tutorial] Waiting for NewConvoyDialog to close before starting…")
 		return
-	# Start only when the user has at least one convoy
+	# Start only when the user has at least one convoy.
 	var has_any_convoys := false
 	if _gdm and _gdm.has_method("get_all_convoy_data"):
 		var conv = _gdm.get_all_convoy_data()
 		has_any_convoys = (conv is Array) and (conv.size() > 0)
 	if not has_any_convoys:
 		return
-	# Initialize and run (prefer external steps if available)
-	if _level <= 0:
+
+	# Sync level from server if available, otherwise use local progress or default.
+	var server_level := -1
+	if is_instance_valid(_gdm) and _gdm.has_method("get_current_user_data"):
+		var user_data: Dictionary = _gdm.get_current_user_data()
+		if user_data.has("metadata") and user_data.metadata is Dictionary:
+			var metadata: Dictionary = user_data.metadata
+			if metadata.has("tutorial"):
+				var tutorial_val = metadata.get("tutorial")
+				if tutorial_val is int or tutorial_val is float:
+					server_level = int(tutorial_val)
+
+	if server_level > 0:
+		# Server state is the source of truth.
+		_level = server_level
+		_step = 0 # Always start at the beginning of a level
+		print("[Tutorial] Starting from server-defined level: ", _level)
+	elif _level <= 0:
+		# No server state, no local progress file loaded, use default.
 		_level = start_level
+		print("[Tutorial] Starting from default level: ", _level)
+	# else: use _level loaded from local file.
+
 	_steps = _load_steps_for_level(_level)
-	_step = 0
 	_started = true
 	_emit_started()
 	_run_current_step()
@@ -157,17 +189,52 @@ func _build_level_steps(level: int) -> Array:
 					lock = "soft"
 				},
 			]
-		2:
+		2: # Resources
 			return [
-				{ id = "l2_intro", copy = "Let’s plan a journey. Open the Journey menu from your convoy.", action = "message", target = {} },
-				{ id = "l2_pick_destination", copy = "Choose a nearby settlement as your destination.", action = "highlight", target = { hint = "map_destinations" } },
-				{ id = "l2_review_routes", copy = "Review the suggested route and confirm when ready.", action = "highlight", target = { hint = "route_confirm" } },
+				{
+					id = "l2_open_market_tab",
+					copy = "Now that you have a vehicle, you'll need supplies for the road. Go to the Market tab to purchase some essential items.",
+					action = "await_market_tab",
+					target = { resolver = "tab_title_contains", token = "Market" },
+					lock = "soft"
+				},
+				{
+					id = "l2_buy_supplies",
+					copy = "Purchase 2 MRE Boxes and 2 Water Jerry Cans. You can select an item to see its details and choose a quantity to buy.",
+					action = "await_supply_purchase",
+					target = { resolver = "vendor_trade_panel" },
+					lock = "soft"
+				},
+				{
+					id = "l2_top_up_tip",
+					copy = "Great! For future reference, you can also use the 'Top Up' button as a shortcut to automatically buy all needed resources.",
+					action = "message", # Just a message, no action needed.
+					target = { resolver = "top_up_button" }, # Highlight it for context
+				},
 			]
-		3:
+		3: # Journey Planning
 			return [
-				{ id = "l3_resources_intro", copy = "Manage your resources: fuel, water, and food.", action = "message", target = {} },
-				{ id = "l3_open_settlement", copy = "Visit a settlement and open the Market/Gas tab.", action = "await_settlement_menu", target = {} },
-				{ id = "l3_top_up", copy = "Use Top Up to automatically buy what you need.", action = "message", target = {} },
+				{
+					id = "l3_open_journey_menu",
+					copy = "Great! You're stocked up. Now, let's plan a journey. Open the Journey menu from your convoy overview.",
+					action = "highlight",
+					target = { resolver = "button_with_text", text_contains = "Journey" },
+					lock = "soft"
+				},
+				{
+					id = "l3_pick_destination",
+					copy = "Choose a nearby settlement as your destination.",
+					action = "highlight",
+					target = { resolver = "journey_destination_button" },
+					lock = "soft"
+				},
+				{
+					id = "l3_review_routes",
+					copy = "Review the suggested route and confirm when ready.",
+					action = "highlight",
+					target = { resolver = "journey_confirm_button" },
+					lock = "soft"
+				},
 			]
 		4:
 			return [
@@ -303,9 +370,10 @@ func _run_current_step() -> void:
 			if is_instance_valid(tabs):
 				var idx := tabs.current_tab
 				if idx >= 0:
-					var title := tabs.get_tab_title(idx)
-					var want := String(step.get("target", {}).get("token", "Dealership"))
-					if title.findn(want) != -1:
+					var title := tabs.get_tab_title(idx).to_lower()
+					var want := String(step.get("target", {}).get("token", "Dealership")).to_lower()
+					# Make the pre-check case-insensitive to match the watcher.
+					if title.find(want) != -1:
 						# The tab is already open. Defer advance to let UI settle before next step.
 						call_deferred("_advance")
 						return
@@ -317,7 +385,7 @@ func _run_current_step() -> void:
 			_apply_lock(step)
 			_resolve_and_highlight(step) # try to highlight tab container as a hint
 			_hint_dealership_tab(step.get("target", {}))
-			_watch_for_dealership_selected(step.get("target", {}))
+			_watch_for_tab_selected(step.get("target", {}))
 		"await_vehicle_purchase":
 			_show_message(step.get("copy", ""), false)
 			_apply_lock(step)
@@ -331,6 +399,48 @@ func _run_current_step() -> void:
 			_resolve_and_highlight(corrected_step)
 			# --- END FIX ---
 			_watch_for_vehicle_purchase()
+		"await_market_tab":
+			# This logic mirrors `await_dealership_tab` for consistency, as requested.
+			# It checks if the tab is already open, and if not, highlights the tab area and waits.
+			var tabs := _get_vendor_tab_container()
+			if is_instance_valid(tabs):
+				var idx := tabs.current_tab
+				if idx >= 0:
+					var title := tabs.get_tab_title(idx).to_lower()
+					var want := String(step.get("target", {}).get("token", "Market")).to_lower()
+					#// --- START LOGGING ---
+					var all_titles: Array = []
+					for i in range(tabs.get_tab_count()): all_titles.append(tabs.get_tab_title(i))
+					print("[Tutorial][Pre-check] Checking if market tab is open. Want: '%s', Current: '%s'. All: %s" % [want, title, all_titles])
+					#// --- END LOGGING ---
+					if title.find(want) != -1:
+						# The tab is already open. Defer advance to let UI settle.
+						print("[Tutorial] Market tab already open, advancing.")
+						call_deferred("_advance")
+						return
+
+			_show_message(step.get("copy", ""), false)
+			_apply_lock(step)
+			_resolve_and_highlight(step)
+			_watch_for_tab_selected(step.get("target", {}))
+		"await_supply_purchase":
+			_show_message(step.get("copy", ""), false)
+			_apply_lock(step)
+			#// --- START FIX ---
+			#// Similar to await_vehicle_purchase, the goal is to highlight the entire vendor panel
+			#// to allow free interaction with the item list and purchase controls.
+			#// External step definitions might override the target to something more specific,
+			#// which would prevent the user from freely interacting. We force the correct target here.
+			var corrected_step := step.duplicate(true)
+			corrected_step["target"] = { "resolver": "vendor_trade_panel" }
+			_resolve_and_highlight(corrected_step)
+			#// --- END FIX ---
+			_watch_for_supply_purchase()
+		"await_top_up":
+			_show_message(step.get("copy", ""), false)
+			_apply_lock(step)
+			_resolve_and_highlight(step)
+			_watch_for_top_up()
 		_:
 			_show_message(step.get("copy", ""), true)
 
@@ -352,6 +462,12 @@ func _advance() -> void:
 			_overlay.call("clear_highlight_and_gating")
 		elif _overlay.has_method("clear_highlight"):
 			_overlay.call("clear_highlight")
+
+	# Stop any active polling
+	if _is_polling_for_tab:
+		_is_polling_for_tab = false
+		set_process(false)
+
 	_step += 1
 	_awaiting_menu_open = false
 	_save_progress()
@@ -360,12 +476,33 @@ func _advance() -> void:
 
 func _emit_finished() -> void:
 	emit_signal("tutorial_finished")
-	# Hide overlay when done (first pass behavior)
-	if _overlay and is_instance_valid(_overlay):
-		_overlay.call_deferred("queue_free")
-		_overlay = null
-	# Mark progress complete for this level
-	_save_progress(true)
+
+	# Update backend and advance to next level
+	if is_instance_valid(_gdm) and _gdm.has_method("update_user_tutorial_stage"):
+		_gdm.call_deferred("update_user_tutorial_stage", _level + 1)
+
+	# Advance to the next level
+	_level += 1
+	_steps = _load_steps_for_level(_level)
+	_step = 0
+	_save_progress() # Save progress for the new level
+
+	if _steps.is_empty():
+		# No more tutorial levels, truly finish
+		if _overlay and is_instance_valid(_overlay):
+			_overlay.call_deferred("queue_free")
+			_overlay = null
+		_save_progress(true) # Mark as fully finished
+		print("[Tutorial] All tutorial levels completed.")
+	else:
+		# Start the next level after a short delay to allow UI to settle
+		print("[Tutorial] Advancing to level ", _level)
+		var timer := get_tree().create_timer(1.5, true) # Increased delay for safety
+		timer.timeout.connect(func():
+			_started = true
+			_emit_started()
+			_run_current_step()
+		)
 
 # ---- Internal watchers and helpers ----
 
@@ -395,35 +532,53 @@ func _get_vendor_tab_container() -> TabContainer:
 	var menu := _get_settlement_menu()
 	if not is_instance_valid(menu):
 		return null
-	var tabs: TabContainer = menu.get_node_or_null("MainVBox/VendorTabContainer")
-	return tabs
+	# More robustly get the tab container by accessing the menu's own @onready variable
+	# rather than relying on a hardcoded scene path.
+	if menu.has_method("get") and "vendor_tab_container" in menu:
+		var tabs = menu.get("vendor_tab_container")
+		if tabs is TabContainer:
+			return tabs
+	# Fallback to the old path for safety
+	return menu.get_node_or_null("MainVBox/VendorTabContainer")
 
-func _hint_dealership_tab(target: Dictionary) -> void:
-	# Respect current step's gating; do not override here.
-	# Previously forced HARD which blocked the highlighted tab. Left empty on purpose.
-	pass
-	# If we ever expand overlay to cover the full UI, we could compute the tab rect and highlight:
-	# var menu := _get_settlement_menu(); if is_instance_valid(menu) and menu.has_method("get_vendor_tab_rect_by_title_contains"): ...
+func _watch_for_tab_selected(target: Dictionary) -> void:
+	# This function now starts a polling loop within the _process function,
+	# which is more robust than using SceneTreeTimers that might fail in a paused tree.
+	var want := String(target.get("token", "Dealership")).to_lower()
+	print("[Tutorial][Watcher] Started. Will poll for tab containing '%s'." % want)
+	_is_polling_for_tab = true
+	_polling_tab_target = target
+	_polling_tab_timer = 0.0 # Check immediately on the next process frame
+	set_process(true)
 
-func _watch_for_dealership_selected(target: Dictionary) -> void:
-	var want := String(target.get("tab_contains", "Dealership"))
-	var timer := get_tree().create_timer(0.5)
-	timer.timeout.connect(func():
-		var tabs := _get_vendor_tab_container()
-		if is_instance_valid(tabs):
-			var idx := tabs.current_tab
-			if idx >= 0:
-				var title := tabs.get_tab_title(idx)
-				if title.findn(want) != -1:
-					# The correct tab is selected. However, the TabContainer needs time to resize
-					# its newly visible child (the VendorTradePanel). Advancing immediately, even
-					# with call_deferred, can happen before the layout is calculated, causing
-					# the highlight resolver to find a zero-sized rectangle.
-					# By waiting for the next process_frame, we ensure the layout is stable.
-					_advance_after_frame()
-					return
-		_watch_for_dealership_selected(target)
-	)
+func _check_for_tab_selected_poll() -> void:
+	var target := _polling_tab_target
+	var want := String(target.get("token", "Dealership")).to_lower()
+
+	print("[Tutorial][Watcher] Polling...")
+	var tabs := _get_vendor_tab_container()
+	if not is_instance_valid(tabs):
+		print("  - FAILED: _get_vendor_tab_container() returned an invalid node.")
+		return
+
+	var idx := tabs.current_tab
+	if idx < 0:
+		print("  - INFO: No tab selected (index is %d)." % idx)
+		return
+
+	var current_title_raw := tabs.get_tab_title(idx)
+	var current_title_lower := current_title_raw.to_lower()
+	var all_titles: Array = []
+	for i in range(tabs.get_tab_count()): all_titles.append(tabs.get_tab_title(i))
+
+	print("  - Polling for tab title containing: '%s'" % want)
+	print("  - Current tab index: %d" % idx)
+	print("  - Current tab title (raw): '%s'" % current_title_raw)
+	print("  - All available tab titles: %s" % all_titles)
+
+	if current_title_lower.find(want) != -1:
+		print("[Tutorial][Watcher] Match found! Advancing step.")
+		_advance_after_frame()
 
 func _advance_after_frame() -> void:
 	# Wait for one full frame to pass. This allows Godot's layout system
@@ -434,6 +589,89 @@ func _advance_after_frame() -> void:
 	await get_tree().process_frame
 	print("[Tutorial] Frames waited. Advancing.")
 	_advance()
+
+var _top_up_button_ref: Button = null
+
+func _watch_for_top_up() -> void:
+	var menu := _get_settlement_menu()
+	if not is_instance_valid(menu):
+		call_deferred("_watch_for_top_up")
+		return
+
+	_top_up_button_ref = menu.get_node_or_null("MainVBox/TopBarHBox/TopUpButton")
+	if is_instance_valid(_top_up_button_ref) and not _top_up_button_ref.is_connected("pressed", Callable(self, "_on_top_up_pressed")):
+		_top_up_button_ref.pressed.connect(Callable(self, "_on_top_up_pressed"), CONNECT_ONE_SHOT)
+	else:
+		# Retry if button not found yet
+		var timer := get_tree().create_timer(0.5, true)
+		timer.timeout.connect(func(): _watch_for_top_up())
+
+func _on_top_up_pressed() -> void:
+	_top_up_button_ref = null
+	_advance()
+
+func _watch_for_supply_purchase() -> void:
+	if not is_instance_valid(_gdm):
+		printerr("[Tutorial] GDM not valid, cannot watch for supply purchase.")
+		return
+	
+	# Connect to the signal that fires after convoy data is updated post-transaction
+	if not _gdm.is_connected("convoy_data_updated", Callable(self, "_on_supply_check")):
+		_gdm.convoy_data_updated.connect(Callable(self, "_on_supply_check"))
+	
+	# Also do an initial check in case the items are already there from a previous attempt
+	if _gdm.has_method("get_all_convoy_data"):
+		_on_supply_check(_gdm.get_all_convoy_data())
+
+func _on_supply_check(_all_convoys: Array) -> void:
+	# This function is now connected. Check if the current step is the one we care about.
+	if _step < 0 or _step >= _steps.size() or _steps[_step].get("action") != "await_supply_purchase":
+		# Not the right step, or step is invalid. Disconnect to avoid running this logic unnecessarily later.
+		if is_instance_valid(_gdm) and _gdm.is_connected("convoy_data_updated", Callable(self, "_on_supply_check")):
+			_gdm.disconnect("convoy_data_updated", Callable(self, "_on_supply_check"))
+		return
+
+	if not is_instance_valid(_gdm):
+		return
+
+	# Find the first convoy, as this tutorial level starts right after getting one.
+	var current_convoy: Dictionary
+	var all_convoy_data = _gdm.get_all_convoy_data()
+	if not all_convoy_data.is_empty():
+		current_convoy = all_convoy_data[0]
+	else:
+		return # No convoys, can't check.
+
+	var mre_count := 0
+	var water_count := 0
+
+	# --- START FIX for supply check ---
+	# The 'all_cargo' key is not a standard field. We need to iterate through
+	# the vehicles in the convoy to get the correct cargo list, or use the
+	# 'cargo_inventory' fallback, mirroring logic from the vendor panel.
+	var cargo_list: Array = []
+	if current_convoy.has("vehicle_details_list") and current_convoy.vehicle_details_list is Array:
+		for vehicle in current_convoy.vehicle_details_list:
+			if vehicle.has("cargo") and vehicle.cargo is Array:
+				cargo_list.append_array(vehicle.cargo)
+	elif current_convoy.has("cargo_inventory") and current_convoy.cargo_inventory is Array:
+		cargo_list = current_convoy.cargo_inventory
+	# --- END FIX for supply check ---
+
+	for item in cargo_list:
+		if not (item is Dictionary): continue
+		var item_name := String(item.get("name", "")).to_lower()
+		var quantity := int(item.get("quantity", 0))
+
+		if item_name.contains("mre"):
+			mre_count += quantity
+		elif item_name.contains("water jerry can"):
+			water_count += quantity
+	
+	if mre_count >= 2 and water_count >= 2:
+		if is_instance_valid(_gdm) and _gdm.is_connected("convoy_data_updated", Callable(self, "_on_supply_check")):
+			_gdm.disconnect("convoy_data_updated", Callable(self, "_on_supply_check"))
+		call_deferred("_advance")
 
 var _vehicle_bought_flag := false
 
@@ -574,11 +812,9 @@ func _on_highlight_retry() -> void:
 				_gate_map(GATING_SOFT)
 			_:
 				_gate_map(GATING_NONE)
-		# Keep trying periodically to follow dynamic UI if it moves; use a faster cadence
-		# to quickly catch post-layout repositioning, then the overlay's own per-frame
-		# syncing will keep the rect accurate between retries.
-		_highlight_timer = get_tree().create_timer(0.4, false)
-		_highlight_timer.timeout.connect(_on_highlight_retry)
+		# Success! The highlight has been set. The overlay's internal _process loop
+		# will now track the node if it moves. We can stop the retry timer.
+		_active_highlight_step.clear() # Stop retrying.
 	else:
 		# After two consecutive failures, downgrade lock to avoid player lockout
 		var lock := String(_active_highlight_step.get("lock", "soft"))
@@ -665,18 +901,20 @@ func _on_menu_opened(menu_node: Node, menu_type: String) -> void:
 
 # --- External steps & persistence ---
 func _load_steps_for_level(level: int) -> Array:
-	# Try JSON from res://Other/tutorial_steps.json
-	var path := "res://Other/tutorial_steps.json"
-	var txt := ""
-	var f := FileAccess.open(path, FileAccess.READ)
-	if f:
-		txt = f.get_as_text()
-		f.close()
-	var data: Variant = JSON.parse_string(txt)
-	if typeof(data) == TYPE_DICTIONARY:
-		var levels: Dictionary = data as Dictionary
-		if levels.has(str(level)) and levels[str(level)] is Array:
-			return levels[str(level)]
+	# --- FIX: Temporarily disable loading from external JSON ---
+	# The external file `res://Other/tutorial_steps.json` appears to contain outdated
+	# tutorial definitions, causing the journey planning steps to run for Level 2.
+	# By commenting this section out, we force the game to use the corrected
+	# `_build_level_steps` function defined within this script.
+	# var path := "res://Other/tutorial_steps.json"
+	# var f := FileAccess.open(path, FileAccess.READ)
+	# if f:
+	# 	var txt := f.get_as_text()
+	# 	f.close()
+	# 	var data: Variant = JSON.parse_string(txt)
+	# 	if typeof(data) == TYPE_DICTIONARY and data.has(str(level)) and data[str(level)] is Array:
+	# 		print("[Tutorial] Loaded steps for level ", level, " from external JSON.")
+	# 		return data[str(level)]
 	# Fallback to built-in
 	return _build_level_steps(level)
 
@@ -725,3 +963,26 @@ func _highlight_node_in_map(node: Node, gating_mode: int = GATING_SOFT) -> void:
 		ov.call("set_gating_mode", gating_mode)
 	if ov.has_method("bring_to_front"):
 		ov.call_deferred("bring_to_front")
+
+# --- Stub for dealership tab hinting ---
+func _hint_dealership_tab(target: Dictionary) -> void:
+	# This function attempts to refine the highlight for a tab, which is often
+	# difficult to resolve because Godot doesn't expose tab button nodes directly.
+	# It relies on a helper method in the ConvoySettlementMenu script.
+	var menu := _get_settlement_menu()
+	if not is_instance_valid(menu):
+		return
+
+	if not menu.has_method("get_vendor_tab_rect_by_title_contains"):
+		print("[Tutorial] Hinting failed: ConvoySettlementMenu is missing 'get_vendor_tab_rect_by_title_contains' helper.")
+		return
+
+	var token := String(target.get("token", "Dealership"))
+	var rect: Rect2 = menu.call("get_vendor_tab_rect_by_title_contains", token)
+
+	if rect.has_area():
+		var ov := _ensure_overlay()
+		if is_instance_valid(ov) and ov.has_method("highlight_node"):
+			# Refine the highlight to be just the tab button.
+			ov.call_deferred("highlight_node", menu, rect)
+			print("[Tutorial] Refined highlight for tab: ", token)
