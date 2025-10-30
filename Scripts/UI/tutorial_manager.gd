@@ -44,6 +44,7 @@ const _POLL_TAB_INTERVAL: float = 0.5
 var _awaiting_menu_open: bool = false
 
 var _supply_checklist_state: Dictionary = { "mre": false, "water": false }
+var _urchin_checklist_state: Dictionary = { "urchins": false }
 
 # Simple contract (kept tiny for first pass):
 # Step schema: { id: String, copy: String, action: String, target: Dictionary }
@@ -234,35 +235,70 @@ func _build_level_steps(level: int) -> Array:
 					target = { resolver = "top_up_button" }, # Highlight it for context
 				},
 			]
-		3: # Journey Planning
+		3: # Mission Items
 			return [
 				{
-					id = "l3_open_journey_menu",
+					id = "l3_open_market_tab",
+					copy = "Some vendors offer special items required for missions. Find the 'Mountain Urchins' in the Market.",
+					action = "await_market_tab",
+					target = { resolver = "tab_title_contains", token = "Market" },
+					lock = "soft"
+				},
+				{
+					id = "l3_buy_urchins",
+					copy = "Purchase 10 Mountain Urchins.",
+					action = "await_urchin_purchase",
+					target = { resolver = "vendor_trade_panel" }, # Highlight the whole panel
+					lock = "soft"
+				},
+				{
+					id = "l3_urchins_bought",
+					copy = "Excellent! You've acquired the mission items. Now you're ready to plan a journey to deliver them.",
+					action = "message",
+					target = {}
+				},
+			]
+		4: # Journey Planning
+			return [
+				{
+					id = "l4_open_journey_menu",
 					copy = "Great! You're stocked up. Now, let's plan a journey. Open the Journey menu from your convoy overview.",
-					action = "highlight",
+					action = "await_journey_menu",
 					target = { resolver = "button_with_text", text_contains = "Journey" },
 					lock = "soft"
 				},
 				{
-					id = "l3_pick_destination",
+					id = "l4_pick_destination",
 					copy = "Choose a nearby settlement as your destination.",
-					action = "highlight",
+					action = "await_destination_pick",
 					target = { resolver = "journey_destination_button" },
 					lock = "soft"
 				},
 				{
-					id = "l3_review_routes",
+					id = "l4_review_routes",
 					copy = "Review the suggested route and confirm when ready.",
-					action = "highlight",
+					action = "await_journey_confirm",
 					target = { resolver = "journey_confirm_button" },
 					lock = "soft"
 				},
+				{
+					id = "l4_journey_started",
+					copy = "Your convoy is on its way! This concludes the tutorial.",
+					action = "message",
+					target = {}
+				},
+				{
+					id = "l4_set_stage_6",
+					copy = "", # No message
+					action = "set_stage_and_finish",
+					target = { "stage": 6 }
+				},
 			]
-		4:
+		5:
 			return [
-				{ id = "l4_parts_intro", copy = "Upgrade vehicles with parts for better performance.", action = "message", target = {} },
-				{ id = "l4_open_dealership", copy = "Open the Dealership again to browse parts.", action = "await_dealership_tab", target = { tab_contains = "Dealership" } },
-				{ id = "l4_buy_install_hint", copy = "Buy a part and use Install to open Mechanics.", action = "message", target = {} },
+				{ id = "l5_parts_intro", copy = "Upgrade vehicles with parts for better performance.", action = "message", target = {} },
+				{ id = "l5_open_dealership", copy = "Open the Dealership again to browse parts.", action = "await_dealership_tab", target = { tab_contains = "Dealership" } },
+				{ id = "l5_buy_install_hint", copy = "Buy a part and use Install to open Mechanics.", action = "message", target = {} },
 			]
 		_:
 			return []
@@ -338,6 +374,19 @@ func _run_current_step() -> void:
 	var action := String(step.get("action", "message"))
 	var id := String(step.get("id", ""))
 
+	# Per user request, update the server-side tutorial stage at specific steps.
+	# The _started flag in _maybe_start() prevents this from causing a restart loop.
+	if is_instance_valid(_gdm) and _gdm.has_method("update_user_tutorial_stage"):
+		# At the end of level 2 (resource top-up), set stage to 3
+		if id == "l2_top_up_tip":
+			_gdm.call_deferred("update_user_tutorial_stage", 3)
+		# At the start of level 3 (urchin purchase), set stage to 4
+		elif id == "l3_open_market_tab":
+			_gdm.call_deferred("update_user_tutorial_stage", 4)
+		# At the start of level 4 (journey planning), set stage to 5
+		elif id == "l4_open_journey_menu":
+			_gdm.call_deferred("update_user_tutorial_stage", 5)
+
 	# Decide whether to lock or unlock vendor tabs for this step.
 	# This prevents the user from switching to other vendor tabs (e.g., Market)
 	# before the tutorial allows it.
@@ -345,7 +394,8 @@ func _run_current_step() -> void:
 		"await_dealership_tab",
 		"await_vehicle_purchase",
 		"await_market_tab",
-		"await_supply_purchase"
+		"await_supply_purchase",
+		"await_urchin_purchase"
 	]
 	if action in lock_tabs_for_actions:
 		_lock_vendor_tabs(step)
@@ -359,6 +409,29 @@ func _run_current_step() -> void:
 			_show_message(step.get("copy", ""), true)
 			_apply_lock(step)
 			_resolve_and_highlight(step)
+			_watch_for_destination_pick()
+		"await_journey_confirm":
+			_show_message(step.get("copy", ""), false)
+			_apply_lock(step)
+			_resolve_and_highlight(step)
+			_watch_for_journey_confirm()
+		"set_stage_and_finish":
+			var stage = step.get("target", {}).get("stage", _level + 1)
+			if is_instance_valid(_gdm) and _gdm.has_method("update_user_tutorial_stage"):
+				_gdm.call_deferred("update_user_tutorial_stage", stage)
+			_clear_highlight()
+			if _overlay and is_instance_valid(_overlay):
+				_overlay.call_deferred("queue_free")
+				_overlay = null
+			_save_progress(true) # Mark as fully finished
+			_started = false
+			emit_signal("tutorial_finished")
+			print("[Tutorial] All tutorial levels completed. Final stage set to %d." % stage)
+		"await_journey_menu":
+			_show_message(step.get("copy", ""), false)
+			_apply_lock(step)
+			_resolve_and_highlight(step)
+			_watch_for_journey_menu()
 		"await_menu_open":
 			_show_message(step.get("copy", ""), false)
 			_apply_lock(step)
@@ -437,6 +510,13 @@ func _run_current_step() -> void:
 			corrected_step["target"] = { "resolver": "vendor_trade_panel" }
 			_resolve_and_highlight(corrected_step)
 			_watch_for_supply_purchase()
+		"await_urchin_purchase":
+			# Message is shown via _update_urchin_purchase_ui inside the watcher
+			_apply_lock(step)
+			var corrected_step := step.duplicate(true)
+			corrected_step["target"] = { "resolver": "vendor_trade_panel" }
+			_resolve_and_highlight(corrected_step)
+			_watch_for_urchin_purchase()
 		"await_top_up":
 			_show_message(step.get("copy", ""), false)
 			_apply_lock(step)
@@ -455,6 +535,80 @@ func _show_message(text: String, show_continue: bool = true) -> void:
 	else:
 		# Fallback if overlay not loaded
 		print("[Tutorial] ", text, " [Click to continue]")
+
+func _get_journey_menu() -> Node:
+	return get_tree().get_root().find_child("ConvoyJourneyMenu", true, false)
+
+func _watch_for_destination_pick() -> void:
+	var journey_menu = _get_journey_menu()
+	if not is_instance_valid(journey_menu):
+		printerr("[Tutorial] Journey menu not found, cannot watch for destination pick. Retrying...")
+		var timer := get_tree().create_timer(0.5, true)
+		timer.timeout.connect(func(): _watch_for_destination_pick())
+		return
+
+	if not journey_menu.is_connected("find_route_requested", Callable(self, "_on_destination_picked")):
+		journey_menu.find_route_requested.connect(Callable(self, "_on_destination_picked"))
+
+func _on_destination_picked(_convoy_data, _destination_data) -> void:
+	if _step < 0 or _step >= _steps.size() or _steps[_step].get("action") != "await_destination_pick":
+		var journey_menu = _get_journey_menu()
+		if is_instance_valid(journey_menu) and journey_menu.is_connected("find_route_requested", Callable(self, "_on_destination_picked")):
+			journey_menu.disconnect("find_route_requested", Callable(self, "_on_destination_picked"))
+		return
+	
+	var journey_menu = _get_journey_menu()
+	if is_instance_valid(journey_menu) and journey_menu.is_connected("find_route_requested", Callable(self, "_on_destination_picked")):
+		journey_menu.disconnect("find_route_requested", Callable(self, "_on_destination_picked"))
+	
+	_advance_after_frame()
+
+func _watch_for_journey_confirm() -> void:
+	if not is_instance_valid(_gdm):
+		printerr("[Tutorial] GDM not valid, cannot watch for journey confirm.")
+		return
+
+	if not _gdm.is_connected("convoy_data_updated", Callable(self, "_on_journey_confirmed")):
+		_gdm.convoy_data_updated.connect(Callable(self, "_on_journey_confirmed"))
+
+func _on_journey_confirmed(all_convoys: Array) -> void:
+	if _step < 0 or _step >= _steps.size() or _steps[_step].get("action") != "await_journey_confirm":
+		if is_instance_valid(_gdm) and _gdm.is_connected("convoy_data_updated", Callable(self, "_on_journey_confirmed")):
+			_gdm.disconnect("convoy_data_updated", Callable(self, "_on_journey_confirmed"))
+		return
+
+	if not is_instance_valid(_gdm) or all_convoys.is_empty(): return
+
+	var current_convoy = all_convoys[0] # Assuming first convoy is the tutorial one
+	if current_convoy.has("journey") and current_convoy.journey is Dictionary and not current_convoy.journey.is_empty():
+		# Journey has started!
+		if is_instance_valid(_gdm) and _gdm.is_connected("convoy_data_updated", Callable(self, "_on_journey_confirmed")):
+			_gdm.disconnect("convoy_data_updated", Callable(self, "_on_journey_confirmed"))
+		
+		# The menu will close automatically. Wait for it to close before advancing.
+		_advance_after_frame()
+
+func _watch_for_journey_menu() -> void:
+	var mm := get_node_or_null("/root/MenuManager")
+	if not is_instance_valid(mm):
+		printerr("[Tutorial] MenuManager not found, cannot watch for journey menu.")
+		return
+	if not mm.is_connected("menu_opened", Callable(self, "_on_journey_menu_opened")):
+		mm.menu_opened.connect(Callable(self, "_on_journey_menu_opened"))
+
+func _on_journey_menu_opened(menu_node: Node, menu_type: String) -> void:
+	if _step < 0 or _step >= _steps.size() or _steps[_step].get("action") != "await_journey_menu":
+		var mm := get_node_or_null("/root/MenuManager")
+		if is_instance_valid(mm) and mm.is_connected("menu_opened", Callable(self, "_on_journey_menu_opened")):
+			mm.disconnect("menu_opened", Callable(self, "_on_journey_menu_opened"))
+		return
+
+	if menu_type == "convoy_journey_submenu":
+		var mm := get_node_or_null("/root/MenuManager")
+		if is_instance_valid(mm) and mm.is_connected("menu_opened", Callable(self, "_on_journey_menu_opened")):
+			mm.disconnect("menu_opened", Callable(self, "_on_journey_menu_opened"))
+		# The journey menu is open. The next step will highlight the destination button.
+		_advance_after_frame()
 
 func _advance() -> void:
 	_clear_highlight()
@@ -613,6 +767,84 @@ func _watch_for_top_up() -> void:
 func _on_top_up_pressed() -> void:
 	_top_up_button_ref = null
 	_advance()
+
+func _watch_for_urchin_purchase() -> void:
+	if not is_instance_valid(_gdm):
+		printerr("[Tutorial] GDM not valid, cannot watch for urchin purchase.")
+		return
+	
+	# Reset checklist state at the beginning of the step
+	_urchin_checklist_state = {"urchins": false}
+
+	# Connect to the signal that fires after convoy data is updated post-transaction
+	if not _gdm.is_connected("convoy_data_updated", Callable(self, "_on_urchin_check")):
+		_gdm.convoy_data_updated.connect(Callable(self, "_on_urchin_check"))
+	
+	# Also do an initial check and UI update in case the items are already there
+	if _gdm.has_method("get_all_convoy_data"):
+		_on_urchin_check(_gdm.get_all_convoy_data())
+
+func _on_urchin_check(_all_convoys: Array) -> void:
+	# This function is now connected. Check if the current step is the one we care about.
+	if _step < 0 or _step >= _steps.size() or _steps[_step].get("action") != "await_urchin_purchase":
+		if is_instance_valid(_gdm) and _gdm.is_connected("convoy_data_updated", Callable(self, "_on_urchin_check")):
+			_gdm.disconnect("convoy_data_updated", Callable(self, "_on_urchin_check"))
+		return
+
+	if not is_instance_valid(_gdm):
+		return
+
+	var current_convoy: Dictionary
+	if not _all_convoys.is_empty():
+		current_convoy = _all_convoys[0]
+	else:
+		_update_urchin_purchase_ui(0)
+		return
+
+	var urchin_count := 0
+
+	var cargo_list: Array = []
+	if current_convoy.has("vehicle_details_list") and current_convoy.vehicle_details_list is Array:
+		for vehicle in current_convoy.vehicle_details_list:
+			if vehicle.has("cargo") and vehicle.cargo is Array:
+				cargo_list.append_array(vehicle.cargo)
+	elif current_convoy.has("cargo_inventory") and current_convoy.cargo_inventory is Array:
+		cargo_list = current_convoy.cargo_inventory
+
+	for item in cargo_list:
+		if not (item is Dictionary): continue
+		var item_name := String(item.get("name", "")).to_lower()
+		var quantity := int(item.get("quantity", 0))
+
+		if item_name.contains("mountain urchin"):
+			urchin_count += quantity
+	
+	_update_urchin_purchase_ui(urchin_count)
+
+	if urchin_count >= 10:
+		if is_instance_valid(_gdm) and _gdm.is_connected("convoy_data_updated", Callable(self, "_on_urchin_check")):
+			_gdm.disconnect("convoy_data_updated", Callable(self, "_on_urchin_check"))
+		call_deferred("_advance")
+
+func _update_urchin_purchase_ui(urchin_count: int) -> void:
+	if _step < 0 or _step >= _steps.size() or _steps[_step].get("action") != "await_urchin_purchase":
+		return
+
+	var step: Dictionary = _steps[_step]
+	var copy = step.get("copy", "")
+
+	var urchins_needed = 10
+
+	_urchin_checklist_state.urchins = urchin_count >= urchins_needed
+
+	var checklist_items = [
+		{ "text": "Mountain Urchins (%d / %d)" % [min(urchin_count, urchins_needed), urchins_needed], "completed": _urchin_checklist_state.urchins },
+	]
+
+	var ov = _ensure_overlay()
+	if ov and ov.has_method("show_message"):
+		ov.call("show_message", copy, false, Callable(), checklist_items)
+
 func _watch_for_supply_purchase() -> void:
 	if not is_instance_valid(_gdm):
 		printerr("[Tutorial] GDM not valid, cannot watch for supply purchase.")
@@ -936,6 +1168,16 @@ func _load_steps_for_level(level: int) -> Array:
 func _lock_vendor_tabs(step: Dictionary) -> void:
 	var tabs := _get_vendor_tab_container()
 	if not is_instance_valid(tabs):
+		return
+
+	# Per user request: If the tutorial is on level 4 (Journey Planning), but the user
+	# is in the settlement menu, they might need to buy mission items they missed.
+	# This ensures the tabs are not locked, allowing them to navigate to the Market.
+	# This acts as a safeguard in case _unlock_vendor_tabs was not effective.
+	if _level == 4:
+		print("[Tutorial] Level 4 active. Forcing all vendor tabs to be unlocked.")
+		for i in range(tabs.get_tab_count()):
+			tabs.set_tab_disabled(i, false)
 		return
 
 	var target_token := String(step.get("target", {}).get("token", "")).to_lower()

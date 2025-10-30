@@ -472,7 +472,7 @@ func update_user_metadata(user_id: String, metadata: Dictionary) -> void:
 		printerr("APICalls (update_user_metadata): invalid user_id %s" % user_id)
 		return
 	
-	var url := "%s/user/update?user_id=%s" % [BASE_URL, user_id]
+	var url := "%s/user?user_id=%s" % [BASE_URL, user_id]
 	var headers: PackedStringArray = ['accept: application/json', 'content-type: application/json']
 	headers = _apply_auth_header(headers)
 	
