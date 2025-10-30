@@ -13,6 +13,7 @@ const PANEL_MAX_WIDTH := 360.0
 var _message_label: RichTextLabel = null
 var _continue_button: Button = null
 var _on_continue_cb: Callable = Callable()
+var _checklist_container: VBoxContainer = null
 var _highlight_rect: Rect2 = Rect2()
 var _has_highlight: bool = false
 var _local_highlight_rect: Rect2 = Rect2() # Cached local-space rect for drawing
@@ -68,11 +69,19 @@ func _ensure_ui_built() -> void:
 		vb.custom_minimum_size = Vector2(320, 0)
 		vb.add_theme_constant_override("separation", 10)
 		_panel.add_child(vb)
+
 		_message_label = RichTextLabel.new()
 		_message_label.bbcode_enabled = true
 		_message_label.fit_content = true
 		_message_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		vb.add_child(_message_label)
+
+		_checklist_container = VBoxContainer.new()
+		_checklist_container.name = "ChecklistContainer"
+		_checklist_container.add_theme_constant_override("separation", 4)
+		_checklist_container.visible = false
+		vb.add_child(_checklist_container)
+
 		_continue_button = Button.new()
 		_continue_button.text = "Continue"
 		_continue_button.pressed.connect(_on_continue_pressed)
@@ -122,16 +131,52 @@ func _make_panel_style() -> StyleBoxFlat:
 
 # Public API
 # Show a message with optional continue button and callback
-func show_message(text: String, show_continue: bool = true, on_continue: Callable = Callable()) -> void:
+func show_message(text: String, show_continue: bool = true, on_continue: Callable = Callable(), checklist_items: Array = []) -> void:
 	_ensure_ui_built()
 	if _message_label != null:
 		_message_label.text = text
 	if _continue_button != null:
 		_continue_button.visible = show_continue
 	_on_continue_cb = on_continue
+	
+	_update_checklist(checklist_items)
+	
 	visible = true
 	_relayout_panel()
 	_layout_blockers()
+
+func _update_checklist(items: Array) -> void:
+	if not is_instance_valid(_checklist_container):
+		return
+
+	# Clear previous items
+	for child in _checklist_container.get_children():
+		child.queue_free()
+
+	if items.is_empty():
+		_checklist_container.visible = false
+		return
+
+	_checklist_container.visible = true
+	for item in items:
+		if not (item is Dictionary): continue
+		var text: String = item.get("text", "")
+		var completed: bool = item.get("completed", false)
+
+		var hbox := HBoxContainer.new()
+		
+		var checkbox := CheckBox.new()
+		checkbox.disabled = true # Non-interactive
+		checkbox.button_pressed = completed
+		hbox.add_child(checkbox)
+
+		var label := Label.new()
+		label.text = text
+		if completed:
+			label.add_theme_color_override("font_color", Color(0.6, 0.6, 0.6))
+		hbox.add_child(label)
+
+		_checklist_container.add_child(hbox)
 	
 # Sets the highlight area without modifying the target node.
 func highlight_node(node: Node, rect: Rect2) -> void:

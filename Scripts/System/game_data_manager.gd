@@ -1473,16 +1473,12 @@ func update_single_vendor(new_vendor_data: Dictionary) -> void:
 	if found:
 		settlement_data_updated.emit(all_settlement_data)
 		# Auto re-probe mechanic/vendor availability for Mechanics-active convoy (if set),
-		# otherwise fall back to the globally selected convoy.
+		# but ONLY if a mechanics session is active. Do not probe on general vendor updates.
 		var probe_target: Dictionary = {}
 		if _mech_active_convoy_id != "":
 			var mech_conv = get_convoy_by_id(_mech_active_convoy_id)
 			if mech_conv is Dictionary and not mech_conv.is_empty():
 				probe_target = mech_conv
-		if probe_target.is_empty():
-			var sel_conv: Dictionary = get_selected_convoy() if get_selected_convoy() is Dictionary else {}
-			if sel_conv is Dictionary and not sel_conv.is_empty():
-				probe_target = sel_conv
 		if not probe_target.is_empty():
 			print("[PartCompatGDM] PROBE: vendor updated; re-probing convoy_id=", str(probe_target.get("convoy_id", "")))
 			probe_mechanic_vendor_availability_for_convoy(probe_target)
@@ -1765,11 +1761,11 @@ func buy_item(convoy_id: String, vendor_id: String, item_data: Dictionary, quant
 	elif item_data.has("vehicle_id"):
 		api_calls_node.buy_vehicle(vendor_id, convoy_id, item_data["vehicle_id"])
 	elif item_data.has("is_raw_resource"):
-		if item_data.has("fuel"):
+		if item_data.has("fuel") and _is_positive_number(item_data.get("fuel")):
 			api_calls_node.buy_resource(vendor_id, convoy_id, "fuel", float(quantity))
-		elif item_data.has("water"):
+		elif item_data.has("water") and _is_positive_number(item_data.get("water")):
 			api_calls_node.buy_resource(vendor_id, convoy_id, "water", float(quantity))
-		elif item_data.has("food"):
+		elif item_data.has("food") and _is_positive_number(item_data.get("food")):
 			api_calls_node.buy_resource(vendor_id, convoy_id, "food", float(quantity))
 		else:
 			printerr("GameDataManager: Unknown raw resource type in buy_item.")

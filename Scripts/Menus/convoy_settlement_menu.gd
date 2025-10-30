@@ -134,6 +134,12 @@ func _display_settlement_info():
 		_display_error("GameDataManager singleton not found. Please configure it in Project > Project Settings > Autoload.")
 		return
 	
+	# Store the title of the currently selected tab before clearing everything.
+	# This allows us to restore the selection if the menu is re-initialized.
+	var previous_tab_title = ""
+	if is_instance_valid(vendor_tab_container) and vendor_tab_container.get_tab_count() > 0 and vendor_tab_container.current_tab >= 0:
+		previous_tab_title = vendor_tab_container.get_tab_title(vendor_tab_container.current_tab)
+
 	_clear_tabs()
 
 	# Get the convoy's current tile coordinates by rounding its float position.
@@ -175,10 +181,23 @@ func _display_settlement_info():
 
 			for vendor in _settlement_data.vendors:
 				_create_vendor_tab(vendor)
-			
-			# After creating all tabs, try to select the "Dealership" tab for the tutorial.
-			# Deferring ensures the tabs are fully in the tree before we try to switch.
-			call_deferred("select_vendor_tab_by_title_contains", "Dealership")
+
+			# Tutorial Helper: If the tutorial is on Level 1, proactively select the Dealership tab
+			# when this menu is first displayed. This avoids hardcoding tutorial logic that
+			# can cause issues on other levels if the menu is re-initialized.
+			var handled_by_tutorial = false
+			var tutorial_manager = get_node_or_null("/root/GameRoot/TutorialManager")
+			if is_instance_valid(tutorial_manager) and tutorial_manager.has_method("get_current_level"):
+				if tutorial_manager.get_current_level() == 1:
+					call_deferred("select_vendor_tab_by_title_contains", "Dealership")
+					handled_by_tutorial = true
+
+			# If the tutorial didn't force a tab, try to restore the previously selected one.
+			if not handled_by_tutorial and not previous_tab_title.is_empty():
+				for i in range(vendor_tab_container.get_tab_count()):
+					if vendor_tab_container.get_tab_title(i) == previous_tab_title:
+						vendor_tab_container.current_tab = i
+						break
 			
 			# After creating vendor tabs compute top up plan
 			_update_top_up_button()

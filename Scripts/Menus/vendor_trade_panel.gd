@@ -1089,17 +1089,14 @@ func _update_fitment_panel() -> void:
 		elif item_data_source.has("part_id") and item_data_source.get("part_id") != null:
 			part_uid = String(item_data_source.get("part_id"))
 
-		# Only show fitment panel for items that look like parts.
-		if not _looks_like_part(item_data_source):
+		# Per user request: Only show the fitment panel if the item has a "slot" property.
+		# This is the primary indicator of it being a vehicle part for UI purposes.
+		if slot_name.is_empty():
 			fitment_panel.visible = false
 			return
 
 		var lines: Array[String] = []
-		if not slot_name.is_empty():
-			lines.append("[b]Slot:[/b] %s" % slot_name)
-		else:
-			lines.append("[b]Slot:[/b] (unknown)")
-
+		lines.append("[b]Slot:[/b] %s" % slot_name)
 		var compat_lines: Array[String] = []
 		if convoy_data and convoy_data.has("vehicle_details_list") and convoy_data.vehicle_details_list is Array:
 			for v in convoy_data.vehicle_details_list:
@@ -1225,14 +1222,28 @@ func _update_transaction_panel() -> void:
 	price_label.text = bbcode_text
 	_update_install_button_state()
 
+func _is_positive_number(v: Variant) -> bool:
+	return (v is float or v is int) and float(v) > 0.0
+
 func _looks_like_part(item_data_source: Dictionary) -> bool:
-	if item_data_source.has("slot") and item_data_source.get("slot") != null:
+	# First, rule out items that are explicitly resources.
+	if item_data_source.get("is_raw_resource", false):
+		return false
+	
+	# Also rule out items that provide resources, like MREs or Jerry Cans.
+	# These are not vehicle parts for compatibility checking purposes.
+	if _is_positive_number(item_data_source.get("food")) or \
+	   _is_positive_number(item_data_source.get("water")) or \
+	   _is_positive_number(item_data_source.get("fuel")):
+		return false
+
+	if item_data_source.has("slot") and item_data_source.get("slot") != null and String(item_data_source.get("slot")).length() > 0:
 		return true
 	if item_data_source.has("intrinsic_part_id"):
 		return true
 	if item_data_source.has("parts") and item_data_source.get("parts") is Array and not (item_data_source.get("parts") as Array).is_empty():
 		var first_p: Dictionary = (item_data_source.get("parts") as Array)[0]
-		if first_p.has("slot") and first_p.get("slot") != null:
+		if first_p.has("slot") and first_p.get("slot") != null and String(first_p.get("slot")).length() > 0:
 			return true
 	if item_data_source.has("is_part") and bool(item_data_source.get("is_part")):
 		return true
@@ -1245,7 +1256,8 @@ func _update_install_button_state() -> void:
 	var can_install := false
 	if is_buy_mode and selected_item and selected_item.has("item_data"):
 		var idata: Dictionary = selected_item.item_data
-		can_install = _looks_like_part(idata)
+		# Per user request, the install button is only available for items with a "slot".
+		can_install = idata.has("slot") and idata.get("slot") != null and not String(idata.get("slot")).is_empty()
 	install_button.visible = can_install
 	install_button.disabled = not can_install
 

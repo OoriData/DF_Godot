@@ -1516,49 +1516,47 @@ func _on_request_completed(result: int, response_code: int, _headers: PackedStri
 
 	# Successful HTTP response routing by purpose
 	if request_purpose_at_start == RequestPurpose.ALL_CONVOYS or request_purpose_at_start == RequestPurpose.USER_CONVOYS:
-		var response_body_text_convoys: String = body.get_string_from_utf8()
-		var json_response_convoys = JSON.parse_string(response_body_text_convoys)
-		if json_response_convoys == null:
-			var error_msg_json_convoys = 'APICalls (_on_request_completed - Purpose: %s, Code: %s): Failed to parse JSON response. URL: %s' % [RequestPurpose.keys()[request_purpose_at_start], response_code, _last_requested_url]
-			printerr(error_msg_json_convoys)
-			printerr('  Raw Body: %s' % response_body_text_convoys)
-			emit_signal('fetch_error', error_msg_json_convoys)
+		var response_body_text: String = body.get_string_from_utf8()
+		var json_response = JSON.parse_string(response_body_text)
+		if json_response == null:
+			var error_msg_json = 'APICalls (_on_request_completed - Purpose: %s, Code: %s): Failed to parse JSON response. URL: %s' % [RequestPurpose.keys()[request_purpose_at_start], response_code, _last_requested_url]
+			printerr(error_msg_json)
+			printerr('  Raw Body: %s' % response_body_text)
+			emit_signal('fetch_error', error_msg_json)
 			_complete_current_request()
 			return
-		# Accept either an Array of convoys OR a wrapper Dictionary containing a convoys-like key
-		if not (json_response_convoys is Array):
-			if json_response_convoys is Dictionary:
+
+		var final_convoy_list: Array
+		if json_response is Array:
+			final_convoy_list = json_response
+		elif json_response is Dictionary:
+			# This is likely a user object from /user/get, which contains a convoy list.
+			# Also emit the full user object for GameDataManager to cache.
+			if request_purpose_at_start == RequestPurpose.USER_CONVOYS:
+				emit_signal('user_data_received', json_response)
+
 				var extracted: Array = []
-				var candidate_keys = ["convoys", "user_convoys", "convoys_in_transit"]
+				var candidate_keys = ["convoys", "user_convoys", "convoy_list", "convoyData", "convoy_data"]
 				for k in candidate_keys:
-					if json_response_convoys.has(k) and json_response_convoys[k] is Array:
-						extracted = json_response_convoys[k]
+					if json_response.has(k) and json_response[k] is Array:
+						extracted = json_response[k]
 						print("APICalls: Extracted convoys array from wrapper key '%s' size=%d" % [k, extracted.size()])
 						break
 				if extracted.is_empty():
-					var error_msg_type_convoys = 'APICalls (_on_request_completed - Purpose: %s, Code: %s): Expected convoy array or wrapper with convoys key, got type=%s. URL: %s' % [RequestPurpose.keys()[request_purpose_at_start], response_code, typeof(json_response_convoys), _last_requested_url]
-					printerr(error_msg_type_convoys)
-					emit_signal('fetch_error', error_msg_type_convoys)
-					_complete_current_request()
-					return
-				json_response_convoys = extracted
-			else:
-				var error_msg_type_convoys2 = 'APICalls (_on_request_completed - Purpose: %s, Code: %s): Unexpected convoy response type=%s. URL: %s' % [RequestPurpose.keys()[request_purpose_at_start], response_code, typeof(json_response_convoys), _last_requested_url]
-				printerr(error_msg_type_convoys2)
-				emit_signal('fetch_error', error_msg_type_convoys2)
-				_complete_current_request()
-				return
-		if not json_response_convoys.is_empty():
-			var first_convoy2 = json_response_convoys[0]
-			print("APICalls: First convoy keys: ", first_convoy2.keys())
-			print("APICalls: First convoy vehicle_details_list: ", first_convoy2.get("vehicle_details_list", []))
-			if first_convoy2.has("vehicle_details_list") and first_convoy2["vehicle_details_list"].size() > 0:
-				print("APICalls: First vehicle keys: ", first_convoy2["vehicle_details_list"][0].keys())
-		print("APICalls (_on_request_completed - %s): Successfully fetched %s convoy(s). URL: %s" % [RequestPurpose.keys()[request_purpose_at_start], json_response_convoys.size(), _last_requested_url])
-		if not json_response_convoys.is_empty():
-			print("  Sample Convoy 0: ID: %s" % [json_response_convoys[0].get("convoy_id", "N/A")])
-		self.convoys_in_transit = json_response_convoys
-		emit_signal('convoy_data_received', json_response_convoys)
+					print("[APICalls] User object received, but no convoy list found inside it. Assuming user has no convoys.")
+					final_convoy_list = []
+				else:
+					final_convoy_list = extracted
+		else:
+			var error_msg_type = 'APICalls (_on_request_completed - Purpose: %s, Code: %s): Unexpected convoy response type=%s. URL: %s' % [RequestPurpose.keys()[request_purpose_at_start], response_code, typeof(json_response), _last_requested_url]
+			printerr(error_msg_type)
+			emit_signal('fetch_error', error_msg_type)
+			_complete_current_request()
+			return
+
+		print("APICalls (_on_request_completed - %s): Successfully fetched %s convoy(s). URL: %s" % [RequestPurpose.keys()[request_purpose_at_start], final_convoy_list.size(), _last_requested_url])
+		self.convoys_in_transit = final_convoy_list
+		emit_signal('convoy_data_received', final_convoy_list)
 		_complete_current_request()
 		return
 

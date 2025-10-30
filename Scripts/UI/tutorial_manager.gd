@@ -20,6 +20,7 @@ var _gdm: Node = null
 var _level: int = 0
 var _step: int = 0
 var _steps: Array = [] # Array of Dictionaries defining steps for current level
+var _initial_vehicle_count := -1
 var _started: bool = false
 var _resolver: Node = null # Scripts/UI/target_resolver.gd instance
 
@@ -40,6 +41,9 @@ var _is_polling_for_tab: bool = false
 var _polling_tab_target: Dictionary = {}
 var _polling_tab_timer: float = 0.0
 const _POLL_TAB_INTERVAL: float = 0.5
+var _awaiting_menu_open: bool = false
+
+var _supply_checklist_state: Dictionary = { "mre": false, "water": false }
 
 # Simple contract (kept tiny for first pass):
 # Step schema: { id: String, copy: String, action: String, target: Dictionary }
@@ -91,6 +95,24 @@ func _emit_changed() -> void:
 	if _step >= 0 and _step < _steps.size():
 		var step: Dictionary = _steps[_step]
 		print("[Tutorial] step:", step.get("id", str(_step)), " action=", step.get("action", "message"), " lock=", step.get("lock", ""))
+
+func _get_total_vehicle_count() -> int:
+	var count := 0
+	if not is_instance_valid(_gdm) or not _gdm.has_method("get_all_convoy_data"):
+		return -1 # Indicate data not available
+	var all_convoys: Array = _gdm.get_all_convoy_data()
+	if not (all_convoys is Array):
+		return -1
+
+	for c in all_convoys:
+		if c is Dictionary:
+			# The augmented data uses 'vehicle_details_list'
+			if c.has("vehicle_details_list") and c["vehicle_details_list"] is Array:
+				count += c["vehicle_details_list"].size()
+	return count
+	
+func get_current_level() -> int:
+	return _level
 
 func _try_start_deferred():
 	call_deferred("_maybe_start")
@@ -161,7 +183,7 @@ func _build_level_steps(level: int) -> Array:
 				{
 					id = "l1_open_convoy_menu",
 					copy = "Open the convoy menu using the convoy dropdown in the top bar.",
-					action = "highlight",
+					action = "await_menu_open",
 					target = { resolver = "button_with_text", text_contains = "Convoy" },
 					lock = "soft"
 				},
@@ -207,7 +229,7 @@ func _build_level_steps(level: int) -> Array:
 				},
 				{
 					id = "l2_top_up_tip",
-					copy = "Great! For future reference, you can also use the 'Top Up' button as a shortcut to automatically buy all needed resources.",
+					copy = "Great! For future reference, you can also use the 'Top Up' button as a shortcut to automatically fill resource containers.",
 					action = "message", # Just a message, no action needed.
 					target = { resolver = "top_up_button" }, # Highlight it for context
 				},
@@ -316,34 +338,19 @@ func _run_current_step() -> void:
 	var action := String(step.get("action", "message"))
 	var id := String(step.get("id", ""))
 
-	# FIX: The external tutorial JSON splits "choose vehicle" and "buy vehicle" into two steps.
-	# This causes the highlight of the vendor panel to appear one step too late.
-	# To correct this, we'll hijack the "l1_choose_vehicle" step to perform the "await_vehicle_purchase" action.
-	# This shows the panel highlight and removes the "Continue" button at the correct time.
-	# We also combine the instructional text from the next step, so the user has full context.
-	# We then skip the original "l1_buy_vehicle" step, as it becomes redundant.
-	if id == "l1_choose_vehicle":
-		# Combine copy from the next step ("l1_buy_vehicle") into this one.
-		if _step + 1 < _steps.size():
-			var next_step: Dictionary = _steps[_step + 1]
-			if next_step.get("id", "") == "l1_buy_vehicle":
-				step["copy"] = str(step.get("copy", "")) + " " + str(next_step.get("copy", ""))
-		# Change the action to be interactive, which also hides the "Continue" button.
-		action = "await_vehicle_purchase"
-	elif id == "l1_buy_vehicle":
-		_advance() # This step's action is now performed by l1_choose_vehicle, so we skip it.
-		return
-
-	# FIX: The external tutorial JSON splits "choose vehicle" and "buy vehicle" into two steps.
-	# This causes the highlight of the vendor panel to appear one step too late.
-	# To correct this, we'll hijack the "l1_choose_vehicle" step to perform the "await_vehicle_purchase" action.
-	# This will show the panel highlight at the correct time.
-	# We then skip the original "l1_buy_vehicle" step, as it becomes redundant.
-	if id == "l1_choose_vehicle":
-		action = "await_vehicle_purchase"
-	elif id == "l1_buy_vehicle":
-		_advance() # This step's action is now performed by l1_choose_vehicle, so we skip it.
-		return
+	# Decide whether to lock or unlock vendor tabs for this step.
+	# This prevents the user from switching to other vendor tabs (e.g., Market)
+	# before the tutorial allows it.
+	var lock_tabs_for_actions := [
+		"await_dealership_tab",
+		"await_vehicle_purchase",
+		"await_market_tab",
+		"await_supply_purchase"
+	]
+	if action in lock_tabs_for_actions:
+		_lock_vendor_tabs(step)
+	else:
+		_unlock_vendor_tabs()
 
 	match action:
 		"message":
@@ -424,17 +431,11 @@ func _run_current_step() -> void:
 			_resolve_and_highlight(step)
 			_watch_for_tab_selected(step.get("target", {}))
 		"await_supply_purchase":
-			_show_message(step.get("copy", ""), false)
+			# Message is now shown via _update_supply_purchase_ui inside the watcher
 			_apply_lock(step)
-			#// --- START FIX ---
-			#// Similar to await_vehicle_purchase, the goal is to highlight the entire vendor panel
-			#// to allow free interaction with the item list and purchase controls.
-			#// External step definitions might override the target to something more specific,
-			#// which would prevent the user from freely interacting. We force the correct target here.
 			var corrected_step := step.duplicate(true)
 			corrected_step["target"] = { "resolver": "vendor_trade_panel" }
 			_resolve_and_highlight(corrected_step)
-			#// --- END FIX ---
 			_watch_for_supply_purchase()
 		"await_top_up":
 			_show_message(step.get("copy", ""), false)
@@ -448,20 +449,15 @@ func _show_message(text: String, show_continue: bool = true) -> void:
 	var ov = _ensure_overlay()
 	if ov and ov.has_method("show_message"):
 		if show_continue:
-			ov.call("show_message", text, true, func(): _advance())
+			ov.call("show_message", text, true, func(): _advance(), [])
 		else:
-			ov.call("show_message", text, false, Callable())
+			ov.call("show_message", text, false, Callable(), [])
 	else:
 		# Fallback if overlay not loaded
 		print("[Tutorial] ", text, " [Click to continue]")
 
 func _advance() -> void:
-	# Clear any existing highlight before moving on
-	if _overlay and is_instance_valid(_overlay):
-		if _overlay.has_method("clear_highlight_and_gating"):
-			_overlay.call("clear_highlight_and_gating")
-		elif _overlay.has_method("clear_highlight"):
-			_overlay.call("clear_highlight")
+	_clear_highlight()
 
 	# Stop any active polling
 	if _is_polling_for_tab:
@@ -473,6 +469,14 @@ func _advance() -> void:
 	_save_progress()
 	_emit_changed()
 	_run_current_step()
+
+func _clear_highlight() -> void:
+	# Clear any existing highlight before moving on
+	if _overlay and is_instance_valid(_overlay):
+		if _overlay.has_method("clear_highlight_and_gating"):
+			_overlay.call("clear_highlight_and_gating")
+		elif _overlay.has_method("clear_highlight"):
+			_overlay.call("clear_highlight")
 
 func _emit_finished() -> void:
 	emit_signal("tutorial_finished")
@@ -609,24 +613,25 @@ func _watch_for_top_up() -> void:
 func _on_top_up_pressed() -> void:
 	_top_up_button_ref = null
 	_advance()
-
 func _watch_for_supply_purchase() -> void:
 	if not is_instance_valid(_gdm):
 		printerr("[Tutorial] GDM not valid, cannot watch for supply purchase.")
 		return
 	
+	# Reset checklist state at the beginning of the step
+	_supply_checklist_state = {"mre": false, "water": false}
+
 	# Connect to the signal that fires after convoy data is updated post-transaction
 	if not _gdm.is_connected("convoy_data_updated", Callable(self, "_on_supply_check")):
 		_gdm.convoy_data_updated.connect(Callable(self, "_on_supply_check"))
 	
-	# Also do an initial check in case the items are already there from a previous attempt
+	# Also do an initial check and UI update in case the items are already there
 	if _gdm.has_method("get_all_convoy_data"):
 		_on_supply_check(_gdm.get_all_convoy_data())
 
 func _on_supply_check(_all_convoys: Array) -> void:
 	# This function is now connected. Check if the current step is the one we care about.
 	if _step < 0 or _step >= _steps.size() or _steps[_step].get("action") != "await_supply_purchase":
-		# Not the right step, or step is invalid. Disconnect to avoid running this logic unnecessarily later.
 		if is_instance_valid(_gdm) and _gdm.is_connected("convoy_data_updated", Callable(self, "_on_supply_check")):
 			_gdm.disconnect("convoy_data_updated", Callable(self, "_on_supply_check"))
 		return
@@ -634,21 +639,16 @@ func _on_supply_check(_all_convoys: Array) -> void:
 	if not is_instance_valid(_gdm):
 		return
 
-	# Find the first convoy, as this tutorial level starts right after getting one.
 	var current_convoy: Dictionary
-	var all_convoy_data = _gdm.get_all_convoy_data()
-	if not all_convoy_data.is_empty():
-		current_convoy = all_convoy_data[0]
+	if not _all_convoys.is_empty():
+		current_convoy = _all_convoys[0]
 	else:
-		return # No convoys, can't check.
+		_update_supply_purchase_ui(0, 0)
+		return
 
 	var mre_count := 0
 	var water_count := 0
 
-	# --- START FIX for supply check ---
-	# The 'all_cargo' key is not a standard field. We need to iterate through
-	# the vehicles in the convoy to get the correct cargo list, or use the
-	# 'cargo_inventory' fallback, mirroring logic from the vendor panel.
 	var cargo_list: Array = []
 	if current_convoy.has("vehicle_details_list") and current_convoy.vehicle_details_list is Array:
 		for vehicle in current_convoy.vehicle_details_list:
@@ -656,65 +656,77 @@ func _on_supply_check(_all_convoys: Array) -> void:
 				cargo_list.append_array(vehicle.cargo)
 	elif current_convoy.has("cargo_inventory") and current_convoy.cargo_inventory is Array:
 		cargo_list = current_convoy.cargo_inventory
-	# --- END FIX for supply check ---
 
 	for item in cargo_list:
 		if not (item is Dictionary): continue
 		var item_name := String(item.get("name", "")).to_lower()
 		var quantity := int(item.get("quantity", 0))
 
+		# Make matching more robust
 		if item_name.contains("mre"):
 			mre_count += quantity
-		elif item_name.contains("water jerry can"):
+		elif item_name.contains("water") and item_name.contains("jerry"):
 			water_count += quantity
 	
+	_update_supply_purchase_ui(mre_count, water_count)
+
 	if mre_count >= 2 and water_count >= 2:
 		if is_instance_valid(_gdm) and _gdm.is_connected("convoy_data_updated", Callable(self, "_on_supply_check")):
 			_gdm.disconnect("convoy_data_updated", Callable(self, "_on_supply_check"))
 		call_deferred("_advance")
 
-var _vehicle_bought_flag := false
+func _update_supply_purchase_ui(mre_count: int, water_count: int) -> void:
+	if _step < 0 or _step >= _steps.size() or _steps[_step].get("action") != "await_supply_purchase":
+		return
+
+	var step: Dictionary = _steps[_step]
+	var copy = step.get("copy", "")
+
+	var mre_needed = 2
+	var water_needed = 2
+
+	_supply_checklist_state.mre = mre_count >= mre_needed
+	_supply_checklist_state.water = water_count >= water_needed
+
+	var checklist_items = [
+		{ "text": "MRE Boxes (%d / %d)" % [min(mre_count, mre_needed), mre_needed], "completed": _supply_checklist_state.mre },
+		{ "text": "Water Jerry Cans (%d / %d)" % [min(water_count, water_needed), water_needed], "completed": _supply_checklist_state.water }
+	]
+
+	var ov = _ensure_overlay()
+	if ov and ov.has_method("show_message"):
+		ov.call("show_message", copy, false, Callable(), checklist_items)
 
 func _watch_for_vehicle_purchase() -> void:
-	# Prefer APICalls signal if available; otherwise, observe convoy data updates.
-	if not _vehicle_bought_flag:
-		var api := get_node_or_null("/root/APICalls")
-		if api and api.has_signal("vehicle_bought") and not api.is_connected("vehicle_bought", Callable(self, "_on_vehicle_bought")):
-			api.connect("vehicle_bought", Callable(self, "_on_vehicle_bought"))
+	# Get initial vehicle count to detect when a new one is added.
+	_initial_vehicle_count = _get_total_vehicle_count()
+	print("[Tutorial] Watching for vehicle purchase. Initial vehicle count: ", _initial_vehicle_count)
+
+	if not is_instance_valid(_gdm):
+		printerr("[Tutorial] GDM not valid, cannot watch for vehicle purchase.")
+		return
+	
+	# Connect to the signal that fires after convoy data is updated post-transaction.
+	# This is more efficient than polling.
+	if not _gdm.is_connected("convoy_data_updated", Callable(self, "_on_convoy_updated_for_vehicle_check")):
+		_gdm.convoy_data_updated.connect(Callable(self, "_on_convoy_updated_for_vehicle_check"))
+
 	# Try to hint the Buy button if present
 	_hint_buy_button()
-	# Start polling convoy data as a fallback
-	_poll_convoy_has_vehicle()
 
-func _on_vehicle_bought(_payload: Dictionary) -> void:
-	_vehicle_bought_flag = true
-	_advance()
-
-func _poll_convoy_has_vehicle() -> void:
-	if _vehicle_bought_flag:
+func _on_convoy_updated_for_vehicle_check(_all_convoys: Array) -> void:
+	# Check if this is the correct tutorial step.
+	if _step < 0 or _step >= _steps.size() or _steps[_step].get("action") != "await_vehicle_purchase":
+		if is_instance_valid(_gdm) and _gdm.is_connected("convoy_data_updated", Callable(self, "_on_convoy_updated_for_vehicle_check")):
+			_gdm.disconnect("convoy_data_updated", Callable(self, "_on_convoy_updated_for_vehicle_check"))
 		return
-	var timer := get_tree().create_timer(0.6)
-	timer.timeout.connect(func():
-		var has_vehicle := false
-		if _gdm:
-			if _gdm.has_method("get_all_convoy_data"):
-				var all: Array = _gdm.get_all_convoy_data()
-				if all is Array:
-					for c in all:
-						if c is Dictionary:
-							# Look for common keys that indicate a vehicle presence
-							if c.has("vehicles") and c["vehicles"] is Array and c["vehicles"].size() > 0:
-								has_vehicle = true
-								break
-							if c.has("vehicle") and c["vehicle"]:
-								has_vehicle = true
-								break
-		if has_vehicle:
-			_vehicle_bought_flag = true
-			_advance()
-		else:
-			_poll_convoy_has_vehicle()
-	)
+
+	var current_vehicle_count := _get_total_vehicle_count()
+	if _initial_vehicle_count >= 0 and current_vehicle_count > _initial_vehicle_count:
+		print("[Tutorial] Detected new vehicle via convoy update. Count changed from %d to %d." % [_initial_vehicle_count, current_vehicle_count])
+		if is_instance_valid(_gdm):
+			_gdm.disconnect("convoy_data_updated", Callable(self, "_on_convoy_updated_for_vehicle_check"))
+		call_deferred("_advance")
 
 func _get_active_vendor_panel_node() -> Node:
 	var tabs := _get_vendor_tab_container()
@@ -737,7 +749,6 @@ func _hint_buy_button() -> void:
 # --- Target resolution & highlight helpers ---
 var _highlight_timer: SceneTreeTimer = null
 var _active_highlight_step: Dictionary = {}
-var _awaiting_menu_open: bool = false
 
 func _apply_lock(step: Dictionary) -> void:
 	var lock := String(step.get("lock", "soft"))
@@ -897,7 +908,11 @@ func _on_menu_opened(menu_node: Node, menu_type: String) -> void:
 	elif is_instance_valid(menu_node) and String(menu_node.name).to_lower().find("convoymenu") != -1:
 		is_convoy = true
 	if is_convoy:
-		_advance()
+		# The menu has been opened, but its layout (and the position of its buttons)
+		# may not be stable until the next frame or two. To prevent a race condition
+		# where the next step tries to highlight a button before it's in its final
+		# position, we wait for the layout to settle before advancing.
+		_advance_after_frame()
 
 # --- External steps & persistence ---
 func _load_steps_for_level(level: int) -> Array:
@@ -917,6 +932,48 @@ func _load_steps_for_level(level: int) -> Array:
 	# 		return data[str(level)]
 	# Fallback to built-in
 	return _build_level_steps(level)
+
+func _lock_vendor_tabs(step: Dictionary) -> void:
+	var tabs := _get_vendor_tab_container()
+	if not is_instance_valid(tabs):
+		return
+
+	var target_token := String(step.get("target", {}).get("token", "")).to_lower()
+	
+	if target_token.is_empty():
+		# No token provided, lock all tabs except the current one. This is for steps
+		# that happen *after* a tab has been selected, like buying an item.
+		var current_tab_idx = tabs.current_tab
+		print("[Tutorial] Locking vendor tabs, allowing current tab (index %d)" % current_tab_idx)
+		for i in range(tabs.get_tab_count()):
+			if i != current_tab_idx:
+				tabs.set_tab_disabled(i, true)
+			else:
+				tabs.set_tab_disabled(i, false)
+	else:
+		# Token provided, lock all tabs that don't match the token. This is for steps
+		# that require the user to click a specific tab.
+		print("[Tutorial] Locking vendor tabs, allowing '%s'" % target_token)
+		for i in range(tabs.get_tab_count()):
+			var title_lower := tabs.get_tab_title(i).to_lower()
+			var is_allowed := title_lower.find(target_token) != -1
+
+			# Tutorial Level 1 special case: When targeting the dealership,
+			# explicitly block market and gas station to prevent user from skipping ahead,
+			# even if their names are unusual.
+			if _level == 1 and target_token == "dealership":
+				if title_lower.find("market") != -1 or title_lower.find("gas") != -1:
+					is_allowed = false
+			
+			tabs.set_tab_disabled(i, not is_allowed)
+
+func _unlock_vendor_tabs() -> void:
+	var tabs := _get_vendor_tab_container()
+	if not is_instance_valid(tabs):
+		return
+	print("[Tutorial] Unlocking all vendor tabs.")
+	for i in range(tabs.get_tab_count()):
+		tabs.set_tab_disabled(i, false)
 
 func _load_progress() -> void:
 	var f := FileAccess.open(PROGRESS_PATH, FileAccess.READ)
