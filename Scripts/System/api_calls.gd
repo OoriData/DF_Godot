@@ -471,13 +471,15 @@ func update_user_metadata(user_id: String, metadata: Dictionary) -> void:
 	if user_id.is_empty() or not _is_valid_uuid(user_id):
 		printerr("APICalls (update_user_metadata): invalid user_id %s" % user_id)
 		return
-	
-	var url := "%s/user?user_id=%s" % [BASE_URL, user_id]
+
+	# Per API documentation, the endpoint is /user/update_metadata and it takes
+	# the user_id as a query parameter and the new metadata object in the body.
+	var url := "%s/user/update_metadata?user_id=%s" % [BASE_URL, user_id]
 	var headers: PackedStringArray = ['accept: application/json', 'content-type: application/json']
 	headers = _apply_auth_header(headers)
 	
-	var body_dict := {"metadata": metadata}
-	var body_json := JSON.stringify(body_dict)
+	# The body should be the metadata dictionary itself, not wrapped in another object.
+	var body_json := JSON.stringify(metadata)
 	
 	_request_queue.append({
 		"url": url,

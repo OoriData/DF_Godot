@@ -248,7 +248,7 @@ func _find_tree_item_contains(tree: Tree, token: String) -> TreeItem:
 	var stack := [root]
 	while stack.size() > 0:
 		var it: TreeItem = stack.pop_back()
-		for col in range(0, tree.get_column_count()):
+		for col in range(tree.columns):
 			var txt := String(it.get_text(col))
 			if txt.findn(token) != -1:
 				return it

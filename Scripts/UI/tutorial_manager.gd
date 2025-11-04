@@ -45,6 +45,7 @@ var _awaiting_menu_open: bool = false
 
 var _supply_checklist_state: Dictionary = { "mre": false, "water": false }
 var _urchin_checklist_state: Dictionary = { "urchins": false }
+var _oyster_checklist_state: Dictionary = { "oysters": false }
 
 # Simple contract (kept tiny for first pass):
 # Step schema: { id: String, copy: String, action: String, target: Dictionary }
@@ -230,75 +231,101 @@ func _build_level_steps(level: int) -> Array:
 				},
 				{
 					id = "l2_top_up_tip",
-					copy = "Great! For future reference, you can also use the 'Top Up' button as a shortcut to automatically fill resource containers.",
-					action = "message", # Just a message, no action needed.
+					copy = "Great! Now use the 'Top Up' button to automatically fill your vehicle's resource containers. This will complete the current tutorial stage.",
+					action = "await_top_up",
 					target = { resolver = "top_up_button" }, # Highlight it for context
-				},
+					lock = "soft",
+				}
 			]
-		3: # Mission Items
+		4: # Level 4: Accept Your First Delivery
 			return [
 				{
-					id = "l3_open_market_tab",
-					copy = "Some vendors offer special items required for missions. Find the 'Mountain Urchins' in the Market.",
+					id = "l4_open_market_tab",
+					copy = "Your vehicle is refueled and restocked. Now, let's accept your first delivery. Go back to the Market tab.",
 					action = "await_market_tab",
 					target = { resolver = "tab_title_contains", token = "Market" },
 					lock = "soft"
 				},
 				{
-					id = "l3_buy_urchins",
-					copy = "Purchase 10 Mountain Urchins.",
+					id = "l4_buy_urchins",
+					copy = "Some vendors offer special items required for missions. Purchase 10 Mountain Urchins.",
 					action = "await_urchin_purchase",
 					target = { resolver = "vendor_trade_panel" }, # Highlight the whole panel
 					lock = "soft"
 				},
 				{
-					id = "l3_urchins_bought",
+					id = "l4_urchins_bought",
 					copy = "Excellent! You've acquired the mission items. Now you're ready to plan a journey to deliver them.",
 					action = "message",
 					target = {}
 				},
 			]
-		4: # Journey Planning
+		5: # Level 5: Embark on Your Journey
 			return [
 				{
-					id = "l4_open_journey_menu",
-					copy = "Great! You're stocked up. Now, let's plan a journey. Open the Journey menu from your convoy overview.",
+					id = "l5_open_convoy_menu",
+					copy = "Great! You have the mission cargo. Return to the convoy menu to plan your journey.",
+					action = "await_menu_open",
+					target = { resolver = "button_with_text", text_contains = "Convoy" },
+					lock = "soft"
+				},
+				{
+					id = "l5_open_journey_menu",
+					copy = "Now, open the Journey menu.",
 					action = "await_journey_menu",
 					target = { resolver = "button_with_text", text_contains = "Journey" },
 					lock = "soft"
 				},
 				{
-					id = "l4_pick_destination",
-					copy = "Choose a nearby settlement as your destination.",
+					id = "l5_pick_destination",
+					copy = "Select the mission destination, Chicago, from the list.",
 					action = "await_destination_pick",
-					target = { resolver = "journey_destination_button" },
+					target = { resolver = "journey_destination_button", text_contains = "Chicago" },
 					lock = "soft"
 				},
 				{
-					id = "l4_review_routes",
-					copy = "Review the suggested route and confirm when ready.",
+					id = "l5_embark",
+					copy = "Click embark to send your convoy on its first delivery!",
 					action = "await_journey_confirm",
 					target = { resolver = "journey_confirm_button" },
 					lock = "soft"
 				},
 				{
-					id = "l4_journey_started",
-					copy = "Your convoy is on its way! This concludes the tutorial.",
-					action = "message",
-					target = {}
-				},
-				{
-					id = "l4_set_stage_6",
+					id = "l5_set_stage_6",
 					copy = "", # No message
 					action = "set_stage_and_finish",
 					target = { "stage": 6 }
 				},
 			]
-		5:
+		6: # Level 6: Grow and Customize
 			return [
-				{ id = "l5_parts_intro", copy = "Upgrade vehicles with parts for better performance.", action = "message", target = {} },
-				{ id = "l5_open_dealership", copy = "Open the Dealership again to browse parts.", action = "await_dealership_tab", target = { tab_contains = "Dealership" } },
-				{ id = "l5_buy_install_hint", copy = "Buy a part and use Install to open Mechanics.", action = "message", target = {} },
+				{
+					id = "l6_info1",
+					copy = "Your convoy is on its way! While you wait, you can refuel and restock your other vehicles.",
+					action = "message",
+					target = {}
+				},
+				{
+					id = "l6_info2",
+					copy = "You can also expand your convoy and customize your vehicles for future journeys. The tutorial will continue when your convoy arrives in Chicago.",
+					action = "message",
+					target = {}
+				}
+			]
+		7: # Level 7: Tutorial Complete
+			return [
+				{
+					id = "l7_info1",
+					copy = "Tutorial complete! Desolate Frontiers is an idle game—wait for your convoy to arrive and enjoy the adventure.",
+					action = "message",
+					target = {}
+				},
+				{
+					id = "l7_info2",
+					copy = "You can check on your convoy's status at any time by using the `/desolate-frontiers` command.",
+					action = "message",
+					target = {}
+				}
 			]
 		_:
 			return []
@@ -377,14 +404,10 @@ func _run_current_step() -> void:
 	# Per user request, update the server-side tutorial stage at specific steps.
 	# The _started flag in _maybe_start() prevents this from causing a restart loop.
 	if is_instance_valid(_gdm) and _gdm.has_method("update_user_tutorial_stage"):
-		# At the end of level 2 (resource top-up), set stage to 3
-		if id == "l2_top_up_tip":
-			_gdm.call_deferred("update_user_tutorial_stage", 3)
-		# At the start of level 3 (urchin purchase), set stage to 4
-		elif id == "l3_open_market_tab":
-			_gdm.call_deferred("update_user_tutorial_stage", 4)
+		# Stage updates are now handled by specific action handlers (e.g., _on_top_up_pressed)
+		# or at the end of a level (_emit_finished). This block is for specific mid-level triggers.
 		# At the start of level 4 (journey planning), set stage to 5
-		elif id == "l4_open_journey_menu":
+		if id == "l4_open_journey_menu":
 			_gdm.call_deferred("update_user_tutorial_stage", 5)
 
 	# Decide whether to lock or unlock vendor tabs for this step.
@@ -517,6 +540,13 @@ func _run_current_step() -> void:
 			corrected_step["target"] = { "resolver": "vendor_trade_panel" }
 			_resolve_and_highlight(corrected_step)
 			_watch_for_urchin_purchase()
+		"await_oyster_purchase":
+			# Message is shown via _update_oyster_purchase_ui inside the watcher
+			_apply_lock(step)
+			var corrected_step := step.duplicate(true)
+			corrected_step["target"] = { "resolver": "vendor_trade_panel" }
+			_resolve_and_highlight(corrected_step)
+			_watch_for_oyster_purchase()
 		"await_top_up":
 			_show_message(step.get("copy", ""), false)
 			_apply_lock(step)
@@ -637,7 +667,11 @@ func _emit_finished() -> void:
 
 	# Update backend and advance to next level
 	if is_instance_valid(_gdm) and _gdm.has_method("update_user_tutorial_stage"):
-		_gdm.call_deferred("update_user_tutorial_stage", _level + 1)
+		# For most levels, we automatically advance the server stage.
+		# Level 5 advances to 6 via a special "set_stage_and_finish" action.
+		# We also prevent level 6 from advancing to 7, as that is handled by the server on convoy arrival.
+		if _level != 5 and _level != 6:
+			_gdm.call_deferred("update_user_tutorial_stage", _level + 1)
 
 	# Advance to the next level
 	_level += 1
@@ -766,7 +800,76 @@ func _watch_for_top_up() -> void:
 
 func _on_top_up_pressed() -> void:
 	_top_up_button_ref = null
-	_advance()
+	# Don't just advance the step. We need to jump from level 2 to level 4.
+	# By setting _level to 3 and calling _emit_finished, we trigger the
+	# standard level transition logic. _emit_finished will increment _level to 4,
+	# update the server stage to 4, and load the steps for the new level.
+	_level = 3
+	_emit_finished()
+
+func _watch_for_oyster_purchase() -> void:
+	if not is_instance_valid(_gdm):
+		printerr("[Tutorial] GDM not valid, cannot watch for oyster purchase.")
+		return
+	
+	_oyster_checklist_state = {"oysters": false}
+
+	if not _gdm.is_connected("convoy_data_updated", Callable(self, "_on_oyster_check")):
+		_gdm.convoy_data_updated.connect(Callable(self, "_on_oyster_check"))
+	
+	if _gdm.has_method("get_all_convoy_data"):
+		_on_oyster_check(_gdm.get_all_convoy_data())
+
+func _on_oyster_check(_all_convoys: Array) -> void:
+	if _step < 0 or _step >= _steps.size() or _steps[_step].get("action") != "await_oyster_purchase":
+		if is_instance_valid(_gdm) and _gdm.is_connected("convoy_data_updated", Callable(self, "_on_oyster_check")):
+			_gdm.disconnect("convoy_data_updated", Callable(self, "_on_oyster_check"))
+		return
+
+	if not is_instance_valid(_gdm):
+		return
+
+	var current_convoy: Dictionary
+	if not _all_convoys.is_empty():
+		current_convoy = _all_convoys[0]
+	else:
+		_update_oyster_purchase_ui(0)
+		return
+
+	var oyster_count := 0
+
+	var cargo_list: Array = []
+	if current_convoy.has("vehicle_details_list") and current_convoy.vehicle_details_list is Array:
+		for vehicle in current_convoy.vehicle_details_list:
+			if vehicle.has("cargo") and vehicle.cargo is Array:
+				cargo_list.append_array(vehicle.cargo)
+	elif current_convoy.has("cargo_inventory") and current_convoy.cargo_inventory is Array:
+		cargo_list = current_convoy.cargo_inventory
+
+	for item in cargo_list:
+		if not (item is Dictionary): continue
+		var item_name := String(item.get("name", "")).to_lower()
+		var quantity := int(item.get("quantity", 0))
+
+		if item_name.contains("rocky mountain oyster"):
+			oyster_count += quantity
+	
+	_update_oyster_purchase_ui(oyster_count)
+
+	if oyster_count > 0:
+		if is_instance_valid(_gdm) and _gdm.is_connected("convoy_data_updated", Callable(self, "_on_oyster_check")):
+			_gdm.disconnect("convoy_data_updated", Callable(self, "_on_oyster_check"))
+		call_deferred("_advance")
+
+func _update_oyster_purchase_ui(oyster_count: int) -> void:
+	if _step < 0 or _step >= _steps.size() or _steps[_step].get("action") != "await_oyster_purchase":
+		return
+	var copy = "Purchase all of the Rocky Mountain Oysters."
+	_oyster_checklist_state.oysters = oyster_count > 0
+	var checklist_items = [ { "text": "Rocky Mountain Oysters", "completed": _oyster_checklist_state.oysters } ]
+	var ov = _ensure_overlay()
+	if ov and ov.has_method("show_message"):
+		ov.call("show_message", copy, false, Callable(), checklist_items)
 
 func _watch_for_urchin_purchase() -> void:
 	if not is_instance_valid(_gdm):
