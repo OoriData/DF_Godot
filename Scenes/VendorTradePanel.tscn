@@ -116,7 +116,7 @@ layout_mode = 2
 size_flags_vertical = 3
 bbcode_enabled = true
 text = "Item description and stats here."
-fit_content = false
+fit_content = true
 
 [node name="DescriptionPanel" type="VBoxContainer" parent="HBoxContainer/MiddlePanel/InfoScrollContainer/InfoVBox"]
 unique_name_in_owner = true

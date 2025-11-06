@@ -15,6 +15,7 @@ signal install_requested(item, quantity, vendor_id)
 @onready var fitment_rich_text: RichTextLabel = %FitmentRichText
 @onready var comparison_panel: PanelContainer = %ComparisonPanel
 @onready var description_toggle_button: Button = %DescriptionToggleButton
+@onready var description_panel: VBoxContainer = %DescriptionPanel
 @onready var item_description_rich_text: RichTextLabel = %ItemDescriptionRichText
 @onready var selected_item_stats: RichTextLabel = %SelectedItemStats
 @onready var equipped_item_stats: RichTextLabel = %EquippedItemStats
@@ -967,6 +968,13 @@ func _update_inspector() -> void:
 
 	var item_data_source = selected_item.item_data if selected_item.has("item_data") and not selected_item.item_data.is_empty() else selected_item
 
+	# If the selected item is a vehicle, use a dedicated inspector update function and skip the generic one.
+	if item_data_source.has("vehicle_id"):
+		_update_inspector_for_vehicle(item_data_source)
+		# Fitment panel should be updated for all items, including vehicles (to hide it).
+		_update_fitment_panel()
+		return
+
 	if is_instance_valid(item_name_label):
 		item_name_label.text = item_data_source.get("name", "No Name")
 
@@ -974,6 +982,9 @@ func _update_inspector() -> void:
 	if is_instance_valid(item_preview):
 		item_preview.texture = item_icon
 		item_preview.visible = item_icon != null
+
+	if is_instance_valid(description_panel):
+		description_panel.visible = true
 
 	# --- Description Handling ---
 	var description_text: String
@@ -1070,6 +1081,77 @@ func _update_inspector() -> void:
 		item_info_rich_text.text = bbcode
 	call_deferred("_log_size_after_update")
 
+func _update_inspector_for_vehicle(vehicle_data: Dictionary) -> void:
+	if is_instance_valid(item_name_label):
+		item_name_label.text = vehicle_data.get("name", "No Name")
+
+	# Vehicles don't have a preview icon, so ensure the preview control is hidden
+	# to prevent it from taking up space.
+	if is_instance_valid(item_preview):
+		item_preview.visible = false
+
+	# --- Description Handling for Vehicles ---
+	if is_instance_valid(description_panel):
+		description_panel.visible = true
+
+	var description_text: String
+	var base_desc_val = vehicle_data.get("base_desc")
+	if is_instance_valid(description_toggle_button):
+		description_toggle_button.visible = true
+		description_toggle_button.text = "Description (Click to Expand)"
+	if is_instance_valid(item_description_rich_text):
+		item_description_rich_text.visible = false # Always start collapsed
+
+	if base_desc_val is String and not base_desc_val.is_empty():
+		description_text = base_desc_val
+	else:
+		var desc_val = vehicle_data.get("description")
+		if desc_val is String and not desc_val.is_empty():
+			description_text = desc_val
+		else:
+			description_text = "No description available."
+	
+	if is_instance_valid(item_description_rich_text):
+		item_description_rich_text.text = description_text
+	var bbcode = ""
+
+	# --- Vehicle Stats ---
+	bbcode += "[b]Vehicle Stats:[/b]\n"
+	var stats_found = false
+	
+	var stat_map = {
+		"top_speed": "Top Speed", "efficiency": "Efficiency", "offroad_capability": "Off-road",
+		"cargo_capacity": "Cargo Capacity", "weight_capacity": "Weight Capacity",
+		"fuel_capacity": "Fuel Capacity", "kwh_capacity": "Battery", "base_weight": "Base Weight"
+	}
+	var unit_map = {
+		"top_speed": "kph", "efficiency": "km/L", "cargo_capacity": "m³",
+		"weight_capacity": "kg", "fuel_capacity": "L", "kwh_capacity": "kWh", "base_weight": "kg"
+	}
+
+	for key in stat_map:
+		if vehicle_data.has(key) and vehicle_data[key] != null:
+			stats_found = true
+			var unit = unit_map.get(key, "")
+			bbcode += "  - %s: %s%s\n" % [stat_map[key], str(vehicle_data[key]), (" " + unit if not unit.is_empty() else "")]
+
+	if not stats_found:
+		bbcode += "  No detailed stats available.\n"
+
+	# --- Installed Parts ---
+	if vehicle_data.has("parts") and vehicle_data.get("parts") is Array:
+		var parts_list: Array = vehicle_data.get("parts")
+		if not parts_list.is_empty():
+			bbcode += "\n[b]Installed Parts:[/b]\n"
+			for part in parts_list:
+				if part is Dictionary:
+					var part_name = part.get("name", "Unknown Part")
+					var part_slot = part.get("slot", "no slot")
+					bbcode += "  - %s (%s)\n" % [part_name, part_slot]
+
+	if is_instance_valid(item_info_rich_text):
+		item_info_rich_text.text = bbcode
+
 func _update_fitment_panel() -> void:
 	# --- Fitment (slot + compatible vehicles via backend) ---
 	if is_instance_valid(fitment_panel) and is_instance_valid(fitment_rich_text):
@@ -1128,6 +1210,24 @@ func _update_transaction_panel() -> void:
 		return
 
 	var item_data_source = selected_item.item_data if selected_item.has("item_data") and not selected_item.item_data.is_empty() else selected_item
+
+	# Handle vehicles separately, as they don't use cargo space and have a simple price.
+	if item_data_source.has("vehicle_id"):
+		var price = float(item_data_source.get("price", 0.0))
+		if current_mode == "sell":
+			# For display, assume sell price is 50% of base. The actual transaction is handled by the backend.
+			price /= 2.0
+		var quantity = int(quantity_spinbox.value) # Should be 1 for vehicles
+		var total_price = price * quantity
+		
+		var bbcode_text = ""
+		bbcode_text += "[b]Price:[/b] $%s\n" % ("%.2f" % price)
+		bbcode_text += "[b]Quantity:[/b] %d\n" % quantity
+		bbcode_text += "[b]Total Price:[/b] $%s" % ("%.2f" % total_price)
+		
+		price_label.text = bbcode_text
+		_update_install_button_state()
+		return
 
 	# --- START: Reduced logging to prevent output overflow ---
 	var item_name_for_log = item_data_source.get("name", "<no_name>")
@@ -1381,8 +1481,13 @@ func _on_api_transaction_error(error_message: String) -> void:
 
 # Updates the comparison panel (stub, fill in as needed)
 func _update_comparison() -> void:
-	# Implement your comparison logic here if needed
-	pass
+	# Hide comparison for vehicles, as there's nothing to compare against.
+	if selected_item and selected_item.has("item_data") and selected_item.item_data.has("vehicle_id"):
+		if is_instance_valid(comparison_panel):
+			comparison_panel.hide()
+		return
+	
+	# Future: Implement comparison logic for parts, etc.
 
 # Clears the inspector panel (stub, fill in as needed)
 func _clear_inspector() -> void:
@@ -1399,6 +1504,8 @@ func _clear_inspector() -> void:
 		fitment_rich_text.visible = false
 	if is_instance_valid(fitment_panel):
 		fitment_panel.visible = false
+	if is_instance_valid(description_panel):
+		description_panel.visible = false
 	# Add more UI clearing as needed
 
 # Helper: recompute aggregate convoy cargo stats (not currently used directly; kept for future refactors)
