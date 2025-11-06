@@ -253,12 +253,6 @@ func _build_level_steps(level: int) -> Array:
 					target = { resolver = "vendor_trade_panel" }, # Highlight the whole panel
 					lock = "soft"
 				},
-				{
-					id = "l4_urchins_bought",
-					copy = "Excellent! You've acquired the mission items. Now you're ready to plan a journey to deliver them.",
-					action = "message",
-					target = {}
-				},
 			]
 		5: # Level 5: Embark on Your Journey
 			return [
@@ -278,7 +272,7 @@ func _build_level_steps(level: int) -> Array:
 				},
 				{
 					id = "l5_pick_destination",
-					copy = "Select the mission destination, Chicago, from the list.",
+					copy = "Select the mission destination from the top of the list.",
 					action = "await_destination_pick",
 					target = { resolver = "journey_destination_button", text_contains = "Chicago" },
 					lock = "soft"
@@ -301,13 +295,13 @@ func _build_level_steps(level: int) -> Array:
 			return [
 				{
 					id = "l6_info1",
-					copy = "Your convoy is on its way! While you wait, you can refuel and restock your other vehicles.",
+					copy = "Your convoy is on its way! Desolate Frontiers is an idle game, so you can close the app and come back later. When your convoy arrives, your cargo will automatically be sold.",
 					action = "message",
 					target = {}
 				},
 				{
 					id = "l6_info2",
-					copy = "You can also expand your convoy and customize your vehicles for future journeys. The tutorial will continue when your convoy arrives in Chicago.",
+					copy = "You can use the money from deliveries to upgrade your vehicles or expand your convoy with new ones.  Check back in when your convoy arrives!",
 					action = "message",
 					target = {}
 				}
@@ -316,13 +310,7 @@ func _build_level_steps(level: int) -> Array:
 			return [
 				{
 					id = "l7_info1",
-					copy = "Tutorial complete! Desolate Frontiers is an idle game—wait for your convoy to arrive and enjoy the adventure.",
-					action = "message",
-					target = {}
-				},
-				{
-					id = "l7_info2",
-					copy = "You can check on your convoy's status at any time by using the `/desolate-frontiers` command.",
+					copy = "Congradulations, you've completed the tutorial! Desolate Frontiers is an idle game—wait for your convoy to arrive and enjoy the adventure.",
 					action = "message",
 					target = {}
 				}
@@ -925,9 +913,12 @@ func _on_urchin_check(_all_convoys: Array) -> void:
 	_update_urchin_purchase_ui(urchin_count)
 
 	if urchin_count >= 10:
+		# Urchins purchased. Disconnect the watcher.
 		if is_instance_valid(_gdm) and _gdm.is_connected("convoy_data_updated", Callable(self, "_on_urchin_check")):
 			_gdm.disconnect("convoy_data_updated", Callable(self, "_on_urchin_check"))
-		call_deferred("_advance")
+		# Finish level 4 and transition to level 5. This will also update the server stage to 5.
+		print("[Tutorial] Urchins purchased. Finishing level 4 to advance to level 5.")
+		_emit_finished()
 
 func _update_urchin_purchase_ui(urchin_count: int) -> void:
 	if _step < 0 or _step >= _steps.size() or _steps[_step].get("action") != "await_urchin_purchase":

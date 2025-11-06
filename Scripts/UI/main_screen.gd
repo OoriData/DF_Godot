@@ -390,7 +390,6 @@ func _check_or_prompt_new_convoy(all_convoys: Array = []):
 
 func _show_new_convoy_dialog():
 	print("[Onboarding] _show_new_convoy_dialog invoked.")
-	_ensure_onboarding_layer()
 	if not is_instance_valid(_new_convoy_dialog):
 		var scene_res: Resource = new_convoy_dialog_scene if new_convoy_dialog_scene != null else load(NEW_CONVOY_DIALOG_SCENE_PATH)
 		if scene_res == null or not (scene_res is PackedScene):
@@ -400,24 +399,28 @@ func _show_new_convoy_dialog():
 			var scene: PackedScene = scene_res
 			print("[Onboarding] Instantiating NewConvoyDialog scene…")
 			_new_convoy_dialog = scene.instantiate()
-		# Always add dialogs under a CenterContainer so they stay centered
-		var host: Node = _onboarding_layer.get_node_or_null("Center") if is_instance_valid(_onboarding_layer) else null
+		# The host for the modal dialog is the full-screen CenterContainer from the scene file.
+		var modal_layer: Control = get_node_or_null("ModalLayer")
+		var host: Node = modal_layer.get_node_or_null("DialogHost") if is_instance_valid(modal_layer) else null
 		if not is_instance_valid(host):
-			host = _onboarding_layer
+			printerr("[Onboarding] CRITICAL: ModalLayer or its DialogHost child not found in MainScreen.tscn!")
+			return
 		host.add_child(_new_convoy_dialog)
-		print("[Onboarding] NewConvoyDialog added to overlay.")
-		# Let CenterContainer handle centering; ensure a reasonable minimum size
-		_new_convoy_dialog.custom_minimum_size = Vector2(420, 180)
+		print("[Onboarding] NewConvoyDialog added to ModalLayer.")
 		# Connect signals
 		if _new_convoy_dialog.has_signal("create_requested"):
 			_new_convoy_dialog.connect("create_requested", Callable(self, "_on_new_convoy_create"))
 		if _new_convoy_dialog.has_signal("canceled"):
 			_new_convoy_dialog.connect("canceled", Callable(self, "_on_new_convoy_canceled"))
+
+	var modal_layer := get_node_or_null("ModalLayer")
 	if _new_convoy_dialog.has_method("open"):
 		print("[Onboarding] Opening NewConvoyDialog…")
+		if is_instance_valid(modal_layer): modal_layer.show()
 		_new_convoy_dialog.call_deferred("open")
 	else:
 		printerr("[Onboarding] WARN: Dialog missing 'open' method; forcing visible true.")
+		if is_instance_valid(modal_layer): modal_layer.show()
 		_new_convoy_dialog.visible = true
 
 func _build_inline_new_convoy_dialog() -> Control:
@@ -544,8 +547,15 @@ func _update_onboarding_layer_rect_to_map() -> void:
 		_onboarding_layer.clip_contents = true
 
 func _hide_new_convoy_dialog():
-	if is_instance_valid(_new_convoy_dialog) and _new_convoy_dialog.has_method("close"):
-		_new_convoy_dialog.call_deferred("close")
+	var modal_layer: Control = get_node_or_null("ModalLayer")
+	if is_instance_valid(modal_layer):
+		modal_layer.hide()
+
+	if is_instance_valid(_new_convoy_dialog):
+		if _new_convoy_dialog.has_method("close"):
+			_new_convoy_dialog.call_deferred("close")
+		# In case the dialog is queued for deletion, we should remove our reference.
+		_new_convoy_dialog = null
 
 func _on_new_convoy_create(convoy_name: String):
 	# Disable dialog while creating
@@ -561,9 +571,9 @@ func _on_new_convoy_create(convoy_name: String):
 		printerr("MainScreen: GameDataManager missing create_new_convoy; cannot create convoy.")
 
 func _on_new_convoy_canceled():
-	# Keep dialog open on cancel for onboarding; optional: hide
-	pass
-	#     _fit_camera_to_map()
+	var modal_layer: Control = get_node_or_null("ModalLayer")
+	if is_instance_valid(modal_layer):
+		modal_layer.hide()
 
 
 # --- Settings integration ---
