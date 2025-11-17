@@ -152,7 +152,7 @@ func _on_vendor_panel_data_ready(vendor_panel_data: Dictionary) -> void:
 	var prev_selected_id := _last_selected_restore_id
 	var prev_tree := _last_selected_tree
 	
-	selected_item = nil # Clear selection variable before repopulating tree
+	selected_item = null # Clear selection variable before repopulating tree
 
 	_update_vendor_ui()
 
