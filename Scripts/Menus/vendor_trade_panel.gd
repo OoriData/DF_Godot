@@ -127,6 +127,35 @@ func _ready() -> void:
 	api.resource_sold.connect(_on_api_transaction_result)
 	api.fetch_error.connect(_on_api_transaction_error)
 
+func _exit_tree() -> void:
+	# Disconnect from GDM signals to avoid lingering <INVALID INSTANCE> connections
+	if is_instance_valid(gdm):
+		var c = Callable(self, "_on_vendor_panel_data_ready")
+		if gdm.has_signal("vendor_panel_data_ready") and gdm.is_connected("vendor_panel_data_ready", c):
+			gdm.disconnect("vendor_panel_data_ready", c)
+		c = Callable(self, "_on_part_compatibility_ready")
+		if gdm.has_signal("part_compatibility_ready") and gdm.is_connected("part_compatibility_ready", c):
+			gdm.disconnect("part_compatibility_ready", c)
+		c = Callable(self, "_on_settlement_data_updated_for_refresh")
+		if gdm.has_signal("settlement_data_updated") and gdm.is_connected("settlement_data_updated", c):
+			gdm.disconnect("settlement_data_updated", c)
+		c = Callable(self, "_on_gdm_convoy_data_changed")
+		if gdm.has_signal("convoy_data_updated") and gdm.is_connected("convoy_data_updated", c):
+			gdm.disconnect("convoy_data_updated", c)
+
+	# Disconnect from API signals
+	var api = get_node_or_null("/root/APICalls")
+	if is_instance_valid(api):
+		var cb = Callable(self, "_on_api_transaction_result")
+		if api.is_connected("vehicle_bought", cb): api.disconnect("vehicle_bought", cb)
+		if api.is_connected("vehicle_sold", cb): api.disconnect("vehicle_sold", cb)
+		if api.is_connected("cargo_bought", cb): api.disconnect("cargo_bought", cb)
+		if api.is_connected("cargo_sold", cb): api.disconnect("cargo_sold", cb)
+		if api.is_connected("resource_bought", cb): api.disconnect("resource_bought", cb)
+		if api.is_connected("resource_sold", cb): api.disconnect("resource_sold", cb)
+		var cbe = Callable(self, "_on_api_transaction_error")
+		if api.is_connected("fetch_error", cbe): api.disconnect("fetch_error", cbe)
+
 # Request data for the panel (call this when opening the panel)
 func request_panel_data(convoy_id: String, vendor_id: String) -> void:
 	if is_instance_valid(gdm):
@@ -199,7 +228,7 @@ func _on_settlement_data_updated_for_refresh(_all_settlements: Array) -> void:
 		# Failsafe
 		loading_panel.visible = false
 
-func _on_gdm_convoy_data_changed(all_convoys: Array) -> void:
+func _on_gdm_convoy_data_changed(_all_convoys: Array) -> void:
 	# This is our primary trigger to refresh the panel after a transaction (buy/sell).
 	# We only act if the panel is visible and we've flagged that a transaction was initiated (`_transaction_in_progress`).
 	if not is_visible_in_tree() or not _transaction_in_progress or not is_instance_valid(gdm):
@@ -961,6 +990,7 @@ func _on_action_button_pressed() -> void:
 		return
 	var vendor_id = vendor_data.get("vendor_id", "")
 	var convoy_id = convoy_data.get("convoy_id", "")
+
 	if current_mode == "buy":
 		gdm.buy_item(convoy_id, vendor_id, item_data_source, quantity)
 		# Emit local signal for UI listeners

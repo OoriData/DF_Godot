@@ -26,7 +26,6 @@ var _resolver: Node = null # Scripts/UI/target_resolver.gd instance
 
 # Persistence
 const PROGRESS_PATH := "user://tutorial_progress.json"
-var _resume_requested: bool = true
 
 # Overlay scope: "map" (default under MapView onboarding layer) or "ui" (full MainScreen)
 var _overlay_scope: String = "map"
@@ -53,16 +52,21 @@ var _oyster_checklist_state: Dictionary = { "oysters": false }
 # action: "message" | "navigate" | "highlight" (future)
 
 func _ready() -> void:
+	# --- START TUTORIAL DIAGNOSTIC ---
+	# This log will run for every instance of TutorialManager. If we see two logs with
+	# different instance IDs, it confirms there is a duplicate instance.
+	print("[Tutorial][DIAGNOSTIC] _ready() called. My path is: %s, My Instance ID is: %d" % [get_path(), get_instance_id()])
+	# --- END TUTORIAL DIAGNOSTIC ---
 	if not enabled:
 		return
 	# Cache references
 	_main_screen = get_node_or_null("/root/GameRoot/MainScreen")
 	_gdm = get_node_or_null("/root/GameDataManager")
 	if _gdm:
-		if _gdm.has_signal("initial_data_ready"):
-			_gdm.connect("initial_data_ready", Callable(self, "_on_initial_data_ready"))
-		if _gdm.has_signal("convoy_data_updated"):
-			_gdm.connect("convoy_data_updated", Callable(self, "_on_convoy_data_updated"))
+		if _gdm.has_signal("initial_data_ready") and not _gdm.is_connected("initial_data_ready", Callable(self, "_on_initial_data_ready")):
+			_gdm.initial_data_ready.connect(Callable(self, "_on_initial_data_ready"))
+		if _gdm.has_signal("convoy_data_updated") and not _gdm.is_connected("convoy_data_updated", Callable(self, "_on_convoy_data_updated")):
+			_gdm.convoy_data_updated.connect(Callable(self, "_on_convoy_data_updated"))
 		# Connect to GDM signals to pause/resume tutorial during UI refreshes
 		if _gdm.has_signal("inline_error_handled") and not _gdm.is_connected("inline_error_handled", Callable(self, "_on_inline_error_handled")):
 			_gdm.inline_error_handled.connect(Callable(self, "_on_inline_error_handled"))
@@ -104,19 +108,27 @@ func _emit_changed() -> void:
 		var step: Dictionary = _steps[_step]
 		print("[Tutorial] step:", step.get("id", str(_step)), " action=", step.get("action", "message"), " lock=", step.get("lock", ""))
 
-func _get_total_vehicle_count() -> int:
+func _get_total_vehicle_count(all_convoys_override: Array = []) -> int:
 	var count := 0
-	if not is_instance_valid(_gdm) or not _gdm.has_method("get_all_convoy_data"):
-		return -1 # Indicate data not available
-	var all_convoys: Array = _gdm.get_all_convoy_data()
-	if not (all_convoys is Array):
-		return -1
+	var all_convoys: Array = all_convoys_override
+	if all_convoys.is_empty():
+		if not is_instance_valid(_gdm) or not _gdm.has_method("get_all_convoy_data"):
+			return -1 # Indicate data not available
+		all_convoys = _gdm.get_all_convoy_data()
+		if not (all_convoys is Array):
+			return -1
 
 	for c in all_convoys:
 		if c is Dictionary:
 			# The augmented data uses 'vehicle_details_list'
 			if c.has("vehicle_details_list") and c["vehicle_details_list"] is Array:
 				count += c["vehicle_details_list"].size()
+			# Fallback for raw data which might use a simpler 'vehicles' key
+			elif c.has("vehicles") and c["vehicles"] is Array:
+				count += c["vehicles"].size()
+			# Fallback for another common pattern, 'vehicle_inventory'
+			elif c.has("vehicle_inventory") and c["vehicle_inventory"] is Array:
+				count += c["vehicle_inventory"].size()
 	return count
 	
 func get_current_level() -> int:
@@ -402,17 +414,15 @@ func _run_current_step() -> void:
 	if _step < 0 or _step >= _steps.size():
 		_emit_finished()
 		return
-	# --- START DEBUG LOG ---
-	# Log the entire step dictionary to verify its contents, especially the 'target'.
-	# This will show if it's being overridden by an external JSON file.
-	print("[Tutorial][DEBUG] Running step: ", _steps[_step])
-	# --- END DEBUG LOG ---
+
+	# --- START TUTORIAL DIAGNOSTIC ---
+	# This log creates a timeline of which step is running.
+	print("[Tutorial][DIAGNOSTIC] --- Running Step: '%s' ---" % _steps[_step].get("id", "N/A"))
+	# --- END TUTORIAL DIAGNOSTIC ---
 	var step: Dictionary = _steps[_step].duplicate() # Use a copy to allow modification
 	var action := String(step.get("action", "message"))
 	var id := String(step.get("id", ""))
 
-	# Per user request, update the server-side tutorial stage at specific steps.
-	# The _started flag in _maybe_start() prevents this from causing a restart loop.
 	if is_instance_valid(_gdm) and _gdm.has_method("update_user_tutorial_stage"):
 		# Stage updates are now handled by specific action handlers (e.g., _on_top_up_pressed)
 		# or at the end of a level (_emit_finished). This block is for specific mid-level triggers.
@@ -502,15 +512,8 @@ func _run_current_step() -> void:
 		"await_vehicle_purchase":
 			_show_message(step.get("copy", ""), false)
 			_apply_lock(step)
-			# --- START FIX ---
-			# The goal for this step is ALWAYS to highlight the entire vendor panel to allow free interaction.
-			# The log shows that a specific button is being highlighted, which suggests the step's 'target'
-			# is being overridden (likely by an external tutorial_steps.json file).
-			# To fix this definitively, we will ignore the step's target and force the correct one.
-			var corrected_step := step.duplicate(true)
-			corrected_step["target"] = { "resolver": "vendor_trade_panel" }
-			_resolve_and_highlight(corrected_step)
-			# --- END FIX ---
+			# The step's target should correctly be { "resolver": "vendor_trade_panel" }
+			_resolve_and_highlight(step)
 			_watch_for_vehicle_purchase()
 		"await_market_tab":
 			# This logic mirrors `await_dealership_tab` for consistency, as requested.
@@ -591,13 +594,12 @@ func _watch_for_destination_pick() -> void:
 		journey_menu.find_route_requested.connect(Callable(self, "_on_destination_picked"))
 
 func _on_destination_picked(_convoy_data, _destination_data) -> void:
+	var journey_menu := _get_journey_menu()
 	if _step < 0 or _step >= _steps.size() or _steps[_step].get("action") != "await_destination_pick":
-		var journey_menu = _get_journey_menu()
 		if is_instance_valid(journey_menu) and journey_menu.is_connected("find_route_requested", Callable(self, "_on_destination_picked")):
 			journey_menu.disconnect("find_route_requested", Callable(self, "_on_destination_picked"))
 		return
-	
-	var journey_menu = _get_journey_menu()
+
 	if is_instance_valid(journey_menu) and journey_menu.is_connected("find_route_requested", Callable(self, "_on_destination_picked")):
 		journey_menu.disconnect("find_route_requested", Callable(self, "_on_destination_picked"))
 	
@@ -636,7 +638,7 @@ func _watch_for_journey_menu() -> void:
 	if not mm.is_connected("menu_opened", Callable(self, "_on_journey_menu_opened")):
 		mm.menu_opened.connect(Callable(self, "_on_journey_menu_opened"))
 
-func _on_journey_menu_opened(menu_node: Node, menu_type: String) -> void:
+func _on_journey_menu_opened(_menu_node: Node, menu_type: String) -> void:
 	if _step < 0 or _step >= _steps.size() or _steps[_step].get("action") != "await_journey_menu":
 		var mm := get_node_or_null("/root/MenuManager")
 		if is_instance_valid(mm) and mm.is_connected("menu_opened", Callable(self, "_on_journey_menu_opened")):
@@ -651,6 +653,11 @@ func _on_journey_menu_opened(menu_node: Node, menu_type: String) -> void:
 		_advance_after_frame()
 
 func _advance() -> void:
+	# --- START TUTORIAL DIAGNOSTIC ---
+	# This log shows the exact moment the tutorial advances to the next step.
+	var current_step_id = _steps[_step].get("id", "N/A") if _step >= 0 and _step < _steps.size() else "INVALID"
+	print("[Tutorial][DIAGNOSTIC] --- Advancing from step: '%s' ---" % current_step_id)
+	# --- END TUTORIAL DIAGNOSTIC ---
 	_clear_highlight()
 
 	# Stop any active polling
@@ -697,14 +704,14 @@ func _emit_finished() -> void:
 		_save_progress(true) # Mark as fully finished
 		print("[Tutorial] All tutorial levels completed.")
 	else:
-		# Start the next level after a short delay to allow UI to settle
+		# Start the next level after a very short settle to avoid perceived stutter
 		print("[Tutorial] Advancing to level ", _level)
-		var timer := get_tree().create_timer(1.5, true) # Increased delay for safety
-		timer.timeout.connect(func():
-			_started = true
-			_emit_started()
-			_run_current_step()
-		)
+		# Prefer a tiny two-frame await over a long fixed delay.
+		await get_tree().process_frame
+		await get_tree().process_frame
+		_started = true
+		_emit_started()
+		_run_current_step()
 
 # ---- Internal watchers and helpers ----
 
@@ -1063,13 +1070,23 @@ func _watch_for_vehicle_purchase() -> void:
 	_hint_buy_button()
 
 func _on_convoy_updated_for_vehicle_check(_all_convoys: Array) -> void:
-	# Check if this is the correct tutorial step.
+	# --- START TUTORIAL DIAGNOSTIC ---
+	# This log confirms the signal handler was called.
+	print("[Tutorial][DIAGNOSTIC] Signal handler '_on_convoy_updated_for_vehicle_check' was called.")
+	# --- END TUTORIAL DIAGNOSTIC ---
 	if _step < 0 or _step >= _steps.size() or _steps[_step].get("action") != "await_vehicle_purchase":
+		# --- START TUTORIAL DIAGNOSTIC ---
+		# This log tells us if the handler is exiting early because the tutorial has already advanced.
+		var current_action = "INVALID_STEP"
+		if _step >= 0 and _step < _steps.size():
+			current_action = _steps[_step].get("action", "N/A")
+		print("[Tutorial][DIAGNOSTIC] Guard clause triggered. Current action is '%s', not 'await_vehicle_purchase'. Disconnecting." % current_action)
+		# --- END TUTORIAL DIAGNOSTIC ---
 		if is_instance_valid(_gdm) and _gdm.is_connected("convoy_data_updated", Callable(self, "_on_convoy_updated_for_vehicle_check")):
 			_gdm.disconnect("convoy_data_updated", Callable(self, "_on_convoy_updated_for_vehicle_check"))
 		return
 
-	var current_vehicle_count := _get_total_vehicle_count()
+	var current_vehicle_count := _get_total_vehicle_count(_all_convoys)
 	if _initial_vehicle_count >= 0 and current_vehicle_count > _initial_vehicle_count:
 		print("[Tutorial] Detected new vehicle via convoy update. Count changed from %d to %d." % [_initial_vehicle_count, current_vehicle_count])
 		if is_instance_valid(_gdm):
@@ -1234,7 +1251,10 @@ func _attach_overlay_scope(scope: String) -> void:
 	# Ensure on top
 	if ov.has_method("bring_to_front"):
 		ov.call_deferred("bring_to_front")
-	print("[Tutorial] Attached overlay scope=", scope, " parent=", (ov.get_parent().name if ov.get_parent() else "<none>"))
+	var parent_name := "<none>"
+	if ov.get_parent() != null:
+		parent_name = str(ov.get_parent().name)
+	print("[Tutorial] Attached overlay scope=", scope, " parent=", parent_name)
 
 func _get_top_bar_inset() -> int:
 	var ms: Control = _main_screen as Control
@@ -1401,3 +1421,62 @@ func _hint_dealership_tab(target: Dictionary) -> void:
 			# Refine the highlight to be just the tab button.
 			ov.call_deferred("highlight_node", menu, rect)
 			print("[Tutorial] Refined highlight for tab: ", token)
+
+# --- Cleanup to prevent lingering connections ---
+func _exit_tree() -> void:
+	# Disconnect from GameDataManager signals
+	if is_instance_valid(_gdm):
+		var c = Callable(self, "_on_initial_data_ready")
+		if _gdm.is_connected("initial_data_ready", c):
+			_gdm.disconnect("initial_data_ready", c)
+		c = Callable(self, "_on_convoy_data_updated")
+		if _gdm.is_connected("convoy_data_updated", c):
+			_gdm.disconnect("convoy_data_updated", c)
+		c = Callable(self, "_on_convoy_updated_for_vehicle_check")
+		if _gdm.is_connected("convoy_data_updated", c):
+			_gdm.disconnect("convoy_data_updated", c)
+		c = Callable(self, "_on_supply_check")
+		if _gdm.is_connected("convoy_data_updated", c):
+			_gdm.disconnect("convoy_data_updated", c)
+		c = Callable(self, "_on_urchin_check")
+		if _gdm.is_connected("convoy_data_updated", c):
+			_gdm.disconnect("convoy_data_updated", c)
+		c = Callable(self, "_on_oyster_check")
+		if _gdm.is_connected("convoy_data_updated", c):
+			_gdm.disconnect("convoy_data_updated", c)
+		c = Callable(self, "_on_journey_confirmed")
+		if _gdm.is_connected("convoy_data_updated", c):
+			_gdm.disconnect("convoy_data_updated", c)
+		c = Callable(self, "_on_inline_error_handled")
+		if _gdm.has_signal("inline_error_handled") and _gdm.is_connected("inline_error_handled", c):
+			_gdm.disconnect("inline_error_handled", c)
+		c = Callable(self, "_on_vendor_panel_refreshed")
+		if _gdm.has_signal("vendor_panel_data_ready") and _gdm.is_connected("vendor_panel_data_ready", c):
+			_gdm.disconnect("vendor_panel_data_ready", c)
+
+	# Disconnect from MenuManager signals
+	var mm := get_node_or_null("/root/MenuManager")
+	if is_instance_valid(mm):
+		var c2 = Callable(self, "_on_menu_opened")
+		if mm.is_connected("menu_opened", c2):
+			mm.disconnect("menu_opened", c2)
+		c2 = Callable(self, "_on_journey_menu_opened")
+		if mm.is_connected("menu_opened", c2):
+			mm.disconnect("menu_opened", c2)
+
+	# Disconnect top-up button if still connected
+	if is_instance_valid(_top_up_button_ref):
+		var c3 = Callable(self, "_on_top_up_pressed")
+		if _top_up_button_ref.is_connected("pressed", c3):
+			_top_up_button_ref.disconnect("pressed", c3)
+		_top_up_button_ref = null
+
+	# Stop polling/timers
+	_is_polling_for_tab = false
+	set_process(false)
+	_highlight_timer = null
+
+	# Free overlay safely
+	if is_instance_valid(_overlay):
+		_overlay.call_deferred("queue_free")
+		_overlay = null

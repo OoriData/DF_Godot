@@ -1291,8 +1291,14 @@ func _on_convoy_transaction(result: Dictionary) -> void:
 	if result.is_empty():
 		return
 	if result.has("convoy_id"):
+		# The result of a transaction is an updated convoy object.
+		# We update our local cache with it and emit the convoy_data_updated signal.
 		update_single_convoy(result)
-		request_user_data_refresh()
+		# We no longer need to request a full user data refresh, as the transaction
+		# result gives us the immediate data we need. This prevents a second, delayed
+		# convoy_data_updated signal which was causing race conditions with the tutorial.
+		# The user's money is synced opportunistically inside update_single_convoy.
+		# request_user_data_refresh()
 
 func trigger_initial_convoy_data_fetch(p_user_id: String) -> void:
 	if is_instance_valid(api_calls_node) and api_calls_node.has_method("get_user_convoys"):
@@ -1418,6 +1424,21 @@ func update_single_convoy(raw_updated_convoy: Dictionary) -> void:
 			break
 	if not found:
 		all_convoy_data.append(augmented_convoy)
+	# --- START TUTORIAL DIAGNOSTIC ---
+	# This log shows who is connected to the signal right before it is emitted.
+	# This is the ultimate ground truth for our debugging.
+	print("[GDM][DIAGNOSTIC] --- Emitting 'convoy_data_updated'. Checking connections... ---")
+	var connections = convoy_data_updated.get_connections()
+	if connections.is_empty():
+		print("[GDM][DIAGNOSTIC]   -> No nodes are connected.")
+	else:
+		for conn in connections:
+			var target_node = conn.get("target")
+			var method_name = conn.get("callable").get_method()
+			var target_id = target_node.get_instance_id() if is_instance_valid(target_node) else "N/A"
+			var target_path = target_node.get_path() if is_instance_valid(target_node) else "<INVALID INSTANCE>"
+			print("[GDM][DIAGNOSTIC]   -> Connected: %s (ID: %s) -> %s()" % [target_path, str(target_id), method_name])
+	# --- END TUTORIAL DIAGNOSTIC ---
 	convoy_data_updated.emit(all_convoy_data)
 
 	# Opportunistically sync global user money from convoy (if present) so header updates immediately
