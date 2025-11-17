@@ -40,6 +40,7 @@ const GATING_HARD := 2
 var _is_polling_for_tab: bool = false
 var _polling_tab_target: Dictionary = {}
 var _polling_tab_timer: float = 0.0
+var _suspended_by_inline_error: bool = false
 const _POLL_TAB_INTERVAL: float = 0.5
 var _awaiting_menu_open: bool = false
 
@@ -62,6 +63,11 @@ func _ready() -> void:
 			_gdm.connect("initial_data_ready", Callable(self, "_on_initial_data_ready"))
 		if _gdm.has_signal("convoy_data_updated"):
 			_gdm.connect("convoy_data_updated", Callable(self, "_on_convoy_data_updated"))
+		# Connect to GDM signals to pause/resume tutorial during UI refreshes
+		if _gdm.has_signal("inline_error_handled") and not _gdm.is_connected("inline_error_handled", Callable(self, "_on_inline_error_handled")):
+			_gdm.inline_error_handled.connect(Callable(self, "_on_inline_error_handled"))
+		if _gdm.has_signal("vendor_panel_data_ready") and not _gdm.is_connected("vendor_panel_data_ready", Callable(self, "_on_vendor_panel_refreshed")):
+			_gdm.vendor_panel_data_ready.connect(Callable(self, "_on_vendor_panel_refreshed"))
 	# MenuManager hooks (for event-driven steps)
 	var mm := get_node_or_null("/root/MenuManager")
 	if mm:
@@ -353,6 +359,13 @@ func _ensure_overlay() -> Node:
 		call_deferred("_verify_overlay_size")
 	return _overlay
 
+func _on_inline_error_handled():
+	if not _started: return
+	print("[Tutorial] Inline error detected. Suspending tutorial overlay.")
+	_suspended_by_inline_error = true
+	if is_instance_valid(_overlay):
+		_overlay.hide()
+
 func _verify_overlay_size() -> void:
 	# If the overlay's parent (onboarding layer) hasn't been sized yet, we may be at (0,0).
 	# In that case, temporarily reparent to full MainScreen scope so highlights work.
@@ -375,6 +388,15 @@ func _configure_overlay_insets() -> void:
 	if ov and ov.has_method("set_safe_area_insets"):
 		# Minimal inset because overlay is scoped to MapView area
 		ov.call("set_safe_area_insets", 8)
+
+func _on_vendor_panel_refreshed(_vendor_panel_data: Dictionary):
+	if not _started or not _suspended_by_inline_error:
+		return
+	
+	print("[Tutorial] Vendor panel refreshed. Resuming tutorial overlay.")
+	_suspended_by_inline_error = false
+	# Re-run the current step to re-evaluate highlights and show the overlay again.
+	call_deferred("_run_current_step")
 
 func _run_current_step() -> void:
 	if _step < 0 or _step >= _steps.size():

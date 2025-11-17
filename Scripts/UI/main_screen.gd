@@ -18,6 +18,8 @@ var _map_is_interactive: bool = true # New flag to control map input
 var _new_convoy_dialog: Control = null
 const NEW_CONVOY_DIALOG_SCENE_PATH := "res://Scenes/NewConvoyDialog.tscn"
 @export var new_convoy_dialog_scene: PackedScene = null
+const ERROR_DIALOG_SCENE_PATH := "res://Scenes/ErrorDialog.tscn"
+var _error_dialog_scene: PackedScene
 
 func initialize(p_map_view: Control, p_camera_controller: Node, p_interaction_manager: Node):
 	self.map_view = p_map_view
@@ -127,6 +129,15 @@ func _ready():
 
 	# Proactively check once after layout settles (in case no signals fire yet)
 	call_deferred("_check_or_prompt_new_convoy")
+
+	# --- API Error Handling ---
+	var api_calls = get_node_or_null("/root/APICalls")
+	if is_instance_valid(api_calls):
+		if not api_calls.is_connected("fetch_error", Callable(self, "_on_api_fetch_error")):
+			api_calls.connect("fetch_error", Callable(self, "_on_api_fetch_error"))
+	else:
+		printerr("MainScreen: Could not find APICalls node to connect error handler.")
+	_error_dialog_scene = load(ERROR_DIALOG_SCENE_PATH)
 # Respond to Control resize events
 
 func _connect_deferred_signals():
@@ -387,6 +398,50 @@ func _check_or_prompt_new_convoy(all_convoys: Array = []):
 		return
 
 	_show_new_convoy_dialog()
+
+func _on_api_fetch_error(message: String):
+	# Check if this is an error that should be handled by a specific UI component
+	# and not by the global popup dialog.
+	if ErrorTranslator.is_inline_error(message):
+		print("MainScreen: Ignoring inline error, expected to be handled by component: ", message)
+		return
+
+	var display_message = ErrorTranslator.translate(message)
+	if display_message.is_empty():
+		return # This error is meant to be ignored by the popup
+
+	_show_error_dialog(display_message)
+
+func _show_error_dialog(message: String):
+	if not is_instance_valid(_error_dialog_scene):
+		printerr("Error dialog scene not loaded!")
+		return
+
+	var modal_layer: Control = get_node_or_null("ModalLayer")
+	var dialog_host: CenterContainer = modal_layer.get_node_or_null("DialogHost") if is_instance_valid(modal_layer) else null
+
+	if not is_instance_valid(dialog_host):
+		printerr("MainScreen: DialogHost not found in ModalLayer!")
+		return
+
+	# Prevent stacking multiple error dialogs. If one is up, just print the new error.
+	if dialog_host.find_child("ErrorDialog", false, false) != null:
+		print("Ignoring new error as a dialog is already visible: ", message)
+		return
+
+	var error_dialog = _error_dialog_scene.instantiate()
+	error_dialog.name = "ErrorDialog"
+	dialog_host.add_child(error_dialog)
+	modal_layer.show()
+
+	error_dialog.show_message(message)
+
+	# When the dialog is closed (freed), hide the modal layer if nothing else is in the host.
+	error_dialog.tree_exited.connect(func():
+		if is_instance_valid(dialog_host) and dialog_host.get_child_count() == 0:
+			if is_instance_valid(modal_layer):
+				modal_layer.hide()
+	)
 
 func _show_new_convoy_dialog():
 	print("[Onboarding] _show_new_convoy_dialog invoked.")

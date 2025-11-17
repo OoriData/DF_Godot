@@ -1,0 +1,10 @@
+[gd_scene load_steps=2 format=3 uid="uid://b6qgydmmt0oq7"]
+
+[ext_resource type="Script" path="res://Scripts/UI/error_dialog.gd" id="1_w8j4c"]
+
+[node name="ErrorDialog" type="AcceptDialog"]
+title = "Error"
+initial_position = 2
+size = Vector2i(400, 150)
+script = ExtResource("1_w8j4c")
+

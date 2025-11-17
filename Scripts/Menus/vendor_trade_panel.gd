@@ -27,12 +27,15 @@ signal install_requested(item, quantity, vendor_id)
 @onready var convoy_money_label: Label = %ConvoyMoneyLabel
 @onready var convoy_cargo_label: Label = %ConvoyCargoLabel
 @onready var trade_mode_tab_container: TabContainer = %TradeModeTabContainer
+@onready var toast_notification: Control = %ToastNotification
 @onready var loading_panel: Panel = %LoadingPanel # (Add a Panel node in your scene and name it LoadingPanel)
 
 # --- Data ---
 var vendor_data # Should be set by the parent
 var convoy_data = {} # Add this line
 var gdm: Node # GameDataManager instance
+var vendor_items = {}
+var convoy_items = {}
 var current_settlement_data # Will hold the current settlement data for local vendor lookup
 var all_settlement_data_global: Array # New: Will hold all settlement data for global vendor lookup
 var selected_item = null
@@ -43,6 +46,7 @@ var _last_selection_unique_key: String = "" # Used to detect same logical select
 var _last_selected_tree: String = "" # "vendor" or "convoy"; used to restore selection after refreshes
 var _last_selected_restore_id: String = "" # Raw cargo_id or vehicle_id string for restoring selection
 
+var _transaction_in_progress: bool = false
 # Backend compatibility cache (per vehicle + part uid), shared semantics with Mechanics menu
 var _compat_cache: Dictionary = {} # key: vehicle_id||part_uid -> payload
 
@@ -93,6 +97,13 @@ func _ready() -> void:
 		# Hook backend part compatibility so vendor UI can display the same truth as mechanics
 		if gdm.has_signal("part_compatibility_ready") and not gdm.part_compatibility_ready.is_connected(_on_part_compatibility_ready):
 			gdm.part_compatibility_ready.connect(_on_part_compatibility_ready)
+		# Connect to settlement updates to know when a vendor refresh is complete.
+		if gdm.has_signal("settlement_data_updated") and not gdm.is_connected("settlement_data_updated", Callable(self, "_on_settlement_data_updated_for_refresh")):
+			gdm.settlement_data_updated.connect(Callable(self, "_on_settlement_data_updated_for_refresh"))
+		# After a transaction, GDM will update convoy data. We listen to this to trigger a full panel refresh,
+		# which includes re-fetching vendor inventory. This creates a sequential, non-flickering update.
+		if gdm.has_signal("convoy_data_updated") and not gdm.is_connected("convoy_data_updated", Callable(self, "_on_gdm_convoy_data_changed")):
+			gdm.convoy_data_updated.connect(Callable(self, "_on_gdm_convoy_data_changed"))
 	else:
 		printerr("VendorTradePanel: Could not find GameDataManager.")
 
@@ -123,22 +134,86 @@ func request_panel_data(convoy_id: String, vendor_id: String) -> void:
 
 # Handler for when GDM emits vendor_panel_data_ready
 func _on_vendor_panel_data_ready(vendor_panel_data: Dictionary) -> void:
+	print("[VendorTradePanel][LOG] _on_vendor_panel_data_ready called. Hiding loading panel and updating UI.")
+	_transaction_in_progress = false # Failsafe reset
+	loading_panel.visible = false # Hide loading indicator on data arrival
 	self.vendor_data = vendor_panel_data.get("vendor_data")
 	self.convoy_data = vendor_panel_data.get("convoy_data")
 	self.current_settlement_data = vendor_panel_data.get("settlement_data")
 	self.all_settlement_data_global = vendor_panel_data.get("all_settlement_data")
 	self.vendor_items = vendor_panel_data.get("vendor_items", {})
 	self.convoy_items = vendor_panel_data.get("convoy_items", {})
-	# Preserve current selection across refreshes when possible
+
+	# --- START ATOMIC REFRESH to prevent flicker ---
+	# Disconnect signals to prevent flicker from intermediate states during repopulation.
+	vendor_item_tree.item_selected.disconnect(_on_vendor_item_selected)
+	convoy_item_tree.item_selected.disconnect(_on_convoy_item_selected)
+
 	var prev_selected_id := _last_selected_restore_id
 	var prev_tree := _last_selected_tree
+	
+	selected_item = nil # Clear selection variable before repopulating tree
+
 	_update_vendor_ui()
-	# Try to restore selection in the appropriate tree
+
+	var selection_restored = false
 	if typeof(prev_selected_id) == TYPE_STRING and not String(prev_selected_id).is_empty():
 		if prev_tree == "vendor":
-			_restore_selection(vendor_item_tree, prev_selected_id)
+			selection_restored = _restore_selection(vendor_item_tree, prev_selected_id)
 		elif prev_tree == "convoy":
-			_restore_selection(convoy_item_tree, prev_selected_id)
+			selection_restored = _restore_selection(convoy_item_tree, prev_selected_id)
+
+	# If selection was not restored, manually clear the inspector panels.
+	if not selection_restored:
+		_clear_inspector()
+		_update_transaction_panel() # This will correctly show $0 since selected_item is null
+		action_button.disabled = true
+		max_button.disabled = true
+
+	# Reconnect signals
+	vendor_item_tree.item_selected.connect(_on_vendor_item_selected)
+	convoy_item_tree.item_selected.connect(_on_convoy_item_selected)
+	# --- END ATOMIC REFRESH ---
+
+func _on_settlement_data_updated_for_refresh(_all_settlements: Array) -> void:
+	# This signal is broad, so we only act if we are specifically waiting for a refresh.
+	# The loading_panel's visibility is our state indicator.
+	if not is_instance_valid(loading_panel) or not loading_panel.visible:
+		# This is now expected for general settlement updates not related to a transaction.
+		return
+
+	# The vendor data in GDM has been updated. Now, we need to re-request the fully
+	# aggregated panel data (which includes convoy items, etc.). This will trigger
+	# the `_on_vendor_panel_data_ready` handler, which will hide the loading panel
+	# and update the entire UI with the fresh data.
+	print("[VendorTradePanel][LOG] Settlement data updated while loading. Re-requesting full panel data.")
+	if is_instance_valid(gdm) and self.convoy_data and self.vendor_data:
+		var convoy_id = self.convoy_data.get("convoy_id", "")
+		var vendor_id = self.vendor_data.get("vendor_id", "")
+		if not convoy_id.is_empty() and not vendor_id.is_empty():
+			gdm.request_vendor_panel_data(convoy_id, vendor_id)
+		else:
+			# Failsafe: if we can't re-request, at least hide the loading panel.
+			loading_panel.visible = false
+	else:
+		# Failsafe
+		loading_panel.visible = false
+
+func _on_gdm_convoy_data_changed(all_convoys: Array) -> void:
+	# This is our primary trigger to refresh the panel after a transaction (buy/sell).
+	# We only act if the panel is visible and we've flagged that a transaction was initiated (`_transaction_in_progress`).
+	if not is_visible_in_tree() or not _transaction_in_progress or not is_instance_valid(gdm):
+		return
+
+	# Consume the flag so this refresh cycle only runs once per transaction.
+	_transaction_in_progress = false
+
+	# To get the latest vendor stock, we must re-request it. This will, in turn,
+	# trigger a full panel data aggregation and UI refresh via the `settlement_data_updated` signal chain.
+	if vendor_data and vendor_data.has("vendor_id"):
+		print("[VendorTradePanel][LOG] Post-transaction convoy update detected. Refreshing vendor data.")
+		loading_panel.visible = true
+		gdm.request_vendor_data_refresh(vendor_data.get("vendor_id"))
 
 func _update_vendor_ui() -> void:
 	# Use self.vendor_items and self.convoy_items to populate the UI
@@ -656,51 +731,6 @@ func _on_user_data_updated(_user_data: Dictionary):
 	# When user data changes (e.g., after a transaction), refresh the display.
 	_update_convoy_info_display()
 
-func _on_gdm_settlement_data_updated(all_settlements_data: Array) -> void:
-	if vendor_data.is_empty() or not vendor_data.has("vendor_id"):
-		return
-	self.all_settlement_data_global = all_settlements_data
-	var current_vendor_id = str(vendor_data.get("vendor_id"))
-	var prev_selected_id := _last_selected_restore_id
-	var prev_tree := _last_selected_tree
-	for settlement in all_settlements_data:
-		if settlement.has("vendors") and settlement.vendors is Array:
-			for vendor in settlement.vendors:
-				if vendor.has("vendor_id") and str(vendor.get("vendor_id")) == current_vendor_id:
-					self.vendor_data = vendor # <-- Only update here!
-					_populate_vendor_list()
-					# Try to restore prior selection if possible
-					if typeof(prev_selected_id) == TYPE_STRING and not String(prev_selected_id).is_empty():
-						if prev_tree == "vendor":
-							_restore_selection(vendor_item_tree, prev_selected_id)
-						elif prev_tree == "convoy":
-							_restore_selection(convoy_item_tree, prev_selected_id)
-					return
-	if is_instance_valid(loading_panel):
-		loading_panel.visible = false
-
-func _on_gdm_convoy_data_updated(all_convoys_data: Array) -> void:
-	if convoy_data.is_empty() or not convoy_data.has("convoy_id"):
-		return
-	var current_convoy_id = str(convoy_data.get("convoy_id"))
-	var prev_selected_id := _last_selected_restore_id
-	var prev_tree := _last_selected_tree
-	for updated_convoy_data in all_convoys_data:
-		if updated_convoy_data.has("convoy_id") and str(updated_convoy_data.get("convoy_id")) == current_convoy_id:
-			self.convoy_data = updated_convoy_data # <-- Only update here!
-			_populate_convoy_list()
-			_update_convoy_info_display()
-			# Try to restore prior selection if possible
-			if typeof(prev_selected_id) == TYPE_STRING and not String(prev_selected_id).is_empty():
-				if prev_tree == "vendor":
-					_restore_selection(vendor_item_tree, prev_selected_id)
-				elif prev_tree == "convoy":
-					_restore_selection(convoy_item_tree, prev_selected_id)
-			return
-	if is_instance_valid(loading_panel):
-		loading_panel.visible = false
-
-
 
 # --- Signal Handlers ---
 func _on_tab_changed(tab_index: int) -> void:
@@ -923,6 +953,9 @@ func _on_action_button_pressed() -> void:
 	var quantity = int(quantity_spinbox.value)
 	if quantity <= 0:
 		return
+
+	_transaction_in_progress = true
+	action_button.disabled = true # Prevent double-clicks
 	var item_data_source = selected_item.get("item_data")
 	if not item_data_source:
 		return
@@ -1205,115 +1238,90 @@ func _update_fitment_panel() -> void:
 		fitment_panel.visible = true
 
 func _update_transaction_panel() -> void:
+	var item_name_for_log = selected_item.item_data.get("name", "<no_name>") if selected_item and selected_item.has("item_data") else "null"
+	print("[VendorTradePanel][LOG] _update_transaction_panel called for item: '%s'" % item_name_for_log)
+
 	if not selected_item:
-		price_label.text = "Total Price: $0"
+		print("[VendorTradePanel][LOG]   -> No item selected, setting price to $0.")
+		price_label.text = "Total Price: $0" # FIX: Ensure dollar sign is present
 		return
 
 	var item_data_source = selected_item.item_data if selected_item.has("item_data") and not selected_item.item_data.is_empty() else selected_item
 
-	# Handle vehicles separately, as they don't use cargo space and have a simple price.
-	if item_data_source.has("vehicle_id"):
-		var price = float(item_data_source.get("price", 0.0))
-		if current_mode == "sell":
-			# For display, assume sell price is 50% of base. The actual transaction is handled by the backend.
-			price /= 2.0
-		var quantity = int(quantity_spinbox.value) # Should be 1 for vehicles
-		var total_price = price * quantity
-		
-		var bbcode_text = ""
-		bbcode_text += "[b]Price:[/b] $%s\n" % ("%.2f" % price)
-		bbcode_text += "[b]Quantity:[/b] %d\n" % quantity
-		bbcode_text += "[b]Total Price:[/b] $%s" % ("%.2f" % total_price)
-		
-		price_label.text = bbcode_text
-		_update_install_button_state()
-		return
-
-	# --- START: Reduced logging to prevent output overflow ---
-	var item_name_for_log = item_data_source.get("name", "<no_name>")
-	var item_id_for_log = item_data_source.get("cargo_id", item_data_source.get("vehicle_id", "<no_id>"))
-	print("DEBUG: item_data_source for price calculation: name='%s', id='%s'" % [item_name_for_log, item_id_for_log])
-	# --- END: Reduced logging ---
-
+	# --- START: UNIFIED PRICE & DISPLAY LOGIC ---
+	var is_vehicle = item_data_source.has("vehicle_id")
 	var quantity = int(quantity_spinbox.value)
-	var final_unit_price = _get_contextual_unit_price(item_data_source)
-	var total_price = final_unit_price * quantity
+	var unit_price: float = 0.0
 
-	if typeof(final_unit_price) != TYPE_FLOAT and typeof(final_unit_price) != TYPE_INT:
-		final_unit_price = 0.0
-	if typeof(total_price) != TYPE_FLOAT and typeof(total_price) != TYPE_INT:
-		total_price = 0.0
+	if is_vehicle:
+		# For vehicles, the price is direct. Check common keys for robustness to fix $0 bug.
+		unit_price = float(item_data_source.get("price", 0.0))
+		if unit_price == 0.0:
+			unit_price = float(item_data_source.get("unit_price", 0.0))
+		if unit_price == 0.0:
+			unit_price = float(item_data_source.get("base_unit_price", 0.0))
+	else:
+		# For cargo, use the existing complex calculation.
+		unit_price = _get_contextual_unit_price(item_data_source)
 
-	var price_components = _get_item_price_components(item_data_source)
-	var container_unit_price = price_components.container_unit_price
-	var resource_unit_value = price_components.resource_unit_value
+	# Apply sell price reduction for display purposes. The backend handles the actual value.
+	if current_mode == "sell":
+		unit_price /= 2.0
 
-	var total_container_value_display: float = 0.0
-	var total_resource_value_display: float = 0.0
-
-	if current_mode == "buy":
-		total_container_value_display = container_unit_price * quantity
-		total_resource_value_display = resource_unit_value * quantity
-	else: # "sell"
-		var final_container_sell_price_unit = container_unit_price / 2.0
-		var sell_price_val = item_data_source.get("sell_unit_price")
-		if sell_price_val is float or sell_price_val is int:
-			final_container_sell_price_unit = float(sell_price_val)
-		total_container_value_display = final_container_sell_price_unit * quantity
-		total_resource_value_display = (resource_unit_value / 2.0) * quantity
+	var total_price = unit_price * quantity
 
 	var bbcode_text = ""
-	bbcode_text += "[b]Unit Price:[/b] $%s\n" % ("%.2f" % final_unit_price)
+	if is_vehicle:
+		bbcode_text += "[b]Price:[/b] $%s\n" % ("%.2f" % unit_price)
+		bbcode_text += "[b]Quantity:[/b] %d\n" % quantity
+		bbcode_text += "[b]Total Price:[/b] $%s" % ("%.2f" % total_price)
+	else:
+		# Use the original detailed display logic for cargo items
+		bbcode_text += "[b]Unit Price:[/b] $%s\n" % ("%.2f" % unit_price)
 
-	var is_mission_cargo = current_mode == "sell" and selected_item.has("mission_vendor_name") and not selected_item.mission_vendor_name.is_empty() and selected_item.mission_vendor_name != "Unknown Vendor"
+		var price_components = _get_item_price_components(item_data_source)
+		var resource_unit_value = price_components.resource_unit_value
+		var total_container_value_display: float = (price_components.container_unit_price / (2.0 if current_mode == "sell" else 1.0)) * quantity
+		var total_resource_value_display: float = (resource_unit_value / (2.0 if current_mode == "sell" else 1.0)) * quantity
+		var is_mission_cargo = current_mode == "sell" and selected_item.has("mission_vendor_name") and not selected_item.mission_vendor_name.is_empty() and selected_item.mission_vendor_name != "Unknown Vendor"
+		if total_resource_value_display > 0.01 and is_mission_cargo:
+			bbcode_text += "  [color=gray](Item: %.2f + Resources: %.2f)[/color]\n" % [total_container_value_display, total_resource_value_display]
 
-	# Show the breakdown ONLY for mission cargo that also has resources of value.
-	if total_resource_value_display > 0.01 and is_mission_cargo:
-		bbcode_text += "  [color=gray](Item: %.2f + Resources: %.2f)[/color]\n" % [total_container_value_display, total_resource_value_display]
+		bbcode_text += "[b]Quantity:[/b] %d\n" % quantity
+		bbcode_text += "[b]Total Price:[/b] $%s\n" % ("%.2f" % total_price)
 
-	bbcode_text += "[b]Quantity:[/b] %d\n" % quantity
-	bbcode_text += "[b]Total Price:[/b] $%s\n" % ("%.2f" % total_price)
+		# --- Added detailed weight/volume and projected convoy stats ---
+		var unit_weight := 0.0
+		if item_data_source.has("unit_weight"): unit_weight = float(item_data_source.get("unit_weight", 0.0))
+		elif item_data_source.has("weight") and item_data_source.has("quantity") and float(item_data_source.get("quantity", 0.0)) > 0.0:
+			unit_weight = float(item_data_source.get("weight", 0.0)) / float(item_data_source.get("quantity", 1.0))
+		var added_weight = unit_weight * quantity
 
-	# --- Added detailed weight/volume and projected convoy stats ---
-	var unit_weight := 0.0
-	if item_data_source.has("unit_weight"):
-		unit_weight = float(item_data_source.get("unit_weight", 0.0))
-	elif item_data_source.has("weight") and item_data_source.has("quantity") and float(item_data_source.get("quantity", 0.0)) > 0.0:
-		var qw = float(item_data_source.get("quantity", 1.0))
-		if qw > 0.0:
-			unit_weight = float(item_data_source.get("weight", 0.0)) / qw
-	var added_weight = unit_weight * quantity
+		var unit_volume := 0.0
+		if item_data_source.has("unit_volume"): unit_volume = float(item_data_source.get("unit_volume", 0.0))
+		elif item_data_source.has("volume") and item_data_source.has("quantity") and float(item_data_source.get("quantity", 0.0)) > 0.0:
+			unit_volume = float(item_data_source.get("volume", 0.0)) / float(item_data_source.get("quantity", 1.0))
+		var added_volume = unit_volume * quantity
 
-	var unit_volume := 0.0
-	if item_data_source.has("unit_volume"):
-		unit_volume = float(item_data_source.get("unit_volume", 0.0))
-	elif item_data_source.has("volume") and item_data_source.has("quantity") and float(item_data_source.get("quantity", 0.0)) > 0.0:
-		var qv = float(item_data_source.get("quantity", 1.0))
-		if qv > 0.0:
-			unit_volume = float(item_data_source.get("volume", 0.0)) / qv
-	var added_volume = unit_volume * quantity
+		if current_mode == "sell":
+			added_weight = -added_weight
+			added_volume = -added_volume
 
-	# Adjust direction for sell mode (capacity freed instead of consumed)
-	if current_mode == "sell":
-		added_weight = -added_weight
-		added_volume = -added_volume
+		if unit_weight > 0.0: bbcode_text += "[b]Unit Weight:[/b] %.2f\n" % unit_weight
+		if unit_volume > 0.0: bbcode_text += "[b]Unit Volume:[/b] %.2f\n" % unit_volume
+		if abs(added_weight) > 0.0001: bbcode_text += "[b]Total Weight:[/b] %.2f\n" % added_weight
+		if abs(added_volume) > 0.0001: bbcode_text += "[b]Total Volume:[/b] %.2f\n" % added_volume
 
-	if unit_weight > 0.0: bbcode_text += "[b]Unit Weight:[/b] %.2f\n" % unit_weight
-	if unit_volume > 0.0: bbcode_text += "[b]Unit Volume:[/b] %.2f\n" % unit_volume
-	if abs(added_weight) > 0.0001: bbcode_text += "[b]Total Weight:[/b] %.2f\n" % added_weight
-	if abs(added_volume) > 0.0001: bbcode_text += "[b]Total Volume:[/b] %.2f\n" % added_volume
-
-	# Projected post-transaction stats (only if we have convoy totals)
-	if (_convoy_total_volume > 0.0 or _convoy_total_weight > 0.0):
-		bbcode_text += "[b]After %s:[/b]\n" % ("Purchase" if current_mode == "buy" else "Sale")
-		if _convoy_total_volume > 0.0:
-			var projected_used_volume = clamp(_convoy_used_volume + added_volume, 0.0, 9999999.0)
-			var vol_pct = clamp((projected_used_volume / _convoy_total_volume) * 100.0, 0.0, 999.9)
-			bbcode_text += "  Volume: %.2f / %.2f (%.1f%%)\n" % [projected_used_volume, _convoy_total_volume, vol_pct]
-		if _convoy_total_weight > 0.0:
-			var projected_used_weight = clamp(_convoy_used_weight + added_weight, 0.0, 9999999.0)
-			var wt_pct = clamp((projected_used_weight / _convoy_total_weight) * 100.0, 0.0, 999.9)
-			bbcode_text += "  Weight: %.2f / %.2f (%.1f%%)\n" % [projected_used_weight, _convoy_total_weight, wt_pct]
+		if (_convoy_total_volume > 0.0 or _convoy_total_weight > 0.0):
+			bbcode_text += "[b]After %s:[/b]\n" % ("Purchase" if current_mode == "buy" else "Sale")
+			if _convoy_total_volume > 0.0:
+				var projected_used_volume = clamp(_convoy_used_volume + added_volume, 0.0, 9999999.0)
+				var vol_pct = clamp((projected_used_volume / _convoy_total_volume) * 100.0, 0.0, 999.9)
+				bbcode_text += "  Volume: %.2f / %.2f (%.1f%%)\n" % [projected_used_volume, _convoy_total_volume, vol_pct]
+			if _convoy_total_weight > 0.0:
+				var projected_used_weight = clamp(_convoy_used_weight + added_weight, 0.0, 9999999.0)
+				var wt_pct = clamp((projected_used_weight / _convoy_total_weight) * 100.0, 0.0, 999.9)
+				bbcode_text += "  Weight: %.2f / %.2f (%.1f%%)\n" % [projected_used_weight, _convoy_total_weight, wt_pct]
 
 	# Trim trailing newline
 	if bbcode_text.ends_with("\n"):
@@ -1464,20 +1472,30 @@ func _get_contextual_unit_price(item_data_source: Dictionary) -> float:
 
 func _on_api_transaction_result(result: Dictionary) -> void:
 	print("DEBUG: _on_api_transaction_result called with result: ", result)
-	if not is_instance_valid(gdm):
-		printerr("VendorTradePanel: Cannot refresh data after transaction, GameDataManager is invalid.")
-		return
-	gdm.request_user_data_refresh()
-	if convoy_data and convoy_data.has("convoy_id"):
-		print("DEBUG: Requesting convoy data refresh after transaction.")
-		gdm.request_convoy_data_refresh()
-	if vendor_data and vendor_data.has("vendor_id"):
-		print("DEBUG: Requesting vendor data refresh after transaction.")
-		gdm.request_vendor_data_refresh(vendor_data.get("vendor_id"))
+	# This handler is now mostly deprecated. The panel's refresh logic is now driven by
+	# signals from the GameDataManager (`convoy_data_updated`) to ensure a more
+	# orderly update flow and prevent UI flicker from multiple concurrent refresh requests.
+	# The GDM's own handlers for transaction signals (e.g., `_on_convoy_transaction`)
+	# are responsible for updating the core data models.
+	pass
 
 func _on_api_transaction_error(error_message: String) -> void:
-	# Called when a transaction fails.
-	printerr("API Transaction Error: ", error_message)
+	# This panel is only interested in errors that happen while it's visible.
+	if not is_visible_in_tree():
+		return
+
+	# Check if this is a special "stale inventory" error that we should handle locally.
+	if ErrorTranslator.is_inline_error(error_message):
+		printerr("VendorTradePanel: Handling inline API error: ", error_message)
+		
+		# Show a toast notification instead of a jarring popup.
+		var toast_msg = ErrorTranslator.translate(error_message)
+		toast_notification.show_message(toast_msg)
+		
+		_transaction_in_progress = false # The transaction failed, so reset the flag.
+		# Show loading indicator and refresh the vendor data to get the latest inventory.
+		loading_panel.visible = true
+		gdm.request_vendor_data_refresh(self.vendor_data.get("vendor_id"))
 
 # Updates the comparison panel (stub, fill in as needed)
 func _update_comparison() -> void:
@@ -1539,22 +1557,26 @@ func _on_description_toggle_pressed() -> void:
 func _log_size_after_update():
 	print("[VendorPanel][LOG] _update_inspector finished. New panel size: %s" % str(size))
 
-func _restore_selection(tree: Tree, item_id):
+func _restore_selection(tree: Tree, item_id) -> bool:
 	if not tree or not tree.get_root():
 		_handle_new_item_selection(null)
-		return
+		return false
 	for category in tree.get_root().get_children():
 		for item in category.get_children():
 			var agg_data = item.get_metadata(0)
 			if agg_data and agg_data.has("item_data"):
 				var id = agg_data.item_data.get("cargo_id", agg_data.item_data.get("vehicle_id", null))
-				var id_str := str(id)
-				var target_str := str(item_id)
-				if id_str == target_str:
+				if id != null and str(id) == str(item_id):
 					item.select(0)
-					_handle_new_item_selection(agg_data)
-					return
-	_handle_new_item_selection(null)	# Helper to restore selection in a tree after data refresh
+					# Manually call the handler since the selection signal is disconnected during the refresh.
+					# This ensures the inspector panel updates correctly.
+					call_deferred("_handle_new_item_selection", agg_data)
+					return true
+	
+	# If we get here, the previously selected item was not found (e.g., it was sold or is out of stock).
+	# Explicitly clear the selection.
+	_handle_new_item_selection(null)
+	return false
 
 # --- Tutorial helpers: target resolution for highlight/gating ---
 

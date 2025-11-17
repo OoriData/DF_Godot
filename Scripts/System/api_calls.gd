@@ -1473,6 +1473,9 @@ func _on_request_completed(result: int, response_code: int, _headers: PackedStri
 				if typeof(first_issue) == TYPE_DICTIONARY and first_issue.has("msg"):
 					emit_signal('fetch_error', "PATCH '" + _current_patch_signal_name + "' failed: " + str(first_issue["msg"]))
 			# Complete request now; we've surfaced error
+			else:
+				# Fallback for non-JSON error body
+				emit_signal('fetch_error', "PATCH '" + _current_patch_signal_name + "' failed: " + fail_body_text)
 			_complete_current_request()
 			return
 

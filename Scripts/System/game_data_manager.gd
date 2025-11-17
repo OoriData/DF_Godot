@@ -20,6 +20,7 @@ signal journey_canceled(convoy_data: Dictionary)
 # New lifecycle / aggregation signals
 signal initial_data_ready  # Fired once after first map + first convoy data loaded
 signal game_data_reset      # Fired when user-auth related data is cleared (logout / expiry)
+signal inline_error_handled # Fired when a UI component handles a recoverable error locally
 
 
 # --- Journey Planning Signals ---
@@ -1484,6 +1485,10 @@ func update_single_vendor(new_vendor_data: Dictionary) -> void:
 			probe_mechanic_vendor_availability_for_convoy(probe_target)
 	else:
 		printerr("GameDataManager: Vendor ID %s not found in any settlement." % updated_id)
+
+func notify_inline_error_handled() -> void:
+	"""Allows UI components to announce they are handling a recoverable error, so other systems (like tutorials) can pause."""
+	emit_signal("inline_error_handled")
 
 func request_vendor_panel_data(convoy_id: String, vendor_id: String) -> void:
 	var vendor_data = get_vendor_by_id(vendor_id)
