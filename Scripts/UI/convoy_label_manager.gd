@@ -52,6 +52,12 @@ var _base_horizontal_label_offset_from_center: float = 20.0 # 10.0 * 2.0
 var _label_map_edge_padding: float = 2.0
 var _label_anti_collision_y_shift: float = 5.0
 
+# --- Collision-avoidance tuning (pixels, in label container local space) ---
+# Minimum keep-out radius around the convoy icon center. Scales naturally with tile size via usage.
+var _icon_keepout_radius_px: float = 18.0
+# Extra padding added to the journey line thickness when checking panel overlap.
+var _route_keepout_extra_px: float = 8.0
+
 
 func set_convoy_label_container(p_container: Node2D):
 	if not is_instance_valid(p_container):
@@ -393,7 +399,7 @@ func _position_convoy_panel(panel: Panel, convoy_data: Dictionary, existing_labe
 		panel.position = p_convoy_label_user_positions[current_convoy_id_str] # User positions are local
 		print("[ConvoyLabelManager] Using user-defined position for convoy_id:", current_convoy_id_str, panel.position)
 		var current_panel_rect = Rect2(panel.position, panel_actual_size)
-		for _attempt in range(10): # Max attempts
+		for _attempt in range(12): # Max attempts
 			var collides_with_existing: bool = false
 			var colliding_rect_for_shift_calc: Rect2 
 			for existing_rect in existing_label_rects: # These are also local to container
@@ -402,20 +408,95 @@ func _position_convoy_panel(panel: Panel, convoy_data: Dictionary, existing_labe
 					collides_with_existing = true
 					colliding_rect_for_shift_calc = existing_rect
 					break
-			if collides_with_existing:
+			# Also avoid covering the convoy icon and immediate journey segment even for user-placed panels
+			var avoid_icon_or_route := _panel_overlaps_icon_or_route(current_panel_rect, convoy_data)
+			if collides_with_existing or avoid_icon_or_route:
 				var shift_based_on_collided_height = 0.0
-				if colliding_rect_for_shift_calc.size.y > 0: # Check for valid Rect2
+				if collides_with_existing and colliding_rect_for_shift_calc.size.y > 0: # Check for valid Rect2
 					shift_based_on_collided_height = colliding_rect_for_shift_calc.size.y * 0.25 + _label_map_edge_padding
-				
 				var label_min_size_for_shift = label_node.get_minimum_size()
 				var y_shift_amount = _label_anti_collision_y_shift + max(label_min_size_for_shift.y * 0.1, shift_based_on_collided_height)
-				
 				panel.position.y += y_shift_amount
 				current_panel_rect = Rect2(panel.position, panel_actual_size)
 			else:
 				break # No collision
 
+	# Auto-placement collision avoidance (labels, icon, route)
+	var base_side_right := true
+	var try_side_toggle_every := 4
+	var attempt := 0
+	while attempt < 20:
+		var panel_rect := Rect2(panel.position, panel_actual_size)
+		var overlaps_labels := false
+		for r in existing_label_rects:
+			if panel_rect.intersects(r.grow_individual(2,2,2,2), true):
+				overlaps_labels = true
+				break
+		var overlaps_icon_or_route := _panel_overlaps_icon_or_route(panel_rect, convoy_data)
+		if not overlaps_labels and not overlaps_icon_or_route:
+			break
+		# Adjust: alternate vertical nudges, periodically flip side and increase horizontal offset
+		var sign_dir: int = 1 if (attempt % 2) == 0 else -1
+		var label_min_sz = label_node.get_minimum_size()
+		var y_shift: float = _label_anti_collision_y_shift + max(2.0, label_min_sz.y * 0.1)
+		panel.position.y += float(sign_dir) * y_shift
+		if (attempt + 1) % try_side_toggle_every == 0:
+			base_side_right = not base_side_right
+			var side_dir := 1.0 if base_side_right else -1.0
+			var extra_x: float = (abs(current_horizontal_offset_world) * 0.5) + (attempt * 0.25)
+			panel.position.x = convoy_center_local_x + side_dir * (current_horizontal_offset_world + extra_x)
+			panel.position.y = convoy_center_local_y - (panel_actual_size.y / 2.0)
+		attempt += 1
+
 	# print("ConvoyLabelManager (_position_convoy_panel) for %s: FinalLocalPos: %s" % [panel.name, panel.position]) # DEBUG
+
+
+# --- Collision helpers ---
+func _panel_overlaps_icon_or_route(panel_rect: Rect2, convoy_data: Dictionary) -> bool:
+	# Icon keepout
+	var conv_x: float = convoy_data.get('x', 0.0)
+	var conv_y: float = convoy_data.get('y', 0.0)
+	var center := Vector2((conv_x + 0.5) * _cached_actual_tile_width_on_texture, (conv_y + 0.5) * _cached_actual_tile_height_on_texture)
+	if _rect_overlaps_circle(panel_rect, center, _icon_keepout_radius_px):
+		return true
+
+	# Route keepout: use current segment near convoy when available
+	var raw_journey = convoy_data.get('journey')
+	if raw_journey is Dictionary:
+		var j: Dictionary = raw_journey
+		var rx: Array = j.get('route_x', [])
+		var ry: Array = j.get('route_y', [])
+		var seg_idx: int = convoy_data.get('_current_segment_start_idx', -1)
+		if rx.size() >= 2 and ry.size() == rx.size():
+			var i0: int = clamp(seg_idx, 0, rx.size() - 2)
+			var p1 := Vector2((float(rx[i0]) + 0.5) * _cached_actual_tile_width_on_texture, (float(ry[i0]) + 0.5) * _cached_actual_tile_height_on_texture)
+			var p2 := Vector2((float(rx[i0+1]) + 0.5) * _cached_actual_tile_width_on_texture, (float(ry[i0+1]) + 0.5) * _cached_actual_tile_height_on_texture)
+			# Grow the panel rect by a thickness to approximate the route stroke + outline
+			var grown := panel_rect.grow(_route_keepout_extra_px)
+			if _segment_intersects_rect(p1, p2, grown):
+				return true
+	return false
+
+func _rect_overlaps_circle(r: Rect2, c: Vector2, radius: float) -> bool:
+	var closest_x = clamp(c.x, r.position.x, r.position.x + r.size.x)
+	var closest_y = clamp(c.y, r.position.y, r.position.y + r.size.y)
+	var dx = c.x - closest_x
+	var dy = c.y - closest_y
+	return (dx * dx + dy * dy) <= (radius * radius)
+
+func _segment_intersects_rect(p1: Vector2, p2: Vector2, rect: Rect2) -> bool:
+	# Fast checks: endpoint inside or intersects any edge
+	if rect.has_point(p1) or rect.has_point(p2):
+		return true
+	var top_left := rect.position
+	var top_right := rect.position + Vector2(rect.size.x, 0)
+	var bottom_left := rect.position + Vector2(0, rect.size.y)
+	var bottom_right := rect.position + rect.size
+	if Geometry2D.segment_intersects_segment(p1, p2, top_left, top_right) != null: return true
+	if Geometry2D.segment_intersects_segment(p1, p2, top_right, bottom_right) != null: return true
+	if Geometry2D.segment_intersects_segment(p1, p2, bottom_right, bottom_left) != null: return true
+	if Geometry2D.segment_intersects_segment(p1, p2, bottom_left, top_left) != null: return true
+	return false
 
 
 func _clamp_panel_position(panel: Panel, p_current_map_screen_rect_for_clamping: Rect2):
