@@ -172,15 +172,11 @@ func force_camera_update():
 
 func _update_camera_viewport_rect_on_resize():
 	if is_instance_valid(map_view) and is_instance_valid(map_camera_controller) and map_camera_controller.has_method("update_map_viewport_rect"):
-		var map_rect = map_view.get_global_rect()
+		# Use the actual MapDisplay (TextureRect) rect, not the root map_view rect.
+		# The root control can include extra UI chrome; using it causes camera/map edge mismatch.
+		var map_rect = _get_map_display_rect()
 		map_camera_controller.update_map_viewport_rect(map_rect)
-		# Only fit to full map when no menu is open, to avoid overriding convoy focus
-		var menu_manager = get_node_or_null("/root/MenuManager")
-		var menu_open = false
-		if is_instance_valid(menu_manager) and menu_manager.has_method("is_any_menu_active"):
-			menu_open = menu_manager.is_any_menu_active()
-		if not menu_open and map_camera_controller.has_method("fit_camera_to_tilemap"):
-			map_camera_controller.fit_camera_to_tilemap()
+		# Preserve current camera state on resize; limits are updated by controller
 
 
 
@@ -196,9 +192,12 @@ func _initial_camera_and_ui_setup():
 	
 	# Now that the layout is stable, tell the camera controller the correct viewport.
 	if is_instance_valid(map_camera_controller) and map_camera_controller.has_method("update_map_viewport_rect"):
-		var map_rect = map_view.get_global_rect()
-		# print("[DFCAM-DEBUG] MainScreen: Initial setup, notifying camera of viewport rect=", map_rect)
+		var map_rect = _get_map_display_rect()
+		# print("[DFCAM-DEBUG] MainScreen: Initial setup, notifying camera of viewport display rect=", map_rect)
 		map_camera_controller.update_map_viewport_rect(map_rect)
+		# Force strict clamping to current viewport size at runtime
+		if map_camera_controller.has_method("set_loose_pan_when_menu_open"):
+			map_camera_controller.set_loose_pan_when_menu_open(false)
 		if map_camera_controller.has_method("fit_camera_to_tilemap"):
 			map_camera_controller.fit_camera_to_tilemap()
 	# else:
@@ -242,12 +241,14 @@ func _on_map_view_gui_input(event: InputEvent):
 		elif event.button_index == MOUSE_BUTTON_WHEEL_UP and event.pressed:
 			var inc: float = float(map_camera_controller.camera_zoom_factor_increment)
 			var factor: float = (1.0 / inc) if _opt_invert_zoom else inc
-			map_camera_controller.zoom_at_screen_pos(factor, event.position)
+			var center := _to_subviewport_screen(event.global_position)
+			map_camera_controller.zoom_at_screen_pos(factor, center)
 			get_viewport().set_input_as_handled()
 		elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN and event.pressed:
 			var inc2: float = float(map_camera_controller.camera_zoom_factor_increment)
 			var factor2: float = inc2 if _opt_invert_zoom else (1.0 / inc2)
-			map_camera_controller.zoom_at_screen_pos(factor2, event.position)
+			var center2 := _to_subviewport_screen(event.global_position)
+			map_camera_controller.zoom_at_screen_pos(factor2, center2)
 			get_viewport().set_input_as_handled()
 
 	elif event is InputEventMouseMotion:
@@ -262,7 +263,10 @@ func _on_map_view_gui_input(event: InputEvent):
 		if _opt_gestures_enabled:
 			var f: float = float(event.factor)
 			var z: float = f if not _opt_invert_zoom else (1.0 / max(0.0001, f))
-			map_camera_controller.zoom_at_screen_pos(z, event.position)
+			# Magnify gesture provides local position relative to map_view, convert to global first
+			var global_center3: Vector2 = map_view.get_global_transform() * event.position
+			var center3 := _to_subviewport_screen(global_center3)
+			map_camera_controller.zoom_at_screen_pos(z, center3)
 		get_viewport().set_input_as_handled()
 	elif event is InputEventPanGesture:
 		# The camera's pan function expects a screen-space delta
@@ -310,9 +314,18 @@ func _on_menu_visibility_changed(is_open: bool, _menu_name: String):
 	await get_tree().process_frame
 
 	if is_instance_valid(map_camera_controller) and map_camera_controller.has_method("update_map_viewport_rect"):
-		var map_rect = map_view.get_global_rect()
-		# print("[DFCAM-DEBUG] MainScreen: Notifying camera of new viewport rect=", map_rect)
+		var map_rect = _get_map_display_rect()
+		# print("[DFCAM-DEBUG] MainScreen: Notifying camera of new viewport display rect=", map_rect)
 		map_camera_controller.update_map_viewport_rect(map_rect)
+		if map_camera_controller.has_method("set_menu_open_state"):
+			map_camera_controller.set_menu_open_state(is_open)
+
+		# Some containers settle over two frames; re-sync once more to be bulletproof
+		await get_tree().process_frame
+		map_rect = _get_map_display_rect()
+		map_camera_controller.update_map_viewport_rect(map_rect)
+		if map_camera_controller.has_method("set_menu_open_state"):
+			map_camera_controller.set_menu_open_state(is_open)
 
 		if is_open:
 			# Focus on the convoy associated with the active menu
@@ -323,10 +336,7 @@ func _on_menu_visibility_changed(is_open: bool, _menu_name: String):
 					var convoy_data = active_menu.get_meta("menu_data")
 					if convoy_data and map_camera_controller.has_method("focus_on_convoy"):
 						map_camera_controller.focus_on_convoy(convoy_data)
-		else:
-			# When closing menus, re-fit to the full tilemap
-			if map_camera_controller.has_method("fit_camera_to_tilemap"):
-				map_camera_controller.fit_camera_to_tilemap()
+		# On close, preserve user's zoom/position; limits already updated by controller
 	# else:
 	# 	printerr("[DFCAM-DEBUG] MainScreen: Could not find MapCameraController or it lacks update_map_viewport_rect method.")
 
@@ -445,6 +455,7 @@ func _show_error_dialog(message: String):
 
 func _show_new_convoy_dialog():
 	print("[Onboarding] _show_new_convoy_dialog invoked.")
+	var modal_layer: Control = get_node_or_null("ModalLayer")
 	if not is_instance_valid(_new_convoy_dialog):
 		var scene_res: Resource = new_convoy_dialog_scene if new_convoy_dialog_scene != null else load(NEW_CONVOY_DIALOG_SCENE_PATH)
 		if scene_res == null or not (scene_res is PackedScene):
@@ -455,7 +466,7 @@ func _show_new_convoy_dialog():
 			print("[Onboarding] Instantiating NewConvoyDialog scene…")
 			_new_convoy_dialog = scene.instantiate()
 		# The host for the modal dialog is the full-screen CenterContainer from the scene file.
-		var modal_layer: Control = get_node_or_null("ModalLayer")
+		modal_layer = get_node_or_null("ModalLayer")
 		var host: Node = modal_layer.get_node_or_null("DialogHost") if is_instance_valid(modal_layer) else null
 		if not is_instance_valid(host):
 			printerr("[Onboarding] CRITICAL: ModalLayer or its DialogHost child not found in MainScreen.tscn!")
@@ -467,8 +478,7 @@ func _show_new_convoy_dialog():
 			_new_convoy_dialog.connect("create_requested", Callable(self, "_on_new_convoy_create"))
 		if _new_convoy_dialog.has_signal("canceled"):
 			_new_convoy_dialog.connect("canceled", Callable(self, "_on_new_convoy_canceled"))
-
-	var modal_layer := get_node_or_null("ModalLayer")
+	modal_layer = get_node_or_null("ModalLayer")
 	if _new_convoy_dialog.has_method("open"):
 		print("[Onboarding] Opening NewConvoyDialog…")
 		if is_instance_valid(modal_layer): modal_layer.show()
@@ -678,8 +688,8 @@ func _on_map_ready_for_focus():
 	_map_ready_for_focus = true
 	await get_tree().process_frame  # Wait for UI to settle
 	if is_instance_valid(map_camera_controller) and not _has_fitted_camera:
-		var map_rect = map_view.get_global_rect()
-		# print("[DFCAM-DEBUG] MainScreen: map_ready_for_focus, updating camera viewport rect=", map_rect)
+		var map_rect = _get_map_display_rect()
+		# print("[DFCAM-DEBUG] MainScreen: map_ready_for_focus, updating camera viewport display rect=", map_rect)
 		map_camera_controller.update_map_viewport_rect(map_rect)
 		if map_camera_controller.has_method("fit_camera_to_tilemap"):
 			map_camera_controller.fit_camera_to_tilemap()
@@ -707,3 +717,28 @@ func set_map_interactive(is_interactive: bool):
 	if not is_interactive and _is_panning:
 		_is_panning = false
 		Input.set_default_cursor_shape(Input.CURSOR_ARROW)
+
+# Convert a global mouse position (in main viewport) to SubViewport pixel space used by the map camera
+func _to_subviewport_screen(global_pos: Vector2) -> Vector2:
+	if not is_instance_valid(map_view):
+		return global_pos
+	var map_display: TextureRect = map_view.get_node_or_null("MapContainer/MapDisplay")
+	var sub_viewport: SubViewport = map_view.get_node_or_null("MapContainer/SubViewport")
+	if not is_instance_valid(map_display) or not is_instance_valid(sub_viewport):
+		return global_pos
+	var display_rect: Rect2 = map_display.get_global_rect()
+	var local_in_display: Vector2 = global_pos - display_rect.position
+	var sub_size: Vector2i = sub_viewport.size
+	return Vector2(
+		(local_in_display.x / max(1.0, display_rect.size.x)) * float(sub_size.x),
+		(local_in_display.y / max(1.0, display_rect.size.y)) * float(sub_size.y)
+	)
+
+# Helper: get the rect we should use for camera viewport sizing (MapDisplay if present, else full map_view)
+func _get_map_display_rect() -> Rect2:
+	if not is_instance_valid(map_view):
+		return Rect2()
+	var map_display: TextureRect = map_view.get_node_or_null("MapContainer/MapDisplay")
+	if is_instance_valid(map_display):
+		return map_display.get_global_rect()
+	return map_view.get_global_rect()

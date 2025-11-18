@@ -1,4 +1,4 @@
-[gd_scene load_steps=10 format=3 uid="uid://b7shrt87ucxid"]
+[gd_scene load_steps=11 format=3 uid="uid://b7shrt87ucxid"]
 
 [ext_resource type="Script" uid="uid://jgttep14pyof" path="res://Scripts/System/main.gd" id="1_qf4ax"]
 [ext_resource type="Script" uid="uid://x3j2ftwe2pi1" path="res://Scripts/Map/map_camera_controller.gd" id="2_k7gy6"]
@@ -8,6 +8,7 @@
 [ext_resource type="Script" uid="uid://crk2s2urriwrg" path="res://Scripts/System/game_timers.gd" id="5_b5irg"]
 [ext_resource type="Script" uid="uid://fqyn0cfdc0rs" path="res://Scripts/Map/convoy_visuals_manager.gd" id="8_hvyeg"]
 [ext_resource type="Script" uid="uid://dpn1l2xm7i2x7" path="res://Scripts/UI/UI_manager.gd" id="9_g243h"]
+[ext_resource type="Script" uid="uid://dyh60sc1kj54f" path="res://Scripts/Map/map_camera_debug_overlay.gd" id="10_dbgov"]
 
 [sub_resource type="ViewportTexture" id="ViewportTexture_k7gy6"]
 viewport_path = NodePath("MapContainer/SubViewport")
@@ -55,6 +56,9 @@ tile_set = ExtResource("3_vvi3b")
 script = ExtResource("3_t5xx3")
 
 [node name="ConvoyConnectorLinesContainer" type="Node2D" parent="MapContainer/SubViewport"]
+
+[node name="CameraDebugOverlay" type="Node2D" parent="MapContainer/SubViewport"]
+script = ExtResource("10_dbgov")
 
 [node name="MapInteractionManager" type="Node" parent="."]
 script = ExtResource("4_b4rp0")
