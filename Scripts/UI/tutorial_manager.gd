@@ -278,7 +278,7 @@ func _build_level_steps(level: int) -> Array:
 					id = "l5_open_convoy_menu",
 					copy = "Great! You have the mission cargo. Return to the convoy menu to plan your journey.",
 					action = "await_menu_open",
-					target = { resolver = "button_with_text", text_contains = "Convoy" },
+					target = { resolver = "convoy_return_button" },
 					lock = "soft"
 				},
 				{
@@ -292,7 +292,7 @@ func _build_level_steps(level: int) -> Array:
 					id = "l5_pick_destination",
 					copy = "Select the mission destination from the top of the list.",
 					action = "await_destination_pick",
-					target = { resolver = "journey_destination_button", text_contains = "Chicago" },
+					target = { resolver = "journey_top_mission_destination" },
 					lock = "soft"
 				},
 				{
@@ -453,6 +453,13 @@ func _run_current_step() -> void:
 			_apply_lock(step)
 			_resolve_and_highlight(step)
 			_watch_for_destination_pick()
+		"await_destination_pick":
+			# New explicit handler so destination click (find_route_requested) advances tutorial
+			# instead of relying on a Continue button.
+			_show_message(step.get("copy", ""), false)
+			_apply_lock(step)
+			_resolve_and_highlight(step)
+			_watch_for_destination_pick()
 		"await_journey_confirm":
 			_show_message(step.get("copy", ""), false)
 			_apply_lock(step)
@@ -466,10 +473,22 @@ func _run_current_step() -> void:
 			if _overlay and is_instance_valid(_overlay):
 				_overlay.call_deferred("queue_free")
 				_overlay = null
-			_save_progress(true) # Mark as fully finished
-			_started = false
+			# Advance to next level locally instead of leaving tutorial inactive on same level.
+			_level += 1
+			_steps = _load_steps_for_level(_level)
+			_step = 0
 			emit_signal("tutorial_finished")
-			print("[Tutorial] All tutorial levels completed. Final stage set to %d." % stage)
+			if _steps.is_empty():
+				# No more levels; persist finished state.
+				_save_progress(true)
+				_started = false
+				print("[Tutorial] All tutorial levels completed. Final stage set to %d." % stage)
+			else:
+				# Persist progress and immediately start next level.
+				_save_progress() # not finished globally
+				_started = true
+				_emit_started()
+				_run_current_step()
 		"await_journey_menu":
 			_show_message(step.get("copy", ""), false)
 			_apply_lock(step)

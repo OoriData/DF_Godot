@@ -31,6 +31,12 @@ func resolve(target: Dictionary) -> Dictionary:
 			var r = _resolve_vendor_tab_contains(target)
 			_print_resolve_result(kind, r)
 			return r
+		"convoy_return_button":
+			# New: highlight the convoy title button in the settlement menu if present,
+			# otherwise fall back to the global ConvoyMenuButton in the top bar.
+			var r := _resolve_convoy_return_button(target)
+			_print_resolve_result(kind, r)
+			return r
 		"vendor_trade_panel":
 			var r = _resolve_vendor_trade_panel(target)
 			_print_resolve_result(kind, r)
@@ -66,6 +72,12 @@ func resolve(target: Dictionary) -> Dictionary:
 		"auto":
 			# Attempt best-effort common targets
 			var r = _resolve_auto(target)
+			_print_resolve_result(kind, r)
+			return r
+		"journey_top_mission_destination":
+			# New specialized resolver: pick the first mission destination button (has leading '['cargo']').
+			# Falls back to the first destination button if no mission cargo present yet.
+			var r := _resolve_journey_top_mission_destination(target)
 			_print_resolve_result(kind, r)
 			return r
 		_:
@@ -277,6 +289,32 @@ func _resolve_vendor_action_button(target: Dictionary) -> Dictionary:
 		return { ok = false, node = panel, rect = _rect_for_control(panel), reason = "vendor-action-btn-missing:" + which }
 	return { ok = true, node = btn, rect = _rect_for_control(btn) }
 
+# New resolver: convoy_return_button
+# Highlights the convoy name button inside the settlement menu (TitleLabel) if present;
+# otherwise falls back to the global ConvoyMenuButton in the MainScreen top bar.
+func _resolve_convoy_return_button(_target: Dictionary) -> Dictionary:
+	# Primary: settlement menu title button
+	var settlement_menu := get_tree().get_root().find_child("ConvoySettlementMenu", true, false)
+	if is_instance_valid(settlement_menu):
+		var title_btn: Button = settlement_menu.get_node_or_null("MainVBox/TopBarHBox/TitleLabel")
+		if is_instance_valid(title_btn):
+			var rect := _rect_for_control(title_btn)
+			if rect.has_area():
+				return { ok = true, node = title_btn, rect = rect }
+			return { ok = false, node = title_btn, rect = rect, reason = "unstable-title-btn-rect" }
+
+	# Fallback: top bar convoy menu button
+	var main_screen := get_tree().get_root().find_child("MainScreen", true, false)
+	if is_instance_valid(main_screen):
+		var convoy_btn := main_screen.find_child("ConvoyMenuButton", true, false)
+		if is_instance_valid(convoy_btn) and convoy_btn is Control:
+			var rect2 := _rect_for_control(convoy_btn)
+			if rect2.has_area():
+				return { ok = true, node = convoy_btn, rect = rect2 }
+			return { ok = false, node = convoy_btn, rect = rect2, reason = "unstable-convoy-menu-btn-rect" }
+
+	return { ok = false, node = null, rect = Rect2(), reason = "convoy-return-button-not-found" }
+
 func _resolve_top_up_button(_target: Dictionary) -> Dictionary:
 	var menu := _get_settlement_menu()
 	if not is_instance_valid(menu):
@@ -355,6 +393,38 @@ func _resolve_journey_confirm_button(_target: Dictionary) -> Dictionary:
 		return { ok = false, node = btn, rect = rect, reason = "unstable-layout" }
 	
 	return { ok = true, node = btn, rect = rect }
+
+# New: resolve first mission destination (button text starts with '[') or fallback to first destination button.
+func _resolve_journey_top_mission_destination(_target: Dictionary) -> Dictionary:
+	var menu := _get_journey_menu()
+	if not is_instance_valid(menu):
+		return { ok = false, node = null, rect = Rect2(), reason = "journey-menu-missing" }
+
+	var content_vbox: VBoxContainer = menu.get_node_or_null("MainVBox/ScrollContainer/ContentVBox")
+	if not is_instance_valid(content_vbox):
+		return { ok = false, node = menu, rect = _rect_for_control(menu), reason = "journey-menu-content-missing" }
+
+	var mission_btn: Button = null
+	var first_btn: Button = null
+	for child in content_vbox.get_children():
+		if child is Button:
+			var b := child as Button
+			if b.text == "Back":
+				continue
+			if first_btn == null:
+				first_btn = b
+			if b.text.begins_with("[") and b.text.find("]") != -1:
+				mission_btn = b
+				break
+
+	var chosen := mission_btn if mission_btn != null else first_btn
+	if chosen == null:
+		return { ok = false, node = content_vbox, rect = _rect_for_control(content_vbox), reason = "no-destination-buttons" }
+
+	var rect := _rect_for_control(chosen)
+	if not rect.has_area():
+		return { ok = false, node = chosen, rect = rect, reason = "unstable-destination-rect" }
+	return { ok = true, node = chosen, rect = rect }
 
 func _resolve_auto(target: Dictionary) -> Dictionary:
 	# Heuristics based on provided hints
