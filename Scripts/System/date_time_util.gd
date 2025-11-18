@@ -84,7 +84,7 @@ static func parse_iso_to_utc_dict(iso_string: String) -> Dictionary:
 			return components
 	return {} # Return empty if parsing failed
 
-static func format_timestamp_display(timestamp_value, include_remaining_time: bool) -> String:
+static func format_timestamp_display(timestamp_value, include_remaining_time: bool, omit_date_if_today: bool = true) -> String:
 	if timestamp_value == null:
 		return "N/A"
 
@@ -125,7 +125,18 @@ static func format_timestamp_display(timestamp_value, include_remaining_time: bo
 	elif hour_val == 0:
 		hour_val = 12
 		
-	var display_text = "%s %s, %d:%02d %s" % [month_str, day_val, hour_val, minute_val, am_pm_str]
+	# Decide whether to include the date. If omit_date_if_today is true and ETA is today (local), show only time.
+	var display_text: String
+	if omit_date_if_today and not current_sys_local_dict.is_empty():
+		var years_match: bool = int(datetime_dict.get("year", -1)) == int(current_sys_local_dict.get("year", -2))
+		var months_match: bool = int(datetime_dict.get("month", -1)) == int(current_sys_local_dict.get("month", -2))
+		var days_match: bool = int(datetime_dict.get("day", -1)) == int(current_sys_local_dict.get("day", -2))
+		if years_match and months_match and days_match:
+			display_text = "%d:%02d %s" % [hour_val, minute_val, am_pm_str]
+		else:
+			display_text = "%s %s, %d:%02d %s" % [month_str, day_val, hour_val, minute_val, am_pm_str]
+	else:
+		display_text = "%s %s, %d:%02d %s" % [month_str, day_val, hour_val, minute_val, am_pm_str]
 
 	if include_remaining_time:
 		var time_remaining_seconds = eta_timestamp_int - current_sys_utc_ts

@@ -231,86 +231,9 @@ func initialize_with_data(data: Dictionary):
 			journey_progress_label.text = "Progress: %.1f%%" % progress_percentage
 
 		if is_instance_valid(journey_eta_label):
-			# Format ETA timestamp into a readable date/time string
-			var eta_value = journey_data.get("eta") # Get raw value. Can be String, int, float, or null.
-			var eta_display_text = "ETA: N/A" # Default text if ETA is invalid or missing
-
-			if eta_value != null:
-				var eta_timestamp_int: int = -1 
-
-				if eta_value is String:
-					# Try to parse as ISO 8601 string first
-					eta_timestamp_int = Time.get_unix_time_from_datetime_string(eta_value)
-					if eta_timestamp_int == -1: # Time.INVALID_DATETIME_STRING or other error
-						# Fallback: check if it's a string representation of a Unix timestamp
-						if eta_value.is_valid_int():
-							eta_timestamp_int = eta_value.to_int()
-						else:
-							printerr("ConvoyMenu: ETA value ('%s') is a string but not a valid integer or recognized datetime format." % eta_value)
-				elif eta_value is float: # JSON numbers can sometimes be parsed as float
-					eta_timestamp_int = int(eta_value)
-				elif eta_value is int:
-					eta_timestamp_int = eta_value
-				if eta_timestamp_int >= 0: # Valid Unix timestamps are typically non-negative
-					# --- Workaround for timezone issue ---
-					# Calculate the system's current timezone offset from UTC in seconds.
-					var current_sys_utc_ts: int = int(Time.get_unix_time_from_system())
-					# Get current local time components as the OS sees them.
-					var current_sys_local_dict: Dictionary = Time.get_datetime_dict_from_system(false)
-					# Convert these local components to a Unix timestamp *as if they were UTC*
-					# The 'true' argument tells the function to interpret current_sys_local_dict's values as UTC.
-					var current_sys_local_interpreted_as_utc_ts: int = Time.get_unix_time_from_datetime_dict(current_sys_local_dict)
-					# The offset is the difference between actual UTC and local time (when its numbers are treated as UTC).
-					var timezone_offset_seconds: int = current_sys_utc_ts - current_sys_local_interpreted_as_utc_ts
-
-					# Adjust the ETA's UTC timestamp to a new timestamp that represents the local time.
-					var eta_timestamp_for_local_display: int = eta_timestamp_int - timezone_offset_seconds
-					
-					# Get datetime components from this adjusted timestamp.
-					# Pass 'true' to interpret eta_timestamp_for_local_display as a UTC timestamp to extract its (now local) numbers.
-					var datetime_dict: Dictionary = Time.get_datetime_dict_from_unix_time(eta_timestamp_for_local_display)
-					var month_names = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
-					var month_str = "Unk"
-					if datetime_dict.month >= 1 and datetime_dict.month <= 12:
-						month_str = month_names[datetime_dict.month - 1]
-					
-					var day_val = datetime_dict.day
-					var hour_val = datetime_dict.hour
-					var minute_val = datetime_dict.minute
-					
-					var am_pm_str = "AM"
-					if hour_val >= 12:
-						am_pm_str = "PM"
-					if hour_val > 12:
-						hour_val -= 12
-					elif hour_val == 0: # Midnight case
-						hour_val = 12
-					eta_display_text = "ETA: %s %s, %d:%02d %s" % [month_str, day_val, hour_val, minute_val, am_pm_str]
-					journey_eta_label.text = eta_display_text
-					
-					# Calculate time remaining using the original UTC ETA and current system UTC time
-					var current_timestamp = current_sys_utc_ts # Reuse current system UTC timestamp
-					var time_remaining_seconds = eta_timestamp_int - current_timestamp
-					
-					if time_remaining_seconds > 0:
-						var days_remaining = floor(time_remaining_seconds / (24.0 * 3600.0))
-						var hours_remaining = floor(fmod(time_remaining_seconds, (24.0 * 3600.0)) / 3600.0)
-						var minutes_remaining = floor(fmod(time_remaining_seconds, 3600.0) / 60.0)
-						
-						var time_remaining_str_parts = []
-						if days_remaining > 0:
-							time_remaining_str_parts.append("%dd" % days_remaining)
-						if hours_remaining > 0:
-							time_remaining_str_parts.append("%dh" % hours_remaining)
-						if minutes_remaining > 0 or (days_remaining == 0 and hours_remaining == 0): # Show minutes if it's the smallest unit or only unit
-							time_remaining_str_parts.append("%dm" % minutes_remaining)
-						
-						eta_display_text += " (%s remaining)" % " ".join(time_remaining_str_parts)
-					elif time_remaining_seconds <= 0 and time_remaining_seconds > -300: # Consider "Now" if within last 5 mins
-						eta_display_text += " (Now)"
-					else: # ETA has passed
-						eta_display_text += " (Arrived)"
-			journey_eta_label.text = eta_display_text
+			var eta_value = journey_data.get("eta")
+			var formatted_eta: String = preload("res://Scripts/System/date_time_util.gd").format_timestamp_display(eta_value, true)
+			journey_eta_label.text = "ETA: " + formatted_eta
 
 		# --- Populate Vehicle Manifest (Simplified) ---
 		if is_instance_valid(vehicles_label):

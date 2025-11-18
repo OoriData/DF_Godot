@@ -249,9 +249,9 @@ func _update_convoy_panel_content(panel: Panel, convoy_data: Dictionary, p_convo
 	var eta_raw_string: String = journey_data.get('eta', 'N/A')
 	var _departure_raw_string_for_eta_format: String = journey_data.get('departure_time', 'N/A')
 	var formatted_eta: String = "N/A" # Default
-	# Avoid static-on-instance warning; fall back to raw string if needed
+	# Use shared date/time utility to produce a user-friendly ETA: time only if today, otherwise date + time. No remaining text for compactness.
 	if eta_raw_string != "N/A":
-		formatted_eta = str(eta_raw_string)
+		formatted_eta = preload("res://Scripts/System/date_time_util.gd").format_timestamp_display(eta_raw_string, false)
 
 	var progress_percentage_str: String = 'N/A'
 	var length: float = journey_data.get('length', 0.0)
