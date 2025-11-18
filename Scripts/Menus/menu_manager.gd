@@ -157,7 +157,7 @@ func _show_menu(menu_scene_resource, data_to_pass = null, add_to_stack: bool = t
 		if not menu_stack.is_empty():
 			go_back()
 		else:
-			emit_signal("menu_visibility_changed", false, 0.0)
+			emit_signal("menu_visibility_changed", false, "")
 		return
 
 	var menu_type = "default"
@@ -185,7 +185,7 @@ func _show_menu(menu_scene_resource, data_to_pass = null, add_to_stack: bool = t
 		if not menu_stack.is_empty():
 			go_back()
 		else:
-			emit_signal("menu_visibility_changed", false, 0.0)
+			emit_signal("menu_visibility_changed", false, "")
 		return
 
 	_menu_container_host.add_child(current_active_menu)
@@ -299,6 +299,11 @@ func go_back():
 				if _scene_resource:
 					_show_menu(_scene_resource, _prev_data, false)
 					return
+		# No previous menu to go back to; fully closing menus.
+		# Deselect any globally selected convoy so the user isn't forced to click again to clear it.
+		var gdm_none = get_node_or_null("/root/GameDataManager")
+		if is_instance_valid(gdm_none) and gdm_none.has_method("select_convoy_by_id"):
+			gdm_none.select_convoy_by_id("", false)
 		emit_signal("menu_visibility_changed", false, "")
 		visible = false
 		return
@@ -311,6 +316,10 @@ func go_back():
 		current_active_menu = null
 		mouse_filter = MOUSE_FILTER_IGNORE
 		self.z_index = _base_z_index
+		# We're closing the last open menu. Clear convoy selection to remove the highlight in the convoy list.
+		var gdm = get_node_or_null("/root/GameDataManager")
+		if is_instance_valid(gdm) and gdm.has_method("select_convoy_by_id"):
+			gdm.select_convoy_by_id("", false)
 		emit_signal("menu_visibility_changed", false, "")
 		visible = false
 		return
@@ -354,7 +363,11 @@ func close_all_menus():
 		if menu_stack.is_empty() and not is_instance_valid(current_active_menu):
 			mouse_filter = MOUSE_FILTER_IGNORE # Ensure mouse filter is reset.
 			self.z_index = _base_z_index # Ensure z_index is reset
-			emit_signal("menu_visibility_changed", false, 0.0)
+			# Also clear any selected convoy to keep UI consistent with a closed menu state.
+			var gdm = get_node_or_null("/root/GameDataManager")
+			if is_instance_valid(gdm) and gdm.has_method("select_convoy_by_id"):
+				gdm.select_convoy_by_id("", false)
+			emit_signal("menu_visibility_changed", false, "")
 		return
 
 	menu_stack.clear() # Prevent go_back from reopening anything

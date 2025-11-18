@@ -1340,20 +1340,28 @@ func get_current_user_data() -> Dictionary:
 	"""Returns the cached user data dictionary."""
 	return current_user_data
 
-func select_convoy_by_id(convoy_id_to_select: String, allow_toggle: bool = true) -> void:
+func select_convoy_by_id(convoy_id_to_select: String, _allow_toggle: bool = true) -> void:
 	"""
 	Central method to change the globally selected convoy by its ID.
-	Handles selecting a new convoy. If allow_toggle is true, it will deselect if the same ID is passed again.
-	"""
-	var new_id_to_set = convoy_id_to_select
-	# If the same ID is passed and toggling is allowed, it's a toggle to deselect.
-	if allow_toggle and _selected_convoy_id == convoy_id_to_select:
-		new_id_to_set = ""
 
-	if _selected_convoy_id != new_id_to_set:
-		_selected_convoy_id = new_id_to_set
-		# Emit the signal with the full data of the selected convoy (or null)
-		convoy_selection_changed.emit(get_selected_convoy())
+	TOGGLE DISABLED: Re-selecting the same convoy ID now does nothing (keeps it selected).
+	To explicitly clear selection, pass an empty string "" as the convoy_id.
+	The allow_toggle parameter is preserved for backward compatibility but no longer causes deselection.
+	"""
+	# Explicit deselect request (empty string provided and something is selected)
+	if convoy_id_to_select == "":
+		if not _selected_convoy_id.is_empty():
+			_selected_convoy_id = ""
+			convoy_selection_changed.emit(get_selected_convoy()) # Will emit null
+		return
+
+	# If the requested ID is already selected, do nothing (toggle behavior removed)
+	if _selected_convoy_id == convoy_id_to_select:
+		return
+
+	# Change selection and emit update
+	_selected_convoy_id = convoy_id_to_select
+	convoy_selection_changed.emit(get_selected_convoy())
 
 func get_selected_convoy() -> Variant:
 	"""Returns the full data dictionary of the selected convoy, or null."""

@@ -145,7 +145,8 @@ func _on_convoy_item_pressed(convoy_item_data: Dictionary) -> void:
 
 	# Instead of emitting a local signal, tell the central state manager what was selected.
 	if is_instance_valid(gdm) and gdm.has_method("select_convoy_by_id"):
-		gdm.select_convoy_by_id(str(convoy_item_data.get("convoy_id", "")))
+		# Do not toggle off if the same convoy is clicked again; keep it selected.
+		gdm.select_convoy_by_id(str(convoy_item_data.get("convoy_id", "")), false)
 
 	# Close the list after an item is selected
 	close_list()
