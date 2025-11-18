@@ -266,7 +266,7 @@ func _build_level_steps(level: int) -> Array:
 				},
 				{
 					id = "l4_buy_urchins",
-					copy = "Some vendors offer special items required for missions. Purchase 10 Mountain Urchins.",
+					copy = "Some vendors offer special items required for missions. Click 'Max' on Mountain Urchins, then Buy.",
 					action = "await_urchin_purchase",
 					target = { resolver = "vendor_trade_panel" }, # Highlight the whole panel
 					lock = "soft"
@@ -941,7 +941,8 @@ func _on_urchin_check(_all_convoys: Array) -> void:
 	
 	_update_urchin_purchase_ui(urchin_count)
 
-	if urchin_count >= 10:
+	# Complete once any amount of Mountain Urchins has been purchased.
+	if urchin_count > 0:
 		# Urchins purchased. Disconnect the watcher.
 		if is_instance_valid(_gdm) and _gdm.is_connected("convoy_data_updated", Callable(self, "_on_urchin_check")):
 			_gdm.disconnect("convoy_data_updated", Callable(self, "_on_urchin_check"))
@@ -956,12 +957,12 @@ func _update_urchin_purchase_ui(urchin_count: int) -> void:
 	var step: Dictionary = _steps[_step]
 	var copy = step.get("copy", "")
 
-	var urchins_needed = 10
+	var urchins_needed = 1
 
 	_urchin_checklist_state.urchins = urchin_count >= urchins_needed
 
 	var checklist_items = [
-		{ "text": "Mountain Urchins (%d / %d)" % [min(urchin_count, urchins_needed), urchins_needed], "completed": _urchin_checklist_state.urchins },
+		{ "text": "Mountain Urchins (any amount)", "completed": _urchin_checklist_state.urchins },
 	]
 
 	var ov = _ensure_overlay()

@@ -315,7 +315,13 @@ func _populate_tree_from_agg(tree: Tree, agg: Dictionary) -> void:
 					if agg_data.total_water > res_qty: res_qty = int(agg_data.total_water)
 					if agg_data.total_food > res_qty: res_qty = int(agg_data.total_food)
 					if res_qty > display_qty: display_qty = res_qty
-				var display_text = "%s (x%d)" % [item_name, display_qty]
+				# Prefer the human-friendly name from item_data for display; fallback to key
+				var display_name: String = item_name
+				if agg_data is Dictionary and agg_data.has("item_data") and agg_data.item_data is Dictionary:
+					var n = agg_data.item_data.get("name")
+					if n is String and not n.is_empty():
+						display_name = n
+				var display_text = "%s (x%d)" % [display_name, display_qty]
 				var tree_child_item = tree.create_item(category_item)
 				tree_child_item.set_text(0, display_text)
 				tree_child_item.set_metadata(0, agg_data)
@@ -942,38 +948,64 @@ func _on_max_button_pressed() -> void:
 			elif idata.get("food",0) > 0: sel_qty = int(idata.get("food"))
 		quantity_spinbox.value = sel_qty
 	elif current_mode == "buy":
-		# For buying, the max is how many the player can afford, limited by vendor stock.
-		var item_data_source = selected_item.get("item_data", {})
-		var vendor_stock = selected_item.get("total_quantity", 0)
+		# For buying, the max is limited by: vendor stock, money, remaining weight, remaining volume.
+		var item_data_source: Dictionary = selected_item.get("item_data", {})
+		var vendor_stock: int = int(selected_item.get("total_quantity", 0))
 		if item_data_source.get("is_raw_resource", false):
-			if item_data_source.get("fuel",0) > 0: vendor_stock = int(item_data_source.get("fuel"))
-			elif item_data_source.get("water",0) > 0: vendor_stock = int(item_data_source.get("water"))
-			elif item_data_source.get("food",0) > 0: vendor_stock = int(item_data_source.get("food"))
-		
-		var max_can_afford = 9999 # A large number
-		var price: float = 0.0
-		var buy_price_val = item_data_source.get("price")
-		if (buy_price_val == null or (not (buy_price_val is float or buy_price_val is int) or float(buy_price_val) == 0.0)) and item_data_source.get("is_raw_resource", false):
 			if item_data_source.get("fuel",0) > 0:
-				buy_price_val = item_data_source.get("fuel_price", vendor_data.get("fuel_price", 0.0))
+				vendor_stock = int(item_data_source.get("fuel"))
 			elif item_data_source.get("water",0) > 0:
-				buy_price_val = item_data_source.get("water_price", vendor_data.get("water_price", 0.0))
+				vendor_stock = int(item_data_source.get("water"))
 			elif item_data_source.get("food",0) > 0:
-				buy_price_val = item_data_source.get("food_price", vendor_data.get("food_price", 0.0))
-		if buy_price_val is float or buy_price_val is int:
-			price = float(buy_price_val)
-		
-		if price > 0:
-			var convoy_money = 0
+				vendor_stock = int(item_data_source.get("food"))
+
+		# Money constraint
+		var is_vehicle: bool = _is_vehicle_item(item_data_source)
+		var unit_price: float = _get_vehicle_price(item_data_source) if is_vehicle else _get_contextual_unit_price(item_data_source)
+		var afford_limit: int = 99999999
+		if unit_price > 0.0:
+			var money: int = 0
+			var have_money := false
+			# Prefer authoritative user money, fallback to convoy money if present.
 			if is_instance_valid(gdm):
-				var user_data = gdm.get_current_user_data()
-				convoy_money = user_data.get("money", 0)
-			max_can_afford = floori(convoy_money / price)
-		else:
-			max_can_afford = vendor_stock # Can afford all if free
+				var ud: Dictionary = gdm.get_current_user_data()
+				if ud.has("money") and (ud.get("money") is int or ud.get("money") is float):
+					money = int(ud.get("money"))
+					have_money = true
+			# If user money wasn't available (or GDM missing), try convoy money
+			if not have_money and convoy_data and convoy_data.has("money") and (convoy_data.get("money") is int or convoy_data.get("money") is float):
+				money = int(convoy_data.get("money"))
+				have_money = true
+			afford_limit = floori(money / unit_price) if unit_price > 0.0 and have_money else 99999999
 
-		var max_quantity = min(max_can_afford, vendor_stock)
+		# Capacity constraints (skip for vehicles)
+		var weight_limit: int = 99999999
+		var volume_limit: int = 99999999
+		if not is_vehicle:
+			# Compute per-unit weight/volume from explicit unit_* or derived from totals.
+			var unit_weight := 0.0
+			if item_data_source.has("unit_weight"):
+				unit_weight = float(item_data_source.get("unit_weight", 0.0))
+			elif item_data_source.has("weight") and item_data_source.has("quantity") and float(item_data_source.get("quantity", 0.0)) > 0.0:
+				unit_weight = float(item_data_source.get("weight", 0.0)) / float(item_data_source.get("quantity", 1.0))
+			var unit_volume := 0.0
+			if item_data_source.has("unit_volume"):
+				unit_volume = float(item_data_source.get("unit_volume", 0.0))
+			elif item_data_source.has("volume") and item_data_source.has("quantity") and float(item_data_source.get("quantity", 0.0)) > 0.0:
+				unit_volume = float(item_data_source.get("volume", 0.0)) / float(item_data_source.get("quantity", 1.0))
+			# Remaining capacities
+			var remaining_weight: float = max(0.0, _convoy_total_weight - _convoy_used_weight)
+			var remaining_volume: float = max(0.0, _convoy_total_volume - _convoy_used_volume)
+			if unit_weight > 0.0 and _convoy_total_weight > 0.0:
+				weight_limit = int(floor(remaining_weight / unit_weight))
+			if unit_volume > 0.0 and _convoy_total_volume > 0.0:
+				volume_limit = int(floor(remaining_volume / unit_volume))
 
+		var max_quantity = vendor_stock
+		max_quantity = min(max_quantity, afford_limit)
+		max_quantity = min(max_quantity, weight_limit)
+		max_quantity = min(max_quantity, volume_limit)
+		max_quantity = max(1, max_quantity)
 		quantity_spinbox.value = max_quantity
 
 func _on_action_button_pressed() -> void:
@@ -994,7 +1026,7 @@ func _on_action_button_pressed() -> void:
 	if current_mode == "buy":
 		gdm.buy_item(convoy_id, vendor_id, item_data_source, quantity)
 		# Emit local signal for UI listeners
-		var unit_price = _get_contextual_unit_price(item_data_source)
+		var unit_price: float = _get_vehicle_price(item_data_source) if item_data_source.has("vehicle_id") else _get_contextual_unit_price(item_data_source)
 		emit_signal("item_purchased", item_data_source, quantity, unit_price * quantity)
 	else:
 		# SELL: Support selling across multiple underlying cargo stacks in the aggregated selection.
@@ -1032,7 +1064,7 @@ func _update_inspector() -> void:
 	var item_data_source = selected_item.item_data if selected_item.has("item_data") and not selected_item.item_data.is_empty() else selected_item
 
 	# If the selected item is a vehicle, use a dedicated inspector update function and skip the generic one.
-	if item_data_source.has("vehicle_id"):
+	if _is_vehicle_item(item_data_source):
 		_update_inspector_for_vehicle(item_data_source)
 		# Fitment panel should be updated for all items, including vehicles (to hide it).
 		_update_fitment_panel()
@@ -1279,17 +1311,13 @@ func _update_transaction_panel() -> void:
 	var item_data_source = selected_item.item_data if selected_item.has("item_data") and not selected_item.item_data.is_empty() else selected_item
 
 	# --- START: UNIFIED PRICE & DISPLAY LOGIC ---
-	var is_vehicle = item_data_source.has("vehicle_id")
+	var is_vehicle = _is_vehicle_item(item_data_source)
 	var quantity = int(quantity_spinbox.value)
 	var unit_price: float = 0.0
 
 	if is_vehicle:
-		# For vehicles, the price is direct. Check common keys for robustness to fix $0 bug.
-		unit_price = float(item_data_source.get("price", 0.0))
-		if unit_price == 0.0:
-			unit_price = float(item_data_source.get("unit_price", 0.0))
-		if unit_price == 0.0:
-			unit_price = float(item_data_source.get("base_unit_price", 0.0))
+		# For vehicles, compute price from vehicle fields (includes base_value fallback).
+		unit_price = _get_vehicle_price(item_data_source)
 	else:
 		# For cargo, use the existing complex calculation.
 		unit_price = _get_contextual_unit_price(item_data_source)
@@ -1485,6 +1513,35 @@ func _get_item_price_components(item_data_source: Dictionary) -> Dictionary:
 		"container_unit_price": container_unit_price,
 		"resource_unit_value": resource_unit_value
 	}
+
+# True if this dictionary represents a vehicle record (not cargo that happens to reference a vehicle_id)
+func _is_vehicle_item(d: Dictionary) -> bool:
+	if not (d.has("vehicle_id") and d.get("vehicle_id") != null):
+		return false
+	# Cargo often contains vehicle_id reference; exclude if it has a cargo_id or is a raw resource
+	if (d.has("cargo_id") and d.get("cargo_id") != null) or d.get("is_raw_resource", false):
+		return false
+	# Positive signals it is a vehicle record
+	var vehicle_keys = [
+		"base_top_speed", "base_value", "base_cargo_capacity", "base_weight_capacity",
+		"base_offroad_capability", "parts"
+	]
+	for k in vehicle_keys:
+		if d.has(k):
+			return true
+	return false
+
+# Returns the unit price for a vehicle, checking several common fields.
+func _get_vehicle_price(vehicle_data: Dictionary) -> float:
+	var keys = ["price", "unit_price", "base_unit_price", "base_value", "base_price", "value"]
+	for k in keys:
+		if vehicle_data.has(k) and vehicle_data[k] != null:
+			var v = vehicle_data[k]
+			if v is float or v is int:
+				var f = float(v)
+				if f > 0.0:
+					return f
+	return 0.0
 
 # Returns the price per unit for the given item, depending on buy/sell mode.
 func _get_contextual_unit_price(item_data_source: Dictionary) -> float:
