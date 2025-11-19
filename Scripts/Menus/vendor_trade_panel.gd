@@ -21,6 +21,8 @@ signal install_requested(item, quantity, vendor_id)
 @onready var equipped_item_stats: RichTextLabel = %EquippedItemStats
 @onready var quantity_spinbox: SpinBox = %QuantitySpinBox
 @onready var price_label: RichTextLabel = %PriceLabel
+@onready var convoy_volume_bar: ProgressBar = %ConvoyVolumeBar
+@onready var convoy_weight_bar: ProgressBar = %ConvoyWeightBar
 @onready var max_button: Button = %MaxButton
 @onready var action_button: Button = %ActionButton
 @onready var install_button: Button = %InstallButton
@@ -762,6 +764,8 @@ func _update_convoy_info_display() -> void:
 			else:
 				weight_segment = " | Weight: %.1f" % _convoy_used_weight
 		convoy_cargo_label.text = "Volume: %.1f / %.1f%s" % [_convoy_used_volume, _convoy_total_volume, weight_segment]
+		# Update capacity bars with current usage (no projection)
+		_refresh_capacity_bars(0.0, 0.0)
 	else:
 		convoy_cargo_label.text = "Cargo: N/A"
 
@@ -1313,6 +1317,8 @@ func _update_transaction_panel() -> void:
 	if not selected_item:
 		print("[VendorTradePanel][LOG]   -> No item selected, setting price to $0.")
 		price_label.text = "Total Price: $0" # FIX: Ensure dollar sign is present
+		# Reset capacity bars to current convoy usage
+		_refresh_capacity_bars(0.0, 0.0)
 		return
 
 	var item_data_source = selected_item.item_data if selected_item.has("item_data") and not selected_item.item_data.is_empty() else selected_item
@@ -1337,12 +1343,16 @@ func _update_transaction_panel() -> void:
 
 	var bbcode_text = ""
 	if is_vehicle:
+		# Vehicles: keep explicit unit and total pricing
 		bbcode_text += "[b]Price:[/b] $%s\n" % ("%.2f" % unit_price)
 		bbcode_text += "[b]Quantity:[/b] %d\n" % quantity
 		bbcode_text += "[b]Total Price:[/b] $%s" % ("%.2f" % total_price)
 	else:
-		# Use the original detailed display logic for cargo items
-		bbcode_text += "[b]Unit Price:[/b] $%s\n" % ("%.2f" % unit_price)
+		# Cargo items: simplify right panel to reduce duplication with center panel
+		# In BUY mode, hide Unit Price/Weight/Volume (already shown in center panel)
+		# In SELL mode, keep Unit Price for clarity
+		if current_mode == "sell":
+			bbcode_text += "[b]Unit Price:[/b] $%s\n" % ("%.2f" % unit_price)
 
 		var price_components = _get_item_price_components(item_data_source)
 		var resource_unit_value = price_components.resource_unit_value
@@ -1355,7 +1365,7 @@ func _update_transaction_panel() -> void:
 		bbcode_text += "[b]Quantity:[/b] %d\n" % quantity
 		bbcode_text += "[b]Total Price:[/b] $%s\n" % ("%.2f" % total_price)
 
-		# --- Added detailed weight/volume and projected convoy stats ---
+		# --- Order totals and projected convoy stats ---
 		var unit_weight := 0.0
 		if item_data_source.has("unit_weight"): unit_weight = float(item_data_source.get("unit_weight", 0.0))
 		elif item_data_source.has("weight") and item_data_source.has("quantity") and float(item_data_source.get("quantity", 0.0)) > 0.0:
@@ -1372,21 +1382,14 @@ func _update_transaction_panel() -> void:
 			added_weight = -added_weight
 			added_volume = -added_volume
 
-		if unit_weight > 0.0: bbcode_text += "[b]Unit Weight:[/b] %.2f\n" % unit_weight
-		if unit_volume > 0.0: bbcode_text += "[b]Unit Volume:[/b] %.2f\n" % unit_volume
-		if abs(added_weight) > 0.0001: bbcode_text += "[b]Total Weight:[/b] %.2f\n" % added_weight
-		if abs(added_volume) > 0.0001: bbcode_text += "[b]Total Volume:[/b] %.2f\n" % added_volume
+		# Do NOT show unit weight/volume in BUY mode to avoid duplication; show order totals in muted color
+		if abs(added_weight) > 0.0001:
+			bbcode_text += "[color=gray]Order Weight: %.2f[/color]\n" % added_weight
+		if abs(added_volume) > 0.0001:
+			bbcode_text += "[color=gray]Order Volume: %.2f[/color]\n" % added_volume
 
-		if (_convoy_total_volume > 0.0 or _convoy_total_weight > 0.0):
-			bbcode_text += "[b]After %s:[/b]\n" % ("Purchase" if current_mode == "buy" else "Sale")
-			if _convoy_total_volume > 0.0:
-				var projected_used_volume = clamp(_convoy_used_volume + added_volume, 0.0, 9999999.0)
-				var vol_pct = clamp((projected_used_volume / _convoy_total_volume) * 100.0, 0.0, 999.9)
-				bbcode_text += "  Volume: %.2f / %.2f (%.1f%%)\n" % [projected_used_volume, _convoy_total_volume, vol_pct]
-			if _convoy_total_weight > 0.0:
-				var projected_used_weight = clamp(_convoy_used_weight + added_weight, 0.0, 9999999.0)
-				var wt_pct = clamp((projected_used_weight / _convoy_total_weight) * 100.0, 0.0, 999.9)
-				bbcode_text += "  Weight: %.2f / %.2f (%.1f%%)\n" % [projected_used_weight, _convoy_total_weight, wt_pct]
+		# Update visual capacity bars to show projected values instead of printing lines
+		_refresh_capacity_bars(added_volume, added_weight)
 
 	# Trim trailing newline
 	if bbcode_text.ends_with("\n"):
@@ -1394,6 +1397,39 @@ func _update_transaction_panel() -> void:
 	# --- End added detail block ---
 	price_label.text = bbcode_text
 	_update_install_button_state()
+
+func _refresh_capacity_bars(projected_volume_delta: float, projected_weight_delta: float) -> void:
+	if is_instance_valid(convoy_volume_bar):
+		if _convoy_total_volume > 0.0:
+			convoy_volume_bar.visible = true
+			convoy_volume_bar.max_value = _convoy_total_volume
+			var projected_vol = clamp(_convoy_used_volume + projected_volume_delta, 0.0, _convoy_total_volume)
+			convoy_volume_bar.value = projected_vol
+			convoy_volume_bar.tooltip_text = "Volume: %.2f / %.2f" % [projected_vol, _convoy_total_volume]
+			var vol_pct = projected_vol / max(0.00001, _convoy_total_volume)
+			convoy_volume_bar.self_modulate = _bar_color_for_pct(vol_pct)
+		else:
+			convoy_volume_bar.visible = false
+	if is_instance_valid(convoy_weight_bar):
+		if _convoy_total_weight > 0.0:
+			convoy_weight_bar.visible = true
+			convoy_weight_bar.max_value = _convoy_total_weight
+			var projected_wt = clamp(_convoy_used_weight + projected_weight_delta, 0.0, _convoy_total_weight)
+			convoy_weight_bar.value = projected_wt
+			convoy_weight_bar.tooltip_text = "Weight: %.2f / %.2f" % [projected_wt, _convoy_total_weight]
+			var wt_pct = projected_wt / max(0.00001, _convoy_total_weight)
+			convoy_weight_bar.self_modulate = _bar_color_for_pct(wt_pct)
+		else:
+			convoy_weight_bar.visible = false
+
+func _bar_color_for_pct(pct: float) -> Color:
+	# Green <= 70%, Yellow <= 90%, Red > 90%
+	if pct <= 0.7:
+		return Color(0.2, 0.8, 0.2)
+	elif pct <= 0.9:
+		return Color(1.0, 0.8, 0.2)
+	else:
+		return Color(1.0, 0.3, 0.3)
 
 func _is_positive_number(v: Variant) -> bool:
 	return (v is float or v is int) and float(v) > 0.0
