@@ -641,7 +641,10 @@ func _populate_convoy_list() -> void:
 
 	var root = convoy_item_tree.create_item()
 	_populate_category(convoy_item_tree, root, "Mission Cargo", aggregated_missions)
-	_populate_category(convoy_item_tree, root, "Parts", aggregated_parts)
+	# Only show loose/aggregated parts when BUYING. In SELL mode installed vehicle parts are not sellable
+	# and were causing crashes when selected. Suppressing the entire Parts category avoids invalid selections.
+	if current_mode == "buy":
+		_populate_category(convoy_item_tree, root, "Parts", aggregated_parts)
 	_populate_category(convoy_item_tree, root, "Other", aggregated_other)
 	_populate_category(convoy_item_tree, root, "Resources", aggregated_resources)
 
@@ -785,6 +788,10 @@ func _on_tab_changed(tab_index: int) -> void:
 		max_button.disabled = true
 
 	_update_install_button_state()
+
+	# Repopulate convoy list to apply mode-specific filtering (e.g., hide Parts when selling).
+	if is_node_ready():
+		_populate_convoy_list()
 
 func _on_vendor_item_selected() -> void:
 	var tree_item = vendor_item_tree.get_selected()
