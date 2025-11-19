@@ -67,6 +67,10 @@ var _cargo_detail_cache: Dictionary = {} # cargo_id -> full cargo Dictionary fro
 var _cargo_enrichment_pending: Dictionary = {} # cargo_id -> true while request in-flight
 var _mech_probe_pending_cargo_ids: Dictionary = {} # cargo_id -> true expected to enrich this probe
 
+# --- Periodic Refresh ---
+@export var convoy_refresh_interval_seconds: float = 2.5 # How often to poll backend for convoy movement
+var _convoy_refresh_timer: Timer = null
+
 # --- Debug Toggles ---
 const VEHICLE_DEBUG_DUMP := true # Set true to print raw & augmented convoy + vehicle data on receipt
 const ROUTE_DEBUG_DUMP := true # Dump route choice structures when received
@@ -241,9 +245,13 @@ func _on_user_id_resolved(user_id: String) -> void:
 			_map_request_in_flight = true
 			request_map_data()
 
+	# Start periodic convoy refresh after auth/user bootstrap
+	_start_convoy_refresh_timer()
+
 func _on_auth_expired() -> void:
 	print('[GameDataManager] Auth expired. Resetting user-related state.')
 	reset_user_state()
+	_stop_convoy_refresh_timer()
 
 # --- Public helper: expose current convoy list ---
 func get_all_convoy_data() -> Array:
@@ -294,6 +302,52 @@ func reset_user_state(clear_map: bool = false) -> void:
 	convoy_data_updated.emit(all_convoy_data)
 	user_data_updated.emit(current_user_data)
 	game_data_reset.emit()
+	# Also ensure background timers are stopped when user state is cleared
+	_stop_convoy_refresh_timer()
+
+func _start_convoy_refresh_timer() -> void:
+	# Create and start a repeating timer that refreshes convoy movement periodically
+	if _convoy_refresh_timer != null and is_instance_valid(_convoy_refresh_timer):
+		return # already running
+	_convoy_refresh_timer = Timer.new()
+	_convoy_refresh_timer.name = "ConvoyRefreshTimer"
+	# Ensure timer fires even if some parts of the tree pause (e.g., opening menus)
+	_convoy_refresh_timer.process_mode = Node.PROCESS_MODE_ALWAYS
+	_convoy_refresh_timer.wait_time = max(0.5, float(convoy_refresh_interval_seconds))
+	_convoy_refresh_timer.one_shot = false
+	add_child(_convoy_refresh_timer)
+	_convoy_refresh_timer.timeout.connect(_on_convoy_refresh_tick)
+	_convoy_refresh_timer.start()
+	print("[GameDataManager] Started convoy refresh timer at ", _convoy_refresh_timer.wait_time, "s")
+
+func _stop_convoy_refresh_timer() -> void:
+	if _convoy_refresh_timer != null and is_instance_valid(_convoy_refresh_timer):
+		_convoy_refresh_timer.stop()
+		_convoy_refresh_timer.queue_free()
+		_convoy_refresh_timer = null
+		print("[GameDataManager] Stopped convoy refresh timer")
+
+func _any_convoy_in_transit() -> bool:
+	for c in all_convoy_data:
+		if not (c is Dictionary):
+			continue
+		var j = c.get("journey")
+		if j is Dictionary:
+			var rx: Array = j.get("route_x", [])
+			var ry: Array = j.get("route_y", [])
+			if rx is Array and ry is Array and rx.size() >= 2 and ry.size() == rx.size():
+				return true
+	return false
+
+func _on_convoy_refresh_tick() -> void:
+	# Only refresh if authenticated and there's at least one convoy in transit
+	if not is_instance_valid(api_calls_node):
+		return
+	var uid := String(api_calls_node.current_user_id)
+	if uid == "":
+		return
+	if _any_convoy_in_transit():
+		request_convoy_data_refresh()
 
 func _on_user_metadata_updated(updated_user_data: Dictionary):
 	if updated_user_data.is_empty():
