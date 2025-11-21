@@ -2,6 +2,7 @@ class_name MapCameraController
 extends Node
 
 signal camera_zoom_changed(new_zoom_level: float)
+signal focus_tween_finished
 
 @export_group("Camera Controls")
 @export var min_camera_zoom_level: float = 0.5 # Prevents excessive zoom out
@@ -25,6 +26,20 @@ var _menu_open: bool = false
 var _menu_open_reference_zoom: float = 1.0
 # --- New: True map size (in tiles) ---
 var map_size: Vector2i = Vector2i.ZERO
+
+# --- Animation / Layout coordination state ---
+var _viewport_updates_suppressed: bool = false # When true, viewport rect updates are deferred until unsuppressed
+var _pending_viewport_rect: Rect2 = Rect2() # Stored most recent rect while suppressed
+var _active_focus_tween: Tween = null # Active tween for smooth camera focusing
+var _overlay_occlusion_px_x: float = 0.0 # Horizontal pixels on right side covered by overlay (menu) and thus not visible
+var _debug_menu_focus: bool = true # Toggle detailed menu focus diagnostics
+var _debug_overlay_label: Label = null
+var _last_tween_target: Vector2 = Vector2.ZERO
+
+@export_group("Focus Tween")
+@export var focus_tween_duration_default: float = 0.6
+@export var focus_tween_trans: int = Tween.TRANS_SINE
+@export var focus_tween_ease: int = Tween.EASE_IN_OUT
 
 # Set the true map size (in tiles)
 func set_map_size(new_size: Vector2i):
@@ -58,11 +73,18 @@ func _ready():
 	pass # Initialization is now handled by the initialize function.
 	if not debug_logging:
 		print("[MCC] Debug logging disabled. Enable 'debug_logging' on MapCameraController to see diagnostics.")
+	if _debug_menu_focus:
+		_create_debug_overlay()
 
 
 func update_map_viewport_rect(new_rect: Rect2):
 	if not is_instance_valid(camera_node) or not is_instance_valid(sub_viewport_node):
 		printerr("[MCC] Cannot update, camera or sub_viewport is not valid.")
+		return
+
+	# Defer updates during animated layout transitions to avoid jitter/tearing
+	if _viewport_updates_suppressed:
+		_pending_viewport_rect = new_rect
 		return
 
 	# CRITICAL FIX: Synchronize the SubViewport's size with the actual UI control's size.
@@ -108,15 +130,27 @@ func _clamp_camera_position():
 	var zoom = camera_node.zoom.x
 	if _menu_open and freeze_zoom_for_menu_bounds:
 		zoom = _menu_open_reference_zoom
-	var visible_world_w = viewport_size.x / max(zoom, 0.0001)
+	# Adjust visible width by subtracting overlay occlusion (menu covering map). Prevent negative values.
+	var adjusted_viewport_w_px = max(0.0, viewport_size.x - _overlay_occlusion_px_x)
+	var adjusted_world_w = adjusted_viewport_w_px / max(zoom, 0.0001) # width of visible (non-occluded) region
+	var full_world_w = viewport_size.x / max(zoom, 0.0001) # width if no occlusion considered
 	var visible_world_h = viewport_size.y / max(zoom, 0.0001)
-	var half_viewport_w = visible_world_w * 0.5
-	var half_viewport_h = visible_world_h * 0.5
+	var half_full_w = full_world_w * 0.5
+	var half_visible_h = visible_world_h * 0.5
 
-	var min_x = map_origin.x + half_viewport_w
-	var max_x = map_origin.x + map_width - half_viewport_w
-	var min_y = map_origin.y + half_viewport_h
-	var max_y = map_origin.y + map_height - half_viewport_h
+	# World width covered by the overlay (menu) – we can extend the right limit by this without exposing off-map in visible region.
+	var occlusion_world_w: float = _overlay_occlusion_px_x / max(zoom, 0.0001)
+
+	# Left bound: use half of FULL width so left edge never shows off-map.
+	var min_x = map_origin.x + half_full_w
+	# Right bound: allow overshoot up to occlusion width (area hidden under menu overlay).
+	var max_x = map_origin.x + map_width - half_full_w + occlusion_world_w
+
+	# Ensure max_x is at least min_x (for very small maps)
+	if max_x < min_x:
+		max_x = min_x
+	var min_y = map_origin.y + half_visible_h
+	var max_y = map_origin.y + map_height - half_visible_h
 
 	if allow_map_edge_exposure:
 		# Allow camera center closer to edges; reduce margin by 75% (configurable strategy)
@@ -127,7 +161,7 @@ func _clamp_camera_position():
 		max_y = lerp(max_y, map_height, margin_factor)
 
 	# If the map is smaller than the visible world area, center the camera
-	if map_width <= visible_world_w:
+	if map_width <= full_world_w:
 		min_x = map_width * 0.5
 		max_x = map_width * 0.5
 	if map_height <= visible_world_h:
@@ -141,13 +175,16 @@ func _clamp_camera_position():
 		"map_h": map_height,
 		"map_origin": map_origin,
 		"view_px": viewport_size,
+		"overlay_px_x": _overlay_occlusion_px_x,
 		"raw_view_px": map_viewport_rect.size,
 		"full_view_px": _full_viewport_size,
 		"menu_open": _menu_open,
 		"zoom": zoom,
-		"world_w": visible_world_w,
+		"world_w_full": full_world_w,
+		"world_w_visible": adjusted_world_w,
 		"world_h": visible_world_h,
 		"min_x": min_x, "max_x": max_x, "min_y": min_y, "max_y": max_y,
+		"occlusion_world_w": occlusion_world_w,
 		"cam_pos": camera_node.position
 	})
 
@@ -177,7 +214,8 @@ func _update_camera_limits():
 	var zoom = max(camera_node.zoom.x, 0.0001)
 	if _menu_open and freeze_zoom_for_menu_bounds:
 		zoom = max(_menu_open_reference_zoom, 0.0001)
-	var visible_world = Vector2(effective_viewport_px.x / zoom, effective_viewport_px.y / zoom)
+	var adjusted_w_px = max(0.0, effective_viewport_px.x - _overlay_occlusion_px_x)
+	var visible_world = Vector2(adjusted_w_px / zoom, effective_viewport_px.y / zoom)
 
 	# Nothing to set on Camera2D limits (we clamp manually), but log useful info
 	var will_center_x = visible_world.x >= map_world_bounds.size.x
@@ -186,6 +224,7 @@ func _update_camera_limits():
 	_dbg("limits", {
 		"map_bounds": map_world_bounds,
 		"viewport_px": effective_viewport_px,
+		"overlay_px_x": _overlay_occlusion_px_x,
 		"raw_viewport_px": viewport_px,
 		"full_viewport_px": _full_viewport_size,
 		"menu_open": _menu_open,
@@ -275,6 +314,12 @@ func get_current_zoom() -> float:
 func focus_on_world_pos(world_pos: Vector2):
 	if not is_instance_valid(camera_node):
 		return
+	# If overlay occludes right edge, bias camera center further right so target appears in visible area.
+	var zoom = max(camera_node.zoom.x, 0.0001)
+	if _overlay_occlusion_px_x > 0.0:
+		var occlusion_world_w: float = _overlay_occlusion_px_x / zoom
+		# Shift by half occlusion width so target moves left out from under menu.
+		world_pos.x += occlusion_world_w * 0.5
 	camera_node.position = world_pos
 	_clamp_camera_position()
 
@@ -393,6 +438,80 @@ func set_freeze_zoom_for_menu_bounds(enabled: bool) -> void:
 	_update_camera_limits()
 	_clamp_camera_position()
 
+# --- New: Animation helpers ---
+func suppress_viewport_updates(suppress: bool) -> void:
+	_viewport_updates_suppressed = suppress
+	if not suppress and _pending_viewport_rect.size != Vector2.ZERO:
+		# Apply the last deferred rect now that suppression lifted
+		var rect_to_apply := _pending_viewport_rect
+		_pending_viewport_rect = Rect2()
+		update_map_viewport_rect(rect_to_apply)
+
+func smooth_focus_on_world_pos(world_pos: Vector2, duration: float = 0.5) -> void:
+	if not is_instance_valid(camera_node):
+		return
+	if _active_focus_tween and _active_focus_tween.is_valid():
+		_active_focus_tween.kill()
+	if duration <= 0.0:
+		duration = focus_tween_duration_default
+	_active_focus_tween = create_tween()
+	_active_focus_tween.set_trans(focus_tween_trans).set_ease(focus_tween_ease)
+	_active_focus_tween.tween_property(camera_node, "position", world_pos, duration)
+	_active_focus_tween.finished.connect(Callable(self, "_on_focus_tween_finished"))
+	_last_tween_target = world_pos
+	if _debug_menu_focus:
+		_dbg("tween_start", {"from": camera_node.position, "to": world_pos, "duration": duration})
+
+func smooth_focus_on_convoy(convoy_data: Dictionary, duration: float = 0.5) -> void:
+	var target_world := get_convoy_world_position(convoy_data)
+	if target_world != Vector2.ZERO:
+		smooth_focus_on_world_pos(target_world, duration)
+
+# Focus convoy expecting a final overlay occlusion width (in pixels). Bias computed from provided value, not current animated value.
+func smooth_focus_on_convoy_with_final_occlusion(convoy_data: Dictionary, final_occlusion_px: float, duration: float = 0.5) -> void:
+	if not is_instance_valid(camera_node):
+		return
+	var target_world := get_convoy_world_position(convoy_data)
+	if target_world == Vector2.ZERO:
+		return
+	var zoom = max(camera_node.zoom.x, 0.0001)
+	var bias_world: float = (final_occlusion_px / zoom) * 0.5
+	# Shift right so convoy appears centered inside reduced visible region (left side).
+	var biased_target := target_world + Vector2(bias_world, 0)
+	if _debug_menu_focus:
+		_dbg("menu_focus_compute", {
+			"raw_target": target_world,
+			"final_occlusion_px": final_occlusion_px,
+			"zoom": zoom,
+			"bias_world": bias_world,
+			"biased_target": biased_target,
+			"cam_start": (camera_node.position if is_instance_valid(camera_node) else Vector2.ZERO)
+		})
+	smooth_focus_on_world_pos(biased_target, duration)
+
+func _on_focus_tween_finished() -> void:
+	_clamp_camera_position()
+	_active_focus_tween = null
+	emit_signal("focus_tween_finished")
+	if _debug_menu_focus:
+		_dbg("tween_finished", {"final_pos": (camera_node.position if is_instance_valid(camera_node) else Vector2.ZERO), "expected_target": _last_tween_target})
+
+# --- Overlay occlusion width setter (for sliding menu overlay) ---
+func set_overlay_occlusion_width(px: float) -> void:
+	_overlay_occlusion_px_x = clamp(px, 0.0, map_viewport_rect.size.x)
+	_update_camera_limits()
+	# Avoid immediate clamp reposition (snap) if a smooth focus tween is in progress.
+	if not (_active_focus_tween and _active_focus_tween.is_valid()):
+		_clamp_camera_position()
+	if _debug_menu_focus:
+		_dbg("occlusion_set", {
+			"occlusion_px": _overlay_occlusion_px_x,
+			"viewport_px": map_viewport_rect.size,
+			"active_tween": (_active_focus_tween and _active_focus_tween.is_valid()),
+			"cam_pos": (camera_node.position if is_instance_valid(camera_node) else Vector2.ZERO)
+		})
+	_update_debug_overlay()
+
 # --- Helpers ---
 func _get_cell_size() -> Vector2:
 	if is_instance_valid(tilemap_ref) and is_instance_valid(tilemap_ref.tile_set):
@@ -407,3 +526,32 @@ func _dbg(tag: String, data: Dictionary = {}):
 		for k in data.keys():
 			summary += str(k) + ":" + str(data[k]) + " "
 		print("[MCC] ", tag, " ", summary)
+		_update_debug_overlay()
+
+func _create_debug_overlay():
+	if not is_instance_valid(get_viewport()):
+		return
+	if _debug_overlay_label:
+		return
+	_debug_overlay_label = Label.new()
+	_debug_overlay_label.name = "CameraDebugOverlay"
+	_debug_overlay_label.modulate = Color(0.9, 0.95, 1.0, 0.85)
+	_debug_overlay_label.theme_type_variation = "Monospace"
+	_debug_overlay_label.position = Vector2(12, 12)
+	_debug_overlay_label.z_index = 10000
+	get_viewport().add_child(_debug_overlay_label)
+	_update_debug_overlay()
+
+func _update_debug_overlay():
+	if not _debug_menu_focus:
+		return
+	if not _debug_overlay_label:
+		return
+	if not is_instance_valid(camera_node):
+		_debug_overlay_label.text = "<no camera>"
+		return
+	var zoom = camera_node.zoom.x
+	var occlusion = _overlay_occlusion_px_x
+	var cam_pos = camera_node.position
+	var target = _last_tween_target
+	_debug_overlay_label.text = "Zoom:" + str(zoom) + "\nOccPx:" + str(occlusion) + "\nCam:" + str(cam_pos) + "\nTweenTarget:" + str(target)

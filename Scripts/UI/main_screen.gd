@@ -12,7 +12,7 @@ var _interactive_state_is_pending: bool = false
 var _pending_interactive_state: bool = false
 var _map_is_interactive: bool = true # New flag to control map input
 
-@onready var menu_container = $MainContainer/MainContent/MenuContainer
+@onready var menu_container = $MenuContainer
 @onready var top_bar = $MainContainer/TopBar
 @onready var _onboarding_layer: Control = Control.new()
 var _new_convoy_dialog: Control = null
@@ -76,6 +76,25 @@ var _opt_invert_zoom := false
 var _opt_gestures_enabled := true
 var _opt_click_closes_menus := true
 var _opt_menu_ratio_open := 2.0
+
+# --- Animation state ---
+const MENU_ANIM_DURATION := 0.45
+const MENU_CAMERA_FOCUS_DURATION := 0.65 # Slightly longer for smoother convoy centering
+const MENU_WIDTH_RATIO_DEFAULT := 0.35 # Fallback percent of screen width when open if settings ratio absent
+var _menu_target_width: float = 0.0
+var _menu_anim_tween: Tween = null
+var _last_focused_convoy_data: Dictionary = {}
+var _current_menu_occlusion_px: float = 0.0 # animated width used to inform camera occlusion
+var DEBUG_MENU_CAMERA: bool = true # master toggle for menu-camera diagnostic logging
+var _menu_anim_in_progress: bool = false # true while menu open/close tween is active to suppress duplicate focus requests
+
+func _dbg_menu(tag: String, data: Dictionary = {}):
+	if not DEBUG_MENU_CAMERA:
+		return
+	var summary := ""
+	for k in data.keys():
+		summary += str(k) + ":" + str(data[k]) + " "
+	print("[MainScreen][MENU-CAM]", tag, summary)
 
 
 func _ready():
@@ -281,68 +300,149 @@ func _on_map_view_gui_input(event: InputEvent):
 # Called by the MenuManager's signal when a menu is opened or closed.
 
 func _on_menu_visibility_changed(is_open: bool, _menu_name: String):
-	# print("[DFCAM-DEBUG] MainScreen: Menu visibility changed. Is open: %s" % is_open)
-
-
-	# The stretch ratio determines how space is distributed in the HBoxContainer.
-	# When the menu is open, we want a 2:1 ratio (menu:map).
-	# When closed, we want a 0:1 ratio, giving the map all the space.
-
-	# Always set stretch ratios and force layout update
-	var main_content = menu_container.get_parent()
-	var main_map = main_content.get_node_or_null("Main")
+	# Overlay behavior: map stays full size; slide menu over it.
+	if not is_instance_valid(menu_container): return
+	var viewport_rect = get_viewport().get_visible_rect()
+	var full_w: float = viewport_rect.size.x
+	var ratio := _opt_menu_ratio_open / (_opt_menu_ratio_open + 1.0)
+	_menu_target_width = max(200.0, full_w * (ratio if ratio > 0 else MENU_WIDTH_RATIO_DEFAULT))
+	_dbg_menu("menu_visibility_signal", {"is_open": is_open, "target_w": _menu_target_width, "viewport_w": full_w})
 	if is_open:
-		menu_container.size_flags_stretch_ratio = _opt_menu_ratio_open
-		if is_instance_valid(main_map):
-			main_map.size_flags_stretch_ratio = 1.0
-		menu_container.show()
-		# print("[DFCAM-DEBUG] MainScreen: Menu opened, set stretch ratios (menu=2, map=1)")
+		var menu_manager = get_node_or_null("/root/MenuManager")
+		var convoy_data: Dictionary = {}
+		if is_instance_valid(menu_manager):
+			var active_menu = menu_manager.get("current_active_menu") if menu_manager.has_method("get") else null
+			if active_menu and active_menu.has_meta("menu_data"):
+				convoy_data = active_menu.get_meta("menu_data")
+		_last_focused_convoy_data = convoy_data
+		# IMPORTANT: apply final occlusion immediately for camera limit computation & centering.
+		_current_menu_occlusion_px = _menu_target_width
+		_update_camera_occlusion_from_menu()
+		_dbg_menu("menu_open_occlusion_applied", {"occlusion_px": _current_menu_occlusion_px, "has_convoy": not convoy_data.is_empty()})
+		_slide_menu_open(convoy_data)
 	else:
-		menu_container.size_flags_stretch_ratio = 0.0
-		if is_instance_valid(main_map):
-			main_map.size_flags_stretch_ratio = 1.0
-			main_map.show() # Ensure map view is visible
-			# Force map view to fill the parent container
-			if main_map.has_method("set_anchors_and_offsets_preset"):
-				main_map.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-		menu_container.hide()
-		# print("[DFCAM-DEBUG] MainScreen: Menu closed, set stretch ratios (menu=0, map=1) and map to full size")
-	if main_content:
-		main_content.queue_sort()
+		_dbg_menu("menu_close_begin", {"last_convoy_empty": _last_focused_convoy_data.is_empty(), "prev_occlusion_px": _current_menu_occlusion_px})
+		# Begin close: animate occlusion down alongside menu.
+		_slide_menu_close(_last_focused_convoy_data)
 
-	# Wait for the layout to update before notifying the camera controller.
-	await get_tree().process_frame
+func _kill_menu_anim_tween():
+	if _menu_anim_tween and _menu_anim_tween.is_valid():
+		_menu_anim_tween.kill()
+	_menu_anim_tween = null
 
-	if is_instance_valid(map_camera_controller) and map_camera_controller.has_method("update_map_viewport_rect"):
-		var map_rect = _get_map_display_rect()
-		# print("[DFCAM-DEBUG] MainScreen: Notifying camera of new viewport display rect=", map_rect)
-		map_camera_controller.update_map_viewport_rect(map_rect)
-		if map_camera_controller.has_method("set_menu_open_state"):
-			map_camera_controller.set_menu_open_state(is_open)
+func _slide_menu_open(convoy_data: Dictionary):
+	if not is_instance_valid(menu_container): return
+	_kill_menu_anim_tween()
+	_menu_anim_in_progress = true
+	# Initial hidden state: width 0 at right edge.
+	menu_container.visible = true
+	menu_container.offset_right = 0
+	menu_container.offset_left = 0 # zero width
+	_dbg_menu("slide_open_start", {"menu_target_w": _menu_target_width, "convoy_empty": convoy_data.is_empty(), "cam_pos_pre": (map_camera_controller.camera_node.position if (is_instance_valid(map_camera_controller) and map_camera_controller.has_method("camera_node")) else "<none>")})
 
-		# Some containers settle over two frames; re-sync once more to be bulletproof
-		await get_tree().process_frame
-		map_rect = _get_map_display_rect()
-		map_camera_controller.update_map_viewport_rect(map_rect)
-		if map_camera_controller.has_method("set_menu_open_state"):
-			map_camera_controller.set_menu_open_state(is_open)
+	# Acquire convoy data if missing (ensure deterministic centering on selected convoy).
+	if convoy_data.is_empty():
+		convoy_data = _get_primary_convoy_data()
+	# Smoothly focus using FINAL occlusion width target so convoy ends centered in reduced visible map view.
+	if is_instance_valid(map_camera_controller):
+		if not convoy_data.is_empty() and map_camera_controller.has_method("smooth_focus_on_convoy_with_final_occlusion"):
+			_dbg_menu("slide_open_focus_convoy", {})
+			map_camera_controller.smooth_focus_on_convoy_with_final_occlusion(convoy_data, _menu_target_width, MENU_CAMERA_FOCUS_DURATION)
+		elif map_camera_controller.has_method("smooth_focus_on_world_pos") and map_camera_controller.has_method("get_current_zoom"):
+			_dbg_menu("slide_open_focus_fallback", {})
+			# Fallback: shift camera center relative to current center (no convoy data available).
+			var zoom: float = max(map_camera_controller.get_current_zoom(), 0.0001)
+			var occlusion_world_w: float = _menu_target_width / zoom
+			var current_center: Vector2 = map_camera_controller.camera_node.position
+			map_camera_controller.smooth_focus_on_world_pos(current_center + Vector2(occlusion_world_w * 0.5, 0), MENU_CAMERA_FOCUS_DURATION)
 
-		if is_open:
-			# Focus on the convoy associated with the active menu
-			var menu_manager = get_node_or_null("/root/MenuManager")
-			if is_instance_valid(menu_manager):
-				var active_menu = menu_manager.get("current_active_menu") if menu_manager.has_method("get") else null
-				if active_menu and active_menu.has_meta("menu_data"):
-					var convoy_data = active_menu.get_meta("menu_data")
-					if convoy_data and map_camera_controller.has_method("focus_on_convoy"):
-						map_camera_controller.focus_on_convoy(convoy_data)
-		# On close, preserve user's zoom/position; limits already updated by controller
-	# else:
-	# 	printerr("[DFCAM-DEBUG] MainScreen: Could not find MapCameraController or it lacks update_map_viewport_rect method.")
+	# Animate menu width (offset_left negative width).
+	_menu_anim_tween = create_tween()
+	_menu_anim_tween.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+	_menu_anim_tween.tween_property(menu_container, "offset_left", -_menu_target_width, MENU_ANIM_DURATION)
+	# Occlusion already set to final; no need to animate it for camera logic.
+	_menu_anim_tween.finished.connect(func():
+		_dbg_menu("slide_open_finished", {"final_offset_left": menu_container.offset_left})
+		# Ensure final width exact
+		menu_container.offset_left = -_menu_target_width
+		# (Camera occlusion already correct)
+		_menu_anim_in_progress = false
+	)
 
-	# After the first layout, if the map is ready, fit the camera
-	# (Removed call to _fit_camera_to_map() to fix parser error)
-	# if _map_ready_for_focus and not _has_fitted_camera:
+func _slide_menu_close(convoy_data: Dictionary):
+	if not is_instance_valid(menu_container): return
+	_kill_menu_anim_tween()
+	_menu_anim_in_progress = true
+	if convoy_data.is_empty():
+		convoy_data = _get_primary_convoy_data()
+	_dbg_menu("slide_close_start", {"convoy_empty": convoy_data.is_empty(), "cam_pos_pre": (map_camera_controller.camera_node.position if (is_instance_valid(map_camera_controller) and map_camera_controller.has_method("camera_node")) else "<none>")})
+	var start_w := _current_menu_occlusion_px
+	if start_w <= 0.0:
+		start_w = _menu_target_width
+	_close_anim_convoy = convoy_data
+	_close_anim_start_width = start_w
+	_menu_anim_tween = create_tween()
+	_menu_anim_tween.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+	_menu_anim_tween.tween_method(Callable(self, "_close_anim_step"), 0.0, 1.0, MENU_ANIM_DURATION)
+	_menu_anim_tween.finished.connect(func():
+		_dbg_menu("slide_close_finished", {"final_offset_left": menu_container.offset_left})
+		menu_container.visible = false
+		menu_container.offset_left = 0.0
+		_current_menu_occlusion_px = 0.0
+		_update_camera_occlusion_from_menu()
+		_menu_anim_in_progress = false
+	)
+
+var _close_anim_convoy: Dictionary = {}
+var _close_anim_start_width: float = 0.0
+
+func _close_anim_step(progress: float):
+	var w = lerp(_close_anim_start_width, 0.0, progress)
+	_current_menu_occlusion_px = w
+	menu_container.offset_left = -w
+	_update_camera_occlusion_from_menu()
+	if is_instance_valid(map_camera_controller) and not _close_anim_convoy.is_empty():
+		if map_camera_controller.has_method("focus_on_convoy"):
+			map_camera_controller.focus_on_convoy(_close_anim_convoy)
+	_dbg_menu("close_step", {"p": progress, "w": w})
+
+# Update camera controller with current animated occlusion width
+func _update_camera_occlusion_from_menu():
+	if is_instance_valid(map_camera_controller) and map_camera_controller.has_method("set_overlay_occlusion_width"):
+		map_camera_controller.set_overlay_occlusion_width(_current_menu_occlusion_px)
+		_dbg_menu("occlusion_update", {"occlusion_px": _current_menu_occlusion_px})
+
+# Helper: attempt to retrieve currently selected convoy data for focusing.
+func _get_primary_convoy_data() -> Dictionary:
+	# Try MenuManager active menu data first
+	var menu_manager = get_node_or_null("/root/MenuManager")
+	if is_instance_valid(menu_manager):
+		var active_menu = menu_manager.get("current_active_menu") if menu_manager.has_method("get") else null
+		if active_menu and active_menu.has_meta("menu_data"):
+			var md = active_menu.get_meta("menu_data")
+			if typeof(md) == TYPE_DICTIONARY and not md.is_empty():
+				return md
+	# Fall back to GameDataManager selected convoy ids
+	var gdm = get_node_or_null("/root/GameDataManager")
+	if is_instance_valid(gdm):
+		var selected_ids := []
+		if gdm.has_method("get_selected_convoy_ids"):
+			selected_ids = gdm.get_selected_convoy_ids()
+		var all_convoys := []
+		if gdm.has_method("get_all_convoy_data"):
+			all_convoys = gdm.get_all_convoy_data()
+		if selected_ids is Array and not selected_ids.is_empty() and all_convoys is Array:
+			for c in all_convoys:
+				if typeof(c) == TYPE_DICTIONARY:
+					var cid = str(c.get("id", ""))
+					if selected_ids.has(cid):
+						return c
+		# Fallback: return first convoy if any
+		if all_convoys is Array and not all_convoys.is_empty():
+			var first = all_convoys[0]
+			if typeof(first) == TYPE_DICTIONARY:
+				return first
+	return {}
 
 func _on_initial_data_ready():
 	print("[Onboarding] initial_data_ready received; checking convoys…")
@@ -678,8 +778,15 @@ func _apply_menu_ratio_if_open():
 func _on_convoy_menu_focus_requested(convoy_data: Dictionary):
 	# Ensure layout has settled and camera sees final rect
 	await get_tree().process_frame
-	if is_instance_valid(map_camera_controller) and map_camera_controller.has_method("focus_on_convoy"):
-		map_camera_controller.focus_on_convoy(convoy_data)
+	if not is_instance_valid(map_camera_controller):
+		return
+	# Suppress duplicate focus while menu visible or animating to preserve biased open tween.
+	if is_instance_valid(menu_container) and (menu_container.visible or _menu_anim_in_progress):
+		_dbg_menu("focus_request_suppressed", {"visible": menu_container.visible, "anim_in_progress": _menu_anim_in_progress})
+		return
+	if map_camera_controller.has_method("smooth_focus_on_convoy"):
+		_dbg_menu("focus_request_applied", {})
+		map_camera_controller.smooth_focus_on_convoy(convoy_data, MENU_CAMERA_FOCUS_DURATION)
 
 
 # Called when the map_ready_for_focus signal is emitted from main.gd

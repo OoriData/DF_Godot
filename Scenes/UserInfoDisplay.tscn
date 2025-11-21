@@ -1,7 +1,23 @@
-[gd_scene load_steps=3 format=3 uid="uid://c5w2h7q3g6y0x"]
+[gd_scene load_steps=4 format=3 uid="uid://c5w2h7q3g6y0x"]
 
 [ext_resource type="Script" uid="uid://45xep8fdnf13" path="res://Scripts/UI/user_info_display.gd" id="1_83a3p"]
 [ext_resource type="PackedScene" uid="uid://dkvjop71jseg6" path="res://Scenes/ConvoyListPanel.tscn" id="2_y7b05"]
+
+[sub_resource type="StyleBoxFlat" id="2_chip_label"]
+content_margin_left = 6.0
+content_margin_top = 2.0
+content_margin_right = 6.0
+content_margin_bottom = 2.0
+bg_color = Color(0.2, 0.24, 0.32, 0.9)
+border_width_left = 1
+border_width_top = 1
+border_width_right = 1
+border_width_bottom = 1
+border_color = Color(0.4, 0.88, 0.8, 0.8)
+corner_radius_top_left = 5
+corner_radius_top_right = 5
+corner_radius_bottom_right = 5
+corner_radius_bottom_left = 5
 
 [node name="UserInfoDisplay" type="HBoxContainer"]
 z_index = 10
@@ -13,6 +29,7 @@ script = ExtResource("1_83a3p")
 
 [node name="UsernameLabel" type="Label" parent="."]
 layout_mode = 2
+theme_override_styles/normal = SubResource("2_chip_label")
 text = "Player"
 vertical_alignment = 1
 
