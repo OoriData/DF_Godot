@@ -10,11 +10,11 @@ var map_camera_controller: Node = null
 var map_interaction_manager: Node = null
 var _interactive_state_is_pending: bool = false
 var _pending_interactive_state: bool = false
+var _onboarding_layer: Control = null
 var _map_is_interactive: bool = true # New flag to control map input
 
 @onready var menu_container = $MenuContainer
 @onready var top_bar = $MainContainer/TopBar
-@onready var _onboarding_layer: Control = Control.new()
 var _new_convoy_dialog: Control = null
 const NEW_CONVOY_DIALOG_SCENE_PATH := "res://Scenes/NewConvoyDialog.tscn"
 @export var new_convoy_dialog_scene: PackedScene = null
@@ -655,6 +655,7 @@ func _ensure_onboarding_layer():
 	if not is_instance_valid(_onboarding_layer):
 		_onboarding_layer = Control.new()
 		_onboarding_layer.name = "OnboardingLayer"
+		_onboarding_layer.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		# Prefer to parent under the map_view (falls back to MainScreen if unavailable)
 		var parent: Node = map_view if is_instance_valid(map_view) else self
 		if _onboarding_layer.get_parent() != parent:
