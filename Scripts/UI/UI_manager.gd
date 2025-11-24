@@ -611,7 +611,8 @@ func _update_settlement_panel_content(panel: Panel, settlement_info: Dictionary)
 	label_node.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	label_node.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	label_node.position = Vector2.ZERO
-	label_node.update_minimum_size()
+	label_node.update_minimum_size() # Ensure label's min_size is current before we use it.
+	label_node.reset_size() # Match size to the new minimum_size.
 	var label_actual_min_size = label_node.get_minimum_size()
 	var stylebox_margins = style_box.get_minimum_size()
 	panel.custom_minimum_size = Vector2(

@@ -305,7 +305,8 @@ func _update_convoy_panel_content(panel: Panel, convoy_data: Dictionary, p_convo
 	label_node.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	label_node.position = Vector2.ZERO 
 
-	label_node.update_minimum_size() # Ensure label's min_size is current
+	label_node.update_minimum_size() # Ensure label's min_size is current.
+	label_node.reset_size() # Match size to the new minimum_size to prevent old, larger bounds from being kept.
 	var label_actual_min_size = label_node.get_minimum_size()
 	var stylebox_margins = style_box.get_minimum_size() # This is Vector2(left+right, top+bottom)
 
