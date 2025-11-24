@@ -13,7 +13,7 @@ var _pending_interactive_state: bool = false
 var _onboarding_layer: Control = null
 var _map_is_interactive: bool = true # New flag to control map input
 
-@onready var menu_container = $MenuContainer
+@onready var menu_container = $MainContainer/MainContent/MapAndMenuContainer/MenuContainer
 @onready var top_bar = $MainContainer/TopBar
 var _new_convoy_dialog: Control = null
 const NEW_CONVOY_DIALOG_SCENE_PATH := "res://Scenes/NewConvoyDialog.tscn"

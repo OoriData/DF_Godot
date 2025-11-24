@@ -54,11 +54,14 @@ layout_mode = 2
 size_flags_vertical = 3
 theme_override_constants/separation = 0
 
-[node name="Main" parent="MainContainer/MainContent" instance=ExtResource("2_pjpa4")]
+[node name="MapAndMenuContainer" type="Control" parent="MainContainer/MainContent"]
 layout_mode = 2
 size_flags_horizontal = 3
 
-[node name="MenuContainer" type="PanelContainer" parent="."]
+[node name="Main" parent="MainContainer/MainContent/MapAndMenuContainer" instance=ExtResource("2_pjpa4")]
+layout_mode = 1
+
+[node name="MenuContainer" type="PanelContainer" parent="MainContainer/MainContent/MapAndMenuContainer"]
 visible = false
 layout_mode = 1
 anchors_preset = 11
