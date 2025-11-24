@@ -315,12 +315,20 @@ func _on_menu_visibility_changed(is_open: bool, _menu_name: String):
 			if active_menu and active_menu.has_meta("menu_data"):
 				convoy_data = active_menu.get_meta("menu_data")
 		_last_focused_convoy_data = convoy_data
+		# Tell camera controller the menu is opening. This allows it to use the correct
+		# clamping logic (e.g. frozen zoom) when calculating the tween target.
+		# We pass 'false' to prevent an immediate camera snap.
+		if is_instance_valid(map_camera_controller) and map_camera_controller.has_method("set_menu_open_state"):
+			map_camera_controller.set_menu_open_state(true, false)
 		# IMPORTANT: apply final occlusion immediately for camera limit computation & centering.
 		_current_menu_occlusion_px = _menu_target_width
 		_update_camera_occlusion_from_menu()
 		_dbg_menu("menu_open_occlusion_applied", {"occlusion_px": _current_menu_occlusion_px, "has_convoy": not convoy_data.is_empty()})
 		_slide_menu_open(convoy_data)
 	else:
+		# Tell camera controller the menu is closing.
+		if is_instance_valid(map_camera_controller) and map_camera_controller.has_method("set_menu_open_state"):
+			map_camera_controller.set_menu_open_state(false)
 		_dbg_menu("menu_close_begin", {"last_convoy_empty": _last_focused_convoy_data.is_empty(), "prev_occlusion_px": _current_menu_occlusion_px})
 		# Begin close: animate occlusion down alongside menu.
 		_slide_menu_close(_last_focused_convoy_data)

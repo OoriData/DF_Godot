@@ -411,12 +411,13 @@ func get_current_pan_bounds() -> Rect2:
 		max_y = map_height * 0.5
 	return Rect2(Vector2(min_x, min_y), Vector2(max_x - min_x, max_y - min_y))
 
-func set_menu_open_state(is_open: bool):
+func set_menu_open_state(is_open: bool, and_clamp_immediately: bool = true):
 	_menu_open = is_open
 	if _menu_open and freeze_zoom_for_menu_bounds:
 		_menu_open_reference_zoom = camera_node.zoom.x if is_instance_valid(camera_node) else 1.0
 	_update_camera_limits()
-	_clamp_camera_position()
+	if and_clamp_immediately:
+		_clamp_camera_position()
 	_dbg("menu_state", {"open": _menu_open, "pan_bounds": get_current_pan_bounds(), "cam_pos": (camera_node.position if is_instance_valid(camera_node) else Vector2.ZERO)})
 
 # Public setter to mirror MIM API and toggle edge exposure at runtime
@@ -452,15 +453,19 @@ func smooth_focus_on_world_pos(world_pos: Vector2, duration: float = 0.5) -> voi
 		return
 	if _active_focus_tween and _active_focus_tween.is_valid():
 		_active_focus_tween.kill()
+
+	# Clamp the target position before tweening to respect map boundaries.
+	var clamped_world_pos = _get_clamped_camera_pos(world_pos)
+
 	if duration <= 0.0:
 		duration = focus_tween_duration_default
 	_active_focus_tween = create_tween()
 	_active_focus_tween.set_trans(focus_tween_trans).set_ease(focus_tween_ease)
-	_active_focus_tween.tween_property(camera_node, "position", world_pos, duration)
+	_active_focus_tween.tween_property(camera_node, "position", clamped_world_pos, duration)
 	_active_focus_tween.finished.connect(Callable(self, "_on_focus_tween_finished"))
-	_last_tween_target = world_pos
+	_last_tween_target = clamped_world_pos
 	if _debug_menu_focus:
-		_dbg("tween_start", {"from": camera_node.position, "to": world_pos, "duration": duration})
+		_dbg("tween_start", {"from": camera_node.position, "to": clamped_world_pos, "duration": duration})
 
 func smooth_focus_on_convoy(convoy_data: Dictionary, duration: float = 0.5) -> void:
 	var target_world := get_convoy_world_position(convoy_data)
@@ -495,6 +500,61 @@ func _on_focus_tween_finished() -> void:
 	emit_signal("focus_tween_finished")
 	if _debug_menu_focus:
 		_dbg("tween_finished", {"final_pos": (camera_node.position if is_instance_valid(camera_node) else Vector2.ZERO), "expected_target": _last_tween_target})
+
+# --- New: Helper to get a clamped camera position without modifying state ---
+func _get_clamped_camera_pos(pos: Vector2) -> Vector2:
+	if not is_instance_valid(camera_node):
+		return pos
+
+	# This logic is a copy of _clamp_camera_position, but it returns a
+	# clamped position instead of modifying the camera directly.
+	var cell_size = _get_cell_size()
+	var map_width = map_size.x * cell_size.x
+	var map_height = map_size.y * cell_size.y
+	var map_origin: Vector2 = Vector2.ZERO
+	if is_instance_valid(tilemap_ref):
+		map_origin = tilemap_ref.position
+
+	var current_viewport_px: Vector2 = map_viewport_rect.size
+	if is_instance_valid(sub_viewport_node):
+		current_viewport_px = Vector2(sub_viewport_node.size)
+	
+	var effective_viewport_size = current_viewport_px
+	if _menu_open and loose_pan_when_menu_open and _full_viewport_size != Vector2.ZERO:
+		effective_viewport_size = _full_viewport_size
+	
+	var viewport_size = effective_viewport_size
+	var zoom = camera_node.zoom.x
+	if _menu_open and freeze_zoom_for_menu_bounds:
+		zoom = _menu_open_reference_zoom
+	
+	var full_world_w = viewport_size.x / max(zoom, 0.0001)
+	var visible_world_h = viewport_size.y / max(zoom, 0.0001)
+	var half_full_w = full_world_w * 0.5
+	var half_visible_h = visible_world_h * 0.5
+
+	var occlusion_world_w: float = _overlay_occlusion_px_x / max(zoom, 0.0001)
+
+	var min_x = map_origin.x + half_full_w
+	var max_x = map_origin.x + map_width - half_full_w + occlusion_world_w
+	if max_x < min_x:
+		max_x = min_x
+	var min_y = map_origin.y + half_visible_h
+	var max_y = map_origin.y + map_height - half_visible_h
+
+	if allow_map_edge_exposure:
+		var margin_factor := 0.25
+		min_x = lerp(min_x, 0.0, margin_factor)
+		max_x = lerp(max_x, map_width, margin_factor)
+		min_y = lerp(min_y, 0.0, margin_factor)
+		max_y = lerp(max_y, map_height, margin_factor)
+
+	if map_width <= full_world_w:
+		min_x = map_width * 0.5; max_x = map_width * 0.5
+	if map_height <= visible_world_h:
+		min_y = map_height * 0.5; max_y = map_height * 0.5
+
+	return Vector2(clamp(pos.x, min_x, max_x), clamp(pos.y, min_y, max_y))
 
 # --- Overlay occlusion width setter (for sliding menu overlay) ---
 func set_overlay_occlusion_width(px: float) -> void:
