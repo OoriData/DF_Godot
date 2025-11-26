@@ -67,6 +67,9 @@ var _cargo_detail_cache: Dictionary = {} # cargo_id -> full cargo Dictionary fro
 var _cargo_enrichment_pending: Dictionary = {} # cargo_id -> true while request in-flight
 var _mech_probe_pending_cargo_ids: Dictionary = {} # cargo_id -> true expected to enrich this probe
 
+# --- Standardized Item Data (typed cargo objects) ---
+const ItemsData = preload("res://Scripts/Data/Items.gd")
+
 # --- Periodic Refresh ---
 @export var convoy_refresh_interval_seconds: float = 2.5 # How often to poll backend for convoy movement
 var _convoy_refresh_timer: Timer = null
@@ -510,6 +513,31 @@ func augment_single_convoy(raw_convoy_item: Dictionary) -> Dictionary:
 	# --- Map vehicles to vehicle_details_list for UI compatibility ---
 	if not augmented_item.has("vehicle_details_list") and augmented_item.has("vehicles"):
 		augmented_item["vehicle_details_list"] = augmented_item["vehicles"]
+
+	# --- Convert each vehicle's cargo to typed data objects (merge 'cargo' + 'cargo_inventory') ---
+	if augmented_item.has("vehicle_details_list") and augmented_item["vehicle_details_list"] is Array:
+		for v in augmented_item["vehicle_details_list"]:
+			if v is Dictionary:
+				var raw_cargo: Array = []
+				# Primary in existing UI: 'cargo'
+				if v.has("cargo") and v.cargo is Array:
+					raw_cargo += v.cargo
+				# Secondary / fallback: 'cargo_inventory'
+				if v.has("cargo_inventory") and v.cargo_inventory is Array:
+					raw_cargo += v.cargo_inventory
+				# Append synthetic bulk resources (vehicle-scoped, if any)
+				for res_key in ["fuel","water","food"]:
+					if v.has(res_key) and (v.get(res_key) is int or v.get(res_key) is float) and float(v.get(res_key)) > 0.0:
+						var qty = int(v.get(res_key))
+						raw_cargo.append({
+							"cargo_id": "bulk_" + res_key + "_" + String(v.get("vehicle_id", v.get("id", ""))),
+							"name": res_key.capitalize(),
+							"quantity": qty,
+							"resource_type": res_key,
+							"is_raw_resource": true
+						})
+				# Build typed list; store under new key 'cargo_items_typed'
+				v["cargo_items_typed"] = ItemsData.classify_many(raw_cargo)
 
 	# Assign color if it's a new convoy
 	var convoy_id_val = augmented_item.get('convoy_id')

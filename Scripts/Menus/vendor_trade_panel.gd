@@ -1,5 +1,7 @@
 extends Control
 
+const ItemsData = preload("res://Scripts/Data/Items.gd")
+
 # Signals to notify the main menu of transactions
 signal item_purchased(item, quantity, total_price)
 signal item_sold(item, quantity, total_price)
@@ -541,25 +543,56 @@ func _populate_convoy_list() -> void:
 	if convoy_data.has("vehicle_details_list"):
 		for vehicle in convoy_data.vehicle_details_list:
 			var vehicle_name = vehicle.get("name", "Unknown Vehicle")
-			for item in vehicle.get("cargo", []):
-				found_any_cargo = true
-				if item.has("intrinsic_part_id") and item.get("intrinsic_part_id") != null:
-					continue
-				var category_dict: Dictionary
-				var mission_vendor_name: String = ""
-				if item.get("recipient") != null or item.get("delivery_reward") != null:
-					category_dict = aggregated_missions
-				elif (item.has("food") and item.get("food") != null and item.get("food") > 0) or \
-					 (item.has("water") and item.get("water") != null and item.get("water") > 0) or \
-					 (item.has("fuel") and item.get("fuel") != null and item.get("fuel") > 0):
-					category_dict = aggregated_resources
-				else:
-					category_dict = aggregated_other
-				if category_dict == aggregated_missions:
-					var recipient_id = item.get("recipient")
-					if recipient_id:
-						mission_vendor_name = _get_vendor_name_for_recipient(recipient_id)
-				_aggregate_item(category_dict, item, vehicle_name, mission_vendor_name)
+			# Prefer typed cargo list if present
+			if vehicle.has("cargo_items_typed") and vehicle["cargo_items_typed"] is Array and not (vehicle["cargo_items_typed"] as Array).is_empty():
+				for typed in vehicle["cargo_items_typed"]:
+					if not typed is CargoItem:
+						continue
+					found_any_cargo = true
+					var raw_item: Dictionary = typed.raw.duplicate(true)
+					raw_item["quantity"] = typed.quantity
+					# Normalize totals for aggregation & price calculations
+					raw_item["weight"] = typed.total_weight
+					raw_item["volume"] = typed.total_volume
+					if typed.has_method("get_modifier_summary"):
+						var mods: String = String(typed.get_modifier_summary())
+						if mods != "":
+							raw_item["modifiers"] = mods
+						if "stats" in typed and typed.stats is Dictionary and not typed.stats.is_empty():
+							raw_item["stats"] = typed.stats.duplicate(true)
+					var category_dict: Dictionary
+					var mission_vendor_name: String = ""
+					match typed.category:
+						"mission": category_dict = aggregated_missions
+						"resource": category_dict = aggregated_resources
+						"part": category_dict = aggregated_parts
+						_:
+							category_dict = aggregated_other
+					if category_dict == aggregated_missions:
+						var recipient_id = raw_item.get("recipient")
+						if recipient_id:
+							mission_vendor_name = _get_vendor_name_for_recipient(recipient_id)
+					_aggregate_item(category_dict, raw_item, vehicle_name, mission_vendor_name)
+			else:
+				for item in vehicle.get("cargo", []):
+					found_any_cargo = true
+					if item.has("intrinsic_part_id") and item.get("intrinsic_part_id") != null:
+						continue
+					var category_dict: Dictionary
+					var mission_vendor_name: String = ""
+					if item.get("recipient") != null or item.get("delivery_reward") != null:
+						category_dict = aggregated_missions
+					elif (item.has("food") and item.get("food") != null and item.get("food") > 0) or \
+						 (item.has("water") and item.get("water") != null and item.get("water") > 0) or \
+						 (item.has("fuel") and item.get("fuel") != null and item.get("fuel") > 0):
+						category_dict = aggregated_resources
+					else:
+						category_dict = aggregated_other
+					if category_dict == aggregated_missions:
+						var recipient_id = item.get("recipient")
+						if recipient_id:
+							mission_vendor_name = _get_vendor_name_for_recipient(recipient_id)
+					_aggregate_item(category_dict, item, vehicle_name, mission_vendor_name)
 			for item in vehicle.get("parts", []):
 				if item.has("intrinsic_part_id") and item.get("intrinsic_part_id") != null:
 					continue
