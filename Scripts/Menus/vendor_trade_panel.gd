@@ -551,6 +551,8 @@ func _populate_convoy_list() -> void:
 					found_any_cargo = true
 					var raw_item: Dictionary = typed.raw.duplicate(true)
 					raw_item["quantity"] = typed.quantity
+					# Inject the category from the typed object to ensure correct classification downstream.
+					raw_item["category"] = typed.category
 					# Normalize totals for aggregation & price calculations
 					raw_item["weight"] = typed.total_weight
 					raw_item["volume"] = typed.total_volume
@@ -1468,28 +1470,8 @@ func _is_positive_number(v: Variant) -> bool:
 	return (v is float or v is int) and float(v) > 0.0
 
 func _looks_like_part(item_data_source: Dictionary) -> bool:
-	# First, rule out items that are explicitly resources.
-	if item_data_source.get("is_raw_resource", false):
-		return false
-	
-	# Also rule out items that provide resources, like MREs or Jerry Cans.
-	# These are not vehicle parts for compatibility checking purposes.
-	if _is_positive_number(item_data_source.get("food")) or \
-	   _is_positive_number(item_data_source.get("water")) or \
-	   _is_positive_number(item_data_source.get("fuel")):
-		return false
-
-	if item_data_source.has("slot") and item_data_source.get("slot") != null and String(item_data_source.get("slot")).length() > 0:
-		return true
-	if item_data_source.has("intrinsic_part_id"):
-		return true
-	if item_data_source.has("parts") and item_data_source.get("parts") is Array and not (item_data_source.get("parts") as Array).is_empty():
-		var first_p: Dictionary = (item_data_source.get("parts") as Array)[0]
-		if first_p.has("slot") and first_p.get("slot") != null and String(first_p.get("slot")).length() > 0:
-			return true
-	if item_data_source.has("is_part") and bool(item_data_source.get("is_part")):
-		return true
-	return false
+	# Defer to the centralized classification logic in the ItemsData factory.
+	return ItemsData.PartItem._looks_like_part_dict(item_data_source)
 
 func _update_install_button_state() -> void:
 	if not is_instance_valid(install_button):

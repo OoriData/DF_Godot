@@ -117,32 +117,45 @@ class PartItem:
 	var modifiers_summary: String = "" # precomputed concise summary
 
 	static func _looks_like_part_dict(d: Dictionary) -> bool:
-		if not d: return false
-		# Primary explicit signals first
-		if d.get("is_part", false): return true
-		if d.has("intrinsic_part_id"): return true
-		if d.has("slot") and d.get("slot") != null and str(d.get("slot")).strip_edges() != "": return true
+		if not d:
+			return false
 
-		# Because this is called after mission/resource/vehicle checks in the factory,
-		# we can be more lenient. The main risk is misclassifying "other" items as parts.
+		# First, rule out items that are explicitly resources to avoid misclassifying containers.
+		if d.get("is_raw_resource", false):
+			return false
+		if str(d.get("category", "")).to_lower() == "resource":
+			return false
+		if ((d.get("food") is float or d.get("food") is int) and float(d.get("food", 0.0)) > 0.0) or \
+		   ((d.get("water") is float or d.get("water") is int) and float(d.get("water", 0.0)) > 0.0) or \
+		   ((d.get("fuel") is float or d.get("fuel") is int) and float(d.get("fuel", 0.0)) > 0.0):
+			return false
 
-		# Heuristic from vendor panel: check for type/category fields
+		# --- Now check for part signals, from strongest to weakest ---
+		if str(d.get("category", "")).to_lower() == "part":
+			return true
+		if d.has("slot") and d.get("slot") != null and String(d.get("slot")).length() > 0:
+			return true
+		if d.has("intrinsic_part_id"):
+			return true
+		if d.has("parts") and d.get("parts") is Array and not (d.get("parts") as Array).is_empty():
+			var first_p = (d.get("parts") as Array)[0]
+			if first_p is Dictionary and first_p.has("slot") and first_p.get("slot") != null and String(first_p.get("slot")).length() > 0:
+				return true
+		if d.has("is_part") and bool(d.get("is_part")):
+			return true
+
 		var type_s := String(d.get("type", "")).to_lower()
-		var cat_s := String(d.get("category", "")).to_lower()
-		if type_s == "part" or cat_s == "part":
+		if type_s == "part":
 			return true
 
-		# Heuristic: if it has a modifier key with a non-zero value, it's likely a part.
-		var has_modifier_key := false
-		for k in ["top_speed_add", "efficiency_add", "offroad_capability_add", "cargo_capacity_add", "weight_capacity_add", "fuel_capacity", "kwh_capacity"]:
-			if d.has(k):
-				var v = d.get(k)
-				# Check for non-zero value to avoid matching things like `fuel_capacity: 0` on non-parts.
-				if (v is int or v is float or (v is String and v.is_valid_float())) and float(v) != 0.0:
-					has_modifier_key = true
-					break
-		if has_modifier_key:
+		# Check for a non-empty 'stats' dictionary, which is a strong indicator of a part.
+		if d.has("stats") and d.get("stats") is Dictionary and not (d.get("stats") as Dictionary).is_empty():
 			return true
+
+		var stat_keys := ["top_speed_add", "efficiency_add", "offroad_capability_add", "cargo_capacity_add", "weight_capacity_add", "fuel_capacity", "kwh_capacity"]
+		for sk in stat_keys:
+			if d.has(sk) and d[sk] != null and (d[sk] is int or d[sk] is float) and float(d[sk]) != 0.0:
+				return true
 
 		return false
 
@@ -154,6 +167,13 @@ class PartItem:
 		p.raw = base.raw
 		p.category = "part"
 		p.slot = String(d.get("slot", ""))
+		# If slot is empty, try to infer it from a nested 'parts' array. This is common for container-like parts.
+		if p.slot == "" and d.has("parts") and d.get("parts") is Array and not (d.get("parts") as Array).is_empty():
+			var first_p = (d.get("parts") as Array)[0]
+			if first_p is Dictionary and first_p.has("slot") and first_p.get("slot") != null:
+				var nested_slot = String(first_p.get("slot"))
+				if not nested_slot.is_empty():
+					p.slot = nested_slot
 		var mod_keys = ["top_speed_add","efficiency_add","offroad_capability_add","cargo_capacity_add","weight_capacity_add","fuel_capacity","kwh_capacity"]
 		for mk in mod_keys:
 			if d.has(mk): p.modifiers[mk] = CargoItem._to_float(d.get(mk))
@@ -263,10 +283,22 @@ class VehicleItem:
 	var weight_capacity: float = 0.0
 
 	static func _looks_like_vehicle_dict(d: Dictionary) -> bool:
-		if not d: return false
-		if d.has("vehicle_id"): return true
+		if not d:
+			return false
+
+		# A dictionary cannot be a vehicle if it's also explicitly a piece of cargo.
+		# Cargo items have a cargo_id, vehicle records do not.
+		if d.has("cargo_id") and d.get("cargo_id") != null:
+			return false
+
+		# Now check for positive signals that it IS a vehicle.
+		# Having a vehicle_id (and no cargo_id) is the strongest signal.
+		if d.has("vehicle_id") and d.get("vehicle_id") != null:
+			return true
+
 		if d.get("is_vehicle", false): return true
 		if d.has("top_speed") and d.has("efficiency"): return true
+
 		return false
 
 	static func _from_vehicle_dict(d: Dictionary) -> VehicleItem:

@@ -5,6 +5,7 @@ signal back_requested
 # Signal to open the full cargo manifest for the entire convoy
 signal return_to_convoy_overview_requested(convoy_data)
 signal inspect_all_convoy_cargo_requested(convoy_data)
+signal inspect_specific_convoy_cargo_requested(convoy_data, item_data)
 
 # @onready variables for UI elements
 @onready var title_label: Label = $MainVBox/TitleLabel
@@ -254,33 +255,88 @@ func _add_detail_row(parent: Container, label_text: String, value_text: String, 
 	hbox.add_child(value_node)
 	parent.add_child(hbox)
 
-func _add_inspectable_item_row(parent: Container, item_name_text: String, item_summary_text: String, item_data: Dictionary):
-	var hbox = HBoxContainer.new()
-	hbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+func _add_inspectable_item_row(parent: Container, item_name: String, agg_data: Dictionary, item_index: int):
+	# agg_data contains: quantity, sample, total_weight, total_volume
+	var item_data = agg_data.sample
 
-	var name_label = Label.new()
-	name_label.text = "  " + item_name_text # Indent for clarity
-	# Remove expand flag to keep labels and button together
-	name_label.size_flags_vertical = Control.SIZE_SHRINK_CENTER # Center vertically if row is taller
-	name_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER # Center text in label
+	var outer_row := HBoxContainer.new()
+	outer_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	outer_row.mouse_filter = Control.MOUSE_FILTER_PASS # For hover effects
+
+	var bg_panel := PanelContainer.new()
+	bg_panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	bg_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+
+	var sb := StyleBoxFlat.new()
+	if item_index % 2 == 0:
+		sb.bg_color = Color(0.13, 0.15, 0.19, 0.8)
+	else:
+		sb.bg_color = Color(0.10, 0.12, 0.16, 0.8)
+	sb.set_content_margin_all(6)
+	bg_panel.add_theme_stylebox_override("panel", sb)
 	
-	# Add a summary label for quick info
-	var summary_label = Label.new()
-	summary_label.text = " " + item_summary_text # Add a space for separation
-	summary_label.add_theme_color_override("font_color", Color.LIGHT_GRAY) # Make summary less prominent
-	summary_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER # Center text in label
-	
+	outer_row.add_child(bg_panel)
+
+	var content_row := HBoxContainer.new()
+	content_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	content_row.add_theme_constant_override("separation", 10)
+	bg_panel.add_child(content_row)
+
+	# Quantity Badge
+	var qty_badge := Label.new()
+	qty_badge.text = "x%d" % agg_data.quantity
+	qty_badge.custom_minimum_size.x = 40
+	qty_badge.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	qty_badge.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	qty_badge.modulate = Color(0.8, 0.85, 0.9, 1)
+	content_row.add_child(qty_badge)
+
+	# Item Name
+	var name_label := Label.new()
+	name_label.text = item_name
+	name_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	name_label.clip_text = true
+	name_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	content_row.add_child(name_label)
+
+	# Weight
+	var weight_label := Label.new()
+	weight_label.text = "%.1f kg" % agg_data.total_weight
+	weight_label.custom_minimum_size.x = 70
+	weight_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	weight_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	weight_label.modulate = Color.LIGHT_GRAY
+	content_row.add_child(weight_label)
+
+	# Volume
+	var volume_label := Label.new()
+	volume_label.text = "%.2f m³" % agg_data.total_volume
+	volume_label.custom_minimum_size.x = 70
+	volume_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	volume_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	volume_label.modulate = Color.LIGHT_GRAY
+	content_row.add_child(volume_label)
+
+	# Inspect Button
 	var inspect_button = Button.new()
 	inspect_button.text = "Inspect"
-	inspect_button.custom_minimum_size.y = 30 # Explicit minimum height for the button
-	inspect_button.size_flags_vertical = Control.SIZE_SHRINK_CENTER # Center vertically if row is taller
-	
-	# This function is only used for cargo, so connect to the cargo inspection handler.
+	inspect_button.custom_minimum_size.x = 80
+	inspect_button.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	inspect_button.pressed.connect(_on_inspect_cargo_pressed.bind(item_data))
-	hbox.add_child(name_label)
-	hbox.add_child(summary_label)
-	hbox.add_child(inspect_button)
-	parent.add_child(hbox)
+	content_row.add_child(inspect_button)
+
+	# Hover effect
+	outer_row.mouse_entered.connect(func():
+		sb.bg_color = sb.bg_color.lightened(0.1)
+	)
+	outer_row.mouse_exited.connect(func():
+		if item_index % 2 == 0:
+			sb.bg_color = Color(0.13, 0.15, 0.19, 0.8)
+		else:
+			sb.bg_color = Color(0.10, 0.12, 0.16, 0.8)
+	)
+
+	parent.add_child(outer_row)
 
 
 func _display_vehicle_details(vehicle_data: Dictionary):
@@ -425,9 +481,50 @@ func _populate_cargo_tab(vehicle_data: Dictionary):
 	# --- Title for this vehicle's cargo ---
 	var vehicle_cargo_title = Label.new()
 	vehicle_cargo_title.text = "Cargo in this Vehicle:"
-	vehicle_cargo_title.add_theme_font_size_override("font_size", 16)
-	vehicle_cargo_title.add_theme_color_override("font_color", Color.LIGHT_GRAY)
+	vehicle_cargo_title.add_theme_font_size_override("font_size", 18)
+	vehicle_cargo_title.add_theme_color_override("font_color", Color.ANTIQUE_WHITE)
 	cargo_vbox.add_child(vehicle_cargo_title)
+
+	# Add a header row for the cargo list
+	var header_hbox = HBoxContainer.new()
+	header_hbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	header_hbox.add_theme_constant_override("separation", 10)
+	
+	var qty_header = Label.new()
+	qty_header.text = "Qty"
+	qty_header.custom_minimum_size.x = 40
+	qty_header.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	qty_header.modulate = Color.LIGHT_GRAY
+	header_hbox.add_child(qty_header)
+	
+	var name_header = Label.new()
+	name_header.text = "Item Name"
+	name_header.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	name_header.modulate = Color.LIGHT_GRAY
+	header_hbox.add_child(name_header)
+	
+	var weight_header = Label.new()
+	weight_header.text = "Weight"
+	weight_header.custom_minimum_size.x = 70
+	weight_header.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	weight_header.modulate = Color.LIGHT_GRAY
+	header_hbox.add_child(weight_header)
+	
+	var volume_header = Label.new()
+	volume_header.text = "Volume"
+	volume_header.custom_minimum_size.x = 70
+	volume_header.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	volume_header.modulate = Color.LIGHT_GRAY
+	header_hbox.add_child(volume_header)
+	
+	var inspect_header_placeholder = Control.new() # Placeholder to align with button
+	inspect_header_placeholder.custom_minimum_size.x = 80 # Approx width of "Inspect" button
+	header_hbox.add_child(inspect_header_placeholder)
+	
+	cargo_vbox.add_child(header_hbox)
+	var header_sep = HSeparator.new()
+	header_sep.custom_minimum_size.y = 5
+	cargo_vbox.add_child(header_sep)
 
 	var all_cargo_from_vehicle: Array = vehicle_data.get("cargo", [])
 	var general_cargo_list: Array = []
@@ -440,22 +537,51 @@ func _populate_cargo_tab(vehicle_data: Dictionary):
 	if general_cargo_list.is_empty():
 		var no_cargo_label = Label.new()
 		no_cargo_label.text = "  No cargo items in this vehicle."
+		no_cargo_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		no_cargo_label.modulate = Color.GRAY
 		cargo_vbox.add_child(no_cargo_label)
 		return
 
-	# Aggregate cargo items by name
+	# Aggregate cargo items by name, now including weight and volume
 	var aggregated_cargo: Dictionary = {}
 	for cargo_item in general_cargo_list:
 		var item_name = cargo_item.get("name", "Unknown Item")
 		if not aggregated_cargo.has(item_name):
-			aggregated_cargo[item_name] = {"quantity": 0, "sample": cargo_item}
-		aggregated_cargo[item_name]["quantity"] += cargo_item.get("quantity", 1)
+			aggregated_cargo[item_name] = {
+				"quantity": 0, 
+				"sample": cargo_item, 
+				"total_weight": 0.0, 
+				"total_volume": 0.0
+			}
+		
+		var item_qty = int(cargo_item.get("quantity", 1))
+		aggregated_cargo[item_name]["quantity"] += item_qty
 
-	# Display aggregated cargo
-	for item_name in aggregated_cargo:
+		var unit_weight = 0.0
+		if cargo_item.has("unit_weight") and cargo_item.get("unit_weight") != null:
+			unit_weight = float(cargo_item.get("unit_weight", 0.0))
+		elif cargo_item.has("weight") and cargo_item.get("weight") != null:
+			if item_qty > 0:
+				unit_weight = float(cargo_item.get("weight", 0.0)) / float(item_qty)
+		
+		var unit_volume = 0.0
+		if cargo_item.has("unit_volume") and cargo_item.get("unit_volume") != null:
+			unit_volume = float(cargo_item.get("unit_volume", 0.0))
+		elif cargo_item.has("volume") and cargo_item.get("volume") != null:
+			if item_qty > 0:
+				unit_volume = float(cargo_item.get("volume", 0.0)) / float(item_qty)
+
+		aggregated_cargo[item_name]["total_weight"] += unit_weight * item_qty
+		aggregated_cargo[item_name]["total_volume"] += unit_volume * item_qty
+
+	# Display aggregated cargo using the new styled row function
+	var item_index = 0
+	var sorted_item_names = aggregated_cargo.keys()
+	sorted_item_names.sort() # Sort for deterministic order
+	for item_name in sorted_item_names:
 		var agg_data = aggregated_cargo[item_name]
-		var summary_text = "Quantity: %d" % agg_data.quantity
-		_add_inspectable_item_row(cargo_vbox, item_name, summary_text, agg_data.sample)
+		_add_inspectable_item_row(cargo_vbox, item_name, agg_data, item_index)
+		item_index += 1
 
 func _add_stat_row_with_button(parent: Container, label_text: String, stat_value_display: String, stat_type: String, vehicle_data: Dictionary):
 	var hbox = HBoxContainer.new()
@@ -670,35 +796,11 @@ func _on_inspect_part_pressed(part_data: Dictionary):
 	dialog.connect("popup_hide", Callable(dialog, "queue_free"))
 
 func _on_inspect_cargo_pressed(item_data: Dictionary):
-	print("ConvoyVehicleMenu: Inspecting cargo item: ", item_data.get("name", "Unknown Item"))
-
-	var dialog = AcceptDialog.new()
-	dialog.title = "Inspect Cargo: " + item_data.get("name", "Item Details")
-	
-	var dialog_vbox = VBoxContainer.new()
-	dialog_vbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	dialog_vbox.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	dialog.add_child(dialog_vbox)
-
-	# Use a GridContainer for a cleaner look, similar to part inspection
-	var grid = GridContainer.new()
-	grid.columns = 2
-	grid.add_theme_constant_override("h_separation", 10)
-	grid.add_theme_constant_override("v_separation", 5)
-	dialog_vbox.add_child(grid)
-
-	# Iterate through keys to display all relevant data
-	for key in item_data:
-		# Skip some less useful or complex keys for this simple display
-		if key in ["parts", "log", "creation_date", "distributor_id", "origin_sett_id", "packed_vehicle", "pending_deletion", "recipient", "vehicle_id", "vendor_id", "warehouse_id", "class_id", "intrinsic_part_id"]:
-			continue
-		if item_data[key] != null: # Only show non-null values
-			_add_grid_row(grid, key.capitalize().replace("_", " "), str(item_data[key]))
-			
-	get_tree().root.add_child(dialog)
-	dialog.popup_centered_ratio(0.75)
-	dialog.connect("confirmed", Callable(dialog, "queue_free"))
-	dialog.connect("popup_hide", Callable(dialog, "queue_free"))
+	if _current_convoy_data:
+		print("ConvoyVehicleMenu: Requesting to inspect specific cargo item: ", item_data.get("name", "Unknown Item"))
+		emit_signal("inspect_specific_convoy_cargo_requested", _current_convoy_data, item_data)
+	else:
+		printerr("ConvoyVehicleMenu: _current_convoy_data is not set. Cannot inspect specific cargo.")
 
 func _on_inspect_all_cargo_pressed():
 	if _current_convoy_data:

@@ -9,11 +9,13 @@ var convoy_data_received: Dictionary
 
 @onready var title_label: Label = $MainVBox/TitleLabel
 @onready var cargo_items_vbox: VBoxContainer = $MainVBox/ScrollContainer/CargoItemsVBox
-@onready var organize_mode_toggle: CheckButton = %OrganizeModeToggle # Add a CheckButton to your scene and give it this unique name
 @onready var back_button: Button = $MainVBox/BackButton
 
 # Add a reference to GameDataManager
 var gdm: Node = null
+var _item_to_inspect_on_load = null
+
+var _organize_button: Button
 
 var organization_mode: String = "by_type" # "by_type" or "by_vehicle"
 
@@ -40,13 +42,52 @@ func _ready():
 	if is_instance_valid(back_button):
 		if not back_button.is_connected("pressed", Callable(self, "_on_back_button_pressed")):
 			back_button.pressed.connect(_on_back_button_pressed, CONNECT_ONE_SHOT)
-	
-	if is_instance_valid(organize_mode_toggle):
-		organize_mode_toggle.toggled.connect(_on_organize_mode_toggled)
-		organize_mode_toggle.button_pressed = (organization_mode == "by_vehicle")
+
+	# --- NEW: Single Organization Toggle Button ---
+	_organize_button = Button.new()
+	_organize_button.name = "OrganizeButton"
+
+	# --- NEW: Custom Styling for the button ---
+	var style_normal = StyleBoxFlat.new()
+	style_normal.bg_color = Color(0.2, 0.22, 0.25, 0.9)
+	style_normal.border_width_left = 1
+	style_normal.border_width_right = 1
+	style_normal.border_width_top = 1
+	style_normal.border_width_bottom = 1
+	style_normal.border_color = Color(0.5, 0.55, 0.6, 0.9)
+	style_normal.corner_radius_top_left = 5
+	style_normal.corner_radius_top_right = 5
+	style_normal.corner_radius_bottom_left = 5
+	style_normal.corner_radius_bottom_right = 5
+	style_normal.content_margin_left = 12
+	style_normal.content_margin_right = 12
+	style_normal.content_margin_top = 6
+	style_normal.content_margin_bottom = 6
+
+	var style_hover = style_normal.duplicate()
+	style_hover.bg_color = style_normal.bg_color.lightened(0.1)
+
+	var style_pressed = style_normal.duplicate()
+	style_pressed.bg_color = style_normal.bg_color.darkened(0.1)
+
+	_organize_button.add_theme_stylebox_override("normal", style_normal)
+	_organize_button.add_theme_stylebox_override("hover", style_hover)
+	_organize_button.add_theme_stylebox_override("pressed", style_pressed)
+
+	var main_vbox = get_node_or_null("MainVBox")
+	if is_instance_valid(main_vbox):
+		# Place button in a container to center it
+		var organize_container = HBoxContainer.new()
+		organize_container.name = "OrganizeContainer"
+		organize_container.alignment = BoxContainer.ALIGNMENT_CENTER
+		organize_container.add_child(_organize_button)
+		main_vbox.add_child(organize_container)
+		main_vbox.move_child(organize_container, 1) # Place it after the title
 	else:
-		printerr("ConvoyCargoMenu: 'OrganizeModeToggle' CheckButton not found. Please add it to the scene.")
-	
+		printerr("ConvoyCargoMenu: MainVBox not found, cannot add organization button.")
+
+	_organize_button.pressed.connect(_on_organize_button_pressed)
+
 	# Make the title label clickable to return to the convoy overview
 	if is_instance_valid(title_label):
 		title_label.mouse_filter = Control.MOUSE_FILTER_STOP # Allow it to receive mouse events
@@ -59,11 +100,18 @@ func _ready():
 		if not gdm.is_connected("convoy_data_updated", Callable(self, "_on_gdm_convoy_data_updated")):
 			gdm.convoy_data_updated.connect(_on_gdm_convoy_data_updated)
 
-func _on_organize_mode_toggled(button_pressed: bool) -> void:
-	if button_pressed:
-		organization_mode = "by_vehicle"
+	# Set initial button text
+	_update_organize_button_text()
+
+func _update_organize_button_text() -> void:
+	if organization_mode == "by_type":
+		_organize_button.text = "Group by Vehicle"
 	else:
-		organization_mode = "by_type"
+		_organize_button.text = "Group by Type"
+
+func _on_organize_button_pressed() -> void:
+	organization_mode = "by_vehicle" if organization_mode == "by_type" else "by_type"
+	_update_organize_button_text()
 	_populate_cargo_list()
 
 # ===== Helper functions for cargo inspect UI =====
@@ -312,22 +360,8 @@ func _apply_value_styling(key: String, value, value_label: Label) -> void:
 
 # Determine if dictionary represents a vehicle part (borrowed logic from vendor_trade_panel with omissions for hidden fields).
 func _looks_like_part(d: Dictionary) -> bool:
-	if not d:
-		return false
-	# Treat explicit category hint
-	if str(d.get("category", "")).to_lower() == "part":
-		return true
-	if d.has("slot") and d.get("slot") != null and String(d.get("slot")).length() > 0:
-		return true
-	if d.has("intrinsic_part_id"):
-		return true
-	if d.has("parts") and d.get("parts") is Array and not (d.get("parts") as Array).is_empty():
-		var first_p = (d.get("parts") as Array)[0]
-		if first_p is Dictionary and first_p.has("slot") and first_p.get("slot") != null and String(first_p.get("slot")).length() > 0:
-			return true
-	if d.has("is_part") and bool(d.get("is_part")):
-		return true
-	return false
+	# Defer to the centralized classification logic in the ItemsData factory.
+	return ItemsData.PartItem._looks_like_part_dict(d)
 
 func _looks_like_mission(d: Dictionary) -> bool:
 	if not d:
@@ -407,6 +441,7 @@ func _build_cargo_row(vehicle_vbox: VBoxContainer, display_name: String, quantit
 	# Outer wrapper preserves full width; background applied via stylebox so children remain interactive.
 	var outer_row := HBoxContainer.new()
 	outer_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	outer_row.set_meta("agg_data", agg_data)
 	outer_row.add_theme_constant_override("separation", 0)
 	outer_row.mouse_filter = Control.MOUSE_FILTER_PASS
 
@@ -462,6 +497,50 @@ func _build_cargo_row(vehicle_vbox: VBoxContainer, display_name: String, quantit
 	content_row.add_child(qty_badge)
 	# Item label (expands to take remaining space before fixed columns)
 	content_row.add_child(item_label)
+
+	# NEW: Context column for vehicle or item type
+	var context_label := Label.new()
+	context_label.custom_minimum_size = Vector2(120, 22)
+	context_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+	context_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	context_label.modulate = Color(0.8, 0.8, 0.8, 1)
+	content_row.add_child(context_label)
+
+	if organization_mode == "by_type":
+		var locations: Dictionary = agg_data.get("locations", {})
+		if not locations.is_empty():
+			if locations.size() == 1:
+				context_label.text = locations.keys()[0]
+			else:
+				context_label.text = "Multiple"
+			
+			var tooltip_parts: Array[String]
+			for v_name in locations:
+				tooltip_parts.append("%s (x%d)" % [v_name, locations[v_name]])
+			context_label.tooltip_text = "In: " + ", ".join(tooltip_parts)
+	else: # "by_vehicle" mode
+		# Use the same broad categories as the "by type" view for consistency.
+		var typed_item = ItemsData.from_dict(item_data)
+		var category_name: String = typed_item.category
+		if CARGO_MENU_DEBUG:
+			print("[CargoUI][ByVehicle] Row classify name:", display_name, " initial:", category_name, " looks_like_part:", _looks_like_part(item_data))
+		# Safeguard: if classifier returns 'other' but data looks like a part, treat as part
+		if category_name == "other" and _looks_like_part(item_data):
+			category_name = "part"
+			if CARGO_MENU_DEBUG:
+				print("[CargoUI][ByVehicle] Forced category to 'part' for:", display_name)
+		
+		var display_text: String
+		match category_name:
+			"mission":
+				display_text = "Mission Cargo"
+			"part":
+				display_text = "Part Cargo"
+			"resource":
+				display_text = "Resource Cargo"
+			_: # "other", "vehicle", or anything else
+				display_text = "Other Cargo"
+		context_label.text = display_text
 
 	# Add Weight and Volume labels to the main row
 	var weight_label := Label.new()
@@ -526,6 +605,7 @@ func _build_cargo_row(vehicle_vbox: VBoxContainer, display_name: String, quantit
 
 	# Inspect/Hide toggle button (always last)
 	var inspect_button := Button.new()
+	inspect_button.name = "InspectButton"
 	inspect_button.text = "Inspect"
 	inspect_button.custom_minimum_size = Vector2(90, 26)
 	inspect_button.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
@@ -613,7 +693,7 @@ func _create_collapsible_section(title: String, keys: Array, data_copy: Dictiona
 
 	return outer
 
-func _aggregate_cargo_item(agg_dict: Dictionary, item: Dictionary) -> void:
+func _aggregate_cargo_item(agg_dict: Dictionary, item: Dictionary, vehicle_name: String = "") -> void:
 	# Use name as aggregation key. Could be improved with a more unique ID if available.
 	var agg_key = _extract_item_display_name(item)
 	
@@ -624,6 +704,8 @@ func _aggregate_cargo_item(agg_dict: Dictionary, item: Dictionary) -> void:
 			"total_quantity": 0,
 			"total_weight": 0.0,
 			"total_volume": 0.0,
+			"locations": {},
+			"items": []
 		}
 
 	var item_quantity = int(item.get("quantity", 0))
@@ -633,6 +715,15 @@ func _aggregate_cargo_item(agg_dict: Dictionary, item: Dictionary) -> void:
 	if CARGO_MENU_DEBUG:
 		print("[CargoAgg][", agg_key, "] +quantity:", item_quantity)
 	
+	# Track locations
+	if not vehicle_name.is_empty():
+		if not agg_dict[agg_key].locations.has(vehicle_name):
+			agg_dict[agg_key].locations[vehicle_name] = 0
+		agg_dict[agg_key].locations[vehicle_name] += item_quantity
+	
+	# NEW: Store the raw item for later lookup
+	agg_dict[agg_key]["items"].append(item)
+
 	# Sum weight and volume. This logic is structured to first determine the
 	# unit weight/volume of the item stack, then multiply by quantity. This is more
 	# robust for ambiguous raw item data, following the convention from Items.gd.
@@ -697,14 +788,15 @@ func _add_category_section(parent: VBoxContainer, title: String, agg_data: Dicti
 	
 	return item_index
 
-func initialize_with_data(data: Dictionary):
+func initialize_with_data(data: Dictionary, item_to_inspect = null):
 	# Ensure this function runs only after the node is fully ready and @onready vars are set.
 	if not is_node_ready():
 		printerr("ConvoyCargoMenu: initialize_with_data called BEFORE node is ready! Deferring.")
-		call_deferred("initialize_with_data", data)
+		call_deferred("initialize_with_data", data, item_to_inspect)
 		return
 
-	convoy_data_received = data.duplicate() # Duplicate to avoid modifying the original
+	convoy_data_received = data.duplicate()
+	_item_to_inspect_on_load = item_to_inspect
 	# print("ConvoyCargoMenu: Initialized with data: ", convoy_data_received) # DEBUG
 
 	if is_instance_valid(title_label) and convoy_data_received.has("convoy_name"):
@@ -713,6 +805,8 @@ func initialize_with_data(data: Dictionary):
 		title_label.text = "Cargo Hold"
 	
 	_populate_cargo_list()
+	if _item_to_inspect_on_load != null:
+		call_deferred("_inspect_item_on_load")
 
 func _populate_cargo_list():
 	if organization_mode == "by_type":
@@ -760,6 +854,7 @@ func _populate_by_type():
 	var any_cargo_found_in_convoy := false
 
 	for vehicle_data in vehicle_details_list:
+		var vehicle_name: String = str(vehicle_data.get("name", "Unknown Vehicle"))
 		if not vehicle_data is Dictionary:
 			printerr("ConvoyCargoMenu: Invalid vehicle_data entry.")
 			continue
@@ -798,13 +893,13 @@ func _populate_by_type():
 						raw_item["stats"] = typed.stats.duplicate(true)
 				match typed.category:
 					"mission":
-						_aggregate_cargo_item(aggregated_missions, raw_item)
+						_aggregate_cargo_item(aggregated_missions, raw_item, vehicle_name)
 					"part":
-						_aggregate_cargo_item(aggregated_parts, raw_item)
+						_aggregate_cargo_item(aggregated_parts, raw_item, vehicle_name)
 					"resource":
-						_aggregate_cargo_item(aggregated_resources, raw_item)
+						_aggregate_cargo_item(aggregated_resources, raw_item, vehicle_name)
 					_:
-						_aggregate_cargo_item(aggregated_other, raw_item)
+						_aggregate_cargo_item(aggregated_other, raw_item, vehicle_name)
 		else:
 			if CARGO_MENU_DEBUG:
 				print("\n--- DEBUG: Processing legacy 'cargo' and 'parts' for vehicle: %s ---" % vehicle_data.get("vehicle_name", "Unknown"))
@@ -827,7 +922,7 @@ func _populate_by_type():
 				any_cargo_found_in_convoy = true
 				# Mission items are identified by recipient/reward, same as vendor panel.
 				if item.get("recipient") != null or item.get("delivery_reward") != null:
-					_aggregate_cargo_item(aggregated_missions, item)
+					_aggregate_cargo_item(aggregated_missions, item, vehicle_name)
 				# Detect parts even if they appear in the main cargo list
 				elif _looks_like_part(item):
 					# Normalize hint to aid downstream UI and filtering
@@ -836,14 +931,14 @@ func _populate_by_type():
 					_inject_part_modifiers(item)
 					if CARGO_MENU_DEBUG:
 						print("[CargoClassify] LEGACY cargo item -> PART:", JSON.stringify(item.get("name", item.get("base_name", ""))))
-					_aggregate_cargo_item(aggregated_parts, item)
+					_aggregate_cargo_item(aggregated_parts, item, vehicle_name)
 				# Resources and supplies
 				elif (_is_positive_number(item.get("food")) or _is_positive_number(item.get("water")) or _is_positive_number(item.get("fuel"))) or item.get("is_raw_resource", false) or str(item.get("category", "")).to_lower() == "resource":
-					_aggregate_cargo_item(aggregated_resources, item)
+					_aggregate_cargo_item(aggregated_resources, item, vehicle_name)
 				else:
 					if CARGO_MENU_DEBUG:
 						print("[CargoClassify] LEGACY cargo item -> OTHER:", JSON.stringify(item.get("name", item.get("base_name", ""))))
-					_aggregate_cargo_item(aggregated_other, item)
+					_aggregate_cargo_item(aggregated_other, item, vehicle_name)
 
 			# Separately process the 'parts' list, if it exists, which is consistent with `vendor_trade_panel`.
 			for item in vehicle_data.get("parts", []):
@@ -853,7 +948,7 @@ func _populate_by_type():
 				# Enrich part data with modifiers/stats so they surface in UI
 				var part_copy: Dictionary = item.duplicate(true)
 				_inject_part_modifiers(part_copy)
-				_aggregate_cargo_item(aggregated_parts, part_copy)
+				_aggregate_cargo_item(aggregated_parts, part_copy, vehicle_name)
 
 	# --- Final safeguard re-bucketing: move misclassified parts from Other -> Parts ---
 	if not aggregated_other.is_empty():
@@ -865,8 +960,18 @@ func _populate_by_type():
 				# Ensure category hint and modifiers present
 				sample["category"] = "part"
 				_inject_part_modifiers(sample)
-				# Merge into parts bucket (aggregate if needed)
-				_aggregate_cargo_item(aggregated_parts, sample)
+				# Merge the entire aggregated entry, not just the sample
+				if aggregated_parts.has(key):
+					aggregated_parts[key].total_quantity += entry.total_quantity
+					aggregated_parts[key].total_weight += entry.total_weight
+					aggregated_parts[key].total_volume += entry.total_volume
+					for loc_key in entry.get("locations", {}):
+						if not aggregated_parts[key].locations.has(loc_key):
+							aggregated_parts[key].locations[loc_key] = 0
+						aggregated_parts[key].locations[loc_key] += entry.locations[loc_key]
+				else:
+					aggregated_parts[key] = entry
+				
 				moved_keys.append(key)
 				if CARGO_MENU_DEBUG:
 					print("[CargoClassify][Rebucket] OTHER -> PART:", key)
@@ -919,13 +1024,11 @@ func _populate_by_vehicle():
 			printerr("ConvoyCargoMenu: Invalid vehicle_data entry.")
 			continue
 
-		# Per-vehicle aggregation dictionaries
-		var vehicle_aggregated_missions: Dictionary = {}
-		var vehicle_aggregated_parts: Dictionary = {}
-		var vehicle_aggregated_resources: Dictionary = {}
-		var vehicle_aggregated_other: Dictionary = {}
+		# A single aggregation dictionary for all cargo within this vehicle.
+		var vehicle_aggregated_all_cargo: Dictionary = {}
 		
 		var has_cargo_in_this_vehicle := false
+		var vehicle_name := str(vehicle_data.get("name", "Unknown Vehicle"))
 
 		# Process typed cargo first
 		if vehicle_data.has("cargo_items_typed") and vehicle_data["cargo_items_typed"] is Array and not (vehicle_data["cargo_items_typed"] as Array).is_empty():
@@ -940,6 +1043,14 @@ func _populate_by_vehicle():
 				raw_item["quantity"] = typed.quantity
 				raw_item["weight"] = typed.total_weight
 				raw_item["volume"] = typed.total_volume
+				# --- Definitive Fix ---
+				# The "by vehicle" mode re-classifies items later. We must ensure the data
+				# passed to the classifier has all the hints the 'typed' object already figured out.
+				# 1. Inject the known category. This is the most important hint.
+				raw_item["category"] = typed.category
+				# 2. If it's a part, also inject the slot, as it's another strong hint for classification.
+				if typed.category == "part" and typed.slot != "":
+					raw_item["slot"] = typed.slot
 				if typed.has_method("get_modifier_summary"):
 					var mods_val = typed.get_modifier_summary()
 					if mods_val is String and mods_val.strip_edges() != "":
@@ -947,11 +1058,7 @@ func _populate_by_vehicle():
 					if "stats" in typed and typed.stats is Dictionary and not typed.stats.is_empty():
 						raw_item["stats"] = typed.stats.duplicate(true)
 				
-				match typed.category:
-					"mission": _aggregate_cargo_item(vehicle_aggregated_missions, raw_item)
-					"part": _aggregate_cargo_item(vehicle_aggregated_parts, raw_item)
-					"resource": _aggregate_cargo_item(vehicle_aggregated_resources, raw_item)
-					_: _aggregate_cargo_item(vehicle_aggregated_other, raw_item)
+				_aggregate_cargo_item(vehicle_aggregated_all_cargo, raw_item)
 		else: # Fallback to legacy cargo
 			var vehicle_cargo_list_raw = vehicle_data.get("cargo", [])
 			var vehicle_cargo_list: Array = []
@@ -962,49 +1069,31 @@ func _populate_by_vehicle():
 				if not (item is Dictionary and _is_displayable_cargo(item)): continue
 				has_cargo_in_this_vehicle = true
 				any_cargo_found_in_convoy = true
-				if item.get("recipient") != null or item.get("delivery_reward") != null:
-					_aggregate_cargo_item(vehicle_aggregated_missions, item)
+				# Replicate the classification logic from `_populate_by_type` to ensure
+				# the `category` hint is correctly injected before aggregation. This helps
+				# the ItemsData factory correctly classify the item later.
+				if _looks_like_mission(item):
+					item["category"] = "mission"
 				elif _looks_like_part(item):
 					item["category"] = "part"
 					_inject_part_modifiers(item)
-					_aggregate_cargo_item(vehicle_aggregated_parts, item)
-				elif (_is_positive_number(item.get("food")) or _is_positive_number(item.get("water")) or _is_positive_number(item.get("fuel"))) or item.get("is_raw_resource", false) or str(item.get("category", "")).to_lower() == "resource":
-					_aggregate_cargo_item(vehicle_aggregated_resources, item)
-				else:
-					_aggregate_cargo_item(vehicle_aggregated_other, item)
+				elif _looks_like_resource(item):
+					item["category"] = "resource"
+				_aggregate_cargo_item(vehicle_aggregated_all_cargo, item)
 			
 			for item in vehicle_data.get("parts", []):
 				if not (item is Dictionary and _is_displayable_cargo(item)): continue
 				has_cargo_in_this_vehicle = true
 				any_cargo_found_in_convoy = true
 				var part_copy: Dictionary = item.duplicate(true)
+				part_copy["category"] = "part" # Ensure it's categorized as a part for the factory
 				_inject_part_modifiers(part_copy)
-				_aggregate_cargo_item(vehicle_aggregated_parts, part_copy)
+				_aggregate_cargo_item(vehicle_aggregated_all_cargo, part_copy)
 
 		if has_cargo_in_this_vehicle:
-			# Add a header for the vehicle
-			var vehicle_header_panel := PanelContainer.new()
-			vehicle_header_panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-			var vehicle_header_style := StyleBoxFlat.new()
-			vehicle_header_style.bg_color = Color(0.1, 0.15, 0.1, 1) # A different color for vehicle headers
-			vehicle_header_style.content_margin_left = 8
-			vehicle_header_style.content_margin_top = 6
-			vehicle_header_style.content_margin_bottom = 6
-			vehicle_header_panel.add_theme_stylebox_override("panel", vehicle_header_style)
-			
-			var vehicle_header_label := Label.new()
-			vehicle_header_label.text = vehicle_data.get("name", "Unknown Vehicle")
-			vehicle_header_label.add_theme_font_size_override("font_size", 22)
-			vehicle_header_label.modulate = Color.LIGHT_GREEN
-			vehicle_header_panel.add_child(vehicle_header_label)
-			direct_vbox_ref.add_child(vehicle_header_panel)
-
-			# Add categorized sections for this vehicle
-			_add_category_section(direct_vbox_ref, "Mission Cargo", vehicle_aggregated_missions)
-			_add_category_section(direct_vbox_ref, "Part Cargo", vehicle_aggregated_parts)
-			_add_category_section(direct_vbox_ref, "Resource Cargo", vehicle_aggregated_resources)
-			_add_category_section(direct_vbox_ref, "Other Cargo", vehicle_aggregated_other)
-
+			# Use the existing category section function, but with the vehicle's name as the title.
+			# This creates the "yellow banner" with the vehicle name.
+			_add_category_section(direct_vbox_ref, vehicle_name, vehicle_aggregated_all_cargo)
 			_add_separator(direct_vbox_ref)
 
 	if not any_cargo_found_in_convoy and not vehicle_details_list.is_empty():
@@ -1136,6 +1225,40 @@ func _on_title_label_gui_input(event: InputEvent):
 		print("ConvoyCargoMenu: Title clicked. Emitting 'return_to_convoy_overview_requested'.")
 		emit_signal("return_to_convoy_overview_requested", convoy_data_received)
 		get_viewport().set_input_as_handled()
+
+func _inspect_item_on_load():
+	if _item_to_inspect_on_load == null:
+		return
+
+	var target_cargo_id = str(_item_to_inspect_on_load.get("cargo_id", ""))
+	if target_cargo_id.is_empty():
+		printerr("ConvoyCargoMenu: Cannot inspect item on load, target item has no cargo_id.")
+		_item_to_inspect_on_load = null
+		return
+
+	for child in cargo_items_vbox.get_children():
+		if child.has_meta("agg_data"):
+			var agg_data = child.get_meta("agg_data")
+			var items = agg_data.get("items", [])
+			for item in items:
+				if str(item.get("cargo_id", "")) == target_cargo_id:
+					var item_row_hbox = child
+					var list_container = cargo_items_vbox
+					var toggle_button = item_row_hbox.find_child("InspectButton", true, false)
+
+					if is_instance_valid(toggle_button):
+						_on_inspect_cargo_item_pressed(agg_data, list_container, item_row_hbox, toggle_button)
+
+						var scroll_container = cargo_items_vbox.get_parent()
+						if scroll_container is ScrollContainer:
+							await get_tree().process_frame # Wait for inspect panel to be added
+							scroll_container.ensure_control_visible(item_row_hbox)
+
+						_item_to_inspect_on_load = null # Clear after use
+						return
+
+	_item_to_inspect_on_load = null # Clear even if not found
+	printerr("ConvoyCargoMenu: Could not find item to inspect on load with cargo_id: ", target_cargo_id)
 
 func _on_gdm_convoy_data_updated(all_convoy_data: Array) -> void:
 	# Update convoy_data_received if this convoy is present in the update

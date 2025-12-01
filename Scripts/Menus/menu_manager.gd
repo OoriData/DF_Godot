@@ -16,6 +16,7 @@ var warehouse_menu_scene = load("res://Scenes/WarehouseMenu.tscn")
 
 var current_active_menu = null
 var menu_stack = [] # To keep track of the navigation path for "back" functionality
+var _next_menu_extra_arg = null # Temp storage for passing a second arg to initialize_with_data
 
 var _menu_container_host: Control = null
 
@@ -109,6 +110,11 @@ func open_convoy_cargo_menu(convoy_data = null):
 	print("MenuManager: open_convoy_cargo_menu called. Original Convoy Data Keys: ", convoy_data.keys())
 	_show_menu(convoy_cargo_menu_scene, convoy_data.duplicate(true))
 
+func open_convoy_cargo_menu_for_item(convoy_data: Dictionary, item_data: Dictionary):
+	# Special handler to open the cargo menu and jump to a specific item.
+	_next_menu_extra_arg = item_data
+	_show_menu(convoy_cargo_menu_scene, convoy_data)
+
 func open_mechanics_menu(convoy_data = null):
 	# Gate: require the convoy to be in a settlement
 	if convoy_data == null:
@@ -194,7 +200,12 @@ func _show_menu(menu_scene_resource, data_to_pass = null, add_to_stack: bool = t
 		current_active_menu.mouse_filter = Control.MOUSE_FILTER_STOP
 	self.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	if current_active_menu.has_method("initialize_with_data"):
-		current_active_menu.call_deferred("initialize_with_data", data_to_pass)
+		if _next_menu_extra_arg != null:
+			current_active_menu.call_deferred("initialize_with_data", data_to_pass, _next_menu_extra_arg)
+			_next_menu_extra_arg = null # Consume the argument
+		else:
+			current_active_menu.call_deferred("initialize_with_data", data_to_pass)
+
 	if data_to_pass:
 		current_active_menu.set_meta("menu_data", data_to_pass)
 
@@ -268,6 +279,8 @@ func _show_menu(menu_scene_resource, data_to_pass = null, add_to_stack: bool = t
 	elif menu_type == "convoy_vehicle_submenu":
 		if current_active_menu.has_signal("inspect_all_convoy_cargo_requested"):
 			current_active_menu.inspect_all_convoy_cargo_requested.connect(open_convoy_cargo_menu, CONNECT_ONE_SHOT)
+		if current_active_menu.has_signal("inspect_specific_convoy_cargo_requested"):
+			current_active_menu.inspect_specific_convoy_cargo_requested.connect(open_convoy_cargo_menu_for_item, CONNECT_ONE_SHOT)
 		if current_active_menu.has_signal("return_to_convoy_overview_requested"):
 			current_active_menu.return_to_convoy_overview_requested.connect(open_convoy_menu, CONNECT_ONE_SHOT)
 		# Optional: if vehicle menu exposes "open_mechanics_menu_requested", connect it
