@@ -166,16 +166,20 @@ func initialize_with_data(data: Dictionary):
 			cargo_weight_text_label.text = "Cargo Weight: %.1f / %.1f" % [used_weight, total_weight]
 			_set_progressbar_style(cargo_weight_bar, used_weight, total_weight)
 
-		# --- Populate Journey Details ---
-		# Assuming journey_data contains "destination_name", "progress", "length", and "eta" (as a timestamp)
+		# --- Populate Journey Details (or hide them if no journey) ---
 		var journey_data = convoy_data_received.get("journey")
-		if journey_data == null:
-			journey_data = {}
-		if is_instance_valid(journey_dest_label):
-			var dest_text: String = "Destination: N/A"
-			if not journey_data.is_empty():
+		var has_journey = journey_data != null and not journey_data.is_empty()
+
+		# Set visibility of all journey-related labels
+		if is_instance_valid(journey_dest_label): journey_dest_label.visible = has_journey
+		if is_instance_valid(journey_progress_label): journey_progress_label.visible = has_journey
+		if is_instance_valid(journey_eta_label): journey_eta_label.visible = has_journey
+
+		# Only populate the labels if there is a journey
+		if has_journey:
+			if is_instance_valid(journey_dest_label):
+				var dest_text: String = "Destination: N/A"
 				# Assuming journey_data contains destination coordinates, e.g., 'dest_coord_x', 'dest_coord_y'
-				# Adjust these keys if your data structure is different.
 				var dest_coord_x_val # Can be float or int
 				var dest_coord_y_val # Can be float or int
 
@@ -195,8 +199,6 @@ func initialize_with_data(data: Dictionary):
 							dest_coord_y_val = route_y_arr[-1] # Get last element
 						else:
 							printerr("ConvoyMenu: route_x and route_y arrays have different sizes.")
-							# dest_coord_x_val and dest_coord_y_val remain null (or unassigned)
-					# If still null here, the next check will handle it.
 
 				if dest_coord_x_val != null and dest_coord_y_val != null:
 					var gdm = get_node_or_null("/root/GameDataManager") # Access the GameDataManager singleton
@@ -219,21 +221,21 @@ func initialize_with_data(data: Dictionary):
 						printerr("ConvoyMenu: GameDataManager node not found.")
 				else:
 					dest_text = "Destination: No coordinates"
-			journey_dest_label.text = dest_text
+				journey_dest_label.text = dest_text
 
-		if is_instance_valid(journey_progress_label):
-			var progress = journey_data.get("progress", 0.0)
-			var length = journey_data.get("length", 0.0)
-			var progress_percentage = 0.0
-			if length > 0:
-				progress_percentage = (progress / length) * 100.0
-			# Display progress as a percentage
-			journey_progress_label.text = "Progress: %.1f%%" % progress_percentage
+			if is_instance_valid(journey_progress_label):
+				var progress = journey_data.get("progress", 0.0)
+				var length = journey_data.get("length", 0.0)
+				var progress_percentage = 0.0
+				if length > 0:
+					progress_percentage = (progress / length) * 100.0
+				# Display progress as a percentage
+				journey_progress_label.text = "Progress: %.1f%%" % progress_percentage
 
-		if is_instance_valid(journey_eta_label):
-			var eta_value = journey_data.get("eta")
-			var formatted_eta: String = preload("res://Scripts/System/date_time_util.gd").format_timestamp_display(eta_value, true)
-			journey_eta_label.text = "ETA: " + formatted_eta
+			if is_instance_valid(journey_eta_label):
+				var eta_value = journey_data.get("eta")
+				var formatted_eta: String = preload("res://Scripts/System/date_time_util.gd").format_timestamp_display(eta_value, true)
+				journey_eta_label.text = "ETA: " + formatted_eta
 
 		# --- Populate Vehicle Manifest (Simplified) ---
 		if is_instance_valid(vehicles_label):
