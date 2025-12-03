@@ -26,6 +26,18 @@ const COLOR_PERFORMANCE_BOX_BG: Color = Color("666666") # Medium Gray
 const COLOR_MENU_BUTTON_GREY_BG: Color = Color("b0b0b0") # Light-Medium Grey for menu buttons
 const COLOR_PERFORMANCE_BOX_FONT: Color = Color.WHITE   # White
 
+# --- Vendor Preview Tab Constants ---
+enum VendorTab { CONVOY_MISSIONS, SETTLEMENT_MISSIONS, COMPATIBLE_PARTS, JOURNEY }
+const COLOR_TAB_ACTIVE_BG: Color = Color("424242") # Grey 800
+const COLOR_TAB_INACTIVE_BG: Color = Color("757575") # Grey 600
+const COLOR_TAB_CONTENT_BG: Color = Color("303030") # Grey 850
+const COLOR_MISSION_TEXT: Color = Color("ffd700") # Gold
+const COLOR_PART_TEXT: Color = Color("4dd0e1") # Material Cyan 300
+const COLOR_BULLET_POINT: Color = Color("9e9e9e") # Grey 500
+const COLOR_TAB_DISABLED_FONT: Color = Color("a0a0a0") # Lighter gray for disabled text
+const COLOR_ITEM_BUTTON_BG: Color = Color("5a5a5a") # Dark-medium gray for item buttons
+const COLOR_JOURNEY_PROGRESS_FILL: Color = Color("29b6f6") # Material Light Blue 400
+
 # --- @onready vars for new labels ---
 # Paths updated to reflect the new TopBarHBox container in the scene.
 @onready var title_label: Label = $MainVBox/TopBarHBox/TitleLabel
@@ -51,14 +63,26 @@ const COLOR_PERFORMANCE_BOX_FONT: Color = Color.WHITE   # White
 @onready var cargo_weight_text_label: Label = $MainVBox/ScrollContainer/ContentVBox/CargoWeightContainer/CargoWeightTextLabel
 @onready var cargo_weight_bar: ProgressBar = $MainVBox/ScrollContainer/ContentVBox/CargoWeightContainer/CargoWeightBar
 
-@onready var journey_dest_label: Label = $MainVBox/ScrollContainer/ContentVBox/JourneyDestLabel
-@onready var journey_progress_label: Label = $MainVBox/ScrollContainer/ContentVBox/JourneyProgressLabel
-@onready var journey_eta_label: Label = $MainVBox/ScrollContainer/ContentVBox/JourneyETALabel
+@onready var scroll_container: ScrollContainer = $MainVBox/ScrollContainer
+@onready var content_vbox: VBoxContainer = $MainVBox/ScrollContainer/ContentVBox
+
 @onready var vehicles_label: Label = $MainVBox/ScrollContainer/ContentVBox/VehiclesLabel
 @onready var all_cargo_label: Label = $MainVBox/ScrollContainer/ContentVBox/AllCargoLabel
-@onready var mission_cargo_preview_label: Label = $MainVBox/ScrollContainer/ContentVBox/VendorPreviewPanel/VendorPreviewVBox/MissionCargoLabel
-@onready var compatible_parts_preview_label: Label = $MainVBox/ScrollContainer/ContentVBox/VendorPreviewPanel/VendorPreviewVBox/CompatiblePartsLabel
-@onready var back_button: Button = $MainVBox/BottomBackHBox/BackButton
+@onready var back_button: Button = $MainVBox/TopBarHBox/BackButton
+
+# --- Vendor Preview Nodes ---
+@onready var convoy_missions_tab_button: Button = $MainVBox/ScrollContainer/ContentVBox/VendorPreviewPanel/VendorPreviewVBox/VendorTabsHBox/ConvoyMissionsTabButton
+@onready var settlement_missions_tab_button: Button = $MainVBox/ScrollContainer/ContentVBox/VendorPreviewPanel/VendorPreviewVBox/VendorTabsHBox/SettlementMissionsTabButton
+@onready var compatible_parts_tab_button: Button = $MainVBox/ScrollContainer/ContentVBox/VendorPreviewPanel/VendorPreviewVBox/VendorTabsHBox/CompatiblePartsTabButton
+@onready var journey_tab_button: Button = $MainVBox/ScrollContainer/ContentVBox/VendorPreviewPanel/VendorPreviewVBox/VendorTabsHBox/JourneyTabButton
+@onready var vendor_item_grid: GridContainer = $MainVBox/ScrollContainer/ContentVBox/VendorPreviewPanel/VendorPreviewVBox/VendorContentPanel/ContentWrapper/VendorItemContainer/VendorItemGrid
+@onready var vendor_item_container: VBoxContainer = $MainVBox/ScrollContainer/ContentVBox/VendorPreviewPanel/VendorPreviewVBox/VendorContentPanel/ContentWrapper/VendorItemContainer
+@onready var vendor_no_items_label: Label = $MainVBox/ScrollContainer/ContentVBox/VendorPreviewPanel/VendorPreviewVBox/VendorContentPanel/ContentWrapper/VendorNoItemsLabel
+@onready var journey_info_vbox: VBoxContainer = $MainVBox/ScrollContainer/ContentVBox/VendorPreviewPanel/VendorPreviewVBox/VendorContentPanel/ContentWrapper/JourneyInfoVBox
+@onready var journey_dest_label: Label = $MainVBox/ScrollContainer/ContentVBox/VendorPreviewPanel/VendorPreviewVBox/VendorContentPanel/ContentWrapper/JourneyInfoVBox/JourneyDestLabel
+@onready var journey_progress_bar: ProgressBar = $MainVBox/ScrollContainer/ContentVBox/VendorPreviewPanel/VendorPreviewVBox/VendorContentPanel/ContentWrapper/JourneyInfoVBox/JourneyProgressControl/JourneyProgressBar
+@onready var journey_progress_label: Label = $MainVBox/ScrollContainer/ContentVBox/VendorPreviewPanel/VendorPreviewVBox/VendorContentPanel/ContentWrapper/JourneyInfoVBox/JourneyProgressControl/JourneyProgressLabel
+@onready var journey_eta_label: Label = $MainVBox/ScrollContainer/ContentVBox/VendorPreviewPanel/VendorPreviewVBox/VendorContentPanel/ContentWrapper/JourneyInfoVBox/JourneyETALabel
 
 # --- Placeholder Menu Buttons ---
 @onready var vehicle_menu_button: Button = $MainVBox/BottomBarPanel/BottomMenuButtonsHBox/VehicleMenuButton
@@ -75,6 +99,12 @@ signal open_cargo_menu_requested(convoy_data)
 # Cached GDM reference
 var _gdm: Node = null
 var _debug_convoy_menu: bool = true # toggle verbose diagnostics for this menu
+
+# --- Vendor Preview State ---
+var _current_vendor_tab: VendorTab = VendorTab.CONVOY_MISSIONS
+var _convoy_mission_items: Array[String] = []
+var _settlement_mission_items: Array[String] = []
+var _compatible_part_items: Array[String] = []
 var _latest_all_settlements: Array = [] # cached list from GDM settlement_data_updated
 
 func _ready():
@@ -110,12 +140,18 @@ func _ready():
 		vp_style.shadow_color = Color(0,0,0,0.45)
 		vp_style.shadow_size = 4
 		vendor_preview_panel.add_theme_stylebox_override("panel", vp_style)
-		# Adjust inner label colors slightly for readability
-		if is_instance_valid(mission_cargo_preview_label):
-			mission_cargo_preview_label.add_theme_color_override("font_color", Color(0.92, 0.96, 1.0))
-		if is_instance_valid(compatible_parts_preview_label):
-			compatible_parts_preview_label.add_theme_color_override("font_color", Color(0.92, 0.96, 1.0))
-
+		# Style the content panel inside the vendor preview
+		var content_panel = vendor_preview_panel.get_node_or_null("VendorPreviewVBox/VendorContentPanel")
+		if is_instance_valid(content_panel):
+			var content_style := StyleBoxFlat.new()
+			content_style.bg_color = COLOR_TAB_CONTENT_BG
+			content_style.corner_radius_top_left = 4
+			content_style.corner_radius_bottom_right = 4
+			content_panel.add_theme_stylebox_override("panel", content_style)
+	
+	# Style the new journey progress bar
+	if is_instance_valid(journey_progress_bar):
+		_style_journey_progress_bar(journey_progress_bar)
 	# IMPORTANT: Ensure you have a Button node in your ConvoyMenu.tscn scene
 	# and that its name is "BackButton".
 	# The third argument 'false' for find_child means 'owned by this node' is not checked,
@@ -180,6 +216,23 @@ func _ready():
 		if not cargo_menu_button.is_connected("pressed", Callable(self, "_on_cargo_menu_button_pressed")):
 			_style_menu_button(cargo_menu_button)
 			cargo_menu_button.pressed.connect(_on_cargo_menu_button_pressed)
+
+	# Connect vendor preview tab buttons
+	if is_instance_valid(convoy_missions_tab_button):
+		_initialize_tab_button_styles(convoy_missions_tab_button)
+		convoy_missions_tab_button.pressed.connect(_on_vendor_tab_pressed.bind(VendorTab.CONVOY_MISSIONS))
+	if is_instance_valid(settlement_missions_tab_button):
+		_initialize_tab_button_styles(settlement_missions_tab_button)
+		settlement_missions_tab_button.pressed.connect(_on_vendor_tab_pressed.bind(VendorTab.SETTLEMENT_MISSIONS))
+	if is_instance_valid(compatible_parts_tab_button):
+		_initialize_tab_button_styles(compatible_parts_tab_button)
+		compatible_parts_tab_button.pressed.connect(_on_vendor_tab_pressed.bind(VendorTab.COMPATIBLE_PARTS))
+	if is_instance_valid(journey_tab_button):
+		_initialize_tab_button_styles(journey_tab_button)
+		journey_tab_button.pressed.connect(_on_vendor_tab_pressed.bind(VendorTab.JOURNEY))
+
+	# Set the initial active tab
+	convoy_missions_tab_button.button_pressed = true
 
 	# Initial font size update
 	call_deferred("_update_font_sizes")
@@ -247,10 +300,24 @@ func initialize_with_data(data: Dictionary):
 		var journey_data = convoy_data_received.get("journey")
 		var has_journey = journey_data != null and not journey_data.is_empty()
 
-		# Set visibility of all journey-related labels
-		if is_instance_valid(journey_dest_label): journey_dest_label.visible = has_journey
-		if is_instance_valid(journey_progress_label): journey_progress_label.visible = has_journey
-		if is_instance_valid(journey_eta_label): journey_eta_label.visible = has_journey
+		# Conditionally show/hide vendor tabs based on journey status
+		if is_instance_valid(journey_tab_button):
+			journey_tab_button.visible = has_journey
+		if is_instance_valid(settlement_missions_tab_button):
+			settlement_missions_tab_button.visible = not has_journey
+		if is_instance_valid(compatible_parts_tab_button):
+			compatible_parts_tab_button.visible = not has_journey
+
+		# If we are on a journey and a settlement tab is active, switch to the journey tab.
+		if has_journey and (_current_vendor_tab == VendorTab.SETTLEMENT_MISSIONS or _current_vendor_tab == VendorTab.COMPATIBLE_PARTS):
+			_current_vendor_tab = VendorTab.JOURNEY
+			if is_instance_valid(journey_tab_button):
+				journey_tab_button.button_pressed = true
+		# If we are NOT on a journey and the journey tab is active, switch to the convoy tab.
+		elif not has_journey and _current_vendor_tab == VendorTab.JOURNEY:
+			_current_vendor_tab = VendorTab.CONVOY_MISSIONS
+			if is_instance_valid(convoy_missions_tab_button):
+				convoy_missions_tab_button.button_pressed = true
 
 		# Only populate the labels if there is a journey
 		if has_journey:
@@ -300,14 +367,15 @@ func initialize_with_data(data: Dictionary):
 					dest_text = "Destination: No coordinates"
 				journey_dest_label.text = dest_text
 
-			if is_instance_valid(journey_progress_label):
+			if is_instance_valid(journey_progress_bar) and is_instance_valid(journey_progress_label):
 				var progress = journey_data.get("progress", 0.0)
 				var length = journey_data.get("length", 0.0)
 				var progress_percentage = 0.0
 				if length > 0:
 					progress_percentage = (progress / length) * 100.0
-				# Display progress as a percentage
-				journey_progress_label.text = "Progress: %.1f%%" % progress_percentage
+				
+				journey_progress_bar.value = progress_percentage
+				journey_progress_label.text = "%.1f%%" % progress_percentage
 
 			if is_instance_valid(journey_eta_label):
 				var eta_value = journey_data.get("eta")
@@ -351,7 +419,7 @@ func initialize_with_data(data: Dictionary):
 				if cid != "":
 					_gdm.start_mechanics_probe_session(cid)
 		_update_vendor_preview()
-		
+
 		# Initial font size update after data is populated
 		call_deferred("_update_font_sizes")
 
@@ -359,70 +427,117 @@ func _update_vendor_preview() -> void:
 	if convoy_data_received == null:
 		return
 	# Mission cargo preview: show items marked mission-critical if present
-	if is_instance_valid(mission_cargo_preview_label):
-		var convoy_missions: Array = _collect_mission_cargo_items(convoy_data_received)
-		var settlement_missions: Array = _collect_settlement_mission_items()
-		if _debug_convoy_menu:
-			print("[ConvoyMenu][Debug] convoy_missions count=", convoy_missions.size(), " items=", convoy_missions)
-			print("[ConvoyMenu][Debug] settlement_missions count=", settlement_missions.size(), " items=", settlement_missions)
-		var convoy_line := "Convoy Missions: " + (", ".join(convoy_missions) if convoy_missions.size() > 0 else "None")
-		var settlement_line := "Settlement Missions: " + (", ".join(settlement_missions) if settlement_missions.size() > 0 else "None")
-		# Provide a helpful hint when settlement missions are None
-		if settlement_missions.is_empty():
-			var sx: int = 0
-			var sy: int = 0
-			if convoy_data_received != null and convoy_data_received.has("x") and convoy_data_received.has("y"):
-				sx = roundi(float(convoy_data_received.get("x", 0)))
-				sy = roundi(float(convoy_data_received.get("y", 0)))
-			settlement_line += " (at %d,%d)" % [sx, sy]
-		mission_cargo_preview_label.text = convoy_line + "\n" + settlement_line
-
+	_convoy_mission_items = _collect_mission_cargo_items(convoy_data_received)
+	_settlement_mission_items = _collect_settlement_mission_items()
+	
 	# Compatible parts preview: use GDM mechanic vendor availability snapshot if available
-	if is_instance_valid(compatible_parts_preview_label):
-		var compat_summary: Array = []
-		if is_instance_valid(_gdm) and _gdm.has_method("get_mechanic_probe_snapshot"):
-			var snap: Dictionary = _gdm.get_mechanic_probe_snapshot()
-			if _debug_convoy_menu:
-				print("[ConvoyMenu][Debug] mech_probe_snapshot keys=", snap.keys())
-			# Prefer showing actual part names using cargo_id enrichment
-			var part_names: Array[String] = []
-			var c2s: Dictionary = snap.get("cargo_id_to_slot", {}) if snap.has("cargo_id_to_slot") else {}
-			if c2s is Dictionary and not c2s.is_empty():
-				# Attempt to fetch enriched cargo names for each cargo_id
-				if _gdm.has_method("get_enriched_cargo"):
-					for cid in c2s.keys():
-						var cargo: Dictionary = _gdm.get_enriched_cargo(String(cid))
-						var nm := String(cargo.get("name", cargo.get("base_name", "")))
-						if nm == "" and _gdm.has_method("ensure_cargo_details"):
-							# Trigger enrichment for future updates
-							_gdm.ensure_cargo_details(String(cid))
-						if nm != "":
-							part_names.append(nm)
-			# If names are still empty, fall back to slot summary counts
-			if part_names.is_empty():
-				if c2s is Dictionary and not c2s.is_empty():
-					var slot_counts: Dictionary = {}
-					for cid in c2s.keys():
-						var slot_name: String = String(c2s.get(cid, ""))
-						if slot_name != "":
-							slot_counts[slot_name] = int(slot_counts.get(slot_name, 0)) + 1
-					for sname in slot_counts.keys():
-						compat_summary.append("%s (%d)" % [String(sname), int(slot_counts.get(sname, 0))])
-			# If we found names, use them directly
-			if not part_names.is_empty():
-				compat_summary = part_names
+	var compat_summary: Array[String] = []
+	if is_instance_valid(_gdm) and _gdm.has_method("get_mechanic_probe_snapshot"):
+		var snap: Dictionary = _gdm.get_mechanic_probe_snapshot()
 		if _debug_convoy_menu:
-			print("[ConvoyMenu][Debug] compat_summary=", compat_summary)
-		compatible_parts_preview_label.text = "Compatible Parts: " + (", ".join(compat_summary) if compat_summary.size() > 0 else "None detected")
+			print("[ConvoyMenu][Debug] mech_probe_snapshot keys=", snap.keys())
+		# Prefer showing actual part names using cargo_id enrichment
+		var part_names: Array[String] = []
+		var c2s: Dictionary = snap.get("cargo_id_to_slot", {}) if snap.has("cargo_id_to_slot") else {}
+		if c2s is Dictionary and not c2s.is_empty():
+			# Attempt to fetch enriched cargo names for each cargo_id
+			if _gdm.has_method("get_enriched_cargo"):
+				for cid in c2s.keys():
+					var cargo: Dictionary = _gdm.get_enriched_cargo(String(cid))
+					var nm := String(cargo.get("name", cargo.get("base_name", "")))
+					if nm == "" and _gdm.has_method("ensure_cargo_details"):
+						# Trigger enrichment for future updates
+						_gdm.ensure_cargo_details(String(cid))
+					if nm != "":
+						part_names.append(nm)
+		# If names are still empty, fall back to slot summary counts
+		if part_names.is_empty():
+			if c2s is Dictionary and not c2s.is_empty():
+				var slot_counts: Dictionary = {}
+				for cid in c2s.keys():
+					var slot_name: String = String(c2s.get(cid, ""))
+					if slot_name != "":
+						slot_counts[slot_name] = int(slot_counts.get(slot_name, 0)) + 1
+				for sname in slot_counts.keys():
+					compat_summary.append("%s (%d)" % [String(sname), int(slot_counts.get(sname, 0))])
+		# If we found names, use them directly
+		if not part_names.is_empty():
+			compat_summary = part_names
+	if _debug_convoy_menu:
+		print("[ConvoyMenu][Debug] compat_summary=", compat_summary)
+	_compatible_part_items = compat_summary
 
-func _collect_mission_cargo_items(convoy: Dictionary) -> Array:
+	# Render the new tabbed display
+	_render_vendor_preview_display()
+
+func _render_vendor_preview_display() -> void:
+	# Update button text with counts
+	convoy_missions_tab_button.text = "Convoy (%d)" % _convoy_mission_items.size()
+	settlement_missions_tab_button.text = "Settlement (%d)" % _settlement_mission_items.size()
+	compatible_parts_tab_button.text = "Parts (%d)" % _compatible_part_items.size()
+	# Journey tab does not need a count
+
+	# Show/hide content containers based on the active tab
+	var is_journey_tab = (_current_vendor_tab == VendorTab.JOURNEY)
+
+	journey_info_vbox.visible = is_journey_tab
+
+	if is_journey_tab:
+		vendor_item_container.visible = false
+		vendor_no_items_label.visible = false
+		return # Nothing more to render for the journey tab
+
+	# --- Handle non-journey tabs ---
+	# Clear previous items from the grid
+	for child in vendor_item_grid.get_children():
+		child.queue_free()
+
+	# Get the correct list of items for the current tab
+	var content_list: Array[String] = []
+	match _current_vendor_tab:
+		VendorTab.CONVOY_MISSIONS:
+			content_list = _convoy_mission_items
+		VendorTab.SETTLEMENT_MISSIONS:
+			content_list = _settlement_mission_items
+		VendorTab.COMPATIBLE_PARTS:
+			content_list = _compatible_part_items
+
+	if content_list.is_empty():
+		vendor_item_container.visible = false
+		vendor_no_items_label.visible = true
+	else:
+		vendor_item_container.visible = true
+		vendor_no_items_label.visible = false
+		for item_string in content_list:
+			var button := Button.new()
+			
+			# Format text to split name and quantity onto new lines for readability
+			var parts = item_string.rsplit(" x", false, 1)
+			var item_name = parts[0]
+			if parts.size() > 1:
+				button.text = "%s\nx%s" % [item_name, parts[1]]
+			else:
+				button.text = item_name
+			
+			button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			button.custom_minimum_size.y = 40 # Give buttons a decent height
+			button.clip_text = true
+			
+			_style_vendor_item_button(button, _current_vendor_tab)
+			
+			vendor_item_grid.add_child(button)
+	
+	# Ensure font sizes are applied to newly created buttons
+	_update_font_sizes()
+
+func _collect_mission_cargo_items(convoy: Dictionary) -> Array[String]:
 	# Mirror vendor_trade_panel.gd logic to avoid mismatches.
 	# Rules:
 	# 1) Prefer vehicle.cargo_items_typed entries where typed.category == "mission".
 	# 2) Else, treat raw cargo entries as mission if they have non-null `recipient` or `delivery_reward`.
 	# 3) Skip items that represent intrinsic parts (have `intrinsic_part_id`).
 	# 4) If no per-vehicle cargo found, fall back to `convoy.cargo_inventory` with the same rules.
-	var out: Array = []
+	var out: Array[String] = []
 	var found_any_cargo := false
 	var agg: Dictionary = {} # name -> total quantity
 	var diag_typed_mission := 0
@@ -633,8 +748,8 @@ func _extract_coords_from_dict(d: Dictionary) -> Vector2i:
 	return Vector2i(xi, yi)
 
 # Collect available mission cargo at the current settlement (not in convoy)
-func _collect_settlement_mission_items() -> Array:
-	var out: Array = []
+func _collect_settlement_mission_items() -> Array[String]:
+	var out: Array[String] = []
 	if not is_instance_valid(_gdm) or convoy_data_received == null:
 		if _debug_convoy_menu:
 			print("[ConvoyMenu][Debug] GDM missing or convoy_data_received null; cannot collect settlement missions.")
@@ -761,6 +876,10 @@ func _on_vendor_panel_ready(_payload: Dictionary) -> void:
 		print("[ConvoyMenu][Debug] vendor_panel_data_ready -> refresh vendor preview")
 	_update_vendor_preview()
 
+func _on_vendor_tab_pressed(tab_index: VendorTab) -> void:
+	_current_vendor_tab = tab_index
+	_render_vendor_preview_display()
+
 # --- Placeholder Button Handlers ---
 func _on_vehicle_menu_button_pressed():
 	print("ConvoyMenu: Vehicle Menu button pressed. Emitting 'open_vehicle_menu_requested'.")
@@ -777,6 +896,7 @@ func _on_settlement_menu_button_pressed():
 func _on_cargo_menu_button_pressed():
 	print("ConvoyMenu: Cargo Menu button pressed. Emitting 'open_cargo_menu_requested'.")
 	emit_signal("open_cargo_menu_requested", convoy_data_received)
+
 
 func _get_color_for_percentage(percentage: float) -> Color:
 	if percentage > 0.7:
@@ -851,7 +971,7 @@ func _update_font_sizes() -> void:
 		speed_text_label, offroad_text_label, efficiency_text_label,
 		cargo_volume_text_label, cargo_weight_text_label,
 		journey_dest_label, journey_progress_label, journey_eta_label,
-		vehicles_label, all_cargo_label,
+		vehicles_label, all_cargo_label, vendor_no_items_label,
 		# Add text of placeholder buttons if they need scaling
 		# vehicle_menu_button, journey_menu_button, 
 		# settlement_menu_button, cargo_menu_button 
@@ -861,6 +981,13 @@ func _update_font_sizes() -> void:
 	if is_instance_valid(title_label):
 		title_label.add_theme_font_size_override("font_size", new_title_font_size)
 
+	# Scale fonts for dynamically created vendor item buttons
+	if is_instance_valid(vendor_item_grid):
+		for child in vendor_item_grid.get_children():
+			if child is Button:
+				# Use a smaller font for the item buttons to ensure text fits
+				child.add_theme_font_size_override("font_size", new_font_size - 8)
+				
 	for label_node in labels_to_scale:
 		if is_instance_valid(label_node):
 			label_node.add_theme_font_size_override("font_size", new_font_size)
@@ -877,6 +1004,16 @@ func _update_font_sizes() -> void:
 		settlement_menu_button.add_theme_font_size_override("font_size", new_font_size)
 	if is_instance_valid(cargo_menu_button):
 		cargo_menu_button.add_theme_font_size_override("font_size", new_font_size)
+	
+	# Scale vendor tab buttons
+	if is_instance_valid(convoy_missions_tab_button):
+		convoy_missions_tab_button.add_theme_font_size_override("font_size", new_font_size - 2)
+	if is_instance_valid(settlement_missions_tab_button):
+		settlement_missions_tab_button.add_theme_font_size_override("font_size", new_font_size - 2)
+	if is_instance_valid(compatible_parts_tab_button):
+		compatible_parts_tab_button.add_theme_font_size_override("font_size", new_font_size - 2)
+	if is_instance_valid(journey_tab_button):
+		journey_tab_button.add_theme_font_size_override("font_size", new_font_size - 2)
 
 	# print("ConvoyMenu: Updated font sizes. Scale: %.2f, Base: %d, Title: %d" % [scale_factor, new_font_size, new_title_font_size]) # DEBUG
 
@@ -915,6 +1052,90 @@ func _style_menu_button(button_node: Button) -> void:
 	button_node.add_theme_stylebox_override("hover", style_box_hover)
 	button_node.add_theme_stylebox_override("pressed", style_box_pressed)
 	button_node.add_theme_color_override("font_color", COLOR_BOX_FONT)
+
+func _initialize_tab_button_styles(button: Button) -> void:
+	if not is_instance_valid(button):
+		return
+
+	var style_normal := StyleBoxFlat.new()
+	style_normal.bg_color = COLOR_TAB_INACTIVE_BG
+	style_normal.corner_radius_top_left = 3
+	style_normal.corner_radius_top_right = 3
+
+	var style_hover := style_normal.duplicate() as StyleBoxFlat
+	style_hover.bg_color = COLOR_TAB_INACTIVE_BG.lightened(0.15)
+
+	var style_pressed := StyleBoxFlat.new()
+	style_pressed.bg_color = COLOR_TAB_ACTIVE_BG # This is the "active" color
+	style_pressed.corner_radius_top_left = 3
+	style_pressed.corner_radius_top_right = 3
+
+	var style_disabled := style_normal.duplicate() as StyleBoxFlat
+	style_disabled.bg_color = COLOR_TAB_INACTIVE_BG.darkened(0.3)
+
+	button.add_theme_color_override("font_disabled_color", COLOR_TAB_DISABLED_FONT)
+	button.add_theme_stylebox_override("normal", style_normal)
+	button.add_theme_stylebox_override("hover", style_hover)
+	button.add_theme_stylebox_override("pressed", style_pressed)
+	button.add_theme_stylebox_override("disabled", style_disabled)
+
+func _style_vendor_item_button(button: Button, tab_type: VendorTab) -> void:
+	var font_color: Color
+	match tab_type:
+		VendorTab.CONVOY_MISSIONS, VendorTab.SETTLEMENT_MISSIONS:
+			font_color = COLOR_MISSION_TEXT
+		VendorTab.COMPATIBLE_PARTS:
+			font_color = COLOR_PART_TEXT
+		_:
+			font_color = Color.WHITE
+
+	var style_normal := StyleBoxFlat.new()
+	style_normal.bg_color = COLOR_ITEM_BUTTON_BG
+	style_normal.border_width_top = 1
+	style_normal.border_width_bottom = 1
+	style_normal.border_width_left = 1
+	style_normal.border_width_right = 1
+	style_normal.border_color = COLOR_ITEM_BUTTON_BG.darkened(0.4)
+	style_normal.corner_radius_top_left = 4
+	style_normal.corner_radius_top_right = 4
+	style_normal.corner_radius_bottom_left = 4
+	style_normal.corner_radius_bottom_right = 4
+
+	var style_hover := style_normal.duplicate() as StyleBoxFlat
+	style_hover.bg_color = COLOR_ITEM_BUTTON_BG.lightened(0.2)
+	style_hover.border_color = style_hover.bg_color.darkened(0.4)
+
+	var style_pressed := style_normal.duplicate() as StyleBoxFlat
+	style_pressed.bg_color = COLOR_ITEM_BUTTON_BG.darkened(0.2)
+	style_pressed.content_margin_top = 2 # Add a little press-down effect
+
+	button.add_theme_color_override("font_color", font_color)
+	button.add_theme_color_override("font_hover_color", font_color.lightened(0.1))
+	button.add_theme_color_override("font_pressed_color", font_color)
+	button.add_theme_stylebox_override("normal", style_normal)
+	button.add_theme_stylebox_override("hover", style_hover)
+	button.add_theme_stylebox_override("pressed", style_pressed)
+
+func _style_journey_progress_bar(bar: ProgressBar) -> void:
+	if not is_instance_valid(bar):
+		return
+
+	var bg_style := StyleBoxFlat.new()
+	bg_style.bg_color = Color(0, 0, 0, 0.4) # Dark, semi-transparent background
+	bg_style.corner_radius_top_left = 6
+	bg_style.corner_radius_top_right = 6
+	bg_style.corner_radius_bottom_left = 6
+	bg_style.corner_radius_bottom_right = 6
+
+	var fill_style := StyleBoxFlat.new()
+	fill_style.bg_color = COLOR_JOURNEY_PROGRESS_FILL
+	fill_style.corner_radius_top_left = 6
+	fill_style.corner_radius_top_right = 6
+	fill_style.corner_radius_bottom_left = 6
+	fill_style.corner_radius_bottom_right = 6
+
+	bar.add_theme_stylebox_override("background", bg_style)
+	bar.add_theme_stylebox_override("fill", fill_style)
 
 # The _update_label function is no longer needed with this simplified structure.
 # You can remove it or comment it out.
