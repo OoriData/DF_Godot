@@ -374,10 +374,14 @@ func _looks_like_mission(d: Dictionary) -> bool:
 	if d.has("mission_vendor_id") and d.get("mission_vendor_id") != null and str(d.get("mission_vendor_id")) != "":
 		return true
 	# From vendor_trade_panel.gd: delivery/recipient info
+	# Treat as mission only if recipient is present OR delivery_reward is a positive number
 	if d.has("recipient") and d.get("recipient") != null:
 		return true
-	if d.has("delivery_reward") and d.get("delivery_reward") != null:
-		return true
+	if d.has("delivery_reward"):
+		var dr = d.get("delivery_reward")
+		if dr != null:
+			if (dr is float or dr is int) and float(dr) > 0.0:
+				return true
 	return false
 
 # Determine if dictionary represents a resource cargo item (raw resources or supplies).

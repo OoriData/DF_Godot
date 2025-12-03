@@ -215,11 +215,11 @@ class MissionItem:
 			return true
 		if d.has("mission_vendor_id") and d.get("mission_vendor_id") != null and str(d.get("mission_vendor_id")).strip_edges() != "":
 			return true
-		# Check for delivery/recipient info, consistent with vendor panel
-		if d.has("recipient") and d.get("recipient") != null:
-			return true
-		if d.has("delivery_reward") and d.get("delivery_reward") != null:
-			return true
+		# Mission cargo must have a positive delivery_reward
+		if d.has("delivery_reward"):
+			var dr = d.get("delivery_reward")
+			if dr != null and (dr is float or dr is int) and float(dr) > 0.0:
+				return true
 		return false
 
 	static func _from_mission_dict(d: Dictionary) -> MissionItem:

@@ -570,6 +570,10 @@ func _populate_convoy_list() -> void:
 						"part": category_dict = aggregated_parts
 						_:
 							category_dict = aggregated_other
+					# Override: if raw data shows mission signals, force mission classification
+					var dr_t = raw_item.get("delivery_reward")
+					if raw_item.get("recipient") != null or ((dr_t is float or dr_t is int) and float(dr_t) > 0.0):
+						category_dict = aggregated_missions
 					if category_dict == aggregated_missions:
 						var recipient_id = raw_item.get("recipient")
 						if recipient_id:
@@ -582,7 +586,9 @@ func _populate_convoy_list() -> void:
 						continue
 					var category_dict: Dictionary
 					var mission_vendor_name: String = ""
-					if item.get("recipient") != null or item.get("delivery_reward") != null:
+					# Mission cargo: recipient present OR delivery_reward is a positive number
+					var dr = item.get("delivery_reward")
+					if item.get("recipient") != null or ((dr is float or dr is int) and float(dr) > 0.0):
 						category_dict = aggregated_missions
 					elif (item.has("food") and item.get("food") != null and item.get("food") > 0) or \
 						 (item.has("water") and item.get("water") != null and item.get("water") > 0) or \
@@ -605,7 +611,9 @@ func _populate_convoy_list() -> void:
 		for item in convoy_data.cargo_inventory:
 			var category_dict: Dictionary
 			var mission_vendor_name: String = ""
-			if item.get("recipient") != null or item.get("delivery_reward") != null:
+			# Mission cargo: recipient present OR delivery_reward is a positive number
+			var dr2 = item.get("delivery_reward")
+			if item.get("recipient") != null or ((dr2 is float or dr2 is int) and float(dr2) > 0.0):
 				category_dict = aggregated_missions
 			elif (item.has("food") and item.get("food") != null and item.get("food") > 0) or \
 				 (item.has("water") and item.get("water") != null and item.get("water") > 0) or \

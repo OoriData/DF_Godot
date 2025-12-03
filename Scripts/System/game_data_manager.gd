@@ -1679,6 +1679,85 @@ func get_convoy_by_id(convoy_id: String) -> Variant:
 			return convoy
 	return null
 
+# --- Public: Settlement mission items at coordinates ---
+func get_settlement_mission_items(x: int, y: int) -> Array:
+	"""
+	Return mission cargo available at the settlement located at (x, y).
+	Aggregates the `missions` bucket from all vendors associated with the settlement
+	using `_aggregate_vendor_items`. Returns an Array of Dictionaries.
+
+	If vendor data is not cached, returns an empty Array. Consider warming caches
+	via `_request_settlement_vendor_data_at_coords(x, y)` beforehand.
+	"""
+	var sx := int(roundf(float(x)))
+	var sy := int(roundf(float(y)))
+	var settlement: Dictionary = {}
+	for s in all_settlement_data:
+		if not (s is Dictionary):
+			continue
+		var sx0 := int(roundf(float(s.get("x", -999999))))
+		var sy0 := int(roundf(float(s.get("y", -999999))))
+		if sx0 == sx and sy0 == sy:
+			settlement = s
+			break
+	if settlement.is_empty():
+		if VEHICLE_DEBUG_DUMP:
+			print("[GameDataManager][SettleMissions] No settlement found at (", sx, ",", sy, ")")
+		return []
+
+	# Collect vendor dictionaries associated with this settlement
+	var vendor_dicts: Array = []
+	var vendor_list = settlement.get("vendors", [])
+	if vendor_list is Array and not vendor_list.is_empty():
+		for v in vendor_list:
+			if v is Dictionary:
+				vendor_dicts.append(v)
+			elif v is String and v != "":
+				var vd = get_vendor_by_id(v)
+				if vd is Dictionary and not vd.is_empty():
+					vendor_dicts.append(vd)
+	else:
+		# Fallback: alternate keys
+		for k in ["vendor_list", "settlement_vendors", "shops"]:
+			if settlement.has(k) and (settlement.get(k) is Array):
+				for v in settlement.get(k):
+					if v is Dictionary:
+						vendor_dicts.append(v)
+					elif v is String and v != "":
+						var vd2 = get_vendor_by_id(v)
+						if vd2 is Dictionary and not vd2.is_empty():
+							vendor_dicts.append(vd2)
+
+	if vendor_dicts.is_empty():
+		if VEHICLE_DEBUG_DUMP:
+			print("[GameDataManager][SettleMissions] No vendors cached for (", sx, ",", sy, ")")
+		return []
+
+	# Aggregate missions from each vendor
+	var missions_out: Array = []
+	for vendor in vendor_dicts:
+		if not (vendor is Dictionary):
+			continue
+		var agg: Dictionary = _aggregate_vendor_items(vendor)
+		var missions_bucket: Dictionary = agg.get("missions", {})
+		for m_key in missions_bucket.keys():
+			var entry: Dictionary = missions_bucket[m_key]
+			if not (entry is Dictionary):
+				continue
+			var item_data: Dictionary = entry.get("item_data", {}) if entry.has("item_data") else {}
+			if not (item_data is Dictionary) or item_data.is_empty():
+				continue
+			var out_item: Dictionary = item_data.duplicate(true)
+			var q_total: int = int(entry.get("total_quantity", out_item.get("quantity", 1)))
+			out_item["quantity"] = q_total if q_total > 0 else max(1, int(out_item.get("quantity", 1)))
+			if not out_item.has("mission_vendor_id") and vendor.has("vendor_id"):
+				out_item["mission_vendor_id"] = String(vendor.get("vendor_id"))
+			missions_out.append(out_item)
+
+	if VEHICLE_DEBUG_DUMP:
+		print("[GameDataManager][SettleMissions] vendors=", vendor_dicts.size(), " missions=", missions_out.size())
+	return missions_out
+
 # Safe numeric checker to handle nulls and non-numeric values from API
 func _is_positive_number(v: Variant) -> bool:
 	return (v is float or v is int) and float(v) > 0.0
@@ -1699,7 +1778,12 @@ func _aggregate_vendor_items(vendor_data: Dictionary) -> Dictionary:
 		if item.has("intrinsic_part_id") and item.get("intrinsic_part_id") != null:
 			continue
 		var category = "other"
-		var is_mission := item.get("recipient") != null
+		# Mission identification: require a delivery_reward (positive number). Recipient remains a secondary hint.
+		var has_reward := false
+		if item.has("delivery_reward"):
+			var dr = item.get("delivery_reward")
+			has_reward = _is_positive_number(dr)
+		var is_mission := has_reward or (item.get("recipient") != null)
 		# Guard against null values in resource fields (API may send null instead of 0)
 		var is_resource: bool = (
 			(item.has("food") and _is_positive_number(item.get("food"))) or
