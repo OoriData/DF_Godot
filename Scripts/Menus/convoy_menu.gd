@@ -262,6 +262,17 @@ func initialize_with_data(data: Dictionary):
 		convoy_data_received = data.duplicate() # Duplicate to avoid modifying the original if needed
 		# print("ConvoyMenu: Initialized with data: ", convoy_data_received) # DEBUG
 		
+		# Kick off a mechanics probe/warm-up so compatibility can populate.
+		# This is done *before* requesting a vendor data refresh to avoid a race condition
+		# where the probe runs on an empty inventory while it is being refreshed.
+		if is_instance_valid(_gdm):
+			if _gdm.has_method("warm_mechanics_data_for_convoy"):
+				_gdm.warm_mechanics_data_for_convoy(convoy_data_received)
+			elif _gdm.has_method("start_mechanics_probe_session"):
+				var cid := String(convoy_data_received.get("convoy_id", ""))
+				if cid != "":
+					_gdm.start_mechanics_probe_session(cid)
+		
 		# When the ConvoyMenu opens, explicitly request a refresh of all vendor data
 		# for the current settlement. This ensures mission destination data is up-to-date.
 		if is_instance_valid(_gdm) and convoy_data_received.has("x") and convoy_data_received.has("y"):
@@ -447,15 +458,7 @@ func initialize_with_data(data: Dictionary):
 				cargo_summary.append("%s x%s" % [item_name, cargo_counts[item_name]])
 			all_cargo_label.text = "Cargo: " + ", ".join(cargo_summary)
 
-		# --- Vendor Preview ---
-		# Kick off a mechanics probe/warm-up so compatibility can populate
-		if is_instance_valid(_gdm):
-			if _gdm.has_method("warm_mechanics_data_for_convoy"):
-				_gdm.warm_mechanics_data_for_convoy(convoy_data_received)
-			elif _gdm.has_method("start_mechanics_probe_session"):
-				var cid := String(convoy_data_received.get("convoy_id", ""))
-				if cid != "":
-					_gdm.start_mechanics_probe_session(cid)
+		# Update the vendor preview. This will be called again by signals when async data arrives.
 		_update_vendor_preview()
 
 		# Initial font size update after data is populated
