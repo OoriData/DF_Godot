@@ -82,6 +82,10 @@ const MECH_DEBUG_FORCE_SAMPLE := true # Force one sample compat request if no ve
 
 # --- Heuristics for detecting parts by name/description (fallback when no explicit slot/type) ---
 func _looks_like_vehicle_part(item: Dictionary) -> Dictionary:
+	# First, ensure it's not a resource item to avoid misclassifying containers like fuel drums.
+	if ItemsData != null and ItemsData.ResourceItem and ItemsData.ResourceItem._looks_like_resource_dict(item):
+		return {"likely": false, "slot_guess": ""}
+
 	var name_l := String(item.get("name", "")).to_lower()
 	var desc_l := String(item.get("base_desc", item.get("description", ""))).to_lower()
 	var text := name_l + "\n" + desc_l
@@ -94,9 +98,9 @@ func _looks_like_vehicle_part(item: Dictionary) -> Dictionary:
 		"engine", "motor",
 		"radiator", "cooler", "intercooler",
 		"turbo", "supercharger",
-		"brake", "rotor", "caliper", "drum",
+		"brake", "rotor", "caliper", "brake drum",
 		"wheel", "tire", "tyre", "spare",
-		"body", "chassis", "frame", "bed"
+		"body", "chassis", "frame"
 	]
 	var likely := false
 	for kw in kw_any:
@@ -123,11 +127,11 @@ func _looks_like_vehicle_part(item: Dictionary) -> Dictionary:
 			slot_guess = "cooling"
 		elif text.find("turbo") != -1 or text.find("supercharger") != -1:
 			slot_guess = "forced_induction"
-		elif text.find("brake") != -1 or text.find("rotor") != -1 or text.find("caliper") != -1 or text.find("drum") != -1:
+		elif text.find("brake") != -1 or text.find("rotor") != -1 or text.find("caliper") != -1 or text.find("brake drum") != -1:
 			slot_guess = "brakes"
 		elif text.find("wheel") != -1 or text.find("tire") != -1 or text.find("tyre") != -1 or text.find("spare") != -1:
 			slot_guess = "spare_tire" if text.find("spare") != -1 else "wheel"
-		elif text.find("body") != -1 or text.find("chassis") != -1 or text.find("frame") != -1 or text.find("bed") != -1:
+		elif text.find("body") != -1 or text.find("chassis") != -1 or text.find("frame") != -1:
 			slot_guess = "body"
 	return {"likely": likely, "slot_guess": slot_guess}
 

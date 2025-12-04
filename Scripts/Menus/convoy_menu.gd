@@ -106,6 +106,7 @@ var _convoy_mission_items: Array[String] = []
 var _settlement_mission_items: Array[String] = []
 var _compatible_part_items: Array[String] = []
 var _latest_all_settlements: Array = [] # cached list from GDM settlement_data_updated
+var _vendor_preview_update_timer: Timer = null # For debouncing updates
 
 func _ready():
 	# --- DIAGNOSTIC: Check if UI nodes are valid ---
@@ -170,8 +171,6 @@ func _ready():
 	_gdm = get_node_or_null("/root/GameDataManager")
 	if is_instance_valid(_gdm):
 		# Refresh vendor preview when mechanics compatibility updates arrive
-		if _gdm.has_signal("mechanic_vendor_slot_availability") and not _gdm.mechanic_vendor_slot_availability.is_connected(_on_mech_vendor_availability):
-			_gdm.mechanic_vendor_slot_availability.connect(_on_mech_vendor_availability)
 		if _gdm.has_signal("part_compatibility_ready") and not _gdm.part_compatibility_ready.is_connected(_on_part_compat_ready):
 			_gdm.part_compatibility_ready.connect(_on_part_compat_ready)
 		# Refresh when vendor panel data becomes ready (post warm-up)
@@ -225,6 +224,14 @@ func _ready():
 
 	# Set the initial active tab
 	convoy_missions_tab_button.button_pressed = true
+
+	# Set up debounce timer for vendor preview updates
+	_vendor_preview_update_timer = Timer.new()
+	_vendor_preview_update_timer.name = "VendorPreviewUpdateTimer"
+	_vendor_preview_update_timer.wait_time = 0.1 # 100ms debounce window
+	_vendor_preview_update_timer.one_shot = true
+	_vendor_preview_update_timer.timeout.connect(_update_vendor_preview)
+	add_child(_vendor_preview_update_timer)
 
 	# Initial font size update
 	call_deferred("_update_font_sizes")
@@ -459,13 +466,18 @@ func initialize_with_data(data: Dictionary):
 			all_cargo_label.text = "Cargo: " + ", ".join(cargo_summary)
 
 		# Update the vendor preview. This will be called again by signals when async data arrives.
-		_update_vendor_preview()
-
+		# Queue an update. This will be debounced with other signals that fire on open.
+		_queue_vendor_preview_update()
 		# Initial font size update after data is populated
 		call_deferred("_update_font_sizes")
 
+func _queue_vendor_preview_update() -> void:
+	# Debounce updates to prevent UI thrashing from rapid signals.
+	if is_instance_valid(_vendor_preview_update_timer):
+		_vendor_preview_update_timer.start()
+
 func _update_vendor_preview() -> void:
-	if convoy_data_received == null:
+	if not is_instance_valid(self) or convoy_data_received == null:
 		return
 	# Mission cargo preview: show items marked mission-critical if present
 	_convoy_mission_items = _collect_mission_cargo_items(convoy_data_received)
@@ -1171,12 +1183,9 @@ func _extract_destination_from_item(item: Dictionary) -> String:
 	if _debug_convoy_menu:
 		print("[ConvoyMenu][Debug] destination unresolved for item=", String(item.get("name", item.get("base_name", "?"))))
 	return ""
-
-func _on_mech_vendor_availability(_veh_id: String, _slot_availability: Dictionary) -> void:
-	_update_vendor_preview()
-
+	
 func _on_part_compat_ready(_payload: Dictionary) -> void:
-	_update_vendor_preview()
+	_queue_vendor_preview_update()
 
 func _on_settlement_data_updated(_list: Array) -> void:
 	# Cache the latest all-settlements payload for local lookups
@@ -1184,7 +1193,7 @@ func _on_settlement_data_updated(_list: Array) -> void:
 		_latest_all_settlements = _list
 		if _debug_convoy_menu:
 			print("[ConvoyMenu][Debug] cached all_settlements count=", _latest_all_settlements.size())
-	_update_vendor_preview()
+	_queue_vendor_preview_update()
 
 func _on_initial_data_ready() -> void:
 	# When initial data comes online (map + convoys), try to sync settlements
@@ -1194,13 +1203,13 @@ func _on_initial_data_ready() -> void:
 			_latest_all_settlements = arr
 			if _debug_convoy_menu:
 				print("[ConvoyMenu][Debug] initial_data_ready -> synced settlements count=", _latest_all_settlements.size())
-	_update_vendor_preview()
+	_queue_vendor_preview_update()
 
 func _on_vendor_panel_ready(_payload: Dictionary) -> void:
 	# Vendor data updated; refresh settlement missions preview
 	if _debug_convoy_menu:
 		print("[ConvoyMenu][Debug] vendor_panel_data_ready -> refresh vendor preview")
-	_update_vendor_preview()
+	_queue_vendor_preview_update()
 
 func _on_vendor_tab_pressed(tab_index: VendorTab) -> void:
 	_current_vendor_tab = tab_index
