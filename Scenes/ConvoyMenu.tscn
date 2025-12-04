@@ -207,10 +207,6 @@ layout_mode = 2
 layout_mode = 2
 theme_override_constants/separation = 8
 
-[node name="VendorPreviewTitle" type="Label" parent="MainVBox/ScrollContainer/ContentVBox/VendorPreviewPanel/VendorPreviewVBox"]
-layout_mode = 2
-text = "Vendor Preview"
-
 [node name="VendorTabsHBox" type="HBoxContainer" parent="MainVBox/ScrollContainer/ContentVBox/VendorPreviewPanel/VendorPreviewVBox"]
 layout_mode = 2
 alignment = 1
@@ -245,9 +241,12 @@ text = "Journey"
 
 [node name="VendorContentPanel" type="PanelContainer" parent="MainVBox/ScrollContainer/ContentVBox/VendorPreviewPanel/VendorPreviewVBox"]
 layout_mode = 2
+size_flags_vertical = 3
+custom_minimum_size = Vector2(0, 160)
 
 [node name="ContentWrapper" type="VBoxContainer" parent="MainVBox/ScrollContainer/ContentVBox/VendorPreviewPanel/VendorPreviewVBox/VendorContentPanel"]
 layout_mode = 2
+theme_override_constants/separation = 6
 
 [node name="JourneyInfoVBox" type="VBoxContainer" parent="MainVBox/ScrollContainer/ContentVBox/VendorPreviewPanel/VendorPreviewVBox/VendorContentPanel/ContentWrapper"]
 visible = false
@@ -289,13 +288,14 @@ text = "ETA: Timestamp"
 
 [node name="VendorItemContainer" type="VBoxContainer" parent="MainVBox/ScrollContainer/ContentVBox/VendorPreviewPanel/VendorPreviewVBox/VendorContentPanel/ContentWrapper"]
 layout_mode = 2
+theme_override_constants/separation = 4
 
 [node name="VendorItemGrid" type="GridContainer" parent="MainVBox/ScrollContainer/ContentVBox/VendorPreviewPanel/VendorPreviewVBox/VendorContentPanel/ContentWrapper/VendorItemContainer"]
 layout_mode = 2
 size_flags_horizontal = 3
 theme_override_constants/h_separation = 2
 theme_override_constants/v_separation = 2
-columns = 4
+columns = 3
 
 [node name="VendorNoItemsLabel" type="Label" parent="MainVBox/ScrollContainer/ContentVBox/VendorPreviewPanel/VendorPreviewVBox/VendorContentPanel/ContentWrapper"]
 visible = false

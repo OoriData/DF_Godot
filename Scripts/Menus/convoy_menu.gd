@@ -241,6 +241,26 @@ func _notification(what: int) -> void:
 	if what == NOTIFICATION_RESIZED:
 		# Call deferred to ensure the new size is fully applied before calculating font sizes
 		call_deferred("_update_font_sizes")
+		call_deferred("_update_vendor_grid_columns")
+
+func _update_vendor_grid_columns() -> void:
+	# Make the vendor item grid responsive: choose columns based on available width.
+	if not is_instance_valid(vendor_item_grid):
+		return
+	var grid_width := vendor_item_grid.size.x
+	if grid_width <= 0:
+		# Fall back to parent/container width if grid has not sized yet
+		var parent := vendor_item_grid.get_parent()
+		if is_instance_valid(parent):
+			grid_width = parent.size.x
+	# Target a comfortable card width ~220px with some gap
+	var target_card_px := 220.0
+	var min_cols := 2
+	var max_cols := 6
+	var cols := int(max(min_cols, min(max_cols, floor(grid_width / target_card_px))))
+	if cols <= 0:
+		cols = min_cols
+	vendor_item_grid.columns = cols
 
 func _on_back_button_pressed():
 	print("ConvoyMenu: Back button pressed. Emitting 'back_requested' signal.")
@@ -469,12 +489,14 @@ func _update_vendor_preview() -> void:
 
 	# Render the new tabbed display
 	_render_vendor_preview_display()
+	# Ensure grid is responsive after content updates
+	_update_vendor_grid_columns()
 
 func _render_vendor_preview_display() -> void:
 	# Update button text with counts
-	convoy_missions_tab_button.text = "Convoy (%d)" % _convoy_mission_items.size()
-	settlement_missions_tab_button.text = "Settlement (%d)" % _settlement_mission_items.size()
-	compatible_parts_tab_button.text = "Parts (%d)" % _compatible_part_items.size()
+	convoy_missions_tab_button.text = "Active Missions (%d)" % _convoy_mission_items.size()
+	settlement_missions_tab_button.text = "Available Missions (%d)" % _settlement_mission_items.size()
+	compatible_parts_tab_button.text = "Available Parts (%d)" % _compatible_part_items.size()
 	# Journey tab does not need a count
 
 	# Show/hide content containers based on the active tab
@@ -510,21 +532,29 @@ func _render_vendor_preview_display() -> void:
 		vendor_no_items_label.visible = false
 		for item_string in content_list:
 			var button := Button.new()
-			
-			# Format text to split name and quantity onto new lines for readability
-			var parts = item_string.rsplit(" x", false, 1)
-			var item_name = parts[0]
-			if parts.size() > 1:
-				button.text = "%s\nx%s" % [item_name, parts[1]]
-			else:
-				button.text = item_name
-			
+			# Support destination annotations in two formats:
+			# "name — to DEST" (em dash syntax) or "name -> DEST" (arrow syntax)
+			var name_qty := item_string
+			var dest_text := ""
+			var sep_idx := name_qty.find(" — to ")
+			var sep_len := 6 # length of " — to "
+			if sep_idx == -1:
+				sep_idx = name_qty.find(" -> ")
+				sep_len = 4
+			if sep_idx != -1:
+				dest_text = name_qty.substr(sep_idx + sep_len)
+				name_qty = name_qty.substr(0, sep_idx)
+			# No quantity display: use item name only
+			var item_name = name_qty
+			# GDScript does not have C-style ternary; use if/else
+			var dest_line := ""
+			if dest_text != "":
+				dest_line = "\n→ " + dest_text
+			button.text = "%s%s" % [item_name, dest_line]
 			button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-			button.custom_minimum_size.y = 40 # Give buttons a decent height
+			button.custom_minimum_size.y = 36
 			button.clip_text = true
-			
 			_style_vendor_item_button(button, _current_vendor_tab)
-			
 			vendor_item_grid.add_child(button)
 	
 	# Ensure font sizes are applied to newly created buttons
@@ -651,8 +681,14 @@ func _collect_mission_cargo_items(convoy: Dictionary) -> Array[String]:
 				diag_allcargo_mission += 1
 
 	# Build display strings from aggregated totals
+	# Build display strings from aggregated totals, including destination if known
 	for k in agg.keys():
-		out.append("%s x%s" % [String(k), int(agg[k])])
+		var base := "%s" % [String(k)]
+		var dest := _infer_destination_for_item(convoy, k)
+		if dest != "":
+			# Keep original display syntax as requested
+			base += " — to %s" % dest
+		out.append(base)
 	if _debug_convoy_menu:
 		print("[ConvoyMenu][Debug] mission agg result=", out)
 		print("[ConvoyMenu][Debug] diag typed=", diag_typed_mission, " raw=", diag_raw_mission, " all=", diag_allcargo_mission)
@@ -769,82 +805,351 @@ func _collect_settlement_mission_items() -> Array[String]:
 		var missions: Array = _gdm.get_settlement_mission_items(sx, sy)
 		if _debug_convoy_menu:
 			print("[ConvoyMenu][Debug] GDM.get_settlement_mission_items exists; returned count=", (missions.size() if missions is Array else -1))
+		var added := false
 		if missions is Array and not missions.is_empty():
 			for item in missions:
-				if not (item is Dictionary):
-					continue
-				var nm := String(item.get("name", item.get("base_name", "Item")))
-				var q := int(item.get("quantity", 1))
-				out.append("%s x%d" % [nm, (q if q > 0 else 1)])
+				if item is Dictionary:
+					var nm := String(item.get("name", item.get("base_name", "Item")))
+					var dest := _extract_destination_from_item(item)
+					var entry := "%s" % [nm]
+					if dest != "":
+						entry += " — to %s" % dest
+					out.append(entry)
+					added = true
+				elif item is String:
+					# Name-only entries; cannot resolve destination from this shape
+					# Defer destination resolution to vendor-scan fallback below
+					pass
 			if _debug_convoy_menu:
-				print("[ConvoyMenu][Debug] Settlement missions via GDM: ", out)
-		else:
-			if _debug_convoy_menu:
-				print("[ConvoyMenu][Debug] GDM returned no settlement missions for (", sx, ",", sy, ")")
+				print("[ConvoyMenu][Debug] Settlement missions via GDM (dicts only): ", out)
+		# If we added any entries with proper dictionaries, return
+		if added:
+			return out
+
+	# Fallback: scan vendors at current settlement for mission cargo dictionaries (has recipient)
+	# Use cached settlements snapshot
+	var settlement_dict: Dictionary = {}
+	for s in _latest_all_settlements:
+		if s is Dictionary and int(roundf(float(s.get("x", -999999)))) == sx and int(roundf(float(s.get("y", -999999)))) == sy:
+			settlement_dict = s
+			break
+	if settlement_dict.is_empty():
+		if _debug_convoy_menu:
+			print("[ConvoyMenu][Debug] No settlement dict found at coords; vendor fallback unavailable.")
 		return out
 
-	# Fallback to prior scanning logic if API not available
-	if _debug_convoy_menu:
-		print("[ConvoyMenu][Debug] get_settlement_mission_items not available; using fallback scan")
-	var agg: Dictionary = {}
-	var settlement_data: Dictionary = {}
-	if _gdm.has_method("get_all_settlements_data"):
-		var all_res = _gdm.get_all_settlements_data()
-		if all_res is Array:
-			_latest_all_settlements = all_res
-			if _debug_convoy_menu:
-				print("[ConvoyMenu][Debug] get_all_settlements_data size=", _latest_all_settlements.size())
-	for s in _latest_all_settlements:
-		if not (s is Dictionary):
+	var vendors: Array = settlement_dict.get("vendors", []) if settlement_dict.has("vendors") else []
+	for v in vendors:
+		if not (v is Dictionary):
 			continue
-		var sc := _extract_coords_from_dict(s)
-		if _debug_convoy_menu:
-			print("[ConvoyMenu][Debug] inspecting settlement at (", sc.x, ",", sc.y, ") name=", String(s.get("name", "?")))
-		if sc.x == sx and sc.y == sy:
-			settlement_data = s
-			break
-	if settlement_data.is_empty():
-		if _debug_convoy_menu:
-			print("[ConvoyMenu][Debug] No settlement found at current coords; preview will show None.")
-		return out
-	# Existing missions arrays (if present)
-	if settlement_data.has("missions") and settlement_data.missions is Array:
-		_scan_settlement_array(settlement_data.missions, agg)
-	# Scan vendors' cargo_inventory for delivery_reward > 0 (strict mission rule)
-	if settlement_data.has("vendors") and settlement_data.vendors is Array:
-		var vendor_count := 0
-		for v in settlement_data.vendors:
-			if not (v is Dictionary):
+		var cargo_inv: Array = v.get("cargo_inventory", [])
+		for ci in cargo_inv:
+			if not (ci is Dictionary):
 				continue
-			vendor_count += 1
-			if _debug_convoy_menu:
-				print("[ConvoyMenu][Debug] scanning vendor id=", String(v.get("vendor_id", "?")), " name=", String(v.get("name", "?")))
-			# Scan explicit vendor missions array if present
-			if v.has("missions") and v.missions is Array:
-				_scan_settlement_array(v.missions, agg)
-			# Strict mission detection from cargo_inventory
-			if v.has("cargo_inventory") and v.cargo_inventory is Array:
-				if _debug_convoy_menu:
-					print("[ConvoyMenu][Debug] vendor cargo_inventory size=", (v.cargo_inventory.size() as int))
-				for ci in v.cargo_inventory:
-					if not (ci is Dictionary):
-						continue
-					if ci.has("intrinsic_part_id") and ci.get("intrinsic_part_id") != null:
-						continue
-					var dr = ci.get("delivery_reward")
-					if (dr is float or dr is int) and float(dr) > 0.0:
-						var nm := String(ci.get("name", ci.get("base_name", "Item")))
-						var q := int(ci.get("quantity", 1))
-						agg[nm] = int(agg.get(nm, 0)) + (q if q > 0 else 1)
-						if _debug_convoy_menu:
-							print("[ConvoyMenu][Debug] mission cargo detected: ", nm, " x", (q if q > 0 else 1), " dr=", float(dr))
-		if _debug_convoy_menu:
-			print("[ConvoyMenu][Debug] scanned vendors count=", vendor_count, " aggregated mission names=", agg.keys())
-	for nm in agg.keys():
-		out.append("%s x%d" % [String(nm), int(agg[nm])])
-	if _debug_convoy_menu and out.is_empty():
-		print("[ConvoyMenu][Debug] Settlement mission aggregation produced no items; showing None.")
+			# Use centralized mission detection when available
+			var is_mission := false
+			if ItemsData != null and ItemsData.MissionItem:
+				is_mission = ItemsData.MissionItem._looks_like_mission_dict(ci)
+			else:
+				var dr = ci.get("delivery_reward")
+				is_mission = (dr is float or dr is int) and float(dr) > 0.0
+			if not is_mission:
+				continue
+			var nm2 := String(ci.get("name", ci.get("base_name", "Item")))
+			var dest2 := _extract_destination_from_item(ci)
+			var entry2 := "%s" % [nm2]
+			if dest2 != "":
+				entry2 += " — to %s" % dest2
+			out.append(entry2)
+
+	if _debug_convoy_menu:
+		print("[ConvoyMenu][Debug] Settlement missions via vendor fallback: ", out)
 	return out
+
+func _infer_destination_for_item(convoy: Dictionary, item_name: String) -> String:
+	# Attempt to find destination for a given mission item within convoy cargo structures.
+	# Look into vehicle cargo typed/raw and convoy-level cargo inventory for fields like
+	# 'recipient_settlement_name', 'destination', 'dest_settlement', or coordinates.
+	var candidates: Array[String] = []
+	# Scan vehicles
+	var vehicles: Array = convoy.get("vehicle_details_list", [])
+	for vehicle in vehicles:
+		if not (vehicle is Dictionary):
+			continue
+		var typed_arr: Array = vehicle.get("cargo_items_typed", [])
+		for typed in typed_arr:
+			var raw: Dictionary = {}
+			if typed is Dictionary:
+				raw = (typed as Dictionary).get("raw", {})
+			else:
+				var raw_any = typed.get("raw") if typed is Object else null
+				if raw_any is Dictionary:
+					raw = raw_any
+			if raw.is_empty():
+				continue
+			if String(raw.get("name", "")) != item_name:
+				continue
+			var dest := _extract_destination_from_item(raw)
+			if dest != "":
+				candidates.append(dest)
+		var cargo_arr: Array = vehicle.get("cargo", [])
+		for ci in cargo_arr:
+			if not (ci is Dictionary):
+				continue
+			if String(ci.get("name", "")) != item_name:
+				continue
+			var dest2 := _extract_destination_from_item(ci)
+			if dest2 != "":
+				candidates.append(dest2)
+	# Scan convoy-level inventory
+	var inv: Array = convoy.get("cargo_inventory", [])
+	for ci2 in inv:
+		if not (ci2 is Dictionary):
+			continue
+		if String(ci2.get("name", "")) != item_name:
+			continue
+		var dest3 := _extract_destination_from_item(ci2)
+		if dest3 != "":
+			candidates.append(dest3)
+	# Return the first distinct destination if any
+	if candidates.size() > 0:
+		return candidates[0]
+	return ""
+
+func _extract_destination_from_item(item: Dictionary) -> String:
+	if _debug_convoy_menu:
+		print("[ConvoyMenu][Debug] _extract_destination_from_item keys=", (item.keys() if item is Dictionary else []))
+	# Fast path: trust GameDataManager-provided destination name first to avoid race conditions
+	if item.has("recipient_settlement_name"):
+		var rsn_val = item.get("recipient_settlement_name")
+		if rsn_val != null:
+			var rsn := str(rsn_val)
+			if rsn != "" and rsn != "null":
+				if _debug_convoy_menu:
+					print("[ConvoyMenu][Debug] dest via recipient_settlement_name=", rsn)
+				return rsn
+
+	# 1) Other direct settlement name fields
+	var name_fields := ["destination_settlement_name", "dest_settlement", "destination_name"]
+	for k in name_fields:
+		if item.has(k):
+			var v_val = item.get(k)
+			if v_val != null:
+				var v := str(v_val)
+				if v != "" and v != "null":
+					if _debug_convoy_menu:
+						print("[ConvoyMenu][Debug] dest via direct name field ", k, "=", v)
+					return v
+
+	# 1b) Recipient settlement object with name
+	if item.has("recipient_settlement") and (item.get("recipient_settlement") is Dictionary):
+		var rs_dict: Dictionary = item.get("recipient_settlement")
+		var rs_name_val = rs_dict.get("name")
+		if rs_name_val != null:
+			var rs_name := str(rs_name_val)
+			if rs_name != "" and rs_name != "null":
+				if _debug_convoy_menu:
+					print("[ConvoyMenu][Debug] dest via recipient_settlement.name=", rs_name)
+				return rs_name
+		# Try coords if name missing
+		var rs_coords := _extract_coords_from_dict(rs_dict)
+		if rs_coords != Vector2i.ZERO:
+			if _debug_convoy_menu:
+				print("[ConvoyMenu][Debug] dest via recipient_settlement coords=", rs_coords)
+			return "(%d, %d)" % [rs_coords.x, rs_coords.y]
+
+	# 2) Resolve via vendor_id -> settlement name using GameDataManager
+	# IMPORTANT: Do NOT use plain `vendor_id` here; that is often the origin vendor
+	# for available missions and will incorrectly map to the current settlement.
+	var vendor_id_fields := ["recipient_vendor_id", "destination_vendor_id", "dest_vendor_id"]
+	for vk in vendor_id_fields:
+		if item.has(vk):
+			var vid_val = item.get(vk)
+			if vid_val != null:
+				var vid := str(vid_val)
+				if vid != "" and vid != "null" and is_instance_valid(_gdm):
+					# Prefer settlement lookup via vendor
+					if _gdm.has_method("get_settlement_for_vendor"):
+						var s = _gdm.get_settlement_for_vendor(vid)
+						if s is Dictionary:
+							var sn_val = (s as Dictionary).get("name")
+							if sn_val != null:
+								var sn := str(sn_val)
+								if sn != "" and sn != "null":
+									return sn
+					# Fallback: vendor name if settlement not found
+					if _gdm.has_method("get_vendor_by_id"):
+						var v = _gdm.get_vendor_by_id(vid)
+						if v is Dictionary:
+							var vn_val = (v as Dictionary).get("name")
+							if vn_val != null:
+								var vn := str(vn_val)
+								if vn != "" and vn != "null":
+									return vn
+
+	# 0) Fallback to resolving recipient field (destination vendor/settlement)
+	var recipient_any = item.get("recipient", null)
+	if recipient_any != null:
+		if recipient_any is Dictionary:
+			var rdict: Dictionary = recipient_any
+			var rname_val = rdict.get("name")
+			if rname_val != null:
+				var rname := str(rname_val)
+				if rname != "" and rname != "null":
+					if _debug_convoy_menu:
+						print("[ConvoyMenu][Debug] dest via recipient.name=", rname)
+					return rname
+			# recipient_settlement_id direct mapping
+			var rsid_val = rdict.get("recipient_settlement_id", rdict.get("settlement_id"))
+			if rsid_val != null and is_instance_valid(_gdm) and _gdm.has_method("get_all_settlements_data"):
+				var rsid := str(rsid_val)
+				var all_setts2 = _gdm.get_all_settlements_data()
+				if all_setts2 is Array:
+					for s2 in all_setts2:
+						if s2 is Dictionary and str((s2 as Dictionary).get("sett_id", (s2 as Dictionary).get("id", ""))) == rsid:
+							var sn2_val = (s2 as Dictionary).get("name")
+							if sn2_val != null:
+								var sn2 := str(sn2_val)
+								if sn2 != "" and sn2 != "null":
+									if _debug_convoy_menu:
+										print("[ConvoyMenu][Debug] dest via recipient_settlement_id=", sn2)
+									return sn2
+			# recipient may carry sett_id
+			var sett_id_val = rdict.get("sett_id")
+			if sett_id_val != null and is_instance_valid(_gdm) and _gdm.has_method("get_all_settlements_data"):
+				var sett_id := str(sett_id_val)
+				var all_setts = _gdm.get_all_settlements_data()
+				if all_setts is Array:
+					for s in all_setts:
+						if s is Dictionary and str((s as Dictionary).get("sett_id", "")) == sett_id:
+							var sn_val = (s as Dictionary).get("name")
+							if sn_val != null:
+								var sn := str(sn_val)
+								if sn != "" and sn != "null":
+									if _debug_convoy_menu:
+										print("[ConvoyMenu][Debug] dest via recipient.sett_id=", sn)
+									return sn
+			# recipient may have coordinates
+			var r_coords := _extract_coords_from_dict(rdict)
+			if r_coords != Vector2i.ZERO:
+				if _debug_convoy_menu:
+					print("[ConvoyMenu][Debug] dest via recipient coords=", r_coords)
+				return "(%d, %d)" % [r_coords.x, r_coords.y]
+			# recipient may carry vendor_id
+			var rvid_val = rdict.get("vendor_id", rdict.get("recipient_vendor_id"))
+			if rvid_val != null and is_instance_valid(_gdm):
+				var rvid := str(rvid_val)
+				if rvid != "" and rvid != "null":
+					if _gdm.has_method("get_settlement_for_vendor"):
+						var s = _gdm.get_settlement_for_vendor(rvid)
+						if s is Dictionary:
+							var sn2_val = (s as Dictionary).get("name")
+							if sn2_val != null:
+								var sn2 := str(sn2_val)
+								if sn2 != "" and sn2 != "null":
+									return sn2
+					if _gdm.has_method("get_vendor_by_id"):
+						var v = _gdm.get_vendor_by_id(rvid)
+						if v is Dictionary:
+							var vn2_val = (v as Dictionary).get("name")
+							if vn2_val != null:
+								var vn2 := str(vn2_val)
+								if vn2 != "" and vn2 != "null":
+									return vn2
+		elif recipient_any is String:
+			var rvid_str := String(recipient_any)
+			if rvid_str != "" and rvid_str != "null" and is_instance_valid(_gdm):
+				if _gdm.has_method("get_settlement_for_vendor"):
+					var s3 = _gdm.get_settlement_for_vendor(rvid_str)
+					if s3 is Dictionary:
+						var sn3_val = (s3 as Dictionary).get("name")
+						if sn3_val != null:
+							var sn3 := str(sn3_val)
+							if sn3 != "" and sn3 != "null":
+								return sn3
+				if _gdm.has_method("get_vendor_by_id"):
+					var v3 = _gdm.get_vendor_by_id(rvid_str)
+					if v3 is Dictionary:
+						var vn3_val = (v3 as Dictionary).get("name")
+						if vn3_val != null:
+							var vn3 := str(vn3_val)
+							if vn3 != "" and vn3 != "null":
+								if _debug_convoy_menu:
+									print("[ConvoyMenu][Debug] dest via recipient vendor name=", vn3)
+								return vn3
+
+	# 3) Destination dictionary object
+	var dest_any: Variant = item.get("destination", null)
+	if dest_any is Dictionary:
+		var dd: Dictionary = dest_any
+		# Try name first
+		var n_val = dd.get("name")
+		if n_val != null:
+			var n := str(n_val)
+			if n != "" and n != "null":
+				if _debug_convoy_menu:
+					print("[ConvoyMenu][Debug] dest via destination.name=", n)
+				return n
+		# Try nested vendor -> settlement mapping
+		var nested_vid_val = dd.get("vendor_id", dd.get("recipient_vendor_id"))
+		if nested_vid_val != null:
+			var nested_vid := str(nested_vid_val)
+			if nested_vid != "" and nested_vid != "null" and is_instance_valid(_gdm):
+				if _gdm.has_method("get_settlement_for_vendor"):
+					var s2 = _gdm.get_settlement_for_vendor(nested_vid)
+					if s2 is Dictionary:
+						var sn2_val = (s2 as Dictionary).get("name")
+						if sn2_val != null:
+							var sn2 := str(sn2_val)
+							if sn2 != "" and sn2 != "null":
+								if _debug_convoy_menu:
+									print("[ConvoyMenu][Debug] dest via destination.vendor->settlement=", sn2)
+								return sn2
+		var coords := _extract_coords_from_dict(dd)
+		if coords != Vector2i.ZERO:
+			if _debug_convoy_menu:
+				print("[ConvoyMenu][Debug] dest via destination coords=", coords)
+			return "(%d, %d)" % [coords.x, coords.y]
+
+	# 4) Raw coordinate fields on item
+	var dx_val = item.get("dest_coord_x", null)
+	var dy_val = item.get("dest_coord_y", null)
+	if dx_val != null and dy_val != null:
+		var coord_str := "(%s, %s)" % [str(dx_val), str(dy_val)]
+		if _debug_convoy_menu:
+			print("[ConvoyMenu][Debug] dest via raw coord fields=", coord_str)
+		return coord_str
+
+	# LAST RESORT: mission_vendor_id may refer to origin vendor; use only if absolutely nothing else available
+	if item.has("mission_vendor_id"):
+		var mvid_val2 = item.get("mission_vendor_id")
+		if mvid_val2 != null:
+			var mvid2 := str(mvid_val2)
+			if mvid2 != "" and mvid2 != "null" and is_instance_valid(_gdm):
+				if _gdm.has_method("get_settlement_for_vendor"):
+					var sm2 = _gdm.get_settlement_for_vendor(mvid2)
+					if sm2 is Dictionary:
+						var smn2_val = (sm2 as Dictionary).get("name")
+						if smn2_val != null:
+							var smn2 := str(smn2_val)
+							if smn2 != "" and smn2 != "null":
+								if _debug_convoy_menu:
+									print("[ConvoyMenu][Debug] dest via mission_vendor_id (fallback)=", smn2)
+								return smn2
+				if _gdm.has_method("get_vendor_by_id"):
+					var vv2 = _gdm.get_vendor_by_id(mvid2)
+					if vv2 is Dictionary:
+						var vv2_name_val = (vv2 as Dictionary).get("name")
+						if vv2_name_val != null:
+							var vv2_name := str(vv2_name_val)
+							if vv2_name != "" and vv2_name != "null":
+								if _debug_convoy_menu:
+									print("[ConvoyMenu][Debug] dest via mission_vendor_id vendor (fallback)=", vv2_name)
+								return vv2_name
+
+	if _debug_convoy_menu:
+		print("[ConvoyMenu][Debug] destination unresolved for item=", String(item.get("name", item.get("base_name", "?"))))
+	return ""
 
 func _on_mech_vendor_availability(_veh_id: String, _slot_availability: Dictionary) -> void:
 	_update_vendor_preview()
@@ -985,8 +1290,8 @@ func _update_font_sizes() -> void:
 	if is_instance_valid(vendor_item_grid):
 		for child in vendor_item_grid.get_children():
 			if child is Button:
-				# Use a smaller font for the item buttons to ensure text fits
-				child.add_theme_font_size_override("font_size", new_font_size - 8)
+				# Increase font for mission/parts item buttons to improve readability
+				child.add_theme_font_size_override("font_size", new_font_size + 2)
 				
 	for label_node in labels_to_scale:
 		if is_instance_valid(label_node):

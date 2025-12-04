@@ -1750,6 +1750,12 @@ func get_settlement_mission_items(x: int, y: int) -> Array:
 			var out_item: Dictionary = item_data.duplicate(true)
 			var q_total: int = int(entry.get("total_quantity", out_item.get("quantity", 1)))
 			out_item["quantity"] = q_total if q_total > 0 else max(1, int(out_item.get("quantity", 1)))
+			
+			# Add the destination settlement name to the item if it was found during aggregation.
+			var dest_name = entry.get("mission_vendor_name", "")
+			if dest_name and not dest_name.is_empty():
+				out_item["recipient_settlement_name"] = dest_name
+
 			if not out_item.has("mission_vendor_id") and vendor.has("vendor_id"):
 				out_item["mission_vendor_id"] = String(vendor.get("vendor_id"))
 			missions_out.append(out_item)
@@ -1778,6 +1784,7 @@ func _aggregate_vendor_items(vendor_data: Dictionary) -> Dictionary:
 		if item.has("intrinsic_part_id") and item.get("intrinsic_part_id") != null:
 			continue
 		var category = "other"
+		var mission_dest_name := ""
 		# Mission identification: require a delivery_reward (positive number). Recipient remains a secondary hint.
 		var has_reward := false
 		if item.has("delivery_reward"):
@@ -1793,6 +1800,11 @@ func _aggregate_vendor_items(vendor_data: Dictionary) -> Dictionary:
 		var is_part: bool = item.has("slot") and item.get("slot") != null and String(item.get("slot")).length() > 0
 		if is_mission:
 			category = "missions"
+			var recipient_vendor_id = item.get("recipient")
+			if recipient_vendor_id and recipient_vendor_id is String and not recipient_vendor_id.is_empty():
+				var dest_settlement = get_settlement_for_vendor(recipient_vendor_id)
+				if dest_settlement and dest_settlement is Dictionary:
+					mission_dest_name = dest_settlement.get("name", "")
 		elif is_resource:
 			category = "resources"
 		elif is_part:
@@ -1811,7 +1823,7 @@ func _aggregate_vendor_items(vendor_data: Dictionary) -> Dictionary:
 				print("[GameDataManager][DEBUG][VendorParts] Container with nested part name=", norm_item.get("name","?"), " slot=", norm_item.get("slot","?"))
 			_aggregate_item(aggregated[category], norm_item)
 			continue
-		_aggregate_item(aggregated[category], item)
+		_aggregate_item(aggregated[category], item, "", mission_dest_name)
 
 	# Add bulk resources
 	for res in ["fuel", "water", "food"]:
@@ -1857,11 +1869,17 @@ func _aggregate_convoy_items(convoy_data: Dictionary, vendor_data: Dictionary) -
 				if item.has("intrinsic_part_id") and item.get("intrinsic_part_id") != null:
 					continue
 				var category = "other"
+				var mission_dest_name := ""
 				if item.get("recipient") != null or item.get("delivery_reward") != null:
 					category = "missions"
+					var recipient_vendor_id = item.get("recipient")
+					if recipient_vendor_id and recipient_vendor_id is String and not recipient_vendor_id.is_empty():
+						var dest_settlement = get_settlement_for_vendor(recipient_vendor_id)
+						if dest_settlement and dest_settlement is Dictionary:
+							mission_dest_name = dest_settlement.get("name", "")
 				elif (item.has("food") and _is_positive_number(item.get("food"))) or (item.has("water") and _is_positive_number(item.get("water"))) or (item.has("fuel") and _is_positive_number(item.get("fuel"))):
 					category = "resources"
-				_aggregate_item(aggregated[category], item, vehicle_name)
+				_aggregate_item(aggregated[category], item, vehicle_name, mission_dest_name)
 			for item in vehicle.get("parts", []):
 				if item.has("intrinsic_part_id") and item.get("intrinsic_part_id") != null:
 					continue
@@ -1871,11 +1889,17 @@ func _aggregate_convoy_items(convoy_data: Dictionary, vendor_data: Dictionary) -
 	if not found_any_cargo and convoy_data.has("cargo_inventory"):
 		for item in convoy_data.cargo_inventory:
 			var category = "other"
+			var mission_dest_name := ""
 			if item.get("recipient") != null or item.get("delivery_reward") != null:
 				category = "missions"
+				var recipient_vendor_id = item.get("recipient")
+				if recipient_vendor_id and recipient_vendor_id is String and not recipient_vendor_id.is_empty():
+					var dest_settlement = get_settlement_for_vendor(recipient_vendor_id)
+					if dest_settlement and dest_settlement is Dictionary:
+						mission_dest_name = dest_settlement.get("name", "")
 			elif (item.has("food") and _is_positive_number(item.get("food"))) or (item.has("water") and _is_positive_number(item.get("water"))) or (item.has("fuel") and _is_positive_number(item.get("fuel"))):
 				category = "resources"
-			_aggregate_item(aggregated[category], item, "Convoy")
+			_aggregate_item(aggregated[category], item, "Convoy", mission_dest_name)
 
 	# Add bulk resources
 	for res in ["fuel", "water", "food"]:

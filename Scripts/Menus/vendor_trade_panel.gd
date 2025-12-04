@@ -326,6 +326,8 @@ func _populate_tree_from_agg(tree: Tree, agg: Dictionary) -> void:
 					if n is String and not n.is_empty():
 						display_name = n
 				var display_text = "%s (x%d)" % [display_name, display_qty]
+				if category == "missions" and agg_data.has("mission_vendor_name") and not agg_data.mission_vendor_name.is_empty():
+					display_text += " (To: %s)" % agg_data.mission_vendor_name
 				var tree_child_item = tree.create_item(category_item)
 				tree_child_item.set_text(0, display_text)
 				tree_child_item.set_metadata(0, agg_data)
@@ -390,10 +392,12 @@ func _populate_vendor_list() -> void:
 		var category_dict: Dictionary
 		var mission_vendor_name: String = ""
 		if item.get("recipient") != null:
+			print("[VendorPanel][Debug] vendor mission item keys=", (item.keys() if item is Dictionary else []))
 			category_dict = aggregated_missions
 			var recipient_id = item.get("recipient")
 			if recipient_id:
 				mission_vendor_name = _get_vendor_name_for_recipient(recipient_id)
+				print("[VendorPanel][Debug] dest via item.recipient -> vendor name=", mission_vendor_name)
 		elif (item.has("food") and item.get("food") != null and item.get("food") > 0) or \
 		   (item.has("water") and item.get("water") != null and item.get("water") > 0) or \
 		   (item.has("fuel") and item.get("fuel") != null and item.get("fuel") > 0):
@@ -438,6 +442,11 @@ func _populate_vendor_list() -> void:
 			else:
 				category_dict = aggregated_other
 		print("DEBUG: Aggregating vendor cargo item:", item)
+		# If this looks like a mission without explicit recipient, log mission_vendor_id for tracing
+		var dr_v = item.get("delivery_reward")
+		var looks_mission := (dr_v is float or dr_v is int) and float(dr_v) > 0.0
+		if looks_mission and not item.has("recipient") and item.has("mission_vendor_id"):
+			print("[VendorPanel][Debug] mission without recipient; mission_vendor_id=", String(item.get("mission_vendor_id")))
 		# Aggregate the display copy when we inferred a slot
 		if category_dict == aggregated_parts and (item.has("slot") or (item.has("parts") and item.get("parts") is Array)):
 			var use_item: Dictionary = item
@@ -710,6 +719,9 @@ func _aggregate_vendor_item(agg_dict: Dictionary, item: Dictionary, p_mission_ve
 		# Mirror back onto the stored item_data so later selection logic sees the larger quantity.
 		agg_dict[item_name].item_data["quantity"] = item_quantity
 	print("DEBUG: _aggregate_vendor_item before add name=", item_name, "incoming quantity=", item.get("quantity"), "parsed=", item_quantity)
+	# Log destination name used for missions
+	if p_mission_vendor_name != "" and agg_dict[item_name].mission_vendor_name == "":
+		print("[VendorPanel][Debug] _aggregate_vendor_item set mission_vendor_name=", p_mission_vendor_name, " for ", item_name)
 	agg_dict[item_name].total_quantity += item_quantity
 	agg_dict[item_name].total_weight += item.get("weight", 0.0)
 	agg_dict[item_name].total_volume += item.get("volume", 0.0)
