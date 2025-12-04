@@ -169,14 +169,6 @@ func _ready():
 	# Cache GameDataManager and connect relevant signals for live updates
 	_gdm = get_node_or_null("/root/GameDataManager")
 	if is_instance_valid(_gdm):
-		# Opportunistically warm vendor caches for this settlement to populate missions
-		if convoy_data_received != null and convoy_data_received.has("x") and convoy_data_received.has("y"):
-			var warm_x := roundi(float(convoy_data_received.get("x", 0)))
-			var warm_y := roundi(float(convoy_data_received.get("y", 0)))
-			if _gdm.has_method("_request_settlement_vendor_data_at_coords"):
-				_gdm.call("_request_settlement_vendor_data_at_coords", warm_x, warm_y)
-				if _debug_convoy_menu:
-					print("[ConvoyMenu][Debug] requested vendor warm-up at (", warm_x, ",", warm_y, ")")
 		# Refresh vendor preview when mechanics compatibility updates arrive
 		if _gdm.has_signal("mechanic_vendor_slot_availability") and not _gdm.mechanic_vendor_slot_availability.is_connected(_on_mech_vendor_availability):
 			_gdm.mechanic_vendor_slot_availability.connect(_on_mech_vendor_availability)
@@ -269,6 +261,32 @@ func _on_back_button_pressed():
 func initialize_with_data(data: Dictionary):
 		convoy_data_received = data.duplicate() # Duplicate to avoid modifying the original if needed
 		# print("ConvoyMenu: Initialized with data: ", convoy_data_received) # DEBUG
+		
+		# When the ConvoyMenu opens, explicitly request a refresh of all vendor data
+		# for the current settlement. This ensures mission destination data is up-to-date.
+		if is_instance_valid(_gdm) and convoy_data_received.has("x") and convoy_data_received.has("y"):
+			var current_convoy_x := roundi(float(convoy_data_received.get("x", 0)))
+			var current_convoy_y := roundi(float(convoy_data_received.get("y", 0)))
+
+			var current_settlement: Dictionary = {}
+			for s in _latest_all_settlements:
+				if s is Dictionary and roundi(float(s.get("x", -999999))) == current_convoy_x and roundi(float(s.get("y", -999999))) == current_convoy_y:
+					current_settlement = s
+					break
+
+			if not current_settlement.is_empty():
+				var vendors_in_settlement: Array = current_settlement.get("vendors", [])
+				for vendor_entry in vendors_in_settlement:
+					if vendor_entry is Dictionary: # If vendor_entry is already a dict
+						var vendor_id = String(vendor_entry.get("vendor_id", ""))
+						if not vendor_id.is_empty():
+							_gdm.request_vendor_data_refresh(vendor_id)
+							if _debug_convoy_menu:
+								print("[ConvoyMenu][Debug] Explicitly requested vendor data refresh for vendor_id: ", vendor_id, " at (", current_convoy_x, ",", current_convoy_y, ")")
+					elif vendor_entry is String: # If vendor_entry is just a vendor_id string
+						_gdm.request_vendor_data_refresh(vendor_entry)
+						if _debug_convoy_menu:
+							print("[ConvoyMenu][Debug] Explicitly requested vendor data refresh for vendor_id (string): ", vendor_entry, " at (", current_convoy_x, ",", current_convoy_y, ")")
 
 		# --- Convoy Name as Title ---
 		if is_instance_valid(title_label):

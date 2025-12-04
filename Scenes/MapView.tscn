@@ -8,7 +8,7 @@
 [ext_resource type="Script" uid="uid://crk2s2urriwrg" path="res://Scripts/System/game_timers.gd" id="5_b5irg"]
 [ext_resource type="Script" uid="uid://fqyn0cfdc0rs" path="res://Scripts/Map/convoy_visuals_manager.gd" id="8_hvyeg"]
 [ext_resource type="Script" uid="uid://dpn1l2xm7i2x7" path="res://Scripts/UI/UI_manager.gd" id="9_g243h"]
-[ext_resource type="Script" path="res://Scripts/Map/map_camera_debug_overlay.gd" id="10_dbgov"]
+[ext_resource type="Script" uid="uid://dyh60sc1kj54f" path="res://Scripts/Map/map_camera_debug_overlay.gd" id="10_dbgov"]
 
 [sub_resource type="ViewportTexture" id="ViewportTexture_k7gy6"]
 viewport_path = NodePath("MapContainer/SubViewport")
