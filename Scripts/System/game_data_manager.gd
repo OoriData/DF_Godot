@@ -1523,16 +1523,27 @@ func get_settlement_name_from_coords(target_x: int, target_y: int) -> String:
 	else:
 		return "N/A (Y Out of Bounds)"
 
-func update_user_money(amount_delta: float):
+func update_user_money(amount_delta: float, confirmed: bool = false):
 	"""
-	Updates the user's money by a given delta and emits the user_data_updated signal.
-	This should be the single point of entry for all client-side money changes.
+	Updates the user's money by a given delta.
+	To avoid showing optimistic balances before a transaction is confirmed,
+	this only emits `user_data_updated` when `confirmed` is true.
+
+	Existing callers that pass only `amount_delta` will update local cache
+	without notifying UI; authoritative updates should come from server
+	success handlers that call with `confirmed=true` or set money from
+	the returned payload directly.
 	"""
 	if not current_user_data.has("money"):
 		current_user_data["money"] = 0.0
-	current_user_data["money"] += amount_delta
-	# ...existing code...
-	user_data_updated.emit(current_user_data)
+	var prev_money := float(current_user_data["money"])
+	var new_money := prev_money + float(amount_delta)
+	current_user_data["money"] = new_money
+	if confirmed:
+		user_data_updated.emit(current_user_data)
+		print("[GameDataManager] Money updated (confirmed): ", prev_money, " -> ", new_money)
+	else:
+		print("[GameDataManager] Money updated (optimistic, no emit): ", prev_money, " -> ", new_money)
 
 func update_single_convoy(raw_updated_convoy: Dictionary) -> void:
 	if not raw_updated_convoy.has("convoy_id"):
