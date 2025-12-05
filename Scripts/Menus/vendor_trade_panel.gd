@@ -330,11 +330,17 @@ func _populate_tree_from_agg(tree: Tree, agg: Dictionary) -> void:
 					var n = agg_data.item_data.get("name")
 					if n is String and not n.is_empty():
 						display_name = n
-				var display_text = "%s (x%d)" % [display_name, display_qty]
-				if category == "missions" and agg_data.has("mission_vendor_name") and not agg_data.mission_vendor_name.is_empty():
-					display_text += " (To: %s)" % agg_data.mission_vendor_name
 				var tree_child_item = tree.create_item(category_item)
-				tree_child_item.set_text(0, display_text)
+				tree_child_item.set_text(0, display_name)
+				tree_child_item.set_autowrap_mode(0, TextServer.AUTOWRAP_WORD)
+				# For raw resource items, make the font bold.
+				if category == "resources" and agg_data.has("item_data") and agg_data.item_data.get("is_raw_resource", false):
+					var default_font = tree.get_theme_font("font")
+					if default_font:
+						var bold_font = FontVariation.new()
+						bold_font.set_base_font(default_font)
+						bold_font.set_variation_embolden(1.0)
+						tree_child_item.set_custom_font(0, bold_font)
 				tree_child_item.set_metadata(0, agg_data)
 
 # --- Data Initialization ---
@@ -891,16 +897,13 @@ func _populate_category(target_tree: Tree, root_item: TreeItem, category_name: S
 	for agg_key in agg_dict:
 		var agg_data = agg_dict[agg_key]
 		var display_name = agg_data.display_name if agg_data.has("display_name") else agg_key
-		var display_text = "%s (x%d)" % [display_name, agg_data.total_quantity]
 		if category_name == "Resources" and ("Fuel" in display_name or "fuel" in display_name):
 			print("DEBUG: _populate_category resource node fuel display_name=", display_name, "total_quantity=", agg_data.total_quantity, "total_fuel=", agg_data.get("total_fuel"))
-		# Append vendor name for Mission Cargo items
-		if category_name == "Mission Cargo" and agg_data.has("mission_vendor_name") and not agg_data.mission_vendor_name.is_empty() and agg_data.mission_vendor_name != "Unknown Vendor":
-			display_text += " (To: %s)" % agg_data.mission_vendor_name
 		
 		var item_icon = agg_data.item_data.get("icon") if agg_data.item_data.has("icon") else null
 		var tree_child_item = target_tree.create_item(category_item)
-		tree_child_item.set_text(0, display_text)
+		tree_child_item.set_text(0, display_name)
+		tree_child_item.set_autowrap_mode(0, TextServer.AUTOWRAP_WORD)
 
 		# For raw resource items, remove the color and use a bold font instead.
 		if agg_data.item_data.get("is_raw_resource", false):
@@ -1179,7 +1182,8 @@ func _update_inspector() -> void:
 	_update_fitment_panel()
 
 	var bbcode = ""
-	if current_mode == "sell" and selected_item.has("mission_vendor_name") and not str(selected_item.mission_vendor_name).is_empty() and selected_item.mission_vendor_name != "Unknown Vendor":
+	# Display destination for mission items in both buy and sell mode.
+	if selected_item.has("mission_vendor_name") and not str(selected_item.mission_vendor_name).is_empty() and selected_item.mission_vendor_name != "Unknown Vendor":
 		bbcode += "[b]Destination:[/b] %s\n\n" % selected_item.mission_vendor_name
 
 	bbcode += "[b]Stats:[/b]\n"
@@ -1397,7 +1401,7 @@ func _update_transaction_panel() -> void:
 
 	# Apply sell price reduction for display purposes. The backend handles the actual value.
 	if current_mode == "sell":
-		unit_price /= 2.0
+		unit_price /= 2.0 # This is line 335
 
 	var total_price = unit_price * quantity
 
@@ -1654,6 +1658,11 @@ func _on_api_transaction_error(error_message: String) -> void:
 	if not is_visible_in_tree():
 		return
 
+	# Any transaction error should reset the in-progress flag and re-enable the button.
+	_transaction_in_progress = false
+	if is_instance_valid(action_button):
+		action_button.disabled = false
+
 	# Check if this is a special "stale inventory" error that we should handle locally.
 	if ErrorTranslator.is_inline_error(error_message):
 		printerr("VendorTradePanel: Handling inline API error: ", error_message)
@@ -1662,7 +1671,6 @@ func _on_api_transaction_error(error_message: String) -> void:
 		var toast_msg = ErrorTranslator.translate(error_message)
 		toast_notification.show_message(toast_msg)
 		
-		_transaction_in_progress = false # The transaction failed, so reset the flag.
 		# Show loading indicator and refresh the vendor data to get the latest inventory.
 		loading_panel.visible = true
 		gdm.request_vendor_data_refresh(self.vendor_data.get("vendor_id"))

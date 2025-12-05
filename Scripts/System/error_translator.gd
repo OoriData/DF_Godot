@@ -7,6 +7,8 @@ const ERROR_MAP: Dictionary = {
 	# --- Specific Transaction/Action Failures ---
 	"not found in the vendor's inventory": "This item is no longer available. The vendor's list has been updated.",
 	"Item no longer sold by vendor": "This item is no longer sold here. The vendor's list has been updated.",
+	"Not enough space in convoy": "There is not enough space in your convoy for this purchase.",
+	"Not enough weight capacity in convoy": "There is not enough weight capacity in your convoy for this purchase.",
 	"Not enough money": "You do not have enough money for this transaction.",
 	"Vendor does not have enough stock": "The vendor's stock has changed. The list has been updated.",
 	"exceeds convoy cargo capacity": "This purchase would exceed your convoy's cargo volume capacity.",
