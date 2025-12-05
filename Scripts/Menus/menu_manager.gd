@@ -71,7 +71,6 @@ func _input(event: InputEvent):
 	# Only process input if a menu is active and visible.
 	if not visible or not is_instance_valid(current_active_menu):
 		return
-
 	# Global back button (e.g., Escape key)
 	if event.is_action_pressed("ui_cancel"):
 		go_back()
@@ -143,6 +142,7 @@ func open_mechanics_menu(convoy_data = null):
 
 func _show_menu(menu_scene_resource, data_to_pass = null, add_to_stack: bool = true):
 	# When showing a menu, make MenuManager visible so it can receive input.
+	var was_visible := visible
 	visible = true
 
 	if current_active_menu:
@@ -215,7 +215,9 @@ func _show_menu(menu_scene_resource, data_to_pass = null, add_to_stack: bool = t
 		if is_instance_valid(user_info_display) and user_info_display.is_visible_in_tree():
 			top_margin = user_info_display.size.y
 		if use_convoy_style_layout:
-			emit_signal("menu_visibility_changed", true, "convoy_menu")
+			# Only emit visibility change on initial open, not during submenu switches.
+			if not was_visible:
+				emit_signal("menu_visibility_changed", true, "convoy_menu")
 			menu_node_control.anchor_left = 1.0 / 3.0
 			menu_node_control.anchor_right = 1.0
 			menu_node_control.anchor_top = 0.0
