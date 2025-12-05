@@ -167,6 +167,11 @@ func request_panel_data(convoy_id: String, vendor_id: String) -> void:
 
 # Handler for when GDM emits vendor_panel_data_ready
 func _on_vendor_panel_data_ready(vendor_panel_data: Dictionary) -> void:
+	# This handler expects the full data payload. If it's a partial "warming" payload
+	# (which lacks this key), ignore it. The warming payload is for other menus.
+	if not vendor_panel_data.has("all_settlement_data"):
+		return
+
 	print("[VendorTradePanel][LOG] _on_vendor_panel_data_ready called. Hiding loading panel and updating UI.")
 	_transaction_in_progress = false # Failsafe reset
 	loading_panel.visible = false # Hide loading indicator on data arrival

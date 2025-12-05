@@ -174,9 +174,9 @@ func _ready():
 		# Refresh vendor preview when mechanics compatibility updates arrive
 		if _gdm.has_signal("part_compatibility_ready") and not _gdm.part_compatibility_ready.is_connected(_on_part_compat_ready):
 			_gdm.part_compatibility_ready.connect(_on_part_compat_ready)
-		# Refresh when vendor panel data becomes ready (post warm-up)
-		if _gdm.has_signal("vendor_panel_data_ready") and not _gdm.vendor_panel_data_ready.is_connected(_on_vendor_panel_ready):
-			_gdm.vendor_panel_data_ready.connect(_on_vendor_panel_ready)
+		# Refresh when vendor PREVIEW data becomes ready (post warm-up)
+		if _gdm.has_signal("vendor_preview_data_ready") and not _gdm.vendor_preview_data_ready.is_connected(_on_vendor_preview_ready):
+			_gdm.vendor_preview_data_ready.connect(_on_vendor_preview_ready)
 		# Also refresh on settlement/vendor changes if available
 		if _gdm.has_signal("settlement_data_updated") and not _gdm.settlement_data_updated.is_connected(_on_settlement_data_updated):
 			_gdm.settlement_data_updated.connect(_on_settlement_data_updated)
@@ -1276,7 +1276,7 @@ func _on_initial_data_ready() -> void:
 				print("[ConvoyMenu][Debug] initial_data_ready -> synced settlements count=", _latest_all_settlements.size())
 	_queue_vendor_preview_update()
 
-func _on_vendor_panel_ready(_payload: Dictionary) -> void:
+func _on_vendor_preview_ready(_payload: Dictionary) -> void:
 	# Vendor data updated; update cache and refresh only if destinations changed
 	var changed := false
 	# Extract missions from payload if available

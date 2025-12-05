@@ -10,6 +10,8 @@ signal convoy_data_updated(all_convoy_data_list: Array)
 # Emitted when the current user's data (like money) is updated.
 signal user_data_updated(user_data: Dictionary)
 signal vendor_panel_data_ready(vendor_panel_data: Dictionary)
+# NEW: Emitted with partial "warming" data for vendor previews (e.g., in ConvoyMenu)
+signal vendor_preview_data_ready(preview_payload: Dictionary)
 # Mechanics / part compatibility relay
 signal part_compatibility_ready(payload: Dictionary) # { vehicle_id, part_id, data }
 signal mechanic_vendor_slot_availability(vehicle_id: String, slot_availability: Dictionary)
@@ -1705,7 +1707,7 @@ func request_settlement_vendor_data_at_coords(x: int, y: int) -> void:
 					if _entry is Dictionary and _entry.has("item_data") and (_entry.get("item_data") is Dictionary):
 						_vm_arr.append(_entry.get("item_data"))
 				payload["vendor_mission_items"] = _vm_arr
-			vendor_panel_data_ready.emit(payload)
+			vendor_preview_data_ready.emit(payload)
 
 # Helper: list vendors present at given map coordinates from cached settlements
 func _get_vendors_at_coords(x: int, y: int) -> Array:
