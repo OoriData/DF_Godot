@@ -487,6 +487,10 @@ func _on_raw_convoy_data_received(raw_data: Variant):
 	# --- END LOGGING ---
 
 	convoy_data_updated.emit(all_convoy_data)
+	# Proactively warm settlement/vendor data for all convoys' current locations
+	# If available, warm settlement/vendor data for all convoys' current locations
+	if has_method("preload_settlement_data_for_active_convoys"):
+		preload_settlement_data_for_active_convoys()
 	_convoys_loaded = true
 	_maybe_emit_initial_ready()
 
@@ -1449,6 +1453,37 @@ func select_convoy_by_id(convoy_id_to_select: String, _allow_toggle: bool = true
 	_selected_convoy_id = convoy_id_to_select
 	convoy_selection_changed.emit(get_selected_convoy())
 
+	# Proactively prefetch ConvoyMenu data so destinations are ready at open
+	var _sel: Variant = get_selected_convoy()
+	if _sel is Dictionary and not (_sel as Dictionary).is_empty():
+		# Warm vendor/settlement data at the selected convoy's coords
+		var sx := int(roundf(float((_sel as Dictionary).get("x", -9999))))
+		var sy := int(roundf(float((_sel as Dictionary).get("y", -9999))))
+		if sx != -9999 and sy != -9999:
+			request_settlement_vendor_data_at_coords(sx, sy)
+		# Also warm the settlement data for all active convoys to reduce future latency
+		if has_method("preload_settlement_data_for_active_convoys"):
+			preload_settlement_data_for_active_convoys()
+# Public: proactively warm vendor/settlement data for all active convoys' settlements
+func preload_settlement_data_for_active_convoys() -> void:
+	if not (all_convoy_data is Array) or all_convoy_data.is_empty():
+		return
+	# Build a set of unique coords from convoys
+	var seen: Dictionary = {}
+	for c in all_convoy_data:
+		if c is Dictionary:
+			var cx := int(roundf(float((c as Dictionary).get("x", -9999))))
+			var cy := int(roundf(float((c as Dictionary).get("y", -9999))))
+			if cx == -9999 or cy == -9999:
+				continue
+			var key := str(cx) + ":" + str(cy)
+			if not seen.has(key):
+				seen[key] = {"x": cx, "y": cy}
+	# Request vendor/settlement payloads for each unique coord
+	for k in seen.keys():
+		var coords: Dictionary = seen[k]
+		request_settlement_vendor_data_at_coords(int(coords.get("x", -9999)), int(coords.get("y", -9999)))
+
 func get_selected_convoy() -> Variant:
 	"""Returns the full data dictionary of the selected convoy, or null."""
 	if _selected_convoy_id.is_empty():
@@ -1624,6 +1659,57 @@ func request_vendor_panel_data(convoy_id: String, vendor_id: String) -> void:
 		"convoy_items": convoy_items
 	}
 	vendor_panel_data_ready.emit(vendor_panel_data)
+
+# --- Prefetch helpers for menus ---
+# Public: request vendor/settlement data at coordinates (wrapper around internal cache)
+func request_settlement_vendor_data_at_coords(x: int, y: int) -> void:
+	# Find vendors at these coordinates and emit vendor panel payloads for each to warm caches
+	var vendors: Array = _get_vendors_at_coords(x, y)
+	var selected_convoy: Variant = get_selected_convoy()
+	var cdict: Dictionary = {}
+	if selected_convoy is Dictionary:
+		cdict = selected_convoy as Dictionary
+	for v in vendors:
+		if v is Dictionary:
+			var vid := String((v as Dictionary).get("vendor_id", (v as Dictionary).get("id", "")))
+			if vid == "":
+				continue
+			# Reuse aggregation to build a readiness payload
+			var vendor_items: Dictionary = _aggregate_vendor_items(v)
+			var convoy_items: Dictionary = {}
+			if not cdict.is_empty():
+				convoy_items = _aggregate_convoy_items(cdict, v)
+			var payload := {
+				"vendor_id": vid,
+				"convoy_id": String(cdict.get("convoy_id", "")),
+				"coords": {"x": x, "y": y},
+				"vendor_mission_items": [],
+				"convoy_mission_items": (convoy_items.get("mission_items", []) if convoy_items.has("mission_items") else [])
+			}
+			if vendor_items.has("missions") and (vendor_items.get("missions") is Dictionary):
+				var _vm_dict: Dictionary = vendor_items.get("missions")
+				var _vm_arr: Array = []
+				for _k in _vm_dict.keys():
+					var _entry: Dictionary = _vm_dict.get(_k, {})
+					if _entry is Dictionary and _entry.has("item_data") and (_entry.get("item_data") is Dictionary):
+						_vm_arr.append(_entry.get("item_data"))
+				payload["vendor_mission_items"] = _vm_arr
+			vendor_panel_data_ready.emit(payload)
+
+# Helper: list vendors present at given map coordinates from cached settlements
+func _get_vendors_at_coords(x: int, y: int) -> Array:
+	var result: Array = []
+	for sett in all_settlement_data:
+		if sett is Dictionary:
+			var sd := sett as Dictionary
+			var sx := int(roundf(float(sd.get("x", -9999))))
+			var sy := int(roundf(float(sd.get("y", -9999))))
+			if sx == x and sy == y and sd.has("vendors") and (sd.get("vendors") is Array):
+				var vs: Array = sd.get("vendors")
+				for v in vs:
+					if v is Dictionary:
+						result.append(v)
+	return result
 
 # --- Journey Planning ---
 func request_route_choices(convoy_id: String, dest_x: int, dest_y: int) -> void:
