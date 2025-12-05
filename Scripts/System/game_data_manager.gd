@@ -1449,6 +1449,11 @@ func select_convoy_by_id(convoy_id_to_select: String, _allow_toggle: bool = true
 	_selected_convoy_id = convoy_id_to_select
 	convoy_selection_changed.emit(get_selected_convoy())
 
+	# Proactively prefetch ConvoyMenu data so destinations are ready at open
+	var _sel: Variant = get_selected_convoy()
+	if _sel is Dictionary and not (_sel as Dictionary).is_empty():
+		prefetch_convoy_menu_data(_sel)
+
 func get_selected_convoy() -> Variant:
 	"""Returns the full data dictionary of the selected convoy, or null."""
 	if _selected_convoy_id.is_empty():
@@ -1598,6 +1603,53 @@ func update_single_vendor(new_vendor_data: Dictionary) -> void:
 		if not probe_target.is_empty():
 			print("[PartCompatGDM] PROBE: vendor updated; re-probing convoy_id=", str(probe_target.get("convoy_id", "")))
 			probe_mechanic_vendor_availability_for_convoy(probe_target)
+
+		# Also emit vendor_panel_data_ready when this vendor belongs to the selected convoy's settlement
+		var v_id := String(new_vendor_data.get("vendor_id", new_vendor_data.get("id", "")))
+		if v_id != "":
+			var selected_convoy: Variant = get_selected_convoy()
+			if selected_convoy is Dictionary and not (selected_convoy as Dictionary).is_empty():
+				var sett: Variant = get_settlement_for_vendor(v_id)
+				if sett is Dictionary:
+					var sx := int(roundf(float(sett.get("x", -9999))))
+					var sy := int(roundf(float(sett.get("y", -9999))))
+					var cx := int(roundf(float((selected_convoy as Dictionary).get("x", -9999))))
+					var cy := int(roundf(float((selected_convoy as Dictionary).get("y", -9999))))
+					if sx == cx and sy == cy:
+						var agg_vendor := _aggregate_vendor_items(new_vendor_data)
+						var agg_convoy := _aggregate_convoy_items(selected_convoy, new_vendor_data)
+						var _vm_arr: Array = []
+						if agg_vendor.has("missions") and (agg_vendor.get("missions") is Dictionary):
+							var _vm_dict: Dictionary = agg_vendor.get("missions")
+							for _k in _vm_dict.keys():
+								var _entry: Dictionary = _vm_dict.get(_k, {})
+								if _entry is Dictionary and _entry.has("item_data") and (_entry.get("item_data") is Dictionary):
+									_vm_arr.append(_entry.get("item_data"))
+						var payload := {
+							"vendor_id": v_id,
+							"convoy_id": String((selected_convoy as Dictionary).get("convoy_id", "")),
+							"coords": {"x": cx, "y": cy},
+							"vendor_mission_items": _vm_arr,
+							"convoy_mission_items": (agg_convoy.get("mission_items", []) if agg_convoy.has("mission_items") else [])
+						}
+						# Snapshots for quick verification
+						var v_items: Array = payload.vendor_mission_items if typeof(payload.vendor_mission_items)==TYPE_ARRAY else []
+						var c_items: Array = payload.convoy_mission_items if typeof(payload.convoy_mission_items)==TYPE_ARRAY else []
+						if v_items.is_empty():
+							print("[GameDataManager][Snap][AggVendor] none (0 vendor mission items)")
+						else:
+							var v0: Dictionary = {}
+							if v_items.size() > 0 and v_items[0] is Dictionary:
+								v0 = v_items[0]
+							print("[GameDataManager][Snap][AggVendor] name=", str(v0.get("name", v0.get("base_name", "?"))), " mission_vendor_id=", str(v0.get("mission_vendor_id", "")), " recipient_settlement_name=", str(v0.get("recipient_settlement_name", "")))
+						if c_items.is_empty():
+							print("[GameDataManager][Snap][AggConvoy] none (0 convoy mission items)")
+						else:
+							var c0: Dictionary = {}
+							if c_items.size() > 0 and c_items[0] is Dictionary:
+								c0 = c_items[0]
+							print("[GameDataManager][Snap][AggConvoy] name=", str(c0.get("name", c0.get("base_name", "?"))), " mission_vendor_id=", str(c0.get("mission_vendor_id", "")), " recipient_settlement_name=", str(c0.get("recipient_settlement_name", "")))
+						vendor_panel_data_ready.emit(payload)
 	else:
 		printerr("GameDataManager: Vendor ID %s not found in any settlement." % updated_id)
 
@@ -1621,8 +1673,50 @@ func request_vendor_panel_data(convoy_id: String, vendor_id: String) -> void:
 		"all_settlement_data": all_settlement_data,
 		"user_data": current_user_data,
 		"vendor_items": vendor_items,
-		"convoy_items": convoy_items
+		"convoy_items": convoy_items,
+		"vendor_id": vendor_id,
+		"convoy_id": convoy_id,
+		"coords": {},
+		"vendor_mission_items": {}
 	}
+	# Fill convenience fields safely
+	if settlement_data is Dictionary:
+		vendor_panel_data["coords"] = {"x": settlement_data.get("x"), "y": settlement_data.get("y")}
+	if vendor_items.has("missions"):
+		# Normalize missions to an Array of item_data dictionaries for UI consumption
+		var _vm_dict: Dictionary = vendor_items.get("missions")
+		var _vm_arr: Array = []
+		if _vm_dict is Dictionary:
+			for _k in _vm_dict.keys():
+				var _entry: Dictionary = _vm_dict.get(_k, {})
+				if _entry is Dictionary and _entry.has("item_data") and (_entry.get("item_data") is Dictionary):
+					_vm_arr.append(_entry.get("item_data"))
+		vendor_panel_data["vendor_mission_items"] = _vm_arr
+	# Instrumentation: log mission bucket counts and sample destination stamping
+	var v_missions: Dictionary = vendor_items.get("missions", {})
+	var c_missions: Dictionary = convoy_items.get("missions", {})
+	print("[GameDataManager][Trace] vendor_panel ready vendor=", str(vendor_id), " convoy=", str(convoy_id), " v_missions=", v_missions.size(), " c_missions=", c_missions.size())
+	var _snap := 0
+	if v_missions.size() == 0:
+		print("[GameDataManager][Snap][AggVendor] none (0 vendor mission items)")
+	else:
+		for k in v_missions.keys():
+			if _snap >= 2:
+				break
+			var entry: Dictionary = v_missions.get(k, {})
+			if entry is Dictionary:
+				var it: Dictionary = entry.get("item_data", {})
+				print("[GameDataManager][Snap][AggVendor] name=", str(it.get("name", it.get("base_name", "?"))), " mission_vendor_id=", str(it.get("mission_vendor_id", "")), " recipient_settlement_name=", str(it.get("recipient_settlement_name", "")))
+				_snap += 1
+	_snap = 0
+	for k2 in c_missions.keys():
+		if _snap >= 2:
+			break
+		var entry2: Dictionary = c_missions.get(k2, {})
+		if entry2 is Dictionary:
+			var it2: Dictionary = entry2.get("item_data", {})
+			print("[GameDataManager][Snap][AggConvoy] name=", str(it2.get("name", it2.get("base_name", "?"))), " mission_vendor_id=", str(it2.get("mission_vendor_id", "")), " recipient_settlement_name=", str(it2.get("recipient_settlement_name", "")))
+			_snap += 1
 	vendor_panel_data_ready.emit(vendor_panel_data)
 
 # --- Journey Planning ---
@@ -1794,7 +1888,7 @@ func _aggregate_vendor_items(vendor_data: Dictionary) -> Dictionary:
 		if item.has("delivery_reward"):
 			var dr = item.get("delivery_reward")
 			has_reward = _is_positive_number(dr)
-		var is_mission := has_reward or (item.get("recipient") != null)
+		var is_mission := has_reward or (item.get("recipient") != null) or (String(item.get("mission_vendor_id", "")) != "")
 		# Guard against null values in resource fields (API may send null instead of 0)
 		var is_resource: bool = (
 			(item.has("food") and _is_positive_number(item.get("food"))) or
@@ -1804,11 +1898,19 @@ func _aggregate_vendor_items(vendor_data: Dictionary) -> Dictionary:
 		var is_part: bool = item.has("slot") and item.get("slot") != null and String(item.get("slot")).length() > 0
 		if is_mission:
 			category = "missions"
-			var recipient_vendor_id = item.get("recipient")
-			if recipient_vendor_id and recipient_vendor_id is String and not recipient_vendor_id.is_empty():
+			# Prefer destination mapping via mission_vendor_id; fallback to recipient vendor id
+			var recipient_vendor_id = String(item.get("mission_vendor_id", ""))
+			if recipient_vendor_id == "":
+				var r_any = item.get("recipient")
+				if r_any and r_any is String:
+					recipient_vendor_id = String(r_any)
+			if recipient_vendor_id != "":
 				var dest_settlement = get_settlement_for_vendor(recipient_vendor_id)
 				if dest_settlement and dest_settlement is Dictionary:
-					mission_dest_name = dest_settlement.get("name", "")
+					mission_dest_name = String(dest_settlement.get("name", ""))
+					if mission_dest_name != "":
+						# Stamp destination early for client-side use
+						item["recipient_settlement_name"] = mission_dest_name
 		elif is_resource:
 			category = "resources"
 		elif is_part:
@@ -1874,13 +1976,19 @@ func _aggregate_convoy_items(convoy_data: Dictionary, vendor_data: Dictionary) -
 					continue
 				var category = "other"
 				var mission_dest_name := ""
-				if item.get("recipient") != null or item.get("delivery_reward") != null:
+				if item.get("recipient") != null or item.get("delivery_reward") != null or String(item.get("mission_vendor_id", "")) != "":
 					category = "missions"
-					var recipient_vendor_id = item.get("recipient")
-					if recipient_vendor_id and recipient_vendor_id is String and not recipient_vendor_id.is_empty():
+					var recipient_vendor_id = String(item.get("mission_vendor_id", ""))
+					if recipient_vendor_id == "":
+						var r_any = item.get("recipient")
+						if r_any and r_any is String:
+							recipient_vendor_id = String(r_any)
+					if recipient_vendor_id != "":
 						var dest_settlement = get_settlement_for_vendor(recipient_vendor_id)
 						if dest_settlement and dest_settlement is Dictionary:
-							mission_dest_name = dest_settlement.get("name", "")
+							mission_dest_name = String(dest_settlement.get("name", ""))
+							if mission_dest_name != "":
+								item["recipient_settlement_name"] = mission_dest_name
 				elif (item.has("food") and _is_positive_number(item.get("food"))) or (item.has("water") and _is_positive_number(item.get("water"))) or (item.has("fuel") and _is_positive_number(item.get("fuel"))):
 					category = "resources"
 				_aggregate_item(aggregated[category], item, vehicle_name, mission_dest_name)
@@ -1894,13 +2002,19 @@ func _aggregate_convoy_items(convoy_data: Dictionary, vendor_data: Dictionary) -
 		for item in convoy_data.cargo_inventory:
 			var category = "other"
 			var mission_dest_name := ""
-			if item.get("recipient") != null or item.get("delivery_reward") != null:
+			if item.get("recipient") != null or item.get("delivery_reward") != null or String(item.get("mission_vendor_id", "")) != "":
 				category = "missions"
-				var recipient_vendor_id = item.get("recipient")
-				if recipient_vendor_id and recipient_vendor_id is String and not recipient_vendor_id.is_empty():
+				var recipient_vendor_id = String(item.get("mission_vendor_id", ""))
+				if recipient_vendor_id == "":
+					var r_any = item.get("recipient")
+					if r_any and r_any is String:
+						recipient_vendor_id = String(r_any)
+				if recipient_vendor_id != "":
 					var dest_settlement = get_settlement_for_vendor(recipient_vendor_id)
 					if dest_settlement and dest_settlement is Dictionary:
-						mission_dest_name = dest_settlement.get("name", "")
+						mission_dest_name = String(dest_settlement.get("name", ""))
+						if mission_dest_name != "":
+							item["recipient_settlement_name"] = mission_dest_name
 			elif (item.has("food") and _is_positive_number(item.get("food"))) or (item.has("water") and _is_positive_number(item.get("water"))) or (item.has("fuel") and _is_positive_number(item.get("fuel"))):
 				category = "resources"
 			_aggregate_item(aggregated[category], item, "Convoy", mission_dest_name)
@@ -2178,3 +2292,31 @@ func _on_convoy_journey_canceled(updated_convoy_data: Dictionary) -> void:
 	print("GameDataManager: Journey cancel confirmed. Updating convoy data.")
 	update_single_convoy(updated_convoy_data)
 	journey_canceled.emit(updated_convoy_data)
+
+# --- Prefetch helpers for menus ---
+# Public: request vendor/settlement data at coordinates (wrapper around internal)
+func request_settlement_vendor_data_at_coords(x: int, y: int) -> void:
+	# If settlements are already cached, request immediately; otherwise wait for cache
+	if all_settlement_data is Array and not all_settlement_data.is_empty():
+		_request_settlement_vendor_data_at_coords(x, y)
+		return
+	if not settlement_data_updated.is_connected(func(_list: Array):
+		_request_settlement_vendor_data_at_coords(x, y)
+	):
+		settlement_data_updated.connect(func(_list: Array):
+			_request_settlement_vendor_data_at_coords(x, y)
+		, CONNECT_ONE_SHOT)
+
+# Public: prefetch all data ConvoyMenu needs before opening
+# - Warms mechanics compatibility snapshot
+# - Requests vendor/settlement payloads for current coords
+func prefetch_convoy_menu_data(convoy: Dictionary) -> void:
+	if convoy.is_empty():
+		return
+	# Warm mechanics snapshot first to avoid probing on empty inventories after refresh
+	warm_mechanics_data_for_convoy(convoy)
+	# Request settlement vendor data for the convoy's current location
+	var sx := int(roundf(float(convoy.get("x", -999999))))
+	var sy := int(roundf(float(convoy.get("y", -999999))))
+	if sx != -999999 and sy != -999999:
+		request_settlement_vendor_data_at_coords(sx, sy)

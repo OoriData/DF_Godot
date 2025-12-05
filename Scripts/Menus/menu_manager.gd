@@ -24,6 +24,9 @@ var _base_z_index: int
 # Ensure this Z-index is higher than ConvoyListPanel's EXPANDED_OVERLAY_Z_INDEX (100)
 const MENU_MANAGER_ACTIVE_Z_INDEX = 150 
 
+# Pending convoy data for gated open
+var _pending_open_convoy_data: Dictionary = {}
+
 ## Emitted when any menu is opened. Passes the menu node instance.
 signal menu_opened(menu_node, menu_type: String)
 ## Emitted when a menu is closed (either by navigating forward or back). Passes the menu node that was closed.
@@ -65,7 +68,13 @@ func _on_gdm_convoy_selection_changed(selected_convoy_data: Variant):
 	# This handler is called when a convoy is selected from the dropdown.
 	# We only want to open the menu if a valid convoy is selected, not when it's deselected (null).
 	if selected_convoy_data:
-		open_convoy_menu(selected_convoy_data)
+		# Prefetch vendor/settlement/mechanics so ConvoyMenu has destinations immediately
+		var gdm = get_node_or_null("/root/GameDataManager")
+		if is_instance_valid(gdm):
+			if gdm.has_method("prefetch_convoy_menu_data"):
+				gdm.prefetch_convoy_menu_data(selected_convoy_data)
+		# Gate opening until ready (settlements cached and at least one vendor update for coords)
+		_open_convoy_menu_when_ready(selected_convoy_data)
 
 func _input(event: InputEvent):
 	# Only process input if a menu is active and visible.
@@ -85,6 +94,99 @@ func is_any_menu_active() -> bool:
 # This ensures the camera always clamps to the correct visible area.
 func open_convoy_menu(convoy_data = null):
 	_show_menu(convoy_menu_scene, convoy_data)
+
+# Internal: wait for GameDataManager to have data ready before opening ConvoyMenu
+func _open_convoy_menu_when_ready(convoy_data: Dictionary) -> void:
+	var gdm = get_node_or_null("/root/GameDataManager")
+	if not is_instance_valid(gdm):
+		open_convoy_menu(convoy_data)
+		return
+	# Quick ready check: settlements cached
+	var settlements_ready := false
+	if gdm.has_method("get_all_settlements_data"):
+		var s_arr: Array = gdm.get_all_settlements_data()
+		settlements_ready = s_arr is Array and not s_arr.is_empty()
+
+	# Store pending data for vendor gating
+	_pending_open_convoy_data = convoy_data.duplicate(true)
+
+	# If settlements are ready, still gate on first vendor panel payload for current coords
+	if settlements_ready:
+		# Connect one-shot vendor gate
+		if gdm.has_signal("vendor_panel_data_ready") and not gdm.vendor_panel_data_ready.is_connected(_on_vendor_panel_ready_open_menu):
+			gdm.vendor_panel_data_ready.connect(_on_vendor_panel_ready_open_menu, CONNECT_ONE_SHOT)
+		# Fallback timer to avoid indefinite wait if vendor signal was missed
+		var tv := Timer.new()
+		tv.one_shot = true
+		tv.wait_time = 0.5
+		tv.timeout.connect(_on_settlement_ready_open_menu, CONNECT_ONE_SHOT)
+		add_child(tv)
+		tv.start()
+		return
+
+	# Otherwise, wait for settlement data and then vendor payload
+	if gdm.has_signal("settlement_data_updated") and not gdm.settlement_data_updated.is_connected(_on_settlement_ready_open_menu):
+		gdm.settlement_data_updated.connect(_on_settlement_ready_open_menu, CONNECT_ONE_SHOT)
+	# Also fire a short timer as a fallback in case signals were already emitted
+	var t := Timer.new()
+	t.one_shot = true
+	t.wait_time = 0.25
+	t.timeout.connect(_on_settlement_ready_open_menu, CONNECT_ONE_SHOT)
+	add_child(t)
+	t.start()
+
+# Callback: open convoy menu once settlements are ready
+func _on_settlement_ready_open_menu(_list: Array = []) -> void:
+	if _pending_open_convoy_data.is_empty():
+		return
+	var gdm = get_node_or_null("/root/GameDataManager")
+	if is_instance_valid(gdm) and gdm.has_method("get_all_settlements_data"):
+		var s2: Array = gdm.get_all_settlements_data()
+		if s2 is Array and not s2.is_empty():
+			# After settlements are ready, also wait for first vendor payload at current coords
+			if gdm.has_signal("vendor_panel_data_ready") and not gdm.vendor_panel_data_ready.is_connected(_on_vendor_panel_ready_open_menu):
+				gdm.vendor_panel_data_ready.connect(_on_vendor_panel_ready_open_menu, CONNECT_ONE_SHOT)
+			# Fallback timer to open if vendor signal doesn't arrive shortly
+			var tv := Timer.new()
+			tv.one_shot = true
+			tv.wait_time = 0.5
+			tv.timeout.connect(func():
+				if not _pending_open_convoy_data.is_empty():
+					var payload := _pending_open_convoy_data.duplicate(true)
+					_pending_open_convoy_data.clear()
+					open_convoy_menu(payload)
+			, CONNECT_ONE_SHOT)
+			add_child(tv)
+			tv.start()
+
+# Callback: open convoy menu once a vendor panel payload arrives for current settlement coords
+func _on_vendor_panel_ready_open_menu(vendor_panel_data: Dictionary) -> void:
+	if _pending_open_convoy_data.is_empty():
+		return
+	var gdm = get_node_or_null("/root/GameDataManager")
+	if not is_instance_valid(gdm):
+		var payload_fallback := _pending_open_convoy_data.duplicate(true)
+		_pending_open_convoy_data.clear()
+		open_convoy_menu(payload_fallback)
+		return
+
+	# Determine vendor's settlement coords
+	var vendor_id := String(vendor_panel_data.get("vendor_id", ""))
+	var is_match := false
+	if vendor_id != "" and gdm.has_method("get_settlement_for_vendor"):
+		var sett = gdm.get_settlement_for_vendor(vendor_id)
+		if sett is Dictionary:
+			var vx := int(roundf(float(sett.get("x", -9999.0))))
+			var vy := int(roundf(float(sett.get("y", -9999.0))))
+			var sx := int(roundf(float(_pending_open_convoy_data.get("x", -9999.0))))
+			var sy := int(roundf(float(_pending_open_convoy_data.get("y", -9999.0))))
+			is_match = (vx == sx and vy == sy)
+
+	# If vendor payload matches current coords, open the menu
+	if is_match:
+		var payload := _pending_open_convoy_data.duplicate(true)
+		_pending_open_convoy_data.clear()
+		open_convoy_menu(payload)
 
 func open_convoy_vehicle_menu(convoy_data = null):
 	print("MenuManager: open_convoy_vehicle_menu called. Convoy Data Received: ")

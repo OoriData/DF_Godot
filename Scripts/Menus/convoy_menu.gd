@@ -107,6 +107,7 @@ var _settlement_mission_items: Array[String] = []
 var _compatible_part_items: Array[String] = []
 var _latest_all_settlements: Array = [] # cached list from GDM settlement_data_updated
 var _vendor_preview_update_timer: Timer = null # For debouncing updates
+var _vendor_preview_ready: bool = false # Gate rendering until authoritative data arrives
 
 func _ready():
 	# --- DIAGNOSTIC: Check if UI nodes are valid ---
@@ -189,6 +190,9 @@ func _ready():
 				_latest_all_settlements = pre_cached
 				if _debug_convoy_menu:
 					print("[ConvoyMenu][Debug] pre-cached all_settlements count=", _latest_all_settlements.size())
+				# If settlements are already cached, allow immediate vendor preview render
+				_vendor_preview_ready = true
+				_queue_vendor_preview_update()
 
 	# Connect placeholder menu buttons
 	if is_instance_valid(vehicle_menu_button):
@@ -267,6 +271,39 @@ func _on_back_button_pressed():
 
 func initialize_with_data(data: Dictionary):
 		convoy_data_received = data.duplicate() # Duplicate to avoid modifying the original if needed
+		if _debug_convoy_menu:
+			print("[ConvoyMenu][Trace] initialize_with_data convoy_id=", str(convoy_data_received.get("convoy_id", "")), " coords=(", str(convoy_data_received.get("x", "")), ",", str(convoy_data_received.get("y", "")), ") vehicles=", (convoy_data_received.get("vehicle_details_list", []) as Array).size())
+			# Init-time mission snapshots (typed cargo route)
+			var _snap_seen_init := 0
+			for v in convoy_data_received.get("vehicle_details_list", []) as Array:
+				if v is Dictionary:
+					for ci in (v.get("cargo_items_typed", []) as Array):
+						if ci is Dictionary and String(ci.get("category", "")) == "mission" and _snap_seen_init < 3:
+							print("[ConvoyMenu][Snap][Init] vehicle=", str(v.get("name", "?")), " item=", str(ci.get("name", ci.get("base_name", "?"))), " mission_vendor_id=", str(ci.get("mission_vendor_id", "")), " recipient_settlement_name=", str(ci.get("recipient_settlement_name", "")), " recipient=", ci.get("recipient", null), " destination=", ci.get("destination", null))
+							_snap_seen_init += 1
+			# If no typed mission cargo found, emit a fallback snapshot via name-only aggregation
+			if _snap_seen_init == 0:
+				var names: Array[String] = _collect_mission_cargo_items(convoy_data_received)
+				if names.is_empty():
+					print("[ConvoyMenu][Snap][Init] none (0 convoy mission items)")
+				else:
+					var _fallback := 0
+					for _nm in names:
+						if _fallback >= 3:
+							break
+						var _dest := _infer_destination_for_item(convoy_data_received, String(_nm))
+						print("[ConvoyMenu][Snap][Init] name=", String(_nm), " inferred_destination=", String(_dest))
+						_fallback += 1
+			var _snap_seen := 0
+			for v in convoy_data_received.get("vehicle_details_list", []) as Array:
+				if v is Dictionary:
+					for ci in (v.get("cargo_items_typed", []) as Array):
+						if ci is Dictionary and String(ci.get("category", "")) == "mission" and _snap_seen < 3:
+							print("[ConvoyMenu][Snap][Init] vehicle=", str(v.get("name", "?")), " item=", str(ci.get("name", ci.get("base_name", "?"))), " mission_vendor_id=", str(ci.get("mission_vendor_id", "")), " recipient_settlement_name=", str(ci.get("recipient_settlement_name", "")), " recipient=", ci.get("recipient", null), " destination=", ci.get("destination", null))
+							_snap_seen += 1
+		# Prefetch all data needed so vendor preview is ready immediately
+		if is_instance_valid(_gdm) and _gdm.has_method("prefetch_convoy_menu_data"):
+			_gdm.prefetch_convoy_menu_data(convoy_data_received)
 		# print("ConvoyMenu: Initialized with data: ", convoy_data_received) # DEBUG
 		
 		# Kick off a mechanics probe/warm-up so compatibility can populate.
@@ -283,6 +320,27 @@ func initialize_with_data(data: Dictionary):
 		# When the ConvoyMenu opens, explicitly request a refresh of all vendor data
 		# for the current settlement. This ensures mission destination data is up-to-date.
 		if is_instance_valid(_gdm) and convoy_data_received.has("x") and convoy_data_received.has("y"):
+			# Also request vendor_panel_data for first vendor to trigger snapshots
+			var current_convoy_x0 := roundi(float(convoy_data_received.get("x", 0)))
+			var current_convoy_y0 := roundi(float(convoy_data_received.get("y", 0)))
+			var first_vendor_id := ""
+			var current_settlement0: Dictionary = {}
+			for s0 in _latest_all_settlements:
+				if s0 is Dictionary and roundi(float(s0.get("x", -999999))) == current_convoy_x0 and roundi(float(s0.get("y", -999999))) == current_convoy_y0:
+					current_settlement0 = s0
+					break
+			if not current_settlement0.is_empty():
+				var vendors_in_settlement0: Array = current_settlement0.get("vendors", [])
+				for ve0 in vendors_in_settlement0:
+					if ve0 is Dictionary and String((ve0 as Dictionary).get("vendor_id", "")) != "":
+						first_vendor_id = String((ve0 as Dictionary).get("vendor_id"))
+						break
+					elif ve0 is String and ve0 != "":
+						first_vendor_id = ve0
+						break
+			if first_vendor_id != "" and _gdm.has_method("request_vendor_panel_data"):
+				var cid := str(convoy_data_received.get("convoy_id", ""))
+				_gdm.request_vendor_panel_data(cid, first_vendor_id)
 			var current_convoy_x := roundi(float(convoy_data_received.get("x", 0)))
 			var current_convoy_y := roundi(float(convoy_data_received.get("y", 0)))
 
@@ -465,8 +523,33 @@ func initialize_with_data(data: Dictionary):
 				cargo_summary.append("%s x%s" % [item_name, cargo_counts[item_name]])
 			all_cargo_label.text = "Cargo: " + ", ".join(cargo_summary)
 
-		# Update the vendor preview. This will be called again by signals when async data arrives.
-		# Queue an update. This will be debounced with other signals that fire on open.
+		# If we already have settlements cached or enriched recipient data in cargo,
+		# allow immediate vendor preview rendering to avoid half-second delay.
+		if not _vendor_preview_ready:
+			if _latest_all_settlements is Array and not (_latest_all_settlements as Array).is_empty():
+				_vendor_preview_ready = true
+			else:
+				# Detect enriched recipient data in convoy cargo
+				var has_enriched := false
+				var vehicles: Array = convoy_data_received.get("vehicle_details_list", [])
+				for v in vehicles:
+					if v is Dictionary and v.has("cargo") and v["cargo"] is Array:
+						for ci in v["cargo"]:
+							if ci is Dictionary and (ci.has("recipient") or ci.has("recipient_settlement_name")):
+								has_enriched = true
+								break
+					if has_enriched:
+						break
+				if not has_enriched:
+					var inv: Array = convoy_data_received.get("cargo_inventory", [])
+					for ci2 in inv:
+						if ci2 is Dictionary and (ci2.has("recipient") or ci2.has("recipient_settlement_name")):
+							has_enriched = true
+							break
+				if has_enriched:
+					_vendor_preview_ready = true
+
+		# Queue a render update (debounced); will only render if _vendor_preview_ready
 		_queue_vendor_preview_update()
 		# Initial font size update after data is populated
 		call_deferred("_update_font_sizes")
@@ -479,9 +562,17 @@ func _queue_vendor_preview_update() -> void:
 func _update_vendor_preview() -> void:
 	if not is_instance_valid(self) or convoy_data_received == null:
 		return
+	# Avoid rendering with potentially stale destination data until ready
+	if not _vendor_preview_ready:
+		if _debug_convoy_menu:
+			print("[ConvoyMenu][Trace] _update_vendor_preview skipped; _vendor_preview_ready=false")
+		return
 	# Mission cargo preview: show items marked mission-critical if present
 	_convoy_mission_items = _collect_mission_cargo_items(convoy_data_received)
 	_settlement_mission_items = _collect_settlement_mission_items()
+
+	if _debug_convoy_menu:
+		print("[ConvoyMenu][Trace] _update_vendor_preview ready convoy_missions=", _convoy_mission_items.size(), " settlement_missions=", _settlement_mission_items.size())
 	
 	# Compatible parts preview: use GDM mechanic vendor availability snapshot if available
 	var compat_summary: Array[String] = []
@@ -833,14 +924,20 @@ func _collect_settlement_mission_items() -> Array[String]:
 	if _debug_convoy_menu:
 		print("[ConvoyMenu][Debug] Collecting settlement missions at coords (", sx, ",", sy, ")")
 
-	# Use GameDataManager source-of-truth aggregation for missions
+	# Use GameDataManager as the single source of truth for missions.
+	# This prevents a race condition where a fallback path could show stale data
+	# before an asynchronous data refresh completes.
 	if _gdm.has_method("get_settlement_mission_items"):
 		var missions: Array = _gdm.get_settlement_mission_items(sx, sy)
 		if _debug_convoy_menu:
 			print("[ConvoyMenu][Debug] GDM.get_settlement_mission_items exists; returned count=", (missions.size() if missions is Array else -1))
-		var added := false
 		if missions is Array and not missions.is_empty():
 			for item in missions:
+				# Opportunistic enrichment: ensure full cargo data is queued for fetch
+				if item is Dictionary and item.has("cargo_id") and is_instance_valid(_gdm) and _gdm.has_method("ensure_cargo_details"):
+					var cid := String(item.get("cargo_id", ""))
+					if cid != "":
+						_gdm.ensure_cargo_details(cid)
 				if item is Dictionary:
 					var nm := String(item.get("name", item.get("base_name", "Item")))
 					var dest := _extract_destination_from_item(item)
@@ -848,55 +945,19 @@ func _collect_settlement_mission_items() -> Array[String]:
 					if dest != "":
 						entry += " — to %s" % dest
 					out.append(entry)
-					added = true
 				elif item is String:
-					# Name-only entries; cannot resolve destination from this shape
-					# Defer destination resolution to vendor-scan fallback below
-					pass
-			if _debug_convoy_menu:
-				print("[ConvoyMenu][Debug] Settlement missions via GDM (dicts only): ", out)
-		# If we added any entries with proper dictionaries, return
-		if added:
-			return out
-
-	# Fallback: scan vendors at current settlement for mission cargo dictionaries (has recipient)
-	# Use cached settlements snapshot
-	var settlement_dict: Dictionary = {}
-	for s in _latest_all_settlements:
-		if s is Dictionary and int(roundf(float(s.get("x", -999999)))) == sx and int(roundf(float(s.get("y", -999999)))) == sy:
-			settlement_dict = s
-			break
-	if settlement_dict.is_empty():
-		if _debug_convoy_menu:
-			print("[ConvoyMenu][Debug] No settlement dict found at coords; vendor fallback unavailable.")
-		return out
-
-	var vendors: Array = settlement_dict.get("vendors", []) if settlement_dict.has("vendors") else []
-	for v in vendors:
-		if not (v is Dictionary):
-			continue
-		var cargo_inv: Array = v.get("cargo_inventory", [])
-		for ci in cargo_inv:
-			if not (ci is Dictionary):
-				continue
-			# Use centralized mission detection when available
-			var is_mission := false
-			if ItemsData != null and ItemsData.MissionItem:
-				is_mission = ItemsData.MissionItem._looks_like_mission_dict(ci)
-			else:
-				var dr = ci.get("delivery_reward")
-				is_mission = (dr is float or dr is int) and float(dr) > 0.0
-			if not is_mission:
-				continue
-			var nm2 := String(ci.get("name", ci.get("base_name", "Item")))
-			var dest2 := _extract_destination_from_item(ci)
-			var entry2 := "%s" % [nm2]
-			if dest2 != "":
-				entry2 += " — to %s" % dest2
-			out.append(entry2)
+					# If we only have a name, enrich with current settlement name so destination is shown immediately.
+					var nm2 := String(item)
+					var dest_name := ""
+					if _gdm.has_method("get_settlement_name_from_coords"):
+						dest_name = String(_gdm.get_settlement_name_from_coords(sx, sy))
+					if dest_name != "":
+						out.append("%s — to %s" % [nm2, dest_name])
+					else:
+						out.append(nm2)
 
 	if _debug_convoy_menu:
-		print("[ConvoyMenu][Debug] Settlement missions via vendor fallback: ", out)
+		print("[ConvoyMenu][Debug] Settlement missions via GDM: ", out)
 	return out
 
 func _infer_destination_for_item(convoy: Dictionary, item_name: String) -> String:
@@ -909,31 +970,20 @@ func _infer_destination_for_item(convoy: Dictionary, item_name: String) -> Strin
 	for vehicle in vehicles:
 		if not (vehicle is Dictionary):
 			continue
-		var typed_arr: Array = vehicle.get("cargo_items_typed", [])
-		for typed in typed_arr:
-			var raw: Dictionary = {}
-			if typed is Dictionary:
-				raw = (typed as Dictionary).get("raw", {})
-			else:
-				var raw_any = typed.get("raw") if typed is Object else null
-				if raw_any is Dictionary:
-					raw = raw_any
-			if raw.is_empty():
-				continue
-			if String(raw.get("name", "")) != item_name:
-				continue
-			var dest := _extract_destination_from_item(raw)
-			if dest != "":
-				candidates.append(dest)
-		var cargo_arr: Array = vehicle.get("cargo", [])
-		for ci in cargo_arr:
-			if not (ci is Dictionary):
-				continue
-			if String(ci.get("name", "")) != item_name:
-				continue
-			var dest2 := _extract_destination_from_item(ci)
-			if dest2 != "":
-				candidates.append(dest2)
+		# Vehicle typed cargo
+		var v_typed: Array = (vehicle as Dictionary).get("cargo_items_typed", [])
+		for it in v_typed:
+			if it is Dictionary and String((it as Dictionary).get("name", "")) == item_name:
+				var dest_vt := _extract_destination_from_item(it)
+				if dest_vt != "":
+					candidates.append(dest_vt)
+		# Vehicle raw cargo
+		var v_raw: Array = (vehicle as Dictionary).get("cargo_items_raw", [])
+		for ir in v_raw:
+			if ir is Dictionary and String((ir as Dictionary).get("name", "")) == item_name:
+				var dest_vr := _extract_destination_from_item(ir)
+				if dest_vr != "":
+					candidates.append(dest_vr)
 	# Scan convoy-level inventory
 	var inv: Array = convoy.get("cargo_inventory", [])
 	for ci2 in inv:
@@ -944,6 +994,13 @@ func _infer_destination_for_item(convoy: Dictionary, item_name: String) -> Strin
 		var dest3 := _extract_destination_from_item(ci2)
 		if dest3 != "":
 			candidates.append(dest3)
+	# Also scan convoy-level all_cargo (raw blended list from API)
+	var all_c: Array = convoy.get("all_cargo", [])
+	for ac in all_c:
+		if ac is Dictionary and String((ac as Dictionary).get("name", "")) == item_name:
+			var dest_ac := _extract_destination_from_item(ac)
+			if dest_ac != "":
+				candidates.append(dest_ac)
 	# Return the first distinct destination if any
 	if candidates.size() > 0:
 		return candidates[0]
@@ -991,34 +1048,33 @@ func _extract_destination_from_item(item: Dictionary) -> String:
 				print("[ConvoyMenu][Debug] dest via recipient_settlement coords=", rs_coords)
 			return "(%d, %d)" % [rs_coords.x, rs_coords.y]
 
-	# 2) Resolve via vendor_id -> settlement name using GameDataManager
-	# IMPORTANT: Do NOT use plain `vendor_id` here; that is often the origin vendor
-	# for available missions and will incorrectly map to the current settlement.
-	var vendor_id_fields := ["recipient_vendor_id", "destination_vendor_id", "dest_vendor_id"]
-	for vk in vendor_id_fields:
-		if item.has(vk):
-			var vid_val = item.get(vk)
-			if vid_val != null:
-				var vid := str(vid_val)
-				if vid != "" and vid != "null" and is_instance_valid(_gdm):
-					# Prefer settlement lookup via vendor
-					if _gdm.has_method("get_settlement_for_vendor"):
-						var s = _gdm.get_settlement_for_vendor(vid)
-						if s is Dictionary:
-							var sn_val = (s as Dictionary).get("name")
-							if sn_val != null:
-								var sn := str(sn_val)
-								if sn != "" and sn != "null":
-									return sn
-					# Fallback: vendor name if settlement not found
-					if _gdm.has_method("get_vendor_by_id"):
-						var v = _gdm.get_vendor_by_id(vid)
-						if v is Dictionary:
-							var vn_val = (v as Dictionary).get("name")
-							if vn_val != null:
-								var vn := str(vn_val)
-								if vn != "" and vn != "null":
-									return vn
+	# 2) Resolve via mission_vendor_id (destination vendor) if provided
+	#    This is safe for settlement missions and avoids waiting for enrichment.
+	if item.has("mission_vendor_id") and is_instance_valid(_gdm):
+		var mvid := String(item.get("mission_vendor_id", ""))
+		if mvid != "":
+			if _gdm.has_method("get_settlement_for_vendor"):
+				var s = _gdm.get_settlement_for_vendor(mvid)
+				if s is Dictionary:
+					var sn_val = (s as Dictionary).get("name")
+					if sn_val != null:
+						var sn := String(sn_val)
+						if sn != "" and sn != "null":
+							if _debug_convoy_menu:
+								print("[ConvoyMenu][Debug] dest via mission_vendor_id->settlement=", sn)
+							return sn
+			if _gdm.has_method("get_vendor_by_id"):
+				var v = _gdm.get_vendor_by_id(mvid)
+				if v is Dictionary:
+					var vn_val = (v as Dictionary).get("name")
+					if vn_val != null:
+						var vn := String(vn_val)
+						if vn != "" and vn != "null":
+							if _debug_convoy_menu:
+								print("[ConvoyMenu][Debug] dest via mission_vendor_id vendor name=", vn)
+							return vn
+
+	# 2b) Do NOT use plain vendor_id fallback; it commonly refers to origin vendor.
 
 	# 0) Fallback to resolving recipient field (destination vendor/settlement)
 	var recipient_any = item.get("recipient", null)
@@ -1153,32 +1209,15 @@ func _extract_destination_from_item(item: Dictionary) -> String:
 			print("[ConvoyMenu][Debug] dest via raw coord fields=", coord_str)
 		return coord_str
 
-	# LAST RESORT: mission_vendor_id may refer to origin vendor; use only if absolutely nothing else available
-	if item.has("mission_vendor_id"):
-		var mvid_val2 = item.get("mission_vendor_id")
-		if mvid_val2 != null:
-			var mvid2 := str(mvid_val2)
-			if mvid2 != "" and mvid2 != "null" and is_instance_valid(_gdm):
-				if _gdm.has_method("get_settlement_for_vendor"):
-					var sm2 = _gdm.get_settlement_for_vendor(mvid2)
-					if sm2 is Dictionary:
-						var smn2_val = (sm2 as Dictionary).get("name")
-						if smn2_val != null:
-							var smn2 := str(smn2_val)
-							if smn2 != "" and smn2 != "null":
-								if _debug_convoy_menu:
-									print("[ConvoyMenu][Debug] dest via mission_vendor_id (fallback)=", smn2)
-								return smn2
-				if _gdm.has_method("get_vendor_by_id"):
-					var vv2 = _gdm.get_vendor_by_id(mvid2)
-					if vv2 is Dictionary:
-						var vv2_name_val = (vv2 as Dictionary).get("name")
-						if vv2_name_val != null:
-							var vv2_name := str(vv2_name_val)
-							if vv2_name != "" and vv2_name != "null":
-								if _debug_convoy_menu:
-									print("[ConvoyMenu][Debug] dest via mission_vendor_id vendor (fallback)=", vv2_name)
-								return vv2_name
+	# 5) Last resort: current settlement name (avoid empty destination at first render)
+	if convoy_data_received != null and is_instance_valid(_gdm) and _gdm.has_method("get_settlement_name_from_coords"):
+		var sx := int(roundf(float(convoy_data_received.get("x", -9999.0))))
+		var sy := int(roundf(float(convoy_data_received.get("y", -9999.0))))
+		var cur_name := String(_gdm.get_settlement_name_from_coords(sx, sy))
+		if cur_name != "":
+			if _debug_convoy_menu:
+				print("[ConvoyMenu][Debug] dest fallback to current settlement=", cur_name)
+			return cur_name
 
 	if _debug_convoy_menu:
 		print("[ConvoyMenu][Debug] destination unresolved for item=", String(item.get("name", item.get("base_name", "?"))))
@@ -1190,9 +1229,10 @@ func _on_part_compat_ready(_payload: Dictionary) -> void:
 func _on_settlement_data_updated(_list: Array) -> void:
 	# Cache the latest all-settlements payload for local lookups
 	if _list is Array:
-		_latest_all_settlements = _list
 		if _debug_convoy_menu:
-			print("[ConvoyMenu][Debug] cached all_settlements count=", _latest_all_settlements.size())
+			print("[ConvoyMenu][Trace] settlement_data_updated count=", _list.size())
+		_latest_all_settlements = _list
+	_vendor_preview_ready = true
 	_queue_vendor_preview_update()
 
 func _on_initial_data_ready() -> void:
@@ -1202,13 +1242,39 @@ func _on_initial_data_ready() -> void:
 		if arr is Array:
 			_latest_all_settlements = arr
 			if _debug_convoy_menu:
-				print("[ConvoyMenu][Debug] initial_data_ready -> synced settlements count=", _latest_all_settlements.size())
+				print("[ConvoyMenu][Trace] initial_data_ready settlements=", _latest_all_settlements.size())
+	_vendor_preview_ready = true
 	_queue_vendor_preview_update()
 
 func _on_vendor_panel_ready(_payload: Dictionary) -> void:
 	# Vendor data updated; refresh settlement missions preview
 	if _debug_convoy_menu:
-		print("[ConvoyMenu][Debug] vendor_panel_data_ready -> refresh vendor preview")
+		var _vid := str(_payload.get("vendor_id", ""))
+		var _cid := str(_payload.get("convoy_id", ""))
+		var _coords: Dictionary = {}
+		if _payload.has("coords") and (_payload.get("coords") is Dictionary):
+			_coords = _payload.get("coords")
+		print("[ConvoyMenu][Trace] vendor_panel_data_ready vendor=", _vid, " convoy=", _cid, " coords=", _coords)
+		var v_m_arr: Array = []
+		if _payload.has("vendor_mission_items"):
+			var _vmi: Variant = _payload.get("vendor_mission_items")
+			if _vmi is Array:
+				v_m_arr = _vmi
+			elif _vmi is Dictionary:
+				# Fallback: if provided as a Dictionary, iterate values
+				for _k in _vmi.keys():
+					var _entry = _vmi.get(_k)
+					if _entry is Dictionary:
+						v_m_arr.append(_entry)
+		var _snap := 0
+		if v_m_arr.is_empty():
+			print("[ConvoyMenu][Snap][Vendor] none (0 vendor mission items)")
+		else:
+			for it in v_m_arr:
+				if it is Dictionary and _snap < 3:
+					print("[ConvoyMenu][Snap][Vendor] item=", str(it.get("name", it.get("base_name", "?"))), " mission_vendor_id=", str(it.get("mission_vendor_id", "")), " recipient_settlement_name=", str(it.get("recipient_settlement_name", "")), " recipient=", it.get("recipient", null), " destination=", it.get("destination", null))
+					_snap += 1
+	_vendor_preview_ready = true
 	_queue_vendor_preview_update()
 
 func _on_vendor_tab_pressed(tab_index: VendorTab) -> void:
