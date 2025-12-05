@@ -1338,6 +1338,12 @@ func _get_color_for_percentage(percentage: float) -> Color:
 	else:
 		return COLOR_RED
 
+func _get_color_for_capacity(percentage: float) -> Color:
+	if percentage > 0.8:
+		return COLOR_YELLOW
+	else:
+		return COLOR_GREEN
+
 func _set_resource_box_style(panel_node: Panel, label_node: Label, current_value: float, max_value: float):
 	if not is_instance_valid(panel_node) or not is_instance_valid(label_node):
 		return
@@ -1381,7 +1387,7 @@ func _set_progressbar_style(progressbar_node: ProgressBar, current_value: float,
 		progressbar_node.value = 0.0
 
 	var fill_style_box = StyleBoxFlat.new()
-	fill_style_box.bg_color = _get_color_for_percentage(percentage)
+	fill_style_box.bg_color = _get_color_for_capacity(percentage)
 	progressbar_node.add_theme_stylebox_override("fill", fill_style_box)
 
 func _update_font_sizes() -> void:
