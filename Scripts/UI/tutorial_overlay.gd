@@ -203,19 +203,9 @@ func highlight_node(node: Node, rect: Rect2) -> void:
 	# This avoids all layout-related bugs where the node's position would reset.
 	if node is Control:
 		_managed_node = node as Control
-		# --- START FIX for UI Race Condition ---
-		# DISABLED: Connecting to the `resized` signal of a UI panel that resizes itself
-		# in response to interaction (like selecting an item) creates a race condition.
-		# The resize triggers an overlay update, which can steal focus and deselect the item.
-		# For static UI panels in tutorials, we accept that the highlight may become
-		# slightly inaccurate if the panel resizes, in favor of not breaking input.
-		#
-		# if _managed_node and _managed_node.has_signal("resized") and not _managed_node.is_connected("resized", Callable(self, "_on_managed_node_resized")):
-		# 	_managed_node.resized.connect(_on_managed_node_resized)
-		#
-		# For static UI panels, both `_process` and the `resized` signal are too aggressive.
-		# We set the highlight once and disable all reactive updates.
-		# --- END FIX ---
+		# Proactively track the node via rect-change signals for tighter sync.
+		_connect_managed_node_signals()
+		# We don't need per-frame tracking if we have signal-driven updates.
 		set_process(false)
 	else:
 		# For non-Control nodes (like sprites), they might move every frame.
@@ -274,6 +264,7 @@ func clear_highlight() -> void:
 		self.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	else:
 		self.mouse_filter = Control.MOUSE_FILTER_STOP
+	_disconnect_managed_node_signals()
 	_reset_managed_node()
 	queue_redraw()
 	_layout_blockers()
@@ -282,6 +273,9 @@ func clear_highlight() -> void:
 
 func _on_managed_node_resized() -> void:
 	# Re-sync the highlight rect on target node resize
+	_update_highlight_from_managed_node()
+
+func _on_managed_node_item_rect_changed() -> void:
 	_update_highlight_from_managed_node()
 
 func _process(_delta: float) -> void:
@@ -312,6 +306,26 @@ func _update_highlight_from_managed_node() -> void:
 		call_deferred("queue_redraw")
 		call_deferred("_layout_blockers")
 		print("[TutorialOverlay][LOG] Deferred redraw and layout.")
+
+func _connect_managed_node_signals() -> void:
+	if not is_instance_valid(_managed_node):
+		return
+	var ci := _managed_node as CanvasItem
+	if ci and not ci.is_connected("item_rect_changed", Callable(self, "_on_managed_node_item_rect_changed")):
+		ci.item_rect_changed.connect(Callable(self, "_on_managed_node_item_rect_changed"))
+	var ctrl := _managed_node as Control
+	if ctrl and not ctrl.is_connected("resized", Callable(self, "_on_managed_node_resized")):
+		ctrl.resized.connect(Callable(self, "_on_managed_node_resized"))
+
+func _disconnect_managed_node_signals() -> void:
+	if not is_instance_valid(_managed_node):
+		return
+	var ci := _managed_node as CanvasItem
+	if ci and ci.is_connected("item_rect_changed", Callable(self, "_on_managed_node_item_rect_changed")):
+		ci.disconnect("item_rect_changed", Callable(self, "_on_managed_node_item_rect_changed"))
+	var ctrl := _managed_node as Control
+	if ctrl and ctrl.is_connected("resized", Callable(self, "_on_managed_node_resized")):
+		ctrl.disconnect("resized", Callable(self, "_on_managed_node_resized"))
 
 # Configure input gating behavior:
 # - GatingMode.NONE: no input blocking by the overlay (except panel itself)

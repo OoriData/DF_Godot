@@ -66,7 +66,7 @@ func resolve(target: Dictionary) -> Dictionary:
 			_print_resolve_result(kind, r)
 			return r
 		"journey_confirm_button":
-			var r = _resolve_journey_confirm_button(target)
+			var r = await _resolve_journey_confirm_button(target)
 			_print_resolve_result(kind, r)
 			return r
 		"auto":
@@ -178,6 +178,20 @@ func _resolve_button_with_text(target: Dictionary) -> Dictionary:
 				if not rect_direct.has_area() or rect_direct.position.length_squared() < 1.0:
 					return { ok = false, node = btn_node, rect = rect_direct, reason = "unstable-layout-direct" }
 				return { ok = true, node = btn_node, rect = rect_direct }
+
+	# Special-case: Journey button in ConvoyMenu bottom bar
+	if token.to_lower().find("journey") != -1:
+		var convoy_menu2 := get_tree().get_root().find_child("ConvoyMenu", true, false)
+		if convoy_menu2:
+			# Path from ConvoyMenu.tscn
+			var journey_btn: Button = convoy_menu2.get_node_or_null("MainVBox/BottomBarPanel/BottomMenuButtonsHBox/JourneyMenuButton")
+			if not is_instance_valid(journey_btn):
+				journey_btn = convoy_menu2.find_child("JourneyMenuButton", true, false)
+			if is_instance_valid(journey_btn):
+				var rj := _rect_for_control(journey_btn)
+				if not rj.has_area() or rj.position.length_squared() < 1.0:
+					return { ok = false, node = journey_btn, rect = rj, reason = "unstable-journey-btn-rect" }
+				return { ok = true, node = journey_btn, rect = rj }
 	# Search common menu roots
 	var roots := [
 		get_tree().get_root().find_child("ConvoySettlementMenu", true, false),
@@ -381,17 +395,31 @@ func _resolve_journey_confirm_button(_target: Dictionary) -> Dictionary:
 	if not is_instance_valid(menu):
 		return { ok = false, node = null, rect = Rect2(), reason = "journey-menu-missing" }
 	
-	if not menu.has_method("get_confirm_button_node"):
-		return { ok = false, node = menu, rect = _rect_for_control(menu), reason = "journey-menu-missing-helper" }
-	
-	var btn: Button = menu.call("get_confirm_button_node")
+	var btn: Button = null
+	# Preferred: explicit helper exposed by ConvoyJourneyMenu script
+	if menu.has_method("get_confirm_button_node"):
+		btn = menu.call("get_confirm_button_node")
+		if is_instance_valid(btn):
+			print("[TutorialResolver] Confirm helper returned node:", (btn as Node).get_path())
+	# Fallback: search for a Button with exact text "Confirm Journey"
+	if not is_instance_valid(btn):
+		var found := _find_button_with_text(menu, "Confirm Journey")
+		if is_instance_valid(found):
+			btn = found
+			print("[TutorialResolver] Confirm button found by text search. Path:", (btn as Node).get_path())
 	if not is_instance_valid(btn):
 		return { ok = false, node = menu, rect = _rect_for_control(menu), reason = "journey-confirm-button-not-found" }
-	
+
 	var rect := _rect_for_control(btn)
+	print("[TutorialResolver] Confirm button rect before settle:", rect)
+	if not rect.has_area() or rect.position.length_squared() < 1.0:
+		# Give layout one frame to settle, then retry once
+		await get_tree().process_frame
+		rect = _rect_for_control(btn)
+		print("[TutorialResolver] Confirm button rect after settle:", rect)
 	if not rect.has_area():
 		return { ok = false, node = btn, rect = rect, reason = "unstable-layout" }
-	
+
 	return { ok = true, node = btn, rect = rect }
 
 # New: resolve first mission destination (button text starts with '[') or fallback to first destination button.
@@ -404,20 +432,26 @@ func _resolve_journey_top_mission_destination(_target: Dictionary) -> Dictionary
 	if not is_instance_valid(content_vbox):
 		return { ok = false, node = menu, rect = _rect_for_control(menu), reason = "journey-menu-content-missing" }
 
+	# Pick the first VISIBLE mission destination button (text starts with '['cargo']').
+	# Fallback to the first VISIBLE destination button (excluding "Back").
 	var mission_btn: Button = null
-	var first_btn: Button = null
+	var first_visible_btn: Button = null
 	for child in content_vbox.get_children():
 		if child is Button:
 			var b := child as Button
 			if b.text == "Back":
 				continue
-			if first_btn == null:
-				first_btn = b
-			if b.text.begins_with("[") and b.text.find("]") != -1:
+			# Ignore hidden or not yet laid out buttons
+			if not b.is_visible_in_tree():
+				continue
+			if first_visible_btn == null:
+				first_visible_btn = b
+			var txt := String(b.text)
+			if txt.begins_with("[") and txt.find("]") != -1:
 				mission_btn = b
 				break
 
-	var chosen := mission_btn if mission_btn != null else first_btn
+	var chosen := mission_btn if mission_btn != null else first_visible_btn
 	if chosen == null:
 		return { ok = false, node = content_vbox, rect = _rect_for_control(content_vbox), reason = "no-destination-buttons" }
 

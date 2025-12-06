@@ -80,6 +80,13 @@ func _ready() -> void:
 	# Resolver instance (using class_name)
 	_resolver = TutorialTargetResolver.new()
 	add_child(_resolver)
+
+	# Re-resolve highlight on viewport resize (screen size/aspect changes).
+	# Use a small debounce to avoid thrashing during animated layout changes.
+	var vp := get_viewport()
+	if is_instance_valid(vp) and not vp.is_connected("size_changed", Callable(self, "_on_viewport_size_changed")):
+		vp.size_changed.connect(Callable(self, "_on_viewport_size_changed"))
+
 	# Load persisted progress if any
 	_load_progress()
 	# Do not create overlay yet; only when the tutorial actually starts
@@ -629,8 +636,23 @@ func _watch_for_journey_confirm() -> void:
 		printerr("[Tutorial] GDM not valid, cannot watch for journey confirm.")
 		return
 
+	# Listen for backend confirmation (journey started)
 	if not _gdm.is_connected("convoy_data_updated", Callable(self, "_on_journey_confirmed")):
 		_gdm.convoy_data_updated.connect(Callable(self, "_on_journey_confirmed"))
+
+	# Also listen for the journey preview starting, which is when the confirm button appears.
+	var journey_menu := _get_journey_menu()
+	if is_instance_valid(journey_menu) and journey_menu.has_signal("route_preview_started"):
+		if not journey_menu.is_connected("route_preview_started", Callable(self, "_on_route_preview_started")):
+			journey_menu.route_preview_started.connect(Callable(self, "_on_route_preview_started"))
+
+func _on_route_preview_started(_route_data: Dictionary) -> void:
+	# Re-resolve now that the confirmation panel and button exist.
+	if _step >= 0 and _step < _steps.size() and _steps[_step].get("action") == "await_journey_confirm":
+		var step: Dictionary = _steps[_step]
+		# Defer one frame to allow layout to settle before resolving the button rect.
+		await get_tree().process_frame
+		_resolve_and_highlight(step)
 
 func _on_journey_confirmed(all_convoys: Array) -> void:
 	if _step < 0 or _step >= _steps.size() or _steps[_step].get("action") != "await_journey_confirm":
@@ -1134,6 +1156,7 @@ func _hint_buy_button() -> void:
 # --- Target resolution & highlight helpers ---
 var _highlight_timer: SceneTreeTimer = null
 var _active_highlight_step: Dictionary = {}
+var _resize_debounce_timer: SceneTreeTimer = null
 
 func _apply_lock(step: Dictionary) -> void:
 	var lock := String(step.get("lock", "soft"))
@@ -1218,7 +1241,32 @@ func _on_highlight_retry() -> void:
 			_gate_map(GATING_SOFT)
 		# Try again soon in case UI just rebuilt (faster retry to beat layout races)
 		_highlight_timer = get_tree().create_timer(0.3, false)
-		_highlight_timer.timeout.connect(_on_highlight_retry)
+
+func _on_viewport_size_changed() -> void:
+	# Debounce rapid size changes and re-resolve the current highlight target.
+	if not _started:
+		return
+	if _resize_debounce_timer != null:
+		return
+	_resize_debounce_timer = get_tree().create_timer(0.15, false)
+	_resize_debounce_timer.timeout.connect(func():
+		_resize_debounce_timer = null
+		# Prefer re-resolving the active highlight step (may be a corrected copy).
+		var step_to_resolve: Dictionary = {}
+		if not _active_highlight_step.is_empty():
+			step_to_resolve = _active_highlight_step
+		elif _step >= 0 and _step < _steps.size():
+			step_to_resolve = _steps[_step]
+		if step_to_resolve.is_empty():
+			return
+		# Only re-resolve if the step has a target; messages do not need updates.
+		var target: Dictionary = step_to_resolve.get("target", {})
+		if target is Dictionary and not target.is_empty():
+			# Call resolve and update overlay rect. If resolution fails, the existing retry
+			# mechanism will take over and attempt again shortly.
+			_resolve_and_highlight(step_to_resolve)
+	)
+
 
 # Scope switching: reparent overlay to cover Map (default) or full UI
 func _maybe_switch_overlay_scope_for_rect(rect: Rect2) -> void:

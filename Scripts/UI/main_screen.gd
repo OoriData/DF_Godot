@@ -346,6 +346,8 @@ func _slide_menu_open(convoy_data: Dictionary):
 	menu_container.visible = true
 	menu_container.offset_right = 0
 	menu_container.offset_left = 0 # zero width
+	# Fade in contents synced to slide to avoid early appearance
+	menu_container.modulate.a = 0.0
 	_dbg_menu("slide_open_start", {"menu_target_w": _menu_target_width, "convoy_empty": convoy_data.is_empty(), "cam_pos_pre": (map_camera_controller.camera_node.position if (is_instance_valid(map_camera_controller) and map_camera_controller.has_method("camera_node")) else "<none>")})
 
 	# Acquire convoy data if missing (ensure deterministic centering on selected convoy).
@@ -367,13 +369,15 @@ func _slide_menu_open(convoy_data: Dictionary):
 	# Animate menu width (offset_left negative width).
 	_menu_anim_tween = create_tween()
 	_menu_anim_tween.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
-	_menu_anim_tween.tween_property(menu_container, "offset_left", -_menu_target_width, MENU_ANIM_DURATION)
+	_menu_anim_tween.parallel().tween_property(menu_container, "offset_left", -_menu_target_width, MENU_ANIM_DURATION)
+	_menu_anim_tween.parallel().tween_property(menu_container, "modulate:a", 1.0, MENU_ANIM_DURATION)
 	# Occlusion already set to final; no need to animate it for camera logic.
 	_menu_anim_tween.finished.connect(func():
 		_dbg_menu("slide_open_finished", {"final_offset_left": menu_container.offset_left})
 		# Ensure final width exact
 		menu_container.offset_left = -_menu_target_width
 		# (Camera occlusion already correct)
+		menu_container.modulate.a = 1.0
 		_menu_anim_in_progress = false
 	)
 
@@ -391,11 +395,13 @@ func _slide_menu_close(convoy_data: Dictionary):
 	_close_anim_start_width = start_w
 	_menu_anim_tween = create_tween()
 	_menu_anim_tween.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
-	_menu_anim_tween.tween_method(Callable(self, "_close_anim_step"), 0.0, 1.0, MENU_ANIM_DURATION)
+	_menu_anim_tween.parallel().tween_method(Callable(self, "_close_anim_step"), 0.0, 1.0, MENU_ANIM_DURATION)
+	_menu_anim_tween.parallel().tween_property(menu_container, "modulate:a", 0.0, MENU_ANIM_DURATION)
 	_menu_anim_tween.finished.connect(func():
 		_dbg_menu("slide_close_finished", {"final_offset_left": menu_container.offset_left})
 		menu_container.visible = false
 		menu_container.offset_left = 0.0
+		menu_container.modulate.a = 1.0
 		_current_menu_occlusion_px = 0.0
 		_update_camera_occlusion_from_menu()
 		_menu_anim_in_progress = false
