@@ -216,7 +216,7 @@ func _build_level_steps(level: int) -> Array:
 				},
 				{
 					id = "l1_open_settlement",
-					copy = "Click the Settlement button to view available vendors.",
+					copy = "This is your covnoy menu,  but first things first lets get you a vehicle. \n\nClick the Settlement button to view available vendors.",
 					action = "await_settlement_menu",
 					target = { resolver = "button_with_text", text_contains = "Settlement" },
 					lock = "soft"
@@ -230,13 +230,14 @@ func _build_level_steps(level: int) -> Array:
 				},
 				{
 					id = "l1_buy_vehicle",
-					copy = "Choose one of the available vehicles from the list, then press 'Buy' to purchase it.",
+					copy = "In the Dealership you can scout different vehicles the vendor has in stock. \n\nSome may be more expensive but can carry more,  allowing for a larger profit margin.  Select one press Buy to purchase.",
 					action = "await_vehicle_purchase",
 					# By targeting the whole panel, we create a highlight "hole" for the entire trade UI.
 					# The user can now click on items in the list and the buy button.
 					target = { resolver = "vendor_trade_panel" },
 					lock = "soft"
 				},
+
 			]
 		2: # Resources
 			return [
@@ -297,14 +298,14 @@ func _build_level_steps(level: int) -> Array:
 				},
 				{
 					id = "l5_pick_destination",
-					copy = "Select the mission destination from the top of the list.",
+					copy = "Here are all available destinations.  Mission destinations are always at the top. \n\n Select the mission destination to proceed.",
 					action = "await_destination_pick",
 					target = { resolver = "journey_top_mission_destination" },
 					lock = "soft"
 				},
 				{
 					id = "l5_embark",
-					copy = "Click embark to send your convoy on its first delivery!",
+					copy = "This screen shows different Resource and journey information. \n\n Click Confirm Journey to embark on your first delivery!",
 					action = "await_journey_confirm",
 					target = { resolver = "journey_confirm_button" },
 					lock = "soft"
