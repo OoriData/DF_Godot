@@ -6,6 +6,7 @@ extends Node
 const ERROR_MAP: Dictionary = {
 	# --- Specific Transaction/Action Failures ---
 	"not found in the vendor's inventory": "This item is no longer available. The vendor's list has been updated.",
+	"not found in inventory of convoy": "The item you're trying to sell is no longer in your inventory. Your cargo list has been updated.",
 	"Item no longer sold by vendor": "This item is no longer sold here. The vendor's list has been updated.",
 	"Not enough space in convoy": "There is not enough space in your convoy for this purchase.",
 	"Not enough weight capacity in convoy": "There is not enough weight capacity in your convoy for this purchase.",
@@ -62,6 +63,7 @@ const INLINE_ERROR_KEYS: Array[String] = [
 	"Item no longer sold by vendor",
 	"Vendor does not have enough stock",
 	"not found in the vendor's inventory",
+	"not found in inventory of convoy",
 ]
 
 func is_inline_error(raw_message: String) -> bool:

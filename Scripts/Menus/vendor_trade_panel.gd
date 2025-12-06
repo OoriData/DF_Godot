@@ -63,6 +63,16 @@ var _convoy_total_weight: float = 0.0
 var _convoy_used_volume: float = 0.0
 var _convoy_total_volume: float = 0.0
 
+# Pending optimistic transaction context (for revert on error)
+var _pending_tx: Dictionary = {
+	"mode": "",
+	"item": {},
+	"quantity": 0,
+	"money_delta": 0.0,
+	"weight_delta": 0.0,
+	"volume_delta": 0.0
+}
+
 func _ready() -> void:
 	# Connect signals from UI elements
 	vendor_item_tree.item_selected.connect(_on_vendor_item_selected)
@@ -1083,27 +1093,68 @@ func _on_max_button_pressed() -> void:
 		quantity_spinbox.value = max_quantity
 
 func _on_action_button_pressed() -> void:
+	if _transaction_in_progress:
+		return
 	if not selected_item:
 		return
 	var quantity = int(quantity_spinbox.value)
 	if quantity <= 0:
 		return
 
-	_transaction_in_progress = true
-	action_button.disabled = true # Prevent double-clicks
 	var item_data_source = selected_item.get("item_data")
 	if not item_data_source:
 		return
+
 	var vendor_id = vendor_data.get("vendor_id", "")
 	var convoy_id = convoy_data.get("convoy_id", "")
+	if vendor_id == "" or convoy_id == "":
+		_on_api_transaction_error("Missing vendor/convoy context")
+		return
 
+	# Compute deltas for optimistic projection
+	var is_vehicle: bool = _is_vehicle_item(item_data_source)
+	var unit_price: float = _get_vehicle_price(item_data_source) if is_vehicle else _get_contextual_unit_price(item_data_source)
+	var total_price: float = unit_price * float(quantity)
+	var unit_weight := 0.0
+	if item_data_source.has("unit_weight"):
+		unit_weight = float(item_data_source.get("unit_weight", 0.0))
+	elif item_data_source.has("weight") and item_data_source.has("quantity") and float(item_data_source.get("quantity", 0.0)) > 0.0:
+		unit_weight = float(item_data_source.get("weight", 0.0)) / float(item_data_source.get("quantity", 1.0))
+	var unit_volume := 0.0
+	if item_data_source.has("unit_volume"):
+		unit_volume = float(item_data_source.get("unit_volume", 0.0))
+	elif item_data_source.has("volume") and item_data_source.has("quantity") and float(item_data_source.get("quantity", 0.0)) > 0.0:
+		unit_volume = float(item_data_source.get("volume", 0.0)) / float(item_data_source.get("quantity", 1.0))
+	var w_delta: float = unit_weight * float(quantity)
+	var v_delta: float = unit_volume * float(quantity)
+
+	_pending_tx.mode = current_mode
+	_pending_tx.item = item_data_source.duplicate(true)
+	_pending_tx.quantity = quantity
+	_pending_tx.money_delta = -total_price if current_mode == "buy" else total_price
+	_pending_tx.weight_delta = w_delta if current_mode == "buy" else -w_delta
+	_pending_tx.volume_delta = v_delta if current_mode == "buy" else -v_delta
+
+	# Apply optimistic UI changes
+	_transaction_in_progress = true
+	if is_instance_valid(action_button):
+		action_button.disabled = true
+	if is_instance_valid(max_button):
+		max_button.disabled = true
+	if is_instance_valid(loading_panel):
+		loading_panel.visible = true
+	# Money projection (if label visible)
+	if is_instance_valid(convoy_money_label) and convoy_money_label.visible and convoy_data.has("money"):
+		var projected_money: float = float(convoy_data.get("money", 0.0)) + _pending_tx.money_delta
+		convoy_money_label.text = _format_money(projected_money)
+	# Capacity bars projection
+	_refresh_capacity_bars(_pending_tx.volume_delta, _pending_tx.weight_delta)
+
+	# Dispatch API via GDM wrappers
 	if current_mode == "buy":
 		gdm.buy_item(convoy_id, vendor_id, item_data_source, quantity)
-		# Emit local signal for UI listeners
-		var unit_price: float = _get_vehicle_price(item_data_source) if item_data_source.has("vehicle_id") else _get_contextual_unit_price(item_data_source)
-		emit_signal("item_purchased", item_data_source, quantity, unit_price * quantity)
+		emit_signal("item_purchased", item_data_source, quantity, total_price)
 	else:
-		# SELL: Support selling across multiple underlying cargo stacks in the aggregated selection.
 		var remaining = quantity
 		if selected_item.has("items") and selected_item.items is Array and not selected_item.items.is_empty():
 			for cargo_item in selected_item.items:
@@ -1116,10 +1167,8 @@ func _on_action_button_pressed() -> void:
 				gdm.sell_item(convoy_id, vendor_id, cargo_item, to_sell)
 				remaining -= to_sell
 		else:
-			# Fallback: original single-item sale
 			gdm.sell_item(convoy_id, vendor_id, item_data_source, quantity)
-		# Emit local signal for UI listeners
-		var sell_unit_price = _get_contextual_unit_price(item_data_source) / 2.0
+		var sell_unit_price = unit_price / 2.0
 		emit_signal("item_sold", item_data_source, quantity, sell_unit_price * quantity)
 
 func _on_quantity_changed(_value: float) -> void:
@@ -1646,34 +1695,46 @@ func _get_contextual_unit_price(item_data_source: Dictionary) -> float:
 
 func _on_api_transaction_result(result: Dictionary) -> void:
 	print("DEBUG: _on_api_transaction_result called with result: ", result)
-	# This handler is now mostly deprecated. The panel's refresh logic is now driven by
-	# signals from the GameDataManager (`convoy_data_updated`) to ensure a more
-	# orderly update flow and prevent UI flicker from multiple concurrent refresh requests.
-	# The GDM's own handlers for transaction signals (e.g., `_on_convoy_transaction`)
-	# are responsible for updating the core data models.
-	pass
+	# Confirm path: request authoritative vendor panel data; leave loading on until it arrives.
+	var gdm_local = get_node_or_null("/root/GameDataManager")
+	if is_instance_valid(gdm_local) and vendor_data and convoy_data:
+		var cid := String(convoy_data.get("convoy_id", ""))
+		var vid := String(vendor_data.get("vendor_id", ""))
+		if cid != "" and vid != "":
+			gdm_local.request_vendor_panel_data(cid, vid)
 
 func _on_api_transaction_error(error_message: String) -> void:
 	# This panel is only interested in errors that happen while it's visible.
 	if not is_visible_in_tree():
 		return
 
-	# Any transaction error should reset the in-progress flag and re-enable the button.
+	# Revert optimistic projections
+	if _transaction_in_progress:
+		# Money revert (if label visible)
+		if is_instance_valid(convoy_money_label) and convoy_money_label.visible and convoy_data.has("money"):
+			convoy_money_label.text = _format_money(float(convoy_data.get("money", 0.0)))
+		# Capacity bars revert
+		_refresh_capacity_bars(-_pending_tx.volume_delta, -_pending_tx.weight_delta)
+
 	_transaction_in_progress = false
 	if is_instance_valid(action_button):
 		action_button.disabled = false
+	if is_instance_valid(max_button):
+		max_button.disabled = false
+	if is_instance_valid(loading_panel):
+		loading_panel.visible = false
 
-	# Check if this is a special "stale inventory" error that we should handle locally.
-	if ErrorTranslator.is_inline_error(error_message):
-		printerr("VendorTradePanel: Handling inline API error: ", error_message)
-		
-		# Show a toast notification instead of a jarring popup.
-		var toast_msg = ErrorTranslator.translate(error_message)
-		toast_notification.show_message(toast_msg)
-		
-		# Show loading indicator and refresh the vendor data to get the latest inventory.
-		loading_panel.visible = true
-		gdm.request_vendor_data_refresh(self.vendor_data.get("vendor_id"))
+	# Show toast if available
+	var friendly_message := ErrorTranslator.translate(error_message)
+	if not friendly_message.is_empty() and is_instance_valid(toast_notification) and toast_notification.has_method("show_message"):
+		toast_notification.call("show_message", friendly_message)
+
+	# Refresh authoritative data
+	if is_instance_valid(gdm) and vendor_data and convoy_data:
+		var cid := String(convoy_data.get("convoy_id", ""))
+		var vid := String(vendor_data.get("vendor_id", ""))
+		if cid != "" and vid != "":
+			gdm.request_vendor_panel_data(cid, vid)
 
 # Updates the comparison panel (stub, fill in as needed)
 func _update_comparison() -> void:
