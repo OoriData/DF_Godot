@@ -22,6 +22,7 @@ signal install_requested(item, quantity, vendor_id)
 @onready var selected_item_stats: RichTextLabel = %SelectedItemStats
 @onready var equipped_item_stats: RichTextLabel = %EquippedItemStats
 @onready var quantity_spinbox: SpinBox = %QuantitySpinBox
+@onready var delivery_reward_label: RichTextLabel = %DeliveryRewardLabel
 @onready var price_label: RichTextLabel = %PriceLabel
 @onready var convoy_volume_bar: ProgressBar = %ConvoyVolumeBar
 @onready var convoy_weight_bar: ProgressBar = %ConvoyWeightBar
@@ -1265,6 +1266,10 @@ func _update_inspector() -> void:
 			unit_volume = _total_volume_calc / _total_quantity_float_v
 	if unit_volume > 0: bbcode += "    - Volume: %s\n" % str(unit_volume)
 
+	var unit_delivery_reward_val = item_data_source.get("unit_delivery_reward")
+	if (unit_delivery_reward_val is float or unit_delivery_reward_val is int) and float(unit_delivery_reward_val) > 0.0:
+		bbcode += "    - Delivery Reward: $%s\n" % ("%.2f" % float(unit_delivery_reward_val))
+
 	bbcode += "\n  [u]Total Order:[/u]\n"
 	var total_quantity = selected_item.get("total_quantity", 0)
 	if total_quantity > 0: bbcode += "    - Quantity: %d\n" % total_quantity
@@ -1278,10 +1283,6 @@ func _update_inspector() -> void:
 	if total_water > 0: bbcode += "    - Water: %s\n" % str(total_water)
 	var total_fuel = selected_item.get("total_fuel", 0.0)
 	if total_fuel > 0: bbcode += "    - Fuel: %s\n" % str(total_fuel)
-
-	var delivery_reward_val = item_data_source.get("delivery_reward")
-	if (delivery_reward_val is float or delivery_reward_val is int) and delivery_reward_val > 0:
-		bbcode += "    - Delivery Reward: $%s\n" % str(delivery_reward_val)
 
 	if item_data_source.has("stats") and item_data_source.stats is Dictionary and not item_data_source.stats.is_empty():
 		bbcode += "\n"
@@ -1430,6 +1431,8 @@ func _update_transaction_panel() -> void:
 	if not selected_item:
 		print("[VendorTradePanel][LOG]   -> No item selected, setting price to $0.")
 		price_label.text = "Total Price: $0" # FIX: Ensure dollar sign is present
+		if is_instance_valid(delivery_reward_label):
+			delivery_reward_label.visible = false
 		# Reset capacity bars to current convoy usage
 		_refresh_capacity_bars(0.0, 0.0)
 		return
@@ -1453,6 +1456,18 @@ func _update_transaction_panel() -> void:
 		unit_price /= 2.0 # This is line 335
 
 	var total_price = unit_price * quantity
+
+	var total_delivery_reward = 0.0
+	var unit_delivery_reward = 0.0
+	if item_data_source.has("unit_delivery_reward"):
+		var udr_val = item_data_source.get("unit_delivery_reward")
+		if udr_val is float or udr_val is int:
+			unit_delivery_reward = float(udr_val)
+			total_delivery_reward = unit_delivery_reward * float(quantity)
+	if is_instance_valid(delivery_reward_label):
+		delivery_reward_label.visible = total_delivery_reward > 0.0
+		if total_delivery_reward > 0.0:
+			delivery_reward_label.text = "[b]Total Delivery Reward:[/b] $%s" % ("%.2f" % total_delivery_reward)
 
 	var bbcode_text = ""
 	if is_vehicle:

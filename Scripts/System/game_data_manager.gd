@@ -1889,10 +1889,7 @@ func _aggregate_vendor_items(vendor_data: Dictionary) -> Dictionary:
 		var category = "other"
 		var mission_dest_name := ""
 		# Mission identification: require a delivery_reward (positive number). Recipient remains a secondary hint.
-		var has_reward := false
-		if item.has("delivery_reward"):
-			var dr = item.get("delivery_reward")
-			has_reward = _is_positive_number(dr)
+		var has_reward := _is_positive_number(item.get("delivery_reward")) or _is_positive_number(item.get("unit_delivery_reward"))
 		var is_mission := has_reward or (item.get("recipient") != null)
 		# Guard against null values in resource fields (API may send null instead of 0)
 		var is_resource: bool = (
@@ -1973,7 +1970,8 @@ func _aggregate_convoy_items(convoy_data: Dictionary, vendor_data: Dictionary) -
 					continue
 				var category = "other"
 				var mission_dest_name := ""
-				if item.get("recipient") != null or item.get("delivery_reward") != null:
+				var is_mission_item := (item.get("recipient") != null or _is_positive_number(item.get("delivery_reward")) or _is_positive_number(item.get("unit_delivery_reward")))
+				if is_mission_item:
 					category = "missions"
 					var recipient_vendor_id = item.get("recipient")
 					if recipient_vendor_id and recipient_vendor_id is String and not recipient_vendor_id.is_empty():
@@ -1993,7 +1991,8 @@ func _aggregate_convoy_items(convoy_data: Dictionary, vendor_data: Dictionary) -
 		for item in convoy_data.cargo_inventory:
 			var category = "other"
 			var mission_dest_name := ""
-			if item.get("recipient") != null or item.get("delivery_reward") != null:
+			var is_mission_item_fallback := (item.get("recipient") != null or _is_positive_number(item.get("delivery_reward")) or _is_positive_number(item.get("unit_delivery_reward")))
+			if is_mission_item_fallback:
 				category = "missions"
 				var recipient_vendor_id = item.get("recipient")
 				if recipient_vendor_id and recipient_vendor_id is String and not recipient_vendor_id.is_empty():
