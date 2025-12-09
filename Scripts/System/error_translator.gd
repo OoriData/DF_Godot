@@ -44,6 +44,8 @@ const ERROR_MAP: Dictionary = {
 	"PATCH 'vehicle_sold' failed:": "Could not sell vehicle: ",
 	"PATCH 'resource_bought' failed:": "Could not buy resource: ",
 	"PATCH 'resource_sold' failed:": "Could not sell resource: ",
+	# Warehouses (DF+ required) — show server-provided detail
+	"PATCH 'warehouse_created' failed:": "Warehouse purchase unavailable: Support the developers and upgrade to DF+",
 
 	# --- Network/Parsing Errors ---
 	"Failed to parse": "Received an unexpected response from the server. Please try again.",

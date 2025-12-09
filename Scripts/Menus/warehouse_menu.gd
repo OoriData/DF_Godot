@@ -432,9 +432,27 @@ func _on_api_error(msg: String) -> void:
 		return
 	if is_instance_valid(buy_button):
 		buy_button.disabled = false
-	# Keep message concise
-	if is_instance_valid(info_label):
-		info_label.text = str(msg)
+	# Route error to modal using ErrorTranslator; avoid printing raw into menu
+	_show_error_modal(msg)
+
+func _show_error_modal(raw_msg: String) -> void:
+	# Translate via ErrorTranslator and display with ErrorDialog.
+	var translated := raw_msg
+	var et_script := preload("res://Scripts/System/error_translator.gd")
+	if et_script:
+		var et := et_script.new()
+		if et and et.has_method("translate"):
+			translated = et.translate(raw_msg)
+	# If translator returns empty (ignored), do nothing.
+	if translated == "":
+		return
+	# Show modal dialog.
+	var dlg_scene := load("res://Scenes/ErrorDialog.tscn")
+	if dlg_scene:
+		var dlg: AcceptDialog = dlg_scene.instantiate()
+		add_child(dlg)
+		if dlg and dlg.has_method("show_message"):
+			dlg.show_message(translated)
 
 func _on_api_warehouse_action(_result: Variant) -> void:
 	# After any action, reload warehouse even if we currently have no local _warehouse data.
