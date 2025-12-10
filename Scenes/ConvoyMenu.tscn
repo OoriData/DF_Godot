@@ -25,7 +25,7 @@ anchor_right = 1.0
 anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
-color = Color(0, 0, 0, 0.733333)
+color = Color(0, 0, 0, 0.65)
 
 [node name="MainVBox" type="VBoxContainer" parent="."]
 layout_mode = 1
@@ -73,10 +73,19 @@ theme_override_constants/separation = 6
 [node name="ResourceStatsHBox" type="HBoxContainer" parent="MainVBox/ScrollContainer/ContentVBox"]
 layout_mode = 2
 
-[node name="WaterBox" type="Panel" parent="MainVBox/ScrollContainer/ContentVBox/ResourceStatsHBox"]
+[node name="WaterBox" type="Control" parent="MainVBox/ScrollContainer/ContentVBox/ResourceStatsHBox"]
 custom_minimum_size = Vector2(0, 35)
 layout_mode = 2
 size_flags_horizontal = 3
+
+[node name="WaterBar" type="ProgressBar" parent="MainVBox/ScrollContainer/ContentVBox/ResourceStatsHBox/WaterBox"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+show_percentage = false
 
 [node name="WaterTextLabel" type="Label" parent="MainVBox/ScrollContainer/ContentVBox/ResourceStatsHBox/WaterBox"]
 layout_mode = 1
@@ -89,10 +98,19 @@ text = "Water: 0 / 0"
 horizontal_alignment = 1
 vertical_alignment = 1
 
-[node name="FoodBox" type="Panel" parent="MainVBox/ScrollContainer/ContentVBox/ResourceStatsHBox"]
+[node name="FoodBox" type="Control" parent="MainVBox/ScrollContainer/ContentVBox/ResourceStatsHBox"]
 custom_minimum_size = Vector2(0, 35)
 layout_mode = 2
 size_flags_horizontal = 3
+
+[node name="FoodBar" type="ProgressBar" parent="MainVBox/ScrollContainer/ContentVBox/ResourceStatsHBox/FoodBox"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+show_percentage = false
 
 [node name="FoodTextLabel" type="Label" parent="MainVBox/ScrollContainer/ContentVBox/ResourceStatsHBox/FoodBox"]
 layout_mode = 1
@@ -105,10 +123,19 @@ text = "Food: 0 / 0"
 horizontal_alignment = 1
 vertical_alignment = 1
 
-[node name="FuelBox" type="Panel" parent="MainVBox/ScrollContainer/ContentVBox/ResourceStatsHBox"]
+[node name="FuelBox" type="Control" parent="MainVBox/ScrollContainer/ContentVBox/ResourceStatsHBox"]
 custom_minimum_size = Vector2(0, 35)
 layout_mode = 2
 size_flags_horizontal = 3
+
+[node name="FuelBar" type="ProgressBar" parent="MainVBox/ScrollContainer/ContentVBox/ResourceStatsHBox/FuelBox"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+show_percentage = false
 
 [node name="FuelTextLabel" type="Label" parent="MainVBox/ScrollContainer/ContentVBox/ResourceStatsHBox/FuelBox"]
 layout_mode = 1
@@ -127,7 +154,7 @@ layout_mode = 2
 [node name="PerformanceStatsHBox" type="HBoxContainer" parent="MainVBox/ScrollContainer/ContentVBox"]
 layout_mode = 2
 
-[node name="SpeedBox" type="Panel" parent="MainVBox/ScrollContainer/ContentVBox/PerformanceStatsHBox"]
+[node name="SpeedBox" type="PanelContainer" parent="MainVBox/ScrollContainer/ContentVBox/PerformanceStatsHBox"]
 custom_minimum_size = Vector2(0, 35)
 layout_mode = 2
 size_flags_horizontal = 3
@@ -140,10 +167,10 @@ anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
 text = "Top Speed: 0"
-horizontal_alignment = 1
+horizontal_alignment = 0
 vertical_alignment = 1
 
-[node name="OffroadBox" type="Panel" parent="MainVBox/ScrollContainer/ContentVBox/PerformanceStatsHBox"]
+[node name="OffroadBox" type="PanelContainer" parent="MainVBox/ScrollContainer/ContentVBox/PerformanceStatsHBox"]
 custom_minimum_size = Vector2(0, 35)
 layout_mode = 2
 size_flags_horizontal = 3
@@ -156,10 +183,10 @@ anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
 text = "Offroad: 0"
-horizontal_alignment = 1
+horizontal_alignment = 0
 vertical_alignment = 1
 
-[node name="EfficiencyBox" type="Panel" parent="MainVBox/ScrollContainer/ContentVBox/PerformanceStatsHBox"]
+[node name="EfficiencyBox" type="PanelContainer" parent="MainVBox/ScrollContainer/ContentVBox/PerformanceStatsHBox"]
 custom_minimum_size = Vector2(0, 35)
 layout_mode = 2
 size_flags_horizontal = 3
@@ -172,7 +199,7 @@ anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
 text = "Efficiency: 0"
-horizontal_alignment = 1
+horizontal_alignment = 0
 vertical_alignment = 1
 
 [node name="HSeparator3" type="HSeparator" parent="MainVBox/ScrollContainer/ContentVBox"]
@@ -200,12 +227,24 @@ text = "Cargo Weight: 0 / 0"
 custom_minimum_size = Vector2(0, 25)
 layout_mode = 2
 
+[node name="HSeparator4" type="HSeparator" parent="MainVBox/ScrollContainer/ContentVBox"]
+layout_mode = 2
+
 [node name="VendorPreviewPanel" type="PanelContainer" parent="MainVBox/ScrollContainer/ContentVBox"]
 layout_mode = 2
 
 [node name="VendorPreviewVBox" type="VBoxContainer" parent="MainVBox/ScrollContainer/ContentVBox/VendorPreviewPanel"]
 layout_mode = 2
 theme_override_constants/separation = 8
+
+[node name="PreviewTitleLabel" type="Label" parent="MainVBox/ScrollContainer/ContentVBox/VendorPreviewPanel/VendorPreviewVBox"]
+layout_mode = 2
+text = "Settlement Preview"
+horizontal_alignment = 1
+theme_override_colors/font_color = Color(0.9, 0.9, 0.9, 1)
+
+[node name="PreviewTitleSeparator" type="HSeparator" parent="MainVBox/ScrollContainer/ContentVBox/VendorPreviewPanel/VendorPreviewVBox"]
+layout_mode = 2
 
 [node name="VendorTabsHBox" type="HBoxContainer" parent="MainVBox/ScrollContainer/ContentVBox/VendorPreviewPanel/VendorPreviewVBox"]
 layout_mode = 2

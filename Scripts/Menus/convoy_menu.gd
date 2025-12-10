@@ -22,7 +22,7 @@ const COLOR_GREEN: Color = Color("66bb6a") # Material Green 400
 const COLOR_YELLOW: Color = Color("ffee58") # Material Yellow 400
 const COLOR_RED: Color = Color("ef5350")   # Material Red 400
 const COLOR_BOX_FONT: Color = Color("000000") # Black font for boxes for contrast
-const COLOR_PERFORMANCE_BOX_BG: Color = Color("666666") # Medium Gray
+const COLOR_PERFORMANCE_BOX_BG: Color = Color("404040cc") # Dark Gray, 80% opaque
 const COLOR_MENU_BUTTON_GREY_BG: Color = Color("b0b0b0") # Light-Medium Grey for menu buttons
 const COLOR_PERFORMANCE_BOX_FONT: Color = Color.WHITE   # White
 
@@ -43,18 +43,18 @@ const COLOR_JOURNEY_PROGRESS_FILL: Color = Color("29b6f6") # Material Light Blue
 @onready var title_label: Label = $MainVBox/TopBarHBox/TitleLabel
 
 # Resource/Stat Boxes (Panel and inner Label)
-@onready var fuel_box: Panel = $MainVBox/ScrollContainer/ContentVBox/ResourceStatsHBox/FuelBox
+@onready var fuel_bar: ProgressBar = $MainVBox/ScrollContainer/ContentVBox/ResourceStatsHBox/FuelBox/FuelBar
 @onready var fuel_text_label: Label = $MainVBox/ScrollContainer/ContentVBox/ResourceStatsHBox/FuelBox/FuelTextLabel
-@onready var water_box: Panel = $MainVBox/ScrollContainer/ContentVBox/ResourceStatsHBox/WaterBox
+@onready var water_bar: ProgressBar = $MainVBox/ScrollContainer/ContentVBox/ResourceStatsHBox/WaterBox/WaterBar
 @onready var water_text_label: Label = $MainVBox/ScrollContainer/ContentVBox/ResourceStatsHBox/WaterBox/WaterTextLabel
-@onready var food_box: Panel = $MainVBox/ScrollContainer/ContentVBox/ResourceStatsHBox/FoodBox
+@onready var food_bar: ProgressBar = $MainVBox/ScrollContainer/ContentVBox/ResourceStatsHBox/FoodBox/FoodBar
 @onready var food_text_label: Label = $MainVBox/ScrollContainer/ContentVBox/ResourceStatsHBox/FoodBox/FoodTextLabel
 
-@onready var speed_box: Panel = $MainVBox/ScrollContainer/ContentVBox/PerformanceStatsHBox/SpeedBox
+@onready var speed_box: PanelContainer = $MainVBox/ScrollContainer/ContentVBox/PerformanceStatsHBox/SpeedBox
 @onready var speed_text_label: Label = $MainVBox/ScrollContainer/ContentVBox/PerformanceStatsHBox/SpeedBox/SpeedTextLabel
-@onready var offroad_box: Panel = $MainVBox/ScrollContainer/ContentVBox/PerformanceStatsHBox/OffroadBox
+@onready var offroad_box: PanelContainer = $MainVBox/ScrollContainer/ContentVBox/PerformanceStatsHBox/OffroadBox
 @onready var offroad_text_label: Label = $MainVBox/ScrollContainer/ContentVBox/PerformanceStatsHBox/OffroadBox/OffroadTextLabel
-@onready var efficiency_box: Panel = $MainVBox/ScrollContainer/ContentVBox/PerformanceStatsHBox/EfficiencyBox
+@onready var efficiency_box: PanelContainer = $MainVBox/ScrollContainer/ContentVBox/PerformanceStatsHBox/EfficiencyBox
 @onready var efficiency_text_label: Label = $MainVBox/ScrollContainer/ContentVBox/PerformanceStatsHBox/EfficiencyBox/EfficiencyTextLabel
 
 # Cargo Progress Bars and Labels
@@ -71,6 +71,7 @@ const COLOR_JOURNEY_PROGRESS_FILL: Color = Color("29b6f6") # Material Light Blue
 @onready var back_button: Button = $MainVBox/TopBarHBox/BackButton
 
 # --- Vendor Preview Nodes ---
+@onready var preview_title_label: Label = $MainVBox/ScrollContainer/ContentVBox/VendorPreviewPanel/VendorPreviewVBox/PreviewTitleLabel
 @onready var convoy_missions_tab_button: Button = $MainVBox/ScrollContainer/ContentVBox/VendorPreviewPanel/VendorPreviewVBox/VendorTabsHBox/ConvoyMissionsTabButton
 @onready var settlement_missions_tab_button: Button = $MainVBox/ScrollContainer/ContentVBox/VendorPreviewPanel/VendorPreviewVBox/VendorTabsHBox/SettlementMissionsTabButton
 @onready var compatible_parts_tab_button: Button = $MainVBox/ScrollContainer/ContentVBox/VendorPreviewPanel/VendorPreviewVBox/VendorTabsHBox/CompatiblePartsTabButton
@@ -353,17 +354,17 @@ func initialize_with_data(data: Dictionary):
 		var current_fuel = convoy_data_received.get("fuel", 0.0)
 		var max_fuel = convoy_data_received.get("max_fuel", 0.0)
 		if is_instance_valid(fuel_text_label): fuel_text_label.text = "Fuel: %.1f / %.1f" % [current_fuel, max_fuel]
-		if is_instance_valid(fuel_box): _set_resource_box_style(fuel_box, fuel_text_label, current_fuel, max_fuel)
+		if is_instance_valid(fuel_bar): _set_resource_bar_style(fuel_bar, fuel_text_label, current_fuel, max_fuel)
 
 		var current_water = convoy_data_received.get("water", 0.0)
 		var max_water = convoy_data_received.get("max_water", 0.0)
 		if is_instance_valid(water_text_label): water_text_label.text = "Water: %.1f / %.1f" % [current_water, max_water]
-		if is_instance_valid(water_box): _set_resource_box_style(water_box, water_text_label, current_water, max_water)
+		if is_instance_valid(water_bar): _set_resource_bar_style(water_bar, water_text_label, current_water, max_water)
 
 		var current_food = convoy_data_received.get("food", 0.0)
 		var max_food = convoy_data_received.get("max_food", 0.0)
 		if is_instance_valid(food_text_label): food_text_label.text = "Food: %.1f / %.1f" % [current_food, max_food]
-		if is_instance_valid(food_box): _set_resource_box_style(food_box, food_text_label, current_food, max_food)
+		if is_instance_valid(food_bar): _set_resource_bar_style(food_bar, food_text_label, current_food, max_food)
 
 		# --- Performance Stats (Speed, Offroad, Efficiency) ---
 		# Assuming these are rated 0-100 for coloring, adjust max_value if different
@@ -394,6 +395,12 @@ func initialize_with_data(data: Dictionary):
 		# --- Populate Journey Details (or hide them if no journey) ---
 		var journey_data = convoy_data_received.get("journey")
 		var has_journey = journey_data != null and not journey_data.is_empty()
+
+		if is_instance_valid(preview_title_label):
+			if has_journey:
+				preview_title_label.text = "Journey Preview"
+			else:
+				preview_title_label.text = "Settlement Preview"
 
 		# Conditionally show/hide vendor tabs based on journey status
 		if is_instance_valid(journey_tab_button):
@@ -1344,33 +1351,62 @@ func _get_color_for_capacity(percentage: float) -> Color:
 	else:
 		return COLOR_GREEN
 
-func _set_resource_box_style(panel_node: Panel, label_node: Label, current_value: float, max_value: float):
-	if not is_instance_valid(panel_node) or not is_instance_valid(label_node):
+func _set_resource_bar_style(bar_node: ProgressBar, label_node: Label, current_value: float, max_value: float):
+	if not is_instance_valid(bar_node) or not is_instance_valid(label_node):
 		return
 
 	var percentage: float = 0.0
 	if max_value > 0:
 		percentage = clamp(current_value / max_value, 0.0, 1.0)
-	
-	var style_box = StyleBoxFlat.new()
-	style_box.bg_color = _get_color_for_percentage(percentage)
-	style_box.corner_radius_top_left = 3
-	style_box.corner_radius_top_right = 3
-	style_box.corner_radius_bottom_left = 3
-	style_box.corner_radius_bottom_right = 3
-	panel_node.add_theme_stylebox_override("panel", style_box)
-	label_node.add_theme_color_override("font_color", COLOR_BOX_FONT)
+		bar_node.value = percentage * 100.0
+	else:
+		bar_node.value = 0.0
 
-func _set_fixed_color_box_style(panel_node: Panel, label_node: Label, p_bg_color: Color, p_font_color: Color):
+	var fill_color := _get_color_for_percentage(percentage)
+	var fill_style := StyleBoxFlat.new()
+	fill_style.bg_color = fill_color
+	fill_style.border_width_left = 1
+	fill_style.border_width_right = 1
+	fill_style.border_width_top = 1
+	fill_style.border_width_bottom = 1
+	fill_style.border_color = fill_color.darkened(0.2)
+	bar_node.add_theme_stylebox_override("fill", fill_style)
+
+	var bg_style := StyleBoxFlat.new()
+	bg_style.bg_color = Color("2a2a2a") # Opaque dark grey
+	# Add a border to help it stand out from the menu background
+	bg_style.border_width_left = 1
+	bg_style.border_width_right = 1
+	bg_style.border_width_top = 1
+	bg_style.border_width_bottom = 1
+	bg_style.border_color = bg_style.bg_color.lightened(0.4) # Match performance box border
+	bg_style.shadow_color = Color(0, 0, 0, 0.4)
+	bg_style.shadow_size = 2
+	bg_style.shadow_offset = Vector2(0, 2)
+	bar_node.add_theme_stylebox_override("background", bg_style)
+
+	# Use a contrasting font color for the label on top of the bar and add a shadow for readability
+	label_node.add_theme_color_override("font_color", Color.WHITE)
+	label_node.add_theme_constant_override("shadow_outline_size", 1)
+	label_node.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.7))
+
+func _set_fixed_color_box_style(panel_node: PanelContainer, label_node: Label, p_bg_color: Color, p_font_color: Color):
 	if not is_instance_valid(panel_node) or not is_instance_valid(label_node):
 		return
 
 	var style_box = StyleBoxFlat.new()
 	style_box.bg_color = p_bg_color
-	style_box.corner_radius_top_left = 3
-	style_box.corner_radius_top_right = 3
-	style_box.corner_radius_bottom_left = 3
-	style_box.corner_radius_bottom_right = 3
+	style_box.content_margin_left = 8
+	style_box.content_margin_right = 8
+	# Add a border and shadow to make the panel pop
+	style_box.border_width_left = 1
+	style_box.border_width_right = 1
+	style_box.border_width_top = 1
+	style_box.border_width_bottom = 1
+	style_box.border_color = p_bg_color.lightened(0.4)
+	style_box.shadow_color = Color(0, 0, 0, 0.4)
+	style_box.shadow_size = 2
+	style_box.shadow_offset = Vector2(0, 2)
 	panel_node.add_theme_stylebox_override("panel", style_box)
 	label_node.add_theme_color_override("font_color", p_font_color)
 
@@ -1386,9 +1422,27 @@ func _set_progressbar_style(progressbar_node: ProgressBar, current_value: float,
 	else:
 		progressbar_node.value = 0.0
 
+	var fill_color := _get_color_for_capacity(percentage)
 	var fill_style_box = StyleBoxFlat.new()
-	fill_style_box.bg_color = _get_color_for_capacity(percentage)
+	fill_style_box.bg_color = fill_color
+	fill_style_box.border_width_left = 1
+	fill_style_box.border_width_right = 1
+	fill_style_box.border_width_top = 1
+	fill_style_box.border_width_bottom = 1
+	fill_style_box.border_color = fill_color.darkened(0.2)
 	progressbar_node.add_theme_stylebox_override("fill", fill_style_box)
+
+	var bg_style := StyleBoxFlat.new()
+	bg_style.bg_color = Color("2a2a2a") # Opaque dark grey
+	bg_style.border_width_left = 1
+	bg_style.border_width_right = 1
+	bg_style.border_width_top = 1
+	bg_style.border_width_bottom = 1
+	bg_style.border_color = bg_style.bg_color.lightened(0.4) # Match performance box border
+	bg_style.shadow_color = Color(0, 0, 0, 0.4)
+	bg_style.shadow_size = 2
+	bg_style.shadow_offset = Vector2(0, 2)
+	progressbar_node.add_theme_stylebox_override("background", bg_style)
 
 func _update_font_sizes() -> void:
 	if REFERENCE_MENU_HEIGHT <= 0:
@@ -1418,6 +1472,9 @@ func _update_font_sizes() -> void:
 
 	if is_instance_valid(title_label):
 		title_label.add_theme_font_size_override("font_size", new_title_font_size)
+
+	if is_instance_valid(preview_title_label):
+		preview_title_label.add_theme_font_size_override("font_size", new_font_size + 2)
 
 	# Scale fonts for dynamically created vendor item buttons
 	if is_instance_valid(vendor_item_grid):
@@ -1559,18 +1616,23 @@ func _style_journey_progress_bar(bar: ProgressBar) -> void:
 		return
 
 	var bg_style := StyleBoxFlat.new()
-	bg_style.bg_color = Color(0, 0, 0, 0.4) # Dark, semi-transparent background
-	bg_style.corner_radius_top_left = 6
-	bg_style.corner_radius_top_right = 6
-	bg_style.corner_radius_bottom_left = 6
-	bg_style.corner_radius_bottom_right = 6
+	bg_style.bg_color = Color("2a2a2a") # Opaque dark grey
+	bg_style.border_width_left = 1
+	bg_style.border_width_right = 1
+	bg_style.border_width_top = 1
+	bg_style.border_width_bottom = 1
+	bg_style.border_color = bg_style.bg_color.lightened(0.4) # Match performance box border
+	bg_style.shadow_color = Color(0, 0, 0, 0.4)
+	bg_style.shadow_size = 2
+	bg_style.shadow_offset = Vector2(0, 2)
 
 	var fill_style := StyleBoxFlat.new()
 	fill_style.bg_color = COLOR_JOURNEY_PROGRESS_FILL
-	fill_style.corner_radius_top_left = 6
-	fill_style.corner_radius_top_right = 6
-	fill_style.corner_radius_bottom_left = 6
-	fill_style.corner_radius_bottom_right = 6
+	fill_style.border_width_left = 1
+	fill_style.border_width_right = 1
+	fill_style.border_width_top = 1
+	fill_style.border_width_bottom = 1
+	fill_style.border_color = COLOR_JOURNEY_PROGRESS_FILL.darkened(0.2)
 
 	bar.add_theme_stylebox_override("background", bg_style)
 	bar.add_theme_stylebox_override("fill", fill_style)
