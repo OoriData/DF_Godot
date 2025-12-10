@@ -72,8 +72,8 @@ signal warehouse_vehicle_retrieved(result: Variant)
 @warning_ignore("unused_signal")
 signal warehouse_convoy_spawned(result: Variant)
 
-var BASE_URL: String = 'http://127.0.0.1:1337' # default
-# var BASE_URL: String = 'https://df-api.oori.dev:1337' # default
+#var BASE_URL: String = 'http://127.0.0.1:1337' # default
+var BASE_URL: String = 'https://df-api.oori.dev:1337' # default
 # Allow override via environment (cannot be const due to runtime lookup)
 func _init():
 	if OS.has_environment('DF_API_BASE_URL'):
