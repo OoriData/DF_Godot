@@ -1,4 +1,18 @@
 extends Control
+const DIAG_ENABLED := true
+var _diag_seq := 0
+func _diag(tag: String, msg: String, data: Variant = null) -> void:
+	if not DIAG_ENABLED:
+		return
+	_diag_seq += 1
+	var ts := Time.get_ticks_msec()
+	var line := "[CargoDiag] %s #%s t=%s :: %s" % [tag, _diag_seq, ts, msg]
+	if data != null:
+		if typeof(data) == TYPE_DICTIONARY or typeof(data) == TYPE_ARRAY or typeof(data) == TYPE_STRING:
+			line += " | " + str(data)
+		else:
+			line += " | (data)"
+	print(line)
 
 const ItemsData = preload("res://Scripts/Data/Items.gd")
 
@@ -16,6 +30,19 @@ var gdm: Node = null
 var _item_to_inspect_on_load = null
 
 var _organize_button: Button
+
+# Debounce UI refresh to prevent instant inspect closure
+var _suppress_refresh_until_msec: int = 0
+var _open_inspects: Dictionary = {}
+
+func _snapshot_open_inspects(tag: String) -> void:
+	# Emit a compact summary of currently tracked open inspect cargo_ids
+	var ids: Array = _open_inspects.keys()
+	var sample_ids: Array = []
+	var limit: int = min(6, ids.size())
+	for i in range(limit):
+		sample_ids.append(str(ids[i]))
+	_diag(tag, "open_ids", {"count": ids.size(), "sample": sample_ids})
 
 var organization_mode: String = "by_type" # "by_type" or "by_vehicle"
 
@@ -39,6 +66,7 @@ func _is_displayable_cargo(item: Dictionary) -> bool:
 	return true
 
 func _ready():
+	_diag("ready", "ConvoyCargoMenu ready")
 	if is_instance_valid(back_button):
 		if not back_button.is_connected("pressed", Callable(self, "_on_back_button_pressed")):
 			back_button.pressed.connect(_on_back_button_pressed, CONNECT_ONE_SHOT)
@@ -103,6 +131,11 @@ func _ready():
 	# Set initial button text
 	_update_organize_button_text()
 
+	# Disable horizontal scrolling to prevent content drifting off-screen
+	var sc := get_node_or_null("MainVBox/ScrollContainer")
+	if sc is ScrollContainer:
+		sc.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+
 func _update_organize_button_text() -> void:
 	if organization_mode == "by_type":
 		_organize_button.text = "Group by Vehicle"
@@ -113,6 +146,7 @@ func _on_organize_button_pressed() -> void:
 	organization_mode = "by_vehicle" if organization_mode == "by_type" else "by_type"
 	_update_organize_button_text()
 	_populate_cargo_list()
+	_diag("organize", "mode_changed", {"mode": organization_mode})
 
 # ===== Helper functions for cargo inspect UI =====
 func _should_hide_key(key: String) -> bool:
@@ -159,6 +193,34 @@ func _format_value(val) -> String:
 		return "(details)"
 	else:
 		return str(val)
+
+# Resolve a vendor name from a vendor_id via GameDataManager, fallback to id if unknown.
+func _resolve_vendor_name(vendor_id: String) -> String:
+	if vendor_id.is_empty():
+		return ""
+	if gdm == null:
+		gdm = get_node_or_null("/root/GameDataManager")
+	if is_instance_valid(gdm) and gdm.has_method("get_vendor_by_id"):
+		var v = gdm.get_vendor_by_id(vendor_id)
+		if v is Dictionary and v.has("name"):
+			var n = String(v.get("name", ""))
+			if not n.is_empty():
+				return n
+	return vendor_id
+
+# Optionally resolve settlement name from vendor id
+func _resolve_settlement_name_for_vendor(vendor_id: String) -> String:
+	if vendor_id.is_empty():
+		return ""
+	if gdm == null:
+		gdm = get_node_or_null("/root/GameDataManager")
+	if is_instance_valid(gdm) and gdm.has_method("get_settlement_for_vendor"):
+		var s = gdm.get_settlement_for_vendor(vendor_id)
+		if s is Dictionary and s.has("settlement_name"):
+			var nm := String(s.get("settlement_name", ""))
+			if not nm.is_empty():
+				return nm
+	return ""
 
 # Build a short, human-friendly stats summary.
 func _format_stats_light(val) -> String:
@@ -289,22 +351,20 @@ func _add_grid(parent: VBoxContainer, data: Dictionary, keys: Array) -> int:
 			shown += 1
 			continue
 
+		# Build a row: use a PanelContainer with a StyleBox for alternating backgrounds
+		var row_panel := PanelContainer.new()
+		row_panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		var sb := StyleBoxFlat.new()
+		if shown % 2 == 0:
+			sb.bg_color = Color(0.15, 0.15, 0.18, 0.6)
+		else:
+			sb.bg_color = Color(0, 0, 0, 0)
+		row_panel.add_theme_stylebox_override("panel", sb)
+
 		var row := HBoxContainer.new()
 		row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		row.add_theme_constant_override("separation", 6)
-
-		# Alternating row background for readability
-		if shown % 2 == 0:
-			var bg := ColorRect.new()
-			bg.color = Color(0.15, 0.15, 0.18, 0.6)
-			bg.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-			row.add_child(bg)
-			# We'll put content inside overlay container on top of bg
-			var overlay := HBoxContainer.new()
-			overlay.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-			overlay.add_theme_constant_override("separation", 6)
-			row.add_child(overlay)
-			row = overlay # redirect additions to overlay
+		row_panel.add_child(row)
 
 		var k_lbl := Label.new()
 		var key_text: String = key_display_map.get(k, _nice_key(k))
@@ -320,13 +380,14 @@ func _add_grid(parent: VBoxContainer, data: Dictionary, keys: Array) -> int:
 		v_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		v_lbl.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 		v_lbl.modulate = Color(0.85, 0.9, 1, 1)
+		v_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD
 
 		# Badge styling for notable numeric/status fields
 		_apply_value_styling(k, value, v_lbl)
 
 		row.add_child(k_lbl)
 		row.add_child(v_lbl)
-		rows_container.add_child(row)
+		rows_container.add_child(row_panel)
 		shown += 1
 
 	if shown > 0:
@@ -809,16 +870,22 @@ func initialize_with_data(data: Dictionary, item_to_inspect = null):
 		title_label.text = "Cargo Hold"
 	
 	_populate_cargo_list()
+	_diag("populate", "called_from_initialize")
 	if _item_to_inspect_on_load != null:
 		call_deferred("_inspect_item_on_load")
 
 func _populate_cargo_list():
+	_diag("populate", "start", {"mode": organization_mode})
+	_snapshot_open_inspects("inspect_state_before_populate")
 	if organization_mode == "by_type":
 		_populate_by_type()
 	else: # "by_vehicle"
 		_populate_by_vehicle()
+	_diag("populate", "done")
+	_reopen_inspects()
 
 func _populate_by_type():
+	_diag("populate_type", "start")
 	# Diagnostic: Try to get the node directly here
 	var main_vbox_node: VBoxContainer = get_node_or_null("MainVBox")
 	if not is_instance_valid(main_vbox_node):
@@ -839,8 +906,12 @@ func _populate_by_type():
 		return
 
 	# Clear any previous items
+	var _clr := direct_vbox_ref.get_child_count()
+	_diag("clear_rows", "type_begin", {"children": _clr})
+	_snapshot_open_inspects("inspect_state_before_clear_type")
 	for child in direct_vbox_ref.get_children():
 		child.queue_free()
+	_diag("clear_rows", "type_end", {"removed": _clr})
 
 	var aggregated_missions: Dictionary = {}
 	var aggregated_parts: Dictionary = {}
@@ -987,6 +1058,7 @@ func _populate_by_type():
 	_add_category_section(direct_vbox_ref, "Part Cargo", aggregated_parts)
 	_add_category_section(direct_vbox_ref, "Resource Cargo", aggregated_resources)
 	_add_category_section(direct_vbox_ref, "Other Cargo", aggregated_other)
+	_diag("populate_type", "sections_added", {"missions": aggregated_missions.size(), "parts": aggregated_parts.size(), "resources": aggregated_resources.size(), "other": aggregated_other.size()})
 
 	# Debug counts summary
 	if CARGO_MENU_DEBUG:
@@ -1007,11 +1079,16 @@ func _populate_by_type():
 		direct_vbox_ref.add_child(no_cargo_overall_label)
 
 func _populate_by_vehicle():
+	_diag("populate_vehicle", "start")
 	var direct_vbox_ref: VBoxContainer = cargo_items_vbox
 	
 	# Clear any previous items
+	var _clr := direct_vbox_ref.get_child_count()
+	_diag("clear_rows", "vehicle_begin", {"children": _clr})
+	_snapshot_open_inspects("inspect_state_before_clear_vehicle")
 	for child in direct_vbox_ref.get_children():
 		child.queue_free()
+	_diag("clear_rows", "vehicle_end", {"removed": _clr})
 
 	var vehicle_details_list: Array = convoy_data_received.get("vehicle_details_list", [])
 	if vehicle_details_list.is_empty():
@@ -1105,6 +1182,7 @@ func _populate_by_vehicle():
 		no_cargo_overall_label.text = "This convoy is carrying no cargo items (only vehicle parts)."
 		no_cargo_overall_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		direct_vbox_ref.add_child(no_cargo_overall_label)
+	_diag("populate_vehicle", "done")
 
 func _on_back_button_pressed():
 	# print("ConvoyCargoMenu: Back button pressed. Emitting 'back_requested' signal.") # DEBUG
@@ -1115,13 +1193,25 @@ func _on_inspect_cargo_item_pressed(agg_data: Dictionary, list_container: VBoxCo
 	if item_row_hbox.has_meta("inspect_building"):
 		return
 
+	# Debounce any external refreshes that rebuild the list (e.g., convoy_data_updated)
+	_suppress_refresh_until_msec = Time.get_ticks_msec() + 400
+	_diag("inspect", "open_requested", {"suppress_until": _suppress_refresh_until_msec, "name": agg_data.get("display_name", "")})
+
 	# If panel already shown, safely remove it deferred
 	if item_row_hbox.has_meta("inspect_panel"):
 		var existing_panel: Node = item_row_hbox.get_meta("inspect_panel")
 		if is_instance_valid(existing_panel):
 			list_container.call_deferred("remove_child", existing_panel)
 			existing_panel.call_deferred("queue_free")
+			_diag("inspect", "existing_removed")
 		item_row_hbox.remove_meta("inspect_panel")
+		# Remove cargo_ids for this row from persistence set
+		if agg_data.has("items") and agg_data["items"] is Array:
+			for it in agg_data["items"]:
+				var cid := str((it as Dictionary).get("cargo_id", ""))
+				if not cid.is_empty():
+					_open_inspects.erase(cid)
+					_diag("inspect", "persist_remove", {"cargo_id": cid})
 		if is_instance_valid(toggle_button):
 			toggle_button.text = "Inspect"
 		return
@@ -1134,15 +1224,63 @@ func _on_inspect_cargo_item_pressed(agg_data: Dictionary, list_container: VBoxCo
 	else:
 		list_container.add_child(panel)
 		list_container.move_child(panel, row_index + 1)
+	_diag("inspect", "panel_added", {"row_index": row_index})
 	item_row_hbox.set_meta("inspect_panel", panel)
 	item_row_hbox.remove_meta("inspect_building")
+	# Persist cargo_ids for this row so we can reopen after refresh
+	if agg_data.has("items") and agg_data["items"] is Array:
+		for it in agg_data["items"]:
+			var cid := str((it as Dictionary).get("cargo_id", ""))
+			if not cid.is_empty():
+				_open_inspects[cid] = true
+				_diag("inspect", "persist_add", {"cargo_id": cid})
 	if is_instance_valid(toggle_button):
 		toggle_button.text = "Hide"
 
+	# Post-open verification: check if panel remains after short delays
+	var verify_token := "" 
+	if agg_data.has("items") and agg_data["items"] is Array and agg_data["items"].size() > 0:
+		var first: Variant = agg_data["items"][0]
+		var first_dict: Dictionary = first if first is Dictionary else {}
+		verify_token = str(first_dict.get("cargo_id", agg_data.get("display_name", "")))
+	_call_verify_inspect_persistence(item_row_hbox, verify_token, 0.5)
+	_call_verify_inspect_persistence(item_row_hbox, verify_token, 1.2)
+
+func _call_verify_inspect_persistence(row: HBoxContainer, token: String, delay_sec: float) -> void:
+	# Use a timer to re-check panel presence and log if missing
+	var t := get_tree().create_timer(delay_sec)
+	t.timeout.connect(func():
+		var present := row.has_meta("inspect_panel") and is_instance_valid(row.get_meta("inspect_panel"))
+		var status := "present" if present else "missing"
+		_diag("inspect_verify", status, {"after_sec": delay_sec, "token": token})
+	)
+
+func _reopen_inspects() -> void:
+	# Re-open inspect panels for any rows whose cargo_ids intersect `_open_inspects`
+	if _open_inspects.is_empty():
+		return
+	var reopen_count := 0
+	for child in cargo_items_vbox.get_children():
+		if child.has_meta("agg_data"):
+			var agg_data: Dictionary = child.get_meta("agg_data")
+			var items: Array = agg_data.get("items", [])
+			var should_reopen := false
+			for it in items:
+				var cid := str((it as Dictionary).get("cargo_id", ""))
+				if not cid.is_empty() and _open_inspects.has(cid):
+					should_reopen = true
+					break
+			if should_reopen:
+				var toggle_button: Button = child.find_child("InspectButton", true, false)
+				if is_instance_valid(toggle_button):
+					_on_inspect_cargo_item_pressed(agg_data, cargo_items_vbox, child, toggle_button)
+					_diag("inspect_reopen", "row", {"name": agg_data.get("display_name", ""), "count_items": items.size()})
+					reopen_count += 1
+	_diag("inspect_reopen", "done", {"count": reopen_count})
+
 func _build_inline_inspect_panel(agg_data: Dictionary, _item_row_hbox: HBoxContainer) -> VBoxContainer:
 	var item_data_sample: Dictionary = agg_data["item_data_sample"]
-	if CARGO_MENU_DEBUG:
-		print("[CargoInspect] agg_data:", JSON.stringify(agg_data, "  "))
+	_diag("inspect_panel", "build_start", {"name": agg_data.get("display_name", ""), "qty": agg_data.get("total_quantity", 0)})
 	var container := VBoxContainer.new()
 	container.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	container.add_theme_constant_override("separation", 4)
@@ -1198,6 +1336,24 @@ func _build_inline_inspect_panel(agg_data: Dictionary, _item_row_hbox: HBoxConta
 	# Collect all other keys to display in a single grid.
 	var all_details_keys: Array = []
 	var is_resource := _looks_like_resource(data_copy)
+
+	# Translate recipient/destination vendor IDs to names for readability
+	# Prefer explicit vendor id fields, otherwise try 'recipient' value directly
+	var recipient_id := String(data_copy.get("recipient_vendor_id", data_copy.get("destination_vendor_id", data_copy.get("mission_vendor_id", ""))))
+	if recipient_id == "" and data_copy.has("recipient") and (data_copy.get("recipient") is String):
+		recipient_id = String(data_copy.get("recipient"))
+	if recipient_id != "":
+		var recip_name := _resolve_vendor_name(recipient_id)
+		if recip_name != "":
+			# Replace plain recipient string if it equals the id
+			if data_copy.has("recipient") and (data_copy.get("recipient") is String):
+				var rec_s := String(data_copy.get("recipient"))
+				if rec_s == recipient_id:
+					data_copy["recipient"] = recip_name
+		# Also inject recipient_settlement_name if available
+		var recip_settlement := _resolve_settlement_name_for_vendor(recipient_id)
+		if recip_settlement != "":
+			data_copy["recipient_settlement_name"] = recip_settlement
 	for k in data_copy.keys():
 		if _should_hide_key(k):
 			continue
@@ -1219,6 +1375,7 @@ func _build_inline_inspect_panel(agg_data: Dictionary, _item_row_hbox: HBoxConta
 
 	# Add all collected keys to a single grid inside the panel.
 	_add_grid(inner, data_copy, all_details_keys)
+	_diag("inspect_panel", "build_done", {"keys": all_details_keys.size()})
 
 	frame.add_child(inner)
 	container.add_child(frame)
@@ -1268,9 +1425,21 @@ func _on_gdm_convoy_data_updated(all_convoy_data: Array) -> void:
 	# Update convoy_data_received if this convoy is present in the update
 	if not convoy_data_received or not convoy_data_received.has("convoy_id"):
 		return
+
+	# If we're within the suppress window, skip rebuilding to avoid closing inspect
+	var now := Time.get_ticks_msec()
+	_diag("gdm_update", "received", {"now": now, "suppress_until": _suppress_refresh_until_msec})
+	if now < _suppress_refresh_until_msec:
+		_diag("gdm_update", "suppressed")
+		return
 	var current_id = str(convoy_data_received.get("convoy_id"))
 	for convoy in all_convoy_data:
 		if convoy.has("convoy_id") and str(convoy.get("convoy_id")) == current_id:
+			var prev_count := int((convoy_data_received.get("vehicle_details_list", []) as Array).size())
 			convoy_data_received = convoy.duplicate(true)
+			var new_count := int((convoy_data_received.get("vehicle_details_list", []) as Array).size())
+			_diag("gdm_update", "convoy_match", {"prev_vehicle_count": prev_count, "new_vehicle_count": new_count})
+			_diag("gdm_update", "repopulate_start")
 			_populate_cargo_list()
+			_diag("gdm_update", "repopulate_done")
 			break

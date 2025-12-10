@@ -67,7 +67,8 @@ const COLOR_JOURNEY_PROGRESS_FILL: Color = Color("29b6f6") # Material Light Blue
 @onready var content_vbox: VBoxContainer = $MainVBox/ScrollContainer/ContentVBox
 
 @onready var vehicles_label: Label = $MainVBox/ScrollContainer/ContentVBox/VehiclesLabel
-@onready var all_cargo_label: Label = $MainVBox/ScrollContainer/ContentVBox/AllCargoLabel
+# Optional: AllCargoLabel may not exist in the scene variant.
+var all_cargo_label: Label = null
 @onready var back_button: Button = $MainVBox/TopBarHBox/BackButton
 
 # --- Vendor Preview Nodes ---
@@ -111,6 +112,11 @@ var _vendor_preview_update_timer: Timer = null # For debouncing updates
 var _destinations_cache: Dictionary = {} # item_name -> recipient_settlement_name (or destination string)
 
 func _ready():
+	# Resolve optional nodes that might be missing depending on scene variant
+	all_cargo_label = get_node_or_null("MainVBox/ScrollContainer/ContentVBox/AllCargoLabel")
+	if all_cargo_label == null:
+		if _debug_convoy_menu:
+			printerr("[ConvoyMenu] Optional AllCargoLabel not found at path MainVBox/ScrollContainer/ContentVBox/AllCargoLabel")
 	# --- DIAGNOSTIC: Check if UI nodes are valid ---
 	if not is_instance_valid(title_label):
 		printerr("ConvoyMenu: CRITICAL - TitleLabel node not found. Check the path in the script.")
