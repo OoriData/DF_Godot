@@ -50,6 +50,18 @@ var organization_mode: String = "by_type" # "by_type" or "by_vehicle"
 const CARGO_MENU_DEBUG: bool = true
 const AGGREGATE_CARGO: bool = false # Set true to merge identical items
 
+# Pretty-print helper with truncation to avoid console limits
+const DEBUG_JSON_CHAR_LIMIT := 4000
+func _json_snippet(data: Variant, label: String = "") -> void:
+	var encoded := JSON.stringify(data, "  ")
+	var total_len := encoded.length()
+	if total_len > DEBUG_JSON_CHAR_LIMIT:
+		encoded = encoded.substr(0, DEBUG_JSON_CHAR_LIMIT) + "...<truncated " + str(total_len - DEBUG_JSON_CHAR_LIMIT) + " chars>"
+	if label != "":
+		print('[CargoMenu][DEBUG][JSON]', label, '=', encoded)
+	else:
+		print(encoded)
+
 func _extract_item_display_name(item: Dictionary) -> String:
 	if item.has("name") and str(item.get("name")) != "":
 		return str(item.get("name"))
@@ -427,22 +439,20 @@ func _looks_like_part(d: Dictionary) -> bool:
 func _looks_like_mission(d: Dictionary) -> bool:
 	if not d:
 		return false
-	# From Items.gd: explicit flags/IDs
+	# Concrete rule alignment: prefer presence of recipient.
+	if d.has("recipient") and d.get("recipient") != null:
+		return true
+	# Keep additional Item rules for compatibility with older data.
 	if d.get("is_mission", false):
 		return true
 	if d.has("mission_id") and d.get("mission_id") != null and str(d.get("mission_id")) != "":
 		return true
 	if d.has("mission_vendor_id") and d.get("mission_vendor_id") != null and str(d.get("mission_vendor_id")) != "":
 		return true
-	# From vendor_trade_panel.gd: delivery/recipient info
-	# Treat as mission only if recipient is present OR delivery_reward is a positive number
-	if d.has("recipient") and d.get("recipient") != null:
-		return true
 	if d.has("delivery_reward"):
 		var dr = d.get("delivery_reward")
-		if dr != null:
-			if (dr is float or dr is int) and float(dr) > 0.0:
-				return true
+		if dr != null and (dr is float or dr is int) and float(dr) > 0.0:
+			return true
 	return false
 
 # Determine if dictionary represents a resource cargo item (raw resources or supplies).
@@ -451,14 +461,14 @@ func _looks_like_resource(d: Dictionary) -> bool:
 		return false
 	if d.get("is_raw_resource", false):
 		return true
+	if d.has("resource_type"):
+		return true
+	# Presence-based detection aligned with Items.gd (includes capital 'Fuel').
+	for k in ["water", "food", "fuel", "Fuel"]:
+		if d.has(k) and d.get(k) != null:
+			return true
+	# Keep category hint as a soft compatibility aid.
 	if str(d.get("category", "")).to_lower() == "resource":
-		return true
-	# Supplies detected by positive quantities
-	if (d.get("food") is float or d.get("food") is int) and float(d.get("food")) > 0.0:
-		return true
-	if (d.get("water") is float or d.get("water") is int) and float(d.get("water")) > 0.0:
-		return true
-	if (d.get("fuel") is float or d.get("fuel") is int) and float(d.get("fuel")) > 0.0:
 		return true
 	return false
 
@@ -966,7 +976,28 @@ func _populate_by_type():
 					# stats present on parts only; copied verbatim
 					if "stats" in typed and typed.stats is Dictionary and not typed.stats.is_empty():
 						raw_item["stats"] = typed.stats.duplicate(true)
-				match typed.category:
+				# Safeguard: if typed says 'other' but data looks like a part/resource/mission, override.
+				var effective_category: String = String(typed.category)
+				if effective_category == "other":
+					if _looks_like_part(raw_item):
+						effective_category = "part"
+						# Ensure hints
+						raw_item["category"] = "part"
+						_inject_part_modifiers(raw_item)
+						if CARGO_MENU_DEBUG:
+							print("[CargoClassify][Typed][Rebucket] OTHER -> PART:", JSON.stringify(raw_item.get("name", raw_item.get("base_name", ""))))
+					elif _looks_like_resource(raw_item):
+						effective_category = "resource"
+						raw_item["category"] = "resource"
+						if CARGO_MENU_DEBUG:
+							print("[CargoClassify][Typed][Rebucket] OTHER -> RESOURCE:", JSON.stringify(raw_item.get("name", raw_item.get("base_name", ""))))
+					elif _looks_like_mission(raw_item):
+						effective_category = "mission"
+						raw_item["category"] = "mission"
+						if CARGO_MENU_DEBUG:
+							print("[CargoClassify][Typed][Rebucket] OTHER -> MISSION:", JSON.stringify(raw_item.get("name", raw_item.get("base_name", ""))))
+
+				match effective_category:
 					"mission":
 						_aggregate_cargo_item(aggregated_missions, raw_item, vehicle_name)
 					"part":
@@ -974,6 +1005,9 @@ func _populate_by_type():
 					"resource":
 						_aggregate_cargo_item(aggregated_resources, raw_item, vehicle_name)
 					_:
+						if CARGO_MENU_DEBUG:
+							print("[CargoClassify][Typed] item -> OTHER name:", JSON.stringify(raw_item.get("name", raw_item.get("base_name", ""))))
+							_json_snippet(raw_item, "[Typed OTHER raw]")
 						_aggregate_cargo_item(aggregated_other, raw_item, vehicle_name)
 		else:
 			if CARGO_MENU_DEBUG:
@@ -995,8 +1029,8 @@ func _populate_by_type():
 				if not (item is Dictionary and _is_displayable_cargo(item)):
 					continue
 				any_cargo_found_in_convoy = true
-				# Mission items are identified by recipient/reward, same as vendor panel.
-				if item.get("recipient") != null or item.get("delivery_reward") != null:
+				# Mission items: prefer presence-based recipient signal.
+				if item.get("recipient") != null:
 					_aggregate_cargo_item(aggregated_missions, item, vehicle_name)
 				# Detect parts even if they appear in the main cargo list
 				elif _looks_like_part(item):
@@ -1007,12 +1041,13 @@ func _populate_by_type():
 					if CARGO_MENU_DEBUG:
 						print("[CargoClassify] LEGACY cargo item -> PART:", JSON.stringify(item.get("name", item.get("base_name", ""))))
 					_aggregate_cargo_item(aggregated_parts, item, vehicle_name)
-				# Resources and supplies
-				elif (_is_positive_number(item.get("food")) or _is_positive_number(item.get("water")) or _is_positive_number(item.get("fuel"))) or item.get("is_raw_resource", false) or str(item.get("category", "")).to_lower() == "resource":
+				# Resources and supplies: presence-based keys, include Fuel and resource_type
+				elif (item.has("food") and item.get("food") != null) or (item.has("water") and item.get("water") != null) or (item.has("fuel") and item.get("fuel") != null) or (item.has("Fuel") and item.get("Fuel") != null) or item.get("is_raw_resource", false) or item.has("resource_type") or str(item.get("category", "")).to_lower() == "resource":
 					_aggregate_cargo_item(aggregated_resources, item, vehicle_name)
 				else:
 					if CARGO_MENU_DEBUG:
-						print("[CargoClassify] LEGACY cargo item -> OTHER:", JSON.stringify(item.get("name", item.get("base_name", ""))))
+						print("[CargoClassify] LEGACY cargo item -> OTHER name:", JSON.stringify(item.get("name", item.get("base_name", ""))))
+						_json_snippet(item, "[Legacy OTHER raw]")
 					_aggregate_cargo_item(aggregated_other, item, vehicle_name)
 
 			# Separately process the 'parts' list, if it exists, which is consistent with `vendor_trade_panel`.
@@ -1050,6 +1085,10 @@ func _populate_by_type():
 				moved_keys.append(key)
 				if CARGO_MENU_DEBUG:
 					print("[CargoClassify][Rebucket] OTHER -> PART:", key)
+			else:
+				if CARGO_MENU_DEBUG:
+					print("[CargoClassify][InspectOther] sample name:", JSON.stringify(sample.get("name", sample.get("base_name", ""))))
+					_json_snippet(sample, "[InspectOther sample raw]")
 		# Remove moved entries from Other so they don't duplicate
 		for k in moved_keys:
 			aggregated_other.erase(k)
@@ -1139,7 +1178,31 @@ func _populate_by_vehicle():
 					if "stats" in typed and typed.stats is Dictionary and not typed.stats.is_empty():
 						raw_item["stats"] = typed.stats.duplicate(true)
 				
+				# Rebucket safeguard for typed 'other'
+				var effective_category: String = String(typed.category)
+				if effective_category == "other":
+					if _looks_like_part(raw_item):
+						effective_category = "part"
+						raw_item["category"] = "part"
+						_inject_part_modifiers(raw_item)
+						if CARGO_MENU_DEBUG:
+							print("[CargoClassify][ByVehicle][Typed][Rebucket] OTHER -> PART:", JSON.stringify(raw_item.get("name", raw_item.get("base_name", ""))))
+					elif _looks_like_resource(raw_item):
+						effective_category = "resource"
+						raw_item["category"] = "resource"
+						if CARGO_MENU_DEBUG:
+							print("[CargoClassify][ByVehicle][Typed][Rebucket] OTHER -> RESOURCE:", JSON.stringify(raw_item.get("name", raw_item.get("base_name", ""))))
+					elif _looks_like_mission(raw_item):
+						effective_category = "mission"
+						raw_item["category"] = "mission"
+						if CARGO_MENU_DEBUG:
+							print("[CargoClassify][ByVehicle][Typed][Rebucket] OTHER -> MISSION:", JSON.stringify(raw_item.get("name", raw_item.get("base_name", ""))))
+
 				_aggregate_cargo_item(vehicle_aggregated_all_cargo, raw_item)
+				# If still 'other', log it for diagnosis
+				if CARGO_MENU_DEBUG and effective_category == "other":
+					print("[CargoClassify][ByVehicle][Typed] item -> OTHER name:", JSON.stringify(raw_item.get("name", raw_item.get("base_name", ""))))
+					_json_snippet(raw_item, "[ByVehicle Typed OTHER raw]")
 		else: # Fallback to legacy cargo
 			var vehicle_cargo_list_raw = vehicle_data.get("cargo", [])
 			var vehicle_cargo_list: Array = []

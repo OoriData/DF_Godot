@@ -51,15 +51,20 @@ static func _compute_unit(base_total: float, qty: int, explicit_unit: float) -> 
 
 # --- Factory ---
 static func from_dict(d: Dictionary) -> CargoItem:
-	# Decide subtype and delegate to its parser
+	# Concrete classification rules:
+	# - Mission: has `.recipient`
+	# - Part:    has `.slot`
+	# - Resource: has `.water` OR `.food` OR `.fuel`/`.Fuel`
+	# - Vehicle: vehicle-looking dictionary without `cargo_id`
+	# - Other:   anything else
 	if MissionItem._looks_like_mission_dict(d):
 		return MissionItem._from_mission_dict(d)
+	if PartItem._looks_like_part_dict(d):
+		return PartItem._from_part_dict(d)
 	if ResourceItem._looks_like_resource_dict(d):
 		return ResourceItem._from_resource_dict(d)
 	if VehicleItem._looks_like_vehicle_dict(d):
 		return VehicleItem._from_vehicle_dict(d)
-	if PartItem._looks_like_part_dict(d):
-		return PartItem._from_part_dict(d)
 	return _parse_base(d)
 
 # Internal: parse only the base fields without re-classification to avoid recursion
@@ -119,44 +124,15 @@ class PartItem:
 	static func _looks_like_part_dict(d: Dictionary) -> bool:
 		if not d:
 			return false
-
-		# First, rule out items that are explicitly resources to avoid misclassifying containers.
-		if d.get("is_raw_resource", false):
-			return false
-		if str(d.get("category", "")).to_lower() == "resource":
-			return false
-		if ((d.get("food") is float or d.get("food") is int) and float(d.get("food", 0.0)) > 0.0) or \
-		   ((d.get("water") is float or d.get("water") is int) and float(d.get("water", 0.0)) > 0.0) or \
-		   ((d.get("fuel") is float or d.get("fuel") is int) and float(d.get("fuel", 0.0)) > 0.0):
-			return false
-
-		# --- Now check for part signals, from strongest to weakest ---
-		if str(d.get("category", "")).to_lower() == "part":
+		# Concrete rules:
+		# 1) Direct slot present on the item
+		if d.has("slot") and d.get("slot") != null and String(d.get("slot")).strip_edges() != "":
 			return true
-		if d.has("slot") and d.get("slot") != null and String(d.get("slot")).length() > 0:
-			return true
-		if d.has("intrinsic_part_id"):
-			return true
+		# 2) Nested slot present in first entry of `parts` array (container-like items)
 		if d.has("parts") and d.get("parts") is Array and not (d.get("parts") as Array).is_empty():
 			var first_p = (d.get("parts") as Array)[0]
-			if first_p is Dictionary and first_p.has("slot") and first_p.get("slot") != null and String(first_p.get("slot")).length() > 0:
+			if first_p is Dictionary and first_p.has("slot") and first_p.get("slot") != null and String(first_p.get("slot")).strip_edges() != "":
 				return true
-		if d.has("is_part") and bool(d.get("is_part")):
-			return true
-
-		var type_s := String(d.get("type", "")).to_lower()
-		if type_s == "part":
-			return true
-
-		# Check for a non-empty 'stats' dictionary, which is a strong indicator of a part.
-		if d.has("stats") and d.get("stats") is Dictionary and not (d.get("stats") as Dictionary).is_empty():
-			return true
-
-		var stat_keys := ["top_speed_add", "efficiency_add", "offroad_capability_add", "cargo_capacity_add", "weight_capacity_add", "fuel_capacity", "kwh_capacity"]
-		for sk in stat_keys:
-			if d.has(sk) and d[sk] != null and (d[sk] is int or d[sk] is float) and float(d[sk]) != 0.0:
-				return true
-
 		return false
 
 	static func _from_part_dict(d: Dictionary) -> PartItem:
@@ -209,6 +185,9 @@ class MissionItem:
 
 	static func _looks_like_mission_dict(d: Dictionary) -> bool:
 		if not d: return false
+		# Concrete rule: presence of `.recipient` means mission cargo.
+		if d.has("recipient") and d.get("recipient") != null:
+			return true
 		if d.get("is_mission", false): return true
 		# Check for non-null and non-empty string IDs
 		if d.has("mission_id") and d.get("mission_id") != null and str(d.get("mission_id")).strip_edges() != "":
@@ -244,13 +223,10 @@ class ResourceItem:
 		if not d: return false
 		if d.get("is_raw_resource", false): return true
 		if d.has("resource_type"): return true # explicit type
-		# Check for positive resource values. Having a key with value 0 (e.g. `fuel: 0`)
-		# should not classify an item as a resource, as parts might have this.
-		for k in ["fuel", "water", "food"]:
-			if d.has(k):
-				var v = d.get(k)
-				if (v is float or v is int) and float(v) > 0.0:
-					return true
+		# Concrete rule: presence of any of these resource keys means resource cargo.
+		for k in ["water", "food", "fuel", "Fuel"]:
+			if d.has(k) and d.get(k) != null:
+				return true
 		return false
 
 	static func _from_resource_dict(d: Dictionary) -> ResourceItem:
