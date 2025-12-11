@@ -58,6 +58,20 @@ func _apply_embedded_mode_visibility() -> void:
 	if is_instance_valid(_overlay):
 		_overlay.visible = not embedded_mode
 
+	# Adjust margins to remove double-padding when embedded
+	var main_vbox: VBoxContainer = $MainVBox
+	if is_instance_valid(main_vbox):
+		if embedded_mode:
+			main_vbox.offset_left = 0
+			main_vbox.offset_top = 0
+			main_vbox.offset_right = 0
+			main_vbox.offset_bottom = 0
+		else: # Restore default margins for standalone mode
+			main_vbox.offset_left = 10
+			main_vbox.offset_top = 10
+			main_vbox.offset_right = -10
+			main_vbox.offset_bottom = -10
+
 func _get_slot_from_item(item: Dictionary) -> String:
 	# Accept alternative slot key names; backend may vary
 	var keys := ["slot", "slot_name", "slotType"]
@@ -386,6 +400,56 @@ func _part_delta_summary(from_part: Dictionary, to_part: Dictionary) -> String:
 			bits.append("%s %s%.0f" % [labels.get(k, k), sym, num])
 	return ", ".join(bits)
 
+func _create_styled_part_row(part: Dictionary, slot_name: String, item_index: int) -> HBoxContainer:
+	var outer_row := HBoxContainer.new()
+	outer_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	outer_row.mouse_filter = Control.MOUSE_FILTER_PASS
+	outer_row.set_meta("slot_name", slot_name) # Keep meta for styling
+
+	var bg_panel := PanelContainer.new()
+	bg_panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	bg_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+
+	var sb := StyleBoxFlat.new()
+	if item_index % 2 == 0:
+		sb.bg_color = Color(0.13, 0.15, 0.19, 0.8)
+	else:
+		sb.bg_color = Color(0.10, 0.12, 0.16, 0.8)
+	sb.set_content_margin_all(6)
+	bg_panel.add_theme_stylebox_override("panel", sb)
+	
+	outer_row.add_child(bg_panel)
+
+	var content_row := HBoxContainer.new()
+	content_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	content_row.add_theme_constant_override("separation", 10)
+	bg_panel.add_child(content_row)
+
+	var name_label = Label.new()
+	var part_name_text = "  — None installed —" if String(part.get("name", "None")) == "None" else "  " + String(part.get("name", "Unknown Part"))
+	name_label.text = part_name_text
+	name_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	name_label.clip_text = true
+	name_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	content_row.add_child(name_label)
+
+	var change_btn = Button.new()
+	change_btn.name = "SwapButton"
+	change_btn.text = "Swap…"
+	change_btn.custom_minimum_size.x = 80
+	change_btn.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	_style_swap_button(change_btn, slot_name)
+	change_btn.pressed.connect(_on_swap_part_pressed.bind(slot_name, part))
+	content_row.add_child(change_btn)
+
+	# Hover effect
+	outer_row.mouse_entered.connect(func(): sb.bg_color = sb.bg_color.lightened(0.1))
+	outer_row.mouse_exited.connect(func():
+		sb.bg_color = Color(0.13, 0.15, 0.19, 0.8) if item_index % 2 == 0 else Color(0.10, 0.12, 0.16, 0.8)
+	)
+
+	return outer_row
+
 # Unique ID helpers for deduping pending swaps
 func _get_part_unique_id(part: Dictionary) -> String:
 	var id: String = String(part.get("cargo_id", ""))
@@ -647,29 +711,24 @@ func _rebuild_parts_tab(vehicle_data: Dictionary):
 		by_slot[slot].append(p)
 	var slots_sorted: Array = by_slot.keys()
 	slots_sorted.sort()
+
+	var part_row_index = 0
 	for slot_name in slots_sorted:
 		var header = Label.new()
 		header.text = slot_name.capitalize().replace("_", " ")
 		header.add_theme_font_size_override("font_size", 16)
-		header.add_theme_color_override("font_color", Color.YELLOW)
+		header.add_theme_color_override("font_color", Color.AQUAMARINE)
 		parts_vbox.add_child(header)
 
 		for part in by_slot[slot_name]:
-			var row = HBoxContainer.new()
-			row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-			row.set_meta("slot_name", slot_name)
-			var name_label = Label.new()
-			name_label.text = "  " + String(part.get("name", "Unknown Part"))
-			name_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-			var change_btn = Button.new()
-			change_btn.name = "SwapButton"
-			change_btn.text = "Swap…"
-			change_btn.custom_minimum_size.y = 30
-			_style_swap_button(change_btn, slot_name)
-			change_btn.pressed.connect(_on_swap_part_pressed.bind(slot_name, part))
-			row.add_child(name_label)
-			row.add_child(change_btn)
+			var row = _create_styled_part_row(part, slot_name, part_row_index)
 			parts_vbox.add_child(row)
+			part_row_index += 1
+		
+		# Add a separator between slot groups
+		var sep = HSeparator.new()
+		sep.custom_minimum_size.y = 8
+		parts_vbox.add_child(sep)
 
 func _refresh_slot_vendor_availability():
 	_slot_vendor_availability.clear()
@@ -783,10 +842,10 @@ func _restyle_swap_buttons_for_slot(slot_name: String) -> void:
 		if not is_instance_valid(child):
 			continue
 		if child is HBoxContainer and child.has_meta("slot_name") and String(child.get_meta("slot_name")) == slot_name:
-			var last_idx := child.get_child_count() - 1
-			var swap_btn: Node = child.get_child(last_idx) if last_idx >= 0 else null
-			if swap_btn is Button and is_instance_valid(swap_btn):
-				_style_swap_button(swap_btn as Button, slot_name)
+			# The button is nested inside the styled row; find it by name.
+			var swap_btn: Button = child.find_child("SwapButton", true, false) as Button
+			if is_instance_valid(swap_btn):
+				_style_swap_button(swap_btn, slot_name)
 
 func _start_vendor_compat_checks_for_vehicle(vehicle: Dictionary) -> void:
 	# Request backend compatibility for ALL vendor part candidates at this settlement for this vehicle
@@ -838,14 +897,17 @@ func _start_vendor_compat_checks_for_vehicle(vehicle: Dictionary) -> void:
 func _style_swap_button(btn: Button, slot_name: String):
 	if not is_instance_valid(btn):
 		return
+
+	# Reset to default style first
+	btn.remove_theme_stylebox_override("normal")
+	btn.remove_theme_color_override("font_color")
+	btn.tooltip_text = ""
+
 	var vendor_available: bool = bool(_slot_vendor_availability.get(slot_name, false))
 	var inventory_available: bool = bool(_slot_inventory_availability.get(slot_name, false))
-	var available: bool = vendor_available or inventory_available
-	if available:
-		# Soft green highlight with border
+
+	if vendor_available or inventory_available:
 		var sb = StyleBoxFlat.new()
-		sb.bg_color = Color(0.12, 0.25, 0.12, 1.0)
-		sb.border_color = Color(0.35, 0.8, 0.35, 1.0)
 		sb.border_width_left = 2
 		sb.border_width_top = 2
 		sb.border_width_right = 2
@@ -854,23 +916,31 @@ func _style_swap_button(btn: Button, slot_name: String):
 		sb.corner_radius_top_right = 6
 		sb.corner_radius_bottom_left = 6
 		sb.corner_radius_bottom_right = 6
-		btn.add_theme_stylebox_override("normal", sb)
-		btn.add_theme_color_override("font_color", Color(0.85, 1.0, 0.85))
-		# Tailor tooltip by source
-		if inventory_available and vendor_available:
-			btn.tooltip_text = "Upgrades available (Inventory + Vendor)"
-		elif inventory_available:
-			btn.tooltip_text = "Inventory has parts for this slot"
-		else:
+
+		if vendor_available and inventory_available:
+			# Combined style: Green background, blue border for dual availability
+			sb.bg_color = Color(0.12, 0.25, 0.12, 1.0) # Green
+			sb.border_color = Color(0.35, 0.6, 0.9, 1.0) # Blue
+			btn.add_theme_color_override("font_color", Color(0.85, 1.0, 0.85)) # Light green text
+			btn.tooltip_text = "Upgrades available (Vendor + Inventory)"
+		elif vendor_available:
+			# Vendor only: Green style
+			sb.bg_color = Color(0.12, 0.25, 0.12, 1.0) # Green
+			sb.border_color = Color(0.35, 0.8, 0.35, 1.0) # Green border
+			btn.add_theme_color_override("font_color", Color(0.85, 1.0, 0.85)) # Light green text
 			btn.tooltip_text = "Vendor has parts for this slot"
+		elif inventory_available:
+			# Inventory only: Blue style
+			sb.bg_color = Color(0.12, 0.18, 0.30, 1.0) # Blue
+			sb.border_color = Color(0.35, 0.6, 0.9, 1.0) # Blue border
+			btn.add_theme_color_override("font_color", Color(0.85, 0.95, 1.0)) # Light blue text
+			btn.tooltip_text = "Inventory has parts for this slot"
+
+		btn.add_theme_stylebox_override("normal", sb)
+
 		# Preserve vendor hint visibility behavior
 		if vendor_available and is_instance_valid(vendor_hint_label):
 			vendor_hint_label.visible = true
-	else:
-		# Default style; keep tooltip blank
-		btn.remove_theme_stylebox_override("normal")
-		btn.remove_theme_color_override("font_color")
-		btn.tooltip_text = ""
 
 func _rebuild_pending_tab():
 	for c in pending_vbox.get_children():
@@ -878,10 +948,12 @@ func _rebuild_pending_tab():
 	if _pending_swaps.size() == 0:
 		_show_info(pending_vbox, "Your cart is empty. Select Swap… to add a part.")
 		return
+
 	# Compute per-vehicle schedules and costs
 	var schedules: Dictionary = _compute_pending_schedules()
 	var grand_parts_cost: float = 0.0
 	var grand_install_cost: float = 0.0
+	var item_index := 0
 	for vid in schedules.keys():
 		# Vehicle-level Changes Overview (before first row for this vehicle)
 		var entries: Array = schedules[vid]
@@ -890,22 +962,36 @@ func _rebuild_pending_tab():
 		var overview_panel := _make_stat_overview_panel(vid, before_stats, after_stats)
 		if is_instance_valid(overview_panel):
 			pending_vbox.add_child(overview_panel)
+
 		for e in entries:
+			var outer_row := HBoxContainer.new()
+			outer_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			outer_row.mouse_filter = Control.MOUSE_FILTER_PASS
+
 			# Panel row with multiline text and right-aligned Remove button
 			var panel = PanelContainer.new()
-			var sb = StyleBoxFlat.new()
-			sb.bg_color = Color(0.08, 0.08, 0.10, 1.0)
-			sb.border_color = Color(0.25, 0.25, 0.35, 1.0)
-			sb.border_width_left = 1
-			sb.border_width_top = 1
-			sb.border_width_right = 1
-			sb.border_width_bottom = 1
-			sb.corner_radius_top_left = 6
-			sb.corner_radius_top_right = 6
-			sb.corner_radius_bottom_left = 6
-			sb.corner_radius_bottom_right = 6
-			panel.add_theme_stylebox_override("panel", sb)
 			panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			outer_row.add_child(panel)
+
+			var sb = StyleBoxFlat.new()
+			if item_index % 2 == 0:
+				sb.bg_color = Color(0.13, 0.15, 0.19, 0.8)
+			else:
+				sb.bg_color = Color(0.10, 0.12, 0.16, 0.8)
+			sb.set_content_margin_all(8)
+			panel.add_theme_stylebox_override("panel", sb)
+
+			# Hover effect
+			outer_row.mouse_entered.connect(func():
+				sb.bg_color = sb.bg_color.lightened(0.1)
+			)
+			outer_row.mouse_exited.connect(func():
+				if item_index % 2 == 0:
+					sb.bg_color = Color(0.13, 0.15, 0.19, 0.8)
+				else:
+					sb.bg_color = Color(0.10, 0.12, 0.16, 0.8)
+			)
 
 			var row_hb = HBoxContainer.new()
 			row_hb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -995,10 +1081,11 @@ func _rebuild_pending_tab():
 			)
 			right_vb.add_child(remove_btn)
 
-			pending_vbox.add_child(panel)
+			pending_vbox.add_child(outer_row)
 			# Cart parts cost sums effective price (inventory parts typically 0)
 			grand_parts_cost += _vendor_price
 			grand_install_cost += install_cost
+			item_index += 1
 	# Summary: If there are vendor parts, show full breakdown; otherwise show only installation
 	if grand_parts_cost > 0.0:
 		var parts_label = Label.new()
@@ -1109,16 +1196,14 @@ func _compute_projected_stats_for_vehicle(vehicle_id: String, schedule_entries: 
 func _make_stat_overview_panel(vehicle_id: String, before_stats: Dictionary, after_stats: Dictionary) -> PanelContainer:
 	var panel = PanelContainer.new()
 	var sb = StyleBoxFlat.new()
-	sb.bg_color = Color(0.10, 0.10, 0.12, 1.0)
-	sb.border_color = Color(0.35, 0.35, 0.5, 1.0)
+	# Use a consistent, slightly different background for summary panels to distinguish them
+	sb.bg_color = Color(0.08, 0.10, 0.14, 0.9)
+	sb.border_color = Color(0.4, 0.45, 0.5, 1.0)
 	sb.border_width_left = 1
-	sb.border_width_top = 1
-	sb.border_width_right = 1
 	sb.border_width_bottom = 1
-	sb.corner_radius_top_left = 6
-	sb.corner_radius_top_right = 6
-	sb.corner_radius_bottom_left = 6
-	sb.corner_radius_bottom_right = 6
+	sb.set_content_margin_all(8)
+	sb.corner_radius_top_left = 4
+	sb.corner_radius_top_right = 4
 	panel.add_theme_stylebox_override("panel", sb)
 	panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 
@@ -1674,22 +1759,15 @@ func _ensure_slot_row(slot_name: String) -> void:
 		header.add_theme_color_override("font_color", Color.YELLOW)
 		parts_vbox.add_child(header)
 	# Add placeholder row
-	var row = HBoxContainer.new()
-	row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	row.set_meta("slot_name", slot_name)
-	var name_label = Label.new()
-	name_label.text = "  — None installed —"
-	name_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	var change_btn = Button.new()
-	change_btn.name = "SwapButton"
-	change_btn.text = "Swap…"
-	change_btn.custom_minimum_size.y = 30
-	_style_swap_button(change_btn, slot_name)
-	# Pass a dummy current_part with just the slot
 	var current_part := {"name": "None", "slot": slot_name}
-	change_btn.pressed.connect(_on_swap_part_pressed.bind(slot_name, current_part))
-	row.add_child(name_label)
-	row.add_child(change_btn)
+	# Find the current total number of rows to get the correct index for styling
+	var current_row_count = 0
+	for child in parts_vbox.get_children():
+		# Only count actual part rows, not headers or separators
+		if child is HBoxContainer:
+			current_row_count += 1
+	
+	var row = _create_styled_part_row(current_part, slot_name, current_row_count)
 	parts_vbox.add_child(row)
 
 func _extract_unit_price(d: Dictionary) -> float:

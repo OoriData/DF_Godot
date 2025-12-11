@@ -13,12 +13,12 @@ signal inspect_specific_convoy_cargo_requested(convoy_data, item_data)
 @onready var back_button: Button = $MainVBox/BackButton
 
 @onready var overview_vbox: VBoxContainer = $MainVBox/VehicleTabContainer/Overview/OverviewVBox
-@onready var parts_vbox: VBoxContainer = $MainVBox/VehicleTabContainer/Parts/PartsVBox
+@onready var parts_vbox: VBoxContainer = $MainVBox/VehicleTabContainer/Parts/PartsScroll/PartsVBox
 @onready var cargo_vbox: VBoxContainer = $MainVBox/VehicleTabContainer/Cargo/CargoVBox
 @onready var back_to_mechanic_button: Button = $MainVBox/BackButton # repurpose later if needed
 @onready var _menu_buttons_container: Node = null
 @onready var mechanic_button_scene_node: Button = $MainVBox/ActionButtons/MechanicButton
-@onready var mechanics_embed: Node = $MainVBox/VehicleTabContainer/Service/MechanicsEmbed
+@onready var mechanics_embed: Node = $MainVBox/VehicleTabContainer/Service/ServiceVBox/MechanicsEmbed
 
 var current_vehicle_list: Array = []
 var _current_convoy_data: Dictionary # To store the full convoy data
@@ -235,25 +235,45 @@ func _on_vehicle_selected(index: int):
 		printerr("ConvoyVehicleMenu: Vehicle data at index ", index, " is not a Dictionary: ", typeof(selected_vehicle_data))
 		_show_initial_detail_message("Error: Could not load vehicle data.")
 
-func _add_detail_row(parent: Container, label_text: String, value_text: String, value_autowrap: bool = false):
-	# print("ConvoyVehicleMenu: _add_detail_row called. Label: '", label_text, "', Value: '", value_text, "'") # Can be too verbose
-	var hbox = HBoxContainer.new()
-	hbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+func _add_styled_detail_row(parent: Container, label_text: String, value_text: String, item_index: int, value_autowrap: bool = false):
+	var outer_row := HBoxContainer.new()
+	outer_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+
+	var bg_panel := PanelContainer.new()
+	bg_panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	bg_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+
+	var sb := StyleBoxFlat.new()
+	if item_index % 2 == 0:
+		sb.bg_color = Color(0.13, 0.15, 0.19, 0.8)
+	else:
+		sb.bg_color = Color(0.10, 0.12, 0.16, 0.8)
+	sb.set_content_margin_all(6)
+	bg_panel.add_theme_stylebox_override("panel", sb)
+	
+	outer_row.add_child(bg_panel)
+
+	var content_row := HBoxContainer.new()
+	content_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	content_row.add_theme_constant_override("separation", 10)
+	bg_panel.add_child(content_row)
 
 	var label_node = Label.new()
 	label_node.text = label_text
-	label_node.custom_minimum_size.x = 120 # Adjust for desired label width
+	label_node.custom_minimum_size.x = 120
+	label_node.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 
 	var value_node = Label.new()
 	value_node.text = value_text
 	value_node.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	value_node.clip_text = true
+	value_node.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	if value_autowrap:
 		value_node.autowrap_mode = TextServer.AUTOWRAP_WORD
 	
-	hbox.add_child(label_node)
-	hbox.add_child(value_node)
-	parent.add_child(hbox)
+	content_row.add_child(label_node)
+	content_row.add_child(value_node)
+	parent.add_child(outer_row)
 
 func _add_inspectable_item_row(parent: Container, item_name: String, agg_data: Dictionary, item_index: int):
 	# agg_data contains: quantity, sample, total_weight, total_volume
@@ -338,6 +358,67 @@ func _add_inspectable_item_row(parent: Container, item_name: String, agg_data: D
 
 	parent.add_child(outer_row)
 
+func _add_inspectable_part_row(parent: Container, part_data: Dictionary, item_index: int):
+	var outer_row := HBoxContainer.new()
+	outer_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	outer_row.mouse_filter = Control.MOUSE_FILTER_PASS # For hover effects
+
+	var bg_panel := PanelContainer.new()
+	bg_panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	bg_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+
+	var sb := StyleBoxFlat.new()
+	if item_index % 2 == 0:
+		sb.bg_color = Color(0.13, 0.15, 0.19, 0.8)
+	else:
+		sb.bg_color = Color(0.10, 0.12, 0.16, 0.8)
+	sb.set_content_margin_all(6)
+	bg_panel.add_theme_stylebox_override("panel", sb)
+	
+	outer_row.add_child(bg_panel)
+
+	var content_row := HBoxContainer.new()
+	content_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	content_row.add_theme_constant_override("separation", 10)
+	bg_panel.add_child(content_row)
+
+	# Part Name
+	var name_label := Label.new()
+	name_label.text = part_data.get("name", "Unknown Part")
+	name_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	name_label.clip_text = true
+	name_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	content_row.add_child(name_label)
+
+	# Part Slot
+	var slot_label := Label.new()
+	slot_label.text = String(part_data.get("slot", "other")).capitalize().replace("_", " ")
+	slot_label.custom_minimum_size.x = 150
+	slot_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	slot_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	slot_label.modulate = Color.LIGHT_GRAY
+	content_row.add_child(slot_label)
+
+	# Inspect Button
+	var inspect_button = Button.new()
+	inspect_button.text = "Inspect"
+	inspect_button.custom_minimum_size.x = 80
+	inspect_button.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	inspect_button.pressed.connect(_on_inspect_part_pressed.bind(part_data))
+	content_row.add_child(inspect_button)
+
+	# Hover effect
+	outer_row.mouse_entered.connect(func():
+		sb.bg_color = sb.bg_color.lightened(0.1)
+	)
+	outer_row.mouse_exited.connect(func():
+		if item_index % 2 == 0:
+			sb.bg_color = Color(0.13, 0.15, 0.19, 0.8)
+		else:
+			sb.bg_color = Color(0.10, 0.12, 0.16, 0.8)
+	)
+
+	parent.add_child(outer_row)
 
 func _display_vehicle_details(vehicle_data: Dictionary):
 	print("ConvoyVehicleMenu: _display_vehicle_details called with data: ", vehicle_data.keys())
@@ -355,29 +436,45 @@ func _display_vehicle_details(vehicle_data: Dictionary):
 func _populate_overview_tab(vehicle_data: Dictionary):
 	if not is_instance_valid(overview_vbox): return
 
-	# Basic Info
-	_add_detail_row(overview_vbox, "Name:", String(vehicle_data.get("name", "N/A")))
-	_add_detail_row(overview_vbox, "Make/Model:", vehicle_data.get("make_model", "N/A"))
-	_add_detail_row(overview_vbox, "Description:", vehicle_data.get("description", "No description."), true)
-	_add_detail_row(overview_vbox, "Color:", vehicle_data.get("color", "N/A").capitalize())
-	_add_detail_row(overview_vbox, "Base Description:", vehicle_data.get("base_desc", "No detailed description."), true)
-	_add_detail_row(overview_vbox, "Shape:", vehicle_data.get("shape", "N/A").capitalize().replace("_", " "))
-	_add_detail_row(overview_vbox, "Base Value:", "$%s" % int(vehicle_data.get("base_value", 0.0)))
-	_add_detail_row(overview_vbox, "Current Value:", "$%s" % int(vehicle_data.get("value", 0.0)))
+	# Basic Info Section
+	var basic_info_title = Label.new()
+	basic_info_title.text = "Basic Information:"
+	basic_info_title.add_theme_font_size_override("font_size", 18)
+	basic_info_title.add_theme_color_override("font_color", Color.YELLOW)
+	overview_vbox.add_child(basic_info_title)
+
+	var details = [
+		{"label": "Name:", "value": String(vehicle_data.get("name", "N/A")), "wrap": false},
+		{"label": "Make/Model:", "value": vehicle_data.get("make_model", "N/A"), "wrap": false},
+		{"label": "Description:", "value": vehicle_data.get("description", "No description."), "wrap": true},
+		{"label": "Color:", "value": vehicle_data.get("color", "N/A").capitalize(), "wrap": false},
+		{"label": "Base Description:", "value": vehicle_data.get("base_desc", "No detailed description."), "wrap": true},
+		{"label": "Shape:", "value": vehicle_data.get("shape", "N/A").capitalize().replace("_", " "), "wrap": false},
+		{"label": "Base Value:", "value": "$%s" % int(vehicle_data.get("base_value", 0.0)), "wrap": false},
+		{"label": "Current Value:", "value": "$%s" % int(vehicle_data.get("value", 0.0)), "wrap": false}
+	]
+	for i in range(details.size()):
+		var detail = details[i]
+		_add_styled_detail_row(overview_vbox, detail.label, detail.value, i, detail.wrap)
 
 	# Stats Section
 	var stats_title = Label.new()
 	stats_title.text = "Statistics:"
 	stats_title.add_theme_font_size_override("font_size", 18) # Make title slightly larger
 	stats_title.add_theme_color_override("font_color", Color.YELLOW) # Highlight title
-
 	overview_vbox.add_child(stats_title)
-	_add_stat_row_with_button(overview_vbox, "  Top Speed:", "%.0f" % vehicle_data.get("top_speed", 0.0), "top_speed", vehicle_data)
-	_add_stat_row_with_button(overview_vbox, "  Offroad:", "%.0f" % vehicle_data.get("offroad_capability", 0.0), "offroad_capability", vehicle_data)
-	_add_stat_row_with_button(overview_vbox, "  Efficiency:", "%.0f" % vehicle_data.get("efficiency", 0.0), "efficiency", vehicle_data)
-	_add_stat_row_with_button(overview_vbox, "  Cargo Capacity:", "%.0f" % vehicle_data.get("cargo_capacity", 0.0), "cargo_capacity", vehicle_data)
-	_add_stat_row_with_button(overview_vbox, "  Weight Capacity:", "%.0f" % vehicle_data.get("weight_capacity", 0.0), "weight_capacity", vehicle_data)
-	_add_stat_row_with_button(overview_vbox, "  Passenger Seats:", "%d" % vehicle_data.get("passenger_seats", 0), "passenger_seats", vehicle_data)
+
+	var stats = [
+		{"label": "Top Speed:", "value": "%.0f" % vehicle_data.get("top_speed", 0.0), "type": "top_speed"},
+		{"label": "Offroad:", "value": "%.0f" % vehicle_data.get("offroad_capability", 0.0), "type": "offroad_capability"},
+		{"label": "Efficiency:", "value": "%.0f" % vehicle_data.get("efficiency", 0.0), "type": "efficiency"},
+		{"label": "Cargo Capacity:", "value": "%.0f" % vehicle_data.get("cargo_capacity", 0.0), "type": "cargo_capacity"},
+		{"label": "Weight Capacity:", "value": "%.0f" % vehicle_data.get("weight_capacity", 0.0), "type": "weight_capacity"},
+		{"label": "Passenger Seats:", "value": "%d" % vehicle_data.get("passenger_seats", 0), "type": "passenger_seats"}
+	]
+	for i in range(stats.size()):
+		var stat = stats[i]
+		_add_stat_row_with_button(overview_vbox, stat.label, stat.value, stat.type, vehicle_data, i)
 
 
 func _populate_parts_tab(vehicle_data: Dictionary):
@@ -409,81 +506,39 @@ func _populate_parts_tab(vehicle_data: Dictionary):
 			categorized_parts[category] = [] # Should not happen if PART_CATEGORY_ORDER is exhaustive
 		categorized_parts[category].append(part_item_data)
 
-	# Vehicle Parts Section (Intrinsic Components)
-	var parts_main_title = Label.new()
-	parts_main_title.text = "Installed Parts:"
-	parts_main_title.add_theme_font_size_override("font_size", 18)
-	parts_main_title.add_theme_color_override("font_color", Color.YELLOW)
-	parts_vbox.add_child(parts_main_title)
-
 	var has_parts_to_display = false
+	var part_row_index = 0
 	for category_name in PART_CATEGORY_ORDER:
 		var parts_in_category = categorized_parts.get(category_name)
 		if parts_in_category and not parts_in_category.is_empty():
 			has_parts_to_display = true
 			# Add category sub-header
+			var sep = HSeparator.new()
+			sep.custom_minimum_size.y = 8
+			parts_vbox.add_child(sep)
 			var category_label = Label.new()
 			category_label.text = category_name + ":"
 			# Make category headers more prominent to act as the "bold title"
-			category_label.add_theme_font_size_override("font_size", 18)
-			category_label.add_theme_color_override("font_color", Color.YELLOW)
+			category_label.add_theme_font_size_override("font_size", 16)
+			category_label.add_theme_color_override("font_color", Color.AQUAMARINE)
 			parts_vbox.add_child(category_label)
 
-			# Add a GridContainer for this category's parts
-			var grid = GridContainer.new()
-			grid.columns = 3 # A good starting point, adjust as needed
-			grid.add_theme_constant_override("h_separation", 8)
-			grid.add_theme_constant_override("v_separation", 8)
-			parts_vbox.add_child(grid)
-
 			# Sort parts within each category deterministically by name (lower), then slot, then id
-			parts_in_category.sort_custom(func(a, b):
-				var an := String(a.get("name", "")).to_lower()
-				var bn := String(b.get("name", "")).to_lower()
-				if an == bn:
-					var aslot := String(a.get("slot", ""))
-					var bslot := String(b.get("slot", ""))
-					if aslot == bslot:
-						var aid := String(a.get("part_id", a.get("intrinsic_part_id", "")))
-						var bid := String(b.get("part_id", b.get("intrinsic_part_id", "")))
-						return aid < bid
-					return aslot < bslot
-				return an < bn)
+			parts_in_category.sort_custom(func(a, b): return String(a.get("name", "")).to_lower() < String(b.get("name", "")).to_lower())
 
 			for part_item_data in parts_in_category:
-				# Create a button for each part, with the part's name as text
-				var part_button = Button.new()
-				part_button.text = part_item_data.get("name", "Unknown Part")
-				part_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-				part_button.custom_minimum_size.y = 40 # Give buttons some height
-				part_button.pressed.connect(_on_inspect_part_pressed.bind(part_item_data))
-				grid.add_child(part_button)
+				_add_inspectable_part_row(parts_vbox, part_item_data, part_row_index)
+				part_row_index += 1
 
 	if not has_parts_to_display:
 		var no_parts_label = Label.new()
-		no_parts_label.text = "  No vehicle parts installed."
+		no_parts_label.text = "\nNo vehicle parts installed."
+		no_parts_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		no_parts_label.modulate = Color.GRAY
 		parts_vbox.add_child(no_parts_label)
 
 func _populate_cargo_tab(vehicle_data: Dictionary):
 	if not is_instance_valid(cargo_vbox): return
-
-	# --- Button to view full convoy manifest ---
-	var full_manifest_button = Button.new()
-	full_manifest_button.text = "View Full Convoy Cargo Manifest"
-	full_manifest_button.custom_minimum_size.y = 40 # Make it a decent size
-	full_manifest_button.pressed.connect(_on_inspect_all_cargo_pressed)
-	cargo_vbox.add_child(full_manifest_button)
-
-	var separator = HSeparator.new()
-	separator.custom_minimum_size.y = 15
-	cargo_vbox.add_child(separator)
-
-	# --- Title for this vehicle's cargo ---
-	var vehicle_cargo_title = Label.new()
-	vehicle_cargo_title.text = "Cargo in this Vehicle:"
-	vehicle_cargo_title.add_theme_font_size_override("font_size", 18)
-	vehicle_cargo_title.add_theme_color_override("font_color", Color.ANTIQUE_WHITE)
-	cargo_vbox.add_child(vehicle_cargo_title)
 
 	# Add a header row for the cargo list
 	var header_hbox = HBoxContainer.new()
@@ -583,35 +638,67 @@ func _populate_cargo_tab(vehicle_data: Dictionary):
 		_add_inspectable_item_row(cargo_vbox, item_name, agg_data, item_index)
 		item_index += 1
 
-func _add_stat_row_with_button(parent: Container, label_text: String, stat_value_display: String, stat_type: String, vehicle_data: Dictionary):
-	var hbox = HBoxContainer.new()
-	hbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	# --- Button to view full convoy manifest at the bottom ---
+	var bottom_separator = HSeparator.new()
+	bottom_separator.custom_minimum_size.y = 15
+	cargo_vbox.add_child(bottom_separator)
+
+	var full_manifest_button = Button.new()
+	full_manifest_button.text = "View Full Convoy Cargo Manifest"
+	full_manifest_button.custom_minimum_size.y = 40 # Make it a decent size
+	full_manifest_button.pressed.connect(_on_inspect_all_cargo_pressed)
+	cargo_vbox.add_child(full_manifest_button)
+
+func _add_stat_row_with_button(parent: Container, label_text: String, stat_value_display: String, stat_type: String, vehicle_data: Dictionary, item_index: int):
+	var outer_row := HBoxContainer.new()
+	outer_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	outer_row.mouse_filter = Control.MOUSE_FILTER_PASS
+
+	var bg_panel := PanelContainer.new()
+	bg_panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	bg_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+
+	var sb := StyleBoxFlat.new()
+	if item_index % 2 == 0:
+		sb.bg_color = Color(0.13, 0.15, 0.19, 0.8)
+	else:
+		sb.bg_color = Color(0.10, 0.12, 0.16, 0.8)
+	sb.set_content_margin_all(6)
+	bg_panel.add_theme_stylebox_override("panel", sb)
+	
+	outer_row.add_child(bg_panel)
+
+	var content_row := HBoxContainer.new()
+	content_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	content_row.add_theme_constant_override("separation", 10)
+	bg_panel.add_child(content_row)
 
 	var label_node = Label.new()
 	label_node.text = label_text
-	label_node.size_flags_vertical = Control.SIZE_SHRINK_CENTER # Align with button vertically
+	label_node.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	label_node.clip_text = true
+	label_node.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	content_row.add_child(label_node)
 
 	var inspect_button = Button.new()
 	inspect_button.text = stat_value_display
-	# Let the button take its natural width and sit next to the label
-	inspect_button.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	inspect_button.custom_minimum_size.x = 80
 	inspect_button.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-
-	# Style the button to be lighter and more distinct
-	var style_box = StyleBoxFlat.new()
-	style_box.bg_color = Color(0.4, 0.4, 0.4, 0.8) # A lighter gray
-	style_box.set_content_margin_all(4) # Give it some padding
-	style_box.corner_radius_top_left = 3
-	style_box.corner_radius_top_right = 3
-	style_box.corner_radius_bottom_left = 3
-	style_box.corner_radius_bottom_right = 3
-	inspect_button.add_theme_stylebox_override("normal", style_box)
-
 	inspect_button.pressed.connect(_on_inspect_stat_pressed.bind(stat_type, vehicle_data))
+	content_row.add_child(inspect_button)
 
-	hbox.add_child(label_node)
-	hbox.add_child(inspect_button)
-	parent.add_child(hbox)
+	# Hover effect
+	outer_row.mouse_entered.connect(func():
+		sb.bg_color = sb.bg_color.lightened(0.1)
+	)
+	outer_row.mouse_exited.connect(func():
+		if item_index % 2 == 0:
+			sb.bg_color = Color(0.13, 0.15, 0.19, 0.8)
+		else:
+			sb.bg_color = Color(0.10, 0.12, 0.16, 0.8)
+	)
+
+	parent.add_child(outer_row)
 
 func _on_inspect_stat_pressed(stat_type: String, vehicle_data: Dictionary):
 	var dialog = AcceptDialog.new()

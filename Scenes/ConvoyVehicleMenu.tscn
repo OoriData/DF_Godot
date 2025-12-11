@@ -69,11 +69,40 @@ layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
 
-[node name="Parts" type="ScrollContainer" parent="MainVBox/VehicleTabContainer"]
+[node name="Parts" type="VBoxContainer" parent="MainVBox/VehicleTabContainer"]
 visible = false
 layout_mode = 2
+theme_override_constants/separation = 5
 
-[node name="PartsVBox" type="VBoxContainer" parent="MainVBox/VehicleTabContainer/Parts"]
+[node name="PartsHeader" type="HBoxContainer" parent="MainVBox/VehicleTabContainer/Parts"]
+layout_mode = 2
+theme_override_constants/separation = 10
+
+[node name="NameHeader" type="Label" parent="MainVBox/VehicleTabContainer/Parts/PartsHeader"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Part Name"
+theme_override_colors/font_color = Color(0.8, 0.8, 0.8, 1)
+
+[node name="SlotHeader" type="Label" parent="MainVBox/VehicleTabContainer/Parts/PartsHeader"]
+custom_minimum_size = Vector2(150, 0)
+layout_mode = 2
+text = "Slot"
+horizontal_alignment = 2
+theme_override_colors/font_color = Color(0.8, 0.8, 0.8, 1)
+
+[node name="InspectHeaderPlaceholder" type="Control" parent="MainVBox/VehicleTabContainer/Parts/PartsHeader"]
+custom_minimum_size = Vector2(80, 0)
+layout_mode = 2
+
+[node name="PartsHeaderSeparator" type="HSeparator" parent="MainVBox/VehicleTabContainer/Parts"]
+layout_mode = 2
+
+[node name="PartsScroll" type="ScrollContainer" parent="MainVBox/VehicleTabContainer/Parts"]
+layout_mode = 2
+size_flags_vertical = 3
+
+[node name="PartsVBox" type="VBoxContainer" parent="MainVBox/VehicleTabContainer/Parts/PartsScroll"]
 layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
@@ -87,10 +116,19 @@ layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
 
-[node name="Service" type="Control" parent="MainVBox/VehicleTabContainer"]
+[node name="Service" type="ScrollContainer" parent="MainVBox/VehicleTabContainer"]
+visible = false
 layout_mode = 2
 
-[node name="MechanicsEmbed" parent="MainVBox/VehicleTabContainer/Service" instance=ExtResource("2_mechanics_scene")]
+[node name="ServiceVBox" type="VBoxContainer" parent="MainVBox/VehicleTabContainer/Service"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+
+[node name="MechanicsEmbed" parent="MainVBox/VehicleTabContainer/Service/ServiceVBox" instance=ExtResource("2_mechanics_scene")]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
 
 [node name="BackButton" type="Button" parent="MainVBox"]
 layout_mode = 2
