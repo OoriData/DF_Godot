@@ -960,6 +960,20 @@ func _populate_category(target_tree: Tree, root_item: TreeItem, category_name: S
 			tree_child_item.set_icon(0, item_icon)
 		tree_child_item.set_metadata(0, agg_data)
 
+		# Tooltip with helpful context: locations and mission/vendor info
+		var tooltip_lines: Array = []
+		if agg_data is Dictionary:
+			var dd: Dictionary = agg_data
+			if dd.has("mission_vendor_name") and str(dd.get("mission_vendor_name", "")) != "":
+				tooltip_lines.append("Destination: " + str(dd.get("mission_vendor_name")))
+			if dd.has("locations") and dd["locations"] is Dictionary and (dd["locations"] as Dictionary).size() > 0:
+				var loc_parts: Array = []
+				for loc in (dd["locations"] as Dictionary).keys():
+					loc_parts.append(str(loc) + ": " + str((dd["locations"] as Dictionary)[loc]))
+				tooltip_lines.append("Locations: " + ", ".join(loc_parts))
+		if tooltip_lines.size() > 0:
+			tree_child_item.set_tooltip_text(0, "\n".join(tooltip_lines))
+
 		# Fill optional numeric columns: Qty, Wt, Vol (if the tree has them)
 		var cols: int = _tree_column_count(target_tree)
 		var qty: Variant = null
@@ -973,31 +987,39 @@ func _populate_category(target_tree: Tree, root_item: TreeItem, category_name: S
 			if (agg_data as Dictionary).has("total_volume"):
 				vol = (agg_data as Dictionary).get("total_volume")
 		if cols > 1:
-			tree_child_item.set_text(1, str(qty) if qty != null else "")
+			tree_child_item.set_text(1, _fmt_qty(qty))
 			# Right-align numeric columns when available
 			target_tree.set_column_expand(1, false)
 			target_tree.set_column_custom_minimum_width(1, 60)
 		if cols > 2:
 			var wt_str: String = ""
 			if wt != null:
-				wt_str = str(snapped(float(wt), 0.01))
+				wt_str = _fmt_float(wt)
 			tree_child_item.set_text(2, wt_str)
 			target_tree.set_column_expand(2, false)
 			target_tree.set_column_custom_minimum_width(2, 70)
 		if cols > 3:
 			var vol_str: String = ""
 			if vol != null:
-				vol_str = str(snapped(float(vol), 0.01))
+				vol_str = _fmt_float(vol)
 			tree_child_item.set_text(3, vol_str)
 			target_tree.set_column_expand(3, false)
 			target_tree.set_column_custom_minimum_width(3, 70)
 
 		# Alternating row backgrounds for readability
-		var alt_bg_a := Color(0.15, 0.15, 0.18, 0.35)
-		var alt_bg_b := Color(0, 0, 0, 0)
+		var alt_bg_a := Color(0.15, 0.16, 0.20, 0.40)
+		var alt_bg_b := Color(0.10, 0.11, 0.14, 0.20)
 		var row_bg := alt_bg_a if (row_index % 2 == 0) else alt_bg_b
 		for c in range(cols):
 			tree_child_item.set_custom_bg_color(c, row_bg)
+
+		# Badge-style emphasis for numeric columns
+		if cols > 1 and qty != null and int(qty) > 0:
+			tree_child_item.set_custom_color(1, Color(0.95, 0.95, 1.0, 0.95))
+		if cols > 2 and wt != null:
+			tree_child_item.set_custom_color(2, Color(0.85, 0.95, 0.90, 0.95))
+		if cols > 3 and vol != null:
+			tree_child_item.set_custom_color(3, Color(0.85, 0.90, 1.0, 0.95))
 		row_index += 1
 
 func _ensure_tree_columns(tree: Tree) -> void:
@@ -1019,6 +1041,37 @@ func _ensure_tree_columns(tree: Tree) -> void:
 	tree.set_column_custom_minimum_width(1, 60)
 	tree.set_column_custom_minimum_width(2, 70)
 	tree.set_column_custom_minimum_width(3, 70)
+
+# --- Display formatting helpers (visual-only) ---
+func _fmt_qty(v: Variant) -> String:
+	if v == null:
+		return ""
+	var n := int(v)
+	return _format_number(n)
+
+func _fmt_float(v: Variant) -> String:
+	if v == null:
+		return ""
+	var f := float(v)
+	return _format_number(snapped(f, 0.01))
+
+func _format_number(val) -> String:
+	# Simple thousands-separator for readability
+	var s := str(val)
+	var dot_idx := s.find(".")
+	var int_part := s
+	var frac_part := ""
+	if dot_idx != -1:
+		int_part = s.substr(0, dot_idx)
+		frac_part = s.substr(dot_idx)
+	var out := ""
+	var count := 0
+	for i in range(int_part.length() - 1, -1, -1):
+		out = int_part[i] + out
+		count += 1
+		if count % 3 == 0 and i > 0:
+			out = "," + out
+	return out + frac_part
 
 func _tree_column_count(tree: Tree) -> int:
 	if not is_instance_valid(tree):
@@ -1326,30 +1379,36 @@ func _update_inspector() -> void:
 		else:
 			description_text = "No description available."
 	if is_instance_valid(item_description_rich_text):
-		item_description_rich_text.text = description_text
+		item_description_rich_text.bbcode_enabled = true
+		item_description_rich_text.clear()
+		item_description_rich_text.parse_bbcode("[color=#C9D1D9]" + description_text + "[/color]")
 
 	# --- Fitment (slot + compatible vehicles via backend) ---
 	# This is now handled by its own function to allow for targeted updates.
 	_update_fitment_panel()
 
 	var bbcode = ""
+	# Section: Summary
+	bbcode += "[color=gold][b]Summary[/b][/color]\n"
+	var total_quantity_hdr: int = int(selected_item.get("total_quantity", 0))
+	if total_quantity_hdr > 0: bbcode += "[b]Quantity:[/b] %s\n" % _format_number(total_quantity_hdr)
 	# Display destination for mission items in both buy and sell mode.
 	if selected_item.has("mission_vendor_name") and not str(selected_item.mission_vendor_name).is_empty() and selected_item.mission_vendor_name != "Unknown Vendor":
-		bbcode += "[b]Destination:[/b] %s\n\n" % selected_item.mission_vendor_name
+		bbcode += "[b]Destination:[/b] %s\n" % selected_item.mission_vendor_name
 
-	bbcode += "[b]Stats:[/b]\n"
-	bbcode += "  [u]Per Unit:[/u]\n"
+	# Section: Per Unit
+	bbcode += "\n[color=#DDEAF0][b]Per Unit[/b][/color]\n"
 	var contextual_unit_price = _get_contextual_unit_price(item_data_source)
 	var price_label_text = "Unit Price"
 	if current_mode == "buy":
 		price_label_text = "Buy Price"
 	elif current_mode == "sell":
 		price_label_text = "Sell Price"
-	bbcode += "    - %s: $%s\n" % [price_label_text, "%.2f" % contextual_unit_price]
+	bbcode += "- %s: $%s\n" % [price_label_text, "%.2f" % contextual_unit_price]
 
 	var price_components = _get_item_price_components(item_data_source)
 	if price_components.resource_unit_value > 0.01:
-		bbcode += "      [color=gray](Item: %.2f + Resources: %.2f)[/color]\n" % [price_components.container_unit_price, price_components.resource_unit_value]
+		bbcode += "  [color=gray](Item: %.2f + Resources: %.2f)[/color]\n" % [price_components.container_unit_price, price_components.resource_unit_value]
 
 	var unit_weight = item_data_source.get("unit_weight", 0.0)
 	if unit_weight == 0.0 and item_data_source.has("weight") and item_data_source.has("quantity"):
@@ -1357,7 +1416,7 @@ func _update_inspector() -> void:
 		var _total_quantity_float_w = float(item_data_source.get("quantity", 1.0))
 		if _total_quantity_float_w > 0:
 			unit_weight = _total_weight_calc / _total_quantity_float_w
-	if unit_weight > 0: bbcode += "    - Weight: %s\n" % str(unit_weight)
+	if unit_weight > 0: bbcode += "- Weight: %s\n" % _fmt_float(unit_weight)
 
 	var unit_volume = item_data_source.get("unit_volume", 0.0)
 	if unit_volume == 0.0 and item_data_source.has("volume") and item_data_source.has("quantity"):
@@ -1365,41 +1424,48 @@ func _update_inspector() -> void:
 		var _total_quantity_float_v = float(item_data_source.get("quantity", 1.0))
 		if _total_quantity_float_v > 0:
 			unit_volume = _total_volume_calc / _total_quantity_float_v
-	if unit_volume > 0: bbcode += "    - Volume: %s\n" % str(unit_volume)
+	if unit_volume > 0: bbcode += "- Volume: %s\n" % _fmt_float(unit_volume)
 
 	var unit_delivery_reward_val = item_data_source.get("unit_delivery_reward")
 	if (unit_delivery_reward_val is float or unit_delivery_reward_val is int) and float(unit_delivery_reward_val) > 0.0:
-		bbcode += "    - Delivery Reward: $%s\n" % ("%.2f" % float(unit_delivery_reward_val))
+		bbcode += "- Delivery Reward: $%s\n" % ("%.2f" % float(unit_delivery_reward_val))
 
-	bbcode += "\n  [u]Total Order:[/u]\n"
+	# Section: Total Order
+	bbcode += "\n[color=#DDEAF0][b]Total Order[/b][/color]\n"
 	var total_quantity = selected_item.get("total_quantity", 0)
-	if total_quantity > 0: bbcode += "    - Quantity: %d\n" % total_quantity
+	if total_quantity > 0: bbcode += "- Quantity: %s\n" % _format_number(total_quantity)
 	var total_weight = selected_item.get("total_weight", 0.0)
-	if total_weight > 0: bbcode += "    - Total Weight: %s\n" % str(total_weight)
+	if total_weight > 0: bbcode += "- Total Weight: %s\n" % _fmt_float(total_weight)
 	var total_volume = selected_item.get("total_volume", 0.0)
-	if total_volume > 0: bbcode += "    - Total Volume: %s\n" % str(total_volume)
+	if total_volume > 0: bbcode += "- Total Volume: %s\n" % _fmt_float(total_volume)
 	var total_food = selected_item.get("total_food", 0.0)
-	if total_food > 0: bbcode += "    - Food: %s\n" % str(total_food)
+	if total_food > 0: bbcode += "- Food: %s\n" % _fmt_float(total_food)
 	var total_water = selected_item.get("total_water", 0.0)
-	if total_water > 0: bbcode += "    - Water: %s\n" % str(total_water)
+	if total_water > 0: bbcode += "- Water: %s\n" % _fmt_float(total_water)
 	var total_fuel = selected_item.get("total_fuel", 0.0)
-	if total_fuel > 0: bbcode += "    - Fuel: %s\n" % str(total_fuel)
+	if total_fuel > 0: bbcode += "- Fuel: %s\n" % _fmt_float(total_fuel)
 
+	# Section: Stats
 	if item_data_source.has("stats") and item_data_source.stats is Dictionary and not item_data_source.stats.is_empty():
-		bbcode += "\n"
+		bbcode += "\n[color=#DDEAF0][b]Stats[/b][/color]\n"
 		for stat_name in item_data_source.stats:
-			bbcode += "- %s: %s\n" % [stat_name.capitalize(), str(item_data_source.stats[stat_name])]
+			bbcode += "• %s: %s\n" % [stat_name.capitalize(), str(item_data_source.stats[stat_name])]
 
 	if current_mode == "sell":
-		bbcode += "\n[b]Locations:[/b]\n"
+		bbcode += "\n[color=#F7D794][b]Locations[/b][/color]\n"
 		var locations = selected_item.get("locations", {})
 		for vehicle_name in locations:
-			bbcode += "- %s: %d\n" % [vehicle_name, locations[vehicle_name]]
+			bbcode += "• %s: %d\n" % [vehicle_name, locations[vehicle_name]]
 
 	print("DEBUG: _update_inspector - Final bbcode for ItemInfoRichText:\n", bbcode)
 
 	if is_instance_valid(item_info_rich_text):
-		item_info_rich_text.text = bbcode
+		item_info_rich_text.bbcode_enabled = true
+		item_info_rich_text.clear()
+		item_info_rich_text.parse_bbcode(bbcode)
+		item_info_rich_text.visible = false
+		# Build segmented info panels for clarity
+		_rebuild_info_sections(item_data_source)
 	call_deferred("_log_size_after_update")
 
 func _update_inspector_for_vehicle(vehicle_data: Dictionary) -> void:
@@ -1976,3 +2042,162 @@ func get_vendor_item_rect_by_text_contains(substr: String) -> Rect2:
 	var local_r: Rect2 = vendor_item_tree.get_item_rect(found, 0, false)
 	var tree_global := vendor_item_tree.get_global_rect()
 	return Rect2(tree_global.position + local_r.position, local_r.size)
+
+# --- Segmented Info Panel Helpers ---
+func _make_panel(title: String, rows: Array) -> PanelContainer:
+	var panel := PanelContainer.new()
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color(0.18, 0.20, 0.24, 0.9)
+	sb.border_color = Color(0.45, 0.50, 0.58, 0.9)
+	sb.border_width_left = 1
+	sb.border_width_right = 1
+	sb.border_width_top = 1
+	sb.border_width_bottom = 1
+	sb.corner_radius_top_left = 6
+	sb.corner_radius_top_right = 6
+	sb.corner_radius_bottom_left = 6
+	sb.corner_radius_bottom_right = 6
+	sb.content_margin_left = 8
+	sb.content_margin_right = 8
+	sb.content_margin_top = 6
+	sb.content_margin_bottom = 6
+	panel.add_theme_stylebox_override("panel", sb)
+
+	var vb := VBoxContainer.new()
+	vb.add_theme_constant_override("separation", 4)
+	panel.add_child(vb)
+
+	var hdr := Label.new()
+	hdr.text = title
+	hdr.add_theme_font_size_override("font_size", 16)
+	hdr.modulate = Color(1.0, 0.85, 0.35, 1.0)
+	vb.add_child(hdr)
+
+	for r in rows:
+		if not (r is Dictionary):
+			continue
+		var line := HBoxContainer.new()
+		line.add_theme_constant_override("separation", 6)
+		var k := Label.new()
+		k.text = String(r.get("k", ""))
+		k.add_theme_font_size_override("font_size", 13)
+		k.modulate = Color(0.92, 0.94, 1.0, 0.95)
+		k.size_flags_horizontal = Control.SIZE_FILL
+		k.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		var v := Label.new()
+		v.text = String(r.get("v", ""))
+		v.add_theme_font_size_override("font_size", 13)
+		v.modulate = Color(0.86, 0.92, 1.0, 1)
+		v.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		v.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		v.autowrap_mode = TextServer.AUTOWRAP_WORD
+		line.add_child(k)
+		line.add_child(v)
+		vb.add_child(line)
+	return panel
+
+func _rebuild_info_sections(item_data_source: Dictionary) -> void:
+	var parent_node = null
+	if is_instance_valid(item_info_rich_text):
+		parent_node = item_info_rich_text.get_parent()
+	if not is_instance_valid(parent_node):
+		return
+	var container: Node = parent_node.get_node_or_null("InfoSectionsContainer")
+	if container == null:
+		container = VBoxContainer.new()
+		container.name = "InfoSectionsContainer"
+		container.add_theme_constant_override("separation", 6)
+		parent_node.add_child(container)
+		var idx: int = parent_node.get_children().find(item_info_rich_text)
+		if idx != -1:
+			parent_node.move_child(container, idx + 1)
+
+	for ch in container.get_children():
+		ch.queue_free()
+
+	var rows_summary: Array = []
+	var total_quantity_hdr: int = 0
+	if selected_item and selected_item is Dictionary:
+		total_quantity_hdr = int(selected_item.get("total_quantity", 0))
+	if total_quantity_hdr > 0:
+		rows_summary.append({"k": "Quantity", "v": _format_number(total_quantity_hdr)})
+	if selected_item and selected_item.has("mission_vendor_name") and str(selected_item.mission_vendor_name) != "":
+		rows_summary.append({"k": "Destination", "v": str(selected_item.mission_vendor_name)})
+	if rows_summary.size() > 0:
+		container.add_child(_make_panel("Summary", rows_summary))
+
+	var rows_unit: Array = []
+	var contextual_unit_price = _get_contextual_unit_price(item_data_source)
+	var price_label_text = "Unit Price"
+	if current_mode == "sell":
+		price_label_text = "Sell Price"
+	elif current_mode == "buy":
+		price_label_text = "Buy Price"
+	rows_unit.append({"k": price_label_text, "v": "$" + _fmt_float(contextual_unit_price)})
+	var unit_weight := 0.0
+	if item_data_source.has("unit_weight") and item_data_source.get("unit_weight") != null:
+		unit_weight = float(item_data_source.get("unit_weight"))
+	elif item_data_source.has("weight") and item_data_source.has("quantity") and float(item_data_source.get("quantity", 1.0)) > 0.0:
+		unit_weight = float(item_data_source.get("weight", 0.0)) / float(item_data_source.get("quantity", 1.0))
+	if unit_weight > 0.0:
+		rows_unit.append({"k": "Weight", "v": _fmt_float(unit_weight)})
+	var unit_volume := 0.0
+	if item_data_source.has("unit_volume") and item_data_source.get("unit_volume") != null:
+		unit_volume = float(item_data_source.get("unit_volume"))
+	elif item_data_source.has("volume") and item_data_source.has("quantity") and float(item_data_source.get("quantity", 1.0)) > 0.0:
+		unit_volume = float(item_data_source.get("volume", 0.0)) / float(item_data_source.get("quantity", 1.0))
+	if unit_volume > 0.0:
+		rows_unit.append({"k": "Volume", "v": _fmt_float(unit_volume)})
+	var unit_delivery_reward_val = item_data_source.get("unit_delivery_reward")
+	if (unit_delivery_reward_val is float or unit_delivery_reward_val is int) and float(unit_delivery_reward_val) > 0.0:
+		rows_unit.append({"k": "Delivery Reward", "v": "$" + _fmt_float(unit_delivery_reward_val)})
+	if rows_unit.size() > 0:
+		container.add_child(_make_panel("Per Unit", rows_unit))
+
+	var rows_total: Array = []
+	var total_quantity = 0
+	if selected_item and selected_item is Dictionary:
+		total_quantity = selected_item.get("total_quantity", 0)
+	if int(total_quantity) > 0:
+		rows_total.append({"k": "Quantity", "v": _format_number(int(total_quantity))})
+	var total_weight = 0.0
+	if selected_item and selected_item is Dictionary:
+		total_weight = selected_item.get("total_weight", 0.0)
+	if float(total_weight) > 0.0:
+		rows_total.append({"k": "Total Weight", "v": _fmt_float(total_weight)})
+	var total_volume = 0.0
+	if selected_item and selected_item is Dictionary:
+		total_volume = selected_item.get("total_volume", 0.0)
+	if float(total_volume) > 0.0:
+		rows_total.append({"k": "Total Volume", "v": _fmt_float(total_volume)})
+	var total_food = 0.0
+	if selected_item and selected_item is Dictionary:
+		total_food = selected_item.get("total_food", 0.0)
+	if float(total_food) > 0.0:
+		rows_total.append({"k": "Food", "v": _fmt_float(total_food)})
+	var total_water = 0.0
+	if selected_item and selected_item is Dictionary:
+		total_water = selected_item.get("total_water", 0.0)
+	if float(total_water) > 0.0:
+		rows_total.append({"k": "Water", "v": _fmt_float(total_water)})
+	var total_fuel = 0.0
+	if selected_item and selected_item is Dictionary:
+		total_fuel = selected_item.get("total_fuel", 0.0)
+	if float(total_fuel) > 0.0:
+		rows_total.append({"k": "Fuel", "v": _fmt_float(total_fuel)})
+	if rows_total.size() > 0:
+		container.add_child(_make_panel("Total Order", rows_total))
+
+	if item_data_source.has("stats") and item_data_source.stats is Dictionary and not item_data_source.stats.is_empty():
+		var rows_stats: Array = []
+		for stat_name in item_data_source.stats:
+			rows_stats.append({"k": String(stat_name).capitalize(), "v": str(item_data_source.stats[stat_name])})
+		container.add_child(_make_panel("Stats", rows_stats))
+
+	if current_mode == "sell" and selected_item and selected_item.has("locations"):
+		var locs: Variant = selected_item.get("locations")
+		if locs is Dictionary and not (locs as Dictionary).is_empty():
+			var rows_locs: Array = []
+			for vehicle_name in (locs as Dictionary).keys():
+				rows_locs.append({"k": String(vehicle_name), "v": str((locs as Dictionary)[vehicle_name])})
+			container.add_child(_make_panel("Locations", rows_locs))
