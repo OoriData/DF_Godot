@@ -1497,99 +1497,25 @@ func _update_inspector_for_vehicle(vehicle_data: Dictionary) -> void:
 			description_text = desc_val
 		else:
 			description_text = "No description available."
-	
+
 	if is_instance_valid(item_description_rich_text):
 		item_description_rich_text.text = description_text
-	var bbcode = ""
 
-	# --- Vehicle Stats ---
-	bbcode += "[b]Vehicle Stats:[/b]\n"
-	var stats_found = false
-	
-	var stat_map = {
-		"top_speed": "Top Speed", "efficiency": "Efficiency", "offroad_capability": "Off-road",
-		"cargo_capacity": "Cargo Capacity", "weight_capacity": "Weight Capacity",
-		"fuel_capacity": "Fuel Capacity", "kwh_capacity": "Battery", "base_weight": "Base Weight"
-	}
-	var unit_map = {
-		"top_speed": "kph", "efficiency": "km/L", "cargo_capacity": "m³",
-		"weight_capacity": "kg", "fuel_capacity": "L", "kwh_capacity": "kWh", "base_weight": "kg"
-	}
-
-	for key in stat_map:
-		if vehicle_data.has(key) and vehicle_data[key] != null:
-			stats_found = true
-			var unit = unit_map.get(key, "")
-			bbcode += "  - %s: %s%s\n" % [stat_map[key], str(vehicle_data[key]), (" " + unit if not unit.is_empty() else "")]
-
-	if not stats_found:
-		bbcode += "  No detailed stats available.\n"
-
-	# --- Installed Parts ---
-	if vehicle_data.has("parts") and vehicle_data.get("parts") is Array:
-		var parts_list: Array = vehicle_data.get("parts")
-		if not parts_list.is_empty():
-			bbcode += "\n[b]Installed Parts:[/b]\n"
-			for part in parts_list:
-				if part is Dictionary:
-					var part_name = part.get("name", "Unknown Part")
-					var part_slot = part.get("slot", "no slot")
-					bbcode += "  - %s (%s)\n" % [part_name, part_slot]
-
+	# Build segmented info panels in the middle column for vehicles
 	if is_instance_valid(item_info_rich_text):
-		item_info_rich_text.text = bbcode
+		item_info_rich_text.bbcode_enabled = true
+		item_info_rich_text.clear()
+		item_info_rich_text.visible = false
+		_rebuild_info_sections(vehicle_data)
 
 func _update_fitment_panel() -> void:
-	# --- Fitment (slot + compatible vehicles via backend) ---
-	if is_instance_valid(fitment_panel) and is_instance_valid(fitment_rich_text):
-		if not selected_item:
-			fitment_panel.visible = false
-			return
-
-		var item_data_source = selected_item.item_data if selected_item.has("item_data") and not selected_item.item_data.is_empty() else selected_item
-
-		var slot_name: String = ""
-		if item_data_source.has("slot") and item_data_source.get("slot") != null:
-			slot_name = String(item_data_source.get("slot"))
-		# Resolve a part UID to query (prefer cargo_id; fallback part_id)
-		var part_uid: String = ""
-		if item_data_source.has("cargo_id") and item_data_source.get("cargo_id") != null:
-			part_uid = String(item_data_source.get("cargo_id"))
-		elif item_data_source.has("part_id") and item_data_source.get("part_id") != null:
-			part_uid = String(item_data_source.get("part_id"))
-
-		# Per user request: Only show the fitment panel if the item has a "slot" property.
-		# This is the primary indicator of it being a vehicle part for UI purposes.
-		if slot_name.is_empty():
-			fitment_panel.visible = false
-			return
-
-		var lines: Array[String] = []
-		lines.append("[b]Slot:[/b] %s" % slot_name)
-		var compat_lines: Array[String] = []
-		if convoy_data and convoy_data.has("vehicle_details_list") and convoy_data.vehicle_details_list is Array:
-			for v in convoy_data.vehicle_details_list:
-				var vid: String = String(v.get("vehicle_id", ""))
-				if vid == "" or part_uid == "":
-					continue
-				# Build cache key and request on-demand if missing
-				# NOTE: Request is sent from _handle_new_item_selection. This function only displays results.
-				var key := _compat_key(vid, part_uid)
-				var compat_ok: bool = _compat_payload_is_compatible(_compat_cache.get(key, {}))
-				var vname: String = v.get("name", "Vehicle")
-				if compat_ok:
-					compat_lines.append("  • %s" % vname)
-
-		if compat_lines.is_empty():
-			lines.append("[color=grey]No compatible convoy vehicles detected by server.[/color]")
-		else:
-			lines.append("[b]Compatible Vehicles:[/b]")
-			for ln in compat_lines:
-				lines.append(ln)
-
-		fitment_rich_text.text = "\n".join(lines)
-		fitment_rich_text.visible = true
-		fitment_panel.visible = true
+	# Per request: remove the plain-text fitment display to avoid duplicates.
+	# The boxed Fitment section is built inside `_rebuild_info_sections`.
+	if is_instance_valid(fitment_rich_text):
+		fitment_rich_text.visible = false
+	if is_instance_valid(fitment_panel):
+		fitment_panel.visible = false
+	return
 
 func _update_transaction_panel() -> void:
 	var item_name_for_log = selected_item.item_data.get("name", "<no_name>") if selected_item and selected_item.has("item_data") else "null"
@@ -1733,6 +1659,17 @@ func _looks_like_part(item_data_source: Dictionary) -> bool:
 	# Defer to the centralized classification logic in the ItemsData factory.
 	return ItemsData.PartItem._looks_like_part_dict(item_data_source)
 
+# Helper: fetch a modifier value from either top-level or stats dict using a list of alias keys
+func _get_modifier_value(item_data_source: Dictionary, keys: Array) -> Variant:
+	for k in keys:
+		if item_data_source.has(k) and item_data_source[k] != null:
+			return item_data_source[k]
+		if item_data_source.has("stats") and item_data_source.stats is Dictionary and (item_data_source.stats as Dictionary).has(k):
+			var v = (item_data_source.stats as Dictionary)[k]
+			if v != null:
+				return v
+	return null
+
 func _update_install_button_state() -> void:
 	if not is_instance_valid(install_button):
 		return
@@ -1803,6 +1740,44 @@ func _extract_install_price(payload: Dictionary) -> float:
 	if d is Array and (d as Array).size() > 0 and (d[0] is Dictionary) and (d[0] as Dictionary).has("installation_price"):
 		return float((d[0] as Dictionary).get("installation_price", 0.0))
 	return -1.0
+
+# Resolve part modifiers from item data or compatibility payload cache
+func _get_part_modifiers(item_data_source: Dictionary) -> Dictionary:
+	var speed_val: Variant = _get_modifier_value(item_data_source, ["top_speed_add", "speed_add", "top_speed_mod", "top_speed_modifier"]) 
+	var eff_val: Variant = _get_modifier_value(item_data_source, ["efficiency_add", "fuel_efficiency_add", "efficiency_mod", "efficiency_modifier"]) 
+	var offroad_val: Variant = _get_modifier_value(item_data_source, ["offroad_capability_add", "offroad_add", "offroad_mod", "offroad_capability_modifier"]) 
+
+	var part_uid: String = String(item_data_source.get("cargo_id", item_data_source.get("part_id", "")))
+	if (speed_val == null or eff_val == null or offroad_val == null) and convoy_data and convoy_data.has("vehicle_details_list"):
+		for v in convoy_data.vehicle_details_list:
+			var vid: String = String(v.get("vehicle_id", ""))
+			if vid == "" or part_uid == "":
+				continue
+			var key := _compat_key(vid, part_uid)
+			if _compat_cache.has(key):
+				var payload: Variant = _compat_cache[key]
+				var d = (payload as Dictionary).get("data") if (payload is Dictionary) else null
+				var pd: Dictionary = {}
+				if d is Array and (d as Array).size() > 0 and (d[0] is Dictionary):
+					pd = d[0]
+				elif d is Dictionary:
+					pd = d
+				if pd.size() > 0:
+					if speed_val == null and pd.has("top_speed_add") and pd["top_speed_add"] != null:
+						speed_val = pd["top_speed_add"]
+					if eff_val == null and pd.has("efficiency_add") and pd["efficiency_add"] != null:
+						eff_val = pd["efficiency_add"]
+					if offroad_val == null and pd.has("offroad_capability_add") and pd["offroad_capability_add"] != null:
+						offroad_val = pd["offroad_capability_add"]
+				# Once we find values from any vehicle, we can stop
+				if speed_val != null or eff_val != null or offroad_val != null:
+					break
+
+	return {
+		"speed": speed_val,
+		"efficiency": eff_val,
+		"offroad": offroad_val
+	}
 
 # --- Price Calculation Helpers ---
 
@@ -2116,75 +2091,148 @@ func _rebuild_info_sections(item_data_source: Dictionary) -> void:
 		ch.queue_free()
 
 	var rows_summary: Array = []
-	var total_quantity_hdr: int = 0
-	if selected_item and selected_item is Dictionary:
-		total_quantity_hdr = int(selected_item.get("total_quantity", 0))
-	if total_quantity_hdr > 0:
-		rows_summary.append({"k": "Quantity", "v": _format_number(total_quantity_hdr)})
+	var is_vehicle := _is_vehicle_item(item_data_source)
+	var is_part := _looks_like_part(item_data_source)
+
+	# Destination for mission cargo
 	if selected_item and selected_item.has("mission_vendor_name") and str(selected_item.mission_vendor_name) != "":
 		rows_summary.append({"k": "Destination", "v": str(selected_item.mission_vendor_name)})
+
+	# Vehicles: include general vehicle stats in Summary
+	if is_vehicle:
+		# Show requested core stats only: speed, efficiency, offroad, weight, volume capacity
+		var stat_map = {
+			"top_speed": "Top Speed",
+			"efficiency": "Efficiency",
+			"offroad_capability": "Off-road",
+			"weight_capacity": "Weight Capacity",
+			"cargo_capacity": "Volume Capacity"
+		}
+		var unit_map = {
+			"top_speed": "kph",
+			"efficiency": "km/L",
+			"offroad_capability": "",
+			"weight_capacity": "kg",
+			"cargo_capacity": "m³"
+		}
+		for key in stat_map:
+			if item_data_source.has(key) and item_data_source[key] != null:
+				var unit = unit_map.get(key, "")
+				var val_str: String = str(item_data_source[key])
+				if not String(unit).is_empty():
+					val_str += " " + unit
+				rows_summary.append({"k": stat_map[key], "v": val_str})
+
+	# Parts: include requested stat modifiers in Summary (speed, efficiency, off-road)
+	elif is_part:
+		var mods := _get_part_modifiers(item_data_source)
+		var speed_val = mods.get("speed")
+		var eff_val = mods.get("efficiency")
+		var offroad_val = mods.get("offroad")
+
+		if speed_val != null and (speed_val is float or speed_val is int):
+			var f = float(speed_val)
+			var s = _fmt_float(f)
+			if f >= 0.0: s = "+" + s
+			rows_summary.append({"k": "Speed", "v": s + " kph"})
+		if eff_val != null and (eff_val is float or eff_val is int):
+			var f2 = float(eff_val)
+			var s2 = _fmt_float(f2)
+			if f2 >= 0.0: s2 = "+" + s2
+			rows_summary.append({"k": "Efficiency", "v": s2 + " km/L"})
+		if offroad_val != null and (offroad_val is float or offroad_val is int):
+			var f3 = float(offroad_val)
+			var s3 = _fmt_float(f3)
+			if f3 >= 0.0: s3 = "+" + s3
+			rows_summary.append({"k": "Off-road", "v": s3})
+
+		# Optionally include remaining stats without duplicating the three above
+		if item_data_source.has("stats") and item_data_source.stats is Dictionary and not item_data_source.stats.is_empty():
+			var skip := ["top_speed_add", "speed_add", "top_speed_mod", "top_speed_modifier", "efficiency_add", "fuel_efficiency_add", "efficiency_mod", "efficiency_modifier", "offroad_capability_add", "offroad_add", "offroad_mod", "offroad_capability_modifier"]
+			var shown := 0
+			for stat_name in item_data_source.stats:
+				if skip.has(String(stat_name)):
+					continue
+				rows_summary.append({"k": String(stat_name).capitalize(), "v": str(item_data_source.stats[stat_name])})
+				shown += 1
+				if shown >= 6:
+					break
+
+	# Mission/resources: include Quantity in Summary (skip for vehicles/parts)
+	elif selected_item and selected_item is Dictionary:
+		var total_quantity_hdr: int = int(selected_item.get("total_quantity", 0))
+		if total_quantity_hdr > 0:
+			rows_summary.append({"k": "Quantity", "v": _format_number(total_quantity_hdr)})
+
 	if rows_summary.size() > 0:
 		container.add_child(_make_panel("Summary", rows_summary))
 
-	var rows_unit: Array = []
-	var contextual_unit_price = _get_contextual_unit_price(item_data_source)
-	var price_label_text = "Unit Price"
-	if current_mode == "sell":
-		price_label_text = "Sell Price"
-	elif current_mode == "buy":
-		price_label_text = "Buy Price"
-	rows_unit.append({"k": price_label_text, "v": "$" + _fmt_float(contextual_unit_price)})
-	var unit_weight := 0.0
-	if item_data_source.has("unit_weight") and item_data_source.get("unit_weight") != null:
-		unit_weight = float(item_data_source.get("unit_weight"))
-	elif item_data_source.has("weight") and item_data_source.has("quantity") and float(item_data_source.get("quantity", 1.0)) > 0.0:
-		unit_weight = float(item_data_source.get("weight", 0.0)) / float(item_data_source.get("quantity", 1.0))
-	if unit_weight > 0.0:
-		rows_unit.append({"k": "Weight", "v": _fmt_float(unit_weight)})
-	var unit_volume := 0.0
-	if item_data_source.has("unit_volume") and item_data_source.get("unit_volume") != null:
-		unit_volume = float(item_data_source.get("unit_volume"))
-	elif item_data_source.has("volume") and item_data_source.has("quantity") and float(item_data_source.get("quantity", 1.0)) > 0.0:
-		unit_volume = float(item_data_source.get("volume", 0.0)) / float(item_data_source.get("quantity", 1.0))
-	if unit_volume > 0.0:
-		rows_unit.append({"k": "Volume", "v": _fmt_float(unit_volume)})
-	var unit_delivery_reward_val = item_data_source.get("unit_delivery_reward")
-	if (unit_delivery_reward_val is float or unit_delivery_reward_val is int) and float(unit_delivery_reward_val) > 0.0:
-		rows_unit.append({"k": "Delivery Reward", "v": "$" + _fmt_float(unit_delivery_reward_val)})
-	if rows_unit.size() > 0:
-		container.add_child(_make_panel("Per Unit", rows_unit))
+	# Category-specific sections
+	# is_vehicle / is_part already computed above
+
+	# Per Unit section only for mission cargo/resources; skip for vehicles and parts
+	if not is_vehicle and not is_part:
+		var rows_unit: Array = []
+		var contextual_unit_price = _get_contextual_unit_price(item_data_source)
+		var price_label_text = "Unit Price"
+		if current_mode == "sell":
+			price_label_text = "Sell Price"
+		elif current_mode == "buy":
+			price_label_text = "Buy Price"
+		rows_unit.append({"k": price_label_text, "v": "$" + _fmt_float(contextual_unit_price)})
+		var unit_weight := 0.0
+		if item_data_source.has("unit_weight") and item_data_source.get("unit_weight") != null:
+			unit_weight = float(item_data_source.get("unit_weight"))
+		elif item_data_source.has("weight") and item_data_source.has("quantity") and float(item_data_source.get("quantity", 1.0)) > 0.0:
+			unit_weight = float(item_data_source.get("weight", 0.0)) / float(item_data_source.get("quantity", 1.0))
+		if unit_weight > 0.0:
+			rows_unit.append({"k": "Weight", "v": _fmt_float(unit_weight)})
+		var unit_volume := 0.0
+		if item_data_source.has("unit_volume") and item_data_source.get("unit_volume") != null:
+			unit_volume = float(item_data_source.get("unit_volume"))
+		elif item_data_source.has("volume") and item_data_source.has("quantity") and float(item_data_source.get("quantity", 1.0)) > 0.0:
+			unit_volume = float(item_data_source.get("volume", 0.0)) / float(item_data_source.get("quantity", 1.0))
+		if unit_volume > 0.0:
+			rows_unit.append({"k": "Volume", "v": _fmt_float(unit_volume)})
+		var unit_delivery_reward_val = item_data_source.get("unit_delivery_reward")
+		if (unit_delivery_reward_val is float or unit_delivery_reward_val is int) and float(unit_delivery_reward_val) > 0.0:
+			rows_unit.append({"k": "Delivery Reward", "v": "$" + _fmt_float(unit_delivery_reward_val)})
+		if rows_unit.size() > 0:
+			container.add_child(_make_panel("Per Unit", rows_unit))
 
 	var rows_total: Array = []
-	var total_quantity = 0
-	if selected_item and selected_item is Dictionary:
-		total_quantity = selected_item.get("total_quantity", 0)
-	if int(total_quantity) > 0:
-		rows_total.append({"k": "Quantity", "v": _format_number(int(total_quantity))})
-	var total_weight = 0.0
-	if selected_item and selected_item is Dictionary:
-		total_weight = selected_item.get("total_weight", 0.0)
-	if float(total_weight) > 0.0:
-		rows_total.append({"k": "Total Weight", "v": _fmt_float(total_weight)})
-	var total_volume = 0.0
-	if selected_item and selected_item is Dictionary:
-		total_volume = selected_item.get("total_volume", 0.0)
-	if float(total_volume) > 0.0:
-		rows_total.append({"k": "Total Volume", "v": _fmt_float(total_volume)})
-	var total_food = 0.0
-	if selected_item and selected_item is Dictionary:
-		total_food = selected_item.get("total_food", 0.0)
-	if float(total_food) > 0.0:
-		rows_total.append({"k": "Food", "v": _fmt_float(total_food)})
-	var total_water = 0.0
-	if selected_item and selected_item is Dictionary:
-		total_water = selected_item.get("total_water", 0.0)
-	if float(total_water) > 0.0:
-		rows_total.append({"k": "Water", "v": _fmt_float(total_water)})
-	var total_fuel = 0.0
-	if selected_item and selected_item is Dictionary:
-		total_fuel = selected_item.get("total_fuel", 0.0)
-	if float(total_fuel) > 0.0:
-		rows_total.append({"k": "Fuel", "v": _fmt_float(total_fuel)})
+	# Only show Total Order for mission/resources; skip for vehicles and parts
+	if not is_vehicle and not is_part:
+		var total_quantity = 0
+		if selected_item and selected_item is Dictionary:
+			total_quantity = selected_item.get("total_quantity", 0)
+		if int(total_quantity) > 0:
+			rows_total.append({"k": "Quantity", "v": _format_number(int(total_quantity))})
+		var total_weight = 0.0
+		if selected_item and selected_item is Dictionary:
+			total_weight = selected_item.get("total_weight", 0.0)
+		if float(total_weight) > 0.0:
+			rows_total.append({"k": "Total Weight", "v": _fmt_float(total_weight)})
+		var total_volume = 0.0
+		if selected_item and selected_item is Dictionary:
+			total_volume = selected_item.get("total_volume", 0.0)
+		if float(total_volume) > 0.0:
+			rows_total.append({"k": "Total Volume", "v": _fmt_float(total_volume)})
+		var total_food = 0.0
+		if selected_item and selected_item is Dictionary:
+			total_food = selected_item.get("total_food", 0.0)
+		if float(total_food) > 0.0:
+			rows_total.append({"k": "Food", "v": _fmt_float(total_food)})
+		var total_water = 0.0
+		if selected_item and selected_item is Dictionary:
+			total_water = selected_item.get("total_water", 0.0)
+		if float(total_water) > 0.0:
+			rows_total.append({"k": "Water", "v": _fmt_float(total_water)})
+		var total_fuel = 0.0
+		if selected_item and selected_item is Dictionary:
+			total_fuel = selected_item.get("total_fuel", 0.0)
+		if float(total_fuel) > 0.0:
+			rows_total.append({"k": "Fuel", "v": _fmt_float(total_fuel)})
 	if rows_total.size() > 0:
 		container.add_child(_make_panel("Total Order", rows_total))
 
@@ -2193,6 +2241,37 @@ func _rebuild_info_sections(item_data_source: Dictionary) -> void:
 		for stat_name in item_data_source.stats:
 			rows_stats.append({"k": String(stat_name).capitalize(), "v": str(item_data_source.stats[stat_name])})
 		container.add_child(_make_panel("Stats", rows_stats))
+
+	# Parts: dedicated Fitment section (Slot + Compatible Vehicles)
+	if is_part:
+		var rows_fit: Array = []
+		var slot_name: String = ""
+		if item_data_source.has("slot") and item_data_source.get("slot") != null:
+			slot_name = String(item_data_source.get("slot"))
+		if not slot_name.is_empty():
+			rows_fit.append({"k": "Slot", "v": slot_name})
+
+		# Build compatible vehicles list using cached compatibility results
+		var compat_lines: Array = []
+		if convoy_data and convoy_data.has("vehicle_details_list") and convoy_data.vehicle_details_list is Array:
+			var part_uid: String = ""
+			if item_data_source.has("cargo_id") and item_data_source.get("cargo_id") != null:
+				part_uid = String(item_data_source.get("cargo_id"))
+			elif item_data_source.has("part_id") and item_data_source.get("part_id") != null:
+				part_uid = String(item_data_source.get("part_id"))
+			for v in convoy_data.vehicle_details_list:
+				var vid: String = String(v.get("vehicle_id", ""))
+				if vid == "" or part_uid == "":
+					continue
+				var key := _compat_key(vid, part_uid)
+				var compat_ok: bool = _compat_payload_is_compatible(_compat_cache.get(key, {}))
+				var vname: String = v.get("name", "Vehicle")
+				if compat_ok:
+					compat_lines.append(vname)
+		if compat_lines.size() > 0:
+			rows_fit.append({"k": "Compatible Vehicles", "v": ", ".join(compat_lines)})
+		if rows_fit.size() > 0:
+			container.add_child(_make_panel("Fitment", rows_fit))
 
 	if current_mode == "sell" and selected_item and selected_item.has("locations"):
 		var locs: Variant = selected_item.get("locations")
