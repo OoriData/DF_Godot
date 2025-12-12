@@ -266,6 +266,8 @@ func _on_gdm_convoy_data_changed(_all_convoys: Array) -> void:
 
 func _update_vendor_ui() -> void:
 	# Use self.vendor_items and self.convoy_items to populate the UI
+	_ensure_tree_columns(vendor_item_tree)
+	_ensure_tree_columns(convoy_item_tree)
 	_populate_tree_from_agg(vendor_item_tree, self.vendor_items)
 	_populate_tree_from_agg(convoy_item_tree, self.convoy_items)
 	_update_convoy_info_display()
@@ -897,26 +899,55 @@ func _populate_category(target_tree: Tree, root_item: TreeItem, category_name: S
 	if agg_dict.is_empty():
 		return
 
+	# Normalize category title to match Cargo menu naming while keeping Vehicles as-is
+	var title := category_name
+	var lc := String(category_name).to_lower()
+	if lc == "parts":
+		title = "Part Cargo"
+	elif lc == "resources":
+		title = "Resource Cargo"
+	elif lc == "other":
+		title = "Other Cargo"
+	# "Mission Cargo" already matches; keep any other titles unchanged (e.g., "Vehicles")
+
 	var category_item = target_tree.create_item(root_item)
-	category_item.set_text(0, category_name)
+	category_item.set_text(0, title)
 	category_item.set_selectable(0, false)
 	category_item.set_custom_color(0, Color.GOLD)
+	# Apply a header-like background across all visible columns for the category row
+	var header_bg := Color(0.2, 0.22, 0.28, 1.0)
+	var _cols_header: int = _tree_column_count(target_tree)
+	for c in range(_cols_header):
+		category_item.set_custom_bg_color(c, header_bg)
 
-	# Let the Tree control manage the collapsed state by not setting the
-	# `collapsed` property here.
-
-	for agg_key in agg_dict:
+	# Sort children alphabetically by display name to mirror cargo menu
+	var rows: Array = []
+	for agg_key in agg_dict.keys():
 		var agg_data = agg_dict[agg_key]
-		var display_name = agg_data.display_name if agg_data.has("display_name") else agg_key
-		if category_name == "Resources" and ("Fuel" in display_name or "fuel" in display_name):
+		var dn: String = ""
+		if agg_data is Dictionary and agg_data.has("display_name"):
+			dn = String(agg_data.get("display_name"))
+		elif agg_data is Dictionary and agg_data.has("item_data") and (agg_data.item_data is Dictionary) and agg_data.item_data.has("name"):
+			dn = String(agg_data.item_data.get("name"))
+		else:
+			dn = String(agg_key)
+		rows.append({"key": agg_key, "data": agg_data, "dn": dn, "sort": dn.to_lower()})
+
+	rows.sort_custom(func(a, b): return a["sort"] < b["sort"]) # case-insensitive A→Z
+
+	var row_index: int = 0
+	for row in rows:
+		var agg_data = row["data"]
+		var display_name: String = row["dn"]
+		if lc == "resources" and ("Fuel" in display_name or "fuel" in display_name):
 			print("DEBUG: _populate_category resource node fuel display_name=", display_name, "total_quantity=", agg_data.total_quantity, "total_fuel=", agg_data.get("total_fuel"))
-		
+
 		var item_icon = agg_data.item_data.get("icon") if agg_data.item_data.has("icon") else null
 		var tree_child_item = target_tree.create_item(category_item)
 		tree_child_item.set_text(0, display_name)
 		tree_child_item.set_autowrap_mode(0, TextServer.AUTOWRAP_WORD)
 
-		# For raw resource items, remove the color and use a bold font instead.
+		# For raw resource items, use a bold font for emphasis
 		if agg_data.item_data.get("is_raw_resource", false):
 			var default_font = target_tree.get_theme_font("font")
 			if default_font:
@@ -928,6 +959,76 @@ func _populate_category(target_tree: Tree, root_item: TreeItem, category_name: S
 		if item_icon:
 			tree_child_item.set_icon(0, item_icon)
 		tree_child_item.set_metadata(0, agg_data)
+
+		# Fill optional numeric columns: Qty, Wt, Vol (if the tree has them)
+		var cols: int = _tree_column_count(target_tree)
+		var qty: Variant = null
+		var wt: Variant = null
+		var vol: Variant = null
+		if agg_data is Dictionary:
+			if (agg_data as Dictionary).has("total_quantity"):
+				qty = (agg_data as Dictionary).get("total_quantity")
+			if (agg_data as Dictionary).has("total_weight"):
+				wt = (agg_data as Dictionary).get("total_weight")
+			if (agg_data as Dictionary).has("total_volume"):
+				vol = (agg_data as Dictionary).get("total_volume")
+		if cols > 1:
+			tree_child_item.set_text(1, str(qty) if qty != null else "")
+			# Right-align numeric columns when available
+			target_tree.set_column_expand(1, false)
+			target_tree.set_column_custom_minimum_width(1, 60)
+		if cols > 2:
+			var wt_str: String = ""
+			if wt != null:
+				wt_str = str(snapped(float(wt), 0.01))
+			tree_child_item.set_text(2, wt_str)
+			target_tree.set_column_expand(2, false)
+			target_tree.set_column_custom_minimum_width(2, 70)
+		if cols > 3:
+			var vol_str: String = ""
+			if vol != null:
+				vol_str = str(snapped(float(vol), 0.01))
+			tree_child_item.set_text(3, vol_str)
+			target_tree.set_column_expand(3, false)
+			target_tree.set_column_custom_minimum_width(3, 70)
+
+		# Alternating row backgrounds for readability
+		var alt_bg_a := Color(0.15, 0.15, 0.18, 0.35)
+		var alt_bg_b := Color(0, 0, 0, 0)
+		var row_bg := alt_bg_a if (row_index % 2 == 0) else alt_bg_b
+		for c in range(cols):
+			tree_child_item.set_custom_bg_color(c, row_bg)
+		row_index += 1
+
+func _ensure_tree_columns(tree: Tree) -> void:
+	if not is_instance_valid(tree):
+		return
+	# Configure a 4-column layout: Item | Qty | Wt | Vol
+	tree.set_columns(4)
+	tree.set_meta("cols", 4)
+	tree.set_column_titles_visible(true)
+	tree.set_column_title(0, "Item")
+	tree.set_column_title(1, "Qty")
+	tree.set_column_title(2, "Wt")
+	tree.set_column_title(3, "Vol")
+	# Make name column expand; numeric columns fixed width
+	tree.set_column_expand(0, true)
+	tree.set_column_expand(1, false)
+	tree.set_column_expand(2, false)
+	tree.set_column_expand(3, false)
+	tree.set_column_custom_minimum_width(1, 60)
+	tree.set_column_custom_minimum_width(2, 70)
+	tree.set_column_custom_minimum_width(3, 70)
+
+func _tree_column_count(tree: Tree) -> int:
+	if not is_instance_valid(tree):
+		return 1
+	if tree.has_meta("cols"):
+		var v = tree.get_meta("cols")
+		if v is int:
+			return int(v)
+	# Fallback to default 1 when metadata is missing
+	return 1
 
 func _handle_new_item_selection(p_selected_item) -> void:
 	var previous_key = _last_selection_unique_key
