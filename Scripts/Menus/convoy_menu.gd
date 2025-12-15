@@ -1450,6 +1450,12 @@ func _set_progressbar_style(progressbar_node: ProgressBar, current_value: float,
 	bg_style.shadow_offset = Vector2(0, 2)
 	progressbar_node.add_theme_stylebox_override("background", bg_style)
 
+	# Ensure in-bar percentage text is visible and readable
+	progressbar_node.show_percentage = true
+	progressbar_node.add_theme_color_override("font_color", Color(1, 1, 1, 1))
+	progressbar_node.add_theme_color_override("font_outline_color", Color(0, 0, 0, 1))
+	progressbar_node.add_theme_constant_override("outline_size", 2)
+
 func _update_font_sizes() -> void:
 	if REFERENCE_MENU_HEIGHT <= 0:
 		printerr("ConvoyMenu: REFERENCE_MENU_HEIGHT is not positive. Cannot scale fonts.")
