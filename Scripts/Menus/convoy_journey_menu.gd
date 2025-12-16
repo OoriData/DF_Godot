@@ -58,13 +58,14 @@ func _ready():
 	var gdm = get_node_or_null("/root/GameDataManager")
 	if is_instance_valid(gdm):
 		print("[ConvoyJourneyMenu] Connecting to GameDataManager signals.")
-		if not gdm.is_connected("route_info_ready", Callable(self, "_on_route_info_ready")):
-			gdm.route_info_ready.connect(_on_route_info_ready)
-		if gdm.has_signal("route_choices_request_started") and not gdm.is_connected("route_choices_request_started", Callable(self, "_on_route_choices_request_started")):
+		# Listen for route choice lifecycle and journey cancel updates
+		if not gdm.route_choices_request_started.is_connected(_on_route_choices_request_started):
 			gdm.route_choices_request_started.connect(_on_route_choices_request_started)
-		if gdm.has_signal("route_choices_error") and not gdm.is_connected("route_choices_error", Callable(self, "_on_route_choices_error")):
+		if not gdm.route_choices_error.is_connected(_on_route_choices_error):
 			gdm.route_choices_error.connect(_on_route_choices_error)
-		if gdm.has_signal("journey_canceled") and not gdm.is_connected("journey_canceled", Callable(self, "_on_journey_canceled")):
+		if not gdm.route_info_ready.is_connected(_on_route_info_ready):
+			gdm.route_info_ready.connect(_on_route_info_ready)
+		if not gdm.journey_canceled.is_connected(_on_journey_canceled):
 			gdm.journey_canceled.connect(_on_journey_canceled)
 	else:
 		printerr("ConvoyJourneyMenu: Could not connect to GameDataManager signals.")
@@ -177,10 +178,13 @@ func initialize_with_data(data: Dictionary):
 		cancel_btn.text = "Cancel Journey"
 		cancel_btn.theme_type_variation = "DangerButton"
 		cancel_btn.pressed.connect(func():
+			# Show a blocking overlay while cancellation propagates
+			_show_blocking_overlay("Canceling journey…")
 			var convoy_id_local := str(convoy_data_received.get("convoy_id"))
 			var journey_id_local := str(journey_data.get("journey_id", ""))
 			if journey_id_local.is_empty():
 				printerr("ConvoyJourneyMenu: Cannot cancel; missing journey_id")
+				_hide_blocking_overlay()
 				return
 			var gdm_cancel := get_node_or_null("/root/GameDataManager")
 			if is_instance_valid(gdm_cancel) and gdm_cancel.has_method("cancel_convoy_journey"):
@@ -188,6 +192,7 @@ func initialize_with_data(data: Dictionary):
 				gdm_cancel.cancel_convoy_journey(convoy_id_local, journey_id_local)
 			else:
 				printerr("ConvoyJourneyMenu: GameDataManager missing cancel_convoy_journey method.")
+				_hide_blocking_overlay()
 		)
 		content_vbox.add_child(cancel_btn)
 
@@ -889,16 +894,63 @@ func _on_journey_canceled(updated_convoy: Dictionary):
 		initialize_with_data(convoy_data_received) # will show journey details
 	else:
 		initialize_with_data(convoy_data_received) # journey missing -> planner
+	# Handle successful journey cancellation by refreshing UI and notifying the user.
+	var canceled_id = String(updated_convoy.get("convoy_id", ""))
+	var current_id = String(convoy_data_received.get("convoy_id", ""))
+	if canceled_id == "" or current_id == "":
+		return
+	if canceled_id != current_id:
+		return
+
+	# Stop any route preview
+	emit_signal("route_preview_ended")
+	_is_request_in_flight = false
+	_clear_loading_indicator()
+
+	# Replace local convoy snapshot and rebuild the panel
+	convoy_data_received = updated_convoy.duplicate(true)
+	initialize_with_data(convoy_data_received)
+
+	# Show user-facing message (non-blocking), then remove loading overlay
+	_show_inline_toast("Journey canceled.", 2.5)
+	_hide_blocking_overlay()
+
+	# Also update the title line to reflect planner state if no active journey
+	var j = updated_convoy.get("journey")
+	if not (j is Dictionary) or j.is_empty():
+		if is_instance_valid(title_label):
+			var convoy_name = String(updated_convoy.get("name", "Convoy"))
+			title_label.text = convoy_name + " - Journey Planner"
 
 func _disable_destination_buttons():
 	for child in content_vbox.get_children():
 		if child is Button and child.text != "Back":
 			child.disabled = true
+	# Disable all destination buttons during a request
+	for child in content_vbox.get_children():
+		if child is Button:
+			(child as Button).disabled = true
+		elif child is HBoxContainer or child is VBoxContainer:
+			for sub in child.get_children():
+				if sub is Button:
+					(sub as Button).disabled = true
+	if is_instance_valid(_next_route_button):
+		_next_route_button.disabled = true
 
 func _enable_destination_buttons():
 	for child in content_vbox.get_children():
 		if child is Button:
 			child.disabled = false
+	# Re-enable destination buttons after request completes
+	for child in content_vbox.get_children():
+		if child is Button:
+			(child as Button).disabled = false
+		elif child is HBoxContainer or child is VBoxContainer:
+			for sub in child.get_children():
+				if sub is Button:
+					(sub as Button).disabled = false
+	if is_instance_valid(_next_route_button):
+		_next_route_button.disabled = false
 
 func _show_loading_indicator(text: String):
 	if _loading_label == null:
@@ -918,6 +970,71 @@ func _show_error_message(msg: String):
 	err_label.text = "Route Error: %s" % msg
 	err_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	content_vbox.add_child(err_label)
+
+	# Lightweight inline toast helper to notify the user
+func _show_inline_toast(text: String, duration_seconds: float = 2.0):
+	# Minimal, non-intrusive toast (no green block background)
+	var toast := Label.new()
+	toast.name = "InlineToast"
+	toast.text = text
+	toast.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	toast.add_theme_font_size_override("font_size", 16)
+	toast.add_theme_color_override("font_color", Color(0.85, 1.0, 0.85))
+	if is_instance_valid(main_vbox):
+		main_vbox.add_child(toast)
+		main_vbox.move_child(toast, 1) # just below Title
+
+	# Auto-remove after duration
+	var t := Timer.new()
+	t.one_shot = true
+	t.wait_time = max(0.5, duration_seconds)
+	add_child(t)
+	t.timeout.connect(func():
+		if is_instance_valid(toast) and is_instance_valid(main_vbox):
+			toast.queue_free()
+		t.queue_free()
+	)
+
+# --- Blocking overlay during backend updates ---
+var _blocking_overlay: Control = null
+
+func _show_blocking_overlay(text: String = "Working…"):
+	if is_instance_valid(_blocking_overlay):
+		_hide_blocking_overlay()
+	var overlay := ColorRect.new()
+	overlay.name = "BlockingOverlay"
+	overlay.color = Color(0, 0, 0, 0.6)
+	overlay.anchor_left = 0
+	overlay.anchor_top = 0
+	overlay.anchor_right = 1
+	overlay.anchor_bottom = 1
+	overlay.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	overlay.grow_vertical = Control.GROW_DIRECTION_BOTH
+	# Message centered
+	var vb := VBoxContainer.new()
+	vb.add_theme_constant_override("separation", 10)
+	vb.anchor_left = 0.5
+	vb.anchor_top = 0.5
+	vb.offset_left = -150
+	vb.offset_top = -40
+	vb.custom_minimum_size = Vector2(300, 80)
+	var msg := Label.new()
+	msg.text = text
+	msg.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	msg.add_theme_font_size_override("font_size", 18)
+	vb.add_child(msg)
+	var sub := Label.new()
+	sub.text = "Please wait…"
+	sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	vb.add_child(sub)
+	overlay.add_child(vb)
+	_blocking_overlay = overlay
+	add_child(_blocking_overlay)
+
+func _hide_blocking_overlay():
+	if is_instance_valid(_blocking_overlay):
+		_blocking_overlay.queue_free()
+	_blocking_overlay = null
 
 # Severity + route cycling helpers (added)
 func _apply_severity_styling():
