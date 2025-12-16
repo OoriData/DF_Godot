@@ -124,8 +124,26 @@ func _ready():
 
 func _display_error(message: String):
 	_clear_tabs()
-	# Display the error in the main title label. The tab container will be empty.
-	title_label.text = message
+	# Disable Top Up interactions when no settlement is present
+	if is_instance_valid(top_up_button):
+		top_up_button.disabled = true
+		top_up_button.tooltip_text = "No settlement available at current location."
+
+	# Hide tab headers for placeholder state
+	if is_instance_valid(vendor_tab_container):
+		if vendor_tab_container.has_method("set_tabs_visible"):
+			vendor_tab_container.set_tabs_visible(false)
+		else:
+			var bar = get_vendor_tab_bar()
+			if bar is Control:
+				bar.visible = false
+
+	# Leave the title as-is (convoy or settlement label) and add simple text directly
+	if is_instance_valid(vendor_tab_container):
+		var label := create_info_label(message)
+		label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		label.size_flags_vertical = Control.SIZE_EXPAND_FILL
+		vendor_tab_container.add_child(label)
 
 
 func _display_settlement_info():
@@ -203,7 +221,11 @@ func _display_settlement_info():
 			_update_top_up_button()
 
 	else:
-		title_label.text = "Location: (%d, %d)" % [current_convoy_x, current_convoy_y]
+		# Ensure the title shows the convoy name (do not replace with coordinates)
+		if is_instance_valid(title_label):
+			var convoy_name: String = String(_convoy_data.get("convoy_name", title_label.text))
+			if not convoy_name.is_empty():
+				title_label.text = convoy_name
 		_display_error("No settlement found at convoy coordinates: (%d, %d)" % [current_convoy_x, current_convoy_y])
 
 func _create_vendor_tab(vendor_data: Dictionary):
