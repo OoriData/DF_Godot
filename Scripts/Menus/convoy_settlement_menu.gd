@@ -19,6 +19,7 @@ const VendorTradePanel = preload("res://Scenes/VendorTradePanel.tscn")
 # The SettlementInfoTab has been removed. All tabs are now dynamically generated.
 @onready var back_button: Button = $MainVBox/BackButton
 var mechanics_tab_vbox: VBoxContainer = null
+var warehouse_button: Button = null
 
 # This will be populated by MenuManager with the specific convoy's data.
 var _convoy_data: Dictionary
@@ -88,6 +89,11 @@ func _ready():
 			top_bar_hbox.add_child(warehouse_btn)
 
 			warehouse_btn.pressed.connect(_on_warehouse_button_pressed)
+
+		# Cache reference for later enable/disable
+		warehouse_button = top_bar_hbox.get_node_or_null("WarehouseButton")
+		if is_instance_valid(warehouse_button):
+			warehouse_button.disabled = false
 
 	# Connect to GameDataManager signals to refresh UI when data updates
 	gdm = get_node_or_null("/root/GameDataManager")
@@ -192,6 +198,16 @@ func _display_settlement_info():
 
 	# Display information based on whether a settlement was found on the tile.
 	if target_tile and target_tile.has("settlements") and target_tile.settlements is Array and not target_tile.settlements.is_empty():
+		# When at a settlement, make sure tab headers are visible and warehouse enabled
+		if is_instance_valid(vendor_tab_container):
+			if vendor_tab_container.has_method("set_tabs_visible"):
+				vendor_tab_container.set_tabs_visible(true)
+			else:
+				var bar = get_vendor_tab_bar()
+				if bar is Control:
+					bar.visible = true
+		if is_instance_valid(warehouse_button):
+			warehouse_button.disabled = false
 		_settlement_data = target_tile.settlements[0] # Assuming we display info for the first settlement.
 
 		if _settlement_data.has("vendors") and _settlement_data.vendors is Array and not _settlement_data.vendors.is_empty():
@@ -226,6 +242,10 @@ func _display_settlement_info():
 			var convoy_name: String = String(_convoy_data.get("convoy_name", title_label.text))
 			if not convoy_name.is_empty():
 				title_label.text = convoy_name
+		# Disable warehouse button while in transit
+		if is_instance_valid(warehouse_button):
+			warehouse_button.disabled = true
+			warehouse_button.tooltip_text = "Warehouse unavailable while in transit."
 		_display_error("No settlement found at convoy coordinates: (%d, %d)" % [current_convoy_x, current_convoy_y])
 
 func _create_vendor_tab(vendor_data: Dictionary):
