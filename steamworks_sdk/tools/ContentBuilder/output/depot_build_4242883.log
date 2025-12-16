@@ -1,0 +1,29 @@
+[2025-12-09 19:13:27]: Starting build for depot 4242883, content path is "/Users/choccy/dev/DF_Godot/steamworks_sdk/tools/ContentBuilder/content/4242880/4242883/", build flags 0x0
+[2025-12-09 19:13:27]: Building file listing for depot 4242883 ...
+[2025-12-09 19:13:27]: Found 18 files for mapping: /Users/choccy/dev/DF_Godot/steamworks_sdk/tools/ContentBuilder/content/4242880/4242883 * -> .
+[2025-12-09 19:13:27]: Found 18 files (177 MB) for depot 4242883
+[2025-12-09 19:13:28]: Building depot 4242883, no baseline manifest
+[2025-12-09 19:13:30]: Found 186 new chunks ( 0 used previously ) for depot 4242883, took 0 minutes, 2 seconds
+[2025-12-09 19:13:30]: Changes to baseline manifest 0 :
+[2025-12-09 19:13:30]: Added  : ".DS_Store" 7 KB 
+[2025-12-09 19:13:30]: Added  : "Desolate Frontiers.app" 0 KB ,Flags: 64
+[2025-12-09 19:13:30]: Added  : "Desolate Frontiers.app\Contents" 0 KB ,Flags: 64
+[2025-12-09 19:13:30]: Added  : "Desolate Frontiers.app\Contents\Frameworks" 0 KB ,Flags: 64
+[2025-12-09 19:13:30]: Added  : "Desolate Frontiers.app\Contents\Frameworks\libgodotsteam.macos.template_release.framework" 0 KB ,Flags: 64
+[2025-12-09 19:13:30]: Added  : "Desolate Frontiers.app\Contents\Frameworks\libgodotsteam.macos.template_release.framework\libgodotsteam.macos.template_release" 5441 KB 
+[2025-12-09 19:13:30]: Added  : "Desolate Frontiers.app\Contents\Frameworks\libgodotsteam.macos.template_release.framework\libsteam_api.dylib" 406 KB 
+[2025-12-09 19:13:30]: Added  : "Desolate Frontiers.app\Contents\Frameworks\libgodotsteam.macos.template_release.framework\Resources" 0 KB ,Flags: 64
+[2025-12-09 19:13:30]: Added  : "Desolate Frontiers.app\Contents\Frameworks\libgodotsteam.macos.template_release.framework\Resources\Info.plist" 1 KB 
+[2025-12-09 19:13:30]: Added  : "Desolate Frontiers.app\Contents\Frameworks\libsteam_api.dylib" 406 KB 
+[2025-12-09 19:13:30]: Added  : "Desolate Frontiers.app\Contents\Info.plist" 2 KB 
+[2025-12-09 19:13:30]: Added  : "Desolate Frontiers.app\Contents\MacOS" 0 KB ,Flags: 64
+[2025-12-09 19:13:30]: Added  : "Desolate Frontiers.app\Contents\MacOS\Desolate Frontiers" 172631 KB 
+[2025-12-09 19:13:30]: Added  : "Desolate Frontiers.app\Contents\PkgInfo" 1 KB 
+[2025-12-09 19:13:30]: Added  : "Desolate Frontiers.app\Contents\Resources" 0 KB ,Flags: 64
+[2025-12-09 19:13:30]: Added  : "Desolate Frontiers.app\Contents\Resources\Desolate Frontiers.pck" 2774 KB 
+[2025-12-09 19:13:30]: Added  : "Desolate Frontiers.app\Contents\Resources\icon.icns" 206 KB 
+[2025-12-09 19:13:30]: Added  : "Desolate Frontiers.app\Contents\Resources\PrivacyInfo.xcprivacy" 1 KB 
+[2025-12-09 19:13:30]: Summary: 18 files added (177.61 MB), 0 files changed (0 bytes), 0 files removed (0 bytes)
+[2025-12-09 19:13:30]: Uploading new manifest to depot_ingest.discovery.steamserver.net (handle 3118708666583860279, 8524 bytes).
+[2025-12-09 19:13:30]: Uploading 186 out of 186 missing chunks.
+[2025-12-09 19:14:02]: Success! New manifestID 8144214492768768997 created and 186 new chunks uploaded.

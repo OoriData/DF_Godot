@@ -1,0 +1,11 @@
+"DepotBuild"
+{
+    "DepotID" "4242882"
+    "ContentRoot" "..\content\4242880\4242882\"
+    "FileMapping"
+    {
+        "LocalPath" "*"
+        "DepotPath" "."
+        "Recursive" "1"
+  }
+}

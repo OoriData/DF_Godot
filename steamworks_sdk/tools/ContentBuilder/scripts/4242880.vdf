@@ -1,0 +1,17 @@
+"AppBuild"
+{
+	"AppID" "4242880" // your AppID
+	"Desc" "Desolate Frontiers" // internal description for this build
+	"verbose" "0" // spew more build details in console
+	"preview" "0" // make this a preview build only, nothing is uploaded
+
+	"ContentRoot" "..\content\" // root content folder, relative to location of this file
+	"BuildOutput" "..\output\" // build output folder for build logs and build cache files
+
+	"Depots"
+	{
+		"4242881" "..\scripts\4242881.vdf"
+		"4242882" "..\scripts\4242882.vdf"
+		"4242883" "..\scripts\4242883.vdf"
+	}
+}
