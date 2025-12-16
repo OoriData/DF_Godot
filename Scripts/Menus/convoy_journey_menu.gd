@@ -116,61 +116,121 @@ func initialize_with_data(data: Dictionary):
 		_populate_destination_list()
 		return
 
-	# Current Location
-	var current_loc_label = Label.new()
-	current_loc_label.text = "Current Location: (%.2f, %.2f)" % [data.get("x", 0.0), data.get("y", 0.0)]
-	content_vbox.add_child(current_loc_label)
-	content_vbox.add_child(HSeparator.new())
+	# ---- Styled container for in-transit details ----
+	var details_panel := PanelContainer.new()
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color(0.10, 0.12, 0.16, 0.94)
+	if sb.has_method("set_border_width_all"):
+		sb.set_border_width_all(1)
+	else:
+		sb.border_width_left = 1
+		sb.border_width_right = 1
+		sb.border_width_top = 1
+		sb.border_width_bottom = 1
+	sb.border_color = Color(0.25, 0.30, 0.38)
+	sb.corner_radius_top_left = 6
+	sb.corner_radius_top_right = 6
+	sb.corner_radius_bottom_left = 6
+	sb.corner_radius_bottom_right = 6
+	details_panel.add_theme_stylebox_override("panel", sb)
+	content_vbox.add_child(details_panel)
+	var details_vbox := VBoxContainer.new()
+	details_vbox.add_theme_constant_override("separation", 8)
+	details_panel.add_child(details_vbox)
 
+	# --- ETA headline (centered) ---
+	var eta_str = journey_data.get("eta")
+	var eta_val := preload("res://Scripts/System/date_time_util.gd").format_timestamp_display(eta_str, true)
+	var eta_headline := Label.new()
+	eta_headline.text = "ETA: %s" % eta_val
+	eta_headline.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	eta_headline.add_theme_font_size_override("font_size", 20)
+	eta_headline.add_theme_color_override("font_color", Color(0.92, 0.97, 1))
+	details_vbox.add_child(eta_headline)
+
+	# Compute progress percentage for the bar only
+	var progress: float = journey_data.get("progress", 0.0)
+	var length: float = journey_data.get("length", 0.0)
+	var progress_percentage := 0.0
+	if length > 0.001:
+		progress_percentage = (progress / length) * 100.0
+
+	# --- Location grid with icons ---
+	var loc_grid := GridContainer.new()
+	loc_grid.columns = 2
+	loc_grid.add_theme_constant_override("h_separation", 14)
+	loc_grid.add_theme_constant_override("v_separation", 6)
+	details_vbox.add_child(loc_grid)
+	# Current
+	var curr_title := Label.new()
+	curr_title.text = "📍 Current"
+	curr_title.add_theme_color_override("font_color", Color(0.85,0.9,1))
+	loc_grid.add_child(curr_title)
+	var curr_value := Label.new()
+	var curr_name := _get_settlement_name(gdm, data.get("x", 0.0), data.get("y", 0.0))
+	curr_value.text = "%s  (%.0f, %.0f)" % [curr_name, data.get("x", 0.0), data.get("y", 0.0)]
+	loc_grid.add_child(curr_value)
+	# Departed (moved below, with emoji)
+	var departure_time_str = journey_data.get("departure_time")
+	var departed_val := preload("res://Scripts/System/date_time_util.gd").format_timestamp_display(departure_time_str, false)
+	var dep_title := Label.new()
+	dep_title.text = "🕓 Departed"
+	loc_grid.add_child(dep_title)
+	var dep_value := Label.new()
+	dep_value.text = departed_val
+	loc_grid.add_child(dep_value)
 	# Origin
 	var origin_x = journey_data.get("origin_x")
 	var origin_y = journey_data.get("origin_y")
-	var origin_label = Label.new()
-	var origin_text = "Origin: N/A"
+	var origin_title := Label.new()
+	origin_title.text = "🏠 Origin"
+	loc_grid.add_child(origin_title)
+	var origin_value := Label.new()
 	if origin_x != null and origin_y != null:
 		var origin_name = _get_settlement_name(gdm, origin_x, origin_y)
-		origin_text = "Origin: %s (at %.0f, %.0f)" % [origin_name, origin_x, origin_y]
-	origin_label.text = origin_text
-	content_vbox.add_child(origin_label)
-
+		origin_value.text = "%s  (%.0f, %.0f)" % [origin_name, origin_x, origin_y]
+	else:
+		origin_value.text = "N/A"
+	loc_grid.add_child(origin_value)
 	# Destination
 	var dest_x = journey_data.get("dest_x")
 	var dest_y = journey_data.get("dest_y")
-	var destination_label = Label.new()
-	var dest_text = "Destination: N/A"
+	var dest_title := Label.new()
+	dest_title.text = "🏁 Destination"
+	loc_grid.add_child(dest_title)
+	var dest_value := Label.new()
 	if dest_x != null and dest_y != null:
 		var dest_name = _get_settlement_name(gdm, dest_x, dest_y)
-		dest_text = "Destination: %s (at %.0f, %.0f)" % [dest_name, dest_x, dest_y]
-	destination_label.text = dest_text
-	content_vbox.add_child(destination_label)
-	content_vbox.add_child(HSeparator.new())
+		dest_value.text = "%s  (%.0f, %.0f)" % [dest_name, dest_x, dest_y]
+	else:
+		dest_value.text = "N/A"
+	loc_grid.add_child(dest_value)
 
-	# Departure Time
-	var departure_time_str = journey_data.get("departure_time")
-	var departure_label = Label.new()
-	departure_label.text = "Departed: " + preload("res://Scripts/System/date_time_util.gd").format_timestamp_display(departure_time_str, false)
-	content_vbox.add_child(departure_label)
-	# ETA and Time Remaining
-	var eta_str = journey_data.get("eta")
-	var eta_label = Label.new()
-	eta_label.text = "ETA: " + preload("res://Scripts/System/date_time_util.gd").format_timestamp_display(eta_str, true)
-	content_vbox.add_child(eta_label)
-	content_vbox.add_child(HSeparator.new())
-
-	# Progress
-	var progress = journey_data.get("progress", 0.0)
-	var length = journey_data.get("length", 0.0)
-	var progress_percentage = 0.0
-	if length > 0.001: # Avoid division by zero
-		progress_percentage = (progress / length) * 100.0
-	var progress_text_label = Label.new()
-	progress_text_label.text = "Progress: %.1f / %.1f units (%.1f%%)" % [progress, length, progress_percentage]
-	content_vbox.add_child(progress_text_label)
-
+	# --- Progress bar (styled to match ConvoyMenu journey color) ---
 	var progress_bar = ProgressBar.new()
-	progress_bar.custom_minimum_size.y = 20
+	progress_bar.custom_minimum_size = Vector2(0, 20)
 	progress_bar.value = progress_percentage
-	content_vbox.add_child(progress_bar)
+	# Match ConvoyMenu: background 2a2a2a with light border; fill uses Color("29b6f6")
+	var bg_style := StyleBoxFlat.new()
+	bg_style.bg_color = Color("2a2a2a")
+	bg_style.border_width_left = 1
+	bg_style.border_width_right = 1
+	bg_style.border_width_top = 1
+	bg_style.border_width_bottom = 1
+	bg_style.border_color = bg_style.bg_color.lightened(0.4)
+	bg_style.shadow_color = Color(0, 0, 0, 0.4)
+	bg_style.shadow_size = 2
+	bg_style.shadow_offset = Vector2(0, 2)
+	var fill_style := StyleBoxFlat.new()
+	fill_style.bg_color = Color("29b6f6")
+	fill_style.border_width_left = 1
+	fill_style.border_width_right = 1
+	fill_style.border_width_top = 1
+	fill_style.border_width_bottom = 1
+	fill_style.border_color = Color("29b6f6").darkened(0.2)
+	progress_bar.add_theme_stylebox_override("background", bg_style)
+	progress_bar.add_theme_stylebox_override("fill", fill_style)
+	details_vbox.add_child(progress_bar)
 
 	# Cancel Journey button (in details mode)
 	if journey_data.has("journey_id"):
@@ -194,7 +254,8 @@ func initialize_with_data(data: Dictionary):
 				printerr("ConvoyJourneyMenu: GameDataManager missing cancel_convoy_journey method.")
 				_hide_blocking_overlay()
 		)
-		content_vbox.add_child(cancel_btn)
+		cancel_btn.add_theme_color_override("font_color", Color(1, 0.92, 0.92))
+		details_vbox.add_child(cancel_btn)
 
 func _populate_destination_list():
 	# Clear potential prior loading state
@@ -970,6 +1031,40 @@ func _show_error_message(msg: String):
 	err_label.text = "Route Error: %s" % msg
 	err_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	content_vbox.add_child(err_label)
+
+# --- Small UI helper: stat card (title + value) ---
+func _make_stat_card(title: String, value_text: String, bg_color: Color) -> PanelContainer:
+	var card := PanelContainer.new()
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = bg_color
+	if sb.has_method("set_border_width_all"):
+		sb.set_border_width_all(1)
+	else:
+		sb.border_width_left = 1
+		sb.border_width_right = 1
+		sb.border_width_top = 1
+		sb.border_width_bottom = 1
+	sb.border_color = Color(0.28,0.34,0.44)
+	sb.corner_radius_top_left = 6
+	sb.corner_radius_top_right = 6
+	sb.corner_radius_bottom_left = 6
+	sb.corner_radius_bottom_right = 6
+	card.add_theme_stylebox_override("panel", sb)
+	var vb := VBoxContainer.new()
+	vb.add_theme_constant_override("separation", 2)
+	vb.custom_minimum_size = Vector2(120, 60)
+	card.add_child(vb)
+	var cap := Label.new()
+	cap.text = title
+	cap.add_theme_color_override("font_color", Color(0.75,0.84,0.95))
+	cap.add_theme_font_size_override("font_size", 12)
+	vb.add_child(cap)
+	var val := Label.new()
+	val.text = value_text
+	val.add_theme_font_size_override("font_size", 18)
+	val.add_theme_color_override("font_color", Color(0.92,0.97,1))
+	vb.add_child(val)
+	return card
 
 	# Lightweight inline toast helper to notify the user
 func _show_inline_toast(text: String, duration_seconds: float = 2.0):
