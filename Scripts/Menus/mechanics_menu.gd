@@ -717,7 +717,7 @@ func _rebuild_parts_tab(vehicle_data: Dictionary):
 		var header = Label.new()
 		header.text = slot_name.capitalize().replace("_", " ")
 		header.add_theme_font_size_override("font_size", 16)
-		header.add_theme_color_override("font_color", Color.AQUAMARINE)
+		header.add_theme_color_override("font_color", Color.YELLOW)
 		parts_vbox.add_child(header)
 
 		for part in by_slot[slot_name]:
@@ -1487,7 +1487,7 @@ func _on_swap_part_pressed(slot_name: String, current_part: Dictionary):
 	compatible_box.add_theme_constant_override("separation", 6)
 	var comp_header = Label.new()
 	comp_header.text = "Compatible replacements"
-	comp_header.add_theme_color_override("font_color", Color(0.6, 1.0, 0.6))
+	comp_header.add_theme_color_override("font_color", Color.YELLOW)
 	comp_header.add_theme_font_size_override("font_size", 16)
 	compatible_box.add_child(comp_header)
 
@@ -1495,7 +1495,7 @@ func _on_swap_part_pressed(slot_name: String, current_part: Dictionary):
 	incompatible_box.add_theme_constant_override("separation", 6)
 	var incomp_header = Label.new()
 	incomp_header.text = "Not compatible"
-	incomp_header.add_theme_color_override("font_color", Color(1.0, 0.6, 0.6))
+	incomp_header.add_theme_color_override("font_color", Color.YELLOW)
 	incomp_header.add_theme_font_size_override("font_size", 16)
 	incompatible_box.add_child(incomp_header)
 

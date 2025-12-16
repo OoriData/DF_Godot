@@ -93,6 +93,7 @@ func _ready():
 	
 	# Make the title label clickable to return to the convoy overview
 	if is_instance_valid(title_label):
+		title_label.add_theme_color_override("font_color", Color.YELLOW)
 		title_label.mouse_filter = Control.MOUSE_FILTER_STOP # Allow it to receive mouse events
 		title_label.gui_input.connect(_on_title_label_gui_input)
 
@@ -518,9 +519,9 @@ func _populate_parts_tab(vehicle_data: Dictionary):
 			parts_vbox.add_child(sep)
 			var category_label = Label.new()
 			category_label.text = category_name + ":"
-			# Make category headers more prominent to act as the "bold title"
+			# Make category headers more prominent and match menu accent color
 			category_label.add_theme_font_size_override("font_size", 16)
-			category_label.add_theme_color_override("font_color", Color.AQUAMARINE)
+			category_label.add_theme_color_override("font_color", Color.YELLOW)
 			parts_vbox.add_child(category_label)
 
 			# Sort parts within each category deterministically by name (lower), then slot, then id
@@ -918,7 +919,7 @@ func _populate_part_details_dialog(parent_vbox: VBoxContainer, part_data: Dictio
 	var perf_mods_label = Label.new()
 	perf_mods_label.text = "Performance Modifiers:"
 	perf_mods_label.add_theme_font_size_override("font_size", 16)
-	perf_mods_label.add_theme_color_override("font_color", Color.CYAN)
+	perf_mods_label.add_theme_color_override("font_color", Color.YELLOW)
 	parent_vbox.add_child(perf_mods_label)
 
 	var perf_grid = GridContainer.new()
@@ -948,7 +949,7 @@ func _populate_part_details_dialog(parent_vbox: VBoxContainer, part_data: Dictio
 	var resource_label = Label.new()
 	resource_label.text = "Resource & Capacity:"
 	resource_label.add_theme_font_size_override("font_size", 16)
-	resource_label.add_theme_color_override("font_color", Color.CYAN)
+	resource_label.add_theme_color_override("font_color", Color.YELLOW)
 	parent_vbox.add_child(resource_label)
 
 	var resource_grid = GridContainer.new()

@@ -107,15 +107,6 @@ layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
 
-[node name="Cargo" type="ScrollContainer" parent="MainVBox/VehicleTabContainer"]
-visible = false
-layout_mode = 2
-
-[node name="CargoVBox" type="VBoxContainer" parent="MainVBox/VehicleTabContainer/Cargo"]
-layout_mode = 2
-size_flags_horizontal = 3
-size_flags_vertical = 3
-
 [node name="Service" type="ScrollContainer" parent="MainVBox/VehicleTabContainer"]
 visible = false
 layout_mode = 2
@@ -126,6 +117,15 @@ size_flags_horizontal = 3
 size_flags_vertical = 3
 
 [node name="MechanicsEmbed" parent="MainVBox/VehicleTabContainer/Service/ServiceVBox" instance=ExtResource("2_mechanics_scene")]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+
+[node name="Cargo" type="ScrollContainer" parent="MainVBox/VehicleTabContainer"]
+visible = false
+layout_mode = 2
+
+[node name="CargoVBox" type="VBoxContainer" parent="MainVBox/VehicleTabContainer/Cargo"]
 layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
