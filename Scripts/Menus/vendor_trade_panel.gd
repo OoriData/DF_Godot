@@ -1025,22 +1025,11 @@ func _populate_category(target_tree: Tree, root_item: TreeItem, category_name: S
 func _ensure_tree_columns(tree: Tree) -> void:
 	if not is_instance_valid(tree):
 		return
-	# Configure a 4-column layout: Item | Qty | Wt | Vol
-	tree.set_columns(4)
-	tree.set_meta("cols", 4)
-	tree.set_column_titles_visible(true)
-	tree.set_column_title(0, "Item")
-	tree.set_column_title(1, "Qty")
-	tree.set_column_title(2, "Wt")
-	tree.set_column_title(3, "Vol")
-	# Make name column expand; numeric columns fixed width
+	# Configure a simple single-column layout (previous behavior)
+	tree.set_columns(1)
+	tree.set_meta("cols", 1)
+	tree.set_column_titles_visible(false)
 	tree.set_column_expand(0, true)
-	tree.set_column_expand(1, false)
-	tree.set_column_expand(2, false)
-	tree.set_column_expand(3, false)
-	tree.set_column_custom_minimum_width(1, 60)
-	tree.set_column_custom_minimum_width(2, 70)
-	tree.set_column_custom_minimum_width(3, 70)
 
 # --- Display formatting helpers (visual-only) ---
 func _fmt_qty(v: Variant) -> String:
