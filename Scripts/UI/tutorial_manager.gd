@@ -400,6 +400,46 @@ func _verify_overlay_size() -> void:
 		# Re-log placement after switching
 		ov.call_deferred("_debug_log_placement")
 
+# Diagnostic: print overlay visibility, parent, rect, and scope
+func _diag_overlay_state(where: String) -> void:
+	var ov := _overlay as Control
+	var parent_path := "<none>"
+	var rect := Rect2()
+	var vis := false
+	var in_tree := false
+	var z: Variant = null
+	if is_instance_valid(ov):
+		var p := ov.get_parent()
+		parent_path = p.get_path() if is_instance_valid(p) else NodePath("<no-parent>")
+		rect = ov.get_global_rect()
+		vis = ov.visible
+		in_tree = ov.is_visible_in_tree()
+		if ov.has_method("get"):
+			z = ov.get("z_index") if ov.has_method("get") else null
+	print("[Tutorial][DIAG] ", where,
+		" scope=", _overlay_scope,
+		" ov=", ov,
+		" parent=", parent_path,
+		" rect=", rect,
+		" visible=", vis,
+		" in_tree=", in_tree,
+		" z_index=", z)
+
+func _ensure_overlay_visible() -> void:
+	# Create overlay if needed, and ensure it's visible and properly scoped.
+	var ov := _ensure_overlay() as Control
+	if ov == null:
+		return
+	var rect := ov.get_global_rect()
+	if not ov.is_visible_in_tree() or rect.size.x <= 2.0 or rect.size.y <= 2.0:
+		print("[Tutorial] Overlay not visible or zero-sized; re-scoping to UI and bringing to front.")
+		_attach_overlay_scope("ui")
+		if ov.has_method("bring_to_front"):
+			ov.call_deferred("bring_to_front")
+	# Ensure safe-area inset applied for UI scope.
+	if ov.has_method("set_safe_area_insets"):
+		ov.call("set_safe_area_insets", _get_top_bar_inset())
+
 func _configure_overlay_insets_deferred() -> void:
 	call_deferred("_configure_overlay_insets")
 
@@ -422,6 +462,10 @@ func _run_current_step() -> void:
 	if _step < 0 or _step >= _steps.size():
 		_emit_finished()
 		return
+
+	# Ensure overlay exists and is visible after fullscreen/menu transitions.
+	_ensure_overlay_visible()
+	_diag_overlay_state("run_current_step:start")
 
 	# --- START TUTORIAL DIAGNOSTIC ---
 	# This log creates a timeline of which step is running.
@@ -596,12 +640,15 @@ func _run_current_step() -> void:
 			_show_message(step.get("copy", ""), true)
 
 func _show_message(text: String, show_continue: bool = true) -> void:
+	_ensure_overlay_visible()
+	_diag_overlay_state("show_message:before")
 	var ov = _ensure_overlay()
 	if ov and ov.has_method("show_message"):
 		if show_continue:
 			ov.call("show_message", text, true, func(): _advance(), [])
 		else:
 			ov.call("show_message", text, false, Callable(), [])
+		_diag_overlay_state("show_message:after")
 	else:
 		# Fallback if overlay not loaded
 		print("[Tutorial] ", text, " [Click to continue]")
@@ -1247,6 +1294,10 @@ func _on_viewport_size_changed() -> void:
 	# Debounce rapid size changes and re-resolve the current highlight target.
 	if not _started:
 		return
+	# Ensure overlay scope/size are valid after fullscreen/menu changes.
+	_verify_overlay_size()
+	if is_instance_valid(_overlay) and _overlay.has_method("bring_to_front"):
+		_overlay.call_deferred("bring_to_front")
 	if _resize_debounce_timer != null:
 		return
 	_resize_debounce_timer = get_tree().create_timer(0.15, false)
@@ -1294,6 +1345,8 @@ func _attach_overlay_scope(scope: String) -> void:
 	if ms == null:
 		return
 	if scope == "map":
+		# In map scope, overlay should follow map containers; disable top_level
+		ov.top_level = false
 		# Parent under onboarding layer (covers MapView area only)
 		var host: Control = null
 		if _main_screen and _main_screen.has_method("get_onboarding_layer"):
@@ -1308,11 +1361,14 @@ func _attach_overlay_scope(scope: String) -> void:
 			ov.call("set_safe_area_insets", 8)
 		_overlay_scope = "map"
 	else:
-		# Parent under full MainScreen to cover full UI; offset below TopBar
-		if ov.get_parent() != ms:
+		# Parent directly under root viewport to avoid container-driven collapse
+		var rootv := get_tree().get_root()
+		if ov.get_parent() != rootv:
 			if ov.get_parent(): ov.get_parent().remove_child(ov)
-			ms.add_child(ov)
-		ms.move_child(ov, ms.get_child_count() - 1)
+			rootv.add_child(ov)
+		rootv.move_child(ov, rootv.get_child_count() - 1)
+		# Under the viewport, containers won't override our rect; anchors fill the screen.
+		ov.top_level = false
 		ov.set_anchors_preset(Control.PRESET_FULL_RECT)
 		if ov.has_method("set_safe_area_insets"):
 			ov.call("set_safe_area_insets", _get_top_bar_inset())
