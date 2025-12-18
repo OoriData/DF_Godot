@@ -77,8 +77,9 @@ const ItemsData = preload("res://Scripts/Data/Items.gd")
 var _convoy_refresh_timer: Timer = null
 
 # --- Debug Toggles ---
-const VEHICLE_DEBUG_DUMP := true # Set true to print raw & augmented convoy + vehicle data on receipt
-const ROUTE_DEBUG_DUMP := true # Dump route choice structures when received
+@export var debug_logging_enabled: bool = false # Master switch to gate heavy debug logs
+const VEHICLE_DEBUG_DUMP := false # Set true to print raw & augmented convoy + vehicle data on receipt
+const ROUTE_DEBUG_DUMP := false # Dump route choice structures when received
 const DEBUG_JSON_CHAR_LIMIT := 2500
 const MECH_DEBUG_FORCE_SAMPLE := true # Force one sample compat request if no vendor parts found
 
@@ -138,6 +139,8 @@ func _looks_like_vehicle_part(item: Dictionary) -> Dictionary:
 	return {"likely": likely, "slot_guess": slot_guess}
 
 func _json_snippet(data: Variant, label: String="") -> void:
+	if not debug_logging_enabled:
+		return
 	var encoded := JSON.stringify(data, "  ")
 	if encoded.length() > DEBUG_JSON_CHAR_LIMIT:
 		encoded = encoded.substr(0, DEBUG_JSON_CHAR_LIMIT) + "...<truncated>"
@@ -474,7 +477,7 @@ func _on_raw_convoy_data_received(raw_data: Variant):
 	for raw_convoy_item in parsed_convoy_list:
 		var augmented = augment_single_convoy(raw_convoy_item)
 		augmented_convoys.append(augmented)
-		if VEHICLE_DEBUG_DUMP and raw_convoy_item is Dictionary:
+		if debug_logging_enabled and VEHICLE_DEBUG_DUMP and raw_convoy_item is Dictionary:
 			_print_convoy_debug_dump(raw_convoy_item, augmented)
 
 	all_convoy_data = augmented_convoys
@@ -568,6 +571,8 @@ func augment_single_convoy(raw_convoy_item: Dictionary) -> Dictionary:
 
 # --- Debug helper to dump convoy, journey, and vehicle data ---
 func _print_convoy_debug_dump(raw_convoy: Dictionary, augmented_convoy: Dictionary) -> void:
+	if not (debug_logging_enabled and VEHICLE_DEBUG_DUMP):
+		return
 	var cid_raw = str(raw_convoy.get('convoy_id', ''))
 	print('\n[GameDataManager][DEBUG][ConvoyDump] --- RAW CONVOY START id=', cid_raw, ' ---')
 	print('[GameDataManager][DEBUG][ConvoyDump] Raw keys: ', raw_convoy.keys())
@@ -1095,7 +1100,8 @@ func _dispatch_compat_for_cargo(cargo_id: String) -> void:
 
 func _on_part_compatibility_checked(payload: Dictionary) -> void:
 	# Relay to UI; include a JSON snippet for quick filtering
-	_json_snippet(payload, "PartCompatGDM.payload")
+	if debug_logging_enabled:
+		_json_snippet(payload, "PartCompatGDM.payload")
 	part_compatibility_ready.emit(payload)
 	# Update mechanic vendor availability cache and emit per-vehicle slot availability when compatible
 	var v_id: String = str(payload.get("vehicle_id", ""))
@@ -1361,6 +1367,9 @@ func get_mechanic_probe_snapshot() -> Dictionary:
 
 # --- Transaction Handlers ---
 func _on_resource_transaction(result: Dictionary) -> void:
+	var t_ms := Time.get_ticks_msec()
+	var cid_dbg := String(result.get("convoy_id", ""))
+	print("[GDM][Txn] resource_txn received t_ms=", t_ms, " convoy_id=", cid_dbg)
 	# Backend returns the updated convoy object (convoy_after). Integrate it.
 	if result.is_empty():
 		printerr("GameDataManager: resource transaction returned empty result")
@@ -1379,6 +1388,9 @@ func _on_resource_transaction(result: Dictionary) -> void:
 		printerr("GameDataManager: resource transaction result missing convoy_id")
 
 func _on_convoy_transaction(result: Dictionary) -> void:
+	var t_ms2 := Time.get_ticks_msec()
+	var cid_dbg2 := String(result.get("convoy_id", ""))
+	print("[GDM][Txn] convoy_txn received t_ms=", t_ms2, " convoy_id=", cid_dbg2)
 	# Generic handler for cargo/vehicle buy/sell returning updated convoy
 	if result.is_empty():
 		return
@@ -1671,6 +1683,8 @@ func request_vendor_panel_data(convoy_id: String, vendor_id: String) -> void:
 		"vendor_items": vendor_items,
 		"convoy_items": convoy_items
 	}
+	var t_emit := Time.get_ticks_msec()
+	print("[GDM][Perf] emit vendor_panel_data_ready t_ms=", t_emit, " vid=", String(vendor_id), " cid=", String(convoy_id))
 	vendor_panel_data_ready.emit(vendor_panel_data)
 
 # --- Prefetch helpers for menus ---
@@ -1804,7 +1818,7 @@ func get_settlement_mission_items(x: int, y: int) -> Array:
 			settlement = s
 			break
 	if settlement.is_empty():
-		if VEHICLE_DEBUG_DUMP:
+		if debug_logging_enabled and VEHICLE_DEBUG_DUMP:
 			print("[GameDataManager][SettleMissions] No settlement found at (", sx, ",", sy, ")")
 		return []
 
@@ -1832,7 +1846,7 @@ func get_settlement_mission_items(x: int, y: int) -> Array:
 							vendor_dicts.append(vd2)
 
 	if vendor_dicts.is_empty():
-		if VEHICLE_DEBUG_DUMP:
+		if debug_logging_enabled and VEHICLE_DEBUG_DUMP:
 			print("[GameDataManager][SettleMissions] No vendors cached for (", sx, ",", sy, ")")
 		return []
 
@@ -1863,7 +1877,7 @@ func get_settlement_mission_items(x: int, y: int) -> Array:
 				out_item["mission_vendor_id"] = String(vendor.get("vendor_id"))
 			missions_out.append(out_item)
 
-	if VEHICLE_DEBUG_DUMP:
+	if debug_logging_enabled and VEHICLE_DEBUG_DUMP:
 		print("[GameDataManager][SettleMissions] vendors=", vendor_dicts.size(), " missions=", missions_out.size())
 	return missions_out
 
@@ -1909,7 +1923,7 @@ func _aggregate_vendor_items(vendor_data: Dictionary) -> Dictionary:
 			category = "resources"
 		elif is_part:
 			category = "parts"
-			if VEHICLE_DEBUG_DUMP:
+			if debug_logging_enabled and VEHICLE_DEBUG_DUMP:
 				print("[GameDataManager][DEBUG][VendorParts] Detected part in vendor cargo name=", item.get("name","?"), " slot=", item.get("slot","?"))
 		elif item.has("parts") and item.get("parts") is Array and not (item.get("parts") as Array).is_empty():
 			# Normalize a vendor cargo container that embeds a single part; lift slot up for categorization
@@ -1919,7 +1933,7 @@ func _aggregate_vendor_items(vendor_data: Dictionary) -> Dictionary:
 			if not norm_item.has("slot") and first_part.has("slot"):
 				norm_item["slot"] = first_part.get("slot")
 			category = "parts"
-			if VEHICLE_DEBUG_DUMP:
+			if debug_logging_enabled and VEHICLE_DEBUG_DUMP:
 				print("[GameDataManager][DEBUG][VendorParts] Container with nested part name=", norm_item.get("name","?"), " slot=", norm_item.get("slot","?"))
 			_aggregate_item(aggregated[category], norm_item)
 			continue
@@ -1940,7 +1954,7 @@ func _aggregate_vendor_items(vendor_data: Dictionary) -> Dictionary:
 			# Preserve the unit price field so UI pricing helpers can pick it up
 			item[res + "_price"] = price
 			_aggregate_item(aggregated["resources"], item)
-			if VEHICLE_DEBUG_DUMP:
+			if debug_logging_enabled and VEHICLE_DEBUG_DUMP:
 				print("[GameDataManager][DEBUG][VendorBulk] Added %s qty=%d price=%f" % [res, qty, price])
 
 	# Vehicles
@@ -2023,9 +2037,9 @@ func _aggregate_convoy_items(convoy_data: Dictionary, vendor_data: Dictionary) -
 			item[res] = qty
 			item[res + "_price"] = price
 			_aggregate_item(aggregated["resources"], item)
-		elif qty > 0 and not has_price and VEHICLE_DEBUG_DUMP:
+		elif qty > 0 and not has_price and debug_logging_enabled and VEHICLE_DEBUG_DUMP:
 			print("[GameDataManager][DEBUG][ConvoyBulkFilter] Skipping %s: qty=%d vendor has no %s_price" % [res, qty, res])
-			if VEHICLE_DEBUG_DUMP:
+			if debug_logging_enabled and VEHICLE_DEBUG_DUMP:
 				print("[GameDataManager][DEBUG][ConvoyBulk] Added %s qty=%d price=%f" % [res, qty, price])
 
 	return aggregated
@@ -2145,7 +2159,7 @@ func _on_api_route_choices_received(routes: Array) -> void:
 	var convoy_data = get_convoy_by_id(convoy_id_local)
 	var destination_data = _pending_journey_destination_data
 	print("[GameDataManager] _on_api_route_choices_received convoy_id=%s routes=%d" % [convoy_id_local, routes.size()])
-	if ROUTE_DEBUG_DUMP:
+	if debug_logging_enabled and ROUTE_DEBUG_DUMP:
 		for i in range(routes.size()):
 			var r = routes[i]
 			if not (r is Dictionary):
@@ -2157,9 +2171,11 @@ func _on_api_route_choices_received(routes: Array) -> void:
 			print('[GameDataManager][DEBUG][RouteChoice] idx=', i, ' keys=', r.keys(), ' kwh_keys=', kwh_keys, ' delta_t=', r.get('delta_t'))
 			if journey_dict is Dictionary:
 				print('[GameDataManager][DEBUG][RouteChoice][Journey] origin=(', journey_dict.get('origin_x'), ',', journey_dict.get('origin_y'), ') dest=(', journey_dict.get('dest_x'), ',', journey_dict.get('dest_y'), ') len route_x=', (journey_dict.get('route_x', []) as Array).size(), ' progress=', journey_dict.get('progress'))
-				_json_snippet(journey_dict, 'route['+str(i)+'].journey')
+				if debug_logging_enabled:
+					_json_snippet(journey_dict, 'route['+str(i)+'].journey')
 			if r.has('kwh_expenses'):
-				_json_snippet(r.get('kwh_expenses'), 'route['+str(i)+'].kwh_expenses')
+				if debug_logging_enabled:
+					_json_snippet(r.get('kwh_expenses'), 'route['+str(i)+'].kwh_expenses')
 	if routes.is_empty():
 		print("[GameDataManager] No routes returned; emitting error.")
 		route_choices_error.emit(convoy_id_local, destination_data, "No routes available")
@@ -2194,11 +2210,11 @@ func _request_settlement_vendor_data_at_coords(x: int, y: int) -> void:
 	if sett_match.is_empty():
 		return
 	var vendors: Array = sett_match.get("vendors", [])
-	if vendors.is_empty() and VEHICLE_DEBUG_DUMP:
+	if vendors.is_empty() and debug_logging_enabled and VEHICLE_DEBUG_DUMP:
 		print("[PartCompatGDM] Warm-up: settlement at (", x, ",", y, ") has no vendors array in map data.")
 	for v in vendors:
 		if not (v is Dictionary):
-			if VEHICLE_DEBUG_DUMP:
+			if debug_logging_enabled and VEHICLE_DEBUG_DUMP:
 				print("[PartCompatGDM] Warm-up: vendor entry is not a Dictionary: ", v)
 			continue
 		# Try multiple key candidates for vendor id
@@ -2208,7 +2224,7 @@ func _request_settlement_vendor_data_at_coords(x: int, y: int) -> void:
 			if v.has(k):
 				vid = str(v.get(k, ""))
 				break
-		if vid == "" and VEHICLE_DEBUG_DUMP:
+		if vid == "" and debug_logging_enabled and VEHICLE_DEBUG_DUMP:
 			print("[PartCompatGDM] Warm-up: vendor has no id field; keys=", v.keys())
 		# Refresh if cargo inventory missing or empty
 		var inv: Array = v.get("cargo_inventory", []) if v.has("cargo_inventory") else []

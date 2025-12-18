@@ -445,8 +445,15 @@ func _post_txn_update_ui():
 		_update_top_up_button()
 
 func _refresh_all_vendor_panels():
-	# Only call refresh_data, never initialize, and always pass deep copies
+	# Only call refresh_data, never initialize, and always pass deep copies.
+	# IMPORTANT: Skip refreshing the currently active vendor tab; the active
+	# panel already performs an authoritative refresh via GameDataManager
+	# vendor_panel_data_ready. Double-refreshing it causes selection flicker
+	# during transactions.
+	var active_idx: int = vendor_tab_container.current_tab
 	for i in range(vendor_tab_container.get_tab_count()):
+		if i == active_idx:
+			continue
 		var tab_content = vendor_tab_container.get_tab_control(i)
 		if tab_content is Control and tab_content.has_method("refresh_data"):
 			var full_vendor_name = tab_content.name

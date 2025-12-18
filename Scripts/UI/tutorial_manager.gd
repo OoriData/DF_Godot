@@ -10,6 +10,8 @@ signal tutorial_finished
 # Public toggles
 @export var enabled: bool = true
 @export var start_level: int = 1
+@export var profiling_enabled: bool = true
+@export var fast_mode: bool = false # Skip extra frame waits when true
 
 # Node references
 var _main_screen: Node = null
@@ -23,6 +25,8 @@ var _steps: Array = [] # Array of Dictionaries defining steps for current level
 var _initial_vehicle_count := -1
 var _started: bool = false
 var _resolver: Node = null # Scripts/UI/target_resolver.gd instance
+var _perf_step_start_ms: int = 0
+var _last_vendor_panel_refresh_ms: int = -1
 
 # Persistence
 const PROGRESS_PATH := "user://tutorial_progress.json"
@@ -42,6 +46,10 @@ var _polling_tab_timer: float = 0.0
 var _suspended_by_inline_error: bool = false
 const _POLL_TAB_INTERVAL: float = 0.5
 var _awaiting_menu_open: bool = false
+var _vendor_panel_connected: bool = false
+var _supply_override_counts: Dictionary = {"mre": 0, "water": 0}
+var _urchin_override_count: int = 0
+var _oyster_override_count: int = 0
 
 var _supply_checklist_state: Dictionary = { "mre": false, "water": false }
 var _urchin_checklist_state: Dictionary = { "urchins": false }
@@ -55,7 +63,8 @@ func _ready() -> void:
 	# --- START TUTORIAL DIAGNOSTIC ---
 	# This log will run for every instance of TutorialManager. If we see two logs with
 	# different instance IDs, it confirms there is a duplicate instance.
-	print("[Tutorial][DIAGNOSTIC] _ready() called. My path is: %s, My Instance ID is: %d" % [get_path(), get_instance_id()])
+	if profiling_enabled:
+		print("[Tutorial][DIAGNOSTIC] _ready() called. My path is: %s, My Instance ID is: %d" % [get_path(), get_instance_id()])
 	# --- END TUTORIAL DIAGNOSTIC ---
 	if not enabled:
 		return
@@ -216,7 +225,7 @@ func _build_level_steps(level: int) -> Array:
 				},
 				{
 					id = "l1_open_settlement",
-					copy = "This is your covnoy menu,  but first things first lets get you a vehicle. \n\nClick the Settlement button to view available vendors.",
+					copy = "This is your convoy menu,  but first things first lets get you a vehicle. \n\nClick the Settlement button to view available vendors.",
 					action = "await_settlement_menu",
 					target = { resolver = "button_with_text", text_contains = "Settlement" },
 					lock = "soft"
@@ -452,11 +461,21 @@ func _configure_overlay_insets() -> void:
 func _on_vendor_panel_refreshed(_vendor_panel_data: Dictionary):
 	if not _started or not _suspended_by_inline_error:
 		return
-	
-	print("[Tutorial] Vendor panel refreshed. Resuming tutorial overlay.")
+	# Simple throttle to avoid overlapping re-runs if multiple payloads arrive together
+	var now_ms := Time.get_ticks_msec()
+	var last := int(_last_vendor_panel_refresh_ms)
+	var delta := (now_ms - last) if last >= 0 else 999999
+	print("[Tutorial][Perf] Vendor panel refreshed; delta since last=", delta, " ms")
+	if delta < 250:
+		print("[Tutorial] Skipping tutorial resume (cooldown) to avoid overlap.")
+		return
+	_last_vendor_panel_refresh_ms = now_ms
+	print("[Tutorial] Vendor panel refreshed. Resuming tutorial overlay after one frame.")
 	_suspended_by_inline_error = false
-	# Re-run the current step to re-evaluate highlights and show the overlay again.
+	# Re-run the current step to re-evaluate highlights and show the overlay again, after a frame.
+	await get_tree().process_frame
 	call_deferred("_run_current_step")
+	_connect_vendor_panel_signals()
 
 func _run_current_step() -> void:
 	if _step < 0 or _step >= _steps.size():
@@ -469,7 +488,9 @@ func _run_current_step() -> void:
 
 	# --- START TUTORIAL DIAGNOSTIC ---
 	# This log creates a timeline of which step is running.
-	print("[Tutorial][DIAGNOSTIC] --- Running Step: '%s' ---" % _steps[_step].get("id", "N/A"))
+	if profiling_enabled:
+		print("[Tutorial][DIAGNOSTIC] --- Running Step: '%s' ---" % _steps[_step].get("id", "N/A"))
+	_perf_step_start_ms = Time.get_ticks_msec()
 	# --- END TUTORIAL DIAGNOSTIC ---
 	var step: Dictionary = _steps[_step].duplicate() # Use a copy to allow modification
 	var action := String(step.get("action", "message"))
@@ -617,6 +638,7 @@ func _run_current_step() -> void:
 			corrected_step["target"] = { "resolver": "vendor_trade_panel" }
 			_resolve_and_highlight(corrected_step)
 			_watch_for_supply_purchase()
+			_connect_vendor_panel_signals()
 		"await_urchin_purchase":
 			# Message is shown via _update_urchin_purchase_ui inside the watcher
 			_apply_lock(step)
@@ -624,6 +646,7 @@ func _run_current_step() -> void:
 			corrected_step["target"] = { "resolver": "vendor_trade_panel" }
 			_resolve_and_highlight(corrected_step)
 			_watch_for_urchin_purchase()
+			_connect_vendor_panel_signals()
 		"await_oyster_purchase":
 			# Message is shown via _update_oyster_purchase_ui inside the watcher
 			_apply_lock(step)
@@ -631,6 +654,7 @@ func _run_current_step() -> void:
 			corrected_step["target"] = { "resolver": "vendor_trade_panel" }
 			_resolve_and_highlight(corrected_step)
 			_watch_for_oyster_purchase()
+			_connect_vendor_panel_signals()
 		"await_top_up":
 			_show_message(step.get("copy", ""), false)
 			_apply_lock(step)
@@ -745,7 +769,10 @@ func _advance() -> void:
 	# --- START TUTORIAL DIAGNOSTIC ---
 	# This log shows the exact moment the tutorial advances to the next step.
 	var current_step_id = _steps[_step].get("id", "N/A") if _step >= 0 and _step < _steps.size() else "INVALID"
-	print("[Tutorial][DIAGNOSTIC] --- Advancing from step: '%s' ---" % current_step_id)
+	if profiling_enabled:
+		var elapsed := Time.get_ticks_msec() - _perf_step_start_ms
+		print("[Tutorial][Perf] Step '%s' duration: %d ms" % [current_step_id, elapsed])
+		print("[Tutorial][DIAGNOSTIC] --- Advancing from step: '%s' ---" % current_step_id)
 	# --- END TUTORIAL DIAGNOSTIC ---
 	_clear_highlight()
 
@@ -769,6 +796,7 @@ func _clear_highlight() -> void:
 			_overlay.call("clear_highlight")
 
 func _emit_finished() -> void:
+	_disconnect_vendor_panel_signals()
 	emit_signal("tutorial_finished")
 
 	# Update backend and advance to next level
@@ -881,11 +909,11 @@ func _check_for_tab_selected_poll() -> void:
 func _advance_after_frame() -> void:
 	# Wait for one full frame to pass. This allows Godot's layout system
 	# to update the size and position of newly visible controls.
-	print("[Tutorial] Waiting one frame for layout...")
+	if profiling_enabled:
+		print("[Tutorial] Waiting one frame for layout...")
 	await get_tree().process_frame
-	print("[Tutorial] Waiting a second frame for good measure...")
-	await get_tree().process_frame
-	print("[Tutorial] Frames waited. Advancing.")
+	if profiling_enabled:
+		print("[Tutorial] Frames waited. Advancing.")
 	_advance()
 
 var _top_up_button_ref: Button = null
@@ -925,6 +953,7 @@ func _watch_for_oyster_purchase() -> void:
 	
 	if _gdm.has_method("get_all_convoy_data"):
 		_on_oyster_check(_gdm.get_all_convoy_data())
+	_connect_vendor_panel_signals()
 
 func _on_oyster_check(_all_convoys: Array) -> void:
 	if _step < 0 or _step >= _steps.size() or _steps[_step].get("action") != "await_oyster_purchase":
@@ -992,6 +1021,7 @@ func _watch_for_urchin_purchase() -> void:
 	# Also do an initial check and UI update in case the items are already there
 	if _gdm.has_method("get_all_convoy_data"):
 		_on_urchin_check(_gdm.get_all_convoy_data())
+	_connect_vendor_panel_signals()
 
 func _on_urchin_check(_all_convoys: Array) -> void:
 	# This function is now connected. Check if the current step is the one we care about.
@@ -1065,6 +1095,7 @@ func _watch_for_supply_purchase() -> void:
 	
 	# Reset checklist state at the beginning of the step
 	_supply_checklist_state = {"mre": false, "water": false}
+	_supply_override_counts = {"mre": 0, "water": 0}
 
 	# Connect to the signal that fires after convoy data is updated post-transaction
 	if not _gdm.is_connected("convoy_data_updated", Callable(self, "_on_supply_check")):
@@ -1073,6 +1104,7 @@ func _watch_for_supply_purchase() -> void:
 	# Also do an initial check and UI update in case the items are already there
 	if _gdm.has_method("get_all_convoy_data"):
 		_on_supply_check(_gdm.get_all_convoy_data())
+	_connect_vendor_panel_signals()
 
 func _on_supply_check(_all_convoys: Array) -> void:
 	# This function is now connected. Check if the current step is the one we care about.
@@ -1115,9 +1147,12 @@ func _on_supply_check(_all_convoys: Array) -> void:
 	
 	_update_supply_purchase_ui(mre_count, water_count)
 
-	if mre_count >= 2 and water_count >= 2:
+	var display_mre: int = max(mre_count, int(_supply_override_counts.get("mre", 0)))
+	var display_water: int = max(water_count, int(_supply_override_counts.get("water", 0)))
+	if display_mre >= 2 and display_water >= 2:
 		if is_instance_valid(_gdm) and _gdm.is_connected("convoy_data_updated", Callable(self, "_on_supply_check")):
 			_gdm.disconnect("convoy_data_updated", Callable(self, "_on_supply_check"))
+		_disconnect_vendor_panel_signals()
 		call_deferred("_advance")
 
 func _update_supply_purchase_ui(mre_count: int, water_count: int) -> void:
@@ -1130,12 +1165,16 @@ func _update_supply_purchase_ui(mre_count: int, water_count: int) -> void:
 	var mre_needed = 2
 	var water_needed = 2
 
-	_supply_checklist_state.mre = mre_count >= mre_needed
-	_supply_checklist_state.water = water_count >= water_needed
+	# Use instant override counts to reflect immediate purchases in UI.
+	var display_mre: int = max(mre_count, int(_supply_override_counts.get("mre", 0)))
+	var display_water: int = max(water_count, int(_supply_override_counts.get("water", 0)))
+
+	_supply_checklist_state.mre = display_mre >= mre_needed
+	_supply_checklist_state.water = display_water >= water_needed
 
 	var checklist_items = [
-		{ "text": "MRE Boxes (%d / %d)" % [min(mre_count, mre_needed), mre_needed], "completed": _supply_checklist_state.mre },
-		{ "text": "Water Jerry Cans (%d / %d)" % [min(water_count, water_needed), water_needed], "completed": _supply_checklist_state.water }
+		{ "text": "MRE Boxes (%d / %d)" % [min(display_mre, mre_needed), mre_needed], "completed": _supply_checklist_state.mre },
+		{ "text": "Water Jerry Cans (%d / %d)" % [min(display_water, water_needed), water_needed], "completed": _supply_checklist_state.water }
 	]
 
 	var ov = _ensure_overlay()
@@ -1193,9 +1232,108 @@ func _get_active_vendor_panel_node() -> Node:
 	var container := tabs.get_child(idx) if idx < tabs.get_child_count() else null
 	if not is_instance_valid(container):
 		return null
-	# Look for a VendorTradePanel child
-	var panel := container.find_child("VendorTradePanel", true, false)
-	return panel
+
+	# Prefer finding by script path to avoid name-based mismatch.
+	# ConvoySettlementMenu renames the panel to the vendor's name, so the instance
+	# is not necessarily called "VendorTradePanel".
+	var target_script_path := "res://Scripts/Menus/vendor_trade_panel.gd"
+	# Depth-first search for a node using the vendor_trade_panel script
+	var stack: Array = [container]
+	while not stack.is_empty():
+		var n: Node = stack.pop_back()
+		if not is_instance_valid(n):
+			continue
+		var s: Script = n.get_script()
+		if s and s.resource_path == target_script_path:
+			return n
+		for c in n.get_children():
+			stack.push_back(c)
+
+	# Fallback: find by signal presence to be resilient if script path changes.
+	stack = [container]
+	while not stack.is_empty():
+		var n2: Node = stack.pop_back()
+		if not is_instance_valid(n2):
+			continue
+		if n2.has_signal("item_purchased"):
+			return n2
+		# Also allow panels exposing tutorial helpers
+		if n2.has_method("get_action_button_node"):
+			return n2
+		for c2 in n2.get_children():
+			stack.push_back(c2)
+
+	# Last resort: name-based
+	return container.find_child("VendorTradePanel", true, false)
+
+# --- Vendor panel signal bridge (instant tutorial feedback) ---
+func _connect_vendor_panel_signals() -> void:
+	if _vendor_panel_connected:
+		return
+	var panel := _get_active_vendor_panel_node()
+	if not is_instance_valid(panel):
+		# Retry shortly in case the panel is still building
+		var t := get_tree().create_timer(0.3, false)
+		t.timeout.connect(func(): _connect_vendor_panel_signals())
+		return
+	if panel.has_signal("item_purchased") and not panel.is_connected("item_purchased", Callable(self, "_on_vendor_item_purchased")):
+		panel.connect("item_purchased", Callable(self, "_on_vendor_item_purchased"))
+	# Optional: hook item_sold if needed later
+	_vendor_panel_connected = true
+
+func _disconnect_vendor_panel_signals() -> void:
+	var panel := _get_active_vendor_panel_node()
+	if is_instance_valid(panel):
+		var c := Callable(self, "_on_vendor_item_purchased")
+		if panel.has_signal("item_purchased") and panel.is_connected("item_purchased", c):
+			panel.disconnect("item_purchased", c)
+	_vendor_panel_connected = false
+
+func _on_vendor_item_purchased(item: Variant, quantity: int, _total_price: float) -> void:
+	# Normalize item name
+	var item_name: String = ""
+	if item is Dictionary:
+		item_name = String((item as Dictionary).get("name", "")).to_lower()
+	else:
+		item_name = String(item).to_lower()
+
+	# Supply step: track MRE boxes and Water Jerry Cans
+	if _step >= 0 and _step < _steps.size() and _steps[_step].get("action") == "await_supply_purchase":
+		if item_name.find("mre") != -1:
+			_supply_override_counts["mre"] = int(_supply_override_counts.get("mre", 0)) + max(1, quantity)
+		elif item_name.find("water") != -1 and item_name.find("jerry") != -1:
+			_supply_override_counts["water"] = int(_supply_override_counts.get("water", 0)) + max(1, quantity)
+
+		var mre := int(_supply_override_counts.get("mre", 0))
+		var water := int(_supply_override_counts.get("water", 0))
+		# Update UI instantly using override counts
+		_update_supply_purchase_ui(mre, water)
+		if mre >= 2 and water >= 2:
+			_disconnect_vendor_panel_signals()
+			call_deferred("_advance")
+			return
+
+	# Urchin step: any amount counts
+	if _step >= 0 and _step < _steps.size() and _steps[_step].get("action") == "await_urchin_purchase":
+		if item_name.find("mountain urchin") != -1:
+			_urchin_override_count += max(1, quantity)
+			_update_urchin_purchase_ui(_urchin_override_count)
+			if _urchin_override_count > 0:
+				# Finish level 4 immediately
+				_disconnect_vendor_panel_signals()
+				print("[Tutorial] Urchins purchased (instant). Finishing level 4.")
+				_emit_finished()
+				return
+
+	# Oyster step: any amount counts
+	if _step >= 0 and _step < _steps.size() and _steps[_step].get("action") == "await_oyster_purchase":
+		if item_name.find("rocky mountain oyster") != -1:
+			_oyster_override_count += max(1, quantity)
+			_update_oyster_purchase_ui(_oyster_override_count)
+			if _oyster_override_count > 0:
+				_disconnect_vendor_panel_signals()
+				call_deferred("_advance")
+				return
 
 func _hint_buy_button() -> void:
 	# Respect current step's gating; do not override here to keep the Buy button clickable.
@@ -1600,6 +1738,9 @@ func _exit_tree() -> void:
 	_is_polling_for_tab = false
 	set_process(false)
 	_highlight_timer = null
+
+	# Disconnect vendor panel signals if connected
+	_disconnect_vendor_panel_signals()
 
 	# Free overlay safely
 	if is_instance_valid(_overlay):

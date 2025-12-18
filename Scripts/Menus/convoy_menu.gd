@@ -303,16 +303,24 @@ func initialize_with_data(data: Dictionary):
 			if not current_settlement.is_empty():
 				var vendors_in_settlement: Array = current_settlement.get("vendors", [])
 				for vendor_entry in vendors_in_settlement:
-					if vendor_entry is Dictionary: # If vendor_entry is already a dict
+					if vendor_entry is Dictionary:
 						var vendor_id = String(vendor_entry.get("vendor_id", ""))
 						if not vendor_id.is_empty():
-							_gdm.request_vendor_data_refresh(vendor_id)
-							if _debug_convoy_menu:
-								print("[ConvoyMenu][Debug] Explicitly requested vendor data refresh for vendor_id: ", vendor_id, " at (", current_convoy_x, ",", current_convoy_y, ")")
-					elif vendor_entry is String: # If vendor_entry is just a vendor_id string
+							var inv: Array = []
+							if vendor_entry.has("cargo_inventory"):
+								var tmp = vendor_entry.get("cargo_inventory")
+								if tmp is Array:
+									inv = tmp
+							var needs_refresh: bool = inv.is_empty()
+							if needs_refresh:
+								_gdm.request_vendor_data_refresh(vendor_id)
+								if _debug_convoy_menu:
+									print("[ConvoyMenu][Debug] Requested vendor refresh for vendor_id:", vendor_id, " (inventory empty/missing)")
+					elif vendor_entry is String:
+						# No local vendor details; request once and let APICalls coalesce duplicates
 						_gdm.request_vendor_data_refresh(vendor_entry)
 						if _debug_convoy_menu:
-							print("[ConvoyMenu][Debug] Explicitly requested vendor data refresh for vendor_id (string): ", vendor_entry, " at (", current_convoy_x, ",", current_convoy_y, ")")
+							print("[ConvoyMenu][Debug] Requested vendor refresh for vendor_id (string):", vendor_entry)
 
 		# Build destination cache from convoy cargo at init
 		_destinations_cache.clear()

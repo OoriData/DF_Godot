@@ -72,8 +72,8 @@ signal warehouse_vehicle_retrieved(result: Variant)
 @warning_ignore("unused_signal")
 signal warehouse_convoy_spawned(result: Variant)
 
-#var BASE_URL: String = 'http://127.0.0.1:1337' # default
-var BASE_URL: String = 'https://df-api.oori.dev:1337' # default
+var BASE_URL: String = 'http://127.0.0.1:1337' # default
+#var BASE_URL: String = 'https://df-api.oori.dev:1337' # default
 # Allow override via environment (cannot be const due to runtime lookup)
 func _init():
 	if OS.has_environment('DF_API_BASE_URL'):
@@ -129,6 +129,42 @@ var _probe_stalled_count: int = 0
 var _auth_me_resolve_attempts: int = 0
 const AUTH_ME_MAX_ATTEMPTS: int = 5
 const AUTH_ME_RETRY_INTERVAL: float = 0.75
+
+# --- Diagnostics (queue + txn tracing) ---
+var _client_txn_seq: int = 0
+var _current_client_txn_id: int = -1
+var _current_request_start_ms: int = 0
+var _pending_vendor_refresh: Dictionary = {} # vendor_id -> true
+var _inflight_vendor_id: String = ""
+
+func _extract_query_param(url: String, key: String) -> String:
+	var q_idx := url.find("?")
+	if q_idx == -1:
+		return ""
+	var query := url.substr(q_idx + 1)
+	var parts := query.split("&")
+	for p in parts:
+		var kv := p.split("=")
+		if kv.size() >= 2 and String(kv[0]) == key:
+			return String(kv[1]).uri_decode()
+	return ""
+
+func _diag_enqueue(tag: String, details: Dictionary) -> void:
+	# Stamp enqueue time and client txn id for tracing if it's a PATCH or interesting GET
+	var qlen_before := _request_queue.size()
+	_client_txn_seq += 1
+	details["client_txn_id"] = _client_txn_seq
+	details["enqueued_at_ms"] = Time.get_ticks_msec()
+	details["debug_tag"] = tag
+	var method_i := int(details.get("method", HTTPClient.METHOD_GET))
+	var url_s := String(details.get("url", ""))
+	var is_patch_txn := (method_i == HTTPClient.METHOD_PATCH and String(details.get("signal_name", "")) != "")
+	print("[APICalls][Enqueue] tag=", tag, " id=", _client_txn_seq, " method=", method_i, " qlen_before=", qlen_before, " in_progress=", _is_request_in_progress, " url=", url_s, " prio_patch=", is_patch_txn)
+	if is_patch_txn:
+		_request_queue.push_front(details)
+	else:
+		_request_queue.append(details)
+	_process_queue()
 
 func _ready() -> void:
 	# Ensure this autoload keeps processing while login screen pauses the tree
@@ -358,8 +394,7 @@ func get_convoy_data(convoy_id: String) -> void:
 		"purpose": RequestPurpose.NONE, # Special case for single convoy, handled in _on_request_completed
 		"method": HTTPClient.METHOD_GET
 	}
-	_request_queue.append(request_details)
-	_process_queue()
+	_diag_enqueue("get_convoy_data", request_details)
 
 func get_map_data(x_min: int = -1, x_max: int = -1, y_min: int = -1, y_max: int = -1) -> void:
 	# Parallel (non-queued) map fetch: does not block auth or other queued requests.
@@ -403,8 +438,7 @@ func get_user_data(p_user_id: String) -> void:
 		"purpose": RequestPurpose.USER_DATA,
 		"method": HTTPClient.METHOD_GET
 	}
-	_request_queue.append(request_details)
-	_process_queue()
+	_diag_enqueue("get_user_data", request_details)
 
 # Force a user data refresh regardless of the one-time guard. Useful after creation events.
 func refresh_user_data(p_user_id: String) -> void:
@@ -422,8 +456,7 @@ func refresh_user_data(p_user_id: String) -> void:
 		"method": HTTPClient.METHOD_GET
 	}
 	print('[APICalls] refresh_user_data(): enqueue URL=', url)
-	_request_queue.append(request_details)
-	_process_queue()
+	_diag_enqueue("refresh_user_data", request_details)
 
 func _is_valid_uuid(uuid_string: String) -> bool:
 	# Basic UUID regex: 8-4-4-4-12 hexadecimal characters
@@ -450,8 +483,7 @@ func get_user_convoys(p_user_id: String) -> void:
 		"purpose": RequestPurpose.USER_CONVOYS, # reuse purpose but now expect Dictionary
 		"method": HTTPClient.METHOD_GET
 	}
-	_request_queue.append(request_details)
-	_process_queue()
+	_diag_enqueue("get_user_convoys", request_details)
 
 func get_all_in_transit_convoys() -> void:
 	var url: String = '%s/convoy/all_in_transit' % [BASE_URL]
@@ -464,8 +496,7 @@ func get_all_in_transit_convoys() -> void:
 		"purpose": RequestPurpose.ALL_CONVOYS,
 		"method": HTTPClient.METHOD_GET
 	}
-	_request_queue.append(request_details)
-	_process_queue()
+	_diag_enqueue("get_all_in_transit_convoys", request_details)
 
 func update_user_metadata(user_id: String, metadata: Dictionary) -> void:
 	if user_id.is_empty() or not _is_valid_uuid(user_id):
@@ -481,7 +512,7 @@ func update_user_metadata(user_id: String, metadata: Dictionary) -> void:
 	# The body should be the metadata dictionary itself, not wrapped in another object.
 	var body_json := JSON.stringify(metadata)
 	
-	_request_queue.append({
+	_diag_enqueue("update_user_metadata", {
 		"url": url,
 		"headers": headers,
 		"purpose": RequestPurpose.NONE,
@@ -489,24 +520,37 @@ func update_user_metadata(user_id: String, metadata: Dictionary) -> void:
 		"body": body_json,
 		"signal_name": "user_metadata_updated"
 	})
-	_process_queue()
 
 # --- Vendor / Transaction Requests (added) ---
 func request_vendor_data(vendor_id: String) -> void:
 	if vendor_id.is_empty() or not _is_valid_uuid(vendor_id):
 		printerr("APICalls (request_vendor_data): invalid vendor_id %s" % vendor_id)
 		return
+	# Coalesce duplicate requests for the same vendor_id
+	if _pending_vendor_refresh.has(vendor_id) or (_is_request_in_progress and _current_request_purpose == RequestPurpose.VENDOR_DATA and _inflight_vendor_id == vendor_id):
+		print("[APICalls][Coalesce] Skip duplicate VENDOR_DATA for vendor_id=", vendor_id)
+		return
 	var url := "%s/vendor/get?vendor_id=%s" % [BASE_URL, vendor_id]
 	var headers: PackedStringArray = ['accept: application/json']
 	headers = _apply_auth_header(headers)
+	# Remove any queued older VENDOR_DATA for the same vendor
+	for i in range(_request_queue.size() - 1, -1, -1):
+		var r: Dictionary = _request_queue[i]
+		if r.get("purpose", -1) == RequestPurpose.VENDOR_DATA:
+			var r_vid := String(r.get("vendor_id", ""))
+			if r_vid == "":
+				r_vid = _extract_query_param(String(r.get("url", "")), "vendor_id")
+			if r_vid == vendor_id:
+				_request_queue.remove_at(i)
+	_pending_vendor_refresh[vendor_id] = true
 	var request_details: Dictionary = {
 		"url": url,
 		"headers": headers,
 		"purpose": RequestPurpose.VENDOR_DATA,
-		"method": HTTPClient.METHOD_GET
+		"method": HTTPClient.METHOD_GET,
+		"vendor_id": vendor_id
 	}
-	_request_queue.append(request_details)
-	_process_queue()
+	_diag_enqueue("request_vendor_data", request_details)
 
 # --- Cargo detail by ID ---
 func get_cargo(cargo_id: String) -> void:
@@ -522,8 +566,7 @@ func get_cargo(cargo_id: String) -> void:
 		"purpose": RequestPurpose.CARGO_DATA,
 		"method": HTTPClient.METHOD_GET
 	}
-	_request_queue.append(request_details)
-	_process_queue()
+	_diag_enqueue("get_cargo", request_details)
 
 # --- Warehouse requests ---
 func warehouse_new(sett_id: String) -> void:
@@ -615,7 +658,7 @@ func warehouse_expand(params: Dictionary) -> void:
 	var headers: PackedStringArray = ['accept: application/json']
 	headers = _apply_auth_header(headers)
 	_current_patch_signal_name = "warehouse_expanded"
-	_request_queue.append({
+	_diag_enqueue("warehouse_expand", {
 		"url": url,
 		"headers": headers,
 		"purpose": RequestPurpose.NONE,
@@ -624,7 +667,6 @@ func warehouse_expand(params: Dictionary) -> void:
 		"signal_name": "warehouse_expanded"
 	})
 	print("[APICalls][warehouse_expand] Queue length now=", _request_queue.size())
-	_process_queue()
 
 # Alternative expansion using JSON body (fallback if query version shows no effect)
 func warehouse_expand_json(params: Dictionary) -> void:
@@ -647,7 +689,7 @@ func warehouse_expand_json(params: Dictionary) -> void:
 	var body_dict := {"warehouse_id": wid, "expand_type": expand_type, "amount": amount}
 	var body_json := JSON.stringify(body_dict)
 	_current_patch_signal_name = "warehouse_expanded"
-	_request_queue.append({
+	_diag_enqueue("warehouse_expand_json", {
 		"url": url,
 		"headers": headers,
 		"purpose": RequestPurpose.NONE,
@@ -656,7 +698,6 @@ func warehouse_expand_json(params: Dictionary) -> void:
 		"signal_name": "warehouse_expanded"
 	})
 	print("[APICalls][warehouse_expand_json] Enqueued JSON PATCH url=", url, " body=", body_json)
-	_process_queue()
 
 # Preferred v2 expansion using explicit field names cargo_capacity_upgrade / vehicle_capacity_upgrade
 func warehouse_expand_v2(warehouse_id: String, cargo_units: int, vehicle_units: int) -> void:
@@ -677,7 +718,7 @@ func warehouse_expand_v2(warehouse_id: String, cargo_units: int, vehicle_units: 
 	var headers: PackedStringArray = ['accept: application/json']
 	headers = _apply_auth_header(headers)
 	_current_patch_signal_name = "warehouse_expanded"
-	_request_queue.append({
+	_diag_enqueue("warehouse_expand_v2", {
 		"url": url,
 		"headers": headers,
 		"purpose": RequestPurpose.NONE,
@@ -686,7 +727,6 @@ func warehouse_expand_v2(warehouse_id: String, cargo_units: int, vehicle_units: 
 		"signal_name": "warehouse_expanded"
 	})
 	print("[APICalls][warehouse_expand_v2] Enqueued URL=", url)
-	_process_queue()
 	# Also enqueue JSON fallback immediately (optional) if first returns no change we can trigger manually
 	var body_dict := {
 		"warehouse_id": warehouse_id,
@@ -694,7 +734,7 @@ func warehouse_expand_v2(warehouse_id: String, cargo_units: int, vehicle_units: 
 		"vehicle_capacity_upgrade": vehicle_u
 	}
 	var body_json := JSON.stringify(body_dict)
-	_request_queue.append({
+	_diag_enqueue("warehouse_expand_v2_fallback_json", {
 		"url": "%s/warehouse/expand" % BASE_URL,
 		"headers": _apply_auth_header(['accept: application/json', 'content-type: application/json']),
 		"purpose": RequestPurpose.NONE,
@@ -714,7 +754,7 @@ func warehouse_cargo_store(params: Dictionary) -> void:
 	var url := "%s/warehouse/cargo/store%s" % [BASE_URL, _build_query(params)]
 	var headers: PackedStringArray = ['accept: application/json']
 	headers = _apply_auth_header(headers)
-	_request_queue.append({
+	_diag_enqueue("warehouse_cargo_store", {
 		"url": url,
 		"headers": headers,
 		"purpose": RequestPurpose.NONE,
@@ -722,13 +762,12 @@ func warehouse_cargo_store(params: Dictionary) -> void:
 		"body": "",
 		"signal_name": "warehouse_cargo_stored"
 	})
-	_process_queue()
 
 func warehouse_cargo_retrieve(params: Dictionary) -> void:
 	var url := "%s/warehouse/cargo/retrieve%s" % [BASE_URL, _build_query(params)]
 	var headers: PackedStringArray = ['accept: application/json']
 	headers = _apply_auth_header(headers)
-	_request_queue.append({
+	_diag_enqueue("warehouse_cargo_retrieve", {
 		"url": url,
 		"headers": headers,
 		"purpose": RequestPurpose.NONE,
@@ -736,13 +775,12 @@ func warehouse_cargo_retrieve(params: Dictionary) -> void:
 		"body": "",
 		"signal_name": "warehouse_cargo_retrieved"
 	})
-	_process_queue()
 
 func warehouse_vehicle_store(params: Dictionary) -> void:
 	var url := "%s/warehouse/vehicle/store%s" % [BASE_URL, _build_query(params)]
 	var headers: PackedStringArray = ['accept: application/json']
 	headers = _apply_auth_header(headers)
-	_request_queue.append({
+	_diag_enqueue("warehouse_vehicle_store", {
 		"url": url,
 		"headers": headers,
 		"purpose": RequestPurpose.NONE,
@@ -750,13 +788,12 @@ func warehouse_vehicle_store(params: Dictionary) -> void:
 		"body": "",
 		"signal_name": "warehouse_vehicle_stored"
 	})
-	_process_queue()
 
 func warehouse_vehicle_retrieve(params: Dictionary) -> void:
 	var url := "%s/warehouse/vehicle/retrieve%s" % [BASE_URL, _build_query(params)]
 	var headers: PackedStringArray = ['accept: application/json']
 	headers = _apply_auth_header(headers)
-	_request_queue.append({
+	_diag_enqueue("warehouse_vehicle_retrieve", {
 		"url": url,
 		"headers": headers,
 		"purpose": RequestPurpose.NONE,
@@ -764,7 +801,6 @@ func warehouse_vehicle_retrieve(params: Dictionary) -> void:
 		"body": "",
 		"signal_name": "warehouse_vehicle_retrieved"
 	})
-	_process_queue()
 
 func warehouse_convoy_spawn(params: Dictionary) -> void:
 	# Normalize param naming: prefer 'new_convoy_name' per latest API spec.
@@ -779,7 +815,7 @@ func warehouse_convoy_spawn(params: Dictionary) -> void:
 	var headers: PackedStringArray = ['accept: application/json']
 	headers = _apply_auth_header(headers)
 	print("[APICalls][Enqueue] warehouse_convoy_spawn url=", url, " queue_len_before=", _request_queue.size(), " in_progress=", _is_request_in_progress)
-	_request_queue.append({
+	_diag_enqueue("warehouse_convoy_spawn", {
 		"url": url,
 		"headers": headers,
 		"purpose": RequestPurpose.NONE,
@@ -788,7 +824,6 @@ func warehouse_convoy_spawn(params: Dictionary) -> void:
 		"signal_name": "warehouse_convoy_spawned"
 	})
 	print("[APICalls][Enqueue] warehouse_convoy_spawn appended queue_len_after=", _request_queue.size())
-	_process_queue()
 
 # TEMP diagnostic: bypass queue to see if HTTP call itself works
 func warehouse_convoy_spawn_direct(params: Dictionary) -> void:
@@ -881,7 +916,7 @@ func buy_cargo(vendor_id: String, convoy_id: String, cargo_id: String, quantity:
 	var url := "%s/vendor/cargo/buy?vendor_id=%s&convoy_id=%s&cargo_id=%s&quantity=%d" % [BASE_URL, vendor_id, convoy_id, cargo_id, quantity]
 	var headers: PackedStringArray = ['accept: application/json']
 	headers = _apply_auth_header(headers)
-	_request_queue.append({
+	_diag_enqueue("buy_cargo", {
 		"url": url,
 		"headers": headers,
 		"purpose": RequestPurpose.NONE,
@@ -889,7 +924,6 @@ func buy_cargo(vendor_id: String, convoy_id: String, cargo_id: String, quantity:
 		"body": "",
 		"signal_name": "cargo_bought"
 	})
-	_process_queue()
 
 func sell_cargo(vendor_id: String, convoy_id: String, cargo_id: String, quantity: int) -> void:
 	if vendor_id.is_empty() or convoy_id.is_empty() or cargo_id.is_empty():
@@ -899,7 +933,7 @@ func sell_cargo(vendor_id: String, convoy_id: String, cargo_id: String, quantity
 	var url := "%s/vendor/cargo/sell?vendor_id=%s&convoy_id=%s&cargo_id=%s&quantity=%d" % [BASE_URL, vendor_id, convoy_id, cargo_id, quantity]
 	var headers: PackedStringArray = ['accept: application/json']
 	headers = _apply_auth_header(headers)
-	_request_queue.append({
+	_diag_enqueue("sell_cargo", {
 		"url": url,
 		"headers": headers,
 		"purpose": RequestPurpose.NONE,
@@ -907,7 +941,6 @@ func sell_cargo(vendor_id: String, convoy_id: String, cargo_id: String, quantity
 		"body": "",
 		"signal_name": "cargo_sold"
 	})
-	_process_queue()
 
 func buy_vehicle(vendor_id: String, convoy_id: String, vehicle_id: String) -> void:
 	if vendor_id.is_empty() or convoy_id.is_empty() or vehicle_id.is_empty():
@@ -917,7 +950,7 @@ func buy_vehicle(vendor_id: String, convoy_id: String, vehicle_id: String) -> vo
 	var url := "%s/vendor/vehicle/buy?vendor_id=%s&convoy_id=%s&vehicle_id=%s" % [BASE_URL, vendor_id, convoy_id, vehicle_id]
 	var headers: PackedStringArray = ['accept: application/json']
 	headers = _apply_auth_header(headers)
-	_request_queue.append({
+	_diag_enqueue("buy_vehicle", {
 		"url": url,
 		"headers": headers,
 		"purpose": RequestPurpose.NONE,
@@ -925,7 +958,6 @@ func buy_vehicle(vendor_id: String, convoy_id: String, vehicle_id: String) -> vo
 		"body": "",
 		"signal_name": "vehicle_bought"
 	})
-	_process_queue()
 
 func sell_vehicle(vendor_id: String, convoy_id: String, vehicle_id: String) -> void:
 	if vendor_id.is_empty() or convoy_id.is_empty() or vehicle_id.is_empty():
@@ -935,7 +967,7 @@ func sell_vehicle(vendor_id: String, convoy_id: String, vehicle_id: String) -> v
 	var url := "%s/vendor/vehicle/sell?vendor_id=%s&convoy_id=%s&vehicle_id=%s" % [BASE_URL, vendor_id, convoy_id, vehicle_id]
 	var headers: PackedStringArray = ['accept: application/json']
 	headers = _apply_auth_header(headers)
-	_request_queue.append({
+	_diag_enqueue("sell_vehicle", {
 		"url": url,
 		"headers": headers,
 		"purpose": RequestPurpose.NONE,
@@ -943,7 +975,6 @@ func sell_vehicle(vendor_id: String, convoy_id: String, vehicle_id: String) -> v
 		"body": "",
 		"signal_name": "vehicle_sold"
 	})
-	_process_queue()
 
 func buy_resource(vendor_id: String, convoy_id: String, resource_type: String, quantity: float) -> void:
 	# Backend route: PATCH /vendor/resource/buy with all fields in query params
@@ -955,7 +986,7 @@ func buy_resource(vendor_id: String, convoy_id: String, resource_type: String, q
 	var headers: PackedStringArray = ['accept: application/json']
 	headers = _apply_auth_header(headers)
 	print("[APICalls][buy_resource] PATCH url=", url, " (query only)")
-	_request_queue.append({
+	_diag_enqueue("buy_resource", {
 		"url": url,
 		"headers": headers,
 		"purpose": RequestPurpose.NONE,
@@ -963,7 +994,6 @@ func buy_resource(vendor_id: String, convoy_id: String, resource_type: String, q
 		"body": "",
 		"signal_name": "resource_bought"
 	})
-	_process_queue()
 
 func sell_resource(vendor_id: String, convoy_id: String, resource_type: String, quantity: float) -> void:
 	# Backend route: PATCH /vendor/resource/sell with all fields in query params
@@ -975,7 +1005,7 @@ func sell_resource(vendor_id: String, convoy_id: String, resource_type: String, 
 	var headers: PackedStringArray = ['accept: application/json']
 	headers = _apply_auth_header(headers)
 	print("[APICalls][sell_resource] PATCH url=", url, " (query only)")
-	_request_queue.append({
+	_diag_enqueue("sell_resource", {
 		"url": url,
 		"headers": headers,
 		"purpose": RequestPurpose.NONE,
@@ -983,7 +1013,6 @@ func sell_resource(vendor_id: String, convoy_id: String, resource_type: String, 
 		"body": "",
 		"signal_name": "resource_sold"
 	})
-	_process_queue()
 
 # --- Mechanics / Part Attach ---
 func attach_vehicle_part(vehicle_id: String, part_cargo_id: String) -> void:
@@ -1000,7 +1029,7 @@ func attach_vehicle_part(vehicle_id: String, part_cargo_id: String) -> void:
 	var headers: PackedStringArray = ['accept: application/json']
 	headers = _apply_auth_header(headers)
 	print("[APICalls][attach_vehicle_part] PATCH url=", url, " auth_present=", _auth_bearer_token != "")
-	_request_queue.append({
+	_diag_enqueue("attach_vehicle_part", {
 		"url": url,
 		"headers": headers,
 		"purpose": RequestPurpose.NONE,
@@ -1008,7 +1037,6 @@ func attach_vehicle_part(vehicle_id: String, part_cargo_id: String) -> void:
 		"body": "",
 		"signal_name": "vehicle_part_attached"
 	})
-	_process_queue()
 
 # --- Mechanics / Part Detach ---
 func detach_vehicle_part(vehicle_id: String, part_id: String) -> void:
@@ -1025,7 +1053,7 @@ func detach_vehicle_part(vehicle_id: String, part_id: String) -> void:
 	var headers: PackedStringArray = ['accept: application/json']
 	headers = _apply_auth_header(headers)
 	print("[APICalls][detach_vehicle_part] PATCH url=", url, " auth_present=", _auth_bearer_token != "")
-	_request_queue.append({
+	_diag_enqueue("detach_vehicle_part", {
 		"url": url,
 		"headers": headers,
 		"purpose": RequestPurpose.NONE,
@@ -1033,7 +1061,6 @@ func detach_vehicle_part(vehicle_id: String, part_id: String) -> void:
 		"body": "",
 		"signal_name": "vehicle_part_detached"
 	})
-	_process_queue()
 
 # --- Mechanics / Vendor Add Part (purchase + install) ---
 func add_vehicle_part(vendor_id: String, convoy_id: String, vehicle_id: String, part_cargo_id: String) -> void:
@@ -1058,7 +1085,7 @@ func add_vehicle_part(vendor_id: String, convoy_id: String, vehicle_id: String, 
 	var headers: PackedStringArray = ['accept: application/json']
 	headers = _apply_auth_header(headers)
 	print("[APICalls][add_vehicle_part] PATCH url=", url, " auth_present=", _auth_bearer_token != "")
-	_request_queue.append({
+	_diag_enqueue("add_vehicle_part", {
 		"url": url,
 		"headers": headers,
 		"purpose": RequestPurpose.NONE,
@@ -1066,7 +1093,6 @@ func add_vehicle_part(vendor_id: String, convoy_id: String, vehicle_id: String, 
 		"body": "",
 		"signal_name": "vehicle_part_added"
 	})
-	_process_queue()
 
 # --- Journey Planning Requests ---
 var _last_route_params: Dictionary = {} # {convoy_id, dest_x, dest_y}
@@ -1122,8 +1148,7 @@ func send_convoy(convoy_id: String, journey_id: String) -> void:
 		"body": "", # No body; params in query string
 		"signal_name": "convoy_sent_on_journey"
 	}
-	_request_queue.append(request_details)
-	_process_queue()
+	_diag_enqueue("send_convoy", request_details)
 
 # Cancel an in-progress convoy journey (PATCH with query params)
 func cancel_convoy_journey(convoy_id: String, journey_id: String) -> void:
@@ -1149,8 +1174,7 @@ func cancel_convoy_journey(convoy_id: String, journey_id: String) -> void:
 		"body": "",
 		"signal_name": "convoy_journey_canceled"
 	}
-	_request_queue.append(request_details)
-	_process_queue()
+	_diag_enqueue("cancel_convoy_journey", request_details)
 
 func _on_route_request_completed(result: int, response_code: int, _headers: PackedStringArray, body: PackedByteArray) -> void:
 	print('[APICalls][FIND_ROUTE] request_completed result=%d code=%d bytes=%d' % [result, response_code, body.size()])
@@ -1197,6 +1221,8 @@ func _on_route_request_completed(result: int, response_code: int, _headers: Pack
 func _complete_current_request() -> void:
 	_current_request_purpose = RequestPurpose.NONE
 	_is_request_in_progress = false
+	_current_client_txn_id = -1
+	_inflight_vendor_id = ""
 	_process_queue()
 
 func _create_queue_watchdog():
@@ -1288,10 +1314,20 @@ func _process_queue() -> void:
 	_is_request_in_progress = true
 	print("[APICalls] _process_queue(): dequeuing next request. Remaining (before pop)=%d" % _request_queue.size())
 	var next_request: Dictionary = _request_queue.pop_front()
-	print("[APICalls] _process_queue(): dequeued. Remaining (after pop)=%d" % _request_queue.size())
+	var q_after := _request_queue.size()
+	var enq_ms := int(next_request.get("enqueued_at_ms", -1))
+	var now_ms := Time.get_ticks_msec()
+	var wait_ms := (now_ms - enq_ms) if enq_ms >= 0 else -1
+	_current_client_txn_id = int(next_request.get("client_txn_id", -1))
+	var dbg_tag := String(next_request.get("debug_tag", ""))
+	print("[APICalls][Dequeue] tag=", dbg_tag, " id=", _current_client_txn_id, " wait_ms=", wait_ms, " qlen_after=", q_after)
 	_last_requested_url = next_request.get("url", "")
 	_current_request_purpose = next_request.get("purpose", RequestPurpose.NONE)
 	_current_patch_signal_name = next_request.get("signal_name", "")
+	if _current_request_purpose == RequestPurpose.VENDOR_DATA:
+		_inflight_vendor_id = String(next_request.get("vendor_id", ""))
+		if _inflight_vendor_id == "":
+			_inflight_vendor_id = _extract_query_param(_last_requested_url, "vendor_id")
 	var headers: PackedStringArray = next_request.get("headers", [])
 	var method: int = next_request.get("method", HTTPClient.METHOD_GET)
 	var body: String = next_request.get("body", "")
@@ -1299,6 +1335,7 @@ func _process_queue() -> void:
 	var purpose_str: String = RequestPurpose.keys()[_current_request_purpose]
 	print("[APICalls] _process_queue(): dispatching purpose=%s URL=%s method=%d" % [purpose_str, _last_requested_url, method])
 	_current_request_start_time = Time.get_unix_time_from_system()
+	_current_request_start_ms = Time.get_ticks_msec()
 	_arm_request_timeout()
 	var error: Error = _http_request.request(_last_requested_url, headers, method, body)
 	if error != OK:
@@ -1374,7 +1411,9 @@ func _abort_map_request_for_auth():
 
 # Called when the HTTPRequest has completed.
 func _on_request_completed(result: int, response_code: int, _headers: PackedStringArray, body: PackedByteArray) -> void:
-	print("[APICalls] _on_request_completed() purpose=%s result=%d code=%d url=%s" % [RequestPurpose.keys()[_current_request_purpose], result, response_code, _last_requested_url])
+	var done_ms := Time.get_ticks_msec()
+	var http_elapsed_ms := done_ms - _current_request_start_ms
+	print("[APICalls] _on_request_completed() purpose=%s result=%d code=%d url=%s id=%d http_ms=%d" % [RequestPurpose.keys()[_current_request_purpose], result, response_code, _last_requested_url, _current_client_txn_id, http_elapsed_ms])
 	if _current_patch_signal_name == "warehouse_convoy_spawned":
 		print("[APICalls][SpawnConvoy] completion result=%d http_code=%d body_bytes=%d" % [result, response_code, body.size()])
 	var request_purpose_at_start = _current_request_purpose
@@ -1387,7 +1426,7 @@ func _on_request_completed(result: int, response_code: int, _headers: PackedStri
 	# PATCH transaction responses (purpose == NONE, but signal_name is set)
 	if _current_request_purpose == RequestPurpose.NONE and _current_patch_signal_name != "":
 		if result == HTTPRequest.RESULT_SUCCESS and (response_code >= 200 and response_code < 300):
-			print("[APICalls][PATCH_TXN] signal=%s code=%d size=%d url=%s" % [_current_patch_signal_name, response_code, body.size(), _last_requested_url])
+			print("[APICalls][PATCH_TXN] signal=%s code=%d size=%d url=%s id=%d http_ms=%d" % [_current_patch_signal_name, response_code, body.size(), _last_requested_url, _current_client_txn_id, http_elapsed_ms])
 			var response_body_text = body.get_string_from_utf8()
 			var preview = response_body_text.substr(0, 400)
 			print("[APICalls][PATCH_TXN] body_preview=", preview)
@@ -1452,7 +1491,7 @@ func _on_request_completed(result: int, response_code: int, _headers: PackedStri
 					})
 					_process_queue()
 					return
-			print("[APICalls][PATCH_TXN] signal=%s FAILED result=%d code=%d url=%s" % [_current_patch_signal_name, result, response_code, _last_requested_url])
+			print("[APICalls][PATCH_TXN] signal=%s FAILED result=%d code=%d url=%s id=%d http_ms=%d" % [_current_patch_signal_name, result, response_code, _last_requested_url, _current_client_txn_id, http_elapsed_ms])
 			var fail_body_text := body.get_string_from_utf8()
 			var fail_preview := fail_body_text.substr(0, 400)
 			print("[APICalls][PATCH_TXN] fail_body_preview=", fail_preview)
@@ -1623,6 +1662,10 @@ func _on_request_completed(result: int, response_code: int, _headers: PackedStri
 		return
 
 	elif request_purpose_at_start == RequestPurpose.VENDOR_DATA:
+		# Clear pending flag for this vendor id on completion
+		var vid_done := _inflight_vendor_id
+		if vid_done == "":
+			vid_done = _extract_query_param(_last_requested_url, "vendor_id")
 		var response_body_text: String = body.get_string_from_utf8()
 		var json_response = JSON.parse_string(response_body_text)
 
@@ -1633,6 +1676,10 @@ func _on_request_completed(result: int, response_code: int, _headers: PackedStri
 		else:
 			print("APICalls (_on_request_completed - VENDOR_DATA): Successfully fetched vendor data. URL: %s" % _last_requested_url)
 			emit_signal('vendor_data_received', json_response)
+		if vid_done != "" and _pending_vendor_refresh.has(vid_done):
+			_pending_vendor_refresh.erase(vid_done)
+		if _inflight_vendor_id == vid_done:
+			_inflight_vendor_id = ""
 
 		_complete_current_request()
 		return
