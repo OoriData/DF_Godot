@@ -243,6 +243,18 @@ func clear_auth_session_token() -> void:
 	cfg.save(SESSION_CFG_PATH)
 	print("[APICalls] Auth session cleared.")
 
+func _load_auth_session_token() -> void:
+	var cfg := ConfigFile.new()
+	var err := cfg.load(SESSION_CFG_PATH)
+	if err != OK:
+		return
+	var token: String = String(cfg.get_value("auth", "session_token", ""))
+	var expiry: int = int(cfg.get_value("auth", "token_expiry", 0))
+	if token != "":
+		_auth_bearer_token = token
+		_auth_token_expiry = expiry
+		print("[APICalls] Loaded persisted session token (len=%d, exp=%d)" % [token.length(), expiry])
+
 func _apply_auth_header(headers: PackedStringArray) -> PackedStringArray:
 	var out := headers.duplicate()
 	if _auth_bearer_token != "":
@@ -254,33 +266,13 @@ func _apply_auth_header(headers: PackedStringArray) -> PackedStringArray:
 		if not has_auth:
 			out.append("Authorization: Bearer %s" % _auth_bearer_token)
 	return out
-
-# --- Auth API ---
-
-func _load_auth_session_token() -> void:
-	var cfg := ConfigFile.new()
-	var err = cfg.load(SESSION_CFG_PATH)
-	if err == OK:
-		var token = cfg.get_value("auth", "session_token", "")
-		var expiry = int(cfg.get_value("auth", "token_expiry", 0))
-		if token != "" and expiry > 0:
-			if Time.get_unix_time_from_system() < expiry:
-				_auth_bearer_token = token
-				_auth_token_expiry = expiry
-				print("[APICalls] Loaded session token from disk, exp=", expiry)
-			else:
-				print("[APICalls] Saved session token expired, clearing.")
-				clear_auth_session_token()
-		else:
-			print("[APICalls] No valid session token found on disk.")
-	else:
-		print("[APICalls] No session.cfg found.")
-
 func is_auth_token_valid() -> bool:
-	return _auth_bearer_token != "" and _auth_token_expiry > Time.get_unix_time_from_system()
+	return _auth_bearer_token != "" and not _is_auth_token_expired()
 
 func _is_auth_token_expired() -> bool:
-	return _auth_bearer_token != "" and _auth_token_expiry <= Time.get_unix_time_from_system()
+	if _auth_bearer_token == "":
+		return false
+	return _auth_token_expiry <= Time.get_unix_time_from_system()
 
 func logout() -> void:
 	clear_auth_session_token()
@@ -1436,6 +1428,15 @@ func _on_request_completed(result: int, response_code: int, _headers: PackedStri
 				print("[APICalls][PATCH_TXN] Non-JSON success body; emitting raw text for signal '%s'." % _current_patch_signal_name)
 				emit_signal(_current_patch_signal_name, response_body_text)
 			else:
+				# Normalize common txn payloads: if server wraps convoy in 'convoy_after', emit the inner convoy
+				if typeof(json_response) == TYPE_DICTIONARY:
+					var sig := _current_patch_signal_name
+					var is_txn_sig := (sig == "vehicle_bought" or sig == "vehicle_sold" or sig == "cargo_bought" or sig == "cargo_sold" or sig == "resource_bought" or sig == "resource_sold")
+					if is_txn_sig and json_response.has("convoy_after") and typeof(json_response["convoy_after"]) == TYPE_DICTIONARY:
+						print("[APICalls][PATCH_TXN] Unwrapping 'convoy_after' for signal '", sig, "'.")
+						emit_signal(_current_patch_signal_name, json_response["convoy_after"])
+						_complete_current_request()
+						return
 				print("APICalls: Transaction '%s' successful. Emitting signal with data." % _current_patch_signal_name)
 				emit_signal(_current_patch_signal_name, json_response)
 			
@@ -1465,17 +1466,31 @@ func _on_request_completed(result: int, response_code: int, _headers: PackedStri
 					})
 					_process_queue()
 					return
-			# Vehicle route fallback: try alternate naming between /vendor/vehicle/buy|sell and /vendor/buy_vehicle|sell_vehicle
+			# Vehicle route fallback: try alternate naming and bare /vehicle endpoints
 			if response_code == 404 and (_current_patch_signal_name == "vehicle_bought" or _current_patch_signal_name == "vehicle_sold"):
-				var alt_url := _last_requested_url
-				# New -> legacy
-				alt_url = alt_url.replace("/vendor/vehicle/buy?", "/vendor/buy_vehicle?")
-				alt_url = alt_url.replace("/vendor/vehicle/sell?", "/vendor/sell_vehicle?")
-				# If no change, try legacy -> new
-				if alt_url == _last_requested_url:
-					alt_url = alt_url.replace("/vendor/buy_vehicle?", "/vendor/vehicle/buy?")
-					alt_url = alt_url.replace("/vendor/sell_vehicle?", "/vendor/vehicle/sell?")
-				if alt_url != _last_requested_url:
+				var candidates: Array[String] = []
+				# 1) Swap vendor/vehicle route to vendor/buy_vehicle|sell_vehicle
+				var c1 := _last_requested_url.replace("/vendor/vehicle/buy?", "/vendor/buy_vehicle?")
+				c1 = c1.replace("/vendor/vehicle/sell?", "/vendor/sell_vehicle?")
+				if c1 != _last_requested_url:
+					candidates.append(c1)
+				# 2) Swap vendor/buy_vehicle|sell_vehicle back to vendor/vehicle/buy|sell
+				var c2 := _last_requested_url.replace("/vendor/buy_vehicle?", "/vendor/vehicle/buy?")
+				c2 = c2.replace("/vendor/sell_vehicle?", "/vendor/vehicle/sell?")
+				if c2 != _last_requested_url:
+					candidates.append(c2)
+				# 3) Try bare /vehicle/buy|sell (server-side route provided)
+				var c3 := _last_requested_url.replace("/vendor/vehicle/buy?", "/vehicle/buy?")
+				c3 = c3.replace("/vendor/buy_vehicle?", "/vehicle/buy?")
+				if c3 != _last_requested_url:
+					candidates.append(c3)
+				var c4 := _last_requested_url.replace("/vendor/vehicle/sell?", "/vehicle/sell?")
+				c4 = c4.replace("/vendor/sell_vehicle?", "/vehicle/sell?")
+				if c4 != _last_requested_url:
+					candidates.append(c4)
+				# Enqueue the first viable candidate
+				if not candidates.is_empty():
+					var alt_url := candidates[0]
 					print("[APICalls][PATCH_TXN][Fallback] 404 on vehicle route; retrying alternate URL=", alt_url)
 					_is_request_in_progress = false
 					_current_request_purpose = RequestPurpose.NONE

@@ -392,8 +392,86 @@ func _update_vendor_ui(update_vendor: bool = true, update_convoy: bool = true) -
 		_populate_tree_from_agg(vendor_item_tree, self.vendor_items)
 	if update_convoy:
 		_ensure_tree_columns(convoy_item_tree)
-		_populate_tree_from_agg(convoy_item_tree, self.convoy_items)
+		var agg_to_use: Dictionary = self.convoy_items if (self.convoy_items is Dictionary) else {}
+		# In SELL mode, allow selling whole vehicles when appropriate for this vendor
+		if _should_show_vehicle_sell_category():
+			agg_to_use = _convoy_items_with_sellable_vehicles(agg_to_use)
+		_populate_tree_from_agg(convoy_item_tree, agg_to_use)
 	_update_convoy_info_display()
+
+func _vendor_has_vehicle_parts() -> bool:
+	# 1) Aggregated vendor_items 'parts' bucket
+	if vendor_items is Dictionary:
+		# Case-insensitive check for a non-empty parts bucket
+		if vendor_items.has("parts") and vendor_items["parts"] is Dictionary and not (vendor_items["parts"] as Dictionary).is_empty():
+			return true
+		if vendor_items.has("Parts") and vendor_items["Parts"] is Dictionary and not (vendor_items["Parts"] as Dictionary).is_empty():
+			return true
+	# 2) Use Items.gd classifier on raw vendor_data inventory
+	if vendor_data and vendor_data.has("cargo_inventory") and (vendor_data.cargo_inventory is Array):
+		for raw in vendor_data.cargo_inventory:
+			if raw is Dictionary and ItemsData.PartItem._looks_like_part_dict(raw):
+				return true
+	# Optional: check nested parts arrays directly (containers exposing parts)
+	if vendor_data and vendor_data.has("cargo_inventory") and (vendor_data.cargo_inventory is Array):
+		for raw2 in vendor_data.cargo_inventory:
+			if not (raw2 is Dictionary):
+				continue
+			if raw2.has("parts") and raw2.parts is Array and not (raw2.parts as Array).is_empty():
+				var fp: Dictionary = (raw2.parts as Array)[0]
+				if fp.has("slot") and fp.get("slot") != null and String(fp.get("slot")).strip_edges() != "":
+					return true
+	# 3) Common explicit flags/types on vendor_data (fallbacks)
+	if vendor_data:
+		if bool(vendor_data.get("sells_parts", false)) or bool(vendor_data.get("sells_vehicle_parts", false)):
+			return true
+		var vtype := String(vendor_data.get("vendor_type", "")).to_lower()
+		if vtype.findn("part") != -1:
+			return true
+	return false
+
+# Unified gate: whether this vendor should show a Vehicles category in SELL mode
+func _should_show_vehicle_sell_category() -> bool:
+	if current_mode != "sell":
+		return false
+	# Primary: vendor actually stocks vehicle parts
+	if _vendor_has_vehicle_parts():
+		return true
+	# Fallbacks: many parts dealers also sell/accept vehicles
+	if vendor_data:
+		# Explicit flags or vehicle inventory imply dealership behavior
+		if bool(vendor_data.get("sells_vehicles", false)):
+			return true
+		if vendor_data.has("vehicle_inventory") and (vendor_data.vehicle_inventory is Array) and not (vendor_data.vehicle_inventory as Array).is_empty():
+			return true
+	return false
+
+func _convoy_items_with_sellable_vehicles(base_agg: Dictionary) -> Dictionary:
+	var out: Dictionary = {}
+	if base_agg is Dictionary:
+		out = base_agg.duplicate(true)
+	# Build Vehicles category from convoy_data when available
+	if convoy_data and convoy_data.has("vehicle_details_list") and (convoy_data.vehicle_details_list is Array):
+		var vehicles_cat: Dictionary = {}
+		for v in convoy_data.vehicle_details_list:
+			if not (v is Dictionary):
+				continue
+			var vid := String(v.get("vehicle_id", ""))
+			if vid == "":
+				continue
+			# Each vehicle is a single-quantity sellable item; price derived from _get_vehicle_price()
+			var key := vid # use id to avoid name collisions
+			var entry := {
+				"item_data": v,
+				"total_quantity": 1,
+				"total_weight": 0.0,
+				"total_volume": 0.0,
+				"display_name": String(v.get("name", "Vehicle"))
+			}
+			vehicles_cat[key] = entry
+		if not vehicles_cat.is_empty():
+			out["vehicles"] = vehicles_cat
+	return out
 
 func _populate_tree_from_agg(tree: Tree, agg: Dictionary) -> void:
 	var t0 := 0
@@ -707,6 +785,7 @@ func _populate_convoy_list() -> void:
 	var aggregated_missions: Dictionary = {}
 	var aggregated_resources: Dictionary = {}
 	var aggregated_parts: Dictionary = {}
+	var aggregated_vehicles: Dictionary = {}
 	var aggregated_other: Dictionary = {}
 
 	# Aggregate items from all vehicles to create a de-duplicated list.
@@ -714,6 +793,18 @@ func _populate_convoy_list() -> void:
 	if convoy_data.has("vehicle_details_list"):
 		for vehicle in convoy_data.vehicle_details_list:
 			var vehicle_name = vehicle.get("name", "Unknown Vehicle")
+			# In SELL mode (when allowed), add vehicles as single sellable entries
+			if _should_show_vehicle_sell_category():
+				var vid := String(vehicle.get("vehicle_id", ""))
+				if not vid.is_empty():
+					aggregated_vehicles[vid] = {
+						"item_data": vehicle,
+						"display_name": vehicle_name,
+						"total_quantity": 1,
+						"total_weight": 0.0,
+						"total_volume": 0.0,
+						"locations": {},
+					}
 			# Prefer typed cargo list if present
 			if vehicle.has("cargo_items_typed") and vehicle["cargo_items_typed"] is Array and not (vehicle["cargo_items_typed"] as Array).is_empty():
 				for typed in vehicle["cargo_items_typed"]:
@@ -863,6 +954,9 @@ func _populate_convoy_list() -> void:
 
 	var root = convoy_item_tree.create_item()
 	_populate_category(convoy_item_tree, root, "Mission Cargo", aggregated_missions)
+	# Vehicles section (SELL mode when allowed)
+	if _should_show_vehicle_sell_category() and not aggregated_vehicles.is_empty():
+		_populate_category(convoy_item_tree, root, "Vehicles", aggregated_vehicles)
 	# Only show loose/aggregated parts when BUYING. In SELL mode installed vehicle parts are not sellable
 	# and were causing crashes when selected. Suppressing the entire Parts category avoids invalid selections.
 	if current_mode == "buy":
@@ -1701,9 +1795,8 @@ func _update_transaction_panel() -> void:
 		unit_price = _get_contextual_unit_price(item_data_source)
 
 	# Apply sell price reduction for display purposes. The backend handles the actual value.
-	if current_mode == "sell":
-		unit_price /= 2.0 # This is line 335
-
+	if current_mode == "sell" and not is_vehicle:
+		unit_price /= 2.0
 	var total_price = unit_price * quantity
 
 	var total_delivery_reward = 0.0
@@ -1717,7 +1810,6 @@ func _update_transaction_panel() -> void:
 		delivery_reward_label.visible = total_delivery_reward > 0.0
 		if total_delivery_reward > 0.0:
 			delivery_reward_label.text = "[b]Total Delivery Reward:[/b] $%s" % ("%.2f" % total_delivery_reward)
-
 	var bbcode_text = ""
 	if is_vehicle:
 		# Vehicles: keep explicit unit and total pricing
@@ -1982,7 +2074,8 @@ func _is_vehicle_item(d: Dictionary) -> bool:
 
 # Returns the unit price for a vehicle, checking several common fields.
 func _get_vehicle_price(vehicle_data: Dictionary) -> float:
-	var keys = ["price", "unit_price", "base_unit_price", "base_value", "base_price", "value"]
+	# Prefer the current vehicle value over any base value fields
+	var keys = ["price", "unit_price", "value", "base_unit_price", "base_price", "base_value"]
 	for k in keys:
 		if vehicle_data.has(k) and vehicle_data[k] != null:
 			var v = vehicle_data[k]

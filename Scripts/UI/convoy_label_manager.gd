@@ -186,7 +186,8 @@ func _create_convoy_panel(convoy_data: Dictionary) -> Panel:
 
 	var label_node := Label.new()
 	label_node.set('bbcode_enabled', true)
-	label_node.vertical_alignment = VERTICAL_ALIGNMENT_TOP
+	label_node.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	label_node.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	if is_instance_valid(_label_settings_ref): # Use the shared LabelSettings for base style
 		label_node.label_settings = _label_settings_ref
 	label_node.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -242,35 +243,23 @@ func _update_convoy_panel_content(panel: Panel, convoy_data: Dictionary, p_convo
 	var current_panel_border_width: int = clamp(roundi(node_border_width_before_clamp), _min_node_panel_border_width, _max_node_panel_border_width)
 
 	# Label Text Generation
-	var efficiency: float = convoy_data.get('efficiency', 0.0)
-	var top_speed: float = convoy_data.get('top_speed', 0.0)
-	var offroad_capability: float = convoy_data.get('offroad_capability', 0.0)
 	var convoy_name: String = convoy_data.get('convoy_name', 'N/A')
 	var raw_journey = convoy_data.get('journey')
 	var journey_data: Dictionary = {}
 	if raw_journey is Dictionary:
 		journey_data = raw_journey
-	var progress: float = journey_data.get('progress', 0.0)
 
 	var eta_raw_string: String = journey_data.get('eta', 'N/A')
-	var _departure_raw_string_for_eta_format: String = journey_data.get('departure_time', 'N/A')
 	var formatted_eta: String = "N/A" # Default
 	# Use shared date/time utility to produce a user-friendly ETA: time only if today, otherwise date + time. No remaining text for compactness.
 	if eta_raw_string != "N/A":
 		formatted_eta = preload("res://Scripts/System/date_time_util.gd").format_timestamp_display(eta_raw_string, false)
 
-	var progress_percentage_str: String = 'N/A'
-	var length: float = journey_data.get('length', 0.0)
-	if length > 0.001:
-		var percentage: float = (progress / length) * 100.0
-		progress_percentage_str = '%.1f%%' % percentage
-	
-	var label_text: String = '%s \n🏁 %s | ETA: %s\n%s %.1f | %s %.1f | %s %.1f' % [
-			convoy_name, progress_percentage_str, formatted_eta,
-			_CONVOY_STAT_EMOJIS_ref.get('efficiency', '?') if is_instance_valid(_CONVOY_STAT_EMOJIS_ref) else 'E', efficiency,
-			_CONVOY_STAT_EMOJIS_ref.get('top_speed', '?') if is_instance_valid(_CONVOY_STAT_EMOJIS_ref) else 'S', top_speed,
-			_CONVOY_STAT_EMOJIS_ref.get('offroad_capability', '?') if is_instance_valid(_CONVOY_STAT_EMOJIS_ref) else 'O', offroad_capability
-		]
+	var label_text: String
+	if formatted_eta != "N/A":
+		label_text = '%s\nETA: %s' % [convoy_name, formatted_eta]
+	else:
+		label_text = convoy_name
 
 	# Update Label
 	if not is_instance_valid(_label_settings_ref) or not is_instance_valid(_label_settings_ref.font):
@@ -303,7 +292,10 @@ func _update_convoy_panel_content(panel: Panel, convoy_data: Dictionary, p_convo
 
 	label_node.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	label_node.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	label_node.position = Vector2.ZERO 
+	# The label needs to be offset by the padding amount so it sits inside the
+	# panel's content area. The panel's StyleBox content_margin properties are
+	# for layout hints and don't automatically move child Controls.
+	label_node.position = Vector2(current_panel_padding_h, current_panel_padding_v)
 
 	label_node.update_minimum_size() # Ensure label's min_size is current.
 	label_node.reset_size() # Match size to the new minimum_size to prevent old, larger bounds from being kept.

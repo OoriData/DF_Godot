@@ -73,6 +73,8 @@ var settlement_label_settings: LabelSettings
 @export_group("Label Positioning")
 ## Amount to shift a label panel vertically to avoid collision with another.
 @export var label_anti_collision_y_shift: float = 5.0 
+## Radius around convoy icons to keep settlement labels out of.
+@export var settlement_convoy_keepout_radius: float = 24.0
 ## Padding from the viewport edges (in pixels) used to clamp label panels.
 @export var label_map_edge_padding: float = 5.0 
 
@@ -125,6 +127,9 @@ var _active_settlement_panels: Dictionary = {} # { "tile_coord_str": PanelNode }
 # Z-index for label containers within MapContainer, relative to MapDisplay and ConvoyNodes
 const LABEL_CONTAINER_Z_INDEX = 2
 
+# Z-index for connector lines, to ensure they are drawn under labels.
+const CONNECTOR_LINES_Z_INDEX = 1
+
 # --- Preview Route Drawing State ---
 var _is_preview_active: bool = false
 var _preview_route_x: Array = []
@@ -167,8 +172,10 @@ func _ready():
 		settlement_label_container.z_index = LABEL_CONTAINER_Z_INDEX
 	if is_instance_valid(convoy_connector_lines_container):
 		convoy_connector_lines_container.visible = true
-		convoy_connector_lines_container.z_index = LABEL_CONTAINER_Z_INDEX # Connectors at the same level as labels
+		convoy_connector_lines_container.z_index = CONNECTOR_LINES_Z_INDEX # Draw lines under labels
 		convoy_connector_lines_container.draw.connect(_on_connector_lines_container_draw)
+	if is_instance_valid(convoy_label_container):
+		convoy_label_container.z_index = LABEL_CONTAINER_Z_INDEX
 
 	# Initialize label settings
 	label_settings = LabelSettings.new()
@@ -630,15 +637,74 @@ func _position_settlement_panel(panel: Panel, settlement_info: Dictionary, _exis
 	var tile_y: int = settlement_info.get('y', -1)
 	if tile_x < 0 or tile_y < 0: return
 
+	# Ensure panel size is current
+	var panel_actual_size = panel.size
+	if panel_actual_size.x <= 0 or panel_actual_size.y <= 0:
+		panel_actual_size = panel.get_minimum_size()
+
 	# Get the local position of the tile center using TerrainTileMap (SubViewport-local)
 	var tile_center = terrain_tilemap.map_to_local(Vector2i(tile_x, tile_y))
 	var current_settlement_offset_above_center: float = base_settlement_offset_above_tile_center
+	
 	# Position label above the tile center, centered horizontally
-	var panel_desired_x = tile_center.x - (panel.size.x / 2.0)
-	var panel_desired_y = tile_center.y - panel.size.y - current_settlement_offset_above_center
+	var panel_desired_x = tile_center.x - (panel_actual_size.x / 2.0)
+	var panel_desired_y = tile_center.y - panel_actual_size.y - current_settlement_offset_above_center
 	panel.position = Vector2(panel_desired_x, panel_desired_y)
 
+	# --- Anti-collision logic ---
+	var attempt := 0
+	while attempt < 20: # Max attempts to find a clear spot
+		var panel_rect := Rect2(panel.position, panel_actual_size)
+		
+		# Check against other labels
+		var overlaps_labels := false
+		for r in _existing_label_rects:
+			if panel_rect.intersects(r.grow(2), true):
+				overlaps_labels = true
+				break
+		
+		# Check against convoy icons
+		var overlaps_convoys := _settlement_panel_overlaps_convoy(panel_rect)
 
+		if not overlaps_labels and not overlaps_convoys:
+			break # Found a clear spot
+
+		# Adjust position if there's an overlap
+		# Nudge vertically, alternating up and down from the original position
+		var nudge_factor = ceil(float(attempt + 1) / 2.0)
+		var sign_dir = 1 if attempt % 2 == 0 else -1
+		# Nudge away from the settlement icon (upwards is negative y)
+		panel.position.y = panel_desired_y - (nudge_factor * label_anti_collision_y_shift * sign_dir)
+		attempt += 1
+
+func _rect_overlaps_circle(r: Rect2, c: Vector2, radius: float) -> bool:
+	var closest_x = clamp(c.x, r.position.x, r.position.x + r.size.x)
+	var closest_y = clamp(c.y, r.position.y, r.position.y + r.size.y)
+	var dx = c.x - closest_x
+	var dy = c.y - closest_y
+	return (dx * dx + dy * dy) <= (radius * radius)
+
+func _settlement_panel_overlaps_convoy(panel_rect: Rect2) -> bool:
+	if not is_instance_valid(terrain_tilemap) or not is_instance_valid(terrain_tilemap.tile_set): return false
+	if not _all_convoy_data_cache: return false
+
+	var tile_size = terrain_tilemap.tile_set.tile_size
+	for convoy_data in _all_convoy_data_cache:
+		if not (convoy_data is Dictionary): continue
+		
+		var convoy_tile_x: float = convoy_data.get('x', -1.0)
+		var convoy_tile_y: float = convoy_data.get('y', -1.0)
+		if convoy_tile_x < 0.0: continue
+
+		var convoy_center_pos = Vector2(
+			(convoy_tile_x + 0.5) * tile_size.x,
+			(convoy_tile_y + 0.5) * tile_size.y
+		)
+
+		if _rect_overlaps_circle(panel_rect, convoy_center_pos, settlement_convoy_keepout_radius):
+			return true
+			
+	return false
 
 func _find_settlement_at_tile(tile_x: int, tile_y: int) -> Variant:
 	if not _all_settlement_data_cache: return null # Guard against null cache
