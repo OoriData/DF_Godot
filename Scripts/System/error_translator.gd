@@ -13,6 +13,8 @@ const ERROR_MAP: Dictionary = {
 	"Item no longer sold by vendor": "This item is no longer sold here. The vendor's list has been updated.",
 	"Not enough space in convoy": "There is not enough space in your convoy for this purchase.",
 	"Not enough weight capacity in convoy": "There is not enough weight capacity in your convoy for this purchase.",
+	# Combined space/weight capacity check across vehicles (includes item details)
+	"Not enough space or weight capacity across all vehicles to add": "This purchase exceeds your convoy's space or weight capacity: ",
 	"Not enough money": "You do not have enough money for this transaction.",
 	"Vendor does not have enough stock": "The vendor's stock has changed. The list has been updated.",
 	"exceeds convoy cargo capacity": "This purchase would exceed your convoy's cargo volume capacity.",
