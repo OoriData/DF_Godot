@@ -101,9 +101,9 @@ const SETTLEMENT_EMOJIS: Dictionary = {
 ## Color for lines connecting convoy icons to their label panels.
 @export var connector_line_color: Color = Color(0.9, 0.9, 0.9, 0.6) 
 ## Width of the connector lines.
-@export var connector_line_width: float = 2.0 # 1.5 * 1.33
+@export var connector_line_width: float = 3.0 # slightly thicker center line
 ## Extra width (in pixels) added to the white outline under journey / preview lines
-@export var route_line_outline_extra_width: float = 4.0
+@export var route_line_outline_extra_width: float = 5.0 # slightly thicker underlay for contrast
 ## Whether to also draw simple convoy dots on the map (legacy). Off because ConvoyNode arrows are used.
 @export var draw_convoy_dots: bool = false
 
@@ -348,7 +348,13 @@ func update_ui_elements(
 	# 	if s is Dictionary:
 	# 		print("  Settlement:", s.get('name', 'N/A'), "coords:", s.get('x', 'N/A'), s.get('y', 'N/A'))
 	
-	_draw_interactive_labels(current_hover_info)
+	# Suppress heavy label rebuilds during light updates if a Control currently holds focus
+	# to avoid disruptive deselection while the user is interacting with menus.
+	# Godot 4: use Viewport.gui_get_focus_owner() instead of SceneTree.get_focus_owner().
+	var focus_owner: Control = get_viewport().gui_get_focus_owner()
+	var suppress_rebuild: bool = _is_light_ui_update and is_instance_valid(focus_owner)
+	if not suppress_rebuild:
+		_draw_interactive_labels(current_hover_info)
 	# Provide drawing parameters to ConvoyLabelManager before updating labels
 	if is_instance_valid(convoy_label_manager) \
 			and convoy_label_manager.has_method("update_drawing_parameters") \
@@ -759,8 +765,44 @@ func _on_connector_lines_container_draw():
 	if not is_instance_valid(terrain_tilemap):
 		printerr("UIManager (_on_connector_lines_container_draw): terrain_tilemap is not assigned or invalid. Cannot draw connector lines.")
 		return
-	# Draw convoy journey lines and icons using TerrainTileMap coordinates
+	# --- Build shared-segment membership to compute lateral offsets for overlapping routes ---
+	var shared_segments_membership: Dictionary = {}
+	var tile_size_vec: Vector2 = Vector2.ZERO
+	if is_instance_valid(terrain_tilemap.tile_set):
+		tile_size_vec = terrain_tilemap.tile_set.tile_size
+	var base_sep_px: float = max(1.0, min(tile_size_vec.x, tile_size_vec.y) * 0.28) # slightly more separation between lanes
+
 	if _all_convoy_data_cache is Array:
+		# Pass 1: collect segment membership across all convoys
+		for convoy_collect in _all_convoy_data_cache:
+			if not (convoy_collect is Dictionary and convoy_collect.has("journey")):
+				continue
+			var j_collect = convoy_collect.get("journey")
+			if not (j_collect is Dictionary and j_collect.has("route_x") and j_collect.has("route_y")):
+				continue
+			var rx_c: Array = j_collect["route_x"]
+			var ry_c: Array = j_collect["route_y"]
+			if rx_c.size() < 2 or ry_c.size() != rx_c.size():
+				continue
+			var cid_c: String = str(convoy_collect.get("convoy_id", ""))
+			if cid_c == "":
+				continue
+			for si in range(rx_c.size() - 1):
+				var a := Vector2i(int(rx_c[si]), int(ry_c[si]))
+				var b := Vector2i(int(rx_c[si + 1]), int(ry_c[si + 1]))
+				# Normalize order for key stability
+				var p1 := Vector2(min(a.x, b.x), min(a.y, b.y))
+				var p2 := Vector2(max(a.x, b.x), max(a.y, b.y))
+				var seg_key := "%s,%s-%s,%s" % [int(p1.x), int(p1.y), int(p2.x), int(p2.y)]
+				if not shared_segments_membership.has(seg_key):
+					shared_segments_membership[seg_key] = []
+				if not shared_segments_membership[seg_key].has(cid_c):
+					shared_segments_membership[seg_key].append(cid_c)
+		# Sort memberships for deterministic lane ordering
+		for k in shared_segments_membership.keys():
+			shared_segments_membership[k].sort()
+
+		# Pass 2: draw each convoy's journey with lateral offsets
 		for convoy in _all_convoy_data_cache:
 			if not (convoy is Dictionary and convoy.has("journey")):
 				continue
@@ -771,19 +813,94 @@ func _on_connector_lines_container_draw():
 			var route_y: Array = journey["route_y"]
 			if route_x.size() < 2 or route_y.size() != route_x.size():
 				continue
-			var points: PackedVector2Array = []
+			var cid: String = str(convoy.get("convoy_id", ""))
+			if cid == "":
+				continue
+
+			# Compute pixel-space points for the route
+			var base_points: Array[Vector2] = []
 			for i in range(route_x.size()):
-				var tile_x = int(route_x[i])
-				var tile_y = int(route_y[i])
-				var tile_pos = terrain_tilemap.map_to_local(Vector2i(tile_x, tile_y))
-				points.append(tile_pos)
-			if points.size() >= 2:
-				var convoy_color = _convoy_id_to_color_map_cache.get(str(convoy.get("convoy_id", "")), connector_line_color)
+				var tile_x := int(route_x[i])
+				var tile_y := int(route_y[i])
+				base_points.append(terrain_tilemap.map_to_local(Vector2i(tile_x, tile_y)))
+
+			# Compute per-segment normals and lane index for this convoy
+			var seg_normals: Array[Vector2] = []
+			var seg_lane_offsets: Array[float] = []
+			var seg_member_counts: Array[int] = []
+			for si in range(route_x.size() - 1):
+				var pA: Vector2 = base_points[si]
+				var pB: Vector2 = base_points[si + 1]
+				var dir: Vector2 = pB - pA
+				var nrm: Vector2 = Vector2.ZERO
+				if dir.length() > 0.0001:
+					nrm = Vector2(-dir.y, dir.x).normalized()
+				seg_normals.append(nrm)
+				# Determine lane offset multiplier for this segment based on membership index
+				var a := Vector2i(int(route_x[si]), int(route_y[si]))
+				var b := Vector2i(int(route_x[si + 1]), int(route_y[si + 1]))
+				var p1 := Vector2(min(a.x, b.x), min(a.y, b.y))
+				var p2 := Vector2(max(a.x, b.x), max(a.y, b.y))
+				var seg_key := "%s,%s-%s,%s" % [int(p1.x), int(p1.y), int(p2.x), int(p2.y)]
+				var members: Array = shared_segments_membership.get(seg_key, [])
+				var idx: int = members.find(cid)
+				var count: int = members.size()
+				var lane_centered: float = 0.0
+				if not (idx == -1 or count <= 1):
+					lane_centered = (float(idx) - float(count - 1) * 0.5)
+				seg_lane_offsets.append(lane_centered)
+				seg_member_counts.append(count)
+
+			# Build offset points by averaging adjacent segment offsets for interior vertices
+			var offset_points: PackedVector2Array = []
+			var min_gap_px: float = 2.0 # ensure a few pixels of separation at junctions
+			for vi in range(base_points.size()):
+				var off_vec: Vector2 = Vector2.ZERO
+				if vi == 0:
+					if seg_normals.size() >= 1:
+						off_vec = seg_normals[0] * seg_lane_offsets[0] * base_sep_px
+						# entering first shared segment: enforce a minimal gap
+						if seg_member_counts.size() >= 1 and seg_member_counts[0] > 1:
+							var lane_sign := 1.0 if seg_lane_offsets[0] >= 0.0 else -1.0
+							if off_vec.length() < min_gap_px and seg_normals[0].length() > 0.0:
+								off_vec = seg_normals[0] * lane_sign * min_gap_px
+				elif vi == base_points.size() - 1:
+					if seg_normals.size() >= 1:
+						off_vec = seg_normals[seg_normals.size() - 1] * seg_lane_offsets[seg_lane_offsets.size() - 1] * base_sep_px
+						# exiting last shared segment: enforce a minimal gap
+						if seg_member_counts.size() >= 1 and seg_member_counts[seg_member_counts.size() - 1] > 1:
+							var lane_sign2 := 1.0 if seg_lane_offsets[seg_lane_offsets.size() - 1] >= 0.0 else -1.0
+							if off_vec.length() < min_gap_px and seg_normals[seg_normals.size() - 1].length() > 0.0:
+								off_vec = seg_normals[seg_normals.size() - 1] * lane_sign2 * min_gap_px
+				else:
+					var prev_off := seg_normals[vi - 1] * seg_lane_offsets[vi - 1] * base_sep_px
+					var next_off := seg_normals[vi] * seg_lane_offsets[vi] * base_sep_px
+					var prev_count := seg_member_counts[vi - 1]
+					var next_count := seg_member_counts[vi]
+					# If entering a shared segment, bias toward next_off; if exiting, bias toward prev_off
+					if prev_count <= 1 and next_count > 1:
+						off_vec = next_off
+					elif prev_count > 1 and next_count <= 1:
+						off_vec = prev_off
+					else:
+						off_vec = (prev_off + next_off) * 0.5
+					# Enforce a small minimum gap at the junction if any segment is shared
+					if (prev_count > 1 or next_count > 1):
+						var use_next := next_count > 1
+						var chosen_n := seg_normals[vi] if use_next else seg_normals[vi - 1]
+						var lane_c := seg_lane_offsets[vi] if use_next else seg_lane_offsets[vi - 1]
+						var lane_sign3 := 1.0 if lane_c >= 0.0 else -1.0
+						if off_vec.length() < min_gap_px and chosen_n.length() > 0.0:
+							off_vec = chosen_n * lane_sign3 * min_gap_px
+				offset_points.append(base_points[vi] + off_vec)
+
+			if offset_points.size() >= 2:
+				var convoy_color = _convoy_id_to_color_map_cache.get(cid, connector_line_color)
 				var outline_w = max(0.0, connector_line_width + route_line_outline_extra_width)
 				# White underlay for better contrast (larger width)
-				convoy_connector_lines_container.draw_polyline(points, Color(1,1,1,0.95), outline_w)
+				convoy_connector_lines_container.draw_polyline(offset_points, Color(1,1,1,0.95), outline_w)
 				# Colored path matching convoy icon (top stroke)
-				convoy_connector_lines_container.draw_polyline(points, convoy_color, connector_line_width)
+				convoy_connector_lines_container.draw_polyline(offset_points, convoy_color, connector_line_width)
 		# Optional legacy convoy dots (disabled by default; arrows are displayed via ConvoyNode nodes)
 		if draw_convoy_dots:
 			for convoy in _all_convoy_data_cache:
