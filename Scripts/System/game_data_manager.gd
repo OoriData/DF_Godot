@@ -38,6 +38,9 @@ signal route_choices_error(convoy_id: String, destination_data: Dictionary, erro
 # when GameDataManager is an Autoload (it will be /root/APICallsInstance if APICallsInstance is also an Autoload or a direct child of root).
 # For now, assuming APICallsInstance will also be an Autoload or accessible globally.
 var api_calls_node: Node = null # Will be fetched in _ready
+@onready var _store: Node = get_node_or_null("/root/GameStore")
+@onready var _hub: Node = get_node_or_null("/root/SignalHub")
+@onready var _scheduler: Node = get_node_or_null("/root/RefreshScheduler")
 
 # --- Data Storage ---
 var map_tiles: Array = []
@@ -236,6 +239,22 @@ func _initiate_preload():
 	else:
 		printerr("GameDataManager (_initiate_preload): Could not find APICalls Autoload. Map data will not be preloaded.")
 
+	# New: Subscribe to GameStore and SignalHub to act as thin adapter
+	if is_instance_valid(_store):
+		if _store.has_signal("map_changed") and not _store.map_changed.is_connected(_on_store_map_changed):
+			_store.map_changed.connect(_on_store_map_changed)
+		if _store.has_signal("convoys_changed") and not _store.convoys_changed.is_connected(_on_store_convoys_changed):
+			_store.convoys_changed.connect(_on_store_convoys_changed)
+		if _store.has_signal("user_changed") and not _store.user_changed.is_connected(_on_store_user_changed):
+			_store.user_changed.connect(_on_store_user_changed)
+	else:
+		print("[GameDataManager] GameStore not found; continuing to listen to APICalls directly.")
+	if is_instance_valid(_hub):
+		if _hub.has_signal("initial_data_ready") and not _hub.initial_data_ready.is_connected(_on_hub_initial_ready):
+			_hub.initial_data_ready.connect(_on_hub_initial_ready)
+	else:
+		print("[GameDataManager] SignalHub not found; will emit initial_data_ready only from local readiness.")
+
 func _on_auth_session_received(_token: String) -> void:
 	# After session token, the APICalls will try to resolve DF user id via /auth/me
 	print('[GameDataManager] Auth session received. Awaiting DF user id…')
@@ -257,13 +276,16 @@ func _on_user_id_resolved(user_id: String) -> void:
 			_map_request_in_flight = true
 			request_map_data()
 
-	# Start periodic convoy refresh after auth/user bootstrap
-	_start_convoy_refresh_timer()
+	# Periodic refresh handled by RefreshScheduler; enable it if present
+	if is_instance_valid(_scheduler) and _scheduler.has_method("enable_polling"):
+		_scheduler.enable_polling(true)
 
 func _on_auth_expired() -> void:
 	print('[GameDataManager] Auth expired. Resetting user-related state.')
 	reset_user_state()
-	_stop_convoy_refresh_timer()
+	# Disable scheduler-based polling on auth expiry
+	if is_instance_valid(_scheduler) and _scheduler.has_method("enable_polling"):
+		_scheduler.enable_polling(false)
 
 # --- Public helper: expose current convoy list ---
 func get_all_convoy_data() -> Array:
@@ -314,8 +336,9 @@ func reset_user_state(clear_map: bool = false) -> void:
 	convoy_data_updated.emit(all_convoy_data)
 	user_data_updated.emit(current_user_data)
 	game_data_reset.emit()
-	# Also ensure background timers are stopped when user state is cleared
-	_stop_convoy_refresh_timer()
+	# Also ensure background polling is stopped when user state is cleared
+	if is_instance_valid(_scheduler) and _scheduler.has_method("enable_polling"):
+		_scheduler.enable_polling(false)
 
 func _start_convoy_refresh_timer() -> void:
 	# Create and start a repeating timer that refreshes convoy movement periodically
@@ -741,6 +764,11 @@ func request_convoy_data_refresh() -> void:
 	Called by an external system (e.g., a timer in main.gd) to trigger a new fetch
 	of convoy data.
 	"""
+	# Prefer ConvoyService; fall back to APICalls for compatibility
+	var conv_svc := get_node_or_null("/root/ConvoyService")
+	if is_instance_valid(conv_svc) and conv_svc.has_method("refresh_all"):
+		conv_svc.refresh_all()
+		return
 	if is_instance_valid(api_calls_node):
 		if not api_calls_node.current_user_id.is_empty() and api_calls_node.has_method("get_user_convoys"):
 			api_calls_node.get_user_convoys(api_calls_node.current_user_id)
@@ -750,6 +778,47 @@ func request_convoy_data_refresh() -> void:
 			printerr("GameDataManager: APICallsInstance is missing 'get_user_convoys' or 'get_all_in_transit_convoys' method.")
 	else:
 		printerr("GameDataManager: Cannot request convoy data refresh. APICallsInstance is invalid.")
+
+# --- Store/Hub adapters ---
+func _on_store_map_changed(tiles: Array, settlements: Array) -> void:
+	# Mirror Store updates into legacy signals expected by existing UI.
+	map_tiles = tiles if tiles != null else []
+	map_data_loaded.emit(map_tiles)
+	# Rebuild settlement list from tiles if not provided
+	all_settlement_data.clear()
+	var have_direct := (settlements != null and settlements is Array and settlements.size() > 0)
+	if have_direct:
+		all_settlement_data = settlements
+	else:
+		if not map_tiles.is_empty():
+			for y_idx in range(map_tiles.size()):
+				var row = map_tiles[y_idx]
+				if not row is Array: continue
+				for x_idx in range(row.size()):
+					var tile_data = row[x_idx]
+					if tile_data is Dictionary and tile_data.has('settlements'):
+						var settlements_on_tile = tile_data.get('settlements', [])
+						if settlements_on_tile is Array:
+							for settlement_entry in settlements_on_tile:
+								if settlement_entry is Dictionary and settlement_entry.has('name'):
+									var settlement_info_for_render = settlement_entry.duplicate()
+									settlement_info_for_render['x'] = x_idx
+									settlement_info_for_render['y'] = y_idx
+									all_settlement_data.append(settlement_info_for_render)
+	settlement_data_updated.emit(all_settlement_data)
+	_map_loaded = true
+	_maybe_emit_initial_ready()
+
+func _on_store_convoys_changed(convoys: Array) -> void:
+	# Reuse existing augmentation pipeline
+	_on_raw_convoy_data_received(convoys)
+
+func _on_store_user_changed(user: Dictionary) -> void:
+	_on_user_data_received_from_api(user)
+
+func _on_hub_initial_ready() -> void:
+	# Re-emit for legacy consumers
+	initial_data_ready.emit()
 
 func request_map_data(x_min: int = -1, x_max: int = -1, y_min: int = -1, y_max: int = -1) -> void:
 	"""

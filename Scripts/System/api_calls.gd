@@ -72,12 +72,34 @@ signal warehouse_vehicle_retrieved(result: Variant)
 @warning_ignore("unused_signal")
 signal warehouse_convoy_spawned(result: Variant)
 
-var BASE_URL: String = 'http://127.0.0.1:1337' # default
-#var BASE_URL: String = 'https://df-api.oori.dev:1337' # default
-# Allow override via environment (cannot be const due to runtime lookup)
+var BASE_URL: String = 'http://127.0.0.1:1337' # default (overridden via config/env)
+# Allow override via configuration and environment (cannot be const due to runtime lookup)
 func _init():
+	_load_base_url_from_config()
 	if OS.has_environment('DF_API_BASE_URL'):
 		BASE_URL = OS.get_environment('DF_API_BASE_URL')
+		print("[APICalls] BASE_URL overridden by env: ", BASE_URL)
+	else:
+		print("[APICalls] BASE_URL from config: ", BASE_URL)
+
+func _load_base_url_from_config() -> void:
+	var cfg := ConfigFile.new()
+	var err := cfg.load("res://config/app_config.cfg")
+	if err != OK:
+		return
+	# Direct base_url wins if provided; otherwise use active_env mapping
+	var direct := String(cfg.get_value("api", "base_url", ""))
+	if direct != "":
+		BASE_URL = direct
+		return
+	var active_env := String(cfg.get_value("api", "active_env", "dev")).to_lower()
+	var dev := String(cfg.get_value("api", "base_url_dev", BASE_URL))
+	var prod := String(cfg.get_value("api", "base_url_prod", BASE_URL))
+	match active_env:
+		"prod":
+			BASE_URL = prod
+		_:
+			BASE_URL = dev
 
 var current_user_id: String = "" # To store the logged-in user's ID
 var _http_request: HTTPRequest
@@ -309,6 +331,7 @@ func start_auth_poll(state: String, interval: float = 1.5, timeout_seconds: floa
 	_login_in_progress = true
 	emit_signal("auth_poll_started")
 	print("[APICalls] Starting auth status poll for state=", state)
+	_emit_hub_auth_state("pending")
 	_enqueue_auth_status_request(state)
 
 func _enqueue_auth_status_request(state: String) -> void:
@@ -1237,6 +1260,12 @@ func _create_queue_watchdog():
 	)
 	t.start()
 
+# Helper: emit auth state into SignalHub if present
+func _emit_hub_auth_state(state: String) -> void:
+	var hub := get_node_or_null('/root/SignalHub')
+	if is_instance_valid(hub) and hub.has_signal('auth_state_changed'):
+		hub.auth_state_changed.emit(state)
+
 func _start_request_status_probe():
 	if has_node('HTTPRequestStatusProbe'):
 		return
@@ -1414,6 +1443,7 @@ func _on_request_completed(result: int, response_code: int, _headers: PackedStri
 		print("[APICalls] Received 401 with auth token present. Treating as expired.")
 		clear_auth_session_token()
 		emit_signal("auth_expired")
+		_emit_hub_auth_state("expired")
 		# Continue to normal error handling path below
 	# PATCH transaction responses (purpose == NONE, but signal_name is set)
 	if _current_request_purpose == RequestPurpose.NONE and _current_patch_signal_name != "":
@@ -1615,6 +1645,10 @@ func _on_request_completed(result: int, response_code: int, _headers: PackedStri
 
 		print("APICalls (_on_request_completed - %s): Successfully fetched %s convoy(s). URL: %s" % [RequestPurpose.keys()[request_purpose_at_start], final_convoy_list.size(), _last_requested_url])
 		self.convoys_in_transit = final_convoy_list
+		# Route to GameStore (and SignalHub via store) as a non-breaking shim
+		var store := get_node_or_null('/root/GameStore')
+		if is_instance_valid(store) and store.has_method('set_convoys'):
+			store.set_convoys(final_convoy_list)
 		emit_signal('convoy_data_received', final_convoy_list)
 		_complete_current_request()
 		return
@@ -1650,6 +1684,10 @@ func _on_request_completed(result: int, response_code: int, _headers: PackedStri
 		else:
 			var tiles_array = deserialized_map_data.get("tiles", [])
 			print("APICalls (_on_request_completed - MAP_DATA): Successfully deserialized binary map data. Rows: %s, Cols: %s. URL: %s" % [tiles_array.size(), tiles_array[0].size() if not tiles_array.is_empty() else 0, _last_requested_url])
+			# Route to GameStore (and SignalHub via store)
+			var store := get_node_or_null('/root/GameStore')
+			if is_instance_valid(store) and store.has_method('set_map'):
+				store.set_map(deserialized_map_data.get('tiles', []), deserialized_map_data.get('settlements', []))
 			emit_signal('map_data_received', deserialized_map_data)
 		_complete_current_request()
 		return
@@ -1670,7 +1708,10 @@ func _on_request_completed(result: int, response_code: int, _headers: PackedStri
 		else:
 			# SUCCESS with user data
 			print("APICalls (_on_request_completed - USER_DATA): Successfully fetched user data. URL: %s" % _last_requested_url)
-			# print("  - User Money: %s" % json_response.get("money", "N/A"))
+			# Update GameStore then emit legacy signal
+			var store := get_node_or_null('/root/GameStore')
+			if is_instance_valid(store) and store.has_method('set_user'):
+				store.set_user(json_response)
 			emit_signal('user_data_received', json_response)
 
 		_complete_current_request()
@@ -1790,6 +1831,7 @@ func _on_request_completed(result: int, response_code: int, _headers: PackedStri
 			var status: String = str(json_response.get('status', 'pending'))
 			print('[APICalls][AUTH_STATUS] attempt=%d/%d status=%s state=%s' % [_auth_poll.attempt, _auth_poll.max_attempts, status, _auth_poll.state])
 			emit_signal('auth_status_update', status)
+			_emit_hub_auth_state(status)
 			if status == 'pending':
 				_auth_poll.attempt += 1
 				if _auth_poll.attempt >= _auth_poll.max_attempts:
@@ -1816,6 +1858,7 @@ func _on_request_completed(result: int, response_code: int, _headers: PackedStri
 					_auth_me_resolve_attempts = 0
 					print('[APICalls][AUTH_STATUS] Forcing /auth/me resolution now that token is set.')
 					resolve_current_user_id(true)
+					_emit_hub_auth_state('complete')
 			else:
 				_auth_poll.active = false
 				_login_in_progress = false
@@ -1874,6 +1917,10 @@ func _on_map_request_completed(result: int, response_code: int, _headers: Packed
 		emit_signal('fetch_error', 'Map deserialization failed')
 		return
 	print('[APICalls][MAP] Deserialized map: rows=%d cols=%d' % [deserialized.tiles.size(), deserialized.tiles[0].size() if deserialized.tiles.size() > 0 else 0])
+	# Route to GameStore (and SignalHub via store) as a non-breaking shim
+	var store := get_node_or_null('/root/GameStore')
+	if is_instance_valid(store) and store.has_method('set_map'):
+		store.set_map(deserialized.get('tiles', []), deserialized.get('settlements', []))
 	emit_signal('map_data_received', deserialized)
 func _decode_jwt_expiry(token: String) -> int:
 	if token == "":

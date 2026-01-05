@@ -98,5 +98,9 @@ func translate(raw_message: String) -> String:
 			return friendly_message # It's a full replacement
 
 	# 3. If no match was found, it's an unknown error.
-	printerr("Unhandled API Error (add to ErrorTranslator): ", raw_message)
+	var logger = get_node_or_null("/root/Logger")
+	if is_instance_valid(logger):
+		logger.warn("Unhandled API Error (add to ErrorTranslator): %s", raw_message)
+	else:
+		printerr("Unhandled API Error (add to ErrorTranslator): ", raw_message)
 	return "An unexpected error occurred. Please try again."
