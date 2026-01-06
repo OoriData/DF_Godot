@@ -39,7 +39,6 @@ signal back_requested
 var _convoy_data: Dictionary
 var _settlement: Dictionary
 var _warehouse: Dictionary
-var gdm: Node
 var api: Node
 var _is_loading: bool = false
 var _pending_action_refresh: bool = false
@@ -52,6 +51,10 @@ var _last_expand_used_json: bool = false # Tracks whether we've already retried 
 var _optimistic_money_active: bool = false
 var _optimistic_money_before: float = 0.0
 var _optimistic_money_after: float = 0.0
+
+@onready var _store: Node = get_node_or_null("/root/GameStore")
+@onready var _user_service: Node = get_node_or_null("/root/UserService")
+@onready var _convoy_service: Node = get_node_or_null("/root/ConvoyService")
 
 
 # Track last-seen dropdown contents to avoid reshuffling
@@ -81,9 +84,16 @@ const WAREHOUSE_UPGRADE_PRICES := {
 
 func _ready():
 	print("[WarehouseMenu] _ready()")
-	gdm = get_node_or_null("/root/GameDataManager")
 	api = get_node_or_null("/root/APICalls")
 	_ensure_inventory_headers()
+	# Subscribe to canonical snapshots so money/convoy cargo stay current.
+	if is_instance_valid(_store):
+		if _store.has_signal("user_changed") and not _store.user_changed.is_connected(_on_store_user_changed):
+			_store.user_changed.connect(_on_store_user_changed)
+		if _store.has_signal("convoys_changed") and not _store.convoys_changed.is_connected(_on_store_convoys_changed):
+			_store.convoys_changed.connect(_on_store_convoys_changed)
+		if _store.has_signal("map_changed") and not _store.map_changed.is_connected(_on_store_map_changed):
+			_store.map_changed.connect(_on_store_map_changed)
 	# Remove top title per request
 	if is_instance_valid(title_label):
 		title_label.visible = false
@@ -269,12 +279,11 @@ func _on_buy_pressed():
 		return
 	# Need settlement id from provided settlement snapshot
 	var sett_id := String(_settlement.get("sett_id", ""))
-	if sett_id == "" and is_instance_valid(gdm):
-		# Fallback: try to resolve by settlement name from provided data
+	if sett_id == "":
+		# Fallback: try to resolve by settlement name from canonical snapshot
 		var name_guess := String(_settlement.get("name", _convoy_data.get("settlement_name", "")))
-		if name_guess != "" and gdm.has_method("get_all_settlements_data"):
-			var all_setts: Array = gdm.get_all_settlements_data()
-			for s in all_setts:
+		if name_guess != "":
+			for s in _get_all_settlements_snapshot():
 				if typeof(s) == TYPE_DICTIONARY and String(s.get("name", "")) == name_guess:
 					sett_id = String(s.get("sett_id", ""))
 					break
@@ -321,8 +330,8 @@ func _on_api_warehouse_created(result: Variant) -> void:
 			_is_loading = true
 			_update_ui()
 			api.get_warehouse(wid)
-	if is_instance_valid(gdm) and gdm.has_method("request_user_data_refresh"):
-		gdm.request_user_data_refresh()
+	if is_instance_valid(_user_service) and _user_service.has_method("refresh_user"):
+		_user_service.refresh_user()
 
 func _on_api_warehouse_received(warehouse_data: Dictionary) -> void:
 	_warehouse = warehouse_data.duplicate(true)
@@ -391,13 +400,8 @@ func _on_api_warehouse_received(warehouse_data: Dictionary) -> void:
 			else:
 				# Second failure (JSON already used) – give up and notify
 				print("[WarehouseMenu][UpgradeDelta][NoChangeAfterJSON] Expansion still shows no delta.")
-				# Refund optimistic deduction if we applied one globally
+				# Clear optimistic markers (authoritative user refresh will correct funds)
 				if _optimistic_money_active:
-					var refund := _optimistic_money_before - _optimistic_money_after
-					if refund > 0.0 and is_instance_valid(gdm) and gdm.has_method("update_user_money"):
-						print("[WarehouseMenu][Optimistic][Refund] Refunding", refund, "due to failed expansion")
-						gdm.update_user_money(refund)
-					# Clear optimistic markers
 					_optimistic_money_active = false
 					_optimistic_money_before = 0.0
 					_optimistic_money_after = 0.0
@@ -417,12 +421,11 @@ func _on_api_warehouse_received(warehouse_data: Dictionary) -> void:
 		_optimistic_money_before = 0.0
 		_optimistic_money_after = 0.0
 	_update_ui()
-	# Optionally refresh user/convoys if needed
-	if is_instance_valid(gdm):
-		if gdm.has_method("request_user_data_refresh"):
-			gdm.request_user_data_refresh()
-		if gdm.has_method("request_convoy_data_refresh"):
-			gdm.request_convoy_data_refresh()
+	# Refresh canonical snapshots (authoritative)
+	if is_instance_valid(_user_service) and _user_service.has_method("refresh_user"):
+		_user_service.refresh_user()
+	if is_instance_valid(_convoy_service) and _convoy_service.has_method("refresh_all"):
+		_convoy_service.refresh_all()
 	# Update dropdowns since we have fresh warehouse data
 	_populate_dropdowns()
 
@@ -468,9 +471,9 @@ func _on_api_warehouse_action(_result: Variant) -> void:
 	# Skip early user data refresh for expansion actions to avoid flicker overriding optimistic deduction
 	var skip_early_user_refresh := _last_expand_type != "" # still tracking an expansion attempt
 	if not skip_early_user_refresh:
-		if is_instance_valid(gdm) and gdm.has_method("request_user_data_refresh"):
+		if is_instance_valid(_user_service) and _user_service.has_method("refresh_user"):
 			print("[WarehouseMenu][ActionComplete] Triggering early user data refresh for non-expansion action")
-			gdm.request_user_data_refresh()
+			_user_service.refresh_user()
 	_is_loading = true
 	_update_ui()
 	api.get_warehouse(wid)
@@ -535,10 +538,6 @@ func _on_expand_cargo():
 			_optimistic_money_after = max(0.0, _optimistic_money_before - float(per_unit))
 			_optimistic_money_active = true
 			print("[WarehouseMenu][Optimistic] Cargo upgrade: deduct", per_unit, "from", _optimistic_money_before, "=>", _optimistic_money_after)
-			# Also update global user data immediately so other UI panels reflect change
-			if is_instance_valid(gdm) and gdm.has_method("update_user_money"):
-				print("[WarehouseMenu][Optimistic][Global] Applying global money deduction=", per_unit)
-				gdm.update_user_money(-float(per_unit))
 			_update_expand_buttons()
 			_update_upgrade_labels()
 		_upgrade_in_progress = true
@@ -588,10 +587,7 @@ func _on_expand_vehicle():
 			_optimistic_money_after = max(0.0, _optimistic_money_before - float(per_unit))
 			_optimistic_money_active = true
 			print("[WarehouseMenu][Optimistic] Vehicle upgrade: deduct", per_unit, "from", _optimistic_money_before, "=>", _optimistic_money_after)
-			# Also update global user data immediately so other UI panels reflect change
-			if is_instance_valid(gdm) and gdm.has_method("update_user_money"):
-				print("[WarehouseMenu][Optimistic][Global] Applying global money deduction=", per_unit)
-				gdm.update_user_money(-float(per_unit))
+			# Do not mutate global snapshots optimistically; rely on refresh.
 			_update_expand_buttons()
 			_update_upgrade_labels()
 		_upgrade_in_progress = true
@@ -743,14 +739,12 @@ func _on_spawn_convoy():
 		print("[WarehouseMenu][SpawnConvoy][Abort] reason=", abort_reason, " wid=", wid, " spawn_vid=", spawn_vid, " name=", cname)
 
 func _try_load_warehouse_for_settlement() -> void:
-	if not is_instance_valid(gdm):
-		return
 	var sett_id := String(_settlement.get("sett_id", ""))
 	if sett_id == "":
 		return
 	var user: Dictionary = {}
-	if is_instance_valid(gdm) and gdm.has_method("get_current_user_data"):
-		user = gdm.get_current_user_data()
+	if is_instance_valid(_user_service) and _user_service.has_method("get_user"):
+		user = _user_service.get_user()
 	var warehouses: Array = []
 	if typeof(user) == TYPE_DICTIONARY:
 		warehouses = user.get("warehouses", [])
@@ -802,17 +796,17 @@ func _get_settlement_type() -> String:
 	if stype != "":
 		return _normalize_settlement_type(stype)
 	# Try resolve by sett_id
-	if _settlement and _settlement.has("sett_id") and is_instance_valid(gdm) and gdm.has_method("get_all_settlements_data"):
+	if _settlement and _settlement.has("sett_id"):
 		var sid := String(_settlement.get("sett_id", ""))
 		if sid != "":
-			for s in gdm.get_all_settlements_data():
+			for s in _get_all_settlements_snapshot():
 				if typeof(s) == TYPE_DICTIONARY and String(s.get("sett_id", "")) == sid:
 					return _normalize_settlement_type(String(s.get("sett_type", "")).to_lower())
 	# Try resolve by name
-	if _settlement and _settlement.has("name") and is_instance_valid(gdm) and gdm.has_method("get_all_settlements_data"):
+	if _settlement and _settlement.has("name"):
 		var sname := String(_settlement.get("name", ""))
 		if sname != "":
-			for s2 in gdm.get_all_settlements_data():
+			for s2 in _get_all_settlements_snapshot():
 				if typeof(s2) == TYPE_DICTIONARY and String(s2.get("name", "")) == sname:
 					return _normalize_settlement_type(String(s2.get("sett_type", "")).to_lower())
 	# Fallback: try convoy_data settlement_name or coords
@@ -823,14 +817,14 @@ func _get_settlement_type() -> String:
 			if from_convoy.has("sett_type"):
 				return _normalize_settlement_type(String(from_convoy.get("sett_type", "")).to_lower())
 			# else if only name/id, try again via lookups
-			if from_convoy.has("sett_id") and is_instance_valid(gdm) and gdm.has_method("get_all_settlements_data"):
+			if from_convoy.has("sett_id"):
 				var sid2 := String(from_convoy.get("sett_id", ""))
-				for s3 in gdm.get_all_settlements_data():
+				for s3 in _get_all_settlements_snapshot():
 					if typeof(s3) == TYPE_DICTIONARY and String(s3.get("sett_id", "")) == sid2:
 						return _normalize_settlement_type(String(s3.get("sett_type", "")).to_lower())
-			if from_convoy.has("name") and is_instance_valid(gdm) and gdm.has_method("get_all_settlements_data"):
+			if from_convoy.has("name"):
 				var sname2 := String(from_convoy.get("name", ""))
-				for s4 in gdm.get_all_settlements_data():
+				for s4 in _get_all_settlements_snapshot():
 					if typeof(s4) == TYPE_DICTIONARY and String(s4.get("name", "")) == sname2:
 						return _normalize_settlement_type(String(s4.get("sett_type", "")).to_lower())
 	print("[WarehouseMenu][SettlType] Unable to resolve settlement type. settlement=", _settlement)
@@ -851,41 +845,75 @@ func _normalize_settlement_type(t: String) -> String:
 	return s
 
 func _resolve_settlement_from_data(d: Dictionary) -> Dictionary:
-	if not is_instance_valid(gdm):
-		return {}
 	var result: Dictionary = {}
 	# Prefer explicit settlement_name on convoy payload
 	if d.has("settlement_name") and String(d.get("settlement_name", "")) != "":
 		var sname := String(d.get("settlement_name"))
-		if gdm.has_method("get_all_settlements_data"):
-			for s in gdm.get_all_settlements_data():
-				if typeof(s) == TYPE_DICTIONARY and String(s.get("name", "")) == sname:
-					result = s.duplicate(true)
-					break
+		for s in _get_all_settlements_snapshot():
+			if typeof(s) == TYPE_DICTIONARY and String(s.get("name", "")) == sname:
+				result = s.duplicate(true)
+				break
 		# If we found by name, return immediately
 		if not result.is_empty():
 			return result
 	# Fallback by coordinates if available
 	var sx := int(roundf(float(d.get("x", -999999.0))))
 	var sy := int(roundf(float(d.get("y", -999999.0))))
-	if gdm.has_method("get_settlement_name_from_coords"):
-		var name_at := String(gdm.get_settlement_name_from_coords(sx, sy))
-		if name_at != "" and gdm.has_method("get_all_settlements_data"):
-			for s2 in gdm.get_all_settlements_data():
-				if typeof(s2) == TYPE_DICTIONARY and String(s2.get("name", "")) == name_at:
-					result = s2.duplicate(true)
-					break
+	if sx > -999999 and sy > -999999:
+		for s2 in _get_all_settlements_snapshot():
+			if typeof(s2) != TYPE_DICTIONARY:
+				continue
+			var sx2 := int(roundf(float(s2.get("x", -999999.0))))
+			var sy2 := int(roundf(float(s2.get("y", -999999.0))))
+			if sx2 == sx and sy2 == sy:
+				result = (s2 as Dictionary).duplicate(true)
+				break
 	return result
 
 func _get_user_money() -> float:
 	# If we applied an optimistic deduction, surface that immediately so tooltips & labels reflect it.
 	if _optimistic_money_active:
 		return _optimistic_money_after
-	if is_instance_valid(gdm) and gdm.has_method("get_current_user_data"):
-		var user: Dictionary = gdm.get_current_user_data()
+	if is_instance_valid(_user_service) and _user_service.has_method("get_user"):
+		var user: Dictionary = _user_service.get_user()
 		if typeof(user) == TYPE_DICTIONARY:
 			return float(user.get("money", 0.0))
 	return 0.0
+
+
+func _get_all_settlements_snapshot() -> Array:
+	if is_instance_valid(_store) and _store.has_method("get_settlements"):
+		return _store.get_settlements()
+	return []
+
+
+func _on_store_user_changed(_user: Dictionary) -> void:
+	# Money / warehouses may change; refresh text + buttons.
+	_update_ui()
+	_update_expand_buttons()
+	_update_upgrade_labels()
+
+
+func _on_store_convoys_changed(convoys: Array) -> void:
+	# Keep convoy cargo/vehicles dropdowns current.
+	var cid := str(_convoy_data.get("convoy_id", "")) if (_convoy_data is Dictionary) else ""
+	if cid == "":
+		return
+	for c in convoys:
+		if c is Dictionary and str(c.get("convoy_id", "")) == cid:
+			_convoy_data = (c as Dictionary).duplicate(true)
+			break
+	_populate_dropdowns()
+
+
+func _on_store_map_changed(_tiles: Array, _settlements: Array) -> void:
+	# Settlement resolution/type may become available after map arrives.
+	if (_settlement is Dictionary) and not _settlement.is_empty():
+		return
+	var resolved := _resolve_settlement_from_data(_convoy_data)
+	if not resolved.is_empty():
+		_settlement = resolved
+		_update_ui()
 
 func _format_money(amount: float) -> String:
 	var s := "%.0f" % amount

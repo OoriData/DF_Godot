@@ -32,21 +32,22 @@ func _on_login_successful(user_id: String) -> void:
 	print("GameScreenManager: Login successful for User ID:", user_id)
 	current_user_id = user_id
 
-	var already_bootstrapped := false
-	if Engine.has_singleton("GameDataManager"):
-		# not typical; fallback path
-		pass
-	if GameDataManager:
-		# Access internal flag safely; if missing, defaults false
-		if GameDataManager.has_method("get"):
-			var val = GameDataManager.get("_user_bootstrap_done")
-			already_bootstrapped = (typeof(val) == TYPE_BOOL and val)
-
-	if already_bootstrapped:
-		print("GameScreenManager: Data bootstrap already performed; skipping manual initial convoy fetch.")
-	elif GameDataManager and GameDataManager.has_method("trigger_initial_convoy_data_fetch"):
-		print("GameScreenManager: Triggering initial convoy data fetch (manual path).")
-		GameDataManager.trigger_initial_convoy_data_fetch(current_user_id)
+	# Phase C: bootstrap via APICalls + Services (no GameDataManager).
+	var api := get_node_or_null("/root/APICalls")
+	if is_instance_valid(api):
+		if api.has_method("set_user_id"):
+			api.set_user_id(current_user_id)
+		# Refresh user snapshot
+		if api.has_method("refresh_user_data"):
+			api.refresh_user_data(current_user_id)
+		elif api.has_method("get_user_data"):
+			api.get_user_data(current_user_id)
+		# Fetch convoys for this user
+		if api.has_method("get_user_convoys"):
+			api.get_user_convoys(current_user_id)
+		# Map request is not user-scoped; fetch once here if available
+		if api.has_method("get_map_data"):
+			api.get_map_data()
 
 	# Remove the login screen completely to prevent any input blocking.
 	if is_instance_valid(login_screen):

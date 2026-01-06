@@ -329,14 +329,10 @@ func _on_map_data_loaded(p_map_tiles: Array):
 
 func _on_convoy_data_loaded(p_convoy_data: Array):
 	_all_convoy_data = p_convoy_data
-	if is_instance_valid(map_interaction_manager):
-		map_interaction_manager.update_data_references(_all_convoy_data, _all_settlement_data, map_tiles)
 	_update_ui_manager(false)
 
 func _on_settlement_data_loaded(p_settlement_data: Array):
 	_all_settlement_data = p_settlement_data
-	if is_instance_valid(map_interaction_manager):
-		map_interaction_manager.update_data_references(_all_convoy_data, _all_settlement_data, map_tiles)
 	_update_ui_manager(false)
 
 func _on_selection_changed(selected_ids: Array):

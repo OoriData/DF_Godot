@@ -13,7 +13,7 @@ var _settings_menu_instance: Window
 var _original_username_font_size: int
 var _original_money_font_size: int
 
-var gdm: Node
+@onready var _store: Node = get_node_or_null("/root/GameStore")
 
 func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_PASS
@@ -21,26 +21,21 @@ func _ready() -> void:
 		if child is Control:
 			child.mouse_filter = Control.MOUSE_FILTER_PASS
 			print("UserInfoDisplay: Set mouse_filter=PASS on child Control node:", child.name)
-	gdm = get_node_or_null("/root/GameDataManager")
-	if is_instance_valid(gdm):
-		# Connect to signals from the GameDataManager
-		if not gdm.is_connected("user_data_updated", _on_user_data_updated):
-			gdm.user_data_updated.connect(_on_user_data_updated)
+	if is_instance_valid(_store) and _store.has_signal("user_changed"):
+		if not _store.user_changed.is_connected(_on_user_data_updated):
+			_store.user_changed.connect(_on_user_data_updated)
 
-		# Connect to the global UI scale manager (autoload under /root)
-		var usm = get_node_or_null("/root/ui_scale_manager")
-		if is_instance_valid(usm):
-			# Store original sizes before applying any scaling
-			_original_username_font_size = username_label.get_theme_font_size("font_size")
-			_original_money_font_size = user_money_label.get_theme_font_size("font_size")
-			usm.scale_changed.connect(_on_ui_scale_changed)
-			# Apply initial scale
-			_on_ui_scale_changed(usm.get_global_ui_scale())
-		else:
-			printerr("UserInfoDisplay: ui_scale_manager autoload not found at /root/ui_scale_manager. UI scaling will not be dynamic.")
-
+	# Connect to the global UI scale manager (autoload under /root)
+	var usm = get_node_or_null("/root/ui_scale_manager")
+	if is_instance_valid(usm):
+		# Store original sizes before applying any scaling
+		_original_username_font_size = username_label.get_theme_font_size("font_size")
+		_original_money_font_size = user_money_label.get_theme_font_size("font_size")
+		usm.scale_changed.connect(_on_ui_scale_changed)
+		# Apply initial scale
+		_on_ui_scale_changed(usm.get_global_ui_scale())
 	else:
-		printerr("UserInfoDisplay: Could not find GameDataManager.")
+		printerr("UserInfoDisplay: ui_scale_manager autoload not found at /root/ui_scale_manager. UI scaling will not be dynamic.")
 
 	# Settings button hookup
 	if is_instance_valid(settings_button):
@@ -80,10 +75,11 @@ func _on_ui_scale_changed(new_scale: float) -> void:
 
 
 func _update_display():
-	if not is_node_ready() or not is_instance_valid(gdm):
+	if not is_node_ready() or not is_instance_valid(_store):
 		return
-
-	var user_data = gdm.get_current_user_data()
+	var user_data: Dictionary = {}
+	if _store.has_method("get_user"):
+		user_data = _store.get_user()
 	var username: String = user_data.get("username", "Player")
 	var money_amount = user_data.get("money", 0)
 

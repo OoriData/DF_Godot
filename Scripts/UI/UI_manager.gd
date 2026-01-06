@@ -139,6 +139,8 @@ var _preview_color: Color = Color(1.0, 0.6, 0.0, 0.85)
 var _preview_line_width: float = 3.5
 var _high_contrast_enabled: bool = false
 
+var _convoy_label_manager_initialized: bool = false
+
 func _ready():
 	await get_tree().process_frame
 
@@ -205,15 +207,7 @@ func _ready():
 		if is_instance_valid(convoy_label_container):
 			convoy_label_manager.set_convoy_label_container(convoy_label_container)
 
-	# Add a reference to GameDataManager
-	var gdm: Node = null
-
-	gdm = get_node_or_null("/root/GameDataManager")
-	if is_instance_valid(gdm):
-		if not gdm.is_connected("convoy_data_updated", Callable(self, "_on_gdm_convoy_data_updated")):
-			gdm.convoy_data_updated.connect(_on_gdm_convoy_data_updated)
-		if not gdm.is_connected("settlement_data_updated", Callable(self, "_on_gdm_settlement_data_updated")):
-			gdm.settlement_data_updated.connect(_on_gdm_settlement_data_updated)
+	# Phase B: UIManager no longer wires directly to GameDataManager.
 
 	# --- Assign TerrainTileMap node if not set ---
 	if not is_instance_valid(terrain_tilemap):
@@ -337,6 +331,22 @@ func update_ui_elements(
 				_convoy_data_by_id_cache[str(convoy_data_item.get("convoy_id"))] = convoy_data_item
 
 	_current_map_zoom_cache = current_map_zoom # Cache the zoom level
+
+	# One-time init for ConvoyLabelManager so it can use the same font scaling constants.
+	if not _convoy_label_manager_initialized and is_instance_valid(convoy_label_manager) and convoy_label_manager.has_method("initialize_font_settings"):
+		convoy_label_manager.initialize_font_settings(
+			label_settings.font,
+			label_settings,
+			base_convoy_title_font_size,
+			ui_overall_scale_multiplier,
+			font_scaling_base_tile_size,
+			font_scaling_exponent,
+			min_node_font_size,
+			max_node_font_size,
+			_all_convoy_data_cache,
+			CONVOY_STAT_EMOJIS
+		)
+		_convoy_label_manager_initialized = true
 
 	# Update UIManager's state from what main.gd passes
 	_convoy_label_user_positions = convoy_label_user_positions_from_main

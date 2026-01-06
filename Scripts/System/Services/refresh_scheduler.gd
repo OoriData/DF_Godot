@@ -69,8 +69,8 @@ func _load_interval_from_config() -> void:
 	if err != OK:
 		return
 	# Optional refresh interval in seconds
-	var v := cfg.get_value("refresh", "convoys_interval", _interval_sec)
-	var t := typeof(v)
+	var v: Variant = cfg.get_value("refresh", "convoys_interval", _interval_sec)
+	var t: int = typeof(v)
 	match t:
 		TYPE_FLOAT, TYPE_INT:
 			_interval_sec = float(v)

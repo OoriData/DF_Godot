@@ -21,7 +21,7 @@ func _load_from_config() -> void:
 	if err != OK:
 		return
 	var level_str: String = String(cfg.get_value("logging", "level", "info")).to_lower()
-	switch level_str:
+	match level_str:
 		"debug":
 			level = Level.DEBUG
 		"info":
@@ -36,7 +36,7 @@ func _load_from_config() -> void:
 
 func set_level_str(level_str: String) -> void:
 	var s := level_str.to_lower()
-	switch s:
+	match s:
 		"debug": level = Level.DEBUG
 		"info": level = Level.INFO
 		"warn": level = Level.WARN
@@ -79,7 +79,7 @@ func _fmt(msg: String, a: Variant, b: Variant, c: Variant) -> String:
 	return out
 
 func _level_to_string(l: int) -> String:
-	switch l:
+	match l:
 		Level.DEBUG: return "debug"
 		Level.INFO: return "info"
 		Level.WARN: return "warn"

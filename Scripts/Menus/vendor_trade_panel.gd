@@ -38,7 +38,6 @@ signal install_requested(item, quantity, vendor_id)
 # --- Data ---
 var vendor_data # Should be set by the parent
 var convoy_data = {} # Add this line
-var gdm: Node # GameDataManager instance
 var vendor_items = {}
 var convoy_items = {}
 var current_settlement_data # Will hold the current settlement data for local vendor lookup
@@ -99,6 +98,18 @@ var _refresh_t0_ms: int = -1 # start time of active refresh
 var _last_data_ready_ms: int = -1 # last time we processed vendor_panel_data_ready
 var _watchdog_retries: Dictionary = {} # refresh_id -> true (prevent multiple retries per cycle)
 
+# --- Services / State (Phase C: no GameDataManager dependency) ---
+@onready var _store: Node = get_node_or_null("/root/GameStore")
+@onready var _hub: Node = get_node_or_null("/root/SignalHub")
+@onready var _vendor_service: Node = get_node_or_null("/root/VendorService")
+@onready var _convoy_service: Node = get_node_or_null("/root/ConvoyService")
+@onready var _mechanics_service: Node = get_node_or_null("/root/MechanicsService")
+@onready var _api: Node = get_node_or_null("/root/APICalls")
+
+var _active_convoy_id: String = ""
+var _active_vendor_id: String = ""
+var _latest_settlements: Array = []
+
 func _get_bold_font_for(node: Control) -> FontVariation:
 	if _bold_font_cache != null:
 		return _bold_font_cache
@@ -140,23 +151,29 @@ func _ready() -> void:
 	else:
 		printerr("VendorTradePanel: 'DescriptionToggleButton' node not found. Please check the scene file.")
 
-	# Get GameDataManager and connect to its signal to keep user money updated.
-	gdm = get_node_or_null("/root/GameDataManager")
-	if is_instance_valid(gdm):
-		if not gdm.is_connected("vendor_panel_data_ready", _on_vendor_panel_data_ready):
-			gdm.vendor_panel_data_ready.connect(_on_vendor_panel_data_ready)
-		# Hook backend part compatibility so vendor UI can display the same truth as mechanics
-		if gdm.has_signal("part_compatibility_ready") and not gdm.part_compatibility_ready.is_connected(_on_part_compatibility_ready):
-			gdm.part_compatibility_ready.connect(_on_part_compatibility_ready)
-		# Connect to settlement updates to know when a vendor refresh is complete.
-		if gdm.has_signal("settlement_data_updated") and not gdm.is_connected("settlement_data_updated", Callable(self, "_on_settlement_data_updated_for_refresh")):
-			gdm.settlement_data_updated.connect(Callable(self, "_on_settlement_data_updated_for_refresh"))
-		# After a transaction, GDM will update convoy data. We listen to this to trigger a full panel refresh,
-		# which includes re-fetching vendor inventory. This creates a sequential, non-flickering update.
-		if gdm.has_signal("convoy_data_updated") and not gdm.is_connected("convoy_data_updated", Callable(self, "_on_gdm_convoy_data_changed")):
-			gdm.convoy_data_updated.connect(Callable(self, "_on_gdm_convoy_data_changed"))
-	else:
-		printerr("VendorTradePanel: Could not find GameDataManager.")
+	# Subscribe to canonical sources (Hub/Store) instead of GameDataManager.
+	if is_instance_valid(_hub):
+		if _hub.has_signal("vendor_panel_ready") and not _hub.vendor_panel_ready.is_connected(_on_hub_vendor_panel_ready):
+			_hub.vendor_panel_ready.connect(_on_hub_vendor_panel_ready)
+	if is_instance_valid(_store):
+		if _store.has_signal("convoys_changed") and not _store.convoys_changed.is_connected(_on_store_convoys_changed):
+			_store.convoys_changed.connect(_on_store_convoys_changed)
+		if _store.has_signal("map_changed") and not _store.map_changed.is_connected(_on_store_map_changed):
+			_store.map_changed.connect(_on_store_map_changed)
+		if _store.has_signal("user_changed") and not _store.user_changed.is_connected(_on_user_data_updated):
+			_store.user_changed.connect(_on_user_data_updated)
+		# Pull initial snapshots if available
+		if _store.has_method("get_settlements"):
+			_latest_settlements = _store.get_settlements()
+			all_settlement_data_global = _latest_settlements
+		if _store.has_method("get_convoys") and _active_convoy_id != "":
+			convoy_data = _get_convoy_by_id(_active_convoy_id)
+		if _store.has_method("get_user"):
+			_on_user_data_updated(_store.get_user())
+
+	# Hook backend part compatibility so vendor UI can display the same truth as mechanics.
+	if is_instance_valid(_api) and _api.has_signal("part_compatibility_checked") and not _api.part_compatibility_checked.is_connected(_on_part_compatibility_ready):
+		_api.part_compatibility_checked.connect(_on_part_compatibility_ready)
 
 	# Enable wrapping for convoy cargo label so multi-line text keeps panel narrow
 	if is_instance_valid(convoy_cargo_label):
@@ -174,37 +191,43 @@ func _ready() -> void:
 		loading_panel.visible = false
 		loading_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
 
-	var api = get_node("/root/APICalls")
-	api.vehicle_bought.connect(_on_api_transaction_result)
-	api.vehicle_sold.connect(_on_api_transaction_result)
-	api.cargo_bought.connect(_on_api_transaction_result)
-	api.cargo_sold.connect(_on_api_transaction_result)
-	api.resource_bought.connect(_on_api_transaction_result)
-	api.resource_sold.connect(_on_api_transaction_result)
-	api.fetch_error.connect(_on_api_transaction_error)
+	var api = get_node_or_null("/root/APICalls")
+	if is_instance_valid(api):
+		api.vehicle_bought.connect(_on_api_transaction_result)
+		api.vehicle_sold.connect(_on_api_transaction_result)
+		api.cargo_bought.connect(_on_api_transaction_result)
+		api.cargo_sold.connect(_on_api_transaction_result)
+		api.resource_bought.connect(_on_api_transaction_result)
+		api.resource_sold.connect(_on_api_transaction_result)
+		api.fetch_error.connect(_on_api_transaction_error)
 
 	# Diagnostics: confirm this instance and signal hookup
 	if perf_log_enabled:
 		var conn_ok := false
-		if is_instance_valid(gdm):
-			conn_ok = gdm.is_connected("vendor_panel_data_ready", Callable(self, "_on_vendor_panel_data_ready"))
-		print("[VendorPanel][DIAG] _ready instance_id=%d perf=%s vendor_data_ready_connected=%s" % [get_instance_id(), str(perf_log_enabled), str(conn_ok)])
+		if is_instance_valid(_hub) and _hub.has_signal("vendor_panel_ready"):
+			conn_ok = _hub.vendor_panel_ready.is_connected(Callable(self, "_on_hub_vendor_panel_ready"))
+		print("[VendorPanel][DIAG] _ready instance_id=%d perf=%s hub_vendor_panel_ready_connected=%s" % [get_instance_id(), str(perf_log_enabled), str(conn_ok)])
 
 func _exit_tree() -> void:
-	# Disconnect from GDM signals to avoid lingering <INVALID INSTANCE> connections
-	if is_instance_valid(gdm):
-		var c = Callable(self, "_on_vendor_panel_data_ready")
-		if gdm.has_signal("vendor_panel_data_ready") and gdm.is_connected("vendor_panel_data_ready", c):
-			gdm.disconnect("vendor_panel_data_ready", c)
-		c = Callable(self, "_on_part_compatibility_ready")
-		if gdm.has_signal("part_compatibility_ready") and gdm.is_connected("part_compatibility_ready", c):
-			gdm.disconnect("part_compatibility_ready", c)
-		c = Callable(self, "_on_settlement_data_updated_for_refresh")
-		if gdm.has_signal("settlement_data_updated") and gdm.is_connected("settlement_data_updated", c):
-			gdm.disconnect("settlement_data_updated", c)
-		c = Callable(self, "_on_gdm_convoy_data_changed")
-		if gdm.has_signal("convoy_data_updated") and gdm.is_connected("convoy_data_updated", c):
-			gdm.disconnect("convoy_data_updated", c)
+	# Disconnect from Hub/Store signals
+	if is_instance_valid(_hub):
+		var c_h := Callable(self, "_on_hub_vendor_panel_ready")
+		if _hub.has_signal("vendor_panel_ready") and _hub.vendor_panel_ready.is_connected(c_h):
+			_hub.vendor_panel_ready.disconnect(c_h)
+	if is_instance_valid(_store):
+		var c1 := Callable(self, "_on_store_convoys_changed")
+		if _store.has_signal("convoys_changed") and _store.convoys_changed.is_connected(c1):
+			_store.convoys_changed.disconnect(c1)
+		var c2 := Callable(self, "_on_store_map_changed")
+		if _store.has_signal("map_changed") and _store.map_changed.is_connected(c2):
+			_store.map_changed.disconnect(c2)
+		var c3 := Callable(self, "_on_user_data_updated")
+		if _store.has_signal("user_changed") and _store.user_changed.is_connected(c3):
+			_store.user_changed.disconnect(c3)
+	if is_instance_valid(_api):
+		var c4 := Callable(self, "_on_part_compatibility_ready")
+		if _api.has_signal("part_compatibility_checked") and _api.part_compatibility_checked.is_connected(c4):
+			_api.part_compatibility_checked.disconnect(c4)
 
 	# Disconnect from API signals
 	var api = get_node_or_null("/root/APICalls")
@@ -221,17 +244,168 @@ func _exit_tree() -> void:
 
 # Request data for the panel (call this when opening the panel)
 func request_panel_data(convoy_id: String, vendor_id: String) -> void:
-	if is_instance_valid(gdm):
-		# Mark a new refresh cycle and start watchdog
-		_refresh_seq += 1
-		_current_refresh_id = _refresh_seq
-		_refresh_t0_ms = Time.get_ticks_msec()
-		_refresh_in_flight = true
-		_awaiting_panel_data = true
-		if perf_log_enabled:
-			print("[VendorPanel][Perf] immediate panel payload requested cid=%s vid=%s id=%d" % [convoy_id, vendor_id, _current_refresh_id])
-		gdm.request_vendor_panel_data(convoy_id, vendor_id)
-		_start_refresh_watchdog(_current_refresh_id)
+	_active_convoy_id = convoy_id
+	_active_vendor_id = vendor_id
+	# Mark a new refresh cycle and start watchdog
+	_refresh_seq += 1
+	_current_refresh_id = _refresh_seq
+	_refresh_t0_ms = Time.get_ticks_msec()
+	_refresh_in_flight = true
+	_awaiting_panel_data = true
+	if perf_log_enabled:
+		print("[VendorPanel][Perf] panel refresh requested cid=%s vid=%s id=%d" % [convoy_id, vendor_id, _current_refresh_id])
+	_request_authoritative_refresh(convoy_id, vendor_id)
+	_start_refresh_watchdog(_current_refresh_id)
+
+func _request_authoritative_refresh(convoy_id: String, vendor_id: String) -> void:
+	if vendor_id != "":
+		if is_instance_valid(_vendor_service) and _vendor_service.has_method("request_vendor_panel"):
+			_vendor_service.request_vendor_panel(convoy_id, vendor_id)
+		elif is_instance_valid(_api) and _api.has_method("request_vendor_data"):
+			_api.request_vendor_data(vendor_id)
+	if convoy_id != "" and is_instance_valid(_convoy_service) and _convoy_service.has_method("refresh_single"):
+		_convoy_service.refresh_single(convoy_id)
+
+func _on_hub_vendor_panel_ready(vendor: Dictionary) -> void:
+	if not (vendor is Dictionary):
+		return
+	var vid := String(vendor.get("vendor_id", ""))
+	if _active_vendor_id != "" and vid != "" and vid != _active_vendor_id:
+		return
+	vendor_data = vendor
+	# Settlement context may depend on map snapshot
+	_all_settlements_from_store()
+	current_settlement_data = _resolve_settlement_for_vendor_or_convoy(vid, _active_convoy_id)
+	_try_process_refresh()
+
+func _on_store_convoys_changed(_convoys: Array) -> void:
+	if _active_convoy_id == "":
+		return
+	var c: Dictionary = _get_convoy_by_id(_active_convoy_id)
+	if c != null and (c is Dictionary) and not (c as Dictionary).is_empty():
+		convoy_data = c
+	# Settlement context may depend on convoy coords as fallback
+	current_settlement_data = _resolve_settlement_for_vendor_or_convoy(_active_vendor_id, _active_convoy_id)
+	_try_process_refresh()
+
+func _on_store_map_changed(_tiles: Array, settlements: Array) -> void:
+	_latest_settlements = settlements if settlements != null else []
+	all_settlement_data_global = _latest_settlements
+	current_settlement_data = _resolve_settlement_for_vendor_or_convoy(_active_vendor_id, _active_convoy_id)
+	_try_process_refresh()
+
+func _all_settlements_from_store() -> void:
+	if is_instance_valid(_store) and _store.has_method("get_settlements"):
+		_latest_settlements = _store.get_settlements()
+		all_settlement_data_global = _latest_settlements
+
+func _get_convoy_by_id(convoy_id: String) -> Dictionary:
+	if convoy_id == "":
+		return {}
+	if not is_instance_valid(_store) or not _store.has_method("get_convoys"):
+		return {}
+	var all_convoys: Array = _store.get_convoys()
+	for c in all_convoys:
+		if c is Dictionary and String((c as Dictionary).get("convoy_id", "")) == convoy_id:
+			return c
+	return {}
+
+func _resolve_settlement_for_vendor_or_convoy(vendor_id: String, convoy_id: String) -> Dictionary:
+	# 1) If we know vendor_id, find settlement containing it
+	if vendor_id != "":
+		for s in all_settlement_data_global:
+			if not (s is Dictionary):
+				continue
+			var vendors: Variant = (s as Dictionary).get("vendors", [])
+			if vendors is Array:
+				for v in vendors:
+					if v is Dictionary and String((v as Dictionary).get("vendor_id", "")) == vendor_id:
+						return s
+	# 2) Fallback: find settlement at convoy coords
+	if convoy_id != "" and convoy_data is Dictionary and String(convoy_data.get("convoy_id", "")) == convoy_id:
+		var cx := int(convoy_data.get("x", 999999))
+		var cy := int(convoy_data.get("y", 999999))
+		for s2 in all_settlement_data_global:
+			if s2 is Dictionary and int((s2 as Dictionary).get("x", 999999)) == cx and int((s2 as Dictionary).get("y", 999999)) == cy:
+				return s2
+	return {}
+
+func _try_process_refresh() -> void:
+	if not (_refresh_in_flight or _awaiting_panel_data):
+		return
+	var vid := String((vendor_data if vendor_data is Dictionary else {}).get("vendor_id", ""))
+	var cid := String((convoy_data if convoy_data is Dictionary else {}).get("convoy_id", ""))
+	if _active_vendor_id != "" and vid != "" and vid != _active_vendor_id:
+		return
+	if _active_convoy_id != "" and cid != "" and cid != _active_convoy_id:
+		return
+	# We require both vendor and convoy context to match the legacy payload semantics.
+	if vid == "" or cid == "":
+		return
+	_process_panel_payload_ready()
+
+func _process_panel_payload_ready() -> void:
+	if perf_log_enabled:
+		print("[VendorPanel][Perf] data_ready PROCESS refresh_id=", _current_refresh_id, " vid=", String(vendor_data.get("vendor_id", "")), " cid=", String(convoy_data.get("convoy_id", "")))
+		var now_ms := Time.get_ticks_msec()
+		if _txn_t0_ms >= 0:
+			print("[VendorPanel][Perf] panel data ready +%d ms" % int(now_ms - _txn_t0_ms))
+			_txn_t0_ms = -1
+		if _refresh_t0_ms >= 0:
+			print("[VendorPanel][Perf] refresh latency +%d ms (id=%d)" % [int(now_ms - _refresh_t0_ms), _current_refresh_id])
+			_refresh_t0_ms = -1
+
+	_refresh_in_flight = false
+	_awaiting_panel_data = false
+	_transaction_in_progress = false
+	_refresh_timer = null
+	_last_data_ready_ms = Time.get_ticks_msec()
+	if show_loading_overlay:
+		_hide_loading()
+
+	# --- START ATOMIC REFRESH to prevent flicker ---
+	var c_vendor := Callable(self, "_on_vendor_item_selected")
+	var c_convoy := Callable(self, "_on_convoy_item_selected")
+	if vendor_item_tree.item_selected.is_connected(c_vendor):
+		vendor_item_tree.item_selected.disconnect(c_vendor)
+	if convoy_item_tree.item_selected.is_connected(c_convoy):
+		convoy_item_tree.item_selected.disconnect(c_convoy)
+
+	var prev_selected_id := _last_selected_restore_id
+	var prev_tree := _last_selected_tree
+
+	var t0 := 0
+	if perf_log_enabled:
+		t0 = Time.get_ticks_msec()
+
+	# Rebuild lists from raw snapshots (vendor_data + convoy_data)
+	_populate_vendor_list()
+	_populate_convoy_list()
+	_update_convoy_info_display()
+	_on_tab_changed(trade_mode_tab_container.current_tab)
+
+	if perf_log_enabled:
+		var dt = Time.get_ticks_msec() - t0
+		print("[VendorPanel][Perf] rebuild dt=", dt, " ms (id=", _current_refresh_id, ")")
+
+	var selection_restored := false
+	if typeof(prev_selected_id) == TYPE_STRING and not String(prev_selected_id).is_empty():
+		if prev_tree == "vendor":
+			selection_restored = _restore_selection(vendor_item_tree, prev_selected_id)
+		elif prev_tree == "convoy":
+			selection_restored = _restore_selection(convoy_item_tree, prev_selected_id)
+
+	if not selection_restored:
+		_clear_inspector()
+		_update_transaction_panel()
+		action_button.disabled = true
+		max_button.disabled = true
+
+	vendor_item_tree.item_selected.connect(_on_vendor_item_selected)
+	convoy_item_tree.item_selected.connect(_on_convoy_item_selected)
+	# --- END ATOMIC REFRESH ---
+
+	_panel_initialized = true
 
 # Handler for when GDM emits vendor_panel_data_ready
 func _on_vendor_panel_data_ready(vendor_panel_data: Dictionary) -> void:
@@ -347,34 +521,8 @@ func _on_vendor_panel_data_ready(vendor_panel_data: Dictionary) -> void:
 	_panel_initialized = true
 
 func _on_settlement_data_updated_for_refresh(_all_settlements: Array) -> void:
-	# Only request the full panel payload once per refresh cycle
-	if not _refresh_in_flight:
-		return
-	if _awaiting_panel_data:
-		return
-
-	# The vendor data in GDM has been updated. Now, we need to re-request the fully
-	# aggregated panel data (which includes convoy items, etc.). This will trigger
-	# the `_on_vendor_panel_data_ready` handler, which will hide the loading panel
-	# and update the entire UI with the fresh data.
-	if perf_log_enabled:
-		print("[VendorTradePanel][LOG] Settlement data updated while loading. Re-requesting full panel data. refresh_id=", _current_refresh_id)
-	if is_instance_valid(gdm) and self.convoy_data and self.vendor_data:
-		var convoy_id = self.convoy_data.get("convoy_id", "")
-		var vendor_id = self.vendor_data.get("vendor_id", "")
-		if not convoy_id.is_empty() and not vendor_id.is_empty():
-			gdm.request_vendor_panel_data(convoy_id, vendor_id)
-			if perf_log_enabled:
-				print("[VendorPanel][Perf] requested panel payload for convoy=", convoy_id, " vendor=", vendor_id, " (id=", _current_refresh_id, ")")
-			_awaiting_panel_data = true
-			# Ensure a watchdog exists for this refresh id as well
-			_start_refresh_watchdog(_current_refresh_id)
-		else:
-			# Failsafe: if we can't re-request, at least hide the loading panel.
-			_hide_loading()
-	else:
-		# Failsafe
-		_hide_loading()
+	# Legacy GDM hook (no longer used). Keep as a no-op for safety.
+	return
 
 func _on_gdm_convoy_data_changed(_all_convoys: Array) -> void:
 	# With debounced refresh, we don't immediately repopulate here.
@@ -566,9 +714,13 @@ func initialize(p_vendor_data, p_convoy_data, p_current_settlement_data, p_all_s
 	self.current_settlement_data = p_current_settlement_data
 	self.all_settlement_data_global = p_all_settlement_data_global
 
-	# Let GameDataManager handle the initial fetch
-	if is_instance_valid(gdm) and self.vendor_data and self.vendor_data.has("vendor_id"):
-		gdm.request_vendor_data_refresh(self.vendor_data.get("vendor_id"))
+	# Request an authoritative refresh via services
+	var vid := String((self.vendor_data if self.vendor_data is Dictionary else {}).get("vendor_id", ""))
+	var cid := String((self.convoy_data if self.convoy_data is Dictionary else {}).get("convoy_id", ""))
+	if vid != "" and cid != "":
+		_active_vendor_id = vid
+		_active_convoy_id = cid
+		_request_authoritative_refresh(cid, vid)
 
 	_populate_vendor_list()
 	_populate_convoy_list()
@@ -1404,10 +1556,10 @@ func _handle_new_item_selection(p_selected_item) -> void:
 			if uid != "" and _looks_like_part(idata):
 				for v in convoy_data.vehicle_details_list:
 					var vid := String(v.get("vehicle_id", ""))
-					if vid != "" and is_instance_valid(gdm) and gdm.has_method("request_part_compatibility"):
+					if vid != "" and is_instance_valid(_mechanics_service) and _mechanics_service.has_method("check_part_compatibility"):
 						var key := _compat_key(vid, uid)
 						if not _compat_cache.has(key):
-							gdm.request_part_compatibility(vid, uid)
+							_mechanics_service.check_part_compatibility(vid, uid)
 		if is_instance_valid(action_button): action_button.disabled = false
 		if is_instance_valid(max_button): max_button.disabled = false
 	else:
@@ -1447,9 +1599,9 @@ func _on_max_button_pressed() -> void:
 		if unit_price > 0.0:
 			var money: int = 0
 			var have_money := false
-			# Prefer authoritative user money, fallback to convoy money if present.
-			if is_instance_valid(gdm):
-				var ud: Dictionary = gdm.get_current_user_data()
+			# Prefer authoritative user money from GameStore, fallback to convoy money.
+			if is_instance_valid(_store) and _store.has_method("get_user"):
+				var ud: Dictionary = _store.get_user()
 				if ud.has("money") and (ud.get("money") is int or ud.get("money") is float):
 					money = int(ud.get("money"))
 					have_money = true
@@ -1548,9 +1700,9 @@ func _on_action_button_pressed() -> void:
 	# Capacity bars projection
 	_refresh_capacity_bars(_pending_tx.volume_delta, _pending_tx.weight_delta)
 
-	# Dispatch API via GDM wrappers
+	# Dispatch API via transport (Phase C: no GDM dependency)
 	if current_mode == "buy":
-		gdm.buy_item(convoy_id, vendor_id, item_data_source, quantity)
+		_dispatch_buy(vendor_id, convoy_id, item_data_source, quantity)
 		emit_signal("item_purchased", item_data_source, quantity, total_price)
 	else:
 		var remaining = quantity
@@ -1562,12 +1714,52 @@ func _on_action_button_pressed() -> void:
 				if available <= 0:
 					continue
 				var to_sell = min(available, remaining)
-				gdm.sell_item(convoy_id, vendor_id, cargo_item, to_sell)
+				_dispatch_sell(vendor_id, convoy_id, cargo_item, to_sell)
 				remaining -= to_sell
 		else:
-			gdm.sell_item(convoy_id, vendor_id, item_data_source, quantity)
+			_dispatch_sell(vendor_id, convoy_id, item_data_source, quantity)
 		var sell_unit_price = unit_price / 2.0
 		emit_signal("item_sold", item_data_source, quantity, sell_unit_price * quantity)
+
+func _dispatch_buy(vendor_id: String, convoy_id: String, item_data_source: Dictionary, quantity: int) -> void:
+	if not is_instance_valid(_api):
+		return
+	if _is_vehicle_item(item_data_source):
+		var vehicle_id := String(item_data_source.get("vehicle_id", ""))
+		if vehicle_id != "" and _api.has_method("buy_vehicle"):
+			_api.buy_vehicle(vendor_id, convoy_id, vehicle_id)
+		return
+	if bool(item_data_source.get("is_raw_resource", false)):
+		var res_type := ""
+		if float(item_data_source.get("fuel", 0)) > 0: res_type = "fuel"
+		elif float(item_data_source.get("water", 0)) > 0: res_type = "water"
+		elif float(item_data_source.get("food", 0)) > 0: res_type = "food"
+		if res_type != "" and _api.has_method("buy_resource"):
+			_api.buy_resource(vendor_id, convoy_id, res_type, float(quantity))
+		return
+	var cargo_id := String(item_data_source.get("cargo_id", ""))
+	if cargo_id != "" and _api.has_method("buy_cargo"):
+		_api.buy_cargo(vendor_id, convoy_id, cargo_id, int(quantity))
+
+func _dispatch_sell(vendor_id: String, convoy_id: String, item_data_source: Dictionary, quantity: int) -> void:
+	if not is_instance_valid(_api):
+		return
+	if _is_vehicle_item(item_data_source):
+		var vehicle_id := String(item_data_source.get("vehicle_id", ""))
+		if vehicle_id != "" and _api.has_method("sell_vehicle"):
+			_api.sell_vehicle(vendor_id, convoy_id, vehicle_id)
+		return
+	if bool(item_data_source.get("is_raw_resource", false)):
+		var res_type := ""
+		if float(item_data_source.get("fuel", 0)) > 0: res_type = "fuel"
+		elif float(item_data_source.get("water", 0)) > 0: res_type = "water"
+		elif float(item_data_source.get("food", 0)) > 0: res_type = "food"
+		if res_type != "" and _api.has_method("sell_resource"):
+			_api.sell_resource(vendor_id, convoy_id, res_type, float(quantity))
+		return
+	var cargo_id := String(item_data_source.get("cargo_id", ""))
+	if cargo_id != "" and _api.has_method("sell_cargo"):
+		_api.sell_cargo(vendor_id, convoy_id, cargo_id, int(quantity))
 
 func _on_quantity_changed(_value: float) -> void:
 	_update_transaction_panel()
@@ -2105,8 +2297,8 @@ func _on_api_transaction_result(result: Dictionary) -> void:
 		if _txn_t0_ms >= 0:
 			var now_ms := Time.get_ticks_msec()
 			print("[VendorPanel][Perf] API result +%d ms" % int(now_ms - _txn_t0_ms))
-	# Prefer an immediate request for the full panel payload for responsiveness.
-	if is_instance_valid(gdm) and vendor_data and convoy_data and not _awaiting_panel_data and not _refresh_in_flight:
+	# Prefer an immediate refresh for responsiveness.
+	if vendor_data and convoy_data and not _awaiting_panel_data and not _refresh_in_flight:
 		var cid := String(convoy_data.get("convoy_id", ""))
 		var vid := String(vendor_data.get("vendor_id", ""))
 		if not cid.is_empty() and not vid.is_empty():
@@ -2115,9 +2307,9 @@ func _on_api_transaction_result(result: Dictionary) -> void:
 			_refresh_seq += 1
 			_current_refresh_id = _refresh_seq
 			_refresh_t0_ms = Time.get_ticks_msec()
-			gdm.request_vendor_panel_data(cid, vid)
+			_request_authoritative_refresh(cid, vid)
 			if perf_log_enabled:
-				print("[VendorPanel][Perf] immediate panel payload requested cid=", cid, " vid=", vid, " id=", _current_refresh_id)
+				print("[VendorPanel][Perf] immediate refresh requested cid=", cid, " vid=", vid, " id=", _current_refresh_id)
 	else:
 		# Fallback: if guards prevent immediate request, schedule a short debounced refresh.
 		_pending_refresh = true
@@ -2155,11 +2347,11 @@ func _on_api_transaction_error(error_message: String) -> void:
 		toast_notification.call("show_message", friendly_message)
 
 	# Refresh authoritative data
-	if is_instance_valid(gdm) and vendor_data and convoy_data:
+	if vendor_data and convoy_data:
 		var cid := String(convoy_data.get("convoy_id", ""))
 		var vid := String(vendor_data.get("vendor_id", ""))
 		if cid != "" and vid != "":
-			gdm.request_vendor_panel_data(cid, vid)
+			_request_authoritative_refresh(cid, vid)
 
 # Updates the comparison panel (stub, fill in as needed)
 func _update_comparison() -> void:
@@ -2245,10 +2437,15 @@ func _on_refresh_debounce_timeout(t: SceneTreeTimer) -> void:
 		_perform_refresh()
 
 func _perform_refresh() -> void:
-	if not is_instance_valid(gdm) or vendor_data == null:
+	if vendor_data == null:
 		return
 	var vid := String(vendor_data.get("vendor_id", ""))
 	if vid == "":
+		return
+	var cid := String((convoy_data if convoy_data is Dictionary else {}).get("convoy_id", _active_convoy_id))
+	if cid == "":
+		cid = _active_convoy_id
+	if cid == "":
 		return
 	# If the user just changed selection very recently, defer the refresh slightly to avoid
 	# interrupting the UI and causing selection flicker. This helps during rapid purchases.
@@ -2265,7 +2462,7 @@ func _perform_refresh() -> void:
 	_refresh_t0_ms = Time.get_ticks_msec()
 	if perf_log_enabled:
 		print("[VendorPanel][Perf] refresh started vendor=", vid, " id=", _current_refresh_id)
-	gdm.request_vendor_data_refresh(vid)
+	_request_authoritative_refresh(cid, vid)
 	_pending_refresh = false
 
 	# Fallback disabled to avoid duplicate payloads; rely on API-result immediate request and settlement signal.
@@ -2288,11 +2485,11 @@ func _on_refresh_watchdog_timeout(rid: int) -> void:
 		_watchdog_retries[rid] = true
 		if perf_log_enabled:
 			print("[VendorPanel][Perf] Watchdog fired for id=", rid, " after ", (now - _refresh_t0_ms), " ms; re-requesting panel payload once.")
-		if is_instance_valid(gdm) and self.convoy_data and self.vendor_data:
+		if self.convoy_data and self.vendor_data:
 			var cid := String(self.convoy_data.get("convoy_id", ""))
 			var vid := String(self.vendor_data.get("vendor_id", ""))
 			if not cid.is_empty() and not vid.is_empty():
-				gdm.request_vendor_panel_data(cid, vid)
+				_request_authoritative_refresh(cid, vid)
 				_awaiting_panel_data = true
 				if perf_log_enabled:
 					print("[VendorPanel][Perf] Watchdog re-request issued cid=", cid, " vid=", vid, " (id=", rid, ")")

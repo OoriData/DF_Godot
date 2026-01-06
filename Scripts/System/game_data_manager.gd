@@ -252,8 +252,15 @@ func _initiate_preload():
 	if is_instance_valid(_hub):
 		if _hub.has_signal("initial_data_ready") and not _hub.initial_data_ready.is_connected(_on_hub_initial_ready):
 			_hub.initial_data_ready.connect(_on_hub_initial_ready)
+		# Phase C: UI emits selection intent via SignalHub; resolve here during transition.
+		if _hub.has_signal("convoy_selection_requested") and not _hub.convoy_selection_requested.is_connected(_on_hub_convoy_selection_requested):
+			_hub.convoy_selection_requested.connect(_on_hub_convoy_selection_requested)
 	else:
 		print("[GameDataManager] SignalHub not found; will emit initial_data_ready only from local readiness.")
+
+
+func _on_hub_convoy_selection_requested(convoy_id: String, allow_toggle: bool) -> void:
+	select_convoy_by_id(convoy_id, allow_toggle)
 
 func _on_auth_session_received(_token: String) -> void:
 	# After session token, the APICalls will try to resolve DF user id via /auth/me

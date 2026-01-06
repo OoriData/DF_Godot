@@ -25,8 +25,10 @@ var convoy_data_received: Dictionary
 @onready var cargo_items_vbox: VBoxContainer = $MainVBox/ScrollContainer/CargoItemsVBox
 @onready var back_button: Button = $MainVBox/BackButton
 
-# Add a reference to GameDataManager
-var gdm: Node = null
+@onready var _store: Node = get_node_or_null("/root/GameStore")
+@onready var _hub: Node = get_node_or_null("/root/SignalHub")
+var _latest_all_settlements: Array = []
+var _vendors_by_id: Dictionary = {} # vendor_id -> vendor Dictionary
 var _item_to_inspect_on_load = null
 
 var _organize_button: Button
@@ -135,10 +137,18 @@ func _ready():
 	else:
 		printerr("ConvoyCargoMenu: BackButton node not found. Ensure it's named 'BackButton' in the scene.")
 
-	gdm = get_node_or_null("/root/GameDataManager")
-	if is_instance_valid(gdm):
-		if not gdm.is_connected("convoy_data_updated", Callable(self, "_on_gdm_convoy_data_updated")):
-			gdm.convoy_data_updated.connect(_on_gdm_convoy_data_updated)
+	# Phase C: subscribe to canonical sources instead of GameDataManager.
+	if is_instance_valid(_store):
+		if _store.has_signal("convoys_changed") and not _store.convoys_changed.is_connected(_on_store_convoys_changed):
+			_store.convoys_changed.connect(_on_store_convoys_changed)
+		if _store.has_signal("map_changed") and not _store.map_changed.is_connected(_on_store_map_changed):
+			_store.map_changed.connect(_on_store_map_changed)
+		if _store.has_method("get_settlements"):
+			var pre_cached = _store.get_settlements()
+			if pre_cached is Array:
+				_latest_all_settlements = pre_cached
+	if is_instance_valid(_hub) and _hub.has_signal("vendor_updated") and not _hub.vendor_updated.is_connected(_on_vendor_updated):
+		_hub.vendor_updated.connect(_on_vendor_updated)
 
 	# Set initial button text
 	_update_organize_button_text()
@@ -206,33 +216,54 @@ func _format_value(val) -> String:
 	else:
 		return str(val)
 
-# Resolve a vendor name from a vendor_id via GameDataManager, fallback to id if unknown.
+# Resolve a vendor name from a vendor_id via cached vendor/settlement data; fallback to id.
 func _resolve_vendor_name(vendor_id: String) -> String:
 	if vendor_id.is_empty():
 		return ""
-	if gdm == null:
-		gdm = get_node_or_null("/root/GameDataManager")
-	if is_instance_valid(gdm) and gdm.has_method("get_vendor_by_id"):
-		var v = gdm.get_vendor_by_id(vendor_id)
-		if v is Dictionary and v.has("name"):
-			var n = String(v.get("name", ""))
-			if not n.is_empty():
-				return n
+	if _vendors_by_id.has(vendor_id):
+		var v0 = _vendors_by_id[vendor_id]
+		if v0 is Dictionary:
+			var n0 := String((v0 as Dictionary).get("name", ""))
+			if not n0.is_empty():
+				return n0
+	for settlement in _latest_all_settlements:
+		if not (settlement is Dictionary):
+			continue
+		var vendors: Array = (settlement as Dictionary).get("vendors", [])
+		for v in vendors:
+			if v is Dictionary and String((v as Dictionary).get("vendor_id", "")) == vendor_id:
+				var n := String((v as Dictionary).get("name", ""))
+				if not n.is_empty():
+					return n
 	return vendor_id
 
 # Optionally resolve settlement name from vendor id
 func _resolve_settlement_name_for_vendor(vendor_id: String) -> String:
 	if vendor_id.is_empty():
 		return ""
-	if gdm == null:
-		gdm = get_node_or_null("/root/GameDataManager")
-	if is_instance_valid(gdm) and gdm.has_method("get_settlement_for_vendor"):
-		var s = gdm.get_settlement_for_vendor(vendor_id)
-		if s is Dictionary and s.has("settlement_name"):
-			var nm := String(s.get("settlement_name", ""))
-			if not nm.is_empty():
-				return nm
+	for settlement in _latest_all_settlements:
+		if not (settlement is Dictionary):
+			continue
+		var vendors: Array = (settlement as Dictionary).get("vendors", [])
+		for v in vendors:
+			if v is Dictionary and String((v as Dictionary).get("vendor_id", "")) == vendor_id:
+				var nm := String((settlement as Dictionary).get("name", (settlement as Dictionary).get("settlement_name", "")))
+				if not nm.is_empty():
+					return nm
 	return ""
+
+
+func _on_store_map_changed(_tiles: Array, settlements: Array) -> void:
+	if settlements is Array:
+		_latest_all_settlements = settlements
+
+
+func _on_vendor_updated(vendor: Dictionary) -> void:
+	if not (vendor is Dictionary):
+		return
+	var vendor_id := String(vendor.get("vendor_id", vendor.get("id", "")))
+	if vendor_id != "":
+		_vendors_by_id[vendor_id] = vendor
 
 # Build a short, human-friendly stats summary.
 func _format_stats_light(val) -> String:
@@ -1484,16 +1515,17 @@ func _inspect_item_on_load():
 	_item_to_inspect_on_load = null # Clear even if not found
 	printerr("ConvoyCargoMenu: Could not find item to inspect on load with cargo_id: ", target_cargo_id)
 
-func _on_gdm_convoy_data_updated(all_convoy_data: Array) -> void:
+
+func _on_store_convoys_changed(all_convoy_data: Array) -> void:
 	# Update convoy_data_received if this convoy is present in the update
 	if not convoy_data_received or not convoy_data_received.has("convoy_id"):
 		return
 
 	# If we're within the suppress window, skip rebuilding to avoid closing inspect
 	var now := Time.get_ticks_msec()
-	_diag("gdm_update", "received", {"now": now, "suppress_until": _suppress_refresh_until_msec})
+	_diag("store_update", "received", {"now": now, "suppress_until": _suppress_refresh_until_msec})
 	if now < _suppress_refresh_until_msec:
-		_diag("gdm_update", "suppressed")
+		_diag("store_update", "suppressed")
 		return
 	var current_id = str(convoy_data_received.get("convoy_id"))
 	for convoy in all_convoy_data:
@@ -1501,8 +1533,8 @@ func _on_gdm_convoy_data_updated(all_convoy_data: Array) -> void:
 			var prev_count := int((convoy_data_received.get("vehicle_details_list", []) as Array).size())
 			convoy_data_received = convoy.duplicate(true)
 			var new_count := int((convoy_data_received.get("vehicle_details_list", []) as Array).size())
-			_diag("gdm_update", "convoy_match", {"prev_vehicle_count": prev_count, "new_vehicle_count": new_count})
-			_diag("gdm_update", "repopulate_start")
+			_diag("store_update", "convoy_match", {"prev_vehicle_count": prev_count, "new_vehicle_count": new_count})
+			_diag("store_update", "repopulate_start")
 			_populate_cargo_list()
-			_diag("gdm_update", "repopulate_done")
+			_diag("store_update", "repopulate_done")
 			break

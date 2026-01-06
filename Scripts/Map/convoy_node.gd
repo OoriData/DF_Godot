@@ -22,7 +22,7 @@ var _throb_phase: float = 0.0
 const MAX_THROB_SCALE_ADDITION: float = 0.2 # e.g., 20% larger at peak
 const THROB_SPEED: float = 2.0 # Radians per second for sin wave
 
-var gdm: Node = null
+@onready var _store: Node = get_node_or_null("/root/GameStore")
 var current_convoy_id: String = ""
 var current_convoy_data: Dictionary = {}
 
@@ -48,10 +48,9 @@ func _ready():
 	icon_sprite.visible = true
 	icon_sprite.modulate = Color(1,1,1,1)
 
-	gdm = get_node_or_null("/root/GameDataManager")
-	if is_instance_valid(gdm):
-		if not gdm.is_connected("convoy_data_updated", Callable(self, "_on_convoy_data_updated")):
-			gdm.convoy_data_updated.connect(Callable(self, "_on_convoy_data_updated"))
+	if is_instance_valid(_store) and _store.has_signal("convoys_changed"):
+		if not _store.convoys_changed.is_connected(_on_convoy_data_updated):
+			_store.convoys_changed.connect(_on_convoy_data_updated)
 
 
 

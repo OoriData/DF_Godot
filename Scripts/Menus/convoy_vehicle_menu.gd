@@ -20,6 +20,10 @@ signal inspect_specific_convoy_cargo_requested(convoy_data, item_data)
 @onready var mechanic_button_scene_node: Button = $MainVBox/ActionButtons/MechanicButton
 @onready var mechanics_embed: Node = $MainVBox/VehicleTabContainer/Service/ServiceVBox/MechanicsEmbed
 
+@onready var _store: Node = get_node_or_null("/root/GameStore")
+@onready var _hub: Node = get_node_or_null("/root/SignalHub")
+@onready var _mechanics_service: Node = get_node_or_null("/root/MechanicsService")
+
 var current_vehicle_list: Array = []
 var _current_convoy_data: Dictionary # To store the full convoy data
 var _selected_vehicle_id: String = "" # Persist selection across refreshes
@@ -121,12 +125,11 @@ func _ready():
 	_clear_all_tabs() # Now safe to call
 	_show_initial_detail_message("Initializing...") # Now safe to call
 
-	# Add a reference to GameDataManager
-	var gdm: Node = null
-	gdm = get_node_or_null("/root/GameDataManager")
-	if is_instance_valid(gdm):
-		if not gdm.is_connected("convoy_data_updated", Callable(self, "_on_gdm_convoy_data_updated")):
-			gdm.convoy_data_updated.connect(_on_gdm_convoy_data_updated)
+	# Subscribe to canonical snapshots/events.
+	if is_instance_valid(_store) and _store.has_signal("convoys_changed") and not _store.convoys_changed.is_connected(_on_store_convoys_changed):
+		_store.convoys_changed.connect(_on_store_convoys_changed)
+	if is_instance_valid(_hub) and _hub.has_signal("convoy_updated") and not _hub.convoy_updated.is_connected(_on_hub_convoy_updated):
+		_hub.convoy_updated.connect(_on_hub_convoy_updated)
 
 func _on_back_button_pressed():
 	print("ConvoyVehicleMenu: Back button pressed. Emitting 'back_requested' signal.")
@@ -863,13 +866,12 @@ func _on_inspect_part_pressed(part_data: Dictionary):
 			remove_btn.custom_minimum_size.y = 36
 			remove_btn.add_theme_color_override("font_color", Color(1,0.4,0.4))
 			remove_btn.pressed.connect(func():
-				var gdm = get_node_or_null("/root/GameDataManager")
-				if is_instance_valid(gdm) and gdm.has_method("detach_vehicle_part"):
+				if is_instance_valid(_mechanics_service) and _mechanics_service.has_method("detach_part"):
 					print("ConvoyVehicleMenu: Requesting detach part_id=", part_id, " from vehicle=", vehicle_id)
-					gdm.detach_vehicle_part(convoy_id, vehicle_id, part_id)
+					_mechanics_service.detach_part(convoy_id, vehicle_id, part_id)
 				else:
-					printerr("ConvoyVehicleMenu: GameDataManager missing detach_vehicle_part()")
-				# Close dialog immediately; UI will refresh on convoy_data_updated
+					printerr("ConvoyVehicleMenu: MechanicsService missing detach_part()")
+				# Close dialog immediately; UI will refresh on convoy updates
 				dialog.hide()
 				dialog.queue_free()
 			)
@@ -1036,17 +1038,26 @@ func _on_title_label_gui_input(event: InputEvent):
 			emit_signal("return_to_convoy_overview_requested", _current_convoy_data)
 			get_viewport().set_input_as_handled()
 
-func _on_gdm_convoy_data_updated(all_convoy_data: Array) -> void:
-	# Update _current_convoy_data if this convoy is present in the update
-	if not _current_convoy_data or not _current_convoy_data.has("convoy_id"):
+func _on_store_convoys_changed(all_convoy_data: Array) -> void:
+	# Update _current_convoy_data if this convoy is present in the snapshot.
+	if not (_current_convoy_data is Dictionary) or not _current_convoy_data.has("convoy_id"):
 		return
-	var current_id = str(_current_convoy_data.get("convoy_id"))
+	var current_id := str(_current_convoy_data.get("convoy_id"))
 	for convoy in all_convoy_data:
-		if convoy.has("convoy_id") and str(convoy.get("convoy_id")) == current_id:
-			_current_convoy_data = convoy.duplicate(true)
-			# Refresh UI with stable sort and reselect preserved vehicle
+		if convoy is Dictionary and convoy.has("convoy_id") and str(convoy.get("convoy_id")) == current_id:
+			_current_convoy_data = (convoy as Dictionary).duplicate(true)
 			initialize_with_data(_current_convoy_data)
 			break
+
+
+func _on_hub_convoy_updated(updated_convoy_data: Dictionary) -> void:
+	# Some services (mechanics/routes) emit point updates; reflect them here.
+	if not (_current_convoy_data is Dictionary) or not _current_convoy_data.has("convoy_id"):
+		return
+	if str(updated_convoy_data.get("convoy_id", "")) != str(_current_convoy_data.get("convoy_id")):
+		return
+	_current_convoy_data = updated_convoy_data.duplicate(true)
+	initialize_with_data(_current_convoy_data)
 
 # Helper: deterministically sort vehicles by name, make_model, then vehicle_id
 func _stable_sort_vehicles(vehicles: Array) -> Array:
@@ -1080,11 +1091,16 @@ func _update_mechanic_button_enabled():
 		if _current_convoy_data.has("in_settlement"):
 			enabled = bool(_current_convoy_data.get("in_settlement"))
 		else:
-			var gdm = get_node_or_null("/root/GameDataManager")
-			if is_instance_valid(gdm) and gdm.has_method("get_settlement_name_from_coords"):
-				var sx = int(roundf(float(_current_convoy_data.get("x", -9999.0))))
-				var sy = int(roundf(float(_current_convoy_data.get("y", -9999.0))))
-				var s_name = gdm.get_settlement_name_from_coords(sx, sy)
-				enabled = s_name != null and String(s_name) != ""
+			# Infer from map snapshot tile settlements.
+			var sx := int(roundf(float(_current_convoy_data.get("x", -9999.0))))
+			var sy := int(roundf(float(_current_convoy_data.get("y", -9999.0))))
+			if is_instance_valid(_store) and _store.has_method("get_tiles"):
+				var tiles: Array = _store.get_tiles()
+				if sy >= 0 and sy < tiles.size():
+					var row: Variant = tiles[sy]
+					if row is Array and sx >= 0 and sx < (row as Array).size():
+						var tile: Variant = (row as Array)[sx]
+						if tile is Dictionary and tile.has("settlements") and tile.settlements is Array and not tile.settlements.is_empty():
+							enabled = true
 	if is_instance_valid(mechanic_button_scene_node):
 		mechanic_button_scene_node.disabled = not enabled

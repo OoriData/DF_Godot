@@ -25,10 +25,12 @@ var warehouse_button: Button = null
 var _convoy_data: Dictionary
 # This will be populated once the settlement is found.
 var _settlement_data: Dictionary
-var _all_settlement_data: Array # New: To store all settlement data from GameDataManager
+var _all_settlement_data: Array # Cached settlements snapshot
 
-# Add a reference to GameDataManager
-var gdm: Node = null
+@onready var _store: Node = get_node_or_null("/root/GameStore")
+@onready var _user_service: Node = get_node_or_null("/root/UserService")
+@onready var _convoy_service: Node = get_node_or_null("/root/ConvoyService")
+@onready var _api: Node = get_node_or_null("/root/APICalls")
 
 # Cached computed top-up plan
 var _top_up_plan: Dictionary = {
@@ -95,37 +97,37 @@ func _ready():
 		if is_instance_valid(warehouse_button):
 			warehouse_button.disabled = false
 
-	# Connect to GameDataManager signals to refresh UI when data updates
-	gdm = get_node_or_null("/root/GameDataManager")
-	if is_instance_valid(gdm):
-		if not gdm.is_connected("convoy_data_updated", Callable(self, "_on_gdm_convoy_data_updated")):
-			gdm.convoy_data_updated.connect(_on_gdm_convoy_data_updated)
-		if not gdm.is_connected("settlement_data_updated", Callable(self, "_on_gdm_settlement_data_updated")):
-			gdm.settlement_data_updated.connect(_on_gdm_settlement_data_updated)
+	# Subscribe to canonical snapshots
+	if is_instance_valid(_store):
+		if _store.has_signal("convoys_changed") and not _store.convoys_changed.is_connected(_on_store_convoys_changed):
+			_store.convoys_changed.connect(_on_store_convoys_changed)
+		if _store.has_signal("map_changed") and not _store.map_changed.is_connected(_on_store_map_changed):
+			_store.map_changed.connect(_on_store_map_changed)
+		if _store.has_signal("user_changed") and not _store.user_changed.is_connected(_on_store_user_changed):
+			_store.user_changed.connect(_on_store_user_changed)
 
-	# Also listen directly to APICalls resource transactions so we can trigger timely refreshes
-	var api = get_node_or_null("/root/APICalls")
-	if is_instance_valid(api):
-		if api.has_signal("resource_bought") and not api.resource_bought.is_connected(_on_api_resource_txn):
-			api.resource_bought.connect(_on_api_resource_txn)
-		if api.has_signal("resource_sold") and not api.resource_sold.is_connected(_on_api_resource_txn):
-			api.resource_sold.connect(_on_api_resource_txn)
+	# Also listen directly to APICalls transaction outcomes so we can trigger timely refreshes
+	if is_instance_valid(_api):
+		if _api.has_signal("resource_bought") and not _api.resource_bought.is_connected(_on_api_resource_txn):
+			_api.resource_bought.connect(_on_api_resource_txn)
+		if _api.has_signal("resource_sold") and not _api.resource_sold.is_connected(_on_api_resource_txn):
+			_api.resource_sold.connect(_on_api_resource_txn)
 		# Fallback: cargo/vehicle transactions also imply convoy changes
 		for sig in ["cargo_bought", "cargo_sold", "vehicle_bought", "vehicle_sold"]:
-			if api.has_signal(sig):
+			if _api.has_signal(sig):
 				var callable = Callable(self, "_on_api_other_txn")
-				var already=false
+				var already := false
 				match sig:
-					"cargo_bought": already = api.cargo_bought.is_connected(callable)
-					"cargo_sold": already = api.cargo_sold.is_connected(callable)
-					"vehicle_bought": already = api.vehicle_bought.is_connected(callable)
-					"vehicle_sold": already = api.vehicle_sold.is_connected(callable)
+					"cargo_bought": already = _api.cargo_bought.is_connected(callable)
+					"cargo_sold": already = _api.cargo_sold.is_connected(callable)
+					"vehicle_bought": already = _api.vehicle_bought.is_connected(callable)
+					"vehicle_sold": already = _api.vehicle_sold.is_connected(callable)
 				if not already:
 					match sig:
-						"cargo_bought": api.cargo_bought.connect(_on_api_other_txn)
-						"cargo_sold": api.cargo_sold.connect(_on_api_other_txn)
-						"vehicle_bought": api.vehicle_bought.connect(_on_api_other_txn)
-						"vehicle_sold": api.vehicle_sold.connect(_on_api_other_txn)
+						"cargo_bought": _api.cargo_bought.connect(_on_api_other_txn)
+						"cargo_sold": _api.cargo_sold.connect(_on_api_other_txn)
+						"vehicle_bought": _api.vehicle_bought.connect(_on_api_other_txn)
+						"vehicle_sold": _api.vehicle_sold.connect(_on_api_other_txn)
 
 
 func _display_error(message: String):
@@ -153,9 +155,8 @@ func _display_error(message: String):
 
 
 func _display_settlement_info():
-	# Ensure GameDataManager is available (it must be an Autoload singleton).
-	if not ProjectSettings.has_setting("autoload/GameDataManager"):
-		_display_error("GameDataManager singleton not found. Please configure it in Project > Project Settings > Autoload.")
+	if not is_instance_valid(_store) or not _store.has_method("get_tiles"):
+		_display_error("GameStore not available. Cannot load settlement data.")
 		return
 	
 	# Store the title of the currently selected tab before clearing everything.
@@ -171,21 +172,14 @@ func _display_settlement_info():
 	var current_convoy_x = roundi(_convoy_data.get("x", -1.0))
 	var current_convoy_y = roundi(_convoy_data.get("y", -1.0))
 
-	# Get map data directly from the GameDataManager singleton instead of loading it here.
-	gdm = get_node_or_null("/root/GameDataManager")
-	if not is_instance_valid(gdm):
-		_display_error("GameDataManager node is not valid or not found in the scene tree.")
-		return
-		
-			
-	# Fetch all settlement data from GameDataManager
-	_all_settlement_data = gdm.get_all_settlements_data()
+	# Fetch settlements + tiles from GameStore snapshot
+	_all_settlement_data = _store.get_settlements() if _store.has_method("get_settlements") else []
 	if _all_settlement_data.is_empty():
-		_display_error("Error: All settlement data not loaded in GameDataManager.")
+		_display_error("Error: Settlement data not loaded.")
 
-	var map_tiles = gdm.map_tiles
+	var map_tiles: Array = _store.get_tiles()
 	if map_tiles.is_empty():
-		_display_error("Error: Map data not loaded in GameDataManager.")
+		_display_error("Error: Map data not loaded.")
 		return
 
 	var target_tile = null
@@ -237,16 +231,23 @@ func _display_settlement_info():
 			_update_top_up_button()
 
 	else:
-		# Ensure the title shows the convoy name (do not replace with coordinates)
+		# No settlement on this tile (likely in transit). Show convoy name and disable settlement-only controls.
 		if is_instance_valid(title_label):
 			var convoy_name: String = String(_convoy_data.get("convoy_name", title_label.text))
 			if not convoy_name.is_empty():
 				title_label.text = convoy_name
-		# Disable warehouse button while in transit
 		if is_instance_valid(warehouse_button):
 			warehouse_button.disabled = true
 			warehouse_button.tooltip_text = "Warehouse unavailable while in transit."
 		_display_error("No settlement found at convoy coordinates: (%d, %d)" % [current_convoy_x, current_convoy_y])
+
+
+func _on_store_convoys_changed(all_convoys_data: Array) -> void:
+	_on_gdm_convoy_data_updated(all_convoys_data)
+
+
+func _on_store_map_changed(_tiles: Array, all_settlements_data: Array) -> void:
+	_on_gdm_settlement_data_updated(all_settlements_data)
 
 func _create_vendor_tab(vendor_data: Dictionary):
 	var vendor_name = vendor_data.get("name", "Unnamed Vendor")
@@ -330,13 +331,10 @@ func _on_warehouse_button_pressed() -> void:
 	if _settlement_data is Dictionary and not _settlement_data.is_empty():
 		payload["settlement"] = _settlement_data.duplicate(true)
 	else:
-		# Try to resolve from GameDataManager for current coordinates
-		var sx = int(roundf(float(_convoy_data.get("x", -9999.0))))
-		var sy = int(roundf(float(_convoy_data.get("y", -9999.0))))
-		if is_instance_valid(gdm) and gdm.has_method("get_settlement_name_from_coords"):
-			var sett_name := String(gdm.get_settlement_name_from_coords(sx, sy))
-			if sett_name != "":
-				payload["settlement_name"] = sett_name
+		# Fallback: resolve settlement name from GameStore snapshot
+		var sett_name := _get_settlement_name_from_convoy_coords()
+		if sett_name != "":
+			payload["settlement_name"] = sett_name
 	emit_signal("open_warehouse_menu_requested", payload)
 
 func create_info_label(text: String) -> Label:
@@ -381,23 +379,17 @@ func _on_title_label_pressed():
 # --- Transaction Logic ---
 
 func _on_item_purchased(_item: Dictionary, _quantity: int, total_cost: float):
-	# Only update user money via GameDataManager. Do NOT mutate local convoy/vendor data.
-	gdm = get_node_or_null("/root/GameDataManager")
-	if is_instance_valid(gdm) and gdm.has_method("update_user_money"):
-		gdm.update_user_money(-total_cost)
-	else:
-		printerr("ConvoySettlementMenu: Could not update user money. GameDataManager not found or is missing 'update_user_money' method.")
-	# Do NOT mutate _convoy_data or vendor data here.
-	# Wait for GameDataManager to emit updated data signals, then refresh UI.
+	# Money/convoy updates are authoritative; request fresh snapshots.
+	if is_instance_valid(_user_service) and _user_service.has_method("refresh_user"):
+		_user_service.refresh_user()
+	if is_instance_valid(_convoy_service) and _convoy_service.has_method("refresh_single"):
+		_convoy_service.refresh_single(str(_convoy_data.get("convoy_id", "")))
 
 func _on_item_sold(_item: Dictionary, _quantity: int, total_value: float):
-	gdm = get_node_or_null("/root/GameDataManager")
-	if is_instance_valid(gdm) and gdm.has_method("update_user_money"):
-		gdm.update_user_money(total_value)
-	else:
-		printerr("ConvoySettlementMenu: Could not update user money. GameDataManager not found or is missing 'update_user_money' method.")
-	# Do NOT mutate _convoy_data or vendor data here.
-	# Wait for GameDataManager to emit updated data signals, then refresh UI.
+	if is_instance_valid(_user_service) and _user_service.has_method("refresh_user"):
+		_user_service.refresh_user()
+	if is_instance_valid(_convoy_service) and _convoy_service.has_method("refresh_single"):
+		_convoy_service.refresh_single(str(_convoy_data.get("convoy_id", "")))
 
 func _on_gdm_convoy_data_updated(all_convoys_data: Array) -> void:
 	# Find the current convoy and update _convoy_data, then refresh UI
@@ -425,11 +417,12 @@ func _on_gdm_settlement_data_updated(all_settlements_data: Array) -> void:
 
 # --- Direct API transaction handlers ---
 func _on_api_resource_txn(_result: Dictionary) -> void:
-	# Called when resource bought/sold; trigger convoy refresh for authoritative state.
-	if is_instance_valid(gdm):
-		gdm.request_convoy_data_refresh()
-		# Also refresh user data (money changes)
-		gdm.request_user_data_refresh()
+	# Called when resource bought/sold; trigger refresh for authoritative state.
+	var convoy_id := str(_convoy_data.get("convoy_id", ""))
+	if convoy_id != "" and is_instance_valid(_convoy_service) and _convoy_service.has_method("refresh_single"):
+		_convoy_service.refresh_single(convoy_id)
+	if is_instance_valid(_user_service) and _user_service.has_method("refresh_user"):
+		_user_service.refresh_user()
 	# Re-enable top-up button after a short delay so updated values incorporated.
 	call_deferred("_post_txn_update_ui")
 
@@ -447,7 +440,7 @@ func _post_txn_update_ui():
 func _refresh_all_vendor_panels():
 	# Only call refresh_data, never initialize, and always pass deep copies.
 	# IMPORTANT: Skip refreshing the currently active vendor tab; the active
-	# panel already performs an authoritative refresh via GameDataManager
+	# panel already performs its own authoritative refresh
 	# vendor_panel_data_ready. Double-refreshing it causes selection flicker
 	# during transactions.
 	var active_idx: int = vendor_tab_container.current_tab
@@ -504,8 +497,8 @@ func _update_top_up_button():
 		return
 
 	var user_money: float = 0.0
-	if is_instance_valid(gdm):
-		var user_data = gdm.get_current_user_data()
+	if is_instance_valid(_user_service) and _user_service.has_method("get_user"):
+		var user_data: Dictionary = _user_service.get_user()
 		user_money = float(user_data.get("money", 0.0))
 	var can_afford = total_cost <= user_money + 0.0001
 	var _label_resources = ", ".join(planned_list)
@@ -640,10 +633,10 @@ func _calculate_top_up_plan() -> Dictionary:
 func _on_top_up_button_pressed():
 	if _top_up_plan.is_empty() or _top_up_plan.get("resources", {}).is_empty():
 		return
-	if not is_instance_valid(gdm):
-		return
 	var convoy_id = str(_convoy_data.get("convoy_id", ""))
 	if convoy_id.is_empty():
+		return
+	if not is_instance_valid(_api):
 		return
 	# Execute purchases individually (one PATCH per resource) based on current plan snapshot.
 	for alloc in _top_up_plan.allocations:
@@ -653,13 +646,48 @@ func _on_top_up_button_pressed():
 		if res == "" or vendor_id.is_empty() or send_qty <= 0:
 			continue
 		print("[TopUp] Purchasing %d %s from vendor %s (price=%.2f) convoy=%s" % [send_qty, res, vendor_id, float(alloc.get("price",0.0)), convoy_id])
-		var item_dict = {"is_raw_resource": true}
-		item_dict[res] = send_qty
-		gdm.buy_item(convoy_id, vendor_id, item_dict, send_qty)
+		# Raw resources use dedicated API call
+		_api.buy_resource(vendor_id, convoy_id, String(res), float(send_qty))
 	# Disable button until data refresh comes back
 	if is_instance_valid(top_up_button):
 		top_up_button.disabled = true
 		top_up_button.text = "Top Up (Processing...)"
+
+
+func _on_store_user_changed(_user: Dictionary) -> void:
+	# Money changes affect top-up affordability/tooltips.
+	_update_top_up_button()
+
+
+func _get_settlement_name_from_convoy_coords() -> String:
+	if not (_convoy_data is Dictionary):
+		return ""
+	if not is_instance_valid(_store) or not _store.has_method("get_tiles"):
+		return ""
+	var sx := int(roundf(float(_convoy_data.get("x", -9999.0))))
+	var sy := int(roundf(float(_convoy_data.get("y", -9999.0))))
+	if sx < 0 or sy < 0:
+		return ""
+	var tiles: Array = _store.get_tiles()
+	if sy >= 0 and sy < tiles.size():
+		var row: Variant = tiles[sy]
+		if row is Array and sx >= 0 and sx < (row as Array).size():
+			var tile: Variant = (row as Array)[sx]
+			if tile is Dictionary and tile.has("settlements") and tile.settlements is Array and not tile.settlements.is_empty():
+				var s0: Variant = tile.settlements[0]
+				if s0 is Dictionary and (s0 as Dictionary).has("name"):
+					return String((s0 as Dictionary).get("name", ""))
+				elif s0 is String:
+					return String(s0)
+	# Fallback: scan settlements snapshot by coords
+	if _store.has_method("get_settlements"):
+		for s in _store.get_settlements():
+			if s is Dictionary:
+				var sx2 := int(roundf(float(s.get("x", -9999.0))))
+				var sy2 := int(roundf(float(s.get("y", -9999.0))))
+				if sx2 == sx and sy2 == sy:
+					return String(s.get("name", ""))
+	return ""
 
 func _style_top_up_button():
 	if not is_instance_valid(top_up_button):

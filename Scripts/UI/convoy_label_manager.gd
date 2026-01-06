@@ -1,4 +1,8 @@
 extends Node
+
+@export var debug_logging: bool = false
+
+const DATE_TIME_UTIL = preload("res://Scripts/System/date_time_util.gd")
 # Cached references from UIManager or main
 var _convoy_label_container_ref: Node2D # Will be assigned programmatically
 var _label_settings_ref: LabelSettings
@@ -253,7 +257,7 @@ func _update_convoy_panel_content(panel: Panel, convoy_data: Dictionary, p_convo
 	var formatted_eta: String = "N/A" # Default
 	# Use shared date/time utility to produce a user-friendly ETA: time only if today, otherwise date + time. No remaining text for compactness.
 	if eta_raw_string != "N/A":
-		formatted_eta = preload("res://Scripts/System/date_time_util.gd").format_timestamp_display(eta_raw_string, false)
+		formatted_eta = DATE_TIME_UTIL.format_timestamp_display(eta_raw_string, false)
 
 	var label_text: String
 	if formatted_eta != "N/A":
@@ -358,8 +362,8 @@ func _position_convoy_panel(panel: Panel, convoy_data: Dictionary, existing_labe
 	var convoy_map_x: float = convoy_data.get('x', 0.0)
 	var convoy_map_y: float = convoy_data.get('y', 0.0)
 
-	# Diagnostic logging for convoy label placement
-	print("[ConvoyLabelManager] Placing label for convoy_id:", current_convoy_id_str, "x:", convoy_map_x, "y:", convoy_map_y)
+	if debug_logging:
+		print("[ConvoyLabelManager] Placing label for convoy_id:", current_convoy_id_str, "x:", convoy_map_x, "y:", convoy_map_y)
 
 	# Horizontal Offset Calculation (in world units)
 	var base_offset_value: float
@@ -374,7 +378,8 @@ func _position_convoy_panel(panel: Panel, convoy_data: Dictionary, existing_labe
 	var panel_actual_size = panel.size
 	if panel_actual_size.x <= 0 or panel_actual_size.y <= 0:
 		panel_actual_size = panel.get_minimum_size()
-		print("[ConvoyLabelManager] Panel size is zero for convoy_id:", current_convoy_id_str)
+		if debug_logging:
+			print("[ConvoyLabelManager] Panel size is zero for convoy_id:", current_convoy_id_str)
 	# Calculate convoy's center in local/world coordinates (relative to _convoy_label_container_ref's origin)
 	# These are based on the unscaled map texture's tile dimensions.
 	var convoy_center_local_x: float = (convoy_map_x + 0.5) * _cached_actual_tile_width_on_texture
@@ -384,13 +389,15 @@ func _position_convoy_panel(panel: Panel, convoy_data: Dictionary, existing_labe
 	var panel_desired_local_x = convoy_center_local_x + current_horizontal_offset_world
 	var panel_desired_local_y = convoy_center_local_y - (panel_actual_size.y / 2.0) # Vertically center panel against icon's y
 	var panel_desired_local_pos = Vector2(panel_desired_local_x, panel_desired_local_y)
-	print("[ConvoyLabelManager] Desired panel position for convoy_id:", current_convoy_id_str, panel_desired_local_pos)
+	if debug_logging:
+		print("[ConvoyLabelManager] Desired panel position for convoy_id:", current_convoy_id_str, panel_desired_local_pos)
 	panel.position = panel_desired_local_pos
 
 	# Apply user-defined position or anti-collision (all in local space of convoy_label_container)
 	if p_selected_convoy_ids.has(current_convoy_id_str) and p_convoy_label_user_positions.has(current_convoy_id_str):
 		panel.position = p_convoy_label_user_positions[current_convoy_id_str] # User positions are local
-		print("[ConvoyLabelManager] Using user-defined position for convoy_id:", current_convoy_id_str, panel.position)
+		if debug_logging:
+			print("[ConvoyLabelManager] Using user-defined position for convoy_id:", current_convoy_id_str, panel.position)
 		var current_panel_rect = Rect2(panel.position, panel_actual_size)
 		for _attempt in range(12): # Max attempts
 			var collides_with_existing: bool = false

@@ -218,29 +218,12 @@ func _ready() -> void:
 	# No persistent requester for mechanics; we will create ephemeral HTTPRequest nodes per request
 	_start_request_status_probe()
 	_load_auth_session_token()
-	# Proactively connect to GameDataManager if available so mechanics pipeline receives compat responses
-	_call_deferred_connect_gdm()
-func _call_deferred_connect_gdm() -> void:
-	call_deferred("_try_connect_gdm")
-
-func _try_connect_gdm() -> void:
-	var gdm = get_node_or_null("/root/GameDataManager")
-	if is_instance_valid(gdm):
-		if gdm.has_method("_on_part_compatibility_checked"):
-			if not is_connected("part_compatibility_checked", gdm._on_part_compatibility_checked):
-				print("[APICalls] Wiring part_compatibility_checked -> GameDataManager._on_part_compatibility_checked")
-				part_compatibility_checked.connect(gdm._on_part_compatibility_checked)
-		else:
-			print("[APICalls] GameDataManager missing handler _on_part_compatibility_checked; skipping auto-wire")
-	else:
-		print("[APICalls] GameDataManager not present at ready; will rely on GDM to connect.")
 	# Auto-resolve user if we have a still-valid token
 	if is_auth_token_valid():
 		print("[APICalls] Auto-login attempt with persisted session token.")
 		resolve_current_user_id()
-	# Initiate the request to get all in-transit convoys.
-	# The data will be processed in _on_request_completed when it arrives.
-	# get_all_in_transit_convoys() # This will now be triggered by GameDataManager after login or if no user
+	# Initial data requests (map/user/convoys) are triggered by the post-login bootstrap
+	# (e.g., GameScreenManager / services).
 
 func set_user_id(p_user_id: String) -> void:
 	current_user_id = p_user_id
@@ -1620,7 +1603,7 @@ func _on_request_completed(result: int, response_code: int, _headers: PackedStri
 			final_convoy_list = json_response
 		elif json_response is Dictionary:
 			# This is likely a user object from /user/get, which contains a convoy list.
-			# Also emit the full user object for GameDataManager to cache.
+			# Also emit the full user object for downstream consumers.
 			if request_purpose_at_start == RequestPurpose.USER_CONVOYS:
 				emit_signal('user_data_received', json_response)
 
