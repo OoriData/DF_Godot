@@ -1525,7 +1525,12 @@ func select_convoy_by_id(convoy_id_to_select: String, _allow_toggle: bool = true
 	if convoy_id_to_select == "":
 		if not _selected_convoy_id.is_empty():
 			_selected_convoy_id = ""
-			convoy_selection_changed.emit(get_selected_convoy()) # Will emit null
+			var _sel_none: Variant = get_selected_convoy() # Will emit null
+			convoy_selection_changed.emit(_sel_none)
+			var _hub_none := get_node_or_null("/root/SignalHub")
+			if is_instance_valid(_hub_none):
+				_hub_none.convoy_selection_changed.emit(_sel_none)
+				_hub_none.selected_convoy_ids_changed.emit([])
 		return
 
 	# If the requested ID is already selected, do nothing (toggle behavior removed)
@@ -1534,10 +1539,17 @@ func select_convoy_by_id(convoy_id_to_select: String, _allow_toggle: bool = true
 
 	# Change selection and emit update
 	_selected_convoy_id = convoy_id_to_select
-	convoy_selection_changed.emit(get_selected_convoy())
+	var _sel: Variant = get_selected_convoy()
+	convoy_selection_changed.emit(_sel)
+	var _hub := get_node_or_null("/root/SignalHub")
+	if is_instance_valid(_hub):
+		_hub.convoy_selection_changed.emit(_sel)
+		if _sel is Dictionary and not (_sel as Dictionary).is_empty():
+			_hub.selected_convoy_ids_changed.emit([convoy_id_to_select])
+		else:
+			_hub.selected_convoy_ids_changed.emit([])
 
 	# Proactively prefetch ConvoyMenu data so destinations are ready at open
-	var _sel: Variant = get_selected_convoy()
 	if _sel is Dictionary and not (_sel as Dictionary).is_empty():
 		# Warm vendor/settlement data at the selected convoy's coords
 		var sx := int(roundf(float((_sel as Dictionary).get("x", -9999))))

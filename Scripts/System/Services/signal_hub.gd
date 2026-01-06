@@ -10,6 +10,14 @@ signal map_changed(tiles: Array, settlements: Array)
 signal convoys_changed(convoys: Array)
 signal convoy_updated(convoy: Dictionary)
 
+# UI selection (source of truth for convoy selection events)
+# - convoy_selection_requested is an intent (dropdown/map click/etc.)
+# - convoy_selection_changed is the resolved selection payload (Dictionary or null)
+# - selected_convoy_ids_changed is the resolved id list used by map/UI highlight
+signal convoy_selection_requested(convoy_id: String, allow_toggle: bool)
+signal convoy_selection_changed(selected_convoy_data: Variant)
+signal selected_convoy_ids_changed(selected_ids: Array)
+
 # User
 signal user_changed(user: Dictionary)
 signal auth_state_changed(state: String)

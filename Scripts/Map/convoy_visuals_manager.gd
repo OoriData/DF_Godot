@@ -12,8 +12,13 @@ var _active_convoy_nodes: Dictionary = {} # { "convoy_id_str": ConvoyNode }
 var convoy_parent_node: Node
 var terrain_tilemap: TileMapLayer # Reference to the tilemap for coordinate conversion
 
-# Add a reference to GameDataManager
-var gdm: Node = null
+@onready var _store: Node = get_node_or_null("/root/GameStore")
+@onready var _hub: Node = get_node_or_null("/root/SignalHub")
+@onready var _convoy_service: Node = get_node_or_null("/root/ConvoyService")
+
+var _latest_convoys: Array = []
+var _selected_convoy_ids: Array[String] = []
+var _initialized: bool = false
 
 
 func initialize(p_convoy_parent_node: Node, p_terrain_tilemap: TileMapLayer):
@@ -23,29 +28,59 @@ func initialize(p_convoy_parent_node: Node, p_terrain_tilemap: TileMapLayer):
 		printerr("ConvoyVisualsManager: convoy_parent_node is invalid during initialization.")
 	if not is_instance_valid(terrain_tilemap):
 		printerr("ConvoyVisualsManager: terrain_tilemap is invalid during initialization.")
+	_initialized = true
+	# If we already have data (autoload order), render immediately.
+	if not _latest_convoys.is_empty():
+		_refresh_visuals()
 
 
 func _ready():
-	# Connect to GameDataManager's convoy_data_updated signal
-	gdm = get_node_or_null("/root/GameDataManager")
-	if is_instance_valid(gdm):
-		if not gdm.is_connected("convoy_data_updated", Callable(self, "_on_gdm_convoy_data_updated")):
-			gdm.convoy_data_updated.connect(Callable(self, "_on_gdm_convoy_data_updated"))
+	# Subscribe to store snapshots.
+	if is_instance_valid(_store) and _store.has_signal("convoys_changed"):
+		if not _store.convoys_changed.is_connected(_on_store_convoys_changed):
+			_store.convoys_changed.connect(_on_store_convoys_changed)
+		_latest_convoys = _store.get_convoys() if _store.has_method("get_convoys") else []
+
+	# Subscribe to selection highlights (migrated selection system).
+	if is_instance_valid(_hub) and _hub.has_signal("selected_convoy_ids_changed"):
+		if not _hub.selected_convoy_ids_changed.is_connected(_on_selected_convoy_ids_changed):
+			_hub.selected_convoy_ids_changed.connect(_on_selected_convoy_ids_changed)
+
+	# If initialized early and store already has data, render now.
+	if _initialized and not _latest_convoys.is_empty():
+		_refresh_visuals()
 
 
-# Handler for updated convoy data
-func _on_gdm_convoy_data_updated(all_convoy_data: Array) -> void:
-	# This function is now the primary trigger for updating convoy visuals.
-	# The augmentation and update logic will be called from here.
+func _on_store_convoys_changed(convoys: Array) -> void:
+	_latest_convoys = convoys if convoys != null else []
+	_refresh_visuals()
 
-	# In a real scenario, this would come from an interaction manager or game state manager.
-	var selected_convoy_ids_list: Array[String] = [] # Placeholder
+
+func _on_selected_convoy_ids_changed(selected_ids: Array) -> void:
+	_selected_convoy_ids = []
+	if selected_ids is Array:
+		for item in selected_ids:
+			var id_str := str(item)
+			if id_str != "":
+				_selected_convoy_ids.append(id_str)
+	_refresh_visuals()
+
+
+func update_selected_convoys(selected_ids: Array) -> void:
+	# Back-compat: main.gd currently calls this directly.
+	_on_selected_convoy_ids_changed(selected_ids)
+
+
+func _refresh_visuals() -> void:
+	if not _initialized:
+		return
+	if not is_instance_valid(convoy_parent_node) or not is_instance_valid(terrain_tilemap):
+		return
 	var convoy_id_to_color_map: Dictionary = {}
-	if is_instance_valid(gdm):
-		convoy_id_to_color_map = gdm.get_convoy_id_to_color_map()
-
-	var augmented_data = augment_convoy_data_with_offsets(all_convoy_data)
-	update_convoy_nodes_on_map(augmented_data, convoy_id_to_color_map, selected_convoy_ids_list)
+	if is_instance_valid(_convoy_service) and _convoy_service.has_method("get_color_map"):
+		convoy_id_to_color_map = _convoy_service.get_color_map()
+	var augmented_data = augment_convoy_data_with_offsets(_latest_convoys)
+	update_convoy_nodes_on_map(augmented_data, convoy_id_to_color_map, _selected_convoy_ids)
 
 
 func augment_convoy_data_with_offsets(convoy_data_array: Array) -> Array:

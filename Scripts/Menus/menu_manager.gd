@@ -20,6 +20,9 @@ var _next_menu_extra_arg = null # Temp storage for passing a second arg to initi
 
 var _menu_container_host: Control = null
 
+@onready var _hub: Node = get_node_or_null("/root/SignalHub")
+@onready var _store: Node = get_node_or_null("/root/GameStore")
+
 var _base_z_index: int
 # Ensure this Z-index is higher than ConvoyListPanel's EXPANDED_OVERLAY_Z_INDEX (100)
 const MENU_MANAGER_ACTIVE_Z_INDEX = 150 
@@ -43,28 +46,26 @@ func _ready():
 	visible = false
 	mouse_filter = MOUSE_FILTER_IGNORE
 	_base_z_index = self.z_index # Store initial z_index
-	
-	# Get the GameDataManager and connect to its signal
-	var gdm = get_node_or_null("/root/GameDataManager")
-	if is_instance_valid(gdm):
-		if gdm.has_signal("convoy_selection_changed"):
-			gdm.convoy_selection_changed.connect(_on_gdm_convoy_selection_changed)
-		else:
-			printerr("MenuManager: GameDataManager is missing 'convoy_selection_changed' signal.")
-		# Connect to convoy data updates so active menus refresh automatically
-		if gdm.has_signal("convoy_data_updated") and not gdm.convoy_data_updated.is_connected(_on_gdm_convoy_data_updated):
-			gdm.convoy_data_updated.connect(_on_gdm_convoy_data_updated)
-	else:
-		printerr("MenuManager: Could not find GameDataManager autoload.")
-	
-	# Example: open_main_menu()
-	print("MenuManager Initialized: visible=", visible, ", mouse_filter=", mouse_filter)
-	pass
 
-func _on_gdm_convoy_selection_changed(selected_convoy_data: Variant):
+	if is_instance_valid(_hub):
+		if _hub.has_signal("convoy_selection_changed") and not _hub.convoy_selection_changed.is_connected(_on_hub_convoy_selection_changed):
+			_hub.convoy_selection_changed.connect(_on_hub_convoy_selection_changed)
+	else:
+		printerr("MenuManager: Could not find SignalHub autoload.")
+
+	if is_instance_valid(_store):
+		if _store.has_signal("convoys_changed") and not _store.convoys_changed.is_connected(_on_store_convoys_changed):
+			_store.convoys_changed.connect(_on_store_convoys_changed)
+	else:
+		printerr("MenuManager: Could not find GameStore autoload.")
+	
+	print("MenuManager Initialized: visible=", visible, ", mouse_filter=", mouse_filter)
+
+
+func _on_hub_convoy_selection_changed(selected_convoy_data: Variant) -> void:
 	# This handler is called when a convoy is selected from the dropdown.
 	# We only want to open the menu if a valid convoy is selected, not when it's deselected (null).
-	if selected_convoy_data:
+	if selected_convoy_data is Dictionary and not (selected_convoy_data as Dictionary).is_empty():
 		open_convoy_menu(selected_convoy_data)
 
 func _input(event: InputEvent):
@@ -124,13 +125,10 @@ func open_mechanics_menu(convoy_data = null):
 	if convoy_data.has("in_settlement"):
 		in_settlement = bool(convoy_data.get("in_settlement"))
 	else:
-		# Fallback: if coords map to a settlement via GameDataManager
-		var gdm = get_node_or_null("/root/GameDataManager")
-		if is_instance_valid(gdm) and gdm.has_method("get_settlement_name_from_coords"):
-			var sx = int(roundf(float(convoy_data.get("x", -9999.0))))
-			var sy = int(roundf(float(convoy_data.get("y", -9999.0))))
-			var sett_name = gdm.get_settlement_name_from_coords(sx, sy)
-			in_settlement = sett_name != null and String(sett_name) != ""
+		# Fallback: if coords map to a settlement via GameStore snapshots
+		var sx = int(roundf(float(convoy_data.get("x", -9999.0))))
+		var sy = int(roundf(float(convoy_data.get("y", -9999.0))))
+		in_settlement = _has_settlement_at_coords(sx, sy)
 	if not in_settlement:
 		push_warning("Mechanic is only available in a settlement.")
 		return
@@ -250,9 +248,7 @@ func _show_menu(menu_scene_resource, data_to_pass = null, add_to_stack: bool = t
 	# --- DIAGNOSTIC TEST: Force all menu layers to ignore input ---
 	# A menu is now active. This manager will now intercept all clicks.
 	# mouse_filter = MOUSE_FILTER_STOP
-	self.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	if is_instance_valid(current_active_menu):
-		current_active_menu.mouse_filter = MOUSE_FILTER_IGNORE
+	# (Removed) Diagnostic overrides that broke menu input handling.
 	# --- END DIAGNOSTIC TEST ---
 
 	self.z_index = MENU_MANAGER_ACTIVE_Z_INDEX
@@ -316,9 +312,7 @@ func go_back():
 					return
 		# No previous menu to go back to; fully closing menus.
 		# Deselect any globally selected convoy so the user isn't forced to click again to clear it.
-		var gdm_none = get_node_or_null("/root/GameDataManager")
-		if is_instance_valid(gdm_none) and gdm_none.has_method("select_convoy_by_id"):
-			gdm_none.select_convoy_by_id("", false)
+		_request_clear_selection()
 		emit_signal("menu_visibility_changed", false, "")
 		visible = false
 		return
@@ -332,9 +326,7 @@ func go_back():
 		mouse_filter = MOUSE_FILTER_IGNORE
 		self.z_index = _base_z_index
 		# We're closing the last open menu. Clear convoy selection to remove the highlight in the convoy list.
-		var gdm = get_node_or_null("/root/GameDataManager")
-		if is_instance_valid(gdm) and gdm.has_method("select_convoy_by_id"):
-			gdm.select_convoy_by_id("", false)
+		_request_clear_selection()
 		emit_signal("menu_visibility_changed", false, "")
 		visible = false
 		return
@@ -348,11 +340,9 @@ func go_back():
 	var _prev_data2 = _previous_menu_info2.get("data")
 	# Replace with freshest convoy data if available
 	if _prev_data2 is Dictionary and _prev_data2.has("convoy_id"):
-		var gdm2 = get_node_or_null("/root/GameDataManager")
-		if is_instance_valid(gdm2) and gdm2.has_method("get_convoy_by_id"):
-			var latest = gdm2.get_convoy_by_id(str(_prev_data2.get("convoy_id")))
-			if latest is Dictionary and not latest.is_empty():
-				_prev_data2 = latest.duplicate(true)
+		var latest2 := _get_latest_convoy_by_id(str(_prev_data2.get("convoy_id")))
+		if not latest2.is_empty():
+			_prev_data2 = latest2.duplicate(true)
 	if _prev_scene_path2:
 		var _scene_resource2 = load(_prev_scene_path2)
 		if _scene_resource2:
@@ -379,9 +369,7 @@ func close_all_menus():
 			mouse_filter = MOUSE_FILTER_IGNORE # Ensure mouse filter is reset.
 			self.z_index = _base_z_index # Ensure z_index is reset
 			# Also clear any selected convoy to keep UI consistent with a closed menu state.
-			var gdm = get_node_or_null("/root/GameDataManager")
-			if is_instance_valid(gdm) and gdm.has_method("select_convoy_by_id"):
-				gdm.select_convoy_by_id("", false)
+			_request_clear_selection()
 			emit_signal("menu_visibility_changed", false, "")
 		return
 
@@ -391,8 +379,8 @@ func close_all_menus():
 	# and it closes the last menu.
 
 
-# Handler to update the currently active menu if convoy data changes
-func _on_gdm_convoy_data_updated(all_convoy_data: Array) -> void:
+
+func _on_store_convoys_changed(all_convoy_data: Array) -> void:
 	if not is_instance_valid(current_active_menu):
 		return
 	if current_active_menu.has_method("initialize_with_data"):
@@ -418,3 +406,39 @@ func _on_gdm_convoy_data_updated(all_convoy_data: Array) -> void:
 						entry["data"] = convoy2.duplicate(true)
 						menu_stack[i] = entry
 						break
+
+
+func _request_clear_selection() -> void:
+	if not is_instance_valid(_hub):
+		return
+	if _hub.has_signal("convoy_selection_requested"):
+		_hub.convoy_selection_requested.emit("", false)
+	else:
+		# Fallback: directly clear resolved selection if request signal isn't available.
+		_hub.convoy_selection_changed.emit(null)
+		_hub.selected_convoy_ids_changed.emit([])
+
+
+func _get_latest_convoy_by_id(convoy_id: String) -> Dictionary:
+	if convoy_id.is_empty() or not is_instance_valid(_store) or not _store.has_method("get_convoys"):
+		return {}
+	var convoys: Array = _store.get_convoys()
+	for c in convoys:
+		if c is Dictionary and (c as Dictionary).has("convoy_id") and str((c as Dictionary).get("convoy_id")) == convoy_id:
+			return c as Dictionary
+	return {}
+
+
+func _has_settlement_at_coords(x: int, y: int) -> bool:
+	if x == -9999 or y == -9999:
+		return false
+	if not is_instance_valid(_store) or not _store.has_method("get_settlements"):
+		return false
+	var settlements: Array = _store.get_settlements()
+	for s in settlements:
+		if s is Dictionary:
+			var sx := int((s as Dictionary).get("x", -9999))
+			var sy := int((s as Dictionary).get("y", -9999))
+			if sx == x and sy == y:
+				return true
+	return false

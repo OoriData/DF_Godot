@@ -100,63 +100,48 @@ func _dbg_menu(tag: String, data: Dictionary = {}):
 
 func _ready():
 	# Defer the initial camera setup to ensure the UI layout is stable.
-	# print("[DFCAM-DEBUG] MainScreen: _ready called, deferring initial camera/UI setup.")
 	call_deferred("_initial_camera_and_ui_setup")
-	# Defer signal connections to ensure child scenes are also ready.
 	call_deferred("_connect_deferred_signals")
 
 	# Connect to the MenuManager's signal that indicates when a menu is opened or closed.
 	var menu_manager = get_node_or_null("/root/MenuManager")
 	if menu_manager:
-		# NEW: Register this screen's menu container with the manager.
 		if menu_manager.has_method("register_menu_container"):
 			menu_manager.register_menu_container(menu_container)
-		else:
-			printerr("MainScreen: CRITICAL - MenuManager is missing 'register_menu_container' method.")
-
 		if not menu_manager.is_connected("menu_visibility_changed", Callable(self, "_on_menu_visibility_changed")):
 			menu_manager.connect("menu_visibility_changed", Callable(self, "_on_menu_visibility_changed"))
-			# print("[MainScreen] Successfully connected to MenuManager's menu_visibility_changed signal.")
-		# Listen for convoy focus requests with data
 		if not menu_manager.is_connected("convoy_menu_focus_requested", Callable(self, "_on_convoy_menu_focus_requested")):
 			menu_manager.connect("convoy_menu_focus_requested", Callable(self, "_on_convoy_menu_focus_requested"))
-	else:
-		printerr("MainScreen: CRITICAL - Could not find MenuManager at /root/MenuManager. Camera adjustments will not work.")
 
-	# --- Window/MapView Resize Handling ---
-	# Use _notification for resize events instead of connecting to nonexistent signal
-	# Also connect to map_view's size_changed if available
+	# Window/MapView Resize Handling
 	if is_instance_valid(map_view):
 		if not map_view.is_connected("size_changed", Callable(self, "_on_map_view_size_changed")):
 			map_view.connect("size_changed", Callable(self, "_on_map_view_size_changed"))
 
-	# --- Load Options from SettingsManager and subscribe ---
+	# Load Options from SettingsManager and subscribe
 	var sm = get_node_or_null("/root/SettingsManager")
 	if is_instance_valid(sm):
 		_apply_settings_snapshot()
 		if not sm.is_connected("setting_changed", Callable(self, "_on_setting_changed")):
 			sm.setting_changed.connect(_on_setting_changed)
 
-	# Subscribe to initial and convoy updates to detect empty state
-	var gdm = get_node_or_null("/root/GameDataManager")
-	if is_instance_valid(gdm):
-		if not gdm.is_connected("initial_data_ready", Callable(self, "_on_initial_data_ready")):
-			gdm.initial_data_ready.connect(_on_initial_data_ready)
-		if not gdm.is_connected("convoy_data_updated", Callable(self, "_on_convoy_data_updated")):
-			gdm.convoy_data_updated.connect(_on_convoy_data_updated)
-		if not gdm.is_connected("user_data_updated", Callable(self, "_on_user_data_updated")):
-			gdm.user_data_updated.connect(_on_user_data_updated)
+	# --- NEW: Subscribe to GameStore and SignalHub events ---
+	var store = get_node_or_null("/root/GameStore")
+	if is_instance_valid(store):
+		if not store.is_connected("map_changed", Callable(self, "_on_store_map_changed")):
+			store.map_changed.connect(_on_store_map_changed)
+		if not store.is_connected("convoys_changed", Callable(self, "_on_store_convoys_changed")):
+			store.convoys_changed.connect(_on_store_convoys_changed)
+		if not store.is_connected("user_changed", Callable(self, "_on_store_user_changed")):
+			store.user_changed.connect(_on_store_user_changed)
+		# Pull initial state and check onboarding/convoy prompt
+		call_deferred("_check_or_prompt_new_convoy_from_store")
 
-	# Proactively check once after layout settles (in case no signals fire yet)
-	call_deferred("_check_or_prompt_new_convoy")
+	var hub = get_node_or_null("/root/SignalHub")
+	if is_instance_valid(hub):
+		if not hub.is_connected("initial_data_ready", Callable(self, "_on_initial_data_ready")):
+			hub.initial_data_ready.connect(_on_initial_data_ready)
 
-	# --- API Error Handling ---
-	var api_calls = get_node_or_null("/root/APICalls")
-	if is_instance_valid(api_calls):
-		if not api_calls.is_connected("fetch_error", Callable(self, "_on_api_fetch_error")):
-			api_calls.connect("fetch_error", Callable(self, "_on_api_fetch_error"))
-	else:
-		printerr("MainScreen: Could not find APICalls node to connect error handler.")
 	_error_dialog_scene = load(ERROR_DIALOG_SCENE_PATH)
 # Respond to Control resize events
 
@@ -437,99 +422,65 @@ func _get_primary_convoy_data() -> Dictionary:
 			var md = active_menu.get_meta("menu_data")
 			if typeof(md) == TYPE_DICTIONARY and not md.is_empty():
 				return md
-	# Fall back to GameDataManager selected convoy ids
-	var gdm = get_node_or_null("/root/GameDataManager")
-	if is_instance_valid(gdm):
-		var selected_ids := []
-		if gdm.has_method("get_selected_convoy_ids"):
-			selected_ids = gdm.get_selected_convoy_ids()
-		var all_convoys := []
-		if gdm.has_method("get_all_convoy_data"):
-			all_convoys = gdm.get_all_convoy_data()
-		if selected_ids is Array and not selected_ids.is_empty() and all_convoys is Array:
-			for c in all_convoys:
-				if typeof(c) == TYPE_DICTIONARY:
-					var cid = str(c.get("id", ""))
-					if selected_ids.has(cid):
-						return c
-		# Fallback: return first convoy if any
-		if all_convoys is Array and not all_convoys.is_empty():
-			var first = all_convoys[0]
-			if typeof(first) == TYPE_DICTIONARY:
-				return first
+	# Use GameStore for selected convoy (if selection logic is needed, adapt as needed)
+	var store = get_node_or_null("/root/GameStore")
+	if is_instance_valid(store):
+		var convoys = store.get_convoys() if store.has_method("get_convoys") else []
+		if convoys is Array and not convoys.is_empty():
+			return convoys[0] # TODO: Replace with actual selection logic if needed
 	return {}
 
 func _on_initial_data_ready():
 	if onboarding_log_enabled:
 		print("[Onboarding] initial_data_ready received; checking convoys…")
-	_check_or_prompt_new_convoy()
+	_check_or_prompt_new_convoy_from_store()
 
-func _on_convoy_data_updated(all_convoys: Array):
+func _on_store_convoys_changed(convoys: Array):
 	if onboarding_log_enabled:
-		print("[Onboarding] convoy_data_updated received; convoys passed count=", (all_convoys.size() if all_convoys is Array else -1))
-	_check_or_prompt_new_convoy(all_convoys)
+		print("[Onboarding] store convoys_changed received; convoys count=", (convoys.size() if convoys is Array else -1))
+	_check_or_prompt_new_convoy_from_store()
 
-func _on_user_data_updated(_user: Dictionary):
+func _on_store_user_changed(_user: Dictionary):
 	if onboarding_log_enabled:
-		print("[Onboarding] user_data_updated received; re-checking convoys…")
-	# Print full user object so we can inspect tutorial flags/fields
-	var user_dump := "<non-dict>"
-	if typeof(_user) == TYPE_DICTIONARY:
-		user_dump = JSON.stringify(_user)
-		var md = _user.get("metadata", {})
+		print("[Onboarding] store user_changed received; re-checking convoys…")
+	_check_or_prompt_new_convoy_from_store()
+
+func _check_or_prompt_new_convoy_from_store():
+	var store = get_node_or_null("/root/GameStore")
+	if not is_instance_valid(store):
+		return
+	var convoys = store.get_convoys() if store.has_method("get_convoys") else []
+	var user = store.get_user() if store.has_method("get_user") else {}
+	var has_any = convoys is Array and convoys.size() > 0
+	var tutorial_stage := -1
+	if typeof(user) == TYPE_DICTIONARY:
+		var md = user.get("metadata", {})
 		if typeof(md) == TYPE_DICTIONARY and md.has("tutorial"):
 			var t = md["tutorial"]
-			var stage = int(t) if typeof(t) in [TYPE_INT, TYPE_FLOAT] else -1
-			if onboarding_log_enabled:
-				print("[Onboarding] user.metadata.tutorial=", stage)
+			if typeof(t) == TYPE_INT:
+				tutorial_stage = t
+			elif typeof(t) == TYPE_FLOAT:
+				tutorial_stage = int(t)
+			elif typeof(t) == TYPE_STRING:
+				var parsed := int(t)
+				tutorial_stage = parsed
 	if onboarding_log_enabled:
-		print("[Onboarding] user object:", user_dump)
-	_check_or_prompt_new_convoy()
-
-func _check_or_prompt_new_convoy(all_convoys: Array = []):
-	var gdm = get_node_or_null("/root/GameDataManager")
-	var convoys := all_convoys
-	if convoys.is_empty() and is_instance_valid(gdm) and gdm.has_method("get_all_convoy_data"):
-		convoys = gdm.get_all_convoy_data()
-	var has_any := convoys is Array and convoys.size() > 0
-
-	# Determine tutorial stage from user metadata
-	var tutorial_stage := -1
-	if is_instance_valid(gdm) and gdm.has_method("get_current_user_data"):
-		var u: Dictionary = gdm.get_current_user_data()
-		if typeof(u) == TYPE_DICTIONARY:
-			var md = u.get("metadata", {})
-			if typeof(md) == TYPE_DICTIONARY and md.has("tutorial"):
-				var t = md["tutorial"]
-				if typeof(t) == TYPE_INT:
-					tutorial_stage = t
-				elif typeof(t) == TYPE_FLOAT:
-					tutorial_stage = int(t)
-				elif typeof(t) == TYPE_STRING:
-					# Attempt to parse string to int
-					var parsed := int(t)
-					# If non-numeric strings become 0; guard with regex if needed later
-					tutorial_stage = parsed
-
-	if onboarding_log_enabled:
-		print("[Onboarding] _check_or_prompt_new_convoy: gdm_valid=", is_instance_valid(gdm),
-			" convoys_is_array=", (convoys is Array),
+		print("[Onboarding] _check_or_prompt_new_convoy_from_store: convoys_is_array=", (convoys is Array),
 			" count=", (convoys.size() if convoys is Array else -1),
 			" has_any=", has_any,
 			" tutorial_stage=", tutorial_stage)
-
-	# Gate the prompt strictly by tutorial stage: only when stage == 1 and user has no convoys
 	if tutorial_stage != 1:
 		if onboarding_log_enabled:
 			print("[Onboarding] Tutorial stage is not 1; suppressing first-convoy prompt.")
 		_hide_new_convoy_dialog()
 		return
-
 	if has_any:
 		_hide_new_convoy_dialog()
 		return
-
 	_show_new_convoy_dialog()
+# Add new handlers for GameStore map_changed if needed
+func _on_store_map_changed(_tiles: Array, _settlements: Array):
+	pass # Add map update logic if needed
 
 func _on_api_fetch_error(message: String):
 	# Check if this is an error that should be handled by a specific UI component
@@ -753,14 +704,13 @@ func _on_new_convoy_create(convoy_name: String):
 	# Disable dialog while creating
 	if is_instance_valid(_new_convoy_dialog) and _new_convoy_dialog.has_method("set_busy"):
 		_new_convoy_dialog.call_deferred("set_busy", true)
-	var gdm = get_node_or_null("/root/GameDataManager")
-	if is_instance_valid(gdm) and gdm.has_method("create_new_convoy"):
-		gdm.create_new_convoy(convoy_name)
-		# Close the dialog immediately; backend will refresh data and the gating
-		# logic will prevent reopening once a convoy exists.
+	# Use ConvoyService to create new convoy
+	var convoy_service = get_node_or_null("/root/ConvoyService")
+	if is_instance_valid(convoy_service) and convoy_service.has_method("create_new_convoy"):
+		convoy_service.create_new_convoy(convoy_name)
 		_hide_new_convoy_dialog()
 	else:
-		printerr("MainScreen: GameDataManager missing create_new_convoy; cannot create convoy.")
+		printerr("MainScreen: ConvoyService missing create_new_convoy; cannot create convoy.")
 
 func _on_new_convoy_canceled():
 	var modal_layer: Control = get_node_or_null("ModalLayer")
