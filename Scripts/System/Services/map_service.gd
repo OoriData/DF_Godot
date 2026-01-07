@@ -6,6 +6,8 @@ extends Node
 @onready var _api: Node = get_node_or_null("/root/APICalls")
 @onready var _store: Node = get_node_or_null("/root/GameStore")
 
+const SettlementModel = preload("res://Scripts/Data/Models/Settlement.gd")
+
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
 
@@ -24,3 +26,11 @@ func get_settlements() -> Array:
 	if is_instance_valid(_store) and _store.has_method("get_settlements"):
 		return _store.get_settlements()
 	return []
+
+
+func get_settlement_models() -> Array:
+	var out: Array = []
+	for s in get_settlements():
+		if s is Dictionary:
+			out.append(SettlementModel.new(s))
+	return out

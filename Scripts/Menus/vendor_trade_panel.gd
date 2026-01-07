@@ -1,6 +1,8 @@
 extends Control
 
 const ItemsData = preload("res://Scripts/Data/Items.gd")
+const SettlementModel = preload("res://Scripts/Data/Models/Settlement.gd")
+const VendorModel = preload("res://Scripts/Data/Models/Vendor.gd")
 
 # Signals to notify the main menu of transactions
 signal item_purchased(item, quantity, total_price)
@@ -110,6 +112,12 @@ var _active_convoy_id: String = ""
 var _active_vendor_id: String = ""
 var _latest_settlements: Array = []
 
+# Typed/cache helpers for high-traffic vendor + settlement lookups
+var _latest_settlement_models: Array = []
+var _vendors_from_settlements_by_id: Dictionary = {} # vendor_id -> vendor Dictionary
+var _vendor_id_to_settlement: Dictionary = {} # vendor_id -> settlement Dictionary
+var _vendor_id_to_name: Dictionary = {} # vendor_id -> vendor name String
+
 func _get_bold_font_for(node: Control) -> FontVariation:
 	if _bold_font_cache != null:
 		return _bold_font_cache
@@ -164,8 +172,9 @@ func _ready() -> void:
 			_store.user_changed.connect(_on_user_data_updated)
 		# Pull initial snapshots if available
 		if _store.has_method("get_settlements"):
-			_latest_settlements = _store.get_settlements()
-			all_settlement_data_global = _latest_settlements
+			var pre_cached = _store.get_settlements()
+			if pre_cached is Array and not (pre_cached as Array).is_empty():
+				_set_latest_settlements_snapshot(pre_cached)
 		if _store.has_method("get_convoys") and _active_convoy_id != "":
 			convoy_data = _get_convoy_by_id(_active_convoy_id)
 		if _store.has_method("get_user"):
@@ -289,15 +298,44 @@ func _on_store_convoys_changed(_convoys: Array) -> void:
 	_try_process_refresh()
 
 func _on_store_map_changed(_tiles: Array, settlements: Array) -> void:
-	_latest_settlements = settlements if settlements != null else []
-	all_settlement_data_global = _latest_settlements
+	_set_latest_settlements_snapshot(settlements if settlements != null else [])
 	current_settlement_data = _resolve_settlement_for_vendor_or_convoy(_active_vendor_id, _active_convoy_id)
 	_try_process_refresh()
 
 func _all_settlements_from_store() -> void:
 	if is_instance_valid(_store) and _store.has_method("get_settlements"):
-		_latest_settlements = _store.get_settlements()
-		all_settlement_data_global = _latest_settlements
+		var arr = _store.get_settlements()
+		if arr is Array:
+			_set_latest_settlements_snapshot(arr)
+
+
+func _set_latest_settlements_snapshot(settlements: Array) -> void:
+	_latest_settlements = settlements
+	all_settlement_data_global = settlements
+	_latest_settlement_models.clear()
+	_vendors_from_settlements_by_id.clear()
+	_vendor_id_to_settlement.clear()
+	_vendor_id_to_name.clear()
+
+	for s in settlements:
+		if not (s is Dictionary):
+			continue
+		var sd: Dictionary = s
+		_latest_settlement_models.append(SettlementModel.new(sd))
+		var vendors_any: Variant = sd.get("vendors", [])
+		if vendors_any is Array:
+			for v in vendors_any:
+				if not (v is Dictionary):
+					continue
+				var vd: Dictionary = v
+				var vid := String(vd.get("vendor_id", vd.get("id", "")))
+				if vid == "":
+					continue
+				_vendors_from_settlements_by_id[vid] = vd
+				_vendor_id_to_settlement[vid] = sd
+				var nm := String(vd.get("name", ""))
+				if nm != "":
+					_vendor_id_to_name[vid] = nm
 
 func _get_convoy_by_id(convoy_id: String) -> Dictionary:
 	if convoy_id == "":
@@ -313,14 +351,8 @@ func _get_convoy_by_id(convoy_id: String) -> Dictionary:
 func _resolve_settlement_for_vendor_or_convoy(vendor_id: String, convoy_id: String) -> Dictionary:
 	# 1) If we know vendor_id, find settlement containing it
 	if vendor_id != "":
-		for s in all_settlement_data_global:
-			if not (s is Dictionary):
-				continue
-			var vendors: Variant = (s as Dictionary).get("vendors", [])
-			if vendors is Array:
-				for v in vendors:
-					if v is Dictionary and String((v as Dictionary).get("vendor_id", "")) == vendor_id:
-						return s
+		if _vendor_id_to_settlement.has(vendor_id):
+			return _vendor_id_to_settlement[vendor_id]
 	# 2) Fallback: find settlement at convoy coords
 	if convoy_id != "" and convoy_data is Dictionary and String(convoy_data.get("convoy_id", "")) == convoy_id:
 		var cx := int(convoy_data.get("x", 999999))
@@ -2397,11 +2429,15 @@ func _format_money(amount) -> String:
 
 # Looks up the vendor name for a recipient ID (stub, fill in as needed)
 func _get_vendor_name_for_recipient(recipient_id) -> String:
-	for settlement in all_settlement_data_global:
-		if settlement.has("vendors"):
-			for vendor in settlement.vendors:
-				if vendor.get("vendor_id", "") == recipient_id:
-					return vendor.get("name", "Unknown Vendor")
+	var rid := String(recipient_id)
+	if rid != "" and _vendor_id_to_name.has(rid):
+		return String(_vendor_id_to_name[rid])
+	if rid != "" and _vendors_from_settlements_by_id.has(rid):
+		var vd = _vendors_from_settlements_by_id[rid]
+		if vd is Dictionary:
+			var nm := String((vd as Dictionary).get("name", ""))
+			if nm != "":
+				return nm
 	return "Unknown Vendor"
 
 # Handler for description toggle button (stub, fill in as needed)

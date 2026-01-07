@@ -15,6 +15,8 @@ func _diag(tag: String, msg: String, data: Variant = null) -> void:
 	print(line)
 
 const ItemsData = preload("res://Scripts/Data/Items.gd")
+const SettlementModel = preload("res://Scripts/Data/Models/Settlement.gd")
+const VendorModel = preload("res://Scripts/Data/Models/Vendor.gd")
 
 signal back_requested
 
@@ -29,6 +31,10 @@ var convoy_data_received: Dictionary
 @onready var _hub: Node = get_node_or_null("/root/SignalHub")
 var _latest_all_settlements: Array = []
 var _vendors_by_id: Dictionary = {} # vendor_id -> vendor Dictionary
+var _latest_all_settlement_models: Array = []
+var _vendors_by_id_models: Dictionary = {} # vendor_id -> Vendor model
+var _vendors_from_settlements_by_id: Dictionary = {} # vendor_id -> vendor Dictionary (from map snapshot)
+var _vendor_id_to_settlement: Dictionary = {} # vendor_id -> settlement Dictionary (from map snapshot)
 var _item_to_inspect_on_load = null
 
 var _organize_button: Button
@@ -145,8 +151,8 @@ func _ready():
 			_store.map_changed.connect(_on_store_map_changed)
 		if _store.has_method("get_settlements"):
 			var pre_cached = _store.get_settlements()
-			if pre_cached is Array:
-				_latest_all_settlements = pre_cached
+			if pre_cached is Array and not (pre_cached as Array).is_empty():
+				_set_latest_settlements_snapshot(pre_cached)
 	if is_instance_valid(_hub) and _hub.has_signal("vendor_updated") and not _hub.vendor_updated.is_connected(_on_vendor_updated):
 		_hub.vendor_updated.connect(_on_vendor_updated)
 
@@ -216,6 +222,29 @@ func _format_value(val) -> String:
 	else:
 		return str(val)
 
+
+func _set_latest_settlements_snapshot(settlements: Array) -> void:
+	_latest_all_settlements = settlements
+	_latest_all_settlement_models.clear()
+	_vendors_from_settlements_by_id.clear()
+	_vendor_id_to_settlement.clear()
+
+	for settlement in settlements:
+		if not (settlement is Dictionary):
+			continue
+		var settlement_dict: Dictionary = settlement
+		_latest_all_settlement_models.append(SettlementModel.new(settlement_dict))
+		var vendors: Array = settlement_dict.get("vendors", [])
+		for v in vendors:
+			if not (v is Dictionary):
+				continue
+			var vendor_dict: Dictionary = v
+			var vendor_id := String(vendor_dict.get("vendor_id", vendor_dict.get("id", "")))
+			if vendor_id == "":
+				continue
+			_vendors_from_settlements_by_id[vendor_id] = vendor_dict
+			_vendor_id_to_settlement[vendor_id] = settlement_dict
+
 # Resolve a vendor name from a vendor_id via cached vendor/settlement data; fallback to id.
 func _resolve_vendor_name(vendor_id: String) -> String:
 	if vendor_id.is_empty():
@@ -226,6 +255,12 @@ func _resolve_vendor_name(vendor_id: String) -> String:
 			var n0 := String((v0 as Dictionary).get("name", ""))
 			if not n0.is_empty():
 				return n0
+	if _vendors_from_settlements_by_id.has(vendor_id):
+		var v1 = _vendors_from_settlements_by_id[vendor_id]
+		if v1 is Dictionary:
+			var n1 := String((v1 as Dictionary).get("name", ""))
+			if not n1.is_empty():
+				return n1
 	for settlement in _latest_all_settlements:
 		if not (settlement is Dictionary):
 			continue
@@ -241,6 +276,12 @@ func _resolve_vendor_name(vendor_id: String) -> String:
 func _resolve_settlement_name_for_vendor(vendor_id: String) -> String:
 	if vendor_id.is_empty():
 		return ""
+	if _vendor_id_to_settlement.has(vendor_id):
+		var s0 = _vendor_id_to_settlement[vendor_id]
+		if s0 is Dictionary:
+			var nm0 := String((s0 as Dictionary).get("name", (s0 as Dictionary).get("settlement_name", "")))
+			if not nm0.is_empty():
+				return nm0
 	for settlement in _latest_all_settlements:
 		if not (settlement is Dictionary):
 			continue
@@ -255,7 +296,7 @@ func _resolve_settlement_name_for_vendor(vendor_id: String) -> String:
 
 func _on_store_map_changed(_tiles: Array, settlements: Array) -> void:
 	if settlements is Array:
-		_latest_all_settlements = settlements
+		_set_latest_settlements_snapshot(settlements)
 
 
 func _on_vendor_updated(vendor: Dictionary) -> void:
@@ -264,6 +305,7 @@ func _on_vendor_updated(vendor: Dictionary) -> void:
 	var vendor_id := String(vendor.get("vendor_id", vendor.get("id", "")))
 	if vendor_id != "":
 		_vendors_by_id[vendor_id] = vendor
+		_vendors_by_id_models[vendor_id] = VendorModel.new(vendor)
 
 # Build a short, human-friendly stats summary.
 func _format_stats_light(val) -> String:

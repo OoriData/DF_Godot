@@ -102,7 +102,7 @@ func _load_base_url_from_config() -> void:
 			BASE_URL = dev
 
 var current_user_id: String = "" # To store the logged-in user's ID
-var _http_request: HTTPRequest
+var _http_request: Node
 var _http_request_map: HTTPRequest  # Dedicated non-queued requester for map data
 var _http_request_route: HTTPRequest # Dedicated requester for route finding (non-queued)
 var _http_request_mech_pool: Array = [] # ephemeral HTTPRequest nodes for part compatibility checks
@@ -138,6 +138,7 @@ var _login_in_progress: bool = false
 # Add after enum declaration
 var _current_request_start_time: float = 0.0
 var _request_timeout_timer: Timer
+var _disable_request_timeouts_for_tests: bool = false
 const REQUEST_TIMEOUT_SECONDS := {
 	RequestPurpose.MAP_DATA: 5.0,
 	RequestPurpose.AUTH_URL: 5.0,
@@ -146,6 +147,27 @@ const REQUEST_TIMEOUT_SECONDS := {
 	RequestPurpose.CARGO_DATA: 5.0,
 	RequestPurpose.WAREHOUSE_GET: 5.0,
 }
+
+
+func set_disable_request_timeouts_for_tests(disabled: bool) -> void:
+	_disable_request_timeouts_for_tests = disabled
+
+
+func set_http_request_for_tests(requester: Node) -> void:
+	# Test-only helper: allow unit tests to inject a stub HTTPRequest.
+	# Keeps runtime behavior unchanged when not used.
+	if requester == null:
+		return
+	if is_instance_valid(_http_request):
+		if _http_request.is_connected("request_completed", Callable(self, "_on_request_completed")):
+			_http_request.disconnect("request_completed", Callable(self, "_on_request_completed"))
+		# Keep the old node if it was created by _ready(); tests may be running in a scene tree.
+	_http_request = requester
+	if not is_ancestor_of(_http_request):
+		add_child(_http_request)
+	if _http_request.is_connected("request_completed", Callable(self, "_on_request_completed")):
+		_http_request.disconnect("request_completed", Callable(self, "_on_request_completed"))
+	_http_request.connect("request_completed", Callable(self, "_on_request_completed"))
 
 var _probe_stalled_count: int = 0
 var _auth_me_resolve_attempts: int = 0
@@ -197,9 +219,9 @@ func _ready() -> void:
 	_http_request = HTTPRequest.new()
 	add_child(_http_request)
 	# Reconnect without .bind() so callback signature matches exactly
-	if _http_request.request_completed.is_connected(_on_request_completed):
-		_http_request.request_completed.disconnect(_on_request_completed)
-	_http_request.request_completed.connect(_on_request_completed)
+	if _http_request.is_connected("request_completed", Callable(self, "_on_request_completed")):
+		_http_request.disconnect("request_completed", Callable(self, "_on_request_completed"))
+	_http_request.connect("request_completed", Callable(self, "_on_request_completed"))
 	# Parallel map HTTPRequest
 	_http_request_map = HTTPRequest.new()
 	_http_request_map.name = "MapHTTPRequest"
@@ -1245,6 +1267,8 @@ func _create_queue_watchdog():
 
 # Helper: emit auth state into SignalHub if present
 func _emit_hub_auth_state(state: String) -> void:
+	if not is_inside_tree():
+		return
 	var hub := get_node_or_null('/root/SignalHub')
 	if is_instance_valid(hub) and hub.has_signal('auth_state_changed'):
 		hub.auth_state_changed.emit(state)
@@ -1308,6 +1332,10 @@ func _retry_auth_url_alternate_host():
 	_process_queue()
 func _process_queue() -> void:
 	print("[APICalls] _process_queue(): entry. in_progress=%s queue_len=%d" % [str(_is_request_in_progress), _request_queue.size()])
+	# When instantiated as a plain script (e.g., unit tests), we are not in the scene tree
+	# and should not attempt to dispatch HTTP requests.
+	if not is_inside_tree():
+		return
 	if _is_request_in_progress or _request_queue.is_empty():
 		return
 	if _is_auth_token_expired():
@@ -1351,6 +1379,8 @@ func _process_queue() -> void:
 		call_deferred("_process_queue")
 
 func _arm_request_timeout():
+	if _disable_request_timeouts_for_tests:
+		return
 	if _request_timeout_timer and is_instance_valid(_request_timeout_timer):
 		_request_timeout_timer.queue_free()
 	var timeout_sec = 0.0

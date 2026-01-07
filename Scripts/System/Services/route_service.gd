@@ -6,6 +6,8 @@ extends Node
 @onready var _api: Node = get_node_or_null("/root/APICalls")
 @onready var _hub: Node = get_node_or_null("/root/SignalHub")
 
+const RouteChoiceModel = preload("res://Scripts/Data/Models/RouteChoice.gd")
+
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
 	# Bridge transport to domain events
@@ -43,6 +45,14 @@ func _on_route_choices_received(routes: Array) -> void:
 		logger.debug("RouteService: choices received count=%s", routes.size())
 	if is_instance_valid(_hub) and _hub.has_signal("route_choices_ready"):
 		_hub.route_choices_ready.emit(routes)
+
+
+func to_models(routes: Array) -> Array:
+	var out: Array = []
+	for r in routes:
+		if r is Dictionary:
+			out.append(RouteChoiceModel.new(r))
+	return out
 
 func _on_convoy_on_journey(updated_convoy_data: Dictionary) -> void:
 	var hub := _hub

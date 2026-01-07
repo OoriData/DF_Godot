@@ -93,14 +93,18 @@ func translate(raw_message: String) -> String:
 		if raw_message.find(key) != -1:
 			var friendly_message = ERROR_MAP[key]
 			if friendly_message.ends_with(" "): # It's a prefix
-				var detail = raw_message.split(key, false, 1)
+				# Keep the leading empty segment when the prefix is at the start of the raw message.
+				var detail = raw_message.split(key, true, 1)
 				return friendly_message + detail[1].strip_edges() if detail.size() > 1 else friendly_message.strip_edges()
 			return friendly_message # It's a full replacement
 
 	# 3. If no match was found, it's an unknown error.
-	var logger = get_node_or_null("/root/Logger")
-	if is_instance_valid(logger):
-		logger.warn("Unhandled API Error (add to ErrorTranslator): %s", raw_message)
+	if is_inside_tree():
+		var logger = get_node_or_null("/root/Logger")
+		if is_instance_valid(logger):
+			logger.warn("Unhandled API Error (add to ErrorTranslator): %s", raw_message)
+		else:
+			printerr("Unhandled API Error (add to ErrorTranslator): ", raw_message)
 	else:
 		printerr("Unhandled API Error (add to ErrorTranslator): ", raw_message)
 	return "An unexpected error occurred. Please try again."

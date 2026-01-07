@@ -1,5 +1,7 @@
 extends Control
 
+const VehicleModel = preload("res://Scripts/Data/Models/Vehicle.gd")
+
 # Signal that MenuManager will listen for to go back
 signal back_requested
 # Signal to open the full cargo manifest for the entire convoy
@@ -483,9 +485,9 @@ func _populate_overview_tab(vehicle_data: Dictionary):
 
 func _populate_parts_tab(vehicle_data: Dictionary):
 	if not is_instance_valid(parts_vbox): return
-
-	var all_cargo_from_vehicle: Array = vehicle_data.get("cargo", [])
-	var all_parts_from_vehicle: Array = vehicle_data.get("parts", [])
+	var v = VehicleModel.new(vehicle_data)
+	var all_cargo_from_vehicle: Array = v.cargo
+	var all_parts_from_vehicle: Array = v.parts
 	var vehicle_parts_list: Array = []
 
 	# 1. Add all items from the dedicated 'parts' array
@@ -585,7 +587,8 @@ func _populate_cargo_tab(vehicle_data: Dictionary):
 	header_sep.custom_minimum_size.y = 5
 	cargo_vbox.add_child(header_sep)
 
-	var all_cargo_from_vehicle: Array = vehicle_data.get("cargo", [])
+	var v = VehicleModel.new(vehicle_data)
+	var all_cargo_from_vehicle: Array = v.cargo
 	var general_cargo_list: Array = []
 
 	# Filter out parts that are also cargo
@@ -719,10 +722,9 @@ func _on_inspect_stat_pressed(stat_type: String, vehicle_data: Dictionary):
 
 	# Combine parts from 'parts' and 'cargo' (with intrinsic_part_id)
 	var all_vehicle_parts: Array = []
-	if vehicle_data.has("parts") and vehicle_data.get("parts") is Array:
-		all_vehicle_parts.append_array(vehicle_data.get("parts"))
-	if vehicle_data.has("cargo") and vehicle_data.get("cargo") is Array:
-		for item_data in vehicle_data.get("cargo"):
+	var v = VehicleModel.new(vehicle_data)
+	all_vehicle_parts.append_array(v.parts)
+	for item_data in v.cargo:
 			if item_data is Dictionary and item_data.has("intrinsic_part_id") and item_data.get("intrinsic_part_id") != null:
 				all_vehicle_parts.append(item_data)
 

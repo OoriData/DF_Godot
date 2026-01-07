@@ -9,6 +9,9 @@ var convoy_data_received: Dictionary
 # Classification helpers from centralized item data
 const ItemsData = preload("res://Scripts/Data/Items.gd")
 
+const SettlementModel = preload("res://Scripts/Data/Models/Settlement.gd")
+const VendorModel = preload("res://Scripts/Data/Models/Vendor.gd")
+
 # --- Font Scaling Parameters ---
 const BASE_FONT_SIZE: float = 18.0  # Increased from 14.0
 const BASE_TITLE_FONT_SIZE: float = 22.0 # Increased from 18.0
@@ -111,9 +114,39 @@ var _convoy_mission_items: Array[String] = []
 var _settlement_mission_items: Array[String] = []
 var _compatible_part_items: Array[String] = []
 var _latest_all_settlements: Array = []
+var _latest_all_settlement_models: Array = [] # Array[Settlement]
 var _vendors_by_id: Dictionary = {} # vendor_id -> vendor Dictionary (from VendorService/Hub)
+var _vendors_by_id_models: Dictionary = {} # vendor_id -> Vendor
+var _vendors_from_settlements_by_id: Dictionary = {} # vendor_id -> vendor Dictionary (from map snapshot)
+var _vendor_id_to_settlement: Dictionary = {} # vendor_id -> settlement Dictionary (from map snapshot)
 var _vendor_preview_update_timer: Timer = null # For debouncing updates
 var _destinations_cache: Dictionary = {} # item_name -> recipient_settlement_name (or destination string)
+
+
+func _set_latest_settlements_snapshot(settlements: Array) -> void:
+	_latest_all_settlements = settlements if settlements != null else []
+	_latest_all_settlement_models.clear()
+	_vendors_from_settlements_by_id.clear()
+	_vendor_id_to_settlement.clear()
+	for s_any in _latest_all_settlements:
+		if not (s_any is Dictionary):
+			continue
+		var s_dict := s_any as Dictionary
+		_latest_all_settlement_models.append(SettlementModel.new(s_dict))
+		var vendors_any: Variant = s_dict.get("vendors", [])
+		var vendors: Array = vendors_any if vendors_any is Array else []
+		for v_any in vendors:
+			if not (v_any is Dictionary):
+				continue
+			var v_dict := v_any as Dictionary
+			var vid := String(v_dict.get("vendor_id", v_dict.get("id", "")))
+			if vid == "":
+				continue
+			# first-writer wins to keep stable results if duplicates exist
+			if not _vendors_from_settlements_by_id.has(vid):
+				_vendors_from_settlements_by_id[vid] = v_dict
+			if not _vendor_id_to_settlement.has(vid):
+				_vendor_id_to_settlement[vid] = s_dict
 
 func _ready():
 	# Resolve optional nodes that might be missing depending on scene variant
@@ -193,7 +226,7 @@ func _ready():
 	if is_instance_valid(_store) and _store.has_method("get_settlements"):
 		var pre_cached = _store.get_settlements()
 		if pre_cached is Array and not (pre_cached as Array).is_empty():
-			_latest_all_settlements = pre_cached
+			_set_latest_settlements_snapshot(pre_cached)
 			if _debug_convoy_menu:
 				print("[ConvoyMenu][Debug] pre-cached settlements count=", _latest_all_settlements.size())
 
@@ -1225,7 +1258,7 @@ func _on_part_compat_ready(_payload: Dictionary) -> void:
 func _on_store_map_changed(_tiles: Array, settlements: Array) -> void:
 	# Cache the latest settlements payload for local lookups
 	if settlements is Array:
-		_latest_all_settlements = settlements
+		_set_latest_settlements_snapshot(settlements)
 		if _debug_convoy_menu:
 			print("[ConvoyMenu][Debug] cached settlements count=", _latest_all_settlements.size())
 	_queue_vendor_preview_update()
@@ -1235,7 +1268,7 @@ func _on_initial_data_ready() -> void:
 	if is_instance_valid(_store) and _store.has_method("get_settlements"):
 		var arr = _store.get_settlements()
 		if arr is Array:
-			_latest_all_settlements = arr
+			_set_latest_settlements_snapshot(arr)
 			if _debug_convoy_menu:
 				print("[ConvoyMenu][Debug] initial_data_ready -> synced settlements count=", _latest_all_settlements.size())
 	_queue_vendor_preview_update()
@@ -1247,6 +1280,7 @@ func _on_vendor_preview_ready(vendor: Dictionary) -> void:
 	var vendor_id := String(vendor.get("vendor_id", vendor.get("id", "")))
 	if vendor_id != "":
 		_vendors_by_id[vendor_id] = vendor
+		_vendors_by_id_models[vendor_id] = VendorModel.new(vendor)
 	var changed := false
 	var cargo_inv: Array = vendor.get("cargo_inventory", [])
 	if cargo_inv is Array and not cargo_inv.is_empty():
@@ -1276,27 +1310,16 @@ func _get_vendor_by_id(vendor_id: String) -> Variant:
 		return null
 	if _vendors_by_id.has(vendor_id):
 		return _vendors_by_id[vendor_id]
-	# Fall back to scanning cached settlements.
-	for settlement in _latest_all_settlements:
-		if not (settlement is Dictionary):
-			continue
-		var vendors: Array = (settlement as Dictionary).get("vendors", [])
-		for v in vendors:
-			if v is Dictionary and String((v as Dictionary).get("vendor_id", "")) == vendor_id:
-				return v
+	if _vendors_from_settlements_by_id.has(vendor_id):
+		return _vendors_from_settlements_by_id[vendor_id]
 	return null
 
 
 func _get_settlement_for_vendor_id(vendor_id: String) -> Variant:
 	if vendor_id == "":
 		return null
-	for settlement in _latest_all_settlements:
-		if not (settlement is Dictionary):
-			continue
-		var vendors: Array = (settlement as Dictionary).get("vendors", [])
-		for v in vendors:
-			if v is Dictionary and String((v as Dictionary).get("vendor_id", "")) == vendor_id:
-				return settlement
+	if _vendor_id_to_settlement.has(vendor_id):
+		return _vendor_id_to_settlement[vendor_id]
 	return null
 
 

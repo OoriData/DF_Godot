@@ -6,6 +6,8 @@ extends Node
 @onready var _api: Node = get_node_or_null("/root/APICalls")
 @onready var _hub: Node = get_node_or_null("/root/SignalHub")
 
+const VendorModel = preload("res://Scripts/Data/Models/Vendor.gd")
+
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
 	# Bridge transport to domain event
@@ -43,3 +45,7 @@ func _on_vendor_data_received(vendor_data: Dictionary) -> void:
 		_hub.vendor_panel_ready.emit(data)
 	if is_instance_valid(_hub) and _hub.has_signal("vendor_preview_ready"):
 		_hub.vendor_preview_ready.emit(data)
+
+
+func to_model(vendor_data: Dictionary):
+	return VendorModel.new(vendor_data)

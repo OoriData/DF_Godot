@@ -5,6 +5,8 @@ signal setting_changed(key: String, value: Variant)
 const SAVE_PATH := "user://settings.cfg"
 const SECTION := "settings"
 
+var _save_path: String = SAVE_PATH
+
 var data := {
 	"ui.scale": 1.4,
 	"ui.menu_open_ratio": 2.0,
@@ -33,15 +35,21 @@ func set_and_save(key: String, value: Variant) -> void:
 	setting_changed.emit(key, value)
 	_apply_runtime_side_effect(key, value)
 
+
+func set_save_path_for_tests(path: String) -> void:
+	# Used by headless/unit tests to avoid clobbering real user settings.
+	if path.strip_edges() != "":
+		_save_path = path
+
 func save_settings() -> void:
 	var cfg := ConfigFile.new()
 	for k in data.keys():
 		cfg.set_value(SECTION, k, data[k])
-	cfg.save(SAVE_PATH)
+	cfg.save(_save_path)
 
 func load_settings() -> void:
 	var cfg := ConfigFile.new()
-	if cfg.load(SAVE_PATH) == OK:
+	if cfg.load(_save_path) == OK:
 		for k in data.keys():
 			if cfg.has_section_key(SECTION, k):
 				data[k] = cfg.get_value(SECTION, k, data[k])
@@ -54,6 +62,8 @@ func _apply_boot_settings() -> void:
 	_apply_runtime_side_effect("display.resolution", data["display.resolution"])
 
 func _apply_runtime_side_effect(key: String, value: Variant) -> void:
+	if DisplayServer.get_name() == "headless":
+		return
 	match key:
 		"display.fullscreen":
 			var mode := DisplayServer.WINDOW_MODE_FULLSCREEN if bool(value) else DisplayServer.WINDOW_MODE_WINDOWED

@@ -6,6 +6,8 @@ extends Node
 @onready var _api: Node = get_node_or_null("/root/APICalls")
 @onready var _store: Node = get_node_or_null("/root/GameStore")
 
+const ConvoyModel = preload("res://Scripts/Data/Models/Convoy.gd")
+
 # This should be the single source of truth for convoy colors.
 const PREDEFINED_CONVOY_COLORS: Array[Color] = [
 	Color.RED, Color.BLUE, Color.GREEN, Color.YELLOW, Color.CYAN, Color.MAGENTA,
@@ -66,3 +68,11 @@ func get_convoys() -> Array:
 	if is_instance_valid(_store) and _store.has_method("get_convoys"):
 		return _store.get_convoys()
 	return []
+
+
+func get_convoy_models() -> Array:
+	var out: Array = []
+	for c in get_convoys():
+		if c is Dictionary:
+			out.append(ConvoyModel.new(c))
+	return out
