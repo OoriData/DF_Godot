@@ -480,9 +480,9 @@ func _handle_lmb_interactions(event: InputEventMouseButton, p_camera: Camera2D) 
 			var clicked_convoy_data = null
 			var mouse_world_pos = camera.get_canvas_transform().affine_inverse() * event.position
 			# Get tile size for world coordinate conversion
-							if not (is_instance_valid(map_display) and is_instance_valid(map_display.tile_set)):
-								return false
-							var tile_size = map_display.tile_set.tile_size
+			if not (is_instance_valid(map_display) and is_instance_valid(map_display.tile_set)):
+				return false
+			var tile_size = map_display.tile_set.tile_size
 			var actual_tile_width_on_world: float = tile_size.x
 			var actual_tile_height_on_world: float = tile_size.y
 			for convoy_data_item in all_convoy_data:

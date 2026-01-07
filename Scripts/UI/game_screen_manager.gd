@@ -32,22 +32,16 @@ func _on_login_successful(user_id: String) -> void:
 	print("GameScreenManager: Login successful for User ID:", user_id)
 	current_user_id = user_id
 
-	# Phase C: bootstrap via APICalls + Services (no GameDataManager).
-	var api := get_node_or_null("/root/APICalls")
-	if is_instance_valid(api):
-		if api.has_method("set_user_id"):
-			api.set_user_id(current_user_id)
-		# Refresh user snapshot
-		if api.has_method("refresh_user_data"):
-			api.refresh_user_data(current_user_id)
-		elif api.has_method("get_user_data"):
-			api.get_user_data(current_user_id)
-		# Fetch convoys for this user
-		if api.has_method("get_user_convoys"):
-			api.get_user_convoys(current_user_id)
-		# Map request is not user-scoped; fetch once here if available
-		if api.has_method("get_map_data"):
-			api.get_map_data()
+	# Phase 4: bootstrap via Services and Store only (no direct APICalls wiring).
+	var user_service := get_node_or_null("/root/UserService")
+	if is_instance_valid(user_service) and user_service.has_method("refresh_user"):
+		user_service.refresh_user(current_user_id)
+	var convoy_service := get_node_or_null("/root/ConvoyService")
+	if is_instance_valid(convoy_service) and convoy_service.has_method("refresh_all"):
+		convoy_service.refresh_all()
+	var map_service := get_node_or_null("/root/MapService")
+	if is_instance_valid(map_service) and map_service.has_method("request_map"):
+		map_service.request_map()
 
 	# Remove the login screen completely to prevent any input blocking.
 	if is_instance_valid(login_screen):

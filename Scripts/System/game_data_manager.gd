@@ -181,19 +181,8 @@ func _initiate_preload():
 			api_calls_node.vendor_data_received.connect(update_single_vendor)
 		if api_calls_node.has_signal('user_metadata_updated') and not api_calls_node.user_metadata_updated.is_connected(_on_user_metadata_updated):
 			api_calls_node.user_metadata_updated.connect(_on_user_metadata_updated)
-		# Transaction patch signals that return updated convoy objects (resource buys etc.)
-		if api_calls_node.has_signal('resource_bought') and not api_calls_node.resource_bought.is_connected(_on_resource_transaction):
-			api_calls_node.resource_bought.connect(_on_resource_transaction)
-		if api_calls_node.has_signal('resource_sold') and not api_calls_node.resource_sold.is_connected(_on_resource_transaction):
-			api_calls_node.resource_sold.connect(_on_resource_transaction)
-		if api_calls_node.has_signal('cargo_bought') and not api_calls_node.cargo_bought.is_connected(_on_convoy_transaction):
-			api_calls_node.cargo_bought.connect(_on_convoy_transaction)
-		if api_calls_node.has_signal('cargo_sold') and not api_calls_node.cargo_sold.is_connected(_on_convoy_transaction):
-			api_calls_node.cargo_sold.connect(_on_convoy_transaction)
-		if api_calls_node.has_signal('vehicle_bought') and not api_calls_node.vehicle_bought.is_connected(_on_convoy_transaction):
-			api_calls_node.vehicle_bought.connect(_on_convoy_transaction)
-		if api_calls_node.has_signal('vehicle_sold') and not api_calls_node.vehicle_sold.is_connected(_on_convoy_transaction):
-			api_calls_node.vehicle_sold.connect(_on_convoy_transaction)
+		# Phase 4: removed direct APICalls transaction signal wiring (resource/cargo/vehicle).
+		# Authoritative refreshes are driven by Services and surfaced via GameStore/SignalHub.
 		# Mechanics: vehicle part attach returns updated vehicle; handle and refresh convoy
 		if api_calls_node.has_signal('vehicle_part_attached') and not api_calls_node.vehicle_part_attached.is_connected(_on_vehicle_part_attached):
 			api_calls_node.vehicle_part_attached.connect(_on_vehicle_part_attached)

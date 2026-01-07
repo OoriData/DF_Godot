@@ -23,12 +23,7 @@ var _cargo_enrichment_pending: Dictionary = {} # cargo_id -> true while request 
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
 	if is_instance_valid(_api):
-		if _api.has_signal("vehicle_part_attached") and not _api.vehicle_part_attached.is_connected(_on_attach_completed):
-			_api.vehicle_part_attached.connect(_on_attach_completed)
-		if _api.has_signal("vehicle_part_added") and not _api.vehicle_part_added.is_connected(_on_add_completed):
-			_api.vehicle_part_added.connect(_on_add_completed)
-		if _api.has_signal("vehicle_part_detached") and not _api.vehicle_part_detached.is_connected(_on_detach_completed):
-			_api.vehicle_part_detached.connect(_on_detach_completed)
+		# Phase 4: Stop listening to APICalls domain-level mechanics signals; rely on service-driven refreshes.
 		if _api.has_signal("part_compatibility_checked") and not _api.part_compatibility_checked.is_connected(_on_compatibility_checked):
 			_api.part_compatibility_checked.connect(_on_compatibility_checked)
 		if _api.has_signal("mechanic_operation_failed") and not _api.mechanic_operation_failed.is_connected(_on_operation_failed):
@@ -187,6 +182,9 @@ func attach_part(convoy_id: String, vehicle_id: String, part_id: String) -> void
 		_vehicle_to_convoy_id[vehicle_id] = convoy_id
 		# APICalls signature: attach_vehicle_part(vehicle_id, part_cargo_id)
 		_api.attach_vehicle_part(vehicle_id, part_id)
+		# Phase 4: Immediately refresh convoy snapshot; Hub will emit updates.
+		if is_instance_valid(_convoy_service) and _convoy_service.has_method("refresh_single"):
+			_convoy_service.refresh_single(convoy_id)
 
 func detach_part(convoy_id: String, vehicle_id: String, part_id: String) -> void:
 	if convoy_id == "" or vehicle_id == "" or part_id == "":
@@ -195,6 +193,9 @@ func detach_part(convoy_id: String, vehicle_id: String, part_id: String) -> void
 		_vehicle_to_convoy_id[vehicle_id] = convoy_id
 		# APICalls signature: detach_vehicle_part(vehicle_id, part_id)
 		_api.detach_vehicle_part(vehicle_id, part_id)
+		# Phase 4: Immediately refresh convoy snapshot; Hub will emit updates.
+		if is_instance_valid(_convoy_service) and _convoy_service.has_method("refresh_single"):
+			_convoy_service.refresh_single(convoy_id)
 
 func add_part_from_vendor(vendor_id: String, convoy_id: String, vehicle_id: String, part_cargo_id: String) -> void:
 	if vendor_id == "" or convoy_id == "" or vehicle_id == "" or part_cargo_id == "":
@@ -202,12 +203,16 @@ func add_part_from_vendor(vendor_id: String, convoy_id: String, vehicle_id: Stri
 	if is_instance_valid(_api) and _api.has_method("add_vehicle_part"):
 		_vehicle_to_convoy_id[vehicle_id] = convoy_id
 		_api.add_vehicle_part(vendor_id, convoy_id, vehicle_id, part_cargo_id)
+		# Phase 4: Immediately refresh convoy snapshot; Hub will emit updates.
+		if is_instance_valid(_convoy_service) and _convoy_service.has_method("refresh_single"):
+			_convoy_service.refresh_single(convoy_id)
 
 func apply_swaps(convoy_id: String, vehicle_id: String, ordered_swaps: Array, vendor_id: String = "") -> void:
 	# Mirrors legacy GameDataManager.apply_mechanic_swaps routing: inventory+removable -> attach;
 	# otherwise vendor add when vendor_id is available; else attach fallback.
 	if not is_instance_valid(_api):
 		return
+	var _issued: bool = false
 	for s in ordered_swaps:
 		if not (s is Dictionary):
 			continue
@@ -238,12 +243,18 @@ func apply_swaps(convoy_id: String, vehicle_id: String, ordered_swaps: Array, ve
 		var prefer_attach := (source == "inventory" and removable and cargo_id_str != "")
 		if prefer_attach and _api.has_method("attach_vehicle_part"):
 			_api.attach_vehicle_part(vid, cargo_id_str)
+			_issued = true
 		elif effective_vendor != "" and _api.has_method("add_vehicle_part"):
 			if cargo_id_str == "":
 				continue
 			_api.add_vehicle_part(effective_vendor, convoy_id, vid, cargo_id_str)
+			_issued = true
 		elif _api.has_method("attach_vehicle_part") and cargo_id_str != "":
 			_api.attach_vehicle_part(vid, cargo_id_str)
+			_issued = true
+	# Phase 4: Immediately refresh convoy snapshot after swap operations.
+	if _issued and is_instance_valid(_convoy_service) and _convoy_service.has_method("refresh_single"):
+		_convoy_service.refresh_single(convoy_id)
 
 func check_part_compatibility(vehicle_id: String, cargo_id: String) -> void:
 	if vehicle_id == "" or cargo_id == "":
@@ -251,42 +262,7 @@ func check_part_compatibility(vehicle_id: String, cargo_id: String) -> void:
 	if is_instance_valid(_api) and _api.has_method("check_vehicle_part_compatibility"):
 		_api.check_vehicle_part_compatibility(vehicle_id, cargo_id)
 
-func _on_attach_completed(updated_convoy_data: Dictionary) -> void:
-	# APICalls returns an updated vehicle dictionary; follow up with an authoritative refresh.
-	var vehicle_id := String(updated_convoy_data.get("vehicle_id", ""))
-	var convoy_id := String(_vehicle_to_convoy_id.get(vehicle_id, ""))
-	if convoy_id != "" and is_instance_valid(_convoy_service) and _convoy_service.has_method("refresh_single"):
-		_convoy_service.refresh_single(convoy_id)
-
-func _on_detach_completed(updated_convoy_data: Dictionary) -> void:
-	# APICalls returns an updated vehicle dictionary; follow up with an authoritative refresh.
-	var vehicle_id := String(updated_convoy_data.get("vehicle_id", ""))
-	var convoy_id := String(_vehicle_to_convoy_id.get(vehicle_id, ""))
-	if convoy_id != "" and is_instance_valid(_convoy_service) and _convoy_service.has_method("refresh_single"):
-		_convoy_service.refresh_single(convoy_id)
-
-func _on_add_completed(result: Dictionary) -> void:
-	# APICalls may return a full convoy dict or a wrapper containing convoy_after.
-	if not (result is Dictionary):
-		return
-	var updated_convoy: Dictionary = {}
-	if result.has("convoy_id"):
-		updated_convoy = result
-	elif result.has("convoy_after") and (result.get("convoy_after") is Dictionary):
-		updated_convoy = result.get("convoy_after")
-	elif result.has("convoy") and (result.get("convoy") is Dictionary):
-		updated_convoy = result.get("convoy")
-	else:
-		for v in result.values():
-			if v is Dictionary and v.has("convoy_id"):
-				updated_convoy = v
-				break
-	if is_instance_valid(_hub) and _hub.has_signal("convoy_updated") and not updated_convoy.is_empty():
-		_hub.convoy_updated.emit(updated_convoy)
-	# Also refresh the convoy snapshot so GameStore stays authoritative.
-	var convoy_id := String(updated_convoy.get("convoy_id", ""))
-	if convoy_id != "" and is_instance_valid(_convoy_service) and _convoy_service.has_method("refresh_single"):
-		_convoy_service.refresh_single(convoy_id)
+# Phase 4: Domain-level APICalls completion handlers removed; immediate refreshes are issued after operations.
 
 func _on_compatibility_checked(payload: Dictionary) -> void:
 	# Compatibility is consumed directly from APICalls.part_compatibility_checked in newer menus.

@@ -200,15 +200,8 @@ func _ready() -> void:
 		loading_panel.visible = false
 		loading_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
 
-	var api = get_node_or_null("/root/APICalls")
-	if is_instance_valid(api):
-		api.vehicle_bought.connect(_on_api_transaction_result)
-		api.vehicle_sold.connect(_on_api_transaction_result)
-		api.cargo_bought.connect(_on_api_transaction_result)
-		api.cargo_sold.connect(_on_api_transaction_result)
-		api.resource_bought.connect(_on_api_transaction_result)
-		api.resource_sold.connect(_on_api_transaction_result)
-		api.fetch_error.connect(_on_api_transaction_error)
+	# Phase 4: UI no longer listens directly to APICalls transaction events.
+	# Refresh cycles are driven via VendorService -> SignalHub vendor_panel_ready and GameStore snapshots.
 
 	# Diagnostics: confirm this instance and signal hookup
 	if perf_log_enabled:
@@ -238,18 +231,7 @@ func _exit_tree() -> void:
 		if _api.has_signal("part_compatibility_checked") and _api.part_compatibility_checked.is_connected(c4):
 			_api.part_compatibility_checked.disconnect(c4)
 
-	# Disconnect from API signals
-	var api = get_node_or_null("/root/APICalls")
-	if is_instance_valid(api):
-		var cb = Callable(self, "_on_api_transaction_result")
-		if api.is_connected("vehicle_bought", cb): api.disconnect("vehicle_bought", cb)
-		if api.is_connected("vehicle_sold", cb): api.disconnect("vehicle_sold", cb)
-		if api.is_connected("cargo_bought", cb): api.disconnect("cargo_bought", cb)
-		if api.is_connected("cargo_sold", cb): api.disconnect("cargo_sold", cb)
-		if api.is_connected("resource_bought", cb): api.disconnect("resource_bought", cb)
-		if api.is_connected("resource_sold", cb): api.disconnect("resource_sold", cb)
-		var cbe = Callable(self, "_on_api_transaction_error")
-		if api.is_connected("fetch_error", cbe): api.disconnect("fetch_error", cbe)
+	# Phase 4: no direct APICalls disconnections required (not connected).
 
 # Request data for the panel (call this when opening the panel)
 func request_panel_data(convoy_id: String, vendor_id: String) -> void:
@@ -270,8 +252,6 @@ func _request_authoritative_refresh(convoy_id: String, vendor_id: String) -> voi
 	if vendor_id != "":
 		if is_instance_valid(_vendor_service) and _vendor_service.has_method("request_vendor_panel"):
 			_vendor_service.request_vendor_panel(convoy_id, vendor_id)
-		elif is_instance_valid(_api) and _api.has_method("request_vendor_data"):
-			_api.request_vendor_data(vendor_id)
 	if convoy_id != "" and is_instance_valid(_convoy_service) and _convoy_service.has_method("refresh_single"):
 		_convoy_service.refresh_single(convoy_id)
 
@@ -552,17 +532,7 @@ func _on_vendor_panel_data_ready(vendor_panel_data: Dictionary) -> void:
 
 	_panel_initialized = true
 
-func _on_settlement_data_updated_for_refresh(_all_settlements: Array) -> void:
-	# Legacy GDM hook (no longer used). Keep as a no-op for safety.
-	return
-
-func _on_gdm_convoy_data_changed(_all_convoys: Array) -> void:
-	# With debounced refresh, we don't immediately repopulate here.
-	# Let the scheduled refresh run after a short inactivity window.
-	if perf_log_enabled and _txn_t0_ms >= 0:
-		var now_ms := Time.get_ticks_msec()
-		print("[VendorPanel][Perf] convoy data updated +%d ms (debounced)" % int(now_ms - _txn_t0_ms))
-	return
+ 
 
 func _update_vendor_ui(update_vendor: bool = true, update_convoy: bool = true) -> void:
 	# Use self.vendor_items and self.convoy_items to populate the UI.
@@ -1754,44 +1724,50 @@ func _on_action_button_pressed() -> void:
 		emit_signal("item_sold", item_data_source, quantity, sell_unit_price * quantity)
 
 func _dispatch_buy(vendor_id: String, convoy_id: String, item_data_source: Dictionary, quantity: int) -> void:
-	if not is_instance_valid(_api):
+	if not is_instance_valid(_vendor_service):
 		return
 	if _is_vehicle_item(item_data_source):
 		var vehicle_id := String(item_data_source.get("vehicle_id", ""))
-		if vehicle_id != "" and _api.has_method("buy_vehicle"):
-			_api.buy_vehicle(vendor_id, convoy_id, vehicle_id)
+		if vehicle_id != "" and _vendor_service.has_method("buy_vehicle"):
+			_vendor_service.buy_vehicle(vendor_id, convoy_id, vehicle_id)
+			_request_authoritative_refresh(convoy_id, vendor_id)
 		return
 	if bool(item_data_source.get("is_raw_resource", false)):
 		var res_type := ""
 		if float(item_data_source.get("fuel", 0)) > 0: res_type = "fuel"
 		elif float(item_data_source.get("water", 0)) > 0: res_type = "water"
 		elif float(item_data_source.get("food", 0)) > 0: res_type = "food"
-		if res_type != "" and _api.has_method("buy_resource"):
-			_api.buy_resource(vendor_id, convoy_id, res_type, float(quantity))
+		if res_type != "" and _vendor_service.has_method("buy_resource"):
+			_vendor_service.buy_resource(vendor_id, convoy_id, res_type, float(quantity))
+			_request_authoritative_refresh(convoy_id, vendor_id)
 		return
 	var cargo_id := String(item_data_source.get("cargo_id", ""))
-	if cargo_id != "" and _api.has_method("buy_cargo"):
-		_api.buy_cargo(vendor_id, convoy_id, cargo_id, int(quantity))
+	if cargo_id != "" and _vendor_service.has_method("buy_cargo"):
+		_vendor_service.buy_cargo(vendor_id, convoy_id, cargo_id, int(quantity))
+		_request_authoritative_refresh(convoy_id, vendor_id)
 
 func _dispatch_sell(vendor_id: String, convoy_id: String, item_data_source: Dictionary, quantity: int) -> void:
-	if not is_instance_valid(_api):
+	if not is_instance_valid(_vendor_service):
 		return
 	if _is_vehicle_item(item_data_source):
 		var vehicle_id := String(item_data_source.get("vehicle_id", ""))
-		if vehicle_id != "" and _api.has_method("sell_vehicle"):
-			_api.sell_vehicle(vendor_id, convoy_id, vehicle_id)
+		if vehicle_id != "" and _vendor_service.has_method("sell_vehicle"):
+			_vendor_service.sell_vehicle(vendor_id, convoy_id, vehicle_id)
+			_request_authoritative_refresh(convoy_id, vendor_id)
 		return
 	if bool(item_data_source.get("is_raw_resource", false)):
 		var res_type := ""
 		if float(item_data_source.get("fuel", 0)) > 0: res_type = "fuel"
 		elif float(item_data_source.get("water", 0)) > 0: res_type = "water"
 		elif float(item_data_source.get("food", 0)) > 0: res_type = "food"
-		if res_type != "" and _api.has_method("sell_resource"):
-			_api.sell_resource(vendor_id, convoy_id, res_type, float(quantity))
+		if res_type != "" and _vendor_service.has_method("sell_resource"):
+			_vendor_service.sell_resource(vendor_id, convoy_id, res_type, float(quantity))
+			_request_authoritative_refresh(convoy_id, vendor_id)
 		return
 	var cargo_id := String(item_data_source.get("cargo_id", ""))
-	if cargo_id != "" and _api.has_method("sell_cargo"):
-		_api.sell_cargo(vendor_id, convoy_id, cargo_id, int(quantity))
+	if cargo_id != "" and _vendor_service.has_method("sell_cargo"):
+		_vendor_service.sell_cargo(vendor_id, convoy_id, cargo_id, int(quantity))
+		_request_authoritative_refresh(convoy_id, vendor_id)
 
 func _on_quantity_changed(_value: float) -> void:
 	_update_transaction_panel()

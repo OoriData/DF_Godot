@@ -1,7 +1,7 @@
 [gd_scene load_steps=4 format=3 uid="uid://dpsk1w1gqj3h7"]
 
 [ext_resource type="Script" path="res://Scripts/Menus/vendor_trade_panel.gd" id="1_script"]
-[ext_resource type="PackedScene" uid="uid://c1y74747t7y7x" path="res://Scenes/UI/ToastNotification.tscn" id="2_toast"]
+[ext_resource type="PackedScene" path="res://Scenes/UI/ToastNotification.tscn" id="2_toast"]
 
 [sub_resource type="StyleBoxFlat" id="StyleBoxFlat_loading"]
 bg_color = Color(0, 0, 0, 0.5)

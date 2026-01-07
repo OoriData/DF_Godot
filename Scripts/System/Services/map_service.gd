@@ -14,7 +14,8 @@ func _ready() -> void:
 func request_map(x_min: int = -1, x_max: int = -1, y_min: int = -1, y_max: int = -1) -> void:
 	if is_instance_valid(_api) and _api.has_method("get_map_data"):
 		if is_instance_valid(get_node_or_null("/root/Logger")):
-			get_node("/root/Logger").info("MapService.request_map x_min=%s x_max=%s y_min=%s y_max=%s", x_min, x_max, y_min, y_max)
+			var msg := "MapService.request_map x_min=%s x_max=%s y_min=%s y_max=%s" % [x_min, x_max, y_min, y_max]
+			get_node("/root/Logger").info(msg)
 		_api.get_map_data(x_min, x_max, y_min, y_max)
 
 func get_tiles() -> Array:

@@ -25,6 +25,7 @@ func _ready() -> void:
 	# (Disabled) login_button.pressed.connect(_on_login_button_pressed)
 	if is_instance_valid(google_button):
 		google_button.pressed.connect(_on_discord_login_pressed)
+	_connect_hub_store_signals()
 	_connect_api_signals()
 	# Focus now goes to OAuth button if needed
 	if is_instance_valid(google_button):
@@ -40,26 +41,29 @@ func _process(_delta: float) -> void:
 	if _oauth_in_progress:
 		_spin_status()
 
+func _connect_hub_store_signals() -> void:
+	var hub := get_node_or_null("/root/SignalHub")
+	if is_instance_valid(hub):
+		if hub.has_signal("auth_state_changed") and not hub.auth_state_changed.is_connected(_on_auth_state_changed):
+			hub.auth_state_changed.connect(_on_auth_state_changed)
+		if hub.has_signal("error_occurred") and not hub.error_occurred.is_connected(_on_hub_error_occurred):
+			hub.error_occurred.connect(_on_hub_error_occurred)
+	var store := get_node_or_null("/root/GameStore")
+	if is_instance_valid(store):
+		if store.has_signal("user_changed") and not store.user_changed.is_connected(_on_store_user_changed):
+			store.user_changed.connect(_on_store_user_changed)
+
 func _connect_api_signals() -> void:
 	var api = _api()
-	if not api:
-		return
-	if not api.auth_url_received.is_connected(_on_auth_url_received):
-		api.auth_url_received.connect(_on_auth_url_received)
-	if not api.fetch_error.is_connected(_on_api_error):
-		api.fetch_error.connect(_on_api_error)
-	if api.has_signal("auth_status_update") and not api.auth_status_update.is_connected(_on_auth_status_update):
-		api.auth_status_update.connect(_on_auth_status_update)
-	if api.has_signal("auth_session_received") and not api.auth_session_received.is_connected(_on_auth_session_received):
-		api.auth_session_received.connect(_on_auth_session_received)
-	if api.has_signal("user_id_resolved") and not api.user_id_resolved.is_connected(_on_user_id_resolved):
-		api.user_id_resolved.connect(_on_user_id_resolved)
-	if api.has_signal("auth_poll_started") and not api.auth_poll_started.is_connected(_on_auth_poll_started):
-		api.auth_poll_started.connect(_on_auth_poll_started)
-	if api.has_signal("auth_poll_finished") and not api.auth_poll_finished.is_connected(_on_auth_poll_finished):
-		api.auth_poll_finished.connect(_on_auth_poll_finished)
-	if api.has_signal("auth_expired") and not api.auth_expired.is_connected(_on_auth_expired):
-		api.auth_expired.connect(_on_auth_expired)
+	if is_instance_valid(api):
+		if api.has_signal("user_id_resolved") and not api.user_id_resolved.is_connected(_on_user_id_resolved):
+			api.user_id_resolved.connect(_on_user_id_resolved)
+		if api.has_signal("auth_url_received") and not api.auth_url_received.is_connected(_on_auth_url_received):
+			api.auth_url_received.connect(_on_auth_url_received)
+		if api.has_signal("fetch_error") and not api.fetch_error.is_connected(_on_api_error):
+			api.fetch_error.connect(_on_api_error)
+		if api.has_signal("auth_expired") and not api.auth_expired.is_connected(_on_auth_expired):
+			api.auth_expired.connect(_on_auth_expired)
 
 # Disabled manual user ID login handler (kept for potential future debugging)
 # func _on_login_button_pressed() -> void:
@@ -97,33 +101,46 @@ func _on_api_error(message: String) -> void:
 	else:
 		status_label.text = message
 
-func _on_auth_status_update(status: String) -> void:
-	if status != "pending":
+func _on_auth_state_changed(state: String) -> void:
+	# Drive UI from canonical Hub auth state.
+	match state:
+		"pending":
+			_set_oauth_active(true)
+			if not status_label.text.begins_with("Authenticating"):
+				status_label.text = "Authenticating"
+		"authenticated":
+			# User resolution will arrive via GameStore.user_changed
+			status_label.text = "Session established. Resolving user..."
+			_set_oauth_active(false)
+		"expired":
+			_set_oauth_active(false)
+			status_label.text = "Session expired. Please login."
+		"failed":
+			_set_oauth_active(false)
+			if status_label.text == "Authenticating" or status_label.text == "":
+				status_label.text = "Authentication failed."
+		_: # default
+			pass
+
+func _on_hub_error_occurred(domain: String, code: String, message: String, inline: bool) -> void:
+	if domain == "auth" or not inline:
+		show_error(message)
+
+func _on_store_user_changed(user: Dictionary) -> void:
+	var uid := String(user.get("user_id", user.get("id", "")))
+	if uid == "":
 		return
-	# Spinner handled in _process; keep lightweight text
-	if not status_label.text.begins_with("Authenticating"):
-		status_label.text = "Authenticating"
-
-func _on_auth_poll_started() -> void:
-	_set_oauth_active(true)
-	status_label.text = "Authenticating"
-
-func _on_auth_poll_finished(success: bool) -> void:
-	if not success:
-		_set_oauth_active(false)
-		# Preserve error message if already set
-		if status_label.text == "Authenticating" or status_label.text == "":
-			status_label.text = "Authentication failed."
-
-func _on_auth_session_received(_token: String) -> void:
-	status_label.text = "Session established. Resolving user..."
+	status_label.text = "Welcome."
+	_set_oauth_active(false)
+	emit_signal("login_successful", uid)
 
 func _on_user_id_resolved(user_id: String) -> void:
+	# Deprecated: prefer GameStore.user_changed; kept for compatibility.
 	if user_id == "":
 		status_label.text = "Failed to resolve user."
 		_set_oauth_active(false)
 		return
-	status_label.text = "Welcome." 
+	status_label.text = "Welcome."
 	_set_oauth_active(false)
 	emit_signal("login_successful", user_id)
 

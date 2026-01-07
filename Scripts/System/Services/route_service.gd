@@ -5,6 +5,7 @@ extends Node
 
 @onready var _api: Node = get_node_or_null("/root/APICalls")
 @onready var _hub: Node = get_node_or_null("/root/SignalHub")
+@onready var _convoy_service: Node = get_node_or_null("/root/ConvoyService")
 
 const RouteChoiceModel = preload("res://Scripts/Data/Models/RouteChoice.gd")
 
@@ -14,10 +15,6 @@ func _ready() -> void:
 	if is_instance_valid(_api):
 		if _api.has_signal("route_choices_received") and not _api.route_choices_received.is_connected(_on_route_choices_received):
 			_api.route_choices_received.connect(_on_route_choices_received)
-		if _api.has_signal("convoy_sent_on_journey") and not _api.convoy_sent_on_journey.is_connected(_on_convoy_on_journey):
-			_api.convoy_sent_on_journey.connect(_on_convoy_on_journey)
-		if _api.has_signal("convoy_journey_canceled") and not _api.convoy_journey_canceled.is_connected(_on_convoy_journey_canceled):
-			_api.convoy_journey_canceled.connect(_on_convoy_journey_canceled)
 
 func request_choices(convoy_id: String, dest_x: int, dest_y: int) -> void:
 	if convoy_id == "":
@@ -32,12 +29,18 @@ func start_journey(convoy_id: String, journey_id: String) -> void:
 		return
 	if is_instance_valid(_api) and _api.has_method("send_convoy"):
 		_api.send_convoy(convoy_id, journey_id)
+		# Phase 4: APICalls no longer emits domain-level journey signals; refresh snapshot.
+		if is_instance_valid(_convoy_service) and _convoy_service.has_method("refresh_single"):
+			_convoy_service.refresh_single(convoy_id)
 
 func cancel_journey(convoy_id: String, journey_id: String) -> void:
 	if convoy_id == "" or journey_id == "":
 		return
 	if is_instance_valid(_api) and _api.has_method("cancel_convoy_journey"):
 		_api.cancel_convoy_journey(convoy_id, journey_id)
+		# Phase 4: APICalls no longer emits domain-level journey signals; refresh snapshot.
+		if is_instance_valid(_convoy_service) and _convoy_service.has_method("refresh_single"):
+			_convoy_service.refresh_single(convoy_id)
 
 func _on_route_choices_received(routes: Array) -> void:
 	var logger := get_node_or_null("/root/Logger")
@@ -54,12 +57,3 @@ func to_models(routes: Array) -> Array:
 			out.append(RouteChoiceModel.new(r))
 	return out
 
-func _on_convoy_on_journey(updated_convoy_data: Dictionary) -> void:
-	var hub := _hub
-	if is_instance_valid(hub) and hub.has_signal("convoy_updated"):
-		hub.convoy_updated.emit(updated_convoy_data)
-
-func _on_convoy_journey_canceled(updated_convoy_data: Dictionary) -> void:
-	var hub := _hub
-	if is_instance_valid(hub) and hub.has_signal("convoy_updated"):
-		hub.convoy_updated.emit(updated_convoy_data)

@@ -39,7 +39,8 @@ signal back_requested
 var _convoy_data: Dictionary
 var _settlement: Dictionary
 var _warehouse: Dictionary
-var api: Node
+var _warehouse_service: Node
+var _hub: Node
 var _is_loading: bool = false
 var _pending_action_refresh: bool = false
 var _last_known_wid: String = "" # Remember last successfully loaded warehouse_id for unconditional refresh after actions
@@ -84,7 +85,8 @@ const WAREHOUSE_UPGRADE_PRICES := {
 
 func _ready():
 	print("[WarehouseMenu] _ready()")
-	api = get_node_or_null("/root/APICalls")
+	_warehouse_service = get_node_or_null("/root/WarehouseService")
+	_hub = get_node_or_null("/root/SignalHub")
 	_ensure_inventory_headers()
 	# Subscribe to canonical snapshots so money/convoy cargo stay current.
 	if is_instance_valid(_store):
@@ -123,27 +125,26 @@ func _ready():
 		cargo_store_dd.item_selected.connect(func(_idx): _update_store_qty_limit())
 	if is_instance_valid(cargo_retrieve_dd):
 		cargo_retrieve_dd.item_selected.connect(func(_idx): _update_retrieve_qty_limit())
-	# Hook API signals
-	if is_instance_valid(api):
-		if api.has_signal("warehouse_created") and not api.warehouse_created.is_connected(_on_api_warehouse_created):
-			api.warehouse_created.connect(_on_api_warehouse_created)
-		if api.has_signal("warehouse_received") and not api.warehouse_received.is_connected(_on_api_warehouse_received):
-			api.warehouse_received.connect(_on_api_warehouse_received)
-		if api.has_signal("fetch_error") and not api.fetch_error.is_connected(_on_api_error):
-			api.fetch_error.connect(_on_api_error)
-		# New action signals
-		if api.has_signal("warehouse_expanded") and not api.warehouse_expanded.is_connected(_on_api_warehouse_action):
-			api.warehouse_expanded.connect(_on_api_warehouse_action)
-		if api.has_signal("warehouse_cargo_stored") and not api.warehouse_cargo_stored.is_connected(_on_api_warehouse_action):
-			api.warehouse_cargo_stored.connect(_on_api_warehouse_action)
-		if api.has_signal("warehouse_cargo_retrieved") and not api.warehouse_cargo_retrieved.is_connected(_on_api_warehouse_action):
-			api.warehouse_cargo_retrieved.connect(_on_api_warehouse_action)
-		if api.has_signal("warehouse_vehicle_stored") and not api.warehouse_vehicle_stored.is_connected(_on_api_warehouse_action):
-			api.warehouse_vehicle_stored.connect(_on_api_warehouse_action)
-		if api.has_signal("warehouse_vehicle_retrieved") and not api.warehouse_vehicle_retrieved.is_connected(_on_api_warehouse_action):
-			api.warehouse_vehicle_retrieved.connect(_on_api_warehouse_action)
-		if api.has_signal("warehouse_convoy_spawned") and not api.warehouse_convoy_spawned.is_connected(_on_api_warehouse_action):
-			api.warehouse_convoy_spawned.connect(_on_api_warehouse_action)
+	# Hook Hub signals (transport → services → hub)
+	if is_instance_valid(_hub):
+		if _hub.has_signal("warehouse_created") and not _hub.warehouse_created.is_connected(_on_hub_warehouse_created):
+			_hub.warehouse_created.connect(_on_hub_warehouse_created)
+		if _hub.has_signal("warehouse_updated") and not _hub.warehouse_updated.is_connected(_on_hub_warehouse_received):
+			_hub.warehouse_updated.connect(_on_hub_warehouse_received)
+		if _hub.has_signal("warehouse_expanded") and not _hub.warehouse_expanded.is_connected(_on_hub_warehouse_action):
+			_hub.warehouse_expanded.connect(_on_hub_warehouse_action)
+		if _hub.has_signal("warehouse_cargo_stored") and not _hub.warehouse_cargo_stored.is_connected(_on_hub_warehouse_action):
+			_hub.warehouse_cargo_stored.connect(_on_hub_warehouse_action)
+		if _hub.has_signal("warehouse_cargo_retrieved") and not _hub.warehouse_cargo_retrieved.is_connected(_on_hub_warehouse_action):
+			_hub.warehouse_cargo_retrieved.connect(_on_hub_warehouse_action)
+		if _hub.has_signal("warehouse_vehicle_stored") and not _hub.warehouse_vehicle_stored.is_connected(_on_hub_warehouse_action):
+			_hub.warehouse_vehicle_stored.connect(_on_hub_warehouse_action)
+		if _hub.has_signal("warehouse_vehicle_retrieved") and not _hub.warehouse_vehicle_retrieved.is_connected(_on_hub_warehouse_action):
+			_hub.warehouse_vehicle_retrieved.connect(_on_hub_warehouse_action)
+		if _hub.has_signal("warehouse_convoy_spawned") and not _hub.warehouse_convoy_spawned.is_connected(_on_hub_warehouse_action):
+			_hub.warehouse_convoy_spawned.connect(_on_hub_warehouse_action)
+		if _hub.has_signal("error_occurred") and not _hub.error_occurred.is_connected(_on_hub_error):
+			_hub.error_occurred.connect(_on_hub_error)
 
 	# Wire UI buttons
 	if is_instance_valid(expand_cargo_btn):
@@ -274,7 +275,7 @@ func _format_warehouse_summary(_w: Dictionary) -> String:
 	return "\n".join(parts)
 
 func _on_buy_pressed():
-	if not is_instance_valid(api):
+	if not is_instance_valid(_warehouse_service):
 		push_warning("API node not available")
 		return
 	# Need settlement id from provided settlement snapshot
@@ -304,9 +305,9 @@ func _on_buy_pressed():
 		info_label.text = "Purchasing warehouse..."
 	if is_instance_valid(buy_button):
 		buy_button.disabled = true
-	api.warehouse_new(sett_id)
+	_warehouse_service.request_new(sett_id)
 
-func _on_api_warehouse_created(result: Variant) -> void:
+func _on_hub_warehouse_created(result: Variant) -> void:
 	# Backend returns the new UUID; refresh user data and show confirmation
 	if is_instance_valid(buy_button):
 		buy_button.disabled = false
@@ -326,14 +327,14 @@ func _on_api_warehouse_created(result: Variant) -> void:
 		if is_instance_valid(info_label):
 			info_label.text = "Warehouse created: %s" % wid
 		# Immediately fetch details
-		if is_instance_valid(api):
+		if is_instance_valid(_warehouse_service):
 			_is_loading = true
 			_update_ui()
-			api.get_warehouse(wid)
+			_warehouse_service.request_get(wid)
 	if is_instance_valid(_user_service) and _user_service.has_method("refresh_user"):
 		_user_service.refresh_user()
 
-func _on_api_warehouse_received(warehouse_data: Dictionary) -> void:
+func _on_hub_warehouse_received(warehouse_data: Dictionary) -> void:
 	_warehouse = warehouse_data.duplicate(true)
 	_is_loading = false
 	_pending_action_refresh = false
@@ -380,7 +381,7 @@ func _on_api_warehouse_received(warehouse_data: Dictionary) -> void:
 			no_change = true
 		if no_change:
 			# Decide on retry with JSON body if we have not yet tried it
-			if not _last_expand_used_json and is_instance_valid(api) and api.has_method("warehouse_expand_json"):
+			if not _last_expand_used_json and is_instance_valid(_warehouse_service):
 				print("[WarehouseMenu][UpgradeDelta][NoChange] Retrying expansion using JSON body fallback.")
 				if is_instance_valid(info_label):
 					info_label.text = "Expansion had no visible effect. Retrying (JSON)..."
@@ -395,7 +396,7 @@ func _on_api_warehouse_received(warehouse_data: Dictionary) -> void:
 				elif _last_known_wid != "":
 					wid_retry = _last_known_wid
 				if wid_retry != "":
-					api.warehouse_expand_json({"warehouse_id": wid_retry, "expand_type": _last_expand_type, "amount": 1})
+					_warehouse_service.request_expand({"warehouse_id": wid_retry, "expand_type": _last_expand_type, "amount": 1})
 					_schedule_refresh_fallback()
 			else:
 				# Second failure (JSON already used) – give up and notify
@@ -429,14 +430,15 @@ func _on_api_warehouse_received(warehouse_data: Dictionary) -> void:
 	# Update dropdowns since we have fresh warehouse data
 	_populate_dropdowns()
 
-func _on_api_error(msg: String) -> void:
+func _on_hub_error(domain: String, _code: String, message: String, _inline: bool) -> void:
 	# Only handle if this menu is visible; otherwise ignore
 	if not is_inside_tree():
 		return
 	if is_instance_valid(buy_button):
 		buy_button.disabled = false
 	# Route error to modal using ErrorTranslator; avoid printing raw into menu
-	_show_error_modal(msg)
+	# Optionally filter by domain; for now surface all.
+	_show_error_modal(message)
 
 func _show_error_modal(raw_msg: String) -> void:
 	# Translate via ErrorTranslator and display with ErrorDialog.
@@ -457,7 +459,7 @@ func _show_error_modal(raw_msg: String) -> void:
 		if dlg and dlg.has_method("show_message"):
 			dlg.show_message(translated)
 
-func _on_api_warehouse_action(_result: Variant) -> void:
+func _on_hub_warehouse_action(_result: Variant) -> void:
 	# After any action, reload warehouse even if we currently have no local _warehouse data.
 	var wid := ""
 	if _warehouse is Dictionary and _warehouse.has("warehouse_id"):
@@ -465,7 +467,7 @@ func _on_api_warehouse_action(_result: Variant) -> void:
 	if wid == "" and _last_known_wid != "":
 		wid = _last_known_wid
 	print("[WarehouseMenu][ActionComplete] result_type=", typeof(_result), " chosen_wid=", wid, " had_local=", (_warehouse is Dictionary and not _warehouse.is_empty()), " last_known=", _last_known_wid)
-	if wid == "" or not is_instance_valid(api):
+	if wid == "" or not is_instance_valid(_warehouse_service):
 		print("[WarehouseMenu][ActionComplete] Abort refresh: missing wid or api invalid")
 		return
 	# Skip early user data refresh for expansion actions to avoid flicker overriding optimistic deduction
@@ -476,7 +478,7 @@ func _on_api_warehouse_action(_result: Variant) -> void:
 			_user_service.refresh_user()
 	_is_loading = true
 	_update_ui()
-	api.get_warehouse(wid)
+	_warehouse_service.request_get(wid)
 
 # Schedule a one-shot fallback refresh in case signals are delayed or missed
 func _schedule_refresh_fallback() -> void:
@@ -490,7 +492,7 @@ func _on_refresh_fallback_timeout() -> void:
 	_refresh_warehouse()
 
 func _refresh_warehouse() -> void:
-	if not is_instance_valid(api):
+	if not is_instance_valid(_warehouse_service):
 		return
 	var wid := ""
 	if _warehouse is Dictionary and _warehouse.has("warehouse_id"):
@@ -498,7 +500,7 @@ func _refresh_warehouse() -> void:
 	if wid != "":
 		_is_loading = true
 		_update_ui()
-		api.get_warehouse(wid)
+		_warehouse_service.request_get(wid)
 	else:
 		_try_load_warehouse_for_settlement()
 
@@ -524,9 +526,9 @@ func _on_expand_cargo():
 		if is_instance_valid(info_label):
 			info_label.text = "Upgrades not available at this settlement."
 		return
-	if wid != "" and is_instance_valid(api):
+	if wid != "" and is_instance_valid(_warehouse_service):
 		info_label.text = "Expanding cargo..."
-		print("[WarehouseMenu][ExpandCargo] Dispatch api.warehouse_expand params=", {"warehouse_id": wid, "expand_type": "cargo", "amount": amt, "unit_price": per_unit})
+		print("[WarehouseMenu][ExpandCargo] Dispatch service.request_expand params=", {"warehouse_id": wid, "cargo_units": 1, "vehicle_units": 0, "unit_price": per_unit})
 		# Record baseline before dispatch
 		_pre_expand_cargo_cap = int(_warehouse.get("cargo_storage_capacity", -1)) if (_warehouse is Dictionary) else -1
 		_pre_expand_vehicle_cap = int(_warehouse.get("vehicle_storage_capacity", -1)) if (_warehouse is Dictionary) else -1
@@ -544,13 +546,9 @@ func _on_expand_cargo():
 		_set_expand_buttons_enabled(false)
 		_pending_action_refresh = true
 		_schedule_refresh_fallback()
-		if api.has_method("warehouse_expand_v2"):
-			print("[WarehouseMenu][ExpandCargo] Using v2 expansion (cargo_capacity_upgrade=1, vehicle_capacity_upgrade=0)")
-			api.warehouse_expand_v2(wid, 1, 0)
-		else:
-			api.warehouse_expand({"warehouse_id": wid, "expand_type": "cargo", "amount": amt})
+		_warehouse_service.request_expand({"warehouse_id": wid, "cargo_units": 1, "vehicle_units": 0})
 	else:
-		print("[WarehouseMenu][ExpandCargo] Blocked: invalid state wid=", wid, " api_valid=", is_instance_valid(api))
+		print("[WarehouseMenu][ExpandCargo] Blocked: invalid state wid=", wid, " svc_valid=", is_instance_valid(_warehouse_service))
 
 func _on_expand_vehicle():
 	print("[WarehouseMenu][ExpandVehicle] Handler ENTER")
@@ -573,9 +571,9 @@ func _on_expand_vehicle():
 		if is_instance_valid(info_label):
 			info_label.text = "Upgrades not available at this settlement."
 		return
-	if wid != "" and is_instance_valid(api):
+	if wid != "" and is_instance_valid(_warehouse_service):
 		info_label.text = "Expanding vehicle slots..."
-		print("[WarehouseMenu][ExpandVehicle] Dispatch api.warehouse_expand params=", {"warehouse_id": wid, "expand_type": "vehicle", "amount": amt, "unit_price": per_unit})
+		print("[WarehouseMenu][ExpandVehicle] Dispatch service.request_expand params=", {"warehouse_id": wid, "cargo_units": 0, "vehicle_units": 1, "unit_price": per_unit})
 		# Record baseline before dispatch
 		_pre_expand_cargo_cap = int(_warehouse.get("cargo_storage_capacity", -1)) if (_warehouse is Dictionary) else -1
 		_pre_expand_vehicle_cap = int(_warehouse.get("vehicle_storage_capacity", -1)) if (_warehouse is Dictionary) else -1
@@ -594,13 +592,9 @@ func _on_expand_vehicle():
 		_set_expand_buttons_enabled(false)
 		_pending_action_refresh = true
 		_schedule_refresh_fallback()
-		if api.has_method("warehouse_expand_v2"):
-			print("[WarehouseMenu][ExpandVehicle] Using v2 expansion (cargo_capacity_upgrade=0, vehicle_capacity_upgrade=1)")
-			api.warehouse_expand_v2(wid, 0, 1)
-		else:
-			api.warehouse_expand({"warehouse_id": wid, "expand_type": "vehicle", "amount": amt})
+		_warehouse_service.request_expand({"warehouse_id": wid, "cargo_units": 0, "vehicle_units": 1})
 	else:
-		print("[WarehouseMenu][ExpandVehicle] Blocked: invalid state wid=", wid, " api_valid=", is_instance_valid(api))
+		print("[WarehouseMenu][ExpandVehicle] Blocked: invalid state wid=", wid, " svc_valid=", is_instance_valid(_warehouse_service))
 
 func _diag_expand_cargo_pressed():
 	var state := "n/a"
@@ -651,11 +645,11 @@ func _on_store_cargo():
 	var cid := str(_convoy_data.get("convoy_id", ""))
 	var cargo_id := _get_selected_meta(cargo_store_dd)
 	var qty := int(cargo_qty_store.value) if is_instance_valid(cargo_qty_store) else 0
-	if wid != "" and cid != "" and cargo_id != "" and qty > 0 and is_instance_valid(api):
+	if wid != "" and cid != "" and cargo_id != "" and qty > 0 and is_instance_valid(_warehouse_service):
 		info_label.text = "Storing cargo..."
 		_pending_action_refresh = true
 		_schedule_refresh_fallback()
-		api.warehouse_cargo_store({"warehouse_id": wid, "convoy_id": cid, "cargo_id": cargo_id, "quantity": qty})
+		_warehouse_service.store_cargo({"warehouse_id": wid, "convoy_id": cid, "cargo_id": cargo_id, "quantity": qty})
 
 func _on_retrieve_cargo():
 	if not (_warehouse is Dictionary) or _warehouse.is_empty():
@@ -666,14 +660,14 @@ func _on_retrieve_cargo():
 	# pick vehicle to receive
 	var recv_vid := _get_selected_meta(cargo_retrieve_vehicle_dd)
 	var qty := int(cargo_qty_retrieve.value) if is_instance_valid(cargo_qty_retrieve) else 0
-	if wid != "" and cid != "" and cargo_id != "" and qty > 0 and is_instance_valid(api):
+	if wid != "" and cid != "" and cargo_id != "" and qty > 0 and is_instance_valid(_warehouse_service):
 		info_label.text = "Retrieving cargo..."
 		var payload := {"warehouse_id": wid, "convoy_id": cid, "cargo_id": cargo_id, "quantity": qty}
 		if recv_vid != "":
 			payload["vehicle_id"] = recv_vid
 		_pending_action_refresh = true
 		_schedule_refresh_fallback()
-		api.warehouse_cargo_retrieve(payload)
+		_warehouse_service.retrieve_cargo(payload)
 
 func _on_store_vehicle():
 	if not (_warehouse is Dictionary) or _warehouse.is_empty():
@@ -681,9 +675,9 @@ func _on_store_vehicle():
 	var wid := str(_warehouse.get("warehouse_id", ""))
 	var cid := str(_convoy_data.get("convoy_id", ""))
 	var vid := _get_selected_meta(vehicle_store_dd)
-	if wid != "" and cid != "" and vid != "" and is_instance_valid(api):
+	if wid != "" and cid != "" and vid != "" and is_instance_valid(_warehouse_service):
 		info_label.text = "Storing vehicle..."
-		api.warehouse_vehicle_store({"warehouse_id": wid, "convoy_id": cid, "vehicle_id": vid})
+		_warehouse_service.store_vehicle({"warehouse_id": wid, "convoy_id": cid, "vehicle_id": vid})
 
 func _on_retrieve_vehicle():
 	if not (_warehouse is Dictionary) or _warehouse.is_empty():
@@ -691,9 +685,9 @@ func _on_retrieve_vehicle():
 	var wid := str(_warehouse.get("warehouse_id", ""))
 	var cid := str(_convoy_data.get("convoy_id", ""))
 	var vid := _get_selected_meta(vehicle_retrieve_dd)
-	if wid != "" and cid != "" and vid != "" and is_instance_valid(api):
+	if wid != "" and cid != "" and vid != "" and is_instance_valid(_warehouse_service):
 		info_label.text = "Retrieving vehicle..."
-		api.warehouse_vehicle_retrieve({"warehouse_id": wid, "convoy_id": cid, "vehicle_id": vid})
+		_warehouse_service.retrieve_vehicle({"warehouse_id": wid, "convoy_id": cid, "vehicle_id": vid})
 
 func _on_spawn_convoy():
 	if not (_warehouse is Dictionary) or _warehouse.is_empty():
@@ -704,8 +698,8 @@ func _on_spawn_convoy():
 		cname = "New Convoy"
 	var spawn_vid := _get_selected_meta(spawn_vehicle_dd)
 	# Detailed diagnostics
-	print("[WarehouseMenu][SpawnConvoy] Attempt wid=", wid, " spawn_vid=", spawn_vid, " name=", cname, " api_valid=", is_instance_valid(api))
-	if wid != "" and spawn_vid != "" and is_instance_valid(api):
+	print("[WarehouseMenu][SpawnConvoy] Attempt wid=", wid, " spawn_vid=", spawn_vid, " name=", cname, " svc_valid=", is_instance_valid(_warehouse_service))
+	if wid != "" and spawn_vid != "" and is_instance_valid(_warehouse_service):
 		if is_instance_valid(info_label):
 			info_label.text = "Spawning convoy..."
 		# Temporarily disable button to prevent double clicks
@@ -714,7 +708,7 @@ func _on_spawn_convoy():
 		_pending_action_refresh = true
 		_schedule_refresh_fallback()
 		# API spec requires 'new_convoy_name'; send both for backward compatibility
-		api.warehouse_convoy_spawn({
+		_warehouse_service.spawn_convoy({
 			"warehouse_id": wid,
 			"vehicle_id": spawn_vid,
 			"new_convoy_name": cname,
@@ -726,7 +720,7 @@ func _on_spawn_convoy():
 			abort_reason = "missing_warehouse_id"
 		elif spawn_vid == "":
 			abort_reason = "missing_vehicle_id"
-		elif not is_instance_valid(api):
+		elif not is_instance_valid(_warehouse_service):
 			abort_reason = "api_unavailable"
 		else:
 			abort_reason = "unknown"
@@ -755,10 +749,10 @@ func _try_load_warehouse_for_settlement() -> void:
 			break
 	if not local_warehouse.is_empty():
 		var wid := String(local_warehouse.get("warehouse_id", ""))
-		if wid != "" and is_instance_valid(api):
+		if wid != "" and is_instance_valid(_warehouse_service):
 			_is_loading = true
 			_update_ui()
-			api.get_warehouse(wid)
+			_warehouse_service.request_get(wid)
 
 func _get_warehouse_price() -> int:
 	var stype := _get_settlement_type()

@@ -1,6 +1,6 @@
 [gd_scene load_steps=4 format=3 uid="uid://dplk0c1xqbv7x"]
 
-[ext_resource type="Script" uid="uid://bqe6d2xypato0" path="res://Scripts/Menus/convoy_vehicle_menu.gd" id="1_script"]
+[ext_resource type="Script" path="res://Scripts/Menus/convoy_vehicle_menu.gd" id="1_script"]
 [ext_resource type="PackedScene" path="res://Scenes/MechanicsMenu.tscn" id="2_mechanics_scene"]
 
 [node name="ConvoyVehicleMenu" type="Control"]

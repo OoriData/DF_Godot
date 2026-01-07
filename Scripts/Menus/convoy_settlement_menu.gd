@@ -107,27 +107,8 @@ func _ready():
 			_store.user_changed.connect(_on_store_user_changed)
 
 	# Also listen directly to APICalls transaction outcomes so we can trigger timely refreshes
-	if is_instance_valid(_api):
-		if _api.has_signal("resource_bought") and not _api.resource_bought.is_connected(_on_api_resource_txn):
-			_api.resource_bought.connect(_on_api_resource_txn)
-		if _api.has_signal("resource_sold") and not _api.resource_sold.is_connected(_on_api_resource_txn):
-			_api.resource_sold.connect(_on_api_resource_txn)
-		# Fallback: cargo/vehicle transactions also imply convoy changes
-		for sig in ["cargo_bought", "cargo_sold", "vehicle_bought", "vehicle_sold"]:
-			if _api.has_signal(sig):
-				var callable = Callable(self, "_on_api_other_txn")
-				var already := false
-				match sig:
-					"cargo_bought": already = _api.cargo_bought.is_connected(callable)
-					"cargo_sold": already = _api.cargo_sold.is_connected(callable)
-					"vehicle_bought": already = _api.vehicle_bought.is_connected(callable)
-					"vehicle_sold": already = _api.vehicle_sold.is_connected(callable)
-				if not already:
-					match sig:
-						"cargo_bought": _api.cargo_bought.connect(_on_api_other_txn)
-						"cargo_sold": _api.cargo_sold.connect(_on_api_other_txn)
-						"vehicle_bought": _api.vehicle_bought.connect(_on_api_other_txn)
-						"vehicle_sold": _api.vehicle_sold.connect(_on_api_other_txn)
+	# Phase 4: UI no longer listens to APICalls transaction signals. Authoritative
+	# refreshes are driven via services + GameStore/SignalHub events.
 
 
 func _display_error(message: String):
@@ -243,11 +224,11 @@ func _display_settlement_info():
 
 
 func _on_store_convoys_changed(all_convoys_data: Array) -> void:
-	_on_gdm_convoy_data_updated(all_convoys_data)
+	_apply_convoy_snapshot_update(all_convoys_data)
 
 
 func _on_store_map_changed(_tiles: Array, all_settlements_data: Array) -> void:
-	_on_gdm_settlement_data_updated(all_settlements_data)
+	_apply_settlement_snapshot_update(all_settlements_data)
 
 func _create_vendor_tab(vendor_data: Dictionary):
 	var vendor_name = vendor_data.get("name", "Unnamed Vendor")
@@ -391,7 +372,7 @@ func _on_item_sold(_item: Dictionary, _quantity: int, total_value: float):
 	if is_instance_valid(_convoy_service) and _convoy_service.has_method("refresh_single"):
 		_convoy_service.refresh_single(str(_convoy_data.get("convoy_id", "")))
 
-func _on_gdm_convoy_data_updated(all_convoys_data: Array) -> void:
+func _apply_convoy_snapshot_update(all_convoys_data: Array) -> void:
 	# Find the current convoy and update _convoy_data, then refresh UI
 	if not _convoy_data or not _convoy_data.has("convoy_id"):
 		return
@@ -403,7 +384,7 @@ func _on_gdm_convoy_data_updated(all_convoys_data: Array) -> void:
 			_update_top_up_button()
 			break
 
-func _on_gdm_settlement_data_updated(all_settlements_data: Array) -> void:
+func _apply_settlement_snapshot_update(all_settlements_data: Array) -> void:
 	# Find the current settlement and update _settlement_data, then refresh UI
 	if not _settlement_data or not _settlement_data.has("sett_id"):
 		return
@@ -417,13 +398,13 @@ func _on_gdm_settlement_data_updated(all_settlements_data: Array) -> void:
 
 # --- Direct API transaction handlers ---
 func _on_api_resource_txn(_result: Dictionary) -> void:
-	# Called when resource bought/sold; trigger refresh for authoritative state.
+	# Deprecated: previously handled APICalls transaction signals. Kept for compatibility.
+	# Now refreshes are triggered directly after initiating transactions.
 	var convoy_id := str(_convoy_data.get("convoy_id", ""))
 	if convoy_id != "" and is_instance_valid(_convoy_service) and _convoy_service.has_method("refresh_single"):
 		_convoy_service.refresh_single(convoy_id)
 	if is_instance_valid(_user_service) and _user_service.has_method("refresh_user"):
 		_user_service.refresh_user()
-	# Re-enable top-up button after a short delay so updated values incorporated.
 	call_deferred("_post_txn_update_ui")
 
 func _on_api_other_txn(_result: Dictionary) -> void:
@@ -648,6 +629,11 @@ func _on_top_up_button_pressed():
 		print("[TopUp] Purchasing %d %s from vendor %s (price=%.2f) convoy=%s" % [send_qty, res, vendor_id, float(alloc.get("price",0.0)), convoy_id])
 		# Raw resources use dedicated API call
 		_api.buy_resource(vendor_id, convoy_id, String(res), float(send_qty))
+	# Immediately trigger authoritative refreshes via services; UI updates via Store/Hub
+	if is_instance_valid(_convoy_service) and _convoy_service.has_method("refresh_single"):
+		_convoy_service.refresh_single(convoy_id)
+	if is_instance_valid(_user_service) and _user_service.has_method("refresh_user"):
+		_user_service.refresh_user()
 	# Disable button until data refresh comes back
 	if is_instance_valid(top_up_button):
 		top_up_button.disabled = true

@@ -951,11 +951,11 @@ func set_dragging_state(panel_node: Panel, convoy_id_str: String, is_dragging: b
 		_dragging_panel_node = null
 		_dragged_convoy_id_actual_str = ""
 
-func _on_gdm_convoy_data_updated(all_convoy_data: Array) -> void:
+func _on_store_convoys_changed(all_convoy_data: Array) -> void:
 	_all_convoy_data_cache = all_convoy_data
 	_draw_interactive_labels({})
 
-func _on_gdm_settlement_data_updated(settlement_data_list: Array) -> void:
+func _on_store_settlements_changed(settlement_data_list: Array) -> void:
 	_all_settlement_data_cache = settlement_data_list
 	_draw_interactive_labels({})
 

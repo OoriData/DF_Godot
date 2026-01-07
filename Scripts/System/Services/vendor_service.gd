@@ -49,3 +49,40 @@ func _on_vendor_data_received(vendor_data: Dictionary) -> void:
 
 func to_model(vendor_data: Dictionary):
 	return VendorModel.new(vendor_data)
+
+# --- Transaction wrappers (Phase 4): UI calls VendorService, not APICalls ---
+func buy_resource(vendor_id: String, convoy_id: String, resource_type: String, quantity: float) -> void:
+	if not is_instance_valid(_api):
+		return
+	if _api.has_method("buy_resource"):
+		_api.buy_resource(vendor_id, convoy_id, resource_type, quantity)
+
+func sell_resource(vendor_id: String, convoy_id: String, resource_type: String, quantity: float) -> void:
+	if not is_instance_valid(_api):
+		return
+	if _api.has_method("sell_resource"):
+		_api.sell_resource(vendor_id, convoy_id, resource_type, quantity)
+
+func buy_cargo(vendor_id: String, convoy_id: String, cargo_id: String, quantity: int) -> void:
+	if not is_instance_valid(_api):
+		return
+	if _api.has_method("buy_cargo"):
+		_api.buy_cargo(vendor_id, convoy_id, cargo_id, quantity)
+
+func sell_cargo(vendor_id: String, convoy_id: String, cargo_id: String, quantity: int) -> void:
+	if not is_instance_valid(_api):
+		return
+	if _api.has_method("sell_cargo"):
+		_api.sell_cargo(vendor_id, convoy_id, cargo_id, quantity)
+
+func buy_vehicle(vendor_id: String, convoy_id: String, vehicle_id: String) -> void:
+	if not is_instance_valid(_api):
+		return
+	if _api.has_method("buy_vehicle"):
+		_api.buy_vehicle(vendor_id, convoy_id, vehicle_id)
+
+func sell_vehicle(vendor_id: String, convoy_id: String, vehicle_id: String) -> void:
+	if not is_instance_valid(_api):
+		return
+	if _api.has_method("sell_vehicle"):
+		_api.sell_vehicle(vendor_id, convoy_id, vehicle_id)

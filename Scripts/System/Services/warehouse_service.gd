@@ -10,22 +10,8 @@ extends Node
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
 	if is_instance_valid(_api):
-		if _api.has_signal("warehouse_created") and not _api.warehouse_created.is_connected(_on_warehouse_created):
-			_api.warehouse_created.connect(_on_warehouse_created)
 		if _api.has_signal("warehouse_received") and not _api.warehouse_received.is_connected(_on_warehouse_received):
 			_api.warehouse_received.connect(_on_warehouse_received)
-		if _api.has_signal("warehouse_expanded") and not _api.warehouse_expanded.is_connected(_on_warehouse_expanded):
-			_api.warehouse_expanded.connect(_on_warehouse_expanded)
-		if _api.has_signal("warehouse_cargo_stored") and not _api.warehouse_cargo_stored.is_connected(_on_warehouse_cargo_stored):
-			_api.warehouse_cargo_stored.connect(_on_warehouse_cargo_stored)
-		if _api.has_signal("warehouse_cargo_retrieved") and not _api.warehouse_cargo_retrieved.is_connected(_on_warehouse_cargo_retrieved):
-			_api.warehouse_cargo_retrieved.connect(_on_warehouse_cargo_retrieved)
-		if _api.has_signal("warehouse_vehicle_stored") and not _api.warehouse_vehicle_stored.is_connected(_on_warehouse_vehicle_stored):
-			_api.warehouse_vehicle_stored.connect(_on_warehouse_vehicle_stored)
-		if _api.has_signal("warehouse_vehicle_retrieved") and not _api.warehouse_vehicle_retrieved.is_connected(_on_warehouse_vehicle_retrieved):
-			_api.warehouse_vehicle_retrieved.connect(_on_warehouse_vehicle_retrieved)
-		if _api.has_signal("warehouse_convoy_spawned") and not _api.warehouse_convoy_spawned.is_connected(_on_warehouse_convoy_spawned):
-			_api.warehouse_convoy_spawned.connect(_on_warehouse_convoy_spawned)
 
 # --- Thin request wrappers ---
 func request_new(settlement_id: String) -> void:
@@ -40,35 +26,57 @@ func request_get(warehouse_id: String) -> void:
 
 func request_expand(params: Dictionary) -> void:
 	if params == null: return
-	if is_instance_valid(_api) and _api.has_method("warehouse_expand_v2"):
+	# Prefer JSON body when explicit expand_type is provided (fallback path)
+	if is_instance_valid(_api) and params.has("expand_type") and _api.has_method("warehouse_expand_json"):
+		_api.warehouse_expand_json(params)
+		_refresh_warehouse_if_possible(params)
+	elif is_instance_valid(_api) and _api.has_method("warehouse_expand_v2"):
 		var wid := String(params.get("warehouse_id", ""))
 		var cargo_units := int(params.get("cargo_units", 0))
 		var vehicle_units := int(params.get("vehicle_units", 0))
 		if wid != "": _api.warehouse_expand_v2(wid, cargo_units, vehicle_units)
+		_refresh_warehouse_if_possible({"warehouse_id": wid})
 	elif is_instance_valid(_api) and _api.has_method("warehouse_expand_json"):
 		_api.warehouse_expand_json(params)
+		_refresh_warehouse_if_possible(params)
 	elif is_instance_valid(_api) and _api.has_method("warehouse_expand"):
 		_api.warehouse_expand(params)
+		_refresh_warehouse_if_possible(params)
 
 func store_cargo(params: Dictionary) -> void:
 	if is_instance_valid(_api) and _api.has_method("warehouse_cargo_store"):
 		_api.warehouse_cargo_store(params)
+		_refresh_warehouse_if_possible(params)
 
 func retrieve_cargo(params: Dictionary) -> void:
 	if is_instance_valid(_api) and _api.has_method("warehouse_cargo_retrieve"):
 		_api.warehouse_cargo_retrieve(params)
+		_refresh_warehouse_if_possible(params)
 
 func store_vehicle(params: Dictionary) -> void:
 	if is_instance_valid(_api) and _api.has_method("warehouse_vehicle_store"):
 		_api.warehouse_vehicle_store(params)
+		_refresh_warehouse_if_possible(params)
 
 func retrieve_vehicle(params: Dictionary) -> void:
 	if is_instance_valid(_api) and _api.has_method("warehouse_vehicle_retrieve"):
 		_api.warehouse_vehicle_retrieve(params)
+		_refresh_warehouse_if_possible(params)
 
 func spawn_convoy(params: Dictionary) -> void:
 	if is_instance_valid(_api) and _api.has_method("warehouse_convoy_spawn"):
 		_api.warehouse_convoy_spawn(params)
+		_refresh_warehouse_if_possible(params)
+
+# --- Helpers ---
+func _refresh_warehouse_if_possible(params: Dictionary) -> void:
+	if params == null:
+		return
+	var wid := String(params.get("warehouse_id", params.get("id", "")))
+	if wid == "":
+		return
+	if is_instance_valid(_api) and _api.has_method("get_warehouse"):
+		_api.get_warehouse(wid)
 
 # --- Signal forwards to SignalHub ---
 func _on_warehouse_created(result: Variant) -> void:

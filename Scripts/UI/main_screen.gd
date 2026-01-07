@@ -153,7 +153,7 @@ func _connect_deferred_signals():
 		if not convoy_button.is_connected("pressed", Callable(self, "on_convoy_button_pressed")):
 			convoy_button.pressed.connect(on_convoy_button_pressed)
 	else:
-		printerr("MainScreen: Could not find ConvoyMenuButton in TopBar (deferred search).")
+		print("[MainScreen] ConvoyMenuButton not present in TopBar; skipping binding.")
 
 func _notification(what):
 	if what == NOTIFICATION_RESIZED:
