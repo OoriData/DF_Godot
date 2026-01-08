@@ -25,10 +25,12 @@ signal inspect_specific_convoy_cargo_requested(convoy_data, item_data)
 @onready var _store: Node = get_node_or_null("/root/GameStore")
 @onready var _hub: Node = get_node_or_null("/root/SignalHub")
 @onready var _mechanics_service: Node = get_node_or_null("/root/MechanicsService")
+@onready var _convoy_service: Node = get_node_or_null("/root/ConvoyService")
 
 var current_vehicle_list: Array = []
 var _current_convoy_data: Dictionary # To store the full convoy data
 var _selected_vehicle_id: String = "" # Persist selection across refreshes
+var _last_refresh_convoy_id: String = "" # Avoid spamming refresh requests
 
 const CONSUMABLE_CLASS_IDS = [
 	"4ccf7ae4-2297-420c-af71-97eda72dceca", # MRE Boxes
@@ -171,11 +173,23 @@ func initialize_with_data(data: Dictionary):
 
 	if is_instance_valid(title_label):
 		_current_convoy_data = data.duplicate(true) # Store the full convoy data
-		title_label.text = data.get("convoy_name", "Convoy")
+		# Prefer convoy_name but fall back to name
+		title_label.text = data.get("convoy_name", data.get("name", "Convoy"))
 		_update_mechanic_button_enabled()
 
 	# Deterministically sort vehicles for stable ordering
-	current_vehicle_list = _stable_sort_vehicles(data.get("vehicle_details_list", []))
+	# Fallback to the canonical 'vehicles' array when 'vehicle_details_list' is absent.
+	current_vehicle_list = _stable_sort_vehicles(
+		data.get("vehicle_details_list", data.get("vehicles", []))
+	)
+
+	# If vehicle details are missing, request a single-convoy refresh to populate them
+	var convoy_id := String(data.get("convoy_id", data.get("id", "")))
+	if current_vehicle_list.is_empty() and convoy_id != "" and is_instance_valid(_convoy_service) and _convoy_service.has_method("refresh_single"):
+		if _last_refresh_convoy_id != convoy_id:
+			print("ConvoyVehicleMenu: Vehicles missing; requesting single-convoy refresh for id=", convoy_id)
+			_last_refresh_convoy_id = convoy_id
+			_convoy_service.refresh_single(convoy_id)
 
 	# Initialize the Service tab mechanics with the same convoy data
 	if is_instance_valid(mechanics_embed) and mechanics_embed.has_method("initialize_with_data"):
@@ -188,7 +202,11 @@ func initialize_with_data(data: Dictionary):
 			vehicle_option_button.add_item("No Vehicles Available")
 			vehicle_option_button.disabled = true
 			print("ConvoyVehicleMenu: No vehicles found in list.")
-			_show_initial_detail_message("No vehicles in this convoy.")
+			var msg := "No vehicles in this convoy."
+			# If we just requested a refresh, inform the user we're loading.
+			if convoy_id != "" and is_instance_valid(_convoy_service) and _convoy_service.has_method("refresh_single"):
+				msg = "Loading vehicles..."
+			_show_initial_detail_message(msg)
 		else:
 			vehicle_option_button.disabled = false
 			for i in range(current_vehicle_list.size()):
@@ -212,6 +230,8 @@ func initialize_with_data(data: Dictionary):
 			if vehicle_option_button.get_item_count() > 0:
 				vehicle_option_button.select(target_index)
 				_on_vehicle_selected(target_index)
+				# Vehicles present; clear refresh guard for future convoys
+				_last_refresh_convoy_id = ""
 			else: # Should not happen if current_vehicle_list was not empty, but as a fallback
 				print("ConvoyVehicleMenu: OptionButton is empty after trying to populate. Showing initial message.")
 				_show_initial_detail_message("Select a vehicle from the dropdown to view details.")

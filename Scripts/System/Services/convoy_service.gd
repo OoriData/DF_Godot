@@ -24,6 +24,10 @@ func _ready() -> void:
 			_store.convoys_changed.connect(_on_store_convoys_changed)
 		# Prime colors from current snapshot.
 		_on_store_convoys_changed(get_convoys())
+	# Bridge transport-level convoy updates to GameStore for single-convoy refreshes
+	if is_instance_valid(_api) and _api.has_signal("convoy_data_received"):
+		if not _api.convoy_data_received.is_connected(_on_api_convoy_data_received):
+			_api.convoy_data_received.connect(_on_api_convoy_data_received)
 
 
 func _on_store_convoys_changed(convoys: Array) -> void:
@@ -96,3 +100,44 @@ func get_convoy_models() -> Array:
 		if c is Dictionary:
 			out.append(ConvoyModel.new(c))
 	return out
+
+# Handle transport convoy_data_received by merging into the GameStore snapshot.
+func _on_api_convoy_data_received(parsed_convoy_list: Array) -> void:
+	if not is_instance_valid(_store) or not _store.has_method("get_convoys") or not _store.has_method("set_convoys"):
+		return
+	var current: Array = _store.get_convoys()
+	var updated: Array = []
+	# Build map for quick replacement
+	var by_id: Dictionary = {}
+	for c in current:
+		if c is Dictionary and c.has("convoy_id"):
+			by_id[str(c.get("convoy_id"))] = c
+		else:
+			updated.append(c)
+	# Merge/replace from parsed list
+	for item in parsed_convoy_list:
+		if not (item is Dictionary):
+			continue
+		var d: Dictionary = (item as Dictionary).duplicate(true)
+		var id_s := str(d.get("convoy_id", d.get("id", d.get("convoyId", ""))))
+		if id_s == "":
+			updated.append(d)
+			continue
+		by_id[id_s] = d
+	# Reconstruct updated list preserving original order where possible
+	for c in current:
+		if c is Dictionary and c.has("convoy_id"):
+			var key := str(c.get("convoy_id"))
+			if by_id.has(key):
+				updated.append(by_id[key])
+				by_id.erase(key)
+			else:
+				updated.append(c)
+		else:
+			# Already appended non-dict entries earlier
+			pass
+	# Append any new convoys not previously present
+	for k in by_id.keys():
+		updated.append(by_id[k])
+	# Push snapshot to GameStore (emits convoys_changed)
+	_store.set_convoys(updated)

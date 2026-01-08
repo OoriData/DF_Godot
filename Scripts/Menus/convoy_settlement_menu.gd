@@ -130,9 +130,13 @@ func _display_error(message: String):
 	# Leave the title as-is (convoy or settlement label) and add simple text directly
 	if is_instance_valid(vendor_tab_container):
 		var label := create_info_label(message)
+		label.name = "InfoMessage"
 		label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		label.size_flags_vertical = Control.SIZE_EXPAND_FILL
 		vendor_tab_container.add_child(label)
+		# Ensure any temporary info tab has a friendly title and won't look like a vendor
+		if vendor_tab_container.get_tab_count() > 0:
+			vendor_tab_container.set_tab_title(vendor_tab_container.get_tab_count() - 1, "Info")
 
 
 func _display_settlement_info():
@@ -173,6 +177,13 @@ func _display_settlement_info():
 
 	# Display information based on whether a settlement was found on the tile.
 	if target_tile and target_tile.has("settlements") and target_tile.settlements is Array and not target_tile.settlements.is_empty():
+		# Remove any placeholder info tab added earlier in error states
+		for i in range(vendor_tab_container.get_tab_count() - 1, -1, -1):
+			var tab_control: Node = vendor_tab_container.get_tab_control(i)
+			if tab_control is Label and tab_control.name == "InfoMessage":
+				vendor_tab_container.remove_child(tab_control)
+				tab_control.queue_free()
+
 		# When at a settlement, make sure tab headers are visible and warehouse enabled
 		if is_instance_valid(vendor_tab_container):
 			if vendor_tab_container.has_method("set_tabs_visible"):
@@ -228,7 +239,9 @@ func _on_store_convoys_changed(all_convoys_data: Array) -> void:
 
 
 func _on_store_map_changed(_tiles: Array, all_settlements_data: Array) -> void:
-	_apply_settlement_snapshot_update(all_settlements_data)
+	# Cache latest settlements and re-display based on current convoy coords.
+	_all_settlement_data = all_settlements_data
+	call_deferred("_display_settlement_info")
 
 func _create_vendor_tab(vendor_data: Dictionary):
 	var vendor_name = vendor_data.get("name", "Unnamed Vendor")
@@ -267,11 +280,12 @@ func _clear_tabs():
 	if not is_instance_valid(vendor_tab_container):
 		printerr("ConvoySettlementMenu: vendor_tab_container is invalid in _clear_tabs().")
 		return
-	# Remove all dynamically added tabs.
+	# Remove all dynamically added tabs using TabContainer API to avoid removing non-tab children.
 	for i in range(vendor_tab_container.get_tab_count() - 1, -1, -1):
-		var tab = vendor_tab_container.get_child(i)
-		vendor_tab_container.remove_child(tab)
-		tab.queue_free()
+		var tab_control = vendor_tab_container.get_tab_control(i)
+		if is_instance_valid(tab_control):
+			vendor_tab_container.remove_child(tab_control)
+			tab_control.queue_free()
 	mechanics_tab_vbox = null
 
 ## Mechanics tab removed: Mechanics is now opened contextually via Install from vendor part purchase.

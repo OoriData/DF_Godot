@@ -29,6 +29,7 @@ var convoy_data_received: Dictionary
 
 @onready var _store: Node = get_node_or_null("/root/GameStore")
 @onready var _hub: Node = get_node_or_null("/root/SignalHub")
+@onready var _convoy_service: Node = get_node_or_null("/root/ConvoyService")
 var _latest_all_settlements: Array = []
 var _vendors_by_id: Dictionary = {} # vendor_id -> vendor Dictionary
 var _latest_all_settlement_models: Array = []
@@ -945,6 +946,14 @@ func initialize_with_data(data: Dictionary, item_to_inspect = null):
 
 	convoy_data_received = data.duplicate()
 	_item_to_inspect_on_load = item_to_inspect
+	# If vehicles are missing, trigger a single-convoy refresh to populate details.
+	var vlist: Array = convoy_data_received.get("vehicle_details_list", [])
+	if (vlist is Array and vlist.is_empty()) and convoy_data_received.has("convoy_id"):
+		var cid := str(convoy_data_received.get("convoy_id", ""))
+		if cid != "" and is_instance_valid(_convoy_service) and _convoy_service.has_method("refresh_single"):
+			_diag("refresh_single", "trigger", {"convoy_id": cid})
+			_convoy_service.refresh_single(cid)
+			# UI will repopulate on GameStore.convoys_changed
 	# print("ConvoyCargoMenu: Initialized with data: ", convoy_data_received) # DEBUG
 
 	if is_instance_valid(title_label) and convoy_data_received.has("convoy_name"):
