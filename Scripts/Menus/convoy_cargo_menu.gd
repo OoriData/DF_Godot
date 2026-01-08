@@ -43,6 +43,7 @@ var _organize_button: Button
 # Debounce UI refresh to prevent instant inspect closure
 var _suppress_refresh_until_msec: int = 0
 var _open_inspects: Dictionary = {}
+var _last_refresh_convoy_id: String = "" # Avoid repeated refresh_single calls
 
 func _snapshot_open_inspects(tag: String) -> void:
 	# Emit a compact summary of currently tracked open inspect cargo_ids
@@ -947,19 +948,20 @@ func initialize_with_data(data: Dictionary, item_to_inspect = null):
 	convoy_data_received = data.duplicate()
 	_item_to_inspect_on_load = item_to_inspect
 	# If vehicles are missing, trigger a single-convoy refresh to populate details.
-	var vlist: Array = convoy_data_received.get("vehicle_details_list", [])
+	var vlist: Array = convoy_data_received.get("vehicle_details_list", convoy_data_received.get("vehicles", []))
 	if (vlist is Array and vlist.is_empty()) and convoy_data_received.has("convoy_id"):
 		var cid := str(convoy_data_received.get("convoy_id", ""))
 		if cid != "" and is_instance_valid(_convoy_service) and _convoy_service.has_method("refresh_single"):
-			_diag("refresh_single", "trigger", {"convoy_id": cid})
-			_convoy_service.refresh_single(cid)
-			# UI will repopulate on GameStore.convoys_changed
+			if _last_refresh_convoy_id != cid:
+				_diag("refresh_single", "trigger", {"convoy_id": cid})
+				_last_refresh_convoy_id = cid
+				_convoy_service.refresh_single(cid)
+				# UI will repopulate on GameStore.convoys_changed
 	# print("ConvoyCargoMenu: Initialized with data: ", convoy_data_received) # DEBUG
 
-	if is_instance_valid(title_label) and convoy_data_received.has("convoy_name"):
-		title_label.text = "%s" % convoy_data_received.get("convoy_name", "Unknown Convoy")
-	elif is_instance_valid(title_label):
-		title_label.text = "Cargo Hold"
+	if is_instance_valid(title_label):
+		var title_val := String(convoy_data_received.get("convoy_name", convoy_data_received.get("name", "Cargo Hold")))
+		title_label.text = "%s" % title_val
 	
 	_populate_cargo_list()
 	_diag("populate", "called_from_initialize")
@@ -1010,7 +1012,7 @@ func _populate_by_type():
 	var aggregated_resources: Dictionary = {}
 	var aggregated_other: Dictionary = {} # Fallback category
 
-	var vehicle_details_list: Array = convoy_data_received.get("vehicle_details_list", [])
+	var vehicle_details_list: Array = convoy_data_received.get("vehicle_details_list", convoy_data_received.get("vehicles", []))
 	if vehicle_details_list.is_empty():
 		var no_vehicles_label := Label.new()
 		no_vehicles_label.text = "No vehicles in this convoy."
@@ -1211,7 +1213,7 @@ func _populate_by_vehicle():
 		child.queue_free()
 	_diag("clear_rows", "vehicle_end", {"removed": _clr})
 
-	var vehicle_details_list: Array = convoy_data_received.get("vehicle_details_list", [])
+	var vehicle_details_list: Array = convoy_data_received.get("vehicle_details_list", convoy_data_received.get("vehicles", []))
 	if vehicle_details_list.is_empty():
 		var no_vehicles_label := Label.new()
 		no_vehicles_label.text = "No vehicles in this convoy."

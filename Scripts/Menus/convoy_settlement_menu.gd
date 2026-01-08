@@ -48,8 +48,8 @@ func initialize_with_data(data: Dictionary):
 		_display_error("No convoy data provided.")
 		return
 
-	# Set the main title to the convoy's name
-	title_label.text = data.get("convoy_name", "Settlement Interactions")
+	# Set the main title to the convoy's name, fallback to 'name' if needed
+	title_label.text = String(data.get("convoy_name", data.get("name", "Settlement Interactions")))
 	_convoy_data = data
 
 	

@@ -71,7 +71,7 @@ static func from_dict(d: Dictionary) -> CargoItem:
 static func _parse_base(d: Dictionary) -> CargoItem:
 	var item := CargoItem.new()
 	item.raw = d.duplicate(true)
-	item.id = String(d.get("cargo_id", d.get("id", "")))
+	item.id = str(d.get("cargo_id", d.get("id", "")))
 	item.name = _safe_name(d)
 	item.quantity = max(1, _to_int(d.get("quantity", 1)))
 	var raw_total_weight = _to_float(d.get("weight", d.get("total_weight", 0)))
@@ -126,12 +126,12 @@ class PartItem:
 			return false
 		# Concrete rules:
 		# 1) Direct slot present on the item
-		if d.has("slot") and d.get("slot") != null and String(d.get("slot")).strip_edges() != "":
+		if d.has("slot") and d.get("slot") != null and str(d.get("slot")).strip_edges() != "":
 			return true
 		# 2) Nested slot present in first entry of `parts` array (container-like items)
 		if d.has("parts") and d.get("parts") is Array and not (d.get("parts") as Array).is_empty():
 			var first_p = (d.get("parts") as Array)[0]
-			if first_p is Dictionary and first_p.has("slot") and first_p.get("slot") != null and String(first_p.get("slot")).strip_edges() != "":
+			if first_p is Dictionary and first_p.has("slot") and first_p.get("slot") != null and str(first_p.get("slot")).strip_edges() != "":
 				return true
 		return false
 
@@ -142,12 +142,12 @@ class PartItem:
 			p.set(f, base.get(f))
 		p.raw = base.raw
 		p.category = "part"
-		p.slot = String(d.get("slot", ""))
+		p.slot = str(d.get("slot", ""))
 		# If slot is empty, try to infer it from a nested 'parts' array. This is common for container-like parts.
 		if p.slot == "" and d.has("parts") and d.get("parts") is Array and not (d.get("parts") as Array).is_empty():
 			var first_p = (d.get("parts") as Array)[0]
 			if first_p is Dictionary and first_p.has("slot") and first_p.get("slot") != null:
-				var nested_slot = String(first_p.get("slot"))
+				var nested_slot = str(first_p.get("slot"))
 				if not nested_slot.is_empty():
 					p.slot = nested_slot
 		var mod_keys = ["top_speed_add","efficiency_add","offroad_capability_add","cargo_capacity_add","weight_capacity_add","fuel_capacity","kwh_capacity"]
@@ -208,9 +208,9 @@ class MissionItem:
 			m.set(f, base.get(f))
 		m.raw = base.raw
 		m.category = "mission"
-		m.mission_id = String(d.get("mission_id",""))
-		m.mission_vendor_id = String(d.get("mission_vendor_id",""))
-		m.mission_type = String(d.get("mission_type", d.get("type", "")))
+		m.mission_id = str(d.get("mission_id",""))
+		m.mission_vendor_id = str(d.get("mission_vendor_id",""))
+		m.mission_type = str(d.get("mission_type", d.get("type", "")))
 		return m
 
 # ================= ResourceItem =================
@@ -238,7 +238,7 @@ class ResourceItem:
 		r.category = "resource"
 		for t in ["resource_type","fuel","water","food"]:
 			if d.has(t):
-				r.resource_type = (t if t in ["fuel","water","food"] else String(d.get(t)))
+				r.resource_type = (t if t in ["fuel","water","food"] else str(d.get(t)))
 				break
 		if r.resource_type == "":
 			r.resource_type = "generic"
@@ -284,7 +284,7 @@ class VehicleItem:
 			v.set(f, base.get(f))
 		v.raw = base.raw
 		v.category = "vehicle"
-		v.vehicle_id = String(d.get("vehicle_id", d.get("id", "")))
+		v.vehicle_id = str(d.get("vehicle_id", d.get("id", "")))
 		v.top_speed = CargoItem._to_float(d.get("top_speed", d.get("top_speed_add", 0)))
 		v.efficiency = CargoItem._to_float(d.get("efficiency", d.get("efficiency_add", 0)))
 		v.offroad_capability = CargoItem._to_float(d.get("offroad_capability", d.get("offroad_capability_add", 0)))

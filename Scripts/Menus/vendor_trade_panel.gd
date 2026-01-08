@@ -35,7 +35,7 @@ signal install_requested(item, quantity, vendor_id)
 @onready var convoy_cargo_label: Label = %ConvoyCargoLabel
 @onready var trade_mode_tab_container: TabContainer = %TradeModeTabContainer
 @onready var toast_notification: Control = %ToastNotification
-@onready var loading_panel: Panel = %LoadingPanel # (Add a Panel node in your scene and name it LoadingPanel)
+var loading_panel: Panel = null
 
 # --- Data ---
 var vendor_data # Should be set by the parent
@@ -135,6 +135,10 @@ func _ready() -> void:
 	# Use item_selected for Tree to update the inspector on a single click.
 	convoy_item_tree.item_selected.connect(_on_convoy_item_selected)
 	trade_mode_tab_container.tab_changed.connect(_on_tab_changed)
+
+	# Optional loading overlay: bind only if present
+	if has_node("%LoadingPanel"):
+		loading_panel = %LoadingPanel
 
 	if is_instance_valid(max_button):
 		max_button.pressed.connect(_on_max_button_pressed)
@@ -258,7 +262,7 @@ func _request_authoritative_refresh(convoy_id: String, vendor_id: String) -> voi
 func _on_hub_vendor_panel_ready(vendor: Dictionary) -> void:
 	if not (vendor is Dictionary):
 		return
-	var vid := String(vendor.get("vendor_id", ""))
+	var vid := str(vendor.get("vendor_id", ""))
 	if _active_vendor_id != "" and vid != "" and vid != _active_vendor_id:
 		return
 	vendor_data = vendor
@@ -308,12 +312,12 @@ func _set_latest_settlements_snapshot(settlements: Array) -> void:
 				if not (v is Dictionary):
 					continue
 				var vd: Dictionary = v
-				var vid := String(vd.get("vendor_id", vd.get("id", "")))
+				var vid := str(vd.get("vendor_id", vd.get("id", "")))
 				if vid == "":
 					continue
 				_vendors_from_settlements_by_id[vid] = vd
 				_vendor_id_to_settlement[vid] = sd
-				var nm := String(vd.get("name", ""))
+				var nm := str(vd.get("name", ""))
 				if nm != "":
 					_vendor_id_to_name[vid] = nm
 
@@ -324,7 +328,7 @@ func _get_convoy_by_id(convoy_id: String) -> Dictionary:
 		return {}
 	var all_convoys: Array = _store.get_convoys()
 	for c in all_convoys:
-		if c is Dictionary and String((c as Dictionary).get("convoy_id", "")) == convoy_id:
+		if c is Dictionary and str((c as Dictionary).get("convoy_id", "")) == convoy_id:
 			return c
 	return {}
 
@@ -334,7 +338,7 @@ func _resolve_settlement_for_vendor_or_convoy(vendor_id: String, convoy_id: Stri
 		if _vendor_id_to_settlement.has(vendor_id):
 			return _vendor_id_to_settlement[vendor_id]
 	# 2) Fallback: find settlement at convoy coords
-	if convoy_id != "" and convoy_data is Dictionary and String(convoy_data.get("convoy_id", "")) == convoy_id:
+	if convoy_id != "" and convoy_data is Dictionary and str(convoy_data.get("convoy_id", "")) == convoy_id:
 		var cx := int(convoy_data.get("x", 999999))
 		var cy := int(convoy_data.get("y", 999999))
 		for s2 in all_settlement_data_global:
@@ -345,8 +349,8 @@ func _resolve_settlement_for_vendor_or_convoy(vendor_id: String, convoy_id: Stri
 func _try_process_refresh() -> void:
 	if not (_refresh_in_flight or _awaiting_panel_data):
 		return
-	var vid := String((vendor_data if vendor_data is Dictionary else {}).get("vendor_id", ""))
-	var cid := String((convoy_data if convoy_data is Dictionary else {}).get("convoy_id", ""))
+	var vid := str((vendor_data if vendor_data is Dictionary else {}).get("vendor_id", ""))
+	var cid := str((convoy_data if convoy_data is Dictionary else {}).get("convoy_id", ""))
 	if _active_vendor_id != "" and vid != "" and vid != _active_vendor_id:
 		return
 	if _active_convoy_id != "" and cid != "" and cid != _active_convoy_id:
@@ -354,11 +358,17 @@ func _try_process_refresh() -> void:
 	# We require both vendor and convoy context to match the legacy payload semantics.
 	if vid == "" or cid == "":
 		return
+	# Guard: if the user just changed selection, defer processing to avoid selection flicker
+	var now_ms := Time.get_ticks_msec()
+	if now_ms - _last_selection_change_ms < DATA_READY_COOLDOWN_MS:
+		var defer_t := get_tree().create_timer(float(DATA_READY_COOLDOWN_MS) / 1000.0)
+		defer_t.timeout.connect(Callable(self, "_try_process_refresh"))
+		return
 	_process_panel_payload_ready()
 
 func _process_panel_payload_ready() -> void:
 	if perf_log_enabled:
-		print("[VendorPanel][Perf] data_ready PROCESS refresh_id=", _current_refresh_id, " vid=", String(vendor_data.get("vendor_id", "")), " cid=", String(convoy_data.get("convoy_id", "")))
+		print("[VendorPanel][Perf] data_ready PROCESS refresh_id=", _current_refresh_id, " vid=", str(vendor_data.get("vendor_id", "")), " cid=", str(convoy_data.get("convoy_id", "")))
 		var now_ms := Time.get_ticks_msec()
 		if _txn_t0_ms >= 0:
 			print("[VendorPanel][Perf] panel data ready +%d ms" % int(now_ms - _txn_t0_ms))
@@ -394,14 +404,13 @@ func _process_panel_payload_ready() -> void:
 	_populate_vendor_list()
 	_populate_convoy_list()
 	_update_convoy_info_display()
-	_on_tab_changed(trade_mode_tab_container.current_tab)
 
 	if perf_log_enabled:
 		var dt = Time.get_ticks_msec() - t0
 		print("[VendorPanel][Perf] rebuild dt=", dt, " ms (id=", _current_refresh_id, ")")
 
 	var selection_restored := false
-	if typeof(prev_selected_id) == TYPE_STRING and not String(prev_selected_id).is_empty():
+	if typeof(prev_selected_id) == TYPE_STRING and str(prev_selected_id) != "":
 		if prev_tree == "vendor":
 			selection_restored = _restore_selection(vendor_item_tree, prev_selected_id)
 		elif prev_tree == "convoy":
@@ -447,8 +456,8 @@ func _on_vendor_panel_data_ready(vendor_panel_data: Dictionary) -> void:
 		return
 
 	# Ignore payloads for other vendors (warmers can emit multiple payloads)
-	var incoming_vid := String((vendor_panel_data.get("vendor_data", {}) as Dictionary).get("vendor_id", ""))
-	var current_vid := String((self.vendor_data if self.vendor_data is Dictionary else {}).get("vendor_id", ""))
+	var incoming_vid := str((vendor_panel_data.get("vendor_data", {}) as Dictionary).get("vendor_id", ""))
+	var current_vid := str((self.vendor_data if self.vendor_data is Dictionary else {}).get("vendor_id", ""))
 	if current_vid != "" and incoming_vid != "" and incoming_vid != current_vid:
 		if perf_log_enabled:
 			print("[VendorPanel][Perf] IGNORE vendor mismatch incoming_vid=", incoming_vid, " current_vid=", current_vid)
@@ -510,7 +519,7 @@ func _on_vendor_panel_data_ready(vendor_panel_data: Dictionary) -> void:
 		print("[VendorPanel][Perf] _update_vendor_ui dt=", dt, " ms (id=", _current_refresh_id, ") vendor_rows=", (self.vendor_items.keys().size() if self.vendor_items is Dictionary else 0), " convoy_rows=", (self.convoy_items.keys().size() if self.convoy_items is Dictionary else 0))
 
 	var selection_restored = false
-	if typeof(prev_selected_id) == TYPE_STRING and not String(prev_selected_id).is_empty():
+	if typeof(prev_selected_id) == TYPE_STRING and not str(prev_selected_id).is_empty():
 		if prev_tree == "vendor":
 			selection_restored = _restore_selection(vendor_item_tree, prev_selected_id)
 		elif prev_tree == "convoy":
@@ -569,13 +578,13 @@ func _vendor_has_vehicle_parts() -> bool:
 				continue
 			if raw2.has("parts") and raw2.parts is Array and not (raw2.parts as Array).is_empty():
 				var fp: Dictionary = (raw2.parts as Array)[0]
-				if fp.has("slot") and fp.get("slot") != null and String(fp.get("slot")).strip_edges() != "":
+				if fp.has("slot") and fp.get("slot") != null and str(fp.get("slot")).strip_edges() != "":
 					return true
 	# 3) Common explicit flags/types on vendor_data (fallbacks)
 	if vendor_data:
 		if bool(vendor_data.get("sells_parts", false)) or bool(vendor_data.get("sells_vehicle_parts", false)):
 			return true
-		var vtype := String(vendor_data.get("vendor_type", "")).to_lower()
+		var vtype := str(vendor_data.get("vendor_type", "")).to_lower()
 		if vtype.findn("part") != -1:
 			return true
 	return false
@@ -606,7 +615,7 @@ func _convoy_items_with_sellable_vehicles(base_agg: Dictionary) -> Dictionary:
 		for v in convoy_data.vehicle_details_list:
 			if not (v is Dictionary):
 				continue
-			var vid := String(v.get("vehicle_id", ""))
+			var vid := str(v.get("vehicle_id", ""))
 			if vid == "":
 				continue
 			# Each vehicle is a single-quantity sellable item; price derived from _get_vehicle_price()
@@ -616,7 +625,7 @@ func _convoy_items_with_sellable_vehicles(base_agg: Dictionary) -> Dictionary:
 				"total_quantity": 1,
 				"total_weight": 0.0,
 				"total_volume": 0.0,
-				"display_name": String(v.get("name", "Vehicle"))
+				"display_name": str(v.get("name", "Vehicle"))
 			}
 			vehicles_cat[key] = entry
 		if not vehicles_cat.is_empty():
@@ -654,11 +663,11 @@ func _populate_tree_from_agg(tree: Tree, agg: Dictionary) -> void:
 			if entry is Dictionary and entry.has("item_data") and entry.item_data is Dictionary:
 				var slot_text := ""
 				if entry.item_data.has("slot") and entry.item_data.get("slot") != null:
-					slot_text = String(entry.item_data.get("slot"))
+					slot_text = str(entry.item_data.get("slot"))
 				elif entry.item_data.has("parts") and entry.item_data.get("parts") is Array and not (entry.item_data.get("parts") as Array).is_empty():
 					var nested_first: Dictionary = (entry.item_data.get("parts") as Array)[0]
 					if nested_first.has("slot") and nested_first.get("slot") != null:
-						slot_text = String(nested_first.get("slot"))
+						slot_text = str(nested_first.get("slot"))
 				if not slot_text.is_empty():
 					display_agg["other"][k].item_data["slot"] = slot_text
 					move_keys.append(k)
@@ -717,8 +726,8 @@ func initialize(p_vendor_data, p_convoy_data, p_current_settlement_data, p_all_s
 	self.all_settlement_data_global = p_all_settlement_data_global
 
 	# Request an authoritative refresh via services
-	var vid := String((self.vendor_data if self.vendor_data is Dictionary else {}).get("vendor_id", ""))
-	var cid := String((self.convoy_data if self.convoy_data is Dictionary else {}).get("convoy_id", ""))
+	var vid := str((self.vendor_data if self.vendor_data is Dictionary else {}).get("vendor_id", ""))
+	var cid := str((self.convoy_data if self.convoy_data is Dictionary else {}).get("convoy_id", ""))
 	if vid != "" and cid != "":
 		_active_vendor_id = vid
 		_active_convoy_id = cid
@@ -744,7 +753,7 @@ func refresh_data(p_vendor_data, p_convoy_data, p_current_settlement_data, p_all
 	_populate_convoy_list()
 	_update_convoy_info_display()
 	# Do not forcibly clear selection; instead, restore it if we know what was selected
-	if typeof(prev_selected_id) == TYPE_STRING and not String(prev_selected_id).is_empty():
+	if typeof(prev_selected_id) == TYPE_STRING and not str(prev_selected_id).is_empty():
 		if prev_tree == "vendor":
 			_restore_selection(vendor_item_tree, prev_selected_id)
 		elif prev_tree == "convoy":
@@ -788,14 +797,14 @@ func _populate_vendor_list() -> void:
 		else:
 			# Robust part detection: top-level slot OR nested parts[] with slot OR part-like hints
 			var part_slot: String = ""
-			if item.has("slot") and item.get("slot") != null and String(item.get("slot")).length() > 0:
-				part_slot = String(item.get("slot"))
+			if item.has("slot") and item.get("slot") != null and str(item.get("slot")).length() > 0:
+				part_slot = str(item.get("slot"))
 			elif item.has("parts") and item.get("parts") is Array and not (item.get("parts") as Array).is_empty():
 				var nested_parts: Array = item.get("parts")
 				var first_part: Dictionary = nested_parts[0]
 				var slot_val = first_part.get("slot", "")
-				if typeof(slot_val) == TYPE_STRING and String(slot_val).length() > 0:
-					part_slot = String(slot_val)
+				if typeof(slot_val) == TYPE_STRING and str(slot_val).length() > 0:
+					part_slot = str(slot_val)
 			# Heuristic fallback if still no slot: check flags/types/stats that imply a part
 			var likely_part := false
 			if part_slot != "":
@@ -803,8 +812,8 @@ func _populate_vendor_list() -> void:
 			elif item.has("is_part") and item.get("is_part"):
 				likely_part = true
 			else:
-				var type_s := String(item.get("type", "")).to_lower()
-				var itype_s := String(item.get("item_type", "")).to_lower()
+				var type_s := str(item.get("type", "")).to_lower()
+				var itype_s := str(item.get("item_type", "")).to_lower()
 				if type_s == "part" or itype_s == "part":
 					likely_part = true
 				else:
@@ -831,7 +840,7 @@ func _populate_vendor_list() -> void:
 		var looks_mission := (dr_v is float or dr_v is int) and float(dr_v) > 0.0
 		if looks_mission and not item.has("recipient") and item.has("mission_vendor_id"):
 			if perf_log_enabled:
-				print("[VendorPanel][Debug] mission without recipient; mission_vendor_id=", String(item.get("mission_vendor_id")))
+				print("[VendorPanel][Debug] mission without recipient; mission_vendor_id=", str(item.get("mission_vendor_id")))
 		# Aggregate the display copy when we inferred a slot
 		if category_dict == aggregated_parts and (item.has("slot") or (item.has("parts") and item.get("parts") is Array)):
 			var use_item: Dictionary = item
@@ -839,9 +848,9 @@ func _populate_vendor_list() -> void:
 				use_item = item
 			elif item.has("parts") and item.get("parts") is Array and not (item.get("parts") as Array).is_empty():
 				var nested_first: Dictionary = (item.get("parts") as Array)[0]
-				if nested_first.has("slot") and String(nested_first.get("slot", "")).length() > 0:
+				if nested_first.has("slot") and str(nested_first.get("slot", "")).length() > 0:
 					use_item = item.duplicate(true)
-					use_item["slot"] = String(nested_first.get("slot"))
+					use_item["slot"] = str(nested_first.get("slot"))
 			_aggregate_vendor_item(category_dict, use_item, mission_vendor_name)
 		else:
 			_aggregate_vendor_item(category_dict, item, mission_vendor_name)
@@ -949,8 +958,8 @@ func _populate_convoy_list() -> void:
 			var vehicle_name = vehicle.get("name", "Unknown Vehicle")
 			# In SELL mode (when allowed), add vehicles as single sellable entries
 			if _should_show_vehicle_sell_category():
-				var vid := String(vehicle.get("vehicle_id", ""))
-				if not vid.is_empty():
+				var vid := str(vehicle.get("vehicle_id", ""))
+				if vid != "":
 					aggregated_vehicles[vid] = {
 						"item_data": vehicle,
 						"display_name": vehicle_name,
@@ -973,7 +982,7 @@ func _populate_convoy_list() -> void:
 					raw_item["weight"] = typed.total_weight
 					raw_item["volume"] = typed.total_volume
 					if typed.has_method("get_modifier_summary"):
-						var mods: String = String(typed.get_modifier_summary())
+						var mods: String = str(typed.get_modifier_summary())
 						if mods != "":
 							raw_item["modifiers"] = mods
 						if "stats" in typed and typed.stats is Dictionary and not typed.stats.is_empty():
@@ -1228,8 +1237,25 @@ func _update_convoy_info_display() -> void:
 		# Cache stats (guard negatives)
 		_convoy_used_volume = max(0.0, used_volume)
 		_convoy_total_volume = max(0.0, total_volume)
+		# Fallback: if volume capacity is missing, estimate from vehicles and cargo
+		if _convoy_total_volume <= 0.0 and convoy_data.has("vehicle_details_list"):
+			var sum_volume := 0.0
+			var total_capacity := 0.0
+			for vehicle in convoy_data.vehicle_details_list:
+				total_capacity += float((vehicle as Dictionary).get("cargo_capacity", 0.0))
+				for c in (vehicle as Dictionary).get("cargo", []):
+					sum_volume += float((c as Dictionary).get("volume", 0.0))
+			_convoy_total_volume = max(_convoy_total_volume, total_capacity)
+			_convoy_used_volume = max(_convoy_used_volume, sum_volume)
 		_convoy_used_weight = max(0.0, weight_used if weight_used >= 0.0 else 0.0)
 		_convoy_total_weight = max(0.0, weight_capacity if weight_capacity >= 0.0 else 0.0)
+		# Fallback: if weight capacity is missing, estimate from vehicles
+		if _convoy_total_weight <= 0.0 and convoy_data.has("vehicle_details_list"):
+			var total_weight_capacity := 0.0
+			for vehicle in convoy_data.vehicle_details_list:
+				var vdict: Dictionary = vehicle
+				total_weight_capacity += float(vdict.get("weight_capacity", vdict.get("max_weight", 0.0)))
+			_convoy_total_weight = max(_convoy_total_weight, total_weight_capacity)
 		# If capacity unknown, attempt an estimate (leave -1 to hide)
 		var weight_segment = ""
 		if weight_used >= 0.0:
@@ -1299,7 +1325,7 @@ func _populate_category(target_tree: Tree, root_item: TreeItem, category_name: S
 
 	# Normalize category title to match Cargo menu naming while keeping Vehicles as-is
 	var title := category_name
-	var lc := String(category_name).to_lower()
+	var lc := str(category_name).to_lower()
 	if lc == "parts":
 		title = "Part Cargo"
 	elif lc == "resources":
@@ -1324,11 +1350,11 @@ func _populate_category(target_tree: Tree, root_item: TreeItem, category_name: S
 		var agg_data = agg_dict[agg_key]
 		var dn: String = ""
 		if agg_data is Dictionary and agg_data.has("display_name"):
-			dn = String(agg_data.get("display_name"))
+			dn = str(agg_data.get("display_name"))
 		elif agg_data is Dictionary and agg_data.has("item_data") and (agg_data.item_data is Dictionary) and agg_data.item_data.has("name"):
-			dn = String(agg_data.item_data.get("name"))
+			dn = str(agg_data.item_data.get("name"))
 		else:
-			dn = String(agg_key)
+			dn = str(agg_key)
 		rows.append({"key": agg_key, "data": agg_data, "dn": dn, "sort": dn.to_lower()})
 
 	rows.sort_custom(func(a, b): return a["sort"] < b["sort"]) # case-insensitive A→Z
@@ -1553,11 +1579,11 @@ func _handle_new_item_selection(p_selected_item) -> void:
 		# Fire backend compatibility checks for this item against all convoy vehicles (to align with Mechanics)
 		if selected_item and selected_item.has("item_data") and convoy_data and convoy_data.has("vehicle_details_list"):
 			var idata = selected_item.item_data
-			var uid := String(idata.get("cargo_id", idata.get("part_id", "")))
+			var uid := str(idata.get("cargo_id", idata.get("part_id", "")))
 			# Only request compatibility for items that look like vehicle parts.
 			if uid != "" and _looks_like_part(idata):
 				for v in convoy_data.vehicle_details_list:
-					var vid := String(v.get("vehicle_id", ""))
+					var vid := str(v.get("vehicle_id", ""))
 					if vid != "" and is_instance_valid(_mechanics_service) and _mechanics_service.has_method("check_part_compatibility"):
 						var key := _compat_key(vid, uid)
 						if not _compat_cache.has(key):
@@ -1665,7 +1691,7 @@ func _on_action_button_pressed() -> void:
 	# Perf baseline for transaction timeline
 	if perf_log_enabled:
 		_txn_t0_ms = Time.get_ticks_msec()
-		var item_name := String(item_data_source.get("name", "?"))
+		var item_name := str(item_data_source.get("name", "?"))
 		print("[VendorPanel][Perf] click '%s' qty=%d t0=%d" % [item_name, quantity, _txn_t0_ms])
 
 	# Compute deltas for optimistic projection
@@ -1727,7 +1753,7 @@ func _dispatch_buy(vendor_id: String, convoy_id: String, item_data_source: Dicti
 	if not is_instance_valid(_vendor_service):
 		return
 	if _is_vehicle_item(item_data_source):
-		var vehicle_id := String(item_data_source.get("vehicle_id", ""))
+		var vehicle_id := str(item_data_source.get("vehicle_id", ""))
 		if vehicle_id != "" and _vendor_service.has_method("buy_vehicle"):
 			_vendor_service.buy_vehicle(vendor_id, convoy_id, vehicle_id)
 			_request_authoritative_refresh(convoy_id, vendor_id)
@@ -1741,7 +1767,7 @@ func _dispatch_buy(vendor_id: String, convoy_id: String, item_data_source: Dicti
 			_vendor_service.buy_resource(vendor_id, convoy_id, res_type, float(quantity))
 			_request_authoritative_refresh(convoy_id, vendor_id)
 		return
-	var cargo_id := String(item_data_source.get("cargo_id", ""))
+	var cargo_id := str(item_data_source.get("cargo_id", ""))
 	if cargo_id != "" and _vendor_service.has_method("buy_cargo"):
 		_vendor_service.buy_cargo(vendor_id, convoy_id, cargo_id, int(quantity))
 		_request_authoritative_refresh(convoy_id, vendor_id)
@@ -1750,7 +1776,7 @@ func _dispatch_sell(vendor_id: String, convoy_id: String, item_data_source: Dict
 	if not is_instance_valid(_vendor_service):
 		return
 	if _is_vehicle_item(item_data_source):
-		var vehicle_id := String(item_data_source.get("vehicle_id", ""))
+		var vehicle_id := str(item_data_source.get("vehicle_id", ""))
 		if vehicle_id != "" and _vendor_service.has_method("sell_vehicle"):
 			_vendor_service.sell_vehicle(vendor_id, convoy_id, vehicle_id)
 			_request_authoritative_refresh(convoy_id, vendor_id)
@@ -1764,7 +1790,7 @@ func _dispatch_sell(vendor_id: String, convoy_id: String, item_data_source: Dict
 			_vendor_service.sell_resource(vendor_id, convoy_id, res_type, float(quantity))
 			_request_authoritative_refresh(convoy_id, vendor_id)
 		return
-	var cargo_id := String(item_data_source.get("cargo_id", ""))
+	var cargo_id := str(item_data_source.get("cargo_id", ""))
 	if cargo_id != "" and _vendor_service.has_method("sell_cargo"):
 		_vendor_service.sell_cargo(vendor_id, convoy_id, cargo_id, int(quantity))
 		_request_authoritative_refresh(convoy_id, vendor_id)
@@ -2126,7 +2152,7 @@ func _update_install_button_state() -> void:
 	if is_buy_mode and selected_item and selected_item.has("item_data"):
 		var idata: Dictionary = selected_item.item_data
 		# Per user request, the install button is only available for items with a "slot".
-		can_install = idata.has("slot") and idata.get("slot") != null and not String(idata.get("slot")).is_empty()
+		can_install = idata.has("slot") and idata.get("slot") != null and not str(idata.get("slot")).is_empty()
 	install_button.visible = can_install
 	install_button.disabled = not can_install
 
@@ -2137,7 +2163,7 @@ func _on_install_button_pressed() -> void:
 	var qty := int(quantity_spinbox.value)
 	if qty <= 0:
 		qty = 1
-	var vend_id := String(vendor_data.get("vendor_id", "")) if vendor_data else ""
+	var vend_id := str(vendor_data.get("vendor_id", "")) if vendor_data else ""
 	emit_signal("install_requested", idata, qty, vend_id)
 
 # --- Compatibility plumbing (align with Mechanics) ---
@@ -2146,8 +2172,8 @@ func _compat_key(vehicle_id: String, part_uid: String) -> String:
 
 func _on_part_compatibility_ready(payload: Dictionary) -> void:
 	# Cache payload
-	var part_cargo_id := String(payload.get("part_cargo_id", ""))
-	var vehicle_id := String(payload.get("vehicle_id", ""))
+	var part_cargo_id := str(payload.get("part_cargo_id", ""))
+	var vehicle_id := str(payload.get("vehicle_id", ""))
 	if part_cargo_id != "" and vehicle_id != "":
 		var key := _compat_key(vehicle_id, part_cargo_id)
 		_compat_cache[key] = payload
@@ -2158,7 +2184,7 @@ func _on_part_compatibility_ready(payload: Dictionary) -> void:
 	# If current selection references this part, refresh inspector for updated fitment
 	if selected_item and selected_item.has("item_data"):
 		var idata: Dictionary = selected_item.item_data
-		var uid := String(idata.get("cargo_id", idata.get("part_id", "")))
+		var uid := str(idata.get("cargo_id", idata.get("part_id", "")))
 		if uid != "" and uid == part_cargo_id:
 			# This was causing a recursive loop.
 			# Only update the part of the UI that depends on this data.
@@ -2195,10 +2221,10 @@ func _get_part_modifiers(item_data_source: Dictionary) -> Dictionary:
 	var eff_val: Variant = _get_modifier_value(item_data_source, ["efficiency_add", "fuel_efficiency_add", "efficiency_mod", "efficiency_modifier"]) 
 	var offroad_val: Variant = _get_modifier_value(item_data_source, ["offroad_capability_add", "offroad_add", "offroad_mod", "offroad_capability_modifier"]) 
 
-	var part_uid: String = String(item_data_source.get("cargo_id", item_data_source.get("part_id", "")))
+	var part_uid: String = str(item_data_source.get("cargo_id", item_data_source.get("part_id", "")))
 	if (speed_val == null or eff_val == null or offroad_val == null) and convoy_data and convoy_data.has("vehicle_details_list"):
 		for v in convoy_data.vehicle_details_list:
-			var vid: String = String(v.get("vehicle_id", ""))
+			var vid: String = str(v.get("vehicle_id", ""))
 			if vid == "" or part_uid == "":
 				continue
 			var key := _compat_key(vid, part_uid)
@@ -2307,8 +2333,8 @@ func _on_api_transaction_result(result: Dictionary) -> void:
 			print("[VendorPanel][Perf] API result +%d ms" % int(now_ms - _txn_t0_ms))
 	# Prefer an immediate refresh for responsiveness.
 	if vendor_data and convoy_data and not _awaiting_panel_data and not _refresh_in_flight:
-		var cid := String(convoy_data.get("convoy_id", ""))
-		var vid := String(vendor_data.get("vendor_id", ""))
+		var cid := str(convoy_data.get("convoy_id", ""))
+		var vid := str(vendor_data.get("vendor_id", ""))
 		if not cid.is_empty() and not vid.is_empty():
 			_refresh_in_flight = true
 			_awaiting_panel_data = true
@@ -2356,8 +2382,8 @@ func _on_api_transaction_error(error_message: String) -> void:
 
 	# Refresh authoritative data
 	if vendor_data and convoy_data:
-		var cid := String(convoy_data.get("convoy_id", ""))
-		var vid := String(vendor_data.get("vendor_id", ""))
+		var cid := str(convoy_data.get("convoy_id", ""))
+		var vid := str(vendor_data.get("vendor_id", ""))
 		if cid != "" and vid != "":
 			_request_authoritative_refresh(cid, vid)
 
@@ -2401,17 +2427,17 @@ func _recalculate_convoy_cargo_stats() -> Dictionary:
 
 # Formats money as a string with commas (e.g., 1,234,567)
 func _format_money(amount) -> String:
-	return "%s" % String("{:,}".format(amount))
+	return "%s" % str("{:,}".format(amount))
 
 # Looks up the vendor name for a recipient ID (stub, fill in as needed)
 func _get_vendor_name_for_recipient(recipient_id) -> String:
-	var rid := String(recipient_id)
+	var rid := str(recipient_id)
 	if rid != "" and _vendor_id_to_name.has(rid):
-		return String(_vendor_id_to_name[rid])
+		return str(_vendor_id_to_name[rid])
 	if rid != "" and _vendors_from_settlements_by_id.has(rid):
 		var vd = _vendors_from_settlements_by_id[rid]
 		if vd is Dictionary:
-			var nm := String((vd as Dictionary).get("name", ""))
+			var nm := str((vd as Dictionary).get("name", ""))
 			if nm != "":
 				return nm
 	return "Unknown Vendor"
@@ -2451,10 +2477,10 @@ func _on_refresh_debounce_timeout(t: SceneTreeTimer) -> void:
 func _perform_refresh() -> void:
 	if vendor_data == null:
 		return
-	var vid := String(vendor_data.get("vendor_id", ""))
+	var vid := str(vendor_data.get("vendor_id", ""))
 	if vid == "":
 		return
-	var cid := String((convoy_data if convoy_data is Dictionary else {}).get("convoy_id", _active_convoy_id))
+	var cid := str((convoy_data if convoy_data is Dictionary else {}).get("convoy_id", _active_convoy_id))
 	if cid == "":
 		cid = _active_convoy_id
 	if cid == "":
@@ -2498,9 +2524,9 @@ func _on_refresh_watchdog_timeout(rid: int) -> void:
 		if perf_log_enabled:
 			print("[VendorPanel][Perf] Watchdog fired for id=", rid, " after ", (now - _refresh_t0_ms), " ms; re-requesting panel payload once.")
 		if self.convoy_data and self.vendor_data:
-			var cid := String(self.convoy_data.get("convoy_id", ""))
-			var vid := String(self.vendor_data.get("vendor_id", ""))
-			if not cid.is_empty() and not vid.is_empty():
+			var cid := str(self.convoy_data.get("convoy_id", ""))
+			var vid := str(self.vendor_data.get("vendor_id", ""))
+			if cid != "" and vid != "":
 				_request_authoritative_refresh(cid, vid)
 				_awaiting_panel_data = true
 				if perf_log_enabled:
@@ -2530,7 +2556,7 @@ func _restore_selection(tree: Tree, item_id) -> bool:
 					# This ensures the inspector panel updates correctly.
 					call_deferred("_handle_new_item_selection", agg_data)
 					return true
-				elif typeof(item_id) == TYPE_STRING and _matches_restore_key(agg_data, String(item_id)):
+				elif typeof(item_id) == TYPE_STRING and _matches_restore_key(agg_data, str(item_id)):
 					item.select(0)
 					call_deferred("_handle_new_item_selection", agg_data)
 					return true
@@ -2546,8 +2572,8 @@ func _matches_restore_key(agg_data: Dictionary, key: String) -> bool:
 		return false
 	var idata: Dictionary = agg_data.item_data
 	if key.begins_with("name:"):
-		var nm := String(key.substr(5))
-		return String(idata.get("name", "")) == nm
+		var nm := str(key.substr(5))
+		return str(idata.get("name", "")) == nm
 	if key == "res:fuel":
 		return bool(idata.get("is_raw_resource", false)) and float(idata.get("fuel", 0.0)) > 0.0
 	if key == "res:water":
@@ -2580,7 +2606,7 @@ func get_vendor_item_rect_by_text_contains(substr: String) -> Rect2:
 	while not q.is_empty():
 		var it: TreeItem = q.pop_back()
 		if it != null:
-			var txt := String(it.get_text(0))
+			var txt := str(it.get_text(0))
 			if txt.to_lower().find(needle) != -1:
 				found = it
 				break
@@ -2636,13 +2662,13 @@ func _make_panel(title: String, rows: Array) -> PanelContainer:
 		var line := HBoxContainer.new()
 		line.add_theme_constant_override("separation", 6)
 		var k := Label.new()
-		k.text = String(r.get("k", ""))
+		k.text = str(r.get("k", ""))
 		k.add_theme_font_size_override("font_size", 13)
 		k.modulate = Color(0.92, 0.94, 1.0, 0.95)
 		k.size_flags_horizontal = Control.SIZE_FILL
 		k.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 		var v := Label.new()
-		v.text = String(r.get("v", ""))
+		v.text = str(r.get("v", ""))
 		v.add_theme_font_size_override("font_size", 13)
 		v.modulate = Color(0.86, 0.92, 1.0, 1)
 		v.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -2701,7 +2727,7 @@ func _rebuild_info_sections(item_data_source: Dictionary) -> void:
 			if item_data_source.has(key) and item_data_source[key] != null:
 				var unit = unit_map.get(key, "")
 				var val_str: String = str(item_data_source[key])
-				if not String(unit).is_empty():
+				if not str(unit).is_empty():
 					val_str += " " + unit
 				rows_summary.append({"k": stat_map[key], "v": val_str})
 
@@ -2733,9 +2759,9 @@ func _rebuild_info_sections(item_data_source: Dictionary) -> void:
 			var skip := ["top_speed_add", "speed_add", "top_speed_mod", "top_speed_modifier", "efficiency_add", "fuel_efficiency_add", "efficiency_mod", "efficiency_modifier", "offroad_capability_add", "offroad_add", "offroad_mod", "offroad_capability_modifier"]
 			var shown := 0
 			for stat_name in item_data_source.stats:
-				if skip.has(String(stat_name)):
+				if skip.has(str(stat_name)):
 					continue
-				rows_summary.append({"k": String(stat_name).capitalize(), "v": str(item_data_source.stats[stat_name])})
+				rows_summary.append({"k": str(stat_name).capitalize(), "v": str(item_data_source.stats[stat_name])})
 				shown += 1
 				if shown >= 6:
 					break
@@ -2821,7 +2847,7 @@ func _rebuild_info_sections(item_data_source: Dictionary) -> void:
 	if item_data_source.has("stats") and item_data_source.stats is Dictionary and not item_data_source.stats.is_empty():
 		var rows_stats: Array = []
 		for stat_name in item_data_source.stats:
-			rows_stats.append({"k": String(stat_name).capitalize(), "v": str(item_data_source.stats[stat_name])})
+			rows_stats.append({"k": str(stat_name).capitalize(), "v": str(item_data_source.stats[stat_name])})
 		container.add_child(_make_panel("Stats", rows_stats))
 
 	# Parts: dedicated Fitment section (Slot + Compatible Vehicles)
@@ -2829,7 +2855,7 @@ func _rebuild_info_sections(item_data_source: Dictionary) -> void:
 		var rows_fit: Array = []
 		var slot_name: String = ""
 		if item_data_source.has("slot") and item_data_source.get("slot") != null:
-			slot_name = String(item_data_source.get("slot"))
+			slot_name = str(item_data_source.get("slot"))
 		if not slot_name.is_empty():
 			rows_fit.append({"k": "Slot", "v": slot_name})
 
@@ -2838,11 +2864,11 @@ func _rebuild_info_sections(item_data_source: Dictionary) -> void:
 		if convoy_data and convoy_data.has("vehicle_details_list") and convoy_data.vehicle_details_list is Array:
 			var part_uid: String = ""
 			if item_data_source.has("cargo_id") and item_data_source.get("cargo_id") != null:
-				part_uid = String(item_data_source.get("cargo_id"))
+				part_uid = str(item_data_source.get("cargo_id"))
 			elif item_data_source.has("part_id") and item_data_source.get("part_id") != null:
-				part_uid = String(item_data_source.get("part_id"))
+				part_uid = str(item_data_source.get("part_id"))
 			for v in convoy_data.vehicle_details_list:
-				var vid: String = String(v.get("vehicle_id", ""))
+				var vid: String = str(v.get("vehicle_id", ""))
 				if vid == "" or part_uid == "":
 					continue
 				var key := _compat_key(vid, part_uid)
@@ -2860,5 +2886,5 @@ func _rebuild_info_sections(item_data_source: Dictionary) -> void:
 		if locs is Dictionary and not (locs as Dictionary).is_empty():
 			var rows_locs: Array = []
 			for vehicle_name in (locs as Dictionary).keys():
-				rows_locs.append({"k": String(vehicle_name), "v": str((locs as Dictionary)[vehicle_name])})
+				rows_locs.append({"k": str(vehicle_name), "v": str((locs as Dictionary)[vehicle_name])})
 			container.add_child(_make_panel("Locations", rows_locs))

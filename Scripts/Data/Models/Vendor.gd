@@ -14,9 +14,9 @@ func _init(d: Dictionary = {}) -> void:
 
 func load_from_dict(d: Dictionary) -> void:
 	raw = (d if d != null else {}).duplicate(true)
-	vendor_id = String(raw.get("vendor_id", raw.get("id", "")))
-	name = String(raw.get("name", ""))
-	sett_id = String(raw.get("sett_id", ""))
+	vendor_id = str(raw.get("vendor_id", raw.get("id", "")))
+	name = str(raw.get("name", ""))
+	sett_id = str(raw.get("sett_id", ""))
 	var c_any: Variant = raw.get("cargo_inventory", [])
 	cargo_inventory = (c_any as Array) if c_any is Array else []
 	var vi_any: Variant = raw.get("vehicle_inventory", [])
