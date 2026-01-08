@@ -3,15 +3,15 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://day2444roqb5c"
-path="res://.godot/imported/goArrow.png-8d473ad9f7033fa317ae25753f0064e4.ctex"
+path="res://.godot/imported/goArrow.png-12508ea1f7a2d6afdba7da3dce9b1c67.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://steamworks_sdk/tools/ContentBuilder/builder_osx/Frameworks/Breakpad.framework/Resources/crash_report_sender.app/Contents/Resources/goArrow.png"
-dest_files=["res://.godot/imported/goArrow.png-8d473ad9f7033fa317ae25753f0064e4.ctex"]
+source_file="res://steamworks_sdk/tools/ContentBuilder/builder_osx/Frameworks/Breakpad.framework/Versions/A/Resources/crash_report_sender.app/Contents/Resources/goArrow.png"
+dest_files=["res://.godot/imported/goArrow.png-12508ea1f7a2d6afdba7da3dce9b1c67.ctex"]
 
 [params]
 

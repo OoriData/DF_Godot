@@ -85,11 +85,12 @@ var _menu_target_width: float = 0.0
 var _menu_anim_tween: Tween = null
 var _last_focused_convoy_data: Dictionary = {}
 var _current_menu_occlusion_px: float = 0.0 # animated width used to inform camera occlusion
-var DEBUG_MENU_CAMERA: bool = true # master toggle for menu-camera diagnostic logging
+@export var debug_menu_camera: bool = false # master toggle for menu-camera diagnostic logging
+@export var onboarding_log_enabled: bool = false # gate onboarding-related logs
 var _menu_anim_in_progress: bool = false # true while menu open/close tween is active to suppress duplicate focus requests
 
 func _dbg_menu(tag: String, data: Dictionary = {}):
-	if not DEBUG_MENU_CAMERA:
+	if not debug_menu_camera:
 		return
 	var summary := ""
 	for k in data.keys():
@@ -459,15 +460,18 @@ func _get_primary_convoy_data() -> Dictionary:
 	return {}
 
 func _on_initial_data_ready():
-	print("[Onboarding] initial_data_ready received; checking convoys…")
+	if onboarding_log_enabled:
+		print("[Onboarding] initial_data_ready received; checking convoys…")
 	_check_or_prompt_new_convoy()
 
 func _on_convoy_data_updated(all_convoys: Array):
-	print("[Onboarding] convoy_data_updated received; convoys passed count=", (all_convoys.size() if all_convoys is Array else -1))
+	if onboarding_log_enabled:
+		print("[Onboarding] convoy_data_updated received; convoys passed count=", (all_convoys.size() if all_convoys is Array else -1))
 	_check_or_prompt_new_convoy(all_convoys)
 
 func _on_user_data_updated(_user: Dictionary):
-	print("[Onboarding] user_data_updated received; re-checking convoys…")
+	if onboarding_log_enabled:
+		print("[Onboarding] user_data_updated received; re-checking convoys…")
 	# Print full user object so we can inspect tutorial flags/fields
 	var user_dump := "<non-dict>"
 	if typeof(_user) == TYPE_DICTIONARY:
@@ -476,8 +480,10 @@ func _on_user_data_updated(_user: Dictionary):
 		if typeof(md) == TYPE_DICTIONARY and md.has("tutorial"):
 			var t = md["tutorial"]
 			var stage = int(t) if typeof(t) in [TYPE_INT, TYPE_FLOAT] else -1
-			print("[Onboarding] user.metadata.tutorial=", stage)
-	print("[Onboarding] user object:", user_dump)
+			if onboarding_log_enabled:
+				print("[Onboarding] user.metadata.tutorial=", stage)
+	if onboarding_log_enabled:
+		print("[Onboarding] user object:", user_dump)
 	_check_or_prompt_new_convoy()
 
 func _check_or_prompt_new_convoy(all_convoys: Array = []):
@@ -505,15 +511,17 @@ func _check_or_prompt_new_convoy(all_convoys: Array = []):
 					# If non-numeric strings become 0; guard with regex if needed later
 					tutorial_stage = parsed
 
-	print("[Onboarding] _check_or_prompt_new_convoy: gdm_valid=", is_instance_valid(gdm),
-		" convoys_is_array=", (convoys is Array),
-		" count=", (convoys.size() if convoys is Array else -1),
-		" has_any=", has_any,
-		" tutorial_stage=", tutorial_stage)
+	if onboarding_log_enabled:
+		print("[Onboarding] _check_or_prompt_new_convoy: gdm_valid=", is_instance_valid(gdm),
+			" convoys_is_array=", (convoys is Array),
+			" count=", (convoys.size() if convoys is Array else -1),
+			" has_any=", has_any,
+			" tutorial_stage=", tutorial_stage)
 
 	# Gate the prompt strictly by tutorial stage: only when stage == 1 and user has no convoys
 	if tutorial_stage != 1:
-		print("[Onboarding] Tutorial stage is not 1; suppressing first-convoy prompt.")
+		if onboarding_log_enabled:
+			print("[Onboarding] Tutorial stage is not 1; suppressing first-convoy prompt.")
 		_hide_new_convoy_dialog()
 		return
 
@@ -568,7 +576,8 @@ func _show_error_dialog(message: String):
 	)
 
 func _show_new_convoy_dialog():
-	print("[Onboarding] _show_new_convoy_dialog invoked.")
+	if onboarding_log_enabled:
+		print("[Onboarding] _show_new_convoy_dialog invoked.")
 	var modal_layer: Control = get_node_or_null("ModalLayer")
 	if not is_instance_valid(_new_convoy_dialog):
 		var scene_res: Resource = new_convoy_dialog_scene if new_convoy_dialog_scene != null else load(NEW_CONVOY_DIALOG_SCENE_PATH)
@@ -577,7 +586,8 @@ func _show_new_convoy_dialog():
 			_new_convoy_dialog = _build_inline_new_convoy_dialog()
 		else:
 			var scene: PackedScene = scene_res
-			print("[Onboarding] Instantiating NewConvoyDialog scene…")
+			if onboarding_log_enabled:
+				print("[Onboarding] Instantiating NewConvoyDialog scene…")
 			_new_convoy_dialog = scene.instantiate()
 		# The host for the modal dialog is the full-screen CenterContainer from the scene file.
 		modal_layer = get_node_or_null("ModalLayer")
@@ -586,7 +596,8 @@ func _show_new_convoy_dialog():
 			printerr("[Onboarding] CRITICAL: ModalLayer or its DialogHost child not found in MainScreen.tscn!")
 			return
 		host.add_child(_new_convoy_dialog)
-		print("[Onboarding] NewConvoyDialog added to ModalLayer.")
+		if onboarding_log_enabled:
+			print("[Onboarding] NewConvoyDialog added to ModalLayer.")
 		# Connect signals
 		if _new_convoy_dialog.has_signal("create_requested"):
 			_new_convoy_dialog.connect("create_requested", Callable(self, "_on_new_convoy_create"))
@@ -594,7 +605,8 @@ func _show_new_convoy_dialog():
 			_new_convoy_dialog.connect("canceled", Callable(self, "_on_new_convoy_canceled"))
 	modal_layer = get_node_or_null("ModalLayer")
 	if _new_convoy_dialog.has_method("open"):
-		print("[Onboarding] Opening NewConvoyDialog…")
+		if onboarding_log_enabled:
+			print("[Onboarding] Opening NewConvoyDialog…")
 		if is_instance_valid(modal_layer): modal_layer.show()
 		_new_convoy_dialog.call_deferred("open")
 	else:

@@ -5,11 +5,16 @@ extends Node
 # The dictionary is checked in order, so more specific keys should be placed before general ones.
 const ERROR_MAP: Dictionary = {
 	# --- Specific Transaction/Action Failures ---
+	# More specific money errors before the general one
+	"Convoy does not have enough money": "You do not have enough money for this transaction.",
+	"does not have enough money": "You do not have enough money for this transaction.",
 	"not found in the vendor's inventory": "This item is no longer available. The vendor's list has been updated.",
 	"not found in inventory of convoy": "The item you're trying to sell is no longer in your inventory. Your cargo list has been updated.",
 	"Item no longer sold by vendor": "This item is no longer sold here. The vendor's list has been updated.",
 	"Not enough space in convoy": "There is not enough space in your convoy for this purchase.",
 	"Not enough weight capacity in convoy": "There is not enough weight capacity in your convoy for this purchase.",
+	# Combined space/weight capacity check across vehicles (includes item details)
+	"Not enough space or weight capacity across all vehicles to add": "This purchase exceeds your convoy's space or weight capacity: ",
 	"Not enough money": "You do not have enough money for this transaction.",
 	"Vendor does not have enough stock": "The vendor's stock has changed. The list has been updated.",
 	"exceeds convoy cargo capacity": "This purchase would exceed your convoy's cargo volume capacity.",
@@ -17,6 +22,8 @@ const ERROR_MAP: Dictionary = {
 	"Part is not compatible with the vehicle": "This part is not compatible with the selected vehicle.",
 	"No vehicle with compatible slot available": "No vehicle in your convoy has a compatible slot for this part.",
 	"Cannot sell mission-critical item": "This item is required for a mission and cannot be sold.",
+	# Selling a vehicle with cargo — match on specific substring so it wins over generic prefixes
+	"contains cargo": "You cannot sell a vehicle while it still has cargo. Remove the cargo and try again.",
 	"Invalid item for this vendor": "This item cannot be bought or sold at this location.",
 
 	# --- Specific Route Finding Errors ---

@@ -290,15 +290,7 @@ unique_name_in_owner = true
 layout_mode = 2
 text = "Money: 0"
 
-[node name="ConvoyCargoLabel" type="Label" parent="HBoxContainer/RightPanel"]
-unique_name_in_owner = true
-layout_mode = 2
-text = "Cargo: 0/0"
-
-[node name="ToastNotification" parent="." instance=ExtResource("2_toast")]
-unique_name_in_owner = true
-layout_mode = 1
-
+# Loading overlay (kept non-blocking; label removed)
 [node name="LoadingPanel" type="Panel" parent="."]
 unique_name_in_owner = true
 visible = false
@@ -308,21 +300,18 @@ anchor_right = 1.0
 anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
+mouse_filter = 2
 theme_override_styles/panel = SubResource("StyleBoxFlat_loading")
 
-[node name="Label" type="Label" parent="LoadingPanel"]
+; Removed blocking banner nodes under LoadingPanel
+
+[node name="ConvoyCargoLabel" type="Label" parent="HBoxContainer/RightPanel"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "Cargo: 0/0"
+
+[node name="ToastNotification" parent="." instance=ExtResource("2_toast")]
+unique_name_in_owner = true
 layout_mode = 1
-anchors_preset = 8
-anchor_left = 0.5
-anchor_top = 0.5
-anchor_right = 0.5
-anchor_bottom = 0.5
-offset_left = -50.0
-offset_top = -13.0
-offset_right = 50.0
-offset_bottom = 13.0
-grow_horizontal = 2
-grow_vertical = 2
-text = "Loading..."
-horizontal_alignment = 1
-vertical_alignment = 1
+
+; Removed duplicate LoadingPanel and its label

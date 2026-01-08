@@ -43,12 +43,25 @@ func _ready() -> void:
 	# Ensure we render on top of all other UI. The TopBar (UserInfoDisplay) has a z_index of 10.
 	z_index = 100
 	_set_full_rect()
+	_normalize_full_rect_layout()
 	_ensure_ui_built()
 	# Initial layout sizing within map area
 	_relayout_panel()
 	_layout_blockers()
 	# We only need _process when a highlight is active; start disabled
 	set_process(false)
+
+	# Try to connect to a global UI scale manager (if present) to react
+	# to scale changes that can occur when naming convoys or toggling fullscreen.
+	_connect_to_ui_scale_manager()
+
+	# Also listen to root window size changes to capture fullscreen/layout transitions.
+	var root := get_tree().get_root()
+	if root and not root.is_connected("size_changed", Callable(self, "_on_root_size_changed")):
+		root.connect("size_changed", Callable(self, "_on_root_size_changed"))
+
+	# Log initial placement and layout state for diagnostics.
+	_log_layout_state("ready")
 
 # Ensure the UI nodes exist (safe to call multiple times)
 func _ensure_ui_built() -> void:
@@ -112,12 +125,106 @@ func _ensure_ui_built() -> void:
 func _debug_log_placement() -> void:
 	# Called deferred from manager to inspect parent and sizing after layout
 	var p := get_parent()
-	var p_path := p.get_path() if p else NodePath("<no-parent>")
+	var p_path: NodePath = NodePath("<no-parent>")
+	if p != null:
+		p_path = p.get_path()
 	var rect := get_global_rect()
 	print("[TutorialOverlay] attached under:", p_path, " size=", size, " global_rect=", rect)
 
+# Verbose layout diagnostics: anchors, offsets, rects, transforms
+func _log_layout_state(tag: String) -> void:
+	var p: Node = get_parent()
+	var parent_path: NodePath = NodePath("<no-parent>")
+	if p != null:
+		parent_path = p.get_path()
+	var rect: Rect2 = get_global_rect()
+	var vp_rect: Rect2 = get_viewport_rect()
+	var root: Window = get_tree().get_root()
+	var root_size: Vector2 = Vector2.ZERO
+	if root != null:
+		root_size = root.size
+	var x_basis: Vector2 = get_global_transform_with_canvas().x
+	var y_basis: Vector2 = get_global_transform_with_canvas().y
+	print("[TutorialOverlay][DIAG] ", tag,
+		" parent=", parent_path,
+		" top_level=", top_level,
+		" anchors=(l:", anchor_left, ", t:", anchor_top, ", r:", anchor_right, ", b:", anchor_bottom, ")",
+		" offsets=(l:", offset_left, ", t:", offset_top, ", r:", offset_right, ", b:", offset_bottom, ")",
+		" size=", size,
+		" rect=", rect,
+		" viewport=", vp_rect.size,
+		" root=", root_size,
+		" basisX=", x_basis, " basisY=", y_basis
+	)
+
+func _on_root_size_changed() -> void:
+	_normalize_full_rect_layout()
+	_log_layout_state("root_size_changed")
+	queue_redraw()
+	_relayout_panel()
+	_layout_blockers()
+
+func _connect_to_ui_scale_manager() -> void:
+	# Prefer autoload at /root/ui_scale_manager; fallback to script-path search.
+	var scale_mgr: Node = get_node_or_null("/root/ui_scale_manager")
+	if scale_mgr == null:
+		# Find a node in the scene tree that uses the UI_scale_manager.gd script
+		# and connect to its scale_changed signal to relayout the overlay.
+		scale_mgr = _find_node_by_script_path("res://Scripts/UI/UI_scale_manager.gd")
+	if scale_mgr and scale_mgr.has_signal("scale_changed"):
+		if not scale_mgr.is_connected("scale_changed", Callable(self, "_on_ui_scale_changed")):
+			scale_mgr.connect("scale_changed", Callable(self, "_on_ui_scale_changed"))
+		print("[TutorialOverlay] Connected to UI_scale_manager scale_changed.")
+
+func _find_node_by_script_path(script_path: String) -> Node:
+	# Walk the tree to find any node with a matching script path
+	var root := get_tree().get_root()
+	if not root:
+		return null
+	var stack: Array = [root]
+	while not stack.is_empty():
+		var n: Node = stack.pop_back()
+		if n and n.get_script():
+			var sp: String = n.get_script().get_path()
+			if sp == script_path:
+				return n
+		for c in n.get_children():
+			stack.push_back(c)
+	return null
+
+func _on_ui_scale_changed(_new_scale: float) -> void:
+	# When UI scale changes, our own transform may change. Recompute layout.
+	queue_redraw()
+	_relayout_panel()
+	_layout_blockers()
+
 func _set_full_rect() -> void:
+	# Ensure anchors mode is used so full-rect anchors take effect.
 	set_anchors_preset(Control.PRESET_FULL_RECT)
+	# Do not rely on inherited offsets; make them zero to span parent fully.
+	offset_left = 0
+	offset_top = 0
+	offset_right = 0
+	offset_bottom = 0
+
+# Ensure anchors and offsets represent a full-rect layout. Call defensively during transitions.
+func _normalize_full_rect_layout() -> void:
+	# If our offsets are negative and equal to parent size, we collapse to zero. Reset them.
+	var p := get_parent()
+	var parent_size: Vector2 = Vector2.ZERO
+	if p and p is Control:
+		parent_size = (p as Control).size
+	# Reset anchors and offsets to full rect whenever size is suspicious or offsets are negative.
+	var suspicious := size.x <= 1.0 or size.y <= 1.0 or offset_right < 0 or offset_bottom < 0
+	if suspicious:
+		set_anchors_preset(Control.PRESET_FULL_RECT)
+		offset_left = 0
+		offset_top = 0
+		offset_right = 0
+		offset_bottom = 0
+		# Optional: if parent has a non-zero top inset requirement, panel will handle via _safe_top_inset.
+		# Log after normalization for visibility
+		_log_layout_state("normalized_full_rect")
 
 func _make_panel_style() -> StyleBoxFlat:
 	var sb := StyleBoxFlat.new()
@@ -333,7 +440,14 @@ func _disconnect_managed_node_signals() -> void:
 # - GatingMode.HARD: block input everywhere, including the highlighted area
 func set_gating_mode(mode: int) -> void:
 	_gating_mode = mode
-	var label := "NONE" if mode == GatingMode.NONE else ("SOFT" if mode == GatingMode.SOFT else "HARD")
+	var label: String
+	match mode:
+		GatingMode.NONE:
+			label = "NONE"
+		GatingMode.SOFT:
+			label = "SOFT"
+		_: # GatingMode.HARD or any other value
+			label = "HARD"
 	print("[TutorialOverlay] gating_mode=", label)
 	_layout_blockers()
 
@@ -388,6 +502,15 @@ func _draw() -> void:
 
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_RESIZED:
+		_normalize_full_rect_layout()
+		_log_layout_state("notification:resized")
+		_relayout_panel()
+		_layout_blockers()
+	elif what == NOTIFICATION_TRANSFORM_CHANGED:
+		# Recalculate layout and redraw on transform changes (e.g., fullscreen scaling).
+		_normalize_full_rect_layout()
+		_log_layout_state("notification:transform_changed")
+		queue_redraw()
 		_relayout_panel()
 		_layout_blockers()
 
@@ -434,12 +557,14 @@ func _layout_blockers() -> void:
 	# Compute highlight rect in local coordinates
 	_local_highlight_rect = Rect2(Vector2.ZERO, Vector2.ZERO)
 	if _has_highlight:
-
-		# Convert the global rect to this control's local space and cache it
-		# for both the shields and the _draw function. Since Control does not have to_local(),
-		# we use subtraction with global_position.
-		var top_left := _highlight_rect.position - self.global_position
-		_local_highlight_rect = Rect2(top_left, _highlight_rect.size)
+		# Convert the global (canvas) rect to this Control's local space using
+		# the global-with-canvas transform inverse. This handles fullscreen/stretch scaling.
+		var inv: Transform2D = get_global_transform_with_canvas().affine_inverse()
+		var top_left_local: Vector2 = inv * _highlight_rect.position
+		var bottom_right_global := _highlight_rect.position + _highlight_rect.size
+		var bottom_right_local: Vector2 = inv * bottom_right_global
+		var size_local: Vector2 = bottom_right_local - top_left_local
+		_local_highlight_rect = Rect2(top_left_local, size_local)
 
 	# Clamp the calculated local rect to the overlay's bounds for safety
 	var full := Rect2(Vector2.ZERO, size)
