@@ -195,7 +195,9 @@ func _ready():
 	if not is_instance_valid(fallback_font):
 		fallback_font = ThemeDB.fallback_font
 	if is_instance_valid(fallback_font):
+		# Duplicate before modifying to avoid editor resource mutation/reload prompts.
 		if fallback_font is FontFile:
+			fallback_font = (fallback_font as FontFile).duplicate(true)
 			(fallback_font as FontFile).oversampling = 2.0
 		label_settings.font = fallback_font
 		settlement_label_settings.font = fallback_font

@@ -53,6 +53,9 @@ func _ready():
 
 func _on_store_convoys_changed(convoys: Array) -> void:
 	_latest_convoys = convoys if convoys != null else []
+	var logger := get_node_or_null("/root/Logger")
+	if is_instance_valid(logger) and logger.has_method("debug"):
+		logger.debug("ConvoyVisualsManager.store_update count=%s", _latest_convoys.size())
 	_refresh_visuals()
 
 

@@ -32,6 +32,9 @@ func set_map(tiles: Array, settlements: Array) -> void:
 
 func set_convoys(convoys: Array) -> void:
 	_convoys = convoys if convoys != null else []
+	var logger := get_node_or_null("/root/Logger")
+	if is_instance_valid(logger) and logger.has_method("info"):
+		logger.info("GameStore.set_convoys count=%s", _convoys.size())
 	emit_signal("convoys_changed", _convoys)
 	var hub := get_node_or_null("/root/SignalHub")
 	if is_instance_valid(hub):

@@ -91,7 +91,11 @@ func _on_main_menu_opened(_menu_node, _menu_type: String):
 
 ## Populates the list with convoy data.
 func populate_convoy_list(convoys_data: Array) -> void:
-	print("ConvoyListPanel: populate_convoy_list() called. Visible:", visible, "Parent:", get_parent())
+	var logger := get_node_or_null("/root/Logger")
+	if is_instance_valid(logger) and logger.has_method("info"):
+		logger.info("ConvoyListPanel.populate count=%s visible=%s", convoys_data.size(), visible)
+	else:
+		print("ConvoyListPanel: populate_convoy_list() called. Visible:", visible, "Parent:", get_parent())
 
 	# Diagnostic: Print node tree under ConvoyItemsContainer to help debug UI population issues
 	if is_instance_valid(list_item_container):
@@ -118,8 +122,8 @@ func populate_convoy_list(convoys_data: Array) -> void:
 			printerr("ConvoyListPanel: Invalid convoy data item: ", convoy_item_data)
 			continue
 
-		var convoy_id = convoy_item_data.get("convoy_id", "N/A")
-		var convoy_name = convoy_item_data.get("convoy_name", "Unknown Convoy")
+		var convoy_id = convoy_item_data.get("convoy_id", convoy_item_data.get("id", "N/A"))
+		var convoy_name = convoy_item_data.get("convoy_name", convoy_item_data.get("name", "Unknown Convoy"))
 		var item_button = Button.new()
 		item_button.text = "%s" % [convoy_name]
 		item_button.name = "ConvoyButton_%s" % str(convoy_id) # Useful for identification

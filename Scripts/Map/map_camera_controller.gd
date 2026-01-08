@@ -598,8 +598,9 @@ func _create_debug_overlay():
 	_debug_overlay_label.modulate = Color(0.9, 0.95, 1.0, 0.85)
 	_debug_overlay_label.theme_type_variation = "Monospace"
 	_debug_overlay_label.position = Vector2(12, 12)
-	_debug_overlay_label.z_index = 10000
-	get_viewport().add_child(_debug_overlay_label)
+	# Clamp z_index to a valid CanvasItem range and add deferred to avoid tree-lock errors
+	_debug_overlay_label.z_index = 200
+	get_viewport().call_deferred("add_child", _debug_overlay_label)
 	_update_debug_overlay()
 
 func _update_debug_overlay():

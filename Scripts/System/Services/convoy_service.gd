@@ -51,10 +51,30 @@ func get_color_for(convoy_id: String, fallback: Color = Color.GRAY) -> Color:
 
 func refresh_all() -> void:
 	# Triggers a transport call; APICalls will route results into GameStore.
-	if is_instance_valid(_api) and _api.has_method("get_all_in_transit_convoys"):
-		if is_instance_valid(get_node_or_null("/root/Logger")):
-			get_node("/root/Logger").info("ConvoyService.refresh_all()")
+	if not is_instance_valid(_api):
+		return
+	var logger := get_node_or_null("/root/Logger")
+	if is_instance_valid(logger) and logger.has_method("info"):
+		logger.info("ConvoyService.refresh_all()")
+	# Prefer user-specific convoys when we have a user id (avoids 403 on global endpoint)
+	var uid: String = ""
+	if is_instance_valid(_store) and _store.has_method("get_user"):
+		var u: Dictionary = _store.get_user()
+		uid = str(u.get("user_id", u.get("id", "")))
+	if uid == "":
+		var maybe_uid = _api.get("current_user_id")
+		if typeof(maybe_uid) == TYPE_STRING:
+			uid = String(maybe_uid)
+	if is_instance_valid(logger) and logger.has_method("info"):
+		logger.info("ConvoyService.refresh_all using uid=%s", uid)
+	if uid != "" and _api.has_method("get_user_convoys"):
+		_api.get_user_convoys(uid)
+	elif _api.has_method("get_all_in_transit_convoys"):
+		if is_instance_valid(logger) and logger.has_method("info"):
+			logger.info("ConvoyService.refresh_all falling back to ALL_CONVOYS")
 		_api.get_all_in_transit_convoys()
+	else:
+		printerr("ConvoyService: APICalls missing convoy fetch methods.")
 
 func refresh_single(convoy_id: String) -> void:
 	if convoy_id == "":

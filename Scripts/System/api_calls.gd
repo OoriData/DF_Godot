@@ -480,6 +480,9 @@ func get_user_convoys(p_user_id: String) -> void:
 		"purpose": RequestPurpose.USER_CONVOYS, # reuse purpose but now expect Dictionary
 		"method": HTTPClient.METHOD_GET
 	}
+	var logger := get_node_or_null('/root/Logger') if is_inside_tree() else null
+	if is_instance_valid(logger) and logger.has_method('info'):
+		logger.info("APICalls.enqueue USER_CONVOYS url=%s", url)
 	_diag_enqueue("get_user_convoys", request_details)
 
 func get_all_in_transit_convoys() -> void:
@@ -493,6 +496,9 @@ func get_all_in_transit_convoys() -> void:
 		"purpose": RequestPurpose.ALL_CONVOYS,
 		"method": HTTPClient.METHOD_GET
 	}
+	var logger := get_node_or_null('/root/Logger') if is_inside_tree() else null
+	if is_instance_valid(logger) and logger.has_method('info'):
+		logger.info("APICalls.enqueue ALL_CONVOYS url=%s", url)
 	_diag_enqueue("get_all_in_transit_convoys", request_details)
 
 func update_user_metadata(user_id: String, metadata: Dictionary) -> void:
@@ -1612,6 +1618,9 @@ func _on_request_completed(result: int, response_code: int, _headers: PackedStri
 						break
 				if extracted.is_empty():
 					print("[APICalls] User object received, but no convoy list found inside it. Assuming user has no convoys.")
+					var logger_missing := get_node_or_null('/root/Logger') if is_inside_tree() else null
+					if is_instance_valid(logger_missing) and logger_missing.has_method('warn'):
+						logger_missing.warn("APICalls USER_CONVOYS: user payload missing convoy list keys. url=%s", _last_requested_url)
 					final_convoy_list = []
 				else:
 					final_convoy_list = extracted
@@ -1623,12 +1632,31 @@ func _on_request_completed(result: int, response_code: int, _headers: PackedStri
 			return
 
 		print("APICalls (_on_request_completed - %s): Successfully fetched %s convoy(s). URL: %s" % [RequestPurpose.keys()[request_purpose_at_start], final_convoy_list.size(), _last_requested_url])
-		self.convoys_in_transit = final_convoy_list
+		var logger2 := get_node_or_null('/root/Logger') if is_inside_tree() else null
+		if is_instance_valid(logger2) and logger2.has_method('info'):
+			logger2.info("APICalls.ok %s count=%s url=%s", RequestPurpose.keys()[request_purpose_at_start], final_convoy_list.size(), _last_requested_url)
+		# Normalize convoy keys for UI/Map consumers (ensure 'convoy_id' and 'convoy_name')
+		var normalized_convoys: Array = []
+		for item in final_convoy_list:
+			if item is Dictionary:
+				var d: Dictionary = (item as Dictionary).duplicate(true)
+				if not d.has("convoy_id"):
+					var raw_id = d.get("id", d.get("convoyId", ""))
+					if typeof(raw_id) != TYPE_NIL and str(raw_id) != "":
+						d["convoy_id"] = str(raw_id)
+				if not d.has("convoy_name"):
+					var raw_name = d.get("convoy_name", d.get("name", d.get("convoyName", "")))
+					if typeof(raw_name) != TYPE_NIL and str(raw_name) != "":
+						d["convoy_name"] = str(raw_name)
+				normalized_convoys.append(d)
+			else:
+				normalized_convoys.append(item)
+		self.convoys_in_transit = normalized_convoys
 		# Route to GameStore (and SignalHub via store) as a non-breaking shim
 		var store := get_node_or_null('/root/GameStore') if is_inside_tree() else null
 		if is_instance_valid(store) and store.has_method('set_convoys'):
-			store.set_convoys(final_convoy_list)
-		emit_signal('convoy_data_received', final_convoy_list)
+			store.set_convoys(normalized_convoys)
+		emit_signal('convoy_data_received', normalized_convoys)
 		_complete_current_request()
 		return
 

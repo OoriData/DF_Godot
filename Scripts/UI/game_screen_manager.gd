@@ -36,8 +36,18 @@ func _on_login_successful(user_id: String) -> void:
 	var user_service := get_node_or_null("/root/UserService")
 	if is_instance_valid(user_service) and user_service.has_method("refresh_user"):
 		user_service.refresh_user(current_user_id)
+	# Trigger convoy refresh after the user snapshot arrives to avoid race conditions.
 	var convoy_service := get_node_or_null("/root/ConvoyService")
-	if is_instance_valid(convoy_service) and convoy_service.has_method("refresh_all"):
+	var store := get_node_or_null("/root/GameStore")
+	if is_instance_valid(store) and store.has_signal("user_changed") and is_instance_valid(convoy_service) and convoy_service.has_method("refresh_all"):
+		var cb := func(_u: Dictionary):
+			var logger := get_node_or_null("/root/Logger")
+			if is_instance_valid(logger) and logger.has_method("info"):
+				logger.info("GameScreenManager: user_changed received; triggering convoy refresh")
+			convoy_service.refresh_all()
+		# Connect as one-shot to auto-disconnect after first emission
+		store.user_changed.connect(cb, Object.CONNECT_ONE_SHOT)
+	elif is_instance_valid(convoy_service) and convoy_service.has_method("refresh_all"):
 		convoy_service.refresh_all()
 	var map_service := get_node_or_null("/root/MapService")
 	if is_instance_valid(map_service) and map_service.has_method("request_map"):
