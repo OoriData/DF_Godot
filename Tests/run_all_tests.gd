@@ -4,10 +4,10 @@ const TestErrorTranslator = preload("res://Tests/test_error_translator.gd")
 const TestTools = preload("res://Tests/test_tools.gd")
 const TestSettings = preload("res://Tests/test_settings_manager.gd")
 const TestAPICalls = preload("res://Tests/test_api_calls.gd")
-const TestUtil = preload("res://Tests/test_util.gd")
+const TestUtils = preload("res://Tests/test_util.gd")
 
 func _initialize() -> void:
-	TestUtil.reset()
+	TestUtils.reset()
 	var tests: Array = [
 		{"name": "ErrorTranslator", "t": TestErrorTranslator.new()},
 		{"name": "Tools", "t": TestTools.new()},
@@ -23,6 +23,7 @@ func _initialize() -> void:
 			t.run()
 		else:
 			push_error("[UnitTests] Missing run() for suite: %s" % nm)
-			TestUtil.failures += 1
-	print("[UnitTests] Done. failures=", TestUtil.failures)
-	quit(0 if TestUtil.failures == 0 else 1)
+			TestUtils.failures += 1
+
+	print("[UnitTests] Done. failures=", TestUtils.failures)
+	quit(0 if TestUtils.failures == 0 else 1)

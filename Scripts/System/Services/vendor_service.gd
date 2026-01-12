@@ -21,7 +21,7 @@ func request_vendor(vendor_id: String) -> void:
 	if is_instance_valid(_api) and _api.has_method("request_vendor_data"):
 		_api.request_vendor_data(vendor_id)
 
-func request_vendor_panel(convoy_id: String, vendor_id: String) -> void:
+func request_vendor_panel(_convoy_id: String, vendor_id: String) -> void:
 	# Thin alias for now; downstream UI can differentiate by listening to panel event.
 	if vendor_id == "":
 		return

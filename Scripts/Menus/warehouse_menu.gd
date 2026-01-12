@@ -245,8 +245,8 @@ func _update_ui():
 				var price := _get_warehouse_price()
 				var funds := _get_user_money()
 				var buy_available := _is_buy_available()
-				var price_text := _format_money(price) if price > 0 else ("N/A" if not buy_available else "TBD")
-				var funds_text := _format_money(funds)
+				var price_text := NumberFormat.format_money(price) if price > 0 else ("N/A" if not buy_available else "TBD")
+				var funds_text := NumberFormat.format_money(funds)
 				info_label.text = "No warehouse here yet.\nPrice: %s\nYour funds: %s" % [price_text, funds_text]
 				print("[WarehouseMenu] No warehouse. sett_type=", _get_settlement_type(), " price=", price, " buy_available=", buy_available)
 				# Update Buy button text and enabled state based on availability and affordability
@@ -297,7 +297,7 @@ func _on_buy_pressed():
 	var funds := _get_user_money()
 	if price > 0 and funds + 0.0001 < float(price):
 		if is_instance_valid(info_label):
-			info_label.text = "Insufficient funds to buy warehouse. Price: %s, You have: %s" % [_format_money(price), _format_money(funds)]
+			info_label.text = "Insufficient funds to buy warehouse. Price: %s, You have: %s" % [NumberFormat.format_money(price), NumberFormat.format_money(funds)]
 		if is_instance_valid(buy_button):
 			buy_button.disabled = true
 		return
@@ -430,7 +430,7 @@ func _on_hub_warehouse_received(warehouse_data: Dictionary) -> void:
 	# Update dropdowns since we have fresh warehouse data
 	_populate_dropdowns()
 
-func _on_hub_error(domain: String, _code: String, message: String, _inline: bool) -> void:
+func _on_hub_error(_domain: String, _code: String, message: String, _inline: bool) -> void:
 	# Only handle if this menu is visible; otherwise ignore
 	if not is_inside_tree():
 		return
@@ -518,7 +518,7 @@ func _on_expand_cargo():
 			info_label.text = "Cannot upgrade: warehouse not loaded yet."
 		return
 	print("[WarehouseMenu][ExpandCargo] Click received wid=", wid, " has_local=", (_warehouse is Dictionary and not _warehouse.is_empty()), " last_known=", _last_known_wid)
-	var amt := 1
+	var _amt := 1
 	var per_unit := _get_upgrade_price_per_unit()
 	if per_unit <= 0:
 		var stype := _get_settlement_type()
@@ -563,7 +563,7 @@ func _on_expand_vehicle():
 			info_label.text = "Cannot upgrade: warehouse not loaded yet."
 		return
 	print("[WarehouseMenu][ExpandVehicle] Click received wid=", wid, " has_local=", (_warehouse is Dictionary and not _warehouse.is_empty()), " last_known=", _last_known_wid)
-	var amt := 1
+	var _amt := 1
 	var per_unit := _get_upgrade_price_per_unit()
 	if per_unit <= 0:
 		var stype := _get_settlement_type()
@@ -909,17 +909,7 @@ func _on_store_map_changed(_tiles: Array, _settlements: Array) -> void:
 		_settlement = resolved
 		_update_ui()
 
-func _format_money(amount: float) -> String:
-	var s := "%.0f" % amount
-	var out := ""
-	var count := 0
-	for i in range(s.length() - 1, -1, -1):
-		var ch := s[i]
-		out = ch + out
-		count += 1
-		if count % 3 == 0 and i > 0:
-			out = "," + out
-	return "$" + out
+ 
 
 func _update_expand_buttons() -> void:
 	# With fixed +1 upgrades, enable when upgrades are available for this settlement.
@@ -935,10 +925,10 @@ func _update_expand_buttons() -> void:
 		disabled_reason = " (upgrade in progress)"
 	if is_instance_valid(expand_cargo_btn):
 		expand_cargo_btn.disabled = base_disabled
-		expand_cargo_btn.tooltip_text = ("Upgrades not available" if not available else "Cost: %s (per unit %s)\nYour funds: %s%s" % [_format_money(total), _format_money(per_unit), _format_money(funds), disabled_reason])
+		expand_cargo_btn.tooltip_text = ("Upgrades not available" if not available else "Cost: %s (per unit %s)\nYour funds: %s%s" % [NumberFormat.format_money(total), NumberFormat.format_money(per_unit), NumberFormat.format_money(funds), disabled_reason])
 	if is_instance_valid(expand_vehicle_btn):
 		expand_vehicle_btn.disabled = base_disabled
-		expand_vehicle_btn.tooltip_text = ("Upgrades not available" if not available else "Cost: %s (per unit %s)\nYour funds: %s%s" % [_format_money(total), _format_money(per_unit), _format_money(funds), disabled_reason])
+		expand_vehicle_btn.tooltip_text = ("Upgrades not available" if not available else "Cost: %s (per unit %s)\nYour funds: %s%s" % [NumberFormat.format_money(total), NumberFormat.format_money(per_unit), NumberFormat.format_money(funds), disabled_reason])
 
 func _update_upgrade_labels() -> void:
 	if not (_warehouse is Dictionary) or _warehouse.is_empty():

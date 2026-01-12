@@ -84,25 +84,10 @@ func _update_display():
 	var money_amount = user_data.get("money", 0)
 
 	username_label.text = username
-	user_money_label.text = _format_money(money_amount)
+	user_money_label.text = NumberFormat.format_money(money_amount)
 
 func _format_money(amount: Variant) -> String:
-	"""Formats a number into a currency string, e.g., $1,234,567"""
-	var num: int = 0
-	if amount is int or amount is float:
-		num = int(amount)
-	
-	if amount == null:
-		return "$0"
-	
-	var s = str(num)
-	var mod = s.length() % 3
-	var res = ""
-	if mod != 0:
-		res = s.substr(0, mod)
-	for i in range(mod, s.length(), 3):
-		res += ("," if res.length() > 0 else "") + s.substr(i, 3)
-	return "$%s" % res
+	return NumberFormat.format_money(amount)
 
 func _on_settings_button_pressed():
 	# Lazy-load the settings menu

@@ -373,14 +373,14 @@ func _on_title_label_pressed():
 
 # --- Transaction Logic ---
 
-func _on_item_purchased(_item: Dictionary, _quantity: int, total_cost: float):
+func _on_item_purchased(_item: Dictionary, _quantity: int, _total_cost: float):
 	# Money/convoy updates are authoritative; request fresh snapshots.
 	if is_instance_valid(_user_service) and _user_service.has_method("refresh_user"):
 		_user_service.refresh_user()
 	if is_instance_valid(_convoy_service) and _convoy_service.has_method("refresh_single"):
 		_convoy_service.refresh_single(str(_convoy_data.get("convoy_id", "")))
 
-func _on_item_sold(_item: Dictionary, _quantity: int, total_value: float):
+func _on_item_sold(_item: Dictionary, _quantity: int, _total_value: float):
 	if is_instance_valid(_user_service) and _user_service.has_method("refresh_user"):
 		_user_service.refresh_user()
 	if is_instance_valid(_convoy_service) and _convoy_service.has_method("refresh_single"):
