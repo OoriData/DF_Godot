@@ -82,7 +82,7 @@ var _pending_tx: Dictionary = {
 var _refresh_timer: SceneTreeTimer = null
 var _pending_refresh: bool = false
 const REFRESH_DEBOUNCE_S: float = 0.25
-const DATA_READY_COOLDOWN_MS: int = 350
+const DATA_READY_COOLDOWN_MS: int = 600
 
 # Perf and logging controls
 @export var perf_log_enabled: bool = true
@@ -112,6 +112,7 @@ var _watchdog_retries: Dictionary = {} # refresh_id -> true (prevent multiple re
 
 var _active_convoy_id: String = ""
 var _active_vendor_id: String = ""
+
 var _latest_settlements: Array = []
 
 # Typed/cache helpers for high-traffic vendor + settlement lookups
@@ -656,10 +657,24 @@ func _on_hub_vendor_panel_ready(vendor_payload: Dictionary) -> void:
 	_try_process_refresh()
 
 func _on_store_convoys_changed(_convoys: Array) -> void:
-	# Update local convoy snapshot for active convoy and try refresh
+	# Update local convoy snapshot for active convoy and perform a minimal UI refresh.
+	# Do NOT rebuild trees here to preserve selection during purchases; authoritative
+	# rebuilds happen via vendor_panel_ready.
 	if _active_convoy_id != "":
-		convoy_data = _get_convoy_by_id(_active_convoy_id)
-	_try_process_refresh()
+		var latest := _get_convoy_by_id(_active_convoy_id)
+		if latest is Dictionary and not (latest as Dictionary).is_empty():
+			convoy_data = (latest as Dictionary)
+			_update_convoy_info_display()
+			_update_transaction_panel()
+
+func _update_ui(convoy: Dictionary) -> void:
+	# Lightweight live refresh: update cached convoy stats and labels without repopulating trees.
+	if not (convoy is Dictionary) or convoy.is_empty():
+		return
+	convoy_data = convoy.duplicate(true)
+	_update_convoy_info_display()
+	# Keep transaction panel in sync (prices may depend on mode and item).
+	_update_transaction_panel()
 
 func _on_store_map_changed(_tiles: Array, settlements: Array) -> void:
 	_set_latest_settlements_snapshot(settlements)

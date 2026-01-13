@@ -1,6 +1,4 @@
-extends Control
-
-signal back_requested
+extends MenuBase
 
 @onready var title_label: Label = $MainVBox/TopBarHBox/TitleLabel
 @onready var buy_button: Button = $MainVBox/TopBarHBox/BuyButton
@@ -177,11 +175,15 @@ func _set_expand_buttons_enabled(enabled: bool) -> void:
 		expand_vehicle_btn.disabled = not enabled
 	print("[WarehouseMenu][UpgradeState] set_expand_buttons_enabled enabled=", enabled, " in_progress=", _upgrade_in_progress)
 
-func initialize_with_data(data: Dictionary) -> void:
+func initialize_with_data(data_or_id: Variant, extra_arg: Variant = null) -> void:
+	if data_or_id is Dictionary:
+		convoy_id = String((data_or_id as Dictionary).get("convoy_id", (data_or_id as Dictionary).get("id", "")))
+	else:
+		convoy_id = String(data_or_id)
 	# Guard: avoid expensive re-initialization if convoy and settlement unchanged
-	var incoming_cid := str(data.get("convoy_id", ""))
+	var incoming_cid := str((data_or_id as Dictionary).get("convoy_id", "")) if data_or_id is Dictionary else ""
 	var existing_cid := str(_convoy_data.get("convoy_id", "")) if (_convoy_data is Dictionary) else ""
-	var incoming_sett: Variant = data.get("settlement", null)
+	var incoming_sett: Variant = (data_or_id as Dictionary).get("settlement", null) if data_or_id is Dictionary else null
 	var incoming_sett_id: String = ""
 	if typeof(incoming_sett) == TYPE_DICTIONARY:
 		incoming_sett_id = str(incoming_sett.get("sett_id", ""))
@@ -190,8 +192,8 @@ func initialize_with_data(data: Dictionary) -> void:
 		# Still refresh dropdowns lightly (convoy cargo may have changed), but skip heavy logging spam
 		_populate_dropdowns()
 		return
-	_convoy_data = data.duplicate(true)
-	var incoming_settlement = data.get("settlement", null)
+	_convoy_data = (data_or_id as Dictionary).duplicate(true) if data_or_id is Dictionary else {}
+	var incoming_settlement = (data_or_id as Dictionary).get("settlement", null) if data_or_id is Dictionary else null
 	if typeof(incoming_settlement) == TYPE_DICTIONARY and not (incoming_settlement as Dictionary).is_empty():
 		_settlement = (incoming_settlement as Dictionary).duplicate(true)
 	else:
@@ -202,10 +204,11 @@ func initialize_with_data(data: Dictionary) -> void:
 	# Don't nuke existing settlement if nothing resolved
 	print("[WarehouseMenu] initialize_with_data name=", String(_settlement.get("name", _convoy_data.get("settlement_name", ""))), " sett_type_resolved=", _get_settlement_type())
 	_update_ui()
+	super.initialize_with_data(data_or_id, extra_arg)
 	_try_load_warehouse_for_settlement()
 	_populate_dropdowns() # initial (may be empty until data arrives)
 
-func _update_ui():
+func _update_ui(convoy: Dictionary = {}):
 	var sett_name := String(_settlement.get("name", _convoy_data.get("settlement_name", "")))
 	if is_instance_valid(title_label):
 		if sett_name != "":

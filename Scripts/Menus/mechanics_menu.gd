@@ -1,7 +1,6 @@
-extends Control
+extends MenuBase
 
 # Signals
-signal back_requested
 signal changes_committed(convoy_id: String, vehicle_id: String, swaps: Array, estimated_cost: float)
 
 # UI refs
@@ -513,11 +512,21 @@ func _close_open_swap_dialog() -> void:
 		(dlg as AcceptDialog).queue_free()
 	_current_swap_ctx.clear()
 
-func initialize_with_data(data: Dictionary):
-	if not is_node_ready():
-		call_deferred("initialize_with_data", data)
-		return
-	_convoy = data.duplicate(true)
+func initialize_with_data(data_or_id: Variant, extra_arg: Variant = null) -> void:
+	if data_or_id is Dictionary:
+		var d: Dictionary = data_or_id as Dictionary
+		convoy_id = String(d.get("convoy_id", d.get("id", "")))
+		if not is_node_ready():
+			call_deferred("initialize_with_data", d, extra_arg)
+			return
+		_convoy = d.duplicate(true)
+	else:
+		convoy_id = String(data_or_id)
+		if not is_node_ready():
+			call_deferred("initialize_with_data", data_or_id, extra_arg)
+			return
+		_convoy = {}
+	super.initialize_with_data(data_or_id, extra_arg)
 	if is_instance_valid(title_label):
 		title_label.text = "Mechanic — %s" % _convoy.get("convoy_name", "Convoy")
 	_vehicles = _convoy.get("vehicle_details_list", [])
@@ -530,8 +539,8 @@ func initialize_with_data(data: Dictionary):
 		_on_vehicle_selected(0)
 
 	# If called with a vendor prefill, add the part to the cart immediately
-	if data.has("_mechanic_prefill") and data._mechanic_prefill is Dictionary:
-		var pre: Dictionary = data._mechanic_prefill
+	if data_or_id is Dictionary and (data_or_id as Dictionary).has("_mechanic_prefill") and (data_or_id as Dictionary)._mechanic_prefill is Dictionary:
+		var pre: Dictionary = (data_or_id as Dictionary)._mechanic_prefill
 		var part: Dictionary = pre.get("part", {})
 		var qty: int = int(pre.get("quantity", 1))
 		var vendor_id: String = String(pre.get("vendor_id", ""))

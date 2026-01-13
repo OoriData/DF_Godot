@@ -299,7 +299,12 @@ func _on_menu_visibility_changed(is_open: bool, _menu_name: String):
 		if is_instance_valid(menu_manager):
 			var active_menu = menu_manager.get("current_active_menu") if menu_manager.has_method("get") else null
 			if active_menu and active_menu.has_meta("menu_data"):
-				convoy_data = active_menu.get_meta("menu_data")
+				var md = active_menu.get_meta("menu_data")
+				# Accept either a full convoy Dictionary or a convoy_id String; resolve IDs via GameStore.
+				if typeof(md) == TYPE_DICTIONARY:
+					convoy_data = md
+				elif typeof(md) == TYPE_STRING:
+					convoy_data = _resolve_convoy_dict_from_id(String(md))
 		_last_focused_convoy_data = convoy_data
 		# Tell camera controller the menu is opening. This allows it to use the correct
 		# clamping logic (e.g. frozen zoom) when calculating the tween target.
@@ -422,12 +427,31 @@ func _get_primary_convoy_data() -> Dictionary:
 			var md = active_menu.get_meta("menu_data")
 			if typeof(md) == TYPE_DICTIONARY and not md.is_empty():
 				return md
+			elif typeof(md) == TYPE_STRING:
+				var resolved := _resolve_convoy_dict_from_id(String(md))
+				if not resolved.is_empty():
+					return resolved
 	# Use GameStore for selected convoy (if selection logic is needed, adapt as needed)
 	var store = get_node_or_null("/root/GameStore")
 	if is_instance_valid(store):
 		var convoys = store.get_convoys() if store.has_method("get_convoys") else []
 		if convoys is Array and not convoys.is_empty():
 			return convoys[0] # TODO: Replace with actual selection logic if needed
+	return {}
+
+# Helper: resolve a convoy Dictionary from a convoy_id String using GameStore
+func _resolve_convoy_dict_from_id(convoy_id: String) -> Dictionary:
+	if convoy_id == "":
+		return {}
+	var store = get_node_or_null("/root/GameStore")
+	if is_instance_valid(store) and store.has_method("get_convoys"):
+		var convoys = store.get_convoys()
+		if convoys is Array:
+			for c_any in convoys:
+				if typeof(c_any) == TYPE_DICTIONARY:
+					var cid := String((c_any as Dictionary).get("convoy_id", (c_any as Dictionary).get("id", "")))
+					if cid == convoy_id:
+						return (c_any as Dictionary)
 	return {}
 
 func _on_initial_data_ready():

@@ -1,4 +1,4 @@
-extends Control
+extends MenuBase
 const DIAG_ENABLED := true
 var _diag_seq := 0
 func _diag(tag: String, msg: String, data: Variant = null) -> void:
@@ -18,7 +18,7 @@ const ItemsData = preload("res://Scripts/Data/Items.gd")
 const SettlementModel = preload("res://Scripts/Data/Models/Settlement.gd")
 const VendorModel = preload("res://Scripts/Data/Models/Vendor.gd")
 
-signal back_requested
+## Back signal provided by MenuBase
 
 signal return_to_convoy_overview_requested(convoy_data)
 var convoy_data_received: Dictionary
@@ -938,15 +938,19 @@ func _add_category_section(parent: VBoxContainer, title: String, agg_data: Dicti
 	
 	return item_index
 
-func initialize_with_data(data: Dictionary, item_to_inspect = null):
+func initialize_with_data(data_or_id: Variant, extra_arg: Variant = null) -> void:
+	if data_or_id is Dictionary:
+		convoy_id = String((data_or_id as Dictionary).get("convoy_id", (data_or_id as Dictionary).get("id", "")))
+	else:
+		convoy_id = String(data_or_id)
 	# Ensure this function runs only after the node is fully ready and @onready vars are set.
 	if not is_node_ready():
 		printerr("ConvoyCargoMenu: initialize_with_data called BEFORE node is ready! Deferring.")
-		call_deferred("initialize_with_data", data, item_to_inspect)
+		call_deferred("initialize_with_data", data_or_id, extra_arg)
 		return
 
-	convoy_data_received = data.duplicate()
-	_item_to_inspect_on_load = item_to_inspect
+	convoy_data_received = (data_or_id as Dictionary).duplicate() if data_or_id is Dictionary else {}
+	_item_to_inspect_on_load = extra_arg
 	# If vehicles are missing, trigger a single-convoy refresh to populate details.
 	var vlist: Array = convoy_data_received.get("vehicle_details_list", convoy_data_received.get("vehicles", []))
 	if (vlist is Array and vlist.is_empty()) and convoy_data_received.has("convoy_id"):
@@ -960,13 +964,15 @@ func initialize_with_data(data: Dictionary, item_to_inspect = null):
 	# print("ConvoyCargoMenu: Initialized with data: ", convoy_data_received) # DEBUG
 
 	if is_instance_valid(title_label):
-		var title_val := String(convoy_data_received.get("convoy_name", convoy_data_received.get("name", "Cargo Hold")))
+		var title_val: String = String(convoy_data_received.get("convoy_name", convoy_data_received.get("name", "Cargo Hold")))
 		title_label.text = "%s" % title_val
 	
 	_populate_cargo_list()
 	_diag("populate", "called_from_initialize")
 	if _item_to_inspect_on_load != null:
 		call_deferred("_inspect_item_on_load")
+	# Standardized: let MenuBase handle store-driven refreshes
+	super.initialize_with_data(data_or_id, extra_arg)
 
 func _populate_cargo_list():
 	_diag("populate", "start", {"mode": organization_mode})
@@ -977,6 +983,14 @@ func _populate_cargo_list():
 		_populate_by_vehicle()
 	_diag("populate", "done")
 	_reopen_inspects()
+
+func _update_ui(convoy: Dictionary) -> void:
+	# Reapply cargo population on live updates while attempting to preserve inspect state.
+	convoy_data_received = convoy.duplicate(true)
+	if is_instance_valid(title_label):
+		var title_val := String(convoy_data_received.get("convoy_name", title_label.text))
+		title_label.text = "%s" % title_val
+	_populate_cargo_list()
 
 func _populate_by_type():
 	_diag("populate_type", "start")

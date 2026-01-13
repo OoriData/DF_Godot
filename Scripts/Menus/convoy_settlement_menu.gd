@@ -1,7 +1,4 @@
-extends Control
-
-# Emitted when the user clicks the back button. MenuManager listens for this.
-signal back_requested
+extends MenuBase
 signal open_mechanics_menu_requested(convoy_data)
 signal open_warehouse_menu_requested(convoy_data)
 
@@ -41,20 +38,20 @@ var _top_up_plan: Dictionary = {
 }
 
 # This function is called by MenuManager to pass the convoy data when the menu is opened.
-func initialize_with_data(data: Dictionary):
+func initialize_with_data(data_or_id: Variant, extra_arg: Variant = null) -> void:
 	print("ConvoySettlementMenu: initialize_with_data called.")
-	if not data or not data.has("convoy_id"):
-		printerr("ConvoySettlementMenu: Received invalid or empty convoy data.")
-		_display_error("No convoy data provided.")
-		return
-
-	# Set the main title to the convoy's name, fallback to 'name' if needed
-	title_label.text = String(data.get("convoy_name", data.get("name", "Settlement Interactions")))
-	_convoy_data = data
-
-	
-	# Always defer the display logic to ensure the node is fully ready and in the scene tree,
-	# and all @onready variables and their connections are established.
+	if data_or_id is Dictionary:
+		var d: Dictionary = data_or_id as Dictionary
+		convoy_id = String(d.get("convoy_id", d.get("id", "")))
+		_convoy_data = d
+		# Set the main title to the convoy's name, fallback to 'name' if needed
+		title_label.text = String(d.get("convoy_name", d.get("name", "Settlement Interactions")))
+	else:
+		convoy_id = String(data_or_id)
+		_convoy_data = {}
+	# Delegate initial UI to MenuBase; it will apply store snapshot when possible
+	super.initialize_with_data(data_or_id, extra_arg)
+	# Defer the display logic to ensure readiness
 	print("ConvoySettlementMenu: initialize_with_data - Deferring _display_settlement_info.")
 	call_deferred("_display_settlement_info")
 
@@ -97,10 +94,8 @@ func _ready():
 		if is_instance_valid(warehouse_button):
 			warehouse_button.disabled = false
 
-	# Subscribe to canonical snapshots
+	# Subscribe to canonical snapshots (store 'convoys_changed' handled by MenuBase)
 	if is_instance_valid(_store):
-		if _store.has_signal("convoys_changed") and not _store.convoys_changed.is_connected(_on_store_convoys_changed):
-			_store.convoys_changed.connect(_on_store_convoys_changed)
 		if _store.has_signal("map_changed") and not _store.map_changed.is_connected(_on_store_map_changed):
 			_store.map_changed.connect(_on_store_map_changed)
 		if _store.has_signal("user_changed") and not _store.user_changed.is_connected(_on_store_user_changed):
@@ -154,8 +149,8 @@ func _display_settlement_info():
 
 	# Get the convoy's current tile coordinates by rounding its float position.
 	# The 'x' and 'y' in convoy_data are interpolated floats. We need integer tile coordinates.
-	var current_convoy_x = roundi(_convoy_data.get("x", -1.0))
-	var current_convoy_y = roundi(_convoy_data.get("y", -1.0))
+	var current_convoy_x: int = roundi(float(_convoy_data.get("x", -1.0)))
+	var current_convoy_y: int = roundi(float(_convoy_data.get("y", -1.0)))
 
 	# Fetch settlements + tiles from GameStore snapshot
 	_all_settlement_data = _store.get_settlements() if _store.has_method("get_settlements") else []
@@ -274,6 +269,13 @@ func _create_vendor_tab(vendor_data: Dictionary):
 	# Forward install requests to open mechanics with a prefilled cart
 	if vendor_panel_instance.has_signal("install_requested"):
 		vendor_panel_instance.install_requested.connect(_on_install_requested)
+
+func _update_ui(convoy: Dictionary) -> void:
+	# Lightweight live refresh: update title and trigger a rebuild.
+	_convoy_data = convoy.duplicate(true)
+	if is_instance_valid(title_label):
+		title_label.text = String(_convoy_data.get("convoy_name", title_label.text))
+	call_deferred("_display_settlement_info")
 
 func _clear_tabs():
 	# Remove all dynamically added vendor tabs, starting from the end.

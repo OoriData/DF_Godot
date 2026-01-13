@@ -1,7 +1,4 @@
-extends Control
-
-# Signal that MenuManager will listen for to go back
-signal back_requested
+extends MenuBase
 signal find_route_requested(convoy_data, destination_data)
 signal return_to_convoy_overview_requested(convoy_data)
 signal route_preview_started(route_data)
@@ -96,23 +93,40 @@ func _process(_delta: float):
 func _physics_process(_delta: float):
 	pass
 
-func initialize_with_data(data: Dictionary):
+func initialize_with_data(data_or_id: Variant, extra_arg: Variant = null) -> void:
 	print("ConvoyJourneyMenu: Initialized with data.") # DEBUG
-	# Store the received data for potential use by the title click
-	convoy_data_received = data.duplicate()
+	var d: Dictionary = {}
+	if data_or_id is Dictionary:
+		d = (data_or_id as Dictionary)
+		convoy_id = String(d.get("convoy_id", d.get("id", "")))
+		convoy_data_received = d.duplicate()
+	else:
+		convoy_id = String(data_or_id)
+		convoy_data_received = {}
+	# Let MenuBase perform initial snapshot-driven update where possible
+	super.initialize_with_data(data_or_id, extra_arg)
 	for child in content_vbox.get_children():
 		child.queue_free()
 	# SAFELY extract journey data (API may send null)
-	var journey_raw = data.get("journey")
+	var journey_raw = d.get("journey")
 	var journey_data: Dictionary = {}
 	if journey_raw is Dictionary:
 		journey_data = journey_raw
 	if is_instance_valid(title_label):
-		var convoy_name = data.get("convoy_name", "Convoy")
+		var convoy_name = d.get("convoy_name", "Convoy")
 		title_label.text = convoy_name + " - " + ("Journey Details" if not journey_data.is_empty() else "Journey Planner")
 	if journey_data.is_empty():
 		_populate_destination_list()
 		return
+
+func _update_ui(convoy: Dictionary) -> void:
+	# Lightweight live refresh: update title and, if journey present, redraw key fields later.
+	convoy_data_received = convoy.duplicate(true)
+	var journey_raw = convoy_data_received.get("journey")
+	if is_instance_valid(title_label):
+		var convoy_name = convoy_data_received.get("convoy_name", title_label.text)
+		var has_journey := journey_raw is Dictionary and not (journey_raw as Dictionary).is_empty()
+		title_label.text = convoy_name + " - " + ("Journey Details" if has_journey else "Journey Planner")
 
 	# ---- Styled container for in-transit details ----
 	var details_panel := PanelContainer.new()
@@ -137,6 +151,9 @@ func initialize_with_data(data: Dictionary):
 	details_panel.add_child(details_vbox)
 
 	# --- ETA headline (centered) ---
+	var journey_data: Dictionary = {}
+	if journey_raw is Dictionary:
+		journey_data = journey_raw
 	var eta_str = journey_data.get("eta")
 	var eta_val := preload("res://Scripts/System/date_time_util.gd").format_timestamp_display(eta_str, true)
 	var eta_headline := Label.new()
@@ -165,8 +182,8 @@ func initialize_with_data(data: Dictionary):
 	curr_title.add_theme_color_override("font_color", Color(0.85,0.9,1))
 	loc_grid.add_child(curr_title)
 	var curr_value := Label.new()
-	var curr_name := _get_settlement_name(null, data.get("x", 0.0), data.get("y", 0.0))
-	curr_value.text = "%s  (%.0f, %.0f)" % [curr_name, data.get("x", 0.0), data.get("y", 0.0)]
+	var curr_name := _get_settlement_name(null, convoy_data_received.get("x", 0.0), convoy_data_received.get("y", 0.0))
+	curr_value.text = "%s  (%.0f, %.0f)" % [curr_name, convoy_data_received.get("x", 0.0), convoy_data_received.get("y", 0.0)]
 	loc_grid.add_child(curr_value)
 	# Departed (moved below, with emoji)
 	var departure_time_str = journey_data.get("departure_time")

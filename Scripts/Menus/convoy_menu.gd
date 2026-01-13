@@ -1,7 +1,4 @@
-extends Control # Or Panel, VBoxContainer, etc., depending on your menu's root node
-
-# Signal that MenuManager will listen for
-signal back_requested # Ensure this line exists and is spelled correctly
+extends MenuBase # Standardized menu base for store-driven updates
 
 # Optional: If your menu needs to display data passed from MenuManager
 var convoy_data_received: Dictionary
@@ -305,11 +302,17 @@ func _on_back_button_pressed():
 	print("ConvoyMenu: Back button pressed. Emitting 'back_requested' signal.")
 	emit_signal("back_requested")
 
-func initialize_with_data(data: Dictionary):
-		convoy_data_received = data.duplicate() # Duplicate to avoid modifying the original if needed
-		# print("ConvoyMenu: Initialized with data: ", convoy_data_received) # DEBUG
-		
-		# Kick off a mechanics warm-up so the "Available Parts" preview can populate.
+func initialize_with_data(data_or_id: Variant, extra_arg: Variant = null) -> void:
+	if data_or_id is Dictionary:
+		convoy_id = String((data_or_id as Dictionary).get("convoy_id", (data_or_id as Dictionary).get("id", "")))
+		convoy_data_received = (data_or_id as Dictionary).duplicate()
+	else:
+		convoy_id = String(data_or_id)
+		convoy_data_received = {}
+	# Delegate initial draw to MenuBase-driven update
+	super.initialize_with_data(data_or_id, extra_arg)
+	# Mechanics warm-up and vendor refresh can still be triggered once at open
+	if convoy_data_received is Dictionary and not convoy_data_received.is_empty():
 		if is_instance_valid(_mechanics_service):
 			if _mechanics_service.has_method("warm_mechanics_data_for_convoy"):
 				_mechanics_service.warm_mechanics_data_for_convoy(convoy_data_received)
@@ -317,19 +320,14 @@ func initialize_with_data(data: Dictionary):
 				var cid := String(convoy_data_received.get("convoy_id", ""))
 				if cid != "":
 					_mechanics_service.start_mechanics_probe_session(cid)
-		
-		# When the ConvoyMenu opens, explicitly request a refresh of all vendor data
-		# for the current settlement. This ensures mission destination data is up-to-date.
 		if convoy_data_received.has("x") and convoy_data_received.has("y"):
 			var current_convoy_x := roundi(float(convoy_data_received.get("x", 0)))
 			var current_convoy_y := roundi(float(convoy_data_received.get("y", 0)))
-
 			var current_settlement: Dictionary = {}
 			for s in _latest_all_settlements:
 				if s is Dictionary and roundi(float(s.get("x", -999999))) == current_convoy_x and roundi(float(s.get("y", -999999))) == current_convoy_y:
 					current_settlement = s
 					break
-
 			if not current_settlement.is_empty():
 				var vendors_in_settlement: Array = current_settlement.get("vendors", [])
 				for vendor_entry in vendors_in_settlement:
@@ -348,16 +346,11 @@ func initialize_with_data(data: Dictionary):
 								if _debug_convoy_menu:
 									print("[ConvoyMenu][Debug] Requested vendor refresh for vendor_id:", vendor_id, " (inventory empty/missing)")
 					elif vendor_entry is String:
-						# No local vendor details; request once and let APICalls coalesce duplicates
 						if is_instance_valid(_vendor_service) and _vendor_service.has_method("request_vendor"):
 							_vendor_service.request_vendor(String(vendor_entry))
 						if _debug_convoy_menu:
 							print("[ConvoyMenu][Debug] Requested vendor refresh for vendor_id (string):", vendor_entry)
-
-		# Build destination cache from convoy cargo at init
-		_destinations_cache.clear()
-		var all_cargo_list_init: Array = convoy_data_received.get("all_cargo", [])
-		for cargo_item in all_cargo_list_init:
+		for cargo_item in convoy_data_received.get("all_cargo", []):
 			if cargo_item is Dictionary:
 				var nm := String((cargo_item as Dictionary).get("name", (cargo_item as Dictionary).get("base_name", "Item")))
 				var dest := _extract_destination_from_item(cargo_item)
@@ -1674,3 +1667,43 @@ func _style_journey_progress_bar(bar: ProgressBar) -> void:
 # You can remove it or comment it out.
 # func _update_label(node_path: String, text_content: Variant):
 # 	...
+
+func _update_ui(convoy: Dictionary) -> void:
+	convoy_data_received = convoy.duplicate(true)
+	if convoy_data_received.has("convoy_id"):
+		convoy_id = String(convoy_data_received.get("convoy_id", ""))
+	# Title
+	if is_instance_valid(title_label):
+		title_label.text = convoy_data_received.get("convoy_name", title_label.text)
+	# Resources
+	var current_fuel = convoy_data_received.get("fuel", 0.0)
+	var max_fuel = convoy_data_received.get("max_fuel", 0.0)
+	if is_instance_valid(fuel_text_label): fuel_text_label.text = "Fuel: %.1f / %.1f" % [current_fuel, max_fuel]
+	if is_instance_valid(fuel_bar): _set_resource_bar_style(fuel_bar, fuel_text_label, current_fuel, max_fuel)
+	var current_water = convoy_data_received.get("water", 0.0)
+	var max_water = convoy_data_received.get("max_water", 0.0)
+	if is_instance_valid(water_text_label): water_text_label.text = "Water: %.1f / %.1f" % [current_water, max_water]
+	if is_instance_valid(water_bar): _set_resource_bar_style(water_bar, water_text_label, current_water, max_water)
+	var current_food = convoy_data_received.get("food", 0.0)
+	var max_food = convoy_data_received.get("max_food", 0.0)
+	if is_instance_valid(food_text_label): food_text_label.text = "Food: %.1f / %.1f" % [current_food, max_food]
+	if is_instance_valid(food_bar): _set_resource_bar_style(food_bar, food_text_label, current_food, max_food)
+	# Performance
+	var top_speed = convoy_data_received.get("top_speed", 0.0)
+	if is_instance_valid(speed_text_label): speed_text_label.text = "Top Speed: %.1f" % top_speed
+	if is_instance_valid(speed_box): _set_fixed_color_box_style(speed_box, speed_text_label, COLOR_PERFORMANCE_BOX_BG, COLOR_PERFORMANCE_BOX_FONT)
+	var offroad = convoy_data_received.get("offroad_capability", 0.0)
+	if is_instance_valid(offroad_text_label): offroad_text_label.text = "Offroad: %.1f" % offroad
+	if is_instance_valid(offroad_box): _set_fixed_color_box_style(offroad_box, offroad_text_label, COLOR_PERFORMANCE_BOX_BG, COLOR_PERFORMANCE_BOX_FONT)
+	var efficiency = convoy_data_received.get("efficiency", 0.0)
+	if is_instance_valid(efficiency_text_label): efficiency_text_label.text = "Efficiency: %.1f" % efficiency
+	if is_instance_valid(efficiency_box): _set_fixed_color_box_style(efficiency_box, efficiency_text_label, COLOR_PERFORMANCE_BOX_BG, COLOR_PERFORMANCE_BOX_FONT)
+	# Cargo
+	var current_cargo_volume = convoy_data_received.get("cargo_volume", 0.0)
+	var max_cargo_volume = convoy_data_received.get("max_cargo_volume", 0.0)
+	if is_instance_valid(cargo_volume_text_label): cargo_volume_text_label.text = "Cargo Volume: %.1f / %.1f" % [current_cargo_volume, max_cargo_volume]
+	if is_instance_valid(cargo_volume_bar): _set_resource_bar_style(cargo_volume_bar, cargo_volume_text_label, current_cargo_volume, max_cargo_volume)
+	var current_cargo_weight = convoy_data_received.get("cargo_weight", 0.0)
+	var max_cargo_weight = convoy_data_received.get("max_cargo_weight", 0.0)
+	if is_instance_valid(cargo_weight_text_label): cargo_weight_text_label.text = "Cargo Weight: %.1f / %.1f" % [current_cargo_weight, max_cargo_weight]
+	if is_instance_valid(cargo_weight_bar): _set_resource_bar_style(cargo_weight_bar, cargo_weight_text_label, current_cargo_weight, max_cargo_weight)

@@ -84,22 +84,27 @@ func is_any_menu_active() -> bool:
 # NOTE: _emit_menu_area_changed is called after every menu open/close/navigation event.
 # This ensures the camera always clamps to the correct visible area.
 func open_convoy_menu(convoy_data = null):
-	_show_menu(convoy_menu_scene, convoy_data)
+	var arg = _extract_convoy_id_or_passthrough(convoy_data)
+	_show_menu(convoy_menu_scene, arg)
 
 func open_convoy_vehicle_menu(convoy_data = null):
 	print("MenuManager: open_convoy_vehicle_menu called. Convoy Data Received: ")
 	print(convoy_data)
-	_show_menu(convoy_vehicle_menu_scene, convoy_data)
+	var arg = _extract_convoy_id_or_passthrough(convoy_data)
+	_show_menu(convoy_vehicle_menu_scene, arg)
 
 func open_convoy_journey_menu(convoy_data = null):
-	_show_menu(convoy_journey_menu_scene, convoy_data)
+	var arg = _extract_convoy_id_or_passthrough(convoy_data)
+	_show_menu(convoy_journey_menu_scene, arg)
 
 func open_convoy_settlement_menu(convoy_data = null):
 	print("MenuManager: open_convoy_settlement_menu called. Data is valid: ", convoy_data != null)
-	_show_menu(convoy_settlement_menu_scene, convoy_data)
+	var arg = _extract_convoy_id_or_passthrough(convoy_data)
+	_show_menu(convoy_settlement_menu_scene, arg)
 
 func open_warehouse_menu(convoy_data = null):
-	_show_menu(warehouse_menu_scene, convoy_data)
+	var arg = _extract_convoy_id_or_passthrough(convoy_data)
+	_show_menu(warehouse_menu_scene, arg)
 
 func open_convoy_cargo_menu(convoy_data = null):
 	if convoy_data == null:
@@ -108,12 +113,14 @@ func open_convoy_cargo_menu(convoy_data = null):
 		return
 
 	print("MenuManager: open_convoy_cargo_menu called. Original Convoy Data Keys: ", convoy_data.keys())
-	_show_menu(convoy_cargo_menu_scene, convoy_data.duplicate(true))
+	var arg = _extract_convoy_id_or_passthrough(convoy_data)
+	_show_menu(convoy_cargo_menu_scene, arg)
 
 func open_convoy_cargo_menu_for_item(convoy_data: Dictionary, item_data: Dictionary):
 	# Special handler to open the cargo menu and jump to a specific item.
 	_next_menu_extra_arg = item_data
-	_show_menu(convoy_cargo_menu_scene, convoy_data)
+	var arg = _extract_convoy_id_or_passthrough(convoy_data)
+	_show_menu(convoy_cargo_menu_scene, arg)
 
 func open_mechanics_menu(convoy_data = null):
 	# Gate: require the convoy to be in a settlement
@@ -298,6 +305,12 @@ func _show_menu(menu_scene_resource, data_to_pass = null, add_to_stack: bool = t
 		if current_active_menu.has_signal("open_warehouse_menu_requested"):
 			current_active_menu.open_warehouse_menu_requested.connect(open_warehouse_menu, CONNECT_ONE_SHOT)
 
+func _extract_convoy_id_or_passthrough(d: Variant) -> Variant:
+	if d is Dictionary:
+		var cid := String((d as Dictionary).get("convoy_id", (d as Dictionary).get("id", "")))
+		if cid != "":
+			return cid
+	return d
 
 func go_back():
 	if not is_instance_valid(current_active_menu):
@@ -305,10 +318,20 @@ func go_back():
 			var _previous_menu_info = menu_stack.pop_back()
 			var _prev_scene_path = _previous_menu_info.get("scene_path")
 			var _prev_data = _previous_menu_info.get("data")
+			# Replace with freshest convoy data if available (handles String convoy_id too)
+			var _prev_arg = _prev_data
+			if typeof(_prev_arg) == TYPE_DICTIONARY and (_prev_arg as Dictionary).has("convoy_id"):
+				var latest := _get_latest_convoy_by_id(str((_prev_arg as Dictionary).get("convoy_id")))
+				if not latest.is_empty():
+					_prev_arg = latest.duplicate(true)
+			elif typeof(_prev_arg) == TYPE_STRING:
+				var latest_s := _get_latest_convoy_by_id(String(_prev_arg))
+				if not latest_s.is_empty():
+					_prev_arg = latest_s.duplicate(true)
 			if _prev_scene_path:
 				var _scene_resource = load(_prev_scene_path)
 				if _scene_resource:
-					_show_menu(_scene_resource, _prev_data, false)
+					_show_menu(_scene_resource, _prev_arg, false)
 					return
 		# No previous menu to go back to; fully closing menus.
 		# Deselect any globally selected convoy so the user isn't forced to click again to clear it.
@@ -339,14 +362,19 @@ func go_back():
 	var _prev_scene_path2 = _previous_menu_info2.get("scene_path")
 	var _prev_data2 = _previous_menu_info2.get("data")
 	# Replace with freshest convoy data if available
-	if _prev_data2 is Dictionary and _prev_data2.has("convoy_id"):
-		var latest2 := _get_latest_convoy_by_id(str(_prev_data2.get("convoy_id")))
+	var _prev_arg2 = _prev_data2
+	if typeof(_prev_arg2) == TYPE_DICTIONARY and (_prev_arg2 as Dictionary).has("convoy_id"):
+		var latest2 := _get_latest_convoy_by_id(str((_prev_arg2 as Dictionary).get("convoy_id")))
 		if not latest2.is_empty():
-			_prev_data2 = latest2.duplicate(true)
+			_prev_arg2 = latest2.duplicate(true)
+	elif typeof(_prev_arg2) == TYPE_STRING:
+		var latest2s := _get_latest_convoy_by_id(String(_prev_arg2))
+		if not latest2s.is_empty():
+			_prev_arg2 = latest2s.duplicate(true)
 	if _prev_scene_path2:
 		var _scene_resource2 = load(_prev_scene_path2)
 		if _scene_resource2:
-			_show_menu(_scene_resource2, _prev_data2, false)
+			_show_menu(_scene_resource2, _prev_arg2, false)
 		else:
 			printerr("MenuManager: Failed to load previous menu scene: ", _prev_scene_path2, ". Attempting to go back further if possible.")
 			go_back()
@@ -383,15 +411,18 @@ func close_all_menus():
 func _on_store_convoys_changed(all_convoy_data: Array) -> void:
 	if not is_instance_valid(current_active_menu):
 		return
-	if current_active_menu.has_method("initialize_with_data"):
-		var menu_data = current_active_menu.get_meta("menu_data", null)
-		if menu_data and menu_data.has("convoy_id"):
-			var current_id = str(menu_data.get("convoy_id"))
-			for convoy in all_convoy_data:
-				if convoy.has("convoy_id") and str(convoy.get("convoy_id")) == current_id:
-					current_active_menu.call_deferred("initialize_with_data", convoy.duplicate(true))
-					current_active_menu.set_meta("menu_data", convoy.duplicate(true))
-					break
+	# Rely on MenuBase to handle store-driven UI refresh. Keep meta snapshots fresh.
+	var menu_data = current_active_menu.get_meta("menu_data", null)
+	var current_id: String = ""
+	if typeof(menu_data) == TYPE_DICTIONARY and (menu_data as Dictionary).has("convoy_id"):
+		current_id = str((menu_data as Dictionary).get("convoy_id"))
+	elif typeof(menu_data) == TYPE_STRING:
+		current_id = String(menu_data)
+	if not current_id.is_empty():
+		for convoy in all_convoy_data:
+			if convoy is Dictionary and (convoy as Dictionary).has("convoy_id") and str((convoy as Dictionary).get("convoy_id")) == current_id:
+				current_active_menu.set_meta("menu_data", (convoy as Dictionary).duplicate(true))
+				break
 	# Also update any stacked menu data snapshots so Back restores fresh data
 	if not menu_stack.is_empty():
 		for i in range(menu_stack.size()):
@@ -399,11 +430,15 @@ func _on_store_convoys_changed(all_convoy_data: Array) -> void:
 			if typeof(entry) != TYPE_DICTIONARY:
 				continue
 			var data_snap = entry.get("data", null)
-			if data_snap is Dictionary and data_snap.has("convoy_id"):
-				var cid = str(data_snap.get("convoy_id"))
+			var cid: String = ""
+			if typeof(data_snap) == TYPE_DICTIONARY and (data_snap as Dictionary).has("convoy_id"):
+				cid = str((data_snap as Dictionary).get("convoy_id"))
+			elif typeof(data_snap) == TYPE_STRING:
+				cid = String(data_snap)
+			if not cid.is_empty():
 				for convoy2 in all_convoy_data:
-					if convoy2.has("convoy_id") and str(convoy2.get("convoy_id")) == cid:
-						entry["data"] = convoy2.duplicate(true)
+					if convoy2 is Dictionary and (convoy2 as Dictionary).has("convoy_id") and str((convoy2 as Dictionary).get("convoy_id")) == cid:
+						entry["data"] = (convoy2 as Dictionary).duplicate(true)
 						menu_stack[i] = entry
 						break
 
