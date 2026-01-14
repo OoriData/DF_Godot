@@ -416,9 +416,9 @@ func _apply_settlement_snapshot_update(all_settlements_data: Array) -> void:
 func _on_api_resource_txn(_result: Dictionary) -> void:
 	# Deprecated: previously handled APICalls transaction signals. Kept for compatibility.
 	# Now refreshes are triggered directly after initiating transactions.
-	var convoy_id := str(_convoy_data.get("convoy_id", ""))
-	if convoy_id != "" and is_instance_valid(_convoy_service) and _convoy_service.has_method("refresh_single"):
-		_convoy_service.refresh_single(convoy_id)
+	var convoy_uuid := str(_convoy_data.get("convoy_id", ""))
+	if convoy_uuid != "" and is_instance_valid(_convoy_service) and _convoy_service.has_method("refresh_single"):
+		_convoy_service.refresh_single(convoy_uuid)
 	if is_instance_valid(_user_service) and _user_service.has_method("refresh_user"):
 		_user_service.refresh_user()
 	call_deferred("_post_txn_update_ui")
@@ -630,8 +630,8 @@ func _calculate_top_up_plan() -> Dictionary:
 func _on_top_up_button_pressed():
 	if _top_up_plan.is_empty() or _top_up_plan.get("resources", {}).is_empty():
 		return
-	var convoy_id = str(_convoy_data.get("convoy_id", ""))
-	if convoy_id.is_empty():
+	var convoy_uuid = str(_convoy_data.get("convoy_id", ""))
+	if convoy_uuid.is_empty():
 		return
 	if not is_instance_valid(_api):
 		return
@@ -642,12 +642,12 @@ func _on_top_up_button_pressed():
 		var send_qty:int = int(alloc.get("quantity", 0))
 		if res == "" or vendor_id.is_empty() or send_qty <= 0:
 			continue
-		print("[TopUp] Purchasing %d %s from vendor %s (price=%.2f) convoy=%s" % [send_qty, res, vendor_id, float(alloc.get("price",0.0)), convoy_id])
+		print("[TopUp] Purchasing %d %s from vendor %s (price=%.2f) convoy=%s" % [send_qty, res, vendor_id, float(alloc.get("price",0.0)), convoy_uuid])
 		# Raw resources use dedicated API call
-		_api.buy_resource(vendor_id, convoy_id, String(res), float(send_qty))
+		_api.buy_resource(vendor_id, convoy_uuid, String(res), float(send_qty))
 	# Immediately trigger authoritative refreshes via services; UI updates via Store/Hub
 	if is_instance_valid(_convoy_service) and _convoy_service.has_method("refresh_single"):
-		_convoy_service.refresh_single(convoy_id)
+		_convoy_service.refresh_single(convoy_uuid)
 	if is_instance_valid(_user_service) and _user_service.has_method("refresh_user"):
 		_user_service.refresh_user()
 	# Disable button until data refresh comes back

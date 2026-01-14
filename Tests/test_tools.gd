@@ -1,6 +1,4 @@
 extends RefCounted
-
-const TestUtil = preload("res://Tests/test_util.gd")
 const Tools = preload("res://Scripts/System/tools.gd")
 
 func run() -> void:

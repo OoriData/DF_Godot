@@ -5,9 +5,39 @@ static func can_show_install_button(is_buy_mode: bool, selected_item: Variant) -
     return CompatAdapter.can_show_install_button(is_buy_mode, selected_item)
 
 static func contextual_unit_price(item_data_source: Dictionary, mode: String) -> float:
-    return PriceUtil.get_contextual_unit_price(item_data_source, mode)
+    var p: float = PriceUtil.get_contextual_unit_price(item_data_source, mode)
+    if p > 0.0:
+        return p
+
+    # Fallbacks for shallow/simple payloads (and unit tests) when PriceUtil cannot
+    # infer a price. Prefer explicit fields if present.
+    var keys := ["unit_price", "price", "value", "base_value", "base_price"]
+    for k in keys:
+        if item_data_source.has(k):
+            var v: Variant = item_data_source.get(k)
+            if v is float or v is int:
+                var fv := float(v)
+                if fv > 0.0:
+                    return fv
+    return p
 
 static func vehicle_price(vehicle_data: Dictionary) -> float:
+    # Vehicles must use API-provided `value` when available.
+    if vehicle_data.has("value"):
+        var vv: Variant = vehicle_data.get("value")
+        if vv is float or vv is int:
+            var fvv := float(vv)
+            if fvv > 0.0:
+                return fvv
+
+    # Fallback for partial vehicle payloads.
+    if vehicle_data.has("base_value"):
+        var bv: Variant = vehicle_data.get("base_value")
+        if bv is float or bv is int:
+            var fbv := float(bv)
+            if fbv > 0.0:
+                return fbv
+
     return PriceUtil.get_vehicle_price(vehicle_data)
 
 static func is_vehicle_item(d: Dictionary) -> bool:
@@ -15,14 +45,10 @@ static func is_vehicle_item(d: Dictionary) -> bool:
         return false
     if (d.has("cargo_id") and d.get("cargo_id") != null) or d.get("is_raw_resource", false):
         return false
-    var vehicle_keys = [
-        "base_top_speed", "base_value", "base_cargo_capacity", "base_weight_capacity",
-        "base_offroad_capability", "parts"
-    ]
-    for k in vehicle_keys:
-        if d.has(k):
-            return true
-    return false
+    # Phase 2: Relaxed check. If it has a vehicle_id and isn't cargo/resource, treat it as a vehicle.
+    # This allows "shallow" vehicle objects (id + name) to be detected so we can trigger
+    # the detail fetch.
+    return true
 
 static func item_price_components(item_data_source: Dictionary) -> Dictionary:
     return PriceUtil.get_item_price_components(item_data_source)

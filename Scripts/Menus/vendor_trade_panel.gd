@@ -4,8 +4,6 @@ const ItemsData = preload("res://Scripts/Data/Items.gd")
 const SettlementModel = preload("res://Scripts/Data/Models/Settlement.gd")
 const VendorModel = preload("res://Scripts/Data/Models/Vendor.gd")
 const CompatAdapter = preload("res://Scripts/Menus/VendorPanel/compat_adapter.gd")
-const VendorTradeVM = preload("res://Scripts/Menus/VendorPanel/vendor_trade_vm.gd")
-const VendorInspectorBuilder = preload("res://Scripts/Menus/VendorPanel/inspector_builder.gd")
 
 # Signals to notify the main menu of transactions
 signal item_purchased(item, quantity, total_price)
@@ -177,6 +175,8 @@ func _ready() -> void:
 		var cb_hub_ready := Callable(self, "_on_hub_vendor_panel_ready")
 		if _hub.has_signal("vendor_panel_ready") and not _hub.vendor_panel_ready.is_connected(cb_hub_ready):
 			_hub.vendor_panel_ready.connect(cb_hub_ready)
+		if _hub.has_signal("vendor_preview_ready") and not _hub.vendor_preview_ready.is_connected(_on_hub_vendor_preview_ready):
+			_hub.vendor_preview_ready.connect(_on_hub_vendor_preview_ready)
 	if is_instance_valid(_store):
 		var cb_convoys := Callable(self, "_on_store_convoys_changed")
 		var cb_map := Callable(self, "_on_store_map_changed")
@@ -196,6 +196,10 @@ func _ready() -> void:
 			convoy_data = _get_convoy_by_id(_active_convoy_id)
 		if _store.has_method("get_user"):
 			_on_user_data_updated(_store.get_user())
+
+	if is_instance_valid(_vendor_service):
+		if _vendor_service.has_signal("vehicle_data_received") and not _vendor_service.vehicle_data_received.is_connected(_on_service_vehicle_data_received):
+			_vendor_service.vehicle_data_received.connect(_on_service_vehicle_data_received)
 
 	# Hook backend part compatibility so vendor UI can display the same truth as mechanics.
 	if is_instance_valid(_api) and _api.has_signal("part_compatibility_checked") and not _api.part_compatibility_checked.is_connected(_on_part_compatibility_ready):
@@ -233,6 +237,8 @@ func _exit_tree() -> void:
 		var cb_hub := Callable(self, "_on_hub_vendor_panel_ready")
 		if _hub.vendor_panel_ready.is_connected(cb_hub):
 			_hub.vendor_panel_ready.disconnect(cb_hub)
+		if _hub.has_signal("vendor_preview_ready") and _hub.vendor_preview_ready.is_connected(_on_hub_vendor_preview_ready):
+			_hub.vendor_preview_ready.disconnect(_on_hub_vendor_preview_ready)
 	if is_instance_valid(_store):
 		var cb_convoys := Callable(self, "_on_store_convoys_changed")
 		var cb_map := Callable(self, "_on_store_map_changed")
@@ -247,6 +253,9 @@ func _exit_tree() -> void:
 		var cb_api := Callable(self, "_on_part_compatibility_ready")
 		if _api.part_compatibility_checked.is_connected(cb_api):
 			_api.part_compatibility_checked.disconnect(cb_api)
+	if is_instance_valid(_vendor_service) and _vendor_service.has_signal("vehicle_data_received"):
+		if _vendor_service.vehicle_data_received.is_connected(_on_service_vehicle_data_received):
+			_vendor_service.vehicle_data_received.disconnect(_on_service_vehicle_data_received)
 
 func _set_latest_settlements_snapshot(settlements: Array) -> void:
 	_latest_settlements = settlements
@@ -656,6 +665,44 @@ func _on_hub_vendor_panel_ready(vendor_payload: Dictionary) -> void:
 		self.vendor_data = vendor_payload
 	_try_process_refresh()
 
+func _on_hub_vendor_preview_ready(data: Dictionary) -> void:
+	# Used for mission cargo destination prefetch
+	var vid := str(data.get("vendor_id", ""))
+	if vid == "":
+		return
+	# Cache it
+	_vendors_from_settlements_by_id[vid] = data
+	var nm := str(data.get("name", ""))
+	if nm != "":
+		_vendor_id_to_name[vid] = nm
+	
+	# If current selection is mission cargo for this vendor, refresh inspector
+	if selected_item and selected_item.has("item_data"):
+		var idata: Dictionary = selected_item.item_data
+		var rid := str(idata.get("recipient", ""))
+		if rid == vid:
+			selected_item["mission_vendor_name"] = nm
+			_update_inspector()
+			_update_transaction_panel()
+
+func _on_service_vehicle_data_received(data: Dictionary) -> void:
+	var vid := str(data.get("vehicle_id", ""))
+	if vid == "":
+		return
+	# If current selection is this vehicle, merge data and refresh
+	if selected_item and selected_item.has("item_data"):
+		var idata: Dictionary = selected_item.item_data
+		var sel_vid := str(idata.get("vehicle_id", ""))
+		if sel_vid == vid:
+			# Merge fetched details into the item data source
+			for k in data:
+				idata[k] = data[k]
+			# Ensure value is propagated if missing
+			if not idata.has("value") and data.has("value"):
+				idata["value"] = data["value"]
+			_update_inspector()
+			_update_transaction_panel()
+
 func _on_store_convoys_changed(_convoys: Array) -> void:
 	# Update local convoy snapshot for active convoy and perform a minimal UI refresh.
 	# Do NOT rebuild trees here to preserve selection during purchases; authoritative
@@ -848,7 +895,23 @@ func _populate_vendor_list() -> void:
 
 	# Process vehicles into their own category
 	for vehicle in vendor_data.get("vehicle_inventory", []):
-		_aggregate_vendor_item(aggregated_vehicles, vehicle)
+		var vid := str(vehicle.get("vehicle_id", ""))
+		if vid != "":
+			# Use vehicle_id as key to prevent merging distinct vehicles with the same name
+			var key := vid
+			var vehicle_name := str(vehicle.get("name", "Unknown Vehicle"))
+			if not aggregated_vehicles.has(key):
+				aggregated_vehicles[key] = {
+					"item_data": vehicle,
+					"display_name": vehicle_name,
+					"total_quantity": 0,
+					"total_weight": 0.0,
+					"total_volume": 0.0,
+					"mission_vendor_name": ""
+				}
+			aggregated_vehicles[key].total_quantity += 1
+		else:
+			_aggregate_vendor_item(aggregated_vehicles, vehicle)
 
 	var root = vendor_item_tree.create_item()
 	_populate_category(vendor_item_tree, root, "Mission Cargo", aggregated_missions)
@@ -1310,6 +1373,23 @@ func _handle_new_item_selection(p_selected_item) -> void:
 		print("DEBUG: _handle_new_item_selection - selected_item: ", item_summary_for_log, " is_same_selection: ", is_same_selection)
 	# --- END: Reduced logging ---
 
+	# --- Data Prefetching ---
+	if selected_item and selected_item.has("item_data"):
+		var idata: Dictionary = selected_item.item_data
+		# 1. Vehicle details
+		if VendorTradeVM.is_vehicle_item(idata):
+			# If missing critical pricing/stats, fetch
+			if not idata.has("value") or not idata.has("base_top_speed"):
+				var vid := str(idata.get("vehicle_id", ""))
+				if vid != "" and is_instance_valid(_vendor_service):
+					_vendor_service.request_vehicle(vid)
+		# 2. Mission recipient details
+		var rid := str(idata.get("recipient", ""))
+		if rid != "" and not _vendor_id_to_name.has(rid):
+			if is_instance_valid(_vendor_service):
+				_vendor_service.request_vendor_preview(rid)
+	# ------------------------
+
 	if selected_item:
 		var stock_qty = selected_item.get("total_quantity", -1)
 		if stock_qty < 0 and selected_item.has("item_data") and selected_item.item_data.has("quantity"):
@@ -1637,7 +1717,7 @@ func _update_inspector() -> void:
 	bbcode += "[color=gold][b]Summary[/b][/color]\n"
 	var total_quantity_hdr: int = int(selected_item.get("total_quantity", 0))
 	if total_quantity_hdr > 0: bbcode += "[b]Quantity:[/b] %s\n" % _format_number(total_quantity_hdr)
-	# Display destination for mission items in both buy and sell mode.
+	# Display destination for mission items in both buy and sell mode. 
 	if selected_item.has("mission_vendor_name") and not str(selected_item.mission_vendor_name).is_empty() and selected_item.mission_vendor_name != "Unknown Vendor":
 		bbcode += "[b]Destination:[/b] %s\n" % selected_item.mission_vendor_name
 
@@ -1649,11 +1729,11 @@ func _update_inspector() -> void:
 		price_label_text = "Buy Price"
 	elif current_mode == "sell":
 		price_label_text = "Sell Price"
-	bbcode += "- %s: $%s\n" % [price_label_text, "%.2f" % contextual_unit_price]
+	bbcode += "- %s: %s\n" % [price_label_text, NumberFormat.format_money(contextual_unit_price)]
 
 	var price_components = VendorTradeVM.item_price_components(item_data_source)
 	if price_components.resource_unit_value > 0.01:
-		bbcode += "  [color=gray](Item: %.2f + Resources: %.2f)[/color]\n" % [price_components.container_unit_price, price_components.resource_unit_value]
+		bbcode += "  [color=gray](Item: %s + Resources: %s)[/color]\n" % [NumberFormat.format_money(price_components.container_unit_price), NumberFormat.format_money(price_components.resource_unit_value)]
 
 	var unit_weight = item_data_source.get("unit_weight", 0.0)
 	if unit_weight == 0.0 and item_data_source.has("weight") and item_data_source.has("quantity"):
@@ -1673,7 +1753,7 @@ func _update_inspector() -> void:
 
 	var unit_delivery_reward_val = item_data_source.get("unit_delivery_reward")
 	if (unit_delivery_reward_val is float or unit_delivery_reward_val is int) and float(unit_delivery_reward_val) > 0.0:
-		bbcode += "- Delivery Reward: $%s\n" % ("%.2f" % float(unit_delivery_reward_val))
+		bbcode += "- Delivery Reward: %s\n" % NumberFormat.format_money(float(unit_delivery_reward_val))
 
 	# Section: Total Order
 	bbcode += "\n[color=#DDEAF0][b]Total Order[/b][/color]\n"
@@ -1747,11 +1827,34 @@ func _update_inspector_for_vehicle(vehicle_data: Dictionary) -> void:
 	if is_instance_valid(item_description_rich_text):
 		item_description_rich_text.text = description_text
 
+	# --- Vehicle Attributes Display ---
+	var bbcode = ""
+	bbcode += "[color=gold][b]Vehicle Specs[/b][/color]\n"
+	
+	var val = vehicle_data.get("value")
+	if val: bbcode += "[b]Value:[/b] %s\n" % NumberFormat.format_money(float(val))
+	
+	var speed = vehicle_data.get("base_top_speed")
+	if speed: bbcode += "[b]Max Speed:[/b] %s km/h\n" % speed
+	
+	var eff = vehicle_data.get("base_fuel_efficiency")
+	if eff: bbcode += "[b]Efficiency:[/b] %s\n" % eff
+	
+	var offroad = vehicle_data.get("base_offroad_capability")
+	if offroad: bbcode += "[b]Offroad:[/b] %s\n" % offroad
+	
+	var w_cap = vehicle_data.get("base_weight_capacity")
+	if w_cap: bbcode += "[b]Weight Cap:[/b] %s\n" % w_cap
+	
+	var v_cap = vehicle_data.get("base_cargo_capacity")
+	if v_cap: bbcode += "[b]Volume Cap:[/b] %s\n" % v_cap
+
 	# Build segmented info panels in the middle column for vehicles
 	if is_instance_valid(item_info_rich_text):
 		item_info_rich_text.bbcode_enabled = true
 		item_info_rich_text.clear()
-		item_info_rich_text.visible = false
+		item_info_rich_text.parse_bbcode(bbcode)
+		item_info_rich_text.visible = true
 		_rebuild_info_sections(vehicle_data)
 
 func _update_fitment_panel() -> void:
@@ -1772,9 +1875,8 @@ func _update_transaction_panel() -> void:
 
 	if not selected_item:
 		if perf_log_enabled:
-			if perf_log_enabled:
-				print("[VendorTradePanel][LOG]   -> No item selected, setting price to $0.")
-		price_label.text = "Total Price: $0" # FIX: Ensure dollar sign is present
+			print("[VendorTradePanel][LOG]   -> No item selected, setting price to $0.")
+		price_label.text = "Total Price: %s" % NumberFormat.format_money(0.0)
 		if is_instance_valid(delivery_reward_label):
 			delivery_reward_label.visible = false
 		# Reset capacity bars to current convoy usage
@@ -1784,7 +1886,7 @@ func _update_transaction_panel() -> void:
 	var item_data_source = selected_item.item_data if selected_item.has("item_data") and not selected_item.item_data.is_empty() else selected_item
 
 	# --- START: UNIFIED PRICE & DISPLAY LOGIC via VM ---
-	var quantity = int(quantity_spinbox.value)
+	var quantity = int(quantity_spinbox.value) if is_instance_valid(quantity_spinbox) else 1
 	var pr = VendorTradeVM.build_price_presenter(item_data_source, str(current_mode), quantity, selected_item)
 	if is_instance_valid(delivery_reward_label):
 		delivery_reward_label.visible = float(pr.get("total_delivery_reward", 0.0)) > 0.0
@@ -1793,8 +1895,7 @@ func _update_transaction_panel() -> void:
 	var bbcode_text = String(pr.get("bbcode_text", ""))
 	var added_w: float = float(pr.get("added_weight", 0.0))
 	var added_v: float = float(pr.get("added_volume", 0.0))
-	if abs(added_w) > 0.0001 or abs(added_v) > 0.0001:
-		_refresh_capacity_bars(added_v, added_w)
+	_refresh_capacity_bars(added_v, added_w)
 
 	# Trim trailing newline just in case
 	if bbcode_text.ends_with("\n"):
@@ -2015,6 +2116,15 @@ func _get_vendor_name_for_recipient(recipient_id) -> String:
 	if rid != "" and _vendor_id_to_name.has(rid):
 		return str(_vendor_id_to_name[rid])
 	if rid != "" and _vendors_from_settlements_by_id.has(rid):
+		# Cache hit from settlement data
+		var vd = _vendors_from_settlements_by_id[rid]
+		if vd is Dictionary:
+			var nm := str((vd as Dictionary).get("name", ""))
+			if nm != "":
+				_vendor_id_to_name[rid] = nm
+				return nm
+	# Fallback: check if we have it in the raw dictionary but not name cache
+	if rid != "" and _vendors_from_settlements_by_id.has(rid):
 		var vd = _vendors_from_settlements_by_id[rid]
 		if vd is Dictionary:
 			var nm := str((vd as Dictionary).get("name", ""))
@@ -2124,6 +2234,13 @@ func _matches_restore_key(agg_data: Dictionary, key: String) -> bool:
 	if not agg_data or not agg_data.has("item_data"):
 		return false
 	var idata: Dictionary = agg_data.item_data
+	
+	# Match by unique ID if present
+	if idata.has("cargo_id") and str(idata.cargo_id) == key:
+		return true
+	if idata.has("vehicle_id") and str(idata.vehicle_id) == key:
+		return true
+		
 	if key.begins_with("name:"):
 		var nm := str(key.substr(5))
 		return str(idata.get("name", "")) == nm

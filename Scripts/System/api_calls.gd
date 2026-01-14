@@ -27,6 +27,8 @@ signal user_metadata_updated(result: Dictionary)
 signal vendor_data_received(vendor_data: Dictionary)
 signal part_compatibility_checked(payload: Dictionary) # { vehicle_id, part_id, data }
 signal cargo_data_received(cargo: Dictionary)
+@warning_ignore("unused_signal")
+signal vehicle_data_received(vehicle_data: Dictionary)
 
 # --- Journey Planning Signals ---
 signal route_choices_received(routes: Array)
@@ -570,6 +572,22 @@ func get_cargo(cargo_id: String) -> void:
 		"method": HTTPClient.METHOD_GET
 	}
 	_diag_enqueue("get_cargo", request_details)
+
+# --- Vehicle detail by ID ---
+func get_vehicle_data(vehicle_id: String) -> void:
+	if vehicle_id.is_empty() or not _is_valid_uuid(vehicle_id):
+		printerr("APICalls (get_vehicle_data): invalid vehicle_id %s" % vehicle_id)
+		return
+	var url := "%s/vehicle/get?vehicle_id=%s" % [BASE_URL, vehicle_id]
+	var headers: PackedStringArray = ['accept: application/json']
+	headers = _apply_auth_header(headers)
+	_diag_enqueue("get_vehicle_data", {
+		"url": url,
+		"headers": headers,
+		"purpose": RequestPurpose.NONE,
+		"method": HTTPClient.METHOD_GET,
+		"signal_name": "vehicle_data_received"
+	})
 
 # --- Warehouse requests ---
 func warehouse_new(sett_id: String) -> void:

@@ -8,12 +8,17 @@ extends Node
 
 const VendorModel = preload("res://Scripts/Data/Models/Vendor.gd")
 
+signal vehicle_data_received(data: Dictionary)
+
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
 	# Bridge transport to domain event
 	if is_instance_valid(_api) and _api.has_signal("vendor_data_received"):
 		if not _api.vendor_data_received.is_connected(_on_vendor_data_received):
 			_api.vendor_data_received.connect(_on_vendor_data_received)
+	if is_instance_valid(_api) and _api.has_signal("vehicle_data_received"):
+		if not _api.vehicle_data_received.is_connected(_on_vehicle_data_received):
+			_api.vehicle_data_received.connect(_on_vehicle_data_received)
 
 func request_vendor(vendor_id: String) -> void:
 	if vendor_id == "":
@@ -33,6 +38,11 @@ func request_vendor_preview(vendor_id: String) -> void:
 		return
 	request_vendor(vendor_id)
 
+func request_vehicle(vehicle_id: String) -> void:
+	if vehicle_id == "" or not is_instance_valid(_api):
+		return
+	_api.get_vehicle_data(vehicle_id)
+
 func _on_vendor_data_received(vendor_data: Dictionary) -> void:
 	var data := vendor_data if vendor_data != null else {}
 	var logger := get_node_or_null("/root/Logger")
@@ -46,6 +56,8 @@ func _on_vendor_data_received(vendor_data: Dictionary) -> void:
 	if is_instance_valid(_hub) and _hub.has_signal("vendor_preview_ready"):
 		_hub.vendor_preview_ready.emit(data)
 
+func _on_vehicle_data_received(data: Dictionary) -> void:
+	emit_signal("vehicle_data_received", data)
 
 func to_model(vendor_data: Dictionary):
 	return VendorModel.new(vendor_data)
