@@ -119,40 +119,12 @@ static func update_vehicle(panel: Object, vehicle_data: Dictionary) -> void:
 	if is_instance_valid(panel.item_description_rich_text):
 		panel.item_description_rich_text.text = description_text
 
-	# --- Vehicle Attributes Display ---
-	var bbcode: String = ""
-	bbcode += "[color=gold][b]Vehicle Specs[/b][/color]\n"
-
-	var val: Variant = vehicle_data.get("value")
-	if val:
-		bbcode += "[b]Value:[/b] %s\n" % NumberFormat.format_money(float(val))
-
-	var speed: Variant = vehicle_data.get("base_top_speed")
-	if speed:
-		bbcode += "[b]Max Speed:[/b] %s km/h\n" % str(speed)
-
-	var eff: Variant = vehicle_data.get("base_fuel_efficiency")
-	if eff:
-		bbcode += "[b]Efficiency:[/b] %s\n" % str(eff)
-
-	var offroad: Variant = vehicle_data.get("base_offroad_capability")
-	if offroad:
-		bbcode += "[b]Offroad:[/b] %s\n" % str(offroad)
-
-	var w_cap: Variant = vehicle_data.get("base_weight_capacity")
-	if w_cap:
-		bbcode += "[b]Weight Cap:[/b] %s\n" % str(w_cap)
-
-	var v_cap: Variant = vehicle_data.get("base_cargo_capacity")
-	if v_cap:
-		bbcode += "[b]Volume Cap:[/b] %s\n" % str(v_cap)
-
-	# Build segmented info panels in the middle column for vehicles
+	# Vehicles should render via the segmented/stylized panels only.
+	# Keep the legacy RichTextLabel hidden to avoid duplicate plain-text blocks.
 	if is_instance_valid(panel.item_info_rich_text):
 		panel.item_info_rich_text.bbcode_enabled = true
 		panel.item_info_rich_text.clear()
-		panel.item_info_rich_text.parse_bbcode(bbcode)
-		panel.item_info_rich_text.visible = true
+		panel.item_info_rich_text.visible = false
 
 	VendorInspectorBuilder.rebuild_info_sections(
 		panel.item_info_rich_text,

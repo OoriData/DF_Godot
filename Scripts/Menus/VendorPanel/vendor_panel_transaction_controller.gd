@@ -66,15 +66,27 @@ static func on_max_button_pressed(panel: Object) -> void:
 	var volume_limit: int = 99999999
 	if not is_vehicle:
 		var unit_weight: float = 0.0
-		if item_data_source.has("unit_weight"):
-			unit_weight = float(item_data_source.get("unit_weight", 0.0))
-		elif item_data_source.has("weight") and item_data_source.has("quantity") and float(item_data_source.get("quantity", 0.0)) > 0.0:
-			unit_weight = float(item_data_source.get("weight", 0.0)) / float(item_data_source.get("quantity", 1.0))
+		if panel.selected_item and (panel.selected_item is Dictionary):
+			var tq: int = int((panel.selected_item as Dictionary).get("total_quantity", 0))
+			var tw: float = float((panel.selected_item as Dictionary).get("total_weight", 0.0))
+			if tq > 0 and tw > 0.0:
+				unit_weight = tw / float(tq)
+		if unit_weight <= 0.0:
+			if item_data_source.has("unit_weight"):
+				unit_weight = float(item_data_source.get("unit_weight", 0.0))
+			elif item_data_source.has("weight") and item_data_source.has("quantity") and float(item_data_source.get("quantity", 0.0)) > 0.0:
+				unit_weight = float(item_data_source.get("weight", 0.0)) / float(item_data_source.get("quantity", 1.0))
 		var unit_volume: float = 0.0
-		if item_data_source.has("unit_volume"):
-			unit_volume = float(item_data_source.get("unit_volume", 0.0))
-		elif item_data_source.has("volume") and item_data_source.has("quantity") and float(item_data_source.get("quantity", 0.0)) > 0.0:
-			unit_volume = float(item_data_source.get("volume", 0.0)) / float(item_data_source.get("quantity", 1.0))
+		if panel.selected_item and (panel.selected_item is Dictionary):
+			var tq2: int = int((panel.selected_item as Dictionary).get("total_quantity", 0))
+			var tv: float = float((panel.selected_item as Dictionary).get("total_volume", 0.0))
+			if tq2 > 0 and tv > 0.0:
+				unit_volume = tv / float(tq2)
+		if unit_volume <= 0.0:
+			if item_data_source.has("unit_volume"):
+				unit_volume = float(item_data_source.get("unit_volume", 0.0))
+			elif item_data_source.has("volume") and item_data_source.has("quantity") and float(item_data_source.get("quantity", 0.0)) > 0.0:
+				unit_volume = float(item_data_source.get("volume", 0.0)) / float(item_data_source.get("quantity", 1.0))
 
 		var remaining_weight: float = max(0.0, float(panel._convoy_total_weight) - float(panel._convoy_used_weight))
 		var remaining_volume: float = max(0.0, float(panel._convoy_total_volume) - float(panel._convoy_used_volume))
@@ -129,16 +141,28 @@ static func on_action_button_pressed(panel: Object) -> void:
 	var total_price: float = unit_price * float(quantity)
 
 	var unit_weight: float = 0.0
-	if item_data_source.has("unit_weight"):
-		unit_weight = float(item_data_source.get("unit_weight", 0.0))
-	elif item_data_source.has("weight") and item_data_source.has("quantity") and float(item_data_source.get("quantity", 0.0)) > 0.0:
-		unit_weight = float(item_data_source.get("weight", 0.0)) / float(item_data_source.get("quantity", 1.0))
+	if panel.selected_item and (panel.selected_item is Dictionary):
+		var tq3: int = int((panel.selected_item as Dictionary).get("total_quantity", 0))
+		var tw3: float = float((panel.selected_item as Dictionary).get("total_weight", 0.0))
+		if tq3 > 0 and tw3 > 0.0:
+			unit_weight = tw3 / float(tq3)
+	if unit_weight <= 0.0:
+		if item_data_source.has("unit_weight"):
+			unit_weight = float(item_data_source.get("unit_weight", 0.0))
+		elif item_data_source.has("weight") and item_data_source.has("quantity") and float(item_data_source.get("quantity", 0.0)) > 0.0:
+			unit_weight = float(item_data_source.get("weight", 0.0)) / float(item_data_source.get("quantity", 1.0))
 
 	var unit_volume: float = 0.0
-	if item_data_source.has("unit_volume"):
-		unit_volume = float(item_data_source.get("unit_volume", 0.0))
-	elif item_data_source.has("volume") and item_data_source.has("quantity") and float(item_data_source.get("quantity", 0.0)) > 0.0:
-		unit_volume = float(item_data_source.get("volume", 0.0)) / float(item_data_source.get("quantity", 1.0))
+	if panel.selected_item and (panel.selected_item is Dictionary):
+		var tq4: int = int((panel.selected_item as Dictionary).get("total_quantity", 0))
+		var tv4: float = float((panel.selected_item as Dictionary).get("total_volume", 0.0))
+		if tq4 > 0 and tv4 > 0.0:
+			unit_volume = tv4 / float(tq4)
+	if unit_volume <= 0.0:
+		if item_data_source.has("unit_volume"):
+			unit_volume = float(item_data_source.get("unit_volume", 0.0))
+		elif item_data_source.has("volume") and item_data_source.has("quantity") and float(item_data_source.get("quantity", 0.0)) > 0.0:
+			unit_volume = float(item_data_source.get("volume", 0.0)) / float(item_data_source.get("quantity", 1.0))
 
 	var w_delta: float = unit_weight * float(quantity)
 	var v_delta: float = unit_volume * float(quantity)

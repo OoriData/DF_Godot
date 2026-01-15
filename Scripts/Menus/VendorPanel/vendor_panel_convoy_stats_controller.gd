@@ -29,46 +29,13 @@ static func update_convoy_info_display(panel: Object) -> void:
 	var used_volume: float = total_volume - free_volume
 
 	# --- Weight ---
-	var weight_capacity: float = -1.0
-	var weight_used: float = -1.0
+	var weight_capacity: float = float(convoy_data.get("total_weight_capacity", 0.0))
+	var weight_used: float = weight_capacity - float(convoy_data.get("total_remaining_capacity", 0.0))
+	if weight_used < 0.0:
+		weight_used = 0.0
 
-	var possible_capacity_keys: Array[String] = [
-		"total_cargo_weight_capacity",
-		"total_weight_capacity",
-		"weight_capacity",
-	]
-	for k in possible_capacity_keys:
-		if convoy_data.has(k):
-			weight_capacity = float(convoy_data.get(k))
-			break
-
-	# Derive used weight from free weight if available.
-	if weight_capacity >= 0.0:
-		var possible_free_keys: Array[String] = ["total_free_weight", "free_weight"]
-		for fk in possible_free_keys:
-			if convoy_data.has(fk):
-				weight_used = weight_capacity - float(convoy_data.get(fk))
-				break
-
-	# If still unknown, sum cargo + parts weights.
+	# Needed for fallback logic below
 	var vlist_any: Variant = convoy_data.get("vehicle_details_list", [])
-	if weight_used < 0.0 and vlist_any is Array:
-		var sum_weight: float = 0.0
-		for vehicle_any in (vlist_any as Array):
-			if not (vehicle_any is Dictionary):
-				continue
-			var vehicle: Dictionary = vehicle_any
-			var cargo_any: Variant = vehicle.get("cargo", [])
-			if cargo_any is Array:
-				for c_any in (cargo_any as Array):
-					if c_any is Dictionary:
-						sum_weight += float((c_any as Dictionary).get("weight", 0.0))
-			var parts_any: Variant = vehicle.get("parts", [])
-			if parts_any is Array:
-				for p_any in (parts_any as Array):
-					if p_any is Dictionary:
-						sum_weight += float((p_any as Dictionary).get("weight", 0.0))
-		weight_used = sum_weight
 
 	# Cache stats (guard negatives).
 	panel._convoy_used_volume = max(0.0, used_volume)

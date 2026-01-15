@@ -103,17 +103,30 @@ static func build_price_presenter(item_data_source: Dictionary, mode: String, qu
         bb += "[b]Total Price:[/b] %s\n" % NumberFormat.format_money(total_price)
 
         var unit_weight := 0.0
-        if item_data_source.has("unit_weight") and item_data_source.get("unit_weight") != null:
-            unit_weight = float(item_data_source.get("unit_weight"))
-        elif item_data_source.has("weight") and item_data_source.has("quantity") and float(item_data_source.get("quantity", 0.0)) > 0.0:
-            unit_weight = float(item_data_source.get("weight", 0.0)) / float(item_data_source.get("quantity", 1.0))
+        # Prefer aggregated totals when available (avoids schema differences between vendor/convoy payloads).
+        if selected_item and (selected_item is Dictionary):
+            var tq: int = int((selected_item as Dictionary).get("total_quantity", 0))
+            var tw: float = float((selected_item as Dictionary).get("total_weight", 0.0))
+            if tq > 0 and tw > 0.0:
+                unit_weight = tw / float(tq)
+        if unit_weight <= 0.0:
+            if item_data_source.has("unit_weight") and item_data_source.get("unit_weight") != null:
+                unit_weight = float(item_data_source.get("unit_weight"))
+            elif item_data_source.has("weight") and item_data_source.has("quantity") and float(item_data_source.get("quantity", 0.0)) > 0.0:
+                unit_weight = float(item_data_source.get("weight", 0.0)) / float(item_data_source.get("quantity", 1.0))
         var added_weight := unit_weight * float(quantity)
 
         var unit_volume := 0.0
-        if item_data_source.has("unit_volume") and item_data_source.get("unit_volume") != null:
-            unit_volume = float(item_data_source.get("unit_volume"))
-        elif item_data_source.has("volume") and item_data_source.has("quantity") and float(item_data_source.get("quantity", 0.0)) > 0.0:
-            unit_volume = float(item_data_source.get("volume", 0.0)) / float(item_data_source.get("quantity", 1.0))
+        if selected_item and (selected_item is Dictionary):
+            var tq2: int = int((selected_item as Dictionary).get("total_quantity", 0))
+            var tv: float = float((selected_item as Dictionary).get("total_volume", 0.0))
+            if tq2 > 0 and tv > 0.0:
+                unit_volume = tv / float(tq2)
+        if unit_volume <= 0.0:
+            if item_data_source.has("unit_volume") and item_data_source.get("unit_volume") != null:
+                unit_volume = float(item_data_source.get("unit_volume"))
+            elif item_data_source.has("volume") and item_data_source.has("quantity") and float(item_data_source.get("quantity", 0.0)) > 0.0:
+                unit_volume = float(item_data_source.get("volume", 0.0)) / float(item_data_source.get("quantity", 1.0))
         var added_volume := unit_volume * float(quantity)
 
         if mode == "sell":

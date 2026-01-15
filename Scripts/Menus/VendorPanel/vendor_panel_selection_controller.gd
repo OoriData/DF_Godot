@@ -66,6 +66,12 @@ static func handle_new_item_selection(panel: Object, p_selected_item: Variant) -
 					panel._vendor_service.request_vehicle(vid)
 		# 2. Mission recipient details
 		var rid := str(idata.get("recipient", ""))
+		if rid == "":
+			# Some mission cargo uses `mission_vendor_id` instead of `recipient`.
+			var dr_v: Variant = idata.get("delivery_reward")
+			var looks_mission := (dr_v is float or dr_v is int) and float(dr_v) > 0.0
+			if looks_mission:
+				rid = str(idata.get("mission_vendor_id", ""))
 		if rid != "" and not panel._vendor_id_to_name.has(rid):
 			if is_instance_valid(panel._vendor_service):
 				panel._vendor_service.request_vendor_preview(rid)

@@ -27,13 +27,19 @@ static func build_vendor_buckets(vendor_data: Dictionary, perf_log_enabled: bool
 
 		var category_dict: Dictionary
 		var mission_vendor_name: String = ""
+		# Missions may carry either `recipient` or `mission_vendor_id` depending on payload shape.
+		# Prefer `recipient`, but fall back to `mission_vendor_id` so Destination can be resolved.
+		var recipient_id_any: Variant = null
 		if item.get("recipient") != null:
+			recipient_id_any = item.get("recipient")
+		elif item.get("mission_vendor_id") != null:
+			recipient_id_any = item.get("mission_vendor_id")
+		if recipient_id_any != null:
 			if perf_log_enabled:
 				print("[VendorCargoAggregator] vendor mission item keys=", (item.keys() if item is Dictionary else []))
 			category_dict = aggregated_missions
-			var recipient_id = item.get("recipient")
-			if recipient_id and get_vendor_name_for_recipient.is_valid():
-				mission_vendor_name = str(get_vendor_name_for_recipient.call(recipient_id))
+			if recipient_id_any and get_vendor_name_for_recipient.is_valid():
+				mission_vendor_name = str(get_vendor_name_for_recipient.call(recipient_id_any))
 		elif (item.has("food") and item.get("food") != null and item.get("food") > 0) or \
 		     (item.has("water") and item.get("water") != null and item.get("water") > 0) or \
 		     (item.has("fuel") and item.get("fuel") != null and item.get("fuel") > 0):
@@ -248,7 +254,9 @@ static func build_convoy_buckets(convoy_data: Dictionary, vendor_data: Dictionar
 					if raw_item.get("recipient") != null or ((dr_t is float or dr_t is int) and float(dr_t) > 0.0):
 						category_dict = aggregated_missions
 					if category_dict == aggregated_missions:
-						var recipient_id = raw_item.get("recipient")
+						var recipient_id: Variant = raw_item.get("recipient")
+						if recipient_id == null:
+							recipient_id = raw_item.get("mission_vendor_id")
 						if recipient_id and get_vendor_name_for_recipient.is_valid():
 							mission_vendor_name = str(get_vendor_name_for_recipient.call(recipient_id))
 					_aggregate_item(category_dict, raw_item, vehicle_name, mission_vendor_name, perf_log_enabled)
@@ -269,7 +277,9 @@ static func build_convoy_buckets(convoy_data: Dictionary, vendor_data: Dictionar
 					else:
 						category_dict2 = aggregated_other
 					if category_dict2 == aggregated_missions:
-						var recipient_id2 = item.get("recipient")
+						var recipient_id2: Variant = item.get("recipient")
+						if recipient_id2 == null:
+							recipient_id2 = item.get("mission_vendor_id")
 						if recipient_id2 and get_vendor_name_for_recipient.is_valid():
 							mission_vendor_name2 = str(get_vendor_name_for_recipient.call(recipient_id2))
 					_aggregate_item(category_dict2, item, vehicle_name, mission_vendor_name2, perf_log_enabled)
@@ -292,7 +302,9 @@ static func build_convoy_buckets(convoy_data: Dictionary, vendor_data: Dictionar
 			else:
 				category_dict3 = aggregated_other
 			if category_dict3 == aggregated_missions:
-				var recipient_id3 = item.get("recipient")
+				var recipient_id3: Variant = item.get("recipient")
+				if recipient_id3 == null:
+					recipient_id3 = item.get("mission_vendor_id")
 				if recipient_id3 and get_vendor_name_for_recipient.is_valid():
 					mission_vendor_name3 = str(get_vendor_name_for_recipient.call(recipient_id3))
 			_aggregate_item(category_dict3, item, "Convoy", mission_vendor_name3, perf_log_enabled)
@@ -394,8 +406,14 @@ static func _aggregate_vendor_item(agg_dict: Dictionary, item: Dictionary, missi
 			print("[VendorCargoAggregator] _aggregate_vendor_item set mission_vendor_name=", mission_vendor_name, " for ", item_name)
 		agg_dict[item_name].mission_vendor_name = mission_vendor_name
 	agg_dict[item_name].total_quantity += item_quantity
-	agg_dict[item_name].total_weight += item.get("weight", 0.0)
-	agg_dict[item_name].total_volume += item.get("volume", 0.0)
+	# Vendor inventory payloads typically report per-unit weight/volume with a stock quantity.
+	# To keep transaction projections correct, scale per-unit values by quantity.
+	var w_any: Variant = item.get("unit_weight", item.get("weight", 0.0))
+	var v_any: Variant = item.get("unit_volume", item.get("volume", 0.0))
+	var w_add: float = float(w_any) * float(item_quantity) if (w_any is float or w_any is int) else 0.0
+	var v_add: float = float(v_any) * float(item_quantity) if (v_any is float or v_any is int) else 0.0
+	agg_dict[item_name].total_weight += w_add
+	agg_dict[item_name].total_volume += v_add
 	if item.get("food") is float or item.get("food") is int:
 		agg_dict[item_name].total_food += item.get("food")
 	if item.get("water") is float or item.get("water") is int:

@@ -536,6 +536,9 @@ func request_vendor_data(vendor_id: String) -> void:
 		print("[APICalls][Coalesce] Skip duplicate VENDOR_DATA for vendor_id=", vendor_id)
 		return
 	var url := "%s/vendor/get?vendor_id=%s" % [BASE_URL, vendor_id]
+	# Optional user_id for scenario logging purposes.
+	if current_user_id != "" and _is_valid_uuid(current_user_id):
+		url += "&user_id=%s" % current_user_id
 	var headers: PackedStringArray = ['accept: application/json']
 	headers = _apply_auth_header(headers)
 	# Remove any queued older VENDOR_DATA for the same vendor

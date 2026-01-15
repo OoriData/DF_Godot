@@ -5,16 +5,9 @@ const SettlementModel = preload("res://Scripts/Data/Models/Settlement.gd")
 const VendorModel = preload("res://Scripts/Data/Models/Vendor.gd")
 const CompatAdapter = preload("res://Scripts/Menus/VendorPanel/compat_adapter.gd")
 const VendorCargoAggregatorScript = preload("res://Scripts/Menus/VendorPanel/cargo_aggregator.gd")
-const VendorPanelInspectorController = preload("res://Scripts/Menus/VendorPanel/vendor_panel_inspector_controller.gd")
-const VendorPanelRefreshController = preload("res://Scripts/Menus/VendorPanel/vendor_panel_refresh_controller.gd")
-const VendorPanelRefreshSchedulerController = preload("res://Scripts/Menus/VendorPanel/vendor_panel_refresh_scheduler_controller.gd")
-const VendorPanelSelectionController = preload("res://Scripts/Menus/VendorPanel/vendor_panel_selection_controller.gd")
-const VendorPanelTransactionController = preload("res://Scripts/Menus/VendorPanel/vendor_panel_transaction_controller.gd")
-const VendorPanelCompatController = preload("res://Scripts/Menus/VendorPanel/vendor_panel_compat_controller.gd")
-const VendorPanelConvoyStatsController = preload("res://Scripts/Menus/VendorPanel/vendor_panel_convoy_stats_controller.gd")
-const VendorPanelContextController = preload("res://Scripts/Menus/VendorPanel/vendor_panel_context_controller.gd")
-const VendorPanelVehicleSellController = preload("res://Scripts/Menus/VendorPanel/vendor_panel_vehicle_sell_controller.gd")
-const VendorPanelTutorialController = preload("res://Scripts/Menus/VendorPanel/vendor_panel_tutorial_controller.gd")
+
+# Note: panel controllers are globally available via `class_name`.
+# Avoid preloading them here to prevent shadowing global identifiers.
 
 # Signals to notify the main menu of transactions
 signal item_purchased(item, quantity, total_price)
@@ -380,8 +373,18 @@ func _on_hub_vendor_preview_ready(data: Dictionary) -> void:
 		VendorPanelContextController.cache_vendor_name(self, vid, nm)
 	# If current selection is mission cargo targeting this vendor, refresh inspector text.
 	if selected_item and selected_item.has("item_data"):
-		var rid := str(selected_item.item_data.get("recipient", ""))
+		var idata: Dictionary = selected_item.item_data
+		var rid := str(idata.get("recipient", ""))
+		if rid == "":
+			# Some mission cargo uses `mission_vendor_id` instead of `recipient`.
+			var dr_v: Variant = idata.get("delivery_reward")
+			var looks_mission := (dr_v is float or dr_v is int) and float(dr_v) > 0.0
+			if looks_mission:
+				rid = str(idata.get("mission_vendor_id", ""))
 		if rid != "" and rid == vid:
+			# Update the aggregated selection dictionary so the inspector builder sees the new name.
+			if selected_item is Dictionary:
+				(selected_item as Dictionary)["mission_vendor_name"] = nm
 			_update_inspector()
 
 func _on_service_vehicle_data_received(data: Dictionary) -> void:

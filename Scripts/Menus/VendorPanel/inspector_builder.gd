@@ -74,7 +74,7 @@ static func rebuild_info_sections(item_info_rich_text: RichTextLabel, item_data_
 		ch.queue_free()
 
 	var rows_summary: Array = []
-	var is_vehicle := PriceUtil.is_vehicle_item(item_data_source)
+	var is_vehicle := VendorTradeVM.is_vehicle_item(item_data_source)
 	var is_part := _looks_like_part(item_data_source)
 
 	if selected_item and (selected_item is Dictionary) and (selected_item as Dictionary).has("mission_vendor_name") and str((selected_item as Dictionary).mission_vendor_name) != "":
@@ -83,22 +83,37 @@ static func rebuild_info_sections(item_info_rich_text: RichTextLabel, item_data_
 	if is_vehicle:
 		var stat_map = {
 			"top_speed": "Top Speed",
-			"efficiency": "Efficiency",
+			"fuel_efficiency": "Efficiency",
 			"offroad_capability": "Off-road",
 			"weight_capacity": "Weight Capacity",
 			"cargo_capacity": "Volume Capacity"
 		}
 		var unit_map = {
 			"top_speed": "kph",
-			"efficiency": "km/L",
+			"fuel_efficiency": "km/L",
 			"offroad_capability": "",
 			"weight_capacity": "kg",
 			"cargo_capacity": "m³"
 		}
 		for key in stat_map:
-			if item_data_source.has(key) and item_data_source[key] != null:
+			var v: Variant = null
+			# Vehicle payloads commonly use base_* keys.
+			match key:
+				"top_speed":
+					v = item_data_source.get("top_speed", item_data_source.get("base_top_speed"))
+				"fuel_efficiency":
+					v = item_data_source.get("fuel_efficiency", item_data_source.get("base_fuel_efficiency"))
+				"offroad_capability":
+					v = item_data_source.get("offroad_capability", item_data_source.get("base_offroad_capability"))
+				"weight_capacity":
+					v = item_data_source.get("weight_capacity", item_data_source.get("base_weight_capacity"))
+				"cargo_capacity":
+					v = item_data_source.get("cargo_capacity", item_data_source.get("base_cargo_capacity"))
+				_:
+					v = item_data_source.get(key)
+			if v != null:
 				var unit = unit_map.get(key, "")
-				var val_str: String = str(item_data_source[key])
+				var val_str: String = str(v)
 				if not str(unit).is_empty():
 					val_str += " " + unit
 				rows_summary.append({"k": stat_map[key], "v": val_str})
@@ -140,27 +155,50 @@ static func rebuild_info_sections(item_info_rich_text: RichTextLabel, item_data_
 	if rows_summary.size() > 0:
 		container.add_child(_make_panel("Summary", rows_summary))
 
-	if not is_vehicle and not is_part:
+	# Vehicles: show pricing/value in its own stylized block.
+	if is_vehicle:
+		var rows_price: Array = []
+		var v_price: float = VendorTradeVM.vehicle_price(item_data_source)
+		if v_price > 0.0:
+			rows_price.append({"k": "Value", "v": NumberFormat.format_money(v_price)})
+		if rows_price.size() > 0:
+			container.add_child(_make_panel("Pricing", rows_price))
+
+	# Show pricing/weight/volume per unit for parts too (they're transactional items).
+	if not is_vehicle:
 		var rows_unit: Array = []
-		var contextual_unit_price = PriceUtil.get_contextual_unit_price(item_data_source, str(current_mode))
-		var price_label_text = "Unit Price"
+		var contextual_unit_price: float = VendorTradeVM.contextual_unit_price(item_data_source, str(current_mode))
+		var price_label_text := "Unit Price"
 		if str(current_mode) == "sell":
 			price_label_text = "Sell Price"
 		elif str(current_mode) == "buy":
 			price_label_text = "Buy Price"
-		rows_unit.append({"k": price_label_text, "v": "$" + NumberFormat.fmt_float(contextual_unit_price, 2)})
+		if contextual_unit_price > 0.0:
+			rows_unit.append({"k": price_label_text, "v": "$" + NumberFormat.fmt_float(contextual_unit_price, 2)})
 		var unit_weight := 0.0
-		if item_data_source.has("unit_weight") and item_data_source.get("unit_weight") != null:
-			unit_weight = float(item_data_source.get("unit_weight"))
-		elif item_data_source.has("weight") and item_data_source.has("quantity") and float(item_data_source.get("quantity", 1.0)) > 0.0:
-			unit_weight = float(item_data_source.get("weight", 0.0)) / float(item_data_source.get("quantity", 1.0))
+		if selected_item and (selected_item is Dictionary):
+			var tq: int = int((selected_item as Dictionary).get("total_quantity", 0))
+			var tw: float = float((selected_item as Dictionary).get("total_weight", 0.0))
+			if tq > 0 and tw > 0.0:
+				unit_weight = tw / float(tq)
+		if unit_weight <= 0.0:
+			if item_data_source.has("unit_weight") and item_data_source.get("unit_weight") != null:
+				unit_weight = float(item_data_source.get("unit_weight"))
+			elif item_data_source.has("weight") and item_data_source.has("quantity") and float(item_data_source.get("quantity", 1.0)) > 0.0:
+				unit_weight = float(item_data_source.get("weight", 0.0)) / float(item_data_source.get("quantity", 1.0))
 		if unit_weight > 0.0:
 			rows_unit.append({"k": "Weight", "v": NumberFormat.fmt_float(unit_weight, 2)})
 		var unit_volume := 0.0
-		if item_data_source.has("unit_volume") and item_data_source.get("unit_volume") != null:
-			unit_volume = float(item_data_source.get("unit_volume"))
-		elif item_data_source.has("volume") and item_data_source.has("quantity") and float(item_data_source.get("quantity", 1.0)) > 0.0:
-			unit_volume = float(item_data_source.get("volume", 0.0)) / float(item_data_source.get("quantity", 1.0))
+		if selected_item and (selected_item is Dictionary):
+			var tq2: int = int((selected_item as Dictionary).get("total_quantity", 0))
+			var tv: float = float((selected_item as Dictionary).get("total_volume", 0.0))
+			if tq2 > 0 and tv > 0.0:
+				unit_volume = tv / float(tq2)
+		if unit_volume <= 0.0:
+			if item_data_source.has("unit_volume") and item_data_source.get("unit_volume") != null:
+				unit_volume = float(item_data_source.get("unit_volume"))
+			elif item_data_source.has("volume") and item_data_source.has("quantity") and float(item_data_source.get("quantity", 1.0)) > 0.0:
+				unit_volume = float(item_data_source.get("volume", 0.0)) / float(item_data_source.get("quantity", 1.0))
 		if unit_volume > 0.0:
 			rows_unit.append({"k": "Volume", "v": NumberFormat.fmt_float(unit_volume, 2)})
 		var unit_delivery_reward_val = item_data_source.get("unit_delivery_reward")
@@ -265,6 +303,9 @@ static func _looks_like_part(item_data_source: Dictionary) -> bool:
 	var stat_keys := ["top_speed_add", "efficiency_add", "offroad_capability_add", "cargo_capacity_add", "weight_capacity_add", "fuel_capacity", "kwh_capacity"]
 	for sk in stat_keys:
 		if item_data_source.has(sk) and item_data_source[sk] != null:
+			return true
+		# Many payloads carry part modifiers under a nested `stats` dictionary.
+		if item_data_source.has("stats") and item_data_source.stats is Dictionary and (item_data_source.stats as Dictionary).has(sk) and (item_data_source.stats as Dictionary)[sk] != null:
 			return true
 	return false
 
