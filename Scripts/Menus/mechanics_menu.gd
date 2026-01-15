@@ -39,6 +39,8 @@ var _breakdown_toggle: CheckButton = null
 # When embedded inside another menu/tab, we hide redundant chrome.
 var embedded_mode: bool = false
 
+var _last_refresh_convoy_id: String = ""
+
 @onready var _store: Node = get_node_or_null("/root/GameStore")
 @onready var _hub: Node = get_node_or_null("/root/SignalHub")
 @onready var _api: Node = get_node_or_null("/root/APICalls")
@@ -513,30 +515,12 @@ func _close_open_swap_dialog() -> void:
 	_current_swap_ctx.clear()
 
 func initialize_with_data(data_or_id: Variant, extra_arg: Variant = null) -> void:
-	if data_or_id is Dictionary:
-		var d: Dictionary = data_or_id as Dictionary
-		convoy_id = String(d.get("convoy_id", d.get("id", "")))
-		if not is_node_ready():
-			call_deferred("initialize_with_data", d, extra_arg)
-			return
-		_convoy = d.duplicate(true)
-	else:
-		convoy_id = String(data_or_id)
-		if not is_node_ready():
-			call_deferred("initialize_with_data", data_or_id, extra_arg)
-			return
-		_convoy = {}
+	if not is_node_ready():
+		call_deferred("initialize_with_data", data_or_id, extra_arg)
+		return
+
+	# Let MenuBase drive store lookup and call our _update_ui when data is available.
 	super.initialize_with_data(data_or_id, extra_arg)
-	if is_instance_valid(title_label):
-		title_label.text = "Mechanic — %s" % _convoy.get("convoy_name", "Convoy")
-	_vehicles = _convoy.get("vehicle_details_list", [])
-	# Clear vendor candidates so we re-derive them from the latest map snapshot.
-	_all_vendor_candidates_cache.clear()
-	_populate_vehicle_dropdown()
-	if not _vehicles.is_empty():
-		if is_instance_valid(vehicle_option_button):
-			vehicle_option_button.select(0)
-		_on_vehicle_selected(0)
 
 	# If called with a vendor prefill, add the part to the cart immediately
 	if data_or_id is Dictionary and (data_or_id as Dictionary).has("_mechanic_prefill") and (data_or_id as Dictionary)._mechanic_prefill is Dictionary:
@@ -584,6 +568,72 @@ func initialize_with_data(data_or_id: Variant, extra_arg: Variant = null) -> voi
 					tab_container.current_tab = cart_idx
 			_rebuild_pending_tab()
 	_refresh_apply_state()
+
+func _update_ui(convoy: Dictionary) -> void:
+	if not (convoy is Dictionary) or convoy.is_empty():
+		reset_view()
+		return
+	_convoy = convoy.duplicate(true)
+	convoy_id = String(_convoy.get("convoy_id", _convoy.get("id", "")))
+	if is_instance_valid(title_label):
+		var nm: String = String(_convoy.get("convoy_name", _convoy.get("name", "Convoy")))
+		title_label.text = "Mechanic — %s" % nm
+
+	# Support both detailed and shallow convoy payloads.
+	_vehicles = _convoy.get("vehicle_details_list", _convoy.get("vehicles", []))
+	_all_vendor_candidates_cache.clear()
+	_populate_vehicle_dropdown()
+
+	if _vehicles.is_empty():
+		_maybe_request_single_convoy_refresh()
+		_refresh_apply_state()
+		return
+
+	var idx := 0
+	if _selected_vehicle_idx >= 0:
+		idx = int(clamp(_selected_vehicle_idx, 0, _vehicles.size() - 1))
+	_selected_vehicle_idx = idx
+	if is_instance_valid(vehicle_option_button):
+		vehicle_option_button.select(idx)
+	_on_vehicle_selected(idx)
+	_refresh_apply_state()
+
+func reset_view() -> void:
+	_convoy = {}
+	_vehicles = []
+	_selected_vehicle_idx = -1
+	_pending_swaps.clear()
+	_slot_vendor_availability.clear()
+	_slot_inventory_availability.clear()
+	_compat_cache.clear()
+	_current_swap_ctx.clear()
+	_cargo_to_slot.clear()
+	_all_vendor_candidates_cache.clear()
+	_install_price_cache.clear()
+	_last_refresh_convoy_id = ""
+	_close_open_swap_dialog()
+	if is_instance_valid(title_label):
+		title_label.text = "Mechanic"
+	if is_instance_valid(vehicle_option_button):
+		vehicle_option_button.clear()
+		vehicle_option_button.add_item("No Vehicles Available")
+		vehicle_option_button.disabled = true
+	_clear_parts_ui()
+	_rebuild_pending_tab()
+	_refresh_apply_state()
+
+func _maybe_request_single_convoy_refresh() -> void:
+	# If we were initialized by id or received a shallow convoy dict, request full details.
+	if convoy_id == "":
+		return
+	if not is_instance_valid(_convoy_service) or not _convoy_service.has_method("refresh_single"):
+		return
+	if _last_refresh_convoy_id == convoy_id:
+		return
+	_last_refresh_convoy_id = convoy_id
+	_convoy_service.refresh_single(convoy_id)
+	_clear_parts_ui()
+	_show_info(parts_vbox, "Loading vehicles...")
 
 func _exit_tree() -> void:
 	# Also ensure any open chooser is closed to avoid dangling node references
@@ -1820,7 +1870,6 @@ func _on_apply_pressed():
 	if _selected_vehicle_idx < 0 or _selected_vehicle_idx >= _vehicles.size():
 		return
 	var vehicle_id = String(_vehicles[_selected_vehicle_idx].get("vehicle_id", ""))
-	var convoy_id = String(_convoy.get("convoy_id", ""))
 	# Build schedule using the same rules as the pending view
 	var schedules := _compute_pending_schedules()
 	var schedule_for_vehicle: Array = schedules.get(vehicle_id, [])

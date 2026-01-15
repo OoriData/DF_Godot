@@ -168,6 +168,12 @@ func initialize_with_data(data_or_id: Variant, extra_arg: Variant = null) -> voi
 	else:
 		convoy_id = String(data_or_id)
 
+	# Always initialize the embedded mechanics menu with the same context.
+	# When this menu is opened with an id (common post-refactor), the service tab
+	# still needs convoy_id so it can refresh from GameStore when shown.
+	if is_instance_valid(mechanics_embed) and mechanics_embed.has_method("initialize_with_data"):
+		mechanics_embed.initialize_with_data(data_or_id)
+
 	if data_or_id is Dictionary:
 		print("ConvoyVehicleMenu: initialize_with_data called. Data keys: ", (data_or_id as Dictionary).keys())
 		print("ConvoyVehicleMenu: vehicle_details_list: ", (data_or_id as Dictionary).get("vehicle_details_list", []))
@@ -195,9 +201,7 @@ func initialize_with_data(data_or_id: Variant, extra_arg: Variant = null) -> voi
 			_last_refresh_convoy_id = convoy_id_local
 			_convoy_service.refresh_single(convoy_id_local)
 
-	# Initialize the Service tab mechanics with the same convoy data
-	if data_or_id is Dictionary and is_instance_valid(mechanics_embed) and mechanics_embed.has_method("initialize_with_data"):
-		mechanics_embed.initialize_with_data(data_or_id)
+	# (embedded mechanics menu already initialized above)
 
 	if data_or_id is Dictionary and is_instance_valid(vehicle_option_button):
 		print("ConvoyVehicleMenu: Populating VehicleOptionButton. Number of vehicles from data: ", current_vehicle_list.size())
@@ -910,9 +914,9 @@ func _on_inspect_part_pressed(part_data: Dictionary):
 
 	if removable:
 		# Resolve context ids
-		var convoy_id := ""
+		var convoy_id_local := ""
 		if _current_convoy_data is Dictionary:
-			convoy_id = String(_current_convoy_data.get("convoy_id", ""))
+			convoy_id_local = String(_current_convoy_data.get("convoy_id", ""))
 		var vehicle_id := String(part_data.get("vehicle_id", ""))
 		if vehicle_id == "":
 			# Fallback: try currently selected vehicle from dropdown
@@ -923,7 +927,7 @@ func _on_inspect_part_pressed(part_data: Dictionary):
 				var vdict: Dictionary = current_vehicle_list[idx]
 				vehicle_id = String(vdict.get("vehicle_id", ""))
 		var part_id := String(part_data.get("part_id", part_data.get("intrinsic_part_id", "")))
-		if convoy_id != "" and vehicle_id != "" and part_id != "":
+		if convoy_id_local != "" and vehicle_id != "" and part_id != "":
 			var remove_btn := Button.new()
 			remove_btn.text = "Remove"
 			remove_btn.custom_minimum_size.y = 36
@@ -931,7 +935,7 @@ func _on_inspect_part_pressed(part_data: Dictionary):
 			remove_btn.pressed.connect(func():
 				if is_instance_valid(_mechanics_service) and _mechanics_service.has_method("detach_part"):
 					print("ConvoyVehicleMenu: Requesting detach part_id=", part_id, " from vehicle=", vehicle_id)
-					_mechanics_service.detach_part(convoy_id, vehicle_id, part_id)
+					_mechanics_service.detach_part(convoy_id_local, vehicle_id, part_id)
 				else:
 					printerr("ConvoyVehicleMenu: MechanicsService missing detach_part()")
 				# Close dialog immediately; UI will refresh on convoy updates
