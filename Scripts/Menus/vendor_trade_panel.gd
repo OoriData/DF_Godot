@@ -890,7 +890,5 @@ func get_vendor_item_rect_by_text_contains(substr: String) -> Rect2:
 	return VendorPanelTutorialController.get_vendor_item_rect_by_text_contains(self, substr)
 
 # --- Segmented Info Panel Helpers ---
- 
-
-func _rebuild_info_sections(item_data_source: Dictionary) -> void:
-	VendorInspectorBuilder.rebuild_info_sections(item_info_rich_text, item_data_source, selected_item, str(current_mode), convoy_data, _compat_cache)
+# (legacy helper removed; segmented inspector is now driven by
+#  VendorPanelInspectorController.update_non_vehicle / update_vehicle)

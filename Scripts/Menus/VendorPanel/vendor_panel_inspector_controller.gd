@@ -18,6 +18,7 @@ static func update_non_vehicle(
 	convoy_data: Dictionary,
 	compat_cache: Dictionary
 ) -> void:
+	print("[Inspector] update_non_vehicle called, selected_item:", selected_item)
 	if selected_item == null:
 		return
 
