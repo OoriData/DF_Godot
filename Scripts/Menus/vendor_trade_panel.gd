@@ -4,11 +4,31 @@ const ItemsData = preload("res://Scripts/Data/Items.gd")
 const SettlementModel = preload("res://Scripts/Data/Models/Settlement.gd")
 const VendorModel = preload("res://Scripts/Data/Models/Vendor.gd")
 const CompatAdapter = preload("res://Scripts/Menus/VendorPanel/compat_adapter.gd")
+const VendorCargoAggregatorScript = preload("res://Scripts/Menus/VendorPanel/cargo_aggregator.gd")
+const VendorPanelInspectorController = preload("res://Scripts/Menus/VendorPanel/vendor_panel_inspector_controller.gd")
+const VendorPanelRefreshController = preload("res://Scripts/Menus/VendorPanel/vendor_panel_refresh_controller.gd")
+const VendorPanelRefreshSchedulerController = preload("res://Scripts/Menus/VendorPanel/vendor_panel_refresh_scheduler_controller.gd")
+const VendorPanelSelectionController = preload("res://Scripts/Menus/VendorPanel/vendor_panel_selection_controller.gd")
+const VendorPanelTransactionController = preload("res://Scripts/Menus/VendorPanel/vendor_panel_transaction_controller.gd")
+const VendorPanelCompatController = preload("res://Scripts/Menus/VendorPanel/vendor_panel_compat_controller.gd")
+const VendorPanelConvoyStatsController = preload("res://Scripts/Menus/VendorPanel/vendor_panel_convoy_stats_controller.gd")
+const VendorPanelContextController = preload("res://Scripts/Menus/VendorPanel/vendor_panel_context_controller.gd")
+const VendorPanelVehicleSellController = preload("res://Scripts/Menus/VendorPanel/vendor_panel_vehicle_sell_controller.gd")
+const VendorPanelTutorialController = preload("res://Scripts/Menus/VendorPanel/vendor_panel_tutorial_controller.gd")
 
 # Signals to notify the main menu of transactions
 signal item_purchased(item, quantity, total_price)
 signal item_sold(item, quantity, total_price)
 signal install_requested(item, quantity, vendor_id)
+
+func _emit_item_purchased(item: Variant, quantity: int, total_price: float) -> void:
+	emit_signal("item_purchased", item, quantity, total_price)
+
+func _emit_item_sold(item: Variant, quantity: int, total_price: float) -> void:
+	emit_signal("item_sold", item, quantity, total_price)
+
+func _emit_install_requested(item: Variant, quantity: int, vendor_id: String) -> void:
+	emit_signal("install_requested", item, quantity, vendor_id)
 
 # --- Node References ---
 @onready var vendor_item_tree: Tree = %VendorItemTree
@@ -100,6 +120,77 @@ var _current_refresh_id: int = -1 # id of the active refresh
 var _refresh_t0_ms: int = -1 # start time of active refresh
 var _last_data_ready_ms: int = -1 # last time we processed vendor_panel_data_ready
 var _watchdog_retries: Dictionary = {} # refresh_id -> true (prevent multiple retries per cycle)
+
+func _is_panel_initialized() -> bool:
+	return _panel_initialized
+
+# These accessors exist mainly because key pieces of selection logic are now handled
+# by external controllers (which Godot's linter does not treat as "usage").
+func _get_last_selected_item_id() -> Variant:
+	return _last_selected_item_id
+
+func _get_last_selected_ref() -> Variant:
+	return _last_selected_ref
+
+func _get_last_selection_unique_key() -> String:
+	return _last_selection_unique_key
+
+func _get_mechanics_service() -> Node:
+	return _mechanics_service
+
+func _get_install_price_cache() -> Dictionary:
+	return _install_price_cache
+
+func _get_refresh_timer() -> SceneTreeTimer:
+	return _refresh_timer
+
+func _get_last_data_ready_ms() -> int:
+	return _last_data_ready_ms
+
+func _get_watchdog_retries() -> Dictionary:
+	return _watchdog_retries
+
+func _get_latest_settlements() -> Array:
+	return _latest_settlements
+
+func _get_latest_settlement_models() -> Array:
+	return _latest_settlement_models
+
+func _get_vendors_from_settlements_by_id() -> Dictionary:
+	return _vendors_from_settlements_by_id
+
+func _get_vendor_id_to_settlement() -> Dictionary:
+	return _vendor_id_to_settlement
+
+func _get_vendor_id_to_name() -> Dictionary:
+	return _vendor_id_to_name
+
+func _is_transaction_in_progress() -> bool:
+	return _transaction_in_progress
+
+func _get_pending_tx() -> Dictionary:
+	return _pending_tx
+
+func _get_pending_refresh() -> bool:
+	return _pending_refresh
+
+func _get_txn_t0_ms() -> int:
+	return _txn_t0_ms
+
+func _get_refresh_in_flight() -> bool:
+	return _refresh_in_flight
+
+func _get_awaiting_panel_data() -> bool:
+	return _awaiting_panel_data
+
+func _get_refresh_seq() -> int:
+	return _refresh_seq
+
+func _get_current_refresh_id() -> int:
+	return _current_refresh_id
+
+func _get_refresh_t0_ms() -> int:
+	return _refresh_t0_ms
 
 # --- Services / State (Phase C: no GameDataManager dependency) ---
 @onready var _store: Node = get_node_or_null("/root/GameStore")
@@ -258,32 +349,7 @@ func _exit_tree() -> void:
 			_vendor_service.vehicle_data_received.disconnect(_on_service_vehicle_data_received)
 
 func _set_latest_settlements_snapshot(settlements: Array) -> void:
-	_latest_settlements = settlements
-	all_settlement_data_global = settlements
-	_latest_settlement_models.clear()
-	_vendors_from_settlements_by_id.clear()
-	_vendor_id_to_settlement.clear()
-	_vendor_id_to_name.clear()
-
-	for s in settlements:
-		if not (s is Dictionary):
-			continue
-		var sd: Dictionary = s
-		_latest_settlement_models.append(SettlementModel.new(sd))
-		var vendors_any: Variant = sd.get("vendors", [])
-		if vendors_any is Array:
-			for v in vendors_any:
-				if not (v is Dictionary):
-					continue
-				var vd: Dictionary = v
-				var vid := str(vd.get("vendor_id", vd.get("id", "")))
-				if vid == "":
-					continue
-				_vendors_from_settlements_by_id[vid] = vd
-				_vendor_id_to_settlement[vid] = sd
-				var nm := str(vd.get("name", ""))
-				if nm != "":
-					_vendor_id_to_name[vid] = nm
+	VendorPanelContextController.set_latest_settlements_snapshot(self, settlements)
 
 func _get_convoy_by_id(convoy_id: String) -> Dictionary:
 	if convoy_id == "":
@@ -296,213 +362,57 @@ func _get_convoy_by_id(convoy_id: String) -> Dictionary:
 			return c
 	return {}
 
+# Central refresh entrypoint used by initialize(), transactions, and watchdog.
+func _request_authoritative_refresh(convoy_id: String, vendor_id: String) -> void:
+	VendorPanelRefreshController.request_authoritative_refresh(self, convoy_id, vendor_id)
+
+# Hub emits vendor_panel_ready with a vendor Dictionary.
+func _on_hub_vendor_panel_ready(data: Dictionary) -> void:
+	VendorPanelRefreshController.on_hub_vendor_panel_ready(self, data)
+
+# Hub emits vendor_preview_ready with a vendor Dictionary.
+func _on_hub_vendor_preview_ready(data: Dictionary) -> void:
+	if data == null or not (data is Dictionary):
+		return
+	var vid := str((data as Dictionary).get("vendor_id", (data as Dictionary).get("id", "")))
+	var nm := str((data as Dictionary).get("name", ""))
+	if vid != "" and nm != "":
+		VendorPanelContextController.cache_vendor_name(self, vid, nm)
+	# If current selection is mission cargo targeting this vendor, refresh inspector text.
+	if selected_item and selected_item.has("item_data"):
+		var rid := str(selected_item.item_data.get("recipient", ""))
+		if rid != "" and rid == vid:
+			_update_inspector()
+
+func _on_service_vehicle_data_received(data: Dictionary) -> void:
+	# Vehicle data prefetch improves inspector/comparison fidelity.
+	if data == null or not (data is Dictionary):
+		return
+	if not selected_item or not selected_item.has("item_data"):
+		return
+	var sel: Dictionary = selected_item.item_data
+	var sel_vid := str(sel.get("vehicle_id", ""))
+	var got_vid := str((data as Dictionary).get("vehicle_id", ""))
+	if sel_vid != "" and got_vid != "" and sel_vid == got_vid:
+		# Merge missing fields without clobbering existing UI-injected values
+		for k in (data as Dictionary).keys():
+			if not sel.has(k):
+				sel[k] = (data as Dictionary)[k]
+		_update_inspector()
+		_update_comparison()
+
 func _resolve_settlement_for_vendor_or_convoy(vendor_id: String, convoy_id: String) -> Dictionary:
-	# 1) If we know vendor_id, find settlement containing it
-	if vendor_id != "":
-		if _vendor_id_to_settlement.has(vendor_id):
-			return _vendor_id_to_settlement[vendor_id]
-	# 2) Fallback: find settlement at convoy coords
-	if convoy_id != "" and convoy_data is Dictionary and str(convoy_data.get("convoy_id", "")) == convoy_id:
-		var cx := int(convoy_data.get("x", 999999))
-		var cy := int(convoy_data.get("y", 999999))
-		for s2 in all_settlement_data_global:
-			if s2 is Dictionary and int((s2 as Dictionary).get("x", 999999)) == cx and int((s2 as Dictionary).get("y", 999999)) == cy:
-				return s2
-	return {}
+	return VendorPanelContextController.resolve_settlement_for_vendor_or_convoy(self, vendor_id, convoy_id)
 
 func _try_process_refresh() -> void:
-	if not (_refresh_in_flight or _awaiting_panel_data):
-		return
-	var vid := str((vendor_data if vendor_data is Dictionary else {}).get("vendor_id", ""))
-	var cid := str((convoy_data if convoy_data is Dictionary else {}).get("convoy_id", ""))
-	if _active_vendor_id != "" and vid != "" and vid != _active_vendor_id:
-		return
-	if _active_convoy_id != "" and cid != "" and cid != _active_convoy_id:
-		return
-	# We require both vendor and convoy context to match the legacy payload semantics.
-	if vid == "" or cid == "":
-		return
-	# Guard: if the user just changed selection, defer processing to avoid selection flicker
-	if VendorSelectionManager.should_defer_selection(_last_selection_change_ms, DATA_READY_COOLDOWN_MS):
-		var defer_t := get_tree().create_timer(float(DATA_READY_COOLDOWN_MS) / 1000.0)
-		defer_t.timeout.connect(Callable(self, "_try_process_refresh"))
-		return
-	_process_panel_payload_ready()
+	VendorPanelRefreshController.try_process_refresh(self)
 
 func _process_panel_payload_ready() -> void:
-	if perf_log_enabled:
-		print("[VendorPanel][Perf] data_ready PROCESS refresh_id=", _current_refresh_id, " vid=", str(vendor_data.get("vendor_id", "")), " cid=", str(convoy_data.get("convoy_id", "")))
-		var now_ms := Time.get_ticks_msec()
-		if _txn_t0_ms >= 0:
-			print("[VendorPanel][Perf] panel data ready +%d ms" % int(now_ms - _txn_t0_ms))
-			_txn_t0_ms = -1
-		if _refresh_t0_ms >= 0:
-			print("[VendorPanel][Perf] refresh latency +%d ms (id=%d)" % [int(now_ms - _refresh_t0_ms), _current_refresh_id])
-			_refresh_t0_ms = -1
-
-	_refresh_in_flight = false
-	_awaiting_panel_data = false
-	_transaction_in_progress = false
-	_refresh_timer = null
-	_last_data_ready_ms = Time.get_ticks_msec()
-	if show_loading_overlay:
-		_hide_loading()
-
-	# --- START ATOMIC REFRESH to prevent flicker ---
-	var c_vendor := Callable(self, "_on_vendor_item_selected")
-	var c_convoy := Callable(self, "_on_convoy_item_selected")
-	if vendor_item_tree.item_selected.is_connected(c_vendor):
-		vendor_item_tree.item_selected.disconnect(c_vendor)
-	if convoy_item_tree.item_selected.is_connected(c_convoy):
-		convoy_item_tree.item_selected.disconnect(c_convoy)
-
-	var prev_selected_id := _last_selected_restore_id
-	var prev_tree := _last_selected_tree
-
-	var t0 := 0
-	if perf_log_enabled:
-		t0 = Time.get_ticks_msec()
-
-	# Rebuild lists from raw snapshots (vendor_data + convoy_data)
-	_populate_vendor_list()
-	_populate_convoy_list()
-	_update_convoy_info_display()
-
-	if perf_log_enabled:
-		var dt = Time.get_ticks_msec() - t0
-		print("[VendorPanel][Perf] rebuild dt=", dt, " ms (id=", _current_refresh_id, ")")
-
-	var selection_restored := false
-	if typeof(prev_selected_id) == TYPE_STRING and str(prev_selected_id) != "":
-		if prev_tree == "vendor":
-			selection_restored = _restore_selection(vendor_item_tree, prev_selected_id)
-		elif prev_tree == "convoy":
-			selection_restored = _restore_selection(convoy_item_tree, prev_selected_id)
-
-	if not selection_restored:
-		_clear_inspector()
-		_update_transaction_panel()
-		action_button.disabled = true
-		max_button.disabled = true
-
-	vendor_item_tree.item_selected.connect(_on_vendor_item_selected)
-	convoy_item_tree.item_selected.connect(_on_convoy_item_selected)
-	# --- END ATOMIC REFRESH ---
-
-	_panel_initialized = true
+	VendorPanelRefreshController.process_panel_payload_ready(self)
 
 # Handler for when GDM emits vendor_panel_data_ready
 func _on_vendor_panel_data_ready(vendor_panel_data: Dictionary) -> void:
-	if perf_log_enabled:
-		var now0 := Time.get_ticks_msec()
-		var delta0 := (now0 - _last_data_ready_ms) if _last_data_ready_ms >= 0 else -1
-		print("[VendorPanel][Perf] data_ready ENTER id=", _current_refresh_id, " panelInit=", _panel_initialized, " in_flight=", _refresh_in_flight, " awaiting=", _awaiting_panel_data, " delta_since_last=", delta0, " ms")
-	# Cooldown guard: if no refresh is in-flight/awaited, ignore duplicate payloads that arrive
-	# immediately after a processed one (or after initial populate once panel is initialized).
-	if not _refresh_in_flight and not _awaiting_panel_data:
-		var now_guard := Time.get_ticks_msec()
-		var delta_guard := (now_guard - _last_data_ready_ms) if _last_data_ready_ms >= 0 else -1
-		if _panel_initialized or (delta_guard >= 0 and delta_guard < DATA_READY_COOLDOWN_MS):
-			if perf_log_enabled:
-				print("[VendorPanel][Perf] IGNORE vendor_panel_data_ready (cooldown) delta=", delta_guard, " ms, id=", _current_refresh_id)
-			return
-	# This handler expects the full data payload. If it's a partial "warming" payload
-	# (which lacks this key), ignore it. The warming payload is for other menus.
-	if not vendor_panel_data.has("all_settlement_data"):
-		# Safety: if a partial payload arrives while a refresh is in progress,
-		# clear flags and hide overlay (if enabled) so the panel doesn't remain blocked.
-		if show_loading_overlay and is_instance_valid(loading_panel) and loading_panel.visible:
-			_hide_loading()
-		_refresh_in_flight = false
-		_awaiting_panel_data = false
-		_transaction_in_progress = false
-		return
-
-	# Ignore payloads for other vendors (warmers can emit multiple payloads)
-	var incoming_vid := str((vendor_panel_data.get("vendor_data", {}) as Dictionary).get("vendor_id", ""))
-	var current_vid := str((self.vendor_data if self.vendor_data is Dictionary else {}).get("vendor_id", ""))
-	if current_vid != "" and incoming_vid != "" and incoming_vid != current_vid:
-		if perf_log_enabled:
-			print("[VendorPanel][Perf] IGNORE vendor mismatch incoming_vid=", incoming_vid, " current_vid=", current_vid)
-		return
-
-	# If we've already initialized and no refresh is in-flight, ignore stray payloads
-	# to prevent multiple mid-purchase UI rebuilds.
-	if _panel_initialized and not _refresh_in_flight and not _awaiting_panel_data:
-		if perf_log_enabled:
-			print("[VendorPanel][Perf] IGNORE stray vendor_panel_data_ready (no refresh in-flight, id=", _current_refresh_id, ")")
-		return
-
-	if perf_log_enabled:
-		print("[VendorTradePanel][LOG] _on_vendor_panel_data_ready called. Hiding loading panel and updating UI.")
-		print("[VendorPanel][Perf] data_ready PROCESS refresh_id=", _current_refresh_id, " incoming_vid=", incoming_vid)
-		var now_ms := Time.get_ticks_msec()
-		if _txn_t0_ms >= 0:
-			print("[VendorPanel][Perf] panel data ready +%d ms" % int(now_ms - _txn_t0_ms))
-			_txn_t0_ms = -1
-		else:
-			print("[VendorPanel][Perf] panel data ready (no baseline)")
-		if _refresh_t0_ms >= 0:
-			print("[VendorPanel][Perf] refresh latency +%d ms (id=%d)" % [int(now_ms - _refresh_t0_ms), _current_refresh_id])
-			_refresh_t0_ms = -1
-	_refresh_in_flight = false
-	_awaiting_panel_data = false
-	_transaction_in_progress = false # Failsafe reset
-	# Cancel any pending debounced refresh now that authoritative data arrived
-	_refresh_timer = null
-	if show_loading_overlay:
-		_hide_loading() # Hide loading indicator on data arrival with fade
-	self.vendor_data = vendor_panel_data.get("vendor_data")
-	self.convoy_data = vendor_panel_data.get("convoy_data")
-	self.current_settlement_data = vendor_panel_data.get("settlement_data")
-	self.all_settlement_data_global = vendor_panel_data.get("all_settlement_data")
-	self.vendor_items = vendor_panel_data.get("vendor_items", {})
-	self.convoy_items = vendor_panel_data.get("convoy_items", {})
-	_last_data_ready_ms = Time.get_ticks_msec()
-
-	# --- START ATOMIC REFRESH to prevent flicker ---
-	# Disconnect signals to prevent flicker from intermediate states during repopulation.
-	vendor_item_tree.item_selected.disconnect(_on_vendor_item_selected)
-	convoy_item_tree.item_selected.disconnect(_on_convoy_item_selected)
-
-	var prev_selected_id := _last_selected_restore_id
-	var prev_tree := _last_selected_tree
-	
-	# Do not forcibly clear selection; we'll attempt to restore it below.
-
-	var t0 := 0
-	if perf_log_enabled:
-		t0 = Time.get_ticks_msec()
-	# Only rebuild the tree(s) that are relevant (active tab or previously selected tree)
-	var need_vendor := (trade_mode_tab_container.current_tab == 0) or (prev_tree == "vendor")
-	var need_convoy := (trade_mode_tab_container.current_tab == 1) or (prev_tree == "convoy")
-	_update_vendor_ui(need_vendor, need_convoy)
-	if perf_log_enabled:
-		var dt = Time.get_ticks_msec() - t0
-		print("[VendorPanel][Perf] _update_vendor_ui dt=", dt, " ms (id=", _current_refresh_id, ") vendor_rows=", (self.vendor_items.keys().size() if self.vendor_items is Dictionary else 0), " convoy_rows=", (self.convoy_items.keys().size() if self.convoy_items is Dictionary else 0))
-
-	var selection_restored = false
-	if typeof(prev_selected_id) == TYPE_STRING and not str(prev_selected_id).is_empty():
-		if prev_tree == "vendor":
-			selection_restored = _restore_selection(vendor_item_tree, prev_selected_id)
-		elif prev_tree == "convoy":
-			selection_restored = _restore_selection(convoy_item_tree, prev_selected_id)
-
-	# If selection was not restored, manually clear the inspector panels.
-	if not selection_restored:
-		_clear_inspector()
-		_update_transaction_panel() # This will correctly show $0 since selected_item is null
-		action_button.disabled = true
-		max_button.disabled = true
-		if perf_log_enabled:
-			print("[VendorPanel][Perf] selection restore failed; inspector cleared (id=", _current_refresh_id, ")")
-
-	# Reconnect signals
-	vendor_item_tree.item_selected.connect(_on_vendor_item_selected)
-	convoy_item_tree.item_selected.connect(_on_convoy_item_selected)
-	# --- END ATOMIC REFRESH ---
-
-	_panel_initialized = true
+	VendorPanelRefreshController.on_vendor_panel_data_ready(self, vendor_panel_data)
 
  
 
@@ -521,79 +431,11 @@ func _update_vendor_ui(update_vendor: bool = true, update_convoy: bool = true) -
 		_populate_tree_from_agg(convoy_item_tree, agg_to_use)
 	_update_convoy_info_display()
 
-func _vendor_has_vehicle_parts() -> bool:
-	# 1) Aggregated vendor_items 'parts' bucket
-	if vendor_items is Dictionary:
-		# Case-insensitive check for a non-empty parts bucket
-		if vendor_items.has("parts") and vendor_items["parts"] is Dictionary and not (vendor_items["parts"] as Dictionary).is_empty():
-			return true
-		if vendor_items.has("Parts") and vendor_items["Parts"] is Dictionary and not (vendor_items["Parts"] as Dictionary).is_empty():
-			return true
-	# 2) Use Items.gd classifier on raw vendor_data inventory
-	if vendor_data and vendor_data.has("cargo_inventory") and (vendor_data.cargo_inventory is Array):
-		for raw in vendor_data.cargo_inventory:
-			if raw is Dictionary and ItemsData.PartItem._looks_like_part_dict(raw):
-				return true
-	# Optional: check nested parts arrays directly (containers exposing parts)
-	if vendor_data and vendor_data.has("cargo_inventory") and (vendor_data.cargo_inventory is Array):
-		for raw2 in vendor_data.cargo_inventory:
-			if not (raw2 is Dictionary):
-				continue
-			if raw2.has("parts") and raw2.parts is Array and not (raw2.parts as Array).is_empty():
-				var fp: Dictionary = (raw2.parts as Array)[0]
-				if fp.has("slot") and fp.get("slot") != null and str(fp.get("slot")).strip_edges() != "":
-					return true
-	# 3) Common explicit flags/types on vendor_data (fallbacks)
-	if vendor_data:
-		if bool(vendor_data.get("sells_parts", false)) or bool(vendor_data.get("sells_vehicle_parts", false)):
-			return true
-		var vtype := str(vendor_data.get("vendor_type", "")).to_lower()
-		if vtype.findn("part") != -1:
-			return true
-	return false
-
-# Unified gate: whether this vendor should show a Vehicles category in SELL mode
 func _should_show_vehicle_sell_category() -> bool:
-	if current_mode != "sell":
-		return false
-	# Primary: vendor actually stocks vehicle parts
-	if _vendor_has_vehicle_parts():
-		return true
-	# Fallbacks: many parts dealers also sell/accept vehicles
-	if vendor_data:
-		# Explicit flags or vehicle inventory imply dealership behavior
-		if bool(vendor_data.get("sells_vehicles", false)):
-			return true
-		if vendor_data.has("vehicle_inventory") and (vendor_data.vehicle_inventory is Array) and not (vendor_data.vehicle_inventory as Array).is_empty():
-			return true
-	return false
+	return VendorPanelVehicleSellController.should_show_vehicle_sell_category(self)
 
 func _convoy_items_with_sellable_vehicles(base_agg: Dictionary) -> Dictionary:
-	var out: Dictionary = {}
-	if base_agg is Dictionary:
-		out = base_agg.duplicate(true)
-	# Build Vehicles category from convoy_data when available
-	if convoy_data and convoy_data.has("vehicle_details_list") and (convoy_data.vehicle_details_list is Array):
-		var vehicles_cat: Dictionary = {}
-		for v in convoy_data.vehicle_details_list:
-			if not (v is Dictionary):
-				continue
-			var vid := str(v.get("vehicle_id", ""))
-			if vid == "":
-				continue
-			# Each vehicle is a single-quantity sellable item; price derived from _get_vehicle_price()
-			var key := vid # use id to avoid name collisions
-			var entry := {
-				"item_data": v,
-				"total_quantity": 1,
-				"total_weight": 0.0,
-				"total_volume": 0.0,
-				"display_name": str(v.get("name", "Vehicle"))
-			}
-			vehicles_cat[key] = entry
-		if not vehicles_cat.is_empty():
-			out["vehicles"] = vehicles_cat
-	return out
+	return VendorPanelVehicleSellController.convoy_items_with_sellable_vehicles(self, base_agg)
 
 func _populate_tree_from_agg(tree: Tree, agg: Dictionary) -> void:
 	var t0 := 0
@@ -649,606 +491,36 @@ func refresh_data(p_vendor_data, p_convoy_data, p_current_settlement_data, p_all
 	_update_transaction_panel()
 	_update_install_button_state()
 
-# Request fresh vendor panel data via service
-func _request_authoritative_refresh(convoy_id: String, vendor_id: String) -> void:
-	if not is_instance_valid(_vendor_service):
-		return
-	if _vendor_service.has_method("request_vendor_panel"):
-		_vendor_service.request_vendor_panel(convoy_id, vendor_id)
-	elif _vendor_service.has_method("request_vendor"):
-		_vendor_service.request_vendor(vendor_id)
-
-# Hub/Store signal handlers
-func _on_hub_vendor_panel_ready(vendor_payload: Dictionary) -> void:
-	# Update vendor data and attempt a refresh using combined snapshots
-	if vendor_payload is Dictionary:
-		self.vendor_data = vendor_payload
-	_try_process_refresh()
-
-func _on_hub_vendor_preview_ready(data: Dictionary) -> void:
-	# Used for mission cargo destination prefetch
-	var vid := str(data.get("vendor_id", ""))
-	if vid == "":
-		return
-	# Cache it
-	_vendors_from_settlements_by_id[vid] = data
-	var nm := str(data.get("name", ""))
-	if nm != "":
-		_vendor_id_to_name[vid] = nm
-	
-	# If current selection is mission cargo for this vendor, refresh inspector
-	if selected_item and selected_item.has("item_data"):
-		var idata: Dictionary = selected_item.item_data
-		var rid := str(idata.get("recipient", ""))
-		if rid == vid:
-			selected_item["mission_vendor_name"] = nm
-			_update_inspector()
-			_update_transaction_panel()
-
-func _on_service_vehicle_data_received(data: Dictionary) -> void:
-	var vid := str(data.get("vehicle_id", ""))
-	if vid == "":
-		return
-	# If current selection is this vehicle, merge data and refresh
-	if selected_item and selected_item.has("item_data"):
-		var idata: Dictionary = selected_item.item_data
-		var sel_vid := str(idata.get("vehicle_id", ""))
-		if sel_vid == vid:
-			# Merge fetched details into the item data source
-			for k in data:
-				idata[k] = data[k]
-			# Ensure value is propagated if missing
-			if not idata.has("value") and data.has("value"):
-				idata["value"] = data["value"]
-			_update_inspector()
-			_update_transaction_panel()
-
-func _on_store_convoys_changed(_convoys: Array) -> void:
-	# Update local convoy snapshot for active convoy and perform a minimal UI refresh.
-	# Do NOT rebuild trees here to preserve selection during purchases; authoritative
-	# rebuilds happen via vendor_panel_ready.
-	if _active_convoy_id != "":
-		var latest := _get_convoy_by_id(_active_convoy_id)
-		if latest is Dictionary and not (latest as Dictionary).is_empty():
-			convoy_data = (latest as Dictionary)
-			_update_convoy_info_display()
-			_update_transaction_panel()
-
-func _update_ui(convoy: Dictionary) -> void:
-	# Lightweight live refresh: update cached convoy stats and labels without repopulating trees.
-	if not (convoy is Dictionary) or convoy.is_empty():
-		return
-	convoy_data = convoy.duplicate(true)
-	_update_convoy_info_display()
-	# Keep transaction panel in sync (prices may depend on mode and item).
-	_update_transaction_panel()
-
-func _on_store_map_changed(_tiles: Array, settlements: Array) -> void:
-	_set_latest_settlements_snapshot(settlements)
-	_try_process_refresh()
-  
-# --- UI Population ---
 func _populate_vendor_list() -> void:
 	vendor_item_tree.clear()
 	if not vendor_data:
 		return
-
-	var aggregated_missions: Dictionary = {}
-	var aggregated_resources: Dictionary = {}
-	var aggregated_vehicles: Dictionary = {}
-	var aggregated_parts: Dictionary = {}
-	var aggregated_other: Dictionary = {}
-
-	# print("DEBUG: vendor_data at start of _populate_vendor_list:", vendor_data)
-	for item in vendor_data.get("cargo_inventory", []):
-		if item.has("intrinsic_part_id") and item.get("intrinsic_part_id") != null:
-			continue
-
-		var category_dict: Dictionary
-		var mission_vendor_name: String = ""
-		if item.get("recipient") != null:
-			if perf_log_enabled:
-				print("[VendorPanel][Debug] vendor mission item keys=", (item.keys() if item is Dictionary else []))
-			category_dict = aggregated_missions
-			var recipient_id = item.get("recipient")
-			if recipient_id:
-				mission_vendor_name = _get_vendor_name_for_recipient(recipient_id)
-				if perf_log_enabled:
-					print("[VendorPanel][Debug] dest via item.recipient -> vendor name=", mission_vendor_name)
-		elif (item.has("food") and item.get("food") != null and item.get("food") > 0) or \
-		   (item.has("water") and item.get("water") != null and item.get("water") > 0) or \
-		   (item.has("fuel") and item.get("fuel") != null and item.get("fuel") > 0):
-			category_dict = aggregated_resources
-		else:
-			# Robust part detection: top-level slot OR nested parts[] with slot OR part-like hints
-			var part_slot: String = ""
-			if item.has("slot") and item.get("slot") != null and str(item.get("slot")).length() > 0:
-				part_slot = str(item.get("slot"))
-			elif item.has("parts") and item.get("parts") is Array and not (item.get("parts") as Array).is_empty():
-				var nested_parts: Array = item.get("parts")
-				var first_part: Dictionary = nested_parts[0]
-				var slot_val = first_part.get("slot", "")
-				if typeof(slot_val) == TYPE_STRING and str(slot_val).length() > 0:
-					part_slot = str(slot_val)
-			# Heuristic fallback if still no slot: check flags/types/stats that imply a part
-			var likely_part := false
-			if part_slot != "":
-				likely_part = true
-			elif item.has("is_part") and item.get("is_part"):
-				likely_part = true
-			else:
-				var type_s := str(item.get("type", "")).to_lower()
-				var itype_s := str(item.get("item_type", "")).to_lower()
-				if type_s == "part" or itype_s == "part":
-					likely_part = true
-				else:
-					var stat_keys := ["top_speed_add", "efficiency_add", "offroad_capability_add", "cargo_capacity_add", "weight_capacity_add", "fuel_capacity", "kwh_capacity"]
-					for sk in stat_keys:
-						if item.has(sk) and item[sk] != null:
-							likely_part = true
-							break
-
-			if likely_part:
-				category_dict = aggregated_parts
-				# Use a display copy and inject inferred slot so UI shows fitment
-				var item_disp: Dictionary = item
-				if part_slot != "":
-					item_disp = item.duplicate(true)
-					item_disp["slot"] = part_slot
-				# print("DEBUG: Vendor part detected name=", item.get("name","?"), " inferred_slot=", part_slot)
-			else:
-				category_dict = aggregated_other
-		if perf_log_enabled:
-			print("DEBUG: Aggregating vendor cargo item:", item)
-		# If this looks like a mission without explicit recipient, log mission_vendor_id for tracing
-		var dr_v = item.get("delivery_reward")
-		var looks_mission := (dr_v is float or dr_v is int) and float(dr_v) > 0.0
-		if looks_mission and not item.has("recipient") and item.has("mission_vendor_id"):
-			if perf_log_enabled:
-				print("[VendorPanel][Debug] mission without recipient; mission_vendor_id=", str(item.get("mission_vendor_id")))
-		# Aggregate the display copy when we inferred a slot
-		if category_dict == aggregated_parts and (item.has("slot") or (item.has("parts") and item.get("parts") is Array)):
-			var use_item: Dictionary = item
-			if item.has("slot"):
-				use_item = item
-			elif item.has("parts") and item.get("parts") is Array and not (item.get("parts") as Array).is_empty():
-				var nested_first: Dictionary = (item.get("parts") as Array)[0]
-				if nested_first.has("slot") and str(nested_first.get("slot", "")).length() > 0:
-					use_item = item.duplicate(true)
-					use_item["slot"] = str(nested_first.get("slot"))
-			_aggregate_vendor_item(category_dict, use_item, mission_vendor_name)
-		else:
-			_aggregate_vendor_item(category_dict, item, mission_vendor_name)
-
-	# --- Create virtual items for raw resources AFTER processing normal cargo ---
-
-	# print("DEBUG: vendor_data raw resources: fuel=", vendor_data.get("fuel", 0), "water=", vendor_data.get("water", 0), "food=", vendor_data.get("food", 0))
-	# Explicitly coerce numeric values without using 'or' (which can mask None vs 0) and log types
-	var raw_fuel_val = vendor_data.get("fuel", 0)
-	var raw_fuel_price_val = vendor_data.get("fuel_price", 0)
-	if perf_log_enabled:
-		print("DEBUG: RAW_FUEL before cast value=", raw_fuel_val, " type=", typeof(raw_fuel_val), " price=", raw_fuel_price_val)
-	var fuel_quantity = int(raw_fuel_val) if (raw_fuel_val is float or raw_fuel_val is int) else 0
-	var fuel_price_is_numeric = raw_fuel_price_val is float or raw_fuel_price_val is int
-	var fuel_price = float(raw_fuel_price_val) if fuel_price_is_numeric else 0.0
-	if fuel_quantity > 0 and fuel_price_is_numeric:
-		var fuel_item = {
-			"name": "Fuel (Bulk)",
-			"base_desc": "Bulk fuel to fill your containers.",
-			"quantity": fuel_quantity, # force exact resource amount
-			"fuel": fuel_quantity,
-			"fuel_price": fuel_price,
-			"is_raw_resource": true
-		}
-		if perf_log_enabled:
-			print("DEBUG: Creating vendor bulk fuel item:", fuel_item)
-		_aggregate_vendor_item(aggregated_resources, fuel_item)
-	elif fuel_quantity > 0:
-		if perf_log_enabled:
-			print("DEBUG: Skipping vendor bulk fuel (no numeric fuel_price)")
-
-	var raw_water_val = vendor_data.get("water", 0)
-	var raw_water_price_val = vendor_data.get("water_price", 0)
-	if perf_log_enabled:
-		print("DEBUG: RAW_WATER before cast value=", raw_water_val, " type=", typeof(raw_water_val), " price=", raw_water_price_val)
-	var water_quantity = int(raw_water_val) if (raw_water_val is float or raw_water_val is int) else 0
-	var water_price_is_numeric = raw_water_price_val is float or raw_water_price_val is int
-	var water_price = float(raw_water_price_val) if water_price_is_numeric else 0.0
-	if water_quantity > 0 and water_price_is_numeric:
-		var water_item = {
-			"name": "Water (Bulk)",
-			"base_desc": "Bulk water to fill your containers.",
-			"quantity": water_quantity, # force exact resource amount
-			"water": water_quantity,
-			"water_price": water_price,
-			"is_raw_resource": true
-		}
-		if perf_log_enabled:
-			print("DEBUG: Creating vendor bulk water item:", water_item)
-		_aggregate_vendor_item(aggregated_resources, water_item)
-	elif water_quantity > 0:
-		if perf_log_enabled:
-			print("DEBUG: Skipping vendor bulk water (no numeric water_price)")
-
-	var raw_food_val = vendor_data.get("food", 0)
-	var raw_food_price_val = vendor_data.get("food_price", 0)
-	if perf_log_enabled:
-		print("DEBUG: RAW_FOOD before cast value=", raw_food_val, " type=", typeof(raw_food_val), " price=", raw_food_price_val)
-	var food_quantity = int(raw_food_val) if (raw_food_val is float or raw_food_val is int) else 0
-	var food_price_is_numeric = raw_food_price_val is float or raw_food_price_val is int
-	var food_price = float(raw_food_price_val) if food_price_is_numeric else 0.0
-	if food_quantity > 0 and food_price_is_numeric:
-		var food_item = {
-			"name": "Food (Bulk)",
-			"base_desc": "Bulk food supplies.",
-			"quantity": food_quantity,
-			"food": food_quantity,
-			"food_price": food_price,
-			"is_raw_resource": true
-		}
-		if perf_log_enabled:
-			print("DEBUG: Creating vendor bulk food item:", food_item)
-		_aggregate_vendor_item(aggregated_resources, food_item)
-	elif food_quantity > 0:
-		if perf_log_enabled:
-			print("DEBUG: Skipping vendor bulk food (no numeric food_price)")
-
-	# Process vehicles into their own category
-	for vehicle in vendor_data.get("vehicle_inventory", []):
-		var vid := str(vehicle.get("vehicle_id", ""))
-		if vid != "":
-			# Use vehicle_id as key to prevent merging distinct vehicles with the same name
-			var key := vid
-			var vehicle_name := str(vehicle.get("name", "Unknown Vehicle"))
-			if not aggregated_vehicles.has(key):
-				aggregated_vehicles[key] = {
-					"item_data": vehicle,
-					"display_name": vehicle_name,
-					"total_quantity": 0,
-					"total_weight": 0.0,
-					"total_volume": 0.0,
-					"mission_vendor_name": ""
-				}
-			aggregated_vehicles[key].total_quantity += 1
-		else:
-			_aggregate_vendor_item(aggregated_vehicles, vehicle)
-
+	var buckets := VendorCargoAggregatorScript.build_vendor_buckets(vendor_data, perf_log_enabled, Callable(self, "_get_vendor_name_for_recipient"))
 	var root = vendor_item_tree.create_item()
-	_populate_category(vendor_item_tree, root, "Mission Cargo", aggregated_missions)
-	_populate_category(vendor_item_tree, root, "Vehicles", aggregated_vehicles)
-	_populate_category(vendor_item_tree, root, "Parts", aggregated_parts)
-	_populate_category(vendor_item_tree, root, "Other", aggregated_other)
-	_populate_category(vendor_item_tree, root, "Resources", aggregated_resources)
+	_populate_category(vendor_item_tree, root, "Mission Cargo", buckets.get("missions", {}))
+	_populate_category(vendor_item_tree, root, "Vehicles", buckets.get("vehicles", {}))
+	_populate_category(vendor_item_tree, root, "Parts", buckets.get("parts", {}))
+	_populate_category(vendor_item_tree, root, "Other", buckets.get("other", {}))
+	_populate_category(vendor_item_tree, root, "Resources", buckets.get("resources", {}))
 
 func _populate_convoy_list() -> void:
 	convoy_item_tree.clear()
-	# print("DEBUG: convoy_data at start of _populate_convoy_list:", convoy_data)
 	if not convoy_data:
 		return
-
-	var aggregated_missions: Dictionary = {}
-	var aggregated_resources: Dictionary = {}
-	var aggregated_parts: Dictionary = {}
-	var aggregated_vehicles: Dictionary = {}
-	var aggregated_other: Dictionary = {}
-
-	# Aggregate items from all vehicles to create a de-duplicated list.
-	var found_any_cargo = false
-	if convoy_data.has("vehicle_details_list"):
-		for vehicle in convoy_data.vehicle_details_list:
-			var vehicle_name = vehicle.get("name", "Unknown Vehicle")
-			# In SELL mode (when allowed), add vehicles as single sellable entries
-			if _should_show_vehicle_sell_category():
-				var vid := str(vehicle.get("vehicle_id", ""))
-				if vid != "":
-					aggregated_vehicles[vid] = {
-						"item_data": vehicle,
-						"display_name": vehicle_name,
-						"total_quantity": 1,
-						"total_weight": 0.0,
-						"total_volume": 0.0,
-						"locations": {},
-					}
-			# Prefer typed cargo list if present
-			if vehicle.has("cargo_items_typed") and vehicle["cargo_items_typed"] is Array and not (vehicle["cargo_items_typed"] as Array).is_empty():
-				for typed in vehicle["cargo_items_typed"]:
-					if not typed is CargoItem:
-						continue
-					found_any_cargo = true
-					var raw_item: Dictionary = typed.raw.duplicate(true)
-					raw_item["quantity"] = typed.quantity
-					# Inject the category from the typed object to ensure correct classification downstream.
-					raw_item["category"] = typed.category
-					# Normalize totals for aggregation & price calculations
-					raw_item["weight"] = typed.total_weight
-					raw_item["volume"] = typed.total_volume
-					if typed.has_method("get_modifier_summary"):
-						var mods: String = str(typed.get_modifier_summary())
-						if mods != "":
-							raw_item["modifiers"] = mods
-						if "stats" in typed and typed.stats is Dictionary and not typed.stats.is_empty():
-							raw_item["stats"] = typed.stats.duplicate(true)
-					var category_dict: Dictionary
-					var mission_vendor_name: String = ""
-					match typed.category:
-						"mission": category_dict = aggregated_missions
-						"resource": category_dict = aggregated_resources
-						"part": category_dict = aggregated_parts
-						_:
-							category_dict = aggregated_other
-					# Override: if raw data shows mission signals, force mission classification
-					var dr_t = raw_item.get("delivery_reward")
-					if raw_item.get("recipient") != null or ((dr_t is float or dr_t is int) and float(dr_t) > 0.0):
-						category_dict = aggregated_missions
-					if category_dict == aggregated_missions:
-						var recipient_id = raw_item.get("recipient")
-						if recipient_id:
-							mission_vendor_name = _get_vendor_name_for_recipient(recipient_id)
-					_aggregate_item(category_dict, raw_item, vehicle_name, mission_vendor_name)
-			else:
-				for item in vehicle.get("cargo", []):
-					found_any_cargo = true
-					if item.has("intrinsic_part_id") and item.get("intrinsic_part_id") != null:
-						continue
-					var category_dict: Dictionary
-					var mission_vendor_name: String = ""
-					# Mission cargo: recipient present OR delivery_reward is a positive number
-					var dr = item.get("delivery_reward")
-					if item.get("recipient") != null or ((dr is float or dr is int) and float(dr) > 0.0):
-						category_dict = aggregated_missions
-					elif (item.has("food") and item.get("food") != null and item.get("food") > 0) or \
-						 (item.has("water") and item.get("water") != null and item.get("water") > 0) or \
-						 (item.has("fuel") and item.get("fuel") != null and item.get("fuel") > 0):
-						category_dict = aggregated_resources
-					else:
-						category_dict = aggregated_other
-					if category_dict == aggregated_missions:
-						var recipient_id = item.get("recipient")
-						if recipient_id:
-							mission_vendor_name = _get_vendor_name_for_recipient(recipient_id)
-					_aggregate_item(category_dict, item, vehicle_name, mission_vendor_name)
-			for item in vehicle.get("parts", []):
-				if item.has("intrinsic_part_id") and item.get("intrinsic_part_id") != null:
-					continue
-				_aggregate_item(aggregated_parts, item, vehicle_name)
-
-	# --- Fallback: If no cargo found in vehicles, use cargo_inventory (all_cargo) ---
-	if not found_any_cargo and convoy_data.has("cargo_inventory"):
-		for item in convoy_data.cargo_inventory:
-			var category_dict: Dictionary
-			var mission_vendor_name: String = ""
-			# Mission cargo: recipient present OR delivery_reward is a positive number
-			var dr2 = item.get("delivery_reward")
-			if item.get("recipient") != null or ((dr2 is float or dr2 is int) and float(dr2) > 0.0):
-				category_dict = aggregated_missions
-			elif (item.has("food") and item.get("food") != null and item.get("food") > 0) or \
-				 (item.has("water") and item.get("water") != null and item.get("water") > 0) or \
-				 (item.has("fuel") and item.get("fuel") != null and item.get("fuel") > 0):
-				category_dict = aggregated_resources
-			else:
-				category_dict = aggregated_other
-			if category_dict == aggregated_missions:
-				var recipient_id = item.get("recipient")
-				if recipient_id:
-					mission_vendor_name = _get_vendor_name_for_recipient(recipient_id)
-			_aggregate_item(category_dict, item, "Convoy", mission_vendor_name)
-
-	# --- Create virtual items for convoy's bulk resources AFTER processing normal cargo ---
-	# Defensive: avoid 'or 0' which can coerce bools, and log types
-	var raw_convoy_fuel = convoy_data.get("fuel", 0)
-	var raw_convoy_water = convoy_data.get("water", 0)
-	var raw_convoy_food = convoy_data.get("food", 0)
-	var vendor_fuel_price = float(vendor_data.get("fuel_price", 0)) if (vendor_data.get("fuel_price", 0) is float or vendor_data.get("fuel_price", 0) is int) else 0.0
-	var vendor_water_price = float(vendor_data.get("water_price", 0)) if (vendor_data.get("water_price", 0) is float or vendor_data.get("water_price", 0) is int) else 0.0
-	var vendor_food_price = float(vendor_data.get("food_price", 0)) if (vendor_data.get("food_price", 0) is float or vendor_data.get("food_price", 0) is int) else 0.0
-	# print("DEBUG: convoy_data raw resources: fuel=", raw_convoy_fuel, " type=", typeof(raw_convoy_fuel), "water=", raw_convoy_water, " type=", typeof(raw_convoy_water), "food=", raw_convoy_food, " type=", typeof(raw_convoy_food))
-	var convoy_fuel_quantity = int(raw_convoy_fuel) if (raw_convoy_fuel is float or raw_convoy_fuel is int) else 0
-	var vendor_fuel_price_numeric = vendor_data.has("fuel_price") and (vendor_data.get("fuel_price") is float or vendor_data.get("fuel_price") is int)
-	if convoy_fuel_quantity > 0 and vendor_fuel_price_numeric:
-		var fuel_item = {
-			"name": "Fuel (Bulk)",
-			"base_desc": "Bulk fuel from your convoy's reserves.",
-			"quantity": convoy_fuel_quantity,
-			"fuel": convoy_fuel_quantity,
-			"fuel_price": vendor_fuel_price,
-			"is_raw_resource": true
-		}
-		if perf_log_enabled:
-			print("DEBUG: Creating convoy bulk fuel item:", fuel_item)
-		_aggregate_vendor_item(aggregated_resources, fuel_item)
-	elif convoy_fuel_quantity > 0:
-		if perf_log_enabled:
-			print("DEBUG: Skipping convoy bulk fuel (vendor has no numeric fuel_price)")
-
-	var convoy_water_quantity = int(raw_convoy_water) if (raw_convoy_water is float or raw_convoy_water is int) else 0
-	var vendor_water_price_numeric = vendor_data.has("water_price") and (vendor_data.get("water_price") is float or vendor_data.get("water_price") is int)
-	if convoy_water_quantity > 0 and vendor_water_price_numeric:
-		var water_item = {
-			"name": "Water (Bulk)",
-			"base_desc": "Bulk water from your convoy's reserves.",
-			"quantity": convoy_water_quantity,
-			"water": convoy_water_quantity,
-			"water_price": vendor_water_price,
-			"is_raw_resource": true
-		}
-		if perf_log_enabled:
-			print("DEBUG: Creating convoy bulk water item:", water_item)
-		_aggregate_vendor_item(aggregated_resources, water_item)
-	elif convoy_water_quantity > 0:
-		if perf_log_enabled:
-			print("DEBUG: Skipping convoy bulk water (vendor has no numeric water_price)")
-
-	var convoy_food_quantity = int(raw_convoy_food) if (raw_convoy_food is float or raw_convoy_food is int) else 0
-	var vendor_food_price_numeric = vendor_data.has("food_price") and (vendor_data.get("food_price") is float or vendor_data.get("food_price") is int)
-	if convoy_food_quantity > 0 and vendor_food_price_numeric:
-		var food_item = {
-			"name": "Food (Bulk)",
-			"base_desc": "Bulk food supplies from your convoy's reserves.",
-			"quantity": convoy_food_quantity,
-			"food": convoy_food_quantity,
-			"food_price": vendor_food_price,
-			"is_raw_resource": true
-		}
-		if perf_log_enabled:
-			print("DEBUG: Creating convoy bulk food item:", food_item)
-		_aggregate_vendor_item(aggregated_resources, food_item)
-	elif convoy_food_quantity > 0:
-		if perf_log_enabled:
-			print("DEBUG: Skipping convoy bulk food (vendor has no numeric food_price)")
-
+	var allow_vehicle_sell := _should_show_vehicle_sell_category()
+	var buckets := VendorCargoAggregatorScript.build_convoy_buckets(convoy_data, vendor_data, current_mode, perf_log_enabled, Callable(self, "_get_vendor_name_for_recipient"), allow_vehicle_sell)
 	var root = convoy_item_tree.create_item()
-	_populate_category(convoy_item_tree, root, "Mission Cargo", aggregated_missions)
-	# Vehicles section (SELL mode when allowed)
-	if _should_show_vehicle_sell_category() and not aggregated_vehicles.is_empty():
-		_populate_category(convoy_item_tree, root, "Vehicles", aggregated_vehicles)
-	# Only show loose/aggregated parts when BUYING. In SELL mode installed vehicle parts are not sellable
-	# and were causing crashes when selected. Suppressing the entire Parts category avoids invalid selections.
+	_populate_category(convoy_item_tree, root, "Mission Cargo", buckets.get("missions", {}))
+	if allow_vehicle_sell and not (buckets.get("vehicles", {}) as Dictionary).is_empty():
+		_populate_category(convoy_item_tree, root, "Vehicles", buckets.get("vehicles", {}))
+	# Only show loose/aggregated parts when BUYING. In SELL mode installed vehicle parts are not sellable.
 	if current_mode == "buy":
-		_populate_category(convoy_item_tree, root, "Parts", aggregated_parts)
-	_populate_category(convoy_item_tree, root, "Other", aggregated_other)
-	_populate_category(convoy_item_tree, root, "Resources", aggregated_resources)
-
-func _aggregate_vendor_item(agg_dict: Dictionary, item: Dictionary, p_mission_vendor_name: String = "") -> void:
-	var item_name = item.get("name", "Unknown Item")
-	if not agg_dict.has(item_name):
-		agg_dict[item_name] = {"item_data": item, "total_quantity": 0, "total_weight": 0.0, "total_volume": 0.0, "total_food": 0.0, "total_water": 0.0, "total_fuel": 0.0, "mission_vendor_name": p_mission_vendor_name}
-	
-	var item_quantity = int(item.get("quantity", 1.0))
-	# For raw bulk resources, prefer the explicit resource amount if larger than the generic quantity field.
-	if item.get("is_raw_resource", false):
-		if item.get("fuel", 0) is int or item.get("fuel", 0) is float:
-			item_quantity = max(item_quantity, int(item.get("fuel", 0) or 0))
-		if item.get("water", 0) is int or item.get("water", 0) is float:
-			item_quantity = max(item_quantity, int(item.get("water", 0) or 0))
-		if item.get("food", 0) is int or item.get("food", 0) is float:
-			item_quantity = max(item_quantity, int(item.get("food", 0) or 0))
-		# Mirror back onto the stored item_data so later selection logic sees the larger quantity.
-		agg_dict[item_name].item_data["quantity"] = item_quantity
-	if perf_log_enabled:
-		print("DEBUG: _aggregate_vendor_item before add name=", item_name, "incoming quantity=", item.get("quantity"), "parsed=", item_quantity)
-	# Log destination name used for missions
-	if p_mission_vendor_name != "" and agg_dict[item_name].mission_vendor_name == "":
-		if perf_log_enabled:
-			print("[VendorPanel][Debug] _aggregate_vendor_item set mission_vendor_name=", p_mission_vendor_name, " for ", item_name)
-	agg_dict[item_name].total_quantity += item_quantity
-	agg_dict[item_name].total_weight += item.get("weight", 0.0)
-	agg_dict[item_name].total_volume += item.get("volume", 0.0)
-	if item.get("food") is float or item.get("food") is int: agg_dict[item_name].total_food += item.get("food")
-	if item.get("water") is float or item.get("water") is int: agg_dict[item_name].total_water += item.get("water")
-	if item.get("fuel") is float or item.get("fuel") is int: agg_dict[item_name].total_fuel += item.get("fuel")
-	if perf_log_enabled:
-		print("DEBUG: _aggregate_vendor_item after add name=", item_name, "total_quantity=", agg_dict[item_name].total_quantity, "total_fuel=", agg_dict[item_name].total_fuel)
-	
-func _aggregate_item(agg_dict: Dictionary, item: Dictionary, vehicle_name: String, p_mission_vendor_name: String = "") -> void:
-	# Use cargo_id as aggregation key if present, but store/display by name
-	var agg_key = str(item.get("cargo_id")) if item.has("cargo_id") else item.get("name", "Unknown Item")
-	var display_name = item.get("name", "Unknown Item")
-	if not agg_dict.has(agg_key):
-		agg_dict[agg_key] = {
-			"item_data": item,
-			"display_name": display_name, # <-- Store the name for display
-			"total_quantity": 0,
-			"locations": {},
-			"mission_vendor_name": p_mission_vendor_name,
-			"total_weight": 0.0,
-			"total_volume": 0.0,
-			"total_food": 0.0,
-			"total_water": 0.0,
-			"total_fuel": 0.0,
-			# Keep a list of the underlying cargo items so we can sell more than a single instance.
-			"items": []
-		}
-	var item_quantity = int(item.get("quantity", 1.0))
-	if item.get("is_raw_resource", false):
-		if item.get("fuel", 0) is int or item.get("fuel", 0) is float:
-			item_quantity = max(item_quantity, int(item.get("fuel", 0) or 0))
-		if item.get("water", 0) is int or item.get("water", 0) is float:
-			item_quantity = max(item_quantity, int(item.get("water", 0) or 0))
-		if item.get("food", 0) is int or item.get("food", 0) is float:
-			item_quantity = max(item_quantity, int(item.get("food", 0) or 0))
-		agg_dict[agg_key].item_data["quantity"] = item_quantity
-	agg_dict[agg_key].total_quantity += item_quantity
-	agg_dict[agg_key].total_weight += item.get("weight", 0.0)
-	agg_dict[agg_key].total_volume += item.get("volume", 0.0)
-	if item.get("food") is float or item.get("food") is int: agg_dict[agg_key].total_food += item.get("food")
-	if item.get("water") is float or item.get("water") is int: agg_dict[agg_key].total_water += item.get("water")
-	if item.get("fuel") is float or item.get("fuel") is int: agg_dict[agg_key].total_fuel += item.get("fuel")
-	if not agg_dict[agg_key].locations.has(vehicle_name):
-		agg_dict[agg_key].locations[vehicle_name] = 0
-	agg_dict[agg_key].locations[vehicle_name] += item_quantity
-	# Track each raw cargo item for selling across multiple underlying stacks
-	agg_dict[agg_key].items.append(item)
+		_populate_category(convoy_item_tree, root, "Parts", buckets.get("parts", {}))
+	_populate_category(convoy_item_tree, root, "Other", buckets.get("other", {}))
+	_populate_category(convoy_item_tree, root, "Resources", buckets.get("resources", {}))
 
 func _update_convoy_info_display() -> void:
-	# This function now updates both the user's money and the convoy's cargo stats.
-	if not is_node_ready(): return
-
-	# We are removing the money display per new requirements. Hide or clear the label.
-	if is_instance_valid(convoy_money_label):
-		convoy_money_label.visible = false
-
-	# Update Convoy Cargo from local convoy_data and cache stats for projections
-	if convoy_data:
-		var used_volume = convoy_data.get("total_cargo_capacity", 0.0) - convoy_data.get("total_free_space", 0.0)
-		var total_volume = convoy_data.get("total_cargo_capacity", 0.0)
-		# Attempt to find weight stats; fall back to calculating if absent.
-		var weight_capacity: float = -1.0
-		var weight_used: float = -1.0
-		var possible_capacity_keys = ["total_cargo_weight_capacity", "total_weight_capacity", "weight_capacity"]
-		for k in possible_capacity_keys:
-			if convoy_data.has(k):
-				weight_capacity = float(convoy_data.get(k))
-				break
-		# Derive used weight from free weight if available
-		if weight_capacity >= 0.0:
-			var possible_free_keys = ["total_free_weight", "free_weight"]
-			for fk in possible_free_keys:
-				if convoy_data.has(fk):
-					weight_used = weight_capacity - float(convoy_data.get(fk))
-					break
-		# If still unknown, sum cargo + parts weights
-		if weight_used < 0.0 and convoy_data.has("vehicle_details_list"):
-			var sum_weight := 0.0
-			for vehicle in convoy_data.vehicle_details_list:
-				for c in vehicle.get("cargo", []):
-					sum_weight += c.get("weight", 0.0)
-				for p in vehicle.get("parts", []):
-					sum_weight += p.get("weight", 0.0)
-			weight_used = sum_weight
-		# Cache stats (guard negatives)
-		_convoy_used_volume = max(0.0, used_volume)
-		_convoy_total_volume = max(0.0, total_volume)
-		# Fallback: if volume capacity is missing, estimate from vehicles and cargo
-		if _convoy_total_volume <= 0.0 and convoy_data.has("vehicle_details_list"):
-			var sum_volume := 0.0
-			var total_capacity := 0.0
-			for vehicle in convoy_data.vehicle_details_list:
-				total_capacity += float((vehicle as Dictionary).get("cargo_capacity", 0.0))
-				for c in (vehicle as Dictionary).get("cargo", []):
-					sum_volume += float((c as Dictionary).get("volume", 0.0))
-			_convoy_total_volume = max(_convoy_total_volume, total_capacity)
-			_convoy_used_volume = max(_convoy_used_volume, sum_volume)
-		_convoy_used_weight = max(0.0, weight_used if weight_used >= 0.0 else 0.0)
-		_convoy_total_weight = max(0.0, weight_capacity if weight_capacity >= 0.0 else 0.0)
-		# Fallback: if weight capacity is missing, estimate from vehicles
-		if _convoy_total_weight <= 0.0 and convoy_data.has("vehicle_details_list"):
-			var total_weight_capacity := 0.0
-			for vehicle in convoy_data.vehicle_details_list:
-				var vdict: Dictionary = vehicle
-				total_weight_capacity += float(vdict.get("weight_capacity", vdict.get("max_weight", 0.0)))
-			_convoy_total_weight = max(_convoy_total_weight, total_weight_capacity)
-		# If capacity unknown, attempt an estimate (leave -1 to hide)
-		var weight_segment = ""
-		if weight_used >= 0.0:
-			if weight_capacity >= 0.0:
-				weight_segment = " | Weight: %.1f / %.1f" % [_convoy_used_weight, _convoy_total_weight]
-			else:
-				weight_segment = " | Weight: %.1f" % _convoy_used_weight
-		convoy_cargo_label.text = "Volume: %.1f / %.1f%s" % [_convoy_used_volume, _convoy_total_volume, weight_segment]
-		# Update capacity bars with current usage (no projection)
-		_refresh_capacity_bars(0.0, 0.0)
-	else:
-		convoy_cargo_label.text = "Cargo: N/A"
+	VendorPanelConvoyStatsController.update_convoy_info_display(self)
 
 func _on_user_data_updated(_user_data: Dictionary):
 	# When user data changes (e.g., after a transaction), refresh the display.
@@ -1333,322 +605,13 @@ func _tree_column_count(tree: Tree) -> int:
 	return 1
 
 func _handle_new_item_selection(p_selected_item) -> void:
-	var previous_key = _last_selection_unique_key
-	selected_item = p_selected_item
-	var new_key: String = ""
-	var restore_id: String = ""
-	if selected_item and selected_item.has("item_data"):
-		var item_data_local = selected_item.item_data
-		if item_data_local.has("cargo_id") and item_data_local.cargo_id != null:
-			new_key = "cargo:" + str(item_data_local.cargo_id)
-			restore_id = str(item_data_local.cargo_id)
-		elif item_data_local.has("vehicle_id") and item_data_local.vehicle_id != null:
-			new_key = "veh:" + str(item_data_local.vehicle_id)
-			restore_id = str(item_data_local.vehicle_id)
-		else:
-				if item_data_local.get("fuel",0) > 0 and item_data_local.get("is_raw_resource", false):
-					new_key = "res:fuel"
-					restore_id = new_key
-				elif item_data_local.get("water",0) > 0 and item_data_local.get("is_raw_resource", false):
-					new_key = "res:water"
-					restore_id = new_key
-				elif item_data_local.get("food",0) > 0 and item_data_local.get("is_raw_resource", false):
-					new_key = "res:food"
-					restore_id = new_key
-				else:
-					new_key = "name:" + str(item_data_local.get("name", ""))
-					restore_id = new_key
-	_last_selected_item_id = new_key
-	_last_selection_unique_key = new_key
-	var is_same_selection = previous_key == new_key
-	_last_selected_ref = selected_item
-	_last_selected_restore_id = restore_id
-
-	# --- START: Reduced logging to prevent output overflow ---
-	var item_summary_for_log = "null"
-	if selected_item and selected_item.has("item_data"):
-		var item_name_for_log = selected_item.item_data.get("name", "<no_name>")
-		item_summary_for_log = "Item(name='%s', key='%s')" % [item_name_for_log, new_key]
-	if perf_log_enabled:
-		print("DEBUG: _handle_new_item_selection - selected_item: ", item_summary_for_log, " is_same_selection: ", is_same_selection)
-	# --- END: Reduced logging ---
-
-	# --- Data Prefetching ---
-	if selected_item and selected_item.has("item_data"):
-		var idata: Dictionary = selected_item.item_data
-		# 1. Vehicle details
-		if VendorTradeVM.is_vehicle_item(idata):
-			# If missing critical pricing/stats, fetch
-			if not idata.has("value") or not idata.has("base_top_speed"):
-				var vid := str(idata.get("vehicle_id", ""))
-				if vid != "" and is_instance_valid(_vendor_service):
-					_vendor_service.request_vehicle(vid)
-		# 2. Mission recipient details
-		var rid := str(idata.get("recipient", ""))
-		if rid != "" and not _vendor_id_to_name.has(rid):
-			if is_instance_valid(_vendor_service):
-				_vendor_service.request_vendor_preview(rid)
-	# ------------------------
-
-	if selected_item:
-		var stock_qty = selected_item.get("total_quantity", -1)
-		if stock_qty < 0 and selected_item.has("item_data") and selected_item.item_data.has("quantity"):
-			stock_qty = int(selected_item.item_data.get("quantity", 1))
-		if selected_item.has("item_data") and selected_item.item_data.get("is_raw_resource", false):
-			var idata = selected_item.item_data
-			if perf_log_enabled:
-				print("DEBUG: selected_item is raw resource, idata:", idata)
-			if idata.get("fuel",0) > 0: stock_qty = int(idata.get("fuel"))
-			elif idata.get("water",0) > 0: stock_qty = int(idata.get("water"))
-			elif idata.get("food",0) > 0: stock_qty = int(idata.get("food"))
-			if perf_log_enabled:
-				print("DEBUG: raw resource stock_qty chosen=", stock_qty)
-		if perf_log_enabled:
-			print("DEBUG: stock_qty for selected_item:", stock_qty)
-		if stock_qty <= 0:
-			stock_qty = 1
-		quantity_spinbox.max_value = max(1, stock_qty)
-		if perf_log_enabled:
-			print("DEBUG: quantity_spinbox.max_value set to:", quantity_spinbox.max_value)
-		if not is_same_selection:
-			quantity_spinbox.value = 1
-		else:
-			quantity_spinbox.value = clampi(int(quantity_spinbox.value), 1, int(quantity_spinbox.max_value))
-		if perf_log_enabled:
-			print("DEBUG: quantity_spinbox.value set to:", quantity_spinbox.value)
-
-		_update_inspector()
-		_update_comparison()
-
-		var item_data_source_debug = selected_item.get("item_data", {})
-
-		# --- START: Reduced logging to prevent output overflow ---
-		var item_name_for_log_debug = item_data_source_debug.get("name", "<no_name>")
-		var item_id_for_log_debug = item_data_source_debug.get("cargo_id", item_data_source_debug.get("vehicle_id", "<no_id>"))
-		if perf_log_enabled:
-			print("DEBUG: _handle_new_item_selection - item_data_source (original): name='%s', id='%s'" % [item_name_for_log_debug, item_id_for_log_debug])
-		# --- END: Reduced logging ---
-		
-		_update_transaction_panel()
-		_update_install_button_state()
-		# Fire backend compatibility checks for this item against all convoy vehicles (to align with Mechanics)
-		if selected_item and selected_item.has("item_data") and convoy_data and convoy_data.has("vehicle_details_list"):
-			var idata = selected_item.item_data
-			var uid := str(idata.get("cargo_id", idata.get("part_id", "")))
-			# Only request compatibility for items that look like vehicle parts.
-			if uid != "" and _looks_like_part(idata):
-				for v in convoy_data.vehicle_details_list:
-					var vid := str(v.get("vehicle_id", ""))
-					if vid != "" and is_instance_valid(_mechanics_service) and _mechanics_service.has_method("check_part_compatibility"):
-						var key: String = VendorTradeVM.compat_key(vid, uid)
-						if not _compat_cache.has(key):
-							_mechanics_service.check_part_compatibility(vid, uid)
-		if is_instance_valid(action_button): action_button.disabled = false
-		if is_instance_valid(max_button): max_button.disabled = false
-	else:
-		_clear_inspector()
-		if is_instance_valid(action_button): action_button.disabled = true
-		if is_instance_valid(max_button): max_button.disabled = true
-		_update_install_button_state()
+	VendorPanelSelectionController.handle_new_item_selection(self, p_selected_item)
 
 func _on_max_button_pressed() -> void:
-	if not selected_item:
-		return
-
-	if current_mode == "sell":
-		var sel_qty = selected_item.get("total_quantity", 1)
-		if selected_item.has("item_data") and selected_item.item_data.get("is_raw_resource", false):
-			var idata = selected_item.item_data
-			if idata.get("fuel",0) > 0: sel_qty = int(idata.get("fuel"))
-			elif idata.get("water",0) > 0: sel_qty = int(idata.get("water"))
-			elif idata.get("food",0) > 0: sel_qty = int(idata.get("food"))
-		quantity_spinbox.value = sel_qty
-	elif current_mode == "buy":
-		# For buying, the max is limited by: vendor stock, money, remaining weight, remaining volume.
-		var item_data_source: Dictionary = selected_item.get("item_data", {})
-		var vendor_stock: int = int(selected_item.get("total_quantity", 0))
-		if item_data_source.get("is_raw_resource", false):
-			if item_data_source.get("fuel",0) > 0:
-				vendor_stock = int(item_data_source.get("fuel"))
-			elif item_data_source.get("water",0) > 0:
-				vendor_stock = int(item_data_source.get("water"))
-			elif item_data_source.get("food",0) > 0:
-				vendor_stock = int(item_data_source.get("food"))
-
-		# Money constraint
-		var is_vehicle: bool = VendorTradeVM.is_vehicle_item(item_data_source)
-		var unit_price: float = VendorTradeVM.vehicle_price(item_data_source) if is_vehicle else VendorTradeVM.contextual_unit_price(item_data_source, str(current_mode))
-		var afford_limit: int = 99999999
-		if unit_price > 0.0:
-			var money: int = 0
-			var have_money := false
-			# Prefer authoritative user money from GameStore, fallback to convoy money.
-			if is_instance_valid(_store) and _store.has_method("get_user"):
-				var ud: Dictionary = _store.get_user()
-				if ud.has("money") and (ud.get("money") is int or ud.get("money") is float):
-					money = int(ud.get("money"))
-					have_money = true
-			# If user money wasn't available (or GDM missing), try convoy money
-			if not have_money and convoy_data and convoy_data.has("money") and (convoy_data.get("money") is int or convoy_data.get("money") is float):
-				money = int(convoy_data.get("money"))
-				have_money = true
-			afford_limit = floori(money / unit_price) if unit_price > 0.0 and have_money else 99999999
-
-		# Capacity constraints (skip for vehicles)
-		var weight_limit: int = 99999999
-		var volume_limit: int = 99999999
-		if not is_vehicle:
-			# Compute per-unit weight/volume from explicit unit_* or derived from totals.
-			var unit_weight := 0.0
-			if item_data_source.has("unit_weight"):
-				unit_weight = float(item_data_source.get("unit_weight", 0.0))
-			elif item_data_source.has("weight") and item_data_source.has("quantity") and float(item_data_source.get("quantity", 0.0)) > 0.0:
-				unit_weight = float(item_data_source.get("weight", 0.0)) / float(item_data_source.get("quantity", 1.0))
-			var unit_volume := 0.0
-			if item_data_source.has("unit_volume"):
-				unit_volume = float(item_data_source.get("unit_volume", 0.0))
-			elif item_data_source.has("volume") and item_data_source.has("quantity") and float(item_data_source.get("quantity", 0.0)) > 0.0:
-				unit_volume = float(item_data_source.get("volume", 0.0)) / float(item_data_source.get("quantity", 1.0))
-			# Remaining capacities
-			var remaining_weight: float = max(0.0, _convoy_total_weight - _convoy_used_weight)
-			var remaining_volume: float = max(0.0, _convoy_total_volume - _convoy_used_volume)
-			if unit_weight > 0.0 and _convoy_total_weight > 0.0:
-				weight_limit = int(floor(remaining_weight / unit_weight))
-			if unit_volume > 0.0 and _convoy_total_volume > 0.0:
-				volume_limit = int(floor(remaining_volume / unit_volume))
-
-		var max_quantity = vendor_stock
-		max_quantity = min(max_quantity, afford_limit)
-		max_quantity = min(max_quantity, weight_limit)
-		max_quantity = min(max_quantity, volume_limit)
-		max_quantity = max(1, max_quantity)
-		quantity_spinbox.value = max_quantity
+	VendorPanelTransactionController.on_max_button_pressed(self)
 
 func _on_action_button_pressed() -> void:
-	if _transaction_in_progress:
-		return
-	if not selected_item:
-		return
-	var quantity = int(quantity_spinbox.value)
-	if quantity <= 0:
-		return
-
-	var item_data_source = selected_item.get("item_data")
-	if not item_data_source:
-		return
-
-	var vendor_id = vendor_data.get("vendor_id", "")
-	var convoy_id = convoy_data.get("convoy_id", "")
-	if vendor_id == "" or convoy_id == "":
-		_on_api_transaction_error("Missing vendor/convoy context")
-		return
-
-	# Perf baseline for transaction timeline
-	if perf_log_enabled:
-		_txn_t0_ms = Time.get_ticks_msec()
-		var item_name := str(item_data_source.get("name", "?"))
-		print("[VendorPanel][Perf] click '%s' qty=%d t0=%d" % [item_name, quantity, _txn_t0_ms])
-
-	# Compute deltas for optimistic projection
-	var is_vehicle: bool = VendorTradeVM.is_vehicle_item(item_data_source)
-	var unit_price: float = VendorTradeVM.vehicle_price(item_data_source) if is_vehicle else VendorTradeVM.contextual_unit_price(item_data_source, str(current_mode))
-	var total_price: float = unit_price * float(quantity)
-	var unit_weight := 0.0
-	if item_data_source.has("unit_weight"):
-		unit_weight = float(item_data_source.get("unit_weight", 0.0))
-	elif item_data_source.has("weight") and item_data_source.has("quantity") and float(item_data_source.get("quantity", 0.0)) > 0.0:
-		unit_weight = float(item_data_source.get("weight", 0.0)) / float(item_data_source.get("quantity", 1.0))
-	var unit_volume := 0.0
-	if item_data_source.has("unit_volume"):
-		unit_volume = float(item_data_source.get("unit_volume", 0.0))
-	elif item_data_source.has("volume") and item_data_source.has("quantity") and float(item_data_source.get("quantity", 0.0)) > 0.0:
-		unit_volume = float(item_data_source.get("volume", 0.0)) / float(item_data_source.get("quantity", 1.0))
-	var w_delta: float = unit_weight * float(quantity)
-	var v_delta: float = unit_volume * float(quantity)
-
-	_pending_tx.mode = current_mode
-	_pending_tx.item = item_data_source.duplicate(true)
-	_pending_tx.quantity = quantity
-	_pending_tx.money_delta = -total_price if current_mode == "buy" else total_price
-	_pending_tx.weight_delta = w_delta if current_mode == "buy" else -w_delta
-	_pending_tx.volume_delta = v_delta if current_mode == "buy" else -v_delta
-
-	# Apply optimistic capacity/money projection without triggering an immediate data refresh.
-	# We will wait for the authoritative API result signals to perform a debounced refresh.
-	_transaction_in_progress = true
-	# Money projection (if label visible)
-	if is_instance_valid(convoy_money_label) and convoy_money_label.visible and convoy_data.has("money"):
-		var projected_money: float = float(convoy_data.get("money", 0.0)) + _pending_tx.money_delta
-		convoy_money_label.text = NumberFormat.format_money(projected_money, "")
-	# Capacity bars projection
-	_refresh_capacity_bars(_pending_tx.volume_delta, _pending_tx.weight_delta)
-
-	# Dispatch API via transport (Phase C: no GDM dependency)
-	if current_mode == "buy":
-		_dispatch_buy(vendor_id, convoy_id, item_data_source, quantity)
-		emit_signal("item_purchased", item_data_source, quantity, total_price)
-	else:
-		var remaining = quantity
-		if selected_item.has("items") and selected_item.items is Array and not selected_item.items.is_empty():
-			for cargo_item in selected_item.items:
-				if remaining <= 0:
-					break
-				var available = int(cargo_item.get("quantity", 0))
-				if available <= 0:
-					continue
-				var to_sell = min(available, remaining)
-				_dispatch_sell(vendor_id, convoy_id, cargo_item, to_sell)
-				remaining -= to_sell
-		else:
-			_dispatch_sell(vendor_id, convoy_id, item_data_source, quantity)
-		var sell_unit_price = unit_price / 2.0
-		emit_signal("item_sold", item_data_source, quantity, sell_unit_price * quantity)
-
-func _dispatch_buy(vendor_id: String, convoy_id: String, item_data_source: Dictionary, quantity: int) -> void:
-	if not is_instance_valid(_vendor_service):
-		return
-	if VendorTradeVM.is_vehicle_item(item_data_source):
-		var vehicle_id := str(item_data_source.get("vehicle_id", ""))
-		if vehicle_id != "" and _vendor_service.has_method("buy_vehicle"):
-			_vendor_service.buy_vehicle(vendor_id, convoy_id, vehicle_id)
-			_request_authoritative_refresh(convoy_id, vendor_id)
-		return
-	if bool(item_data_source.get("is_raw_resource", false)):
-		var res_type := ""
-		if float(item_data_source.get("fuel", 0)) > 0: res_type = "fuel"
-		elif float(item_data_source.get("water", 0)) > 0: res_type = "water"
-		elif float(item_data_source.get("food", 0)) > 0: res_type = "food"
-		if res_type != "" and _vendor_service.has_method("buy_resource"):
-			_vendor_service.buy_resource(vendor_id, convoy_id, res_type, float(quantity))
-			_request_authoritative_refresh(convoy_id, vendor_id)
-		return
-	var cargo_id := str(item_data_source.get("cargo_id", ""))
-	if cargo_id != "" and _vendor_service.has_method("buy_cargo"):
-		_vendor_service.buy_cargo(vendor_id, convoy_id, cargo_id, int(quantity))
-		_request_authoritative_refresh(convoy_id, vendor_id)
-
-func _dispatch_sell(vendor_id: String, convoy_id: String, item_data_source: Dictionary, quantity: int) -> void:
-	if not is_instance_valid(_vendor_service):
-		return
-	if VendorTradeVM.is_vehicle_item(item_data_source):
-		var vehicle_id := str(item_data_source.get("vehicle_id", ""))
-		if vehicle_id != "" and _vendor_service.has_method("sell_vehicle"):
-			_vendor_service.sell_vehicle(vendor_id, convoy_id, vehicle_id)
-			_request_authoritative_refresh(convoy_id, vendor_id)
-		return
-	if bool(item_data_source.get("is_raw_resource", false)):
-		var res_type := ""
-		if float(item_data_source.get("fuel", 0)) > 0: res_type = "fuel"
-		elif float(item_data_source.get("water", 0)) > 0: res_type = "water"
-		elif float(item_data_source.get("food", 0)) > 0: res_type = "food"
-		if res_type != "" and _vendor_service.has_method("sell_resource"):
-			_vendor_service.sell_resource(vendor_id, convoy_id, res_type, float(quantity))
-			_request_authoritative_refresh(convoy_id, vendor_id)
-		return
-	var cargo_id := str(item_data_source.get("cargo_id", ""))
-	if cargo_id != "" and _vendor_service.has_method("sell_cargo"):
-		_vendor_service.sell_cargo(vendor_id, convoy_id, cargo_id, int(quantity))
-		_request_authoritative_refresh(convoy_id, vendor_id)
+	VendorPanelTransactionController.on_action_button_pressed(self)
 
 func _on_quantity_changed(_value: float) -> void:
 	_update_transaction_panel()
@@ -1668,194 +631,27 @@ func _update_inspector() -> void:
 
 	# If the selected item is a vehicle, use a dedicated inspector update function and skip the generic one.
 	if VendorTradeVM.is_vehicle_item(item_data_source):
-		_update_inspector_for_vehicle(item_data_source)
+		var vehicle_data: Dictionary = item_data_source if item_data_source is Dictionary else {}
+		VendorPanelInspectorController.update_vehicle(self, vehicle_data)
 		# Fitment panel should be updated for all items, including vehicles (to hide it).
 		_update_fitment_panel()
 		return
 
-	if is_instance_valid(item_name_label):
-		item_name_label.text = item_data_source.get("name", "No Name")
-
-	var item_icon = item_data_source.get("icon") if item_data_source.has("icon") else null
-	if is_instance_valid(item_preview):
-		item_preview.texture = item_icon
-		item_preview.visible = item_icon != null
-
-	if is_instance_valid(description_panel):
-		description_panel.visible = true
-
-	# --- Description Handling ---
-	var description_text: String
-	var base_desc_val = item_data_source.get("base_desc")
-	if is_instance_valid(description_toggle_button):
-		description_toggle_button.visible = true
-		description_toggle_button.text = "Description (Click to Expand)"
-	if is_instance_valid(item_description_rich_text):
-		item_description_rich_text.visible = false
-
-	if base_desc_val is String and not base_desc_val.is_empty():
-		description_text = base_desc_val
-	else:
-		var desc_val = item_data_source.get("description")
-		if desc_val is String and not desc_val.is_empty():
-			description_text = desc_val
-		elif desc_val is bool:
-			description_text = str(desc_val)
-		else:
-			description_text = "No description available."
-	if is_instance_valid(item_description_rich_text):
-		item_description_rich_text.bbcode_enabled = true
-		item_description_rich_text.clear()
-		item_description_rich_text.parse_bbcode("[color=#C9D1D9]" + description_text + "[/color]")
-
-	# --- Fitment (slot + compatible vehicles via backend) ---
-	# This is now handled by its own function to allow for targeted updates.
-	_update_fitment_panel()
-
-	var bbcode = ""
-	# Section: Summary
-	bbcode += "[color=gold][b]Summary[/b][/color]\n"
-	var total_quantity_hdr: int = int(selected_item.get("total_quantity", 0))
-	if total_quantity_hdr > 0: bbcode += "[b]Quantity:[/b] %s\n" % _format_number(total_quantity_hdr)
-	# Display destination for mission items in both buy and sell mode. 
-	if selected_item.has("mission_vendor_name") and not str(selected_item.mission_vendor_name).is_empty() and selected_item.mission_vendor_name != "Unknown Vendor":
-		bbcode += "[b]Destination:[/b] %s\n" % selected_item.mission_vendor_name
-
-	# Section: Per Unit
-	bbcode += "\n[color=#DDEAF0][b]Per Unit[/b][/color]\n"
-	var contextual_unit_price = VendorTradeVM.contextual_unit_price(item_data_source, str(current_mode))
-	var price_label_text = "Unit Price"
-	if current_mode == "buy":
-		price_label_text = "Buy Price"
-	elif current_mode == "sell":
-		price_label_text = "Sell Price"
-	bbcode += "- %s: %s\n" % [price_label_text, NumberFormat.format_money(contextual_unit_price)]
-
-	var price_components = VendorTradeVM.item_price_components(item_data_source)
-	if price_components.resource_unit_value > 0.01:
-		bbcode += "  [color=gray](Item: %s + Resources: %s)[/color]\n" % [NumberFormat.format_money(price_components.container_unit_price), NumberFormat.format_money(price_components.resource_unit_value)]
-
-	var unit_weight = item_data_source.get("unit_weight", 0.0)
-	if unit_weight == 0.0 and item_data_source.has("weight") and item_data_source.has("quantity"):
-		var _total_weight_calc = item_data_source.get("weight", 0.0)
-		var _total_quantity_float_w = float(item_data_source.get("quantity", 1.0))
-		if _total_quantity_float_w > 0:
-			unit_weight = _total_weight_calc / _total_quantity_float_w
-	if unit_weight > 0: bbcode += "- Weight: %s\n" % _fmt_float(unit_weight)
-
-	var unit_volume = item_data_source.get("unit_volume", 0.0)
-	if unit_volume == 0.0 and item_data_source.has("volume") and item_data_source.has("quantity"):
-		var _total_volume_calc = item_data_source.get("volume", 0.0)
-		var _total_quantity_float_v = float(item_data_source.get("quantity", 1.0))
-		if _total_quantity_float_v > 0:
-			unit_volume = _total_volume_calc / _total_quantity_float_v
-	if unit_volume > 0: bbcode += "- Volume: %s\n" % _fmt_float(unit_volume)
-
-	var unit_delivery_reward_val = item_data_source.get("unit_delivery_reward")
-	if (unit_delivery_reward_val is float or unit_delivery_reward_val is int) and float(unit_delivery_reward_val) > 0.0:
-		bbcode += "- Delivery Reward: %s\n" % NumberFormat.format_money(float(unit_delivery_reward_val))
-
-	# Section: Total Order
-	bbcode += "\n[color=#DDEAF0][b]Total Order[/b][/color]\n"
-	var total_quantity = selected_item.get("total_quantity", 0)
-	if total_quantity > 0: bbcode += "- Quantity: %s\n" % _format_number(total_quantity)
-	var total_weight = selected_item.get("total_weight", 0.0)
-	if total_weight > 0: bbcode += "- Total Weight: %s\n" % _fmt_float(total_weight)
-	var total_volume = selected_item.get("total_volume", 0.0)
-	if total_volume > 0: bbcode += "- Total Volume: %s\n" % _fmt_float(total_volume)
-	var total_food = selected_item.get("total_food", 0.0)
-	if total_food > 0: bbcode += "- Food: %s\n" % _fmt_float(total_food)
-	var total_water = selected_item.get("total_water", 0.0)
-	if total_water > 0: bbcode += "- Water: %s\n" % _fmt_float(total_water)
-	var total_fuel = selected_item.get("total_fuel", 0.0)
-	if total_fuel > 0: bbcode += "- Fuel: %s\n" % _fmt_float(total_fuel)
-
-	# Section: Stats
-	if item_data_source.has("stats") and item_data_source.stats is Dictionary and not item_data_source.stats.is_empty():
-		bbcode += "\n[color=#DDEAF0][b]Stats[/b][/color]\n"
-		for stat_name in item_data_source.stats:
-			bbcode += "• %s: %s\n" % [stat_name.capitalize(), str(item_data_source.stats[stat_name])]
-
-	if current_mode == "sell":
-		bbcode += "\n[color=#F7D794][b]Locations[/b][/color]\n"
-		var locations = selected_item.get("locations", {})
-		for vehicle_name in locations:
-			bbcode += "• %s: %d\n" % [vehicle_name, locations[vehicle_name]]
-
-	if perf_log_enabled:
-		print("DEBUG: _update_inspector - Final bbcode for ItemInfoRichText:\n", bbcode)
-
-	if is_instance_valid(item_info_rich_text):
-		item_info_rich_text.bbcode_enabled = true
-		item_info_rich_text.clear()
-		item_info_rich_text.parse_bbcode(bbcode)
-		item_info_rich_text.visible = false
-		# Build segmented info panels for clarity
-		_rebuild_info_sections(item_data_source)
+	VendorPanelInspectorController.update_non_vehicle(
+		selected_item,
+		str(current_mode),
+		item_name_label,
+		item_preview,
+		description_panel,
+		description_toggle_button,
+		item_description_rich_text,
+		item_info_rich_text,
+		fitment_panel,
+		fitment_rich_text,
+		convoy_data,
+		_compat_cache
+	)
 	call_deferred("_log_size_after_update")
-
-func _update_inspector_for_vehicle(vehicle_data: Dictionary) -> void:
-	if is_instance_valid(item_name_label):
-		item_name_label.text = vehicle_data.get("name", "No Name")
-
-	# Vehicles don't have a preview icon, so ensure the preview control is hidden
-	# to prevent it from taking up space.
-	if is_instance_valid(item_preview):
-		item_preview.visible = false
-
-	# --- Description Handling for Vehicles ---
-	if is_instance_valid(description_panel):
-		description_panel.visible = true
-
-	var description_text: String
-	var base_desc_val = vehicle_data.get("base_desc")
-	if is_instance_valid(description_toggle_button):
-		description_toggle_button.visible = true
-		description_toggle_button.text = "Description (Click to Expand)"
-	if is_instance_valid(item_description_rich_text):
-		item_description_rich_text.visible = false # Always start collapsed
-
-	if base_desc_val is String and not base_desc_val.is_empty():
-		description_text = base_desc_val
-	else:
-		var desc_val = vehicle_data.get("description")
-		if desc_val is String and not desc_val.is_empty():
-			description_text = desc_val
-		else:
-			description_text = "No description available."
-
-	if is_instance_valid(item_description_rich_text):
-		item_description_rich_text.text = description_text
-
-	# --- Vehicle Attributes Display ---
-	var bbcode = ""
-	bbcode += "[color=gold][b]Vehicle Specs[/b][/color]\n"
-	
-	var val = vehicle_data.get("value")
-	if val: bbcode += "[b]Value:[/b] %s\n" % NumberFormat.format_money(float(val))
-	
-	var speed = vehicle_data.get("base_top_speed")
-	if speed: bbcode += "[b]Max Speed:[/b] %s km/h\n" % speed
-	
-	var eff = vehicle_data.get("base_fuel_efficiency")
-	if eff: bbcode += "[b]Efficiency:[/b] %s\n" % eff
-	
-	var offroad = vehicle_data.get("base_offroad_capability")
-	if offroad: bbcode += "[b]Offroad:[/b] %s\n" % offroad
-	
-	var w_cap = vehicle_data.get("base_weight_capacity")
-	if w_cap: bbcode += "[b]Weight Cap:[/b] %s\n" % w_cap
-	
-	var v_cap = vehicle_data.get("base_cargo_capacity")
-	if v_cap: bbcode += "[b]Volume Cap:[/b] %s\n" % v_cap
-
-	# Build segmented info panels in the middle column for vehicles
-	if is_instance_valid(item_info_rich_text):
-		item_info_rich_text.bbcode_enabled = true
-		item_info_rich_text.clear()
-		item_info_rich_text.parse_bbcode(bbcode)
-		item_info_rich_text.visible = true
-		_rebuild_info_sections(vehicle_data)
 
 func _update_fitment_panel() -> void:
 	# Per request: remove the plain-text fitment display to avoid duplicates.
@@ -1905,37 +701,7 @@ func _update_transaction_panel() -> void:
 	_update_install_button_state()
 
 func _refresh_capacity_bars(projected_volume_delta: float, projected_weight_delta: float) -> void:
-	if is_instance_valid(convoy_volume_bar):
-		if _convoy_total_volume > 0.0:
-			convoy_volume_bar.visible = true
-			convoy_volume_bar.max_value = _convoy_total_volume
-			var projected_vol = clamp(_convoy_used_volume + projected_volume_delta, 0.0, _convoy_total_volume)
-			convoy_volume_bar.value = projected_vol
-			convoy_volume_bar.tooltip_text = "Volume: %.2f / %.2f" % [projected_vol, _convoy_total_volume]
-			var vol_pct = projected_vol / max(0.00001, _convoy_total_volume)
-			convoy_volume_bar.self_modulate = _bar_color_for_pct(vol_pct)
-		else:
-			convoy_volume_bar.visible = false
-	if is_instance_valid(convoy_weight_bar):
-		if _convoy_total_weight > 0.0:
-			convoy_weight_bar.visible = true
-			convoy_weight_bar.max_value = _convoy_total_weight
-			var projected_wt = clamp(_convoy_used_weight + projected_weight_delta, 0.0, _convoy_total_weight)
-			convoy_weight_bar.value = projected_wt
-			convoy_weight_bar.tooltip_text = "Weight: %.2f / %.2f" % [projected_wt, _convoy_total_weight]
-			var wt_pct = projected_wt / max(0.00001, _convoy_total_weight)
-			convoy_weight_bar.self_modulate = _bar_color_for_pct(wt_pct)
-		else:
-			convoy_weight_bar.visible = false
-
-func _bar_color_for_pct(pct: float) -> Color:
-	# Green <= 70%, Yellow <= 90%, Red > 90%
-	if pct <= 0.7:
-		return Color(0.2, 0.8, 0.2)
-	elif pct <= 0.9:
-		return Color(1.0, 0.8, 0.2)
-	else:
-		return Color(1.0, 0.3, 0.3)
+	VendorPanelConvoyStatsController.refresh_capacity_bars(self, projected_volume_delta, projected_weight_delta)
 
 func _is_positive_number(v: Variant) -> bool:
 	return (v is float or v is int) and float(v) > 0.0
@@ -1948,45 +714,16 @@ func _looks_like_part(item_data_source: Dictionary) -> bool:
  
 
 func _update_install_button_state() -> void:
-	if not is_instance_valid(install_button):
-		return
-	var is_buy_mode := trade_mode_tab_container.current_tab == 0
-	var can_install = VendorTradeVM.can_show_install_button(is_buy_mode, selected_item)
-	install_button.visible = can_install
-	install_button.disabled = not can_install
+	VendorPanelCompatController.update_install_button_state(self)
 
 func _on_install_button_pressed() -> void:
-	if not selected_item or not selected_item.has("item_data"):
-		return
-	var idata: Dictionary = selected_item.item_data
-	var qty := int(quantity_spinbox.value)
-	if qty <= 0:
-		qty = 1
-	var vend_id := str(vendor_data.get("vendor_id", "")) if vendor_data else ""
-	emit_signal("install_requested", idata, qty, vend_id)
+	VendorPanelCompatController.on_install_button_pressed(self)
 
 # --- Compatibility plumbing (align with Mechanics) ---
  
 
 func _on_part_compatibility_ready(payload: Dictionary) -> void:
-	# Cache payload
-	var part_cargo_id := str(payload.get("part_cargo_id", ""))
-	var vehicle_id := str(payload.get("vehicle_id", ""))
-	if part_cargo_id != "" and vehicle_id != "":
-		var key: String = VendorTradeVM.compat_key(vehicle_id, part_cargo_id)
-		_compat_cache[key] = payload
-		# Extract and remember install price for potential future display
-		var price: float = VendorTradeVM.extract_install_price(payload)
-		if price >= 0.0:
-			_install_price_cache[key] = price
-	# If current selection references this part, refresh inspector for updated fitment
-	if selected_item and selected_item.has("item_data"):
-		var idata: Dictionary = selected_item.item_data
-		var uid := str(idata.get("cargo_id", idata.get("part_id", "")))
-		if uid != "" and uid == part_cargo_id:
-			# This was causing a recursive loop.
-			# Only update the part of the UI that depends on this data.
-			_update_fitment_panel()
+	VendorPanelCompatController.on_part_compatibility_ready(self, payload)
 
  
 
@@ -2008,66 +745,10 @@ func _on_part_compatibility_ready(payload: Dictionary) -> void:
  
 
 func _on_api_transaction_result(result: Dictionary) -> void:
-	if perf_log_enabled:
-		print("DEBUG: _on_api_transaction_result called with result: ", result)
-		if _txn_t0_ms >= 0:
-			var now_ms := Time.get_ticks_msec()
-			print("[VendorPanel][Perf] API result +%d ms" % int(now_ms - _txn_t0_ms))
-	# Prefer an immediate refresh for responsiveness.
-	if vendor_data and convoy_data and not _awaiting_panel_data and not _refresh_in_flight:
-		var cid := str(convoy_data.get("convoy_id", ""))
-		var vid := str(vendor_data.get("vendor_id", ""))
-		if not cid.is_empty() and not vid.is_empty():
-			_refresh_in_flight = true
-			_awaiting_panel_data = true
-			_refresh_seq += 1
-			_current_refresh_id = _refresh_seq
-			_refresh_t0_ms = Time.get_ticks_msec()
-			_request_authoritative_refresh(cid, vid)
-			if perf_log_enabled:
-				print("[VendorPanel][Perf] immediate refresh requested cid=", cid, " vid=", vid, " id=", _current_refresh_id)
-	else:
-		# Fallback: if guards prevent immediate request, schedule a short debounced refresh.
-		_pending_refresh = true
-		_schedule_refresh()
+	VendorPanelRefreshController.on_api_transaction_result(self, result)
 
 func _on_api_transaction_error(error_message: String) -> void:
-	# This panel is only interested in errors that happen while it's visible.
-	if not is_visible_in_tree():
-		return
-
-	if perf_log_enabled and _txn_t0_ms >= 0:
-		var now_ms := Time.get_ticks_msec()
-		print("[VendorPanel][Perf] API error +%d ms" % int(now_ms - _txn_t0_ms))
-		_txn_t0_ms = -1
-
-	# Revert optimistic projections
-	if _transaction_in_progress:
-		# Money revert (if label visible)
-		if is_instance_valid(convoy_money_label) and convoy_money_label.visible and convoy_data.has("money"):
-			convoy_money_label.text = NumberFormat.format_money(float(convoy_data.get("money", 0.0)), "")
-		# Capacity bars revert
-		_refresh_capacity_bars(-_pending_tx.volume_delta, -_pending_tx.weight_delta)
-
-	_transaction_in_progress = false
-	if is_instance_valid(action_button):
-		action_button.disabled = false
-	if is_instance_valid(max_button):
-		max_button.disabled = false
-	if show_loading_overlay and is_instance_valid(loading_panel):
-		_hide_loading()
-
-	# Show toast if available
-	var friendly_message := ErrorTranslator.translate(error_message)
-	if not friendly_message.is_empty() and is_instance_valid(toast_notification) and toast_notification.has_method("show_message"):
-		toast_notification.call("show_message", friendly_message)
-
-	# Refresh authoritative data
-	if vendor_data and convoy_data:
-		var cid := str(convoy_data.get("convoy_id", ""))
-		var vid := str(vendor_data.get("vendor_id", ""))
-		if cid != "" and vid != "":
-			_request_authoritative_refresh(cid, vid)
+	VendorPanelRefreshController.on_api_transaction_error(self, error_message)
 
 # Updates the comparison panel (stub, fill in as needed)
 func _update_comparison() -> void:
@@ -2112,25 +793,7 @@ func _recalculate_convoy_cargo_stats() -> Dictionary:
 
 # Looks up the vendor name for a recipient ID (stub, fill in as needed)
 func _get_vendor_name_for_recipient(recipient_id) -> String:
-	var rid := str(recipient_id)
-	if rid != "" and _vendor_id_to_name.has(rid):
-		return str(_vendor_id_to_name[rid])
-	if rid != "" and _vendors_from_settlements_by_id.has(rid):
-		# Cache hit from settlement data
-		var vd = _vendors_from_settlements_by_id[rid]
-		if vd is Dictionary:
-			var nm := str((vd as Dictionary).get("name", ""))
-			if nm != "":
-				_vendor_id_to_name[rid] = nm
-				return nm
-	# Fallback: check if we have it in the raw dictionary but not name cache
-	if rid != "" and _vendors_from_settlements_by_id.has(rid):
-		var vd = _vendors_from_settlements_by_id[rid]
-		if vd is Dictionary:
-			var nm := str((vd as Dictionary).get("name", ""))
-			if nm != "":
-				return nm
-	return "Unknown Vendor"
+	return VendorPanelContextController.get_vendor_name_for_recipient(self, recipient_id)
 
 # Handler for description toggle button (stub, fill in as needed)
 func _on_description_toggle_pressed() -> void:
@@ -2153,72 +816,26 @@ func _hide_loading() -> void:
 
 # Debounced refresh scheduler
 func _schedule_refresh() -> void:
-	# Create a new timer; only the latest one triggers the refresh.
-	var t = VendorSelectionManager.schedule_debounce(get_tree(), REFRESH_DEBOUNCE_S, Callable(self, "_on_refresh_debounce_timeout"))
-	_refresh_timer = t
-	if perf_log_enabled:
-		print("[VendorPanel][Perf] refresh scheduled in %.2fs (seq=%d)" % [REFRESH_DEBOUNCE_S, _refresh_seq + 1])
+	VendorPanelRefreshSchedulerController.schedule_refresh(self)
 
 func _on_refresh_debounce_timeout(t: SceneTreeTimer) -> void:
-	if _refresh_timer == t:
-		_perform_refresh()
+	VendorPanelRefreshSchedulerController.on_refresh_debounce_timeout(self, t)
 
 func _perform_refresh() -> void:
-	if vendor_data == null:
-		return
-	var vid := str(vendor_data.get("vendor_id", ""))
-	if vid == "":
-		return
-	var cid := str((convoy_data if convoy_data is Dictionary else {}).get("convoy_id", _active_convoy_id))
-	if cid == "":
-		cid = _active_convoy_id
-	if cid == "":
-		return
-	# If the user just changed selection very recently, defer the refresh slightly to avoid
-	# interrupting the UI and causing selection flicker. This helps during rapid purchases.
-	if VendorSelectionManager.perform_refresh_guard(_last_selection_change_ms, REFRESH_DEBOUNCE_S, Callable(self, "_on_deferred_refresh_timeout")):
-		return
-	# Disabled blocking overlay during tutorial work; keep UI interactive.
-	_refresh_in_flight = true
-	_awaiting_panel_data = true
-	_refresh_seq += 1
-	_current_refresh_id = _refresh_seq
-	_refresh_t0_ms = Time.get_ticks_msec()
-	if perf_log_enabled:
-		print("[VendorPanel][Perf] refresh started vendor=", vid, " id=", _current_refresh_id)
-	_request_authoritative_refresh(cid, vid)
-	_pending_refresh = false
+	VendorPanelRefreshSchedulerController.perform_refresh(self)
 
 	# Fallback disabled to avoid duplicate payloads; rely on API-result immediate request and settlement signal.
 # Helper to restore selection in a tree after data refresh
 
 # --- Refresh watchdog: ensures we don't stall silently if no payload arrives ---
 func _start_refresh_watchdog(refresh_id: int, timeout_ms: int = 1200) -> void:
-	VendorSelectionManager.start_watchdog(get_tree(), refresh_id, timeout_ms, Callable(self, "_on_refresh_watchdog_timeout"))
+	VendorPanelRefreshSchedulerController.start_refresh_watchdog(self, refresh_id, timeout_ms)
 
 func _on_refresh_watchdog_timeout(rid: int) -> void:
-	# Only act if still awaiting this refresh and no data_ready processed since start
-	var now := Time.get_ticks_msec()
-	var no_payload := (_last_data_ready_ms < _refresh_t0_ms) or (_last_data_ready_ms < 0)
-	if _current_refresh_id == rid and (_refresh_in_flight or _awaiting_panel_data) and no_payload:
-		if _watchdog_retries.has(rid):
-			return
-		_watchdog_retries[rid] = true
-		if perf_log_enabled:
-			print("[VendorPanel][Perf] Watchdog fired for id=", rid, " after ", (now - _refresh_t0_ms), " ms; re-requesting panel payload once.")
-		if self.convoy_data and self.vendor_data:
-			var cid := str(self.convoy_data.get("convoy_id", ""))
-			var vid := str(self.vendor_data.get("vendor_id", ""))
-			if cid != "" and vid != "":
-				_request_authoritative_refresh(cid, vid)
-				_awaiting_panel_data = true
-				if perf_log_enabled:
-					print("[VendorPanel][Perf] Watchdog re-request issued cid=", cid, " vid=", vid, " (id=", rid, ")")
+	VendorPanelRefreshSchedulerController.on_refresh_watchdog_timeout(self, rid)
 
 func _on_deferred_refresh_timeout() -> void:
-	# After short defer, perform the refresh if this panel is still alive.
-	if is_instance_valid(self):
-		_perform_refresh()
+	VendorPanelRefreshSchedulerController.on_deferred_refresh_timeout(self)
 
 func _log_size_after_update():
 	if perf_log_enabled:
@@ -2233,6 +850,9 @@ func _restore_selection(tree: Tree, item_id) -> bool:
 func _matches_restore_key(agg_data: Dictionary, key: String) -> bool:
 	if not agg_data or not agg_data.has("item_data"):
 		return false
+	# Prefer matching the explicit stable key if present
+	if agg_data.has("stable_key") and str(agg_data.get("stable_key", "")) == str(key):
+		return true
 	var idata: Dictionary = agg_data.item_data
 	
 	# Match by unique ID if present
@@ -2256,45 +876,15 @@ func _matches_restore_key(agg_data: Dictionary, key: String) -> bool:
 
 # Expose the primary action button (Buy/Sell) for highlighting
 func get_action_button_node() -> Button:
-	return action_button
+	return VendorPanelTutorialController.get_action_button_node(self)
 
 # Ensure the Buy tab is selected
 func focus_buy_tab() -> void:
-	if is_instance_valid(trade_mode_tab_container):
-		trade_mode_tab_container.current_tab = 0
+	VendorPanelTutorialController.focus_buy_tab(self)
 
 # Find the rect of a vendor item in the tree by display text contains (case-insensitive)
 func get_vendor_item_rect_by_text_contains(substr: String) -> Rect2:
-	if not is_instance_valid(vendor_item_tree):
-		return Rect2()
-	var root := vendor_item_tree.get_root()
-	if root == null:
-		return Rect2()
-	var needle := substr.to_lower()
-	var found: TreeItem = null
-	var q := [root]
-	while not q.is_empty():
-		var it: TreeItem = q.pop_back()
-		if it != null:
-			var txt := str(it.get_text(0))
-			if txt.to_lower().find(needle) != -1:
-				found = it
-				break
-			# enqueue children
-			var child := it.get_first_child()
-			while child != null:
-				q.push_back(child)
-				child = child.get_next()
-	if found == null:
-		return Rect2()
-	# Ensure the item is visible (expand parents) so rect is meaningful
-	var parent := found.get_parent()
-	while parent != null:
-		parent.collapsed = false
-		parent = parent.get_parent()
-	var local_r: Rect2 = vendor_item_tree.get_item_rect(found, 0, false)
-	var tree_global := vendor_item_tree.get_global_rect()
-	return Rect2(tree_global.position + local_r.position, local_r.size)
+	return VendorPanelTutorialController.get_vendor_item_rect_by_text_contains(self, substr)
 
 # --- Segmented Info Panel Helpers ---
  
