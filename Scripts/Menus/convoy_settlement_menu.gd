@@ -271,11 +271,22 @@ func _create_vendor_tab(vendor_data: Dictionary):
 		vendor_panel_instance.install_requested.connect(_on_install_requested)
 
 func _update_ui(convoy: Dictionary) -> void:
-	# Lightweight live refresh: update title and trigger a rebuild.
+	# Smart refresh: only rebuild tabs if we moved to a new tile.
+	var old_data = _convoy_data
 	_convoy_data = convoy.duplicate(true)
+	
 	if is_instance_valid(title_label):
 		title_label.text = String(_convoy_data.get("convoy_name", title_label.text))
-	call_deferred("_display_settlement_info")
+
+	var old_x = int(round(float(old_data.get("x", -9999))))
+	var old_y = int(round(float(old_data.get("y", -9999))))
+	var new_x = int(round(float(_convoy_data.get("x", -9999))))
+	var new_y = int(round(float(_convoy_data.get("y", -9999))))
+
+	if old_x != new_x or old_y != new_y or (is_instance_valid(vendor_tab_container) and vendor_tab_container.get_tab_count() == 0):
+		call_deferred("_display_settlement_info")
+	else:
+		_update_top_up_button()
 
 func _clear_tabs():
 	# Remove all dynamically added vendor tabs, starting from the end.

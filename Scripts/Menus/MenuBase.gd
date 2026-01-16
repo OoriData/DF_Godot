@@ -6,6 +6,7 @@ signal back_requested
 
 var convoy_id: String = ""
 var extra: Variant = null
+var _last_convoy_data: Dictionary = {}
 
 func _ensure_store_subscription() -> void:
 	var store = get_node_or_null("/root/GameStore")
@@ -26,17 +27,21 @@ func initialize_with_data(data_or_id: Variant, extra_arg: Variant = null) -> voi
 		var convoy: Dictionary = data_or_id
 		convoy_id = str(convoy.get("convoy_id", convoy.get("id", "")))
 		if not convoy.is_empty():
+			_last_convoy_data = convoy.duplicate(true)
 			_update_ui(convoy)
 		else:
+			_last_convoy_data = {}
 			reset_view()
 	else:
 		convoy_id = str(data_or_id)
+		_last_convoy_data = {}
 		_refresh_from_store()
 
 func set_convoy_context(id: String, extra_arg: Variant = null) -> void:
 	_ensure_store_subscription()
 	convoy_id = id
 	extra = extra_arg
+	_last_convoy_data = {}
 	_refresh_from_store()
 
 func set_extra(extra_arg: Variant) -> void:
@@ -44,6 +49,7 @@ func set_extra(extra_arg: Variant) -> void:
 
 func refresh_now() -> void:
 	_ensure_store_subscription()
+	_last_convoy_data = {}
 	_refresh_from_store()
 
 func _ready() -> void:
@@ -60,9 +66,11 @@ func _on_convoys_changed(_convoys: Array) -> void:
 	# Only refresh if this menu is visible and has a convoy context.
 	if not is_visible_in_tree() or convoy_id == "":
 		return
+	print("[MenuBase] _on_convoys_changed triggered for: ", name, " (convoy_id: ", convoy_id, ")")
 	_refresh_from_store()
 
 func _refresh_from_store() -> void:
+	print("[MenuBase] _refresh_from_store executing for: ", name)
 	var store = get_node_or_null("/root/GameStore")
 	if store and convoy_id != "":
 		var convoy: Dictionary = {}
@@ -76,8 +84,15 @@ func _refresh_from_store() -> void:
 						convoy = c
 						break
 		if convoy and not convoy.is_empty():
-			_update_ui(convoy)
+			if _has_relevant_changes(_last_convoy_data, convoy):
+				_last_convoy_data = convoy.duplicate(true)
+				print("[MenuBase] Found relevant changes, calling _update_ui for: ", name)
+				_update_ui(convoy)
+			else:
+				print("[MenuBase] No relevant changes, skipping update for: ", name)
 		else:
+			_last_convoy_data = {}
+			print("[MenuBase] Convoy data empty/missing, calling reset_view for: ", name)
 			reset_view()
 
 func _exit_tree() -> void:
@@ -93,3 +108,6 @@ func _update_ui(_convoy: Dictionary) -> void:
 
 func reset_view() -> void:
 	pass
+
+func _has_relevant_changes(old_data: Dictionary, new_data: Dictionary) -> bool:
+	return old_data.hash() != new_data.hash()
