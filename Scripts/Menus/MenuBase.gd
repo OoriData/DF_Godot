@@ -84,6 +84,9 @@ func _refresh_from_store() -> void:
 						convoy = c
 						break
 		if convoy and not convoy.is_empty():
+			var vdl = convoy.get("vehicle_details_list", [])
+			print("[MenuBase] _refresh_from_store: convoy found. ID=", convoy_id, " Keys=", convoy.keys().size(), " VDL size=", vdl.size() if vdl else "null")
+			
 			if _has_relevant_changes(_last_convoy_data, convoy):
 				_last_convoy_data = convoy.duplicate(true)
 				print("[MenuBase] Found relevant changes, calling _update_ui for: ", name)

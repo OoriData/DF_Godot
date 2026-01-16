@@ -460,8 +460,8 @@ func _ready():
 	if is_instance_valid(_api) and _api.has_signal("part_compatibility_checked") and not _api.part_compatibility_checked.is_connected(_on_part_compatibility_ready):
 		_api.part_compatibility_checked.connect(_on_part_compatibility_ready)
 	# Keep the menu in sync with authoritative convoy snapshots.
-	if is_instance_valid(_store) and _store.has_signal("convoys_changed") and not _store.convoys_changed.is_connected(_on_store_convoys_changed):
-		_store.convoys_changed.connect(_on_store_convoys_changed)
+	# if is_instance_valid(_store) and _store.has_signal("convoys_changed") and not _store.convoys_changed.is_connected(_on_store_convoys_changed):
+	# 	_store.convoys_changed.connect(_on_store_convoys_changed)
 	# Optional point updates (vendor add can emit convoy dict).
 	if is_instance_valid(_hub) and _hub.has_signal("convoy_updated") and not _hub.convoy_updated.is_connected(_on_hub_convoy_updated):
 		_hub.convoy_updated.connect(_on_hub_convoy_updated)
@@ -573,6 +573,14 @@ func _update_ui(convoy: Dictionary) -> void:
 	if not (convoy is Dictionary) or convoy.is_empty():
 		reset_view()
 		return
+	
+	# Guard against shallow updates wiping out our vehicle list
+	var new_vehicles = convoy.get("vehicle_details_list", convoy.get("vehicles", []))
+	if new_vehicles.is_empty() and not _vehicles.is_empty():
+		print("[MechanicsMenu] Ignoring update: new payload has no vehicles, but we have ", _vehicles.size())
+		return
+
+	print("[MechanicsMenu] _update_ui processing. VDL size=", new_vehicles.size())
 	_convoy = convoy.duplicate(true)
 	convoy_id = String(_convoy.get("convoy_id", _convoy.get("id", "")))
 	if is_instance_valid(title_label):
@@ -2293,3 +2301,12 @@ func _on_mechanic_vendor_slot_availability(vehicle_id: String, slot_availability
 			if not bool(_slot_vendor_availability.get(s, false)):
 				_slot_vendor_availability[s] = true
 				_restyle_swap_buttons_for_slot(s)
+
+func _has_relevant_changes(old_data: Dictionary, new_data: Dictionary) -> bool:
+	var o = old_data.duplicate()
+	var n = new_data.duplicate()
+	# Ignore position and resource changes to prevent constant refreshing while moving
+	for k in ["x", "y", "fuel", "water", "food", "travel_progress"]:
+		o.erase(k)
+		n.erase(k)
+	return o.hash() != n.hash()
