@@ -1099,7 +1099,9 @@ func _populate_by_type():
 					"mission":
 						_aggregate_cargo_item(aggregated_missions, raw_item, vehicle_name)
 					"part":
-						_aggregate_cargo_item(aggregated_parts, raw_item, vehicle_name)
+						# Only aggregate if uninstalled (vehicle_id == null)
+						if not raw_item.has("vehicle_id") or raw_item["vehicle_id"] == null:
+							_aggregate_cargo_item(aggregated_parts, raw_item, vehicle_name)
 					"resource":
 						_aggregate_cargo_item(aggregated_resources, raw_item, vehicle_name)
 					_:
@@ -1151,6 +1153,9 @@ func _populate_by_type():
 			# Separately process the 'parts' list, if it exists, which is consistent with `vendor_trade_panel`.
 			for item in vehicle_data.get("parts", []):
 				if not (item is Dictionary and _is_displayable_cargo(item)):
+					continue
+				# Only aggregate if uninstalled (vehicle_id == null)
+				if item.has("vehicle_id") and item["vehicle_id"] != null:
 					continue
 				any_cargo_found_in_convoy = true
 				# Enrich part data with modifiers/stats so they surface in UI
@@ -1296,6 +1301,10 @@ func _populate_by_vehicle():
 						if CARGO_MENU_DEBUG:
 							print("[CargoClassify][ByVehicle][Typed][Rebucket] OTHER -> MISSION:", JSON.stringify(raw_item.get("name", raw_item.get("base_name", ""))))
 
+				# Only aggregate if uninstalled (vehicle_id == null) for parts
+				if String(typed.category) == "part":
+					if raw_item.has("vehicle_id") and raw_item["vehicle_id"] != null:
+						continue
 				_aggregate_cargo_item(vehicle_aggregated_all_cargo, raw_item)
 				# If still 'other', log it for diagnosis
 				if CARGO_MENU_DEBUG and effective_category == "other":
@@ -1325,6 +1334,9 @@ func _populate_by_vehicle():
 			
 			for item in vehicle_data.get("parts", []):
 				if not (item is Dictionary and _is_displayable_cargo(item)): continue
+				# Only aggregate if uninstalled (vehicle_id == null)
+				if item.has("vehicle_id") and item["vehicle_id"] != null:
+					continue
 				has_cargo_in_this_vehicle = true
 				any_cargo_found_in_convoy = true
 				var part_copy: Dictionary = item.duplicate(true)

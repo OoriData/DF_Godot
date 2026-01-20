@@ -305,12 +305,21 @@ func _on_back_button_pressed():
 func initialize_with_data(data_or_id: Variant, extra_arg: Variant = null) -> void:
 	if data_or_id is Dictionary:
 		convoy_id = String((data_or_id as Dictionary).get("convoy_id", (data_or_id as Dictionary).get("id", "")))
-		convoy_data_received = (data_or_id as Dictionary).duplicate()
 	else:
 		convoy_id = String(data_or_id)
-		convoy_data_received = {}
+	# Always resolve the latest snapshot from GameStore by id
+	var resolved_convoy: Dictionary = {}
+	if is_instance_valid(_store) and _store.has_method("get_convoys"):
+		var convoys: Array = _store.get_convoys()
+		for c in convoys:
+			if c is Dictionary and String(c.get("convoy_id", c.get("id", ""))) == convoy_id:
+				resolved_convoy = c
+				break
+	if resolved_convoy.is_empty() and data_or_id is Dictionary:
+		resolved_convoy = (data_or_id as Dictionary).duplicate()
+	convoy_data_received = resolved_convoy.duplicate()
 	# Delegate initial draw to MenuBase-driven update
-	super.initialize_with_data(data_or_id, extra_arg)
+	super.initialize_with_data(convoy_data_received, extra_arg)
 	# Mechanics warm-up and vendor refresh can still be triggered once at open
 	if convoy_data_received is Dictionary and not convoy_data_received.is_empty():
 		if is_instance_valid(_mechanics_service):
