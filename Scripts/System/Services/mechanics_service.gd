@@ -19,6 +19,13 @@ var _preview_active_convoy_id: String = ""
 var _preview_cargo_id_to_slot: Dictionary = {} # cargo_id -> slot_name
 var _cargo_detail_cache: Dictionary = {} # cargo_id -> cargo Dictionary
 var _cargo_enrichment_pending: Dictionary = {} # cargo_id -> true while request in-flight
+var _vendor_cache: Dictionary = {} # vendor_id -> vendor Dictionary (last payload)
+
+func get_cached_vendor(vendor_id: String) -> Dictionary:
+	if vendor_id == "":
+		return {}
+	var v: Variant = _vendor_cache.get(vendor_id, {})
+	return v if v is Dictionary else {}
 
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
@@ -138,12 +145,33 @@ func _ingest_vendor_inventory(vendor: Variant) -> void:
 	if not (vendor is Dictionary):
 		return
 	var vd: Dictionary = vendor
+	# Unwrap common envelopes
+	if vd.has("vendor") and vd.get("vendor") is Dictionary:
+		vd = vd.get("vendor")
+	elif vd.has("data") and vd.get("data") is Dictionary:
+		vd = vd.get("data")
+	# Robust vendor id extraction
+	var vendor_id := ""
+	var id_keys := ["vendor_id", "vendorId", "vendorID", "vend_id", "vendor_uuid", "uuid", "id", "_id"]
+	for k in id_keys:
+		if vd.has(k) and vd.get(k) != null:
+			vendor_id = String(vd.get(k, ""))
+			if vendor_id != "":
+				break
+	if vendor_id != "":
+		_vendor_cache[vendor_id] = vd
 	# Vendor payloads can use different keys.
 	var cargo_inv: Array = []
-	if vd.has("cargo_inventory") and (vd.get("cargo_inventory") is Array):
-		cargo_inv = vd.get("cargo_inventory")
-	elif vd.has("inventory") and (vd.get("inventory") is Array):
-		cargo_inv = vd.get("inventory")
+	var inv_keys := ["cargo_inventory", "cargoInventory", "cargo_inventory_list", "cargoInventoryList", "inventory", "inv", "cargo", "items", "goods", "stock"]
+	for k in inv_keys:
+		if vd.has(k):
+			var inv: Variant = vd.get(k)
+			if inv is Array:
+				cargo_inv = inv
+				break
+			if inv is Dictionary and (inv as Dictionary).has("items") and (inv as Dictionary).get("items") is Array:
+				cargo_inv = (inv as Dictionary).get("items")
+				break
 	if cargo_inv.is_empty():
 		return
 	for item in cargo_inv:
@@ -264,7 +292,7 @@ func check_part_compatibility(vehicle_id: String, cargo_id: String) -> void:
 
 # Phase 4: Domain-level APICalls completion handlers removed; immediate refreshes are issued after operations.
 
-func _on_compatibility_checked(payload: Dictionary) -> void:
+func _on_compatibility_checked(_payload: Dictionary) -> void:
 	# Compatibility is consumed directly from APICalls.part_compatibility_checked in newer menus.
 	pass
 

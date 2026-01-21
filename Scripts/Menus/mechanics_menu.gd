@@ -31,6 +31,26 @@ var _cargo_to_slot: Dictionary = {} # cargo_id -> slot_name for vendor candidate
 var _all_vendor_candidates_cache: Array = [] # cached vendor part candidates at current settlement
 var _install_price_cache: Dictionary = {} # key: vehicle_id||part_uid -> float
 
+# One-time debug signature to avoid spamming vendor scan diagnostics
+var _vendor_debug_last_sig: String = ""
+var _vendor_debug_calls: int = 0
+
+func _looks_like_uuid(s: String) -> bool:
+	# Very small heuristic to recognize UUIDs without regex.
+	return s.length() == 36 and s.count("-") == 4
+
+func _extract_settlement_vendors(settlement: Dictionary) -> Array:
+	# Settlement snapshots can store vendors under different keys.
+	var keys := ["vendors", "vendor_ids", "vendorIds", "vendors_ids", "vendor_list", "vendorList"]
+	for k in keys:
+		if settlement.has(k):
+			var v: Variant = settlement.get(k)
+			if v is Array:
+				return v
+			if v is Dictionary and (v as Dictionary).has("vendors") and (v as Dictionary).get("vendors") is Array:
+				return (v as Dictionary).get("vendors")
+	return []
+
 # Developer toggle: when true, emit detailed cost audit lines to the console
 var _cost_audit_enabled: bool = true
 var _show_cost_breakdown: bool = false
@@ -46,6 +66,7 @@ var _last_refresh_convoy_id: String = ""
 @onready var _api: Node = get_node_or_null("/root/APICalls")
 @onready var _mechanics_service: Node = get_node_or_null("/root/MechanicsService")
 @onready var _convoy_service: Node = get_node_or_null("/root/ConvoyService")
+@onready var _vendor_service: Node = get_node_or_null("/root/VendorService")
 
 func set_embedded_mode(val: bool) -> void:
 	embedded_mode = val
@@ -79,20 +100,18 @@ func _apply_embedded_mode_visibility() -> void:
 			main_vbox.offset_bottom = -10
 
 func _get_slot_from_item(item: Dictionary) -> String:
-	# Accept alternative slot key names; backend may vary
-	var keys := ["slot", "slot_name", "slotType"]
-	for k in keys:
-		if item.has(k) and item.get(k) != null:
-			var v = item.get(k)
-			if typeof(v) == TYPE_STRING and String(v) != "":
-				return String(v)
+	# Parts are identified by having a concrete `slot` field.
+	if item.has("slot") and item.get("slot") != null:
+		var v = item.get("slot")
+		if typeof(v) == TYPE_STRING and String(v) != "":
+			return String(v)
 	return ""
 
-# Resolve a slot for a cargo item using multiple sources: direct, nested parts[0], then simple heuristics
+# Resolve a slot for a cargo item using only schema fields: direct `.slot` or nested `parts[0].slot`.
 func _detect_slot_for_item(item: Dictionary) -> String:
 	if not (item is Dictionary):
 		return ""
-	# 1) Direct keys on item
+	# 1) Direct slot on item
 	var s := _get_slot_from_item(item)
 	if s != "":
 		return s
@@ -103,13 +122,45 @@ func _detect_slot_for_item(item: Dictionary) -> String:
 			var s2 := _get_slot_from_item(parts_arr[0])
 			if s2 != "":
 				return s2
-	# 3) Basic local heuristic for common items like tires/wheels
-	var nm := String(item.get("name", "")).to_lower()
-	if nm.find("tire") != -1 or nm.find("tyre") != -1:
-		return "tires"
-	if nm.find("wheel") != -1:
-		return "wheels"
 	return ""
+
+func _unwrap_vendor_payload(v: Dictionary) -> Dictionary:
+	# Vendor payloads sometimes come wrapped (e.g. {vendor: {...}} or {data: {...}})
+	if v.has("vendor") and v.get("vendor") is Dictionary:
+		return v.get("vendor")
+	if v.has("data") and v.get("data") is Dictionary:
+		return v.get("data")
+	return v
+
+func _extract_vendor_id(v: Dictionary) -> String:
+	var id_keys := ["vendor_id", "vendorId", "vendorID", "vend_id", "vendor_uuid", "uuid", "id", "_id"]
+	for k in id_keys:
+		if v.has(k) and v.get(k) != null:
+			var s := String(v.get(k, ""))
+			if s != "":
+				return s
+	# Fallback: scan values for a UUID-like string.
+	for val in v.values():
+		if val is String and _looks_like_uuid(String(val)):
+			return String(val)
+	return ""
+
+func _extract_vendor_inventory(v: Dictionary) -> Array:
+	# Vendor inventories may be under different keys.
+	var keys := [
+		"cargo_inventory", "cargoInventory", "cargo_inventory_list", "cargoInventoryList",
+		"inventory", "inv", "cargo", "items", "goods", "stock"
+	]
+	for k in keys:
+		if v.has(k):
+			var inv: Variant = v.get(k)
+			if inv is Array:
+				return inv
+			if inv is Dictionary:
+				# Some payloads nest list under inv.items
+				if (inv as Dictionary).has("items") and (inv as Dictionary).get("items") is Array:
+					return (inv as Dictionary).get("items")
+	return []
 
 # Given a cargo item, return the dictionary to display in the chooser (prefers nested part or enriched copy),
 # always carrying cargo_id.
@@ -465,6 +516,10 @@ func _ready():
 	# Optional point updates (vendor add can emit convoy dict).
 	if is_instance_valid(_hub) and _hub.has_signal("convoy_updated") and not _hub.convoy_updated.is_connected(_on_hub_convoy_updated):
 		_hub.convoy_updated.connect(_on_hub_convoy_updated)
+	# Vendor inventories can arrive async (settlement snapshot may include only vendor ids).
+	# When vendor payloads arrive, refresh vendor candidates and re-run compat checks.
+	if is_instance_valid(_hub) and _hub.has_signal("vendor_updated") and not _hub.vendor_updated.is_connected(_on_hub_vendor_updated):
+		_hub.vendor_updated.connect(_on_hub_vendor_updated)
 
 	# Add an on-screen developer toggle for cost breakdowns
 	var main_vb: VBoxContainer = null
@@ -590,6 +645,8 @@ func _update_ui(convoy: Dictionary) -> void:
 	# Support both detailed and shallow convoy payloads.
 	_vehicles = _convoy.get("vehicle_details_list", _convoy.get("vehicles", []))
 	_all_vendor_candidates_cache.clear()
+	_vendor_debug_last_sig = ""
+	_vendor_debug_calls = 0
 	_populate_vehicle_dropdown()
 
 	if _vehicles.is_empty():
@@ -618,6 +675,8 @@ func reset_view() -> void:
 	_cargo_to_slot.clear()
 	_all_vendor_candidates_cache.clear()
 	_install_price_cache.clear()
+	_vendor_debug_last_sig = ""
+	_vendor_debug_calls = 0
 	_last_refresh_convoy_id = ""
 	_close_open_swap_dialog()
 	if is_instance_valid(title_label):
@@ -653,6 +712,8 @@ func _exit_tree() -> void:
 		_hub.convoy_updated.disconnect(_on_hub_convoy_updated)
 	if is_instance_valid(_api) and _api.has_signal("part_compatibility_checked") and _api.part_compatibility_checked.is_connected(_on_part_compatibility_ready):
 		_api.part_compatibility_checked.disconnect(_on_part_compatibility_ready)
+	if is_instance_valid(_hub) and _hub.has_signal("vendor_updated") and _hub.vendor_updated.is_connected(_on_hub_vendor_updated):
+		_hub.vendor_updated.disconnect(_on_hub_vendor_updated)
 
 # Allow parent to set the selected vehicle index directly (to keep tabs in sync)
 func set_selected_vehicle_index(idx: int) -> void:
@@ -702,6 +763,12 @@ func _on_hub_convoy_updated(updated_convoy: Dictionary) -> void:
 	var target_id := String(_convoy.get("convoy_id", ""))
 	if target_id == "" or String(updated_convoy.get("convoy_id", "")) != target_id:
 		return
+	# If the swap chooser is open, avoid rebuilding UI (it would close the dialog and/or drop placeholder slot rows).
+	# We'll pick up refreshed data on the next explicit selection change or after the dialog closes.
+	if not _current_swap_ctx.is_empty():
+		_convoy = updated_convoy.duplicate(true)
+		_vehicles = _convoy.get("vehicle_details_list", [])
+		return
 	_convoy = updated_convoy.duplicate(true)
 	_vehicles = _convoy.get("vehicle_details_list", [])
 	_populate_vehicle_dropdown()
@@ -709,6 +776,19 @@ func _on_hub_convoy_updated(updated_convoy: Dictionary) -> void:
 		var idx: int = int(clamp(_selected_vehicle_idx, 0, _vehicles.size() - 1))
 		_on_vehicle_selected(idx if _selected_vehicle_idx >= 0 else 0)
 	_refresh_apply_state()
+
+func _on_hub_vendor_updated(_vendor: Dictionary) -> void:
+	# Vendor payloads contain inventories; settlement snapshots may contain only ids.
+	# When vendor data arrives, invalidate vendor caches and rerun highlights.
+	var v: Dictionary = _unwrap_vendor_payload(_vendor)
+	var vid := _extract_vendor_id(v)
+	var inv := _extract_vendor_inventory(v)
+	# This confirms the vendor pipeline is actually delivering payloads to this menu.
+	print("[PartCompatUI] vendor_updated received vendor_id=", vid, " inv_count=", inv.size(), " keys=", v.keys())
+	_all_vendor_candidates_cache.clear()
+	if _selected_vehicle_idx >= 0 and _selected_vehicle_idx < _vehicles.size():
+		_refresh_slot_vendor_availability()
+		_start_vendor_compat_checks_for_vehicle(_vehicles[_selected_vehicle_idx])
 
 func _populate_vehicle_dropdown():
 	vehicle_option_button.clear()
@@ -746,17 +826,15 @@ func _rebuild_parts_tab(vehicle_data: Dictionary):
 	var installed_parts: Array = []
 	if vehicle_data.has("parts") and vehicle_data.parts is Array:
 		installed_parts.append_array(vehicle_data.parts)
-	if vehicle_data.has("cargo") and vehicle_data.cargo is Array:
-		for item in vehicle_data.cargo:
-			if item is Dictionary and item.get("intrinsic_part_id") != null:
-				installed_parts.append(item)
 	if installed_parts.is_empty():
 		_show_info(parts_vbox, "No installed parts detected.")
 		return
 	# Group by slot
 	var by_slot: Dictionary = {}
 	for p in installed_parts:
-		var slot = String(p.get("slot", "other"))
+		var slot := _detect_slot_for_item(p)
+		if slot == "":
+			slot = "other"
 		if not by_slot.has(slot):
 			by_slot[slot] = []
 		by_slot[slot].append(p)
@@ -789,18 +867,22 @@ func _refresh_slot_vendor_availability():
 	if _selected_vehicle_idx >= 0 and _selected_vehicle_idx < _vehicles.size():
 		var v = _vehicles[_selected_vehicle_idx]
 		for p in v.get("parts", []):
-			var s_val = p.get("slot", "")
-			var s: String = s_val if typeof(s_val) == TYPE_STRING else ""
+			if not (p is Dictionary):
+				continue
+			var s := _detect_slot_for_item(p)
 			if s != "" and not slot_set2.has(s):
 				slot_set2[s] = true
 				slots2.append(s)
+		# Include any slot-bearing cargo items.
 		for c in v.get("cargo", []):
-			if c is Dictionary and c.get("intrinsic_part_id") != null:
-				var cs_val = c.get("slot", "")
-				var cs: String = cs_val if typeof(cs_val) == TYPE_STRING else ""
-				if cs != "" and not slot_set2.has(cs):
-					slot_set2[cs] = true
-					slots2.append(cs)
+			if not (c is Dictionary):
+				continue
+			var cs := _detect_slot_for_item(c)
+			if cs == "":
+				continue
+			if not slot_set2.has(cs):
+				slot_set2[cs] = true
+				slots2.append(cs)
 	for s in slots2:
 		_slot_vendor_availability[s] = false
 
@@ -819,26 +901,28 @@ func _refresh_slot_inventory_availability() -> void:
 	var slot_set: Dictionary = {}
 	var slots: Array = []
 	for p in vsel.get("parts", []):
-		var s_val = p.get("slot", "")
-		var s: String = s_val if typeof(s_val) == TYPE_STRING else ""
+		if not (p is Dictionary):
+			continue
+		var s := _detect_slot_for_item(p)
 		if s != "" and not slot_set.has(s):
 			slot_set[s] = true
 			slots.append(s)
+	# Also include any slot-bearing cargo items.
 	for c in vsel.get("cargo", []):
-		if c is Dictionary and c.get("intrinsic_part_id") != null:
-			var cs_val = c.get("slot", "")
-			var cs: String = cs_val if typeof(cs_val) == TYPE_STRING else ""
-			if cs != "" and not slot_set.has(cs):
-				slot_set[cs] = true
-				slots.append(cs)
+		if not (c is Dictionary):
+			continue
+		var cs := _detect_slot_for_item(c)
+		if cs == "":
+			continue
+		if not slot_set.has(cs):
+			slot_set[cs] = true
+			slots.append(cs)
 
-	# NEW: include slots from ALL convoy cargo items (loose parts) across vehicles
+	# Include slots from ALL convoy cargo items (parts in convoy cargo across vehicles)
 	for v in _vehicles:
 		var cargo_all: Array = v.get("cargo", [])
 		for item in cargo_all:
 			if not (item is Dictionary):
-				continue
-			if item.get("intrinsic_part_id") != null:
 				continue
 			var s_detected := _detect_slot_for_item(item)
 			if typeof(s_detected) == TYPE_STRING and s_detected != "" and not slot_set.has(s_detected):
@@ -852,15 +936,13 @@ func _refresh_slot_inventory_availability() -> void:
 			for item in cargo:
 				if not (item is Dictionary):
 					continue
-				# Only consider loose cargo parts (not currently installed markers)
-				if item.get("intrinsic_part_id") != null:
-					continue
 				if _detect_slot_for_item(item) != s:
 					continue
-				# Prefer backend compatibility cache when available
+				# Compatibility API requires a cargo instance id.
 				var cid_val: String = String(item.get("cargo_id", ""))
 				if cid_val == "":
-					cid_val = String(item.get("part_id", ""))
+					continue
+				# Prefer backend compatibility cache when available
 				var ck := "%s||%s" % [vid, cid_val]
 				var comp_ok := false
 				if _compat_cache.has(ck):
@@ -938,6 +1020,8 @@ func _start_vendor_compat_checks_for_vehicle(vehicle: Dictionary) -> void:
 				elif _cargo_to_slot.has(cid):
 					slot_name = String(_cargo_to_slot.get(cid, ""))
 				if slot_name != "":
+					# Ensure placeholder row exists after any UI rebuilds.
+					_ensure_slot_row(slot_name)
 					_slot_vendor_availability[slot_name] = true
 					_restyle_swap_buttons_for_slot(slot_name)
 				continue
@@ -1675,12 +1759,15 @@ func _collect_candidate_parts_for_slot(slot_name: String) -> Array:
 		for item in cargo:
 			if not (item is Dictionary):
 				continue
-			# Only loose cargo parts
-			if item.get("intrinsic_part_id") != null:
-				continue
+			# Part identification is strictly slot-based.
 			var s := _detect_slot_for_item(item)
-			if s == slot_name:
-				out.append(item)
+			if s != slot_name:
+				continue
+			# Compatibility API requires a cargo instance id.
+			var cid := String(item.get("cargo_id", ""))
+			if cid == "":
+				continue
+			out.append(item)
 	return out
 
 func _collect_vendor_parts_for_slot(slot_name: String) -> Array:
@@ -1709,18 +1796,71 @@ func _collect_all_vendor_part_candidates() -> Array:
 		print("[PartCompatUI] No settlement match at (", sx, ", ", sy, ") while collecting vendor parts")
 		return results
 
-	var vendors: Array = settlement_match.get("vendors", [])
+	var vendors: Array = _extract_settlement_vendors(settlement_match)
+	# Avoid spamming: only dump one debug line-set per location+vendor-count when no candidates are found.
+	var debug_sig := "%s:%s:%s" % [
+		String(settlement_match.get("settlement_id", settlement_match.get("id", ""))),
+		str(int(roundf(float(_convoy.get("x", -99999.0))))),
+		str(int(roundf(float(_convoy.get("y", -99999.0)))))
+	]
+	_vendor_debug_calls += 1
+	if _vendor_debug_calls <= 3:
+		print("[PartCompatUI] Vendor scan header: sig=", debug_sig, " settlement_keys=", settlement_match.keys(), " vendors_count=", vendors.size())
+	var debug_once := false
+	var requested_vendor_ids: Dictionary = {} # vendor_id -> true
+	var vendor_idx := 0
 	for vendor in vendors:
-		if not (vendor is Dictionary):
+		vendor_idx += 1
+		var vendor_dict: Dictionary = {}
+		var vendor_id_local := ""
+		# Settlement snapshots may store vendor ids (String) instead of full dictionaries.
+		if vendor is Dictionary:
+			vendor_dict = _unwrap_vendor_payload(vendor)
+			vendor_id_local = _extract_vendor_id(vendor_dict)
+			if _vendor_debug_calls <= 1:
+				print("[PartCompatUI] Vendor stub ", vendor_idx, ": keys=", vendor_dict.keys(), " extracted_vendor_id=", vendor_id_local)
+			# Settlement vendor dictionaries are sometimes partial OR contain cargo items without slot metadata.
+			# If the embedded inventory is empty OR has no slot-detectable items, request full vendor payload
+			# (which may include nested parts/slot fields), then attempt to use MechanicsService cache.
+			var inv_now := _extract_vendor_inventory(vendor_dict)
+			var inv_has_slot := false
+			for it in inv_now:
+				if it is Dictionary and _detect_slot_for_item(it) != "":
+					inv_has_slot = true
+					break
+			if vendor_id_local != "" and (inv_now.is_empty() or not inv_has_slot):
+				if is_instance_valid(_vendor_service) and _vendor_service.has_method("request_vendor") and not requested_vendor_ids.has(vendor_id_local):
+					requested_vendor_ids[vendor_id_local] = true
+					print("[PartCompatUI] Requesting vendor payload vendor_id=", vendor_id_local, " reason=", ("empty_inventory" if inv_now.is_empty() else "no_slot_items_in_embedded_inventory"), " inv_count=", inv_now.size())
+					_vendor_service.request_vendor(vendor_id_local)
+				if is_instance_valid(_mechanics_service) and _mechanics_service.has_method("get_cached_vendor"):
+					var cached: Dictionary = _mechanics_service.get_cached_vendor(vendor_id_local)
+					if not cached.is_empty():
+						vendor_dict = _unwrap_vendor_payload(cached)
+		elif vendor is String:
+			vendor_id_local = String(vendor)
+			# Request vendor details; results will arrive via SignalHub.vendor_updated.
+			if vendor_id_local != "" and is_instance_valid(_vendor_service) and _vendor_service.has_method("request_vendor"):
+				print("[PartCompatUI] Requesting vendor payload vendor_id=", vendor_id_local)
+				_vendor_service.request_vendor(vendor_id_local)
+			# Best-effort: use MechanicsService cache if it already has the payload.
+			if vendor_id_local != "" and is_instance_valid(_mechanics_service) and _mechanics_service.has_method("get_cached_vendor"):
+				vendor_dict = _unwrap_vendor_payload(_mechanics_service.get_cached_vendor(vendor_id_local))
+		else:
 			continue
-		var vendor_id_local := String(vendor.get("vendor_id", ""))
-		var cargo_inv: Array = vendor.get("cargo_inventory", [])
+		if vendor_dict.is_empty():
+			continue
+		if vendor_id_local == "":
+			vendor_id_local = _extract_vendor_id(vendor_dict)
+		# Vendor payloads can use different keys.
+		var cargo_inv: Array = _extract_vendor_inventory(vendor_dict)
+		if cargo_inv.is_empty() and not debug_once and _vendor_debug_last_sig != debug_sig:
+			debug_once = true
+			_vendor_debug_last_sig = debug_sig
+			print("[PartCompatUI] Vendor scan debug: settlement_vendors=", vendors.size(), " vendor_id=", vendor_id_local, " keys=", vendor_dict.keys())
 		for item in cargo_inv:
 			if not (item is Dictionary):
 				continue
-			if item.get("intrinsic_part_id") != null:
-				continue # skip intrinsic-installed markers
-
 			var price_f := _extract_price_from_dict(item)
 			var cid_any: String = str(item.get("cargo_id", ""))
 			var source_item: Dictionary = item
@@ -1752,6 +1892,11 @@ func _collect_all_vendor_part_candidates() -> Array:
 					continue
 			# Case 3: no slot/parts — skip
 
+	# If we ended with zero candidates, emit a summary (always for first few scans; otherwise once per sig).
+	if results.is_empty() and (_vendor_debug_calls <= 3 or _vendor_debug_last_sig != debug_sig):
+		_vendor_debug_last_sig = debug_sig
+		print("[PartCompatUI] Vendor scan summary: sig=", debug_sig, " vendors_count=", vendors.size(), " vendor_entries_types=", vendors.map(func(e): return typeof(e)))
+
 	if results.is_empty():
 		var sx2 := int(roundf(float(_convoy.get("x", -99999.0))))
 		var sy2 := int(roundf(float(_convoy.get("y", -99999.0))))
@@ -1769,29 +1914,79 @@ func _get_settlement_at_convoy_coords() -> Dictionary:
 	for s in settlements:
 		if not (s is Dictionary):
 			continue
-		if int(s.get("x", 123456)) == sx and int(s.get("y", 123456)) == sy:
+		if _xy_matches(s, sx, sy):
 			return s
 	# Fallback: use tile-attached settlements if present
 	var tiles: Array = []
 	if is_instance_valid(_store) and _store.has_method("get_tiles"):
 		tiles = _store.get_tiles()
+	# Common schema: tiles is a 2D Array (rows by y, columns by x)
+	if sy >= 0 and sy < tiles.size():
+		var row: Variant = tiles[sy]
+		if row is Array and sx >= 0 and sx < (row as Array).size():
+			var tile: Variant = (row as Array)[sx]
+			if tile is Dictionary:
+				var st: Array = tile.get("settlements", [])
+				if not st.is_empty():
+					var s0: Variant = st[0]
+					if s0 is Dictionary:
+						return s0
+					if s0 is String:
+						# Try to resolve settlement id back to a full settlement dict.
+						for s in settlements:
+							if s is Dictionary:
+								var sid := String((s as Dictionary).get("settlement_id", (s as Dictionary).get("id", "")))
+								if sid != "" and sid == String(s0):
+									return s
+						# Unable to resolve; return empty so caller can handle.
+						return {} # Ensure a value is returned if s0 is String but not resolved
+	# Alternate schema: tiles is a flat list of tile dictionaries with x/y fields
 	for t in tiles:
 		if not (t is Dictionary):
 			continue
-		if int(t.get("x", 123456)) == sx and int(t.get("y", 123456)) == sy:
-			var st: Array = t.get("settlements", [])
-			if not st.is_empty() and (st[0] is Dictionary):
-				return st[0]
-	return {}
+		if _xy_matches(t, sx, sy):
+			var st2: Array = t.get("settlements", [])
+			if not st2.is_empty() and (st2[0] is Dictionary):
+				return st2[0]
+	return {} # Ensure a value is always returned
+
+func _xy_matches(d: Dictionary, x: int, y: int) -> bool:
+	var x_any: Variant = null
+	var y_any: Variant = null
+	if d.has("x") and d.has("y"):
+		x_any = d.get("x")
+		y_any = d.get("y")
+	elif d.has("coord_x") and d.has("coord_y"):
+		x_any = d.get("coord_x")
+		y_any = d.get("coord_y")
+	elif d.has("coords") and (d.get("coords") is Array) and (d.get("coords") as Array).size() >= 2:
+		var a: Array = d.get("coords")
+		x_any = a[0]
+		y_any = a[1]
+	elif d.has("coord") and (d.get("coord") is Array) and (d.get("coord") as Array).size() >= 2:
+		var a2: Array = d.get("coord")
+		x_any = a2[0]
+		y_any = a2[1]
+	if x_any == null or y_any == null:
+		return false
+	var dx := int(roundf(float(x_any)))
+	var dy := int(roundf(float(y_any)))
+	return dx == x and dy == y
 
 func _get_vendor_id_at_convoy_location() -> String:
 	var settlement := _get_settlement_at_convoy_coords()
 	if settlement.is_empty():
 		return ""
-	var vendors: Array = settlement.get("vendors", [])
-	if vendors.is_empty() or not (vendors[0] is Dictionary):
+	var vendors: Array = _extract_settlement_vendors(settlement)
+	if vendors.is_empty():
 		return ""
-	return String((vendors[0] as Dictionary).get("vendor_id", ""))
+	var v0: Variant = vendors[0]
+	if v0 is Dictionary:
+		var unwrapped := _unwrap_vendor_payload(v0)
+		return _extract_vendor_id(unwrapped)
+	if v0 is String:
+		return String(v0)
+	return ""
 
 func _ensure_slot_row(slot_name: String) -> void:
 	# If the UI has no row for this slot, create a placeholder row to enable swapping

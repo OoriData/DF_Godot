@@ -23,6 +23,7 @@ func _ready() -> void:
 func request_vendor(vendor_id: String) -> void:
 	if vendor_id == "":
 		return
+	print("[VendorService] request_vendor vendor_id=", vendor_id)
 	if is_instance_valid(_api) and _api.has_method("request_vendor_data"):
 		_api.request_vendor_data(vendor_id)
 
@@ -45,6 +46,9 @@ func request_vehicle(vehicle_id: String) -> void:
 
 func _on_vendor_data_received(vendor_data: Dictionary) -> void:
 	var data := vendor_data if vendor_data != null else {}
+	if data is Dictionary:
+		var vid := str(data.get("vendor_id", data.get("id", "")))
+		print("[VendorService] vendor_data_received vendor_id=", vid, " keys=", data.keys())
 	var logger := get_node_or_null("/root/Logger")
 	if is_instance_valid(logger):
 		logger.debug("VendorService: vendor data received keys=%s", (data.keys() if data is Dictionary else []))

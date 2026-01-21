@@ -22,9 +22,6 @@ static func build_vendor_buckets(vendor_data: Dictionary, perf_log_enabled: bool
 		}
 
 	for item in vendor_data.get("cargo_inventory", []):
-		if item.has("intrinsic_part_id") and item.get("intrinsic_part_id") != null:
-			continue
-
 		var category_dict: Dictionary
 		var mission_vendor_name: String = ""
 		# Missions may carry either `recipient` or `mission_vendor_id` depending on payload shape.
@@ -45,50 +42,12 @@ static func build_vendor_buckets(vendor_data: Dictionary, perf_log_enabled: bool
 		     (item.has("fuel") and item.get("fuel") != null and item.get("fuel") > 0):
 			category_dict = aggregated_resources
 		else:
-			# Robust part detection: top-level slot OR nested parts[] with slot OR part-like hints
-			var part_slot: String = ""
-			if item.has("slot") and item.get("slot") != null and str(item.get("slot")).length() > 0:
-				part_slot = str(item.get("slot"))
-			elif item.has("parts") and item.get("parts") is Array and not (item.get("parts") as Array).is_empty():
-				var nested_parts: Array = item.get("parts")
-				var first_part: Dictionary = nested_parts[0]
-				var slot_val = first_part.get("slot", "")
-				if typeof(slot_val) == TYPE_STRING and str(slot_val).length() > 0:
-					part_slot = str(slot_val)
-			var likely_part := false
-			if part_slot != "":
-				likely_part = true
-			elif item.has("is_part") and item.get("is_part"):
-				likely_part = true
-			else:
-				var type_s := str(item.get("type", "")).to_lower()
-				var itype_s := str(item.get("item_type", "")).to_lower()
-				if type_s == "part" or itype_s == "part":
-					likely_part = true
-				else:
-					var stat_keys := [
-						"top_speed_add",
-						"efficiency_add",
-						"offroad_capability_add",
-						"cargo_capacity_add",
-						"weight_capacity_add",
-						"fuel_capacity",
-						"kwh_capacity",
-					]
-					for sk in stat_keys:
-						if item.has(sk) and item[sk] != null:
-							likely_part = true
-							break
-			if likely_part:
+			# Part identification is strictly slot-based.
+			if ItemsData != null and ItemsData.PartItem and ItemsData.PartItem._looks_like_part_dict(item):
 				category_dict = aggregated_parts
-				var item_disp: Dictionary = item
-				if part_slot != "":
-					item_disp = item.duplicate(true)
-					item_disp["slot"] = part_slot
-				_aggregate_vendor_item(category_dict, item_disp, mission_vendor_name, perf_log_enabled)
+				_aggregate_vendor_item(category_dict, item, mission_vendor_name, perf_log_enabled)
 				continue
-			else:
-				category_dict = aggregated_other
+			category_dict = aggregated_other
 		if perf_log_enabled:
 			print("[VendorCargoAggregator] Aggregating vendor cargo item:", item)
 		var dr_v = item.get("delivery_reward")
@@ -263,8 +222,6 @@ static func build_convoy_buckets(convoy_data: Dictionary, vendor_data: Dictionar
 			else:
 				for item in vehicle.get("cargo", []):
 					found_any_cargo = true
-					if item.has("intrinsic_part_id") and item.get("intrinsic_part_id") != null:
-						continue
 					var category_dict2: Dictionary
 					var mission_vendor_name2: String = ""
 					var dr = item.get("delivery_reward")
@@ -274,6 +231,8 @@ static func build_convoy_buckets(convoy_data: Dictionary, vendor_data: Dictionar
 					     (item.has("water") and item.get("water") != null and item.get("water") > 0) or \
 					     (item.has("fuel") and item.get("fuel") != null and item.get("fuel") > 0):
 						category_dict2 = aggregated_resources
+					elif ItemsData != null and ItemsData.PartItem and ItemsData.PartItem._looks_like_part_dict(item):
+						category_dict2 = aggregated_parts
 					else:
 						category_dict2 = aggregated_other
 					if category_dict2 == aggregated_missions:
@@ -284,8 +243,6 @@ static func build_convoy_buckets(convoy_data: Dictionary, vendor_data: Dictionar
 							mission_vendor_name2 = str(get_vendor_name_for_recipient.call(recipient_id2))
 					_aggregate_item(category_dict2, item, vehicle_name, mission_vendor_name2, perf_log_enabled)
 			for part in vehicle.get("parts", []):
-				if part.has("intrinsic_part_id") and part.get("intrinsic_part_id") != null:
-					continue
 				_aggregate_item(aggregated_parts, part, vehicle_name, "", perf_log_enabled)
 
 	if not found_any_cargo and convoy_data.has("cargo_inventory"):

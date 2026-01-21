@@ -1262,27 +1262,14 @@ func probe_mechanic_vendor_availability_for_convoy(convoy: Dictionary) -> void:
 		for item in cargo_inv:
 			if not (item is Dictionary):
 				continue
-			if item.get("intrinsic_part_id") != null:
-				continue
 			var _price_f = 0.0 # unused here
 			# Prefer cargo_id for compatibility API
 			var cid_any: String = str(item.get("cargo_id", ""))
 			if cid_any == "":
 				cid_any = str(item.get("part_id", ""))
-			# Heuristic: detect likely parts even without explicit slot
-			var is_likely_part := false
-			if item.has("is_part") and item.get("is_part"):
-				is_likely_part = true
-			var type_s := String(item.get("type", "")).to_lower()
-			var itype_s := String(item.get("item_type", "")).to_lower()
-			if type_s == "part" or itype_s == "part":
-				is_likely_part = true
-			var stat_keys := ["top_speed_add", "efficiency_add", "offroad_capability_add", "cargo_capacity_add", "weight_capacity_add", "fuel_capacity", "kwh_capacity"]
-			for sk in stat_keys:
-				if item.has(sk) and item[sk] != null:
-					is_likely_part = true
-					break
-			# Name/description-based fallback using sample data patterns (e.g., CVT Kit, Differentials, Fuel Cell, Box Truck Body)
+			# Part identification is strictly slot-based.
+			var is_likely_part := (ItemsData != null and ItemsData.PartItem and ItemsData.PartItem._looks_like_part_dict(item))
+			# Name/description-based fallback is intentionally removed; non-slot cargo is not a part.
 			if not is_likely_part:
 				var name_heur = _looks_like_vehicle_part(item)
 				if name_heur.get("likely", false):
@@ -1537,13 +1524,13 @@ func select_convoy_by_id(convoy_id_to_select: String, _allow_toggle: bool = true
 	_selected_convoy_id = convoy_id_to_select
 	var _sel: Variant = get_selected_convoy()
 	convoy_selection_changed.emit(_sel)
-	var _hub := get_node_or_null("/root/SignalHub")
-	if is_instance_valid(_hub):
-		_hub.convoy_selection_changed.emit(_sel)
+	var hub_local := get_node_or_null("/root/SignalHub")
+	if is_instance_valid(hub_local):
+		hub_local.convoy_selection_changed.emit(_sel)
 		if _sel is Dictionary and not (_sel as Dictionary).is_empty():
-			_hub.selected_convoy_ids_changed.emit([convoy_id_to_select])
+			hub_local.selected_convoy_ids_changed.emit([convoy_id_to_select])
 		else:
-			_hub.selected_convoy_ids_changed.emit([])
+			hub_local.selected_convoy_ids_changed.emit([])
 
 	# Proactively prefetch ConvoyMenu data so destinations are ready at open
 	if _sel is Dictionary and not (_sel as Dictionary).is_empty():
@@ -1975,8 +1962,6 @@ func _aggregate_vendor_items(vendor_data: Dictionary) -> Dictionary:
 		return aggregated
 
 	for item in vendor_data.get("cargo_inventory", []):
-		if item.has("intrinsic_part_id") and item.get("intrinsic_part_id") != null:
-			continue
 		var category = "other"
 		var mission_dest_name := ""
 		# Mission identification: require a delivery_reward (positive number). Recipient remains a secondary hint.
@@ -1988,7 +1973,7 @@ func _aggregate_vendor_items(vendor_data: Dictionary) -> Dictionary:
 			(item.has("water") and _is_positive_number(item.get("water"))) or
 			(item.has("fuel") and _is_positive_number(item.get("fuel")))
 		)
-		var is_part: bool = item.has("slot") and item.get("slot") != null and String(item.get("slot")).length() > 0
+		var is_part: bool = (ItemsData != null and ItemsData.PartItem and ItemsData.PartItem._looks_like_part_dict(item))
 		if is_mission:
 			category = "missions"
 			var recipient_vendor_id = item.get("recipient")
@@ -2057,8 +2042,6 @@ func _aggregate_convoy_items(convoy_data: Dictionary, vendor_data: Dictionary) -
 			var vehicle_name = vehicle.get("name", "Unknown Vehicle")
 			for item in vehicle.get("cargo", []):
 				found_any_cargo = true
-				if item.has("intrinsic_part_id") and item.get("intrinsic_part_id") != null:
-					continue
 				var category = "other"
 				var mission_dest_name := ""
 				var is_mission_item := (item.get("recipient") != null or _is_positive_number(item.get("delivery_reward")) or _is_positive_number(item.get("unit_delivery_reward")))
@@ -2071,10 +2054,10 @@ func _aggregate_convoy_items(convoy_data: Dictionary, vendor_data: Dictionary) -
 							mission_dest_name = dest_settlement.get("name", "")
 				elif (item.has("food") and _is_positive_number(item.get("food"))) or (item.has("water") and _is_positive_number(item.get("water"))) or (item.has("fuel") and _is_positive_number(item.get("fuel"))):
 					category = "resources"
+				elif ItemsData != null and ItemsData.PartItem and ItemsData.PartItem._looks_like_part_dict(item):
+					category = "parts"
 				_aggregate_item(aggregated[category], item, vehicle_name, mission_dest_name)
 			for item in vehicle.get("parts", []):
-				if item.has("intrinsic_part_id") and item.get("intrinsic_part_id") != null:
-					continue
 				_aggregate_item(aggregated["parts"], item, vehicle_name)
 
 	# Fallback: If no cargo found in vehicles, use cargo_inventory
@@ -2092,6 +2075,8 @@ func _aggregate_convoy_items(convoy_data: Dictionary, vendor_data: Dictionary) -
 						mission_dest_name = dest_settlement.get("name", "")
 			elif (item.has("food") and _is_positive_number(item.get("food"))) or (item.has("water") and _is_positive_number(item.get("water"))) or (item.has("fuel") and _is_positive_number(item.get("fuel"))):
 				category = "resources"
+			elif ItemsData != null and ItemsData.PartItem and ItemsData.PartItem._looks_like_part_dict(item):
+				category = "parts"
 			_aggregate_item(aggregated[category], item, "Convoy", mission_dest_name)
 
 	# Add bulk resources

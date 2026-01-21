@@ -82,9 +82,8 @@ func _extract_item_display_name(item: Dictionary) -> String:
 	return "Unknown Item"
 
 func _is_displayable_cargo(item: Dictionary) -> bool:
-	# Only exclude intrinsic parts; show zero-quantity items (debug) so user knows they exist
-	if item.has("intrinsic_part_id") and item.get("intrinsic_part_id") != null:
-		return false
+	# Show all cargo items. `vehicle_id` is present for normal cargo too, so it cannot be used
+	# to distinguish installed vs loose.
 	return true
 
 func _ready():
@@ -184,7 +183,7 @@ func _should_hide_key(key: String) -> bool:
 		return true
 	var hidden_exact := {
 		"id": true, "uuid": true, "guid": true,
-		"intrinsic_part_id": true, "template_id": true, "part_id": true,
+		"template_id": true, "part_id": true,
 		"convoy_id": true, "vehicle_id": true, "asset_id": true, "owner_id": true,
 		"internal": true, "_internal": true, "debug": true, "_debug": true,
 		"is_template": true, "is_system": true, "system": true,

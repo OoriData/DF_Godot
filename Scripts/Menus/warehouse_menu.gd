@@ -1,5 +1,7 @@
 extends MenuBase
 
+const ItemsData = preload("res://Scripts/Data/Items.gd")
+
 @onready var title_label: Label = $MainVBox/TopBarHBox/TitleLabel
 @onready var buy_button: Button = $MainVBox/TopBarHBox/BuyButton
 @onready var back_button: Button = $MainVBox/BackButton
@@ -208,7 +210,7 @@ func initialize_with_data(data_or_id: Variant, extra_arg: Variant = null) -> voi
 	_try_load_warehouse_for_settlement()
 	_populate_dropdowns() # initial (may be empty until data arrives)
 
-func _update_ui(convoy: Dictionary = {}):
+func _update_ui(_convoy: Dictionary = {}):
 	var sett_name := String(_settlement.get("name", _convoy_data.get("settlement_name", "")))
 	if is_instance_valid(title_label):
 		if sett_name != "":
@@ -976,7 +978,7 @@ func _populate_dropdowns() -> void:
 		var part_wh: Array = []
 		for wi in wh_items:
 			if wi is Dictionary:
-				var is_part: bool = wi.has("intrinsic_part_id") and wi.get("intrinsic_part_id") != null
+				var is_part: bool = (ItemsData != null and ItemsData.PartItem and ItemsData.PartItem._looks_like_part_dict(wi))
 				var entry: Dictionary = (wi as Dictionary).duplicate(true)
 				if is_part:
 					part_wh.append(entry)
@@ -1321,17 +1323,7 @@ func _aggregate_convoy_cargo(convoy: Dictionary) -> Dictionary:
 	var by_id_is_part: Dictionary = {}
 	var by_id_has_dest: Dictionary = {}
 
-	# Build set of installed part IDs to exclude corresponding cargo entries if present
-	var installed_part_ids: Dictionary = {} # set-like
-	for veh0 in convoy.get("vehicle_details_list", []):
-		if not (veh0 is Dictionary):
-			continue
-		var parts_arr: Array = veh0.get("parts", [])
-		for p in parts_arr:
-			if p is Dictionary:
-				var pid := String(p.get("part_id", p.get("intrinsic_part_id", "")))
-				if pid != "":
-					installed_part_ids[pid] = true
+	# Installed parts are identified as slot-bearing cargo entries that are attached to a vehicle.
 	for veh in convoy.get("vehicle_details_list", []):
 		if not (veh is Dictionary):
 			continue
@@ -1345,13 +1337,10 @@ func _aggregate_convoy_cargo(convoy: Dictionary) -> Dictionary:
 			var qty := int(item.get("quantity", 0))
 			if qty <= 0:
 				continue
-			# Classify as part cargo if intrinsic_part_id present; installed parts are not in cargo[]
-			var is_part: bool = item.has("intrinsic_part_id") and item.get("intrinsic_part_id") != null
-			# If this is a part cargo and this intrinsic_part_id is installed on any vehicle, skip showing it
-			if is_part:
-				var intr_id := String(item.get("intrinsic_part_id", ""))
-				if intr_id != "" and installed_part_ids.has(intr_id):
-					continue
+			# Part identification is strictly slot-based.
+			var is_part: bool = (ItemsData != null and ItemsData.PartItem and ItemsData.PartItem._looks_like_part_dict(item))
+			# Note: `vehicle_id` is present for normal per-vehicle cargo too, so do NOT use it
+			# to filter parts here.
 			if not by_id.has(cid):
 				by_id[cid] = {
 					"cargo_id": cid,
