@@ -19,10 +19,47 @@ var _initial_emitted: bool = false
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
 
+func _derive_settlements_from_tiles(tiles: Array) -> Array:
+	# Tools.deserialize_map_data returns settlements nested per-tile under tile["settlements"].
+	# Many UI paths expect a flat settlements array (and map_changed(tiles, settlements)).
+	var out: Array = []
+	var seen: Dictionary = {}
+	if tiles == null:
+		return out
+	for row in tiles:
+		if not (row is Array):
+			continue
+		for tile in row:
+			if not (tile is Dictionary):
+				continue
+			var s_any: Variant = (tile as Dictionary).get("settlements", [])
+			if not (s_any is Array):
+				continue
+			for s in (s_any as Array):
+				if not (s is Dictionary):
+					continue
+				var sd := s as Dictionary
+				var key := ""
+				if sd.has("sett_id"):
+					key = "id:" + str(sd.get("sett_id"))
+				else:
+					key = "xy:" + str(sd.get("x", "?")) + "," + str(sd.get("y", "?")) + ":" + str(sd.get("name", ""))
+				if seen.has(key):
+					continue
+				seen[key] = true
+				out.append(sd)
+	return out
+
 # Setters emit signals (also emit via SignalHub if present)
 func set_map(tiles: Array, settlements: Array) -> void:
 	_tiles = tiles if tiles != null else []
 	_settlements = settlements if settlements != null else []
+	# Back-compat + correctness: if callers pass no settlements (common), derive from tiles.
+	if _settlements.is_empty() and not _tiles.is_empty():
+		_settlements = _derive_settlements_from_tiles(_tiles)
+		var logger := get_node_or_null("/root/Logger")
+		if is_instance_valid(logger) and logger.has_method("debug"):
+			logger.debug("GameStore.set_map derived settlements=%s", _settlements.size())
 	emit_signal("map_changed", _tiles, _settlements)
 	var hub := get_node_or_null("/root/SignalHub")
 	if is_instance_valid(hub):

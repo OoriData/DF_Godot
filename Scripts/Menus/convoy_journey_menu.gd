@@ -39,9 +39,19 @@ var _next_route_button: Button = null
 const ALLOW_HYBRID_ENERGY := true # Show battery usage even if vehicle also has internal combustion
 const SHOW_ENERGY_DEBUG := true # Toggle to display raw data snapshot for kWh logic
 
+# Destinations depend on settlements from the map snapshot. If the player opens this
+# menu before map data arrives, we poll briefly and refresh when available.
+var _settlement_poll_attempts: int = 0
+var _settlement_poll_timer: Timer = null
+
 @onready var _store: Node = get_node_or_null("/root/GameStore")
 @onready var _hub: Node = get_node_or_null("/root/SignalHub")
 @onready var _routes: Node = get_node_or_null("/root/RouteService")
+@onready var _logger: Node = get_node_or_null("/root/Logger")
+
+func _log_debug(msg: String, a: Variant = null, b: Variant = null, c: Variant = null) -> void:
+	if is_instance_valid(_logger) and _logger.has_method("debug"):
+		_logger.debug(msg, a, b, c)
 
 func _ready():
 	# Connect the back button signal
@@ -66,6 +76,13 @@ func _ready():
 			_hub.route_choices_ready.connect(_on_route_choices_ready)
 		if _hub.has_signal("convoy_updated") and not _hub.convoy_updated.is_connected(_on_hub_convoy_updated):
 			_hub.convoy_updated.connect(_on_hub_convoy_updated)
+		# Refresh planner destinations when map/settlement snapshot arrives.
+		if _hub.has_signal("map_changed") and not _hub.map_changed.is_connected(_on_map_changed):
+			_hub.map_changed.connect(_on_map_changed)
+	elif is_instance_valid(_store):
+		# Fallback if hub isn't present for some reason.
+		if _store.has_signal("map_changed") and not _store.map_changed.is_connected(_on_map_changed):
+			_store.map_changed.connect(_on_map_changed)
 
 	# Remove the placeholder label if it exists
 	if content_vbox.has_node("PlaceholderLabel"):
@@ -94,39 +111,44 @@ func _physics_process(_delta: float):
 	pass
 
 func initialize_with_data(data_or_id: Variant, extra_arg: Variant = null) -> void:
-	print("ConvoyJourneyMenu: Initialized with data.") # DEBUG
-	var d: Dictionary = {}
+	# MenuBase owns refreshing from GameStore; we only keep local snapshot.
 	if data_or_id is Dictionary:
-		d = (data_or_id as Dictionary)
+		var d := data_or_id as Dictionary
 		convoy_id = String(d.get("convoy_id", d.get("id", "")))
-		convoy_data_received = d.duplicate()
+		convoy_data_received = d.duplicate(true)
 	else:
 		convoy_id = String(data_or_id)
 		convoy_data_received = {}
-	# Let MenuBase perform initial snapshot-driven update where possible
+	_log_debug("ConvoyJourneyMenu.initialize_with_data name=%s convoy_id=%s type=%s", name, convoy_id, typeof(data_or_id))
 	super.initialize_with_data(data_or_id, extra_arg)
-	for child in content_vbox.get_children():
-		child.queue_free()
-	# SAFELY extract journey data (API may send null)
-	var journey_raw = d.get("journey")
-	var journey_data: Dictionary = {}
-	if journey_raw is Dictionary:
-		journey_data = journey_raw
-	if is_instance_valid(title_label):
-		var convoy_name = d.get("convoy_name", "Convoy")
-		title_label.text = convoy_name + " - " + ("Journey Details" if not journey_data.is_empty() else "Journey Planner")
-	if journey_data.is_empty():
-		_populate_destination_list()
-		return
 
 func _update_ui(convoy: Dictionary) -> void:
-	# Lightweight live refresh: update title and, if journey present, redraw key fields later.
+	# Snapshot update from GameStore.
 	convoy_data_received = convoy.duplicate(true)
-	var journey_raw = convoy_data_received.get("journey")
+	var journey_raw: Variant = convoy_data_received.get("journey")
+	var has_journey := journey_raw is Dictionary and not (journey_raw as Dictionary).is_empty()
 	if is_instance_valid(title_label):
-		var convoy_name = convoy_data_received.get("convoy_name", title_label.text)
-		var has_journey := journey_raw is Dictionary and not (journey_raw as Dictionary).is_empty()
-		title_label.text = convoy_name + " - " + ("Journey Details" if has_journey else "Journey Planner")
+		var convoy_name = convoy_data_received.get("convoy_name", convoy_data_received.get("name", "Convoy"))
+		title_label.text = String(convoy_name) + " - " + ("Journey Details" if has_journey else "Journey Planner")
+
+	# If a confirmation preview is open, don't clobber it on background refresh.
+	if is_instance_valid(_confirmation_panel) and _confirmation_panel.visible:
+		return
+
+	# Deterministic rebuild: prevent duplicated panels/buttons from accumulating.
+	for child in content_vbox.get_children():
+		child.queue_free()
+
+	if not has_journey:
+		var settlement_count: int = (_store.get_settlements().size() if is_instance_valid(_store) and _store.has_method("get_settlements") else -1)
+		_log_debug("ConvoyJourneyMenu planner render convoy_id=%s settlements=%s", str(convoy_data_received.get("convoy_id", "")), settlement_count)
+		if settlement_count <= 0:
+			_show_loading_indicator("Loading destinations…")
+			_schedule_destination_retry()
+		else:
+			_settlement_poll_attempts = 0
+			_populate_destination_list()
+		return
 
 	# ---- Styled container for in-transit details ----
 	var details_panel := PanelContainer.new()
@@ -151,9 +173,7 @@ func _update_ui(convoy: Dictionary) -> void:
 	details_panel.add_child(details_vbox)
 
 	# --- ETA headline (centered) ---
-	var journey_data: Dictionary = {}
-	if journey_raw is Dictionary:
-		journey_data = journey_raw
+	var journey_data: Dictionary = journey_raw as Dictionary
 	var eta_str = journey_data.get("eta")
 	var eta_val := preload("res://Scripts/System/date_time_util.gd").format_timestamp_display(eta_str, true)
 	var eta_headline := Label.new()
@@ -272,6 +292,8 @@ func _update_ui(convoy: Dictionary) -> void:
 		details_vbox.add_child(cancel_btn)
 
 func _populate_destination_list():
+	# Reset planner loading state for a clean rebuild.
+	_settlement_poll_attempts = 0
 	# Clear potential prior loading state
 	_is_request_in_flight = false
 	_loading_label = null
@@ -298,10 +320,14 @@ func _populate_destination_list():
 	# Create a reverse map from vendor_id to settlement_name for quick lookups.
 	var vendor_to_settlement_map: Dictionary = {}
 	for settlement in all_settlements:
-		if settlement.has("vendors") and settlement.vendors is Array:
-			for vendor in settlement.vendors:
-				if vendor.has("vendor_id"):
-					vendor_to_settlement_map[str(vendor.vendor_id)] = settlement.get("name")
+		if not (settlement is Dictionary):
+			continue
+		var settlement_dict := settlement as Dictionary
+		var vendors: Variant = settlement_dict.get("vendors", [])
+		if vendors is Array:
+			for vendor in vendors:
+				if vendor is Dictionary and (vendor as Dictionary).has("vendor_id"):
+					vendor_to_settlement_map[str((vendor as Dictionary).get("vendor_id"))] = settlement_dict.get("name")
 
 	# Find any mission-specific destinations by resolving recipient IDs to settlement names.
 	var mission_destinations: Dictionary = {}
@@ -374,6 +400,65 @@ func _populate_destination_list():
 		at_destination_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		content_vbox.add_child(at_destination_label)
 
+func _on_map_changed(_tiles: Array, settlements: Array) -> void:
+	_log_debug("ConvoyJourneyMenu map_changed received visible=%s settlements=%s", is_visible_in_tree(), (settlements.size() if settlements != null else -1))
+	# When settlements arrive after the menu is opened, refresh the destination list.
+	if not is_visible_in_tree():
+		return
+	if not is_instance_valid(content_vbox):
+		return
+	# If a journey is active or a confirmation panel is open, don't rebuild planner UI.
+	var j: Variant = convoy_data_received.get("journey")
+	var has_journey := j is Dictionary and not (j as Dictionary).is_empty()
+	if has_journey:
+		return
+	if is_instance_valid(_confirmation_panel) and _confirmation_panel.visible:
+		return
+	if settlements == null or settlements.is_empty():
+		# Still useful to keep the user informed.
+		_show_loading_indicator("Loading destinations…")
+		_schedule_destination_retry()
+		return
+	_log_debug("ConvoyJourneyMenu map_changed -> refresh destinations convoy_id=%s settlements=%s", str(convoy_data_received.get("convoy_id", "")), settlements.size())
+	for child in content_vbox.get_children():
+		child.queue_free()
+	_populate_destination_list()
+
+func _schedule_destination_retry() -> void:
+	# Avoid infinite rebuild loops if map never loads.
+	if _settlement_poll_attempts >= 10:
+		_log_debug("ConvoyJourneyMenu settlement poll giving up attempts=%s", _settlement_poll_attempts)
+		return
+	_settlement_poll_attempts += 1
+	if is_instance_valid(_settlement_poll_timer):
+		_settlement_poll_timer.stop()
+		_settlement_poll_timer.queue_free()
+	_settlement_poll_timer = Timer.new()
+	_settlement_poll_timer.one_shot = true
+	_settlement_poll_timer.wait_time = 0.5
+	add_child(_settlement_poll_timer)
+	_settlement_poll_timer.timeout.connect(func():
+		if not is_visible_in_tree():
+			return
+		# Only retry in planner mode (no active journey and no confirmation panel).
+		var j: Variant = convoy_data_received.get("journey")
+		var has_journey := j is Dictionary and not (j as Dictionary).is_empty()
+		if has_journey:
+			return
+		if is_instance_valid(_confirmation_panel) and _confirmation_panel.visible:
+			return
+		var cnt: int = (_store.get_settlements().size() if is_instance_valid(_store) and _store.has_method("get_settlements") else -1)
+		_log_debug("ConvoyJourneyMenu settlement poll attempt=%s settlements=%s", _settlement_poll_attempts, cnt)
+		if cnt > 0:
+			for child in content_vbox.get_children():
+				child.queue_free()
+			_settlement_poll_attempts = 0
+			_populate_destination_list()
+		else:
+			_schedule_destination_retry()
+	)
+	_settlement_poll_timer.start()
+
 func _get_settlement_name(_unused_gdm_node, coord_x, coord_y) -> String:
 	if not is_instance_valid(_store) or not _store.has_method("get_settlements"):
 		return "Unknown"
@@ -384,8 +469,8 @@ func _get_settlement_name(_unused_gdm_node, coord_x, coord_y) -> String:
 			var sx := int((s as Dictionary).get("x", -9999))
 			var sy := int((s as Dictionary).get("y", -9999))
 			if sx == x_int and sy == y_int:
-				var name := str((s as Dictionary).get("name", "Unknown"))
-				return name if name != "" else "Unknown"
+				var settlement_name := str((s as Dictionary).get("name", "Unknown"))
+				return settlement_name if settlement_name != "" else "Unknown"
 	return "Uncharted Location"
 
 func _on_title_label_gui_input(event: InputEvent):
@@ -400,10 +485,10 @@ func _on_destination_button_pressed(destination_data: Dictionary):
 	print("ConvoyJourneyMenu: Destination '%s' selected. Requesting route choices." % destination_data.get("name"))
 	_last_requested_destination = destination_data
 	if is_instance_valid(_routes) and _routes.has_method("request_choices"):
-		var convoy_id := str(convoy_data_received.get("convoy_id"))
+		var convoy_id_local := str(convoy_data_received.get("convoy_id"))
 		var dest_x := int(destination_data.get("x"))
 		var dest_y := int(destination_data.get("y"))
-		_routes.request_choices(convoy_id, dest_x, dest_y)
+		_routes.request_choices(convoy_id_local, dest_x, dest_y)
 		_disable_destination_buttons()
 		_show_loading_indicator("Finding routes...")
 	else:
@@ -955,13 +1040,13 @@ func _on_change_destination_pressed():
 			child.visible = true
 
 func _on_confirm_journey_pressed(route_data: Dictionary):
-	var convoy_id = str(convoy_data_received.get("convoy_id"))
+	var convoy_id_local = str(convoy_data_received.get("convoy_id"))
 	var journey_id = str(route_data.get("journey", {}).get("journey_id", ""))
 	if journey_id.is_empty():
 		printerr("ConvoyJourneyMenu: Cannot confirm journey; missing journey_id")
 		return
 	if is_instance_valid(_routes) and _routes.has_method("start_journey"):
-		_routes.start_journey(convoy_id, journey_id)
+		_routes.start_journey(convoy_id_local, journey_id)
 	else:
 		printerr("ConvoyJourneyMenu: RouteService missing start_journey; cannot confirm.")
 	# End preview and go back to overview
