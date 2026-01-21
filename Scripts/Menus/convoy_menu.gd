@@ -103,7 +103,13 @@ signal open_cargo_menu_requested(convoy_data)
 @onready var _vendor_service: Node = get_node_or_null("/root/VendorService")
 @onready var _mechanics_service: Node = get_node_or_null("/root/MechanicsService")
 @onready var _api: Node = get_node_or_null("/root/APICalls")
+@onready var _convoy_service: Node = get_node_or_null("/root/ConvoyService")
 var _debug_convoy_menu: bool = true # toggle verbose diagnostics for this menu
+
+# ConvoyMenu should always render from a *full* convoy snapshot. Some signal paths provide
+# a shallow convoy dict (missing capacities/resources), which can temporarily render 0/0.
+# We request full details once per open and ignore incomplete updates after we have complete.
+var _requested_full_convoy_id: String = ""
 
 # --- Vendor Preview State ---
 var _current_vendor_tab: VendorTab = VendorTab.CONVOY_MISSIONS
@@ -118,6 +124,31 @@ var _vendors_from_settlements_by_id: Dictionary = {} # vendor_id -> vendor Dicti
 var _vendor_id_to_settlement: Dictionary = {} # vendor_id -> settlement Dictionary (from map snapshot)
 var _vendor_preview_update_timer: Timer = null # For debouncing updates
 var _destinations_cache: Dictionary = {} # item_name -> recipient_settlement_name (or destination string)
+
+
+func _is_convoy_payload_complete(c: Dictionary) -> bool:
+	# Heuristic: a "full" convoy snapshot includes capacity/resource maxima.
+	# Shallow snapshots often omit these keys, causing UI to render 0/0.
+	if c.is_empty():
+		return false
+	var has_capacity := c.has("total_cargo_capacity") or c.has("total_weight_capacity") or c.has("max_cargo_volume") or c.has("max_cargo_weight")
+	var has_resource_max := c.has("max_fuel") or c.has("max_water") or c.has("max_food")
+	return has_capacity and has_resource_max
+
+
+func _ensure_full_convoy_loaded(target_id: String, snapshot: Dictionary) -> void:
+	if target_id == "":
+		return
+	if _requested_full_convoy_id == target_id:
+		return
+	if _is_convoy_payload_complete(snapshot):
+		return
+	if not is_instance_valid(_convoy_service) or not _convoy_service.has_method("refresh_single"):
+		return
+	_requested_full_convoy_id = target_id
+	if _debug_convoy_menu:
+		print("[ConvoyMenu][Debug] Requesting full convoy snapshot for convoy_id=", target_id)
+	_convoy_service.refresh_single(target_id)
 
 
 func _set_latest_settlements_snapshot(settlements: Array) -> void:
@@ -318,6 +349,9 @@ func initialize_with_data(data_or_id: Variant, extra_arg: Variant = null) -> voi
 	if resolved_convoy.is_empty() and data_or_id is Dictionary:
 		resolved_convoy = (data_or_id as Dictionary).duplicate()
 	convoy_data_received = resolved_convoy.duplicate()
+	# Kick off a one-time full snapshot request if we only have a shallow convoy payload.
+	_requested_full_convoy_id = "" if _requested_full_convoy_id != convoy_id else _requested_full_convoy_id
+	_ensure_full_convoy_loaded(convoy_id, convoy_data_received)
 	# Delegate initial draw to MenuBase-driven update
 	super.initialize_with_data(convoy_data_received, extra_arg)
 	# Mechanics warm-up and vendor refresh can still be triggered once at open
@@ -1678,41 +1712,89 @@ func _style_journey_progress_bar(bar: ProgressBar) -> void:
 # 	...
 
 func _update_ui(convoy: Dictionary) -> void:
-	convoy_data_received = convoy.duplicate(true)
-	if convoy_data_received.has("convoy_id"):
-		convoy_id = String(convoy_data_received.get("convoy_id", ""))
+	var incoming: Dictionary = convoy.duplicate(true)
+	var incoming_id := String(incoming.get("convoy_id", incoming.get("id", "")))
+	if incoming_id == "":
+		incoming_id = convoy_id
+	var same_id := (incoming_id != "" and convoy_id != "" and incoming_id == convoy_id)
+	var incoming_complete := _is_convoy_payload_complete(incoming)
+	var current_complete := _is_convoy_payload_complete(convoy_data_received)
+
+	# If we already have a complete snapshot, ignore later incomplete snapshots for the same convoy.
+	if same_id and current_complete and not incoming_complete:
+		_ensure_full_convoy_loaded(convoy_id, incoming)
+		return
+
+	# Accept update and track id.
+	convoy_data_received = incoming
+	if incoming_id != "":
+		convoy_id = incoming_id
+
+	# If we received a shallow snapshot, request full details once and avoid rendering misleading 0/0.
+	if not incoming_complete:
+		_ensure_full_convoy_loaded(convoy_id, convoy_data_received)
+		if is_instance_valid(title_label):
+			title_label.text = String(convoy_data_received.get("convoy_name", convoy_data_received.get("name", title_label.text)))
+		if is_instance_valid(cargo_volume_text_label):
+			cargo_volume_text_label.text = "Cargo Volume: loading…"
+		if is_instance_valid(cargo_weight_text_label):
+			cargo_weight_text_label.text = "Cargo Weight: loading…"
+		return
+
 	# Title
 	if is_instance_valid(title_label):
-		title_label.text = convoy_data_received.get("convoy_name", title_label.text)
-	# Resources
-	var current_fuel = convoy_data_received.get("fuel", 0.0)
-	var max_fuel = convoy_data_received.get("max_fuel", 0.0)
+		title_label.text = String(convoy_data_received.get("convoy_name", convoy_data_received.get("name", title_label.text)))
+
+	# Resources (prefer max_*; fall back to capacity keys if present)
+	var current_fuel: float = float(convoy_data_received.get("fuel", 0.0))
+	var max_fuel: float = float(convoy_data_received.get("max_fuel", convoy_data_received.get("fuel_capacity", 0.0)))
 	if is_instance_valid(fuel_text_label): fuel_text_label.text = "Fuel: %.1f / %.1f" % [current_fuel, max_fuel]
 	if is_instance_valid(fuel_bar): _set_resource_bar_style(fuel_bar, fuel_text_label, current_fuel, max_fuel)
-	var current_water = convoy_data_received.get("water", 0.0)
-	var max_water = convoy_data_received.get("max_water", 0.0)
+
+	var current_water: float = float(convoy_data_received.get("water", 0.0))
+	var max_water: float = float(convoy_data_received.get("max_water", convoy_data_received.get("water_capacity", 0.0)))
 	if is_instance_valid(water_text_label): water_text_label.text = "Water: %.1f / %.1f" % [current_water, max_water]
 	if is_instance_valid(water_bar): _set_resource_bar_style(water_bar, water_text_label, current_water, max_water)
-	var current_food = convoy_data_received.get("food", 0.0)
-	var max_food = convoy_data_received.get("max_food", 0.0)
+
+	var current_food: float = float(convoy_data_received.get("food", 0.0))
+	var max_food: float = float(convoy_data_received.get("max_food", convoy_data_received.get("food_capacity", 0.0)))
 	if is_instance_valid(food_text_label): food_text_label.text = "Food: %.1f / %.1f" % [current_food, max_food]
 	if is_instance_valid(food_bar): _set_resource_bar_style(food_bar, food_text_label, current_food, max_food)
+
 	# Performance
-	var top_speed = convoy_data_received.get("top_speed", 0.0)
+	var top_speed: float = float(convoy_data_received.get("top_speed", 0.0))
 	if is_instance_valid(speed_text_label): speed_text_label.text = "Top Speed: %.1f" % top_speed
 	if is_instance_valid(speed_box): _set_fixed_color_box_style(speed_box, speed_text_label, COLOR_PERFORMANCE_BOX_BG, COLOR_PERFORMANCE_BOX_FONT)
-	var offroad = convoy_data_received.get("offroad_capability", 0.0)
+	var offroad: float = float(convoy_data_received.get("offroad_capability", 0.0))
 	if is_instance_valid(offroad_text_label): offroad_text_label.text = "Offroad: %.1f" % offroad
 	if is_instance_valid(offroad_box): _set_fixed_color_box_style(offroad_box, offroad_text_label, COLOR_PERFORMANCE_BOX_BG, COLOR_PERFORMANCE_BOX_FONT)
-	var efficiency = convoy_data_received.get("efficiency", 0.0)
+	var efficiency: float = float(convoy_data_received.get("efficiency", 0.0))
 	if is_instance_valid(efficiency_text_label): efficiency_text_label.text = "Efficiency: %.1f" % efficiency
 	if is_instance_valid(efficiency_box): _set_fixed_color_box_style(efficiency_box, efficiency_text_label, COLOR_PERFORMANCE_BOX_BG, COLOR_PERFORMANCE_BOX_FONT)
-	# Cargo
-	var current_cargo_volume = convoy_data_received.get("cargo_volume", 0.0)
-	var max_cargo_volume = convoy_data_received.get("max_cargo_volume", 0.0)
-	if is_instance_valid(cargo_volume_text_label): cargo_volume_text_label.text = "Cargo Volume: %.1f / %.1f" % [current_cargo_volume, max_cargo_volume]
-	if is_instance_valid(cargo_volume_bar): _set_resource_bar_style(cargo_volume_bar, cargo_volume_text_label, current_cargo_volume, max_cargo_volume)
-	var current_cargo_weight = convoy_data_received.get("cargo_weight", 0.0)
-	var max_cargo_weight = convoy_data_received.get("max_cargo_weight", 0.0)
-	if is_instance_valid(cargo_weight_text_label): cargo_weight_text_label.text = "Cargo Weight: %.1f / %.1f" % [current_cargo_weight, max_cargo_weight]
-	if is_instance_valid(cargo_weight_bar): _set_resource_bar_style(cargo_weight_bar, cargo_weight_text_label, current_cargo_weight, max_cargo_weight)
+
+	# Cargo (support both schema shapes)
+	var used_volume: float = 0.0
+	var total_volume: float = 0.0
+	if convoy_data_received.has("total_cargo_capacity"):
+		total_volume = float(convoy_data_received.get("total_cargo_capacity", 0.0))
+		used_volume = total_volume - float(convoy_data_received.get("total_free_space", 0.0))
+	else:
+		used_volume = float(convoy_data_received.get("cargo_volume", 0.0))
+		total_volume = float(convoy_data_received.get("max_cargo_volume", 0.0))
+	if is_instance_valid(cargo_volume_text_label):
+		cargo_volume_text_label.text = "Cargo Volume: %.1f / %.1f" % [used_volume, total_volume]
+	if is_instance_valid(cargo_volume_bar):
+		_set_progressbar_style(cargo_volume_bar, used_volume, total_volume)
+
+	var used_weight: float = 0.0
+	var total_weight: float = 0.0
+	if convoy_data_received.has("total_weight_capacity"):
+		total_weight = float(convoy_data_received.get("total_weight_capacity", 0.0))
+		used_weight = total_weight - float(convoy_data_received.get("total_remaining_capacity", 0.0))
+	else:
+		used_weight = float(convoy_data_received.get("cargo_weight", 0.0))
+		total_weight = float(convoy_data_received.get("max_cargo_weight", 0.0))
+	if is_instance_valid(cargo_weight_text_label):
+		cargo_weight_text_label.text = "Cargo Weight: %.1f / %.1f" % [used_weight, total_weight]
+	if is_instance_valid(cargo_weight_bar):
+		_set_progressbar_style(cargo_weight_bar, used_weight, total_weight)
