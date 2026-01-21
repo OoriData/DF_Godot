@@ -34,6 +34,9 @@ var _install_price_cache: Dictionary = {} # key: vehicle_id||part_uid -> float
 # One-time debug signature to avoid spamming vendor scan diagnostics
 var _vendor_debug_last_sig: String = ""
 var _vendor_debug_calls: int = 0
+var _last_vendor_payload_sig: String = ""
+
+@export var debug_part_compat_ui: bool = true
 
 func _looks_like_uuid(s: String) -> bool:
 	# Very small heuristic to recognize UUIDs without regex.
@@ -60,6 +63,57 @@ var _breakdown_toggle: CheckButton = null
 var embedded_mode: bool = false
 
 var _last_refresh_convoy_id: String = ""
+
+# When a swap chooser is open, background convoy polling should not rebuild UI.
+# Also, ignore polling updates that only change non-mechanics fields (e.g. movement).
+func _mechanics_signature(convoy: Dictionary) -> int:
+	var rows: Array[String] = []
+	var vehicles: Array = convoy.get("vehicle_details_list", convoy.get("vehicles", []))
+	for v in vehicles:
+		if not (v is Dictionary):
+			continue
+		var vd: Dictionary = v
+		var vid := str(vd.get("vehicle_id", vd.get("id", "")))
+		# Installed parts affect mechanics UI.
+		if vd.has("parts") and vd.get("parts") is Array:
+			for p in vd.get("parts", []):
+				if not (p is Dictionary):
+					continue
+				var pd: Dictionary = p
+				var slot := str(pd.get("slot", ""))
+				var cid := str(pd.get("cargo_id", pd.get("part_id", pd.get("id", ""))))
+				var uid := str(pd.get("part_uid", pd.get("uid", "")))
+				rows.append("%s|part|%s|%s|%s" % [vid, slot, cid, uid])
+		# Convoy cargo can affect slot inventory availability highlights.
+		var cargo_items: Array = []
+		if vd.has("cargo_items_typed") and vd.get("cargo_items_typed") is Array:
+			cargo_items.append_array(vd.get("cargo_items_typed", []))
+		elif vd.has("cargo_items") and vd.get("cargo_items") is Array:
+			cargo_items.append_array(vd.get("cargo_items", []))
+		for it in cargo_items:
+			if not (it is Dictionary):
+				continue
+			var d: Dictionary = it
+			var cid2 := str(d.get("cargo_id", d.get("id", "")))
+			var qty := int(d.get("quantity", d.get("qty", 1)))
+			var uid2 := str(d.get("part_uid", d.get("uid", "")))
+			rows.append("%s|cargo|%s|%s|%s" % [vid, cid2, qty, uid2])
+	rows.sort()
+	return "\n".join(rows).hash()
+
+func _has_relevant_changes(old_data: Dictionary, new_data: Dictionary) -> bool:
+	# Override MenuBase: only rebuild when mechanics-relevant data changes.
+	if old_data.is_empty() and not new_data.is_empty():
+		return true
+	if new_data.is_empty() and not old_data.is_empty():
+		return true
+	return _mechanics_signature(old_data) != _mechanics_signature(new_data)
+
+func _on_convoys_changed(convoys: Array) -> void:
+	# Override MenuBase: don't refresh-from-store while a chooser is open.
+	if not _current_swap_ctx.is_empty():
+		return
+	super._on_convoys_changed(convoys)
 
 @onready var _store: Node = get_node_or_null("/root/GameStore")
 @onready var _hub: Node = get_node_or_null("/root/SignalHub")
@@ -201,9 +255,10 @@ func _set_install_price(vehicle_id: String, part_uid: String, price: float) -> v
 	if not _current_swap_ctx.is_empty():
 		var row_map: Dictionary = _current_swap_ctx.get("row_map", {})
 		if row_map.has(part_uid):
-			var row: HBoxContainer = row_map[part_uid]
-			if is_instance_valid(row):
-				_update_row_price_from_cache(row)
+			# Don't type-cast directly: the stored node may have been freed.
+			var row_any: Variant = row_map.get(part_uid, null)
+			if is_instance_valid(row_any) and row_any is HBoxContainer:
+				_update_row_price_from_cache(row_any)
 	# Update any pending swap entries
 	_refresh_pending_prices_for_part(vehicle_id, part_uid)
 
@@ -267,9 +322,10 @@ func _update_all_breakdown_labels() -> void:
 		return
 	var row_map: Dictionary = _current_swap_ctx.get("row_map", {})
 	for k in row_map.keys():
-		var row: HBoxContainer = row_map[k]
-		if not is_instance_valid(row):
+		var row_any: Variant = row_map.get(k, null)
+		if not (is_instance_valid(row_any) and row_any is HBoxContainer):
 			continue
+		var row: HBoxContainer = row_any
 		var veh_id := String(row.get_meta("vehicle_id", "")) if row.has_meta("vehicle_id") else ""
 		var part_uid := String(row.get_meta("part_uid", "")) if row.has_meta("part_uid") else ""
 		var part_dict: Dictionary = row.get_meta("part_dict", {}) if row.has_meta("part_dict") else {}
@@ -371,9 +427,9 @@ func _maybe_cache_install_price_from_payload(payload: Dictionary) -> void:
 			if not _current_swap_ctx.is_empty():
 				var row_map2: Dictionary = _current_swap_ctx.get("row_map", {})
 				if row_map2.has(part_uid):
-					var row2: HBoxContainer = row_map2[part_uid]
-					if is_instance_valid(row2) and row2.has_meta("part_dict"):
-						var pd: Dictionary = row2.get_meta("part_dict", {})
+					var row2_any: Variant = row_map2.get(part_uid, null)
+					if is_instance_valid(row2_any) and row2_any is HBoxContainer and (row2_any as HBoxContainer).has_meta("part_dict"):
+						var pd: Dictionary = (row2_any as HBoxContainer).get_meta("part_dict", {})
 						if part_name == "" and pd.has("name"): part_name = String(pd.get("name", ""))
 						if part_slot == "" and pd.has("slot"): part_slot = String(pd.get("slot", ""))
 						if part_val_log == 0.0 and pd.has("value") and pd.get("value") != null:
@@ -552,6 +608,9 @@ func _ready():
 			main_vb.add_child(row)
 		_breakdown_toggle = cb
 
+	# Ensure MenuBase hooks are installed.
+	super._ready()
+
 func _rename_pending_tab_to_cart() -> void:
 	if not is_instance_valid(tab_container) or not is_instance_valid(pending_scroll):
 		return
@@ -627,6 +686,16 @@ func initialize_with_data(data_or_id: Variant, extra_arg: Variant = null) -> voi
 func _update_ui(convoy: Dictionary) -> void:
 	if not (convoy is Dictionary) or convoy.is_empty():
 		reset_view()
+		return
+
+	# If the swap chooser is open, avoid rebuilding UI (it would close the dialog).
+	# Stash the latest snapshot so actions use up-to-date data.
+	if not _current_swap_ctx.is_empty():
+		var new_vehicles2 = convoy.get("vehicle_details_list", convoy.get("vehicles", []))
+		if not new_vehicles2.is_empty():
+			_convoy = convoy.duplicate(true)
+			convoy_id = String(_convoy.get("convoy_id", _convoy.get("id", "")))
+			_vehicles = new_vehicles2
 		return
 	
 	# Guard against shallow updates wiping out our vehicle list
@@ -706,8 +775,6 @@ func _exit_tree() -> void:
 	# Also ensure any open chooser is closed to avoid dangling node references
 	_close_open_swap_dialog()
 	# Disconnect update signals to avoid duplicate connections on reopen
-	if is_instance_valid(_store) and _store.has_signal("convoys_changed") and _store.convoys_changed.is_connected(_on_store_convoys_changed):
-		_store.convoys_changed.disconnect(_on_store_convoys_changed)
 	if is_instance_valid(_hub) and _hub.has_signal("convoy_updated") and _hub.convoy_updated.is_connected(_on_hub_convoy_updated):
 		_hub.convoy_updated.disconnect(_on_hub_convoy_updated)
 	if is_instance_valid(_api) and _api.has_signal("part_compatibility_checked") and _api.part_compatibility_checked.is_connected(_on_part_compatibility_ready):
@@ -727,34 +794,7 @@ func set_selected_vehicle_index(idx: int) -> void:
 		vehicle_option_button.select(safe_idx)
 	_on_vehicle_selected(safe_idx)
 
-func _on_store_convoys_changed(all_convoys: Array) -> void:
-	# Refresh this menu when our convoy is updated in the canonical snapshot.
-	if _convoy.is_empty():
-		return
-	var target_id := String(_convoy.get("convoy_id", ""))
-	if target_id == "":
-		return
-	var selected_vehicle_id := ""
-	if _selected_vehicle_idx >= 0 and _selected_vehicle_idx < _vehicles.size():
-		selected_vehicle_id = String(_vehicles[_selected_vehicle_idx].get("vehicle_id", ""))
-	for c in all_convoys:
-		if not (c is Dictionary):
-			continue
-		if String(c.get("convoy_id", "")) == target_id:
-			_convoy = (c as Dictionary).duplicate(true)
-			_vehicles = _convoy.get("vehicle_details_list", [])
-			# Restore previous selection if possible
-			var new_index := 0
-			if selected_vehicle_id != "":
-				for i in range(_vehicles.size()):
-					if String(_vehicles[i].get("vehicle_id", "")) == selected_vehicle_id:
-						new_index = i
-						break
-			_populate_vehicle_dropdown()
-			if _vehicles.size() > 0:
-				_on_vehicle_selected(new_index)
-			_refresh_apply_state()
-			break
+
 
 func _on_hub_convoy_updated(updated_convoy: Dictionary) -> void:
 	# Best-effort: if a service emitted an updated convoy dict, refresh UI immediately.
@@ -783,12 +823,28 @@ func _on_hub_vendor_updated(_vendor: Dictionary) -> void:
 	var v: Dictionary = _unwrap_vendor_payload(_vendor)
 	var vid := _extract_vendor_id(v)
 	var inv := _extract_vendor_inventory(v)
-	# This confirms the vendor pipeline is actually delivering payloads to this menu.
-	print("[PartCompatUI] vendor_updated received vendor_id=", vid, " inv_count=", inv.size(), " keys=", v.keys())
+	# Debounce identical vendor payloads to prevent Swap highlight flicker.
+	var inv_ids: Array[String] = []
+	for it in inv:
+		if not (it is Dictionary):
+			continue
+		var d: Dictionary = it
+		var cid := String(d.get("cargo_id", d.get("part_id", d.get("id", ""))))
+		if cid != "":
+			inv_ids.append(cid)
+	inv_ids.sort()
+	var sig := "%s|%s|%s" % [vid, inv_ids.size(), "\n".join(inv_ids).hash()]
+	if sig == _last_vendor_payload_sig:
+		return
+	_last_vendor_payload_sig = sig
+	if debug_part_compat_ui:
+		# Confirms the vendor pipeline is delivering payloads to this menu.
+		print("[PartCompatUI] vendor_updated received vendor_id=", vid, " inv_count=", inv.size(), " keys=", v.keys())
 	_all_vendor_candidates_cache.clear()
 	if _selected_vehicle_idx >= 0 and _selected_vehicle_idx < _vehicles.size():
-		_refresh_slot_vendor_availability()
+		# IMPORTANT: do not clear highlights to false; start checks and recompute-from-cache.
 		_start_vendor_compat_checks_for_vehicle(_vehicles[_selected_vehicle_idx])
+		_refresh_slot_vendor_availability()
 
 func _populate_vehicle_dropdown():
 	vehicle_option_button.clear()
@@ -860,35 +916,128 @@ func _rebuild_parts_tab(vehicle_data: Dictionary):
 		parts_vbox.add_child(sep)
 
 func _refresh_slot_vendor_availability():
-	_slot_vendor_availability.clear()
-	# Build a set of slots to track for the selected vehicle; initialize to false.
-	var slot_set2 := {}
-	var slots2: Array = []
-	if _selected_vehicle_idx >= 0 and _selected_vehicle_idx < _vehicles.size():
-		var v = _vehicles[_selected_vehicle_idx]
-		for p in v.get("parts", []):
-			if not (p is Dictionary):
-				continue
-			var s := _detect_slot_for_item(p)
-			if s != "" and not slot_set2.has(s):
-				slot_set2[s] = true
-				slots2.append(s)
-		# Include any slot-bearing cargo items.
-		for c in v.get("cargo", []):
-			if not (c is Dictionary):
-				continue
-			var cs := _detect_slot_for_item(c)
-			if cs == "":
-				continue
-			if not slot_set2.has(cs):
-				slot_set2[cs] = true
-				slots2.append(cs)
-	for s in slots2:
-		_slot_vendor_availability[s] = false
+	# Compute vendor availability WITHOUT clearing to false first; clearing causes visible flicker
+	# when vendor updates arrive frequently.
+	if _selected_vehicle_idx < 0 or _selected_vehicle_idx >= _vehicles.size():
+		return
+	var vsel: Dictionary = _vehicles[_selected_vehicle_idx]
+	var vehicle_id := str(vsel.get("vehicle_id", ""))
+	if vehicle_id == "":
+		return
 
-	# Restyle all visible rows for these slots to clear any previous highlight
+	# Build a stable list of slots to track for the selected vehicle.
+	var slot_set2: Dictionary = {}
+	var slots2: Array[String] = []
+	for p in vsel.get("parts", []):
+		if not (p is Dictionary):
+			continue
+		var s := _detect_slot_for_item(p)
+		if s != "" and not slot_set2.has(s):
+			slot_set2[s] = true
+			slots2.append(s)
+	for c in vsel.get("cargo", []):
+		if not (c is Dictionary):
+			continue
+		var cs := _detect_slot_for_item(c)
+		if cs != "" and not slot_set2.has(cs):
+			slot_set2[cs] = true
+			slots2.append(cs)
+	slots2.sort()
+
+	# Use any cached vendor candidates when present. If not present, we avoid forcing values
+	# to false because we cannot prove that "no compatible items exist" yet.
+	var candidates: Array = _all_vendor_candidates_cache
+
+	# Build next map, starting from previous state to avoid blinking during in-flight checks.
+	var next_avail: Dictionary = {}
 	for s in slots2:
+		next_avail[s] = bool(_slot_vendor_availability.get(s, false))
+
+	# Track per-slot known/unknown results so we can safely turn slots OFF only when all
+	# candidates for that slot are known and incompatible.
+	var slot_has_candidate: Dictionary = {}
+	var slot_has_unknown: Dictionary = {}
+	var slot_has_known_true: Dictionary = {}
+	for s in slots2:
+		slot_has_candidate[s] = false
+		slot_has_unknown[s] = false
+		slot_has_known_true[s] = false
+
+	if not candidates.is_empty():
+		for entry in candidates:
+			if not (entry is Dictionary):
+				continue
+			var cand: Dictionary = (entry as Dictionary).get("part", {})
+			if cand.is_empty():
+				continue
+			var cid_val: Variant = cand.get("cargo_id", cand.get("part_id", cand.get("id", "")))
+			if typeof(cid_val) != TYPE_STRING or String(cid_val) == "":
+				continue
+			var cid: String = String(cid_val)
+			var slot_name := ""
+			var s_loc_val = cand.get("slot", "")
+			if typeof(s_loc_val) == TYPE_STRING:
+				slot_name = String(s_loc_val)
+			if slot_name == "" and _cargo_to_slot.has(cid):
+				slot_name = String(_cargo_to_slot.get(cid, ""))
+			if slot_name == "" or not slot_set2.has(slot_name):
+				continue
+			slot_has_candidate[slot_name] = true
+
+			var cache_key := "%s||%s" % [vehicle_id, cid]
+			if not _compat_cache.has(cache_key):
+				slot_has_unknown[slot_name] = true
+				continue
+			var cached: Dictionary = _compat_cache[cache_key]
+			var ok := false
+			var status_code: int = int(cached.get("status", 0))
+			var data_any: Variant = cached.get("data")
+			if data_any is Dictionary:
+				var data: Dictionary = data_any
+				if data.has("compatible"):
+					ok = bool(data.get("compatible"))
+				elif data.has("fitment") and data.get("fitment") is Dictionary and data.fitment.has("compatible"):
+					ok = bool(data.fitment.get("compatible"))
+			elif data_any is Array and status_code >= 200 and status_code < 300:
+				# Some endpoints return HTTP 200 with an Array of part dicts; treat that as compatible.
+				ok = true
+			if ok:
+				slot_has_known_true[slot_name] = true
+				next_avail[slot_name] = true
+
+	# Turn slots OFF only when we have candidates and none are unknown and none are true.
+	for s in slots2:
+		if bool(slot_has_candidate.get(s, false)) and not bool(slot_has_unknown.get(s, false)) and not bool(slot_has_known_true.get(s, false)):
+			next_avail[s] = false
+
+	# Apply diffs: only restyle slots whose availability changed.
+	var all_slots: Array[String] = []
+	for s in slots2:
+		all_slots.append(s)
+	for old_key in _slot_vendor_availability.keys():
+		if typeof(old_key) == TYPE_STRING:
+			var os: String = String(old_key)
+			if not slot_set2.has(os) and not all_slots.has(os):
+				all_slots.append(os)
+	all_slots.sort()
+
+	for s in all_slots:
+		var oldv := bool(_slot_vendor_availability.get(s, false))
+		var newv := bool(next_avail.get(s, false))
+		if oldv == newv:
+			continue
+		_slot_vendor_availability[s] = newv
+		if newv:
+			_ensure_slot_row(s)
 		_restyle_swap_buttons_for_slot(s)
+
+	# Drop keys that no longer apply.
+	for k in _slot_vendor_availability.keys():
+		if typeof(k) != TYPE_STRING:
+			continue
+		var ks: String = String(k)
+		if not slot_set2.has(ks):
+			_slot_vendor_availability.erase(ks)
 
 func _refresh_slot_inventory_availability() -> void:
 	# Determine which slots have a compatible replacement in convoy cargo for the SELECTED vehicle
@@ -947,11 +1096,16 @@ func _refresh_slot_inventory_availability() -> void:
 				var comp_ok := false
 				if _compat_cache.has(ck):
 					var payload: Dictionary = _compat_cache[ck]
-					var data: Dictionary = payload.get("data", {}) if payload.get("data") is Dictionary else {}
-					if data.has("compatible"):
-						comp_ok = bool(data.get("compatible"))
-					elif data.has("fitment") and data.get("fitment") is Dictionary and data.fitment.has("compatible"):
-						comp_ok = bool(data.fitment.get("compatible"))
+					var status_code: int = int(payload.get("status", 0))
+					var data_any: Variant = payload.get("data")
+					if data_any is Dictionary:
+						var data: Dictionary = data_any
+						if data.has("compatible"):
+							comp_ok = bool(data.get("compatible"))
+						elif data.has("fitment") and data.get("fitment") is Dictionary and data.fitment.has("compatible"):
+							comp_ok = bool(data.fitment.get("compatible"))
+					elif data_any is Array and status_code >= 200 and status_code < 300:
+						comp_ok = true
 				else:
 					# Fallback: light local check
 					comp_ok = _is_part_compatible(vsel, s, item)
@@ -987,7 +1141,8 @@ func _start_vendor_compat_checks_for_vehicle(vehicle: Dictionary) -> void:
 		return
 	if _all_vendor_candidates_cache.is_empty():
 		_all_vendor_candidates_cache = _collect_all_vendor_part_candidates()
-	print("[PartCompatUI] Dispatching compat checks for ", _all_vendor_candidates_cache.size(), " vendor candidates for vehicle=", vehicle_id)
+	if debug_part_compat_ui:
+		print("[PartCompatUI] Dispatching compat checks for ", _all_vendor_candidates_cache.size(), " vendor candidates for vehicle=", vehicle_id)
 	for entry in _all_vendor_candidates_cache:
 		var cand: Dictionary = entry.get("part", {})
 		# Prefer cargo_id for compatibility endpoint; fall back to part_id
@@ -1007,15 +1162,27 @@ func _start_vendor_compat_checks_for_vehicle(vehicle: Dictionary) -> void:
 		if _compat_cache.has(cache_key):
 			var cached: Dictionary = _compat_cache[cache_key]
 			var ok := false
-			var data: Dictionary = cached.get("data", {}) if cached.get("data") is Dictionary else {}
-			if data.has("compatible"):
-				ok = bool(data.get("compatible"))
-			elif data.has("fitment") and data.get("fitment") is Dictionary and data.fitment.has("compatible"):
-				ok = bool(data.fitment.get("compatible"))
+			var status_code: int = int(cached.get("status", 0))
+			var data_any: Variant = cached.get("data")
+			var data: Dictionary = {} # used for slot extraction when Dictionary-shaped
+			if data_any is Dictionary:
+				data = data_any
+				if data.has("compatible"):
+					ok = bool(data.get("compatible"))
+				elif data.has("fitment") and data.get("fitment") is Dictionary and data.fitment.has("compatible"):
+					ok = bool(data.fitment.get("compatible"))
+			elif data_any is Array and status_code >= 200 and status_code < 300:
+				ok = true
 			if ok:
 				# Already known compatible for this vehicle; synthesize slot and restyle now
 				var slot_name := ""
-				if data.has("fitment") and data.fitment is Dictionary and data.fitment.has("slot"):
+				if data_any is Array:
+					var arr: Array = data_any
+					if arr.size() > 0 and (arr[0] is Dictionary) and (arr[0] as Dictionary).has("slot"):
+						slot_name = String((arr[0] as Dictionary).get("slot", ""))
+					if slot_name == "" and _cargo_to_slot.has(cid):
+						slot_name = String(_cargo_to_slot.get(cid, ""))
+				elif data.has("fitment") and data.fitment is Dictionary and data.fitment.has("slot"):
 					slot_name = String(data.fitment.get("slot", ""))
 				elif _cargo_to_slot.has(cid):
 					slot_name = String(_cargo_to_slot.get(cid, ""))
@@ -1024,9 +1191,11 @@ func _start_vendor_compat_checks_for_vehicle(vehicle: Dictionary) -> void:
 					_ensure_slot_row(slot_name)
 					_slot_vendor_availability[slot_name] = true
 					_restyle_swap_buttons_for_slot(slot_name)
-				continue
+			# Cached result (compatible or not) means we should not re-request.
+			continue
 		if is_instance_valid(_mechanics_service) and _mechanics_service.has_method("check_part_compatibility"):
-			print("[PartCompatUI] REQUEST vehicle=", vehicle_id, " part_cargo_id=", cid)
+			if debug_part_compat_ui:
+				print("[PartCompatUI] REQUEST vehicle=", vehicle_id, " part_cargo_id=", cid)
 			_mechanics_service.check_part_compatibility(vehicle_id, cid)
 
 func _style_swap_button(btn: Button, slot_name: String):
@@ -2247,9 +2416,10 @@ func _update_row_from_compat_payload(payload: Dictionary) -> void:
 	var row_map: Dictionary = _current_swap_ctx.get("row_map", {})
 	if not row_map.has(cid):
 		return
-	var row: HBoxContainer = row_map[cid]
-	if not is_instance_valid(row):
+	var row_any: Variant = row_map.get(cid, null)
+	if not (is_instance_valid(row_any) and row_any is HBoxContainer):
 		return
+	var row: HBoxContainer = row_any
 	var compat_lbl: Label = row.get_node_or_null("CompatLabel")
 	var btn: Button = row.get_node_or_null("SelectBtn")
 	var data: Dictionary = payload.get("data", {}) if payload.get("data") is Dictionary else {}
@@ -2431,8 +2601,9 @@ func _on_part_compatibility_ready(payload: Dictionary) -> void:
 	# Installation price may be present; cache and update UI
 	_maybe_cache_install_price_from_payload(payload)
 	# Dual logs: concise keyword + structured snippet
-	print("[PartCompatUI] payload=", payload)
-	_debug_snippet(payload, "PartCompatUI.payload")
+	if debug_part_compat_ui:
+		print("[PartCompatUI] payload=", payload)
+		_debug_snippet(payload, "PartCompatUI.payload")
 	# Update any open chooser rows
 	_update_row_from_compat_payload(payload)
 	# Also update slot highlights based on backend result
@@ -2496,12 +2667,3 @@ func _on_mechanic_vendor_slot_availability(vehicle_id: String, slot_availability
 			if not bool(_slot_vendor_availability.get(s, false)):
 				_slot_vendor_availability[s] = true
 				_restyle_swap_buttons_for_slot(s)
-
-func _has_relevant_changes(old_data: Dictionary, new_data: Dictionary) -> bool:
-	var o = old_data.duplicate()
-	var n = new_data.duplicate()
-	# Ignore position and resource changes to prevent constant refreshing while moving
-	for k in ["x", "y", "fuel", "water", "food", "travel_progress"]:
-		o.erase(k)
-		n.erase(k)
-	return o.hash() != n.hash()

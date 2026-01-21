@@ -45,6 +45,80 @@ var _suppress_refresh_until_msec: int = 0
 var _open_inspects: Dictionary = {}
 var _last_refresh_convoy_id: String = "" # Avoid repeated refresh_single calls
 
+# When a refresh arrives during the suppress window, stash the latest payload and
+# apply it once the window expires (prevents list rebuilds from closing inspect).
+var _deferred_convoy_payload: Dictionary = {}
+var _deferred_refresh_token: int = 0
+
+func _cargo_signature(convoy: Dictionary) -> int:
+	# Build a stable signature of cargo-related data only (ignores position/time noise).
+	var rows: Array[String] = []
+	var vehicles: Array = convoy.get("vehicle_details_list", convoy.get("vehicles", []))
+	for v in vehicles:
+		if not (v is Dictionary):
+			continue
+		var vd: Dictionary = v
+		var vid := String(vd.get("vehicle_id", vd.get("id", "")))
+
+		# Typed cargo lists (preferred) and fallback untyped cargo.
+		var cargo_items: Array = []
+		if vd.has("cargo_items_typed") and vd.get("cargo_items_typed") is Array:
+			cargo_items.append_array(vd.get("cargo_items_typed", []))
+		elif vd.has("cargo_items") and vd.get("cargo_items") is Array:
+			cargo_items.append_array(vd.get("cargo_items", []))
+
+		for it in cargo_items:
+			if not (it is Dictionary):
+				continue
+			var d: Dictionary = it
+			var cid := String(d.get("cargo_id", d.get("id", "")))
+			var qty := int(d.get("quantity", d.get("qty", 1)))
+			var uid := String(d.get("part_uid", d.get("uid", "")))
+			rows.append("%s|%s|%s|%s" % [vid, cid, qty, uid])
+
+		# Some payloads embed loose parts in `parts` with vehicle_id == null.
+		if vd.has("parts") and vd.get("parts") is Array:
+			for p in vd.get("parts", []):
+				if not (p is Dictionary):
+					continue
+				var pd: Dictionary = p
+				if pd.has("vehicle_id") and pd.get("vehicle_id") != null:
+					continue
+				var cid2 := String(pd.get("cargo_id", pd.get("id", "")))
+				var qty2 := int(pd.get("quantity", pd.get("qty", 1)))
+				var uid2 := String(pd.get("part_uid", pd.get("uid", "")))
+				rows.append("%s|%s|%s|%s" % [vid, cid2, qty2, uid2])
+
+	rows.sort()
+	return "\n".join(rows).hash()
+
+func _has_relevant_changes(old_data: Dictionary, new_data: Dictionary) -> bool:
+	# Override MenuBase: only rebuild cargo UI when cargo-related data changes.
+	if old_data.is_empty() and not new_data.is_empty():
+		return true
+	if new_data.is_empty() and not old_data.is_empty():
+		return true
+	return _cargo_signature(old_data) != _cargo_signature(new_data)
+
+func _schedule_deferred_refresh() -> void:
+	_deferred_refresh_token += 1
+	var token := _deferred_refresh_token
+	var now := Time.get_ticks_msec()
+	var delay_ms: int = int(max(10, _suppress_refresh_until_msec - now))
+	var t := get_tree().create_timer(float(delay_ms) / 1000.0)
+	t.timeout.connect(func():
+		if token != _deferred_refresh_token:
+			return
+		var now2 := Time.get_ticks_msec()
+		if now2 < _suppress_refresh_until_msec:
+			_schedule_deferred_refresh()
+			return
+		if not _deferred_convoy_payload.is_empty():
+			convoy_data_received = _deferred_convoy_payload.duplicate(true)
+			_deferred_convoy_payload = {}
+		_populate_cargo_list()
+	)
+
 func _snapshot_open_inspects(tag: String) -> void:
 	# Emit a compact summary of currently tracked open inspect cargo_ids
 	var ids: Array = _open_inspects.keys()
@@ -81,7 +155,7 @@ func _extract_item_display_name(item: Dictionary) -> String:
 		return str(item.get("specific_name"))
 	return "Unknown Item"
 
-func _is_displayable_cargo(item: Dictionary) -> bool:
+func _is_displayable_cargo(_item: Dictionary) -> bool:
 	# Show all cargo items. `vehicle_id` is present for normal cargo too, so it cannot be used
 	# to distinguish installed vs loose.
 	return true
@@ -145,9 +219,9 @@ func _ready():
 		printerr("ConvoyCargoMenu: BackButton node not found. Ensure it's named 'BackButton' in the scene.")
 
 	# Phase C: subscribe to canonical sources instead of GameDataManager.
+	# NOTE: MenuBase already subscribes to `GameStore.convoys_changed`; avoid a second
+	# connection here (duplicate refreshes were closing inspect panels).
 	if is_instance_valid(_store):
-		if _store.has_signal("convoys_changed") and not _store.convoys_changed.is_connected(_on_store_convoys_changed):
-			_store.convoys_changed.connect(_on_store_convoys_changed)
 		if _store.has_signal("map_changed") and not _store.map_changed.is_connected(_on_store_map_changed):
 			_store.map_changed.connect(_on_store_map_changed)
 		if _store.has_method("get_settlements"):
@@ -164,6 +238,9 @@ func _ready():
 	var sc := get_node_or_null("MainVBox/ScrollContainer")
 	if sc is ScrollContainer:
 		sc.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+
+	# Ensure MenuBase hooks are installed.
+	super._ready()
 
 func _update_organize_button_text() -> void:
 	if organization_mode == "by_type":
@@ -985,6 +1062,13 @@ func _populate_cargo_list():
 
 func _update_ui(convoy: Dictionary) -> void:
 	# Reapply cargo population on live updates while attempting to preserve inspect state.
+	var now := Time.get_ticks_msec()
+	if now < _suppress_refresh_until_msec:
+		# Stash and apply after suppress window to avoid list rebuild closing inspect panels.
+		_deferred_convoy_payload = convoy.duplicate(true)
+		_schedule_deferred_refresh()
+		_diag("update_ui", "suppressed", {"now": now, "suppress_until": _suppress_refresh_until_msec})
+		return
 	convoy_data_received = convoy.duplicate(true)
 	if is_instance_valid(title_label):
 		var title_val := String(convoy_data_received.get("convoy_name", title_label.text))
