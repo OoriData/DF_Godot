@@ -21,6 +21,7 @@ signal selected_convoy_ids_changed(selected_ids: Array)
 # User
 signal user_changed(user: Dictionary)
 signal auth_state_changed(state: String)
+signal user_refresh_requested
 
 # Vendors
 signal vendor_updated(vendor: Dictionary)

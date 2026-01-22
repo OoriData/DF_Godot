@@ -781,6 +781,8 @@ func _on_part_compatibility_ready(payload: Dictionary) -> void:
 
 func _on_api_transaction_result(result: Dictionary) -> void:
 	VendorPanelRefreshController.on_api_transaction_result(self, result)
+	if is_instance_valid(_hub) and _hub.has_signal("user_refresh_requested"):
+		_hub.user_refresh_requested.emit()
 
 func _on_api_transaction_error(error_message: String) -> void:
 	VendorPanelRefreshController.on_api_transaction_error(self, error_message)

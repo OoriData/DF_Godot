@@ -4,8 +4,8 @@ extends MenuBase
 signal changes_committed(convoy_id: String, vehicle_id: String, swaps: Array, estimated_cost: float)
 
 # UI refs
-@onready var title_label: Label = $MainVBox/TitleLabel
-@onready var vehicle_option_button: OptionButton = $MainVBox/VehicleOptionButton
+@onready var title_label: Label = get_node_or_null("MainVBox/TitleLabel")
+@onready var vehicle_option_button: OptionButton = get_node_or_null("MainVBox/VehicleOptionButton")
 @onready var tab_container: TabContainer = $MainVBox/TabContainer
 @onready var parts_scroll: ScrollContainer = $MainVBox/TabContainer/Parts
 @onready var parts_vbox: VBoxContainer = $MainVBox/TabContainer/Parts/PartsVBox
@@ -36,6 +36,7 @@ var _vendor_debug_last_sig: String = ""
 var _vendor_debug_calls: int = 0
 var _last_vendor_payload_sig: String = ""
 
+var _awaiting_swap_completion: bool = false
 @export var debug_part_compat_ui: bool = true
 
 func _looks_like_uuid(s: String) -> bool:
@@ -731,6 +732,12 @@ func _update_ui(convoy: Dictionary) -> void:
 		vehicle_option_button.select(idx)
 	_on_vehicle_selected(idx)
 	_refresh_apply_state()
+	
+	if _awaiting_swap_completion:
+		_awaiting_swap_completion = false
+		if is_instance_valid(_hub) and _hub.has_signal("user_refresh_requested"):
+			_hub.user_refresh_requested.emit()
+
 
 func reset_view() -> void:
 	_convoy = {}
@@ -747,6 +754,7 @@ func reset_view() -> void:
 	_vendor_debug_last_sig = ""
 	_vendor_debug_calls = 0
 	_last_refresh_convoy_id = ""
+	_awaiting_swap_completion = false
 	_close_open_swap_dialog()
 	if is_instance_valid(title_label):
 		title_label.text = "Mechanic"
@@ -806,6 +814,12 @@ func _on_hub_convoy_updated(updated_convoy: Dictionary) -> void:
 	# If the swap chooser is open, avoid rebuilding UI (it would close the dialog and/or drop placeholder slot rows).
 	# We'll pick up refreshed data on the next explicit selection change or after the dialog closes.
 	if not _current_swap_ctx.is_empty():
+		if _awaiting_swap_completion:
+			# If we were waiting for a swap to complete, we still want to refresh the user money
+			# even if we don't rebuild the mechanics UI yet.
+			_awaiting_swap_completion = false
+			if is_instance_valid(_hub) and _hub.has_signal("user_refresh_requested"):
+				_hub.user_refresh_requested.emit()
 		_convoy = updated_convoy.duplicate(true)
 		_vehicles = _convoy.get("vehicle_details_list", [])
 		return
@@ -816,6 +830,11 @@ func _on_hub_convoy_updated(updated_convoy: Dictionary) -> void:
 		var idx: int = int(clamp(_selected_vehicle_idx, 0, _vehicles.size() - 1))
 		_on_vehicle_selected(idx if _selected_vehicle_idx >= 0 else 0)
 	_refresh_apply_state()
+	
+	if _awaiting_swap_completion:
+		_awaiting_swap_completion = false
+		if is_instance_valid(_hub) and _hub.has_signal("user_refresh_requested"):
+			_hub.user_refresh_requested.emit()
 
 func _on_hub_vendor_updated(_vendor: Dictionary) -> void:
 	# Vendor payloads contain inventories; settlement snapshots may contain only ids.
@@ -1899,7 +1918,8 @@ func _on_swap_part_pressed(slot_name: String, current_part: Dictionary):
 						chooser.queue_free()
 						_rebuild_pending_tab()
 					)
-				compatible_box.add_child(row)
+				if row.get_parent() == null:
+					compatible_box.add_child(row)
 			else:
 				# annotate with reason
 				var reason = _compat_reason(vehicle, slot_name, cand)
@@ -1907,15 +1927,15 @@ func _on_swap_part_pressed(slot_name: String, current_part: Dictionary):
 				var select_btn_in: Button = row.get_node_or_null("SelectBtn")
 				if is_instance_valid(select_btn_in):
 					select_btn_in.disabled = true
-				incompatible_box.add_child(row)
+				if row.get_parent() == null:
+					incompatible_box.add_child(row)
 
 	get_tree().root.add_child(chooser)
 	chooser.popup_centered_ratio(0.8)
 	chooser.connect("confirmed", Callable(chooser, "queue_free"))
-	chooser.connect("popup_hide", Callable(chooser, "queue_free"))
-	chooser.connect("popup_hide", func():
-		_current_swap_ctx.clear()
-	)
+	chooser.connect("canceled", Callable(chooser, "queue_free"))
+	chooser.connect("close_requested", Callable(chooser, "queue_free"))
+	chooser.connect("tree_exiting", func(): _current_swap_ctx.clear())
 	# Hide incompatible list if empty
 	if incompatible_box.get_child_count() <= 1:
 		incompatible_box.visible = false
@@ -2266,9 +2286,15 @@ func _on_apply_pressed():
 	if is_instance_valid(_mechanics_service) and _mechanics_service.has_method("apply_swaps"):
 		print("[MechanicsMenu][Apply] Applying ", ordered_swaps.size(), " swap(s) vend=", vendor_id, " vehicle=", vehicle_id, " convoy=", convoy_id, " total=$", "%.2f" % total_cost)
 		_mechanics_service.apply_swaps(convoy_id, vehicle_id, ordered_swaps, vendor_id)
+		
+		# Speculative refresh: Request user data update immediately so money updates even if convoy signal lags.
+		if is_instance_valid(_hub) and _hub.has_signal("user_refresh_requested"):
+			_hub.user_refresh_requested.emit()
+
 		# Ensure authoritative refresh after operations are queued.
 		if is_instance_valid(_convoy_service) and _convoy_service.has_method("refresh_single") and convoy_id != "":
 			_convoy_service.refresh_single(convoy_id)
+		_awaiting_swap_completion = true
 	else:
 		printerr("[MechanicsMenu][Apply] MechanicsService missing apply_swaps; cannot apply.")
 	# Prototype: just clear changes after emit

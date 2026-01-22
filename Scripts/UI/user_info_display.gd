@@ -14,16 +14,22 @@ var _original_username_font_size: int
 var _original_money_font_size: int
 
 @onready var _store: Node = get_node_or_null("/root/GameStore")
+@onready var _hub: Node = get_node_or_null("/root/SignalHub")
+@onready var _api: Node = get_node_or_null("/root/APICalls")
+@onready var _user_service: Node = get_node_or_null("/root/UserService")
 
 func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_PASS
 	for child in get_children():
 		if child is Control:
 			child.mouse_filter = Control.MOUSE_FILTER_PASS
-			print("UserInfoDisplay: Set mouse_filter=PASS on child Control node:", child.name)
+
 	if is_instance_valid(_store) and _store.has_signal("user_changed"):
 		if not _store.user_changed.is_connected(_on_user_data_updated):
 			_store.user_changed.connect(_on_user_data_updated)
+	
+	if is_instance_valid(_hub) and _hub.has_signal("user_refresh_requested"):
+		_hub.user_refresh_requested.connect(_on_user_refresh_requested)
 
 	# Connect to the global UI scale manager (autoload under /root)
 	var usm = get_node_or_null("/root/ui_scale_manager")
@@ -62,9 +68,37 @@ func _notification(what: int) -> void:
 	if what == NOTIFICATION_VISIBILITY_CHANGED and is_visible_in_tree():
 		_update_display()
 
-func _on_user_data_updated(_user_data: Dictionary):
-	_update_display()
+func _on_user_data_updated(user_data: Dictionary):
+	_update_display(user_data)
 
+func _on_user_refresh_requested() -> void:
+	var refreshed = false
+	
+	# Try UserService first
+	if is_instance_valid(_user_service) and _user_service.has_method("request_user"):
+		_user_service.request_user()
+		refreshed = true
+	# Try APICalls with common method names
+	elif is_instance_valid(_api):
+		if _api.has_method("request_user"):
+			_api.request_user()
+			refreshed = true
+		elif _api.has_method("refresh_user_data"):
+			var uid = ""
+			if is_instance_valid(_store) and _store.has_method("get_user"):
+				var u = _store.get_user()
+				uid = str(u.get("user_id", u.get("id", "")))
+			_api.refresh_user_data(uid)
+			refreshed = true
+	# Try Store last
+	elif is_instance_valid(_store) and _store.has_method("request_user_refresh"):
+		_store.request_user_refresh()
+		refreshed = true
+
+	if not refreshed:
+		print("[UserInfoDisplay] ERROR: No way to request user refresh found!")
+
+	_update_display()
 
 func _on_ui_scale_changed(new_scale: float) -> void:
 	"""Applies the new global UI scale to the font sizes of the labels."""
@@ -74,12 +108,13 @@ func _on_ui_scale_changed(new_scale: float) -> void:
 		user_money_label.add_theme_font_size_override("font_size", int(_original_money_font_size * new_scale))
 
 
-func _update_display():
+func _update_display(data: Dictionary = {}):
 	if not is_node_ready() or not is_instance_valid(_store):
 		return
-	var user_data: Dictionary = {}
-	if _store.has_method("get_user"):
+	var user_data: Dictionary = data
+	if user_data.is_empty() and _store.has_method("get_user"):
 		user_data = _store.get_user()
+		
 	var username: String = user_data.get("username", "Player")
 	var money_amount = user_data.get("money", 0)
 
