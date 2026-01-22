@@ -203,6 +203,27 @@ var _vendors_from_settlements_by_id: Dictionary = {} # vendor_id -> vendor Dicti
 var _vendor_id_to_settlement: Dictionary = {} # vendor_id -> settlement Dictionary
 var _vendor_id_to_name: Dictionary = {} # vendor_id -> vendor name String
 
+func _vendor_data_with_price_fallback(vd_in: Variant) -> Dictionary:
+	var vd: Dictionary = vd_in if (vd_in is Dictionary) else {}
+	var vid: String = str(vd.get("vendor_id", vd.get("id", "")))
+	if vid == "":
+		return vd
+	if _vendors_from_settlements_by_id == null or _vendors_from_settlements_by_id.is_empty():
+		return vd
+	var fallback_any: Variant = _vendors_from_settlements_by_id.get(vid)
+	if not (fallback_any is Dictionary):
+		return vd
+	var fallback: Dictionary = fallback_any
+	# Merge only missing/null price fields from fallback; keep live inventory fields.
+	var out: Dictionary = vd.duplicate(true)
+	for k in ["fuel_price", "water_price", "food_price"]:
+		var has_key := out.has(k)
+		var val: Variant = out.get(k) if has_key else null
+		if (not has_key) or val == null:
+			if fallback.has(k) and fallback.get(k) != null:
+				out[k] = fallback.get(k)
+	return out
+
 func _get_bold_font_for(node: Control) -> FontVariation:
 	if _bold_font_cache != null:
 		return _bold_font_cache
@@ -498,7 +519,8 @@ func _populate_vendor_list() -> void:
 	vendor_item_tree.clear()
 	if not vendor_data:
 		return
-	var buckets := VendorCargoAggregatorScript.build_vendor_buckets(vendor_data, perf_log_enabled, Callable(self, "_get_vendor_name_for_recipient"))
+	var vd_for_agg := _vendor_data_with_price_fallback(vendor_data)
+	var buckets := VendorCargoAggregatorScript.build_vendor_buckets(vd_for_agg, perf_log_enabled, Callable(self, "_get_vendor_name_for_recipient"))
 	var root = vendor_item_tree.create_item()
 	_populate_category(vendor_item_tree, root, "Mission Cargo", buckets.get("missions", {}))
 	_populate_category(vendor_item_tree, root, "Vehicles", buckets.get("vehicles", {}))
@@ -511,7 +533,17 @@ func _populate_convoy_list() -> void:
 	if not convoy_data:
 		return
 	var allow_vehicle_sell := _should_show_vehicle_sell_category()
-	var buckets := VendorCargoAggregatorScript.build_convoy_buckets(convoy_data, vendor_data, current_mode, perf_log_enabled, Callable(self, "_get_vendor_name_for_recipient"), allow_vehicle_sell)
+	var vd_for_agg := _vendor_data_with_price_fallback(vendor_data)
+	var buckets := VendorCargoAggregatorScript.build_convoy_buckets(convoy_data, vd_for_agg, current_mode, perf_log_enabled, Callable(self, "_get_vendor_name_for_recipient"), allow_vehicle_sell)
+	if perf_log_enabled and str(current_mode) == "sell":
+		var vd: Dictionary = vendor_data if (vendor_data is Dictionary) else {}
+		var vdx: Dictionary = vd_for_agg
+		print("[VendorPanel][SellDiag] vendor_id=", str(vd.get("vendor_id", "")),
+			" has_keys(cargo_inventory/vehicle_inventory)=", vd.has("cargo_inventory"), "/", vd.has("vehicle_inventory"),
+			" prices_raw(f/w/food)=", str(vd.get("fuel_price", "<none>")), "/", str(vd.get("water_price", "<none>")), "/", str(vd.get("food_price", "<none>")),
+			" prices_used(f/w/food)=", str(vdx.get("fuel_price", "<none>")), "/", str(vdx.get("water_price", "<none>")), "/", str(vdx.get("food_price", "<none>")),
+			" allow_vehicle_sell=", allow_vehicle_sell,
+			" bucket_sizes(m/v/p/o/r)=", int((buckets.get("missions", {}) as Dictionary).size()), "/", int((buckets.get("vehicles", {}) as Dictionary).size()), "/", int((buckets.get("parts", {}) as Dictionary).size()), "/", int((buckets.get("other", {}) as Dictionary).size()), "/", int((buckets.get("resources", {}) as Dictionary).size()))
 	var root = convoy_item_tree.create_item()
 	_populate_category(convoy_item_tree, root, "Mission Cargo", buckets.get("missions", {}))
 	if allow_vehicle_sell and not (buckets.get("vehicles", {}) as Dictionary).is_empty():

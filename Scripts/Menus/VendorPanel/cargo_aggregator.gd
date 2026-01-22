@@ -5,6 +5,64 @@ const ItemsData = preload("res://Scripts/Data/Items.gd") # ensures CargoItem cla
 # Helper to aggregate vendor and convoy cargo into category buckets.
 # Buckets use stable keys: "missions", "vehicles", "parts", "other", "resources".
 
+
+static func _to_float_any(v: Variant) -> float:
+	if v == null:
+		return 0.0
+	if v is float or v is int:
+		return float(v)
+	if v is String:
+		var s := (v as String).strip_edges()
+		if s.is_valid_float():
+			return float(s)
+		if s.is_valid_int():
+			return float(int(s))
+	return 0.0
+
+
+static func _to_int_any(v: Variant) -> int:
+	if v == null:
+		return 0
+	if v is int:
+		return int(v)
+	if v is float:
+		return int(v)
+	if v is String:
+		var s := (v as String).strip_edges()
+		if s.is_valid_int():
+			return int(s)
+		if s.is_valid_float():
+			return int(float(s))
+	return 0
+
+
+static func _has_positive_price(d: Dictionary, key: String) -> bool:
+	if d == null:
+		return false
+	if not d.has(key):
+		return false
+	return _to_float_any(d.get(key)) > 0.0
+
+
+static func _item_resource_amount(item: Dictionary, res_key: String) -> float:
+	if item == null:
+		return 0.0
+	# Payloads are not perfectly consistent about key casing (e.g. "Fuel" vs "fuel").
+	if item.has(res_key):
+		return _to_float_any(item.get(res_key, 0))
+	# Try a single common alternate casing.
+	var alt := ""
+	match res_key:
+		"fuel":
+			alt = "Fuel"
+		"water":
+			alt = "Water"
+		"food":
+			alt = "Food"
+	if alt != "" and item.has(alt):
+		return _to_float_any(item.get(alt, 0))
+	return 0.0
+
 static func build_vendor_buckets(vendor_data: Dictionary, perf_log_enabled: bool, get_vendor_name_for_recipient: Callable) -> Dictionary:
 	var aggregated_missions: Dictionary = {}
 	var aggregated_resources: Dictionary = {}
@@ -38,8 +96,8 @@ static func build_vendor_buckets(vendor_data: Dictionary, perf_log_enabled: bool
 			if recipient_id_any and get_vendor_name_for_recipient.is_valid():
 				mission_vendor_name = str(get_vendor_name_for_recipient.call(recipient_id_any))
 		elif (item.has("food") and item.get("food") != null and item.get("food") > 0) or \
-		     (item.has("water") and item.get("water") != null and item.get("water") > 0) or \
-		     (item.has("fuel") and item.get("fuel") != null and item.get("fuel") > 0):
+			 (item.has("water") and item.get("water") != null and item.get("water") > 0) or \
+			 (item.has("fuel") and item.get("fuel") != null and item.get("fuel") > 0):
 			category_dict = aggregated_resources
 		else:
 			# Part identification is strictly slot-based.
@@ -62,10 +120,9 @@ static func build_vendor_buckets(vendor_data: Dictionary, perf_log_enabled: bool
 	var raw_fuel_price_val = vendor_data.get("fuel_price", 0)
 	if perf_log_enabled:
 		print("[VendorCargoAggregator] RAW_FUEL before cast value=", raw_fuel_val, " type=", typeof(raw_fuel_val), " price=", raw_fuel_price_val)
-	var fuel_quantity = int(raw_fuel_val) if (raw_fuel_val is float or raw_fuel_val is int) else 0
-	var fuel_price_is_numeric = raw_fuel_price_val is float or raw_fuel_price_val is int
-	var fuel_price = float(raw_fuel_price_val) if fuel_price_is_numeric else 0.0
-	if fuel_quantity > 0 and fuel_price_is_numeric:
+	var fuel_quantity := _to_int_any(raw_fuel_val)
+	var fuel_price := _to_float_any(raw_fuel_price_val)
+	if fuel_quantity > 0 and fuel_price > 0.0:
 		var fuel_item = {
 			"name": "Fuel (Bulk)",
 			"base_desc": "Bulk fuel to fill your containers.",
@@ -78,16 +135,15 @@ static func build_vendor_buckets(vendor_data: Dictionary, perf_log_enabled: bool
 			print("[VendorCargoAggregator] Creating vendor bulk fuel item:", fuel_item)
 		_aggregate_vendor_item(aggregated_resources, fuel_item, "", perf_log_enabled)
 	elif fuel_quantity > 0 and perf_log_enabled:
-		print("[VendorCargoAggregator] Skipping vendor bulk fuel (no numeric fuel_price)")
+		print("[VendorCargoAggregator] Skipping vendor bulk fuel (no positive fuel_price)")
 
 	var raw_water_val = vendor_data.get("water", 0)
 	var raw_water_price_val = vendor_data.get("water_price", 0)
 	if perf_log_enabled:
 		print("[VendorCargoAggregator] RAW_WATER before cast value=", raw_water_val, " type=", typeof(raw_water_val), " price=", raw_water_price_val)
-	var water_quantity = int(raw_water_val) if (raw_water_val is float or raw_water_val is int) else 0
-	var water_price_is_numeric = raw_water_price_val is float or raw_water_price_val is int
-	var water_price = float(raw_water_price_val) if water_price_is_numeric else 0.0
-	if water_quantity > 0 and water_price_is_numeric:
+	var water_quantity := _to_int_any(raw_water_val)
+	var water_price := _to_float_any(raw_water_price_val)
+	if water_quantity > 0 and water_price > 0.0:
 		var water_item = {
 			"name": "Water (Bulk)",
 			"base_desc": "Bulk water to fill your containers.",
@@ -100,16 +156,15 @@ static func build_vendor_buckets(vendor_data: Dictionary, perf_log_enabled: bool
 			print("[VendorCargoAggregator] Creating vendor bulk water item:", water_item)
 		_aggregate_vendor_item(aggregated_resources, water_item, "", perf_log_enabled)
 	elif water_quantity > 0 and perf_log_enabled:
-		print("[VendorCargoAggregator] Skipping vendor bulk water (no numeric water_price)")
+		print("[VendorCargoAggregator] Skipping vendor bulk water (no positive water_price)")
 
 	var raw_food_val = vendor_data.get("food", 0)
 	var raw_food_price_val = vendor_data.get("food_price", 0)
 	if perf_log_enabled:
 		print("[VendorCargoAggregator] RAW_FOOD before cast value=", raw_food_val, " type=", typeof(raw_food_val), " price=", raw_food_price_val)
-	var food_quantity = int(raw_food_val) if (raw_food_val is float or raw_food_val is int) else 0
-	var food_price_is_numeric = raw_food_price_val is float or raw_food_price_val is int
-	var food_price = float(raw_food_price_val) if food_price_is_numeric else 0.0
-	if food_quantity > 0 and food_price_is_numeric:
+	var food_quantity := _to_int_any(raw_food_val)
+	var food_price := _to_float_any(raw_food_price_val)
+	if food_quantity > 0 and food_price > 0.0:
 		var food_item = {
 			"name": "Food (Bulk)",
 			"base_desc": "Bulk food supplies.",
@@ -122,7 +177,7 @@ static func build_vendor_buckets(vendor_data: Dictionary, perf_log_enabled: bool
 			print("[VendorCargoAggregator] Creating vendor bulk food item:", food_item)
 		_aggregate_vendor_item(aggregated_resources, food_item, "", perf_log_enabled)
 	elif food_quantity > 0 and perf_log_enabled:
-		print("[VendorCargoAggregator] Skipping vendor bulk food (no numeric food_price)")
+		print("[VendorCargoAggregator] Skipping vendor bulk food (no positive food_price)")
 
 	for vehicle in vendor_data.get("vehicle_inventory", []):
 		var vid := str(vehicle.get("vehicle_id", ""))
@@ -168,10 +223,37 @@ static func build_convoy_buckets(convoy_data: Dictionary, vendor_data: Dictionar
 		}
 
 	var found_any_cargo = false
+	var is_sell_mode: bool = str(_current_mode) == "sell"
+	var vendor_can_buy_cargo: bool = true # Updated rule: every vendor allows selling cargo.
+	var vendor_vehicle_inventory_any: Variant = (vendor_data.get("vehicle_inventory") if vendor_data != null else null)
+	var vendor_can_buy_vehicles: bool = vendor_vehicle_inventory_any is Array and not (vendor_vehicle_inventory_any as Array).is_empty()
+	var vendor_buys_fuel: bool = _has_positive_price(vendor_data, "fuel_price")
+	var vendor_buys_water: bool = _has_positive_price(vendor_data, "water_price")
+	var vendor_buys_food: bool = _has_positive_price(vendor_data, "food_price")
+	# Updated rule: vehicles should only show in SELL when vendor actually has vehicles.
+	var vehicle_sell_allowed: bool = vendor_can_buy_vehicles
+	# Some convoy snapshots use different key shapes (e.g. `all_cargo` and `vehicles`).
+	var convoy_all_cargo_any: Variant = convoy_data.get("all_cargo")
+	var convoy_vehicles_any: Variant = convoy_data.get("vehicles")
+	if perf_log_enabled and is_sell_mode:
+		var ac_sz := (int((convoy_all_cargo_any as Array).size()) if convoy_all_cargo_any is Array else -1)
+		var v_sz := (int((convoy_vehicles_any as Array).size()) if convoy_vehicles_any is Array else -1)
+		print("[VendorCargoAggregator][SellDiag] convoy shapes all_cargo_size=", ac_sz, " vehicles_size=", v_sz,
+			" has_vehicle_details_list=", convoy_data.has("vehicle_details_list"),
+			" has_cargo_inventory=", convoy_data.has("cargo_inventory"))
+	if perf_log_enabled and is_sell_mode:
+		var vid_dbg := str((vendor_data.get("vendor_id", "") if vendor_data != null else ""))
+		print("[VendorCargoAggregator][SellDiag] vendor_id=", vid_dbg,
+			" vendor_can_buy_cargo=", vendor_can_buy_cargo,
+			" vendor_can_buy_vehicles=", vendor_can_buy_vehicles,
+			" allow_vehicle_sell=", bool(allow_vehicle_sell),
+			" vehicle_sell_allowed=", vehicle_sell_allowed,
+			" buys(fuel/water/food)=", vendor_buys_fuel, "/", vendor_buys_water, "/", vendor_buys_food,
+			" convoy_keys=", (convoy_data.keys() if convoy_data != null else []))
 	if convoy_data.has("vehicle_details_list"):
 		for vehicle in convoy_data.vehicle_details_list:
 			var vehicle_name = vehicle.get("name", "Unknown Vehicle")
-			if allow_vehicle_sell:
+			if vehicle_sell_allowed:
 				var vid := str(vehicle.get("vehicle_id", ""))
 				if vid != "":
 					aggregated_vehicles[vid] = {
@@ -218,6 +300,19 @@ static func build_convoy_buckets(convoy_data: Dictionary, vendor_data: Dictionar
 							recipient_id = raw_item.get("mission_vendor_id")
 						if recipient_id and get_vendor_name_for_recipient.is_valid():
 							mission_vendor_name = str(get_vendor_name_for_recipient.call(recipient_id))
+					# SELL: only include what this vendor can buy.
+					if is_sell_mode:
+						# Resource-bearing cargo is only sellable if the vendor has a positive price for
+						# at least one of the contained resources, regardless of which bucket it would land in.
+						if category_dict != aggregated_missions:
+							var has_fuel: bool = _item_resource_amount(raw_item, "fuel") > 0.0
+							var has_water: bool = _item_resource_amount(raw_item, "water") > 0.0
+							var has_food: bool = _item_resource_amount(raw_item, "food") > 0.0
+							if has_fuel or has_water or has_food:
+								var sellable_res: bool = (has_fuel and vendor_buys_fuel) or (has_water and vendor_buys_water) or (has_food and vendor_buys_food)
+								if not sellable_res:
+									continue
+						# Non-resource cargo (and parts-as-cargo) are always sellable; missions are always allowed.
 					_aggregate_item(category_dict, raw_item, vehicle_name, mission_vendor_name, perf_log_enabled)
 			else:
 				for item in vehicle.get("cargo", []):
@@ -228,11 +323,12 @@ static func build_convoy_buckets(convoy_data: Dictionary, vendor_data: Dictionar
 					if item.get("recipient") != null or ((dr is float or dr is int) and float(dr) > 0.0):
 						category_dict2 = aggregated_missions
 					elif (item.has("food") and item.get("food") != null and item.get("food") > 0) or \
-					     (item.has("water") and item.get("water") != null and item.get("water") > 0) or \
-					     (item.has("fuel") and item.get("fuel") != null and item.get("fuel") > 0):
+						 (item.has("water") and item.get("water") != null and item.get("water") > 0) or \
+						 (item.has("fuel") and item.get("fuel") != null and item.get("fuel") > 0):
 						category_dict2 = aggregated_resources
 					elif ItemsData != null and ItemsData.PartItem and ItemsData.PartItem._looks_like_part_dict(item):
-						category_dict2 = aggregated_parts
+						# In SELL mode, treat loose part cargo as sellable cargo (not installed parts).
+						category_dict2 = aggregated_other if is_sell_mode else aggregated_parts
 					else:
 						category_dict2 = aggregated_other
 					if category_dict2 == aggregated_missions:
@@ -241,9 +337,22 @@ static func build_convoy_buckets(convoy_data: Dictionary, vendor_data: Dictionar
 							recipient_id2 = item.get("mission_vendor_id")
 						if recipient_id2 and get_vendor_name_for_recipient.is_valid():
 							mission_vendor_name2 = str(get_vendor_name_for_recipient.call(recipient_id2))
+					# SELL: only include what this vendor can buy.
+					if is_sell_mode:
+						if category_dict2 != aggregated_missions:
+							var has_fuel2: bool = _item_resource_amount(item, "fuel") > 0.0
+							var has_water2: bool = _item_resource_amount(item, "water") > 0.0
+							var has_food2: bool = _item_resource_amount(item, "food") > 0.0
+							if has_fuel2 or has_water2 or has_food2:
+								var sellable_res2: bool = (has_fuel2 and vendor_buys_fuel) or (has_water2 and vendor_buys_water) or (has_food2 and vendor_buys_food)
+								if not sellable_res2:
+									continue
+						# Non-resource cargo (and parts-as-cargo) are always sellable; missions are always allowed.
 					_aggregate_item(category_dict2, item, vehicle_name, mission_vendor_name2, perf_log_enabled)
-			for part in vehicle.get("parts", []):
-				_aggregate_item(aggregated_parts, part, vehicle_name, "", perf_log_enabled)
+			# Vehicle installed parts should not be sellable as loose cargo.
+			if not is_sell_mode:
+				for part in vehicle.get("parts", []):
+					_aggregate_item(aggregated_parts, part, vehicle_name, "", perf_log_enabled)
 
 	if not found_any_cargo and convoy_data.has("cargo_inventory"):
 		for item in convoy_data.cargo_inventory:
@@ -253,9 +362,11 @@ static func build_convoy_buckets(convoy_data: Dictionary, vendor_data: Dictionar
 			if item.get("recipient") != null or ((dr2 is float or dr2 is int) and float(dr2) > 0.0):
 				category_dict3 = aggregated_missions
 			elif (item.has("food") and item.get("food") != null and item.get("food") > 0) or \
-			     (item.has("water") and item.get("water") != null and item.get("water") > 0) or \
-			     (item.has("fuel") and item.get("fuel") != null and item.get("fuel") > 0):
+				 (item.has("water") and item.get("water") != null and item.get("water") > 0) or \
+				 (item.has("fuel") and item.get("fuel") != null and item.get("fuel") > 0):
 				category_dict3 = aggregated_resources
+			elif ItemsData != null and ItemsData.PartItem and ItemsData.PartItem._looks_like_part_dict(item):
+				category_dict3 = aggregated_other if is_sell_mode else aggregated_parts
 			else:
 				category_dict3 = aggregated_other
 			if category_dict3 == aggregated_missions:
@@ -264,17 +375,103 @@ static func build_convoy_buckets(convoy_data: Dictionary, vendor_data: Dictionar
 					recipient_id3 = item.get("mission_vendor_id")
 				if recipient_id3 and get_vendor_name_for_recipient.is_valid():
 					mission_vendor_name3 = str(get_vendor_name_for_recipient.call(recipient_id3))
+			# SELL: only include what this vendor can buy.
+			if is_sell_mode:
+				if category_dict3 != aggregated_missions:
+					var has_fuel3: bool = _item_resource_amount(item, "fuel") > 0.0
+					var has_water3: bool = _item_resource_amount(item, "water") > 0.0
+					var has_food3: bool = _item_resource_amount(item, "food") > 0.0
+					if has_fuel3 or has_water3 or has_food3:
+						var sellable_res3: bool = (has_fuel3 and vendor_buys_fuel) or (has_water3 and vendor_buys_water) or (has_food3 and vendor_buys_food)
+						if not sellable_res3:
+							continue
+				# Non-resource cargo (and parts-as-cargo) are always sellable; missions are always allowed.
 			_aggregate_item(category_dict3, item, "Convoy", mission_vendor_name3, perf_log_enabled)
+
+	# Fallback: some snapshots provide a flattened `all_cargo` array instead of `cargo_inventory`.
+	if not found_any_cargo and not convoy_data.has("cargo_inventory") and convoy_all_cargo_any is Array:
+		for item_any in (convoy_all_cargo_any as Array):
+			var item: Dictionary = {}
+			var item_category: String = ""
+			# all_cargo may contain raw dictionaries OR typed CargoItem Resources.
+			if item_any is CargoItem:
+				var typed: CargoItem = item_any
+				item = typed.raw.duplicate(true)
+				item["quantity"] = typed.quantity
+				item["category"] = typed.category
+				item["weight"] = typed.total_weight
+				item["volume"] = typed.total_volume
+				item_category = typed.category
+				if typed.has_method("get_modifier_summary"):
+					var mods: String = str(typed.call("get_modifier_summary"))
+					if mods != "":
+						item["modifiers"] = mods
+				if "stats" in typed and typed.stats is Dictionary and not typed.stats.is_empty():
+					item["stats"] = typed.stats.duplicate(true)
+			elif item_any is Dictionary:
+				item = item_any
+			else:
+				continue
+			found_any_cargo = true
+			var category_dict4: Dictionary
+			var mission_vendor_name4: String = ""
+			var dr4 = item.get("delivery_reward")
+			if item.get("recipient") != null or ((dr4 is float or dr4 is int) and float(dr4) > 0.0):
+				category_dict4 = aggregated_missions
+			elif item_category == "resource" or (item.has("food") and item.get("food") != null and item.get("food") > 0) or \
+					 (item.has("water") and item.get("water") != null and item.get("water") > 0) or \
+					 (item.has("fuel") and item.get("fuel") != null and item.get("fuel") > 0):
+				category_dict4 = aggregated_resources
+			elif item_category == "part" or (ItemsData != null and ItemsData.PartItem and ItemsData.PartItem._looks_like_part_dict(item)):
+				category_dict4 = aggregated_other if is_sell_mode else aggregated_parts
+			else:
+				category_dict4 = aggregated_other
+			if category_dict4 == aggregated_missions:
+				var recipient_id4: Variant = item.get("recipient")
+				if recipient_id4 == null:
+					recipient_id4 = item.get("mission_vendor_id")
+				if recipient_id4 and get_vendor_name_for_recipient.is_valid():
+					mission_vendor_name4 = str(get_vendor_name_for_recipient.call(recipient_id4))
+			# SELL: only include what this vendor can buy.
+			if is_sell_mode:
+				if category_dict4 != aggregated_missions:
+					var has_fuel4: bool = _item_resource_amount(item, "fuel") > 0.0
+					var has_water4: bool = _item_resource_amount(item, "water") > 0.0
+					var has_food4: bool = _item_resource_amount(item, "food") > 0.0
+					if has_fuel4 or has_water4 or has_food4:
+						var sellable_res4: bool = (has_fuel4 and vendor_buys_fuel) or (has_water4 and vendor_buys_water) or (has_food4 and vendor_buys_food)
+						if not sellable_res4:
+							continue
+				# Non-resource cargo (and parts-as-cargo) are always sellable; missions are always allowed.
+			_aggregate_item(category_dict4, item, "Convoy", mission_vendor_name4, perf_log_enabled)
+
+	# Vehicles fallback: some convoy snapshots provide `vehicles` instead of `vehicle_details_list`.
+	if vehicle_sell_allowed and not convoy_data.has("vehicle_details_list") and convoy_vehicles_any is Array:
+		for v_any in (convoy_vehicles_any as Array):
+			if not (v_any is Dictionary):
+				continue
+			var v: Dictionary = v_any
+			var vid2 := str(v.get("vehicle_id", ""))
+			if vid2 == "":
+				continue
+			if not aggregated_vehicles.has(vid2):
+				aggregated_vehicles[vid2] = {
+					"item_data": v,
+					"display_name": str(v.get("name", "Unknown Vehicle")),
+					"total_quantity": 1,
+					"total_weight": 0.0,
+					"total_volume": 0.0,
+					"locations": {},
+				}
 
 	var raw_convoy_fuel = convoy_data.get("fuel", 0)
 	var raw_convoy_water = convoy_data.get("water", 0)
 	var raw_convoy_food = convoy_data.get("food", 0)
-	var vendor_fuel_price = float(vendor_data.get("fuel_price", 0)) if (vendor_data.get("fuel_price", 0) is float or vendor_data.get("fuel_price", 0) is int) else 0.0
-	var vendor_water_price = float(vendor_data.get("water_price", 0)) if (vendor_data.get("water_price", 0) is float or vendor_data.get("water_price", 0) is int) else 0.0
-	var vendor_food_price = float(vendor_data.get("food_price", 0)) if (vendor_data.get("food_price", 0) is float or vendor_data.get("food_price", 0) is int) else 0.0
-	var convoy_fuel_quantity = int(raw_convoy_fuel) if (raw_convoy_fuel is float or raw_convoy_fuel is int) else 0
-	var vendor_fuel_price_numeric = vendor_data.has("fuel_price") and (vendor_data.get("fuel_price") is float or vendor_data.get("fuel_price") is int)
-	if convoy_fuel_quantity > 0 and vendor_fuel_price_numeric:
+	var vendor_fuel_price := _to_float_any(vendor_data.get("fuel_price", 0) if vendor_data != null else 0)
+	var vendor_water_price := _to_float_any(vendor_data.get("water_price", 0) if vendor_data != null else 0)
+	var vendor_food_price := _to_float_any(vendor_data.get("food_price", 0) if vendor_data != null else 0)
+	var convoy_fuel_quantity := _to_int_any(raw_convoy_fuel)
+	if convoy_fuel_quantity > 0 and vendor_buys_fuel:
 		var fuel_item2 = {
 			"name": "Fuel (Bulk)",
 			"base_desc": "Bulk fuel from your convoy's reserves.",
@@ -287,11 +484,10 @@ static func build_convoy_buckets(convoy_data: Dictionary, vendor_data: Dictionar
 			print("[VendorCargoAggregator] Creating convoy bulk fuel item:", fuel_item2)
 		_aggregate_vendor_item(aggregated_resources, fuel_item2, "", perf_log_enabled)
 	elif convoy_fuel_quantity > 0 and perf_log_enabled:
-		print("[VendorCargoAggregator] Skipping convoy bulk fuel (vendor has no numeric fuel_price)")
+		print("[VendorCargoAggregator] Skipping convoy bulk fuel (vendor has no positive fuel_price)")
 
-	var convoy_water_quantity = int(raw_convoy_water) if (raw_convoy_water is float or raw_convoy_water is int) else 0
-	var vendor_water_price_numeric = vendor_data.has("water_price") and (vendor_data.get("water_price") is float or vendor_data.get("water_price") is int)
-	if convoy_water_quantity > 0 and vendor_water_price_numeric:
+	var convoy_water_quantity := _to_int_any(raw_convoy_water)
+	if convoy_water_quantity > 0 and vendor_buys_water:
 		var water_item2 = {
 			"name": "Water (Bulk)",
 			"base_desc": "Bulk water from your convoy's reserves.",
@@ -304,11 +500,10 @@ static func build_convoy_buckets(convoy_data: Dictionary, vendor_data: Dictionar
 			print("[VendorCargoAggregator] Creating convoy bulk water item:", water_item2)
 		_aggregate_vendor_item(aggregated_resources, water_item2, "", perf_log_enabled)
 	elif convoy_water_quantity > 0 and perf_log_enabled:
-		print("[VendorCargoAggregator] Skipping convoy bulk water (vendor has no numeric water_price)")
+		print("[VendorCargoAggregator] Skipping convoy bulk water (vendor has no positive water_price)")
 
-	var convoy_food_quantity = int(raw_convoy_food) if (raw_convoy_food is float or raw_convoy_food is int) else 0
-	var vendor_food_price_numeric = vendor_data.has("food_price") and (vendor_data.get("food_price") is float or vendor_data.get("food_price") is int)
-	if convoy_food_quantity > 0 and vendor_food_price_numeric:
+	var convoy_food_quantity := _to_int_any(raw_convoy_food)
+	if convoy_food_quantity > 0 and vendor_buys_food:
 		var food_item2 = {
 			"name": "Food (Bulk)",
 			"base_desc": "Bulk food supplies from your convoy's reserves.",
@@ -321,7 +516,14 @@ static func build_convoy_buckets(convoy_data: Dictionary, vendor_data: Dictionar
 			print("[VendorCargoAggregator] Creating convoy bulk food item:", food_item2)
 		_aggregate_vendor_item(aggregated_resources, food_item2, "", perf_log_enabled)
 	elif convoy_food_quantity > 0 and perf_log_enabled:
-		print("[VendorCargoAggregator] Skipping convoy bulk food (vendor has no numeric food_price)")
+		print("[VendorCargoAggregator] Skipping convoy bulk food (vendor has no positive food_price)")
+
+	if perf_log_enabled and is_sell_mode:
+		print("[VendorCargoAggregator][SellDiag] buckets sizes missions=", aggregated_missions.size(),
+			" vehicles=", aggregated_vehicles.size(),
+			" parts=", aggregated_parts.size(),
+			" other=", aggregated_other.size(),
+			" resources=", aggregated_resources.size())
 
 	return {
 		"missions": aggregated_missions,

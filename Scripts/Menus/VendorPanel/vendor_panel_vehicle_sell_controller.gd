@@ -57,16 +57,10 @@ static func should_show_vehicle_sell_category(panel: Object) -> bool:
 	if str(panel.current_mode) != "sell":
 		return false
 
-	# Primary: vendor actually stocks vehicle parts
-	if _vendor_has_vehicle_parts(panel):
-		return true
-
-	# Fallbacks: many parts dealers also sell/accept vehicles
+	# Updated rule: only show Vehicles in SELL when the vendor actually has vehicles.
+	# (If a vendor's vehicle_inventory is empty, vehicles should not show in Sell.)
 	if panel.vendor_data and (panel.vendor_data is Dictionary):
 		var vd: Dictionary = panel.vendor_data
-		# Explicit flags or vehicle inventory imply dealership behavior
-		if bool(vd.get("sells_vehicles", false)):
-			return true
 		var v_inv_any: Variant = vd.get("vehicle_inventory")
 		if v_inv_any is Array and not (v_inv_any as Array).is_empty():
 			return true
