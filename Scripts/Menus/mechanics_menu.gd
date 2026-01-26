@@ -918,6 +918,10 @@ func _rebuild_parts_tab(vehicle_data: Dictionary):
 
 	var part_row_index = 0
 	for slot_name in slots_sorted:
+		# Skip any slot that has no swappable candidates in inventory or vendor stock.
+		# This ensures that every visible part row corresponds to a slot where a swap is possible.
+		if not _slot_has_swappable_candidate(vehicle_data, slot_name):
+			continue
 		var header = Label.new()
 		header.text = slot_name.capitalize().replace("_", " ")
 		header.add_theme_font_size_override("font_size", 16)
@@ -1221,49 +1225,11 @@ func _style_swap_button(btn: Button, slot_name: String):
 	if not is_instance_valid(btn):
 		return
 
-	# Reset to default style first
+	# Reset to a neutral, non-highlighted style. All visible rows already
+	# represent swappable slots, so we no longer need special button coloring.
 	btn.remove_theme_stylebox_override("normal")
 	btn.remove_theme_color_override("font_color")
 	btn.tooltip_text = ""
-
-	var vendor_available: bool = bool(_slot_vendor_availability.get(slot_name, false))
-	var inventory_available: bool = bool(_slot_inventory_availability.get(slot_name, false))
-
-	if vendor_available or inventory_available:
-		var sb = StyleBoxFlat.new()
-		sb.border_width_left = 2
-		sb.border_width_top = 2
-		sb.border_width_right = 2
-		sb.border_width_bottom = 2
-		sb.corner_radius_top_left = 6
-		sb.corner_radius_top_right = 6
-		sb.corner_radius_bottom_left = 6
-		sb.corner_radius_bottom_right = 6
-
-		if vendor_available and inventory_available:
-			# Combined style: Green background, blue border for dual availability
-			sb.bg_color = Color(0.12, 0.25, 0.12, 1.0) # Green
-			sb.border_color = Color(0.35, 0.6, 0.9, 1.0) # Blue
-			btn.add_theme_color_override("font_color", Color(0.85, 1.0, 0.85)) # Light green text
-			btn.tooltip_text = "Upgrades available (Vendor + Inventory)"
-		elif vendor_available:
-			# Vendor only: Green style
-			sb.bg_color = Color(0.12, 0.25, 0.12, 1.0) # Green
-			sb.border_color = Color(0.35, 0.8, 0.35, 1.0) # Green border
-			btn.add_theme_color_override("font_color", Color(0.85, 1.0, 0.85)) # Light green text
-			btn.tooltip_text = "Vendor has parts for this slot"
-		elif inventory_available:
-			# Inventory only: Blue style
-			sb.bg_color = Color(0.12, 0.18, 0.30, 1.0) # Blue
-			sb.border_color = Color(0.35, 0.6, 0.9, 1.0) # Blue border
-			btn.add_theme_color_override("font_color", Color(0.85, 0.95, 1.0)) # Light blue text
-			btn.tooltip_text = "Inventory has parts for this slot"
-
-		btn.add_theme_stylebox_override("normal", sb)
-
-		# Preserve vendor hint visibility behavior
-		if vendor_available and is_instance_valid(vendor_hint_label):
-			vendor_hint_label.visible = true
 
 func _rebuild_pending_tab():
 	for c in pending_vbox.get_children():
@@ -1958,6 +1924,76 @@ func _collect_candidate_parts_for_slot(slot_name: String) -> Array:
 				continue
 			out.append(item)
 	return out
+
+func _slot_has_swappable_candidate(vehicle_data: Dictionary, slot_name: String) -> bool:
+	# Returns true if there is at least one candidate part (inventory or vendor)
+	# for this slot that is actually compatible. Slots whose only candidates are
+	# known to be "Not Compatible" will be omitted from the main list.
+	var vehicle_id := String(vehicle_data.get("vehicle_id", ""))
+	var any_candidate := false
+	var any_compatible := false
+
+	# Helper to interpret a cached compatibility payload.
+	var _is_payload_compatible = func(payload: Dictionary) -> bool:
+		var status_code := int(payload.get("status", 0))
+		var data_any: Variant = payload.get("data")
+		if data_any is Dictionary:
+			var data: Dictionary = data_any
+			if data.has("compatible"):
+				return bool(data.get("compatible"))
+			if data.has("fitment") and data.get("fitment") is Dictionary and (data["fitment"] as Dictionary).has("compatible"):
+				return bool((data["fitment"] as Dictionary).get("compatible"))
+		elif data_any is Array and status_code >= 200 and status_code < 300:
+			# Some endpoints return HTTP 2xx with an Array of part dicts; treat that as compatible.
+			return true
+		return false
+
+	# Check convoy-inventory candidates for this slot.
+	for item in _collect_candidate_parts_for_slot(slot_name):
+		if not (item is Dictionary):
+			continue
+		any_candidate = true
+		var cid := String((item as Dictionary).get("cargo_id", ""))
+		var compat_known := false
+		if vehicle_id != "" and cid != "":
+			var ck := "%s||%s" % [vehicle_id, cid]
+			if _compat_cache.has(ck):
+				compat_known = true
+				if _is_payload_compatible.call(_compat_cache[ck]):
+					any_compatible = true
+					break
+		# Fallback to local heuristic when backend hasn't answered yet.
+		if not compat_known and _is_part_compatible(vehicle_data, slot_name, item):
+			any_compatible = true
+			break
+
+	if any_compatible:
+		return true
+
+	# Check vendor candidates.
+	for entry in _collect_vendor_parts_for_slot(slot_name):
+		if not (entry is Dictionary):
+			continue
+		var cand: Dictionary = (entry as Dictionary).get("part", {})
+		if cand.is_empty():
+			continue
+		any_candidate = true
+		var cid2 := String(cand.get("cargo_id", cand.get("part_id", "")))
+		var compat_known2 := false
+		if vehicle_id != "" and cid2 != "":
+			var ck2 := "%s||%s" % [vehicle_id, cid2]
+			if _compat_cache.has(ck2):
+				compat_known2 = true
+				if _is_payload_compatible.call(_compat_cache[ck2]):
+					any_compatible = true
+					break
+		if not compat_known2 and _is_part_compatible(vehicle_data, slot_name, cand):
+			any_compatible = true
+			break
+
+	# Only show the slot when we have at least one candidate and at least
+	# one of those candidates is compatible according to backend/local rules.
+	return any_candidate and any_compatible
 
 func _collect_vendor_parts_for_slot(slot_name: String) -> Array:
 	# Filtered view over all vendor candidates for a specific slot
