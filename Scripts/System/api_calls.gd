@@ -30,6 +30,14 @@ signal cargo_data_received(cargo: Dictionary)
 @warning_ignore("unused_signal")
 signal vehicle_data_received(vehicle_data: Dictionary)
 
+# Transaction signals (restored for UI feedback)
+signal cargo_bought(result: Dictionary)
+signal cargo_sold(result: Dictionary)
+signal vehicle_bought(result: Dictionary)
+signal vehicle_sold(result: Dictionary)
+signal resource_bought(result: Dictionary)
+signal resource_sold(result: Dictionary)
+
 # --- Journey Planning Signals ---
 signal route_choices_received(routes: Array)
 
@@ -183,6 +191,7 @@ func _diag_enqueue(tag: String, details: Dictionary) -> void:
 	var url_s := String(details.get("url", ""))
 	var is_patch_txn := (method_i == HTTPClient.METHOD_PATCH and String(details.get("signal_name", "")) != "")
 	_log_debug("[APICalls][Enqueue] tag=" + tag + " id=" + str(_client_txn_seq) + " method=" + str(method_i) + " qlen_before=" + str(qlen_before) + " in_progress=" + str(_is_request_in_progress) + " url=" + url_s + " prio_patch=" + str(is_patch_txn))
+	print("[APICalls][Debug] Enqueuing request tag=%s. Queue size: %d" % [tag, _request_queue.size()])
 	if is_patch_txn:
 		_request_queue.push_front(details)
 	else:
@@ -915,6 +924,7 @@ func get_vendor_data(vendor_id: String) -> void:
 	request_vendor_data(vendor_id)
 
 func buy_cargo(vendor_id: String, convoy_id: String, cargo_id: String, quantity: int) -> void:
+	print("[APICalls][Debug] buy_cargo called. vendor=%s convoy=%s cargo=%s qty=%d" % [vendor_id, convoy_id, cargo_id, quantity])
 	if vendor_id.is_empty() or convoy_id.is_empty() or cargo_id.is_empty():
 		printerr("APICalls (buy_cargo): missing id(s)")
 		return
@@ -1314,7 +1324,7 @@ func _retry_auth_url_alternate_host():
 	})
 	_process_queue()
 func _process_queue() -> void:
-	print("[APICalls] _process_queue(): entry. in_progress=%s queue_len=%d" % [str(_is_request_in_progress), _request_queue.size()])
+	print("[APICalls][Debug] _process_queue(): entry. in_progress=%s queue_len=%d" % [str(_is_request_in_progress), _request_queue.size()])
 	# When instantiated as a plain script (e.g., unit tests), we are not in the scene tree
 	# and should not attempt to dispatch HTTP requests.
 	if not is_inside_tree():
@@ -1447,6 +1457,7 @@ func _on_request_completed(result: int, response_code: int, _headers: PackedStri
 			_log_info("[APICalls][PATCH_TXN] signal=%s code=%d size=%d url=%s id=%d http_ms=%d" % [_current_patch_signal_name, response_code, body.size(), _last_requested_url, _current_client_txn_id, http_elapsed_ms])
 			var response_body_text = body.get_string_from_utf8()
 			var preview = response_body_text.substr(0, 400)
+			print("[APICalls][Debug] Transaction Response Body: ", response_body_text)
 			_log_debug("[APICalls][PATCH_TXN] body_preview=" + preview)
 			var json_response = JSON.parse_string(response_body_text)
 			if json_response == null:
@@ -1462,7 +1473,7 @@ func _on_request_completed(result: int, response_code: int, _headers: PackedStri
 			else:
 				# Normalize common txn payloads: if server wraps convoy in 'convoy_after', emit the inner convoy
 				var sig2 := _current_patch_signal_name
-				var skip_emit := (sig2 == "vehicle_bought" or sig2 == "vehicle_sold" or sig2 == "cargo_bought" or sig2 == "cargo_sold" or sig2 == "resource_bought" or sig2 == "resource_sold")
+				var skip_emit := false
 				var can_emit2 := has_signal(sig2)
 				if typeof(json_response) == TYPE_DICTIONARY and not skip_emit and can_emit2:
 					if json_response.has("convoy_after") and typeof(json_response["convoy_after"]) == TYPE_DICTIONARY:
@@ -1545,6 +1556,7 @@ func _on_request_completed(result: int, response_code: int, _headers: PackedStri
 			_log_info("[APICalls][PATCH_TXN] signal=%s FAILED result=%d code=%d url=%s id=%d http_ms=%d" % [_current_patch_signal_name, result, response_code, _last_requested_url, _current_client_txn_id, http_elapsed_ms])
 			var fail_body_text := body.get_string_from_utf8()
 			var fail_preview := fail_body_text.substr(0, 400)
+			print("[APICalls][Debug] Transaction Failed. Code: %d. Body: %s" % [response_code, fail_body_text])
 			print("[APICalls][PATCH_TXN] fail_body_preview=", fail_preview)
 			# Try to parse JSON error for clearer feedback (e.g. FastAPI validation 'detail')
 			var fail_json = JSON.parse_string(fail_body_text)

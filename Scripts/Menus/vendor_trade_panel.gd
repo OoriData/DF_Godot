@@ -5,6 +5,7 @@ const SettlementModel = preload("res://Scripts/Data/Models/Settlement.gd")
 const VendorModel = preload("res://Scripts/Data/Models/Vendor.gd")
 const CompatAdapter = preload("res://Scripts/Menus/VendorPanel/compat_adapter.gd")
 const VendorCargoAggregatorScript = preload("res://Scripts/Menus/VendorPanel/cargo_aggregator.gd")
+const SignalWatcherScript = preload("res://addons/gut/signal_watcher.gd")
 
 # Note: panel controllers are globally available via `class_name`.
 # Avoid preloading them here to prevent shadowing global identifiers.
@@ -113,6 +114,7 @@ var _current_refresh_id: int = -1 # id of the active refresh
 var _refresh_t0_ms: int = -1 # start time of active refresh
 var _last_data_ready_ms: int = -1 # last time we processed vendor_panel_data_ready
 var _watchdog_retries: Dictionary = {} # refresh_id -> true (prevent multiple retries per cycle)
+var _signal_watcher = null
 
 func _is_panel_initialized() -> bool:
 	return _panel_initialized
@@ -282,8 +284,12 @@ func _ready() -> void:
 			_hub.vendor_panel_ready.connect(cb_hub_ready)
 		if _hub.has_signal("vendor_preview_ready") and not _hub.vendor_preview_ready.is_connected(_on_hub_vendor_preview_ready):
 			_hub.vendor_preview_ready.connect(_on_hub_vendor_preview_ready)
+		if _hub.has_signal("convoys_changed") and not _hub.convoys_changed.is_connected(_on_convoys_changed):
+			_hub.convoys_changed.connect(_on_convoys_changed)
+		if _hub.has_signal("convoy_updated") and not _hub.convoy_updated.is_connected(_on_convoy_updated):
+			_hub.convoy_updated.connect(_on_convoy_updated)
 	if is_instance_valid(_store):
-		var cb_convoys := Callable(self, "_on_store_convoys_changed")
+		var cb_convoys := Callable(self, "_on_convoys_changed")
 		var cb_map := Callable(self, "_on_store_map_changed")
 		var cb_user := Callable(self, "_on_user_data_updated")
 		if _store.has_signal("convoys_changed") and not _store.convoys_changed.is_connected(cb_convoys):
@@ -309,6 +315,10 @@ func _ready() -> void:
 	# Hook backend part compatibility so vendor UI can display the same truth as mechanics.
 	if is_instance_valid(_api) and _api.has_signal("part_compatibility_checked") and not _api.part_compatibility_checked.is_connected(_on_part_compatibility_ready):
 		_api.part_compatibility_checked.connect(_on_part_compatibility_ready)
+	var txn_cb = Callable(self, "_on_api_transaction_result")
+	for sig in ["cargo_bought", "cargo_sold", "vehicle_bought", "vehicle_sold", "resource_bought", "resource_sold"]:
+		if _api.has_signal(sig) and not _api.is_connected(sig, txn_cb):
+			_api.connect(sig, txn_cb)
 
 	# Enable wrapping for convoy cargo label so multi-line text keeps panel narrow
 	if is_instance_valid(convoy_cargo_label):
@@ -331,6 +341,10 @@ func _ready() -> void:
 
 	# Diagnostics: confirm this instance and signal hookup
 	if perf_log_enabled:
+		_signal_watcher = SignalWatcherScript.new()
+		_signal_watcher.watch_signal(_hub, "vendor_updated")
+		_signal_watcher.watch_signal(_hub, "convoy_updated")
+
 		var conn_ok := false
 		if is_instance_valid(_hub) and _hub.has_signal("vendor_panel_ready"):
 			conn_ok = _hub.vendor_panel_ready.is_connected(Callable(self, "_on_hub_vendor_panel_ready"))
@@ -344,8 +358,12 @@ func _exit_tree() -> void:
 			_hub.vendor_panel_ready.disconnect(cb_hub)
 		if _hub.has_signal("vendor_preview_ready") and _hub.vendor_preview_ready.is_connected(_on_hub_vendor_preview_ready):
 			_hub.vendor_preview_ready.disconnect(_on_hub_vendor_preview_ready)
+		if _hub.has_signal("convoys_changed") and _hub.convoys_changed.is_connected(_on_convoys_changed):
+			_hub.convoys_changed.disconnect(_on_convoys_changed)
+		if _hub.has_signal("convoy_updated") and _hub.convoy_updated.is_connected(_on_convoy_updated):
+			_hub.convoy_updated.disconnect(_on_convoy_updated)
 	if is_instance_valid(_store):
-		var cb_convoys := Callable(self, "_on_store_convoys_changed")
+		var cb_convoys := Callable(self, "_on_convoys_changed")
 		var cb_map := Callable(self, "_on_store_map_changed")
 		var cb_user := Callable(self, "_on_user_data_updated")
 		if _store.has_signal("convoys_changed") and _store.convoys_changed.is_connected(cb_convoys):
@@ -358,9 +376,17 @@ func _exit_tree() -> void:
 		var cb_api := Callable(self, "_on_part_compatibility_ready")
 		if _api.part_compatibility_checked.is_connected(cb_api):
 			_api.part_compatibility_checked.disconnect(cb_api)
+		var txn_cb = Callable(self, "_on_api_transaction_result")
+		for sig in ["cargo_bought", "cargo_sold", "vehicle_bought", "vehicle_sold", "resource_bought", "resource_sold"]:
+			if _api.has_signal(sig) and _api.is_connected(sig, txn_cb):
+				_api.disconnect(sig, txn_cb)
 	if is_instance_valid(_vendor_service) and _vendor_service.has_signal("vehicle_data_received"):
 		if _vendor_service.vehicle_data_received.is_connected(_on_service_vehicle_data_received):
 			_vendor_service.vehicle_data_received.disconnect(_on_service_vehicle_data_received)
+	
+	if _signal_watcher:
+		_signal_watcher.clear()
+		_signal_watcher = null
 
 func _set_latest_settlements_snapshot(settlements: Array) -> void:
 	VendorPanelContextController.set_latest_settlements_snapshot(self, settlements)
@@ -382,6 +408,10 @@ func _request_authoritative_refresh(convoy_id: String, vendor_id: String) -> voi
 
 # Hub emits vendor_panel_ready with a vendor Dictionary.
 func _on_hub_vendor_panel_ready(data: Dictionary) -> void:
+	# Guard against mismatching vendor data arriving late
+	var incoming_vid = str(data.get("vendor_id", ""))
+	if _active_vendor_id != "" and incoming_vid != "" and incoming_vid != _active_vendor_id:
+		return
 	VendorPanelRefreshController.on_hub_vendor_panel_ready(self, data)
 
 # Hub emits vendor_preview_ready with a vendor Dictionary.
@@ -561,6 +591,25 @@ func _on_user_data_updated(_user_data: Dictionary):
 	# When user data changes (e.g., after a transaction), refresh the display.
 	_update_convoy_info_display()
 
+func _on_convoys_changed(convoys: Array) -> void:
+	if _active_convoy_id == "":
+		return
+	for c in convoys:
+		if c is Dictionary and str(c.get("convoy_id", "")) == _active_convoy_id:
+			_on_convoy_updated(c)
+			return
+
+func _on_convoy_updated(convoy: Dictionary) -> void:
+	if str(convoy.get("convoy_id", "")) != _active_convoy_id:
+		return
+	
+	if perf_log_enabled and _signal_watcher:
+		print("[VendorPanel] Convoy updated via signal. Vendor updated count: ", _signal_watcher.get_emit_count(_hub, "vendor_updated"))
+
+	self.convoy_data = convoy
+	_populate_convoy_list()
+	_update_convoy_info_display()
+
 
 # --- Signal Handlers ---
 func _on_tab_changed(tab_index: int) -> void:
@@ -712,6 +761,8 @@ func _update_transaction_panel() -> void:
 			delivery_reward_label.visible = false
 		# Reset capacity bars to current convoy usage
 		_refresh_capacity_bars(0.0, 0.0)
+		if is_instance_valid(action_button):
+			action_button.disabled = true
 		return
 
 	var item_data_source = selected_item.item_data if selected_item.has("item_data") and not selected_item.item_data.is_empty() else selected_item
@@ -734,6 +785,8 @@ func _update_transaction_panel() -> void:
 	# Assign composed text
 	price_label.text = bbcode_text
 	_update_install_button_state()
+	if is_instance_valid(action_button):
+		action_button.disabled = false
 
 func _refresh_capacity_bars(projected_volume_delta: float, projected_weight_delta: float) -> void:
 	VendorPanelConvoyStatsController.refresh_capacity_bars(self, projected_volume_delta, projected_weight_delta)
@@ -780,6 +833,13 @@ func _on_part_compatibility_ready(payload: Dictionary) -> void:
  
 
 func _on_api_transaction_result(result: Dictionary) -> void:
+	# If the transaction result contains an updated convoy object, apply it immediately
+	# to the UI. This provides faster feedback than waiting for a full refresh cycle.
+	if result.has("convoy_id") and (result.has("vehicle_details_list") or result.has("vehicles")):
+		self.convoy_data = result
+		_populate_convoy_list()
+		_update_convoy_info_display()
+
 	VendorPanelRefreshController.on_api_transaction_result(self, result)
 	if is_instance_valid(_hub) and _hub.has_signal("user_refresh_requested"):
 		_hub.user_refresh_requested.emit()
