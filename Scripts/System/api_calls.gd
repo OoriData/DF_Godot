@@ -40,6 +40,7 @@ signal resource_sold(result: Dictionary)
 
 # --- Journey Planning Signals ---
 signal route_choices_received(routes: Array)
+signal convoy_created(convoy: Dictionary) # Restored for service-driven refresh
 
 # --- Warehouse Signals ---
 signal warehouse_received(warehouse_data: Dictionary)
@@ -511,6 +512,9 @@ func get_all_in_transit_convoys() -> void:
 	if is_instance_valid(logger) and logger.has_method('info'):
 		logger.info("APICalls.enqueue ALL_CONVOYS url=%s", url)
 	_diag_enqueue("get_all_in_transit_convoys", request_details)
+
+
+
 
 func update_user_metadata(user_id: String, metadata: Dictionary) -> void:
 	if user_id.is_empty() or not _is_valid_uuid(user_id):
@@ -2068,6 +2072,8 @@ func _on_create_convoy_completed(result: int, response_code: int, _headers: Pack
 			print("[APICalls][create_convoy] Success (UUID string) http=", response_code, " uuid=", payload)
 		else:
 			print("[APICalls][create_convoy] Success http=", response_code, " non-JSON or unexpected type; raw=", raw_text.substr(0, 200))
+		# Signal success to listeners (ConvoyService)
+		emit_signal("convoy_created", payload if typeof(payload) == TYPE_DICTIONARY else {})
 	else:
 		print("[APICalls][create_convoy] Failure result=", result, " http=", response_code, " url=", url_used, " was_retry=", was_retry, " body=", (raw_text.substr(0, 300) if raw_text != "" else "<empty>"))
 		# If the primary endpoint failed (e.g., 404/405/400), try alternate '/convoy/new' once

@@ -28,6 +28,9 @@ func _ready() -> void:
 	if is_instance_valid(_api) and _api.has_signal("convoy_data_received"):
 		if not _api.convoy_data_received.is_connected(_on_api_convoy_data_received):
 			_api.convoy_data_received.connect(_on_api_convoy_data_received)
+	if is_instance_valid(_api) and _api.has_signal("convoy_created"):
+		if not _api.convoy_created.is_connected(_on_api_convoy_created):
+			_api.convoy_created.connect(_on_api_convoy_created)
 
 
 func _on_store_convoys_changed(convoys: Array) -> void:
@@ -87,6 +90,16 @@ func refresh_single(convoy_id: String) -> void:
 		if is_instance_valid(get_node_or_null("/root/Logger")):
 			get_node("/root/Logger").info("ConvoyService.refresh_single id=%s", convoy_id)
 		_api.get_convoy_data(convoy_id)
+
+func create_new_convoy(name: String) -> void:
+	if not is_instance_valid(_api) or not _api.has_method("create_convoy"):
+		printerr("ConvoyService: APICalls missing create_convoy.")
+		return
+	_api.create_convoy(name)
+
+func _on_api_convoy_created(_convoy: Dictionary) -> void:
+	# Trigger a full refresh to get the new list and user defaults
+	refresh_all()
 
 func get_convoys() -> Array:
 	if is_instance_valid(_store) and _store.has_method("get_convoys"):
