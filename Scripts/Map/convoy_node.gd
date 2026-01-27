@@ -59,6 +59,7 @@ func set_convoy_data(p_convoy_data: Dictionary, p_color: Color, p_terrain_tilema
 	convoy_color = p_color
 	terrain_tilemap = p_terrain_tilemap # Store the tilemap reference
 	name = "Convoy_" + str(convoy_data.get("convoy_id", "Unknown"))
+	current_convoy_id = str(convoy_data.get("convoy_id", ""))
 	
 	# Initial update of visuals based on new data
 	_update_visuals()
@@ -103,7 +104,7 @@ func _update_visuals():
 	var direction_rad: float = icon_sprite.rotation # Keep current rotation if no new direction
 
 	if current_segment_idx != -1 and \
-	   route_x.size() > current_segment_idx + 1 and route_y.size() > current_segment_idx + 1:
+	   route_x.size() > current_segment_idx and route_y.size() > current_segment_idx:
 		
 		var p_start_tile_coords = Vector2i(route_x[current_segment_idx], route_y[current_segment_idx])
 		var p_end_tile_coords: Vector2i
@@ -114,9 +115,12 @@ func _update_visuals():
 			p_end_tile_coords = p_start_tile_coords
 			if current_segment_idx > 0: # Try to get rotation from previous segment
 				var p_prev_tile_coords = Vector2i(route_x[current_segment_idx - 1], route_y[current_segment_idx - 1])
-				var dir_vec_tile = p_start_tile_coords - p_prev_tile_coords
-				if dir_vec_tile.length_squared() > 0.0001:
-					direction_rad = (Vector2(dir_vec_tile)).angle()
+				# Convert to pixels to get correct visual angle (especially for isometric maps)
+				var p_curr_px = terrain_tilemap.map_to_local(p_start_tile_coords)
+				var p_prev_px = terrain_tilemap.map_to_local(p_prev_tile_coords)
+				var dir_vec_px = p_curr_px - p_prev_px
+				if dir_vec_px.length_squared() > 0.0001:
+					direction_rad = dir_vec_px.angle()
 
 		# Convert tile coordinates to local pixel coordinates using the tilemap
 		var p_start_pixel = terrain_tilemap.map_to_local(p_start_tile_coords)
@@ -134,6 +138,32 @@ func _update_visuals():
 		var map_y: float = convoy_data.get("y", 0.0)
 		# This fallback assumes x/y are tile coordinates.
 		final_pixel_pos = terrain_tilemap.map_to_local(Vector2i(int(map_x), int(map_y)))
+		
+		# Try to determine rotation from route if available (fallback logic)
+		if route_x.size() > 1 and route_y.size() > 1:
+			var current_tile = Vector2(map_x, map_y)
+			var closest_i = 0
+			var min_d = INF
+			for i in range(route_x.size()):
+				var d = current_tile.distance_squared_to(Vector2(route_x[i], route_y[i]))
+				if d < min_d:
+					min_d = d
+					closest_i = i
+			
+			var p_from_idx = closest_i
+			var p_to_idx = closest_i + 1
+			
+			# If at end, look backward (maintain last heading)
+			if p_to_idx >= route_x.size():
+				p_from_idx = closest_i - 1
+				p_to_idx = closest_i
+			
+			if p_from_idx >= 0 and p_to_idx < route_x.size():
+				var p_from = terrain_tilemap.map_to_local(Vector2i(route_x[p_from_idx], route_y[p_from_idx]))
+				var p_to = terrain_tilemap.map_to_local(Vector2i(route_x[p_to_idx], route_y[p_to_idx]))
+				var dir = p_to - p_from
+				if dir.length_squared() > 0.001:
+					direction_rad = dir.angle()
 
 	# Debug: Print final calculated pixel position
 	# print("[ConvoyNode] final_pixel_pos:", final_pixel_pos)
@@ -227,7 +257,14 @@ func _on_convoy_data_updated(all_convoy_data: Array) -> void:
 	# Find the convoy with the current ID
 	for convoy in all_convoy_data:
 		if str(convoy.get("convoy_id", "")) == str(current_convoy_id):
+			# Fallback: If new data is missing name, preserve existing name
+			if not convoy.has("convoy_name") or convoy["convoy_name"] == null:
+				var old_name = current_convoy_data.get("convoy_name", convoy_data.get("convoy_name"))
+				if old_name:
+					convoy["convoy_name"] = old_name
+
 			current_convoy_data = convoy
+			convoy_data = convoy # Keep movement data in sync
 			_update_display()
 			return
 
@@ -237,6 +274,6 @@ func _update_display() -> void:
 		return
 	# Populate your UI fields using current_convoy_data
 	# Example:
-	$ConvoyNameLabel.text = current_convoy_data.get("convoy_name", "Unknown Convoy")
-	$ConvoyStatusLabel.text = current_convoy_data.get("status", "Unknown Status")
+	# $ConvoyNameLabel.text = current_convoy_data.get("convoy_name", "Unknown Convoy")
+	# $ConvoyStatusLabel.text = current_convoy_data.get("status", "Unknown Status")
 	# ...and so on for other UI elements...

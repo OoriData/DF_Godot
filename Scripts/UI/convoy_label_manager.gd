@@ -6,11 +6,12 @@ const DATE_TIME_UTIL = preload("res://Scripts/System/date_time_util.gd")
 # Cached references from UIManager or main
 var _convoy_label_container_ref: Node2D # Will be assigned programmatically
 var _label_settings_ref: LabelSettings
-var _base_convoy_title_font_size_ref: int = 15 # Default, will be overridden
+var _dynamic_label_settings: LabelSettings # Local duplicate to allow dynamic font sizing
+var _base_convoy_title_font_size_ref: int = 24 # Default, will be overridden
 var _ui_overall_scale_multiplier: float = 1.0
 var _font_scaling_base_tile_size: float = 24.0
-var _font_scaling_exponent: float = 0.6
-var _max_node_panel_border_width: int = 3 # Default max border width
+var _font_scaling_exponent: float = 0.45 # Adjusted for balance
+var _max_node_panel_border_width: int = 3 # Adjusted
 var _CONVOY_STAT_EMOJIS_ref: Dictionary # Expected to be initialized externally
 
 # Add a local cache for convoy data by ID
@@ -19,7 +20,7 @@ var _convoy_data_by_id_cache: Dictionary = {}
 # --- Newly Declared Member Variables ---
 # Font size clamping
 var _min_node_font_size: int = 8
-var _max_node_font_size: int = 72
+var _max_node_font_size: int = 64 # Adjusted
 
 # Active panels tracking
 var _active_convoy_panels: Dictionary = {}
@@ -36,12 +37,12 @@ var _ui_drawing_params_cached: bool = false # Flag indicating if cache params ar
 # Panel styling parameters
 var _base_convoy_panel_corner_radius: float = 8.0 # 4.0 * 2.0
 var _min_node_panel_corner_radius: float = 0.0
-var _max_node_panel_corner_radius: float = 40.0 # 20.0 * 2.0
+var _max_node_panel_corner_radius: float = 20.0 # Adjusted
 
-var _base_convoy_panel_padding_h: float = 8.0 # 4.0 * 2.0
-var _base_convoy_panel_padding_v: float = 4.0 # 2.0 * 2.0
+var _base_convoy_panel_padding_h: float = 12.0 # Was 8.0
+var _base_convoy_panel_padding_v: float = 8.0 # Was 4.0
 var _min_node_panel_padding: float = 0.0
-var _max_node_panel_padding: float = 40.0 # 20.0 * 2.0
+var _max_node_panel_padding: float = 20.0 # Adjusted
 
 var _base_convoy_panel_border_width: float = 2.0 # 1.0 * 2.0
 var _min_node_panel_border_width: int = 0 # Min clamp for border width
@@ -100,13 +101,15 @@ func initialize_font_settings(p_theme_font: Font, p_label_settings: LabelSetting
 	_label_settings_ref = p_label_settings # UIManager still owns this, we just use it
 	if is_instance_valid(_label_settings_ref):
 		_label_settings_ref.font = p_theme_font
+		_dynamic_label_settings = _label_settings_ref.duplicate()
+
 	# Double base font size
 	_ui_overall_scale_multiplier = p_ui_scale
 	_font_scaling_base_tile_size = p_font_base_tile_size
 	_base_convoy_title_font_size_ref = int(p_base_convoy_title_fs * 2.0)
 	_font_scaling_exponent = p_font_exponent
 	_min_node_font_size = p_min_font
-	_max_node_font_size = int(p_max_font * 2.0)
+	_max_node_font_size = int(p_max_font * 4.0) # Adjusted multiplier
 
 	_CONVOY_STAT_EMOJIS_ref = p_convoy_stat_emojis
 
@@ -192,7 +195,9 @@ func _create_convoy_panel(convoy_data: Dictionary) -> Panel:
 	label_node.set('bbcode_enabled', true)
 	label_node.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	label_node.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	if is_instance_valid(_label_settings_ref): # Use the shared LabelSettings for base style
+	if is_instance_valid(_dynamic_label_settings):
+		label_node.label_settings = _dynamic_label_settings
+	elif is_instance_valid(_label_settings_ref): # Fallback
 		label_node.label_settings = _label_settings_ref
 	label_node.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	panel.add_child(label_node)
@@ -218,10 +223,10 @@ func _update_convoy_panel_content(panel: Panel, convoy_data: Dictionary, p_convo
 	var font_render_scale: float = pow(base_linear_font_scale, _font_scaling_exponent)
 
 	# Use the specific base convoy title font size stored in this manager
-	var adjusted_base_font_size = _base_convoy_title_font_size_ref * _ui_overall_scale_multiplier
-	var scaled_target_screen_font_size = adjusted_base_font_size * font_render_scale
-	var node_font_size_before_clamp = scaled_target_screen_font_size / _current_map_zoom_cache
-	var current_convoy_title_font_size: int = clamp(roundi(node_font_size_before_clamp), _min_node_font_size, _max_node_font_size)
+	# Font size is now handled globally in update_convoy_labels via _dynamic_label_settings
+	# var adjusted_base_font_size = _base_convoy_title_font_size_ref * _ui_overall_scale_multiplier
+	# var scaled_target_screen_font_size = adjusted_base_font_size * font_render_scale
+	# var node_font_size_before_clamp = scaled_target_screen_font_size / _current_map_zoom_cache
 
 	var current_convoy_id_str = str(convoy_data.get('convoy_id'))
 
@@ -271,7 +276,7 @@ func _update_convoy_panel_content(panel: Panel, convoy_data: Dictionary, p_convo
 		# Fallback or return if critical settings are missing
 		pass
 	
-	label_node.add_theme_font_size_override("font_size", current_convoy_title_font_size)
+	# label_node.add_theme_font_size_override("font_size", current_convoy_title_font_size) # Removed: controlled by LabelSettings
 	label_node.text = label_text
 
 	# Update Panel StyleBox
@@ -547,12 +552,39 @@ func update_convoy_labels(
 				panel_node.visible = false
 		return
 
+	# --- Update shared font size for this frame ---
+	var effective_tile_size_on_texture: float = min(_cached_actual_tile_width_on_texture, _cached_actual_tile_height_on_texture)
+	var base_linear_font_scale: float = 1.0
+	if _font_scaling_base_tile_size > 0.001:
+		base_linear_font_scale = effective_tile_size_on_texture / _font_scaling_base_tile_size
+	var font_render_scale: float = pow(base_linear_font_scale, _font_scaling_exponent)
+	var adjusted_base_font_size = _base_convoy_title_font_size_ref * _ui_overall_scale_multiplier
+	var scaled_target_screen_font_size = adjusted_base_font_size * font_render_scale
+	var node_font_size_before_clamp = scaled_target_screen_font_size / _current_map_zoom_cache
+	if is_instance_valid(_dynamic_label_settings):
+		_dynamic_label_settings.font_size = clamp(roundi(node_font_size_before_clamp), _min_node_font_size, _max_node_font_size)
+
 	# Update local convoy data cache
-	_convoy_data_by_id_cache.clear()
+	var incoming_ids = {}
 	if p_all_convoy_data is Array:
 		for convoy_data_item in p_all_convoy_data:
 			if convoy_data_item is Dictionary and convoy_data_item.has("convoy_id"):
-				_convoy_data_by_id_cache[str(convoy_data_item.get("convoy_id"))] = convoy_data_item
+				var c_id = str(convoy_data_item.get("convoy_id"))
+				incoming_ids[c_id] = true
+				
+				# Fallback: If new data is missing name, preserve existing name from cache
+				if not convoy_data_item.has("convoy_name") or convoy_data_item["convoy_name"] == null:
+					var old_data = _convoy_data_by_id_cache.get(c_id)
+					if old_data and old_data.get("convoy_name"):
+						convoy_data_item["convoy_name"] = old_data["convoy_name"]
+
+				_convoy_data_by_id_cache[c_id] = convoy_data_item
+	
+	# Prune stale entries from cache
+	var cached_ids = _convoy_data_by_id_cache.keys()
+	for cid in cached_ids:
+		if not incoming_ids.has(cid):
+			_convoy_data_by_id_cache.erase(cid)
 	# print("ConvoyLabelManager (update_convoy_labels): _convoy_data_by_id_cache populated. Size: ", _convoy_data_by_id_cache.size()) # DEBUG
 
 	var drawn_convoy_ids_this_update: Array[String] = []
