@@ -5,8 +5,8 @@ extends VBoxContainer
 @onready var convoy_popup: PopupPanel = %ConvoyPopup
 @onready var list_item_container: VBoxContainer = %ConvoyItemsContainer
 
-# Add a reference to GameDataManager
-var gdm: Node = null
+@onready var _store: Node = get_node_or_null("/root/GameStore")
+@onready var _hub: Node = get_node_or_null("/root/SignalHub")
 
 func _ready():
 	# More robust node checks.
@@ -33,29 +33,18 @@ func _ready():
 		# The warning message is updated to reflect the new expected structure.
 		printerr("ConvoyListPanel: MenuManager Autoload node not found. Cannot auto-close on menu open. Check Project Settings -> Autoload.")
 
-	# Add this block to connect to GameDataManager's convoy_data_updated signal
-	gdm = get_node_or_null("/root/GameDataManager")
-	if is_instance_valid(gdm):
-		if not gdm.is_connected("convoy_data_updated", Callable(self, "_on_convoy_data_updated")):
-			gdm.convoy_data_updated.connect(Callable(self, "_on_convoy_data_updated"))
-		# NEW: Connect to a signal that fires when the selected convoy changes.
-		# This allows the dropdown to update itself from anywhere in the game.
-		if gdm.has_signal("convoy_selection_changed"):
-			if not gdm.is_connected("convoy_selection_changed", Callable(self, "_on_convoy_selection_changed")):
-				gdm.convoy_selection_changed.connect(Callable(self, "_on_convoy_selection_changed"))
-		else:
-			printerr("ConvoyListPanel: GameDataManager is missing 'convoy_selection_changed' signal.")
+	# Subscribe to canonical snapshots + selection bus
+	if is_instance_valid(_store) and _store.has_signal("convoys_changed"):
+		if not _store.convoys_changed.is_connected(_on_convoy_data_updated):
+			_store.convoys_changed.connect(_on_convoy_data_updated)
+		if _store.has_method("get_convoys"):
+			var convoys_now: Array = _store.get_convoys()
+			if not convoys_now.is_empty():
+				populate_convoy_list(convoys_now)
 
-		# Immediately populate with current data from GameDataManager if it's already loaded.
-		if gdm.has_method("get_all_convoys"):
-			var convoys = gdm.get_all_convoys()
-			if not convoys.is_empty():
-				populate_convoy_list(convoys)
-		if gdm.has_method("get_selected_convoy"):
-			var selected = gdm.get_selected_convoy()
-			_on_convoy_selection_changed(selected)
-	else:
-		printerr("ConvoyListPanel: GameDataManager not found in scene tree.")
+	if is_instance_valid(_hub) and _hub.has_signal("convoy_selection_changed"):
+		if not _hub.convoy_selection_changed.is_connected(_on_convoy_selection_changed):
+			_hub.convoy_selection_changed.connect(_on_convoy_selection_changed)
 
 func _on_toggle_button_pressed() -> void:
 	# DIAGNOSTIC: Print a message to see if this function is ever called.
@@ -102,7 +91,11 @@ func _on_main_menu_opened(_menu_node, _menu_type: String):
 
 ## Populates the list with convoy data.
 func populate_convoy_list(convoys_data: Array) -> void:
-	print("ConvoyListPanel: populate_convoy_list() called. Visible:", visible, "Parent:", get_parent())
+	var logger := get_node_or_null("/root/Logger")
+	if is_instance_valid(logger) and logger.has_method("info"):
+		logger.info("ConvoyListPanel.populate count=%s visible=%s", convoys_data.size(), visible)
+	else:
+		print("ConvoyListPanel: populate_convoy_list() called. Visible:", visible, "Parent:", get_parent())
 
 	# Diagnostic: Print node tree under ConvoyItemsContainer to help debug UI population issues
 	if is_instance_valid(list_item_container):
@@ -129,8 +122,8 @@ func populate_convoy_list(convoys_data: Array) -> void:
 			printerr("ConvoyListPanel: Invalid convoy data item: ", convoy_item_data)
 			continue
 
-		var convoy_id = convoy_item_data.get("convoy_id", "N/A")
-		var convoy_name = convoy_item_data.get("convoy_name", "Unknown Convoy")
+		var convoy_id = convoy_item_data.get("convoy_id", convoy_item_data.get("id", "N/A"))
+		var convoy_name = convoy_item_data.get("convoy_name", convoy_item_data.get("name", "Unknown Convoy"))
 		var item_button = Button.new()
 		item_button.text = "%s" % [convoy_name]
 		item_button.name = "ConvoyButton_%s" % str(convoy_id) # Useful for identification
@@ -143,10 +136,9 @@ func _on_convoy_item_pressed(convoy_item_data: Dictionary) -> void:
 		printerr("ConvoyListPanel: Critical nodes missing in _on_convoy_item_pressed.")
 		return
 
-	# Instead of emitting a local signal, tell the central state manager what was selected.
-	if is_instance_valid(gdm) and gdm.has_method("select_convoy_by_id"):
-		# Do not toggle off if the same convoy is clicked again; keep it selected.
-		gdm.select_convoy_by_id(str(convoy_item_data.get("convoy_id", "")), false)
+	# Tell the canonical selection bus about the intent.
+	if is_instance_valid(_hub) and _hub.has_signal("convoy_selection_requested"):
+		_hub.convoy_selection_requested.emit(str(convoy_item_data.get("convoy_id", "")), false)
 
 	# Close the list after an item is selected
 	close_list()
@@ -154,10 +146,7 @@ func _on_convoy_item_pressed(convoy_item_data: Dictionary) -> void:
 # Add this handler to update the list when convoy data changes
 func _on_convoy_data_updated(all_convoy_data: Array) -> void:
 	populate_convoy_list(all_convoy_data)
-	# After repopulating, ensure the selection highlight and button text are correct.
-	if is_instance_valid(gdm) and gdm.has_method("get_selected_convoy"):
-		var selected = gdm.get_selected_convoy()
-		_on_convoy_selection_changed(selected)
+	# Selection highlight updates on convoy_selection_changed.
 
 
 # NEW: Handles updates when the globally selected convoy changes.

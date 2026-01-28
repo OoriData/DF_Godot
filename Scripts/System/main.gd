@@ -20,7 +20,9 @@ signal map_ready_for_focus
 @onready var main_screen: Control = get_owner()
 
 # --- Autoloads / Singletons ---
-@onready var game_data_manager = get_node_or_null("/root/GameDataManager")
+@onready var _store: Node = get_node_or_null("/root/GameStore")
+@onready var _hub: Node = get_node_or_null("/root/SignalHub")
+@onready var _convoy_service: Node = get_node_or_null("/root/ConvoyService")
 
 # --- Data Variables ---
 var map_tiles: Array = []
@@ -84,17 +86,14 @@ func initialize_all_components():
 	else:
 		printerr("[Main] MapDisplay node is invalid.")
 
-	# Connect to GameDataManager signals
-	if is_instance_valid(game_data_manager):
-		if not game_data_manager.is_connected("map_data_loaded", Callable(self, "_on_map_data_loaded")):
-			game_data_manager.connect("map_data_loaded", Callable(self, "_on_map_data_loaded"))
-		# FIX: use updated signal names
-		if not game_data_manager.is_connected("convoy_data_updated", Callable(self, "_on_convoy_data_loaded")):
-			game_data_manager.connect("convoy_data_updated", Callable(self, "_on_convoy_data_loaded"))
-		if not game_data_manager.is_connected("settlement_data_updated", Callable(self, "_on_settlement_data_loaded")):
-			game_data_manager.connect("settlement_data_updated", Callable(self, "_on_settlement_data_loaded"))
+	# Connect to GameStore snapshots
+	if is_instance_valid(_store):
+		if _store.has_signal("map_changed") and not _store.map_changed.is_connected(_on_store_map_changed):
+			_store.map_changed.connect(_on_store_map_changed)
+		if _store.has_signal("convoys_changed") and not _store.convoys_changed.is_connected(_on_store_convoys_changed):
+			_store.convoys_changed.connect(_on_store_convoys_changed)
 	else:
-		printerr("Main: GameDataManager not found.")
+		printerr("Main: GameStore not found.")
 
 	# Initialize MainScreen
 	if is_instance_valid(main_screen):
@@ -155,30 +154,31 @@ func initialize_all_components():
 	print("--- Main Initialization Complete ---")
 	_map_and_ui_setup_complete = true
 	# Defer replay to ensure layout & SubViewport have valid size
-	call_deferred("_late_replay_preloaded")
+	call_deferred("_replay_store_snapshots")
 
-func _late_replay_preloaded():
-	if not is_instance_valid(game_data_manager):
+
+func _on_store_map_changed(tiles: Array, settlements: Array) -> void:
+	_on_map_data_loaded(tiles)
+	_on_settlement_data_loaded(settlements)
+
+
+func _on_store_convoys_changed(convoys: Array) -> void:
+	_on_convoy_data_loaded(convoys)
+
+
+func _replay_store_snapshots():
+	if not is_instance_valid(_store):
 		return
 	await get_tree().process_frame # wait a frame for layout
-	var preloaded_tiles: Array = []
-	if game_data_manager.has_method('get_map_tiles'):
-		preloaded_tiles = game_data_manager.get_map_tiles()
+	var preloaded_tiles: Array = _store.get_tiles() if _store.has_method("get_tiles") else []
+	var preloaded_settlements: Array = _store.get_settlements() if _store.has_method("get_settlements") else []
 	if not preloaded_tiles.is_empty():
 		print('[Main][Replay] Map tiles preloaded (size=%d); replaying.' % preloaded_tiles.size())
-		_on_map_data_loaded(preloaded_tiles)
-	var preloaded_convoys: Array = []
-	if game_data_manager.has_method('get_all_convoy_data'):
-		preloaded_convoys = game_data_manager.get_all_convoy_data()
+		_on_store_map_changed(preloaded_tiles, preloaded_settlements)
+	var preloaded_convoys: Array = _store.get_convoys() if _store.has_method("get_convoys") else []
 	if not preloaded_convoys.is_empty():
 		print('[Main][Replay] Convoys preloaded (count=%d); replaying.' % preloaded_convoys.size())
-		_on_convoy_data_loaded(preloaded_convoys)
-	var preloaded_settlements: Array = []
-	if game_data_manager.has_method('get_all_settlements_data'):
-		preloaded_settlements = game_data_manager.get_all_settlements_data()
-	if not preloaded_settlements.is_empty():
-		print('[Main][Replay] Settlements preloaded (count=%d); replaying.' % preloaded_settlements.size())
-		_on_settlement_data_loaded(preloaded_settlements)
+		_on_store_convoys_changed(preloaded_convoys)
 	await get_tree().process_frame # allow TileMap population
 	if is_instance_valid(terrain_tilemap):
 		var used = terrain_tilemap.get_used_cells().size()
@@ -329,20 +329,18 @@ func _on_map_data_loaded(p_map_tiles: Array):
 
 func _on_convoy_data_loaded(p_convoy_data: Array):
 	_all_convoy_data = p_convoy_data
-	if is_instance_valid(map_interaction_manager):
-		map_interaction_manager.update_data_references(_all_convoy_data, _all_settlement_data, map_tiles)
 	_update_ui_manager(false)
 
 func _on_settlement_data_loaded(p_settlement_data: Array):
 	_all_settlement_data = p_settlement_data
-	if is_instance_valid(map_interaction_manager):
-		map_interaction_manager.update_data_references(_all_convoy_data, _all_settlement_data, map_tiles)
 	_update_ui_manager(false)
 
 func _on_selection_changed(selected_ids: Array):
 	_selected_convoy_ids = selected_ids
 	if is_instance_valid(convoy_visuals_manager):
 		convoy_visuals_manager.update_selected_convoys(selected_ids)
+	if is_instance_valid(_hub) and _hub.has_signal("selected_convoy_ids_changed"):
+		_hub.selected_convoy_ids_changed.emit(selected_ids)
 	_update_ui_manager(false)
 
 func _on_hover_changed(hover_info: Dictionary):
@@ -364,8 +362,8 @@ func _update_ui_manager(is_light_update: bool):
 	if not ui_manager_node.has_method("update_ui_elements"):
 		return
 	var color_map: Dictionary = {}
-	if is_instance_valid(game_data_manager) and game_data_manager.has_method("get_convoy_id_to_color_map"):
-		color_map = game_data_manager.get_convoy_id_to_color_map()
+	if is_instance_valid(_convoy_service) and _convoy_service.has_method("get_color_map"):
+		color_map = _convoy_service.get_color_map()
 	var dragging_panel_node: Panel = null
 	var dragged_convoy_id_str: String = ""
 	var user_positions: Dictionary = _convoy_label_user_positions

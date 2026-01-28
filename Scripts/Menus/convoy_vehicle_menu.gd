@@ -1,7 +1,8 @@
-extends Control
+extends MenuBase
 
-# Signal that MenuManager will listen for to go back
-signal back_requested
+const VehicleModel = preload("res://Scripts/Data/Models/Vehicle.gd")
+
+# Back signal provided by MenuBase
 # Signal to open the full cargo manifest for the entire convoy
 signal return_to_convoy_overview_requested(convoy_data)
 signal inspect_all_convoy_cargo_requested(convoy_data)
@@ -20,9 +21,15 @@ signal inspect_specific_convoy_cargo_requested(convoy_data, item_data)
 @onready var mechanic_button_scene_node: Button = $MainVBox/ActionButtons/MechanicButton
 @onready var mechanics_embed: Node = $MainVBox/VehicleTabContainer/Service/ServiceVBox/MechanicsEmbed
 
+@onready var _store: Node = get_node_or_null("/root/GameStore")
+@onready var _hub: Node = get_node_or_null("/root/SignalHub")
+@onready var _mechanics_service: Node = get_node_or_null("/root/MechanicsService")
+@onready var _convoy_service: Node = get_node_or_null("/root/ConvoyService")
+
 var current_vehicle_list: Array = []
 var _current_convoy_data: Dictionary # To store the full convoy data
 var _selected_vehicle_id: String = "" # Persist selection across refreshes
+var _last_refresh_convoy_id: String = "" # Avoid spamming refresh requests
 
 const CONSUMABLE_CLASS_IDS = [
 	"4ccf7ae4-2297-420c-af71-97eda72dceca", # MRE Boxes
@@ -121,12 +128,9 @@ func _ready():
 	_clear_all_tabs() # Now safe to call
 	_show_initial_detail_message("Initializing...") # Now safe to call
 
-	# Add a reference to GameDataManager
-	var gdm: Node = null
-	gdm = get_node_or_null("/root/GameDataManager")
-	if is_instance_valid(gdm):
-		if not gdm.is_connected("convoy_data_updated", Callable(self, "_on_gdm_convoy_data_updated")):
-			gdm.convoy_data_updated.connect(_on_gdm_convoy_data_updated)
+	# Subscribe to canonical events (store convoys_changed handled by MenuBase).
+	if is_instance_valid(_hub) and _hub.has_signal("convoy_updated") and not _hub.convoy_updated.is_connected(_on_hub_convoy_updated):
+		_hub.convoy_updated.connect(_on_hub_convoy_updated)
 
 func _on_back_button_pressed():
 	print("ConvoyVehicleMenu: Back button pressed. Emitting 'back_requested' signal.")
@@ -152,38 +156,65 @@ func _show_initial_detail_message(message: String):
 	prompt_label.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	overview_vbox.add_child(prompt_label)
 
-func initialize_with_data(data: Dictionary):
+func initialize_with_data(data_or_id: Variant, extra_arg: Variant = null) -> void:
 	# Ensure this function runs only after the node is fully ready and @onready vars are set.
 	if not is_node_ready():
 		printerr("ConvoyVehicleMenu: initialize_with_data called BEFORE node is ready! Deferring.")
-		call_deferred("initialize_with_data", data)
+		call_deferred("initialize_with_data", data_or_id, extra_arg)
 		return
 
-	print("ConvoyVehicleMenu: initialize_with_data called. Data keys: ", data.keys())
-	print("ConvoyVehicleMenu: vehicle_details_list: ", data.get("vehicle_details_list", []))
-	if data.has("vehicle_details_list") and data["vehicle_details_list"].size() > 0:
-		print("ConvoyVehicleMenu: First vehicle keys: ", data["vehicle_details_list"][0].keys())
+	if data_or_id is Dictionary:
+		convoy_id = String((data_or_id as Dictionary).get("convoy_id", (data_or_id as Dictionary).get("id", "")))
+	else:
+		convoy_id = String(data_or_id)
 
-	if is_instance_valid(title_label):
-		_current_convoy_data = data.duplicate(true) # Store the full convoy data
-		title_label.text = data.get("convoy_name", "Convoy")
+	# Always initialize the embedded mechanics menu with the same context.
+	# When this menu is opened with an id (common post-refactor), the service tab
+	# still needs convoy_id so it can refresh from GameStore when shown.
+	if is_instance_valid(mechanics_embed) and mechanics_embed.has_method("initialize_with_data"):
+		mechanics_embed.initialize_with_data(data_or_id)
+
+	if data_or_id is Dictionary:
+		print("ConvoyVehicleMenu: initialize_with_data called. Data keys: ", (data_or_id as Dictionary).keys())
+		print("ConvoyVehicleMenu: vehicle_details_list: ", (data_or_id as Dictionary).get("vehicle_details_list", []))
+		if (data_or_id as Dictionary).has("vehicle_details_list") and (data_or_id as Dictionary)["vehicle_details_list"].size() > 0:
+			print("ConvoyVehicleMenu: First vehicle keys: ", (data_or_id as Dictionary)["vehicle_details_list"][0].keys())
+
+	if data_or_id is Dictionary and is_instance_valid(title_label):
+		_current_convoy_data = (data_or_id as Dictionary).duplicate(true) # Store the full convoy data
+		# Prefer convoy_name but fall back to name
+		title_label.text = _current_convoy_data.get("convoy_name", _current_convoy_data.get("name", "Convoy"))
 		_update_mechanic_button_enabled()
 
 	# Deterministically sort vehicles for stable ordering
-	current_vehicle_list = _stable_sort_vehicles(data.get("vehicle_details_list", []))
+	# Fallback to the canonical 'vehicles' array when 'vehicle_details_list' is absent.
+	if data_or_id is Dictionary:
+		current_vehicle_list = _stable_sort_vehicles(
+			(data_or_id as Dictionary).get("vehicle_details_list", (data_or_id as Dictionary).get("vehicles", []))
+		)
 
-	# Initialize the Service tab mechanics with the same convoy data
-	if is_instance_valid(mechanics_embed) and mechanics_embed.has_method("initialize_with_data"):
-		mechanics_embed.initialize_with_data(data)
+	# If vehicle details are missing, request a single-convoy refresh to populate them
+	var convoy_id_local = convoy_id
+	if current_vehicle_list.is_empty() and convoy_id_local != "" and is_instance_valid(_convoy_service) and _convoy_service.has_method("refresh_single"):
+		if _last_refresh_convoy_id != convoy_id_local:
+			print("ConvoyVehicleMenu: Vehicles missing; requesting single-convoy refresh for id=", convoy_id_local)
+			_last_refresh_convoy_id = convoy_id_local
+			_convoy_service.refresh_single(convoy_id_local)
 
-	if is_instance_valid(vehicle_option_button):
+	# (embedded mechanics menu already initialized above)
+
+	if data_or_id is Dictionary and is_instance_valid(vehicle_option_button):
 		print("ConvoyVehicleMenu: Populating VehicleOptionButton. Number of vehicles from data: ", current_vehicle_list.size())
 		vehicle_option_button.clear()
 		if current_vehicle_list.is_empty():
 			vehicle_option_button.add_item("No Vehicles Available")
 			vehicle_option_button.disabled = true
 			print("ConvoyVehicleMenu: No vehicles found in list.")
-			_show_initial_detail_message("No vehicles in this convoy.")
+			var msg: String = "No vehicles in this convoy."
+			# If we just requested a refresh, inform the user we're loading.
+			if convoy_id != "" and is_instance_valid(_convoy_service) and _convoy_service.has_method("refresh_single"):
+				msg = "Loading vehicles..."
+			_show_initial_detail_message(msg)
 		else:
 			vehicle_option_button.disabled = false
 			for i in range(current_vehicle_list.size()):
@@ -193,11 +224,11 @@ func initialize_with_data(data: Dictionary):
 					var make_model = vehicle_data.get("make_model", "N/A")
 					vehicle_option_button.add_item("%s (%s)" % [vehicle_name, make_model], i)
 					# Persist id as metadata for stability
-					var vid := String(vehicle_data.get("vehicle_id", ""))
+					var vid: String = String(vehicle_data.get("vehicle_id", ""))
 					vehicle_option_button.set_item_metadata(i, vid)
 			print("ConvoyVehicleMenu: VehicleOptionButton populated. Item count: ", vehicle_option_button.get_item_count())
 			# Select previously selected vehicle if present; otherwise first
-			var target_index := 0
+			var target_index: int = 0
 			if _selected_vehicle_id != "":
 				for idx in range(vehicle_option_button.get_item_count()):
 					var meta = vehicle_option_button.get_item_metadata(idx)
@@ -207,12 +238,17 @@ func initialize_with_data(data: Dictionary):
 			if vehicle_option_button.get_item_count() > 0:
 				vehicle_option_button.select(target_index)
 				_on_vehicle_selected(target_index)
+				# Vehicles present; clear refresh guard for future convoys
+				_last_refresh_convoy_id = ""
 			else: # Should not happen if current_vehicle_list was not empty, but as a fallback
 				print("ConvoyVehicleMenu: OptionButton is empty after trying to populate. Showing initial message.")
 				_show_initial_detail_message("Select a vehicle from the dropdown to view details.")
 	else:
 		printerr("ConvoyVehicleMenu: CRITICAL - VehicleOptionButton node NOT found during initialize_with_data.")
 		_show_initial_detail_message("Error: Vehicle selection UI not available.")
+
+	# Ensure MenuBase subscriptions and store-driven updates are engaged for this menu
+	super.initialize_with_data(data_or_id, extra_arg)
 
 func _on_vehicle_selected(index: int):
 	print("ConvoyVehicleMenu: _on_vehicle_selected called with index: ", index)
@@ -232,9 +268,43 @@ func _on_vehicle_selected(index: int):
 		# Keep Service tab mechanics selection in sync
 		if is_instance_valid(mechanics_embed) and mechanics_embed.has_method("set_selected_vehicle_index"):
 			mechanics_embed.set_selected_vehicle_index(index)
-	else:
-		printerr("ConvoyVehicleMenu: Vehicle data at index ", index, " is not a Dictionary: ", typeof(selected_vehicle_data))
-		_show_initial_detail_message("Error: Could not load vehicle data.")
+
+func _update_ui(convoy: Dictionary) -> void:
+	_current_convoy_data = convoy.duplicate(true)
+	if is_instance_valid(title_label):
+		title_label.text = _current_convoy_data.get("convoy_name", title_label.text)
+		_update_mechanic_button_enabled()
+	# Rebuild vehicle list and selection
+	current_vehicle_list = _stable_sort_vehicles(
+		_current_convoy_data.get("vehicle_details_list", _current_convoy_data.get("vehicles", []))
+	)
+	if is_instance_valid(vehicle_option_button):
+		vehicle_option_button.clear()
+		if current_vehicle_list.is_empty():
+			vehicle_option_button.add_item("No Vehicles Available")
+			vehicle_option_button.disabled = true
+			_show_initial_detail_message("No vehicles in this convoy.")
+		else:
+			vehicle_option_button.disabled = false
+			for i in range(current_vehicle_list.size()):
+				var vehicle_data = current_vehicle_list[i]
+				if vehicle_data is Dictionary:
+					var vehicle_name = vehicle_data.get("name", "Unnamed Vehicle %s" % (i + 1))
+					var make_model = vehicle_data.get("make_model", "N/A")
+					vehicle_option_button.add_item("%s (%s)" % [vehicle_name, make_model], i)
+					var vid := String(vehicle_data.get("vehicle_id", ""))
+					vehicle_option_button.set_item_metadata(i, vid)
+			var target_index := 0
+			if _selected_vehicle_id != "":
+				for idx in range(vehicle_option_button.get_item_count()):
+					var meta = vehicle_option_button.get_item_metadata(idx)
+					if String(meta) == _selected_vehicle_id:
+						target_index = idx
+						break
+			if vehicle_option_button.get_item_count() > 0:
+				vehicle_option_button.select(target_index)
+				_on_vehicle_selected(target_index)
+	# Do not call super.initialize_with_data here; this is a UI refresh
 
 func _add_styled_detail_row(parent: Container, label_text: String, value_text: String, item_index: int, value_autowrap: bool = false):
 	var outer_row := HBoxContainer.new()
@@ -480,9 +550,9 @@ func _populate_overview_tab(vehicle_data: Dictionary):
 
 func _populate_parts_tab(vehicle_data: Dictionary):
 	if not is_instance_valid(parts_vbox): return
-
-	var all_cargo_from_vehicle: Array = vehicle_data.get("cargo", [])
-	var all_parts_from_vehicle: Array = vehicle_data.get("parts", [])
+	var v = VehicleModel.new(vehicle_data)
+	var all_cargo_from_vehicle: Array = v.cargo
+	var all_parts_from_vehicle: Array = v.parts
 	var vehicle_parts_list: Array = []
 
 	# 1. Add all items from the dedicated 'parts' array
@@ -582,7 +652,8 @@ func _populate_cargo_tab(vehicle_data: Dictionary):
 	header_sep.custom_minimum_size.y = 5
 	cargo_vbox.add_child(header_sep)
 
-	var all_cargo_from_vehicle: Array = vehicle_data.get("cargo", [])
+	var v = VehicleModel.new(vehicle_data)
+	var all_cargo_from_vehicle: Array = v.cargo
 	var general_cargo_list: Array = []
 
 	# Filter out parts that are also cargo
@@ -716,10 +787,9 @@ func _on_inspect_stat_pressed(stat_type: String, vehicle_data: Dictionary):
 
 	# Combine parts from 'parts' and 'cargo' (with intrinsic_part_id)
 	var all_vehicle_parts: Array = []
-	if vehicle_data.has("parts") and vehicle_data.get("parts") is Array:
-		all_vehicle_parts.append_array(vehicle_data.get("parts"))
-	if vehicle_data.has("cargo") and vehicle_data.get("cargo") is Array:
-		for item_data in vehicle_data.get("cargo"):
+	var v = VehicleModel.new(vehicle_data)
+	all_vehicle_parts.append_array(v.parts)
+	for item_data in v.cargo:
 			if item_data is Dictionary and item_data.has("intrinsic_part_id") and item_data.get("intrinsic_part_id") != null:
 				all_vehicle_parts.append(item_data)
 
@@ -844,9 +914,9 @@ func _on_inspect_part_pressed(part_data: Dictionary):
 
 	if removable:
 		# Resolve context ids
-		var convoy_id := ""
+		var convoy_id_local := ""
 		if _current_convoy_data is Dictionary:
-			convoy_id = String(_current_convoy_data.get("convoy_id", ""))
+			convoy_id_local = String(_current_convoy_data.get("convoy_id", ""))
 		var vehicle_id := String(part_data.get("vehicle_id", ""))
 		if vehicle_id == "":
 			# Fallback: try currently selected vehicle from dropdown
@@ -857,19 +927,18 @@ func _on_inspect_part_pressed(part_data: Dictionary):
 				var vdict: Dictionary = current_vehicle_list[idx]
 				vehicle_id = String(vdict.get("vehicle_id", ""))
 		var part_id := String(part_data.get("part_id", part_data.get("intrinsic_part_id", "")))
-		if convoy_id != "" and vehicle_id != "" and part_id != "":
+		if convoy_id_local != "" and vehicle_id != "" and part_id != "":
 			var remove_btn := Button.new()
 			remove_btn.text = "Remove"
 			remove_btn.custom_minimum_size.y = 36
 			remove_btn.add_theme_color_override("font_color", Color(1,0.4,0.4))
 			remove_btn.pressed.connect(func():
-				var gdm = get_node_or_null("/root/GameDataManager")
-				if is_instance_valid(gdm) and gdm.has_method("detach_vehicle_part"):
+				if is_instance_valid(_mechanics_service) and _mechanics_service.has_method("detach_part"):
 					print("ConvoyVehicleMenu: Requesting detach part_id=", part_id, " from vehicle=", vehicle_id)
-					gdm.detach_vehicle_part(convoy_id, vehicle_id, part_id)
+					_mechanics_service.detach_part(convoy_id_local, vehicle_id, part_id)
 				else:
-					printerr("ConvoyVehicleMenu: GameDataManager missing detach_vehicle_part()")
-				# Close dialog immediately; UI will refresh on convoy_data_updated
+					printerr("ConvoyVehicleMenu: MechanicsService missing detach_part()")
+				# Close dialog immediately; UI will refresh on convoy updates
 				dialog.hide()
 				dialog.queue_free()
 			)
@@ -1036,17 +1105,17 @@ func _on_title_label_gui_input(event: InputEvent):
 			emit_signal("return_to_convoy_overview_requested", _current_convoy_data)
 			get_viewport().set_input_as_handled()
 
-func _on_gdm_convoy_data_updated(all_convoy_data: Array) -> void:
-	# Update _current_convoy_data if this convoy is present in the update
-	if not _current_convoy_data or not _current_convoy_data.has("convoy_id"):
+# Store-driven refresh handled by MenuBase
+
+
+func _on_hub_convoy_updated(updated_convoy_data: Dictionary) -> void:
+	# Some services (mechanics/routes) emit point updates; reflect them here.
+	if not (_current_convoy_data is Dictionary) or not _current_convoy_data.has("convoy_id"):
 		return
-	var current_id = str(_current_convoy_data.get("convoy_id"))
-	for convoy in all_convoy_data:
-		if convoy.has("convoy_id") and str(convoy.get("convoy_id")) == current_id:
-			_current_convoy_data = convoy.duplicate(true)
-			# Refresh UI with stable sort and reselect preserved vehicle
-			initialize_with_data(_current_convoy_data)
-			break
+	if str(updated_convoy_data.get("convoy_id", "")) != str(_current_convoy_data.get("convoy_id")):
+		return
+	_current_convoy_data = updated_convoy_data.duplicate(true)
+	initialize_with_data(_current_convoy_data)
 
 # Helper: deterministically sort vehicles by name, make_model, then vehicle_id
 func _stable_sort_vehicles(vehicles: Array) -> Array:
@@ -1080,11 +1149,16 @@ func _update_mechanic_button_enabled():
 		if _current_convoy_data.has("in_settlement"):
 			enabled = bool(_current_convoy_data.get("in_settlement"))
 		else:
-			var gdm = get_node_or_null("/root/GameDataManager")
-			if is_instance_valid(gdm) and gdm.has_method("get_settlement_name_from_coords"):
-				var sx = int(roundf(float(_current_convoy_data.get("x", -9999.0))))
-				var sy = int(roundf(float(_current_convoy_data.get("y", -9999.0))))
-				var s_name = gdm.get_settlement_name_from_coords(sx, sy)
-				enabled = s_name != null and String(s_name) != ""
+			# Infer from map snapshot tile settlements.
+			var sx := int(roundf(float(_current_convoy_data.get("x", -9999.0))))
+			var sy := int(roundf(float(_current_convoy_data.get("y", -9999.0))))
+			if is_instance_valid(_store) and _store.has_method("get_tiles"):
+				var tiles: Array = _store.get_tiles()
+				if sy >= 0 and sy < tiles.size():
+					var row: Variant = tiles[sy]
+					if row is Array and sx >= 0 and sx < (row as Array).size():
+						var tile: Variant = (row as Array)[sx]
+						if tile is Dictionary and tile.has("settlements") and tile.settlements is Array and not tile.settlements.is_empty():
+							enabled = true
 	if is_instance_valid(mechanic_button_scene_node):
 		mechanic_button_scene_node.disabled = not enabled

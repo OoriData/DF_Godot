@@ -1,7 +1,9 @@
-extends Control
+extends MenuBase
 
 signal embark_requested(convoy_id, journey_id)
-signal back_requested
+# If this menu requires convoy context, ensure initialize_with_data delegates to MenuBase
+func initialize_with_data(data_or_id: Variant, extra_arg: Variant = null) -> void:
+	super.initialize_with_data(data_or_id, extra_arg)
 
 # --- Node References ---
 @onready var destination_value: Label = $MainVBox/ColumnsHBox/RightColumn/DetailsGrid/DestinationValue

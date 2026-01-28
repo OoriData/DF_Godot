@@ -1,5 +1,7 @@
 extends Node
 
+@export var debug_logging: bool = false
+
 # --- Signals ---
 # Emitted when the hovered map element or UI panel changes.
 signal hover_changed(new_hover_info: Dictionary)
@@ -31,10 +33,14 @@ var ui_manager: Node = null # This will be the UIManagerNode instance
 var _sub_viewport: SubViewport = null
 var _map_texture_rect: TextureRect = null
 
-# --- Data References (to be set by main.gd via initialize method) ---
+# --- Data Snapshots ---
+# Phase B: MapInteractionManager reads snapshots from GameStore.
+# These are kept as local caches for convenience/perf.
 var all_convoy_data: Array = []
 var all_settlement_data: Array = []
 var map_tiles: Array = []
+
+var _store: Node = null
 var camera: Camera2D = null
 var map_container_for_bounds: TextureRect = null # Changed to TextureRect, will hold map_display
 # Ensure MapCameraController node is a child of MapInteractionManager in the scene
@@ -100,9 +106,9 @@ func initialize(
 	# New: Pass TileMapLayer node for bounds
 	map_display = p_tilemap
 	ui_manager = p_ui_manager
-	all_convoy_data = p_all_convoy_data
-	all_settlement_data = p_all_settlement_data
-	map_tiles = p_map_tiles
+	# Prefer snapshots from GameStore; fall back to passed arrays for legacy scenes.
+	_refresh_snapshots_from_store_or_fallback(p_all_convoy_data, p_all_settlement_data, p_map_tiles)
+	_connect_store_signals_if_available()
 	_selected_convoy_ids = p_initial_selected_ids.duplicate(true)
 	_convoy_label_user_positions = p_initial_user_positions.duplicate(true)
 	camera = p_camera
@@ -144,43 +150,13 @@ func _on_map_camera_controller_zoom_changed(new_zoom_level: float) -> void:
 	# This function is called when the camera zoom changes. You can add logic here if needed.
 	# For now, just emit the signal for compatibility.
 	emit_signal("camera_zoom_changed", new_zoom_level)
-	# --- DIAGNOSTICS: Print visibility state of all relevant map nodes (after assignment) ---
-	var map_display_vis = "N/A"
+	if not debug_logging:
+		return
+	# Diagnostics (gated)
+	var map_display_vis: Variant = "N/A"
 	if is_instance_valid(map_display) and map_display.has_method("is_visible_in_tree"):
 		map_display_vis = map_display.is_visible_in_tree()
-	print("[VIS] MapInteractionManager: map_display visible:", map_display_vis)
-
-	var camera_vis = "N/A"
-	if is_instance_valid(camera) and camera.has_method("is_visible_in_tree"):
-		camera_vis = camera.is_visible_in_tree()
-	print("[VIS] MapInteractionManager: camera visible:", camera_vis)
-
-	var parent = map_display.get_parent() if is_instance_valid(map_display) else null
-	var parent_vis = "N/A"
-	if is_instance_valid(parent) and parent.has_method("is_visible_in_tree"):
-		parent_vis = parent.is_visible_in_tree()
-	print("[VIS] MapInteractionManager: map_display parent visible:", parent_vis)
-	# Deep diagnostics for map_display (should be TerrainTileMap) and its tileset
-	print("[DIAG] MapInteractionManager initialize: map_display is_instance_valid:", is_instance_valid(map_display))
-	if is_instance_valid(map_display):
-		print("[DIAG] map_display type:", typeof(map_display), " class:", map_display.get_class())
-		print("[DIAG] map_display resource_path:", map_display.resource_path if map_display.has_method("resource_path") else "N/A")
-		print("[DIAG] map_display.tile_set is_instance_valid:", is_instance_valid(map_display.tile_set))
-		if is_instance_valid(map_display.tile_set):
-			print("[DIAG] map_display.tile_set resource_path:", map_display.tile_set.resource_path if map_display.tile_set.has_method("resource_path") else "N/A")
-			print("[DIAG] map_display.tile_set to_string:", str(map_display.tile_set))
-			var ids = []
-			if map_display.tile_set.has_method("get_tiles_ids"):
-				ids = map_display.tile_set.get_tiles_ids()
-			else:
-				for i in range(100):
-					if map_display.tile_set.has_method("has_tile") and map_display.tile_set.has_tile(i):
-						ids.append(i)
-			print("[DIAG] map_display.tile_set ids:", ids)
-		else:
-			print("[DIAG] map_display.tile_set is not valid!")
-	else:
-		print("[DIAG] map_display is not valid!")
+	print("[MIM][VIS] map_display visible:", map_display_vis)
 		
 # Call this to allow or disallow the camera to move outside map bounds (e.g. for journey preview)
 func set_camera_loose_mode(is_loose: bool):
@@ -188,14 +164,10 @@ func set_camera_loose_mode(is_loose: bool):
 		map_camera_controller.set_allow_camera_outside_bounds(is_loose)
 
 func update_data_references(p_all_convoy_data: Array, p_all_settlement_data: Array, p_map_tiles: Array):
-	"""Called by main.gd when core data (convoys, settlements, map_tiles) is updated."""
-	all_convoy_data = p_all_convoy_data
-	all_settlement_data = p_all_settlement_data
-	map_tiles = p_map_tiles
-
-	# The camera controller is now updated by main_screen.gd, so no need to do anything here.
-
-	# print("MapInteractionManager: Data references updated.")
+	"""Deprecated (Phase B): MapInteractionManager reads snapshots from GameStore.
+	Kept for compatibility with legacy callers.
+	"""
+	_refresh_snapshots_from_store_or_fallback(p_all_convoy_data, p_all_settlement_data, p_map_tiles)
 
 func _physics_process(_delta: float):
 	pass # Camera clamping is now handled by MapCameraController's _physics_process
@@ -377,6 +349,8 @@ func _perform_hover_tests_at_world(mouse_world_pos: Vector2):
 	var _found_hover_element: bool = false
 
 	# Get map bounds from TileMap
+	if not (is_instance_valid(map_display) and is_instance_valid(map_display.tile_set)):
+		return
 	var tile_size = map_display.tile_set.tile_size
 	var actual_tile_width_on_world: float = tile_size.x
 	var actual_tile_height_on_world: float = tile_size.y
@@ -439,8 +413,10 @@ func _handle_lmb_interactions(event: InputEventMouseButton, p_camera: Camera2D) 
 
 	if event.pressed:
 		# --- Check for Panel Drag Start ---
-		if is_instance_valid(ui_manager) and ui_manager.has_method("get_node_or_null") and is_instance_valid(ui_manager.convoy_label_container):
-			var convoy_label_container_node = ui_manager.convoy_label_container
+		var convoy_label_container_node: Node = null
+		if is_instance_valid(ui_manager):
+			convoy_label_container_node = ui_manager.get("convoy_label_container")
+		if is_instance_valid(convoy_label_container_node):
 			for i in range(convoy_label_container_node.get_child_count() - 1, -1, -1):
 				var node = convoy_label_container_node.get_child(i)
 				if node is Panel:
@@ -504,6 +480,8 @@ func _handle_lmb_interactions(event: InputEventMouseButton, p_camera: Camera2D) 
 			var clicked_convoy_data = null
 			var mouse_world_pos = camera.get_canvas_transform().affine_inverse() * event.position
 			# Get tile size for world coordinate conversion
+			if not (is_instance_valid(map_display) and is_instance_valid(map_display.tile_set)):
+				return false
 			var tile_size = map_display.tile_set.tile_size
 			var actual_tile_width_on_world: float = tile_size.x
 			var actual_tile_height_on_world: float = tile_size.y
@@ -527,3 +505,53 @@ func _handle_lmb_interactions(event: InputEventMouseButton, p_camera: Camera2D) 
 				return true # Click on convoy handled
 			# ...existing code...
 	return false # Ensure all code paths return a value
+
+
+func get_dragging_panel_node() -> Panel:
+	return _dragging_panel_node
+
+
+func get_dragged_convoy_id_str() -> String:
+	return _dragged_convoy_id_actual_str
+
+
+func get_convoy_label_user_positions() -> Dictionary:
+	return _convoy_label_user_positions
+
+
+func _get_store() -> Node:
+	if not is_instance_valid(_store):
+		_store = get_node_or_null("/root/GameStore")
+	return _store
+
+
+func _refresh_snapshots_from_store_or_fallback(p_convoys: Array, p_settlements: Array, p_tiles: Array) -> void:
+	var store := _get_store()
+	if is_instance_valid(store) and store.has_method("get_convoys") and store.has_method("get_settlements") and store.has_method("get_tiles"):
+		all_convoy_data = store.get_convoys()
+		all_settlement_data = store.get_settlements()
+		map_tiles = store.get_tiles()
+		return
+	# Legacy fallback
+	all_convoy_data = p_convoys if p_convoys != null else []
+	all_settlement_data = p_settlements if p_settlements != null else []
+	map_tiles = p_tiles if p_tiles != null else []
+
+
+func _connect_store_signals_if_available() -> void:
+	var store := _get_store()
+	if not is_instance_valid(store):
+		return
+	if store.has_signal("map_changed") and not store.map_changed.is_connected(_on_store_map_changed):
+		store.map_changed.connect(_on_store_map_changed)
+	if store.has_signal("convoys_changed") and not store.convoys_changed.is_connected(_on_store_convoys_changed):
+		store.convoys_changed.connect(_on_store_convoys_changed)
+
+
+func _on_store_map_changed(tiles: Array, settlements: Array) -> void:
+	map_tiles = tiles if tiles != null else []
+	all_settlement_data = settlements if settlements != null else []
+
+
+func _on_store_convoys_changed(convoys: Array) -> void:
+	all_convoy_data = convoys if convoys != null else []

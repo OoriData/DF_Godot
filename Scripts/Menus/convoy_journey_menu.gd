@@ -1,7 +1,4 @@
-extends Control
-
-# Signal that MenuManager will listen for to go back
-signal back_requested
+extends MenuBase
 signal find_route_requested(convoy_data, destination_data)
 signal return_to_convoy_overview_requested(convoy_data)
 signal route_preview_started(route_data)
@@ -42,6 +39,20 @@ var _next_route_button: Button = null
 const ALLOW_HYBRID_ENERGY := true # Show battery usage even if vehicle also has internal combustion
 const SHOW_ENERGY_DEBUG := true # Toggle to display raw data snapshot for kWh logic
 
+# Destinations depend on settlements from the map snapshot. If the player opens this
+# menu before map data arrives, we poll briefly and refresh when available.
+var _settlement_poll_attempts: int = 0
+var _settlement_poll_timer: Timer = null
+
+@onready var _store: Node = get_node_or_null("/root/GameStore")
+@onready var _hub: Node = get_node_or_null("/root/SignalHub")
+@onready var _routes: Node = get_node_or_null("/root/RouteService")
+@onready var _logger: Node = get_node_or_null("/root/Logger")
+
+func _log_debug(msg: String, a: Variant = null, b: Variant = null, c: Variant = null) -> void:
+	if is_instance_valid(_logger) and _logger.has_method("debug"):
+		_logger.debug(msg, a, b, c)
+
 func _ready():
 	# Connect the back button signal
 	if is_instance_valid(back_button):
@@ -55,20 +66,23 @@ func _ready():
 	else:
 		printerr("ConvoyJourneyMenu: CRITICAL - TitleLabel node NOT found or is not a Label.")
 
-	var gdm = get_node_or_null("/root/GameDataManager")
-	if is_instance_valid(gdm):
-		print("[ConvoyJourneyMenu] Connecting to GameDataManager signals.")
-		# Listen for route choice lifecycle and journey cancel updates
-		if not gdm.route_choices_request_started.is_connected(_on_route_choices_request_started):
-			gdm.route_choices_request_started.connect(_on_route_choices_request_started)
-		if not gdm.route_choices_error.is_connected(_on_route_choices_error):
-			gdm.route_choices_error.connect(_on_route_choices_error)
-		if not gdm.route_info_ready.is_connected(_on_route_info_ready):
-			gdm.route_info_ready.connect(_on_route_info_ready)
-		if not gdm.journey_canceled.is_connected(_on_journey_canceled):
-			gdm.journey_canceled.connect(_on_journey_canceled)
-	else:
-		printerr("ConvoyJourneyMenu: Could not connect to GameDataManager signals.")
+	# Canonical route lifecycle + convoy update events.
+	if is_instance_valid(_hub):
+		if _hub.has_signal("route_choices_request_started") and not _hub.route_choices_request_started.is_connected(_on_route_choices_request_started):
+			_hub.route_choices_request_started.connect(_on_route_choices_request_started)
+		if _hub.has_signal("route_choices_error") and not _hub.route_choices_error.is_connected(_on_route_choices_error):
+			_hub.route_choices_error.connect(_on_route_choices_error)
+		if _hub.has_signal("route_choices_ready") and not _hub.route_choices_ready.is_connected(_on_route_choices_ready):
+			_hub.route_choices_ready.connect(_on_route_choices_ready)
+		if _hub.has_signal("convoy_updated") and not _hub.convoy_updated.is_connected(_on_hub_convoy_updated):
+			_hub.convoy_updated.connect(_on_hub_convoy_updated)
+		# Refresh planner destinations when map/settlement snapshot arrives.
+		if _hub.has_signal("map_changed") and not _hub.map_changed.is_connected(_on_map_changed):
+			_hub.map_changed.connect(_on_map_changed)
+	elif is_instance_valid(_store):
+		# Fallback if hub isn't present for some reason.
+		if _store.has_signal("map_changed") and not _store.map_changed.is_connected(_on_map_changed):
+			_store.map_changed.connect(_on_map_changed)
 
 	# Remove the placeholder label if it exists
 	if content_vbox.has_node("PlaceholderLabel"):
@@ -96,24 +110,44 @@ func _process(_delta: float):
 func _physics_process(_delta: float):
 	pass
 
-func initialize_with_data(data: Dictionary):
-	print("ConvoyJourneyMenu: Initialized with data.") # DEBUG
-	# Store the received data for potential use by the title click
-	convoy_data_received = data.duplicate()
+func initialize_with_data(data_or_id: Variant, extra_arg: Variant = null) -> void:
+	# MenuBase owns refreshing from GameStore; we only keep local snapshot.
+	if data_or_id is Dictionary:
+		var d := data_or_id as Dictionary
+		convoy_id = String(d.get("convoy_id", d.get("id", "")))
+		convoy_data_received = d.duplicate(true)
+	else:
+		convoy_id = String(data_or_id)
+		convoy_data_received = {}
+	_log_debug("ConvoyJourneyMenu.initialize_with_data name=%s convoy_id=%s type=%s", name, convoy_id, typeof(data_or_id))
+	super.initialize_with_data(data_or_id, extra_arg)
+
+func _update_ui(convoy: Dictionary) -> void:
+	# Snapshot update from GameStore.
+	convoy_data_received = convoy.duplicate(true)
+	var journey_raw: Variant = convoy_data_received.get("journey")
+	var has_journey := journey_raw is Dictionary and not (journey_raw as Dictionary).is_empty()
+	if is_instance_valid(title_label):
+		var convoy_name = convoy_data_received.get("convoy_name", convoy_data_received.get("name", "Convoy"))
+		title_label.text = String(convoy_name) + " - " + ("Journey Details" if has_journey else "Journey Planner")
+
+	# If a confirmation preview is open, don't clobber it on background refresh.
+	if is_instance_valid(_confirmation_panel) and _confirmation_panel.visible:
+		return
+
+	# Deterministic rebuild: prevent duplicated panels/buttons from accumulating.
 	for child in content_vbox.get_children():
 		child.queue_free()
-	# SAFELY extract journey data (API may send null)
-	var journey_raw = data.get("journey")
-	var journey_data: Dictionary = {}
-	if journey_raw is Dictionary:
-		journey_data = journey_raw
-	# Access GameDataManager after journey coercion
-	var gdm = get_node_or_null("/root/GameDataManager")
-	if is_instance_valid(title_label):
-		var convoy_name = data.get("convoy_name", "Convoy")
-		title_label.text = convoy_name + " - " + ("Journey Details" if not journey_data.is_empty() else "Journey Planner")
-	if journey_data.is_empty():
-		_populate_destination_list()
+
+	if not has_journey:
+		var settlement_count: int = (_store.get_settlements().size() if is_instance_valid(_store) and _store.has_method("get_settlements") else -1)
+		_log_debug("ConvoyJourneyMenu planner render convoy_id=%s settlements=%s", str(convoy_data_received.get("convoy_id", "")), settlement_count)
+		if settlement_count <= 0:
+			_show_loading_indicator("Loading destinations…")
+			_schedule_destination_retry()
+		else:
+			_settlement_poll_attempts = 0
+			_populate_destination_list()
 		return
 
 	# ---- Styled container for in-transit details ----
@@ -139,6 +173,7 @@ func initialize_with_data(data: Dictionary):
 	details_panel.add_child(details_vbox)
 
 	# --- ETA headline (centered) ---
+	var journey_data: Dictionary = journey_raw as Dictionary
 	var eta_str = journey_data.get("eta")
 	var eta_val := preload("res://Scripts/System/date_time_util.gd").format_timestamp_display(eta_str, true)
 	var eta_headline := Label.new()
@@ -167,8 +202,8 @@ func initialize_with_data(data: Dictionary):
 	curr_title.add_theme_color_override("font_color", Color(0.85,0.9,1))
 	loc_grid.add_child(curr_title)
 	var curr_value := Label.new()
-	var curr_name := _get_settlement_name(gdm, data.get("x", 0.0), data.get("y", 0.0))
-	curr_value.text = "%s  (%.0f, %.0f)" % [curr_name, data.get("x", 0.0), data.get("y", 0.0)]
+	var curr_name := _get_settlement_name(null, convoy_data_received.get("x", 0.0), convoy_data_received.get("y", 0.0))
+	curr_value.text = "%s  (%.0f, %.0f)" % [curr_name, convoy_data_received.get("x", 0.0), convoy_data_received.get("y", 0.0)]
 	loc_grid.add_child(curr_value)
 	# Departed (moved below, with emoji)
 	var departure_time_str = journey_data.get("departure_time")
@@ -187,7 +222,7 @@ func initialize_with_data(data: Dictionary):
 	loc_grid.add_child(origin_title)
 	var origin_value := Label.new()
 	if origin_x != null and origin_y != null:
-		var origin_name = _get_settlement_name(gdm, origin_x, origin_y)
+		var origin_name = _get_settlement_name(null, origin_x, origin_y)
 		origin_value.text = "%s  (%.0f, %.0f)" % [origin_name, origin_x, origin_y]
 	else:
 		origin_value.text = "N/A"
@@ -200,7 +235,7 @@ func initialize_with_data(data: Dictionary):
 	loc_grid.add_child(dest_title)
 	var dest_value := Label.new()
 	if dest_x != null and dest_y != null:
-		var dest_name = _get_settlement_name(gdm, dest_x, dest_y)
+		var dest_name = _get_settlement_name(null, dest_x, dest_y)
 		dest_value.text = "%s  (%.0f, %.0f)" % [dest_name, dest_x, dest_y]
 	else:
 		dest_value.text = "N/A"
@@ -246,33 +281,33 @@ func initialize_with_data(data: Dictionary):
 				printerr("ConvoyJourneyMenu: Cannot cancel; missing journey_id")
 				_hide_blocking_overlay()
 				return
-			var gdm_cancel := get_node_or_null("/root/GameDataManager")
-			if is_instance_valid(gdm_cancel) and gdm_cancel.has_method("cancel_convoy_journey"):
+			if is_instance_valid(_routes) and _routes.has_method("cancel_journey"):
 				print("[ConvoyJourneyMenu] Cancel Journey pressed convoy="+convoy_id_local+" journey="+journey_id_local)
-				gdm_cancel.cancel_convoy_journey(convoy_id_local, journey_id_local)
+				_routes.cancel_journey(convoy_id_local, journey_id_local)
 			else:
-				printerr("ConvoyJourneyMenu: GameDataManager missing cancel_convoy_journey method.")
+				printerr("ConvoyJourneyMenu: RouteService missing cancel_journey method.")
 				_hide_blocking_overlay()
 		)
 		cancel_btn.add_theme_color_override("font_color", Color(1, 0.92, 0.92))
 		details_vbox.add_child(cancel_btn)
 
 func _populate_destination_list():
+	# Reset planner loading state for a clean rebuild.
+	_settlement_poll_attempts = 0
 	# Clear potential prior loading state
 	_is_request_in_flight = false
 	_loading_label = null
 	_last_requested_destination = {}
 
-	var gdm = get_node_or_null("/root/GameDataManager")
-	if not is_instance_valid(gdm) or not gdm.has_method("get_all_settlements_data"):
-		printerr("ConvoyJourneyMenu: GameDataManager not found or method missing. Cannot populate destinations.")
+	if not is_instance_valid(_store) or not _store.has_method("get_settlements"):
+		printerr("ConvoyJourneyMenu: GameStore not found or method missing. Cannot populate destinations.")
 		var error_label = Label.new()
 		error_label.text = "Error: Could not load destination data."
 		error_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		content_vbox.add_child(error_label)
 		return
 
-	var all_settlements = gdm.get_all_settlements_data()
+	var all_settlements: Array = _store.get_settlements()
 	if all_settlements.is_empty():
 		var no_settlements_label = Label.new()
 		no_settlements_label.text = "No known destinations to travel to."
@@ -283,27 +318,198 @@ func _populate_destination_list():
 	var convoy_pos = Vector2(convoy_data_received.get("x", 0.0), convoy_data_received.get("y", 0.0))
 
 	# Create a reverse map from vendor_id to settlement_name for quick lookups.
+	# Also map Vendor Name -> Settlement Name to handle non-ID recipient strings.
 	var vendor_to_settlement_map: Dictionary = {}
+	var vendor_name_to_settlement_map: Dictionary = {}
+	var settlement_id_to_name: Dictionary = {}
+
+
+	
 	for settlement in all_settlements:
-		if settlement.has("vendors") and settlement.vendors is Array:
-			for vendor in settlement.vendors:
-				if vendor.has("vendor_id"):
-					vendor_to_settlement_map[str(vendor.vendor_id)] = settlement.get("name")
+		if not (settlement is Dictionary):
+			continue
+		var settlement_dict := settlement as Dictionary
+		var settlement_name = settlement_dict.get("name", "Unknown")
+		var vendors: Variant = settlement_dict.get("vendors", [])
+		if vendors is Array:
+			for vendor in vendors:
+				if vendor is Dictionary:
+					var v_id = str(vendor.get("vendor_id", ""))
+					var v_name = str(vendor.get("name", ""))
+					
+					if not v_id.is_empty():
+						vendor_to_settlement_map[v_id] = settlement_name
+					if not v_name.is_empty():
+						vendor_name_to_settlement_map[v_name] = settlement_name
+		
+		# DEBUG: Inspect Green Bay vendors
+		# if settlement_name == "Green Bay": ...
+
+		var s_id = str(settlement_dict.get("id", ""))
+		if not s_id.is_empty():
+			settlement_id_to_name[s_id] = settlement_name
+		var s_settlement_id = str(settlement_dict.get("settlement_id", ""))
+		if not s_settlement_id.is_empty():
+			settlement_id_to_name[s_settlement_id] = settlement_name
+
+	# Fallback: Check if GameStore has a global vendor list (commonly available in this codebase pattern)
+	# This handles cases where dynamic vendors (like mission-specific ones) aren't nested in the settlement snapshot.
+	if is_instance_valid(_store) and _store.has_method("get_vendors"):
+		var all_vendors = _store.get_vendors()
+		if all_vendors is Array:
+			for vendor in all_vendors:
+				if not (vendor is Dictionary): continue
+				var v_id = str(vendor.get("vendor_id", ""))
+				var v_name = str(vendor.get("name", ""))
+				var v_settlement_id = str(vendor.get("settlement_id", "")) # linking key
+				
+				# We need to find the settlement name for this vendor.
+				# If we have settlement_id, we can look it up.
+				var linked_settlement_name = ""
+				
+				# Optimization: check known map first
+				if not v_id.is_empty() and vendor_to_settlement_map.has(v_id):
+					continue
+				
+				# Try to resolve settlement name by ID
+				if not v_settlement_id.is_empty():
+					for s in all_settlements:
+						if str(s.get("id")) == v_settlement_id or str(s.get("settlement_id")) == v_settlement_id:
+							linked_settlement_name = s.get("name", "")
+							break
+				
+				# If resolved, add to maps
+				if not linked_settlement_name.is_empty():
+					if not v_id.is_empty():
+						vendor_to_settlement_map[v_id] = linked_settlement_name
+					if not v_name.is_empty():
+						vendor_name_to_settlement_map[v_name] = linked_settlement_name
+	
+
 
 	# Find any mission-specific destinations by resolving recipient IDs to settlement names.
 	var mission_destinations: Dictionary = {}
+	
+	print("[ConvoyJourneyMenu] Convoy Data Keys: ", convoy_data_received.keys())
+	
+	var vehicles_list = []
 	if convoy_data_received.has("vehicle_details_list"):
-		for vehicle in convoy_data_received.get("vehicle_details_list", []):
-			if vehicle.has("cargo"):
-				for cargo_item in vehicle.get("cargo", []):
-					var recipient_id = cargo_item.get("recipient")
-					if recipient_id != null:
-						var recipient_id_str = str(recipient_id)
-						if vendor_to_settlement_map.has(recipient_id_str):
-							var settlement_name = vendor_to_settlement_map[recipient_id_str]
-							# Store the name of the first mission cargo item found for this destination.
-							if not mission_destinations.has(settlement_name):
-								mission_destinations[settlement_name] = cargo_item.get("name", "Mission Cargo")
+		vehicles_list = convoy_data_received.get("vehicle_details_list", [])
+	elif convoy_data_received.has("vehicles"):
+		vehicles_list = convoy_data_received.get("vehicles", [])
+	
+	if not vehicles_list.is_empty():
+		for vehicle in vehicles_list:
+			# Aggregate all potential cargo sources
+			var all_cargo = []
+			if vehicle.get("cargo_items_typed") is Array:
+				all_cargo.append_array(vehicle.get("cargo_items_typed"))
+			elif vehicle.get("cargo_items") is Array:
+				all_cargo.append_array(vehicle.get("cargo_items"))
+			
+			# Fallback to legacy "cargo" if specific lists are missing or empty? 
+			# Or just include it to be safe.
+			if vehicle.get("cargo") is Array:
+				all_cargo.append_array(vehicle.get("cargo"))
+			
+			if vehicle.get("all_cargo") is Array:
+				all_cargo.append_array(vehicle.get("all_cargo"))
+			
+			print("[ConvoyJourneyMenu] Vehicle cargo count: ", all_cargo.size())
+
+			for cargo_item in all_cargo:
+				if not (cargo_item is Dictionary):
+					continue
+				
+				# Check for mission indicators
+				var match_found = false
+				
+				# 0. Check pre-calculated UI field (unlikely in raw data but checked just in case)
+				if cargo_item.get("recipient_settlement_name") is String:
+					var rsn = str(cargo_item.get("recipient_settlement_name"))
+					if not rsn.is_empty():
+						# Exact match logic
+						if mission_destinations.has(rsn):
+							match_found = true
+						# Check if this name is a valid settlement
+						elif vendor_to_settlement_map.values().has(rsn):
+							mission_destinations[rsn] = cargo_item.get("name", "Mission Cargo")
+							match_found = true
+				
+				if match_found: continue
+
+				if match_found:
+					continue
+
+				# Gather all candidate keys that might identify the destination
+				var candidate_keys = []
+				
+				# string-based keys
+				if cargo_item.get("recipient") != null: candidate_keys.append(str(cargo_item.get("recipient")))
+				if cargo_item.get("recipient_vendor_id") != null: candidate_keys.append(str(cargo_item.get("recipient_vendor_id")))
+				if cargo_item.get("destination_vendor_id") != null: candidate_keys.append(str(cargo_item.get("destination_vendor_id")))
+				if cargo_item.get("mission_vendor_id") != null: candidate_keys.append(str(cargo_item.get("mission_vendor_id")))
+
+				for val in candidate_keys:
+					if val.is_empty(): continue
+					
+					var resolved_settlement = ""
+					
+					# 1. Try ID Match
+					if vendor_to_settlement_map.has(val):
+						resolved_settlement = vendor_to_settlement_map[val]
+					
+					# 2. Try Settlement ID Match Directly
+					elif settlement_id_to_name.has(val):
+						resolved_settlement = settlement_id_to_name[val]
+					
+					# 2. Try Vendor Name Match (Exact)
+					elif vendor_name_to_settlement_map.has(val):
+						resolved_settlement = vendor_name_to_settlement_map[val]
+					
+					# 3. Fuzzy match against Settlement Names directly (e.g. "Green Bay General")
+					else:
+						# optimization: only do fuzzy loop if not found yet
+						var val_lower = val.to_lower()
+						for s_data in all_settlements:
+							var s_name = s_data.get("name", "")
+							if s_name.is_empty(): continue
+							var s_name_lower = s_name.to_lower()
+							
+							# Check if candidate string contains settlement name (e.g. "Green Bay General Store" contains "Green Bay")
+							if val_lower.find(s_name_lower) != -1:
+								resolved_settlement = s_name
+								break
+							# Check reverse (unlikely for settlement names, but possible)
+							if s_name_lower.find(val_lower) != -1:
+								resolved_settlement = s_name
+								break
+						
+						# 4. Fuzzy match against Vendor Names -> link to Settlement
+						if resolved_settlement == "":
+							for v_name in vendor_name_to_settlement_map.keys():
+								# e.g. val="Green Bay Gen" vs v_name="Green Bay General Store"
+								if str(v_name).to_lower().find(val_lower) != -1 or val_lower.find(str(v_name).to_lower()) != -1:
+									resolved_settlement = vendor_name_to_settlement_map[v_name]
+									break
+
+					if resolved_settlement != "":
+						if not mission_destinations.has(resolved_settlement):
+							mission_destinations[resolved_settlement] = cargo_item.get("name", "Mission Cargo")
+						match_found = true
+						print("[ConvoyJourneyMenu] MATCH FOUND for cargo '%s': resolved to '%s' via key '%s'" % [cargo_item.get("name"), resolved_settlement, val])
+						break
+				
+				# if not match_found and (not candidate_keys.is_empty()):
+				# 	print("[ConvoyJourneyMenu] NO MATCH for cargo '%s'. Candidate keys: %s" % [cargo_item.get("name"), candidate_keys])
+				
+				if match_found:
+					continue
+				
+				# Validation / Debug for loose items
+				if cargo_item.get("is_mission", false) or (cargo_item.get("mission_id", "") != ""):
+					# Valid mission item but destination unknown.
+					pass
 
 	var header_label = Label.new()
 	header_label.text = "Choose a Destination:"
@@ -332,15 +538,18 @@ func _populate_destination_list():
 		var b_name = b.data.get("name", "")
 		var a_is_mission = mission_destinations.has(a_name)
 		var b_is_mission = mission_destinations.has(b_name)
-
-		if a_is_mission and not b_is_mission:
-			return true # a comes before b
-		if not a_is_mission and b_is_mission:
-			return false # b comes before a
 		
+		if a_is_mission != b_is_mission:
+			return a_is_mission # true (mission) comes before false
+
 		# If both are missions or both are not, sort by distance
 		return a.distance < b.distance
 	)
+	
+	print("[ConvoyJourneyMenu] Mission Destinations Found: ", mission_destinations.keys())
+	for d in potential_destinations:
+		if mission_destinations.has(d.data.get("name", "")):
+			print("[ConvoyJourneyMenu] Priority Dest: %s" % d.data.get("name"))
 
 	for destination_entry in potential_destinations:
 		var settlement_data = destination_entry.data
@@ -361,17 +570,78 @@ func _populate_destination_list():
 		at_destination_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		content_vbox.add_child(at_destination_label)
 
-func _get_settlement_name(gdm_node, coord_x, coord_y) -> String:
-	if not is_instance_valid(gdm_node) or not gdm_node.has_method("get_settlement_name_from_coords"):
-		printerr("ConvoyJourneyMenu: GameDataManager not available or method missing for settlement name.")
+func _on_map_changed(_tiles: Array, settlements: Array) -> void:
+	_log_debug("ConvoyJourneyMenu map_changed received visible=%s settlements=%s", is_visible_in_tree(), (settlements.size() if settlements != null else -1))
+	# When settlements arrive after the menu is opened, refresh the destination list.
+	if not is_visible_in_tree():
+		return
+	if not is_instance_valid(content_vbox):
+		return
+	# If a journey is active or a confirmation panel is open, don't rebuild planner UI.
+	var j: Variant = convoy_data_received.get("journey")
+	var has_journey := j is Dictionary and not (j as Dictionary).is_empty()
+	if has_journey:
+		return
+	if is_instance_valid(_confirmation_panel) and _confirmation_panel.visible:
+		return
+	if settlements == null or settlements.is_empty():
+		# Still useful to keep the user informed.
+		_show_loading_indicator("Loading destinations…")
+		_schedule_destination_retry()
+		return
+	_log_debug("ConvoyJourneyMenu map_changed -> refresh destinations convoy_id=%s settlements=%s", str(convoy_data_received.get("convoy_id", "")), settlements.size())
+	for child in content_vbox.get_children():
+		child.queue_free()
+	_populate_destination_list()
+
+func _schedule_destination_retry() -> void:
+	# Avoid infinite rebuild loops if map never loads.
+	if _settlement_poll_attempts >= 10:
+		_log_debug("ConvoyJourneyMenu settlement poll giving up attempts=%s", _settlement_poll_attempts)
+		return
+	_settlement_poll_attempts += 1
+	if is_instance_valid(_settlement_poll_timer):
+		_settlement_poll_timer.stop()
+		_settlement_poll_timer.queue_free()
+	_settlement_poll_timer = Timer.new()
+	_settlement_poll_timer.one_shot = true
+	_settlement_poll_timer.wait_time = 0.5
+	add_child(_settlement_poll_timer)
+	_settlement_poll_timer.timeout.connect(func():
+		if not is_visible_in_tree():
+			return
+		# Only retry in planner mode (no active journey and no confirmation panel).
+		var j: Variant = convoy_data_received.get("journey")
+		var has_journey := j is Dictionary and not (j as Dictionary).is_empty()
+		if has_journey:
+			return
+		if is_instance_valid(_confirmation_panel) and _confirmation_panel.visible:
+			return
+		var cnt: int = (_store.get_settlements().size() if is_instance_valid(_store) and _store.has_method("get_settlements") else -1)
+		_log_debug("ConvoyJourneyMenu settlement poll attempt=%s settlements=%s", _settlement_poll_attempts, cnt)
+		if cnt > 0:
+			for child in content_vbox.get_children():
+				child.queue_free()
+			_settlement_poll_attempts = 0
+			_populate_destination_list()
+		else:
+			_schedule_destination_retry()
+	)
+	_settlement_poll_timer.start()
+
+func _get_settlement_name(_unused_gdm_node, coord_x, coord_y) -> String:
+	if not is_instance_valid(_store) or not _store.has_method("get_settlements"):
 		return "Unknown"
-	
-	var x_int = roundi(float(coord_x))
-	var y_int = roundi(float(coord_y))
-	var settlement_name = gdm_node.get_settlement_name_from_coords(x_int, y_int)
-	if settlement_name.begins_with("N/A"):
-		return "Uncharted Location"
-	return settlement_name
+	var x_int := roundi(float(coord_x))
+	var y_int := roundi(float(coord_y))
+	for s in _store.get_settlements():
+		if s is Dictionary:
+			var sx := int((s as Dictionary).get("x", -9999))
+			var sy := int((s as Dictionary).get("y", -9999))
+			if sx == x_int and sy == y_int:
+				var settlement_name := str((s as Dictionary).get("name", "Unknown"))
+				return settlement_name if settlement_name != "" else "Unknown"
+	return "Uncharted Location"
 
 func _on_title_label_gui_input(event: InputEvent):
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
@@ -384,37 +654,45 @@ func _on_destination_button_pressed(destination_data: Dictionary):
 		return # Ignore multiple clicks while loading
 	print("ConvoyJourneyMenu: Destination '%s' selected. Requesting route choices." % destination_data.get("name"))
 	_last_requested_destination = destination_data
-	var gdm = get_node_or_null("/root/GameDataManager")
-	if is_instance_valid(gdm) and gdm.has_method("request_route_choices"):
-		var convoy_id = str(convoy_data_received.get("convoy_id"))
-		var dest_x = int(destination_data.get("x"))
-		var dest_y = int(destination_data.get("y"))
-		gdm.request_route_choices(convoy_id, dest_x, dest_y)
+	if is_instance_valid(_routes) and _routes.has_method("request_choices"):
+		var convoy_id_local := str(convoy_data_received.get("convoy_id"))
+		var dest_x := int(destination_data.get("x"))
+		var dest_y := int(destination_data.get("y"))
+		_routes.request_choices(convoy_id_local, dest_x, dest_y)
 		_disable_destination_buttons()
 		_show_loading_indicator("Finding routes...")
 	else:
-		printerr("ConvoyJourneyMenu: Could not find GameDataManager or 'request_route_choices' method.")
+		printerr("ConvoyJourneyMenu: RouteService not available; cannot request route choices.")
 	_emit_find_route(destination_data)
 
 func _emit_find_route(destination_data: Dictionary):
 	emit_signal("find_route_requested", convoy_data_received, destination_data)
 
-func _on_route_choices_request_started(convoy_id: String, _destination_ctx: Dictionary):
-	print("[ConvoyJourneyMenu] route_choices_request_started for convoy_id=", convoy_id)
-	# Verify this is for our convoy
-	if str(convoy_data_received.get("convoy_id")) != str(convoy_id):
-		return
+func _on_route_choices_request_started():
+	print("[ConvoyJourneyMenu] route_choices_request_started")
 	_is_request_in_flight = true
 	_show_loading_indicator("Calculating routes...")
 
-func _on_route_choices_error(convoy_id: String, _destination_ctx: Dictionary, error_message: String):
-	print("[ConvoyJourneyMenu] route_choices_error for convoy_id=", convoy_id, " error=", error_message)
-	if str(convoy_data_received.get("convoy_id")) != str(convoy_id):
-		return
+func _on_route_choices_error(error_message: String):
+	print("[ConvoyJourneyMenu] route_choices_error error=", error_message)
 	_is_request_in_flight = false
 	_clear_loading_indicator()
 	_show_error_message(error_message)
 	_enable_destination_buttons()
+
+func _on_route_choices_ready(routes: Array) -> void:
+	_on_route_info_ready(convoy_data_received, _last_requested_destination, routes)
+
+func _on_hub_convoy_updated(updated_convoy: Dictionary) -> void:
+	if not (updated_convoy is Dictionary):
+		return
+	if str(updated_convoy.get("convoy_id", "")) != str(convoy_data_received.get("convoy_id", "")):
+		return
+	# If journey is now empty, treat it as a cancel completion for UX.
+	var j: Variant = updated_convoy.get("journey")
+	var is_empty := (j == null) or (j is Dictionary and (j as Dictionary).is_empty())
+	if is_empty:
+		_on_journey_canceled(updated_convoy)
 
 func _on_route_info_ready(convoy_data: Dictionary, destination_data: Dictionary, route_choices: Array):
 	print("[ConvoyJourneyMenu] route_info_ready for convoy_id=", convoy_data.get("convoy_id"), " routes=", route_choices.size())
@@ -541,20 +819,23 @@ func _extract_battery_item(vehicle: Dictionary) -> Dictionary:
 	return {}
 
 func _refresh_convoy_snapshot():
-	var gdm = get_node_or_null('/root/GameDataManager')
-	if not is_instance_valid(gdm):
+	if not is_instance_valid(_store) or not _store.has_method("get_convoys"):
 		return
 	if not convoy_data_received.has('convoy_id'):
 		return
-	if gdm.has_method('get_convoy_by_id'):
-		var latest = gdm.get_convoy_by_id(str(convoy_data_received.get('convoy_id')))
-		if latest is Dictionary and not latest.is_empty():
+	var target_id := str(convoy_data_received.get('convoy_id'))
+	if target_id == "":
+		return
+	for c in _store.get_convoys():
+		if c is Dictionary and str((c as Dictionary).get('convoy_id', '')) == target_id:
+			var latest := c as Dictionary
 			# Only update vehicle lists to avoid overwriting selection context
 			if latest.has('vehicle_details_list'):
 				convoy_data_received['vehicle_details_list'] = latest.get('vehicle_details_list')
 			elif latest.has('vehicles'):
 				convoy_data_received['vehicle_details_list'] = latest.get('vehicles')
 			print('[ConvoyJourneyMenu][DEBUG] Refreshed convoy vehicle snapshot. Vehicles now =', (convoy_data_received.get('vehicle_details_list', []) as Array).size())
+			break
 
 # Numeric coercion (re-added after revert)
 func _coerce_number(v: Variant) -> float:
@@ -929,14 +1210,15 @@ func _on_change_destination_pressed():
 			child.visible = true
 
 func _on_confirm_journey_pressed(route_data: Dictionary):
-	var convoy_id = str(convoy_data_received.get("convoy_id"))
+	var convoy_id_local = str(convoy_data_received.get("convoy_id"))
 	var journey_id = str(route_data.get("journey", {}).get("journey_id", ""))
 	if journey_id.is_empty():
 		printerr("ConvoyJourneyMenu: Cannot confirm journey; missing journey_id")
 		return
-	var gdm = get_node_or_null("/root/GameDataManager")
-	if is_instance_valid(gdm):
-		gdm.start_convoy_journey(convoy_id, journey_id)
+	if is_instance_valid(_routes) and _routes.has_method("start_journey"):
+		_routes.start_journey(convoy_id_local, journey_id)
+	else:
+		printerr("ConvoyJourneyMenu: RouteService missing start_journey; cannot confirm.")
 	# End preview and go back to overview
 	emit_signal("route_preview_ended")
 	emit_signal("return_to_convoy_overview_requested", convoy_data_received)

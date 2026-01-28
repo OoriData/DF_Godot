@@ -16,7 +16,9 @@ signal tutorial_finished
 # Node references
 var _main_screen: Node = null
 var _overlay: Node = null # Scripts/UI/tutorial_overlay.gd instance
-var _gdm: Node = null
+@onready var _store: Node = get_node_or_null("/root/GameStore")
+@onready var _hub: Node = get_node_or_null("/root/SignalHub")
+@onready var _api: Node = get_node_or_null("/root/APICalls")
 
 # Internal state
 var _level: int = 0
@@ -70,17 +72,17 @@ func _ready() -> void:
 		return
 	# Cache references
 	_main_screen = get_node_or_null("/root/GameRoot/MainScreen")
-	_gdm = get_node_or_null("/root/GameDataManager")
-	if _gdm:
-		if _gdm.has_signal("initial_data_ready") and not _gdm.is_connected("initial_data_ready", Callable(self, "_on_initial_data_ready")):
-			_gdm.initial_data_ready.connect(Callable(self, "_on_initial_data_ready"))
-		if _gdm.has_signal("convoy_data_updated") and not _gdm.is_connected("convoy_data_updated", Callable(self, "_on_convoy_data_updated")):
-			_gdm.convoy_data_updated.connect(Callable(self, "_on_convoy_data_updated"))
-		# Connect to GDM signals to pause/resume tutorial during UI refreshes
-		if _gdm.has_signal("inline_error_handled") and not _gdm.is_connected("inline_error_handled", Callable(self, "_on_inline_error_handled")):
-			_gdm.inline_error_handled.connect(Callable(self, "_on_inline_error_handled"))
-		if _gdm.has_signal("vendor_panel_data_ready") and not _gdm.is_connected("vendor_panel_data_ready", Callable(self, "_on_vendor_panel_refreshed")):
-			_gdm.vendor_panel_data_ready.connect(Callable(self, "_on_vendor_panel_refreshed"))
+	# Phase C: subscribe to canonical sources (Hub/Store) instead of GameDataManager.
+	if is_instance_valid(_hub):
+		if _hub.has_signal("initial_data_ready") and not _hub.is_connected("initial_data_ready", Callable(self, "_on_initial_data_ready")):
+			_hub.connect("initial_data_ready", Callable(self, "_on_initial_data_ready"))
+		if _hub.has_signal("vendor_panel_ready") and not _hub.is_connected("vendor_panel_ready", Callable(self, "_on_vendor_panel_refreshed")):
+			_hub.connect("vendor_panel_ready", Callable(self, "_on_vendor_panel_refreshed"))
+		if _hub.has_signal("error_occurred") and not _hub.is_connected("error_occurred", Callable(self, "_on_hub_error_occurred")):
+			_hub.connect("error_occurred", Callable(self, "_on_hub_error_occurred"))
+	if is_instance_valid(_store):
+		if _store.has_signal("convoys_changed") and not _store.is_connected("convoys_changed", Callable(self, "_on_convoy_data_updated")):
+			_store.connect("convoys_changed", Callable(self, "_on_convoy_data_updated"))
 	# MenuManager hooks (for event-driven steps)
 	var mm := get_node_or_null("/root/MenuManager")
 	if mm:
@@ -128,9 +130,9 @@ func _get_total_vehicle_count(all_convoys_override: Array = []) -> int:
 	var count := 0
 	var all_convoys: Array = all_convoys_override
 	if all_convoys.is_empty():
-		if not is_instance_valid(_gdm) or not _gdm.has_method("get_all_convoy_data"):
+		if not is_instance_valid(_store) or not _store.has_method("get_convoys"):
 			return -1 # Indicate data not available
-		all_convoys = _gdm.get_all_convoy_data()
+		all_convoys = _store.get_convoys()
 		if not (all_convoys is Array):
 			return -1
 
@@ -162,16 +164,16 @@ func _maybe_start() -> void:
 		return
 	# Start only when the user has at least one convoy.
 	var has_any_convoys := false
-	if _gdm and _gdm.has_method("get_all_convoy_data"):
-		var conv = _gdm.get_all_convoy_data()
+	if is_instance_valid(_store) and _store.has_method("get_convoys"):
+		var conv = _store.get_convoys()
 		has_any_convoys = (conv is Array) and (conv.size() > 0)
 	if not has_any_convoys:
 		return
 
 	# Sync level from server if available, otherwise use local progress or default.
 	var server_level := -1
-	if is_instance_valid(_gdm) and _gdm.has_method("get_current_user_data"):
-		var user_data: Dictionary = _gdm.get_current_user_data()
+	if is_instance_valid(_store) and _store.has_method("get_user"):
+		var user_data: Dictionary = _store.get_user()
 		if user_data.has("metadata") and user_data.metadata is Dictionary:
 			var metadata: Dictionary = user_data.metadata
 			if metadata.has("tutorial"):
@@ -194,6 +196,42 @@ func _maybe_start() -> void:
 	_started = true
 	_emit_started()
 	_run_current_step()
+
+
+func _persist_tutorial_stage(new_stage: int) -> void:
+	if not is_instance_valid(_api) or not _api.has_method("update_user_metadata"):
+		return
+
+	var user_id: String = String(_api.current_user_id)
+	
+	# Fallback: if API doesn't have the user_id (e.g. lost state), try to recover from GameStore
+	if user_id.is_empty():
+		if is_instance_valid(_store) and _store.has_method("get_user"):
+			var u: Dictionary = _store.get_user()
+			user_id = String(u.get("id", u.get("user_id", "")))
+			if not user_id.is_empty():
+				print("[Tutorial] Recovered missing user_id from GameStore: ", user_id)
+				# Repair API state
+				if "current_user_id" in _api:
+					_api.current_user_id = user_id
+
+	if user_id.is_empty():
+		printerr("[Tutorial] Error: Cannot persist stage %d; no user_id found in API or Store." % new_stage)
+		return
+
+	var user_data: Dictionary = {}
+	if is_instance_valid(_store) and _store.has_method("get_user"):
+		user_data = _store.get_user()
+	var new_metadata := {}
+	if user_data.has("metadata") and user_data.metadata is Dictionary:
+		new_metadata = user_data.metadata.duplicate(true)
+	new_metadata["tutorial"] = new_stage
+	_api.update_user_metadata(user_id, new_metadata)
+
+
+func _on_hub_error_occurred(_domain: String, _code: String, _message: String, inline: bool) -> void:
+	if inline:
+		_on_inline_error_handled()
 
 func _is_new_convoy_dialog_visible() -> bool:
 	if _main_screen == null:
@@ -339,6 +377,12 @@ func _build_level_steps(level: int) -> Array:
 					copy = "You can use the money from deliveries to upgrade your vehicles or expand your convoy with new ones.  Check back in when your convoy arrives!",
 					action = "message",
 					target = {}
+				},
+				{
+					id = "l6_finish",
+					copy = "",
+					action = "set_stage_and_finish",
+					target = { "stage": 7 }
 				}
 			]
 		7: # Level 7: Tutorial Complete
@@ -486,22 +530,17 @@ func _run_current_step() -> void:
 	_ensure_overlay_visible()
 	_diag_overlay_state("run_current_step:start")
 
-	# --- START TUTORIAL DIAGNOSTIC ---
-	# This log creates a timeline of which step is running.
-	if profiling_enabled:
-		print("[Tutorial][DIAGNOSTIC] --- Running Step: '%s' ---" % _steps[_step].get("id", "N/A"))
 	_perf_step_start_ms = Time.get_ticks_msec()
-	# --- END TUTORIAL DIAGNOSTIC ---
+
 	var step: Dictionary = _steps[_step].duplicate() # Use a copy to allow modification
 	var action := String(step.get("action", "message"))
 	var id := String(step.get("id", ""))
 
-	if is_instance_valid(_gdm) and _gdm.has_method("update_user_tutorial_stage"):
-		# Stage updates are now handled by specific action handlers (e.g., _on_top_up_pressed)
-		# or at the end of a level (_emit_finished). This block is for specific mid-level triggers.
-		# At the start of level 4 (journey planning), set stage to 5
-		if id == "l4_open_journey_menu":
-			_gdm.call_deferred("update_user_tutorial_stage", 5)
+	# Stage updates are handled by specific action handlers (e.g., _on_top_up_pressed)
+	# or at the end of a level (_emit_finished). This block is for specific mid-level triggers.
+	# At the start of level 4 (journey planning), set stage to 5
+	if id == "l4_open_journey_menu":
+		_persist_tutorial_stage(5)
 
 	# Decide whether to lock or unlock vendor tabs for this step.
 	# This prevents the user from switching to other vendor tabs (e.g., Market)
@@ -540,8 +579,7 @@ func _run_current_step() -> void:
 			_watch_for_journey_confirm()
 		"set_stage_and_finish":
 			var stage = step.get("target", {}).get("stage", _level + 1)
-			if is_instance_valid(_gdm) and _gdm.has_method("update_user_tutorial_stage"):
-				_gdm.call_deferred("update_user_tutorial_stage", stage)
+			_persist_tutorial_stage(int(stage))
 			_clear_highlight()
 			if _overlay and is_instance_valid(_overlay):
 				_overlay.call_deferred("queue_free")
@@ -704,13 +742,13 @@ func _on_destination_picked(_convoy_data, _destination_data) -> void:
 	_advance_after_frame()
 
 func _watch_for_journey_confirm() -> void:
-	if not is_instance_valid(_gdm):
-		printerr("[Tutorial] GDM not valid, cannot watch for journey confirm.")
+	if not is_instance_valid(_store):
+		printerr("[Tutorial] GameStore not valid, cannot watch for journey confirm.")
 		return
 
 	# Listen for backend confirmation (journey started)
-	if not _gdm.is_connected("convoy_data_updated", Callable(self, "_on_journey_confirmed")):
-		_gdm.convoy_data_updated.connect(Callable(self, "_on_journey_confirmed"))
+	if not _store.is_connected("convoys_changed", Callable(self, "_on_journey_confirmed")):
+		_store.connect("convoys_changed", Callable(self, "_on_journey_confirmed"))
 
 	# Also listen for the journey preview starting, which is when the confirm button appears.
 	var journey_menu := _get_journey_menu()
@@ -728,17 +766,16 @@ func _on_route_preview_started(_route_data: Dictionary) -> void:
 
 func _on_journey_confirmed(all_convoys: Array) -> void:
 	if _step < 0 or _step >= _steps.size() or _steps[_step].get("action") != "await_journey_confirm":
-		if is_instance_valid(_gdm) and _gdm.is_connected("convoy_data_updated", Callable(self, "_on_journey_confirmed")):
-			_gdm.disconnect("convoy_data_updated", Callable(self, "_on_journey_confirmed"))
+		if is_instance_valid(_store) and _store.is_connected("convoys_changed", Callable(self, "_on_journey_confirmed")):
+			_store.disconnect("convoys_changed", Callable(self, "_on_journey_confirmed"))
 		return
-
-	if not is_instance_valid(_gdm) or all_convoys.is_empty(): return
+	if not is_instance_valid(_store) or all_convoys.is_empty(): return
 
 	var current_convoy = all_convoys[0] # Assuming first convoy is the tutorial one
 	if current_convoy.has("journey") and current_convoy.journey is Dictionary and not current_convoy.journey.is_empty():
 		# Journey has started!
-		if is_instance_valid(_gdm) and _gdm.is_connected("convoy_data_updated", Callable(self, "_on_journey_confirmed")):
-			_gdm.disconnect("convoy_data_updated", Callable(self, "_on_journey_confirmed"))
+		if is_instance_valid(_store) and _store.is_connected("convoys_changed", Callable(self, "_on_journey_confirmed")):
+			_store.disconnect("convoys_changed", Callable(self, "_on_journey_confirmed"))
 		
 		# The menu will close automatically. Wait for it to close before advancing.
 		_advance_after_frame()
@@ -800,12 +837,11 @@ func _emit_finished() -> void:
 	emit_signal("tutorial_finished")
 
 	# Update backend and advance to next level
-	if is_instance_valid(_gdm) and _gdm.has_method("update_user_tutorial_stage"):
-		# For most levels, we automatically advance the server stage.
-		# Level 5 advances to 6 via a special "set_stage_and_finish" action.
-		# We also prevent level 6 from advancing to 7, as that is handled by the server on convoy arrival.
-		if _level != 5 and _level != 6:
-			_gdm.call_deferred("update_user_tutorial_stage", _level + 1)
+	# For most levels, we automatically advance the server stage.
+	# Level 5 advances to 6 via a special "set_stage_and_finish" action.
+	# We also prevent level 6 from advancing to 7, as that is handled by the server on convoy arrival.
+	if _level != 5 and _level != 6:
+		_persist_tutorial_stage(_level + 1)
 
 	# Advance to the next level
 	_level += 1
@@ -942,26 +978,21 @@ func _on_top_up_pressed() -> void:
 	_emit_finished()
 
 func _watch_for_oyster_purchase() -> void:
-	if not is_instance_valid(_gdm):
-		printerr("[Tutorial] GDM not valid, cannot watch for oyster purchase.")
+	if not is_instance_valid(_store):
+		printerr("[Tutorial] GameStore not valid, cannot watch for oyster purchase.")
 		return
 	
 	_oyster_checklist_state = {"oysters": false}
 
-	if not _gdm.is_connected("convoy_data_updated", Callable(self, "_on_oyster_check")):
-		_gdm.convoy_data_updated.connect(Callable(self, "_on_oyster_check"))
-	
-	if _gdm.has_method("get_all_convoy_data"):
-		_on_oyster_check(_gdm.get_all_convoy_data())
+	if not _store.is_connected("convoys_changed", Callable(self, "_on_oyster_check")):
+		_store.connect("convoys_changed", Callable(self, "_on_oyster_check"))
+	_on_oyster_check(_store.get_convoys())
 	_connect_vendor_panel_signals()
 
 func _on_oyster_check(_all_convoys: Array) -> void:
 	if _step < 0 or _step >= _steps.size() or _steps[_step].get("action") != "await_oyster_purchase":
-		if is_instance_valid(_gdm) and _gdm.is_connected("convoy_data_updated", Callable(self, "_on_oyster_check")):
-			_gdm.disconnect("convoy_data_updated", Callable(self, "_on_oyster_check"))
-		return
-
-	if not is_instance_valid(_gdm):
+		if is_instance_valid(_store) and _store.is_connected("convoys_changed", Callable(self, "_on_oyster_check")):
+			_store.disconnect("convoys_changed", Callable(self, "_on_oyster_check"))
 		return
 
 	var current_convoy: Dictionary
@@ -992,8 +1023,8 @@ func _on_oyster_check(_all_convoys: Array) -> void:
 	_update_oyster_purchase_ui(oyster_count)
 
 	if oyster_count > 0:
-		if is_instance_valid(_gdm) and _gdm.is_connected("convoy_data_updated", Callable(self, "_on_oyster_check")):
-			_gdm.disconnect("convoy_data_updated", Callable(self, "_on_oyster_check"))
+		if is_instance_valid(_store) and _store.is_connected("convoys_changed", Callable(self, "_on_oyster_check")):
+			_store.disconnect("convoys_changed", Callable(self, "_on_oyster_check"))
 		call_deferred("_advance")
 
 func _update_oyster_purchase_ui(oyster_count: int) -> void:
@@ -1007,30 +1038,26 @@ func _update_oyster_purchase_ui(oyster_count: int) -> void:
 		ov.call("show_message", copy, false, Callable(), checklist_items)
 
 func _watch_for_urchin_purchase() -> void:
-	if not is_instance_valid(_gdm):
-		printerr("[Tutorial] GDM not valid, cannot watch for urchin purchase.")
+	if not is_instance_valid(_store):
+		printerr("[Tutorial] GameStore not valid, cannot watch for urchin purchase.")
 		return
 	
 	# Reset checklist state at the beginning of the step
 	_urchin_checklist_state = {"urchins": false}
 
 	# Connect to the signal that fires after convoy data is updated post-transaction
-	if not _gdm.is_connected("convoy_data_updated", Callable(self, "_on_urchin_check")):
-		_gdm.convoy_data_updated.connect(Callable(self, "_on_urchin_check"))
+	if not _store.is_connected("convoys_changed", Callable(self, "_on_urchin_check")):
+		_store.connect("convoys_changed", Callable(self, "_on_urchin_check"))
 	
 	# Also do an initial check and UI update in case the items are already there
-	if _gdm.has_method("get_all_convoy_data"):
-		_on_urchin_check(_gdm.get_all_convoy_data())
+	_on_urchin_check(_store.get_convoys())
 	_connect_vendor_panel_signals()
 
 func _on_urchin_check(_all_convoys: Array) -> void:
 	# This function is now connected. Check if the current step is the one we care about.
 	if _step < 0 or _step >= _steps.size() or _steps[_step].get("action") != "await_urchin_purchase":
-		if is_instance_valid(_gdm) and _gdm.is_connected("convoy_data_updated", Callable(self, "_on_urchin_check")):
-			_gdm.disconnect("convoy_data_updated", Callable(self, "_on_urchin_check"))
-		return
-
-	if not is_instance_valid(_gdm):
+		if is_instance_valid(_store) and _store.is_connected("convoys_changed", Callable(self, "_on_urchin_check")):
+			_store.disconnect("convoys_changed", Callable(self, "_on_urchin_check"))
 		return
 
 	var current_convoy: Dictionary
@@ -1063,8 +1090,8 @@ func _on_urchin_check(_all_convoys: Array) -> void:
 	# Complete once any amount of Mountain Urchins has been purchased.
 	if urchin_count > 0:
 		# Urchins purchased. Disconnect the watcher.
-		if is_instance_valid(_gdm) and _gdm.is_connected("convoy_data_updated", Callable(self, "_on_urchin_check")):
-			_gdm.disconnect("convoy_data_updated", Callable(self, "_on_urchin_check"))
+		if is_instance_valid(_store) and _store.is_connected("convoys_changed", Callable(self, "_on_urchin_check")):
+			_store.disconnect("convoys_changed", Callable(self, "_on_urchin_check"))
 		# Finish level 4 and transition to level 5. This will also update the server stage to 5.
 		print("[Tutorial] Urchins purchased. Finishing level 4 to advance to level 5.")
 		_emit_finished()
@@ -1089,8 +1116,8 @@ func _update_urchin_purchase_ui(urchin_count: int) -> void:
 		ov.call("show_message", copy, false, Callable(), checklist_items)
 
 func _watch_for_supply_purchase() -> void:
-	if not is_instance_valid(_gdm):
-		printerr("[Tutorial] GDM not valid, cannot watch for supply purchase.")
+	if not is_instance_valid(_store):
+		printerr("[Tutorial] GameStore not valid, cannot watch for supply purchase.")
 		return
 	
 	# Reset checklist state at the beginning of the step
@@ -1098,22 +1125,18 @@ func _watch_for_supply_purchase() -> void:
 	_supply_override_counts = {"mre": 0, "water": 0}
 
 	# Connect to the signal that fires after convoy data is updated post-transaction
-	if not _gdm.is_connected("convoy_data_updated", Callable(self, "_on_supply_check")):
-		_gdm.convoy_data_updated.connect(Callable(self, "_on_supply_check"))
+	if not _store.is_connected("convoys_changed", Callable(self, "_on_supply_check")):
+		_store.connect("convoys_changed", Callable(self, "_on_supply_check"))
 	
 	# Also do an initial check and UI update in case the items are already there
-	if _gdm.has_method("get_all_convoy_data"):
-		_on_supply_check(_gdm.get_all_convoy_data())
+	_on_supply_check(_store.get_convoys())
 	_connect_vendor_panel_signals()
 
 func _on_supply_check(_all_convoys: Array) -> void:
 	# This function is now connected. Check if the current step is the one we care about.
 	if _step < 0 or _step >= _steps.size() or _steps[_step].get("action") != "await_supply_purchase":
-		if is_instance_valid(_gdm) and _gdm.is_connected("convoy_data_updated", Callable(self, "_on_supply_check")):
-			_gdm.disconnect("convoy_data_updated", Callable(self, "_on_supply_check"))
-		return
-
-	if not is_instance_valid(_gdm):
+		if is_instance_valid(_store) and _store.is_connected("convoys_changed", Callable(self, "_on_supply_check")):
+			_store.disconnect("convoys_changed", Callable(self, "_on_supply_check"))
 		return
 
 	var current_convoy: Dictionary
@@ -1150,8 +1173,8 @@ func _on_supply_check(_all_convoys: Array) -> void:
 	var display_mre: int = max(mre_count, int(_supply_override_counts.get("mre", 0)))
 	var display_water: int = max(water_count, int(_supply_override_counts.get("water", 0)))
 	if display_mre >= 2 and display_water >= 2:
-		if is_instance_valid(_gdm) and _gdm.is_connected("convoy_data_updated", Callable(self, "_on_supply_check")):
-			_gdm.disconnect("convoy_data_updated", Callable(self, "_on_supply_check"))
+		if is_instance_valid(_store) and _store.is_connected("convoys_changed", Callable(self, "_on_supply_check")):
+			_store.disconnect("convoys_changed", Callable(self, "_on_supply_check"))
 		_disconnect_vendor_panel_signals()
 		call_deferred("_advance")
 
@@ -1186,14 +1209,15 @@ func _watch_for_vehicle_purchase() -> void:
 	_initial_vehicle_count = _get_total_vehicle_count()
 	print("[Tutorial] Watching for vehicle purchase. Initial vehicle count: ", _initial_vehicle_count)
 
-	if not is_instance_valid(_gdm):
-		printerr("[Tutorial] GDM not valid, cannot watch for vehicle purchase.")
+	if not is_instance_valid(_store) or not _store.has_signal("convoys_changed"):
+		printerr("[Tutorial] GameStore not valid, cannot watch for vehicle purchase.")
 		return
-	
-	# Connect to the signal that fires after convoy data is updated post-transaction.
+
+	# Connect to store updates after transactions.
 	# This is more efficient than polling.
-	if not _gdm.is_connected("convoy_data_updated", Callable(self, "_on_convoy_updated_for_vehicle_check")):
-		_gdm.convoy_data_updated.connect(Callable(self, "_on_convoy_updated_for_vehicle_check"))
+	var c := Callable(self, "_on_convoy_updated_for_vehicle_check")
+	if not _store.is_connected("convoys_changed", c):
+		_store.connect("convoys_changed", c)
 
 	# Try to hint the Buy button if present
 	_hint_buy_button()
@@ -1211,15 +1235,15 @@ func _on_convoy_updated_for_vehicle_check(_all_convoys: Array) -> void:
 			current_action = _steps[_step].get("action", "N/A")
 		print("[Tutorial][DIAGNOSTIC] Guard clause triggered. Current action is '%s', not 'await_vehicle_purchase'. Disconnecting." % current_action)
 		# --- END TUTORIAL DIAGNOSTIC ---
-		if is_instance_valid(_gdm) and _gdm.is_connected("convoy_data_updated", Callable(self, "_on_convoy_updated_for_vehicle_check")):
-			_gdm.disconnect("convoy_data_updated", Callable(self, "_on_convoy_updated_for_vehicle_check"))
+		if is_instance_valid(_store) and _store.has_signal("convoys_changed") and _store.is_connected("convoys_changed", Callable(self, "_on_convoy_updated_for_vehicle_check")):
+			_store.disconnect("convoys_changed", Callable(self, "_on_convoy_updated_for_vehicle_check"))
 		return
 
 	var current_vehicle_count := _get_total_vehicle_count(_all_convoys)
 	if _initial_vehicle_count >= 0 and current_vehicle_count > _initial_vehicle_count:
 		print("[Tutorial] Detected new vehicle via convoy update. Count changed from %d to %d." % [_initial_vehicle_count, current_vehicle_count])
-		if is_instance_valid(_gdm):
-			_gdm.disconnect("convoy_data_updated", Callable(self, "_on_convoy_updated_for_vehicle_check"))
+		if is_instance_valid(_store) and _store.has_signal("convoys_changed") and _store.is_connected("convoys_changed", Callable(self, "_on_convoy_updated_for_vehicle_check")):
+			_store.disconnect("convoys_changed", Callable(self, "_on_convoy_updated_for_vehicle_check"))
 		call_deferred("_advance")
 
 func _get_active_vendor_panel_node() -> Node:
@@ -1687,35 +1711,37 @@ func _hint_dealership_tab(target: Dictionary) -> void:
 
 # --- Cleanup to prevent lingering connections ---
 func _exit_tree() -> void:
-	# Disconnect from GameDataManager signals
-	if is_instance_valid(_gdm):
-		var c = Callable(self, "_on_initial_data_ready")
-		if _gdm.is_connected("initial_data_ready", c):
-			_gdm.disconnect("initial_data_ready", c)
-		c = Callable(self, "_on_convoy_data_updated")
-		if _gdm.is_connected("convoy_data_updated", c):
-			_gdm.disconnect("convoy_data_updated", c)
-		c = Callable(self, "_on_convoy_updated_for_vehicle_check")
-		if _gdm.is_connected("convoy_data_updated", c):
-			_gdm.disconnect("convoy_data_updated", c)
-		c = Callable(self, "_on_supply_check")
-		if _gdm.is_connected("convoy_data_updated", c):
-			_gdm.disconnect("convoy_data_updated", c)
-		c = Callable(self, "_on_urchin_check")
-		if _gdm.is_connected("convoy_data_updated", c):
-			_gdm.disconnect("convoy_data_updated", c)
-		c = Callable(self, "_on_oyster_check")
-		if _gdm.is_connected("convoy_data_updated", c):
-			_gdm.disconnect("convoy_data_updated", c)
-		c = Callable(self, "_on_journey_confirmed")
-		if _gdm.is_connected("convoy_data_updated", c):
-			_gdm.disconnect("convoy_data_updated", c)
-		c = Callable(self, "_on_inline_error_handled")
-		if _gdm.has_signal("inline_error_handled") and _gdm.is_connected("inline_error_handled", c):
-			_gdm.disconnect("inline_error_handled", c)
-		c = Callable(self, "_on_vendor_panel_refreshed")
-		if _gdm.has_signal("vendor_panel_data_ready") and _gdm.is_connected("vendor_panel_data_ready", c):
-			_gdm.disconnect("vendor_panel_data_ready", c)
+	# Disconnect from Hub/Store signals (Phase C)
+	if is_instance_valid(_hub):
+		var c_h := Callable(self, "_on_initial_data_ready")
+		if _hub.has_signal("initial_data_ready") and _hub.is_connected("initial_data_ready", c_h):
+			_hub.disconnect("initial_data_ready", c_h)
+		c_h = Callable(self, "_on_vendor_panel_refreshed")
+		if _hub.has_signal("vendor_panel_ready") and _hub.is_connected("vendor_panel_ready", c_h):
+			_hub.disconnect("vendor_panel_ready", c_h)
+		c_h = Callable(self, "_on_hub_error_occurred")
+		if _hub.has_signal("error_occurred") and _hub.is_connected("error_occurred", c_h):
+			_hub.disconnect("error_occurred", c_h)
+
+	if is_instance_valid(_store):
+		var c_s := Callable(self, "_on_convoy_data_updated")
+		if _store.has_signal("convoys_changed") and _store.is_connected("convoys_changed", c_s):
+			_store.disconnect("convoys_changed", c_s)
+		c_s = Callable(self, "_on_convoy_updated_for_vehicle_check")
+		if _store.has_signal("convoys_changed") and _store.is_connected("convoys_changed", c_s):
+			_store.disconnect("convoys_changed", c_s)
+		c_s = Callable(self, "_on_supply_check")
+		if _store.has_signal("convoys_changed") and _store.is_connected("convoys_changed", c_s):
+			_store.disconnect("convoys_changed", c_s)
+		c_s = Callable(self, "_on_urchin_check")
+		if _store.has_signal("convoys_changed") and _store.is_connected("convoys_changed", c_s):
+			_store.disconnect("convoys_changed", c_s)
+		c_s = Callable(self, "_on_oyster_check")
+		if _store.has_signal("convoys_changed") and _store.is_connected("convoys_changed", c_s):
+			_store.disconnect("convoys_changed", c_s)
+		c_s = Callable(self, "_on_journey_confirmed")
+		if _store.has_signal("convoys_changed") and _store.is_connected("convoys_changed", c_s):
+			_store.disconnect("convoys_changed", c_s)
 
 	# Disconnect from MenuManager signals
 	var mm := get_node_or_null("/root/MenuManager")

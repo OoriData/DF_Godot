@@ -32,21 +32,26 @@ func _on_login_successful(user_id: String) -> void:
 	print("GameScreenManager: Login successful for User ID:", user_id)
 	current_user_id = user_id
 
-	var already_bootstrapped := false
-	if Engine.has_singleton("GameDataManager"):
-		# not typical; fallback path
-		pass
-	if GameDataManager:
-		# Access internal flag safely; if missing, defaults false
-		if GameDataManager.has_method("get"):
-			var val = GameDataManager.get("_user_bootstrap_done")
-			already_bootstrapped = (typeof(val) == TYPE_BOOL and val)
-
-	if already_bootstrapped:
-		print("GameScreenManager: Data bootstrap already performed; skipping manual initial convoy fetch.")
-	elif GameDataManager and GameDataManager.has_method("trigger_initial_convoy_data_fetch"):
-		print("GameScreenManager: Triggering initial convoy data fetch (manual path).")
-		GameDataManager.trigger_initial_convoy_data_fetch(current_user_id)
+	# Phase 4: bootstrap via Services and Store only (no direct APICalls wiring).
+	var user_service := get_node_or_null("/root/UserService")
+	if is_instance_valid(user_service) and user_service.has_method("refresh_user"):
+		user_service.refresh_user(current_user_id)
+	# Trigger convoy refresh after the user snapshot arrives to avoid race conditions.
+	var convoy_service := get_node_or_null("/root/ConvoyService")
+	var store := get_node_or_null("/root/GameStore")
+	if is_instance_valid(store) and store.has_signal("user_changed") and is_instance_valid(convoy_service) and convoy_service.has_method("refresh_all"):
+		var cb := func(_u: Dictionary):
+			var logger := get_node_or_null("/root/Logger")
+			if is_instance_valid(logger) and logger.has_method("info"):
+				logger.info("GameScreenManager: user_changed received; triggering convoy refresh")
+			convoy_service.refresh_all()
+		# Connect as one-shot to auto-disconnect after first emission
+		store.user_changed.connect(cb, Object.CONNECT_ONE_SHOT)
+	elif is_instance_valid(convoy_service) and convoy_service.has_method("refresh_all"):
+		convoy_service.refresh_all()
+	var map_service := get_node_or_null("/root/MapService")
+	if is_instance_valid(map_service) and map_service.has_method("request_map"):
+		map_service.request_map()
 
 	# Remove the login screen completely to prevent any input blocking.
 	if is_instance_valid(login_screen):

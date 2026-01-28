@@ -1,4 +1,4 @@
-extends Control
+extends MenuBase
 const DIAG_ENABLED := true
 var _diag_seq := 0
 func _diag(tag: String, msg: String, data: Variant = null) -> void:
@@ -15,8 +15,10 @@ func _diag(tag: String, msg: String, data: Variant = null) -> void:
 	print(line)
 
 const ItemsData = preload("res://Scripts/Data/Items.gd")
+const SettlementModel = preload("res://Scripts/Data/Models/Settlement.gd")
+const VendorModel = preload("res://Scripts/Data/Models/Vendor.gd")
 
-signal back_requested
+## Back signal provided by MenuBase
 
 signal return_to_convoy_overview_requested(convoy_data)
 var convoy_data_received: Dictionary
@@ -25,8 +27,15 @@ var convoy_data_received: Dictionary
 @onready var cargo_items_vbox: VBoxContainer = $MainVBox/ScrollContainer/CargoItemsVBox
 @onready var back_button: Button = $MainVBox/BackButton
 
-# Add a reference to GameDataManager
-var gdm: Node = null
+@onready var _store: Node = get_node_or_null("/root/GameStore")
+@onready var _hub: Node = get_node_or_null("/root/SignalHub")
+@onready var _convoy_service: Node = get_node_or_null("/root/ConvoyService")
+var _latest_all_settlements: Array = []
+var _vendors_by_id: Dictionary = {} # vendor_id -> vendor Dictionary
+var _latest_all_settlement_models: Array = []
+var _vendors_by_id_models: Dictionary = {} # vendor_id -> Vendor model
+var _vendors_from_settlements_by_id: Dictionary = {} # vendor_id -> vendor Dictionary (from map snapshot)
+var _vendor_id_to_settlement: Dictionary = {} # vendor_id -> settlement Dictionary (from map snapshot)
 var _item_to_inspect_on_load = null
 
 var _organize_button: Button
@@ -34,6 +43,81 @@ var _organize_button: Button
 # Debounce UI refresh to prevent instant inspect closure
 var _suppress_refresh_until_msec: int = 0
 var _open_inspects: Dictionary = {}
+var _last_refresh_convoy_id: String = "" # Avoid repeated refresh_single calls
+
+# When a refresh arrives during the suppress window, stash the latest payload and
+# apply it once the window expires (prevents list rebuilds from closing inspect).
+var _deferred_convoy_payload: Dictionary = {}
+var _deferred_refresh_token: int = 0
+
+func _cargo_signature(convoy: Dictionary) -> int:
+	# Build a stable signature of cargo-related data only (ignores position/time noise).
+	var rows: Array[String] = []
+	var vehicles: Array = convoy.get("vehicle_details_list", convoy.get("vehicles", []))
+	for v in vehicles:
+		if not (v is Dictionary):
+			continue
+		var vd: Dictionary = v
+		var vid := String(vd.get("vehicle_id", vd.get("id", "")))
+
+		# Typed cargo lists (preferred) and fallback untyped cargo.
+		var cargo_items: Array = []
+		if vd.has("cargo_items_typed") and vd.get("cargo_items_typed") is Array:
+			cargo_items.append_array(vd.get("cargo_items_typed", []))
+		elif vd.has("cargo_items") and vd.get("cargo_items") is Array:
+			cargo_items.append_array(vd.get("cargo_items", []))
+
+		for it in cargo_items:
+			if not (it is Dictionary):
+				continue
+			var d: Dictionary = it
+			var cid := String(d.get("cargo_id", d.get("id", "")))
+			var qty := int(d.get("quantity", d.get("qty", 1)))
+			var uid := String(d.get("part_uid", d.get("uid", "")))
+			rows.append("%s|%s|%s|%s" % [vid, cid, qty, uid])
+
+		# Some payloads embed loose parts in `parts` with vehicle_id == null.
+		if vd.has("parts") and vd.get("parts") is Array:
+			for p in vd.get("parts", []):
+				if not (p is Dictionary):
+					continue
+				var pd: Dictionary = p
+				if pd.has("vehicle_id") and pd.get("vehicle_id") != null:
+					continue
+				var cid2 := String(pd.get("cargo_id", pd.get("id", "")))
+				var qty2 := int(pd.get("quantity", pd.get("qty", 1)))
+				var uid2 := String(pd.get("part_uid", pd.get("uid", "")))
+				rows.append("%s|%s|%s|%s" % [vid, cid2, qty2, uid2])
+
+	rows.sort()
+	return "\n".join(rows).hash()
+
+func _has_relevant_changes(old_data: Dictionary, new_data: Dictionary) -> bool:
+	# Override MenuBase: only rebuild cargo UI when cargo-related data changes.
+	if old_data.is_empty() and not new_data.is_empty():
+		return true
+	if new_data.is_empty() and not old_data.is_empty():
+		return true
+	return _cargo_signature(old_data) != _cargo_signature(new_data)
+
+func _schedule_deferred_refresh() -> void:
+	_deferred_refresh_token += 1
+	var token := _deferred_refresh_token
+	var now := Time.get_ticks_msec()
+	var delay_ms: int = int(max(10, _suppress_refresh_until_msec - now))
+	var t := get_tree().create_timer(float(delay_ms) / 1000.0)
+	t.timeout.connect(func():
+		if token != _deferred_refresh_token:
+			return
+		var now2 := Time.get_ticks_msec()
+		if now2 < _suppress_refresh_until_msec:
+			_schedule_deferred_refresh()
+			return
+		if not _deferred_convoy_payload.is_empty():
+			convoy_data_received = _deferred_convoy_payload.duplicate(true)
+			_deferred_convoy_payload = {}
+		_populate_cargo_list()
+	)
 
 func _snapshot_open_inspects(tag: String) -> void:
 	# Emit a compact summary of currently tracked open inspect cargo_ids
@@ -71,10 +155,9 @@ func _extract_item_display_name(item: Dictionary) -> String:
 		return str(item.get("specific_name"))
 	return "Unknown Item"
 
-func _is_displayable_cargo(item: Dictionary) -> bool:
-	# Only exclude intrinsic parts; show zero-quantity items (debug) so user knows they exist
-	if item.has("intrinsic_part_id") and item.get("intrinsic_part_id") != null:
-		return false
+func _is_displayable_cargo(_item: Dictionary) -> bool:
+	# Show all cargo items. `vehicle_id` is present for normal cargo too, so it cannot be used
+	# to distinguish installed vs loose.
 	return true
 
 func _ready():
@@ -135,10 +218,18 @@ func _ready():
 	else:
 		printerr("ConvoyCargoMenu: BackButton node not found. Ensure it's named 'BackButton' in the scene.")
 
-	gdm = get_node_or_null("/root/GameDataManager")
-	if is_instance_valid(gdm):
-		if not gdm.is_connected("convoy_data_updated", Callable(self, "_on_gdm_convoy_data_updated")):
-			gdm.convoy_data_updated.connect(_on_gdm_convoy_data_updated)
+	# Phase C: subscribe to canonical sources instead of GameDataManager.
+	# NOTE: MenuBase already subscribes to `GameStore.convoys_changed`; avoid a second
+	# connection here (duplicate refreshes were closing inspect panels).
+	if is_instance_valid(_store):
+		if _store.has_signal("map_changed") and not _store.map_changed.is_connected(_on_store_map_changed):
+			_store.map_changed.connect(_on_store_map_changed)
+		if _store.has_method("get_settlements"):
+			var pre_cached = _store.get_settlements()
+			if pre_cached is Array and not (pre_cached as Array).is_empty():
+				_set_latest_settlements_snapshot(pre_cached)
+	if is_instance_valid(_hub) and _hub.has_signal("vendor_updated") and not _hub.vendor_updated.is_connected(_on_vendor_updated):
+		_hub.vendor_updated.connect(_on_vendor_updated)
 
 	# Set initial button text
 	_update_organize_button_text()
@@ -147,6 +238,9 @@ func _ready():
 	var sc := get_node_or_null("MainVBox/ScrollContainer")
 	if sc is ScrollContainer:
 		sc.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+
+	# Ensure MenuBase hooks are installed.
+	super._ready()
 
 func _update_organize_button_text() -> void:
 	if organization_mode == "by_type":
@@ -166,7 +260,7 @@ func _should_hide_key(key: String) -> bool:
 		return true
 	var hidden_exact := {
 		"id": true, "uuid": true, "guid": true,
-		"intrinsic_part_id": true, "template_id": true, "part_id": true,
+		"template_id": true, "part_id": true,
 		"convoy_id": true, "vehicle_id": true, "asset_id": true, "owner_id": true,
 		"internal": true, "_internal": true, "debug": true, "_debug": true,
 		"is_template": true, "is_system": true, "system": true,
@@ -206,33 +300,90 @@ func _format_value(val) -> String:
 	else:
 		return str(val)
 
-# Resolve a vendor name from a vendor_id via GameDataManager, fallback to id if unknown.
+
+func _set_latest_settlements_snapshot(settlements: Array) -> void:
+	_latest_all_settlements = settlements
+	_latest_all_settlement_models.clear()
+	_vendors_from_settlements_by_id.clear()
+	_vendor_id_to_settlement.clear()
+
+	for settlement in settlements:
+		if not (settlement is Dictionary):
+			continue
+		var settlement_dict: Dictionary = settlement
+		_latest_all_settlement_models.append(SettlementModel.new(settlement_dict))
+		var vendors: Array = settlement_dict.get("vendors", [])
+		for v in vendors:
+			if not (v is Dictionary):
+				continue
+			var vendor_dict: Dictionary = v
+			var vendor_id := String(vendor_dict.get("vendor_id", vendor_dict.get("id", "")))
+			if vendor_id == "":
+				continue
+			_vendors_from_settlements_by_id[vendor_id] = vendor_dict
+			_vendor_id_to_settlement[vendor_id] = settlement_dict
+
+# Resolve a vendor name from a vendor_id via cached vendor/settlement data; fallback to id.
 func _resolve_vendor_name(vendor_id: String) -> String:
 	if vendor_id.is_empty():
 		return ""
-	if gdm == null:
-		gdm = get_node_or_null("/root/GameDataManager")
-	if is_instance_valid(gdm) and gdm.has_method("get_vendor_by_id"):
-		var v = gdm.get_vendor_by_id(vendor_id)
-		if v is Dictionary and v.has("name"):
-			var n = String(v.get("name", ""))
-			if not n.is_empty():
-				return n
+	if _vendors_by_id.has(vendor_id):
+		var v0 = _vendors_by_id[vendor_id]
+		if v0 is Dictionary:
+			var n0 := String((v0 as Dictionary).get("name", ""))
+			if not n0.is_empty():
+				return n0
+	if _vendors_from_settlements_by_id.has(vendor_id):
+		var v1 = _vendors_from_settlements_by_id[vendor_id]
+		if v1 is Dictionary:
+			var n1 := String((v1 as Dictionary).get("name", ""))
+			if not n1.is_empty():
+				return n1
+	for settlement in _latest_all_settlements:
+		if not (settlement is Dictionary):
+			continue
+		var vendors: Array = (settlement as Dictionary).get("vendors", [])
+		for v in vendors:
+			if v is Dictionary and String((v as Dictionary).get("vendor_id", "")) == vendor_id:
+				var n := String((v as Dictionary).get("name", ""))
+				if not n.is_empty():
+					return n
 	return vendor_id
 
 # Optionally resolve settlement name from vendor id
 func _resolve_settlement_name_for_vendor(vendor_id: String) -> String:
 	if vendor_id.is_empty():
 		return ""
-	if gdm == null:
-		gdm = get_node_or_null("/root/GameDataManager")
-	if is_instance_valid(gdm) and gdm.has_method("get_settlement_for_vendor"):
-		var s = gdm.get_settlement_for_vendor(vendor_id)
-		if s is Dictionary and s.has("settlement_name"):
-			var nm := String(s.get("settlement_name", ""))
-			if not nm.is_empty():
-				return nm
+	if _vendor_id_to_settlement.has(vendor_id):
+		var s0 = _vendor_id_to_settlement[vendor_id]
+		if s0 is Dictionary:
+			var nm0 := String((s0 as Dictionary).get("name", (s0 as Dictionary).get("settlement_name", "")))
+			if not nm0.is_empty():
+				return nm0
+	for settlement in _latest_all_settlements:
+		if not (settlement is Dictionary):
+			continue
+		var vendors: Array = (settlement as Dictionary).get("vendors", [])
+		for v in vendors:
+			if v is Dictionary and String((v as Dictionary).get("vendor_id", "")) == vendor_id:
+				var nm := String((settlement as Dictionary).get("name", (settlement as Dictionary).get("settlement_name", "")))
+				if not nm.is_empty():
+					return nm
 	return ""
+
+
+func _on_store_map_changed(_tiles: Array, settlements: Array) -> void:
+	if settlements is Array:
+		_set_latest_settlements_snapshot(settlements)
+
+
+func _on_vendor_updated(vendor: Dictionary) -> void:
+	if not (vendor is Dictionary):
+		return
+	var vendor_id := String(vendor.get("vendor_id", vendor.get("id", "")))
+	if vendor_id != "":
+		_vendors_by_id[vendor_id] = vendor
+		_vendors_by_id_models[vendor_id] = VendorModel.new(vendor)
 
 # Build a short, human-friendly stats summary.
 func _format_stats_light(val) -> String:
@@ -863,26 +1014,41 @@ func _add_category_section(parent: VBoxContainer, title: String, agg_data: Dicti
 	
 	return item_index
 
-func initialize_with_data(data: Dictionary, item_to_inspect = null):
+func initialize_with_data(data_or_id: Variant, extra_arg: Variant = null) -> void:
+	if data_or_id is Dictionary:
+		convoy_id = String((data_or_id as Dictionary).get("convoy_id", (data_or_id as Dictionary).get("id", "")))
+	else:
+		convoy_id = String(data_or_id)
 	# Ensure this function runs only after the node is fully ready and @onready vars are set.
 	if not is_node_ready():
 		printerr("ConvoyCargoMenu: initialize_with_data called BEFORE node is ready! Deferring.")
-		call_deferred("initialize_with_data", data, item_to_inspect)
+		call_deferred("initialize_with_data", data_or_id, extra_arg)
 		return
 
-	convoy_data_received = data.duplicate()
-	_item_to_inspect_on_load = item_to_inspect
+	convoy_data_received = (data_or_id as Dictionary).duplicate() if data_or_id is Dictionary else {}
+	_item_to_inspect_on_load = extra_arg
+	# If vehicles are missing, trigger a single-convoy refresh to populate details.
+	var vlist: Array = convoy_data_received.get("vehicle_details_list", convoy_data_received.get("vehicles", []))
+	if (vlist is Array and vlist.is_empty()) and convoy_data_received.has("convoy_id"):
+		var cid := str(convoy_data_received.get("convoy_id", ""))
+		if cid != "" and is_instance_valid(_convoy_service) and _convoy_service.has_method("refresh_single"):
+			if _last_refresh_convoy_id != cid:
+				_diag("refresh_single", "trigger", {"convoy_id": cid})
+				_last_refresh_convoy_id = cid
+				_convoy_service.refresh_single(cid)
+				# UI will repopulate on GameStore.convoys_changed
 	# print("ConvoyCargoMenu: Initialized with data: ", convoy_data_received) # DEBUG
 
-	if is_instance_valid(title_label) and convoy_data_received.has("convoy_name"):
-		title_label.text = "%s" % convoy_data_received.get("convoy_name", "Unknown Convoy")
-	elif is_instance_valid(title_label):
-		title_label.text = "Cargo Hold"
+	if is_instance_valid(title_label):
+		var title_val: String = String(convoy_data_received.get("convoy_name", convoy_data_received.get("name", "Cargo Hold")))
+		title_label.text = "%s" % title_val
 	
 	_populate_cargo_list()
 	_diag("populate", "called_from_initialize")
 	if _item_to_inspect_on_load != null:
 		call_deferred("_inspect_item_on_load")
+	# Standardized: let MenuBase handle store-driven refreshes
+	super.initialize_with_data(data_or_id, extra_arg)
 
 func _populate_cargo_list():
 	_diag("populate", "start", {"mode": organization_mode})
@@ -893,6 +1059,21 @@ func _populate_cargo_list():
 		_populate_by_vehicle()
 	_diag("populate", "done")
 	_reopen_inspects()
+
+func _update_ui(convoy: Dictionary) -> void:
+	# Reapply cargo population on live updates while attempting to preserve inspect state.
+	var now := Time.get_ticks_msec()
+	if now < _suppress_refresh_until_msec:
+		# Stash and apply after suppress window to avoid list rebuild closing inspect panels.
+		_deferred_convoy_payload = convoy.duplicate(true)
+		_schedule_deferred_refresh()
+		_diag("update_ui", "suppressed", {"now": now, "suppress_until": _suppress_refresh_until_msec})
+		return
+	convoy_data_received = convoy.duplicate(true)
+	if is_instance_valid(title_label):
+		var title_val := String(convoy_data_received.get("convoy_name", title_label.text))
+		title_label.text = "%s" % title_val
+	_populate_cargo_list()
 
 func _populate_by_type():
 	_diag("populate_type", "start")
@@ -928,7 +1109,7 @@ func _populate_by_type():
 	var aggregated_resources: Dictionary = {}
 	var aggregated_other: Dictionary = {} # Fallback category
 
-	var vehicle_details_list: Array = convoy_data_received.get("vehicle_details_list", [])
+	var vehicle_details_list: Array = convoy_data_received.get("vehicle_details_list", convoy_data_received.get("vehicles", []))
 	if vehicle_details_list.is_empty():
 		var no_vehicles_label := Label.new()
 		no_vehicles_label.text = "No vehicles in this convoy."
@@ -1001,7 +1182,9 @@ func _populate_by_type():
 					"mission":
 						_aggregate_cargo_item(aggregated_missions, raw_item, vehicle_name)
 					"part":
-						_aggregate_cargo_item(aggregated_parts, raw_item, vehicle_name)
+						# Only aggregate if uninstalled (vehicle_id == null)
+						if not raw_item.has("vehicle_id") or raw_item["vehicle_id"] == null:
+							_aggregate_cargo_item(aggregated_parts, raw_item, vehicle_name)
 					"resource":
 						_aggregate_cargo_item(aggregated_resources, raw_item, vehicle_name)
 					_:
@@ -1053,6 +1236,9 @@ func _populate_by_type():
 			# Separately process the 'parts' list, if it exists, which is consistent with `vendor_trade_panel`.
 			for item in vehicle_data.get("parts", []):
 				if not (item is Dictionary and _is_displayable_cargo(item)):
+					continue
+				# Only aggregate if uninstalled (vehicle_id == null)
+				if item.has("vehicle_id") and item["vehicle_id"] != null:
 					continue
 				any_cargo_found_in_convoy = true
 				# Enrich part data with modifiers/stats so they surface in UI
@@ -1129,7 +1315,7 @@ func _populate_by_vehicle():
 		child.queue_free()
 	_diag("clear_rows", "vehicle_end", {"removed": _clr})
 
-	var vehicle_details_list: Array = convoy_data_received.get("vehicle_details_list", [])
+	var vehicle_details_list: Array = convoy_data_received.get("vehicle_details_list", convoy_data_received.get("vehicles", []))
 	if vehicle_details_list.is_empty():
 		var no_vehicles_label := Label.new()
 		no_vehicles_label.text = "No vehicles in this convoy."
@@ -1198,6 +1384,10 @@ func _populate_by_vehicle():
 						if CARGO_MENU_DEBUG:
 							print("[CargoClassify][ByVehicle][Typed][Rebucket] OTHER -> MISSION:", JSON.stringify(raw_item.get("name", raw_item.get("base_name", ""))))
 
+				# Only aggregate if uninstalled (vehicle_id == null) for parts
+				if String(typed.category) == "part":
+					if raw_item.has("vehicle_id") and raw_item["vehicle_id"] != null:
+						continue
 				_aggregate_cargo_item(vehicle_aggregated_all_cargo, raw_item)
 				# If still 'other', log it for diagnosis
 				if CARGO_MENU_DEBUG and effective_category == "other":
@@ -1227,6 +1417,9 @@ func _populate_by_vehicle():
 			
 			for item in vehicle_data.get("parts", []):
 				if not (item is Dictionary and _is_displayable_cargo(item)): continue
+				# Only aggregate if uninstalled (vehicle_id == null)
+				if item.has("vehicle_id") and item["vehicle_id"] != null:
+					continue
 				has_cargo_in_this_vehicle = true
 				any_cargo_found_in_convoy = true
 				var part_copy: Dictionary = item.duplicate(true)
@@ -1484,16 +1677,17 @@ func _inspect_item_on_load():
 	_item_to_inspect_on_load = null # Clear even if not found
 	printerr("ConvoyCargoMenu: Could not find item to inspect on load with cargo_id: ", target_cargo_id)
 
-func _on_gdm_convoy_data_updated(all_convoy_data: Array) -> void:
+
+func _on_store_convoys_changed(all_convoy_data: Array) -> void:
 	# Update convoy_data_received if this convoy is present in the update
 	if not convoy_data_received or not convoy_data_received.has("convoy_id"):
 		return
 
 	# If we're within the suppress window, skip rebuilding to avoid closing inspect
 	var now := Time.get_ticks_msec()
-	_diag("gdm_update", "received", {"now": now, "suppress_until": _suppress_refresh_until_msec})
+	_diag("store_update", "received", {"now": now, "suppress_until": _suppress_refresh_until_msec})
 	if now < _suppress_refresh_until_msec:
-		_diag("gdm_update", "suppressed")
+		_diag("store_update", "suppressed")
 		return
 	var current_id = str(convoy_data_received.get("convoy_id"))
 	for convoy in all_convoy_data:
@@ -1501,8 +1695,8 @@ func _on_gdm_convoy_data_updated(all_convoy_data: Array) -> void:
 			var prev_count := int((convoy_data_received.get("vehicle_details_list", []) as Array).size())
 			convoy_data_received = convoy.duplicate(true)
 			var new_count := int((convoy_data_received.get("vehicle_details_list", []) as Array).size())
-			_diag("gdm_update", "convoy_match", {"prev_vehicle_count": prev_count, "new_vehicle_count": new_count})
-			_diag("gdm_update", "repopulate_start")
+			_diag("store_update", "convoy_match", {"prev_vehicle_count": prev_count, "new_vehicle_count": new_count})
+			_diag("store_update", "repopulate_start")
 			_populate_cargo_list()
-			_diag("gdm_update", "repopulate_done")
+			_diag("store_update", "repopulate_done")
 			break

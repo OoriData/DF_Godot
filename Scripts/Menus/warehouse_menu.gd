@@ -1,6 +1,6 @@
-extends Control
+extends MenuBase
 
-signal back_requested
+const ItemsData = preload("res://Scripts/Data/Items.gd")
 
 @onready var title_label: Label = $MainVBox/TopBarHBox/TitleLabel
 @onready var buy_button: Button = $MainVBox/TopBarHBox/BuyButton
@@ -39,8 +39,8 @@ signal back_requested
 var _convoy_data: Dictionary
 var _settlement: Dictionary
 var _warehouse: Dictionary
-var gdm: Node
-var api: Node
+var _warehouse_service: Node
+var _hub: Node
 var _is_loading: bool = false
 var _pending_action_refresh: bool = false
 var _last_known_wid: String = "" # Remember last successfully loaded warehouse_id for unconditional refresh after actions
@@ -52,6 +52,10 @@ var _last_expand_used_json: bool = false # Tracks whether we've already retried 
 var _optimistic_money_active: bool = false
 var _optimistic_money_before: float = 0.0
 var _optimistic_money_after: float = 0.0
+
+@onready var _store: Node = get_node_or_null("/root/GameStore")
+@onready var _user_service: Node = get_node_or_null("/root/UserService")
+@onready var _convoy_service: Node = get_node_or_null("/root/ConvoyService")
 
 
 # Track last-seen dropdown contents to avoid reshuffling
@@ -81,9 +85,17 @@ const WAREHOUSE_UPGRADE_PRICES := {
 
 func _ready():
 	print("[WarehouseMenu] _ready()")
-	gdm = get_node_or_null("/root/GameDataManager")
-	api = get_node_or_null("/root/APICalls")
+	_warehouse_service = get_node_or_null("/root/WarehouseService")
+	_hub = get_node_or_null("/root/SignalHub")
 	_ensure_inventory_headers()
+	# Subscribe to canonical snapshots so money/convoy cargo stay current.
+	if is_instance_valid(_store):
+		if _store.has_signal("user_changed") and not _store.user_changed.is_connected(_on_store_user_changed):
+			_store.user_changed.connect(_on_store_user_changed)
+		if _store.has_signal("convoys_changed") and not _store.convoys_changed.is_connected(_on_store_convoys_changed):
+			_store.convoys_changed.connect(_on_store_convoys_changed)
+		if _store.has_signal("map_changed") and not _store.map_changed.is_connected(_on_store_map_changed):
+			_store.map_changed.connect(_on_store_map_changed)
 	# Remove top title per request
 	if is_instance_valid(title_label):
 		title_label.visible = false
@@ -113,27 +125,26 @@ func _ready():
 		cargo_store_dd.item_selected.connect(func(_idx): _update_store_qty_limit())
 	if is_instance_valid(cargo_retrieve_dd):
 		cargo_retrieve_dd.item_selected.connect(func(_idx): _update_retrieve_qty_limit())
-	# Hook API signals
-	if is_instance_valid(api):
-		if api.has_signal("warehouse_created") and not api.warehouse_created.is_connected(_on_api_warehouse_created):
-			api.warehouse_created.connect(_on_api_warehouse_created)
-		if api.has_signal("warehouse_received") and not api.warehouse_received.is_connected(_on_api_warehouse_received):
-			api.warehouse_received.connect(_on_api_warehouse_received)
-		if api.has_signal("fetch_error") and not api.fetch_error.is_connected(_on_api_error):
-			api.fetch_error.connect(_on_api_error)
-		# New action signals
-		if api.has_signal("warehouse_expanded") and not api.warehouse_expanded.is_connected(_on_api_warehouse_action):
-			api.warehouse_expanded.connect(_on_api_warehouse_action)
-		if api.has_signal("warehouse_cargo_stored") and not api.warehouse_cargo_stored.is_connected(_on_api_warehouse_action):
-			api.warehouse_cargo_stored.connect(_on_api_warehouse_action)
-		if api.has_signal("warehouse_cargo_retrieved") and not api.warehouse_cargo_retrieved.is_connected(_on_api_warehouse_action):
-			api.warehouse_cargo_retrieved.connect(_on_api_warehouse_action)
-		if api.has_signal("warehouse_vehicle_stored") and not api.warehouse_vehicle_stored.is_connected(_on_api_warehouse_action):
-			api.warehouse_vehicle_stored.connect(_on_api_warehouse_action)
-		if api.has_signal("warehouse_vehicle_retrieved") and not api.warehouse_vehicle_retrieved.is_connected(_on_api_warehouse_action):
-			api.warehouse_vehicle_retrieved.connect(_on_api_warehouse_action)
-		if api.has_signal("warehouse_convoy_spawned") and not api.warehouse_convoy_spawned.is_connected(_on_api_warehouse_action):
-			api.warehouse_convoy_spawned.connect(_on_api_warehouse_action)
+	# Hook Hub signals (transport → services → hub)
+	if is_instance_valid(_hub):
+		if _hub.has_signal("warehouse_created") and not _hub.warehouse_created.is_connected(_on_hub_warehouse_created):
+			_hub.warehouse_created.connect(_on_hub_warehouse_created)
+		if _hub.has_signal("warehouse_updated") and not _hub.warehouse_updated.is_connected(_on_hub_warehouse_received):
+			_hub.warehouse_updated.connect(_on_hub_warehouse_received)
+		if _hub.has_signal("warehouse_expanded") and not _hub.warehouse_expanded.is_connected(_on_hub_warehouse_action):
+			_hub.warehouse_expanded.connect(_on_hub_warehouse_action)
+		if _hub.has_signal("warehouse_cargo_stored") and not _hub.warehouse_cargo_stored.is_connected(_on_hub_warehouse_action):
+			_hub.warehouse_cargo_stored.connect(_on_hub_warehouse_action)
+		if _hub.has_signal("warehouse_cargo_retrieved") and not _hub.warehouse_cargo_retrieved.is_connected(_on_hub_warehouse_action):
+			_hub.warehouse_cargo_retrieved.connect(_on_hub_warehouse_action)
+		if _hub.has_signal("warehouse_vehicle_stored") and not _hub.warehouse_vehicle_stored.is_connected(_on_hub_warehouse_action):
+			_hub.warehouse_vehicle_stored.connect(_on_hub_warehouse_action)
+		if _hub.has_signal("warehouse_vehicle_retrieved") and not _hub.warehouse_vehicle_retrieved.is_connected(_on_hub_warehouse_action):
+			_hub.warehouse_vehicle_retrieved.connect(_on_hub_warehouse_action)
+		if _hub.has_signal("warehouse_convoy_spawned") and not _hub.warehouse_convoy_spawned.is_connected(_on_hub_warehouse_action):
+			_hub.warehouse_convoy_spawned.connect(_on_hub_warehouse_action)
+		if _hub.has_signal("error_occurred") and not _hub.error_occurred.is_connected(_on_hub_error):
+			_hub.error_occurred.connect(_on_hub_error)
 
 	# Wire UI buttons
 	if is_instance_valid(expand_cargo_btn):
@@ -166,11 +177,15 @@ func _set_expand_buttons_enabled(enabled: bool) -> void:
 		expand_vehicle_btn.disabled = not enabled
 	print("[WarehouseMenu][UpgradeState] set_expand_buttons_enabled enabled=", enabled, " in_progress=", _upgrade_in_progress)
 
-func initialize_with_data(data: Dictionary) -> void:
+func initialize_with_data(data_or_id: Variant, extra_arg: Variant = null) -> void:
+	if data_or_id is Dictionary:
+		convoy_id = String((data_or_id as Dictionary).get("convoy_id", (data_or_id as Dictionary).get("id", "")))
+	else:
+		convoy_id = String(data_or_id)
 	# Guard: avoid expensive re-initialization if convoy and settlement unchanged
-	var incoming_cid := str(data.get("convoy_id", ""))
+	var incoming_cid := str((data_or_id as Dictionary).get("convoy_id", "")) if data_or_id is Dictionary else ""
 	var existing_cid := str(_convoy_data.get("convoy_id", "")) if (_convoy_data is Dictionary) else ""
-	var incoming_sett: Variant = data.get("settlement", null)
+	var incoming_sett: Variant = (data_or_id as Dictionary).get("settlement", null) if data_or_id is Dictionary else null
 	var incoming_sett_id: String = ""
 	if typeof(incoming_sett) == TYPE_DICTIONARY:
 		incoming_sett_id = str(incoming_sett.get("sett_id", ""))
@@ -179,8 +194,8 @@ func initialize_with_data(data: Dictionary) -> void:
 		# Still refresh dropdowns lightly (convoy cargo may have changed), but skip heavy logging spam
 		_populate_dropdowns()
 		return
-	_convoy_data = data.duplicate(true)
-	var incoming_settlement = data.get("settlement", null)
+	_convoy_data = (data_or_id as Dictionary).duplicate(true) if data_or_id is Dictionary else {}
+	var incoming_settlement = (data_or_id as Dictionary).get("settlement", null) if data_or_id is Dictionary else null
 	if typeof(incoming_settlement) == TYPE_DICTIONARY and not (incoming_settlement as Dictionary).is_empty():
 		_settlement = (incoming_settlement as Dictionary).duplicate(true)
 	else:
@@ -191,10 +206,11 @@ func initialize_with_data(data: Dictionary) -> void:
 	# Don't nuke existing settlement if nothing resolved
 	print("[WarehouseMenu] initialize_with_data name=", String(_settlement.get("name", _convoy_data.get("settlement_name", ""))), " sett_type_resolved=", _get_settlement_type())
 	_update_ui()
+	super.initialize_with_data(data_or_id, extra_arg)
 	_try_load_warehouse_for_settlement()
 	_populate_dropdowns() # initial (may be empty until data arrives)
 
-func _update_ui():
+func _update_ui(_convoy: Dictionary = {}):
 	var sett_name := String(_settlement.get("name", _convoy_data.get("settlement_name", "")))
 	if is_instance_valid(title_label):
 		if sett_name != "":
@@ -234,8 +250,8 @@ func _update_ui():
 				var price := _get_warehouse_price()
 				var funds := _get_user_money()
 				var buy_available := _is_buy_available()
-				var price_text := _format_money(price) if price > 0 else ("N/A" if not buy_available else "TBD")
-				var funds_text := _format_money(funds)
+				var price_text := NumberFormat.format_money(price) if price > 0 else ("N/A" if not buy_available else "TBD")
+				var funds_text := NumberFormat.format_money(funds)
 				info_label.text = "No warehouse here yet.\nPrice: %s\nYour funds: %s" % [price_text, funds_text]
 				print("[WarehouseMenu] No warehouse. sett_type=", _get_settlement_type(), " price=", price, " buy_available=", buy_available)
 				# Update Buy button text and enabled state based on availability and affordability
@@ -264,17 +280,16 @@ func _format_warehouse_summary(_w: Dictionary) -> String:
 	return "\n".join(parts)
 
 func _on_buy_pressed():
-	if not is_instance_valid(api):
+	if not is_instance_valid(_warehouse_service):
 		push_warning("API node not available")
 		return
 	# Need settlement id from provided settlement snapshot
 	var sett_id := String(_settlement.get("sett_id", ""))
-	if sett_id == "" and is_instance_valid(gdm):
-		# Fallback: try to resolve by settlement name from provided data
+	if sett_id == "":
+		# Fallback: try to resolve by settlement name from canonical snapshot
 		var name_guess := String(_settlement.get("name", _convoy_data.get("settlement_name", "")))
-		if name_guess != "" and gdm.has_method("get_all_settlements_data"):
-			var all_setts: Array = gdm.get_all_settlements_data()
-			for s in all_setts:
+		if name_guess != "":
+			for s in _get_all_settlements_snapshot():
 				if typeof(s) == TYPE_DICTIONARY and String(s.get("name", "")) == name_guess:
 					sett_id = String(s.get("sett_id", ""))
 					break
@@ -287,7 +302,7 @@ func _on_buy_pressed():
 	var funds := _get_user_money()
 	if price > 0 and funds + 0.0001 < float(price):
 		if is_instance_valid(info_label):
-			info_label.text = "Insufficient funds to buy warehouse. Price: %s, You have: %s" % [_format_money(price), _format_money(funds)]
+			info_label.text = "Insufficient funds to buy warehouse. Price: %s, You have: %s" % [NumberFormat.format_money(price), NumberFormat.format_money(funds)]
 		if is_instance_valid(buy_button):
 			buy_button.disabled = true
 		return
@@ -295,9 +310,9 @@ func _on_buy_pressed():
 		info_label.text = "Purchasing warehouse..."
 	if is_instance_valid(buy_button):
 		buy_button.disabled = true
-	api.warehouse_new(sett_id)
+	_warehouse_service.request_new(sett_id)
 
-func _on_api_warehouse_created(result: Variant) -> void:
+func _on_hub_warehouse_created(result: Variant) -> void:
 	# Backend returns the new UUID; refresh user data and show confirmation
 	if is_instance_valid(buy_button):
 		buy_button.disabled = false
@@ -317,14 +332,14 @@ func _on_api_warehouse_created(result: Variant) -> void:
 		if is_instance_valid(info_label):
 			info_label.text = "Warehouse created: %s" % wid
 		# Immediately fetch details
-		if is_instance_valid(api):
+		if is_instance_valid(_warehouse_service):
 			_is_loading = true
 			_update_ui()
-			api.get_warehouse(wid)
-	if is_instance_valid(gdm) and gdm.has_method("request_user_data_refresh"):
-		gdm.request_user_data_refresh()
+			_warehouse_service.request_get(wid)
+	if is_instance_valid(_user_service) and _user_service.has_method("refresh_user"):
+		_user_service.refresh_user()
 
-func _on_api_warehouse_received(warehouse_data: Dictionary) -> void:
+func _on_hub_warehouse_received(warehouse_data: Dictionary) -> void:
 	_warehouse = warehouse_data.duplicate(true)
 	_is_loading = false
 	_pending_action_refresh = false
@@ -371,7 +386,7 @@ func _on_api_warehouse_received(warehouse_data: Dictionary) -> void:
 			no_change = true
 		if no_change:
 			# Decide on retry with JSON body if we have not yet tried it
-			if not _last_expand_used_json and is_instance_valid(api) and api.has_method("warehouse_expand_json"):
+			if not _last_expand_used_json and is_instance_valid(_warehouse_service):
 				print("[WarehouseMenu][UpgradeDelta][NoChange] Retrying expansion using JSON body fallback.")
 				if is_instance_valid(info_label):
 					info_label.text = "Expansion had no visible effect. Retrying (JSON)..."
@@ -386,18 +401,13 @@ func _on_api_warehouse_received(warehouse_data: Dictionary) -> void:
 				elif _last_known_wid != "":
 					wid_retry = _last_known_wid
 				if wid_retry != "":
-					api.warehouse_expand_json({"warehouse_id": wid_retry, "expand_type": _last_expand_type, "amount": 1})
+					_warehouse_service.request_expand({"warehouse_id": wid_retry, "expand_type": _last_expand_type, "amount": 1})
 					_schedule_refresh_fallback()
 			else:
 				# Second failure (JSON already used) – give up and notify
 				print("[WarehouseMenu][UpgradeDelta][NoChangeAfterJSON] Expansion still shows no delta.")
-				# Refund optimistic deduction if we applied one globally
+				# Clear optimistic markers (authoritative user refresh will correct funds)
 				if _optimistic_money_active:
-					var refund := _optimistic_money_before - _optimistic_money_after
-					if refund > 0.0 and is_instance_valid(gdm) and gdm.has_method("update_user_money"):
-						print("[WarehouseMenu][Optimistic][Refund] Refunding", refund, "due to failed expansion")
-						gdm.update_user_money(refund)
-					# Clear optimistic markers
 					_optimistic_money_active = false
 					_optimistic_money_before = 0.0
 					_optimistic_money_after = 0.0
@@ -417,23 +427,23 @@ func _on_api_warehouse_received(warehouse_data: Dictionary) -> void:
 		_optimistic_money_before = 0.0
 		_optimistic_money_after = 0.0
 	_update_ui()
-	# Optionally refresh user/convoys if needed
-	if is_instance_valid(gdm):
-		if gdm.has_method("request_user_data_refresh"):
-			gdm.request_user_data_refresh()
-		if gdm.has_method("request_convoy_data_refresh"):
-			gdm.request_convoy_data_refresh()
+	# Refresh canonical snapshots (authoritative)
+	if is_instance_valid(_user_service) and _user_service.has_method("refresh_user"):
+		_user_service.refresh_user()
+	if is_instance_valid(_convoy_service) and _convoy_service.has_method("refresh_all"):
+		_convoy_service.refresh_all()
 	# Update dropdowns since we have fresh warehouse data
 	_populate_dropdowns()
 
-func _on_api_error(msg: String) -> void:
+func _on_hub_error(_domain: String, _code: String, message: String, _inline: bool) -> void:
 	# Only handle if this menu is visible; otherwise ignore
 	if not is_inside_tree():
 		return
 	if is_instance_valid(buy_button):
 		buy_button.disabled = false
 	# Route error to modal using ErrorTranslator; avoid printing raw into menu
-	_show_error_modal(msg)
+	# Optionally filter by domain; for now surface all.
+	_show_error_modal(message)
 
 func _show_error_modal(raw_msg: String) -> void:
 	# Translate via ErrorTranslator and display with ErrorDialog.
@@ -454,7 +464,7 @@ func _show_error_modal(raw_msg: String) -> void:
 		if dlg and dlg.has_method("show_message"):
 			dlg.show_message(translated)
 
-func _on_api_warehouse_action(_result: Variant) -> void:
+func _on_hub_warehouse_action(_result: Variant) -> void:
 	# After any action, reload warehouse even if we currently have no local _warehouse data.
 	var wid := ""
 	if _warehouse is Dictionary and _warehouse.has("warehouse_id"):
@@ -462,18 +472,18 @@ func _on_api_warehouse_action(_result: Variant) -> void:
 	if wid == "" and _last_known_wid != "":
 		wid = _last_known_wid
 	print("[WarehouseMenu][ActionComplete] result_type=", typeof(_result), " chosen_wid=", wid, " had_local=", (_warehouse is Dictionary and not _warehouse.is_empty()), " last_known=", _last_known_wid)
-	if wid == "" or not is_instance_valid(api):
+	if wid == "" or not is_instance_valid(_warehouse_service):
 		print("[WarehouseMenu][ActionComplete] Abort refresh: missing wid or api invalid")
 		return
 	# Skip early user data refresh for expansion actions to avoid flicker overriding optimistic deduction
 	var skip_early_user_refresh := _last_expand_type != "" # still tracking an expansion attempt
 	if not skip_early_user_refresh:
-		if is_instance_valid(gdm) and gdm.has_method("request_user_data_refresh"):
+		if is_instance_valid(_user_service) and _user_service.has_method("refresh_user"):
 			print("[WarehouseMenu][ActionComplete] Triggering early user data refresh for non-expansion action")
-			gdm.request_user_data_refresh()
+			_user_service.refresh_user()
 	_is_loading = true
 	_update_ui()
-	api.get_warehouse(wid)
+	_warehouse_service.request_get(wid)
 
 # Schedule a one-shot fallback refresh in case signals are delayed or missed
 func _schedule_refresh_fallback() -> void:
@@ -487,7 +497,7 @@ func _on_refresh_fallback_timeout() -> void:
 	_refresh_warehouse()
 
 func _refresh_warehouse() -> void:
-	if not is_instance_valid(api):
+	if not is_instance_valid(_warehouse_service):
 		return
 	var wid := ""
 	if _warehouse is Dictionary and _warehouse.has("warehouse_id"):
@@ -495,7 +505,7 @@ func _refresh_warehouse() -> void:
 	if wid != "":
 		_is_loading = true
 		_update_ui()
-		api.get_warehouse(wid)
+		_warehouse_service.request_get(wid)
 	else:
 		_try_load_warehouse_for_settlement()
 
@@ -513,7 +523,7 @@ func _on_expand_cargo():
 			info_label.text = "Cannot upgrade: warehouse not loaded yet."
 		return
 	print("[WarehouseMenu][ExpandCargo] Click received wid=", wid, " has_local=", (_warehouse is Dictionary and not _warehouse.is_empty()), " last_known=", _last_known_wid)
-	var amt := 1
+	var _amt := 1
 	var per_unit := _get_upgrade_price_per_unit()
 	if per_unit <= 0:
 		var stype := _get_settlement_type()
@@ -521,9 +531,9 @@ func _on_expand_cargo():
 		if is_instance_valid(info_label):
 			info_label.text = "Upgrades not available at this settlement."
 		return
-	if wid != "" and is_instance_valid(api):
+	if wid != "" and is_instance_valid(_warehouse_service):
 		info_label.text = "Expanding cargo..."
-		print("[WarehouseMenu][ExpandCargo] Dispatch api.warehouse_expand params=", {"warehouse_id": wid, "expand_type": "cargo", "amount": amt, "unit_price": per_unit})
+		print("[WarehouseMenu][ExpandCargo] Dispatch service.request_expand params=", {"warehouse_id": wid, "cargo_units": 1, "vehicle_units": 0, "unit_price": per_unit})
 		# Record baseline before dispatch
 		_pre_expand_cargo_cap = int(_warehouse.get("cargo_storage_capacity", -1)) if (_warehouse is Dictionary) else -1
 		_pre_expand_vehicle_cap = int(_warehouse.get("vehicle_storage_capacity", -1)) if (_warehouse is Dictionary) else -1
@@ -535,23 +545,15 @@ func _on_expand_cargo():
 			_optimistic_money_after = max(0.0, _optimistic_money_before - float(per_unit))
 			_optimistic_money_active = true
 			print("[WarehouseMenu][Optimistic] Cargo upgrade: deduct", per_unit, "from", _optimistic_money_before, "=>", _optimistic_money_after)
-			# Also update global user data immediately so other UI panels reflect change
-			if is_instance_valid(gdm) and gdm.has_method("update_user_money"):
-				print("[WarehouseMenu][Optimistic][Global] Applying global money deduction=", per_unit)
-				gdm.update_user_money(-float(per_unit))
 			_update_expand_buttons()
 			_update_upgrade_labels()
 		_upgrade_in_progress = true
 		_set_expand_buttons_enabled(false)
 		_pending_action_refresh = true
 		_schedule_refresh_fallback()
-		if api.has_method("warehouse_expand_v2"):
-			print("[WarehouseMenu][ExpandCargo] Using v2 expansion (cargo_capacity_upgrade=1, vehicle_capacity_upgrade=0)")
-			api.warehouse_expand_v2(wid, 1, 0)
-		else:
-			api.warehouse_expand({"warehouse_id": wid, "expand_type": "cargo", "amount": amt})
+		_warehouse_service.request_expand({"warehouse_id": wid, "cargo_units": 1, "vehicle_units": 0})
 	else:
-		print("[WarehouseMenu][ExpandCargo] Blocked: invalid state wid=", wid, " api_valid=", is_instance_valid(api))
+		print("[WarehouseMenu][ExpandCargo] Blocked: invalid state wid=", wid, " svc_valid=", is_instance_valid(_warehouse_service))
 
 func _on_expand_vehicle():
 	print("[WarehouseMenu][ExpandVehicle] Handler ENTER")
@@ -566,7 +568,7 @@ func _on_expand_vehicle():
 			info_label.text = "Cannot upgrade: warehouse not loaded yet."
 		return
 	print("[WarehouseMenu][ExpandVehicle] Click received wid=", wid, " has_local=", (_warehouse is Dictionary and not _warehouse.is_empty()), " last_known=", _last_known_wid)
-	var amt := 1
+	var _amt := 1
 	var per_unit := _get_upgrade_price_per_unit()
 	if per_unit <= 0:
 		var stype := _get_settlement_type()
@@ -574,9 +576,9 @@ func _on_expand_vehicle():
 		if is_instance_valid(info_label):
 			info_label.text = "Upgrades not available at this settlement."
 		return
-	if wid != "" and is_instance_valid(api):
+	if wid != "" and is_instance_valid(_warehouse_service):
 		info_label.text = "Expanding vehicle slots..."
-		print("[WarehouseMenu][ExpandVehicle] Dispatch api.warehouse_expand params=", {"warehouse_id": wid, "expand_type": "vehicle", "amount": amt, "unit_price": per_unit})
+		print("[WarehouseMenu][ExpandVehicle] Dispatch service.request_expand params=", {"warehouse_id": wid, "cargo_units": 0, "vehicle_units": 1, "unit_price": per_unit})
 		# Record baseline before dispatch
 		_pre_expand_cargo_cap = int(_warehouse.get("cargo_storage_capacity", -1)) if (_warehouse is Dictionary) else -1
 		_pre_expand_vehicle_cap = int(_warehouse.get("vehicle_storage_capacity", -1)) if (_warehouse is Dictionary) else -1
@@ -588,23 +590,16 @@ func _on_expand_vehicle():
 			_optimistic_money_after = max(0.0, _optimistic_money_before - float(per_unit))
 			_optimistic_money_active = true
 			print("[WarehouseMenu][Optimistic] Vehicle upgrade: deduct", per_unit, "from", _optimistic_money_before, "=>", _optimistic_money_after)
-			# Also update global user data immediately so other UI panels reflect change
-			if is_instance_valid(gdm) and gdm.has_method("update_user_money"):
-				print("[WarehouseMenu][Optimistic][Global] Applying global money deduction=", per_unit)
-				gdm.update_user_money(-float(per_unit))
+			# Do not mutate global snapshots optimistically; rely on refresh.
 			_update_expand_buttons()
 			_update_upgrade_labels()
 		_upgrade_in_progress = true
 		_set_expand_buttons_enabled(false)
 		_pending_action_refresh = true
 		_schedule_refresh_fallback()
-		if api.has_method("warehouse_expand_v2"):
-			print("[WarehouseMenu][ExpandVehicle] Using v2 expansion (cargo_capacity_upgrade=0, vehicle_capacity_upgrade=1)")
-			api.warehouse_expand_v2(wid, 0, 1)
-		else:
-			api.warehouse_expand({"warehouse_id": wid, "expand_type": "vehicle", "amount": amt})
+		_warehouse_service.request_expand({"warehouse_id": wid, "cargo_units": 0, "vehicle_units": 1})
 	else:
-		print("[WarehouseMenu][ExpandVehicle] Blocked: invalid state wid=", wid, " api_valid=", is_instance_valid(api))
+		print("[WarehouseMenu][ExpandVehicle] Blocked: invalid state wid=", wid, " svc_valid=", is_instance_valid(_warehouse_service))
 
 func _diag_expand_cargo_pressed():
 	var state := "n/a"
@@ -655,11 +650,11 @@ func _on_store_cargo():
 	var cid := str(_convoy_data.get("convoy_id", ""))
 	var cargo_id := _get_selected_meta(cargo_store_dd)
 	var qty := int(cargo_qty_store.value) if is_instance_valid(cargo_qty_store) else 0
-	if wid != "" and cid != "" and cargo_id != "" and qty > 0 and is_instance_valid(api):
+	if wid != "" and cid != "" and cargo_id != "" and qty > 0 and is_instance_valid(_warehouse_service):
 		info_label.text = "Storing cargo..."
 		_pending_action_refresh = true
 		_schedule_refresh_fallback()
-		api.warehouse_cargo_store({"warehouse_id": wid, "convoy_id": cid, "cargo_id": cargo_id, "quantity": qty})
+		_warehouse_service.store_cargo({"warehouse_id": wid, "convoy_id": cid, "cargo_id": cargo_id, "quantity": qty})
 
 func _on_retrieve_cargo():
 	if not (_warehouse is Dictionary) or _warehouse.is_empty():
@@ -670,14 +665,14 @@ func _on_retrieve_cargo():
 	# pick vehicle to receive
 	var recv_vid := _get_selected_meta(cargo_retrieve_vehicle_dd)
 	var qty := int(cargo_qty_retrieve.value) if is_instance_valid(cargo_qty_retrieve) else 0
-	if wid != "" and cid != "" and cargo_id != "" and qty > 0 and is_instance_valid(api):
+	if wid != "" and cid != "" and cargo_id != "" and qty > 0 and is_instance_valid(_warehouse_service):
 		info_label.text = "Retrieving cargo..."
 		var payload := {"warehouse_id": wid, "convoy_id": cid, "cargo_id": cargo_id, "quantity": qty}
 		if recv_vid != "":
 			payload["vehicle_id"] = recv_vid
 		_pending_action_refresh = true
 		_schedule_refresh_fallback()
-		api.warehouse_cargo_retrieve(payload)
+		_warehouse_service.retrieve_cargo(payload)
 
 func _on_store_vehicle():
 	if not (_warehouse is Dictionary) or _warehouse.is_empty():
@@ -685,9 +680,9 @@ func _on_store_vehicle():
 	var wid := str(_warehouse.get("warehouse_id", ""))
 	var cid := str(_convoy_data.get("convoy_id", ""))
 	var vid := _get_selected_meta(vehicle_store_dd)
-	if wid != "" and cid != "" and vid != "" and is_instance_valid(api):
+	if wid != "" and cid != "" and vid != "" and is_instance_valid(_warehouse_service):
 		info_label.text = "Storing vehicle..."
-		api.warehouse_vehicle_store({"warehouse_id": wid, "convoy_id": cid, "vehicle_id": vid})
+		_warehouse_service.store_vehicle({"warehouse_id": wid, "convoy_id": cid, "vehicle_id": vid})
 
 func _on_retrieve_vehicle():
 	if not (_warehouse is Dictionary) or _warehouse.is_empty():
@@ -695,9 +690,9 @@ func _on_retrieve_vehicle():
 	var wid := str(_warehouse.get("warehouse_id", ""))
 	var cid := str(_convoy_data.get("convoy_id", ""))
 	var vid := _get_selected_meta(vehicle_retrieve_dd)
-	if wid != "" and cid != "" and vid != "" and is_instance_valid(api):
+	if wid != "" and cid != "" and vid != "" and is_instance_valid(_warehouse_service):
 		info_label.text = "Retrieving vehicle..."
-		api.warehouse_vehicle_retrieve({"warehouse_id": wid, "convoy_id": cid, "vehicle_id": vid})
+		_warehouse_service.retrieve_vehicle({"warehouse_id": wid, "convoy_id": cid, "vehicle_id": vid})
 
 func _on_spawn_convoy():
 	if not (_warehouse is Dictionary) or _warehouse.is_empty():
@@ -708,8 +703,8 @@ func _on_spawn_convoy():
 		cname = "New Convoy"
 	var spawn_vid := _get_selected_meta(spawn_vehicle_dd)
 	# Detailed diagnostics
-	print("[WarehouseMenu][SpawnConvoy] Attempt wid=", wid, " spawn_vid=", spawn_vid, " name=", cname, " api_valid=", is_instance_valid(api))
-	if wid != "" and spawn_vid != "" and is_instance_valid(api):
+	print("[WarehouseMenu][SpawnConvoy] Attempt wid=", wid, " spawn_vid=", spawn_vid, " name=", cname, " svc_valid=", is_instance_valid(_warehouse_service))
+	if wid != "" and spawn_vid != "" and is_instance_valid(_warehouse_service):
 		if is_instance_valid(info_label):
 			info_label.text = "Spawning convoy..."
 		# Temporarily disable button to prevent double clicks
@@ -718,7 +713,7 @@ func _on_spawn_convoy():
 		_pending_action_refresh = true
 		_schedule_refresh_fallback()
 		# API spec requires 'new_convoy_name'; send both for backward compatibility
-		api.warehouse_convoy_spawn({
+		_warehouse_service.spawn_convoy({
 			"warehouse_id": wid,
 			"vehicle_id": spawn_vid,
 			"new_convoy_name": cname,
@@ -730,7 +725,7 @@ func _on_spawn_convoy():
 			abort_reason = "missing_warehouse_id"
 		elif spawn_vid == "":
 			abort_reason = "missing_vehicle_id"
-		elif not is_instance_valid(api):
+		elif not is_instance_valid(_warehouse_service):
 			abort_reason = "api_unavailable"
 		else:
 			abort_reason = "unknown"
@@ -743,14 +738,12 @@ func _on_spawn_convoy():
 		print("[WarehouseMenu][SpawnConvoy][Abort] reason=", abort_reason, " wid=", wid, " spawn_vid=", spawn_vid, " name=", cname)
 
 func _try_load_warehouse_for_settlement() -> void:
-	if not is_instance_valid(gdm):
-		return
 	var sett_id := String(_settlement.get("sett_id", ""))
 	if sett_id == "":
 		return
 	var user: Dictionary = {}
-	if is_instance_valid(gdm) and gdm.has_method("get_current_user_data"):
-		user = gdm.get_current_user_data()
+	if is_instance_valid(_user_service) and _user_service.has_method("get_user"):
+		user = _user_service.get_user()
 	var warehouses: Array = []
 	if typeof(user) == TYPE_DICTIONARY:
 		warehouses = user.get("warehouses", [])
@@ -761,10 +754,10 @@ func _try_load_warehouse_for_settlement() -> void:
 			break
 	if not local_warehouse.is_empty():
 		var wid := String(local_warehouse.get("warehouse_id", ""))
-		if wid != "" and is_instance_valid(api):
+		if wid != "" and is_instance_valid(_warehouse_service):
 			_is_loading = true
 			_update_ui()
-			api.get_warehouse(wid)
+			_warehouse_service.request_get(wid)
 
 func _get_warehouse_price() -> int:
 	var stype := _get_settlement_type()
@@ -802,17 +795,17 @@ func _get_settlement_type() -> String:
 	if stype != "":
 		return _normalize_settlement_type(stype)
 	# Try resolve by sett_id
-	if _settlement and _settlement.has("sett_id") and is_instance_valid(gdm) and gdm.has_method("get_all_settlements_data"):
+	if _settlement and _settlement.has("sett_id"):
 		var sid := String(_settlement.get("sett_id", ""))
 		if sid != "":
-			for s in gdm.get_all_settlements_data():
+			for s in _get_all_settlements_snapshot():
 				if typeof(s) == TYPE_DICTIONARY and String(s.get("sett_id", "")) == sid:
 					return _normalize_settlement_type(String(s.get("sett_type", "")).to_lower())
 	# Try resolve by name
-	if _settlement and _settlement.has("name") and is_instance_valid(gdm) and gdm.has_method("get_all_settlements_data"):
+	if _settlement and _settlement.has("name"):
 		var sname := String(_settlement.get("name", ""))
 		if sname != "":
-			for s2 in gdm.get_all_settlements_data():
+			for s2 in _get_all_settlements_snapshot():
 				if typeof(s2) == TYPE_DICTIONARY and String(s2.get("name", "")) == sname:
 					return _normalize_settlement_type(String(s2.get("sett_type", "")).to_lower())
 	# Fallback: try convoy_data settlement_name or coords
@@ -823,14 +816,14 @@ func _get_settlement_type() -> String:
 			if from_convoy.has("sett_type"):
 				return _normalize_settlement_type(String(from_convoy.get("sett_type", "")).to_lower())
 			# else if only name/id, try again via lookups
-			if from_convoy.has("sett_id") and is_instance_valid(gdm) and gdm.has_method("get_all_settlements_data"):
+			if from_convoy.has("sett_id"):
 				var sid2 := String(from_convoy.get("sett_id", ""))
-				for s3 in gdm.get_all_settlements_data():
+				for s3 in _get_all_settlements_snapshot():
 					if typeof(s3) == TYPE_DICTIONARY and String(s3.get("sett_id", "")) == sid2:
 						return _normalize_settlement_type(String(s3.get("sett_type", "")).to_lower())
-			if from_convoy.has("name") and is_instance_valid(gdm) and gdm.has_method("get_all_settlements_data"):
+			if from_convoy.has("name"):
 				var sname2 := String(from_convoy.get("name", ""))
-				for s4 in gdm.get_all_settlements_data():
+				for s4 in _get_all_settlements_snapshot():
 					if typeof(s4) == TYPE_DICTIONARY and String(s4.get("name", "")) == sname2:
 						return _normalize_settlement_type(String(s4.get("sett_type", "")).to_lower())
 	print("[WarehouseMenu][SettlType] Unable to resolve settlement type. settlement=", _settlement)
@@ -851,53 +844,77 @@ func _normalize_settlement_type(t: String) -> String:
 	return s
 
 func _resolve_settlement_from_data(d: Dictionary) -> Dictionary:
-	if not is_instance_valid(gdm):
-		return {}
 	var result: Dictionary = {}
 	# Prefer explicit settlement_name on convoy payload
 	if d.has("settlement_name") and String(d.get("settlement_name", "")) != "":
 		var sname := String(d.get("settlement_name"))
-		if gdm.has_method("get_all_settlements_data"):
-			for s in gdm.get_all_settlements_data():
-				if typeof(s) == TYPE_DICTIONARY and String(s.get("name", "")) == sname:
-					result = s.duplicate(true)
-					break
+		for s in _get_all_settlements_snapshot():
+			if typeof(s) == TYPE_DICTIONARY and String(s.get("name", "")) == sname:
+				result = s.duplicate(true)
+				break
 		# If we found by name, return immediately
 		if not result.is_empty():
 			return result
 	# Fallback by coordinates if available
 	var sx := int(roundf(float(d.get("x", -999999.0))))
 	var sy := int(roundf(float(d.get("y", -999999.0))))
-	if gdm.has_method("get_settlement_name_from_coords"):
-		var name_at := String(gdm.get_settlement_name_from_coords(sx, sy))
-		if name_at != "" and gdm.has_method("get_all_settlements_data"):
-			for s2 in gdm.get_all_settlements_data():
-				if typeof(s2) == TYPE_DICTIONARY and String(s2.get("name", "")) == name_at:
-					result = s2.duplicate(true)
-					break
+	if sx > -999999 and sy > -999999:
+		for s2 in _get_all_settlements_snapshot():
+			if typeof(s2) != TYPE_DICTIONARY:
+				continue
+			var sx2 := int(roundf(float(s2.get("x", -999999.0))))
+			var sy2 := int(roundf(float(s2.get("y", -999999.0))))
+			if sx2 == sx and sy2 == sy:
+				result = (s2 as Dictionary).duplicate(true)
+				break
 	return result
 
 func _get_user_money() -> float:
 	# If we applied an optimistic deduction, surface that immediately so tooltips & labels reflect it.
 	if _optimistic_money_active:
 		return _optimistic_money_after
-	if is_instance_valid(gdm) and gdm.has_method("get_current_user_data"):
-		var user: Dictionary = gdm.get_current_user_data()
+	if is_instance_valid(_user_service) and _user_service.has_method("get_user"):
+		var user: Dictionary = _user_service.get_user()
 		if typeof(user) == TYPE_DICTIONARY:
 			return float(user.get("money", 0.0))
 	return 0.0
 
-func _format_money(amount: float) -> String:
-	var s := "%.0f" % amount
-	var out := ""
-	var count := 0
-	for i in range(s.length() - 1, -1, -1):
-		var ch := s[i]
-		out = ch + out
-		count += 1
-		if count % 3 == 0 and i > 0:
-			out = "," + out
-	return "$" + out
+
+func _get_all_settlements_snapshot() -> Array:
+	if is_instance_valid(_store) and _store.has_method("get_settlements"):
+		return _store.get_settlements()
+	return []
+
+
+func _on_store_user_changed(_user: Dictionary) -> void:
+	# Money / warehouses may change; refresh text + buttons.
+	_update_ui()
+	_update_expand_buttons()
+	_update_upgrade_labels()
+
+
+func _on_store_convoys_changed(convoys: Array) -> void:
+	# Keep convoy cargo/vehicles dropdowns current.
+	var cid := str(_convoy_data.get("convoy_id", "")) if (_convoy_data is Dictionary) else ""
+	if cid == "":
+		return
+	for c in convoys:
+		if c is Dictionary and str(c.get("convoy_id", "")) == cid:
+			_convoy_data = (c as Dictionary).duplicate(true)
+			break
+	_populate_dropdowns()
+
+
+func _on_store_map_changed(_tiles: Array, _settlements: Array) -> void:
+	# Settlement resolution/type may become available after map arrives.
+	if (_settlement is Dictionary) and not _settlement.is_empty():
+		return
+	var resolved := _resolve_settlement_from_data(_convoy_data)
+	if not resolved.is_empty():
+		_settlement = resolved
+		_update_ui()
+
+ 
 
 func _update_expand_buttons() -> void:
 	# With fixed +1 upgrades, enable when upgrades are available for this settlement.
@@ -913,10 +930,10 @@ func _update_expand_buttons() -> void:
 		disabled_reason = " (upgrade in progress)"
 	if is_instance_valid(expand_cargo_btn):
 		expand_cargo_btn.disabled = base_disabled
-		expand_cargo_btn.tooltip_text = ("Upgrades not available" if not available else "Cost: %s (per unit %s)\nYour funds: %s%s" % [_format_money(total), _format_money(per_unit), _format_money(funds), disabled_reason])
+		expand_cargo_btn.tooltip_text = ("Upgrades not available" if not available else "Cost: %s (per unit %s)\nYour funds: %s%s" % [NumberFormat.format_money(total), NumberFormat.format_money(per_unit), NumberFormat.format_money(funds), disabled_reason])
 	if is_instance_valid(expand_vehicle_btn):
 		expand_vehicle_btn.disabled = base_disabled
-		expand_vehicle_btn.tooltip_text = ("Upgrades not available" if not available else "Cost: %s (per unit %s)\nYour funds: %s%s" % [_format_money(total), _format_money(per_unit), _format_money(funds), disabled_reason])
+		expand_vehicle_btn.tooltip_text = ("Upgrades not available" if not available else "Cost: %s (per unit %s)\nYour funds: %s%s" % [NumberFormat.format_money(total), NumberFormat.format_money(per_unit), NumberFormat.format_money(funds), disabled_reason])
 
 func _update_upgrade_labels() -> void:
 	if not (_warehouse is Dictionary) or _warehouse.is_empty():
@@ -961,7 +978,7 @@ func _populate_dropdowns() -> void:
 		var part_wh: Array = []
 		for wi in wh_items:
 			if wi is Dictionary:
-				var is_part: bool = wi.has("intrinsic_part_id") and wi.get("intrinsic_part_id") != null
+				var is_part: bool = (ItemsData != null and ItemsData.PartItem and ItemsData.PartItem._looks_like_part_dict(wi))
 				var entry: Dictionary = (wi as Dictionary).duplicate(true)
 				if is_part:
 					part_wh.append(entry)
@@ -1306,17 +1323,7 @@ func _aggregate_convoy_cargo(convoy: Dictionary) -> Dictionary:
 	var by_id_is_part: Dictionary = {}
 	var by_id_has_dest: Dictionary = {}
 
-	# Build set of installed part IDs to exclude corresponding cargo entries if present
-	var installed_part_ids: Dictionary = {} # set-like
-	for veh0 in convoy.get("vehicle_details_list", []):
-		if not (veh0 is Dictionary):
-			continue
-		var parts_arr: Array = veh0.get("parts", [])
-		for p in parts_arr:
-			if p is Dictionary:
-				var pid := String(p.get("part_id", p.get("intrinsic_part_id", "")))
-				if pid != "":
-					installed_part_ids[pid] = true
+	# Installed parts are identified as slot-bearing cargo entries that are attached to a vehicle.
 	for veh in convoy.get("vehicle_details_list", []):
 		if not (veh is Dictionary):
 			continue
@@ -1330,13 +1337,10 @@ func _aggregate_convoy_cargo(convoy: Dictionary) -> Dictionary:
 			var qty := int(item.get("quantity", 0))
 			if qty <= 0:
 				continue
-			# Classify as part cargo if intrinsic_part_id present; installed parts are not in cargo[]
-			var is_part: bool = item.has("intrinsic_part_id") and item.get("intrinsic_part_id") != null
-			# If this is a part cargo and this intrinsic_part_id is installed on any vehicle, skip showing it
-			if is_part:
-				var intr_id := String(item.get("intrinsic_part_id", ""))
-				if intr_id != "" and installed_part_ids.has(intr_id):
-					continue
+			# Part identification is strictly slot-based.
+			var is_part: bool = (ItemsData != null and ItemsData.PartItem and ItemsData.PartItem._looks_like_part_dict(item))
+			# Note: `vehicle_id` is present for normal per-vehicle cargo too, so do NOT use it
+			# to filter parts here.
 			if not by_id.has(cid):
 				by_id[cid] = {
 					"cargo_id": cid,

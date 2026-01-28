@@ -38,6 +38,9 @@ signal route_choices_error(convoy_id: String, destination_data: Dictionary, erro
 # when GameDataManager is an Autoload (it will be /root/APICallsInstance if APICallsInstance is also an Autoload or a direct child of root).
 # For now, assuming APICallsInstance will also be an Autoload or accessible globally.
 var api_calls_node: Node = null # Will be fetched in _ready
+@onready var _store: Node = get_node_or_null("/root/GameStore")
+@onready var _hub: Node = get_node_or_null("/root/SignalHub")
+@onready var _scheduler: Node = get_node_or_null("/root/RefreshScheduler")
 
 # --- Data Storage ---
 var map_tiles: Array = []
@@ -178,19 +181,8 @@ func _initiate_preload():
 			api_calls_node.vendor_data_received.connect(update_single_vendor)
 		if api_calls_node.has_signal('user_metadata_updated') and not api_calls_node.user_metadata_updated.is_connected(_on_user_metadata_updated):
 			api_calls_node.user_metadata_updated.connect(_on_user_metadata_updated)
-		# Transaction patch signals that return updated convoy objects (resource buys etc.)
-		if api_calls_node.has_signal('resource_bought') and not api_calls_node.resource_bought.is_connected(_on_resource_transaction):
-			api_calls_node.resource_bought.connect(_on_resource_transaction)
-		if api_calls_node.has_signal('resource_sold') and not api_calls_node.resource_sold.is_connected(_on_resource_transaction):
-			api_calls_node.resource_sold.connect(_on_resource_transaction)
-		if api_calls_node.has_signal('cargo_bought') and not api_calls_node.cargo_bought.is_connected(_on_convoy_transaction):
-			api_calls_node.cargo_bought.connect(_on_convoy_transaction)
-		if api_calls_node.has_signal('cargo_sold') and not api_calls_node.cargo_sold.is_connected(_on_convoy_transaction):
-			api_calls_node.cargo_sold.connect(_on_convoy_transaction)
-		if api_calls_node.has_signal('vehicle_bought') and not api_calls_node.vehicle_bought.is_connected(_on_convoy_transaction):
-			api_calls_node.vehicle_bought.connect(_on_convoy_transaction)
-		if api_calls_node.has_signal('vehicle_sold') and not api_calls_node.vehicle_sold.is_connected(_on_convoy_transaction):
-			api_calls_node.vehicle_sold.connect(_on_convoy_transaction)
+		# Phase 4: removed direct APICalls transaction signal wiring (resource/cargo/vehicle).
+		# Authoritative refreshes are driven by Services and surfaced via GameStore/SignalHub.
 		# Mechanics: vehicle part attach returns updated vehicle; handle and refresh convoy
 		if api_calls_node.has_signal('vehicle_part_attached') and not api_calls_node.vehicle_part_attached.is_connected(_on_vehicle_part_attached):
 			api_calls_node.vehicle_part_attached.connect(_on_vehicle_part_attached)
@@ -236,6 +228,29 @@ func _initiate_preload():
 	else:
 		printerr("GameDataManager (_initiate_preload): Could not find APICalls Autoload. Map data will not be preloaded.")
 
+	# New: Subscribe to GameStore and SignalHub to act as thin adapter
+	if is_instance_valid(_store):
+		if _store.has_signal("map_changed") and not _store.map_changed.is_connected(_on_store_map_changed):
+			_store.map_changed.connect(_on_store_map_changed)
+		if _store.has_signal("convoys_changed") and not _store.convoys_changed.is_connected(_on_store_convoys_changed):
+			_store.convoys_changed.connect(_on_store_convoys_changed)
+		if _store.has_signal("user_changed") and not _store.user_changed.is_connected(_on_store_user_changed):
+			_store.user_changed.connect(_on_store_user_changed)
+	else:
+		print("[GameDataManager] GameStore not found; continuing to listen to APICalls directly.")
+	if is_instance_valid(_hub):
+		if _hub.has_signal("initial_data_ready") and not _hub.initial_data_ready.is_connected(_on_hub_initial_ready):
+			_hub.initial_data_ready.connect(_on_hub_initial_ready)
+		# Phase C: UI emits selection intent via SignalHub; resolve here during transition.
+		if _hub.has_signal("convoy_selection_requested") and not _hub.convoy_selection_requested.is_connected(_on_hub_convoy_selection_requested):
+			_hub.convoy_selection_requested.connect(_on_hub_convoy_selection_requested)
+	else:
+		print("[GameDataManager] SignalHub not found; will emit initial_data_ready only from local readiness.")
+
+
+func _on_hub_convoy_selection_requested(convoy_id: String, allow_toggle: bool) -> void:
+	select_convoy_by_id(convoy_id, allow_toggle)
+
 func _on_auth_session_received(_token: String) -> void:
 	# After session token, the APICalls will try to resolve DF user id via /auth/me
 	print('[GameDataManager] Auth session received. Awaiting DF user id…')
@@ -257,13 +272,16 @@ func _on_user_id_resolved(user_id: String) -> void:
 			_map_request_in_flight = true
 			request_map_data()
 
-	# Start periodic convoy refresh after auth/user bootstrap
-	_start_convoy_refresh_timer()
+	# Periodic refresh handled by RefreshScheduler; enable it if present
+	if is_instance_valid(_scheduler) and _scheduler.has_method("enable_polling"):
+		_scheduler.enable_polling(true)
 
 func _on_auth_expired() -> void:
 	print('[GameDataManager] Auth expired. Resetting user-related state.')
 	reset_user_state()
-	_stop_convoy_refresh_timer()
+	# Disable scheduler-based polling on auth expiry
+	if is_instance_valid(_scheduler) and _scheduler.has_method("enable_polling"):
+		_scheduler.enable_polling(false)
 
 # --- Public helper: expose current convoy list ---
 func get_all_convoy_data() -> Array:
@@ -314,8 +332,9 @@ func reset_user_state(clear_map: bool = false) -> void:
 	convoy_data_updated.emit(all_convoy_data)
 	user_data_updated.emit(current_user_data)
 	game_data_reset.emit()
-	# Also ensure background timers are stopped when user state is cleared
-	_stop_convoy_refresh_timer()
+	# Also ensure background polling is stopped when user state is cleared
+	if is_instance_valid(_scheduler) and _scheduler.has_method("enable_polling"):
+		_scheduler.enable_polling(false)
 
 func _start_convoy_refresh_timer() -> void:
 	# Create and start a repeating timer that refreshes convoy movement periodically
@@ -741,6 +760,11 @@ func request_convoy_data_refresh() -> void:
 	Called by an external system (e.g., a timer in main.gd) to trigger a new fetch
 	of convoy data.
 	"""
+	# Prefer ConvoyService; fall back to APICalls for compatibility
+	var conv_svc := get_node_or_null("/root/ConvoyService")
+	if is_instance_valid(conv_svc) and conv_svc.has_method("refresh_all"):
+		conv_svc.refresh_all()
+		return
 	if is_instance_valid(api_calls_node):
 		if not api_calls_node.current_user_id.is_empty() and api_calls_node.has_method("get_user_convoys"):
 			api_calls_node.get_user_convoys(api_calls_node.current_user_id)
@@ -750,6 +774,47 @@ func request_convoy_data_refresh() -> void:
 			printerr("GameDataManager: APICallsInstance is missing 'get_user_convoys' or 'get_all_in_transit_convoys' method.")
 	else:
 		printerr("GameDataManager: Cannot request convoy data refresh. APICallsInstance is invalid.")
+
+# --- Store/Hub adapters ---
+func _on_store_map_changed(tiles: Array, settlements: Array) -> void:
+	# Mirror Store updates into legacy signals expected by existing UI.
+	map_tiles = tiles if tiles != null else []
+	map_data_loaded.emit(map_tiles)
+	# Rebuild settlement list from tiles if not provided
+	all_settlement_data.clear()
+	var have_direct := (settlements != null and settlements is Array and settlements.size() > 0)
+	if have_direct:
+		all_settlement_data = settlements
+	else:
+		if not map_tiles.is_empty():
+			for y_idx in range(map_tiles.size()):
+				var row = map_tiles[y_idx]
+				if not row is Array: continue
+				for x_idx in range(row.size()):
+					var tile_data = row[x_idx]
+					if tile_data is Dictionary and tile_data.has('settlements'):
+						var settlements_on_tile = tile_data.get('settlements', [])
+						if settlements_on_tile is Array:
+							for settlement_entry in settlements_on_tile:
+								if settlement_entry is Dictionary and settlement_entry.has('name'):
+									var settlement_info_for_render = settlement_entry.duplicate()
+									settlement_info_for_render['x'] = x_idx
+									settlement_info_for_render['y'] = y_idx
+									all_settlement_data.append(settlement_info_for_render)
+	settlement_data_updated.emit(all_settlement_data)
+	_map_loaded = true
+	_maybe_emit_initial_ready()
+
+func _on_store_convoys_changed(convoys: Array) -> void:
+	# Reuse existing augmentation pipeline
+	_on_raw_convoy_data_received(convoys)
+
+func _on_store_user_changed(user: Dictionary) -> void:
+	_on_user_data_received_from_api(user)
+
+func _on_hub_initial_ready() -> void:
+	# Re-emit for legacy consumers
+	initial_data_ready.emit()
 
 func request_map_data(x_min: int = -1, x_max: int = -1, y_min: int = -1, y_max: int = -1) -> void:
 	"""
@@ -1197,27 +1262,14 @@ func probe_mechanic_vendor_availability_for_convoy(convoy: Dictionary) -> void:
 		for item in cargo_inv:
 			if not (item is Dictionary):
 				continue
-			if item.get("intrinsic_part_id") != null:
-				continue
 			var _price_f = 0.0 # unused here
 			# Prefer cargo_id for compatibility API
 			var cid_any: String = str(item.get("cargo_id", ""))
 			if cid_any == "":
 				cid_any = str(item.get("part_id", ""))
-			# Heuristic: detect likely parts even without explicit slot
-			var is_likely_part := false
-			if item.has("is_part") and item.get("is_part"):
-				is_likely_part = true
-			var type_s := String(item.get("type", "")).to_lower()
-			var itype_s := String(item.get("item_type", "")).to_lower()
-			if type_s == "part" or itype_s == "part":
-				is_likely_part = true
-			var stat_keys := ["top_speed_add", "efficiency_add", "offroad_capability_add", "cargo_capacity_add", "weight_capacity_add", "fuel_capacity", "kwh_capacity"]
-			for sk in stat_keys:
-				if item.has(sk) and item[sk] != null:
-					is_likely_part = true
-					break
-			# Name/description-based fallback using sample data patterns (e.g., CVT Kit, Differentials, Fuel Cell, Box Truck Body)
+			# Part identification is strictly slot-based.
+			var is_likely_part := (ItemsData != null and ItemsData.PartItem and ItemsData.PartItem._looks_like_part_dict(item))
+			# Name/description-based fallback is intentionally removed; non-slot cargo is not a part.
 			if not is_likely_part:
 				var name_heur = _looks_like_vehicle_part(item)
 				if name_heur.get("likely", false):
@@ -1456,7 +1508,12 @@ func select_convoy_by_id(convoy_id_to_select: String, _allow_toggle: bool = true
 	if convoy_id_to_select == "":
 		if not _selected_convoy_id.is_empty():
 			_selected_convoy_id = ""
-			convoy_selection_changed.emit(get_selected_convoy()) # Will emit null
+			var _sel_none: Variant = get_selected_convoy() # Will emit null
+			convoy_selection_changed.emit(_sel_none)
+			var _hub_none := get_node_or_null("/root/SignalHub")
+			if is_instance_valid(_hub_none):
+				_hub_none.convoy_selection_changed.emit(_sel_none)
+				_hub_none.selected_convoy_ids_changed.emit([])
 		return
 
 	# If the requested ID is already selected, do nothing (toggle behavior removed)
@@ -1465,10 +1522,17 @@ func select_convoy_by_id(convoy_id_to_select: String, _allow_toggle: bool = true
 
 	# Change selection and emit update
 	_selected_convoy_id = convoy_id_to_select
-	convoy_selection_changed.emit(get_selected_convoy())
+	var _sel: Variant = get_selected_convoy()
+	convoy_selection_changed.emit(_sel)
+	var hub_local := get_node_or_null("/root/SignalHub")
+	if is_instance_valid(hub_local):
+		hub_local.convoy_selection_changed.emit(_sel)
+		if _sel is Dictionary and not (_sel as Dictionary).is_empty():
+			hub_local.selected_convoy_ids_changed.emit([convoy_id_to_select])
+		else:
+			hub_local.selected_convoy_ids_changed.emit([])
 
 	# Proactively prefetch ConvoyMenu data so destinations are ready at open
-	var _sel: Variant = get_selected_convoy()
 	if _sel is Dictionary and not (_sel as Dictionary).is_empty():
 		# Warm vendor/settlement data at the selected convoy's coords
 		var sx := int(roundf(float((_sel as Dictionary).get("x", -9999))))
@@ -1898,8 +1962,6 @@ func _aggregate_vendor_items(vendor_data: Dictionary) -> Dictionary:
 		return aggregated
 
 	for item in vendor_data.get("cargo_inventory", []):
-		if item.has("intrinsic_part_id") and item.get("intrinsic_part_id") != null:
-			continue
 		var category = "other"
 		var mission_dest_name := ""
 		# Mission identification: require a delivery_reward (positive number). Recipient remains a secondary hint.
@@ -1911,7 +1973,7 @@ func _aggregate_vendor_items(vendor_data: Dictionary) -> Dictionary:
 			(item.has("water") and _is_positive_number(item.get("water"))) or
 			(item.has("fuel") and _is_positive_number(item.get("fuel")))
 		)
-		var is_part: bool = item.has("slot") and item.get("slot") != null and String(item.get("slot")).length() > 0
+		var is_part: bool = (ItemsData != null and ItemsData.PartItem and ItemsData.PartItem._looks_like_part_dict(item))
 		if is_mission:
 			category = "missions"
 			var recipient_vendor_id = item.get("recipient")
@@ -1980,8 +2042,6 @@ func _aggregate_convoy_items(convoy_data: Dictionary, vendor_data: Dictionary) -
 			var vehicle_name = vehicle.get("name", "Unknown Vehicle")
 			for item in vehicle.get("cargo", []):
 				found_any_cargo = true
-				if item.has("intrinsic_part_id") and item.get("intrinsic_part_id") != null:
-					continue
 				var category = "other"
 				var mission_dest_name := ""
 				var is_mission_item := (item.get("recipient") != null or _is_positive_number(item.get("delivery_reward")) or _is_positive_number(item.get("unit_delivery_reward")))
@@ -1994,10 +2054,10 @@ func _aggregate_convoy_items(convoy_data: Dictionary, vendor_data: Dictionary) -
 							mission_dest_name = dest_settlement.get("name", "")
 				elif (item.has("food") and _is_positive_number(item.get("food"))) or (item.has("water") and _is_positive_number(item.get("water"))) or (item.has("fuel") and _is_positive_number(item.get("fuel"))):
 					category = "resources"
+				elif ItemsData != null and ItemsData.PartItem and ItemsData.PartItem._looks_like_part_dict(item):
+					category = "parts"
 				_aggregate_item(aggregated[category], item, vehicle_name, mission_dest_name)
 			for item in vehicle.get("parts", []):
-				if item.has("intrinsic_part_id") and item.get("intrinsic_part_id") != null:
-					continue
 				_aggregate_item(aggregated["parts"], item, vehicle_name)
 
 	# Fallback: If no cargo found in vehicles, use cargo_inventory
@@ -2015,6 +2075,8 @@ func _aggregate_convoy_items(convoy_data: Dictionary, vendor_data: Dictionary) -
 						mission_dest_name = dest_settlement.get("name", "")
 			elif (item.has("food") and _is_positive_number(item.get("food"))) or (item.has("water") and _is_positive_number(item.get("water"))) or (item.has("fuel") and _is_positive_number(item.get("fuel"))):
 				category = "resources"
+			elif ItemsData != null and ItemsData.PartItem and ItemsData.PartItem._looks_like_part_dict(item):
+				category = "parts"
 			_aggregate_item(aggregated[category], item, "Convoy", mission_dest_name)
 
 	# Add bulk resources

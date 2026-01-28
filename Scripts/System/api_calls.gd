@@ -20,67 +20,62 @@ signal auth_expired
 signal auth_poll_started
 signal auth_poll_finished(success: bool)
 
-# --- Vendor Transaction Signals ---
-@warning_ignore("unused_signal")
-signal vehicle_bought(result: Dictionary)
-@warning_ignore("unused_signal")
-signal vehicle_sold(result: Dictionary)
-@warning_ignore("unused_signal")
-signal cargo_bought(result: Dictionary)
-@warning_ignore("unused_signal")
-signal cargo_sold(result: Dictionary)
+# --- Vendor Signals (transport-level only) ---
+# Phase 4: Removed UI-facing vendor transaction signals (buy/sell). Services drive refreshes.
 @warning_ignore("unused_signal")
 signal user_metadata_updated(result: Dictionary)
-@warning_ignore("unused_signal")
-signal resource_bought(result: Dictionary)
-@warning_ignore("unused_signal")
-signal resource_sold(result: Dictionary)
 signal vendor_data_received(vendor_data: Dictionary)
 signal part_compatibility_checked(payload: Dictionary) # { vehicle_id, part_id, data }
 signal cargo_data_received(cargo: Dictionary)
 @warning_ignore("unused_signal")
-signal vehicle_part_attached(result: Dictionary)
-@warning_ignore("unused_signal")
-signal vehicle_part_added(result: Dictionary)
-@warning_ignore("unused_signal")
-signal vehicle_part_detached(result: Dictionary)
+signal vehicle_data_received(vehicle_data: Dictionary)
+
+# Transaction signals (restored for UI feedback)
+signal cargo_bought(result: Dictionary)
+signal cargo_sold(result: Dictionary)
+signal vehicle_bought(result: Dictionary)
+signal vehicle_sold(result: Dictionary)
+signal resource_bought(result: Dictionary)
+signal resource_sold(result: Dictionary)
 
 # --- Journey Planning Signals ---
 signal route_choices_received(routes: Array)
-@warning_ignore("unused_signal")
-signal convoy_sent_on_journey(updated_convoy_data: Dictionary)
-@warning_ignore("unused_signal")
-signal convoy_journey_canceled(updated_convoy_data: Dictionary)
-@warning_ignore("unused_signal")
-signal convoy_created(result: Dictionary)
+signal convoy_created(convoy: Dictionary) # Restored for service-driven refresh
 
 # --- Warehouse Signals ---
-@warning_ignore("unused_signal")
-signal warehouse_created(result: Variant) # API returns UUID or dict; treat as Variant
-@warning_ignore("unused_signal")
 signal warehouse_received(warehouse_data: Dictionary)
-@warning_ignore("unused_signal")
-signal warehouse_expanded(result: Variant)
-@warning_ignore("unused_signal")
-signal warehouse_cargo_stored(result: Variant)
-@warning_ignore("unused_signal")
-signal warehouse_cargo_retrieved(result: Variant)
-@warning_ignore("unused_signal")
-signal warehouse_vehicle_stored(result: Variant)
-@warning_ignore("unused_signal")
-signal warehouse_vehicle_retrieved(result: Variant)
-@warning_ignore("unused_signal")
-signal warehouse_convoy_spawned(result: Variant)
 
-var BASE_URL: String = 'http://127.0.0.1:1337' # default
-#var BASE_URL: String = 'https://df-api.oori.dev:1337' # default
-# Allow override via environment (cannot be const due to runtime lookup)
+var BASE_URL: String = 'http://127.0.0.1:1337' # default (overridden via config/env)
+# Allow override via configuration and environment (cannot be const due to runtime lookup)
 func _init():
+	_load_base_url_from_config()
 	if OS.has_environment('DF_API_BASE_URL'):
 		BASE_URL = OS.get_environment('DF_API_BASE_URL')
+		print("[APICalls] BASE_URL overridden by env: ", BASE_URL)
+	else:
+		print("[APICalls] BASE_URL from config: ", BASE_URL)
+
+func _load_base_url_from_config() -> void:
+	var cfg := ConfigFile.new()
+	var err := cfg.load("res://config/app_config.cfg")
+	if err != OK:
+		return
+	# Direct base_url wins if provided; otherwise use active_env mapping
+	var direct := String(cfg.get_value("api", "base_url", ""))
+	if direct != "":
+		BASE_URL = direct
+		return
+	var active_env := String(cfg.get_value("api", "active_env", "dev")).to_lower()
+	var dev := String(cfg.get_value("api", "base_url_dev", BASE_URL))
+	var prod := String(cfg.get_value("api", "base_url_prod", BASE_URL))
+	match active_env:
+		"prod":
+			BASE_URL = prod
+		_:
+			BASE_URL = dev
 
 var current_user_id: String = "" # To store the logged-in user's ID
-var _http_request: HTTPRequest
+var _http_request: Node
 var _http_request_map: HTTPRequest  # Dedicated non-queued requester for map data
 var _http_request_route: HTTPRequest # Dedicated requester for route finding (non-queued)
 var _http_request_mech_pool: Array = [] # ephemeral HTTPRequest nodes for part compatibility checks
@@ -116,6 +111,7 @@ var _login_in_progress: bool = false
 # Add after enum declaration
 var _current_request_start_time: float = 0.0
 var _request_timeout_timer: Timer
+var _disable_request_timeouts_for_tests: bool = false
 const REQUEST_TIMEOUT_SECONDS := {
 	RequestPurpose.MAP_DATA: 5.0,
 	RequestPurpose.AUTH_URL: 5.0,
@@ -124,6 +120,42 @@ const REQUEST_TIMEOUT_SECONDS := {
 	RequestPurpose.CARGO_DATA: 5.0,
 	RequestPurpose.WAREHOUSE_GET: 5.0,
 }
+
+# --- Logging helpers (gate prints behind Logger) ---
+func _log_debug(msg: String) -> void:
+	var logger := get_node_or_null("/root/Logger") if is_inside_tree() else null
+	if is_instance_valid(logger) and logger.has_method("debug"):
+		logger.debug(msg)
+	else:
+		print(msg)
+
+func _log_info(msg: String) -> void:
+	var logger := get_node_or_null("/root/Logger") if is_inside_tree() else null
+	if is_instance_valid(logger) and logger.has_method("info"):
+		logger.info(msg)
+	else:
+		print(msg)
+
+
+func set_disable_request_timeouts_for_tests(disabled: bool) -> void:
+	_disable_request_timeouts_for_tests = disabled
+
+
+func set_http_request_for_tests(requester: Node) -> void:
+	# Test-only helper: allow unit tests to inject a stub HTTPRequest.
+	# Keeps runtime behavior unchanged when not used.
+	if requester == null:
+		return
+	if is_instance_valid(_http_request):
+		if _http_request.is_connected("request_completed", Callable(self, "_on_request_completed")):
+			_http_request.disconnect("request_completed", Callable(self, "_on_request_completed"))
+		# Keep the old node if it was created by _ready(); tests may be running in a scene tree.
+	_http_request = requester
+	if not is_ancestor_of(_http_request):
+		add_child(_http_request)
+	if _http_request.is_connected("request_completed", Callable(self, "_on_request_completed")):
+		_http_request.disconnect("request_completed", Callable(self, "_on_request_completed"))
+	_http_request.connect("request_completed", Callable(self, "_on_request_completed"))
 
 var _probe_stalled_count: int = 0
 var _auth_me_resolve_attempts: int = 0
@@ -159,7 +191,8 @@ func _diag_enqueue(tag: String, details: Dictionary) -> void:
 	var method_i := int(details.get("method", HTTPClient.METHOD_GET))
 	var url_s := String(details.get("url", ""))
 	var is_patch_txn := (method_i == HTTPClient.METHOD_PATCH and String(details.get("signal_name", "")) != "")
-	print("[APICalls][Enqueue] tag=", tag, " id=", _client_txn_seq, " method=", method_i, " qlen_before=", qlen_before, " in_progress=", _is_request_in_progress, " url=", url_s, " prio_patch=", is_patch_txn)
+	_log_debug("[APICalls][Enqueue] tag=" + tag + " id=" + str(_client_txn_seq) + " method=" + str(method_i) + " qlen_before=" + str(qlen_before) + " in_progress=" + str(_is_request_in_progress) + " url=" + url_s + " prio_patch=" + str(is_patch_txn))
+	print("[APICalls][Debug] Enqueuing request tag=%s. Queue size: %d" % [tag, _request_queue.size()])
 	if is_patch_txn:
 		_request_queue.push_front(details)
 	else:
@@ -169,15 +202,15 @@ func _diag_enqueue(tag: String, details: Dictionary) -> void:
 func _ready() -> void:
 	# Ensure this autoload keeps processing while login screen pauses the tree
 	process_mode = Node.PROCESS_MODE_ALWAYS
-	print('[APICalls] _ready(): process_mode set to ALWAYS (was paused tree workaround)')
+	_log_info('[APICalls] _ready(): process_mode set to ALWAYS (was paused tree workaround)')
 	# Create an HTTPRequest node and add it as a child.
 	# This node will handle the actual network communication.
 	_http_request = HTTPRequest.new()
 	add_child(_http_request)
 	# Reconnect without .bind() so callback signature matches exactly
-	if _http_request.request_completed.is_connected(_on_request_completed):
-		_http_request.request_completed.disconnect(_on_request_completed)
-	_http_request.request_completed.connect(_on_request_completed)
+	if _http_request.is_connected("request_completed", Callable(self, "_on_request_completed")):
+		_http_request.disconnect("request_completed", Callable(self, "_on_request_completed"))
+	_http_request.connect("request_completed", Callable(self, "_on_request_completed"))
 	# Parallel map HTTPRequest
 	_http_request_map = HTTPRequest.new()
 	_http_request_map.name = "MapHTTPRequest"
@@ -196,29 +229,12 @@ func _ready() -> void:
 	# No persistent requester for mechanics; we will create ephemeral HTTPRequest nodes per request
 	_start_request_status_probe()
 	_load_auth_session_token()
-	# Proactively connect to GameDataManager if available so mechanics pipeline receives compat responses
-	_call_deferred_connect_gdm()
-func _call_deferred_connect_gdm() -> void:
-	call_deferred("_try_connect_gdm")
-
-func _try_connect_gdm() -> void:
-	var gdm = get_node_or_null("/root/GameDataManager")
-	if is_instance_valid(gdm):
-		if gdm.has_method("_on_part_compatibility_checked"):
-			if not is_connected("part_compatibility_checked", gdm._on_part_compatibility_checked):
-				print("[APICalls] Wiring part_compatibility_checked -> GameDataManager._on_part_compatibility_checked")
-				part_compatibility_checked.connect(gdm._on_part_compatibility_checked)
-		else:
-			print("[APICalls] GameDataManager missing handler _on_part_compatibility_checked; skipping auto-wire")
-	else:
-		print("[APICalls] GameDataManager not present at ready; will rely on GDM to connect.")
 	# Auto-resolve user if we have a still-valid token
 	if is_auth_token_valid():
 		print("[APICalls] Auto-login attempt with persisted session token.")
 		resolve_current_user_id()
-	# Initiate the request to get all in-transit convoys.
-	# The data will be processed in _on_request_completed when it arrives.
-	# get_all_in_transit_convoys() # This will now be triggered by GameDataManager after login or if no user
+	# Initial data requests (map/user/convoys) are triggered by the post-login bootstrap
+	# (e.g., GameScreenManager / services).
 
 func set_user_id(p_user_id: String) -> void:
 	current_user_id = p_user_id
@@ -228,7 +244,7 @@ func set_user_id(p_user_id: String) -> void:
 func set_auth_session_token(token: String) -> void:
 	_auth_bearer_token = token
 	_auth_token_expiry = _decode_jwt_expiry(token)
-	print("[APICalls] Auth session set (len=", token.length(), ", exp=", _auth_token_expiry, ")")
+	_log_info("[APICalls] Auth session set (len=" + str(token.length()) + ", exp=" + str(_auth_token_expiry) + ")")
 	var cfg := ConfigFile.new()
 	cfg.set_value("auth", "session_token", token)
 	cfg.set_value("auth", "token_expiry", _auth_token_expiry)
@@ -241,7 +257,7 @@ func clear_auth_session_token() -> void:
 	cfg.set_value("auth", "session_token", "")
 	cfg.set_value("auth", "token_expiry", 0)
 	cfg.save(SESSION_CFG_PATH)
-	print("[APICalls] Auth session cleared.")
+	_log_info("[APICalls] Auth session cleared.")
 
 func _load_auth_session_token() -> void:
 	var cfg := ConfigFile.new()
@@ -284,7 +300,7 @@ func get_auth_url(_provider: String = "") -> void:
 	if _login_in_progress or _auth_poll.active:
 		print("[APICalls] Ignoring get_auth_url; login already in progress.")
 		return
-	print("[APICalls] get_auth_url(): queueing AUTH_URL request (provider=%s). Current queue length before append=%d" % [_provider, _request_queue.size()])
+	_log_debug("[APICalls] get_auth_url(): queueing AUTH_URL request (provider=" + _provider + "). Current queue length before append=" + str(_request_queue.size()))
 	var url := "%s/auth/discord/url" % BASE_URL
 	var headers: PackedStringArray = ['accept: application/json']
 	var request_details: Dictionary = {
@@ -294,7 +310,7 @@ func get_auth_url(_provider: String = "") -> void:
 		"method": HTTPClient.METHOD_GET
 	}
 	_request_queue.append(request_details)
-	print("[APICalls] get_auth_url(): appended. Queue length now=%d in_progress=%s" % [_request_queue.size(), str(_is_request_in_progress)])
+	_log_debug("[APICalls] get_auth_url(): appended. Queue length now=" + str(_request_queue.size()) + " in_progress=" + str(_is_request_in_progress))
 	_process_queue()
 	# Failsafe: schedule a deferred attempt and a watchdog
 	call_deferred("_process_queue")
@@ -308,7 +324,8 @@ func start_auth_poll(state: String, interval: float = 1.5, timeout_seconds: floa
 	_auth_poll.max_attempts = int(ceil(timeout_seconds / max(0.2, interval)))
 	_login_in_progress = true
 	emit_signal("auth_poll_started")
-	print("[APICalls] Starting auth status poll for state=", state)
+	_log_info("[APICalls] Starting auth status poll for state=" + state)
+	_emit_hub_auth_state("pending")
 	_enqueue_auth_status_request(state)
 
 func _enqueue_auth_status_request(state: String) -> void:
@@ -330,7 +347,7 @@ func resolve_current_user_id(force: bool = false) -> void:
 		print('[APICalls] resolve_current_user_id(): already requested; skipping.')
 		return
 	if force:
-		print('[APICalls] resolve_current_user_id(): forced retry attempt %d' % (_auth_me_resolve_attempts + 1))
+		_log_debug('[APICalls] resolve_current_user_id(): forced retry attempt ' + str(_auth_me_resolve_attempts + 1))
 	_auth_me_requested = true
 	_auth_me_resolve_attempts += 1
 	if current_user_id != '' and not force:
@@ -402,7 +419,7 @@ func get_map_data(x_min: int = -1, x_max: int = -1, y_min: int = -1, y_max: int 
 	if _http_request_map.get_http_client_status() == HTTPClient.STATUS_REQUESTING:
 		print('[APICalls] Aborting previous map request to start a new one.')
 		_http_request_map.cancel_request()
-	print('[APICalls][MAP] Dispatching parallel map request: %s' % url)
+	_log_info('[APICalls][MAP] Dispatching parallel map request: ' + url)
 	var headers: PackedStringArray = ['accept: application/octet-stream']
 	# Apply auth header if we have a token (map now protected)
 	headers = _apply_auth_header(headers)
@@ -447,7 +464,7 @@ func refresh_user_data(p_user_id: String) -> void:
 		"purpose": RequestPurpose.USER_DATA,
 		"method": HTTPClient.METHOD_GET
 	}
-	print('[APICalls] refresh_user_data(): enqueue URL=', url)
+	_log_debug('[APICalls] refresh_user_data(): enqueue URL=' + url)
 	_diag_enqueue("refresh_user_data", request_details)
 
 func _is_valid_uuid(uuid_string: String) -> bool:
@@ -475,6 +492,9 @@ func get_user_convoys(p_user_id: String) -> void:
 		"purpose": RequestPurpose.USER_CONVOYS, # reuse purpose but now expect Dictionary
 		"method": HTTPClient.METHOD_GET
 	}
+	var logger := get_node_or_null('/root/Logger') if is_inside_tree() else null
+	if is_instance_valid(logger) and logger.has_method('info'):
+		logger.info("APICalls.enqueue USER_CONVOYS url=%s", url)
 	_diag_enqueue("get_user_convoys", request_details)
 
 func get_all_in_transit_convoys() -> void:
@@ -488,7 +508,13 @@ func get_all_in_transit_convoys() -> void:
 		"purpose": RequestPurpose.ALL_CONVOYS,
 		"method": HTTPClient.METHOD_GET
 	}
+	var logger := get_node_or_null('/root/Logger') if is_inside_tree() else null
+	if is_instance_valid(logger) and logger.has_method('info'):
+		logger.info("APICalls.enqueue ALL_CONVOYS url=%s", url)
 	_diag_enqueue("get_all_in_transit_convoys", request_details)
+
+
+
 
 func update_user_metadata(user_id: String, metadata: Dictionary) -> void:
 	if user_id.is_empty() or not _is_valid_uuid(user_id):
@@ -523,6 +549,9 @@ func request_vendor_data(vendor_id: String) -> void:
 		print("[APICalls][Coalesce] Skip duplicate VENDOR_DATA for vendor_id=", vendor_id)
 		return
 	var url := "%s/vendor/get?vendor_id=%s" % [BASE_URL, vendor_id]
+	# Optional user_id for scenario logging purposes.
+	if current_user_id != "" and _is_valid_uuid(current_user_id):
+		url += "&user_id=%s" % current_user_id
 	var headers: PackedStringArray = ['accept: application/json']
 	headers = _apply_auth_header(headers)
 	# Remove any queued older VENDOR_DATA for the same vendor
@@ -559,6 +588,22 @@ func get_cargo(cargo_id: String) -> void:
 		"method": HTTPClient.METHOD_GET
 	}
 	_diag_enqueue("get_cargo", request_details)
+
+# --- Vehicle detail by ID ---
+func get_vehicle_data(vehicle_id: String) -> void:
+	if vehicle_id.is_empty() or not _is_valid_uuid(vehicle_id):
+		printerr("APICalls (get_vehicle_data): invalid vehicle_id %s" % vehicle_id)
+		return
+	var url := "%s/vehicle/get?vehicle_id=%s" % [BASE_URL, vehicle_id]
+	var headers: PackedStringArray = ['accept: application/json']
+	headers = _apply_auth_header(headers)
+	_diag_enqueue("get_vehicle_data", {
+		"url": url,
+		"headers": headers,
+		"purpose": RequestPurpose.NONE,
+		"method": HTTPClient.METHOD_GET,
+		"signal_name": "vehicle_data_received"
+	})
 
 # --- Warehouse requests ---
 func warehouse_new(sett_id: String) -> void:
@@ -623,7 +668,7 @@ func _build_query(params: Dictionary) -> String:
 	return "?" + "&".join(parts)
 
 func warehouse_expand(params: Dictionary) -> void:
-	print("[APICalls][warehouse_expand] invoked params=", params, " types=", _diagnose_param_types(params))
+	_log_debug("[APICalls][warehouse_expand] invoked params=" + str(params) + " types=" + str(_diagnose_param_types(params)))
 	var wid_raw = params.get("warehouse_id", "")
 	var expand_type_raw = params.get("expand_type", "")
 	var amount_raw = params.get("amount", 1)
@@ -644,25 +689,23 @@ func warehouse_expand(params: Dictionary) -> void:
 		printerr("[APICalls][warehouse_expand] Missing expand_type in params raw=", expand_type_raw)
 		return
 	var query_dict := {"warehouse_id": wid, "expand_type": expand_type, "amount": amount, "type": expand_type, "expand": expand_type}
-	print("[APICalls][warehouse_expand] Prepared query wid=", wid, " expand_type=", expand_type, " amount=", amount, " final_query_dict=", query_dict)
+	_log_debug("[APICalls][warehouse_expand] Prepared query wid=" + wid + " expand_type=" + expand_type + " amount=" + amount + " final_query_dict=" + str(query_dict))
 	var url := "%s/warehouse/expand%s" % [BASE_URL, _build_query(query_dict)]
-	print("[APICalls][warehouse_expand] Enqueue URL=", url)
+	_log_debug("[APICalls][warehouse_expand] Enqueue URL=" + url)
 	var headers: PackedStringArray = ['accept: application/json']
 	headers = _apply_auth_header(headers)
-	_current_patch_signal_name = "warehouse_expanded"
 	_diag_enqueue("warehouse_expand", {
 		"url": url,
 		"headers": headers,
 		"purpose": RequestPurpose.NONE,
 		"method": HTTPClient.METHOD_PATCH,
 		"body": "",
-		"signal_name": "warehouse_expanded"
 	})
-	print("[APICalls][warehouse_expand] Queue length now=", _request_queue.size())
+	_log_debug("[APICalls][warehouse_expand] Queue length now=" + str(_request_queue.size()))
 
 # Alternative expansion using JSON body (fallback if query version shows no effect)
 func warehouse_expand_json(params: Dictionary) -> void:
-	print("[APICalls][warehouse_expand_json] invoked params=", params, " types=", _diagnose_param_types(params))
+	_log_debug("[APICalls][warehouse_expand_json] invoked params=" + str(params) + " types=" + str(_diagnose_param_types(params)))
 	var wid_raw = params.get("warehouse_id", "")
 	var expand_type_raw = params.get("expand_type", params.get("type", params.get("expand", "")))
 	var amount_raw = params.get("amount", params.get("units", 1))
@@ -680,16 +723,14 @@ func warehouse_expand_json(params: Dictionary) -> void:
 	headers = _apply_auth_header(headers)
 	var body_dict := {"warehouse_id": wid, "expand_type": expand_type, "amount": amount}
 	var body_json := JSON.stringify(body_dict)
-	_current_patch_signal_name = "warehouse_expanded"
 	_diag_enqueue("warehouse_expand_json", {
 		"url": url,
 		"headers": headers,
 		"purpose": RequestPurpose.NONE,
 		"method": HTTPClient.METHOD_PATCH,
 		"body": body_json,
-		"signal_name": "warehouse_expanded"
 	})
-	print("[APICalls][warehouse_expand_json] Enqueued JSON PATCH url=", url, " body=", body_json)
+	_log_debug("[APICalls][warehouse_expand_json] Enqueued JSON PATCH url=" + url + " body=" + body_json)
 
 # Preferred v2 expansion using explicit field names cargo_capacity_upgrade / vehicle_capacity_upgrade
 func warehouse_expand_v2(warehouse_id: String, cargo_units: int, vehicle_units: int) -> void:
@@ -699,7 +740,7 @@ func warehouse_expand_v2(warehouse_id: String, cargo_units: int, vehicle_units: 
 		return
 	var cargo_u := int(max(0, cargo_units))
 	var vehicle_u := int(max(0, vehicle_units))
-	print("[APICalls][warehouse_expand_v2] wid=", warehouse_id, " cargo_units=", cargo_u, " vehicle_units=", vehicle_u)
+	_log_debug("[APICalls][warehouse_expand_v2] wid=" + warehouse_id + " cargo_units=" + str(cargo_u) + " vehicle_units=" + str(vehicle_u))
 	var q_params := {
 		"warehouse_id": warehouse_id,
 		"cargo_capacity_upgrade": str(cargo_u),
@@ -709,16 +750,14 @@ func warehouse_expand_v2(warehouse_id: String, cargo_units: int, vehicle_units: 
 	var url := "%s/warehouse/expand%s" % [BASE_URL, url_query]
 	var headers: PackedStringArray = ['accept: application/json']
 	headers = _apply_auth_header(headers)
-	_current_patch_signal_name = "warehouse_expanded"
 	_diag_enqueue("warehouse_expand_v2", {
 		"url": url,
 		"headers": headers,
 		"purpose": RequestPurpose.NONE,
 		"method": HTTPClient.METHOD_PATCH,
 		"body": "",
-		"signal_name": "warehouse_expanded"
 	})
-	print("[APICalls][warehouse_expand_v2] Enqueued URL=", url)
+	_log_debug("[APICalls][warehouse_expand_v2] Enqueued URL=" + url)
 	# Also enqueue JSON fallback immediately (optional) if first returns no change we can trigger manually
 	var body_dict := {
 		"warehouse_id": warehouse_id,
@@ -732,9 +771,8 @@ func warehouse_expand_v2(warehouse_id: String, cargo_units: int, vehicle_units: 
 		"purpose": RequestPurpose.NONE,
 		"method": HTTPClient.METHOD_PATCH,
 		"body": body_json,
-		"signal_name": "warehouse_expanded"
 	})
-	print("[APICalls][warehouse_expand_v2] (Queued JSON fallback second) body=", body_json, " queue_len=", _request_queue.size())
+	_log_debug("[APICalls][warehouse_expand_v2] (Queued JSON fallback second) body=" + body_json + " queue_len=" + str(_request_queue.size()))
 
 func _diagnose_param_types(d: Dictionary) -> Dictionary:
 	var out: Dictionary = {}
@@ -752,7 +790,6 @@ func warehouse_cargo_store(params: Dictionary) -> void:
 		"purpose": RequestPurpose.NONE,
 		"method": HTTPClient.METHOD_PATCH,
 		"body": "",
-		"signal_name": "warehouse_cargo_stored"
 	})
 
 func warehouse_cargo_retrieve(params: Dictionary) -> void:
@@ -765,7 +802,6 @@ func warehouse_cargo_retrieve(params: Dictionary) -> void:
 		"purpose": RequestPurpose.NONE,
 		"method": HTTPClient.METHOD_PATCH,
 		"body": "",
-		"signal_name": "warehouse_cargo_retrieved"
 	})
 
 func warehouse_vehicle_store(params: Dictionary) -> void:
@@ -778,7 +814,6 @@ func warehouse_vehicle_store(params: Dictionary) -> void:
 		"purpose": RequestPurpose.NONE,
 		"method": HTTPClient.METHOD_PATCH,
 		"body": "",
-		"signal_name": "warehouse_vehicle_stored"
 	})
 
 func warehouse_vehicle_retrieve(params: Dictionary) -> void:
@@ -791,7 +826,6 @@ func warehouse_vehicle_retrieve(params: Dictionary) -> void:
 		"purpose": RequestPurpose.NONE,
 		"method": HTTPClient.METHOD_PATCH,
 		"body": "",
-		"signal_name": "warehouse_vehicle_retrieved"
 	})
 
 func warehouse_convoy_spawn(params: Dictionary) -> void:
@@ -813,7 +847,6 @@ func warehouse_convoy_spawn(params: Dictionary) -> void:
 		"purpose": RequestPurpose.NONE,
 		"method": HTTPClient.METHOD_PATCH,
 		"body": "",
-		"signal_name": "warehouse_convoy_spawned"
 	})
 	print("[APICalls][Enqueue] warehouse_convoy_spawn appended queue_len_after=", _request_queue.size())
 
@@ -834,13 +867,7 @@ func warehouse_convoy_spawn_direct(params: Dictionary) -> void:
 		print("[APICalls][Direct] completion result=", result, " code=", code, " bytes=", body.size())
 		var text := body.get_string_from_utf8()
 		print("[APICalls][Direct] body=", text.substr(0, 300))
-		# Attempt to parse JSON
-		var json := JSON.new()
-		if json.parse(text) == OK:
-			emit_signal("warehouse_convoy_spawned", json.data)
-		else:
-			emit_signal("warehouse_convoy_spawned", text)
-			print("[APICalls][Direct] emitted raw text for warehouse_convoy_spawned")
+		# No direct domain signal emissions; services will refresh warehouse state.
 	)
 	var err := req.request(url, headers, HTTPClient.METHOD_PATCH, "")
 	if err != OK:
@@ -888,7 +915,7 @@ func _on_part_compat_request_completed(result: int, response_code: int, _headers
 		"status": response_code,
 		"data": data
 	}
-	print("[PartCompatAPI] RESPONSE payload=", payload)
+	_log_debug("[PartCompatAPI] RESPONSE payload=" + str(payload))
 	emit_signal('part_compatibility_checked', payload)
 	# Cleanup requester
 	if is_instance_valid(requester):
@@ -901,6 +928,7 @@ func get_vendor_data(vendor_id: String) -> void:
 	request_vendor_data(vendor_id)
 
 func buy_cargo(vendor_id: String, convoy_id: String, cargo_id: String, quantity: int) -> void:
+	print("[APICalls][Debug] buy_cargo called. vendor=%s convoy=%s cargo=%s qty=%d" % [vendor_id, convoy_id, cargo_id, quantity])
 	if vendor_id.is_empty() or convoy_id.is_empty() or cargo_id.is_empty():
 		printerr("APICalls (buy_cargo): missing id(s)")
 		return
@@ -977,7 +1005,7 @@ func buy_resource(vendor_id: String, convoy_id: String, resource_type: String, q
 	var url := "%s/vendor/resource/buy?vendor_id=%s&convoy_id=%s&resource_type=%s&quantity=%s" % [BASE_URL, vendor_id, convoy_id, resource_type, qty_str]
 	var headers: PackedStringArray = ['accept: application/json']
 	headers = _apply_auth_header(headers)
-	print("[APICalls][buy_resource] PATCH url=", url, " (query only)")
+	_log_info("[APICalls][buy_resource] PATCH url=" + url + " (query only)")
 	_diag_enqueue("buy_resource", {
 		"url": url,
 		"headers": headers,
@@ -996,7 +1024,7 @@ func sell_resource(vendor_id: String, convoy_id: String, resource_type: String, 
 	var url := "%s/vendor/resource/sell?vendor_id=%s&convoy_id=%s&resource_type=%s&quantity=%s" % [BASE_URL, vendor_id, convoy_id, resource_type, qty_str]
 	var headers: PackedStringArray = ['accept: application/json']
 	headers = _apply_auth_header(headers)
-	print("[APICalls][sell_resource] PATCH url=", url, " (query only)")
+	_log_info("[APICalls][sell_resource] PATCH url=" + url + " (query only)")
 	_diag_enqueue("sell_resource", {
 		"url": url,
 		"headers": headers,
@@ -1020,14 +1048,13 @@ func attach_vehicle_part(vehicle_id: String, part_cargo_id: String) -> void:
 	var url := "%s/vehicle/part/attach?vehicle_id=%s&part_cargo_id=%s" % [BASE_URL, vehicle_id, part_cargo_id]
 	var headers: PackedStringArray = ['accept: application/json']
 	headers = _apply_auth_header(headers)
-	print("[APICalls][attach_vehicle_part] PATCH url=", url, " auth_present=", _auth_bearer_token != "")
+	_log_info("[APICalls][attach_vehicle_part] PATCH url=" + url + " auth_present=" + str(_auth_bearer_token != ""))
 	_diag_enqueue("attach_vehicle_part", {
 		"url": url,
 		"headers": headers,
 		"purpose": RequestPurpose.NONE,
 		"method": HTTPClient.METHOD_PATCH,
 		"body": "",
-		"signal_name": "vehicle_part_attached"
 	})
 
 # --- Mechanics / Part Detach ---
@@ -1044,14 +1071,13 @@ func detach_vehicle_part(vehicle_id: String, part_id: String) -> void:
 	var url := "%s/vehicle/part/detach?vehicle_id=%s&part_id=%s" % [BASE_URL, vehicle_id, part_id]
 	var headers: PackedStringArray = ['accept: application/json']
 	headers = _apply_auth_header(headers)
-	print("[APICalls][detach_vehicle_part] PATCH url=", url, " auth_present=", _auth_bearer_token != "")
+	_log_info("[APICalls][detach_vehicle_part] PATCH url=" + url + " auth_present=" + str(_auth_bearer_token != ""))
 	_diag_enqueue("detach_vehicle_part", {
 		"url": url,
 		"headers": headers,
 		"purpose": RequestPurpose.NONE,
 		"method": HTTPClient.METHOD_PATCH,
 		"body": "",
-		"signal_name": "vehicle_part_detached"
 	})
 
 # --- Mechanics / Vendor Add Part (purchase + install) ---
@@ -1076,14 +1102,13 @@ func add_vehicle_part(vendor_id: String, convoy_id: String, vehicle_id: String, 
 	var url := "%s/vendor/vehicle/part/add?vendor_id=%s&convoy_id=%s&vehicle_id=%s&part_cargo_id=%s" % [BASE_URL, vendor_id, convoy_id, vehicle_id, part_cargo_id]
 	var headers: PackedStringArray = ['accept: application/json']
 	headers = _apply_auth_header(headers)
-	print("[APICalls][add_vehicle_part] PATCH url=", url, " auth_present=", _auth_bearer_token != "")
+	_log_info("[APICalls][add_vehicle_part] PATCH url=" + url + " auth_present=" + str(_auth_bearer_token != ""))
 	_diag_enqueue("add_vehicle_part", {
 		"url": url,
 		"headers": headers,
 		"purpose": RequestPurpose.NONE,
 		"method": HTTPClient.METHOD_PATCH,
 		"body": "",
-		"signal_name": "vehicle_part_added"
 	})
 
 # --- Journey Planning Requests ---
@@ -1106,7 +1131,7 @@ func find_route(convoy_id: String, dest_x: int, dest_y: int) -> void:
 	var url: String = "%s/convoy/journey/find_route?convoy_id=%s&dest_x=%d&dest_y=%d" % [BASE_URL, convoy_id, dest_x, dest_y]
 	var headers: PackedStringArray = ['accept: application/json']
 	headers = _apply_auth_header(headers)
-	print('[APICalls][FIND_ROUTE] Sending POST (query params) url=%s' % url)
+	_log_info('[APICalls][FIND_ROUTE] Sending POST (query params) url=%s' % url)
 	var err = _http_request_route.request(url, headers, HTTPClient.METHOD_POST) # empty body; params in query string
 	if err != OK:
 		var err_msg2 = 'APICalls (find_route): HTTPRequest error code %s' % err
@@ -1131,14 +1156,14 @@ func send_convoy(convoy_id: String, journey_id: String) -> void:
 	var headers: PackedStringArray = ['accept: application/json']
 	headers = _apply_auth_header(headers)
 	var has_auth := _auth_bearer_token != ""
-	print('[APICalls][SEND_JOURNEY] PATCH (query params) ', url, ' auth_present=', has_auth)
+	_log_info('[APICalls][SEND_JOURNEY] PATCH (query params) %s auth_present=%s' % [url, str(has_auth)])
 	var request_details: Dictionary = {
 		"url": url,
 		"headers": headers,
 		"purpose": RequestPurpose.NONE,
 		"method": HTTPClient.METHOD_PATCH,
 		"body": "", # No body; params in query string
-		"signal_name": "convoy_sent_on_journey"
+		"signal_name": "" # Phase 4: no domain-level signal emitted; services will refresh
 	}
 	_diag_enqueue("send_convoy", request_details)
 
@@ -1157,26 +1182,26 @@ func cancel_convoy_journey(convoy_id: String, journey_id: String) -> void:
 	var url := "%s/convoy/journey/cancel?convoy_id=%s&journey_id=%s" % [BASE_URL, convoy_id, journey_id]
 	var headers: PackedStringArray = ['accept: application/json']
 	headers = _apply_auth_header(headers)
-	print('[APICalls][CANCEL_JOURNEY] PATCH (query params) ', url, ' auth_present=', _auth_bearer_token != "")
+	_log_info('[APICalls][CANCEL_JOURNEY] PATCH (query params) %s auth_present=%s' % [url, str(_auth_bearer_token != "")])
 	var request_details: Dictionary = {
 		"url": url,
 		"headers": headers,
 		"purpose": RequestPurpose.NONE,
 		"method": HTTPClient.METHOD_PATCH,
 		"body": "",
-		"signal_name": "convoy_journey_canceled"
+		"signal_name": "" # Phase 4: no domain-level signal emitted; services will refresh
 	}
 	_diag_enqueue("cancel_convoy_journey", request_details)
 
 func _on_route_request_completed(result: int, response_code: int, _headers: PackedStringArray, body: PackedByteArray) -> void:
-	print('[APICalls][FIND_ROUTE] request_completed result=%d code=%d bytes=%d' % [result, response_code, body.size()])
+	_log_info('[APICalls][FIND_ROUTE] request_completed result=%d code=%d bytes=%d' % [result, response_code, body.size()])
 	if result != HTTPRequest.RESULT_SUCCESS:
 		var err_msg = 'APICalls (_on_route_request_completed): Network error result=%d code=%d' % [result, response_code]
 		printerr(err_msg)
 		emit_signal('fetch_error', err_msg)
 		return
 	var response_body_text: String = body.get_string_from_utf8()
-	print('[APICalls][FIND_ROUTE] Raw body: ', response_body_text)
+	_log_debug('[APICalls][FIND_ROUTE] Raw body: ' + response_body_text)
 	var json_response = JSON.parse_string(response_body_text)
 	if json_response == null:
 		var error_msg_json = 'APICalls (_on_route_request_completed): Failed to parse JSON.'
@@ -1186,18 +1211,18 @@ func _on_route_request_completed(result: int, response_code: int, _headers: Pack
 		return
 	# Expected primary shape: Array of route dicts
 	if json_response is Array:
-		print('[APICalls][FIND_ROUTE] Parsed %d route choice(s) (Array).' % json_response.size())
+		_log_info('[APICalls][FIND_ROUTE] Parsed %d route choice(s) (Array).' % json_response.size())
 		emit_signal('route_choices_received', json_response)
 		return
 	if json_response is Dictionary:
 		# Accept wrappers or single journey dict
 		if json_response.has('routes') and json_response['routes'] is Array:
 			var arr: Array = json_response['routes']
-			print('[APICalls][FIND_ROUTE] Parsed %d route choice(s) from routes[] wrapper.' % arr.size())
+			_log_info('[APICalls][FIND_ROUTE] Parsed %d route choice(s) from routes[] wrapper.' % arr.size())
 			emit_signal('route_choices_received', arr)
 			return
 		elif json_response.has('journey'):
-			print('[APICalls][FIND_ROUTE] Received single route object; wrapping into array.')
+			_log_info('[APICalls][FIND_ROUTE] Received single route object; wrapping into array.')
 			emit_signal('route_choices_received', [json_response])
 			return
 		elif json_response.has('detail'):
@@ -1236,6 +1261,14 @@ func _create_queue_watchdog():
 			print("[APICalls][Watchdog] Still in progress (purpose=%s). If stuck, will allow next watchdog (requeue)." % RequestPurpose.keys()[_current_request_purpose])
 	)
 	t.start()
+
+# Helper: emit auth state into SignalHub if present
+func _emit_hub_auth_state(state: String) -> void:
+	if not is_inside_tree():
+		return
+	var hub := get_node_or_null('/root/SignalHub')
+	if is_instance_valid(hub) and hub.has_signal('auth_state_changed'):
+		hub.auth_state_changed.emit(state)
 
 func _start_request_status_probe():
 	if has_node('HTTPRequestStatusProbe'):
@@ -1295,7 +1328,11 @@ func _retry_auth_url_alternate_host():
 	})
 	_process_queue()
 func _process_queue() -> void:
-	print("[APICalls] _process_queue(): entry. in_progress=%s queue_len=%d" % [str(_is_request_in_progress), _request_queue.size()])
+	print("[APICalls][Debug] _process_queue(): entry. in_progress=%s queue_len=%d" % [str(_is_request_in_progress), _request_queue.size()])
+	# When instantiated as a plain script (e.g., unit tests), we are not in the scene tree
+	# and should not attempt to dispatch HTTP requests.
+	if not is_inside_tree():
+		return
 	if _is_request_in_progress or _request_queue.is_empty():
 		return
 	if _is_auth_token_expired():
@@ -1339,6 +1376,8 @@ func _process_queue() -> void:
 		call_deferred("_process_queue")
 
 func _arm_request_timeout():
+	if _disable_request_timeouts_for_tests:
+		return
 	if _request_timeout_timer and is_instance_valid(_request_timeout_timer):
 		_request_timeout_timer.queue_free()
 	var timeout_sec = 0.0
@@ -1405,40 +1444,52 @@ func _abort_map_request_for_auth():
 func _on_request_completed(result: int, response_code: int, _headers: PackedStringArray, body: PackedByteArray) -> void:
 	var done_ms := Time.get_ticks_msec()
 	var http_elapsed_ms := done_ms - _current_request_start_ms
-	print("[APICalls] _on_request_completed() purpose=%s result=%d code=%d url=%s id=%d http_ms=%d" % [RequestPurpose.keys()[_current_request_purpose], result, response_code, _last_requested_url, _current_client_txn_id, http_elapsed_ms])
+	_log_info("[APICalls] _on_request_completed() purpose=%s result=%d code=%d url=%s id=%d http_ms=%d" % [RequestPurpose.keys()[_current_request_purpose], result, response_code, _last_requested_url, _current_client_txn_id, http_elapsed_ms])
 	if _current_patch_signal_name == "warehouse_convoy_spawned":
-		print("[APICalls][SpawnConvoy] completion result=%d http_code=%d body_bytes=%d" % [result, response_code, body.size()])
+		_log_info("[APICalls][SpawnConvoy] completion result=%d http_code=%d body_bytes=%d" % [result, response_code, body.size()])
 	var request_purpose_at_start = _current_request_purpose
 	# Global 401 handling (auth expired)
 	if response_code == 401 and _auth_bearer_token != "" and request_purpose_at_start != RequestPurpose.AUTH_STATUS:
-		print("[APICalls] Received 401 with auth token present. Treating as expired.")
+		_log_info("[APICalls] Received 401 with auth token present. Treating as expired.")
 		clear_auth_session_token()
 		emit_signal("auth_expired")
+		_emit_hub_auth_state("expired")
 		# Continue to normal error handling path below
 	# PATCH transaction responses (purpose == NONE, but signal_name is set)
 	if _current_request_purpose == RequestPurpose.NONE and _current_patch_signal_name != "":
 		if result == HTTPRequest.RESULT_SUCCESS and (response_code >= 200 and response_code < 300):
-			print("[APICalls][PATCH_TXN] signal=%s code=%d size=%d url=%s id=%d http_ms=%d" % [_current_patch_signal_name, response_code, body.size(), _last_requested_url, _current_client_txn_id, http_elapsed_ms])
+			_log_info("[APICalls][PATCH_TXN] signal=%s code=%d size=%d url=%s id=%d http_ms=%d" % [_current_patch_signal_name, response_code, body.size(), _last_requested_url, _current_client_txn_id, http_elapsed_ms])
 			var response_body_text = body.get_string_from_utf8()
 			var preview = response_body_text.substr(0, 400)
-			print("[APICalls][PATCH_TXN] body_preview=", preview)
+			print("[APICalls][Debug] Transaction Response Body: ", response_body_text)
+			_log_debug("[APICalls][PATCH_TXN] body_preview=" + preview)
 			var json_response = JSON.parse_string(response_body_text)
 			if json_response == null:
 				# Accept plain-text bodies (e.g., UUID) by emitting the raw string
-				print("[APICalls][PATCH_TXN] Non-JSON success body; emitting raw text for signal '%s'." % _current_patch_signal_name)
-				emit_signal(_current_patch_signal_name, response_body_text)
+				var sig_n := _current_patch_signal_name
+				var is_txn := (sig_n == "vehicle_bought" or sig_n == "vehicle_sold" or sig_n == "cargo_bought" or sig_n == "cargo_sold" or sig_n == "resource_bought" or sig_n == "resource_sold")
+				var can_emit := has_signal(sig_n)
+				if not is_txn and can_emit:
+					_log_info("[APICalls][PATCH_TXN] Non-JSON success body; emitting raw text for signal '%s'." % sig_n)
+					emit_signal(sig_n, response_body_text)
+				else:
+					_log_info("[APICalls][PATCH_TXN] Non-JSON success for '%s'; skipping emit (services will refresh or signal removed)." % sig_n)
 			else:
 				# Normalize common txn payloads: if server wraps convoy in 'convoy_after', emit the inner convoy
-				if typeof(json_response) == TYPE_DICTIONARY:
-					var sig := _current_patch_signal_name
-					var is_txn_sig := (sig == "vehicle_bought" or sig == "vehicle_sold" or sig == "cargo_bought" or sig == "cargo_sold" or sig == "resource_bought" or sig == "resource_sold")
-					if is_txn_sig and json_response.has("convoy_after") and typeof(json_response["convoy_after"]) == TYPE_DICTIONARY:
-						print("[APICalls][PATCH_TXN] Unwrapping 'convoy_after' for signal '", sig, "'.")
-						emit_signal(_current_patch_signal_name, json_response["convoy_after"])
+				var sig2 := _current_patch_signal_name
+				var skip_emit := false
+				var can_emit2 := has_signal(sig2)
+				if typeof(json_response) == TYPE_DICTIONARY and not skip_emit and can_emit2:
+					if json_response.has("convoy_after") and typeof(json_response["convoy_after"]) == TYPE_DICTIONARY:
+						_log_info("[APICalls][PATCH_TXN] Unwrapping 'convoy_after' for signal '" + sig2 + "'.")
+						emit_signal(sig2, json_response["convoy_after"])
 						_complete_current_request()
 						return
-				print("APICalls: Transaction '%s' successful. Emitting signal with data." % _current_patch_signal_name)
-				emit_signal(_current_patch_signal_name, json_response)
+				if not skip_emit and can_emit2:
+					_log_info("APICalls: Transaction '%s' successful. Emitting signal with data." % sig2)
+					emit_signal(sig2, json_response)
+				else:
+					_log_info("APICalls: Transaction '%s' successful. Skipping emit (services will refresh or signal removed)." % sig2)
 			
 			_complete_current_request()
 			return
@@ -1449,7 +1500,7 @@ func _on_request_completed(result: int, response_code: int, _headers: PackedStri
 				legacy_url = legacy_url.replace("/vendor/cargo/buy?", "/vendor/buy_cargo?")
 				legacy_url = legacy_url.replace("/vendor/cargo/sell?", "/vendor/sell_cargo?")
 				if legacy_url != _last_requested_url:
-					print("[APICalls][PATCH_TXN][Fallback] 404 on new cargo route; retrying legacy URL=", legacy_url)
+					_log_info("[APICalls][PATCH_TXN][Fallback] 404 on new cargo route; retrying legacy URL=" + legacy_url)
 					# Mark current attempt ended and enqueue fallback
 					_is_request_in_progress = false
 					_current_request_purpose = RequestPurpose.NONE
@@ -1491,7 +1542,7 @@ func _on_request_completed(result: int, response_code: int, _headers: PackedStri
 				# Enqueue the first viable candidate
 				if not candidates.is_empty():
 					var alt_url := candidates[0]
-					print("[APICalls][PATCH_TXN][Fallback] 404 on vehicle route; retrying alternate URL=", alt_url)
+					_log_info("[APICalls][PATCH_TXN][Fallback] 404 on vehicle route; retrying alternate URL=" + alt_url)
 					_is_request_in_progress = false
 					_current_request_purpose = RequestPurpose.NONE
 					var headers2: PackedStringArray = ['accept: application/json']
@@ -1506,9 +1557,10 @@ func _on_request_completed(result: int, response_code: int, _headers: PackedStri
 					})
 					_process_queue()
 					return
-			print("[APICalls][PATCH_TXN] signal=%s FAILED result=%d code=%d url=%s id=%d http_ms=%d" % [_current_patch_signal_name, result, response_code, _last_requested_url, _current_client_txn_id, http_elapsed_ms])
+			_log_info("[APICalls][PATCH_TXN] signal=%s FAILED result=%d code=%d url=%s id=%d http_ms=%d" % [_current_patch_signal_name, result, response_code, _last_requested_url, _current_client_txn_id, http_elapsed_ms])
 			var fail_body_text := body.get_string_from_utf8()
 			var fail_preview := fail_body_text.substr(0, 400)
+			print("[APICalls][Debug] Transaction Failed. Code: %d. Body: %s" % [response_code, fail_body_text])
 			print("[APICalls][PATCH_TXN] fail_body_preview=", fail_preview)
 			# Try to parse JSON error for clearer feedback (e.g. FastAPI validation 'detail')
 			var fail_json = JSON.parse_string(fail_body_text)
@@ -1590,7 +1642,7 @@ func _on_request_completed(result: int, response_code: int, _headers: PackedStri
 			final_convoy_list = json_response
 		elif json_response is Dictionary:
 			# This is likely a user object from /user/get, which contains a convoy list.
-			# Also emit the full user object for GameDataManager to cache.
+			# Also emit the full user object for downstream consumers.
 			if request_purpose_at_start == RequestPurpose.USER_CONVOYS:
 				emit_signal('user_data_received', json_response)
 
@@ -1603,6 +1655,9 @@ func _on_request_completed(result: int, response_code: int, _headers: PackedStri
 						break
 				if extracted.is_empty():
 					print("[APICalls] User object received, but no convoy list found inside it. Assuming user has no convoys.")
+					var logger_missing := get_node_or_null('/root/Logger') if is_inside_tree() else null
+					if is_instance_valid(logger_missing) and logger_missing.has_method('warn'):
+						logger_missing.warn("APICalls USER_CONVOYS: user payload missing convoy list keys. url=%s", _last_requested_url)
 					final_convoy_list = []
 				else:
 					final_convoy_list = extracted
@@ -1614,8 +1669,31 @@ func _on_request_completed(result: int, response_code: int, _headers: PackedStri
 			return
 
 		print("APICalls (_on_request_completed - %s): Successfully fetched %s convoy(s). URL: %s" % [RequestPurpose.keys()[request_purpose_at_start], final_convoy_list.size(), _last_requested_url])
-		self.convoys_in_transit = final_convoy_list
-		emit_signal('convoy_data_received', final_convoy_list)
+		var logger2 := get_node_or_null('/root/Logger') if is_inside_tree() else null
+		if is_instance_valid(logger2) and logger2.has_method('info'):
+			logger2.info("APICalls.ok %s count=%s url=%s", RequestPurpose.keys()[request_purpose_at_start], final_convoy_list.size(), _last_requested_url)
+		# Normalize convoy keys for UI/Map consumers (ensure 'convoy_id' and 'convoy_name')
+		var normalized_convoys: Array = []
+		for item in final_convoy_list:
+			if item is Dictionary:
+				var d: Dictionary = (item as Dictionary).duplicate(true)
+				if not d.has("convoy_id"):
+					var raw_id = d.get("id", d.get("convoyId", ""))
+					if typeof(raw_id) != TYPE_NIL and str(raw_id) != "":
+						d["convoy_id"] = str(raw_id)
+				if not d.has("convoy_name"):
+					var raw_name = d.get("convoy_name", d.get("name", d.get("convoyName", "")))
+					if typeof(raw_name) != TYPE_NIL and str(raw_name) != "":
+						d["convoy_name"] = str(raw_name)
+				normalized_convoys.append(d)
+			else:
+				normalized_convoys.append(item)
+		self.convoys_in_transit = normalized_convoys
+		# Route to GameStore (and SignalHub via store) as a non-breaking shim
+		var store := get_node_or_null('/root/GameStore') if is_inside_tree() else null
+		if is_instance_valid(store) and store.has_method('set_convoys'):
+			store.set_convoys(normalized_convoys)
+		emit_signal('convoy_data_received', normalized_convoys)
 		_complete_current_request()
 		return
 
@@ -1650,6 +1728,10 @@ func _on_request_completed(result: int, response_code: int, _headers: PackedStri
 		else:
 			var tiles_array = deserialized_map_data.get("tiles", [])
 			print("APICalls (_on_request_completed - MAP_DATA): Successfully deserialized binary map data. Rows: %s, Cols: %s. URL: %s" % [tiles_array.size(), tiles_array[0].size() if not tiles_array.is_empty() else 0, _last_requested_url])
+			# Route to GameStore (and SignalHub via store)
+			var store := get_node_or_null('/root/GameStore') if is_inside_tree() else null
+			if is_instance_valid(store) and store.has_method('set_map'):
+				store.set_map(deserialized_map_data.get('tiles', []), deserialized_map_data.get('settlements', []))
 			emit_signal('map_data_received', deserialized_map_data)
 		_complete_current_request()
 		return
@@ -1670,7 +1752,10 @@ func _on_request_completed(result: int, response_code: int, _headers: PackedStri
 		else:
 			# SUCCESS with user data
 			print("APICalls (_on_request_completed - USER_DATA): Successfully fetched user data. URL: %s" % _last_requested_url)
-			# print("  - User Money: %s" % json_response.get("money", "N/A"))
+			# Update GameStore then emit legacy signal
+			var store := get_node_or_null('/root/GameStore') if is_inside_tree() else null
+			if is_instance_valid(store) and store.has_method('set_user'):
+				store.set_user(json_response)
 			emit_signal('user_data_received', json_response)
 
 		_complete_current_request()
@@ -1790,6 +1875,7 @@ func _on_request_completed(result: int, response_code: int, _headers: PackedStri
 			var status: String = str(json_response.get('status', 'pending'))
 			print('[APICalls][AUTH_STATUS] attempt=%d/%d status=%s state=%s' % [_auth_poll.attempt, _auth_poll.max_attempts, status, _auth_poll.state])
 			emit_signal('auth_status_update', status)
+			_emit_hub_auth_state(status)
 			if status == 'pending':
 				_auth_poll.attempt += 1
 				if _auth_poll.attempt >= _auth_poll.max_attempts:
@@ -1816,6 +1902,7 @@ func _on_request_completed(result: int, response_code: int, _headers: PackedStri
 					_auth_me_resolve_attempts = 0
 					print('[APICalls][AUTH_STATUS] Forcing /auth/me resolution now that token is set.')
 					resolve_current_user_id(true)
+					_emit_hub_auth_state('complete')
 			else:
 				_auth_poll.active = false
 				_login_in_progress = false
@@ -1874,6 +1961,10 @@ func _on_map_request_completed(result: int, response_code: int, _headers: Packed
 		emit_signal('fetch_error', 'Map deserialization failed')
 		return
 	print('[APICalls][MAP] Deserialized map: rows=%d cols=%d' % [deserialized.tiles.size(), deserialized.tiles[0].size() if deserialized.tiles.size() > 0 else 0])
+	# Route to GameStore (and SignalHub via store) as a non-breaking shim
+	var store := get_node_or_null('/root/GameStore') if is_inside_tree() else null
+	if is_instance_valid(store) and store.has_method('set_map'):
+		store.set_map(deserialized.get('tiles', []), deserialized.get('settlements', []))
 	emit_signal('map_data_received', deserialized)
 func _decode_jwt_expiry(token: String) -> int:
 	if token == "":
@@ -1977,13 +2068,12 @@ func _on_create_convoy_completed(result: int, response_code: int, _headers: Pack
 	if ok:
 		if typeof(payload) == TYPE_DICTIONARY:
 			print("[APICalls][create_convoy] Success http=", response_code, " payload keys=", payload.keys())
-			emit_signal("convoy_created", payload)
 		elif typeof(payload) == TYPE_STRING:
 			print("[APICalls][create_convoy] Success (UUID string) http=", response_code, " uuid=", payload)
-			emit_signal("convoy_created", {"convoy_id": payload})
 		else:
 			print("[APICalls][create_convoy] Success http=", response_code, " non-JSON or unexpected type; raw=", raw_text.substr(0, 200))
-			emit_signal("convoy_created", {"raw": raw_text})
+		# Signal success to listeners (ConvoyService)
+		emit_signal("convoy_created", payload if typeof(payload) == TYPE_DICTIONARY else {})
 	else:
 		print("[APICalls][create_convoy] Failure result=", result, " http=", response_code, " url=", url_used, " was_retry=", was_retry, " body=", (raw_text.substr(0, 300) if raw_text != "" else "<empty>"))
 		# If the primary endpoint failed (e.g., 404/405/400), try alternate '/convoy/new' once
