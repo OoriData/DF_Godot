@@ -318,31 +318,198 @@ func _populate_destination_list():
 	var convoy_pos = Vector2(convoy_data_received.get("x", 0.0), convoy_data_received.get("y", 0.0))
 
 	# Create a reverse map from vendor_id to settlement_name for quick lookups.
+	# Also map Vendor Name -> Settlement Name to handle non-ID recipient strings.
 	var vendor_to_settlement_map: Dictionary = {}
+	var vendor_name_to_settlement_map: Dictionary = {}
+	var settlement_id_to_name: Dictionary = {}
+
+
+	
 	for settlement in all_settlements:
 		if not (settlement is Dictionary):
 			continue
 		var settlement_dict := settlement as Dictionary
+		var settlement_name = settlement_dict.get("name", "Unknown")
 		var vendors: Variant = settlement_dict.get("vendors", [])
 		if vendors is Array:
 			for vendor in vendors:
-				if vendor is Dictionary and (vendor as Dictionary).has("vendor_id"):
-					vendor_to_settlement_map[str((vendor as Dictionary).get("vendor_id"))] = settlement_dict.get("name")
+				if vendor is Dictionary:
+					var v_id = str(vendor.get("vendor_id", ""))
+					var v_name = str(vendor.get("name", ""))
+					
+					if not v_id.is_empty():
+						vendor_to_settlement_map[v_id] = settlement_name
+					if not v_name.is_empty():
+						vendor_name_to_settlement_map[v_name] = settlement_name
+		
+		# DEBUG: Inspect Green Bay vendors
+		# if settlement_name == "Green Bay": ...
+
+		var s_id = str(settlement_dict.get("id", ""))
+		if not s_id.is_empty():
+			settlement_id_to_name[s_id] = settlement_name
+		var s_settlement_id = str(settlement_dict.get("settlement_id", ""))
+		if not s_settlement_id.is_empty():
+			settlement_id_to_name[s_settlement_id] = settlement_name
+
+	# Fallback: Check if GameStore has a global vendor list (commonly available in this codebase pattern)
+	# This handles cases where dynamic vendors (like mission-specific ones) aren't nested in the settlement snapshot.
+	if is_instance_valid(_store) and _store.has_method("get_vendors"):
+		var all_vendors = _store.get_vendors()
+		if all_vendors is Array:
+			for vendor in all_vendors:
+				if not (vendor is Dictionary): continue
+				var v_id = str(vendor.get("vendor_id", ""))
+				var v_name = str(vendor.get("name", ""))
+				var v_settlement_id = str(vendor.get("settlement_id", "")) # linking key
+				
+				# We need to find the settlement name for this vendor.
+				# If we have settlement_id, we can look it up.
+				var linked_settlement_name = ""
+				
+				# Optimization: check known map first
+				if not v_id.is_empty() and vendor_to_settlement_map.has(v_id):
+					continue
+				
+				# Try to resolve settlement name by ID
+				if not v_settlement_id.is_empty():
+					for s in all_settlements:
+						if str(s.get("id")) == v_settlement_id or str(s.get("settlement_id")) == v_settlement_id:
+							linked_settlement_name = s.get("name", "")
+							break
+				
+				# If resolved, add to maps
+				if not linked_settlement_name.is_empty():
+					if not v_id.is_empty():
+						vendor_to_settlement_map[v_id] = linked_settlement_name
+					if not v_name.is_empty():
+						vendor_name_to_settlement_map[v_name] = linked_settlement_name
+	
+
 
 	# Find any mission-specific destinations by resolving recipient IDs to settlement names.
 	var mission_destinations: Dictionary = {}
+	
+	print("[ConvoyJourneyMenu] Convoy Data Keys: ", convoy_data_received.keys())
+	
+	var vehicles_list = []
 	if convoy_data_received.has("vehicle_details_list"):
-		for vehicle in convoy_data_received.get("vehicle_details_list", []):
-			if vehicle.has("cargo"):
-				for cargo_item in vehicle.get("cargo", []):
-					var recipient_id = cargo_item.get("recipient")
-					if recipient_id != null:
-						var recipient_id_str = str(recipient_id)
-						if vendor_to_settlement_map.has(recipient_id_str):
-							var settlement_name = vendor_to_settlement_map[recipient_id_str]
-							# Store the name of the first mission cargo item found for this destination.
-							if not mission_destinations.has(settlement_name):
-								mission_destinations[settlement_name] = cargo_item.get("name", "Mission Cargo")
+		vehicles_list = convoy_data_received.get("vehicle_details_list", [])
+	elif convoy_data_received.has("vehicles"):
+		vehicles_list = convoy_data_received.get("vehicles", [])
+	
+	if not vehicles_list.is_empty():
+		for vehicle in vehicles_list:
+			# Aggregate all potential cargo sources
+			var all_cargo = []
+			if vehicle.get("cargo_items_typed") is Array:
+				all_cargo.append_array(vehicle.get("cargo_items_typed"))
+			elif vehicle.get("cargo_items") is Array:
+				all_cargo.append_array(vehicle.get("cargo_items"))
+			
+			# Fallback to legacy "cargo" if specific lists are missing or empty? 
+			# Or just include it to be safe.
+			if vehicle.get("cargo") is Array:
+				all_cargo.append_array(vehicle.get("cargo"))
+			
+			if vehicle.get("all_cargo") is Array:
+				all_cargo.append_array(vehicle.get("all_cargo"))
+			
+			print("[ConvoyJourneyMenu] Vehicle cargo count: ", all_cargo.size())
+
+			for cargo_item in all_cargo:
+				if not (cargo_item is Dictionary):
+					continue
+				
+				# Check for mission indicators
+				var match_found = false
+				
+				# 0. Check pre-calculated UI field (unlikely in raw data but checked just in case)
+				if cargo_item.get("recipient_settlement_name") is String:
+					var rsn = str(cargo_item.get("recipient_settlement_name"))
+					if not rsn.is_empty():
+						# Exact match logic
+						if mission_destinations.has(rsn):
+							match_found = true
+						# Check if this name is a valid settlement
+						elif vendor_to_settlement_map.values().has(rsn):
+							mission_destinations[rsn] = cargo_item.get("name", "Mission Cargo")
+							match_found = true
+				
+				if match_found: continue
+
+				if match_found:
+					continue
+
+				# Gather all candidate keys that might identify the destination
+				var candidate_keys = []
+				
+				# string-based keys
+				if cargo_item.get("recipient") != null: candidate_keys.append(str(cargo_item.get("recipient")))
+				if cargo_item.get("recipient_vendor_id") != null: candidate_keys.append(str(cargo_item.get("recipient_vendor_id")))
+				if cargo_item.get("destination_vendor_id") != null: candidate_keys.append(str(cargo_item.get("destination_vendor_id")))
+				if cargo_item.get("mission_vendor_id") != null: candidate_keys.append(str(cargo_item.get("mission_vendor_id")))
+
+				for val in candidate_keys:
+					if val.is_empty(): continue
+					
+					var resolved_settlement = ""
+					
+					# 1. Try ID Match
+					if vendor_to_settlement_map.has(val):
+						resolved_settlement = vendor_to_settlement_map[val]
+					
+					# 2. Try Settlement ID Match Directly
+					elif settlement_id_to_name.has(val):
+						resolved_settlement = settlement_id_to_name[val]
+					
+					# 2. Try Vendor Name Match (Exact)
+					elif vendor_name_to_settlement_map.has(val):
+						resolved_settlement = vendor_name_to_settlement_map[val]
+					
+					# 3. Fuzzy match against Settlement Names directly (e.g. "Green Bay General")
+					else:
+						# optimization: only do fuzzy loop if not found yet
+						var val_lower = val.to_lower()
+						for s_data in all_settlements:
+							var s_name = s_data.get("name", "")
+							if s_name.is_empty(): continue
+							var s_name_lower = s_name.to_lower()
+							
+							# Check if candidate string contains settlement name (e.g. "Green Bay General Store" contains "Green Bay")
+							if val_lower.find(s_name_lower) != -1:
+								resolved_settlement = s_name
+								break
+							# Check reverse (unlikely for settlement names, but possible)
+							if s_name_lower.find(val_lower) != -1:
+								resolved_settlement = s_name
+								break
+						
+						# 4. Fuzzy match against Vendor Names -> link to Settlement
+						if resolved_settlement == "":
+							for v_name in vendor_name_to_settlement_map.keys():
+								# e.g. val="Green Bay Gen" vs v_name="Green Bay General Store"
+								if str(v_name).to_lower().find(val_lower) != -1 or val_lower.find(str(v_name).to_lower()) != -1:
+									resolved_settlement = vendor_name_to_settlement_map[v_name]
+									break
+
+					if resolved_settlement != "":
+						if not mission_destinations.has(resolved_settlement):
+							mission_destinations[resolved_settlement] = cargo_item.get("name", "Mission Cargo")
+						match_found = true
+						print("[ConvoyJourneyMenu] MATCH FOUND for cargo '%s': resolved to '%s' via key '%s'" % [cargo_item.get("name"), resolved_settlement, val])
+						break
+				
+				# if not match_found and (not candidate_keys.is_empty()):
+				# 	print("[ConvoyJourneyMenu] NO MATCH for cargo '%s'. Candidate keys: %s" % [cargo_item.get("name"), candidate_keys])
+				
+				if match_found:
+					continue
+				
+				# Validation / Debug for loose items
+				if cargo_item.get("is_mission", false) or (cargo_item.get("mission_id", "") != ""):
+					# Valid mission item but destination unknown.
+					pass
 
 	var header_label = Label.new()
 	header_label.text = "Choose a Destination:"
@@ -371,15 +538,18 @@ func _populate_destination_list():
 		var b_name = b.data.get("name", "")
 		var a_is_mission = mission_destinations.has(a_name)
 		var b_is_mission = mission_destinations.has(b_name)
-
-		if a_is_mission and not b_is_mission:
-			return true # a comes before b
-		if not a_is_mission and b_is_mission:
-			return false # b comes before a
 		
+		if a_is_mission != b_is_mission:
+			return a_is_mission # true (mission) comes before false
+
 		# If both are missions or both are not, sort by distance
 		return a.distance < b.distance
 	)
+	
+	print("[ConvoyJourneyMenu] Mission Destinations Found: ", mission_destinations.keys())
+	for d in potential_destinations:
+		if mission_destinations.has(d.data.get("name", "")):
+			print("[ConvoyJourneyMenu] Priority Dest: %s" % d.data.get("name"))
 
 	for destination_entry in potential_destinations:
 		var settlement_data = destination_entry.data
