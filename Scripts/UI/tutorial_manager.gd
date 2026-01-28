@@ -201,9 +201,24 @@ func _maybe_start() -> void:
 func _persist_tutorial_stage(new_stage: int) -> void:
 	if not is_instance_valid(_api) or not _api.has_method("update_user_metadata"):
 		return
+
 	var user_id: String = String(_api.current_user_id)
+	
+	# Fallback: if API doesn't have the user_id (e.g. lost state), try to recover from GameStore
 	if user_id.is_empty():
+		if is_instance_valid(_store) and _store.has_method("get_user"):
+			var u: Dictionary = _store.get_user()
+			user_id = String(u.get("id", u.get("user_id", "")))
+			if not user_id.is_empty():
+				print("[Tutorial] Recovered missing user_id from GameStore: ", user_id)
+				# Repair API state
+				if "current_user_id" in _api:
+					_api.current_user_id = user_id
+
+	if user_id.is_empty():
+		printerr("[Tutorial] Error: Cannot persist stage %d; no user_id found in API or Store." % new_stage)
 		return
+
 	var user_data: Dictionary = {}
 	if is_instance_valid(_store) and _store.has_method("get_user"):
 		user_data = _store.get_user()
@@ -362,6 +377,12 @@ func _build_level_steps(level: int) -> Array:
 					copy = "You can use the money from deliveries to upgrade your vehicles or expand your convoy with new ones.  Check back in when your convoy arrives!",
 					action = "message",
 					target = {}
+				},
+				{
+					id = "l6_finish",
+					copy = "",
+					action = "set_stage_and_finish",
+					target = { "stage": 7 }
 				}
 			]
 		7: # Level 7: Tutorial Complete
@@ -509,12 +530,8 @@ func _run_current_step() -> void:
 	_ensure_overlay_visible()
 	_diag_overlay_state("run_current_step:start")
 
-	# --- START TUTORIAL DIAGNOSTIC ---
-	# This log creates a timeline of which step is running.
-	if profiling_enabled:
-		print("[Tutorial][DIAGNOSTIC] --- Running Step: '%s' ---" % _steps[_step].get("id", "N/A"))
 	_perf_step_start_ms = Time.get_ticks_msec()
-	# --- END TUTORIAL DIAGNOSTIC ---
+
 	var step: Dictionary = _steps[_step].duplicate() # Use a copy to allow modification
 	var action := String(step.get("action", "message"))
 	var id := String(step.get("id", ""))
