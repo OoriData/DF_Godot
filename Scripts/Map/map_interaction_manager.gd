@@ -163,11 +163,7 @@ func set_camera_loose_mode(is_loose: bool):
 	if is_instance_valid(map_camera_controller) and map_camera_controller.has_method("set_allow_camera_outside_bounds"):
 		map_camera_controller.set_allow_camera_outside_bounds(is_loose)
 
-func update_data_references(p_all_convoy_data: Array, p_all_settlement_data: Array, p_map_tiles: Array):
-	"""Deprecated (Phase B): MapInteractionManager reads snapshots from GameStore.
-	Kept for compatibility with legacy callers.
-	"""
-	_refresh_snapshots_from_store_or_fallback(p_all_convoy_data, p_all_settlement_data, p_map_tiles)
+	_connect_store_signals_if_available()
 
 func _physics_process(_delta: float):
 	pass # Camera clamping is now handled by MapCameraController's _physics_process

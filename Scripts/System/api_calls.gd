@@ -4,10 +4,6 @@ extends Node
 # Signal to indicate when parsed convoy data has been fetched
 signal convoy_data_received(parsed_convoy_list: Array)
 # Signal to indicate an error occurred during fetching
-signal map_data_received(map_data: Dictionary)
-# Signal to indicate when user data has been fetched
-signal user_data_received(user_data: Dictionary)
-# Signal to indicate an error occurred during fetching
 signal fetch_error(error_message: String)
 
 # --- Auth Signals ---

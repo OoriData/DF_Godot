@@ -3,10 +3,8 @@ extends Control
 signal login_successful(user_id: String)
 
 # Removed obsolete InstructionsLabel (not present in scene)
-@onready var user_id_line_edit: LineEdit = $CenterContainer/VBoxContainer/UserIDLineEdit
 @onready var center_container: CenterContainer = $CenterContainer
 @onready var vbox_container: VBoxContainer = $CenterContainer/VBoxContainer
-@onready var login_button: Button = $CenterContainer/VBoxContainer/LoginButton
 @onready var status_label: Label = $CenterContainer/VBoxContainer/StatusLabel
 @onready var google_button: Button = $CenterContainer/VBoxContainer/GoogleLoginButton  # Discord login button
 
@@ -17,12 +15,6 @@ var _spinner_timer: Timer
 var _oauth_in_progress: bool = false
 
 func _ready() -> void:
-	# Manual user ID login disabled for production. Hide related controls.
-	if is_instance_valid(user_id_line_edit):
-		user_id_line_edit.visible = false
-	if is_instance_valid(login_button):
-		login_button.visible = false
-	# (Disabled) login_button.pressed.connect(_on_login_button_pressed)
 	if is_instance_valid(google_button):
 		google_button.pressed.connect(_on_discord_login_pressed)
 	_connect_hub_store_signals()
@@ -64,15 +56,6 @@ func _connect_api_signals() -> void:
 			api.fetch_error.connect(_on_api_error)
 		if api.has_signal("auth_expired") and not api.auth_expired.is_connected(_on_auth_expired):
 			api.auth_expired.connect(_on_auth_expired)
-
-# Disabled manual user ID login handler (kept for potential future debugging)
-# func _on_login_button_pressed() -> void:
-# 	var user_id: String = user_id_line_edit.text.strip_edges()
-# 	if user_id.is_empty():
-# 		status_label.text = "User ID cannot be empty."
-# 		return
-# 	status_label.text = "Loading user..."
-# 	emit_signal("login_successful", user_id)
 
 func _on_discord_login_pressed() -> void:
 	if _oauth_in_progress:
@@ -158,8 +141,8 @@ func _spin_status() -> void:
 
 func _set_oauth_active(active: bool) -> void:
 	_oauth_in_progress = active
-	google_button.disabled = active
-	login_button.disabled = active
+	if is_instance_valid(google_button):
+		google_button.disabled = active
 	if active and _spinner_timer == null:
 		_spinner_timer = Timer.new()
 		_spinner_timer.wait_time = 0.5
@@ -170,10 +153,6 @@ func _set_oauth_active(active: bool) -> void:
 	elif not active and _spinner_timer:
 		_spinner_timer.queue_free()
 		_spinner_timer = null
-
-func _input(_event: InputEvent) -> void:
-	# Manual user ID entry disabled; ignore enter key path.
-	pass
 
 func show_error(message: String) -> void:
 	status_label.text = message

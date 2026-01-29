@@ -17,8 +17,6 @@ signal inspect_specific_convoy_cargo_requested(convoy_data, item_data)
 @onready var parts_vbox: VBoxContainer = $MainVBox/VehicleTabContainer/Parts/PartsScroll/PartsVBox
 @onready var cargo_vbox: VBoxContainer = $MainVBox/VehicleTabContainer/Cargo/CargoVBox
 @onready var back_to_mechanic_button: Button = $MainVBox/BackButton # repurpose later if needed
-@onready var _menu_buttons_container: Node = null
-@onready var mechanic_button_scene_node: Button = $MainVBox/ActionButtons/MechanicButton
 @onready var mechanics_embed: Node = $MainVBox/VehicleTabContainer/Service/ServiceVBox/MechanicsEmbed
 
 @onready var _store: Node = get_node_or_null("/root/GameStore")
@@ -104,19 +102,7 @@ func _ready():
 		title_label.mouse_filter = Control.MOUSE_FILTER_STOP # Allow it to receive mouse events
 		title_label.gui_input.connect(_on_title_label_gui_input)
 
-	# Old mechanic buttons are deprecated in favor of the Service tab
-	# If one exists in the scene or overview, hide/skip wiring it.
-	var buttons_path_candidates = ["MainVBox/ScrollContainer/ContentVBox/MenuButtons", "MainVBox/VehicleTabContainer/Overview/OverviewVBox/MenuButtons"]
-	for p in buttons_path_candidates:
-		var node = get_node_or_null(p)
-		if node != null:
-			_menu_buttons_container = node
-			break
-	# Ensure scene Mechanic button is hidden
-	if is_instance_valid(mechanic_button_scene_node):
-		mechanic_button_scene_node.visible = false
-
-	# Configure embedded mechanics menu to fit tab chrome
+	# Configuration for Service tab
 	if is_instance_valid(mechanics_embed) and mechanics_embed.has_method("set_embedded_mode"):
 		mechanics_embed.set_embedded_mode(true)
 
@@ -182,9 +168,7 @@ func initialize_with_data(data_or_id: Variant, extra_arg: Variant = null) -> voi
 
 	if data_or_id is Dictionary and is_instance_valid(title_label):
 		_current_convoy_data = (data_or_id as Dictionary).duplicate(true) # Store the full convoy data
-		# Prefer convoy_name but fall back to name
 		title_label.text = _current_convoy_data.get("convoy_name", _current_convoy_data.get("name", "Convoy"))
-		_update_mechanic_button_enabled()
 
 	# Deterministically sort vehicles for stable ordering
 	# Fallback to the canonical 'vehicles' array when 'vehicle_details_list' is absent.
@@ -273,7 +257,6 @@ func _update_ui(convoy: Dictionary) -> void:
 	_current_convoy_data = convoy.duplicate(true)
 	if is_instance_valid(title_label):
 		title_label.text = _current_convoy_data.get("convoy_name", title_label.text)
-		_update_mechanic_button_enabled()
 	# Rebuild vehicle list and selection
 	current_vehicle_list = _stable_sort_vehicles(
 		_current_convoy_data.get("vehicle_details_list", _current_convoy_data.get("vehicles", []))
@@ -1142,23 +1125,3 @@ func _stable_sort_vehicles(vehicles: Array) -> Array:
 			return am < bm
 		return an < bn)
 	return copy
-
-func _update_mechanic_button_enabled():
-	var enabled := false
-	if _current_convoy_data and _current_convoy_data is Dictionary:
-		if _current_convoy_data.has("in_settlement"):
-			enabled = bool(_current_convoy_data.get("in_settlement"))
-		else:
-			# Infer from map snapshot tile settlements.
-			var sx := int(roundf(float(_current_convoy_data.get("x", -9999.0))))
-			var sy := int(roundf(float(_current_convoy_data.get("y", -9999.0))))
-			if is_instance_valid(_store) and _store.has_method("get_tiles"):
-				var tiles: Array = _store.get_tiles()
-				if sy >= 0 and sy < tiles.size():
-					var row: Variant = tiles[sy]
-					if row is Array and sx >= 0 and sx < (row as Array).size():
-						var tile: Variant = (row as Array)[sx]
-						if tile is Dictionary and tile.has("settlements") and tile.settlements is Array and not tile.settlements.is_empty():
-							enabled = true
-	if is_instance_valid(mechanic_button_scene_node):
-		mechanic_button_scene_node.disabled = not enabled

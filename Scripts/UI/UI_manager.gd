@@ -104,8 +104,6 @@ const SETTLEMENT_EMOJIS: Dictionary = {
 @export var connector_line_width: float = 3.0 # slightly thicker center line
 ## Extra width (in pixels) added to the white outline under journey / preview lines
 @export var route_line_outline_extra_width: float = 5.0 # slightly thicker underlay for contrast
-## Whether to also draw simple convoy dots on the map (legacy). Off because ConvoyNode arrows are used.
-@export var draw_convoy_dots: bool = false
 
 # --- State managed by UIManager ---
 var _dragging_panel_node: Panel = null
@@ -913,16 +911,6 @@ func _on_connector_lines_container_draw():
 				convoy_connector_lines_container.draw_polyline(offset_points, Color(1,1,1,0.95), outline_w)
 				# Colored path matching convoy icon (top stroke)
 				convoy_connector_lines_container.draw_polyline(offset_points, convoy_color, connector_line_width)
-		# Optional legacy convoy dots (disabled by default; arrows are displayed via ConvoyNode nodes)
-		if draw_convoy_dots:
-			for convoy in _all_convoy_data_cache:
-				if not (convoy is Dictionary and convoy.has("x") and convoy.has("y")):
-					continue
-				var tile_x = int(convoy["x"])
-				var tile_y = int(convoy["y"])
-				var tile_pos = terrain_tilemap.map_to_local(Vector2i(tile_x, tile_y))
-				var color = _convoy_id_to_color_map_cache.get(str(convoy.get("convoy_id", "")), Color(1,1,1,1))
-				convoy_connector_lines_container.draw_circle(tile_pos, 6, color)
 	# --- Preview Route Drawing (after existing routes so it appears on top) ---
 	if _is_preview_active and _preview_route_x.size() >= 2 and _preview_route_x.size() == _preview_route_y.size():
 		var preview_points: PackedVector2Array = []

@@ -15,7 +15,6 @@ const VendorTradePanel = preload("res://Scenes/VendorTradePanel.tscn")
 # The node 'SettlementInfoTab' is renamed to 'Settlement Info' by its 'name' property in the scene file.
 # The SettlementInfoTab has been removed. All tabs are now dynamically generated.
 @onready var back_button: Button = $MainVBox/BackButton
-var mechanics_tab_vbox: VBoxContainer = null
 var warehouse_button: Button = null
 
 # This will be populated by MenuManager with the specific convoy's data.
@@ -299,7 +298,6 @@ func _clear_tabs():
 		if is_instance_valid(tab_control):
 			vendor_tab_container.remove_child(tab_control)
 			tab_control.queue_free()
-	mechanics_tab_vbox = null
 
 ## Mechanics tab removed: Mechanics is now opened contextually via Install from vendor part purchase.
 
