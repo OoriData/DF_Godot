@@ -1,4 +1,4 @@
-[gd_scene load_steps=5 format=3 uid="uid://cxciw3malgni0"]
+[gd_scene format=3 uid="uid://cxciw3malgni0"]
 
 [ext_resource type="PackedScene" uid="uid://c5w2h7q3g6y0x" path="res://Scenes/UserInfoDisplay.tscn" id="1_j4x7k"]
 [ext_resource type="PackedScene" uid="uid://b7shrt87ucxid" path="res://Scenes/MapView.tscn" id="2_pjpa4"]
@@ -18,7 +18,7 @@ shadow_color = Color(0, 0, 0, 0.55)
 shadow_size = 6
 shadow_offset = Vector2(0, 2)
 
-[node name="MainScreen" type="Control"]
+[node name="MainScreen" type="Control" unique_id=1991463694]
 layout_mode = 3
 anchors_preset = 15
 anchor_right = 1.0
@@ -27,7 +27,7 @@ grow_horizontal = 2
 grow_vertical = 2
 script = ExtResource("3_abcde")
 
-[node name="BackgroundLayer" type="TextureRect" parent="."]
+[node name="BackgroundLayer" type="TextureRect" parent="." unique_id=608362989]
 z_index = -10
 layout_mode = 1
 anchors_preset = 15
@@ -38,7 +38,7 @@ grow_vertical = 2
 mouse_filter = 2
 stretch_mode = 2
 
-[node name="MainContainer" type="VBoxContainer" parent="."]
+[node name="MainContainer" type="VBoxContainer" parent="." unique_id=184885931]
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
@@ -46,22 +46,22 @@ anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
 
-[node name="TopBar" parent="MainContainer" instance=ExtResource("1_j4x7k")]
+[node name="TopBar" parent="MainContainer" unique_id=402530602 instance=ExtResource("1_j4x7k")]
 layout_mode = 2
 
-[node name="MainContent" type="HBoxContainer" parent="MainContainer"]
+[node name="MainContent" type="HBoxContainer" parent="MainContainer" unique_id=1959474049]
 layout_mode = 2
 size_flags_vertical = 3
 theme_override_constants/separation = 0
 
-[node name="MapAndMenuContainer" type="Control" parent="MainContainer/MainContent"]
+[node name="MapAndMenuContainer" type="Control" parent="MainContainer/MainContent" unique_id=1824883098]
 layout_mode = 2
 size_flags_horizontal = 3
 
-[node name="Main" parent="MainContainer/MainContent/MapAndMenuContainer" instance=ExtResource("2_pjpa4")]
+[node name="Main" parent="MainContainer/MainContent/MapAndMenuContainer" unique_id=46825411 instance=ExtResource("2_pjpa4")]
 layout_mode = 1
 
-[node name="MenuContainer" type="PanelContainer" parent="MainContainer/MainContent/MapAndMenuContainer"]
+[node name="MenuContainer" type="PanelContainer" parent="MainContainer/MainContent/MapAndMenuContainer" unique_id=1182338784]
 visible = false
 clip_contents = true
 layout_mode = 1
@@ -73,7 +73,7 @@ grow_horizontal = 2
 grow_vertical = 2
 theme_override_styles/panel = SubResource("1_menu_container_style")
 
-[node name="ModalLayer" type="Control" parent="."]
+[node name="ModalLayer" type="Control" parent="." unique_id=682483634]
 visible = false
 layout_mode = 1
 anchors_preset = 15
@@ -83,7 +83,7 @@ grow_horizontal = 2
 grow_vertical = 2
 mouse_filter = 2
 
-[node name="Scrim" type="ColorRect" parent="ModalLayer"]
+[node name="Scrim" type="ColorRect" parent="ModalLayer" unique_id=1360692916]
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
@@ -92,7 +92,7 @@ grow_horizontal = 2
 grow_vertical = 2
 color = Color(0, 0, 0, 0.5)
 
-[node name="DialogHost" type="CenterContainer" parent="ModalLayer"]
+[node name="DialogHost" type="CenterContainer" parent="ModalLayer" unique_id=267748847]
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0

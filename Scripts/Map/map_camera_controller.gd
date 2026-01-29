@@ -16,6 +16,11 @@ signal focus_tween_finished
 @export var loose_pan_when_menu_open: bool = false # DEFAULT CHANGED: when menu opens, immediately use the shrunken viewport for clamping so edges stay locked to map
 @export var freeze_zoom_for_menu_bounds: bool = true # If true, when menu opens capture zoom and use it for bounds until menu closes
 @export var allow_map_edge_exposure: bool = false # If true, camera center can approach true map edge (viewport may show off-map)
+@export var fit_margin: float = 1.0 # 1.0 means exact fit, < 1.0 adds margin (e.g. 0.95)
+
+enum FitMode { CONTAIN, COVER }
+@export var fit_mode: FitMode = FitMode.COVER
+@export var auto_limit_zoom_out: bool = true # If true, min_camera_zoom_level is adjusted to prevent showing off-map
 
 
 var camera_node: Camera2D = null
@@ -70,11 +75,20 @@ func initialize(p_camera: Camera2D, p_tilemap: TileMapLayer, p_sub_viewport: Sub
  		})
 
 func _ready():
-	pass # Initialization is now handled by the initialize function.
 	if not debug_logging:
 		print("[MCC] Debug logging disabled. Enable 'debug_logging' on MapCameraController to see diagnostics.")
 	if _debug_menu_focus:
 		_create_debug_overlay()
+	
+	# Listen to viewport changes directly to ensure synchronization
+	if is_instance_valid(get_viewport()):
+		get_viewport().size_changed.connect(_on_viewport_size_changed)
+
+func _on_viewport_size_changed():
+	# When the window resizes, we need to update our internal rect
+	if is_instance_valid(get_viewport()):
+		var new_rect = get_viewport().get_visible_rect()
+		update_map_viewport_rect(new_rect)
 
 
 func update_map_viewport_rect(new_rect: Rect2):
@@ -139,7 +153,7 @@ func _clamp_camera_position():
 	var half_visible_h = visible_world_h * 0.5
 
 	# World width covered by the overlay (menu) – we can extend the right limit by this without exposing off-map in visible region.
-	var occlusion_world_w: float = _overlay_occlusion_px_x / max(zoom, 0.0001)
+	var occlusion_world_w: float = _overlay_occlusion_px_x / max(zoom, 0.1)
 
 	# Left bound: use half of FULL width so left edge never shows off-map.
 	var min_x = map_origin.x + half_full_w
@@ -204,13 +218,23 @@ func _update_camera_limits():
 		_dbg("limits_skip_no_map_size")
 		return
 
-	# Prefer the actual SubViewport render size over any cached rect
 	var viewport_px = map_viewport_rect.size
 	if is_instance_valid(sub_viewport_node):
 		viewport_px = Vector2(sub_viewport_node.size)
 	var effective_viewport_px = viewport_px
 	if _menu_open and loose_pan_when_menu_open and _full_viewport_size != Vector2.ZERO:
 		effective_viewport_px = _full_viewport_size
+	
+	# --- Dynamic Zoom Limit Update ---
+	if auto_limit_zoom_out:
+		var map_w = map_size.x * cell_size.x
+		var map_h = map_size.y * cell_size.y
+		if map_w > 0 and map_h > 0:
+			var zoom_min_x = effective_viewport_px.x / map_w
+			var zoom_min_y = effective_viewport_px.y / map_h
+			var requested_min = max(zoom_min_x, zoom_min_y) if fit_mode == FitMode.COVER else min(zoom_min_x, zoom_min_y)
+			min_camera_zoom_level = requested_min
+	
 	var zoom = max(camera_node.zoom.x, 0.0001)
 	if _menu_open and freeze_zoom_for_menu_bounds:
 		zoom = max(_menu_open_reference_zoom, 0.0001)
@@ -297,7 +321,25 @@ func fit_camera_to_tilemap():
 
 	var zoom_x = viewport_size.x / map_world_bounds.size.x
 	var zoom_y = viewport_size.y / map_world_bounds.size.y
-	var target_zoom = min(zoom_x, zoom_y) * 0.95
+	
+	var target_zoom: float = 1.0
+	if fit_mode == FitMode.COVER:
+		target_zoom = max(zoom_x, zoom_y)
+	else: # FitMode.CONTAIN
+		target_zoom = min(zoom_x, zoom_y)
+		
+	target_zoom *= fit_margin
+
+	# If auto-limiting zoom out, update min_camera_zoom_level dynamically
+	if auto_limit_zoom_out:
+		var min_fill_zoom = max(zoom_x, zoom_y)
+		var min_fit_zoom = min(zoom_x, zoom_y)
+		# If we want to allow seeing the whole map even with bars, use min_fit_zoom.
+		# If we want to ALWAYS fill the screen, use min_fill_zoom.
+		# Let's default to min_fit_zoom if CONTAIN, or min_fill_zoom if COVER.
+		var requested_min = min_fill_zoom if fit_mode == FitMode.COVER else min_fit_zoom
+		min_camera_zoom_level = requested_min
+	
 	target_zoom = clamp(target_zoom, min_camera_zoom_level, max_camera_zoom_level)
 	camera_node.zoom = Vector2(target_zoom, target_zoom)
 	# camera_node.offset = Vector2.ZERO

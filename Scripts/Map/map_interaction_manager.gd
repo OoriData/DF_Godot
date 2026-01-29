@@ -86,6 +86,13 @@ var _current_map_screen_rect: Rect2 # The actual screen rect the map is displaye
 func _ready():
 	# The MapInteractionManager might not need to process input itself if main.gd forwards it.
 	set_process(true) # Enable _process for the hover timer
+	
+	# Auto-detect control scheme based on platform
+	var OS_name = OS.get_name()
+	if OS_name == "Android" or OS_name == "iOS":
+		active_control_scheme = ControlScheme.TOUCH
+		# print("[MIM] Detected mobile platform, switching to TOUCH control scheme.")
+	
 	if is_instance_valid(get_viewport()):
 		_current_map_screen_rect = get_viewport().get_visible_rect() # Initialize
 	else:

@@ -43,6 +43,8 @@ TutorialManager="*res://Scripts/UI/tutorial_manager.gd"
 
 [display]
 
+window/size/viewport_width=2436
+window/size/viewport_height=1125
 window/size/initial_position_type=2
 window/stretch/mode="canvas_items"
 window/stretch/aspect="expand"
