@@ -100,12 +100,10 @@ func _on_user_refresh_requested() -> void:
 
 	_update_display()
 
-func _on_ui_scale_changed(new_scale: float) -> void:
-	"""Applies the new global UI scale to the font sizes of the labels."""
-	if _original_username_font_size > 0:
-		username_label.add_theme_font_size_override("font_size", int(_original_username_font_size * new_scale))
-	if _original_money_font_size > 0:
-		user_money_label.add_theme_font_size_override("font_size", int(_original_money_font_size * new_scale))
+func _on_ui_scale_changed(_new_scale: float) -> void:
+	# Font scaling is now handled globally by content_scale_factor.
+	# We no longer need to manually override font sizes here.
+	pass
 
 
 func _update_display(data: Dictionary = {}):

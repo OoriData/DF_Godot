@@ -114,8 +114,15 @@ func update_map_viewport_rect(new_rect: Rect2):
 		map_viewport_rect = Rect2(Vector2.ZERO, sub_viewport_node.size)
 		# print("[DFCAM-DEBUG] update_map_viewport_rect: new_rect was invalid, using existing SubViewport size=", sub_viewport_node.size)
 
-	# camera_node.offset = Vector2.ZERO
 	_update_camera_limits()
+	
+	# CRITICAL: If auto_limit_zoom_out is active, ensure current zoom doesn't violate new bounds
+	if is_instance_valid(camera_node):
+		var cur_z = camera_node.zoom.x
+		var new_z = clampf(cur_z, min_camera_zoom_level, max_camera_zoom_level)
+		if not is_equal_approx(cur_z, new_z):
+			camera_node.zoom = Vector2(new_z, new_z)
+			emit_signal("camera_zoom_changed", new_z)
 	# Preserve current zoom/position on layout changes; just clamp to new bounds
 	_clamp_camera_position()
 	_dbg("update_map_viewport_rect", {"sub_size": sub_viewport_node.size, "map_viewport_rect": map_viewport_rect, "zoom": (camera_node.zoom.x if is_instance_valid(camera_node) else -1.0), "cam_pos": (camera_node.position if is_instance_valid(camera_node) else Vector2.ZERO)})

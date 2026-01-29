@@ -9,7 +9,7 @@ var _save_path: String = SAVE_PATH
 
 var data := {
 	"ui.scale": 1.4,
-	"ui.menu_open_ratio": 2.0,
+	"ui.menu_open_ratio": 0.5, # Midpoint of the 25%-75% range
 
 
 	"access.high_contrast": false,

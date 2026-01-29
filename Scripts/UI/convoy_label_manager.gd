@@ -103,10 +103,10 @@ func initialize_font_settings(p_theme_font: Font, p_label_settings: LabelSetting
 		_label_settings_ref.font = p_theme_font
 		_dynamic_label_settings = _label_settings_ref.duplicate()
 
-	# Double base font size
+	# Manual font scaling is now handled by content_scale_factor
 	_ui_overall_scale_multiplier = p_ui_scale
 	_font_scaling_base_tile_size = p_font_base_tile_size
-	_base_convoy_title_font_size_ref = int(p_base_convoy_title_fs * 2.0)
+	_base_convoy_title_font_size_ref = p_base_convoy_title_fs 
 	_font_scaling_exponent = p_font_exponent
 	_min_node_font_size = p_min_font
 	_max_node_font_size = int(p_max_font * 4.0) # Adjusted multiplier
@@ -230,24 +230,20 @@ func _update_convoy_panel_content(panel: Panel, convoy_data: Dictionary, p_convo
 
 	var current_convoy_id_str = str(convoy_data.get('convoy_id'))
 
-	# Panel appearance (using member variables for config)
-	var adjusted_base_corner_radius = _base_convoy_panel_corner_radius * _ui_overall_scale_multiplier
-	var scaled_target_screen_corner_radius = adjusted_base_corner_radius * font_render_scale
+	# Panel appearance (content_scale_factor handles global sizing)
+	var scaled_target_screen_corner_radius = _base_convoy_panel_corner_radius * font_render_scale
 	var node_corner_radius_before_clamp = scaled_target_screen_corner_radius / _current_map_zoom_cache
 	var current_panel_corner_radius: float = clamp(node_corner_radius_before_clamp, _min_node_panel_corner_radius, _max_node_panel_corner_radius)
 
-	var adjusted_base_padding_h = _base_convoy_panel_padding_h * _ui_overall_scale_multiplier
-	var scaled_target_screen_padding_h = adjusted_base_padding_h * font_render_scale
+	var scaled_target_screen_padding_h = _base_convoy_panel_padding_h * font_render_scale
 	var node_padding_h_before_clamp = scaled_target_screen_padding_h / _current_map_zoom_cache
 	var current_panel_padding_h: float = clamp(node_padding_h_before_clamp, _min_node_panel_padding, _max_node_panel_padding)
 
-	var adjusted_base_padding_v = _base_convoy_panel_padding_v * _ui_overall_scale_multiplier
-	var scaled_target_screen_padding_v = adjusted_base_padding_v * font_render_scale
+	var scaled_target_screen_padding_v = _base_convoy_panel_padding_v * font_render_scale
 	var node_padding_v_before_clamp = scaled_target_screen_padding_v / _current_map_zoom_cache
 	var current_panel_padding_v: float = clamp(node_padding_v_before_clamp, _min_node_panel_padding, _max_node_panel_padding)
 
-	var adjusted_base_border_width = _base_convoy_panel_border_width * _ui_overall_scale_multiplier
-	var scaled_target_screen_border_width = adjusted_base_border_width * font_render_scale
+	var scaled_target_screen_border_width = _base_convoy_panel_border_width * font_render_scale
 	var node_border_width_before_clamp = scaled_target_screen_border_width / _current_map_zoom_cache
 	var current_panel_border_width: int = clamp(roundi(node_border_width_before_clamp), _min_node_panel_border_width, _max_node_panel_border_width)
 
@@ -558,9 +554,7 @@ func update_convoy_labels(
 	if _font_scaling_base_tile_size > 0.001:
 		base_linear_font_scale = effective_tile_size_on_texture / _font_scaling_base_tile_size
 	var font_render_scale: float = pow(base_linear_font_scale, _font_scaling_exponent)
-	var adjusted_base_font_size = _base_convoy_title_font_size_ref * _ui_overall_scale_multiplier
-	var scaled_target_screen_font_size = adjusted_base_font_size * font_render_scale
-	var node_font_size_before_clamp = scaled_target_screen_font_size / _current_map_zoom_cache
+	var node_font_size_before_clamp = (_base_convoy_title_font_size_ref * font_render_scale) / _current_map_zoom_cache
 	if is_instance_valid(_dynamic_label_settings):
 		_dynamic_label_settings.font_size = clamp(roundi(node_font_size_before_clamp), _min_node_font_size, _max_node_font_size)
 

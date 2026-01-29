@@ -27,6 +27,10 @@ func _ready():
 	_wire_events()
 
 func _init_values():
+	s_menu_ratio.min_value = 0.0
+	s_menu_ratio.max_value = 1.0
+	s_menu_ratio.step = 0.01
+	
 	s_ui_scale.value = float(SM.get_value("ui.scale", 1.4))
 	c_fullscreen.button_pressed = bool(SM.get_value("display.fullscreen", false))
 	_populate_resolution_options()
@@ -34,11 +38,12 @@ func _init_values():
 	c_invert_pan.button_pressed = bool(SM.get_value("controls.invert_pan", false))
 	c_invert_zoom.button_pressed = bool(SM.get_value("controls.invert_zoom", false))
 	c_gestures.button_pressed = bool(SM.get_value("controls.gestures_enabled", true))
-	s_menu_ratio.value = float(SM.get_value("ui.menu_open_ratio", 2.0))
+	s_menu_ratio.value = float(SM.get_value("ui.menu_open_ratio", 0.5))
 	c_high_contrast.button_pressed = bool(SM.get_value("access.high_contrast", false))
 
 func _wire_events():
-	s_ui_scale.value_changed.connect(func(v): SM.set_and_save("ui.scale", v))
+	s_ui_scale.value_changed.connect(_on_ui_scale_value_changed)
+	s_ui_scale.drag_ended.connect(_on_ui_scale_drag_ended)
 	c_fullscreen.toggled.connect(func(b): SM.set_and_save("display.fullscreen", b))
 	resolution_opt.item_selected.connect(_on_resolution_selected)
 	c_invert_pan.toggled.connect(func(b): SM.set_and_save("controls.invert_pan", b))
@@ -56,7 +61,7 @@ func _wire_events():
 func _on_reset_defaults():
 	var defaults := {
 		"ui.scale": 1.4,
-		"ui.menu_open_ratio": 2.0,
+		"ui.menu_open_ratio": 0.5, # Match new default
 		"ui.click_closes_menus": false,
 		"access.high_contrast": false,
 		"display.fullscreen": false,
@@ -98,3 +103,12 @@ func _on_resolution_selected(index: int):
 	var meta: Variant = resolution_opt.get_item_metadata(index)
 	if meta is Vector2i:
 		SM.set_and_save("display.resolution", meta)
+
+func _on_ui_scale_value_changed(_v: float):
+	# Optional: We could apply a "preview" scale here without saving,
+	# but content_scale_factor is quite heavy. Let's stick to debounced or drag_ended.
+	pass
+
+func _on_ui_scale_drag_ended(changed: bool):
+	if changed:
+		SM.set_and_save("ui.scale", s_ui_scale.value)

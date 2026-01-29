@@ -75,7 +75,7 @@ var _opt_invert_pan := false
 var _opt_invert_zoom := false
 var _opt_gestures_enabled := true
 var _opt_click_closes_menus := true
-var _opt_menu_ratio_open := 2.0
+var _opt_menu_ratio_open := 0.5
 
 # --- Animation state ---
 const MENU_ANIM_DURATION := 0.45
@@ -288,11 +288,20 @@ func _on_map_view_gui_input(event: InputEvent):
 func _on_menu_visibility_changed(is_open: bool, _menu_name: String):
 	# Overlay behavior: map stays full size; slide menu over it.
 	if not is_instance_valid(menu_container): return
-	var viewport_rect = get_viewport().get_visible_rect()
-	var full_w: float = viewport_rect.size.x
-	var ratio := _opt_menu_ratio_open / (_opt_menu_ratio_open + 1.0)
-	_menu_target_width = max(200.0, full_w * (ratio if ratio > 0 else MENU_WIDTH_RATIO_DEFAULT))
-	_dbg_menu("menu_visibility_signal", {"is_open": is_open, "target_w": _menu_target_width, "viewport_w": full_w})
+	var viewport_sz = get_viewport_rect().size
+	var full_w: float = viewport_sz.x
+	# Map 0.0-1.0 to 25%-75% of screen width
+	var ratio_pct = lerp(0.25, 0.75, _opt_menu_ratio_open)
+	_menu_target_width = full_w * ratio_pct
+	
+	# Detect and prevent cramming: Enforce a minimum width in logical pixels.
+	# 320 logical pixels is generally enough for most sidebars.
+	if _menu_target_width < 320.0:
+		_menu_target_width = 320.0
+		
+	# Also cap it if the window is tiny to avoid covering everything.
+	if _menu_target_width > full_w * 0.85:
+		_menu_target_width = full_w * 0.85
 	if is_open:
 		var menu_manager = get_node_or_null("/root/MenuManager")
 		var convoy_data: Dictionary = {}
@@ -762,17 +771,31 @@ func _on_setting_changed(key: String, _value: Variant) -> void:
 			_apply_menu_ratio_if_open()
 
 func _apply_menu_ratio_if_open():
-	# If the menu container is visible, update its stretch ratio live
-	if not is_instance_valid(menu_container):
+	# If the menu container is visible, update its width live based on the new ratio
+	if not is_instance_valid(menu_container) or not menu_container.visible:
 		return
-	if menu_container.visible:
-		var main_content = menu_container.get_parent()
-		var main_map = main_content.get_node_or_null("Main") if is_instance_valid(main_content) else null
-		menu_container.size_flags_stretch_ratio = _opt_menu_ratio_open
-		if is_instance_valid(main_map):
-			main_map.size_flags_stretch_ratio = 1.0
-		if is_instance_valid(main_content):
-			main_content.queue_sort()
+		
+	var viewport_sz = get_viewport_rect().size
+	var full_w: float = viewport_sz.x
+	# Map 0.0-1.0 to 25%-75% of screen width
+	var ratio_pct = lerp(0.25, 0.75, _opt_menu_ratio_open)
+	_menu_target_width = full_w * ratio_pct
+	
+	# Detect and prevent cramming
+	if _menu_target_width < 320.0:
+		_menu_target_width = 320.0
+	if _menu_target_width > full_w * 0.85:
+		_menu_target_width = full_w * 0.85
+	
+	# Apply immediately if visible and not currently animating
+	if not _menu_anim_in_progress:
+		menu_container.offset_left = -_menu_target_width
+		_current_menu_occlusion_px = _menu_target_width
+		_update_camera_occlusion_from_menu()
+		# Reposition camera to keep convoy focused if possible
+		if not _last_focused_convoy_data.is_empty() and is_instance_valid(map_camera_controller):
+			if map_camera_controller.has_method("focus_on_convoy"):
+				map_camera_controller.focus_on_convoy(_last_focused_convoy_data)
 
 
 # Called when the menu asks specifically to focus on a convoy (with data)

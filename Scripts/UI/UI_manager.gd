@@ -338,7 +338,7 @@ func update_ui_elements(
 			label_settings.font,
 			label_settings,
 			base_convoy_title_font_size,
-			ui_overall_scale_multiplier,
+			1.0, # ui_overall_scale_multiplier is now handled by content_scale_factor
 			font_scaling_base_tile_size,
 			font_scaling_exponent,
 			min_node_font_size,
@@ -592,25 +592,25 @@ func _update_settlement_panel_content(panel: Panel, settlement_info: Dictionary)
 	var label_node: Label = panel.get_meta("label_node_ref")
 	var style_box: StyleBoxFlat = panel.get_meta("style_box_ref")
 	if not is_instance_valid(label_node) or not is_instance_valid(style_box): return
-	# Font size and panel sizing use only exported variables and ui_overall_scale_multiplier
+	# Font size and panel sizing now rely on content_scale_factor
 	var current_settlement_font_size: int = clamp(
-		roundi((base_settlement_font_size * ui_overall_scale_multiplier) / max(0.0001, _current_map_zoom_cache)),
+		roundi(base_settlement_font_size / max(0.0001, _current_map_zoom_cache)),
 		min_node_font_size,
 		max_node_font_size
 	)
 	# Scale panel visuals inversely with zoom so the box scales along with the text
 	var current_settlement_panel_corner_radius: float = clamp(
-		(base_settlement_panel_corner_radius * ui_overall_scale_multiplier) / max(0.0001, _current_map_zoom_cache),
+		base_settlement_panel_corner_radius / max(0.0001, _current_map_zoom_cache),
 		min_node_panel_corner_radius,
 		max_node_panel_corner_radius
 	)
 	var current_settlement_panel_padding_h: float = clamp(
-		(base_settlement_panel_padding_h * ui_overall_scale_multiplier) / max(0.0001, _current_map_zoom_cache),
+		base_settlement_panel_padding_h / max(0.0001, _current_map_zoom_cache),
 		min_node_panel_padding,
 		max_node_panel_padding
 	)
 	var current_settlement_panel_padding_v: float = clamp(
-		(base_settlement_panel_padding_v * ui_overall_scale_multiplier) / max(0.0001, _current_map_zoom_cache),
+		base_settlement_panel_padding_v / max(0.0001, _current_map_zoom_cache),
 		min_node_panel_padding,
 		max_node_panel_padding
 	)
