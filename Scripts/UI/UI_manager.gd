@@ -358,13 +358,9 @@ func update_ui_elements(
 	# 	if s is Dictionary:
 	# 		print("  Settlement:", s.get('name', 'N/A'), "coords:", s.get('x', 'N/A'), s.get('y', 'N/A'))
 	
-	# Suppress heavy label rebuilds during light updates if a Control currently holds focus
-	# to avoid disruptive deselection while the user is interacting with menus.
-	# Godot 4: use Viewport.gui_get_focus_owner() instead of SceneTree.get_focus_owner().
-	var focus_owner: Control = get_viewport().gui_get_focus_owner()
-	var suppress_rebuild: bool = _is_light_ui_update and is_instance_valid(focus_owner)
-	if not suppress_rebuild:
-		_draw_interactive_labels(current_hover_info)
+	# Always update settlement labels - they are not focus-sensitive and should respond
+	# to hover and selection changes immediately, even when UI elements have focus.
+	_draw_interactive_labels(current_hover_info)
 	# Provide drawing parameters to ConvoyLabelManager before updating labels
 	if is_instance_valid(convoy_label_manager) \
 			and convoy_label_manager.has_method("update_drawing_parameters") \
@@ -951,4 +947,13 @@ func _on_store_settlements_changed(settlement_data_list: Array) -> void:
 
 func _on_ui_scale_changed(new_scale: float):
 	ui_overall_scale_multiplier = new_scale
+	# Update viewport rect to ensure proper clamping after scale changes
+	var map_view = get_node_or_null("/root/Main/MainScreen/MainContainer/MainContent/MapView")
+	if is_instance_valid(map_view):
+		var map_display_node = map_view.get_node_or_null("MapDisplay")
+		if is_instance_valid(map_display_node) and map_display_node.has_method("get_global_rect"):
+			_current_map_screen_rect_for_clamping = map_display_node.get_global_rect()
+	else:
+		# Fallback to viewport rect if map_view not found
+		_current_map_screen_rect_for_clamping = get_viewport().get_visible_rect()
 	_draw_interactive_labels({})
