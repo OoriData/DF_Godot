@@ -2,7 +2,7 @@
 extends Node
 
 # Simple logging utility with levels and optional HTTP trace flag.
-# Loads configuration from res://config/app_config.cfg if present.
+# Loads configuration from res://app_config.cfg if present.
 
 enum Level { DEBUG, INFO, WARN, ERROR }
 
@@ -17,7 +17,7 @@ func _ready() -> void:
 
 func _load_from_config() -> void:
 	var cfg := ConfigFile.new()
-	var err := cfg.load("res://config/app_config.cfg")
+	var err := cfg.load("res://app_config.cfg")
 	if err != OK:
 		return
 	var level_str: String = String(cfg.get_value("logging", "level", "info")).to_lower()

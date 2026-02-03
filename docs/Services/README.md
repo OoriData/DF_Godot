@@ -14,5 +14,5 @@ Services:
 - MechanicsService: cargo detail, compat checks, swaps; emits mechanics events.
 - RouteService: choices request/ready/error; journey start/cancel.
 - WarehouseService: warehouse create/get/expand/store/retrieve/spawn.
-- RefreshScheduler: owns polling; intervals configured via [config/app_config.cfg](../../config/app_config.cfg).
+- RefreshScheduler: owns polling; intervals configured via [app_config.cfg](../../app_config.cfg).
 - ConvoySelectionService: resolves selection intent to confirmed selection.

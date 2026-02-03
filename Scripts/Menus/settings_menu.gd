@@ -10,14 +10,20 @@ extends Window
 @onready var c_high_contrast: CheckBox = $Margin/VBox/GameplaySec/HighContrastCheck
 @onready var btn_reset: Button = $Margin/VBox/ButtonsRow/ResetDefaultsButton
 @onready var btn_close: Button = $Margin/VBox/ButtonsRow/CloseButton
+@onready var btn_logout: Button = $Margin/VBox/ButtonsRow/LogoutButton
 
 var SM: Node
+var API: Node
 
 func _ready():
 	SM = get_node_or_null("/root/SettingsManager")
 	if not is_instance_valid(SM):
 		push_error("SettingsMenu: SettingsManager not found")
 		return
+
+	API = get_node_or_null("/root/APICalls")
+	if not is_instance_valid(API):
+		push_error("SettingsMenu: APICalls autoload not found")
 
 	# Make the window's titlebar close button work
 	if not is_connected("close_requested", Callable(self, "_on_close_requested")):
@@ -57,6 +63,8 @@ func _wire_events():
 		btn_close.pressed.connect(func(): hide())
 	if is_instance_valid(btn_reset):
 		btn_reset.pressed.connect(_on_reset_defaults)
+	if is_instance_valid(btn_logout):
+		btn_logout.pressed.connect(_on_logout_pressed)
 
 func _on_reset_defaults():
 	var defaults := {
@@ -112,3 +120,8 @@ func _on_ui_scale_value_changed(_v: float):
 func _on_ui_scale_drag_ended(changed: bool):
 	if changed:
 		SM.set_and_save("ui.scale", s_ui_scale.value)
+
+func _on_logout_pressed():
+	if is_instance_valid(API) and API.has_method("logout"):
+		API.logout()
+		hide()

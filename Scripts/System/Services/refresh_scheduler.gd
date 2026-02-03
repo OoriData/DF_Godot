@@ -65,7 +65,7 @@ func _on_convoy_refresh_timeout() -> void:
 
 func _load_interval_from_config() -> void:
 	var cfg := ConfigFile.new()
-	var err := cfg.load("res://config/app_config.cfg")
+	var err := cfg.load("res://app_config.cfg")
 	if err != OK:
 		return
 	# Optional refresh interval in seconds

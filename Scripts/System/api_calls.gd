@@ -53,7 +53,7 @@ func _init():
 
 func _load_base_url_from_config() -> void:
 	var cfg := ConfigFile.new()
-	var err := cfg.load("res://config/app_config.cfg")
+	var err := cfg.load("res://app_config.cfg")
 	if err != OK:
 		return
 	# Direct base_url wins if provided; otherwise use active_env mapping
