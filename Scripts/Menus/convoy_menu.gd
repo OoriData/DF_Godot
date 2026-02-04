@@ -66,7 +66,7 @@ const COLOR_JOURNEY_PROGRESS_FILL: Color = Color("29b6f6") # Material Light Blue
 @onready var scroll_container: ScrollContainer = $MainVBox/ScrollContainer
 @onready var content_vbox: VBoxContainer = $MainVBox/ScrollContainer/ContentVBox
 
-@onready var vehicles_label: Label = $MainVBox/ScrollContainer/ContentVBox/VehiclesLabel
+@onready var vehicles_label: Label = get_node_or_null("MainVBox/ScrollContainer/ContentVBox/VehiclesLabel")
 # Optional: AllCargoLabel may not exist in the scene variant.
 var all_cargo_label: Label = null
 @onready var back_button: Button = $MainVBox/TopBarHBox/BackButton

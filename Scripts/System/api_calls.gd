@@ -6,6 +6,10 @@ signal convoy_data_received(parsed_convoy_list: Array)
 # Signal to indicate an error occurred during fetching
 signal fetch_error(error_message: String)
 
+# Restored signals (legacy support)
+signal user_data_received(user_data: Dictionary)
+signal map_data_received(map_data: Dictionary)
+
 # --- Auth Signals ---
 signal auth_url_received(data: Dictionary)
 signal auth_token_received(data: Dictionary)
