@@ -120,8 +120,12 @@ func set_map_ready() -> void:
 func _on_initial_data_ready() -> void:
 	_maybe_start()
 
+var _awaiting_convoy_update: bool = false
+
 func _on_convoy_data_updated(_all: Array) -> void:
 	_maybe_start()
+	if _awaiting_convoy_update:
+		_run_current_step()
 
 func _emit_started() -> void:
 	emit_signal("tutorial_started", _level, _step)
@@ -154,6 +158,24 @@ func _get_total_vehicle_count(all_convoys_override: Array = []) -> int:
 			elif c.has("vehicle_inventory") and c["vehicle_inventory"] is Array:
 				count += c["vehicle_inventory"].size()
 	return count
+
+func _is_convoy_at_zero() -> bool:
+	if not is_instance_valid(_store) or not _store.has_method("get_convoys"):
+		return true # Assume bad state if store missing
+	var convoys = _store.get_convoys()
+	if not (convoys is Array) or convoys.is_empty():
+		return true
+	
+	# Check the first convoy (tutorial assumes single convoy context)
+	var c = convoys[0]
+	if c is Dictionary:
+		var x = float(c.get("x", 0.0))
+		var y = float(c.get("y", 0.0))
+		# Tolerance for float comparison, though 0.0 is usually exact from API defaults
+		if abs(x) < 0.1 and abs(y) < 0.1:
+			return true
+	
+	return false
 	
 func get_current_level() -> int:
 	return _level
@@ -579,6 +601,20 @@ func _run_current_step() -> void:
 	if id == "l4_open_journey_menu":
 		_persist_tutorial_stage(5)
 
+	# Race Condition Fix:
+	# Level 5 relies on the convoy being warped from (0,0) to the vendor's location.
+	# If we proceed while x=0,y=0, route finding will fail ("No path found").
+	if id == "l5_open_convoy_menu":
+		if _is_convoy_at_zero():
+			print("[Tutorial] Convoy still at (0,0). Suspending step '%s' until warp update." % id)
+			_awaiting_convoy_update = true
+			# Optionally show a spinner or "Please wait..." here if needed, 
+			# but usually implicit waiting is fine as long as we don't highlight the button yet.
+			return
+		else:
+			_awaiting_convoy_update = false
+			print("[Tutorial] Convoy warp confirmed (x!=0). Proceeding with '%s'." % id)
+
 	# Decide whether to lock or unlock vendor tabs for this step.
 	# This prevents the user from switching to other vendor tabs (e.g., Market)
 	# before the tutorial allows it.
@@ -763,18 +799,18 @@ func _watch_for_destination_pick() -> void:
 		timer.timeout.connect(func(): _watch_for_destination_pick())
 		return
 
-	if not journey_menu.is_connected("find_route_requested", Callable(self, "_on_destination_picked")):
-		journey_menu.find_route_requested.connect(Callable(self, "_on_destination_picked"))
+	if not journey_menu.is_connected("route_preview_started", Callable(self, "_on_destination_picked")):
+		journey_menu.route_preview_started.connect(Callable(self, "_on_destination_picked"))
 
-func _on_destination_picked(_convoy_data, _destination_data) -> void:
+func _on_destination_picked(_route_data) -> void:
 	var journey_menu := _get_journey_menu()
 	if _step < 0 or _step >= _steps.size() or _steps[_step].get("action") != "await_destination_pick":
-		if is_instance_valid(journey_menu) and journey_menu.is_connected("find_route_requested", Callable(self, "_on_destination_picked")):
-			journey_menu.disconnect("find_route_requested", Callable(self, "_on_destination_picked"))
+		if is_instance_valid(journey_menu) and journey_menu.is_connected("route_preview_started", Callable(self, "_on_destination_picked")):
+			journey_menu.disconnect("route_preview_started", Callable(self, "_on_destination_picked"))
 		return
 
-	if is_instance_valid(journey_menu) and journey_menu.is_connected("find_route_requested", Callable(self, "_on_destination_picked")):
-		journey_menu.disconnect("find_route_requested", Callable(self, "_on_destination_picked"))
+	if is_instance_valid(journey_menu) and journey_menu.is_connected("route_preview_started", Callable(self, "_on_destination_picked")):
+		journey_menu.disconnect("route_preview_started", Callable(self, "_on_destination_picked"))
 	
 	_advance_after_frame()
 
