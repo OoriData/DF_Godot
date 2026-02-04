@@ -74,6 +74,8 @@ var current_user_id: String = "" # To store the logged-in user's ID
 var _http_request: Node
 var _http_request_map: HTTPRequest  # Dedicated non-queued requester for map data
 var _http_request_route: HTTPRequest # Dedicated requester for route finding (non-queued)
+var _map_request_start_ms: int = 0
+var _last_map_url: String = ""
 var _http_request_mech_pool: Array = [] # ephemeral HTTPRequest nodes for part compatibility checks
 var convoys_in_transit: Array = []  # This will store the latest parsed list of convoys (either user's or all)
 var _last_requested_url: String = "" # To store the URL for logging on error
@@ -415,6 +417,8 @@ func get_map_data(x_min: int = -1, x_max: int = -1, y_min: int = -1, y_max: int 
 	if _http_request_map.get_http_client_status() == HTTPClient.STATUS_REQUESTING:
 		print('[APICalls] Aborting previous map request to start a new one.')
 		_http_request_map.cancel_request()
+	_last_map_url = url
+	_map_request_start_ms = Time.get_ticks_msec()
 	_log_info('[APICalls][MAP] Dispatching parallel map request: ' + url)
 	var headers: PackedStringArray = ['accept: application/octet-stream']
 	# Apply auth header if we have a token (map now protected)
@@ -1714,20 +1718,29 @@ func _on_request_completed(result: int, response_code: int, _headers: PackedStri
 			_complete_current_request()
 			return
 
-		# The server sends custom binary data, not JSON. We need to deserialize it.
+		# The server sends custom binary data, not JSON. Measure client-side decode + store work.
+		var t_decode_start := Time.get_ticks_msec()
 		var deserialized_map_data: Dictionary = preload("res://Scripts/System/tools.gd").deserialize_map_data(body)
+		var t_decode_end := Time.get_ticks_msec()
 
 		if deserialized_map_data.is_empty():
 			var error_msg = "APICalls (_on_request_completed - MAP_DATA): Deserialization of binary map data failed. The data might be corrupt or the format has changed."
 			printerr(error_msg)
 			emit_signal('fetch_error', error_msg)
 		else:
-			var tiles_array = deserialized_map_data.get("tiles", [])
-			print("APICalls (_on_request_completed - MAP_DATA): Successfully deserialized binary map data. Rows: %s, Cols: %s. URL: %s" % [tiles_array.size(), tiles_array[0].size() if not tiles_array.is_empty() else 0, _last_requested_url])
+			var tiles_array: Array = deserialized_map_data.get("tiles", [])
+			var map_rows: int = tiles_array.size()
+			var map_cols: int = tiles_array[0].size() if not tiles_array.is_empty() else 0
+			var t_store_start := Time.get_ticks_msec()
 			# Route to GameStore (and SignalHub via store)
 			var store := get_node_or_null('/root/GameStore') if is_inside_tree() else null
 			if is_instance_valid(store) and store.has_method('set_map'):
 				store.set_map(deserialized_map_data.get('tiles', []), deserialized_map_data.get('settlements', []))
+			var t_store_end := Time.get_ticks_msec()
+			var decode_ms := t_decode_end - t_decode_start
+			var store_ms := t_store_end - t_store_start
+			var total_client_ms := (t_store_end - t_decode_start)
+			print("APICalls (_on_request_completed - MAP_DATA): map ok rows=%s cols=%s decode_ms=%s store_ms=%s client_ms_total=%s url=%s" % [map_rows, map_cols, decode_ms, store_ms, total_client_ms, _last_requested_url])
 			emit_signal('map_data_received', deserialized_map_data)
 		_complete_current_request()
 		return
@@ -1930,8 +1943,11 @@ func _on_request_completed(result: int, response_code: int, _headers: PackedStri
 					printerr('[APICalls][AUTH_ME] Gave up resolving user id after %d attempts.' % AUTH_ME_MAX_ATTEMPTS)
 		_complete_current_request()
 		return
+
 func _on_map_request_completed(result: int, response_code: int, _headers: PackedStringArray, body: PackedByteArray) -> void:
-	print('[APICalls][MAP][Parallel] completed result=%d code=%d size=%d' % [result, response_code, body.size()])
+	var done_ms := Time.get_ticks_msec()
+	var http_ms := (done_ms - _map_request_start_ms) if _map_request_start_ms > 0 else -1
+	print('[APICalls][MAP][Parallel] completed result=%d code=%d size=%d http_ms=%d url=%s' % [result, response_code, body.size(), http_ms, _last_map_url])
 	if result != HTTPRequest.RESULT_SUCCESS:
 		printerr('[APICalls][MAP] Parallel map request failed (result=%d).' % result)
 		emit_signal('fetch_error', 'Map request failed (result)')
@@ -1951,16 +1967,26 @@ func _on_map_request_completed(result: int, response_code: int, _headers: Packed
 		emit_signal('fetch_error', 'Empty map response')
 		return
 	var tools := preload('res://Scripts/System/tools.gd')
+	var t_decode_start := Time.get_ticks_msec()
 	var deserialized: Dictionary = tools.deserialize_map_data(body)
+	var t_decode_end := Time.get_ticks_msec()
 	if deserialized.is_empty() or not deserialized.has('tiles'):
 		printerr('[APICalls][MAP] Deserialization returned empty/invalid dict.')
 		emit_signal('fetch_error', 'Map deserialization failed')
 		return
-	print('[APICalls][MAP] Deserialized map: rows=%d cols=%d' % [deserialized.tiles.size(), deserialized.tiles[0].size() if deserialized.tiles.size() > 0 else 0])
+	var tiles_array := deserialized.tiles as Array
+	var rows := tiles_array.size()
+	var cols := (tiles_array[0] as Array).size() if rows > 0 else 0
+	var t_store_start := Time.get_ticks_msec()
 	# Route to GameStore (and SignalHub via store) as a non-breaking shim
 	var store := get_node_or_null('/root/GameStore') if is_inside_tree() else null
 	if is_instance_valid(store) and store.has_method('set_map'):
 		store.set_map(deserialized.get('tiles', []), deserialized.get('settlements', []))
+	var t_store_end := Time.get_ticks_msec()
+	var decode_ms := t_decode_end - t_decode_start
+	var store_ms := t_store_end - t_store_start
+	var client_ms_total := t_store_end - t_decode_start
+	print('[APICalls][MAP] Deserialized map ok: rows=%d cols=%d http_ms=%d decode_ms=%d store_ms=%d client_ms_total=%d size=%d url=%s' % [rows, cols, http_ms, decode_ms, store_ms, client_ms_total, body.size(), _last_map_url])
 	emit_signal('map_data_received', deserialized)
 func _decode_jwt_expiry(token: String) -> int:
 	if token == "":

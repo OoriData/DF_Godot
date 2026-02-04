@@ -29,9 +29,11 @@ var _started: bool = false
 var _resolver: Node = null # Scripts/UI/target_resolver.gd instance
 var _perf_step_start_ms: int = 0
 var _last_vendor_panel_refresh_ms: int = -1
+var _map_ready: bool = false
 
 # Persistence
 const PROGRESS_PATH := "user://tutorial_progress.json"
+const MAX_TUTORIAL_LEVEL := 8
 
 # Overlay scope: "map" (default under MapView onboarding layer) or "ui" (full MainScreen)
 var _overlay_scope: String = "map"
@@ -111,6 +113,10 @@ func _process(delta: float) -> void:
 			_polling_tab_timer = _POLL_TAB_INTERVAL
 			_check_for_tab_selected_poll()
 
+func set_map_ready() -> void:
+	_map_ready = true
+	_try_start_deferred()
+
 func _on_initial_data_ready() -> void:
 	_maybe_start()
 
@@ -156,7 +162,14 @@ func _try_start_deferred():
 	call_deferred("_maybe_start")
 
 func _maybe_start() -> void:
+	if profiling_enabled:
+		print("[Tutorial] _maybe_start invoked. started=", _started, " map_ready=", _map_ready)
 	if _started or not enabled:
+		return
+	# Do not start until the map and camera are ready for focus.
+	if not _map_ready:
+		if profiling_enabled:
+			print("[Tutorial] Delaying start; map not ready yet.")
 		return
 	# Do not start while the first-convoy modal is visible
 	if _is_new_convoy_dialog_visible():
@@ -181,26 +194,50 @@ func _maybe_start() -> void:
 				if tutorial_val is int or tutorial_val is float:
 					server_level = int(tutorial_val)
 
+	# Clamp any server-defined level above our maximum down to MAX_TUTORIAL_LEVEL
+	if server_level > MAX_TUTORIAL_LEVEL:
+		print("[Tutorial] Server tutorial level ", server_level, " above max; clamping to ", MAX_TUTORIAL_LEVEL)
+		server_level = MAX_TUTORIAL_LEVEL
+
 	if server_level > 0:
 		# Server state is the source of truth.
 		_level = server_level
 		_step = 0 # Always start at the beginning of a level
 		print("[Tutorial] Starting from server-defined level: ", _level)
-	elif _level <= 0:
-		# No server state, no local progress file loaded, use default.
+	else:
+		# No server state defined on the backend. Treat this as a fresh
+		# tutorial run and ignore any stale local progress.
 		_level = start_level
+		_step = 0
 		print("[Tutorial] Starting from default level: ", _level)
 	# else: use _level loaded from local file.
 
 	_steps = _load_steps_for_level(_level)
 	_started = true
 	_emit_started()
+	
+	# Softlock check: If we are in Level 1 (Purchase Vehicle) but have 0 money, warn loudly.
+	if _level == 1:
+		var money = 0
+		if is_instance_valid(_store) and _store.has_method("get_user"):
+			var u = _store.get_user()
+			money = int(u.get("money", 0))
+		if money <= 0:
+			printerr("[Tutorial] CRITICAL SOFTLOCK DETECTED: User is at Level 1 but has %s money. Purchase will fail. Check backend STARTER_MONEY config." % money)
+			_show_message("Error: You have no starting money (%s). Please contact support or reset account." % money, false)
+			
 	_run_current_step()
 
 
 func _persist_tutorial_stage(new_stage: int) -> void:
 	if not is_instance_valid(_api) or not _api.has_method("update_user_metadata"):
 		return
+
+	# Enforce an upper bound on the tutorial stage we ever write back.
+	if new_stage > MAX_TUTORIAL_LEVEL:
+		if profiling_enabled:
+			print("[Tutorial] Requested stage ", new_stage, " exceeds max; clamping to ", MAX_TUTORIAL_LEVEL)
+		new_stage = MAX_TUTORIAL_LEVEL
 
 	var user_id: String = String(_api.current_user_id)
 	
@@ -840,8 +877,8 @@ func _emit_finished() -> void:
 	# For most levels, we automatically advance the server stage.
 	# Level 5 advances to 6 via a special "set_stage_and_finish" action.
 	# We also prevent level 6 from advancing to 7, as that is handled by the server on convoy arrival.
-	if _level != 5 and _level != 6:
-		_persist_tutorial_stage(_level + 1)
+	if _level != 5 and _level != 6 and _level < MAX_TUTORIAL_LEVEL:
+		_persist_tutorial_stage(min(_level + 1, MAX_TUTORIAL_LEVEL))
 
 	# Advance to the next level
 	_level += 1

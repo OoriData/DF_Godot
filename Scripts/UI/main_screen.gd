@@ -12,6 +12,7 @@ var _interactive_state_is_pending: bool = false
 var _pending_interactive_state: bool = false
 var _onboarding_layer: Control = null
 var _map_is_interactive: bool = true # New flag to control map input
+var _map_loading_overlay: Control = null
 
 @onready var menu_container = $MainContainer/MainContent/MapAndMenuContainer/MenuContainer
 @onready var top_bar = $MainContainer/TopBar
@@ -472,6 +473,12 @@ func _on_store_convoys_changed(convoys: Array):
 	if onboarding_log_enabled:
 		print("[Onboarding] store convoys_changed received; convoys count=", (convoys.size() if convoys is Array else -1))
 	_check_or_prompt_new_convoy_from_store()
+	# Once the map is ready for focus, also nudge the TutorialManager to
+	# (re)attempt starting, so whatever stage the user is on resumes.
+	if _map_ready_for_focus:
+		var tm := get_node_or_null("/root/TutorialManager")
+		if is_instance_valid(tm) and tm.has_method("_maybe_start"):
+			tm.call_deferred("_maybe_start")
 
 func _on_store_user_changed(_user: Dictionary):
 	if onboarding_log_enabled:
@@ -481,6 +488,11 @@ func _on_store_user_changed(_user: Dictionary):
 func _check_or_prompt_new_convoy_from_store():
 	var store = get_node_or_null("/root/GameStore")
 	if not is_instance_valid(store):
+		return
+	# Do not run first-convoy onboarding logic until the map is ready for focus.
+	if not _map_ready_for_focus:
+		if onboarding_log_enabled:
+			print("[Onboarding] Map not ready; skipping first-convoy check.")
 		return
 	var convoys = store.get_convoys() if store.has_method("get_convoys") else []
 	var user = store.get_user() if store.has_method("get_user") else {}
@@ -497,6 +509,12 @@ func _check_or_prompt_new_convoy_from_store():
 			elif typeof(t) == TYPE_STRING:
 				var parsed := int(t)
 				tutorial_stage = parsed
+	# If there is no `tutorial` key in metadata (tutorial_stage stays -1),
+	# treat this as a brand-new tutorial player and start at stage 1.
+	# This ensures that fresh users with `{}` metadata still see the
+	# first-convoy onboarding dialog and can progress into the tutorial.
+	if tutorial_stage == -1:
+		tutorial_stage = 1
 	if onboarding_log_enabled:
 		print("[Onboarding] _check_or_prompt_new_convoy_from_store: convoys_is_array=", (convoys is Array),
 			" count=", (convoys.size() if convoys is Array else -1),
@@ -508,6 +526,13 @@ func _check_or_prompt_new_convoy_from_store():
 		_hide_new_convoy_dialog()
 		return
 	if has_any:
+		# User already has at least one convoy. Ensure the tutorial is
+		# started if they're at the beginning (stage 1), and never show
+		# the create-convoy dialog in this case.
+		var tutorial_manager := get_node_or_null("/root/TutorialManager")
+		if is_instance_valid(tutorial_manager) and tutorial_manager.has_method("_maybe_start"):
+			# Defer to avoid fighting with other listeners on the same frame.
+			tutorial_manager.call_deferred("_maybe_start")
 		_hide_new_convoy_dialog()
 		return
 	_show_new_convoy_dialog()
@@ -751,6 +776,43 @@ func _on_new_convoy_canceled():
 		modal_layer.hide()
 
 
+func _build_map_loading_overlay() -> Control:
+	var root := Control.new()
+	root.name = "MapLoadingOverlay"
+	root.set_anchors_preset(Control.PRESET_FULL_RECT)
+	root.offset_left = 0
+	root.offset_top = 0
+	root.offset_right = 0
+	root.offset_bottom = 0
+	root.mouse_filter = Control.MOUSE_FILTER_STOP
+	root.z_index = 200
+
+	var bg := ColorRect.new()
+	bg.color = Color(0, 0, 0, 0.6)
+	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
+	root.add_child(bg)
+
+	var label := Label.new()
+	label.text = "Loading map…"
+	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	label.set_anchors_preset(Control.PRESET_FULL_RECT)
+	root.add_child(label)
+
+	return root
+
+
+func _set_map_loading(is_loading: bool) -> void:
+	if is_loading:
+		if not is_instance_valid(_map_loading_overlay):
+			_map_loading_overlay = _build_map_loading_overlay()
+			add_child(_map_loading_overlay)
+		_map_loading_overlay.visible = true
+	else:
+		if is_instance_valid(_map_loading_overlay):
+			_map_loading_overlay.visible = false
+
+
 # --- Settings integration ---
 func _apply_settings_snapshot():
 	var sm = get_node_or_null("/root/SettingsManager")
@@ -797,7 +859,6 @@ func _apply_menu_ratio_if_open():
 			if map_camera_controller.has_method("focus_on_convoy"):
 				map_camera_controller.focus_on_convoy(_last_focused_convoy_data)
 
-
 # Called when the menu asks specifically to focus on a convoy (with data)
 func _on_convoy_menu_focus_requested(convoy_data: Dictionary):
 	# Ensure layout has settled and camera sees final rect
@@ -826,6 +887,19 @@ func _on_map_ready_for_focus():
 			map_camera_controller.fit_camera_to_tilemap()
 		_has_fitted_camera = true
 		# print("[DFCAM-DEBUG] MainScreen: fit_camera_to_tilemap called.")
+
+	# Inform TutorialManager that the map is now ready so the tutorial
+	# can safely start once convoy/dialog conditions are satisfied.
+	var tm := get_node_or_null("/root/TutorialManager")
+	if is_instance_valid(tm) and tm.has_method("set_map_ready"):
+		# Defer to ensure all layout work for the frame has settled.
+		tm.call_deferred("set_map_ready")
+
+	# Now that the map is ready and the layout is stable, run the
+	# first-convoy onboarding check once using the latest Store snapshot.
+	_check_or_prompt_new_convoy_from_store()
+	# Hide any map-loading overlay if it is still visible.
+	_set_map_loading(false)
 
 
 # Called when the convoy button in the top bar is pressed.

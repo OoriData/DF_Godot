@@ -80,7 +80,36 @@ func set_convoys(convoys: Array) -> void:
 	_maybe_emit_initial_ready()
 
 func set_user(user: Dictionary) -> void:
+	var old_user := _user if _user != null else {}
+	var old_money := 0
+	if old_user.has("money"):
+		var om = old_user["money"]
+		if typeof(om) in [TYPE_INT, TYPE_FLOAT]:
+			old_money = int(om)
+		elif typeof(om) == TYPE_STRING and om.is_valid_float():
+			old_money = int(float(om))
+
 	_user = user if user != null else {}
+	
+	# Robustly parse and normalize 'money'
+	var new_money := 0
+	var raw_money = _user.get("money", 0)
+	var money_type = typeof(raw_money)
+	
+	if money_type in [TYPE_INT, TYPE_FLOAT]:
+		new_money = int(raw_money)
+	elif money_type == TYPE_STRING:
+		if raw_money.is_valid_float():
+			new_money = int(float(raw_money))
+			# Update the dictionary so downstream consumers get an int
+			_user["money"] = new_money
+		else:
+			print("[GameStore] WARN: User money contains invalid string: ", raw_money)
+	
+	var logger := get_node_or_null("/root/Logger")
+	if is_instance_valid(logger) and logger.has_method("info"):
+		logger.info("GameStore.set_user money old=%s new=%s (raw_type=%s val=%s)" % [old_money, new_money, money_type, raw_money])
+		
 	emit_signal("user_changed", _user)
 	var hub := get_node_or_null("/root/SignalHub")
 	if is_instance_valid(hub):
