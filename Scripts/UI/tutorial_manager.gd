@@ -599,17 +599,23 @@ func _run_current_step() -> void:
 	# or at the end of a level (_emit_finished). This block is for specific mid-level triggers.
 	# At the start of level 4 (journey planning), set stage to 5
 	if id == "l4_open_journey_menu":
+		# Note: This ID might not exist in current definitions, but keeping for safety.
 		_persist_tutorial_stage(5)
+
+	# Force stage 6 when opening the journey menu to ensure backend warp trigger fires.
+	if id == "l5_open_journey_menu":
+		print("[Tutorial] forcing stage 6 update to trigger backend warp.")
+		_persist_tutorial_stage(6)
 
 	# Race Condition Fix:
 	# Level 5 relies on the convoy being warped from (0,0) to the vendor's location.
 	# If we proceed while x=0,y=0, route finding will fail ("No path found").
-	if id == "l5_open_convoy_menu":
+	# We check this at `l5_pick_destination` so the user can still navigate the menus while waiting.
+	if id == "l5_pick_destination":
 		if _is_convoy_at_zero():
 			print("[Tutorial] Convoy still at (0,0). Suspending step '%s' until warp update." % id)
+			_show_message("Waiting for convoy location update...", false)
 			_awaiting_convoy_update = true
-			# Optionally show a spinner or "Please wait..." here if needed, 
-			# but usually implicit waiting is fine as long as we don't highlight the button yet.
 			return
 		else:
 			_awaiting_convoy_update = false

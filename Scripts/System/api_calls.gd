@@ -534,6 +534,8 @@ func update_user_metadata(user_id: String, metadata: Dictionary) -> void:
 	# The body should be the metadata dictionary itself, not wrapped in another object.
 	var body_json := JSON.stringify(metadata)
 	
+	print("[APICalls][DEBUG] update_user_metadata: url=", url, " body=", body_json)
+	
 	_diag_enqueue("update_user_metadata", {
 		"url": url,
 		"headers": headers,
