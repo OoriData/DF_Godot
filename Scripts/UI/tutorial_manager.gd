@@ -385,6 +385,13 @@ func _build_level_steps(level: int) -> Array:
 					target = { resolver = "vendor_trade_panel" }, # Highlight the whole panel
 					lock = "soft"
 				},
+				{
+					id = "l4_ensure_top_up",
+					copy = "Make sure your vehicle is fully topped up before leaving.",
+					action = "await_top_up",
+					target = { resolver = "top_up_button" },
+					lock = "soft"
+				},
 			]
 		5: # Level 5: Embark on Your Journey
 			return [
@@ -918,8 +925,10 @@ func _emit_finished() -> void:
 	# Update backend and advance to next level
 	# For most levels, we automatically advance the server stage.
 	# Level 5 advances to 6 via a special "set_stage_and_finish" action.
+	# Level 4 advances to 5, but we MUST NOT set stage 5 locally because the backend
+	# handles the transition (stage 4 + topup -> stage 5 + teleport).
 	# We also prevent level 6 from advancing to 7, as that is handled by the server on convoy arrival.
-	if _level != 5 and _level != 6 and _level < MAX_TUTORIAL_LEVEL:
+	if _level != 4 and _level != 5 and _level != 6 and _level < MAX_TUTORIAL_LEVEL:
 		_persist_tutorial_stage(min(_level + 1, MAX_TUTORIAL_LEVEL))
 
 	# Advance to the next level
@@ -1040,6 +1049,18 @@ func _watch_for_top_up() -> void:
 		return
 
 	_top_up_button_ref = menu.get_node_or_null("MainVBox/TopBarHBox/TopUpButton")
+
+	# Check if already full to avoid softlock
+	if is_instance_valid(_top_up_button_ref):
+		if _top_up_button_ref.disabled and _top_up_button_ref.text.find("Full") != -1:
+			print("[Tutorial] Vehicle already topped up. Advancing.")
+			if _level == 2:
+				_level = 3
+				_emit_finished()
+			else:
+				call_deferred("_advance")
+			return
+
 	if is_instance_valid(_top_up_button_ref) and not _top_up_button_ref.is_connected("pressed", Callable(self, "_on_top_up_pressed")):
 		_top_up_button_ref.pressed.connect(Callable(self, "_on_top_up_pressed"), CONNECT_ONE_SHOT)
 	else:
@@ -1049,12 +1070,17 @@ func _watch_for_top_up() -> void:
 
 func _on_top_up_pressed() -> void:
 	_top_up_button_ref = null
-	# Don't just advance the step. We need to jump from level 2 to level 4.
-	# By setting _level to 3 and calling _emit_finished, we trigger the
-	# standard level transition logic. _emit_finished will increment _level to 4,
-	# update the server stage to 4, and load the steps for the new level.
-	_level = 3
-	_emit_finished()
+	
+	if _level == 2:
+		# Don't just advance the step. We need to jump from level 2 to level 4.
+		# By setting _level to 3 and calling _emit_finished, we trigger the
+		# standard level transition logic. _emit_finished will increment _level to 4,
+		# update the server stage to 4, and load the steps for the new level.
+		_level = 3
+		_emit_finished()
+	else:
+		# Normal progression (e.g. Level 4)
+		call_deferred("_advance")
 
 func _watch_for_oyster_purchase() -> void:
 	if not is_instance_valid(_store):
@@ -1422,10 +1448,10 @@ func _on_vendor_item_purchased(item: Variant, quantity: int, _total_price: float
 			_urchin_override_count += max(1, quantity)
 			_update_urchin_purchase_ui(_urchin_override_count)
 			if _urchin_override_count > 0:
-				# Finish level 4 immediately
+				# Finish step (move to correct top-up step), do NOT force finish level
 				_disconnect_vendor_panel_signals()
-				print("[Tutorial] Urchins purchased (instant). Finishing level 4.")
-				_emit_finished()
+				print("[Tutorial] Urchins purchased. Advancing to next step (Top Up).")
+				call_deferred("_advance")
 				return
 
 	# Oyster step: any amount counts
