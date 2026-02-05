@@ -49,3 +49,24 @@ signal initial_data_ready
 
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
+	
+	# Bridge: Listen to transport-layer errors from APICalls and surface as domain errors
+	var api = get_node_or_null("/root/APICalls")
+	if is_instance_valid(api):
+		if api.has_signal("fetch_error"):
+			if not api.fetch_error.is_connected(_on_api_fetch_error):
+				api.fetch_error.connect(_on_api_fetch_error)
+		else:
+			printerr("SignalHub: APICalls missing fetch_error signal.")
+	else:
+		printerr("SignalHub: APICalls autoload not found.")
+
+func _on_api_fetch_error(message: String) -> void:
+	# Use ErrorTranslator (autoload) to determine if this is an inline-only error
+	var is_inline: bool = false
+	var et = get_node_or_null("/root/ErrorTranslator")
+	if is_instance_valid(et) and et.has_method("is_inline_error"):
+		is_inline = et.is_inline_error(message)
+	
+	# Emit canonical error event
+	error_occurred.emit("API", "FETCH_ERROR", message, is_inline)

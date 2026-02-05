@@ -142,6 +142,8 @@ func _ready():
 	if is_instance_valid(hub):
 		if not hub.is_connected("initial_data_ready", Callable(self, "_on_initial_data_ready")):
 			hub.initial_data_ready.connect(_on_initial_data_ready)
+		if not hub.is_connected("error_occurred", Callable(self, "_on_signal_hub_error_occurred")):
+			hub.error_occurred.connect(_on_signal_hub_error_occurred)
 
 	_error_dialog_scene = load(ERROR_DIALOG_SCENE_PATH)
 # Respond to Control resize events
@@ -540,18 +542,24 @@ func _check_or_prompt_new_convoy_from_store():
 func _on_store_map_changed(_tiles: Array, _settlements: Array):
 	pass # Add map update logic if needed
 
-func _on_api_fetch_error(message: String):
-	# Check if this is an error that should be handled by a specific UI component
-	# and not by the global popup dialog.
-	if ErrorTranslator.is_inline_error(message):
-		print("MainScreen: Ignoring inline error, expected to be handled by component: ", message)
+func _on_signal_hub_error_occurred(_domain: String, _code: String, message: String, inline: bool):
+	# If the error is marked as inline (e.g. toast), do not show a blocking dialog.
+	if inline:
+		if onboarding_log_enabled:
+			print("MainScreen: Ignoring inline error (handled by toasts/components): ", message)
 		return
 
+	# Translate the raw error message to a user-friendly one.
 	var display_message = ErrorTranslator.translate(message)
 	if display_message.is_empty():
-		return # This error is meant to be ignored by the popup
+		return # Ignored error
 
 	_show_error_dialog(display_message)
+
+func _on_api_fetch_error(message: String):
+	# Fallback/Legacy handler if anything still wires directly to APICalls (should be none)
+	# Reuse the new handler logic
+	_on_signal_hub_error_occurred("API", "FETCH_ERROR", message, ErrorTranslator.is_inline_error(message))
 
 func _show_error_dialog(message: String):
 	if not is_instance_valid(_error_dialog_scene):

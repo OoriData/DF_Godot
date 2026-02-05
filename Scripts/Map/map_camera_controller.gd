@@ -37,7 +37,7 @@ var _viewport_updates_suppressed: bool = false # When true, viewport rect update
 var _pending_viewport_rect: Rect2 = Rect2() # Stored most recent rect while suppressed
 var _active_focus_tween: Tween = null # Active tween for smooth camera focusing
 var _overlay_occlusion_px_x: float = 0.0 # Horizontal pixels on right side covered by overlay (menu) and thus not visible
-var _debug_menu_focus: bool = true # Toggle detailed menu focus diagnostics
+var _debug_menu_focus: bool = false # Toggle detailed menu focus diagnostics (set to false to disable overlay)
 var _debug_overlay_label: Label = null
 var _last_tween_target: Vector2 = Vector2.ZERO
 
@@ -77,8 +77,7 @@ func initialize(p_camera: Camera2D, p_tilemap: TileMapLayer, p_sub_viewport: Sub
 func _ready():
 	if not debug_logging:
 		print("[MCC] Debug logging disabled. Enable 'debug_logging' on MapCameraController to see diagnostics.")
-	if _debug_menu_focus:
-		_create_debug_overlay()
+	# Debug overlay is now disabled by default
 	
 	# Listen to viewport changes directly to ensure synchronization
 	if is_instance_valid(get_viewport()):
