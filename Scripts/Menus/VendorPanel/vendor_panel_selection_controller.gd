@@ -42,6 +42,8 @@ static func handle_new_item_selection(panel: Object, p_selected_item: Variant) -
 	panel._last_selected_item_id = new_key
 	panel._last_selection_unique_key = new_key
 	var is_same_selection: bool = previous_key == new_key
+	if not is_same_selection and panel.has_method("_clear_committed_projection"):
+		panel._clear_committed_projection()
 	panel._last_selected_ref = panel.selected_item
 	panel._last_selected_restore_id = restore_id
 

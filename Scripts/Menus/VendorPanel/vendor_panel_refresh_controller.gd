@@ -26,7 +26,10 @@ static func request_authoritative_refresh(panel: Object, convoy_id: String, vend
 	# Best-effort: sync convoy snapshot immediately from store
 	var c: Dictionary = panel._get_convoy_by_id(convoy_id)
 	if c is Dictionary and not c.is_empty():
-		panel.convoy_data = c
+		if panel.has_method("_try_set_convoy_data"):
+			panel._try_set_convoy_data(c)
+		else:
+			panel.convoy_data = c
 
 
 static func on_api_transaction_result(panel: Object, result: Dictionary) -> void:
@@ -100,7 +103,10 @@ static func on_hub_vendor_panel_ready(panel: Object, data: Dictionary) -> void:
 	if cid != "":
 		var c: Dictionary = panel._get_convoy_by_id(cid)
 		if c is Dictionary and not c.is_empty():
-			panel.convoy_data = c
+			if panel.has_method("_try_set_convoy_data"):
+				panel._try_set_convoy_data(c)
+			else:
+				panel.convoy_data = c
 
 	# If we don't have settlements yet, try to pull from GameStore
 	if is_instance_valid(panel._store) and panel._store.has_method("get_settlements") and (panel._latest_settlements == null or panel._latest_settlements.is_empty()):
@@ -259,7 +265,11 @@ static func on_vendor_panel_data_ready(panel: Object, vendor_panel_data: Diction
 	if panel.show_loading_overlay:
 		panel._hide_loading() # Hide loading indicator on data arrival with fade
 	panel.vendor_data = vendor_panel_data.get("vendor_data")
-	panel.convoy_data = vendor_panel_data.get("convoy_data")
+	var incoming_convoy: Variant = vendor_panel_data.get("convoy_data")
+	if incoming_convoy is Dictionary and panel.has_method("_try_set_convoy_data"):
+		panel._try_set_convoy_data(incoming_convoy)
+	else:
+		panel.convoy_data = incoming_convoy
 	panel.current_settlement_data = vendor_panel_data.get("settlement_data")
 	panel.all_settlement_data_global = vendor_panel_data.get("all_settlement_data")
 	panel.vendor_items = vendor_panel_data.get("vendor_items", {})

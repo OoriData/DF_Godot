@@ -170,6 +170,11 @@ static func on_action_button_pressed(panel: Object) -> void:
 	panel._pending_tx.mode = str(panel.current_mode)
 	panel._pending_tx.item = item_data_source.duplicate(true)
 	panel._pending_tx.quantity = quantity
+	panel._pending_tx.selection_key = str(panel._last_selection_unique_key)
+	panel._pending_tx.selection_tree = str(panel._last_selected_tree)
+	panel._pending_tx.start_used_weight = float(panel._convoy_used_weight)
+	panel._pending_tx.start_used_volume = float(panel._convoy_used_volume)
+	panel._pending_tx.started_ms = Time.get_ticks_msec()
 	panel._pending_tx.money_delta = -total_price if str(panel.current_mode) == "buy" else total_price
 	panel._pending_tx.weight_delta = w_delta if str(panel.current_mode) == "buy" else -w_delta
 	panel._pending_tx.volume_delta = v_delta if str(panel.current_mode) == "buy" else -v_delta

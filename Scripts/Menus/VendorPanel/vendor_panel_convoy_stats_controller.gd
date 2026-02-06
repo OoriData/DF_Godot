@@ -4,7 +4,7 @@ class_name VendorPanelConvoyStatsController
 # Convoy stats + capacity bar updates extracted from vendor_trade_panel.gd.
 # Operates on the panel instance to preserve behavior while isolating buggy math/UI.
 
-static func update_convoy_info_display(panel: Object) -> void:
+static func update_convoy_info_display(panel: Object, projected_volume_delta: float = 0.0, projected_weight_delta: float = 0.0) -> void:
 	if not panel.is_node_ready():
 		return
 
@@ -82,8 +82,8 @@ static func update_convoy_info_display(panel: Object) -> void:
 	if is_instance_valid(panel.convoy_cargo_label):
 		panel.convoy_cargo_label.text = "Volume: %.1f / %.1f%s" % [float(panel._convoy_used_volume), float(panel._convoy_total_volume), weight_segment]
 
-	# Update capacity bars with current usage (no projection).
-	refresh_capacity_bars(panel, 0.0, 0.0)
+	# Update capacity bars with current usage plus any projection.
+	refresh_capacity_bars(panel, projected_volume_delta, projected_weight_delta)
 
 
 static func refresh_capacity_bars(panel: Object, projected_volume_delta: float, projected_weight_delta: float) -> void:

@@ -85,10 +85,217 @@ var _pending_tx: Dictionary = {
 	"mode": "",
 	"item": {},
 	"quantity": 0,
+	"selection_key": "",
+	"selection_tree": "",
 	"money_delta": 0.0,
 	"weight_delta": 0.0,
 	"volume_delta": 0.0
 }
+
+# After a successful transaction, we "commit" the projection for the current selection
+# so that when the authoritative convoy snapshot updates, the bars don't double-count.
+var _committed_projection: Dictionary = {
+	"selection_key": "",
+	"selection_tree": "",
+	"mode": "",
+	"quantity": 0,
+}
+
+# Short-lived guard to reject out-of-order convoy snapshots during refresh bursts.
+const BASELINE_GUARD_MS: int = 1500
+const BASELINE_EPS: float = 0.0001
+var _baseline_guard: Dictionary = {
+	"active": false,
+	"until_ms": 0,
+	"mode": "", # "buy" or "sell"
+	"min_used_weight": 0.0,
+	"min_used_volume": 0.0,
+	"max_used_weight": 0.0,
+	"max_used_volume": 0.0,
+}
+
+func _clear_committed_projection() -> void:
+	_committed_projection.selection_key = ""
+	_committed_projection.selection_tree = ""
+	_committed_projection.mode = ""
+	_committed_projection.quantity = 0
+
+func _apply_committed_projection_scale(quantity: int, added_volume: float, added_weight: float) -> Dictionary:
+	# If we just completed a transaction for this same logical selection, treat that
+	# quantity as "committed" so we don't double-count when the convoy snapshot updates.
+	var committed_applies: bool = (
+		str(_committed_projection.get("selection_key", "")) == str(_last_selection_unique_key)
+		and str(_committed_projection.get("selection_tree", "")) == str(_last_selected_tree)
+		and str(_committed_projection.get("mode", "")) == str(current_mode)
+	)
+	if not committed_applies or quantity <= 0:
+		return {"added_volume": added_volume, "added_weight": added_weight}
+
+	var committed_qty: int = maxi(0, int(_committed_projection.get("quantity", 0)))
+	var uncommitted_qty: int = maxi(0, quantity - committed_qty)
+	if uncommitted_qty == quantity:
+		return {"added_volume": added_volume, "added_weight": added_weight}
+	if uncommitted_qty <= 0:
+		return {"added_volume": 0.0, "added_weight": 0.0}
+
+	var scale: float = float(uncommitted_qty) / float(quantity)
+	return {"added_volume": added_volume * scale, "added_weight": added_weight * scale}
+
+func _get_effective_projection_deltas() -> Dictionary:
+	# Used to keep capacity bars stable during background convoy/store refreshes.
+	if bool(_transaction_in_progress):
+		return {
+			"volume": float(_pending_tx.get("volume_delta", 0.0)),
+			"weight": float(_pending_tx.get("weight_delta", 0.0)),
+		}
+	if not (_panel_initialized and selected_item):
+		return {"volume": 0.0, "weight": 0.0}
+
+	var item_data_source = selected_item.item_data if selected_item.has("item_data") and not selected_item.item_data.is_empty() else selected_item
+	var quantity: int = int(quantity_spinbox.value) if is_instance_valid(quantity_spinbox) else 1
+	var pr = VendorTradeVM.build_price_presenter(item_data_source, str(current_mode), quantity, selected_item)
+	var added_w: float = float(pr.get("added_weight", 0.0))
+	var added_v: float = float(pr.get("added_volume", 0.0))
+	var scaled := _apply_committed_projection_scale(quantity, added_v, added_w)
+	return {"volume": float(scaled.get("added_volume", 0.0)), "weight": float(scaled.get("added_weight", 0.0))}
+
+func _commit_projection_from_pending_tx() -> void:
+	if not (_pending_tx is Dictionary):
+		return
+	var qty: int = int(_pending_tx.get("quantity", 0))
+	var key: String = str(_pending_tx.get("selection_key", ""))
+	var tree: String = str(_pending_tx.get("selection_tree", ""))
+	var mode: String = str(_pending_tx.get("mode", ""))
+	if qty <= 0 or key.is_empty() or tree.is_empty() or mode.is_empty():
+		return
+	_committed_projection.selection_key = key
+	_committed_projection.selection_tree = tree
+	_committed_projection.mode = mode
+	_committed_projection.quantity = qty
+
+func _clear_pending_tx() -> void:
+	_pending_tx.mode = ""
+	_pending_tx.item = {}
+	_pending_tx.quantity = 0
+	_pending_tx.selection_key = ""
+	_pending_tx.selection_tree = ""
+	_pending_tx.money_delta = 0.0
+	_pending_tx.weight_delta = 0.0
+	_pending_tx.volume_delta = 0.0
+
+func _extract_capacity_stats_from_convoy(convoy: Dictionary) -> Dictionary:
+	# Returns used/total for volume + weight when the keys exist.
+	# If keys are missing, totals will be 0.
+	var total_volume: float = float(convoy.get("total_cargo_capacity", 0.0))
+	var free_volume: float = float(convoy.get("total_free_space", 0.0))
+	var used_volume: float = max(0.0, total_volume - free_volume)
+	var total_weight: float = float(convoy.get("total_weight_capacity", 0.0))
+	var remaining_weight: float = float(convoy.get("total_remaining_capacity", 0.0))
+	var used_weight: float = max(0.0, total_weight - remaining_weight)
+	return {
+		"total_volume": total_volume,
+		"used_volume": used_volume,
+		"total_weight": total_weight,
+		"used_weight": used_weight,
+	}
+
+func _baseline_guard_is_active() -> bool:
+	if not bool(_baseline_guard.get("active", false)):
+		return false
+	var now_ms: int = Time.get_ticks_msec()
+	if now_ms > int(_baseline_guard.get("until_ms", 0)):
+		_baseline_guard.active = false
+		return false
+	return true
+
+func _activate_baseline_guard(mode: String, used_volume: float, used_weight: float) -> void:
+	_baseline_guard.active = true
+	_baseline_guard.until_ms = Time.get_ticks_msec() + BASELINE_GUARD_MS
+	_baseline_guard.mode = mode
+	if mode == "buy":
+		_baseline_guard.min_used_volume = used_volume
+		_baseline_guard.min_used_weight = used_weight
+		_baseline_guard.max_used_volume = 0.0
+		_baseline_guard.max_used_weight = 0.0
+	else:
+		_baseline_guard.max_used_volume = used_volume
+		_baseline_guard.max_used_weight = used_weight
+		_baseline_guard.min_used_volume = 0.0
+		_baseline_guard.min_used_weight = 0.0
+
+func _should_accept_convoy_snapshot(convoy: Dictionary) -> bool:
+	if not _baseline_guard_is_active():
+		return true
+	var stats := _extract_capacity_stats_from_convoy(convoy)
+	var used_v: float = float(stats.get("used_volume", 0.0))
+	var used_w: float = float(stats.get("used_weight", 0.0))
+	# If totals are missing (0), we can't meaningfully compare; accept.
+	if float(stats.get("total_volume", 0.0)) <= 0.0 and float(stats.get("total_weight", 0.0)) <= 0.0:
+		return true
+	var mode: String = str(_baseline_guard.get("mode", ""))
+	if mode == "buy":
+		# Reject regressions.
+		if used_v + BASELINE_EPS < float(_baseline_guard.get("min_used_volume", 0.0)):
+			return false
+		if used_w + BASELINE_EPS < float(_baseline_guard.get("min_used_weight", 0.0)):
+			return false
+		return true
+	elif mode == "sell":
+		# Reject increases.
+		if used_v - BASELINE_EPS > float(_baseline_guard.get("max_used_volume", 0.0)):
+			return false
+		if used_w - BASELINE_EPS > float(_baseline_guard.get("max_used_weight", 0.0)):
+			return false
+		return true
+	return true
+
+func _maybe_finalize_optimistic_tx_on_incoming_convoy(convoy: Dictionary) -> void:
+	# If a convoy snapshot arrives that already includes the optimistic delta,
+	# stop applying `_pending_tx` immediately to avoid a brief double-count.
+	if not bool(_transaction_in_progress):
+		return
+	if int(_pending_tx.get("quantity", 0)) <= 0:
+		return
+	var mode: String = str(_pending_tx.get("mode", ""))
+	if mode != "buy" and mode != "sell":
+		return
+	var stats := _extract_capacity_stats_from_convoy(convoy)
+	var incoming_used_v: float = float(stats.get("used_volume", 0.0))
+	var incoming_used_w: float = float(stats.get("used_weight", 0.0))
+	var start_used_v: float = float(_pending_tx.get("start_used_volume", _convoy_used_volume))
+	var start_used_w: float = float(_pending_tx.get("start_used_weight", _convoy_used_weight))
+	var expected_used_v: float = start_used_v + float(_pending_tx.get("volume_delta", 0.0))
+	var expected_used_w: float = start_used_w + float(_pending_tx.get("weight_delta", 0.0))
+	# Tolerance: treat values as matching if they are within 5% of delta or 0.5 absolute.
+	var tol_v: float = max(0.5, abs(float(_pending_tx.get("volume_delta", 0.0))) * 0.05)
+	var tol_w: float = max(0.5, abs(float(_pending_tx.get("weight_delta", 0.0))) * 0.05)
+
+	var matches_v := true
+	var matches_w := true
+	if float(stats.get("total_volume", 0.0)) > 0.0:
+		matches_v = abs(incoming_used_v - expected_used_v) <= tol_v
+	if float(stats.get("total_weight", 0.0)) > 0.0:
+		matches_w = abs(incoming_used_w - expected_used_w) <= tol_w
+
+	if matches_v and matches_w:
+		_commit_projection_from_pending_tx()
+		_transaction_in_progress = false
+		_clear_pending_tx()
+		_activate_baseline_guard(mode, incoming_used_v, incoming_used_w)
+
+func _try_set_convoy_data(next_convoy: Dictionary) -> bool:
+	if not (next_convoy is Dictionary) or next_convoy.is_empty():
+		return false
+	_maybe_finalize_optimistic_tx_on_incoming_convoy(next_convoy)
+	if not _should_accept_convoy_snapshot(next_convoy):
+		return false
+	self.convoy_data = next_convoy
+	return true
+
+func _looks_like_authoritative_convoy_snapshot(d: Dictionary) -> bool:
+	# Transaction responses and store snapshots typically include these capacity keys.
+	# If present, we should not keep applying optimistic deltas on top of them.
+	return d.has("total_cargo_capacity") or d.has("total_free_space") or d.has("total_weight_capacity") or d.has("total_remaining_capacity")
 
 # Debounced vendor refresh to avoid mid-purchase flicker
 var _refresh_timer: SceneTreeTimer = null
@@ -585,7 +792,8 @@ func _populate_convoy_list() -> void:
 	_populate_category(convoy_item_tree, root, "Resources", buckets.get("resources", {}))
 
 func _update_convoy_info_display() -> void:
-	VendorPanelConvoyStatsController.update_convoy_info_display(self)
+	var deltas := _get_effective_projection_deltas()
+	VendorPanelConvoyStatsController.update_convoy_info_display(self, float(deltas.get("volume", 0.0)), float(deltas.get("weight", 0.0)))
 
 func _on_user_data_updated(_user_data: Dictionary):
 	# When user data changes (e.g., after a transaction), refresh the display.
@@ -606,8 +814,17 @@ func _on_convoy_updated(convoy: Dictionary) -> void:
 	if perf_log_enabled and _signal_watcher:
 		print("[VendorPanel] Convoy updated via signal. Vendor updated count: ", _signal_watcher.get_emit_count(_hub, "vendor_updated"))
 
-	self.convoy_data = convoy
-	_populate_convoy_list()
+	if not _try_set_convoy_data(convoy):
+		return
+
+	# Convoy updates can arrive in bursts after transactions (user refreshes, convoy refreshes).
+	# Rebuilding the convoy Tree clears selection and can briefly null out the inspector,
+	# which causes capacity bars to "spasm". Only rebuild the convoy tree when it's relevant.
+	var is_sell_tab: bool = is_instance_valid(trade_mode_tab_container) and int(trade_mode_tab_container.current_tab) == 1
+	var need_convoy_tree_refresh: bool = is_sell_tab or str(_last_selected_tree) == "convoy" or str(current_mode) == "sell"
+	if need_convoy_tree_refresh:
+		_populate_convoy_list()
+
 	_update_convoy_info_display()
 
 
@@ -618,6 +835,7 @@ func _on_tab_changed(tab_index: int) -> void:
 	
 	# Clear selection and inspector when switching tabs
 	selected_item = null
+	_clear_committed_projection()
 	if vendor_item_tree.get_selected():
 		vendor_item_tree.get_selected().deselect(0)
 	if convoy_item_tree.get_selected():
@@ -777,6 +995,10 @@ func _update_transaction_panel() -> void:
 	var bbcode_text = String(pr.get("bbcode_text", ""))
 	var added_w: float = float(pr.get("added_weight", 0.0))
 	var added_v: float = float(pr.get("added_volume", 0.0))
+	var scaled := _apply_committed_projection_scale(quantity, added_v, added_w)
+	added_v = float(scaled.get("added_volume", added_v))
+	added_w = float(scaled.get("added_weight", added_w))
+
 	_refresh_capacity_bars(added_v, added_w)
 
 	# Trim trailing newline just in case
@@ -833,12 +1055,25 @@ func _on_part_compatibility_ready(payload: Dictionary) -> void:
  
 
 func _on_api_transaction_result(result: Dictionary) -> void:
+	# Commit this transaction's projection so subsequent authoritative convoy updates
+	# don't reset the bars to an incorrect projected value.
+	if bool(_transaction_in_progress):
+		_commit_projection_from_pending_tx()
+
 	# If the transaction result contains an updated convoy object, apply it immediately
 	# to the UI. This provides faster feedback than waiting for a full refresh cycle.
 	if result.has("convoy_id") and (result.has("vehicle_details_list") or result.has("vehicles")):
-		self.convoy_data = result
-		_populate_convoy_list()
+		_try_set_convoy_data(result)
+		var is_sell_tab: bool = is_instance_valid(trade_mode_tab_container) and int(trade_mode_tab_container.current_tab) == 1
+		var need_convoy_tree_refresh: bool = is_sell_tab or str(_last_selected_tree) == "convoy" or str(current_mode) == "sell"
+		if need_convoy_tree_refresh:
+			_populate_convoy_list()
 		_update_convoy_info_display()
+		# We now have an authoritative convoy baseline; stop applying optimistic deltas
+		# (otherwise the next convoy/store update burst briefly double-counts them).
+		if _looks_like_authoritative_convoy_snapshot(result):
+			_transaction_in_progress = false
+			_clear_pending_tx()
 
 	VendorPanelRefreshController.on_api_transaction_result(self, result)
 	if is_instance_valid(_hub) and _hub.has_signal("user_refresh_requested"):
