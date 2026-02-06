@@ -91,25 +91,166 @@ static func refresh_capacity_bars(panel: Object, projected_volume_delta: float, 
 		if float(panel._convoy_total_volume) > 0.0:
 			panel.convoy_volume_bar.visible = true
 			panel.convoy_volume_bar.max_value = float(panel._convoy_total_volume)
-			var projected_vol: float = clamp(float(panel._convoy_used_volume) + projected_volume_delta, 0.0, float(panel._convoy_total_volume))
+			var base_vol: float = clamp(float(panel._convoy_used_volume), 0.0, float(panel._convoy_total_volume))
+			var projected_vol: float = clamp(base_vol + projected_volume_delta, 0.0, float(panel._convoy_total_volume))
 			panel.convoy_volume_bar.value = projected_vol
 			panel.convoy_volume_bar.tooltip_text = "Volume: %.2f / %.2f" % [projected_vol, float(panel._convoy_total_volume)]
 			var vol_pct: float = projected_vol / max(0.00001, float(panel._convoy_total_volume))
 			panel.convoy_volume_bar.self_modulate = _bar_color_for_pct(vol_pct)
+			_update_projection_overlay(panel.convoy_volume_bar, base_vol, projected_vol, float(panel._convoy_total_volume), projected_volume_delta)
 		else:
 			panel.convoy_volume_bar.visible = false
+			_update_projection_overlay(panel.convoy_volume_bar, 0.0, 0.0, 0.0, 0.0)
 
 	if is_instance_valid(panel.convoy_weight_bar):
 		if float(panel._convoy_total_weight) > 0.0:
 			panel.convoy_weight_bar.visible = true
 			panel.convoy_weight_bar.max_value = float(panel._convoy_total_weight)
-			var projected_wt: float = clamp(float(panel._convoy_used_weight) + projected_weight_delta, 0.0, float(panel._convoy_total_weight))
+			var base_wt: float = clamp(float(panel._convoy_used_weight), 0.0, float(panel._convoy_total_weight))
+			var projected_wt: float = clamp(base_wt + projected_weight_delta, 0.0, float(panel._convoy_total_weight))
 			panel.convoy_weight_bar.value = projected_wt
 			panel.convoy_weight_bar.tooltip_text = "Weight: %.2f / %.2f" % [projected_wt, float(panel._convoy_total_weight)]
 			var wt_pct: float = projected_wt / max(0.00001, float(panel._convoy_total_weight))
 			panel.convoy_weight_bar.self_modulate = _bar_color_for_pct(wt_pct)
+			_update_projection_overlay(panel.convoy_weight_bar, base_wt, projected_wt, float(panel._convoy_total_weight), projected_weight_delta)
 		else:
 			panel.convoy_weight_bar.visible = false
+			_update_projection_overlay(panel.convoy_weight_bar, 0.0, 0.0, 0.0, 0.0)
+
+
+static func _update_projection_overlay(bar: ProgressBar, base_value: float, projected_value: float, total_value: float, delta: float) -> void:
+	if not is_instance_valid(bar):
+		return
+
+	# Hide overlay when no projection is active.
+	var projection_active: bool = abs(delta) > 0.00001 and total_value > 0.0 and bar.visible and abs(projected_value - base_value) > 0.00001
+	var segment: Panel = _ensure_projection_segment(bar)
+	segment.visible = projection_active
+
+	# Keep old marker nodes hidden (in case a previous session created them).
+	var base_marker: Node = bar.get_node_or_null("ProjectionBaseMarker")
+	if base_marker != null and base_marker is CanvasItem:
+		(base_marker as CanvasItem).visible = false
+	var proj_marker: Node = bar.get_node_or_null("ProjectionProjectedMarker")
+	if proj_marker != null and proj_marker is CanvasItem:
+		(proj_marker as CanvasItem).visible = false
+
+	if not projection_active:
+		return
+
+	# 1) Ensure overlay is clipped to the bar rect.
+	# (This is rectangular clipping; the segment itself will be rounded to match.)
+	bar.clip_contents = true
+
+	# Place the overlay segment between base and projected positions.
+	# We align to the bar's content margins but allow the height to fill more
+	# to avoid looking disconnected.
+	var inner_pos := Vector2.ZERO
+	var w: float = bar.size.x
+	var h: float = bar.size.y
+	
+	var bg_sb: StyleBox = bar.get_theme_stylebox("background")
+	if bg_sb != null:
+		var l := float(bg_sb.get_content_margin(SIDE_LEFT))
+		var r := float(bg_sb.get_content_margin(SIDE_RIGHT))
+		var t := float(bg_sb.get_content_margin(SIDE_TOP))
+		var b := float(bg_sb.get_content_margin(SIDE_BOTTOM))
+		inner_pos = Vector2(l, t)
+		w = max(1.0, bar.size.x - l - r)
+		# Force full height to perfectly cover the bar.
+		inner_pos.y = 0.0
+		h = bar.size.y
+
+	var base_x: float = inner_pos.x + (clamp(base_value, 0.0, total_value) / max(0.00001, total_value)) * w
+	var proj_x: float = inner_pos.x + (clamp(projected_value, 0.0, total_value) / max(0.00001, total_value)) * w
+	var left_x: float = min(base_x, proj_x)
+	var right_x: float = max(base_x, proj_x)
+	segment.position = Vector2(left_x, inner_pos.y)
+	segment.size = Vector2(max(1.0, right_x - left_x), h)
+	(segment as CanvasItem).z_index = 100
+
+	# Styling: translucent fill + white border.
+	var sb := StyleBoxFlat.new()
+	var is_adding: bool = delta > 0.0
+	sb.bg_color = (Color(0.25, 0.95, 0.85, 0.30) if is_adding else Color(1.0, 0.45, 0.45, 0.25))
+	sb.border_color = Color(1.0, 1.0, 1.0, 0.80) # Brighter, clearer border
+	
+	# Fetch rounding from the bar's theme.
+	var fill_sb: StyleBox = bar.get_theme_stylebox("fill")
+	var bg_sb_actual: StyleBox = bar.get_theme_stylebox("background")
+	var radius: int = int(round(h * 0.5)) # Default to pill shape
+	
+	if fill_sb != null and fill_sb is StyleBoxFlat:
+		var f := fill_sb as StyleBoxFlat
+		radius = maxi(int(f.corner_radius_top_left), int(f.corner_radius_top_right))
+		radius = maxi(radius, maxi(int(f.corner_radius_bottom_left), int(f.corner_radius_bottom_right)))
+	elif bg_sb_actual != null and bg_sb_actual is StyleBoxFlat:
+		var b_sb := bg_sb_actual as StyleBoxFlat
+		radius = maxi(int(b_sb.corner_radius_top_left), int(b_sb.corner_radius_top_right))
+	
+	var touches_left: bool = left_x <= (bar.get_theme_stylebox("background").get_content_margin(SIDE_LEFT) + 1.0) if bar.get_theme_stylebox("background") else left_x <= 1.0
+	var touches_right: bool = right_x >= (bar.size.x - (bar.get_theme_stylebox("background").get_content_margin(SIDE_RIGHT) if bar.get_theme_stylebox("background") else 0.0) - 1.0)
+	
+	# Border and corner logic for "flush" appearance:
+	# - Both ends now have a border for clarity (1px for inner, 2px for front).
+	sb.set_border_width_all(1)
+	
+	if is_adding:
+		# The left side (left_x) is the "inner" start.
+		# The right side (right_x) is the "front" (leading edge).
+		sb.corner_radius_top_left = 0
+		sb.corner_radius_bottom_left = 0
+		sb.border_width_left = 1 # Inner start
+		sb.border_width_right = 2 # Front
+		
+		# The right side is the "tip" of the bar.
+		sb.corner_radius_top_right = radius
+		sb.corner_radius_bottom_right = radius
+	else:
+		# The left side (left_x) is the "front" (new tip of green).
+		# The right side (right_x) is the "inner" start (where cargo used to end).
+		sb.corner_radius_top_left = radius
+		sb.corner_radius_bottom_left = radius
+		sb.border_width_left = 2 # Front
+		sb.border_width_right = 1 # Inner start
+		
+		# The right side is where the bar used to end.
+		sb.corner_radius_top_right = radius if touches_right else 0
+		sb.corner_radius_bottom_right = radius if touches_right else 0
+	
+	# Override: if we touch the absolute left, always round.
+	if touches_left:
+		sb.corner_radius_top_left = radius
+		sb.corner_radius_bottom_left = radius
+		# If it's touching the left at 0, both edges are visible/important.
+
+	segment.add_theme_stylebox_override("panel", sb)
+
+
+static func _ensure_marker(bar: ProgressBar, name: String) -> ColorRect:
+	# Backward compatibility for previously-created marker nodes.
+	var existing: Node = bar.get_node_or_null(name)
+	if existing != null and existing is ColorRect:
+		return existing as ColorRect
+	var cr := ColorRect.new()
+	cr.name = name
+	cr.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	bar.add_child(cr)
+	return cr
+
+
+static func _ensure_projection_segment(bar: ProgressBar) -> Panel:
+	var existing: Node = bar.get_node_or_null("ProjectionSegment")
+	if existing != null and existing is Panel:
+		return existing as Panel
+	# If a previous version created ProjectionSegment as a ColorRect, remove it.
+	if existing != null and is_instance_valid(existing):
+		existing.queue_free()
+	var p := Panel.new()
+	p.name = "ProjectionSegment"
+	p.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	bar.add_child(p)
+	return p
 
 
 static func _bar_color_for_pct(pct: float) -> Color:
