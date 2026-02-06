@@ -320,10 +320,11 @@ func _add_styled_detail_row(parent: Container, label_text: String, value_text: S
 	var value_node = Label.new()
 	value_node.text = value_text
 	value_node.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	value_node.clip_text = true
 	value_node.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	if value_autowrap:
 		value_node.autowrap_mode = TextServer.AUTOWRAP_WORD
+	else:
+		value_node.clip_text = true # Only clip single-line values if they definitely won't wrap
 	
 	content_row.add_child(label_node)
 	content_row.add_child(value_node)
@@ -497,19 +498,52 @@ func _populate_overview_tab(vehicle_data: Dictionary):
 	basic_info_title.add_theme_color_override("font_color", Color.YELLOW)
 	overview_vbox.add_child(basic_info_title)
 
+	# Super-robust description retrieval: look for any available text in possible fields.
+	var description_text = ""
+	var candidates = [
+		vehicle_data.get("description"),
+		vehicle_data.get("base_desc"),
+		vehicle_data.get("current_desc"),
+		vehicle_data.get("desc")
+	]
+	
+	for candidate in candidates:
+		if candidate != null:
+			var s = str(candidate).strip_edges()
+			if not s.is_empty() and s != "No description." and s != "No detailed description.":
+				description_text = s
+				break
+	
+	# If STILL empty, but the user says vehicles HAVE descriptions, we add a placeholder 
+	# so the field is visible and we can confirm if it's a data key issue.
+	if description_text.is_empty():
+		description_text = "Description not found in data. (Tested keys: description, base_desc, current_desc, desc)"
+
 	var details = [
-		{"label": "Name:", "value": String(vehicle_data.get("name", "N/A")), "wrap": false},
-		{"label": "Make/Model:", "value": vehicle_data.get("make_model", "N/A"), "wrap": false},
-		{"label": "Description:", "value": vehicle_data.get("description", "No description."), "wrap": true},
-		{"label": "Color:", "value": vehicle_data.get("color", "N/A").capitalize(), "wrap": false},
-		{"label": "Base Description:", "value": vehicle_data.get("base_desc", "No detailed description."), "wrap": true},
-		{"label": "Shape:", "value": vehicle_data.get("shape", "N/A").capitalize().replace("_", " "), "wrap": false},
+		{"label": "Name:", "value": String(vehicle_data.get("name", "")), "wrap": false},
+		{"label": "Make/Model:", "value": vehicle_data.get("make_model", ""), "wrap": false},
+		{"label": "Description:", "value": description_text, "wrap": true},
+		{"label": "Color:", "value": vehicle_data.get("color", "").capitalize(), "wrap": false},
+		{"label": "Shape:", "value": vehicle_data.get("shape", "").capitalize().replace("_", " "), "wrap": false},
 		{"label": "Base Value:", "value": "$%s" % int(vehicle_data.get("base_value", 0.0)), "wrap": false},
 		{"label": "Current Value:", "value": "$%s" % int(vehicle_data.get("value", 0.0)), "wrap": false}
 	]
+	
+	var visible_row_index = 0
 	for i in range(details.size()):
 		var detail = details[i]
-		_add_styled_detail_row(overview_vbox, detail.label, detail.value, i, detail.wrap)
+		var val = detail.value
+		
+		# Skip truly empty or placeholder values
+		if val == null:
+			continue
+			
+		var val_str = str(val).strip_edges()
+		if val_str.is_empty() or val_str == "N/A" or val_str == "0" or val_str == "$0":
+			continue
+		
+		_add_styled_detail_row(overview_vbox, detail.label, val_str, visible_row_index, detail.wrap)
+		visible_row_index += 1
 
 	# Stats Section
 	var stats_title = Label.new()
@@ -526,9 +560,16 @@ func _populate_overview_tab(vehicle_data: Dictionary):
 		{"label": "Weight Capacity:", "value": "%.0f" % vehicle_data.get("weight_capacity", 0.0), "type": "weight_capacity"},
 		{"label": "Passenger Seats:", "value": "%d" % vehicle_data.get("passenger_seats", 0), "type": "passenger_seats"}
 	]
+	
+	visible_row_index = 0 # Reset for stats section if desired, or continue. I'll reset for section consistency.
 	for i in range(stats.size()):
 		var stat = stats[i]
-		_add_stat_row_with_button(overview_vbox, stat.label, stat.value, stat.type, vehicle_data, i)
+		# For stats, we usually want to see 0s, but if they are essentially empty/missing, we might skip.
+		# However, stats were not explicitly mentioned as needing to be hidden if 0, 
+		# but the user said "We shouldnt include any fields that are empty."
+		# I'll keep stats for now unless they are explicitly N/A or something.
+		_add_stat_row_with_button(overview_vbox, stat.label, stat.value, stat.type, vehicle_data, visible_row_index)
+		visible_row_index += 1
 
 
 func _populate_parts_tab(vehicle_data: Dictionary):
