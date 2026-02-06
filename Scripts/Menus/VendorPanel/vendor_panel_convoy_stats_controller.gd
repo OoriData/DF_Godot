@@ -167,7 +167,7 @@ static func _update_projection_overlay(bar: ProgressBar, base_value: float, proj
 	var right_x: float = max(base_x, proj_x)
 	segment.position = Vector2(left_x, inner_pos.y)
 	segment.size = Vector2(max(1.0, right_x - left_x), h)
-	(segment as CanvasItem).z_index = 100
+	segment.z_index = 100
 
 	# Styling: translucent fill + white border.
 	var sb := StyleBoxFlat.new()
