@@ -8,6 +8,7 @@ const ItemsData = preload("res://Scripts/Data/Items.gd")
 
 const SettlementModel = preload("res://Scripts/Data/Models/Settlement.gd")
 const VendorModel = preload("res://Scripts/Data/Models/Vendor.gd")
+const VendorPanelContextController = preload("res://Scripts/Menus/VendorPanel/vendor_panel_context_controller.gd")
 
 # --- Font Scaling Parameters ---
 const BASE_FONT_SIZE: float = 18.0  # Increased from 14.0
@@ -98,6 +99,12 @@ signal open_journey_menu_requested(convoy_data)
 signal open_settlement_menu_requested(convoy_data)
 signal open_cargo_menu_requested(convoy_data)
 
+# --- Deep-link navigation from Settlement Preview buttons ---
+# Used by MenuManager to open destination menu with a focus intent via extra_arg.
+signal open_settlement_menu_with_focus_requested(convoy_data: Dictionary, focus_intent: Dictionary)
+# Used by MenuManager to open Cargo menu and auto-inspect a specific item via extra_arg (expects cargo_id).
+signal open_cargo_menu_inspect_requested(convoy_data: Dictionary, item_data: Dictionary)
+
 @onready var _store: Node = get_node_or_null("/root/GameStore")
 @onready var _hub: Node = get_node_or_null("/root/SignalHub")
 @onready var _vendor_service: Node = get_node_or_null("/root/VendorService")
@@ -122,8 +129,17 @@ var _vendors_by_id: Dictionary = {} # vendor_id -> vendor Dictionary (from Vendo
 var _vendors_by_id_models: Dictionary = {} # vendor_id -> Vendor
 var _vendors_from_settlements_by_id: Dictionary = {} # vendor_id -> vendor Dictionary (from map snapshot)
 var _vendor_id_to_settlement: Dictionary = {} # vendor_id -> settlement Dictionary (from map snapshot)
+var _vendor_id_to_name: Dictionary = {} # vendor_id -> vendor name String (from map snapshot + vendor previews)
 var _vendor_preview_update_timer: Timer = null # For debouncing updates
 var _destinations_cache: Dictionary = {} # item_name -> recipient_settlement_name (or destination string)
+
+# Avoid spamming vendor detail requests when Available Missions refreshes.
+var _requested_vendor_details: Dictionary = {} # vendor_id -> true
+
+# For deep-linking Active Missions -> Cargo menu, preserve at least one representative cargo_id per mission item name.
+var _active_mission_cargo_id_by_name: Dictionary = {} # item_name -> cargo_id
+var _active_mission_cargo_id_by_display: Dictionary = {} # "name — to DEST" -> cargo_id
+
 
 
 func _is_convoy_payload_complete(c: Dictionary) -> bool:
@@ -156,6 +172,7 @@ func _set_latest_settlements_snapshot(settlements: Array) -> void:
 	_latest_all_settlement_models.clear()
 	_vendors_from_settlements_by_id.clear()
 	_vendor_id_to_settlement.clear()
+	_vendor_id_to_name.clear()
 	for s_any in _latest_all_settlements:
 		if not (s_any is Dictionary):
 			continue
@@ -175,6 +192,9 @@ func _set_latest_settlements_snapshot(settlements: Array) -> void:
 				_vendors_from_settlements_by_id[vid] = v_dict
 			if not _vendor_id_to_settlement.has(vid):
 				_vendor_id_to_settlement[vid] = s_dict
+			var nm := String(v_dict.get("name", ""))
+			if nm != "" and not _vendor_id_to_name.has(vid):
+				_vendor_id_to_name[vid] = nm
 
 func _ready():
 	# Resolve optional nodes that might be missing depending on scene variant
@@ -244,8 +264,13 @@ func _ready():
 	# Phase C: subscribe to canonical sources (Hub/Store/APICalls) instead of GameDataManager.
 	if is_instance_valid(_api) and _api.has_signal("part_compatibility_checked") and not _api.part_compatibility_checked.is_connected(_on_part_compat_ready):
 		_api.part_compatibility_checked.connect(_on_part_compat_ready)
+	if is_instance_valid(_api) and _api.has_signal("cargo_data_received") and not _api.cargo_data_received.is_connected(_on_cargo_data_received):
+		_api.cargo_data_received.connect(_on_cargo_data_received)
 	if is_instance_valid(_hub) and _hub.has_signal("vendor_preview_ready") and not _hub.vendor_preview_ready.is_connected(_on_vendor_preview_ready):
 		_hub.vendor_preview_ready.connect(_on_vendor_preview_ready)
+	# Some flows emit vendor_updated instead of vendor_preview_ready.
+	if is_instance_valid(_hub) and _hub.has_signal("vendor_updated") and not _hub.vendor_updated.is_connected(_on_vendor_preview_ready):
+		_hub.vendor_updated.connect(_on_vendor_preview_ready)
 	if is_instance_valid(_store) and _store.has_signal("map_changed") and not _store.map_changed.is_connected(_on_store_map_changed):
 		_store.map_changed.connect(_on_store_map_changed)
 	if is_instance_valid(_hub) and _hub.has_signal("initial_data_ready") and not _hub.initial_data_ready.is_connected(_on_initial_data_ready):
@@ -303,6 +328,50 @@ func _ready():
 
 	# Initial font size update
 	call_deferred("_update_font_sizes")
+	if _debug_convoy_menu:
+		print("[ConvoyMenu][Debug] services api=", is_instance_valid(_api), " vendor_service=", is_instance_valid(_vendor_service))
+
+
+func _looks_like_full_vendor_payload(v: Dictionary) -> bool:
+	# Settlement map snapshot vendor entries can be partial (mission items missing recipient/mission_vendor_id).
+	# A "full" payload from VendorService typically includes mission routing fields in cargo_inventory.
+	if v.is_empty():
+		return false
+	var inv_any: Variant = v.get("cargo_inventory", null)
+	if not (inv_any is Array):
+		return false
+	for it_any in (inv_any as Array):
+		if not (it_any is Dictionary):
+			continue
+		var it: Dictionary = it_any
+		if it.get("recipient") != null:
+			return true
+		var mvid := str(it.get("mission_vendor_id", "")).strip_edges()
+		if mvid != "":
+			return true
+	# Heuristic: full vendor payload often includes price fields.
+	if v.has("fuel_price") or v.has("water_price") or v.has("food_price"):
+		return true
+	return false
+
+
+func _request_vendor_details(vendor_id: String) -> void:
+	if vendor_id == "":
+		return
+	if bool(_requested_vendor_details.get(vendor_id, false)):
+		return
+	_requested_vendor_details[vendor_id] = true
+	if _debug_convoy_menu:
+		print("[ConvoyMenu][Debug] requesting vendor details vendor_id=", vendor_id)
+	if is_instance_valid(_vendor_service) and _vendor_service.has_method("request_vendor"):
+		_vendor_service.request_vendor(vendor_id)
+		return
+	# Fallback: call APICalls directly if VendorService isn't available.
+	if is_instance_valid(_api) and _api.has_method("request_vendor_data"):
+		_api.request_vendor_data(vendor_id)
+		return
+	if _debug_convoy_menu:
+		printerr("[ConvoyMenu][Debug] cannot request vendor details; missing VendorService/APICalls.request_vendor_data")
 
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_RESIZED:
@@ -701,6 +770,7 @@ func _render_vendor_preview_display() -> void:
 			# Support destination annotations in two formats:
 			# "name — to DEST" (em dash syntax) or "name -> DEST" (arrow syntax)
 			var name_qty := item_string
+			var lookup_key := item_string
 			var dest_text := ""
 			var sep_idx := name_qty.find(" — to ")
 			var sep_len := 6 # length of " — to "
@@ -718,13 +788,155 @@ func _render_vendor_preview_display() -> void:
 				dest_line = "\n→ " + dest_text
 			button.text = "%s%s" % [item_name, dest_line]
 			button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-			button.custom_minimum_size.y = 36
-			button.clip_text = true
+			# NOTE: Button text is clipped by default; allow enough height for the optional 2nd line.
+			button.custom_minimum_size.y = 54 if dest_text != "" else 36
+			button.clip_text = false if dest_text != "" else true
+			# Attach a deep-link intent so clicks can navigate to the right destination.
+			var nav_intent: Dictionary = {}
+			match _current_vendor_tab:
+				VendorTab.CONVOY_MISSIONS:
+					var cid := String(_active_mission_cargo_id_by_display.get(lookup_key, ""))
+					if cid == "":
+						cid = String(_active_mission_cargo_id_by_name.get(item_name, ""))
+					nav_intent = {"target": "cargo_inspect", "cargo_id": cid, "item_name": item_name}
+					if cid == "":
+						button.tooltip_text = "Open Cargo (no cargo_id available for deep-link)"
+				VendorTab.SETTLEMENT_MISSIONS:
+					nav_intent = _build_settlement_focus_intent(item_name, "missions")
+				VendorTab.COMPATIBLE_PARTS:
+					nav_intent = _build_settlement_focus_intent(item_name, "parts")
+					# If this looks like a slot summary (e.g., "Engine (2)") rather than a real item,
+					# keep navigation but expect focus to be best-effort.
+			button.set_meta("nav_intent", nav_intent)
+			button.pressed.connect(_on_vendor_preview_item_button_pressed.bind(button))
 			_style_vendor_item_button(button, _current_vendor_tab)
 			vendor_item_grid.add_child(button)
 	
 	# Ensure font sizes are applied to newly created buttons
 	_update_font_sizes()
+
+
+func _get_current_settlement_dict() -> Dictionary:
+	if not (convoy_data_received is Dictionary) or convoy_data_received.is_empty():
+		return {}
+	var sx := roundi(float(convoy_data_received.get("x", 0)))
+	var sy := roundi(float(convoy_data_received.get("y", 0)))
+	for s in _latest_all_settlements:
+		if s is Dictionary and roundi(float(s.get("x", -999999))) == sx and roundi(float(s.get("y", -999999))) == sy:
+			return s
+	return {}
+
+
+func _resolve_vendor_focus_for_item(item_name: String, category_hint: String) -> Dictionary:
+	# Best-effort: find a vendor at the current settlement whose inventory contains this item.
+	# Returns a partial dict like {vendor_id, vendor_name_hint}.
+	if item_name == "":
+		return {}
+	var settlement := _get_current_settlement_dict()
+	if settlement.is_empty():
+		return {}
+	var vendors: Array = settlement.get("vendors", [])
+	for v_any in vendors:
+		var v: Dictionary = {}
+		if v_any is Dictionary:
+			v = v_any
+		elif v_any is String:
+			var looked: Dictionary = _get_vendor_by_id(String(v_any))
+			if not looked.is_empty():
+				v = looked
+			else:
+				v = {"vendor_id": String(v_any)}
+		else:
+			continue
+
+		var vid := String(v.get("vendor_id", ""))
+		var vname := String(v.get("name", v.get("vendor_name", "")))
+		var inv: Array = []
+		if v.get("cargo_inventory") is Array:
+			inv = v.get("cargo_inventory")
+		elif v.get("inventory") is Array:
+			inv = v.get("inventory")
+
+		for it_any in inv:
+			if not (it_any is Dictionary):
+				continue
+			var it: Dictionary = it_any
+			var nm := String(it.get("name", it.get("base_name", "")))
+			if nm != item_name:
+				continue
+			# Optional category filtering to avoid accidental matches.
+			if category_hint == "parts" and not _is_part_item(it):
+				continue
+			if category_hint == "missions":
+				# Accept either central classification or presence of delivery_reward.
+				var mission_ok := false
+				if ItemsData != null and ItemsData.MissionItem:
+					mission_ok = ItemsData.MissionItem._looks_like_mission_dict(it)
+				if not mission_ok:
+					var dr = it.get("delivery_reward")
+					mission_ok = (dr is float or dr is int) and float(dr) > 0.0
+				if not mission_ok:
+					continue
+
+			var out: Dictionary = {}
+			if vid != "":
+				out["vendor_id"] = vid
+			if vname != "":
+				out["vendor_name_hint"] = vname
+			return out
+
+	return {}
+
+
+func _build_settlement_focus_intent(item_name: String, category_hint: String) -> Dictionary:
+	var intent: Dictionary = {
+		"target": "settlement_vendor",
+		"mode": "buy",
+		"tree": "vendor",
+		"category_hint": category_hint,
+	}
+	if item_name != "":
+		intent["item_restore_key"] = "name:%s" % item_name
+	var vendor_bits := _resolve_vendor_focus_for_item(item_name, category_hint)
+	for k in vendor_bits.keys():
+		intent[k] = vendor_bits[k]
+	return intent
+
+
+func _on_vendor_preview_item_button_pressed(button: Button) -> void:
+	if not is_instance_valid(button):
+		return
+	if not (convoy_data_received is Dictionary) or convoy_data_received.is_empty():
+		return
+
+	var intent_any: Variant = button.get_meta("nav_intent", null)
+	if typeof(intent_any) != TYPE_DICTIONARY:
+		# Fallback: open settlement menu (best default for preview buttons)
+		emit_signal("open_settlement_menu_requested", convoy_data_received)
+		return
+	var intent: Dictionary = intent_any as Dictionary
+	var target := String(intent.get("target", ""))
+
+	if target == "cargo_inspect":
+		var cargo_id := String(intent.get("cargo_id", ""))
+		if cargo_id != "":
+			emit_signal("open_cargo_menu_inspect_requested", convoy_data_received, {"cargo_id": cargo_id})
+		else:
+			# No cargo_id means we can't deep-link; still open Cargo menu.
+			push_warning("ConvoyMenu: Active Mission deep-link missing cargo_id; opening Cargo menu without focus. item_name=%s" % String(intent.get("item_name", "")))
+			emit_signal("open_cargo_menu_requested", convoy_data_received)
+		return
+
+	if target == "settlement_vendor":
+		var has_focus_bits := String(intent.get("item_restore_key", "")) != "" or String(intent.get("vendor_id", "")) != "" or String(intent.get("vendor_name_hint", "")) != ""
+		if has_focus_bits:
+			emit_signal("open_settlement_menu_with_focus_requested", convoy_data_received, intent)
+		else:
+			emit_signal("open_settlement_menu_requested", convoy_data_received)
+		return
+
+	# Default fallback
+	emit_signal("open_settlement_menu_requested", convoy_data_received)
 
 func _collect_mission_cargo_items(convoy: Dictionary) -> Array[String]:
 	# Mirror vendor_trade_panel.gd logic to avoid mismatches.
@@ -735,7 +947,9 @@ func _collect_mission_cargo_items(convoy: Dictionary) -> Array[String]:
 	# 4) If no per-vehicle cargo found, fall back to `convoy.cargo_inventory` with the same rules.
 	var out: Array[String] = []
 	var found_any_cargo := false
-	var agg: Dictionary = {} # name -> total quantity
+	var agg: Dictionary = {} # display_key -> total quantity
+	_active_mission_cargo_id_by_name.clear()
+	_active_mission_cargo_id_by_display.clear()
 	var diag_typed_mission := 0
 	var diag_raw_mission := 0
 	var diag_allcargo_mission := 0
@@ -787,6 +1001,15 @@ func _collect_mission_cargo_items(convoy: Dictionary) -> Array[String]:
 						if raw_item.has("intrinsic_part_id") and raw_item.get("intrinsic_part_id") != null:
 							continue
 						var item_name := String(raw_item.get("name", "Item"))
+						var dest_key := _extract_destination_from_item(raw_item)
+						var display_key := item_name
+						if dest_key != "":
+							display_key = "%s — to %s" % [item_name, dest_key]
+						var cid := String(raw_item.get("cargo_id", raw_item.get("id", "")))
+						if cid != "" and not _active_mission_cargo_id_by_name.has(item_name):
+							_active_mission_cargo_id_by_name[item_name] = cid
+						if cid != "" and not _active_mission_cargo_id_by_display.has(display_key):
+							_active_mission_cargo_id_by_display[display_key] = cid
 						var qty := 1
 						if typed is Dictionary:
 							qty = int((typed as Dictionary).get("quantity", 1))
@@ -794,7 +1017,7 @@ func _collect_mission_cargo_items(convoy: Dictionary) -> Array[String]:
 							var q_any = typed.get("quantity") if typed is Object else null
 							if q_any != null:
 								qty = int(q_any)
-						agg[item_name] = int(agg.get(item_name, 0)) + qty
+						agg[display_key] = int(agg.get(display_key, 0)) + qty
 						diag_typed_mission += 1
 				# Also scan raw cargo for mission items regardless of typed presence
 				var cargo_arr: Array = vehicle.get("cargo", [])
@@ -807,10 +1030,19 @@ func _collect_mission_cargo_items(convoy: Dictionary) -> Array[String]:
 							continue
 						if _looks_like_mission_item(item):
 							var item_name2 := String(item.get("name", "Item"))
+							var dest_key2 := _extract_destination_from_item(item)
+							var display_key2 := item_name2
+							if dest_key2 != "":
+								display_key2 = "%s — to %s" % [item_name2, dest_key2]
+							var cid2 := String(item.get("cargo_id", item.get("id", "")))
+							if cid2 != "" and not _active_mission_cargo_id_by_name.has(item_name2):
+								_active_mission_cargo_id_by_name[item_name2] = cid2
+							if cid2 != "" and not _active_mission_cargo_id_by_display.has(display_key2):
+								_active_mission_cargo_id_by_display[display_key2] = cid2
 							var qty2 := int(item.get("quantity", 1))
 							if _debug_convoy_menu:
 								print("[ConvoyMenu][Debug] raw mission item=", item_name2, " q=", qty2)
-							agg[item_name2] = int(agg.get(item_name2, 0)) + qty2
+							agg[display_key2] = int(agg.get(display_key2, 0)) + qty2
 							diag_raw_mission += 1
 
 	# Fallback to convoy-level inventory if nothing was found in vehicles
@@ -822,10 +1054,19 @@ func _collect_mission_cargo_items(convoy: Dictionary) -> Array[String]:
 				continue
 			if _looks_like_mission_item(item):
 				var item_name3 := String(item.get("name", "Item"))
+				var dest_key3 := _extract_destination_from_item(item)
+				var display_key3 := item_name3
+				if dest_key3 != "":
+					display_key3 = "%s — to %s" % [item_name3, dest_key3]
+				var cid3 := String(item.get("cargo_id", item.get("id", "")))
+				if cid3 != "" and not _active_mission_cargo_id_by_name.has(item_name3):
+					_active_mission_cargo_id_by_name[item_name3] = cid3
+				if cid3 != "" and not _active_mission_cargo_id_by_display.has(display_key3):
+					_active_mission_cargo_id_by_display[display_key3] = cid3
 				var qty3 := int(item.get("quantity", 1))
 				if _debug_convoy_menu:
 					print("[ConvoyMenu][Debug] inventory mission item=", item_name3, " q=", qty3)
-				agg[item_name3] = int(agg.get(item_name3, 0)) + qty3
+				agg[display_key3] = int(agg.get(display_key3, 0)) + qty3
 				diag_raw_mission += 1
 
 	# Also scan convoy-level all_cargo for mission stacks
@@ -840,21 +1081,25 @@ func _collect_mission_cargo_items(convoy: Dictionary) -> Array[String]:
 				continue
 			if _looks_like_mission_item(ac):
 				var aname := String(ac.get("name", "Item"))
+				var dest_key4 := _extract_destination_from_item(ac)
+				var display_key4 := aname
+				if dest_key4 != "":
+					display_key4 = "%s — to %s" % [aname, dest_key4]
+				var cid4 := String(ac.get("cargo_id", ac.get("id", "")))
+				if cid4 != "" and not _active_mission_cargo_id_by_name.has(aname):
+					_active_mission_cargo_id_by_name[aname] = cid4
+				if cid4 != "" and not _active_mission_cargo_id_by_display.has(display_key4):
+					_active_mission_cargo_id_by_display[display_key4] = cid4
 				var aq := int(ac.get("quantity", 1))
-				agg[aname] = int(agg.get(aname, 0)) + (aq if aq > 0 else 1)
+				agg[display_key4] = int(agg.get(display_key4, 0)) + (aq if aq > 0 else 1)
 				if _debug_convoy_menu:
 					print("[ConvoyMenu][Debug] all_cargo mission item=", aname, " q=", aq)
 				diag_allcargo_mission += 1
 
-	# Build display strings from aggregated totals
-	# Build display strings from aggregated totals, including destination if known
+	# Build display strings from aggregated totals.
+	# Keys are already in "name" or "name — to DEST" form.
 	for k in agg.keys():
-		var base := "%s" % [String(k)]
-		var dest := _infer_destination_for_item(convoy, k)
-		if dest != "":
-			# Keep original display syntax as requested
-			base += " — to %s" % dest
-		out.append(base)
+		out.append(String(k))
 	if _debug_convoy_menu:
 		print("[ConvoyMenu][Debug] mission agg result=", out)
 		print("[ConvoyMenu][Debug] diag typed=", diag_typed_mission, " raw=", diag_raw_mission, " all=", diag_allcargo_mission)
@@ -954,6 +1199,8 @@ func _collect_settlement_mission_items() -> Array[String]:
 	var out: Array[String] = []
 	if convoy_data_received == null:
 		return out
+	var diag_budget: int = 6
+	var diag_vendor_budget: int = 6
 
 	# Determine current convoy coordinates (round to match settlement keys)
 	var sx: int = 0
@@ -977,13 +1224,52 @@ func _collect_settlement_mission_items() -> Array[String]:
 		return out
 
 	var vendors: Array = settlement_dict.get("vendors", []) if settlement_dict.has("vendors") else []
-	for v in vendors:
-		if not (v is Dictionary):
+	for v_any in vendors:
+		# Vendors in map snapshot are often partial; prefer full vendor payloads from VendorService/Hub.
+		var vendor_dict: Dictionary = {}
+		var vid: String = ""
+		if v_any is Dictionary:
+			vendor_dict = v_any
+			vid = String((v_any as Dictionary).get("vendor_id", (v_any as Dictionary).get("id", "")))
+		elif v_any is String:
+			vid = String(v_any)
+		else:
 			continue
-		var cargo_inv: Array = v.get("cargo_inventory", [])
-		for ci in cargo_inv:
-			if not (ci is Dictionary):
+
+		# Some settlement snapshots don't include vendor_id on the vendor object.
+		# Try to infer from the first cargo item.
+		if vid == "" and not vendor_dict.is_empty():
+			var inv_probe: Variant = vendor_dict.get("cargo_inventory", null)
+			if inv_probe is Array and not (inv_probe as Array).is_empty():
+				var first_any: Variant = (inv_probe as Array)[0]
+				if first_any is Dictionary:
+					vid = String((first_any as Dictionary).get("vendor_id", ""))
+					if _debug_convoy_menu and diag_vendor_budget > 0:
+						diag_vendor_budget -= 1
+						print("[ConvoyMenu][Debug] inferred vendor_id from cargo item vendor_id=", vid,
+							" vendor_keys=", vendor_dict.keys(),
+							" cargo_keys=", (first_any as Dictionary).keys())
+			elif _debug_convoy_menu and diag_vendor_budget > 0:
+				diag_vendor_budget -= 1
+				print("[ConvoyMenu][Debug] settlement vendor missing vendor_id; keys=", vendor_dict.keys())
+
+		# If we have a cached payload for this vendor, prefer it.
+		# IMPORTANT: _get_vendor_by_id can return the map snapshot vendor entry; only trust it if it looks full.
+		if vid != "":
+			var cached := _get_vendor_by_id(vid)
+			if not cached.is_empty() and _looks_like_full_vendor_payload(cached):
+				vendor_dict = cached
+			else:
+				_request_vendor_details(vid)
+		elif _debug_convoy_menu and diag_vendor_budget > 0:
+			diag_vendor_budget -= 1
+			print("[ConvoyMenu][Debug] cannot request vendor details (no vendor_id)")
+
+		var cargo_inv: Array = vendor_dict.get("cargo_inventory", [])
+		for ci_any in cargo_inv:
+			if not (ci_any is Dictionary):
 				continue
+			var ci: Dictionary = ci_any
 			# Use centralized mission detection when available
 			var is_mission := false
 			if ItemsData != null and ItemsData.MissionItem:
@@ -994,7 +1280,37 @@ func _collect_settlement_mission_items() -> Array[String]:
 			if not is_mission:
 				continue
 			var nm2 := String(ci.get("name", ci.get("base_name", "Item")))
+			# Force-request full vendor payload based on the mission item's origin vendor_id.
+			# Settlement snapshot vendor entries sometimes omit vendor_id, but cargo items often include it.
+			var origin_vid := String(ci.get("vendor_id", "")).strip_edges()
+			if origin_vid != "":
+				_request_vendor_details(origin_vid)
 			var dest2 := _extract_destination_from_item(ci)
+			# Fallback: mission cargo from snapshots may omit routing fields; try to enrich by cargo_id.
+			if dest2 == "":
+				var cid2 := String(ci.get("cargo_id", ""))
+				if cid2 != "" and is_instance_valid(_mechanics_service):
+					if _mechanics_service.has_method("get_enriched_cargo"):
+						var enriched_any: Variant = _mechanics_service.get_enriched_cargo(cid2)
+						if enriched_any is Dictionary and not (enriched_any as Dictionary).is_empty():
+							dest2 = _extract_destination_from_item(enriched_any as Dictionary)
+					if dest2 == "" and _mechanics_service.has_method("ensure_cargo_details"):
+						if _debug_convoy_menu and diag_budget > 0:
+							print("[ConvoyMenu][Debug][AvailMission] requesting cargo enrichment cargo_id=", cid2)
+						_mechanics_service.ensure_cargo_details(cid2)
+			if _debug_convoy_menu and diag_budget > 0:
+				diag_budget -= 1
+				var rec_any: Variant = ci.get("recipient", null)
+				var mvid_any: Variant = ci.get("mission_vendor_id", null)
+				print("[ConvoyMenu][Debug][AvailMission] name=", nm2,
+					" dest=", dest2,
+					" recipient=", rec_any,
+					" mission_vendor_id=", mvid_any,
+					" recipient_vendor_id=", ci.get("recipient_vendor_id", null),
+					" destination_vendor_id=", ci.get("destination_vendor_id", null),
+					" recipient_settlement_name=", ci.get("recipient_settlement_name", null),
+					" keys=", (ci.keys() if ci is Dictionary else [])
+				)
 			var entry2 := "%s" % [nm2]
 			if dest2 != "":
 				entry2 += " — to %s" % dest2
@@ -1003,6 +1319,23 @@ func _collect_settlement_mission_items() -> Array[String]:
 	if _debug_convoy_menu:
 		print("[ConvoyMenu][Debug] Settlement missions via vendor fallback: ", out)
 	return out
+
+
+func _on_cargo_data_received(cargo: Dictionary) -> void:
+	# Cargo enrichment responses can include recipient/destination fields.
+	# When one arrives, refresh preview so Available Missions can show destinations.
+	if not (cargo is Dictionary) or cargo.is_empty():
+		return
+	# Keep this cheap: only queue a refresh if this looks like mission cargo or has useful destination fields.
+	var looks_mission := false
+	if ItemsData != null and ItemsData.MissionItem:
+		looks_mission = ItemsData.MissionItem._looks_like_mission_dict(cargo)
+	else:
+		var dr = cargo.get("delivery_reward")
+		looks_mission = (dr is float or dr is int) and float(dr) > 0.0
+	if not looks_mission and cargo.get("recipient_settlement_name") == null and cargo.get("recipient") == null and cargo.get("mission_vendor_id") == null:
+		return
+	_queue_vendor_preview_update()
 
 func _infer_destination_for_item(convoy: Dictionary, item_name: String) -> String:
 	# Attempt to find destination for a given mission item within convoy cargo structures.
@@ -1114,17 +1447,33 @@ func _extract_destination_from_item(item: Dictionary) -> String:
 							var sn := str(sn_val)
 							if sn != "" and sn != "null":
 								return sn
-					# Fallback: vendor name if settlement not found
-					var v = _get_vendor_by_id(vid)
-					if v is Dictionary:
-						var vn_val = (v as Dictionary).get("name")
-						if vn_val != null:
-							var vn := str(vn_val)
-							if vn != "" and vn != "null":
-								return vn
+					# Fallback: vendor name via shared resolver (VendorTradePanel semantics)
+					var vn := ""
+					if VendorPanelContextController != null:
+						vn = str(VendorPanelContextController.get_vendor_name_for_recipient(self, vid))
+					if vn != "" and vn != "null" and vn != "Unknown Vendor":
+						return vn
+
+	# 2b) Some mission payloads use `mission_vendor_id` as the destination vendor when `recipient` is missing.
+	# Mirror VendorCargoAggregator behavior: only use it when we don't have `recipient`.
+	if item.get("recipient") == null and item.has("mission_vendor_id") and item.get("mission_vendor_id") != null:
+		var mvid := str(item.get("mission_vendor_id"))
+		if mvid != "" and mvid != "null":
+			var sm: Dictionary = _get_settlement_for_vendor_id(mvid)
+			if not sm.is_empty():
+				var smn_val2: Variant = sm.get("name")
+				if smn_val2 != null:
+					var smn2 := str(smn_val2)
+					if smn2 != "" and smn2 != "null":
+						return smn2
+			var vvn2 := ""
+			if VendorPanelContextController != null:
+				vvn2 = str(VendorPanelContextController.get_vendor_name_for_recipient(self, mvid))
+			if vvn2 != "" and vvn2 != "null" and vvn2 != "Unknown Vendor":
+				return vvn2
 
 	# 0) Fallback to resolving recipient field (destination vendor/settlement)
-	var recipient_any = item.get("recipient", null)
+	var recipient_any: Variant = item.get("recipient", null)
 	if recipient_any != null:
 		if recipient_any is Dictionary:
 			var rdict: Dictionary = recipient_any
@@ -1179,32 +1528,36 @@ func _extract_destination_from_item(item: Dictionary) -> String:
 							var sn2 := str(sn2_val)
 							if sn2 != "" and sn2 != "null":
 								return sn2
-					var v = _get_vendor_by_id(rvid)
-					if v is Dictionary:
-						var vn2_val = (v as Dictionary).get("name")
-						if vn2_val != null:
-							var vn2 := str(vn2_val)
-							if vn2 != "" and vn2 != "null":
-								return vn2
-		elif recipient_any is String:
-			var rvid_str := String(recipient_any)
+					var vn2 := ""
+					if VendorPanelContextController != null:
+						vn2 = str(VendorPanelContextController.get_vendor_name_for_recipient(self, rvid))
+					if vn2 != "" and vn2 != "null" and vn2 != "Unknown Vendor":
+						return vn2
+		elif recipient_any is String or recipient_any is int or recipient_any is float:
+			# Some payloads use numeric recipient ids.
+			var rvid_str := str(recipient_any)
 			if rvid_str != "" and rvid_str != "null":
-				var s3 = _get_settlement_for_vendor_id(rvid_str)
-				if s3 is Dictionary:
-					var sn3_val = (s3 as Dictionary).get("name")
+				var s3: Dictionary = _get_settlement_for_vendor_id(rvid_str)
+				if not s3.is_empty():
+					var sn3_val: Variant = s3.get("name")
 					if sn3_val != null:
 						var sn3 := str(sn3_val)
 						if sn3 != "" and sn3 != "null":
 							return sn3
-				var v3 = _get_vendor_by_id(rvid_str)
-				if v3 is Dictionary:
-					var vn3_val = (v3 as Dictionary).get("name")
-					if vn3_val != null:
-						var vn3 := str(vn3_val)
-						if vn3 != "" and vn3 != "null":
-							if _debug_convoy_menu:
-								print("[ConvoyMenu][Debug] dest via recipient vendor name=", vn3)
-							return vn3
+				# If recipient is actually a settlement id, resolve directly.
+				var sn_sett := _get_settlement_name_by_any_id(rvid_str)
+				if sn_sett != "":
+					if _debug_convoy_menu:
+						print("[ConvoyMenu][Debug] dest via recipient settlement id=", sn_sett)
+					return sn_sett
+				# Shared resolver used by VendorTradePanel/VendorCargoAggregator.
+				var vn3 := ""
+				if VendorPanelContextController != null:
+					vn3 = str(VendorPanelContextController.get_vendor_name_for_recipient(self, rvid_str))
+				if vn3 != "" and vn3 != "null" and vn3 != "Unknown Vendor":
+					if _debug_convoy_menu:
+						print("[ConvoyMenu][Debug] dest via recipient vendor name (shared)=", vn3)
+					return vn3
 
 	# 3) Destination dictionary object
 	var dest_any: Variant = item.get("destination", null)
@@ -1274,15 +1627,13 @@ func _extract_destination_from_item(item: Dictionary) -> String:
 								if _debug_convoy_menu:
 									print("[ConvoyMenu][Debug] dest via mission_vendor_id (fallback)=", smn2)
 								return smn2
-				var vv2 = _get_vendor_by_id(mvid2)
-				if vv2 is Dictionary:
-						var vv2_name_val = (vv2 as Dictionary).get("name")
-						if vv2_name_val != null:
-							var vv2_name := str(vv2_name_val)
-							if vv2_name != "" and vv2_name != "null":
-								if _debug_convoy_menu:
-									print("[ConvoyMenu][Debug] dest via mission_vendor_id vendor (fallback)=", vv2_name)
-								return vv2_name
+				var vv2_name := ""
+				if VendorPanelContextController != null:
+					vv2_name = str(VendorPanelContextController.get_vendor_name_for_recipient(self, mvid2))
+				if vv2_name != "" and vv2_name != "null" and vv2_name != "Unknown Vendor":
+					if _debug_convoy_menu:
+						print("[ConvoyMenu][Debug] dest via mission_vendor_id vendor (shared fallback)=", vv2_name)
+					return vv2_name
 
 	if _debug_convoy_menu:
 		print("[ConvoyMenu][Debug] destination unresolved for item=", String(item.get("name", item.get("base_name", "?"))))
@@ -1317,6 +1668,9 @@ func _on_vendor_preview_ready(vendor: Dictionary) -> void:
 	if vendor_id != "":
 		_vendors_by_id[vendor_id] = vendor
 		_vendors_by_id_models[vendor_id] = VendorModel.new(vendor)
+		var vendor_name := String(vendor.get("name", ""))
+		if vendor_name != "":
+			_vendor_id_to_name[vendor_id] = vendor_name
 	var changed := false
 	var cargo_inv: Array = vendor.get("cargo_inventory", [])
 	if cargo_inv is Array and not cargo_inv.is_empty():
@@ -1341,22 +1695,22 @@ func _on_vendor_preview_ready(vendor: Dictionary) -> void:
 		_queue_vendor_preview_update()
 
 
-func _get_vendor_by_id(vendor_id: String) -> Variant:
+func _get_vendor_by_id(vendor_id: String) -> Dictionary:
 	if vendor_id == "":
-		return null
-	if _vendors_by_id.has(vendor_id):
+		return {}
+	if _vendors_by_id.has(vendor_id) and (_vendors_by_id[vendor_id] is Dictionary):
 		return _vendors_by_id[vendor_id]
-	if _vendors_from_settlements_by_id.has(vendor_id):
+	if _vendors_from_settlements_by_id.has(vendor_id) and (_vendors_from_settlements_by_id[vendor_id] is Dictionary):
 		return _vendors_from_settlements_by_id[vendor_id]
-	return null
+	return {}
 
 
-func _get_settlement_for_vendor_id(vendor_id: String) -> Variant:
+func _get_settlement_for_vendor_id(vendor_id: String) -> Dictionary:
 	if vendor_id == "":
-		return null
-	if _vendor_id_to_settlement.has(vendor_id):
+		return {}
+	if _vendor_id_to_settlement.has(vendor_id) and (_vendor_id_to_settlement[vendor_id] is Dictionary):
 		return _vendor_id_to_settlement[vendor_id]
-	return null
+	return {}
 
 
 func _get_settlement_name_from_coords(x: int, y: int) -> String:
@@ -1377,6 +1731,22 @@ func _get_settlement_name_from_coords(x: int, y: int) -> String:
 			return "N/A (No Settlements at Coords)"
 		return "N/A (X Out of Bounds)"
 	return "N/A (Y Out of Bounds)"
+
+
+func _get_settlement_name_by_any_id(id_any: Variant) -> String:
+	var id_str := str(id_any)
+	if id_str == "" or id_str == "null":
+		return ""
+	for s_any in _latest_all_settlements:
+		if not (s_any is Dictionary):
+			continue
+		var s: Dictionary = s_any
+		var sid := str(s.get("sett_id", s.get("settlement_id", s.get("id", ""))))
+		if sid != "" and sid == id_str:
+			var nm := str(s.get("name", ""))
+			if nm != "" and nm != "null":
+				return nm
+	return ""
 
 func _on_vendor_tab_pressed(tab_index: VendorTab) -> void:
 	_current_vendor_tab = tab_index

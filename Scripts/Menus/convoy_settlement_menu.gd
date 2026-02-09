@@ -23,6 +23,11 @@ var _convoy_data: Dictionary
 var _settlement_data: Dictionary
 var _all_settlement_data: Array # Cached settlements snapshot
 
+# Optional deep-link intent passed via MenuManager extra_arg.
+var _pending_focus_intent: Dictionary = {}
+var _pending_focus_retry_attempts_left: int = 0
+var _pending_focus_retry_in_flight: bool = false
+
 @onready var _store: Node = get_node_or_null("/root/GameStore")
 @onready var _user_service: Node = get_node_or_null("/root/UserService")
 @onready var _convoy_service: Node = get_node_or_null("/root/ConvoyService")
@@ -39,6 +44,11 @@ var _top_up_plan: Dictionary = {
 # This function is called by MenuManager to pass the convoy data when the menu is opened.
 func initialize_with_data(data_or_id: Variant, extra_arg: Variant = null) -> void:
 	print("ConvoySettlementMenu: initialize_with_data called.")
+	# Capture optional deep-link focus intent (passed via MenuManager extra_arg)
+	_pending_focus_intent = (extra_arg as Dictionary).duplicate(true) if (typeof(extra_arg) == TYPE_DICTIONARY) else {}
+	if not _pending_focus_intent.is_empty() and String(_pending_focus_intent.get("target", "")) == "settlement_vendor":
+		# Retry budget for cases where vendor inventories arrive late.
+		_pending_focus_retry_attempts_left = 24
 	if data_or_id is Dictionary:
 		var d: Dictionary = data_or_id as Dictionary
 		convoy_id = String(d.get("convoy_id", d.get("id", "")))
@@ -53,6 +63,24 @@ func initialize_with_data(data_or_id: Variant, extra_arg: Variant = null) -> voi
 	# Defer the display logic to ensure readiness
 	print("ConvoySettlementMenu: initialize_with_data - Deferring _display_settlement_info.")
 	call_deferred("_display_settlement_info")
+	# Best-effort: apply focus after the UI is built.
+	if not _pending_focus_intent.is_empty():
+		call_deferred("_apply_pending_focus_intent")
+
+
+func _schedule_pending_focus_retry(delay_seconds: float) -> void:
+	if _pending_focus_intent.is_empty() or _pending_focus_retry_attempts_left <= 0:
+		return
+	if _pending_focus_retry_in_flight:
+		return
+	if not is_inside_tree():
+		return
+	_pending_focus_retry_in_flight = true
+	var timer := get_tree().create_timer(delay_seconds)
+	timer.timeout.connect(func() -> void:
+		_pending_focus_retry_in_flight = false
+		_apply_pending_focus_intent()
+	)
 
 
 func _ready():
@@ -255,6 +283,10 @@ func _create_vendor_tab(vendor_data: Dictionary):
 	#    _ready() function, which populates all its @onready variables (like vendor_item_list).
 	vendor_tab_container.add_child(vendor_panel_instance)
 	vendor_panel_instance.name = vendor_name
+	# Persist vendor_id on the panel node so we can select tabs by id later.
+	var vendor_id_str := String(vendor_data.get("vendor_id", ""))
+	if vendor_id_str != "":
+		vendor_panel_instance.set_meta("vendor_id", vendor_id_str)
 	vendor_tab_container.set_tab_title(vendor_tab_container.get_tab_count() - 1, short_vendor_name)
 	# Pass deep copies to avoid reference bugs!
 	vendor_panel_instance.initialize(
@@ -268,6 +300,78 @@ func _create_vendor_tab(vendor_data: Dictionary):
 	# Forward install requests to open mechanics with a prefilled cart
 	if vendor_panel_instance.has_signal("install_requested"):
 		vendor_panel_instance.install_requested.connect(_on_install_requested)
+
+
+func _select_vendor_tab_by_vendor_id(vendor_id: String) -> bool:
+	if vendor_id == "" or not is_instance_valid(vendor_tab_container):
+		return false
+	for i in range(vendor_tab_container.get_tab_count()):
+		var ctrl: Node = vendor_tab_container.get_tab_control(i)
+		if not is_instance_valid(ctrl):
+			continue
+		var meta_any: Variant = ctrl.get_meta("vendor_id", "")
+		if String(meta_any) == vendor_id:
+			if vendor_tab_container.current_tab != i:
+				vendor_tab_container.current_tab = i
+			return true
+	return false
+
+
+func _try_focus_intent_on_any_vendor_tab(intent: Dictionary) -> bool:
+	if not (intent is Dictionary) or intent.is_empty() or not is_instance_valid(vendor_tab_container):
+		return false
+	for i in range(vendor_tab_container.get_tab_count()):
+		var ctrl: Node = vendor_tab_container.get_tab_control(i)
+		if not is_instance_valid(ctrl):
+			continue
+		if ctrl.has_method("try_focus_intent_once"):
+			var ok_any: bool = bool(ctrl.call("try_focus_intent_once", intent))
+			if ok_any:
+				vendor_tab_container.current_tab = i
+				# Hand off persistent retries to the winning panel.
+				if ctrl.has_method("focus_intent"):
+					ctrl.call("focus_intent", intent)
+				return true
+	return false
+
+
+func _apply_pending_focus_intent() -> void:
+	if _pending_focus_intent.is_empty() or not is_instance_valid(vendor_tab_container):
+		return
+	if String(_pending_focus_intent.get("target", "")) != "settlement_vendor":
+		return
+
+	# 1) Choose vendor tab (if possible)
+	var vid := String(_pending_focus_intent.get("vendor_id", ""))
+	var vhint := String(_pending_focus_intent.get("vendor_name_hint", ""))
+	var selected := false
+	if vid != "":
+		selected = _select_vendor_tab_by_vendor_id(vid)
+	if (not selected) and vhint != "":
+		selected = select_vendor_tab_by_title_contains(vhint)
+
+	# 2) If vendor is known, ask the active vendor panel to focus (it will retry on refresh).
+	if selected:
+		var panel: Node = get_active_vendor_panel_node()
+		if is_instance_valid(panel) and panel.has_method("focus_intent"):
+			panel.call("focus_intent", _pending_focus_intent)
+		_pending_focus_intent = {}
+		_pending_focus_retry_attempts_left = 0
+		return
+
+	# 3) Vendor unknown: probe all vendor tabs and pick the first that can focus now.
+	if _try_focus_intent_on_any_vendor_tab(_pending_focus_intent):
+		_pending_focus_intent = {}
+		_pending_focus_retry_attempts_left = 0
+		return
+
+	# 4) Still not found; retry a few times to handle late vendor inventory.
+	_pending_focus_retry_attempts_left -= 1
+	if _pending_focus_retry_attempts_left <= 0:
+		push_warning("ConvoySettlementMenu: Could not apply deep-link focus intent after retries: %s" % str(_pending_focus_intent))
+		_pending_focus_intent = {}
+		return
+	_schedule_pending_focus_retry(0.25)
 
 func _update_ui(convoy: Dictionary) -> void:
 	# Smart refresh: only rebuild tabs if we moved to a new tile.

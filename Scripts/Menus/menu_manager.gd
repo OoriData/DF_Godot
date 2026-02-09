@@ -102,6 +102,12 @@ func open_convoy_settlement_menu(convoy_data = null):
 	var arg = _extract_convoy_id_or_passthrough(convoy_data)
 	_show_menu(convoy_settlement_menu_scene, arg)
 
+func open_convoy_settlement_menu_with_focus(convoy_data: Dictionary, focus_intent: Dictionary) -> void:
+	# Open the settlement menu and pass the focus intent as extra_arg so it can deep-link.
+	_next_menu_extra_arg = focus_intent
+	var arg = _extract_convoy_id_or_passthrough(convoy_data)
+	_show_menu(convoy_settlement_menu_scene, arg)
+
 func open_warehouse_menu(convoy_data = null):
 	var arg = _extract_convoy_id_or_passthrough(convoy_data)
 	_show_menu(warehouse_menu_scene, arg)
@@ -279,8 +285,14 @@ func _show_menu(menu_scene_resource, data_to_pass = null, add_to_stack: bool = t
 			current_active_menu.open_settlement_menu_requested.connect(open_convoy_settlement_menu, CONNECT_ONE_SHOT)
 		else:
 			printerr("MenuManager: FAILED to connect. ConvoyMenu is missing the 'open_settlement_menu_requested' signal declaration.")
+		# Deep-link: open settlement menu and focus a specific vendor/item
+		if current_active_menu.has_signal("open_settlement_menu_with_focus_requested"):
+			current_active_menu.open_settlement_menu_with_focus_requested.connect(open_convoy_settlement_menu_with_focus, CONNECT_ONE_SHOT)
 		if current_active_menu.has_signal("open_cargo_menu_requested"):
 			current_active_menu.open_cargo_menu_requested.connect(open_convoy_cargo_menu, CONNECT_ONE_SHOT)
+		# Deep-link: open cargo menu and inspect a specific item (expects {cargo_id})
+		if current_active_menu.has_signal("open_cargo_menu_inspect_requested"):
+			current_active_menu.open_cargo_menu_inspect_requested.connect(open_convoy_cargo_menu_for_item, CONNECT_ONE_SHOT)
 	elif menu_type == "convoy_vehicle_submenu":
 		if current_active_menu.has_signal("inspect_all_convoy_cargo_requested"):
 			current_active_menu.inspect_all_convoy_cargo_requested.connect(open_convoy_cargo_menu, CONNECT_ONE_SHOT)

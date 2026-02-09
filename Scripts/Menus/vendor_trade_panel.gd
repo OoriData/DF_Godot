@@ -67,6 +67,9 @@ var _last_selection_unique_key: String = "" # Used to detect same logical select
 var _last_selected_tree: String = "" # "vendor" or "convoy"; used to restore selection after refreshes
 var _last_selected_restore_id: String = "" # Raw cargo_id or vehicle_id string for restoring selection
 
+# Optional deep-link focus intent (set by ConvoySettlementMenu when navigated from preview).
+var _pending_focus_intent: Dictionary = {}
+
 var _transaction_in_progress: bool = false
 # Backend compatibility cache (per vehicle + part uid), shared semantics with Mechanics menu
 var _compat_cache: Dictionary = {} # key: vehicle_id||part_uid -> payload
@@ -751,6 +754,8 @@ func refresh_data(p_vendor_data, p_convoy_data, p_current_settlement_data, p_all
 	# Keep buttons and panels in sync
 	_update_transaction_panel()
 	_update_install_button_state()
+	# If we were asked to focus a particular item via deep-link, retry after refresh.
+	_try_apply_pending_focus_intent()
 
 func _populate_vendor_list() -> void:
 	vendor_item_tree.clear()
@@ -764,6 +769,63 @@ func _populate_vendor_list() -> void:
 	_populate_category(vendor_item_tree, root, "Parts", buckets.get("parts", {}))
 	_populate_category(vendor_item_tree, root, "Other", buckets.get("other", {}))
 	_populate_category(vendor_item_tree, root, "Resources", buckets.get("resources", {}))
+	# Vendor list is now rebuilt; apply any queued deep-link focus request.
+	_try_apply_pending_focus_intent()
+
+
+# --- Deep-link focus API ---
+
+func focus_intent(intent: Dictionary) -> bool:
+	# Public API: called by ConvoySettlementMenu to focus a vendor item.
+	if not (intent is Dictionary) or intent.is_empty():
+		return false
+	_pending_focus_intent = intent.duplicate(true)
+	return _try_apply_pending_focus_intent()
+
+
+func try_focus_intent_once(intent: Dictionary) -> bool:
+	# Non-persistent focus attempt: returns true only if the item is selectable right now.
+	# This is used by ConvoySettlementMenu to probe multiple vendor tabs without leaving
+	# pending focus state on every panel.
+	if not (intent is Dictionary) or intent.is_empty():
+		return false
+	if not is_node_ready() or not is_instance_valid(vendor_item_tree):
+		return false
+	if String(intent.get("target", "")) != "settlement_vendor":
+		return false
+
+	var mode := String(intent.get("mode", "buy"))
+	if mode == "buy":
+		focus_buy_tab()
+
+	var restore_key := String(intent.get("item_restore_key", ""))
+	if restore_key == "":
+		return false
+
+	return _restore_selection(vendor_item_tree, restore_key)
+
+
+func _try_apply_pending_focus_intent() -> bool:
+	if _pending_focus_intent.is_empty():
+		return false
+	if not is_node_ready() or not is_instance_valid(vendor_item_tree):
+		return false
+	if String(_pending_focus_intent.get("target", "")) != "settlement_vendor":
+		return false
+
+	# Default to BUY tab for settlement vendor deep-links.
+	var mode := String(_pending_focus_intent.get("mode", "buy"))
+	if mode == "buy":
+		focus_buy_tab()
+
+	var restore_key := String(_pending_focus_intent.get("item_restore_key", ""))
+	if restore_key == "":
+		return false
+
+	var ok := _restore_selection(vendor_item_tree, restore_key)
+	if ok:
+		_pending_focus_intent = {}
+	return ok
 
 func _populate_convoy_list() -> void:
 	convoy_item_tree.clear()
