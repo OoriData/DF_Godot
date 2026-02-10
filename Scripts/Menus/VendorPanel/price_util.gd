@@ -16,14 +16,33 @@ static func get_item_price_components(item: Dictionary) -> Dictionary:
 	var container_keys = ["container_unit_price", "unit_price", "price", "base_price", "buy_price", "sell_price"]
 	for k in container_keys:
 		if item.has(k) and (item[k] is float or item[k] is int):
-			out.container_unit_price = float(item[k])
-			break
-	# Resource-specific unit value (raw value per unit)
-	var resource_keys = ["resource_unit_value", "unit_value", "value"]
+			var val = float(item[k])
+			if val > 0.0:
+				out.container_unit_price = val
+				break
+	# Resource-specific unit value (total value of contained resources)
+	var resource_keys = ["fuel_price", "water_price", "food_price"]
+	var amount_keys = ["fuel", "water", "food", "Fuel", "Water", "Food"]
 	for rk in resource_keys:
 		if item.has(rk) and (item[rk] is float or item[rk] is int):
-			out.resource_unit_value = float(item[rk])
-			break
+			var price = float(item[rk])
+			if price > 0.0:
+				var amount = 0.0
+				if item.get("is_raw_resource", false):
+					# For bulk resources, the price fields (water_price, fuel_price, etc.)
+					# are already PER UNIT prices, so amount = 1.0
+					amount = 1.0
+				else:
+					var prefix = rk.split("_")[0].to_lower()
+					for ak in amount_keys:
+						if ak.to_lower() == prefix:
+							var av = item.get(ak)
+							if av is float or av is int:
+								amount = float(av)
+							break
+				if amount > 0.0:
+					out.resource_unit_value += (price * amount)
+	out.resource_unit_value = max(0.0, out.resource_unit_value) # Fallback / cleanup
 	# Allow nested price dicts like { price: { buy: x, sell: y } }
 	if item.has("price") and item.price is Dictionary:
 		var pd = item.price as Dictionary
@@ -33,6 +52,8 @@ static func get_item_price_components(item: Dictionary) -> Dictionary:
 			out.container_unit_price = float(pd.buy)
 		elif pd.has("sell") and (pd.sell is float or pd.sell is int):
 			out.container_unit_price = float(pd.sell)
+	if (item.get("perf_log_enabled", false) or item.get("is_raw_resource", false)) and out.resource_unit_value > 0.0:
+		print("[PriceUtil] Calculated price components for '%s': Resource=%.2f Container=%.2f" % [item.get("name", "Unknown"), out.resource_unit_value, out.container_unit_price])
 	return out
 
 # True if the dictionary represents a vehicle record
@@ -73,14 +94,18 @@ static func get_contextual_unit_price(item: Dictionary, mode: String) -> float:
 	if is_vehicle_item(item):
 		return get_vehicle_price(item)
 	var comps = get_item_price_components(item)
-	var unit = comps.container_unit_price
-	# If separate buy/sell fields exist, prefer the matching one
+	var unit = comps.container_unit_price + comps.resource_unit_value
+	# If separate buy/sell fields exist, prefer the matching one (if positive)
 	if mode == "buy":
 		for k in ["buy_price", "price_buy", "unit_buy"]:
 			if item.has(k) and (item[k] is float or item[k] is int):
-				return float(item[k])
+				var fv = float(item[k])
+				if fv > 0.0:
+					return fv
 	elif mode == "sell":
 		for k in ["sell_price", "price_sell", "unit_sell"]:
 			if item.has(k) and (item[k] is float or item[k] is int):
-				return float(item[k])
+				var fv = float(item[k])
+				if fv > 0.0:
+					return fv
 	return unit

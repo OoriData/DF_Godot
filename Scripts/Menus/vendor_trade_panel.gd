@@ -424,20 +424,133 @@ func _vendor_data_with_price_fallback(vd_in: Variant) -> Dictionary:
 	var vid: String = str(vd.get("vendor_id", vd.get("id", "")))
 	if vid == "":
 		return vd
-	if _vendors_from_settlements_by_id == null or _vendors_from_settlements_by_id.is_empty():
-		return vd
-	var fallback_any: Variant = _vendors_from_settlements_by_id.get(vid)
-	if not (fallback_any is Dictionary):
-		return vd
-	var fallback: Dictionary = fallback_any
-	# Merge only missing/null price fields from fallback; keep live inventory fields.
+	
+	if perf_log_enabled:
+		print("[PriceFallback] RAW VENDOR DATA for ", vid, ":")
+		print("  water=", str(vd.get("water", "MISSING")), ", water_price=", str(vd.get("water_price", "MISSING")))
+		print("  fuel=", str(vd.get("fuel", "MISSING")), ", fuel_price=", str(vd.get("fuel_price", "MISSING")))
+		print("  food=", str(vd.get("food", "MISSING")), ", food_price=", str(vd.get("food_price", "MISSING")))
+	
 	var out: Dictionary = vd.duplicate(true)
-	for k in ["fuel_price", "water_price", "food_price"]:
-		var has_key := out.has(k)
-		var val: Variant = out.get(k) if has_key else null
-		if (not has_key) or val == null:
-			if fallback.has(k) and fallback.get(k) != null:
-				out[k] = fallback.get(k)
+	var price_keys = ["fuel_price", "water_price", "food_price"]
+	
+	# Determine which keys need a fallback
+	var keys_to_fix = []
+	for k in price_keys:
+		var val = out.get(k)
+		var valid_positive := false
+		if (val is float or val is int) and float(val) > 0.0:
+			valid_positive = true
+		
+		if not valid_positive:
+			keys_to_fix.append(k)
+	
+	if keys_to_fix.is_empty():
+		return out
+
+	if perf_log_enabled:
+		print("[PriceFallback] Vendor %s needs fallback for keys: %s" % [vid, keys_to_fix])
+
+	# Strategy 1: Look at the specific vendor record from global settlement data
+	if not _vendors_from_settlements_by_id.is_empty():
+		var global_v = _vendors_from_settlements_by_id.get(vid)
+		if global_v is Dictionary:
+			for k in keys_to_fix:
+				var fv = global_v.get(k)
+				if (fv is float or fv is int or fv is String) and float(fv) > 0.0:
+					out[k] = fv
+					if perf_log_enabled:
+						print("[PriceFallback] Found %s = %s via global vendor record for %s" % [k, fv, vid])
+	
+	# Re-check keys to fix
+	var remaining_keys = []
+	for k in keys_to_fix:
+		var cur_val = out.get(k)
+		if not (cur_val is float or cur_val is int) or float(cur_val) <= 0.0:
+			remaining_keys.append(k)
+	
+	if remaining_keys.is_empty():
+		return out
+		
+	# Strategy 2: Look at the settlement and other vendors in the same settlement
+	var sett = _vendor_id_to_settlement.get(vid)
+	if sett is Dictionary:
+		# First check the SETTLEMENT ITSELF for resource prices
+		if perf_log_enabled:
+			print("[PriceFallback] Strategy 2a: Checking settlement '%s' for resource prices: %s" % [sett.get("name", "Unknown"), remaining_keys])
+		
+		var still_needed_after_sett = []
+		for k in remaining_keys:
+			var sv = sett.get(k)
+			if sv != null and (sv is float or sv is int or sv is String) and float(sv) > 0.0:
+				out[k] = sv
+				if perf_log_enabled:
+					print("[PriceFallback] Found %s = %s from settlement itself" % [k, sv])
+			else:
+				still_needed_after_sett.append(k)
+		remaining_keys = still_needed_after_sett
+		
+		if remaining_keys.is_empty():
+			return out
+		
+		# Then check other vendors in the settlement
+		var vendors = sett.get("vendors", [])
+		if perf_log_enabled:
+			print("[PriceFallback] Strategy 2b: Searching %d vendors in settlement for remaining keys: %s" % [vendors.size() if vendors is Array else 0, remaining_keys])
+		if vendors is Array:
+			for v_any in vendors:
+				if not (v_any is Dictionary): continue
+				var v_dict: Dictionary = v_any
+				var v_id = str(v_dict.get("vendor_id", v_dict.get("id", "")))
+				# Don't check ourselves again (already did in Strategy 1 effectively)
+				if v_id == vid:
+					continue
+				
+				# Try to fill remaining keys
+				var still_needed = []
+				for k in remaining_keys:
+					var sv = v_dict.get(k)
+					if sv != null and (sv is float or sv is int or sv is String) and float(sv) > 0.0:
+						out[k] = sv
+						if perf_log_enabled:
+							print("[PriceFallback] Found %s = %s via neighbor vendor %s in settlement" % [k, sv, v_id])
+					else:
+						still_needed.append(k)
+				remaining_keys = still_needed
+				if remaining_keys.is_empty():
+					break
+	
+	if remaining_keys.is_empty():
+		return out
+		
+	# Strategy 3: Global Scan (Last Resort)
+	if perf_log_enabled:
+		print("[PriceFallback] Strategy 3: Scanning ALL settlements for remaining keys: %s" % [remaining_keys])
+	
+	for s_any in _latest_settlements:
+		if not (s_any is Dictionary): continue
+		var s_dict: Dictionary = s_any
+		var s_vendors = s_dict.get("vendors", [])
+		if s_vendors is Array:
+			for v_any in s_vendors:
+				if not (v_any is Dictionary): continue
+				var v_dict: Dictionary = v_any
+				
+				var still_needed = []
+				for k in remaining_keys:
+					var gv = v_dict.get(k)
+					if gv != null and (gv is float or gv is int or gv is String) and float(gv) > 0.0:
+						out[k] = gv
+						if perf_log_enabled:
+							print("[PriceFallback] GLOBAL MATCH: Found %s = %s at %s (%s)" % [k, gv, v_dict.get("name", "Unknown"), s_dict.get("name", "Unknown")])
+					else:
+						still_needed.append(k)
+				remaining_keys = still_needed
+				if remaining_keys.is_empty():
+					break
+		if remaining_keys.is_empty():
+			break
+
 	return out
 
 func _get_bold_font_for(node: Control) -> FontVariation:
@@ -836,7 +949,9 @@ func _populate_convoy_list() -> void:
 	if not convoy_data:
 		return
 	var allow_vehicle_sell := _should_show_vehicle_sell_category()
-	var vd_for_agg := _vendor_data_with_price_fallback(vendor_data)
+	# Only apply cross-vendor price fallback for BUY mode display.
+	# In SELL mode we must use the vendor's own pricing to decide what can be sold.
+	var vd_for_agg = vendor_data if str(current_mode) == "sell" else _vendor_data_with_price_fallback(vendor_data)
 	var buckets := VendorCargoAggregatorScript.build_convoy_buckets(convoy_data, vd_for_agg, current_mode, perf_log_enabled, Callable(self, "_get_vendor_name_for_recipient"), allow_vehicle_sell)
 	if perf_log_enabled and str(current_mode) == "sell":
 		var vd: Dictionary = vendor_data if (vendor_data is Dictionary) else {}
@@ -1056,6 +1171,15 @@ func _update_transaction_panel() -> void:
 	if is_instance_valid(transaction_quantity_container):
 		transaction_quantity_container.visible = not is_vehicle
 
+	# SELL guard: bulk resources can only be sold when vendor has a matching positive price.
+	var can_transact: bool = true
+	if str(current_mode) == "sell" and bool(item_data_source.get("is_raw_resource", false)):
+		# Use raw vendor pricing here (no fallback), to match gating rules.
+		var vd_guard: Dictionary = vendor_data if (vendor_data is Dictionary) else {}
+		var rt_guard: String = VendorTradeVM.raw_resource_type(item_data_source)
+		if rt_guard != "" and not VendorTradeVM.vendor_can_buy_resource(vd_guard, rt_guard):
+			can_transact = false
+
 	# --- START: UNIFIED PRICE & DISPLAY LOGIC via VM ---
 	var quantity = int(quantity_spinbox.value) if is_instance_valid(quantity_spinbox) else 1
 	var pr = VendorTradeVM.build_price_presenter(item_data_source, str(current_mode), quantity, selected_item)
@@ -1079,7 +1203,9 @@ func _update_transaction_panel() -> void:
 	price_label.text = bbcode_text
 	_update_install_button_state()
 	if is_instance_valid(action_button):
-		action_button.disabled = false
+		action_button.disabled = not can_transact
+		if not can_transact:
+			action_button.text = "Sell"
 
 func _refresh_capacity_bars(projected_volume_delta: float, projected_weight_delta: float) -> void:
 	VendorPanelConvoyStatsController.refresh_capacity_bars(self, projected_volume_delta, projected_weight_delta)

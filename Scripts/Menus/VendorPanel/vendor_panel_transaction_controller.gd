@@ -64,7 +64,17 @@ static func on_max_button_pressed(panel: Object) -> void:
 	# Capacity constraints (skip for vehicles)
 	var weight_limit: int = 99999999
 	var volume_limit: int = 99999999
+	var resource_limit: int = 99999999
 	if not is_vehicle:
+		if bool(item_data_source.get("is_raw_resource", false)) and panel.convoy_data and (panel.convoy_data is Dictionary):
+			var cd: Dictionary = panel.convoy_data
+			if item_data_source.get("fuel", 0) > 0:
+				resource_limit = maxi(0, int(cd.get("max_fuel", 0) - cd.get("fuel", 0)))
+			elif item_data_source.get("water", 0) > 0:
+				resource_limit = maxi(0, int(cd.get("max_water", 0) - cd.get("water", 0)))
+			elif item_data_source.get("food", 0) > 0:
+				resource_limit = maxi(0, int(cd.get("max_food", 0) - cd.get("food", 0)))
+
 		var unit_weight: float = 0.0
 		if panel.selected_item and (panel.selected_item is Dictionary):
 			var tq: int = int((panel.selected_item as Dictionary).get("total_quantity", 0))
@@ -87,18 +97,19 @@ static func on_max_button_pressed(panel: Object) -> void:
 				unit_volume = float(item_data_source.get("unit_volume", 0.0))
 			elif item_data_source.has("volume") and item_data_source.has("quantity") and float(item_data_source.get("quantity", 0.0)) > 0.0:
 				unit_volume = float(item_data_source.get("volume", 0.0)) / float(item_data_source.get("quantity", 1.0))
-
+ 
 		var remaining_weight: float = max(0.0, float(panel._convoy_total_weight) - float(panel._convoy_used_weight))
 		var remaining_volume: float = max(0.0, float(panel._convoy_total_volume) - float(panel._convoy_used_volume))
 		if unit_weight > 0.0 and float(panel._convoy_total_weight) > 0.0:
 			weight_limit = int(floor(remaining_weight / unit_weight))
 		if unit_volume > 0.0 and float(panel._convoy_total_volume) > 0.0:
 			volume_limit = int(floor(remaining_volume / unit_volume))
-
+ 
 	var max_quantity: int = vendor_stock
 	max_quantity = min(max_quantity, afford_limit)
 	max_quantity = min(max_quantity, weight_limit)
 	max_quantity = min(max_quantity, volume_limit)
+	max_quantity = min(max_quantity, resource_limit)
 	max_quantity = max(1, max_quantity)
 	panel.quantity_spinbox.value = max_quantity
 
@@ -268,6 +279,12 @@ static func dispatch_sell(panel: Object, vendor_id: String, convoy_id: String, i
 			res_type = "water"
 		elif float(item_data_source.get("food", 0)) > 0:
 			res_type = "food"
+		if res_type != "":
+			# For SELL gating we must use the vendor's own price keys.
+			var vd: Dictionary = panel.vendor_data if (panel.vendor_data is Dictionary) else {}
+			if not VendorTradeVM.vendor_can_buy_resource(vd, res_type):
+				panel._on_api_transaction_error("Vendor does not buy " + res_type)
+				return
 		if res_type != "" and panel._vendor_service.has_method("sell_resource"):
 			panel._vendor_service.sell_resource(vendor_id, convoy_id, res_type, float(quantity))
 			panel._request_authoritative_refresh(convoy_id, vendor_id)

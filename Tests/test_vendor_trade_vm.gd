@@ -36,6 +36,44 @@ func test_build_price_presenter_sell_mode_resource():
 	assert_eq(res.added_weight, -5.0, "Added weight should be negative for sell (removing from convoy)")
 	assert_eq(res.added_volume, -5.0, "Added volume should be negative for sell")
 
+
+func test_build_price_presenter_buy_mode_bulk_raw_resource_simplified_text():
+	var item = {
+		"name": "Fuel (Bulk)",
+		"is_raw_resource": true,
+		"fuel": 100,
+		"fuel_price": 20.0,
+		"unit_weight": 1.0,
+		"unit_volume": 0.0
+	}
+	var res = VendorTradeVM.build_price_presenter(item, "buy", 10, null)
+	assert_eq(res.unit_price, 20.0)
+	assert_eq(res.total_price, 200.0)
+	assert_eq(res.added_weight, 10.0)
+	assert_eq(res.added_volume, 0.0, "Bulk resources should not project volume")
+	assert_ne(res.bbcode_text.find("Unit Price"), -1)
+	assert_ne(res.bbcode_text.find("Total Price"), -1)
+	assert_ne(res.bbcode_text.find("Weight Change"), -1)
+	assert_eq(res.bbcode_text.find("Quantity"), -1, "Bulk resources should not show quantity line")
+	assert_eq(res.bbcode_text.find("Order Volume"), -1, "Bulk resources should not show volume line")
+	assert_eq(res.bbcode_text.find("Order Weight"), -1, "Bulk resources should use Weight Change label")
+
+
+func test_build_price_presenter_sell_mode_bulk_raw_resource_full_price_and_negates_weight():
+	var item = {
+		"name": "Water (Bulk)",
+		"is_raw_resource": true,
+		"water": 50,
+		"water_price": 10.0,
+		"unit_weight": 1.0,
+		"unit_volume": 0.0
+	}
+	var res = VendorTradeVM.build_price_presenter(item, "sell", 5, null)
+	assert_eq(res.unit_price, 10.0, "Sell price should use vendor water_price for bulk resources")
+	assert_eq(res.total_price, 50.0)
+	assert_eq(res.added_weight, -5.0)
+	assert_eq(res.bbcode_text.find("Quantity"), -1)
+
 func test_build_price_presenter_vehicle_pricing():
 	# Vehicles should NOT be halved in sell mode
 	var item = {

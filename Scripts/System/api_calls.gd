@@ -1471,20 +1471,28 @@ func _on_request_completed(result: int, response_code: int, _headers: PackedStri
 			_log_debug("[APICalls][PATCH_TXN] body_preview=" + preview)
 			var json_response = JSON.parse_string(response_body_text)
 			if json_response == null:
-				# Accept plain-text bodies (e.g., UUID) by emitting the raw string
+				# Accept plain-text bodies (e.g., UUID). For transaction signals we still emit a Dictionary
+				# so UI feedback + refresh wiring stays consistent.
 				var sig_n := _current_patch_signal_name
 				var is_txn := (sig_n == "vehicle_bought" or sig_n == "vehicle_sold" or sig_n == "cargo_bought" or sig_n == "cargo_sold" or sig_n == "resource_bought" or sig_n == "resource_sold")
 				var can_emit := has_signal(sig_n)
-				if not is_txn and can_emit:
-					_log_info("[APICalls][PATCH_TXN] Non-JSON success body; emitting raw text for signal '%s'." % sig_n)
-					emit_signal(sig_n, response_body_text)
+				if can_emit:
+					if is_txn:
+						_log_info("[APICalls][PATCH_TXN] Non-JSON txn success body; emitting minimal Dictionary for '%s'." % sig_n)
+						emit_signal(sig_n, {"raw": response_body_text, "ok": true})
+					else:
+						_log_info("[APICalls][PATCH_TXN] Non-JSON success body; emitting raw text for signal '%s'." % sig_n)
+						emit_signal(sig_n, response_body_text)
 				else:
-					_log_info("[APICalls][PATCH_TXN] Non-JSON success for '%s'; skipping emit (services will refresh or signal removed)." % sig_n)
+					_log_info("[APICalls][PATCH_TXN] Non-JSON success for '%s'; cannot emit (signal missing)." % sig_n)
 			else:
 				# Normalize common txn payloads: if server wraps convoy in 'convoy_after', emit the inner convoy
 				var sig2 := _current_patch_signal_name
 				var skip_emit := false
 				var can_emit2 := has_signal(sig2)
+				# Ensure transaction signals always receive a Dictionary payload.
+				if typeof(json_response) != TYPE_DICTIONARY and (sig2 == "vehicle_bought" or sig2 == "vehicle_sold" or sig2 == "cargo_bought" or sig2 == "cargo_sold" or sig2 == "resource_bought" or sig2 == "resource_sold"):
+					json_response = {"data": json_response, "ok": true}
 				if typeof(json_response) == TYPE_DICTIONARY and not skip_emit and can_emit2:
 					if json_response.has("convoy_after") and typeof(json_response["convoy_after"]) == TYPE_DICTIONARY:
 						_log_info("[APICalls][PATCH_TXN] Unwrapping 'convoy_after' for signal '" + sig2 + "'.")

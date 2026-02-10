@@ -79,9 +79,20 @@ static func build_vendor_buckets(vendor_data: Dictionary, perf_log_enabled: bool
 			"resources": aggregated_resources,
 		}
 
+	var v_fuel_p = vendor_data.get("fuel_price", 0)
+	var v_water_p = vendor_data.get("water_price", 0)
+	var v_food_p = vendor_data.get("food_price", 0)
+
 	for item in vendor_data.get("cargo_inventory", []):
 		var category_dict: Dictionary
 		var mission_vendor_name: String = ""
+		
+		# Inject current vendor prices so PriceUtil can see them on the item level
+		if item is Dictionary:
+			if not item.has("fuel_price") or item.get("fuel_price") == null: item["fuel_price"] = v_fuel_p
+			if not item.has("water_price") or item.get("water_price") == null: item["water_price"] = v_water_p
+			if not item.has("food_price") or item.get("food_price") == null: item["food_price"] = v_food_p
+
 		# Missions may carry either `recipient` or `mission_vendor_id` depending on payload shape.
 		# Prefer `recipient`, but fall back to `mission_vendor_id` so Destination can be resolved.
 		var recipient_id_any: Variant = null
@@ -122,7 +133,7 @@ static func build_vendor_buckets(vendor_data: Dictionary, perf_log_enabled: bool
 		print("[VendorCargoAggregator] RAW_FUEL before cast value=", raw_fuel_val, " type=", typeof(raw_fuel_val), " price=", raw_fuel_price_val)
 	var fuel_quantity := _to_int_any(raw_fuel_val)
 	var fuel_price := _to_float_any(raw_fuel_price_val)
-	if fuel_quantity > 0 and fuel_price > 0.0:
+	if fuel_quantity > 0:
 		var fuel_item = {
 			"name": "Fuel (Bulk)",
 			"base_desc": "Bulk fuel to fill your containers.",
@@ -130,12 +141,17 @@ static func build_vendor_buckets(vendor_data: Dictionary, perf_log_enabled: bool
 			"fuel": fuel_quantity,
 			"fuel_price": fuel_price,
 			"is_raw_resource": true,
+			"unit_weight": 1.0,
+			"unit_volume": 0.0,
+			"total_weight": fuel_quantity * 1.0,
+			"total_volume": 0.0,
 		}
 		if perf_log_enabled:
 			print("[VendorCargoAggregator] Creating vendor bulk fuel item:", fuel_item)
 		_aggregate_vendor_item(aggregated_resources, fuel_item, "", perf_log_enabled)
 	elif fuel_quantity > 0 and perf_log_enabled:
-		print("[VendorCargoAggregator] Skipping vendor bulk fuel (no positive fuel_price)")
+		# This branch is now unreachable but kept for structural symmetry with previous version
+		print("[VendorCargoAggregator] Skipping vendor bulk fuel (unexpected state)")
 
 	var raw_water_val = vendor_data.get("water", 0)
 	var raw_water_price_val = vendor_data.get("water_price", 0)
@@ -143,7 +159,7 @@ static func build_vendor_buckets(vendor_data: Dictionary, perf_log_enabled: bool
 		print("[VendorCargoAggregator] RAW_WATER before cast value=", raw_water_val, " type=", typeof(raw_water_val), " price=", raw_water_price_val)
 	var water_quantity := _to_int_any(raw_water_val)
 	var water_price := _to_float_any(raw_water_price_val)
-	if water_quantity > 0 and water_price > 0.0:
+	if water_quantity > 0:
 		var water_item = {
 			"name": "Water (Bulk)",
 			"base_desc": "Bulk water to fill your containers.",
@@ -151,12 +167,16 @@ static func build_vendor_buckets(vendor_data: Dictionary, perf_log_enabled: bool
 			"water": water_quantity,
 			"water_price": water_price,
 			"is_raw_resource": true,
+			"unit_weight": 1.0,
+			"unit_volume": 0.0,
+			"total_weight": water_quantity * 1.0,
+			"total_volume": 0.0,
 		}
 		if perf_log_enabled:
 			print("[VendorCargoAggregator] Creating vendor bulk water item:", water_item)
 		_aggregate_vendor_item(aggregated_resources, water_item, "", perf_log_enabled)
 	elif water_quantity > 0 and perf_log_enabled:
-		print("[VendorCargoAggregator] Skipping vendor bulk water (no positive water_price)")
+		print("[VendorCargoAggregator] Skipping vendor bulk water (unexpected state)")
 
 	var raw_food_val = vendor_data.get("food", 0)
 	var raw_food_price_val = vendor_data.get("food_price", 0)
@@ -164,7 +184,7 @@ static func build_vendor_buckets(vendor_data: Dictionary, perf_log_enabled: bool
 		print("[VendorCargoAggregator] RAW_FOOD before cast value=", raw_food_val, " type=", typeof(raw_food_val), " price=", raw_food_price_val)
 	var food_quantity := _to_int_any(raw_food_val)
 	var food_price := _to_float_any(raw_food_price_val)
-	if food_quantity > 0 and food_price > 0.0:
+	if food_quantity > 0:
 		var food_item = {
 			"name": "Food (Bulk)",
 			"base_desc": "Bulk food supplies.",
@@ -172,12 +192,16 @@ static func build_vendor_buckets(vendor_data: Dictionary, perf_log_enabled: bool
 			"food": food_quantity,
 			"food_price": food_price,
 			"is_raw_resource": true,
+			"unit_weight": 1.0,
+			"unit_volume": 0.0,
+			"total_weight": food_quantity * 1.0,
+			"total_volume": 0.0,
 		}
 		if perf_log_enabled:
 			print("[VendorCargoAggregator] Creating vendor bulk food item:", food_item)
 		_aggregate_vendor_item(aggregated_resources, food_item, "", perf_log_enabled)
 	elif food_quantity > 0 and perf_log_enabled:
-		print("[VendorCargoAggregator] Skipping vendor bulk food (no positive food_price)")
+		print("[VendorCargoAggregator] Skipping vendor bulk food (unexpected state)")
 
 	for vehicle in vendor_data.get("vehicle_inventory", []):
 		var vid := str(vehicle.get("vehicle_id", ""))
@@ -226,6 +250,11 @@ static func build_convoy_buckets(convoy_data: Dictionary, vendor_data: Dictionar
 	var is_sell_mode: bool = str(_current_mode) == "sell"
 	var vendor_can_buy_cargo: bool = true # Updated rule: every vendor allows selling cargo.
 	var vendor_vehicle_inventory_any: Variant = (vendor_data.get("vehicle_inventory") if vendor_data != null else null)
+	
+	var v_fuel_p = vendor_data.get("fuel_price", 0) if (vendor_data is Dictionary) else 0
+	var v_water_p = vendor_data.get("water_price", 0) if (vendor_data is Dictionary) else 0
+	var v_food_p = vendor_data.get("food_price", 0) if (vendor_data is Dictionary) else 0
+	
 	var vendor_can_buy_vehicles: bool = vendor_vehicle_inventory_any is Array and not (vendor_vehicle_inventory_any as Array).is_empty()
 	var vendor_buys_fuel: bool = _has_positive_price(vendor_data, "fuel_price")
 	var vendor_buys_water: bool = _has_positive_price(vendor_data, "water_price")
@@ -270,6 +299,12 @@ static func build_convoy_buckets(convoy_data: Dictionary, vendor_data: Dictionar
 						continue
 					found_any_cargo = true
 					var raw_item: Dictionary = typed.raw.duplicate(true)
+					
+					# Inject current vendor prices so PriceUtil can see them on the item level
+					if not raw_item.has("fuel_price") or raw_item.get("fuel_price") == null: raw_item["fuel_price"] = v_fuel_p
+					if not raw_item.has("water_price") or raw_item.get("water_price") == null: raw_item["water_price"] = v_water_p
+					if not raw_item.has("food_price") or raw_item.get("food_price") == null: raw_item["food_price"] = v_food_p
+
 					raw_item["quantity"] = typed.quantity
 					raw_item["category"] = typed.category
 					raw_item["weight"] = typed.total_weight
@@ -356,6 +391,12 @@ static func build_convoy_buckets(convoy_data: Dictionary, vendor_data: Dictionar
 
 	if not found_any_cargo and convoy_data.has("cargo_inventory"):
 		for item in convoy_data.cargo_inventory:
+			# Inject current vendor prices so PriceUtil can see them on the item level
+			if item is Dictionary:
+				if not item.has("fuel_price") or item.get("fuel_price") == null: item["fuel_price"] = v_fuel_p
+				if not item.has("water_price") or item.get("water_price") == null: item["water_price"] = v_water_p
+				if not item.has("food_price") or item.get("food_price") == null: item["food_price"] = v_food_p
+
 			var category_dict3: Dictionary
 			var mission_vendor_name3: String = ""
 			var dr2 = item.get("delivery_reward")
@@ -412,6 +453,12 @@ static func build_convoy_buckets(convoy_data: Dictionary, vendor_data: Dictionar
 				item = item_any
 			else:
 				continue
+			
+			# Inject current vendor prices so PriceUtil can see them on the item level
+			if not item.has("fuel_price") or item.get("fuel_price") == null: item["fuel_price"] = v_fuel_p
+			if not item.has("water_price") or item.get("water_price") == null: item["water_price"] = v_water_p
+			if not item.has("food_price") or item.get("food_price") == null: item["food_price"] = v_food_p
+
 			found_any_cargo = true
 			var category_dict4: Dictionary
 			var mission_vendor_name4: String = ""
@@ -471,7 +518,7 @@ static func build_convoy_buckets(convoy_data: Dictionary, vendor_data: Dictionar
 	var vendor_water_price := _to_float_any(vendor_data.get("water_price", 0) if vendor_data != null else 0)
 	var vendor_food_price := _to_float_any(vendor_data.get("food_price", 0) if vendor_data != null else 0)
 	var convoy_fuel_quantity := _to_int_any(raw_convoy_fuel)
-	if convoy_fuel_quantity > 0 and vendor_buys_fuel:
+	if convoy_fuel_quantity > 0 and (not is_sell_mode or vendor_buys_fuel):
 		var fuel_item2 = {
 			"name": "Fuel (Bulk)",
 			"base_desc": "Bulk fuel from your convoy's reserves.",
@@ -479,15 +526,19 @@ static func build_convoy_buckets(convoy_data: Dictionary, vendor_data: Dictionar
 			"fuel": convoy_fuel_quantity,
 			"fuel_price": vendor_fuel_price,
 			"is_raw_resource": true,
+			"unit_weight": 1.0,
+			"unit_volume": 0.0,
+			"total_weight": float(convoy_fuel_quantity) * 1.0,
+			"total_volume": 0.0,
 		}
 		if perf_log_enabled:
 			print("[VendorCargoAggregator] Creating convoy bulk fuel item:", fuel_item2)
 		_aggregate_vendor_item(aggregated_resources, fuel_item2, "", perf_log_enabled)
 	elif convoy_fuel_quantity > 0 and perf_log_enabled:
-		print("[VendorCargoAggregator] Skipping convoy bulk fuel (vendor has no positive fuel_price)")
+		print("[VendorCargoAggregator] Skipping convoy bulk fuel (unexpected state)")
 
 	var convoy_water_quantity := _to_int_any(raw_convoy_water)
-	if convoy_water_quantity > 0 and vendor_buys_water:
+	if convoy_water_quantity > 0 and (not is_sell_mode or vendor_buys_water):
 		var water_item2 = {
 			"name": "Water (Bulk)",
 			"base_desc": "Bulk water from your convoy's reserves.",
@@ -495,15 +546,19 @@ static func build_convoy_buckets(convoy_data: Dictionary, vendor_data: Dictionar
 			"water": convoy_water_quantity,
 			"water_price": vendor_water_price,
 			"is_raw_resource": true,
+			"unit_weight": 1.0,
+			"unit_volume": 0.0,
+			"total_weight": float(convoy_water_quantity) * 1.0,
+			"total_volume": 0.0,
 		}
 		if perf_log_enabled:
 			print("[VendorCargoAggregator] Creating convoy bulk water item:", water_item2)
 		_aggregate_vendor_item(aggregated_resources, water_item2, "", perf_log_enabled)
 	elif convoy_water_quantity > 0 and perf_log_enabled:
-		print("[VendorCargoAggregator] Skipping convoy bulk water (vendor has no positive water_price)")
+		print("[VendorCargoAggregator] Skipping convoy bulk water (unexpected state)")
 
 	var convoy_food_quantity := _to_int_any(raw_convoy_food)
-	if convoy_food_quantity > 0 and vendor_buys_food:
+	if convoy_food_quantity > 0 and (not is_sell_mode or vendor_buys_food):
 		var food_item2 = {
 			"name": "Food (Bulk)",
 			"base_desc": "Bulk food supplies from your convoy's reserves.",
@@ -511,12 +566,16 @@ static func build_convoy_buckets(convoy_data: Dictionary, vendor_data: Dictionar
 			"food": convoy_food_quantity,
 			"food_price": vendor_food_price,
 			"is_raw_resource": true,
+			"unit_weight": 1.0,
+			"unit_volume": 0.0,
+			"total_weight": float(convoy_food_quantity) * 1.0,
+			"total_volume": 0.0,
 		}
 		if perf_log_enabled:
 			print("[VendorCargoAggregator] Creating convoy bulk food item:", food_item2)
 		_aggregate_vendor_item(aggregated_resources, food_item2, "", perf_log_enabled)
 	elif convoy_food_quantity > 0 and perf_log_enabled:
-		print("[VendorCargoAggregator] Skipping convoy bulk food (vendor has no positive food_price)")
+		print("[VendorCargoAggregator] Skipping convoy bulk food (unexpected state)")
 
 	if perf_log_enabled and is_sell_mode:
 		print("[VendorCargoAggregator][SellDiag] buckets sizes missions=", aggregated_missions.size(),
@@ -580,7 +639,7 @@ static func _aggregate_vendor_item(agg_dict: Dictionary, item: Dictionary, missi
 	if item.get("fuel") is float or item.get("fuel") is int:
 		agg_dict[item_name].total_fuel += item.get("fuel")
 	if perf_log_enabled:
-		print("[VendorCargoAggregator] _aggregate_vendor_item after add name=", item_name, "total_quantity=", agg_dict[item_name].total_quantity, "total_fuel=", agg_dict[item_name].total_fuel)
+		print("[VendorCargoAggregator] _aggregate_vendor_item after add name=", item_name, "total_quantity=", agg_dict[item_name].total_quantity, "total_fuel=", agg_dict[item_name].total_fuel, "total_water=", agg_dict[item_name].total_water, "total_food=", agg_dict[item_name].total_food)
 
 
 static func _aggregate_item(agg_dict: Dictionary, item: Dictionary, vehicle_name: String, mission_vendor_name: String, perf_log_enabled: bool) -> void:

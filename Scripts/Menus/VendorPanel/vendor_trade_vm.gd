@@ -1,6 +1,41 @@
 class_name VendorTradeVM
 const CompatAdapter = preload("res://Scripts/Menus/VendorPanel/compat_adapter.gd")
 
+static func _to_float_any(v: Variant) -> float:
+    if v == null:
+        return 0.0
+    if v is float or v is int:
+        return float(v)
+    if v is String:
+        var s := (v as String).strip_edges()
+        if s.is_valid_float():
+            return float(s)
+        if s.is_valid_int():
+            return float(int(s))
+    return 0.0
+
+static func raw_resource_type(item_data_source: Dictionary) -> String:
+    if item_data_source == null:
+        return ""
+    if _to_float_any(item_data_source.get("fuel", 0.0)) > 0.0:
+        return "fuel"
+    if _to_float_any(item_data_source.get("water", 0.0)) > 0.0:
+        return "water"
+    if _to_float_any(item_data_source.get("food", 0.0)) > 0.0:
+        return "food"
+    return ""
+
+static func vendor_can_buy_resource(vendor_data: Dictionary, resource_type: String) -> bool:
+    if vendor_data == null:
+        return false
+    var rt := str(resource_type).to_lower()
+    if rt == "":
+        return false
+    var key := rt + "_price"
+    if not vendor_data.has(key):
+        return false
+    return _to_float_any(vendor_data.get(key)) > 0.0
+
 static func can_show_install_button(is_buy_mode: bool, selected_item: Variant) -> bool:
     return CompatAdapter.can_show_install_button(is_buy_mode, selected_item)
 
@@ -11,7 +46,7 @@ static func contextual_unit_price(item_data_source: Dictionary, mode: String) ->
 
     # Fallbacks for shallow/simple payloads (and unit tests) when PriceUtil cannot
     # infer a price. Prefer explicit fields if present.
-    var keys := ["unit_price", "price", "value", "base_value", "base_price"]
+    var keys := ["unit_price", "price", "value", "base_value", "base_price", "fuel_price", "water_price", "food_price"]
     for k in keys:
         if item_data_source.has(k):
             var v: Variant = item_data_source.get(k)
@@ -67,8 +102,11 @@ static func get_part_modifiers_from_cache(part_uid: String, convoy_data: Diction
 
 static func build_price_presenter(item_data_source: Dictionary, mode: String, quantity: int, selected_item: Variant) -> Dictionary:
     var is_vehicle := is_vehicle_item(item_data_source)
+    var is_bulk_resource: bool = bool(item_data_source.get("is_raw_resource", false))
+
     var unit_price: float = vehicle_price(item_data_source) if is_vehicle else contextual_unit_price(item_data_source, mode)
-    if mode == "sell" and not is_vehicle:
+    # Keep legacy sell behavior (half price) for normal items, but bulk resources sell at full price.
+    if mode == "sell" and not is_vehicle and not is_bulk_resource:
         unit_price /= 2.0
     var total_price: float = unit_price * float(quantity)
 
@@ -84,6 +122,32 @@ static func build_price_presenter(item_data_source: Dictionary, mode: String, qu
     if is_vehicle:
         bb += "[b]Price:[/b] %s" % NumberFormat.format_money(unit_price)
     else:
+        # Bulk resources have a simplified presenter per UI requirements.
+        if is_bulk_resource:
+            bb += "[b]Unit Price:[/b] %s\n" % NumberFormat.format_money(unit_price)
+            bb += "[b]Total Price:[/b] %s\n" % NumberFormat.format_money(total_price)
+            var unit_weight_bulk: float = 0.0
+            if selected_item and (selected_item is Dictionary):
+                var tqb: int = int((selected_item as Dictionary).get("total_quantity", 0))
+                var twb: float = float((selected_item as Dictionary).get("total_weight", 0.0))
+                if tqb > 0 and twb > 0.0:
+                    unit_weight_bulk = twb / float(tqb)
+            if unit_weight_bulk <= 0.0 and item_data_source.has("unit_weight"):
+                unit_weight_bulk = _to_float_any(item_data_source.get("unit_weight"))
+            var added_weight_bulk := unit_weight_bulk * float(quantity)
+            if mode == "sell":
+                added_weight_bulk = -added_weight_bulk
+            if abs(added_weight_bulk) > 0.0001:
+                bb += "[color=gray]Weight Change: %.2f[/color]\n" % added_weight_bulk
+            return {
+                "bbcode_text": bb.rstrip("\n"),
+                "unit_price": unit_price,
+                "total_price": total_price,
+                "added_weight": added_weight_bulk,
+                "added_volume": 0.0,
+                "total_delivery_reward": total_delivery_reward
+            }
+
         if mode == "sell":
             bb += "[b]Unit Price:[/b] %s\n" % NumberFormat.format_money(unit_price)
         var price_components = PriceUtil.get_item_price_components(item_data_source)

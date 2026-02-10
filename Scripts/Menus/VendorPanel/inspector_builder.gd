@@ -133,6 +133,36 @@ static func rebuild_info_sections(item_info_rich_text: RichTextLabel, item_data_
 	var is_vehicle: bool = VendorTradeVM.is_vehicle_item(item_data_source)
 	var is_part: bool = _looks_like_part(item_data_source)
 
+	# Bulk raw resources have a simplified middle summary per requirements.
+	if bool(item_data_source.get("is_raw_resource", false)):
+		var avail: int = 0
+		if selected_item and (selected_item is Dictionary):
+			avail = int((selected_item as Dictionary).get("total_quantity", 0))
+		if avail <= 0:
+			# Fallback to explicit resource key.
+			var rt := VendorTradeVM.raw_resource_type(item_data_source)
+			if rt != "":
+				avail = int(round(float(item_data_source.get(rt, 0.0))))
+
+		var pr1 := VendorTradeVM.build_price_presenter(item_data_source, String(current_mode), 1, selected_item)
+		var unit_price: float = float(pr1.get("unit_price", 0.0))
+
+		var unit_weight: float = 0.0
+		if item_data_source.has("unit_weight") and item_data_source.get("unit_weight") != null:
+			unit_weight = float(item_data_source.get("unit_weight"))
+		elif selected_item and (selected_item is Dictionary):
+			var tq: int = int((selected_item as Dictionary).get("total_quantity", 0))
+			var tw: float = float((selected_item as Dictionary).get("total_weight", 0.0))
+			if tq > 0 and tw > 0.0:
+				unit_weight = tw / float(tq)
+
+		rows_summary.append({"k": "Available", "v": NumberFormat.format_number(avail)})
+		rows_summary.append({"k": "Unit Price", "v": NumberFormat.format_money(unit_price)})
+		rows_summary.append({"k": "Unit Weight", "v": NumberFormat.fmt_float(unit_weight, 2)})
+
+		container.add_child(_make_panel("Summary", rows_summary))
+		return
+
 	if selected_item and (selected_item is Dictionary) and (selected_item as Dictionary).has("mission_vendor_name") and str((selected_item as Dictionary).mission_vendor_name) != "":
 		rows_summary.append({"k": "Destination", "v": str((selected_item as Dictionary).mission_vendor_name)})
 
@@ -308,6 +338,12 @@ static func rebuild_info_sections(item_info_rich_text: RichTextLabel, item_data_
 		var total_quantity = 0
 		if selected_item and (selected_item is Dictionary):
 			total_quantity = (selected_item as Dictionary).get("total_quantity", 0)
+			
+		var q_val = int(panel.get("quantity_spinbox").value) if is_instance_valid(panel) and panel.get("quantity_spinbox") != null else 1
+		var price_pres = VendorTradeVM.build_price_presenter(item_data_source, str(current_mode), q_val, selected_item)
+		var total_price = price_pres.get("total_price", 0.0)
+		rows_total.append({"k": "Total Price", "v": NumberFormat.format_money(total_price)})
+		
 		if int(total_quantity) > 0:
 			rows_total.append({"k": "Quantity", "v": NumberFormat.format_number(int(total_quantity))})
 		var total_weight = 0.0

@@ -26,6 +26,27 @@ func test_sell_mode_excludes_bulk_fuel_when_vendor_has_zero_price():
 	assert_false((buckets.get("resources", {}) as Dictionary).has("Fuel (Bulk)"), "Should not show bulk fuel when fuel_price == 0")
 
 
+func test_sell_mode_excludes_bulk_water_when_vendor_has_zero_price():
+	var vendor := {"water_price": 0, "cargo_inventory": [], "vehicle_inventory": []}
+	var convoy := {"convoy_id": "c1", "water": 10}
+	var buckets := Aggregator.build_convoy_buckets(convoy, vendor, "sell", false, Callable(), false)
+	assert_false((buckets.get("resources", {}) as Dictionary).has("Water (Bulk)"), "Should not show bulk water when water_price == 0")
+
+
+func test_sell_mode_excludes_bulk_food_when_vendor_has_zero_price():
+	var vendor := {"food_price": 0, "cargo_inventory": [], "vehicle_inventory": []}
+	var convoy := {"convoy_id": "c1", "food": 10}
+	var buckets := Aggregator.build_convoy_buckets(convoy, vendor, "sell", false, Callable(), false)
+	assert_false((buckets.get("resources", {}) as Dictionary).has("Food (Bulk)"), "Should not show bulk food when food_price == 0")
+
+
+func test_sell_mode_excludes_bulk_water_when_vendor_price_missing():
+	var vendor := {"cargo_inventory": [], "vehicle_inventory": []} # no water_price key
+	var convoy := {"convoy_id": "c1", "water": 10}
+	var buckets := Aggregator.build_convoy_buckets(convoy, vendor, "sell", false, Callable(), false)
+	assert_false((buckets.get("resources", {}) as Dictionary).has("Water (Bulk)"), "Should not show bulk water when water_price is missing")
+
+
 func test_sell_mode_excludes_food_resource_cargo_when_vendor_food_price_zero_even_if_item_is_other():
 	# Simulate a resource-bearing item that does not use the canonical lowercase key.
 	# This historically could be mis-bucketed as Other and slip past resource gating.
