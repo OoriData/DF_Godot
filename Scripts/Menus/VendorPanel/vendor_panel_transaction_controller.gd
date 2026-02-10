@@ -181,6 +181,11 @@ static func on_action_button_pressed(panel: Object) -> void:
 
 	# Apply optimistic capacity/money projection without triggering an immediate data refresh.
 	panel._transaction_in_progress = true
+	if is_instance_valid(panel.action_button):
+		panel.action_button.disabled = true
+		panel.action_button.text = "Processing..."
+	if is_instance_valid(panel.max_button):
+		panel.max_button.disabled = true
 	# Money projection (if label visible)
 	if is_instance_valid(panel.convoy_money_label) and panel.convoy_money_label.visible and panel.convoy_data and (panel.convoy_data is Dictionary) and (panel.convoy_data as Dictionary).has("money"):
 		var projected_money: float = float((panel.convoy_data as Dictionary).get("money", 0.0)) + float(panel._pending_tx.money_delta)

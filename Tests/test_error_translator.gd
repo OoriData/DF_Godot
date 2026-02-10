@@ -14,4 +14,10 @@ func run() -> void:
 	TestUtil.assert_true(msg.begins_with("Could not buy item:"), "prefix mapping")
 	TestUtil.assert_true(msg.find("Not enough space") != -1, "prefix detail")
 	# unknown fallback
-	TestUtil.assert_eq(et.translate("Some totally unknown error"), "An unexpected error occurred. Please try again.", "unknown fallback")
+	var unknown := et.translate("Some totally unknown error")
+	TestUtil.assert_true(unknown.begins_with("An unexpected error occurred."), "unknown fallback prefix")
+	# In debug/editor builds we show the raw error details to help development.
+	if OS.is_debug_build() or OS.has_feature("debug") or OS.has_feature("editor"):
+		TestUtil.assert_true(unknown.find("Some totally unknown error") != -1, "unknown includes detail in debug")
+	else:
+		TestUtil.assert_eq(unknown, "An unexpected error occurred. Please try again.", "unknown fallback generic")

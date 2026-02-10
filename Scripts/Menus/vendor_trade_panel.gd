@@ -118,6 +118,9 @@ var _baseline_guard: Dictionary = {
 	"max_used_volume": 0.0,
 }
 
+# Feedback state for transaction success/failure in the middle panel
+var _feedback_data: Dictionary = {} # { "message": "", "type": "success" }
+
 func _clear_committed_projection() -> void:
 	_committed_projection.selection_key = ""
 	_committed_projection.selection_tree = ""
@@ -1123,6 +1126,13 @@ func _on_part_compatibility_ready(payload: Dictionary) -> void:
  
 
 func _on_api_transaction_result(result: Dictionary) -> void:
+	# Capture feedback info BEFORE we potentially clear _pending_tx
+	var mode_str: String = "bought" if str(current_mode) == "buy" else "sold"
+	var qty: int = int(_pending_tx.get("quantity", 1))
+	var item_name: String = str(_pending_tx.get("item", {}).get("name", "Item"))
+	var total_price: float = abs(float(_pending_tx.get("money_delta", 0.0)))
+	var msg: String = "Successfully %s %d %s for %s" % [mode_str, qty, item_name, NumberFormat.format_money(total_price, "")]
+
 	# Commit this transaction's projection so subsequent authoritative convoy updates
 	# don't reset the bars to an incorrect projected value.
 	if bool(_transaction_in_progress):
@@ -1144,11 +1154,19 @@ func _on_api_transaction_result(result: Dictionary) -> void:
 			_clear_pending_tx()
 
 	VendorPanelRefreshController.on_api_transaction_result(self, result)
+	
+	# Show success feedback and flash bars
+	show_transaction_feedback(msg, "success")
+	_flash_capacity_bars()
+
 	if is_instance_valid(_hub) and _hub.has_signal("user_refresh_requested"):
 		_hub.user_refresh_requested.emit()
 
 func _on_api_transaction_error(error_message: String) -> void:
 	VendorPanelRefreshController.on_api_transaction_error(self, error_message)
+	
+	var friendly_message: String = ErrorTranslator.translate(error_message)
+	show_transaction_feedback(friendly_message, "error")
 
 # Updates the comparison panel (stub, fill in as needed)
 func _update_comparison() -> void:
@@ -1177,7 +1195,15 @@ func _clear_inspector() -> void:
 		fitment_panel.visible = false
 	if is_instance_valid(description_panel):
 		description_panel.visible = false
-	# Add more UI clearing as needed
+	
+	# Clear feedback if present
+	_feedback_data = {}
+	
+	# Clear the segmented sections container
+	var container: Node = get_node_or_null("%ItemInfoRichText").get_parent().get_node_or_null("InfoSectionsContainer")
+	if is_instance_valid(container):
+		for ch in container.get_children():
+			ch.queue_free()
 
 # Helper: recompute aggregate convoy cargo stats (not currently used directly; kept for future refactors)
 func _recalculate_convoy_cargo_stats() -> Dictionary:
@@ -1289,3 +1315,39 @@ func get_vendor_item_rect_by_text_contains(substr: String) -> Rect2:
 # --- Segmented Info Panel Helpers ---
 # (legacy helper removed; segmented inspector is now driven by
 #  VendorPanelInspectorController.update_non_vehicle / update_vehicle)
+
+func show_transaction_feedback(message: String, type: String = "success") -> void:
+	_feedback_data = {
+		"message": message,
+		"type": type
+	}
+	_update_inspector()
+	
+	# Show toast if available
+	if is_instance_valid(toast_notification) and toast_notification.has_method("show_message"):
+		toast_notification.call("show_message", message)
+	
+	# Clear selection to fulfill user's "clear panel" request
+	_last_selected_restore_id = ""
+	selected_item = null
+	
+	# Reset feedback after a delay
+	var timer: SceneTreeTimer = get_tree().create_timer(2.0)
+	timer.timeout.connect(func():
+		_feedback_data = {}
+		_update_inspector()
+	)
+
+func _flash_capacity_bars() -> void:
+	var flash_color: Color = Color(1.5, 1.5, 1.5, 1.0) # Bright white flash
+	var duration: float = 0.6
+	
+	if is_instance_valid(convoy_volume_bar):
+		var tv: Tween = create_tween()
+		tv.tween_property(convoy_volume_bar, "modulate", flash_color, duration * 0.3)
+		tv.tween_property(convoy_volume_bar, "modulate", Color.WHITE, duration * 0.7)
+		
+	if is_instance_valid(convoy_weight_bar):
+		var tw: Tween = create_tween()
+		tw.tween_property(convoy_weight_bar, "modulate", flash_color, duration * 0.3)
+		tw.tween_property(convoy_weight_bar, "modulate", Color.WHITE, duration * 0.7)

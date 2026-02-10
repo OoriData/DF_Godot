@@ -1,6 +1,11 @@
 # /Users/aidan/Work/DF_Godot/Scripts/System/error_translator.gd
 extends Node
 
+const _UNKNOWN_FALLBACK_GENERIC := "An unexpected error occurred. Please try again."
+const _UNKNOWN_FALLBACK_PREFIX := "An unexpected error occurred."
+const _DEBUG_DETAIL_MAX_CHARS := 800
+const _SHOW_ERROR_DETAILS_SETTING := "df/debug/show_error_details"
+
 # A dictionary mapping parts of technical error messages to user-friendly explanations.
 # The dictionary is checked in order, so more specific keys should be placed before general ones.
 const ERROR_MAP: Dictionary = {
@@ -81,6 +86,22 @@ func is_inline_error(raw_message: String) -> bool:
 			return true
 	return false
 
+func _should_show_debug_details() -> bool:
+	# Opt-in/out setting. If present it wins.
+	if ProjectSettings.has_setting(_SHOW_ERROR_DETAILS_SETTING):
+		return bool(ProjectSettings.get_setting(_SHOW_ERROR_DETAILS_SETTING))
+	# Default to showing detail in editor/debug builds so developers can quickly
+	# decide whether a new error needs handling.
+	return OS.is_debug_build() or OS.has_feature("debug") or OS.has_feature("editor")
+
+func _format_unknown_error(raw_message: String) -> String:
+	if not _should_show_debug_details():
+		return _UNKNOWN_FALLBACK_GENERIC
+	var detail := raw_message.strip_edges()
+	if detail.length() > _DEBUG_DETAIL_MAX_CHARS:
+		detail = detail.substr(0, _DEBUG_DETAIL_MAX_CHARS) + "\u2026 (truncated; see logs)"
+	return _UNKNOWN_FALLBACK_PREFIX + "\n\nDetails:\n" + detail
+
 # This function translates a raw technical error message into a user-friendly one.
 func translate(raw_message: String) -> String:
 	# 1. Check if the error should be ignored completely.
@@ -107,4 +128,4 @@ func translate(raw_message: String) -> String:
 			printerr("Unhandled API Error (add to ErrorTranslator): ", raw_message)
 	else:
 		printerr("Unhandled API Error (add to ErrorTranslator): ", raw_message)
-	return "An unexpected error occurred. Please try again."
+	return _format_unknown_error(raw_message)

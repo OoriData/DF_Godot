@@ -49,6 +49,12 @@ static func on_api_transaction_result(panel: Object, result: Dictionary) -> void
 				print("[VendorPanel][Perf] immediate refresh requested cid=", cid, " vid=", vid, " id=", int(panel._current_refresh_id))
 			return
 
+	if is_instance_valid(panel.action_button):
+		panel.action_button.disabled = false
+		panel.action_button.text = "Buy" if str(panel.current_mode) == "buy" else "Sell"
+	if is_instance_valid(panel.max_button):
+		panel.max_button.disabled = false
+
 	# Fallback: if guards prevent immediate request, schedule a short debounced refresh.
 	panel._pending_refresh = true
 	panel._schedule_refresh()
@@ -75,6 +81,7 @@ static func on_api_transaction_error(panel: Object, error_message: String) -> vo
 	panel._transaction_in_progress = false
 	if is_instance_valid(panel.action_button):
 		panel.action_button.disabled = false
+		panel.action_button.text = "Buy" if str(panel.current_mode) == "buy" else "Sell"
 	if is_instance_valid(panel.max_button):
 		panel.max_button.disabled = false
 	if panel.show_loading_overlay and is_instance_valid(panel.loading_panel):

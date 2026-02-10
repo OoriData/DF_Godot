@@ -94,9 +94,44 @@ static func rebuild_info_sections(item_info_rich_text: RichTextLabel, item_data_
 	for ch in container.get_children():
 		ch.queue_free()
 
+	# If panel has active feedback, show that instead of item details.
+	var panel: Node = item_info_rich_text.get_parent().get_parent() # Usually the main panel
+	if is_instance_valid(panel) and panel.get("_feedback_data") is Dictionary and not (panel.get("_feedback_data") as Dictionary).is_empty():
+		var fb: Dictionary = panel.get("_feedback_data")
+		var fb_panel: PanelContainer = PanelContainer.new()
+		var fb_sb: StyleBoxFlat = StyleBoxFlat.new()
+		var fb_color: Color = Color(0.15, 0.45, 0.15, 0.8) if fb.get("type") == "success" else Color(0.45, 0.15, 0.15, 0.8)
+		fb_sb.bg_color = fb_color
+		fb_sb.border_color = Color(1, 1, 1, 0.3)
+		fb_sb.border_width_all = 1
+		fb_sb.corner_radius_all = 8
+		fb_sb.content_margin_all = 20
+		fb_panel.add_theme_stylebox_override("panel", fb_sb)
+		fb_panel.size_flags_vertical = Control.SIZE_EXPAND_FILL
+		
+		var fb_vb: VBoxContainer = VBoxContainer.new()
+		fb_vb.alignment = BoxContainer.ALIGNMENT_CENTER
+		fb_panel.add_child(fb_vb)
+		
+		var fb_hdr: Label = Label.new()
+		fb_hdr.text = "Transaction Complete" if fb.get("type") == "success" else "Transaction Failed"
+		fb_hdr.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		fb_hdr.add_theme_font_size_override("font_size", 20)
+		fb_vb.add_child(fb_hdr)
+		
+		var fb_msg: Label = Label.new()
+		fb_msg.text = fb.get("message", "")
+		fb_msg.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		fb_msg.autowrap_mode = TextServer.AUTOWRAP_WORD
+		fb_msg.add_theme_font_size_override("font_size", 16)
+		fb_vb.add_child(fb_msg)
+		
+		container.add_child(fb_panel)
+		return
+
 	var rows_summary: Array = []
-	var is_vehicle := VendorTradeVM.is_vehicle_item(item_data_source)
-	var is_part := _looks_like_part(item_data_source)
+	var is_vehicle: bool = VendorTradeVM.is_vehicle_item(item_data_source)
+	var is_part: bool = _looks_like_part(item_data_source)
 
 	if selected_item and (selected_item is Dictionary) and (selected_item as Dictionary).has("mission_vendor_name") and str((selected_item as Dictionary).mission_vendor_name) != "":
 		rows_summary.append({"k": "Destination", "v": str((selected_item as Dictionary).mission_vendor_name)})
