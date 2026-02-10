@@ -46,6 +46,7 @@ func _emit_install_requested(item: Variant, quantity: int, vendor_id: String) ->
 @onready var max_button: Button = %MaxButton
 @onready var action_button: Button = %ActionButton
 @onready var install_button: Button = %InstallButton
+@onready var transaction_quantity_container: HBoxContainer = %TransactionQuantityContainer
 @onready var convoy_money_label: Label = %ConvoyMoneyLabel
 @onready var convoy_cargo_label: Label = %ConvoyCargoLabel
 @onready var trade_mode_tab_container: TabContainer = %TradeModeTabContainer
@@ -1041,11 +1042,16 @@ func _update_transaction_panel() -> void:
 			delivery_reward_label.visible = false
 		# Reset capacity bars to current convoy usage
 		_refresh_capacity_bars(0.0, 0.0)
+		if is_instance_valid(transaction_quantity_container):
+			transaction_quantity_container.visible = true
 		if is_instance_valid(action_button):
 			action_button.disabled = true
 		return
 
 	var item_data_source = selected_item.item_data if selected_item.has("item_data") and not selected_item.item_data.is_empty() else selected_item
+	var is_vehicle := VendorTradeVM.is_vehicle_item(item_data_source)
+	if is_instance_valid(transaction_quantity_container):
+		transaction_quantity_container.visible = not is_vehicle
 
 	# --- START: UNIFIED PRICE & DISPLAY LOGIC via VM ---
 	var quantity = int(quantity_spinbox.value) if is_instance_valid(quantity_spinbox) else 1

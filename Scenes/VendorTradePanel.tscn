@@ -198,14 +198,15 @@ layout_mode = 2
 text = "Transaction"
 theme_override_font_sizes/font_size = 20
 
-[node name="HBoxContainer" type="HBoxContainer" parent="HBoxContainer/RightPanel"]
+[node name="TransactionQuantityContainer" type="HBoxContainer" parent="HBoxContainer/RightPanel"]
+unique_name_in_owner = true
 layout_mode = 2
 
-[node name="Label" type="Label" parent="HBoxContainer/RightPanel/HBoxContainer"]
+[node name="Label" type="Label" parent="HBoxContainer/RightPanel/TransactionQuantityContainer"]
 layout_mode = 2
 text = "Quantity:"
 
-[node name="QuantitySpinBox" type="SpinBox" parent="HBoxContainer/RightPanel/HBoxContainer"]
+[node name="QuantitySpinBox" type="SpinBox" parent="HBoxContainer/RightPanel/TransactionQuantityContainer"]
 unique_name_in_owner = true
 layout_mode = 2
 size_flags_horizontal = 1
@@ -214,7 +215,7 @@ max_value = 99.0
 value = 1.0
 allow_greater = false
 
-[node name="MaxButton" type="Button" parent="HBoxContainer/RightPanel/HBoxContainer"]
+[node name="MaxButton" type="Button" parent="HBoxContainer/RightPanel/TransactionQuantityContainer"]
 unique_name_in_owner = true
 layout_mode = 2
 text = "Max"

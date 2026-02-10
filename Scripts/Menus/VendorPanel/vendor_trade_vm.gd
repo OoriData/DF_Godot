@@ -82,9 +82,7 @@ static func build_price_presenter(item_data_source: Dictionary, mode: String, qu
 
     var bb: String = ""
     if is_vehicle:
-        bb += "[b]Price:[/b] %s\n" % NumberFormat.format_money(unit_price)
-        bb += "[b]Quantity:[/b] %d\n" % quantity
-        bb += "[b]Total Price:[/b] %s" % NumberFormat.format_money(total_price)
+        bb += "[b]Price:[/b] %s" % NumberFormat.format_money(unit_price)
     else:
         if mode == "sell":
             bb += "[b]Unit Price:[/b] %s\n" % NumberFormat.format_money(unit_price)
