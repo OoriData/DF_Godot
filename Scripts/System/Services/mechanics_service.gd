@@ -20,6 +20,7 @@ var _preview_cargo_id_to_slot: Dictionary = {} # cargo_id -> slot_name
 var _cargo_detail_cache: Dictionary = {} # cargo_id -> cargo Dictionary
 var _cargo_enrichment_pending: Dictionary = {} # cargo_id -> true while request in-flight
 var _vendor_cache: Dictionary = {} # vendor_id -> vendor Dictionary (last payload)
+var _debug_mechanics: bool = true
 
 func get_cached_vendor(vendor_id: String) -> Dictionary:
 	if vendor_id == "":
@@ -67,8 +68,10 @@ func warm_mechanics_data_for_convoy(convoy: Dictionary) -> void:
 	if cid != "":
 		_preview_active_convoy_id = cid
 
-	var x := int(roundf(float(convoy.get("x", 0))))
-	var y := int(roundf(float(convoy.get("y", 0))))
+	var cv_x = convoy.get("x", 0)
+	var cv_y = convoy.get("y", 0)
+	var x := int(roundf(float(cv_x) if cv_x != null else 0.0))
+	var y := int(roundf(float(cv_y) if cv_y != null else 0.0))
 	# Scan current settlement snapshot for vendor inventories.
 	var settlements: Array = []
 	if is_instance_valid(_store) and _store.has_method("get_settlements"):
@@ -77,21 +80,49 @@ func warm_mechanics_data_for_convoy(convoy: Dictionary) -> void:
 	for s in settlements:
 		if not (s is Dictionary):
 			continue
-		var sx := int(roundf(float((s as Dictionary).get("x", -999999))))
-		var sy := int(roundf(float((s as Dictionary).get("y", -999999))))
+		var sx_val = (s as Dictionary).get("x", -999999)
+		var sy_val = (s as Dictionary).get("y", -999999)
+		var sx := int(roundf(float(sx_val) if sx_val != null else 0.0))
+		var sy := int(roundf(float(sy_val) if sy_val != null else 0.0))
 		if sx == x and sy == y:
 			settlement = s
 			break
 	if settlement.is_empty():
 		return
 	var vendors_any: Array = settlement.get("vendors", [])
+	# For each vendor in the current settlement, request full details if we don't have them.
 	for v in vendors_any:
+		var vid := ""
 		if v is Dictionary:
-			_ingest_vendor_inventory(v)
+			vid = str(v.get("vendor_id", v.get("id", "")))
+			# Only ingest if it looks like it might actually have inventory/useful data.
+			# Don't let shallow map dictionaries poison the cache.
+			if _is_full_vendor_payload(v):
+				_ingest_vendor_inventory(v)
 		elif v is String:
-			# Request vendor details so Hub emits vendor_updated and we can ingest inventory.
+			vid = v
+
+		# If we don't have a cached full preview for this vendor, request full details.
+		var cached: Dictionary = _vendor_cache.get(vid, {})
+		if vid != "" and not _is_full_vendor_payload(cached):
 			if is_instance_valid(_vendor_service) and _vendor_service.has_method("request_vendor"):
-				_vendor_service.request_vendor(String(v))
+				if _debug_mechanics:
+					print("[MechanicsService] Warmup: requesting full details for vendor_id=", vid)
+				_vendor_service.request_vendor(vid)
+		elif _debug_mechanics and vid != "":
+			print("[MechanicsService] Warmup: vendor_id=", vid, " already cached (full). Parts in c2s: ", _preview_cargo_id_to_slot.size())
+
+func _is_full_vendor_payload(v: Dictionary) -> bool:
+	if v.is_empty(): return false
+	# A full payload from the API typically includes an explicit inventory key.
+	# Map snapshots usually only include id, name, and position.
+	for k in ["cargo_inventory", "cargoInventory", "inventory", "cargo", "stock"]:
+		if v.has(k) and v[k] is Array:
+			return true
+	# Also consider it full if it has resource prices (common for mechanics/traders).
+	if v.has("fuel_price") or v.has("water_price") or v.has("food_price"):
+		return true
+	return false
 
 
 func get_mechanic_probe_snapshot() -> Dictionary:
@@ -133,8 +164,19 @@ func _on_cargo_data_received(cargo: Dictionary) -> void:
 			var first_p = (cargo.get("parts") as Array)[0]
 			if first_p is Dictionary:
 				slot = String((first_p as Dictionary).get("slot", ""))
+		
 		if slot != "":
 			_preview_cargo_id_to_slot[cid] = slot
+		else:
+			# Even without a slot, if it's identified as a part, we must track it for the preview list.
+			if not _preview_cargo_id_to_slot.has(cid):
+				_preview_cargo_id_to_slot[cid] = ""
+		
+		# If we found a part/slot update, tell the Hub so menus can refresh based on enriched data.
+		if is_instance_valid(_hub) and _hub.has_signal("vendor_preview_ready"):
+			if _debug_mechanics:
+				print("[MechanicsService] Enriched part arrived, triggering preview refresh: ", cargo.get("name", "Unknown"), " cid=", cid)
+			_hub.vendor_preview_ready.emit(false) # false = cache not cleared, just updated
 
 
 func _on_vendor_updated(vendor: Dictionary) -> void:
@@ -159,7 +201,10 @@ func _ingest_vendor_inventory(vendor: Variant) -> void:
 			if vendor_id != "":
 				break
 	if vendor_id != "":
-		_vendor_cache[vendor_id] = vd
+		if not _vendor_cache.has(vendor_id) or _is_full_vendor_payload(vd):
+			_vendor_cache[vendor_id] = vd
+		elif _debug_mechanics:
+			print("[MechanicsService] Ingest: ignoring shallow payload for already cached vendor_id=", vendor_id)
 	# Vendor payloads can use different keys.
 	var cargo_inv: Array = []
 	var inv_keys := ["cargo_inventory", "cargoInventory", "cargo_inventory_list", "cargoInventoryList", "inventory", "inv", "cargo", "items", "goods", "stock"]
@@ -197,6 +242,29 @@ func _ingest_vendor_inventory(vendor: Variant) -> void:
 				# Leave an empty slot entry so ConvoyMenu can still count the item.
 				if not _preview_cargo_id_to_slot.has(cid):
 					_preview_cargo_id_to_slot[cid] = ""
+			if _debug_mechanics:
+				print("[MechanicsService] Ingested part: ", d.get("name", "Unknown"), " cid=", cid, " slot=", slot)
+		else:
+			# If it's not a mission and not a resource, proactively enrich it as a potential part.
+			var is_mission := false
+			if ItemsData != null and ItemsData.MissionItem:
+				is_mission = ItemsData.MissionItem._looks_like_mission_dict(d)
+			
+			var is_resource := false
+			for res_key in ["fuel", "water", "food"]:
+				var rv = d.get(res_key)
+				if rv != null and (rv is float or rv is int) and float(rv) > 0.0:
+					is_resource = true
+					break
+			
+			if not is_mission and not is_resource:
+				if _debug_mechanics:
+					print("[MechanicsService] Proactively enriching potential part: ", d.get("name", "Unknown"), " cid=", cid)
+				ensure_cargo_details(cid)
+			elif _debug_mechanics:
+				# Extra verbose: find out why it's not a part
+				var nm := String(d.get("name", "Unknown"))
+				print("[MechanicsService] Item skipped (is_mission=%s is_resource=%s): " % [is_mission, is_resource], nm, " cid=", cid)
 
 
 func _on_store_map_changed(_tiles: Array, _settlements: Array) -> void:

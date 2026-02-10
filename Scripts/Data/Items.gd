@@ -133,6 +133,24 @@ class PartItem:
 			var first_p = (d.get("parts") as Array)[0]
 			if first_p is Dictionary and first_p.has("slot") and first_p.get("slot") != null and str(first_p.get("slot")).strip_edges() != "":
 				return true
+		# 3) Explicit type hint
+		var type_s := str(d.get("type", d.get("item_type", ""))).to_lower()
+		if type_s == "part" or d.get("is_part", false) == true:
+			return true
+		# 4) Common part modifier keys (direct or in stats)
+		var stat_keys := ["top_speed_add", "efficiency_add", "offroad_capability_add", "cargo_capacity_add", "weight_capacity_add", "fuel_capacity", "kwh_capacity"]
+		for sk in stat_keys:
+			if d.has(sk) and d[sk] != null:
+				return true
+			if d.has("stats") and d.stats is Dictionary and (d.stats as Dictionary).has(sk) and (d.stats as Dictionary)[sk] != null:
+				return true
+		# 5) Structural hints (part_id, intrinsic_part_id, or class_id presence)
+		if d.has("part_id") and d.get("part_id") != null and str(d.get("part_id")) != "":
+			return true
+		if d.has("intrinsic_part_id") and d.get("intrinsic_part_id") != null and str(d.get("intrinsic_part_id")) != "":
+			return true
+		# NOTE: class_id is on everything, so don't use it alone. 
+		# But if it has a slot OR it has part_id, it's definitely a part.
 		return false
 
 	static func _from_part_dict(d: Dictionary) -> PartItem:

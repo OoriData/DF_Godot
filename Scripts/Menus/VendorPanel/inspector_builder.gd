@@ -5,10 +5,22 @@ const CompatAdapter = preload("res://Scripts/Menus/VendorPanel/compat_adapter.gd
 static func get_stat_value(item_data_source: Dictionary, key: String) -> Variant:
 	if item_data_source.has(key) and item_data_source[key] != null:
 		return item_data_source[key]
+	
+	# Check nested stats dictionary
+	if item_data_source.has("stats") and item_data_source.stats is Dictionary:
+		var vs = item_data_source.stats.get(key)
+		if vs != null:
+			return vs
+
+	# Check nested parts
 	if item_data_source.has("parts") and item_data_source.parts is Array and not item_data_source.parts.is_empty():
 		var first_part: Dictionary = item_data_source.parts[0]
 		if first_part.has(key) and first_part[key] != null:
 			return first_part[key]
+		if first_part.has("stats") and first_part.stats is Dictionary:
+			var fps = first_part.stats.get(key)
+			if fps != null:
+				return fps
 	return null
 
 static func _make_panel(title: String, rows: Array) -> PanelContainer:
@@ -83,10 +95,8 @@ static func rebuild_info_sections(item_info_rich_text: RichTextLabel, item_data_
 		ch.queue_free()
 
 	var rows_summary: Array = []
-	print("[Inspector] item_data_source:", item_data_source)
 	var is_vehicle := VendorTradeVM.is_vehicle_item(item_data_source)
 	var is_part := _looks_like_part(item_data_source)
-	print("[Inspector] is_part:", is_part, "is_vehicle:", is_vehicle)
 
 	if selected_item and (selected_item is Dictionary) and (selected_item as Dictionary).has("mission_vendor_name") and str((selected_item as Dictionary).mission_vendor_name) != "":
 		rows_summary.append({"k": "Destination", "v": str((selected_item as Dictionary).mission_vendor_name)})
@@ -140,20 +150,19 @@ static func rebuild_info_sections(item_info_rich_text: RichTextLabel, item_data_
 			{"key": "weight_capacity_add", "label": "Weight Capacity", "unit": "kg"},
 			{"key": "cargo_capacity_add", "label": "Volume Capacity", "unit": "m³"},
 			{"key": "fuel_capacity", "label": "Fuel Capacity", "unit": "L"},
-			{"key": "water_capacity", "label": "Water Capacity", "unit": "L"}
+			{"key": "water_capacity", "label": "Water Capacity", "unit": "L"},
+			{"key": "kwh_capacity", "label": "Battery Capacity", "unit": "kWh"}
 		]
 		for field in stat_fields:
 			var v = get_stat_value(item_data_source, field.key)
-			print("[Inspector] Checking field:", field.key, "value:", v)
-			if v != null and (v is float or v is int):
+			
+			if v != null and (v is float or v is int or v is String):
 				var f = float(v)
+				if f == 0.0:
+					continue
 				var s = NumberFormat.fmt_float(f, 2)
 				if f > 0.0:
 					s = "+" + s
-				elif f < 0.0:
-					s = s
-				else:
-					s = "0"
 				if field.unit != "":
 					s += " " + field.unit
 				rows_summary.append({"k": field.label, "v": s})
@@ -165,8 +174,11 @@ static func rebuild_info_sections(item_info_rich_text: RichTextLabel, item_data_
 		]
 		for field in engine_fields:
 			var v_engine = get_stat_value(item_data_source, field.key)
-			if v_engine != null and (v_engine is float or v_engine is int):
+
+			if v_engine != null and (v_engine is float or v_engine is int or v_engine is String):
 				var s_engine = str(int(round(float(v_engine))))
+				if field.unit != "":
+					s_engine += " " + field.unit
 				rows_summary.append({"k": field.label, "v": s_engine})
 
 		# Core driving stats (Speed/Efficiency/Off-road) from compatibility/part modifiers.
@@ -179,7 +191,7 @@ static func rebuild_info_sections(item_info_rich_text: RichTextLabel, item_data_
 		for field in core_fields:
 			if part_mods.has(field.key):
 				var mv = part_mods[field.key]
-				if mv != null and (mv is float or mv is int):
+				if mv != null and (mv is float or mv is int or mv is String):
 					var f_core = float(mv)
 					if f_core == 0.0:
 						continue
@@ -190,7 +202,7 @@ static func rebuild_info_sections(item_info_rich_text: RichTextLabel, item_data_
 
 		# Also show any additional stats in the nested stats dictionary, skipping the above
 		if item_data_source.has("stats") and item_data_source.stats is Dictionary and not item_data_source.stats.is_empty():
-			var skip := ["top_speed_add", "speed_add", "top_speed_mod", "top_speed_modifier", "efficiency_add", "fuel_efficiency_add", "efficiency_mod", "efficiency_modifier", "offroad_capability_add", "offroad_add", "offroad_mod", "offroad_capability_modifier", "kw", "nm", "speed", "efficiency", "offroad"]
+			var skip := ["top_speed_add", "speed_add", "top_speed_mod", "top_speed_modifier", "efficiency_add", "fuel_efficiency_add", "efficiency_mod", "efficiency_modifier", "offroad_capability_add", "offroad_add", "offroad_mod", "offroad_capability_modifier", "kw", "nm", "speed", "efficiency", "offroad", "weight_capacity_add", "cargo_capacity_add", "fuel_capacity", "water_capacity", "kwh_capacity"]
 			var shown := 0
 			for stat_name in item_data_source.stats:
 				if skip.has(str(stat_name)):
@@ -374,10 +386,7 @@ static func _get_part_modifiers(item_data_source: Dictionary, convoy_data: Dicti
 
 static func _get_modifier_value(item_data_source: Dictionary, keys: Array) -> Variant:
 	for k in keys:
-		if item_data_source.has(k) and item_data_source[k] != null:
-			return item_data_source[k]
-		if item_data_source.has("stats") and item_data_source.stats is Dictionary and (item_data_source.stats as Dictionary).has(k):
-			var v = (item_data_source.stats as Dictionary)[k]
-			if v != null:
-				return v
+		var v = get_stat_value(item_data_source, k)
+		if v != null:
+			return v
 	return null

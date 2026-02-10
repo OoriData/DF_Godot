@@ -2,11 +2,15 @@ extends Node
 class_name VendorCompatAdapter
 
 static func has_install_slot(item_data: Dictionary) -> bool:
-	return item_data.has("slot") and item_data.get("slot") != null and not str(item_data.get("slot")).is_empty()
+	if item_data.has("slot") and item_data.get("slot") != null and not str(item_data.get("slot")).is_empty():
+		return true
+	if item_data.has("parts") and item_data.get("parts") is Array and not (item_data.get("parts") as Array).is_empty():
+		var first_p = (item_data.get("parts") as Array)[0]
+		if first_p is Dictionary and first_p.has("slot") and first_p.get("slot") != null and not str(first_p.get("slot")).is_empty():
+			return true
+	return false
 
-static func can_show_install_button(is_buy_mode: bool, selected_item: Variant) -> bool:
-	if not is_buy_mode:
-		return false
+static func can_show_install_button(_is_buy_mode: bool, selected_item: Variant) -> bool:
 	if selected_item == null or not (selected_item is Dictionary) or not (selected_item as Dictionary).has("item_data"):
 		return false
 	var idata: Dictionary = (selected_item as Dictionary).item_data

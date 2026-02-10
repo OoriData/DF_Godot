@@ -403,6 +403,18 @@ func _on_back_button_pressed():
 	emit_signal("back_requested")
 
 func initialize_with_data(data_or_id: Variant, extra_arg: Variant = null) -> void:
+	# Manually resolve nodes as @onready vars aren't ready if called before add_child
+	if _store == null: _store = get_node_or_null("/root/GameStore")
+	if _hub == null: _hub = get_node_or_null("/root/SignalHub")
+	if _vendor_service == null: _vendor_service = get_node_or_null("/root/VendorService")
+	if _mechanics_service == null: _mechanics_service = get_node_or_null("/root/MechanicsService")
+	if _api == null: _api = get_node_or_null("/root/APICalls")
+	if _convoy_service == null: _convoy_service = get_node_or_null("/root/ConvoyService")
+
+	# Prime settlements immediately if empty
+	if _latest_all_settlements.is_empty() and is_instance_valid(_store) and _store.has_method("get_settlements"):
+		_set_latest_settlements_snapshot(_store.get_settlements())
+
 	if data_or_id is Dictionary:
 		convoy_id = String((data_or_id as Dictionary).get("convoy_id", (data_or_id as Dictionary).get("id", "")))
 	else:
@@ -433,13 +445,20 @@ func initialize_with_data(data_or_id: Variant, extra_arg: Variant = null) -> voi
 				if cid != "":
 					_mechanics_service.start_mechanics_probe_session(cid)
 		if convoy_data_received.has("x") and convoy_data_received.has("y"):
-			var current_convoy_x := roundi(float(convoy_data_received.get("x", 0)))
-			var current_convoy_y := roundi(float(convoy_data_received.get("y", 0)))
+			var cv_x = convoy_data_received.get("x", 0)
+			var cv_y = convoy_data_received.get("y", 0)
+			var current_convoy_x := roundi(float(cv_x) if cv_x != null else 0.0)
+			var current_convoy_y := roundi(float(cv_y) if cv_y != null else 0.0)
 			var current_settlement: Dictionary = {}
 			for s in _latest_all_settlements:
-				if s is Dictionary and roundi(float(s.get("x", -999999))) == current_convoy_x and roundi(float(s.get("y", -999999))) == current_convoy_y:
-					current_settlement = s
-					break
+				if s is Dictionary:
+					var sx_val = s.get("x", -999999)
+					var sy_val = s.get("y", -999999)
+					var sx := roundi(float(sx_val) if sx_val != null else 0.0)
+					var sy := roundi(float(sy_val) if sy_val != null else 0.0)
+					if sx == current_convoy_x and sy == current_convoy_y:
+						current_settlement = s
+						break
 			if not current_settlement.is_empty():
 				var vendors_in_settlement: Array = current_settlement.get("vendors", [])
 				for vendor_entry in vendors_in_settlement:
@@ -695,8 +714,9 @@ func _update_vendor_preview() -> void:
 				var slot_counts: Dictionary = {}
 				for cid in c2s.keys():
 					var slot_name: String = String(c2s.get(cid, ""))
-					if slot_name != "":
-						slot_counts[slot_name] = int(slot_counts.get(slot_name, 0)) + 1
+					# If slot is unknown, use "General Part" as a label
+					var display_slot = slot_name if slot_name != "" else "General"
+					slot_counts[display_slot] = int(slot_counts.get(display_slot, 0)) + 1
 				for sname in slot_counts.keys():
 					compat_summary.append("%s (%d)" % [String(sname), int(slot_counts.get(sname, 0))])
 		# If we found names, use them directly
@@ -1333,7 +1353,12 @@ func _on_cargo_data_received(cargo: Dictionary) -> void:
 	else:
 		var dr = cargo.get("delivery_reward")
 		looks_mission = (dr is float or dr is int) and float(dr) > 0.0
-	if not looks_mission and cargo.get("recipient_settlement_name") == null and cargo.get("recipient") == null and cargo.get("mission_vendor_id") == null:
+
+	var looks_part := false
+	if ItemsData != null and ItemsData.PartItem:
+		looks_part = ItemsData.PartItem._looks_like_part_dict(cargo)
+
+	if not looks_mission and not looks_part and cargo.get("recipient_settlement_name") == null and cargo.get("recipient") == null and cargo.get("mission_vendor_id") == null:
 		return
 	_queue_vendor_preview_update()
 
@@ -1649,6 +1674,9 @@ func _on_store_map_changed(_tiles: Array, settlements: Array) -> void:
 		if _debug_convoy_menu:
 			print("[ConvoyMenu][Debug] cached settlements count=", _latest_all_settlements.size())
 	_queue_vendor_preview_update()
+	# Ensure mechanics preview is warmed up with the new settlement data
+	if is_instance_valid(_mechanics_service) and _mechanics_service.has_method("warm_mechanics_data_for_convoy"):
+		_mechanics_service.warm_mechanics_data_for_convoy(convoy_data_received)
 
 func _on_initial_data_ready() -> void:
 	# When initial data comes online (map + convoys), try to sync settlements
@@ -1659,6 +1687,9 @@ func _on_initial_data_ready() -> void:
 			if _debug_convoy_menu:
 				print("[ConvoyMenu][Debug] initial_data_ready -> synced settlements count=", _latest_all_settlements.size())
 	_queue_vendor_preview_update()
+	# Ensure mechanics preview is warmed up with the initial settlement data
+	if is_instance_valid(_mechanics_service) and _mechanics_service.has_method("warm_mechanics_data_for_convoy"):
+		_mechanics_service.warm_mechanics_data_for_convoy(convoy_data_received)
 
 func _on_vendor_preview_ready(vendor: Dictionary) -> void:
 	# Vendor updated via VendorService; cache it and refresh destinations if needed.
