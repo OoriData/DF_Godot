@@ -20,7 +20,30 @@ var _preview_cargo_id_to_slot: Dictionary = {} # cargo_id -> slot_name
 var _cargo_detail_cache: Dictionary = {} # cargo_id -> cargo Dictionary
 var _cargo_enrichment_pending: Dictionary = {} # cargo_id -> true while request in-flight
 var _vendor_cache: Dictionary = {} # vendor_id -> vendor Dictionary (last payload)
+var _vendor_cache_rich: Dictionary = {} # vendor_id -> bool (true when payload contains part metadata)
+var _vendor_details_requested: Dictionary = {} # vendor_id -> true (prevent request spam)
 var _debug_mechanics: bool = true
+
+func _vendor_payload_has_part_metadata(v: Dictionary) -> bool:
+	# Map snapshot vendors include cargo_inventory, but cargo entries are often minimal
+	# (no slot/parts fields). Full vendor payloads (from VendorService/API) typically
+	# include part metadata or nested parts arrays.
+	if v.is_empty():
+		return false
+	var inv_any: Variant = v.get("cargo_inventory", null)
+	if not (inv_any is Array):
+		return false
+	for it_any in (inv_any as Array):
+		if not (it_any is Dictionary):
+			continue
+		var it: Dictionary = it_any
+		# Strong signals of part payload shape
+		if it.has("slot") or it.has("part_type") or it.has("part_modifiers"):
+			return true
+		var parts_any: Variant = it.get("parts", null)
+		if parts_any is Array and not (parts_any as Array).is_empty():
+			return true
+	return false
 
 func get_cached_vendor(vendor_id: String) -> Dictionary:
 	if vendor_id == "":
@@ -67,11 +90,15 @@ func warm_mechanics_data_for_convoy(convoy: Dictionary) -> void:
 	var cid := String(convoy.get("convoy_id", ""))
 	if cid != "":
 		_preview_active_convoy_id = cid
+	if _debug_mechanics:
+		print("[MechanicsService] Warmup start convoy_id=", _preview_active_convoy_id, " keys=", convoy.keys())
 
 	var cv_x = convoy.get("x", 0)
 	var cv_y = convoy.get("y", 0)
 	var x := int(roundf(float(cv_x) if cv_x != null else 0.0))
 	var y := int(roundf(float(cv_y) if cv_y != null else 0.0))
+	if _debug_mechanics:
+		print("[MechanicsService] Warmup coords x=", x, " y=", y)
 	# Scan current settlement snapshot for vendor inventories.
 	var settlements: Array = []
 	if is_instance_valid(_store) and _store.has_method("get_settlements"):
@@ -88,29 +115,46 @@ func warm_mechanics_data_for_convoy(convoy: Dictionary) -> void:
 			settlement = s
 			break
 	if settlement.is_empty():
+		if _debug_mechanics:
+			print("[MechanicsService] Warmup: no settlement found at coords; settlements_count=", settlements.size())
 		return
 	var vendors_any: Array = settlement.get("vendors", [])
+	if _debug_mechanics:
+		print("[MechanicsService] Warmup: settlement=", String(settlement.get("name", "")), " vendors_count=", vendors_any.size())
 	# For each vendor in the current settlement, request full details if we don't have them.
+	var diag_budget := 4
 	for v in vendors_any:
 		var vid := ""
 		if v is Dictionary:
 			vid = str(v.get("vendor_id", v.get("id", "")))
+			if _debug_mechanics and diag_budget > 0:
+				diag_budget -= 1
+				var ci_any: Variant = (v as Dictionary).get("cargo_inventory", null)
+				var ci_len := (ci_any as Array).size() if ci_any is Array else -1
+				print("[MechanicsService] Warmup vendor vid=", vid,
+					" map_full=", _is_full_vendor_payload(v),
+					" rich=", _vendor_payload_has_part_metadata(v),
+					" cargo_inventory_len=", ci_len,
+					" keys=", (v as Dictionary).keys())
 			# Only ingest if it looks like it might actually have inventory/useful data.
 			# Don't let shallow map dictionaries poison the cache.
-			if _is_full_vendor_payload(v):
+			if _vendor_payload_has_part_metadata(v):
 				_ingest_vendor_inventory(v)
 		elif v is String:
 			vid = v
 
-		# If we don't have a cached full preview for this vendor, request full details.
-		var cached: Dictionary = _vendor_cache.get(vid, {})
-		if vid != "" and not _is_full_vendor_payload(cached):
+		# If we don't have a cached *rich* preview for this vendor, request full details.
+		var cached_rich := bool(_vendor_cache_rich.get(vid, false))
+		if vid != "" and not cached_rich:
+			if bool(_vendor_details_requested.get(vid, false)):
+				continue
+			_vendor_details_requested[vid] = true
 			if is_instance_valid(_vendor_service) and _vendor_service.has_method("request_vendor"):
 				if _debug_mechanics:
-					print("[MechanicsService] Warmup: requesting full details for vendor_id=", vid)
+					print("[MechanicsService] Warmup: requesting rich vendor details for vendor_id=", vid)
 				_vendor_service.request_vendor(vid)
 		elif _debug_mechanics and vid != "":
-			print("[MechanicsService] Warmup: vendor_id=", vid, " already cached (full). Parts in c2s: ", _preview_cargo_id_to_slot.size())
+			print("[MechanicsService] Warmup: vendor_id=", vid, " already cached (rich). Parts in c2s: ", _preview_cargo_id_to_slot.size())
 
 func _is_full_vendor_payload(v: Dictionary) -> bool:
 	if v.is_empty(): return false
@@ -173,10 +217,9 @@ func _on_cargo_data_received(cargo: Dictionary) -> void:
 				_preview_cargo_id_to_slot[cid] = ""
 		
 		# If we found a part/slot update, tell the Hub so menus can refresh based on enriched data.
-		if is_instance_valid(_hub) and _hub.has_signal("vendor_preview_ready"):
-			if _debug_mechanics:
-				print("[MechanicsService] Enriched part arrived, triggering preview refresh: ", cargo.get("name", "Unknown"), " cid=", cid)
-			_hub.vendor_preview_ready.emit(false) # false = cache not cleared, just updated
+		# NOTE: We rely on APICalls.cargo_data_received (and other domain signals) to refresh UI.
+		# Emitting vendor_preview_ready here is inappropriate because the signal payload is a vendor Dictionary.
+		# (Previously a boolean was emitted, which can cause runtime type errors in listeners.)
 
 
 func _on_vendor_updated(vendor: Dictionary) -> void:
@@ -201,10 +244,14 @@ func _ingest_vendor_inventory(vendor: Variant) -> void:
 			if vendor_id != "":
 				break
 	if vendor_id != "":
-		if not _vendor_cache.has(vendor_id) or _is_full_vendor_payload(vd):
+		var rich := _vendor_payload_has_part_metadata(vd)
+		# Keep the latest payload, but only upgrade the cache to a rich payload.
+		if not _vendor_cache.has(vendor_id) or rich:
 			_vendor_cache[vendor_id] = vd
-		elif _debug_mechanics:
-			print("[MechanicsService] Ingest: ignoring shallow payload for already cached vendor_id=", vendor_id)
+		if rich:
+			_vendor_cache_rich[vendor_id] = true
+		if _debug_mechanics:
+			print("[MechanicsService] Ingest vendor_id=", vendor_id, " rich=", rich, " keys=", vd.keys())
 	# Vendor payloads can use different keys.
 	var cargo_inv: Array = []
 	var inv_keys := ["cargo_inventory", "cargoInventory", "cargo_inventory_list", "cargoInventoryList", "inventory", "inv", "cargo", "items", "goods", "stock"]
@@ -270,6 +317,20 @@ func _ingest_vendor_inventory(vendor: Variant) -> void:
 func _on_store_map_changed(_tiles: Array, _settlements: Array) -> void:
 	# Settlement inventory context may have changed; clear slot cache so next warmup rebuilds.
 	_preview_cargo_id_to_slot.clear()
+	if _debug_mechanics:
+		print("[MechanicsService] map_changed: cleared slot cache; active_convoy_id=", _preview_active_convoy_id)
+	# Important: map_changed can fire after ConvoyMenu has already called warmup.
+	# Auto-warm again here using the active convoy id to avoid ordering issues.
+	if _preview_active_convoy_id != "" and is_instance_valid(_store) and _store.has_method("get_convoys"):
+		var convoys: Array = _store.get_convoys()
+		for c_any in convoys:
+			if not (c_any is Dictionary):
+				continue
+			var c: Dictionary = c_any
+			var cid := String(c.get("convoy_id", c.get("id", "")))
+			if cid == _preview_active_convoy_id:
+				warm_mechanics_data_for_convoy(c)
+				break
 
 func attach_part(convoy_id: String, vehicle_id: String, part_id: String) -> void:
 	if convoy_id == "" or vehicle_id == "" or part_id == "":

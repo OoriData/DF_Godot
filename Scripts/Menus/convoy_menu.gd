@@ -131,6 +131,7 @@ var _vendors_from_settlements_by_id: Dictionary = {} # vendor_id -> vendor Dicti
 var _vendor_id_to_settlement: Dictionary = {} # vendor_id -> settlement Dictionary (from map snapshot)
 var _vendor_id_to_name: Dictionary = {} # vendor_id -> vendor name String (from map snapshot + vendor previews)
 var _vendor_preview_update_timer: Timer = null # For debouncing updates
+var _vendor_preview_update_pending: bool = false
 var _destinations_cache: Dictionary = {} # item_name -> recipient_settlement_name (or destination string)
 
 # Avoid spamming vendor detail requests when Available Missions refreshes.
@@ -325,6 +326,13 @@ func _ready():
 	_vendor_preview_update_timer.one_shot = true
 	_vendor_preview_update_timer.timeout.connect(_update_vendor_preview)
 	add_child(_vendor_preview_update_timer)
+
+	# initialize_with_data can run before _ready; if so, we may have missed the initial preview refresh.
+	if _vendor_preview_update_pending:
+		_vendor_preview_update_pending = false
+		_queue_vendor_preview_update()
+	elif convoy_data_received != null and not convoy_data_received.is_empty():
+		_queue_vendor_preview_update()
 
 	# Initial font size update
 	call_deferred("_update_font_sizes")
@@ -680,10 +688,16 @@ func _queue_vendor_preview_update() -> void:
 	# Debounce updates to prevent UI thrashing from rapid signals.
 	if is_instance_valid(_vendor_preview_update_timer):
 		_vendor_preview_update_timer.start()
+	else:
+		_vendor_preview_update_pending = true
 
 func _update_vendor_preview() -> void:
 	if not is_instance_valid(self) or convoy_data_received == null:
 		return
+	if _debug_convoy_menu:
+		print("[ConvoyMenu][Debug] _update_vendor_preview convoy_id=", String(convoy_data_received.get("convoy_id", convoy_data_received.get("id", ""))),
+			" coords=", Vector2i(roundi(float(convoy_data_received.get("x", 0))), roundi(float(convoy_data_received.get("y", 0)))),
+			" current_tab=", int(_current_vendor_tab))
 	# Mission cargo preview: show items marked mission-critical if present
 	_convoy_mission_items = _collect_mission_cargo_items(convoy_data_received)
 	_settlement_mission_items = _collect_settlement_mission_items()
@@ -697,6 +711,17 @@ func _update_vendor_preview() -> void:
 		# Prefer showing actual part names using cargo_id enrichment
 		var part_names: Array[String] = []
 		var c2s: Dictionary = snap.get("cargo_id_to_slot", {}) if snap.has("cargo_id_to_slot") else {}
+		if _debug_convoy_menu:
+			print("[ConvoyMenu][Debug] mech_probe_snapshot cargo_id_to_slot size=", (c2s.size() if c2s is Dictionary else -1))
+			if c2s is Dictionary and not c2s.is_empty():
+				var sample: Array = []
+				var b := 5
+				for cid in c2s.keys():
+					sample.append({"cid": String(cid), "slot": String(c2s.get(cid, ""))})
+					b -= 1
+					if b <= 0:
+						break
+				print("[ConvoyMenu][Debug] mech_probe_snapshot sample=", sample)
 		if c2s is Dictionary and not c2s.is_empty():
 			# Attempt to fetch enriched cargo names for each cargo_id
 			if _mechanics_service.has_method("get_enriched_cargo"):
@@ -725,6 +750,27 @@ func _update_vendor_preview() -> void:
 	if _debug_convoy_menu:
 		print("[ConvoyMenu][Debug] compat_summary=", compat_summary)
 	_compatible_part_items = compat_summary
+	if _debug_convoy_menu and _compatible_part_items.is_empty():
+		var settlement := _get_current_settlement_dict()
+		if settlement.is_empty():
+			print("[ConvoyMenu][Debug] Compatible Parts empty: no current settlement match; cached_settlements_count=", _latest_all_settlements.size())
+		else:
+			var vendors_any: Variant = settlement.get("vendors", [])
+			var vendors: Array = vendors_any if vendors_any is Array else []
+			print("[ConvoyMenu][Debug] Compatible Parts empty: settlement=", String(settlement.get("name", "")), " vendors_count=", vendors.size())
+			var budget := 3
+			for v_any in vendors:
+				if budget <= 0:
+					break
+				budget -= 1
+				if v_any is Dictionary:
+					var v: Dictionary = v_any
+					var vid := String(v.get("vendor_id", v.get("id", "")))
+					var inv_any: Variant = v.get("cargo_inventory", null)
+					var inv_len := (inv_any as Array).size() if inv_any is Array else -1
+					print("[ConvoyMenu][Debug] settlement vendor vid=", vid, " cargo_inventory_len=", inv_len, " keys=", v.keys())
+				else:
+					print("[ConvoyMenu][Debug] settlement vendor entry type=", typeof(v_any), " val=", str(v_any))
 
 	# If cache is available, merge cached destinations into display strings
 	if _destinations_cache is Dictionary and not _destinations_cache.is_empty():
@@ -1691,10 +1737,19 @@ func _on_initial_data_ready() -> void:
 	if is_instance_valid(_mechanics_service) and _mechanics_service.has_method("warm_mechanics_data_for_convoy"):
 		_mechanics_service.warm_mechanics_data_for_convoy(convoy_data_received)
 
-func _on_vendor_preview_ready(vendor: Dictionary) -> void:
-	# Vendor updated via VendorService; cache it and refresh destinations if needed.
-	if not (vendor is Dictionary) or vendor.is_empty():
+func _on_vendor_preview_ready(vendor_any: Variant) -> void:
+	# This signal is used as a general "vendor preview changed" notifier across the app.
+	# Most emitters send a vendor Dictionary, but some older code paths may emit non-dicts.
+	# Always refresh the preview (debounced) so Compatible Parts can populate early.
+	if not (vendor_any is Dictionary):
+		_queue_vendor_preview_update()
 		return
+	var vendor: Dictionary = vendor_any
+	if vendor.is_empty():
+		_queue_vendor_preview_update()
+		return
+
+	# Vendor updated via VendorService; cache it and refresh destinations if needed.
 	var vendor_id := String(vendor.get("vendor_id", vendor.get("id", "")))
 	if vendor_id != "":
 		_vendors_by_id[vendor_id] = vendor
@@ -1702,7 +1757,8 @@ func _on_vendor_preview_ready(vendor: Dictionary) -> void:
 		var vendor_name := String(vendor.get("name", ""))
 		if vendor_name != "":
 			_vendor_id_to_name[vendor_id] = vendor_name
-	var changed := false
+
+	var destinations_changed := false
 	var cargo_inv: Array = vendor.get("cargo_inventory", [])
 	if cargo_inv is Array and not cargo_inv.is_empty():
 		for it in cargo_inv:
@@ -1719,11 +1775,12 @@ func _on_vendor_preview_ready(vendor: Dictionary) -> void:
 			var prev := String(_destinations_cache.get(nm, ""))
 			if dest != "" and dest != prev:
 				_destinations_cache[nm] = dest
-				changed = true
+				destinations_changed = true
 	if _debug_convoy_menu:
-		print("[ConvoyMenu][Debug] vendor_preview_ready changed=", changed, " cache_size=", (_destinations_cache.size() if _destinations_cache is Dictionary else -1))
-	if changed:
-		_queue_vendor_preview_update()
+		print("[ConvoyMenu][Debug] vendor_preview_ready destinations_changed=", destinations_changed, " cache_size=", (_destinations_cache.size() if _destinations_cache is Dictionary else -1))
+
+	# Always refresh on vendor updates so Available Parts/Missions can appear without visiting SettlementMenu.
+	_queue_vendor_preview_update()
 
 
 func _get_vendor_by_id(vendor_id: String) -> Dictionary:
