@@ -64,6 +64,10 @@ theme_override_constants/separation = 6
 layout_mode = 2
 text = "UI"
 
+[node name="DynamicScaleCheck" type="CheckBox" parent="Margin/VBox/UISec"]
+layout_mode = 2
+text = "Dynamic Scaling (Auto)"
+
 [node name="UIScaleRow" type="HBoxContainer" parent="Margin/VBox/UISec"]
 layout_mode = 2
 

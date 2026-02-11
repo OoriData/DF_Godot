@@ -5,6 +5,18 @@ extends Node
 ## Used with Project Stretch settings to ensure consistent scaling.
 const BASE_RESOLUTION = Vector2(1920, 1080)
 
+## Minimum "effective" logical width we want present.
+## If the effective width drops below this (due to high scale),
+## the UI will likely break/overlap.
+const MIN_LOGICAL_WIDTH = 1150.0
+
+## Target logical width for mobile devices.
+## This makes UI elements appear larger (touch friendly).
+const TARGET_LOGICAL_WIDTH_MOBILE = 1600.0
+
+## Target logical width for desktop.
+const TARGET_LOGICAL_WIDTH_DESKTOP = 1920.0
+
 ## Signal emitted when the global UI scale multiplier changes.
 signal scale_changed(new_scale)
 
@@ -34,8 +46,14 @@ func _on_size_changed():
 	# Always re-assert the scale in case Godot reset it during resize
 	set_global_ui_scale(_global_ui_scale)
 	
-	# Only re-calculate the auto heuristic if the user HAS NOT set a value.
+	# Check for Dynamic Scaling preference
 	var sm = get_node_or_null("/root/SettingsManager")
+	if is_instance_valid(sm):
+		if bool(sm.get_value("ui.auto_scale", false)):
+			_auto_adjust_scale()
+			return
+
+	# Only re-calculate the auto heuristic if the user HAS NOT set a value.
 	var has_setting = false
 	if is_instance_valid(sm):
 		has_setting = sm.data.has("ui.scale")
@@ -44,48 +62,51 @@ func _on_size_changed():
 		_auto_adjust_scale()
 
 func _auto_adjust_scale():
-	# Simple heuristic for mobile/high-DPI scaling
-	var screen_dpi = DisplayServer.screen_get_dpi()
-	var screen_size = DisplayServer.screen_get_size()
-	var screen_height = screen_size.y
+	var screen_width = DisplayServer.window_get_size().x
+	var is_mobile = DisplayServer.get_name() == "Android" or DisplayServer.get_name() == "iOS"
+
+	var target_width = TARGET_LOGICAL_WIDTH_MOBILE if is_mobile else TARGET_LOGICAL_WIDTH_DESKTOP
 	
-	# If DPI is high, we likely need larger UI
-	var dpi_scale = 1.0
-	if screen_dpi > 150: 
-		dpi_scale = 1.5
-	if screen_dpi > 250:
-		dpi_scale = 2.0
-	if screen_dpi > 350:
-		dpi_scale = 3.0
-	if screen_dpi > 450:
-		dpi_scale = 5.0
-		
-	# Adjust based on height (baseline 1080p)
-	var height_scale = float(screen_height) / 1080.0
+	# Calculate the scale needed to achieve the target width
+	# scale = physical_width / logical_width
+	var target_scale = float(screen_width) / target_width
 	
-	# Combine and clamp
-	var target_scale = clampf(dpi_scale * height_scale, 1.0, 6.0)
+	# Clamp to safe limits
+	var max_safe = get_max_safe_scale()
+	target_scale = clampf(target_scale, 0.75, max_safe)
 	
 	# Check if we should apply this. If a SettingsManager exists and has a value, 
 	# that should probably win, unless this is the first boot.
+	# Check if we should apply this. 
+	# If Dynamic Scaling is ON, we ALWAYS apply.
+	# If OFF, we only apply if no manual setting exists (first boot).
 	var sm = get_node_or_null("/root/SettingsManager")
 	if is_instance_valid(sm):
-		var has_setting = sm.data.has("ui.scale")
-		if has_setting and _auto_adjust_done:
-			# Logic: We've already done our boot adjustment or pulled from settings.
-			# Let the manual scale win.
-			return
+		var auto_on = bool(sm.get_value("ui.auto_scale", false))
+		if not auto_on:
+			var has_setting = sm.data.has("ui.scale")
+			if has_setting and _auto_adjust_done:
+				# Manual mode: Let the manual scale win.
+				return
 
 	_auto_adjust_done = true
 	set_global_ui_scale(target_scale)
-	print("[UIScaleManager] Applied auto-scale: ", target_scale, " (DPI:", screen_dpi, " H:", screen_height, ")")
+	print("[UIScaleManager] Applied auto-scale: ", target_scale, " (Width:", screen_width, " Target:", target_width, ")")
 
 ## The global multiplier for all UI elements. 1.0 is default.
 func get_global_ui_scale() -> float:
 	return _global_ui_scale
 
+func get_max_safe_scale() -> float:
+	var screen_width = DisplayServer.window_get_size().x
+	# Max scale = physical / min_logical 
+	return float(screen_width) / MIN_LOGICAL_WIDTH
+
 func set_global_ui_scale(value: float):
-	var new_value = clampf(value, 0.75, 6.0) 
+	var max_safe = get_max_safe_scale()
+	# Ensure checking against min 0.75 and max safe
+	var new_value = clampf(value, 0.75, max_safe) 
+	
 	if not is_equal_approx(_global_ui_scale, new_value) or not is_equal_approx(get_tree().root.content_scale_factor, new_value):
 		_global_ui_scale = new_value
 		# Target the root window viewport specifically to ensure global effect

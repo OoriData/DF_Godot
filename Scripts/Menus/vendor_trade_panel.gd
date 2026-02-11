@@ -677,6 +677,71 @@ func _ready() -> void:
 			conn_ok = _hub.vendor_panel_ready.is_connected(Callable(self, "_on_hub_vendor_panel_ready"))
 		print("[VendorPanel][DIAG] _ready instance_id=%d perf=%s hub_vendor_panel_ready_connected=%s" % [get_instance_id(), str(perf_log_enabled), str(conn_ok)])
 
+	_make_panels_responsive()
+	_apply_text_readability_fixes()
+
+func _make_panels_responsive() -> void:
+	# Programmatically wrap Middle and Right panels in ScrollContainers
+	var hbox = get_node_or_null("HBoxContainer")
+	if not is_instance_valid(hbox): return
+	
+	var middle = hbox.get_node_or_null("MiddlePanel")
+	if is_instance_valid(middle) and not (middle.get_parent() is ScrollContainer):
+		_wrap_inv_scroll(middle, 0.4, 2.0)
+		
+	var right = hbox.get_node_or_null("RightPanel")
+	if is_instance_valid(right) and not (right.get_parent() is ScrollContainer):
+		_wrap_inv_scroll(right, 0.3, 1.0)
+
+func _wrap_inv_scroll(panel: Control, stretch_ratio_h: float, stretch_ratio_v: float) -> void:
+	var parent = panel.get_parent()
+	var scroll = ScrollContainer.new()
+	scroll.name = panel.name + "Scroll"
+	scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	scroll.size_flags_stretch_ratio = stretch_ratio_h
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	
+	# Swap
+	var idx = panel.get_index()
+	parent.remove_child(panel)
+	parent.add_child(scroll)
+	parent.move_child(scroll, idx)
+	scroll.add_child(panel)
+	
+	# Reset panel flags to fit inside scroll
+	panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	panel.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	panel.size_flags_stretch_ratio = 1.0 # Reset ratio as parent scroll handles it
+
+var _semi_bold_font_cache: FontVariation = null
+
+func _get_semi_bold_font_for(node: Control) -> FontVariation:
+	if _semi_bold_font_cache != null:
+		return _semi_bold_font_cache
+	var default_font = node.get_theme_font("font") if is_instance_valid(node) else null
+	if default_font:
+		var bf = FontVariation.new()
+		bf.set_base_font(default_font)
+		bf.set_variation_embolden(0.6) # Moderate weight increase
+		_semi_bold_font_cache = bf
+	return _semi_bold_font_cache
+
+func _apply_text_readability_fixes() -> void:
+	# Apply semibold font to small labels to make them appear "thicker" and more readable
+	var labels_to_fix = [
+		get_node_or_null("%VolumeLabel"), # Using unique names from tscn
+		get_node_or_null("HBoxContainer/RightPanel/CapacityBars/VolumeLabel"), # Fallback path
+		get_node_or_null("%MassLabel"),
+		get_node_or_null("HBoxContainer/RightPanel/CapacityBars/MassLabel"),
+		get_node_or_null("HBoxContainer/RightPanel/TransactionQuantityContainer/Label")
+	]
+	
+	for lbl in labels_to_fix:
+		if is_instance_valid(lbl) and lbl is Label:
+			lbl.add_theme_font_override("font", _get_semi_bold_font_for(lbl))
+
+
 func _exit_tree() -> void:
 	# Disconnect from Hub/Store/API signals that we connected in _ready
 	if is_instance_valid(_hub) and _hub.has_signal("vendor_panel_ready"):
@@ -1326,10 +1391,12 @@ func _clear_inspector() -> void:
 	_feedback_data = {}
 	
 	# Clear the segmented sections container
-	var container: Node = get_node_or_null("%ItemInfoRichText").get_parent().get_node_or_null("InfoSectionsContainer")
-	if is_instance_valid(container):
-		for ch in container.get_children():
-			ch.queue_free()
+	# Clear the segmented sections container
+	if is_instance_valid(item_info_rich_text):
+		var container: Node = item_info_rich_text.get_parent().get_node_or_null("InfoSectionsContainer")
+		if is_instance_valid(container):
+			for ch in container.get_children():
+				ch.queue_free()
 
 # Helper: recompute aggregate convoy cargo stats (not currently used directly; kept for future refactors)
 func _recalculate_convoy_cargo_stats() -> Dictionary:

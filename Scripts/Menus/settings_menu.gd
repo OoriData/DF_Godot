@@ -1,6 +1,7 @@
 extends Window
 
 @onready var s_ui_scale: HSlider = $Margin/VBox/UISec/UIScaleRow/UIScaleSlider
+@onready var c_dynamic_scale: CheckBox = $Margin/VBox/UISec/DynamicScaleCheck # New
 @onready var c_fullscreen: CheckBox = $Margin/VBox/DisplaySection/FullscreenCheck
 @onready var resolution_opt: OptionButton = $Margin/VBox/DisplaySection/ResolutionRow/ResolutionOption
 @onready var c_invert_pan: CheckBox = $Margin/VBox/ControlsSec/InvertPanCheck
@@ -37,7 +38,18 @@ func _init_values():
 	s_menu_ratio.max_value = 1.0
 	s_menu_ratio.step = 0.01
 	
+	# Fetch safe max scale to prevent broken UI
+	var sm_scale = get_node_or_null("/root/ui_scale_manager")
+	if is_instance_valid(sm_scale) and sm_scale.has_method("get_max_safe_scale"):
+		s_ui_scale.max_value = sm_scale.get_max_safe_scale()
+	
 	s_ui_scale.value = float(SM.get_value("ui.scale", 1.4))
+	
+	var dyn = bool(SM.get_value("ui.auto_scale", false))
+	if is_instance_valid(c_dynamic_scale):
+		c_dynamic_scale.button_pressed = dyn
+	s_ui_scale.editable = not dyn # Disable slider if dynamic is on
+	
 	c_fullscreen.button_pressed = bool(SM.get_value("display.fullscreen", false))
 	_populate_resolution_options()
 	_init_resolution_selection()
@@ -50,6 +62,18 @@ func _init_values():
 func _wire_events():
 	s_ui_scale.value_changed.connect(_on_ui_scale_value_changed)
 	s_ui_scale.drag_ended.connect(_on_ui_scale_drag_ended)
+	
+	if is_instance_valid(c_dynamic_scale):
+		c_dynamic_scale.toggled.connect(func(b):
+			SM.set_and_save("ui.auto_scale", b)
+			s_ui_scale.editable = not b
+			if b:
+				# Trigger auto-adjust immediately
+				var sm_scale = get_node_or_null("/root/ui_scale_manager")
+				if is_instance_valid(sm_scale) and sm_scale.has_method("_auto_adjust_scale"):
+					sm_scale._auto_adjust_scale()
+		)
+	
 	c_fullscreen.toggled.connect(func(b): SM.set_and_save("display.fullscreen", b))
 	resolution_opt.item_selected.connect(_on_resolution_selected)
 	c_invert_pan.toggled.connect(func(b): SM.set_and_save("controls.invert_pan", b))
@@ -69,6 +93,7 @@ func _wire_events():
 func _on_reset_defaults():
 	var defaults := {
 		"ui.scale": 1.4,
+		"ui.auto_scale": false, # Default off
 		"ui.menu_open_ratio": 0.5, # Match new default
 		"ui.click_closes_menus": false,
 		"access.high_contrast": false,

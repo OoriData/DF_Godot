@@ -243,7 +243,7 @@ theme_override_constants/separation = 6
 layout_mode = 2
 text = "Volume"
 horizontal_alignment = 0
-theme_override_font_sizes/font_size = 14
+
 
 [node name="ConvoyVolumeBar" type="ProgressBar" parent="HBoxContainer/RightPanel/CapacityBars"]
 unique_name_in_owner = true
@@ -257,7 +257,7 @@ show_percentage = true
 layout_mode = 2
 text = "Mass"
 horizontal_alignment = 0
-theme_override_font_sizes/font_size = 14
+
 
 [node name="ConvoyWeightBar" type="ProgressBar" parent="HBoxContainer/RightPanel/CapacityBars"]
 unique_name_in_owner = true
