@@ -12,6 +12,17 @@ var _all_route_choices: Array = []
 var _current_route_index: int = 0
 var _destination_data: Dictionary = {}
 
+# --- Top Up State ---
+const TOP_UP_RESOURCES := ["fuel", "water", "food"]
+var _top_up_plan: Dictionary = {
+	"total_cost": 0.0,
+	"allocations": [],
+	"resources": {},
+	"planned_list": []
+}
+var _current_settlement_data: Dictionary = {} # Cached for Top Up logic
+var top_up_button: Button = null # Dynamically created
+
 # @onready variables for UI elements
 @onready var title_label: Label = $MainVBox/TitleLabel
 @onready var scroll_container: ScrollContainer = $MainVBox/ScrollContainer
@@ -48,6 +59,9 @@ var _settlement_poll_timer: Timer = null
 @onready var _hub: Node = get_node_or_null("/root/SignalHub")
 @onready var _routes: Node = get_node_or_null("/root/RouteService")
 @onready var _logger: Node = get_node_or_null("/root/Logger")
+@onready var _user_service: Node = get_node_or_null("/root/UserService")
+@onready var _convoy_service: Node = get_node_or_null("/root/ConvoyService")
+@onready var _api: Node = get_node_or_null("/root/APICalls")
 
 func _log_debug(msg: String, a: Variant = null, b: Variant = null, c: Variant = null) -> void:
 	if is_instance_valid(_logger) and _logger.has_method("debug"):
@@ -84,6 +98,11 @@ func _ready():
 		if _store.has_signal("map_changed") and not _store.map_changed.is_connected(_on_map_changed):
 			_store.map_changed.connect(_on_map_changed)
 
+	# Listen for money changes to update Top Up button
+	if is_instance_valid(_store):
+		if _store.has_signal("user_changed") and not _store.user_changed.is_connected(_on_store_user_changed):
+			_store.user_changed.connect(_on_store_user_changed)
+
 	# Remove the placeholder label if it exists
 	if content_vbox.has_node("PlaceholderLabel"):
 		var placeholder = content_vbox.get_node("PlaceholderLabel")
@@ -102,6 +121,12 @@ func _on_back_button_pressed():
 	if is_instance_valid(_route_selection_menu_instance):
 		_route_selection_menu_instance.queue_free()
 		emit_signal("route_preview_ended") # Clean up the preview
+
+	# If confirmation panel is open, go back to destination list
+	if is_instance_valid(_confirmation_panel) and _confirmation_panel.visible:
+		_on_change_destination_pressed()
+		return
+		
 	emit_signal("back_requested")
 
 func _process(_delta: float):
@@ -1181,10 +1206,20 @@ func _show_confirmation_panel(route_data: Dictionary):
 	var buttons_hbox = HBoxContainer.new()
 	buttons_hbox.alignment = BoxContainer.ALIGNMENT_CENTER
 	_confirmation_panel.add_child(buttons_hbox)
-	_change_destination_button = Button.new()
-	_change_destination_button.text = "Back"
-	_change_destination_button.pressed.connect(_on_change_destination_pressed)
-	buttons_hbox.add_child(_change_destination_button)
+	
+	# --- Top Up Integration ---
+	_current_settlement_data = _find_current_settlement()
+	if not _current_settlement_data.is_empty():
+		top_up_button = Button.new()
+		top_up_button.text = "Top Up"
+		if not top_up_button.is_connected("pressed", Callable(self, "_on_top_up_button_pressed")):
+			top_up_button.pressed.connect(_on_top_up_button_pressed)
+		buttons_hbox.add_child(top_up_button)
+		_style_top_up_button()
+		_update_top_up_button()
+	else:
+		top_up_button = null
+	# --------------------------
 	if _route_choices_cache.size() > 1:
 		_next_route_button = Button.new()
 		_next_route_button.text = "Next Route"
@@ -1450,6 +1485,469 @@ func get_destination_button_rect_by_label_contains(substr: String) -> Rect2:
 				return ctrl.get_global_rect()
 	return Rect2()
 
-# Expose confirm button node for highlight/gating during confirmation step
+# Expose confirm button node for highlight/gating during confirmation step (modified to allow append)
 func get_confirm_button_node() -> Button:
 	return _confirm_button
+
+# --- Top Up Feature (Cloned from ConvoySettlementMenu) ---
+
+func _find_current_settlement() -> Dictionary:
+	if not is_instance_valid(_store) or not _store.has_method("get_tiles"):
+		return {}
+	
+	var cx = int(round(float(convoy_data_received.get("x", -9999))))
+	var cy = int(round(float(convoy_data_received.get("y", -9999))))
+	
+	if cx < 0 or cy < 0:
+		return {}
+
+	# Fast lookup via tiles
+	var map_tiles = _store.get_tiles()
+	if cy >= 0 and cy < map_tiles.size():
+		var row = map_tiles[cy]
+		if cx >= 0 and cx < row.size():
+			var tile = row[cx]
+			if tile is Dictionary and tile.has("settlements") and tile.settlements is Array and not tile.settlements.is_empty():
+				# Return the first settlement found at this location
+				return tile.settlements[0]
+				
+	return {}
+
+func _update_top_up_button():
+	if not is_instance_valid(top_up_button):
+		return
+	
+	# Refresh settlement data just in case
+	_current_settlement_data = _find_current_settlement()
+		
+	if _current_settlement_data.is_empty() or not _current_settlement_data.has("vendors"):
+		top_up_button.text = "Top Up (No Vendors)"
+		top_up_button.disabled = true
+		top_up_button.tooltip_text = "No vendors present in this settlement."
+		return
+	if convoy_data_received.is_empty():
+		top_up_button.text = "Top Up (No Convoy)"
+		top_up_button.disabled = true
+		top_up_button.tooltip_text = "Convoy data unavailable."
+		return
+
+	# Calculate full plan first to see if we need it
+	var full_plan = _calculate_top_up_plan()
+	var needed_cost = full_plan.get("total_cost", 0.0)
+	
+	if full_plan.get("planned_list", []).is_empty():
+		top_up_button.text = "Top Up (Full)"
+		top_up_button.disabled = true
+		top_up_button.tooltip_text = "Fuel, Water and Food are already at maximum levels."
+		return
+
+	var user_money: float = 0.0
+	if is_instance_valid(_user_service) and _user_service.has_method("get_user"):
+		var user_data: Dictionary = _user_service.get_user()
+		user_money = float(user_data.get("money", 0.0))
+
+	var is_partial = false
+	if user_money < needed_cost:
+		# User cannot afford full top up. Calculate partial plan with budget.
+		_top_up_plan = _calculate_top_up_plan(user_money)
+		is_partial = true
+	else:
+		_top_up_plan = full_plan
+
+	var planned_list: Array = _top_up_plan.get("planned_list", [])
+	var total_cost: float = _top_up_plan.get("total_cost", 0.0)
+	
+	# If even partial plan is empty (cannot afford anything), disable
+	if planned_list.is_empty() or total_cost <= 0.0001:
+		top_up_button.text = "Top Up"
+		top_up_button.disabled = true
+		top_up_button.tooltip_text = "Insufficient funds to purchase any resources."
+		return
+
+	if is_partial:
+		top_up_button.text = "Top Up (Partial)"
+	else:
+		top_up_button.text = "Top Up"
+	
+	top_up_button.disabled = false 
+
+	# Build tooltip breakdown (group by resource, showing each vendor line)
+	var breakdown_lines: Array = []
+	var allocations_by_res: Dictionary = {}
+	for alloc in _top_up_plan.allocations:
+		var r = String(alloc.get("res",""))
+		if r == "":
+			continue
+		if not allocations_by_res.has(r):
+			allocations_by_res[r] = []
+		allocations_by_res[r].append(alloc)
+	for r in allocations_by_res.keys():
+		var group:Array = allocations_by_res[r]
+		group.sort_custom(func(a,b): return float(a.price) < float(b.price))
+		var res_total_qty:int = 0
+		var res_total_cost:float = 0.0
+		breakdown_lines.append(r.capitalize() + ":")
+		for g in group:
+			var qty_i = int(g.get("quantity",0))
+			var price_i = float(g.get("price",0.0))
+			var vendor_name = String(g.get("vendor_name","?"))
+			var sub_i = float(qty_i) * price_i
+			res_total_qty += qty_i
+			res_total_cost += sub_i
+			breakdown_lines.append("  %s: %d @ $%.2f = $%.0f" % [vendor_name, qty_i, price_i, sub_i])
+		breakdown_lines.append("  Subtotal %s: %d = $%.0f" % [r, res_total_qty, res_total_cost])
+	
+	breakdown_lines.append("Total: $%.0f" % total_cost)
+	if is_partial:
+		var missing = max(0.0, needed_cost - user_money)
+		breakdown_lines.append("Partial Top Up (Need $%.0f more for full)." % missing)
+	
+	top_up_button.tooltip_text = "Top Up Plan:\n" + "\n".join(breakdown_lines)
+
+func _calculate_top_up_plan(budget: float = -1.0) -> Dictionary:
+	var plan: Dictionary = {"total_cost": 0.0, "allocations": [], "resources": {}, "planned_list": []}
+	if _current_settlement_data.is_empty() or not _current_settlement_data.has("vendors"):
+		return plan
+	var convoy := convoy_data_received
+	if convoy.is_empty():
+		return plan
+
+	# Budget/weight constraints
+	var remaining_budget: float = budget
+	var budget_limited := budget >= 0.0
+	if not budget_limited:
+		remaining_budget = 999999999.0
+	var remaining_weight := float(convoy.get("total_remaining_capacity", 999999.0))
+	var weight_limited := remaining_weight <= 0.001
+	var resource_weights: Dictionary = convoy.get("resource_weights", {})
+
+	# Build per-resource state with cheapest-vendor priority for that resource.
+	var state_by_res: Dictionary = {}
+	for res: String in TOP_UP_RESOURCES:
+		var max_amount: float = float(convoy.get("max_" + res, 0.0))
+		if max_amount <= 0.001:
+			continue
+		var current_amount: float = float(convoy.get(res, 0.0))
+		var needed_exact: float = max(max_amount - current_amount, 0.0)
+		var needed_remaining: int = int(floor(needed_exact + 0.0001))
+		if needed_remaining <= 0:
+			continue
+
+		var price_key: String = String(res) + "_price"
+		var vendor_candidates: Array = []
+		for v in _current_settlement_data.get("vendors", []):
+			if v.has(price_key) and v[price_key] != null and v.has(res):
+				var stock_available := int(v.get(res, 0))
+				var price := float(v.get(price_key, 0.0))
+				if stock_available > 0 and price > 0.0:
+					vendor_candidates.append({"vendor": v, "price": price, "stock": stock_available})
+		vendor_candidates.sort_custom(func(a, b): return float(a.price) < float(b.price))
+		if vendor_candidates.is_empty():
+			continue
+
+		var weight_per_unit: float = float(resource_weights.get(res, 1.0))
+		if weight_per_unit <= 0.0:
+			weight_per_unit = 1.0
+
+		state_by_res[res] = {
+			"res": res,
+			"max": max_amount,
+			"current": current_amount,
+			"needed": needed_remaining,
+			"vendors": vendor_candidates,
+			"vendor_idx": 0,
+			"vendor_stock_left": int(vendor_candidates[0].stock),
+			"weight_per_unit": weight_per_unit,
+		}
+
+	if state_by_res.is_empty():
+		return plan
+
+	var planned_set: Dictionary = {}
+	# Keyed by "res|vendor_id" so we can merge allocations and avoid 1-unit spam.
+	var alloc_index_by_key: Dictionary = {}
+	var last_picked_res: String = ""
+	var safety := 0
+	while true:
+		safety += 1
+		if safety > 10000:
+			break
+
+		if budget_limited and remaining_budget < 0.01:
+			break
+		if not weight_limited and remaining_weight <= 0.001:
+			break
+
+		# Build list of resources that can still accept at least 1 unit.
+		var active: Array = []
+		for res: String in TOP_UP_RESOURCES:
+			if not state_by_res.has(res):
+				continue
+			var s: Dictionary = state_by_res[res]
+			if int(s.get("needed", 0)) <= 0:
+				continue
+			var vendors: Array = s.get("vendors", [])
+			var vidx: int = int(s.get("vendor_idx", 0))
+			if vidx >= vendors.size():
+				continue
+			var price := float(vendors[vidx].price)
+			if budget_limited and remaining_budget < price:
+				continue
+			if not weight_limited:
+				var wpu := float(s.get("weight_per_unit", 1.0))
+				if remaining_weight < wpu:
+					continue
+			active.append(res)
+		if active.is_empty():
+			break
+
+		# Compute min fill percentage among active resources.
+		var min_fill := 999.0
+		for res: String in active:
+			var s: Dictionary = state_by_res[res]
+			var fill := 1.0
+			var max_amount := float(s.get("max", 0.0))
+			if max_amount > 0.001:
+				fill = float(s.get("current", 0.0)) / max_amount
+			if fill < min_fill:
+				min_fill = fill
+
+		# Collect all resources tied for min fill (within epsilon), and rotate tie-breaking.
+		var eps := 0.000001
+		var tied: Array = []
+		for res: String in active:
+			var s: Dictionary = state_by_res[res]
+			var max_amount := float(s.get("max", 0.0))
+			var fill := 1.0
+			if max_amount > 0.001:
+				fill = float(s.get("current", 0.0)) / max_amount
+			if abs(fill - min_fill) <= eps:
+				tied.append(res)
+		if tied.is_empty():
+			break
+
+		var pick_res := String(tied[0])
+		if tied.size() > 1 and last_picked_res != "":
+			var last_idx := tied.find(last_picked_res)
+			if last_idx != -1:
+				pick_res = String(tied[(last_idx + 1) % tied.size()])
+		last_picked_res = pick_res
+
+		var s_pick: Dictionary = state_by_res[pick_res]
+		var max_pick := float(s_pick.get("max", 0.0))
+		if max_pick <= 0.001:
+			break
+
+		# Find the next higher fill among active resources so we can buy in chunks.
+		var next_fill := 1.0
+		var found_next := false
+		for res: String in active:
+			var s: Dictionary = state_by_res[res]
+			var max_amount := float(s.get("max", 0.0))
+			if max_amount <= 0.001:
+				continue
+			var fill := float(s.get("current", 0.0)) / max_amount
+			if fill > (min_fill + eps):
+				if not found_next or fill < next_fill:
+					next_fill = fill
+					found_next = true
+		if not found_next:
+			next_fill = 1.0
+
+		var units_to_target := int(ceil(max(0.0, (next_fill - min_fill)) * max_pick))
+		if units_to_target <= 0:
+			units_to_target = 1
+
+		# Ensure vendor pointer is on a valid candidate with stock.
+		var vendors: Array = s_pick.get("vendors", [])
+		var vidx: int = int(s_pick.get("vendor_idx", 0))
+		var stock_left: int = int(s_pick.get("vendor_stock_left", 0))
+		while vidx < vendors.size() and stock_left <= 0:
+			vidx += 1
+			if vidx < vendors.size():
+				stock_left = int(vendors[vidx].stock)
+		s_pick.vendor_idx = vidx
+		s_pick.vendor_stock_left = stock_left
+		state_by_res[pick_res] = s_pick
+		if vidx >= vendors.size():
+			continue
+
+		var price: float = float(vendors[vidx].price)
+		var weight_per_unit: float = float(s_pick.get("weight_per_unit", 1.0))
+		var take_qty: int = min(units_to_target, int(s_pick.get("needed", 0)))
+		take_qty = min(take_qty, stock_left)
+		if budget_limited:
+			take_qty = min(take_qty, int(floor(remaining_budget / price)))
+		if not weight_limited and remaining_weight < 999998:
+			take_qty = min(take_qty, int(floor(remaining_weight / weight_per_unit)))
+		if take_qty <= 0:
+			continue
+
+		var vdict: Dictionary = vendors[vidx].vendor
+		var vendor_id := str(vdict.get("vendor_id", ""))
+		var vendor_name := str(vdict.get("name", "Vendor"))
+		var subtotal := float(take_qty) * price
+
+		var alloc_key: String = String(pick_res) + "|" + String(vendor_id)
+		if alloc_index_by_key.has(alloc_key):
+			var idx: int = int(alloc_index_by_key.get(alloc_key, -1))
+			if idx >= 0 and idx < plan.allocations.size():
+				var existing: Dictionary = plan.allocations[idx]
+				existing.quantity = int(existing.get("quantity", 0)) + int(take_qty)
+				existing.subtotal = float(existing.get("subtotal", 0.0)) + float(subtotal)
+				# Keep vendor_name/price stable; refresh just in case.
+				existing.vendor_name = vendor_name
+				existing.price = price
+				plan.allocations[idx] = existing
+			else:
+				alloc_index_by_key.erase(alloc_key)
+				plan.allocations.append({
+					"res": pick_res,
+					"vendor_id": vendor_id,
+					"vendor_name": vendor_name,
+					"price": price,
+					"quantity": take_qty,
+					"subtotal": subtotal
+				})
+				alloc_index_by_key[alloc_key] = plan.allocations.size() - 1
+		else:
+			plan.allocations.append({
+				"res": pick_res,
+				"vendor_id": vendor_id,
+				"vendor_name": vendor_name,
+				"price": price,
+				"quantity": take_qty,
+				"subtotal": subtotal
+			})
+			alloc_index_by_key[alloc_key] = plan.allocations.size() - 1
+		plan.total_cost += subtotal
+		remaining_budget -= subtotal
+		if not weight_limited:
+			remaining_weight -= float(take_qty) * weight_per_unit
+
+		# Update state for the picked resource.
+		s_pick.current = float(s_pick.get("current", 0.0)) + float(take_qty)
+		s_pick.needed = int(s_pick.get("needed", 0)) - take_qty
+		s_pick.vendor_stock_left = stock_left - take_qty
+		state_by_res[pick_res] = s_pick
+
+		# Aggregate totals for UI/tooltip.
+		if not plan.resources.has(pick_res):
+			plan.resources[pick_res] = {"total_quantity": 0, "total_cost": 0.0}
+		plan.resources[pick_res].total_quantity += int(take_qty)
+		plan.resources[pick_res].total_cost += subtotal
+		planned_set[pick_res] = true
+
+	# Preserve a stable resource ordering for any UI consumption.
+	for res in TOP_UP_RESOURCES:
+		if planned_set.has(res):
+			plan.planned_list.append(res)
+	return plan
+
+func _on_top_up_button_pressed():
+	if _top_up_plan.is_empty() or _top_up_plan.get("resources", {}).is_empty():
+		return
+	var convoy_uuid = str(convoy_data_received.get("convoy_id", ""))
+	if convoy_uuid.is_empty():
+		return
+	if not is_instance_valid(_api):
+		return
+	# Execute purchases individually
+	for alloc in _top_up_plan.allocations:
+		var res = alloc.get("res", "")
+		var vendor_id = str(alloc.get("vendor_id", ""))
+		var send_qty:int = int(alloc.get("quantity", 0))
+		if res == "" or vendor_id.is_empty() or send_qty <= 0:
+			continue
+		print("[TopUp] Purchasing %d %s from vendor %s (price=%.2f) convoy=%s" % [send_qty, res, vendor_id, float(alloc.get("price",0.0)), convoy_uuid])
+		_api.buy_resource(vendor_id, convoy_uuid, String(res), float(send_qty))
+	
+	# Trigger refreshes
+	if is_instance_valid(_convoy_service) and _convoy_service.has_method("refresh_single"):
+		_convoy_service.refresh_single(convoy_uuid)
+	if is_instance_valid(_user_service) and _user_service.has_method("refresh_user"):
+		_user_service.refresh_user()
+	
+	# Disable button until refresh
+	if is_instance_valid(top_up_button):
+		top_up_button.disabled = true
+		top_up_button.text = "Top Up (Processing...)"
+
+	# Refresh confirmation panel if visible to update resource warnings
+	if is_instance_valid(_confirmation_panel) and _confirmation_panel.visible:
+		# Small delay to allow transactions to register locally before rebuilding
+		get_tree().create_timer(0.2).timeout.connect(func():
+			if is_instance_valid(_confirmation_panel) and _confirmation_panel.visible:
+				_cycle_route(0)
+		)
+
+func _style_top_up_button():
+	if not is_instance_valid(top_up_button):
+		return
+	# --- Button StyleBoxes (Cloned) ---
+	var normal = StyleBoxFlat.new()
+	normal.bg_color = Color(0.15, 0.15, 0.18, 1.0)
+	normal.corner_radius_top_left = 6
+	normal.corner_radius_top_right = 6
+	normal.corner_radius_bottom_left = 6
+	normal.corner_radius_bottom_right = 6
+	normal.border_width_left = 2
+	normal.border_width_right = 2
+	normal.border_width_top = 2
+	normal.border_width_bottom = 2
+	normal.border_color = Color(0.40, 0.60, 0.90)
+	normal.shadow_color = Color(0,0,0,0.6)
+	normal.shadow_size = 3
+
+	var hover = normal.duplicate()
+	hover.bg_color = Color(0.22, 0.22, 0.28, 1.0)
+	hover.border_color = Color(0.55, 0.75, 1.0)
+
+	var pressed = normal.duplicate()
+	pressed.bg_color = Color(0.10, 0.10, 0.14, 1.0)
+	pressed.border_color = Color(0.30, 0.50, 0.80)
+
+	var disabled = normal.duplicate()
+	disabled.bg_color = Color(0.08, 0.08, 0.09, 1.0)
+	disabled.border_color = Color(0.20, 0.20, 0.20)
+	disabled.shadow_size = 0
+
+	top_up_button.add_theme_stylebox_override("normal", normal)
+	top_up_button.add_theme_stylebox_override("hover", hover)
+	top_up_button.add_theme_stylebox_override("pressed", pressed)
+	top_up_button.add_theme_stylebox_override("disabled", disabled)
+
+	# --- Tooltip Style ---
+	var tooltip_panel = StyleBoxFlat.new()
+	tooltip_panel.bg_color = Color(0.05, 0.05, 0.06, 1.0)
+	tooltip_panel.corner_radius_top_left = 4
+	tooltip_panel.corner_radius_top_right = 4
+	tooltip_panel.corner_radius_bottom_left = 4
+	tooltip_panel.corner_radius_bottom_right = 4
+	tooltip_panel.border_color = Color(0.60, 0.60, 0.70)
+	tooltip_panel.border_width_left = 1
+	tooltip_panel.border_width_right = 1
+	tooltip_panel.border_width_top = 1
+	tooltip_panel.border_width_bottom = 1
+	tooltip_panel.shadow_color = Color(0,0,0,0.7)
+	tooltip_panel.shadow_size = 4
+	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
+		tooltip_panel.set_content_margin(side, 6)
+	top_up_button.add_theme_stylebox_override("tooltip_panel", tooltip_panel)
+
+	# --- Font & Colors ---
+	top_up_button.add_theme_color_override("font_color", Color(0.92, 0.96, 1.0))
+	top_up_button.add_theme_color_override("font_color_hover", Color(1.0, 1.0, 1.0))
+	top_up_button.add_theme_color_override("font_color_pressed", Color(0.85, 0.90, 1.0))
+	top_up_button.add_theme_color_override("font_color_disabled", Color(0.55, 0.55, 0.60))
+	top_up_button.add_theme_font_size_override("font_size", 18)
+
+	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
+		normal.set_content_margin(side, normal.get_content_margin(side) + 2)
+		hover.set_content_margin(side, hover.get_content_margin(side) + 2)
+		pressed.set_content_margin(side, pressed.get_content_margin(side) + 2)
+		disabled.set_content_margin(side, disabled.get_content_margin(side) + 2)
+
+func _on_store_user_changed(_user: Dictionary) -> void:
+	# Money changes affect top-up affordability/tooltips.
+	_update_top_up_button()
