@@ -578,7 +578,11 @@ func initialize_with_data(data_or_id: Variant, extra_arg: Variant = null) -> voi
 			if has_journey:
 				preview_title_label.text = "Journey Preview"
 			else:
-				preview_title_label.text = "Settlement Preview"
+				var s_dict := _get_current_settlement_dict()
+				var s_name := str(s_dict.get("name", "Settlement"))
+				if s_name == "" or s_name == "null":
+					s_name = "Settlement"
+				preview_title_label.text = "%s Preview" % s_name
 
 		# Conditionally show/hide vendor tabs based on journey status
 		if is_instance_valid(journey_tab_button):
@@ -795,15 +799,31 @@ func _update_vendor_preview() -> void:
 
 func _render_vendor_preview_display() -> void:
 	# Update button text with counts
-	convoy_missions_tab_button.text = "Active Missions (%d)" % _convoy_mission_items.size()
-	settlement_missions_tab_button.text = "Available Missions (%d)" % _settlement_mission_items.size()
-	compatible_parts_tab_button.text = "Available Parts (%d)" % _compatible_part_items.size()
+	if is_instance_valid(convoy_missions_tab_button):
+		convoy_missions_tab_button.text = "Active Missions (%d)" % _convoy_mission_items.size()
+	if is_instance_valid(settlement_missions_tab_button):
+		settlement_missions_tab_button.text = "Available Missions (%d)" % _settlement_mission_items.size()
+	if is_instance_valid(compatible_parts_tab_button):
+		compatible_parts_tab_button.text = "Available Parts (%d)" % _compatible_part_items.size()
 	# Journey tab does not need a count
 
 	# Show/hide content containers based on the active tab
 	var is_journey_tab = (_current_vendor_tab == VendorTab.JOURNEY)
 
 	journey_info_vbox.visible = is_journey_tab
+
+	# Logic to hide "Active Missions" if empty
+	if _convoy_mission_items.is_empty():
+		if is_instance_valid(convoy_missions_tab_button):
+			convoy_missions_tab_button.visible = false
+		# If we were on the hidden tab, switch to Settlement/Available Missions
+		if _current_vendor_tab == VendorTab.CONVOY_MISSIONS:
+			_current_vendor_tab = VendorTab.SETTLEMENT_MISSIONS
+			if is_instance_valid(settlement_missions_tab_button):
+				settlement_missions_tab_button.button_pressed = true
+	else:
+		if is_instance_valid(convoy_missions_tab_button):
+			convoy_missions_tab_button.visible = true
 
 	if is_journey_tab:
 		vendor_item_container.visible = false
@@ -1867,7 +1887,9 @@ func _get_color_for_percentage(percentage: float) -> Color:
 		return COLOR_RED
 
 func _get_color_for_capacity(percentage: float) -> Color:
-	if percentage > 0.8:
+	if percentage > 0.95:
+		return COLOR_RED
+	elif percentage > 0.75:
 		return COLOR_YELLOW
 	else:
 		return COLOR_GREEN
@@ -1930,6 +1952,10 @@ func _set_fixed_color_box_style(panel_node: PanelContainer, label_node: Label, p
 	style_box.shadow_offset = Vector2(0, 2)
 	panel_node.add_theme_stylebox_override("panel", style_box)
 	label_node.add_theme_color_override("font_color", p_font_color)
+	
+	# Center text
+	label_node.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	label_node.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 
 
 func _set_progressbar_style(progressbar_node: ProgressBar, current_value: float, max_value: float):
