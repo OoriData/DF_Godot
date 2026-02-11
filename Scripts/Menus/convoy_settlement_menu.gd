@@ -597,10 +597,11 @@ func _update_top_up_button():
 		top_up_button.tooltip_text = "Convoy data unavailable."
 		return
 
-	_top_up_plan = _calculate_top_up_plan()
-	var planned_list: Array = _top_up_plan.get("planned_list", [])
-	var total_cost: float = _top_up_plan.get("total_cost", 0.0)
-	if planned_list.is_empty():
+	# Calculate full plan first to see if we need it
+	var full_plan = _calculate_top_up_plan()
+	var needed_cost = full_plan.get("total_cost", 0.0)
+	
+	if full_plan.get("planned_list", []).is_empty():
 		top_up_button.text = "Top Up (Full)"
 		top_up_button.disabled = true
 		top_up_button.tooltip_text = "Fuel, Water and Food are already at maximum levels."
@@ -610,12 +611,31 @@ func _update_top_up_button():
 	if is_instance_valid(_user_service) and _user_service.has_method("get_user"):
 		var user_data: Dictionary = _user_service.get_user()
 		user_money = float(user_data.get("money", 0.0))
-	var can_afford = total_cost <= user_money + 0.0001
-	var _label_resources = ", ".join(planned_list)
-	top_up_button.text = "Top Up"
-	top_up_button.disabled = not can_afford
-	if not can_afford:
-		top_up_button.text += " !"
+
+	var is_partial = false
+	if user_money < needed_cost:
+		# User cannot afford full top up. Calculate partial plan with budget.
+		_top_up_plan = _calculate_top_up_plan(user_money)
+		is_partial = true
+	else:
+		_top_up_plan = full_plan
+
+	var planned_list: Array = _top_up_plan.get("planned_list", [])
+	var total_cost: float = _top_up_plan.get("total_cost", 0.0)
+	
+	# If even partial plan is empty (cannot afford anything), disable
+	if planned_list.is_empty() or total_cost <= 0.0001:
+		top_up_button.text = "Top Up"
+		top_up_button.disabled = true
+		top_up_button.tooltip_text = "Insufficient funds to purchase any resources."
+		return
+
+	if is_partial:
+		top_up_button.text = "Top Up (Partial)"
+	else:
+		top_up_button.text = "Top Up"
+	
+	top_up_button.disabled = false 
 
 	# Build tooltip breakdown (group by resource, showing each vendor line)
 	var breakdown_lines: Array = []
@@ -642,101 +662,253 @@ func _update_top_up_button():
 			res_total_cost += sub_i
 			breakdown_lines.append("  %s: %d @ $%.2f = $%.0f" % [vendor_name, qty_i, price_i, sub_i])
 		breakdown_lines.append("  Subtotal %s: %d = $%.0f" % [r, res_total_qty, res_total_cost])
+	
 	breakdown_lines.append("Total: $%.0f" % total_cost)
-	if not can_afford:
-		var deficit = max(0.0, total_cost - user_money)
-		breakdown_lines.append("Insufficient funds (need $%.0f more)." % deficit)
+	if is_partial:
+		var missing = max(0.0, needed_cost - user_money)
+		breakdown_lines.append("Partial Top Up (Need $%.0f more for full)." % missing)
+	
 	top_up_button.tooltip_text = "Top Up Plan:\n" + "\n".join(breakdown_lines)
 
-func _calculate_top_up_plan() -> Dictionary:
+func _calculate_top_up_plan(budget: float = -1.0) -> Dictionary:
 	var plan: Dictionary = {"total_cost": 0.0, "allocations": [], "resources": {}, "planned_list": []}
 	if _settlement_data.is_empty() or not _settlement_data.has("vendors"):
 		return plan
-	var convoy = _convoy_data
+	var convoy := _convoy_data
 	if convoy.is_empty():
 		return plan
 
-	# Determine fill percentage order (lowest first)
-	var res_fill_pairs: Array = []
-	for res in TOP_UP_RESOURCES:
-		var current = float(convoy.get(res, 0.0))
-		var maximum = float(convoy.get("max_" + res, 0.0))
-		var fill = 1.0
-		if maximum > 0.001:
-			fill = current / maximum
-		res_fill_pairs.append({"res": res, "fill": fill})
-	res_fill_pairs.sort_custom(func(a, b): return a.fill < b.fill)
-
-	# Basic weight limiting (optional) using total_remaining_capacity if present
-	var remaining_weight = float(convoy.get("total_remaining_capacity", 999999.0))
-	var weight_limited = remaining_weight <= 0.001
-	# Optional resource weights (if present inside convoy misc or weights dict)
+	# Budget/weight constraints
+	var remaining_budget: float = budget
+	var budget_limited := budget >= 0.0
+	if not budget_limited:
+		remaining_budget = 999999999.0
+	var remaining_weight := float(convoy.get("total_remaining_capacity", 999999.0))
+	var weight_limited := remaining_weight <= 0.001
 	var resource_weights: Dictionary = convoy.get("resource_weights", {})
 
-	for pair in res_fill_pairs:
-		var res = pair.res
-		var current_amount = float(convoy.get(res, 0.0))
-		var max_amount = float(convoy.get("max_" + res, 0.0))
-		var needed_exact = max(max_amount - current_amount, 0.0)
-		var needed_remaining = int(floor(needed_exact + 0.0001))
+	# Build per-resource state with cheapest-vendor priority for that resource.
+	# Then allocate in a leveling loop (always buy for the lowest fill%), which naturally
+	# distributes purchases evenly instead of fully topping up one resource first.
+	var state_by_res: Dictionary = {}
+	for res: String in TOP_UP_RESOURCES:
+		var max_amount: float = float(convoy.get("max_" + res, 0.0))
+		if max_amount <= 0.001:
+			continue
+		var current_amount: float = float(convoy.get(res, 0.0))
+		var needed_exact: float = max(max_amount - current_amount, 0.0)
+		var needed_remaining: int = int(floor(needed_exact + 0.0001))
 		if needed_remaining <= 0:
 			continue
-		var price_key = res + "_price"
-		# Gather vendors with price & stock
+
+		var price_key: String = String(res) + "_price"
 		var vendor_candidates: Array = []
 		for v in _settlement_data.get("vendors", []):
 			if v.has(price_key) and v[price_key] != null and v.has(res):
-				var stock_available = int(v.get(res, 0))
-				var price = float(v.get(price_key, 0.0))
-				if stock_available > 0 and price > 0:
+				var stock_available := int(v.get(res, 0))
+				var price := float(v.get(price_key, 0.0))
+				if stock_available > 0 and price > 0.0:
 					vendor_candidates.append({"vendor": v, "price": price, "stock": stock_available})
+		vendor_candidates.sort_custom(func(a, b): return float(a.price) < float(b.price))
 		if vendor_candidates.is_empty():
 			continue
-		# Sort by ascending price
-		vendor_candidates.sort_custom(func(a,b): return a.price < b.price)
-		var weight_per_unit = float(resource_weights.get(res, 1.0))
-		if weight_per_unit <= 0: weight_per_unit = 1.0
-		var any_allocated = false
-		for cand in vendor_candidates:
-			if needed_remaining <= 0:
-				break
-			if not weight_limited and remaining_weight <= 0.0:
-				break
-			var take_qty = min(needed_remaining, int(cand.stock))
-			if not weight_limited and remaining_weight < 999998:
-				var max_by_weight = int(floor(remaining_weight / weight_per_unit))
-				take_qty = min(take_qty, max_by_weight)
-			if take_qty <= 0:
+
+		var weight_per_unit: float = float(resource_weights.get(res, 1.0))
+		if weight_per_unit <= 0.0:
+			weight_per_unit = 1.0
+
+		state_by_res[res] = {
+			"res": res,
+			"max": max_amount,
+			"current": current_amount,
+			"needed": needed_remaining,
+			"vendors": vendor_candidates,
+			"vendor_idx": 0,
+			"vendor_stock_left": int(vendor_candidates[0].stock),
+			"weight_per_unit": weight_per_unit,
+		}
+
+	if state_by_res.is_empty():
+		return plan
+
+	var planned_set: Dictionary = {}
+	# Keyed by "res|vendor_id" so we can merge allocations and avoid 1-unit spam.
+	var alloc_index_by_key: Dictionary = {}
+	var last_picked_res: String = ""
+	var safety := 0
+	while true:
+		safety += 1
+		if safety > 10000:
+			break
+
+		if budget_limited and remaining_budget < 0.01:
+			break
+		if not weight_limited and remaining_weight <= 0.001:
+			break
+
+		# Build list of resources that can still accept at least 1 unit.
+		var active: Array = []
+		for res: String in TOP_UP_RESOURCES:
+			if not state_by_res.has(res):
 				continue
-			var vdict: Dictionary = cand.vendor
-			var vendor_id = str(vdict.get("vendor_id", ""))
-			var vendor_name = str(vdict.get("name", "Vendor"))
-			var price = float(cand.price)
-			var subtotal = float(take_qty) * price
+			var s: Dictionary = state_by_res[res]
+			if int(s.get("needed", 0)) <= 0:
+				continue
+			var vendors: Array = s.get("vendors", [])
+			var vidx: int = int(s.get("vendor_idx", 0))
+			if vidx >= vendors.size():
+				continue
+			var price := float(vendors[vidx].price)
+			if budget_limited and remaining_budget < price:
+				continue
+			if not weight_limited:
+				var wpu := float(s.get("weight_per_unit", 1.0))
+				if remaining_weight < wpu:
+					continue
+			active.append(res)
+		if active.is_empty():
+			break
+
+		# Compute min fill percentage among active resources.
+		var min_fill := 999.0
+		for res: String in active:
+			var s: Dictionary = state_by_res[res]
+			var fill := 1.0
+			var max_amount := float(s.get("max", 0.0))
+			if max_amount > 0.001:
+				fill = float(s.get("current", 0.0)) / max_amount
+			if fill < min_fill:
+				min_fill = fill
+
+		# Collect all resources tied for min fill (within epsilon), and rotate tie-breaking.
+		var eps := 0.000001
+		var tied: Array = []
+		for res: String in active:
+			var s: Dictionary = state_by_res[res]
+			var max_amount := float(s.get("max", 0.0))
+			var fill := 1.0
+			if max_amount > 0.001:
+				fill = float(s.get("current", 0.0)) / max_amount
+			if abs(fill - min_fill) <= eps:
+				tied.append(res)
+		if tied.is_empty():
+			break
+
+		var pick_res := String(tied[0])
+		if tied.size() > 1 and last_picked_res != "":
+			var last_idx := tied.find(last_picked_res)
+			if last_idx != -1:
+				pick_res = String(tied[(last_idx + 1) % tied.size()])
+		last_picked_res = pick_res
+
+		var s_pick: Dictionary = state_by_res[pick_res]
+		var max_pick := float(s_pick.get("max", 0.0))
+		if max_pick <= 0.001:
+			break
+
+		# Find the next higher fill among active resources so we can buy in chunks.
+		var next_fill := 1.0
+		var found_next := false
+		for res: String in active:
+			var s: Dictionary = state_by_res[res]
+			var max_amount := float(s.get("max", 0.0))
+			if max_amount <= 0.001:
+				continue
+			var fill := float(s.get("current", 0.0)) / max_amount
+			if fill > (min_fill + eps):
+				if not found_next or fill < next_fill:
+					next_fill = fill
+					found_next = true
+		if not found_next:
+			next_fill = 1.0
+
+		var units_to_target := int(ceil(max(0.0, (next_fill - min_fill)) * max_pick))
+		if units_to_target <= 0:
+			units_to_target = 1
+
+		# Ensure vendor pointer is on a valid candidate with stock.
+		var vendors: Array = s_pick.get("vendors", [])
+		var vidx: int = int(s_pick.get("vendor_idx", 0))
+		var stock_left: int = int(s_pick.get("vendor_stock_left", 0))
+		while vidx < vendors.size() and stock_left <= 0:
+			vidx += 1
+			if vidx < vendors.size():
+				stock_left = int(vendors[vidx].stock)
+		s_pick.vendor_idx = vidx
+		s_pick.vendor_stock_left = stock_left
+		state_by_res[pick_res] = s_pick
+		if vidx >= vendors.size():
+			continue
+
+		var price: float = float(vendors[vidx].price)
+		var weight_per_unit: float = float(s_pick.get("weight_per_unit", 1.0))
+		var take_qty: int = min(units_to_target, int(s_pick.get("needed", 0)))
+		take_qty = min(take_qty, stock_left)
+		if budget_limited:
+			take_qty = min(take_qty, int(floor(remaining_budget / price)))
+		if not weight_limited and remaining_weight < 999998:
+			take_qty = min(take_qty, int(floor(remaining_weight / weight_per_unit)))
+		if take_qty <= 0:
+			continue
+
+		var vdict: Dictionary = vendors[vidx].vendor
+		var vendor_id := str(vdict.get("vendor_id", ""))
+		var vendor_name := str(vdict.get("name", "Vendor"))
+		var subtotal := float(take_qty) * price
+
+		var alloc_key: String = String(pick_res) + "|" + String(vendor_id)
+		if alloc_index_by_key.has(alloc_key):
+			var idx: int = int(alloc_index_by_key.get(alloc_key, -1))
+			if idx >= 0 and idx < plan.allocations.size():
+				var existing: Dictionary = plan.allocations[idx]
+				existing.quantity = int(existing.get("quantity", 0)) + int(take_qty)
+				existing.subtotal = float(existing.get("subtotal", 0.0)) + float(subtotal)
+				# Keep vendor_name/price stable; refresh just in case.
+				existing.vendor_name = vendor_name
+				existing.price = price
+				plan.allocations[idx] = existing
+			else:
+				alloc_index_by_key.erase(alloc_key)
+				plan.allocations.append({
+					"res": pick_res,
+					"vendor_id": vendor_id,
+					"vendor_name": vendor_name,
+					"price": price,
+					"quantity": take_qty,
+					"subtotal": subtotal
+				})
+				alloc_index_by_key[alloc_key] = plan.allocations.size() - 1
+		else:
 			plan.allocations.append({
-				"res": res,
+				"res": pick_res,
 				"vendor_id": vendor_id,
 				"vendor_name": vendor_name,
 				"price": price,
 				"quantity": take_qty,
 				"subtotal": subtotal
 			})
-			plan.total_cost += subtotal
-			needed_remaining -= take_qty
-			any_allocated = true
-			if not weight_limited:
-				remaining_weight -= float(take_qty) * weight_per_unit
-				if remaining_weight <= 0:
-					remaining_weight = 0
-					break
-		if any_allocated:
-			if not plan.resources.has(res):
-				plan.resources[res] = {"total_quantity": 0, "total_cost": 0.0}
-			# Aggregate totals for resource
-			for alloc in plan.allocations:
-				if alloc.res == res:
-					plan.resources[res].total_quantity += int(alloc.quantity)
-					plan.resources[res].total_cost += float(alloc.subtotal)
+			alloc_index_by_key[alloc_key] = plan.allocations.size() - 1
+		plan.total_cost += subtotal
+		remaining_budget -= subtotal
+		if not weight_limited:
+			remaining_weight -= float(take_qty) * weight_per_unit
+
+		# Update state for the picked resource.
+		s_pick.current = float(s_pick.get("current", 0.0)) + float(take_qty)
+		s_pick.needed = int(s_pick.get("needed", 0)) - take_qty
+		s_pick.vendor_stock_left = stock_left - take_qty
+		state_by_res[pick_res] = s_pick
+
+		# Aggregate totals for UI/tooltip.
+		if not plan.resources.has(pick_res):
+			plan.resources[pick_res] = {"total_quantity": 0, "total_cost": 0.0}
+		plan.resources[pick_res].total_quantity += int(take_qty)
+		plan.resources[pick_res].total_cost += subtotal
+		planned_set[pick_res] = true
+
+	# Preserve a stable resource ordering for any UI consumption.
+	for res in TOP_UP_RESOURCES:
+		if planned_set.has(res):
 			plan.planned_list.append(res)
 	return plan
 

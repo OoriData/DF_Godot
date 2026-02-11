@@ -133,7 +133,7 @@ static func build_vendor_buckets(vendor_data: Dictionary, perf_log_enabled: bool
 		print("[VendorCargoAggregator] RAW_FUEL before cast value=", raw_fuel_val, " type=", typeof(raw_fuel_val), " price=", raw_fuel_price_val)
 	var fuel_quantity := _to_int_any(raw_fuel_val)
 	var fuel_price := _to_float_any(raw_fuel_price_val)
-	if fuel_quantity > 0:
+	if fuel_quantity > 0 and fuel_price > 0.0:
 		var fuel_item = {
 			"name": "Fuel (Bulk)",
 			"base_desc": "Bulk fuel to fill your containers.",
@@ -150,8 +150,7 @@ static func build_vendor_buckets(vendor_data: Dictionary, perf_log_enabled: bool
 			print("[VendorCargoAggregator] Creating vendor bulk fuel item:", fuel_item)
 		_aggregate_vendor_item(aggregated_resources, fuel_item, "", perf_log_enabled)
 	elif fuel_quantity > 0 and perf_log_enabled:
-		# This branch is now unreachable but kept for structural symmetry with previous version
-		print("[VendorCargoAggregator] Skipping vendor bulk fuel (unexpected state)")
+		print("[VendorCargoAggregator] Skipping vendor bulk fuel (missing/zero price)")
 
 	var raw_water_val = vendor_data.get("water", 0)
 	var raw_water_price_val = vendor_data.get("water_price", 0)
@@ -159,7 +158,7 @@ static func build_vendor_buckets(vendor_data: Dictionary, perf_log_enabled: bool
 		print("[VendorCargoAggregator] RAW_WATER before cast value=", raw_water_val, " type=", typeof(raw_water_val), " price=", raw_water_price_val)
 	var water_quantity := _to_int_any(raw_water_val)
 	var water_price := _to_float_any(raw_water_price_val)
-	if water_quantity > 0:
+	if water_quantity > 0 and water_price > 0.0:
 		var water_item = {
 			"name": "Water (Bulk)",
 			"base_desc": "Bulk water to fill your containers.",
@@ -176,7 +175,7 @@ static func build_vendor_buckets(vendor_data: Dictionary, perf_log_enabled: bool
 			print("[VendorCargoAggregator] Creating vendor bulk water item:", water_item)
 		_aggregate_vendor_item(aggregated_resources, water_item, "", perf_log_enabled)
 	elif water_quantity > 0 and perf_log_enabled:
-		print("[VendorCargoAggregator] Skipping vendor bulk water (unexpected state)")
+		print("[VendorCargoAggregator] Skipping vendor bulk water (missing/zero price)")
 
 	var raw_food_val = vendor_data.get("food", 0)
 	var raw_food_price_val = vendor_data.get("food_price", 0)
@@ -184,7 +183,7 @@ static func build_vendor_buckets(vendor_data: Dictionary, perf_log_enabled: bool
 		print("[VendorCargoAggregator] RAW_FOOD before cast value=", raw_food_val, " type=", typeof(raw_food_val), " price=", raw_food_price_val)
 	var food_quantity := _to_int_any(raw_food_val)
 	var food_price := _to_float_any(raw_food_price_val)
-	if food_quantity > 0:
+	if food_quantity > 0 and food_price > 0.0:
 		var food_item = {
 			"name": "Food (Bulk)",
 			"base_desc": "Bulk food supplies.",
@@ -201,7 +200,7 @@ static func build_vendor_buckets(vendor_data: Dictionary, perf_log_enabled: bool
 			print("[VendorCargoAggregator] Creating vendor bulk food item:", food_item)
 		_aggregate_vendor_item(aggregated_resources, food_item, "", perf_log_enabled)
 	elif food_quantity > 0 and perf_log_enabled:
-		print("[VendorCargoAggregator] Skipping vendor bulk food (unexpected state)")
+		print("[VendorCargoAggregator] Skipping vendor bulk food (missing/zero price)")
 
 	for vehicle in vendor_data.get("vehicle_inventory", []):
 		var vid := str(vehicle.get("vehicle_id", ""))

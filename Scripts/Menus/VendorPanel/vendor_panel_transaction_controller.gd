@@ -249,6 +249,11 @@ static func dispatch_buy(panel: Object, vendor_id: String, convoy_id: String, it
 			res_type = "water"
 		elif float(item_data_source.get("food", 0)) > 0:
 			res_type = "food"
+		if res_type != "":
+			var vd: Dictionary = panel.vendor_data if (panel.vendor_data is Dictionary) else {}
+			if not VendorTradeVM.vendor_can_buy_resource(vd, res_type):
+				panel._on_api_transaction_error("Vendor does not sell " + res_type)
+				return
 		if res_type != "" and panel._vendor_service.has_method("buy_resource"):
 			panel._vendor_service.buy_resource(vendor_id, convoy_id, res_type, float(quantity))
 			panel._request_authoritative_refresh(convoy_id, vendor_id)

@@ -47,6 +47,28 @@ func test_sell_mode_excludes_bulk_water_when_vendor_price_missing():
 	assert_false((buckets.get("resources", {}) as Dictionary).has("Water (Bulk)"), "Should not show bulk water when water_price is missing")
 
 
+func test_vendor_buckets_exclude_bulk_water_when_water_price_missing_or_zero():
+	var vendor_data_missing = {
+		"vendor_id": "v1",
+		"water": 100,
+		# water_price intentionally missing
+		"cargo_inventory": [],
+		"vehicle_inventory": []
+	}
+	var buckets_missing := VendorCargoAggregator.build_vendor_buckets(vendor_data_missing, false, Callable())
+	assert_eq(int((buckets_missing.get("resources", {}) as Dictionary).size()), 0, "Vendor bulk water should be omitted when water_price is missing")
+
+	var vendor_data_zero = {
+		"vendor_id": "v1",
+		"water": 100,
+		"water_price": 0,
+		"cargo_inventory": [],
+		"vehicle_inventory": []
+	}
+	var buckets_zero := VendorCargoAggregator.build_vendor_buckets(vendor_data_zero, false, Callable())
+	assert_eq(int((buckets_zero.get("resources", {}) as Dictionary).size()), 0, "Vendor bulk water should be omitted when water_price is 0")
+
+
 func test_sell_mode_excludes_food_resource_cargo_when_vendor_food_price_zero_even_if_item_is_other():
 	# Simulate a resource-bearing item that does not use the canonical lowercase key.
 	# This historically could be mis-bucketed as Other and slip past resource gating.

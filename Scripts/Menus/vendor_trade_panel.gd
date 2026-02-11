@@ -949,9 +949,9 @@ func _populate_convoy_list() -> void:
 	if not convoy_data:
 		return
 	var allow_vehicle_sell := _should_show_vehicle_sell_category()
-	# Only apply cross-vendor price fallback for BUY mode display.
-	# In SELL mode we must use the vendor's own pricing to decide what can be sold.
-	var vd_for_agg = vendor_data if str(current_mode) == "sell" else _vendor_data_with_price_fallback(vendor_data)
+	# Always use price fallback for aggregation to ensure consistent grouping (e.g. water/food).
+	# Transaction logic will still enforce vendor's actual buying prices.
+	var vd_for_agg = _vendor_data_with_price_fallback(vendor_data)
 	var buckets := VendorCargoAggregatorScript.build_convoy_buckets(convoy_data, vd_for_agg, current_mode, perf_log_enabled, Callable(self, "_get_vendor_name_for_recipient"), allow_vehicle_sell)
 	if perf_log_enabled and str(current_mode) == "sell":
 		var vd: Dictionary = vendor_data if (vendor_data is Dictionary) else {}
@@ -1171,10 +1171,10 @@ func _update_transaction_panel() -> void:
 	if is_instance_valid(transaction_quantity_container):
 		transaction_quantity_container.visible = not is_vehicle
 
-	# SELL guard: bulk resources can only be sold when vendor has a matching positive price.
+	# Guard: bulk resources can only be transacted when vendor has a matching positive price.
 	var can_transact: bool = true
-	if str(current_mode) == "sell" and bool(item_data_source.get("is_raw_resource", false)):
-		# Use raw vendor pricing here (no fallback), to match gating rules.
+	if bool(item_data_source.get("is_raw_resource", false)):
+		# Use raw vendor pricing here (no fallback), to keep BUY/SELL consistent.
 		var vd_guard: Dictionary = vendor_data if (vendor_data is Dictionary) else {}
 		var rt_guard: String = VendorTradeVM.raw_resource_type(item_data_source)
 		if rt_guard != "" and not VendorTradeVM.vendor_can_buy_resource(vd_guard, rt_guard):
