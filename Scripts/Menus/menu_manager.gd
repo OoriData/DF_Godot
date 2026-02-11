@@ -93,6 +93,12 @@ func open_convoy_vehicle_menu(convoy_data = null):
 	var arg = _extract_convoy_id_or_passthrough(convoy_data)
 	_show_menu(convoy_vehicle_menu_scene, arg)
 
+func open_convoy_vehicle_menu_with_focus(convoy_data: Dictionary, vehicle_id: String) -> void:
+	# Open the vehicle menu and pass the vehicle_id as extra_arg to pre-select the vehicle
+	_next_menu_extra_arg = vehicle_id
+	var arg = _extract_convoy_id_or_passthrough(convoy_data)
+	_show_menu(convoy_vehicle_menu_scene, arg)
+
 func open_convoy_journey_menu(convoy_data = null):
 	var arg = _extract_convoy_id_or_passthrough(convoy_data)
 	_show_menu(convoy_journey_menu_scene, arg)
@@ -309,6 +315,8 @@ func _show_menu(menu_scene_resource, data_to_pass = null, add_to_stack: bool = t
 	elif menu_type == "convoy_cargo_submenu":
 		if current_active_menu.has_signal("return_to_convoy_overview_requested"):
 			current_active_menu.return_to_convoy_overview_requested.connect(open_convoy_menu, CONNECT_ONE_SHOT)
+		if current_active_menu.has_signal("open_vehicle_menu_requested"):
+			current_active_menu.open_vehicle_menu_requested.connect(open_convoy_vehicle_menu_with_focus, CONNECT_ONE_SHOT)
 	elif menu_type == "convoy_settlement_submenu":
 		# Hook from settlement menu mechanics tab
 		if current_active_menu.has_signal("open_mechanics_menu_requested"):

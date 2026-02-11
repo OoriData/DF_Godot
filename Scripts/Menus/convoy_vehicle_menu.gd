@@ -233,6 +233,18 @@ func initialize_with_data(data_or_id: Variant, extra_arg: Variant = null) -> voi
 
 	# Ensure MenuBase subscriptions and store-driven updates are engaged for this menu
 	super.initialize_with_data(data_or_id, extra_arg)
+	
+	# If extra_arg is a vehicle_id string, set it for selection
+	if extra_arg is String and String(extra_arg) != "":
+		_selected_vehicle_id = String(extra_arg)
+		# Re-trigger vehicle selection to show the specified vehicle
+		if is_instance_valid(vehicle_option_button):
+			for idx in range(vehicle_option_button.get_item_count()):
+				var meta = vehicle_option_button.get_item_metadata(idx)
+				if String(meta) == _selected_vehicle_id:
+					vehicle_option_button.select(idx)
+					_on_vehicle_selected(idx)
+					break
 
 func _on_vehicle_selected(index: int):
 	print("ConvoyVehicleMenu: _on_vehicle_selected called with index: ", index)

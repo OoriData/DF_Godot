@@ -18,9 +18,15 @@ const ItemsData = preload("res://Scripts/Data/Items.gd")
 const SettlementModel = preload("res://Scripts/Data/Models/Settlement.gd")
 const VendorModel = preload("res://Scripts/Data/Models/Vendor.gd")
 
+# Match the ConvoyMenu cargo bar color scheme.
+const CAPACITY_COLOR_GREEN: Color = Color("66bb6a")
+const CAPACITY_COLOR_YELLOW: Color = Color("ffee58")
+const CAPACITY_COLOR_RED: Color = Color("ef5350")
+
 ## Back signal provided by MenuBase
 
 signal return_to_convoy_overview_requested(convoy_data)
+signal open_vehicle_menu_requested(convoy_data, vehicle_id)
 var convoy_data_received: Dictionary
 
 @onready var title_label: Label = $MainVBox/TitleLabel
@@ -37,6 +43,9 @@ var _vendors_by_id_models: Dictionary = {} # vendor_id -> Vendor model
 var _vendors_from_settlements_by_id: Dictionary = {} # vendor_id -> vendor Dictionary (from map snapshot)
 var _vendor_id_to_settlement: Dictionary = {} # vendor_id -> settlement Dictionary (from map snapshot)
 var _item_to_inspect_on_load = null
+
+# Populated during `_populate_by_vehicle()` so header rows can render capacity bars.
+var _vehicle_capacity_by_id: Dictionary = {} # vehicle_id -> {"cargo_capacity": float, "weight_capacity": float}
 
 var _organize_button: Button
 
@@ -128,7 +137,7 @@ func _snapshot_open_inspects(tag: String) -> void:
 		sample_ids.append(str(ids[i]))
 	_diag(tag, "open_ids", {"count": ids.size(), "sample": sample_ids})
 
-var organization_mode: String = "by_type" # "by_type" or "by_vehicle"
+var organization_mode: String = "by_vehicle" # "by_type" or "by_vehicle"
 
 # Debug toggle for diagnosing missing cargo items
 const CARGO_MENU_DEBUG: bool = true
@@ -155,9 +164,19 @@ func _extract_item_display_name(item: Dictionary) -> String:
 		return str(item.get("specific_name"))
 	return "Unknown Item"
 
-func _is_displayable_cargo(_item: Dictionary) -> bool:
-	# Show all cargo items. `vehicle_id` is present for normal cargo too, so it cannot be used
-	# to distinguish installed vs loose.
+func _is_displayable_cargo(item: Dictionary) -> bool:
+	if item.is_empty():
+		return false
+	# Installed parts should not show in cargo
+	if item.get("installed", false):
+		return false
+	# Intrinsic parts (like built-in fuel tanks) are internal mechanics, not cargo
+	var intrinsic_id = item.get("intrinsic_part_id")
+	if intrinsic_id != null and str(intrinsic_id) != "":
+		return false
+	
+	# Show all other cargo items. `vehicle_id` is present for normal cargo too, so it cannot be used
+	# to distinguish installed vs loose on its own (but is used in aggregation logic for parts).
 	return true
 
 func _ready():
@@ -978,7 +997,7 @@ func _aggregate_cargo_item(agg_dict: Dictionary, item: Dictionary, vehicle_name:
 	if CARGO_MENU_DEBUG:
 		print("[CargoAgg][", agg_key, "] unit_v:", unit_v, " qty:", item_quantity, " -> total_volume:", agg_dict[agg_key]["total_volume"])
 
-func _add_category_section(parent: VBoxContainer, title: String, agg_data: Dictionary) -> int:
+func _add_category_section(parent: VBoxContainer, title: String, agg_data: Dictionary, vehicle_id: String = "") -> int:
 	if agg_data.is_empty():
 		return 0
 
@@ -990,13 +1009,89 @@ func _add_category_section(parent: VBoxContainer, title: String, agg_data: Dicti
 	header_style.content_margin_left = 8
 	header_style.content_margin_top = 4
 	header_style.content_margin_bottom = 4
+	header_style.content_margin_right = 8
 	header_panel.add_theme_stylebox_override("panel", header_style)
+	
+	# Use HBoxContainer to allow for both label and button
+	var header_hbox := HBoxContainer.new()
+	header_hbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	header_panel.add_child(header_hbox)
 	
 	var header_label := Label.new()
 	header_label.text = title
 	header_label.add_theme_font_size_override("font_size", 20)
 	header_label.modulate = Color.GOLD
-	header_panel.add_child(header_label)
+	header_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	header_hbox.add_child(header_label)
+
+	# In "by_vehicle" organization mode, show mini volume/weight bars for the vehicle
+	# between the name and the inspect button.
+	if vehicle_id != "" and organization_mode == "by_vehicle":
+		var caps: Dictionary = _vehicle_capacity_by_id.get(vehicle_id, {})
+		var total_volume: float = float(caps.get("cargo_capacity", 0.0))
+		var total_weight: float = float(caps.get("weight_capacity", 0.0))
+
+		var used_volume: float = 0.0
+		var used_weight: float = 0.0
+		for v in agg_data.values():
+			if v is Dictionary:
+				used_volume += float((v as Dictionary).get("total_volume", 0.0))
+				used_weight += float((v as Dictionary).get("total_weight", 0.0))
+
+		var bars_vbox := VBoxContainer.new()
+		bars_vbox.name = "VehicleMiniBars"
+		bars_vbox.add_theme_constant_override("separation", 2)
+		bars_vbox.custom_minimum_size = Vector2(160, 0)
+		bars_vbox.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		bars_vbox.size_flags_horizontal = Control.SIZE_SHRINK_END
+
+		var vol_row := HBoxContainer.new()
+		vol_row.add_theme_constant_override("separation", 6)
+		var vol_lbl := Label.new()
+		vol_lbl.text = "V"
+		vol_lbl.custom_minimum_size = Vector2(14, 10)
+		vol_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		vol_lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		vol_lbl.modulate = Color(0.8, 0.9, 0.85, 1)
+		var vol_bar := ProgressBar.new()
+		vol_bar.custom_minimum_size = Vector2(140, 10)
+		vol_bar.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		vol_bar.show_percentage = false
+		_set_capacity_progressbar_style(vol_bar, used_volume, total_volume)
+		vol_bar.tooltip_text = "Volume: %.1f / %.1f" % [used_volume, total_volume]
+		vol_row.add_child(vol_lbl)
+		vol_row.add_child(vol_bar)
+
+		var wt_row := HBoxContainer.new()
+		wt_row.add_theme_constant_override("separation", 6)
+		var wt_lbl := Label.new()
+		wt_lbl.text = "W"
+		wt_lbl.custom_minimum_size = Vector2(14, 10)
+		wt_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		wt_lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		wt_lbl.modulate = Color(0.8, 0.85, 0.9, 1)
+		var wt_bar := ProgressBar.new()
+		wt_bar.custom_minimum_size = Vector2(140, 10)
+		wt_bar.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		wt_bar.show_percentage = false
+		_set_capacity_progressbar_style(wt_bar, used_weight, total_weight)
+		wt_bar.tooltip_text = "Weight: %.1f / %.1f" % [used_weight, total_weight]
+		wt_row.add_child(wt_lbl)
+		wt_row.add_child(wt_bar)
+
+		bars_vbox.add_child(vol_row)
+		bars_vbox.add_child(wt_row)
+		header_hbox.add_child(bars_vbox)
+	
+	# Add inspect button if vehicle_id is provided
+	if vehicle_id != "":
+		var inspect_button := Button.new()
+		inspect_button.text = "Inspect"
+		inspect_button.custom_minimum_size = Vector2(90, 26)
+		inspect_button.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		inspect_button.pressed.connect(_on_vehicle_inspect_pressed.bind(vehicle_id))
+		header_hbox.add_child(inspect_button)
+	
 	parent.add_child(header_panel)
 
 	var item_index := 0
@@ -1306,6 +1401,7 @@ func _populate_by_type():
 func _populate_by_vehicle():
 	_diag("populate_vehicle", "start")
 	var direct_vbox_ref: VBoxContainer = cargo_items_vbox
+	_vehicle_capacity_by_id.clear()
 	
 	# Clear any previous items
 	var _clr := direct_vbox_ref.get_child_count()
@@ -1329,6 +1425,14 @@ func _populate_by_vehicle():
 		if not vehicle_data is Dictionary:
 			printerr("ConvoyCargoMenu: Invalid vehicle_data entry.")
 			continue
+
+		# Cache per-vehicle capacities for mini bars.
+		var cached_vehicle_id := String((vehicle_data as Dictionary).get("vehicle_id", (vehicle_data as Dictionary).get("id", "")))
+		if cached_vehicle_id != "":
+			_vehicle_capacity_by_id[cached_vehicle_id] = {
+				"cargo_capacity": float((vehicle_data as Dictionary).get("cargo_capacity", (vehicle_data as Dictionary).get("max_volume", 0.0))),
+				"weight_capacity": float((vehicle_data as Dictionary).get("weight_capacity", (vehicle_data as Dictionary).get("max_weight", 0.0)))
+			}
 
 		# A single aggregation dictionary for all cargo within this vehicle.
 		var vehicle_aggregated_all_cargo: Dictionary = {}
@@ -1428,9 +1532,11 @@ func _populate_by_vehicle():
 				_aggregate_cargo_item(vehicle_aggregated_all_cargo, part_copy)
 
 		if has_cargo_in_this_vehicle:
+			# Extract vehicle_id for the inspect button
+			var vehicle_id := String(vehicle_data.get("vehicle_id", vehicle_data.get("id", "")))
 			# Use the existing category section function, but with the vehicle's name as the title.
 			# This creates the "yellow banner" with the vehicle name.
-			_add_category_section(direct_vbox_ref, vehicle_name, vehicle_aggregated_all_cargo)
+			_add_category_section(direct_vbox_ref, vehicle_name, vehicle_aggregated_all_cargo, vehicle_id)
 			_add_separator(direct_vbox_ref)
 
 	if not any_cargo_found_in_convoy and not vehicle_details_list.is_empty():
@@ -1439,6 +1545,49 @@ func _populate_by_vehicle():
 		no_cargo_overall_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		direct_vbox_ref.add_child(no_cargo_overall_label)
 	_diag("populate_vehicle", "done")
+
+
+func _get_color_for_capacity(percentage: float) -> Color:
+	# Mirror `ConvoyMenu._get_color_for_capacity` thresholds.
+	if percentage > 0.95:
+		return CAPACITY_COLOR_RED
+	elif percentage > 0.75:
+		return CAPACITY_COLOR_YELLOW
+	return CAPACITY_COLOR_GREEN
+
+
+func _set_capacity_progressbar_style(progressbar_node: ProgressBar, current_value: float, max_value: float) -> void:
+	# Mirror `ConvoyMenu._set_progressbar_style` so the mini bars match.
+	if not is_instance_valid(progressbar_node):
+		return
+	var percentage: float = 0.0
+	if max_value > 0.0:
+		percentage = clamp(current_value / max_value, 0.0, 1.0)
+		progressbar_node.value = percentage * 100.0
+	else:
+		progressbar_node.value = 0.0
+
+	var fill_color := _get_color_for_capacity(percentage)
+	var fill_style_box := StyleBoxFlat.new()
+	fill_style_box.bg_color = fill_color
+	fill_style_box.border_width_left = 1
+	fill_style_box.border_width_right = 1
+	fill_style_box.border_width_top = 1
+	fill_style_box.border_width_bottom = 1
+	fill_style_box.border_color = fill_color.darkened(0.2)
+	progressbar_node.add_theme_stylebox_override("fill", fill_style_box)
+
+	var bg_style := StyleBoxFlat.new()
+	bg_style.bg_color = Color("2a2a2a")
+	bg_style.border_width_left = 1
+	bg_style.border_width_right = 1
+	bg_style.border_width_top = 1
+	bg_style.border_width_bottom = 1
+	bg_style.border_color = bg_style.bg_color.lightened(0.4)
+	bg_style.shadow_color = Color(0, 0, 0, 0.4)
+	bg_style.shadow_size = 2
+	bg_style.shadow_offset = Vector2(0, 2)
+	progressbar_node.add_theme_stylebox_override("background", bg_style)
 
 func _on_back_button_pressed():
 	# print("ConvoyCargoMenu: Back button pressed. Emitting 'back_requested' signal.") # DEBUG
@@ -1676,6 +1825,13 @@ func _inspect_item_on_load():
 
 	_item_to_inspect_on_load = null # Clear even if not found
 	printerr("ConvoyCargoMenu: Could not find item to inspect on load with cargo_id: ", target_cargo_id)
+
+
+func _on_vehicle_inspect_pressed(vehicle_id: String) -> void:
+	# Called when inspect button is pressed on a vehicle header
+	if not convoy_data_received.is_empty():
+		_diag("vehicle_inspect", "clicked", {"vehicle_id": vehicle_id})
+		emit_signal("open_vehicle_menu_requested", convoy_data_received, vehicle_id)
 
 
 func _on_store_convoys_changed(all_convoy_data: Array) -> void:
