@@ -149,4 +149,12 @@ func _on_ui_scale_drag_ended(changed: bool):
 func _on_logout_pressed():
 	if is_instance_valid(API) and API.has_method("logout"):
 		API.logout()
-		hide()
+	hide()
+
+	# Ask the active GameRoot (GameScreenManager) to return to the login screen.
+	var scene_root := get_tree().current_scene
+	if is_instance_valid(scene_root) and scene_root.has_method("logout_to_login"):
+		scene_root.logout_to_login()
+	else:
+		# Fallback: reload the main scene (autoloads persist, but this at least restores the login UI).
+		get_tree().reload_current_scene()

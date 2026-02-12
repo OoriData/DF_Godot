@@ -128,6 +128,30 @@ func get_convoys() -> Array:
 func get_user() -> Dictionary:
 	return _user
 
+
+func reset_all() -> void:
+	# Wipe snapshots and readiness flags (used for logout / switching accounts).
+	_tiles = []
+	_settlements = []
+	_convoys = []
+	_user = {}
+	_map_ready = false
+	_convoys_ready = false
+	_initial_emitted = false
+
+	emit_signal("map_changed", _tiles, _settlements)
+	emit_signal("convoys_changed", _convoys)
+	emit_signal("user_changed", _user)
+
+	var hub := get_node_or_null("/root/SignalHub")
+	if is_instance_valid(hub):
+		if hub.has_signal("map_changed"):
+			hub.map_changed.emit(_tiles, _settlements)
+		if hub.has_signal("convoys_changed"):
+			hub.convoys_changed.emit(_convoys)
+		if hub.has_signal("user_changed"):
+			hub.user_changed.emit(_user)
+
 func _maybe_emit_initial_ready() -> void:
 	if _initial_emitted:
 		return

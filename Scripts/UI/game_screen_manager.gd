@@ -7,6 +7,8 @@ class_name GameScreenManager
 
 var current_user_id: String = ""
 
+const LOGIN_SCREEN_SCENE_PATH := "res://Scenes/LoginScreen.tscn"
+
 
 func _ready():
 	# Ensure we have the necessary nodes.
@@ -31,6 +33,11 @@ func _ready():
 func _on_login_successful(user_id: String) -> void:
 	print("GameScreenManager: Login successful for User ID:", user_id)
 	current_user_id = user_id
+
+	# Re-enable periodic refresh now that we're authenticated.
+	var refresh := get_node_or_null("/root/RefreshScheduler")
+	if is_instance_valid(refresh) and refresh.has_method("enable_polling"):
+		refresh.enable_polling(true)
 
 	# Phase 4: bootstrap via Services and Store only (no direct APICalls wiring).
 	var user_service := get_node_or_null("/root/UserService")
@@ -76,3 +83,46 @@ func _on_login_successful(user_id: String) -> void:
 		printerr("GameScreenManager: MainScreen is missing the 'force_camera_update' method.")
 
 	print("GameScreenManager: Switched to Main Screen.")
+
+
+func logout_to_login() -> void:
+	# Transition back to the login screen without restarting the app process.
+	# Note: autoload singletons persist, so we also clear store snapshots and stop polling.
+	current_user_id = ""
+
+	var refresh := get_node_or_null("/root/RefreshScheduler")
+	if is_instance_valid(refresh) and refresh.has_method("enable_polling"):
+		refresh.enable_polling(false)
+
+	var store := get_node_or_null("/root/GameStore")
+	if is_instance_valid(store) and store.has_method("reset_all"):
+		store.reset_all()
+
+	if is_instance_valid(main_screen):
+		main_screen.visible = false
+		main_screen.process_mode = Node.PROCESS_MODE_DISABLED
+		if main_screen.has_method("set_map_interactive"):
+			main_screen.set_map_interactive(false)
+
+	# Recreate LoginScreen if it was freed after a previous successful login.
+	if not is_instance_valid(login_screen):
+		var scene_res: Resource = load(LOGIN_SCREEN_SCENE_PATH)
+		if scene_res != null and scene_res is PackedScene:
+			login_screen = (scene_res as PackedScene).instantiate()
+			login_screen.name = "LoginScreen"
+			add_child(login_screen)
+		else:
+			printerr("GameScreenManager: Failed to load LoginScreen scene at ", LOGIN_SCREEN_SCENE_PATH)
+			# Fallback: at least reload the current scene so the user can log back in.
+			get_tree().reload_current_scene()
+			return
+
+	# Ensure signal wired for the new instance.
+	if is_instance_valid(login_screen):
+		if not login_screen.is_connected("login_successful", Callable(self, "_on_login_successful")):
+			login_screen.connect("login_successful", Callable(self, "_on_login_successful"))
+		login_screen.visible = true
+		login_screen.process_mode = Node.PROCESS_MODE_ALWAYS
+
+	get_tree().paused = true
+	print("GameScreenManager: Logged out. Showing Login Screen.")

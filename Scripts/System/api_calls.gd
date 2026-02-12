@@ -17,6 +17,7 @@ signal auth_status_update(status: String)
 signal auth_session_received(session_token: String)
 signal user_id_resolved(user_id: String)
 signal auth_expired
+signal logged_out
 signal auth_poll_started
 signal auth_poll_finished(success: bool)
 
@@ -293,8 +294,32 @@ func _is_auth_token_expired() -> bool:
 	return _auth_token_expiry <= Time.get_unix_time_from_system()
 
 func logout() -> void:
+	# Clear persisted + in-memory auth state.
 	clear_auth_session_token()
-	emit_signal("fetch_error", "Logged out.")
+	current_user_id = ""
+	_auth_me_requested = false
+	_user_data_requested_once = false
+	_login_in_progress = false
+	_auth_poll.active = false
+	_auth_poll.state = ""
+	_auth_poll.attempt = 0
+
+	# Stop/clear any outstanding requests so we don't keep polling with stale state.
+	_request_queue.clear()
+	_is_request_in_progress = false
+	_current_request_purpose = RequestPurpose.NONE
+	_current_patch_signal_name = ""
+	_last_requested_url = ""
+
+	if _http_request:
+		_http_request.cancel_request()
+	if _http_request_map:
+		_http_request_map.cancel_request()
+	if _http_request_route:
+		_http_request_route.cancel_request()
+
+	_emit_hub_auth_state("logged_out")
+	emit_signal("logged_out")
 
 func get_auth_url(_provider: String = "") -> void:
 	# Abort map fetch if it's blocking
