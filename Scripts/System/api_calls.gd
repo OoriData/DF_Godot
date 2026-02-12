@@ -1923,7 +1923,13 @@ func _on_request_completed(result: int, response_code: int, _headers: PackedStri
 			var status: String = str(json_response.get('status', 'pending'))
 			print('[APICalls][AUTH_STATUS] attempt=%d/%d status=%s state=%s' % [_auth_poll.attempt, _auth_poll.max_attempts, status, _auth_poll.state])
 			emit_signal('auth_status_update', status)
-			_emit_hub_auth_state(status)
+			# Normalize transport status values into canonical UI-facing auth states.
+			var hub_state := status
+			if status == 'complete':
+				hub_state = 'authenticated'
+			elif status == 'failed' or status == 'error' or status == 'denied':
+				hub_state = 'failed'
+			_emit_hub_auth_state(hub_state)
 			if status == 'pending':
 				_auth_poll.attempt += 1
 				if _auth_poll.attempt >= _auth_poll.max_attempts:
@@ -1950,7 +1956,7 @@ func _on_request_completed(result: int, response_code: int, _headers: PackedStri
 					_auth_me_resolve_attempts = 0
 					print('[APICalls][AUTH_STATUS] Forcing /auth/me resolution now that token is set.')
 					resolve_current_user_id(true)
-					_emit_hub_auth_state('complete')
+					_emit_hub_auth_state('authenticated')
 			else:
 				_auth_poll.active = false
 				_login_in_progress = false
@@ -1971,6 +1977,9 @@ func _on_request_completed(result: int, response_code: int, _headers: PackedStri
 			if not uid_str.is_empty() and _is_valid_uuid(uid_str):
 				print('[APICalls][AUTH_ME] Resolved user id (attempt %d): %s' % [_auth_me_resolve_attempts, uid_str])
 				_auth_me_resolve_attempts = 0
+				set_user_id(uid_str)
+				# Populate GameStore.user_changed so the LoginScreen can advance.
+				get_user_data(uid_str)
 				emit_signal('user_id_resolved', uid_str)
 			else:
 				print('[APICalls][AUTH_ME] Missing/invalid user_id (attempt %d/%d). Body=%s' % [_auth_me_resolve_attempts, AUTH_ME_MAX_ATTEMPTS, response_body_text])
