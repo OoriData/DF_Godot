@@ -232,9 +232,11 @@ layout_mode = 2
 
 [node name="VendorPreviewPanel" type="PanelContainer" parent="MainVBox/ScrollContainer/ContentVBox"]
 layout_mode = 2
+size_flags_vertical = 3
 
 [node name="VendorPreviewVBox" type="VBoxContainer" parent="MainVBox/ScrollContainer/ContentVBox/VendorPreviewPanel"]
 layout_mode = 2
+size_flags_vertical = 3
 theme_override_constants/separation = 8
 
 [node name="PreviewTitleLabel" type="Label" parent="MainVBox/ScrollContainer/ContentVBox/VendorPreviewPanel/VendorPreviewVBox"]
@@ -283,25 +285,31 @@ layout_mode = 2
 size_flags_vertical = 3
 custom_minimum_size = Vector2(0, 160)
 
-[node name="ContentWrapper" type="VBoxContainer" parent="MainVBox/ScrollContainer/ContentVBox/VendorPreviewPanel/VendorPreviewVBox/VendorContentPanel"]
+[node name="VendorContentScroll" type="ScrollContainer" parent="MainVBox/ScrollContainer/ContentVBox/VendorPreviewPanel/VendorPreviewVBox/VendorContentPanel"]
 layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+
+[node name="ContentWrapper" type="VBoxContainer" parent="MainVBox/ScrollContainer/ContentVBox/VendorPreviewPanel/VendorPreviewVBox/VendorContentPanel/VendorContentScroll"]
+layout_mode = 2
+size_flags_horizontal = 3
 theme_override_constants/separation = 6
 
-[node name="JourneyInfoVBox" type="VBoxContainer" parent="MainVBox/ScrollContainer/ContentVBox/VendorPreviewPanel/VendorPreviewVBox/VendorContentPanel/ContentWrapper"]
+[node name="JourneyInfoVBox" type="VBoxContainer" parent="MainVBox/ScrollContainer/ContentVBox/VendorPreviewPanel/VendorPreviewVBox/VendorContentPanel/VendorContentScroll/ContentWrapper"]
 visible = false
 layout_mode = 2
 theme_override_constants/separation = 8
 alignment = 1
 
-[node name="JourneyDestLabel" type="Label" parent="MainVBox/ScrollContainer/ContentVBox/VendorPreviewPanel/VendorPreviewVBox/VendorContentPanel/ContentWrapper/JourneyInfoVBox"]
+[node name="JourneyDestLabel" type="Label" parent="MainVBox/ScrollContainer/ContentVBox/VendorPreviewPanel/VendorPreviewVBox/VendorContentPanel/VendorContentScroll/ContentWrapper/JourneyInfoVBox"]
 layout_mode = 2
 text = "Destination: (X, Y)"
 
-[node name="JourneyProgressControl" type="Control" parent="MainVBox/ScrollContainer/ContentVBox/VendorPreviewPanel/VendorPreviewVBox/VendorContentPanel/ContentWrapper/JourneyInfoVBox"]
+[node name="JourneyProgressControl" type="Control" parent="MainVBox/ScrollContainer/ContentVBox/VendorPreviewPanel/VendorPreviewVBox/VendorContentPanel/VendorContentScroll/ContentWrapper/JourneyInfoVBox"]
 custom_minimum_size = Vector2(0, 30)
 layout_mode = 2
 
-[node name="JourneyProgressBar" type="ProgressBar" parent="MainVBox/ScrollContainer/ContentVBox/VendorPreviewPanel/VendorPreviewVBox/VendorContentPanel/ContentWrapper/JourneyInfoVBox/JourneyProgressControl"]
+[node name="JourneyProgressBar" type="ProgressBar" parent="MainVBox/ScrollContainer/ContentVBox/VendorPreviewPanel/VendorPreviewVBox/VendorContentPanel/VendorContentScroll/ContentWrapper/JourneyInfoVBox/JourneyProgressControl"]
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
@@ -310,7 +318,7 @@ grow_horizontal = 2
 grow_vertical = 2
 show_percentage = false
 
-[node name="JourneyProgressLabel" type="Label" parent="MainVBox/ScrollContainer/ContentVBox/VendorPreviewPanel/VendorPreviewVBox/VendorContentPanel/ContentWrapper/JourneyInfoVBox/JourneyProgressControl"]
+[node name="JourneyProgressLabel" type="Label" parent="MainVBox/ScrollContainer/ContentVBox/VendorPreviewPanel/VendorPreviewVBox/VendorContentPanel/VendorContentScroll/ContentWrapper/JourneyInfoVBox/JourneyProgressControl"]
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
@@ -321,22 +329,22 @@ text = "0.0%"
 horizontal_alignment = 1
 vertical_alignment = 1
 
-[node name="JourneyETALabel" type="Label" parent="MainVBox/ScrollContainer/ContentVBox/VendorPreviewPanel/VendorPreviewVBox/VendorContentPanel/ContentWrapper/JourneyInfoVBox"]
+[node name="JourneyETALabel" type="Label" parent="MainVBox/ScrollContainer/ContentVBox/VendorPreviewPanel/VendorPreviewVBox/VendorContentPanel/VendorContentScroll/ContentWrapper/JourneyInfoVBox"]
 layout_mode = 2
 text = "ETA: Timestamp"
 
-[node name="VendorItemContainer" type="VBoxContainer" parent="MainVBox/ScrollContainer/ContentVBox/VendorPreviewPanel/VendorPreviewVBox/VendorContentPanel/ContentWrapper"]
+[node name="VendorItemContainer" type="VBoxContainer" parent="MainVBox/ScrollContainer/ContentVBox/VendorPreviewPanel/VendorPreviewVBox/VendorContentPanel/VendorContentScroll/ContentWrapper"]
 layout_mode = 2
 theme_override_constants/separation = 4
 
-[node name="VendorItemGrid" type="GridContainer" parent="MainVBox/ScrollContainer/ContentVBox/VendorPreviewPanel/VendorPreviewVBox/VendorContentPanel/ContentWrapper/VendorItemContainer"]
+[node name="VendorItemGrid" type="GridContainer" parent="MainVBox/ScrollContainer/ContentVBox/VendorPreviewPanel/VendorPreviewVBox/VendorContentPanel/VendorContentScroll/ContentWrapper/VendorItemContainer"]
 layout_mode = 2
 size_flags_horizontal = 3
 theme_override_constants/h_separation = 2
 theme_override_constants/v_separation = 2
 columns = 3
 
-[node name="VendorNoItemsLabel" type="Label" parent="MainVBox/ScrollContainer/ContentVBox/VendorPreviewPanel/VendorPreviewVBox/VendorContentPanel/ContentWrapper"]
+[node name="VendorNoItemsLabel" type="Label" parent="MainVBox/ScrollContainer/ContentVBox/VendorPreviewPanel/VendorPreviewVBox/VendorContentPanel/VendorContentScroll/ContentWrapper"]
 visible = false
 layout_mode = 1
 anchors_preset = 15
