@@ -81,6 +81,10 @@ const PART_CATEGORY_ORDER = [
 ]
 
 
+# Inspect dialog options
+const SHOW_PART_INSPECT_RAW_DATA := false
+
+
 func _ready():
 	# Connect the back button signal
 	if is_instance_valid(back_button):
@@ -931,6 +935,7 @@ func _on_inspect_part_pressed(part_data: Dictionary):
 	var dialog = AcceptDialog.new()
 	dialog.title = "Inspect: " + part_data.get("name", "Component Details")
 	var dialog_vbox = VBoxContainer.new()
+	dialog_vbox.add_theme_constant_override("separation", 10)
 	dialog_vbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	dialog_vbox.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	dialog.add_child(dialog_vbox)
@@ -1003,122 +1008,306 @@ func _on_inspect_all_cargo_pressed():
 		printerr("ConvoyVehicleMenu: _current_convoy_data is not set. Cannot open full cargo manifest.")
 
 func _populate_part_details_dialog(parent_vbox: VBoxContainer, part_data: Dictionary):
+	parent_vbox.add_theme_constant_override("separation", 10)
 
-	var main_details_grid = GridContainer.new()
-	main_details_grid.columns = 2
-	main_details_grid.add_theme_constant_override("h_separation", 10)
-	main_details_grid.add_theme_constant_override("v_separation", 5)
-	parent_vbox.add_child(main_details_grid)
+	# Use a scroll container so big parts don't overflow the dialog.
+	var scroll := ScrollContainer.new()
+	scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	scroll.custom_minimum_size = Vector2(560, 520)
+	parent_vbox.add_child(scroll)
 
-	_add_grid_row(main_details_grid, "Name", part_data.get("name", "N/A"))
-	_add_grid_row(main_details_grid, "Slot", part_data.get("slot", "N/A").capitalize().replace("_", " ")) # Corrected: Removed extra argument
-	_add_grid_row(main_details_grid, "Description", part_data.get("description", part_data.get("base_desc", "No description available.")))
-	_add_grid_row(main_details_grid, "Value", "$%s" % int(part_data.get("value", 0.0)))
-	_add_grid_row(main_details_grid, "Critical Part", "Yes" if part_data.get("critical", false) else "No")
-	_add_grid_row(main_details_grid, "Bolt-on", "Yes" if part_data.get("bolt_on", false) else "No")
-	_add_grid_row(main_details_grid, "Removable", "Yes" if part_data.get("removable", false) else "No")
-	_add_grid_row(main_details_grid, "OE Part", "Yes" if part_data.get("oe", false) else "No")
-	_add_grid_row(main_details_grid, "Salvageable", "Yes" if part_data.get("salvagable", false) else "No")
+	var content := VBoxContainer.new()
+	content.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	content.add_theme_constant_override("separation", 10)
+	scroll.add_child(content)
 
-	# Performance Modifiers
-	var perf_mods_label = Label.new()
-	perf_mods_label.text = "Performance Modifiers:"
-	perf_mods_label.add_theme_font_size_override("font_size", 16)
-	perf_mods_label.add_theme_color_override("font_color", Color.YELLOW)
-	parent_vbox.add_child(perf_mods_label)
+	# Header
+	var header := Label.new()
+	header.text = String(part_data.get("name", "Component Details"))
+	header.add_theme_font_size_override("font_size", 18)
+	header.add_theme_color_override("font_color", Color(1.0, 0.85, 0.35, 1.0))
+	content.add_child(header)
 
-	var perf_grid = GridContainer.new()
-	perf_grid.columns = 2
-	perf_grid.add_theme_constant_override("h_separation", 10)
-	perf_grid.add_theme_constant_override("v_separation", 5)
-	parent_vbox.add_child(perf_grid)
+	var slot_text := _fmt_titleish(part_data.get("slot"))
+	if not slot_text.is_empty():
+		var slot_lbl := Label.new()
+		slot_lbl.text = slot_text
+		slot_lbl.add_theme_color_override("font_color", Color(0.86, 0.92, 1.0, 0.95))
+		content.add_child(slot_lbl)
 
-	if part_data.has("top_speed_add") and part_data.top_speed_add != null:
-		_add_grid_row(perf_grid, "Top Speed Add", "%+d" % part_data.top_speed_add)
-	if part_data.has("efficiency_add") and part_data.efficiency_add != null:
-		_add_grid_row(perf_grid, "Efficiency Add", "%+d" % part_data.efficiency_add)
-	if part_data.has("offroad_capability_add") and part_data.offroad_capability_add != null:
-		_add_grid_row(perf_grid, "Offroad Add", "%+d" % part_data.offroad_capability_add)
-	if part_data.has("kw") and part_data.kw != null:
-		_add_grid_row(perf_grid, "Power (kW)", "%.1f" % part_data.kw)
-	if part_data.has("nm") and part_data.nm != null:
-		_add_grid_row(perf_grid, "Torque (Nm)", "%.1f" % part_data.nm)
-	if part_data.has("wp") and part_data.wp != null:
-		_add_grid_row(perf_grid, "Wear Points", "%.1f" % part_data.wp)
-	if part_data.has("weight_class") and part_data.weight_class != null:
-		_add_grid_row(perf_grid, "Weight Class", "%.0f" % part_data.weight_class)
-	if part_data.has("diameter") and part_data.diameter != null:
-		_add_grid_row(perf_grid, "Diameter", "%.3f" % part_data.diameter)
+	# Details panel
+	var detail_rows: Array = []
+	var desc := _first_nonempty_string([
+		part_data.get("description"),
+		part_data.get("base_desc")
+	])
+	_append_row_if_present(detail_rows, "Description", desc)
 
-	# Resource/Capacity
-	var resource_label = Label.new()
-	resource_label.text = "Resource & Capacity:"
-	resource_label.add_theme_font_size_override("font_size", 16)
-	resource_label.add_theme_color_override("font_color", Color.YELLOW)
-	parent_vbox.add_child(resource_label)
+	# Optional metadata that players actually care about
+	_append_row_if_present(detail_rows, "Requires", _fmt_requirements(part_data.get("requirements")))
+	_append_row_if_present(detail_rows, "Coupling", _fmt_titleish(part_data.get("coupling")))
+	_append_row_if_present(detail_rows, "Driven Axles", _fmt_titleish(part_data.get("driven_axles")))
 
-	var resource_grid = GridContainer.new()
-	resource_grid.columns = 2
-	resource_grid.add_theme_constant_override("h_separation", 10)
-	resource_grid.add_theme_constant_override("v_separation", 5)
-	parent_vbox.add_child(resource_grid)
+	var value_v: Variant = part_data.get("value")
+	if _should_show(value_v) and float(value_v) > 0.0:
+		_append_row_if_present(detail_rows, "Value", "$%s" % int(round(float(value_v))))
 
-	if part_data.has("fuel_capacity") and part_data.fuel_capacity != null:
-		_add_grid_row(resource_grid, "Fuel Capacity", "%.1f L" % part_data.fuel_capacity)
-	if part_data.has("kwh_capacity") and part_data.kwh_capacity != null:
-		_add_grid_row(resource_grid, "Battery Capacity", "%.1f kWh" % part_data.kwh_capacity)
-	if part_data.has("cargo_capacity_add") and part_data.cargo_capacity_add != null:
-		_add_grid_row(resource_grid, "Cargo Capacity Add", "%+d" % part_data.cargo_capacity_add)
-	if part_data.has("weight_capacity_add") and part_data.weight_capacity_add != null:
-		_add_grid_row(resource_grid, "Weight Capacity Add", "%+d" % part_data.weight_capacity_add)
-	if part_data.has("weight_capacity_multi") and part_data.weight_capacity_multi != null:
-		_add_grid_row(resource_grid, "Weight Capacity Multiplier", "x%.2f" % part_data.weight_capacity_multi)
-	if part_data.has("fuel") and part_data.fuel != null:
-		_add_grid_row(resource_grid, "Current Fuel", "%.1f L" % part_data.fuel)
-	if part_data.has("water") and part_data.water != null:
-		_add_grid_row(resource_grid, "Current Water", "%.1f L" % part_data.water)
-	if part_data.has("food") and part_data.food != null:
-		_add_grid_row(resource_grid, "Current Food", "%.1f units" % part_data.food)
-	if part_data.has("volume") and part_data.volume != null:
-		_add_grid_row(resource_grid, "Volume", "%.1f" % part_data.volume)
-	if part_data.has("weight") and part_data.weight != null:
-		_add_grid_row(resource_grid, "Weight", "%.1f" % part_data.weight)
+	var flags: Array = []
+	if bool(part_data.get("critical", false)):
+		flags.append("Critical")
+	if bool(part_data.get("bolt_on", false)):
+		flags.append("Bolt-on")
+	if bool(part_data.get("removable", false)):
+		flags.append("Removable")
+	if bool(part_data.get("oe", false)):
+		flags.append("OE")
+	if bool(part_data.get("salvagable", false)):
+		flags.append("Salvageable")
+	_append_row_if_present(detail_rows, "Tags", ", ".join(flags))
 
-	# Raw Data (for debugging/completeness)
-	var raw_data_label = Label.new()
-	raw_data_label.text = "Raw Data:"
-	raw_data_label.add_theme_font_size_override("font_size", 16)
-	raw_data_label.add_theme_color_override("font_color", Color.GRAY)
-	parent_vbox.add_child(raw_data_label)
+	if not detail_rows.is_empty():
+		content.add_child(_make_inspect_panel("Details", detail_rows))
 
-	var raw_data_grid = GridContainer.new()
-	raw_data_grid.columns = 2
-	raw_data_grid.add_theme_constant_override("h_separation", 10)
-	raw_data_grid.add_theme_constant_override("v_separation", 5)
-	parent_vbox.add_child(raw_data_grid)
+	# Performance / Stats panel
+	var perf_rows: Array = []
+	_append_signed_row(perf_rows, "Top Speed", part_data.get("top_speed_add"), "")
+	_append_signed_row(perf_rows, "Efficiency", part_data.get("efficiency_add"), "")
+	_append_signed_row(perf_rows, "Off-road", part_data.get("offroad_capability_add"), "")
+	_append_signed_row(perf_rows, "A/C", part_data.get("ac_add"), "")
+	_append_float_row(perf_rows, "Power", part_data.get("kw"), 1, " kW")
+	_append_float_row(perf_rows, "Torque", part_data.get("nm"), 1, " Nm")
+	_append_float_row(perf_rows, "Wear Points", part_data.get("wp"), 1, "")
+	_append_float_row(perf_rows, "Weight Class", part_data.get("weight_class"), 0, "")
+	_append_float_row(perf_rows, "Diameter", part_data.get("diameter"), 3, "")
 
-	for key in part_data:
-		# Skip keys already displayed in structured sections
-		if key in ["name", "slot", "description", "base_desc", "value", "critical", "bolt_on", "removable", "oe", "salvagable",
-					"top_speed_add", "efficiency_add", "offroad_capability_add", "kw", "nm", "wp", "weight_class", "diameter",
-					"fuel_capacity", "kwh_capacity", "cargo_capacity_add", "weight_capacity_add", "weight_capacity_multi",
-					"fuel", "water", "food", "volume", "weight", "parts", "cargo", "log", "creation_date", "distributor_id",
-					"origin_sett_id", "packed_vehicle", "pending_deletion", "recipient", "resource_weight", "specific_name",
-					"specific_unit_capacity", "unit_capacity", "unit_delivery_reward", "unit_dry_weight", "unit_price",
-					"unit_volume", "unit_weight", "vehicle_id", "vendor_id", "warehouse_id", "class_id", "base_name",
-					"base_unit_capacity", "base_unit_price", "energy_density", "dummy", "coupling", "driven_axles", "requirements"]:
-			continue
-		
-		# Special handling for arrays/dictionaries in raw data
-		var display_value = part_data[key]
-		if display_value is Array or display_value is Dictionary:
-			display_value = JSON.stringify(display_value) # Convert complex types to string
-		
-		_add_grid_row(raw_data_grid, key.capitalize().replace("_", " "), display_value)
+	if not perf_rows.is_empty():
+		content.add_child(_make_inspect_panel("Performance", perf_rows))
+
+	# Capacity / Resources panel
+	var cap_rows: Array = []
+	_append_float_row(cap_rows, "Fuel Capacity", part_data.get("fuel_capacity"), 1, " L")
+	_append_float_row(cap_rows, "Water Capacity", part_data.get("water_capacity"), 1, " L")
+	_append_float_row(cap_rows, "Battery Capacity", part_data.get("kwh_capacity"), 1, " kWh")
+	_append_signed_row(cap_rows, "Cargo Capacity", part_data.get("cargo_capacity_add"), " m³")
+	_append_signed_row(cap_rows, "Weight Capacity", part_data.get("weight_capacity_add"), " kg")
+	_append_multiplier_row(cap_rows, "Weight Multiplier", part_data.get("weight_capacity_multi"))
+
+	# Some parts carry current resources; only show if present.
+	_append_float_row(cap_rows, "Current Fuel", part_data.get("fuel"), 1, " L")
+	_append_float_row(cap_rows, "Current Water", part_data.get("water"), 1, " L")
+	_append_float_row(cap_rows, "Current Food", part_data.get("food"), 1, " units")
+	_append_float_row(cap_rows, "Volume", part_data.get("volume"), 2, " m³")
+	_append_float_row(cap_rows, "Weight", part_data.get("weight"), 1, " kg")
+
+	if not cap_rows.is_empty():
+		content.add_child(_make_inspect_panel("Capacity", cap_rows))
+
+	# Optional raw dump for debugging.
+	if SHOW_PART_INSPECT_RAW_DATA:
+		var raw_rows: Array = []
+		for key in part_data:
+			if key in [
+				"name", "slot", "description", "base_desc", "value", "critical", "bolt_on", "removable", "oe", "salvagable",
+				"requirements", "coupling", "driven_axles",
+				"top_speed_add", "efficiency_add", "offroad_capability_add", "ac_add", "kw", "nm", "wp", "weight_class", "diameter",
+				"fuel_capacity", "water_capacity", "kwh_capacity", "cargo_capacity_add", "weight_capacity_add", "weight_capacity_multi",
+				"fuel", "water", "food", "volume", "weight"
+			]:
+				continue
+			var raw_v: Variant = part_data[key]
+			if not _should_show(raw_v):
+				continue
+			var display_value: Variant = raw_v
+			if display_value is Array or display_value is Dictionary:
+				display_value = JSON.stringify(display_value)
+			_append_row_if_present(raw_rows, _fmt_titleish(key), str(display_value))
+		if not raw_rows.is_empty():
+			content.add_child(_make_inspect_panel("Raw", raw_rows))
 
 	# Ensure dialog resizes to fit content
 	parent_vbox.call_deferred("update_minimum_size")
-	parent_vbox.get_parent().call_deferred("popup_centered_ratio", 0.75) # Re-center dialog after content added
+	parent_vbox.get_parent().call_deferred("popup_centered_ratio", 0.75)
+
+
+func _make_inspect_panel(title: String, rows: Array) -> PanelContainer:
+	var panel := PanelContainer.new()
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color(0.13, 0.15, 0.19, 0.92)
+	sb.border_color = Color(0.45, 0.50, 0.58, 0.65)
+	sb.border_width_left = 1
+	sb.border_width_right = 1
+	sb.border_width_top = 1
+	sb.border_width_bottom = 1
+	sb.corner_radius_top_left = 8
+	sb.corner_radius_top_right = 8
+	sb.corner_radius_bottom_left = 8
+	sb.corner_radius_bottom_right = 8
+	sb.content_margin_left = 10
+	sb.content_margin_right = 10
+	sb.content_margin_top = 8
+	sb.content_margin_bottom = 8
+	panel.add_theme_stylebox_override("panel", sb)
+
+	var vb := VBoxContainer.new()
+	vb.add_theme_constant_override("separation", 6)
+	panel.add_child(vb)
+
+	var hdr := Label.new()
+	hdr.text = title
+	hdr.add_theme_font_size_override("font_size", 16)
+	hdr.add_theme_color_override("font_color", Color.YELLOW)
+	vb.add_child(hdr)
+
+	var row_index := 0
+	for r in rows:
+		if not (r is Dictionary):
+			continue
+		var k := str(r.get("k", "")).strip_edges()
+		var v := str(r.get("v", "")).strip_edges()
+		if k.is_empty() or v.is_empty():
+			continue
+		_add_kv_row(vb, k, v, row_index)
+		row_index += 1
+
+	return panel
+
+
+func _add_kv_row(parent: Container, key_text: String, value_text: String, row_index: int) -> void:
+	var outer_row := HBoxContainer.new()
+	outer_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+
+	var bg_panel := PanelContainer.new()
+	bg_panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	bg_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+
+	var sb := StyleBoxFlat.new()
+	if row_index % 2 == 0:
+		sb.bg_color = Color(0.10, 0.12, 0.16, 0.70)
+	else:
+		sb.bg_color = Color(0.08, 0.10, 0.14, 0.70)
+	sb.corner_radius_top_left = 6
+	sb.corner_radius_top_right = 6
+	sb.corner_radius_bottom_left = 6
+	sb.corner_radius_bottom_right = 6
+	sb.set_content_margin_all(6)
+	bg_panel.add_theme_stylebox_override("panel", sb)
+	outer_row.add_child(bg_panel)
+
+	var content_row := HBoxContainer.new()
+	content_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	content_row.add_theme_constant_override("separation", 10)
+	bg_panel.add_child(content_row)
+
+	var key_label := Label.new()
+	key_label.text = key_text + ":"
+	key_label.custom_minimum_size.x = 140
+	key_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	key_label.add_theme_color_override("font_color", Color(0.75, 0.85, 1.0, 0.95))
+	content_row.add_child(key_label)
+
+	var value_label := Label.new()
+	value_label.text = value_text
+	value_label.autowrap_mode = TextServer.AUTOWRAP_WORD
+	value_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	value_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	value_label.add_theme_color_override("font_color", Color(0.92, 0.94, 1.0, 1.0))
+	content_row.add_child(value_label)
+
+	parent.add_child(outer_row)
+
+
+func _should_show(v: Variant) -> bool:
+	if v == null:
+		return false
+	if v is String:
+		return not String(v).strip_edges().is_empty()
+	if v is bool:
+		return bool(v)
+	if v is int:
+		return int(v) != 0
+	if v is float:
+		return abs(float(v)) > 0.000001
+	if v is Array:
+		return not (v as Array).is_empty()
+	if v is Dictionary:
+		return not (v as Dictionary).is_empty()
+	return true
+
+
+func _append_row_if_present(rows: Array, label: String, value: Variant) -> void:
+	if not _should_show(value):
+		return
+	rows.append({"k": label, "v": str(value)})
+
+
+func _append_signed_row(rows: Array, label: String, value: Variant, suffix: String) -> void:
+	if not _should_show(value):
+		return
+	var n := float(value)
+	var s := _fmt_signed_number(n)
+	if not str(suffix).is_empty():
+		s += str(suffix)
+	rows.append({"k": label, "v": s})
+
+
+func _append_float_row(rows: Array, label: String, value: Variant, decimals: int, suffix: String) -> void:
+	if not _should_show(value):
+		return
+	var n := float(value)
+	var fmt := "%0." + str(decimals) + "f"
+	var s := fmt % n
+	# Trim trailing .0 when decimals==1 and value is whole-ish.
+	if decimals == 1 and abs(n - round(n)) < 0.000001:
+		s = str(int(round(n)))
+	if not str(suffix).is_empty():
+		s += str(suffix)
+	rows.append({"k": label, "v": s})
+
+
+func _append_multiplier_row(rows: Array, label: String, value: Variant) -> void:
+	if not _should_show(value):
+		return
+	var n := float(value)
+	rows.append({"k": label, "v": "x%.2f" % n})
+
+
+func _fmt_signed_number(n: float) -> String:
+	if abs(n - round(n)) < 0.000001:
+		return "%+d" % int(round(n))
+	return "%+.1f" % n
+
+
+func _fmt_titleish(v: Variant) -> String:
+	if v == null:
+		return ""
+	var s := String(v).strip_edges()
+	if s.is_empty():
+		return ""
+	return s.capitalize().replace("_", " ")
+
+
+func _first_nonempty_string(candidates: Array) -> String:
+	for c in candidates:
+		if c == null:
+			continue
+		var s := String(c).strip_edges()
+		if not s.is_empty():
+			return s
+	return ""
+
+
+func _fmt_requirements(v: Variant) -> String:
+	if not _should_show(v):
+		return ""
+	if v is Array:
+		var reqs := []
+		for r in v:
+			var s := _fmt_titleish(r)
+			if not s.is_empty():
+				reqs.append(s)
+		return ", ".join(reqs)
+	return _fmt_titleish(v)
 
 func _add_grid_row(grid: GridContainer, key: String, value):
 	"""Helper function to add a key-value row to a GridContainer."""
