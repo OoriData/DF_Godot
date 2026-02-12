@@ -1,6 +1,14 @@
 extends Node
 class_name NumberFormat
 
+static func _is_all_zeros(s: String) -> bool:
+	if s.is_empty():
+		return true
+	for i in range(s.length()):
+		if s[i] != "0":
+			return false
+	return true
+
 static func format_number(val) -> String:
 	if val == null:
 		return "0"
@@ -19,7 +27,7 @@ static func format_number(val) -> String:
 		count += 1
 		if count % 3 == 0 and i != 0:
 			out = "," + out
-	if parts.size() > 1 and parts[1] != "0":
+	if parts.size() > 1 and not _is_all_zeros(parts[1]):
 		return sign_str + out + "." + parts[1]
 	return sign_str + out
 
@@ -28,6 +36,8 @@ static func fmt_float(v: Variant, decimals: int = 2) -> String:
 		return "0.00"
 	var f = 0.0
 	if v is float or v is int:
+		f = float(v)
+	elif v is String and (v as String).is_valid_float():
 		f = float(v)
 	else:
 		return str(v)

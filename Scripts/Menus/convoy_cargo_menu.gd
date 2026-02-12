@@ -309,10 +309,12 @@ func _format_value(val) -> String:
 	var t := typeof(val)
 	if t == TYPE_BOOL:
 		return "Yes" if val else "No"
+	elif t == TYPE_INT or t == TYPE_FLOAT:
+		return NumberFormat.fmt_float(val, 2)
 	elif t == TYPE_ARRAY:
 		var parts: Array = []
 		for v in val:
-			parts.append(str(v))
+			parts.append(_format_value(v))
 		return ", ".join(parts)
 	elif t == TYPE_DICTIONARY:
 		return "(details)"
@@ -789,7 +791,7 @@ func _build_cargo_row(vehicle_vbox: VBoxContainer, display_name: String, quantit
 
 	# Add Weight and Volume labels to the main row
 	var weight_label := Label.new()
-	weight_label.text = "%.2f kg" % agg_data.get("total_weight", 0.0)
+	weight_label.text = NumberFormat.fmt_float(agg_data.get("total_weight", 0.0), 2) + " kg"
 	weight_label.custom_minimum_size = Vector2(80, 22)
 	weight_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	weight_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
@@ -797,7 +799,7 @@ func _build_cargo_row(vehicle_vbox: VBoxContainer, display_name: String, quantit
 	content_row.add_child(weight_label)
 
 	var volume_label := Label.new()
-	volume_label.text = "%.2f m³" % agg_data.get("total_volume", 0.0)
+	volume_label.text = NumberFormat.fmt_float(agg_data.get("total_volume", 0.0), 2) + " m³"
 	volume_label.custom_minimum_size = Vector2(80, 22)
 	volume_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	volume_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
@@ -1058,7 +1060,7 @@ func _add_category_section(parent: VBoxContainer, title: String, agg_data: Dicti
 		vol_bar.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		vol_bar.show_percentage = false
 		_set_capacity_progressbar_style(vol_bar, used_volume, total_volume)
-		vol_bar.tooltip_text = "Volume: %.1f / %.1f" % [used_volume, total_volume]
+		vol_bar.tooltip_text = "Volume: %s / %s" % [NumberFormat.fmt_float(used_volume, 2), NumberFormat.fmt_float(total_volume, 2)]
 		vol_row.add_child(vol_lbl)
 		vol_row.add_child(vol_bar)
 
@@ -1075,7 +1077,7 @@ func _add_category_section(parent: VBoxContainer, title: String, agg_data: Dicti
 		wt_bar.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		wt_bar.show_percentage = false
 		_set_capacity_progressbar_style(wt_bar, used_weight, total_weight)
-		wt_bar.tooltip_text = "Weight: %.1f / %.1f" % [used_weight, total_weight]
+		wt_bar.tooltip_text = "Weight: %s / %s" % [NumberFormat.fmt_float(used_weight, 2), NumberFormat.fmt_float(total_weight, 2)]
 		wt_row.add_child(wt_lbl)
 		wt_row.add_child(wt_bar)
 

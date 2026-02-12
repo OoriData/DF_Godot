@@ -138,7 +138,7 @@ static func build_price_presenter(item_data_source: Dictionary, mode: String, qu
             if mode == "sell":
                 added_weight_bulk = -added_weight_bulk
             if abs(added_weight_bulk) > 0.0001:
-                bb += "[color=gray]Weight Change: %.2f[/color]\n" % added_weight_bulk
+                bb += "[color=gray]Weight Change: %s[/color]\n" % NumberFormat.fmt_float(added_weight_bulk, 2)
             return {
                 "bbcode_text": bb.rstrip("\n"),
                 "unit_price": unit_price,
@@ -160,7 +160,10 @@ static func build_price_presenter(item_data_source: Dictionary, mode: String, qu
             var sid: Dictionary = selected_item as Dictionary
             is_mission_cargo = sid.has("mission_vendor_name") and not String(sid.get("mission_vendor_name", "")).is_empty() and String(sid.get("mission_vendor_name", "")) != "Unknown Vendor"
         if total_resource_value_display > 0.01 and is_mission_cargo:
-            bb += "  [color=gray](Item: %.2f + Resources: %.2f)[/color]\n" % [total_container_value_display, total_resource_value_display]
+            bb += "  [color=gray](Item: %s + Resources: %s)[/color]\n" % [
+                NumberFormat.fmt_float(total_container_value_display, 2),
+                NumberFormat.fmt_float(total_resource_value_display, 2),
+            ]
         bb += "[b]Quantity:[/b] %d\n" % quantity
         bb += "[b]Total Price:[/b] %s\n" % NumberFormat.format_money(total_price)
 
@@ -196,9 +199,9 @@ static func build_price_presenter(item_data_source: Dictionary, mode: String, qu
             added_volume = -added_volume
 
         if abs(added_weight) > 0.0001:
-            bb += "[color=gray]Order Weight: %.2f[/color]\n" % added_weight
+            bb += "[color=gray]Order Weight: %s[/color]\n" % NumberFormat.fmt_float(added_weight, 2)
         if abs(added_volume) > 0.0001:
-            bb += "[color=gray]Order Volume: %.2f[/color]\n" % added_volume
+            bb += "[color=gray]Order Volume: %s[/color]\n" % NumberFormat.fmt_float(added_volume, 2)
 
         return {
             "bbcode_text": bb.rstrip("\n"),

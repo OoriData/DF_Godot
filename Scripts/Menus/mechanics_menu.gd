@@ -374,7 +374,7 @@ func _update_row_price_from_cache(row: HBoxContainer) -> void:
 	# If this row represents an inventory part, only show installation cost; otherwise show full vendor breakdown
 	var src := String(row.get_meta("source", "")) if row.has_meta("source") else ""
 	if src != "vendor":
-		price_lbl.text = "Installation $%s" % ["%.2f" % install_price]
+		price_lbl.text = "Installation " + NumberFormat.format_money(install_price)
 	else:
 		var price_text := _format_price_label(vendor_price, install_price)
 		price_lbl.text = price_text
@@ -1326,15 +1326,15 @@ func _rebuild_pending_tab():
 				costs_lbl.text = _format_price_label(_vendor_price, install_cost)
 			else:
 				# Inventory: only installation cost
-				costs_lbl.text = "Installation $%s" % ["%.2f" % install_cost]
+				costs_lbl.text = "Installation " + NumberFormat.format_money(install_cost)
 			costs_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD
 			left_vb.add_child(costs_lbl)
 
 			# Value line: clearly separated
 			var value_lbl = Label.new()
 			var value_delta := float(e.get("value_delta", part_value))
-			var sign_str := "+" if value_delta >= 0.0 else ""
-			var value_text = "Vehicle Value %s$%s" % [sign_str, "%.2f" % value_delta]
+			var sign_str := "+" if value_delta > 0.0 else ("" if value_delta == 0.0 else "-")
+			var value_text = "Vehicle Value %s%s" % [sign_str, NumberFormat.format_money(abs(value_delta))]
 			if removable_flag:
 				value_text += " (removable)"
 			value_lbl.text = value_text
@@ -1378,23 +1378,23 @@ func _rebuild_pending_tab():
 	# Summary: If there are vendor parts, show full breakdown; otherwise show only installation
 	if grand_parts_cost > 0.0:
 		var parts_label = Label.new()
-		parts_label.text = "Parts cost: $%s" % ("%.2f" % grand_parts_cost)
+		parts_label.text = "Parts cost: " + NumberFormat.format_money(grand_parts_cost)
 		parts_label.add_theme_font_size_override("font_size", 16)
 		pending_vbox.add_child(parts_label)
 
 		var install_label = Label.new()
-		install_label.text = "Installation: $%s" % ("%.2f" % grand_install_cost)
+		install_label.text = "Installation: " + NumberFormat.format_money(grand_install_cost)
 		install_label.add_theme_font_size_override("font_size", 16)
 		pending_vbox.add_child(install_label)
 
 		var total_label = Label.new()
 		var grand_total := grand_parts_cost + grand_install_cost
-		total_label.text = "Total: $%s" % ("%.2f" % grand_total)
+		total_label.text = "Total: " + NumberFormat.format_money(grand_total)
 		total_label.add_theme_font_size_override("font_size", 16)
 		pending_vbox.add_child(total_label)
 	else:
 		var install_label = Label.new()
-		install_label.text = "Installation: $%s" % ("%.2f" % grand_install_cost)
+		install_label.text = "Installation: " + NumberFormat.format_money(grand_install_cost)
 		install_label.add_theme_font_size_override("font_size", 16)
 		pending_vbox.add_child(install_label)
 	_refresh_apply_state()
@@ -1539,9 +1539,23 @@ func _make_stat_overview_panel(vehicle_id: String, before_stats: Dictionary, aft
 		var values_lbl = Label.new()
 		var arrow := " → "
 		if k == "value":
-			values_lbl.text = "$%s%s$%s (%s%s)" % ["%.0f" % before, arrow, "%.0f" % after, "+" if delta > 0.0 else ("" if delta == 0.0 else ""), "%.0f" % delta]
+			var sign_str := "+" if delta > 0.0 else ("" if delta == 0.0 else "-")
+			values_lbl.text = "%s%s%s (%s%s)" % [
+				NumberFormat.format_money(before),
+				arrow,
+				NumberFormat.format_money(after),
+				sign_str,
+				NumberFormat.format_money(abs(delta)),
+			]
 		else:
-			values_lbl.text = "%s%s%s (%s%s)" % ["%.0f" % before, arrow, "%.0f" % after, "+" if delta > 0.0 else ("" if delta == 0.0 else ""), "%.0f" % delta]
+			var sign_str2 := "+" if delta > 0.0 else ("" if delta == 0.0 else "-")
+			values_lbl.text = "%s%s%s (%s%s)" % [
+				NumberFormat.fmt_float(before, 0),
+				arrow,
+				NumberFormat.fmt_float(after, 0),
+				sign_str2,
+				NumberFormat.fmt_float(abs(delta), 0),
+			]
 		# Color delta: green positive, red negative, neutral grey
 		var color := Color(0.85, 0.85, 0.95)
 		if delta > 0.0:

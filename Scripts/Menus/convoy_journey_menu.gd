@@ -228,7 +228,11 @@ func _update_ui(convoy: Dictionary) -> void:
 	loc_grid.add_child(curr_title)
 	var curr_value := Label.new()
 	var curr_name := _get_settlement_name(null, convoy_data_received.get("x", 0.0), convoy_data_received.get("y", 0.0))
-	curr_value.text = "%s  (%.0f, %.0f)" % [curr_name, convoy_data_received.get("x", 0.0), convoy_data_received.get("y", 0.0)]
+	curr_value.text = "%s  (%s, %s)" % [
+		curr_name,
+		NumberFormat.fmt_float(convoy_data_received.get("x", 0.0), 0),
+		NumberFormat.fmt_float(convoy_data_received.get("y", 0.0), 0),
+	]
 	loc_grid.add_child(curr_value)
 	# Departed (moved below, with emoji)
 	var departure_time_str = journey_data.get("departure_time")
@@ -248,7 +252,7 @@ func _update_ui(convoy: Dictionary) -> void:
 	var origin_value := Label.new()
 	if origin_x != null and origin_y != null:
 		var origin_name = _get_settlement_name(null, origin_x, origin_y)
-		origin_value.text = "%s  (%.0f, %.0f)" % [origin_name, origin_x, origin_y]
+		origin_value.text = "%s  (%s, %s)" % [origin_name, NumberFormat.fmt_float(origin_x, 0), NumberFormat.fmt_float(origin_y, 0)]
 	else:
 		origin_value.text = "N/A"
 	loc_grid.add_child(origin_value)
@@ -261,7 +265,7 @@ func _update_ui(convoy: Dictionary) -> void:
 	var dest_value := Label.new()
 	if dest_x != null and dest_y != null:
 		var dest_name = _get_settlement_name(null, dest_x, dest_y)
-		dest_value.text = "%s  (%.0f, %.0f)" % [dest_name, dest_x, dest_y]
+		dest_value.text = "%s  (%s, %s)" % [dest_name, NumberFormat.fmt_float(dest_x, 0), NumberFormat.fmt_float(dest_y, 0)]
 	else:
 		dest_value.text = "N/A"
 	loc_grid.add_child(dest_value)
@@ -999,7 +1003,7 @@ func _show_confirmation_panel(route_data: Dictionary):
 	var distance_miles = tiles * 30.0
 	var eta_minutes = route_data.get("delta_t", 0.0)
 	var eta_fmt = _format_travel_time(eta_minutes)
-	summary.text = "Destination: %s\nDistance: %.1f miles\nEstimated Travel Time: %s" % [ _destination_data.get("name", "Unknown"), distance_miles, eta_fmt]
+	summary.text = "Destination: %s\nDistance: %s miles\nEstimated Travel Time: %s" % [ _destination_data.get("name", "Unknown"), NumberFormat.fmt_float(distance_miles, 2), eta_fmt]
 	_confirmation_panel.add_child(summary)
 	var resources_header = Label.new()
 	resources_header.text = "Projected Resource Usage"
@@ -1088,23 +1092,23 @@ func _show_confirmation_panel(route_data: Dictionary):
 			icon_lbl.add_theme_color_override("font_color", Color(1,0.75,0.35))
 		res_grid.add_child(icon_lbl)
 		var need_lbl = Label.new()
-		need_lbl.text = "%.1f%s" % [need, unit]
+		need_lbl.text = NumberFormat.fmt_float(need, 2) + unit
 		need_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 		res_grid.add_child(need_lbl)
 		var have_lbl = Label.new()
-		have_lbl.text = "%.1f%s" % [have, unit]
+		have_lbl.text = NumberFormat.fmt_float(have, 2) + unit
 		have_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 		res_grid.add_child(have_lbl)
 		var rem_lbl = Label.new()
 		var remaining = have - need
 		if remaining < 0:
-			rem_lbl.text = "Short %.1f%s" % [abs(remaining), unit]
+			rem_lbl.text = "Short " + NumberFormat.fmt_float(abs(remaining), 2) + unit
 			rem_lbl.add_theme_color_override("font_color", Color(1,0.35,0.35))
 		elif status == "warn":
-			rem_lbl.text = "%.1f%s" % [remaining, unit]
+			rem_lbl.text = NumberFormat.fmt_float(remaining, 2) + unit
 			rem_lbl.add_theme_color_override("font_color", Color(1,0.75,0.35))
 		else:
-			rem_lbl.text = "%.1f%s" % [remaining, unit]
+			rem_lbl.text = NumberFormat.fmt_float(remaining, 2) + unit
 		rem_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 		res_grid.add_child(rem_lbl)
 	_add_res_row.call("⛽ Fuel", "L", fuel_needed, fuel_have, fuel_max, fuel_status)
@@ -1181,9 +1185,9 @@ func _show_confirmation_panel(route_data: Dictionary):
 			bar.custom_minimum_size = Vector2(140, 14)
 			if bar.has_method("set_show_percentage"):
 				bar.set("show_percentage", false)
-			var bar_tt = "%s Usage: %.1f / %.1f kWh" % [e.name, e.used, e.capacity]
+			var bar_tt = "%s Usage: %s / %s kWh" % [e.name, NumberFormat.fmt_float(e.used, 2), NumberFormat.fmt_float(e.capacity, 2)]
 			if e.status == "critical":
-				bar_tt += " (Shortfall %.1f kWh)" % (e.raw_used - e.capacity)
+				bar_tt += " (Shortfall %s kWh)" % NumberFormat.fmt_float(e.raw_used - e.capacity, 2)
 			elif e.status == "discharged":
 				bar_tt += " (Fully Discharged)"
 			bar.tooltip_text = bar_tt
@@ -1191,10 +1195,14 @@ func _show_confirmation_panel(route_data: Dictionary):
 			var nums_lbl = Label.new()
 			if e.status == "critical":
 				# Show true need and shortfall for pure electric shortfall
-				nums_lbl.text = "Need: %.1f  Capacity: %.1f  Short: %.1f" % [e.raw_used, e.capacity, e.raw_used - e.capacity]
+				nums_lbl.text = "Need: %s  Capacity: %s  Short: %s" % [
+					NumberFormat.fmt_float(e.raw_used, 2),
+					NumberFormat.fmt_float(e.capacity, 2),
+					NumberFormat.fmt_float(e.raw_used - e.capacity, 2),
+				]
 			else:
 				# For normal & discharged (IC) cases, cap the displayed need at capacity
-				nums_lbl.text = "Need: %.1f  Capacity: %.1f" % [e.used, e.capacity]
+				nums_lbl.text = "Need: %s  Capacity: %s" % [NumberFormat.fmt_float(e.used, 2), NumberFormat.fmt_float(e.capacity, 2)]
 			energy_grid.add_child(nums_lbl)
 	# Severity state from combined energy + resource evaluation
 	if any_critical or resource_critical:

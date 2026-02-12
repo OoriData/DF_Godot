@@ -39,16 +39,16 @@ func _update_ui() -> void:
 	if destination_value:
 		destination_value.text = str(_route_data.get("destination_name", "Unknown"))
 	if distance_value:
-		distance_value.text = "%.1f km" % float(_route_data.get("distance", 0.0))
+		distance_value.text = NumberFormat.fmt_float(_route_data.get("distance", 0.0), 2) + " km"
 	if eta_value:
 		# Use basic formatting or a helper if available
 		eta_value.text = str(_route_data.get("eta", "N/A"))
 		
 	var costs = _route_data.get("costs", {})
 	if costs is Dictionary:
-		if fuel_value: fuel_value.text = "%.1f" % float(costs.get("fuel", 0.0))
-		if water_value: water_value.text = "%.1f" % float(costs.get("water", 0.0))
-		if food_value: food_value.text = "%.1f" % float(costs.get("food", 0.0))
+		if fuel_value: fuel_value.text = NumberFormat.fmt_float(costs.get("fuel", 0.0), 2)
+		if water_value: water_value.text = NumberFormat.fmt_float(costs.get("water", 0.0), 2)
+		if food_value: food_value.text = NumberFormat.fmt_float(costs.get("food", 0.0), 2)
 
 func _on_back_pressed() -> void:
 	emit_signal("back_requested")

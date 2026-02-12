@@ -392,7 +392,7 @@ func _add_inspectable_item_row(parent: Container, item_name: String, agg_data: D
 
 	# Weight
 	var weight_label := Label.new()
-	weight_label.text = "%.1f kg" % agg_data.total_weight
+	weight_label.text = NumberFormat.fmt_float(agg_data.total_weight, 2) + " kg"
 	weight_label.custom_minimum_size.x = 70
 	weight_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	weight_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
@@ -401,7 +401,7 @@ func _add_inspectable_item_row(parent: Container, item_name: String, agg_data: D
 
 	# Volume
 	var volume_label := Label.new()
-	volume_label.text = "%.2f m³" % agg_data.total_volume
+	volume_label.text = NumberFormat.fmt_float(agg_data.total_volume, 2) + " m³"
 	volume_label.custom_minimum_size.x = 70
 	volume_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	volume_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER

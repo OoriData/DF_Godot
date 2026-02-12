@@ -75,12 +75,12 @@ static func update_convoy_info_display(panel: Object, projected_volume_delta: fl
 	var weight_segment: String = ""
 	if weight_used >= 0.0:
 		if weight_capacity >= 0.0:
-			weight_segment = " | Weight: %.1f / %.1f" % [float(panel._convoy_used_weight), float(panel._convoy_total_weight)]
+			weight_segment = " | Weight: %s / %s" % [NumberFormat.fmt_float(panel._convoy_used_weight, 2), NumberFormat.fmt_float(panel._convoy_total_weight, 2)]
 		else:
-			weight_segment = " | Weight: %.1f" % float(panel._convoy_used_weight)
+			weight_segment = " | Weight: %s" % NumberFormat.fmt_float(panel._convoy_used_weight, 2)
 
 	if is_instance_valid(panel.convoy_cargo_label):
-		panel.convoy_cargo_label.text = "Volume: %.1f / %.1f%s" % [float(panel._convoy_used_volume), float(panel._convoy_total_volume), weight_segment]
+		panel.convoy_cargo_label.text = "Volume: %s / %s%s" % [NumberFormat.fmt_float(panel._convoy_used_volume, 2), NumberFormat.fmt_float(panel._convoy_total_volume, 2), weight_segment]
 
 	# Update capacity bars with current usage plus any projection.
 	refresh_capacity_bars(panel, projected_volume_delta, projected_weight_delta)
@@ -94,7 +94,7 @@ static func refresh_capacity_bars(panel: Object, projected_volume_delta: float, 
 			var base_vol: float = clamp(float(panel._convoy_used_volume), 0.0, float(panel._convoy_total_volume))
 			var projected_vol: float = clamp(base_vol + projected_volume_delta, 0.0, float(panel._convoy_total_volume))
 			panel.convoy_volume_bar.value = projected_vol
-			panel.convoy_volume_bar.tooltip_text = "Volume: %.2f / %.2f" % [projected_vol, float(panel._convoy_total_volume)]
+			panel.convoy_volume_bar.tooltip_text = "Volume: %s / %s" % [NumberFormat.fmt_float(projected_vol, 2), NumberFormat.fmt_float(panel._convoy_total_volume, 2)]
 			var vol_pct: float = projected_vol / max(0.00001, float(panel._convoy_total_volume))
 			panel.convoy_volume_bar.self_modulate = _bar_color_for_pct(vol_pct)
 			_update_projection_overlay(panel.convoy_volume_bar, base_vol, projected_vol, float(panel._convoy_total_volume), projected_volume_delta)
@@ -109,7 +109,7 @@ static func refresh_capacity_bars(panel: Object, projected_volume_delta: float, 
 			var base_wt: float = clamp(float(panel._convoy_used_weight), 0.0, float(panel._convoy_total_weight))
 			var projected_wt: float = clamp(base_wt + projected_weight_delta, 0.0, float(panel._convoy_total_weight))
 			panel.convoy_weight_bar.value = projected_wt
-			panel.convoy_weight_bar.tooltip_text = "Weight: %.2f / %.2f" % [projected_wt, float(panel._convoy_total_weight)]
+			panel.convoy_weight_bar.tooltip_text = "Weight: %s / %s" % [NumberFormat.fmt_float(projected_wt, 2), NumberFormat.fmt_float(panel._convoy_total_weight, 2)]
 			var wt_pct: float = projected_wt / max(0.00001, float(panel._convoy_total_weight))
 			panel.convoy_weight_bar.self_modulate = _bar_color_for_pct(wt_pct)
 			_update_projection_overlay(panel.convoy_weight_bar, base_wt, projected_wt, float(panel._convoy_total_weight), projected_weight_delta)

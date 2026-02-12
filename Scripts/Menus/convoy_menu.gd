@@ -531,43 +531,43 @@ func initialize_with_data(data_or_id: Variant, extra_arg: Variant = null) -> voi
 		# --- Resources (Fuel, Water, Food) ---
 		var current_fuel = convoy_data_received.get("fuel", 0.0)
 		var max_fuel = convoy_data_received.get("max_fuel", 0.0)
-		if is_instance_valid(fuel_text_label): fuel_text_label.text = "Fuel: %.1f / %.1f" % [current_fuel, max_fuel]
+		if is_instance_valid(fuel_text_label): fuel_text_label.text = "Fuel: %s / %s" % [NumberFormat.fmt_float(current_fuel, 2), NumberFormat.fmt_float(max_fuel, 2)]
 		if is_instance_valid(fuel_bar): _set_resource_bar_style(fuel_bar, fuel_text_label, current_fuel, max_fuel)
 
 		var current_water = convoy_data_received.get("water", 0.0)
 		var max_water = convoy_data_received.get("max_water", 0.0)
-		if is_instance_valid(water_text_label): water_text_label.text = "Water: %.1f / %.1f" % [current_water, max_water]
+		if is_instance_valid(water_text_label): water_text_label.text = "Water: %s / %s" % [NumberFormat.fmt_float(current_water, 2), NumberFormat.fmt_float(max_water, 2)]
 		if is_instance_valid(water_bar): _set_resource_bar_style(water_bar, water_text_label, current_water, max_water)
 
 		var current_food = convoy_data_received.get("food", 0.0)
 		var max_food = convoy_data_received.get("max_food", 0.0)
-		if is_instance_valid(food_text_label): food_text_label.text = "Food: %.1f / %.1f" % [current_food, max_food]
+		if is_instance_valid(food_text_label): food_text_label.text = "Food: %s / %s" % [NumberFormat.fmt_float(current_food, 2), NumberFormat.fmt_float(max_food, 2)]
 		if is_instance_valid(food_bar): _set_resource_bar_style(food_bar, food_text_label, current_food, max_food)
 
 		# --- Performance Stats (Speed, Offroad, Efficiency) ---
 		# Assuming these are rated 0-100 for coloring, adjust max_value if different
 		var top_speed = convoy_data_received.get("top_speed", 0.0)
-		if is_instance_valid(speed_text_label): speed_text_label.text = "Top Speed: %.1f" % top_speed
+		if is_instance_valid(speed_text_label): speed_text_label.text = "Top Speed: %s" % NumberFormat.fmt_float(top_speed, 2)
 		if is_instance_valid(speed_box): _set_fixed_color_box_style(speed_box, speed_text_label, COLOR_PERFORMANCE_BOX_BG, COLOR_PERFORMANCE_BOX_FONT)
 
 		var offroad = convoy_data_received.get("offroad_capability", 0.0)
-		if is_instance_valid(offroad_text_label): offroad_text_label.text = "Offroad: %.1f" % offroad
+		if is_instance_valid(offroad_text_label): offroad_text_label.text = "Offroad: %s" % NumberFormat.fmt_float(offroad, 2)
 		if is_instance_valid(offroad_box): _set_fixed_color_box_style(offroad_box, offroad_text_label, COLOR_PERFORMANCE_BOX_BG, COLOR_PERFORMANCE_BOX_FONT)
 
 		var efficiency = convoy_data_received.get("efficiency", 0.0)
-		if is_instance_valid(efficiency_text_label): efficiency_text_label.text = "Efficiency: %.1f" % efficiency
+		if is_instance_valid(efficiency_text_label): efficiency_text_label.text = "Efficiency: %s" % NumberFormat.fmt_float(efficiency, 2)
 		if is_instance_valid(efficiency_box): _set_fixed_color_box_style(efficiency_box, efficiency_text_label, COLOR_PERFORMANCE_BOX_BG, COLOR_PERFORMANCE_BOX_FONT)
 
 		# --- Cargo Volume and Weight Bars ---
 		if is_instance_valid(cargo_volume_text_label) and is_instance_valid(cargo_volume_bar):
 			var used_volume = convoy_data_received.get("total_cargo_capacity", 0.0) - convoy_data_received.get("total_free_space", 0.0)
 			var total_volume = convoy_data_received.get("total_cargo_capacity", 0.0)
-			cargo_volume_text_label.text = "Cargo Volume: %.1f / %.1f" % [used_volume, total_volume]
+			cargo_volume_text_label.text = "Cargo Volume: %s / %s" % [NumberFormat.fmt_float(used_volume, 2), NumberFormat.fmt_float(total_volume, 2)]
 			_set_progressbar_style(cargo_volume_bar, used_volume, total_volume)
 		if is_instance_valid(cargo_weight_text_label) and is_instance_valid(cargo_weight_bar):
 			var used_weight = convoy_data_received.get("total_weight_capacity", 0.0) - convoy_data_received.get("total_remaining_capacity", 0.0)
 			var total_weight = convoy_data_received.get("total_weight_capacity", 0.0)
-			cargo_weight_text_label.text = "Cargo Weight: %.1f / %.1f" % [used_weight, total_weight]
+			cargo_weight_text_label.text = "Cargo Weight: %s / %s" % [NumberFormat.fmt_float(used_weight, 2), NumberFormat.fmt_float(total_weight, 2)]
 			_set_progressbar_style(cargo_weight_bar, used_weight, total_weight)
 
 		# --- Populate Journey Details (or hide them if no journey) ---
@@ -633,7 +633,7 @@ func initialize_with_data(data_or_id: Variant, extra_arg: Variant = null) -> voi
 					var dest_y_int: int = roundi(float(dest_coord_y_val))
 					var settlement_name: String = _get_settlement_name_from_coords(dest_x_int, dest_y_int)
 					if settlement_name.begins_with("N/A"):
-						dest_text = "Destination: %s (at %.1f, %.1f)" % [settlement_name, dest_coord_x_val, dest_coord_y_val]
+						dest_text = "Destination: %s (at %s, %s)" % [settlement_name, NumberFormat.fmt_float(dest_coord_x_val, 2), NumberFormat.fmt_float(dest_coord_y_val, 2)]
 					else:
 						dest_text = "Destination: %s" % settlement_name
 				else:
@@ -648,7 +648,7 @@ func initialize_with_data(data_or_id: Variant, extra_arg: Variant = null) -> voi
 					progress_percentage = (progress / length) * 100.0
 				
 				journey_progress_bar.value = progress_percentage
-				journey_progress_label.text = "%.1f%%" % progress_percentage
+				journey_progress_label.text = NumberFormat.fmt_float(progress_percentage, 2) + "%"
 
 			if is_instance_valid(journey_eta_label):
 				var eta_value = journey_data.get("eta")
@@ -2232,28 +2232,28 @@ func _update_ui(convoy: Dictionary) -> void:
 	# Resources (prefer max_*; fall back to capacity keys if present)
 	var current_fuel: float = float(convoy_data_received.get("fuel", 0.0))
 	var max_fuel: float = float(convoy_data_received.get("max_fuel", convoy_data_received.get("fuel_capacity", 0.0)))
-	if is_instance_valid(fuel_text_label): fuel_text_label.text = "Fuel: %.1f / %.1f" % [current_fuel, max_fuel]
+	if is_instance_valid(fuel_text_label): fuel_text_label.text = "Fuel: %s / %s" % [NumberFormat.fmt_float(current_fuel, 2), NumberFormat.fmt_float(max_fuel, 2)]
 	if is_instance_valid(fuel_bar): _set_resource_bar_style(fuel_bar, fuel_text_label, current_fuel, max_fuel)
 
 	var current_water: float = float(convoy_data_received.get("water", 0.0))
 	var max_water: float = float(convoy_data_received.get("max_water", convoy_data_received.get("water_capacity", 0.0)))
-	if is_instance_valid(water_text_label): water_text_label.text = "Water: %.1f / %.1f" % [current_water, max_water]
+	if is_instance_valid(water_text_label): water_text_label.text = "Water: %s / %s" % [NumberFormat.fmt_float(current_water, 2), NumberFormat.fmt_float(max_water, 2)]
 	if is_instance_valid(water_bar): _set_resource_bar_style(water_bar, water_text_label, current_water, max_water)
 
 	var current_food: float = float(convoy_data_received.get("food", 0.0))
 	var max_food: float = float(convoy_data_received.get("max_food", convoy_data_received.get("food_capacity", 0.0)))
-	if is_instance_valid(food_text_label): food_text_label.text = "Food: %.1f / %.1f" % [current_food, max_food]
+	if is_instance_valid(food_text_label): food_text_label.text = "Food: %s / %s" % [NumberFormat.fmt_float(current_food, 2), NumberFormat.fmt_float(max_food, 2)]
 	if is_instance_valid(food_bar): _set_resource_bar_style(food_bar, food_text_label, current_food, max_food)
 
 	# Performance
 	var top_speed: float = float(convoy_data_received.get("top_speed", 0.0))
-	if is_instance_valid(speed_text_label): speed_text_label.text = "Top Speed: %.1f" % top_speed
+	if is_instance_valid(speed_text_label): speed_text_label.text = "Top Speed: %s" % NumberFormat.fmt_float(top_speed, 2)
 	if is_instance_valid(speed_box): _set_fixed_color_box_style(speed_box, speed_text_label, COLOR_PERFORMANCE_BOX_BG, COLOR_PERFORMANCE_BOX_FONT)
 	var offroad: float = float(convoy_data_received.get("offroad_capability", 0.0))
-	if is_instance_valid(offroad_text_label): offroad_text_label.text = "Offroad: %.1f" % offroad
+	if is_instance_valid(offroad_text_label): offroad_text_label.text = "Offroad: %s" % NumberFormat.fmt_float(offroad, 2)
 	if is_instance_valid(offroad_box): _set_fixed_color_box_style(offroad_box, offroad_text_label, COLOR_PERFORMANCE_BOX_BG, COLOR_PERFORMANCE_BOX_FONT)
 	var efficiency: float = float(convoy_data_received.get("efficiency", 0.0))
-	if is_instance_valid(efficiency_text_label): efficiency_text_label.text = "Efficiency: %.1f" % efficiency
+	if is_instance_valid(efficiency_text_label): efficiency_text_label.text = "Efficiency: %s" % NumberFormat.fmt_float(efficiency, 2)
 	if is_instance_valid(efficiency_box): _set_fixed_color_box_style(efficiency_box, efficiency_text_label, COLOR_PERFORMANCE_BOX_BG, COLOR_PERFORMANCE_BOX_FONT)
 
 	# Cargo (support both schema shapes)
@@ -2266,7 +2266,7 @@ func _update_ui(convoy: Dictionary) -> void:
 		used_volume = float(convoy_data_received.get("cargo_volume", 0.0))
 		total_volume = float(convoy_data_received.get("max_cargo_volume", 0.0))
 	if is_instance_valid(cargo_volume_text_label):
-		cargo_volume_text_label.text = "Cargo Volume: %.1f / %.1f" % [used_volume, total_volume]
+		cargo_volume_text_label.text = "Cargo Volume: %s / %s" % [NumberFormat.fmt_float(used_volume, 2), NumberFormat.fmt_float(total_volume, 2)]
 	if is_instance_valid(cargo_volume_bar):
 		_set_progressbar_style(cargo_volume_bar, used_volume, total_volume)
 
@@ -2279,6 +2279,6 @@ func _update_ui(convoy: Dictionary) -> void:
 		used_weight = float(convoy_data_received.get("cargo_weight", 0.0))
 		total_weight = float(convoy_data_received.get("max_cargo_weight", 0.0))
 	if is_instance_valid(cargo_weight_text_label):
-		cargo_weight_text_label.text = "Cargo Weight: %.1f / %.1f" % [used_weight, total_weight]
+		cargo_weight_text_label.text = "Cargo Weight: %s / %s" % [NumberFormat.fmt_float(used_weight, 2), NumberFormat.fmt_float(total_weight, 2)]
 	if is_instance_valid(cargo_weight_bar):
 		_set_progressbar_style(cargo_weight_bar, used_weight, total_weight)
