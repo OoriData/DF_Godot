@@ -49,8 +49,21 @@ static func _is_intrinsic_resource_container(item: Dictionary) -> bool:
 	if item == null:
 		return false
 	var iid: String = str(item.get("intrinsic_part_id", "")).strip_edges()
-	if iid != "" and iid == INTRINSIC_RESOURCE_CONTAINER_PART_ID:
-		return true
+	# In some convoy payload shapes, installed vehicle resource containers (notably fuel tanks)
+	# incorrectly appear in the vehicle's `cargo` list and look like resource cargo because
+	# they have `fuel`/`water`/`food` quantities.
+	#
+	# We only omit the known intrinsic *resource containers* here, not every intrinsic part.
+	# (Some intrinsic parts may still be legitimate tradable cargo in other contexts.)
+	if iid != "":
+		# Most commonly manifests as a "Fuel Tank" cargo row.
+		var n: String = str(item.get("name", "")).strip_edges().to_lower()
+		var bn: String = str(item.get("base_name", "")).strip_edges().to_lower()
+		var sn: String = str(item.get("specific_name", "")).strip_edges().to_lower()
+		if iid == INTRINSIC_RESOURCE_CONTAINER_PART_ID:
+			return true
+		if n == "fuel tank" or bn == "fuel tank" or sn == "fuel tank":
+			return true
 	# Some payload shapes may only include the container's part_id.
 	var pid: String = str(item.get("part_id", "")).strip_edges()
 	return pid != "" and pid == INTRINSIC_RESOURCE_CONTAINER_PART_ID

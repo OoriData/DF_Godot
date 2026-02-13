@@ -244,6 +244,7 @@ Buckets are dictionaries with standard category keys:
 	- Cargo items are aggregated into categories.
 	- Parts are aggregated into the `parts` bucket.
 	- Optionally injects vehicles into a `vehicles` bucket when SELL mode + vendor supports vehicle selling.
+- Omits intrinsic fuel tank cargo (installed resource containers) so it does not appear as tradable resource cargo.
 - Creates virtual rows for bulk resources from convoy reserves, priced using the vendor’s raw resource prices.
 
 #### Stable keys (critical for duplicates + restore)
