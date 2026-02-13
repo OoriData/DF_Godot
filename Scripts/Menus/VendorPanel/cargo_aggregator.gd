@@ -129,7 +129,7 @@ static func build_vendor_buckets(vendor_data: Dictionary, perf_log_enabled: bool
 		print("[VendorCargoAggregator] RAW_FUEL before cast value=", raw_fuel_val, " type=", typeof(raw_fuel_val), " price=", raw_fuel_price_val)
 	var fuel_quantity := _to_int_any(raw_fuel_val)
 	var fuel_price := _to_float_any(raw_fuel_price_val)
-	if fuel_quantity > 0 and fuel_price > 0.0:
+	if fuel_quantity > 0:
 		var fuel_item = {
 			"name": "Fuel (Bulk)",
 			"base_desc": "Bulk fuel to fill your containers.",
@@ -145,8 +145,7 @@ static func build_vendor_buckets(vendor_data: Dictionary, perf_log_enabled: bool
 		if perf_log_enabled:
 			print("[VendorCargoAggregator] Creating vendor bulk fuel item:", fuel_item)
 		_aggregate_vendor_item(aggregated_resources, fuel_item, "", perf_log_enabled)
-	elif fuel_quantity > 0 and perf_log_enabled:
-		print("[VendorCargoAggregator] Skipping vendor bulk fuel (missing/zero price)")
+
 
 	var raw_water_val = vendor_data.get("water", 0)
 	var raw_water_price_val = vendor_data.get("water_price", 0)
@@ -154,7 +153,7 @@ static func build_vendor_buckets(vendor_data: Dictionary, perf_log_enabled: bool
 		print("[VendorCargoAggregator] RAW_WATER before cast value=", raw_water_val, " type=", typeof(raw_water_val), " price=", raw_water_price_val)
 	var water_quantity := _to_int_any(raw_water_val)
 	var water_price := _to_float_any(raw_water_price_val)
-	if water_quantity > 0 and water_price > 0.0:
+	if water_quantity > 0:
 		var water_item = {
 			"name": "Water (Bulk)",
 			"base_desc": "Bulk water to fill your containers.",
@@ -170,8 +169,7 @@ static func build_vendor_buckets(vendor_data: Dictionary, perf_log_enabled: bool
 		if perf_log_enabled:
 			print("[VendorCargoAggregator] Creating vendor bulk water item:", water_item)
 		_aggregate_vendor_item(aggregated_resources, water_item, "", perf_log_enabled)
-	elif water_quantity > 0 and perf_log_enabled:
-		print("[VendorCargoAggregator] Skipping vendor bulk water (missing/zero price)")
+
 
 	var raw_food_val = vendor_data.get("food", 0)
 	var raw_food_price_val = vendor_data.get("food_price", 0)
@@ -179,7 +177,7 @@ static func build_vendor_buckets(vendor_data: Dictionary, perf_log_enabled: bool
 		print("[VendorCargoAggregator] RAW_FOOD before cast value=", raw_food_val, " type=", typeof(raw_food_val), " price=", raw_food_price_val)
 	var food_quantity := _to_int_any(raw_food_val)
 	var food_price := _to_float_any(raw_food_price_val)
-	if food_quantity > 0 and food_price > 0.0:
+	if food_quantity > 0:
 		var food_item = {
 			"name": "Food (Bulk)",
 			"base_desc": "Bulk food supplies.",
@@ -195,8 +193,7 @@ static func build_vendor_buckets(vendor_data: Dictionary, perf_log_enabled: bool
 		if perf_log_enabled:
 			print("[VendorCargoAggregator] Creating vendor bulk food item:", food_item)
 		_aggregate_vendor_item(aggregated_resources, food_item, "", perf_log_enabled)
-	elif food_quantity > 0 and perf_log_enabled:
-		print("[VendorCargoAggregator] Skipping vendor bulk food (missing/zero price)")
+
 
 	for vehicle in vendor_data.get("vehicle_inventory", []):
 		var vid := str(vehicle.get("vehicle_id", ""))
@@ -245,15 +242,18 @@ static func build_convoy_buckets(convoy_data: Dictionary, vendor_data: Dictionar
 	var is_sell_mode: bool = str(_current_mode) == "sell"
 	var vendor_can_buy_cargo: bool = true # Updated rule: every vendor allows selling cargo.
 	var vendor_vehicle_inventory_any: Variant = (vendor_data.get("vehicle_inventory") if vendor_data != null else null)
+	var vid_dbg: String = str((vendor_data.get("vendor_id", "") if vendor_data != null else "")).strip_edges()
+	var sell_skip_diag_count: int = 0
 	
 	var v_fuel_p = vendor_data.get("fuel_price", 0) if (vendor_data is Dictionary) else 0
 	var v_water_p = vendor_data.get("water_price", 0) if (vendor_data is Dictionary) else 0
 	var v_food_p = vendor_data.get("food_price", 0) if (vendor_data is Dictionary) else 0
 	
 	var vendor_can_buy_vehicles: bool = vendor_vehicle_inventory_any is Array and not (vendor_vehicle_inventory_any as Array).is_empty()
-	var vendor_buys_fuel: bool = _has_positive_price(vendor_data, "fuel_price")
-	var vendor_buys_water: bool = _has_positive_price(vendor_data, "water_price")
-	var vendor_buys_food: bool = _has_positive_price(vendor_data, "food_price")
+	var vd_for_rules: Dictionary = vendor_data if (vendor_data is Dictionary) else {}
+	var vendor_buys_fuel: bool = VendorTradeVM.vendor_can_buy_resource(vd_for_rules, "fuel")
+	var vendor_buys_water: bool = VendorTradeVM.vendor_can_buy_resource(vd_for_rules, "water")
+	var vendor_buys_food: bool = VendorTradeVM.vendor_can_buy_resource(vd_for_rules, "food")
 	# Updated rule: vehicles should only show in SELL when vendor actually has vehicles.
 	var vehicle_sell_allowed: bool = vendor_can_buy_vehicles
 	# Some convoy snapshots use different key shapes (e.g. `all_cargo` and `vehicles`).
@@ -266,7 +266,6 @@ static func build_convoy_buckets(convoy_data: Dictionary, vendor_data: Dictionar
 			" has_vehicle_details_list=", convoy_data.has("vehicle_details_list"),
 			" has_cargo_inventory=", convoy_data.has("cargo_inventory"))
 	if perf_log_enabled and is_sell_mode:
-		var vid_dbg := str((vendor_data.get("vendor_id", "") if vendor_data != null else ""))
 		print("[VendorCargoAggregator][SellDiag] vendor_id=", vid_dbg,
 			" vendor_can_buy_cargo=", vendor_can_buy_cargo,
 			" vendor_can_buy_vehicles=", vendor_can_buy_vehicles,
@@ -341,6 +340,14 @@ static func build_convoy_buckets(convoy_data: Dictionary, vendor_data: Dictionar
 						# Resource-bearing cargo is only sellable if the vendor has a positive price for
 						# ALL contained resource types, regardless of which bucket it would land in.
 						if not is_mission_item and not VendorTradeVM.vendor_can_buy_item_resources(vendor_data if (vendor_data is Dictionary) else {}, raw_item):
+							if perf_log_enabled and sell_skip_diag_count < 8:
+								var req := VendorTradeVM.required_resource_types(raw_item)
+								if not req.is_empty():
+									sell_skip_diag_count += 1
+									print("[VendorCargoAggregator][SellSkip] vendor_id=", vid_dbg,
+										" item=", str(raw_item.get("name", "<noname>")),
+										" required=", req,
+										" vendor_prices(f/w/food)=", str((vendor_data.get("fuel_price", "<none>") if vendor_data != null else "<none>")), "/", str((vendor_data.get("water_price", "<none>") if vendor_data != null else "<none>")), "/", str((vendor_data.get("food_price", "<none>") if vendor_data != null else "<none>")))
 							continue
 						# Non-resource cargo (and parts-as-cargo) are always sellable; missions are always allowed.
 					_aggregate_item(category_dict, raw_item, vehicle_name, mission_vendor_name, perf_log_enabled)
@@ -376,6 +383,14 @@ static func build_convoy_buckets(convoy_data: Dictionary, vendor_data: Dictionar
 					# SELL: only include what this vendor can buy.
 					if is_sell_mode:
 						if not is_mission_item2 and not VendorTradeVM.vendor_can_buy_item_resources(vendor_data if (vendor_data is Dictionary) else {}, item):
+							if perf_log_enabled and sell_skip_diag_count < 8:
+								var req2 := VendorTradeVM.required_resource_types(item)
+								if not req2.is_empty():
+									sell_skip_diag_count += 1
+									print("[VendorCargoAggregator][SellSkip] vendor_id=", vid_dbg,
+										" item=", str(item.get("name", "<noname>")),
+										" required=", req2,
+										" vendor_prices(f/w/food)=", str((vendor_data.get("fuel_price", "<none>") if vendor_data != null else "<none>")), "/", str((vendor_data.get("water_price", "<none>") if vendor_data != null else "<none>")), "/", str((vendor_data.get("food_price", "<none>") if vendor_data != null else "<none>")))
 							continue
 						# Non-resource cargo (and parts-as-cargo) are always sellable; missions are always allowed.
 					_aggregate_item(category_dict2, item, vehicle_name, mission_vendor_name2, perf_log_enabled)
@@ -420,6 +435,14 @@ static func build_convoy_buckets(convoy_data: Dictionary, vendor_data: Dictionar
 			# SELL: only include what this vendor can buy.
 			if is_sell_mode:
 				if not is_mission_item3 and not VendorTradeVM.vendor_can_buy_item_resources(vendor_data if (vendor_data is Dictionary) else {}, item):
+					if perf_log_enabled and sell_skip_diag_count < 8:
+						var req3 := VendorTradeVM.required_resource_types(item)
+						if not req3.is_empty():
+							sell_skip_diag_count += 1
+							print("[VendorCargoAggregator][SellSkip] vendor_id=", vid_dbg,
+								" item=", str(item.get("name", "<noname>")),
+								" required=", req3,
+								" vendor_prices(f/w/food)=", str((vendor_data.get("fuel_price", "<none>") if vendor_data != null else "<none>")), "/", str((vendor_data.get("water_price", "<none>") if vendor_data != null else "<none>")), "/", str((vendor_data.get("food_price", "<none>") if vendor_data != null else "<none>")))
 					continue
 				# Non-resource cargo (and parts-as-cargo) are always sellable; missions are always allowed.
 			_aggregate_item(category_dict3, item, "Convoy", mission_vendor_name3, perf_log_enabled)
@@ -482,6 +505,14 @@ static func build_convoy_buckets(convoy_data: Dictionary, vendor_data: Dictionar
 			# SELL: only include what this vendor can buy.
 			if is_sell_mode:
 				if not is_mission_item4 and not VendorTradeVM.vendor_can_buy_item_resources(vendor_data if (vendor_data is Dictionary) else {}, item):
+					if perf_log_enabled and sell_skip_diag_count < 8:
+						var req4 := VendorTradeVM.required_resource_types(item)
+						if not req4.is_empty():
+							sell_skip_diag_count += 1
+							print("[VendorCargoAggregator][SellSkip] vendor_id=", vid_dbg,
+								" item=", str(item.get("name", "<noname>")),
+								" required=", req4,
+								" vendor_prices(f/w/food)=", str((vendor_data.get("fuel_price", "<none>") if vendor_data != null else "<none>")), "/", str((vendor_data.get("water_price", "<none>") if vendor_data != null else "<none>")), "/", str((vendor_data.get("food_price", "<none>") if vendor_data != null else "<none>")))
 					continue
 				# Non-resource cargo (and parts-as-cargo) are always sellable; missions are always allowed.
 			_aggregate_item(category_dict4, item, "Convoy", mission_vendor_name4, perf_log_enabled)

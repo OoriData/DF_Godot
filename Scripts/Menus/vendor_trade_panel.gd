@@ -419,11 +419,25 @@ var _vendors_from_settlements_by_id: Dictionary = {} # vendor_id -> vendor Dicti
 var _vendor_id_to_settlement: Dictionary = {} # vendor_id -> settlement Dictionary
 var _vendor_id_to_name: Dictionary = {} # vendor_id -> vendor name String
 
+# Throttles noisy price-fallback diagnostics (vendor_id -> true)
+var _price_fallback_diag_seen: Dictionary = {}
+
+# Throttle one-time map cache debug
+var _map_cache_diag_printed: bool = false
+
 func _vendor_data_with_price_fallback(vd_in: Variant) -> Dictionary:
 	var vd: Dictionary = vd_in if (vd_in is Dictionary) else {}
-	var vid: String = str(vd.get("vendor_id", vd.get("id", "")))
+	var vid: String = str(vd.get("vendor_id", vd.get("id", ""))).strip_edges()
 	if vid == "":
 		return vd
+	var vendor_name: String = str(vd.get("name", "")).strip_edges()
+	if vendor_name == "" and _vendor_id_to_name.has(vid):
+		vendor_name = str(_vendor_id_to_name.get(vid, "")).strip_edges()
+	var settlement_name: String = ""
+	if _vendor_id_to_settlement.has(vid):
+		var s_any: Variant = _vendor_id_to_settlement.get(vid)
+		if s_any is Dictionary:
+			settlement_name = str((s_any as Dictionary).get("name", "")).strip_edges()
 	
 	if perf_log_enabled:
 		print("[PriceFallback] RAW VENDOR DATA for ", vid, ":")
@@ -470,19 +484,64 @@ func _vendor_data_with_price_fallback(vd_in: Variant) -> Dictionary:
 		return out
 
 	if perf_log_enabled:
-		print("[PriceFallback] Vendor %s needs fallback for keys: %s" % [vid, keys_to_fix])
+		print("[PriceFallback] vid=%s name=%s settlement=%s needs_fallback=%s" % [
+			vid,
+			vendor_name,
+			settlement_name,
+			str(keys_to_fix),
+		])
 
 	# Strategy 1 (ONLY): Look at the specific vendor record from global settlement data.
 	# Never borrow prices from a settlement or neighboring vendors; that changes vendor behavior.
+	# If our cache isn't ready yet, opportunistically refresh it from GameStore.
+	if _vendors_from_settlements_by_id.is_empty() or not _vendors_from_settlements_by_id.has(vid):
+		if is_instance_valid(_store) and _store.has_method("get_settlements"):
+			var ss2: Variant = _store.get_settlements()
+			if ss2 is Array and not (ss2 as Array).is_empty():
+				_set_latest_settlements_snapshot(ss2 as Array)
+				if perf_log_enabled:
+					print("[PriceFallback] Refreshed settlement cache from GameStore (settlements=%d)" % int((ss2 as Array).size()))
+
 	if not _vendors_from_settlements_by_id.is_empty():
-		var global_v = _vendors_from_settlements_by_id.get(vid)
+		var global_v: Variant = _vendors_from_settlements_by_id.get(vid)
+		if not (global_v is Dictionary):
+			if perf_log_enabled and not _price_fallback_diag_seen.has(vid):
+				_price_fallback_diag_seen[vid] = true
+				print("[PriceFallback][Diag] vid=%s name=%s settlement=%s missing_global_vendor_record cache_counts vendors=%d settlements=%d store_settlements=%d" % [
+					vid,
+					vendor_name,
+					settlement_name,
+					int(_vendors_from_settlements_by_id.size()),
+					int((_latest_settlements.size() if _latest_settlements is Array else -1)),
+					int((_store.get_settlements().size() if is_instance_valid(_store) and _store.has_method("get_settlements") else -1)),
+				])
 		if global_v is Dictionary:
+			var filled_any: bool = false
 			for k in keys_to_fix:
-				var fv = global_v.get(k)
+				var fv = (global_v as Dictionary).get(k)
 				if (fv is float or fv is int or fv is String) and float(fv) > 0.0:
 					out[k] = fv
+					filled_any = true
 					if perf_log_enabled:
 						print("[PriceFallback] Found %s = %s via global vendor record for %s" % [k, fv, vid])
+			# If nothing was filled, print a single diagnostic snapshot of what the cache contains.
+			if perf_log_enabled and not filled_any and not _price_fallback_diag_seen.has(vid):
+				_price_fallback_diag_seen[vid] = true
+				var gv: Dictionary = global_v as Dictionary
+				print("[PriceFallback][Diag] vid=%s name=%s settlement=%s global_prices(f/w/food)=%s/%s/%s raw_needed=%s" % [
+					vid,
+					vendor_name,
+					settlement_name,
+					str(gv.get("fuel_price", "<none>")),
+					str(gv.get("water_price", "<none>")),
+					str(gv.get("food_price", "<none>")),
+					str(keys_to_fix),
+				])
+				print("[PriceFallback][Diag] cache_counts vendors=%d settlements=%d store_settlements=%d" % [
+					int(_vendors_from_settlements_by_id.size()),
+					int((_latest_settlements.size() if _latest_settlements is Array else -1)),
+					int((_store.get_settlements().size() if is_instance_valid(_store) and _store.has_method("get_settlements") else -1)),
+				])
 
 	# If we still don't have a positive value, leave it missing/null/0.
 	# Downstream SELL gating relies on vendor_data having a positive price to allow selling.
@@ -720,6 +779,12 @@ func _on_store_map_changed(_tiles: Array, settlements: Array) -> void:
 	# Keep settlement/vendor caches fresh for price fallback + recipient name resolution.
 	if settlements is Array:
 		_set_latest_settlements_snapshot(settlements)
+		if perf_log_enabled and not _map_cache_diag_printed:
+			_map_cache_diag_printed = true
+			print("[VendorPanel][MapCache] settlements=%d vendors_cached=%d" % [
+				int((settlements as Array).size()),
+				int(_vendors_from_settlements_by_id.size()),
+			])
 
 func _set_latest_settlements_snapshot(settlements: Array) -> void:
 	VendorPanelContextController.set_latest_settlements_snapshot(self, settlements)
@@ -962,10 +1027,29 @@ func _populate_convoy_list() -> void:
 	if perf_log_enabled and str(current_mode) == "sell":
 		var vd: Dictionary = vendor_data if (vendor_data is Dictionary) else {}
 		var vdx: Dictionary = vd_for_agg
+		var vid_dbg: String = str(vd.get("vendor_id", vd.get("id", ""))).strip_edges()
+		var vname_dbg: String = str(vd.get("name", "")).strip_edges()
+		if vname_dbg == "" and _vendor_id_to_name.has(vid_dbg):
+			vname_dbg = str(_vendor_id_to_name.get(vid_dbg, "")).strip_edges()
+		var sname_dbg: String = ""
+		var sv_prices: String = "<no-settlement-vendor>"
+		if _vendor_id_to_settlement.has(vid_dbg):
+			var ss_any: Variant = _vendor_id_to_settlement.get(vid_dbg)
+			if ss_any is Dictionary:
+				sname_dbg = str((ss_any as Dictionary).get("name", "")).strip_edges()
+		if _vendors_from_settlements_by_id.has(vid_dbg):
+			var sv_any: Variant = _vendors_from_settlements_by_id.get(vid_dbg)
+			if sv_any is Dictionary:
+				var sv: Dictionary = sv_any
+				sv_prices = "%s/%s/%s" % [str(sv.get("fuel_price", "<none>")), str(sv.get("water_price", "<none>")), str(sv.get("food_price", "<none>"))]
 		print("[VendorPanel][SellDiag] vendor_id=", str(vd.get("vendor_id", "")),
+			" vendor_name=", vname_dbg,
+			" settlement=", sname_dbg,
 			" has_keys(cargo_inventory/vehicle_inventory)=", vd.has("cargo_inventory"), "/", vd.has("vehicle_inventory"),
+			" stock_raw(f/w/food)=", str(vd.get("fuel", "<none>")), "/", str(vd.get("water", "<none>")), "/", str(vd.get("food", "<none>")),
 			" prices_raw(f/w/food)=", str(vd.get("fuel_price", "<none>")), "/", str(vd.get("water_price", "<none>")), "/", str(vd.get("food_price", "<none>")),
 			" prices_used(f/w/food)=", str(vdx.get("fuel_price", "<none>")), "/", str(vdx.get("water_price", "<none>")), "/", str(vdx.get("food_price", "<none>")),
+			" settlement_prices(f/w/food)=", sv_prices,
 			" allow_vehicle_sell=", allow_vehicle_sell,
 			" bucket_sizes(m/v/p/o/r)=", int((buckets.get("missions", {}) as Dictionary).size()), "/", int((buckets.get("vehicles", {}) as Dictionary).size()), "/", int((buckets.get("parts", {}) as Dictionary).size()), "/", int((buckets.get("other", {}) as Dictionary).size()), "/", int((buckets.get("resources", {}) as Dictionary).size()))
 	var root = convoy_item_tree.create_item()

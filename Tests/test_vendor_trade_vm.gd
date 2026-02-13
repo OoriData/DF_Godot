@@ -135,3 +135,23 @@ func test_build_price_presenter_mission_rewards():
 	}
 	var res = VendorTradeVM.build_price_presenter(item, "buy", 3, null)
 	assert_eq(res.total_delivery_reward, 150.0, "Should calculate total delivery reward")
+
+
+func test_vendor_can_buy_resource_positive_price_allows():
+	var vendor := {"water": 0, "water_price": 10}
+	assert_true(VendorTradeVM.vendor_can_buy_resource(vendor, "water"))
+
+
+func test_vendor_can_buy_resource_positive_stock_allows_when_price_zero():
+	var vendor := {"water": 100, "water_price": 0}
+	assert_true(VendorTradeVM.vendor_can_buy_resource(vendor, "water"), "Positive stock should allow even when price is 0")
+
+
+func test_vendor_can_buy_resource_positive_stock_allows_when_price_null():
+	var vendor := {"water": 100, "water_price": null}
+	assert_true(VendorTradeVM.vendor_can_buy_resource(vendor, "water"), "Positive stock should allow even when price is null")
+
+
+func test_vendor_can_buy_resource_missing_or_zero_disallows():
+	assert_false(VendorTradeVM.vendor_can_buy_resource({"water": 0, "water_price": 0}, "water"))
+	assert_false(VendorTradeVM.vendor_can_buy_resource({}, "water"))

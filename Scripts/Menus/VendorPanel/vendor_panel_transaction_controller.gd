@@ -288,8 +288,13 @@ static func dispatch_sell(panel: Object, vendor_id: String, convoy_id: String, i
 			res_type = "food"
 		if res_type != "":
 			# For SELL gating we must use the vendor's own price keys.
-			var vd: Dictionary = panel.vendor_data if (panel.vendor_data is Dictionary) else {}
-			if not VendorTradeVM.vendor_can_buy_resource(vd, res_type):
+			# Vendor data endpoints are sometimes partial; allow panel's safe fallback
+			# (exact same vendor record from settlements) to fill missing/0 placeholders.
+			var vd_raw: Dictionary = panel.vendor_data if (panel.vendor_data is Dictionary) else {}
+			var vd_eff: Dictionary = vd_raw
+			if panel.has_method("_vendor_data_with_price_fallback"):
+				vd_eff = panel.call("_vendor_data_with_price_fallback", vd_raw)
+			if not VendorTradeVM.vendor_can_buy_resource(vd_eff, res_type):
 				panel._on_api_transaction_error("Vendor does not buy " + res_type)
 				return
 		if res_type != "" and panel._vendor_service.has_method("sell_resource"):
@@ -304,7 +309,10 @@ static func dispatch_sell(panel: Object, vendor_id: String, convoy_id: String, i
 	if intrinsic_id == INTRINSIC_RESOURCE_CONTAINER_PART_ID or part_id == INTRINSIC_RESOURCE_CONTAINER_PART_ID:
 		panel._on_api_transaction_error("Intrinsic resource containers cannot be sold")
 		return
-	var vd_guard: Dictionary = panel.vendor_data if (panel.vendor_data is Dictionary) else {}
+	var vd_guard_raw: Dictionary = panel.vendor_data if (panel.vendor_data is Dictionary) else {}
+	var vd_guard: Dictionary = vd_guard_raw
+	if panel.has_method("_vendor_data_with_price_fallback"):
+		vd_guard = panel.call("_vendor_data_with_price_fallback", vd_guard_raw)
 	if not VendorTradeVM.vendor_can_buy_item_resources(vd_guard, item_data_source):
 		panel._on_api_transaction_error("Vendor does not buy contained resources")
 		return

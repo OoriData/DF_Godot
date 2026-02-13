@@ -82,10 +82,19 @@ static func vendor_can_buy_resource(vendor_data: Dictionary, resource_type: Stri
     var rt := str(resource_type).to_lower()
     if rt == "":
         return false
+
+    # Primary signal: a positive explicit price.
     var key := rt + "_price"
-    if not vendor_data.has(key):
-        return false
-    return _to_float_any(vendor_data.get(key)) > 0.0
+    if vendor_data.has(key) and _to_float_any(vendor_data.get(key)) > 0.0:
+        return true
+
+    # Secondary signal: some vendors (notably water-focused ones) may return 0/null prices
+    # while still exposing positive stock. Treat positive stock as "vendor supports trading"
+    # so resource-bearing containers can be listed in SELL mode and bulk resources can appear.
+    if vendor_data.has(rt) and _to_float_any(vendor_data.get(rt)) > 0.0:
+        return true
+
+    return false
 
 static func can_show_install_button(is_buy_mode: bool, selected_item: Variant) -> bool:
     return CompatAdapter.can_show_install_button(is_buy_mode, selected_item)
