@@ -25,16 +25,76 @@ static func raw_resource_type(item_data_source: Dictionary) -> String:
         return "food"
     return ""
 
+
+static func item_resource_amount(item_data_source: Dictionary, res_key: String) -> float:
+    if item_data_source == null:
+        return 0.0
+    var rk := str(res_key).to_lower()
+    if rk == "":
+        return 0.0
+
+    # Payloads are not perfectly consistent about key casing (e.g. "Fuel" vs "fuel").
+    if item_data_source.has(rk):
+        return _to_float_any(item_data_source.get(rk, 0.0))
+
+    var alt := ""
+    match rk:
+        "fuel":
+            alt = "Fuel"
+        "water":
+            alt = "Water"
+        "food":
+            alt = "Food"
+        _:
+            alt = ""
+
+    if alt != "" and item_data_source.has(alt):
+        return _to_float_any(item_data_source.get(alt, 0.0))
+    return 0.0
+
+
+static func required_resource_types(item_data_source: Dictionary) -> Array[String]:
+    var out: Array[String] = []
+    if item_data_source == null:
+        return out
+    for rt in ["fuel", "water", "food"]:
+        if item_resource_amount(item_data_source, rt) > 0.0:
+            out.append(rt)
+    return out
+
+
+static func vendor_can_buy_item_resources(vendor_data: Dictionary, item_data_source: Dictionary) -> bool:
+    # Cargo that contains resources (fuel/water/food) is only sellable if the vendor
+    # has a positive price for ALL contained resource types.
+    var required: Array[String] = required_resource_types(item_data_source)
+    if required.is_empty():
+        return true
+    if vendor_data == null:
+        return false
+    for rt in required:
+        if not vendor_can_buy_resource(vendor_data, rt):
+            return false
+    return true
+
 static func vendor_can_buy_resource(vendor_data: Dictionary, resource_type: String) -> bool:
     if vendor_data == null:
         return false
     var rt := str(resource_type).to_lower()
     if rt == "":
         return false
+
+    # Primary signal: a positive explicit price.
     var key := rt + "_price"
-    if not vendor_data.has(key):
-        return false
-    return _to_float_any(vendor_data.get(key)) > 0.0
+    if vendor_data.has(key) and _to_float_any(vendor_data.get(key)) > 0.0:
+        return true
+
+    # Secondary signal: some vendors (notably water-focused ones) may return 0/null prices
+    # while still exposing positive stock. Treat positive stock as "vendor supports trading"
+    # so resource-bearing containers can be listed in SELL mode and bulk resources can appear.
+    if vendor_data.has(rt) and _to_float_any(vendor_data.get(rt)) > 0.0:
+        return true
+
+    return false
 
 static func can_show_install_button(is_buy_mode: bool, selected_item: Variant) -> bool:
     return CompatAdapter.can_show_install_button(is_buy_mode, selected_item)
