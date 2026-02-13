@@ -1,6 +1,8 @@
 extends RefCounted
 class_name VendorPanelTransactionController
 
+const INTRINSIC_RESOURCE_CONTAINER_PART_ID := "7d1c1f56-e215-4b16-89f9-dca416a2d58e"
+
 # Transaction logic extracted from vendor_trade_panel.gd.
 # Owns max-quantity constraints, optimistic projection, and buy/sell dispatch.
 
@@ -297,6 +299,11 @@ static func dispatch_sell(panel: Object, vendor_id: String, convoy_id: String, i
 
 	# Resource-bearing cargo (containers, etc.) should only be sellable when vendor has
 	# positive prices for the resources contained.
+	var intrinsic_id := str(item_data_source.get("intrinsic_part_id", "")).strip_edges()
+	var part_id := str(item_data_source.get("part_id", "")).strip_edges()
+	if intrinsic_id == INTRINSIC_RESOURCE_CONTAINER_PART_ID or part_id == INTRINSIC_RESOURCE_CONTAINER_PART_ID:
+		panel._on_api_transaction_error("Intrinsic resource containers cannot be sold")
+		return
 	var vd_guard: Dictionary = panel.vendor_data if (panel.vendor_data is Dictionary) else {}
 	if not VendorTradeVM.vendor_can_buy_item_resources(vd_guard, item_data_source):
 		panel._on_api_transaction_error("Vendor does not buy contained resources")

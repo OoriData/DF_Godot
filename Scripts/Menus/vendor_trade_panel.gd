@@ -437,7 +437,9 @@ func _vendor_data_with_price_fallback(vd_in: Variant) -> Dictionary:
 	# Determine which keys need a fallback
 	var keys_to_fix: Array = []
 	for k in price_keys:
-		# IMPORTANT: explicit 0 means "does not buy/sell this resource" and must NOT be overridden.
+		# IMPORTANT: we only ever fill from the exact same vendor record (Strategy 1).
+		# Some vendor endpoints return 0s as placeholders; allow Strategy 1 to provide
+		# the authoritative positive value when available.
 		if not out.has(k):
 			keys_to_fix.append(k)
 			continue
@@ -445,6 +447,12 @@ func _vendor_data_with_price_fallback(vd_in: Variant) -> Dictionary:
 		if val == null:
 			keys_to_fix.append(k)
 			continue
+		# Many vendor payloads are partial and use 0 as a placeholder; allow Strategy 1
+		# (exact vendor record from settlements) to fill in a positive value when present.
+		if val is float or val is int:
+			if float(val) == 0.0:
+				keys_to_fix.append(k)
+				continue
 		# If a non-numeric string sneaks in, treat it as missing.
 		if val is String:
 			var s := (val as String).strip_edges()
@@ -452,6 +460,9 @@ func _vendor_data_with_price_fallback(vd_in: Variant) -> Dictionary:
 				keys_to_fix.append(k)
 				continue
 			if not (s.is_valid_float() or s.is_valid_int()):
+				keys_to_fix.append(k)
+				continue
+			if float(s) == 0.0:
 				keys_to_fix.append(k)
 				continue
 	
@@ -703,6 +714,12 @@ func _exit_tree() -> void:
 	if _signal_watcher:
 		_signal_watcher.clear()
 		_signal_watcher = null
+
+
+func _on_store_map_changed(_tiles: Array, settlements: Array) -> void:
+	# Keep settlement/vendor caches fresh for price fallback + recipient name resolution.
+	if settlements is Array:
+		_set_latest_settlements_snapshot(settlements)
 
 func _set_latest_settlements_snapshot(settlements: Array) -> void:
 	VendorPanelContextController.set_latest_settlements_snapshot(self, settlements)

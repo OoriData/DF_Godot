@@ -1,6 +1,7 @@
 extends Node
 class_name VendorCargoAggregator
 const ItemsData = preload("res://Scripts/Data/Items.gd") # ensures CargoItem class is registered
+const INTRINSIC_RESOURCE_CONTAINER_PART_ID := "7d1c1f56-e215-4b16-89f9-dca416a2d58e"
 
 # Helper to aggregate vendor and convoy cargo into category buckets.
 # Buckets use stable keys: "missions", "vehicles", "parts", "other", "resources".
@@ -43,6 +44,17 @@ static func _has_positive_price(d: Dictionary, key: String) -> bool:
 		return false
 	return _to_float_any(d.get(key)) > 0.0
 
+
+static func _is_intrinsic_resource_container(item: Dictionary) -> bool:
+	if item == null:
+		return false
+	var iid: String = str(item.get("intrinsic_part_id", "")).strip_edges()
+	if iid != "" and iid == INTRINSIC_RESOURCE_CONTAINER_PART_ID:
+		return true
+	# Some payload shapes may only include the container's part_id.
+	var pid: String = str(item.get("part_id", "")).strip_edges()
+	return pid != "" and pid == INTRINSIC_RESOURCE_CONTAINER_PART_ID
+
 static func build_vendor_buckets(vendor_data: Dictionary, perf_log_enabled: bool, get_vendor_name_for_recipient: Callable) -> Dictionary:
 	var aggregated_missions: Dictionary = {}
 	var aggregated_resources: Dictionary = {}
@@ -64,6 +76,10 @@ static func build_vendor_buckets(vendor_data: Dictionary, perf_log_enabled: bool
 	var v_food_p = vendor_data.get("food_price", 0)
 
 	for item in vendor_data.get("cargo_inventory", []):
+		# Do not surface intrinsic resource containers (e.g., vehicle fuel tanks) as tradable cargo.
+		if item is Dictionary and _is_intrinsic_resource_container(item as Dictionary):
+			continue
+
 		var category_dict: Dictionary
 		var mission_vendor_name: String = ""
 		
@@ -278,6 +294,9 @@ static func build_convoy_buckets(convoy_data: Dictionary, vendor_data: Dictionar
 						continue
 					found_any_cargo = true
 					var raw_item: Dictionary = typed.raw.duplicate(true)
+					# Do not surface intrinsic resource containers as tradable cargo.
+					if _is_intrinsic_resource_container(raw_item):
+						continue
 					
 					# Inject current vendor prices so PriceUtil can see them on the item level
 					if not raw_item.has("fuel_price") or raw_item.get("fuel_price") == null: raw_item["fuel_price"] = v_fuel_p
@@ -295,10 +314,12 @@ static func build_convoy_buckets(convoy_data: Dictionary, vendor_data: Dictionar
 					if "stats" in typed and typed.stats is Dictionary and not typed.stats.is_empty():
 						raw_item["stats"] = typed.stats.duplicate(true)
 					var category_dict: Dictionary
+					var is_mission_item: bool = false
 					var mission_vendor_name: String = ""
 					match typed.category:
 						"mission":
 							category_dict = aggregated_missions
+							is_mission_item = true
 						"resource":
 							category_dict = aggregated_resources
 						"part":
@@ -308,7 +329,8 @@ static func build_convoy_buckets(convoy_data: Dictionary, vendor_data: Dictionar
 					var dr_t = raw_item.get("delivery_reward")
 					if raw_item.get("recipient") != null or ((dr_t is float or dr_t is int) and float(dr_t) > 0.0):
 						category_dict = aggregated_missions
-					if category_dict == aggregated_missions:
+						is_mission_item = true
+					if is_mission_item:
 						var recipient_id: Variant = raw_item.get("recipient")
 						if recipient_id == null:
 							recipient_id = raw_item.get("mission_vendor_id")
@@ -318,18 +340,24 @@ static func build_convoy_buckets(convoy_data: Dictionary, vendor_data: Dictionar
 					if is_sell_mode:
 						# Resource-bearing cargo is only sellable if the vendor has a positive price for
 						# ALL contained resource types, regardless of which bucket it would land in.
-						if category_dict != aggregated_missions and not VendorTradeVM.vendor_can_buy_item_resources(vendor_data if (vendor_data is Dictionary) else {}, raw_item):
+						if not is_mission_item and not VendorTradeVM.vendor_can_buy_item_resources(vendor_data if (vendor_data is Dictionary) else {}, raw_item):
 							continue
 						# Non-resource cargo (and parts-as-cargo) are always sellable; missions are always allowed.
 					_aggregate_item(category_dict, raw_item, vehicle_name, mission_vendor_name, perf_log_enabled)
 			else:
 				for item in vehicle.get("cargo", []):
+					# Do not surface intrinsic resource containers as tradable cargo.
+					if item is Dictionary and _is_intrinsic_resource_container(item as Dictionary):
+						continue
+
 					found_any_cargo = true
 					var category_dict2: Dictionary
+					var is_mission_item2: bool = false
 					var mission_vendor_name2: String = ""
 					var dr = item.get("delivery_reward")
 					if item.get("recipient") != null or ((dr is float or dr is int) and float(dr) > 0.0):
 						category_dict2 = aggregated_missions
+						is_mission_item2 = true
 					elif (item.has("food") and item.get("food") != null and item.get("food") > 0) or \
 						 (item.has("water") and item.get("water") != null and item.get("water") > 0) or \
 						 (item.has("fuel") and item.get("fuel") != null and item.get("fuel") > 0):
@@ -339,7 +367,7 @@ static func build_convoy_buckets(convoy_data: Dictionary, vendor_data: Dictionar
 						category_dict2 = aggregated_other if is_sell_mode else aggregated_parts
 					else:
 						category_dict2 = aggregated_other
-					if category_dict2 == aggregated_missions:
+					if is_mission_item2:
 						var recipient_id2: Variant = item.get("recipient")
 						if recipient_id2 == null:
 							recipient_id2 = item.get("mission_vendor_id")
@@ -347,7 +375,7 @@ static func build_convoy_buckets(convoy_data: Dictionary, vendor_data: Dictionar
 							mission_vendor_name2 = str(get_vendor_name_for_recipient.call(recipient_id2))
 					# SELL: only include what this vendor can buy.
 					if is_sell_mode:
-						if category_dict2 != aggregated_missions and not VendorTradeVM.vendor_can_buy_item_resources(vendor_data if (vendor_data is Dictionary) else {}, item):
+						if not is_mission_item2 and not VendorTradeVM.vendor_can_buy_item_resources(vendor_data if (vendor_data is Dictionary) else {}, item):
 							continue
 						# Non-resource cargo (and parts-as-cargo) are always sellable; missions are always allowed.
 					_aggregate_item(category_dict2, item, vehicle_name, mission_vendor_name2, perf_log_enabled)
@@ -358,6 +386,10 @@ static func build_convoy_buckets(convoy_data: Dictionary, vendor_data: Dictionar
 
 	if not found_any_cargo and convoy_data.has("cargo_inventory"):
 		for item in convoy_data.cargo_inventory:
+			# Do not surface intrinsic resource containers as tradable cargo.
+			if item is Dictionary and _is_intrinsic_resource_container(item as Dictionary):
+				continue
+
 			# Inject current vendor prices so PriceUtil can see them on the item level
 			if item is Dictionary:
 				if not item.has("fuel_price") or item.get("fuel_price") == null: item["fuel_price"] = v_fuel_p
@@ -365,10 +397,12 @@ static func build_convoy_buckets(convoy_data: Dictionary, vendor_data: Dictionar
 				if not item.has("food_price") or item.get("food_price") == null: item["food_price"] = v_food_p
 
 			var category_dict3: Dictionary
+			var is_mission_item3: bool = false
 			var mission_vendor_name3: String = ""
 			var dr2 = item.get("delivery_reward")
 			if item.get("recipient") != null or ((dr2 is float or dr2 is int) and float(dr2) > 0.0):
 				category_dict3 = aggregated_missions
+				is_mission_item3 = true
 			elif (item.has("food") and item.get("food") != null and item.get("food") > 0) or \
 				 (item.has("water") and item.get("water") != null and item.get("water") > 0) or \
 				 (item.has("fuel") and item.get("fuel") != null and item.get("fuel") > 0):
@@ -377,7 +411,7 @@ static func build_convoy_buckets(convoy_data: Dictionary, vendor_data: Dictionar
 				category_dict3 = aggregated_other if is_sell_mode else aggregated_parts
 			else:
 				category_dict3 = aggregated_other
-			if category_dict3 == aggregated_missions:
+			if is_mission_item3:
 				var recipient_id3: Variant = item.get("recipient")
 				if recipient_id3 == null:
 					recipient_id3 = item.get("mission_vendor_id")
@@ -385,7 +419,7 @@ static func build_convoy_buckets(convoy_data: Dictionary, vendor_data: Dictionar
 					mission_vendor_name3 = str(get_vendor_name_for_recipient.call(recipient_id3))
 			# SELL: only include what this vendor can buy.
 			if is_sell_mode:
-				if category_dict3 != aggregated_missions and not VendorTradeVM.vendor_can_buy_item_resources(vendor_data if (vendor_data is Dictionary) else {}, item):
+				if not is_mission_item3 and not VendorTradeVM.vendor_can_buy_item_resources(vendor_data if (vendor_data is Dictionary) else {}, item):
 					continue
 				# Non-resource cargo (and parts-as-cargo) are always sellable; missions are always allowed.
 			_aggregate_item(category_dict3, item, "Convoy", mission_vendor_name3, perf_log_enabled)
@@ -414,6 +448,9 @@ static func build_convoy_buckets(convoy_data: Dictionary, vendor_data: Dictionar
 				item = item_any
 			else:
 				continue
+			# Do not surface intrinsic resource containers as tradable cargo.
+			if _is_intrinsic_resource_container(item):
+				continue
 			
 			# Inject current vendor prices so PriceUtil can see them on the item level
 			if not item.has("fuel_price") or item.get("fuel_price") == null: item["fuel_price"] = v_fuel_p
@@ -422,10 +459,12 @@ static func build_convoy_buckets(convoy_data: Dictionary, vendor_data: Dictionar
 
 			found_any_cargo = true
 			var category_dict4: Dictionary
+			var is_mission_item4: bool = false
 			var mission_vendor_name4: String = ""
 			var dr4 = item.get("delivery_reward")
 			if item.get("recipient") != null or ((dr4 is float or dr4 is int) and float(dr4) > 0.0):
 				category_dict4 = aggregated_missions
+				is_mission_item4 = true
 			elif item_category == "resource" or (item.has("food") and item.get("food") != null and item.get("food") > 0) or \
 					 (item.has("water") and item.get("water") != null and item.get("water") > 0) or \
 					 (item.has("fuel") and item.get("fuel") != null and item.get("fuel") > 0):
@@ -434,7 +473,7 @@ static func build_convoy_buckets(convoy_data: Dictionary, vendor_data: Dictionar
 				category_dict4 = aggregated_other if is_sell_mode else aggregated_parts
 			else:
 				category_dict4 = aggregated_other
-			if category_dict4 == aggregated_missions:
+			if is_mission_item4:
 				var recipient_id4: Variant = item.get("recipient")
 				if recipient_id4 == null:
 					recipient_id4 = item.get("mission_vendor_id")
@@ -442,7 +481,7 @@ static func build_convoy_buckets(convoy_data: Dictionary, vendor_data: Dictionar
 					mission_vendor_name4 = str(get_vendor_name_for_recipient.call(recipient_id4))
 			# SELL: only include what this vendor can buy.
 			if is_sell_mode:
-				if category_dict4 != aggregated_missions and not VendorTradeVM.vendor_can_buy_item_resources(vendor_data if (vendor_data is Dictionary) else {}, item):
+				if not is_mission_item4 and not VendorTradeVM.vendor_can_buy_item_resources(vendor_data if (vendor_data is Dictionary) else {}, item):
 					continue
 				# Non-resource cargo (and parts-as-cargo) are always sellable; missions are always allowed.
 			_aggregate_item(category_dict4, item, "Convoy", mission_vendor_name4, perf_log_enabled)
