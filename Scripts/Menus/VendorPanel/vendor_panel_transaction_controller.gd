@@ -295,6 +295,13 @@ static func dispatch_sell(panel: Object, vendor_id: String, convoy_id: String, i
 			panel._request_authoritative_refresh(convoy_id, vendor_id)
 		return
 
+	# Resource-bearing cargo (containers, etc.) should only be sellable when vendor has
+	# positive prices for the resources contained.
+	var vd_guard: Dictionary = panel.vendor_data if (panel.vendor_data is Dictionary) else {}
+	if not VendorTradeVM.vendor_can_buy_item_resources(vd_guard, item_data_source):
+		panel._on_api_transaction_error("Vendor does not buy contained resources")
+		return
+
 	var cargo_id: String = str(item_data_source.get("cargo_id", ""))
 	if cargo_id != "" and panel._vendor_service.has_method("sell_cargo"):
 		panel._vendor_service.sell_cargo(vendor_id, convoy_id, cargo_id, int(quantity))

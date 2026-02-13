@@ -93,6 +93,38 @@ func test_sell_mode_includes_cargo_when_vendor_has_cargo_inventory_capability():
 	assert_true((buckets.get("other", {}) as Dictionary).size() > 0, "Should show cargo when vendor has cargo_inventory")
 
 
+func test_sell_mode_excludes_fuel_bearing_cargo_when_vendor_has_no_fuel_price():
+	var vendor := {"fuel_price": 0, "cargo_inventory": [], "vehicle_inventory": []}
+	var convoy := {"convoy_id": "c1", "cargo_inventory": [{"cargo_id": "x", "name": "Jerry Cans", "quantity": 1, "fuel": 20.0}]}
+	var buckets := Aggregator.build_convoy_buckets(convoy, vendor, "sell", false, Callable(), false)
+	assert_eq((buckets.get("resources", {}) as Dictionary).size(), 0)
+	assert_eq((buckets.get("other", {}) as Dictionary).size(), 0, "Fuel-bearing cargo should be excluded when vendor fuel_price == 0")
+
+
+func test_sell_mode_includes_fuel_bearing_cargo_when_vendor_has_positive_fuel_price():
+	var vendor := {"fuel_price": 20, "cargo_inventory": [], "vehicle_inventory": []}
+	var convoy := {"convoy_id": "c1", "cargo_inventory": [{"cargo_id": "x", "name": "Jerry Cans", "quantity": 1, "fuel": 20.0}]}
+	var buckets := Aggregator.build_convoy_buckets(convoy, vendor, "sell", false, Callable(), false)
+	assert_true((buckets.get("resources", {}) as Dictionary).size() > 0 or (buckets.get("other", {}) as Dictionary).size() > 0, "Fuel-bearing cargo should be sellable when vendor fuel_price > 0")
+
+
+func test_sell_mode_excludes_capitalized_fuel_key_when_vendor_has_no_fuel_price():
+	var vendor := {"fuel_price": 0, "cargo_inventory": [], "vehicle_inventory": []}
+	var convoy := {"convoy_id": "c1", "all_cargo": [{"cargo_id": "x", "name": "Jerry Cans", "quantity": 1, "Fuel": 20.0}]}
+	var buckets := Aggregator.build_convoy_buckets(convoy, vendor, "sell", false, Callable(), false)
+	assert_eq((buckets.get("resources", {}) as Dictionary).size(), 0)
+	assert_eq((buckets.get("other", {}) as Dictionary).size(), 0, "Fuel-bearing cargo with 'Fuel' key should be excluded when vendor fuel_price == 0")
+
+
+func test_sell_mode_requires_all_contained_resources_to_be_buyable():
+	# This case shouldn't exist in real data, but ensures strictness if it does.
+	var vendor := {"fuel_price": 20, "water_price": 0, "cargo_inventory": [], "vehicle_inventory": []}
+	var convoy := {"convoy_id": "c1", "cargo_inventory": [{"cargo_id": "x", "name": "Mixed Tank", "quantity": 1, "fuel": 1.0, "water": 1.0}]}
+	var buckets := Aggregator.build_convoy_buckets(convoy, vendor, "sell", false, Callable(), false)
+	assert_eq((buckets.get("resources", {}) as Dictionary).size(), 0)
+	assert_eq((buckets.get("other", {}) as Dictionary).size(), 0, "Multi-resource cargo should be excluded unless vendor buys all contained resources")
+
+
 func test_sell_mode_includes_all_cargo_when_convoy_uses_all_cargo_key():
 	var vendor := {"cargo_inventory": [], "vehicle_inventory": []}
 	var convoy := {"convoy_id": "c1", "all_cargo": [{"cargo_id": "x", "name": "Box", "quantity": 1}]}

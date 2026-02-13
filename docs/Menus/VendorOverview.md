@@ -251,6 +251,17 @@ Convoy aggregation uses `_stable_key_for_convoy_item(item)` (inside the aggregat
 
 This is intentionally **not** per-stack `cargo_id` in cases where multiple stacks represent the same logical item—this prevents duplicated convoy rows.
 
+---
+
+## Sellability rules (what a vendor will buy)
+
+In **SELL** mode, the convoy tree only shows items that the current vendor is allowed to buy.
+
+- **Normal cargo (non-resource-bearing)**: sellable to any vendor.
+- **Bulk resources** (virtual rows like `Fuel (Bulk)`): only shown when the vendor has a **positive** `<resource>_price`.
+- **Resource-bearing cargo** (containers like jerry cans / drums that have `fuel`/`water`/`food` > 0): only sellable when the vendor has a **positive price** for the contained resource type.
+	- This rule is enforced both in aggregation (so the row is hidden) and in the transaction controller (so a stale selection can’t dispatch an invalid API call).
+
 ### Rendering (buckets → TreeItems)
 Rendering is handled by [Scripts/Menus/VendorPanel/tree_builder.gd](../../Scripts/Menus/VendorPanel/tree_builder.gd):
 

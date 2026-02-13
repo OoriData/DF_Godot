@@ -145,8 +145,8 @@ func _apply_committed_projection_scale(quantity: int, added_volume: float, added
 	if uncommitted_qty <= 0:
 		return {"added_volume": 0.0, "added_weight": 0.0}
 
-	var scale: float = float(uncommitted_qty) / float(quantity)
-	return {"added_volume": added_volume * scale, "added_weight": added_weight * scale}
+	var scale_factor: float = float(uncommitted_qty) / float(quantity)
+	return {"added_volume": added_volume * scale_factor, "added_weight": added_weight * scale_factor}
 
 func _get_effective_projection_deltas() -> Dictionary:
 	# Used to keep capacity bars stable during background convoy/store refreshes.
@@ -435,15 +435,25 @@ func _vendor_data_with_price_fallback(vd_in: Variant) -> Dictionary:
 	var price_keys = ["fuel_price", "water_price", "food_price"]
 	
 	# Determine which keys need a fallback
-	var keys_to_fix = []
+	var keys_to_fix: Array = []
 	for k in price_keys:
-		var val = out.get(k)
-		var valid_positive := false
-		if (val is float or val is int) and float(val) > 0.0:
-			valid_positive = true
-		
-		if not valid_positive:
+		# IMPORTANT: explicit 0 means "does not buy/sell this resource" and must NOT be overridden.
+		if not out.has(k):
 			keys_to_fix.append(k)
+			continue
+		var val: Variant = out.get(k)
+		if val == null:
+			keys_to_fix.append(k)
+			continue
+		# If a non-numeric string sneaks in, treat it as missing.
+		if val is String:
+			var s := (val as String).strip_edges()
+			if s == "":
+				keys_to_fix.append(k)
+				continue
+			if not (s.is_valid_float() or s.is_valid_int()):
+				keys_to_fix.append(k)
+				continue
 	
 	if keys_to_fix.is_empty():
 		return out
@@ -451,7 +461,8 @@ func _vendor_data_with_price_fallback(vd_in: Variant) -> Dictionary:
 	if perf_log_enabled:
 		print("[PriceFallback] Vendor %s needs fallback for keys: %s" % [vid, keys_to_fix])
 
-	# Strategy 1: Look at the specific vendor record from global settlement data
+	# Strategy 1 (ONLY): Look at the specific vendor record from global settlement data.
+	# Never borrow prices from a settlement or neighboring vendors; that changes vendor behavior.
 	if not _vendors_from_settlements_by_id.is_empty():
 		var global_v = _vendors_from_settlements_by_id.get(vid)
 		if global_v is Dictionary:
@@ -461,96 +472,9 @@ func _vendor_data_with_price_fallback(vd_in: Variant) -> Dictionary:
 					out[k] = fv
 					if perf_log_enabled:
 						print("[PriceFallback] Found %s = %s via global vendor record for %s" % [k, fv, vid])
-	
-	# Re-check keys to fix
-	var remaining_keys = []
-	for k in keys_to_fix:
-		var cur_val = out.get(k)
-		if not (cur_val is float or cur_val is int) or float(cur_val) <= 0.0:
-			remaining_keys.append(k)
-	
-	if remaining_keys.is_empty():
-		return out
-		
-	# Strategy 2: Look at the settlement and other vendors in the same settlement
-	var sett = _vendor_id_to_settlement.get(vid)
-	if sett is Dictionary:
-		# First check the SETTLEMENT ITSELF for resource prices
-		if perf_log_enabled:
-			print("[PriceFallback] Strategy 2a: Checking settlement '%s' for resource prices: %s" % [sett.get("name", "Unknown"), remaining_keys])
-		
-		var still_needed_after_sett = []
-		for k in remaining_keys:
-			var sv = sett.get(k)
-			if sv != null and (sv is float or sv is int or sv is String) and float(sv) > 0.0:
-				out[k] = sv
-				if perf_log_enabled:
-					print("[PriceFallback] Found %s = %s from settlement itself" % [k, sv])
-			else:
-				still_needed_after_sett.append(k)
-		remaining_keys = still_needed_after_sett
-		
-		if remaining_keys.is_empty():
-			return out
-		
-		# Then check other vendors in the settlement
-		var vendors = sett.get("vendors", [])
-		if perf_log_enabled:
-			print("[PriceFallback] Strategy 2b: Searching %d vendors in settlement for remaining keys: %s" % [vendors.size() if vendors is Array else 0, remaining_keys])
-		if vendors is Array:
-			for v_any in vendors:
-				if not (v_any is Dictionary): continue
-				var v_dict: Dictionary = v_any
-				var v_id = str(v_dict.get("vendor_id", v_dict.get("id", "")))
-				# Don't check ourselves again (already did in Strategy 1 effectively)
-				if v_id == vid:
-					continue
-				
-				# Try to fill remaining keys
-				var still_needed = []
-				for k in remaining_keys:
-					var sv = v_dict.get(k)
-					if sv != null and (sv is float or sv is int or sv is String) and float(sv) > 0.0:
-						out[k] = sv
-						if perf_log_enabled:
-							print("[PriceFallback] Found %s = %s via neighbor vendor %s in settlement" % [k, sv, v_id])
-					else:
-						still_needed.append(k)
-				remaining_keys = still_needed
-				if remaining_keys.is_empty():
-					break
-	
-	if remaining_keys.is_empty():
-		return out
-		
-	# Strategy 3: Global Scan (Last Resort)
-	if perf_log_enabled:
-		print("[PriceFallback] Strategy 3: Scanning ALL settlements for remaining keys: %s" % [remaining_keys])
-	
-	for s_any in _latest_settlements:
-		if not (s_any is Dictionary): continue
-		var s_dict: Dictionary = s_any
-		var s_vendors = s_dict.get("vendors", [])
-		if s_vendors is Array:
-			for v_any in s_vendors:
-				if not (v_any is Dictionary): continue
-				var v_dict: Dictionary = v_any
-				
-				var still_needed = []
-				for k in remaining_keys:
-					var gv = v_dict.get(k)
-					if gv != null and (gv is float or gv is int or gv is String) and float(gv) > 0.0:
-						out[k] = gv
-						if perf_log_enabled:
-							print("[PriceFallback] GLOBAL MATCH: Found %s = %s at %s (%s)" % [k, gv, v_dict.get("name", "Unknown"), s_dict.get("name", "Unknown")])
-					else:
-						still_needed.append(k)
-				remaining_keys = still_needed
-				if remaining_keys.is_empty():
-					break
-		if remaining_keys.is_empty():
-			break
 
+	# If we still don't have a positive value, leave it missing/null/0.
+	# Downstream SELL gating relies on vendor_data having a positive price to allow selling.
 	return out
 
 func _get_bold_font_for(node: Control) -> FontVariation:
@@ -693,7 +617,7 @@ func _make_panels_responsive() -> void:
 	if is_instance_valid(right) and not (right.get_parent() is ScrollContainer):
 		_wrap_inv_scroll(right, 0.3, 1.0)
 
-func _wrap_inv_scroll(panel: Control, stretch_ratio_h: float, stretch_ratio_v: float) -> void:
+func _wrap_inv_scroll(panel: Control, stretch_ratio_h: float, _stretch_ratio_v: float) -> void:
 	var parent = panel.get_parent()
 	var scroll = ScrollContainer.new()
 	scroll.name = panel.name + "Scroll"

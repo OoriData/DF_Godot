@@ -43,26 +43,6 @@ static func _has_positive_price(d: Dictionary, key: String) -> bool:
 		return false
 	return _to_float_any(d.get(key)) > 0.0
 
-
-static func _item_resource_amount(item: Dictionary, res_key: String) -> float:
-	if item == null:
-		return 0.0
-	# Payloads are not perfectly consistent about key casing (e.g. "Fuel" vs "fuel").
-	if item.has(res_key):
-		return _to_float_any(item.get(res_key, 0))
-	# Try a single common alternate casing.
-	var alt := ""
-	match res_key:
-		"fuel":
-			alt = "Fuel"
-		"water":
-			alt = "Water"
-		"food":
-			alt = "Food"
-	if alt != "" and item.has(alt):
-		return _to_float_any(item.get(alt, 0))
-	return 0.0
-
 static func build_vendor_buckets(vendor_data: Dictionary, perf_log_enabled: bool, get_vendor_name_for_recipient: Callable) -> Dictionary:
 	var aggregated_missions: Dictionary = {}
 	var aggregated_resources: Dictionary = {}
@@ -337,15 +317,9 @@ static func build_convoy_buckets(convoy_data: Dictionary, vendor_data: Dictionar
 					# SELL: only include what this vendor can buy.
 					if is_sell_mode:
 						# Resource-bearing cargo is only sellable if the vendor has a positive price for
-						# at least one of the contained resources, regardless of which bucket it would land in.
-						if category_dict != aggregated_missions:
-							var has_fuel: bool = _item_resource_amount(raw_item, "fuel") > 0.0
-							var has_water: bool = _item_resource_amount(raw_item, "water") > 0.0
-							var has_food: bool = _item_resource_amount(raw_item, "food") > 0.0
-							if has_fuel or has_water or has_food:
-								var sellable_res: bool = (has_fuel and vendor_buys_fuel) or (has_water and vendor_buys_water) or (has_food and vendor_buys_food)
-								if not sellable_res:
-									continue
+						# ALL contained resource types, regardless of which bucket it would land in.
+						if category_dict != aggregated_missions and not VendorTradeVM.vendor_can_buy_item_resources(vendor_data if (vendor_data is Dictionary) else {}, raw_item):
+							continue
 						# Non-resource cargo (and parts-as-cargo) are always sellable; missions are always allowed.
 					_aggregate_item(category_dict, raw_item, vehicle_name, mission_vendor_name, perf_log_enabled)
 			else:
@@ -373,14 +347,8 @@ static func build_convoy_buckets(convoy_data: Dictionary, vendor_data: Dictionar
 							mission_vendor_name2 = str(get_vendor_name_for_recipient.call(recipient_id2))
 					# SELL: only include what this vendor can buy.
 					if is_sell_mode:
-						if category_dict2 != aggregated_missions:
-							var has_fuel2: bool = _item_resource_amount(item, "fuel") > 0.0
-							var has_water2: bool = _item_resource_amount(item, "water") > 0.0
-							var has_food2: bool = _item_resource_amount(item, "food") > 0.0
-							if has_fuel2 or has_water2 or has_food2:
-								var sellable_res2: bool = (has_fuel2 and vendor_buys_fuel) or (has_water2 and vendor_buys_water) or (has_food2 and vendor_buys_food)
-								if not sellable_res2:
-									continue
+						if category_dict2 != aggregated_missions and not VendorTradeVM.vendor_can_buy_item_resources(vendor_data if (vendor_data is Dictionary) else {}, item):
+							continue
 						# Non-resource cargo (and parts-as-cargo) are always sellable; missions are always allowed.
 					_aggregate_item(category_dict2, item, vehicle_name, mission_vendor_name2, perf_log_enabled)
 			# Vehicle installed parts should not be sellable as loose cargo.
@@ -417,14 +385,8 @@ static func build_convoy_buckets(convoy_data: Dictionary, vendor_data: Dictionar
 					mission_vendor_name3 = str(get_vendor_name_for_recipient.call(recipient_id3))
 			# SELL: only include what this vendor can buy.
 			if is_sell_mode:
-				if category_dict3 != aggregated_missions:
-					var has_fuel3: bool = _item_resource_amount(item, "fuel") > 0.0
-					var has_water3: bool = _item_resource_amount(item, "water") > 0.0
-					var has_food3: bool = _item_resource_amount(item, "food") > 0.0
-					if has_fuel3 or has_water3 or has_food3:
-						var sellable_res3: bool = (has_fuel3 and vendor_buys_fuel) or (has_water3 and vendor_buys_water) or (has_food3 and vendor_buys_food)
-						if not sellable_res3:
-							continue
+				if category_dict3 != aggregated_missions and not VendorTradeVM.vendor_can_buy_item_resources(vendor_data if (vendor_data is Dictionary) else {}, item):
+					continue
 				# Non-resource cargo (and parts-as-cargo) are always sellable; missions are always allowed.
 			_aggregate_item(category_dict3, item, "Convoy", mission_vendor_name3, perf_log_enabled)
 
@@ -480,14 +442,8 @@ static func build_convoy_buckets(convoy_data: Dictionary, vendor_data: Dictionar
 					mission_vendor_name4 = str(get_vendor_name_for_recipient.call(recipient_id4))
 			# SELL: only include what this vendor can buy.
 			if is_sell_mode:
-				if category_dict4 != aggregated_missions:
-					var has_fuel4: bool = _item_resource_amount(item, "fuel") > 0.0
-					var has_water4: bool = _item_resource_amount(item, "water") > 0.0
-					var has_food4: bool = _item_resource_amount(item, "food") > 0.0
-					if has_fuel4 or has_water4 or has_food4:
-						var sellable_res4: bool = (has_fuel4 and vendor_buys_fuel) or (has_water4 and vendor_buys_water) or (has_food4 and vendor_buys_food)
-						if not sellable_res4:
-							continue
+				if category_dict4 != aggregated_missions and not VendorTradeVM.vendor_can_buy_item_resources(vendor_data if (vendor_data is Dictionary) else {}, item):
+					continue
 				# Non-resource cargo (and parts-as-cargo) are always sellable; missions are always allowed.
 			_aggregate_item(category_dict4, item, "Convoy", mission_vendor_name4, perf_log_enabled)
 
