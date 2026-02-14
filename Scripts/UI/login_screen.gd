@@ -110,9 +110,9 @@ func _setup_map_background() -> void:
 
 	_bg_camera = Camera2D.new()
 	_bg_camera.name = "Camera"
+	_bg_camera.enabled = false
 	_bg_camera.zoom = Vector2(1.05, 1.05)
 	_bg_root.add_child(_bg_camera)
-	_bg_camera.make_current()
 
 	# TileSet shared with the actual map.
 	var tile_set: TileSet = load("res://Assets/tiles/tile_set.tres")
@@ -127,6 +127,8 @@ func _setup_map_background() -> void:
 	add_child(_bg_texture_rect)
 	move_child(_bg_texture_rect, 0)
 	_bg_texture_rect.add_child(_bg_viewport)
+	# Only make current after the camera is inside the scene tree.
+	call_deferred("_make_bg_camera_current")
 
 	# Render viewport into the TextureRect.
 	_bg_texture_rect.texture = _bg_viewport.get_texture()
@@ -134,6 +136,15 @@ func _setup_map_background() -> void:
 	# Keep viewport sized to the screen.
 	if not get_viewport().size_changed.is_connected(_on_viewport_size_changed):
 		get_viewport().size_changed.connect(_on_viewport_size_changed)
+
+func _make_bg_camera_current() -> void:
+	if _bg_camera == null:
+		return
+	if not _bg_camera.is_inside_tree():
+		call_deferred("_make_bg_camera_current")
+		return
+	_bg_camera.enabled = true
+	_bg_camera.make_current()
 
 func _on_viewport_size_changed() -> void:
 	if _bg_viewport == null:
@@ -186,8 +197,8 @@ func _populate_placeholder_tiles(tile_set: TileSet) -> void:
 	for y in range(_bg_map_size.y):
 		for x in range(_bg_map_size.x):
 			var n := noise.get_noise_2d(float(x), float(y))
-			var name := _pick_tile_name(n)
-			var entry: Dictionary = _bg_tile_name_to_entry.get(name, {})
+			var tile_name := _pick_tile_name(n)
+			var entry: Dictionary = _bg_tile_name_to_entry.get(tile_name, {})
 			if entry.is_empty():
 				continue
 			_bg_tilemap.set_cell(Vector2i(x, y), int(entry["source_id"]), entry["coords"])
@@ -364,7 +375,7 @@ func _on_auth_state_changed(state: String) -> void:
 		_: # default
 			pass
 
-func _on_hub_error_occurred(domain: String, code: String, message: String, inline: bool) -> void:
+func _on_hub_error_occurred(domain: String, _code: String, message: String, inline: bool) -> void:
 	if domain == "auth" or not inline:
 		show_error(message)
 

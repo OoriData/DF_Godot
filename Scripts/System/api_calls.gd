@@ -91,6 +91,7 @@ var _http_request_map: HTTPRequest  # Dedicated non-queued requester for map dat
 var _http_request_route: HTTPRequest # Dedicated requester for route finding (non-queued)
 var _map_request_start_ms: int = 0
 var _last_map_url: String = ""
+var _map_request_inflight: bool = false
 var _http_request_mech_pool: Array = [] # ephemeral HTTPRequest nodes for part compatibility checks
 var convoys_in_transit: Array = []  # This will store the latest parsed list of convoys (either user's or all)
 var _last_requested_url: String = "" # To store the URL for logging on error
@@ -332,6 +333,7 @@ func logout() -> void:
 	if _http_request:
 		_http_request.cancel_request()
 	if _http_request_map:
+		_map_request_inflight = false
 		_http_request_map.cancel_request()
 	if _http_request_route:
 		_http_request_route.cancel_request()
@@ -488,10 +490,18 @@ func get_map_data(x_min: int = -1, x_max: int = -1, y_min: int = -1, y_max: int 
 	if y_max != -1: query_params.append("y_max=%d" % y_max)
 	if not query_params.is_empty():
 		url += "?" + "&".join(query_params)
-	# Abort any in-flight map request (optional latest-wins strategy)
-	if _http_request_map.get_http_client_status() == HTTPClient.STATUS_REQUESTING:
-		print('[APICalls] Aborting previous map request to start a new one.')
-		_http_request_map.cancel_request()
+	# Avoid starting a new request while one is still in progress.
+	# (Calling cancel_request() and then request() immediately can still hit ERR_BUSY.)
+	if not is_instance_valid(_http_request_map):
+		printerr('[APICalls][MAP] HTTPRequest node not ready; cannot fetch map.')
+		return
+	if _map_request_inflight:
+		print('[APICalls][MAP] Map request already in-flight; skipping duplicate request.')
+		return
+	if _http_request_map.get_http_client_status() != HTTPClient.STATUS_DISCONNECTED:
+		print('[APICalls][MAP] HTTPRequest is busy (status=%d); syncing flag and skipping.' % _http_request_map.get_http_client_status())
+		_map_request_inflight = true
+		return
 	_last_map_url = url
 	_map_request_start_ms = Time.get_ticks_msec()
 	_log_info('[APICalls][MAP] Dispatching parallel map request: ' + url)
@@ -501,6 +511,9 @@ func get_map_data(x_min: int = -1, x_max: int = -1, y_min: int = -1, y_max: int 
 	var err := _http_request_map.request(url, headers, HTTPClient.METHOD_GET)
 	if err != OK:
 		printerr('[APICalls][MAP] Failed to start map request (error=%s) URL=%s' % [err, url])
+		_map_request_inflight = false
+		return
+	_map_request_inflight = true
 
 func get_user_data(p_user_id: String) -> void:
 	if _user_data_requested_once:
@@ -2064,6 +2077,7 @@ func _on_request_completed(result: int, response_code: int, _headers: PackedStri
 		return
 
 func _on_map_request_completed(result: int, response_code: int, _headers: PackedStringArray, body: PackedByteArray) -> void:
+	_map_request_inflight = false
 	var done_ms := Time.get_ticks_msec()
 	var http_ms := (done_ms - _map_request_start_ms) if _map_request_start_ms > 0 else -1
 	print('[APICalls][MAP][Parallel] completed result=%d code=%d size=%d http_ms=%d url=%s' % [result, response_code, body.size(), http_ms, _last_map_url])
