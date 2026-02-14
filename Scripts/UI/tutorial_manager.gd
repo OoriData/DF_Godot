@@ -205,13 +205,17 @@ func _maybe_start() -> void:
 	if not has_any_convoys:
 		return
 
-	# Sync level from server if available, otherwise use local progress or default.
+	# Sync level from server if available.
+	# Backend contract: missing metadata.tutorial means "tutorial completed" (or completed elsewhere),
+	# except we still allow the tutorial if the convoy is at Tutorial City spawn (0,0).
 	var server_level := -1
+	var server_has_tutorial_key := false
 	if is_instance_valid(_store) and _store.has_method("get_user"):
 		var user_data: Dictionary = _store.get_user()
 		if user_data.has("metadata") and user_data.metadata is Dictionary:
 			var metadata: Dictionary = user_data.metadata
 			if metadata.has("tutorial"):
+				server_has_tutorial_key = true
 				var tutorial_val = metadata.get("tutorial")
 				if tutorial_val is int or tutorial_val is float:
 					server_level = int(tutorial_val)
@@ -221,18 +225,27 @@ func _maybe_start() -> void:
 		print("[Tutorial] Server tutorial level ", server_level, " above max; clamping to ", MAX_TUTORIAL_LEVEL)
 		server_level = MAX_TUTORIAL_LEVEL
 
+	# If the backend has no explicit tutorial stage, do not start the tutorial for
+	# returning users unless they are at the Tutorial City spawn point.
+	if not server_has_tutorial_key:
+		if not _is_convoy_at_zero():
+			if profiling_enabled:
+				print("[Tutorial] metadata.tutorial missing and convoy not at (0,0); suppressing auto-start.")
+			return
+		# Allowed: treat as stage 1 when at (0,0) so brand-new users still see tutorial.
+		server_level = start_level
+
 	if server_level > 0:
 		# Server state is the source of truth.
 		_level = server_level
 		_step = 0 # Always start at the beginning of a level
 		print("[Tutorial] Starting from server-defined level: ", _level)
 	else:
-		# No server state defined on the backend. Treat this as a fresh
-		# tutorial run and ignore any stale local progress.
+		# Explicit server tutorial stage is missing or invalid AND we are allowed to start.
 		_level = start_level
 		_step = 0
 		print("[Tutorial] Starting from default level: ", _level)
-	# else: use _level loaded from local file.
+	# NOTE: Local progress is intentionally not used as source-of-truth when backend stage is missing.
 
 	_steps = _load_steps_for_level(_level)
 	_started = true

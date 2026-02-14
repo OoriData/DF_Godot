@@ -499,6 +499,12 @@ func _check_or_prompt_new_convoy_from_store():
 	var convoys = store.get_convoys() if store.has_method("get_convoys") else []
 	var user = store.get_user() if store.has_method("get_user") else {}
 	var has_any = convoys is Array and convoys.size() > 0
+	var is_tutorial_city_spawn := false
+	if has_any and typeof(convoys[0]) == TYPE_DICTIONARY:
+		var c0: Dictionary = convoys[0]
+		var x := float(c0.get("x", 0.0))
+		var y := float(c0.get("y", 0.0))
+		is_tutorial_city_spawn = abs(x) < 0.1 and abs(y) < 0.1
 	var tutorial_stage := -1
 	if typeof(user) == TYPE_DICTIONARY:
 		var md = user.get("metadata", {})
@@ -511,17 +517,22 @@ func _check_or_prompt_new_convoy_from_store():
 			elif typeof(t) == TYPE_STRING:
 				var parsed := int(t)
 				tutorial_stage = parsed
-	# If there is no `tutorial` key in metadata (tutorial_stage stays -1),
-	# treat this as a brand-new tutorial player and start at stage 1.
-	# This ensures that fresh users with `{}` metadata still see the
-	# first-convoy onboarding dialog and can progress into the tutorial.
+	# Backend contract: missing metadata.tutorial means "tutorial completed"
+	# (or completed on a different platform).
+	# Exception: allow tutorial/onboarding when the user has no convoy OR
+	# their convoy is at the Tutorial City spawn point (0,0).
 	if tutorial_stage == -1:
-		tutorial_stage = 1
+		if not has_any or is_tutorial_city_spawn:
+			tutorial_stage = 1
+		else:
+			# Any value != 1 suppresses the first-convoy prompt and tutorial auto-start.
+			tutorial_stage = 999
 	if onboarding_log_enabled:
 		print("[Onboarding] _check_or_prompt_new_convoy_from_store: convoys_is_array=", (convoys is Array),
 			" count=", (convoys.size() if convoys is Array else -1),
 			" has_any=", has_any,
-			" tutorial_stage=", tutorial_stage)
+			" tutorial_stage=", tutorial_stage,
+			" tutorial_spawn_0_0=", is_tutorial_city_spawn)
 	if tutorial_stage != 1:
 		if onboarding_log_enabled:
 			print("[Onboarding] Tutorial stage is not 1; suppressing first-convoy prompt.")
