@@ -9,11 +9,59 @@ enum Level { DEBUG, INFO, WARN, ERROR }
 var level: int = Level.INFO
 var http_trace: bool = false
 
+# Recent log ring buffer (for bug reports / diagnostics)
+var _recent_lines: Array[String] = []
+var _recent_times_ms: Array[int] = []
+var _recent_max_lines: int = 400
+
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
 	_load_from_config()
+	# Allow optional config override
+	var cfg := ConfigFile.new()
+	if cfg.load("res://app_config.cfg") == OK:
+		_recent_max_lines = int(cfg.get_value("logging", "recent_max_lines", _recent_max_lines))
 	# Basic startup log
 	info("Logger ready (level=%s, http_trace=%s)", _level_to_string(level), str(http_trace))
+
+func get_recent_lines(max_lines: int = 200) -> Array[String]:
+	var n := int(max(0, max_lines))
+	if n == 0:
+		return []
+	if _recent_lines.size() <= n:
+		return _recent_lines.duplicate()
+	return _recent_lines.slice(_recent_lines.size() - n, _recent_lines.size())
+
+func get_recent_lines_since(window_seconds: float, max_lines: int = 200) -> Array[String]:
+	var n := int(max(0, max_lines))
+	if n == 0:
+		return []
+	var ws := float(window_seconds)
+	if ws <= 0.0:
+		return get_recent_lines(n)
+	var cutoff_ms := Time.get_ticks_msec() - int(round(ws * 1000.0))
+	var out: Array[String] = []
+	# Walk backwards so we grab newest first, then reverse.
+	for i in range(_recent_lines.size() - 1, -1, -1):
+		if i < _recent_times_ms.size() and _recent_times_ms[i] < cutoff_ms:
+			break
+		out.append(_recent_lines[i])
+		if out.size() >= n:
+			break
+	out.reverse()
+	return out
+
+func clear_recent_lines() -> void:
+	_recent_lines.clear()
+	_recent_times_ms.clear()
+
+func _push_recent_line(line: String) -> void:
+	_recent_lines.append(line)
+	_recent_times_ms.append(Time.get_ticks_msec())
+	if _recent_lines.size() > _recent_max_lines:
+		_recent_lines = _recent_lines.slice(_recent_lines.size() - _recent_max_lines, _recent_lines.size())
+		if _recent_times_ms.size() > _recent_max_lines:
+			_recent_times_ms = _recent_times_ms.slice(_recent_times_ms.size() - _recent_max_lines, _recent_times_ms.size())
 
 func _load_from_config() -> void:
 	var cfg := ConfigFile.new()
@@ -45,18 +93,26 @@ func set_level_str(level_str: String) -> void:
 
 func debug(msg: String, a: Variant = null, b: Variant = null, c: Variant = null) -> void:
 	if level <= Level.DEBUG:
-		print("[DEBUG] ", _fmt(msg, a, b, c))
+		var line := "[DEBUG] " + _fmt(msg, a, b, c)
+		_push_recent_line(line)
+		print(line)
 
 func info(msg: String, a: Variant = null, b: Variant = null, c: Variant = null) -> void:
 	if level <= Level.INFO:
-		print("[INFO ] ", _fmt(msg, a, b, c))
+		var line := "[INFO ] " + _fmt(msg, a, b, c)
+		_push_recent_line(line)
+		print(line)
 
 func warn(msg: String, a: Variant = null, b: Variant = null, c: Variant = null) -> void:
 	if level <= Level.WARN:
-		printerr("[WARN ] ", _fmt(msg, a, b, c))
+		var line := "[WARN ] " + _fmt(msg, a, b, c)
+		_push_recent_line(line)
+		printerr(line)
 
 func error(msg: String, a: Variant = null, b: Variant = null, c: Variant = null) -> void:
-	printerr("[ERROR] ", _fmt(msg, a, b, c))
+	var line := "[ERROR] " + _fmt(msg, a, b, c)
+	_push_recent_line(line)
+	printerr(line)
 
 func _fmt(msg: String, a: Variant, b: Variant, c: Variant) -> String:
 	var out := msg

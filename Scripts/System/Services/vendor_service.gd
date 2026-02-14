@@ -10,6 +10,15 @@ const VendorModel = preload("res://Scripts/Data/Models/Vendor.gd")
 
 signal vehicle_data_received(data: Dictionary)
 
+var _last_vendor_data: Dictionary = {}
+var _last_vendor_updated_ms: int = 0
+
+func get_last_vendor_data() -> Dictionary:
+	return _last_vendor_data.duplicate(true)
+
+func get_last_vendor_id() -> String:
+	return str(_last_vendor_data.get("vendor_id", _last_vendor_data.get("id", "")))
+
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
 	# Bridge transport to domain event
@@ -49,6 +58,8 @@ func _on_vendor_data_received(vendor_data: Dictionary) -> void:
 	if data is Dictionary:
 		var vid := str(data.get("vendor_id", data.get("id", "")))
 		print("[VendorService] vendor_data_received vendor_id=", vid, " keys=", data.keys())
+		_last_vendor_data = (data as Dictionary).duplicate(true)
+		_last_vendor_updated_ms = Time.get_ticks_msec()
 	var logger := get_node_or_null("/root/Logger")
 	if is_instance_valid(logger):
 		logger.debug("VendorService: vendor data received keys=%s", (data.keys() if data is Dictionary else []))

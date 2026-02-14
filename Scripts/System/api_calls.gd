@@ -32,11 +32,17 @@ signal cargo_data_received(cargo: Dictionary)
 signal vehicle_data_received(vehicle_data: Dictionary)
 
 # Transaction signals (restored for UI feedback)
+@warning_ignore("unused_signal")
 signal cargo_bought(result: Dictionary)
+@warning_ignore("unused_signal")
 signal cargo_sold(result: Dictionary)
+@warning_ignore("unused_signal")
 signal vehicle_bought(result: Dictionary)
+@warning_ignore("unused_signal")
 signal vehicle_sold(result: Dictionary)
+@warning_ignore("unused_signal")
 signal resource_bought(result: Dictionary)
+@warning_ignore("unused_signal")
 signal resource_sold(result: Dictionary)
 
 # --- Journey Planning Signals ---
@@ -45,6 +51,10 @@ signal convoy_created(convoy: Dictionary) # Restored for service-driven refresh
 
 # --- Warehouse Signals ---
 signal warehouse_received(warehouse_data: Dictionary)
+
+# --- Bug Report Signals ---
+@warning_ignore("unused_signal")
+signal bug_report_submitted(result: Dictionary)
 
 var BASE_URL: String = 'http://127.0.0.1:1337' # default (overridden via config/env)
 # Allow override via configuration and environment (cannot be const due to runtime lookup)
@@ -171,6 +181,14 @@ var _current_client_txn_id: int = -1
 var _current_request_start_ms: int = 0
 var _pending_vendor_refresh: Dictionary = {} # vendor_id -> true
 var _inflight_vendor_id: String = ""
+
+# --- Last request diagnostics (for UI error surfacing / bug report testing) ---
+var _current_debug_tag: String = ""
+var _current_request_method: int = HTTPClient.METHOD_GET
+var _last_request_debug: Dictionary = {}
+
+func get_last_request_debug() -> Dictionary:
+	return _last_request_debug.duplicate(true)
 
 func _extract_query_param(url: String, key: String) -> String:
 	var q_idx := url.find("?")
@@ -409,6 +427,34 @@ func exchange_auth_token(code: String, state: String, code_verifier: String) -> 
 	}
 	_request_queue.append(request_details)
 	_process_queue()
+
+
+# --- Bug report ---
+func submit_bug_report(payload: Dictionary) -> void:
+	# Client-side submits a JSON body to POST /bug-report.
+	# Backend should create a GitHub issue (server-side token).
+	var url := "%s/bug-report" % BASE_URL
+	var headers: PackedStringArray = ['accept: application/json', 'content-type: application/json']
+	headers = _apply_auth_header(headers)
+	var body_json := JSON.stringify(payload)
+	var body_bytes := body_json.to_utf8_buffer().size()
+	var has_shot := payload.has("screenshot")
+	var has_logs := payload.has("logs")
+	var has_metadata := payload.has("meta")
+	var shot_b64_len := 0
+	if has_shot and payload["screenshot"] is Dictionary:
+		var s := payload["screenshot"] as Dictionary
+		if s.has("base64"):
+			shot_b64_len = String(s.get("base64", "")).length()
+	_log_info("[APICalls][BugReport] enqueue url=%s bytes=%d screenshot=%s shot_b64_len=%d logs=%s meta=%s" % [url, body_bytes, str(has_shot), shot_b64_len, str(has_logs), str(has_metadata)])
+	_diag_enqueue("bug_report", {
+		"url": url,
+		"headers": headers,
+		"purpose": RequestPurpose.NONE,
+		"method": HTTPClient.METHOD_POST,
+		"body": body_json,
+		"signal_name": "bug_report_submitted"
+	})
 
 # --- Existing APIs ---
 func get_convoy_data(convoy_id: String) -> void:
@@ -1380,6 +1426,7 @@ func _process_queue() -> void:
 	var wait_ms := (now_ms - enq_ms) if enq_ms >= 0 else -1
 	_current_client_txn_id = int(next_request.get("client_txn_id", -1))
 	var dbg_tag := String(next_request.get("debug_tag", ""))
+	_current_debug_tag = dbg_tag
 	print("[APICalls][Dequeue] tag=", dbg_tag, " id=", _current_client_txn_id, " wait_ms=", wait_ms, " qlen_after=", q_after)
 	_last_requested_url = next_request.get("url", "")
 	_current_request_purpose = next_request.get("purpose", RequestPurpose.NONE)
@@ -1390,6 +1437,7 @@ func _process_queue() -> void:
 			_inflight_vendor_id = _extract_query_param(_last_requested_url, "vendor_id")
 	var headers: PackedStringArray = next_request.get("headers", [])
 	var method: int = next_request.get("method", HTTPClient.METHOD_GET)
+	_current_request_method = method
 	var body: String = next_request.get("body", "")
 	headers = _apply_auth_header(headers)
 	var purpose_str: String = RequestPurpose.keys()[_current_request_purpose]
@@ -1475,7 +1523,28 @@ func _abort_map_request_for_auth():
 func _on_request_completed(result: int, response_code: int, _headers: PackedStringArray, body: PackedByteArray) -> void:
 	var done_ms := Time.get_ticks_msec()
 	var http_elapsed_ms := done_ms - _current_request_start_ms
+	var resp_preview := ""
+	if body.size() > 0:
+		resp_preview = body.get_string_from_utf8()
+		if resp_preview == "":
+			resp_preview = str(body)
+		resp_preview = resp_preview.substr(0, 400)
+	_last_request_debug = {
+		"tag": _current_debug_tag,
+		"id": _current_client_txn_id,
+		"method": _current_request_method,
+		"url": _last_requested_url,
+		"purpose": RequestPurpose.keys()[_current_request_purpose],
+		"signal_name": _current_patch_signal_name,
+		"result": result,
+		"code": response_code,
+		"elapsed_ms": http_elapsed_ms,
+		"body_bytes": body.size(),
+		"body_preview": resp_preview,
+	}
 	_log_info("[APICalls] _on_request_completed() purpose=%s result=%d code=%d url=%s id=%d http_ms=%d" % [RequestPurpose.keys()[_current_request_purpose], result, response_code, _last_requested_url, _current_client_txn_id, http_elapsed_ms])
+	if _current_debug_tag == "bug_report":
+		_log_info("[APICalls][BugReport] complete result=%d code=%d body_bytes=%d preview=%s" % [result, response_code, body.size(), resp_preview])
 	if _current_patch_signal_name == "warehouse_convoy_spawned":
 		_log_info("[APICalls][SpawnConvoy] completion result=%d http_code=%d body_bytes=%d" % [result, response_code, body.size()])
 	var request_purpose_at_start = _current_request_purpose
@@ -1603,6 +1672,7 @@ func _on_request_completed(result: int, response_code: int, _headers: PackedStri
 			print("[APICalls][PATCH_TXN] fail_body_preview=", fail_preview)
 			# Try to parse JSON error for clearer feedback (e.g. FastAPI validation 'detail')
 			var fail_json = JSON.parse_string(fail_body_text)
+			var detail_msg := ""
 			if typeof(fail_json) == TYPE_DICTIONARY:
 				var msg_parts: Array = []
 				if fail_json.has("detail"):
@@ -1610,17 +1680,18 @@ func _on_request_completed(result: int, response_code: int, _headers: PackedStri
 				if fail_json.has("error"):
 					msg_parts.append(str(fail_json["error"]))
 				if msg_parts.size() > 0:
-					var combined := "PATCH '" + _current_patch_signal_name + "' failed: " + "; ".join(msg_parts)
-					emit_signal('fetch_error', combined)
+					detail_msg = "; ".join(msg_parts)
 			elif typeof(fail_json) == TYPE_ARRAY and fail_json.size() > 0:
 				# FastAPI may return list of validation issues
 				var first_issue = fail_json[0]
 				if typeof(first_issue) == TYPE_DICTIONARY and first_issue.has("msg"):
-					emit_signal('fetch_error', "PATCH '" + _current_patch_signal_name + "' failed: " + str(first_issue["msg"]))
-			# Complete request now; we've surfaced error
+					detail_msg = str(first_issue["msg"])
+			if detail_msg == "":
+				detail_msg = fail_body_text
+			if _current_debug_tag == "bug_report" and _current_patch_signal_name == "bug_report_submitted":
+				emit_signal('fetch_error', "Bug report submit failed (HTTP %d): %s" % [response_code, detail_msg])
 			else:
-				# Fallback for non-JSON error body
-				emit_signal('fetch_error', "PATCH '" + _current_patch_signal_name + "' failed: " + fail_body_text)
+				emit_signal('fetch_error', "PATCH '" + _current_patch_signal_name + "' failed: " + detail_msg)
 			_complete_current_request()
 			return
 

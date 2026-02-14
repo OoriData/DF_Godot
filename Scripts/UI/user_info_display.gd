@@ -9,6 +9,9 @@ signal convoy_menu_requested(convoy_id: String)
 @onready var settings_button: Button = $SettingsButton
 var _settings_menu_instance: Window
 
+var _bug_report_button: Button
+var _bug_report_window: BugReportWindow
+
 # Store original font sizes to scale them from a clean base
 var _original_username_font_size: int
 var _original_money_font_size: int
@@ -46,6 +49,9 @@ func _ready() -> void:
 	# Settings button hookup
 	if is_instance_valid(settings_button):
 		settings_button.pressed.connect(_on_settings_button_pressed)
+
+	# Bug report button (placed next to Options)
+	_ensure_bug_report_button()
 
 
 
@@ -104,6 +110,81 @@ func _on_ui_scale_changed(_new_scale: float) -> void:
 	# Font scaling is now handled globally by content_scale_factor.
 	# We no longer need to manually override font sizes here.
 	pass
+
+
+func _ensure_bug_report_button() -> void:
+	if is_instance_valid(_bug_report_button):
+		return
+	_bug_report_button = Button.new()
+	_bug_report_button.name = "BugReportButton"
+	_bug_report_button.text = "Report Bug"
+	_bug_report_button.focus_mode = Control.FOCUS_NONE
+	_apply_bug_report_button_style(_bug_report_button)
+	_bug_report_button.pressed.connect(_on_bug_report_pressed)
+	add_child(_bug_report_button)
+	# Place to the right of the Options button (and on the right side of any separator).
+	if is_instance_valid(settings_button):
+		var idx := get_children().find(settings_button)
+		if idx != -1:
+			move_child(_bug_report_button, idx + 1)
+	_bug_report_button.mouse_filter = Control.MOUSE_FILTER_PASS
+
+
+func _apply_bug_report_button_style(btn: Button) -> void:
+	if not is_instance_valid(btn):
+		return
+	# Dark red theme override for the button background.
+	var normal := StyleBoxFlat.new()
+	normal.bg_color = Color("#5A0B0B")
+	normal.corner_radius_bottom_left = 6
+	normal.corner_radius_bottom_right = 6
+	normal.corner_radius_top_left = 6
+	normal.corner_radius_top_right = 6
+	normal.content_margin_left = 10
+	normal.content_margin_right = 10
+	normal.content_margin_top = 6
+	normal.content_margin_bottom = 6
+
+	var hover := normal.duplicate() as StyleBoxFlat
+	hover.bg_color = Color("#741010")
+
+	var pressed := normal.duplicate() as StyleBoxFlat
+	pressed.bg_color = Color("#3F0707")
+
+	btn.add_theme_stylebox_override("normal", normal)
+	btn.add_theme_stylebox_override("hover", hover)
+	btn.add_theme_stylebox_override("pressed", pressed)
+	btn.add_theme_color_override("font_color", Color("#FFFFFF"))
+	btn.add_theme_color_override("font_hover_color", Color("#FFFFFF"))
+	btn.add_theme_color_override("font_pressed_color", Color("#FFFFFF"))
+
+
+func _on_bug_report_pressed() -> void:
+	# Capture screenshot BEFORE any window/popup appears.
+	var png_bytes := PackedByteArray()
+	# Wait until the frame is rendered so the viewport image is valid.
+	await RenderingServer.frame_post_draw
+	var vp := get_viewport()
+	if is_instance_valid(vp) and is_instance_valid(vp.get_texture()):
+		var img := vp.get_texture().get_image()
+		if img:
+			png_bytes = img.save_png_to_buffer()
+
+	# Lazy-create bug report window
+	if not is_instance_valid(_bug_report_window):
+		var script := load("res://Scripts/UI/bug_report_window.gd")
+		if script == null:
+			push_error("Failed to load bug_report_window.gd")
+			return
+		_bug_report_window = script.new()
+		get_tree().root.add_child(_bug_report_window)
+
+	if _bug_report_window.has_method("set_screenshot_png_bytes"):
+		_bug_report_window.set_screenshot_png_bytes(png_bytes)
+	if _bug_report_window.has_method("open_centered"):
+		_bug_report_window.open_centered()
+	else:
+		_bug_report_window.show()
 
 
 func _update_display(data: Dictionary = {}):
