@@ -1013,39 +1013,55 @@ func _show_confirmation_panel(route_data: Dictionary):
 	# Clear panel for rebuild
 	for child in _confirmation_panel.get_children():
 		child.queue_free()
-	# Title with route index
+	# ---------------- Title & Basic Info ----------------
+	var header_vbox = VBoxContainer.new()
+	header_vbox.add_theme_constant_override("separation", 2)
+	_confirmation_panel.add_child(header_vbox)
+
 	var title = Label.new()
 	title.text = "Confirm Journey (%d / %d)" % [_current_route_choice_index + 1, max(1, _all_route_choices.size())]
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_confirmation_panel.add_child(title)
-	# ---------------- BODY START ----------------
-	var summary = Label.new()
-	summary.autowrap_mode = TextServer.AUTOWRAP_WORD
+	title.add_theme_font_size_override("font_size", 22)
+	title.add_theme_color_override("font_color", Color(0.9, 0.95, 1.0))
+	header_vbox.add_child(title)
+
 	var journey = route_data.get("journey", {})
 	var tiles = (journey.get("route_x", []) as Array).size()
 	var distance_miles = tiles * 30.0
 	var eta_minutes = route_data.get("delta_t", 0.0)
 	var eta_fmt = _format_travel_time(eta_minutes)
-	summary.text = "Destination: %s\nDistance: %s miles\nEstimated Travel Time: %s" % [ _destination_data.get("name", "Unknown"), NumberFormat.fmt_float(distance_miles, 2), eta_fmt]
-	_confirmation_panel.add_child(summary)
-	var resources_header = Label.new()
-	resources_header.text = "Projected Resource Usage"
-	_confirmation_panel.add_child(resources_header)
-	# --- Resource Summary (Consumption vs Reserves) ---
+	
+	var sub_info = Label.new()
+	sub_info.text = "%s • %s miles • ETA: %s" % [_destination_data.get("name", "Unknown"), NumberFormat.fmt_float(distance_miles, 1), eta_fmt]
+	sub_info.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	sub_info.add_theme_color_override("font_color", Color(0.7, 0.75, 0.8))
+	header_vbox.add_child(sub_info)
+
+	_confirmation_panel.add_child(HSeparator.new())
+
+	# --- Resource Section ---
 	var resources_section = VBoxContainer.new()
-	resources_section.name = "ResourcesSection"
 	_confirmation_panel.add_child(resources_section)
+	
+	var res_header_hbox = HBoxContainer.new()
+	resources_section.add_child(res_header_hbox)
+	
+	var res_icon = Label.new()
+	res_icon.text = "📦"
+	res_header_hbox.add_child(res_icon)
+	
 	var res_title = Label.new()
-	res_title.text = "Convoy Resources"
-	res_title.add_theme_color_override("font_color", Color(0.9,0.9,1))
-	resources_section.add_child(res_title)
-	# Gather consumption from route
+	res_title.text = "Projected Resource Usage"
+	res_title.add_theme_font_size_override("font_size", 16)
+	res_title.add_theme_color_override("font_color", Color(0.8, 0.85, 0.95))
+	res_header_hbox.add_child(res_title)
+
 	var fuel_needed: float = 0.0
 	for fk in route_data.get("fuel_expenses", {}):
 		fuel_needed += _coerce_number(route_data.get("fuel_expenses", {})[fk])
 	var water_needed: float = _coerce_number(route_data.get("water_expense", 0.0))
 	var food_needed: float = _coerce_number(route_data.get("food_expense", 0.0))
-	# Gather convoy reserves
+	
 	var fuel_have: float = _coerce_number(convoy_data_received.get("fuel", 0.0))
 	var fuel_max: float = _coerce_number(convoy_data_received.get("max_fuel", 0.0))
 	var water_have: float = _coerce_number(convoy_data_received.get("water", 0.0))
@@ -1053,339 +1069,264 @@ func _show_confirmation_panel(route_data: Dictionary):
 	var food_have: float = _coerce_number(convoy_data_received.get("food", 0.0))
 	var food_max: float = _coerce_number(convoy_data_received.get("max_food", 0.0))
 
-	# Helper to classify status (assumption: warn if >50% of reserve, critical if need > reserve)
 	var _classify = func(need: float, have: float) -> String:
-		if need <= 0.0:
-			return "ok"
-		if have <= 0.0:
-			return "critical" # any need when none available
-		if need > have + 0.0001:
-			return "critical"
-		if need > 0.5 * have:
-			return "warn"
+		if need <= 0.0: return "ok"
+		if have <= 0.0: return "critical"
+		if need > have + 0.0001: return "critical"
+		if need > 0.5 * have: return "warn"
 		return "ok"
 
 	var fuel_status = _classify.call(fuel_needed, fuel_have)
 	var water_status = _classify.call(water_needed, water_have)
 	var food_status = _classify.call(food_needed, food_have)
-
 	var resource_warning: bool = (fuel_status == "warn" or water_status == "warn" or food_status == "warn")
 	var resource_critical: bool = (fuel_status == "critical" or water_status == "critical" or food_status == "critical")
 
-	# Container panel for contrast (now also housing energy subsection)
 	var res_panel = PanelContainer.new()
-	var sb = StyleBoxFlat.new()
-	sb.bg_color = Color(0.12,0.14,0.18,0.95)
-	if sb.has_method("set_border_width_all"):
-		sb.set_border_width_all(1)
-	else:
-		sb.border_width_left = 1
-		sb.border_width_right = 1
-		sb.border_width_top = 1
-		sb.border_width_bottom = 1
-	sb.border_color = Color(0.25,0.3,0.38)
-	sb.corner_radius_top_left = 4
-	sb.corner_radius_top_right = 4
-	sb.corner_radius_bottom_left = 4
-	sb.corner_radius_bottom_right = 4
-	res_panel.add_theme_stylebox_override("panel", sb)
+	var main_sb = StyleBoxFlat.new()
+	main_sb.bg_color = Color(0.08, 0.1, 0.12, 0.8)
+	main_sb.set_border_width_all(1)
+	main_sb.border_color = Color(0.2, 0.25, 0.3)
+	main_sb.corner_radius_top_left = 6
+	main_sb.corner_radius_top_right = 6
+	main_sb.corner_radius_bottom_left = 6
+	main_sb.corner_radius_bottom_right = 6
+	res_panel.add_theme_stylebox_override("panel", main_sb)
 	resources_section.add_child(res_panel)
+
 	var panel_vbox = VBoxContainer.new()
-	panel_vbox.add_theme_constant_override("separation", 8)
+	panel_vbox.add_theme_constant_override("separation", 0)
 	res_panel.add_child(panel_vbox)
-	# Resource Grid: Resource | Need | Have | Remaining
-	var res_grid = GridContainer.new()
-	res_grid.columns = 4
-	res_grid.add_theme_constant_override("h_separation", 32)
-	panel_vbox.add_child(res_grid)
+
+	# -- Table Header Background --
+	var header_bar = PanelContainer.new()
+	var hsb = StyleBoxFlat.new()
+	hsb.bg_color = Color(0.15, 0.18, 0.22, 1.0)
+	hsb.corner_radius_top_left = 6
+	hsb.corner_radius_top_right = 6
+	header_bar.add_theme_stylebox_override("panel", hsb)
+	panel_vbox.add_child(header_bar)
+
+	var header_hbox = HBoxContainer.new()
+	header_hbox.add_theme_constant_override("separation", 16)
+	header_bar.add_child(header_hbox)
+	
+	var col_widths = [0, 85, 110, 110]
+	var _create_col_label = func(text: String, alignment: int, min_w: float) -> Label:
+		var lbl = Label.new()
+		lbl.text = text
+		if min_w > 0: lbl.custom_minimum_size.x = min_w
+		lbl.horizontal_alignment = alignment
+		if alignment == HORIZONTAL_ALIGNMENT_LEFT:
+			lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		return lbl
+
 	var header_labels = ["Resource", "Need", "Have (Capacity)", "Remaining"]
-	for h in header_labels:
-		var hl = Label.new()
-		hl.text = h
-		hl.add_theme_color_override("font_color", Color(0.75,0.85,0.95))
-		if h != "Resource":
-			hl.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-		res_grid.add_child(hl)
+	for i in range(header_labels.size()):
+		var hl = _create_col_label.call(header_labels[i], (HORIZONTAL_ALIGNMENT_RIGHT if i > 0 else HORIZONTAL_ALIGNMENT_LEFT), col_widths[i])
+		hl.add_theme_color_override("font_color", Color(0.6, 0.7, 0.8))
+		hl.add_theme_font_size_override("font_size", 13)
+		header_hbox.add_child(hl)
+
+	# -- Rows VBox --
+	var res_list = VBoxContainer.new()
+	res_list.add_theme_constant_override("separation", 2)
+	panel_vbox.add_child(res_list)
+
 	var _add_res_row = func(label: String, unit: String, need: float, have: float, max_v: float, status: String):
-		var row_container = Control.new() # Dummy container just in case needed for spacing
+		var row_panel = PanelContainer.new()
+		var bg_style = StyleBoxFlat.new()
+		bg_style.set_corner_radius_all(2)
 		
-		# --- Resource Name ---
-		var icon_lbl = Label.new()
-		icon_lbl.text = label
-		if status == "critical":
-			icon_lbl.add_theme_color_override("font_color", Color(1,0.35,0.35))
-			icon_lbl.text = "⚠️ " + label
-		elif status == "warn":
-			icon_lbl.add_theme_color_override("font_color", Color(1,0.75,0.35))
-		res_grid.add_child(icon_lbl)
+		match status:
+			"critical":
+				bg_style.bg_color = Color(0.6, 0.1, 0.1, 0.15) # Subtle glow
+				bg_style.set_border_width_all(1)
+				bg_style.border_color = Color(1.0, 1.0, 1.0, 0.8) # White border
+			"warn":
+				bg_style.bg_color = Color(0.6, 0.4, 0.1, 0.15)
+				bg_style.set_border_width_all(1)
+				bg_style.border_color = Color(1.0, 0.8, 0.4, 0.5)
+			_:
+				bg_style.bg_color = Color(0,0,0,0)
+				
+		row_panel.add_theme_stylebox_override("panel", bg_style)
+		res_list.add_child(row_panel)
 		
-		# --- Need ---
-		var need_lbl = Label.new()
-		need_lbl.text = NumberFormat.fmt_float(need, 2) + unit
-		need_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-		res_grid.add_child(need_lbl)
+		var row_hbox = HBoxContainer.new()
+		row_hbox.add_theme_constant_override("separation", 16)
+		row_panel.add_child(row_hbox)
 		
-		# --- Have (Capacity) ---
-		var have_lbl = Label.new()
+		var name_text = label
+		if status == "critical": name_text = "⚠️ " + label
+		var icon_lbl = _create_col_label.call(name_text, HORIZONTAL_ALIGNMENT_LEFT, col_widths[0])
+		if status == "critical": icon_lbl.add_theme_color_override("font_color", Color(1, 0.4, 0.4))
+		elif status == "warn": icon_lbl.add_theme_color_override("font_color", Color(1, 0.8, 0.4))
+		row_hbox.add_child(icon_lbl)
+		
+		row_hbox.add_child(_create_col_label.call(NumberFormat.fmt_float(need, 2) + unit, HORIZONTAL_ALIGNMENT_RIGHT, col_widths[1]))
+		
 		var have_text = NumberFormat.fmt_float(have, 2)
-		if max_v > 0:
-			have_text += " / " + NumberFormat.fmt_float(max_v, 0)
-		have_lbl.text = have_text + unit
-		have_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-		res_grid.add_child(have_lbl)
+		if max_v > 0: have_text += " / " + NumberFormat.fmt_float(max_v, 0)
+		row_hbox.add_child(_create_col_label.call(have_text + unit, HORIZONTAL_ALIGNMENT_RIGHT, col_widths[2]))
 		
-		# --- Remaining ---
-		var rem_lbl = Label.new()
 		var remaining = have - need
+		var rem_lbl = _create_col_label.call(NumberFormat.fmt_float(remaining, 2) + unit, HORIZONTAL_ALIGNMENT_RIGHT, col_widths[3])
 		if remaining < 0:
 			rem_lbl.text = "Short " + NumberFormat.fmt_float(abs(remaining), 2) + unit
-			rem_lbl.add_theme_color_override("font_color", Color(1,0.35,0.35))
-			# Visual highlight for the row effect could be simulated by background panel if needed
+			rem_lbl.add_theme_color_override("font_color", Color(1, 0.4, 0.4))
 		elif status == "warn":
-			rem_lbl.text = NumberFormat.fmt_float(remaining, 2) + unit
-			rem_lbl.add_theme_color_override("font_color", Color(1,0.75,0.35))
-		else:
-			rem_lbl.text = NumberFormat.fmt_float(remaining, 2) + unit
-		rem_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-		res_grid.add_child(rem_lbl)
+			rem_lbl.add_theme_color_override("font_color", Color(1, 0.8, 0.4))
+		row_hbox.add_child(rem_lbl)
 
 	_add_res_row.call("⛽ Fuel", "L", fuel_needed, fuel_have, fuel_max, fuel_status)
 	_add_res_row.call("💧 Water", "L", water_needed, water_have, water_max, water_status)
 	_add_res_row.call("🍖 Food", "", food_needed, food_have, food_max, food_status)
-	# Warning / Critical message (no legend explanation)
+
 	if resource_critical or resource_warning:
 		var warn_lbl = Label.new()
 		warn_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD
-		if resource_critical:
-			warn_lbl.text = "[CRITICAL] Insufficient reserves for journey." if not resource_warning else "[CRITICAL] Insufficient reserves; high usage on others."
-			warn_lbl.add_theme_color_override("font_color", Color(1,0.4,0.4))
-			warn_lbl.add_theme_font_size_override("font_size", 18) # Larger text
-		elif resource_warning:
-			warn_lbl.text = "[Warning] High consumption (>50%) on at least one reserve."
-			warn_lbl.add_theme_color_override("font_color", Color(1,0.75,0.35))
+		warn_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		var text_pfx = "[CRITICAL] " if resource_critical else "[WARNING] "
+		var text_msg = "Insufficient reserves for journey." if resource_critical else "High consumption on reserves."
+		warn_lbl.text = text_pfx + text_msg
+		warn_lbl.add_theme_color_override("font_color", Color(1, 0.4, 0.4) if resource_critical else Color(1, 0.8, 0.4))
+		warn_lbl.add_theme_font_size_override("font_size", 16)
 		panel_vbox.add_child(warn_lbl)
-	# (Vehicle Energy subsection will be appended later if entries exist)
-	# Resolve kWh expenses and build energy entries (will attach inside panel_vbox)
+
+	# --- Vehicle Energy ---
 	var kwh_expenses: Dictionary = _resolve_kwh_expenses(route_data)
 	var vehicles: Array = _get_vehicle_list()
 	var energy_entries: Array = []
 	var any_critical := false
 	for v in vehicles:
-		if not (v is Dictionary):
-			continue
+		if not (v is Dictionary): continue
 		var cap_val: float = _coerce_number(v.get('kwh_capacity', 0.0))
-		if cap_val <= 0.0:
-			continue
+		if cap_val <= 0.0: continue
 		var vid = v.get('vehicle_id')
 		var used: float = _coerce_number(kwh_expenses.get(str(vid), 0.0))
-		if used <= 0.0:
-			continue
+		if used <= 0.0: continue
 		var is_ic := bool(v.get('internal_combustion', false))
-		var veh_name := str(v.get('name', 'Vehicle'))
 		var status := "normal"
-		var display_used := used
 		if used > cap_val:
-			if is_ic:
-				status = "discharged"
-				display_used = cap_val
+			if is_ic: status = "discharged"
 			else:
 				status = "critical"
 				any_critical = true
-		energy_entries.append({"name": veh_name, "used": display_used, "capacity": cap_val, "raw_used": used, "status": status, "is_ic": is_ic})
+		energy_entries.append({"name": str(v.get('name', 'Vehicle')), "used": (cap_val if is_ic and used > cap_val else used), "capacity": cap_val, "raw_used": used, "status": status, "is_ic": is_ic})
+
 	if not energy_entries.is_empty():
 		panel_vbox.add_child(HSeparator.new())
-		var energy_subtitle = Label.new()
-		energy_subtitle.text = "Vehicle Energy"
-		energy_subtitle.add_theme_color_override("font_color", Color(0.85,0.85,1))
-		panel_vbox.add_child(energy_subtitle)
 		var energy_grid = GridContainer.new()
 		energy_grid.columns = 4
 		energy_grid.add_theme_constant_override("h_separation", 24)
 		panel_vbox.add_child(energy_grid)
 		for e in energy_entries:
 			var icon_lbl = Label.new()
-			match e.status:
-				"critical": icon_lbl.text = "❗"
-				"discharged": icon_lbl.text = "🪫"
-				_:
-					icon_lbl.text = "🔋"
+			icon_lbl.text = "❗" if e.status == "critical" else ("🪫" if e.status == "discharged" else "🔋")
 			energy_grid.add_child(icon_lbl)
 			var name_lbl = Label.new()
 			name_lbl.text = e.name
-			if e.status == "critical":
-				name_lbl.add_theme_color_override("font_color", Color(1,0.4,0.4))
-			elif e.status == "discharged":
-				name_lbl.add_theme_color_override("font_color", Color(1,0.75,0.4))
+			if e.status == "critical": name_lbl.add_theme_color_override("font_color", Color(1, 0.4, 0.4))
 			energy_grid.add_child(name_lbl)
 			var bar = ProgressBar.new()
-			bar.min_value = 0
 			bar.max_value = e.capacity
 			bar.value = e.used
 			bar.custom_minimum_size = Vector2(140, 14)
-			if bar.has_method("set_show_percentage"):
-				bar.set("show_percentage", false)
-			var bar_tt = "%s Usage: %s / %s kWh" % [e.name, NumberFormat.fmt_float(e.used, 2), NumberFormat.fmt_float(e.capacity, 2)]
-			if e.status == "critical":
-				bar_tt += " (Shortfall %s kWh)" % NumberFormat.fmt_float(e.raw_used - e.capacity, 2)
-			elif e.status == "discharged":
-				bar_tt += " (Fully Discharged)"
-			bar.tooltip_text = bar_tt
+			if bar.has_method("set_show_percentage"): bar.set("show_percentage", false)
 			energy_grid.add_child(bar)
 			var nums_lbl = Label.new()
-			if e.status == "critical":
-				# Show true need and shortfall for pure electric shortfall
-				nums_lbl.text = "Need: %s  Capacity: %s  Short: %s" % [
-					NumberFormat.fmt_float(e.raw_used, 2),
-					NumberFormat.fmt_float(e.capacity, 2),
-					NumberFormat.fmt_float(e.raw_used - e.capacity, 2),
-				]
-			else:
-				# For normal & discharged (IC) cases, cap the displayed need at capacity
-				nums_lbl.text = "Need: %s  Capacity: %s" % [NumberFormat.fmt_float(e.used, 2), NumberFormat.fmt_float(e.capacity, 2)]
+			nums_lbl.text = "%s / %s kWh" % [NumberFormat.fmt_float(e.used, 1), NumberFormat.fmt_float(e.capacity, 1)]
 			energy_grid.add_child(nums_lbl)
 
-	# --- Delivery Manifest Section ---
-	# Calculate potential earnings and list items for the selected destination
+	# --- Delivery Manifest ---
 	var dest_name = _destination_data.get("name", "")
 	var dest_settlement_id = str(_destination_data.get("id", ""))
 	if dest_settlement_id == "": dest_settlement_id = str(_destination_data.get("settlement_id", ""))
-	
-	var dest_vendors = _destination_data.get("vendors", [])
-	var valid_dest_ids = []
-	if dest_settlement_id != "": valid_dest_ids.append(dest_settlement_id)
-	
-	if dest_vendors is Array:
-		for v in dest_vendors:
+	var valid_dest_ids = [dest_settlement_id]
+	if _destination_data.get("vendors") is Array:
+		for v in _destination_data.get("vendors"):
 			if v is Dictionary:
 				if v.has("vendor_id"): valid_dest_ids.append(str(v.get("vendor_id")))
 				if v.has("id"): valid_dest_ids.append(str(v.get("id")))
-	
-	print("[ConvoyJourneyMenu] Checking cargo for destination: %s (IDs: %s)" % [dest_name, valid_dest_ids])
-	
+
 	var manifest_items = []
 	var total_earnings = 0.0
-	
-	# Helper to check if item is for this destination
 	var _is_for_destination = func(item: Dictionary) -> bool:
-		# 1. Direct Name Match
-		var r_name = str(item.get("recipient_settlement_name", ""))
-		if r_name == dest_name and r_name != "": return true
-		
-		# 2. Output Debug for tricky items
-		var recipient = str(item.get("recipient", ""))
-		# print("  > Item: %s | Recipient: %s" % [item.get("name"), recipient])
-
-		# 3. ID Match against any valid destination ID (Settlement or Vendor)
-		var item_ids = []
-		if recipient != "": item_ids.append(recipient)
-		if item.has("recipient_vendor_id"): item_ids.append(str(item.get("recipient_vendor_id")))
-		if item.has("destination_vendor_id"): item_ids.append(str(item.get("destination_vendor_id")))
-		if item.has("mission_vendor_id"): item_ids.append(str(item.get("mission_vendor_id")))
-		
-		for vid in item_ids:
-			if vid != "" and valid_dest_ids.has(vid):
-				# print("    MATCH FOUND on ID: %s" % vid)
-				return true
-				
+		if str(item.get("recipient_settlement_name", "")) == dest_name: return true
+		var r = str(item.get("recipient", ""))
+		var ids = [r]
+		if item.has("recipient_vendor_id"): ids.append(str(item.get("recipient_vendor_id")))
+		if item.has("destination_vendor_id"): ids.append(str(item.get("destination_vendor_id")))
+		for vid in ids:
+			if vid != "" and valid_dest_ids.has(vid): return true
 		return false
 
-	var vehicles_list = _get_vehicle_list()
-	for v in vehicles_list:
+	var vlist = _get_vehicle_list()
+	for v in vlist:
 		if not (v is Dictionary): continue
-		var cargo_list = []
-		if v.get("cargo_items_typed") is Array: cargo_list.append_array(v.get("cargo_items_typed"))
-		elif v.get("cargo_items") is Array: cargo_list.append_array(v.get("cargo_items"))
-		elif v.get("cargo") is Array: cargo_list.append_array(v.get("cargo"))
-		
-		for item in cargo_list:
+		var clist = []
+		if v.get("cargo_items_typed") is Array: clist.append_array(v.get("cargo_items_typed"))
+		elif v.get("cargo_items") is Array: clist.append_array(v.get("cargo_items"))
+		elif v.get("cargo") is Array: clist.append_array(v.get("cargo"))
+		for item in clist:
 			if not (item is Dictionary): continue
-			
 			if _is_for_destination.call(item):
-				var item_name = item.get("name", "Unknown Cargo")
 				var qty = _coerce_number(item.get("quantity", 1))
-				
-				# Earnings Logic: Prioritize delivery_reward -> unit_delivery_reward -> sell_price -> value
-				var unit_reward = 0.0
-				
-				# Check for total delivery reward first
-				if item.has("delivery_reward") and item.get("delivery_reward") != null:
-					unit_reward = _coerce_number(item.get("delivery_reward"))
-					# If this is a total reward for the stack, don't multiply by qty? 
-					# Usually 'delivery_reward' in JSON example (261) was 381035.0 for qty 1.
-					# Let's assume delivery_reward is the TOTAL for the item stack if meaningful, or check unit_delivery_reward.
-				elif item.has("unit_delivery_reward") and item.get("unit_delivery_reward") != null:
-					unit_reward = _coerce_number(item.get("unit_delivery_reward")) * qty
-				elif item.has("sell_price"):
-					unit_reward = _coerce_number(item.get("sell_price")) * qty
-				elif item.has("value"):
-					unit_reward = _coerce_number(item.get("value")) * qty
-				
-				# Quick fix for the "delivery_reward" field in JSON seemingly being the total or unit?
-				# JSON line 261: "delivery_reward": 381035.0, "quantity": 1.0. 
-				# JSON line 282: "unit_delivery_reward": 381035.0.
-				# It seems delivery_reward might be the total for the line item.
-				# So if we used delivery_reward directly, we shouldn't multiply?
-				# Let's trust logic: if delivery_reward is present, use it as the Line Total.
-				var line_total = unit_reward
-				if item.has("delivery_reward") and item.get("delivery_reward") != null:
-					line_total = _coerce_number(item.get("delivery_reward"))
-				
-				manifest_items.append({
-					"name": item_name,
-					"qty": qty,
-					"value": line_total
-				})
-				total_earnings += line_total
+				var reward = _coerce_number(item.get("delivery_reward", item.get("unit_delivery_reward", _coerce_number(item.get("sell_price", item.get("value", 0.0))) * qty)))
+				if item.has("unit_delivery_reward") and not item.has("delivery_reward"): reward = _coerce_number(item.get("unit_delivery_reward")) * qty
+				manifest_items.append({"name": item.get("name", "Cargo"), "qty": qty, "value": reward})
+				total_earnings += reward
 
 	if not manifest_items.is_empty():
 		_confirmation_panel.add_child(HSeparator.new())
-		var manifest_header = Label.new()
-		manifest_header.text = "Delivery Manifest"
-		manifest_header.add_theme_font_size_override("font_size", 18)
-		manifest_header.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		_confirmation_panel.add_child(manifest_header)
-		
-		var manifest_panel = PanelContainer.new()
-		var msb = StyleBoxFlat.new()
-		msb.bg_color = Color(0.15, 0.18, 0.22, 0.9)
-		msb.set_border_width_all(1)
-		msb.border_color = Color(0.3, 0.5, 0.4)
-		msb.corner_radius_top_left = 4
-		msb.corner_radius_top_right = 4
-		msb.corner_radius_bottom_left = 4
-		msb.corner_radius_bottom_right = 4
-		manifest_panel.add_theme_stylebox_override("panel", msb)
-		_confirmation_panel.add_child(manifest_panel)
+		var m_header_hbox = HBoxContainer.new()
+		_confirmation_panel.add_child(m_header_hbox)
+		var m_icon = Label.new()
+		m_icon.text = "📜"
+		m_header_hbox.add_child(m_icon)
+		var m_title = Label.new()
+		m_title.text = "Delivery Manifest"
+		m_title.add_theme_font_size_override("font_size", 16)
+		m_title.add_theme_color_override("font_color", Color(0.8, 0.95, 0.85))
+		m_header_hbox.add_child(m_title)
+
+		var m_panel = PanelContainer.new()
+		var msb = main_sb.duplicate()
+		msb.bg_color = Color(0.08, 0.12, 0.1, 0.8)
+		msb.border_color = Color(0.2, 0.35, 0.25)
+		m_panel.add_theme_stylebox_override("panel", msb)
+		_confirmation_panel.add_child(m_panel)
 		
 		var m_vbox = VBoxContainer.new()
-		manifest_panel.add_child(m_vbox)
+		m_vbox.add_theme_constant_override("separation", 4)
+		m_panel.add_child(m_vbox)
 		
 		for m_item in manifest_items:
 			var row = HBoxContainer.new()
-			var name_lbl = Label.new()
-			name_lbl.text = "- %s (x%d)" % [m_item.name, m_item.qty]
-			name_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-			row.add_child(name_lbl)
-			
-			var val_lbl = Label.new()
-			val_lbl.text = NumberFormat.format_money(m_item.value)
-			val_lbl.add_theme_color_override("font_color", Color(0.6, 1.0, 0.6))
-			row.add_child(val_lbl)
+			var n_lbl = Label.new()
+			n_lbl.text = "• %s (x%d)" % [m_item.name, m_item.qty]
+			n_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			n_lbl.add_theme_color_override("font_color", Color(0.85, 0.9, 0.85))
+			row.add_child(n_lbl)
+			var v_lbl = Label.new()
+			v_lbl.text = NumberFormat.format_money(m_item.value)
+			v_lbl.add_theme_color_override("font_color", Color(0.5, 1.0, 0.5))
+			row.add_child(v_lbl)
 			m_vbox.add_child(row)
 			
 		m_vbox.add_child(HSeparator.new())
-		var total_row = HBoxContainer.new()
-		var total_lbl = Label.new()
-		total_lbl.text = "Total Estimated Earnings:"
-		total_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		total_row.add_child(total_lbl)
-		
-		var total_val = Label.new()
-		total_val.text = NumberFormat.format_money(total_earnings)
-		total_val.add_theme_color_override("font_color", Color(0.4, 1.0, 0.4))
-		total_val.add_theme_font_size_override("font_size", 18)
-		total_row.add_child(total_val)
-		m_vbox.add_child(total_row)
+		var t_row = HBoxContainer.new()
+		var t_lbl = Label.new()
+		t_lbl.text = "Estimated Earnings:"
+		t_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		t_row.add_child(t_lbl)
+		var t_val = Label.new()
+		t_val.text = NumberFormat.format_money(total_earnings)
+		t_val.add_theme_color_override("font_color", Color(0.4, 1.0, 0.4))
+		t_val.add_theme_font_size_override("font_size", 18)
+		t_row.add_child(t_val)
+		m_vbox.add_child(t_row)
 
 
 	# Severity state from combined energy + resource evaluation
@@ -1435,6 +1376,8 @@ func _on_change_destination_pressed():
 	for child in content_vbox.get_children():
 		if child != _confirmation_panel:
 			child.visible = true
+	# Re-enable the destination buttons that were disabled on selection
+	_enable_destination_buttons()
 
 func _on_confirm_journey_pressed(route_data: Dictionary):
 	var convoy_id_local = str(convoy_data_received.get("convoy_id"))
