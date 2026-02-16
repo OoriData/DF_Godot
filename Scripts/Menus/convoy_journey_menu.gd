@@ -1098,7 +1098,7 @@ func _show_confirmation_panel(route_data: Dictionary):
 	res_grid.columns = 4
 	res_grid.add_theme_constant_override("h_separation", 32)
 	panel_vbox.add_child(res_grid)
-	var header_labels = ["Resource", "Need", "Have", "Remaining"]
+	var header_labels = ["Resource", "Need", "Have (Capacity)", "Remaining"]
 	for h in header_labels:
 		var hl = Label.new()
 		hl.text = h
@@ -1106,27 +1106,41 @@ func _show_confirmation_panel(route_data: Dictionary):
 		if h != "Resource":
 			hl.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 		res_grid.add_child(hl)
-	var _add_res_row = func(label: String, unit: String, need: float, have: float, _max_v: float, status: String):
+	var _add_res_row = func(label: String, unit: String, need: float, have: float, max_v: float, status: String):
+		var row_container = Control.new() # Dummy container just in case needed for spacing
+		
+		# --- Resource Name ---
 		var icon_lbl = Label.new()
 		icon_lbl.text = label
 		if status == "critical":
 			icon_lbl.add_theme_color_override("font_color", Color(1,0.35,0.35))
+			icon_lbl.text = "⚠️ " + label
 		elif status == "warn":
 			icon_lbl.add_theme_color_override("font_color", Color(1,0.75,0.35))
 		res_grid.add_child(icon_lbl)
+		
+		# --- Need ---
 		var need_lbl = Label.new()
 		need_lbl.text = NumberFormat.fmt_float(need, 2) + unit
 		need_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 		res_grid.add_child(need_lbl)
+		
+		# --- Have (Capacity) ---
 		var have_lbl = Label.new()
-		have_lbl.text = NumberFormat.fmt_float(have, 2) + unit
+		var have_text = NumberFormat.fmt_float(have, 2)
+		if max_v > 0:
+			have_text += " / " + NumberFormat.fmt_float(max_v, 0)
+		have_lbl.text = have_text + unit
 		have_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 		res_grid.add_child(have_lbl)
+		
+		# --- Remaining ---
 		var rem_lbl = Label.new()
 		var remaining = have - need
 		if remaining < 0:
 			rem_lbl.text = "Short " + NumberFormat.fmt_float(abs(remaining), 2) + unit
 			rem_lbl.add_theme_color_override("font_color", Color(1,0.35,0.35))
+			# Visual highlight for the row effect could be simulated by background panel if needed
 		elif status == "warn":
 			rem_lbl.text = NumberFormat.fmt_float(remaining, 2) + unit
 			rem_lbl.add_theme_color_override("font_color", Color(1,0.75,0.35))
@@ -1134,6 +1148,7 @@ func _show_confirmation_panel(route_data: Dictionary):
 			rem_lbl.text = NumberFormat.fmt_float(remaining, 2) + unit
 		rem_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 		res_grid.add_child(rem_lbl)
+
 	_add_res_row.call("⛽ Fuel", "L", fuel_needed, fuel_have, fuel_max, fuel_status)
 	_add_res_row.call("💧 Water", "L", water_needed, water_have, water_max, water_status)
 	_add_res_row.call("🍖 Food", "", food_needed, food_have, food_max, food_status)
@@ -1144,6 +1159,7 @@ func _show_confirmation_panel(route_data: Dictionary):
 		if resource_critical:
 			warn_lbl.text = "[CRITICAL] Insufficient reserves for journey." if not resource_warning else "[CRITICAL] Insufficient reserves; high usage on others."
 			warn_lbl.add_theme_color_override("font_color", Color(1,0.4,0.4))
+			warn_lbl.add_theme_font_size_override("font_size", 18) # Larger text
 		elif resource_warning:
 			warn_lbl.text = "[Warning] High consumption (>50%) on at least one reserve."
 			warn_lbl.add_theme_color_override("font_color", Color(1,0.75,0.35))
@@ -1227,6 +1243,151 @@ func _show_confirmation_panel(route_data: Dictionary):
 				# For normal & discharged (IC) cases, cap the displayed need at capacity
 				nums_lbl.text = "Need: %s  Capacity: %s" % [NumberFormat.fmt_float(e.used, 2), NumberFormat.fmt_float(e.capacity, 2)]
 			energy_grid.add_child(nums_lbl)
+
+	# --- Delivery Manifest Section ---
+	# Calculate potential earnings and list items for the selected destination
+	var dest_name = _destination_data.get("name", "")
+	var dest_settlement_id = str(_destination_data.get("id", ""))
+	if dest_settlement_id == "": dest_settlement_id = str(_destination_data.get("settlement_id", ""))
+	
+	var dest_vendors = _destination_data.get("vendors", [])
+	var valid_dest_ids = []
+	if dest_settlement_id != "": valid_dest_ids.append(dest_settlement_id)
+	
+	if dest_vendors is Array:
+		for v in dest_vendors:
+			if v is Dictionary:
+				if v.has("vendor_id"): valid_dest_ids.append(str(v.get("vendor_id")))
+				if v.has("id"): valid_dest_ids.append(str(v.get("id")))
+	
+	print("[ConvoyJourneyMenu] Checking cargo for destination: %s (IDs: %s)" % [dest_name, valid_dest_ids])
+	
+	var manifest_items = []
+	var total_earnings = 0.0
+	
+	# Helper to check if item is for this destination
+	var _is_for_destination = func(item: Dictionary) -> bool:
+		# 1. Direct Name Match
+		var r_name = str(item.get("recipient_settlement_name", ""))
+		if r_name == dest_name and r_name != "": return true
+		
+		# 2. Output Debug for tricky items
+		var recipient = str(item.get("recipient", ""))
+		# print("  > Item: %s | Recipient: %s" % [item.get("name"), recipient])
+
+		# 3. ID Match against any valid destination ID (Settlement or Vendor)
+		var item_ids = []
+		if recipient != "": item_ids.append(recipient)
+		if item.has("recipient_vendor_id"): item_ids.append(str(item.get("recipient_vendor_id")))
+		if item.has("destination_vendor_id"): item_ids.append(str(item.get("destination_vendor_id")))
+		if item.has("mission_vendor_id"): item_ids.append(str(item.get("mission_vendor_id")))
+		
+		for vid in item_ids:
+			if vid != "" and valid_dest_ids.has(vid):
+				# print("    MATCH FOUND on ID: %s" % vid)
+				return true
+				
+		return false
+
+	var vehicles_list = _get_vehicle_list()
+	for v in vehicles_list:
+		if not (v is Dictionary): continue
+		var cargo_list = []
+		if v.get("cargo_items_typed") is Array: cargo_list.append_array(v.get("cargo_items_typed"))
+		elif v.get("cargo_items") is Array: cargo_list.append_array(v.get("cargo_items"))
+		elif v.get("cargo") is Array: cargo_list.append_array(v.get("cargo"))
+		
+		for item in cargo_list:
+			if not (item is Dictionary): continue
+			
+			if _is_for_destination.call(item):
+				var item_name = item.get("name", "Unknown Cargo")
+				var qty = _coerce_number(item.get("quantity", 1))
+				
+				# Earnings Logic: Prioritize delivery_reward -> unit_delivery_reward -> sell_price -> value
+				var unit_reward = 0.0
+				
+				# Check for total delivery reward first
+				if item.has("delivery_reward") and item.get("delivery_reward") != null:
+					unit_reward = _coerce_number(item.get("delivery_reward"))
+					# If this is a total reward for the stack, don't multiply by qty? 
+					# Usually 'delivery_reward' in JSON example (261) was 381035.0 for qty 1.
+					# Let's assume delivery_reward is the TOTAL for the item stack if meaningful, or check unit_delivery_reward.
+				elif item.has("unit_delivery_reward") and item.get("unit_delivery_reward") != null:
+					unit_reward = _coerce_number(item.get("unit_delivery_reward")) * qty
+				elif item.has("sell_price"):
+					unit_reward = _coerce_number(item.get("sell_price")) * qty
+				elif item.has("value"):
+					unit_reward = _coerce_number(item.get("value")) * qty
+				
+				# Quick fix for the "delivery_reward" field in JSON seemingly being the total or unit?
+				# JSON line 261: "delivery_reward": 381035.0, "quantity": 1.0. 
+				# JSON line 282: "unit_delivery_reward": 381035.0.
+				# It seems delivery_reward might be the total for the line item.
+				# So if we used delivery_reward directly, we shouldn't multiply?
+				# Let's trust logic: if delivery_reward is present, use it as the Line Total.
+				var line_total = unit_reward
+				if item.has("delivery_reward") and item.get("delivery_reward") != null:
+					line_total = _coerce_number(item.get("delivery_reward"))
+				
+				manifest_items.append({
+					"name": item_name,
+					"qty": qty,
+					"value": line_total
+				})
+				total_earnings += line_total
+
+	if not manifest_items.is_empty():
+		_confirmation_panel.add_child(HSeparator.new())
+		var manifest_header = Label.new()
+		manifest_header.text = "Delivery Manifest"
+		manifest_header.add_theme_font_size_override("font_size", 18)
+		manifest_header.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		_confirmation_panel.add_child(manifest_header)
+		
+		var manifest_panel = PanelContainer.new()
+		var msb = StyleBoxFlat.new()
+		msb.bg_color = Color(0.15, 0.18, 0.22, 0.9)
+		msb.set_border_width_all(1)
+		msb.border_color = Color(0.3, 0.5, 0.4)
+		msb.corner_radius_top_left = 4
+		msb.corner_radius_top_right = 4
+		msb.corner_radius_bottom_left = 4
+		msb.corner_radius_bottom_right = 4
+		manifest_panel.add_theme_stylebox_override("panel", msb)
+		_confirmation_panel.add_child(manifest_panel)
+		
+		var m_vbox = VBoxContainer.new()
+		manifest_panel.add_child(m_vbox)
+		
+		for m_item in manifest_items:
+			var row = HBoxContainer.new()
+			var name_lbl = Label.new()
+			name_lbl.text = "- %s (x%d)" % [m_item.name, m_item.qty]
+			name_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			row.add_child(name_lbl)
+			
+			var val_lbl = Label.new()
+			val_lbl.text = NumberFormat.format_money(m_item.value)
+			val_lbl.add_theme_color_override("font_color", Color(0.6, 1.0, 0.6))
+			row.add_child(val_lbl)
+			m_vbox.add_child(row)
+			
+		m_vbox.add_child(HSeparator.new())
+		var total_row = HBoxContainer.new()
+		var total_lbl = Label.new()
+		total_lbl.text = "Total Estimated Earnings:"
+		total_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		total_row.add_child(total_lbl)
+		
+		var total_val = Label.new()
+		total_val.text = NumberFormat.format_money(total_earnings)
+		total_val.add_theme_color_override("font_color", Color(0.4, 1.0, 0.4))
+		total_val.add_theme_font_size_override("font_size", 18)
+		total_row.add_child(total_val)
+		m_vbox.add_child(total_row)
+
+
 	# Severity state from combined energy + resource evaluation
 	if any_critical or resource_critical:
 		_severity_state = "critical"
