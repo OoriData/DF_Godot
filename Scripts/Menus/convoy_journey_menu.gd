@@ -103,6 +103,13 @@ func _ready():
 		if _store.has_signal("user_changed") and not _store.user_changed.is_connected(_on_store_user_changed):
 			_store.user_changed.connect(_on_store_user_changed)
 
+	# Listen for API errors to unblock overlay if cancellation fails
+	if is_instance_valid(_api):
+		if _api.has_signal("fetch_error") and not _api.fetch_error.is_connected(_on_fetch_error):
+			_api.fetch_error.connect(_on_fetch_error)
+		if _api.has_signal("journey_canceled") and not _api.journey_canceled.is_connected(_on_journey_canceled_api):
+			_api.journey_canceled.connect(_on_journey_canceled_api)
+
 	# Remove the placeholder label if it exists
 	if content_vbox.has_node("PlaceholderLabel"):
 		var placeholder = content_vbox.get_node("PlaceholderLabel")
@@ -708,6 +715,22 @@ func _on_route_choices_error(error_message: String):
 	_clear_loading_indicator()
 	_show_error_message(error_message)
 	_enable_destination_buttons()
+
+func _on_fetch_error(error_message: String):
+	# If we are blocking the UI (e.g. cancelling journey), an API error means we should unblock.
+	if is_instance_valid(_blocking_overlay):
+		_hide_blocking_overlay()
+		_show_inline_toast("Error: " + error_message, 4.0)
+
+func _on_journey_canceled_api(_result: Dictionary):
+	# API confirmed cancellation.
+	# We still wait for the hub update for data, but we can stop blocking the UI or at least know it succeeded.
+	# Actually, since services refresh, we might just want to hide overlay here to be responsive.
+	# But let's check if the convoy update handles it.
+	# The issue was the overlay STUCK. So let's force hide it here.
+	print("[ConvoyJourneyMenu] _on_journey_canceled_api received. Hiding overlay.")
+	_hide_blocking_overlay()
+	_show_inline_toast("Journey canceled.", 2.0)
 
 func _on_route_choices_ready(routes: Array) -> void:
 	_on_route_info_ready(convoy_data_received, _last_requested_destination, routes)
@@ -1417,6 +1440,7 @@ func _show_inline_toast(text: String, duration_seconds: float = 2.0):
 
 # --- Blocking overlay during backend updates ---
 var _blocking_overlay: Control = null
+var _blocking_overlay_timer: Timer = null
 
 func _show_blocking_overlay(text: String = "Working…"):
 	if is_instance_valid(_blocking_overlay):
@@ -1451,10 +1475,28 @@ func _show_blocking_overlay(text: String = "Working…"):
 	_blocking_overlay = overlay
 	add_child(_blocking_overlay)
 
+	# Safety timer to prevent infinite blocking
+	if is_instance_valid(_blocking_overlay_timer):
+		_blocking_overlay_timer.queue_free()
+	_blocking_overlay_timer = Timer.new()
+	_blocking_overlay_timer.one_shot = true
+	_blocking_overlay_timer.wait_time = 10.0 # 10s timeout
+	_blocking_overlay_timer.timeout.connect(func():
+		if is_instance_valid(_blocking_overlay):
+			_hide_blocking_overlay()
+			_show_inline_toast("Request timed out.", 3.0)
+	)
+	add_child(_blocking_overlay_timer)
+	_blocking_overlay_timer.start()
+
 func _hide_blocking_overlay():
 	if is_instance_valid(_blocking_overlay):
 		_blocking_overlay.queue_free()
 	_blocking_overlay = null
+	if is_instance_valid(_blocking_overlay_timer):
+		_blocking_overlay_timer.stop()
+		_blocking_overlay_timer.queue_free()
+	_blocking_overlay_timer = null
 
 # Severity + route cycling helpers (added)
 func _apply_severity_styling():

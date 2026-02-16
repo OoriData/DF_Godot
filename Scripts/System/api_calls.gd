@@ -44,6 +44,8 @@ signal vehicle_sold(result: Dictionary)
 signal resource_bought(result: Dictionary)
 @warning_ignore("unused_signal")
 signal resource_sold(result: Dictionary)
+@warning_ignore("unused_signal")
+signal journey_canceled(result: Dictionary)
 
 # --- Journey Planning Signals ---
 signal route_choices_received(routes: Array)
@@ -1279,7 +1281,7 @@ func cancel_convoy_journey(convoy_id: String, journey_id: String) -> void:
 		"purpose": RequestPurpose.NONE,
 		"method": HTTPClient.METHOD_PATCH,
 		"body": "",
-		"signal_name": "" # Phase 4: no domain-level signal emitted; services will refresh
+		"signal_name": "journey_canceled" # Emit specific signal to avoid convoy fetch confusion
 	}
 	_diag_enqueue("cancel_convoy_journey", request_details)
 
