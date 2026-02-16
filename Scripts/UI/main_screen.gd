@@ -317,7 +317,13 @@ func _on_menu_visibility_changed(is_open: bool, _menu_name: String):
 					convoy_data = md
 				elif typeof(md) == TYPE_STRING:
 					convoy_data = _resolve_convoy_dict_from_id(String(md))
+		# If MenuManager didn't provide explicit convoy data, fall back to the same
+		# primary convoy selection logic used by the open tween.
+		if convoy_data.is_empty() and has_method("_get_primary_convoy_data"):
+			convoy_data = _get_primary_convoy_data()
 		_last_focused_convoy_data = convoy_data
+		# Keep the selected convoy label panel open while the convoy menu is visible.
+		_set_pinned_convoy_label_from_data(convoy_data)
 		# Tell camera controller the menu is opening. This allows it to use the correct
 		# clamping logic (e.g. frozen zoom) when calculating the tween target.
 		# We pass 'false' to prevent an immediate camera snap.
@@ -335,6 +341,41 @@ func _on_menu_visibility_changed(is_open: bool, _menu_name: String):
 		_dbg_menu("menu_close_begin", {"last_convoy_empty": _last_focused_convoy_data.is_empty(), "prev_occlusion_px": _current_menu_occlusion_px})
 		# Begin close: animate occlusion down alongside menu.
 		_slide_menu_close(_last_focused_convoy_data)
+
+
+func _get_convoy_label_manager_node() -> Node:
+	# ConvoyLabelManager script is attached to MapView's ConvoyLabelContainer node.
+	if not is_instance_valid(map_view):
+		return null
+	return map_view.get_node_or_null("MapContainer/SubViewport/ConvoyLabelContainer")
+
+
+func _force_map_ui_refresh() -> void:
+	# Ensure label pin/unpin reflects immediately even if there was no hover/selection change.
+	if is_instance_valid(map_view) and map_view.has_method("_update_ui_manager"):
+		map_view._update_ui_manager(true)
+
+
+func _set_pinned_convoy_label_from_data(convoy_data: Dictionary) -> void:
+	var convoy_id_str := ""
+	if convoy_data != null and convoy_data is Dictionary:
+		convoy_id_str = str(convoy_data.get("convoy_id", convoy_data.get("id", "")))
+	if convoy_id_str == "":
+		return
+	var clm := _get_convoy_label_manager_node()
+	if is_instance_valid(clm) and clm.has_method("set_pinned_convoy_ids"):
+		clm.set_pinned_convoy_ids([convoy_id_str])
+		_force_map_ui_refresh()
+
+
+func _clear_pinned_convoy_label() -> void:
+	var clm := _get_convoy_label_manager_node()
+	if is_instance_valid(clm):
+		if clm.has_method("clear_pinned_convoy_ids"):
+			clm.clear_pinned_convoy_ids()
+		elif clm.has_method("set_pinned_convoy_ids"):
+			clm.set_pinned_convoy_ids([])
+	_force_map_ui_refresh()
 
 func _kill_menu_anim_tween():
 	if _menu_anim_tween and _menu_anim_tween.is_valid():
@@ -408,6 +449,8 @@ func _slide_menu_close(convoy_data: Dictionary):
 		_current_menu_occlusion_px = 0.0
 		_update_camera_occlusion_from_menu()
 		_menu_anim_in_progress = false
+		# Now that the menu is fully closed, release any menu-pinned convoy label.
+		_clear_pinned_convoy_label()
 	)
 
 var _close_anim_convoy: Dictionary = {}

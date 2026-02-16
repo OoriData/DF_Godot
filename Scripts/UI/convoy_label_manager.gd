@@ -63,6 +63,24 @@ var _icon_keepout_radius_px: float = 18.0
 # Extra padding added to the journey line thickness when checking panel overlap.
 var _route_keepout_extra_px: float = 8.0
 
+# Convoy labels normally show on hover/selection. While a convoy menu is open we want
+# the relevant convoy label to stay visible even if selection/hover is cleared.
+var _pinned_convoy_ids: Array[String] = []
+
+
+func set_pinned_convoy_ids(ids: Array) -> void:
+	_pinned_convoy_ids.clear()
+	if ids == null:
+		return
+	for id_any in ids:
+		var id_str := str(id_any)
+		if id_str != "" and not _pinned_convoy_ids.has(id_str):
+			_pinned_convoy_ids.append(id_str)
+
+
+func clear_pinned_convoy_ids() -> void:
+	_pinned_convoy_ids.clear()
+
 
 func set_convoy_label_container(p_container: Node2D):
 	if not is_instance_valid(p_container):
@@ -368,7 +386,8 @@ func _position_convoy_panel(panel: Panel, convoy_data: Dictionary, existing_labe
 
 	# Horizontal Offset Calculation (in world units)
 	var base_offset_value: float
-	if p_selected_convoy_ids.has(current_convoy_id_str):
+	# Pinned labels (e.g. convoy menu open) should behave like selected labels.
+	if p_selected_convoy_ids.has(current_convoy_id_str) or _pinned_convoy_ids.has(current_convoy_id_str):
 		base_offset_value = _base_selected_convoy_horizontal_offset
 	else:
 		base_offset_value = _base_horizontal_label_offset_from_center
@@ -467,16 +486,43 @@ func _panel_overlaps_icon_or_route(panel_rect: Rect2, convoy_data: Dictionary) -
 		var j: Dictionary = raw_journey
 		var rx: Array = j.get('route_x', [])
 		var ry: Array = j.get('route_y', [])
-		var seg_idx: int = convoy_data.get('_current_segment_start_idx', -1)
+		var seg_idx: int = int(convoy_data.get('_current_segment_start_idx', -1))
 		if rx.size() >= 2 and ry.size() == rx.size():
-			var i0: int = clamp(seg_idx, 0, rx.size() - 2)
-			var p1 := Vector2((float(rx[i0]) + 0.5) * _cached_actual_tile_width_on_texture, (float(ry[i0]) + 0.5) * _cached_actual_tile_height_on_texture)
-			var p2 := Vector2((float(rx[i0+1]) + 0.5) * _cached_actual_tile_width_on_texture, (float(ry[i0+1]) + 0.5) * _cached_actual_tile_height_on_texture)
-			# Grow the panel rect by a thickness to approximate the route stroke + outline
+			# If the convoy payload doesn't provide an accurate current segment index,
+			# infer the nearest route segment to the convoy icon and test adjacent segments.
+			if seg_idx < 0 or seg_idx > (rx.size() - 2):
+				seg_idx = _infer_route_segment_index_near_convoy(rx, ry, conv_x, conv_y)
+			var candidates: Array[int] = []
+			candidates.append(clamp(seg_idx, 0, rx.size() - 2))
+			candidates.append(clamp(seg_idx - 1, 0, rx.size() - 2))
+			# Grow the panel rect by a thickness to approximate the route stroke + outline.
+			# This operates in the SubViewport's local pixel space, matching how lines are drawn.
 			var grown := panel_rect.grow(_route_keepout_extra_px)
-			if _segment_intersects_rect(p1, p2, grown):
-				return true
+			for i0 in candidates:
+				var p1 := Vector2((float(rx[i0]) + 0.5) * _cached_actual_tile_width_on_texture, (float(ry[i0]) + 0.5) * _cached_actual_tile_height_on_texture)
+				var p2 := Vector2((float(rx[i0 + 1]) + 0.5) * _cached_actual_tile_width_on_texture, (float(ry[i0 + 1]) + 0.5) * _cached_actual_tile_height_on_texture)
+				if _segment_intersects_rect(p1, p2, grown):
+					return true
 	return false
+
+
+func _infer_route_segment_index_near_convoy(rx: Array, ry: Array, conv_x: float, conv_y: float) -> int:
+	# Returns a segment start index i such that the segment i->i+1 is near the convoy.
+	# We find the closest route point to the convoy tile coords and choose the segment
+	# emanating from that point (or the previous one).
+	if rx.size() < 2 or ry.size() != rx.size():
+		return 0
+	var best_i := 0
+	var best_d2 := INF
+	for i in range(rx.size()):
+		var dx := float(rx[i]) - conv_x
+		var dy := float(ry[i]) - conv_y
+		var d2 := dx * dx + dy * dy
+		if d2 < best_d2:
+			best_d2 = d2
+			best_i = i
+	# Convert point index to segment start index.
+	return clamp(best_i, 0, rx.size() - 2)
 
 func _rect_overlaps_circle(r: Rect2, c: Vector2, radius: float) -> bool:
 	var closest_x = clamp(c.x, r.position.x, r.position.x + r.size.x)
@@ -585,6 +631,12 @@ func update_convoy_labels(
 	var all_drawn_label_rects_this_update: Array[Rect2] = []
 
 	var convoy_ids_to_display: Array[String] = []
+
+	# Add pinned convoy IDs (e.g., convoy menu open) first so the label stays visible
+	# even if selection is empty or hover has moved away.
+	for pinned_id in _pinned_convoy_ids:
+		if pinned_id != "" and not convoy_ids_to_display.has(pinned_id):
+			convoy_ids_to_display.append(pinned_id)
 
 	# Determine which convoy IDs to display based on selection
 	if p_selected_convoy_ids is Array:
