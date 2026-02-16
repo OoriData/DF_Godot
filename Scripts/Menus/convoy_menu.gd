@@ -800,9 +800,9 @@ func _update_vendor_preview() -> void:
 func _render_vendor_preview_display() -> void:
 	# Update button text with counts
 	if is_instance_valid(convoy_missions_tab_button):
-		convoy_missions_tab_button.text = "Active Missions (%d)" % _convoy_mission_items.size()
+		convoy_missions_tab_button.text = "Active Deliveries (%d)" % _convoy_mission_items.size()
 	if is_instance_valid(settlement_missions_tab_button):
-		settlement_missions_tab_button.text = "Available Missions (%d)" % _settlement_mission_items.size()
+		settlement_missions_tab_button.text = "Available Deliveries (%d)" % _settlement_mission_items.size()
 	if is_instance_valid(compatible_parts_tab_button):
 		compatible_parts_tab_button.text = "Available Parts (%d)" % _compatible_part_items.size()
 	# Journey tab does not need a count

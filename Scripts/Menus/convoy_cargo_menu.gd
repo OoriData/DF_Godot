@@ -780,7 +780,7 @@ func _build_cargo_row(vehicle_vbox: VBoxContainer, display_name: String, quantit
 		var display_text: String
 		match category_name:
 			"mission":
-				display_text = "Mission Cargo"
+				display_text = "Delivery Cargo"
 			"part":
 				display_text = "Part Cargo"
 			"resource":
@@ -1376,7 +1376,7 @@ func _populate_by_type():
 		for k in moved_keys:
 			aggregated_other.erase(k)
 
-	_add_category_section(direct_vbox_ref, "Mission Cargo", aggregated_missions)
+	_add_category_section(direct_vbox_ref, "Delivery Cargo", aggregated_missions)
 	_add_category_section(direct_vbox_ref, "Part Cargo", aggregated_parts)
 	_add_category_section(direct_vbox_ref, "Resource Cargo", aggregated_resources)
 	_add_category_section(direct_vbox_ref, "Other Cargo", aggregated_other)

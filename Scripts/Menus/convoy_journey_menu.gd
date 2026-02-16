@@ -462,7 +462,7 @@ func _populate_destination_list():
 							match_found = true
 						# Check if this name is a valid settlement
 						elif vendor_to_settlement_map.values().has(rsn):
-							mission_destinations[rsn] = cargo_item.get("name", "Mission Cargo")
+							mission_destinations[rsn] = cargo_item.get("name", "Delivery Cargo")
 							match_found = true
 				
 				if match_found: continue
@@ -524,7 +524,7 @@ func _populate_destination_list():
 
 					if resolved_settlement != "":
 						if not mission_destinations.has(resolved_settlement):
-							mission_destinations[resolved_settlement] = cargo_item.get("name", "Mission Cargo")
+							mission_destinations[resolved_settlement] = cargo_item.get("name", "Delivery Cargo")
 						match_found = true
 						print("[ConvoyJourneyMenu] MATCH FOUND for cargo '%s': resolved to '%s' via key '%s'" % [cargo_item.get("name"), resolved_settlement, val])
 						break

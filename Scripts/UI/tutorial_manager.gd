@@ -393,7 +393,7 @@ func _build_level_steps(level: int) -> Array:
 				},
 				{
 					id = "l4_buy_urchins",
-					copy = "Some vendors offer special items required for missions. Click 'Max' on Mountain Urchins, then Buy.",
+					copy = "Some vendors offer special items required for deliveries. Click 'Max' on Mountain Urchins, then Buy.",
 					action = "await_urchin_purchase",
 					target = { resolver = "vendor_trade_panel" }, # Highlight the whole panel
 					lock = "soft"
@@ -410,7 +410,7 @@ func _build_level_steps(level: int) -> Array:
 			return [
 				{
 					id = "l5_open_convoy_menu",
-					copy = "Great! You have the mission cargo. Return to the convoy menu to plan your journey.",
+					copy = "Great! You have the delivery cargo. Return to the convoy menu to plan your journey.",
 					action = "await_menu_open",
 					target = { resolver = "convoy_return_button" },
 					lock = "soft"

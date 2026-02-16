@@ -952,7 +952,7 @@ func _populate_vendor_list() -> void:
 	var vd_for_agg := _vendor_data_with_price_fallback(vendor_data)
 	var buckets := VendorCargoAggregatorScript.build_vendor_buckets(vd_for_agg, perf_log_enabled, Callable(self, "_get_vendor_name_for_recipient"))
 	var root = vendor_item_tree.create_item()
-	_populate_category(vendor_item_tree, root, "Mission Cargo", buckets.get("missions", {}))
+	_populate_category(vendor_item_tree, root, "Delivery Cargo", buckets.get("missions", {}))
 	_populate_category(vendor_item_tree, root, "Vehicles", buckets.get("vehicles", {}))
 	_populate_category(vendor_item_tree, root, "Parts", buckets.get("parts", {}))
 	_populate_category(vendor_item_tree, root, "Other", buckets.get("other", {}))
@@ -1053,7 +1053,7 @@ func _populate_convoy_list() -> void:
 			" allow_vehicle_sell=", allow_vehicle_sell,
 			" bucket_sizes(m/v/p/o/r)=", int((buckets.get("missions", {}) as Dictionary).size()), "/", int((buckets.get("vehicles", {}) as Dictionary).size()), "/", int((buckets.get("parts", {}) as Dictionary).size()), "/", int((buckets.get("other", {}) as Dictionary).size()), "/", int((buckets.get("resources", {}) as Dictionary).size()))
 	var root = convoy_item_tree.create_item()
-	_populate_category(convoy_item_tree, root, "Mission Cargo", buckets.get("missions", {}))
+	_populate_category(convoy_item_tree, root, "Delivery Cargo", buckets.get("missions", {}))
 	if allow_vehicle_sell and not (buckets.get("vehicles", {}) as Dictionary).is_empty():
 		_populate_category(convoy_item_tree, root, "Vehicles", buckets.get("vehicles", {}))
 	# Only show loose/aggregated parts when BUYING. In SELL mode installed vehicle parts are not sellable.
