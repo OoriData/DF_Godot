@@ -6,12 +6,14 @@ signal convoy_menu_requested(convoy_id: String)
 
 @onready var username_label: Label = $UsernameLabel
 @onready var user_money_label: Label = $UserMoneyLabel
-@onready var settings_button: Button = $SettingsButton
+@onready var settings_button: MenuButton = $SettingsButton
 var _settings_menu_instance: Window
-
-var _bug_report_button: Button
 var _bug_report_window: BugReportWindow
+var _discord_popup: PopupPanel
 
+const _OPTIONS_SETTINGS_ID := 1
+const _OPTIONS_REPORT_BUG_ID := 2
+const _OPTIONS_DISCORD_ID := 3
 # Store original font sizes to scale them from a clean base
 var _original_username_font_size: int
 var _original_money_font_size: int
@@ -46,12 +48,8 @@ func _ready() -> void:
 	else:
 		printerr("UserInfoDisplay: ui_scale_manager autoload not found at /root/ui_scale_manager. UI scaling will not be dynamic.")
 
-	# Settings button hookup
-	if is_instance_valid(settings_button):
-		settings_button.pressed.connect(_on_settings_button_pressed)
-
-	# Bug report button (placed next to Options)
-	_ensure_bug_report_button()
+	# Options dropdown (replaces separate top-row buttons)
+	_configure_options_dropdown()
 
 
 
@@ -112,51 +110,50 @@ func _on_ui_scale_changed(_new_scale: float) -> void:
 	pass
 
 
-func _ensure_bug_report_button() -> void:
-	if is_instance_valid(_bug_report_button):
+func _configure_options_dropdown() -> void:
+	if not is_instance_valid(settings_button):
 		return
-	_bug_report_button = Button.new()
-	_bug_report_button.name = "BugReportButton"
-	_bug_report_button.text = "Report Bug"
-	_bug_report_button.focus_mode = Control.FOCUS_NONE
-	_apply_bug_report_button_style(_bug_report_button)
-	_bug_report_button.pressed.connect(_on_bug_report_pressed)
-	add_child(_bug_report_button)
-	# Place to the right of the Options button (and on the right side of any separator).
-	if is_instance_valid(settings_button):
-		var idx := get_children().find(settings_button)
-		if idx != -1:
-			move_child(_bug_report_button, idx + 1)
-	_bug_report_button.mouse_filter = Control.MOUSE_FILTER_PASS
-
-
-func _apply_bug_report_button_style(btn: Button) -> void:
-	if not is_instance_valid(btn):
+	# Ensure this button behaves like a dropdown.
+	var popup := settings_button.get_popup()
+	if not is_instance_valid(popup):
+		push_error("UserInfoDisplay: SettingsButton is a MenuButton but has no popup")
 		return
-	# Dark red theme override for the button background.
-	var normal := StyleBoxFlat.new()
-	normal.bg_color = Color("#5A0B0B")
-	normal.corner_radius_bottom_left = 6
-	normal.corner_radius_bottom_right = 6
-	normal.corner_radius_top_left = 6
-	normal.corner_radius_top_right = 6
-	normal.content_margin_left = 10
-	normal.content_margin_right = 10
-	normal.content_margin_top = 6
-	normal.content_margin_bottom = 6
 
-	var hover := normal.duplicate() as StyleBoxFlat
-	hover.bg_color = Color("#741010")
+	popup.clear()
+	popup.add_item("Settings", _OPTIONS_SETTINGS_ID)
+	popup.add_item("Report Bug", _OPTIONS_REPORT_BUG_ID)
+	popup.add_item("Join Discord", _OPTIONS_DISCORD_ID)
 
-	var pressed := normal.duplicate() as StyleBoxFlat
-	pressed.bg_color = Color("#3F0707")
+	if not popup.id_pressed.is_connected(_on_options_menu_id_pressed):
+		popup.id_pressed.connect(_on_options_menu_id_pressed)
 
-	btn.add_theme_stylebox_override("normal", normal)
-	btn.add_theme_stylebox_override("hover", hover)
-	btn.add_theme_stylebox_override("pressed", pressed)
-	btn.add_theme_color_override("font_color", Color("#FFFFFF"))
-	btn.add_theme_color_override("font_hover_color", Color("#FFFFFF"))
-	btn.add_theme_color_override("font_pressed_color", Color("#FFFFFF"))
+
+func _on_options_menu_id_pressed(id: int) -> void:
+	match id:
+		_OPTIONS_SETTINGS_ID:
+			_on_settings_button_pressed()
+		_OPTIONS_REPORT_BUG_ID:
+			call_deferred("_on_bug_report_pressed")
+		_OPTIONS_DISCORD_ID:
+			call_deferred("_on_discord_pressed")
+		_:
+			pass
+
+
+func _on_discord_pressed() -> void:
+	# Lazy-create discord popup
+	if not is_instance_valid(_discord_popup):
+		var script := load("res://Scripts/UI/discord_popup.gd")
+		if script == null:
+			push_error("Failed to load discord_popup.gd")
+			return
+		_discord_popup = script.new()
+		get_tree().root.add_child(_discord_popup)
+
+	if _discord_popup.has_method("open_centered"):
+		_discord_popup.open_centered()
+	else:
+		_discord_popup.show()
 
 
 func _on_bug_report_pressed() -> void:
