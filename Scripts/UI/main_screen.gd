@@ -90,6 +90,9 @@ var _current_menu_occlusion_px: float = 0.0 # animated width used to inform came
 @export var onboarding_log_enabled: bool = false # gate onboarding-related logs
 var _menu_anim_in_progress: bool = false # true while menu open/close tween is active to suppress duplicate focus requests
 
+# --- Journey preview camera fitting ---
+var _active_journey_menu: Node = null
+
 func _dbg_menu(tag: String, data: Dictionary = {}):
 	if not debug_menu_camera:
 		return
@@ -113,6 +116,11 @@ func _ready():
 			menu_manager.connect("menu_visibility_changed", Callable(self, "_on_menu_visibility_changed"))
 		if not menu_manager.is_connected("convoy_menu_focus_requested", Callable(self, "_on_convoy_menu_focus_requested")):
 			menu_manager.connect("convoy_menu_focus_requested", Callable(self, "_on_convoy_menu_focus_requested"))
+		# Listen for menu instances so we can attach to Journey preview events.
+		if menu_manager.has_signal("menu_opened") and not menu_manager.is_connected("menu_opened", Callable(self, "_on_menu_opened")):
+			menu_manager.connect("menu_opened", Callable(self, "_on_menu_opened"))
+		if menu_manager.has_signal("menu_closed") and not menu_manager.is_connected("menu_closed", Callable(self, "_on_menu_closed")):
+			menu_manager.connect("menu_closed", Callable(self, "_on_menu_closed"))
 
 	# Window/MapView Resize Handling
 	if is_instance_valid(map_view):
@@ -147,6 +155,47 @@ func _ready():
 
 	_error_dialog_scene = load(ERROR_DIALOG_SCENE_PATH)
 # Respond to Control resize events
+
+func _on_menu_opened(menu_node: Node, menu_type: String) -> void:
+	# Attach to journey preview events so we can fit camera to route lines.
+	if menu_type != "convoy_journey_submenu":
+		return
+	if not is_instance_valid(menu_node):
+		return
+	_active_journey_menu = menu_node
+	if menu_node.has_signal("route_preview_started") and not menu_node.is_connected("route_preview_started", Callable(self, "_on_journey_route_preview_started")):
+		menu_node.connect("route_preview_started", Callable(self, "_on_journey_route_preview_started"))
+	if menu_node.has_signal("route_preview_ended") and not menu_node.is_connected("route_preview_ended", Callable(self, "_on_journey_route_preview_ended")):
+		menu_node.connect("route_preview_ended", Callable(self, "_on_journey_route_preview_ended"))
+
+func _on_menu_closed(menu_node_was_active: Node, menu_type: String) -> void:
+	if menu_type != "convoy_journey_submenu":
+		return
+	if is_instance_valid(menu_node_was_active):
+		if menu_node_was_active.has_signal("route_preview_started") and menu_node_was_active.is_connected("route_preview_started", Callable(self, "_on_journey_route_preview_started")):
+			menu_node_was_active.disconnect("route_preview_started", Callable(self, "_on_journey_route_preview_started"))
+		if menu_node_was_active.has_signal("route_preview_ended") and menu_node_was_active.is_connected("route_preview_ended", Callable(self, "_on_journey_route_preview_ended")):
+			menu_node_was_active.disconnect("route_preview_ended", Callable(self, "_on_journey_route_preview_ended"))
+	if _active_journey_menu == menu_node_was_active:
+		_active_journey_menu = null
+
+func _on_journey_route_preview_started(route_data: Dictionary) -> void:
+	# When the route loads, zoom/center to show the full line.
+	if not is_instance_valid(map_camera_controller):
+		return
+	if map_camera_controller.has_method("smooth_fit_route_preview"):
+		# Defer one frame so layout/occlusion is definitely up to date.
+		call_deferred("_deferred_fit_route_preview", route_data)
+
+func _deferred_fit_route_preview(route_data: Dictionary) -> void:
+	if not is_instance_valid(map_camera_controller):
+		return
+	if map_camera_controller.has_method("smooth_fit_route_preview"):
+		map_camera_controller.smooth_fit_route_preview(route_data, 0.75, 0.92)
+
+func _on_journey_route_preview_ended() -> void:
+	# No-op for now; we keep the camera where the user last left it.
+	pass
 
 func _connect_deferred_signals():
 	# Connect the button in the top bar to a function that asks the MenuManager to open the menu.

@@ -36,6 +36,7 @@ var map_size: Vector2i = Vector2i.ZERO
 var _viewport_updates_suppressed: bool = false # When true, viewport rect updates are deferred until unsuppressed
 var _pending_viewport_rect: Rect2 = Rect2() # Stored most recent rect while suppressed
 var _active_focus_tween: Tween = null # Active tween for smooth camera focusing
+var _active_focus_tween_is_fit: bool = false
 var _overlay_occlusion_px_x: float = 0.0 # Horizontal pixels on right side covered by overlay (menu) and thus not visible
 var _debug_menu_focus: bool = false # Toggle detailed menu focus diagnostics (set to false to disable overlay)
 var _debug_overlay_label: Label = null
@@ -542,9 +543,220 @@ func smooth_focus_on_convoy_with_final_occlusion(convoy_data: Dictionary, final_
 		})
 	smooth_focus_on_world_pos(biased_target, duration)
 
+# --- NEW: Fit helpers (zoom + pan to bounds) ---
+# Smoothly zoom out/in so a world-space rect is fully visible in the *non-occluded* map area.
+func smooth_fit_world_rect(world_rect: Rect2, duration: float = 0.6, margin: float = 0.92) -> void:
+	if not is_instance_valid(camera_node):
+		return
+	# Allow 0 width/height (perfectly straight routes) by treating as thin rects.
+	if world_rect.size.x <= 0.0 and world_rect.size.y <= 0.0:
+		return
+	# Kill any active focus tween to avoid fighting.
+	if _active_focus_tween and _active_focus_tween.is_valid():
+		_active_focus_tween.kill()
+	_active_focus_tween_is_fit = true
+
+	# Use current render size as source of truth.
+	var viewport_px: Vector2 = map_viewport_rect.size
+	if is_instance_valid(sub_viewport_node):
+		viewport_px = Vector2(sub_viewport_node.size)
+	if viewport_px.x <= 0.0 or viewport_px.y <= 0.0:
+		viewport_px = get_viewport().get_visible_rect().size
+	if viewport_px.x <= 0.0 or viewport_px.y <= 0.0:
+		return
+
+	# Available width excludes overlay occlusion.
+	var visible_w_px: float = max(1.0, viewport_px.x - _overlay_occlusion_px_x)
+	var visible_h_px: float = max(1.0, viewport_px.y)
+	var rect_w: float = max(1.0, world_rect.size.x)
+	var rect_h: float = max(1.0, world_rect.size.y)
+
+	# Camera2D.zoom < 1.0 zooms out. Choose CONTAIN behavior (fit inside view).
+	var zoom_x: float = visible_w_px / rect_w
+	var zoom_y: float = visible_h_px / rect_h
+	var target_zoom: float = min(zoom_x, zoom_y) * clamp(margin, 0.5, 1.0)
+	# Allow zooming out further than min_camera_zoom_level if needed for long routes.
+	# Still clamp to a conservative floor to avoid numerical weirdness.
+	target_zoom = clamp(target_zoom, 0.05, max_camera_zoom_level)
+
+	# If menu is open and we freeze zoom for bounds, keep the reference in sync.
+	if _menu_open and freeze_zoom_for_menu_bounds:
+		_menu_open_reference_zoom = target_zoom
+
+	var start_zoom: float = maxf(camera_node.zoom.x, 0.0001)
+	# Compute a good center at the *current* zoom, then pan there first.
+	var start_center: Vector2 = _get_fit_center_for_world_rect_and_zoom(world_rect, start_zoom)
+	var final_center: Vector2 = _get_fit_center_for_world_rect_and_zoom(world_rect, target_zoom)
+
+	if duration <= 0.0:
+		duration = focus_tween_duration_default
+	# Split: quick pan to route center (at current zoom), then zoom while keeping that center anchored.
+	var pan_time: float = minf(0.18, duration * 0.35)
+	var zoom_time: float = maxf(0.05, duration - pan_time)
+
+	_active_focus_tween = create_tween()
+	_active_focus_tween.set_trans(focus_tween_trans).set_ease(focus_tween_ease)
+	if camera_node.position.distance_to(start_center) > 1.0:
+		_active_focus_tween.tween_property(camera_node, "position", start_center, pan_time)
+	# During zoom, keep the rect fully visible (bias changes with zoom).
+	_active_focus_tween.tween_method(
+		Callable(self, "_apply_fit_zoom_step").bind(world_rect),
+		start_zoom,
+		target_zoom,
+		zoom_time
+	)
+	_active_focus_tween.finished.connect(Callable(self, "_on_focus_tween_finished"))
+	_last_tween_target = final_center
+	_dbg("fit_rect", {"rect": world_rect, "target_zoom": target_zoom, "start_zoom": start_zoom, "start_center": start_center, "final_center": final_center})
+
+# Convenience: extract the journey route polyline and fit to its bounds.
+func smooth_fit_route_preview(route_data: Dictionary, duration: float = 0.6, margin: float = 0.92) -> void:
+	if not (route_data is Dictionary):
+		return
+	var journey: Variant = route_data.get("journey")
+	if not (journey is Dictionary):
+		return
+	var rx: Variant = (journey as Dictionary).get("route_x", [])
+	var ry: Variant = (journey as Dictionary).get("route_y", [])
+	if not (rx is Array and ry is Array):
+		return
+	var route_x: Array = rx
+	var route_y: Array = ry
+	if route_x.size() < 2 or route_y.size() != route_x.size():
+		return
+	var bounds := _get_route_world_bounds(route_x, route_y)
+	if bounds.size.x <= 0.0 and bounds.size.y <= 0.0:
+		return
+	# Pad so endpoints/line thickness aren't tight against edges.
+	var pad := _get_cell_size() * 0.75
+	bounds = bounds.grow_individual(pad.x, pad.y, pad.x, pad.y)
+	smooth_fit_world_rect(bounds, duration, margin)
+
+func _get_route_world_bounds(route_x: Array, route_y: Array) -> Rect2:
+	var minv := Vector2(INF, INF)
+	var maxv := Vector2(-INF, -INF)
+	for i in range(route_x.size()):
+		var tx := int(route_x[i])
+		var ty := int(route_y[i])
+		var wp := Vector2.ZERO
+		if is_instance_valid(tilemap_ref):
+			wp = tilemap_ref.map_to_local(Vector2i(tx, ty))
+		else:
+			var cs := _get_cell_size()
+			wp = Vector2(tx * cs.x, ty * cs.y)
+		minv.x = min(minv.x, wp.x)
+		minv.y = min(minv.y, wp.y)
+		maxv.x = max(maxv.x, wp.x)
+		maxv.y = max(maxv.y, wp.y)
+	if minv.x == INF:
+		return Rect2()
+	return Rect2(minv, maxv - minv)
+
+func _get_clamped_camera_pos_for_zoom(pos: Vector2, zoom_val: float) -> Vector2:
+	if not is_instance_valid(camera_node):
+		return pos
+	var cell_size = _get_cell_size()
+	var map_width = map_size.x * cell_size.x
+	var map_height = map_size.y * cell_size.y
+	var map_origin: Vector2 = Vector2.ZERO
+	if is_instance_valid(tilemap_ref):
+		map_origin = tilemap_ref.position
+
+	var current_viewport_px: Vector2 = map_viewport_rect.size
+	if is_instance_valid(sub_viewport_node):
+		current_viewport_px = Vector2(sub_viewport_node.size)
+	var viewport_size = current_viewport_px
+	if _menu_open and loose_pan_when_menu_open and _full_viewport_size != Vector2.ZERO:
+		viewport_size = _full_viewport_size
+
+	var zoom: float = maxf(zoom_val, 0.0001)
+	var full_world_w = viewport_size.x / zoom
+	var visible_world_h = viewport_size.y / zoom
+	var half_full_w = full_world_w * 0.5
+	var half_visible_h = visible_world_h * 0.5
+
+	var occlusion_world_w: float = _overlay_occlusion_px_x / zoom
+	var min_x = map_origin.x + half_full_w
+	var max_x = map_origin.x + map_width - half_full_w + occlusion_world_w
+	if max_x < min_x:
+		max_x = min_x
+	var min_y = map_origin.y + half_visible_h
+	var max_y = map_origin.y + map_height - half_visible_h
+
+	if allow_map_edge_exposure:
+		var margin_factor := 0.25
+		min_x = lerp(min_x, 0.0, margin_factor)
+		max_x = lerp(max_x, map_width, margin_factor)
+		min_y = lerp(min_y, 0.0, margin_factor)
+		max_y = lerp(max_y, map_height, margin_factor)
+
+	if map_width <= full_world_w:
+		min_x = map_width * 0.5; max_x = map_width * 0.5
+	if map_height <= visible_world_h:
+		min_y = map_height * 0.5; max_y = map_height * 0.5
+
+	return Vector2(clamp(pos.x, min_x, max_x), clamp(pos.y, min_y, max_y))
+
+func _get_fit_center_for_world_rect_and_zoom(world_rect: Rect2, zoom_val: float) -> Vector2:
+	# Chooses a camera center that keeps world_rect inside the *visible* (non-occluded) region.
+	# This is intentionally NOT clamped to map bounds, because long routes near edges may
+	# require showing some off-map area to keep the whole route visible.
+	var current_viewport_px: Vector2 = map_viewport_rect.size
+	if is_instance_valid(sub_viewport_node):
+		current_viewport_px = Vector2(sub_viewport_node.size)
+	var viewport_size: Vector2 = current_viewport_px
+	if _menu_open and loose_pan_when_menu_open and _full_viewport_size != Vector2.ZERO:
+		viewport_size = _full_viewport_size
+
+	var zoom: float = maxf(zoom_val, 0.0001)
+	var full_world_w: float = viewport_size.x / zoom
+	var full_world_h: float = viewport_size.y / zoom
+	var half_full_w: float = full_world_w * 0.5
+	var half_full_h: float = full_world_h * 0.5
+	var occlusion_world_w: float = _overlay_occlusion_px_x / zoom
+
+	var rect_left: float = world_rect.position.x
+	var rect_top: float = world_rect.position.y
+	var rect_right: float = world_rect.position.x + world_rect.size.x
+	var rect_bottom: float = world_rect.position.y + world_rect.size.y
+
+	var desired: Vector2 = world_rect.get_center()
+	# Bias right so the rect is centered in the visible region (left side).
+	if _overlay_occlusion_px_x > 0.0:
+		desired.x += occlusion_world_w * 0.5
+
+	# Horizontal clamp so the *visible* right edge includes rect_right.
+	# Visible right edge (non-occluded): cam_x + half_full_w - occlusion_world_w
+	var min_center_x: float = rect_right - half_full_w + occlusion_world_w
+	var max_center_x: float = rect_left + half_full_w
+	if min_center_x <= max_center_x:
+		desired.x = clampf(desired.x, min_center_x, max_center_x)
+
+	# Vertical clamp so the rect stays in view.
+	var min_center_y: float = rect_bottom - half_full_h
+	var max_center_y: float = rect_top + half_full_h
+	if min_center_y <= max_center_y:
+		desired.y = clampf(desired.y, min_center_y, max_center_y)
+
+	return desired
+
+func _apply_fit_zoom_step(zoom_level: float, world_rect: Rect2) -> void:
+	if not is_instance_valid(camera_node):
+		return
+	var z: float = maxf(zoom_level, 0.0001)
+	camera_node.zoom = Vector2(z, z)
+	# If menu is open and we freeze zoom for bounds, keep the reference in sync.
+	if _menu_open and freeze_zoom_for_menu_bounds:
+		_menu_open_reference_zoom = z
+	camera_node.position = _get_fit_center_for_world_rect_and_zoom(world_rect, z)
+
 func _on_focus_tween_finished() -> void:
-	_clamp_camera_position()
+	# For fit tweens, don't snap back to map clamp, since that can hide long routes
+	# behind the menu occlusion near map edges.
+	if not _active_focus_tween_is_fit:
+		_clamp_camera_position()
 	_active_focus_tween = null
+	_active_focus_tween_is_fit = false
 	emit_signal("focus_tween_finished")
 	if _debug_menu_focus:
 		_dbg("tween_finished", {"final_pos": (camera_node.position if is_instance_valid(camera_node) else Vector2.ZERO), "expected_target": _last_tween_target})

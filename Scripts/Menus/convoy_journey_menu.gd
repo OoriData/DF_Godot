@@ -23,6 +23,19 @@ var _top_up_plan: Dictionary = {
 var _current_settlement_data: Dictionary = {} # Cached for Top Up logic
 var top_up_button: Button = null # Dynamically created
 
+# Settlement type emojis (kept in sync with UIManager for consistent affordances)
+const SETTLEMENT_EMOJIS: Dictionary = {
+	"town": "🏘️",
+	"village": "🏠",
+	"city": "🏢",
+	"city-state": "🏛️",
+	"dome": "🏙️",
+	"military_base": "🪖",
+	"tutorial": "📘",
+}
+
+var _pending_confirmation_refresh_after_top_up: bool = false
+
 # @onready variables for UI elements
 @onready var title_label: Label = $MainVBox/TitleLabel
 @onready var scroll_container: ScrollContainer = $MainVBox/ScrollContainer
@@ -116,6 +129,27 @@ func _ready():
 		if is_instance_valid(placeholder):
 			placeholder.queue_free()
 
+func _normalize_settlement_type(raw_type: Variant) -> String:
+	var s := String(raw_type if raw_type != null else "").strip_edges().to_lower()
+	if s == "":
+		return ""
+	# Common normalization variants
+	if s == "citystate" or s == "city-state-":
+		return "city-state"
+	if s == "military base" or s == "military-base":
+		return "military_base"
+	return s
+
+func _get_settlement_emoji(settlement_data: Dictionary) -> String:
+	if settlement_data.is_empty():
+		return ""
+	var t := ""
+	if settlement_data.has("sett_type"):
+		t = _normalize_settlement_type(settlement_data.get("sett_type"))
+	elif settlement_data.has("type"):
+		t = _normalize_settlement_type(settlement_data.get("type"))
+	return String(SETTLEMENT_EMOJIS.get(t, ""))
+
 func _notification(what):
 	if what == NOTIFICATION_PREDELETE:
 		# Ensure preview is cleaned up if this menu is closed unexpectedly.
@@ -165,6 +199,12 @@ func _update_ui(convoy: Dictionary) -> void:
 
 	# If a confirmation preview is open, don't clobber it on background refresh.
 	if is_instance_valid(_confirmation_panel) and _confirmation_panel.visible:
+		# After a Top Up, rebuild projections using the updated convoy snapshot.
+		if _pending_confirmation_refresh_after_top_up:
+			_pending_confirmation_refresh_after_top_up = false
+			_update_top_up_button()
+			if not _route_choices_cache.is_empty() and _current_route_choice_index >= 0 and _current_route_choice_index < _route_choices_cache.size():
+				_show_confirmation_panel(_route_choices_cache[_current_route_choice_index])
 		return
 
 	# Deterministic rebuild: prevent duplicated panels/buttons from accumulating.
@@ -591,8 +631,10 @@ func _populate_destination_list():
 		var settlement_data = destination_entry.data
 		var distance = destination_entry.distance
 		var dest_button = Button.new()
-		var settlement_name = settlement_data.get("name", "Unknown")
-		var button_text = "%s (%.1f units)" % [settlement_name, distance]
+		var settlement_name: String = str(settlement_data.get("name", "Unknown"))
+		var emoji := _get_settlement_emoji(settlement_data)
+		var display_name: String = (emoji + " " + settlement_name) if emoji != "" else settlement_name
+		var button_text = "%s (%.1f units)" % [display_name, distance]
 		if mission_destinations.has(settlement_name):
 			var cargo_name = mission_destinations[settlement_name]
 			button_text = "[%s] %s" % [cargo_name, button_text]
@@ -1371,6 +1413,7 @@ func _on_change_destination_pressed():
 	# Hide confirmation, re-show destination list
 	if is_instance_valid(_confirmation_panel):
 		_confirmation_panel.visible = false
+	_pending_confirmation_refresh_after_top_up = false
 	# Stop preview line
 	emit_signal("route_preview_ended")
 	for child in content_vbox.get_children():
@@ -2027,13 +2070,8 @@ func _on_top_up_button_pressed():
 		top_up_button.disabled = true
 		top_up_button.text = "Top Up (Processing...)"
 
-	# Refresh confirmation panel if visible to update resource warnings
-	if is_instance_valid(_confirmation_panel) and _confirmation_panel.visible:
-		# Small delay to allow transactions to register locally before rebuilding
-		get_tree().create_timer(0.2).timeout.connect(func():
-			if is_instance_valid(_confirmation_panel) and _confirmation_panel.visible:
-				_cycle_route(0)
-		)
+	# Refresh confirmation panel once GameStore delivers updated convoy snapshot.
+	_pending_confirmation_refresh_after_top_up = true
 
 func _style_top_up_button():
 	if not is_instance_valid(top_up_button):
