@@ -41,9 +41,8 @@ func _ready():
 	# The icon_sprite.texture is already set to arrow_texture above
 	icon_sprite.scale = Vector2.ONE
 
-	# --- Ensure convoy icon is always visible and above the map ---
-	self.z_index = 10
-	icon_sprite.z_index = 10
+	# Ensure child sprite uses Z-index relative to this node.
+	icon_sprite.z_index = 0
 	self.visible = true
 	icon_sprite.visible = true
 	icon_sprite.modulate = Color(1,1,1,1)

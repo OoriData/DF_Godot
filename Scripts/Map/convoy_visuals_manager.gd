@@ -18,6 +18,7 @@ var terrain_tilemap: TileMapLayer # Reference to the tilemap for coordinate conv
 
 var _latest_convoys: Array = []
 var _selected_convoy_ids: Array[String] = []
+var _focused_convoy_id: String = ""
 var _initialized: bool = false
 
 
@@ -46,6 +47,14 @@ func _ready():
 		if not _hub.selected_convoy_ids_changed.is_connected(_on_selected_convoy_ids_changed):
 			_hub.selected_convoy_ids_changed.connect(_on_selected_convoy_ids_changed)
 
+	# Subscribe to focus signals from MenuManager
+	var menu_manager = get_node_or_null("/root/MenuManager")
+	if is_instance_valid(menu_manager):
+		if menu_manager.has_signal("convoy_menu_focus_requested") and not menu_manager.convoy_menu_focus_requested.is_connected(_on_menu_focus_requested):
+			menu_manager.convoy_menu_focus_requested.connect(_on_menu_focus_requested)
+		if menu_manager.has_signal("menu_visibility_changed") and not menu_manager.menu_visibility_changed.is_connected(_on_menu_visibility_changed):
+			menu_manager.menu_visibility_changed.connect(_on_menu_visibility_changed)
+
 	# If initialized early and store already has data, render now.
 	if _initialized and not _latest_convoys.is_empty():
 		_refresh_visuals()
@@ -72,6 +81,20 @@ func _on_selected_convoy_ids_changed(selected_ids: Array) -> void:
 func update_selected_convoys(selected_ids: Array) -> void:
 	# Back-compat: main.gd currently calls this directly.
 	_on_selected_convoy_ids_changed(selected_ids)
+
+
+func _on_menu_focus_requested(convoy_data: Dictionary) -> void:
+	var cid = str(convoy_data.get("convoy_id", convoy_data.get("id", "")))
+	if cid != _focused_convoy_id:
+		_focused_convoy_id = cid
+		_refresh_visuals()
+
+
+func _on_menu_visibility_changed(is_open: bool, _menu_name: String) -> void:
+	if not is_open:
+		if _focused_convoy_id != "":
+			_focused_convoy_id = ""
+			_refresh_visuals()
 
 
 func _refresh_visuals() -> void:
@@ -215,20 +238,27 @@ func update_convoy_nodes_on_map(
 		current_convoy_ids_from_data.append(convoy_id_str)
 
 		var is_selected = selected_convoy_ids_list.has(convoy_id_str)
+		var is_focused = (convoy_id_str == _focused_convoy_id)
 		var convoy_color = convoy_id_to_color_map.get(convoy_id_str, Color.GRAY)
+
+		var target_z = CONVOY_NODE_Z_INDEX
+		if is_focused:
+			target_z += 20
+		elif is_selected:
+			target_z += 10
 
 		if _active_convoy_nodes.has(convoy_id_str):
 			var existing_node = _active_convoy_nodes[convoy_id_str]
 			# Pass the tilemap instead of pixel sizes
 			existing_node.set_convoy_data(convoy_item_data, convoy_color, terrain_tilemap)
-			existing_node.z_index = CONVOY_NODE_Z_INDEX + 1 if is_selected else CONVOY_NODE_Z_INDEX
+			existing_node.z_index = target_z
 			# Position is now handled entirely within ConvoyNode.gd
 		else:
 			var new_convoy_node = convoy_node_scene.instantiate()
 			convoy_parent_node.add_child(new_convoy_node)
 			# Pass the tilemap instead of pixel sizes
 			new_convoy_node.set_convoy_data(convoy_item_data, convoy_color, terrain_tilemap)
-			new_convoy_node.z_index = CONVOY_NODE_Z_INDEX + 1 if is_selected else CONVOY_NODE_Z_INDEX
+			new_convoy_node.z_index = target_z
 			
 			new_convoy_node.name = "ConvoyNode_" + convoy_id_str 
 			_active_convoy_nodes[convoy_id_str] = new_convoy_node
