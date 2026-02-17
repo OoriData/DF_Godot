@@ -61,6 +61,8 @@ func _ready() -> void:
 			_api.mechanic_operation_failed.connect(_on_operation_failed)
 		if _api.has_signal("cargo_data_received") and not _api.cargo_data_received.is_connected(_on_cargo_data_received):
 			_api.cargo_data_received.connect(_on_cargo_data_received)
+		if _api.has_signal("cargo_data_failed") and not _api.cargo_data_failed.is_connected(_on_cargo_data_failed):
+			_api.cargo_data_failed.connect(_on_cargo_data_failed)
 
 	# Keep the preview cache warm by ingesting vendor updates.
 	if is_instance_valid(_hub) and _hub.has_signal("vendor_updated") and not _hub.vendor_updated.is_connected(_on_vendor_updated):
@@ -220,6 +222,15 @@ func _on_cargo_data_received(cargo: Dictionary) -> void:
 		# NOTE: We rely on APICalls.cargo_data_received (and other domain signals) to refresh UI.
 		# Emitting vendor_preview_ready here is inappropriate because the signal payload is a vendor Dictionary.
 		# (Previously a boolean was emitted, which can cause runtime type errors in listeners.)
+	_cargo_enrichment_pending.erase(cid)
+
+
+func _on_cargo_data_failed(cargo_id: String) -> void:
+	if cargo_id == "":
+		return
+	_cargo_enrichment_pending.erase(cargo_id)
+	if _debug_mechanics:
+		print("[MechanicsService] Cargo enrichment failed for cid=", cargo_id)
 
 
 func _on_vendor_updated(vendor: Dictionary) -> void:
@@ -298,20 +309,24 @@ func _ingest_vendor_inventory(vendor: Variant) -> void:
 				is_mission = ItemsData.MissionItem._looks_like_mission_dict(d)
 			
 			var is_resource := false
-			for res_key in ["fuel", "water", "food"]:
-				var rv = d.get(res_key)
-				if rv != null and (rv is float or rv is int) and float(rv) > 0.0:
-					is_resource = true
-					break
+			if ItemsData != null and ItemsData.ResourceItem:
+				is_resource = ItemsData.ResourceItem._looks_like_resource_dict(d)
+			else:
+				for res_key in ["fuel", "water", "food"]:
+					var rv = d.get(res_key)
+					if rv != null and (rv is float or rv is int) and float(rv) > 0.0:
+						is_resource = true
+						break
 			
-			if not is_mission and not is_resource:
+			var is_vehicle := d.has("vehicle_id") or d.has("packed_vehicle")
+			if not is_mission and not is_resource and not is_vehicle:
 				if _debug_mechanics:
 					print("[MechanicsService] Proactively enriching potential part: ", d.get("name", "Unknown"), " cid=", cid)
 				ensure_cargo_details(cid)
 			elif _debug_mechanics:
 				# Extra verbose: find out why it's not a part
 				var nm := String(d.get("name", "Unknown"))
-				print("[MechanicsService] Item skipped (is_mission=%s is_resource=%s): " % [is_mission, is_resource], nm, " cid=", cid)
+				print("[MechanicsService] Item skipped (is_mission=%s is_resource=%s is_vehicle=%s): " % [is_mission, is_resource, is_vehicle], nm, " cid=", cid)
 
 
 func _on_store_map_changed(_tiles: Array, _settlements: Array) -> void:

@@ -28,6 +28,7 @@ signal user_metadata_updated(result: Dictionary)
 signal vendor_data_received(vendor_data: Dictionary)
 signal part_compatibility_checked(payload: Dictionary) # { vehicle_id, part_id, data }
 signal cargo_data_received(cargo: Dictionary)
+signal cargo_data_failed(cargo_id: String)
 @warning_ignore("unused_signal")
 signal vehicle_data_received(vehicle_data: Dictionary)
 
@@ -1747,6 +1748,12 @@ func _on_request_completed(result: int, response_code: int, _headers: PackedStri
 			emit_signal('fetch_error', error_detail)
 		else:
 			emit_signal('fetch_error', response_text)
+		
+		if request_purpose_at_start == RequestPurpose.CARGO_DATA:
+			var cid := _extract_query_param(_last_requested_url, "cargo_id")
+			if cid != "":
+				emit_signal("cargo_data_failed", cid)
+		
 		_complete_current_request()
 		return
 
