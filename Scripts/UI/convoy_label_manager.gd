@@ -67,6 +67,33 @@ var _route_keepout_extra_px: float = 8.0
 # the relevant convoy label to stay visible even if selection/hover is cleared.
 var _pinned_convoy_ids: Array[String] = []
 
+# Pixels on the right side covered by the menu overlay (global/screen space).
+var _menu_occlusion_px_x: float = 0.0
+var _last_map_screen_rect_for_clamping: Rect2 = Rect2()
+
+
+func set_menu_occlusion_width(px: float) -> void:
+	_menu_occlusion_px_x = maxf(0.0, px)
+	# Re-clamp currently visible panels immediately so they don't sit under the menu.
+	if _last_map_screen_rect_for_clamping.size != Vector2.ZERO:
+		_reclamp_active_panels(_last_map_screen_rect_for_clamping)
+
+
+func _reclamp_active_panels(p_map_screen_rect_for_clamping: Rect2) -> void:
+	for panel_node in _active_convoy_panels.values():
+		if panel_node is Panel and is_instance_valid(panel_node) and panel_node.visible:
+			_clamp_panel_position(panel_node, p_map_screen_rect_for_clamping)
+
+
+func _get_effective_clamp_rect_local(p_map_screen_rect_for_clamping: Rect2) -> Rect2:
+	if not is_instance_valid(_convoy_label_container_ref):
+		return Rect2()
+	var effective_clamp_rect: Rect2 = p_map_screen_rect_for_clamping
+	if _menu_occlusion_px_x > 0.0 and effective_clamp_rect.size.x > 0.0:
+		effective_clamp_rect.size.x = maxf(0.0, effective_clamp_rect.size.x - _menu_occlusion_px_x)
+	var container_global_transform := _convoy_label_container_ref.get_global_transform_with_canvas()
+	return container_global_transform.affine_inverse() * effective_clamp_rect
+
 
 func set_pinned_convoy_ids(ids: Array) -> void:
 	_pinned_convoy_ids.clear()
@@ -405,9 +432,24 @@ func _position_convoy_panel(panel: Panel, convoy_data: Dictionary, existing_labe
 	var convoy_center_local_x: float = (convoy_map_x + 0.5) * _cached_actual_tile_width_on_texture
 	var convoy_center_local_y: float = (convoy_map_y + 0.5) * _cached_actual_tile_height_on_texture
 
-	# Calculate panel's desired local/world position
-	var panel_desired_local_x = convoy_center_local_x + current_horizontal_offset_world
-	var panel_desired_local_y = convoy_center_local_y - (panel_actual_size.y / 2.0) # Vertically center panel against icon's y
+	# Calculate panel's desired local/world position.
+	# If the right side is occluded by a menu, prefer placing the label on the left
+	# when the right-side position would overlap the occluded region.
+	var panel_desired_local_y: float = convoy_center_local_y - (panel_actual_size.y / 2.0) # Vertically center panel against icon's y
+	var panel_desired_local_x_right: float = convoy_center_local_x + current_horizontal_offset_world
+	var panel_desired_local_x_left: float = convoy_center_local_x - current_horizontal_offset_world - panel_actual_size.x
+	var panel_desired_local_x: float = panel_desired_local_x_right
+	if _menu_occlusion_px_x > 0.0 and _last_map_screen_rect_for_clamping.size != Vector2.ZERO:
+		var clamp_local: Rect2 = _get_effective_clamp_rect_local(_last_map_screen_rect_for_clamping)
+		if clamp_local.size != Vector2.ZERO:
+			var max_x_allowed: float = clamp_local.end.x - panel_actual_size.x - _label_map_edge_padding
+			# If right-side placement would be pushed under the menu (beyond visible clamp), flip to left.
+			if panel_desired_local_x_right > max_x_allowed:
+				panel_desired_local_x = panel_desired_local_x_left
+				# If left also doesn't fit, fall back to right and let clamping handle it.
+				var min_x_allowed: float = clamp_local.position.x + _label_map_edge_padding
+				if panel_desired_local_x < min_x_allowed:
+					panel_desired_local_x = panel_desired_local_x_right
 	var panel_desired_local_pos = Vector2(panel_desired_local_x, panel_desired_local_y)
 	if debug_logging:
 		print("[ConvoyLabelManager] Desired panel position for convoy_id:", current_convoy_id_str, panel_desired_local_pos)
@@ -550,8 +592,12 @@ func _clamp_panel_position(panel: Panel, p_current_map_screen_rect_for_clamping:
 	if not is_instance_valid(panel) or not is_instance_valid(_convoy_label_container_ref):
 		return
 
+	var effective_clamp_rect: Rect2 = p_current_map_screen_rect_for_clamping
+	if _menu_occlusion_px_x > 0.0 and effective_clamp_rect.size.x > 0.0:
+		effective_clamp_rect.size.x = maxf(0.0, effective_clamp_rect.size.x - _menu_occlusion_px_x)
+
 	var container_global_transform = _convoy_label_container_ref.get_global_transform_with_canvas()
-	var clamp_rect_local_to_container = container_global_transform.affine_inverse() * p_current_map_screen_rect_for_clamping
+	var clamp_rect_local_to_container = container_global_transform.affine_inverse() * effective_clamp_rect
 
 	var panel_actual_size = panel.size
 	if panel_actual_size.x <= 0 or panel_actual_size.y <= 0:
@@ -584,6 +630,7 @@ func update_convoy_labels(
 	p_current_map_screen_rect_for_clamping: Rect2
 	# Style parameters are now member variables, set by initialize_style_settings
 ):
+	_last_map_screen_rect_for_clamping = p_current_map_screen_rect_for_clamping
 
 	if not _ui_drawing_params_cached:
 		# print("ConvoyLabelManager (update_convoy_labels): Drawing parameters NOT cached. Bailing out.") # DEBUG

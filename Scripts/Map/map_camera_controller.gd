@@ -469,6 +469,27 @@ func set_menu_open_state(is_open: bool, and_clamp_immediately: bool = true):
 		_clamp_camera_position()
 	_dbg("menu_state", {"open": _menu_open, "pan_bounds": get_current_pan_bounds(), "cam_pos": (camera_node.position if is_instance_valid(camera_node) else Vector2.ZERO)})
 
+# Resets any temporary "fit" state and returns camera to normal clamped map bounds.
+func reset_camera_to_map_bounds() -> void:
+	if not is_instance_valid(camera_node):
+		return
+	if _active_focus_tween and _active_focus_tween.is_valid():
+		_active_focus_tween.kill()
+	_active_focus_tween = null
+	_active_focus_tween_is_fit = false
+
+	_update_camera_limits()
+
+	var current_zoom: float = maxf(camera_node.zoom.x, 0.0001)
+	var clamped_zoom: float = clampf(current_zoom, min_camera_zoom_level, max_camera_zoom_level)
+	if not is_equal_approx(current_zoom, clamped_zoom):
+		camera_node.zoom = Vector2(clamped_zoom, clamped_zoom)
+		emit_signal("camera_zoom_changed", clamped_zoom)
+		if _menu_open and freeze_zoom_for_menu_bounds:
+			_menu_open_reference_zoom = clamped_zoom
+
+	_clamp_camera_position()
+
 # Public setter to mirror MIM API and toggle edge exposure at runtime
 func set_allow_camera_outside_bounds(allow: bool) -> void:
 	allow_map_edge_exposure = allow
@@ -502,6 +523,7 @@ func smooth_focus_on_world_pos(world_pos: Vector2, duration: float = 0.5) -> voi
 		return
 	if _active_focus_tween and _active_focus_tween.is_valid():
 		_active_focus_tween.kill()
+	_active_focus_tween_is_fit = false
 
 	# Clamp the target position before tweening to respect map boundaries.
 	var clamped_world_pos = _get_clamped_camera_pos(world_pos)
@@ -715,6 +737,15 @@ func _get_fit_center_for_world_rect_and_zoom(world_rect: Rect2, zoom_val: float)
 	var half_full_h: float = full_world_h * 0.5
 	var occlusion_world_w: float = _overlay_occlusion_px_x / zoom
 
+	# If the visible height is larger than the map height, center the map vertically so
+	# any off-map area is split evenly above/below.
+	var lock_y_to_map_center: bool = false
+	var map_origin: Vector2 = Vector2.ZERO
+	if is_instance_valid(tilemap_ref):
+		map_origin = tilemap_ref.position
+	var cell_size: Vector2 = _get_cell_size()
+	var map_height: float = float(map_size.y) * cell_size.y
+
 	var rect_left: float = world_rect.position.x
 	var rect_top: float = world_rect.position.y
 	var rect_right: float = world_rect.position.x + world_rect.size.x
@@ -724,6 +755,9 @@ func _get_fit_center_for_world_rect_and_zoom(world_rect: Rect2, zoom_val: float)
 	# Bias right so the rect is centered in the visible region (left side).
 	if _overlay_occlusion_px_x > 0.0:
 		desired.x += occlusion_world_w * 0.5
+	if map_height > 0.0 and map_height <= full_world_h:
+		desired.y = map_origin.y + map_height * 0.5
+		lock_y_to_map_center = true
 
 	# Horizontal clamp so the *visible* right edge includes rect_right.
 	# Visible right edge (non-occluded): cam_x + half_full_w - occlusion_world_w
@@ -733,10 +767,11 @@ func _get_fit_center_for_world_rect_and_zoom(world_rect: Rect2, zoom_val: float)
 		desired.x = clampf(desired.x, min_center_x, max_center_x)
 
 	# Vertical clamp so the rect stays in view.
-	var min_center_y: float = rect_bottom - half_full_h
-	var max_center_y: float = rect_top + half_full_h
-	if min_center_y <= max_center_y:
-		desired.y = clampf(desired.y, min_center_y, max_center_y)
+	if not lock_y_to_map_center:
+		var min_center_y: float = rect_bottom - half_full_h
+		var max_center_y: float = rect_top + half_full_h
+		if min_center_y <= max_center_y:
+			desired.y = clampf(desired.y, min_center_y, max_center_y)
 
 	return desired
 

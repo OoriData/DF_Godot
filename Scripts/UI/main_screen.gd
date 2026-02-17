@@ -163,6 +163,11 @@ func _on_menu_opened(menu_node: Node, menu_type: String) -> void:
 	if not is_instance_valid(menu_node):
 		return
 	_active_journey_menu = menu_node
+	# Ensure convoy labels are re-clamped/repositioned against current menu occlusion.
+	var clm := _get_convoy_label_manager_node()
+	if is_instance_valid(clm) and clm.has_method("set_menu_occlusion_width"):
+		clm.set_menu_occlusion_width(_current_menu_occlusion_px)
+	_force_map_ui_refresh()
 	if menu_node.has_signal("route_preview_started") and not menu_node.is_connected("route_preview_started", Callable(self, "_on_journey_route_preview_started")):
 		menu_node.connect("route_preview_started", Callable(self, "_on_journey_route_preview_started"))
 	if menu_node.has_signal("route_preview_ended") and not menu_node.is_connected("route_preview_ended", Callable(self, "_on_journey_route_preview_ended")):
@@ -178,6 +183,16 @@ func _on_menu_closed(menu_node_was_active: Node, menu_type: String) -> void:
 			menu_node_was_active.disconnect("route_preview_ended", Callable(self, "_on_journey_route_preview_ended"))
 	if _active_journey_menu == menu_node_was_active:
 		_active_journey_menu = null
+	# Ensure we never leave the camera outside map bounds after closing the Journey menu.
+	call_deferred("_deferred_reset_camera_after_journey_menu")
+
+func _deferred_reset_camera_after_journey_menu() -> void:
+	if not is_instance_valid(map_camera_controller):
+		return
+	# Wait one frame so menu occlusion/layout updates are settled.
+	await get_tree().process_frame
+	if map_camera_controller.has_method("reset_camera_to_map_bounds"):
+		map_camera_controller.reset_camera_to_map_bounds()
 
 func _on_journey_route_preview_started(route_data: Dictionary) -> void:
 	# When the route loads, zoom/center to show the full line.
@@ -194,8 +209,12 @@ func _deferred_fit_route_preview(route_data: Dictionary) -> void:
 		map_camera_controller.smooth_fit_route_preview(route_data, 0.75, 0.92)
 
 func _on_journey_route_preview_ended() -> void:
-	# No-op for now; we keep the camera where the user last left it.
-	pass
+	# Route preview is done (e.g. confirm/cancel/back). If we temporarily fit off-map,
+	# return to normal clamped bounds.
+	if not is_instance_valid(map_camera_controller):
+		return
+	if map_camera_controller.has_method("reset_camera_to_map_bounds"):
+		map_camera_controller.reset_camera_to_map_bounds()
 
 func _connect_deferred_signals():
 	# Connect the button in the top bar to a function that asks the MenuManager to open the menu.
@@ -520,6 +539,10 @@ func _update_camera_occlusion_from_menu():
 	if is_instance_valid(map_camera_controller) and map_camera_controller.has_method("set_overlay_occlusion_width"):
 		map_camera_controller.set_overlay_occlusion_width(_current_menu_occlusion_px)
 		_dbg_menu("occlusion_update", {"occlusion_px": _current_menu_occlusion_px})
+	# Keep convoy labels out from under the menu overlay.
+	var clm := _get_convoy_label_manager_node()
+	if is_instance_valid(clm) and clm.has_method("set_menu_occlusion_width"):
+		clm.set_menu_occlusion_width(_current_menu_occlusion_px)
 
 # Helper: attempt to retrieve currently selected convoy data for focusing.
 func _get_primary_convoy_data() -> Dictionary:

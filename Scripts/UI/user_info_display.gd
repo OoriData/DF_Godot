@@ -23,6 +23,8 @@ var _original_money_font_size: int
 @onready var _api: Node = get_node_or_null("/root/APICalls")
 @onready var _user_service: Node = get_node_or_null("/root/UserService")
 
+@export var navbar_background_color: Color = Color(0.16, 0.16, 0.16, 0.92)
+
 func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_PASS
 	for child in get_children():
@@ -50,6 +52,7 @@ func _ready() -> void:
 
 	# Options dropdown (replaces separate top-row buttons)
 	_configure_options_dropdown()
+	queue_redraw()
 
 
 
@@ -71,6 +74,15 @@ func _print_ui_tree(node: Node, indent: int):
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_VISIBILITY_CHANGED and is_visible_in_tree():
 		_update_display()
+		queue_redraw()
+	elif what == NOTIFICATION_RESIZED:
+		queue_redraw()
+
+func _draw() -> void:
+	# Explicit background so the navbar stays grey even if the project clear color is black.
+	if size.x <= 0.0 or size.y <= 0.0:
+		return
+	draw_rect(Rect2(Vector2.ZERO, size), navbar_background_color, true)
 
 func _on_user_data_updated(user_data: Dictionary):
 	_update_display(user_data)
