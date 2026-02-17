@@ -170,21 +170,18 @@ func augment_convoy_data_with_offsets(convoy_data_array: Array) -> Array:
 						if dir_canonical.length() > 0.0001:
 							normal_canonical = Vector2(-dir_canonical.y, dir_canonical.x).normalized()
 						
-						# Current travel direction normal (for determining lane sign)
-						var pA_actual := terrain_tilemap.map_to_local(a)
-						var pB_actual := terrain_tilemap.map_to_local(b)
-						var dir_actual := pB_actual - pA_actual
-						var travel_normal := Vector2.ZERO
-						if dir_actual.length() > 0.0001:
-							travel_normal = Vector2(-dir_actual.y, dir_actual.x).normalized()
-							
-						var normal_alignment := 1.0 if (travel_normal.dot(normal_canonical) > 0.0) else -1.0
+						var lane_centered = 0.0
+						if overlap_index != -1:
+							var pA_actual := terrain_tilemap.map_to_local(a)
+							var pB_actual := terrain_tilemap.map_to_local(b)
+							var travel_dir := pB_actual - pA_actual
+							var alignment := 1.0 if (travel_dir.dot(dir_canonical) >= 0.0) else -1.0
+							lane_centered = (float(overlap_index) - float(overlapping_convoys.size() - 1) * 0.5) * alignment
 						
-						var lane_centered = (float(overlap_index) - float(overlapping_convoys.size() - 1) * 0.5) * normal_alignment
 						# base_offset_magnitude is 20% of tile size usually
 						# We should match the base_sep_px from UI_manager.gd (which is 28% of tile size)
 						var tile_size_vec = terrain_tilemap.tile_set.tile_size
-						var sep_px = max(1.0, min(tile_size_vec.x, tile_size_vec.y) * 0.28)
+						var sep_px = max(1.0, min(tile_size_vec.x, tile_size_vec.y) * 0.32)
 						
 						icon_offset_v = normal_canonical * lane_centered * sep_px
 			

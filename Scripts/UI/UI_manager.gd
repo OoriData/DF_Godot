@@ -103,7 +103,7 @@ const SETTLEMENT_EMOJIS: Dictionary = {
 ## Width of the connector lines.
 @export var connector_line_width: float = 3.0 # slightly thicker center line
 ## Extra width (in pixels) added to the white outline under journey / preview lines
-@export var route_line_outline_extra_width: float = 5.0 # slightly thicker underlay for contrast
+@export var route_line_outline_extra_width: float = 2.0 # thinner border for more prominent colors
 
 # --- State managed by UIManager ---
 var _dragging_panel_node: Panel = null
@@ -776,7 +776,7 @@ func _on_connector_lines_container_draw():
 	var tile_size_vec: Vector2 = Vector2.ZERO
 	if is_instance_valid(terrain_tilemap.tile_set):
 		tile_size_vec = terrain_tilemap.tile_set.tile_size
-	var base_sep_px: float = max(1.0, min(tile_size_vec.x, tile_size_vec.y) * 0.28) # slightly more separation between lanes
+	var base_sep_px: float = max(1.0, min(tile_size_vec.x, tile_size_vec.y) * 0.32) # slightly more separation between lanes
 
 	if _all_convoy_data_cache is Array:
 		# Pass 1: collect segment membership across all convoys
@@ -805,6 +805,21 @@ func _on_connector_lines_container_draw():
 					shared_segments_membership[seg_key] = []
 				if not shared_segments_membership[seg_key].has(cid_c):
 					shared_segments_membership[seg_key].append(cid_c)
+		
+		# --- Add Preview Route to membership if active ---
+		if _is_preview_active and _preview_route_x.size() >= 2:
+			var preview_cid := "PREVIEW_ROUTE"
+			for si in range(_preview_route_x.size() - 1):
+				var a := Vector2i(int(_preview_route_x[si]), int(_preview_route_y[si]))
+				var b := Vector2i(int(_preview_route_x[si + 1]), int(_preview_route_y[si + 1]))
+				var p_min := a if (a.x < b.x or (a.x == b.x and a.y < b.y)) else b
+				var p_max := b if (p_min == a) else a
+				var seg_key := "%d,%d-%d,%d" % [p_min.x, p_min.y, p_max.x, p_max.y]
+				if not shared_segments_membership.has(seg_key):
+					shared_segments_membership[seg_key] = []
+				if not shared_segments_membership[seg_key].has(preview_cid):
+					shared_segments_membership[seg_key].append(preview_cid)
+
 		# Sort memberships for deterministic lane ordering
 		for k in shared_segments_membership.keys():
 			shared_segments_membership[k].sort()
@@ -853,17 +868,6 @@ func _on_connector_lines_container_draw():
 				if dir_canonical.length() > 0.0001:
 					normal_canonical = Vector2(-dir_canonical.y, dir_canonical.x).normalized()
 				
-				# Current travel direction normal (for determining lane sign)
-				var dir_actual := pB - pA
-				var travel_normal := Vector2.ZERO
-				if dir_actual.length() > 0.0001:
-					travel_normal = Vector2(-dir_actual.y, dir_actual.x).normalized()
-				
-				# If we are traveling against the canonical direction, we're on the "left" side 
-				# of the canonical line if we want to be on the "right" side of the travel line.
-				# Dot product of actual normal and canonical normal tells us if they are aligned (1) or opposite (-1).
-				var normal_alignment := 1.0 if (travel_normal.dot(normal_canonical) > 0.0) else -1.0
-				
 				seg_normals.append(normal_canonical)
 				
 				# Determine lane offset multiplier for this segment based on membership index
@@ -873,9 +877,11 @@ func _on_connector_lines_container_draw():
 				var count: int = members.size()
 				var lane_centered: float = 0.0
 				if not (idx == -1 or count <= 1):
-					# Apply the alignment correction: if traveling inverted, the lanes 
-					# must be flipped relative to the canonical normal to maintain "drive on the right".
-					lane_centered = (float(idx) - float(count - 1) * 0.5) * normal_alignment
+					# Use direction-based alignment to ensure "Lane 0" stays on the same side
+					# throughout the journey. travel_dir dot can_dir tells us if we are flipped.
+					var travel_dir := pB - pA
+					var alignment := 1.0 if (travel_dir.dot(dir_canonical) >= 0.0) else -1.0
+					lane_centered = (float(idx) - float(count - 1) * 0.5) * alignment
 				seg_lane_offsets.append(lane_centered)
 				seg_member_counts.append(count)
 
@@ -901,22 +907,33 @@ func _on_connector_lines_container_draw():
 							if off_vec.length() < min_gap_px and seg_normals[seg_normals.size() - 1].length() > 0.0:
 								off_vec = seg_normals[seg_normals.size() - 1] * lane_sign2 * min_gap_px
 				else:
-					var prev_off := seg_normals[vi - 1] * seg_lane_offsets[vi - 1] * base_sep_px
-					var next_off := seg_normals[vi] * seg_lane_offsets[vi] * base_sep_px
-					var prev_count := seg_member_counts[vi - 1]
-					var next_count := seg_member_counts[vi]
-					# If entering a shared segment, bias toward next_off; if exiting, bias toward prev_off
-					if prev_count <= 1 and next_count > 1:
-						off_vec = next_off
-					elif prev_count > 1 and next_count <= 1:
-						off_vec = prev_off
+					var n_prev := seg_normals[vi - 1]
+					var n_next := seg_normals[vi]
+					var lane_prev := seg_lane_offsets[vi - 1]
+					var lane_next := seg_lane_offsets[vi]
+					var count_prev := seg_member_counts[vi - 1]
+					var count_next := seg_member_counts[vi]
+
+					if count_prev <= 1 and count_next > 1:
+						off_vec = n_next * lane_next * base_sep_px
+					elif count_prev > 1 and count_next <= 1:
+						off_vec = n_prev * lane_prev * base_sep_px
 					else:
-						off_vec = (prev_off + next_off) * 0.5
+						# Use miter normal to keep lanes parallel through the turn
+						var miter := (n_prev + n_next).normalized()
+						if miter.length_squared() < 0.0001:
+							# Parallel or opposing segments
+							off_vec = n_prev * lane_prev * base_sep_px
+						else:
+							var miter_len: float = base_sep_px / max(0.1, n_prev.dot(miter))							# The lane offset should ideally be consistent, but we use the next segment's lane
+							# as the authoritative one if they differ (though they shouldn't on a continuous path).
+							off_vec = miter * lane_next * miter_len
+					
 					# Enforce a small minimum gap at the junction if any segment is shared
-					if (prev_count > 1 or next_count > 1):
-						var use_next := next_count > 1
-						var chosen_n := seg_normals[vi] if use_next else seg_normals[vi - 1]
-						var lane_c := seg_lane_offsets[vi] if use_next else seg_lane_offsets[vi - 1]
+					if (count_prev > 1 or count_next > 1):
+						var use_next := count_next > 1
+						var chosen_n := n_next if use_next else n_prev
+						var lane_c := lane_next if use_next else lane_prev
 						var lane_sign3 := 1.0 if lane_c >= 0.0 else -1.0
 						if off_vec.length() < min_gap_px and chosen_n.length() > 0.0:
 							off_vec = chosen_n * lane_sign3 * min_gap_px
@@ -931,18 +948,93 @@ func _on_connector_lines_container_draw():
 				convoy_connector_lines_container.draw_polyline(offset_points, convoy_color, connector_line_width)
 	# --- Preview Route Drawing (after existing routes so it appears on top) ---
 	if _is_preview_active and _preview_route_x.size() >= 2 and _preview_route_x.size() == _preview_route_y.size():
-		var preview_points: PackedVector2Array = []
+		var preview_points_base: Array[Vector2] = []
 		for j in range(_preview_route_x.size()):
 			var px = int(_preview_route_x[j])
 			var py = int(_preview_route_y[j])
-			var ppos = terrain_tilemap.map_to_local(Vector2i(px, py))
-			preview_points.append(ppos)
-		if preview_points.size() >= 2:
+			preview_points_base.append(terrain_tilemap.map_to_local(Vector2i(px, py)))
+		
+		var preview_offset_points: PackedVector2Array = []
+		var preview_cid := "PREVIEW_ROUTE"
+		var min_gap_px: float = 2.0
+		
+		# Compute per-segment normals and lane index for the preview
+		var p_seg_normals: Array[Vector2] = []
+		var p_seg_lane_offsets: Array[float] = []
+		var p_seg_member_counts: Array[int] = []
+		
+		for si in range(_preview_route_x.size() - 1):
+			var a_tile := Vector2i(int(_preview_route_x[si]), int(_preview_route_y[si]))
+			var b_tile := Vector2i(int(_preview_route_x[si + 1]), int(_preview_route_y[si + 1]))
+			var p_min_tile := a_tile if (a_tile.x < b_tile.x or (a_tile.x == b_tile.x and a_tile.y < b_tile.y)) else b_tile
+			var p_max_tile := b_tile if (p_min_tile == a_tile) else a_tile
+			
+			var pA_canonical := terrain_tilemap.map_to_local(p_min_tile)
+			var pB_canonical := terrain_tilemap.map_to_local(p_max_tile)
+			var dir_canonical := pB_canonical - pA_canonical
+			var normal_canonical := Vector2.ZERO
+			if dir_canonical.length() > 0.0001:
+				normal_canonical = Vector2(-dir_canonical.y, dir_canonical.x).normalized()
+			
+			p_seg_normals.append(normal_canonical)
+			
+			var seg_key := "%d,%d-%d,%d" % [p_min_tile.x, p_min_tile.y, p_max_tile.x, p_max_tile.y]
+			var members: Array = shared_segments_membership.get(seg_key, [])
+			var idx: int = members.find(preview_cid)
+			var count: int = members.size()
+			var lane_centered: float = 0.0
+			if not (idx == -1 or count <= 1):
+				var travel_dir := preview_points_base[si+1] - preview_points_base[si]
+				var alignment := 1.0 if (travel_dir.dot(dir_canonical) >= 0.0) else -1.0
+				lane_centered = (float(idx) - float(count - 1) * 0.5) * alignment
+			p_seg_lane_offsets.append(lane_centered)
+			p_seg_member_counts.append(count)
+
+		# Build offset points for preview
+		for vi in range(preview_points_base.size()):
+			var off_vec: Vector2 = Vector2.ZERO
+			if vi == 0:
+				if p_seg_normals.size() >= 1:
+					off_vec = p_seg_normals[0] * p_seg_lane_offsets[0] * base_sep_px
+			elif vi == preview_points_base.size() - 1:
+				if p_seg_normals.size() >= 1:
+					off_vec = p_seg_normals[p_seg_normals.size() - 1] * p_seg_lane_offsets[p_seg_lane_offsets.size() - 1] * base_sep_px
+			else:
+				var n_prev := p_seg_normals[vi - 1]
+				var n_next := p_seg_normals[vi]
+				var lane_prev := p_seg_lane_offsets[vi - 1]
+				var lane_next := p_seg_lane_offsets[vi]
+				var cp_prev := p_seg_member_counts[vi - 1]
+				var cp_next := p_seg_member_counts[vi]
+				
+				if cp_prev <= 1 and cp_next > 1:
+					off_vec = n_next * lane_next * base_sep_px
+				elif cp_prev > 1 and cp_next <= 1:
+					off_vec = n_prev * lane_prev * base_sep_px
+				else:
+					# Miter normal for parallel lanes through corners
+					var miter := (n_prev + n_next).normalized()
+					if miter.length_squared() < 0.0001:
+						off_vec = n_prev * lane_prev * base_sep_px
+					else:
+						var miter_len: float = base_sep_px / max(0.1, n_prev.dot(miter))
+						off_vec = miter * lane_next * miter_len
+				
+				if cp_prev > 1 or cp_next > 1:
+					var use_next := cp_next > 1
+					var chosen_n := n_next if use_next else n_prev
+					var lane_c := lane_next if use_next else lane_prev
+					var lane_sign3 := 1.0 if lane_c >= 0.0 else -1.0
+					if off_vec.length() < min_gap_px and chosen_n.length() > 0.0:
+						off_vec = chosen_n * lane_sign3 * min_gap_px
+			preview_offset_points.append(preview_points_base[vi] + off_vec)
+
+		if preview_offset_points.size() >= 2:
 			var preview_outline_w = max(0.0, _preview_line_width + route_line_outline_extra_width)
 			# White underlay for preview path (larger outline)
-			convoy_connector_lines_container.draw_polyline(preview_points, Color(1,1,1,0.95), preview_outline_w)
+			convoy_connector_lines_container.draw_polyline(preview_offset_points, Color(1,1,1,0.95), preview_outline_w)
 			# Colored overlay matching convoy color
-			convoy_connector_lines_container.draw_polyline(preview_points, _preview_color, _preview_line_width)
+			convoy_connector_lines_container.draw_polyline(preview_offset_points, _preview_color, _preview_line_width)
 
 func set_convoy_user_position(convoy_id_str: String, position: Vector2):
 	_convoy_label_user_positions[convoy_id_str] = position
