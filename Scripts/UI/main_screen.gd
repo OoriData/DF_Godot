@@ -90,6 +90,39 @@ var _current_menu_occlusion_px: float = 0.0 # animated width used to inform came
 @export var onboarding_log_enabled: bool = false # gate onboarding-related logs
 var _menu_anim_in_progress: bool = false # true while menu open/close tween is active to suppress duplicate focus requests
 
+# Coalesce potentially-frequent menu occlusion changes into a single Map UI refresh.
+# This ensures convoy labels reflow immediately when the menu animates, instead of
+# waiting for a hover-triggered update.
+const _OCCLUSION_REFRESH_EPS_PX := 0.5
+var _pending_map_ui_refresh: bool = false
+var _pending_occlusion_px_for_refresh: float = 0.0
+var _last_occlusion_px_used_for_refresh: float = -999999.0
+
+const _JOURNEY_PREVIEW_UI_REFRESH_DELAY_SEC := 0.82
+
+func _request_map_ui_refresh_due_to_occlusion() -> void:
+	_pending_occlusion_px_for_refresh = _current_menu_occlusion_px
+	if _pending_map_ui_refresh:
+		return
+	_pending_map_ui_refresh = true
+	call_deferred("_do_map_ui_refresh_due_to_occlusion")
+
+func _do_map_ui_refresh_due_to_occlusion() -> void:
+	_pending_map_ui_refresh = false
+	if abs(_pending_occlusion_px_for_refresh - _last_occlusion_px_used_for_refresh) < _OCCLUSION_REFRESH_EPS_PX:
+		return
+	_last_occlusion_px_used_for_refresh = _pending_occlusion_px_for_refresh
+	_force_map_ui_refresh()
+
+func _force_map_ui_refresh_after(delay_sec: float) -> void:
+	if delay_sec <= 0.0:
+		_force_map_ui_refresh()
+		return
+	await get_tree().create_timer(delay_sec).timeout
+	if not is_inside_tree():
+		return
+	_force_map_ui_refresh()
+
 # --- Journey preview camera fitting ---
 var _active_journey_menu: Node = null
 
@@ -163,11 +196,6 @@ func _on_menu_opened(menu_node: Node, menu_type: String) -> void:
 	if not is_instance_valid(menu_node):
 		return
 	_active_journey_menu = menu_node
-	# Ensure convoy labels are re-clamped/repositioned against current menu occlusion.
-	var clm := _get_convoy_label_manager_node()
-	if is_instance_valid(clm) and clm.has_method("set_menu_occlusion_width"):
-		clm.set_menu_occlusion_width(_current_menu_occlusion_px)
-	_force_map_ui_refresh()
 	if menu_node.has_signal("route_preview_started") and not menu_node.is_connected("route_preview_started", Callable(self, "_on_journey_route_preview_started")):
 		menu_node.connect("route_preview_started", Callable(self, "_on_journey_route_preview_started"))
 	if menu_node.has_signal("route_preview_ended") and not menu_node.is_connected("route_preview_ended", Callable(self, "_on_journey_route_preview_ended")):
@@ -201,6 +229,9 @@ func _on_journey_route_preview_started(route_data: Dictionary) -> void:
 	if map_camera_controller.has_method("smooth_fit_route_preview"):
 		# Defer one frame so layout/occlusion is definitely up to date.
 		call_deferred("_deferred_fit_route_preview", route_data)
+		# Labels often don't update during camera tweens (no hover/selection change),
+		# so force a single refresh near the end of the fit animation.
+		call_deferred("_force_map_ui_refresh_after", _JOURNEY_PREVIEW_UI_REFRESH_DELAY_SEC)
 
 func _deferred_fit_route_preview(route_data: Dictionary) -> void:
 	if not is_instance_valid(map_camera_controller):
@@ -215,6 +246,8 @@ func _on_journey_route_preview_ended() -> void:
 		return
 	if map_camera_controller.has_method("reset_camera_to_map_bounds"):
 		map_camera_controller.reset_camera_to_map_bounds()
+		# Ensure UI labels/clamping update even without hover.
+		call_deferred("_force_map_ui_refresh_after", 0.05)
 
 func _connect_deferred_signals():
 	# Connect the button in the top bar to a function that asks the MenuManager to open the menu.
@@ -397,6 +430,8 @@ func _on_menu_visibility_changed(is_open: bool, _menu_name: String):
 		# We pass 'false' to prevent an immediate camera snap.
 		if is_instance_valid(map_camera_controller) and map_camera_controller.has_method("set_menu_open_state"):
 			map_camera_controller.set_menu_open_state(true, false)
+		# Suppress convoy label reflow while the menu is animating in.
+		_menu_anim_in_progress = true
 		# IMPORTANT: apply final occlusion immediately for camera limit computation & centering.
 		_current_menu_occlusion_px = _menu_target_width
 		_update_camera_occlusion_from_menu()
@@ -436,14 +471,15 @@ func _set_pinned_convoy_label_from_data(convoy_data: Dictionary) -> void:
 		_force_map_ui_refresh()
 
 
-func _clear_pinned_convoy_label() -> void:
+func _clear_pinned_convoy_label(refresh: bool = true) -> void:
 	var clm := _get_convoy_label_manager_node()
 	if is_instance_valid(clm):
 		if clm.has_method("clear_pinned_convoy_ids"):
 			clm.clear_pinned_convoy_ids()
 		elif clm.has_method("set_pinned_convoy_ids"):
 			clm.set_pinned_convoy_ids([])
-	_force_map_ui_refresh()
+	if refresh:
+		_force_map_ui_refresh()
 
 func _kill_menu_anim_tween():
 	if _menu_anim_tween and _menu_anim_tween.is_valid():
@@ -491,6 +527,8 @@ func _slide_menu_open(convoy_data: Dictionary):
 		# (Camera occlusion already correct)
 		menu_container.modulate.a = 1.0
 		_menu_anim_in_progress = false
+		# Apply occlusion to convoy labels and reflow once at the end.
+		_update_camera_occlusion_from_menu()
 	)
 
 func _slide_menu_close(convoy_data: Dictionary):
@@ -515,10 +553,10 @@ func _slide_menu_close(convoy_data: Dictionary):
 		menu_container.offset_left = 0.0
 		menu_container.modulate.a = 1.0
 		_current_menu_occlusion_px = 0.0
-		_update_camera_occlusion_from_menu()
 		_menu_anim_in_progress = false
+		_update_camera_occlusion_from_menu()
 		# Now that the menu is fully closed, release any menu-pinned convoy label.
-		_clear_pinned_convoy_label()
+		_clear_pinned_convoy_label(false)
 	)
 
 var _close_anim_convoy: Dictionary = {}
@@ -542,7 +580,14 @@ func _update_camera_occlusion_from_menu():
 	# Keep convoy labels out from under the menu overlay.
 	var clm := _get_convoy_label_manager_node()
 	if is_instance_valid(clm) and clm.has_method("set_menu_occlusion_width"):
+		# During menu tweens, suppress label occlusion updates so labels don't snap
+		# multiple times while the menu slides.
+		if _menu_anim_in_progress:
+			return
 		clm.set_menu_occlusion_width(_current_menu_occlusion_px)
+		# Reclamping alone doesn't guarantee collision resolution; request a full
+		# convoy label reflow via the normal UI update pipeline.
+		_request_map_ui_refresh_due_to_occlusion()
 
 # Helper: attempt to retrieve currently selected convoy data for focusing.
 func _get_primary_convoy_data() -> Dictionary:
