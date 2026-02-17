@@ -796,10 +796,11 @@ func _on_connector_lines_container_draw():
 			for si in range(rx_c.size() - 1):
 				var a := Vector2i(int(rx_c[si]), int(ry_c[si]))
 				var b := Vector2i(int(rx_c[si + 1]), int(ry_c[si + 1]))
-				# Normalize order for key stability
-				var p1 := Vector2(min(a.x, b.x), min(a.y, b.y))
-				var p2 := Vector2(max(a.x, b.x), max(a.y, b.y))
-				var seg_key := "%s,%s-%s,%s" % [int(p1.x), int(p1.y), int(p2.x), int(p2.y)]
+				# Normalize order for key stability: subway-style pathing needs a canonical
+				# key regardless of travel direction.
+				var p_min := a if (a.x < b.x or (a.x == b.x and a.y < b.y)) else b
+				var p_max := b if (p_min == a) else a
+				var seg_key := "%d,%d-%d,%d" % [p_min.x, p_min.y, p_max.x, p_max.y]
 				if not shared_segments_membership.has(seg_key):
 					shared_segments_membership[seg_key] = []
 				if not shared_segments_membership[seg_key].has(cid_c):
@@ -837,23 +838,44 @@ func _on_connector_lines_container_draw():
 			for si in range(route_x.size() - 1):
 				var pA: Vector2 = base_points[si]
 				var pB: Vector2 = base_points[si + 1]
-				var dir: Vector2 = pB - pA
-				var nrm: Vector2 = Vector2.ZERO
-				if dir.length() > 0.0001:
-					nrm = Vector2(-dir.y, dir.x).normalized()
-				seg_normals.append(nrm)
+				# Use a canonical direction for normal calculation (p_min to p_max)
+				# so that lanes are consistent regardless of which way the convoy is moving.
+				var a_tile := Vector2i(int(route_x[si]), int(route_y[si]))
+				var b_tile := Vector2i(int(route_x[si + 1]), int(route_y[si + 1]))
+				var p_min_tile := a_tile if (a_tile.x < b_tile.x or (a_tile.x == b_tile.x and a_tile.y < b_tile.y)) else b_tile
+				var p_max_tile := b_tile if (p_min_tile == a_tile) else a_tile
+				
+				var pA_canonical := terrain_tilemap.map_to_local(p_min_tile)
+				var pB_canonical := terrain_tilemap.map_to_local(p_max_tile)
+				var dir_canonical := pB_canonical - pA_canonical
+				
+				var normal_canonical := Vector2.ZERO
+				if dir_canonical.length() > 0.0001:
+					normal_canonical = Vector2(-dir_canonical.y, dir_canonical.x).normalized()
+				
+				# Current travel direction normal (for determining lane sign)
+				var dir_actual := pB - pA
+				var travel_normal := Vector2.ZERO
+				if dir_actual.length() > 0.0001:
+					travel_normal = Vector2(-dir_actual.y, dir_actual.x).normalized()
+				
+				# If we are traveling against the canonical direction, we're on the "left" side 
+				# of the canonical line if we want to be on the "right" side of the travel line.
+				# Dot product of actual normal and canonical normal tells us if they are aligned (1) or opposite (-1).
+				var normal_alignment := 1.0 if (travel_normal.dot(normal_canonical) > 0.0) else -1.0
+				
+				seg_normals.append(normal_canonical)
+				
 				# Determine lane offset multiplier for this segment based on membership index
-				var a := Vector2i(int(route_x[si]), int(route_y[si]))
-				var b := Vector2i(int(route_x[si + 1]), int(route_y[si + 1]))
-				var p1 := Vector2(min(a.x, b.x), min(a.y, b.y))
-				var p2 := Vector2(max(a.x, b.x), max(a.y, b.y))
-				var seg_key := "%s,%s-%s,%s" % [int(p1.x), int(p1.y), int(p2.x), int(p2.y)]
+				var seg_key := "%d,%d-%d,%d" % [p_min_tile.x, p_min_tile.y, p_max_tile.x, p_max_tile.y]
 				var members: Array = shared_segments_membership.get(seg_key, [])
 				var idx: int = members.find(cid)
 				var count: int = members.size()
 				var lane_centered: float = 0.0
 				if not (idx == -1 or count <= 1):
-					lane_centered = (float(idx) - float(count - 1) * 0.5)
+					# Apply the alignment correction: if traveling inverted, the lanes 
+					# must be flipped relative to the canonical normal to maintain "drive on the right".
+					lane_centered = (float(idx) - float(count - 1) * 0.5) * normal_alignment
 				seg_lane_offsets.append(lane_centered)
 				seg_member_counts.append(count)
 

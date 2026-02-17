@@ -114,12 +114,12 @@ func augment_convoy_data_with_offsets(convoy_data_array: Array) -> Array:
 				var route_y_s: Array = journey_data_for_shared.get("route_y", [])
 				if route_x_s.size() >= 2 and route_y_s.size() == route_x_s.size():
 					for k_segment in range(route_x_s.size() - 1):
-						var p1_map: Vector2 = Vector2(float(route_x_s[k_segment]), float(route_y_s[k_segment]))
-						var p2_map: Vector2 = Vector2(float(route_x_s[k_segment + 1]), float(route_y_s[k_segment + 1]))
-						# Sort points to make segment key consistent regardless of direction
-						var key_points = [p1_map, p2_map]
-						key_points.sort_custom(func(a, b): return a.x < b.x or (a.x == b.x and a.y < b.y))
-						var segment_key = str(key_points[0]) + "-" + str(key_points[1])
+						var a := Vector2i(int(route_x_s[k_segment]), int(route_y_s[k_segment]))
+						var b := Vector2i(int(route_x_s[k_segment + 1]), int(route_y_s[k_segment + 1]))
+						# Normalize order for key stability (consistent with UI_manager.gd)
+						var p_min := a if (a.x < b.x or (a.x == b.x and a.y < b.y)) else b
+						var p_max := b if (p_min == a) else a
+						var segment_key := "%d,%d-%d,%d" % [p_min.x, p_min.y, p_max.x, p_max.y]
 						
 						if not shared_segments_data_for_icons.has(segment_key):
 							shared_segments_data_for_icons[segment_key] = []
@@ -146,21 +146,47 @@ func augment_convoy_data_with_offsets(convoy_data_array: Array) -> Array:
 					journey_d = raw_journey
 
 				if current_seg_idx != -1 and journey_d.get("route_x", []).size() > current_seg_idx + 1:
-					var r_x = journey_d.get("route_x")
-					var r_y = journey_d.get("route_y")
-					var p1_m = Vector2(float(r_x[current_seg_idx]), float(r_y[current_seg_idx]))
-					var p2_m = Vector2(float(r_x[current_seg_idx + 1]), float(r_y[current_seg_idx + 1]))
-					
-					var key_points = [p1_m, p2_m]
-					key_points.sort_custom(func(a, b): return a.x < b.x or (a.x == b.x and a.y < b.y))
-					var segment_key = str(key_points[0]) + "-" + str(key_points[1])
+					var rx_c = journey_d.get("route_x")
+					var ry_c = journey_d.get("route_y")
+					var si = current_seg_idx
+					var a := Vector2i(int(rx_c[si]), int(ry_c[si]))
+					var b := Vector2i(int(rx_c[si+1]), int(ry_c[si+1]))
+					# Normalize order for key stability (consistent with UI_manager.gd)
+					var p_min := a if (a.x < b.x or (a.x == b.x and a.y < b.y)) else b
+					var p_max := b if (p_min == a) else a
+					var segment_key := "%d,%d-%d,%d" % [p_min.x, p_min.y, p_max.x, p_max.y]
 					
 					var overlapping_convoys = shared_segments_data_for_icons.get(segment_key, [])
 					var overlap_index = overlapping_convoys.find(current_convoy_id_str_for_offset)
 					
 					if overlap_index != -1:
-						var angle = (PI * 2 * overlap_index) / max(1, overlapping_convoys.size())
-						icon_offset_v = Vector2(cos(angle), sin(angle)) * base_offset_magnitude
+						# Use a canonical direction for normal calculation (p_min to p_max)
+						# so that lanes are consistent regardless of which way the convoy is moving.
+						var pA_canonical := terrain_tilemap.map_to_local(p_min)
+						var pB_canonical := terrain_tilemap.map_to_local(p_max)
+						var dir_canonical := pB_canonical - pA_canonical
+						
+						var normal_canonical := Vector2.ZERO
+						if dir_canonical.length() > 0.0001:
+							normal_canonical = Vector2(-dir_canonical.y, dir_canonical.x).normalized()
+						
+						# Current travel direction normal (for determining lane sign)
+						var pA_actual := terrain_tilemap.map_to_local(a)
+						var pB_actual := terrain_tilemap.map_to_local(b)
+						var dir_actual := pB_actual - pA_actual
+						var travel_normal := Vector2.ZERO
+						if dir_actual.length() > 0.0001:
+							travel_normal = Vector2(-dir_actual.y, dir_actual.x).normalized()
+							
+						var normal_alignment := 1.0 if (travel_normal.dot(normal_canonical) > 0.0) else -1.0
+						
+						var lane_centered = (float(overlap_index) - float(overlapping_convoys.size() - 1) * 0.5) * normal_alignment
+						# base_offset_magnitude is 20% of tile size usually
+						# We should match the base_sep_px from UI_manager.gd (which is 28% of tile size)
+						var tile_size_vec = terrain_tilemap.tile_set.tile_size
+						var sep_px = max(1.0, min(tile_size_vec.x, tile_size_vec.y) * 0.28)
+						
+						icon_offset_v = normal_canonical * lane_centered * sep_px
 			
 			convoy_item_augmented["_pixel_offset_for_icon"] = icon_offset_v
 			processed_convoy_data_temp.append(convoy_item_augmented)

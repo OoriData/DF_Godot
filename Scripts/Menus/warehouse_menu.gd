@@ -7,6 +7,9 @@ const ItemsData = preload("res://Scripts/Data/Items.gd")
 @onready var back_button: Button = $MainVBox/BackButton
 @onready var info_label: Label = $MainVBox/Body/InfoLabel
 @onready var owned_tabs: TabContainer = $MainVBox/Body/OwnedTabs
+@onready var body_vbox: VBoxContainer = $MainVBox/Body
+@onready var main_vbox: VBoxContainer = $MainVBox
+@onready var top_bar_hbox: HBoxContainer = $MainVBox/TopBarHBox
 @onready var summary_label: Label = $MainVBox/Body/OwnedTabs/Overview/SummaryLabel
 @onready var expand_cargo_btn: Button = $MainVBox/Body/OwnedTabs/Overview/ExpandCargoHBox/ExpandCargoBtn
 @onready var expand_vehicle_btn: Button = $MainVBox/Body/OwnedTabs/Overview/ExpandVehicleHBox/ExpandVehicleBtn
@@ -20,6 +23,7 @@ const ItemsData = preload("res://Scripts/Data/Items.gd")
 @onready var cargo_usage_label: Label = $MainVBox/Body/OwnedTabs/Cargo/CargoUsageLabel
 @onready var cargo_grid: GridContainer = $MainVBox/Body/OwnedTabs/Cargo/CargoInventoryPanel/CargoGridScroll/CargoGrid
 @onready var cargo_inventory_panel: Control = $MainVBox/Body/OwnedTabs/Cargo/CargoInventoryPanel
+@onready var cargo_grid_scroll: ScrollContainer = $MainVBox/Body/OwnedTabs/Cargo/CargoInventoryPanel/CargoGridScroll
 @onready var vehicle_store_dd: OptionButton = $MainVBox/Body/OwnedTabs/Vehicles/VehicleStoreHBox/VehicleStoreDropdown
 @onready var store_vehicle_btn: Button = $MainVBox/Body/OwnedTabs/Vehicles/VehicleStoreHBox/StoreVehicleBtn
 @onready var vehicle_retrieve_dd: OptionButton = $MainVBox/Body/OwnedTabs/Vehicles/VehicleRetrieveHBox/VehicleRetrieveDropdown
@@ -29,6 +33,7 @@ const ItemsData = preload("res://Scripts/Data/Items.gd")
 @onready var spawn_convoy_btn: Button = $MainVBox/Body/OwnedTabs/Vehicles/SpawnHBox/SpawnConvoyBtn
 @onready var vehicle_grid: GridContainer = $MainVBox/Body/OwnedTabs/Vehicles/VehicleInventoryPanel/VehicleGridScroll/VehicleGrid
 @onready var vehicle_inventory_panel: Control = $MainVBox/Body/OwnedTabs/Vehicles/VehicleInventoryPanel
+@onready var vehicle_grid_scroll: ScrollContainer = $MainVBox/Body/OwnedTabs/Vehicles/VehicleInventoryPanel/VehicleGridScroll
 @onready var expand_cargo_label: Label = $MainVBox/Body/OwnedTabs/Overview/ExpandCargoHBox/ExpandCargoLabel
 @onready var expand_vehicle_label: Label = $MainVBox/Body/OwnedTabs/Overview/ExpandVehicleHBox/ExpandVehicleLabel
 @onready var overview_cargo_bar: ProgressBar = $MainVBox/Body/OwnedTabs/Overview/OverviewCargoHBox/OverviewCargoBar
@@ -52,6 +57,13 @@ var _last_expand_used_json: bool = false # Tracks whether we've already retried 
 var _optimistic_money_active: bool = false
 var _optimistic_money_before: float = 0.0
 var _optimistic_money_after: float = 0.0
+
+var _info_card: PanelContainer = null
+var _bg_rect: ColorRect = null
+var _content_frame: PanelContainer = null
+
+var _post_buy_refresh_attempts_left: int = 0
+var _post_buy_refresh_in_flight: bool = false
 
 @onready var _store: Node = get_node_or_null("/root/GameStore")
 @onready var _user_service: Node = get_node_or_null("/root/UserService")
@@ -100,6 +112,9 @@ func _ready():
 	if is_instance_valid(title_label):
 		title_label.visible = false
 		title_label.text = ""
+	# UI polish (buy state card + button styling)
+	_style_buy_menu_ui()
+	_tune_inventory_panels_layout()
 	# Diagnostics: verify expand buttons and signal connections
 	if is_instance_valid(expand_cargo_btn):
 		print("[WarehouseMenu][Diag] Found expand_cargo_btn path=", expand_cargo_btn.get_path(), " disabled=", expand_cargo_btn.disabled)
@@ -169,6 +184,413 @@ func _ready():
 		print("[WarehouseMenu][Debug] Connected spawn_convoy_btn pressed signal path=", spawn_convoy_btn.get_path())
 	_update_ui()
 
+func _tune_inventory_panels_layout() -> void:
+	# The scene marks inventory panels as SIZE_EXPAND_FILL, which makes a huge empty
+	# box when the grid has only a few entries. Prefer content-sized panels.
+	for ctrl in [cargo_inventory_panel, cargo_grid_scroll, vehicle_inventory_panel, vehicle_grid_scroll]:
+		if ctrl is Control and is_instance_valid(ctrl):
+			# Expand horizontally but not vertically.
+			(ctrl as Control).size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			(ctrl as Control).size_flags_vertical = Control.SIZE_FILL
+
+func _style_buy_menu_ui() -> void:
+	# Improve contrast between menu background and UI surfaces.
+	_ensure_background_layers()
+	_style_containers()
+	_style_form_controls()
+	# Make the "no warehouse yet" state feel like a real menu instead of raw text.
+	_ensure_info_card_wrapper()
+	_style_primary_button(buy_button, Color(0.35, 0.65, 1.0, 1.0))
+	_style_secondary_button(back_button)
+	_style_info_label(info_label)
+	# Tabs are the "owned" state; keep label card hidden when tabs show.
+	if is_instance_valid(owned_tabs) and is_instance_valid(info_label):
+		# Ensure the info label expands nicely when visible
+		info_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		info_label.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	# Style owned-state panels too, so tabs and inventory panels read as distinct surfaces.
+	_style_panel_surface(owned_tabs)
+	_style_panel_surface(cargo_inventory_panel)
+	_style_panel_surface(vehicle_inventory_panel)
+
+func _ensure_background_layers() -> void:
+	# Add a background and a framed content area behind the VBox.
+	# This keeps UI readable even on dark global themes.
+	if not is_inside_tree():
+		return
+	# Background
+	if not (is_instance_valid(_bg_rect) and _bg_rect.is_inside_tree()):
+		var bg := ColorRect.new()
+		bg.name = "WarehouseBackground"
+		bg.color = Color(0.02, 0.03, 0.04, 1.0)
+		bg.anchor_left = 0
+		bg.anchor_top = 0
+		bg.anchor_right = 1
+		bg.anchor_bottom = 1
+		bg.offset_left = 0
+		bg.offset_top = 0
+		bg.offset_right = 0
+		bg.offset_bottom = 0
+		bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		bg.z_index = -100
+		add_child(bg)
+		move_child(bg, 0)
+		_bg_rect = bg
+	# Content frame
+	if not (is_instance_valid(_content_frame) and _content_frame.is_inside_tree()):
+		var frame := PanelContainer.new()
+		frame.name = "WarehouseContentFrame"
+		frame.anchor_left = 0
+		frame.anchor_top = 0
+		frame.anchor_right = 1
+		frame.anchor_bottom = 1
+		frame.offset_left = 10
+		frame.offset_top = 10
+		frame.offset_right = -10
+		frame.offset_bottom = -10
+		frame.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		frame.z_index = -50
+		var sb := StyleBoxFlat.new()
+		# Slightly lighter than background so the content area pops.
+		sb.bg_color = Color(0.06, 0.07, 0.09, 0.95)
+		sb.border_color = Color(0.35, 0.42, 0.55, 0.9)
+		sb.border_width_left = 1
+		sb.border_width_right = 1
+		sb.border_width_top = 1
+		sb.border_width_bottom = 1
+		sb.corner_radius_top_left = 12
+		sb.corner_radius_top_right = 12
+		sb.corner_radius_bottom_left = 12
+		sb.corner_radius_bottom_right = 12
+		sb.shadow_color = Color(0, 0, 0, 0.6)
+		sb.shadow_size = 10
+		frame.add_theme_stylebox_override("panel", sb)
+		add_child(frame)
+		# Keep frame behind MainVBox (which is expected to be child index > 0).
+		move_child(frame, 1)
+		_content_frame = frame
+	# Add some padding so content doesn't touch the frame border.
+	if is_instance_valid(main_vbox):
+		main_vbox.offset_left = 18
+		main_vbox.offset_top = 18
+		main_vbox.offset_right = -18
+		main_vbox.offset_bottom = -18
+
+func _style_containers() -> void:
+	if is_instance_valid(main_vbox):
+		main_vbox.add_theme_constant_override("separation", 12)
+	if is_instance_valid(body_vbox):
+		body_vbox.add_theme_constant_override("separation", 10)
+		# Key fix: don't let Body expand to consume all remaining height.
+		# Otherwise it creates a huge empty gap between the tabs/content and the Back button.
+		body_vbox.size_flags_vertical = Control.SIZE_FILL
+	if is_instance_valid(top_bar_hbox):
+		top_bar_hbox.add_theme_constant_override("separation", 10)
+		# Improve top bar readability
+		top_bar_hbox.add_theme_constant_override("margin_left", 2)
+	# Tabs/content should be content-sized by default; internal scroll areas handle overflow.
+	if is_instance_valid(owned_tabs):
+		owned_tabs.size_flags_vertical = Control.SIZE_FILL
+	if is_instance_valid(info_label):
+		info_label.size_flags_vertical = Control.SIZE_FILL
+	# Back button sits at bottom; give it breathing room
+	if is_instance_valid(back_button):
+		back_button.add_theme_constant_override("hseparation", 8)
+
+func _style_panel_surface(ctrl: Control) -> void:
+	# Apply a consistent panel surface style to containers that draw a panel.
+	if not is_instance_valid(ctrl):
+		return
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color(0.08, 0.09, 0.12, 0.96)
+	sb.border_color = Color(0.38, 0.46, 0.60, 0.9)
+	sb.border_width_left = 1
+	sb.border_width_right = 1
+	sb.border_width_top = 1
+	sb.border_width_bottom = 1
+	sb.corner_radius_top_left = 10
+	sb.corner_radius_top_right = 10
+	sb.corner_radius_bottom_left = 10
+	sb.corner_radius_bottom_right = 10
+	sb.shadow_color = Color(0, 0, 0, 0.35)
+	sb.shadow_size = 6
+	ctrl.add_theme_stylebox_override("panel", sb)
+
+func _style_form_controls() -> void:
+	# Dropdowns/inputs need to pop against dark panels.
+	_style_option_button(cargo_store_dd)
+	_style_option_button(cargo_retrieve_dd)
+	_style_option_button(cargo_retrieve_vehicle_dd)
+	_style_option_button(vehicle_store_dd)
+	_style_option_button(vehicle_retrieve_dd)
+	_style_option_button(spawn_vehicle_dd)
+	_style_spin_box(cargo_qty_store)
+	_style_spin_box(cargo_qty_retrieve)
+	_style_line_edit(spawn_name_input)
+
+func _style_option_button(ob: OptionButton) -> void:
+	if not is_instance_valid(ob):
+		return
+	ob.custom_minimum_size = Vector2(0, 40)
+	ob.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	ob.add_theme_font_size_override("font_size", 16)
+	ob.add_theme_color_override("font_color", Color(0.96, 0.98, 1.0, 1.0))
+	ob.add_theme_color_override("font_color_disabled", Color(0.60, 0.62, 0.68, 1.0))
+
+	var normal := StyleBoxFlat.new()
+	normal.bg_color = Color(0.12, 0.14, 0.18, 1.0)
+	normal.border_color = Color(0.55, 0.68, 0.88, 0.95)
+	normal.border_width_left = 1
+	normal.border_width_right = 1
+	normal.border_width_top = 1
+	normal.border_width_bottom = 1
+	normal.corner_radius_top_left = 8
+	normal.corner_radius_top_right = 8
+	normal.corner_radius_bottom_left = 8
+	normal.corner_radius_bottom_right = 8
+	normal.shadow_color = Color(0, 0, 0, 0.35)
+	normal.shadow_size = 3
+	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
+		normal.set_content_margin(side, 10)
+
+	var hover := normal.duplicate()
+	hover.bg_color = Color(0.16, 0.18, 0.24, 1.0)
+	hover.border_color = Color(0.70, 0.82, 1.0, 1.0)
+
+	var pressed := normal.duplicate()
+	pressed.bg_color = Color(0.10, 0.11, 0.15, 1.0)
+	pressed.border_color = Color(0.45, 0.58, 0.78, 1.0)
+
+	var disabled := normal.duplicate()
+	disabled.bg_color = Color(0.10, 0.10, 0.12, 1.0)
+	disabled.border_color = Color(0.25, 0.28, 0.34, 1.0)
+	disabled.shadow_size = 0
+
+	ob.add_theme_stylebox_override("normal", normal)
+	ob.add_theme_stylebox_override("hover", hover)
+	ob.add_theme_stylebox_override("pressed", pressed)
+	ob.add_theme_stylebox_override("disabled", disabled)
+	ob.add_theme_stylebox_override("focus", hover)
+
+	# Also style the dropdown list popup for readability.
+	var popup := ob.get_popup()
+	if popup is PopupMenu:
+		_style_popup_menu(popup)
+
+func _style_popup_menu(pm: PopupMenu) -> void:
+	if not is_instance_valid(pm):
+		return
+	pm.add_theme_font_size_override("font_size", 16)
+	pm.add_theme_color_override("font_color", Color(0.96, 0.98, 1.0, 1.0))
+	pm.add_theme_color_override("font_hover_color", Color(1, 1, 1, 1))
+	pm.add_theme_color_override("font_disabled_color", Color(0.60, 0.62, 0.68, 1.0))
+
+	var panel := StyleBoxFlat.new()
+	panel.bg_color = Color(0.08, 0.09, 0.12, 0.98)
+	panel.border_color = Color(0.55, 0.68, 0.88, 0.9)
+	panel.border_width_left = 1
+	panel.border_width_right = 1
+	panel.border_width_top = 1
+	panel.border_width_bottom = 1
+	panel.corner_radius_top_left = 10
+	panel.corner_radius_top_right = 10
+	panel.corner_radius_bottom_left = 10
+	panel.corner_radius_bottom_right = 10
+	panel.shadow_color = Color(0, 0, 0, 0.65)
+	panel.shadow_size = 10
+	pm.add_theme_stylebox_override("panel", panel)
+
+	var hover := StyleBoxFlat.new()
+	hover.bg_color = Color(0.20, 0.28, 0.40, 1.0)
+	hover.corner_radius_top_left = 6
+	hover.corner_radius_top_right = 6
+	hover.corner_radius_bottom_left = 6
+	hover.corner_radius_bottom_right = 6
+	pm.add_theme_stylebox_override("hover", hover)
+
+func _style_line_edit(le: LineEdit) -> void:
+	if not is_instance_valid(le):
+		return
+	le.custom_minimum_size = Vector2(le.custom_minimum_size.x, 40)
+	le.add_theme_font_size_override("font_size", 16)
+	le.add_theme_color_override("font_color", Color(0.96, 0.98, 1.0, 1.0))
+	le.add_theme_color_override("placeholder_color", Color(0.70, 0.74, 0.82, 0.85))
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color(0.10, 0.12, 0.16, 1.0)
+	sb.border_color = Color(0.55, 0.68, 0.88, 0.75)
+	sb.border_width_left = 1
+	sb.border_width_right = 1
+	sb.border_width_top = 1
+	sb.border_width_bottom = 1
+	sb.corner_radius_top_left = 8
+	sb.corner_radius_top_right = 8
+	sb.corner_radius_bottom_left = 8
+	sb.corner_radius_bottom_right = 8
+	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
+		sb.set_content_margin(side, 10)
+	le.add_theme_stylebox_override("normal", sb)
+	var focus := sb.duplicate()
+	focus.border_color = Color(0.75, 0.88, 1.0, 1.0)
+	le.add_theme_stylebox_override("focus", focus)
+
+func _style_spin_box(sb: SpinBox) -> void:
+	if not is_instance_valid(sb):
+		return
+	sb.custom_minimum_size = Vector2(0, 40)
+	# SpinBox's internal LineEdit draws the background; style it for contrast.
+	var le: LineEdit = sb.get_line_edit()
+	if is_instance_valid(le):
+		_style_line_edit(le)
+
+func _ensure_info_card_wrapper() -> void:
+	if not is_instance_valid(info_label) or not is_instance_valid(body_vbox):
+		return
+	# If we've already wrapped it, nothing to do.
+	if is_instance_valid(_info_card) and _info_card.is_inside_tree():
+		return
+	# If the scene already contains an InfoCard (future-proof), reuse it.
+	var existing := body_vbox.get_node_or_null("InfoCard")
+	if existing is PanelContainer:
+		_info_card = existing
+		return
+	# Wrap InfoLabel in a PanelContainer+MarginContainer to get padding + background.
+	var original_parent: Node = info_label.get_parent()
+	if original_parent != body_vbox:
+		# Unexpected structure; bail rather than reparenting aggressively.
+		return
+	var insert_index := info_label.get_index()
+	body_vbox.remove_child(info_label)
+
+	var card := PanelContainer.new()
+	card.name = "InfoCard"
+	card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	card.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	card.custom_minimum_size = Vector2(0, 150)
+
+	var panel_sb := StyleBoxFlat.new()
+	panel_sb.bg_color = Color(0.06, 0.07, 0.09, 0.92)
+	panel_sb.border_color = Color(0.35, 0.45, 0.60, 0.9)
+	panel_sb.border_width_left = 1
+	panel_sb.border_width_right = 1
+	panel_sb.border_width_top = 1
+	panel_sb.border_width_bottom = 1
+	panel_sb.corner_radius_top_left = 10
+	panel_sb.corner_radius_top_right = 10
+	panel_sb.corner_radius_bottom_left = 10
+	panel_sb.corner_radius_bottom_right = 10
+	panel_sb.shadow_color = Color(0, 0, 0, 0.55)
+	panel_sb.shadow_size = 6
+	card.add_theme_stylebox_override("panel", panel_sb)
+
+	var margin := MarginContainer.new()
+	margin.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	margin.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	margin.add_theme_constant_override("margin_left", 14)
+	margin.add_theme_constant_override("margin_right", 14)
+	margin.add_theme_constant_override("margin_top", 12)
+	margin.add_theme_constant_override("margin_bottom", 12)
+
+	card.add_child(margin)
+	margin.add_child(info_label)
+
+	body_vbox.add_child(card)
+	body_vbox.move_child(card, insert_index)
+	_info_card = card
+
+func _style_info_label(lbl: Label) -> void:
+	if not is_instance_valid(lbl):
+		return
+	lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	lbl.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	lbl.add_theme_font_size_override("font_size", 18)
+	lbl.add_theme_color_override("font_color", Color(0.92, 0.95, 1.0, 1.0))
+	lbl.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.55))
+	lbl.add_theme_constant_override("shadow_outline_size", 0)
+	lbl.add_theme_constant_override("shadow_offset_x", 0)
+	lbl.add_theme_constant_override("shadow_offset_y", 1)
+
+func _style_primary_button(btn: Button, accent: Color) -> void:
+	if not is_instance_valid(btn):
+		return
+	btn.custom_minimum_size = Vector2(170, 44)
+	btn.focus_mode = Control.FOCUS_ALL
+
+	var normal := StyleBoxFlat.new()
+	normal.bg_color = Color(accent.r * 0.70, accent.g * 0.70, accent.b * 0.70, 1.0)
+	normal.border_color = Color(accent.r, accent.g, accent.b, 0.95)
+	normal.border_width_left = 2
+	normal.border_width_right = 2
+	normal.border_width_top = 2
+	normal.border_width_bottom = 2
+	normal.corner_radius_top_left = 10
+	normal.corner_radius_top_right = 10
+	normal.corner_radius_bottom_left = 10
+	normal.corner_radius_bottom_right = 10
+	normal.shadow_color = Color(0, 0, 0, 0.55)
+	normal.shadow_size = 5
+
+	var hover := normal.duplicate()
+	hover.bg_color = Color(accent.r * 0.78, accent.g * 0.78, accent.b * 0.78, 1.0)
+	hover.border_color = Color(accent.r, accent.g, accent.b, 1.0)
+
+	var pressed := normal.duplicate()
+	pressed.bg_color = Color(accent.r * 0.60, accent.g * 0.60, accent.b * 0.60, 1.0)
+	pressed.shadow_size = 2
+
+	var disabled := normal.duplicate()
+	disabled.bg_color = Color(0.12, 0.12, 0.14, 1.0)
+	disabled.border_color = Color(0.22, 0.22, 0.26, 1.0)
+	disabled.shadow_size = 0
+
+	btn.add_theme_stylebox_override("normal", normal)
+	btn.add_theme_stylebox_override("hover", hover)
+	btn.add_theme_stylebox_override("pressed", pressed)
+	btn.add_theme_stylebox_override("disabled", disabled)
+	btn.add_theme_color_override("font_color", Color(0.96, 0.98, 1.0, 1.0))
+	btn.add_theme_color_override("font_color_hover", Color(1, 1, 1, 1))
+	btn.add_theme_color_override("font_color_pressed", Color(0.90, 0.94, 1.0, 1.0))
+	btn.add_theme_color_override("font_color_disabled", Color(0.60, 0.62, 0.68, 1.0))
+	btn.add_theme_font_size_override("font_size", 18)
+
+func _style_secondary_button(btn: Button) -> void:
+	if not is_instance_valid(btn):
+		return
+	btn.custom_minimum_size = Vector2(0, 42)
+	var normal := StyleBoxFlat.new()
+	normal.bg_color = Color(0.12, 0.13, 0.16, 1.0)
+	normal.border_color = Color(0.32, 0.36, 0.44, 1.0)
+	normal.border_width_left = 1
+	normal.border_width_right = 1
+	normal.border_width_top = 1
+	normal.border_width_bottom = 1
+	normal.corner_radius_top_left = 8
+	normal.corner_radius_top_right = 8
+	normal.corner_radius_bottom_left = 8
+	normal.corner_radius_bottom_right = 8
+
+	var hover := normal.duplicate()
+	hover.bg_color = Color(0.16, 0.17, 0.21, 1.0)
+	hover.border_color = Color(0.45, 0.50, 0.62, 1.0)
+
+	var pressed := normal.duplicate()
+	pressed.bg_color = Color(0.10, 0.10, 0.12, 1.0)
+	pressed.border_color = Color(0.28, 0.32, 0.40, 1.0)
+
+	var disabled := normal.duplicate()
+	disabled.bg_color = Color(0.10, 0.10, 0.11, 1.0)
+	disabled.border_color = Color(0.20, 0.20, 0.22, 1.0)
+
+	btn.add_theme_stylebox_override("normal", normal)
+	btn.add_theme_stylebox_override("hover", hover)
+	btn.add_theme_stylebox_override("pressed", pressed)
+	btn.add_theme_stylebox_override("disabled", disabled)
+	btn.add_theme_color_override("font_color", Color(0.92, 0.95, 1.0, 1.0))
+	btn.add_theme_color_override("font_color_disabled", Color(0.60, 0.62, 0.68, 1.0))
+	btn.add_theme_font_size_override("font_size", 16)
+
 func _set_expand_buttons_enabled(enabled: bool) -> void:
 	# Central helper so we can uniformly toggle & log state
 	if is_instance_valid(expand_cargo_btn):
@@ -205,12 +627,22 @@ func initialize_with_data(data_or_id: Variant, extra_arg: Variant = null) -> voi
 			_settlement = resolved
 	# Don't nuke existing settlement if nothing resolved
 	print("[WarehouseMenu] initialize_with_data name=", String(_settlement.get("name", _convoy_data.get("settlement_name", ""))), " sett_type_resolved=", _get_settlement_type())
-	_update_ui()
+	_update_ui(_convoy_data)
 	super.initialize_with_data(data_or_id, extra_arg)
 	_try_load_warehouse_for_settlement()
 	_populate_dropdowns() # initial (may be empty until data arrives)
 
-func _update_ui(_convoy: Dictionary = {}):
+func _update_ui(convoy: Dictionary = {}):
+	# MenuBase passes an authoritative convoy snapshot when opened by convoy_id.
+	# Consume it so we can resolve settlement/type/price reliably.
+	if typeof(convoy) == TYPE_DICTIONARY and not (convoy as Dictionary).is_empty():
+		_convoy_data = (convoy as Dictionary).duplicate(true)
+		if (_settlement is Dictionary) and _settlement.is_empty():
+			var resolved := _resolve_settlement_from_data(_convoy_data)
+			if not resolved.is_empty():
+				_settlement = resolved
+	# Ensure we always have the best-effort settlement ID cached for buy actions.
+	_get_settlement_id()
 	var sett_name := String(_settlement.get("name", _convoy_data.get("settlement_name", "")))
 	if is_instance_valid(title_label):
 		if sett_name != "":
@@ -221,6 +653,7 @@ func _update_ui(_convoy: Dictionary = {}):
 	if _warehouse is Dictionary and not _warehouse.is_empty():
 		if is_instance_valid(buy_button):
 			buy_button.visible = false
+		_set_info_area_visible(false)
 		# Show the tabs and fill the summary label
 		if is_instance_valid(owned_tabs):
 			owned_tabs.visible = true
@@ -243,6 +676,7 @@ func _update_ui(_convoy: Dictionary = {}):
 			buy_button.visible = not _is_loading
 		if is_instance_valid(owned_tabs):
 			owned_tabs.visible = false
+		_set_info_area_visible(true)
 		if is_instance_valid(info_label):
 			if _is_loading:
 				info_label.text = "Loading warehouse..."
@@ -250,7 +684,16 @@ func _update_ui(_convoy: Dictionary = {}):
 				var price := _get_warehouse_price()
 				var funds := _get_user_money()
 				var buy_available := _is_buy_available()
-				var price_text := NumberFormat.format_money(price) if price > 0 else ("N/A" if not buy_available else "TBD")
+				var can_resolve_settlement := _get_settlement_id() != ""
+				var price_text := ""
+				if price > 0:
+					price_text = NumberFormat.format_money(price)
+				elif not buy_available:
+					price_text = "N/A"
+				else:
+					# Previously showed "TBD" when settlement type wasn't resolved.
+					# Prefer a clearer state and avoid enabling buy until settlement is known.
+					price_text = "…" if not can_resolve_settlement else "Unknown"
 				var funds_text := NumberFormat.format_money(funds)
 				info_label.text = "No warehouse here yet.\nPrice: %s\nYour funds: %s" % [price_text, funds_text]
 				print("[WarehouseMenu] No warehouse. sett_type=", _get_settlement_type(), " price=", price, " buy_available=", buy_available)
@@ -260,6 +703,10 @@ func _update_ui(_convoy: Dictionary = {}):
 						buy_button.text = "Buy"
 						buy_button.disabled = true
 						buy_button.tooltip_text = "Warehouses are not available in this settlement."
+					elif not can_resolve_settlement:
+						buy_button.text = "Buy"
+						buy_button.disabled = true
+						buy_button.tooltip_text = "Loading settlement info…"
 					elif price > 0:
 						buy_button.text = "Buy (%s)" % price_text
 						var can_afford := funds + 0.0001 >= float(price)
@@ -273,6 +720,28 @@ func _update_ui(_convoy: Dictionary = {}):
 						buy_button.disabled = false
 						buy_button.tooltip_text = ""
 
+
+func _set_info_area_visible(should_show: bool) -> void:
+	# The buy/no-warehouse state uses InfoLabel wrapped in an InfoCard panel.
+	# When a warehouse exists we show OwnedTabs, and this InfoCard becomes an empty
+	# middle panel between the tabs and the Back button unless we hide it.
+	if is_instance_valid(_info_card):
+		_info_card.visible = should_show
+	if is_instance_valid(info_label):
+		# Keep label visibility consistent even if wrapper is not present.
+		info_label.visible = should_show
+
+func _get_settlement_id() -> String:
+	# Best-effort: ensure we have a settlement id for buy requests.
+	if (_settlement is Dictionary) and String(_settlement.get("sett_id", "")) != "":
+		return String(_settlement.get("sett_id", ""))
+	if _convoy_data is Dictionary and not _convoy_data.is_empty():
+		var resolved := _resolve_settlement_from_data(_convoy_data)
+		if not resolved.is_empty() and String(resolved.get("sett_id", "")) != "":
+			_settlement = resolved
+			return String(resolved.get("sett_id", ""))
+	return ""
+
 func _format_warehouse_summary(_w: Dictionary) -> String:
 	# Overview now minimal; details moved elsewhere
 	var parts: Array[String] = []
@@ -284,7 +753,7 @@ func _on_buy_pressed():
 		push_warning("API node not available")
 		return
 	# Need settlement id from provided settlement snapshot
-	var sett_id := String(_settlement.get("sett_id", ""))
+	var sett_id := _get_settlement_id()
 	if sett_id == "":
 		# Fallback: try to resolve by settlement name from canonical snapshot
 		var name_guess := String(_settlement.get("name", _convoy_data.get("settlement_name", "")))
@@ -295,7 +764,7 @@ func _on_buy_pressed():
 					break
 	if sett_id == "":
 		if is_instance_valid(info_label):
-			info_label.text = "No settlement selected."
+			info_label.text = "Settlement not resolved yet."
 		return
 	# Affordability check (client-side UX only; server remains authoritative)
 	var price := _get_warehouse_price()
@@ -310,7 +779,51 @@ func _on_buy_pressed():
 		info_label.text = "Purchasing warehouse..."
 	if is_instance_valid(buy_button):
 		buy_button.disabled = true
+	_is_loading = true
+	_update_ui()
 	_warehouse_service.request_new(sett_id)
+	# APICalls no longer emits 'warehouse_created' (see logs), so we must refresh
+	# authoritative snapshots and discover the new warehouse via user.warehouses.
+	if is_instance_valid(_user_service) and _user_service.has_method("refresh_user"):
+		_user_service.refresh_user()
+	_start_post_buy_refresh_poll()
+
+func _start_post_buy_refresh_poll() -> void:
+	# Try a handful of times: user refresh -> check user.warehouses -> request_get.
+	_post_buy_refresh_attempts_left = 10
+	_schedule_post_buy_refresh(0.5)
+
+func _schedule_post_buy_refresh(delay_seconds: float) -> void:
+	if _post_buy_refresh_attempts_left <= 0:
+		# Give up gracefully; keep UI usable.
+		_is_loading = false
+		if is_instance_valid(info_label) and (_warehouse is Dictionary and _warehouse.is_empty()):
+			info_label.text = "Purchase sent. Waiting for server sync…"
+		_update_ui()
+		return
+	if _post_buy_refresh_in_flight:
+		return
+	if not is_inside_tree():
+		return
+	if _warehouse is Dictionary and not _warehouse.is_empty():
+		return
+	_post_buy_refresh_in_flight = true
+	var t := get_tree().create_timer(delay_seconds)
+	t.timeout.connect(func() -> void:
+		_post_buy_refresh_in_flight = false
+		if not is_inside_tree():
+			return
+		if _warehouse is Dictionary and not _warehouse.is_empty():
+			return
+		_post_buy_refresh_attempts_left -= 1
+		if is_instance_valid(_user_service) and _user_service.has_method("refresh_user"):
+			_user_service.refresh_user()
+		# Also try loading immediately from whatever snapshot we already have.
+		if not _is_loading:
+			_is_loading = true
+		_try_load_warehouse_for_settlement()
+		_schedule_post_buy_refresh(0.8)
+	)
 
 func _on_hub_warehouse_created(result: Variant) -> void:
 	# Backend returns the new UUID; refresh user data and show confirmation
@@ -648,31 +1161,28 @@ func _on_store_cargo():
 		return
 	var wid := str(_warehouse.get("warehouse_id", ""))
 	var cid := str(_convoy_data.get("convoy_id", ""))
-	var cargo_id := _get_selected_meta(cargo_store_dd)
+	var cargo_meta := _get_selected_meta(cargo_store_dd)
 	var qty := int(cargo_qty_store.value) if is_instance_valid(cargo_qty_store) else 0
-	if wid != "" and cid != "" and cargo_id != "" and qty > 0 and is_instance_valid(_warehouse_service):
+	if wid != "" and cid != "" and cargo_meta != "" and qty > 0 and is_instance_valid(_warehouse_service):
 		info_label.text = "Storing cargo..."
 		_pending_action_refresh = true
 		_schedule_refresh_fallback()
-		_warehouse_service.store_cargo({"warehouse_id": wid, "convoy_id": cid, "cargo_id": cargo_id, "quantity": qty})
+		_store_cargo_by_meta(wid, cid, cargo_meta, qty)
 
 func _on_retrieve_cargo():
 	if not (_warehouse is Dictionary) or _warehouse.is_empty():
 		return
 	var wid := str(_warehouse.get("warehouse_id", ""))
 	var cid := str(_convoy_data.get("convoy_id", ""))
-	var cargo_id := _get_selected_meta(cargo_retrieve_dd)
+	var cargo_meta := _get_selected_meta(cargo_retrieve_dd)
 	# pick vehicle to receive
 	var recv_vid := _get_selected_meta(cargo_retrieve_vehicle_dd)
 	var qty := int(cargo_qty_retrieve.value) if is_instance_valid(cargo_qty_retrieve) else 0
-	if wid != "" and cid != "" and cargo_id != "" and qty > 0 and is_instance_valid(_warehouse_service):
+	if wid != "" and cid != "" and cargo_meta != "" and qty > 0 and is_instance_valid(_warehouse_service):
 		info_label.text = "Retrieving cargo..."
-		var payload := {"warehouse_id": wid, "convoy_id": cid, "cargo_id": cargo_id, "quantity": qty}
-		if recv_vid != "":
-			payload["vehicle_id"] = recv_vid
 		_pending_action_refresh = true
 		_schedule_refresh_fallback()
-		_warehouse_service.retrieve_cargo(payload)
+		_retrieve_cargo_by_meta(wid, cid, cargo_meta, qty, recv_vid)
 
 func _on_store_vehicle():
 	if not (_warehouse is Dictionary) or _warehouse.is_empty():
@@ -891,6 +1401,9 @@ func _on_store_user_changed(_user: Dictionary) -> void:
 	_update_ui()
 	_update_expand_buttons()
 	_update_upgrade_labels()
+	# If we don't have a warehouse yet, try to discover it from user.warehouses.
+	if (_warehouse is Dictionary and _warehouse.is_empty()) and not _is_loading:
+		_try_load_warehouse_for_settlement()
 
 
 func _on_store_convoys_changed(convoys: Array) -> void:
@@ -907,7 +1420,7 @@ func _on_store_convoys_changed(convoys: Array) -> void:
 
 func _on_store_map_changed(_tiles: Array, _settlements: Array) -> void:
 	# Settlement resolution/type may become available after map arrives.
-	if (_settlement is Dictionary) and not _settlement.is_empty():
+	if (_settlement is Dictionary) and not _settlement.is_empty() and String(_settlement.get("sett_type", "")) != "":
 		return
 	var resolved := _resolve_settlement_from_data(_convoy_data)
 	if not resolved.is_empty():
@@ -947,17 +1460,17 @@ func _update_upgrade_labels() -> void:
 
 # --- Helpers for dropdowns ---
 func _populate_dropdowns() -> void:
-	# Convoy cargo (Store): aggregate across vehicles, exclude installed parts, list normal-with-destination first, then other normal, then part cargo
+	# Convoy cargo (Store): aggregate across vehicles, exclude parts, list destination cargo first, then other cargo
 	if is_instance_valid(cargo_store_dd):
 		var agg := _aggregate_convoy_cargo(_convoy_data)
 		var normals_dest: Array = agg["normal_dest"] if agg.has("normal_dest") else []
 		var normals_other: Array = agg["normal_other"] if agg.has("normal_other") else []
-		var parts: Array = agg["part"] if agg.has("part") else []
 		# Build id/label list in stable order
 		var items: Array = []
-		for it in normals_dest: items.append({"id": it["cargo_id"], "label": "%s x%d" % [it.get("name", "Unknown"), int(it.get("quantity", 0))]})
-		for itn in normals_other: items.append({"id": itn["cargo_id"], "label": "%s x%d" % [itn.get("name", "Unknown"), int(itn.get("quantity", 0))]})
-		for it2 in parts: items.append({"id": it2["cargo_id"], "label": "%s x%d" % [it2.get("name", "Unknown"), int(it2.get("quantity", 0))]})
+		for it in normals_dest:
+			items.append({"id": String(it.get("meta", "")), "label": "%s x%d" % [it.get("name", "Unknown"), int(it.get("quantity", 0))]})
+		for itn in normals_other:
+			items.append({"id": String(itn.get("meta", "")), "label": "%s x%d" % [itn.get("name", "Unknown"), int(itn.get("quantity", 0))]})
 		_set_option_button_items(cargo_store_dd, items, _last_cargo_store_ids)
 		# Sync store qty limit to selected item after (re)population
 		_update_store_qty_limit()
@@ -973,29 +1486,12 @@ func _populate_dropdowns() -> void:
 			wh_items = _warehouse.get("all_cargo", [])
 		# Debug: show how many warehouse cargo items were found before classification
 		print("[WarehouseMenu][Debug] Dropdown populate: wh cargo count=", wh_items.size())
-		var norm_wh_dest: Array = []
-		var norm_wh_other: Array = []
-		var part_wh: Array = []
-		for wi in wh_items:
-			if wi is Dictionary:
-				var is_part: bool = (ItemsData != null and ItemsData.PartItem and ItemsData.PartItem._looks_like_part_dict(wi))
-				var entry: Dictionary = (wi as Dictionary).duplicate(true)
-				if is_part:
-					part_wh.append(entry)
-				else:
-					# destination (mission) if recipient or delivery_reward present
-					var has_dest: bool = (entry.get("recipient") != null) or (entry.get("delivery_reward") != null)
-					if has_dest:
-						norm_wh_dest.append(entry)
-					else:
-						norm_wh_other.append(entry)
-		norm_wh_dest.sort_custom(func(a, b): return String(a.get("name","")) < String(b.get("name","")) or (String(a.get("name","")) == String(b.get("name","")) and String(a.get("cargo_id","")) < String(b.get("cargo_id",""))))
-		norm_wh_other.sort_custom(func(a, b): return String(a.get("name","")) < String(b.get("name","")) or (String(a.get("name","")) == String(b.get("name","")) and String(a.get("cargo_id","")) < String(b.get("cargo_id",""))))
-		part_wh.sort_custom(func(a, b): return String(a.get("name","")) < String(b.get("name","")) or (String(a.get("name","")) == String(b.get("name","")) and String(a.get("cargo_id","")) < String(b.get("cargo_id",""))))
+		var wh_agg := _aggregate_warehouse_cargo(wh_items)
 		var wh_items_final: Array = []
-		for a in norm_wh_dest: wh_items_final.append({"id": String(a.get("cargo_id","")), "label": "%s x%d" % [String(a.get("name","Unknown")), int(a.get("quantity",0))]})
-		for a2 in norm_wh_other: wh_items_final.append({"id": String(a2.get("cargo_id","")), "label": "%s x%d" % [String(a2.get("name","Unknown")), int(a2.get("quantity",0))]})
-		for b in part_wh: wh_items_final.append({"id": String(b.get("cargo_id","")), "label": "%s x%d" % [String(b.get("name","Unknown")), int(b.get("quantity",0))]})
+		for a in (wh_agg.get("normal_dest", []) as Array):
+			wh_items_final.append({"id": String(a.get("meta","")), "label": "%s x%d" % [String(a.get("name","Unknown")), int(a.get("quantity",0))]})
+		for a2 in (wh_agg.get("normal_other", []) as Array):
+			wh_items_final.append({"id": String(a2.get("meta","")), "label": "%s x%d" % [String(a2.get("name","Unknown")), int(a2.get("quantity",0))]})
 		_set_option_button_items(cargo_retrieve_dd, wh_items_final, _last_cargo_retrieve_ids)
 		# Sync retrieve qty limit to selected item after (re)population
 		_update_retrieve_qty_limit()
@@ -1003,9 +1499,7 @@ func _populate_dropdowns() -> void:
 		_render_cargo_grid()
 
 	# Vehicles from convoy for store and target vehicle dropdowns (stable sort by name then id)
-	var convoy_vehicles: Array = []
-	if _convoy_data and _convoy_data.has("vehicle_details_list"):
-		convoy_vehicles = _convoy_data.get("vehicle_details_list", [])
+	var convoy_vehicles: Array = _get_convoy_vehicle_details_list(_convoy_data)
 	var convoy_vehicle_items: Array = []
 	for v in convoy_vehicles:
 		if v is Dictionary:
@@ -1134,14 +1628,19 @@ func _render_cargo_grid() -> void:
 		wh_items = _warehouse.get("cargo_inventory", [])
 	elif _warehouse.has("all_cargo"):
 		wh_items = _warehouse.get("all_cargo", [])
-	# Render simple boxes (no icons) with name + qty
-	if wh_items.is_empty():
-		var empty_label := Label.new()
-		empty_label.text = "(No cargo stored)"
-		empty_label.modulate = Color(0.8,0.8,0.8)
-		cargo_grid.add_child(empty_label)
+	# Render simple boxes (no icons) with name + qty (aggregated; parts excluded)
+	var wh_agg := _aggregate_warehouse_cargo(wh_items)
+	var wh_items_display: Array = []
+	for a in (wh_agg.get("normal_dest", []) as Array):
+		wh_items_display.append(a)
+	for a2 in (wh_agg.get("normal_other", []) as Array):
+		wh_items_display.append(a2)
+	if wh_items_display.is_empty():
+		_set_inventory_panel_empty_state(cargo_inventory_panel, "CargoInventoryEmptyPanel", "No cargo stored yet.")
 		return
-	for wi in wh_items:
+	_set_inventory_panel_empty_state(cargo_inventory_panel, "CargoInventoryEmptyPanel", "", true)
+	_adjust_inventory_panel_height(cargo_inventory_panel, cargo_grid_scroll, wh_items_display.size(), 4)
+	for wi in wh_items_display:
 		if wi is Dictionary:
 			var item_name := String(wi.get("name", "Item"))
 			var qty := int(wi.get("quantity", 0))
@@ -1168,11 +1667,10 @@ func _render_vehicle_grid() -> void:
 	elif _warehouse.has("vehicle_inventory"):
 		wh_vehicles = _warehouse.get("vehicle_inventory", [])
 	if wh_vehicles.is_empty():
-		var empty_label := Label.new()
-		empty_label.text = "(No vehicles stored)"
-		empty_label.modulate = Color(0.8,0.8,0.8)
-		vehicle_grid.add_child(empty_label)
+		_set_inventory_panel_empty_state(vehicle_inventory_panel, "VehicleInventoryEmptyPanel", "No vehicles stored yet.")
 		return
+	_set_inventory_panel_empty_state(vehicle_inventory_panel, "VehicleInventoryEmptyPanel", "", true)
+	_adjust_inventory_panel_height(vehicle_inventory_panel, vehicle_grid_scroll, wh_vehicles.size(), 4)
 	for v in wh_vehicles:
 		if v is Dictionary:
 			var vehicle_name := String(v.get("name", "Vehicle"))
@@ -1185,14 +1683,98 @@ func _render_vehicle_grid() -> void:
 			panel.add_child(vb)
 			vehicle_grid.add_child(panel)
 
+func _set_inventory_panel_empty_state(panel_ctrl: Control, empty_panel_name: String, empty_message: String, show_inventory_panel: bool = false) -> void:
+	# When inventories are empty, the ScrollContainer panels in the scene expand
+	# and look like a big blank box. Collapse them and show a compact empty-state.
+	if not is_instance_valid(panel_ctrl):
+		return
+	var parent := panel_ctrl.get_parent()
+	if parent == null:
+		return
+	var existing: Node = parent.get_node_or_null(empty_panel_name)
+	if show_inventory_panel:
+		panel_ctrl.visible = true
+		# Restore content-sized behavior (no vertical expand)
+		if panel_ctrl is Control:
+			(panel_ctrl as Control).size_flags_vertical = Control.SIZE_FILL
+		# Also ensure the internal scroll doesn't expand to fill the tab.
+		if panel_ctrl.has_node("CargoGridScroll"):
+			var sc := panel_ctrl.get_node_or_null("CargoGridScroll")
+			if sc is Control:
+				(sc as Control).size_flags_vertical = Control.SIZE_FILL
+		elif panel_ctrl.has_node("VehicleGridScroll"):
+			var sc2 := panel_ctrl.get_node_or_null("VehicleGridScroll")
+			if sc2 is Control:
+				(sc2 as Control).size_flags_vertical = Control.SIZE_FILL
+		if existing:
+			existing.queue_free()
+		return
+
+	panel_ctrl.visible = false
+	if existing == null:
+		var p := PanelContainer.new()
+		p.name = empty_panel_name
+		p.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		p.custom_minimum_size = Vector2(0, 48)
+		var sb := StyleBoxFlat.new()
+		sb.bg_color = Color(0.08, 0.09, 0.12, 0.96)
+		sb.border_color = Color(0.38, 0.46, 0.60, 0.6)
+		sb.border_width_left = 1
+		sb.border_width_right = 1
+		sb.border_width_top = 1
+		sb.border_width_bottom = 1
+		sb.corner_radius_top_left = 10
+		sb.corner_radius_top_right = 10
+		sb.corner_radius_bottom_left = 10
+		sb.corner_radius_bottom_right = 10
+		p.add_theme_stylebox_override("panel", sb)
+		var m := MarginContainer.new()
+		m.add_theme_constant_override("margin_left", 12)
+		m.add_theme_constant_override("margin_right", 12)
+		m.add_theme_constant_override("margin_top", 8)
+		m.add_theme_constant_override("margin_bottom", 8)
+		var l := Label.new()
+		l.text = empty_message
+		l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		l.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+		l.add_theme_color_override("font_color", Color(0.82, 0.86, 0.92, 1.0))
+		l.add_theme_font_size_override("font_size", 16)
+		m.add_child(l)
+		p.add_child(m)
+		parent.add_child(p)
+		parent.move_child(p, panel_ctrl.get_index())
+	else:
+		# Update message if needed
+		var pc := existing as PanelContainer
+		if pc and pc.get_child_count() > 0:
+			var margin := pc.get_child(0)
+			if margin and margin.get_child_count() > 0 and margin.get_child(0) is Label:
+				(margin.get_child(0) as Label).text = empty_message
+
+func _adjust_inventory_panel_height(panel_ctrl: Control, scroll_ctrl: ScrollContainer, item_count: int, columns: int) -> void:
+	# Clamp the inventory panel height to its content so we don't get a giant blank area.
+	if not (is_instance_valid(panel_ctrl) and is_instance_valid(scroll_ctrl)):
+		return
+	columns = max(1, columns)
+	var rows := int(ceil(float(max(item_count, 1)) / float(columns)))
+	# Rough row height: our panels are 32px min + margins.
+	var row_h := 40
+	var desired := 20 + rows * row_h
+	# Clamp so it never takes half the menu.
+	var clamped := clampi(desired, 70, 220)
+	scroll_ctrl.custom_minimum_size = Vector2(scroll_ctrl.custom_minimum_size.x, float(clamped))
+	# Ensure the container doesn't expand beyond its minimum.
+	scroll_ctrl.size_flags_vertical = Control.SIZE_FILL
+	panel_ctrl.size_flags_vertical = Control.SIZE_FILL
+
 # Enforce SpinBox max based on selected cargo quantities
 func _update_store_qty_limit() -> void:
 	if not is_instance_valid(cargo_qty_store):
 		return
-	var cargo_id := _get_selected_meta(cargo_store_dd)
+	var cargo_meta := _get_selected_meta(cargo_store_dd)
 	var max_qty := 1
-	if cargo_id != "":
-		max_qty = max(1, _get_convoy_cargo_quantity_by_id(cargo_id))
+	if cargo_meta != "":
+		max_qty = max(1, _get_convoy_cargo_quantity_for_meta(cargo_meta))
 	cargo_qty_store.min_value = 1
 	cargo_qty_store.step = 1
 	cargo_qty_store.allow_greater = false
@@ -1201,15 +1783,15 @@ func _update_store_qty_limit() -> void:
 		cargo_qty_store.value = cargo_qty_store.max_value
 	# Optionally disable button if none available
 	if is_instance_valid(store_cargo_btn):
-		store_cargo_btn.disabled = (cargo_id == "" or max_qty <= 0)
+		store_cargo_btn.disabled = (cargo_meta == "" or max_qty <= 0)
 
 func _update_retrieve_qty_limit() -> void:
 	if not is_instance_valid(cargo_qty_retrieve):
 		return
-	var cargo_id := _get_selected_meta(cargo_retrieve_dd)
+	var cargo_meta := _get_selected_meta(cargo_retrieve_dd)
 	var max_qty := 1
-	if cargo_id != "":
-		max_qty = max(1, _get_warehouse_cargo_quantity_by_id(cargo_id))
+	if cargo_meta != "":
+		max_qty = max(1, _get_warehouse_cargo_quantity_for_meta(cargo_meta))
 	cargo_qty_retrieve.min_value = 1
 	cargo_qty_retrieve.step = 1
 	cargo_qty_retrieve.allow_greater = false
@@ -1217,18 +1799,26 @@ func _update_retrieve_qty_limit() -> void:
 	if cargo_qty_retrieve.value > cargo_qty_retrieve.max_value:
 		cargo_qty_retrieve.value = cargo_qty_retrieve.max_value
 	if is_instance_valid(retrieve_cargo_btn):
-		retrieve_cargo_btn.disabled = (cargo_id == "" or max_qty <= 0)
+		retrieve_cargo_btn.disabled = (cargo_meta == "" or max_qty <= 0)
 
 func _get_convoy_cargo_quantity_by_id(cargo_id: String) -> int:
 	if cargo_id == "":
 		return 0
-	var agg := _aggregate_convoy_cargo(_convoy_data)
-	for arr_name in ["normal_dest", "normal_other", "part"]:
-		if agg.has(arr_name):
-			for it in agg[arr_name]:
-				if String(it.get("cargo_id", "")) == cargo_id:
-					return int(it.get("quantity", 0))
-	return 0
+	var total := 0
+	var vehicles: Array = _get_convoy_vehicle_details_list(_convoy_data)
+	for veh in vehicles:
+		if not (veh is Dictionary):
+			continue
+		var cargo_arr: Array = veh.get("cargo", [])
+		for item in cargo_arr:
+			if not (item is Dictionary):
+				continue
+			if String(item.get("cargo_id", "")) != cargo_id:
+				continue
+			if _looks_like_part_cargo(item as Dictionary):
+				continue
+			total += int(item.get("quantity", 0))
+	return total
 
 func _get_warehouse_cargo_quantity_by_id(cargo_id: String) -> int:
 	if cargo_id == "" or not (_warehouse is Dictionary) or _warehouse.is_empty():
@@ -1315,16 +1905,165 @@ func _set_option_button_items(dd: OptionButton, items: Array, last_ids_ref: Arra
 		last_ids_ref.clear()
 		for nid in new_ids: last_ids_ref.append(nid)
 
-func _aggregate_convoy_cargo(convoy: Dictionary) -> Dictionary:
-	var result := {"normal_dest": [], "normal_other": [], "part": []}
-	if not (convoy is Dictionary) or not convoy.has("vehicle_details_list"):
-		return result
-	var by_id: Dictionary = {}
-	var by_id_is_part: Dictionary = {}
-	var by_id_has_dest: Dictionary = {}
+func _looks_like_part_cargo(d: Dictionary) -> bool:
+	return (ItemsData != null and ItemsData.PartItem and ItemsData.PartItem._looks_like_part_dict(d))
 
-	# Installed parts are identified as slot-bearing cargo entries that are attached to a vehicle.
-	for veh in convoy.get("vehicle_details_list", []):
+func _get_cargo_display_name(d: Dictionary) -> String:
+	# Prefer base_name so variants (e.g. different cereals) collapse nicely.
+	var base := String(d.get("base_name", ""))
+	if base.strip_edges() != "":
+		return base
+	return String(d.get("name", "Unknown"))
+
+func _get_cargo_group_key(d: Dictionary, has_dest: bool) -> String:
+	var name_key := _get_cargo_display_name(d).to_lower().strip_edges()
+	if has_dest:
+		# Do not merge destination/mission cargo across different recipients.
+		var recipient_key := str(d.get("recipient", d.get("mission_id", d.get("mission_vendor_id", ""))))
+		return "dest|%s|%s" % [name_key, recipient_key]
+	return "norm|%s" % name_key
+
+func _encode_cargo_meta(items: Array) -> String:
+	# items is an array of {cargo_id, quantity}. If a single cargo_id, return it directly.
+	var clean: Array = []
+	for e in items:
+		if e is Dictionary:
+			var cid := String((e as Dictionary).get("cargo_id", ""))
+			var q := int((e as Dictionary).get("quantity", 0))
+			if cid != "" and q > 0:
+				clean.append({"cargo_id": cid, "quantity": q})
+	if clean.size() == 0:
+		return ""
+	if clean.size() == 1:
+		return String((clean[0] as Dictionary).get("cargo_id", ""))
+	# Keep deterministic order
+	clean.sort_custom(func(a, b): return String(a.get("cargo_id", "")) < String(b.get("cargo_id", "")))
+	return JSON.stringify(clean)
+
+func _decode_cargo_meta(meta: String) -> Array:
+	var s := meta.strip_edges()
+	if s.begins_with("["):
+		var parsed: Variant = JSON.parse_string(s)
+		if parsed is Array:
+			return parsed as Array
+	return []
+
+func _get_convoy_cargo_quantity_for_meta(cargo_meta: String) -> int:
+	if cargo_meta == "":
+		return 0
+	var decoded := _decode_cargo_meta(cargo_meta)
+	if not decoded.is_empty():
+		var total := 0
+		for e in decoded:
+			if e is Dictionary:
+				total += int((e as Dictionary).get("quantity", 0))
+		return total
+	# Single-id meta; quantity should be present in aggregation.
+	var agg := _aggregate_convoy_cargo(_convoy_data)
+	for arr_name in ["normal_dest", "normal_other"]:
+		if agg.has(arr_name):
+			for it in (agg[arr_name] as Array):
+				if String(it.get("meta", "")) == cargo_meta:
+					return int(it.get("quantity", 0))
+	return 0
+
+func _get_warehouse_cargo_quantity_for_meta(cargo_meta: String) -> int:
+	if cargo_meta == "" or not (_warehouse is Dictionary) or _warehouse.is_empty():
+		return 0
+	var decoded := _decode_cargo_meta(cargo_meta)
+	if not decoded.is_empty():
+		var total := 0
+		for e in decoded:
+			if e is Dictionary:
+				total += int((e as Dictionary).get("quantity", 0))
+		return total
+	return _get_warehouse_cargo_quantity_by_id(cargo_meta)
+
+func _store_cargo_by_meta(wid: String, cid: String, cargo_meta: String, qty: int) -> void:
+	var decoded := _decode_cargo_meta(cargo_meta)
+	if decoded.is_empty():
+		_warehouse_service.store_cargo({"warehouse_id": wid, "convoy_id": cid, "cargo_id": cargo_meta, "quantity": qty})
+		return
+	var remaining: int = qty
+	for e in decoded:
+		if remaining <= 0:
+			break
+		if e is Dictionary:
+			var eid := String((e as Dictionary).get("cargo_id", ""))
+			var avail := int((e as Dictionary).get("quantity", 0))
+			var take: int = min(remaining, avail)
+			if eid != "" and take > 0:
+				_warehouse_service.store_cargo({"warehouse_id": wid, "convoy_id": cid, "cargo_id": eid, "quantity": take})
+				remaining -= take
+
+func _retrieve_cargo_by_meta(wid: String, cid: String, cargo_meta: String, qty: int, recv_vid: String) -> void:
+	var decoded := _decode_cargo_meta(cargo_meta)
+	if decoded.is_empty():
+		var payload := {"warehouse_id": wid, "convoy_id": cid, "cargo_id": cargo_meta, "quantity": qty}
+		if recv_vid != "":
+			payload["vehicle_id"] = recv_vid
+		_warehouse_service.retrieve_cargo(payload)
+		return
+	var remaining: int = qty
+	for e in decoded:
+		if remaining <= 0:
+			break
+		if e is Dictionary:
+			var eid := String((e as Dictionary).get("cargo_id", ""))
+			var avail := int((e as Dictionary).get("quantity", 0))
+			var take: int = min(remaining, avail)
+			if eid != "" and take > 0:
+				var payload2 := {"warehouse_id": wid, "convoy_id": cid, "cargo_id": eid, "quantity": take}
+				if recv_vid != "":
+					payload2["vehicle_id"] = recv_vid
+				_warehouse_service.retrieve_cargo(payload2)
+				remaining -= take
+
+func _aggregate_warehouse_cargo(items: Array) -> Dictionary:
+	# Aggregate cargo by base name and exclude parts.
+	var result := {"normal_dest": [], "normal_other": []}
+	if items.is_empty():
+		return result
+	var by_key: Dictionary = {}
+	for wi in items:
+		if wi is Dictionary:
+			var d := wi as Dictionary
+			var cid := String(d.get("cargo_id", ""))
+			var qty := int(d.get("quantity", 0))
+			if cid == "" or qty <= 0:
+				continue
+			if _looks_like_part_cargo(d):
+				continue
+			var has_dest: bool = (d.get("recipient") != null) or (d.get("delivery_reward") != null)
+			var key := _get_cargo_group_key(d, has_dest)
+			if not by_key.has(key):
+				by_key[key] = {"name": _get_cargo_display_name(d), "quantity": 0, "has_dest": has_dest, "items": []}
+			(by_key[key] as Dictionary)["quantity"] = int((by_key[key] as Dictionary).get("quantity", 0)) + qty
+			var arr: Array = (by_key[key] as Dictionary).get("items", [])
+			arr.append({"cargo_id": cid, "quantity": qty})
+			(by_key[key] as Dictionary)["items"] = arr
+	for k in by_key.keys():
+		var g: Dictionary = by_key[k]
+		var entry := {"meta": _encode_cargo_meta(g.get("items", [])), "name": String(g.get("name", "Unknown")), "quantity": int(g.get("quantity", 0))}
+		if bool(g.get("has_dest", false)):
+			(result["normal_dest"] as Array).append(entry)
+		else:
+			(result["normal_other"] as Array).append(entry)
+	(result["normal_dest"] as Array).sort_custom(func(a, b): return String(a.get("name", "")) < String(b.get("name", "")) or (String(a.get("name", "")) == String(b.get("name", "")) and String(a.get("meta", "")) < String(b.get("meta", ""))))
+	(result["normal_other"] as Array).sort_custom(func(a, b): return String(a.get("name", "")) < String(b.get("name", "")) or (String(a.get("name", "")) == String(b.get("name", "")) and String(a.get("meta", "")) < String(b.get("meta", ""))))
+	return result
+
+func _aggregate_convoy_cargo(convoy: Dictionary) -> Dictionary:
+	var result := {"normal_dest": [], "normal_other": []}
+	if not (convoy is Dictionary):
+		return result
+	var vehicles: Array = _get_convoy_vehicle_details_list(convoy)
+	if vehicles.is_empty():
+		return result
+	var by_key: Dictionary = {}
+
+	# Aggregate by base name where possible (e.g., cereal variants), and exclude parts (e.g., fuel tanks).
+	for veh in vehicles:
 		if not (veh is Dictionary):
 			continue
 		var cargo_arr: Array = veh.get("cargo", [])
@@ -1337,43 +2076,46 @@ func _aggregate_convoy_cargo(convoy: Dictionary) -> Dictionary:
 			var qty := int(item.get("quantity", 0))
 			if qty <= 0:
 				continue
-			# Part identification is strictly slot-based.
-			var is_part: bool = (ItemsData != null and ItemsData.PartItem and ItemsData.PartItem._looks_like_part_dict(item))
-			# Note: `vehicle_id` is present for normal per-vehicle cargo too, so do NOT use it
-			# to filter parts here.
-			if not by_id.has(cid):
-				by_id[cid] = {
-					"cargo_id": cid,
-					"name": String(item.get("name", "Unknown")),
-					"quantity": qty
-				}
-				by_id_is_part[cid] = is_part
-				by_id_has_dest[cid] = (item.get("recipient") != null) or (item.get("delivery_reward") != null)
-			else:
-				by_id[cid]["quantity"] = int(by_id[cid].get("quantity", 0)) + qty
-				# If any occurrence flags as part, keep it as part
-				if is_part:
-					by_id_is_part[cid] = true
-				# If any occurrence has destination, keep it as true
-				if (item.get("recipient") != null) or (item.get("delivery_reward") != null):
-					by_id_has_dest[cid] = true
-	# Split and sort
-	var normals_dest: Array = []
-	var normals_other: Array = []
-	var parts: Array = []
-	for cid2 in by_id.keys():
-		var entry = by_id[cid2]
-		if by_id_is_part.get(cid2, false):
-			parts.append(entry)
+			if _looks_like_part_cargo(item):
+				continue
+			var has_dest: bool = (item.get("recipient") != null) or (item.get("delivery_reward") != null)
+			var key := _get_cargo_group_key(item, has_dest)
+			if not by_key.has(key):
+				by_key[key] = {"name": _get_cargo_display_name(item), "quantity": 0, "has_dest": has_dest, "items": []}
+			(by_key[key] as Dictionary)["quantity"] = int((by_key[key] as Dictionary).get("quantity", 0)) + qty
+			var arr: Array = (by_key[key] as Dictionary).get("items", [])
+			arr.append({"cargo_id": cid, "quantity": qty})
+			(by_key[key] as Dictionary)["items"] = arr
+	for k in by_key.keys():
+		var g: Dictionary = by_key[k]
+		var entry := {"meta": _encode_cargo_meta(g.get("items", [])), "name": String(g.get("name", "Unknown")), "quantity": int(g.get("quantity", 0))}
+		if bool(g.get("has_dest", false)):
+			(result["normal_dest"] as Array).append(entry)
 		else:
-			if by_id_has_dest.get(cid2, false):
-				normals_dest.append(entry)
-			else:
-				normals_other.append(entry)
-	normals_dest.sort_custom(func(a, b): return String(a.get("name","")) < String(b.get("name","")) or (String(a.get("name","")) == String(b.get("name","")) and String(a.get("cargo_id","")) < String(b.get("cargo_id",""))))
-	normals_other.sort_custom(func(a, b): return String(a.get("name","")) < String(b.get("name","")) or (String(a.get("name","")) == String(b.get("name","")) and String(a.get("cargo_id","")) < String(b.get("cargo_id",""))))
-	parts.sort_custom(func(a, b): return String(a.get("name","")) < String(b.get("name","")) or (String(a.get("name","")) == String(b.get("name","")) and String(a.get("cargo_id","")) < String(b.get("cargo_id",""))))
-	result["normal_dest"] = normals_dest
-	result["normal_other"] = normals_other
-	result["part"] = parts
+			(result["normal_other"] as Array).append(entry)
+	(result["normal_dest"] as Array).sort_custom(func(a, b): return String(a.get("name", "")) < String(b.get("name", "")) or (String(a.get("name", "")) == String(b.get("name", "")) and String(a.get("meta", "")) < String(b.get("meta", ""))))
+	(result["normal_other"] as Array).sort_custom(func(a, b): return String(a.get("name", "")) < String(b.get("name", "")) or (String(a.get("name", "")) == String(b.get("name", "")) and String(a.get("meta", "")) < String(b.get("meta", ""))))
 	return result
+
+func _get_convoy_vehicle_details_list(convoy: Dictionary) -> Array:
+	# Convoy payload shape has varied across API versions.
+	# Prefer vehicle_details_list, fallback to vehicles/vehicle_list.
+	if not (convoy is Dictionary) or convoy.is_empty():
+		return []
+	var vlist: Variant = convoy.get("vehicle_details_list", null)
+	if typeof(vlist) == TYPE_ARRAY and (vlist as Array).size() > 0:
+		return vlist as Array
+	vlist = convoy.get("vehicles", null)
+	if typeof(vlist) == TYPE_ARRAY and (vlist as Array).size() > 0:
+		return vlist as Array
+	vlist = convoy.get("vehicle_list", null)
+	if typeof(vlist) == TYPE_ARRAY and (vlist as Array).size() > 0:
+		return vlist as Array
+	# If key exists but empty, return empty.
+	if convoy.has("vehicle_details_list") and typeof(convoy.get("vehicle_details_list")) == TYPE_ARRAY:
+		return convoy.get("vehicle_details_list")
+	if convoy.has("vehicles") and typeof(convoy.get("vehicles")) == TYPE_ARRAY:
+		return convoy.get("vehicles")
+	if convoy.has("vehicle_list") and typeof(convoy.get("vehicle_list")) == TYPE_ARRAY:
+		return convoy.get("vehicle_list")
+	return []

@@ -115,8 +115,9 @@ func open_convoy_settlement_menu_with_focus(convoy_data: Dictionary, focus_inten
 	_show_menu(convoy_settlement_menu_scene, arg)
 
 func open_warehouse_menu(convoy_data = null):
-	var arg = _extract_convoy_id_or_passthrough(convoy_data)
-	_show_menu(warehouse_menu_scene, arg)
+	# IMPORTANT: WarehouseMenu may require extra context like {settlement}.
+	# Do not collapse the payload to convoy_id here.
+	_show_menu(warehouse_menu_scene, convoy_data)
 
 func open_convoy_cargo_menu(convoy_data = null):
 	if convoy_data == null:
