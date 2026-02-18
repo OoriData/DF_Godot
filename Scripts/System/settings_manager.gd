@@ -16,7 +16,6 @@ var data := {
 	"access.high_contrast": false,
 
 	"display.fullscreen": false,
-	"display.resolution": Vector2i(1280, 720),
 
 	"controls.invert_pan": false,
 	"controls.invert_zoom": false,
@@ -60,7 +59,6 @@ func _apply_boot_settings() -> void:
 	if is_instance_valid(sm) and sm.has_method("set_global_ui_scale"):
 		sm.set_global_ui_scale(float(data["ui.scale"]))
 	_apply_runtime_side_effect("display.fullscreen", data["display.fullscreen"])
-	_apply_runtime_side_effect("display.resolution", data["display.resolution"])
 
 func _apply_runtime_side_effect(key: String, value: Variant) -> void:
 	if DisplayServer.get_name() == "headless":
@@ -69,18 +67,6 @@ func _apply_runtime_side_effect(key: String, value: Variant) -> void:
 		"display.fullscreen":
 			var mode := DisplayServer.WINDOW_MODE_FULLSCREEN if bool(value) else DisplayServer.WINDOW_MODE_WINDOWED
 			DisplayServer.window_set_mode(mode, 0)
-		"display.resolution":
-			var size: Vector2i
-			if value is Vector2i:
-				size = value
-			elif value is Vector2:
-				size = Vector2i(int(value.x), int(value.y))
-			elif value is String and value.find("x") != -1:
-				var parts = value.split("x")
-				if parts.size() == 2:
-					size = Vector2i(int(parts[0]), int(parts[1]))
-			if size.x > 0 and size.y > 0:
-				DisplayServer.window_set_size(size, 0)
 		"ui.scale":
 			var sm := get_node_or_null("/root/ui_scale_manager")
 			if is_instance_valid(sm) and sm.has_method("set_global_ui_scale"):

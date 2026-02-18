@@ -44,17 +44,6 @@ text = "Display"
 layout_mode = 2
 text = "Fullscreen"
 
-[node name="ResolutionRow" type="HBoxContainer" parent="Margin/VBox/DisplaySection"]
-layout_mode = 2
-
-[node name="ResolutionLabel" type="Label" parent="Margin/VBox/DisplaySection/ResolutionRow"]
-layout_mode = 2
-text = "Resolution"
-
-[node name="ResolutionOption" type="OptionButton" parent="Margin/VBox/DisplaySection/ResolutionRow"]
-layout_mode = 2
-size_flags_horizontal = 3
-
 
 [node name="UISec" type="VBoxContainer" parent="Margin/VBox"]
 layout_mode = 2

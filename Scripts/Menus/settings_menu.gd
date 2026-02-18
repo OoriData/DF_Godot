@@ -3,7 +3,6 @@ extends Window
 @onready var s_ui_scale: HSlider = $Margin/VBox/UISec/UIScaleRow/UIScaleSlider
 @onready var c_dynamic_scale: CheckBox = $Margin/VBox/UISec/DynamicScaleCheck # New
 @onready var c_fullscreen: CheckBox = $Margin/VBox/DisplaySection/FullscreenCheck
-@onready var resolution_opt: OptionButton = $Margin/VBox/DisplaySection/ResolutionRow/ResolutionOption
 @onready var c_invert_pan: CheckBox = $Margin/VBox/ControlsSec/InvertPanCheck
 @onready var c_invert_zoom: CheckBox = $Margin/VBox/ControlsSec/InvertZoomCheck
 @onready var c_gestures: CheckBox = $Margin/VBox/ControlsSec/GesturesCheck
@@ -51,8 +50,6 @@ func _init_values():
 	s_ui_scale.editable = not dyn # Disable slider if dynamic is on
 	
 	c_fullscreen.button_pressed = bool(SM.get_value("display.fullscreen", false))
-	_populate_resolution_options()
-	_init_resolution_selection()
 	c_invert_pan.button_pressed = bool(SM.get_value("controls.invert_pan", false))
 	c_invert_zoom.button_pressed = bool(SM.get_value("controls.invert_zoom", false))
 	c_gestures.button_pressed = bool(SM.get_value("controls.gestures_enabled", true))
@@ -75,7 +72,6 @@ func _wire_events():
 		)
 	
 	c_fullscreen.toggled.connect(func(b): SM.set_and_save("display.fullscreen", b))
-	resolution_opt.item_selected.connect(_on_resolution_selected)
 	c_invert_pan.toggled.connect(func(b): SM.set_and_save("controls.invert_pan", b))
 	c_invert_zoom.toggled.connect(func(b): SM.set_and_save("controls.invert_zoom", b))
 	c_gestures.toggled.connect(func(b): SM.set_and_save("controls.gestures_enabled", b))
@@ -98,7 +94,6 @@ func _on_reset_defaults():
 		"ui.click_closes_menus": false,
 		"access.high_contrast": false,
 		"display.fullscreen": false,
-		"display.resolution": Vector2i(1280, 720),
 		"controls.invert_pan": false,
 		"controls.invert_zoom": false,
 		"controls.gestures_enabled": true,
@@ -109,33 +104,6 @@ func _on_reset_defaults():
 
 func _on_close_requested():
 	hide()
-
-func _populate_resolution_options():
-	resolution_opt.clear()
-	var list: Array[Vector2i] = [
-		Vector2i(1280, 720),
-		Vector2i(1600, 900),
-		Vector2i(1920, 1080),
-		Vector2i(2560, 1440),
-		Vector2i(3840, 2160),
-	]
-	for res in list:
-		resolution_opt.add_item("%dx%d" % [res.x, res.y])
-		resolution_opt.set_item_metadata(resolution_opt.item_count - 1, res)
-
-func _init_resolution_selection():
-	var current: Variant = SM.get_value("display.resolution", Vector2i(1280, 720))
-	var cur: Vector2i = current if current is Vector2i else Vector2i(int(current.x), int(current.y))
-	for i in range(resolution_opt.item_count):
-		var meta: Variant = resolution_opt.get_item_metadata(i)
-		if meta is Vector2i and meta == cur:
-			resolution_opt.select(i)
-			break
-
-func _on_resolution_selected(index: int):
-	var meta: Variant = resolution_opt.get_item_metadata(index)
-	if meta is Vector2i:
-		SM.set_and_save("display.resolution", meta)
 
 func _on_ui_scale_value_changed(_v: float):
 	# Optional: We could apply a "preview" scale here without saving,
