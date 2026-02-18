@@ -1,0 +1,11 @@
+"DepotBuild"
+{
+	"DepotID" "YOUR_DEPOT_ID_MACOS"
+	"FileMapping"
+	{
+		"LocalPath" "./macos/*"
+		"DepotPath" "."
+		"recursive" "1"
+	}
+	"FileExclusion" "*.DS_Store"
+}

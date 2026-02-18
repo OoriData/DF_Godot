@@ -1,0 +1,148 @@
+name: Build Google Play
+
+on:
+  workflow_call:
+    inputs:
+      godot_version:
+        required: true
+        type: string
+        default: '4.6.0'
+
+      version_tag:
+        required: true
+        type: string
+    secrets:
+      GOOGLE_PLAY_SERVICE_ACCOUNT_JSON:
+        required: true
+      ANDROID_KEYSTORE_BASE64:
+        required: true
+      ANDROID_KEY_ALIAS:
+        required: true
+      ANDROID_KEY_PASSWORD:
+        required: true
+    outputs:
+      build_status:
+        description: 'Build success/failure'
+        value: ${{ jobs.build.outputs.status }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    outputs:
+      status: ${{ steps.export.outcome }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Keystore
+        run: |
+          echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 --decode > release.keystore
+          # Godot export presets expect the keystore at a specific path or need to be overridden
+          # Current export_presets.cfg doesn't seem to use env vars for keystore path, 
+          # so we might need to sed it or place it where expected if relative.
+          # However, abarichello/godot-ci allows us to inject the keystore.
+          
+          # Let's verify where export_presets.cfg expects it.
+          # It usually expects 'keystore/release'
+          
+
+      - name: Configure Keystore in Presets
+        shell: python
+        run: |
+          import os
+          import re
+          import sys
+
+          with open('export_presets.cfg', 'r') as f:
+              content = f.read()
+
+          # Dynamically find the preset index for "Android (Play Store)"
+          preset_match = re.search(r'^\[preset\.(\d+)\]\s+name="Android \(Play Store\)"', content, re.MULTILINE)
+          
+          if not preset_match:
+              print("Error: Could not find preset named 'Android (Play Store)'")
+              sys.exit(1)
+              
+          preset_index = preset_match.group(1)
+          print(f"Found 'Android (Play Store)' at index {preset_index}")
+
+          # Target the corresponding options section [preset.X.options]
+          section_header = f'[preset.{preset_index}.options]'
+          escaped_header = re.escape(section_header)
+          section_regex = r'({})(.*?)(?=\n\[|$)'.format(escaped_header)
+          
+          keystore_path = os.path.abspath('release.keystore')
+          print(f"Using absolute keystore path: {keystore_path}")
+
+          def set_key(match):
+              header = match.group(1)
+              section = match.group(2)
+              
+              overrides = {
+                  'keystore/release': '"{}"'.format(keystore_path),
+                  'keystore/release_user': '"{}"'.format(os.environ['ANDROID_KEY_ALIAS']),
+                  'keystore/release_password': '"{}"'.format(os.environ['ANDROID_KEY_PASSWORD']),
+                  'version/code': str(27 + (int(os.environ['GITHUB_RUN_NUMBER']) * 10) + int(os.environ['GITHUB_RUN_ATTEMPT']))
+              }
+              
+              for key, val in overrides.items():
+                  if re.search(r'^{}\s*='.format(re.escape(key)), section, re.MULTILINE):
+                      section = re.sub(r'^{}\s*=.*'.format(re.escape(key)), r'{}={}'.format(key, val), section, flags=re.MULTILINE)
+                  else:
+                      section += '\n{}={}'.format(key, val)
+              return header + section
+
+          new_content = re.sub(section_regex, set_key, content, flags=re.DOTALL)
+
+          with open('export_presets.cfg', 'w') as f:
+              f.write(new_content)
+        env:
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          GITHUB_RUN_NUMBER: ${{ github.run_number }}
+          GITHUB_RUN_ATTEMPT: ${{ github.run_attempt }}
+
+      - name: Setup Godot
+        uses: chickensoft-games/setup-godot@v2
+        with:
+          version: ${{ inputs.godot_version }}
+          use-dotnet: false
+          include-templates: true
+
+      - name: Restore Android Libraries
+        run: |
+          # The .aar files are excluded from the repo due to size.
+          # We extract them from the Godot export templates provided by setup-godot.
+          TEMPLATES_DIR="$HOME/.local/share/godot/export_templates/${{ inputs.godot_version }}.stable"
+          SOURCE_ZIP="$TEMPLATES_DIR/android_source.zip"
+          
+          if [ -f "$SOURCE_ZIP" ]; then
+            echo "Found templates zip at $SOURCE_ZIP"
+            unzip -o "$SOURCE_ZIP" "libs/*" -d android/build/
+          else
+            echo "Templates zip not found at $SOURCE_ZIP, searching..."
+            SOURCE_ZIP=$(find $HOME -name "android_source.zip" | head -n 1)
+            if [ -n "$SOURCE_ZIP" ]; then
+              echo "Found source zip at $SOURCE_ZIP"
+              unzip -o "$SOURCE_ZIP" "libs/*" -d android/build/
+            else
+              echo "Error: Could not find android_source.zip. Listing home for debug:"
+              ls -R $HOME/.local/share/godot || true
+              exit 1
+            fi
+          fi
+
+      - name: Export Android
+        run: |
+          mkdir -p build/android
+          godot --headless --export-release "Android (Play Store)" build/android/Desolate_Frontiers.aab
+
+      - name: Deploy to Play Store
+        if: success()
+        uses: r0adkll/upload-google-play@v1
+        with:
+          serviceAccountJsonPlainText: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
+          packageName: com.ooridata.desolate_frontiers
+          releaseFiles: build/android/Desolate_Frontiers.aab
+          track: internal # Default to internal for safety
+          status: draft # Default to draft

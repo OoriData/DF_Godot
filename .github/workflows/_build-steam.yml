@@ -1,0 +1,134 @@
+name: Build Steam
+
+on:
+  workflow_call:
+    inputs:
+      godot_version:
+        required: true
+        type: string
+        default: '4.6.0'
+      version_tag:
+        required: true
+        type: string
+    secrets:
+      STEAM_USERNAME:
+        required: true
+      STEAM_PASSWORD:
+        required: true
+      STEAM_CONFIG_VDF:
+        required: false
+      STEAM_APP_ID:
+        required: true
+      STEAM_DEPOT_ID_WINDOWS:
+        required: true
+      STEAM_DEPOT_ID_MACOS:
+        required: true
+    outputs:
+      build_status:
+        description: 'Build success/failure'
+        value: ${{ jobs.deploy.outputs.status }}
+
+jobs:
+  build_windows:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Setup Godot
+        uses: chickensoft-games/setup-godot@v2
+        with:
+          version: ${{ inputs.godot_version }}
+          use-dotnet: false
+          include-templates: true
+
+      - name: Export Windows
+        run: |
+          mkdir -p build/windows
+          godot --headless --export-release "Windows Desktop (x86)" build/windows/Desolate_Frontiers.exe
+          
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: steam-build-windows
+          path: build/windows
+
+  build_macos:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Setup Godot
+        uses: chickensoft-games/setup-godot@v2
+        with:
+          version: ${{ inputs.godot_version }}
+          use-dotnet: false
+          include-templates: true
+
+      - name: Export macOS
+        run: |
+          mkdir -p build/macos
+          godot --headless --export-release "macOS" build/macos/Desolate_Frontiers.zip
+          
+      - name: Extract macOS Zip
+        run: |
+          # 7z x preserves directory structure better than unzip for Mac apps sometimes, but unzip is standard.
+          # The key is preserving specific macos permissions/symlinks which implies we might want to unzip on macos runner?
+          # But we are on linux runner.
+          # Steam expects the folder structure of .app
+          # The godot-ci action usually outputs a zip for macOS.
+          
+          cd build/macos
+          unzip Desolate_Frontiers.zip
+          rm Desolate_Frontiers.zip
+          
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: steam-build-macos
+          path: build/macos
+
+  deploy:
+    needs: [build_windows, build_macos]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Download Windows Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: steam-build-windows
+          path: build/windows
+          
+      - name: Download macOS Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: steam-build-macos
+          path: build/macos
+          
+      - name: Setup SteamCMD
+        uses: cybercode/steamcmd-action@v1
+        
+      - name: Prepare VDF Scripts
+        run: |
+          # Replace placeholders in VDF files with secrets
+          sed -i "s/YOUR_APP_ID/${{ secrets.STEAM_APP_ID }}/g" steam_scripts/app_build.vdf
+          sed -i "s/YOUR_DEPOT_ID_WINDOWS/${{ secrets.STEAM_DEPOT_ID_WINDOWS }}/g" steam_scripts/app_build.vdf
+          sed -i "s/YOUR_DEPOT_ID_MACOS/${{ secrets.STEAM_DEPOT_ID_MACOS }}/g" steam_scripts/app_build.vdf
+          
+          sed -i "s/YOUR_DEPOT_ID_WINDOWS/${{ secrets.STEAM_DEPOT_ID_WINDOWS }}/g" steam_scripts/depot_build_windows.vdf
+          sed -i "s/YOUR_DEPOT_ID_MACOS/${{ secrets.STEAM_DEPOT_ID_MACOS }}/g" steam_scripts/depot_build_macos.vdf
+          
+      - name: Deploy to Steam
+        env:
+          STEAM_USERNAME: ${{ secrets.STEAM_USERNAME }}
+          STEAM_PASSWORD: ${{ secrets.STEAM_PASSWORD }}
+          # If using config.vdf for auth (Steam Guard)
+          STEAM_CONFIG_VDF: ${{ secrets.STEAM_CONFIG_VDF }}
+        run: |
+          # If config.vdf is provided, we need to place it where steamcmd expects it
+          if [ ! -z "$STEAM_CONFIG_VDF" ]; then
+             mkdir -p ~/.steam/steam/config
+             echo "$STEAM_CONFIG_VDF" | base64 --decode > ~/.steam/steam/config/config.vdf
+          fi
+          
+          steamcmd +login $STEAM_USERNAME $STEAM_PASSWORD +run_app_build_http $(pwd)/steam_scripts/app_build.vdf +quit

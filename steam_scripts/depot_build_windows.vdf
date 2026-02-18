@@ -1,0 +1,11 @@
+"DepotBuild"
+{
+	"DepotID" "YOUR_DEPOT_ID_WINDOWS"
+	"FileMapping"
+	{
+		"LocalPath" "./windows/*"
+		"DepotPath" "."
+		"recursive" "1"
+	}
+	"FileExclusion" "*.pdb"
+}
