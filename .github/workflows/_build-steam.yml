@@ -53,7 +53,7 @@ jobs:
           path: build/windows
 
   build_macos:
-    runs-on: ubuntu-latest
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
       
