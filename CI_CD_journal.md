@@ -33,3 +33,4 @@
 
 ### Note on Steam Credentials
 Steam requires clear-text credentials for automated uploads. Use a dedicated service account if possible and ensure `STEAM_CONFIG_VDF` is used if Steam Guard is active.
+
