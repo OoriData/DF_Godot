@@ -127,8 +127,11 @@ jobs:
         run: |
           # If config.vdf is provided, we need to place it where steamcmd expects it
           if [ ! -z "$STEAM_CONFIG_VDF" ]; then
-             mkdir -p ~/.steam/steam/config
-             echo "$STEAM_CONFIG_VDF" | base64 --decode > ~/.steam/steam/config/config.vdf
+             # Use STEAM_DIR if set by the action, otherwise fallback to home
+             DEST_DIR="${STEAM_DIR:-$HOME/.steam/steam}/config"
+             mkdir -p "$DEST_DIR"
+             echo "$STEAM_CONFIG_VDF" | base64 --decode > "$DEST_DIR/config.vdf"
+             echo "Placed config.vdf in $DEST_DIR"
           fi
           
           steamcmd +login $STEAM_USERNAME $STEAM_PASSWORD +run_app_build_http $(pwd)/steam_scripts/app_build.vdf +quit
