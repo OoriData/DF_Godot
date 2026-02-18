@@ -106,7 +106,7 @@ jobs:
           path: build/macos
           
       - name: Setup SteamCMD
-        uses: cybercode/steamcmd-action@v1
+        uses: RageAgainstThePixel/setup-steamcmd@v1
         
       - name: Prepare VDF Scripts
         run: |
