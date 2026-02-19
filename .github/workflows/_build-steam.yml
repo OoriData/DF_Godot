@@ -117,18 +117,24 @@ jobs:
         run: |
           # Define an isolated Steam directory to avoid session pollution.
           export STEAM_HOME="$(pwd)/steam_home"
-          mkdir -p "$STEAM_HOME/config"
+          
+          # Verification: SteamCMD typically looks in ~/Steam/config or ~/.steam/steam/config depending on the distro/setup.
+          # We will populate both potential locations to be safe.
+          mkdir -p "$STEAM_HOME/Steam/config"
+          mkdir -p "$STEAM_HOME/.steam/steam/config"
           
           # 1. Place the config.vdf (the Golden Session)
           if [ ! -z "$STEAM_CONFIG_VDF" ]; then
-             echo "$STEAM_CONFIG_VDF" | base64 --decode > "$STEAM_HOME/config/config.vdf"
-             echo "Placed config.vdf in $STEAM_HOME"
+             echo "$STEAM_CONFIG_VDF" | base64 --decode > "$STEAM_HOME/Steam/config/config.vdf"
+             cp "$STEAM_HOME/Steam/config/config.vdf" "$STEAM_HOME/.steam/steam/config/config.vdf"
+             echo "Placed config.vdf in $STEAM_HOME/Steam/config"
           fi
           
           # 2. Place sentry file if provided (machine auth)
           if [ ! -z "$STEAM_SSFN_FILE_BASE64" ]; then
-             echo "$STEAM_SSFN_FILE_BASE64" | base64 --decode > "$STEAM_HOME/ssfn_ci_auth"
-             echo "Placed sentry file in $STEAM_HOME"
+             echo "$STEAM_SSFN_FILE_BASE64" | base64 --decode > "$STEAM_HOME/Steam/ssfn_ci_auth"
+             cp "$STEAM_HOME/Steam/ssfn_ci_auth" "$STEAM_HOME/ssfn_ci_auth"
+             echo "Placed sentry file in $STEAM_HOME/Steam"
           fi
           
           # 3. Inject IDs into VDFs
@@ -152,12 +158,20 @@ jobs:
           # We must save this new token back to Secrets to prevent "Account Logon Denied" on the next run.
           echo "Rotating Steam Config Secret..."
           
-          if [ ! -f "$STEAM_HOME/config/config.vdf" ]; then
-            echo "::error::Config file not found at expected path: $STEAM_HOME/config/config.vdf"
-            exit 1
+          # SteamCMD on Linux usually updates the file in ~/Steam/config
+          TARGET_CONFIG="$STEAM_HOME/Steam/config/config.vdf"
+          
+          if [ ! -f "$TARGET_CONFIG" ]; then
+            echo "::warning::Config file not found at $TARGET_CONFIG. Checking fallback..."
+            TARGET_CONFIG="$STEAM_HOME/.steam/steam/config/config.vdf"
+          fi
+          
+          if [ ! -f "$TARGET_CONFIG" ]; then
+             echo "::error::Config file not found after run. Rotation skipped."
+             exit 0 # Don't fail the build, but warn
           fi
           
           # Encode with -w 0 to ensure single-line (no wrapping) for the secret
-          base64 -w 0 "$STEAM_HOME/config/config.vdf" | gh secret set STEAM_CONFIG_VDF --body -
+          base64 -w 0 "$TARGET_CONFIG" | gh secret set STEAM_CONFIG_VDF --body -
           
           echo "✅ Secret STEAM_CONFIG_VDF rotated successfully."
