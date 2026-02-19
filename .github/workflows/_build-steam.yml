@@ -117,26 +117,18 @@ jobs:
         run: |
           # Define an isolated Steam directory to avoid session pollution.
           export STEAM_HOME="$(pwd)/steam_home"
-          
-          # SteamCMD on Linux is... particular. It often looks in specific subfolders.
-          # We create the standard structure ($HOME/Steam and $HOME/.steam)
-          mkdir -p "$STEAM_HOME/Steam/config"
-          mkdir -p "$STEAM_HOME/.steam/steam/config"
+          mkdir -p "$STEAM_HOME/config"
           
           # 1. Place the config.vdf (the Golden Session)
           if [ ! -z "$STEAM_CONFIG_VDF" ]; then
-             echo "$STEAM_CONFIG_VDF" | base64 --decode > "$STEAM_HOME/Steam/config/config.vdf"
-             # Copy to .steam just in case the symlinks aren't set up by the tool
-             cp "$STEAM_HOME/Steam/config/config.vdf" "$STEAM_HOME/.steam/steam/config/config.vdf"
-             echo "Placed config.vdf in $STEAM_HOME/Steam/config"
+             echo "$STEAM_CONFIG_VDF" | base64 --decode > "$STEAM_HOME/config/config.vdf"
+             echo "Placed config.vdf in $STEAM_HOME"
           fi
           
           # 2. Place sentry file if provided (machine auth)
           if [ ! -z "$STEAM_SSFN_FILE_BASE64" ]; then
-             # Sentry files live in the root of the Steam directory
-             echo "$STEAM_SSFN_FILE_BASE64" | base64 --decode > "$STEAM_HOME/Steam/ssfn_ci_auth"
-             cp "$STEAM_HOME/Steam/ssfn_ci_auth" "$STEAM_HOME/.steam/steam/ssfn_ci_auth"
-             echo "Placed sentry file in $STEAM_HOME/Steam"
+             echo "$STEAM_SSFN_FILE_BASE64" | base64 --decode > "$STEAM_HOME/ssfn_ci_auth"
+             echo "Placed sentry file in $STEAM_HOME"
           fi
           
           # 3. Inject IDs into VDFs
@@ -149,3 +141,23 @@ jobs:
 
           # 4. Run the build with the isolated HOME
           HOME="$STEAM_HOME" steamcmd +login $STEAM_USERNAME $STEAM_PASSWORD +run_app_build $(pwd)/steam_scripts/app_build.vdf +quit
+
+      - name: Self-Healing Steam Auth (Rotate Secret)
+        if: success()
+        env:
+          GH_TOKEN: ${{ secrets.STEAM_SECRET_UPDATER_PAT }}
+          STEAM_HOME: ${{ github.workspace }}/steam_home
+        run: |
+          # The config.vdf is updated by SteamCMD with a new token after every login.
+          # We must save this new token back to Secrets to prevent "Account Logon Denied" on the next run.
+          echo "Rotating Steam Config Secret..."
+          
+          if [ ! -f "$STEAM_HOME/config/config.vdf" ]; then
+            echo "::error::Config file not found at expected path: $STEAM_HOME/config/config.vdf"
+            exit 1
+          fi
+          
+          # Encode with -w 0 to ensure single-line (no wrapping) for the secret
+          base64 -w 0 "$STEAM_HOME/config/config.vdf" | gh secret set STEAM_CONFIG_VDF --body -
+          
+          echo "✅ Secret STEAM_CONFIG_VDF rotated successfully."
