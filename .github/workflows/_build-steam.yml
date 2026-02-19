@@ -117,18 +117,22 @@ jobs:
         run: |
           # Define an isolated Steam directory to avoid session pollution.
           export STEAM_HOME="$(pwd)/steam_home"
-          mkdir -p "$STEAM_HOME/config"
+          
+          # SteamCMD uses ~/Steam/config/config.vdf on Linux by default.
+          # We must replicate that structure inside our isolated HOME.
+          mkdir -p "$STEAM_HOME/Steam/config"
           
           # 1. Place the config.vdf (the Golden Session)
           if [ ! -z "$STEAM_CONFIG_VDF" ]; then
-             echo "$STEAM_CONFIG_VDF" | base64 --decode > "$STEAM_HOME/config/config.vdf"
-             echo "Placed config.vdf in $STEAM_HOME"
+             echo "$STEAM_CONFIG_VDF" | base64 --decode > "$STEAM_HOME/Steam/config/config.vdf"
+             echo "Placed config.vdf in $STEAM_HOME/Steam/config"
           fi
           
           # 2. Place sentry file if provided (machine auth)
           if [ ! -z "$STEAM_SSFN_FILE_BASE64" ]; then
-             echo "$STEAM_SSFN_FILE_BASE64" | base64 --decode > "$STEAM_HOME/ssfn_ci_auth"
-             echo "Placed sentry file in $STEAM_HOME"
+             # Sentry file usually sits in the root of the Steam folder (often ~/Steam)
+             echo "$STEAM_SSFN_FILE_BASE64" | base64 --decode > "$STEAM_HOME/Steam/ssfn_ci_auth"
+             echo "Placed sentry file in $STEAM_HOME/Steam"
           fi
           
           # 3. Inject IDs into VDFs
@@ -152,12 +156,14 @@ jobs:
           # We must save this new token back to Secrets to prevent "Account Logon Denied" on the next run.
           echo "Rotating Steam Config Secret..."
           
-          if [ ! -f "$STEAM_HOME/config/config.vdf" ]; then
-            echo "::error::Config file not found at expected path: $STEAM_HOME/config/config.vdf"
+          CONFIG_PATH="$STEAM_HOME/Steam/config/config.vdf"
+          
+          if [ ! -f "$CONFIG_PATH" ]; then
+            echo "::error::Config file not found at expected path: $CONFIG_PATH"
             exit 1
           fi
           
           # Encode with -w 0 to ensure single-line (no wrapping) for the secret
-          base64 -w 0 "$STEAM_HOME/config/config.vdf" | gh secret set STEAM_CONFIG_VDF --body -
+          base64 -w 0 "$CONFIG_PATH" | gh secret set STEAM_CONFIG_VDF --body -
           
           echo "✅ Secret STEAM_CONFIG_VDF rotated successfully."
