@@ -4,11 +4,11 @@ on:
   push:
     branches: [ "CI-CD" ] # Triggers automatically when you push to this branch
 
-variables:
+env:
   # CHANGE THIS to your Steam username
   STEAM_USERNAME: "oori_builder"
   # PASTE YOUR CODE HERE before pushing
-  STEAM_GUARD_CODE: "YOUR_CODE_HERE"
+  STEAM_GUARD_CODE: "YBQFX"
 
 jobs:
   capture-session:
