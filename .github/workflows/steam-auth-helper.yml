@@ -1,0 +1,61 @@
+name: Steam Auth Helper
+
+on:
+  workflow_dispatch:
+    inputs:
+      steam_username:
+        description: 'Steam Username'
+        required: true
+      steam_guard_code:
+        description: 'Steam Guard Code (Leave blank if you want to use the logs to prompt)'
+        required: false
+
+jobs:
+  capture-session:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Setup SteamCMD
+        uses: RageAgainstThePixel/setup-steamcmd@v1
+
+      - name: Perform Login
+        env:
+          STEAM_USERNAME: ${{ github.event.inputs.steam_username }}
+          STEAM_PASSWORD: ${{ secrets.STEAM_PASSWORD }}
+          STEAM_GUARD_CODE: ${{ github.event.inputs.steam_guard_code }}
+        run: |
+          export STEAM_HOME="/home/runner/steam_session"
+          mkdir -p "$STEAM_HOME"
+          
+          echo "Starting login process..."
+          if [ ! -z "$STEAM_GUARD_CODE" ]; then
+            # Attempt login with provided code
+            HOME="$STEAM_HOME" steamcmd +set_steam_guard_code "$STEAM_GUARD_CODE" +login "$STEAM_USERNAME" "$STEAM_PASSWORD" +quit
+          else
+            # Manual mode: This will fail but show the prompt, then we can run it again if we had a TTY.
+            # Since we don't have a TTY, we recommend providing the code as input.
+            echo "ERROR: You must provide a Steam Guard code in the workflow inputs."
+            exit 1
+          fi
+
+      - name: Generate Base64 Payloads
+        if: success()
+        run: |
+          export STEAM_HOME="/home/runner/steam_session"
+          echo "### PAYLOADS START ###"
+          
+          echo "--- STEAM_CONFIG_VDF ---"
+          base64 -w 0 "$STEAM_HOME/.steam/steam/config/config.vdf"
+          echo ""
+          
+          echo "--- STEAM_SSFN_FILE_BASE64 ---"
+          # Find any ssfn file in the root
+          SSFN_FILE=$(find "$STEAM_HOME/.steam/steam" -maxdepth 1 -name "ssfn*" | head -n 1)
+          if [ ! -z "$SSFN_FILE" ]; then
+            base64 -w 0 "$SSFN_FILE"
+          else
+            echo "No SSFN file found. This might be okay if config.vdf is enough."
+          fi
+          
+          echo ""
+          echo "### PAYLOADS END ###"
+          echo "Copy the strings above and update your GitHub Secrets."
