@@ -89,7 +89,7 @@ jobs:
 
   deploy:
     needs: [build_windows, build_macos]
-    runs-on: macos-latest
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       
@@ -115,50 +115,54 @@ jobs:
           STEAM_CONFIG_VDF: ${{ secrets.STEAM_CONFIG_VDF }}
           STEAM_SSFN_FILE_BASE64: ${{ secrets.STEAM_SSFN_FILE_BASE64 }}
         run: |
-          # Define an isolated Steam directory on macOS.
-          # On macOS, Steam expects configuration in ~/Library/Application Support/Steam
-          export STEAM_HOME="$(pwd)/steam_home"
-          export STEAM_CONFIG_DIR="$STEAM_HOME/Library/Application Support/Steam/config"
-          mkdir -p "$STEAM_CONFIG_DIR"
+          # Use the standard STEAM_DIR provided by RageAgainstThePixel/setup-steamcmd
+          # In GitHub Actions Ubuntu, this is usually /home/runner/Steam
+          mkdir -p "$STEAM_DIR/config"
+          mkdir -p "$HOME/.steam/steam/config"
           
           # 1. Place the config.vdf (The Golden Session)
           if [ ! -z "$STEAM_CONFIG_VDF" ]; then
-             echo "$STEAM_CONFIG_VDF" | base64 --decode > "$STEAM_CONFIG_DIR/config.vdf"
-             echo "Placed config.vdf in $STEAM_CONFIG_DIR"
+             echo "$STEAM_CONFIG_VDF" | base64 --decode > "$STEAM_DIR/config/config.vdf"
+             echo "Placed config.vdf in $STEAM_DIR/config"
+             # Sync to the other standard location just in case
+             cp "$STEAM_DIR/config/config.vdf" "$HOME/.steam/steam/config/config.vdf" || true
           fi
           
           # 2. Place sentry file if provided
           if [ ! -z "$STEAM_SSFN_FILE_BASE64" ]; then
-             # On Mac, ssfn usually goes in the root Steam folder
-             echo "$STEAM_SSFN_FILE_BASE64" | base64 --decode > "$STEAM_HOME/Library/Application Support/Steam/ssfn_ci_auth"
+             echo "$STEAM_SSFN_FILE_BASE64" | base64 --decode > "$STEAM_DIR/ssfn_ci_auth"
+             cp "$STEAM_DIR/ssfn_ci_auth" "$HOME/.steam/steam/ssfn_ci_auth" || true
           fi
           
-          # 3. Inject IDs into VDFs using Perl (cross-platform safe)
-          perl -pi -e "s/YOUR_APP_ID/${{ secrets.STEAM_APP_ID }}/g" steam_scripts/app_build.vdf
-          perl -pi -e "s/YOUR_DEPOT_ID_WINDOWS/${{ secrets.STEAM_DEPOT_ID_WINDOWS }}/g" steam_scripts/app_build.vdf
-          perl -pi -e "s/YOUR_DEPOT_ID_MACOS/${{ secrets.STEAM_DEPOT_ID_MACOS }}/g" steam_scripts/app_build.vdf
+          # 3. Inject IDs into VDFs
+          sed -i "s/YOUR_APP_ID/${{ secrets.STEAM_APP_ID }}/g" steam_scripts/app_build.vdf
+          sed -i "s/YOUR_DEPOT_ID_WINDOWS/${{ secrets.STEAM_DEPOT_ID_WINDOWS }}/g" steam_scripts/app_build.vdf
+          sed -i "s/YOUR_DEPOT_ID_MACOS/${{ secrets.STEAM_DEPOT_ID_MACOS }}/g" steam_scripts/app_build.vdf
           
-          perl -pi -e "s/YOUR_DEPOT_ID_WINDOWS/${{ secrets.STEAM_DEPOT_ID_WINDOWS }}/g" steam_scripts/depot_build_windows.vdf
-          perl -pi -e "s/YOUR_DEPOT_ID_MACOS/${{ secrets.STEAM_DEPOT_ID_MACOS }}/g" steam_scripts/depot_build_macos.vdf
+          sed -i "s/YOUR_DEPOT_ID_WINDOWS/${{ secrets.STEAM_DEPOT_ID_WINDOWS }}/g" steam_scripts/depot_build_windows.vdf
+          sed -i "s/YOUR_DEPOT_ID_MACOS/${{ secrets.STEAM_DEPOT_ID_MACOS }}/g" steam_scripts/depot_build_macos.vdf
 
-          # 4. Run the build with the isolated HOME
-          HOME="$STEAM_HOME" steamcmd +login $STEAM_USERNAME $STEAM_PASSWORD +run_app_build $(pwd)/steam_scripts/app_build.vdf +quit
+          # 4. Run the build (No HOME override, using standard env)
+          steamcmd +login $STEAM_USERNAME $STEAM_PASSWORD +run_app_build $(pwd)/steam_scripts/app_build.vdf +quit
 
       - name: Self-Healing Steam Auth (Rotate Secret)
-        if: success()
+        if: always() # Run even if deploy fails to capture any partial auth updates
         env:
           GH_TOKEN: ${{ secrets.STEAM_SECRET_UPDATER_PAT }}
-          STEAM_HOME: ${{ github.workspace }}/steam_home
         run: |
           echo "Rotating Steam Config Secret..."
-          TARGET_CONFIG="$STEAM_HOME/Library/Application Support/Steam/config/config.vdf"
+          
+          # Try to find the most recently updated config.vdf
+          TARGET_CONFIG="$STEAM_DIR/config/config.vdf"
+          if [ ! -f "$TARGET_CONFIG" ]; then
+            TARGET_CONFIG="$HOME/.steam/steam/config/config.vdf"
+          fi
           
           if [ ! -f "$TARGET_CONFIG" ]; then
-             echo "::error::Config file not found at $TARGET_CONFIG. Rotation skipped."
+             echo "::warning::Config file not found after run. Rotation skipped."
              exit 0
           fi
           
-          # macOS base64 doesn't have -w; it doesn't wrap by default or we can pipe to tr
-          base64 "$TARGET_CONFIG" | tr -d '\n' | gh secret set STEAM_CONFIG_VDF --body -
-          
+          # Encode and update secret
+          base64 -w 0 "$TARGET_CONFIG" | gh secret set STEAM_CONFIG_VDF --body -
           echo "✅ Secret STEAM_CONFIG_VDF rotated successfully."
