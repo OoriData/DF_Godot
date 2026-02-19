@@ -105,33 +105,14 @@ jobs:
           name: steam-build-macos
           path: build/macos
           
-      - name: Setup SteamCMD
-        uses: RageAgainstThePixel/setup-steamcmd@v1
-        
-      - name: Prepare VDF Scripts
-        run: |
-          # Replace placeholders in VDF files with secrets
-          sed -i "s/YOUR_APP_ID/${{ secrets.STEAM_APP_ID }}/g" steam_scripts/app_build.vdf
-          sed -i "s/YOUR_DEPOT_ID_WINDOWS/${{ secrets.STEAM_DEPOT_ID_WINDOWS }}/g" steam_scripts/app_build.vdf
-          sed -i "s/YOUR_DEPOT_ID_MACOS/${{ secrets.STEAM_DEPOT_ID_MACOS }}/g" steam_scripts/app_build.vdf
-          
-          sed -i "s/YOUR_DEPOT_ID_WINDOWS/${{ secrets.STEAM_DEPOT_ID_WINDOWS }}/g" steam_scripts/depot_build_windows.vdf
-          sed -i "s/YOUR_DEPOT_ID_MACOS/${{ secrets.STEAM_DEPOT_ID_MACOS }}/g" steam_scripts/depot_build_macos.vdf
-          
       - name: Deploy to Steam
+        uses: game-ci/steam-deploy@v3
+        with:
+          username: ${{ secrets.STEAM_USERNAME }}
+          configVdf: ${{ secrets.STEAM_CONFIG_VDF }}
+          appId: ${{ secrets.STEAM_APP_ID }}
+          buildDescription: "Desolate Frontiers CI Build ${{ inputs.version_tag }}"
+          rootPath: "."
+          buildDescriptionFile: "steam_scripts/app_build.vdf"
         env:
-          STEAM_USERNAME: ${{ secrets.STEAM_USERNAME }}
           STEAM_PASSWORD: ${{ secrets.STEAM_PASSWORD }}
-          # If using config.vdf for auth (Steam Guard)
-          STEAM_CONFIG_VDF: ${{ secrets.STEAM_CONFIG_VDF }}
-        run: |
-          # If config.vdf is provided, we need to place it where steamcmd expects it
-          if [ ! -z "$STEAM_CONFIG_VDF" ]; then
-             # Use STEAM_DIR if set by the action, otherwise fallback to home
-             DEST_DIR="${STEAM_DIR:-$HOME/.steam/steam}/config"
-             mkdir -p "$DEST_DIR"
-             echo "$STEAM_CONFIG_VDF" | base64 --decode > "$DEST_DIR/config.vdf"
-             echo "Placed config.vdf in $DEST_DIR"
-          fi
-          
-          steamcmd +login $STEAM_USERNAME $STEAM_PASSWORD +run_app_build_http $(pwd)/steam_scripts/app_build.vdf +quit

@@ -102,6 +102,7 @@ jobs:
           python3 -c '
           import re
           import os
+          import sys
           
           # Read project.godot for the "Short Version" (config/version)
           short_version = "1.0.0" # Fallback
@@ -110,12 +111,20 @@ jobs:
               match = re.search(r"config/version=\"([^\"]+)\"", godot_content)
               if match:
                   short_version = match.group(1)
-
           with open("export_presets.cfg", "r") as f:
               content = f.read()
           
-          # Match Preset 5 (macOS App Store) options section
-          section_regex = r"(\[preset\.5\.options\].*?)(?=\n\[|$)"
+          # Dynamically find the preset index for "macOS (App Store)"
+          preset_match = re.search(r"^\[preset\.(\d+)\]\s+name=\"macOS \(App Store\)\"", content, re.MULTILINE)
+          if not preset_match:
+              print("Error: Could not find preset named \"macOS (App Store)\"")
+              sys.exit(1)
+          
+          preset_index = preset_match.group(1)
+          print(f"Found \"macOS (App Store)\" at index {preset_index}")
+          
+          # Match the options section for this preset
+          section_regex = r"(\[preset\." + preset_index + r"\.options\].*?)(?=\n\[|$)"
           
           def set_key(match):
               section = match.group(1)
@@ -137,7 +146,6 @@ jobs:
                   else:
                       section += f"\n{key}={val}"
               return section
-
           new_content = re.sub(section_regex, set_key, content, flags=re.DOTALL)
           with open("export_presets.cfg", "w") as f:
               f.write(new_content)

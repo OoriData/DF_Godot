@@ -136,6 +136,7 @@ jobs:
           python3 -c '
           import re
           import os
+          import sys
           
           # Read project.godot for the "Short Version" (config/version)
           short_version = "1.0.0" # Fallback
@@ -148,15 +149,23 @@ jobs:
           with open("export_presets.cfg", "r") as f:
               content = f.read()
           
-          # Match Preset 3 (iOS) options section
-          section_regex = r"(\[preset\.3\.options\].*?)(?=\n\[|$)"
+          # Dynamically find the preset index for "iOS"
+          preset_match = re.search(r"^\[preset\.(\d+)\]\s+name=\"iOS\"", content, re.MULTILINE)
+          if not preset_match:
+              print("Error: Could not find preset named \"iOS\"")
+              sys.exit(1)
+          
+          preset_index = preset_match.group(1)
+          print(f"Found \"iOS\" at index {preset_index}")
+          
+          # Match the options section for this preset
+          section_regex = r"(\[preset\." + preset_index + r"\.options\].*?)(?=\n\[|$)"
           
           def set_key(match):
               section = match.group(1)
               specifier = os.environ.get("IOS_PROFILE_NAME", "match AppStore com.ooridata.desolate-frontiers")
               
               # Build Number logic: base + (run_number * 10) + run_attempt
-              # Using a high base to ensure it stays above previous manual uploads
               build_number = str(100 + (int(os.environ["GITHUB_RUN_NUMBER"]) * 10) + int(os.environ["GITHUB_RUN_ATTEMPT"]))
               
               overrides = {
@@ -171,7 +180,6 @@ jobs:
                   else:
                       section += f"\n{key}={val}"
               return section
-
           new_content = re.sub(section_regex, set_key, content, flags=re.DOTALL)
           with open("export_presets.cfg", "w") as f:
               f.write(new_content)
