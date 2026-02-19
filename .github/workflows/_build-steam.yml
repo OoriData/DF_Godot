@@ -105,14 +105,39 @@ jobs:
           name: steam-build-macos
           path: build/macos
           
+      - name: Setup SteamCMD
+        uses: RageAgainstThePixel/setup-steamcmd@v1
+        
       - name: Deploy to Steam
-        uses: game-ci/steam-deploy@v3
-        with:
-          username: ${{ secrets.STEAM_USERNAME }}
-          configVdf: ${{ secrets.STEAM_CONFIG_VDF }}
-          appId: ${{ secrets.STEAM_APP_ID }}
-          buildDescription: "Desolate Frontiers CI Build ${{ inputs.version_tag }}"
-          rootPath: "."
-          buildDescriptionFile: "steam_scripts/app_build.vdf"
         env:
+          STEAM_USERNAME: ${{ secrets.STEAM_USERNAME }}
           STEAM_PASSWORD: ${{ secrets.STEAM_PASSWORD }}
+          STEAM_CONFIG_VDF: ${{ secrets.STEAM_CONFIG_VDF }}
+          STEAM_SSFN_FILE_BASE64: ${{ secrets.STEAM_SSFN_FILE_BASE64 }}
+        run: |
+          # Define an isolated Steam directory to avoid session pollution.
+          export STEAM_HOME="$(pwd)/steam_home"
+          mkdir -p "$STEAM_HOME/config"
+          
+          # 1. Place the config.vdf (the Golden Session)
+          if [ ! -z "$STEAM_CONFIG_VDF" ]; then
+             echo "$STEAM_CONFIG_VDF" | base64 --decode > "$STEAM_HOME/config/config.vdf"
+             echo "Placed config.vdf in $STEAM_HOME"
+          fi
+          
+          # 2. Place sentry file if provided (machine auth)
+          if [ ! -z "$STEAM_SSFN_FILE_BASE64" ]; then
+             echo "$STEAM_SSFN_FILE_BASE64" | base64 --decode > "$STEAM_HOME/ssfn_ci_auth"
+             echo "Placed sentry file in $STEAM_HOME"
+          fi
+          
+          # 3. Inject IDs into VDFs
+          sed -i "s/YOUR_APP_ID/${{ secrets.STEAM_APP_ID }}/g" steam_scripts/app_build.vdf
+          sed -i "s/YOUR_DEPOT_ID_WINDOWS/${{ secrets.STEAM_DEPOT_ID_WINDOWS }}/g" steam_scripts/app_build.vdf
+          sed -i "s/YOUR_DEPOT_ID_MACOS/${{ secrets.STEAM_DEPOT_ID_MACOS }}/g" steam_scripts/app_build.vdf
+          
+          sed -i "s/YOUR_DEPOT_ID_WINDOWS/${{ secrets.STEAM_DEPOT_ID_WINDOWS }}/g" steam_scripts/depot_build_windows.vdf
+          sed -i "s/YOUR_DEPOT_ID_MACOS/${{ secrets.STEAM_DEPOT_ID_MACOS }}/g" steam_scripts/depot_build_macos.vdf
+
+          # 4. Run the build with the isolated HOME
+          HOME="$STEAM_HOME" steamcmd +login $STEAM_USERNAME $STEAM_PASSWORD +run_app_build $(pwd)/steam_scripts/app_build.vdf +quit
