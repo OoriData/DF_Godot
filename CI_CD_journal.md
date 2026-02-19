@@ -30,6 +30,8 @@
     - **Update (2026-02-18 3:11PM)**: Switched `build_macos` job to `macos-latest` runner because Godot 4 requires Xcode tools for macOS export (even for Steam/Ad-hoc if signing is checked in the preset).
     - **Update (2026-02-18 3:25PM)**: Replaced broken `cybercode/steamcmd-action` with `RageAgainstThePixel/setup-steamcmd@v1` in the `deploy` job.
     - **Update (2026-02-18 3:35PM)**: Improved `config.vdf` pathing in the deploy job to use the action's environment variables.
+    - **Update (2026-02-18 6:35PM)**: Recommending "Clean Folder" local login to capture a portable `config.vdf`.
+    - **Update (2026-02-18 6:45PM)**: Identified path mismatch in manual script—`config.vdf` was in `$HOME/config` but Linux `steamcmd` expects `$HOME/Steam/config`. Updated workflow to populate both `.steam` and `Steam` directories.
     - **Update (2026-02-18 5:47PM)**: `localconfig.vdf` and `config.vdf` updated. Proceeding with refreshed `config.vdf` in CI.
     - **Update (2026-02-18 5:50PM)**: `config.vdf` alone is still failing on the runner with a Mobile Guard challenge. Recommending a switch back to Email Auth to force `ssfn` creation.
     - **Update (2026-02-18 5:58PM)**: Pivoted to `game-ci/steam-deploy` action which has better internal handling for the `config.vdf` auth method.
