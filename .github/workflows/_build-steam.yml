@@ -117,18 +117,22 @@ jobs:
         run: |
           # Define an isolated Steam directory to avoid session pollution.
           export STEAM_HOME="$(pwd)/steam_home"
-          mkdir -p "$STEAM_HOME/config"
+          mkdir -p "$STEAM_HOME/Steam/config"
+          mkdir -p "$STEAM_HOME/.steam/steam/config" # Extra fallback for linux
           
           # 1. Place the config.vdf (the Golden Session)
           if [ ! -z "$STEAM_CONFIG_VDF" ]; then
-             echo "$STEAM_CONFIG_VDF" | base64 --decode > "$STEAM_HOME/config/config.vdf"
-             echo "Placed config.vdf in $STEAM_HOME"
+             # We place it in both likely locations to be absolutely sure
+             echo "$STEAM_CONFIG_VDF" | base64 --decode > "$STEAM_HOME/Steam/config/config.vdf"
+             cp "$STEAM_HOME/Steam/config/config.vdf" "$STEAM_HOME/.steam/steam/config/config.vdf" || true
+             echo "Placed config.vdf in $STEAM_HOME/Steam/config"
           fi
           
           # 2. Place sentry file if provided (machine auth)
           if [ ! -z "$STEAM_SSFN_FILE_BASE64" ]; then
-             echo "$STEAM_SSFN_FILE_BASE64" | base64 --decode > "$STEAM_HOME/ssfn_ci_auth"
-             echo "Placed sentry file in $STEAM_HOME"
+             echo "$STEAM_SSFN_FILE_BASE64" | base64 --decode > "$STEAM_HOME/Steam/ssfn_ci_auth"
+             cp "$STEAM_HOME/Steam/ssfn_ci_auth" "$STEAM_HOME/.steam/steam/ssfn_ci_auth" || true
+             echo "Placed sentry file in $STEAM_HOME/Steam"
           fi
           
           # 3. Inject IDs into VDFs
