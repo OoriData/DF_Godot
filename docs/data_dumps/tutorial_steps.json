@@ -1,0 +1,63 @@
+{
+  "1": [
+    {
+      "id": "l1_intro",
+      "copy": "Welcome to Desolate Frontiers! This is the very start of your journey.",
+      "action": "message"
+    },
+    {
+      "id": "l1_open_convoy_menu",
+      "copy": "Open the convoy menu using the convoy dropdown in the top bar.",
+      "action": "await_menu_open",
+      "lock": "soft",
+      "target": { "resolver": "button_with_text", "text_contains": "Convoy" }
+    },
+    {
+      "id": "l1_open_settlement",
+      "copy": "Click the Settlement button to view available vendors.",
+      "action": "await_settlement_menu",
+      "lock": "soft",
+      "target": { "resolver": "button_with_text", "text_contains": "Settlement" }
+    },
+    {
+      "id": "l1_open_dealership",
+      "copy": "In the settlement, go to the Dealership tab.",
+      "action": "await_dealership_tab",
+      "lock": "soft",
+      "target": { "resolver": "tab_title_contains", "token": "Dealership" }
+    },
+    {
+      "id": "l1_choose_vehicle",
+      "copy": "Choose one of the available vehicles in the Dealership.",
+      "action": "message"
+    },
+    {
+      "id": "l1_buy_vehicle",
+      "copy": "Press Buy to purchase your chosen vehicle.",
+      "action": "await_vehicle_purchase",
+      "lock": "soft",
+      "target": { "resolver": "vendor_action_button", "which": "buy" }
+    }
+  ],
+  "2": [
+    {
+      "id": "l2_intro",
+      "copy": "Let’s plan a journey. Open the Journey menu from your convoy.",
+      "action": "message"
+    },
+    {
+      "id": "l2_pick_destination",
+      "copy": "Choose a nearby settlement as your destination.",
+      "action": "highlight",
+      "lock": "soft",
+      "target": { "resolver": "button_with_text", "text_contains": "Destination" }
+    },
+    {
+      "id": "l2_review_routes",
+      "copy": "Review the suggested route and confirm when ready.",
+      "action": "highlight",
+      "lock": "soft",
+      "target": { "resolver": "journey_action_button", "token": "Embark" }
+    }
+  ]
+}
