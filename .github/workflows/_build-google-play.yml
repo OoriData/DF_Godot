@@ -118,12 +118,14 @@ jobs:
           
           if [ -f "$SOURCE_ZIP" ]; then
             echo "Found templates zip at $SOURCE_ZIP"
+            mkdir -p android/build/
             unzip -o "$SOURCE_ZIP" "libs/*" -d android/build/
           else
             echo "Templates zip not found at $SOURCE_ZIP, searching..."
             SOURCE_ZIP=$(find $HOME -name "android_source.zip" | head -n 1)
             if [ -n "$SOURCE_ZIP" ]; then
               echo "Found source zip at $SOURCE_ZIP"
+              mkdir -p android/build/
               unzip -o "$SOURCE_ZIP" "libs/*" -d android/build/
             else
               echo "Error: Could not find android_source.zip. Listing home for debug:"
