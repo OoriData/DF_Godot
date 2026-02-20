@@ -12,6 +12,7 @@ var convoy_settlement_menu_scene = preload("res://Scenes/ConvoySettlementMenu.ts
 var convoy_cargo_menu_scene = preload("res://Scenes/ConvoyCargoMenu.tscn") # Example path
 var mechanics_menu_scene = preload("res://Scenes/MechanicsMenu.tscn")
 var warehouse_menu_scene = load("res://Scenes/WarehouseMenu.tscn")
+var premium_upgrade_modal_scene = preload("res://Scenes/UI/PremiumUpgradeModal.tscn")
 
 
 var current_active_menu = null
@@ -155,6 +156,10 @@ func open_mechanics_menu(convoy_data = null):
 	_show_menu(mechanics_menu_scene, convoy_data)
 
 
+
+func open_premium_upgrade_menu():
+	_show_menu(premium_upgrade_modal_scene, null)
+
 ### --- Generic menu handling ---
 # _emit_menu_area_changed is only called from menu_manager.gd, never from menu scripts.
 
@@ -201,6 +206,9 @@ func _show_menu(menu_scene_resource, data_to_pass = null, add_to_stack: bool = t
 	elif menu_scene_resource == convoy_cargo_menu_scene:
 		menu_type = "convoy_cargo_submenu"
 		use_convoy_style_layout = true
+	elif menu_scene_resource == premium_upgrade_modal_scene:
+		menu_type = "modal"
+		use_convoy_style_layout = false
 
 	current_active_menu.set_meta("menu_type", menu_type)
 

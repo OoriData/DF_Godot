@@ -433,6 +433,26 @@ func exchange_auth_token(code: String, state: String, code_verifier: String) -> 
 	_request_queue.append(request_details)
 	_process_queue()
 
+func login_with_steam(steam_id: String) -> void:
+	# POST to /auth/steam_login
+	var url := "%s/auth/steam_login" % BASE_URL
+	var headers: PackedStringArray = ['accept: application/json', 'content-type: application/json']
+	var body := JSON.stringify({
+		"steam_id": steam_id
+	})
+	
+	_log_info("[APICalls] Initiating Steam login for ID: " + steam_id)
+	
+	var request_details: Dictionary = {
+		"url": url,
+		"headers": headers,
+		"purpose": RequestPurpose.AUTH_TOKEN, # reuse token purpose as it returns a session
+		"method": HTTPClient.METHOD_POST,
+		"body": body,
+	}
+	_request_queue.append(request_details)
+	_process_queue()
+
 
 # --- Bug report ---
 func submit_bug_report(payload: Dictionary) -> void:
@@ -1990,6 +2010,7 @@ func _on_request_completed(result: int, response_code: int, _headers: PackedStri
 
 	elif request_purpose_at_start == RequestPurpose.AUTH_TOKEN:
 		var response_body_text: String = body.get_string_from_utf8()
+		print("[APICalls][AUTH_TOKEN] Received response body: ", response_body_text)
 		var json_response = JSON.parse_string(response_body_text)
 
 		if json_response == null or not json_response is Dictionary:
@@ -1997,6 +2018,19 @@ func _on_request_completed(result: int, response_code: int, _headers: PackedStri
 			emit_signal('auth_token_received', {"raw": response_body_text})
 		else:
 			print("APICalls (_on_request_completed - AUTH_TOKEN): Token exchange successful.")
+			
+			var token = str(json_response.get("session_token", ""))
+			if token != "":
+				set_auth_session_token(token)
+				emit_signal('auth_session_received', token)
+				
+				# Force user resolution
+				_auth_me_requested = false
+				_auth_me_resolve_attempts = 0
+				print('[APICalls][AUTH_TOKEN] Forcing /auth/me resolution now that token is set.')
+				resolve_current_user_id(true)
+				_emit_hub_auth_state('authenticated')
+			
 			emit_signal('auth_token_received', json_response)
 
 		_complete_current_request()

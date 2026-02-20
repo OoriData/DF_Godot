@@ -40,6 +40,7 @@ ConvoySelectionService="*res://Scripts/System/Services/convoy_selection_service.
 MenuManager="*res://Scripts/Menus/menu_manager.gd"
 ui_scale_manager="*res://Scripts/UI/UI_scale_manager.gd"
 TutorialManager="*res://Scripts/UI/tutorial_manager.gd"
+SteamManager="*res://Scripts/System/steam_manager.gd"
 
 [display]
 
@@ -60,3 +61,10 @@ renderer/rendering_method="gl_compatibility"
 renderer/rendering_method.mobile="gl_compatibility"
 textures/vram_compression/import_etc2_astc=true
 environment/defaults/default_clear_color=Color(0, 0, 0, 1)
+
+[steam]
+
+initialization/app_id=0
+initialization/initialize_on_startup=false
+initialization/embed_callbacks=false
+multiplayer_peer/max_channels=4
