@@ -45,8 +45,7 @@ jobs:
           PLATFORMS="${{ inputs.platforms }}"
           if [[ "${{ github.event_name }}" == "push" ]]; then
             # Build all platforms on tag/push
-            # PLATFORMS="web,android,ios,macos,steam"
-            PLATFORMS="steam"
+            PLATFORMS="web,android,ios,macos,steam"
           fi
           
           echo "Building platforms: $PLATFORMS"

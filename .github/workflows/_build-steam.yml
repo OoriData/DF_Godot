@@ -1,4 +1,4 @@
-name: Build Steam
+name: Build Desktop (Steam) (PC/Mac)
 
 on:
   workflow_call:
@@ -10,23 +10,6 @@ on:
       version_tag:
         required: true
         type: string
-    secrets:
-      STEAM_USERNAME:
-        required: true
-      STEAM_PASSWORD:
-        required: true
-      STEAM_CONFIG_VDF:
-        required: false
-      STEAM_APP_ID:
-        required: true
-      STEAM_DEPOT_ID_WINDOWS:
-        required: true
-      STEAM_DEPOT_ID_MACOS:
-        required: true
-    outputs:
-      build_status:
-        description: 'Build success/failure'
-        value: ${{ jobs.deploy.outputs.status }}
 
 jobs:
   build_windows:
@@ -45,12 +28,14 @@ jobs:
         run: |
           mkdir -p build/windows
           godot --headless --export-release "Windows Desktop (x86)" build/windows/Desolate_Frontiers.exe
+          cd build/windows
+          zip -r ../Desolate_Frontiers_Windows.zip .
           
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: steam-build-windows
-          path: build/windows
+          name: desktop-build-windows
+          path: build/Desolate_Frontiers_Windows.zip
 
   build_macos:
     runs-on: macos-latest
@@ -66,103 +51,51 @@ jobs:
 
       - name: Export macOS
         run: |
-          mkdir -p build/macos
-          godot --headless --export-release "macOS" build/macos/Desolate_Frontiers.zip
-          
-      - name: Extract macOS Zip
-        run: |
-          # 7z x preserves directory structure better than unzip for Mac apps sometimes, but unzip is standard.
-          # The key is preserving specific macos permissions/symlinks which implies we might want to unzip on macos runner?
-          # But we are on linux runner.
-          # Steam expects the folder structure of .app
-          # The godot-ci action usually outputs a zip for macOS.
-          
-          cd build/macos
-          unzip Desolate_Frontiers.zip
-          rm Desolate_Frontiers.zip
+          mkdir -p build
+          # Godot macOS export creates a .zip by default when targeting a .zip extension
+          godot --headless --export-release "macOS" build/Desolate_Frontiers_macOS.zip
           
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: steam-build-macos
-          path: build/macos
+          name: desktop-build-macos
+          path: build/Desolate_Frontiers_macOS.zip
 
-  deploy:
+  release:
     needs: [build_windows, build_macos]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
       
+      - name: Get Project Version
+        id: version
+        run: |
+          VERSION=$(grep 'config/version' project.godot | awk -F '"' '{print $2}')
+          if [ -z "$VERSION" ]; then
+            VERSION="${{ inputs.version_tag }}"
+          fi
+          echo "project_version=$VERSION" >> $GITHUB_OUTPUT
+        
       - name: Download Windows Artifact
         uses: actions/download-artifact@v4
         with:
-          name: steam-build-windows
-          path: build/windows
+          name: desktop-build-windows
+          path: artifacts/
           
       - name: Download macOS Artifact
         uses: actions/download-artifact@v4
         with:
-          name: steam-build-macos
-          path: build/macos
+          name: desktop-build-macos
+          path: artifacts/
           
-      - name: Setup SteamCMD
-        uses: RageAgainstThePixel/setup-steamcmd@v1
-        
-      - name: Deploy to Steam
-        env:
-          STEAM_USERNAME: ${{ secrets.STEAM_USERNAME }}
-          STEAM_PASSWORD: ${{ secrets.STEAM_PASSWORD }}
-          STEAM_CONFIG_VDF: ${{ secrets.STEAM_CONFIG_VDF }}
-          STEAM_SSFN_FILE_BASE64: ${{ secrets.STEAM_SSFN_FILE_BASE64 }}
-        run: |
-          # Use the standard STEAM_DIR provided by RageAgainstThePixel/setup-steamcmd
-          # In GitHub Actions Ubuntu, this is usually /home/runner/Steam
-          mkdir -p "$STEAM_DIR/config"
-          mkdir -p "$HOME/.steam/steam/config"
-          
-          # 1. Place the config.vdf (The Golden Session)
-          if [ ! -z "$STEAM_CONFIG_VDF" ]; then
-             echo "$STEAM_CONFIG_VDF" | base64 --decode > "$STEAM_DIR/config/config.vdf"
-             echo "Placed config.vdf in $STEAM_DIR/config"
-             # Sync to the other standard location just in case
-             cp "$STEAM_DIR/config/config.vdf" "$HOME/.steam/steam/config/config.vdf" || true
-          fi
-          
-          # 2. Place sentry file if provided
-          if [ ! -z "$STEAM_SSFN_FILE_BASE64" ]; then
-             echo "$STEAM_SSFN_FILE_BASE64" | base64 --decode > "$STEAM_DIR/ssfn_ci_auth"
-             cp "$STEAM_DIR/ssfn_ci_auth" "$HOME/.steam/steam/ssfn_ci_auth" || true
-          fi
-          
-          # 3. Inject IDs into VDFs
-          sed -i "s/YOUR_APP_ID/${{ secrets.STEAM_APP_ID }}/g" steam_scripts/app_build.vdf
-          sed -i "s/YOUR_DEPOT_ID_WINDOWS/${{ secrets.STEAM_DEPOT_ID_WINDOWS }}/g" steam_scripts/app_build.vdf
-          sed -i "s/YOUR_DEPOT_ID_MACOS/${{ secrets.STEAM_DEPOT_ID_MACOS }}/g" steam_scripts/app_build.vdf
-          
-          sed -i "s/YOUR_DEPOT_ID_WINDOWS/${{ secrets.STEAM_DEPOT_ID_WINDOWS }}/g" steam_scripts/depot_build_windows.vdf
-          sed -i "s/YOUR_DEPOT_ID_MACOS/${{ secrets.STEAM_DEPOT_ID_MACOS }}/g" steam_scripts/depot_build_macos.vdf
-
-          # 4. Run the build (No HOME override, using standard env)
-          steamcmd +login $STEAM_USERNAME $STEAM_PASSWORD +run_app_build $(pwd)/steam_scripts/app_build.vdf +quit
-
-      - name: Self-Healing Steam Auth (Rotate Secret)
-        if: always() # Run even if deploy fails to capture any partial auth updates
-        env:
-          GH_TOKEN: ${{ secrets.STEAM_SECRET_UPDATER_PAT }}
-        run: |
-          echo "Rotating Steam Config Secret..."
-          
-          # Try to find the most recently updated config.vdf
-          TARGET_CONFIG="$STEAM_DIR/config/config.vdf"
-          if [ ! -f "$TARGET_CONFIG" ]; then
-            TARGET_CONFIG="$HOME/.steam/steam/config/config.vdf"
-          fi
-          
-          if [ ! -f "$TARGET_CONFIG" ]; then
-             echo "::warning::Config file not found after run. Rotation skipped."
-             exit 0
-          fi
-          
-          # Encode and update secret
-          base64 -w 0 "$TARGET_CONFIG" | gh secret set STEAM_CONFIG_VDF --body -
-          echo "✅ Secret STEAM_CONFIG_VDF rotated successfully."
+      - name: Publish GitHub Release
+        uses: ncipollo/release-action@v1
+        with:
+          tag: "v${{ steps.version.outputs.project_version }}"
+          name: "Release v${{ steps.version.outputs.project_version }}"
+          artifacts: "artifacts/*.zip"
+          allowUpdates: true
+          replacesArtifacts: true
+          token: ${{ github.token }}
