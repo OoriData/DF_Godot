@@ -15,8 +15,7 @@ on:
         type: string
   push:
     branches:
-      - main        # Change this if you want it to trigger on other branches
-      - CI-CD
+      - release        # Change this if you want it to trigger on other branches
     tags:
       - 'v*'
 
@@ -45,8 +44,7 @@ jobs:
           PLATFORMS="${{ inputs.platforms }}"
           if [[ "${{ github.event_name }}" == "push" ]]; then
             # Build all platforms on tag/push
-            # PLATFORMS="web,android,ios,macos,steam"
-            PLATFORMS="android,ios,macos"
+            PLATFORMS="web,android,ios,macos,steam"
           fi
           
           echo "Building platforms: $PLATFORMS"
