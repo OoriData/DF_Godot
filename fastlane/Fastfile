@@ -1,0 +1,106 @@
+default_platform(:ios)
+
+platform :ios do
+  desc 'Sync certificates for iOS'
+  lane :sync_certificates do
+    # Generate API Key for portal access
+    api_key = app_store_connect_api_key(
+      key_id: ENV['APP_STORE_CONNECT_KEY_ID'],
+      issuer_id: ENV['APP_STORE_CONNECT_ISSUER_ID'],
+      key_content: Base64.decode64(ENV['APP_STORE_CONNECT_API_KEY']),
+      is_key_content_base64: false
+    )
+
+    match(
+      api_key: api_key,
+      type: 'appstore',
+      readonly: ENV['MATCH_READONLY'] != 'false',
+      keychain_name: ENV['MATCH_KEYCHAIN_NAME'],
+      keychain_password: ENV['MATCH_KEYCHAIN_PASSWORD'],
+      git_url: 'git@github.com:OoriData/mobile-signing-certs.git',
+      app_identifier: 'com.ooridata.desolate-frontiers'
+    )
+  end
+
+  desc 'Upload iOS build to TestFlight'
+  lane :release do
+    sync_certificates
+    
+    # Generate API Key (we need it for upload too)
+    api_key = app_store_connect_api_key(
+      key_id: ENV['APP_STORE_CONNECT_KEY_ID'],
+      issuer_id: ENV['APP_STORE_CONNECT_ISSUER_ID'],
+      key_content: Base64.decode64(ENV['APP_STORE_CONNECT_API_KEY']),
+      is_key_content_base64: false
+    )
+
+    # Upload to TestFlight
+    upload_to_testflight(
+      api_key: api_key,
+      ipa: 'build/ios/Desolate_Frontiers.ipa',
+      skip_waiting_for_build_processing: true
+    )
+  end
+end
+
+platform :mac do
+  desc 'Sync certificates for macOS'
+  lane :sync_certificates do
+    # Generate API Key for portal access
+    api_key = app_store_connect_api_key(
+      key_id: ENV['APP_STORE_CONNECT_KEY_ID'],
+      issuer_id: ENV['APP_STORE_CONNECT_ISSUER_ID'],
+      key_content: Base64.decode64(ENV['APP_STORE_CONNECT_API_KEY']),
+      is_key_content_base64: false
+    )
+
+    # App Store Distribution (for the app itself)
+    match(
+      api_key: api_key,
+      type: 'appstore',
+      platform: 'macos',
+      readonly: ENV['MATCH_READONLY'] != 'false',
+      keychain_name: ENV['MATCH_KEYCHAIN_NAME'],
+      keychain_password: ENV['MATCH_KEYCHAIN_PASSWORD'],
+      git_url: 'git@github.com:OoriData/mobile-signing-certs.git',
+      app_identifier: 'com.ooridata.desolate-frontiers'
+    )
+
+    # Mac Installer Distribution (for the .pkg)
+    # WARNING: If this fails with "No code signing identity found", run manually once:
+    # MATCH_READONLY=false bundle exec fastlane mac sync_certificates
+    match(
+      api_key: api_key,
+      type: 'mac_installer_distribution',
+      platform: 'macos',
+      skip_provisioning_profiles: true,
+      skip_certificate_matching: true,
+      readonly: ENV['MATCH_READONLY'] != 'false', # Allow override for seeding
+      keychain_name: ENV['MATCH_KEYCHAIN_NAME'],
+      keychain_password: ENV['MATCH_KEYCHAIN_PASSWORD'],
+      git_url: 'git@github.com:OoriData/mobile-signing-certs.git',
+      app_identifier: 'com.ooridata.desolate-frontiers'
+    )
+  end
+
+  desc 'Upload macOS build to App Store'
+  lane :release do
+    # Decode and setup App Store Connect API key
+    api_key = app_store_connect_api_key(
+      key_id: ENV['APP_STORE_CONNECT_KEY_ID'],
+      issuer_id: ENV['APP_STORE_CONNECT_ISSUER_ID'],
+      key_content: Base64.decode64(ENV['APP_STORE_CONNECT_API_KEY']),
+      is_key_content_base64: false
+    )
+
+    # Upload to App Store
+    upload_to_app_store(
+      api_key: api_key,
+      pkg: 'build/macos-store/Desolate_Frontiers.pkg',
+      skip_screenshots: true,
+      skip_metadata: true,
+      submit_for_review: false,
+      precheck_include_in_app_purchases: false
+    )
+  end
+end
