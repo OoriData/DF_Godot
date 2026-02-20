@@ -1,0 +1,17 @@
+"AppBuild"
+{
+	"AppID" "YOUR_APP_ID" // Your AppID
+	"Desc" "Desolate Frontiers Build" // internal description for this build
+	"Preview" "0" // make this a preview build only, nothing is uploaded
+	"Local" "" // put content on local content server instead of uploading to Steam
+	"SetLive" "" // set this build live on beta branch AlphaTest
+	"ContentRoot" "..\build\" // content root folder relative to this script file
+	"BuildOutput" "..\build_output\" // put build cache and log files on different drive for better performance
+	"verbose" "0" // spew more build details in console
+	"Depots"
+	{
+		// file mapping instructions for each depot are in separate script files
+		"YOUR_DEPOT_ID_WINDOWS" "depot_build_windows.vdf"
+		"YOUR_DEPOT_ID_MACOS" "depot_build_macos.vdf"
+	}
+}

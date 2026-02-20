@@ -2,7 +2,16 @@
 
 # Godot 4+ specific ignores
 .godot/
-/android/
 .vscode/*
 Other/*
 desolate_frontiers.keystore
+
+# Godot Android build template
+!android/build/
+android/build/.gradle/
+android/build/build/
+!android/build/assetPackInstallTime/
+android/build/assetPackInstallTime/build/
+android/build/assetPackInstallTime/src/main/assets/
+android/build/libs/
+*.aar

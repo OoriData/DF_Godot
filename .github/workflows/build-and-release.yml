@@ -1,0 +1,127 @@
+name: Build and Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      godot_version:
+        description: 'Godot Version'
+        required: true
+        default: '4.6.0'
+        type: string
+      platforms:
+        description: 'Platforms to build (comma-separated: web,android,ios,macos,steam)'
+        required: true
+        default: 'web'
+        type: string
+  push:
+    branches:
+      - release        # Change this if you want it to trigger on other branches
+    tags:
+      - 'v*'
+
+jobs:
+  # Determine which platforms to build based on inputs or trigger
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      build_web: ${{ steps.check.outputs.build_web }}
+      build_android: ${{ steps.check.outputs.build_android }}
+      build_ios: ${{ steps.check.outputs.build_ios }}
+      build_macos: ${{ steps.check.outputs.build_macos }}
+      build_steam: ${{ steps.check.outputs.build_steam }}
+      version: ${{ steps.version.outputs.tag }}
+    steps:
+      - id: version
+        run: |
+          if [[ "${{ github.ref }}" == "refs/tags/"* ]]; then
+            echo "tag=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+          else
+            echo "tag=Manual-$(date +%Y%m%d-%H%M)" >> $GITHUB_OUTPUT
+          fi
+
+      - id: check
+        run: |
+          PLATFORMS="${{ inputs.platforms }}"
+          if [[ "${{ github.event_name }}" == "push" ]]; then
+            # Build all platforms on tag/push
+            PLATFORMS="web,android,ios,macos,steam"
+          fi
+          
+          echo "Building platforms: $PLATFORMS"
+          
+          if [[ "$PLATFORMS" == *"web"* ]]; then echo "build_web=true" >> $GITHUB_OUTPUT; else echo "build_web=false" >> $GITHUB_OUTPUT; fi
+          if [[ "$PLATFORMS" == *"android"* ]]; then echo "build_android=true" >> $GITHUB_OUTPUT; else echo "build_android=false" >> $GITHUB_OUTPUT; fi
+          if [[ "$PLATFORMS" == *"ios"* ]]; then echo "build_ios=true" >> $GITHUB_OUTPUT; else echo "build_ios=false" >> $GITHUB_OUTPUT; fi
+          if [[ "$PLATFORMS" == *"macos"* ]]; then echo "build_macos=true" >> $GITHUB_OUTPUT; else echo "build_macos=false" >> $GITHUB_OUTPUT; fi
+          if [[ "$PLATFORMS" == *"steam"* ]]; then echo "build_steam=true" >> $GITHUB_OUTPUT; else echo "build_steam=false" >> $GITHUB_OUTPUT; fi
+
+  # Web Build
+  web:
+    needs: setup
+    if: needs.setup.outputs.build_web == 'true'
+    permissions:
+      contents: write
+    uses: ./.github/workflows/_build-web.yml
+    with:
+      godot_version: ${{ inputs.godot_version || '4.6.0' }}
+      version_tag: ${{ needs.setup.outputs.version }}
+    secrets: inherit
+
+  # Android Build
+  android:
+    needs: setup
+    if: needs.setup.outputs.build_android == 'true'
+    uses: ./.github/workflows/_build-google-play.yml
+    with:
+      godot_version: ${{ inputs.godot_version || '4.6.0' }}
+      version_tag: ${{ needs.setup.outputs.version }}
+    secrets: inherit
+
+  # iOS Build
+  ios:
+    needs: setup
+    if: needs.setup.outputs.build_ios == 'true'
+    uses: ./.github/workflows/_build-ios-appstore.yml
+    with:
+      godot_version: ${{ inputs.godot_version || '4.6.0' }}
+      version_tag: ${{ needs.setup.outputs.version }}
+    secrets: inherit
+
+  # macOS Build
+  macos:
+    needs: setup
+    if: needs.setup.outputs.build_macos == 'true'
+    uses: ./.github/workflows/_build-macos-appstore.yml
+    with:
+      godot_version: ${{ inputs.godot_version || '4.6.0' }}
+      version_tag: ${{ needs.setup.outputs.version }}
+    secrets: inherit
+
+  # Steam Build
+  steam:
+    needs: setup
+    if: needs.setup.outputs.build_steam == 'true'
+    permissions:
+      contents: write
+    uses: ./.github/workflows/_build-steam.yml
+    with:
+      godot_version: ${{ inputs.godot_version || '4.6.0' }}
+      version_tag: ${{ needs.setup.outputs.version }}
+    secrets: inherit
+
+
+  # Sync job to help align the graph and avoid long overlapping lines
+  sync-platforms:
+    needs: [web, android, ios, macos]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Main platform builds completed."
+
+  # Final Report
+  report:
+    needs: [sync-platforms, steam]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Builds completed."
