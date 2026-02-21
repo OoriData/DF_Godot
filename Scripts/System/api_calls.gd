@@ -55,6 +55,10 @@ signal convoy_created(convoy: Dictionary) # Restored for service-driven refresh
 # --- Warehouse Signals ---
 signal warehouse_received(warehouse_data: Dictionary)
 
+# --- Steam Signals ---
+signal steam_account_linked(result: Dictionary)   # { ok, steam_id, user_id, error_code, message }
+signal steam_premium_order_created(result: Dictionary) # { ok, order_id, error_code, message }
+
 # --- Bug Report Signals ---
 @warning_ignore("unused_signal")
 signal bug_report_submitted(result: Dictionary)
@@ -453,6 +457,122 @@ func login_with_steam(steam_id: String) -> void:
 	_request_queue.append(request_details)
 	_process_queue()
 
+
+# --- Steam account linking ---
+## Links the current DF account to a Steam ID via POST /auth/steam/link.
+## Emits steam_account_linked({ ok, steam_id, user_id, error_code, message }).
+func link_steam_account(steam_id: String, persona_name: String = "") -> void:
+	if steam_id.is_empty():
+		printerr("[APICalls][link_steam_account] steam_id cannot be empty")
+		emit_signal("steam_account_linked", {"ok": false, "error_code": 400, "message": "Steam ID cannot be empty."})
+		return
+	var url := "%s/auth/steam/link" % BASE_URL
+	var headers: PackedStringArray = ['accept: application/json', 'content-type: application/json']
+	headers = _apply_auth_header(headers)
+	var body_dict: Dictionary = {"steam_id": steam_id}
+	if persona_name != "":
+		body_dict["persona_name"] = persona_name
+	var body_json := JSON.stringify(body_dict)
+	_log_info("[APICalls][link_steam_account] POST url=%s steam_id=%s" % [url, steam_id])
+	# Use ephemeral requester so this doesn't queue-starve other requests
+	var req := HTTPRequest.new()
+	req.name = "SteamLinkRequest"
+	add_child(req)
+	req.request_completed.connect(
+		_on_steam_link_completed.bind(req)
+	)
+	var err := req.request(url, headers, HTTPClient.METHOD_POST, body_json)
+	if err != OK:
+		printerr("[APICalls][link_steam_account] HTTP request failed err=%d" % err)
+		req.queue_free()
+		emit_signal("steam_account_linked", {"ok": false, "error_code": -1, "message": "Network error (%d)." % err})
+
+func _on_steam_link_completed(result: int, response_code: int, _headers: PackedStringArray, body: PackedByteArray, requester: HTTPRequest) -> void:
+	if is_instance_valid(requester):
+		requester.queue_free()
+	var text := body.get_string_from_utf8()
+	var json := JSON.new()
+	var parse_err := json.parse(text)
+	var data: Variant = {}
+	if parse_err == OK:
+		data = json.data
+	_log_info("[APICalls][link_steam_account] response code=%d body=%s" % [response_code, text.substr(0, 200)])
+	if response_code == 200:
+		emit_signal("steam_account_linked", {
+			"ok": true,
+			"steam_id": String(data.get("steam_id", "")),
+			"user_id": String(data.get("user_id", "")),
+			"error_code": 0,
+			"message": ""
+		})
+	else:
+		var msg := ""
+		if data is Dictionary:
+			msg = String(data.get("detail", data.get("message", "Unknown error.")))
+		else:
+			msg = text.substr(0, 200)
+		emit_signal("steam_account_linked", {
+			"ok": false,
+			"steam_id": "",
+			"user_id": "",
+			"error_code": response_code,
+			"message": msg
+		})
+
+## Initiates a Steam premium purchase order via POST /steam/create_premium_order.
+## Guards against calling without a linked steam_id.
+## Emits steam_premium_order_created({ ok, order_id, error_code, message }).
+func create_steam_premium_order(steam_id: String, item_id: String) -> void:
+	if steam_id.is_empty():
+		printerr("[APICalls][create_steam_premium_order] No Steam ID – account not linked.")
+		emit_signal("steam_premium_order_created", {"ok": false, "error_code": 400, "message": "User not linked to Steam. Please link your Steam account first."})
+		return
+	var url := "%s/steam/create_premium_order" % BASE_URL
+	var headers: PackedStringArray = ['accept: application/json', 'content-type: application/json']
+	headers = _apply_auth_header(headers)
+	var body_json := JSON.stringify({"steam_id": steam_id, "item_id": item_id})
+	_log_info("[APICalls][create_steam_premium_order] POST url=%s steam_id=%s item_id=%s" % [url, steam_id, item_id])
+	var req := HTTPRequest.new()
+	req.name = "SteamOrderRequest"
+	add_child(req)
+	req.request_completed.connect(
+		_on_steam_order_completed.bind(req)
+	)
+	var err := req.request(url, headers, HTTPClient.METHOD_POST, body_json)
+	if err != OK:
+		printerr("[APICalls][create_steam_premium_order] HTTP request failed err=%d" % err)
+		req.queue_free()
+		emit_signal("steam_premium_order_created", {"ok": false, "error_code": -1, "message": "Network error (%d)." % err})
+
+func _on_steam_order_completed(result: int, response_code: int, _headers: PackedStringArray, body: PackedByteArray, requester: HTTPRequest) -> void:
+	if is_instance_valid(requester):
+		requester.queue_free()
+	var text := body.get_string_from_utf8()
+	var json := JSON.new()
+	var parse_err := json.parse(text)
+	var data: Variant = {}
+	if parse_err == OK:
+		data = json.data
+	_log_info("[APICalls][create_steam_premium_order] response code=%d body=%s" % [response_code, text.substr(0, 200)])
+	if response_code == 200:
+		emit_signal("steam_premium_order_created", {
+			"ok": true,
+			"order_id": String(data.get("order_id", "")),
+			"error_code": 0,
+			"message": ""
+		})
+	else:
+		var msg := ""
+		if data is Dictionary:
+			msg = String(data.get("detail", data.get("message", "Unknown error.")))
+		else:
+			msg = text.substr(0, 200)
+		emit_signal("steam_premium_order_created", {
+			"ok": false,
+			"order_id": "",
+			"error_code": response_code,
+			"message": msg
+		})
 
 # --- Bug report ---
 func submit_bug_report(payload: Dictionary) -> void:
