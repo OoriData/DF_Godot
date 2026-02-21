@@ -16,6 +16,9 @@ var _map_loading_overlay: Control = null
 
 @onready var menu_container = $MainContainer/MainContent/MapAndMenuContainer/MenuContainer
 @onready var top_bar = $MainContainer/TopBar
+@onready var visualizer_container = $MainContainer/MainContent/MapAndMenuContainer/VisualizerContainer
+@onready var convoy_visualizer = $MainContainer/MainContent/MapAndMenuContainer/VisualizerContainer/ConvoyVisualizer
+@onready var visualizer_expand_btn = $MainContainer/MainContent/MapAndMenuContainer/VisualizerContainer/VisualizerExpandBtn
 var _new_convoy_dialog: Control = null
 const NEW_CONVOY_DIALOG_SCENE_PATH := "res://Scenes/NewConvoyDialog.tscn"
 @export var new_convoy_dialog_scene: PackedScene = null
@@ -89,6 +92,16 @@ var _current_menu_occlusion_px: float = 0.0 # animated width used to inform came
 @export var debug_menu_camera: bool = false # master toggle for menu-camera diagnostic logging
 @export var onboarding_log_enabled: bool = false # gate onboarding-related logs
 var _menu_anim_in_progress: bool = false # true while menu open/close tween is active to suppress duplicate focus requests
+
+# --- Visualizer Panel State ---
+const VISUALIZER_HEIGHT_RATIO := 0.3 # fraction of MapAndMenuContainer height
+const VISUALIZER_MIN_HEIGHT := 120.0
+const VISUALIZER_MAX_HEIGHT := 350.0
+const VISUALIZER_ANIM_DURATION := 0.35
+var _visualizer_target_height: float = 0.0
+var _visualizer_anim_tween: Tween = null
+var _visualizer_expanded: bool = false # true when filling the map area
+var _visualizer_pre_expand_height: float = 0.0
 
 # Coalesce potentially-frequent menu occlusion changes into a single Map UI refresh.
 # This ensures convoy labels reflow immediately when the menu animates, instead of
@@ -187,6 +200,12 @@ func _ready():
 			hub.error_occurred.connect(_on_signal_hub_error_occurred)
 
 	_error_dialog_scene = load(ERROR_DIALOG_SCENE_PATH)
+
+	# --- Visualizer expand button ---
+	if is_instance_valid(visualizer_expand_btn):
+		if not visualizer_expand_btn.is_connected("pressed", Callable(self, "_on_visualizer_expand_pressed")):
+			visualizer_expand_btn.pressed.connect(_on_visualizer_expand_pressed)
+
 # Respond to Control resize events
 
 func _on_menu_opened(menu_node: Node, menu_type: String) -> void:
@@ -276,7 +295,7 @@ func _on_map_view_size_changed():
 
 # Call this after the main screen is visible and unpaused to ensure camera is correct
 func force_camera_update():
-	await get_tree().process_frame  # Wait for layout to settle
+	await get_tree().process_frame # Wait for layout to settle
 	_update_camera_viewport_rect_on_resize()
 
 func _update_camera_viewport_rect_on_resize():
@@ -286,7 +305,6 @@ func _update_camera_viewport_rect_on_resize():
 		var map_rect = _get_map_display_rect()
 		map_camera_controller.update_map_viewport_rect(map_rect)
 		# Preserve current camera state on resize; limits are updated by controller
-
 
 
 func _initial_camera_and_ui_setup():
@@ -365,7 +383,7 @@ func _on_map_view_gui_input(event: InputEvent):
 			# The camera's pan function expects a screen-space delta
 			var delta: Vector2 = event.relative
 			if not _opt_invert_pan:
-				delta = -delta
+				delta = - delta
 			map_camera_controller.pan(delta)
 			get_viewport().set_input_as_handled()
 	elif event is InputEventMagnifyGesture:
@@ -445,6 +463,12 @@ func _on_menu_visibility_changed(is_open: bool, _menu_name: String):
 		# Begin close: animate occlusion down alongside menu.
 		_slide_menu_close(_last_focused_convoy_data)
 
+	# --- Visualizer panel tied to convoy menu open/close ---
+	if is_open:
+		_slide_visualizer_open()
+	else:
+		_slide_visualizer_close()
+
 
 func _get_convoy_label_manager_node() -> Node:
 	# ConvoyLabelManager script is attached to MapView's ConvoyLabelContainer node.
@@ -523,7 +547,7 @@ func _slide_menu_open(convoy_data: Dictionary):
 	_menu_anim_tween.finished.connect(func():
 		_dbg_menu("slide_open_finished", {"final_offset_left": menu_container.offset_left})
 		# Ensure final width exact
-		menu_container.offset_left = -_menu_target_width
+		menu_container.offset_left = - _menu_target_width
 		# (Camera occlusion already correct)
 		menu_container.modulate.a = 1.0
 		_menu_anim_in_progress = false
@@ -571,6 +595,124 @@ func _close_anim_step(progress: float):
 		if map_camera_controller.has_method("focus_on_convoy"):
 			map_camera_controller.focus_on_convoy(_close_anim_convoy)
 	_dbg_menu("close_step", {"p": progress, "w": w})
+
+
+# =====================================================================
+# Convoy Visualizer sliding panel
+# =====================================================================
+
+func _kill_visualizer_tween():
+	if _visualizer_anim_tween and _visualizer_anim_tween.is_valid():
+		_visualizer_anim_tween.kill()
+	_visualizer_anim_tween = null
+
+func _compute_visualizer_height() -> float:
+	var parent := visualizer_container.get_parent() as Control
+	if not is_instance_valid(parent):
+		return VISUALIZER_MIN_HEIGHT
+	var h: float = parent.size.y * VISUALIZER_HEIGHT_RATIO
+	return clampf(h, VISUALIZER_MIN_HEIGHT, VISUALIZER_MAX_HEIGHT)
+
+func _slide_visualizer_open():
+	if not is_instance_valid(visualizer_container):
+		return
+	_kill_visualizer_tween()
+	_visualizer_expanded = false
+	_visualizer_target_height = _compute_visualizer_height()
+
+	# Start hidden at the very bottom (zero height)
+	visualizer_container.visible = true
+	visualizer_container.offset_top = 0
+	visualizer_container.offset_bottom = 0
+	visualizer_container.modulate.a = 0.0
+	# Keep the visualizer to the left of the convoy menu panel
+	visualizer_container.offset_right = - _menu_target_width
+	# Reset anchors for bottom-strip mode
+	visualizer_container.anchor_left = 0.0
+	visualizer_container.anchor_top = 1.0
+	visualizer_container.anchor_right = 1.0
+	visualizer_container.anchor_bottom = 1.0
+
+	_visualizer_anim_tween = create_tween()
+	_visualizer_anim_tween.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+	_visualizer_anim_tween.parallel().tween_property(visualizer_container, "offset_top", -_visualizer_target_height, VISUALIZER_ANIM_DURATION)
+	_visualizer_anim_tween.parallel().tween_property(visualizer_container, "modulate:a", 1.0, VISUALIZER_ANIM_DURATION)
+	_visualizer_anim_tween.finished.connect(func():
+		visualizer_container.offset_top = - _visualizer_target_height
+		visualizer_container.modulate.a = 1.0
+		_pass_convoy_data_to_visualizer()
+	)
+
+func _slide_visualizer_close():
+	if not is_instance_valid(visualizer_container):
+		return
+	# If expanded, collapse first
+	if _visualizer_expanded:
+		_visualizer_expanded = false
+	_kill_visualizer_tween()
+	_visualizer_anim_tween = create_tween()
+	_visualizer_anim_tween.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN)
+	_visualizer_anim_tween.parallel().tween_property(visualizer_container, "offset_top", 0.0, VISUALIZER_ANIM_DURATION)
+	_visualizer_anim_tween.parallel().tween_property(visualizer_container, "modulate:a", 0.0, VISUALIZER_ANIM_DURATION)
+	_visualizer_anim_tween.finished.connect(func():
+		visualizer_container.visible = false
+		visualizer_container.offset_top = 0
+		visualizer_container.offset_right = 0
+		visualizer_container.modulate.a = 1.0
+		# Reset anchors
+		visualizer_container.anchor_left = 0.0
+		visualizer_container.anchor_top = 1.0
+		visualizer_container.anchor_right = 1.0
+		visualizer_container.anchor_bottom = 1.0
+	)
+
+func _on_visualizer_expand_pressed():
+	if not is_instance_valid(visualizer_container):
+		return
+	_visualizer_expanded = !_visualizer_expanded
+	_kill_visualizer_tween()
+
+	if _visualizer_expanded:
+		# Save current height for restore
+		_visualizer_pre_expand_height = _visualizer_target_height
+		# Animate to fill the full MapAndMenuContainer (anchors 0,0 → 1,1)
+		_visualizer_anim_tween = create_tween()
+		_visualizer_anim_tween.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+		# Move anchor_top from 1.0 to 0.0 to fill the area
+		_visualizer_anim_tween.tween_property(visualizer_container, "anchor_top", 0.0, VISUALIZER_ANIM_DURATION)
+		_visualizer_anim_tween.parallel().tween_property(visualizer_container, "offset_top", 0.0, VISUALIZER_ANIM_DURATION)
+		_visualizer_anim_tween.finished.connect(func():
+			visualizer_container.anchor_top = 0.0
+			visualizer_container.offset_top = 0
+			if is_instance_valid(visualizer_expand_btn):
+				visualizer_expand_btn.text = "⛶"
+		)
+		if is_instance_valid(visualizer_expand_btn):
+			visualizer_expand_btn.text = "↙"
+	else:
+		# Collapse back to bottom strip
+		_visualizer_target_height = _visualizer_pre_expand_height if _visualizer_pre_expand_height > 0 else _compute_visualizer_height()
+		_visualizer_anim_tween = create_tween()
+		_visualizer_anim_tween.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+		_visualizer_anim_tween.tween_property(visualizer_container, "anchor_top", 1.0, VISUALIZER_ANIM_DURATION)
+		_visualizer_anim_tween.parallel().tween_property(visualizer_container, "offset_top", -_visualizer_target_height, VISUALIZER_ANIM_DURATION)
+		_visualizer_anim_tween.finished.connect(func():
+			visualizer_container.anchor_top = 1.0
+			visualizer_container.offset_top = - _visualizer_target_height
+			if is_instance_valid(visualizer_expand_btn):
+				visualizer_expand_btn.text = "⛶"
+		)
+		if is_instance_valid(visualizer_expand_btn):
+			visualizer_expand_btn.text = "⛶"
+
+func _pass_convoy_data_to_visualizer():
+	if not is_instance_valid(convoy_visualizer) or not convoy_visualizer.has_method("initialize_with_convoy"):
+		return
+	var convoy_data := _last_focused_convoy_data
+	if convoy_data.is_empty():
+		convoy_data = _get_primary_convoy_data()
+	if not convoy_data.is_empty():
+		convoy_visualizer.initialize_with_convoy(convoy_data)
 
 # Update camera controller with current animated occlusion width
 func _update_camera_occlusion_from_menu():
@@ -1030,7 +1172,7 @@ func _apply_menu_ratio_if_open():
 	
 	# Apply immediately if visible and not currently animating
 	if not _menu_anim_in_progress:
-		menu_container.offset_left = -_menu_target_width
+		menu_container.offset_left = - _menu_target_width
 		_current_menu_occlusion_px = _menu_target_width
 		_update_camera_occlusion_from_menu()
 		# Reposition camera to keep convoy focused if possible
@@ -1057,7 +1199,7 @@ func _on_convoy_menu_focus_requested(convoy_data: Dictionary):
 func _on_map_ready_for_focus():
 	# print("[DFCAM-DEBUG] MainScreen: Received map_ready_for_focus signal.")
 	_map_ready_for_focus = true
-	await get_tree().process_frame  # Wait for UI to settle
+	await get_tree().process_frame # Wait for UI to settle
 	if is_instance_valid(map_camera_controller) and not _has_fitted_camera:
 		var map_rect = _get_map_display_rect()
 		# print("[DFCAM-DEBUG] MainScreen: map_ready_for_focus, updating camera viewport display rect=", map_rect)

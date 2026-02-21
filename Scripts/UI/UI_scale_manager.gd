@@ -26,6 +26,10 @@ var _global_ui_scale: float = 1.4
 var _auto_adjust_done: bool = false
 
 func _ready():
+	# Skip all display-dependent logic when running headless (CLI testing, CI)
+	if DisplayServer.get_name() == "headless":
+		return
+
 	# Try to pull from settings first
 	var sm = get_node_or_null("/root/SettingsManager")
 	var pulled_from_settings = false
@@ -62,6 +66,8 @@ func _on_size_changed():
 		_auto_adjust_scale()
 
 func _auto_adjust_scale():
+	if DisplayServer.get_name() == "headless":
+		return
 	var screen_width = DisplayServer.window_get_size().x
 	var is_mobile = DisplayServer.get_name() == "Android" or DisplayServer.get_name() == "iOS"
 
@@ -103,9 +109,11 @@ func get_max_safe_scale() -> float:
 	return float(screen_width) / MIN_LOGICAL_WIDTH
 
 func set_global_ui_scale(value: float):
+	if DisplayServer.get_name() == "headless":
+		return
 	var max_safe = get_max_safe_scale()
 	# Ensure checking against min 0.75 and max safe
-	var new_value = clampf(value, 0.75, max_safe) 
+	var new_value = clampf(value, 0.75, max_safe)
 	
 	if not is_equal_approx(_global_ui_scale, new_value) or not is_equal_approx(get_tree().root.content_scale_factor, new_value):
 		_global_ui_scale = new_value

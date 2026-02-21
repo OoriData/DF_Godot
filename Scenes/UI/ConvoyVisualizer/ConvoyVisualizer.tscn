@@ -1,0 +1,77 @@
+[gd_scene load_steps=5 format=3 uid="uid://c7t8x2dgbw0h3"]
+
+[ext_resource type="Script" path="res://Scenes/UI/ConvoyVisualizer/convoy_visualizer.gd" id="1_p4xw2"]
+[ext_resource type="Script" path="res://Scenes/UI/ConvoyVisualizer/vehicle_2d.gd" id="2_vhc2d"]
+
+[sub_resource type="RectangleShape2D" id="RectangleShape2D_q3y2x"]
+size = Vector2(2500, 100)
+
+[node name="ConvoyVisualizer" type="Control"]
+clip_contents = true
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("1_p4xw2")
+
+[node name="SubViewportContainer" type="SubViewportContainer" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+stretch = true
+
+[node name="SubViewport" type="SubViewport" parent="SubViewportContainer"]
+handle_input_locally = false
+size = Vector2i(1920, 1080)
+render_target_update_mode = 4
+
+[node name="World" type="Node2D" parent="SubViewportContainer/SubViewport"]
+
+[node name="ParallaxBackground" type="ParallaxBackground" parent="SubViewportContainer/SubViewport/World"]
+custom_viewport = NodePath("..")
+
+[node name="SkyLayer" type="ParallaxLayer" parent="SubViewportContainer/SubViewport/World/ParallaxBackground"]
+motion_scale = Vector2(0.1, 0.1)
+motion_mirroring = Vector2(2000, 0)
+
+[node name="SkyRect" type="ColorRect" parent="SubViewportContainer/SubViewport/World/ParallaxBackground/SkyLayer"]
+offset_top = -1000.0
+offset_right = 2000.0
+offset_bottom = 50.0
+color = Color(0.392157, 0.584314, 0.929412, 1)
+
+[node name="MidgroundLayer" type="ParallaxLayer" parent="SubViewportContainer/SubViewport/World/ParallaxBackground"]
+motion_scale = Vector2(0.3, 0.3)
+motion_mirroring = Vector2(2000, 0)
+
+[node name="HillsRect" type="ColorRect" parent="SubViewportContainer/SubViewport/World/ParallaxBackground/MidgroundLayer"]
+offset_top = -20.0
+offset_right = 2000.0
+offset_bottom = 200.0
+color = Color(0.24, 0.44, 0.28, 1)
+
+[node name="GroundLayer" type="ParallaxLayer" parent="SubViewportContainer/SubViewport/World/ParallaxBackground"]
+motion_mirroring = Vector2(2000, 0)
+
+[node name="GroundRect" type="ColorRect" parent="SubViewportContainer/SubViewport/World/ParallaxBackground/GroundLayer"]
+offset_top = 50.0
+offset_right = 2000.0
+offset_bottom = 500.0
+color = Color(0.19, 0.17, 0.15, 1)
+
+[node name="RoadBody" type="StaticBody2D" parent="SubViewportContainer/SubViewport/World/ParallaxBackground/GroundLayer"]
+position = Vector2(1000, 100)
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="SubViewportContainer/SubViewport/World/ParallaxBackground/GroundLayer/RoadBody"]
+shape = SubResource("RectangleShape2D_q3y2x")
+
+[node name="Camera2D" type="Camera2D" parent="SubViewportContainer/SubViewport/World"]
+position = Vector2(960, 0)
+
+[node name="Vehicles" type="Node2D" parent="SubViewportContainer/SubViewport/World"]
+position = Vector2(960, -50)

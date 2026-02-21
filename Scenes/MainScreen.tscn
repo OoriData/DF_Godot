@@ -1,8 +1,9 @@
-[gd_scene format=3 uid="uid://cxciw3malgni0"]
+[gd_scene load_steps=6 format=3 uid="uid://cxciw3malgni0"]
 
 [ext_resource type="PackedScene" uid="uid://c5w2h7q3g6y0x" path="res://Scenes/UserInfoDisplay.tscn" id="1_j4x7k"]
 [ext_resource type="PackedScene" uid="uid://b7shrt87ucxid" path="res://Scenes/MapView.tscn" id="2_pjpa4"]
 [ext_resource type="Script" uid="uid://c6dp007swcck6" path="res://Scripts/UI/main_screen.gd" id="3_abcde"]
+[ext_resource type="PackedScene" uid="uid://c7t8x2dgbw0h3" path="res://Scenes/UI/ConvoyVisualizer/ConvoyVisualizer.tscn" id="4_viz"]
 
 [sub_resource type="StyleBoxFlat" id="1_menu_container_style"]
 content_margin_left = 8.0
@@ -17,6 +18,20 @@ corner_radius_bottom_left = 6
 shadow_color = Color(0, 0, 0, 0.55)
 shadow_size = 6
 shadow_offset = Vector2(0, 2)
+
+[sub_resource type="StyleBoxFlat" id="2_visualizer_container_style"]
+content_margin_left = 0.0
+content_margin_top = 0.0
+content_margin_right = 0.0
+content_margin_bottom = 0.0
+bg_color = Color(0.08, 0.09, 0.14, 0.95)
+border_width_top = 1
+border_color = Color(0.28, 0.72, 0.66, 0.7)
+corner_radius_top_left = 6
+corner_radius_top_right = 6
+shadow_color = Color(0, 0, 0, 0.55)
+shadow_size = 4
+shadow_offset = Vector2(0, -2)
 
 [node name="MainScreen" type="Control" unique_id=1991463694]
 layout_mode = 3
@@ -72,6 +87,35 @@ anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
 theme_override_styles/panel = SubResource("1_menu_container_style")
+
+[node name="VisualizerContainer" type="PanelContainer" parent="MainContainer/MainContent/MapAndMenuContainer"]
+visible = false
+clip_contents = true
+layout_mode = 1
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_top = 0
+offset_bottom = 0
+grow_horizontal = 2
+grow_vertical = 0
+theme_override_styles/panel = SubResource("2_visualizer_container_style")
+
+[node name="ConvoyVisualizer" parent="MainContainer/MainContent/MapAndMenuContainer/VisualizerContainer" instance=ExtResource("4_viz")]
+layout_mode = 2
+
+[node name="VisualizerExpandBtn" type="Button" parent="MainContainer/MainContent/MapAndMenuContainer/VisualizerContainer"]
+layout_mode = 1
+anchors_preset = 1
+anchor_left = 1.0
+anchor_right = 1.0
+offset_left = -36.0
+offset_top = 4.0
+offset_right = -4.0
+offset_bottom = 30.0
+grow_horizontal = 0
+text = "⛶"
+flat = true
 
 [node name="ModalLayer" type="Control" parent="." unique_id=682483634]
 visible = false

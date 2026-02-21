@@ -1,6 +1,7 @@
-[gd_scene load_steps=3 format=3 uid="uid://baapt2nhy58e7"]
+[gd_scene load_steps=5 format=3 uid="uid://baapt2nhy58e7"]
 
 [ext_resource type="Script" path="res://Scripts/Menus/convoy_menu.gd" id="1_f5pu3"]
+[ext_resource type="PackedScene" uid="uid://cx6i4m1nixl72" path="res://Scenes/UI/TopUpButtonTooltip.tscn" id="10_tooltip"]
 
 [sub_resource type="ButtonGroup" id="ButtonGroup_vendor_tabs"]
 
@@ -68,7 +69,7 @@ size_flags_vertical = 3
 layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
-theme_override_constants/separation = 6
+theme_override_constants/separation = 16
 
 [node name="ResourceStatsHBox" type="HBoxContainer" parent="MainVBox/ScrollContainer/ContentVBox"]
 layout_mode = 2

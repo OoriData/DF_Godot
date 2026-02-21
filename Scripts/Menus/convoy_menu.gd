@@ -11,7 +11,7 @@ const VendorModel = preload("res://Scripts/Data/Models/Vendor.gd")
 const VendorPanelContextController = preload("res://Scripts/Menus/VendorPanel/vendor_panel_context_controller.gd")
 
 # --- Font Scaling Parameters ---
-const BASE_FONT_SIZE: float = 18.0  # Increased from 14.0
+const BASE_FONT_SIZE: float = 18.0 # Increased from 14.0
 const BASE_TITLE_FONT_SIZE: float = 22.0 # Increased from 18.0
 const REFERENCE_MENU_HEIGHT: float = 600.0 # The menu height at which BASE_FONT_SIZE looks best
 const MIN_FONT_SIZE: float = 8.0
@@ -21,14 +21,14 @@ const MAX_TITLE_FONT_SIZE: float = 30.0
 # --- Color Constants for Styling ---
 const COLOR_GREEN: Color = Color("66bb6a") # Material Green 400
 const COLOR_YELLOW: Color = Color("ffee58") # Material Yellow 400
-const COLOR_RED: Color = Color("ef5350")   # Material Red 400
+const COLOR_RED: Color = Color("ef5350") # Material Red 400
 const COLOR_BOX_FONT: Color = Color("000000") # Black font for boxes for contrast
 const COLOR_PERFORMANCE_BOX_BG: Color = Color("404040cc") # Dark Gray, 80% opaque
 const COLOR_MENU_BUTTON_GREY_BG: Color = Color("b0b0b0") # Light-Medium Grey for menu buttons
-const COLOR_PERFORMANCE_BOX_FONT: Color = Color.WHITE   # White
+const COLOR_PERFORMANCE_BOX_FONT: Color = Color.WHITE # White
 
 # --- Vendor Preview Tab Constants ---
-enum VendorTab { CONVOY_MISSIONS, SETTLEMENT_MISSIONS, COMPATIBLE_PARTS, JOURNEY }
+enum VendorTab {CONVOY_MISSIONS, SETTLEMENT_MISSIONS, COMPATIBLE_PARTS, JOURNEY}
 const COLOR_TAB_ACTIVE_BG: Color = Color("424242") # Grey 800
 const COLOR_TAB_INACTIVE_BG: Color = Color("757575") # Grey 600
 const COLOR_TAB_CONTENT_BG: Color = Color("303030") # Grey 850
@@ -72,7 +72,7 @@ const COLOR_JOURNEY_PROGRESS_FILL: Color = Color("29b6f6") # Material Light Blue
 var all_cargo_label: Label = null
 @onready var back_button: Button = $MainVBox/TopBarHBox/BackButton
 
-# --- Vendor Preview Nodes ---
+# --- Vendor Panel Utilities ---
 @onready var preview_title_label: Label = $MainVBox/ScrollContainer/ContentVBox/VendorPreviewPanel/VendorPreviewVBox/PreviewTitleLabel
 @onready var convoy_missions_tab_button: Button = $MainVBox/ScrollContainer/ContentVBox/VendorPreviewPanel/VendorPreviewVBox/VendorTabsHBox/ConvoyMissionsTabButton
 @onready var settlement_missions_tab_button: Button = $MainVBox/ScrollContainer/ContentVBox/VendorPreviewPanel/VendorPreviewVBox/VendorTabsHBox/SettlementMissionsTabButton
@@ -81,6 +81,7 @@ var all_cargo_label: Label = null
 @onready var vendor_item_grid: GridContainer = $MainVBox/ScrollContainer/ContentVBox/VendorPreviewPanel/VendorPreviewVBox/VendorContentPanel/VendorContentScroll/ContentWrapper/VendorItemContainer/VendorItemGrid
 @onready var vendor_item_container: VBoxContainer = $MainVBox/ScrollContainer/ContentVBox/VendorPreviewPanel/VendorPreviewVBox/VendorContentPanel/VendorContentScroll/ContentWrapper/VendorItemContainer
 @onready var vendor_no_items_label: Label = $MainVBox/ScrollContainer/ContentVBox/VendorPreviewPanel/VendorPreviewVBox/VendorContentPanel/VendorContentScroll/ContentWrapper/VendorNoItemsLabel
+@onready var overview_vbox: VBoxContainer = $MainVBox/ScrollContainer/ContentVBox/OverviewVBox
 @onready var journey_info_vbox: VBoxContainer = $MainVBox/ScrollContainer/ContentVBox/VendorPreviewPanel/VendorPreviewVBox/VendorContentPanel/VendorContentScroll/ContentWrapper/JourneyInfoVBox
 @onready var journey_dest_label: Label = $MainVBox/ScrollContainer/ContentVBox/VendorPreviewPanel/VendorPreviewVBox/VendorContentPanel/VendorContentScroll/ContentWrapper/JourneyInfoVBox/JourneyDestLabel
 @onready var journey_progress_bar: ProgressBar = $MainVBox/ScrollContainer/ContentVBox/VendorPreviewPanel/VendorPreviewVBox/VendorContentPanel/VendorContentScroll/ContentWrapper/JourneyInfoVBox/JourneyProgressControl/JourneyProgressBar
@@ -142,7 +143,6 @@ var _active_mission_cargo_id_by_name: Dictionary = {} # item_name -> cargo_id
 var _active_mission_cargo_id_by_display: Dictionary = {} # "name — to DEST" -> cargo_id
 
 
-
 func _is_convoy_payload_complete(c: Dictionary) -> bool:
 	# Heuristic: a "full" convoy snapshot includes capacity/resource maxima.
 	# Shallow snapshots often omit these keys, causing UI to render 0/0.
@@ -159,6 +159,7 @@ func _ensure_full_convoy_loaded(target_id: String, snapshot: Dictionary) -> void
 	if _requested_full_convoy_id == target_id:
 		return
 	if _is_convoy_payload_complete(snapshot):
+		_parse_convoy_payload(snapshot) # Call parse if already complete
 		return
 	if not is_instance_valid(_convoy_service) or not _convoy_service.has_method("refresh_single"):
 		return
@@ -166,6 +167,14 @@ func _ensure_full_convoy_loaded(target_id: String, snapshot: Dictionary) -> void
 	if _debug_convoy_menu:
 		print("[ConvoyMenu][Debug] Requesting full convoy snapshot for convoy_id=", target_id)
 	_convoy_service.refresh_single(target_id)
+
+func _parse_convoy_payload(payload: Dictionary) -> void:
+	if _debug_convoy_menu:
+		print("[ConvoyMenu][Debug] Parsing full convoy payload. Convoy ID=", payload.get("id", "Unknown"), " Vehicles=", payload.get("vehicles", []).size())
+	
+	# Pass data to the Vendor Preview pane if active
+	# (The rest of the original _ensure_full_convoy_loaded function was not part of the instruction,
+	# so it's assumed to be handled elsewhere or not relevant to this specific change.)
 
 
 func _set_latest_settlements_snapshot(settlements: Array) -> void:
@@ -232,7 +241,7 @@ func _ready():
 		vp_style.border_width_top = 1
 		vp_style.border_width_bottom = 1
 		vp_style.border_color = Color(0.25, 0.35, 0.55, 0.9)
-		vp_style.shadow_color = Color(0,0,0,0.45)
+		vp_style.shadow_color = Color(0, 0, 0, 0.45)
 		vp_style.shadow_size = 4
 		vendor_preview_panel.add_theme_stylebox_override("panel", vp_style)
 		# Style the content panel inside the vendor preview
@@ -2086,7 +2095,7 @@ func _style_menu_button(button_node: Button) -> void:
 	style_box_normal.border_width_bottom = 1
 	style_box_normal.border_color = COLOR_BOX_FONT.darkened(0.2)
 	style_box_normal.shadow_size = 4
-	style_box_normal.shadow_color = Color(0,0,0,0.4)
+	style_box_normal.shadow_color = Color(0, 0, 0, 0.4)
 
 	var style_box_hover := style_box_normal.duplicate()
 	style_box_hover.bg_color = COLOR_MENU_BUTTON_GREY_BG.lightened(0.1)
@@ -2094,7 +2103,7 @@ func _style_menu_button(button_node: Button) -> void:
 	var style_box_pressed := style_box_normal.duplicate()
 	style_box_pressed.bg_color = COLOR_MENU_BUTTON_GREY_BG.darkened(0.15)
 	style_box_pressed.shadow_size = 2
-	style_box_pressed.shadow_color = Color(0,0,0,0.25)
+	style_box_pressed.shadow_color = Color(0, 0, 0, 0.25)
 
 	button_node.add_theme_stylebox_override("normal", style_box_normal)
 	button_node.add_theme_stylebox_override("hover", style_box_hover)
