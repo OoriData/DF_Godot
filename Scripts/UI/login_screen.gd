@@ -71,6 +71,29 @@ func _ready() -> void:
 	if api and api.is_auth_token_valid():
 		status_label.text = "Resuming session..."
 		# APICalls autoload will resolve the session/user automatically.
+	
+	_add_version_label()
+
+func _add_version_label() -> void:
+	var version = ProjectSettings.get_setting("application/config/version", "0.0.0")
+	var label = Label.new()
+	label.text = "v" + str(version)
+	label.name = "VersionLabel"
+	
+	# Style
+	label.modulate = Color(1, 1, 1, 0.4)
+	var settings = LabelSettings.new()
+	settings.font_size = 14
+	label.label_settings = settings
+	
+	# Positioning
+	label.set_anchors_and_offsets_preset(Control.PRESET_TOP_RIGHT)
+	label.offset_left -= 12
+	label.offset_top += 12
+	label.grow_horizontal = Control.GROW_DIRECTION_BEGIN
+	label.grow_vertical = Control.GROW_DIRECTION_END
+	
+	add_child(label)
 
 func _process(_delta: float) -> void:
 	_update_map_background(_delta)
