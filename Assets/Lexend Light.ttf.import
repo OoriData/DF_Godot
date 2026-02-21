@@ -3,11 +3,12 @@
 importer="font_data_dynamic"
 type="FontFile"
 uid="uid://bgq4aye8k7t84"
-valid=false
+path="res://.godot/imported/Lexend Light.ttf-ad9e9e6b1c8d6008dc898a534829b153.fontdata"
 
 [deps]
 
 source_file="res://Assets/Lexend Light.ttf"
+dest_files=["res://.godot/imported/Lexend Light.ttf-ad9e9e6b1c8d6008dc898a534829b153.fontdata"]
 
 [params]
 
