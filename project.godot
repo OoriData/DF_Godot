@@ -52,7 +52,7 @@ window/handheld/orientation=6
 
 [gui]
 
-theme/custom_font="uid://btu0it3y07pxg"
+theme/custom_font="res://Assets/main_font.tres"
 
 [rendering]
 
