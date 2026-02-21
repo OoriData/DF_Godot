@@ -1,6 +1,6 @@
 [gd_resource type="FontVariation" load_steps=4 format=3]
 
-[ext_resource type="FontFile" uid="uid://btu0it3y07pxg" path="res://Assets/Roboto-VariableFont_wdth,wght.ttf" id="1_base"]
+[ext_resource type="FontFile" uid="uid://bgq4aye8k7t84" path="res://Assets/Lexend Light.ttf" id="1_base"]
 [ext_resource type="FontFile" uid="uid://b2hcvt5pfoqdh" path="res://Assets/NotoSansMath-Regular.ttf" id="2_math"]
 [ext_resource type="FontVariation" path="res://Assets/emoji_fallback.tres" id="3_emoji"]
 
