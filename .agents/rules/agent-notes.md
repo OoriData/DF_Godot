@@ -1,3 +1,7 @@
+---
+trigger: always_on
+---
+
 # Agent Notes — Desolate Frontiers (Godot 4.6)
 
 Notes and instructions for AI coding agents working on this project.
