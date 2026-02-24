@@ -198,6 +198,8 @@ func _ready():
 			hub.initial_data_ready.connect(_on_initial_data_ready)
 		if not hub.is_connected("error_occurred", Callable(self, "_on_signal_hub_error_occurred")):
 			hub.error_occurred.connect(_on_signal_hub_error_occurred)
+		if hub.has_signal("convoy_selection_changed"):
+			hub.convoy_selection_changed.connect(_on_convoy_selection_changed)
 
 	_error_dialog_scene = load(ERROR_DIALOG_SCENE_PATH)
 
@@ -705,12 +707,25 @@ func _on_visualizer_expand_pressed():
 		if is_instance_valid(visualizer_expand_btn):
 			visualizer_expand_btn.text = "⛶"
 
+func _on_convoy_selection_changed(selected_convoy_data: Variant) -> void:
+	if typeof(selected_convoy_data) == TYPE_DICTIONARY:
+		_last_focused_convoy_data = selected_convoy_data
+	elif typeof(selected_convoy_data) == TYPE_STRING:
+		# If we only have an ID, resolve it
+		_last_focused_convoy_data = _resolve_convoy_dict_from_id(String(selected_convoy_data))
+	
+	# If the visualizer is currently open, update it immediately
+	if is_instance_valid(visualizer_container) and visualizer_container.visible:
+		_pass_convoy_data_to_visualizer()
+
 func _pass_convoy_data_to_visualizer():
 	if not is_instance_valid(convoy_visualizer) or not convoy_visualizer.has_method("initialize_with_convoy"):
 		return
 	var convoy_data := _last_focused_convoy_data
 	if convoy_data.is_empty():
 		convoy_data = _get_primary_convoy_data()
+	
+	_dbg_menu("visualizer_update_data", {"has_convoy": not convoy_data.is_empty()})
 	if not convoy_data.is_empty():
 		convoy_visualizer.initialize_with_convoy(convoy_data)
 
