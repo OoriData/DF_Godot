@@ -45,8 +45,13 @@ func _build_convoy() -> void:
 		return
 		
 	# Spawn vehicles
-	var spacing: float = 250.0
-	var current_x: float = 0.0
+	var spacing: float = 200.0 # Standard spacing between vehicle centers
+	var total_count = vehicle_data_list.size()
+	
+	# Calculate start X to center the convoy around 0
+	# (total_count - 1) * spacing is the total width
+	var start_x: float = ((total_count - 1) * spacing) / 2.0
+	var current_x: float = start_x
 	
 	for v_data in vehicle_data_list:
 		if not (v_data is Dictionary): continue
@@ -59,15 +64,14 @@ func _build_convoy() -> void:
 		
 		var v_node = vehicle_scene.instantiate()
 		vehicles_node.add_child(v_node)
+		# Place vehicles relatively centered on the ground
 		v_node.position = Vector2(current_x, 0)
 		v_node.setup(v_color, v_shape, v_weight)
 		
 		vehicle_nodes.append(v_node)
 		
-		# Adjust spacing for the next vehicle, placing newer vehicles behind
+		# Move to the position of the next vehicle (going left/backwards)
 		current_x -= spacing
 		
-	# Adjust camera to roughly center the convoy
-	if vehicle_nodes.size() > 0:
-		var total_width = (vehicle_nodes.size() - 1) * spacing
-		camera.position.x = - total_width / 2.0
+	# Center camera at origin (since vehicles are centered around 0)
+	camera.position.x = 0

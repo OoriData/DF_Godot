@@ -1,7 +1,6 @@
-extends RigidBody2D
+extends Node2D
 
 @onready var color_rect: ColorRect = $ColorRect
-@onready var collision_shape: CollisionShape2D = $CollisionShape2D
 
 var _color: String = ""
 var _shape: String = ""
@@ -25,7 +24,6 @@ func setup(vehicle_color: String, vehicle_shape: String, vehicle_weight_class: f
 	_weight_class = vehicle_weight_class
 	
 	_apply_visuals()
-	_apply_physics()
 
 func _apply_visuals() -> void:
 	# Base color
@@ -57,19 +55,5 @@ func _apply_visuals() -> void:
 	base_height *= scale_factor
 	
 	color_rect.size = Vector2(base_width, base_height)
-	color_rect.position = Vector2(-base_width / 2.0, -base_height / 2.0)
-	
-	if collision_shape.shape is RectangleShape2D:
-		var rect_shape = collision_shape.shape as RectangleShape2D
-		rect_shape.size = color_rect.size
-
-func _apply_physics() -> void:
-	# Higher weight class = higher mass
-	mass = 1000.0 + (_weight_class * 1000.0)
-
-func _input_event(_viewport: Viewport, event: InputEvent, shape_idx: int) -> void:
-	# Add interaction: click to bounce/fling
-	if event is InputEventMouseButton:
-		var mb = event as InputEventMouseButton
-		if mb.button_index == MOUSE_BUTTON_LEFT and mb.pressed:
-			apply_central_impulse(Vector2(0, -600.0 * mass))
+	# Center the rectangle horizontally and keep it bottom-aligned to its position
+	color_rect.position = Vector2(-base_width / 2.0, -base_height)

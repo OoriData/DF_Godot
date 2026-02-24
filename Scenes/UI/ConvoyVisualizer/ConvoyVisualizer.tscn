@@ -37,41 +37,44 @@ custom_viewport = NodePath("..")
 
 [node name="SkyLayer" type="ParallaxLayer" parent="SubViewportContainer/SubViewport/World/ParallaxBackground"]
 motion_scale = Vector2(0.1, 0.1)
-motion_mirroring = Vector2(2000, 0)
+motion_mirroring = Vector2(4000, 0)
 
 [node name="SkyRect" type="ColorRect" parent="SubViewportContainer/SubViewport/World/ParallaxBackground/SkyLayer"]
+offset_left = -2000.0
 offset_top = -1000.0
 offset_right = 2000.0
-offset_bottom = 50.0
+offset_bottom = 0.0
 color = Color(0.392157, 0.584314, 0.929412, 1)
 
 [node name="MidgroundLayer" type="ParallaxLayer" parent="SubViewportContainer/SubViewport/World/ParallaxBackground"]
 motion_scale = Vector2(0.3, 0.3)
-motion_mirroring = Vector2(2000, 0)
+motion_mirroring = Vector2(4000, 0)
 
 [node name="HillsRect" type="ColorRect" parent="SubViewportContainer/SubViewport/World/ParallaxBackground/MidgroundLayer"]
-offset_top = -20.0
+offset_left = -2000.0
+offset_top = 0.0
 offset_right = 2000.0
-offset_bottom = 200.0
+offset_bottom = 100.0
 color = Color(0.24, 0.44, 0.28, 1)
 
 [node name="GroundLayer" type="ParallaxLayer" parent="SubViewportContainer/SubViewport/World/ParallaxBackground"]
-motion_mirroring = Vector2(2000, 0)
+motion_mirroring = Vector2(4000, 0)
 
 [node name="GroundRect" type="ColorRect" parent="SubViewportContainer/SubViewport/World/ParallaxBackground/GroundLayer"]
-offset_top = 50.0
+offset_left = -2000.0
+offset_top = 100.0
 offset_right = 2000.0
-offset_bottom = 500.0
+offset_bottom = 600.0
 color = Color(0.19, 0.17, 0.15, 1)
 
 [node name="RoadBody" type="StaticBody2D" parent="SubViewportContainer/SubViewport/World/ParallaxBackground/GroundLayer"]
-position = Vector2(1000, 100)
+position = Vector2(0, 100)
 
 [node name="CollisionShape2D" type="CollisionShape2D" parent="SubViewportContainer/SubViewport/World/ParallaxBackground/GroundLayer/RoadBody"]
 shape = SubResource("RectangleShape2D_q3y2x")
 
 [node name="Camera2D" type="Camera2D" parent="SubViewportContainer/SubViewport/World"]
-position = Vector2(960, 0)
+position = Vector2(0, 0)
 
 [node name="Vehicles" type="Node2D" parent="SubViewportContainer/SubViewport/World"]
-position = Vector2(960, -50)
+position = Vector2(0, 100)

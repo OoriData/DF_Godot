@@ -14,6 +14,7 @@ config/name="Desolate Frontiers"
 config/version="0.3.7pre1"
 run/main_scene="res://Scenes/GameRoot.tscn"
 config/features=PackedStringArray("4.6", "GL Compatibility")
+run/max_fps=240
 run/low_processor_mode=true
 boot_splash/image="res://Assets/df-logo-diamond.png"
 config/icon="uid://btrbocmbg1efs"
@@ -43,9 +44,10 @@ TutorialManager="*res://Scripts/UI/tutorial_manager.gd"
 
 [display]
 
-window/size/viewport_width=2436
-window/size/viewport_height=1125
-window/size/initial_position_type=2
+window/size/viewport_width=3456
+window/size/viewport_height=2234
+window/size/initial_position_type=3
+window/size/initial_screen=1
 window/stretch/mode="canvas_items"
 window/stretch/aspect="expand"
 window/handheld/orientation=6
