@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://d2sng7ou7hmvm"
-path="res://.godot/imported/4-door_sedan.png-ea2da92dd2e970708c42367a0c24117a.ctex"
+uid="uid://fru05rh4t5pp"
+path="res://.godot/imported/sedan.png-9431ecf3d26e407a6531c3a6afd0ea09.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://Assets/vehicle_sprites/4-door_sedan.png"
-dest_files=["res://.godot/imported/4-door_sedan.png-ea2da92dd2e970708c42367a0c24117a.ctex"]
+source_file="res://Assets/vehicle_sprites/sedan.png"
+dest_files=["res://.godot/imported/sedan.png-9431ecf3d26e407a6531c3a6afd0ea09.ctex"]
 
 [params]
 

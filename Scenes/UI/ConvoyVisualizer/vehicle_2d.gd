@@ -22,31 +22,35 @@ func _parse_color(color_str: String) -> Color:
 	if s.is_empty():
 		return Color(0.7, 0.7, 0.7, 1.0)
 
-	# Try direct string conversion (Godot handles many named colors like "red", "blue")
-	if Color.html_is_valid(s):
-		return Color.from_string(s, Color.GRAY)
-
-	# Handle complex names with spaces: "Olive Drab" -> "olivedrab"
+	# Handle specific custom requirements first
 	var normalized = s.to_lower().replace(" ", "").replace("_", "")
 
-	# Godot's Color() constructor handles many named colors if spaces are removed
-	# However, we'll use a small dictionary for common non-standard names
-	# or names that might differ from Godot's built-in set.
 	var custom_map = {
 		"olivedrab": Color(0.42, 0.56, 0.14),
 		"drab": Color(0.59, 0.53, 0.44),
 		"tan": Color(0.82, 0.71, 0.55),
 		"navy": Color.NAVY_BLUE,
 		"forest": Color.FOREST_GREEN,
-		"maroon": Color.MAROON
+		"maroon": Color.MAROON,
+		"beige": Color(0.96, 0.90, 0.70), # More saturated beige
+		"gray": Color(0.75, 0.75, 0.75), # 3/4 brightness
+		"black": Color(0.5, 0.5, 0.5) # 1/2 brightness
 	}
 
 	if custom_map.has(normalized):
 		return custom_map[normalized]
 
-	# Final attempt: Godot built-in named colors
-	# Color() constructor is quite robust in GDScript
-	return Color(normalized) if Color.html_is_valid(normalized) else Color.GRAY
+	if normalized == "grey":
+		return custom_map["gray"]
+
+	# Try general color names and hex strings
+	# from_string is the robust way in Godot 4 to handle both names and hex
+	var c = Color.from_string(s, Color.TRANSPARENT)
+	if c != Color.TRANSPARENT:
+		return c
+
+	# Final fallback
+	return Color.GRAY
 
 func _apply_visuals() -> void:
 	# 1. Determine the correct sprite path
@@ -64,9 +68,13 @@ func _apply_visuals() -> void:
 			sprite.texture = texture
 
 		# Apply target color to the hue-shift shader
+		var is_rainbow = _color.to_lower().strip_edges() == "striped rainbow livery"
 		var target_color = _parse_color(_color)
+
 		if sprite.material is ShaderMaterial:
-			sprite.material.set_shader_parameter("target_color", target_color)
+			# If in rainbow mode, pass white to target_color to avoid tinting the rainbow effect
+			sprite.material.set_shader_parameter("target_color", Color.WHITE if is_rainbow else target_color)
+			sprite.material.set_shader_parameter("rainbow_mode", is_rainbow)
 
 		# Ensure modulate is reset to white so it doesn't interfere with the shader
 		sprite.modulate = Color.WHITE

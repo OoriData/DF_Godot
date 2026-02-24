@@ -1,8 +1,9 @@
 shader_type canvas_item;
 
 uniform vec4 target_color : source_color;
+uniform bool rainbow_mode = false;
 
-// RGB to HSV conversion from Godot documentation/community snippets
+// RGB to HSV conversion
 vec3 rgb2hsv(vec3 c) {
     vec4 K = vec4(0.0, -1.0 / 3.0, 2.0 / 3.0, -1.0);
     vec4 p = mix(vec4(c.bg, K.wz), vec4(c.gb, K.xy), step(c.b, c.g));
@@ -21,18 +22,25 @@ vec3 hsv2rgb(vec3 c) {
 
 void fragment() {
     vec4 original_color = texture(TEXTURE, UV);
+    if (original_color.a < 0.01) discard;
     
     // Convert current pixel to HSV
     vec3 hsv_base = rgb2hsv(original_color.rgb);
-    // Convert target color to HSV
-    vec3 hsv_target = rgb2hsv(target_color.rgb);
     
-    // Apply target hue and saturation
-    // We keep the original 'Value' (brightness) to preserve shading/details
-    // We also multiply by target brightness to allow for dark/bright variations
+    vec3 hsv_target;
+    if (rainbow_mode) {
+        // Striped rainbow effect based on UV.x
+        float hue = fract(UV.x * 2.5); 
+        hsv_target = vec3(hue, 0.8, 1.0);
+    } else {
+        hsv_target = rgb2hsv(target_color.rgb);
+    }
+    
+    // Apply target hue and saturation while preserving sprite luminosity
     vec3 out_hsv = vec3(hsv_target.x, hsv_target.y, hsv_base.z * hsv_target.z);
     
     vec3 final_rgb = hsv2rgb(out_hsv);
+    float final_alpha = original_color.a * (rainbow_mode ? 1.0 : target_color.a);
     
-    COLOR = vec4(final_rgb, original_color.a * target_color.a);
+    COLOR = vec4(final_rgb, final_alpha);
 }
