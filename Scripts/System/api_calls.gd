@@ -58,7 +58,7 @@ signal warehouse_received(warehouse_data: Dictionary)
 
 # --- Steam Signals ---
 signal steam_account_linked(result: Dictionary)   # { ok, steam_id, user_id, error_code, message }
-signal auth_links_received(links: Array)             # Array of { provider, provider_id, linked_at }
+signal auth_links_received(links: Array)             # Array of { provider, provider_subject_id, linked_at }
 signal merge_preview_received(result: Dictionary)    # { ok, merge_token, summary, error_code, message }
 signal merge_committed(result: Dictionary)           # { ok, user_id, error_code, message }
 signal discord_link_url_received(url: String, state: String)
@@ -529,10 +529,24 @@ func _on_steam_link_completed(result: int, response_code: int, _headers: PackedS
 		data = json.data
 	_log_info("[APICalls][link_steam_account] response code=%d body=%s" % [response_code, text.substr(0, 200)])
 	if response_code == 200:
+		var st_id := String(data.get("steam_id", ""))
+		var u_id := String(data.get("user_id", ""))
+		
+		# Optimistically update the store if possible
+		var store := get_node_or_null("/root/GameStore")
+		if is_instance_valid(store) and store.has_method("get_user"):
+			var u = store.get_user()
+			if not u.is_empty() and st_id != "":
+				var updated_user = u.duplicate(true)
+				updated_user["steam_id"] = st_id
+				store.set_user(updated_user)
+				
+		resolve_current_user_id(true)
+		
 		emit_signal("steam_account_linked", {
 			"ok": true,
-			"steam_id": String(data.get("steam_id", "")),
-			"user_id": String(data.get("user_id", "")),
+			"steam_id": st_id,
+			"user_id": u_id,
 			"error_code": 0,
 			"message": "",
 			"conflict": {}
@@ -2248,6 +2262,13 @@ func _on_request_completed(result: int, response_code: int, _headers: PackedStri
 			# Update GameStore then emit legacy signal
 			var store := get_node_or_null('/root/GameStore') if is_inside_tree() else null
 			if is_instance_valid(store) and store.has_method('set_user'):
+				var existing_user = store.get_user()
+				if existing_user is Dictionary and not existing_user.is_empty():
+					# Preserve locally-injected IDs if backend is lagging or omitting them
+					if (not json_response.has("steam_id") or json_response.get("steam_id") == null) and existing_user.has("steam_id") and existing_user.get("steam_id") != null:
+						json_response["steam_id"] = existing_user.get("steam_id")
+					if (not json_response.has("discord_id") or json_response.get("discord_id") == null) and existing_user.has("discord_id") and existing_user.get("discord_id") != null:
+						json_response["discord_id"] = existing_user.get("discord_id")
 				store.set_user(json_response)
 			emit_signal('user_data_received', json_response)
 
@@ -2483,7 +2504,7 @@ func _on_request_completed(result: int, response_code: int, _headers: PackedStri
 				_auth_me_resolve_attempts = 0
 				set_user_id(uid_str)
 				# Populate GameStore.user_changed so the LoginScreen can advance.
-				get_user_data(uid_str)
+				get_user_data(uid_str, true)
 				emit_signal('user_id_resolved', uid_str)
 			else:
 				print('[APICalls][AUTH_ME] Missing/invalid user_id (attempt %d/%d). Body=%s' % [_auth_me_resolve_attempts, AUTH_ME_MAX_ATTEMPTS, response_body_text])

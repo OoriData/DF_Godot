@@ -196,6 +196,12 @@ func _on_steam_link_result(result: Dictionary) -> void:
 	if result.get("ok", false):
 		var linked_id := String(result.get("steam_id", ""))
 		_set_status("✅  Linked! Steam ID: %s" % linked_id, _STEAM_GREEN_HL)
+		
+		# Proactively alert other systems (like AccountLinksPopup) that user identity changed
+		var hub := get_node_or_null("/root/SignalHub")
+		if is_instance_valid(hub) and hub.has_signal("user_refresh_requested"):
+			hub.user_refresh_requested.emit()
+
 		# Auto-close after 2 seconds
 		await get_tree().create_timer(2.0).timeout
 		if is_inside_tree():

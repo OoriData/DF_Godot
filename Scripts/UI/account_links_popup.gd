@@ -70,46 +70,35 @@ func _on_user_data_refreshed(_user_data: Dictionary) -> void:
 # ── API Handlers ─────────────────────────────────────────────────────────────
 
 func _on_auth_links_received(links: Array) -> void:
+	print("[AccountLinksPopup] Received %d auth links: %s" % [links.size(), str(links)])
+	
 	var steam_linked := "Not Linked"
 	var discord_linked := "Not Linked"
 	
 	for link in links:
 		var provider = link.get("provider", "")
-		var pid = link.get("provider_id", "")
+		# The backend uses 'provider_subject_id'
+		var pid = str(link.get("provider_subject_id", link.get("provider_id", "")))
+		if pid == "" or pid == "<null>":
+			continue
+			
 		if provider == "steam":
 			steam_linked = pid
 		elif provider == "discord":
 			discord_linked = pid
 			
-	# Verify against the user object to ensure the backend actually has the ID bound
-	var user_data: Dictionary = {}
-	var store := get_node_or_null("/root/GameStore")
-	if is_instance_valid(store) and store.has_method("get_user"):
-		user_data = store.get_user()
-	
-	var raw_steam = user_data.get("steam_id")
-	var raw_discord = user_data.get("discord_id")
-	var actual_steam_id := "" if raw_steam == null else str(raw_steam)
-	var actual_discord_id := "" if raw_discord == null else str(raw_discord)
-	
-	if actual_steam_id == "<null>":
-		actual_steam_id = ""
-	if actual_discord_id == "<null>":
-		actual_discord_id = ""
-	
-	if steam_linked != "Not Linked" and actual_steam_id != "":
+	# Update UI based on the link list (Primary source of truth)
+	if steam_linked != "Not Linked":
 		_steam_id_label.text = "✅ Connected"
 		_steam_id_label.add_theme_color_override("font_color", _GREEN_SUCCESS)
 	else:
-		steam_linked = "Not Linked"
 		_steam_id_label.text = "Not Linked"
 		_steam_id_label.add_theme_color_override("font_color", _TEXT_DIM)
 	
-	if discord_linked != "Not Linked" and actual_discord_id != "":
+	if discord_linked != "Not Linked":
 		_discord_id_label.text = "✅ Connected"
 		_discord_id_label.add_theme_color_override("font_color", _GREEN_SUCCESS)
 	else:
-		discord_linked = "Not Linked"
 		_discord_id_label.text = "Not Linked"
 		_discord_id_label.add_theme_color_override("font_color", _TEXT_DIM)
 	
