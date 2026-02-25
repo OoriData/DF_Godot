@@ -189,3 +189,57 @@ Steam>
 [2025-12-09 19:14:02] [2025-12-09 19:14:02]: Successfully finished AppID 4242880 build (BuildID 21124184).
 [2025-12-09 19:14:02] 
 Steam>
+
+
+[2026-02-20 13:57:36] Client version: 1769026246
+[2026-02-20 13:57:36] Loading Steam API...
+[2026-02-20 13:57:36] OK
+[2026-02-20 13:57:36] 
+Steam>
+[2026-02-20 13:57:43] Cached credentials not found.
+[2026-02-20 13:57:43] 
+password: 
+[2026-02-20 13:57:43] 
+Proceeding with login using username/password.
+[2026-02-20 13:57:43] Logging in user 'iceblice9' [U:1:130228598] to Steam Public...
+[2026-02-20 13:59:16] ERROR (Invalid Password)
+[2026-02-20 13:59:16] 
+Steam>
+[2026-02-20 13:59:26] Cached credentials not found.
+[2026-02-20 13:59:26] 
+password: 
+[2026-02-20 13:59:26] 
+Proceeding with login using username/password.
+[2026-02-20 13:59:26] Logging in user 'iceblice9' [U:1:130228598] to Steam Public...
+[2026-02-20 13:59:58] OK
+[2026-02-20 13:59:58] Waiting for client config...
+[2026-02-20 13:59:59] OK
+[2026-02-20 13:59:59] Waiting for user info...
+[2026-02-20 13:59:59] OK
+[2026-02-20 13:59:59] 
+Steam>
+[2026-02-20 14:00:58] [2026-02-20 14:00:58]: ERROR! App build file does not exist: ../scripts/app_build_4242880.vdf.
+[2026-02-20 14:00:58] 
+Steam>
+[2026-02-20 14:10:55] [2026-02-20 14:10:55]: Starting AppID 4242880 build (flags 0x0).
+[2026-02-20 14:10:55] [2026-02-20 14:10:55]: Building depot 4242881...
+
+[2026-02-20 14:10:55] Building file mapping...
+[2026-02-20 14:10:55] Scanning content
+[2026-02-20 14:10:55] Uploading content...
+[2026-02-20 14:10:56] 
+[2026-02-20 14:10:56] [2026-02-20 14:10:56]: Building depot 4242882...
+
+[2026-02-20 14:10:56] Building file mapping...
+[2026-02-20 14:10:56] Scanning content
+[2026-02-20 14:10:56] Uploading content...
+[2026-02-20 14:10:57] 
+[2026-02-20 14:10:57] [2026-02-20 14:10:57]: Building depot 4242883...
+
+[2026-02-20 14:10:57] Building file mapping...
+[2026-02-20 14:10:57] Scanning content
+[2026-02-20 14:10:58] Uploading content...
+[2026-02-20 14:10:59] 
+[2026-02-20 14:10:59] [2026-02-20 14:10:59]: Successfully finished AppID 4242880 build (BuildID 22026361).
+[2026-02-20 14:10:59] 
+Steam>
