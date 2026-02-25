@@ -10,12 +10,12 @@ signal convoy_menu_requested(convoy_id: String)
 var _settings_menu_instance: Window
 var _bug_report_window: BugReportWindow
 var _discord_popup: PopupPanel
-var _steam_link_popup: PopupPanel
+var _account_links_popup: CanvasLayer
 
 const _OPTIONS_SETTINGS_ID := 1
 const _OPTIONS_REPORT_BUG_ID := 2
 const _OPTIONS_DISCORD_ID := 3
-const _OPTIONS_LINK_STEAM_ID := 4
+const _OPTIONS_CONNECT_ACCOUNTS_ID := 4
 # Store original font sizes to scale them from a clean base
 var _original_username_font_size: int
 var _original_money_font_size: int
@@ -137,7 +137,7 @@ func _configure_options_dropdown() -> void:
 	popup.add_item("Settings", _OPTIONS_SETTINGS_ID)
 	popup.add_item("Report Bug", _OPTIONS_REPORT_BUG_ID)
 	popup.add_item("Join Discord", _OPTIONS_DISCORD_ID)
-	popup.add_item("Link Steam", _OPTIONS_LINK_STEAM_ID)
+	popup.add_item("Connect Accounts", _OPTIONS_CONNECT_ACCOUNTS_ID)
 
 	if not popup.id_pressed.is_connected(_on_options_menu_id_pressed):
 		popup.id_pressed.connect(_on_options_menu_id_pressed)
@@ -151,8 +151,8 @@ func _on_options_menu_id_pressed(id: int) -> void:
 			call_deferred("_on_bug_report_pressed")
 		_OPTIONS_DISCORD_ID:
 			call_deferred("_on_discord_pressed")
-		_OPTIONS_LINK_STEAM_ID:
-			call_deferred("_on_link_steam_pressed")
+		_OPTIONS_CONNECT_ACCOUNTS_ID:
+			call_deferred("_on_connect_accounts_pressed")
 		_:
 			pass
 
@@ -173,20 +173,20 @@ func _on_discord_pressed() -> void:
 		_discord_popup.show()
 
 
-func _on_link_steam_pressed() -> void:
-	# Lazy-create Steam link popup
-	if not is_instance_valid(_steam_link_popup):
-		var script := load("res://Scripts/UI/steam_link_popup.gd")
+func _on_connect_accounts_pressed() -> void:
+	# Lazy-create Account links popup
+	if not is_instance_valid(_account_links_popup):
+		var script := load("res://Scripts/UI/account_links_popup.gd")
 		if script == null:
-			push_error("Failed to load steam_link_popup.gd")
+			push_error("Failed to load account_links_popup.gd")
 			return
-		_steam_link_popup = script.new()
-		get_tree().root.add_child(_steam_link_popup)
+		_account_links_popup = script.new()
+		get_tree().root.add_child(_account_links_popup)
 
-	if _steam_link_popup.has_method("open_centered"):
-		_steam_link_popup.open_centered()
+	if _account_links_popup.has_method("open_centered"):
+		_account_links_popup.open_centered()
 	else:
-		_steam_link_popup.show()
+		_account_links_popup.show()
 
 
 func _on_bug_report_pressed() -> void:

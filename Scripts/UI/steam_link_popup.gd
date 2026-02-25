@@ -1,4 +1,4 @@
-extends PopupPanel
+extends CanvasLayer
 class_name SteamLinkPopup
 
 signal closed
@@ -11,20 +11,25 @@ const _STEAM_GREEN  := Color("#4c6b22")
 const _STEAM_GREEN_HL := Color("#a4d007")
 const _ERROR_RED    := Color("#c73232")
 
+var _overlay: Control
 var _root: VBoxContainer
 var _steam_id_input: LineEdit
 var _status_label: Label
 var _link_button: Button
 var _close_button: Button
 
-@onready var _api: Node = get_node_or_null("/root/APICalls")
-@onready var _steam_mgr: Node = get_node_or_null("/root/SteamManager")
+var _api: Node
+var _steam_mgr: Node
 
 func _ready() -> void:
+	_api = get_node_or_null("/root/APICalls")
+	_steam_mgr = get_node_or_null("/root/SteamManager")
+	layer = 101 # Same as AccountMergeModal
+	visible = false
 	_build_ui()
 
 func open_centered() -> void:
-	popup_centered(Vector2i(400, 220))
+	show()
 	call_deferred("_on_opened")
 
 func _on_opened() -> void:
@@ -47,6 +52,17 @@ func _on_opened() -> void:
 # ── Build UI ─────────────────────────────────────────────────────────────────
 
 func _build_ui() -> void:
+	# Full-screen overlay
+	_overlay = Control.new()
+	_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	add_child(_overlay)
+	
+	var dim := ColorRect.new()
+	dim.color = Color(0, 0, 0, 0.4)
+	dim.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_overlay.add_child(dim)
+
+	var panel := PanelContainer.new()
 	# Panel background
 	var panel_style := StyleBoxFlat.new()
 	panel_style.bg_color = _STEAM_BLUE
@@ -56,20 +72,23 @@ func _build_ui() -> void:
 	panel_style.corner_radius_top_right   = 10
 	panel_style.corner_radius_bottom_left = 10
 	panel_style.corner_radius_bottom_right = 10
-	add_theme_stylebox_override("panel", panel_style)
+	panel.add_theme_stylebox_override("panel", panel_style)
+	
+	panel.custom_minimum_size = Vector2(380, 180)
+	panel.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
+	_overlay.add_child(panel)
 
 	var margin := MarginContainer.new()
-	margin.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	margin.add_theme_constant_override("margin_left",   16)
 	margin.add_theme_constant_override("margin_right",  16)
 	margin.add_theme_constant_override("margin_top",    12)
 	margin.add_theme_constant_override("margin_bottom", 12)
-	add_child(margin)
+	panel.add_child(margin)
 
 	var root := VBoxContainer.new()
 	root.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	root.size_flags_vertical   = Control.SIZE_EXPAND_FILL
-	root.add_theme_constant_override("separation", 10)
+	root.add_theme_constant_override("separation", 6)
 	margin.add_child(root)
 	_root = root
 
@@ -87,10 +106,9 @@ func _build_ui() -> void:
 
 	# Description
 	var desc := Label.new()
-	desc.text = "Enter your Steam ID to link it to your DF profile.\nYou can find it in Steam → View → Profile."
-	desc.add_theme_font_size_override("font_size", 13)
+	desc.text = "Link your Steam account to your DF profile."
+	desc.add_theme_font_size_override("font_size", 12)
 	desc.add_theme_color_override("font_color", _STEAM_LIGHT.darkened(0.25))
-	desc.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	root.add_child(desc)
 
 	# Input row
@@ -188,11 +206,52 @@ func _on_steam_link_result(result: Dictionary) -> void:
 		var msg: String = result.get("message", "Unknown error.")
 		match code:
 			400:
-				_show_error("Invalid Steam ID or already linked to this account.\n%s" % msg)
+				_show_error("Invalid Steam ID or already linked to this account.")
 			409:
-				_show_error("This Steam account is already linked to another DF profile.\nPlease unlink it there first.")
+				# Pass conflict data to the merge modal
+				_open_merge_modal(result.get("conflict", {}))
 			_:
 				_show_error("Error %d: %s" % [code, msg])
+
+
+func _open_merge_modal(conflict: Dictionary) -> void:
+	_set_status("Account conflict detected — merge required.", _STEAM_ACCENT)
+	# Hide this popup while merge modal is open
+	hide()
+	var script := load("res://Scripts/UI/account_merge_modal.gd")
+	if script == null:
+		push_error("[SteamLinkPopup] Failed to load account_merge_modal.gd")
+		_show_error("This Steam account is already linked to another DF profile.")
+		show()
+		return
+	var modal = script.new()
+	get_tree().root.add_child(modal)
+	if modal.has_signal("merge_done"):
+		modal.merge_done.connect(_on_merge_done)
+	if modal.has_signal("cancelled"):
+		modal.cancelled.connect(_on_merge_cancelled)
+	if modal.has_method("open_with_conflict"):
+		modal.open_with_conflict(conflict)
+	else:
+		modal.popup_centered(Vector2i(400, 300))
+
+
+func _on_merge_done(user_id: String) -> void:
+	# Merge committed — refresh session then close this popup
+	var hub := get_node_or_null("/root/SignalHub")
+	if is_instance_valid(hub) and hub.has_signal("user_refresh_requested"):
+		hub.user_refresh_requested.emit()
+	_set_status("✅  Accounts merged! Refreshing…", _STEAM_GREEN_HL)
+	show()
+	await get_tree().create_timer(2.0).timeout
+	if is_inside_tree():
+		hide()
+		closed.emit()
+
+
+func _on_merge_cancelled() -> void:
+	# User cancelled merge — re-show link popup so they can try again or close
+	show()
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 

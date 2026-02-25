@@ -345,8 +345,6 @@ func _on_discord_login_pressed() -> void:
 		return
 	api.get_auth_url()
 
-	api.get_auth_url()
-
 func _on_steam_login_pressed() -> void:
 	if _oauth_in_progress:
 		return
@@ -360,7 +358,10 @@ func _on_steam_login_pressed() -> void:
 	_set_oauth_active(true)
 	var api = _api()
 	if api:
-		api.login_with_steam(steam_id)
+		var persona := ""
+		if SteamManager.has_method("get_steam_username"):
+			persona = SteamManager.get_steam_username()
+		api.login_with_steam(steam_id, persona)
 	else:
 		status_label.text = "API System offline."
 		_set_oauth_active(false)
