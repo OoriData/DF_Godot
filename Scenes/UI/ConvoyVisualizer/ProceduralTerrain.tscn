@@ -1,0 +1,6 @@
+[gd_scene format=3 uid="uid://c83la2d"]
+
+[ext_resource type="Script" path="res://Scenes/UI/ConvoyVisualizer/procedural_terrain.gd" id="1_pt"]
+
+[node name="ProceduralTerrain" type="Node2D"]
+script = ExtResource("1_pt")

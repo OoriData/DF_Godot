@@ -1,4 +1,4 @@
-[gd_scene load_steps=5 format=3 uid="uid://b1v2a3h8djk9c"]
+[gd_scene load_steps=4 format=3 uid="uid://b1v2a3h8djk9c"]
 
 [ext_resource type="Script" path="res://Scenes/UI/ConvoyVisualizer/vehicle_2d.gd" id="1_v4m2b"]
 [ext_resource type="Shader" path="res://Scenes/UI/ConvoyVisualizer/vehicle_hue_shift.gdshader" id="2_v4m2b"]
@@ -8,20 +8,28 @@ resource_local_to_scene = true
 shader = ExtResource("2_v4m2b")
 shader_parameter/target_color = Color(1, 1, 1, 1)
 
-[sub_resource type="RectangleShape2D" id="RectangleShape2D_y5u2b"]
-size = Vector2(100, 50)
-
-[node name="Vehicle2D" type="Node2D"]
+[node name="VehiclePhysicsGroup" type="Node2D"]
 script = ExtResource("1_v4m2b")
 
-[node name="VehicleSprite" type="Sprite2D" parent="."]
+[node name="Chassis" type="RigidBody2D" parent="."]
+collision_layer = 2
+collision_mask = 3
+mass = 10.0
+
+[node name="VehicleSprite" type="Sprite2D" parent="Chassis"]
 unique_name_in_owner = true
 material = SubResource("ShaderMaterial_v4m2b")
 
-[node name="ErrorRect" type="ColorRect" parent="."]
+[node name="ErrorRect" type="ColorRect" parent="Chassis"]
 unique_name_in_owner = true
 visible = false
 offset_left = -50.0
 offset_top = -100.0
 offset_right = 50.0
 color = Color(1, 0, 1, 1)
+
+[node name="Wheels" type="Node2D" parent="."]
+
+[node name="Joints" type="Node2D" parent="."]
+
+[node name="CargoBed" type="Node2D" parent="."]
