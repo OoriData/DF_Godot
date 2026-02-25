@@ -1,0 +1,74 @@
+name: Build Web
+
+on:
+  workflow_call:
+    inputs:
+      godot_version:
+        required: true
+        type: string
+        default: '4.6.0'
+      version_tag:
+        required: true
+        type: string
+    outputs:
+      build_status:
+        description: 'Build success/failure'
+        value: ${{ jobs.build.outputs.status }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    outputs:
+      status: ${{ steps.export.outcome }}
+    
+    permissions:
+      contents: write # Required for deploying to gh-pages
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Create Build Directory
+        run: mkdir -p build/web
+
+      - name: List Files (Pre-Export)
+        run: ls -F
+
+      - name: Setup Godot
+        uses: chickensoft-games/setup-godot@v2
+        with:
+          version: ${{ inputs.godot_version }}
+          use-dotnet: false
+          include-templates: true
+
+      - name: Export Godot Project
+        run: |
+          mkdir -p build/web
+          godot --headless --export-release "Web" build/web/index.html
+
+      - name: Create Hosting Branch Documentation
+        run: |
+          cat > build/web/README.md <<EOF
+          # Web App Hosting Branch
+          
+          This branch is automatically managed by the CI/CD pipeline.
+          
+          - **Live Demo**: [https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/](https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/)
+          - **Source Code**: See the \`main\` branch.
+          - **Last Updated**: $(date)
+          - **Branch Purpose**: This branch is intentionally kept separate from the source code and only contains the compiled web build artifacts for GitHub Pages hosting.
+          EOF
+          touch build/web/.nojekyll
+
+      - name: List Files (Debug)
+        run: ls -R build/web
+
+      # Deploy to GitHub Pages
+      # This deploys the content of build/web to the gh-pages branch
+      - name: Deploy to GitHub Pages
+        if: success()
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./build/web
+          publish_branch: webapp-hosting

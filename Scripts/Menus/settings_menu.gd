@@ -31,6 +31,20 @@ func _ready():
 
 	_init_values()
 	_wire_events()
+	_add_version_label()
+
+func _add_version_label():
+	var version = ProjectSettings.get_setting("application/config/version", "0.0.0")
+	var label = Label.new()
+	label.text = "Desolate Frontiers v" + str(version)
+	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	label.modulate = Color(1, 1, 1, 0.4)
+	
+	var settings = LabelSettings.new()
+	settings.font_size = 14
+	label.label_settings = settings
+	
+	$Margin/VBox.add_child(label)
 
 func _init_values():
 	s_menu_ratio.min_value = 0.0

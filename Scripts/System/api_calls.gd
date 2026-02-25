@@ -3,6 +3,7 @@ extends Node
 
 # Signal to indicate when parsed convoy data has been fetched
 signal convoy_data_received(parsed_convoy_list: Array)
+signal discord_code_link_started(result: Dictionary) # { ok, code, expires_in, error_code, message }
 # Signal to indicate an error occurred during fetching
 signal fetch_error(error_message: String)
 
@@ -54,6 +55,14 @@ signal convoy_created(convoy: Dictionary) # Restored for service-driven refresh
 
 # --- Warehouse Signals ---
 signal warehouse_received(warehouse_data: Dictionary)
+
+# --- Steam Signals ---
+signal steam_account_linked(result: Dictionary)   # { ok, steam_id, user_id, error_code, message }
+signal auth_links_received(links: Array)             # Array of { provider, provider_subject_id, linked_at }
+signal merge_preview_received(result: Dictionary)    # { ok, merge_token, summary, error_code, message }
+signal merge_committed(result: Dictionary)           # { ok, user_id, error_code, message }
+signal discord_link_url_received(url: String, state: String)
+signal discord_account_linked(result: Dictionary)    # { ok, error_code, message, conflict }
 
 # --- Bug Report Signals ---
 @warning_ignore("unused_signal")
@@ -154,6 +163,24 @@ func _log_info(msg: String) -> void:
 		print(msg)
 
 
+func _get_error_message(data: Variant, body_text: String) -> String:
+	if data is Dictionary:
+		var detail = data.get("detail", null)
+		if detail is Dictionary:
+			return String(detail.get("message", detail.get("error", "Unknown error.")))
+		elif detail is String:
+			return detail
+		
+		var msg = data.get("message", data.get("error", null))
+		if msg != null:
+			return String(msg)
+	
+	if body_text != "" and body_text.length() < 500:
+		return body_text
+	
+	return "Unknown error."
+
+
 func set_disable_request_timeouts_for_tests(disabled: bool) -> void:
 	_disable_request_timeouts_for_tests = disabled
 
@@ -250,6 +277,11 @@ func _ready() -> void:
 	if _http_request_route.request_completed.is_connected(_on_route_request_completed):
 		_http_request_route.request_completed.disconnect(_on_route_request_completed)
 	_http_request_route.request_completed.connect(_on_route_request_completed)
+
+	# Central refresh trigger
+	var hub := get_node_or_null("/root/SignalHub")
+	if is_instance_valid(hub) and hub.has_signal("user_refresh_requested"):
+		hub.user_refresh_requested.connect(resolve_current_user_id.bind(true))
 
 	# No persistent requester for mechanics; we will create ephemeral HTTPRequest nodes per request
 	_start_request_status_probe()
@@ -433,6 +465,340 @@ func exchange_auth_token(code: String, state: String, code_verifier: String) -> 
 	_request_queue.append(request_details)
 	_process_queue()
 
+func login_with_steam(steam_id: String, persona_name: String = "") -> void:
+	# POST to /auth/steam_login
+	var url := "%s/auth/steam_login" % BASE_URL
+	var headers: PackedStringArray = ['accept: application/json', 'content-type: application/json']
+	var body_dict: Dictionary = {"steam_id": steam_id}
+	if persona_name != "":
+		body_dict["persona_name"] = persona_name
+		body_dict["username"] = persona_name
+	var body := JSON.stringify(body_dict)
+	
+	_log_info("[APICalls] Initiating Steam login for ID: %s (persona: %s)" % [steam_id, persona_name])
+	
+	var request_details: Dictionary = {
+		"url": url,
+		"headers": headers,
+		"purpose": RequestPurpose.AUTH_TOKEN, # reuse token purpose as it returns a session
+		"method": HTTPClient.METHOD_POST,
+		"body": body,
+	}
+	_request_queue.append(request_details)
+	_process_queue()
+
+
+# --- Steam account linking ---
+## Links the current DF account to a Steam ID via POST /auth/steam/link.
+## Emits steam_account_linked({ ok, steam_id, user_id, error_code, message }).
+func link_steam_account(steam_id: String, persona_name: String = "") -> void:
+	if steam_id.is_empty():
+		printerr("[APICalls][link_steam_account] steam_id cannot be empty")
+		emit_signal("steam_account_linked", {"ok": false, "error_code": 400, "message": "Steam ID cannot be empty."})
+		return
+	var url := "%s/auth/steam/link" % BASE_URL
+	var headers: PackedStringArray = ['accept: application/json', 'content-type: application/json']
+	headers = _apply_auth_header(headers)
+	var body_dict: Dictionary = {"steam_id": steam_id}
+	if persona_name != "":
+		body_dict["persona_name"] = persona_name
+		body_dict["username"] = persona_name
+	var body_json := JSON.stringify(body_dict)
+	_log_info("[APICalls][link_steam_account] POST url=%s steam_id=%s" % [url, steam_id])
+	# Use ephemeral requester so this doesn't queue-starve other requests
+	var req := HTTPRequest.new()
+	req.name = "SteamLinkRequest"
+	add_child(req)
+	req.request_completed.connect(
+		_on_steam_link_completed.bind(req)
+	)
+	var err := req.request(url, headers, HTTPClient.METHOD_POST, body_json)
+	if err != OK:
+		printerr("[APICalls][link_steam_account] HTTP request failed err=%d" % err)
+		req.queue_free()
+		emit_signal("steam_account_linked", {"ok": false, "error_code": -1, "message": "Network error (%d)." % err})
+
+func _on_steam_link_completed(result: int, response_code: int, _headers: PackedStringArray, body: PackedByteArray, requester: HTTPRequest) -> void:
+	if is_instance_valid(requester):
+		requester.queue_free()
+	var text := body.get_string_from_utf8()
+	var json := JSON.new()
+	var parse_err := json.parse(text)
+	var data: Variant = {}
+	if parse_err == OK:
+		data = json.data
+	_log_info("[APICalls][link_steam_account] response code=%d body=%s" % [response_code, text.substr(0, 200)])
+	if response_code == 200:
+		var st_id := String(data.get("steam_id", ""))
+		var u_id := String(data.get("user_id", ""))
+		
+		# Optimistically update the store if possible
+		var store := get_node_or_null("/root/GameStore")
+		if is_instance_valid(store) and store.has_method("get_user"):
+			var u = store.get_user()
+			if not u.is_empty() and st_id != "":
+				var updated_user = u.duplicate(true)
+				updated_user["steam_id"] = st_id
+				store.set_user(updated_user)
+				
+		resolve_current_user_id(true)
+		
+		emit_signal("steam_account_linked", {
+			"ok": true,
+			"steam_id": st_id,
+			"user_id": u_id,
+			"error_code": 0,
+			"message": "",
+			"conflict": {}
+		})
+	else:
+		var msg := _get_error_message(data, text.substr(0, 200))
+		var conflict_data: Dictionary = {}
+		if data is Dictionary:
+			# Gather conflict data from all possible sources (detail, conflict, or top-level)
+			if response_code == 409:
+				var detail_raw = data.get("detail", null)
+				if detail_raw is Dictionary:
+					conflict_data.merge(detail_raw)
+				
+				var conf_raw = data.get("conflict", null)
+				if conf_raw is Dictionary:
+					conflict_data.merge(conf_raw)
+				
+				if data.has("merge_token"):
+					conflict_data["merge_token"] = data.get("merge_token")
+				
+				# If we still have nothing but it's a 409, take the whole thing
+				if conflict_data.is_empty():
+					conflict_data = data.duplicate()
+		
+		if response_code != 200:
+			_log_info("[APICalls][link_steam_account] Error %d: %s" % [response_code, text])
+		
+		emit_signal("steam_account_linked", {
+			"ok": false,
+			"steam_id": "",
+			"user_id": "",
+			"error_code": response_code,
+			"message": msg,
+			"conflict": conflict_data
+		})
+
+# --- Auth Links / Merge ---
+
+## Returns all linked providers for the current user.
+## Emits auth_links_received(links: Array).
+func get_auth_links() -> void:
+	var url := "%s/auth/links" % BASE_URL
+	var headers: PackedStringArray = ['accept: application/json']
+	headers = _apply_auth_header(headers)
+	_log_info("[APICalls][get_auth_links] GET %s" % url)
+	var req := HTTPRequest.new()
+	req.name = "AuthLinksRequest"
+	add_child(req)
+	req.request_completed.connect(_on_auth_links_completed.bind(req))
+	var err := req.request(url, headers, HTTPClient.METHOD_GET)
+	if err != OK:
+		printerr("[APICalls][get_auth_links] HTTP request failed err=%d" % err)
+		req.queue_free()
+		emit_signal("auth_links_received", [])
+
+func _on_auth_links_completed(result: int, response_code: int, _headers: PackedStringArray, body: PackedByteArray, requester: HTTPRequest) -> void:
+	if is_instance_valid(requester):
+		requester.queue_free()
+	var text := body.get_string_from_utf8()
+	if response_code != 200:
+		printerr("[APICalls][get_auth_links] Error %d: %s" % [response_code, text.substr(0, 200)])
+		emit_signal("auth_links_received", [])
+		return
+	var json := JSON.new()
+	var links: Array = []
+	if json.parse(text) == OK:
+		if json.data is Array:
+			links = json.data as Array
+		elif json.data is Dictionary and json.data.has("links"):
+			links = json.data.get("links", []) as Array
+	_log_info("[APICalls][get_auth_links] response code=%d links=%d" % [response_code, links.size()])
+	emit_signal("auth_links_received", links)
+
+## Requests a Discord link URL for the current user.
+## Emits discord_link_url_received(url, state).
+func get_discord_link_url() -> void:
+	var url := "%s/auth/discord/link/url" % BASE_URL
+	var headers: PackedStringArray = ['accept: application/json']
+	headers = _apply_auth_header(headers)
+	_log_info("[APICalls][get_discord_link_url] GET %s" % url)
+	var req := HTTPRequest.new()
+	req.name = "DiscordLinkUrlRequest"
+	add_child(req)
+	req.request_completed.connect(_on_discord_link_url_completed.bind(req))
+	var err := req.request(url, headers, HTTPClient.METHOD_GET)
+	if err != OK:
+		printerr("[APICalls][get_discord_link_url] HTTP request failed err=%d" % err)
+		req.queue_free()
+		emit_signal("discord_link_url_received", "", "")
+
+func _on_discord_link_url_completed(result: int, response_code: int, _headers: PackedStringArray, body: PackedByteArray, requester: HTTPRequest) -> void:
+	if is_instance_valid(requester):
+		requester.queue_free()
+	var text := body.get_string_from_utf8()
+	var json := JSON.new()
+	var data: Variant = {}
+	if json.parse(text) == OK:
+		data = json.data
+	_log_info("[APICalls][get_discord_link_url] response code=%d" % response_code)
+	if response_code == 200:
+		var link_url := str(data.get("url", ""))
+		var state := str(data.get("state", ""))
+		emit_signal("discord_link_url_received", link_url, state)
+	else:
+		emit_signal("discord_link_url_received", "", "")
+
+## Starts a Discord link-code flow via POST /auth/discord/link_code.
+## Returns a short-lived code the user pastes into the Discord bot.
+## Emits discord_code_link_started({ ok, code, expires_in, error_code, message }).
+func start_discord_link_code() -> void:
+	var url := "%s/auth/discord/link_code" % BASE_URL
+	var headers: PackedStringArray = ['accept: application/json', 'content-type: application/json']
+	headers = _apply_auth_header(headers)
+	_log_info("[APICalls][start_discord_link_code] POST %s" % url)
+	var req := HTTPRequest.new()
+	req.name = "DiscordLinkCodeRequest"
+	add_child(req)
+	req.request_completed.connect(_on_discord_link_code_completed.bind(req))
+	var err := req.request(url, headers, HTTPClient.METHOD_POST, "{}")
+	if err != OK:
+		printerr("[APICalls][start_discord_link_code] HTTP request failed err=%d" % err)
+		req.queue_free()
+		emit_signal("discord_code_link_started", {"ok": false, "error_code": -1, "message": "Network error (%d)." % err})
+
+func _on_discord_link_code_completed(result: int, response_code: int, _headers: PackedStringArray, body: PackedByteArray, requester: HTTPRequest) -> void:
+	if is_instance_valid(requester):
+		requester.queue_free()
+	var text := body.get_string_from_utf8()
+	var json := JSON.new()
+	var data: Variant = {}
+	if json.parse(text) == OK:
+		data = json.data
+	_log_info("[APICalls][start_discord_link_code] response code=%d" % response_code)
+	if response_code == 200:
+		emit_signal("discord_code_link_started", {
+			"ok": true,
+			"code": String(data.get("code", "")),
+			"expires_in": int(data.get("expires_in", 300)),
+			"error_code": 0,
+			"message": ""
+		})
+	else:
+		var msg := _get_error_message(data, text.substr(0, 200))
+		_log_info("[APICalls][start_discord_link_code] Error %d: %s" % [response_code, text])
+		emit_signal("discord_code_link_started", {"ok": false, "code": "", "expires_in": 0, "error_code": response_code, "message": msg})
+
+## Previews what will happen if two accounts are merged.
+## merge_token is provided in the 409 conflict payload from a link attempt.
+## source_id is the current user ID, target_id is the existing account ID.
+## Emits merge_preview_received({ ok, merge_token, summary, error_code, message }).
+func preview_merge(merge_token: String, source_id: String, target_id: String) -> void:
+	if merge_token.is_empty():
+		printerr("[APICalls][preview_merge] merge_token is empty")
+		emit_signal("merge_preview_received", {"ok": false, "merge_token": "", "summary": [], "error_code": 400, "message": "No merge token provided."})
+		return
+	var url := "%s/auth/merge/preview" % BASE_URL
+	var headers: PackedStringArray = ['accept: application/json', 'content-type: application/json']
+	headers = _apply_auth_header(headers)
+	var body_json := JSON.stringify({
+		"merge_token": merge_token,
+		"source_user_id": source_id,
+		"target_user_id": target_id
+	})
+	_log_info("[APICalls][preview_merge] POST %s" % url)
+	var req := HTTPRequest.new()
+	req.name = "MergePreviewRequest"
+	add_child(req)
+	req.request_completed.connect(_on_merge_preview_completed.bind(req))
+	var err := req.request(url, headers, HTTPClient.METHOD_POST, body_json)
+	if err != OK:
+		printerr("[APICalls][preview_merge] HTTP request failed err=%d" % err)
+		req.queue_free()
+		emit_signal("merge_preview_received", {"ok": false, "error_code": -1, "message": "Network error (%d)." % err})
+
+func _on_merge_preview_completed(result: int, response_code: int, _headers: PackedStringArray, body: PackedByteArray, requester: HTTPRequest) -> void:
+	if is_instance_valid(requester):
+		requester.queue_free()
+	var text := body.get_string_from_utf8()
+	var json := JSON.new()
+	var data: Variant = {}
+	if json.parse(text) == OK:
+		data = json.data
+	_log_info("[APICalls][preview_merge] response code=%d" % response_code)
+	if response_code == 200:
+		emit_signal("merge_preview_received", {
+			"ok": true,
+			"merge_token": String(data.get("merge_token", "")),
+			"summary": data.get("summary", []),
+			"error_code": 0,
+			"message": ""
+		})
+	else:
+		var msg := _get_error_message(data, text.substr(0, 200))
+		_log_info("[APICalls][preview_merge] Error %d: %s" % [response_code, text])
+		emit_signal("merge_preview_received", {"ok": false, "merge_token": "", "summary": [], "error_code": response_code, "message": msg})
+
+## Commits a previewed account merge.
+## source_id is the current user ID, target_id is the existing account ID.
+## Emits merge_committed({ ok, user_id, error_code, message }).
+## On success the caller should refresh the session + user data.
+func commit_merge(merge_token: String, source_id: String, target_id: String) -> void:
+	if merge_token.is_empty():
+		printerr("[APICalls][commit_merge] merge_token is empty")
+		emit_signal("merge_committed", {"ok": false, "user_id": "", "error_code": 400, "message": "No merge token provided."})
+		return
+	var url := "%s/auth/merge/commit" % BASE_URL
+	var headers: PackedStringArray = ['accept: application/json', 'content-type: application/json']
+	headers = _apply_auth_header(headers)
+	var body_json := JSON.stringify({
+		"merge_token": merge_token,
+		"source_user_id": source_id,
+		"target_user_id": target_id,
+		"confirm": true
+	})
+	_log_info("[APICalls][commit_merge] POST %s" % url)
+	var req := HTTPRequest.new()
+	req.name = "MergeCommitRequest"
+	add_child(req)
+	req.request_completed.connect(_on_merge_commit_completed.bind(req))
+	var err := req.request(url, headers, HTTPClient.METHOD_POST, body_json)
+	if err != OK:
+		printerr("[APICalls][commit_merge] HTTP request failed err=%d" % err)
+		req.queue_free()
+		emit_signal("merge_committed", {"ok": false, "error_code": -1, "message": "Network error (%d)." % err})
+
+func _on_merge_commit_completed(result: int, response_code: int, _headers: PackedStringArray, body: PackedByteArray, requester: HTTPRequest) -> void:
+	if is_instance_valid(requester):
+		requester.queue_free()
+	var text := body.get_string_from_utf8()
+	var json := JSON.new()
+	var data: Variant = {}
+	if json.parse(text) == OK:
+		data = json.data
+	_log_info("[APICalls][commit_merge] response code=%d" % response_code)
+	if response_code == 200:
+		# Success! Refresh identity from /auth/me before signaling done
+		resolve_current_user_id(true)
+		
+		var uid := String(data.get("user_id", ""))
+		get_user_data(uid, true)
+		
+		emit_signal("merge_committed", {
+			"ok": true,
+			"user_id": uid,
+			"error_code": 0,
+			"message": ""
+		})
+	else:
+		var msg := _get_error_message(data, text.substr(0, 200))
+		_log_info("[APICalls][commit_merge] Error %d: %s" % [response_code, text])
+		emit_signal("merge_committed", {"ok": false, "user_id": "", "error_code": response_code, "message": msg})
 
 # --- Bug report ---
 func submit_bug_report(payload: Dictionary) -> void:
@@ -518,8 +884,8 @@ func get_map_data(x_min: int = -1, x_max: int = -1, y_min: int = -1, y_max: int 
 		return
 	_map_request_inflight = true
 
-func get_user_data(p_user_id: String) -> void:
-	if _user_data_requested_once:
+func get_user_data(p_user_id: String, force: bool = false) -> void:
+	if _user_data_requested_once and not force:
 		print('[APICalls] get_user_data(): already fetched once this session; skip duplicate.')
 		return
 	_user_data_requested_once = true
@@ -1896,6 +2262,13 @@ func _on_request_completed(result: int, response_code: int, _headers: PackedStri
 			# Update GameStore then emit legacy signal
 			var store := get_node_or_null('/root/GameStore') if is_inside_tree() else null
 			if is_instance_valid(store) and store.has_method('set_user'):
+				var existing_user = store.get_user()
+				if existing_user is Dictionary and not existing_user.is_empty():
+					# Preserve locally-injected IDs if backend is lagging or omitting them
+					if (not json_response.has("steam_id") or json_response.get("steam_id") == null) and existing_user.has("steam_id") and existing_user.get("steam_id") != null:
+						json_response["steam_id"] = existing_user.get("steam_id")
+					if (not json_response.has("discord_id") or json_response.get("discord_id") == null) and existing_user.has("discord_id") and existing_user.get("discord_id") != null:
+						json_response["discord_id"] = existing_user.get("discord_id")
 				store.set_user(json_response)
 			emit_signal('user_data_received', json_response)
 
@@ -1990,6 +2363,7 @@ func _on_request_completed(result: int, response_code: int, _headers: PackedStri
 
 	elif request_purpose_at_start == RequestPurpose.AUTH_TOKEN:
 		var response_body_text: String = body.get_string_from_utf8()
+		print("[APICalls][AUTH_TOKEN] Received response body: ", response_body_text)
 		var json_response = JSON.parse_string(response_body_text)
 
 		if json_response == null or not json_response is Dictionary:
@@ -1997,6 +2371,19 @@ func _on_request_completed(result: int, response_code: int, _headers: PackedStri
 			emit_signal('auth_token_received', {"raw": response_body_text})
 		else:
 			print("APICalls (_on_request_completed - AUTH_TOKEN): Token exchange successful.")
+			
+			var token = str(json_response.get("session_token", ""))
+			if token != "":
+				set_auth_session_token(token)
+				emit_signal('auth_session_received', token)
+				
+				# Force user resolution
+				_auth_me_requested = false
+				_auth_me_resolve_attempts = 0
+				print('[APICalls][AUTH_TOKEN] Forcing /auth/me resolution now that token is set.')
+				resolve_current_user_id(true)
+				_emit_hub_auth_state('authenticated')
+			
 			emit_signal('auth_token_received', json_response)
 
 		_complete_current_request()
@@ -2035,6 +2422,20 @@ func _on_request_completed(result: int, response_code: int, _headers: PackedStri
 			elif status == 'complete':
 				_auth_poll.active = false
 				_login_in_progress = false
+				
+				# Check if this was a linking operation vs login
+				var res_dict = json_response.get('result', {})
+				if res_dict.get('linked', false):
+					print('[APICalls][AUTH_STATUS] link complete received.')
+					emit_signal('discord_account_linked', {
+						'ok': true,
+						'error_code': 0,
+						'message': 'Link successful'
+					})
+					emit_signal('auth_poll_finished', true)
+					resolve_current_user_id(true)
+					return
+
 				var token: String = str(json_response.get('session_token', ''))
 				print('[APICalls][AUTH_STATUS] complete received; token length=%d' % token.length())
 				if token.is_empty():
@@ -2053,10 +2454,41 @@ func _on_request_completed(result: int, response_code: int, _headers: PackedStri
 			else:
 				_auth_poll.active = false
 				_login_in_progress = false
-				var err_msg := str(json_response.get('error', 'Authentication failed'))
+				
+				var err_msg := _get_error_message(json_response, response_body_text.substr(0, 200))
+				
+				# Check for conflict in status-poll error detail (Account Merge flow)
+				var status_code = int(json_response.get("code", 0))
+				if status == "error" and (status_code == 409 or json_response.has("conflict")):
+					var conflict_data: Dictionary = {}
+					var detail_raw = json_response.get("detail", null)
+					if detail_raw is Dictionary:
+						conflict_data.merge(detail_raw)
+					if json_response.has("conflict"):
+						conflict_data.merge(json_response.get("conflict", {}))
+					if json_response.has("merge_token"):
+						conflict_data["merge_token"] = json_response.get("merge_token")
+					
+					emit_signal("discord_account_linked", {
+						"ok": false,
+						"error_code": 409,
+						"message": "Account already linked to another user.",
+						"conflict": conflict_data
+					})
+					emit_signal('auth_poll_finished', false)
+					return
+
 				printerr('[APICalls][AUTH_STATUS] failure status=%s error=%s' % [status, err_msg])
 				emit_signal('auth_poll_finished', false)
 				emit_signal('fetch_error', err_msg)
+				
+				# Re-use discord_account_linked for link-specific errors if polling for link
+				if _auth_poll.state != "":
+					emit_signal("discord_account_linked", {
+						"ok": false,
+						"error_code": 0, # Could try to map status_code here if available
+						"message": err_msg
+					})
 		_complete_current_request()
 		return
 
@@ -2072,7 +2504,7 @@ func _on_request_completed(result: int, response_code: int, _headers: PackedStri
 				_auth_me_resolve_attempts = 0
 				set_user_id(uid_str)
 				# Populate GameStore.user_changed so the LoginScreen can advance.
-				get_user_data(uid_str)
+				get_user_data(uid_str, true)
 				emit_signal('user_id_resolved', uid_str)
 			else:
 				print('[APICalls][AUTH_ME] Missing/invalid user_id (attempt %d/%d). Body=%s' % [_auth_me_resolve_attempts, AUTH_ME_MAX_ATTEMPTS, response_body_text])
@@ -2096,12 +2528,16 @@ func _on_map_request_completed(result: int, response_code: int, _headers: Packed
 		return
 	if not (response_code >= 200 and response_code < 300):
 		var body_txt := body.get_string_from_utf8()
-		printerr('[APICalls][MAP] HTTP %d for map request. Body preview=%s' % [response_code, body_txt.left(200)])
-		if response_code == 401 and _auth_bearer_token != '':
-			print('[APICalls][MAP] 401 received; clearing auth and emitting auth_expired.')
-			clear_auth_session_token()
-			emit_signal('auth_expired')
+		if response_code == 401:
+			if _auth_bearer_token != '':
+				print('[APICalls][MAP] 401 received; clearing auth and emitting auth_expired.')
+				clear_auth_session_token()
+				emit_signal('auth_expired')
+			else:
+				# Suppress 401 map errors if not logged in yet (common on start/login screen)
+				_log_info('[APICalls][MAP] Suppression of 401 for map request (not logged in).')
 		else:
+			printerr('[APICalls][MAP] HTTP %d for map request. Body preview=%s' % [response_code, body_txt.left(200)])
 			emit_signal('fetch_error', 'Map request HTTP %d' % response_code)
 		return
 	if body.is_empty():

@@ -1,0 +1,101 @@
+name: Build Desktop (Steam) (PC/Mac)
+
+on:
+  workflow_call:
+    inputs:
+      godot_version:
+        required: true
+        type: string
+        default: '4.6.0'
+      version_tag:
+        required: true
+        type: string
+
+jobs:
+  build_windows:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Setup Godot
+        uses: chickensoft-games/setup-godot@v2
+        with:
+          version: ${{ inputs.godot_version }}
+          use-dotnet: false
+          include-templates: true
+
+      - name: Export Windows
+        run: |
+          mkdir -p build/windows
+          godot --headless --export-release "Windows Desktop (x86)" build/windows/Desolate_Frontiers.exe
+          cd build/windows
+          zip -r ../Desolate_Frontiers_Windows.zip .
+          
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-build-windows
+          path: build/Desolate_Frontiers_Windows.zip
+
+  build_macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Setup Godot
+        uses: chickensoft-games/setup-godot@v2
+        with:
+          version: ${{ inputs.godot_version }}
+          use-dotnet: false
+          include-templates: true
+
+      - name: Export macOS
+        run: |
+          mkdir -p build
+          # Godot macOS export creates a .zip by default when targeting a .zip extension
+          godot --headless --export-release "macOS" build/Desolate_Frontiers_macOS.zip
+          
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-build-macos
+          path: build/Desolate_Frontiers_macOS.zip
+
+  release:
+    needs: [build_windows, build_macos]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Get Project Version
+        id: version
+        run: |
+          VERSION=$(grep 'config/version' project.godot | awk -F '"' '{print $2}')
+          if [ -z "$VERSION" ]; then
+            VERSION="${{ inputs.version_tag }}"
+          fi
+          echo "project_version=$VERSION" >> $GITHUB_OUTPUT
+        
+      - name: Download Windows Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: desktop-build-windows
+          path: artifacts/
+          
+      - name: Download macOS Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: desktop-build-macos
+          path: artifacts/
+          
+      - name: Publish GitHub Release
+        uses: ncipollo/release-action@v1
+        with:
+          tag: "v${{ steps.version.outputs.project_version }}"
+          name: "Release v${{ steps.version.outputs.project_version }}"
+          artifacts: "artifacts/*.zip"
+          allowUpdates: true
+          replacesArtifacts: true
+          token: ${{ github.token }}

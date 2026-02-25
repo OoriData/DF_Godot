@@ -1,0 +1,206 @@
+name: Build iOS
+
+on:
+  workflow_call:
+    inputs:
+      godot_version:
+        required: true
+        type: string
+        default: '4.6.0'
+      version_tag:
+        required: true
+        type: string
+    secrets:
+      APP_STORE_CONNECT_API_KEY:
+        required: true
+      APP_STORE_CONNECT_KEY_ID:
+        required: true
+      APP_STORE_CONNECT_ISSUER_ID:
+        required: true
+      MATCH_PASSWORD:
+        required: true
+      MATCH_GIT_URL:
+        required: true
+      GIT_TOKEN:
+        required: true
+      APPLE_DISTRIBUTION_P12:
+        required: true
+      IOS_EXPORT_PRESET_NAME:
+        required: false # Default to 'iOS'
+    outputs:
+      build_status:
+        description: 'Build success/failure'
+        value: ${{ jobs.build.outputs.status }}
+
+jobs:
+  build:
+    runs-on: macos-latest
+    outputs:
+      status: ${{ steps.export.outcome }}
+    steps:
+      - uses: actions/checkout@v4
+      
+      # Setup Ruby for Fastlane
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.3'
+          bundler-cache: true
+        
+      
+      # Since we are on macos-latest, we can use fastlane match to setup certs
+      # BUT, Godot export needs the certs installed in the keychain BEFORE export if we want Godot to sign it.
+      # OR we can export unsigned and sign with fastlane.
+      # The `abarichello/godot-ci` action runs in docker on Linux usually, but on macOS it runs directly?
+      # Wait, godot-ci is a Docker action. Docker is not supported on macOS runners natively in GitHub Actions (VM).
+      # This is a problem. `abarichello/godot-ci` might fail on macos-latest if it relies on Docker.
+      # Correct: GitHub Actions macOS runners do NOT support Docker.
+      # We must use a different approach for exporting on macOS, OR export on Linux and sign on macOS.
+      
+      # Strategy Change:
+      # 1. Export on Ubuntu (Linux) using godot-ci (setup keys? or export unsigned?)
+      #    - Godot cannot export iOS on Linux properly if it needs to compile/sign (it generates an Xcode project).
+      #    - Actually Godot 4 export for iOS generates an .ipa if configured, or an Xcode project.
+      #    - Preset 3 says `export_path=.../Spellist.ipa`.
+      #    - Godot on Linux CAN export an IPA if no signing interacts with macOS system (it might need the template).
+      #    - Documentation says: "Exporting to iOS ... is available on all platforms, but you need a Mac to deploy."
+      #    - So we can export the IPA (or Xcode project) on Linux.
+      # 2. Upload artifact.
+      # 3. Download on macOS runner.
+      # 4. Sign and upload with Fastlane.
+      
+      # However, splitting jobs creates overhead.
+      # Let's try to do it all on macOS without docker-based action.
+      # We can simply install Godot on the macOS runner.
+      
+      - name: Setup Godot
+        uses: chickensoft-games/setup-godot@v2
+        with:
+          version: ${{ inputs.godot_version }}
+          use-dotnet: false
+          include-templates: true
+          
+      # Now we need certificates for Godot to sign (if it does signing)
+      # Or we let Godot export the Xcode project and we build/sign with Fastlane (gym).
+      # The preset outputs an .ipa directly?
+      # If the preset is configured to output an IPA, Godot tries to call built-in tools.
+      # If we export to an Xcode project (rename output to folder?), we can use Fastlane gym.
+      # Looking at export_presets.cfg (lines 528+), export_path ends in .ipa.
+      # This usually means Godot attempts to produce an .ipa.
+      
+      - name: Setup Keychain
+        run: |
+          security create-keychain -p actions temp.keychain
+          security default-keychain -s temp.keychain
+          security unlock-keychain -p actions temp.keychain
+          security set-keychain-settings -t 3600 -u temp.keychain
+          security list-keychains -d user -s temp.keychain login.keychain-db
+
+      - name: Import Apple Distribution Certificate
+        env:
+          P12_BASE64: ${{ secrets.APPLE_DISTRIBUTION_P12 }}
+        run: |
+          echo "$P12_BASE64" | base64 --decode > /tmp/apple_dist.p12
+          security import /tmp/apple_dist.p12 -k temp.keychain -P "" -T /usr/bin/codesign -T /usr/bin/productbuild -T /usr/bin/security
+          rm /tmp/apple_dist.p12
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k actions temp.keychain
+
+      - name: Configure SSH for Match
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.MATCH_SSH_KEY }}
+
+      - name: Fastlane Match (iOS)
+        env:
+          MATCH_PASSWORD: ${{ secrets.MATCH_PASSWORD }}
+          MATCH_GIT_URL: ${{ secrets.MATCH_GIT_URL }}
+        run: |
+          # Use SSH URL from secret, or ensure the Matchfile uses git@github.com format
+          # We override the git_url here to force SSH if the Matchfile has HTTPS
+          bundle exec fastlane match appstore --readonly --keychain_name temp.keychain --keychain_password actions --git_url "git@github.com:OoriData/mobile-signing-certs.git" --app_identifier "com.ooridata.desolate-frontiers"
+
+      - name: Capture Provisioning Profile Name
+        run: |
+          # Find the installed iOS provisioning profile and extract its name
+          PROFILE_PATH=$(find ~/Library/Developer/Xcode/UserData/Provisioning\ Profiles ~/Library/MobileDevice/Provisioning\ Profiles -name "*.mobileprovision" 2>/dev/null | head -1)
+          if [ -n "$PROFILE_PATH" ]; then
+            PROFILE_NAME=$(security cms -D -i "$PROFILE_PATH" 2>/dev/null | plutil -extract Name raw -)
+            echo "IOS_PROFILE_NAME=$PROFILE_NAME" >> $GITHUB_ENV
+            echo "Found profile: $PROFILE_NAME"
+          else
+            echo "IOS_PROFILE_NAME=match AppStore com.ooridata.desolate-frontiers" >> $GITHUB_ENV
+            echo "No profile found, using default name"
+          fi
+
+      - name: Inject Signing Configuration
+        run: |
+          python3 -c '
+          import re
+          import os
+          import sys
+          
+          # Read project.godot for the "Short Version" (config/version)
+          short_version = "1.0.0" # Fallback
+          with open("project.godot", "r") as f:
+              godot_content = f.read()
+              match = re.search(r"config/version=\"([^\"]+)\"", godot_content)
+              if match:
+                  short_version = match.group(1)
+          
+          with open("export_presets.cfg", "r") as f:
+              content = f.read()
+          
+          # Dynamically find the preset index for "iOS"
+          preset_match = re.search(r"^\[preset\.(\d+)\]\s+name=\"iOS\"", content, re.MULTILINE)
+          if not preset_match:
+              print("Error: Could not find preset named \"iOS\"")
+              sys.exit(1)
+          
+          preset_index = preset_match.group(1)
+          print(f"Found \"iOS\" at index {preset_index}")
+          
+          # Match the options section for this preset
+          section_regex = r"(\[preset\." + preset_index + r"\.options\].*?)(?=\n\[|$)"
+          
+          def set_key(match):
+              section = match.group(1)
+              specifier = os.environ.get("IOS_PROFILE_NAME", "match AppStore com.ooridata.desolate-frontiers")
+              
+              # Build Number logic: base + (run_number * 10) + run_attempt
+              build_number = str(100 + (int(os.environ["GITHUB_RUN_NUMBER"]) * 10) + int(os.environ["GITHUB_RUN_ATTEMPT"]))
+              
+              overrides = {
+                  "application/provisioning_profile_specifier_release": f"\"{specifier}\"",
+                  "application/version": f"\"{build_number}\"",
+                  "application/short_version": f"\"{short_version}\""
+              }
+              
+              for key, val in overrides.items():
+                  if f"{key}=" in section:
+                      section = re.sub(f"{re.escape(key)}=.*", f"{key}={val}", section)
+                  else:
+                      section += f"\n{key}={val}"
+              return section
+          new_content = re.sub(section_regex, set_key, content, flags=re.DOTALL)
+          with open("export_presets.cfg", "w") as f:
+              f.write(new_content)
+          '
+        env:
+          GITHUB_RUN_NUMBER: ${{ github.run_number }}
+          GITHUB_RUN_ATTEMPT: ${{ github.run_attempt }}
+
+      - name: Build with Godot (Export)
+        id: export
+        run: |
+          mkdir -p build/ios
+          godot --headless --export-release "iOS" "build/ios/Desolate_Frontiers.ipa"
+
+      - name: Upload to TestFlight
+        env:
+          APP_STORE_CONNECT_API_KEY: ${{ secrets.APP_STORE_CONNECT_API_KEY }}
+          APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          MATCH_PASSWORD: ${{ secrets.MATCH_PASSWORD }}
+          MATCH_KEYCHAIN_NAME: temp.keychain
+          MATCH_KEYCHAIN_PASSWORD: actions
+        run: |
+          bundle exec fastlane ios release

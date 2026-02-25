@@ -1,13 +1,14 @@
-[2025-12-09 19:13:08]: Starting build for depot 4242882, content path is "/Users/choccy/dev/DF_Godot/steamworks_sdk/tools/ContentBuilder/content/4242880/4242882/", build flags 0x0
-[2025-12-09 19:13:08]: Building file listing for depot 4242882 ...
-[2025-12-09 19:13:08]: Found 2 files for mapping: /Users/choccy/dev/DF_Godot/steamworks_sdk/tools/ContentBuilder/content/4242880/4242882 * -> .
-[2025-12-09 19:13:08]: Found 2 files (92 MB) for depot 4242882
-[2025-12-09 19:13:08]: Building depot 4242882, no baseline manifest
-[2025-12-09 19:13:09]: Found 94 new chunks ( 0 used previously ) for depot 4242882, took 0 minutes, 1 seconds
-[2025-12-09 19:13:09]: Changes to baseline manifest 0 :
-[2025-12-09 19:13:09]: Added  : ".DS_Store" 7 KB 
-[2025-12-09 19:13:09]: Added  : "Desolate Frontiers.exe" 95109 KB 
-[2025-12-09 19:13:09]: Summary: 2 files added (92.89 MB), 0 files changed (0 bytes), 0 files removed (0 bytes)
-[2025-12-09 19:13:09]: Uploading new manifest to depot_ingest.discovery.steamserver.net (handle 8014482626197290581, 3320 bytes).
-[2025-12-09 19:13:10]: Uploading 94 out of 94 missing chunks.
-[2025-12-09 19:13:27]: Success! New manifestID 1328040879535336232 created and 94 new chunks uploaded.
+[2026-02-20 14:10:56]: Starting build for depot 4242882, content path is "/Users/aidan/Work/DF_Godot/steamworks_sdk/tools/ContentBuilder/content/4242880/4242882/", build flags 0x0
+[2026-02-20 14:10:56]: Building file listing for depot 4242882 ...
+[2026-02-20 14:10:56]: Found 1 files for mapping: /Users/aidan/Work/DF_Godot/steamworks_sdk/tools/ContentBuilder/content/4242880/4242882 * -> .
+[2026-02-20 14:10:56]: Found 1 files (0 MB) for depot 4242882
+[2026-02-20 14:10:56]: Building depot 4242882, baseline manifest 1073634928901071682 (3 files)
+[2026-02-20 14:10:56]: Found 1 new chunks ( 106 used previously ) for depot 4242882, took 0 minutes, 0 seconds
+[2026-02-20 14:10:56]: Changes to baseline manifest 1073634928901071682 :
+[2026-02-20 14:10:56]: Added  : ".DS_Store" 7 KB 
+[2026-02-20 14:10:56]: Removed: Desolate_Frontiers.exe (106952 KB)
+[2026-02-20 14:10:56]: Removed: __MACOSX (0 KB)
+[2026-02-20 14:10:56]: Removed: __MACOSX\._Desolate_Frontiers.exe (1 KB)
+[2026-02-20 14:10:56]: Summary: 1 files added (6.00 KB), 0 files changed (0 bytes), 3 files removed (104.45 MB)
+[2026-02-20 14:10:57]: Uploading new manifest to depot_ingest.discovery.steamserver.net (handle 13821551435215939264, 429 bytes).
+[2026-02-20 14:10:57]: Success! New manifestID 3088188170132557631 created and 0 new chunks uploaded.
