@@ -4,7 +4,7 @@
 // Incrementing CACHE_VERSION will kick off the install event and force
 // previously cached resources to be updated from the network.
 /** @type {string} */
-const CACHE_VERSION = '1771547757|9216573';
+const CACHE_VERSION = '1772063305|9133869';
 /** @type {string} */
 const CACHE_PREFIX = 'Desolate Frontie-sw-cache-';
 const CACHE_NAME = CACHE_PREFIX + CACHE_VERSION;
