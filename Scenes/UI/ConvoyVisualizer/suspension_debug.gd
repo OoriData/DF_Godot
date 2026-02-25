@@ -17,12 +17,7 @@ func _draw() -> void:
 		if not is_instance_valid(w): continue
 		
 		var attach_world = chassis_xform * Vector2(vehicle._wheel_attach_xs[i], 0)
-		var attach_local = attach_world - vehicle.global_position
 		var wheel_local = w.global_position - vehicle.global_position
-		
-		# Suspension Line
-		draw_line(attach_local, wheel_local, Color.YELLOW, 2.0)
-		draw_circle(attach_local, 3.0, Color.RED)
 		draw_circle(wheel_local, 4.0, Color.GREEN)
 		
 		# 2. DRAW TORQUE ARROWS (Propulsion/Braking)

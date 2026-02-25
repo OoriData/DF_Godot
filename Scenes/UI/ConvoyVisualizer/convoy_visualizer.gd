@@ -175,11 +175,21 @@ func set_global_torque(val: float) -> void:
 
 func set_global_stiffness(val: float) -> void:
 	for v in vehicle_nodes:
-		if is_instance_valid(v): v.stiffness = val
+		if is_instance_valid(v):
+			v.stiffness = val
+			if v.has_node("Chassis"):
+				for j in v.get_node("Chassis").get_children():
+					if j is DampedSpringJoint2D:
+						j.stiffness = val * v._weight_class
 
 func set_global_damping(val: float) -> void:
 	for v in vehicle_nodes:
-		if is_instance_valid(v): v.damping = val
+		if is_instance_valid(v):
+			v.damping = val
+			if v.has_node("Chassis"):
+				for j in v.get_node("Chassis").get_children():
+					if j is DampedSpringJoint2D:
+						j.damping = val * v._weight_class
 
 
 func set_terrain_difficulty(dif: float) -> void:

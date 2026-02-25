@@ -209,11 +209,30 @@ func _build_physics() -> void:
 		# but we keep them as a cheap fail-safe.
 		wheel.add_collision_exception_with(chassis)
 		chassis.add_collision_exception_with(wheel)
-
 		wheels_container.add_child(wheel)
 		_wheel_bodies.append(wheel)
 		_wheel_attach_xs.append(wx)
-		# No joints! Constraints are applied manually in _physics_process
+
+		# Physics Joints Initialization
+		var groove = GrooveJoint2D.new()
+		groove.node_a = chassis.get_path()
+		groove.node_b = wheel.get_path()
+		# Groove restricts passing through its entire length on Y axis. So we give it a generous range
+		var max_travel = radius * 1.5
+		groove.length = max_travel * 2.0
+		groove.initial_offset = max_travel * 0.5 # Distance from groove.position (-0.5) to wheel (0 = center)
+		groove.position = Vector2(wx, -max_travel * 0.5) # Center the groove around the attachment point
+		chassis.add_child(groove)
+
+		var spring = DampedSpringJoint2D.new()
+		spring.node_a = chassis.get_path()
+		spring.node_b = wheel.get_path()
+		spring.length = radius * 2.5 # Maximum extension before bottoming out downward
+		spring.rest_length = radius # Natural resting gap
+		spring.stiffness = stiffness * _weight_class # Spring force
+		spring.damping = damping * _weight_class # Rebound dampening
+		spring.position = Vector2(wx, 0) # Attach point on chassis
+		chassis.add_child(spring)
 
 	_wheel_rest_y = radius
 
@@ -286,7 +305,6 @@ func set_moving(state: bool) -> void:
 # --- Tuning Parameters ---
 var stiffness: float = 250.0
 var damping: float = 10.0
-var lateral_stiffness: float = 1000.0
 var propulsion_torque: float = 800000.0
 var brake_torque: float = 2000000.0
 var cruise_speed: float = 100.0 # Feed-forward speed from convoy
@@ -305,7 +323,6 @@ func _physics_process(delta: float) -> void:
 	if not is_instance_valid(chassis): return
 
 	_update_telemetry()
-	_apply_constraints(delta)
 
 	var torque = 0.0
 	if _is_moving:
@@ -319,61 +336,6 @@ func _update_telemetry() -> void:
 	telemetry.speed = chassis.linear_velocity.x * travel_direction
 	telemetry.distance_error = (target_world_x - chassis.global_position.x) * travel_direction
 	telemetry.valid_wheels = _wheel_bodies.size()
-
-func _apply_constraints(delta: float) -> void:
-	for i in range(_wheel_bodies.size()):
-		var w = _wheel_bodies[i]
-		if not is_instance_valid(w): continue
-
-		# Ensure bodies don't sleep so constraints always run
-		w.sleeping = false
-		chassis.sleeping = false
-
-		var attach_local_offset = Vector2(_wheel_attach_xs[i], 0)
-		var chassis_xform = chassis.global_transform
-		var attach_world = chassis_xform * attach_local_offset
-
-		var local_down = chassis_xform.basis_xform(Vector2(0, 1)).normalized()
-		var local_right = chassis_xform.basis_xform(Vector2(1, 0)).normalized()
-
-		# 1. LATERAL CONSTRAINT (Soft Force-based pull)
-		var wheel_to_attach = w.global_position - attach_world
-		var lateral_dist = wheel_to_attach.dot(local_right)
-		var vel_diff = w.linear_velocity - chassis.linear_velocity
-		var lateral_vel_diff = vel_diff.dot(local_right)
-
-		# Restoring stiffness and high damping to keep wheels vertically aligned
-		var lateral_force_mag = - (lateral_stiffness * w.mass) * lateral_dist - (80.0 * w.mass) * lateral_vel_diff
-		w.apply_central_force(local_right * lateral_force_mag)
-		chassis.apply_central_force(-local_right * lateral_force_mag)
-
-		# Extra wheel damping to kill jitter from high stiffness
-		w.linear_velocity *= 0.99
-
-		# 2. SUSPENSION SPRING
-		var axial_dist = wheel_to_attach.dot(local_down)
-		var displacement = axial_dist - _wheel_rest_y
-
-		# Main linear spring
-		var spring_force_mag = - (stiffness * _weight_class) * displacement - (damping * _weight_class) * vel_diff.dot(local_down)
-
-		# 3. BUMP STOPS (Non-linear force at limits)
-		var max_travel = _wheel_rest_y * 1.5
-		var upper_limit = - max_travel * 0.8 # Wheel hitting chassis
-		var lower_limit = max_travel * 0.8 # Wheel over-extending
-
-		# If near upper limit, apply exponentially more force pushing DOWN
-		if displacement < upper_limit:
-			var over_limit = upper_limit - displacement
-			spring_force_mag += (stiffness * 10.0 * _weight_class) * over_limit
-
-		# If near lower limit, apply force pulling UP
-		elif displacement > lower_limit:
-			var over_limit = displacement - lower_limit
-			spring_force_mag -= (stiffness * 5.0 * _weight_class) * over_limit
-
-		w.apply_central_force(local_down * spring_force_mag)
-		chassis.apply_central_force(-local_down * spring_force_mag)
 
 func _calculate_propulsion_torque(delta: float) -> float:
 	var dist = telemetry.distance_error
