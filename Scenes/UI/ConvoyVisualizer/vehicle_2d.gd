@@ -20,14 +20,15 @@ var _cargo_data: Array = []
 
 var target_world_x: float = 0.0
 var travel_direction: float = 1.0
-var _physics_layer: int = 3
 
 var _wheel_bodies: Array[RigidBody2D] = []
 var _cargo_bodies: Array[RigidBody2D] = []
 var _wheel_attach_xs: Array[float] = [] # X positions on chassis where each wheel connects
 var _wheel_rest_y: float = 0.0 # Rest Y offset of wheel from chassis
 
-func setup(vehicle_color: String, vehicle_shape: String, vehicle_weight_class: float, driven: Array = [], cargo: Array = [], direction: float = 1.0, layer_idx: int = 3) -> void:
+var _body_layer_bit: int = 0
+
+func setup(vehicle_color: String, vehicle_shape: String, vehicle_weight_class: float, driven: Array = [], cargo: Array = [], direction: float = 1.0, layer_idx: int = 0) -> void:
 	_color = vehicle_color
 	_shape = vehicle_shape # Keep case for mapping check
 	_weight_class = vehicle_weight_class
@@ -38,7 +39,10 @@ func setup(vehicle_color: String, vehicle_shape: String, vehicle_weight_class: f
 
 	travel_direction = sign(direction)
 	if travel_direction == 0: travel_direction = 1.0
-	_physics_layer = layer_idx
+
+	# Unique layer for this vehicle's body+cargo starting at bit 3 (Layer 4)
+	# Max 16 vehicles comfortably within 32-bit int limit for layers
+	_body_layer_bit = 1 << (3 + (layer_idx % 16))
 
 	_apply_visuals()
 	_build_physics()
@@ -149,11 +153,13 @@ func _build_physics() -> void:
 	chassis_col.polygon = points
 	chassis.add_child(chassis_col)
 
-	var layer_bit = 1 << (_physics_layer - 1)
-	var wheel_layer_bit = 1 << (_physics_layer) # Next bit
-	
-	chassis.collision_layer = layer_bit
-	chassis.collision_mask = 1 | layer_bit # Ground + Cargo/itself
+	# COLLISION LAYERS:
+	# Layer 1: Ground/Static
+	# Layer 2: All Wheels (Isolated globally)
+	# Layer 4+: Unique per-vehicle Body Layer (Chassis + Cargo)
+
+	chassis.collision_layer = _body_layer_bit
+	chassis.collision_mask = 1 | _body_layer_bit # Ground + OWN Cargo only
 	chassis.mass = _weight_class * 100.0
 
 	var wheel_xs = [-w * 0.35, w * 0.35]
@@ -196,10 +202,13 @@ func _build_physics() -> void:
 		w_vis_bot.color = Color(0.55, 0.55, 0.55)
 		w_vis_bot.polygon = _create_semicircle_poly(radius, PI)
 		wheel.add_child(w_vis_bot)
-		wheel.collision_layer = wheel_layer_bit
+		wheel.collision_layer = 2 # bit 2 (Layer 2)
 		wheel.collision_mask = 1 # ONLY collide with ground
-		
-		# No exceptions needed because layers are isolated!
+
+		# Isolated layers mean no exceptions are strictly necessary,
+		# but we keep them as a cheap fail-safe.
+		wheel.add_collision_exception_with(chassis)
+		chassis.add_collision_exception_with(wheel)
 
 		wheels_container.add_child(wheel)
 		_wheel_bodies.append(wheel)
@@ -242,7 +251,6 @@ func _spawn_cargo() -> void:
 	var step = (w * 0.6) / float(max(1, count))
 	var start_x = - (w * 0.3)
 
-	var layer_bit = 1 << (_physics_layer - 1)
 
 	for i in range(count):
 		var cb = RigidBody2D.new()
@@ -261,11 +269,16 @@ func _spawn_cargo() -> void:
 		vis.color = Color(randf(), randf(), randf(), 1.0)
 		cb.add_child(vis)
 
-		cb.collision_layer = layer_bit
-		cb.collision_mask = 1 | layer_bit
+		cb.collision_layer = _body_layer_bit
+		cb.collision_mask = 1 | _body_layer_bit # Ground + OWN Chassis/Cargo only
 
 		cargo_container.add_child(cb)
 		_cargo_bodies.append(cb)
+
+		# Explicitly exempt cargo from hitting wheels (Fail-safe for layer isolation)
+		for wheel in _wheel_bodies:
+			cb.add_collision_exception_with(wheel)
+			wheel.add_collision_exception_with(cb)
 
 func set_moving(state: bool) -> void:
 	_is_moving = state
@@ -323,33 +336,44 @@ func _apply_constraints(delta: float) -> void:
 		var local_down = chassis_xform.basis_xform(Vector2(0, 1)).normalized()
 		var local_right = chassis_xform.basis_xform(Vector2(1, 0)).normalized()
 
-		# 1. LATERAL CONSTRAINT (Force-based pull)
+		# 1. LATERAL CONSTRAINT (Soft Force-based pull)
 		var wheel_to_attach = w.global_position - attach_world
 		var lateral_dist = wheel_to_attach.dot(local_right)
 		var vel_diff = w.linear_velocity - chassis.linear_velocity
 		var lateral_vel_diff = vel_diff.dot(local_right)
 
-		var lateral_force_mag = - (lateral_stiffness * w.mass) * lateral_dist - (20.0 * w.mass) * lateral_vel_diff
+		# Restoring stiffness and high damping to keep wheels vertically aligned
+		var lateral_force_mag = - (lateral_stiffness * w.mass) * lateral_dist - (80.0 * w.mass) * lateral_vel_diff
 		w.apply_central_force(local_right * lateral_force_mag)
 		chassis.apply_central_force(-local_right * lateral_force_mag)
+
+		# Extra wheel damping to kill jitter from high stiffness
+		w.linear_velocity *= 0.99
 
 		# 2. SUSPENSION SPRING
 		var axial_dist = wheel_to_attach.dot(local_down)
 		var displacement = axial_dist - _wheel_rest_y
+
+		# Main linear spring
 		var spring_force_mag = - (stiffness * _weight_class) * displacement - (damping * _weight_class) * vel_diff.dot(local_down)
+
+		# 3. BUMP STOPS (Non-linear force at limits)
+		var max_travel = _wheel_rest_y * 1.5
+		var upper_limit = - max_travel * 0.8 # Wheel hitting chassis
+		var lower_limit = max_travel * 0.8 # Wheel over-extending
+
+		# If near upper limit, apply exponentially more force pushing DOWN
+		if displacement < upper_limit:
+			var over_limit = upper_limit - displacement
+			spring_force_mag += (stiffness * 10.0 * _weight_class) * over_limit
+
+		# If near lower limit, apply force pulling UP
+		elif displacement > lower_limit:
+			var over_limit = displacement - lower_limit
+			spring_force_mag -= (stiffness * 5.0 * _weight_class) * over_limit
+
 		w.apply_central_force(local_down * spring_force_mag)
 		chassis.apply_central_force(-local_down * spring_force_mag)
-
-		# 3. CLAMP travel
-		var max_travel = _wheel_rest_y * 1.5
-		if axial_dist < _wheel_rest_y - max_travel * 0.4:
-			w.global_position = attach_world + local_down * (_wheel_rest_y - max_travel * 0.4)
-			var axial_v = w.linear_velocity.dot(local_down)
-			if axial_v < 0: w.linear_velocity -= local_down * axial_v
-		elif axial_dist > _wheel_rest_y + max_travel * 0.8:
-			w.global_position = attach_world + local_down * (_wheel_rest_y + max_travel * 0.8)
-			var axial_v = w.linear_velocity.dot(local_down)
-			if axial_v > 0: w.linear_velocity -= local_down * axial_v
 
 func _calculate_propulsion_torque(delta: float) -> float:
 	var dist = telemetry.distance_error

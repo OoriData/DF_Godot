@@ -255,9 +255,8 @@ func _build_convoy() -> void:
 		var init_x = convoy_center_x + (current_offset * travel_direction)
 		v_node.position = Vector2(init_x, 0)
 		
-		# Assign a unique collision layer from 3 up to 20
-		var phys_layer = 3 + (vehicle_idx % 18)
-		v_node.setup(v_color, v_shape, v_weight, v_driven, v_cargo, travel_direction, phys_layer)
+		# Assign a unique collision layer index (internal bits handled in vehicle_2d)
+		v_node.setup(v_color, v_shape, v_weight, v_driven, v_cargo, travel_direction, vehicle_idx)
 		
 		vehicle_nodes.append(v_node)
 		vehicle_offsets.append(current_offset)
