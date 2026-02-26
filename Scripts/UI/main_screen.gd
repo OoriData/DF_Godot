@@ -653,8 +653,7 @@ func _check_or_prompt_new_convoy_from_store():
 		return
 	# Do not run first-convoy onboarding logic until the map is ready for focus.
 	if not _map_ready_for_focus:
-		if onboarding_log_enabled:
-			print("[Onboarding] Map not ready; skipping first-convoy check.")
+		print("[Onboarding] Map not ready; skipping first-convoy check (onboarding_log_enabled=%s)" % onboarding_log_enabled)
 		return
 	var convoys = store.get_convoys() if store.has_method("get_convoys") else []
 	var user = store.get_user() if store.has_method("get_user") else {}
@@ -697,6 +696,9 @@ func _check_or_prompt_new_convoy_from_store():
 		if onboarding_log_enabled:
 			print("[Onboarding] Tutorial stage is not 1; suppressing first-convoy prompt.")
 		_hide_new_convoy_dialog()
+		
+		# Returning player check (even if tutorial isn't stage 1)
+		_maybe_show_returning_player_tips()
 		return
 	if has_any:
 		# User already has at least one convoy. Ensure the tutorial is
@@ -707,6 +709,9 @@ func _check_or_prompt_new_convoy_from_store():
 			# Defer to avoid fighting with other listeners on the same frame.
 			tutorial_manager.call_deferred("_maybe_start")
 		_hide_new_convoy_dialog()
+		
+		# NEW: Also check for returning player tips here since we have convoys and map is ready
+		_maybe_show_returning_player_tips()
 		return
 	_show_new_convoy_dialog()
 # Add new handlers for GameStore map_changed if needed
@@ -758,9 +763,7 @@ func _show_error_dialog(message: String):
 
 	# When the dialog is closed (freed), hide the modal layer if nothing else is in the host.
 	error_dialog.tree_exited.connect(func():
-		if is_instance_valid(dialog_host) and dialog_host.get_child_count() == 0:
-			if is_instance_valid(modal_layer):
-				modal_layer.hide()
+		_maybe_hide_modal_layer()
 	)
 
 func _show_new_convoy_dialog():
@@ -801,6 +804,82 @@ func _show_new_convoy_dialog():
 		printerr("[Onboarding] WARN: Dialog missing 'open' method; forcing visible true.")
 		if is_instance_valid(modal_layer): modal_layer.show()
 		_new_convoy_dialog.visible = true
+
+func show_returning_player_tips() -> bool:
+	var tips_scene := load("res://Scenes/UI/ReturningPlayerTipsModal.tscn")
+	if not tips_scene:
+		printerr("[MainScreen] Failed to load ReturningPlayerTipsModal.tscn")
+		return false
+	var tips = tips_scene.instantiate()
+	var modal_layer: Control = get_node_or_null("ModalLayer")
+	var host: Node = modal_layer.get_node_or_null("DialogHost") if is_instance_valid(modal_layer) else null
+	if not is_instance_valid(host):
+		printerr("[MainScreen] DialogHost not found; cannot show tips.")
+		return false
+	host.add_child(tips)
+	modal_layer.show()
+	if tips.has_method("open"):
+		tips.open()
+	
+	# Close handling
+	tips.tree_exited.connect(func():
+		_maybe_hide_modal_layer()
+	)
+	return true
+
+func _maybe_show_returning_player_tips() -> void:
+	var api = get_node_or_null("/root/APICalls")
+	var store = get_node_or_null("/root/GameStore")
+	
+	if not is_instance_valid(api) or not api.has_method("is_first_login_on_device"):
+		return
+	
+	var user_id = String(api.current_user_id)
+	if user_id.is_empty() and is_instance_valid(store):
+		var user = store.get_user()
+		user_id = String(user.get("user_id", user.get("id", "")))
+		
+	if onboarding_log_enabled:
+		print("[Tips] _maybe_show_returning_player_tips invoked. user_id='%s'" % user_id)
+	
+	if user_id.is_empty():
+		if onboarding_log_enabled:
+			print("[Tips] Suppressing popup: user_id is empty.")
+		return
+		
+	var is_first = api.is_first_login_on_device(user_id)
+	if not is_first:
+		return
+		
+	# Condition 1: Not a brand new player (must have convoys)
+	var convoys = store.get_convoys() if is_instance_valid(store) else []
+	if not (convoys is Array) or convoys.is_empty():
+		if onboarding_log_enabled:
+			print("[Tips] Suppressing popup: No convoys found (brand new player).")
+		return
+		
+	# Condition 2: Not in active tutorial (stages 1-7)
+	# Stage 8 is the completion state, so we allow tips if tutorial_stage is 8 or non-existent.
+	var tutorial_stage := -1
+	if is_instance_valid(store):
+		var user = store.get_user()
+		var md = user.get("metadata", {})
+		if md is Dictionary and md.has("tutorial"):
+			tutorial_stage = int(md["tutorial"])
+	
+	if tutorial_stage >= 1 and tutorial_stage < 8:
+		if onboarding_log_enabled:
+			print("[Tips] Suppressing popup: Tutorial is active (stage %d)." % tutorial_stage)
+		return
+		
+	# All conditions met
+	if onboarding_log_enabled:
+		print("[Tips] Conditions met for first login on device. Showing tips.")
+	
+	if show_returning_player_tips():
+		api.mark_login_on_device(user_id)
+	else:
+		push_warning("[Tips] Failed to show tips modal; will retry on next check.")
 
 func _build_inline_new_convoy_dialog() -> Control:
 	var dlg := PanelContainer.new()
@@ -927,15 +1006,28 @@ func _update_onboarding_layer_rect_to_map() -> void:
 		_onboarding_layer.clip_contents = true
 
 func _hide_new_convoy_dialog():
-	var modal_layer: Control = get_node_or_null("ModalLayer")
-	if is_instance_valid(modal_layer):
-		modal_layer.hide()
-
 	if is_instance_valid(_new_convoy_dialog):
 		if _new_convoy_dialog.has_method("close"):
-			_new_convoy_dialog.call_deferred("close")
-		# In case the dialog is queued for deletion, we should remove our reference.
-		_new_convoy_dialog = null
+			_new_convoy_dialog.close()
+		else:
+			_new_convoy_dialog.visible = false
+		# We don't nullify here if it's persistent, but we should ensure layer check
+		_maybe_hide_modal_layer()
+
+func _maybe_hide_modal_layer():
+	var modal_layer: Control = get_node_or_null("ModalLayer")
+	var host: Node = modal_layer.get_node_or_null("DialogHost") if is_instance_valid(modal_layer) else null
+	if not is_instance_valid(modal_layer) or not is_instance_valid(host):
+		return
+	
+	var has_visible_dialog := false
+	for child in host.get_children():
+		if child is Control and child.visible and not child.is_queued_for_deletion():
+			has_visible_dialog = true
+			break
+	
+	if not has_visible_dialog:
+		modal_layer.hide()
 
 func _on_new_convoy_create(convoy_name: String):
 	# Disable dialog while creating
@@ -950,9 +1042,7 @@ func _on_new_convoy_create(convoy_name: String):
 		printerr("MainScreen: ConvoyService missing create_new_convoy; cannot create convoy.")
 
 func _on_new_convoy_canceled():
-	var modal_layer: Control = get_node_or_null("ModalLayer")
-	if is_instance_valid(modal_layer):
-		modal_layer.hide()
+	_hide_new_convoy_dialog()
 
 
 func _build_map_loading_overlay() -> Control:
@@ -1076,7 +1166,9 @@ func _on_map_ready_for_focus():
 
 	# Now that the map is ready and the layout is stable, run the
 	# first-convoy onboarding check once using the latest Store snapshot.
+	# Note: This now also triggers returning player tips if applicable.
 	_check_or_prompt_new_convoy_from_store()
+
 	# Hide any map-loading overlay if it is still visible.
 	_set_map_loading(false)
 

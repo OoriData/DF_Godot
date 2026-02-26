@@ -163,6 +163,20 @@ func _log_info(msg: String) -> void:
 	else:
 		print(msg)
 
+func _log_warn(msg: String) -> void:
+	var logger := get_node_or_null("/root/Logger") if is_inside_tree() else null
+	if is_instance_valid(logger) and logger.has_method("warn"):
+		logger.warn(msg)
+	else:
+		print("[WARN] ", msg)
+
+func _log_error(msg: String) -> void:
+	var logger := get_node_or_null("/root/Logger") if is_inside_tree() else null
+	if is_instance_valid(logger) and logger.has_method("error"):
+		logger.error(msg)
+	else:
+		printerr("[ERROR] ", msg)
+
 
 func _get_error_message(data: Variant, body_text: String) -> String:
 	if data is Dictionary:
@@ -328,6 +342,38 @@ func _load_auth_session_token() -> void:
 		_auth_bearer_token = token
 		_auth_token_expiry = expiry
 		print("[APICalls] Loaded persisted session token (len=%d, exp=%d)" % [token.length(), expiry])
+
+func is_first_login_on_device(p_user_id: String) -> bool:
+	if p_user_id == "":
+		return false
+	var cfg := ConfigFile.new()
+	var err := cfg.load(SESSION_CFG_PATH)
+	if err != OK:
+		return true # Default to true if no config exists
+	var known_users: Array = cfg.get_value("device_history", "known_users", [])
+	return not (p_user_id in known_users)
+
+func mark_login_on_device(p_user_id: String) -> void:
+	if p_user_id == "":
+		return
+	var cfg := ConfigFile.new()
+	cfg.load(SESSION_CFG_PATH) # Load existing to append
+	var known_users: Array = cfg.get_value("device_history", "known_users", [])
+	if not (p_user_id in known_users):
+		known_users.append(p_user_id)
+		cfg.set_value("device_history", "known_users", known_users)
+		cfg.save(SESSION_CFG_PATH)
+		_log_info("[APICalls] Marked user %s as known on this device." % p_user_id)
+
+func reset_device_history() -> void:
+	var cfg := ConfigFile.new()
+	cfg.load(SESSION_CFG_PATH)
+	cfg.erase_section("device_history")
+	var err := cfg.save(SESSION_CFG_PATH)
+	if err == OK:
+		_log_info("[APICalls] Device login history reset.")
+	else:
+		_log_error("[APICalls] Failed to reset device login history: %d" % err)
 
 func _apply_auth_header(headers: PackedStringArray) -> PackedStringArray:
 	var out := headers.duplicate()

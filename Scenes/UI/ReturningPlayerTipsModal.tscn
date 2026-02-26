@@ -1,0 +1,122 @@
+[gd_scene load_steps=2 format=3 uid="uid://returning_player_tips_modal"]
+
+[ext_resource type="Script" path="res://Scripts/UI/returning_player_tips_modal.gd" id="1_script"]
+
+[node name="ReturningPlayerTipsModal" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("1_script")
+
+[node name="ColorRect" type="ColorRect" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+color = Color(0, 0, 0, 0.470588)
+
+[node name="Panel" type="Panel" parent="."]
+custom_minimum_size = Vector2(800, 600)
+layout_mode = 1
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -400.0
+offset_top = -300.0
+offset_right = 400.0
+offset_bottom = 300.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="VBoxContainer" type="VBoxContainer" parent="Panel"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 30.0
+offset_top = 30.0
+offset_right = -30.0
+offset_bottom = -30.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_constants/separation = 20
+
+[node name="Title" type="Label" parent="Panel/VBoxContainer"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 36
+text = "WELCOME BACK!"
+horizontal_alignment = 1
+
+[node name="ScrollContainer" type="ScrollContainer" parent="Panel/VBoxContainer"]
+layout_mode = 2
+size_flags_vertical = 3
+
+[node name="Content" type="VBoxContainer" parent="Panel/VBoxContainer/ScrollContainer"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 15
+
+[node name="AppHighlights" type="VBoxContainer" parent="Panel/VBoxContainer/ScrollContainer/Content"]
+layout_mode = 2
+
+[node name="SubTitle" type="Label" parent="Panel/VBoxContainer/ScrollContainer/Content/AppHighlights"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.282353, 0.721569, 0.658824, 1)
+theme_override_font_sizes/font_size = 24
+text = "Early Access"
+
+[node name="Text" type="Label" parent="Panel/VBoxContainer/ScrollContainer/Content/AppHighlights"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 18
+text = "We're in early access and still very much in development! Your feedback is crucial to shaping the future of Desolate Frontiers."
+autowrap_mode = 2
+
+[node name="Suggestions" type="VBoxContainer" parent="Panel/VBoxContainer/ScrollContainer/Content"]
+layout_mode = 2
+
+[node name="SubTitle" type="Label" parent="Panel/VBoxContainer/ScrollContainer/Content/Suggestions"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.282353, 0.721569, 0.658824, 1)
+theme_override_font_sizes/font_size = 24
+text = "Feedback & Community"
+
+[node name="Text" type="Label" parent="Panel/VBoxContainer/ScrollContainer/Content/Suggestions"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 18
+text = "• Use the **Report Bug** button in the options menu (top left) liberally for bugs, suggestions, and requests.
+• Join our **Discord** for more suggestions and to connect with the community!"
+autowrap_mode = 2
+
+[node name="GameTips" type="VBoxContainer" parent="Panel/VBoxContainer/ScrollContainer/Content"]
+layout_mode = 2
+
+[node name="SubTitle" type="Label" parent="Panel/VBoxContainer/ScrollContainer/Content/GameTips"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.282353, 0.721569, 0.658824, 1)
+theme_override_font_sizes/font_size = 24
+text = "Quick Tips"
+
+[node name="Text" type="Label" parent="Panel/VBoxContainer/ScrollContainer/Content/GameTips"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 18
+text = "• Select convoys in the **top right** to open their menus and manage vehicles.
+• Tap and drag to pan the map; pinch to zoom.
+• Visit Settlement Cities to trade and upgrade your convoys."
+autowrap_mode = 2
+
+[node name="Tutorial" type="VBoxContainer" parent="Panel/VBoxContainer/ScrollContainer/Content"]
+visible = false
+layout_mode = 2
+
+[node name="CloseButton" type="Button" parent="Panel/VBoxContainer"]
+custom_minimum_size = Vector2(200, 50)
+layout_mode = 2
+size_flags_horizontal = 4
+text = "GOT IT"

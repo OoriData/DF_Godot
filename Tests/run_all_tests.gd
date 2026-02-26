@@ -4,6 +4,7 @@ const TestErrorTranslator = preload("res://Tests/test_error_translator.gd")
 const TestTools = preload("res://Tests/test_tools.gd")
 const TestSettings = preload("res://Tests/test_settings_manager.gd")
 const TestAPICalls = preload("res://Tests/test_api_calls.gd")
+const TestDeviceLogin = preload("res://Tests/test_device_login.gd")
 const TestUtils = preload("res://Tests/test_util.gd")
 
 func _initialize() -> void:
@@ -13,6 +14,7 @@ func _initialize() -> void:
 		{"name": "Tools", "t": TestTools.new()},
 		{"name": "SettingsManager", "t": TestSettings.new()},
 		{"name": "APICalls", "t": TestAPICalls.new()},
+		{"name": "DeviceLogin", "t": TestDeviceLogin.new()},
 	]
 	for entry in tests:
 		var nm := String(entry.get("name", ""))

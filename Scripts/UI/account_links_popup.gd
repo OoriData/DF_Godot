@@ -207,9 +207,13 @@ func _build_ui() -> void:
 	panel_style.corner_radius_bottom_right = 12
 	panel.add_theme_stylebox_override("panel", panel_style)
 	
-	panel.custom_minimum_size = Vector2(420, 260)
-	panel.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
 	_overlay.add_child(panel)
+	panel.custom_minimum_size = Vector2(480, 400)
+	panel.layout_mode = 1 # Anchors
+	panel.anchors_preset = Control.PRESET_CENTER
+	panel.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	panel.grow_vertical = Control.GROW_DIRECTION_BOTH
+	panel.set_anchors_and_offsets_preset(Control.PRESET_CENTER, Control.PRESET_MODE_MINSIZE)
 
 	var margin := MarginContainer.new()
 	margin.add_theme_constant_override("margin_left", 20)

@@ -138,6 +138,8 @@ func _configure_options_dropdown() -> void:
 	popup.add_item("Report Bug", _OPTIONS_REPORT_BUG_ID)
 	popup.add_item("Join Discord", _OPTIONS_DISCORD_ID)
 	popup.add_item("Connect Accounts", _OPTIONS_CONNECT_ACCOUNTS_ID)
+	popup.add_separator()
+	popup.add_item("Highlights & Tips", 100) # Using 100 as a unique ID for Tips
 
 	if not popup.id_pressed.is_connected(_on_options_menu_id_pressed):
 		popup.id_pressed.connect(_on_options_menu_id_pressed)
@@ -153,8 +155,15 @@ func _on_options_menu_id_pressed(id: int) -> void:
 			call_deferred("_on_discord_pressed")
 		_OPTIONS_CONNECT_ACCOUNTS_ID:
 			call_deferred("_on_connect_accounts_pressed")
+		100:
+			_on_highlights_tips_pressed()
 		_:
 			pass
+
+func _on_highlights_tips_pressed() -> void:
+	var main_screen := get_tree().root.find_child("MainScreen", true, false)
+	if is_instance_valid(main_screen) and main_screen.has_method("show_returning_player_tips"):
+		main_screen.show_returning_player_tips()
 
 
 func _on_discord_pressed() -> void:
