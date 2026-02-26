@@ -6,6 +6,7 @@ Transport & Utilities underpinning services and UI.
   - Role: HTTP transport + request queue; emits data/auth/errors.
   - Public API: auth, user/convoys, map, vendors, mechanics, routing, warehouse.
   - Testing: queue ordering, timeouts, auth using stubbed HTTPRequest.
+  - Identity: See [Identity.md](Identity.md) for auth/linking/merging deep-dive.
 
 - SettingsManager: [Scripts/System/settings_manager.gd](../../Scripts/System/settings_manager.gd)
   - Role: persistent settings; emits `setting_changed(key, value)`; applies display/UI side effects.

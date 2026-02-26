@@ -146,6 +146,7 @@ const REQUEST_TIMEOUT_SECONDS := {
 	RequestPurpose.CARGO_DATA: 5.0,
 	RequestPurpose.WAREHOUSE_GET: 5.0,
 }
+var _uuid_regex: RegEx = null
 
 # --- Logging helpers (gate prints behind Logger) ---
 func _log_debug(msg: String) -> void:
@@ -889,30 +890,19 @@ func get_user_data(p_user_id: String, force: bool = false) -> void:
 		print('[APICalls] get_user_data(): already fetched once this session; skip duplicate.')
 		return
 	_user_data_requested_once = true
-	if not _is_valid_uuid(p_user_id):
-		var error_msg = "APICalls (get_user_data): Provided ID '%s' is not a valid UUID." % p_user_id
-		printerr(error_msg)
-		emit_signal('fetch_error', error_msg)
-		return
-
-	var url: String = '%s/user/get?user_id=%s' % [BASE_URL, p_user_id]
-	var headers: PackedStringArray = ['accept: application/json']
-
-	var request_details: Dictionary = {
-		"url": url,
-		"headers": headers,
-		"purpose": RequestPurpose.USER_DATA,
-		"method": HTTPClient.METHOD_GET
-	}
-	_diag_enqueue("get_user_data", request_details)
+	_request_user_data_internal(p_user_id, "get_user_data")
 
 # Force a user data refresh regardless of the one-time guard. Useful after creation events.
 func refresh_user_data(p_user_id: String) -> void:
+	_request_user_data_internal(p_user_id, "refresh_user_data")
+
+func _request_user_data_internal(p_user_id: String, tag: String) -> void:
 	if not _is_valid_uuid(p_user_id):
-		var error_msg = "APICalls (refresh_user_data): Provided ID '%s' is not a valid UUID." % p_user_id
+		var error_msg = "APICalls (%s): Provided ID '%s' is not a valid UUID." % [tag, p_user_id]
 		printerr(error_msg)
 		emit_signal('fetch_error', error_msg)
 		return
+
 	var url: String = '%s/user/get?user_id=%s' % [BASE_URL, p_user_id]
 	var headers: PackedStringArray = ['accept: application/json']
 	var request_details: Dictionary = {
@@ -921,14 +911,16 @@ func refresh_user_data(p_user_id: String) -> void:
 		"purpose": RequestPurpose.USER_DATA,
 		"method": HTTPClient.METHOD_GET
 	}
-	_log_debug('[APICalls] refresh_user_data(): enqueue URL=' + url)
-	_diag_enqueue("refresh_user_data", request_details)
+	if tag == "refresh_user_data":
+		_log_debug('[APICalls] refresh_user_data(): enqueue URL=' + url)
+	_diag_enqueue(tag, request_details)
 
 func _is_valid_uuid(uuid_string: String) -> bool:
 	# Basic UUID regex: 8-4-4-4-12 hexadecimal characters
-	var uuid_regex = RegEx.new()
-	uuid_regex.compile("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
-	return uuid_regex.search(uuid_string) != null
+	if _uuid_regex == null:
+		_uuid_regex = RegEx.new()
+		_uuid_regex.compile("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
+	return _uuid_regex.search(uuid_string) != null
 
 func get_user_convoys(p_user_id: String) -> void:
 	if p_user_id.is_empty():
