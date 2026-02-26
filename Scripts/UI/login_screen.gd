@@ -400,11 +400,15 @@ func _on_auth_url_received(data: Dictionary) -> void:
 	status_label.text = "Browser opened. Complete Discord sign-in..."
 
 func _on_api_error(message: String) -> void:
+	var friendly := ErrorTranslator.translate(message)
+	if friendly.is_empty():
+		return
+		
 	if _oauth_in_progress:
-		status_label.text = "Auth error: %s" % message
+		status_label.text = friendly
 		_set_oauth_active(false)
 	else:
-		status_label.text = message
+		status_label.text = friendly
 
 func _on_auth_state_changed(state: String) -> void:
 	# Drive UI from canonical Hub auth state.
@@ -422,7 +426,7 @@ func _on_auth_state_changed(state: String) -> void:
 			status_label.text = "Session expired. Please login."
 		"failed":
 			_set_oauth_active(false)
-			if status_label.text == "Authenticating" or status_label.text == "":
+			if status_label.text == "Authenticating" or status_label.text == "" or status_label.text.begins_with("Authenticating"):
 				status_label.text = "Authentication failed."
 		_: # default
 			pass

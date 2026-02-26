@@ -42,6 +42,11 @@ const ERROR_MAP: Dictionary = {
 	"Session expired": "Your session has expired. Please log in again.",
 	"Authentication timed out": "Authentication timed out. Please try logging in again.",
 	"Auth complete but no session_token": "There was a problem logging you in. Please try again.",
+	"Field required": "Authentication was cancelled by the user.",
+	"Login cancelled.": "Authentication was cancelled by the user.",
+	"Access denied.": "Access denied.",
+	"access_denied": "Authentication was denied or cancelled.",
+	"cancelled": "Authentication was cancelled by the user.",
 
 	# --- Input Validation Errors ---
 	"is not a valid UUID": "An internal error occurred (Invalid ID).",

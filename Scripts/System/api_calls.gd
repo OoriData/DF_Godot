@@ -183,6 +183,11 @@ func _get_error_message(data: Variant, body_text: String) -> String:
 		var detail = data.get("detail", null)
 		if detail is Dictionary:
 			return String(detail.get("message", detail.get("error", "Unknown error.")))
+		elif detail is Array and detail.size() > 0:
+			var first = detail[0]
+			if first is Dictionary and first.has("msg"):
+				return String(first.get("msg"))
+			return String(first)
 		elif detail is String:
 			return detail
 		
@@ -191,6 +196,11 @@ func _get_error_message(data: Variant, body_text: String) -> String:
 			return String(msg)
 	
 	if body_text != "" and body_text.length() < 500:
+		var json = JSON.parse_string(body_text)
+		if json is Array and json.size() > 0:
+			var first = json[0]
+			if first is Dictionary and first.has("msg"):
+				return String(first.get("msg"))
 		return body_text
 	
 	return "Unknown error."
@@ -2092,26 +2102,14 @@ func _on_request_completed(result: int, response_code: int, _headers: PackedStri
 			print("[APICalls][PATCH_TXN] fail_body_preview=", fail_preview)
 			# Try to parse JSON error for clearer feedback (e.g. FastAPI validation 'detail')
 			var fail_json = JSON.parse_string(fail_body_text)
-			var detail_msg := ""
-			if typeof(fail_json) == TYPE_DICTIONARY:
-				var msg_parts: Array = []
-				if fail_json.has("detail"):
-					msg_parts.append(str(fail_json["detail"]))
-				if fail_json.has("error"):
-					msg_parts.append(str(fail_json["error"]))
-				if msg_parts.size() > 0:
-					detail_msg = "; ".join(msg_parts)
-			elif typeof(fail_json) == TYPE_ARRAY and fail_json.size() > 0:
-				# FastAPI may return list of validation issues
-				var first_issue = fail_json[0]
-				if typeof(first_issue) == TYPE_DICTIONARY and first_issue.has("msg"):
-					detail_msg = str(first_issue["msg"])
-			if detail_msg == "":
-				detail_msg = fail_body_text
+			var detail_msg = _get_error_message(fail_json, fail_body_text)
+
 			if _current_debug_tag == "bug_report" and _current_patch_signal_name == "bug_report_submitted":
 				emit_signal('fetch_error', "Bug report submit failed (HTTP %d): %s" % [response_code, detail_msg])
 			else:
-				emit_signal('fetch_error', "PATCH '" + _current_patch_signal_name + "' failed: " + detail_msg)
+				var prefix = "PATCH '" + _current_patch_signal_name + "' failed: "
+				# If the error message already has a meaningful prefix or is translated, don't double-prefix if it looks like a full sentence
+				emit_signal('fetch_error', prefix + detail_msg)
 			_complete_current_request()
 			return
 
@@ -2144,14 +2142,10 @@ func _on_request_completed(result: int, response_code: int, _headers: PackedStri
 		printerr("API error response code: ", response_code)
 		printerr("API error response body: ", response_text)
 		
-		# Try to extract "detail" from JSON error
-		var error_detail = ""
+		# Try to extract meaningful error from JSON
 		var json_result = JSON.parse_string(response_text)
-		if typeof(json_result) == TYPE_DICTIONARY and json_result.has("detail"):
-			error_detail = json_result["detail"]
-			emit_signal('fetch_error', error_detail)
-		else:
-			emit_signal('fetch_error', response_text)
+		var error_msg = _get_error_message(json_result, response_text)
+		emit_signal('fetch_error', error_msg)
 		
 		if request_purpose_at_start == RequestPurpose.CARGO_DATA:
 			var cid := _extract_query_param(_last_requested_url, "cargo_id")
@@ -2489,6 +2483,30 @@ func _on_request_completed(result: int, response_code: int, _headers: PackedStri
 					print('[APICalls][AUTH_STATUS] Forcing /auth/me resolution now that token is set.')
 					resolve_current_user_id(true)
 					_emit_hub_auth_state('authenticated')
+			elif status == 'cancelled':
+				_auth_poll.active = false
+				_login_in_progress = false
+				emit_signal('auth_poll_finished', false)
+				emit_signal('fetch_error', 'Login cancelled.')
+				_emit_hub_auth_state('failed')
+				if _auth_poll.state != "":
+					emit_signal("discord_account_linked", {
+						"ok": false,
+						"error_code": 0,
+						"message": "Login cancelled."
+					})
+			elif status == 'denied':
+				_auth_poll.active = false
+				_login_in_progress = false
+				emit_signal('auth_poll_finished', false)
+				emit_signal('fetch_error', 'Access denied.')
+				_emit_hub_auth_state('failed')
+				if _auth_poll.state != "":
+					emit_signal("discord_account_linked", {
+						"ok": false,
+						"error_code": 403,
+						"message": "Access denied."
+					})
 			else:
 				_auth_poll.active = false
 				_login_in_progress = false
@@ -2497,7 +2515,7 @@ func _on_request_completed(result: int, response_code: int, _headers: PackedStri
 				
 				# Check for conflict in status-poll error detail (Account Merge flow)
 				var status_code = int(json_response.get("code", 0))
-				if status == "error" and (status_code == 409 or json_response.has("conflict")):
+				if (status == "error" or status == "failed") and (status_code == 409 or json_response.has("conflict")):
 					var conflict_data: Dictionary = {}
 					var detail_raw = json_response.get("detail", null)
 					if detail_raw is Dictionary:
@@ -2524,7 +2542,7 @@ func _on_request_completed(result: int, response_code: int, _headers: PackedStri
 				if _auth_poll.state != "":
 					emit_signal("discord_account_linked", {
 						"ok": false,
-						"error_code": 0, # Could try to map status_code here if available
+						"error_code": status_code if status_code != 0 else 0,
 						"message": err_msg
 					})
 		_complete_current_request()
