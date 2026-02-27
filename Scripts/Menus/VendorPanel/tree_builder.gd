@@ -158,7 +158,7 @@ static func _normalize_category_title(category_name: String) -> String:
 	return title
 
 # Populate a single category section mirroring panel styling and metadata.
-static func populate_category(target_tree: Tree, root_item: TreeItem, category_name: String, agg_dict: Dictionary) -> void:
+static func populate_category(target_tree: Tree, root_item: TreeItem, category_name: String, agg_dict: Dictionary, sort_metric: int = -1) -> void:
 	if agg_dict == null or agg_dict.is_empty():
 		return
 	var title := _normalize_category_title(category_name)
@@ -185,7 +185,37 @@ static func populate_category(target_tree: Tree, root_item: TreeItem, category_n
 		else:
 			dn = str(agg_key)
 		rows.append({"key": agg_key, "data": agg_data, "dn": dn, "sort": dn.to_lower()})
-	rows.sort_custom(func(a, b): return a["sort"] < b["sort"])
+	if sort_metric >= 0 and _normalize_category_title(category_name) == "Delivery Cargo":
+		var CargoSorter = preload("res://Scripts/System/cargo_sorter.gd")
+		var items_to_sort = []
+		for r in rows:
+			var data = r["data"]
+			if data is Dictionary and data.has("item_data") and data["item_data"] is Dictionary:
+				items_to_sort.append(data["item_data"])
+			else:
+				items_to_sort.append(data)
+		
+		# Sort items using the CargoSorter
+		var sorted_items = CargoSorter.sort_cargo(items_to_sort, sort_metric, false)
+		
+		# Rebuild `rows` matching the sorted order
+		var new_rows: Array = []
+		for sorted_item in sorted_items:
+			for i in range(rows.size()):
+				var r = rows[i]
+				var r_data = r["data"]
+				var r_item_data = r_data.get("item_data", r_data) if r_data is Dictionary else r_data
+				if r_item_data == sorted_item:
+					new_rows.append(r)
+					rows.remove_at(i)
+					break
+		
+		# Any leftovers (shouldn't happen, but just in case)
+		for r in rows:
+			new_rows.append(r)
+		rows = new_rows
+	else:
+		rows.sort_custom(func(a, b): return a["sort"] < b["sort"])
 
 	var row_index: int = 0
 	for row in rows:

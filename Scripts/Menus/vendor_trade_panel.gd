@@ -51,6 +51,7 @@ func _emit_install_requested(item: Variant, quantity: int, vendor_id: String) ->
 @onready var convoy_cargo_label: Label = %ConvoyCargoLabel
 @onready var trade_mode_tab_container: TabContainer = %TradeModeTabContainer
 @onready var toast_notification: Control = %ToastNotification
+@onready var cargo_sort_option_button: OptionButton = get_node_or_null("%CargoSortOptionButton")
 var loading_panel: Panel = null
 
 # --- Data ---
@@ -62,6 +63,7 @@ var current_settlement_data # Will hold the current settlement data for local ve
 var all_settlement_data_global: Array # New: Will hold all settlement data for global vendor lookup
 var selected_item = null
 var current_mode = "buy" # or "sell"
+var _cargo_sort_metric: int = 0 # CargoSorter.SortMetric
 var _last_selected_item_id = null # <-- Add this line
 var _last_selected_ref = null # Track last selected aggregated data reference to avoid resetting quantity repeatedly
 var _last_selection_unique_key: String = "" # Used to detect same logical selection even if reference changes
@@ -120,6 +122,71 @@ var _baseline_guard: Dictionary = {
 
 # Feedback state for transaction success/failure in the middle panel
 var _feedback_data: Dictionary = {} # { "message": "", "type": "success" }
+
+func _get_settings_manager() -> Node:
+	return get_node_or_null("/root/SettingsManager")
+
+func _load_cargo_sort_metric_from_settings() -> void:
+	var sm := _get_settings_manager()
+	if is_instance_valid(sm) and sm.has_method("get_value"):
+		_cargo_sort_metric = int(sm.get_value("ui.cargo_sort_metric", 0))
+
+func _save_cargo_sort_metric_to_settings(metric: int) -> void:
+	var sm := _get_settings_manager()
+	if is_instance_valid(sm) and sm.has_method("set_and_save"):
+		sm.set_and_save("ui.cargo_sort_metric", metric)
+
+func _set_cargo_sort_ui_visible(visible: bool) -> void:
+	if is_instance_valid(cargo_sort_option_button):
+		var p := cargo_sort_option_button.get_parent()
+		if is_instance_valid(p):
+			p.visible = visible
+
+func _has_delivery_cargo_in_array(inv_any: Variant) -> bool:
+	if not (inv_any is Array):
+		return false
+	for entry_any in (inv_any as Array):
+		if not (entry_any is Dictionary):
+			continue
+		var d: Dictionary = entry_any
+		if ItemsData != null and ItemsData.MissionItem and ItemsData.MissionItem._looks_like_mission_dict(d):
+			return true
+		var dr: Variant = d.get("delivery_reward", null)
+		if (dr is float or dr is int) and float(dr) > 0.0:
+			return true
+		if d.get("recipient", null) != null:
+			return true
+	return false
+
+func _has_delivery_cargo_fast_for_mode(mode: String) -> bool:
+	if mode == "sell":
+		if convoy_data is Dictionary:
+			var cd: Dictionary = convoy_data
+			if _has_delivery_cargo_in_array(cd.get("cargo_inventory", [])):
+				return true
+			if _has_delivery_cargo_in_array(cd.get("all_cargo", [])):
+				return true
+			if cd.has("vehicle_details_list") and cd.get("vehicle_details_list") is Array:
+				for v_any in (cd.get("vehicle_details_list") as Array):
+					if not (v_any is Dictionary):
+						continue
+					var v: Dictionary = v_any
+					if _has_delivery_cargo_in_array(v.get("cargo_inventory", [])):
+						return true
+					if _has_delivery_cargo_in_array(v.get("cargo_items_typed", [])):
+						return true
+		return false
+
+	if vendor_data is Dictionary:
+		var vd: Dictionary = vendor_data
+		if _has_delivery_cargo_in_array(vd.get("cargo_inventory", [])):
+			return true
+		if _has_delivery_cargo_in_array(vd.get("all_cargo", [])):
+			return true
+	return false
+
+func _update_sort_dropdown_visibility_fast() -> void:
+	_set_cargo_sort_ui_visible(_has_delivery_cargo_fast_for_mode(current_mode))
 
 func _clear_committed_projection() -> void:
 	_committed_projection.selection_key = ""
@@ -598,6 +665,50 @@ func _ready() -> void:
 	else:
 		printerr("VendorTradePanel: 'DescriptionToggleButton' node not found. Please check the scene file.")
 
+	if is_instance_valid(cargo_sort_option_button):
+		_load_cargo_sort_metric_from_settings()
+		cargo_sort_option_button.custom_minimum_size = Vector2(280, 34)
+		cargo_sort_option_button.add_theme_color_override("font_color", Color(0.93, 0.93, 0.93, 1.0))
+		cargo_sort_option_button.add_theme_color_override("font_hover_color", Color(0.98, 0.98, 0.98, 1.0))
+		var sort_normal := StyleBoxFlat.new()
+		sort_normal.bg_color = Color(0.24, 0.24, 0.24, 0.96)
+		sort_normal.border_width_left = 1
+		sort_normal.border_width_right = 1
+		sort_normal.border_width_top = 1
+		sort_normal.border_width_bottom = 1
+		sort_normal.border_color = Color(0.56, 0.56, 0.56, 0.95)
+		sort_normal.corner_radius_top_left = 4
+		sort_normal.corner_radius_top_right = 4
+		sort_normal.corner_radius_bottom_left = 4
+		sort_normal.corner_radius_bottom_right = 4
+		sort_normal.content_margin_left = 10
+		sort_normal.content_margin_right = 10
+		sort_normal.content_margin_top = 4
+		sort_normal.content_margin_bottom = 4
+		var sort_hover := sort_normal.duplicate()
+		sort_hover.bg_color = Color(0.31, 0.31, 0.31, 0.98)
+		sort_hover.border_color = Color(0.70, 0.70, 0.70, 1.0)
+		var sort_pressed := sort_normal.duplicate()
+		sort_pressed.bg_color = Color(0.18, 0.18, 0.18, 1.0)
+		cargo_sort_option_button.add_theme_stylebox_override("normal", sort_normal)
+		cargo_sort_option_button.add_theme_stylebox_override("hover", sort_hover)
+		cargo_sort_option_button.add_theme_stylebox_override("pressed", sort_pressed)
+		cargo_sort_option_button.add_theme_stylebox_override("focus", sort_hover)
+		var sort_parent := cargo_sort_option_button.get_parent()
+		if is_instance_valid(sort_parent):
+			sort_parent.add_theme_constant_override("separation", 8)
+			
+		cargo_sort_option_button.clear()
+		cargo_sort_option_button.add_item("Sort: Profit Margin/Unit")
+		cargo_sort_option_button.add_item("Sort: Profit Density/Weight")
+		cargo_sort_option_button.add_item("Sort: Profit Density/Volume")
+		cargo_sort_option_button.add_item("Sort: Total Order Profit")
+		cargo_sort_option_button.add_item("Sort: Distance to Recipient")
+		_cargo_sort_metric = clampi(_cargo_sort_metric, 0, max(0, cargo_sort_option_button.item_count - 1))
+		cargo_sort_option_button.select(_cargo_sort_metric)
+		cargo_sort_option_button.item_selected.connect(_on_cargo_sort_selected)
+		_update_sort_dropdown_visibility_fast()
+
 	# Subscribe to canonical sources (Hub/Store) instead of GameDataManager.
 	if is_instance_valid(_hub):
 		var cb_hub_ready := Callable(self, "_on_hub_vendor_panel_ready")
@@ -905,6 +1016,7 @@ func initialize(p_vendor_data, p_convoy_data, p_current_settlement_data, p_all_s
 	self.convoy_data = p_convoy_data
 	self.current_settlement_data = p_current_settlement_data
 	self.all_settlement_data_global = p_all_settlement_data_global
+	_update_sort_dropdown_visibility_fast()
 
 	# Request an authoritative refresh via services
 	var vid := str((self.vendor_data if self.vendor_data is Dictionary else {}).get("vendor_id", ""))
@@ -925,6 +1037,7 @@ func refresh_data(p_vendor_data, p_convoy_data, p_current_settlement_data, p_all
 	self.convoy_data = p_convoy_data
 	self.current_settlement_data = p_current_settlement_data
 	self.all_settlement_data_global = p_all_settlement_data_global
+	_update_sort_dropdown_visibility_fast()
 
 	# Preserve current selection context for restore after repopulation
 	var prev_selected_id := _last_selected_restore_id
@@ -952,11 +1065,16 @@ func _populate_vendor_list() -> void:
 	var vd_for_agg := _vendor_data_with_price_fallback(vendor_data)
 	var buckets := VendorCargoAggregatorScript.build_vendor_buckets(vd_for_agg, perf_log_enabled, Callable(self, "_get_vendor_name_for_recipient"))
 	var root = vendor_item_tree.create_item()
+	var has_delivery_cargo = not buckets.get("missions", {}).is_empty()
 	_populate_category(vendor_item_tree, root, "Delivery Cargo", buckets.get("missions", {}))
 	_populate_category(vendor_item_tree, root, "Vehicles", buckets.get("vehicles", {}))
 	_populate_category(vendor_item_tree, root, "Parts", buckets.get("parts", {}))
 	_populate_category(vendor_item_tree, root, "Other", buckets.get("other", {}))
 	_populate_category(vendor_item_tree, root, "Resources", buckets.get("resources", {}))
+
+	if is_instance_valid(cargo_sort_option_button):
+		_set_cargo_sort_ui_visible(has_delivery_cargo or _has_delivery_cargo_fast_for_mode("buy"))
+
 	# Vendor list is now rebuilt; apply any queued deep-link focus request.
 	_try_apply_pending_focus_intent()
 
@@ -1053,6 +1171,7 @@ func _populate_convoy_list() -> void:
 			" allow_vehicle_sell=", allow_vehicle_sell,
 			" bucket_sizes(m/v/p/o/r)=", int((buckets.get("missions", {}) as Dictionary).size()), "/", int((buckets.get("vehicles", {}) as Dictionary).size()), "/", int((buckets.get("parts", {}) as Dictionary).size()), "/", int((buckets.get("other", {}) as Dictionary).size()), "/", int((buckets.get("resources", {}) as Dictionary).size()))
 	var root = convoy_item_tree.create_item()
+	var has_delivery_cargo = not buckets.get("missions", {}).is_empty()
 	_populate_category(convoy_item_tree, root, "Delivery Cargo", buckets.get("missions", {}))
 	if allow_vehicle_sell and not (buckets.get("vehicles", {}) as Dictionary).is_empty():
 		_populate_category(convoy_item_tree, root, "Vehicles", buckets.get("vehicles", {}))
@@ -1061,6 +1180,11 @@ func _populate_convoy_list() -> void:
 		_populate_category(convoy_item_tree, root, "Parts", buckets.get("parts", {}))
 	_populate_category(convoy_item_tree, root, "Other", buckets.get("other", {}))
 	_populate_category(convoy_item_tree, root, "Resources", buckets.get("resources", {}))
+
+	# Show sorting if either list has delivery cargo, according to Active Tab
+	if is_instance_valid(cargo_sort_option_button):
+		if current_mode == "sell":
+			_set_cargo_sort_ui_visible(has_delivery_cargo or _has_delivery_cargo_fast_for_mode("sell"))
 
 func _update_convoy_info_display() -> void:
 	var deltas := _get_effective_projection_deltas()
@@ -1103,6 +1227,7 @@ func _on_convoy_updated(convoy: Dictionary) -> void:
 func _on_tab_changed(tab_index: int) -> void:
 	current_mode = "buy" if tab_index == 0 else "sell"
 	action_button.text = "Buy" if current_mode == "buy" else "Sell"
+	_update_sort_dropdown_visibility_fast()
 	
 	# Clear selection and inspector when switching tabs
 	selected_item = null
@@ -1146,7 +1271,7 @@ func _on_convoy_item_selected() -> void:
 	call_deferred("_handle_new_item_selection", item)
 
 func _populate_category(target_tree: Tree, root_item: TreeItem, category_name: String, agg_dict: Dictionary) -> void:
-	VendorTreeBuilder.populate_category(target_tree, root_item, category_name, agg_dict)
+	VendorTreeBuilder.populate_category(target_tree, root_item, category_name, agg_dict, _cargo_sort_metric)
 
 func _ensure_tree_columns(tree: Tree) -> void:
 	if not is_instance_valid(tree):
@@ -1569,3 +1694,10 @@ func _flash_capacity_bars() -> void:
 		var tw: Tween = create_tween()
 		tw.tween_property(convoy_weight_bar, "modulate", flash_color, duration * 0.3)
 		tw.tween_property(convoy_weight_bar, "modulate", Color.WHITE, duration * 0.7)
+
+func _on_cargo_sort_selected(index: int) -> void:
+	_cargo_sort_metric = index
+	_save_cargo_sort_metric_to_settings(index)
+
+	_populate_vendor_list()
+	_populate_convoy_list()

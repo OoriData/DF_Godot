@@ -132,6 +132,9 @@ var _vendor_id_to_settlement: Dictionary = {} # vendor_id -> settlement Dictiona
 var _vendor_id_to_name: Dictionary = {} # vendor_id -> vendor name String (from map snapshot + vendor previews)
 var _vendor_preview_update_timer: Timer = null # For debouncing updates
 var _vendor_preview_update_pending: bool = false
+var _cargo_sort_metric: int = 0
+var _mission_sort_container: HBoxContainer = null
+var _mission_sort_option_button: OptionButton = null
 var _destinations_cache: Dictionary = {} # item_name -> recipient_settlement_name (or destination string)
 
 # Avoid spamming vendor detail requests when Available Missions refreshes.
@@ -140,6 +143,19 @@ var _requested_vendor_details: Dictionary = {} # vendor_id -> true
 # For deep-linking Active Missions -> Cargo menu, preserve at least one representative cargo_id per mission item name.
 var _active_mission_cargo_id_by_name: Dictionary = {} # item_name -> cargo_id
 var _active_mission_cargo_id_by_display: Dictionary = {} # "name — to DEST" -> cargo_id
+
+func _get_settings_manager() -> Node:
+	return get_node_or_null("/root/SettingsManager")
+
+func _load_cargo_sort_metric_from_settings() -> void:
+	var sm := _get_settings_manager()
+	if is_instance_valid(sm) and sm.has_method("get_value"):
+		_cargo_sort_metric = int(sm.get_value("ui.cargo_sort_metric", 0))
+
+func _save_cargo_sort_metric_to_settings(metric: int) -> void:
+	var sm := _get_settings_manager()
+	if is_instance_valid(sm) and sm.has_method("set_and_save"):
+		sm.set_and_save("ui.cargo_sort_metric", metric)
 
 
 
@@ -207,6 +223,76 @@ func _ready():
 	if not is_instance_valid(title_label):
 		printerr("ConvoyMenu: CRITICAL - TitleLabel node not found. Check the path in the script.")
 
+	
+	if has_node("MainVBox/ScrollContainer/ContentVBox/VendorPreviewPanel/VendorPreviewVBox"):
+		var preview_vbox = $MainVBox/ScrollContainer/ContentVBox/VendorPreviewPanel/VendorPreviewVBox
+		var sort_dropdown_container := preview_vbox.get_node_or_null("SortDropdownContainer") as HBoxContainer
+		if not is_instance_valid(sort_dropdown_container):
+			sort_dropdown_container = HBoxContainer.new()
+			sort_dropdown_container.name = "SortDropdownContainer"
+			sort_dropdown_container.alignment = BoxContainer.ALIGNMENT_END
+			sort_dropdown_container.visible = false
+		
+		var sort_option := sort_dropdown_container.get_node_or_null("MissionSortOptionButton") as OptionButton
+		if not is_instance_valid(sort_option):
+			sort_option = OptionButton.new()
+			sort_option.name = "MissionSortOptionButton"
+			sort_dropdown_container.add_child(sort_option)
+
+		# Make sort control stand out against dark backgrounds.
+		sort_dropdown_container.add_theme_constant_override("separation", 8)
+		sort_option.custom_minimum_size = Vector2(300, 34)
+		sort_option.add_theme_color_override("font_color", Color(0.93, 0.93, 0.93, 1.0))
+		sort_option.add_theme_color_override("font_hover_color", Color(0.98, 0.98, 0.98, 1.0))
+		var so_normal := StyleBoxFlat.new()
+		so_normal.bg_color = Color(0.24, 0.24, 0.24, 0.96)
+		so_normal.border_width_left = 1
+		so_normal.border_width_right = 1
+		so_normal.border_width_top = 1
+		so_normal.border_width_bottom = 1
+		so_normal.border_color = Color(0.56, 0.56, 0.56, 0.95)
+		so_normal.corner_radius_top_left = 4
+		so_normal.corner_radius_top_right = 4
+		so_normal.corner_radius_bottom_left = 4
+		so_normal.corner_radius_bottom_right = 4
+		so_normal.content_margin_left = 10
+		so_normal.content_margin_right = 10
+		so_normal.content_margin_top = 4
+		so_normal.content_margin_bottom = 4
+		var so_hover := so_normal.duplicate()
+		so_hover.bg_color = Color(0.31, 0.31, 0.31, 0.98)
+		so_hover.border_color = Color(0.70, 0.70, 0.70, 1.0)
+		var so_pressed := so_normal.duplicate()
+		so_pressed.bg_color = Color(0.18, 0.18, 0.18, 1.0)
+		sort_option.add_theme_stylebox_override("normal", so_normal)
+		sort_option.add_theme_stylebox_override("hover", so_hover)
+		sort_option.add_theme_stylebox_override("pressed", so_pressed)
+		sort_option.add_theme_stylebox_override("focus", so_hover)
+		
+		_load_cargo_sort_metric_from_settings()
+			
+		sort_option.clear()
+		sort_option.add_item("Sort: Profit Margin/Unit")
+		sort_option.add_item("Sort: Profit Density/Weight")
+		sort_option.add_item("Sort: Profit Density/Volume")
+		sort_option.add_item("Sort: Total Order Profit")
+		sort_option.add_item("Sort: Distance to Recipient")
+		_cargo_sort_metric = clampi(_cargo_sort_metric, 0, max(0, sort_option.item_count - 1))
+		sort_option.select(_cargo_sort_metric)
+		if sort_option.item_selected.is_connected(_on_mission_sort_selected):
+			sort_option.item_selected.disconnect(_on_mission_sort_selected)
+		sort_option.item_selected.connect(_on_mission_sort_selected)
+		_mission_sort_container = sort_dropdown_container
+		_mission_sort_option_button = sort_option
+		
+		if sort_dropdown_container.get_parent() == null:
+			# Insert below VendorTabsHBox
+			var tabs_hbox = preview_vbox.get_node_or_null("VendorTabsHBox")
+			if tabs_hbox:
+				preview_vbox.add_child(sort_dropdown_container)
+				preview_vbox.move_child(sort_dropdown_container, tabs_hbox.get_index() + 1)
+
+	
 	# Style bottom bar panel if present
 	var bottom_panel := $MainVBox/BottomBarPanel if has_node("MainVBox/BottomBarPanel") else null
 	if is_instance_valid(bottom_panel):
@@ -845,6 +931,17 @@ func _render_vendor_preview_display() -> void:
 		VendorTab.COMPATIBLE_PARTS:
 			content_list = _compatible_part_items
 
+	var sort_container: HBoxContainer = _mission_sort_container
+	if not is_instance_valid(sort_container):
+		var preview_vbox = get_node_or_null("MainVBox/ScrollContainer/ContentVBox/VendorPreviewPanel/VendorPreviewVBox")
+		sort_container = preview_vbox.get_node_or_null("SortDropdownContainer") if preview_vbox else null
+		_mission_sort_container = sort_container
+	if sort_container:
+		if content_list.is_empty() or _current_vendor_tab == VendorTab.COMPATIBLE_PARTS:
+			sort_container.visible = false
+		else:
+			sort_container.visible = true
+
 	if content_list.is_empty():
 		vendor_item_container.visible = false
 		vendor_no_items_label.visible = true
@@ -1034,6 +1131,7 @@ func _collect_mission_cargo_items(convoy: Dictionary) -> Array[String]:
 	var out: Array[String] = []
 	var found_any_cargo := false
 	var agg: Dictionary = {} # display_key -> total quantity
+	var agg_data: Dictionary = {} # display_key -> raw item
 	_active_mission_cargo_id_by_name.clear()
 	_active_mission_cargo_id_by_display.clear()
 	var diag_typed_mission := 0
@@ -1104,6 +1202,8 @@ func _collect_mission_cargo_items(convoy: Dictionary) -> Array[String]:
 							if q_any != null:
 								qty = int(q_any)
 						agg[display_key] = int(agg.get(display_key, 0)) + qty
+						if not agg_data.has(display_key):
+							agg_data[display_key] = raw_item.duplicate()
 						diag_typed_mission += 1
 				# Also scan raw cargo for mission items regardless of typed presence
 				var cargo_arr: Array = vehicle.get("cargo", [])
@@ -1129,6 +1229,8 @@ func _collect_mission_cargo_items(convoy: Dictionary) -> Array[String]:
 							if _debug_convoy_menu:
 								print("[ConvoyMenu][Debug] raw mission item=", item_name2, " q=", qty2)
 							agg[display_key2] = int(agg.get(display_key2, 0)) + qty2
+							if not agg_data.has(display_key2):
+								agg_data[display_key2] = item.duplicate()
 							diag_raw_mission += 1
 
 	# Fallback to convoy-level inventory if nothing was found in vehicles
@@ -1153,6 +1255,8 @@ func _collect_mission_cargo_items(convoy: Dictionary) -> Array[String]:
 				if _debug_convoy_menu:
 					print("[ConvoyMenu][Debug] inventory mission item=", item_name3, " q=", qty3)
 				agg[display_key3] = int(agg.get(display_key3, 0)) + qty3
+				if not agg_data.has(display_key3):
+					agg_data[display_key3] = item.duplicate()
 				diag_raw_mission += 1
 
 	# Also scan convoy-level all_cargo for mission stacks
@@ -1178,14 +1282,28 @@ func _collect_mission_cargo_items(convoy: Dictionary) -> Array[String]:
 					_active_mission_cargo_id_by_display[display_key4] = cid4
 				var aq := int(ac.get("quantity", 1))
 				agg[display_key4] = int(agg.get(display_key4, 0)) + (aq if aq > 0 else 1)
+				if not agg_data.has(display_key4):
+					agg_data[display_key4] = ac.duplicate()
 				if _debug_convoy_menu:
 					print("[ConvoyMenu][Debug] all_cargo mission item=", aname, " q=", aq)
 				diag_allcargo_mission += 1
 
-	# Build display strings from aggregated totals.
-	# Keys are already in "name" or "name — to DEST" form.
+
+	var CargoSorter = null
+	if _cargo_sort_metric >= 0:
+		CargoSorter = preload("res://Scripts/System/cargo_sorter.gd")
+	var items_to_sort = []
 	for k in agg.keys():
-		out.append(String(k))
+		var data = agg_data.get(k, {}).duplicate()
+		data["display_name"] = String(k)
+		data["total_quantity"] = agg[k]
+		items_to_sort.append(data)
+	
+	if CargoSorter and _cargo_sort_metric >= 0:
+		items_to_sort = CargoSorter.sort_cargo(items_to_sort, _cargo_sort_metric, false)
+	
+	for sorted_item in items_to_sort:
+		out.append(sorted_item["display_name"])
 	if _debug_convoy_menu:
 		print("[ConvoyMenu][Debug] mission agg result=", out)
 		print("[ConvoyMenu][Debug] diag typed=", diag_typed_mission, " raw=", diag_raw_mission, " all=", diag_allcargo_mission)
@@ -1283,6 +1401,7 @@ func _extract_coords_from_dict(d: Dictionary) -> Vector2i:
 # Collect available mission cargo at the current settlement (not in convoy)
 func _collect_settlement_mission_items() -> Array[String]:
 	var out: Array[String] = []
+	var raw_items = []
 	if convoy_data_received == null:
 		return out
 	var diag_budget: int = 6
@@ -1400,8 +1519,21 @@ func _collect_settlement_mission_items() -> Array[String]:
 			var entry2 := "%s" % [nm2]
 			if dest2 != "":
 				entry2 += " — to %s" % dest2
-			out.append(entry2)
+			
+			var sort_data = ci.duplicate()
+			sort_data["display_name"] = entry2
+			raw_items.append(sort_data)
 
+	
+	var CargoSorter = null
+	if _cargo_sort_metric >= 0:
+		CargoSorter = preload("res://Scripts/System/cargo_sorter.gd")
+	if CargoSorter and _cargo_sort_metric >= 0:
+		raw_items = CargoSorter.sort_cargo(raw_items, _cargo_sort_metric, false)
+	
+	for ri in raw_items:
+		out.append(ri["display_name"])
+		
 	if _debug_convoy_menu:
 		print("[ConvoyMenu][Debug] Settlement missions via vendor fallback: ", out)
 	return out
@@ -1859,6 +1991,11 @@ func _get_settlement_name_by_any_id(id_any: Variant) -> String:
 func _on_vendor_tab_pressed(tab_index: VendorTab) -> void:
 	_current_vendor_tab = tab_index
 	_render_vendor_preview_display()
+
+func _on_mission_sort_selected(idx: int) -> void:
+	_cargo_sort_metric = idx
+	_save_cargo_sort_metric_to_settings(idx)
+	_update_vendor_preview()
 
 # --- Placeholder Button Handlers ---
 func _on_vehicle_menu_button_pressed():
