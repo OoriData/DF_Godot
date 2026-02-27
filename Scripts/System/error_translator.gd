@@ -42,6 +42,11 @@ const ERROR_MAP: Dictionary = {
 	"Session expired": "Your session has expired. Please log in again.",
 	"Authentication timed out": "Authentication timed out. Please try logging in again.",
 	"Auth complete but no session_token": "There was a problem logging you in. Please try again.",
+	"Field required": "Authentication was cancelled by the user.",
+	"Login cancelled.": "Authentication was cancelled by the user.",
+	"Access denied.": "Access denied.",
+	"access_denied": "Authentication was denied or cancelled.",
+	"cancelled": "Authentication was cancelled by the user.",
 
 	# --- Input Validation Errors ---
 	"is not a valid UUID": "An internal error occurred (Invalid ID).",
@@ -68,7 +73,8 @@ const ERROR_MAP: Dictionary = {
 # A list of technical error substrings that should NOT be shown to the user.
 const IGNORED_SUBSTRINGS: Array[String] = [
 	"Logged out.", # This is a normal event, not an error to display.
-	"Unauthorized" # This is a standard auth challenge, not an error to display in a modal. The auth flow will handle showing the login screen.
+	"Unauthorized", # This is a standard auth challenge, not an error to display in a modal. The auth flow will handle showing the login screen.
+	"Map request HTTP 401" # Suppress 401 errors for map requests (common before login)
 ]
 
 # A list of error substrings that should be handled by a local UI component (like a toast)

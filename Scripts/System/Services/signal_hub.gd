@@ -46,6 +46,7 @@ signal warehouse_vehicle_stored(result: Variant)
 signal warehouse_vehicle_retrieved(result: Variant)
 signal warehouse_convoy_spawned(result: Variant)
 signal initial_data_ready
+signal auto_sell_receipt_ready(receipt_data: Variant)
 
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS

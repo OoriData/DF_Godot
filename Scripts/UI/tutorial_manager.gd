@@ -180,6 +180,9 @@ func _is_convoy_at_zero() -> bool:
 func get_current_level() -> int:
 	return _level
 
+func is_tutorial_active() -> bool:
+	return _started
+
 func _try_start_deferred():
 	call_deferred("_maybe_start")
 

@@ -51,10 +51,18 @@ var _bg_drift_speed: Vector2 = Vector2(18.0, 10.0)
 var _bg_time: float = 0.0
 var _bg_has_real_map: bool = false
 
+var _steam_login_button: Button = null
+
 func _ready() -> void:
+	print("[LoginScreen] _ready() called.")
 	_setup_map_background()
 	if is_instance_valid(discord_button):
 		discord_button.pressed.connect(_on_discord_login_pressed)
+	
+	if SteamManager.has_signal("steam_initialized"):
+		if not SteamManager.steam_initialized.is_connected(_on_steam_initialized):
+			SteamManager.steam_initialized.connect(_on_steam_initialized)
+	
 	_connect_hub_store_signals()
 	_connect_api_signals()
 	_style_discord_button()
@@ -360,6 +368,27 @@ func _on_discord_login_pressed() -> void:
 		return
 	api.get_auth_url()
 
+func _on_steam_login_pressed() -> void:
+	if _oauth_in_progress:
+		return
+	status_label.text = "Checking Steam ID..."
+	var steam_id = SteamManager.get_steam_id()
+	if steam_id == "":
+		status_label.text = "Error: Could not get Steam ID."
+		return
+		
+	status_label.text = "Logging in with Steam..."
+	_set_oauth_active(true)
+	var api = _api()
+	if api:
+		var persona := ""
+		if SteamManager.has_method("get_steam_username"):
+			persona = SteamManager.get_steam_username()
+		api.login_with_steam(steam_id, persona)
+	else:
+		status_label.text = "API System offline."
+		_set_oauth_active(false)
+
 func _on_auth_url_received(data: Dictionary) -> void:
 	var auth_url: String = str(data.get("url", ""))
 	_pkce_state = str(data.get("state", ""))
@@ -371,11 +400,15 @@ func _on_auth_url_received(data: Dictionary) -> void:
 	status_label.text = "Browser opened. Complete Discord sign-in..."
 
 func _on_api_error(message: String) -> void:
+	var friendly := ErrorTranslator.translate(message)
+	if friendly.is_empty():
+		return
+		
 	if _oauth_in_progress:
-		status_label.text = "Auth error: %s" % message
+		status_label.text = friendly
 		_set_oauth_active(false)
 	else:
-		status_label.text = message
+		status_label.text = friendly
 
 func _on_auth_state_changed(state: String) -> void:
 	# Drive UI from canonical Hub auth state.
@@ -393,7 +426,7 @@ func _on_auth_state_changed(state: String) -> void:
 			status_label.text = "Session expired. Please login."
 		"failed":
 			_set_oauth_active(false)
-			if status_label.text == "Authenticating" or status_label.text == "":
+			if status_label.text == "Authenticating" or status_label.text == "" or status_label.text.begins_with("Authenticating"):
 				status_label.text = "Authentication failed."
 		_: # default
 			pass
@@ -511,6 +544,7 @@ func _ensure_coming_soon_section() -> void:
 	section.add_child(row)
 	vbox_container.add_child(section)
 
+
 	# Place the section just below the Discord button when possible.
 	if is_instance_valid(discord_button) and discord_button.get_parent() == vbox_container:
 		var idx := vbox_container.get_children().find(discord_button)
@@ -520,6 +554,13 @@ func _ensure_coming_soon_section() -> void:
 func _make_coming_soon_button(text: String) -> Button:
 	var b := Button.new()
 	b.text = text
+	
+	if text == "Steam":
+		_steam_login_button = b
+		if SteamManager.is_steam_running():
+			_style_active_steam_button(b)
+			return b
+
 	b.disabled = true
 	b.focus_mode = Control.FOCUS_NONE
 	b.custom_minimum_size = Vector2(140, 44)
@@ -541,6 +582,44 @@ func _make_coming_soon_button(text: String) -> Button:
 	b.add_theme_stylebox_override("normal", normal)
 	b.add_theme_stylebox_override("disabled", normal)
 	return b
+
+func _on_steam_initialized() -> void:
+	print("[LoginScreen] Steam initialized signal received.")
+	if is_instance_valid(_steam_login_button):
+		_style_active_steam_button(_steam_login_button)
+
+func _style_active_steam_button(b: Button) -> void:
+	if not is_instance_valid(b):
+		return
+	print("[LoginScreen] Enabling Steam login button.")
+	b.disabled = false
+	b.focus_mode = Control.FOCUS_ALL
+	b.add_theme_color_override("font_color", Color.WHITE)
+	b.add_theme_color_override("font_hover_color", Color.WHITE)
+	if not b.pressed.is_connected(_on_steam_login_pressed):
+		b.pressed.connect(_on_steam_login_pressed)
+	
+	# Make it look active (Steam thematic blue)
+	var normal_steam := StyleBoxFlat.new()
+	normal_steam.bg_color = Color("171a21") # Steam dark blue
+	normal_steam.border_width_bottom = 2
+	normal_steam.border_color = Color("66c0f4") # Steam light blue
+	normal_steam.corner_radius_top_left = 10
+	normal_steam.corner_radius_top_right = 10
+	normal_steam.corner_radius_bottom_left = 10
+	normal_steam.corner_radius_bottom_right = 10
+	normal_steam.content_margin_left = 12
+	normal_steam.content_margin_right = 12
+	normal_steam.content_margin_top = 8
+	normal_steam.content_margin_bottom = 8
+	
+	var hover_steam := normal_steam.duplicate()
+	hover_steam.bg_color = Color("2a475e")
+	
+	b.add_theme_stylebox_override("normal", normal_steam)
+	b.add_theme_stylebox_override("hover", hover_steam)
+	b.add_theme_stylebox_override("pressed", normal_steam)
+	b.add_theme_stylebox_override("focus", hover_steam)
 
 func show_error(message: String) -> void:
 	status_label.text = message

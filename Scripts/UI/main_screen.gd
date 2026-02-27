@@ -24,6 +24,7 @@ const NEW_CONVOY_DIALOG_SCENE_PATH := "res://Scenes/NewConvoyDialog.tscn"
 @export var new_convoy_dialog_scene: PackedScene = null
 const ERROR_DIALOG_SCENE_PATH := "res://Scenes/ErrorDialog.tscn"
 var _error_dialog_scene: PackedScene
+const AUTO_SELL_RECEIPT_MODAL_SCENE_PATH := "res://Scenes/UI/AutoSellReceiptModal.tscn"
 
 func initialize(p_map_view: Control, p_camera_controller: Node, p_interaction_manager: Node):
 	self.map_view = p_map_view
@@ -32,8 +33,8 @@ func initialize(p_map_view: Control, p_camera_controller: Node, p_interaction_ma
 
 	# Connect to the MapView's specific input signal
 	if is_instance_valid(map_view):
-		if not map_view.is_connected("gui_input", Callable(self, "_on_map_view_gui_input")):
-			map_view.gui_input.connect(Callable(self, "_on_map_view_gui_input"))
+		if not map_view.is_connected("gui_input", Callable(self , "_on_map_view_gui_input")):
+			map_view.gui_input.connect(Callable(self , "_on_map_view_gui_input"))
 			# print("[DFCAM-DEBUG] MainScreen: Connected to map_view's gui_input signal.")
 	# else:
 	# 	printerr("[DFCAM-DEBUG] MainScreen: Could not find map_view node to connect its input.")
@@ -158,46 +159,48 @@ func _ready():
 	if menu_manager:
 		if menu_manager.has_method("register_menu_container"):
 			menu_manager.register_menu_container(menu_container)
-		if not menu_manager.is_connected("menu_visibility_changed", Callable(self, "_on_menu_visibility_changed")):
-			menu_manager.connect("menu_visibility_changed", Callable(self, "_on_menu_visibility_changed"))
-		if not menu_manager.is_connected("convoy_menu_focus_requested", Callable(self, "_on_convoy_menu_focus_requested")):
-			menu_manager.connect("convoy_menu_focus_requested", Callable(self, "_on_convoy_menu_focus_requested"))
+		if not menu_manager.is_connected("menu_visibility_changed", Callable(self , "_on_menu_visibility_changed")):
+			menu_manager.connect("menu_visibility_changed", Callable(self , "_on_menu_visibility_changed"))
+		if not menu_manager.is_connected("convoy_menu_focus_requested", Callable(self , "_on_convoy_menu_focus_requested")):
+			menu_manager.connect("convoy_menu_focus_requested", Callable(self , "_on_convoy_menu_focus_requested"))
 		# Listen for menu instances so we can attach to Journey preview events.
-		if menu_manager.has_signal("menu_opened") and not menu_manager.is_connected("menu_opened", Callable(self, "_on_menu_opened")):
-			menu_manager.connect("menu_opened", Callable(self, "_on_menu_opened"))
-		if menu_manager.has_signal("menu_closed") and not menu_manager.is_connected("menu_closed", Callable(self, "_on_menu_closed")):
-			menu_manager.connect("menu_closed", Callable(self, "_on_menu_closed"))
+		if menu_manager.has_signal("menu_opened") and not menu_manager.is_connected("menu_opened", Callable(self , "_on_menu_opened")):
+			menu_manager.connect("menu_opened", Callable(self , "_on_menu_opened"))
+		if menu_manager.has_signal("menu_closed") and not menu_manager.is_connected("menu_closed", Callable(self , "_on_menu_closed")):
+			menu_manager.connect("menu_closed", Callable(self , "_on_menu_closed"))
 
 	# Window/MapView Resize Handling
 	if is_instance_valid(map_view):
-		if not map_view.is_connected("size_changed", Callable(self, "_on_map_view_size_changed")):
-			map_view.connect("size_changed", Callable(self, "_on_map_view_size_changed"))
+		if not map_view.is_connected("size_changed", Callable(self , "_on_map_view_size_changed")):
+			map_view.connect("size_changed", Callable(self , "_on_map_view_size_changed"))
 
 	# Load Options from SettingsManager and subscribe
 	var sm = get_node_or_null("/root/SettingsManager")
 	if is_instance_valid(sm):
 		_apply_settings_snapshot()
-		if not sm.is_connected("setting_changed", Callable(self, "_on_setting_changed")):
+		if not sm.is_connected("setting_changed", Callable(self , "_on_setting_changed")):
 			sm.setting_changed.connect(_on_setting_changed)
 
 	# --- NEW: Subscribe to GameStore and SignalHub events ---
 	var store = get_node_or_null("/root/GameStore")
 	if is_instance_valid(store):
-		if not store.is_connected("map_changed", Callable(self, "_on_store_map_changed")):
+		if not store.is_connected("map_changed", Callable(self , "_on_store_map_changed")):
 			store.map_changed.connect(_on_store_map_changed)
-		if not store.is_connected("convoys_changed", Callable(self, "_on_store_convoys_changed")):
+		if not store.is_connected("convoys_changed", Callable(self , "_on_store_convoys_changed")):
 			store.convoys_changed.connect(_on_store_convoys_changed)
-		if not store.is_connected("user_changed", Callable(self, "_on_store_user_changed")):
+		if not store.is_connected("user_changed", Callable(self , "_on_store_user_changed")):
 			store.user_changed.connect(_on_store_user_changed)
 		# Pull initial state and check onboarding/convoy prompt
 		call_deferred("_check_or_prompt_new_convoy_from_store")
 
 	var hub = get_node_or_null("/root/SignalHub")
 	if is_instance_valid(hub):
-		if not hub.is_connected("initial_data_ready", Callable(self, "_on_initial_data_ready")):
+		if not hub.is_connected("initial_data_ready", Callable(self , "_on_initial_data_ready")):
 			hub.initial_data_ready.connect(_on_initial_data_ready)
-		if not hub.is_connected("error_occurred", Callable(self, "_on_signal_hub_error_occurred")):
+		if not hub.is_connected("error_occurred", Callable(self , "_on_signal_hub_error_occurred")):
 			hub.error_occurred.connect(_on_signal_hub_error_occurred)
+		if not hub.is_connected("auto_sell_receipt_ready", Callable(self , "_on_auto_sell_receipt_ready")):
+			hub.auto_sell_receipt_ready.connect(_on_auto_sell_receipt_ready)
 		if hub.has_signal("convoy_selection_changed"):
 			hub.convoy_selection_changed.connect(_on_convoy_selection_changed)
 
@@ -205,7 +208,7 @@ func _ready():
 
 	# --- Visualizer expand button ---
 	if is_instance_valid(visualizer_expand_btn):
-		if not visualizer_expand_btn.is_connected("pressed", Callable(self, "_on_visualizer_expand_pressed")):
+		if not visualizer_expand_btn.is_connected("pressed", Callable(self , "_on_visualizer_expand_pressed")):
 			visualizer_expand_btn.pressed.connect(_on_visualizer_expand_pressed)
 
 # Respond to Control resize events
@@ -217,19 +220,19 @@ func _on_menu_opened(menu_node: Node, menu_type: String) -> void:
 	if not is_instance_valid(menu_node):
 		return
 	_active_journey_menu = menu_node
-	if menu_node.has_signal("route_preview_started") and not menu_node.is_connected("route_preview_started", Callable(self, "_on_journey_route_preview_started")):
-		menu_node.connect("route_preview_started", Callable(self, "_on_journey_route_preview_started"))
-	if menu_node.has_signal("route_preview_ended") and not menu_node.is_connected("route_preview_ended", Callable(self, "_on_journey_route_preview_ended")):
-		menu_node.connect("route_preview_ended", Callable(self, "_on_journey_route_preview_ended"))
+	if menu_node.has_signal("route_preview_started") and not menu_node.is_connected("route_preview_started", Callable(self , "_on_journey_route_preview_started")):
+		menu_node.connect("route_preview_started", Callable(self , "_on_journey_route_preview_started"))
+	if menu_node.has_signal("route_preview_ended") and not menu_node.is_connected("route_preview_ended", Callable(self , "_on_journey_route_preview_ended")):
+		menu_node.connect("route_preview_ended", Callable(self , "_on_journey_route_preview_ended"))
 
 func _on_menu_closed(menu_node_was_active: Node, menu_type: String) -> void:
 	if menu_type != "convoy_journey_submenu":
 		return
 	if is_instance_valid(menu_node_was_active):
-		if menu_node_was_active.has_signal("route_preview_started") and menu_node_was_active.is_connected("route_preview_started", Callable(self, "_on_journey_route_preview_started")):
-			menu_node_was_active.disconnect("route_preview_started", Callable(self, "_on_journey_route_preview_started"))
-		if menu_node_was_active.has_signal("route_preview_ended") and menu_node_was_active.is_connected("route_preview_ended", Callable(self, "_on_journey_route_preview_ended")):
-			menu_node_was_active.disconnect("route_preview_ended", Callable(self, "_on_journey_route_preview_ended"))
+		if menu_node_was_active.has_signal("route_preview_started") and menu_node_was_active.is_connected("route_preview_started", Callable(self , "_on_journey_route_preview_started")):
+			menu_node_was_active.disconnect("route_preview_started", Callable(self , "_on_journey_route_preview_started"))
+		if menu_node_was_active.has_signal("route_preview_ended") and menu_node_was_active.is_connected("route_preview_ended", Callable(self , "_on_journey_route_preview_ended")):
+			menu_node_was_active.disconnect("route_preview_ended", Callable(self , "_on_journey_route_preview_ended"))
 	if _active_journey_menu == menu_node_was_active:
 		_active_journey_menu = null
 	# Ensure we never leave the camera outside map bounds after closing the Journey menu.
@@ -275,7 +278,7 @@ func _connect_deferred_signals():
 	# This is deferred to ensure the TopBar and its instanced children (like ConvoyListPanel) are fully ready.
 	var convoy_button = top_bar.find_child("ConvoyMenuButton", true, false)
 	if convoy_button:
-		if not convoy_button.is_connected("pressed", Callable(self, "on_convoy_button_pressed")):
+		if not convoy_button.is_connected("pressed", Callable(self , "on_convoy_button_pressed")):
 			convoy_button.pressed.connect(on_convoy_button_pressed)
 	else:
 		print("[MainScreen] ConvoyMenuButton not present in TopBar; skipping binding.")
@@ -571,7 +574,7 @@ func _slide_menu_close(convoy_data: Dictionary):
 	_close_anim_start_width = start_w
 	_menu_anim_tween = create_tween()
 	_menu_anim_tween.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
-	_menu_anim_tween.parallel().tween_method(Callable(self, "_close_anim_step"), 0.0, 1.0, MENU_ANIM_DURATION)
+	_menu_anim_tween.parallel().tween_method(Callable(self , "_close_anim_step"), 0.0, 1.0, MENU_ANIM_DURATION)
 	_menu_anim_tween.parallel().tween_property(menu_container, "modulate:a", 0.0, MENU_ANIM_DURATION)
 	_menu_anim_tween.finished.connect(func():
 		_dbg_menu("slide_close_finished", {"final_offset_left": menu_container.offset_left})
@@ -810,8 +813,7 @@ func _check_or_prompt_new_convoy_from_store():
 		return
 	# Do not run first-convoy onboarding logic until the map is ready for focus.
 	if not _map_ready_for_focus:
-		if onboarding_log_enabled:
-			print("[Onboarding] Map not ready; skipping first-convoy check.")
+		print("[Onboarding] Map not ready; skipping first-convoy check (onboarding_log_enabled=%s)" % onboarding_log_enabled)
 		return
 	var convoys = store.get_convoys() if store.has_method("get_convoys") else []
 	var user = store.get_user() if store.has_method("get_user") else {}
@@ -854,6 +856,9 @@ func _check_or_prompt_new_convoy_from_store():
 		if onboarding_log_enabled:
 			print("[Onboarding] Tutorial stage is not 1; suppressing first-convoy prompt.")
 		_hide_new_convoy_dialog()
+		
+		# Returning player check (even if tutorial isn't stage 1)
+		_maybe_show_returning_player_tips()
 		return
 	if has_any:
 		# User already has at least one convoy. Ensure the tutorial is
@@ -864,11 +869,48 @@ func _check_or_prompt_new_convoy_from_store():
 			# Defer to avoid fighting with other listeners on the same frame.
 			tutorial_manager.call_deferred("_maybe_start")
 		_hide_new_convoy_dialog()
+		
+		# NEW: Also check for returning player tips here since we have convoys and map is ready
+		_maybe_show_returning_player_tips()
 		return
 	_show_new_convoy_dialog()
 # Add new handlers for GameStore map_changed if needed
 func _on_store_map_changed(_tiles: Array, _settlements: Array):
 	pass # Add map update logic if needed
+
+func _on_auto_sell_receipt_ready(receipt_data: Variant) -> void:
+	print("[AutoSell] main_screen received auto_sell_receipt_ready signal")
+	if not (receipt_data is Dictionary) or receipt_data.get("items", []).is_empty():
+		return
+	
+	var scene = load(AUTO_SELL_RECEIPT_MODAL_SCENE_PATH)
+	if not (scene is PackedScene):
+		printerr("[AutoSell] main_screen: Could not load AutoSellReceiptModal scene!")
+		return
+	
+	var modal_layer: Control = get_node_or_null("ModalLayer")
+	var host: Node = modal_layer.get_node_or_null("DialogHost") if is_instance_valid(modal_layer) else null
+	if not is_instance_valid(host):
+		printerr("[AutoSell] main_screen: ModalLayer or DialogHost not found for AutoSellReceiptModal!")
+		return
+	
+	print("[AutoSell] main_screen: Instantiating and showing receipt modal")
+	var receipt_modal = scene.instantiate()
+	host.add_child(receipt_modal)
+	
+	if receipt_modal.has_method("set_receipt_data"):
+		receipt_modal.set_receipt_data(receipt_data)
+	
+	modal_layer.show()
+	
+	if receipt_modal.has_method("set_receipt_data"):
+		receipt_modal.set_receipt_data(receipt_data)
+	if receipt_modal.has_method("open"):
+		receipt_modal.open()
+	
+	receipt_modal.tree_exited.connect(func():
+		_maybe_hide_modal_layer()
+	)
 
 func _on_signal_hub_error_occurred(_domain: String, _code: String, message: String, inline: bool):
 	# If the error is marked as inline (e.g. toast), do not show a blocking dialog.
@@ -915,9 +957,7 @@ func _show_error_dialog(message: String):
 
 	# When the dialog is closed (freed), hide the modal layer if nothing else is in the host.
 	error_dialog.tree_exited.connect(func():
-		if is_instance_valid(dialog_host) and dialog_host.get_child_count() == 0:
-			if is_instance_valid(modal_layer):
-				modal_layer.hide()
+		_maybe_hide_modal_layer()
 	)
 
 func _show_new_convoy_dialog():
@@ -945,9 +985,9 @@ func _show_new_convoy_dialog():
 			print("[Onboarding] NewConvoyDialog added to ModalLayer.")
 		# Connect signals
 		if _new_convoy_dialog.has_signal("create_requested"):
-			_new_convoy_dialog.connect("create_requested", Callable(self, "_on_new_convoy_create"))
+			_new_convoy_dialog.connect("create_requested", Callable(self , "_on_new_convoy_create"))
 		if _new_convoy_dialog.has_signal("canceled"):
-			_new_convoy_dialog.connect("canceled", Callable(self, "_on_new_convoy_canceled"))
+			_new_convoy_dialog.connect("canceled", Callable(self , "_on_new_convoy_canceled"))
 	modal_layer = get_node_or_null("ModalLayer")
 	if _new_convoy_dialog.has_method("open"):
 		if onboarding_log_enabled:
@@ -958,6 +998,82 @@ func _show_new_convoy_dialog():
 		printerr("[Onboarding] WARN: Dialog missing 'open' method; forcing visible true.")
 		if is_instance_valid(modal_layer): modal_layer.show()
 		_new_convoy_dialog.visible = true
+
+func show_returning_player_tips() -> bool:
+	var tips_scene := load("res://Scenes/UI/ReturningPlayerTipsModal.tscn")
+	if not tips_scene:
+		printerr("[MainScreen] Failed to load ReturningPlayerTipsModal.tscn")
+		return false
+	var tips = tips_scene.instantiate()
+	var modal_layer: Control = get_node_or_null("ModalLayer")
+	var host: Node = modal_layer.get_node_or_null("DialogHost") if is_instance_valid(modal_layer) else null
+	if not is_instance_valid(host):
+		printerr("[MainScreen] DialogHost not found; cannot show tips.")
+		return false
+	host.add_child(tips)
+	modal_layer.show()
+	if tips.has_method("open"):
+		tips.open()
+	
+	# Close handling
+	tips.tree_exited.connect(func():
+		_maybe_hide_modal_layer()
+	)
+	return true
+
+func _maybe_show_returning_player_tips() -> void:
+	var api = get_node_or_null("/root/APICalls")
+	var store = get_node_or_null("/root/GameStore")
+	
+	if not is_instance_valid(api) or not api.has_method("is_first_login_on_device"):
+		return
+	
+	var user_id = String(api.current_user_id)
+	if user_id.is_empty() and is_instance_valid(store):
+		var user = store.get_user()
+		user_id = String(user.get("user_id", user.get("id", "")))
+		
+	if onboarding_log_enabled:
+		print("[Tips] _maybe_show_returning_player_tips invoked. user_id='%s'" % user_id)
+	
+	if user_id.is_empty():
+		if onboarding_log_enabled:
+			print("[Tips] Suppressing popup: user_id is empty.")
+		return
+		
+	var is_first = api.is_first_login_on_device(user_id)
+	if not is_first:
+		return
+		
+	# Condition 1: Not a brand new player (must have convoys)
+	var convoys = store.get_convoys() if is_instance_valid(store) else []
+	if not (convoys is Array) or convoys.is_empty():
+		if onboarding_log_enabled:
+			print("[Tips] Suppressing popup: No convoys found (brand new player).")
+		return
+		
+	# Condition 2: Not in active tutorial (stages 1-7)
+	# Stage 8 is the completion state, so we allow tips if tutorial_stage is 8 or non-existent.
+	var tutorial_stage := -1
+	if is_instance_valid(store):
+		var user = store.get_user()
+		var md = user.get("metadata", {})
+		if md is Dictionary and md.has("tutorial"):
+			tutorial_stage = int(md["tutorial"])
+	
+	if tutorial_stage >= 1 and tutorial_stage < 8:
+		if onboarding_log_enabled:
+			print("[Tips] Suppressing popup: Tutorial is active (stage %d)." % tutorial_stage)
+		return
+		
+	# All conditions met
+	if onboarding_log_enabled:
+		print("[Tips] Conditions met for first login on device. Showing tips.")
+	
+	if show_returning_player_tips():
+		api.mark_login_on_device(user_id)
+	else:
+		push_warning("[Tips] Failed to show tips modal; will retry on next check.")
 
 func _build_inline_new_convoy_dialog() -> Control:
 	var dlg := PanelContainer.new()
@@ -1084,15 +1200,28 @@ func _update_onboarding_layer_rect_to_map() -> void:
 		_onboarding_layer.clip_contents = true
 
 func _hide_new_convoy_dialog():
-	var modal_layer: Control = get_node_or_null("ModalLayer")
-	if is_instance_valid(modal_layer):
-		modal_layer.hide()
-
 	if is_instance_valid(_new_convoy_dialog):
 		if _new_convoy_dialog.has_method("close"):
-			_new_convoy_dialog.call_deferred("close")
-		# In case the dialog is queued for deletion, we should remove our reference.
-		_new_convoy_dialog = null
+			_new_convoy_dialog.close()
+		else:
+			_new_convoy_dialog.visible = false
+		# We don't nullify here if it's persistent, but we should ensure layer check
+		_maybe_hide_modal_layer()
+
+func _maybe_hide_modal_layer():
+	var modal_layer: Control = get_node_or_null("ModalLayer")
+	var host: Node = modal_layer.get_node_or_null("DialogHost") if is_instance_valid(modal_layer) else null
+	if not is_instance_valid(modal_layer) or not is_instance_valid(host):
+		return
+	
+	var has_visible_dialog := false
+	for child in host.get_children():
+		if child is Control and child.visible and not child.is_queued_for_deletion():
+			has_visible_dialog = true
+			break
+	
+	if not has_visible_dialog:
+		modal_layer.hide()
 
 func _on_new_convoy_create(convoy_name: String):
 	# Disable dialog while creating
@@ -1107,9 +1236,7 @@ func _on_new_convoy_create(convoy_name: String):
 		printerr("MainScreen: ConvoyService missing create_new_convoy; cannot create convoy.")
 
 func _on_new_convoy_canceled():
-	var modal_layer: Control = get_node_or_null("ModalLayer")
-	if is_instance_valid(modal_layer):
-		modal_layer.hide()
+	_hide_new_convoy_dialog()
 
 
 func _build_map_loading_overlay() -> Control:
@@ -1233,7 +1360,9 @@ func _on_map_ready_for_focus():
 
 	# Now that the map is ready and the layout is stable, run the
 	# first-convoy onboarding check once using the latest Store snapshot.
+	# Note: This now also triggers returning player tips if applicable.
 	_check_or_prompt_new_convoy_from_store()
+
 	# Hide any map-loading overlay if it is still visible.
 	_set_map_loading(false)
 

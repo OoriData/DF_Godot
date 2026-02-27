@@ -9,7 +9,7 @@ Autoloads:
 Services:
 - MapService: requests map; emits `map_changed`; updates store.
 - ConvoyService: refreshes all/single; selection; provides color map; emits `convoys_changed`, `selected_convoy_changed`.
-- UserService: refresh/update money/tutorial; emits `user_changed`.
+- UserService: manages user data and identity. Interface for current user snapshots and manual refresh triggers; bridges identity changes to `SignalHub` and persistent storage.
 - VendorService: vendor data, panel/preview, buy/sell wrappers; emits vendor events.
 - MechanicsService: cargo detail, compat checks, swaps; emits mechanics events.
 - RouteService: choices request/ready/error; journey start/cancel.

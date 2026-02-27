@@ -32,6 +32,8 @@ var convoy_data_received: Dictionary
 @onready var title_label: Label = $MainVBox/TitleLabel
 @onready var cargo_items_vbox: VBoxContainer = $MainVBox/ScrollContainer/CargoItemsVBox
 @onready var back_button: Button = $MainVBox/BackButton
+@onready var cargo_sort_option_button: OptionButton = get_node_or_null("%CargoSortOptionButton")
+var _cargo_sort_metric: int = 0
 
 @onready var _store: Node = get_node_or_null("/root/GameStore")
 @onready var _hub: Node = get_node_or_null("/root/SignalHub")
@@ -181,6 +183,56 @@ func _is_displayable_cargo(item: Dictionary) -> bool:
 
 func _ready():
 	_diag("ready", "ConvoyCargoMenu ready")
+	
+	if is_instance_valid(cargo_sort_option_button):
+		if Engine.has_singleton("SettingsManager"):
+			_cargo_sort_metric = get_node("/root/SettingsManager").get_value("ui.cargo_sort_metric", 0)
+		cargo_sort_option_button.custom_minimum_size = Vector2(280, 34)
+		cargo_sort_option_button.add_theme_color_override("font_color", Color(0.93, 0.93, 0.93, 1.0))
+		cargo_sort_option_button.add_theme_color_override("font_hover_color", Color(0.98, 0.98, 0.98, 1.0))
+		var sort_normal := StyleBoxFlat.new()
+		sort_normal.bg_color = Color(0.24, 0.24, 0.24, 0.96)
+		sort_normal.border_width_left = 1
+		sort_normal.border_width_right = 1
+		sort_normal.border_width_top = 1
+		sort_normal.border_width_bottom = 1
+		sort_normal.border_color = Color(0.56, 0.56, 0.56, 0.95)
+		sort_normal.corner_radius_top_left = 4
+		sort_normal.corner_radius_top_right = 4
+		sort_normal.corner_radius_bottom_left = 4
+		sort_normal.corner_radius_bottom_right = 4
+		sort_normal.content_margin_left = 10
+		sort_normal.content_margin_right = 10
+		sort_normal.content_margin_top = 4
+		sort_normal.content_margin_bottom = 4
+		var sort_hover := sort_normal.duplicate()
+		sort_hover.bg_color = Color(0.31, 0.31, 0.31, 0.98)
+		sort_hover.border_color = Color(0.70, 0.70, 0.70, 1.0)
+		var sort_pressed := sort_normal.duplicate()
+		sort_pressed.bg_color = Color(0.18, 0.18, 0.18, 1.0)
+		cargo_sort_option_button.add_theme_stylebox_override("normal", sort_normal)
+		cargo_sort_option_button.add_theme_stylebox_override("hover", sort_hover)
+		cargo_sort_option_button.add_theme_stylebox_override("pressed", sort_pressed)
+		cargo_sort_option_button.add_theme_stylebox_override("focus", sort_hover)
+		var sort_parent := cargo_sort_option_button.get_parent()
+		if is_instance_valid(sort_parent):
+			sort_parent.add_theme_constant_override("separation", 8)
+			
+		cargo_sort_option_button.clear()
+		cargo_sort_option_button.add_item("Sort: Profit Margin/Unit")
+		cargo_sort_option_button.add_item("Sort: Profit Density/Weight")
+		cargo_sort_option_button.add_item("Sort: Profit Density/Volume")
+		cargo_sort_option_button.add_item("Sort: Total Order Profit")
+		cargo_sort_option_button.add_item("Sort: Distance to Recipient")
+		_cargo_sort_metric = clampi(_cargo_sort_metric, 0, max(0, cargo_sort_option_button.item_count - 1))
+		cargo_sort_option_button.select(_cargo_sort_metric)
+		cargo_sort_option_button.item_selected.connect(func(idx: int):
+			_cargo_sort_metric = idx
+			if Engine.has_singleton("SettingsManager"):
+				get_node("/root/SettingsManager").set_and_save("ui.cargo_sort_metric", idx)
+			_populate_cargo_list()
+		)
+		
 	if is_instance_valid(back_button):
 		if not back_button.is_connected("pressed", Callable(self, "_on_back_button_pressed")):
 			back_button.pressed.connect(_on_back_button_pressed, CONNECT_ONE_SHOT)
@@ -1099,6 +1151,26 @@ func _add_category_section(parent: VBoxContainer, title: String, agg_data: Dicti
 	var item_index := 0
 	var sorted_keys = agg_data.keys()
 	sorted_keys.sort()
+	
+	if _cargo_sort_metric >= 0 and title == "Delivery Cargo":
+		var CargoSorter = preload("res://Scripts/System/cargo_sorter.gd")
+		var items_to_sort = []
+		for k in sorted_keys:
+			var sample = agg_data[k].get("item_data_sample", {})
+			# Duplicate to safely inject the key tracking without affecting core data
+			var sample_copy = sample.duplicate(true)
+			if sample_copy is Dictionary:
+				sample_copy["_agg_key"] = k
+				items_to_sort.append(sample_copy)
+		
+		# Sort items using the utility
+		var sorted_items = CargoSorter.sort_cargo(items_to_sort, _cargo_sort_metric, false)
+		
+		# Rebuild ordered keys
+		sorted_keys.clear()
+		for item in sorted_items:
+			if item.has("_agg_key"):
+				sorted_keys.append(item["_agg_key"])
 
 	if CARGO_MENU_DEBUG:
 		print("[CargoUI] Building category '", title, "' with ", sorted_keys.size(), " keys")
@@ -1382,6 +1454,9 @@ func _populate_by_type():
 	_add_category_section(direct_vbox_ref, "Other Cargo", aggregated_other)
 	_diag("populate_type", "sections_added", {"missions": aggregated_missions.size(), "parts": aggregated_parts.size(), "resources": aggregated_resources.size(), "other": aggregated_other.size()})
 
+	if is_instance_valid(cargo_sort_option_button):
+		cargo_sort_option_button.get_parent().visible = not aggregated_missions.is_empty()
+
 	# Debug counts summary
 	if CARGO_MENU_DEBUG:
 		print("[ConvoyCargoMenu][DEBUG] Category counts -> Missions:%d Parts:%d Resources:%d Other:%d" % [aggregated_missions.size(), aggregated_parts.size(), aggregated_resources.size(), aggregated_other.size()])
@@ -1422,6 +1497,7 @@ func _populate_by_vehicle():
 		return
 
 	var any_cargo_found_in_convoy := false
+	var global_has_delivery_cargo := false
 
 	for vehicle_data in vehicle_details_list:
 		if not vehicle_data is Dictionary:
@@ -1495,6 +1571,9 @@ func _populate_by_vehicle():
 					if raw_item.has("vehicle_id") and raw_item["vehicle_id"] != null:
 						continue
 				_aggregate_cargo_item(vehicle_aggregated_all_cargo, raw_item)
+				# Flag if this is delivery cargo
+				if effective_category == "mission":
+					global_has_delivery_cargo = true
 				# If still 'other', log it for diagnosis
 				if CARGO_MENU_DEBUG and effective_category == "other":
 					print("[CargoClassify][ByVehicle][Typed] item -> OTHER name:", JSON.stringify(raw_item.get("name", raw_item.get("base_name", ""))))
@@ -1514,6 +1593,7 @@ func _populate_by_vehicle():
 				# the ItemsData factory correctly classify the item later.
 				if _looks_like_mission(item):
 					item["category"] = "mission"
+					global_has_delivery_cargo = true
 				elif _looks_like_part(item):
 					item["category"] = "part"
 					_inject_part_modifiers(item)
@@ -1534,6 +1614,25 @@ func _populate_by_vehicle():
 				_aggregate_cargo_item(vehicle_aggregated_all_cargo, part_copy)
 
 		if has_cargo_in_this_vehicle:
+			var sorted_keys = vehicle_aggregated_all_cargo.keys()
+			sorted_keys.sort()
+			
+			if _cargo_sort_metric >= 0:
+				var CargoSorter = preload("res://Scripts/System/cargo_sorter.gd")
+				var items_to_sort = []
+				for k in sorted_keys:
+					var sample = vehicle_aggregated_all_cargo[k].get("item_data_sample", {})
+					var sample_copy = sample.duplicate(true)
+					if sample_copy is Dictionary:
+						sample_copy["_agg_key"] = k
+						items_to_sort.append(sample_copy)
+				
+				var sorted_items = CargoSorter.sort_cargo(items_to_sort, _cargo_sort_metric, false)
+				sorted_keys.clear()
+				for item in sorted_items:
+					if item.has("_agg_key"):
+						sorted_keys.append(item["_agg_key"])
+						
 			# Extract vehicle_id for the inspect button
 			var vehicle_id := String(vehicle_data.get("vehicle_id", vehicle_data.get("id", "")))
 			# Use the existing category section function, but with the vehicle's name as the title.
@@ -1546,6 +1645,10 @@ func _populate_by_vehicle():
 		no_cargo_overall_label.text = "This convoy is carrying no cargo items (only vehicle parts)."
 		no_cargo_overall_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		direct_vbox_ref.add_child(no_cargo_overall_label)
+
+	if is_instance_valid(cargo_sort_option_button):
+		cargo_sort_option_button.get_parent().visible = global_has_delivery_cargo
+
 	_diag("populate_vehicle", "done")
 
 
