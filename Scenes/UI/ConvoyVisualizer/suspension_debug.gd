@@ -12,20 +12,37 @@ func _draw() -> void:
 	var target_rel_x = (vehicle.target_world_x - vehicle.global_position.x)
 	draw_line(Vector2(target_rel_x, -150), Vector2(target_rel_x, 50), Color(0, 1, 1, 0.4), 1.0)
 	
-	for i in range(vehicle._wheel_bodies.size()):
-		var w = vehicle._wheel_bodies[i]
-		if not is_instance_valid(w): continue
+	for i in range(vehicle._wheel_rays.size()):
+		var ray = vehicle._wheel_rays[i]
+		if not is_instance_valid(ray): continue
 		
-		var attach_world = chassis_xform * Vector2(vehicle._wheel_attach_xs[i], 0)
-		var wheel_local = w.global_position - vehicle.global_position
-		draw_circle(wheel_local, 4.0, Color.GREEN)
+		var ray_origin_world = ray.global_position
+		var ray_origin_local = ray_origin_world - vehicle.global_position
+		var ray_end_world = ray_origin_world + (chassis_xform.basis_xform(Vector2.DOWN).normalized() * vehicle._wheel_max_travel)
+		var ray_end_local = ray_end_world - vehicle.global_position
+		
+		# Draw the maximum travel line (Grey)
+		draw_line(ray_origin_local, ray_end_local, Color(0.5, 0.5, 0.5, 0.5), 2.0)
+		
+		if vehicle._wheel_grounded[i]:
+			# Draw the actual compressed spring (Blue)
+			var current_end_world = vehicle._wheel_visuals[i].global_position
+			var current_end_local = current_end_world - vehicle.global_position
+			draw_line(ray_origin_local, current_end_local, Color.CYAN, 3.0)
+			
+			# Draw an upward arrow representing the suspension force
+			var force = vehicle._wheel_suspension_forces[i]
+			var force_len = clamp(force / 500.0, 5.0, 100.0)
+			var force_end_local = current_end_local + (chassis_xform.basis_xform(Vector2.UP).normalized() * force_len)
+			draw_line(current_end_local, force_end_local, Color.YELLOW, 4.0)
 		
 		# 2. DRAW TORQUE ARROWS (Propulsion/Braking)
 		var torque = tel.torque
-		if tel.mode == "BRAKE": torque = - sign(w.angular_velocity) * 1000.0 # Force visual for brake
+		if tel.mode == "BRAKE": torque = -1000.0 # Force visual for brake
 		
 		if abs(torque) > 1.0:
 			var arrow_dir = Vector2(sign(torque) * vehicle.travel_direction, 0)
+			var wheel_local = vehicle._wheel_visuals[i].global_position - vehicle.global_position
 			var arrow_start = wheel_local + Vector2(0, 30)
 			# Square root scaling makes low torque values much more visible
 			var arrow_len = 5.0 + sqrt(abs(torque) / 200.0)

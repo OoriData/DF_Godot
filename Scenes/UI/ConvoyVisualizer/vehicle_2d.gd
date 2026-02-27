@@ -21,10 +21,16 @@ var _cargo_data: Array = []
 var target_world_x: float = 0.0
 var travel_direction: float = 1.0
 
-var _wheel_bodies: Array[RigidBody2D] = []
+var _wheel_rays: Array[RayCast2D] = []
+var _wheel_visuals: Array[Node2D] = []
+var _prev_spring_lengths: Array[float] = []
+var _wheel_grounded: Array[bool] = []
+var _wheel_suspension_forces: Array[float] = []
+
 var _cargo_bodies: Array[RigidBody2D] = []
 var _wheel_attach_xs: Array[float] = [] # X positions on chassis where each wheel connects
 var _wheel_rest_y: float = 0.0 # Rest Y offset of wheel from chassis
+var _wheel_max_travel: float = 0.0
 
 var _body_layer_bit: int = 0
 
@@ -178,63 +184,35 @@ func _build_physics() -> void:
 	for i in range(wheel_xs.size()):
 		var wx = wheel_xs[i]
 
-		var wheel = RigidBody2D.new()
-		wheel.position = Vector2(wx, radius * 0.5)
-		wheel.mass = chassis.mass * 0.15
+		var ray = RayCast2D.new()
+		ray.position = Vector2(wx, 0)
+		ray.target_position = Vector2(0, radius * 2.5) # Max travel distance + radius
+		ray.collision_mask = 1 # ONLY collide with ground (Layer 1)
+		# Force raycast to update before we rely on it
+		ray.enabled = true
+		chassis.add_child(ray)
+		_wheel_rays.append(ray)
 
-		var phys_mat = PhysicsMaterial.new()
-		phys_mat.friction = 1.0
-		phys_mat.rough = true
-		wheel.physics_material_override = phys_mat
-
-		var w_col = CollisionShape2D.new()
-		var circle = CircleShape2D.new()
-		circle.radius = radius
-		w_col.shape = circle
-		wheel.add_child(w_col)
-
+		var wheel_vis = Node2D.new()
 		var w_vis_top = Polygon2D.new()
 		w_vis_top.color = Color.DARK_GRAY
 		w_vis_top.polygon = _create_semicircle_poly(radius, 0.0)
-		wheel.add_child(w_vis_top)
+		wheel_vis.add_child(w_vis_top)
 
 		var w_vis_bot = Polygon2D.new()
 		w_vis_bot.color = Color(0.55, 0.55, 0.55)
 		w_vis_bot.polygon = _create_semicircle_poly(radius, PI)
-		wheel.add_child(w_vis_bot)
-		wheel.collision_layer = 2 # bit 2 (Layer 2)
-		wheel.collision_mask = 1 # ONLY collide with ground
+		wheel_vis.add_child(w_vis_bot)
 
-		# Isolated layers mean no exceptions are strictly necessary,
-		# but we keep them as a cheap fail-safe.
-		wheel.add_collision_exception_with(chassis)
-		chassis.add_collision_exception_with(wheel)
-		wheels_container.add_child(wheel)
-		_wheel_bodies.append(wheel)
+		wheels_container.add_child(wheel_vis)
+		_wheel_visuals.append(wheel_vis)
 		_wheel_attach_xs.append(wx)
-
-		# Physics Joints Initialization
-		var groove = GrooveJoint2D.new()
-		groove.node_a = chassis.get_path()
-		groove.node_b = wheel.get_path()
-		# Groove restricts passing through its entire length on Y axis. So we give it a generous range
-		var max_travel = radius * 1.5
-		groove.length = max_travel * 2.0
-		groove.initial_offset = max_travel * 0.5 # Distance from groove.position (-0.5) to wheel (0 = center)
-		groove.position = Vector2(wx, -max_travel * 0.5) # Center the groove around the attachment point
-		chassis.add_child(groove)
-
-		var spring = DampedSpringJoint2D.new()
-		spring.node_a = chassis.get_path()
-		spring.node_b = wheel.get_path()
-		spring.length = radius * 2.5 # Maximum extension before bottoming out downward
-		spring.rest_length = radius # Natural resting gap
-		spring.stiffness = stiffness * _weight_class # Spring force
-		spring.damping = damping * _weight_class # Rebound dampening
-		spring.position = Vector2(wx, 0) # Attach point on chassis
-		chassis.add_child(spring)
+		_prev_spring_lengths.append(radius)
+		_wheel_grounded.append(false)
+		_wheel_suspension_forces.append(0.0)
 
 	_wheel_rest_y = radius
+	_wheel_max_travel = radius * 2.5
 
 	_spawn_cargo()
 	_setup_debug_overlay()
@@ -258,6 +236,24 @@ func _setup_debug_overlay() -> void:
 	_debug_overlay.vehicle = self
 
 func _process(_delta: float) -> void:
+	if Engine.is_editor_hint(): return
+
+	# Update wheel visuals based on raycasts
+	for i in range(_wheel_visuals.size()):
+		var vis = _wheel_visuals[i]
+		var ray = _wheel_rays[i]
+		if ray.is_colliding():
+			var hit_point = ray.get_collision_point()
+			var hit_normal = ray.get_collision_normal()
+			# Place the wheel slightly above the ground contact point based on radius
+			vis.global_position = hit_point + (hit_normal * _wheel_rest_y)
+			# Rotate wheel visual over time to simulate rolling if moving
+			if is_instance_valid(chassis):
+				vis.rotation += (chassis.linear_velocity.dot(chassis.global_transform.basis_xform(Vector2.RIGHT)) * _delta) / _wheel_rest_y
+		else:
+			# Droop wheel to max travel
+			vis.global_position = ray.global_position + (chassis.global_transform.basis_xform(Vector2.DOWN).normalized() * _wheel_max_travel)
+
 	if _debug_overlay:
 		_debug_overlay.queue_redraw()
 
@@ -295,9 +291,7 @@ func _spawn_cargo() -> void:
 		_cargo_bodies.append(cb)
 
 		# Explicitly exempt cargo from hitting wheels (Fail-safe for layer isolation)
-		for wheel in _wheel_bodies:
-			cb.add_collision_exception_with(wheel)
-			wheel.add_collision_exception_with(cb)
+		# No longer necessary as wheels are purely visual under the RayCast model
 
 func set_moving(state: bool) -> void:
 	_is_moving = state
@@ -323,6 +317,7 @@ func _physics_process(delta: float) -> void:
 	if not is_instance_valid(chassis): return
 
 	_update_telemetry()
+	_apply_suspension(delta)
 
 	var torque = 0.0
 	if _is_moving:
@@ -335,7 +330,49 @@ func _physics_process(delta: float) -> void:
 func _update_telemetry() -> void:
 	telemetry.speed = chassis.linear_velocity.x * travel_direction
 	telemetry.distance_error = (target_world_x - chassis.global_position.x) * travel_direction
-	telemetry.valid_wheels = _wheel_bodies.size()
+
+	var valid_wheels = 0
+	for g in _wheel_grounded:
+		if g: valid_wheels += 1
+	telemetry.valid_wheels = valid_wheels
+
+func _apply_suspension(delta: float) -> void:
+	# Convert parameters to "per-wheel" force multipliers based on weight class
+	var p_stiffness = stiffness * _weight_class * 100.0 # Force N/m
+	var p_damping = damping * _weight_class * 10.0
+
+	for i in range(_wheel_rays.size()):
+		var ray = _wheel_rays[i]
+
+		# Reset state for telemetry/traction
+		_wheel_grounded[i] = false
+		_wheel_suspension_forces[i] = 0.0
+
+		if ray.is_colliding():
+			var hit_point = ray.get_collision_point()
+			var hit_normal = ray.get_collision_normal()
+			var dist = ray.global_position.distance_to(hit_point)
+
+			var current_spring_len = dist - _wheel_rest_y
+
+			# Displacement: Positive means compressed (wheel pushed up relative to rest), Negative means extended
+			var displacement = _wheel_rest_y - current_spring_len
+
+			var spring_velocity = (current_spring_len - _prev_spring_lengths[i]) / delta
+			_prev_spring_lengths[i] = current_spring_len
+
+			var force_mag = (displacement * p_stiffness) - (spring_velocity * p_damping)
+			force_mag = max(0.0, force_mag) # Springs only push UP, they don't pull the chassis down
+
+			if force_mag > 0:
+				_wheel_grounded[i] = true
+				_wheel_suspension_forces[i] = force_mag
+
+				# Apply force to chassis AT the contact point
+				var force_offset = hit_point - chassis.global_position
+				chassis.apply_force(hit_normal * force_mag, force_offset)
+		else:
+			_prev_spring_lengths[i] = _wheel_max_travel
 
 func _calculate_propulsion_torque(delta: float) -> float:
 	var dist = telemetry.distance_error
@@ -365,10 +402,7 @@ func _calculate_propulsion_torque(delta: float) -> float:
 		if is_moving_forward:
 			telemetry.mode = "BRAKE"
 			var brake_mag = clamp(speed / 100.0, 0.5, 3.0)
-			for w_body in _wheel_bodies:
-				if is_instance_valid(w_body) and abs(w_body.angular_velocity) > 0.1:
-					w_body.apply_torque(-sign(w_body.angular_velocity) * brake_torque * brake_mag * chassis.mass * delta)
-			throttle = 0.0
+			throttle = - brake_mag
 		else:
 			telemetry.mode = "REVERSE"
 			throttle = clamp(dist / 100.0, -1.2, 0.0)
@@ -380,11 +414,6 @@ func _calculate_propulsion_torque(delta: float) -> float:
 	telemetry.throttle = throttle
 	var torque = propulsion_torque * throttle * chassis.mass * delta
 	telemetry.torque = torque
-
-	# Rolling resistance emulated by drag
-	for w_body in _wheel_bodies:
-		if is_instance_valid(w_body):
-			w_body.angular_velocity *= 0.985
 
 	return torque * travel_direction
 
@@ -398,17 +427,31 @@ func _calculate_idle_braking(delta: float) -> float:
 	if abs(vel) > 5.0:
 		torque = - sign(vel) * brake_torque * chassis.mass * delta
 
-	for w_body in _wheel_bodies:
-		if is_instance_valid(w_body):
-			w_body.angular_velocity *= 0.85
-
 	return torque
 
 func _apply_drive_torque(torque: float) -> void:
-	if torque == 0.0: return
-	for i in range(_wheel_bodies.size()):
-		var is_driven = i >= _driven_wheels.size() or _driven_wheels[i]
-		if is_driven:
-			var w = _wheel_bodies[i]
-			if is_instance_valid(w):
-				w.apply_torque(torque)
+	if abs(torque) < 1.0: return
+
+	telemetry.torque = torque
+
+	var driven_count = _driven_wheels.size()
+	if driven_count == 0:
+		driven_count = _wheel_rays.size()
+
+	var force_per_wheel = torque / driven_count
+	var local_forward = chassis.global_transform.basis_xform(Vector2.RIGHT).normalized()
+
+	for idx in range(_wheel_rays.size()):
+		var is_driven = _driven_wheels.is_empty() or (idx < _driven_wheels.size() and _driven_wheels[idx])
+
+		if is_driven and _wheel_grounded[idx]:
+			# The traction force is limited by how much normal force (suspension load) is on the wheel
+			var max_traction = _wheel_suspension_forces[idx] * 1.5 # Friction coefficient
+			var applied_force = clamp(force_per_wheel, -max_traction, max_traction)
+
+			var ray = _wheel_rays[idx]
+			var hit_point = ray.get_collision_point()
+			var force_offset = hit_point - chassis.global_position
+
+			# Apply forward drive force directly to chassis through the contact patch
+			chassis.apply_force(local_forward * applied_force, force_offset)
