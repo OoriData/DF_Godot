@@ -46,7 +46,7 @@ func _spawn_chunk(idx: int) -> void:
 	# Update noise parameters based on difficulty
 	# Higher difficulty = higher amplitude and higher frequency (more bumpy)
 	# Magnitude decreased by 50% as requested (was 10 to 100)
-	var amplitude = lerp(5.0, 50.0, terrain_difficulty)
+	var amplitude = lerp(5.0, 65.0, terrain_difficulty)
 	var freq = lerp(0.001, 0.006, terrain_difficulty)
 	noise.frequency = freq
 	
@@ -70,6 +70,10 @@ func _spawn_chunk(idx: int) -> void:
 	# Put terrain on collision layer 1
 	static_body.collision_layer = 1
 	static_body.collision_mask = 0
+	
+	var p_mat = PhysicsMaterial.new()
+	p_mat.friction = 0.1
+	static_body.physics_material_override = p_mat
 	
 	add_child(static_body)
 	chunks[idx] = static_body

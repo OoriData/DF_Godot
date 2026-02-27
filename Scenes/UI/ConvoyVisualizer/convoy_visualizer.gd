@@ -101,7 +101,7 @@ func _on_direction_toggled(pressed: bool) -> void:
 func _update_movement_state_internal() -> void:
 	for v in vehicle_nodes:
 		if v.has_method("set_moving"):
-			v.set_moving(is_moving and not is_stuck)
+			v.set_moving(is_moving)
 
 func _physics_process(delta: float) -> void:
 	if vehicle_nodes.is_empty(): return
@@ -124,7 +124,7 @@ func _physics_process(delta: float) -> void:
 		if "cruise_speed" in v:
 			v.cruise_speed = convoy_base_speed
 		if v.has_method("set_moving"):
-			v.set_moving(is_moving and not is_stuck)
+			v.set_moving(is_moving)
 
 		if v.has_node("Chassis"):
 			act_center += v.get_node("Chassis").global_position
@@ -147,8 +147,8 @@ func _physics_process(delta: float) -> void:
 		var viewport_w = get_viewport_rect().size.x
 
 		# Target zoom: we want spread + padding (e.g. 400px) to fit in viewport
-		var padding = 600.0 # Enough space for margins
-		var target_zoom_val = clamp(viewport_w / (spread + padding), 0.25, 1.0)
+		var padding = 800.0 # Increased padding for wider convoy spread
+		var target_zoom_val = clamp(viewport_w / (spread + padding), 0.05, 1.0)
 		var target_zoom = Vector2(target_zoom_val, target_zoom_val)
 
 		var smooth = 1.0 - exp(-5.0 * delta)
@@ -165,8 +165,19 @@ func _check_stuck_status(delta: float) -> void:
 		if not is_instance_valid(v) or not "telemetry" in v: continue
 
 		var tel = v.telemetry
-		# Definition of stuck: Trying to move (Throttle > 0.5) but speed is zero (< 10)
-		if is_moving and tel.throttle > 0.5 and abs(tel.speed) < 10.0:
+
+		# Calculate distance error from target
+		var current_x = v.get_node("Chassis").global_position.x if v.has_node("Chassis") else v.global_position.x
+		var dist_error = abs(v.target_world_x - current_x)
+
+		# 1. HARD CUT: Immediate stop if way too far behind
+		if is_moving and dist_error > 600.0:
+			any_stuck = true
+			vehicle_stuck_timers[i] = 2.0 # Force timer full
+			continue
+
+		# 2. SOFT CHECK: Target error > 300 + struggling to move
+		if is_moving and tel.throttle > 0.1 and abs(tel.speed) < 10.0 and dist_error > 300.0:
 			vehicle_stuck_timers[i] += delta
 		else:
 			vehicle_stuck_timers[i] = 0.0
@@ -278,7 +289,7 @@ func _build_convoy() -> void:
 	for v_data in vehicle_data_list:
 		if not (v_data is Dictionary): continue
 
-		var v_id = String(v_data.get("vehicle_id", v_data.get("id", "")))
+		var _v_id = String(v_data.get("vehicle_id", v_data.get("id", "")))
 		var v_color = String(v_data.get("color", ""))
 		var v_shape = String(v_data.get("shape", ""))
 		var v_weight = float(v_data.get("weight_class", 0.0))

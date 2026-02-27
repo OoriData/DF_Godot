@@ -81,7 +81,7 @@ var all_cargo_label: Label = null
 @onready var vendor_item_grid: GridContainer = $MainVBox/ScrollContainer/ContentVBox/VendorPreviewPanel/VendorPreviewVBox/VendorContentPanel/VendorContentScroll/ContentWrapper/VendorItemContainer/VendorItemGrid
 @onready var vendor_item_container: VBoxContainer = $MainVBox/ScrollContainer/ContentVBox/VendorPreviewPanel/VendorPreviewVBox/VendorContentPanel/VendorContentScroll/ContentWrapper/VendorItemContainer
 @onready var vendor_no_items_label: Label = $MainVBox/ScrollContainer/ContentVBox/VendorPreviewPanel/VendorPreviewVBox/VendorContentPanel/VendorContentScroll/ContentWrapper/VendorNoItemsLabel
-@onready var overview_vbox: VBoxContainer = $MainVBox/ScrollContainer/ContentVBox/OverviewVBox
+@onready var overview_vbox: VBoxContainer = get_node_or_null("MainVBox/ScrollContainer/ContentVBox/OverviewVBox")
 @onready var journey_info_vbox: VBoxContainer = $MainVBox/ScrollContainer/ContentVBox/VendorPreviewPanel/VendorPreviewVBox/VendorContentPanel/VendorContentScroll/ContentWrapper/JourneyInfoVBox
 @onready var journey_dest_label: Label = $MainVBox/ScrollContainer/ContentVBox/VendorPreviewPanel/VendorPreviewVBox/VendorContentPanel/VendorContentScroll/ContentWrapper/JourneyInfoVBox/JourneyDestLabel
 @onready var journey_progress_bar: ProgressBar = $MainVBox/ScrollContainer/ContentVBox/VendorPreviewPanel/VendorPreviewVBox/VendorContentPanel/VendorContentScroll/ContentWrapper/JourneyInfoVBox/JourneyProgressControl/JourneyProgressBar
@@ -187,7 +187,7 @@ func _ensure_full_convoy_loaded(target_id: String, snapshot: Dictionary) -> void
 func _parse_convoy_payload(payload: Dictionary) -> void:
 	if _debug_convoy_menu:
 		print("[ConvoyMenu][Debug] Parsing full convoy payload. Convoy ID=", payload.get("id", "Unknown"), " Vehicles=", payload.get("vehicles", []).size())
-	
+
 	# Pass data to the Vendor Preview pane if active
 	# (The rest of the original _ensure_full_convoy_loaded function was not part of the instruction,
 	# so it's assumed to be handled elsewhere or not relevant to this specific change.)
@@ -232,7 +232,7 @@ func _ready():
 	if not is_instance_valid(title_label):
 		printerr("ConvoyMenu: CRITICAL - TitleLabel node not found. Check the path in the script.")
 
-	
+
 	if has_node("MainVBox/ScrollContainer/ContentVBox/VendorPreviewPanel/VendorPreviewVBox"):
 		var preview_vbox = $MainVBox/ScrollContainer/ContentVBox/VendorPreviewPanel/VendorPreviewVBox
 		var sort_dropdown_container := preview_vbox.get_node_or_null("SortDropdownContainer") as HBoxContainer
@@ -241,7 +241,7 @@ func _ready():
 			sort_dropdown_container.name = "SortDropdownContainer"
 			sort_dropdown_container.alignment = BoxContainer.ALIGNMENT_END
 			sort_dropdown_container.visible = false
-		
+
 		var sort_option := sort_dropdown_container.get_node_or_null("MissionSortOptionButton") as OptionButton
 		if not is_instance_valid(sort_option):
 			sort_option = OptionButton.new()
@@ -277,9 +277,9 @@ func _ready():
 		sort_option.add_theme_stylebox_override("hover", so_hover)
 		sort_option.add_theme_stylebox_override("pressed", so_pressed)
 		sort_option.add_theme_stylebox_override("focus", so_hover)
-		
+
 		_load_cargo_sort_metric_from_settings()
-			
+
 		sort_option.clear()
 		sort_option.add_item("Sort: Profit Margin/Unit")
 		sort_option.add_item("Sort: Profit Density/Weight")
@@ -293,7 +293,7 @@ func _ready():
 		sort_option.item_selected.connect(_on_mission_sort_selected)
 		_mission_sort_container = sort_dropdown_container
 		_mission_sort_option_button = sort_option
-		
+
 		if sort_dropdown_container.get_parent() == null:
 			# Insert below VendorTabsHBox
 			var tabs_hbox = preview_vbox.get_node_or_null("VendorTabsHBox")
@@ -301,7 +301,7 @@ func _ready():
 				preview_vbox.add_child(sort_dropdown_container)
 				preview_vbox.move_child(sort_dropdown_container, tabs_hbox.get_index() + 1)
 
-	
+
 	# Style bottom bar panel if present
 	var bottom_panel := $MainVBox/BottomBarPanel if has_node("MainVBox/BottomBarPanel") else null
 	if is_instance_valid(bottom_panel):
@@ -338,7 +338,7 @@ func _ready():
 			content_style.corner_radius_top_left = 4
 			content_style.corner_radius_bottom_right = 4
 			content_panel.add_theme_stylebox_override("panel", content_style)
-	
+
 	# Style the new journey progress bar
 	if is_instance_valid(journey_progress_bar):
 		_style_journey_progress_bar(journey_progress_bar)
@@ -351,7 +351,7 @@ func _ready():
 	if back_button and back_button is Button:
 		# print("ConvoyMenu: BackButton found. Connecting its 'pressed' signal.") # DEBUG
 		# Check if already connected to prevent duplicate connections if _ready is called multiple times (unlikely for menus but good practice)
-		if not back_button.is_connected("pressed", Callable(self, "_on_back_button_pressed")):
+		if not back_button.is_connected("pressed", Callable(self , "_on_back_button_pressed")):
 			back_button.pressed.connect(_on_back_button_pressed, CONNECT_ONE_SHOT) # Use ONE_SHOT as menu is freed
 	else:
 		printerr("ConvoyMenu: CRITICAL - BackButton node NOT found or is not a Button. Ensure it's named 'BackButton' in ConvoyMenu.tscn.")
@@ -381,19 +381,19 @@ func _ready():
 
 	# Connect placeholder menu buttons
 	if is_instance_valid(vehicle_menu_button):
-		if not vehicle_menu_button.is_connected("pressed", Callable(self, "_on_vehicle_menu_button_pressed")):
+		if not vehicle_menu_button.is_connected("pressed", Callable(self , "_on_vehicle_menu_button_pressed")):
 			_style_menu_button(vehicle_menu_button)
 			vehicle_menu_button.pressed.connect(_on_vehicle_menu_button_pressed)
 	if is_instance_valid(journey_menu_button):
-		if not journey_menu_button.is_connected("pressed", Callable(self, "_on_journey_menu_button_pressed")):
+		if not journey_menu_button.is_connected("pressed", Callable(self , "_on_journey_menu_button_pressed")):
 			_style_menu_button(journey_menu_button)
 			journey_menu_button.pressed.connect(_on_journey_menu_button_pressed)
 	if is_instance_valid(settlement_menu_button):
-		if not settlement_menu_button.is_connected("pressed", Callable(self, "_on_settlement_menu_button_pressed")):
+		if not settlement_menu_button.is_connected("pressed", Callable(self , "_on_settlement_menu_button_pressed")):
 			_style_menu_button(settlement_menu_button)
 			settlement_menu_button.pressed.connect(_on_settlement_menu_button_pressed)
 	if is_instance_valid(cargo_menu_button):
-		if not cargo_menu_button.is_connected("pressed", Callable(self, "_on_cargo_menu_button_pressed")):
+		if not cargo_menu_button.is_connected("pressed", Callable(self , "_on_cargo_menu_button_pressed")):
 			_style_menu_button(cargo_menu_button)
 			cargo_menu_button.pressed.connect(_on_cargo_menu_button_pressed)
 
@@ -741,7 +741,7 @@ func initialize_with_data(data_or_id: Variant, extra_arg: Variant = null) -> voi
 				var progress_percentage = 0.0
 				if length > 0:
 					progress_percentage = (progress / length) * 100.0
-				
+
 				journey_progress_bar.value = progress_percentage
 				journey_progress_label.text = NumberFormat.fmt_float(progress_percentage, 2) + "%"
 
@@ -791,7 +791,7 @@ func _queue_vendor_preview_update() -> void:
 		_vendor_preview_update_pending = true
 
 func _update_vendor_preview() -> void:
-	if not is_instance_valid(self) or convoy_data_received == null:
+	if not is_instance_valid(self ) or convoy_data_received == null:
 		return
 	if _debug_convoy_menu:
 		print("[ConvoyMenu][Debug] _update_vendor_preview convoy_id=", String(convoy_data_received.get("convoy_id", convoy_data_received.get("id", ""))),
@@ -800,7 +800,7 @@ func _update_vendor_preview() -> void:
 	# Mission cargo preview: show items marked mission-critical if present
 	_convoy_mission_items = _collect_mission_cargo_items(convoy_data_received)
 	_settlement_mission_items = _collect_settlement_mission_items()
-	
+
 	# Compatible parts preview: use GDM mechanic vendor availability snapshot if available
 	var compat_summary: Array[String] = []
 	if is_instance_valid(_mechanics_service) and _mechanics_service.has_method("get_mechanic_probe_snapshot"):
@@ -1003,7 +1003,7 @@ func _render_vendor_preview_display() -> void:
 			button.pressed.connect(_on_vendor_preview_item_button_pressed.bind(button))
 			_style_vendor_item_button(button, _current_vendor_tab)
 			vendor_item_grid.add_child(button)
-	
+
 	# Ensure font sizes are applied to newly created buttons
 	_update_font_sizes()
 
@@ -1307,10 +1307,10 @@ func _collect_mission_cargo_items(convoy: Dictionary) -> Array[String]:
 		data["display_name"] = String(k)
 		data["total_quantity"] = agg[k]
 		items_to_sort.append(data)
-	
+
 	if CargoSorter and _cargo_sort_metric >= 0:
 		items_to_sort = CargoSorter.sort_cargo(items_to_sort, _cargo_sort_metric, false)
-	
+
 	for sorted_item in items_to_sort:
 		out.append(sorted_item["display_name"])
 	if _debug_convoy_menu:
@@ -1528,21 +1528,21 @@ func _collect_settlement_mission_items() -> Array[String]:
 			var entry2 := "%s" % [nm2]
 			if dest2 != "":
 				entry2 += " — to %s" % dest2
-			
+
 			var sort_data = ci.duplicate()
 			sort_data["display_name"] = entry2
 			raw_items.append(sort_data)
 
-	
+
 	var CargoSorter = null
 	if _cargo_sort_metric >= 0:
 		CargoSorter = preload("res://Scripts/System/cargo_sorter.gd")
 	if CargoSorter and _cargo_sort_metric >= 0:
 		raw_items = CargoSorter.sort_cargo(raw_items, _cargo_sort_metric, false)
-	
+
 	for ri in raw_items:
 		out.append(ri["display_name"])
-		
+
 	if _debug_convoy_menu:
 		print("[ConvoyMenu][Debug] Settlement missions via vendor fallback: ", out)
 	return out
@@ -1682,7 +1682,7 @@ func _extract_destination_from_item(item: Dictionary) -> String:
 					# Fallback: vendor name via shared resolver (VendorTradePanel semantics)
 					var vn := ""
 					if VendorPanelContextController != null:
-						vn = str(VendorPanelContextController.get_vendor_name_for_recipient(self, vid))
+						vn = str(VendorPanelContextController.get_vendor_name_for_recipient(self , vid))
 					if vn != "" and vn != "null" and vn != "Unknown Vendor":
 						return vn
 
@@ -1700,7 +1700,7 @@ func _extract_destination_from_item(item: Dictionary) -> String:
 						return smn2
 			var vvn2 := ""
 			if VendorPanelContextController != null:
-				vvn2 = str(VendorPanelContextController.get_vendor_name_for_recipient(self, mvid))
+				vvn2 = str(VendorPanelContextController.get_vendor_name_for_recipient(self , mvid))
 			if vvn2 != "" and vvn2 != "null" and vvn2 != "Unknown Vendor":
 				return vvn2
 
@@ -1762,7 +1762,7 @@ func _extract_destination_from_item(item: Dictionary) -> String:
 								return sn2
 					var vn2 := ""
 					if VendorPanelContextController != null:
-						vn2 = str(VendorPanelContextController.get_vendor_name_for_recipient(self, rvid))
+						vn2 = str(VendorPanelContextController.get_vendor_name_for_recipient(self , rvid))
 					if vn2 != "" and vn2 != "null" and vn2 != "Unknown Vendor":
 						return vn2
 		elif recipient_any is String or recipient_any is int or recipient_any is float:
@@ -1785,7 +1785,7 @@ func _extract_destination_from_item(item: Dictionary) -> String:
 				# Shared resolver used by VendorTradePanel/VendorCargoAggregator.
 				var vn3 := ""
 				if VendorPanelContextController != null:
-					vn3 = str(VendorPanelContextController.get_vendor_name_for_recipient(self, rvid_str))
+					vn3 = str(VendorPanelContextController.get_vendor_name_for_recipient(self , rvid_str))
 				if vn3 != "" and vn3 != "null" and vn3 != "Unknown Vendor":
 					if _debug_convoy_menu:
 						print("[ConvoyMenu][Debug] dest via recipient vendor name (shared)=", vn3)
@@ -1861,7 +1861,7 @@ func _extract_destination_from_item(item: Dictionary) -> String:
 								return smn2
 				var vv2_name := ""
 				if VendorPanelContextController != null:
-					vv2_name = str(VendorPanelContextController.get_vendor_name_for_recipient(self, mvid2))
+					vv2_name = str(VendorPanelContextController.get_vendor_name_for_recipient(self , mvid2))
 				if vv2_name != "" and vv2_name != "null" and vv2_name != "Unknown Vendor":
 					if _debug_convoy_menu:
 						print("[ConvoyMenu][Debug] dest via mission_vendor_id vendor (shared fallback)=", vv2_name)
@@ -1870,7 +1870,7 @@ func _extract_destination_from_item(item: Dictionary) -> String:
 	if _debug_convoy_menu:
 		print("[ConvoyMenu][Debug] destination unresolved for item=", String(item.get("name", item.get("base_name", "?"))))
 	return ""
-	
+
 func _on_part_compat_ready(_payload: Dictionary) -> void:
 	_queue_vendor_preview_update()
 
@@ -2098,7 +2098,7 @@ func _set_fixed_color_box_style(panel_node: PanelContainer, label_node: Label, p
 	style_box.shadow_offset = Vector2(0, 2)
 	panel_node.add_theme_stylebox_override("panel", style_box)
 	label_node.add_theme_color_override("font_color", p_font_color)
-	
+
 	# Center text
 	label_node.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	label_node.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
@@ -2107,7 +2107,7 @@ func _set_fixed_color_box_style(panel_node: PanelContainer, label_node: Label, p
 func _set_progressbar_style(progressbar_node: ProgressBar, current_value: float, max_value: float):
 	if not is_instance_valid(progressbar_node):
 		return
-	
+
 	var percentage: float = 0.0
 	if max_value > 0:
 		percentage = clamp(current_value / max_value, 0.0, 1.0)
@@ -2164,8 +2164,8 @@ func _update_font_sizes() -> void:
 		journey_dest_label, journey_progress_label, journey_eta_label,
 		vehicles_label, all_cargo_label, vendor_no_items_label,
 		# Add text of placeholder buttons if they need scaling
-		# vehicle_menu_button, journey_menu_button, 
-		# settlement_menu_button, cargo_menu_button 
+		# vehicle_menu_button, journey_menu_button,
+		# settlement_menu_button, cargo_menu_button
 	]
 	# title_label is handled separately as it's the main convoy name title
 
@@ -2181,14 +2181,14 @@ func _update_font_sizes() -> void:
 			if child is Button:
 				# Increase font for mission/parts item buttons to improve readability
 				child.add_theme_font_size_override("font_size", new_font_size + 2)
-				
+
 	for label_node in labels_to_scale:
 		if is_instance_valid(label_node):
 			label_node.add_theme_font_size_override("font_size", new_font_size)
 
 	if is_instance_valid(back_button):
 		back_button.add_theme_font_size_override("font_size", new_font_size)
-	
+
 	# Scale placeholder button fonts if they are valid
 	if is_instance_valid(vehicle_menu_button):
 		vehicle_menu_button.add_theme_font_size_override("font_size", new_font_size)
@@ -2198,7 +2198,7 @@ func _update_font_sizes() -> void:
 		settlement_menu_button.add_theme_font_size_override("font_size", new_font_size)
 	if is_instance_valid(cargo_menu_button):
 		cargo_menu_button.add_theme_font_size_override("font_size", new_font_size)
-	
+
 	# Scale vendor tab buttons
 	if is_instance_valid(convoy_missions_tab_button):
 		convoy_missions_tab_button.add_theme_font_size_override("font_size", new_font_size - 2)

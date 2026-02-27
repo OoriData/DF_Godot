@@ -145,11 +145,17 @@ func _build_physics() -> void:
 	var chassis_col = CollisionPolygon2D.new()
 	var bed_depth = h * 0.3
 
+	var bevel = h * 0.15
 	var points = PackedVector2Array([
 		Vector2(-w / 2, -h), Vector2(-w / 2 + 20, -h),
 		Vector2(-w / 2 + 20, -bed_depth), Vector2(w / 2 - 20, -bed_depth),
 		Vector2(w / 2 - 20, -h), Vector2(w / 2, -h),
-		Vector2(w / 2, 0), Vector2(-w / 2, 0)
+		# Front-Bottom Bevel
+		Vector2(w / 2, -bevel),
+		Vector2(w / 2 - bevel, 0),
+		# Back-Bottom Bevel
+		Vector2(-w / 2 + bevel, 0),
+		Vector2(-w / 2, -bevel)
 	])
 
 	if travel_direction < 0:
@@ -289,10 +295,12 @@ func _spawn_cargo() -> void:
 	for i in range(count):
 		var cb = RigidBody2D.new()
 		cb.position = Vector2(start_x + (i * step), -100)
-		cb.mass = 5.0
+		cb.mass = 25.0
 
 		var c_mat = PhysicsMaterial.new()
-		c_mat.friction = 1.0 # High friction so cargo doesn't slide like ice
+		c_mat.friction = 0.6
+		c_mat.rough = true
+		c_mat.bounce = 0.0
 		cb.physics_material_override = c_mat
 
 		var col = CollisionShape2D.new()
@@ -326,8 +334,8 @@ var brake_torque: float = 40000.0
 var cruise_speed: float = 500.0
 
 # Station-keeping Gains
-var p_gain: float = 1.0
-var brake_gain: float = 1.0
+var p_gain: float = 0.5
+var brake_gain: float = 0.5
 
 # --- Diagnostics ---
 var telemetry: Dictionary = {
@@ -443,10 +451,6 @@ func _calculate_propulsion_torque(_delta: float) -> float:
 		else:
 			telemetry.mode = "REVERSE"
 			throttle = clamp((dist / 100.0) * p_gain, -1.2, 0.0)
-
-	# Soft Speed Cap (700-800 unit range)
-	if speed > 700.0:
-		throttle *= (1.0 - clamp((speed - 700.0) / 100.0, 0.0, 1.0))
 
 	telemetry.throttle = throttle
 	# Removed mass and delta scaling to normalize tuning.
