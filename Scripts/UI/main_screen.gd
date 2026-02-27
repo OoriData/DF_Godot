@@ -21,6 +21,7 @@ const NEW_CONVOY_DIALOG_SCENE_PATH := "res://Scenes/NewConvoyDialog.tscn"
 @export var new_convoy_dialog_scene: PackedScene = null
 const ERROR_DIALOG_SCENE_PATH := "res://Scenes/ErrorDialog.tscn"
 var _error_dialog_scene: PackedScene
+const AUTO_SELL_RECEIPT_MODAL_SCENE_PATH := "res://Scenes/UI/AutoSellReceiptModal.tscn"
 
 func initialize(p_map_view: Control, p_camera_controller: Node, p_interaction_manager: Node):
 	self.map_view = p_map_view
@@ -185,6 +186,8 @@ func _ready():
 			hub.initial_data_ready.connect(_on_initial_data_ready)
 		if not hub.is_connected("error_occurred", Callable(self, "_on_signal_hub_error_occurred")):
 			hub.error_occurred.connect(_on_signal_hub_error_occurred)
+		if not hub.is_connected("auto_sell_receipt_ready", Callable(self, "_on_auto_sell_receipt_ready")):
+			hub.auto_sell_receipt_ready.connect(_on_auto_sell_receipt_ready)
 
 	_error_dialog_scene = load(ERROR_DIALOG_SCENE_PATH)
 # Respond to Control resize events
@@ -717,6 +720,40 @@ func _check_or_prompt_new_convoy_from_store():
 # Add new handlers for GameStore map_changed if needed
 func _on_store_map_changed(_tiles: Array, _settlements: Array):
 	pass # Add map update logic if needed
+
+func _on_auto_sell_receipt_ready(receipt_data: Variant) -> void:
+	print("[AutoSell] main_screen received auto_sell_receipt_ready signal")
+	if not (receipt_data is Dictionary) or receipt_data.get("items", []).is_empty():
+		return
+	
+	var scene = load(AUTO_SELL_RECEIPT_MODAL_SCENE_PATH)
+	if not (scene is PackedScene):
+		printerr("[AutoSell] main_screen: Could not load AutoSellReceiptModal scene!")
+		return
+	
+	var modal_layer: Control = get_node_or_null("ModalLayer")
+	var host: Node = modal_layer.get_node_or_null("DialogHost") if is_instance_valid(modal_layer) else null
+	if not is_instance_valid(host):
+		printerr("[AutoSell] main_screen: ModalLayer or DialogHost not found for AutoSellReceiptModal!")
+		return
+	
+	print("[AutoSell] main_screen: Instantiating and showing receipt modal")
+	var receipt_modal = scene.instantiate()
+	host.add_child(receipt_modal)
+	
+	if receipt_modal.has_method("set_receipt_data"):
+		receipt_modal.set_receipt_data(receipt_data)
+	
+	modal_layer.show()
+	
+	if receipt_modal.has_method("set_receipt_data"):
+		receipt_modal.set_receipt_data(receipt_data)
+	if receipt_modal.has_method("open"):
+		receipt_modal.open()
+	
+	receipt_modal.tree_exited.connect(func():
+		_maybe_hide_modal_layer()
+	)
 
 func _on_signal_hub_error_occurred(_domain: String, _code: String, message: String, inline: bool):
 	# If the error is marked as inline (e.g. toast), do not show a blocking dialog.

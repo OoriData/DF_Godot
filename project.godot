@@ -11,7 +11,7 @@ config_version=5
 [application]
 
 config/name="Desolate Frontiers"
-config/version="0.3.11"
+config/version="0.3.12"
 run/main_scene="res://Scenes/GameRoot.tscn"
 config/features=PackedStringArray("4.6", "GL Compatibility")
 run/low_processor_mode=true
@@ -40,6 +40,7 @@ ConvoySelectionService="*res://Scripts/System/Services/convoy_selection_service.
 MenuManager="*res://Scripts/Menus/menu_manager.gd"
 ui_scale_manager="*res://Scripts/UI/UI_scale_manager.gd"
 TutorialManager="*res://Scripts/UI/tutorial_manager.gd"
+AutoSellService="*res://Scripts/System/Services/auto_sell_service.gd"
 SteamManager="*res://Scripts/System/steam_manager.gd"
 
 [display]
