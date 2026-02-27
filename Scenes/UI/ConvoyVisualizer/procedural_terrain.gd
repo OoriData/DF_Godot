@@ -4,7 +4,7 @@ class_name ProceduralTerrain
 @export var camera: Camera2D
 @export var chunk_width: float = 2000.0
 @export var terrain_depth: float = 1000.0 # How far down the polygon goes
-@export var point_step: float = 50.0 # X distance between points in the polygon
+@export var point_step: float = 25.0 # X distance between points in the polygon (was 50.0)
 
 var terrain_difficulty: float = 0.5
 var noise: FastNoiseLite
@@ -45,7 +45,8 @@ func _spawn_chunk(idx: int) -> void:
 	
 	# Update noise parameters based on difficulty
 	# Higher difficulty = higher amplitude and higher frequency (more bumpy)
-	var amplitude = lerp(10.0, 100.0, terrain_difficulty)
+	# Magnitude decreased by 50% as requested (was 10 to 100)
+	var amplitude = lerp(5.0, 50.0, terrain_difficulty)
 	var freq = lerp(0.001, 0.006, terrain_difficulty)
 	noise.frequency = freq
 	

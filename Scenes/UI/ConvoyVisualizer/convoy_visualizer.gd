@@ -17,13 +17,14 @@ var current_convoy_data: Dictionary = {}
 
 var vehicle_nodes: Array[Node2D] = []
 var vehicle_offsets: Array[float] = []
+var vehicle_stuck_timers: Array[float] = [] # Track how long each vehicle has been struggling
 
 var is_moving: bool = false
 var is_stuck: bool = false
 var travel_direction: float = 1.0
 
 var convoy_center_x: float = 0.0
-var convoy_base_speed: float = 100.0
+var convoy_base_speed: float = 500.0
 var _stored_difficulty: float = 1.0
 
 func _ready() -> void:
@@ -42,34 +43,36 @@ func _add_physics_sliders() -> void:
 	# Find the VBoxContainer and add more controls dynamically
 	var vbox = find_child("VBoxContainer", true)
 	if not vbox: return
-	
-	_create_labeled_slider(vbox, "Propulsion Torque", 100000, 5000000, 800000, set_global_torque)
-	_create_labeled_slider(vbox, "Suspension Stiffness", 50, 2000, 250, set_global_stiffness)
-	_create_labeled_slider(vbox, "Suspension Damping", 1, 100, 10, set_global_damping)
-	_create_labeled_slider(vbox, "Convoy Base Speed", 0, 500, 100, func(v): convoy_base_speed = v)
+
+	_create_labeled_slider(vbox, "Propulsion Torque", 0, 500000, 16000, set_global_torque)
+	_create_labeled_slider(vbox, "Suspension Stiffness", 0, 1000, 100, set_global_stiffness)
+	_create_labeled_slider(vbox, "Suspension Damping", 1, 500, 50, set_global_damping)
+	_create_labeled_slider(vbox, "Convoy Base Speed", 0, 2000, 500, func(v): convoy_base_speed = v)
+	_create_labeled_slider(vbox, "Throttle P-Gain", 0, 5.0, 1.0, set_global_p_gain)
+	_create_labeled_slider(vbox, "Brake Intensity", 0, 5.0, 1.0, set_global_brake_gain)
 
 func _create_labeled_slider(container: Control, label_text: String, min_v: float, max_v: float, default_v: float, callback: Callable) -> void:
 	var hbox = HBoxContainer.new()
 	var lbl = Label.new()
 	lbl.text = label_text
 	lbl.custom_minimum_size.x = 140
-	
+
 	var sld = HSlider.new()
 	sld.min_value = min_v
 	sld.max_value = max_v
 	sld.value = default_v
 	sld.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	
+
 	var edit = LineEdit.new()
 	edit.text = str(default_v)
 	edit.custom_minimum_size.x = 100
-	
+
 	# Sync Slider -> Edit & Callback
 	sld.value_changed.connect(func(v):
 		edit.text = str(int(v) if v == float(int(v)) else v)
 		callback.call(v)
 	)
-	
+
 	# Sync Edit -> Slider & Callback
 	edit.text_submitted.connect(func(new_text):
 		var v = new_text.to_float()
@@ -78,7 +81,7 @@ func _create_labeled_slider(container: Control, label_text: String, min_v: float
 		edit.text = str(v)
 		callback.call(v)
 	)
-	
+
 	hbox.add_child(lbl)
 	hbox.add_child(sld)
 	hbox.add_child(edit)
@@ -102,32 +105,35 @@ func _update_movement_state_internal() -> void:
 
 func _physics_process(delta: float) -> void:
 	if vehicle_nodes.is_empty(): return
-	
-	# 1. Update virtual center (Constant speed)
-	if is_moving:
+
+	# 1. Update virtual center (Constant speed, unless stuck)
+	if is_moving and not is_stuck:
 		convoy_center_x += convoy_base_speed * travel_direction * delta
-		
-	# 2. Apply moving state and target to vehicles
+
+	# 2. Check for stuck vehicles
+	_check_stuck_status(delta)
+
+	# 3. Apply moving state and target to vehicles
 	var act_center = Vector2.ZERO
 	var valid_count = 0
 	for i in range(vehicle_nodes.size()):
 		var v = vehicle_nodes[i]
 		if not is_instance_valid(v): continue
-		
+
 		v.target_world_x = convoy_center_x + (vehicle_offsets[i] * travel_direction)
 		if "cruise_speed" in v:
 			v.cruise_speed = convoy_base_speed
 		if v.has_method("set_moving"):
-			v.set_moving(is_moving)
-			
+			v.set_moving(is_moving and not is_stuck)
+
 		if v.has_node("Chassis"):
 			act_center += v.get_node("Chassis").global_position
 			valid_count += 1
-			
+
 	# 4. Camera follows actual vehicles and adjusts zoom
 	if valid_count > 0:
 		act_center /= valid_count
-		
+
 		# Calculate horizontal spread
 		var min_x = float(INF)
 		var max_x = float(-INF)
@@ -136,15 +142,15 @@ func _physics_process(delta: float) -> void:
 			var cx = v.get_node("Chassis").global_position.x
 			min_x = min(min_x, cx)
 			max_x = max(max_x, cx)
-		
+
 		var spread = max_x - min_x
 		var viewport_w = get_viewport_rect().size.x
-		
+
 		# Target zoom: we want spread + padding (e.g. 400px) to fit in viewport
 		var padding = 600.0 # Enough space for margins
 		var target_zoom_val = clamp(viewport_w / (spread + padding), 0.25, 1.0)
 		var target_zoom = Vector2(target_zoom_val, target_zoom_val)
-		
+
 		var smooth = 1.0 - exp(-5.0 * delta)
 		camera.global_position = camera.global_position.lerp(act_center, smooth)
 		camera.zoom = camera.zoom.lerp(target_zoom, smooth)
@@ -152,17 +158,35 @@ func _physics_process(delta: float) -> void:
 		# 5. Update Telemetry UI (from lead vehicle)
 		_update_debug_ui_telemetry()
 
+func _check_stuck_status(delta: float) -> void:
+	var any_stuck = false
+	for i in range(vehicle_nodes.size()):
+		var v = vehicle_nodes[i]
+		if not is_instance_valid(v) or not "telemetry" in v: continue
+
+		var tel = v.telemetry
+		# Definition of stuck: Trying to move (Throttle > 0.5) but speed is zero (< 10)
+		if is_moving and tel.throttle > 0.5 and abs(tel.speed) < 10.0:
+			vehicle_stuck_timers[i] += delta
+		else:
+			vehicle_stuck_timers[i] = 0.0
+
+		if vehicle_stuck_timers[i] > 1.0: # Stuck for > 1 second
+			any_stuck = true
+
+	is_stuck = any_stuck
+
 func _update_debug_ui_telemetry() -> void:
 	if vehicle_nodes.is_empty(): return
 	var lead = vehicle_nodes[0]
 	if not is_instance_valid(lead) or not "telemetry" in lead: return
-	
+
 	var tel = lead.telemetry
 	var tel_text = "[color=cyan]LEAD VEHICLE TELEMETRY[/color]\n"
 	tel_text += "MODE: %s | SPEED: %d\n" % [tel.mode, tel.speed]
 	tel_text += "ERROR: %d | THROTTLE: %.2f\n" % [tel.distance_error, tel.throttle]
 	tel_text += "TORQUE: %d" % [tel.torque]
-	
+
 	# If we have a dedicated label, use it. Otherwise, hijack the diff label for now
 	# or better, just print it to the diff label temporarily
 	if diff_label:
@@ -182,6 +206,16 @@ func set_global_damping(val: float) -> void:
 	for v in vehicle_nodes:
 		if is_instance_valid(v):
 			v.damping = val
+
+func set_global_p_gain(val: float) -> void:
+	for v in vehicle_nodes:
+		if is_instance_valid(v):
+			v.p_gain = val
+
+func set_global_brake_gain(val: float) -> void:
+	for v in vehicle_nodes:
+		if is_instance_valid(v):
+			v.brake_gain = val
 
 
 func set_terrain_difficulty(dif: float) -> void:
@@ -225,46 +259,46 @@ func _build_convoy() -> void:
 	for child in vehicles_node.get_children():
 		child.queue_free()
 	vehicle_nodes.clear()
-	
+
 	var vehicle_data_list: Array = current_convoy_data.get("vehicle_details_list", current_convoy_data.get("vehicles", []))
 	if vehicle_data_list.is_empty():
 		push_warning("ConvoyVisualizer: No vehicles found in convoy data.")
 		return
-		
+
 	# Spawn vehicles
 	var spacing: float = 120.0 # Tighter spacing so vehicles stay on screen
 	var total_count = vehicle_data_list.size()
 	var start_offset: float = ((total_count - 1) * spacing) / 2.0
 	var current_offset: float = start_offset
-	
+
 	vehicle_offsets.clear()
-	
+
 	var vehicle_idx = 0
-	
+
 	for v_data in vehicle_data_list:
 		if not (v_data is Dictionary): continue
-		
+
 		var v_id = String(v_data.get("vehicle_id", v_data.get("id", "")))
 		var v_color = String(v_data.get("color", ""))
 		var v_shape = String(v_data.get("shape", ""))
 		var v_weight = float(v_data.get("weight_class", 0.0))
 		var v_driven = v_data.get("driven_wheels", [])
 		var v_cargo = v_data.get("cargo", [])
-		
+
 		var v_node = vehicle_scene.instantiate()
 		vehicles_node.add_child(v_node)
-		
+
 		var init_x = convoy_center_x + (current_offset * travel_direction)
 		v_node.position = Vector2(init_x, 0)
-		
+
 		# Assign a unique collision layer index (internal bits handled in vehicle_2d)
 		v_node.setup(v_color, v_shape, v_weight, v_driven, v_cargo, travel_direction, vehicle_idx)
-		
+
 		vehicle_nodes.append(v_node)
 		vehicle_offsets.append(current_offset)
-		
+		vehicle_stuck_timers.append(0.0)
 		current_offset -= spacing
 		vehicle_idx += 1
-		
+
 	if camera:
 		camera.position.x = convoy_center_x
