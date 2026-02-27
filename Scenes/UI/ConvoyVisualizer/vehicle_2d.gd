@@ -33,6 +33,9 @@ var _wheel_rest_y: float = 0.0 # Rest Y offset of wheel from chassis
 var _wheel_max_travel: float = 0.0
 var _chassis_h: float = 0.0
 
+var _wheel_radius: float = 10.0
+var _wheel_angular_velocities: Array[float] = []
+
 var _body_layer_bit: int = 0
 
 func setup(vehicle_color: String, vehicle_shape: String, vehicle_weight_class: float, driven: Array = [], cargo: Array = [], direction: float = 1.0, layer_idx: int = 0) -> void:
@@ -193,6 +196,7 @@ func _build_physics() -> void:
 		wheel_xs = flipped_xs
 
 	var radius = h * 0.22
+	_wheel_radius = radius
 
 	for i in range(wheel_xs.size()):
 		var wx = wheel_xs[i]
@@ -225,6 +229,7 @@ func _build_physics() -> void:
 		_prev_spring_lengths.append(radius)
 		_wheel_grounded.append(false)
 		_wheel_suspension_forces.append(0.0)
+		_wheel_angular_velocities.append(0.0)
 
 	# Ride Height: How far below the axle (0) the wheel center sits at rest.
 	# Increasing this gives the vehicle more ground clearance.
@@ -277,7 +282,7 @@ func _process(_delta: float) -> void:
 		# Rotation happens ALWAYS regardless of contact, based on chassis speed
 		# This ensures wheels don't 'freeze' mid-air
 		if is_instance_valid(chassis):
-			vis.rotation += (chassis.linear_velocity.dot(chassis.global_transform.basis_xform(Vector2.RIGHT)) * _delta) / radius
+			vis.rotation += _wheel_angular_velocities[i] * _delta
 
 	if _debug_overlay:
 		_debug_overlay.queue_redraw()
@@ -350,6 +355,18 @@ var telemetry: Dictionary = {
 func _physics_process(delta: float) -> void:
 	if not is_instance_valid(chassis): return
 
+	var local_forward = chassis.global_transform.basis_xform(Vector2.RIGHT).normalized()
+	var ground_speed = chassis.linear_velocity.dot(local_forward)
+	var grip_angular_vel = ground_speed / max(_wheel_radius, 1.0)
+
+	for i in range(_wheel_rays.size()):
+		if _wheel_grounded[i]:
+			# Fast lerp towards grip speed
+			_wheel_angular_velocities[i] = lerp(_wheel_angular_velocities[i], grip_angular_vel, 10.0 * delta)
+		else:
+			# Slow decay in air
+			_wheel_angular_velocities[i] = lerp(_wheel_angular_velocities[i], 0.0, 1.0 * delta)
+
 	_update_telemetry()
 	_apply_suspension(delta)
 
@@ -359,7 +376,7 @@ func _physics_process(delta: float) -> void:
 	else:
 		torque = _calculate_idle_braking(delta)
 
-	_apply_drive_torque(torque)
+	_apply_drive_torque(torque, delta)
 
 func _update_telemetry() -> void:
 	telemetry.speed = chassis.linear_velocity.x * travel_direction
@@ -472,7 +489,7 @@ func _calculate_idle_braking(delta: float) -> float:
 
 	return torque
 
-func _apply_drive_torque(torque: float) -> void:
+func _apply_drive_torque(torque: float, delta: float) -> void:
 	if abs(torque) < 1.0: return
 
 	telemetry.torque = torque
@@ -487,14 +504,22 @@ func _apply_drive_torque(torque: float) -> void:
 	for idx in range(_wheel_rays.size()):
 		var is_driven = _driven_wheels.is_empty() or (idx < _driven_wheels.size() and _driven_wheels[idx])
 
-		if is_driven and _wheel_grounded[idx]:
-			# The traction force is limited by how much normal force (suspension load) is on the wheel
-			var max_traction = _wheel_suspension_forces[idx] * 1.5 # Friction coefficient
-			var applied_force = clamp(force_per_wheel, -max_traction, max_traction)
+		if is_driven:
+			if _wheel_grounded[idx]:
+				# The traction force is limited by how much normal force (suspension load) is on the wheel
+				var max_traction = _wheel_suspension_forces[idx] * 1.5 # Friction coefficient
+				var applied_force = clamp(force_per_wheel, -max_traction, max_traction)
+				var slip_force = force_per_wheel - applied_force
 
-			var ray = _wheel_rays[idx]
-			var hit_point = ray.get_collision_point()
-			var force_offset = hit_point - chassis.global_position
+				var ray = _wheel_rays[idx]
+				var hit_point = ray.get_collision_point()
+				var force_offset = hit_point - chassis.global_position
 
-			# Apply forward drive force directly to chassis through the contact patch
-			chassis.apply_force(local_forward * applied_force, force_offset)
+				# Apply forward drive force directly to chassis through the contact patch
+				chassis.apply_force(local_forward * applied_force, force_offset)
+
+				# Add visual slip
+				_wheel_angular_velocities[idx] += slip_force * delta * 0.1
+			else:
+				# Free spinning in air
+				_wheel_angular_velocities[idx] += force_per_wheel * delta * 0.5
