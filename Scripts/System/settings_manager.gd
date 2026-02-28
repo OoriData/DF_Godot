@@ -5,23 +5,22 @@ signal setting_changed(key: String, value: Variant)
 const SAVE_PATH := "user://settings.cfg"
 const SECTION := "settings"
 
-var _save_path: String = SAVE_PATH
+var _save_path: String
 
-var data := {
-	"ui.scale": 1.4,
-	"ui.auto_scale": false, # Dynamic scaling (adjusts to window size)
-	"ui.menu_open_ratio": 0.5, # Midpoint of the 25%-75% range
-	"ui.cargo_sort_metric": 0, # Default cargo sort mode
+var data: Dictionary
 
-
-	"access.high_contrast": false,
-
-	"display.fullscreen": false,
-
-	"controls.invert_pan": false,
-	"controls.invert_zoom": false,
-	"controls.gestures_enabled": true,
-}
+func _init() -> void:
+	_save_path = SAVE_PATH
+	data = Dictionary()
+	data["ui.scale"] = 1.4
+	data["ui.auto_scale"] = false
+	data["ui.menu_open_ratio"] = 0.5
+	data["ui.cargo_sort_metric"] = 0
+	data["access.high_contrast"] = false
+	data["display.fullscreen"] = false
+	data["controls.invert_pan"] = false
+	data["controls.invert_zoom"] = false
+	data["controls.gestures_enabled"] = true
 
 func _ready() -> void:
 	load_settings()
@@ -35,7 +34,6 @@ func set_and_save(key: String, value: Variant) -> void:
 	save_settings()
 	setting_changed.emit(key, value)
 	_apply_runtime_side_effect(key, value)
-
 
 func set_save_path_for_tests(path: String) -> void:
 	# Used by headless/unit tests to avoid clobbering real user settings.

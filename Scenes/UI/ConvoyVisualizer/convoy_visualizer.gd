@@ -55,6 +55,8 @@ func _add_physics_sliders() -> void:
 	_create_labeled_slider(vbox, "Convoy Base Speed", 0, 2000, 500, func(v): convoy_base_speed = v)
 	_create_labeled_slider(vbox, "Throttle P-Gain", 0, 5.0, 1.0, set_global_p_gain)
 	_create_labeled_slider(vbox, "Brake Intensity", 0, 5.0, 1.0, set_global_brake_gain)
+	_create_labeled_slider(vbox, "Cargo Volume Scalar", 0.0, 5.0, 1.0, set_global_cargo_volume)
+	_create_labeled_slider(vbox, "Cargo Weight Scalar", 0.0, 2.0, 0.3, set_global_cargo_weight)
 
 func _create_labeled_slider(container: Control, label_text: String, min_v: float, max_v: float, default_v: float, callback: Callable) -> void:
 	var hbox = HBoxContainer.new()
@@ -237,6 +239,16 @@ func set_global_brake_gain(val: float) -> void:
 		if is_instance_valid(v):
 			v.brake_gain = val
 
+func set_global_cargo_volume(val: float) -> void:
+	for v in vehicle_nodes:
+		if is_instance_valid(v) and v.has_method("set_cargo_volume_scalar"):
+			v.cargo_volume_scalar = val
+
+func set_global_cargo_weight(val: float) -> void:
+	for v in vehicle_nodes:
+		if is_instance_valid(v) and v.has_method("set_cargo_weight_scalar"):
+			v.cargo_weight_scalar = val
+
 
 func set_terrain_difficulty(dif: float) -> void:
 	_stored_difficulty = dif
@@ -250,6 +262,22 @@ func set_terrain_difficulty(dif: float) -> void:
 #region Convoy Management
 func initialize_with_convoy(convoy_data: Dictionary) -> void:
 	current_convoy_data = convoy_data.duplicate(true)
+
+	# Extract convoy top speed or find lowest top speed among vehicles
+	var c_top_speed = float(current_convoy_data.get("top_speed", -1.0))
+	if c_top_speed < 0:
+		var vehicles = current_convoy_data.get("vehicle_details_list", current_convoy_data.get("vehicles", []))
+		for v in vehicles:
+			if v is Dictionary and v.has("top_speed"):
+				var v_spd = float(v["top_speed"])
+				if c_top_speed < 0 or v_spd < c_top_speed:
+					c_top_speed = v_spd
+		if c_top_speed < 0:
+			c_top_speed = 50.0 # Default if wholly missing
+
+	# Map: 0 top_speed -> 500 base_speed, 100 top_speed -> 1500 base_speed
+	convoy_base_speed = lerp(500.0, 1500.0, clamp(c_top_speed / 100.0, 0.0, 1.0))
+
 	reset_convoy()
 
 func reset_convoy() -> void:
@@ -300,11 +328,6 @@ func _build_convoy() -> void:
 		if not (v_data is Dictionary): continue
 
 		var _v_id = String(v_data.get("vehicle_id", v_data.get("id", "")))
-		var v_color = String(v_data.get("color", ""))
-		var v_shape = String(v_data.get("shape", ""))
-		var v_weight = float(v_data.get("weight_class", 0.0))
-		var v_driven = v_data.get("driven_wheels", [])
-		var v_cargo = v_data.get("cargo", [])
 
 		var v_node = vehicle_scene.instantiate()
 		vehicles_node.add_child(v_node)
@@ -312,12 +335,80 @@ func _build_convoy() -> void:
 		var init_x = convoy_center_x + (current_offset * travel_direction)
 		v_node.position = Vector2(init_x, 0)
 
+		# Check if this vehicle has a trailer part equipped
+		var trailer_data = null
+		# TRAILERS TEMPORARILY DISABLED
+		# var parts = v_data.get("parts", [])
+		# if parts is Array:
+		# 	for p in parts:
+		# 		if p is Dictionary and p.get("slot") == "trailer":
+		# 			trailer_data = p
+		# 			break
+		# elif parts is Dictionary and parts.has("trailer"):
+		# 	trailer_data = parts["trailer"]
+
+		# Split cargo if there is a trailer
+		var main_cargo = []
+		var trailer_cargo = []
+		var full_cargo = v_data.get("cargo", []).duplicate(true)
+
+		if trailer_data != null:
+			# Very rough split: 40% truck, 60% trailer
+			var split_idx = max(1, int(full_cargo.size() * 0.4))
+			for i in range(full_cargo.size()):
+				if i < split_idx:
+					main_cargo.append(full_cargo[i])
+				else:
+					trailer_cargo.append(full_cargo[i])
+		else:
+			main_cargo = full_cargo
+
+		var main_v_data = v_data.duplicate(true)
+		main_v_data["cargo"] = main_cargo
+
 		# Assign a unique collision layer index (internal bits handled in vehicle_2d)
-		v_node.setup(v_color, v_shape, v_weight, v_driven, v_cargo, travel_direction, vehicle_idx)
+		v_node.setup(main_v_data, travel_direction, vehicle_idx, false)
 
 		vehicle_nodes.append(v_node)
 		vehicle_offsets.append(current_offset)
 		vehicle_stuck_timers.append(0.0)
+
+		# Now spawn and link the trailer if one exists
+		if trailer_data != null and trailer_data is Dictionary:
+			var t_node = vehicle_scene.instantiate()
+			vehicles_node.add_child(t_node)
+
+			var t_spacing = 80.0
+			var t_init_x = init_x - (t_spacing * travel_direction)
+			t_node.position = Vector2(t_init_x, 0)
+
+			var t_v_data = trailer_data.duplicate(true)
+			t_v_data["cargo"] = trailer_cargo
+
+			# Fallback trailer color to match truck if not specified
+			if not t_v_data.has("color") or str(t_v_data["color"]) == "":
+				t_v_data["color"] = v_data.get("color", "")
+
+			t_node.setup(t_v_data, travel_direction, vehicle_idx, true)
+
+			vehicle_nodes.append(t_node)
+			vehicle_offsets.append(current_offset - t_spacing)
+			vehicle_stuck_timers.append(0.0)
+
+			# Link them physically
+			var joint = PinJoint2D.new()
+			# Place joint between the two vehicles
+			joint.position = Vector2(init_x - (t_spacing * travel_direction * 0.5), 0)
+			joint.node_a = joint.get_path_to(v_node.get_node("Chassis"))
+			joint.node_b = joint.get_path_to(t_node.get_node("Chassis"))
+			joint.disable_collision = true
+			# Soften the joint slightly
+			joint.softness = 0.5
+			vehicles_node.add_child(joint)
+
+			# Increase total spacing to account for trailer
+			current_offset -= t_spacing
+
 		current_offset -= spacing
 		vehicle_idx += 1
 

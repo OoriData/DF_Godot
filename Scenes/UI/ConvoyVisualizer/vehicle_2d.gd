@@ -38,17 +38,58 @@ var _wheel_radius: float = 10.0
 var _wheel_angular_velocities: Array[float] = []
 
 var _body_layer_bit: int = 0
+var _vehicle_data: Dictionary = {}
+var _top_speed: float = 0.0
+var _offroad_capability: float = 0.0
+var _tire_diameter: float = -1.0
+var _is_trailer: bool = false
+var cargo_volume_scalar: float = 1.0: set = set_cargo_volume_scalar
+var cargo_weight_scalar: float = 0.3: set = set_cargo_weight_scalar
 #endregion
 
 #region Initialization
-func setup(vehicle_color: String, vehicle_shape: String, vehicle_weight_class: float, driven: Array = [], cargo: Array = [], direction: float = 1.0, layer_idx: int = 0) -> void:
-	_color = vehicle_color
-	_shape = vehicle_shape # Keep case for mapping check
-	_weight_class = vehicle_weight_class
+func setup(v_data: Dictionary, direction: float = 1.0, layer_idx: int = 0, is_trailer: bool = false) -> void:
+	_vehicle_data = v_data.duplicate()
+	_color = String(v_data.get("color", ""))
+	_shape = String(v_data.get("shape", "")) # Keep case for mapping check
+	if _shape == "":
+		_shape = String(v_data.get("base_name", ""))
+	if _shape == "":
+		var vid = v_data.get("vehicle_id", v_data.get("part_id", v_data.get("id", "")))
+		_shape = String(vid)
+
+	_shape = _shape.strip_edges()
+	_weight_class = float(v_data.get("weight_class", 1.0))
 	if _weight_class <= 0.0:
 		_weight_class = 1.0
-	_driven_wheels = driven.duplicate()
-	_cargo_data = cargo.duplicate()
+	_driven_wheels = v_data.get("driven_wheels", []).duplicate()
+	_cargo_data = v_data.get("cargo", []).duplicate()
+	_is_trailer = is_trailer
+
+	var ts = v_data.get("top_speed")
+	if ts != null: _top_speed = float(ts)
+
+	var oc = v_data.get("offroad_capability")
+	if oc != null: _offroad_capability = float(oc)
+
+	_tire_diameter = -1.0
+	var parts = v_data.get("parts", [])
+	var tires = null
+	if parts is Array:
+		for p in parts:
+			if p is Dictionary and p.get("slot") == "tires":
+				tires = p
+				break
+	elif parts is Dictionary and parts.has("tires"):
+		tires = parts["tires"]
+
+	if tires is Dictionary:
+		var d = tires.get("diameter")
+		if d != null:
+			_tire_diameter = float(d)
+
+	# Top speed mapping: 0 -> 10000 torque, 100 -> 30000 torque
+	propulsion_torque = lerp(10000.0, 30000.0, clamp(_top_speed / 100.0, 0.0, 1.0))
 
 	travel_direction = sign(direction)
 	if travel_direction == 0: travel_direction = 1.0
@@ -139,7 +180,15 @@ func _apply_visuals() -> void:
 		var target_size = NORMALIZED_WIDTH * weight_scale
 		error_rect.size = Vector2(target_size, target_size)
 		error_rect.position = Vector2(-target_size / 2.0, -target_size)
-		error_rect.color = Color(1, 0, 1, 1)
+
+		if _is_trailer:
+			# Trailers without sprites look like generic grey cargo boxes
+			error_rect.color = Color(0.35, 0.35, 0.35, 0.9)
+			# Make it more rectangular for a trailer feel
+			error_rect.size.y = target_size * 0.6
+			error_rect.position.y = - error_rect.size.y
+		else:
+			error_rect.color = Color(1, 0, 1, 1) # Magenta for missing truck sprites
 #endregion
 
 #region Physics Setup
@@ -193,8 +242,35 @@ func _build_physics() -> void:
 
 	var wheel_xs = [-w * 0.35, w * 0.35]
 	var shape_low = _shape.to_lower()
-	if shape_low == "semi_truck" or shape_low == "tanker" or shape_low == "container_truck":
-		wheel_xs = [-w * 0.4, -w * 0.1, w * 0.4]
+
+	# Default to 2 axles, but some shapes have more
+	var num_axles = 2
+
+	if shape_low in ["6x6", "6x6_apc", "6x6_cabover", "day_cab_3_axle_tractor", "sleeper_cab_3_axle_tractor"]:
+		num_axles = 3
+	elif shape_low in ["8x8_apc", "8x8_cabover", "8x8_tractor", "square_cab_4_axle_tractor"]:
+		num_axles = 4
+	elif shape_low in ["10x10_cabover"]:
+		num_axles = 5
+	elif shape_low in ["semi_truck", "tanker", "container_truck"]:
+		# Legacy explicit mapping
+		num_axles = 3
+
+	if num_axles > 2:
+		wheel_xs.clear()
+		# Distribute axles evenly between -0.4w and 0.4w
+		var min_x = -w * 0.4
+		var max_x = w * 0.4
+		var span = max_x - min_x
+		var axle_step = span / float(num_axles - 1)
+		for i in range(num_axles):
+			wheel_xs.append(min_x + (i * axle_step))
+
+	if _is_trailer:
+		# Trailers usually only have tires in the back
+		# Let's just keep the rearmost axle
+		var rearmost = wheel_xs[0]
+		wheel_xs = [rearmost]
 
 	if travel_direction < 0:
 		var flipped_xs = []
@@ -202,7 +278,15 @@ func _build_physics() -> void:
 			flipped_xs.append(-wx)
 		wheel_xs = flipped_xs
 
-	var radius = h * 0.22
+	var base_radius = NORMALIZED_WIDTH * 0.5 * 0.22
+	var radius = base_radius
+	if _tire_diameter > 0:
+		# Scale relative to 0.65m default
+		radius = base_radius * (_tire_diameter / 0.65)
+	else:
+		# Softened weight class scaling for default wheels
+		radius = base_radius * pow(_weight_class, 0.2)
+
 	_wheel_radius = radius
 
 	for i in range(wheel_xs.size()):
@@ -238,10 +322,10 @@ func _build_physics() -> void:
 		_wheel_suspension_forces.append(0.0)
 		_wheel_angular_velocities.append(0.0)
 
-	# Ride Height: How far below the axle (0) the wheel center sits at rest.
-	# Increasing this gives the vehicle more ground clearance.
-	_wheel_rest_y = radius * 2.2
-	_wheel_max_travel = radius * 3.5
+	# Ride Height: 0 offroad = 0.5x, 100 offroad = 1.5x
+	var ride_height_scalar = lerp(0.5, 1.5, clamp(_offroad_capability / 100.0, 0.0, 1.0))
+	_wheel_rest_y = radius * 2.2 * ride_height_scalar
+	_wheel_max_travel = radius * 3.5 * ride_height_scalar
 
 	_spawn_cargo()
 	_setup_debug_overlay()
@@ -273,7 +357,7 @@ func _process(_delta: float) -> void:
 		var vis = _wheel_visuals[i]
 		var ray = _wheel_rays[i]
 		var local_down = ray.target_position.normalized()
-		var radius = _wheel_rest_y / 2.2 # Get the raw wheel radius back for visual math
+		var radius = _wheel_radius
 
 		if ray.is_colliding():
 			var hit_point = ray.get_collision_point()
@@ -295,43 +379,126 @@ func _process(_delta: float) -> void:
 		_debug_overlay.queue_redraw()
 
 func _spawn_cargo() -> void:
-	var max_cargo = 5
-	var count = min(_cargo_data.size(), max_cargo)
-	if count == 0: return
+	if _cargo_data.is_empty(): return
 
+	var max_physics_blocks_per_type = 30
 	var w = NORMALIZED_WIDTH * sprite.scale.x
-	var step = (w * 0.6) / float(max(1, count))
-	var start_x = - (w * 0.3)
+	var start_x = - (w * 0.4)
+	var bed_width = w * 0.8
 
+	# Keep track of where to drop the next item so they stack somewhat naturally
+	var drop_x = start_x
+	var drop_step = 30.0
 
-	for i in range(count):
-		var cb = RigidBody2D.new()
-		cb.position = Vector2(start_x + (i * step), -100)
-		cb.mass = 25.0
+	for item in _cargo_data:
+		if not (item is Dictionary): continue
 
-		var c_mat = PhysicsMaterial.new()
-		c_mat.friction = 0.6
-		c_mat.rough = true
-		c_mat.bounce = 0.0
-		cb.physics_material_override = c_mat
+		var category = str(item.get("category", ""))
+		# Do not physically simulate intrinsic parts
+		if category == "intrinsic": continue
 
-		var col = CollisionShape2D.new()
-		var r = RectangleShape2D.new()
-		r.size = Vector2(25, 25)
-		col.shape = r
-		cb.add_child(col)
+		# Figure out what this item is
+		var is_water = item.has("water") and item.get("water") != null
+		var is_food = item.has("food") and item.get("food") != null
+		var is_fuel = (item.has("fuel") and item.get("fuel") != null) or (item.has("Fuel") and item.get("Fuel") != null)
+		var is_part = item.has("parts") and item.get("parts") != null
 
-		var vis = ColorRect.new()
-		vis.size = Vector2(25, 25)
-		vis.position = Vector2(-12.5, -12.5)
-		vis.color = Color(randf(), randf(), randf(), 1.0)
-		cb.add_child(vis)
+		# Determine color
+		var box_color: Color
+		if is_water: box_color = Color.BLUE
+		elif is_food: box_color = Color.GREEN
+		elif is_fuel: box_color = Color.ORANGE
+		elif is_part: box_color = Color.LIGHT_GRAY
+		else:
+			# Hash name for consistent random color
+			var item_name = str(item.get("name", item.get("base_name", "Cargo")))
+			var hash_val = item_name.hash()
+			box_color = Color(
+				fmod(abs(hash_val) / 255.0, 1.0),
+				fmod(abs(hash_val) / 65025.0, 1.0),
+				fmod(abs(hash_val) / 16581375.0, 1.0),
+				1.0
+			)
 
-		cb.collision_layer = _body_layer_bit
-		cb.collision_mask = 1 | _body_layer_bit # Ground + OWN Chassis/Cargo only
+		var qty = int(item.get("quantity", 1))
+		var unit_weight = float(item.get("unit_weight", 10.0))
+		var unit_volume = float(item.get("unit_volume", 1.0))
 
-		cargo_container.add_child(cb)
-		_cargo_bodies.append(cb)
+		# If quantity is massive, we combine them so physics engine doesn't die.
+		var simulated_blocks = min(qty, max_physics_blocks_per_type)
+		var aggregation_factor = max(1, qty / float(max_physics_blocks_per_type))
+
+		for i in range(simulated_blocks):
+			var is_last_block = (i == simulated_blocks - 1)
+			var current_block_qty = aggregation_factor
+			if is_last_block:
+				# Add whatever remainder is left to the last block
+				current_block_qty += qty % max_physics_blocks_per_type
+
+			var block_weight = unit_weight * current_block_qty * cargo_weight_scalar
+			var block_vol = unit_volume * current_block_qty * cargo_volume_scalar
+			# Use cube root (pow 1/3) for more realistic 3D->2D dimension mapping
+			# Using 1.0 as base scalar as volume units are large
+			var block_size = max(10.0, pow(block_vol, 1.0 / 3.0))
+
+			# Cap size so it doesn't get insanely huge and break the truck
+			block_size = min(block_size, bed_width * 0.8)
+
+			var cb = RigidBody2D.new()
+			cb.position = Vector2(drop_x, -100 - (i * 10))
+			cb.mass = max(1.0, block_weight)
+
+			var c_mat = PhysicsMaterial.new()
+			c_mat.friction = 0.6
+			c_mat.rough = true
+			c_mat.bounce = 0.0
+			cb.physics_material_override = c_mat
+
+			var col = CollisionShape2D.new()
+			var r = RectangleShape2D.new()
+			r.size = Vector2(block_size, block_size)
+			col.shape = r
+			cb.add_child(col)
+
+			var vis = ColorRect.new()
+			vis.size = Vector2(block_size, block_size)
+			vis.position = Vector2(-block_size / 2.0, -block_size / 2.0)
+			vis.color = box_color
+			cb.add_child(vis)
+
+			cb.collision_layer = _body_layer_bit
+			cb.collision_mask = 1 | _body_layer_bit # Ground + OWN Chassis/Cargo only
+
+			cargo_container.add_child(cb)
+			_cargo_bodies.append(cb)
+
+			drop_x += drop_step
+			if drop_x > w * 0.4:
+				drop_x = start_x
+
+func set_cargo_volume_scalar(val: float) -> void:
+	cargo_volume_scalar = val
+	# Re-spawn cargo to show visual change immediately
+	for c in _cargo_bodies:
+		if is_instance_valid(c):
+			c.queue_free()
+	_cargo_bodies.clear()
+	_spawn_cargo()
+
+func set_cargo_weight_scalar(val: float) -> void:
+	cargo_weight_scalar = val
+	# Update mass of existing bodies
+	for c in _cargo_bodies:
+		if is_instance_valid(c):
+			# This is a rough update as aggregation/original mass isn't stored per-body
+			# but it will reflect in future spawns or if we just re-spawn like volume
+			pass
+	# Re-spawn is safer for mass consistency too
+	for c in _cargo_bodies:
+		if is_instance_valid(c):
+			c.queue_free()
+	_cargo_bodies.clear()
+	_spawn_cargo()
 #endregion
 
 #region Main Application Loop
@@ -531,6 +698,7 @@ func _apply_drive_torque(torque: float, delta: float) -> void:
 
 				# Add visual slip
 				_wheel_angular_velocities[idx] += slip_force * delta * 0.1
+			else:
 				# Free spinning in air
 				_wheel_angular_velocities[idx] += force_per_wheel * delta * 0.5
 #endregion

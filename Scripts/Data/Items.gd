@@ -6,19 +6,19 @@ extends Resource
 class_name CargoItem
 
 # --- Core Common Properties ---
-var id: String = ""              # cargo_id or constructed synthetic id
-var name: String = ""            # display-friendly name
-var quantity: int = 0             # total quantity (>=1)
-var unit_weight: float = 0.0      # weight per unit
-var unit_volume: float = 0.0      # volume per unit
-var total_weight: float = 0.0     # cached total (quantity * unit_weight)
-var total_volume: float = 0.0     # cached total (quantity * unit_volume)
-var category: String = "other"    # coarse bucket: part / mission / resource / vehicle / other
-var base_desc: String = ""        # base description if present
-var quality: float = -1.0         # -1 when not applicable
-var condition: float = -1.0       # -1 when not applicable
-var tags: Array[String] = []      # category/type/subtype tags
-var raw: Dictionary = {}          # original raw dictionary (for legacy fallback / migration)
+var id: String = "" # cargo_id or constructed synthetic id
+var name: String = "" # display-friendly name
+var quantity: int = 0 # total quantity (>=1)
+var unit_weight: float = 0.0 # weight per unit
+var unit_volume: float = 0.0 # volume per unit
+var total_weight: float = 0.0 # cached total (quantity * unit_weight)
+var total_volume: float = 0.0 # cached total (quantity * unit_volume)
+var category: String = "other" # coarse bucket: part / mission / resource / vehicle / other
+var base_desc: String = "" # base description if present
+var quality: float = -1.0 # -1 when not applicable
+var condition: float = -1.0 # -1 when not applicable
+var tags: Array[String] = [] # category/type/subtype tags
+var raw: Dictionary = {} # original raw dictionary (for legacy fallback / migration)
 
 # --- Construction / Parsing Helpers ---
 static func _to_float(v) -> float:
@@ -118,7 +118,7 @@ class PartItem:
 	extends CargoItem
 	var slot: String = ""
 	var modifiers: Dictionary = {} # additive / capacity stats
-	var stats: Dictionary = {}      # optional nested stats dictionary
+	var stats: Dictionary = {} # optional nested stats dictionary
 	var modifiers_summary: String = "" # precomputed concise summary
 
 	static func _looks_like_part_dict(d: Dictionary) -> bool:
@@ -155,8 +155,8 @@ class PartItem:
 
 	static func _from_part_dict(d: Dictionary) -> PartItem:
 		var p := PartItem.new()
-		var base := CargoItem._parse_base(d)
-		for f in ["id","name","quantity","unit_weight","unit_volume","total_weight","total_volume","base_desc","quality","condition","tags"]:
+		var base := _parse_base(d)
+		for f in ["id", "name", "quantity", "unit_weight", "unit_volume", "total_weight", "total_volume", "base_desc", "quality", "condition", "tags"]:
 			p.set(f, base.get(f))
 		p.raw = base.raw
 		p.category = "part"
@@ -168,9 +168,9 @@ class PartItem:
 				var nested_slot = str(first_p.get("slot"))
 				if not nested_slot.is_empty():
 					p.slot = nested_slot
-		var mod_keys = ["top_speed_add","efficiency_add","offroad_capability_add","cargo_capacity_add","weight_capacity_add","fuel_capacity","kwh_capacity"]
+		var mod_keys = ["top_speed_add", "efficiency_add", "offroad_capability_add", "cargo_capacity_add", "weight_capacity_add", "fuel_capacity", "kwh_capacity"]
 		for mk in mod_keys:
-			if d.has(mk): p.modifiers[mk] = CargoItem._to_float(d.get(mk))
+			if d.has(mk): p.modifiers[mk] = _to_float(d.get(mk))
 		if d.has("modifiers") and d.get("modifiers") is Dictionary:
 			for k in d.get("modifiers").keys():
 				p.modifiers[k] = d.get("modifiers")[k]
@@ -182,11 +182,11 @@ class PartItem:
 	func get_modifier_summary() -> String:
 		var bits: Array[String] = []
 		var compact_labels := {
-			"top_speed_add":"Spd","efficiency_add":"Eff","offroad_capability_add":"Off","cargo_capacity_add":"Cargo","weight_capacity_add":"Weight","fuel_capacity":"FuelCap","kwh_capacity":"kWh"
+			"top_speed_add": "Spd", "efficiency_add": "Eff", "offroad_capability_add": "Off", "cargo_capacity_add": "Cargo", "weight_capacity_add": "Weight", "fuel_capacity": "FuelCap", "kwh_capacity": "kWh"
 		}
 		for k in compact_labels.keys():
-			if modifiers.has(k) and CargoItem._to_float(modifiers[k]) > 0.0:
-				var v = CargoItem._to_float(modifiers[k])
+			if modifiers.has(k) and _to_float(modifiers[k]) > 0.0:
+				var v = _to_float(modifiers[k])
 				bits.append(compact_labels[k] + " " + ("%.0f" % v))
 		return "(" + ", ".join(bits) + ")" if not bits.is_empty() else ""
 
@@ -221,20 +221,20 @@ class MissionItem:
 
 	static func _from_mission_dict(d: Dictionary) -> MissionItem:
 		var m := MissionItem.new()
-		var base := CargoItem._parse_base(d)
-		for f in ["id","name","quantity","unit_weight","unit_volume","total_weight","total_volume","base_desc","quality","condition","tags"]:
+		var base := _parse_base(d)
+		for f in ["id", "name", "quantity", "unit_weight", "unit_volume", "total_weight", "total_volume", "base_desc", "quality", "condition", "tags"]:
 			m.set(f, base.get(f))
 		m.raw = base.raw
 		m.category = "mission"
-		m.mission_id = str(d.get("mission_id",""))
-		m.mission_vendor_id = str(d.get("mission_vendor_id",""))
+		m.mission_id = str(d.get("mission_id", ""))
+		m.mission_vendor_id = str(d.get("mission_vendor_id", ""))
 		m.mission_type = str(d.get("mission_type", d.get("type", "")))
 		return m
 
 # ================= ResourceItem =================
 class ResourceItem:
 	extends CargoItem
-	var resource_type: String = ""  # fuel / water / food / generic
+	var resource_type: String = "" # fuel / water / food / generic
 	var unit_price: float = 0.0
 
 	static func _looks_like_resource_dict(d: Dictionary) -> bool:
@@ -249,20 +249,20 @@ class ResourceItem:
 
 	static func _from_resource_dict(d: Dictionary) -> ResourceItem:
 		var r := ResourceItem.new()
-		var base := CargoItem._parse_base(d)
-		for f in ["id","name","quantity","unit_weight","unit_volume","total_weight","total_volume","base_desc","quality","condition","tags"]:
+		var base := _parse_base(d)
+		for f in ["id", "name", "quantity", "unit_weight", "unit_volume", "total_weight", "total_volume", "base_desc", "quality", "condition", "tags"]:
 			r.set(f, base.get(f))
 		r.raw = base.raw
 		r.category = "resource"
-		for t in ["resource_type","fuel","water","food"]:
+		for t in ["resource_type", "fuel", "water", "food"]:
 			if d.has(t):
-				r.resource_type = (t if t in ["fuel","water","food"] else str(d.get(t)))
+				r.resource_type = (t if t in ["fuel", "water", "food"] else str(d.get(t)))
 				break
 		if r.resource_type == "":
 			r.resource_type = "generic"
-		for pk in ["unit_price","price","resource_unit_value","container_unit_price","buy_price","sell_price"]:
+		for pk in ["unit_price", "price", "resource_unit_value", "container_unit_price", "buy_price", "sell_price"]:
 			if d.has(pk):
-				var v = CargoItem._to_float(d.get(pk))
+				var v = _to_float(d.get(pk))
 				if v > 0.0: r.unit_price = v; break
 		return r
 
@@ -297,17 +297,17 @@ class VehicleItem:
 
 	static func _from_vehicle_dict(d: Dictionary) -> VehicleItem:
 		var v := VehicleItem.new()
-		var base := CargoItem._parse_base(d)
-		for f in ["id","name","quantity","unit_weight","unit_volume","total_weight","total_volume","base_desc","quality","condition","tags"]:
+		var base := _parse_base(d)
+		for f in ["id", "name", "quantity", "unit_weight", "unit_volume", "total_weight", "total_volume", "base_desc", "quality", "condition", "tags"]:
 			v.set(f, base.get(f))
 		v.raw = base.raw
 		v.category = "vehicle"
 		v.vehicle_id = str(d.get("vehicle_id", d.get("id", "")))
-		v.top_speed = CargoItem._to_float(d.get("top_speed", d.get("top_speed_add", 0)))
-		v.efficiency = CargoItem._to_float(d.get("efficiency", d.get("efficiency_add", 0)))
-		v.offroad_capability = CargoItem._to_float(d.get("offroad_capability", d.get("offroad_capability_add", 0)))
-		v.cargo_capacity = CargoItem._to_float(d.get("cargo_capacity", d.get("cargo_capacity_add", 0)))
-		v.weight_capacity = CargoItem._to_float(d.get("weight_capacity", d.get("weight_capacity_add", 0)))
+		v.top_speed = _to_float(d.get("top_speed", d.get("top_speed_add", 0)))
+		v.efficiency = _to_float(d.get("efficiency", d.get("efficiency_add", 0)))
+		v.offroad_capability = _to_float(d.get("offroad_capability", d.get("offroad_capability_add", 0)))
+		v.cargo_capacity = _to_float(d.get("cargo_capacity", d.get("cargo_capacity_add", 0)))
+		v.weight_capacity = _to_float(d.get("weight_capacity", d.get("weight_capacity_add", 0)))
 		return v
 
 # --- Convenience utilities ---
