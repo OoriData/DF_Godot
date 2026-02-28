@@ -329,6 +329,12 @@ func _ready():
 			content_style.corner_radius_top_left = 4
 			content_style.corner_radius_bottom_right = 4
 			content_panel.add_theme_stylebox_override("panel", content_style)
+		
+		# Enforce vertical-only scrolling
+		var vendor_content_scroll = vendor_preview_panel.get_node_or_null("VendorPreviewVBox/VendorContentPanel/VendorContentScroll")
+		if is_instance_valid(vendor_content_scroll) and vendor_content_scroll is ScrollContainer:
+			vendor_content_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+			vendor_content_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
 	
 	# Style the new journey progress bar
 	if is_instance_valid(journey_progress_bar):
@@ -965,15 +971,43 @@ func _render_vendor_preview_display() -> void:
 				name_qty = name_qty.substr(0, sep_idx)
 			# No quantity display: use item name only
 			var item_name = name_qty
-			# GDScript does not have C-style ternary; use if/else
+			# Use RichTextLabel for multi-colored text
+			var rtl := RichTextLabel.new()
+			rtl.name = "ButtonRTL"
+			rtl.bbcode_enabled = true
+			rtl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			rtl.scroll_active = false
+			rtl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+			rtl.fit_content = true # Allow label to size itself to text for perfect centering
+			
+			var cargo_color := Color.WHITE.to_html(false)
+			var dest_color := COLOR_YELLOW.to_html(false) # Yellow to indicate destination
+			
 			var dest_line := ""
 			if dest_text != "":
-				dest_line = "\n→ " + dest_text
-			button.text = "%s%s" % [item_name, dest_line]
+				dest_line = "\n[color=#%s]→ %s[/color]" % [dest_color, dest_text]
+			
+			rtl.text = "[center][color=#%s]%s[/color]%s[/center]" % [cargo_color, item_name, dest_line]
+			button.text = "" # Clear default button text
+			
+			# Use CenterContainer for robust geometric centering that ignores animating parent widths
+			var center_container := CenterContainer.new()
+			center_container.name = "ButtonCenter"
+			center_container.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			center_container.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+			button.add_child(center_container)
+			
+			center_container.add_child(rtl)
+			
+			# Set a stable, fixed width to prevent any horizontal re-wrapping or snapping
+			rtl.custom_minimum_size.x = 200
+			rtl.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+			rtl.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+
 			button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-			# NOTE: Button text is clipped by default; allow enough height for the optional 2nd line.
-			button.custom_minimum_size.y = 54 if dest_text != "" else 36
-			button.clip_text = false if dest_text != "" else true
+			# Increase height to 96px for "airy" spacing and 3rd line headroom
+			button.custom_minimum_size.y = 96 if dest_text != "" else 45
+			button.clip_text = true
 			# Attach a deep-link intent so clicks can navigate to the right destination.
 			var nav_intent: Dictionary = {}
 			match _current_vendor_tab:
@@ -995,7 +1029,7 @@ func _render_vendor_preview_display() -> void:
 			_style_vendor_item_button(button, _current_vendor_tab)
 			vendor_item_grid.add_child(button)
 	
-	# Ensure font sizes are applied to newly created buttons
+	# Ensure font sizes are applied immediately
 	_update_font_sizes()
 
 
@@ -2166,12 +2200,37 @@ func _update_font_sizes() -> void:
 	if is_instance_valid(preview_title_label):
 		preview_title_label.add_theme_font_size_override("font_size", new_font_size + 2)
 
-	# Scale fonts for dynamically created vendor item buttons
+	# Update font sizes for dynamically created vendor item buttons and their RichTextLabels
 	if is_instance_valid(vendor_item_grid):
 		for child in vendor_item_grid.get_children():
 			if child is Button:
 				# Increase font for mission/parts item buttons to improve readability
 				child.add_theme_font_size_override("font_size", new_font_size + 2)
+				# Look for RTL inside VBoxContainer if present
+				var rtl = child.find_child("ButtonRTL", true, false)
+				# Synchronize RTL width with the container for correct wrapping
+				var parent_container = rtl.get_parent()
+				if is_instance_valid(parent_container) and parent_container.size.x > 50:
+					rtl.custom_minimum_size.x = parent_container.size.x
+				
+				# Restore larger normal font size based on complexity
+				var cargo_only: bool = not rtl.text.contains("\n")
+				var raw_len: int = rtl.text.replace("[center]", "").replace("[/center]", "").length()
+				
+				var effective_font_size = new_font_size + 2 # Default basis
+				
+				if cargo_only:
+					effective_font_size = new_font_size + 4 # Max size for simple items
+				elif raw_len > 45:
+					effective_font_size = max(MIN_FONT_SIZE, effective_font_size - 4)
+				elif raw_len > 34:
+					effective_font_size = max(MIN_FONT_SIZE, effective_font_size - 2)
+				# Note: 2-line labels under 30 chars stay at +2 size
+					
+				rtl.add_theme_font_size_override("normal_font_size", effective_font_size)
+				rtl.add_theme_font_size_override("bold_font_size", effective_font_size)
+				rtl.add_theme_font_size_override("italics_font_size", effective_font_size)
+				# Height is now handled automatically by fit_content + VBoxContainer centering
 				
 	for label_node in labels_to_scale:
 		if is_instance_valid(label_node):
@@ -2261,14 +2320,13 @@ func _initialize_tab_button_styles(button: Button) -> void:
 	button.add_theme_color_override("font_disabled_color", COLOR_TAB_DISABLED_FONT)
 	button.add_theme_stylebox_override("normal", style_normal)
 	button.add_theme_stylebox_override("hover", style_hover)
-	button.add_theme_stylebox_override("pressed", style_pressed)
 	button.add_theme_stylebox_override("disabled", style_disabled)
 
 func _style_vendor_item_button(button: Button, tab_type: VendorTab) -> void:
 	var font_color: Color
 	match tab_type:
 		VendorTab.CONVOY_MISSIONS, VendorTab.SETTLEMENT_MISSIONS:
-			font_color = COLOR_MISSION_TEXT
+			font_color = Color.WHITE
 		VendorTab.COMPATIBLE_PARTS:
 			font_color = COLOR_PART_TEXT
 		_:
@@ -2277,22 +2335,22 @@ func _style_vendor_item_button(button: Button, tab_type: VendorTab) -> void:
 	var style_normal := StyleBoxFlat.new()
 	style_normal.bg_color = COLOR_ITEM_BUTTON_BG
 	style_normal.border_width_top = 1
-	style_normal.border_width_bottom = 1
+	style_normal.border_width_bottom = 2 # Subtle 3D shadow effect
 	style_normal.border_width_left = 1
 	style_normal.border_width_right = 1
-	style_normal.border_color = COLOR_ITEM_BUTTON_BG.darkened(0.4)
+	style_normal.border_color = COLOR_ITEM_BUTTON_BG.darkened(0.3)
 	style_normal.corner_radius_top_left = 4
 	style_normal.corner_radius_top_right = 4
 	style_normal.corner_radius_bottom_left = 4
 	style_normal.corner_radius_bottom_right = 4
 
 	var style_hover := style_normal.duplicate() as StyleBoxFlat
-	style_hover.bg_color = COLOR_ITEM_BUTTON_BG.lightened(0.2)
-	style_hover.border_color = style_hover.bg_color.darkened(0.4)
+	style_hover.bg_color = COLOR_ITEM_BUTTON_BG.lightened(0.15)
+	style_hover.border_color = style_hover.bg_color.darkened(0.3)
 
 	var style_pressed := style_normal.duplicate() as StyleBoxFlat
 	style_pressed.bg_color = COLOR_ITEM_BUTTON_BG.darkened(0.2)
-	style_pressed.content_margin_top = 2 # Add a little press-down effect
+	style_pressed.content_margin_top = 3 # Press-down effect
 
 	button.add_theme_color_override("font_color", font_color)
 	button.add_theme_color_override("font_hover_color", font_color.lightened(0.1))
