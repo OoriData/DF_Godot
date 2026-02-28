@@ -1,5 +1,6 @@
 extends Control
 
+#region Constants & Variables
 @onready var vehicles_node: Node2D = $SubViewportContainer/SubViewport/World/Vehicles
 @onready var camera: Camera2D = $SubViewportContainer/SubViewport/World/Camera2D
 @onready var parallax_bg: ParallaxBackground = $SubViewportContainer/SubViewport/World/ParallaxBackground
@@ -26,7 +27,9 @@ var travel_direction: float = 1.0
 var convoy_center_x: float = 0.0
 var convoy_base_speed: float = 500.0
 var _stored_difficulty: float = 1.0
+#endregion
 
+#region Initialization
 func _ready() -> void:
 	is_moving = false
 	if procedural_terrain:
@@ -38,7 +41,9 @@ func _ready() -> void:
 	if diff_slider: diff_slider.value_changed.connect(set_terrain_difficulty)
 
 	_add_physics_sliders()
+#endregion
 
+#region Debug UI & Controls
 func _add_physics_sliders() -> void:
 	# Find the VBoxContainer and add more controls dynamically
 	var vbox = find_child("VBoxContainer", true)
@@ -102,7 +107,9 @@ func _update_movement_state_internal() -> void:
 	for v in vehicle_nodes:
 		if v.has_method("set_moving"):
 			v.set_moving(is_moving)
+#endregion
 
+#region Main Processing Loop
 func _physics_process(delta: float) -> void:
 	if vehicle_nodes.is_empty(): return
 
@@ -186,7 +193,9 @@ func _check_stuck_status(delta: float) -> void:
 			any_stuck = true
 
 	is_stuck = any_stuck
+#endregion
 
+#region Global Setters & Debug Telemetry
 func _update_debug_ui_telemetry() -> void:
 	if vehicle_nodes.is_empty(): return
 	var lead = vehicle_nodes[0]
@@ -236,8 +245,9 @@ func set_terrain_difficulty(dif: float) -> void:
 		procedural_terrain.set_difficulty((dif - 1.0) / 8.0)
 	if diff_label:
 		diff_label.text = "[center]Terrain Difficulty: " + str(int(dif)) + "[/center]"
+#endregion
 
-
+#region Convoy Management
 func initialize_with_convoy(convoy_data: Dictionary) -> void:
 	current_convoy_data = convoy_data.duplicate(true)
 	reset_convoy()
@@ -313,3 +323,4 @@ func _build_convoy() -> void:
 
 	if camera:
 		camera.position.x = convoy_center_x
+#endregion

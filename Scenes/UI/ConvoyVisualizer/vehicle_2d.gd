@@ -1,5 +1,6 @@
 extends Node2D
 
+#region Node References & Variables
 @onready var chassis = $Chassis
 @onready var sprite = %VehicleSprite
 @onready var error_rect = %ErrorRect
@@ -37,7 +38,9 @@ var _wheel_radius: float = 10.0
 var _wheel_angular_velocities: Array[float] = []
 
 var _body_layer_bit: int = 0
+#endregion
 
+#region Initialization
 func setup(vehicle_color: String, vehicle_shape: String, vehicle_weight_class: float, driven: Array = [], cargo: Array = [], direction: float = 1.0, layer_idx: int = 0) -> void:
 	_color = vehicle_color
 	_shape = vehicle_shape # Keep case for mapping check
@@ -56,7 +59,9 @@ func setup(vehicle_color: String, vehicle_shape: String, vehicle_weight_class: f
 
 	_apply_visuals()
 	_build_physics()
+#endregion
 
+#region Visual Setup
 func _parse_color(color_str: String) -> Color:
 	var s = color_str.strip_edges()
 	if s.is_empty():
@@ -135,7 +140,9 @@ func _apply_visuals() -> void:
 		error_rect.size = Vector2(target_size, target_size)
 		error_rect.position = Vector2(-target_size / 2.0, -target_size)
 		error_rect.color = Color(1, 0, 1, 1)
+#endregion
 
+#region Physics Setup
 func _build_physics() -> void:
 	var tex_w = sprite.texture.get_width() if sprite.texture else NORMALIZED_WIDTH
 	var tex_h = sprite.texture.get_height() if sprite.texture else NORMALIZED_WIDTH * 0.5
@@ -325,13 +332,14 @@ func _spawn_cargo() -> void:
 
 		cargo_container.add_child(cb)
 		_cargo_bodies.append(cb)
+#endregion
 
-		# Explicitly exempt cargo from hitting wheels (Fail-safe for layer isolation)
-		# No longer necessary as wheels are purely visual under the RayCast model
+#region Main Application Loop
 func set_moving(state: bool) -> void:
 	_is_moving = state
+#endregion
 
-# --- Tuning Parameters ---
+#region Tuning Parameters
 var stiffness: float = 100.0
 var damping: float = 50.0
 var propulsion_torque: float = 16000.0
@@ -341,8 +349,9 @@ var cruise_speed: float = 500.0
 # Station-keeping Gains
 var p_gain: float = 0.5
 var brake_gain: float = 0.5
+#endregion
 
-# --- Diagnostics ---
+#region Diagnostics & Telemetry
 var telemetry: Dictionary = {
 	"mode": "IDLE",
 	"throttle": 0.0,
@@ -351,7 +360,9 @@ var telemetry: Dictionary = {
 	"torque": 0.0,
 	"valid_wheels": 0
 }
+#endregion
 
+#region Physics Simulation
 func _physics_process(delta: float) -> void:
 	if not is_instance_valid(chassis): return
 
@@ -520,6 +531,7 @@ func _apply_drive_torque(torque: float, delta: float) -> void:
 
 				# Add visual slip
 				_wheel_angular_velocities[idx] += slip_force * delta * 0.1
-			else:
 				# Free spinning in air
 				_wheel_angular_velocities[idx] += force_per_wheel * delta * 0.5
+#endregion
+#endregion
