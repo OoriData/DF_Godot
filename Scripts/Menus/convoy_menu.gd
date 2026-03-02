@@ -1029,8 +1029,8 @@ func _render_vendor_preview_display() -> void:
 			_style_vendor_item_button(button, _current_vendor_tab)
 			vendor_item_grid.add_child(button)
 	
-	# Ensure font sizes are applied immediately
-	_update_font_sizes()
+	# Ensure font sizes are applied immediately (deferred to stable layout)
+	call_deferred("_update_font_sizes")
 
 
 func _get_current_settlement_dict() -> Dictionary:
@@ -2169,15 +2169,20 @@ func _set_progressbar_style(progressbar_node: ProgressBar, current_value: float,
 	progressbar_node.add_theme_constant_override("outline_size", 2)
 
 func _update_font_sizes() -> void:
+	if not is_instance_valid(self):
+		return
 	if REFERENCE_MENU_HEIGHT <= 0:
 		printerr("ConvoyMenu: REFERENCE_MENU_HEIGHT is not positive. Cannot scale fonts.")
 		return
 
 	var current_menu_height: float = self.size.y
-	if current_menu_height <= 0: # Menu might not have a size yet if called too early
+	if current_menu_height <= 200: # Menu might not have a size yet or is minimized/animating
 		return
 
 	var scale_factor: float = current_menu_height / REFERENCE_MENU_HEIGHT
+	
+	if _debug_convoy_menu:
+		print("[ConvoyMenu][Debug] Scaling fonts. Height=", current_menu_height, " Factor=", scale_factor)
 
 	var new_font_size: int = clamp(int(BASE_FONT_SIZE * scale_factor), MIN_FONT_SIZE, MAX_FONT_SIZE)
 	var new_title_font_size: int = clamp(int(BASE_TITLE_FONT_SIZE * scale_factor), MIN_FONT_SIZE, MAX_TITLE_FONT_SIZE)
@@ -2210,8 +2215,13 @@ func _update_font_sizes() -> void:
 				var rtl = child.find_child("ButtonRTL", true, false)
 				# Synchronize RTL width with the container for correct wrapping
 				var parent_container = rtl.get_parent()
-				if is_instance_valid(parent_container) and parent_container.size.x > 50:
-					rtl.custom_minimum_size.x = parent_container.size.x
+				if is_instance_valid(parent_container):
+					var target_width = parent_container.size.x
+					# Fallback: if container has no width yet, use a sensible default or the button width
+					if target_width <= 50:
+						target_width = child.size.x
+					if target_width > 50:
+						rtl.custom_minimum_size.x = target_width
 				
 				# Restore larger normal font size based on complexity
 				var cargo_only: bool = not rtl.text.contains("\n")
