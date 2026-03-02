@@ -107,10 +107,9 @@ static func rebuild_info_sections(item_info_rich_text: RichTextLabel, item_data_
 		fb_sb.corner_radius_all = 8
 		fb_sb.content_margin_all = 20
 		fb_panel.add_theme_stylebox_override("panel", fb_sb)
-		fb_panel.size_flags_vertical = Control.SIZE_EXPAND_FILL
+		fb_panel.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
 		
 		var fb_vb: VBoxContainer = VBoxContainer.new()
-		fb_vb.alignment = BoxContainer.ALIGNMENT_CENTER
 		fb_panel.add_child(fb_vb)
 		
 		var fb_hdr: Label = Label.new()
@@ -334,16 +333,22 @@ static func rebuild_info_sections(item_info_rich_text: RichTextLabel, item_data_
 			container.add_child(_make_panel("Per Unit", rows_unit))
 
 	var rows_total: Array = []
-	if not is_vehicle and not is_part:
+	if not is_vehicle:
 		var total_quantity = 0
 		if selected_item and (selected_item is Dictionary):
 			total_quantity = (selected_item as Dictionary).get("total_quantity", 0)
 			
-		var q_val = int(panel.get("quantity_spinbox").value) if is_instance_valid(panel) and panel.get("quantity_spinbox") != null else 1
-		var price_pres = VendorTradeVM.build_price_presenter(item_data_source, str(current_mode), q_val, selected_item)
-		var total_price = price_pres.get("total_price", 0.0)
-		rows_total.append({"k": "Total Price", "v": NumberFormat.format_money(total_price)})
+		# Total Order panel shows the price/reward for the ENTIRE stack (total_quantity)
+		# rather than the transient quantity in the spinbox.
+		var q_val_for_total = int(total_quantity) if int(total_quantity) > 0 else 1
+		var price_pres = VendorTradeVM.build_price_presenter(item_data_source, str(current_mode), q_val_for_total, selected_item)
+		var full_stack_price = price_pres.get("total_price", 0.0)
+		rows_total.append({"k": "Total Price", "v": NumberFormat.format_money(full_stack_price)})
 		
+		var full_stack_reward = price_pres.get("total_delivery_reward", 0.0)
+		if full_stack_reward > 0.0:
+			rows_total.append({"k": "Total Reward", "v": NumberFormat.format_money(full_stack_reward)})
+
 		if int(total_quantity) > 0:
 			rows_total.append({"k": "Quantity", "v": NumberFormat.format_number(int(total_quantity))})
 		var total_weight = 0.0
