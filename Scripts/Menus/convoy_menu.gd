@@ -39,6 +39,13 @@ const COLOR_TAB_DISABLED_FONT: Color = Color("a0a0a0") # Lighter gray for disabl
 const COLOR_ITEM_BUTTON_BG: Color = Color("5a5a5a") # Dark-medium gray for item buttons
 const COLOR_JOURNEY_PROGRESS_FILL: Color = Color("29b6f6") # Material Light Blue 400
 
+# --- Vendor Item Button Layout ---
+const VENDOR_ITEM_BUTTON_MIN_WIDTH: float = 190.0
+const VENDOR_ITEM_BUTTON_HEIGHT: float = 72.0
+const VENDOR_ITEM_BUTTON_PADDING_X: float = 12.0
+const VENDOR_ITEM_BUTTON_TOP_PADDING: float = 6.0
+const VENDOR_ITEM_BUTTON_BOTTOM_CLEARANCE: float = 6.0
+
 # --- @onready vars for new labels ---
 # Paths updated to reflect the new TopBarHBox container in the scene.
 @onready var title_label: Label = $MainVBox/TopBarHBox/TitleLabel
@@ -222,6 +229,11 @@ func _ready():
 	# --- DIAGNOSTIC: Check if UI nodes are valid ---
 	if not is_instance_valid(title_label):
 		printerr("ConvoyMenu: CRITICAL - TitleLabel node not found. Check the path in the script.")
+
+	# --- Layout Tuning: GridContainer Separation ---
+	if is_instance_valid(vendor_item_grid):
+		vendor_item_grid.add_theme_constant_override("h_separation", 8)
+		vendor_item_grid.add_theme_constant_override("v_separation", 10)
 
 	
 	if has_node("MainVBox/ScrollContainer/ContentVBox/VendorPreviewPanel/VendorPreviewVBox"):
@@ -489,11 +501,11 @@ func _update_vendor_grid_columns() -> void:
 		var parent := vendor_item_grid.get_parent()
 		if is_instance_valid(parent):
 			grid_width = parent.size.x
-	# Target a comfortable card width ~220px with some gap
-	var target_card_px := 220.0
+	# Target a comfortable card width ~210px (optimized for density)
+	var target_card_px := 210.0
 	var min_cols := 2
-	var max_cols := 6
-	var cols := int(max(min_cols, min(max_cols, floor(grid_width / target_card_px))))
+	var max_cols := 6 # Allowed for more horizontal density
+	var cols := int(max(min_cols, min(max_cols, floor(grid_width / (target_card_px + 8))))) # Include separation in calculation
 	if cols <= 0:
 		cols = min_cols
 	vendor_item_grid.columns = cols
@@ -889,6 +901,105 @@ func _update_vendor_preview() -> void:
 	# Ensure grid is responsive after content updates
 	_update_vendor_grid_columns()
 
+
+func _build_vendor_preview_button(item_string: String) -> Button:
+	var button := Button.new()
+	# Support destination annotations in two formats:
+	# "name — to DEST" (em dash syntax) or "name -> DEST" (arrow syntax)
+	var name_qty := item_string
+	var lookup_key := item_string
+	var dest_text := ""
+	var sep_idx := name_qty.find(" — to ")
+	var sep_len := 6 # length of " — to "
+	if sep_idx == -1:
+		sep_idx = name_qty.find(" -> ")
+		sep_len = 4
+	if sep_idx != -1:
+		dest_text = name_qty.substr(sep_idx + sep_len)
+		name_qty = name_qty.substr(0, sep_idx)
+	# No quantity display: use item name only
+	var item_name := name_qty
+
+	# Constrain text within explicit padded bounds inside the button.
+	var text_bounds := MarginContainer.new()
+	text_bounds.name = "TextBounds"
+	text_bounds.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	text_bounds.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	text_bounds.add_theme_constant_override("margin_left", int(VENDOR_ITEM_BUTTON_PADDING_X))
+	text_bounds.add_theme_constant_override("margin_right", int(VENDOR_ITEM_BUTTON_PADDING_X))
+	text_bounds.add_theme_constant_override("margin_top", int(VENDOR_ITEM_BUTTON_TOP_PADDING))
+	text_bounds.add_theme_constant_override("margin_bottom", int(VENDOR_ITEM_BUTTON_BOTTOM_CLEARANCE))
+	button.add_child(text_bounds)
+
+	var vbox := VBoxContainer.new()
+	vbox.name = "ButtonVBox"
+	vbox.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	vbox.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	vbox.alignment = BoxContainer.ALIGNMENT_CENTER
+	vbox.add_theme_constant_override("separation", 2)
+	text_bounds.add_child(vbox)
+
+	var name_label := Label.new()
+	name_label.name = "NameLabel"
+	name_label.text = item_name
+	name_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	name_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	name_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	name_label.clip_text = true
+	name_label.add_theme_constant_override("outline_size", 2)
+	name_label.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.95))
+	name_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	name_label.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	vbox.add_child(name_label)
+
+	if dest_text != "":
+		var dest_label := Label.new()
+		dest_label.name = "DestLabel"
+		dest_label.text = "→ " + dest_text
+		dest_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		dest_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		dest_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+		dest_label.clip_text = true
+		dest_label.add_theme_constant_override("outline_size", 2)
+		dest_label.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.95))
+		dest_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		dest_label.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		dest_label.add_theme_color_override("font_color", COLOR_YELLOW)
+		vbox.add_child(dest_label)
+
+	# Set stable widths for truncation to work with lateral padding.
+	var default_text_width := VENDOR_ITEM_BUTTON_MIN_WIDTH - (VENDOR_ITEM_BUTTON_PADDING_X * 2.0)
+	name_label.custom_minimum_size.x = default_text_width
+	if vbox.get_child_count() > 1 and vbox.get_child(1) is Label:
+		(vbox.get_child(1) as Label).custom_minimum_size.x = default_text_width
+
+	button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	button.custom_minimum_size.x = VENDOR_ITEM_BUTTON_MIN_WIDTH
+	button.custom_minimum_size.y = VENDOR_ITEM_BUTTON_HEIGHT
+	button.clip_contents = true
+	button.clip_text = true
+
+	# Attach a deep-link intent so clicks can navigate to the right destination.
+	var nav_intent: Dictionary = {}
+	match _current_vendor_tab:
+		VendorTab.CONVOY_MISSIONS:
+			var cid := String(_active_mission_cargo_id_by_display.get(lookup_key, ""))
+			if cid == "":
+				cid = String(_active_mission_cargo_id_by_name.get(item_name, ""))
+			nav_intent = {"target": "cargo_inspect", "cargo_id": cid, "item_name": item_name}
+			if cid == "":
+				button.tooltip_text = "Open Cargo (no cargo_id available for deep-link)"
+		VendorTab.SETTLEMENT_MISSIONS:
+			nav_intent = _build_settlement_focus_intent(item_name, "missions")
+		VendorTab.COMPATIBLE_PARTS:
+			nav_intent = _build_settlement_focus_intent(item_name, "parts")
+			# If this looks like a slot summary (e.g., "Engine (2)") rather than a real item,
+			# keep navigation but expect focus to be best-effort.
+	button.set_meta("nav_intent", nav_intent)
+	button.pressed.connect(_on_vendor_preview_item_button_pressed.bind(button))
+	_style_vendor_item_button(button, _current_vendor_tab)
+	return button
+
 func _render_vendor_preview_display() -> void:
 	# Update button text with counts
 	if is_instance_valid(convoy_missions_tab_button):
@@ -955,78 +1066,7 @@ func _render_vendor_preview_display() -> void:
 		vendor_item_container.visible = true
 		vendor_no_items_label.visible = false
 		for item_string in content_list:
-			var button := Button.new()
-			# Support destination annotations in two formats:
-			# "name — to DEST" (em dash syntax) or "name -> DEST" (arrow syntax)
-			var name_qty := item_string
-			var lookup_key := item_string
-			var dest_text := ""
-			var sep_idx := name_qty.find(" — to ")
-			var sep_len := 6 # length of " — to "
-			if sep_idx == -1:
-				sep_idx = name_qty.find(" -> ")
-				sep_len = 4
-			if sep_idx != -1:
-				dest_text = name_qty.substr(sep_idx + sep_len)
-				name_qty = name_qty.substr(0, sep_idx)
-			# No quantity display: use item name only
-			var item_name = name_qty
-			# Use RichTextLabel for multi-colored text
-			var rtl := RichTextLabel.new()
-			rtl.name = "ButtonRTL"
-			rtl.bbcode_enabled = true
-			rtl.mouse_filter = Control.MOUSE_FILTER_IGNORE
-			rtl.scroll_active = false
-			rtl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-			rtl.fit_content = true # Allow label to size itself to text for perfect centering
-			
-			var cargo_color := Color.WHITE.to_html(false)
-			var dest_color := COLOR_YELLOW.to_html(false) # Yellow to indicate destination
-			
-			var dest_line := ""
-			if dest_text != "":
-				dest_line = "\n[color=#%s]→ %s[/color]" % [dest_color, dest_text]
-			
-			rtl.text = "[center][color=#%s]%s[/color]%s[/center]" % [cargo_color, item_name, dest_line]
-			button.text = "" # Clear default button text
-			
-			# Use CenterContainer for robust geometric centering that ignores animating parent widths
-			var center_container := CenterContainer.new()
-			center_container.name = "ButtonCenter"
-			center_container.mouse_filter = Control.MOUSE_FILTER_IGNORE
-			center_container.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-			button.add_child(center_container)
-			
-			center_container.add_child(rtl)
-			
-			# Set a stable, fixed width to prevent any horizontal re-wrapping or snapping
-			rtl.custom_minimum_size.x = 200
-			rtl.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-			rtl.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-
-			button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-			# Increase height to 96px for "airy" spacing and 3rd line headroom
-			button.custom_minimum_size.y = 96 if dest_text != "" else 45
-			button.clip_text = true
-			# Attach a deep-link intent so clicks can navigate to the right destination.
-			var nav_intent: Dictionary = {}
-			match _current_vendor_tab:
-				VendorTab.CONVOY_MISSIONS:
-					var cid := String(_active_mission_cargo_id_by_display.get(lookup_key, ""))
-					if cid == "":
-						cid = String(_active_mission_cargo_id_by_name.get(item_name, ""))
-					nav_intent = {"target": "cargo_inspect", "cargo_id": cid, "item_name": item_name}
-					if cid == "":
-						button.tooltip_text = "Open Cargo (no cargo_id available for deep-link)"
-				VendorTab.SETTLEMENT_MISSIONS:
-					nav_intent = _build_settlement_focus_intent(item_name, "missions")
-				VendorTab.COMPATIBLE_PARTS:
-					nav_intent = _build_settlement_focus_intent(item_name, "parts")
-					# If this looks like a slot summary (e.g., "Engine (2)") rather than a real item,
-					# keep navigation but expect focus to be best-effort.
-			button.set_meta("nav_intent", nav_intent)
-			button.pressed.connect(_on_vendor_preview_item_button_pressed.bind(button))
-			_style_vendor_item_button(button, _current_vendor_tab)
+			var button := _build_vendor_preview_button(item_string)
 			vendor_item_grid.add_child(button)
 	
 	# Ensure font sizes are applied immediately (deferred to stable layout)
@@ -2211,36 +2251,36 @@ func _update_font_sizes() -> void:
 			if child is Button:
 				# Increase font for mission/parts item buttons to improve readability
 				child.add_theme_font_size_override("font_size", new_font_size + 2)
-				# Look for RTL inside VBoxContainer if present
-				var rtl = child.find_child("ButtonRTL", true, false)
-				# Synchronize RTL width with the container for correct wrapping
-				var parent_container = rtl.get_parent()
-				if is_instance_valid(parent_container):
-					var target_width = parent_container.size.x
-					# Fallback: if container has no width yet, use a sensible default or the button width
-					if target_width <= 50:
-						target_width = child.size.x
-					if target_width > 50:
-						rtl.custom_minimum_size.x = target_width
+				# Update font sizes for NameLabel and DestLabel
+				var name_l := child.find_child("NameLabel", true, false) as Label
+				var dest_l := child.find_child("DestLabel", true, false) as Label
 				
-				# Restore larger normal font size based on complexity
-				var cargo_only: bool = not rtl.text.contains("\n")
-				var raw_len: int = rtl.text.replace("[center]", "").replace("[/center]", "").length()
+				var raw_len: int = name_l.text.length() if is_instance_valid(name_l) else 0
+				if is_instance_valid(dest_l):
+					raw_len = max(raw_len, dest_l.text.length() - 2)
 				
 				var effective_font_size = new_font_size + 2 # Default basis
-				
-				if cargo_only:
-					effective_font_size = new_font_size + 4 # Max size for simple items
-				elif raw_len > 45:
+				if raw_len > 40:
 					effective_font_size = max(MIN_FONT_SIZE, effective_font_size - 4)
-				elif raw_len > 34:
+				elif raw_len > 25:
 					effective_font_size = max(MIN_FONT_SIZE, effective_font_size - 2)
-				# Note: 2-line labels under 30 chars stay at +2 size
-					
-				rtl.add_theme_font_size_override("normal_font_size", effective_font_size)
-				rtl.add_theme_font_size_override("bold_font_size", effective_font_size)
-				rtl.add_theme_font_size_override("italics_font_size", effective_font_size)
-				# Height is now handled automatically by fit_content + VBoxContainer centering
+				elif raw_len < 12:
+					effective_font_size = new_font_size + 4
+
+				# Keep two centered lines visible inside fixed-height item cards.
+				var has_dest_line := is_instance_valid(dest_l)
+				var max_button_label_size := 19 if has_dest_line else 22
+				effective_font_size = clamp(effective_font_size + 1, MIN_FONT_SIZE, max_button_label_size)
+
+				var text_width: float = child.size.x - (VENDOR_ITEM_BUTTON_PADDING_X * 2.0) if child.size.x > 50 else (VENDOR_ITEM_BUTTON_MIN_WIDTH - (VENDOR_ITEM_BUTTON_PADDING_X * 2.0))
+				text_width = max(120.0, text_width)
+
+				if is_instance_valid(name_l):
+					name_l.add_theme_font_size_override("font_size", effective_font_size)
+					name_l.custom_minimum_size.x = text_width
+				if is_instance_valid(dest_l):
+					dest_l.add_theme_font_size_override("font_size", effective_font_size)
+					dest_l.custom_minimum_size.x = text_width
 				
 	for label_node in labels_to_scale:
 		if is_instance_valid(label_node):
@@ -2348,6 +2388,10 @@ func _style_vendor_item_button(button: Button, tab_type: VendorTab) -> void:
 	style_normal.border_width_bottom = 2 # Subtle 3D shadow effect
 	style_normal.border_width_left = 1
 	style_normal.border_width_right = 1
+	style_normal.content_margin_left = 0
+	style_normal.content_margin_right = 0
+	style_normal.content_margin_top = 0
+	style_normal.content_margin_bottom = 0
 	style_normal.border_color = COLOR_ITEM_BUTTON_BG.darkened(0.3)
 	style_normal.corner_radius_top_left = 4
 	style_normal.corner_radius_top_right = 4
@@ -2360,7 +2404,7 @@ func _style_vendor_item_button(button: Button, tab_type: VendorTab) -> void:
 
 	var style_pressed := style_normal.duplicate() as StyleBoxFlat
 	style_pressed.bg_color = COLOR_ITEM_BUTTON_BG.darkened(0.2)
-	style_pressed.content_margin_top = 3 # Press-down effect
+	style_pressed.content_margin_top = 1 # Subtle press-down effect
 
 	button.add_theme_color_override("font_color", font_color)
 	button.add_theme_color_override("font_hover_color", font_color.lightened(0.1))
