@@ -63,6 +63,8 @@ signal merge_preview_received(result: Dictionary)    # { ok, merge_token, summar
 signal merge_committed(result: Dictionary)           # { ok, user_id, error_code, message }
 signal discord_link_url_received(url: String, state: String)
 signal discord_account_linked(result: Dictionary)    # { ok, error_code, message, conflict }
+signal apple_link_url_received(url: String, state: String)
+signal apple_account_linked(result: Dictionary)      # { ok, error_code, message, conflict }
 
 # --- Bug Report Signals ---
 @warning_ignore("unused_signal")
@@ -133,6 +135,8 @@ var _auth_me_requested: bool = false
 var _user_data_requested_once: bool = false
 const SESSION_CFG_PATH: String = "user://session.cfg"
 var _login_in_progress: bool = false
+var _pending_auth_url_provider: String = "discord"
+var _current_auth_poll_provider: String = "discord"
 
 # Add after enum declaration
 var _current_request_start_time: float = 0.0
@@ -433,14 +437,50 @@ func logout() -> void:
 	_emit_hub_auth_state("logged_out")
 	emit_signal("logged_out")
 
-func get_auth_url(_provider: String = "") -> void:
+func _normalize_auth_provider(provider: String) -> String:
+	var p := provider.strip_edges().to_lower()
+	if p == "":
+		return "discord"
+	if p == "apple":
+		return "apple"
+	return "discord"
+
+func _auth_url_for_provider(base: String, provider: String) -> String:
+	var p := _normalize_auth_provider(provider)
+	match p:
+		"apple":
+			return "%s/auth/apple/url" % base
+		_:
+			return "%s/auth/discord/url" % base
+
+func _emit_provider_link_result(provider: String, payload: Dictionary) -> void:
+	var p := _normalize_auth_provider(provider)
+	match p:
+		"apple":
+			emit_signal("apple_account_linked", payload)
+		_:
+			emit_signal("discord_account_linked", payload)
+
+func _resolve_auth_status_provider(json_response: Dictionary) -> String:
+	var provider := _current_auth_poll_provider
+	if json_response.has("provider"):
+		provider = _normalize_auth_provider(str(json_response.get("provider", provider)))
+	var res_any: Variant = json_response.get("result", {})
+	if res_any is Dictionary:
+		var res := res_any as Dictionary
+		if res.has("provider"):
+			provider = _normalize_auth_provider(str(res.get("provider", provider)))
+	return provider
+
+func get_auth_url(provider: String = "") -> void:
 	# Abort map fetch if it's blocking
 	_abort_map_request_for_auth()
 	if _login_in_progress or _auth_poll.active:
 		print("[APICalls] Ignoring get_auth_url; login already in progress.")
 		return
-	_log_debug("[APICalls] get_auth_url(): queueing AUTH_URL request (provider=" + _provider + "). Current queue length before append=" + str(_request_queue.size()))
-	var url := "%s/auth/discord/url" % BASE_URL
+	_pending_auth_url_provider = _normalize_auth_provider(provider)
+	_log_debug("[APICalls] get_auth_url(): queueing AUTH_URL request (provider=" + _pending_auth_url_provider + "). Current queue length before append=" + str(_request_queue.size()))
+	var url := _auth_url_for_provider(BASE_URL, _pending_auth_url_provider)
 	var headers: PackedStringArray = ['accept: application/json']
 	var request_details: Dictionary = {
 		"url": url,
@@ -455,15 +495,16 @@ func get_auth_url(_provider: String = "") -> void:
 	call_deferred("_process_queue")
 	_create_queue_watchdog()
 
-func start_auth_poll(state: String, interval: float = 1.5, timeout_seconds: float = 120.0) -> void:
+func start_auth_poll(state: String, interval: float = 1.5, timeout_seconds: float = 120.0, provider: String = "") -> void:
 	_auth_poll.active = true
 	_auth_poll.state = state
 	_auth_poll.attempt = 0
 	_auth_poll.interval = interval
 	_auth_poll.max_attempts = int(ceil(timeout_seconds / max(0.2, interval)))
+	_current_auth_poll_provider = _normalize_auth_provider(provider if provider != "" else _pending_auth_url_provider)
 	_login_in_progress = true
 	emit_signal("auth_poll_started")
-	_log_info("[APICalls] Starting auth status poll for state=" + state)
+	_log_info("[APICalls] Starting auth status poll for state=" + state + " provider=" + _current_auth_poll_provider)
 	_emit_hub_auth_state("pending")
 	_enqueue_auth_status_request(state)
 
@@ -694,6 +735,39 @@ func get_discord_link_url() -> void:
 		printerr("[APICalls][get_discord_link_url] HTTP request failed err=%d" % err)
 		req.queue_free()
 		emit_signal("discord_link_url_received", "", "")
+
+## Requests an Apple link URL for the current user.
+## Emits apple_link_url_received(url, state).
+func get_apple_link_url() -> void:
+	var url := "%s/auth/apple/link/url" % BASE_URL
+	var headers: PackedStringArray = ['accept: application/json']
+	headers = _apply_auth_header(headers)
+	_log_info("[APICalls][get_apple_link_url] GET %s" % url)
+	var req := HTTPRequest.new()
+	req.name = "AppleLinkUrlRequest"
+	add_child(req)
+	req.request_completed.connect(_on_apple_link_url_completed.bind(req))
+	var err := req.request(url, headers, HTTPClient.METHOD_GET)
+	if err != OK:
+		printerr("[APICalls][get_apple_link_url] HTTP request failed err=%d" % err)
+		req.queue_free()
+		emit_signal("apple_link_url_received", "", "")
+
+func _on_apple_link_url_completed(result: int, response_code: int, _headers: PackedStringArray, body: PackedByteArray, requester: HTTPRequest) -> void:
+	if is_instance_valid(requester):
+		requester.queue_free()
+	var text := body.get_string_from_utf8()
+	var json := JSON.new()
+	var data: Variant = {}
+	if json.parse(text) == OK:
+		data = json.data
+	_log_info("[APICalls][get_apple_link_url] response code=%d" % response_code)
+	if response_code == 200:
+		var link_url := str(data.get("url", ""))
+		var state := str(data.get("state", ""))
+		emit_signal("apple_link_url_received", link_url, state)
+	else:
+		emit_signal("apple_link_url_received", "", "")
 
 func _on_discord_link_url_completed(result: int, response_code: int, _headers: PackedStringArray, body: PackedByteArray, requester: HTTPRequest) -> void:
 	if is_instance_valid(requester):
@@ -1825,7 +1899,7 @@ func _retry_auth_url_alternate_host():
 		if r.get('purpose', -1) == RequestPurpose.AUTH_URL:
 			_request_queue.remove_at(i)
 			break
-	var url := '%s/auth/discord/url' % alt_host
+	var url := _auth_url_for_provider(alt_host, _pending_auth_url_provider)
 	var headers: PackedStringArray = ['accept: application/json']
 	_request_queue.push_front({
 		'url': url,
@@ -2389,7 +2463,7 @@ func _on_request_completed(result: int, response_code: int, _headers: PackedStri
 			print("[APICalls] (_on_request_completed - AUTH_URL): Got auth URL: %s" % json_response.get("url", "<missing>"))
 			emit_signal('auth_url_received', json_response)
 			if json_response.has("state"):
-				start_auth_poll(str(json_response["state"]))
+				start_auth_poll(str(json_response["state"]), 1.5, 120.0, _pending_auth_url_provider)
 		_complete_current_request()
 		return
 
@@ -2433,6 +2507,7 @@ func _on_request_completed(result: int, response_code: int, _headers: PackedStri
 			emit_signal('fetch_error', 'Auth status parse error')
 		else:
 			var status: String = str(json_response.get('status', 'pending'))
+			var status_provider := _resolve_auth_status_provider(json_response)
 			print('[APICalls][AUTH_STATUS] attempt=%d/%d status=%s state=%s' % [_auth_poll.attempt, _auth_poll.max_attempts, status, _auth_poll.state])
 			emit_signal('auth_status_update', status)
 			# Normalize transport status values into canonical UI-facing auth states.
@@ -2459,7 +2534,7 @@ func _on_request_completed(result: int, response_code: int, _headers: PackedStri
 				var res_dict = json_response.get('result', {})
 				if res_dict.get('linked', false):
 					print('[APICalls][AUTH_STATUS] link complete received.')
-					emit_signal('discord_account_linked', {
+					_emit_provider_link_result(status_provider, {
 						'ok': true,
 						'error_code': 0,
 						'message': 'Link successful'
@@ -2490,7 +2565,7 @@ func _on_request_completed(result: int, response_code: int, _headers: PackedStri
 				emit_signal('fetch_error', 'Login cancelled.')
 				_emit_hub_auth_state('failed')
 				if _auth_poll.state != "":
-					emit_signal("discord_account_linked", {
+					_emit_provider_link_result(status_provider, {
 						"ok": false,
 						"error_code": 0,
 						"message": "Login cancelled."
@@ -2502,7 +2577,7 @@ func _on_request_completed(result: int, response_code: int, _headers: PackedStri
 				emit_signal('fetch_error', 'Access denied.')
 				_emit_hub_auth_state('failed')
 				if _auth_poll.state != "":
-					emit_signal("discord_account_linked", {
+					_emit_provider_link_result(status_provider, {
 						"ok": false,
 						"error_code": 403,
 						"message": "Access denied."
@@ -2525,7 +2600,7 @@ func _on_request_completed(result: int, response_code: int, _headers: PackedStri
 					if json_response.has("merge_token"):
 						conflict_data["merge_token"] = json_response.get("merge_token")
 					
-					emit_signal("discord_account_linked", {
+					_emit_provider_link_result(status_provider, {
 						"ok": false,
 						"error_code": 409,
 						"message": "Account already linked to another user.",
@@ -2540,7 +2615,7 @@ func _on_request_completed(result: int, response_code: int, _headers: PackedStri
 				
 				# Re-use discord_account_linked for link-specific errors if polling for link
 				if _auth_poll.state != "":
-					emit_signal("discord_account_linked", {
+					_emit_provider_link_result(status_provider, {
 						"ok": false,
 						"error_code": status_code if status_code != 0 else 0,
 						"message": err_msg

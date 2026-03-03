@@ -10,6 +10,8 @@ signal login_successful(user_id: String)
 @onready var background_overlay: ColorRect = $Background
 
 const DISCORD_BLURPLE := Color("5865F2")
+const APPLE_BLACK := Color("111111")
+const APPLE_HOVER := Color("1f1f1f")
 
 const _TERRAIN_INT_TO_NAME := {
 	0: "impassable",
@@ -52,6 +54,8 @@ var _bg_time: float = 0.0
 var _bg_has_real_map: bool = false
 
 var _steam_login_button: Button = null
+var _apple_login_button: Button = null
+var _active_oauth_provider_label: String = "Discord"
 
 func _ready() -> void:
 	print("[LoginScreen] _ready() called.")
@@ -66,6 +70,7 @@ func _ready() -> void:
 	_connect_hub_store_signals()
 	_connect_api_signals()
 	_style_discord_button()
+	_ensure_apple_login_button()
 	_ensure_coming_soon_section()
 	_try_use_real_map_background()
 	# Ensure overlay sits above the generated map background.
@@ -361,12 +366,24 @@ func _connect_api_signals() -> void:
 func _on_discord_login_pressed() -> void:
 	if _oauth_in_progress:
 		return
+	_active_oauth_provider_label = "Discord"
 	status_label.text = "Starting Discord auth..."
 	var api = _api()
 	if api == null:
 		status_label.text = "Auth system not ready."
 		return
-	api.get_auth_url()
+	api.get_auth_url("discord")
+
+func _on_apple_login_pressed() -> void:
+	if _oauth_in_progress:
+		return
+	_active_oauth_provider_label = "Apple"
+	status_label.text = "Starting Apple auth..."
+	var api = _api()
+	if api == null:
+		status_label.text = "Auth system not ready."
+		return
+	api.get_auth_url("apple")
 
 func _on_steam_login_pressed() -> void:
 	if _oauth_in_progress:
@@ -397,7 +414,7 @@ func _on_auth_url_received(data: Dictionary) -> void:
 		status_label.text = "Failed to get auth URL."
 		return
 	OS.shell_open(auth_url)
-	status_label.text = "Browser opened. Complete Discord sign-in..."
+	status_label.text = "Browser opened. Complete %s sign-in..." % _active_oauth_provider_label
 
 func _on_api_error(message: String) -> void:
 	var friendly := ErrorTranslator.translate(message)
@@ -459,6 +476,8 @@ func _set_oauth_active(active: bool) -> void:
 	_oauth_in_progress = active
 	if is_instance_valid(discord_button):
 		discord_button.disabled = active
+	if is_instance_valid(_apple_login_button):
+		_apple_login_button.disabled = active
 	if active and _spinner_timer == null:
 		_spinner_timer = Timer.new()
 		_spinner_timer.wait_time = 0.5
@@ -516,6 +535,64 @@ func _style_discord_button() -> void:
 	discord_button.custom_minimum_size = Vector2(340, 54)
 	discord_button.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 
+func _ensure_apple_login_button() -> void:
+	if not is_instance_valid(vbox_container):
+		return
+	if is_instance_valid(_apple_login_button):
+		return
+
+	var b := Button.new()
+	b.name = "AppleLoginButton"
+	b.text = "Continue with Apple"
+	b.custom_minimum_size = Vector2(340, 54)
+	b.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	b.add_theme_color_override("font_color", Color.WHITE)
+	b.add_theme_color_override("font_hover_color", Color.WHITE)
+	b.add_theme_color_override("font_pressed_color", Color.WHITE)
+	b.add_theme_color_override("font_disabled_color", Color(1, 1, 1, 0.6))
+
+	var normal := StyleBoxFlat.new()
+	normal.bg_color = APPLE_BLACK
+	normal.corner_radius_top_left = 10
+	normal.corner_radius_top_right = 10
+	normal.corner_radius_bottom_left = 10
+	normal.corner_radius_bottom_right = 10
+	normal.content_margin_left = 14
+	normal.content_margin_right = 14
+	normal.content_margin_top = 10
+	normal.content_margin_bottom = 10
+
+	var hover := normal.duplicate()
+	hover.bg_color = APPLE_HOVER
+
+	var pressed := normal.duplicate()
+	pressed.bg_color = Color("000000")
+
+	var disabled := normal.duplicate()
+	disabled.bg_color = Color("2a2a2a")
+
+	var focus := normal.duplicate()
+	focus.border_width_left = 2
+	focus.border_width_right = 2
+	focus.border_width_top = 2
+	focus.border_width_bottom = 2
+	focus.border_color = Color(1, 1, 1, 0.35)
+
+	b.add_theme_stylebox_override("normal", normal)
+	b.add_theme_stylebox_override("hover", hover)
+	b.add_theme_stylebox_override("pressed", pressed)
+	b.add_theme_stylebox_override("disabled", disabled)
+	b.add_theme_stylebox_override("focus", focus)
+	b.pressed.connect(_on_apple_login_pressed)
+
+	vbox_container.add_child(b)
+	if is_instance_valid(discord_button) and discord_button.get_parent() == vbox_container:
+		var idx := vbox_container.get_children().find(discord_button)
+		if idx != -1:
+			vbox_container.move_child(b, min(idx + 1, vbox_container.get_child_count() - 1))
+
+	_apple_login_button = b
+
 func _ensure_coming_soon_section() -> void:
 	if not is_instance_valid(vbox_container):
 		return
@@ -545,9 +622,10 @@ func _ensure_coming_soon_section() -> void:
 	vbox_container.add_child(section)
 
 
-	# Place the section just below the Discord button when possible.
-	if is_instance_valid(discord_button) and discord_button.get_parent() == vbox_container:
-		var idx := vbox_container.get_children().find(discord_button)
+	# Place the section just below the Apple button when present; otherwise below Discord.
+	var anchor_button: Button = _apple_login_button if is_instance_valid(_apple_login_button) else discord_button
+	if is_instance_valid(anchor_button) and anchor_button.get_parent() == vbox_container:
+		var idx := vbox_container.get_children().find(anchor_button)
 		if idx != -1:
 			vbox_container.move_child(section, min(idx + 1, vbox_container.get_child_count() - 1))
 

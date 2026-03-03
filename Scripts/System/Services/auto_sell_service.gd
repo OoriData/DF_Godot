@@ -121,7 +121,10 @@ func _compare_and_report() -> void:
 	if not sold_items.is_empty():
 		var total_credits = 0.0
 		for item in sold_items:
-			total_credits += float(item.get("delivery_reward", 0.0))
+			var reward = item.get("delivery_reward")
+			if reward != null:
+				total_credits += float(reward)
+			
 			# Resolve recipient name for each item
 			item["resolved_recipient"] = _resolve_recipient_name(item)
 		
@@ -333,6 +336,13 @@ func simulate_autosell() -> void:
 		fake_item3["dest_coord_y"] = 34
 		fake_item3["delivery_reward"] = 150.0
 		data.append(fake_item3)
+
+		# Case 4: Explicitly NULL delivery_reward (regression test for float() error)
+		var fake_item4 = data[0].duplicate(true)
+		fake_item4["part_uid"] = "DEBUG_NULL_REWARD_" + str(Time.get_ticks_msec() + 3)
+		fake_item4["name"] = "DEBUG: Null Reward Item"
+		fake_item4["delivery_reward"] = null
+		data.append(fake_item4)
 		
 		var write_file = FileAccess.open(SNAPSHOT_PATH, FileAccess.WRITE)
 		write_file.store_string(JSON.stringify(data))
