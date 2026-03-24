@@ -110,7 +110,7 @@ func _compare_and_report() -> void:
 	var last_cargo = json.get_data()
 	if not (last_cargo is Array):
 		return
-		
+
 	var current_convoys = _store.get_convoys()
 	var current_cargo = _get_flat_cargo_list(current_convoys)
 	

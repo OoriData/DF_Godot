@@ -585,6 +585,24 @@ func login_with_steam(steam_id: String, persona_name: String = "") -> void:
 	_request_queue.append(request_details)
 	_process_queue()
 
+func login_with_apple(identity_token: String) -> void:
+	var url := "%s/auth/apple/login" % BASE_URL
+	var headers: PackedStringArray = ['accept: application/json', 'content-type: application/json']
+	var body_dict: Dictionary = {"identity_token": identity_token}
+	var body := JSON.stringify(body_dict)
+	
+	_log_info("[APICalls] Initiating Apple login")
+	
+	var request_details: Dictionary = {
+		"url": url,
+		"headers": headers,
+		"purpose": RequestPurpose.AUTH_TOKEN,
+		"method": HTTPClient.METHOD_POST,
+		"body": body,
+	}
+	_request_queue.append(request_details)
+	_process_queue()
+
 
 # --- Steam account linking ---
 ## Links the current DF account to a Steam ID via POST /auth/steam/link.

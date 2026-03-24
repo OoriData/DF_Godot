@@ -379,11 +379,40 @@ func _on_apple_login_pressed() -> void:
 		return
 	_active_oauth_provider_label = "Apple"
 	status_label.text = "Starting Apple auth..."
+	_set_oauth_active(true)
 	var api = _api()
 	if api == null:
 		status_label.text = "Auth system not ready."
+		_set_oauth_active(false)
 		return
+
+	# Attempt to use native Plugin on macOS/iOS
+	if OS.get_name() in ["macOS", "iOS"]:
+		if Engine.has_singleton("SignInWithApple"):
+			var apple = Engine.get_singleton("SignInWithApple")
+			if not apple.is_connected("on_login_success", Callable(self, "_on_apple_native_login_success")):
+				apple.connect("on_login_success", Callable(self, "_on_apple_native_login_success"))
+				apple.connect("on_login_error", Callable(self, "_on_apple_native_login_error"))
+			apple.login()
+			return
+		elif Engine.has_singleton("AppleAuth"):
+			var apple = Engine.get_singleton("AppleAuth")
+			# Depending on the precise plugin API, adjust signals here later
+			apple.login()
+			return
+
+	# Fallback to Web OAuth flow
 	api.get_auth_url("apple")
+
+func _on_apple_native_login_success(identity_token: String, _auth_code: String = "") -> void:
+	var api = _api()
+	if api:
+		status_label.text = "Verifying Apple session..."
+		api.login_with_apple(identity_token)
+
+func _on_apple_native_login_error(error_msg: String) -> void:
+	status_label.text = "Apple sign-in failed: " + error_msg
+	_set_oauth_active(false)
 
 func _on_steam_login_pressed() -> void:
 	if _oauth_in_progress:
