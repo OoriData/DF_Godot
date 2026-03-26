@@ -40,13 +40,13 @@ ConvoySelectionService="*res://Scripts/System/Services/convoy_selection_service.
 MenuManager="*res://Scripts/Menus/menu_manager.gd"
 ui_scale_manager="*res://Scripts/UI/UI_scale_manager.gd"
 TutorialManager="*res://Scripts/UI/tutorial_manager.gd"
-AutoSellService="*res://Scripts/System/Services/auto_sell_service.gd"
 SteamManager="*res://Scripts/System/steam_manager.gd"
+AutoSellService="*res://Scripts/System/Services/auto_sell_service.gd"
 
 [display]
 
-window/size/viewport_width=2436
-window/size/viewport_height=1125
+window/size/viewport_width=2556
+window/size/viewport_height=1179
 window/size/initial_position_type=2
 window/stretch/mode="canvas_items"
 window/stretch/aspect="expand"
