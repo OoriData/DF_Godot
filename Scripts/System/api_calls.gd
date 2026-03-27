@@ -65,6 +65,8 @@ signal discord_link_url_received(url: String, state: String)
 signal discord_account_linked(result: Dictionary)    # { ok, error_code, message, conflict }
 signal apple_link_url_received(url: String, state: String)
 signal apple_account_linked(result: Dictionary)      # { ok, error_code, message, conflict }
+signal google_link_url_received(url: String, state: String)
+signal google_account_linked(result: Dictionary)     # { ok, error_code, message, conflict }
 
 # --- Bug Report Signals ---
 @warning_ignore("unused_signal")
@@ -443,6 +445,8 @@ func _normalize_auth_provider(provider: String) -> String:
 		return "discord"
 	if p == "apple":
 		return "apple"
+	if p == "google":
+		return "google"
 	return "discord"
 
 func _auth_url_for_provider(base: String, provider: String) -> String:
@@ -450,6 +454,8 @@ func _auth_url_for_provider(base: String, provider: String) -> String:
 	match p:
 		"apple":
 			return "%s/auth/apple/url" % base
+		"google":
+			return "%s/auth/google/url" % base
 		_:
 			return "%s/auth/discord/url" % base
 
@@ -458,8 +464,12 @@ func _emit_provider_link_result(provider: String, payload: Dictionary) -> void:
 	match p:
 		"apple":
 			emit_signal("apple_account_linked", payload)
-		_:
+		"discord":
 			emit_signal("discord_account_linked", payload)
+		"google":
+			emit_signal("google_account_linked", payload)
+		_:
+			_log_warn("[APICalls] Unknown provider for link result: " + provider)
 
 func _resolve_auth_status_provider(json_response: Dictionary) -> String:
 	var provider := _current_auth_poll_provider
@@ -597,6 +607,24 @@ func login_with_apple(identity_token: String) -> void:
 		"url": url,
 		"headers": headers,
 		"purpose": RequestPurpose.AUTH_TOKEN,
+		"method": HTTPClient.METHOD_POST,
+		"body": body,
+	}
+	_request_queue.append(request_details)
+	_process_queue()
+
+func login_with_google(id_token: String) -> void:
+	var url := "%s/auth/google/login" % BASE_URL
+	var headers: PackedStringArray = ['accept: application/json', 'content-type: application/json']
+	var body_dict: Dictionary = {"id_token": id_token}
+	var body := JSON.stringify(body_dict)
+	
+	_log_info("[APICalls] Initiating Google login")
+	
+	var request_details: Dictionary = {
+		"url": url,
+		"headers": headers,
+		"purpose": RequestPurpose.AUTH_TOKEN, # reuse token purpose as it returns a session
 		"method": HTTPClient.METHOD_POST,
 		"body": body,
 	}
@@ -770,6 +798,95 @@ func get_apple_link_url() -> void:
 		printerr("[APICalls][get_apple_link_url] HTTP request failed err=%d" % err)
 		req.queue_free()
 		emit_signal("apple_link_url_received", "", "")
+
+# --- Google account linking ---
+
+## Requests a Google link URL for the current user.
+## Emits google_link_url_received(url, state).
+func get_google_link_url() -> void:
+	var url := "%s/auth/google/link/url" % BASE_URL
+	var headers: PackedStringArray = ['accept: application/json']
+	headers = _apply_auth_header(headers)
+
+	_log_info("[APICalls][get_google_link_url] GET %s" % url)
+
+	var req: HTTPRequest = HTTPRequest.new()
+	add_child(req)
+	req.request_completed.connect(_on_google_link_url_completed.bind(req))
+
+	var err := req.request(url, headers, HTTPClient.METHOD_GET)
+	if err != OK:
+		printerr("[APICalls][get_google_link_url] HTTP request failed err=%d" % err)
+		req.queue_free()
+		emit_signal("google_link_url_received", "", "")
+
+func _on_google_link_url_completed(result: int, response_code: int, _headers: PackedStringArray, body: PackedByteArray, requester: HTTPRequest) -> void:
+	if is_instance_valid(requester):
+		requester.queue_free()
+	var text := body.get_string_from_utf8()
+	var json := JSON.new()
+	var data: Variant = {}
+	if json.parse(text) == OK:
+		data = json.data
+	_log_info("[APICalls][get_google_link_url] response code=%d" % response_code)
+	if response_code == 200:
+		var link_url := str(data.get("url", ""))
+		var state := str(data.get("state", ""))
+		
+		emit_signal("google_link_url_received", link_url, state)
+	else:
+		emit_signal("google_link_url_received", "", "")
+
+## Links the current DF account to a Google account using native ID token.
+## Emits google_account_linked({ ok, error_code, message, conflict }).
+func link_google_account(id_token: String) -> void:
+	var url := "%s/auth/google/link" % BASE_URL
+	var headers: PackedStringArray = ['accept: application/json', 'content-type: application/json']
+	headers = _apply_auth_header(headers)
+	var payload := JSON.stringify({"id_token": id_token})
+
+	_log_info("[APICalls][link_google_account] POST %s" % url)
+
+	var req: HTTPRequest = HTTPRequest.new()
+	req.name = "GoogleLinkRequest"
+	add_child(req)
+	req.request_completed.connect(_on_google_link_completed.bind(req))
+
+	var err := req.request(url, headers, HTTPClient.METHOD_POST, payload)
+	if err != OK:
+		printerr("[APICalls][link_google_account] request failed err=%d" % err)
+		req.queue_free()
+		_emit_provider_link_result("google", {"ok": false, "error_code": -1, "message": "Network error.", "conflict": false})
+
+func _on_google_link_completed(result: int, response_code: int, _headers: PackedStringArray, body: PackedByteArray, requester: HTTPRequest) -> void:
+	if is_instance_valid(requester):
+		requester.queue_free()
+	var text := body.get_string_from_utf8()
+	
+	if result != HTTPRequest.RESULT_SUCCESS:
+		printerr("[APICalls][link_google_account] Network fail. HttpResult=", result)
+		_emit_provider_link_result("google", {"ok": false, "error_code": -1, "message": "Network error.", "conflict": false})
+		return
+		
+	var payload_result: Dictionary = {"ok": false, "error_code": response_code, "message": "Unknown error."}
+	
+	if response_code >= 200 and response_code < 300:
+		payload_result["ok"] = true
+	else:
+		var json := JSON.new()
+		if json.parse(text) == OK and json.data is Dictionary:
+			var dict: Dictionary = json.data
+			if dict.has("detail") and dict["detail"] is String:
+				payload_result["message"] = dict["detail"]
+			elif dict.has("message") and dict["message"] is String:
+				payload_result["message"] = dict["message"]
+				
+			if response_code == 409 and dict.has("conflict"):
+				payload_result["conflict"] = dict["conflict"]
+		else:
+			payload_result["message"] = "Server error %d" % response_code
+			
+	_emit_provider_link_result("google", payload_result)
 
 func _on_apple_link_url_completed(result: int, response_code: int, _headers: PackedStringArray, body: PackedByteArray, requester: HTTPRequest) -> void:
 	if is_instance_valid(requester):
