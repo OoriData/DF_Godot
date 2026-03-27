@@ -950,6 +950,28 @@ func _on_merge_commit_completed(result: int, response_code: int, _headers: Packe
 		emit_signal("merge_committed", {"ok": false, "user_id": "", "error_code": response_code, "message": msg})
 
 # --- Bug report ---
+# --- Push Notifications ---
+func register_push_token(token: String, platform: String) -> void:
+	if token.is_empty():
+		return
+	var url := "%s/user/push-token?token=%s&platform=%s" % [BASE_URL, token.uri_encode(), platform.uri_encode()]
+	var headers: PackedStringArray = ['accept: application/json']
+	headers = _apply_auth_header(headers)
+	_log_info("[APICalls][register_push_token] POST token for platform=%s" % platform)
+	# Use ephemeral requester so this doesn't block the main game queue
+	var req := HTTPRequest.new()
+	req.name = "PushTokenRequest"
+	add_child(req)
+	req.request_completed.connect(func(result: int, response_code: int, _headers: PackedStringArray, body: PackedByteArray):
+		if is_instance_valid(req):
+			req.queue_free()
+		_log_info("[APICalls][register_push_token] response code=%d" % response_code)
+	)
+	var err := req.request(url, headers, HTTPClient.METHOD_POST, "")
+	if err != OK:
+		printerr("[APICalls][register_push_token] HTTP request failed err=%d" % err)
+		req.queue_free()
+
 func submit_bug_report(payload: Dictionary) -> void:
 	# Client-side submits a JSON body to POST /bug-report.
 	# Backend should create a GitHub issue (server-side token).

@@ -60,7 +60,18 @@ func _ready():
 	else:
 		printerr("MenuManager: Could not find GameStore autoload.")
 	
+	var push_manager = get_node_or_null("/root/PushNotificationManager")
+	if is_instance_valid(push_manager) and push_manager.has_signal("push_dialogue_requested"):
+		push_manager.push_dialogue_requested.connect(_on_push_dialogue_requested)
+	
 	print("MenuManager Initialized: visible=", visible, ", mouse_filter=", mouse_filter)
+
+func _on_push_dialogue_requested(dialogue_id: String) -> void:
+	print("MenuManager: Interrupted for push notification dialogue deep-link: ", dialogue_id)
+	close_all_menus()
+	# TODO: Once the Conversation/Dialogue UI is built, instantiate and show it here using _show_menu
+	# or dispatch to the Dialogue Manager.
+	print("[MenuManager] Hook for Dialogue UI goes here (dialogue_id: %s)" % dialogue_id)
 
 
 func _on_hub_convoy_selection_changed(selected_convoy_data: Variant) -> void:

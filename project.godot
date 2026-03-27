@@ -42,6 +42,8 @@ ui_scale_manager="*res://Scripts/UI/UI_scale_manager.gd"
 TutorialManager="*res://Scripts/UI/tutorial_manager.gd"
 SteamManager="*res://Scripts/System/steam_manager.gd"
 AutoSellService="*res://Scripts/System/Services/auto_sell_service.gd"
+PushNotificationManager="*res://Scripts/System/Services/push_notification_manager.gd"
+Firebase="*uid://cvb26atjckwlq"
 
 [display]
 
@@ -51,6 +53,10 @@ window/size/initial_position_type=2
 window/stretch/mode="canvas_items"
 window/stretch/aspect="expand"
 window/handheld/orientation=6
+
+[editor_plugins]
+
+enabled=PackedStringArray("res://addons/godot-firebase/plugin.cfg")
 
 [gui]
 
