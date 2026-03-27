@@ -84,14 +84,6 @@ label_settings = SubResource("LabelSettings_Subtitle")
 custom_minimum_size = Vector2(0, 18)
 layout_mode = 2
 
-[node name="GoogleLoginButton" type="Button" parent="CenterContainer/VBoxContainer"]
-custom_minimum_size = Vector2(100, 30)
-layout_mode = 2
-size_flags_horizontal = 4
-theme_override_colors/font_color = Color(0.95, 0.95, 0.95, 1)
-theme_override_styles/normal = SubResource("StyleBoxFlat_ButtonBg")
-text = "Login with Discord"
-
 [node name="StatusLabel" type="Label" parent="CenterContainer/VBoxContainer"]
 custom_minimum_size = Vector2(200, 28)
 layout_mode = 2

@@ -10,6 +10,7 @@ const _TEXT_DIM         := Color("#9a9ab0")
 const _ACCENT_PRIMARY   := Color("#5865F2") # Discord Blurple
 const _ACCENT_SECONDARY := Color("#66c0f4") # Steam Light Blue
 const _ACCENT_APPLE     := Color("#d0d0d0")
+const _ACCENT_GOOGLE    := Color("#4285F4")
 const _GREEN_SUCCESS    := Color("#a4d007")
 const _RED_ERROR        := Color("#e94560")
 
@@ -18,11 +19,13 @@ var _root: VBoxContainer
 var _steam_id_label: Label
 var _discord_id_label: Label
 var _apple_id_label: Label
+var _google_id_label: Label
 var _status_label: Label
 
 var _steam_connect_btn: Button
 var _discord_connect_btn: Button
 var _apple_connect_btn: Button
+var _google_connect_btn: Button
 
 var _api: Node
 var _hub: Node
@@ -46,8 +49,10 @@ func _connect_signals() -> void:
 	_api.discord_account_linked.connect(_on_discord_link_result)
 	_api.apple_account_linked.connect(_on_apple_link_result)
 	_api.steam_account_linked.connect(_on_steam_link_result)
+	_api.google_account_linked.connect(_on_google_link_result)
 	_api.discord_link_url_received.connect(_on_discord_url_received)
 	_api.apple_link_url_received.connect(_on_apple_url_received)
+	_api.google_link_url_received.connect(_on_google_url_received)
 	
 	if not _api.user_data_received.is_connected(_on_user_data_refreshed):
 		_api.user_data_received.connect(_on_user_data_refreshed)
@@ -80,6 +85,7 @@ func _on_auth_links_received(links: Array) -> void:
 	var steam_linked := "Not Linked"
 	var discord_linked := "Not Linked"
 	var apple_linked := "Not Linked"
+	var google_linked := "Not Linked"
 	
 	for link in links:
 		var provider = link.get("provider", "")
@@ -94,6 +100,8 @@ func _on_auth_links_received(links: Array) -> void:
 			discord_linked = pid
 		elif provider == "apple":
 			apple_linked = pid
+		elif provider == "google":
+			google_linked = pid
 			
 	# Update UI based on the link list (Primary source of truth)
 	if steam_linked != "Not Linked":
@@ -116,10 +124,18 @@ func _on_auth_links_received(links: Array) -> void:
 	else:
 		_apple_id_label.text = "Not Linked"
 		_apple_id_label.add_theme_color_override("font_color", _TEXT_DIM)
+
+	if google_linked != "Not Linked":
+		_google_id_label.text = "✅ Connected"
+		_google_id_label.add_theme_color_override("font_color", _GREEN_SUCCESS)
+	else:
+		_google_id_label.text = "Not Linked"
+		_google_id_label.add_theme_color_override("font_color", _TEXT_DIM)
 	
 	_steam_connect_btn.disabled = (steam_linked != "Not Linked")
 	_discord_connect_btn.disabled = (discord_linked != "Not Linked")
 	_apple_connect_btn.disabled = (apple_linked != "Not Linked")
+	_google_connect_btn.disabled = (google_linked != "Not Linked")
 	
 	_set_status("Accounts updated.", _GREEN_SUCCESS)
 	await get_tree().create_timer(2.0).timeout
@@ -145,6 +161,17 @@ func _on_apple_url_received(url: String, state: String) -> void:
 	_set_status("Opening browser... Poll started.", _ACCENT_APPLE)
 	OS.shell_open(url)
 	_api.start_auth_poll(state, 1.5, 120.0, "apple")
+
+func _on_google_url_received(url: String, state: String) -> void:
+	if url == "" or state == "":
+		_set_status("Failed to get Google linking URL.", _RED_ERROR)
+		_google_connect_btn.disabled = false
+		return
+
+	_set_status("Opening browser... Poll started.", _ACCENT_GOOGLE)
+	OS.shell_open(url)
+	_api.start_auth_poll(state, 1.5, 120.0, "google")
+
 
 func _on_discord_link_result(result: Dictionary) -> void:
 	_discord_connect_btn.disabled = false
@@ -181,6 +208,19 @@ func _on_apple_link_result(result: Dictionary) -> void:
 		else:
 			_set_status("Error: %s" % result.get("message", "Link failed"), _RED_ERROR)
 
+func _on_google_link_result(result: Dictionary) -> void:
+	_google_connect_btn.disabled = false
+	if result.get("ok", false):
+		_set_status("✅ Google linked!", _GREEN_SUCCESS)
+		_refresh_data()
+	else:
+		var code = result.get("error_code", 0)
+		if code == 409:
+			_open_merge_modal(result.get("conflict", {}))
+		else:
+			_set_status("Error: %s" % result.get("message", "Link failed"), _RED_ERROR)
+
+
 # ── UI Actions ───────────────────────────────────────────────────────────────
 
 func _on_connect_discord_pressed() -> void:
@@ -209,6 +249,25 @@ func _on_connect_apple_pressed() -> void:
 	_apple_connect_btn.disabled = true
 	if is_instance_valid(_api):
 		_api.get_apple_link_url()
+
+func _on_connect_google_pressed() -> void:
+	_google_connect_btn.disabled = true
+	if Engine.has_singleton("GoogleAuthService"):
+		var google_auth = Engine.get_singleton("GoogleAuthService")
+		if google_auth.has_method("connect_account"):
+			google_auth.connect_account()
+			return
+	
+	# Fallback if Autoload is used directly
+	if has_node("/root/GoogleAuthService"):
+		var google_auth = get_node("/root/GoogleAuthService")
+		if google_auth.has_method("connect_account"):
+			google_auth.connect_account()
+			return
+			
+	_set_status("GoogleAuthService not available.", _RED_ERROR)
+	_google_connect_btn.disabled = false
+
 
 func _open_merge_modal(conflict: Dictionary) -> void:
 	hide()
@@ -306,6 +365,12 @@ func _build_ui() -> void:
 	_apple_id_label = Label.new()
 	rows.add_child(_create_row("Apple", _ACCENT_APPLE, _apple_id_label, _on_connect_apple_pressed, "AppleRow"))
 	_apple_connect_btn = rows.get_node("AppleRow/ConnectBtn")
+
+	# Google Row
+	_google_id_label = Label.new()
+	rows.add_child(_create_row("Google", _ACCENT_GOOGLE, _google_id_label, _on_connect_google_pressed, "GoogleRow"))
+	_google_connect_btn = rows.get_node("GoogleRow/ConnectBtn")
+
 
 	# Status Label
 	_status_label = Label.new()

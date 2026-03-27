@@ -11,7 +11,7 @@ config_version=5
 [application]
 
 config/name="Desolate Frontiers"
-config/version="0.3.16"
+config/version="0.3.17"
 run/main_scene="res://Scenes/GameRoot.tscn"
 config/features=PackedStringArray("4.6", "GL Compatibility")
 run/low_processor_mode=true
@@ -43,7 +43,7 @@ TutorialManager="*res://Scripts/UI/tutorial_manager.gd"
 SteamManager="*res://Scripts/System/steam_manager.gd"
 AutoSellService="*res://Scripts/System/Services/auto_sell_service.gd"
 PushNotificationManager="*res://Scripts/System/Services/push_notification_manager.gd"
-Firebase="*uid://cvb26atjckwlq"
+GoogleAuthService="*res://Scripts/System/Services/google_auth_service.gd"
 
 [display]
 
@@ -56,7 +56,7 @@ window/handheld/orientation=6
 
 [editor_plugins]
 
-enabled=PackedStringArray("res://addons/godot-firebase/plugin.cfg")
+enabled=PackedStringArray("res://addons/GodotGoogleSignIn/plugin.cfg")
 
 [gui]
 
