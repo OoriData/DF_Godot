@@ -26,9 +26,9 @@ class AndroidExportPlugin extends EditorExportPlugin:
 
 	func _get_android_libraries(platform, debug):
 		if debug:
-			return PackedStringArray([_plugin_name + "/bin/release/" + _plugin_name + "-release.aar"])
+			return PackedStringArray(["res://addons/" + _plugin_name + "/bin/release/" + _plugin_name + "-release.aar"])
 		else:
-			return PackedStringArray([_plugin_name + "/bin/release/" + _plugin_name + "-release.aar"])
+			return PackedStringArray(["res://addons/" + _plugin_name + "/bin/release/" + _plugin_name + "-release.aar"])
 
 	func _get_android_dependencies(platform, debug):
 		# Required dependencies for Credential Manager
