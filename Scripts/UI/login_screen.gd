@@ -334,11 +334,11 @@ func _on_google_login_pressed() -> void:
 
 	GoogleAuthService.sign_in()
 
-func _on_google_native_login_success(id_token: String, email: String, display_name: String) -> void:
+func _on_google_native_login_success(id_token: String, email: String, display_name: String, nonce: String) -> void:
 	var api = _api()
 	if api:
 		status_label.text = "Verifying Google session..."
-		api.login_with_google(id_token)
+		api.login_with_google(id_token, nonce)
 
 func _on_google_native_login_error(error_msg: String) -> void:
 	status_label.text = "Google sign-in failed: " + error_msg

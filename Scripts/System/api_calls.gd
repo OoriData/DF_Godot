@@ -613,10 +613,12 @@ func login_with_apple(identity_token: String) -> void:
 	_request_queue.append(request_details)
 	_process_queue()
 
-func login_with_google(id_token: String) -> void:
+func login_with_google(id_token: String, nonce: String = "") -> void:
 	var url := "%s/auth/google/login" % BASE_URL
 	var headers: PackedStringArray = ['accept: application/json', 'content-type: application/json']
 	var body_dict: Dictionary = {"id_token": id_token}
+	if nonce != "":
+		body_dict["nonce"] = nonce
 	var body := JSON.stringify(body_dict)
 	
 	_log_info("[APICalls] Initiating Google login")
@@ -839,11 +841,14 @@ func _on_google_link_url_completed(result: int, response_code: int, _headers: Pa
 
 ## Links the current DF account to a Google account using native ID token.
 ## Emits google_account_linked({ ok, error_code, message, conflict }).
-func link_google_account(id_token: String) -> void:
+func link_google_account(id_token: String, nonce: String = "") -> void:
 	var url := "%s/auth/google/link" % BASE_URL
 	var headers: PackedStringArray = ['accept: application/json', 'content-type: application/json']
 	headers = _apply_auth_header(headers)
-	var payload := JSON.stringify({"id_token": id_token})
+	var body_dict: Dictionary = {"id_token": id_token}
+	if nonce != "":
+		body_dict["nonce"] = nonce
+	var payload := JSON.stringify(body_dict)
 
 	_log_info("[APICalls][link_google_account] POST %s" % url)
 
