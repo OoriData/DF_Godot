@@ -235,7 +235,7 @@ func _ready():
 		vendor_item_grid.add_theme_constant_override("h_separation", 8)
 		vendor_item_grid.add_theme_constant_override("v_separation", 10)
 
-	
+
 	if has_node("MainVBox/ScrollContainer/ContentVBox/VendorPreviewPanel/VendorPreviewVBox"):
 		var preview_vbox = $MainVBox/ScrollContainer/ContentVBox/VendorPreviewPanel/VendorPreviewVBox
 		var sort_dropdown_container := preview_vbox.get_node_or_null("SortDropdownContainer") as HBoxContainer
@@ -244,7 +244,7 @@ func _ready():
 			sort_dropdown_container.name = "SortDropdownContainer"
 			sort_dropdown_container.alignment = BoxContainer.ALIGNMENT_END
 			sort_dropdown_container.visible = false
-		
+
 		var sort_option := sort_dropdown_container.get_node_or_null("MissionSortOptionButton") as OptionButton
 		if not is_instance_valid(sort_option):
 			sort_option = OptionButton.new()
@@ -280,9 +280,9 @@ func _ready():
 		sort_option.add_theme_stylebox_override("hover", so_hover)
 		sort_option.add_theme_stylebox_override("pressed", so_pressed)
 		sort_option.add_theme_stylebox_override("focus", so_hover)
-		
+
 		_load_cargo_sort_metric_from_settings()
-			
+
 		sort_option.clear()
 		sort_option.add_item("Sort: Profit Margin/Unit")
 		sort_option.add_item("Sort: Profit Density/Weight")
@@ -296,7 +296,7 @@ func _ready():
 		sort_option.item_selected.connect(_on_mission_sort_selected)
 		_mission_sort_container = sort_dropdown_container
 		_mission_sort_option_button = sort_option
-		
+
 		if sort_dropdown_container.get_parent() == null:
 			# Insert below VendorTabsHBox
 			var tabs_hbox = preview_vbox.get_node_or_null("VendorTabsHBox")
@@ -304,7 +304,7 @@ func _ready():
 				preview_vbox.add_child(sort_dropdown_container)
 				preview_vbox.move_child(sort_dropdown_container, tabs_hbox.get_index() + 1)
 
-	
+
 	# Style bottom bar panel if present
 	var bottom_panel := $MainVBox/BottomBarPanel if has_node("MainVBox/BottomBarPanel") else null
 	if is_instance_valid(bottom_panel):
@@ -341,13 +341,13 @@ func _ready():
 			content_style.corner_radius_top_left = 4
 			content_style.corner_radius_bottom_right = 4
 			content_panel.add_theme_stylebox_override("panel", content_style)
-		
+
 		# Enforce vertical-only scrolling
 		var vendor_content_scroll = vendor_preview_panel.get_node_or_null("VendorPreviewVBox/VendorContentPanel/VendorContentScroll")
 		if is_instance_valid(vendor_content_scroll) and vendor_content_scroll is ScrollContainer:
 			vendor_content_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 			vendor_content_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
-	
+
 	# Style the new journey progress bar
 	if is_instance_valid(journey_progress_bar):
 		_style_journey_progress_bar(journey_progress_bar)
@@ -750,7 +750,7 @@ func initialize_with_data(data_or_id: Variant, extra_arg: Variant = null) -> voi
 				var progress_percentage = 0.0
 				if length > 0:
 					progress_percentage = (progress / length) * 100.0
-				
+
 				journey_progress_bar.value = progress_percentage
 				journey_progress_label.text = NumberFormat.fmt_float(progress_percentage, 2) + "%"
 
@@ -809,7 +809,7 @@ func _update_vendor_preview() -> void:
 	# Mission cargo preview: show items marked mission-critical if present
 	_convoy_mission_items = _collect_mission_cargo_items(convoy_data_received)
 	_settlement_mission_items = _collect_settlement_mission_items()
-	
+
 	# Compatible parts preview: use GDM mechanic vendor availability snapshot if available
 	var compat_summary: Array[String] = []
 	if is_instance_valid(_mechanics_service) and _mechanics_service.has_method("get_mechanic_probe_snapshot"):
@@ -1068,7 +1068,7 @@ func _render_vendor_preview_display() -> void:
 		for item_string in content_list:
 			var button := _build_vendor_preview_button(item_string)
 			vendor_item_grid.add_child(button)
-	
+
 	# Ensure font sizes are applied immediately (deferred to stable layout)
 	call_deferred("_update_font_sizes")
 
@@ -1372,10 +1372,10 @@ func _collect_mission_cargo_items(convoy: Dictionary) -> Array[String]:
 		data["display_name"] = String(k)
 		data["total_quantity"] = agg[k]
 		items_to_sort.append(data)
-	
+
 	if CargoSorter and _cargo_sort_metric >= 0:
 		items_to_sort = CargoSorter.sort_cargo(items_to_sort, _cargo_sort_metric, false)
-	
+
 	for sorted_item in items_to_sort:
 		out.append(sorted_item["display_name"])
 	if _debug_convoy_menu:
@@ -1593,21 +1593,21 @@ func _collect_settlement_mission_items() -> Array[String]:
 			var entry2 := "%s" % [nm2]
 			if dest2 != "":
 				entry2 += " — to %s" % dest2
-			
+
 			var sort_data = ci.duplicate()
 			sort_data["display_name"] = entry2
 			raw_items.append(sort_data)
 
-	
+
 	var CargoSorter = null
 	if _cargo_sort_metric >= 0:
 		CargoSorter = preload("res://Scripts/System/cargo_sorter.gd")
 	if CargoSorter and _cargo_sort_metric >= 0:
 		raw_items = CargoSorter.sort_cargo(raw_items, _cargo_sort_metric, false)
-	
+
 	for ri in raw_items:
 		out.append(ri["display_name"])
-		
+
 	if _debug_convoy_menu:
 		print("[ConvoyMenu][Debug] Settlement missions via vendor fallback: ", out)
 	return out
@@ -1935,7 +1935,7 @@ func _extract_destination_from_item(item: Dictionary) -> String:
 	if _debug_convoy_menu:
 		print("[ConvoyMenu][Debug] destination unresolved for item=", String(item.get("name", item.get("base_name", "?"))))
 	return ""
-	
+
 func _on_part_compat_ready(_payload: Dictionary) -> void:
 	_queue_vendor_preview_update()
 
@@ -2163,7 +2163,7 @@ func _set_fixed_color_box_style(panel_node: PanelContainer, label_node: Label, p
 	style_box.shadow_offset = Vector2(0, 2)
 	panel_node.add_theme_stylebox_override("panel", style_box)
 	label_node.add_theme_color_override("font_color", p_font_color)
-	
+
 	# Center text
 	label_node.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	label_node.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
@@ -2172,7 +2172,7 @@ func _set_fixed_color_box_style(panel_node: PanelContainer, label_node: Label, p
 func _set_progressbar_style(progressbar_node: ProgressBar, current_value: float, max_value: float):
 	if not is_instance_valid(progressbar_node):
 		return
-	
+
 	var percentage: float = 0.0
 	if max_value > 0:
 		percentage = clamp(current_value / max_value, 0.0, 1.0)
@@ -2220,7 +2220,7 @@ func _update_font_sizes() -> void:
 		return
 
 	var scale_factor: float = current_menu_height / REFERENCE_MENU_HEIGHT
-	
+
 	if _debug_convoy_menu:
 		print("[ConvoyMenu][Debug] Scaling fonts. Height=", current_menu_height, " Factor=", scale_factor)
 
@@ -2234,8 +2234,8 @@ func _update_font_sizes() -> void:
 		journey_dest_label, journey_progress_label, journey_eta_label,
 		vehicles_label, all_cargo_label, vendor_no_items_label,
 		# Add text of placeholder buttons if they need scaling
-		# vehicle_menu_button, journey_menu_button, 
-		# settlement_menu_button, cargo_menu_button 
+		# vehicle_menu_button, journey_menu_button,
+		# settlement_menu_button, cargo_menu_button
 	]
 	# title_label is handled separately as it's the main convoy name title
 
@@ -2254,11 +2254,11 @@ func _update_font_sizes() -> void:
 				# Update font sizes for NameLabel and DestLabel
 				var name_l := child.find_child("NameLabel", true, false) as Label
 				var dest_l := child.find_child("DestLabel", true, false) as Label
-				
+
 				var raw_len: int = name_l.text.length() if is_instance_valid(name_l) else 0
 				if is_instance_valid(dest_l):
 					raw_len = max(raw_len, dest_l.text.length() - 2)
-				
+
 				var effective_font_size = new_font_size + 2 # Default basis
 				if raw_len > 40:
 					effective_font_size = max(MIN_FONT_SIZE, effective_font_size - 4)
@@ -2281,14 +2281,14 @@ func _update_font_sizes() -> void:
 				if is_instance_valid(dest_l):
 					dest_l.add_theme_font_size_override("font_size", effective_font_size)
 					dest_l.custom_minimum_size.x = text_width
-				
+
 	for label_node in labels_to_scale:
 		if is_instance_valid(label_node):
 			label_node.add_theme_font_size_override("font_size", new_font_size)
 
 	if is_instance_valid(back_button):
 		back_button.add_theme_font_size_override("font_size", new_font_size)
-	
+
 	# Scale placeholder button fonts if they are valid
 	if is_instance_valid(vehicle_menu_button):
 		vehicle_menu_button.add_theme_font_size_override("font_size", new_font_size)
@@ -2298,7 +2298,7 @@ func _update_font_sizes() -> void:
 		settlement_menu_button.add_theme_font_size_override("font_size", new_font_size)
 	if is_instance_valid(cargo_menu_button):
 		cargo_menu_button.add_theme_font_size_override("font_size", new_font_size)
-	
+
 	# Scale vendor tab buttons
 	if is_instance_valid(convoy_missions_tab_button):
 		convoy_missions_tab_button.add_theme_font_size_override("font_size", new_font_size - 2)

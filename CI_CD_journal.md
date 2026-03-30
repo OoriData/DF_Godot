@@ -44,3 +44,7 @@
     - **Update (2026-02-19 7:15PM)**: Android build failed with "The caller does not have permission". This indicates that while the app exists, the Service Account is not authorized to manage it or the app hasn't finalized its internal setup.
 ### Note on Steam Credentials
 Steam requires clear-text credentials for automated uploads. Use a dedicated service account if possible and ensure `STEAM_CONFIG_VDF` is used if Steam Guard is active.
+
+## 2026-03-26 - Push Notifications CI Update
+- **`_build-ios-appstore.yml`**: Integrated an automated Python step to dynamically inject the `entitlements/push_notifications="Production"` flag into `export_presets.cfg` during the headless Xcode export. This solves the issue of missing capabilities when exporting strictly via GitHub Actions without opening Xcode.
+- **Local Debug vs CI Codesigning**: Removed hardcoded App Store provisioning profiles (`application/provisioning_profile_specifier_release`) and distribution certificates (`application/code_sign_identity_release`) from `export_presets.cfg`. This allows developers to natively debug push notifications on local devices via automatic Xcode signing. To maintain flawless App Store headless exports, the specific Apple Distribution code-signing identity is now dynamically injected into the build pipeline at runtime exclusively via `_build-ios-appstore.yml`.
