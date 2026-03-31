@@ -1,6 +1,7 @@
 [gd_scene load_steps=2 format=3 uid="uid://c53414078170s"]
 
 [ext_resource type="Script" uid="uid://do81c8ifoqgjo" path="res://Scripts/Menus/route_selection_menu.gd" id="1_84q0y"]
+[ext_resource type="Script" path="res://Scripts/UI/responsive_list_adapter.gd" id="2_resp"]
 
 [node name="RouteSelectionMenu" type="Control"]
 layout_mode = 3
@@ -108,6 +109,9 @@ size_flags_vertical = 3
 [node name="VehicleExpensesVBox" type="VBoxContainer" parent="MainVBox/ColumnsHBox/LeftColumn/ScrollContainer"]
 layout_mode = 2
 size_flags_horizontal = 3
+
+[node name="ResponsiveListAdapter" type="Node" parent="MainVBox/ColumnsHBox/LeftColumn/ScrollContainer/VehicleExpensesVBox"]
+script = ExtResource("2_resp")
 
 [node name="PlaceholderLabel" type="Label" parent="MainVBox/ColumnsHBox/LeftColumn/ScrollContainer/VehicleExpensesVBox"]
 layout_mode = 2

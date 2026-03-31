@@ -1,7 +1,9 @@
-[gd_scene load_steps=4 format=3 uid="uid://dpsk1w1gqj3h7"]
+[gd_scene load_steps=5 format=3 uid="uid://dpsk1w1gqj3h7"]
 
 [ext_resource type="Script" path="res://Scripts/Menus/vendor_trade_panel.gd" id="1_script"]
 [ext_resource type="PackedScene" path="res://Scenes/UI/ToastNotification.tscn" id="2_toast"]
+[ext_resource type="Script" path="res://Scripts/UI/responsive_list_adapter.gd" id="3_resp"]
+[ext_resource type="Script" path="res://Scripts/UI/quantity_widget.gd" id="4_qty_widget"]
 
 [sub_resource type="StyleBoxFlat" id="StyleBoxFlat_loading"]
 bg_color = Color(0, 0, 0, 0.5)
@@ -15,6 +17,9 @@ anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
 script = ExtResource("1_script")
+
+[node name="ResponsiveListAdapter" type="Node" parent="."]
+script = ExtResource("3_resp")
 
 [node name="HBoxContainer" type="HBoxContainer" parent="."]
 layout_mode = 1
@@ -49,6 +54,11 @@ layout_mode = 2
 size_flags_vertical = 3
 tab_alignment = 1
 
+[node name="ResponsiveListAdapter" type="Node" parent="HBoxContainer/LeftPanel/TradeModeTabContainer"]
+script = ExtResource("3_resp")
+apply_to_children = false
+apply_to_parent = true
+
 [node name="Buy" type="VBoxContainer" parent="HBoxContainer/LeftPanel/TradeModeTabContainer"]
 name = "Buy"
 layout_mode = 2
@@ -62,6 +72,9 @@ unique_name_in_owner = true
 layout_mode = 2
 size_flags_vertical = 3
 hide_root = true
+
+[node name="ResponsiveListAdapter" type="Node" parent="HBoxContainer/LeftPanel/TradeModeTabContainer/Buy"]
+script = ExtResource("3_resp")
 
 [node name="Sell" type="VBoxContainer" parent="HBoxContainer/LeftPanel/TradeModeTabContainer"]
 name = "Sell"
@@ -77,6 +90,10 @@ unique_name_in_owner = true
 layout_mode = 2
 size_flags_vertical = 3
 hide_root = true
+
+[node name="ResponsiveListAdapter" type="Node" parent="HBoxContainer/LeftPanel/TradeModeTabContainer/Sell"]
+script = ExtResource("3_resp")
+
 [node name="VSeparator" type="VSeparator" parent="HBoxContainer"]
 layout_mode = 2
 
@@ -84,6 +101,10 @@ layout_mode = 2
 layout_mode = 2
 size_flags_horizontal = 3
 size_flags_stretch_ratio = 0.4
+
+[node name="ResponsiveListAdapter" type="Node" parent="HBoxContainer/MiddlePanel"]
+script = ExtResource("3_resp")
+large_text = true
 
 [node name="ItemNameLabel" type="Label" parent="HBoxContainer/MiddlePanel"]
 unique_name_in_owner = true
@@ -205,6 +226,11 @@ size_flags_horizontal = 3
 size_flags_stretch_ratio = 0.3
 theme_override_constants/separation = 10
 
+[node name="ResponsiveListAdapter" type="Node" parent="HBoxContainer/RightPanel"]
+script = ExtResource("3_resp")
+ledger_style = true
+large_text = true
+
 [node name="TransactionLabel" type="Label" parent="HBoxContainer/RightPanel"]
 layout_mode = 2
 text = "Transaction"
@@ -218,14 +244,13 @@ layout_mode = 2
 layout_mode = 2
 text = "Quantity:"
 
-[node name="QuantitySpinBox" type="SpinBox" parent="HBoxContainer/RightPanel/TransactionQuantityContainer"]
+[node name="QuantitySpinBox" type="HBoxContainer" parent="HBoxContainer/RightPanel/TransactionQuantityContainer"]
 unique_name_in_owner = true
 layout_mode = 2
-size_flags_horizontal = 1
+script = ExtResource("4_qty_widget")
 min_value = 0.0
 max_value = 99.0
 value = 1.0
-allow_greater = false
 
 [node name="MaxButton" type="Button" parent="HBoxContainer/RightPanel/TransactionQuantityContainer"]
 unique_name_in_owner = true

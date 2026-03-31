@@ -38,7 +38,7 @@ func _emit_install_requested(item: Variant, quantity: int, vendor_id: String) ->
 @onready var item_description_rich_text: RichTextLabel = %ItemDescriptionRichText
 @onready var selected_item_stats: RichTextLabel = %SelectedItemStats
 @onready var equipped_item_stats: RichTextLabel = %EquippedItemStats
-@onready var quantity_spinbox: SpinBox = %QuantitySpinBox
+@onready var quantity_spinbox: QuantityWidget = %QuantitySpinBox
 @onready var delivery_reward_label: RichTextLabel = %DeliveryRewardLabel
 @onready var price_label: RichTextLabel = %PriceLabel
 @onready var convoy_volume_bar: ProgressBar = %ConvoyVolumeBar
