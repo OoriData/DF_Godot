@@ -92,11 +92,26 @@ func _on_toggle_button_pressed() -> void:
 	if convoy_popup.is_visible():
 		convoy_popup.hide()
 	else:
-		var item_count = max(1, list_item_container.get_child_count())
-		var item_h = 64 if _is_mobile() else 30
-		var popup_height = clamp(item_count * item_h + 20, 80 if _is_mobile() else 50, 500 if _is_mobile() else 300)
+		# Determine actual convoy count for accurate height calculation
+		var convoys = []
+		if is_instance_valid(_store) and _store.has_method("get_convoys"):
+			convoys = _store.get_convoys()
+		
+		var item_count = convoys.size() if not convoys.is_empty() else 1 # 1 for "No convoys" label
+		
+		var is_mobile = _is_mobile()
+		var item_h = 64 if is_mobile else 32 # Match heights used in populate_convoy_list
+		var separation = 12 if is_mobile else 4 # VBoxContainer separation
+		
+		# Calculate total height: items + separations + top/bottom padding
+		var total_content_h = (item_count * item_h) + (max(0, item_count - 1) * separation) + 20
+		
+		# Clamp height to reasonable limits
+		var max_h = 600 if is_mobile else 300
+		var min_h = 80 if is_mobile else 50
+		var popup_height = clamp(total_content_h, min_h, max_h)
+		
 		convoy_popup.size = Vector2(toggle_button.size.x, popup_height)
-
 
 		# Use popup(Rect2i) for robust positioning in Godot 4.
 		# This positions the popup relative to the viewport, using global coordinates.
