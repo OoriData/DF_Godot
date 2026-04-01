@@ -154,6 +154,9 @@ var _active_mission_cargo_id_by_display: Dictionary = {} # "name — to DEST" ->
 func _get_settings_manager() -> Node:
 	return get_node_or_null("/root/SettingsManager")
 
+func _is_mobile() -> bool:
+	return OS.has_feature("mobile") or OS.has_feature("web_android") or OS.has_feature("web_ios") or DisplayServer.get_name() in ["Android", "iOS"]
+
 func _load_cargo_sort_metric_from_settings() -> void:
 	var sm := _get_settings_manager()
 	if is_instance_valid(sm) and sm.has_method("get_value"):
@@ -314,6 +317,16 @@ func _ready():
 		bar_style.corner_radius_top_right = 6
 		bar_style.border_width_top = 1
 		bar_style.border_color = Color(0.28, 0.28, 0.28)
+		if _is_mobile():
+			bar_style.content_margin_top = 6.0
+			bar_style.content_margin_bottom = 6.0
+			bar_style.content_margin_left = 6.0
+			bar_style.content_margin_right = 6.0
+			# Also make the HBox inside fill edge-to-edge on mobile
+			var hbox := bottom_panel.get_node_or_null("BottomMenuButtonsHBox")
+			if is_instance_valid(hbox):
+				hbox.alignment = BoxContainer.ALIGNMENT_BEGIN
+				hbox.add_theme_constant_override("separation", 4)
 		bottom_panel.add_theme_stylebox_override("panel", bar_style)
 
 	# Style vendor preview panel if present
@@ -362,6 +375,8 @@ func _ready():
 		# Check if already connected to prevent duplicate connections if _ready is called multiple times (unlikely for menus but good practice)
 		if not back_button.is_connected("pressed", Callable(self, "_on_back_button_pressed")):
 			back_button.pressed.connect(_on_back_button_pressed, CONNECT_ONE_SHOT) # Use ONE_SHOT as menu is freed
+		if _is_mobile():
+			back_button.custom_minimum_size = Vector2(back_button.custom_minimum_size.x, 60.0)
 	else:
 		printerr("ConvoyMenu: CRITICAL - BackButton node NOT found or is not a Button. Ensure it's named 'BackButton' in ConvoyMenu.tscn.")
 
@@ -2316,16 +2331,22 @@ func _style_menu_button(button_node: Button) -> void:
 	if not is_instance_valid(button_node):
 		return
 
-	# Consistent min height already set in scene; enforce if loaded dynamically
-	if button_node.custom_minimum_size.y < 30.0:
-		button_node.custom_minimum_size = Vector2(button_node.custom_minimum_size.x, 34.0)
+	# On mobile enforce tall touch targets; on desktop keep scene defaults.
+	var on_mobile := _is_mobile()
+	var min_h := 70.0 if on_mobile else 34.0
+	var corner_r := 6 if on_mobile else 4
+	var v_pad := 8.0 if on_mobile else 4.0
+	if button_node.custom_minimum_size.y < min_h:
+		button_node.custom_minimum_size = Vector2(button_node.custom_minimum_size.x, min_h)
+	if on_mobile:
+		button_node.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 
 	var style_box_normal := StyleBoxFlat.new()
 	style_box_normal.bg_color = COLOR_MENU_BUTTON_GREY_BG
-	style_box_normal.corner_radius_top_left = 4
-	style_box_normal.corner_radius_top_right = 4
-	style_box_normal.corner_radius_bottom_left = 4
-	style_box_normal.corner_radius_bottom_right = 4
+	style_box_normal.corner_radius_top_left = corner_r
+	style_box_normal.corner_radius_top_right = corner_r
+	style_box_normal.corner_radius_bottom_left = corner_r
+	style_box_normal.corner_radius_bottom_right = corner_r
 	style_box_normal.border_width_left = 1
 	style_box_normal.border_width_right = 1
 	style_box_normal.border_width_top = 1
@@ -2333,6 +2354,8 @@ func _style_menu_button(button_node: Button) -> void:
 	style_box_normal.border_color = COLOR_BOX_FONT.darkened(0.2)
 	style_box_normal.shadow_size = 4
 	style_box_normal.shadow_color = Color(0,0,0,0.4)
+	style_box_normal.content_margin_top = v_pad
+	style_box_normal.content_margin_bottom = v_pad
 
 	var style_box_hover := style_box_normal.duplicate()
 	style_box_hover.bg_color = COLOR_MENU_BUTTON_GREY_BG.lightened(0.1)
@@ -2351,18 +2374,29 @@ func _initialize_tab_button_styles(button: Button) -> void:
 	if not is_instance_valid(button):
 		return
 
+	var on_mobile := _is_mobile()
+	var tab_corner_r := 5 if on_mobile else 3
+	var tab_v_pad := 10.0 if on_mobile else 4.0
+	if on_mobile:
+		button.custom_minimum_size = Vector2(0.0, 52.0)
+		button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+
 	var style_normal := StyleBoxFlat.new()
 	style_normal.bg_color = COLOR_TAB_INACTIVE_BG
-	style_normal.corner_radius_top_left = 3
-	style_normal.corner_radius_top_right = 3
+	style_normal.corner_radius_top_left = tab_corner_r
+	style_normal.corner_radius_top_right = tab_corner_r
+	style_normal.content_margin_top = tab_v_pad
+	style_normal.content_margin_bottom = tab_v_pad
 
 	var style_hover := style_normal.duplicate() as StyleBoxFlat
 	style_hover.bg_color = COLOR_TAB_INACTIVE_BG.lightened(0.15)
 
 	var style_pressed := StyleBoxFlat.new()
 	style_pressed.bg_color = COLOR_TAB_ACTIVE_BG # This is the "active" color
-	style_pressed.corner_radius_top_left = 3
-	style_pressed.corner_radius_top_right = 3
+	style_pressed.corner_radius_top_left = tab_corner_r
+	style_pressed.corner_radius_top_right = tab_corner_r
+	style_pressed.content_margin_top = tab_v_pad
+	style_pressed.content_margin_bottom = tab_v_pad
 
 	var style_disabled := style_normal.duplicate() as StyleBoxFlat
 	style_disabled.bg_color = COLOR_TAB_INACTIVE_BG.darkened(0.3)
