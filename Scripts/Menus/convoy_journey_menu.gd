@@ -21,7 +21,7 @@ var _top_up_plan: Dictionary = {
 	"planned_list": []
 }
 var _current_settlement_data: Dictionary = {} # Cached for Top Up logic
-var top_up_button: Button = null # Dynamically created
+var top_up_button: Control = null # Dynamically created (can be Button or touch PanelContainer)
 
 # Settlement type emojis (kept in sync with UIManager for consistent affordances)
 const SETTLEMENT_EMOJIS: Dictionary = {
@@ -52,14 +52,14 @@ var _last_requested_destination: Dictionary = {}
 
 # New confirmation panel references (created dynamically)
 var _confirmation_panel: VBoxContainer = null
-var _confirm_button: Button = null
+var _confirm_button: Control = null
 var _change_destination_button: Button = null
 
 # --- Route Cycling and Severity ---
 var _current_route_choice_index: int = 0
 var _route_choices_cache: Array = []
 var _severity_state: String = "none" # none|safety|critical
-var _next_route_button: Button = null
+var _next_route_button: Control = null
 const ALLOW_HYBRID_ENERGY := true # Show battery usage even if vehicle also has internal combustion
 const SHOW_ENERGY_DEBUG := true # Toggle to display raw data snapshot for kWh logic
 
@@ -76,6 +76,9 @@ var _settlement_poll_timer: Timer = null
 @onready var _convoy_service: Node = get_node_or_null("/root/ConvoyService")
 @onready var _api: Node = get_node_or_null("/root/APICalls")
 
+func _is_mobile() -> bool:
+	return OS.has_feature("mobile") or OS.has_feature("web_android") or OS.has_feature("web_ios") or DisplayServer.get_name() in ["Android", "iOS"]
+
 func _log_debug(msg: String, a: Variant = null, b: Variant = null, c: Variant = null) -> void:
 	if is_instance_valid(_logger) and _logger.has_method("debug"):
 		_logger.debug(msg, a, b, c)
@@ -85,6 +88,9 @@ func _ready():
 	if is_instance_valid(back_button):
 		if not back_button.is_connected("pressed", Callable(self, "_on_back_button_pressed")):
 			back_button.pressed.connect(_on_back_button_pressed)
+		if _is_mobile():
+			back_button.custom_minimum_size.y = 60
+			back_button.add_theme_font_size_override("font_size", 22)
 	
 	# Make the title label clickable to return to the convoy overview
 	if is_instance_valid(title_label):
@@ -251,7 +257,7 @@ func _update_ui(convoy: Dictionary) -> void:
 	var eta_headline := Label.new()
 	eta_headline.text = "ETA: %s" % eta_val
 	eta_headline.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	eta_headline.add_theme_font_size_override("font_size", 20)
+	eta_headline.add_theme_font_size_override("font_size", 32 if _is_mobile() else 20)
 	eta_headline.add_theme_color_override("font_color", Color(0.92, 0.97, 1))
 	details_vbox.add_child(eta_headline)
 
@@ -345,29 +351,63 @@ func _update_ui(convoy: Dictionary) -> void:
 
 	# Cancel Journey button (in details mode)
 	if journey_data.has("journey_id"):
-		var cancel_btn := Button.new()
-		cancel_btn.text = "Cancel Journey"
-		cancel_btn.theme_type_variation = "DangerButton"
-		cancel_btn.pressed.connect(func():
-			# Show a blocking overlay while cancellation propagates
-			_show_blocking_overlay("Canceling journey…")
-			var convoy_id_local := str(convoy_data_received.get("convoy_id"))
-			var journey_id_local := str(journey_data.get("journey_id", ""))
-			if journey_id_local.is_empty():
-				printerr("ConvoyJourneyMenu: Cannot cancel; missing journey_id")
-				_hide_blocking_overlay()
-				return
-			if is_instance_valid(_routes) and _routes.has_method("cancel_journey"):
-				print("[ConvoyJourneyMenu] Cancel Journey pressed convoy="+convoy_id_local+" journey="+journey_id_local)
-				_routes.cancel_journey(convoy_id_local, journey_id_local)
-			else:
-				printerr("ConvoyJourneyMenu: RouteService missing cancel_journey method.")
-				_hide_blocking_overlay()
+		var cancel_container = PanelContainer.new()
+		var csb = StyleBoxFlat.new()
+		csb.bg_color = Color(0.4, 0.1, 0.1, 0.9) # Danger red
+		csb.corner_radius_top_left = 6
+		csb.corner_radius_top_right = 6
+		csb.corner_radius_bottom_left = 6
+		csb.corner_radius_bottom_right = 6
+		csb.content_margin_left = 20
+		csb.content_margin_right = 20
+		csb.content_margin_top = 10
+		csb.content_margin_bottom = 10
+		cancel_container.add_theme_stylebox_override("panel", csb)
+		
+		if _is_mobile():
+			cancel_container.custom_minimum_size = Vector2(140, 64)
+		
+		cancel_container.mouse_filter = Control.MOUSE_FILTER_STOP
+		cancel_container.gui_input.connect(func(event):
+			if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
+				if event.pressed:
+					if cancel_container.get_meta("disabled", false): return
+					cancel_container.set_meta("tap_start_pos", event.global_position)
+					csb.bg_color = Color(0.6, 0.2, 0.2, 1.0)
+				else:
+					if cancel_container.get_meta("disabled", false): return
+					csb.bg_color = Color(0.4, 0.1, 0.1, 0.9)
+					var start_pos = cancel_container.get_meta("tap_start_pos", event.global_position)
+					if (event.global_position - start_pos).length() < 10:
+						# Show a blocking overlay while cancellation propagates
+						_show_blocking_overlay("Canceling journey…")
+						var convoy_id_local := str(convoy_data_received.get("convoy_id"))
+						var journey_id_local := str(journey_data.get("journey_id", ""))
+						if journey_id_local.is_empty():
+							printerr("ConvoyJourneyMenu: Cannot cancel; missing journey_id")
+							_hide_blocking_overlay()
+							return
+						if is_instance_valid(_routes) and _routes.has_method("cancel_journey"):
+							print("[ConvoyJourneyMenu] Cancel Journey pressed convoy="+convoy_id_local+" journey="+journey_id_local)
+							_routes.cancel_journey(convoy_id_local, journey_id_local)
+						else:
+							printerr("ConvoyJourneyMenu: RouteService missing cancel_journey method.")
+							_hide_blocking_overlay()
+						get_viewport().set_input_as_handled()
 		)
-		cancel_btn.add_theme_color_override("font_color", Color(1, 0.92, 0.92))
-		details_vbox.add_child(cancel_btn)
+		
+		var c_lbl = Label.new()
+		c_lbl.text = "Cancel Journey"
+		c_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		c_lbl.add_theme_font_size_override("font_size", 26 if _is_mobile() else 14)
+		c_lbl.add_theme_color_override("font_color", Color(1, 0.92, 0.92))
+		cancel_container.add_child(c_lbl)
+		details_vbox.add_child(cancel_container)
 
 func _populate_destination_list():
+	if _is_mobile():
+		content_vbox.add_theme_constant_override("separation", 14)
+
 	# Reset planner loading state for a clean rebuild.
 	_settlement_poll_attempts = 0
 	# Clear potential prior loading state
@@ -630,7 +670,7 @@ func _populate_destination_list():
 	for destination_entry in potential_destinations:
 		var settlement_data = destination_entry.data
 		var distance = destination_entry.distance
-		var dest_button = Button.new()
+		
 		var settlement_name: String = str(settlement_data.get("name", "Unknown"))
 		var emoji := _get_settlement_emoji(settlement_data)
 		var display_name: String = (emoji + " " + settlement_name) if emoji != "" else settlement_name
@@ -638,9 +678,51 @@ func _populate_destination_list():
 		if mission_destinations.has(settlement_name):
 			var cargo_name = mission_destinations[settlement_name]
 			button_text = "[%s] %s" % [cargo_name, button_text]
-		dest_button.text = button_text
-		dest_button.pressed.connect(_on_destination_button_pressed.bind(settlement_data))
-		content_vbox.add_child(dest_button)
+
+		# Create a tap-detecting container for mobile scrolling support
+		var item_container = PanelContainer.new()
+		var sb = StyleBoxFlat.new()
+		sb.bg_color = Color(0.12, 0.14, 0.18, 0.9)
+		sb.corner_radius_top_left = 6
+		sb.corner_radius_top_right = 6
+		sb.corner_radius_bottom_left = 6
+		sb.corner_radius_bottom_right = 6
+		sb.set_border_width_all(1)
+		sb.border_color = Color(0.25, 0.3, 0.38)
+		sb.content_margin_left = 14
+		sb.content_margin_right = 14
+		sb.content_margin_top = 10
+		sb.content_margin_bottom = 10
+		item_container.add_theme_stylebox_override("panel", sb)
+		
+		if _is_mobile():
+			item_container.custom_minimum_size.y = 64
+		
+		item_container.mouse_filter = Control.MOUSE_FILTER_STOP
+		item_container.gui_input.connect(func(event):
+			if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
+				if event.pressed:
+					if item_container.get_meta("disabled", false): return
+					item_container.set_meta("tap_start_pos", event.global_position)
+					sb.bg_color = Color(0.2, 0.25, 0.3, 1.0) # Pressed highlight
+				else:
+					if item_container.get_meta("disabled", false): return
+					sb.bg_color = Color(0.12, 0.14, 0.18, 0.9) # Reset
+					var start_pos = item_container.get_meta("tap_start_pos", event.global_position)
+					var move_dist = (event.global_position - start_pos).length()
+					# If finger moved less than 10px, it's a click
+					if move_dist < 10:
+						_on_destination_button_pressed(settlement_data)
+						get_viewport().set_input_as_handled()
+		)
+
+		var lbl = Label.new()
+		lbl.text = button_text
+		lbl.mouse_filter = Control.MOUSE_FILTER_PASS
+		lbl.add_theme_font_size_override("font_size", 22 if _is_mobile() else 14)
+		item_container.add_child(lbl)
+		
+		content_vbox.add_child(item_container)
 
 	if potential_destinations.is_empty():
 		var at_destination_label = Label.new()
@@ -720,6 +802,23 @@ func _get_settlement_name(_unused_gdm_node, coord_x, coord_y) -> String:
 				var settlement_name := str((s as Dictionary).get("name", "Unknown"))
 				return settlement_name if settlement_name != "" else "Unknown"
 	return "Uncharted Location"
+
+# --- Button Abstraction Helpers (Support both Button and Touch Containers) ---
+
+func _set_btn_text(btn: Control, text: String):
+	if btn is Button:
+		btn.text = text
+	elif btn.has_meta("label"):
+		var lbl = btn.get_meta("label")
+		if lbl is Label:
+			lbl.text = text
+
+func _set_btn_disabled(btn: Control, disabled: bool):
+	if btn is Button:
+		btn.disabled = disabled
+	else:
+		btn.set_meta("disabled", disabled)
+		btn.modulate.a = 0.5 if disabled else 1.0
 
 func _on_title_label_gui_input(event: InputEvent):
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
@@ -1057,13 +1156,13 @@ func _show_confirmation_panel(route_data: Dictionary):
 		child.queue_free()
 	# ---------------- Title & Basic Info ----------------
 	var header_vbox = VBoxContainer.new()
-	header_vbox.add_theme_constant_override("separation", 2)
+	header_vbox.add_theme_constant_override("separation", 14 if _is_mobile() else 2)
 	_confirmation_panel.add_child(header_vbox)
 
 	var title = Label.new()
 	title.text = "Confirm Journey (%d / %d)" % [_current_route_choice_index + 1, max(1, _all_route_choices.size())]
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	title.add_theme_font_size_override("font_size", 22)
+	title.add_theme_font_size_override("font_size", 35 if _is_mobile() else 22)
 	title.add_theme_color_override("font_color", Color(0.9, 0.95, 1.0))
 	header_vbox.add_child(title)
 
@@ -1094,7 +1193,7 @@ func _show_confirmation_panel(route_data: Dictionary):
 	
 	var res_title = Label.new()
 	res_title.text = "Projected Resource Usage"
-	res_title.add_theme_font_size_override("font_size", 16)
+	res_title.add_theme_font_size_override("font_size", 26 if _is_mobile() else 16)
 	res_title.add_theme_color_override("font_color", Color(0.8, 0.85, 0.95))
 	res_header_hbox.add_child(res_title)
 
@@ -1167,7 +1266,7 @@ func _show_confirmation_panel(route_data: Dictionary):
 	for i in range(header_labels.size()):
 		var hl = _create_col_label.call(header_labels[i], (HORIZONTAL_ALIGNMENT_RIGHT if i > 0 else HORIZONTAL_ALIGNMENT_LEFT), col_widths[i])
 		hl.add_theme_color_override("font_color", Color(0.6, 0.7, 0.8))
-		hl.add_theme_font_size_override("font_size", 13)
+		hl.add_theme_font_size_override("font_size", 20 if _is_mobile() else 13)
 		header_hbox.add_child(hl)
 
 	# -- Rows VBox --
@@ -1196,7 +1295,7 @@ func _show_confirmation_panel(route_data: Dictionary):
 		res_list.add_child(row_panel)
 		
 		var row_hbox = HBoxContainer.new()
-		row_hbox.add_theme_constant_override("separation", 16)
+		row_hbox.add_theme_constant_override("separation", 20 if _is_mobile() else 16)
 		row_panel.add_child(row_hbox)
 		
 		var name_text = label
@@ -1233,7 +1332,7 @@ func _show_confirmation_panel(route_data: Dictionary):
 		var text_msg = "Insufficient reserves for journey." if resource_critical else "High consumption on reserves."
 		warn_lbl.text = text_pfx + text_msg
 		warn_lbl.add_theme_color_override("font_color", Color(1, 0.4, 0.4) if resource_critical else Color(1, 0.8, 0.4))
-		warn_lbl.add_theme_font_size_override("font_size", 16)
+		warn_lbl.add_theme_font_size_override("font_size", 26 if _is_mobile() else 16)
 		panel_vbox.add_child(warn_lbl)
 
 	# --- Vehicle Energy ---
@@ -1329,7 +1428,7 @@ func _show_confirmation_panel(route_data: Dictionary):
 		m_header_hbox.add_child(m_icon)
 		var m_title = Label.new()
 		m_title.text = "Delivery Manifest"
-		m_title.add_theme_font_size_override("font_size", 16)
+		m_title.add_theme_font_size_override("font_size", 26 if _is_mobile() else 16)
 		m_title.add_theme_color_override("font_color", Color(0.8, 0.95, 0.85))
 		m_header_hbox.add_child(m_title)
 
@@ -1366,7 +1465,7 @@ func _show_confirmation_panel(route_data: Dictionary):
 		var t_val = Label.new()
 		t_val.text = NumberFormat.format_money(total_earnings)
 		t_val.add_theme_color_override("font_color", Color(0.4, 1.0, 0.4))
-		t_val.add_theme_font_size_override("font_size", 18)
+		t_val.add_theme_font_size_override("font_size", 28 if _is_mobile() else 18)
 		t_row.add_child(t_val)
 		m_vbox.add_child(t_row)
 
@@ -1385,26 +1484,135 @@ func _show_confirmation_panel(route_data: Dictionary):
 	# --- Top Up Integration ---
 	_current_settlement_data = _find_current_settlement()
 	if not _current_settlement_data.is_empty():
-		top_up_button = Button.new()
-		top_up_button.text = "Top Up"
-		if not top_up_button.is_connected("pressed", Callable(self, "_on_top_up_button_pressed")):
-			top_up_button.pressed.connect(_on_top_up_button_pressed)
-		buttons_hbox.add_child(top_up_button)
-		_style_top_up_button()
-		_update_top_up_button()
+		var top_up_container = PanelContainer.new()
+		top_up_container.name = "TopUpContainer"
+		var tsb = StyleBoxFlat.new()
+		tsb.bg_color = Color(0.2, 0.25, 0.3, 0.9)
+		tsb.corner_radius_top_left = 6
+		tsb.corner_radius_top_right = 6
+		tsb.corner_radius_bottom_left = 6
+		tsb.corner_radius_bottom_right = 6
+		tsb.content_margin_left = 20
+		tsb.content_margin_right = 20
+		tsb.content_margin_top = 10
+		tsb.content_margin_bottom = 10
+		top_up_container.add_theme_stylebox_override("panel", tsb)
+		
+		if _is_mobile():
+			top_up_container.custom_minimum_size = Vector2(140, 64)
+		
+		top_up_container.mouse_filter = Control.MOUSE_FILTER_STOP
+		top_up_container.gui_input.connect(func(event):
+			if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
+				if event.pressed:
+					if top_up_container.get_meta("disabled", false): return
+					top_up_container.set_meta("tap_start_pos", event.global_position)
+					tsb.bg_color = Color(0.3, 0.4, 0.5, 1.0)
+				else:
+					if top_up_container.get_meta("disabled", false): return
+					tsb.bg_color = Color(0.2, 0.25, 0.3, 0.9)
+					var start_pos = top_up_container.get_meta("tap_start_pos", event.global_position)
+					if (event.global_position - start_pos).length() < 10:
+						_on_top_up_button_pressed()
+						get_viewport().set_input_as_handled()
+		)
+		
+		var t_lbl = Label.new()
+		t_lbl.text = "Top Up"
+		t_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		t_lbl.add_theme_font_size_override("font_size", 26 if _is_mobile() else 14)
+		top_up_container.add_child(t_lbl)
+		top_up_container.set_meta("label", t_lbl) # Store for text updates
+		buttons_hbox.add_child(top_up_container)
+		
+		# Set as top_up_button for reference (even though it's technically a container now)
+		top_up_button = top_up_container as Control
 	else:
 		top_up_button = null
 	# --------------------------
 	if _route_choices_cache.size() > 1:
-		_next_route_button = Button.new()
-		_next_route_button.text = "Next Route"
-		_next_route_button.pressed.connect(func(): _cycle_route(1))
-		buttons_hbox.add_child(_next_route_button)
-	_confirm_button = Button.new()
-	_confirm_button.text = "Confirm Journey"
-	_confirm_button.theme_type_variation = "SuccessButton"
-	_confirm_button.pressed.connect(_on_confirm_journey_pressed.bind(route_data))
-	buttons_hbox.add_child(_confirm_button)
+		var next_container = PanelContainer.new()
+		var nsb = StyleBoxFlat.new()
+		nsb.bg_color = Color(0.25, 0.25, 0.25, 0.9)
+		nsb.corner_radius_top_left = 6
+		nsb.corner_radius_top_right = 6
+		nsb.corner_radius_bottom_left = 6
+		nsb.corner_radius_bottom_right = 6
+		nsb.content_margin_left = 20
+		nsb.content_margin_right = 20
+		nsb.content_margin_top = 10
+		nsb.content_margin_bottom = 10
+		next_container.add_theme_stylebox_override("panel", nsb)
+		
+		if _is_mobile():
+			next_container.custom_minimum_size = Vector2(140, 64)
+		
+		next_container.mouse_filter = Control.MOUSE_FILTER_STOP
+		next_container.gui_input.connect(func(event):
+			if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
+				if event.pressed:
+					if next_container.get_meta("disabled", false): return
+					next_container.set_meta("tap_start_pos", event.global_position)
+					nsb.bg_color = Color(0.4, 0.4, 0.4, 1.0)
+				else:
+					if next_container.get_meta("disabled", false): return
+					nsb.bg_color = Color(0.25, 0.25, 0.25, 0.9)
+					var start_pos = next_container.get_meta("tap_start_pos", event.global_position)
+					if (event.global_position - start_pos).length() < 10:
+						_cycle_route(1)
+						get_viewport().set_input_as_handled()
+		)
+		
+		var n_lbl = Label.new()
+		n_lbl.text = "Next Route"
+		n_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		n_lbl.add_theme_font_size_override("font_size", 26 if _is_mobile() else 14)
+		next_container.add_child(n_lbl)
+		next_container.set_meta("label", n_lbl) # Store for text updates
+		buttons_hbox.add_child(next_container)
+		
+		_next_route_button = next_container as Control
+
+	var confirm_container = PanelContainer.new()
+	var csb = StyleBoxFlat.new()
+	csb.bg_color = Color(0.1, 0.4, 0.2, 0.9) # Greenish for success
+	csb.corner_radius_top_left = 6
+	csb.corner_radius_top_right = 6
+	csb.corner_radius_bottom_left = 6
+	csb.corner_radius_bottom_right = 6
+	csb.content_margin_left = 20
+	csb.content_margin_right = 20
+	csb.content_margin_top = 10
+	csb.content_margin_bottom = 10
+	confirm_container.add_theme_stylebox_override("panel", csb)
+	
+	if _is_mobile():
+		confirm_container.custom_minimum_size = Vector2(140, 64)
+	
+	confirm_container.mouse_filter = Control.MOUSE_FILTER_STOP
+	confirm_container.gui_input.connect(func(event):
+		if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
+			if event.pressed:
+				if confirm_container.get_meta("disabled", false): return
+				confirm_container.set_meta("tap_start_pos", event.global_position)
+				csb.bg_color = Color(0.2, 0.6, 0.3, 1.0)
+			else:
+				if confirm_container.get_meta("disabled", false): return
+				csb.bg_color = Color(0.1, 0.4, 0.2, 0.9)
+				var start_pos = confirm_container.get_meta("tap_start_pos", event.global_position)
+				if (event.global_position - start_pos).length() < 10:
+					_on_confirm_journey_pressed(route_data)
+					get_viewport().set_input_as_handled()
+	)
+	
+	var c_lbl = Label.new()
+	c_lbl.text = "Confirm Journey"
+	c_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	c_lbl.add_theme_font_size_override("font_size", 26 if _is_mobile() else 14)
+	confirm_container.add_child(c_lbl)
+	confirm_container.set_meta("label", c_lbl) # Store for text updates
+	buttons_hbox.add_child(confirm_container)
+	_confirm_button = confirm_container as Variant
 	_apply_severity_styling()
 	# ---------------- BODY END ----------------
 	_confirmation_panel.visible = true
@@ -1480,31 +1688,35 @@ func _on_journey_canceled(updated_convoy: Dictionary):
 
 func _disable_destination_buttons():
 	for child in content_vbox.get_children():
-		if child is Button and child.text != "Back":
+		if child.has_meta("tap_start_pos"):
+			child.set_meta("disabled", true)
+			child.modulate.a = 0.5
+		elif child is Button:
 			child.disabled = true
-	# Disable all destination buttons during a request
-	for child in content_vbox.get_children():
-		if child is Button:
-			(child as Button).disabled = true
-		elif child is HBoxContainer or child is VBoxContainer:
+		elif child is HBoxContainer or child is VBoxContainer or child is PanelContainer:
 			for sub in child.get_children():
 				if sub is Button:
 					(sub as Button).disabled = true
+				elif sub.has_meta("tap_start_pos"):
+					sub.set_meta("disabled", true)
+					sub.modulate.a = 0.5
 	if is_instance_valid(_next_route_button):
 		_next_route_button.disabled = true
 
 func _enable_destination_buttons():
 	for child in content_vbox.get_children():
+		if child.has_meta("tap_start_pos"):
+			child.set_meta("disabled", false)
+			child.modulate.a = 1.0
 		if child is Button:
 			child.disabled = false
-	# Re-enable destination buttons after request completes
-	for child in content_vbox.get_children():
-		if child is Button:
-			(child as Button).disabled = false
-		elif child is HBoxContainer or child is VBoxContainer:
+		elif child is HBoxContainer or child is VBoxContainer or child is PanelContainer:
 			for sub in child.get_children():
 				if sub is Button:
 					(sub as Button).disabled = false
+				elif sub.has_meta("tap_start_pos"):
+					sub.set_meta("disabled", false)
+					sub.modulate.a = 1.0
 	if is_instance_valid(_next_route_button):
 		_next_route_button.disabled = false
 
@@ -1552,11 +1764,11 @@ func _make_stat_card(title: String, value_text: String, bg_color: Color) -> Pane
 	var cap := Label.new()
 	cap.text = title
 	cap.add_theme_color_override("font_color", Color(0.75,0.84,0.95))
-	cap.add_theme_font_size_override("font_size", 12)
+	cap.add_theme_font_size_override("font_size", 19 if _is_mobile() else 12)
 	vb.add_child(cap)
 	var val := Label.new()
 	val.text = value_text
-	val.add_theme_font_size_override("font_size", 18)
+	val.add_theme_font_size_override("font_size", 28 if _is_mobile() else 18)
 	val.add_theme_color_override("font_color", Color(0.92,0.97,1))
 	vb.add_child(val)
 	return card
@@ -1649,16 +1861,30 @@ func _hide_blocking_overlay():
 func _apply_severity_styling():
 	if not is_instance_valid(_confirm_button):
 		return
+		
+	var btn_text = "Confirm Journey"
+	var style_color_bg = Color(0.1, 0.4, 0.2, 0.9) # Success Green
 	match _severity_state:
 		"critical":
-			_confirm_button.theme_type_variation = "DangerButton"
-			_confirm_button.text = "🛑 Confirm (Critical)"
+			btn_text = "🛑 Confirm (Critical)"
+			style_color_bg = Color(0.6, 0.1, 0.1, 1.0) # Danger Red
 		"safety":
-			_confirm_button.theme_type_variation = "WarningButton"
-			_confirm_button.text = "⚠️ Confirm (Low Reserve)"
-		_:
-			_confirm_button.theme_type_variation = "SuccessButton"
-			_confirm_button.text = "Confirm Journey"
+			btn_text = "⚠️ Confirm (Low Reserve)"
+			style_color_bg = Color(0.8, 0.5, 0.1, 1.0) # Warning Orange
+			
+	if _confirm_button is Button:
+		_confirm_button.text = btn_text
+		match _severity_state:
+			"critical": _confirm_button.theme_type_variation = "DangerButton"
+			"safety": _confirm_button.theme_type_variation = "WarningButton"
+			_: _confirm_button.theme_type_variation = "SuccessButton"
+	elif _confirm_button.has_meta("label"):
+		var lbl = _confirm_button.get_meta("label")
+		if lbl is Label:
+			lbl.text = btn_text
+		var sb = _confirm_button.get_theme_stylebox("panel")
+		if sb is StyleBoxFlat:
+			sb.bg_color = style_color_bg
 
 func _cycle_route(delta: int):
 	if _route_choices_cache.is_empty():
@@ -1675,15 +1901,22 @@ func _cycle_route(delta: int):
 func get_destination_button_rect_by_label_contains(substr: String) -> Rect2:
 	var needle := substr.to_lower()
 	for child in content_vbox.get_children():
-		if child is Button:
-			var txt := String((child as Button).text)
+		if child is Button or child.has_meta("tap_start_pos"):
+			var txt := ""
+			if child is Button:
+				txt = String((child as Button).text)
+			elif child.has_meta("label"):
+				var lbl = child.get_meta("label")
+				if lbl is Label:
+					txt = lbl.text
+			
 			if txt.to_lower().find(needle) != -1:
 				var ctrl := child as Control
 				return ctrl.get_global_rect()
 	return Rect2()
 
 # Expose confirm button node for highlight/gating during confirmation step (modified to allow append)
-func get_confirm_button_node() -> Button:
+func get_confirm_button_node() -> Control:
 	return _confirm_button
 
 # --- Top Up Feature (Cloned from ConvoySettlementMenu) ---
@@ -1718,13 +1951,13 @@ func _update_top_up_button():
 	_current_settlement_data = _find_current_settlement()
 		
 	if _current_settlement_data.is_empty() or not _current_settlement_data.has("vendors"):
-		top_up_button.text = "Top Up (No Vendors)"
-		top_up_button.disabled = true
+		_set_btn_text(top_up_button, "Top Up (No Vendors)")
+		_set_btn_disabled(top_up_button, true)
 		top_up_button.tooltip_text = "No vendors present in this settlement."
 		return
 	if convoy_data_received.is_empty():
-		top_up_button.text = "Top Up (No Convoy)"
-		top_up_button.disabled = true
+		_set_btn_text(top_up_button, "Top Up (No Convoy)")
+		_set_btn_disabled(top_up_button, true)
 		top_up_button.tooltip_text = "Convoy data unavailable."
 		return
 
@@ -1733,8 +1966,8 @@ func _update_top_up_button():
 	var needed_cost = full_plan.get("total_cost", 0.0)
 	
 	if full_plan.get("planned_list", []).is_empty():
-		top_up_button.text = "Top Up (Full)"
-		top_up_button.disabled = true
+		_set_btn_text(top_up_button, "Top Up (Full)")
+		_set_btn_disabled(top_up_button, true)
 		top_up_button.tooltip_text = "Fuel, Water and Food are already at maximum levels."
 		return
 
@@ -1756,17 +1989,17 @@ func _update_top_up_button():
 	
 	# If even partial plan is empty (cannot afford anything), disable
 	if planned_list.is_empty() or total_cost <= 0.0001:
-		top_up_button.text = "Top Up"
-		top_up_button.disabled = true
+		_set_btn_text(top_up_button, "Top Up")
+		_set_btn_disabled(top_up_button, true)
 		top_up_button.tooltip_text = "Insufficient funds to purchase any resources."
 		return
 
 	if is_partial:
-		top_up_button.text = "Top Up (Partial)"
+		_set_btn_text(top_up_button, "Top Up (Partial)")
 	else:
-		top_up_button.text = "Top Up"
+		_set_btn_text(top_up_button, "Top Up")
 	
-	top_up_button.disabled = false 
+	_set_btn_disabled(top_up_button, false) 
 
 	# Build tooltip breakdown (group by resource, showing each vendor line)
 	var breakdown_lines: Array = []
@@ -2067,8 +2300,8 @@ func _on_top_up_button_pressed():
 	
 	# Disable button until refresh
 	if is_instance_valid(top_up_button):
-		top_up_button.disabled = true
-		top_up_button.text = "Top Up (Processing...)"
+		_set_btn_disabled(top_up_button, true)
+		_set_btn_text(top_up_button, "Top Up (Processing...)")
 
 	# Refresh confirmation panel once GameStore delivers updated convoy snapshot.
 	_pending_confirmation_refresh_after_top_up = true
@@ -2104,10 +2337,14 @@ func _style_top_up_button():
 	disabled.border_color = Color(0.20, 0.20, 0.20)
 	disabled.shadow_size = 0
 
-	top_up_button.add_theme_stylebox_override("normal", normal)
-	top_up_button.add_theme_stylebox_override("hover", hover)
-	top_up_button.add_theme_stylebox_override("pressed", pressed)
-	top_up_button.add_theme_stylebox_override("disabled", disabled)
+	if top_up_button is Button:
+		top_up_button.add_theme_stylebox_override("normal", normal)
+		top_up_button.add_theme_stylebox_override("hover", hover)
+		top_up_button.add_theme_stylebox_override("pressed", pressed)
+		top_up_button.add_theme_stylebox_override("disabled", disabled)
+	else:
+		# For custom container, we just use the normal style as the base
+		top_up_button.add_theme_stylebox_override("panel", normal)
 
 	# --- Tooltip Style ---
 	var tooltip_panel = StyleBoxFlat.new()
