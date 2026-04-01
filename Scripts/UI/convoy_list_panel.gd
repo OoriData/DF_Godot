@@ -21,6 +21,9 @@ func _ready():
 	# The popup hides itself when focus is lost. We connect to its signal to update our button.
 	convoy_popup.popup_hide.connect(_on_popup_hide)
 
+	if _is_mobile():
+		_apply_mobile_popup_style()
+
 	# Attempt to connect to MenuManager's signal to auto-close this panel.
 	# Since MenuManager is an Autoload, it's globally available.
 	var menu_manager_node = get_node_or_null("/root/MenuManager")
@@ -60,7 +63,15 @@ func _ready():
 		rtl.fit_content = true
 		# Using full rect so [center] has the button width to work with
 		rtl.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-		rtl.offset_top = 4 # Vertical offset for centering
+		
+		# Mobile Scaling 1.6x
+		if _is_mobile():
+			toggle_button.custom_minimum_size.y = 60
+			rtl.add_theme_font_size_override("normal_font_size", int(16 * 1.6))
+			rtl.offset_top = 12 # Adjust for larger height
+		else:
+			rtl.offset_top = 4 # Vertical offset for centering
+		
 		rtl.autowrap_mode = TextServer.AUTOWRAP_OFF
 		toggle_button.add_child(rtl)
 		toggle_button.text = "" # Use child for display
@@ -81,8 +92,9 @@ func _on_toggle_button_pressed() -> void:
 	if convoy_popup.is_visible():
 		convoy_popup.hide()
 	else:
-		var item_count = max(1, list_item_container.get_child_count()) # Avoid 0
-		var popup_height = clamp(item_count * 30 + 10, 50, 300) # e.g., 30px per item + padding
+		var item_count = max(1, list_item_container.get_child_count())
+		var item_h = 64 if _is_mobile() else 30
+		var popup_height = clamp(item_count * item_h + 20, 80 if _is_mobile() else 50, 500 if _is_mobile() else 300)
 		convoy_popup.size = Vector2(toggle_button.size.x, popup_height)
 
 
@@ -152,7 +164,12 @@ func populate_convoy_list(convoys_data: Array) -> void:
 
 		var item_button = Button.new()
 		item_button.name = "ConvoyButton_%s" % str(convoy_id)
-		item_button.custom_minimum_size = Vector2(0, 32)
+		
+		var is_mobile = _is_mobile()
+		var item_h = 64 if is_mobile else 32
+		var boost = 1.6 if is_mobile else 1.0
+		
+		item_button.custom_minimum_size = Vector2(0, item_h)
 		item_button.clip_contents = true
 		item_button.text = "" # Clear default text
 		
@@ -170,6 +187,8 @@ func populate_convoy_list(convoys_data: Array) -> void:
 		var name_label = Label.new()
 		name_label.text = convoy_name
 		name_label.add_theme_color_override("font_color", Color(1.0, 1.0, 1.0)) # Bright White
+		if is_mobile:
+			name_label.add_theme_font_size_override("font_size", int(16 * boost))
 		hbox.add_child(name_label)
 		
 		var journey: Variant = convoy_item_data.get("journey")
@@ -229,6 +248,25 @@ func _on_convoy_item_pressed(convoy_item_data: Dictionary) -> void:
 
 	# Close the list after an item is selected
 	close_list()
+
+func _is_mobile() -> bool:
+	return OS.has_feature("mobile") or DisplayServer.get_name() in ["Android", "iOS"]
+
+func _apply_mobile_popup_style() -> void:
+	var ledger = StyleBoxFlat.new()
+	ledger.bg_color = Color(0.1, 0.12, 0.15, 0.98) # Dark slate
+	ledger.border_width_left = 2
+	ledger.border_width_right = 2
+	ledger.border_width_top = 2
+	ledger.border_width_bottom = 2
+	ledger.border_color = Color(0.3, 0.35, 0.4, 1.0) # Steel
+	ledger.corner_radius_top_left = 6
+	ledger.corner_radius_top_right = 6
+	ledger.corner_radius_bottom_left = 6
+	ledger.corner_radius_bottom_right = 6
+	convoy_popup.add_theme_stylebox_override("panel", ledger)
+	
+	list_item_container.add_theme_constant_override("separation", 12)
 
 # Add this handler to update the list when convoy data changes
 func _on_convoy_data_updated(all_convoy_data: Array) -> void:

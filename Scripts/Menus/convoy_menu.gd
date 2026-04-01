@@ -40,8 +40,8 @@ const COLOR_ITEM_BUTTON_BG: Color = Color("5a5a5a") # Dark-medium gray for item 
 const COLOR_JOURNEY_PROGRESS_FILL: Color = Color("29b6f6") # Material Light Blue 400
 
 # --- Vendor Item Button Layout ---
-const VENDOR_ITEM_BUTTON_MIN_WIDTH: float = 190.0
-const VENDOR_ITEM_BUTTON_HEIGHT: float = 72.0
+var VENDOR_ITEM_BUTTON_MIN_WIDTH: float = 190.0
+var VENDOR_ITEM_BUTTON_HEIGHT: float = 72.0
 const VENDOR_ITEM_BUTTON_PADDING_X: float = 12.0
 const VENDOR_ITEM_BUTTON_TOP_PADDING: float = 6.0
 const VENDOR_ITEM_BUTTON_BOTTOM_CLEARANCE: float = 6.0
@@ -224,6 +224,10 @@ func _set_latest_settlements_snapshot(settlements: Array) -> void:
 				_vendor_id_to_name[vid] = nm
 
 func _ready():
+	if _is_mobile():
+		VENDOR_ITEM_BUTTON_MIN_WIDTH = 210.0
+		VENDOR_ITEM_BUTTON_HEIGHT = 100.0
+
 	# Resolve optional nodes that might be missing depending on scene variant
 	all_cargo_label = get_node_or_null("MainVBox/ScrollContainer/ContentVBox/AllCargoLabel")
 	if all_cargo_label == null:
@@ -235,8 +239,10 @@ func _ready():
 
 	# --- Layout Tuning: GridContainer Separation ---
 	if is_instance_valid(vendor_item_grid):
-		vendor_item_grid.add_theme_constant_override("h_separation", 8)
-		vendor_item_grid.add_theme_constant_override("v_separation", 10)
+		var sep_h = 12 if _is_mobile() else 8
+		var sep_v = 16 if _is_mobile() else 10
+		vendor_item_grid.add_theme_constant_override("h_separation", sep_h)
+		vendor_item_grid.add_theme_constant_override("v_separation", sep_v)
 
 
 	if has_node("MainVBox/ScrollContainer/ContentVBox/VendorPreviewPanel/VendorPreviewVBox"):
@@ -355,11 +361,20 @@ func _ready():
 			content_style.corner_radius_bottom_right = 4
 			content_panel.add_theme_stylebox_override("panel", content_style)
 
-		# Enforce vertical-only scrolling
+		# Enforce horizontal-only scrolling on mobile, vertical elsewhere
 		var vendor_content_scroll = vendor_preview_panel.get_node_or_null("VendorPreviewVBox/VendorContentPanel/VendorContentScroll")
 		if is_instance_valid(vendor_content_scroll) and vendor_content_scroll is ScrollContainer:
-			vendor_content_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-			vendor_content_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+			if _is_mobile():
+				vendor_content_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+				vendor_content_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+				# Eliminate deadspace by fixing height to accommodate 120px buttons + padding
+				vendor_content_scroll.custom_minimum_size.y = 150.0
+				# Ensure scroll bar is visible optionally or at least doesn't block touch
+				vendor_content_scroll.scroll_deadzone = 10
+			else:
+				vendor_content_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+				vendor_content_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+				vendor_content_scroll.custom_minimum_size.y = 0.0 # Reset for desktop
 
 	# Style the new journey progress bar
 	if is_instance_valid(journey_progress_bar):
@@ -510,6 +525,10 @@ func _update_vendor_grid_columns() -> void:
 	# Make the vendor item grid responsive: choose columns based on available width.
 	if not is_instance_valid(vendor_item_grid):
 		return
+	if _is_mobile():
+		# On mobile we use a horizontal carousel (1 row, infinite columns)
+		return
+	
 	var grid_width := vendor_item_grid.size.x
 	if grid_width <= 0:
 		# Fall back to parent/container width if grid has not sized yet
@@ -1012,6 +1031,8 @@ func _build_vendor_preview_button(item_string: String) -> Button:
 			# keep navigation but expect focus to be best-effort.
 	button.set_meta("nav_intent", nav_intent)
 	button.pressed.connect(_on_vendor_preview_item_button_pressed.bind(button))
+	if _is_mobile():
+		button.mouse_filter = Control.MOUSE_FILTER_PASS # Allow drag events to pass to ScrollContainer
 	_style_vendor_item_button(button, _current_vendor_tab)
 	return button
 
@@ -1080,8 +1101,14 @@ func _render_vendor_preview_display() -> void:
 	else:
 		vendor_item_container.visible = true
 		vendor_no_items_label.visible = false
+		if _is_mobile():
+			vendor_item_grid.columns = content_list.size()
+		var item_count = content_list.size()
 		for item_string in content_list:
 			var button := _build_vendor_preview_button(item_string)
+			if _is_mobile() and item_count == 1:
+				button.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+				button.custom_minimum_size.x = 210.0
 			vendor_item_grid.add_child(button)
 
 	# Ensure font sizes are applied immediately (deferred to stable layout)
@@ -2275,16 +2302,19 @@ func _update_font_sizes() -> void:
 					raw_len = max(raw_len, dest_l.text.length() - 2)
 
 				var effective_font_size = new_font_size + 2 # Default basis
+				if _is_mobile():
+					effective_font_size = int(effective_font_size * 1.4)
+
 				if raw_len > 40:
 					effective_font_size = max(MIN_FONT_SIZE, effective_font_size - 4)
 				elif raw_len > 25:
 					effective_font_size = max(MIN_FONT_SIZE, effective_font_size - 2)
 				elif raw_len < 12:
-					effective_font_size = new_font_size + 4
+					effective_font_size = effective_font_size + 4
 
 				# Keep two centered lines visible inside fixed-height item cards.
 				var has_dest_line := is_instance_valid(dest_l)
-				var max_button_label_size := 19 if has_dest_line else 22
+				var max_button_label_size := 30 if _is_mobile() else (19 if has_dest_line else 22)
 				effective_font_size = clamp(effective_font_size + 1, MIN_FONT_SIZE, max_button_label_size)
 
 				var text_width: float = child.size.x - (VENDOR_ITEM_BUTTON_PADDING_X * 2.0) if child.size.x > 50 else (VENDOR_ITEM_BUTTON_MIN_WIDTH - (VENDOR_ITEM_BUTTON_PADDING_X * 2.0))

@@ -18,23 +18,27 @@ var _plus_btn: Button
 func _ready() -> void:
 	_minus_btn = Button.new()
 	_minus_btn.text = "-"
-	_minus_btn.custom_minimum_size = Vector2(55, 50)
+	var btn_h = 74 if _is_mobile() else 50
+	var btn_w = 74 if _is_mobile() else 55
+	_minus_btn.custom_minimum_size = Vector2(btn_w, btn_h)
 	_minus_btn.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	_apply_btn_style(_minus_btn, Color(0.55, 0.15, 0.15))
 	add_child(_minus_btn)
 	
 	_value_label = LineEdit.new()
 	_value_label.text = str(int(value))
-	_value_label.custom_minimum_size = Vector2(50, 50)
+	_value_label.custom_minimum_size = Vector2(btn_w - 10, btn_h)
 	_value_label.alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_value_label.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	_value_label.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	_value_label.editable = true
+	if _is_mobile():
+		_value_label.add_theme_font_size_override("font_size", 24)
 	add_child(_value_label)
 	
 	_plus_btn = Button.new()
 	_plus_btn.text = "+"
-	_plus_btn.custom_minimum_size = Vector2(55, 50)
+	_plus_btn.custom_minimum_size = Vector2(btn_w, btn_h)
 	_plus_btn.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	_apply_btn_style(_plus_btn, Color(0.15, 0.45, 0.15))
 	add_child(_plus_btn)
@@ -45,7 +49,11 @@ func _ready() -> void:
 	_value_label.focus_exited.connect(_on_focus_exited)
 	
 	alignment = BoxContainer.ALIGNMENT_CENTER
-	add_theme_constant_override("separation", 4)
+	var sep = 10 if _is_mobile() else 4
+	add_theme_constant_override("separation", sep)
+
+func _is_mobile() -> bool:
+	return OS.has_feature("mobile") or OS.has_feature("web_android") or OS.has_feature("web_ios") or DisplayServer.get_name() in ["Android", "iOS"]
 
 func set_value(new_val: float) -> void:
 	value = clampf(new_val, min_value, max_value)

@@ -6,11 +6,13 @@ class_name ResponsiveListAdapter
 ## Add this as a non-visual child to any Container (e.g. VBoxContainer) to make buttons/items taller for touch.
 
 @export var desktop_min_height: float = 0.0 ## If > 0, enforces on desktop too. Useful for testing.
-@export var mobile_min_height: float = 70.0 ## Target minimum height for mobile touch targets.
+@export var mobile_min_height: float = 84.0 ## Target minimum height for mobile touch targets.
 @export var apply_to_children: bool = true ## If true, applies to all children of parent.
 @export var recursive: bool = true ## If true, drills down into sub-containers to find Controls.
 @export var apply_to_parent: bool = false ## If true, applies directly to the parent's minimum size.
 @export var ledger_style: bool = false ## If true, applies a lighter "ledger" background to the node (if it is a container).
+@export var large_text: bool = false ## If true, forces large text boost even on desktop.
+@export var boost: float = 1.6 ## Font scale multiplier when large_text is true or on mobile.
 
 func _ready() -> void:
 	if Engine.is_editor_hint():
@@ -18,7 +20,7 @@ func _ready() -> void:
 		
 	var parent = get_parent()
 	if parent:
-		if _is_mobile() and parent is Container:
+		if (_is_mobile() or large_text) and parent is Container:
 			# Reduce separation on mobile to prevent excessive dead space
 			if parent.has_theme_constant_override("separation"):
 				var current = parent.get_theme_constant("separation")
@@ -116,7 +118,7 @@ func _apply_size_to_node(node: Node, target_h: float) -> void:
 				node.custom_minimum_size.x = max(node.custom_minimum_size.x, 300)
 				node.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	elif node is Control:
-		if _is_mobile():
+		if _is_mobile() or large_text:
 			_apply_large_text(node)
 		
 		# For non-clickable elements (Labels, etc), DON'T enforce large height to avoid dead space
@@ -125,15 +127,19 @@ func _apply_size_to_node(node: Node, target_h: float) -> void:
 			node.custom_minimum_size.y = max(node.custom_minimum_size.y, 40)
 
 func _apply_large_text(node: Control) -> void:
-	var boost = 1.6 # 60% larger for deep readability on mobile
+	var b = boost if (boost > 0.1) else 1.6
 	if node is Label:
 		var fs = node.get_theme_font_size("font_size")
-		node.add_theme_font_size_override("font_size", int(fs * boost))
+		node.add_theme_font_size_override("font_size", int(fs * b))
 	elif node is RichTextLabel:
 		var fs = node.get_theme_font_size("normal_font_size")
-		node.add_theme_font_size_override("normal_font_size", int(fs * boost))
+		node.add_theme_font_size_override("normal_font_size", int(fs * b))
 		if node.theme_override_font_sizes.has("bold_font_size"):
-			node.add_theme_font_size_override("bold_font_size", int(node.get_theme_font_size("bold_font_size") * boost))
+			node.add_theme_font_size_override("bold_font_size", int(node.get_theme_font_size("bold_font_size") * b))
+	elif node is Tree:
+		var fs = node.get_theme_font_size("font_size")
+		node.add_theme_font_size_override("font_size", int(fs * b))
+		node.add_theme_font_size_override("title_button_font_size", int(fs * b))
 
 func _apply_style_to_button(btn: Button) -> void:
 	# Add a subtle background/border to buttons on mobile so they are recognizable touch targets

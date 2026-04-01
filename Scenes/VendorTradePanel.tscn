@@ -75,6 +75,7 @@ hide_root = true
 
 [node name="ResponsiveListAdapter" type="Node" parent="HBoxContainer/LeftPanel/TradeModeTabContainer/Buy"]
 script = ExtResource("3_resp")
+large_text = true
 
 [node name="Sell" type="VBoxContainer" parent="HBoxContainer/LeftPanel/TradeModeTabContainer"]
 name = "Sell"
@@ -93,6 +94,7 @@ hide_root = true
 
 [node name="ResponsiveListAdapter" type="Node" parent="HBoxContainer/LeftPanel/TradeModeTabContainer/Sell"]
 script = ExtResource("3_resp")
+large_text = true
 
 [node name="VSeparator" type="VSeparator" parent="HBoxContainer"]
 layout_mode = 2
@@ -228,6 +230,7 @@ theme_override_constants/separation = 10
 
 [node name="ResponsiveListAdapter" type="Node" parent="HBoxContainer/RightPanel"]
 script = ExtResource("3_resp")
+mobile_min_height = 84.0
 ledger_style = true
 large_text = true
 
@@ -303,11 +306,13 @@ show_percentage = true
 [node name="ActionButton" type="Button" parent="HBoxContainer/RightPanel"]
 unique_name_in_owner = true
 layout_mode = 2
+size_flags_horizontal = 3
 text = "Buy"
 
 [node name="InstallButton" type="Button" parent="HBoxContainer/RightPanel"]
 unique_name_in_owner = true
 layout_mode = 2
+size_flags_horizontal = 3
 text = "Install"
 visible = false
 

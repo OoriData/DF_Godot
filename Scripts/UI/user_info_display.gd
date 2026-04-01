@@ -1,12 +1,12 @@
-extends HBoxContainer
+extends PanelContainer
 
 ## Emitted when a convoy is selected from the dropdown, requesting its menu to be opened.
 @warning_ignore("unused_signal")
 signal convoy_menu_requested(convoy_id: String)
 
-@onready var username_label: Label = $UsernameLabel
-@onready var user_money_label: Label = $UserMoneyLabel
-@onready var settings_button: MenuButton = $SettingsButton
+@onready var username_label: Label = %UsernameLabel
+@onready var user_money_label: Label = %UserMoneyLabel
+@onready var settings_button: MenuButton = %SettingsButton
 var _settings_menu_instance: Window
 var _bug_report_window: BugReportWindow
 var _discord_popup: PopupPanel
@@ -54,7 +54,87 @@ func _ready() -> void:
 
 	# Options dropdown (replaces separate top-row buttons)
 	_configure_options_dropdown()
+	
+	if _is_mobile():
+		_apply_mobile_optimizations()
+	
 	queue_redraw()
+
+func _is_mobile() -> bool:
+	return OS.has_feature("mobile") or DisplayServer.get_name() in ["Android", "iOS"]
+
+func _apply_mobile_optimizations() -> void:
+	# 1. Scaling & Touch Targets
+	custom_minimum_size.y = 70 # Refined for better prominence
+	
+	# 2. Typography 1.6x Boost
+	var boost = 1.6
+	var labels = [username_label, user_money_label]
+	for label in labels:
+		var fs = label.get_theme_font_size("font_size")
+		label.add_theme_font_size_override("font_size", int(fs * boost))
+	
+	# Settings button scaling
+	var btn_fs = settings_button.get_theme_font_size("font_size")
+	settings_button.add_theme_font_size_override("font_size", int(btn_fs * boost))
+	settings_button.custom_minimum_size.y = 50 # Substantial hit area
+	
+	# 3. Layout & Density (14px margins)
+	add_theme_constant_override("separation", 14)
+	
+	# 4. Safe Area Handling (Curved corners and notches)
+	_update_safe_margins()
+	get_viewport().size_changed.connect(_update_safe_margins)
+
+	# 5. Ledger Style for Username Chip
+	var ledger_chip = StyleBoxFlat.new()
+	ledger_chip.bg_color = Color(0.12, 0.15, 0.2, 0.95) # Deep slate
+	ledger_chip.border_width_left = 1
+	ledger_chip.border_width_right = 1
+	ledger_chip.border_width_top = 1
+	ledger_chip.border_width_bottom = 1
+	ledger_chip.border_color = Color(0.4, 0.45, 0.5, 0.8) # Steel border
+	ledger_chip.corner_radius_top_left = 6
+	ledger_chip.corner_radius_top_right = 6
+	ledger_chip.corner_radius_bottom_left = 6
+	ledger_chip.corner_radius_bottom_right = 6
+	ledger_chip.content_margin_left = 12
+	ledger_chip.content_margin_right = 12
+	username_label.add_theme_stylebox_override("normal", ledger_chip)
+
+func _update_safe_margins() -> void:
+	if not _is_mobile():
+		return
+	
+	var safe_area = DisplayServer.get_display_safe_area()
+	var screen_size = DisplayServer.window_get_size() # Use window size for logical coordinates
+	var screen_full = DisplayServer.screen_get_size()
+	
+	# Godot 4.3+ safe_area is in screen pixels. We need logical pixels if content_scale_factor is used.
+	# However, since we're setting theme constants, we use the raw pixel offsets relative to the screen.
+	# Actually, the best way is to let MarginContainer handle it or calculate relative to window.
+	
+	var left_pad = max(32.0, safe_area.position.x)
+	var right_pad = max(32.0, screen_full.x - safe_area.end.x)
+	var top_pad = safe_area.position.y
+	
+	# Update stylebox content margins instead of outer margins
+	# This ensures the background remains full-width while content clears corners
+	var style = get_theme_stylebox("panel").duplicate()
+	if style is StyleBoxFlat:
+		style.bg_color = Color(0.08, 0.1, 0.12, 0.96) # Deep Slate
+		style.border_width_bottom = 1
+		style.border_color = Color(0.3, 0.35, 0.4, 0.8) # Steel border
+		
+		style.content_margin_left = int(left_pad)
+		style.content_margin_right = int(right_pad)
+		style.content_margin_top = int(top_pad)
+		add_theme_stylebox_override("panel", style)
+	
+	# Remove any outer margins set previously to ensure the bar stays full-width
+	remove_theme_constant_override("margin_left")
+	remove_theme_constant_override("margin_right")
+	remove_theme_constant_override("margin_top")
 
 
 
