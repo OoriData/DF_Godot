@@ -77,7 +77,21 @@ func _apply_mobile_optimizations() -> void:
 	# Settings button scaling
 	var btn_fs = settings_button.get_theme_font_size("font_size")
 	settings_button.add_theme_font_size_override("font_size", int(btn_fs * boost))
-	settings_button.custom_minimum_size.y = 50 # Substantial hit area
+	settings_button.custom_minimum_size.y = 64 # Was 50, solid touch target
+	var sb_btn = StyleBoxFlat.new()
+	sb_btn.bg_color = Color(0.12, 0.15, 0.2, 0.95)
+	sb_btn.border_width_left = 1
+	sb_btn.border_width_right = 1
+	sb_btn.border_width_top = 1
+	sb_btn.border_width_bottom = 1
+	sb_btn.border_color = Color(0.4, 0.45, 0.5, 0.8)
+	sb_btn.corner_radius_top_left = 6
+	sb_btn.corner_radius_top_right = 6
+	sb_btn.corner_radius_bottom_left = 6
+	sb_btn.corner_radius_bottom_right = 6
+	sb_btn.content_margin_left = 24
+	sb_btn.content_margin_right = 24
+	settings_button.add_theme_stylebox_override("normal", sb_btn)
 	
 	# 3. Layout & Density (14px margins)
 	add_theme_constant_override("separation", 14)
@@ -223,6 +237,28 @@ func _configure_options_dropdown() -> void:
 
 	if not popup.id_pressed.is_connected(_on_options_menu_id_pressed):
 		popup.id_pressed.connect(_on_options_menu_id_pressed)
+		
+	if _is_mobile():
+		popup.add_theme_font_size_override("font_size", int(14 * 1.6))
+		popup.add_theme_constant_override("v_separation", 16)
+		popup.add_theme_constant_override("item_start_padding", 24)
+		popup.add_theme_constant_override("item_end_padding", 24)
+		var popup_style = StyleBoxFlat.new()
+		popup_style.bg_color = Color(0.12, 0.15, 0.2, 0.98)
+		popup_style.content_margin_left = 24
+		popup_style.content_margin_right = 24
+		popup_style.content_margin_top = 16
+		popup_style.content_margin_bottom = 16
+		popup_style.border_width_left = 1
+		popup_style.border_width_right = 1
+		popup_style.border_width_top = 1
+		popup_style.border_width_bottom = 1
+		popup_style.border_color = Color(0.4, 0.45, 0.5, 0.8)
+		popup_style.corner_radius_top_left = 6
+		popup_style.corner_radius_top_right = 6
+		popup_style.corner_radius_bottom_left = 6
+		popup_style.corner_radius_bottom_right = 6
+		popup.add_theme_stylebox_override("panel", popup_style)
 
 
 func _on_options_menu_id_pressed(id: int) -> void:

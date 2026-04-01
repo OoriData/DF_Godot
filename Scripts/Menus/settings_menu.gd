@@ -32,6 +32,50 @@ func _ready():
 	_init_values()
 	_wire_events()
 	_add_version_label()
+	
+	if _is_mobile():
+		_apply_mobile_optimizations()
+
+func _is_mobile() -> bool:
+	return OS.has_feature("mobile") or DisplayServer.get_name() in ["Android", "iOS"]
+
+func _get_font_size(base: int) -> int:
+	return int(base * 1.6) if _is_mobile() else base
+
+func _apply_mobile_optimizations() -> void:
+	min_size = Vector2i(720, 680)
+	
+	# Scale CheckBoxes and Labels globally within Margin
+	var margin_node = get_node_or_null("Margin/VBox")
+	if is_instance_valid(margin_node):
+		_apply_mobile_recursive(margin_node)
+	
+	# Specifically scale the main action buttons
+	for btn in [btn_close, btn_reset, btn_logout]:
+		if is_instance_valid(btn):
+			btn.custom_minimum_size.y = 64
+			btn.add_theme_font_size_override("font_size", _get_font_size(16))
+
+func _apply_mobile_recursive(node: Node) -> void:
+	if node is CheckBox:
+		node.add_theme_font_size_override("font_size", _get_font_size(14))
+		node.custom_minimum_size.y = 48
+	elif node is Label:
+		node.add_theme_font_size_override("font_size", _get_font_size(16))
+	elif node is HSlider:
+		node.custom_minimum_size.y = 48
+		var slider_style = StyleBoxFlat.new()
+		slider_style.bg_color = Color(0.2, 0.2, 0.2, 1.0)
+		slider_style.content_margin_top = 16
+		slider_style.content_margin_bottom = 16
+		slider_style.corner_radius_top_left = 6
+		slider_style.corner_radius_top_right = 6
+		slider_style.corner_radius_bottom_left = 6
+		slider_style.corner_radius_bottom_right = 6
+		node.add_theme_stylebox_override("slider", slider_style)
+		
+	for child in node.get_children():
+		_apply_mobile_recursive(child)
 
 func _add_version_label():
 	var version = ProjectSettings.get_setting("application/config/version", "0.0.0")
