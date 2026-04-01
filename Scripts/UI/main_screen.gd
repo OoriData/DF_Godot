@@ -13,6 +13,7 @@ var _pending_interactive_state: bool = false
 var _onboarding_layer: Control = null
 var _map_is_interactive: bool = true # New flag to control map input
 var _map_loading_overlay: Control = null
+var ui_manager: Node = null
 
 @onready var menu_container = $MainContainer/MainContent/MapAndMenuContainer/MenuContainer
 @onready var top_bar = $MainContainer/TopBar
@@ -23,10 +24,18 @@ const ERROR_DIALOG_SCENE_PATH := "res://Scenes/ErrorDialog.tscn"
 var _error_dialog_scene: PackedScene
 const AUTO_SELL_RECEIPT_MODAL_SCENE_PATH := "res://Scenes/UI/AutoSellReceiptModal.tscn"
 
-func initialize(p_map_view: Control, p_camera_controller: Node, p_interaction_manager: Node):
+func initialize(p_map_view: Control, p_camera_controller: Node, p_interaction_manager: Node, p_ui_manager: Node = null):
 	self.map_view = p_map_view
 	map_camera_controller = p_camera_controller
 	map_interaction_manager = p_interaction_manager
+	ui_manager = p_ui_manager
+
+	# Connect signals from interaction manager
+	if is_instance_valid(map_interaction_manager):
+		if not map_interaction_manager.is_connected("convoy_menu_requested", Callable(self, "_on_convoy_menu_requested")):
+			map_interaction_manager.convoy_menu_requested.connect(_on_convoy_menu_requested)
+		if map_interaction_manager.has_signal("settlement_clicked") and not map_interaction_manager.is_connected("settlement_clicked", Callable(self, "_on_settlement_clicked")):
+			map_interaction_manager.settlement_clicked.connect(_on_settlement_clicked)
 
 	# Connect to the MapView's specific input signal
 	if is_instance_valid(map_view):
@@ -72,6 +81,10 @@ var _is_panning := false
 var _map_ready_for_focus: bool = false
 var _has_fitted_camera: bool = false
 
+# --- Mobile Touch State ---
+var _touches: Dictionary = {} # index (int) -> global_position (Vector2)
+var _last_pinch_distance: float = 0.0
+
 # --- Options snapshot (from SettingsManager) ---
 var _opt_invert_pan := false
 var _opt_invert_zoom := false
@@ -88,7 +101,7 @@ var _menu_anim_tween: Tween = null
 var _last_focused_convoy_data: Dictionary = {}
 var _current_menu_occlusion_px: float = 0.0 # animated width used to inform camera occlusion
 @export var debug_menu_camera: bool = false # master toggle for menu-camera diagnostic logging
-@export var onboarding_log_enabled: bool = false # gate onboarding-related logs
+@export var onboarding_log_enabled: bool = true # gate onboarding-related logs
 var _menu_anim_in_progress: bool = false # true while menu open/close tween is active to suppress duplicate focus requests
 
 # Coalesce potentially-frequent menu occlusion changes into a single Map UI refresh.
@@ -333,7 +346,59 @@ func _on_map_view_gui_input(event: InputEvent):
 			Input.set_default_cursor_shape(Input.CURSOR_ARROW)
 			return
 
-	# 2. If the event was not consumed by the interaction manager, handle camera movement and menu closing.
+	# 2. Handle Screen Touch Events (Touchscreens)
+	if event is InputEventScreenTouch:
+		if event.pressed:
+			_touches[event.index] = event.position
+		else:
+			if _touches.has(event.index):
+				_touches.erase(event.index)
+			_last_pinch_distance = 0.0 # Reset pinch distance when any finger is lifted
+		
+		# If we have 2 touches, initialize the pinch distance
+		if _touches.size() == 2:
+			var touch_ids = _touches.keys()
+			_last_pinch_distance = _touches[touch_ids[0]].distance_to(_touches[touch_ids[1]])
+		
+		# Prevent mouse emulation from starting a pan if we have multiple touches
+		if _touches.size() > 1:
+			_is_panning = false
+			Input.set_default_cursor_shape(Input.CURSOR_ARROW)
+
+	elif event is InputEventScreenDrag:
+		_touches[event.index] = event.position
+		
+		# Handle Pinch-to-Zoom
+		if _touches.size() == 2:
+			var touch_ids = _touches.keys()
+			var current_dist = _touches[touch_ids[0]].distance_to(_touches[touch_ids[1]])
+			
+			if _last_pinch_distance > 0:
+				var zoom_factor = current_dist / _last_pinch_distance
+				var pinch_center = (_touches[touch_ids[0]] + _touches[touch_ids[1]]) * 0.5
+				
+				# Use global position for center, converted to subviewport screen space
+				var global_center = map_view.get_global_transform() * pinch_center
+				var sub_center = _to_subviewport_screen(global_center)
+				
+				if abs(zoom_factor - 1.0) > 0.0001:
+					map_camera_controller.zoom_at_screen_pos(zoom_factor, sub_center)
+			
+			_last_pinch_distance = current_dist
+			get_viewport().set_input_as_handled()
+			return # Pinch zoom consumes the event
+		
+		# Handle Single-Finger Panning
+		elif _touches.size() == 1:
+			var delta = event.relative
+			if not _opt_invert_pan:
+				delta = -delta
+			if is_instance_valid(map_camera_controller) and map_camera_controller.has_method("pan"):
+				map_camera_controller.pan(delta)
+			get_viewport().set_input_as_handled()
+			return # Pan consumes the event
+
+	# 3. If the event was not consumed by the interaction manager or touch, handle camera movement and menu closing.
 	if event is InputEventMouseButton:
 		if event.button_index == MOUSE_BUTTON_LEFT:
 			if event.pressed:
@@ -348,6 +413,8 @@ func _on_map_view_gui_input(event: InputEvent):
 				get_viewport().set_input_as_handled() # Consume the event
 			else:
 				_is_panning = false
+				_touches.clear() # Clear any touches that might have been tracked via emulation
+				_last_pinch_distance = 0.0
 				Input.set_default_cursor_shape(Input.CURSOR_ARROW)
 				get_viewport().set_input_as_handled() # Consume the event
 		elif event.button_index == MOUSE_BUTTON_WHEEL_UP and event.pressed:
@@ -1166,7 +1233,14 @@ func _apply_menu_ratio_if_open():
 				map_camera_controller.focus_on_convoy(_last_focused_convoy_data)
 
 # Called when the menu asks specifically to focus on a convoy (with data)
-func _on_convoy_menu_focus_requested(convoy_data: Dictionary):
+func _on_settlement_clicked(coords: Vector2i):
+	if onboarding_log_enabled:
+		print("[MainScreen] Settlement clicked at coords:", coords)
+	if is_instance_valid(ui_manager):
+		ui_manager.toggle_settlement_pin(coords)
+		_force_map_ui_refresh()
+
+func _on_convoy_menu_requested(convoy_data: Dictionary):
 	# Ensure layout has settled and camera sees final rect
 	await get_tree().process_frame
 	if not is_instance_valid(map_camera_controller):

@@ -121,6 +121,7 @@ var _current_map_zoom_cache: float = 1.0 # Cache for current map zoom level
 var _current_map_screen_rect_for_clamping: Rect2
 
 var _active_settlement_panels: Dictionary = {} # { "tile_coord_str": PanelNode }
+var _pinned_settlement_coords: Array[Vector2i] = []
 
 # Z-index for label containers within MapContainer, relative to MapDisplay and ConvoyNodes
 const LABEL_CONTAINER_Z_INDEX = 2
@@ -432,6 +433,18 @@ func _clamp_panel_position(panel: Panel): # Original function, now less used but
 	panel.position.x = clamp(panel.position.x, padded_min_x, padded_max_x)
 	panel.position.y = clamp(panel.position.y, padded_min_y, padded_max_y)
 
+func toggle_settlement_pin(coords: Vector2i):
+	print("[UIManager] Toggling settlement pin for: ", coords)
+	if _pinned_settlement_coords.has(coords):
+		print("[UIManager]   Removing pin")
+		_pinned_settlement_coords.erase(coords)
+	else:
+		print("[UIManager]   Adding pin")
+		_pinned_settlement_coords.append(coords)
+
+func clear_all_settlement_pins():
+	_pinned_settlement_coords.clear()
+
 func _draw_interactive_labels(current_hover_info: Dictionary):
 	if is_instance_valid(_dragging_panel_node):
 		pass # Let's assume main.gd already checked this or UIManager will handle it.
@@ -439,6 +452,12 @@ func _draw_interactive_labels(current_hover_info: Dictionary):
 	var all_drawn_label_rects_this_update: Array[Rect2] = [] # This will be used by SettlementLabelManager and ConvoyLabelManager internally or passed to them
 	var convoy_ids_to_display: Array[String] = []
 	var settlement_coords_to_display: Array[Vector2i] = []
+	
+	# Include pinned settlements
+	for pinned_coords in _pinned_settlement_coords:
+		if not settlement_coords_to_display.has(pinned_coords):
+			settlement_coords_to_display.append(pinned_coords)
+
 	# Draw Settlement Labels (for selected convoys' start/end, then hovered settlement)
 	if not _selected_convoy_ids_cache.is_empty():
 		for convoy_data in _all_convoy_data_cache:
