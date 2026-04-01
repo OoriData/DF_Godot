@@ -14,6 +14,7 @@ signal inspect_specific_convoy_cargo_requested(convoy_data, item_data)
 @onready var back_button: Button = $MainVBox/BackButton
 
 @onready var overview_vbox: VBoxContainer = $MainVBox/VehicleTabContainer/Overview/OverviewVBox
+@onready var stats_vbox: VBoxContainer = $MainVBox/VehicleTabContainer/Stats/StatsVBox
 @onready var parts_vbox: VBoxContainer = $MainVBox/VehicleTabContainer/Parts/PartsScroll/PartsVBox
 @onready var cargo_vbox: VBoxContainer = $MainVBox/VehicleTabContainer/Cargo/CargoVBox
 @onready var back_to_mechanic_button: Button = $MainVBox/BackButton # repurpose later if needed
@@ -85,11 +86,20 @@ const PART_CATEGORY_ORDER = [
 const SHOW_PART_INSPECT_RAW_DATA := false
 
 
+func _is_mobile() -> bool:
+	return OS.has_feature("mobile") or OS.has_feature("web_android") or OS.has_feature("web_ios") or DisplayServer.get_name() in ["Android", "iOS"]
+
+func _get_font_size(base: int) -> int:
+	return int(base * 1.6) if _is_mobile() else base
+
 func _ready():
 	# Connect the back button signal
 	if is_instance_valid(back_button):
 		if not back_button.is_connected("pressed", Callable(self, "_on_back_button_pressed")):
 			back_button.pressed.connect(_on_back_button_pressed)
+		if _is_mobile():
+			back_button.custom_minimum_size = Vector2(back_button.custom_minimum_size.x, 60.0)
+			back_button.add_theme_font_size_override("font_size", _get_font_size(16))
 	else:
 		printerr("ConvoyVehicleMenu: CRITICAL - BackButton node NOT found or is not a Button.")
 
@@ -97,6 +107,16 @@ func _ready():
 	if is_instance_valid(vehicle_option_button):
 		if not vehicle_option_button.is_connected("item_selected", Callable(self, "_on_vehicle_selected")):
 			vehicle_option_button.item_selected.connect(_on_vehicle_selected)
+		if _is_mobile():
+			vehicle_option_button.custom_minimum_size = Vector2(240, 60.0)
+			vehicle_option_button.add_theme_font_size_override("font_size", _get_font_size(16))
+			
+			# Scale the dropdown list (PopupMenu)
+			var popup = vehicle_option_button.get_popup()
+			popup.add_theme_font_size_override("font_size", _get_font_size(16))
+			popup.add_theme_constant_override("item_start_padding", 24)
+			popup.add_theme_constant_override("item_end_padding", 24)
+			popup.add_theme_constant_override("v_separation", 12)
 	else:
 		printerr("ConvoyVehicleMenu: CRITICAL - VehicleOptionButton node NOT found.")
 	
@@ -105,13 +125,26 @@ func _ready():
 		title_label.add_theme_color_override("font_color", Color.YELLOW)
 		title_label.mouse_filter = Control.MOUSE_FILTER_STOP # Allow it to receive mouse events
 		title_label.gui_input.connect(_on_title_label_gui_input)
+		if _is_mobile():
+			title_label.add_theme_font_size_override("font_size", _get_font_size(20))
 
 	# Configuration for Service tab
 	if is_instance_valid(mechanics_embed) and mechanics_embed.has_method("set_embedded_mode"):
 		mechanics_embed.set_embedded_mode(true)
 
+	# Mobile: enlarge TabContainer tab strips + MechanicButton
+	if _is_mobile():
+		var tab_container := $MainVBox/VehicleTabContainer if has_node("MainVBox/VehicleTabContainer") else null
+		if is_instance_valid(tab_container) and tab_container is TabContainer:
+			_apply_mobile_tab_styles(tab_container)
+			tab_container.add_theme_font_size_override("font_size", _get_font_size(16))
+		var mechanic_btn := $MainVBox/ActionButtons/MechanicButton if has_node("MainVBox/ActionButtons/MechanicButton") else null
+		if is_instance_valid(mechanic_btn):
+			mechanic_btn.custom_minimum_size = Vector2(mechanic_btn.custom_minimum_size.x, 60.0)
+			mechanic_btn.add_theme_font_size_override("font_size", _get_font_size(16))
+
 	# Check new VBox validity
-	if not is_instance_valid(overview_vbox) or not is_instance_valid(parts_vbox) or not is_instance_valid(cargo_vbox):
+	if not is_instance_valid(overview_vbox) or not is_instance_valid(stats_vbox) or not is_instance_valid(parts_vbox) or not is_instance_valid(cargo_vbox):
 		printerr("ConvoyVehicleMenu: CRITICAL - One or more tab VBox nodes are not valid in _ready()!")
 		return # Stop further initialization
 
@@ -122,12 +155,34 @@ func _ready():
 	if is_instance_valid(_hub) and _hub.has_signal("convoy_updated") and not _hub.convoy_updated.is_connected(_on_hub_convoy_updated):
 		_hub.convoy_updated.connect(_on_hub_convoy_updated)
 
+func _apply_mobile_tab_styles(tc: TabContainer) -> void:
+	for style_name in ["tab_selected", "tab_unselected", "tab_disabled", "tab_hovered"]:
+		var base = tc.get_theme_stylebox(style_name)
+		var style: StyleBoxFlat
+		if base is StyleBoxFlat:
+			style = base.duplicate() as StyleBoxFlat
+		else:
+			style = StyleBoxFlat.new()
+			style.bg_color = Color(0.2, 0.2, 0.2, 1.0) if style_name == "tab_selected" else Color(0.12, 0.12, 0.12, 1.0)
+		style.content_margin_top = 14.0
+		style.content_margin_bottom = 14.0
+		style.content_margin_left = 28.0
+		style.content_margin_right = 28.0
+		style.corner_radius_top_left = 5
+		style.corner_radius_top_right = 5
+		if style_name == "tab_selected":
+			style.border_width_left = 1
+			style.border_width_right = 1
+			style.border_width_top = 1
+			style.border_color = Color(0.45, 0.55, 0.75, 0.9)
+		tc.add_theme_stylebox_override(style_name, style)
+
 func _on_back_button_pressed():
 	print("ConvoyVehicleMenu: Back button pressed. Emitting 'back_requested' signal.")
 	emit_signal("back_requested")
 
 func _clear_all_tabs():
-	var all_vboxes = [overview_vbox, parts_vbox, cargo_vbox]
+	var all_vboxes = [overview_vbox, stats_vbox, parts_vbox, cargo_vbox]
 	for vbox in all_vboxes:
 		if is_instance_valid(vbox):
 			for child in vbox.get_children():
@@ -144,6 +199,7 @@ func _show_initial_detail_message(message: String):
 	prompt_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	prompt_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	prompt_label.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	prompt_label.add_theme_font_size_override("font_size", _get_font_size(16))
 	overview_vbox.add_child(prompt_label)
 
 func initialize_with_data(data_or_id: Variant, extra_arg: Variant = null) -> void:
@@ -318,7 +374,8 @@ func _add_styled_detail_row(parent: Container, label_text: String, value_text: S
 		sb.bg_color = Color(0.13, 0.15, 0.19, 0.8)
 	else:
 		sb.bg_color = Color(0.10, 0.12, 0.16, 0.8)
-	sb.set_content_margin_all(6)
+	var row_margin := 14 if _is_mobile() else 6
+	sb.set_content_margin_all(row_margin)
 	bg_panel.add_theme_stylebox_override("panel", sb)
 	
 	outer_row.add_child(bg_panel)
@@ -332,11 +389,13 @@ func _add_styled_detail_row(parent: Container, label_text: String, value_text: S
 	label_node.text = label_text
 	label_node.custom_minimum_size.x = 120
 	label_node.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	label_node.add_theme_font_size_override("font_size", _get_font_size(16))
 
 	var value_node = Label.new()
 	value_node.text = value_text
 	value_node.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	value_node.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	value_node.add_theme_font_size_override("font_size", _get_font_size(16))
 	if value_autowrap:
 		value_node.autowrap_mode = TextServer.AUTOWRAP_WORD
 	else:
@@ -363,7 +422,8 @@ func _add_inspectable_item_row(parent: Container, item_name: String, agg_data: D
 		sb.bg_color = Color(0.13, 0.15, 0.19, 0.8)
 	else:
 		sb.bg_color = Color(0.10, 0.12, 0.16, 0.8)
-	sb.set_content_margin_all(6)
+	var row_margin := 14 if _is_mobile() else 6
+	sb.set_content_margin_all(row_margin)
 	bg_panel.add_theme_stylebox_override("panel", sb)
 	
 	outer_row.add_child(bg_panel)
@@ -380,6 +440,7 @@ func _add_inspectable_item_row(parent: Container, item_name: String, agg_data: D
 	qty_badge.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	qty_badge.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	qty_badge.modulate = Color(0.8, 0.85, 0.9, 1)
+	qty_badge.add_theme_font_size_override("font_size", _get_font_size(16))
 	content_row.add_child(qty_badge)
 
 	# Item Name
@@ -388,6 +449,7 @@ func _add_inspectable_item_row(parent: Container, item_name: String, agg_data: D
 	name_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	name_label.clip_text = true
 	name_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	name_label.add_theme_font_size_override("font_size", _get_font_size(16))
 	content_row.add_child(name_label)
 
 	# Weight
@@ -397,6 +459,7 @@ func _add_inspectable_item_row(parent: Container, item_name: String, agg_data: D
 	weight_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	weight_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	weight_label.modulate = Color.LIGHT_GRAY
+	weight_label.add_theme_font_size_override("font_size", _get_font_size(12))
 	content_row.add_child(weight_label)
 
 	# Volume
@@ -406,12 +469,14 @@ func _add_inspectable_item_row(parent: Container, item_name: String, agg_data: D
 	volume_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	volume_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	volume_label.modulate = Color.LIGHT_GRAY
+	volume_label.add_theme_font_size_override("font_size", _get_font_size(12))
 	content_row.add_child(volume_label)
 
 	# Inspect Button
 	var inspect_button = Button.new()
 	inspect_button.text = "Inspect"
-	inspect_button.custom_minimum_size.x = 80
+	inspect_button.custom_minimum_size = Vector2(140 if _is_mobile() else 80, 64 if _is_mobile() else 0)
+	inspect_button.add_theme_font_size_override("font_size", _get_font_size(14))
 	inspect_button.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	inspect_button.pressed.connect(_on_inspect_cargo_pressed.bind(item_data))
 	content_row.add_child(inspect_button)
@@ -443,7 +508,8 @@ func _add_inspectable_part_row(parent: Container, part_data: Dictionary, item_in
 		sb.bg_color = Color(0.13, 0.15, 0.19, 0.8)
 	else:
 		sb.bg_color = Color(0.10, 0.12, 0.16, 0.8)
-	sb.set_content_margin_all(6)
+	var row_margin := 14 if _is_mobile() else 6
+	sb.set_content_margin_all(row_margin)
 	bg_panel.add_theme_stylebox_override("panel", sb)
 	
 	outer_row.add_child(bg_panel)
@@ -459,6 +525,7 @@ func _add_inspectable_part_row(parent: Container, part_data: Dictionary, item_in
 	name_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	name_label.clip_text = true
 	name_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	name_label.add_theme_font_size_override("font_size", _get_font_size(16))
 	content_row.add_child(name_label)
 
 	# Part Slot
@@ -468,12 +535,14 @@ func _add_inspectable_part_row(parent: Container, part_data: Dictionary, item_in
 	slot_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	slot_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	slot_label.modulate = Color.LIGHT_GRAY
+	slot_label.add_theme_font_size_override("font_size", _get_font_size(14))
 	content_row.add_child(slot_label)
 
 	# Inspect Button
 	var inspect_button = Button.new()
 	inspect_button.text = "Inspect"
-	inspect_button.custom_minimum_size.x = 80
+	inspect_button.custom_minimum_size = Vector2(140 if _is_mobile() else 80, 64 if _is_mobile() else 0)
+	inspect_button.add_theme_font_size_override("font_size", _get_font_size(14))
 	inspect_button.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	inspect_button.pressed.connect(_on_inspect_part_pressed.bind(part_data))
 	content_row.add_child(inspect_button)
@@ -496,11 +565,13 @@ func _display_vehicle_details(vehicle_data: Dictionary):
 	_clear_all_tabs()
 
 	_populate_overview_tab(vehicle_data)
+	_populate_stats_tab(vehicle_data)
 	_populate_parts_tab(vehicle_data)
 	_populate_cargo_tab(vehicle_data)
 
 	# Ensure layout updates
 	overview_vbox.call_deferred("update_minimum_size")
+	stats_vbox.call_deferred("update_minimum_size")
 	parts_vbox.call_deferred("update_minimum_size")
 	cargo_vbox.call_deferred("update_minimum_size")
 
@@ -510,7 +581,7 @@ func _populate_overview_tab(vehicle_data: Dictionary):
 	# Basic Info Section
 	var basic_info_title = Label.new()
 	basic_info_title.text = "Basic Information:"
-	basic_info_title.add_theme_font_size_override("font_size", 18)
+	basic_info_title.add_theme_font_size_override("font_size", _get_font_size(18))
 	basic_info_title.add_theme_color_override("font_color", Color.YELLOW)
 	overview_vbox.add_child(basic_info_title)
 
@@ -561,12 +632,8 @@ func _populate_overview_tab(vehicle_data: Dictionary):
 		_add_styled_detail_row(overview_vbox, detail.label, val_str, visible_row_index, detail.wrap)
 		visible_row_index += 1
 
-	# Stats Section
-	var stats_title = Label.new()
-	stats_title.text = "Statistics:"
-	stats_title.add_theme_font_size_override("font_size", 18) # Make title slightly larger
-	stats_title.add_theme_color_override("font_color", Color.YELLOW) # Highlight title
-	overview_vbox.add_child(stats_title)
+func _populate_stats_tab(vehicle_data: Dictionary):
+	if not is_instance_valid(stats_vbox): return
 
 	var stats = [
 		{"label": "Top Speed:", "value": "%.0f" % vehicle_data.get("top_speed", 0.0), "type": "top_speed"},
@@ -577,16 +644,82 @@ func _populate_overview_tab(vehicle_data: Dictionary):
 		{"label": "Passenger Seats:", "value": "%d" % vehicle_data.get("passenger_seats", 0), "type": "passenger_seats"}
 	]
 	
-	visible_row_index = 0 # Reset for stats section if desired, or continue. I'll reset for section consistency.
-	for i in range(stats.size()):
-		var stat = stats[i]
-		# For stats, we usually want to see 0s, but if they are essentially empty/missing, we might skip.
-		# However, stats were not explicitly mentioned as needing to be hidden if 0, 
-		# but the user said "We shouldnt include any fields that are empty."
-		# I'll keep stats for now unless they are explicitly N/A or something.
-		_add_stat_row_with_button(overview_vbox, stat.label, stat.value, stat.type, vehicle_data, visible_row_index)
-		visible_row_index += 1
+	# --- 2-column stat card grid is now the default for all platforms ---
+	var grid := GridContainer.new()
+	grid.columns = 2
+	grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	grid.add_theme_constant_override("h_separation", 10)
+	grid.add_theme_constant_override("v_separation", 10)
+	stats_vbox.add_child(grid)
+	
+	for stat in stats:
+		_build_stat_card(grid, stat.label, stat.value, stat.type, vehicle_data)
 
+
+## Stat card helper for grid layout ##
+func _build_stat_card(parent: Container, label_text: String, value_text: String, stat_type: String, vehicle_data: Dictionary) -> void:
+	var card := PanelContainer.new()
+	card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+
+	var card_style := StyleBoxFlat.new()
+	card_style.bg_color = Color(0.13, 0.16, 0.22, 0.9)
+	card_style.border_width_left = 1
+	card_style.border_width_right = 1
+	card_style.border_width_top = 1
+	card_style.border_width_bottom = 1
+	card_style.border_color = Color(0.30, 0.38, 0.55, 0.85)
+	card_style.corner_radius_top_left = 6
+	card_style.corner_radius_top_right = 6
+	card_style.corner_radius_bottom_left = 6
+	card_style.corner_radius_bottom_right = 6
+	card_style.content_margin_left = 8
+	card_style.content_margin_right = 8
+	card_style.content_margin_top = 8
+	card_style.content_margin_bottom = 8
+	card.add_theme_stylebox_override("panel", card_style)
+
+	var vbox := VBoxContainer.new()
+	vbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	vbox.add_theme_constant_override("separation", 4)
+	card.add_child(vbox)
+
+	# Stat label (e.g. "Top Speed:")
+	var lbl := Label.new()
+	lbl.text = label_text
+	lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	lbl.add_theme_color_override("font_color", Color(0.75, 0.82, 0.95, 1.0))
+	lbl.add_theme_font_size_override("font_size", _get_font_size(14))
+	vbox.add_child(lbl)
+
+	# Value button — tappable to open breakdown
+	var btn := Button.new()
+	btn.text = value_text
+	btn.custom_minimum_size = Vector2(0, 64 if _is_mobile() else 52)
+	btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	btn.add_theme_font_size_override("font_size", _get_font_size(22))
+	var btn_style := StyleBoxFlat.new()
+	btn_style.bg_color = Color(0.18, 0.22, 0.32, 0.95)
+	btn_style.border_width_left = 1
+	btn_style.border_width_right = 1
+	btn_style.border_width_top = 1
+	btn_style.border_width_bottom = 1
+	btn_style.border_color = Color(0.35, 0.48, 0.72, 0.9)
+	btn_style.corner_radius_top_left = 5
+	btn_style.corner_radius_top_right = 5
+	btn_style.corner_radius_bottom_left = 5
+	btn_style.corner_radius_bottom_right = 5
+	var btn_hover := btn_style.duplicate() as StyleBoxFlat
+	btn_hover.bg_color = Color(0.22, 0.28, 0.42, 1.0)
+	btn_hover.border_color = Color(0.55, 0.68, 0.92, 1.0)
+	var btn_pressed := btn_style.duplicate() as StyleBoxFlat
+	btn_pressed.bg_color = Color(0.12, 0.16, 0.26, 1.0)
+	btn.add_theme_stylebox_override("normal", btn_style)
+	btn.add_theme_stylebox_override("hover", btn_hover)
+	btn.add_theme_stylebox_override("pressed", btn_pressed)
+	btn.pressed.connect(_on_inspect_stat_pressed.bind(stat_type, vehicle_data))
+	vbox.add_child(btn)
+
+	parent.add_child(card)
 
 func _populate_parts_tab(vehicle_data: Dictionary):
 	if not is_instance_valid(parts_vbox): return
@@ -630,7 +763,7 @@ func _populate_parts_tab(vehicle_data: Dictionary):
 			var category_label = Label.new()
 			category_label.text = category_name + ":"
 			# Make category headers more prominent and match menu accent color
-			category_label.add_theme_font_size_override("font_size", 16)
+			category_label.add_theme_font_size_override("font_size", _get_font_size(16))
 			category_label.add_theme_color_override("font_color", Color.YELLOW)
 			parts_vbox.add_child(category_label)
 
@@ -661,12 +794,14 @@ func _populate_cargo_tab(vehicle_data: Dictionary):
 	qty_header.custom_minimum_size.x = 40
 	qty_header.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	qty_header.modulate = Color.LIGHT_GRAY
+	qty_header.add_theme_font_size_override("font_size", _get_font_size(12))
 	header_hbox.add_child(qty_header)
 	
 	var name_header = Label.new()
 	name_header.text = "Item Name"
 	name_header.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	name_header.modulate = Color.LIGHT_GRAY
+	name_header.add_theme_font_size_override("font_size", _get_font_size(12))
 	header_hbox.add_child(name_header)
 	
 	var weight_header = Label.new()
@@ -674,6 +809,7 @@ func _populate_cargo_tab(vehicle_data: Dictionary):
 	weight_header.custom_minimum_size.x = 70
 	weight_header.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	weight_header.modulate = Color.LIGHT_GRAY
+	weight_header.add_theme_font_size_override("font_size", _get_font_size(12))
 	header_hbox.add_child(weight_header)
 	
 	var volume_header = Label.new()
@@ -681,6 +817,7 @@ func _populate_cargo_tab(vehicle_data: Dictionary):
 	volume_header.custom_minimum_size.x = 70
 	volume_header.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	volume_header.modulate = Color.LIGHT_GRAY
+	volume_header.add_theme_font_size_override("font_size", _get_font_size(12))
 	header_hbox.add_child(volume_header)
 	
 	var inspect_header_placeholder = Control.new() # Placeholder to align with button
@@ -757,7 +894,8 @@ func _populate_cargo_tab(vehicle_data: Dictionary):
 
 	var full_manifest_button = Button.new()
 	full_manifest_button.text = "View Full Convoy Cargo Manifest"
-	full_manifest_button.custom_minimum_size.y = 40 # Make it a decent size
+	full_manifest_button.custom_minimum_size.y = 60 if _is_mobile() else 40
+	full_manifest_button.add_theme_font_size_override("font_size", _get_font_size(16))
 	full_manifest_button.pressed.connect(_on_inspect_all_cargo_pressed)
 	cargo_vbox.add_child(full_manifest_button)
 
@@ -775,7 +913,8 @@ func _add_stat_row_with_button(parent: Container, label_text: String, stat_value
 		sb.bg_color = Color(0.13, 0.15, 0.19, 0.8)
 	else:
 		sb.bg_color = Color(0.10, 0.12, 0.16, 0.8)
-	sb.set_content_margin_all(6)
+	var row_margin := 14 if _is_mobile() else 6
+	sb.set_content_margin_all(row_margin)
 	bg_panel.add_theme_stylebox_override("panel", sb)
 	
 	outer_row.add_child(bg_panel)
@@ -790,11 +929,13 @@ func _add_stat_row_with_button(parent: Container, label_text: String, stat_value
 	label_node.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	label_node.clip_text = true
 	label_node.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	label_node.add_theme_font_size_override("font_size", _get_font_size(16))
 	content_row.add_child(label_node)
 
 	var inspect_button = Button.new()
 	inspect_button.text = stat_value_display
-	inspect_button.custom_minimum_size.x = 80
+	inspect_button.custom_minimum_size = Vector2(140 if _is_mobile() else 80, 64 if _is_mobile() else 0)
+	inspect_button.add_theme_font_size_override("font_size", _get_font_size(14))
 	inspect_button.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	inspect_button.pressed.connect(_on_inspect_stat_pressed.bind(stat_type, vehicle_data))
 	content_row.add_child(inspect_button)
@@ -845,6 +986,7 @@ func _on_inspect_stat_pressed(stat_type: String, vehicle_data: Dictionary):
 			seats_label.text = "Passenger Seats: %d\n\nNote: Passenger seats are typically a base property of the vehicle and not modified by individual parts in an additive manner." % final_stat_value
 			seats_label.autowrap_mode = TextServer.AUTOWRAP_WORD
 			seats_label.add_theme_color_override("font_color", Color.LIGHT_GRAY)
+			seats_label.add_theme_font_size_override("font_size", _get_font_size(14))
 			dialog_vbox.add_child(seats_label)
 			get_tree().root.add_child(dialog)
 			dialog.popup_centered_ratio(0.75)
@@ -881,17 +1023,19 @@ func _on_inspect_stat_pressed(stat_type: String, vehicle_data: Dictionary):
 	if not modifiers_list.is_empty():
 		var modifiers_label = Label.new()
 		modifiers_label.text = "\nModifiers from Parts:"
-		modifiers_label.add_theme_font_size_override("font_size", 16)
+		modifiers_label.add_theme_font_size_override("font_size", _get_font_size(16))
 		modifiers_label.add_theme_color_override("font_color", Color.CYAN)
 		dialog_vbox.add_child(modifiers_label)
 
 		for mod_info in modifiers_list:
 			var part_name_label = Label.new()
 			part_name_label.text = "  %s: %+.1f" % [mod_info.part_name, mod_info.modifier]
+			part_name_label.add_theme_font_size_override("font_size", _get_font_size(14))
 			dialog_vbox.add_child(part_name_label)
 	else:
 		var no_mods_label = Label.new()
 		no_mods_label.text = "\nNo part modifiers found for this stat."
+		no_mods_label.add_theme_font_size_override("font_size", _get_font_size(14))
 		dialog_vbox.add_child(no_mods_label)
 
 	get_tree().root.add_child(dialog)
@@ -971,7 +1115,8 @@ func _on_inspect_part_pressed(part_data: Dictionary):
 		if convoy_id_local != "" and vehicle_id != "" and part_id != "":
 			var remove_btn := Button.new()
 			remove_btn.text = "Remove"
-			remove_btn.custom_minimum_size.y = 36
+			remove_btn.custom_minimum_size.y = 60 if _is_mobile() else 36
+			remove_btn.add_theme_font_size_override("font_size", _get_font_size(16))
 			remove_btn.add_theme_color_override("font_color", Color(1,0.4,0.4))
 			remove_btn.pressed.connect(func():
 				if is_instance_valid(_mechanics_service) and _mechanics_service.has_method("detach_part"):
@@ -1025,7 +1170,7 @@ func _populate_part_details_dialog(parent_vbox: VBoxContainer, part_data: Dictio
 	# Header
 	var header := Label.new()
 	header.text = String(part_data.get("name", "Component Details"))
-	header.add_theme_font_size_override("font_size", 18)
+	header.add_theme_font_size_override("font_size", _get_font_size(18))
 	header.add_theme_color_override("font_color", Color(1.0, 0.85, 0.35, 1.0))
 	content.add_child(header)
 
@@ -1034,6 +1179,7 @@ func _populate_part_details_dialog(parent_vbox: VBoxContainer, part_data: Dictio
 		var slot_lbl := Label.new()
 		slot_lbl.text = slot_text
 		slot_lbl.add_theme_color_override("font_color", Color(0.86, 0.92, 1.0, 0.95))
+		slot_lbl.add_theme_font_size_override("font_size", _get_font_size(14))
 		content.add_child(slot_lbl)
 
 	# Details panel
@@ -1155,7 +1301,7 @@ func _make_inspect_panel(title: String, rows: Array) -> PanelContainer:
 
 	var hdr := Label.new()
 	hdr.text = title
-	hdr.add_theme_font_size_override("font_size", 16)
+	hdr.add_theme_font_size_override("font_size", _get_font_size(16))
 	hdr.add_theme_color_override("font_color", Color.YELLOW)
 	vb.add_child(hdr)
 
@@ -1204,6 +1350,7 @@ func _add_kv_row(parent: Container, key_text: String, value_text: String, row_in
 	key_label.custom_minimum_size.x = 140
 	key_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	key_label.add_theme_color_override("font_color", Color(0.75, 0.85, 1.0, 0.95))
+	key_label.add_theme_font_size_override("font_size", _get_font_size(14))
 	content_row.add_child(key_label)
 
 	var value_label := Label.new()
@@ -1212,6 +1359,7 @@ func _add_kv_row(parent: Container, key_text: String, value_text: String, row_in
 	value_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	value_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	value_label.add_theme_color_override("font_color", Color(0.92, 0.94, 1.0, 1.0))
+	value_label.add_theme_font_size_override("font_size", _get_font_size(14))
 	content_row.add_child(value_label)
 
 	parent.add_child(outer_row)
@@ -1315,12 +1463,14 @@ func _add_grid_row(grid: GridContainer, key: String, value):
 	key_label.text = key + ":"
 	key_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	key_label.add_theme_color_override("font_color", Color.LIGHT_BLUE)
+	key_label.add_theme_font_size_override("font_size", _get_font_size(14))
 	grid.add_child(key_label)
 
 	var value_label = Label.new()
 	value_label.text = str(value)
 	value_label.autowrap_mode = TextServer.AUTOWRAP_WORD
 	value_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	value_label.add_theme_font_size_override("font_size", _get_font_size(14))
 	grid.add_child(value_label)
 
 func _on_title_label_gui_input(event: InputEvent):

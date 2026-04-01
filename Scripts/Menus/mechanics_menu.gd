@@ -39,6 +39,12 @@ var _last_vendor_payload_sig: String = ""
 var _awaiting_swap_completion: bool = false
 @export var debug_part_compat_ui: bool = true
 
+func _is_mobile() -> bool:
+	return OS.has_feature("mobile") or OS.has_feature("web_android") or OS.has_feature("web_ios") or DisplayServer.get_name() in ["Android", "iOS"]
+
+func _get_font_size(base: int) -> int:
+	return int(base * 1.6) if _is_mobile() else base
+
 func _looks_like_uuid(s: String) -> bool:
 	# Very small heuristic to recognize UUIDs without regex.
 	return s.length() == 36 and s.count("-") == 4
@@ -497,7 +503,8 @@ func _create_styled_part_row(part: Dictionary, slot_name: String, item_index: in
 		sb.bg_color = Color(0.13, 0.15, 0.19, 0.8)
 	else:
 		sb.bg_color = Color(0.10, 0.12, 0.16, 0.8)
-	sb.set_content_margin_all(6)
+	var row_margin := 12 if _is_mobile() else 6
+	sb.set_content_margin_all(row_margin)
 	bg_panel.add_theme_stylebox_override("panel", sb)
 	
 	outer_row.add_child(bg_panel)
@@ -513,12 +520,15 @@ func _create_styled_part_row(part: Dictionary, slot_name: String, item_index: in
 	name_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	name_label.clip_text = true
 	name_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	name_label.add_theme_font_size_override("font_size", _get_font_size(16))
 	content_row.add_child(name_label)
 
 	var change_btn = Button.new()
 	change_btn.name = "SwapButton"
 	change_btn.text = "Swap…"
-	change_btn.custom_minimum_size.x = 80
+	change_btn.custom_minimum_size = Vector2(140 if _is_mobile() else 80, 64 if _is_mobile() else 0)
+	if _is_mobile():
+		change_btn.add_theme_font_size_override("font_size", _get_font_size(14))
 	change_btn.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	_style_swap_button(change_btn, slot_name)
 	change_btn.pressed.connect(_on_swap_part_pressed.bind(slot_name, part))
@@ -611,6 +621,41 @@ func _ready():
 
 	# Ensure MenuBase hooks are installed.
 	super._ready()
+	
+	if _is_mobile():
+		if is_instance_valid(apply_button):
+			apply_button.custom_minimum_size.y = 60
+			apply_button.add_theme_font_size_override("font_size", _get_font_size(16))
+		if is_instance_valid(back_button):
+			back_button.custom_minimum_size.y = 60
+			back_button.add_theme_font_size_override("font_size", _get_font_size(16))
+		if is_instance_valid(vendor_hint_label):
+			vendor_hint_label.add_theme_font_size_override("font_size", _get_font_size(12))
+		if is_instance_valid(tab_container):
+			_apply_mechanics_mobile_tab_styles(tab_container)
+			tab_container.add_theme_font_size_override("font_size", _get_font_size(16))
+
+func _apply_mechanics_mobile_tab_styles(tc: TabContainer) -> void:
+	for style_name in ["tab_selected", "tab_unselected", "tab_disabled", "tab_hovered"]:
+		var base = tc.get_theme_stylebox(style_name)
+		var style: StyleBoxFlat
+		if base is StyleBoxFlat:
+			style = base.duplicate() as StyleBoxFlat
+		else:
+			style = StyleBoxFlat.new()
+			style.bg_color = Color(0.2, 0.2, 0.2, 1.0) if style_name == "tab_selected" else Color(0.12, 0.12, 0.12, 1.0)
+		style.content_margin_top = 14.0
+		style.content_margin_bottom = 14.0
+		style.content_margin_left = 28.0
+		style.content_margin_right = 28.0
+		style.corner_radius_top_left = 5
+		style.corner_radius_top_right = 5
+		if style_name == "tab_selected":
+			style.border_width_left = 1
+			style.border_width_right = 1
+			style.border_width_top = 1
+			style.border_color = Color(0.45, 0.55, 0.75, 0.9)
+		tc.add_theme_stylebox_override(style_name, style)
 
 func _rename_pending_tab_to_cart() -> void:
 	if not is_instance_valid(tab_container) or not is_instance_valid(pending_scroll):
@@ -1268,7 +1313,8 @@ func _rebuild_pending_tab():
 				sb.bg_color = Color(0.13, 0.15, 0.19, 0.8)
 			else:
 				sb.bg_color = Color(0.10, 0.12, 0.16, 0.8)
-			sb.set_content_margin_all(8)
+			var row_margin := 14 if _is_mobile() else 8
+			sb.set_content_margin_all(row_margin)
 			panel.add_theme_stylebox_override("panel", sb)
 
 			# Hover effect
@@ -1289,7 +1335,7 @@ func _rebuild_pending_tab():
 
 			var left_vb = VBoxContainer.new()
 			left_vb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-			left_vb.add_theme_constant_override("separation", 2)
+			left_vb.add_theme_constant_override("separation", 2 if not _is_mobile() else 6)
 			row_hb.add_child(left_vb)
 
 			var title_lbl = Label.new()
@@ -1297,7 +1343,7 @@ func _rebuild_pending_tab():
 			var to_n = String(e.get("to_name", "New"))
 			var slot_title = String(e.get("slot","slot")).capitalize()
 			title_lbl.text = "%s: %s → %s" % [slot_title, from_n, to_n]
-			title_lbl.add_theme_font_size_override("font_size", 14)
+			title_lbl.add_theme_font_size_override("font_size", _get_font_size(14))
 			title_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD
 			left_vb.add_child(title_lbl)
 
@@ -1308,6 +1354,7 @@ func _rebuild_pending_tab():
 			if sref_any is Dictionary:
 				src_str = String((sref_any as Dictionary).get("source", ""))
 			src_lbl.text = "Source: %s" % ("Vendor" if src_str == "vendor" else "Inventory")
+			src_lbl.add_theme_font_size_override("font_size", _get_font_size(12))
 			if src_str == "vendor":
 				src_lbl.add_theme_color_override("font_color", Color(0.75, 1.0, 0.75))
 			else:
@@ -1328,6 +1375,7 @@ func _rebuild_pending_tab():
 				# Inventory: only installation cost
 				costs_lbl.text = "Installation " + NumberFormat.format_money(install_cost)
 			costs_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD
+			costs_lbl.add_theme_font_size_override("font_size", _get_font_size(12))
 			left_vb.add_child(costs_lbl)
 
 			# Value line: clearly separated
@@ -1339,6 +1387,7 @@ func _rebuild_pending_tab():
 				value_text += " (removable)"
 			value_lbl.text = value_text
 			value_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD
+			value_lbl.add_theme_font_size_override("font_size", _get_font_size(12))
 			left_vb.add_child(value_lbl)
 
 			# Optional stat deltas
@@ -1361,7 +1410,8 @@ func _rebuild_pending_tab():
 
 			var remove_btn = Button.new()
 			remove_btn.text = "Remove"
-			remove_btn.custom_minimum_size = Vector2(100, 28)
+			remove_btn.custom_minimum_size = Vector2(120 if _is_mobile() else 100, 64 if _is_mobile() else 28)
+			remove_btn.add_theme_font_size_override("font_size", _get_font_size(14))
 			remove_btn.size_flags_horizontal = Control.SIZE_SHRINK_END
 			remove_btn.pressed.connect(func():
 				_pending_swaps.erase(swap_ref_local)
@@ -1379,23 +1429,23 @@ func _rebuild_pending_tab():
 	if grand_parts_cost > 0.0:
 		var parts_label = Label.new()
 		parts_label.text = "Parts cost: " + NumberFormat.format_money(grand_parts_cost)
-		parts_label.add_theme_font_size_override("font_size", 16)
+		parts_label.add_theme_font_size_override("font_size", _get_font_size(16))
 		pending_vbox.add_child(parts_label)
 
 		var install_label = Label.new()
 		install_label.text = "Installation: " + NumberFormat.format_money(grand_install_cost)
-		install_label.add_theme_font_size_override("font_size", 16)
+		install_label.add_theme_font_size_override("font_size", _get_font_size(16))
 		pending_vbox.add_child(install_label)
 
 		var total_label = Label.new()
 		var grand_total := grand_parts_cost + grand_install_cost
 		total_label.text = "Total: " + NumberFormat.format_money(grand_total)
-		total_label.add_theme_font_size_override("font_size", 16)
+		total_label.add_theme_font_size_override("font_size", _get_font_size(18))
 		pending_vbox.add_child(total_label)
 	else:
 		var install_label = Label.new()
 		install_label.text = "Installation: " + NumberFormat.format_money(grand_install_cost)
-		install_label.add_theme_font_size_override("font_size", 16)
+		install_label.add_theme_font_size_override("font_size", _get_font_size(16))
 		pending_vbox.add_child(install_label)
 	_refresh_apply_state()
 
