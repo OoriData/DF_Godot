@@ -87,6 +87,10 @@ func _apply_size_to_node(node: Node, target_h: float) -> void:
 						style.border_width_right = 1
 						style.border_width_top = 1
 						style.border_color = Color(0.5, 0.5, 0.5, 1.0)
+						# Make tabs wider on mobile
+						style.content_margin_left = max(style.content_margin_left, 24.0)
+						style.content_margin_right = max(style.content_margin_right, 24.0)
+						
 						if style_name == "tab_selected":
 							style.bg_color = Color(0.25, 0.25, 0.25, 1.0)
 						else:
