@@ -225,7 +225,7 @@ func _set_latest_settlements_snapshot(settlements: Array) -> void:
 
 func _ready():
 	if _is_mobile():
-		VENDOR_ITEM_BUTTON_MIN_WIDTH = 210.0
+		VENDOR_ITEM_BUTTON_MIN_WIDTH = 240.0
 		VENDOR_ITEM_BUTTON_HEIGHT = 100.0
 
 	# Resolve optional nodes that might be missing depending on scene variant
@@ -367,14 +367,14 @@ func _ready():
 			if _is_mobile():
 				vendor_content_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
 				vendor_content_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-				# Eliminate deadspace by fixing height to accommodate 120px buttons + padding
-				vendor_content_scroll.custom_minimum_size.y = 150.0
+				# Eliminate deadspace by fixing height to accommodate two 100px buttons + padding
+				vendor_content_scroll.custom_minimum_size.y = 230.0
 				# Ensure scroll bar is visible optionally or at least doesn't block touch
 				vendor_content_scroll.scroll_deadzone = 10
 			else:
-				vendor_content_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-				vendor_content_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
-				vendor_content_scroll.custom_minimum_size.y = 0.0 # Reset for desktop
+				vendor_content_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+				vendor_content_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+				vendor_content_scroll.custom_minimum_size.y = 120.0 # Reset for desktop, but fix height for horiz scroll
 
 	# Style the new journey progress bar
 	if is_instance_valid(journey_progress_bar):
@@ -1001,13 +1001,15 @@ func _build_vendor_preview_button(item_string: String) -> Button:
 		dest_label.add_theme_color_override("font_color", COLOR_YELLOW)
 		vbox.add_child(dest_label)
 
-	# Set stable widths for truncation to work with lateral padding.
-	var default_text_width := VENDOR_ITEM_BUTTON_MIN_WIDTH - (VENDOR_ITEM_BUTTON_PADDING_X * 2.0)
+	# Set flexible default width. The labels will adapt based on Control.SIZE_EXPAND_FILL behavior
+	# but text_overrun_behavior stops them from pushing button minimum bounds outward.
+	var default_text_width := 10.0
 	name_label.custom_minimum_size.x = default_text_width
 	if vbox.get_child_count() > 1 and vbox.get_child(1) is Label:
 		(vbox.get_child(1) as Label).custom_minimum_size.x = default_text_width
 
-	button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	# Force fixed dimension by avoiding EXPAND fill.
+	button.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN if _is_mobile() else Control.SIZE_EXPAND_FILL
 	button.custom_minimum_size.x = VENDOR_ITEM_BUTTON_MIN_WIDTH
 	button.custom_minimum_size.y = VENDOR_ITEM_BUTTON_HEIGHT
 	button.clip_contents = true
@@ -1102,13 +1104,12 @@ func _render_vendor_preview_display() -> void:
 		vendor_item_container.visible = true
 		vendor_no_items_label.visible = false
 		if _is_mobile():
-			vendor_item_grid.columns = content_list.size()
+			# Calculate enough columns to evenly split items into a max of 2 horizontal rows
+			var calc_cols = ceil(float(content_list.size()) / 2.0)
+			vendor_item_grid.columns = max(1, int(calc_cols))
 		var item_count = content_list.size()
 		for item_string in content_list:
 			var button := _build_vendor_preview_button(item_string)
-			if _is_mobile() and item_count == 1:
-				button.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
-				button.custom_minimum_size.x = 210.0
 			vendor_item_grid.add_child(button)
 
 	# Ensure font sizes are applied immediately (deferred to stable layout)
