@@ -52,9 +52,9 @@ func _ready():
 	# Setup styling for toggle button if it exists
 	if is_instance_valid(toggle_button):
 		# Ensure button has a reasonable minimum size since we're clearing its text
-		toggle_button.custom_minimum_size = Vector2(200, 36)
-		toggle_button.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-		
+		# Standard Scaling
+		toggle_button.custom_minimum_size = Vector2(240, 48)
+
 		# We'll use a RichTextLabel child for BBCode styling on the button
 		var rtl = RichTextLabel.new()
 		rtl.name = "StyleLabel"
@@ -64,12 +64,13 @@ func _ready():
 		# Using full rect so [center] has the button width to work with
 		rtl.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 		
-		# Mobile Scaling 1.6x
+		# Mobile Scaling 1.6x (Reverted from 1.8x)
 		if _is_mobile():
-			toggle_button.custom_minimum_size.y = 60
+			toggle_button.custom_minimum_size.y = 64 # Reverted from 80
 			rtl.add_theme_font_size_override("normal_font_size", int(16 * 1.6))
-			rtl.offset_top = 12 # Adjust for larger height
+			rtl.offset_top = 14 # Adjust for larger height
 		else:
+			rtl.add_theme_font_size_override("normal_font_size", int(16 * 1.1))
 			rtl.offset_top = 4 # Vertical offset for centering
 		
 		rtl.autowrap_mode = TextServer.AUTOWRAP_OFF

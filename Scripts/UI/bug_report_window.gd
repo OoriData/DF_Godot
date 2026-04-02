@@ -44,6 +44,14 @@ func _ready() -> void:
 
 	_build_ui()
 	_update_submit_enabled()
+	_apply_ui_scaling_recursive(self)
+
+func _is_mobile() -> bool:
+	return OS.has_feature("mobile") or DisplayServer.get_name() in ["Android", "iOS"]
+
+func _get_font_size(base: int) -> int:
+	var boost = 1.7 if _is_mobile() else 1.2
+	return int(base * boost)
 
 func set_screenshot_png_bytes(png_bytes: PackedByteArray) -> void:
 	_screenshot_png_bytes = png_bytes if png_bytes != null else PackedByteArray()
@@ -53,7 +61,12 @@ func open_centered() -> void:
 	_status("", false)
 	_pending = false
 	_update_submit_enabled()
-	popup_centered(Vector2i(820, 700))
+	var win_size = DisplayServer.window_get_size()
+	var win_w = 940 if _is_mobile() else 820
+	var win_h = 800 if _is_mobile() else 700
+	win_w = min(win_w, win_size.x - 32)
+	win_h = min(win_h, win_size.y - 64)
+	popup_centered(Vector2i(win_w, win_h))
 	call_deferred("_refresh_layout")
 
 func _refresh_layout() -> void:
@@ -72,6 +85,24 @@ func _refresh_layout_once_more() -> void:
 func _on_close_pressed() -> void:
 	hide()
 	closed.emit()
+
+func _apply_ui_scaling_recursive(node: Node) -> void:
+	if node is Button:
+		node.add_theme_font_size_override("font_size", _get_font_size(14))
+		var btn_name: String = node.name.to_lower() if is_instance_valid(node) else ""
+		var is_action = btn_name.contains("close") or btn_name.contains("cancel") or btn_name.contains("submit") or btn_name == ""
+		var target_h = (72 if is_action else 52) if _is_mobile() else 42
+		if node.custom_minimum_size.y < target_h:
+			node.custom_minimum_size.y = target_h
+	elif node is Label:
+		var current_fs = node.get_theme_font_size("font_size")
+		if current_fs <= 1: current_fs = 14
+		node.add_theme_font_size_override("font_size", _get_font_size(current_fs))
+	elif node is TextEdit or node is LineEdit:
+		node.add_theme_font_size_override("font_size", _get_font_size(14))
+	
+	for child in node.get_children():
+		_apply_ui_scaling_recursive(child)
 
 func _build_ui() -> void:
 	# Style the popup panel itself

@@ -40,34 +40,74 @@ func _is_mobile() -> bool:
 	return OS.has_feature("mobile") or DisplayServer.get_name() in ["Android", "iOS"]
 
 func _get_font_size(base: int) -> int:
-	return int(base * 1.6) if _is_mobile() else base
+	var boost = 2.2 if _is_mobile() else 1.2
+	return int(base * boost)
 
 func _apply_mobile_optimizations() -> void:
-	min_size = Vector2i(720, 680)
+	var win_size = DisplayServer.window_get_size()
+	var target_w = min(860, win_size.x - 32)
+	var target_h = min(740, win_size.y - 64)
+	min_size = Vector2i(target_w, target_h)
 	
 	# Scale CheckBoxes and Labels globally within Margin
-	var margin_node = get_node_or_null("Margin/VBox")
-	if is_instance_valid(margin_node):
-		_apply_mobile_recursive(margin_node)
+	var margin_node = get_node_or_null("Margin")
+	if is_instance_valid(margin_node) and margin_node is MarginContainer:
+		margin_node.add_theme_constant_override("margin_left", 32)
+		margin_node.add_theme_constant_override("margin_right", 32)
+		margin_node.add_theme_constant_override("margin_top", 32)
+		margin_node.add_theme_constant_override("margin_bottom", 32)
+		
+	var vbox_node = get_node_or_null("Margin/VBox")
+	if is_instance_valid(vbox_node) and vbox_node is VBoxContainer:
+		vbox_node.add_theme_constant_override("separation", 32)
+		_apply_ui_scaling_recursive(vbox_node)
 	
-	# Specifically scale the main action buttons
+	# Hide desktop-only scaling options on mobile
+	var ui_scale_row = get_node_or_null("Margin/VBox/UISec/UIScaleRow")
+	if is_instance_valid(ui_scale_row):
+		ui_scale_row.visible = false
+	if is_instance_valid(c_dynamic_scale):
+		c_dynamic_scale.visible = false
+	
+	# Hide display section (fullscreen) on mobile
+	var display_sec = get_node_or_null("Margin/VBox/DisplaySection")
+	if is_instance_valid(display_sec):
+		display_sec.visible = false
+		
+	# Specifically scale the main action buttons and fix layout
+	var buttons_row = get_node_or_null("Margin/VBox/ButtonsRow")
+	if is_instance_valid(buttons_row) and buttons_row is HBoxContainer:
+		# On mobile, a horizontal row with 3 large buttons + spacer is too cramped.
+		# Let's remove the spacer and use a centered HBox or switch to vertical if needed.
+		var spacer = buttons_row.get_node_or_null("LeftSpacer")
+		if is_instance_valid(spacer):
+			spacer.visible = false
+		buttons_row.alignment = BoxContainer.ALIGNMENT_CENTER
+		buttons_row.add_theme_constant_override("separation", 20)
+
 	for btn in [btn_close, btn_reset, btn_logout]:
 		if is_instance_valid(btn):
-			btn.custom_minimum_size.y = 64
-			btn.add_theme_font_size_override("font_size", _get_font_size(16))
+			var want_huge = btn.name.to_lower().contains("close")
+			var btn_height = (96 if want_huge else 80) if _is_mobile() else 48
+			btn.custom_minimum_size.y = btn_height
+			btn.custom_minimum_size.x = 220 if _is_mobile() else 0
+			btn.add_theme_font_size_override("font_size", _get_font_size(18))
+			# Ensure buttons are clickable
+			btn.mouse_filter = Control.MOUSE_FILTER_STOP
 
-func _apply_mobile_recursive(node: Node) -> void:
+func _apply_ui_scaling_recursive(node: Node) -> void:
 	if node is CheckBox:
-		node.add_theme_font_size_override("font_size", _get_font_size(14))
-		node.custom_minimum_size.y = 48
-	elif node is Label:
 		node.add_theme_font_size_override("font_size", _get_font_size(16))
+		node.custom_minimum_size.y = 64 if _is_mobile() else 36
+	elif node is Label:
+		node.add_theme_font_size_override("font_size", _get_font_size(18))
 	elif node is HSlider:
-		node.custom_minimum_size.y = 48
+		node.custom_minimum_size.y = 52 if _is_mobile() else 36
 		var slider_style = StyleBoxFlat.new()
 		slider_style.bg_color = Color(0.2, 0.2, 0.2, 1.0)
-		slider_style.content_margin_top = 16
-		slider_style.content_margin_bottom = 16
+		var pad = 18 if _is_mobile() else 12
+		slider_style.content_margin_top = pad
+		slider_style.content_margin_bottom = pad
 		slider_style.corner_radius_top_left = 6
 		slider_style.corner_radius_top_right = 6
 		slider_style.corner_radius_bottom_left = 6
@@ -75,7 +115,7 @@ func _apply_mobile_recursive(node: Node) -> void:
 		node.add_theme_stylebox_override("slider", slider_style)
 		
 	for child in node.get_children():
-		_apply_mobile_recursive(child)
+		_apply_ui_scaling_recursive(child)
 
 func _add_version_label():
 	var version = ProjectSettings.get_setting("application/config/version", "0.0.0")
@@ -138,11 +178,20 @@ func _wire_events():
 	# removed reduce motion and route preview
 
 	if is_instance_valid(btn_close):
-		btn_close.pressed.connect(func(): hide())
+		btn_close.pressed.connect(func(): 
+			print("[SettingsMenu] Close pressed")
+			hide()
+		)
 	if is_instance_valid(btn_reset):
-		btn_reset.pressed.connect(_on_reset_defaults)
+		btn_reset.pressed.connect(func():
+			print("[SettingsMenu] Reset pressed")
+			_on_reset_defaults()
+		)
 	if is_instance_valid(btn_logout):
-		btn_logout.pressed.connect(_on_logout_pressed)
+		btn_logout.pressed.connect(func():
+			print("[SettingsMenu] Logout pressed")
+			_on_logout_pressed()
+		)
 
 func _on_reset_defaults():
 	var defaults := {
@@ -161,6 +210,7 @@ func _on_reset_defaults():
 	_init_values()
 
 func _on_close_requested():
+	print("[SettingsMenu] Window close_requested")
 	hide()
 
 func _on_ui_scale_value_changed(_v: float):

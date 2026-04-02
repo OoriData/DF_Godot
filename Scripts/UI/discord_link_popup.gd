@@ -19,6 +19,14 @@ func _ready() -> void:
 	visible = false
 	_api = get_node_or_null("/root/APICalls")
 	_build_ui()
+	_apply_ui_scaling_recursive(self)
+
+func _is_mobile() -> bool:
+	return OS.has_feature("mobile") or DisplayServer.get_name() in ["Android", "iOS"]
+
+func _get_font_size(base: int) -> int:
+	var boost = 1.7 if _is_mobile() else 1.2
+	return int(base * boost)
 
 func open_centered() -> void:
 	show()
@@ -57,7 +65,9 @@ func _build_ui() -> void:
 	panel_style.corner_radius_bottom_right = 12
 	panel.add_theme_stylebox_override("panel", panel_style)
 	
-	panel.custom_minimum_size = Vector2(380, 200)
+	var win_w = 480 if _is_mobile() else 380
+	var win_h = 320 if _is_mobile() else 200
+	panel.custom_minimum_size = Vector2(win_w, win_h)
 	panel.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
 	_overlay.add_child(panel)
 
@@ -134,3 +144,19 @@ func _apply_discord_button_style(btn: Button) -> void:
 	btn.add_theme_stylebox_override("hover", hover)
 	btn.add_theme_stylebox_override("pressed", pressed)
 	btn.add_theme_color_override("font_color", Color.WHITE)
+
+func _apply_ui_scaling_recursive(node: Node) -> void:
+	if node is Button:
+		node.add_theme_font_size_override("font_size", _get_font_size(14))
+		var btn_name: String = node.name.to_lower() if is_instance_valid(node) else ""
+		var want_huge = btn_name.contains("cancel") or btn_name.contains("continue")
+		var target_h = (72 if want_huge else 52) if _is_mobile() else 40
+		if node.custom_minimum_size.y < target_h:
+			node.custom_minimum_size.y = target_h
+	elif node is Label:
+		var current_fs = node.get_theme_font_size("font_size")
+		if current_fs <= 1: current_fs = 14
+		node.add_theme_font_size_override("font_size", _get_font_size(current_fs))
+	
+	for child in node.get_children():
+		_apply_ui_scaling_recursive(child)

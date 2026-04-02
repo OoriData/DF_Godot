@@ -44,6 +44,12 @@ unique_name_in_owner = true
 layout_mode = 2
 text = "Options"
 
+[node name="ReportBugButton" type="Button" parent="HBoxContent"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_colors/font_color = Color(1, 1, 1, 1)
+text = "Feedback"
+
 [node name="VSeparator" type="VSeparator" parent="HBoxContent"]
 layout_mode = 2
 

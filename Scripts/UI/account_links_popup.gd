@@ -37,6 +37,14 @@ func _ready() -> void:
 	_hub = get_node_or_null("/root/SignalHub")
 	_build_ui()
 	_connect_signals()
+	_apply_ui_scaling_recursive(self)
+
+func _is_mobile() -> bool:
+	return OS.has_feature("mobile") or DisplayServer.get_name() in ["Android", "iOS"]
+
+func _get_font_size(base: int) -> int:
+	var boost = 1.7 if _is_mobile() else 1.2
+	return int(base * boost)
 
 func open_centered() -> void:
 	show()
@@ -310,7 +318,12 @@ func _build_ui() -> void:
 	panel.add_theme_stylebox_override("panel", panel_style)
 	
 	_overlay.add_child(panel)
-	panel.custom_minimum_size = Vector2(480, 400)
+	var win_size = DisplayServer.window_get_size()
+	var win_w = 640 if _is_mobile() else 480
+	var win_h = 560 if _is_mobile() else 400
+	win_w = min(win_w, win_size.x - 32)
+	win_h = min(win_h, win_size.y - 64)
+	panel.custom_minimum_size = Vector2(win_w, win_h)
 	panel.layout_mode = 1 # Anchors
 	panel.anchors_preset = Control.PRESET_CENTER
 	panel.grow_horizontal = Control.GROW_DIRECTION_BOTH
@@ -318,10 +331,12 @@ func _build_ui() -> void:
 	panel.set_anchors_and_offsets_preset(Control.PRESET_CENTER, Control.PRESET_MODE_MINSIZE)
 
 	var margin := MarginContainer.new()
-	margin.add_theme_constant_override("margin_left", 20)
-	margin.add_theme_constant_override("margin_right", 20)
-	margin.add_theme_constant_override("margin_top", 16)
-	margin.add_theme_constant_override("margin_bottom", 16)
+	var h_pad = 32 if _is_mobile() else 20
+	var v_pad = 24 if _is_mobile() else 16
+	margin.add_theme_constant_override("margin_left", h_pad)
+	margin.add_theme_constant_override("margin_right", h_pad)
+	margin.add_theme_constant_override("margin_top", v_pad)
+	margin.add_theme_constant_override("margin_bottom", v_pad)
 	panel.add_child(margin)
 
 	var root := VBoxContainer.new()
@@ -382,7 +397,7 @@ func _build_ui() -> void:
 	# Close Button
 	var close_btn := Button.new()
 	close_btn.text = "Close"
-	close_btn.custom_minimum_size = Vector2(100, 32)
+	close_btn.custom_minimum_size = Vector2(160, 72) if _is_mobile() else Vector2(100, 32)
 	close_btn.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	close_btn.pressed.connect(func(): hide(); closed.emit())
 	root.add_child(close_btn)
@@ -424,3 +439,20 @@ func _create_row(label_text: String, accent_color: Color, id_val_label: Label, o
 func _set_status(text: String, color: Color) -> void:
 	_status_label.text = text
 	_status_label.add_theme_color_override("font_color", color)
+
+func _apply_ui_scaling_recursive(node: Node) -> void:
+	if node is Button:
+		node.add_theme_font_size_override("font_size", _get_font_size(14))
+		# Adjust min height if not already set large
+		var btn_name: String = node.name.to_lower() if is_instance_valid(node) else ""
+		var want_huge = btn_name.contains("close") or btn_name.contains("cancel") or btn_name.contains("okay") or btn_name.contains("back")
+		var target_h = (72 if want_huge else 64) if _is_mobile() else 36
+		if node.custom_minimum_size.y < target_h:
+			node.custom_minimum_size.y = target_h
+	elif node is Label:
+		var current_fs = node.get_theme_font_size("font_size")
+		if current_fs <= 0: current_fs = 14
+		node.add_theme_font_size_override("font_size", _get_font_size(current_fs))
+	
+	for child in node.get_children():
+		_apply_ui_scaling_recursive(child)

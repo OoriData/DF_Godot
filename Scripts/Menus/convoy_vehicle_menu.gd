@@ -90,16 +90,18 @@ func _is_mobile() -> bool:
 	return OS.has_feature("mobile") or OS.has_feature("web_android") or OS.has_feature("web_ios") or DisplayServer.get_name() in ["Android", "iOS"]
 
 func _get_font_size(base: int) -> int:
-	return int(base * 1.6) if _is_mobile() else base
+	var boost = 1.7 if _is_mobile() else 1.2
+	return int(base * boost)
 
 func _ready():
 	# Connect the back button signal
 	if is_instance_valid(back_button):
 		if not back_button.is_connected("pressed", Callable(self, "_on_back_button_pressed")):
 			back_button.pressed.connect(_on_back_button_pressed)
-		if _is_mobile():
-			back_button.custom_minimum_size = Vector2(back_button.custom_minimum_size.x, 60.0)
-			back_button.add_theme_font_size_override("font_size", _get_font_size(16))
+		
+		# Always boost button size and font on all platforms
+		back_button.custom_minimum_size.y = 72.0 if _is_mobile() else 44.0
+		back_button.add_theme_font_size_override("font_size", _get_font_size(16))
 	else:
 		printerr("ConvoyVehicleMenu: CRITICAL - BackButton node NOT found or is not a Button.")
 
@@ -107,16 +109,18 @@ func _ready():
 	if is_instance_valid(vehicle_option_button):
 		if not vehicle_option_button.is_connected("item_selected", Callable(self, "_on_vehicle_selected")):
 			vehicle_option_button.item_selected.connect(_on_vehicle_selected)
-		if _is_mobile():
-			vehicle_option_button.custom_minimum_size = Vector2(240, 60.0)
-			vehicle_option_button.add_theme_font_size_override("font_size", _get_font_size(16))
-			
-			# Scale the dropdown list (PopupMenu)
-			var popup = vehicle_option_button.get_popup()
-			popup.add_theme_font_size_override("font_size", _get_font_size(16))
-			popup.add_theme_constant_override("item_start_padding", 24)
-			popup.add_theme_constant_override("item_end_padding", 24)
-			popup.add_theme_constant_override("v_separation", 12)
+		
+		# Always boost button size and font on all platforms
+		vehicle_option_button.custom_minimum_size.y = 72.0 if _is_mobile() else 44.0
+		vehicle_option_button.add_theme_font_size_override("font_size", _get_font_size(16))
+		
+		# Scale the dropdown list (PopupMenu)
+		var popup = vehicle_option_button.get_popup()
+		popup.add_theme_font_size_override("font_size", _get_font_size(16))
+		var pad = 24 if _is_mobile() else 12
+		popup.add_theme_constant_override("item_start_padding", pad)
+		popup.add_theme_constant_override("item_end_padding", pad)
+		popup.add_theme_constant_override("v_separation", 12 if _is_mobile() else 6)
 	else:
 		printerr("ConvoyVehicleMenu: CRITICAL - VehicleOptionButton node NOT found.")
 	
@@ -140,7 +144,7 @@ func _ready():
 			tab_container.add_theme_font_size_override("font_size", _get_font_size(16))
 		var mechanic_btn := $MainVBox/ActionButtons/MechanicButton if has_node("MainVBox/ActionButtons/MechanicButton") else null
 		if is_instance_valid(mechanic_btn):
-			mechanic_btn.custom_minimum_size = Vector2(mechanic_btn.custom_minimum_size.x, 60.0)
+			mechanic_btn.custom_minimum_size.y = 72.0 if _is_mobile() else 44.0
 			mechanic_btn.add_theme_font_size_override("font_size", _get_font_size(16))
 
 	# Check new VBox validity
@@ -956,11 +960,21 @@ func _add_stat_row_with_button(parent: Container, label_text: String, stat_value
 func _on_inspect_stat_pressed(stat_type: String, vehicle_data: Dictionary):
 	var dialog = AcceptDialog.new()
 	dialog.title = "Inspect " + stat_type.capitalize().replace("_", " ")
+	
+	var win_size = DisplayServer.window_get_size()
+	var target_w = min(600, win_size.x - 32)
+	var target_h = min(500, win_size.y - 64)
+	dialog.min_size = Vector2(target_w, target_h)
 
 	var dialog_vbox = VBoxContainer.new()
 	dialog_vbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	dialog_vbox.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	dialog.add_child(dialog_vbox)
+	
+	if _is_mobile():
+		var ok_btn = dialog.get_ok_button()
+		ok_btn.custom_minimum_size.y = 72
+		ok_btn.add_theme_font_size_override("font_size", _get_font_size(16))
 
 	var final_stat_value: float = vehicle_data.get(stat_type, 0.0)
 	var total_modifier: float = 0.0
@@ -1078,11 +1092,22 @@ func _on_inspect_part_pressed(part_data: Dictionary):
 	print("ConvoyVehicleMenu: Inspecting part: ", part_data.get("name", "Unknown Part"))
 	var dialog = AcceptDialog.new()
 	dialog.title = "Inspect: " + part_data.get("name", "Component Details")
+	
+	var win_size = DisplayServer.window_get_size()
+	var target_w = min(800, win_size.x - 32)
+	var target_h = min(700, win_size.y - 64)
+	dialog.min_size = Vector2(target_w, target_h)
+	
 	var dialog_vbox = VBoxContainer.new()
-	dialog_vbox.add_theme_constant_override("separation", 10)
+	dialog_vbox.add_theme_constant_override("separation", 12 if _is_mobile() else 10)
 	dialog_vbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	dialog_vbox.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	dialog.add_child(dialog_vbox)
+	
+	if _is_mobile():
+		var ok_btn = dialog.get_ok_button()
+		ok_btn.custom_minimum_size.y = 72
+		ok_btn.add_theme_font_size_override("font_size", _get_font_size(16))
 
 	_populate_part_details_dialog(dialog_vbox, part_data)
 

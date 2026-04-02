@@ -170,7 +170,8 @@ func _is_mobile() -> bool:
 	return OS.has_feature("mobile") or OS.has_feature("web_android") or OS.has_feature("web_ios") or DisplayServer.get_name() in ["Android", "iOS"]
 
 func _get_font_size(base: int) -> int:
-	return int(base * 1.6) if _is_mobile() else base
+	var boost = 1.7 if _is_mobile() else 1.2
+	return int(base * boost)
 
 func _is_displayable_cargo(item: Dictionary) -> bool:
 	if item.is_empty():
@@ -194,7 +195,7 @@ func _ready():
 		if Engine.has_singleton("SettingsManager"):
 			_cargo_sort_metric = get_node("/root/SettingsManager").get_value("ui.cargo_sort_metric", 0)
 		
-		var sort_h = 60 if _is_mobile() else 34
+		var sort_h = 60 if _is_mobile() else 44
 		cargo_sort_option_button.custom_minimum_size = Vector2(280, sort_h)
 		cargo_sort_option_button.add_theme_font_size_override("font_size", _get_font_size(14))
 		cargo_sort_option_button.add_theme_color_override("font_color", Color(0.93, 0.93, 0.93, 1.0))
@@ -265,7 +266,10 @@ func _ready():
 		
 	if is_instance_valid(back_button):
 		if _is_mobile():
-			back_button.custom_minimum_size.y = 60
+			back_button.custom_minimum_size.y = 72
+			back_button.add_theme_font_size_override("font_size", _get_font_size(16))
+		else:
+			back_button.custom_minimum_size.y = 44
 			back_button.add_theme_font_size_override("font_size", _get_font_size(16))
 		if not back_button.is_connected("pressed", Callable(self, "_on_back_button_pressed")):
 			back_button.pressed.connect(_on_back_button_pressed, CONNECT_ONE_SHOT)
@@ -301,8 +305,7 @@ func _ready():
 	_organize_button.add_theme_stylebox_override("hover", style_hover)
 	_organize_button.add_theme_stylebox_override("pressed", style_pressed)
 	_organize_button.add_theme_font_size_override("font_size", _get_font_size(14))
-	if _is_mobile():
-		_organize_button.custom_minimum_size.y = 60
+	_organize_button.custom_minimum_size.y = 60 if _is_mobile() else 44
 
 	var main_vbox = get_node_or_null("MainVBox")
 	if is_instance_valid(main_vbox):
@@ -1276,7 +1279,7 @@ func _add_category_section(parent: VBoxContainer, title: String, agg_data: Dicti
 		var inspect_button := Button.new()
 		inspect_button.text = "Inspect"
 		var btn_w = 140 if _is_mobile() else 90
-		var btn_h = 64 if _is_mobile() else 26
+		var btn_h = 72 if _is_mobile() else 44
 		inspect_button.custom_minimum_size = Vector2(btn_w, btn_h)
 		inspect_button.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 		inspect_button.add_theme_font_size_override("font_size", _get_font_size(13))
@@ -1947,10 +1950,10 @@ func _build_inline_inspect_panel(agg_data: Dictionary, _item_row_hbox: HBoxConta
 		ledger.corner_radius_top_right = 6
 		ledger.corner_radius_bottom_left = 6
 		ledger.corner_radius_bottom_right = 6
-		ledger.content_margin_left = 14
-		ledger.content_margin_right = 14
-		ledger.content_margin_top = 14
-		ledger.content_margin_bottom = 14
+		ledger.content_margin_left = 20
+		ledger.content_margin_right = 20
+		ledger.content_margin_top = 20
+		ledger.content_margin_bottom = 20
 		frame.add_theme_stylebox_override("panel", ledger)
 	
 	container.add_child(frame)

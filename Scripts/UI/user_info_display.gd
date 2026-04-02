@@ -7,6 +7,7 @@ signal convoy_menu_requested(convoy_id: String)
 @onready var username_label: Label = %UsernameLabel
 @onready var user_money_label: Label = %UserMoneyLabel
 @onready var settings_button: MenuButton = %SettingsButton
+@onready var report_bug_button: Button = %ReportBugButton
 var _settings_menu_instance: Window
 var _bug_report_window: BugReportWindow
 var _discord_popup: PopupPanel
@@ -52,8 +53,16 @@ func _ready() -> void:
 	else:
 		printerr("UserInfoDisplay: ui_scale_manager autoload not found at /root/ui_scale_manager. UI scaling will not be dynamic.")
 
+	# Connect standalone report bug button
+	if is_instance_valid(report_bug_button):
+		report_bug_button.pressed.connect(call_deferred.bind("_on_bug_report_pressed"))
+
 	# Options dropdown (replaces separate top-row buttons)
 	_configure_options_dropdown()
+	
+	# Initial desktop sizing/styling if not mobile
+	if not _is_mobile():
+		_apply_desktop_styling()
 	
 	if _is_mobile():
 		_apply_mobile_optimizations()
@@ -65,9 +74,9 @@ func _is_mobile() -> bool:
 
 func _apply_mobile_optimizations() -> void:
 	# 1. Scaling & Touch Targets
-	custom_minimum_size.y = 70 # Refined for better prominence
+	custom_minimum_size.y = 60
 	
-	# 2. Typography 1.6x Boost
+	# 2. Typography 1.6x Boost (Reverted from 1.8x)
 	var boost = 1.6
 	var labels = [username_label, user_money_label]
 	for label in labels:
@@ -77,7 +86,7 @@ func _apply_mobile_optimizations() -> void:
 	# Settings button scaling
 	var btn_fs = settings_button.get_theme_font_size("font_size")
 	settings_button.add_theme_font_size_override("font_size", int(btn_fs * boost))
-	settings_button.custom_minimum_size.y = 64 # Was 50, solid touch target
+	settings_button.custom_minimum_size.y = 44
 	var sb_btn = StyleBoxFlat.new()
 	sb_btn.bg_color = Color(0.12, 0.15, 0.2, 0.95)
 	sb_btn.border_width_left = 1
@@ -85,21 +94,45 @@ func _apply_mobile_optimizations() -> void:
 	sb_btn.border_width_top = 1
 	sb_btn.border_width_bottom = 1
 	sb_btn.border_color = Color(0.4, 0.45, 0.5, 0.8)
-	sb_btn.corner_radius_top_left = 6
-	sb_btn.corner_radius_top_right = 6
-	sb_btn.corner_radius_bottom_left = 6
-	sb_btn.corner_radius_bottom_right = 6
-	sb_btn.content_margin_left = 24
-	sb_btn.content_margin_right = 24
+	sb_btn.corner_radius_top_left = 8
+	sb_btn.corner_radius_top_right = 8
+	sb_btn.corner_radius_bottom_left = 8
+	sb_btn.corner_radius_bottom_right = 8
+	sb_btn.content_margin_left = 28
+	sb_btn.content_margin_right = 28
 	settings_button.add_theme_stylebox_override("normal", sb_btn)
+
+	# Report Bug button scaling & red styling
+	if is_instance_valid(report_bug_button):
+		report_bug_button.add_theme_font_size_override("font_size", int(btn_fs * boost))
+		report_bug_button.custom_minimum_size.y = 44
+		var bug_style = StyleBoxFlat.new()
+		bug_style.bg_color = Color(0.7, 0.1, 0.15, 0.95) # Prominent Red
+		bug_style.border_width_left = 2
+		bug_style.border_width_right = 2
+		bug_style.border_width_top = 2
+		bug_style.border_width_bottom = 2
+		bug_style.border_color = Color(1.0, 0.4, 0.4, 0.8)
+		bug_style.corner_radius_top_left = 8
+		bug_style.corner_radius_top_right = 8
+		bug_style.corner_radius_bottom_left = 8
+		bug_style.corner_radius_bottom_right = 8
+		bug_style.content_margin_left = 28
+		bug_style.content_margin_right = 28
+		report_bug_button.add_theme_stylebox_override("normal", bug_style)
+		# Hover/Pressed states
+		var bug_style_hover = bug_style.duplicate()
+		bug_style_hover.bg_color = Color(0.85, 0.15, 0.2, 1.0)
+		report_bug_button.add_theme_stylebox_override("hover", bug_style_hover)
+		report_bug_button.add_theme_stylebox_override("pressed", bug_style_hover)
 	
-	# 3. Layout & Density (14px margins)
-	add_theme_constant_override("separation", 14)
+	# 3. Layout & Density (16px margins)
+	add_theme_constant_override("separation", 16)
 	
 	# 4. Safe Area Handling (Curved corners and notches)
 	_update_safe_margins()
 	get_viewport().size_changed.connect(_update_safe_margins)
-
+	
 	# 5. Ledger Style for Username Chip
 	var ledger_chip = StyleBoxFlat.new()
 	ledger_chip.bg_color = Color(0.12, 0.15, 0.2, 0.95) # Deep slate
@@ -115,6 +148,33 @@ func _apply_mobile_optimizations() -> void:
 	ledger_chip.content_margin_left = 12
 	ledger_chip.content_margin_right = 12
 	username_label.add_theme_stylebox_override("normal", ledger_chip)
+
+func _apply_desktop_styling() -> void:
+	custom_minimum_size.y = 52 # Reverted from 56 (closer to original 48-60 range)
+	
+	var boost = 1.1 # Slightly reduced from 1.2
+	var btn_fs = settings_button.get_theme_font_size("font_size")
+	if btn_fs <= 0: btn_fs = 16
+	
+	settings_button.add_theme_font_size_override("font_size", int(btn_fs * boost))
+	settings_button.custom_minimum_size.y = 40 # Reverted from 44
+	
+	if is_instance_valid(report_bug_button):
+		report_bug_button.add_theme_font_size_override("font_size", int(btn_fs * boost))
+		report_bug_button.custom_minimum_size.y = 40
+		var bug_style = StyleBoxFlat.new()
+		bug_style.bg_color = Color(0.6, 0.1, 0.1, 0.9)
+		bug_style.corner_radius_top_left = 4
+		bug_style.corner_radius_top_right = 4
+		bug_style.corner_radius_bottom_left = 4
+		bug_style.corner_radius_bottom_right = 4
+		bug_style.content_margin_left = 16
+		bug_style.content_margin_right = 16
+		report_bug_button.add_theme_stylebox_override("normal", bug_style)
+		
+		var bug_style_hover = bug_style.duplicate()
+		bug_style_hover.bg_color = Color(0.8, 0.15, 0.15, 1.0)
+		report_bug_button.add_theme_stylebox_override("hover", bug_style_hover)
 
 func _update_safe_margins() -> void:
 	if not _is_mobile():
@@ -229,7 +289,6 @@ func _configure_options_dropdown() -> void:
 
 	popup.clear()
 	popup.add_item("Settings", _OPTIONS_SETTINGS_ID)
-	popup.add_item("Report Bug", _OPTIONS_REPORT_BUG_ID)
 	popup.add_item("Join Discord", _OPTIONS_DISCORD_ID)
 	popup.add_item("Connect Accounts", _OPTIONS_CONNECT_ACCOUNTS_ID)
 	popup.add_separator()
@@ -239,16 +298,16 @@ func _configure_options_dropdown() -> void:
 		popup.id_pressed.connect(_on_options_menu_id_pressed)
 		
 	if _is_mobile():
-		popup.add_theme_font_size_override("font_size", int(14 * 1.6))
-		popup.add_theme_constant_override("v_separation", 16)
-		popup.add_theme_constant_override("item_start_padding", 24)
-		popup.add_theme_constant_override("item_end_padding", 24)
+		popup.add_theme_font_size_override("font_size", int(16 * 1.7))
+		popup.add_theme_constant_override("v_separation", 32)
+		popup.add_theme_constant_override("item_start_padding", 32)
+		popup.add_theme_constant_override("item_end_padding", 32)
 		var popup_style = StyleBoxFlat.new()
 		popup_style.bg_color = Color(0.12, 0.15, 0.2, 0.98)
-		popup_style.content_margin_left = 24
-		popup_style.content_margin_right = 24
-		popup_style.content_margin_top = 16
-		popup_style.content_margin_bottom = 16
+		popup_style.content_margin_left = 32
+		popup_style.content_margin_right = 32
+		popup_style.content_margin_top = 24
+		popup_style.content_margin_bottom = 24
 		popup_style.border_width_left = 1
 		popup_style.border_width_right = 1
 		popup_style.border_width_top = 1
@@ -374,6 +433,11 @@ func _on_settings_button_pressed():
 	# Popup centered each time
 	if _settings_menu_instance:
 		if _settings_menu_instance.has_method("popup_centered"):
-			_settings_menu_instance.popup_centered(Vector2i(720, 560))
+			var win_size = DisplayServer.window_get_size()
+			var size_w = 860 if _is_mobile() else 720
+			var size_h = 760 if _is_mobile() else 560
+			size_w = min(size_w, win_size.x - 32)
+			size_h = min(size_h, win_size.y - 64)
+			_settings_menu_instance.popup_centered(Vector2i(size_w, size_h))
 		else:
 			_settings_menu_instance.show()
