@@ -37,10 +37,18 @@ func _ready():
 		_apply_mobile_optimizations()
 
 func _is_mobile() -> bool:
-	return OS.has_feature("mobile") or DisplayServer.get_name() in ["Android", "iOS"]
+	if OS.has_feature("mobile") or OS.has_feature("web_android") or OS.has_feature("web_ios") or DisplayServer.get_name() in ["Android", "iOS"]:
+		return true
+	if is_inside_tree():
+		var win_size = get_viewport_rect().size
+		if win_size.y > win_size.x:
+			return true
+	return false
 
 func _get_font_size(base: int) -> int:
-	var boost = 2.2 if _is_mobile() else 1.2
+	var win_size = get_viewport_rect().size if is_inside_tree() else Vector2(0, 0)
+	var is_portrait = win_size.y > win_size.x
+	var boost = 2.0 if is_portrait else (1.6 if _is_mobile() else 1.2)
 	return int(base * boost)
 
 func _apply_mobile_optimizations() -> void:

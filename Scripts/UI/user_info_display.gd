@@ -70,42 +70,54 @@ func _ready() -> void:
 	queue_redraw()
 
 func _is_mobile() -> bool:
-	return OS.has_feature("mobile") or DisplayServer.get_name() in ["Android", "iOS"]
+	if OS.has_feature("mobile") or OS.has_feature("web_android") or OS.has_feature("web_ios") or DisplayServer.get_name() in ["Android", "iOS"]:
+		return true
+	if is_inside_tree():
+		var win_size = get_viewport_rect().size
+		if win_size.y > win_size.x:
+			return true
+	return false
 
 func _apply_mobile_optimizations() -> void:
 	# 1. Scaling & Touch Targets
-	custom_minimum_size.y = 60
+	_update_mobile_sizing()
 	
-	# 2. Typography 1.6x Boost (Reverted from 1.8x)
-	var boost = 1.6
+	# 2. Aggressive Typography Boost for Portrait
+	var win_size = get_viewport_rect().size if is_inside_tree() else Vector2(0, 0)
+	var is_portrait = win_size.y > win_size.x
+	var boost = 2.5 if is_portrait else 1.6
+	
 	var labels = [username_label, user_money_label]
 	for label in labels:
-		var fs = label.get_theme_font_size("font_size")
-		label.add_theme_font_size_override("font_size", int(fs * boost))
+		if is_instance_valid(label):
+			var fs = label.get_theme_font_size("font_size")
+			label.add_theme_font_size_override("font_size", int(fs * boost))
 	
 	# Settings button scaling
-	var btn_fs = settings_button.get_theme_font_size("font_size")
-	settings_button.add_theme_font_size_override("font_size", int(btn_fs * boost))
-	settings_button.custom_minimum_size.y = 44
-	var sb_btn = StyleBoxFlat.new()
-	sb_btn.bg_color = Color(0.12, 0.15, 0.2, 0.95)
-	sb_btn.border_width_left = 1
-	sb_btn.border_width_right = 1
-	sb_btn.border_width_top = 1
-	sb_btn.border_width_bottom = 1
-	sb_btn.border_color = Color(0.4, 0.45, 0.5, 0.8)
-	sb_btn.corner_radius_top_left = 8
-	sb_btn.corner_radius_top_right = 8
-	sb_btn.corner_radius_bottom_left = 8
-	sb_btn.corner_radius_bottom_right = 8
-	sb_btn.content_margin_left = 28
-	sb_btn.content_margin_right = 28
-	settings_button.add_theme_stylebox_override("normal", sb_btn)
+	if is_instance_valid(settings_button):
+		var btn_fs = settings_button.get_theme_font_size("font_size")
+		settings_button.add_theme_font_size_override("font_size", int(btn_fs * boost))
+		settings_button.custom_minimum_size.y = 80 if is_portrait else 44
+		var sb_btn = StyleBoxFlat.new()
+		sb_btn.bg_color = Color(0.12, 0.15, 0.2, 0.95)
+		sb_btn.border_width_left = 1
+		sb_btn.border_width_right = 1
+		sb_btn.border_width_top = 1
+		sb_btn.border_width_bottom = 1
+		sb_btn.border_color = Color(0.4, 0.45, 0.5, 0.8)
+		sb_btn.corner_radius_top_left = 8
+		sb_btn.corner_radius_top_right = 8
+		sb_btn.corner_radius_bottom_left = 8
+		sb_btn.corner_radius_bottom_right = 8
+		sb_btn.content_margin_left = 28
+		sb_btn.content_margin_right = 28
+		settings_button.add_theme_stylebox_override("normal", sb_btn)
 
 	# Report Bug button scaling & red styling
 	if is_instance_valid(report_bug_button):
-		report_bug_button.add_theme_font_size_override("font_size", int(btn_fs * boost))
-		report_bug_button.custom_minimum_size.y = 44
+		var bug_fs = report_bug_button.get_theme_font_size("font_size")
+		report_bug_button.add_theme_font_size_override("font_size", int(bug_fs * boost))
+		report_bug_button.custom_minimum_size.y = 80 if is_portrait else 44
 		var bug_style = StyleBoxFlat.new()
 		bug_style.bg_color = Color(0.7, 0.1, 0.15, 0.95) # Prominent Red
 		bug_style.border_width_left = 2
@@ -131,7 +143,8 @@ func _apply_mobile_optimizations() -> void:
 	
 	# 4. Safe Area Handling (Curved corners and notches)
 	_update_safe_margins()
-	get_viewport().size_changed.connect(_update_safe_margins)
+	if not get_viewport().size_changed.is_connected(_update_safe_margins):
+		get_viewport().size_changed.connect(_update_safe_margins)
 	
 	# 5. Ledger Style for Username Chip
 	var ledger_chip = StyleBoxFlat.new()
@@ -147,7 +160,22 @@ func _apply_mobile_optimizations() -> void:
 	ledger_chip.corner_radius_bottom_right = 6
 	ledger_chip.content_margin_left = 12
 	ledger_chip.content_margin_right = 12
-	username_label.add_theme_stylebox_override("normal", ledger_chip)
+	if is_instance_valid(username_label):
+		username_label.add_theme_stylebox_override("normal", ledger_chip)
+
+func _update_mobile_sizing() -> void:
+	if not _is_mobile():
+		return
+	var win_size = get_viewport_rect().size if is_inside_tree() else Vector2(0, 0)
+	var is_portrait = win_size.y > win_size.x
+	if is_portrait:
+		custom_minimum_size.y = 120
+		if is_instance_valid(settings_button): settings_button.custom_minimum_size.y = 80
+		if is_instance_valid(report_bug_button): report_bug_button.custom_minimum_size.y = 80
+	else:
+		custom_minimum_size.y = 60
+		if is_instance_valid(settings_button): settings_button.custom_minimum_size.y = 44
+		if is_instance_valid(report_bug_button): report_bug_button.custom_minimum_size.y = 44
 
 func _apply_desktop_styling() -> void:
 	custom_minimum_size.y = 52 # Reverted from 56 (closer to original 48-60 range)
@@ -232,7 +260,9 @@ func _notification(what: int) -> void:
 		_update_display()
 		queue_redraw()
 	elif what == NOTIFICATION_RESIZED:
+		_update_mobile_sizing()
 		queue_redraw()
+
 
 func _draw() -> void:
 	# Explicit background so the navbar stays grey even if the project clear color is black.

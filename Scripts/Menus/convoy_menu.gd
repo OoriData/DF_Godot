@@ -155,7 +155,13 @@ func _get_settings_manager() -> Node:
 	return get_node_or_null("/root/SettingsManager")
 
 func _is_mobile() -> bool:
-	return OS.has_feature("mobile") or OS.has_feature("web_android") or OS.has_feature("web_ios") or DisplayServer.get_name() in ["Android", "iOS"]
+	if OS.has_feature("mobile") or OS.has_feature("web_android") or OS.has_feature("web_ios") or DisplayServer.get_name() in ["Android", "iOS"]:
+		return true
+	if is_inside_tree():
+		var win_size = get_viewport_rect().size
+		if win_size.y > win_size.x:
+			return true
+	return false
 
 func _load_cargo_sort_metric_from_settings() -> void:
 	var sm := _get_settings_manager()
@@ -224,9 +230,7 @@ func _set_latest_settlements_snapshot(settlements: Array) -> void:
 				_vendor_id_to_name[vid] = nm
 
 func _ready():
-	if _is_mobile():
-		VENDOR_ITEM_BUTTON_MIN_WIDTH = 240.0
-		VENDOR_ITEM_BUTTON_HEIGHT = 100.0
+	_update_mobile_dependent_layout()
 
 	# Resolve optional nodes that might be missing depending on scene variant
 	all_cargo_label = get_node_or_null("MainVBox/ScrollContainer/ContentVBox/AllCargoLabel")
@@ -361,21 +365,6 @@ func _ready():
 			content_style.corner_radius_bottom_right = 4
 			content_panel.add_theme_stylebox_override("panel", content_style)
 
-		# Enforce horizontal-only scrolling on mobile, vertical elsewhere
-		var vendor_content_scroll = vendor_preview_panel.get_node_or_null("VendorPreviewVBox/VendorContentPanel/VendorContentScroll")
-		if is_instance_valid(vendor_content_scroll) and vendor_content_scroll is ScrollContainer:
-			if _is_mobile():
-				vendor_content_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
-				vendor_content_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-				# Eliminate deadspace by fixing height to accommodate two 100px buttons + padding
-				vendor_content_scroll.custom_minimum_size.y = 230.0
-				# Ensure scroll bar is visible optionally or at least doesn't block touch
-				vendor_content_scroll.scroll_deadzone = 10
-			else:
-				vendor_content_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
-				vendor_content_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-				vendor_content_scroll.custom_minimum_size.y = 120.0 # Reset for desktop, but fix height for horiz scroll
-
 	# Style the new journey progress bar
 	if is_instance_valid(journey_progress_bar):
 		_style_journey_progress_bar(journey_progress_bar)
@@ -421,19 +410,15 @@ func _ready():
 	# Connect placeholder menu buttons
 	if is_instance_valid(vehicle_menu_button):
 		if not vehicle_menu_button.is_connected("pressed", Callable(self, "_on_vehicle_menu_button_pressed")):
-			_style_menu_button(vehicle_menu_button)
 			vehicle_menu_button.pressed.connect(_on_vehicle_menu_button_pressed)
 	if is_instance_valid(journey_menu_button):
 		if not journey_menu_button.is_connected("pressed", Callable(self, "_on_journey_menu_button_pressed")):
-			_style_menu_button(journey_menu_button)
 			journey_menu_button.pressed.connect(_on_journey_menu_button_pressed)
 	if is_instance_valid(settlement_menu_button):
 		if not settlement_menu_button.is_connected("pressed", Callable(self, "_on_settlement_menu_button_pressed")):
-			_style_menu_button(settlement_menu_button)
 			settlement_menu_button.pressed.connect(_on_settlement_menu_button_pressed)
 	if is_instance_valid(cargo_menu_button):
 		if not cargo_menu_button.is_connected("pressed", Callable(self, "_on_cargo_menu_button_pressed")):
-			_style_menu_button(cargo_menu_button)
 			cargo_menu_button.pressed.connect(_on_cargo_menu_button_pressed)
 
 	# Connect vendor preview tab buttons
@@ -518,8 +503,95 @@ func _request_vendor_details(vendor_id: String) -> void:
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_RESIZED:
 		# Call deferred to ensure the new size is fully applied before calculating font sizes
+		call_deferred("_update_mobile_dependent_layout")
 		call_deferred("_update_font_sizes")
 		call_deferred("_update_vendor_grid_columns")
+
+func _update_mobile_dependent_layout() -> void:
+	var win_size = get_viewport_rect().size if is_inside_tree() else Vector2(0, 0)
+	var is_portrait = win_size.y > win_size.x
+	var use_mobile = _is_mobile()
+	
+	if is_portrait:
+		VENDOR_ITEM_BUTTON_MIN_WIDTH = 240.0
+		VENDOR_ITEM_BUTTON_HEIGHT = 120.0
+	elif use_mobile:
+		VENDOR_ITEM_BUTTON_MIN_WIDTH = 240.0
+		VENDOR_ITEM_BUTTON_HEIGHT = 100.0
+	else:
+		VENDOR_ITEM_BUTTON_MIN_WIDTH = 190.0
+		VENDOR_ITEM_BUTTON_HEIGHT = 72.0
+		
+	# Super-scale stats in portrait by stacking them vertically
+	var res_hbox := $MainVBox/ScrollContainer/ContentVBox/ResourceStatsHBox as BoxContainer
+	var perf_hbox := $MainVBox/ScrollContainer/ContentVBox/PerformanceStatsHBox as BoxContainer
+	
+	var stat_height = 100.0 if is_portrait else 50.0
+	
+	if is_instance_valid(res_hbox):
+		res_hbox.vertical = is_portrait
+		res_hbox.add_theme_constant_override("separation", 8 if is_portrait else 4)
+		for child in res_hbox.get_children():
+			if child is Control:
+				child.custom_minimum_size.y = stat_height
+				
+	if is_instance_valid(perf_hbox):
+		perf_hbox.vertical = is_portrait
+		perf_hbox.add_theme_constant_override("separation", 8 if is_portrait else 4)
+		for child in perf_hbox.get_children():
+			if child is Control:
+				child.custom_minimum_size.y = stat_height
+
+	# Update vendor scroll handling
+	var vendor_preview_panel := $MainVBox/ScrollContainer/ContentVBox/VendorPreviewPanel if has_node("MainVBox/ScrollContainer/ContentVBox/VendorPreviewPanel") else null
+	if is_instance_valid(vendor_preview_panel):
+		var vendor_content_scroll = vendor_preview_panel.get_node_or_null("VendorPreviewVBox/VendorContentPanel/VendorContentScroll")
+		if is_instance_valid(vendor_content_scroll) and vendor_content_scroll is ScrollContainer:
+			if use_mobile:
+				vendor_content_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+				vendor_content_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+				vendor_content_scroll.custom_minimum_size.y = 260.0 if is_portrait else 230.0
+				vendor_content_scroll.scroll_deadzone = 10
+			else:
+				vendor_content_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+				vendor_content_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+				vendor_content_scroll.custom_minimum_size.y = 120.0
+				
+	# Back Button
+	if is_instance_valid(back_button):
+		back_button.custom_minimum_size = Vector2(back_button.custom_minimum_size.x, 110.0 if is_portrait else (60.0 if use_mobile else 34.0))
+		
+	# Bottom Bar Panel and children styles
+	var bottom_panel := $MainVBox/BottomBarPanel if has_node("MainVBox/BottomBarPanel") else null
+	if is_instance_valid(bottom_panel):
+		var bar_style = bottom_panel.get_theme_stylebox("panel")
+		if bar_style is StyleBoxFlat:
+			bar_style.content_margin_top = 10.0 if is_portrait else (6.0 if use_mobile else 0.0)
+			bar_style.content_margin_bottom = 10.0 if is_portrait else (6.0 if use_mobile else 0.0)
+			bar_style.content_margin_left = 10.0 if is_portrait else (6.0 if use_mobile else 0.0)
+			bar_style.content_margin_right = 10.0 if is_portrait else (6.0 if use_mobile else 0.0)
+
+		var hbox := bottom_panel.get_node_or_null("BottomMenuButtonsHBox")
+		if is_instance_valid(hbox):
+			# Use FlowContainer wrapping for better vertical density
+			hbox.alignment = BoxContainer.ALIGNMENT_CENTER
+
+	# Placeholder menu buttons (Vehicles, Journey, etc.)
+	var btn_min_h = 100.0 if is_portrait else (70.0 if use_mobile else 34.0)
+	for btn in [vehicle_menu_button, journey_menu_button, settlement_menu_button, cargo_menu_button]:
+		if is_instance_valid(btn):
+			btn.custom_minimum_size.y = btn_min_h
+			btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+
+	_style_menu_button(vehicle_menu_button)
+	_style_menu_button(journey_menu_button)
+	_style_menu_button(settlement_menu_button)
+	_style_menu_button(cargo_menu_button)
+	
+	if is_instance_valid(vendor_item_grid):
+		for child in vendor_item_grid.get_children():
+			if child is Button:
+				_style_vendor_item_button(child, _current_vendor_tab)
 
 func _update_vendor_grid_columns() -> void:
 	# Make the vendor item grid responsive: choose columns based on available width.
@@ -2267,8 +2339,11 @@ func _update_font_sizes() -> void:
 	if _debug_convoy_menu:
 		print("[ConvoyMenu][Debug] Scaling fonts. Height=", current_menu_height, " Factor=", scale_factor)
 
-	var new_font_size: int = clamp(int(BASE_FONT_SIZE * scale_factor), MIN_FONT_SIZE, MAX_FONT_SIZE)
-	var new_title_font_size: int = clamp(int(BASE_TITLE_FONT_SIZE * scale_factor), MIN_FONT_SIZE, MAX_TITLE_FONT_SIZE)
+	var win_size = get_viewport_rect().size if is_inside_tree() else Vector2(0, 0)
+	var is_portrait = win_size.y > win_size.x
+	var boost = 2.5 if is_portrait else (1.6 if _is_mobile() else 1.2)
+	var new_font_size: int = clamp(int(BASE_FONT_SIZE * scale_factor * boost / 1.6), MIN_FONT_SIZE, MAX_FONT_SIZE + 20)
+	var new_title_font_size: int = clamp(int(BASE_TITLE_FONT_SIZE * scale_factor * boost / 1.6), MIN_FONT_SIZE, MAX_TITLE_FONT_SIZE + 20)
 
 	var labels_to_scale: Array[Label] = [
 		fuel_text_label, water_text_label, food_text_label,
@@ -2302,8 +2377,10 @@ func _update_font_sizes() -> void:
 				if is_instance_valid(dest_l):
 					raw_len = max(raw_len, dest_l.text.length() - 2)
 
-				var effective_font_size = new_font_size + 2 # Default basis
-				if _is_mobile():
+				var effective_font_size = new_font_size + 4 # Default basis
+				if is_portrait:
+					effective_font_size = int(effective_font_size * 1.8)
+				elif _is_mobile():
 					effective_font_size = int(effective_font_size * 1.4)
 
 				if raw_len > 40:
@@ -2346,14 +2423,15 @@ func _update_font_sizes() -> void:
 		cargo_menu_button.add_theme_font_size_override("font_size", new_font_size)
 
 	# Scale vendor tab buttons
+	var tab_fs = new_font_size + 4 if is_portrait else new_font_size - 2
 	if is_instance_valid(convoy_missions_tab_button):
-		convoy_missions_tab_button.add_theme_font_size_override("font_size", new_font_size - 2)
+		convoy_missions_tab_button.add_theme_font_size_override("font_size", tab_fs)
 	if is_instance_valid(settlement_missions_tab_button):
-		settlement_missions_tab_button.add_theme_font_size_override("font_size", new_font_size - 2)
+		settlement_missions_tab_button.add_theme_font_size_override("font_size", tab_fs)
 	if is_instance_valid(compatible_parts_tab_button):
-		compatible_parts_tab_button.add_theme_font_size_override("font_size", new_font_size - 2)
+		compatible_parts_tab_button.add_theme_font_size_override("font_size", tab_fs)
 	if is_instance_valid(journey_tab_button):
-		journey_tab_button.add_theme_font_size_override("font_size", new_font_size - 2)
+		journey_tab_button.add_theme_font_size_override("font_size", tab_fs)
 
 	# print("ConvoyMenu: Updated font sizes. Scale: %.2f, Base: %d, Title: %d" % [scale_factor, new_font_size, new_title_font_size]) # DEBUG
 

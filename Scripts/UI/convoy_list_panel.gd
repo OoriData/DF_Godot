@@ -65,13 +65,20 @@ func _ready():
 		rtl.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 		
 		# Mobile Scaling 1.6x (Reverted from 1.8x)
-		if _is_mobile():
-			toggle_button.custom_minimum_size.y = 64 # Reverted from 80
-			rtl.add_theme_font_size_override("normal_font_size", int(16 * 1.6))
-			rtl.offset_top = 14 # Adjust for larger height
+		# Mobile Scaling
+		var win_size = get_viewport_rect().size if is_inside_tree() else Vector2(0, 0)
+		var is_portrait = win_size.y > win_size.x
+		if is_portrait:
+			toggle_button.custom_minimum_size.y = 100
+			rtl.add_theme_font_size_override("normal_font_size", _get_font_size(16))
+			rtl.offset_top = 28
+		elif _is_mobile():
+			toggle_button.custom_minimum_size.y = 64
+			rtl.add_theme_font_size_override("normal_font_size", _get_font_size(16))
+			rtl.offset_top = 14
 		else:
-			rtl.add_theme_font_size_override("normal_font_size", int(16 * 1.1))
-			rtl.offset_top = 4 # Vertical offset for centering
+			rtl.add_theme_font_size_override("normal_font_size", _get_font_size(16))
+			rtl.offset_top = 4
 		
 		rtl.autowrap_mode = TextServer.AUTOWRAP_OFF
 		toggle_button.add_child(rtl)
@@ -100,16 +107,18 @@ func _on_toggle_button_pressed() -> void:
 		
 		var item_count = convoys.size() if not convoys.is_empty() else 1 # 1 for "No convoys" label
 		
+		var win_size = DisplayServer.window_get_size()
+		var is_portrait = win_size.y > win_size.x
 		var is_mobile = _is_mobile()
-		var item_h = 64 if is_mobile else 32 # Match heights used in populate_convoy_list
-		var separation = 12 if is_mobile else 4 # VBoxContainer separation
+		var item_h = 100 if is_portrait else (64 if is_mobile else 32)
+		var separation = 16 if is_portrait else (12 if is_mobile else 4)
 		
 		# Calculate total height: items + separations + top/bottom padding
 		var total_content_h = (item_count * item_h) + (max(0, item_count - 1) * separation) + 20
 		
 		# Clamp height to reasonable limits
-		var max_h = 600 if is_mobile else 300
-		var min_h = 80 if is_mobile else 50
+		var max_h = 800 if is_portrait else (600 if is_mobile else 300)
+		var min_h = 100 if is_portrait else (80 if is_mobile else 50)
 		var popup_height = clamp(total_content_h, min_h, max_h)
 		
 		convoy_popup.size = Vector2(toggle_button.size.x, popup_height)
@@ -181,9 +190,10 @@ func populate_convoy_list(convoys_data: Array) -> void:
 		var item_button = Button.new()
 		item_button.name = "ConvoyButton_%s" % str(convoy_id)
 		
+		var win_size = DisplayServer.window_get_size()
+		var is_portrait = win_size.y > win_size.x
 		var is_mobile = _is_mobile()
-		var item_h = 64 if is_mobile else 32
-		var boost = 1.6 if is_mobile else 1.0
+		var item_h = 100 if is_portrait else (64 if is_mobile else 32)
 		
 		item_button.custom_minimum_size = Vector2(0, item_h)
 		item_button.clip_contents = true
@@ -203,8 +213,7 @@ func populate_convoy_list(convoys_data: Array) -> void:
 		var name_label = Label.new()
 		name_label.text = convoy_name
 		name_label.add_theme_color_override("font_color", Color(1.0, 1.0, 1.0)) # Bright White
-		if is_mobile:
-			name_label.add_theme_font_size_override("font_size", int(16 * boost))
+		name_label.add_theme_font_size_override("font_size", _get_font_size(16))
 		hbox.add_child(name_label)
 		
 		var journey: Variant = convoy_item_data.get("journey")
@@ -261,12 +270,23 @@ func _on_convoy_item_pressed(convoy_item_data: Dictionary) -> void:
 	# Tell the canonical selection bus about the intent.
 	if is_instance_valid(_hub) and _hub.has_signal("convoy_selection_requested"):
 		_hub.convoy_selection_requested.emit(str(convoy_item_data.get("convoy_id", "")), false)
-
-	# Close the list after an item is selected
+			# Close the list after an item is selected
 	close_list()
 
 func _is_mobile() -> bool:
-	return OS.has_feature("mobile") or DisplayServer.get_name() in ["Android", "iOS"]
+	if OS.has_feature("mobile") or OS.has_feature("web_android") or OS.has_feature("web_ios") or DisplayServer.get_name() in ["Android", "iOS"]:
+		return true
+	if is_inside_tree():
+		var win_size = get_viewport_rect().size
+		if win_size.y > win_size.x:
+			return true
+	return false
+
+func _get_font_size(base: int) -> int:
+	var win_size = get_viewport_rect().size if is_inside_tree() else Vector2(0, 0)
+	var is_portrait = win_size.y > win_size.x
+	var boost = 2.5 if is_portrait else (1.6 if _is_mobile() else 1.2)
+	return int(base * boost)
 
 func _apply_mobile_popup_style() -> void:
 	var ledger = StyleBoxFlat.new()

@@ -363,31 +363,32 @@ custom_minimum_size = Vector2(0, 48)
 [node name="BottomBarPanel" type="PanelContainer" parent="MainVBox"]
 layout_mode = 2
 
-[node name="BottomMenuButtonsHBox" type="HBoxContainer" parent="MainVBox/BottomBarPanel"]
+[node name="BottomMenuButtonsHBox" type="HFlowContainer" parent="MainVBox/BottomBarPanel"]
 layout_mode = 2
-theme_override_constants/separation = 10
+theme_override_constants/h_separation = 10
+theme_override_constants/v_separation = 10
 alignment = 1
 
 [node name="VehicleMenuButton" type="Button" parent="MainVBox/BottomBarPanel/BottomMenuButtonsHBox"]
 layout_mode = 2
 text = "Vehicles"
 custom_minimum_size = Vector2(110, 34)
-size_flags_horizontal = 1
+size_flags_horizontal = 3
 
 [node name="JourneyMenuButton" type="Button" parent="MainVBox/BottomBarPanel/BottomMenuButtonsHBox"]
 layout_mode = 2
 text = "Journey"
 custom_minimum_size = Vector2(110, 34)
-size_flags_horizontal = 1
+size_flags_horizontal = 3
 
 [node name="SettlementMenuButton" type="Button" parent="MainVBox/BottomBarPanel/BottomMenuButtonsHBox"]
 layout_mode = 2
 text = "Settlement"
 custom_minimum_size = Vector2(110, 34)
-size_flags_horizontal = 1
+size_flags_horizontal = 3
 
 [node name="CargoMenuButton" type="Button" parent="MainVBox/BottomBarPanel/BottomMenuButtonsHBox"]
 layout_mode = 2
 text = "Cargo"
 custom_minimum_size = Vector2(110, 34)
-size_flags_horizontal = 1
+size_flags_horizontal = 3

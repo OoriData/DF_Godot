@@ -40,10 +40,19 @@ var _awaiting_swap_completion: bool = false
 @export var debug_part_compat_ui: bool = true
 
 func _is_mobile() -> bool:
-	return OS.has_feature("mobile") or OS.has_feature("web_android") or OS.has_feature("web_ios") or DisplayServer.get_name() in ["Android", "iOS"]
+	if OS.has_feature("mobile") or OS.has_feature("web_android") or OS.has_feature("web_ios") or DisplayServer.get_name() in ["Android", "iOS"]:
+		return true
+	if is_inside_tree():
+		var win_size = get_viewport_rect().size
+		if win_size.y > win_size.x:
+			return true
+	return false
 
 func _get_font_size(base: int) -> int:
-	return int(base * 1.6) if _is_mobile() else base
+	var win_size = get_viewport_rect().size if is_inside_tree() else Vector2(0, 0)
+	var is_portrait = win_size.y > win_size.x
+	var boost = 2.5 if is_portrait else (1.6 if _is_mobile() else 1.2)
+	return int(base * boost)
 
 func _looks_like_uuid(s: String) -> bool:
 	# Very small heuristic to recognize UUIDs without regex.
@@ -524,11 +533,13 @@ func _create_styled_part_row(part: Dictionary, slot_name: String, item_index: in
 	content_row.add_child(name_label)
 
 	var change_btn = Button.new()
+	var win_size_row = get_viewport_rect().size if is_inside_tree() else Vector2(0, 0)
+	var is_portrait_row = win_size_row.y > win_size_row.x
 	change_btn.name = "SwapButton"
 	change_btn.text = "Swap…"
-	change_btn.custom_minimum_size = Vector2(140 if _is_mobile() else 80, 64 if _is_mobile() else 0)
-	if _is_mobile():
-		change_btn.add_theme_font_size_override("font_size", _get_font_size(14))
+	var btn_h = 80 if is_portrait_row else (64 if _is_mobile() else 44)
+	change_btn.custom_minimum_size = Vector2(140 if _is_mobile() else 80, btn_h)
+	change_btn.add_theme_font_size_override("font_size", _get_font_size(14))
 	change_btn.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	_style_swap_button(change_btn, slot_name)
 	change_btn.pressed.connect(_on_swap_part_pressed.bind(slot_name, part))
@@ -623,11 +634,14 @@ func _ready():
 	super._ready()
 	
 	if _is_mobile():
+		var win_size_ready = get_viewport_rect().size if is_inside_tree() else Vector2(0, 0)
+		var is_portrait_ready = win_size_ready.y > win_size_ready.x
+		var big_btn_h = 110 if is_portrait_ready else 72
 		if is_instance_valid(apply_button):
-			apply_button.custom_minimum_size.y = 72
+			apply_button.custom_minimum_size.y = big_btn_h
 			apply_button.add_theme_font_size_override("font_size", _get_font_size(16))
 		if is_instance_valid(back_button):
-			back_button.custom_minimum_size.y = 72
+			back_button.custom_minimum_size.y = big_btn_h
 			back_button.add_theme_font_size_override("font_size", _get_font_size(16))
 		if is_instance_valid(vendor_hint_label):
 			vendor_hint_label.add_theme_font_size_override("font_size", _get_font_size(12))
@@ -636,6 +650,8 @@ func _ready():
 			tab_container.add_theme_font_size_override("font_size", _get_font_size(16))
 
 func _apply_mechanics_mobile_tab_styles(tc: TabContainer) -> void:
+	var win_size = get_viewport_rect().size if is_inside_tree() else Vector2(0, 0)
+	var is_portrait = win_size.y > win_size.x
 	for style_name in ["tab_selected", "tab_unselected", "tab_disabled", "tab_hovered"]:
 		var base = tc.get_theme_stylebox(style_name)
 		var style: StyleBoxFlat
@@ -644,10 +660,10 @@ func _apply_mechanics_mobile_tab_styles(tc: TabContainer) -> void:
 		else:
 			style = StyleBoxFlat.new()
 			style.bg_color = Color(0.2, 0.2, 0.2, 1.0) if style_name == "tab_selected" else Color(0.12, 0.12, 0.12, 1.0)
-		style.content_margin_top = 14.0
-		style.content_margin_bottom = 14.0
-		style.content_margin_left = 28.0
-		style.content_margin_right = 28.0
+		style.content_margin_top = 20.0 if is_portrait else 14.0
+		style.content_margin_bottom = 20.0 if is_portrait else 14.0
+		style.content_margin_left = 32.0 if is_portrait else 28.0
+		style.content_margin_right = 32.0 if is_portrait else 28.0
 		style.corner_radius_top_left = 5
 		style.corner_radius_top_right = 5
 		if style_name == "tab_selected":

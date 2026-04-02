@@ -167,10 +167,18 @@ func _extract_item_display_name(item: Dictionary) -> String:
 	return "Unknown Item"
 
 func _is_mobile() -> bool:
-	return OS.has_feature("mobile") or OS.has_feature("web_android") or OS.has_feature("web_ios") or DisplayServer.get_name() in ["Android", "iOS"]
+	if OS.has_feature("mobile") or OS.has_feature("web_android") or OS.has_feature("web_ios") or DisplayServer.get_name() in ["Android", "iOS"]:
+		return true
+	if is_inside_tree():
+		var win_size = get_viewport_rect().size
+		if win_size.y > win_size.x:
+			return true
+	return false
 
 func _get_font_size(base: int) -> int:
-	var boost = 1.7 if _is_mobile() else 1.2
+	var win_size = get_viewport_rect().size if is_inside_tree() else Vector2(0, 0)
+	var is_portrait = win_size.y > win_size.x
+	var boost = 2.5 if is_portrait else (1.6 if _is_mobile() else 1.2)
 	return int(base * boost)
 
 func _is_displayable_cargo(item: Dictionary) -> bool:
@@ -195,9 +203,11 @@ func _ready():
 		if Engine.has_singleton("SettingsManager"):
 			_cargo_sort_metric = get_node("/root/SettingsManager").get_value("ui.cargo_sort_metric", 0)
 		
-		var sort_h = 60 if _is_mobile() else 44
+		var win_size = get_viewport_rect().size if is_inside_tree() else Vector2(0, 0)
+		var is_portrait = win_size.y > win_size.x
+		var sort_h = 100 if is_portrait else (60 if _is_mobile() else 44)
 		cargo_sort_option_button.custom_minimum_size = Vector2(280, sort_h)
-		cargo_sort_option_button.add_theme_font_size_override("font_size", _get_font_size(14))
+		cargo_sort_option_button.add_theme_font_size_override("font_size", _get_font_size(15))
 		cargo_sort_option_button.add_theme_color_override("font_color", Color(0.93, 0.93, 0.93, 1.0))
 		cargo_sort_option_button.add_theme_color_override("font_hover_color", Color(0.98, 0.98, 0.98, 1.0))
 		var sort_normal := StyleBoxFlat.new()
@@ -265,7 +275,12 @@ func _ready():
 			popup.add_theme_stylebox_override("panel", popup_style)
 		
 	if is_instance_valid(back_button):
-		if _is_mobile():
+		var win_size = get_viewport_rect().size if is_inside_tree() else Vector2(0, 0)
+		var is_portrait = win_size.y > win_size.x
+		if is_portrait:
+			back_button.custom_minimum_size.y = 110
+			back_button.add_theme_font_size_override("font_size", _get_font_size(16))
+		elif _is_mobile():
 			back_button.custom_minimum_size.y = 72
 			back_button.add_theme_font_size_override("font_size", _get_font_size(16))
 		else:
@@ -301,11 +316,13 @@ func _ready():
 	var style_pressed = style_normal.duplicate()
 	style_pressed.bg_color = style_normal.bg_color.darkened(0.1)
 
+	var win_size = get_viewport_rect().size if is_inside_tree() else Vector2(0, 0)
+	var is_portrait = win_size.y > win_size.x
 	_organize_button.add_theme_stylebox_override("normal", style_normal)
 	_organize_button.add_theme_stylebox_override("hover", style_hover)
 	_organize_button.add_theme_stylebox_override("pressed", style_pressed)
 	_organize_button.add_theme_font_size_override("font_size", _get_font_size(14))
-	_organize_button.custom_minimum_size.y = 60 if _is_mobile() else 44
+	_organize_button.custom_minimum_size.y = 80 if is_portrait else (60 if _is_mobile() else 44)
 
 	var main_vbox = get_node_or_null("MainVBox")
 	if is_instance_valid(main_vbox):

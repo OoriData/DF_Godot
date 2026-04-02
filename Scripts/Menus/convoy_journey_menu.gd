@@ -77,7 +77,19 @@ var _settlement_poll_timer: Timer = null
 @onready var _api: Node = get_node_or_null("/root/APICalls")
 
 func _is_mobile() -> bool:
-	return OS.has_feature("mobile") or OS.has_feature("web_android") or OS.has_feature("web_ios") or DisplayServer.get_name() in ["Android", "iOS"]
+	if OS.has_feature("mobile") or OS.has_feature("web_android") or OS.has_feature("web_ios") or DisplayServer.get_name() in ["Android", "iOS"]:
+		return true
+	if is_inside_tree():
+		var win_size = get_viewport_rect().size
+		if win_size.y > win_size.x:
+			return true
+	return false
+
+func _get_font_size(base: int) -> int:
+	var win_size = get_viewport_rect().size if is_inside_tree() else Vector2(0, 0)
+	var is_portrait = win_size.y > win_size.x
+	var boost = 2.5 if is_portrait else (1.6 if _is_mobile() else 1.2)
+	return int(base * boost)
 
 func _log_debug(msg: String, a: Variant = null, b: Variant = null, c: Variant = null) -> void:
 	if is_instance_valid(_logger) and _logger.has_method("debug"):
@@ -88,9 +100,14 @@ func _ready():
 	if is_instance_valid(back_button):
 		if not back_button.is_connected("pressed", Callable(self, "_on_back_button_pressed")):
 			back_button.pressed.connect(_on_back_button_pressed)
-		if _is_mobile():
+		var win_size = get_viewport_rect().size if is_inside_tree() else Vector2(0, 0)
+		var is_portrait = win_size.y > win_size.x
+		if is_portrait:
+			back_button.custom_minimum_size.y = 80
+			back_button.add_theme_font_size_override("font_size", _get_font_size(16))
+		elif _is_mobile():
 			back_button.custom_minimum_size.y = 60
-			back_button.add_theme_font_size_override("font_size", 22)
+			back_button.add_theme_font_size_override("font_size", _get_font_size(16))
 	
 	# Make the title label clickable to return to the convoy overview
 	if is_instance_valid(title_label):
@@ -257,7 +274,9 @@ func _update_ui(convoy: Dictionary) -> void:
 	var eta_headline := Label.new()
 	eta_headline.text = "ETA: %s" % eta_val
 	eta_headline.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	eta_headline.add_theme_font_size_override("font_size", 32 if _is_mobile() else 20)
+	var win_size = get_viewport_rect().size if is_inside_tree() else Vector2(0, 0)
+	var is_portrait = win_size.y > win_size.x
+	eta_headline.add_theme_font_size_override("font_size", _get_font_size(18))
 	eta_headline.add_theme_color_override("font_color", Color(0.92, 0.97, 1))
 	details_vbox.add_child(eta_headline)
 
@@ -695,7 +714,11 @@ func _populate_destination_list():
 		sb.content_margin_bottom = 10
 		item_container.add_theme_stylebox_override("panel", sb)
 		
-		if _is_mobile():
+		var win_size = get_viewport_rect().size if is_inside_tree() else Vector2(0, 0)
+		var is_portrait = win_size.y > win_size.x
+		if is_portrait:
+			item_container.custom_minimum_size.y = 80
+		elif _is_mobile():
 			item_container.custom_minimum_size.y = 64
 		
 		item_container.mouse_filter = Control.MOUSE_FILTER_STOP
@@ -719,7 +742,7 @@ func _populate_destination_list():
 		var lbl = Label.new()
 		lbl.text = button_text
 		lbl.mouse_filter = Control.MOUSE_FILTER_PASS
-		lbl.add_theme_font_size_override("font_size", 22 if _is_mobile() else 14)
+		lbl.add_theme_font_size_override("font_size", _get_font_size(14))
 		item_container.add_child(lbl)
 		
 		content_vbox.add_child(item_container)

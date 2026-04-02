@@ -87,10 +87,18 @@ const SHOW_PART_INSPECT_RAW_DATA := false
 
 
 func _is_mobile() -> bool:
-	return OS.has_feature("mobile") or OS.has_feature("web_android") or OS.has_feature("web_ios") or DisplayServer.get_name() in ["Android", "iOS"]
+	if OS.has_feature("mobile") or OS.has_feature("web_android") or OS.has_feature("web_ios") or DisplayServer.get_name() in ["Android", "iOS"]:
+		return true
+	if is_inside_tree():
+		var win_size = get_viewport_rect().size
+		if win_size.y > win_size.x:
+			return true
+	return false
 
 func _get_font_size(base: int) -> int:
-	var boost = 1.7 if _is_mobile() else 1.2
+	var win_size = get_viewport_rect().size if is_inside_tree() else Vector2(0, 0)
+	var is_portrait = win_size.y > win_size.x
+	var boost = 2.5 if is_portrait else (1.6 if _is_mobile() else 1.2)
 	return int(base * boost)
 
 func _ready():
@@ -99,8 +107,10 @@ func _ready():
 		if not back_button.is_connected("pressed", Callable(self, "_on_back_button_pressed")):
 			back_button.pressed.connect(_on_back_button_pressed)
 		
-		# Always boost button size and font on all platforms
-		back_button.custom_minimum_size.y = 72.0 if _is_mobile() else 44.0
+		var win_size = get_viewport_rect().size if is_inside_tree() else Vector2(0, 0)
+		var is_portrait = win_size.y > win_size.x
+		var btn_h = 110.0 if is_portrait else (72.0 if _is_mobile() else 44.0)
+		back_button.custom_minimum_size.y = btn_h
 		back_button.add_theme_font_size_override("font_size", _get_font_size(16))
 	else:
 		printerr("ConvoyVehicleMenu: CRITICAL - BackButton node NOT found or is not a Button.")
@@ -110,8 +120,10 @@ func _ready():
 		if not vehicle_option_button.is_connected("item_selected", Callable(self, "_on_vehicle_selected")):
 			vehicle_option_button.item_selected.connect(_on_vehicle_selected)
 		
-		# Always boost button size and font on all platforms
-		vehicle_option_button.custom_minimum_size.y = 72.0 if _is_mobile() else 44.0
+		var win_size = get_viewport_rect().size if is_inside_tree() else Vector2(0, 0)
+		var is_portrait = win_size.y > win_size.x
+		var btn_h = 80.0 if is_portrait else (72.0 if _is_mobile() else 44.0)
+		vehicle_option_button.custom_minimum_size.y = btn_h
 		vehicle_option_button.add_theme_font_size_override("font_size", _get_font_size(16))
 		
 		# Scale the dropdown list (PopupMenu)
@@ -160,6 +172,9 @@ func _ready():
 		_hub.convoy_updated.connect(_on_hub_convoy_updated)
 
 func _apply_mobile_tab_styles(tc: TabContainer) -> void:
+	var win_size = get_viewport_rect().size if is_inside_tree() else Vector2(0, 0)
+	var is_portrait = win_size.y > win_size.x
+	
 	for style_name in ["tab_selected", "tab_unselected", "tab_disabled", "tab_hovered"]:
 		var base = tc.get_theme_stylebox(style_name)
 		var style: StyleBoxFlat
@@ -168,10 +183,10 @@ func _apply_mobile_tab_styles(tc: TabContainer) -> void:
 		else:
 			style = StyleBoxFlat.new()
 			style.bg_color = Color(0.2, 0.2, 0.2, 1.0) if style_name == "tab_selected" else Color(0.12, 0.12, 0.12, 1.0)
-		style.content_margin_top = 14.0
-		style.content_margin_bottom = 14.0
-		style.content_margin_left = 28.0
-		style.content_margin_right = 28.0
+		style.content_margin_top = 20.0 if is_portrait else 14.0
+		style.content_margin_bottom = 20.0 if is_portrait else 14.0
+		style.content_margin_left = 32.0 if is_portrait else 28.0
+		style.content_margin_right = 32.0 if is_portrait else 28.0
 		style.corner_radius_top_left = 5
 		style.corner_radius_top_right = 5
 		if style_name == "tab_selected":
