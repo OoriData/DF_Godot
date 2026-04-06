@@ -103,7 +103,7 @@ func _ready():
 		var win_size = get_viewport_rect().size if is_inside_tree() else Vector2(0, 0)
 		var is_portrait = win_size.y > win_size.x
 		if is_portrait:
-			back_button.custom_minimum_size.y = 80
+			back_button.custom_minimum_size.y = 100
 			back_button.add_theme_font_size_override("font_size", _get_font_size(16))
 		elif _is_mobile():
 			back_button.custom_minimum_size.y = 60
@@ -276,7 +276,7 @@ func _update_ui(convoy: Dictionary) -> void:
 	eta_headline.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	var win_size = get_viewport_rect().size if is_inside_tree() else Vector2(0, 0)
 	var is_portrait = win_size.y > win_size.x
-	eta_headline.add_theme_font_size_override("font_size", _get_font_size(18))
+	eta_headline.add_theme_font_size_override("font_size", _get_font_size(22 if is_portrait else 18))
 	eta_headline.add_theme_color_override("font_color", Color(0.92, 0.97, 1))
 	details_vbox.add_child(eta_headline)
 
@@ -291,12 +291,14 @@ func _update_ui(convoy: Dictionary) -> void:
 	var loc_grid := GridContainer.new()
 	loc_grid.columns = 2
 	loc_grid.add_theme_constant_override("h_separation", 14)
-	loc_grid.add_theme_constant_override("v_separation", 6)
+	loc_grid.add_theme_constant_override("v_separation", 8 if is_portrait else 6)
 	details_vbox.add_child(loc_grid)
+	var loc_label_fs := _get_font_size(14) if _is_mobile() else 14
 	# Current
 	var curr_title := Label.new()
 	curr_title.text = "📍 Current"
 	curr_title.add_theme_color_override("font_color", Color(0.85,0.9,1))
+	curr_title.add_theme_font_size_override("font_size", loc_label_fs)
 	loc_grid.add_child(curr_title)
 	var curr_value := Label.new()
 	var curr_name := _get_settlement_name(null, convoy_data_received.get("x", 0.0), convoy_data_received.get("y", 0.0))
@@ -305,21 +307,25 @@ func _update_ui(convoy: Dictionary) -> void:
 		NumberFormat.fmt_float(convoy_data_received.get("x", 0.0), 0),
 		NumberFormat.fmt_float(convoy_data_received.get("y", 0.0), 0),
 	]
+	curr_value.add_theme_font_size_override("font_size", loc_label_fs)
 	loc_grid.add_child(curr_value)
 	# Departed (moved below, with emoji)
 	var departure_time_str = journey_data.get("departure_time")
 	var departed_val := preload("res://Scripts/System/date_time_util.gd").format_timestamp_display(departure_time_str, false)
 	var dep_title := Label.new()
 	dep_title.text = "🕓 Departed"
+	dep_title.add_theme_font_size_override("font_size", loc_label_fs)
 	loc_grid.add_child(dep_title)
 	var dep_value := Label.new()
 	dep_value.text = departed_val
+	dep_value.add_theme_font_size_override("font_size", loc_label_fs)
 	loc_grid.add_child(dep_value)
 	# Origin
 	var origin_x = journey_data.get("origin_x")
 	var origin_y = journey_data.get("origin_y")
 	var origin_title := Label.new()
 	origin_title.text = "🏠 Origin"
+	origin_title.add_theme_font_size_override("font_size", loc_label_fs)
 	loc_grid.add_child(origin_title)
 	var origin_value := Label.new()
 	if origin_x != null and origin_y != null:
@@ -327,12 +333,14 @@ func _update_ui(convoy: Dictionary) -> void:
 		origin_value.text = "%s  (%s, %s)" % [origin_name, NumberFormat.fmt_float(origin_x, 0), NumberFormat.fmt_float(origin_y, 0)]
 	else:
 		origin_value.text = "N/A"
+	origin_value.add_theme_font_size_override("font_size", loc_label_fs)
 	loc_grid.add_child(origin_value)
 	# Destination
 	var dest_x = journey_data.get("dest_x")
 	var dest_y = journey_data.get("dest_y")
 	var dest_title := Label.new()
 	dest_title.text = "🏁 Destination"
+	dest_title.add_theme_font_size_override("font_size", loc_label_fs)
 	loc_grid.add_child(dest_title)
 	var dest_value := Label.new()
 	if dest_x != null and dest_y != null:
@@ -340,12 +348,14 @@ func _update_ui(convoy: Dictionary) -> void:
 		dest_value.text = "%s  (%s, %s)" % [dest_name, NumberFormat.fmt_float(dest_x, 0), NumberFormat.fmt_float(dest_y, 0)]
 	else:
 		dest_value.text = "N/A"
+	dest_value.add_theme_font_size_override("font_size", loc_label_fs)
 	loc_grid.add_child(dest_value)
 
 	# --- Progress bar (styled to match ConvoyMenu journey color) ---
 	var progress_bar = ProgressBar.new()
-	progress_bar.custom_minimum_size = Vector2(0, 20)
+	progress_bar.custom_minimum_size = Vector2(0, 40 if is_portrait else 20)
 	progress_bar.value = progress_percentage
+	progress_bar.add_theme_font_size_override("font_size", _get_font_size(14))
 	# Match ConvoyMenu: background 2a2a2a with light border; fill uses Color("29b6f6")
 	var bg_style := StyleBoxFlat.new()
 	bg_style.bg_color = Color("2a2a2a")
@@ -384,7 +394,10 @@ func _update_ui(convoy: Dictionary) -> void:
 		cancel_container.add_theme_stylebox_override("panel", csb)
 		
 		if _is_mobile():
-			cancel_container.custom_minimum_size = Vector2(140, 64)
+			if is_portrait:
+				cancel_container.custom_minimum_size = Vector2(240, 100)
+			else:
+				cancel_container.custom_minimum_size = Vector2(140, 64)
 		
 		cancel_container.mouse_filter = Control.MOUSE_FILTER_PASS
 		cancel_container.gui_input.connect(func(event):
@@ -418,7 +431,7 @@ func _update_ui(convoy: Dictionary) -> void:
 		var c_lbl = Label.new()
 		c_lbl.text = "Cancel Journey"
 		c_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		c_lbl.add_theme_font_size_override("font_size", 26 if _is_mobile() else 14)
+		c_lbl.add_theme_font_size_override("font_size", _get_font_size(18) if _is_mobile() else 14)
 		c_lbl.add_theme_color_override("font_color", Color(1, 0.92, 0.92))
 		cancel_container.add_child(c_lbl)
 		details_vbox.add_child(cancel_container)
@@ -717,7 +730,7 @@ func _populate_destination_list():
 		var win_size = get_viewport_rect().size if is_inside_tree() else Vector2(0, 0)
 		var is_portrait = win_size.y > win_size.x
 		if is_portrait:
-			item_container.custom_minimum_size.y = 80
+			item_container.custom_minimum_size.y = 110
 		elif _is_mobile():
 			item_container.custom_minimum_size.y = 64
 		
@@ -742,7 +755,7 @@ func _populate_destination_list():
 		var lbl = Label.new()
 		lbl.text = button_text
 		lbl.mouse_filter = Control.MOUSE_FILTER_PASS
-		lbl.add_theme_font_size_override("font_size", _get_font_size(14))
+		lbl.add_theme_font_size_override("font_size", _get_font_size(16) if is_portrait else _get_font_size(14))
 		item_container.add_child(lbl)
 		
 		content_vbox.add_child(item_container)

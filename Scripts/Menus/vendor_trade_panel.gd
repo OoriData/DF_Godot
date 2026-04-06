@@ -625,6 +625,13 @@ func _get_bold_font_for(node: Control) -> FontVariation:
 		_bold_font_cache = bf
 	return _bold_font_cache
 
+func _get_portrait_font_size(base: int) -> int:
+	var win_size = get_viewport_rect().size if is_inside_tree() else Vector2(0, 0)
+	var is_portrait = win_size.y > win_size.x
+	var is_mobile = OS.has_feature("mobile") or OS.has_feature("web_android") or OS.has_feature("web_ios") or is_portrait or (is_inside_tree() and get_viewport_rect().size.y < 500)
+	var boost = 2.5 if is_portrait else (1.6 if is_mobile else 1.2)
+	return int(base * boost)
+
 func _ready() -> void:
 	# Connect signals from UI elements
 	vendor_item_tree.item_selected.connect(_on_vendor_item_selected)
@@ -667,7 +674,11 @@ func _ready() -> void:
 
 	if is_instance_valid(cargo_sort_option_button):
 		_load_cargo_sort_metric_from_settings()
-		cargo_sort_option_button.custom_minimum_size = Vector2(280, 34)
+		var win_size = get_viewport_rect().size if is_inside_tree() else Vector2(0, 0)
+		var vp_is_portrait = win_size.y > win_size.x
+		var sort_h = 80 if vp_is_portrait else 34
+		cargo_sort_option_button.custom_minimum_size = Vector2(280, sort_h)
+		cargo_sort_option_button.add_theme_font_size_override("font_size", _get_portrait_font_size(13))
 		cargo_sort_option_button.add_theme_color_override("font_color", Color(0.93, 0.93, 0.93, 1.0))
 		cargo_sort_option_button.add_theme_color_override("font_hover_color", Color(0.98, 0.98, 0.98, 1.0))
 		var sort_normal := StyleBoxFlat.new()
@@ -758,10 +769,21 @@ func _ready() -> void:
 
 	# Initially hide comparison panel until an item is selected
 	comparison_panel.hide()
+	# Scale action buttons according to orientation
+	var win_size_btn = get_viewport_rect().size if is_inside_tree() else Vector2(0, 0)
+	var is_portrait_btn = win_size_btn.y > win_size_btn.x
+	var btn_min_h = 100.0 if is_portrait_btn else 34.0
 	if is_instance_valid(action_button):
 		action_button.disabled = true
+		action_button.custom_minimum_size.y = btn_min_h
+		action_button.add_theme_font_size_override("font_size", _get_portrait_font_size(16))
 	if is_instance_valid(max_button):
 		max_button.disabled = true
+		max_button.custom_minimum_size.y = btn_min_h
+		max_button.add_theme_font_size_override("font_size", _get_portrait_font_size(14))
+	if is_instance_valid(install_button):
+		install_button.custom_minimum_size.y = btn_min_h
+		install_button.add_theme_font_size_override("font_size", _get_portrait_font_size(14))
 
 	# Ensure loading overlay never blocks input during tutorial debugging
 	if is_instance_valid(loading_panel):
@@ -833,7 +855,10 @@ func _get_semi_bold_font_for(node: Control) -> FontVariation:
 	return _semi_bold_font_cache
 
 func _apply_text_readability_fixes() -> void:
-	# Apply semibold font to small labels to make them appear "thicker" and more readable
+	# Apply semibold font and portrait-aware font size boosts to labels
+	var win_size = get_viewport_rect().size if is_inside_tree() else Vector2(0, 0)
+	var is_portrait = win_size.y > win_size.x
+	
 	var labels_to_fix = [
 		get_node_or_null("%VolumeLabel"), # Using unique names from tscn
 		get_node_or_null("HBoxContainer/RightPanel/CapacityBars/VolumeLabel"), # Fallback path
@@ -845,6 +870,35 @@ func _apply_text_readability_fixes() -> void:
 	for lbl in labels_to_fix:
 		if is_instance_valid(lbl) and lbl is Label:
 			lbl.add_theme_font_override("font", _get_semi_bold_font_for(lbl))
+			if is_portrait:
+				lbl.add_theme_font_size_override("font_size", _get_portrait_font_size(15))
+	
+	# Scale the in-bar percentage text on cargo capacity bars
+	for bar_node_name in ["%ConvoyVolumeBar", "%ConvoyWeightBar"]:
+		var bar = get_node_or_null(bar_node_name)
+		if not is_instance_valid(bar):
+			# Try fallback paths
+			bar = get_node_or_null("HBoxContainer/RightPanel/CapacityBars/ConvoyVolumeBar")
+		if is_instance_valid(bar):
+			if is_portrait:
+				bar.custom_minimum_size.y = 60
+				bar.add_theme_font_size_override("font_size", _get_portrait_font_size(16))
+			else:
+				bar.add_theme_font_size_override("font_size", _get_portrait_font_size(13))
+	
+	# Scale cargo bars from @onready vars
+	if is_portrait:
+		if is_instance_valid(convoy_volume_bar):
+			convoy_volume_bar.custom_minimum_size.y = 60
+			convoy_volume_bar.add_theme_font_size_override("font_size", _get_portrait_font_size(16))
+		if is_instance_valid(convoy_weight_bar):
+			convoy_weight_bar.custom_minimum_size.y = 60
+			convoy_weight_bar.add_theme_font_size_override("font_size", _get_portrait_font_size(16))
+	else:
+		if is_instance_valid(convoy_volume_bar):
+			convoy_volume_bar.add_theme_font_size_override("font_size", _get_portrait_font_size(13))
+		if is_instance_valid(convoy_weight_bar):
+			convoy_weight_bar.add_theme_font_size_override("font_size", _get_portrait_font_size(13))
 
 
 func _exit_tree() -> void:

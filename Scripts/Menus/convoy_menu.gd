@@ -154,15 +154,26 @@ var _active_mission_cargo_id_by_display: Dictionary = {} # "name — to DEST" ->
 func _get_settings_manager() -> Node:
 	return get_node_or_null("/root/SettingsManager")
 
+func _is_portrait_view() -> bool:
+	if not is_inside_tree(): return false
+	var win_size = get_viewport_rect().size
+	return win_size.y > win_size.x
+
 func _is_mobile() -> bool:
 	if OS.has_feature("mobile") or OS.has_feature("web_android") or OS.has_feature("web_ios") or DisplayServer.get_name() in ["Android", "iOS"]:
 		return true
 	if is_inside_tree():
 		var win_size = get_viewport_rect().size
-		# Catch portrait mode OR short landscape screens (like Godot's mobile emulator rotated sideways)
+		# Catch short landscape screens or portrait
 		if win_size.y > win_size.x or win_size.y < 500:
 			return true
 	return false
+
+func _get_font_size(base: int) -> int:
+	var win_size = get_viewport_rect().size if is_inside_tree() else Vector2(0, 0)
+	var is_portrait = win_size.y > win_size.x
+	var boost = 2.5 if is_portrait else (1.6 if _is_mobile() else 1.2)
+	return int(base * boost)
 
 func _load_cargo_sort_metric_from_settings() -> void:
 	var sm := _get_settings_manager()
@@ -509,13 +520,12 @@ func _notification(what: int) -> void:
 		call_deferred("_update_vendor_grid_columns")
 
 func _update_mobile_dependent_layout() -> void:
-	var win_size = get_viewport_rect().size if is_inside_tree() else Vector2(0, 0)
-	var is_portrait = win_size.y > win_size.x
+	var is_portrait = _is_portrait_view()
 	var use_mobile = _is_mobile()
 	
 	if is_portrait:
-		VENDOR_ITEM_BUTTON_MIN_WIDTH = 240.0
-		VENDOR_ITEM_BUTTON_HEIGHT = 120.0
+		VENDOR_ITEM_BUTTON_MIN_WIDTH = 400.0
+		VENDOR_ITEM_BUTTON_HEIGHT = 300.0
 	elif use_mobile:
 		VENDOR_ITEM_BUTTON_MIN_WIDTH = 240.0
 		VENDOR_ITEM_BUTTON_HEIGHT = 100.0
@@ -527,7 +537,7 @@ func _update_mobile_dependent_layout() -> void:
 	var res_hbox := $MainVBox/ScrollContainer/ContentVBox/ResourceStatsHBox as BoxContainer
 	var perf_hbox := $MainVBox/ScrollContainer/ContentVBox/PerformanceStatsHBox as BoxContainer
 	
-	var stat_height = 100.0 if is_portrait else 50.0
+	var stat_height = 120.0 if is_portrait else 50.0
 	
 	if is_instance_valid(res_hbox):
 		res_hbox.vertical = is_portrait
@@ -543,6 +553,21 @@ func _update_mobile_dependent_layout() -> void:
 			if child is Control:
 				child.custom_minimum_size.y = stat_height
 
+	# Scale cargo bars taller in portrait so the built-in % text is readable
+	var cargo_bars_hbox := $MainVBox/ScrollContainer/ContentVBox/CargoBarsHBox if has_node("MainVBox/ScrollContainer/ContentVBox/CargoBarsHBox") else null
+	if is_instance_valid(cargo_bars_hbox):
+		var cargo_bar_h = 80.0 if is_portrait else (48.0 if use_mobile else 28.0)
+		for child in cargo_bars_hbox.get_children():
+			if child is Control:
+				child.custom_minimum_size.y = cargo_bar_h
+				# Scale the label inside the cargo bar container
+				for sub in child.get_children():
+					if sub is Label:
+						sub.add_theme_font_size_override("font_size", _get_font_size(13))
+					elif sub is ProgressBar:
+						# Make in-bar % text bigger in portrait
+						sub.add_theme_font_size_override("font_size", _get_font_size(16))
+
 	# Update vendor scroll handling
 	var vendor_preview_panel := $MainVBox/ScrollContainer/ContentVBox/VendorPreviewPanel if has_node("MainVBox/ScrollContainer/ContentVBox/VendorPreviewPanel") else null
 	if is_instance_valid(vendor_preview_panel):
@@ -551,7 +576,7 @@ func _update_mobile_dependent_layout() -> void:
 			if use_mobile:
 				vendor_content_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
 				vendor_content_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-				vendor_content_scroll.custom_minimum_size.y = 260.0 if is_portrait else 90.0
+				vendor_content_scroll.custom_minimum_size.y = 650.0 if is_portrait else 90.0
 				vendor_content_scroll.scroll_deadzone = 8
 			else:
 				vendor_content_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
@@ -560,7 +585,7 @@ func _update_mobile_dependent_layout() -> void:
 				
 	# Back Button
 	if is_instance_valid(back_button):
-		back_button.custom_minimum_size = Vector2(back_button.custom_minimum_size.x, 110.0 if is_portrait else (60.0 if use_mobile else 34.0))
+		back_button.custom_minimum_size = Vector2(back_button.custom_minimum_size.x, 120.0 if is_portrait else (60.0 if use_mobile else 34.0))
 		
 	# Bottom Bar Panel and children styles
 	var bottom_panel := $MainVBox/BottomBarPanel if has_node("MainVBox/BottomBarPanel") else null
@@ -578,7 +603,7 @@ func _update_mobile_dependent_layout() -> void:
 			hbox.alignment = BoxContainer.ALIGNMENT_CENTER
 
 	# Placeholder menu buttons (Vehicles, Journey, etc.)
-	var btn_min_h = 100.0 if is_portrait else (70.0 if use_mobile else 34.0)
+	var btn_min_h = 140.0 if is_portrait else (70.0 if use_mobile else 34.0)
 	for btn in [vehicle_menu_button, journey_menu_button, settlement_menu_button, cargo_menu_button]:
 		if is_instance_valid(btn):
 			btn.custom_minimum_size.y = btn_min_h
@@ -589,6 +614,14 @@ func _update_mobile_dependent_layout() -> void:
 	_style_menu_button(settlement_menu_button)
 	_style_menu_button(cargo_menu_button)
 	
+	if is_instance_valid(_mission_sort_option_button):
+		if is_portrait:
+			_mission_sort_option_button.custom_minimum_size = Vector2(400, 80)
+			_mission_sort_option_button.add_theme_font_size_override("font_size", _get_font_size(18))
+		else:
+			_mission_sort_option_button.custom_minimum_size = Vector2(300, 34)
+			_mission_sort_option_button.add_theme_font_size_override("font_size", 14)
+	
 	if is_instance_valid(vendor_item_grid):
 		for child in vendor_item_grid.get_children():
 			if child is Control and child.has_meta("nav_intent"):
@@ -598,10 +631,25 @@ func _update_vendor_grid_columns() -> void:
 	# Make the vendor item grid responsive: choose columns based on available width.
 	if not is_instance_valid(vendor_item_grid):
 		return
+		
+	var is_portrait = _is_portrait_view()
+	var on_mobile = _is_mobile()
 	var is_narrow_screen = get_viewport_rect().size.x < 1150
-	if _is_mobile() or is_narrow_screen:
-		# On mobile or any simulated small tablet view, use a horizontal carousel
-		vendor_item_grid.columns = 9999
+	
+	if on_mobile or is_narrow_screen:
+		if is_portrait:
+			# Split into 2 rows by setting columns to ceil(valid_items / 2.0)
+			var valid_count := 0
+			for child in vendor_item_grid.get_children():
+				if is_instance_valid(child) and not child.is_queued_for_deletion():
+					valid_count += 1
+			
+			var cols = max(1, int(ceil(valid_count / 2.0)))
+			if _debug_convoy_menu:
+				print("[ConvoyMenu] Portrait 2-row layout: items=", valid_count, " columns=", cols)
+			vendor_item_grid.columns = cols
+		else:
+			vendor_item_grid.columns = 9999
 		return
 	
 	var grid_width := vendor_item_grid.size.x
@@ -1076,6 +1124,10 @@ func _build_vendor_preview_button(item_string: String) -> Control:
 		dest_label.add_theme_color_override("font_color", COLOR_YELLOW)
 		vbox.add_child(dest_label)
 
+	button.set_meta("name_label", name_label)
+	if dest_text != "":
+		button.set_meta("dest_label", vbox.get_child(1) if vbox.get_child_count() > 1 else null)
+
 	# Set flexible default width. The labels will adapt based on Control.SIZE_EXPAND_FILL behavior
 	# but text_overrun_behavior stops them from pushing button minimum bounds outward.
 	var default_text_width := 10.0
@@ -1204,15 +1256,14 @@ func _render_vendor_preview_display() -> void:
 	else:
 		vendor_item_container.visible = true
 		vendor_no_items_label.visible = false
-		if _is_mobile():
-			vendor_item_grid.columns = 9999
 		var item_count = content_list.size()
 		for item_string in content_list:
 			var button := _build_vendor_preview_button(item_string)
 			vendor_item_grid.add_child(button)
 
-	# Ensure font sizes are applied immediately (deferred to stable layout)
+	# Ensure font sizes and grid columns are updated
 	call_deferred("_update_font_sizes")
+	call_deferred("_update_vendor_grid_columns")
 
 
 func _get_current_settlement_dict() -> Dictionary:
@@ -2393,12 +2444,12 @@ func _update_font_sizes() -> void:
 	# Update font sizes for dynamically created vendor item buttons and their RichTextLabels
 	if is_instance_valid(vendor_item_grid):
 		for child in vendor_item_grid.get_children():
-			if child is Button:
+			if child is Button or child is PanelContainer:
 				# Increase font for mission/parts item buttons to improve readability
 				child.add_theme_font_size_override("font_size", new_font_size + 2)
-				# Update font sizes for NameLabel and DestLabel
-				var name_l := child.find_child("NameLabel", true, false) as Label
-				var dest_l := child.find_child("DestLabel", true, false) as Label
+				# Update font sizes for NameLabel and DestLabel using metadata for performance
+				var name_l: Label = child.get_meta("name_label") if child.has_meta("name_label") else (child.find_child("NameLabel", true, false) as Label)
+				var dest_l: Label = child.get_meta("dest_label") if child.has_meta("dest_label") else (child.find_child("DestLabel", true, false) as Label)
 
 				var raw_len: int = name_l.text.length() if is_instance_valid(name_l) else 0
 				if is_instance_valid(dest_l):
@@ -2406,7 +2457,7 @@ func _update_font_sizes() -> void:
 
 				var effective_font_size = new_font_size + 4 # Default basis
 				if is_portrait:
-					effective_font_size = int(effective_font_size * 1.8)
+					effective_font_size = int(effective_font_size * 3.0)
 				elif _is_mobile():
 					effective_font_size = int(effective_font_size * 1.4)
 
@@ -2419,7 +2470,8 @@ func _update_font_sizes() -> void:
 
 				# Keep two centered lines visible inside fixed-height item cards.
 				var has_dest_line := is_instance_valid(dest_l)
-				var max_button_label_size := 30 if _is_mobile() else (19 if has_dest_line else 22)
+				var is_port = get_viewport_rect().size.y > get_viewport_rect().size.x
+				var max_button_label_size := 60 if is_port else (30 if _is_mobile() else (19 if has_dest_line else 22))
 				effective_font_size = clamp(effective_font_size + 1, MIN_FONT_SIZE, max_button_label_size)
 
 				var text_width: float = child.size.x - (VENDOR_ITEM_BUTTON_PADDING_X * 2.0) if child.size.x > 50 else (VENDOR_ITEM_BUTTON_MIN_WIDTH - (VENDOR_ITEM_BUTTON_PADDING_X * 2.0))
@@ -2450,7 +2502,7 @@ func _update_font_sizes() -> void:
 		cargo_menu_button.add_theme_font_size_override("font_size", new_font_size)
 
 	# Scale vendor tab buttons
-	var tab_fs = new_font_size + 4 if is_portrait else new_font_size - 2
+	var tab_fs = (new_font_size + 10) if is_portrait else (new_font_size + 2 if _is_mobile() else new_font_size - 2)
 	if is_instance_valid(convoy_missions_tab_button):
 		convoy_missions_tab_button.add_theme_font_size_override("font_size", tab_fs)
 	if is_instance_valid(settlement_missions_tab_button):
@@ -2510,11 +2562,14 @@ func _initialize_tab_button_styles(button: Button) -> void:
 	if not is_instance_valid(button):
 		return
 
+	var win_size = get_viewport_rect().size if is_inside_tree() else Vector2(0, 0)
+	var is_portrait = win_size.y > win_size.x
 	var on_mobile := _is_mobile()
 	var tab_corner_r := 5 if on_mobile else 3
-	var tab_v_pad := 10.0 if on_mobile else 4.0
+	var tab_v_pad := 14.0 if is_portrait else (10.0 if on_mobile else 4.0)
 	if on_mobile:
-		button.custom_minimum_size = Vector2(0.0, 52.0)
+		var tab_h = 80.0 if is_portrait else 52.0
+		button.custom_minimum_size = Vector2(0.0, tab_h)
 		button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 
 	var style_normal := StyleBoxFlat.new()
