@@ -386,7 +386,7 @@ func _update_ui(convoy: Dictionary) -> void:
 		if _is_mobile():
 			cancel_container.custom_minimum_size = Vector2(140, 64)
 		
-		cancel_container.mouse_filter = Control.MOUSE_FILTER_STOP
+		cancel_container.mouse_filter = Control.MOUSE_FILTER_PASS
 		cancel_container.gui_input.connect(func(event):
 			if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
 				if event.pressed:
@@ -721,7 +721,7 @@ func _populate_destination_list():
 		elif _is_mobile():
 			item_container.custom_minimum_size.y = 64
 		
-		item_container.mouse_filter = Control.MOUSE_FILTER_STOP
+		item_container.mouse_filter = Control.MOUSE_FILTER_PASS
 		item_container.gui_input.connect(func(event):
 			if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
 				if event.pressed:
@@ -1524,7 +1524,7 @@ func _show_confirmation_panel(route_data: Dictionary):
 		if _is_mobile():
 			top_up_container.custom_minimum_size = Vector2(140, 64)
 		
-		top_up_container.mouse_filter = Control.MOUSE_FILTER_STOP
+		top_up_container.mouse_filter = Control.MOUSE_FILTER_PASS
 		top_up_container.gui_input.connect(func(event):
 			if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
 				if event.pressed:
@@ -1570,7 +1570,7 @@ func _show_confirmation_panel(route_data: Dictionary):
 		if _is_mobile():
 			next_container.custom_minimum_size = Vector2(140, 64)
 		
-		next_container.mouse_filter = Control.MOUSE_FILTER_STOP
+		next_container.mouse_filter = Control.MOUSE_FILTER_PASS
 		next_container.gui_input.connect(func(event):
 			if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
 				if event.pressed:
@@ -1612,7 +1612,7 @@ func _show_confirmation_panel(route_data: Dictionary):
 	if _is_mobile():
 		confirm_container.custom_minimum_size = Vector2(140, 64)
 	
-	confirm_container.mouse_filter = Control.MOUSE_FILTER_STOP
+	confirm_container.mouse_filter = Control.MOUSE_FILTER_PASS
 	confirm_container.gui_input.connect(func(event):
 		if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
 			if event.pressed:

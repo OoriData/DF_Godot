@@ -69,11 +69,11 @@ func _ready():
 		var win_size = get_viewport_rect().size if is_inside_tree() else Vector2(0, 0)
 		var is_portrait = win_size.y > win_size.x
 		if is_portrait:
-			toggle_button.custom_minimum_size.y = 100
+			toggle_button.custom_minimum_size = Vector2(400, 100)
 			rtl.add_theme_font_size_override("normal_font_size", _get_font_size(16))
 			rtl.offset_top = 28
 		elif _is_mobile():
-			toggle_button.custom_minimum_size.y = 64
+			toggle_button.custom_minimum_size = Vector2(300, 64)
 			rtl.add_theme_font_size_override("normal_font_size", _get_font_size(16))
 			rtl.offset_top = 14
 		else:
@@ -114,7 +114,7 @@ func _on_toggle_button_pressed() -> void:
 		var separation = 16 if is_portrait else (12 if is_mobile else 4)
 		
 		# Calculate total height: items + separations + top/bottom padding
-		var total_content_h = (item_count * item_h) + (max(0, item_count - 1) * separation) + 20
+		var total_content_h = (item_count * item_h) + (max(0, item_count - 1) * separation) + 60
 		
 		# Clamp height to reasonable limits
 		var max_h = 800 if is_portrait else (600 if is_mobile else 300)

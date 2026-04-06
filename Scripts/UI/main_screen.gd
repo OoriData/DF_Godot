@@ -478,6 +478,16 @@ func _is_portrait() -> bool:
 	var viewport_sz = get_viewport_rect().size
 	return viewport_sz.y > viewport_sz.x
 
+func _get_bottom_safe_margin() -> float:
+	var is_mobile = OS.has_feature("mobile") or OS.has_feature("web_android") or OS.has_feature("web_ios") or DisplayServer.get_name() in ["Android", "iOS"]
+	if not is_mobile:
+		return 0.0
+	var safe_area = DisplayServer.get_display_safe_area()
+	var window_size = DisplayServer.window_get_size()
+	if safe_area.size.y > 0 and safe_area.end.y < window_size.y:
+		return max(34.0, float(window_size.y - safe_area.end.y))
+	return 34.0
+
 func _on_menu_visibility_changed(is_open: bool, _menu_name: String):
 	# Overlay behavior: map stays full size; slide menu over it.
 	if not is_instance_valid(menu_container): return
@@ -584,9 +594,10 @@ func _slide_menu_open(convoy_data: Dictionary):
 	_menu_anim_in_progress = true
 	# Initial hidden state: width 0 at right edge (or bottom edge).
 	menu_container.visible = true
+	var bottom_margin = _get_bottom_safe_margin() if _is_portrait() else 0.0
 	if _is_portrait():
-		menu_container.offset_bottom = 0
-		menu_container.offset_top = 0 # zero height
+		menu_container.offset_bottom = -bottom_margin
+		menu_container.offset_top = -bottom_margin # zero height
 		menu_container.offset_right = 0
 		menu_container.offset_left = 0
 	else:
@@ -619,14 +630,18 @@ func _slide_menu_open(convoy_data: Dictionary):
 	_menu_anim_tween = create_tween()
 	_menu_anim_tween.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
 	var prop = "offset_top" if _is_portrait() else "offset_left"
-	_menu_anim_tween.parallel().tween_property(menu_container, prop, -_menu_target_width, MENU_ANIM_DURATION)
+	bottom_margin = _get_bottom_safe_margin() if _is_portrait() else 0.0
+	var target_val = -_menu_target_width - bottom_margin if _is_portrait() else -_menu_target_width
+	_menu_anim_tween.parallel().tween_property(menu_container, prop, target_val, MENU_ANIM_DURATION)
 	_menu_anim_tween.parallel().tween_property(menu_container, "modulate:a", 1.0, MENU_ANIM_DURATION)
 	# Occlusion already set to final; no need to animate it for camera logic.
 	_menu_anim_tween.finished.connect(func():
 		_dbg_menu("slide_open_finished", {"final_offset": menu_container.get(prop)})
 		# Ensure final size exact
 		if _is_portrait():
-			menu_container.offset_top = -_menu_target_width
+			var b_margin = _get_bottom_safe_margin()
+			menu_container.offset_top = -_menu_target_width - b_margin
+			menu_container.offset_bottom = -b_margin
 		else:
 			menu_container.offset_left = -_menu_target_width
 		# (Camera occlusion already correct)
@@ -656,7 +671,9 @@ func _slide_menu_close(convoy_data: Dictionary):
 		_dbg_menu("slide_close_finished", {"final_offset": (menu_container.offset_top if _is_portrait() else menu_container.offset_left)})
 		menu_container.visible = false
 		menu_container.offset_left = 0.0
-		menu_container.offset_top = 0.0
+		var b_margin = _get_bottom_safe_margin() if _is_portrait() else 0.0
+		menu_container.offset_top = -b_margin if _is_portrait() else 0.0
+		menu_container.offset_bottom = -b_margin if _is_portrait() else 0.0
 		menu_container.modulate.a = 1.0
 		_current_menu_occlusion_px = 0.0
 		_menu_anim_in_progress = false
@@ -672,7 +689,9 @@ func _close_anim_step(progress: float):
 	var w = lerp(_close_anim_start_width, 0.0, progress)
 	_current_menu_occlusion_px = w
 	if _is_portrait():
-		menu_container.offset_top = -w
+		var b_margin = _get_bottom_safe_margin()
+		menu_container.offset_top = -w - b_margin
+		menu_container.offset_bottom = -b_margin
 	else:
 		menu_container.offset_left = -w
 	_update_camera_occlusion_from_menu()

@@ -66,10 +66,10 @@ const VENDOR_ITEM_BUTTON_BOTTOM_CLEARANCE: float = 6.0
 @onready var efficiency_text_label: Label = $MainVBox/ScrollContainer/ContentVBox/PerformanceStatsHBox/EfficiencyBox/EfficiencyTextLabel
 
 # Cargo Progress Bars and Labels
-@onready var cargo_volume_text_label: Label = $MainVBox/ScrollContainer/ContentVBox/CargoVolumeContainer/CargoVolumeTextLabel
-@onready var cargo_volume_bar: ProgressBar = $MainVBox/ScrollContainer/ContentVBox/CargoVolumeContainer/CargoVolumeBar
-@onready var cargo_weight_text_label: Label = $MainVBox/ScrollContainer/ContentVBox/CargoWeightContainer/CargoWeightTextLabel
-@onready var cargo_weight_bar: ProgressBar = $MainVBox/ScrollContainer/ContentVBox/CargoWeightContainer/CargoWeightBar
+@onready var cargo_volume_text_label: Label = $MainVBox/ScrollContainer/ContentVBox/CargoBarsHBox/CargoVolumeContainer/CargoVolumeTextLabel
+@onready var cargo_volume_bar: ProgressBar = $MainVBox/ScrollContainer/ContentVBox/CargoBarsHBox/CargoVolumeContainer/CargoVolumeBar
+@onready var cargo_weight_text_label: Label = $MainVBox/ScrollContainer/ContentVBox/CargoBarsHBox/CargoWeightContainer/CargoWeightTextLabel
+@onready var cargo_weight_bar: ProgressBar = $MainVBox/ScrollContainer/ContentVBox/CargoBarsHBox/CargoWeightContainer/CargoWeightBar
 
 @onready var scroll_container: ScrollContainer = $MainVBox/ScrollContainer
 @onready var content_vbox: VBoxContainer = $MainVBox/ScrollContainer/ContentVBox
@@ -159,7 +159,8 @@ func _is_mobile() -> bool:
 		return true
 	if is_inside_tree():
 		var win_size = get_viewport_rect().size
-		if win_size.y > win_size.x:
+		# Catch portrait mode OR short landscape screens (like Godot's mobile emulator rotated sideways)
+		if win_size.y > win_size.x or win_size.y < 500:
 			return true
 	return false
 
@@ -550,8 +551,8 @@ func _update_mobile_dependent_layout() -> void:
 			if use_mobile:
 				vendor_content_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
 				vendor_content_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-				vendor_content_scroll.custom_minimum_size.y = 260.0 if is_portrait else 230.0
-				vendor_content_scroll.scroll_deadzone = 10
+				vendor_content_scroll.custom_minimum_size.y = 260.0 if is_portrait else 90.0
+				vendor_content_scroll.scroll_deadzone = 8
 			else:
 				vendor_content_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
 				vendor_content_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
@@ -590,15 +591,17 @@ func _update_mobile_dependent_layout() -> void:
 	
 	if is_instance_valid(vendor_item_grid):
 		for child in vendor_item_grid.get_children():
-			if child is Button:
+			if child is Control and child.has_meta("nav_intent"):
 				_style_vendor_item_button(child, _current_vendor_tab)
 
 func _update_vendor_grid_columns() -> void:
 	# Make the vendor item grid responsive: choose columns based on available width.
 	if not is_instance_valid(vendor_item_grid):
 		return
-	if _is_mobile():
-		# On mobile we use a horizontal carousel (1 row, infinite columns)
+	var is_narrow_screen = get_viewport_rect().size.x < 1150
+	if _is_mobile() or is_narrow_screen:
+		# On mobile or any simulated small tablet view, use a horizontal carousel
+		vendor_item_grid.columns = 9999
 		return
 	
 	var grid_width := vendor_item_grid.size.x
@@ -1008,8 +1011,8 @@ func _update_vendor_preview() -> void:
 	_update_vendor_grid_columns()
 
 
-func _build_vendor_preview_button(item_string: String) -> Button:
-	var button := Button.new()
+func _build_vendor_preview_button(item_string: String) -> Control:
+	var button := PanelContainer.new()
 	# Support destination annotations in two formats:
 	# "name — to DEST" (em dash syntax) or "name -> DEST" (arrow syntax)
 	var name_qty := item_string
@@ -1085,7 +1088,6 @@ func _build_vendor_preview_button(item_string: String) -> Button:
 	button.custom_minimum_size.x = VENDOR_ITEM_BUTTON_MIN_WIDTH
 	button.custom_minimum_size.y = VENDOR_ITEM_BUTTON_HEIGHT
 	button.clip_contents = true
-	button.clip_text = true
 
 	# Attach a deep-link intent so clicks can navigate to the right destination.
 	var nav_intent: Dictionary = {}
@@ -1104,9 +1106,36 @@ func _build_vendor_preview_button(item_string: String) -> Button:
 			# If this looks like a slot summary (e.g., "Engine (2)") rather than a real item,
 			# keep navigation but expect focus to be best-effort.
 	button.set_meta("nav_intent", nav_intent)
-	button.pressed.connect(_on_vendor_preview_item_button_pressed.bind(button))
-	if _is_mobile():
-		button.mouse_filter = Control.MOUSE_FILTER_PASS # Allow drag events to pass to ScrollContainer
+	
+	# Mobile tap detection logic to replace Button press
+	button.mouse_filter = Control.MOUSE_FILTER_PASS
+	button.gui_input.connect(func(event):
+		if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
+			if event.pressed:
+				button.set_meta("tap_start_pos", event.global_position)
+				# Update background to pressed style
+				var custom_style = StyleBoxFlat.new()
+				custom_style.bg_color = COLOR_ITEM_BUTTON_BG.darkened(0.2)
+				custom_style.corner_radius_top_left = 4
+				custom_style.corner_radius_top_right = 4
+				custom_style.corner_radius_bottom_left = 4
+				custom_style.corner_radius_bottom_right = 4
+				custom_style.content_margin_top = 1
+				button.add_theme_stylebox_override("panel", custom_style)
+			else:
+				# Reset style
+				_style_vendor_item_button(button, _current_vendor_tab)
+				var start_pos = button.get_meta("tap_start_pos", event.global_position)
+				var move_dist = (event.global_position - start_pos).length()
+				if move_dist < 10:
+					_on_vendor_preview_item_button_pressed(button)
+					get_viewport().set_input_as_handled()
+	)
+
+	button.set_meta("name_label", name_label)
+	if dest_text != "":
+		button.set_meta("dest_label", vbox.get_node_or_null("DestLabel"))
+
 	_style_vendor_item_button(button, _current_vendor_tab)
 	return button
 
@@ -1176,9 +1205,7 @@ func _render_vendor_preview_display() -> void:
 		vendor_item_container.visible = true
 		vendor_no_items_label.visible = false
 		if _is_mobile():
-			# Calculate enough columns to evenly split items into a max of 2 horizontal rows
-			var calc_cols = ceil(float(content_list.size()) / 2.0)
-			vendor_item_grid.columns = max(1, int(calc_cols))
+			vendor_item_grid.columns = 9999
 		var item_count = content_list.size()
 		for item_string in content_list:
 			var button := _build_vendor_preview_button(item_string)
@@ -1275,7 +1302,7 @@ func _build_settlement_focus_intent(item_name: String, category_hint: String) ->
 	return intent
 
 
-func _on_vendor_preview_item_button_pressed(button: Button) -> void:
+func _on_vendor_preview_item_button_pressed(button: Control) -> void:
 	if not is_instance_valid(button):
 		return
 	if not (convoy_data_received is Dictionary) or convoy_data_received.is_empty():
@@ -2515,7 +2542,7 @@ func _initialize_tab_button_styles(button: Button) -> void:
 	button.add_theme_stylebox_override("hover", style_hover)
 	button.add_theme_stylebox_override("disabled", style_disabled)
 
-func _style_vendor_item_button(button: Button, tab_type: VendorTab) -> void:
+func _style_vendor_item_button(button: Control, tab_type: VendorTab) -> void:
 	var font_color: Color
 	match tab_type:
 		VendorTab.CONVOY_MISSIONS, VendorTab.SETTLEMENT_MISSIONS:
@@ -2541,20 +2568,27 @@ func _style_vendor_item_button(button: Button, tab_type: VendorTab) -> void:
 	style_normal.corner_radius_bottom_left = 4
 	style_normal.corner_radius_bottom_right = 4
 
-	var style_hover := style_normal.duplicate() as StyleBoxFlat
-	style_hover.bg_color = COLOR_ITEM_BUTTON_BG.lightened(0.15)
-	style_hover.border_color = style_hover.bg_color.darkened(0.3)
+	if button is PanelContainer:
+		button.add_theme_stylebox_override("panel", style_normal)
+		if button.has_meta("name_label"):
+			var lbl = button.get_meta("name_label")
+			if is_instance_valid(lbl):
+				lbl.add_theme_color_override("font_color", font_color)
+	elif button is Button:
+		var style_hover := style_normal.duplicate() as StyleBoxFlat
+		style_hover.bg_color = COLOR_ITEM_BUTTON_BG.lightened(0.15)
+		style_hover.border_color = style_hover.bg_color.darkened(0.3)
 
-	var style_pressed := style_normal.duplicate() as StyleBoxFlat
-	style_pressed.bg_color = COLOR_ITEM_BUTTON_BG.darkened(0.2)
-	style_pressed.content_margin_top = 1 # Subtle press-down effect
+		var style_pressed := style_normal.duplicate() as StyleBoxFlat
+		style_pressed.bg_color = COLOR_ITEM_BUTTON_BG.darkened(0.2)
+		style_pressed.content_margin_top = 1 # Subtle press-down effect
 
-	button.add_theme_color_override("font_color", font_color)
-	button.add_theme_color_override("font_hover_color", font_color.lightened(0.1))
-	button.add_theme_color_override("font_pressed_color", font_color)
-	button.add_theme_stylebox_override("normal", style_normal)
-	button.add_theme_stylebox_override("hover", style_hover)
-	button.add_theme_stylebox_override("pressed", style_pressed)
+		button.add_theme_color_override("font_color", font_color)
+		button.add_theme_color_override("font_hover_color", font_color.lightened(0.1))
+		button.add_theme_color_override("font_pressed_color", font_color)
+		button.add_theme_stylebox_override("normal", style_normal)
+		button.add_theme_stylebox_override("hover", style_hover)
+		button.add_theme_stylebox_override("pressed", style_pressed)
 
 func _style_journey_progress_bar(bar: ProgressBar) -> void:
 	if not is_instance_valid(bar):
