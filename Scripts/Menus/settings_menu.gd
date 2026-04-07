@@ -43,7 +43,7 @@ func _is_mobile() -> bool:
 
 func _get_font_size(base: int) -> int:
 	var is_portrait = _is_portrait()
-	var boost = 3.2 if is_portrait else (2.1 if _is_mobile() else 1.4)
+	var boost = 3.5 if is_portrait else (1.6 if _is_mobile() else 1.2)
 	return int(base * boost)
 
 func _update_layout() -> void:
@@ -57,9 +57,9 @@ func _update_layout() -> void:
 	var target_h: int
 	
 	if is_portrait:
-		# Portrait: nearly full width, capped height
-		target_w = int(win_size.x * 0.95)
-		target_h = int(win_size.y * 0.90)
+		# Portrait: Absolute full width and height
+		target_w = int(win_size.x)
+		target_h = int(win_size.y)
 	else:
 		# Landscape: width capped but comfortable, height strictly respects borders
 		target_w = int(min(1200, win_size.x * 0.85))
@@ -77,6 +77,16 @@ func _update_layout() -> void:
 			panel.offset_top = -target_h / 2
 			panel.offset_bottom = target_h / 2
 			
+		# Remove borders and corners in portrait for a flush full-screen look
+		var style = panel.get_theme_stylebox("panel").duplicate()
+		if style is StyleBoxFlat:
+			style.set_border_width_all(0 if is_portrait else 1)
+			style.corner_radius_top_left = 0 if is_portrait else 12
+			style.corner_radius_top_right = 0 if is_portrait else 12
+			style.corner_radius_bottom_left = 0 if is_portrait else 12
+			style.corner_radius_bottom_right = 0 if is_portrait else 12
+			panel.add_theme_stylebox_override("panel", style)
+			
 	var scroll = %Scroll
 	if is_instance_valid(scroll):
 		scroll.scroll_deadzone = 12 # Higher deadzone helpful for mobile scrolling over buttons
@@ -88,7 +98,7 @@ func _update_layout() -> void:
 	# Scale margins
 	var margin_node = %Margin
 	if is_instance_valid(margin_node) and margin_node is MarginContainer:
-		var pad = 24 if is_portrait else 32
+		var pad = 8 if is_portrait else 32
 		margin_node.add_theme_constant_override("margin_left", pad)
 		margin_node.add_theme_constant_override("margin_right", pad)
 		margin_node.add_theme_constant_override("margin_top", pad)

@@ -85,7 +85,7 @@ func _apply_mobile_optimizations() -> void:
 	# 2. Aggressive Typography Boost for Portrait
 	var win_size = get_viewport().get_visible_rect().size if is_inside_tree() else Vector2(0, 0)
 	var is_portrait = win_size.y > win_size.x
-	var boost = 2.8 if is_portrait else 1.8
+	var boost = 3.2 if is_portrait else 2.2
 	
 	var labels = [username_label, user_money_label]
 	for label in labels:
@@ -169,27 +169,27 @@ func _update_mobile_sizing() -> void:
 	var win_size = get_viewport_rect().size if is_inside_tree() else Vector2(0, 0)
 	var is_portrait = win_size.y > win_size.x
 	if is_portrait:
-		custom_minimum_size.y = 140
-		if is_instance_valid(settings_button): settings_button.custom_minimum_size.y = 100
-		if is_instance_valid(report_bug_button): report_bug_button.custom_minimum_size.y = 100
+		custom_minimum_size.y = 170
+		if is_instance_valid(settings_button): settings_button.custom_minimum_size.y = 120
+		if is_instance_valid(report_bug_button): report_bug_button.custom_minimum_size.y = 120
 	else:
-		custom_minimum_size.y = 60
-		if is_instance_valid(settings_button): settings_button.custom_minimum_size.y = 44
-		if is_instance_valid(report_bug_button): report_bug_button.custom_minimum_size.y = 44
+		custom_minimum_size.y = 90
+		if is_instance_valid(settings_button): settings_button.custom_minimum_size.y = 64
+		if is_instance_valid(report_bug_button): report_bug_button.custom_minimum_size.y = 64
 
 func _apply_desktop_styling() -> void:
-	custom_minimum_size.y = 52 # Reverted from 56 (closer to original 48-60 range)
+	custom_minimum_size.y = 68 # Reverted from 56 (closer to original 48-60 range)
 	
-	var boost = 1.1 # Slightly reduced from 1.2
+	var boost = 1.3 # Slightly reduced from 1.2
 	var btn_fs = settings_button.get_theme_font_size("font_size")
 	if btn_fs <= 0: btn_fs = 16
 	
 	settings_button.add_theme_font_size_override("font_size", int(btn_fs * boost))
-	settings_button.custom_minimum_size.y = 40 # Reverted from 44
+	settings_button.custom_minimum_size.y = 52 # Reverted from 44
 	
 	if is_instance_valid(report_bug_button):
 		report_bug_button.add_theme_font_size_override("font_size", int(btn_fs * boost))
-		report_bug_button.custom_minimum_size.y = 40
+		report_bug_button.custom_minimum_size.y = 52
 		var bug_style = StyleBoxFlat.new()
 		bug_style.bg_color = Color(0.6, 0.1, 0.1, 0.9)
 		bug_style.corner_radius_top_left = 4
