@@ -6,6 +6,7 @@ signal login_successful(user_id: String)
 @onready var vbox_container: VBoxContainer = $CenterContainer/VBoxContainer
 @onready var status_label: Label = $CenterContainer/VBoxContainer/StatusLabel
 @onready var background_overlay: ColorRect = $Background
+@onready var title_logo: TextureRect = $CenterContainer/VBoxContainer/TitleLogo
 
 # Brand colors
 const DISCORD_BLURPLE := Color("5865F2")
@@ -99,6 +100,9 @@ func _ready() -> void:
 	if is_instance_valid(background_overlay):
 		background_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
 
+	# Apply portrait layout before first frame
+	_apply_portrait_layout()
+
 	# Focus the first button
 	if is_instance_valid(_discord_button):
 		_discord_button.grab_focus()
@@ -114,6 +118,65 @@ func _process(_delta: float) -> void:
 	_update_map_background(_delta)
 	if _oauth_in_progress:
 		_spin_status()
+
+# ────────────────────────────────────────────────────────────────────
+# Portrait / Mobile helpers
+# ────────────────────────────────────────────────────────────────────
+
+func _is_portrait() -> bool:
+	var sz := get_viewport_rect().size
+	return sz.y > sz.x
+
+func _is_mobile() -> bool:
+	return OS.has_feature("mobile") or DisplayServer.get_name() in ["Android", "iOS"]
+
+## Re-sizes buttons and spacing to fill portrait screen width on mobile.
+func _apply_portrait_layout() -> void:
+	if not is_instance_valid(vbox_container):
+		return
+
+	var viewport_sz := get_viewport_rect().size
+	var portrait := _is_portrait()
+	var mobile := _is_mobile()
+
+	if portrait and mobile:
+		# Derive a uniform scale so all elements grow proportionally.
+		# Reference width is 340 px (original button). Target 88 % of screen.
+		var scale_f: float = (viewport_sz.x * 0.88) / 340.0
+
+		var btn_w: float  = 340.0 * scale_f
+		var btn_h: float  = 54.0  * scale_f
+		var font_sz: int  = int(round(16.0 * scale_f))
+		var vbox_sep: int = int(round(10.0 * scale_f))
+
+		vbox_container.add_theme_constant_override("separation", vbox_sep)
+
+		for btn in [_discord_button, _apple_button, _google_button, _steam_button]:
+			if not is_instance_valid(btn):
+				continue
+			btn.custom_minimum_size = Vector2(btn_w, btn_h)
+			btn.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+			btn.add_theme_font_size_override("font_size", font_sz)
+
+		# Scale the logo halfway between original and full scale (avoids clipping)
+		if is_instance_valid(title_logo):
+			var logo_f: float = (scale_f + 1.0) / 2.0
+			title_logo.custom_minimum_size = Vector2(520.0 * logo_f, 160.0 * logo_f)
+
+		# Zoom the background camera so the map bleeds off all 4 edges
+		if is_instance_valid(_bg_camera):
+			_bg_camera.zoom = Vector2(4.5, 4.5)
+	else:
+		# Restore defaults
+		vbox_container.add_theme_constant_override("separation", 8)
+		for btn in [_discord_button, _apple_button, _google_button, _steam_button]:
+			if not is_instance_valid(btn):
+				continue
+			btn.custom_minimum_size = Vector2(340, 54)
+			btn.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+			btn.remove_theme_font_size_override("font_size")
+		if is_instance_valid(_bg_camera):
+			_bg_camera.zoom = Vector2(1.05, 1.05)
 
 # ────────────────────────────────────────────────────────────────────
 # Button creation
@@ -518,7 +581,7 @@ func _setup_map_background() -> void:
 	_bg_texture_rect = TextureRect.new()
 	_bg_texture_rect.name = "MapBackground"
 	_bg_texture_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_bg_texture_rect.stretch_mode = TextureRect.STRETCH_SCALE
+	_bg_texture_rect.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
 	_bg_texture_rect.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
 	_bg_texture_rect.modulate = Color(1, 1, 1, 0.26)
 	_bg_texture_rect.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -576,6 +639,7 @@ func _on_viewport_size_changed() -> void:
 	if _bg_viewport == null:
 		return
 	_bg_viewport.size = get_viewport_rect().size
+	_apply_portrait_layout()
 
 func _build_tile_lookup(tile_set: TileSet) -> void:
 	_bg_tile_name_to_entry.clear()
