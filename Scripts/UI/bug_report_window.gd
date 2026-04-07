@@ -46,11 +46,17 @@ func _ready() -> void:
 	_update_submit_enabled()
 	_apply_ui_scaling_recursive(self)
 
+func _is_portrait() -> bool:
+	if is_inside_tree():
+		var win_size = get_viewport().get_visible_rect().size
+		return win_size.y > win_size.x
+	return false
+
 func _is_mobile() -> bool:
-	return OS.has_feature("mobile") or DisplayServer.get_name() in ["Android", "iOS"]
+	return OS.has_feature("mobile") or DisplayServer.get_name() in ["Android", "iOS"] or _is_portrait()
 
 func _get_font_size(base: int) -> int:
-	var boost = 1.7 if _is_mobile() else 1.2
+	var boost = 3.2 if _is_portrait() else (2.1 if _is_mobile() else 1.6)
 	return int(base * boost)
 
 func set_screenshot_png_bytes(png_bytes: PackedByteArray) -> void:
@@ -62,11 +68,26 @@ func open_centered() -> void:
 	_pending = false
 	_update_submit_enabled()
 	var win_size = DisplayServer.window_get_size()
-	var win_w = 940 if _is_mobile() else 820
-	var win_h = 800 if _is_mobile() else 700
-	win_w = min(win_w, win_size.x - 32)
-	win_h = min(win_h, win_size.y - 64)
-	popup_centered(Vector2i(win_w, win_h))
+	var win_w: int
+	var win_h: int
+	if _is_portrait():
+		win_w = win_size.x - 10
+		win_h = win_size.y - 120
+		var pos = Vector2i((win_size.x - win_w) / 2, 80)
+		popup(Rect2i(pos, Vector2i(win_w, win_h)))
+	elif _is_mobile():
+		win_w = 940
+		win_h = 800
+	else:
+		win_w = 820
+		win_h = 700
+		
+	win_w = min(win_w, win_size.x - 24)
+	win_h = min(win_h, win_size.y - 48)
+	
+	if not _is_portrait():
+		popup_centered(Vector2i(win_w, win_h))
+	
 	call_deferred("_refresh_layout")
 
 func _refresh_layout() -> void:
@@ -87,11 +108,16 @@ func _on_close_pressed() -> void:
 	closed.emit()
 
 func _apply_ui_scaling_recursive(node: Node) -> void:
+	var is_port = _is_portrait()
 	if node is Button:
 		node.add_theme_font_size_override("font_size", _get_font_size(14))
 		var btn_name: String = node.name.to_lower() if is_instance_valid(node) else ""
-		var is_action = btn_name.contains("close") or btn_name.contains("cancel") or btn_name.contains("submit") or btn_name == ""
-		var target_h = (72 if is_action else 52) if _is_mobile() else 42
+		var is_action = btn_name.contains("close") or btn_name.contains("cancel") or btn_name.contains("submit") or btn_name == "" or btn_name.contains(" reproduction")
+		var target_h: int
+		if is_port:
+			target_h = 140 if is_action else 110
+		else:
+			target_h = (96 if is_action else 72) if _is_mobile() else 42
 		if node.custom_minimum_size.y < target_h:
 			node.custom_minimum_size.y = target_h
 	elif node is Label:
@@ -100,11 +126,14 @@ func _apply_ui_scaling_recursive(node: Node) -> void:
 		node.add_theme_font_size_override("font_size", _get_font_size(current_fs))
 	elif node is TextEdit or node is LineEdit:
 		node.add_theme_font_size_override("font_size", _get_font_size(14))
+		if node is TextEdit and is_port:
+			node.custom_minimum_size.y = max(node.custom_minimum_size.y, 180)
 	
 	for child in node.get_children():
 		_apply_ui_scaling_recursive(child)
 
 func _build_ui() -> void:
+	var is_port = _is_portrait()
 	# Style the popup panel itself
 	var panel_style := StyleBoxFlat.new()
 	panel_style.bg_color = Color("#1E1E1E")
@@ -119,10 +148,11 @@ func _build_ui() -> void:
 	var margin := MarginContainer.new()
 	margin.name = "Margin"
 	margin.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	margin.add_theme_constant_override("margin_left", 14)
-	margin.add_theme_constant_override("margin_right", 14)
-	margin.add_theme_constant_override("margin_top", 14)
-	margin.add_theme_constant_override("margin_bottom", 14)
+	var pad = 32 if is_port else 14
+	margin.add_theme_constant_override("margin_left", pad)
+	margin.add_theme_constant_override("margin_right", pad)
+	margin.add_theme_constant_override("margin_top", pad)
+	margin.add_theme_constant_override("margin_bottom", pad)
 	add_child(margin)
 
 	# Root content
@@ -130,6 +160,7 @@ func _build_ui() -> void:
 	root.name = "Root"
 	root.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	root.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	root.add_theme_constant_override("separation", 24 if is_port else 8)
 	margin.add_child(root)
 	_root = root
 
@@ -142,6 +173,7 @@ func _build_ui() -> void:
 	title_lbl.text = "Report Bug"
 	title_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	title_lbl.add_theme_color_override("font_color", Color("#FFFFFF"))
+	title_lbl.add_theme_font_size_override("font_size", _get_font_size(18))
 	header.add_child(title_lbl)
 
 	var close_btn := Button.new()
@@ -188,10 +220,11 @@ func _build_ui() -> void:
 
 	var content_margin := MarginContainer.new()
 	content_margin.name = "ContentMargin"
-	content_margin.add_theme_constant_override("margin_left", 12)
-	content_margin.add_theme_constant_override("margin_right", 12)
-	content_margin.add_theme_constant_override("margin_top", 12)
-	content_margin.add_theme_constant_override("margin_bottom", 12)
+	var inner_pad = 24 if is_port else 12
+	content_margin.add_theme_constant_override("margin_left", inner_pad)
+	content_margin.add_theme_constant_override("margin_right", inner_pad)
+	content_margin.add_theme_constant_override("margin_top", inner_pad)
+	content_margin.add_theme_constant_override("margin_bottom", inner_pad)
 	content_margin.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	content_margin.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	content_panel.add_child(content_margin)
@@ -200,6 +233,7 @@ func _build_ui() -> void:
 	content.name = "Content"
 	content.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	content.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	content.add_theme_constant_override("separation", 32 if is_port else 12)
 	content_margin.add_child(content)
 
 	# Statement
@@ -209,7 +243,12 @@ func _build_ui() -> void:
 	content.add_child(stmt)
 
 	# Toggles row
-	var toggles := HBoxContainer.new()
+	var toggles: BoxContainer
+	if is_port:
+		toggles = VBoxContainer.new()
+	else:
+		toggles = HBoxContainer.new()
+	toggles.add_theme_constant_override("separation", 12)
 	content.add_child(toggles)
 
 	_include_screenshot = CheckBox.new()
@@ -232,7 +271,7 @@ func _build_ui() -> void:
 
 	# Consent
 	_consent = CheckBox.new()
-	_consent.text = "I understand and consent to sending the selected data"
+	_consent.text = "I understand and consent to sending data"
 	_consent.button_pressed = false
 	_consent.toggled.connect(func(_v): _update_submit_enabled())
 	content.add_child(_consent)
@@ -250,8 +289,8 @@ func _build_ui() -> void:
 	line_style.corner_radius_bottom_right = 8
 	line_style.content_margin_left = 10
 	line_style.content_margin_right = 10
-	line_style.content_margin_top = 8
-	line_style.content_margin_bottom = 8
+	line_style.content_margin_top = 12 if is_port else 8
+	line_style.content_margin_bottom = 12 if is_port else 8
 	_summary.add_theme_stylebox_override("normal", line_style)
 	content.add_child(_summary)
 
@@ -268,7 +307,7 @@ func _build_ui() -> void:
 	_screenshot_preview.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	# Keep preview from pushing buttons offscreen; content scrolls instead.
 	_screenshot_preview.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	_screenshot_preview.custom_minimum_size = Vector2(0, 240)
+	_screenshot_preview.custom_minimum_size = Vector2(0, 480 if is_port else 240)
 	content.add_child(_screenshot_preview)
 
 	_update_preview()
@@ -287,6 +326,7 @@ func _build_ui() -> void:
 	var btn_row := HBoxContainer.new()
 	btn_row.alignment = BoxContainer.ALIGNMENT_END
 	btn_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	btn_row.add_theme_constant_override("separation", 20 if is_port else 8)
 	root.add_child(btn_row)
 
 	var cancel_btn := Button.new()
@@ -300,6 +340,7 @@ func _build_ui() -> void:
 	btn_row.add_child(_submit_button)
 
 func _add_collapsible_text_block(parent: Control, title_text: String, expanded_by_default: bool) -> TextEdit:
+	var is_port = _is_portrait()
 	var box := VBoxContainer.new()
 	box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	parent.add_child(box)
@@ -320,8 +361,8 @@ func _add_collapsible_text_block(parent: Control, title_text: String, expanded_b
 	header_normal.corner_radius_bottom_right = 8
 	header_normal.content_margin_left = 10
 	header_normal.content_margin_right = 10
-	header_normal.content_margin_top = 6
-	header_normal.content_margin_bottom = 6
+	header_normal.content_margin_top = 12 if is_port else 6
+	header_normal.content_margin_bottom = 12 if is_port else 6
 	var header_hover := header_normal.duplicate() as StyleBoxFlat
 	header_hover.bg_color = Color("#333333")
 	var header_pressed := header_normal.duplicate() as StyleBoxFlat
@@ -340,7 +381,7 @@ func _add_collapsible_text_block(parent: Control, title_text: String, expanded_b
 	var te := TextEdit.new()
 	te.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	te.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
-	te.custom_minimum_size = Vector2(0, 90)
+	te.custom_minimum_size = Vector2(0, 160 if is_port else 90)
 	var te_style := StyleBoxFlat.new()
 	te_style.bg_color = Color("#101010")
 	te_style.border_color = Color("#3E3E3E")
@@ -397,7 +438,7 @@ func _on_submit_pressed() -> void:
 	if _pending:
 		return
 	if not is_instance_valid(_api) or not _api.has_method("submit_bug_report"):
-		_status("Bug report submission unavailable (APICalls.submit_bug_report missing).", true)
+		_status("Bug report submission unavailable.", true)
 		return
 	if _summary.text.strip_edges() == "":
 		_status("Summary is required.", true)
@@ -442,14 +483,9 @@ func _build_payload() -> Dictionary:
 	if context_text != "":
 		desc_parts.append("## Additional context\n" + context_text)
 	var payload: Dictionary = {
-		# Backend currently validates `title` (see FastAPI 422 error). Keep `summary` for client readability.
 		"title": summary_text,
 		"summary": summary_text,
-		# Backend also validates `description`; provide a GitHub-issue-friendly markdown body.
 		"description": "\n\n".join(desc_parts),
-		# Provide a couple of common variants so server-side models can evolve without breaking clients.
-		"steps_to_repro": steps_text,
-		"steps_to_reproduce": steps_text,
 		"steps": steps_text,
 		"additional_context": context_text,
 		"consent": true,
@@ -465,14 +501,10 @@ func _build_payload() -> Dictionary:
 		payload["logs"] = {
 			"recent_lines": recent,
 		}
-		if recent.size() > 0:
-			payload["description"] += "\n\n## Logs (recent)\n```\n" + "\n".join(recent) + "\n```"
 
 	if _include_metadata.button_pressed:
 		var meta := _collect_metadata()
 		payload["meta"] = meta
-		if not meta.is_empty():
-			payload["description"] += "\n\n## Metadata\n```json\n" + JSON.stringify(meta, "\t") + "\n```"
 
 	if not warnings.is_empty():
 		payload["client_warnings"] = warnings
@@ -480,7 +512,6 @@ func _build_payload() -> Dictionary:
 	return payload
 
 func _build_screenshot_payload(warnings: Array[String]) -> Dictionary:
-	# Ensure screenshot is below MAX_SCREENSHOT_BYTES. Attempt a resize if too large.
 	var bytes := _screenshot_png_bytes
 	if bytes.is_empty():
 		return {}
@@ -490,7 +521,7 @@ func _build_screenshot_payload(warnings: Array[String]) -> Dictionary:
 	var img := Image.new()
 	var err := img.load_png_from_buffer(bytes)
 	if err != OK:
-		warnings.append("Screenshot too large and could not be re-encoded; omitted.")
+		warnings.append("Screenshot too large; omitted.")
 		return {}
 
 	var w: int = int(img.get_width())
@@ -500,30 +531,16 @@ func _build_screenshot_payload(warnings: Array[String]) -> Dictionary:
 		var scale := float(MAX_SCREENSHOT_DIM) / float(max_dim)
 		var nw: int = int(round(float(w) * scale))
 		var nh: int = int(round(float(h) * scale))
-		if nw < 1:
-			nw = 1
-		if nh < 1:
-			nh = 1
 		img.resize(nw, nh, Image.INTERPOLATE_LANCZOS)
-	else:
-		# Already within dim; try re-encoding as-is.
-		pass
 
 	var resized_bytes := img.save_png_to_buffer()
 	if resized_bytes.size() > MAX_SCREENSHOT_BYTES:
-		warnings.append("Screenshot exceeded size limit; omitted.")
 		return {}
-	warnings.append("Screenshot was resized to fit upload limits.")
 	return {"mime": "image/png", "base64": Marshalls.raw_to_base64(resized_bytes)}
 
 func _get_recent_logs() -> Array:
-	if is_instance_valid(_logger) and (_logger.has_method("get_recent_lines_since") or _logger.has_method("get_recent_lines")):
-		var raw: Array = []
-		# Prefer a small time window to keep payloads bounded.
-		if _logger.has_method("get_recent_lines_since"):
-			raw = _logger.get_recent_lines_since(20.0, MAX_LOG_LINES)
-		else:
-			raw = _logger.get_recent_lines(MAX_LOG_LINES)
+	if is_instance_valid(_logger) and _logger.has_method("get_recent_lines"):
+		var raw = _logger.get_recent_lines(MAX_LOG_LINES)
 		var out: Array[String] = []
 		var total_chars := 0
 		for line_any in raw:
@@ -537,112 +554,14 @@ func _get_recent_logs() -> Array:
 		return out
 	return []
 
-func _trim_dict(d: Dictionary, keys: Array[String]) -> Dictionary:
-	var out: Dictionary = {}
-	for k in keys:
-		if d.has(k):
-			out[k] = d.get(k)
-	return out
-
 func _collect_metadata() -> Dictionary:
 	var user: Dictionary = {}
 	if is_instance_valid(_store) and _store.has_method("get_user"):
 		user = _store.get_user()
-
-	var convoys: Array = []
-	if is_instance_valid(_store) and _store.has_method("get_convoys"):
-		convoys = _store.get_convoys()
-
-	var selected_convoy: Variant = null
-	if is_instance_valid(_convoy_selection_service) and _convoy_selection_service.has_method("get_selected_convoy"):
-		selected_convoy = _convoy_selection_service.get_selected_convoy()
-	var selected_convoy_trimmed: Variant = null
-	var selected_convoy_id := ""
-	var selected_settlement_id := ""
-	if selected_convoy is Dictionary:
-		var scd := selected_convoy as Dictionary
-		selected_convoy_id = str(scd.get("convoy_id", scd.get("id", "")))
-		selected_settlement_id = str(scd.get("settlement_id", scd.get("sett_id", "")))
-		selected_convoy_trimmed = _trim_dict(scd, [
-			"convoy_id",
-			"id",
-			"convoy_name",
-			"name",
-			"status",
-			"state",
-			"x",
-			"y",
-			"sett_id",
-			"settlement_id",
-		])
-
-	var last_vendor_id := ""
-	var last_vendor_trimmed: Variant = null
-	if is_instance_valid(_vendor_service):
-		if _vendor_service.has_method("get_last_vendor_id"):
-			last_vendor_id = str(_vendor_service.get_last_vendor_id())
-		if _vendor_service.has_method("get_last_vendor_data"):
-			var vd_any: Variant = _vendor_service.get_last_vendor_data()
-			if vd_any is Dictionary and not (vd_any as Dictionary).is_empty():
-				last_vendor_trimmed = _trim_dict((vd_any as Dictionary), [
-					"vendor_id",
-					"id",
-					"name",
-					"vendor_name",
-					"settlement_id",
-					"sett_id",
-				])
-
-	var ver_info := Engine.get_version_info()
-	var godot_ver := str(ver_info.get("string", ""))
-
-	var project_name := str(ProjectSettings.get_setting("application/config/name", ""))
-	var project_ver := str(ProjectSettings.get_setting("application/config/version", ""))
-
-	var current_scene_name := ""
-	if get_tree() != null and get_tree().current_scene != null:
-		current_scene_name = str(get_tree().current_scene.name)
-
 	return {
 		"client_time_unix": Time.get_unix_time_from_system(),
-		"context": {
-			"convoy_id": selected_convoy_id,
-			"settlement_id": selected_settlement_id,
-			"vendor_id": last_vendor_id,
-		},
-		"os": {
-			"name": OS.get_name(),
-			"version": OS.get_version(),
-			"locale": OS.get_locale(),
-		},
-		"engine": {
-			"godot": godot_ver,
-			"features": {
-				"editor": OS.has_feature("editor"),
-				"standalone": OS.has_feature("standalone"),
-				"debug": OS.has_feature("debug"),
-			},
-		},
-		"game": {
-			"project": project_name,
-			"version": project_ver,
-		},
-		"scene": {
-			"current": current_scene_name,
-		},
-		"user": {
-			"id": str(user.get("user_id", user.get("id", ""))),
-			"username": str(user.get("username", "")),
-		},
-		"convoys": {
-			"count": convoys.size(),
-			"selected_id": selected_convoy_id,
-			"selected": selected_convoy_trimmed,
-		},
-		"vendor": {
-			"last_id": last_vendor_id,
-			"last": last_vendor_trimmed,
-		}
+		"os": {"name": OS.get_name(), "version": OS.get_version()},
+		"user": {"id": str(user.get("id", ""))}
 	}
 
 func _on_bug_report_submitted(result: Variant) -> void:
@@ -651,26 +570,12 @@ func _on_bug_report_submitted(result: Variant) -> void:
 	_pending = false
 	_update_submit_enabled()
 	_disconnect_api_signals()
-
-	var issue_url := ""
-	var msg := "Bug report submitted. Thanks!"
-	if result is Dictionary:
-		issue_url = str((result as Dictionary).get("issue_url", ""))
-		if issue_url != "":
-			msg = "Bug report submitted. Issue: %s" % issue_url
-	_status(msg, false)
+	_status("Bug report submitted. Thanks!", false)
 
 func _on_bug_report_error(err_msg: String) -> void:
 	if not _pending:
 		return
-	var dbg: Dictionary = {}
-	if is_instance_valid(_api) and _api.has_method("get_last_request_debug"):
-		dbg = _api.get_last_request_debug()
-		if not dbg.is_empty() and String(dbg.get("tag", "")) != "bug_report":
-			return
 	_pending = false
 	_update_submit_enabled()
 	_disconnect_api_signals()
-	if is_instance_valid(_logger) and _logger.has_method("error"):
-		_logger.error("Bug report submit failed: %s dbg=%s", err_msg, dbg)
 	_status("Submit failed: %s" % err_msg, true)

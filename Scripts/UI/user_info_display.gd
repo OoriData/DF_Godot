@@ -8,7 +8,7 @@ signal convoy_menu_requested(convoy_id: String)
 @onready var user_money_label: Label = %UserMoneyLabel
 @onready var settings_button: MenuButton = %SettingsButton
 @onready var report_bug_button: Button = %ReportBugButton
-var _settings_menu_instance: Window
+var _settings_menu_instance: CanvasLayer
 var _bug_report_window: BugReportWindow
 var _discord_popup: PopupPanel
 var _account_links_popup: CanvasLayer
@@ -73,7 +73,7 @@ func _is_mobile() -> bool:
 	if OS.has_feature("mobile") or OS.has_feature("web_android") or OS.has_feature("web_ios") or DisplayServer.get_name() in ["Android", "iOS"]:
 		return true
 	if is_inside_tree():
-		var win_size = get_viewport_rect().size
+		var win_size = get_viewport().get_visible_rect().size
 		if win_size.y > win_size.x:
 			return true
 	return false
@@ -83,9 +83,9 @@ func _apply_mobile_optimizations() -> void:
 	_update_mobile_sizing()
 	
 	# 2. Aggressive Typography Boost for Portrait
-	var win_size = get_viewport_rect().size if is_inside_tree() else Vector2(0, 0)
+	var win_size = get_viewport().get_visible_rect().size if is_inside_tree() else Vector2(0, 0)
 	var is_portrait = win_size.y > win_size.x
-	var boost = 2.5 if is_portrait else 1.6
+	var boost = 2.8 if is_portrait else 1.8
 	
 	var labels = [username_label, user_money_label]
 	for label in labels:
@@ -97,7 +97,7 @@ func _apply_mobile_optimizations() -> void:
 	if is_instance_valid(settings_button):
 		var btn_fs = settings_button.get_theme_font_size("font_size")
 		settings_button.add_theme_font_size_override("font_size", int(btn_fs * boost))
-		settings_button.custom_minimum_size.y = 80 if is_portrait else 44
+		settings_button.custom_minimum_size.y = 100 if is_portrait else 60
 		var sb_btn = StyleBoxFlat.new()
 		sb_btn.bg_color = Color(0.12, 0.15, 0.2, 0.95)
 		sb_btn.border_width_left = 1
@@ -117,7 +117,7 @@ func _apply_mobile_optimizations() -> void:
 	if is_instance_valid(report_bug_button):
 		var bug_fs = report_bug_button.get_theme_font_size("font_size")
 		report_bug_button.add_theme_font_size_override("font_size", int(bug_fs * boost))
-		report_bug_button.custom_minimum_size.y = 80 if is_portrait else 44
+		report_bug_button.custom_minimum_size.y = 100 if is_portrait else 60
 		var bug_style = StyleBoxFlat.new()
 		bug_style.bg_color = Color(0.7, 0.1, 0.15, 0.95) # Prominent Red
 		bug_style.border_width_left = 2
@@ -169,9 +169,9 @@ func _update_mobile_sizing() -> void:
 	var win_size = get_viewport_rect().size if is_inside_tree() else Vector2(0, 0)
 	var is_portrait = win_size.y > win_size.x
 	if is_portrait:
-		custom_minimum_size.y = 120
-		if is_instance_valid(settings_button): settings_button.custom_minimum_size.y = 80
-		if is_instance_valid(report_bug_button): report_bug_button.custom_minimum_size.y = 80
+		custom_minimum_size.y = 140
+		if is_instance_valid(settings_button): settings_button.custom_minimum_size.y = 100
+		if is_instance_valid(report_bug_button): report_bug_button.custom_minimum_size.y = 100
 	else:
 		custom_minimum_size.y = 60
 		if is_instance_valid(settings_button): settings_button.custom_minimum_size.y = 44
@@ -328,10 +328,10 @@ func _configure_options_dropdown() -> void:
 		popup.id_pressed.connect(_on_options_menu_id_pressed)
 		
 	if _is_mobile():
-		popup.add_theme_font_size_override("font_size", int(16 * 1.7))
-		popup.add_theme_constant_override("v_separation", 32)
-		popup.add_theme_constant_override("item_start_padding", 32)
-		popup.add_theme_constant_override("item_end_padding", 32)
+		popup.add_theme_font_size_override("font_size", int(16 * 2.2))
+		popup.add_theme_constant_override("v_separation", 48)
+		popup.add_theme_constant_override("item_start_padding", 48)
+		popup.add_theme_constant_override("item_end_padding", 48)
 		var popup_style = StyleBoxFlat.new()
 		popup_style.bg_color = Color(0.12, 0.15, 0.2, 0.98)
 		popup_style.content_margin_left = 32
@@ -372,6 +372,7 @@ func _on_highlights_tips_pressed() -> void:
 
 
 func _on_discord_pressed() -> void:
+	print("[UserInfoDisplay] _on_discord_pressed called | LOUD LOG")
 	# Lazy-create discord popup
 	if not is_instance_valid(_discord_popup):
 		var script := load("res://Scripts/UI/discord_popup.gd")
@@ -453,21 +454,14 @@ func _on_settings_button_pressed():
 		var scene: PackedScene = load("res://Scenes/SettingsMenu.tscn")
 		if scene:
 			_settings_menu_instance = scene.instantiate()
-			# Add to the root so it behaves like a popup window
+			# Add to the root so it behaves like a full-screen overlay
 			get_tree().root.add_child(_settings_menu_instance)
-			_settings_menu_instance.title = "Options"
-			_settings_menu_instance.min_size = Vector2(600, 480)
 		else:
 			push_error("Failed to load SettingsMenu.tscn")
 			return
-	# Popup centered each time
+	
 	if _settings_menu_instance:
-		if _settings_menu_instance.has_method("popup_centered"):
-			var win_size = DisplayServer.window_get_size()
-			var size_w = 860 if _is_mobile() else 720
-			var size_h = 760 if _is_mobile() else 560
-			size_w = min(size_w, win_size.x - 32)
-			size_h = min(size_h, win_size.y - 64)
-			_settings_menu_instance.popup_centered(Vector2i(size_w, size_h))
-		else:
-			_settings_menu_instance.show()
+		_settings_menu_instance.show()
+		# Refresh layout/sizing for the current screen orientation
+		if _settings_menu_instance.has_method("_apply_mobile_optimizations"):
+			_settings_menu_instance.call("_apply_mobile_optimizations")

@@ -39,14 +39,21 @@ func _ready() -> void:
 	_connect_signals()
 	_apply_ui_scaling_recursive(self)
 
+func _is_portrait() -> bool:
+	if is_inside_tree():
+		var win_size = get_viewport().get_visible_rect().size
+		return win_size.y > win_size.x
+	return false
+
 func _is_mobile() -> bool:
-	return OS.has_feature("mobile") or DisplayServer.get_name() in ["Android", "iOS"]
+	return OS.has_feature("mobile") or DisplayServer.get_name() in ["Android", "iOS"] or _is_portrait()
 
 func _get_font_size(base: int) -> int:
-	var boost = 1.7 if _is_mobile() else 1.2
+	var boost = 2.2 if _is_portrait() else (1.7 if _is_mobile() else 1.2)
 	return int(base * boost)
 
 func open_centered() -> void:
+	print("[AccountLinksPopup] open_centered called | LOUD LOG")
 	show()
 	_refresh_data()
 
@@ -296,6 +303,7 @@ func _open_merge_modal(conflict: Dictionary) -> void:
 # ── Build UI ─────────────────────────────────────────────────────────────────
 
 func _build_ui() -> void:
+	var is_port = _is_portrait()
 	# Full-screen overlay to block input and stay open
 	_overlay = Control.new()
 	_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -319,10 +327,21 @@ func _build_ui() -> void:
 	
 	_overlay.add_child(panel)
 	var win_size = DisplayServer.window_get_size()
-	var win_w = 640 if _is_mobile() else 480
-	var win_h = 560 if _is_mobile() else 400
-	win_w = min(win_w, win_size.x - 32)
-	win_h = min(win_h, win_size.y - 64)
+	var win_w: int
+	var win_h: int
+	if is_port:
+		win_w = win_size.x - 16
+		win_h = win_size.y - 180
+		panel.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
+		panel.offset_top += 70 # Shift down to clear nav bar
+		panel.offset_bottom += 70
+	elif _is_mobile():
+		win_w = 640
+		win_h = 560
+	else:
+		win_w = 480
+		win_h = 400
+	
 	panel.custom_minimum_size = Vector2(win_w, win_h)
 	panel.layout_mode = 1 # Anchors
 	panel.anchors_preset = Control.PRESET_CENTER
@@ -331,8 +350,8 @@ func _build_ui() -> void:
 	panel.set_anchors_and_offsets_preset(Control.PRESET_CENTER, Control.PRESET_MODE_MINSIZE)
 
 	var margin := MarginContainer.new()
-	var h_pad = 32 if _is_mobile() else 20
-	var v_pad = 24 if _is_mobile() else 16
+	var h_pad = 32 if is_port else (32 if _is_mobile() else 20)
+	var v_pad = 28 if is_port else (24 if _is_mobile() else 16)
 	margin.add_theme_constant_override("margin_left", h_pad)
 	margin.add_theme_constant_override("margin_right", h_pad)
 	margin.add_theme_constant_override("margin_top", v_pad)
@@ -340,7 +359,7 @@ func _build_ui() -> void:
 	panel.add_child(margin)
 
 	var root := VBoxContainer.new()
-	root.add_theme_constant_override("separation", 12)
+	root.add_theme_constant_override("separation", 18 if is_port else 12)
 	margin.add_child(root)
 	_root = root
 
@@ -348,7 +367,7 @@ func _build_ui() -> void:
 	var title := Label.new()
 	title.text = "Connected Accounts"
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	title.add_theme_font_size_override("font_size", 18)
+	title.add_theme_font_size_override("font_size", _get_font_size(18))
 	title.add_theme_color_override("font_color", _TEXT_LIGHT)
 	root.add_child(title)
 
@@ -363,7 +382,7 @@ func _build_ui() -> void:
 
 	var rows := VBoxContainer.new()
 	rows.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	rows.add_theme_constant_override("separation", 16)
+	rows.add_theme_constant_override("separation", 24 if is_port else 16)
 	scroll.add_child(rows)
 
 	# Steam Row
@@ -390,25 +409,30 @@ func _build_ui() -> void:
 	# Status Label
 	_status_label = Label.new()
 	_status_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_status_label.add_theme_font_size_override("font_size", 12)
+	_status_label.add_theme_font_size_override("font_size", _get_font_size(12))
 	_status_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	root.add_child(_status_label)
 
 	# Close Button
 	var close_btn := Button.new()
 	close_btn.text = "Close"
-	close_btn.custom_minimum_size = Vector2(160, 72) if _is_mobile() else Vector2(100, 32)
+	var btn_h = 100 if is_port else (72 if _is_mobile() else 32)
+	var btn_w = 240 if is_port else (160 if _is_mobile() else 100)
+	close_btn.custom_minimum_size = Vector2(btn_w, btn_h)
 	close_btn.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	close_btn.pressed.connect(func(): hide(); closed.emit())
 	root.add_child(close_btn)
 
 func _create_row(label_text: String, accent_color: Color, id_val_label: Label, on_pressed: Callable, node_name: String) -> HBoxContainer:
+	var is_port = _is_portrait()
 	var row := HBoxContainer.new()
 	row.name = node_name
 	row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.add_theme_constant_override("separation", 16 if is_port else 8)
 	
 	var icon_placeholder := ColorRect.new()
-	icon_placeholder.custom_minimum_size = Vector2(32, 32)
+	var icon_size = 48 if is_port else 32
+	icon_placeholder.custom_minimum_size = Vector2(icon_size, icon_size)
 	icon_placeholder.color = accent_color.darkened(0.5)
 	row.add_child(icon_placeholder)
 	
@@ -418,19 +442,21 @@ func _create_row(label_text: String, accent_color: Color, id_val_label: Label, o
 	
 	var name_lbl := Label.new()
 	name_lbl.text = label_text
-	name_lbl.add_theme_font_size_override("font_size", 14)
+	name_lbl.add_theme_font_size_override("font_size", _get_font_size(14))
 	name_lbl.add_theme_color_override("font_color", accent_color)
 	text_stack.add_child(name_lbl)
 	
 	id_val_label.text = "Loading..."
-	id_val_label.add_theme_font_size_override("font_size", 11)
+	id_val_label.add_theme_font_size_override("font_size", _get_font_size(11))
 	id_val_label.add_theme_color_override("font_color", _TEXT_DIM)
 	text_stack.add_child(id_val_label)
 	
 	var connect_btn := Button.new()
 	connect_btn.name = "ConnectBtn"
 	connect_btn.text = "Connect"
-	connect_btn.custom_minimum_size = Vector2(80, 28)
+	var c_btn_h = 72 if is_port else (28 if not _is_mobile() else 52)
+	var c_btn_w = 120 if is_port else 80
+	connect_btn.custom_minimum_size = Vector2(c_btn_w, c_btn_h)
 	connect_btn.pressed.connect(on_pressed)
 	row.add_child(connect_btn)
 	
@@ -441,12 +467,17 @@ func _set_status(text: String, color: Color) -> void:
 	_status_label.add_theme_color_override("font_color", color)
 
 func _apply_ui_scaling_recursive(node: Node) -> void:
+	var is_port = _is_portrait()
 	if node is Button:
 		node.add_theme_font_size_override("font_size", _get_font_size(14))
 		# Adjust min height if not already set large
 		var btn_name: String = node.name.to_lower() if is_instance_valid(node) else ""
 		var want_huge = btn_name.contains("close") or btn_name.contains("cancel") or btn_name.contains("okay") or btn_name.contains("back")
-		var target_h = (72 if want_huge else 64) if _is_mobile() else 36
+		var target_h: int
+		if is_port:
+			target_h = 100 if want_huge else 72
+		else:
+			target_h = (72 if want_huge else 64) if _is_mobile() else 36
 		if node.custom_minimum_size.y < target_h:
 			node.custom_minimum_size.y = target_h
 	elif node is Label:
