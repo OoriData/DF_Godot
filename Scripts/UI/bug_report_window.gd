@@ -1,4 +1,4 @@
-extends PopupPanel
+extends ResponsiveModalPanel
 class_name BugReportWindow
 
 signal closed
@@ -32,32 +32,21 @@ var _status_label: Label
 var _submit_button: Button
 
 var _pending: bool = false
-
 var _root: Control
 
 func _ready() -> void:
+	super._ready() # Important for ResponsiveModalPanel
 	_api = get_node_or_null("/root/APICalls")
 	_store = get_node_or_null("/root/GameStore")
 	_logger = get_node_or_null("/root/Logger")
 	_convoy_selection_service = get_node_or_null("/root/ConvoySelectionService")
 	_vendor_service = get_node_or_null("/root/VendorService")
 
+	max_desktop_width = 1100
+	max_desktop_height = 950
+
 	_build_ui()
 	_update_submit_enabled()
-	_apply_ui_scaling_recursive(self)
-
-func _is_portrait() -> bool:
-	if is_inside_tree():
-		var win_size = get_viewport().get_visible_rect().size
-		return win_size.y > win_size.x
-	return false
-
-func _is_mobile() -> bool:
-	return OS.has_feature("mobile") or DisplayServer.get_name() in ["Android", "iOS"] or _is_portrait()
-
-func _get_font_size(base: int) -> int:
-	var boost = 7.0 if _is_portrait() else (2.4 if _is_mobile() else 1.2)
-	return int(base * boost)
 
 func set_screenshot_png_bytes(png_bytes: PackedByteArray) -> void:
 	_screenshot_png_bytes = png_bytes if png_bytes != null else PackedByteArray()
@@ -67,118 +56,28 @@ func open_centered() -> void:
 	_status("", false)
 	_pending = false
 	_update_submit_enabled()
-	# Use the larger of two sources — get_visible_rect() can return stale/small
-	# values on first call on mobile before the viewport is fully initialized.
-	var ds_size = DisplayServer.window_get_size()
-	var vp_size = get_viewport().get_visible_rect().size
-	var avail_w = int(max(ds_size.x, vp_size.x))
-	var avail_h = int(max(ds_size.y, vp_size.y))
-
-	if _is_portrait():
-		popup(Rect2i(Vector2i(0, 0), Vector2i(avail_w, avail_h)))
-		call_deferred("_force_size_portrait")
-		call_deferred("_refresh_layout")
-		return
-
-	var win_w: int
-	var win_h: int
-	if _is_mobile():
-		win_w = min(1200, avail_w - 24)
-		win_h = min(1000, avail_h - 48)
-	else:
-		win_w = min(1100, avail_w - 24)
-		win_h = min(950, avail_h - 48)
-
-	popup_centered(Vector2i(win_w, win_h))
-	call_deferred("_refresh_layout")
-
-func _force_size_portrait() -> void:
-	# Godot's PopupPanel layout pass can shrink the popup back to min_size.
-	# Re-apply the full available size one frame later to override that.
-	if not visible:
-		return
-	var ds_size = DisplayServer.window_get_size()
-	var vp_size = get_viewport().get_visible_rect().size
-	var avail_w = int(max(ds_size.x, vp_size.x))
-	var avail_h = int(max(ds_size.y, vp_size.y))
-	position = Vector2i(0, 0)
-	size = Vector2i(avail_w, avail_h)
-
-func _refresh_layout() -> void:
-	# Ensure controls compute minimum sizes and lay out on first popup.
-	if is_instance_valid(_root):
-		_root.queue_sort()
-		_root.queue_redraw()
-	# Run again next frame; some themes finalize sizes late.
-	call_deferred("_refresh_layout_once_more")
-
-func _refresh_layout_once_more() -> void:
-	if is_instance_valid(_root):
-		_root.queue_sort()
-		_root.queue_redraw()
+	# Call base class to handle open smartly based on device
+	open_modal()
 
 func _on_close_pressed() -> void:
-	hide()
+	close_modal()
 	closed.emit()
 
-func _apply_ui_scaling_recursive(node: Node) -> void:
-	if node is Control and not node is ScrollContainer:
-		# Don't override ScrollContainer — it needs MOUSE_FILTER_STOP to receive scroll/touch events.
-		node.mouse_filter = Control.MOUSE_FILTER_PASS
-	var is_port = _is_portrait()
-	if node is Button:
-		node.add_theme_font_size_override("font_size", _get_font_size(14))
-		var btn_name: String = node.name.to_lower() if is_instance_valid(node) else ""
-		var is_action = btn_name.contains("close") or btn_name.contains("cancel") or btn_name.contains("submit") or btn_name == "" or btn_name.contains(" reproduction")
-		var target_h: int
-		if is_port:
-			target_h = 240 if is_action else 180
-		else:
-			target_h = (160 if is_action else 130) if _is_mobile() else 56
-		if node.custom_minimum_size.y < target_h:
-			node.custom_minimum_size.y = target_h
-	elif node is Label:
-		var current_fs = node.get_theme_font_size("font_size")
-		if current_fs <= 1: current_fs = 14
-		node.add_theme_font_size_override("font_size", _get_font_size(current_fs))
-	elif node is TextEdit or node is LineEdit:
-		node.add_theme_font_size_override("font_size", _get_font_size(14))
-		if node is TextEdit and is_port:
-			node.custom_minimum_size.y = max(node.custom_minimum_size.y, 180)
-	
-	for child in node.get_children():
-		_apply_ui_scaling_recursive(child)
-
 func _build_ui() -> void:
-	var is_port = _is_portrait()
-	# Style the popup panel itself
-	var panel_style := StyleBoxFlat.new()
-	panel_style.bg_color = Color("#1E1E1E")
-	panel_style.border_color = Color("#2E2E2E")
-	panel_style.set_border_width_all(0 if is_port else 1)
-	panel_style.corner_radius_top_left = 0 if is_port else 12
-	panel_style.corner_radius_top_right = 0 if is_port else 12
-	panel_style.corner_radius_bottom_left = 0 if is_port else 12
-	panel_style.corner_radius_bottom_right = 0 if is_port else 12
-	add_theme_stylebox_override("panel", panel_style)
-
-	var margin := MarginContainer.new()
+	var margin := ResponsiveMarginContainer.new()
 	margin.name = "Margin"
 	margin.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	var pad = 0 if is_port else 20
-	margin.add_theme_constant_override("margin_left", pad)
-	margin.add_theme_constant_override("margin_right", pad)
-	margin.add_theme_constant_override("margin_top", pad)
-	margin.add_theme_constant_override("margin_bottom", pad)
+	margin.mobile_portrait_margins = 16
+	margin.desktop_margins = 32
 	margin.mouse_filter = Control.MOUSE_FILTER_PASS
-	add_child(margin)
+	add_content(margin)
 
 	# Root content
 	var root := VBoxContainer.new()
 	root.name = "Root"
 	root.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	root.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	root.add_theme_constant_override("separation", 22 if is_port else 12)
+	root.add_theme_constant_override("separation", 16)
 	root.mouse_filter = Control.MOUSE_FILTER_PASS
 	margin.add_child(root)
 	_root = root
@@ -192,16 +91,14 @@ func _build_ui() -> void:
 	title_lbl.text = "Report Bug"
 	title_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	title_lbl.add_theme_color_override("font_color", Color("#FFFFFF"))
-	title_lbl.add_theme_font_size_override("font_size", _get_font_size(14))
 	header.add_child(title_lbl)
 
 	var close_btn := Button.new()
 	close_btn.text = "✕"
 	close_btn.focus_mode = Control.FOCUS_NONE
 	close_btn.pressed.connect(_on_close_pressed)
+	close_btn.custom_minimum_size = Vector2(40, 40)
 	header.add_child(close_btn)
-
-	# Separator removed to save space.
 
 	# Scrollable content (form fields + screenshot preview)
 	var scroll := ScrollContainer.new()
@@ -218,21 +115,13 @@ func _build_ui() -> void:
 	scroll_style.corner_radius_bottom_left = 10
 	scroll_style.corner_radius_bottom_right = 10
 	scroll.add_theme_stylebox_override("panel", scroll_style)
-	# MOUSE_FILTER_STOP (default) lets the ScrollContainer intercept touch/scroll events.
 	root.add_child(scroll)
 
-	# Note: content_panel was removed to reduce nesting and provide more room.
-
-	var content_margin := MarginContainer.new()
+	var content_margin := ResponsiveMarginContainer.new()
 	content_margin.name = "ContentMargin"
-	var inner_pad = 12 if is_port else 16
-	content_margin.add_theme_constant_override("margin_left", inner_pad)
-	content_margin.add_theme_constant_override("margin_right", inner_pad)
-	content_margin.add_theme_constant_override("margin_top", inner_pad)
-	content_margin.add_theme_constant_override("margin_bottom", inner_pad)
+	content_margin.mobile_portrait_margins = 16
+	content_margin.desktop_margins = 24
 	content_margin.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	# Do NOT set SIZE_EXPAND_FILL vertically — the child of a ScrollContainer
-	# must be allowed to overflow so the scroll actually works.
 	content_margin.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
 	content_margin.mouse_filter = Control.MOUSE_FILTER_PASS
 	scroll.add_child(content_margin)
@@ -240,9 +129,8 @@ func _build_ui() -> void:
 	var content := VBoxContainer.new()
 	content.name = "Content"
 	content.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	# Same here: let it grow beyond the scroll container height.
 	content.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
-	content.add_theme_constant_override("separation", 34 if is_port else 12)
+	content.add_theme_constant_override("separation", 24)
 	content.mouse_filter = Control.MOUSE_FILTER_PASS
 	content_margin.add_child(content)
 
@@ -252,13 +140,10 @@ func _build_ui() -> void:
 	stmt.text = "Submitting sends the information you select (screenshot, logs, game/account metadata) to the developers to help debug. Do not include passwords or secrets."
 	content.add_child(stmt)
 
-	# Toggles row
-	var toggles: BoxContainer
-	if is_port:
-		toggles = VBoxContainer.new()
-	else:
-		toggles = HBoxContainer.new()
-	toggles.add_theme_constant_override("separation", 17 if is_port else 12)
+	# Toggles row (Wrapped in FlowContainer for automatic responsiveness)
+	var toggles := FlowContainer.new()
+	toggles.add_theme_constant_override("h_separation", 16)
+	toggles.add_theme_constant_override("v_separation", 16)
 	toggles.mouse_filter = Control.MOUSE_FILTER_PASS
 	content.add_child(toggles)
 
@@ -269,7 +154,7 @@ func _build_ui() -> void:
 	toggles.add_child(_include_screenshot)
 
 	_include_logs = CheckBox.new()
-	_include_logs.text = "Include recent logs"
+	_include_logs.text = "Include logs"
 	_include_logs.button_pressed = true
 	_include_logs.toggled.connect(func(_v): _update_submit_enabled())
 	toggles.add_child(_include_logs)
@@ -289,20 +174,8 @@ func _build_ui() -> void:
 
 	_summary = LineEdit.new()
 	_summary.placeholder_text = "Summary (required)"
+	_summary.custom_minimum_size = Vector2(0, 50)
 	_summary.text_changed.connect(func(_t): _update_submit_enabled())
-	var line_style := StyleBoxFlat.new()
-	line_style.bg_color = Color("#121212")
-	line_style.border_color = Color("#444444")
-	line_style.set_border_width_all(1)
-	line_style.corner_radius_top_left = 8
-	line_style.corner_radius_top_right = 8
-	line_style.corner_radius_bottom_left = 8
-	line_style.corner_radius_bottom_right = 8
-	line_style.content_margin_left = 10
-	line_style.content_margin_right = 10
-	line_style.content_margin_top = 16 if is_port else 12
-	line_style.content_margin_bottom = 16 if is_port else 12
-	_summary.add_theme_stylebox_override("normal", line_style)
 	content.add_child(_summary)
 
 	_steps = _add_collapsible_text_block(content, "Steps to reproduce", false)
@@ -317,43 +190,38 @@ func _build_ui() -> void:
 	_screenshot_preview.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	_screenshot_preview.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_screenshot_preview.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	# Reasonable preview height; content scrolls so it won't clip anything.
-	_screenshot_preview.custom_minimum_size = Vector2(0, 400 if is_port else 400)
+	_screenshot_preview.custom_minimum_size = Vector2(0, 250)
 	content.add_child(_screenshot_preview)
 
 	_update_preview()
 
-	# Separator removed to save space.
-
-	# Status (fixed below scroll)
+	# Status
 	_status_label = Label.new()
 	_status_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_status_label.text = ""
 	_status_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	root.add_child(_status_label)
 
-	# Buttons (fixed below scroll)
+	# Buttons
 	var btn_row := HBoxContainer.new()
 	btn_row.alignment = BoxContainer.ALIGNMENT_END
 	btn_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	btn_row.add_theme_constant_override("separation", 12 if is_port else 8)
+	btn_row.add_theme_constant_override("separation", 16)
 	root.add_child(btn_row)
 
 	var cancel_btn := Button.new()
 	cancel_btn.text = "Cancel"
-	cancel_btn.custom_minimum_size.y = 240 if is_port else 50
+	cancel_btn.custom_minimum_size = Vector2(100, 50)
 	cancel_btn.pressed.connect(_on_close_pressed)
 	btn_row.add_child(cancel_btn)
 
 	_submit_button = Button.new()
 	_submit_button.text = "Submit"
-	_submit_button.custom_minimum_size.x = 300 if is_port else 140
-	_submit_button.custom_minimum_size.y = 300 if is_port else 60
+	_submit_button.custom_minimum_size = Vector2(140, 50)
 	_submit_button.pressed.connect(_on_submit_pressed)
 	btn_row.add_child(_submit_button)
 
 func _add_collapsible_text_block(parent: Control, title_text: String, expanded_by_default: bool) -> TextEdit:
-	var is_port = _is_portrait()
 	var box := VBoxContainer.new()
 	box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	parent.add_child(box)
@@ -364,26 +232,7 @@ func _add_collapsible_text_block(parent: Control, title_text: String, expanded_b
 	header_btn.focus_mode = Control.FOCUS_NONE
 	header_btn.text = ("▾  " if expanded_by_default else "▸  ") + title_text
 	header_btn.alignment = HORIZONTAL_ALIGNMENT_LEFT
-	var header_normal := StyleBoxFlat.new()
-	header_normal.bg_color = Color("#2B2B2B")
-	header_normal.border_color = Color("#3E3E3E")
-	header_normal.set_border_width_all(1)
-	header_normal.corner_radius_top_left = 8
-	header_normal.corner_radius_top_right = 8
-	header_normal.corner_radius_bottom_left = 8
-	header_normal.corner_radius_bottom_right = 8
-	header_normal.content_margin_left = 10
-	header_normal.content_margin_right = 10
-	header_normal.content_margin_top = 16 if is_port else 10
-	header_normal.content_margin_bottom = 16 if is_port else 10
-	var header_hover := header_normal.duplicate() as StyleBoxFlat
-	header_hover.bg_color = Color("#333333")
-	var header_pressed := header_normal.duplicate() as StyleBoxFlat
-	header_pressed.bg_color = Color("#262626")
-	header_btn.add_theme_stylebox_override("normal", header_normal)
-	header_btn.add_theme_stylebox_override("hover", header_hover)
-	header_btn.add_theme_stylebox_override("pressed", header_pressed)
-	header_btn.add_theme_color_override("font_color", Color("#FFFFFF"))
+	header_btn.custom_minimum_size = Vector2(0, 45)
 	box.add_child(header_btn)
 
 	var inner := VBoxContainer.new()
@@ -394,20 +243,9 @@ func _add_collapsible_text_block(parent: Control, title_text: String, expanded_b
 	var te := TextEdit.new()
 	te.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	te.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
-	te.custom_minimum_size = Vector2(0, 480 if is_port else 180)
-	var te_style := StyleBoxFlat.new()
-	te_style.bg_color = Color("#101010")
-	te_style.border_color = Color("#3E3E3E")
-	te_style.set_border_width_all(1)
-	te_style.corner_radius_top_left = 8
-	te_style.corner_radius_top_right = 8
-	te_style.corner_radius_bottom_left = 8
-	te_style.corner_radius_bottom_right = 8
-	te_style.content_margin_left = 10
-	te_style.content_margin_right = 10
-	te_style.content_margin_top = 10
-	te_style.content_margin_bottom = 10
-	te.add_theme_stylebox_override("normal", te_style)
+	te.custom_minimum_size = Vector2(0, 150)
+	te.wrap_mode = TextEdit.LINE_WRAPPING_BOUNDARY
+	te.scroll_fit_content_height = true
 	te.text_changed.connect(func(): _update_submit_enabled())
 	inner.add_child(te)
 
@@ -464,7 +302,6 @@ func _on_submit_pressed() -> void:
 	_update_submit_enabled()
 	_status("Submitting...", false)
 
-	# Connect once for completion
 	if _api.has_signal("bug_report_submitted"):
 		if not _api.bug_report_submitted.is_connected(_on_bug_report_submitted):
 			_api.bug_report_submitted.connect(_on_bug_report_submitted)
