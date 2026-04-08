@@ -20,6 +20,7 @@ script = ExtResource("1_script")
 
 [node name="ResponsiveListAdapter" type="Node" parent="."]
 script = ExtResource("3_resp")
+mobile_min_height = 64.0
 
 [node name="HBoxContainer" type="HBoxContainer" parent="."]
 layout_mode = 1
@@ -39,14 +40,22 @@ size_flags_stretch_ratio = 0.3
 [node name="SortSettingsContainer" type="HBoxContainer" parent="HBoxContainer/LeftPanel"]
 layout_mode = 2
 
-[node name="Label" type="Label" parent="HBoxContainer/LeftPanel/SortSettingsContainer"]
-layout_mode = 2
-text = "Sort Cargo:"
-
-[node name="CargoSortOptionButton" type="OptionButton" parent="HBoxContainer/LeftPanel/SortSettingsContainer"]
+[node name="CargoSortButton" type="MenuButton" parent="HBoxContainer/LeftPanel/SortSettingsContainer"]
 unique_name_in_owner = true
 layout_mode = 2
-size_flags_horizontal = 3
+size_flags_horizontal = 0
+text = "Sort"
+switch_on_hover = true
+item_count = 5
+popup/item_0/text = "Profit Margin/Unit"
+popup/item_1/text = "Profit Density/Weight"
+popup/item_1/id = 1
+popup/item_2/text = "Profit Density/Volume"
+popup/item_2/id = 2
+popup/item_3/text = "Total Order Profit"
+popup/item_3/id = 3
+popup/item_4/text = "Distance to Recipient"
+popup/item_4/id = 4
 
 [node name="TradeModeTabContainer" type="TabContainer" parent="HBoxContainer/LeftPanel"]
 unique_name_in_owner = true
@@ -75,6 +84,7 @@ hide_root = true
 
 [node name="ResponsiveListAdapter" type="Node" parent="HBoxContainer/LeftPanel/TradeModeTabContainer/Buy"]
 script = ExtResource("3_resp")
+mobile_min_height = 64.0
 large_text = true
 
 [node name="Sell" type="VBoxContainer" parent="HBoxContainer/LeftPanel/TradeModeTabContainer"]
@@ -94,6 +104,7 @@ hide_root = true
 
 [node name="ResponsiveListAdapter" type="Node" parent="HBoxContainer/LeftPanel/TradeModeTabContainer/Sell"]
 script = ExtResource("3_resp")
+mobile_min_height = 64.0
 large_text = true
 
 [node name="VSeparator" type="VSeparator" parent="HBoxContainer"]
@@ -102,10 +113,11 @@ layout_mode = 2
 [node name="MiddlePanel" type="VBoxContainer" parent="HBoxContainer"]
 layout_mode = 2
 size_flags_horizontal = 3
-size_flags_stretch_ratio = 0.4
+size_flags_stretch_ratio = 0.35
 
 [node name="ResponsiveListAdapter" type="Node" parent="HBoxContainer/MiddlePanel"]
 script = ExtResource("3_resp")
+mobile_min_height = 64.0
 large_text = true
 
 [node name="ItemNameLabel" type="Label" parent="HBoxContainer/MiddlePanel"]
@@ -225,12 +237,12 @@ layout_mode = 2
 [node name="RightPanel" type="VBoxContainer" parent="HBoxContainer"]
 layout_mode = 2
 size_flags_horizontal = 3
-size_flags_stretch_ratio = 0.3
-theme_override_constants/separation = 10
+size_flags_stretch_ratio = 0.35
+theme_override_constants/separation = 4
 
 [node name="ResponsiveListAdapter" type="Node" parent="HBoxContainer/RightPanel"]
 script = ExtResource("3_resp")
-mobile_min_height = 84.0
+mobile_min_height = 64.0
 ledger_style = true
 large_text = true
 
@@ -242,6 +254,7 @@ theme_override_font_sizes/font_size = 20
 [node name="TransactionQuantityContainer" type="HBoxContainer" parent="HBoxContainer/RightPanel"]
 unique_name_in_owner = true
 layout_mode = 2
+theme_override_constants/separation = 2
 
 [node name="QuantitySpinBox" type="HBoxContainer" parent="HBoxContainer/RightPanel/TransactionQuantityContainer"]
 unique_name_in_owner = true

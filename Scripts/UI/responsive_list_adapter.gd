@@ -12,7 +12,9 @@ class_name ResponsiveListAdapter
 @export var apply_to_parent: bool = false ## If true, applies directly to the parent's minimum size.
 @export var ledger_style: bool = false ## If true, applies a lighter "ledger" background to the node (if it is a container).
 @export var large_text: bool = false ## If true, forces large text boost even on desktop.
-@export var boost: float = 1.6 ## Font scale multiplier when large_text is true or on mobile.
+@export var boost: float = 1.4 ## Font scale multiplier when large_text is true or on mobile.
+@export var portrait_boost: float = 1.6 ## Font scale multiplier specifically for mobile portrait.
+@export var scroll_pass_through: bool = true ## If true, sets mouse_filter to PASS on interactive controls.
 
 func _ready() -> void:
 	if Engine.is_editor_hint():
@@ -36,11 +38,39 @@ func _ready() -> void:
 		
 		if ledger_style and parent is Control:
 			_apply_ledger_style(parent)
+			
+	# Connect to DeviceStateManager for dynamic orientation changes
+	var dsm = get_node_or_null("/root/DeviceStateManager")
+	if dsm:
+		if not dsm.is_connected("layout_mode_changed", _on_layout_mode_changed):
+			dsm.layout_mode_changed.connect(_on_layout_mode_changed)
+
+func _on_layout_mode_changed(_mode: int, _size: Vector2, _is_mobile_val: bool) -> void:
+	if Engine.is_editor_hint():
+		return
+	var parent = get_parent()
+	if parent:
+		# Reset meta to allow re-application
+		_reset_responsive_meta_recursive(parent)
+		# Re-apply styling
+		if apply_to_children:
+			_apply_to_existing_children(parent)
+		if apply_to_parent and parent is Control:
+			_apply_size_to_node(parent, _get_target_height())
+
+func _reset_responsive_meta_recursive(node: Node) -> void:
+	if node.has_meta("responsive_scaled"):
+		node.remove_meta("responsive_scaled")
+	for child in node.get_children(true):
+		_reset_responsive_meta_recursive(child)
 
 func _is_mobile() -> bool:
 	return OS.has_feature("mobile") or OS.has_feature("web_android") or OS.has_feature("web_ios") or DisplayServer.get_name() in ["Android", "iOS"]
 
 func _get_target_height() -> float:
+	var dsm = get_node_or_null("/root/DeviceStateManager")
+	if dsm and dsm.get_layout_mode() == 2: # MOBILE_PORTRAIT
+		return mobile_min_height * 1.2
 	if _is_mobile():
 		return mobile_min_height
 	return desktop_min_height
@@ -72,6 +102,13 @@ func _apply_size_to_node(node: Node, target_h: float) -> void:
 	
 	node.set_meta("responsive_scaled", true)
 
+	if scroll_pass_through and node is Control:
+		# Interactive controls must be PASS to allow ScrollContainer to detect drag gestures on mobile.
+		# This ensures that touching text or panels inside a scrollable area doesn't block scrolling.
+		if node is Button or node is Tree or node is TabContainer or node is TextureRect \
+			or node is PanelContainer or node is Panel or node is RichTextLabel or node is Label:
+			node.mouse_filter = Control.MOUSE_FILTER_PASS
+
 	if node is Tree:
 		var extra = max(0.0, target_h - 30.0)
 		node.add_theme_constant_override("v_separation", int(extra))
@@ -98,6 +135,20 @@ func _apply_size_to_node(node: Node, target_h: float) -> void:
 						else:
 							style.bg_color = Color(0.1, 0.1, 0.1, 0.9)
 					node.add_theme_stylebox_override(style_name, style)
+		
+		# Specifically scale the TabContainer font size
+		var dsm = get_node_or_null("/root/DeviceStateManager")
+		var font_b = boost
+		if dsm and dsm.get_layout_mode() == 2: # MOBILE_PORTRAIT
+			font_b = portrait_boost
+		
+		if _is_mobile() or large_text:
+			# TabContainer uses 'font_size' theme override for the tab titles
+			var base_fs = node.get_theme_font_size("font_size")
+			if base_fs <= 16: base_fs = 18 # Ensure a reasonable base for scaling
+			node.add_theme_font_size_override("font_size", int(base_fs * font_b))
+			# Reduce side margins to fit more tabs/content without clipping
+			node.add_theme_constant_override("side_margin", int(8 * font_b))
 	elif node is SpinBox:
 		# Basic height for touch; width is NOT forced since Godot 4 arrow sizing is done via updown icon
 		node.custom_minimum_size.y = target_h
@@ -127,7 +178,13 @@ func _apply_size_to_node(node: Node, target_h: float) -> void:
 			node.custom_minimum_size.y = max(node.custom_minimum_size.y, 40)
 
 func _apply_large_text(node: Control) -> void:
-	var b = boost if (boost > 0.1) else 1.6
+	var dsm = get_node_or_null("/root/DeviceStateManager")
+	var b = boost
+	if dsm and dsm.get_layout_mode() == 2: # MOBILE_PORTRAIT
+		b = portrait_boost
+	
+	if b < 0.1: b = 1.6
+	
 	if node is Label:
 		var fs = node.get_theme_font_size("font_size")
 		node.add_theme_font_size_override("font_size", int(fs * b))

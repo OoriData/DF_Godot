@@ -478,6 +478,14 @@ func _is_portrait() -> bool:
 	var viewport_sz = get_viewport_rect().size
 	return viewport_sz.y > viewport_sz.x
 
+func _get_menu_ratios() -> Vector2:
+	# Portrait: Use 40-60% of screen height
+	if _is_portrait():
+		return Vector2(0.4, 0.6)
+	# Landscape: Use 35-85% of screen width (Increased by 10% from 0.25-0.75)
+	else:
+		return Vector2(0.35, 0.85)
+
 func _get_bottom_safe_margin() -> float:
 	var is_mobile = OS.has_feature("mobile") or OS.has_feature("web_android") or OS.has_feature("web_ios") or DisplayServer.get_name() in ["Android", "iOS"]
 	if not is_mobile:
@@ -495,10 +503,9 @@ func _on_menu_visibility_changed(is_open: bool, _menu_name: String):
 	
 	var viewport_sz = get_viewport_rect().size
 	var full_w: float = viewport_sz.y if _is_portrait() else viewport_sz.x
-	# Map 0.0-1.0 to 25%-75% of screen width (or 40%-60% for height)
-	var min_ratio = 0.4 if _is_portrait() else 0.25
-	var max_ratio = 0.6 if _is_portrait() else 0.75
-	var ratio_pct = lerp(min_ratio, max_ratio, _opt_menu_ratio_open)
+	
+	var ratios = _get_menu_ratios()
+	var ratio_pct = lerp(ratios.x, ratios.y, _opt_menu_ratio_open)
 	_menu_target_width = full_w * ratio_pct
 	
 	# Detect and prevent cramming: Enforce a minimum width/height in logical pixels.
@@ -1280,9 +1287,10 @@ func _apply_menu_ratio_if_open():
 		return
 		
 	var viewport_sz = get_viewport_rect().size
-	var full_w: float = viewport_sz.x
-	# Map 0.0-1.0 to 25%-75% of screen width
-	var ratio_pct = lerp(0.25, 0.75, _opt_menu_ratio_open)
+	var full_w: float = viewport_sz.y if _is_portrait() else viewport_sz.x
+	
+	var ratios = _get_menu_ratios()
+	var ratio_pct = lerp(ratios.x, ratios.y, _opt_menu_ratio_open)
 	_menu_target_width = full_w * ratio_pct
 	
 	# Detect and prevent cramming

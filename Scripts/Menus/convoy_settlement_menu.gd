@@ -101,9 +101,8 @@ func _ready():
 		if not top_up_button.is_connected("pressed", Callable(self, "_on_top_up_button_pressed")):
 			top_up_button.pressed.connect(_on_top_up_button_pressed)
 		_update_top_up_button()
-		_style_top_up_button()
+		_style_top_bar_button(top_up_button)
 
-	# Add a Warehouse button to the top bar (only once)
 	if is_instance_valid(top_bar_hbox):
 		var existing_btn: Button = top_bar_hbox.get_node_or_null("WarehouseButton")
 		if existing_btn == null:
@@ -111,7 +110,7 @@ func _ready():
 			warehouse_btn.name = "WarehouseButton"
 			warehouse_btn.text = "Warehouse"
 			warehouse_btn.tooltip_text = "View or buy a Warehouse in this settlement"
-			warehouse_btn.size_flags_horizontal = Control.SIZE_SHRINK_END
+			warehouse_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 			top_bar_hbox.add_child(warehouse_btn)
 
 			warehouse_btn.pressed.connect(_on_warehouse_button_pressed)
@@ -120,6 +119,11 @@ func _ready():
 		warehouse_button = top_bar_hbox.get_node_or_null("WarehouseButton")
 		if is_instance_valid(warehouse_button):
 			warehouse_button.disabled = false
+			_style_top_bar_button(warehouse_button)
+
+	# Apply styling to title label as well
+	if is_instance_valid(title_label):
+		_style_top_bar_button(title_label)
 
 	# Subscribe to canonical snapshots (store 'convoys_changed' handled by MenuBase)
 	if is_instance_valid(_store):
@@ -131,6 +135,20 @@ func _ready():
 	# Also listen directly to APICalls transaction outcomes so we can trigger timely refreshes
 	# Phase 4: UI no longer listens to APICalls transaction signals. Authoritative
 	# refreshes are driven via services + GameStore/SignalHub events.
+
+	var dsm = get_node_or_null("/root/DeviceStateManager")
+	if is_instance_valid(dsm):
+		if not dsm.is_connected("layout_mode_changed", _on_layout_mode_changed):
+			dsm.layout_mode_changed.connect(_on_layout_mode_changed)
+
+func _on_layout_mode_changed(_mode: int, _size: Vector2, _is_mobile_val: bool) -> void:
+	if is_instance_valid(top_up_button):
+		_style_top_bar_button(top_up_button)
+	if is_instance_valid(title_label):
+		_style_top_bar_button(title_label)
+	if is_instance_valid(warehouse_button):
+		_style_top_bar_button(warehouse_button)
+
 
 
 func _display_error(message: String):
@@ -976,10 +994,10 @@ func _get_settlement_name_from_convoy_coords() -> String:
 					return String(s.get("name", ""))
 	return ""
 
-func _style_top_up_button():
-	if not is_instance_valid(top_up_button):
+func _style_top_bar_button(button: Button) -> void:
+	if not is_instance_valid(button):
 		return
-	# --- Button StyleBoxes ---
+		
 	var normal = StyleBoxFlat.new()
 	normal.bg_color = Color(0.15, 0.15, 0.18, 1.0)
 	normal.corner_radius_top_left = 6
@@ -1007,14 +1025,13 @@ func _style_top_up_button():
 	disabled.border_color = Color(0.20, 0.20, 0.20)
 	disabled.shadow_size = 0
 
-	top_up_button.add_theme_stylebox_override("normal", normal)
-	top_up_button.add_theme_stylebox_override("hover", hover)
-	top_up_button.add_theme_stylebox_override("pressed", pressed)
-	top_up_button.add_theme_stylebox_override("disabled", disabled)
+	button.add_theme_stylebox_override("normal", normal)
+	button.add_theme_stylebox_override("hover", hover)
+	button.add_theme_stylebox_override("pressed", pressed)
+	button.add_theme_stylebox_override("disabled", disabled)
 
 	# --- Tooltip Style ---
 	var tooltip_panel = StyleBoxFlat.new()
-	# Make fully opaque for readability (user requested less transparency)
 	tooltip_panel.bg_color = Color(0.05, 0.05, 0.06, 1.0)
 	tooltip_panel.corner_radius_top_left = 4
 	tooltip_panel.corner_radius_top_right = 4
@@ -1027,20 +1044,22 @@ func _style_top_up_button():
 	tooltip_panel.border_width_bottom = 1
 	tooltip_panel.shadow_color = Color(0,0,0,0.7)
 	tooltip_panel.shadow_size = 4
-	# Extra padding inside tooltip for clarity
 	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
 		tooltip_panel.set_content_margin(side, 6)
-	top_up_button.add_theme_stylebox_override("tooltip_panel", tooltip_panel)
+	button.add_theme_stylebox_override("tooltip_panel", tooltip_panel)
 
 	# --- Font & Colors ---
-	top_up_button.add_theme_color_override("font_color", Color(0.92, 0.96, 1.0))
-	top_up_button.add_theme_color_override("font_color_hover", Color(1.0, 1.0, 1.0))
-	top_up_button.add_theme_color_override("font_color_pressed", Color(0.85, 0.90, 1.0))
-	top_up_button.add_theme_color_override("font_color_disabled", Color(0.55, 0.55, 0.60))
-	# Slightly larger font to pop
-	top_up_button.add_theme_font_size_override("font_size", 18)
+	button.add_theme_color_override("font_color", Color(0.92, 0.96, 1.0))
+	button.add_theme_color_override("font_color_hover", Color(1.0, 1.0, 1.0))
+	button.add_theme_color_override("font_color_pressed", Color(0.85, 0.90, 1.0))
+	button.add_theme_color_override("font_color_disabled", Color(0.55, 0.55, 0.60))
+	
+	var dsm = get_node_or_null("/root/DeviceStateManager")
+	var fs = 18
+	if is_instance_valid(dsm):
+		fs = dsm.get_scaled_base_font_size(18)
+	button.add_theme_font_size_override("font_size", fs)
 
-	# Optional: Increase content margin for a beefier look
 	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
 		normal.set_content_margin(side, normal.get_content_margin(side) + 2)
 		hover.set_content_margin(side, hover.get_content_margin(side) + 2)

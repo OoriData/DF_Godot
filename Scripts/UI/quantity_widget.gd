@@ -16,12 +16,22 @@ var _value_label: LineEdit
 var _plus_btn: Button
 
 func _ready() -> void:
+	var dsm = get_node_or_null("/root/DeviceStateManager")
+	var is_portrait: bool = false
+	if is_instance_valid(dsm):
+		is_portrait = (dsm.get_layout_mode() == 2)
+	else:
+		if is_inside_tree() and get_viewport_rect().size.y > get_viewport_rect().size.x:
+			is_portrait = true
+			
+	var btn_h = 100 if is_portrait else 40
+	var btn_w = 90 if is_portrait else 42
+	
 	_minus_btn = Button.new()
 	_minus_btn.text = "-"
-	var btn_h = 74 if _is_mobile() else 50
-	var btn_w = 74 if _is_mobile() else 55
 	_minus_btn.custom_minimum_size = Vector2(btn_w, btn_h)
 	_minus_btn.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	_minus_btn.mouse_filter = Control.MOUSE_FILTER_PASS
 	_apply_btn_style(_minus_btn, Color(0.55, 0.15, 0.15))
 	add_child(_minus_btn)
 	
@@ -31,15 +41,16 @@ func _ready() -> void:
 	_value_label.alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_value_label.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	_value_label.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	_value_label.mouse_filter = Control.MOUSE_FILTER_PASS
 	_value_label.editable = true
-	if _is_mobile():
-		_value_label.add_theme_font_size_override("font_size", 24)
+	# Let inheriting Theme scale text natively without arbitrary overrides!
 	add_child(_value_label)
 	
 	_plus_btn = Button.new()
 	_plus_btn.text = "+"
 	_plus_btn.custom_minimum_size = Vector2(btn_w, btn_h)
 	_plus_btn.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	_plus_btn.mouse_filter = Control.MOUSE_FILTER_PASS
 	_apply_btn_style(_plus_btn, Color(0.15, 0.45, 0.15))
 	add_child(_plus_btn)
 	
@@ -49,17 +60,9 @@ func _ready() -> void:
 	_value_label.focus_exited.connect(_on_focus_exited)
 	
 	alignment = BoxContainer.ALIGNMENT_CENTER
-	var sep = 10 if _is_mobile() else 4
+	mouse_filter = Control.MOUSE_FILTER_PASS
+	var sep = 16 if is_portrait else 2
 	add_theme_constant_override("separation", sep)
-
-func _is_mobile() -> bool:
-	if OS.has_feature("mobile") or OS.has_feature("web_android") or OS.has_feature("web_ios") or DisplayServer.get_name() in ["Android", "iOS"]:
-		return true
-	if is_inside_tree():
-		var win_size = get_viewport_rect().size
-		if win_size.y > win_size.x:
-			return true
-	return false
 
 func set_value(new_val: float) -> void:
 	value = clampf(new_val, min_value, max_value)

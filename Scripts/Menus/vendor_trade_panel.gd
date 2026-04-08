@@ -51,7 +51,7 @@ func _emit_install_requested(item: Variant, quantity: int, vendor_id: String) ->
 @onready var convoy_cargo_label: Label = %ConvoyCargoLabel
 @onready var trade_mode_tab_container: TabContainer = %TradeModeTabContainer
 @onready var toast_notification: Control = %ToastNotification
-@onready var cargo_sort_option_button: OptionButton = get_node_or_null("%CargoSortOptionButton")
+@onready var cargo_sort_button: MenuButton = get_node_or_null("%CargoSortButton")
 var loading_panel: Panel = null
 
 # --- Data ---
@@ -137,8 +137,8 @@ func _save_cargo_sort_metric_to_settings(metric: int) -> void:
 		sm.set_and_save("ui.cargo_sort_metric", metric)
 
 func _set_cargo_sort_ui_visible(visible: bool) -> void:
-	if is_instance_valid(cargo_sort_option_button):
-		var p := cargo_sort_option_button.get_parent()
+	if is_instance_valid(cargo_sort_button):
+		var p := cargo_sort_button.get_parent()
 		if is_instance_valid(p):
 			p.visible = visible
 
@@ -625,14 +625,28 @@ func _get_bold_font_for(node: Control) -> FontVariation:
 		_bold_font_cache = bf
 	return _bold_font_cache
 
-func _get_portrait_font_size(base: int) -> int:
-	var win_size = get_viewport_rect().size if is_inside_tree() else Vector2(0, 0)
-	var is_portrait = win_size.y > win_size.x
-	var is_mobile = OS.has_feature("mobile") or OS.has_feature("web_android") or OS.has_feature("web_ios") or is_portrait or (is_inside_tree() and get_viewport_rect().size.y < 500)
-	var boost = 2.5 if is_portrait else (1.6 if is_mobile else 1.2)
-	return int(base * boost)
-
+# Deleted: _get_portrait_font_size
 func _ready() -> void:
+	var dsm = get_node_or_null("/root/DeviceStateManager")
+	if is_instance_valid(dsm):
+		var mode = dsm.get_layout_mode()
+		var dyn_font_sz = dsm.get_scaled_base_font_size(16)
+		if mode == 2: # MOBILE_PORTRAIT
+			dyn_font_sz = int(dyn_font_sz * 1.1)
+		
+		var curr_theme = theme
+		if curr_theme == null:
+			curr_theme = Theme.new()
+			theme = curr_theme
+		curr_theme.default_font_size = dyn_font_sz
+		
+		# Explicitly boost tabs if available
+		if is_instance_valid(trade_mode_tab_container):
+			trade_mode_tab_container.theme = curr_theme
+			var tab_bar = trade_mode_tab_container.get_tab_bar()
+			if is_instance_valid(tab_bar):
+				tab_bar.add_theme_font_size_override("font_size", dyn_font_sz)
+
 	# Connect signals from UI elements
 	vendor_item_tree.item_selected.connect(_on_vendor_item_selected)
 	# Use item_selected for Tree to update the inspector on a single click.
@@ -672,15 +686,15 @@ func _ready() -> void:
 	else:
 		printerr("VendorTradePanel: 'DescriptionToggleButton' node not found. Please check the scene file.")
 
-	if is_instance_valid(cargo_sort_option_button):
+	if is_instance_valid(cargo_sort_button):
 		_load_cargo_sort_metric_from_settings()
 		var win_size = get_viewport_rect().size if is_inside_tree() else Vector2(0, 0)
 		var vp_is_portrait = win_size.y > win_size.x
 		var sort_h = 80 if vp_is_portrait else 34
-		cargo_sort_option_button.custom_minimum_size = Vector2(280, sort_h)
-		cargo_sort_option_button.add_theme_font_size_override("font_size", _get_portrait_font_size(13))
-		cargo_sort_option_button.add_theme_color_override("font_color", Color(0.93, 0.93, 0.93, 1.0))
-		cargo_sort_option_button.add_theme_color_override("font_hover_color", Color(0.98, 0.98, 0.98, 1.0))
+		cargo_sort_button.custom_minimum_size = Vector2(100, sort_h) # Thinner button
+		cargo_sort_button.add_theme_color_override("font_color", Color(0.93, 0.93, 0.93, 1.0))
+		cargo_sort_button.add_theme_color_override("font_hover_color", Color(0.98, 0.98, 0.98, 1.0))
+		
 		var sort_normal := StyleBoxFlat.new()
 		sort_normal.bg_color = Color(0.24, 0.24, 0.24, 0.96)
 		sort_normal.border_width_left = 1
@@ -696,28 +710,31 @@ func _ready() -> void:
 		sort_normal.content_margin_right = 10
 		sort_normal.content_margin_top = 4
 		sort_normal.content_margin_bottom = 4
+		
 		var sort_hover := sort_normal.duplicate()
 		sort_hover.bg_color = Color(0.31, 0.31, 0.31, 0.98)
 		sort_hover.border_color = Color(0.70, 0.70, 0.70, 1.0)
 		var sort_pressed := sort_normal.duplicate()
 		sort_pressed.bg_color = Color(0.18, 0.18, 0.18, 1.0)
-		cargo_sort_option_button.add_theme_stylebox_override("normal", sort_normal)
-		cargo_sort_option_button.add_theme_stylebox_override("hover", sort_hover)
-		cargo_sort_option_button.add_theme_stylebox_override("pressed", sort_pressed)
-		cargo_sort_option_button.add_theme_stylebox_override("focus", sort_hover)
-		var sort_parent := cargo_sort_option_button.get_parent()
-		if is_instance_valid(sort_parent):
-			sort_parent.add_theme_constant_override("separation", 8)
+		
+		cargo_sort_button.add_theme_stylebox_override("normal", sort_normal)
+		cargo_sort_button.add_theme_stylebox_override("hover", sort_hover)
+		cargo_sort_button.add_theme_stylebox_override("pressed", sort_pressed)
+		cargo_sort_button.add_theme_stylebox_override("focus", sort_hover)
+		
+		var popup = cargo_sort_button.get_popup()
+		popup.clear()
+		popup.add_radio_check_item("Profit Margin/Unit", 0)
+		popup.add_radio_check_item("Profit Density/Weight", 1)
+		popup.add_radio_check_item("Profit Density/Volume", 2)
+		popup.add_radio_check_item("Total Order Profit", 3)
+		popup.add_radio_check_item("Distance to Recipient", 4)
+		
+		_cargo_sort_metric = clampi(_cargo_sort_metric, 0, max(0, popup.item_count - 1))
+		for i in range(popup.item_count):
+			popup.set_item_checked(i, i == _cargo_sort_metric)
 			
-		cargo_sort_option_button.clear()
-		cargo_sort_option_button.add_item("Sort: Profit Margin/Unit")
-		cargo_sort_option_button.add_item("Sort: Profit Density/Weight")
-		cargo_sort_option_button.add_item("Sort: Profit Density/Volume")
-		cargo_sort_option_button.add_item("Sort: Total Order Profit")
-		cargo_sort_option_button.add_item("Sort: Distance to Recipient")
-		_cargo_sort_metric = clampi(_cargo_sort_metric, 0, max(0, cargo_sort_option_button.item_count - 1))
-		cargo_sort_option_button.select(_cargo_sort_metric)
-		cargo_sort_option_button.item_selected.connect(_on_cargo_sort_selected)
+		popup.index_pressed.connect(_on_cargo_sort_selected)
 		_update_sort_dropdown_visibility_fast()
 
 	# Subscribe to canonical sources (Hub/Store) instead of GameDataManager.
@@ -776,14 +793,16 @@ func _ready() -> void:
 	if is_instance_valid(action_button):
 		action_button.disabled = true
 		action_button.custom_minimum_size.y = btn_min_h
-		action_button.add_theme_font_size_override("font_size", _get_portrait_font_size(16))
 	if is_instance_valid(max_button):
 		max_button.disabled = true
 		max_button.custom_minimum_size.y = btn_min_h
-		max_button.add_theme_font_size_override("font_size", _get_portrait_font_size(14))
 	if is_instance_valid(install_button):
 		install_button.custom_minimum_size.y = btn_min_h
-		install_button.add_theme_font_size_override("font_size", _get_portrait_font_size(14))
+		
+	# Boost quantity selector buttons natively
+	if is_instance_valid(quantity_spinbox):
+		if is_portrait_btn:
+			quantity_spinbox.custom_minimum_size.y = btn_min_h
 
 	# Ensure loading overlay never blocks input during tutorial debugging
 	if is_instance_valid(loading_panel):
@@ -855,10 +874,7 @@ func _get_semi_bold_font_for(node: Control) -> FontVariation:
 	return _semi_bold_font_cache
 
 func _apply_text_readability_fixes() -> void:
-	# Apply semibold font and portrait-aware font size boosts to labels
-	var win_size = get_viewport_rect().size if is_inside_tree() else Vector2(0, 0)
-	var is_portrait = win_size.y > win_size.x
-	
+	# Apply semibold font where needed (sizes scale via root theme natively now!)
 	var labels_to_fix = [
 		get_node_or_null("%VolumeLabel"), # Using unique names from tscn
 		get_node_or_null("HBoxContainer/RightPanel/CapacityBars/VolumeLabel"), # Fallback path
@@ -870,35 +886,25 @@ func _apply_text_readability_fixes() -> void:
 	for lbl in labels_to_fix:
 		if is_instance_valid(lbl) and lbl is Label:
 			lbl.add_theme_font_override("font", _get_semi_bold_font_for(lbl))
-			if is_portrait:
-				lbl.add_theme_font_size_override("font_size", _get_portrait_font_size(15))
 	
-	# Scale the in-bar percentage text on cargo capacity bars
+	# Scale the in-bar percentage text on cargo capacity bars natively via y limits
+	var win_size = get_viewport_rect().size if is_inside_tree() else Vector2(0, 0)
+	var is_portrait = win_size.y > win_size.x
+	
 	for bar_node_name in ["%ConvoyVolumeBar", "%ConvoyWeightBar"]:
 		var bar = get_node_or_null(bar_node_name)
 		if not is_instance_valid(bar):
-			# Try fallback paths
 			bar = get_node_or_null("HBoxContainer/RightPanel/CapacityBars/ConvoyVolumeBar")
 		if is_instance_valid(bar):
 			if is_portrait:
 				bar.custom_minimum_size.y = 60
-				bar.add_theme_font_size_override("font_size", _get_portrait_font_size(16))
-			else:
-				bar.add_theme_font_size_override("font_size", _get_portrait_font_size(13))
 	
 	# Scale cargo bars from @onready vars
 	if is_portrait:
 		if is_instance_valid(convoy_volume_bar):
 			convoy_volume_bar.custom_minimum_size.y = 60
-			convoy_volume_bar.add_theme_font_size_override("font_size", _get_portrait_font_size(16))
 		if is_instance_valid(convoy_weight_bar):
 			convoy_weight_bar.custom_minimum_size.y = 60
-			convoy_weight_bar.add_theme_font_size_override("font_size", _get_portrait_font_size(16))
-	else:
-		if is_instance_valid(convoy_volume_bar):
-			convoy_volume_bar.add_theme_font_size_override("font_size", _get_portrait_font_size(13))
-		if is_instance_valid(convoy_weight_bar):
-			convoy_weight_bar.add_theme_font_size_override("font_size", _get_portrait_font_size(13))
 
 
 func _exit_tree() -> void:
@@ -1126,7 +1132,7 @@ func _populate_vendor_list() -> void:
 	_populate_category(vendor_item_tree, root, "Other", buckets.get("other", {}))
 	_populate_category(vendor_item_tree, root, "Resources", buckets.get("resources", {}))
 
-	if is_instance_valid(cargo_sort_option_button):
+	if is_instance_valid(cargo_sort_button):
 		_set_cargo_sort_ui_visible(has_delivery_cargo or _has_delivery_cargo_fast_for_mode("buy"))
 
 	# Vendor list is now rebuilt; apply any queued deep-link focus request.
@@ -1236,7 +1242,7 @@ func _populate_convoy_list() -> void:
 	_populate_category(convoy_item_tree, root, "Resources", buckets.get("resources", {}))
 
 	# Show sorting if either list has delivery cargo, according to Active Tab
-	if is_instance_valid(cargo_sort_option_button):
+	if is_instance_valid(cargo_sort_button):
 		if current_mode == "sell":
 			_set_cargo_sort_ui_visible(has_delivery_cargo or _has_delivery_cargo_fast_for_mode("sell"))
 
@@ -1752,6 +1758,11 @@ func _flash_capacity_bars() -> void:
 func _on_cargo_sort_selected(index: int) -> void:
 	_cargo_sort_metric = index
 	_save_cargo_sort_metric_to_settings(index)
+	
+	if is_instance_valid(cargo_sort_button):
+		var popup = cargo_sort_button.get_popup()
+		for i in range(popup.item_count):
+			popup.set_item_checked(i, i == index)
 
 	_populate_vendor_list()
 	_populate_convoy_list()

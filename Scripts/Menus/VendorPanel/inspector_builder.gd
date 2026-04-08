@@ -41,14 +41,28 @@ static func _make_panel(title: String, rows: Array) -> PanelContainer:
 	sb.content_margin_top = 6
 	sb.content_margin_bottom = 6
 	panel.add_theme_stylebox_override("panel", sb)
+	panel.mouse_filter = Control.MOUSE_FILTER_PASS
 
 	var vb := VBoxContainer.new()
+	vb.mouse_filter = Control.MOUSE_FILTER_PASS
 	vb.add_theme_constant_override("separation", 4)
 	panel.add_child(vb)
 
+	var dsm = Engine.get_main_loop().root.get_node_or_null("DeviceStateManager")
+	var hdr_sz := 16
+	var txt_sz := 13
+	if is_instance_valid(dsm):
+		hdr_sz = dsm.get_scaled_base_font_size(16)
+		txt_sz = dsm.get_scaled_base_font_size(13)
+		var mode = dsm.get_layout_mode()
+		if mode == 2: # MOBILE_PORTRAIT
+			hdr_sz = int(hdr_sz * 1.1)
+			txt_sz = int(txt_sz * 1.1)
+
 	var hdr := Label.new()
 	hdr.text = title
-	hdr.add_theme_font_size_override("font_size", 16)
+	hdr.mouse_filter = Control.MOUSE_FILTER_PASS
+	hdr.add_theme_font_size_override("font_size", hdr_sz)
 	hdr.modulate = Color(1.0, 0.85, 0.35, 1.0)
 	vb.add_child(hdr)
 
@@ -59,13 +73,13 @@ static func _make_panel(title: String, rows: Array) -> PanelContainer:
 		line.add_theme_constant_override("separation", 6)
 		var k := Label.new()
 		k.text = str(r.get("k", ""))
-		k.add_theme_font_size_override("font_size", 13)
+		k.add_theme_font_size_override("font_size", txt_sz)
 		k.modulate = Color(0.92, 0.94, 1.0, 0.95)
 		k.size_flags_horizontal = Control.SIZE_FILL
 		k.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 		var v := Label.new()
 		v.text = str(r.get("v", ""))
-		v.add_theme_font_size_override("font_size", 13)
+		v.add_theme_font_size_override("font_size", txt_sz)
 		v.modulate = Color(0.86, 0.92, 1.0, 1)
 		v.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		v.size_flags_vertical = Control.SIZE_SHRINK_CENTER
@@ -85,6 +99,7 @@ static func rebuild_info_sections(item_info_rich_text: RichTextLabel, item_data_
 	if container == null:
 		container = VBoxContainer.new()
 		container.name = "InfoSectionsContainer"
+		container.mouse_filter = Control.MOUSE_FILTER_PASS
 		container.add_theme_constant_override("separation", 6)
 		parent_node.add_child(container)
 		var idx: int = parent_node.get_children().find(item_info_rich_text)
