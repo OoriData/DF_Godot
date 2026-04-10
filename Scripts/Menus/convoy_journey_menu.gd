@@ -76,21 +76,6 @@ var _settlement_poll_timer: Timer = null
 @onready var _convoy_service: Node = get_node_or_null("/root/ConvoyService")
 @onready var _api: Node = get_node_or_null("/root/APICalls")
 
-func _is_mobile() -> bool:
-	if OS.has_feature("mobile") or OS.has_feature("web_android") or OS.has_feature("web_ios") or DisplayServer.get_name() in ["Android", "iOS"]:
-		return true
-	if is_inside_tree():
-		var win_size = get_viewport_rect().size
-		if win_size.y > win_size.x:
-			return true
-	return false
-
-func _get_font_size(base: int) -> int:
-	var win_size = get_viewport_rect().size if is_inside_tree() else Vector2(0, 0)
-	var is_portrait = win_size.y > win_size.x
-	var boost = 2.5 if is_portrait else (1.6 if _is_mobile() else 1.2)
-	return int(base * boost)
-
 func _log_debug(msg: String, a: Variant = null, b: Variant = null, c: Variant = null) -> void:
 	if is_instance_valid(_logger) and _logger.has_method("debug"):
 		_logger.debug(msg, a, b, c)
@@ -100,14 +85,13 @@ func _ready():
 	if is_instance_valid(back_button):
 		if not back_button.is_connected("pressed", Callable(self, "_on_back_button_pressed")):
 			back_button.pressed.connect(_on_back_button_pressed)
-		var win_size = get_viewport_rect().size if is_inside_tree() else Vector2(0, 0)
-		var is_portrait = win_size.y > win_size.x
+		var is_portrait = DeviceStateManager.get_is_portrait()
 		if is_portrait:
 			back_button.custom_minimum_size.y = 100
-			back_button.add_theme_font_size_override("font_size", _get_font_size(16))
-		elif _is_mobile():
+			back_button.add_theme_font_size_override("font_size", DeviceStateManager.get_scaled_base_font_size(16))
+		elif DeviceStateManager.is_mobile:
 			back_button.custom_minimum_size.y = 60
-			back_button.add_theme_font_size_override("font_size", _get_font_size(16))
+			back_button.add_theme_font_size_override("font_size", DeviceStateManager.get_scaled_base_font_size(16))
 	
 	# Make the title label clickable to return to the convoy overview
 	if is_instance_valid(title_label):
@@ -274,9 +258,8 @@ func _update_ui(convoy: Dictionary) -> void:
 	var eta_headline := Label.new()
 	eta_headline.text = "ETA: %s" % eta_val
 	eta_headline.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	var win_size = get_viewport_rect().size if is_inside_tree() else Vector2(0, 0)
-	var is_portrait = win_size.y > win_size.x
-	eta_headline.add_theme_font_size_override("font_size", _get_font_size(22 if is_portrait else 18))
+	var is_portrait = DeviceStateManager.get_is_portrait()
+	eta_headline.add_theme_font_size_override("font_size", DeviceStateManager.get_scaled_base_font_size(22 if is_portrait else 18))
 	eta_headline.add_theme_color_override("font_color", Color(0.92, 0.97, 1))
 	details_vbox.add_child(eta_headline)
 
@@ -293,7 +276,7 @@ func _update_ui(convoy: Dictionary) -> void:
 	loc_grid.add_theme_constant_override("h_separation", 14)
 	loc_grid.add_theme_constant_override("v_separation", 8 if is_portrait else 6)
 	details_vbox.add_child(loc_grid)
-	var loc_label_fs := _get_font_size(14) if _is_mobile() else 14
+	var loc_label_fs := DeviceStateManager.get_scaled_base_font_size(14) if DeviceStateManager.is_mobile else 14
 	# Current
 	var curr_title := Label.new()
 	curr_title.text = "📍 Current"
@@ -355,7 +338,7 @@ func _update_ui(convoy: Dictionary) -> void:
 	var progress_bar = ProgressBar.new()
 	progress_bar.custom_minimum_size = Vector2(0, 40 if is_portrait else 20)
 	progress_bar.value = progress_percentage
-	progress_bar.add_theme_font_size_override("font_size", _get_font_size(14))
+	progress_bar.add_theme_font_size_override("font_size", DeviceStateManager.get_scaled_base_font_size(14))
 	# Match ConvoyMenu: background 2a2a2a with light border; fill uses Color("29b6f6")
 	var bg_style := StyleBoxFlat.new()
 	bg_style.bg_color = Color("2a2a2a")
@@ -393,9 +376,9 @@ func _update_ui(convoy: Dictionary) -> void:
 		csb.content_margin_bottom = 10
 		cancel_container.add_theme_stylebox_override("panel", csb)
 		
-		if _is_mobile():
-			if is_portrait:
-				cancel_container.custom_minimum_size = Vector2(240, 100)
+		if DeviceStateManager.is_mobile:
+			if DeviceStateManager.get_is_portrait():
+				cancel_container.custom_minimum_size = Vector2(260, 90)
 			else:
 				cancel_container.custom_minimum_size = Vector2(140, 64)
 		
@@ -431,13 +414,13 @@ func _update_ui(convoy: Dictionary) -> void:
 		var c_lbl = Label.new()
 		c_lbl.text = "Cancel Journey"
 		c_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		c_lbl.add_theme_font_size_override("font_size", _get_font_size(18) if _is_mobile() else 14)
+		c_lbl.add_theme_font_size_override("font_size", DeviceStateManager.get_scaled_base_font_size(18) if DeviceStateManager.is_mobile else 14)
 		c_lbl.add_theme_color_override("font_color", Color(1, 0.92, 0.92))
 		cancel_container.add_child(c_lbl)
 		details_vbox.add_child(cancel_container)
 
 func _populate_destination_list():
-	if _is_mobile():
+	if DeviceStateManager.is_mobile:
 		content_vbox.add_theme_constant_override("separation", 14)
 
 	# Reset planner loading state for a clean rebuild.
@@ -727,11 +710,10 @@ func _populate_destination_list():
 		sb.content_margin_bottom = 10
 		item_container.add_theme_stylebox_override("panel", sb)
 		
-		var win_size = get_viewport_rect().size if is_inside_tree() else Vector2(0, 0)
-		var is_portrait = win_size.y > win_size.x
+		var is_portrait = DeviceStateManager.get_is_portrait()
 		if is_portrait:
 			item_container.custom_minimum_size.y = 110
-		elif _is_mobile():
+		elif DeviceStateManager.is_mobile:
 			item_container.custom_minimum_size.y = 64
 		
 		item_container.mouse_filter = Control.MOUSE_FILTER_PASS
@@ -755,7 +737,7 @@ func _populate_destination_list():
 		var lbl = Label.new()
 		lbl.text = button_text
 		lbl.mouse_filter = Control.MOUSE_FILTER_PASS
-		lbl.add_theme_font_size_override("font_size", _get_font_size(16) if is_portrait else _get_font_size(14))
+		lbl.add_theme_font_size_override("font_size", DeviceStateManager.get_scaled_base_font_size(16) if is_portrait else DeviceStateManager.get_scaled_base_font_size(14))
 		item_container.add_child(lbl)
 		
 		content_vbox.add_child(item_container)
@@ -1185,20 +1167,25 @@ func _show_confirmation_panel(route_data: Dictionary):
 	if not is_instance_valid(_confirmation_panel):
 		_confirmation_panel = VBoxContainer.new()
 		_confirmation_panel.name = "ConfirmationPanel"
-		_confirmation_panel.add_theme_constant_override("separation", 10)
+		_confirmation_panel.add_theme_constant_override("separation", 24 if DeviceStateManager.get_is_portrait() else 10)
 		content_vbox.add_child(_confirmation_panel)
 	# Clear panel for rebuild
 	for child in _confirmation_panel.get_children():
 		child.queue_free()
 	# ---------------- Title & Basic Info ----------------
+	var _add_sep = func():
+		var s = HSeparator.new()
+		if DeviceStateManager.get_is_portrait(): s.add_theme_constant_override("separation", 10)
+		_confirmation_panel.add_child(s)
+
 	var header_vbox = VBoxContainer.new()
-	header_vbox.add_theme_constant_override("separation", 14 if _is_mobile() else 2)
+	header_vbox.add_theme_constant_override("separation", 14 if DeviceStateManager.is_mobile else 2)
 	_confirmation_panel.add_child(header_vbox)
 
 	var title = Label.new()
 	title.text = "Confirm Journey (%d / %d)" % [_current_route_choice_index + 1, max(1, _all_route_choices.size())]
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	title.add_theme_font_size_override("font_size", 35 if _is_mobile() else 22)
+	title.add_theme_font_size_override("font_size", 35 if DeviceStateManager.is_mobile else 22)
 	title.add_theme_color_override("font_color", Color(0.9, 0.95, 1.0))
 	header_vbox.add_child(title)
 
@@ -1214,7 +1201,7 @@ func _show_confirmation_panel(route_data: Dictionary):
 	sub_info.add_theme_color_override("font_color", Color(0.7, 0.75, 0.8))
 	header_vbox.add_child(sub_info)
 
-	_confirmation_panel.add_child(HSeparator.new())
+	_add_sep.call()
 
 	# --- Resource Section ---
 	var resources_section = VBoxContainer.new()
@@ -1229,7 +1216,7 @@ func _show_confirmation_panel(route_data: Dictionary):
 	
 	var res_title = Label.new()
 	res_title.text = "Projected Resource Usage"
-	res_title.add_theme_font_size_override("font_size", 26 if _is_mobile() else 16)
+	res_title.add_theme_font_size_override("font_size", 26 if DeviceStateManager.is_mobile else 16)
 	res_title.add_theme_color_override("font_color", Color(0.8, 0.85, 0.95))
 	res_header_hbox.add_child(res_title)
 
@@ -1284,10 +1271,6 @@ func _show_confirmation_panel(route_data: Dictionary):
 	header_bar.add_theme_stylebox_override("panel", hsb)
 	panel_vbox.add_child(header_bar)
 
-	var header_hbox = HBoxContainer.new()
-	header_hbox.add_theme_constant_override("separation", 16)
-	header_bar.add_child(header_hbox)
-	
 	var col_widths = [0, 85, 110, 110]
 	var _create_col_label = func(text: String, alignment: int, min_w: float) -> Label:
 		var lbl = Label.new()
@@ -1298,12 +1281,19 @@ func _show_confirmation_panel(route_data: Dictionary):
 			lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		return lbl
 
-	var header_labels = ["Resource", "Need", "Have (Capacity)", "Remaining"]
-	for i in range(header_labels.size()):
-		var hl = _create_col_label.call(header_labels[i], (HORIZONTAL_ALIGNMENT_RIGHT if i > 0 else HORIZONTAL_ALIGNMENT_LEFT), col_widths[i])
-		hl.add_theme_color_override("font_color", Color(0.6, 0.7, 0.8))
-		hl.add_theme_font_size_override("font_size", 20 if _is_mobile() else 13)
-		header_hbox.add_child(hl)
+	if DeviceStateManager.get_is_portrait():
+		header_bar.visible = false
+	else:
+		var header_hbox = HBoxContainer.new()
+		header_hbox.add_theme_constant_override("separation", 16)
+		header_bar.add_child(header_hbox)
+		
+		var header_labels = ["Resource", "Need", "Have (Capacity)", "Remaining"]
+		for i in range(header_labels.size()):
+			var hl = _create_col_label.call(header_labels[i], (HORIZONTAL_ALIGNMENT_RIGHT if i > 0 else HORIZONTAL_ALIGNMENT_LEFT), col_widths[i])
+			hl.add_theme_color_override("font_color", Color(0.6, 0.7, 0.8))
+			hl.add_theme_font_size_override("font_size", DeviceStateManager.get_scaled_base_font_size(13))
+			header_hbox.add_child(hl)
 
 	# -- Rows VBox --
 	var res_list = VBoxContainer.new()
@@ -1317,9 +1307,9 @@ func _show_confirmation_panel(route_data: Dictionary):
 		
 		match status:
 			"critical":
-				bg_style.bg_color = Color(0.6, 0.1, 0.1, 0.15) # Subtle glow
+				bg_style.bg_color = Color(0.6, 0.1, 0.1, 0.15)
 				bg_style.set_border_width_all(1)
-				bg_style.border_color = Color(1.0, 1.0, 1.0, 0.8) # White border
+				bg_style.border_color = Color(1.0, 1.0, 1.0, 0.8)
 			"warn":
 				bg_style.bg_color = Color(0.6, 0.4, 0.1, 0.15)
 				bg_style.set_border_width_all(1)
@@ -1330,31 +1320,84 @@ func _show_confirmation_panel(route_data: Dictionary):
 		row_panel.add_theme_stylebox_override("panel", bg_style)
 		res_list.add_child(row_panel)
 		
-		var row_hbox = HBoxContainer.new()
-		row_hbox.add_theme_constant_override("separation", 20 if _is_mobile() else 16)
-		row_panel.add_child(row_hbox)
-		
 		var name_text = label
 		if status == "critical": name_text = "⚠️ " + label
-		var icon_lbl = _create_col_label.call(name_text, HORIZONTAL_ALIGNMENT_LEFT, col_widths[0])
-		if status == "critical": icon_lbl.add_theme_color_override("font_color", Color(1, 0.4, 0.4))
-		elif status == "warn": icon_lbl.add_theme_color_override("font_color", Color(1, 0.8, 0.4))
-		row_hbox.add_child(icon_lbl)
-		
-		row_hbox.add_child(_create_col_label.call(NumberFormat.fmt_float(need, 2) + unit, HORIZONTAL_ALIGNMENT_RIGHT, col_widths[1]))
-		
+		var remaining = have - need
 		var have_text = NumberFormat.fmt_float(have, 2)
 		if max_v > 0: have_text += " / " + NumberFormat.fmt_float(max_v, 0)
-		row_hbox.add_child(_create_col_label.call(have_text + unit, HORIZONTAL_ALIGNMENT_RIGHT, col_widths[2]))
 		
-		var remaining = have - need
-		var rem_lbl = _create_col_label.call(NumberFormat.fmt_float(remaining, 2) + unit, HORIZONTAL_ALIGNMENT_RIGHT, col_widths[3])
-		if remaining < 0:
-			rem_lbl.text = "Short " + NumberFormat.fmt_float(abs(remaining), 2) + unit
-			rem_lbl.add_theme_color_override("font_color", Color(1, 0.4, 0.4))
-		elif status == "warn":
-			rem_lbl.add_theme_color_override("font_color", Color(1, 0.8, 0.4))
-		row_hbox.add_child(rem_lbl)
+		var rem_text = NumberFormat.fmt_float(remaining, 2) + unit
+		if remaining < 0: rem_text = "Short " + NumberFormat.fmt_float(abs(remaining), 2) + unit
+
+		if DeviceStateManager.get_is_portrait(): # Spacious Portrait Card Layout
+			var m_cont = MarginContainer.new()
+			m_cont.add_theme_constant_override("margin_left", 12)
+			m_cont.add_theme_constant_override("margin_right", 12)
+			m_cont.add_theme_constant_override("margin_top", 8)
+			m_cont.add_theme_constant_override("margin_bottom", 8)
+			row_panel.add_child(m_cont)
+			
+			var vbox = VBoxContainer.new()
+			vbox.add_theme_constant_override("separation", 6)
+			m_cont.add_child(vbox)
+			
+			var title_hbox = HBoxContainer.new()
+			vbox.add_child(title_hbox)
+			
+			var title_lbl = Label.new()
+			title_lbl.text = name_text
+			title_lbl.add_theme_font_size_override("font_size", DeviceStateManager.get_scaled_base_font_size(18))
+			if status == "critical": title_lbl.add_theme_color_override("font_color", Color(1, 0.4, 0.4))
+			elif status == "warn": title_lbl.add_theme_color_override("font_color", Color(1, 0.8, 0.4))
+			title_hbox.add_child(title_lbl)
+			
+			# Stats in a 3-column grid to use width effectively
+			var stats_grid = GridContainer.new()
+			stats_grid.columns = 3
+			stats_grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			stats_grid.add_theme_constant_override("h_separation", 20)
+			vbox.add_child(stats_grid)
+			
+			var _add_stat = func(pfx: String, val: String, color: Color):
+				var sv = VBoxContainer.new()
+				sv.add_theme_constant_override("separation", 0)
+				var pl = Label.new()
+				pl.text = pfx
+				pl.add_theme_font_size_override("font_size", DeviceStateManager.get_scaled_base_font_size(12))
+				pl.add_theme_color_override("font_color", Color(0.6, 0.6, 0.6))
+				sv.add_child(pl)
+				var vl = Label.new()
+				vl.text = val
+				vl.add_theme_font_size_override("font_size", DeviceStateManager.get_scaled_base_font_size(15))
+				vl.add_theme_color_override("font_color", color)
+				sv.add_child(vl)
+				stats_grid.add_child(sv)
+			
+			_add_stat.call("NEED", NumberFormat.fmt_float(need, 2) + unit, Color(0.9, 0.9, 0.9))
+			_add_stat.call("HAVE", have_text + unit, Color(0.9, 0.9, 0.9))
+			
+			var rem_color = Color(0.5, 1.0, 0.5)
+			if remaining < 0: rem_color = Color(1, 0.4, 0.4)
+			elif status == "warn": rem_color = Color(1, 0.8, 0.4)
+			_add_stat.call("REMAINING", rem_text, rem_color)
+		else:
+			# Existing Landscape Layout
+			var row_hbox = HBoxContainer.new()
+			row_hbox.add_theme_constant_override("separation", 20 if DeviceStateManager.is_mobile else 16)
+			row_panel.add_child(row_hbox)
+			
+			var icon_lbl = _create_col_label.call(name_text, HORIZONTAL_ALIGNMENT_LEFT, col_widths[0])
+			if status == "critical": icon_lbl.add_theme_color_override("font_color", Color(1, 0.4, 0.4))
+			elif status == "warn": icon_lbl.add_theme_color_override("font_color", Color(1, 0.8, 0.4))
+			row_hbox.add_child(icon_lbl)
+			
+			row_hbox.add_child(_create_col_label.call(NumberFormat.fmt_float(need, 2) + unit, HORIZONTAL_ALIGNMENT_RIGHT, col_widths[1]))
+			row_hbox.add_child(_create_col_label.call(have_text + unit, HORIZONTAL_ALIGNMENT_RIGHT, col_widths[2]))
+			
+			var rem_lbl = _create_col_label.call(rem_text, HORIZONTAL_ALIGNMENT_RIGHT, col_widths[3])
+			if remaining < 0: rem_lbl.add_theme_color_override("font_color", Color(1, 0.4, 0.4))
+			elif status == "warn": rem_lbl.add_theme_color_override("font_color", Color(1, 0.8, 0.4))
+			row_hbox.add_child(rem_lbl)
 
 	_add_res_row.call("⛽ Fuel", "L", fuel_needed, fuel_have, fuel_max, fuel_status)
 	_add_res_row.call("💧 Water", "L", water_needed, water_have, water_max, water_status)
@@ -1368,7 +1411,7 @@ func _show_confirmation_panel(route_data: Dictionary):
 		var text_msg = "Insufficient reserves for journey." if resource_critical else "High consumption on reserves."
 		warn_lbl.text = text_pfx + text_msg
 		warn_lbl.add_theme_color_override("font_color", Color(1, 0.4, 0.4) if resource_critical else Color(1, 0.8, 0.4))
-		warn_lbl.add_theme_font_size_override("font_size", 26 if _is_mobile() else 16)
+		warn_lbl.add_theme_font_size_override("font_size", 26 if DeviceStateManager.is_mobile else 16)
 		panel_vbox.add_child(warn_lbl)
 
 	# --- Vehicle Energy ---
@@ -1394,27 +1437,71 @@ func _show_confirmation_panel(route_data: Dictionary):
 
 	if not energy_entries.is_empty():
 		panel_vbox.add_child(HSeparator.new())
-		var energy_grid = GridContainer.new()
-		energy_grid.columns = 4
-		energy_grid.add_theme_constant_override("h_separation", 24)
-		panel_vbox.add_child(energy_grid)
+		var energy_flow = FlowContainer.new()
+		energy_flow.add_theme_constant_override("h_separation", 24)
+		energy_flow.add_theme_constant_override("v_separation", 12)
+		panel_vbox.add_child(energy_flow)
+		
 		for e in energy_entries:
-			var icon_lbl = Label.new()
-			icon_lbl.text = "❗" if e.status == "critical" else ("🪫" if e.status == "discharged" else "🔋")
-			energy_grid.add_child(icon_lbl)
-			var name_lbl = Label.new()
-			name_lbl.text = e.name
-			if e.status == "critical": name_lbl.add_theme_color_override("font_color", Color(1, 0.4, 0.4))
-			energy_grid.add_child(name_lbl)
-			var bar = ProgressBar.new()
-			bar.max_value = e.capacity
-			bar.value = e.used
-			bar.custom_minimum_size = Vector2(140, 14)
-			if bar.has_method("set_show_percentage"): bar.set("show_percentage", false)
-			energy_grid.add_child(bar)
-			var nums_lbl = Label.new()
-			nums_lbl.text = "%s / %s kWh" % [NumberFormat.fmt_float(e.used, 1), NumberFormat.fmt_float(e.capacity, 1)]
-			energy_grid.add_child(nums_lbl)
+			var item_vbox = VBoxContainer.new()
+			item_vbox.add_theme_constant_override("separation", 2)
+			
+			if DeviceStateManager.get_is_portrait():
+				# Portrait: Name and numbers on top, bar below
+				var top_hbox = HBoxContainer.new()
+				item_vbox.add_child(top_hbox)
+				
+				var icon_lbl = Label.new()
+				icon_lbl.text = "❗" if e.status == "critical" else ("🪫" if e.status == "discharged" else "🔋")
+				top_hbox.add_child(icon_lbl)
+				
+				var name_lbl = Label.new()
+				name_lbl.text = e.name
+				name_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+				if e.status == "critical": name_lbl.add_theme_color_override("font_color", Color(1, 0.4, 0.4))
+				top_hbox.add_child(name_lbl)
+				
+				var nums_lbl = Label.new()
+				nums_lbl.text = "%s/%s kWh" % [NumberFormat.fmt_float(e.used, 1), NumberFormat.fmt_float(e.capacity, 1)]
+				nums_lbl.add_theme_color_override("font_color", Color(0.8, 0.8, 0.8))
+				nums_lbl.add_theme_font_size_override("font_size", DeviceStateManager.get_scaled_base_font_size(12))
+				top_hbox.add_child(nums_lbl)
+				
+				var bar = ProgressBar.new()
+				bar.max_value = e.capacity
+				bar.value = e.used
+				bar.custom_minimum_size = Vector2(0, 18)
+				bar.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+				if bar.has_method("set_show_percentage"): bar.set("show_percentage", false)
+				item_vbox.add_child(bar)
+				
+				# Ensure it takes significant width in portrait flow
+				item_vbox.custom_minimum_size.x = 260
+			else:
+				# Existing landscape-ish style
+				var title_hbox = HBoxContainer.new()
+				var icon_lbl = Label.new()
+				icon_lbl.text = "❗" if e.status == "critical" else ("🪫" if e.status == "discharged" else "🔋")
+				title_hbox.add_child(icon_lbl)
+				var name_lbl = Label.new()
+				name_lbl.text = e.name
+				if e.status == "critical": name_lbl.add_theme_color_override("font_color", Color(1, 0.4, 0.4))
+				title_hbox.add_child(name_lbl)
+				item_vbox.add_child(title_hbox)
+				
+				var bar = ProgressBar.new()
+				bar.max_value = e.capacity
+				bar.value = e.used
+				bar.custom_minimum_size = Vector2(140, 14)
+				if bar.has_method("set_show_percentage"): bar.set("show_percentage", false)
+				item_vbox.add_child(bar)
+				
+				var nums_lbl = Label.new()
+				nums_lbl.text = "%s / %s kWh" % [NumberFormat.fmt_float(e.used, 1), NumberFormat.fmt_float(e.capacity, 1)]
+				nums_lbl.add_theme_color_override("font_color", Color(0.8, 0.8, 0.8))
+				item_vbox.add_child(nums_lbl)
+			
+			energy_flow.add_child(item_vbox)
 
 	# --- Delivery Manifest ---
 	var dest_name = _destination_data.get("name", "")
@@ -1456,7 +1543,7 @@ func _show_confirmation_panel(route_data: Dictionary):
 				total_earnings += reward
 
 	if not manifest_items.is_empty():
-		_confirmation_panel.add_child(HSeparator.new())
+		_add_sep.call()
 		var m_header_hbox = HBoxContainer.new()
 		_confirmation_panel.add_child(m_header_hbox)
 		var m_icon = Label.new()
@@ -1464,7 +1551,7 @@ func _show_confirmation_panel(route_data: Dictionary):
 		m_header_hbox.add_child(m_icon)
 		var m_title = Label.new()
 		m_title.text = "Delivery Manifest"
-		m_title.add_theme_font_size_override("font_size", 26 if _is_mobile() else 16)
+		m_title.add_theme_font_size_override("font_size", 26 if DeviceStateManager.is_mobile else 16)
 		m_title.add_theme_color_override("font_color", Color(0.8, 0.95, 0.85))
 		m_header_hbox.add_child(m_title)
 
@@ -1477,7 +1564,15 @@ func _show_confirmation_panel(route_data: Dictionary):
 		
 		var m_vbox = VBoxContainer.new()
 		m_vbox.add_theme_constant_override("separation", 4)
-		m_panel.add_child(m_vbox)
+		
+		if DeviceStateManager.get_is_portrait() and manifest_items.size() > 3:
+			var manifest_scroll = ScrollContainer.new()
+			manifest_scroll.custom_minimum_size.y = 160
+			manifest_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+			m_panel.add_child(manifest_scroll)
+			manifest_scroll.add_child(m_vbox)
+		else:
+			m_panel.add_child(m_vbox)
 		
 		for m_item in manifest_items:
 			var row = HBoxContainer.new()
@@ -1491,6 +1586,10 @@ func _show_confirmation_panel(route_data: Dictionary):
 			v_lbl.add_theme_color_override("font_color", Color(0.5, 1.0, 0.5))
 			row.add_child(v_lbl)
 			m_vbox.add_child(row)
+			if DeviceStateManager.get_is_portrait():
+				n_lbl.add_theme_font_size_override("font_size", DeviceStateManager.get_scaled_base_font_size(14))
+				v_lbl.add_theme_font_size_override("font_size", DeviceStateManager.get_scaled_base_font_size(14))
+				row.custom_minimum_size.y = 40
 			
 		m_vbox.add_child(HSeparator.new())
 		var t_row = HBoxContainer.new()
@@ -1501,7 +1600,7 @@ func _show_confirmation_panel(route_data: Dictionary):
 		var t_val = Label.new()
 		t_val.text = NumberFormat.format_money(total_earnings)
 		t_val.add_theme_color_override("font_color", Color(0.4, 1.0, 0.4))
-		t_val.add_theme_font_size_override("font_size", 28 if _is_mobile() else 18)
+		t_val.add_theme_font_size_override("font_size", 28 if DeviceStateManager.is_mobile else 18)
 		t_row.add_child(t_val)
 		m_vbox.add_child(t_row)
 
@@ -1513,8 +1612,8 @@ func _show_confirmation_panel(route_data: Dictionary):
 		_severity_state = "safety"
 	else:
 		_severity_state = "none"
-	var buttons_hbox = HBoxContainer.new()
-	buttons_hbox.alignment = BoxContainer.ALIGNMENT_CENTER
+	var buttons_hbox = FlowContainer.new()
+	buttons_hbox.alignment = FlowContainer.ALIGNMENT_CENTER
 	_confirmation_panel.add_child(buttons_hbox)
 	
 	# --- Top Up Integration ---
@@ -1534,7 +1633,9 @@ func _show_confirmation_panel(route_data: Dictionary):
 		tsb.content_margin_bottom = 10
 		top_up_container.add_theme_stylebox_override("panel", tsb)
 		
-		if _is_mobile():
+		if DeviceStateManager.get_is_portrait():
+			top_up_container.custom_minimum_size = Vector2(180, 90)
+		elif DeviceStateManager.is_mobile:
 			top_up_container.custom_minimum_size = Vector2(140, 64)
 		
 		top_up_container.mouse_filter = Control.MOUSE_FILTER_PASS
@@ -1556,7 +1657,7 @@ func _show_confirmation_panel(route_data: Dictionary):
 		var t_lbl = Label.new()
 		t_lbl.text = "Top Up"
 		t_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		t_lbl.add_theme_font_size_override("font_size", 26 if _is_mobile() else 14)
+		t_lbl.add_theme_font_size_override("font_size", DeviceStateManager.get_scaled_base_font_size(15))
 		top_up_container.add_child(t_lbl)
 		top_up_container.set_meta("label", t_lbl) # Store for text updates
 		buttons_hbox.add_child(top_up_container)
@@ -1580,7 +1681,9 @@ func _show_confirmation_panel(route_data: Dictionary):
 		nsb.content_margin_bottom = 10
 		next_container.add_theme_stylebox_override("panel", nsb)
 		
-		if _is_mobile():
+		if DeviceStateManager.get_is_portrait():
+			next_container.custom_minimum_size = Vector2(180, 90)
+		elif DeviceStateManager.is_mobile:
 			next_container.custom_minimum_size = Vector2(140, 64)
 		
 		next_container.mouse_filter = Control.MOUSE_FILTER_PASS
@@ -1602,7 +1705,7 @@ func _show_confirmation_panel(route_data: Dictionary):
 		var n_lbl = Label.new()
 		n_lbl.text = "Next Route"
 		n_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		n_lbl.add_theme_font_size_override("font_size", 26 if _is_mobile() else 14)
+		n_lbl.add_theme_font_size_override("font_size", DeviceStateManager.get_scaled_base_font_size(15))
 		next_container.add_child(n_lbl)
 		next_container.set_meta("label", n_lbl) # Store for text updates
 		buttons_hbox.add_child(next_container)
@@ -1622,7 +1725,9 @@ func _show_confirmation_panel(route_data: Dictionary):
 	csb.content_margin_bottom = 10
 	confirm_container.add_theme_stylebox_override("panel", csb)
 	
-	if _is_mobile():
+	if DeviceStateManager.get_is_portrait():
+		confirm_container.custom_minimum_size = Vector2(240, 90)
+	elif DeviceStateManager.is_mobile:
 		confirm_container.custom_minimum_size = Vector2(140, 64)
 	
 	confirm_container.mouse_filter = Control.MOUSE_FILTER_PASS
@@ -1644,7 +1749,7 @@ func _show_confirmation_panel(route_data: Dictionary):
 	var c_lbl = Label.new()
 	c_lbl.text = "Confirm Journey"
 	c_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	c_lbl.add_theme_font_size_override("font_size", 26 if _is_mobile() else 14)
+	c_lbl.add_theme_font_size_override("font_size", DeviceStateManager.get_scaled_base_font_size(15))
 	confirm_container.add_child(c_lbl)
 	confirm_container.set_meta("label", c_lbl) # Store for text updates
 	buttons_hbox.add_child(confirm_container)
@@ -1800,11 +1905,11 @@ func _make_stat_card(title: String, value_text: String, bg_color: Color) -> Pane
 	var cap := Label.new()
 	cap.text = title
 	cap.add_theme_color_override("font_color", Color(0.75,0.84,0.95))
-	cap.add_theme_font_size_override("font_size", 19 if _is_mobile() else 12)
+	cap.add_theme_font_size_override("font_size", 19 if DeviceStateManager.is_mobile else 12)
 	vb.add_child(cap)
 	var val := Label.new()
 	val.text = value_text
-	val.add_theme_font_size_override("font_size", 28 if _is_mobile() else 18)
+	val.add_theme_font_size_override("font_size", 28 if DeviceStateManager.is_mobile else 18)
 	val.add_theme_color_override("font_color", Color(0.92,0.97,1))
 	vb.add_child(val)
 	return card
