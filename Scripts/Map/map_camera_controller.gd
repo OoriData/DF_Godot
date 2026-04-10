@@ -190,13 +190,13 @@ func _clamp_camera_position():
 		min_y = lerp(min_y, 0.0, margin_factor)
 		max_y = lerp(max_y, map_height, margin_factor)
 
-	# If the map is smaller than the visible world area, center the camera
-	if map_width <= full_world_w:
-		min_x = map_width * 0.5
-		max_x = map_width * 0.5
-	if map_height <= full_world_h:
-		min_y = map_height * 0.5
-		max_y = map_height * 0.5
+	# If the map is smaller than the visible non-occluded world area, center the camera
+	if map_width <= adjusted_world_w:
+		min_x = map_origin.x + map_width * 0.5 + occlusion_world_w * 0.5
+		max_x = min_x
+	if map_height <= adjusted_world_h:
+		min_y = map_origin.y + map_height * 0.5 + occlusion_world_h * 0.5
+		max_y = min_y
 
 	camera_node.position.x = clamp(camera_node.position.x, min_x, max_x)
 	camera_node.position.y = clamp(camera_node.position.y, min_y, max_y)
@@ -476,12 +476,14 @@ func get_current_pan_bounds() -> Rect2:
 		max_x = lerp(max_x, map_width, margin_factor)
 		min_y = lerp(min_y, 0.0, margin_factor)
 		max_y = lerp(max_y, map_height, margin_factor)
-	if map_width <= visible_world_w:
-		min_x = map_width * 0.5
-		max_x = map_width * 0.5
-	if map_height <= visible_world_h:
-		min_y = map_height * 0.5
-		max_y = map_height * 0.5
+	var adjusted_world_w = max(0.0, effective_viewport_size.x - _overlay_occlusion_px_x) / zoom
+	var adjusted_world_h = max(0.0, effective_viewport_size.y - _overlay_occlusion_px_y) / zoom
+	if map_width <= adjusted_world_w:
+		min_x = map_origin.x + map_width * 0.5 + occlusion_world_w * 0.5
+		max_x = min_x
+	if map_height <= adjusted_world_h:
+		min_y = map_origin.y + map_height * 0.5 + occlusion_world_h * 0.5
+		max_y = min_y
 	return Rect2(Vector2(min_x, min_y), Vector2(max_x - min_x, max_y - min_y))
 
 func set_menu_open_state(is_open: bool, and_clamp_immediately: bool = true):
@@ -744,10 +746,12 @@ func _get_clamped_camera_pos_for_zoom(pos: Vector2, zoom_val: float) -> Vector2:
 		min_y = lerp(min_y, 0.0, margin_factor)
 		max_y = lerp(max_y, map_height, margin_factor)
 
-	if map_width <= full_world_w:
-		min_x = map_width * 0.5; max_x = map_width * 0.5
-	if map_height <= full_world_h:
-		min_y = map_height * 0.5; max_y = map_height * 0.5
+	var adjusted_world_w = max(0.0, viewport_size.x - _overlay_occlusion_px_x) / zoom
+	var adjusted_world_h = max(0.0, viewport_size.y - _overlay_occlusion_px_y) / zoom
+	if map_width <= adjusted_world_w:
+		min_x = map_origin.x + map_width * 0.5 + occlusion_world_w * 0.5; max_x = min_x
+	if map_height <= adjusted_world_h:
+		min_y = map_origin.y + map_height * 0.5 + occlusion_world_h * 0.5; max_y = min_y
 
 	return Vector2(clamp(pos.x, min_x, max_x), clamp(pos.y, min_y, max_y))
 
