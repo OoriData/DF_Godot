@@ -299,6 +299,45 @@ func _update_menu_container_anchors():
 		menu_container.anchor_right = 1.0
 		menu_container.anchor_top = 0.0
 		menu_container.anchor_bottom = 1.0
+	
+	_update_menu_container_style()
+
+func _update_menu_container_style():
+	if not is_instance_valid(menu_container):
+		return
+		
+	var style: StyleBoxFlat = menu_container.get_theme_stylebox("panel")
+	if style:
+		style = style.duplicate()
+	else:
+		style = StyleBoxFlat.new()
+		
+	var bottom_margin = _get_bottom_safe_margin()
+	
+	if _is_portrait():
+		# Bottom sheet style: rounded top, square bottom
+		style.corner_radius_top_left = 12
+		style.corner_radius_top_right = 12
+		style.corner_radius_bottom_left = 0
+		style.corner_radius_bottom_right = 0
+		# Increase side margins slightly for portrait
+		style.content_margin_left = 12
+		style.content_margin_right = 12
+		style.content_margin_top = 10
+		# Push content up to respect safe area
+		style.content_margin_bottom = 10.0 + bottom_margin
+	else:
+		# Sidebar style: rounded left, square right
+		style.corner_radius_top_left = 12
+		style.corner_radius_bottom_left = 12
+		style.corner_radius_top_right = 0
+		style.corner_radius_bottom_right = 0
+		style.content_margin_left = 8
+		style.content_margin_right = 8
+		style.content_margin_top = 6
+		style.content_margin_bottom = 6
+		
+	menu_container.add_theme_stylebox_override("panel", style)
 
 func _on_map_view_size_changed():
 	# Called when MapView is resized (e.g., due to menu open/close or container resize)
@@ -601,10 +640,9 @@ func _slide_menu_open(convoy_data: Dictionary):
 	_menu_anim_in_progress = true
 	# Initial hidden state: width 0 at right edge (or bottom edge).
 	menu_container.visible = true
-	var bottom_margin = _get_bottom_safe_margin() if _is_portrait() else 0.0
 	if _is_portrait():
-		menu_container.offset_bottom = -bottom_margin
-		menu_container.offset_top = -bottom_margin # zero height
+		menu_container.offset_bottom = 0
+		menu_container.offset_top = 0 # zero height
 		menu_container.offset_right = 0
 		menu_container.offset_left = 0
 	else:
@@ -637,8 +675,7 @@ func _slide_menu_open(convoy_data: Dictionary):
 	_menu_anim_tween = create_tween()
 	_menu_anim_tween.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
 	var prop = "offset_top" if _is_portrait() else "offset_left"
-	bottom_margin = _get_bottom_safe_margin() if _is_portrait() else 0.0
-	var target_val = -_menu_target_width - bottom_margin if _is_portrait() else -_menu_target_width
+	var target_val = -_menu_target_width - _get_bottom_safe_margin() if _is_portrait() else -_menu_target_width
 	_menu_anim_tween.parallel().tween_property(menu_container, prop, target_val, MENU_ANIM_DURATION)
 	_menu_anim_tween.parallel().tween_property(menu_container, "modulate:a", 1.0, MENU_ANIM_DURATION)
 	# Occlusion already set to final; no need to animate it for camera logic.
@@ -646,9 +683,8 @@ func _slide_menu_open(convoy_data: Dictionary):
 		_dbg_menu("slide_open_finished", {"final_offset": menu_container.get(prop)})
 		# Ensure final size exact
 		if _is_portrait():
-			var b_margin = _get_bottom_safe_margin()
-			menu_container.offset_top = -_menu_target_width - b_margin
-			menu_container.offset_bottom = -b_margin
+			menu_container.offset_top = -_menu_target_width - _get_bottom_safe_margin()
+			menu_container.offset_bottom = 0
 		else:
 			menu_container.offset_left = -_menu_target_width
 		# (Camera occlusion already correct)
@@ -678,9 +714,8 @@ func _slide_menu_close(convoy_data: Dictionary):
 		_dbg_menu("slide_close_finished", {"final_offset": (menu_container.offset_top if _is_portrait() else menu_container.offset_left)})
 		menu_container.visible = false
 		menu_container.offset_left = 0.0
-		var b_margin = _get_bottom_safe_margin() if _is_portrait() else 0.0
-		menu_container.offset_top = -b_margin if _is_portrait() else 0.0
-		menu_container.offset_bottom = -b_margin if _is_portrait() else 0.0
+		menu_container.offset_top = 0.0
+		menu_container.offset_bottom = 0.0
 		menu_container.modulate.a = 1.0
 		_current_menu_occlusion_px = 0.0
 		_menu_anim_in_progress = false
@@ -698,7 +733,7 @@ func _close_anim_step(progress: float):
 	if _is_portrait():
 		var b_margin = _get_bottom_safe_margin()
 		menu_container.offset_top = -w - b_margin
-		menu_container.offset_bottom = -b_margin
+		menu_container.offset_bottom = 0
 	else:
 		menu_container.offset_left = -w
 	_update_camera_occlusion_from_menu()

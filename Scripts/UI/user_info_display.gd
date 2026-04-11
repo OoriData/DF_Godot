@@ -220,6 +220,9 @@ func _update_safe_margins() -> void:
 	var right_pad = max(32.0, screen_full.x - safe_area.end.x)
 	var top_pad = safe_area.position.y
 	
+	if screen_size.y > screen_size.x:
+		top_pad += 24.0 # Add extra clearance for dynamic islands in portrait
+	
 	# Update stylebox content margins instead of outer margins
 	# This ensures the background remains full-width while content clears corners
 	var style = get_theme_stylebox("panel").duplicate()

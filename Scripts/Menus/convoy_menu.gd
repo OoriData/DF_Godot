@@ -540,14 +540,12 @@ func _update_mobile_dependent_layout() -> void:
 	var stat_height = 120.0 if is_portrait else 50.0
 	
 	if is_instance_valid(res_hbox):
-		res_hbox.vertical = is_portrait
 		res_hbox.add_theme_constant_override("separation", 8 if is_portrait else 4)
 		for child in res_hbox.get_children():
 			if child is Control:
 				child.custom_minimum_size.y = stat_height
 				
 	if is_instance_valid(perf_hbox):
-		perf_hbox.vertical = is_portrait
 		perf_hbox.add_theme_constant_override("separation", 8 if is_portrait else 4)
 		for child in perf_hbox.get_children():
 			if child is Control:

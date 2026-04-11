@@ -102,16 +102,29 @@ func _get_font_size(base: int) -> int:
 	return int(base * boost)
 
 func _ready():
-	# Connect the back button signal
+	# Wrap back_button in an HBox if not already wrapped, and add Cargo Manifest button
 	if is_instance_valid(back_button):
 		if not back_button.is_connected("pressed", Callable(self, "_on_back_button_pressed")):
 			back_button.pressed.connect(_on_back_button_pressed)
 		
-		var win_size = get_viewport_rect().size if is_inside_tree() else Vector2(0, 0)
-		var is_portrait = win_size.y > win_size.x
-		var btn_h = 110.0 if is_portrait else (72.0 if _is_mobile() else 44.0)
-		back_button.custom_minimum_size.y = btn_h
-		back_button.add_theme_font_size_override("font_size", _get_font_size(16))
+		var parent = back_button.get_parent()
+		var hbox = HBoxContainer.new()
+		hbox.name = "BottomButtonsHBox"
+		var idx = back_button.get_index()
+		parent.add_child(hbox)
+		parent.move_child(hbox, idx)
+		parent.remove_child(back_button)
+		hbox.add_child(back_button)
+		
+		back_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		style_back_button(back_button)
+		
+		var manifest_btn = Button.new()
+		manifest_btn.text = "View Cargo Manifest"
+		manifest_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		manifest_btn.pressed.connect(_on_inspect_all_cargo_pressed)
+		hbox.add_child(manifest_btn)
+		style_back_button(manifest_btn)
 	else:
 		printerr("ConvoyVehicleMenu: CRITICAL - BackButton node NOT found or is not a Button.")
 
@@ -153,7 +166,9 @@ func _ready():
 		var tab_container := $MainVBox/VehicleTabContainer if has_node("MainVBox/VehicleTabContainer") else null
 		if is_instance_valid(tab_container) and tab_container is TabContainer:
 			_apply_mobile_tab_styles(tab_container)
-			tab_container.add_theme_font_size_override("font_size", _get_font_size(16))
+			var is_portrait = (get_viewport_rect().size.y > get_viewport_rect().size.x) if is_inside_tree() else false
+			tab_container.add_theme_font_size_override("font_size", _get_font_size(24 if is_portrait else 16))
+			tab_container.tab_alignment = 1 # Center alignment
 		var mechanic_btn := $MainVBox/ActionButtons/MechanicButton if has_node("MainVBox/ActionButtons/MechanicButton") else null
 		if is_instance_valid(mechanic_btn):
 			mechanic_btn.custom_minimum_size.y = 72.0 if _is_mobile() else 44.0
@@ -183,10 +198,10 @@ func _apply_mobile_tab_styles(tc: TabContainer) -> void:
 		else:
 			style = StyleBoxFlat.new()
 			style.bg_color = Color(0.2, 0.2, 0.2, 1.0) if style_name == "tab_selected" else Color(0.12, 0.12, 0.12, 1.0)
-		style.content_margin_top = 20.0 if is_portrait else 14.0
-		style.content_margin_bottom = 20.0 if is_portrait else 14.0
-		style.content_margin_left = 32.0 if is_portrait else 28.0
-		style.content_margin_right = 32.0 if is_portrait else 28.0
+		style.content_margin_top = 32.0 if is_portrait else 18.0
+		style.content_margin_bottom = 32.0 if is_portrait else 18.0
+		style.content_margin_left = 64.0 if is_portrait else 28.0
+		style.content_margin_right = 64.0 if is_portrait else 28.0
 		style.corner_radius_top_left = 5
 		style.corner_radius_top_right = 5
 		if style_name == "tab_selected":
@@ -782,7 +797,8 @@ func _populate_parts_tab(vehicle_data: Dictionary):
 			var category_label = Label.new()
 			category_label.text = category_name + ":"
 			# Make category headers more prominent and match menu accent color
-			category_label.add_theme_font_size_override("font_size", _get_font_size(16))
+			var is_portrait = (get_viewport_rect().size.y > get_viewport_rect().size.x) if is_inside_tree() else false
+			category_label.add_theme_font_size_override("font_size", _get_font_size(22 if is_portrait else 18))
 			category_label.add_theme_color_override("font_color", Color.YELLOW)
 			parts_vbox.add_child(category_label)
 
@@ -906,17 +922,7 @@ func _populate_cargo_tab(vehicle_data: Dictionary):
 		_add_inspectable_item_row(cargo_vbox, item_name, agg_data, item_index)
 		item_index += 1
 
-	# --- Button to view full convoy manifest at the bottom ---
-	var bottom_separator = HSeparator.new()
-	bottom_separator.custom_minimum_size.y = 15
-	cargo_vbox.add_child(bottom_separator)
-
-	var full_manifest_button = Button.new()
-	full_manifest_button.text = "View Full Convoy Cargo Manifest"
-	full_manifest_button.custom_minimum_size.y = 60 if _is_mobile() else 40
-	full_manifest_button.add_theme_font_size_override("font_size", _get_font_size(16))
-	full_manifest_button.pressed.connect(_on_inspect_all_cargo_pressed)
-	cargo_vbox.add_child(full_manifest_button)
+	# View Full Convoy Cargo Manifest button is now in the global HBox at the bottom with the Back Button
 
 func _add_stat_row_with_button(parent: Container, label_text: String, stat_value_display: String, stat_type: String, vehicle_data: Dictionary, item_index: int):
 	var outer_row := HBoxContainer.new()
@@ -977,6 +983,14 @@ func _on_inspect_stat_pressed(stat_type: String, vehicle_data: Dictionary):
 	dialog.title = "Inspect " + stat_type.capitalize().replace("_", " ")
 	
 	var win_size = DisplayServer.window_get_size()
+	
+	var dlg_font = _get_font_size(20 if _is_mobile() else 14)
+	dialog.get_label().add_theme_font_size_override("font_size", dlg_font)
+	var ok_btn = dialog.get_ok_button()
+	if is_instance_valid(ok_btn):
+		ok_btn.add_theme_font_size_override("font_size", dlg_font)
+		ok_btn.custom_minimum_size.y = 80 if _is_mobile() else 40
+
 	var target_w = min(600, win_size.x - 32)
 	var target_h = min(500, win_size.y - 64)
 	dialog.min_size = Vector2(target_w, target_h)
@@ -986,11 +1000,6 @@ func _on_inspect_stat_pressed(stat_type: String, vehicle_data: Dictionary):
 	dialog_vbox.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	dialog.add_child(dialog_vbox)
 	
-	if _is_mobile():
-		var ok_btn = dialog.get_ok_button()
-		ok_btn.custom_minimum_size.y = 72
-		ok_btn.add_theme_font_size_override("font_size", _get_font_size(16))
-
 	var final_stat_value: float = vehicle_data.get(stat_type, 0.0)
 	var total_modifier: float = 0.0
 	var modifiers_list: Array = [] # [{"part_name": "Engine", "modifier": 10}]
@@ -1109,6 +1118,14 @@ func _on_inspect_part_pressed(part_data: Dictionary):
 	dialog.title = "Inspect: " + part_data.get("name", "Component Details")
 	
 	var win_size = DisplayServer.window_get_size()
+	
+	var dlg_font = _get_font_size(20 if _is_mobile() else 14)
+	dialog.get_label().add_theme_font_size_override("font_size", dlg_font)
+	var ok_btn = dialog.get_ok_button()
+	if is_instance_valid(ok_btn):
+		ok_btn.add_theme_font_size_override("font_size", dlg_font)
+		ok_btn.custom_minimum_size.y = 80 if _is_mobile() else 40
+
 	var target_w = min(800, win_size.x - 32)
 	var target_h = min(700, win_size.y - 64)
 	dialog.min_size = Vector2(target_w, target_h)
@@ -1119,11 +1136,6 @@ func _on_inspect_part_pressed(part_data: Dictionary):
 	dialog_vbox.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	dialog.add_child(dialog_vbox)
 	
-	if _is_mobile():
-		var ok_btn = dialog.get_ok_button()
-		ok_btn.custom_minimum_size.y = 72
-		ok_btn.add_theme_font_size_override("font_size", _get_font_size(16))
-
 	_populate_part_details_dialog(dialog_vbox, part_data)
 
 	# If part is removable and we can resolve vehicle_id and part_id, add a Remove button

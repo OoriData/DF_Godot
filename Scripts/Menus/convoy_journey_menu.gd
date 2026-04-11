@@ -85,13 +85,7 @@ func _ready():
 	if is_instance_valid(back_button):
 		if not back_button.is_connected("pressed", Callable(self, "_on_back_button_pressed")):
 			back_button.pressed.connect(_on_back_button_pressed)
-		var is_portrait = DeviceStateManager.get_is_portrait()
-		if is_portrait:
-			back_button.custom_minimum_size.y = 100
-			back_button.add_theme_font_size_override("font_size", DeviceStateManager.get_scaled_base_font_size(16))
-		elif DeviceStateManager.is_mobile:
-			back_button.custom_minimum_size.y = 60
-			back_button.add_theme_font_size_override("font_size", DeviceStateManager.get_scaled_base_font_size(16))
+		style_back_button(back_button)
 	
 	# Make the title label clickable to return to the convoy overview
 	if is_instance_valid(title_label):
@@ -648,6 +642,12 @@ func _populate_destination_list():
 	content_vbox.add_child(header_label)
 	content_vbox.add_child(HSeparator.new())
 
+	if DeviceStateManager.get_is_portrait():
+		content_vbox.size_flags_vertical = Control.SIZE_EXPAND_FILL
+		var scroll = content_vbox.get_parent()
+		if is_instance_valid(scroll) and scroll is ScrollContainer:
+			scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+
 	var potential_destinations = []
 	for settlement_data in all_settlements:
 		var settlement_pos = Vector2(settlement_data.get("x", 0.0), settlement_data.get("y", 0.0))
@@ -713,6 +713,7 @@ func _populate_destination_list():
 		var is_portrait = DeviceStateManager.get_is_portrait()
 		if is_portrait:
 			item_container.custom_minimum_size.y = 110
+			item_container.size_flags_vertical = Control.SIZE_EXPAND_FILL # Allow filling dead space if scrolling isn't needed
 		elif DeviceStateManager.is_mobile:
 			item_container.custom_minimum_size.y = 64
 		

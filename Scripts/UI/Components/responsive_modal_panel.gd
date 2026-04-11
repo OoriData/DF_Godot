@@ -87,7 +87,7 @@ func _apply_layout() -> void:
 		_panel_margin.add_theme_constant_override("margin_left", margin)
 		_panel_margin.add_theme_constant_override("margin_right", margin)
 		_panel_margin.add_theme_constant_override("margin_top", margin + 12) # Extra top breathing room
-		_panel_margin.add_theme_constant_override("margin_bottom", margin + 12)
+		_panel_margin.add_theme_constant_override("margin_bottom", int(margin / 2.0))
 		
 		_panel.size_flags_horizontal = Control.SIZE_FILL
 		_panel.size_flags_vertical = Control.SIZE_FILL

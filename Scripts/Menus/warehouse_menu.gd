@@ -14,11 +14,11 @@ const ItemsData = preload("res://Scripts/Data/Items.gd")
 @onready var expand_cargo_btn: Button = $MainVBox/Body/OwnedTabs/Overview/ExpandCargoHBox/ExpandCargoBtn
 @onready var expand_vehicle_btn: Button = $MainVBox/Body/OwnedTabs/Overview/ExpandVehicleHBox/ExpandVehicleBtn
 @onready var cargo_store_dd: OptionButton = $MainVBox/Body/OwnedTabs/Cargo/CargoStoreHBox/CargoStoreDropdown
-@onready var cargo_qty_store: SpinBox = $MainVBox/Body/OwnedTabs/Cargo/CargoStoreHBox/CargoQtyStore
+@onready var cargo_qty_store: Control = $MainVBox/Body/OwnedTabs/Cargo/CargoStoreHBox/CargoQtyStore
 @onready var store_cargo_btn: Button = $MainVBox/Body/OwnedTabs/Cargo/CargoStoreHBox/StoreCargoBtn
 @onready var cargo_retrieve_dd: OptionButton = $MainVBox/Body/OwnedTabs/Cargo/CargoRetrieveHBox/CargoRetrieveDropdown
 @onready var cargo_retrieve_vehicle_dd: OptionButton = $MainVBox/Body/OwnedTabs/Cargo/CargoRetrieveHBox/CargoRetrieveVehicleDropdown
-@onready var cargo_qty_retrieve: SpinBox = $MainVBox/Body/OwnedTabs/Cargo/CargoRetrieveHBox/CargoQtyRetrieve
+@onready var cargo_qty_retrieve: Control = $MainVBox/Body/OwnedTabs/Cargo/CargoRetrieveHBox/CargoQtyRetrieve
 @onready var retrieve_cargo_btn: Button = $MainVBox/Body/OwnedTabs/Cargo/CargoRetrieveHBox/RetrieveCargoBtn
 @onready var cargo_usage_label: Label = $MainVBox/Body/OwnedTabs/Cargo/CargoUsageLabel
 @onready var cargo_grid: GridContainer = $MainVBox/Body/OwnedTabs/Cargo/CargoInventoryPanel/CargoGridScroll/CargoGrid
@@ -108,6 +108,13 @@ func _ready():
 			_store.convoys_changed.connect(_on_store_convoys_changed)
 		if _store.has_signal("map_changed") and not _store.map_changed.is_connected(_on_store_map_changed):
 			_store.map_changed.connect(_on_store_map_changed)
+	
+	# Connect to DeviceStateManager for dynamic orientation changes
+	var dsm = get_node_or_null("/root/DeviceStateManager")
+	if dsm:
+		if not dsm.layout_mode_changed.is_connected(_on_layout_mode_changed):
+			dsm.layout_mode_changed.connect(_on_layout_mode_changed)
+			
 	# Remove top title per request
 	if is_instance_valid(title_label):
 		title_label.visible = false
@@ -133,6 +140,7 @@ func _ready():
 	call_deferred("_post_ready_expand_diag")
 	if is_instance_valid(back_button):
 		back_button.pressed.connect(func(): emit_signal("back_requested"))
+		style_back_button(back_button)
 	if is_instance_valid(buy_button):
 		buy_button.pressed.connect(_on_buy_pressed)
 	# Selection change hooks to enforce quantity limits
@@ -182,16 +190,64 @@ func _ready():
 	if is_instance_valid(spawn_convoy_btn):
 		spawn_convoy_btn.pressed.connect(_on_spawn_convoy)
 		print("[WarehouseMenu][Debug] Connected spawn_convoy_btn pressed signal path=", spawn_convoy_btn.get_path())
+	
+	# Initial style pass
+	_on_layout_mode_changed()
 	_update_ui()
 
+func _on_layout_mode_changed(_mode: int = -1, _size: Vector2 = Vector2.ZERO, _is_mobile_val: bool = false) -> void:
+	# Centralized UI refresh for orientation changes
+	_style_buy_menu_ui()
+	_tune_inventory_panels_layout()
+	_update_ui()
+	if _warehouse is Dictionary and not _warehouse.is_empty():
+		_render_cargo_grid()
+		_render_vehicle_grid()
+
 func _tune_inventory_panels_layout() -> void:
-	# The scene marks inventory panels as SIZE_EXPAND_FILL, which makes a huge empty
-	# box when the grid has only a few entries. Prefer content-sized panels.
+	# Keep panels expanded vertically to fill the modal as requested.
+	# Use stretch_ratio to ensure inventory grids dominate the vertical space
+	# when competing with other expanding elements.
 	for ctrl in [cargo_inventory_panel, cargo_grid_scroll, vehicle_inventory_panel, vehicle_grid_scroll]:
 		if ctrl is Control and is_instance_valid(ctrl):
-			# Expand horizontally but not vertically.
 			(ctrl as Control).size_flags_horizontal = Control.SIZE_EXPAND_FILL
-			(ctrl as Control).size_flags_vertical = Control.SIZE_FILL
+			(ctrl as Control).size_flags_vertical = Control.SIZE_EXPAND_FILL
+			(ctrl as Control).size_flags_stretch_ratio = 10.0 # Force inventory to take all remaining space
+	
+	if is_instance_valid(owned_tabs):
+		owned_tabs.size_flags_vertical = Control.SIZE_EXPAND_FILL
+		owned_tabs.custom_minimum_size.y = 0 
+		# Also force subtab containers to expand
+		for i in range(owned_tabs.get_tab_count()):
+			var tab = owned_tabs.get_tab_control(i)
+			if is_instance_valid(tab):
+				tab.size_flags_vertical = Control.SIZE_EXPAND_FILL
+		_style_tab_container(owned_tabs)
+
+func _style_tab_container(tc: TabContainer) -> void:
+	if not is_instance_valid(tc):
+		return
+	var dsm = get_node_or_null("/root/DeviceStateManager")
+	var is_portrait = dsm.get_is_portrait() if dsm else (get_viewport_rect().size.y > get_viewport_rect().size.x)
+	var tab_h = 180 if is_portrait else 64
+	var font_size = 36 if is_portrait else 18
+
+	tc.add_theme_font_size_override("font_size", font_size)
+	
+	# Godot 4 TabContainer scales tabs via content margins in the tab styleboxes
+	var styles = ["tab_selected", "tab_unselected", "tab_disabled", "tab_hovered"]
+	for s_name in styles:
+		var style = tc.get_theme_stylebox(s_name).duplicate()
+		if style is StyleBoxFlat:
+			var margin = (tab_h - font_size) / 2.0
+			style.content_margin_top = margin
+			style.content_margin_bottom = margin
+			style.content_margin_left = 40 if is_portrait else 20
+			style.content_margin_right = 40 if is_portrait else 20
+			# Set blocky corners
+			style.corner_radius_top_left = 6
+			style.corner_radius_top_right = 6
+			tc.add_theme_stylebox_override(s_name, style)
 
 func _style_buy_menu_ui() -> void:
 	# Improve contrast between menu background and UI surfaces.
@@ -278,24 +334,46 @@ func _ensure_background_layers() -> void:
 
 func _style_containers() -> void:
 	if is_instance_valid(main_vbox):
-		main_vbox.add_theme_constant_override("separation", 12)
+		main_vbox.add_theme_constant_override("separation", 48)
 	if is_instance_valid(body_vbox):
-		body_vbox.add_theme_constant_override("separation", 10)
-		# Key fix: don't let Body expand to consume all remaining height.
-		# Otherwise it creates a huge empty gap between the tabs/content and the Back button.
-		body_vbox.size_flags_vertical = Control.SIZE_FILL
+		body_vbox.add_theme_constant_override("separation", 36)
+		# Key fix: allow Body to expand to consume all remaining height.
+		body_vbox.size_flags_vertical = Control.SIZE_EXPAND_FILL
+		body_vbox.mouse_filter = Control.MOUSE_FILTER_PASS
+	
+	# Apply massive header text to section labels
+	var dsm = get_node_or_null("/root/DeviceStateManager")
+	var is_portrait = dsm.get_is_portrait() if dsm else (get_viewport_rect().size.y > get_viewport_rect().size.x)
+	var header_font_size = 48 if is_portrait else (dsm.get_scaled_base_font_size(24) if dsm else 24)
+	var label_font_size = 36 if is_portrait else (dsm.get_scaled_base_font_size(18) if dsm else 18)
+	
+	# Scale overview labels specifically
+	for lbl in [summary_label, overview_cargo_label, overview_vehicle_label, cargo_usage_label]:
+		if is_instance_valid(lbl):
+			lbl.add_theme_font_size_override("font_size", label_font_size)
+			lbl.mouse_filter = Control.MOUSE_FILTER_PASS
+	
+	for tab_name in ["Overview", "Cargo", "Vehicles"]:
+		var tab = owned_tabs.get_node_or_null(tab_name)
+		if is_instance_valid(tab):
+			for child in tab.get_children():
+				if child is Label:
+					child.add_theme_font_size_override("font_size", header_font_size)
+					child.add_theme_color_override("font_color", Color(0.85, 0.90, 1.0, 1.0))
+					child.size_flags_vertical = 0 # Don't let labels expand, keep them as headers
+
 	if is_instance_valid(top_bar_hbox):
-		top_bar_hbox.add_theme_constant_override("separation", 10)
+		top_bar_hbox.add_theme_constant_override("separation", 24)
 		# Improve top bar readability
-		top_bar_hbox.add_theme_constant_override("margin_left", 2)
-	# Tabs/content should be content-sized by default; internal scroll areas handle overflow.
+		top_bar_hbox.add_theme_constant_override("margin_left", 8)
+	# Tabs/content should expand to fill available vertical space
 	if is_instance_valid(owned_tabs):
-		owned_tabs.size_flags_vertical = Control.SIZE_FILL
+		owned_tabs.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	if is_instance_valid(info_label):
-		info_label.size_flags_vertical = Control.SIZE_FILL
+		info_label.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	# Back button sits at bottom; give it breathing room
 	if is_instance_valid(back_button):
-		back_button.add_theme_constant_override("hseparation", 8)
+		back_button.add_theme_constant_override("hseparation", 16)
 
 func _style_panel_surface(ctrl: Control) -> void:
 	# Apply a consistent panel surface style to containers that draw a panel.
@@ -324,16 +402,22 @@ func _style_form_controls() -> void:
 	_style_option_button(vehicle_store_dd)
 	_style_option_button(vehicle_retrieve_dd)
 	_style_option_button(spawn_vehicle_dd)
-	_style_spin_box(cargo_qty_store)
-	_style_spin_box(cargo_qty_retrieve)
+	for node in [cargo_qty_store, cargo_qty_retrieve]:
+		if node.has_method("set_value"):
+			_style_quantity_control(node)
 	_style_line_edit(spawn_name_input)
 
 func _style_option_button(ob: OptionButton) -> void:
 	if not is_instance_valid(ob):
 		return
-	ob.custom_minimum_size = Vector2(0, 40)
+	var dsm = get_node_or_null("/root/DeviceStateManager")
+	var is_portrait = dsm.get_is_portrait() if dsm else (get_viewport_rect().size.y > get_viewport_rect().size.x)
+	var btn_h = 220 if is_portrait else 84
+	var btn_min_w = 300 if is_portrait else 150
+	ob.custom_minimum_size = Vector2(btn_min_w, btn_h)
 	ob.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	ob.add_theme_font_size_override("font_size", 16)
+	var font_size = 42 if is_portrait else (dsm.get_scaled_base_font_size(24) if dsm else 24)
+	ob.add_theme_font_size_override("font_size", font_size)
 	ob.add_theme_color_override("font_color", Color(0.96, 0.98, 1.0, 1.0))
 	ob.add_theme_color_override("font_color_disabled", Color(0.60, 0.62, 0.68, 1.0))
 
@@ -344,10 +428,10 @@ func _style_option_button(ob: OptionButton) -> void:
 	normal.border_width_right = 1
 	normal.border_width_top = 1
 	normal.border_width_bottom = 1
-	normal.corner_radius_top_left = 8
-	normal.corner_radius_top_right = 8
-	normal.corner_radius_bottom_left = 8
-	normal.corner_radius_bottom_right = 8
+	normal.corner_radius_top_left = 6
+	normal.corner_radius_top_right = 6
+	normal.corner_radius_bottom_left = 6
+	normal.corner_radius_bottom_right = 6
 	normal.shadow_color = Color(0, 0, 0, 0.35)
 	normal.shadow_size = 3
 	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
@@ -380,7 +464,11 @@ func _style_option_button(ob: OptionButton) -> void:
 func _style_popup_menu(pm: PopupMenu) -> void:
 	if not is_instance_valid(pm):
 		return
-	pm.add_theme_font_size_override("font_size", 16)
+	var dsm = get_node_or_null("/root/DeviceStateManager")
+	var is_portrait = dsm.get_is_portrait() if dsm else (get_viewport_rect().size.y > get_viewport_rect().size.x)
+	var font_size = 32 if is_portrait else (dsm.get_scaled_base_font_size(18) if dsm else 18)
+	pm.add_theme_font_size_override("font_size", font_size)
+	pm.add_theme_constant_override("v_separation", 32 if is_portrait else 8)
 	pm.add_theme_color_override("font_color", Color(0.96, 0.98, 1.0, 1.0))
 	pm.add_theme_color_override("font_hover_color", Color(1, 1, 1, 1))
 	pm.add_theme_color_override("font_disabled_color", Color(0.60, 0.62, 0.68, 1.0))
@@ -392,10 +480,10 @@ func _style_popup_menu(pm: PopupMenu) -> void:
 	panel.border_width_right = 1
 	panel.border_width_top = 1
 	panel.border_width_bottom = 1
-	panel.corner_radius_top_left = 10
-	panel.corner_radius_top_right = 10
-	panel.corner_radius_bottom_left = 10
-	panel.corner_radius_bottom_right = 10
+	panel.corner_radius_top_left = 6
+	panel.corner_radius_top_right = 6
+	panel.corner_radius_bottom_left = 6
+	panel.corner_radius_bottom_right = 6
 	panel.shadow_color = Color(0, 0, 0, 0.65)
 	panel.shadow_size = 10
 	pm.add_theme_stylebox_override("panel", panel)
@@ -411,8 +499,12 @@ func _style_popup_menu(pm: PopupMenu) -> void:
 func _style_line_edit(le: LineEdit) -> void:
 	if not is_instance_valid(le):
 		return
-	le.custom_minimum_size = Vector2(le.custom_minimum_size.x, 40)
-	le.add_theme_font_size_override("font_size", 16)
+	var dsm = get_node_or_null("/root/DeviceStateManager")
+	var is_portrait = dsm.get_is_portrait() if dsm else (get_viewport_rect().size.y > get_viewport_rect().size.x)
+	var btn_h = 220 if is_portrait else 84
+	le.custom_minimum_size = Vector2(le.custom_minimum_size.x, btn_h)
+	var font_size = 36 if is_portrait else (dsm.get_scaled_base_font_size(24) if dsm else 24)
+	le.add_theme_font_size_override("font_size", font_size)
 	le.add_theme_color_override("font_color", Color(0.96, 0.98, 1.0, 1.0))
 	le.add_theme_color_override("placeholder_color", Color(0.70, 0.74, 0.82, 0.85))
 	var sb := StyleBoxFlat.new()
@@ -422,21 +514,33 @@ func _style_line_edit(le: LineEdit) -> void:
 	sb.border_width_right = 1
 	sb.border_width_top = 1
 	sb.border_width_bottom = 1
-	sb.corner_radius_top_left = 8
-	sb.corner_radius_top_right = 8
-	sb.corner_radius_bottom_left = 8
-	sb.corner_radius_bottom_right = 8
+	sb.corner_radius_top_left = 12
+	sb.corner_radius_top_right = 12
+	sb.corner_radius_bottom_left = 12
+	sb.corner_radius_bottom_right = 12
 	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
-		sb.set_content_margin(side, 10)
+		sb.set_content_margin(side, 18)
 	le.add_theme_stylebox_override("normal", sb)
 	var focus := sb.duplicate()
 	focus.border_color = Color(0.75, 0.88, 1.0, 1.0)
 	le.add_theme_stylebox_override("focus", focus)
 
+func _style_quantity_control(qc: Control) -> void:
+	if not is_instance_valid(qc):
+		return
+	var dsm = get_node_or_null("/root/DeviceStateManager")
+	var is_portrait = dsm.get_is_portrait() if dsm else (get_viewport_rect().size.y > get_viewport_rect().size.x)
+	var h = 220 if is_portrait else 84
+	qc.custom_minimum_size.y = h
+	# QuantityWidget handles its own internal styling, just ensure it has height.
+
 func _style_spin_box(sb: SpinBox) -> void:
 	if not is_instance_valid(sb):
 		return
-	sb.custom_minimum_size = Vector2(0, 40)
+	var dsm = get_node_or_null("/root/DeviceStateManager")
+	var is_portrait = dsm.get_is_portrait() if dsm else (get_viewport_rect().size.y > get_viewport_rect().size.x)
+	var btn_h = 220 if is_portrait else 84
+	sb.custom_minimum_size = Vector2(0, btn_h)
 	# SpinBox's internal LineEdit draws the background; style it for contrast.
 	var le: LineEdit = sb.get_line_edit()
 	if is_instance_valid(le):
@@ -465,7 +569,7 @@ func _ensure_info_card_wrapper() -> void:
 	card.name = "InfoCard"
 	card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	card.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	card.custom_minimum_size = Vector2(0, 150)
+	card.custom_minimum_size = Vector2(0, 300)
 
 	var panel_sb := StyleBoxFlat.new()
 	panel_sb.bg_color = Color(0.06, 0.07, 0.09, 0.92)
@@ -500,22 +604,27 @@ func _ensure_info_card_wrapper() -> void:
 func _style_info_label(lbl: Label) -> void:
 	if not is_instance_valid(lbl):
 		return
+	var dsm = get_node_or_null("/root/DeviceStateManager")
 	lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	lbl.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	lbl.add_theme_font_size_override("font_size", 18)
+	var font_size = dsm.get_scaled_base_font_size(28) if dsm else 34
+	lbl.add_theme_font_size_override("font_size", font_size)
 	lbl.add_theme_color_override("font_color", Color(0.92, 0.95, 1.0, 1.0))
 	lbl.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.55))
 	lbl.add_theme_constant_override("shadow_outline_size", 0)
 	lbl.add_theme_constant_override("shadow_offset_x", 0)
-	lbl.add_theme_constant_override("shadow_offset_y", 1)
+	lbl.add_theme_constant_override("shadow_offset_y", 3)
 
 func _style_primary_button(btn: Button, accent: Color) -> void:
 	if not is_instance_valid(btn):
 		return
-	btn.custom_minimum_size = Vector2(170, 44)
+	var dsm = get_node_or_null("/root/DeviceStateManager")
+	var is_portrait = dsm.get_is_portrait() if dsm else (get_viewport_rect().size.y > get_viewport_rect().size.x)
+	var btn_h = 240 if is_portrait else 96
+	btn.custom_minimum_size = Vector2(400 if is_portrait else 280, btn_h)
 	btn.focus_mode = Control.FOCUS_ALL
 
 	var normal := StyleBoxFlat.new()
@@ -525,10 +634,10 @@ func _style_primary_button(btn: Button, accent: Color) -> void:
 	normal.border_width_right = 2
 	normal.border_width_top = 2
 	normal.border_width_bottom = 2
-	normal.corner_radius_top_left = 10
-	normal.corner_radius_top_right = 10
-	normal.corner_radius_bottom_left = 10
-	normal.corner_radius_bottom_right = 10
+	normal.corner_radius_top_left = 6
+	normal.corner_radius_top_right = 6
+	normal.corner_radius_bottom_left = 6
+	normal.corner_radius_bottom_right = 6
 	normal.shadow_color = Color(0, 0, 0, 0.55)
 	normal.shadow_size = 5
 
@@ -552,13 +661,28 @@ func _style_primary_button(btn: Button, accent: Color) -> void:
 	btn.add_theme_color_override("font_color", Color(0.96, 0.98, 1.0, 1.0))
 	btn.add_theme_color_override("font_color_hover", Color(1, 1, 1, 1))
 	btn.add_theme_color_override("font_color_pressed", Color(0.90, 0.94, 1.0, 1.0))
-	btn.add_theme_color_override("font_color_disabled", Color(0.60, 0.62, 0.68, 1.0))
-	btn.add_theme_font_size_override("font_size", 18)
+	var font_size = 48 if is_portrait else (dsm.get_scaled_base_font_size(28) if dsm else 28)
+	btn.add_theme_font_size_override("font_size", font_size)
 
 func _style_secondary_button(btn: Button) -> void:
 	if not is_instance_valid(btn):
 		return
-	btn.custom_minimum_size = Vector2(0, 42)
+	
+	var dsm = get_node_or_null("/root/DeviceStateManager")
+	var is_portrait = dsm.get_is_portrait() if dsm else (get_viewport_rect().size.y > get_viewport_rect().size.x)
+
+	if btn == back_button:
+		# Specifically scale the back button to be chunky too
+		btn.custom_minimum_size = Vector2(400 if is_portrait else 200, 220 if is_portrait else 84)
+		btn.add_theme_font_size_override("font_size", 42 if is_portrait else 24)
+		return
+
+	var btn_h = 240 if is_portrait else 110
+	var btn_w = 400 if is_portrait else 220
+	btn.custom_minimum_size = Vector2(btn_w, btn_h)
+	btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL # Allow button to fight for space
+	btn.mouse_filter = Control.MOUSE_FILTER_STOP # Buttons should catch input
+	btn.add_theme_font_size_override("font_size", 32 if is_portrait else 18)
 	var normal := StyleBoxFlat.new()
 	normal.bg_color = Color(0.12, 0.13, 0.16, 1.0)
 	normal.border_color = Color(0.32, 0.36, 0.44, 1.0)
@@ -566,10 +690,10 @@ func _style_secondary_button(btn: Button) -> void:
 	normal.border_width_right = 1
 	normal.border_width_top = 1
 	normal.border_width_bottom = 1
-	normal.corner_radius_top_left = 8
-	normal.corner_radius_top_right = 8
-	normal.corner_radius_bottom_left = 8
-	normal.corner_radius_bottom_right = 8
+	normal.corner_radius_top_left = 6
+	normal.corner_radius_top_right = 6
+	normal.corner_radius_bottom_left = 6
+	normal.corner_radius_bottom_right = 6
 
 	var hover := normal.duplicate()
 	hover.bg_color = Color(0.16, 0.17, 0.21, 1.0)
@@ -1567,6 +1691,14 @@ func _update_cargo_usage_label() -> void:
 	_update_overview_bars()
 
 func _update_overview_bars() -> void:
+	var dsm = get_node_or_null("/root/DeviceStateManager")
+	var is_portrait = dsm.get_is_portrait() if dsm else (get_viewport_rect().size.y > get_viewport_rect().size.x)
+	var bar_h = 100 if is_portrait else 32
+	if is_instance_valid(overview_cargo_bar):
+		overview_cargo_bar.custom_minimum_size.y = bar_h
+	if is_instance_valid(overview_vehicle_bar):
+		overview_vehicle_bar.custom_minimum_size.y = bar_h
+
 	if not (_warehouse is Dictionary) or _warehouse.is_empty():
 		if is_instance_valid(overview_cargo_bar):
 			overview_cargo_bar.value = 0
@@ -1644,11 +1776,20 @@ func _render_cargo_grid() -> void:
 		if wi is Dictionary:
 			var item_name := String(wi.get("name", "Item"))
 			var qty := int(wi.get("quantity", 0))
+			var dsm = get_node_or_null("/root/DeviceStateManager")
+			var is_portrait = dsm.get_is_portrait() if dsm else (get_viewport_rect().size.y > get_viewport_rect().size.x)
+			var item_h = 140 if is_portrait else 72
+			var font_size = dsm.get_scaled_base_font_size(22) if dsm else (42 if is_portrait else 22)
+			
 			var panel := PanelContainer.new()
-			panel.custom_minimum_size = Vector2(120, 32)
+			panel.custom_minimum_size = Vector2(200, item_h)
+			panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 			var vb := VBoxContainer.new()
+			vb.alignment = BoxContainer.ALIGNMENT_CENTER
 			var label := Label.new()
 			label.text = "%s x%d" % [item_name, qty]
+			label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+			label.add_theme_font_size_override("font_size", font_size)
 			vb.add_child(label)
 			panel.add_child(vb)
 			cargo_grid.add_child(panel)
@@ -1674,11 +1815,20 @@ func _render_vehicle_grid() -> void:
 	for v in wh_vehicles:
 		if v is Dictionary:
 			var vehicle_name := String(v.get("name", "Vehicle"))
+			var dsm = get_node_or_null("/root/DeviceStateManager")
+			var is_portrait = dsm.get_is_portrait() if dsm else (get_viewport_rect().size.y > get_viewport_rect().size.x)
+			var item_h = 140 if is_portrait else 72
+			var font_size = dsm.get_scaled_base_font_size(22) if dsm else (42 if is_portrait else 22)
+
 			var panel := PanelContainer.new()
-			panel.custom_minimum_size = Vector2(120, 32)
+			panel.custom_minimum_size = Vector2(200, item_h)
+			panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 			var vb := VBoxContainer.new()
+			vb.alignment = BoxContainer.ALIGNMENT_CENTER
 			var label := Label.new()
 			label.text = vehicle_name
+			label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+			label.add_theme_font_size_override("font_size", font_size)
 			vb.add_child(label)
 			panel.add_child(vb)
 			vehicle_grid.add_child(panel)

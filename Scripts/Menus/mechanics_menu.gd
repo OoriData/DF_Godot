@@ -576,8 +576,12 @@ func _is_part_already_pending(part: Dictionary) -> bool:
 func _ready():
 	if is_instance_valid(back_button):
 		back_button.pressed.connect(func(): emit_signal("back_requested"))
+		back_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		style_back_button(back_button)
 	if is_instance_valid(apply_button):
 		apply_button.pressed.connect(_on_apply_pressed)
+		apply_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		style_back_button(apply_button)
 	if is_instance_valid(vehicle_option_button):
 		vehicle_option_button.item_selected.connect(_on_vehicle_selected)
 	# If we're embedded in a tab, ensure chrome matches
@@ -636,13 +640,6 @@ func _ready():
 	if _is_mobile():
 		var win_size_ready = get_viewport_rect().size if is_inside_tree() else Vector2(0, 0)
 		var is_portrait_ready = win_size_ready.y > win_size_ready.x
-		var big_btn_h = 110 if is_portrait_ready else 72
-		if is_instance_valid(apply_button):
-			apply_button.custom_minimum_size.y = big_btn_h
-			apply_button.add_theme_font_size_override("font_size", _get_font_size(16))
-		if is_instance_valid(back_button):
-			back_button.custom_minimum_size.y = big_btn_h
-			back_button.add_theme_font_size_override("font_size", _get_font_size(16))
 		if is_instance_valid(vendor_hint_label):
 			vendor_hint_label.add_theme_font_size_override("font_size", _get_font_size(12))
 		if is_instance_valid(tab_container):
@@ -660,8 +657,8 @@ func _apply_mechanics_mobile_tab_styles(tc: TabContainer) -> void:
 		else:
 			style = StyleBoxFlat.new()
 			style.bg_color = Color(0.2, 0.2, 0.2, 1.0) if style_name == "tab_selected" else Color(0.12, 0.12, 0.12, 1.0)
-		style.content_margin_top = 20.0 if is_portrait else 14.0
-		style.content_margin_bottom = 20.0 if is_portrait else 14.0
+		style.content_margin_top = 32.0 if is_portrait else 18.0
+		style.content_margin_bottom = 32.0 if is_portrait else 18.0
 		style.content_margin_left = 32.0 if is_portrait else 28.0
 		style.content_margin_right = 32.0 if is_portrait else 28.0
 		style.corner_radius_top_left = 5
@@ -985,7 +982,8 @@ func _rebuild_parts_tab(vehicle_data: Dictionary):
 			continue
 		var header = Label.new()
 		header.text = slot_name.capitalize().replace("_", " ")
-		header.add_theme_font_size_override("font_size", 16)
+		var is_portrait = (get_viewport_rect().size.y > get_viewport_rect().size.x) if is_inside_tree() else false
+		header.add_theme_font_size_override("font_size", _get_font_size(24 if is_portrait else 18))
 		header.add_theme_color_override("font_color", Color.YELLOW)
 		parts_vbox.add_child(header)
 
@@ -1825,6 +1823,15 @@ func _on_swap_part_pressed(slot_name: String, current_part: Dictionary):
 	chooser.title = "Swap: " + slot_name.capitalize().replace("_", " ")
 	
 	var win_size = DisplayServer.window_get_size()
+	
+	# Scale dialog natively using our font helpers
+	var dlg_font = _get_font_size(20 if _is_mobile() else 14)
+	chooser.get_label().add_theme_font_size_override("font_size", dlg_font)
+	var ok_btn = chooser.get_ok_button()
+	if is_instance_valid(ok_btn):
+		ok_btn.add_theme_font_size_override("font_size", dlg_font)
+		ok_btn.custom_minimum_size.y = 80 if _is_mobile() else 40
+
 	var target_w = min(1000, win_size.x - 32)
 	var target_h = min(800, win_size.y - 64)
 	chooser.min_size = Vector2(target_w, target_h)
@@ -1844,21 +1851,16 @@ func _on_swap_part_pressed(slot_name: String, current_part: Dictionary):
 	hdr_left.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	var title_lbl = Label.new()
 	title_lbl.text = "Slot: " + slot_name.capitalize().replace("_", " ")
-	title_lbl.add_theme_font_size_override("font_size", _get_font_size(18))
+	title_lbl.add_theme_font_size_override("font_size", _get_font_size(24 if _is_mobile() else 18))
 	var current_lbl = Label.new()
 	current_lbl.text = "Current: " + String(current_part.get("name", "None")) + " " + _part_summary(current_part)
 	current_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD
-	current_lbl.add_theme_font_size_override("font_size", _get_font_size(14))
+	current_lbl.add_theme_font_size_override("font_size", _get_font_size(18 if _is_mobile() else 14))
 	hdr_left.add_child(title_lbl)
 	hdr_left.add_child(current_lbl)
 	header.add_child(hdr_left)
 	root.add_child(header)
 	
-	if _is_mobile():
-		var ok_btn = chooser.get_ok_button()
-		ok_btn.custom_minimum_size.y = 72
-		ok_btn.add_theme_font_size_override("font_size", _get_font_size(16))
-
 	var sep = HSeparator.new()
 	root.add_child(sep)
 
@@ -1868,7 +1870,7 @@ func _on_swap_part_pressed(slot_name: String, current_part: Dictionary):
 	var comp_header = Label.new()
 	comp_header.text = "Compatible replacements"
 	comp_header.add_theme_color_override("font_color", Color.YELLOW)
-	comp_header.add_theme_font_size_override("font_size", _get_font_size(16))
+	comp_header.add_theme_font_size_override("font_size", _get_font_size(24 if _is_mobile() else 16))
 	compatible_box.add_child(comp_header)
 
 	var incompatible_box = VBoxContainer.new()
@@ -1876,7 +1878,7 @@ func _on_swap_part_pressed(slot_name: String, current_part: Dictionary):
 	var incomp_header = Label.new()
 	incomp_header.text = "Not compatible"
 	incomp_header.add_theme_color_override("font_color", Color.YELLOW)
-	incomp_header.add_theme_font_size_override("font_size", _get_font_size(16))
+	incomp_header.add_theme_font_size_override("font_size", _get_font_size(24 if _is_mobile() else 16))
 	incompatible_box.add_child(incomp_header)
 
 	var scroll = ScrollContainer.new()
@@ -2470,14 +2472,14 @@ func _make_candidate_row(part: Dictionary, source: String, _price: float, compat
 	var name_lbl = Label.new()
 	name_lbl.text = String(part.get("name", "Part")) + " " + _part_summary(part)
 	name_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD
-	name_lbl.add_theme_font_size_override("font_size", _get_font_size(14))
+	name_lbl.add_theme_font_size_override("font_size", _get_font_size(18 if _is_mobile() else 14))
 	name_vb.add_child(name_lbl)
 	# Delta vs current is unknown here; show intrinsic summary only
 	var delta_lbl = Label.new()
 	delta_lbl.name = "DeltaLabel"
 	delta_lbl.text = ""
 	delta_lbl.add_theme_color_override("font_color", Color(0.75, 0.85, 1.0))
-	delta_lbl.add_theme_font_size_override("font_size", _get_font_size(12))
+	delta_lbl.add_theme_font_size_override("font_size", _get_font_size(16 if _is_mobile() else 12))
 	name_vb.add_child(delta_lbl)
 	hb.add_child(name_vb)
 
@@ -2486,7 +2488,7 @@ func _make_candidate_row(part: Dictionary, source: String, _price: float, compat
 	compat_lbl.name = "CompatLabel"
 	compat_lbl.text = "Checking…"
 	compat_lbl.add_theme_color_override("font_color", Color(0.9, 0.9, 0.6))
-	compat_lbl.add_theme_font_size_override("font_size", _get_font_size(12))
+	compat_lbl.add_theme_font_size_override("font_size", _get_font_size(16 if _is_mobile() else 12))
 	compat_lbl.tooltip_text = "Awaiting backend check"
 	hb.add_child(compat_lbl)
 
@@ -2532,6 +2534,7 @@ func _make_candidate_row(part: Dictionary, source: String, _price: float, compat
 		price_text = "Installation $%s" % ["%.2f" % install_price]
 	price_lbl.text = price_text
 	price_lbl.add_theme_color_override("font_color", Color(0.85, 1.0, 0.85))
+	price_lbl.add_theme_font_size_override("font_size", _get_font_size(18 if _is_mobile() else 14))
 	hb.add_child(price_lbl)
 	if part_price <= 0.0:
 		_log_cost_audit("vendor_price_zero_row_init", {

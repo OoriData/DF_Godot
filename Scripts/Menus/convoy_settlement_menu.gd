@@ -88,6 +88,7 @@ func _ready():
 	# It's crucial to connect signals here for the UI to be interactive.
 	if is_instance_valid(back_button):
 		back_button.pressed.connect(_on_back_button_pressed)
+		_style_back_button(back_button)
 	else:
 		printerr("ConvoySettlementMenu: BackButton node not found.")
 	
@@ -148,6 +149,8 @@ func _on_layout_mode_changed(_mode: int, _size: Vector2, _is_mobile_val: bool) -
 		_style_top_bar_button(title_label)
 	if is_instance_valid(warehouse_button):
 		_style_top_bar_button(warehouse_button)
+	if is_instance_valid(back_button):
+		_style_back_button(back_button)
 
 
 
@@ -1065,6 +1068,58 @@ func _style_top_bar_button(button: Button) -> void:
 		hover.set_content_margin(side, hover.get_content_margin(side) + 2)
 		pressed.set_content_margin(side, pressed.get_content_margin(side) + 2)
 		disabled.set_content_margin(side, disabled.get_content_margin(side) + 2)
+
+func _style_back_button(button: Button) -> void:
+	if not is_instance_valid(button):
+		return
+		
+	var dsm = get_node_or_null("/root/DeviceStateManager")
+	var is_portrait = false
+	var is_mobile = false
+	var fs = 18
+	
+	if is_instance_valid(dsm):
+		is_portrait = dsm.get_is_portrait()
+		is_mobile = dsm.is_mobile
+		fs = dsm.get_scaled_base_font_size(24 if is_portrait else 20)
+	else:
+		var win_size = get_viewport_rect().size if is_inside_tree() else Vector2(0, 0)
+		is_portrait = win_size.y > win_size.x
+		is_mobile = is_portrait
+
+	# Chunky height for touch targets
+	button.custom_minimum_size.y = 100 if is_portrait else (72 if is_mobile else 54)
+	button.add_theme_font_size_override("font_size", fs)
+
+	var normal = StyleBoxFlat.new()
+	normal.bg_color = Color(0.12, 0.14, 0.18, 0.95)
+	normal.corner_radius_top_left = 8
+	normal.corner_radius_top_right = 8
+	normal.corner_radius_bottom_left = 8
+	normal.corner_radius_bottom_right = 8
+	normal.border_width_left = 2
+	normal.border_width_right = 2
+	normal.border_width_top = 2
+	normal.border_width_bottom = 2
+	normal.border_color = Color(0.40, 0.60, 0.90) # Consistent blue border
+	normal.shadow_color = Color(0, 0, 0, 0.5)
+	normal.shadow_size = 4
+	
+	var hover = normal.duplicate()
+	hover.bg_color = Color(0.20, 0.25, 0.35, 1.0)
+	hover.border_color = Color(0.55, 0.75, 1.0)
+	
+	var pressed = normal.duplicate()
+	pressed.bg_color = Color(0.08, 0.10, 0.14, 1.0)
+	pressed.border_color = Color(0.30, 0.50, 0.80)
+	
+	button.add_theme_stylebox_override("normal", normal)
+	button.add_theme_stylebox_override("hover", hover)
+	button.add_theme_stylebox_override("pressed", pressed)
+	
+	button.add_theme_color_override("font_color", Color(0.95, 0.95, 1.0))
+	button.add_theme_color_override("font_color_hover", Color(1.0, 1.0, 1.0))
+	button.add_theme_color_override("font_color_pressed", Color(0.8, 0.9, 1.0))
 
 
 # --- Custom Tooltip Override ---
