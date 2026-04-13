@@ -202,6 +202,12 @@ func _ready():
 		if not hub.is_connected("auto_sell_receipt_ready", Callable(self, "_on_auto_sell_receipt_ready")):
 			hub.auto_sell_receipt_ready.connect(_on_auto_sell_receipt_ready)
 
+	# Connect to Layout Mode Changes
+	var dsm = get_node_or_null("/root/DeviceStateManager")
+	if is_instance_valid(dsm):
+		if not dsm.is_connected("layout_mode_changed", Callable(self, "_on_layout_mode_changed")):
+			dsm.layout_mode_changed.connect(_on_layout_mode_changed)
+
 	_error_dialog_scene = load(ERROR_DIALOG_SCENE_PATH)
 # Respond to Control resize events
 
@@ -282,9 +288,57 @@ func _notification(what):
 
 func _on_main_screen_size_changed():
 	# Called when MainScreen is resized (window resize or layout change)
+	if _menu_anim_in_progress == false and is_instance_valid(menu_container) and menu_container.visible:
+		_refresh_menu_layout()
 	_update_menu_container_anchors()
 	_update_camera_viewport_rect_on_resize()
 	_update_onboarding_layer_rect_to_map()
+
+func _on_layout_mode_changed(mode, screen_size, is_mobile):
+	# Directly handle layout mode flips (Portrait <-> Landscape)
+	_update_menu_container_anchors()
+	if _menu_anim_in_progress == false and is_instance_valid(menu_container) and menu_container.visible:
+		_refresh_menu_layout()
+	
+	_update_camera_viewport_rect_on_resize()
+	_update_onboarding_layer_rect_to_map()
+
+func _refresh_menu_layout():
+	# Update Target Width
+	var viewport_sz = get_viewport_rect().size
+	var full_w: float = viewport_sz.y if _is_portrait() else viewport_sz.x
+	var ratios = _get_menu_ratios()
+	var ratio_pct = lerp(ratios.x, ratios.y, _opt_menu_ratio_open)
+	_menu_target_width = full_w * ratio_pct
+	
+	if _menu_target_width < 320.0:
+		_menu_target_width = 320.0
+	if _menu_target_width > full_w * 0.85:
+		_menu_target_width = full_w * 0.85
+		
+	# Apply final bounds manually to snap the view instantly during transitions
+	_current_menu_occlusion_px = _menu_target_width
+	if _is_portrait():
+		var bottom_margin = _get_bottom_safe_margin()
+		menu_container.offset_top = -_menu_target_width - bottom_margin
+		menu_container.offset_bottom = 0
+		# Ensure we zero out left/right offsets to prevent layout skewing from previous landscape mode
+		menu_container.offset_left = 0
+		menu_container.offset_right = 0
+	else:
+		menu_container.offset_left = -_menu_target_width
+		# Also reset right offset, and zero out top/bottom that might have been polluted by portrait mode
+		menu_container.offset_right = 0
+		menu_container.offset_top = 0
+		menu_container.offset_bottom = 0
+
+	_update_camera_occlusion_from_menu()
+	
+	# Reposition camera to keep convoy focused if possible
+	if not _last_focused_convoy_data.is_empty() and is_instance_valid(map_camera_controller):
+		if map_camera_controller.has_method("focus_on_convoy"):
+			map_camera_controller.focus_on_convoy(_last_focused_convoy_data)
+
 
 func _update_menu_container_anchors():
 	if not is_instance_valid(menu_container):
@@ -1321,28 +1375,8 @@ func _apply_menu_ratio_if_open():
 	if not is_instance_valid(menu_container) or not menu_container.visible:
 		return
 		
-	var viewport_sz = get_viewport_rect().size
-	var full_w: float = viewport_sz.y if _is_portrait() else viewport_sz.x
-	
-	var ratios = _get_menu_ratios()
-	var ratio_pct = lerp(ratios.x, ratios.y, _opt_menu_ratio_open)
-	_menu_target_width = full_w * ratio_pct
-	
-	# Detect and prevent cramming
-	if _menu_target_width < 320.0:
-		_menu_target_width = 320.0
-	if _menu_target_width > full_w * 0.85:
-		_menu_target_width = full_w * 0.85
-	
-	# Apply immediately if visible and not currently animating
 	if not _menu_anim_in_progress:
-		menu_container.offset_left = -_menu_target_width
-		_current_menu_occlusion_px = _menu_target_width
-		_update_camera_occlusion_from_menu()
-		# Reposition camera to keep convoy focused if possible
-		if not _last_focused_convoy_data.is_empty() and is_instance_valid(map_camera_controller):
-			if map_camera_controller.has_method("focus_on_convoy"):
-				map_camera_controller.focus_on_convoy(_last_focused_convoy_data)
+		_refresh_menu_layout()
 
 # Called when the menu asks specifically to focus on a convoy (with data)
 func _on_settlement_clicked(coords: Vector2i):
