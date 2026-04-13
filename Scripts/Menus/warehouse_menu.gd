@@ -211,11 +211,17 @@ func _tune_inventory_panels_layout() -> void:
 	# Keep panels expanded vertically to fill the modal as requested.
 	# Use stretch_ratio to ensure inventory grids dominate the vertical space
 	# when competing with other expanding elements.
-	for ctrl in [cargo_inventory_panel, cargo_grid_scroll, vehicle_inventory_panel, vehicle_grid_scroll]:
+	for ctrl in [cargo_inventory_panel, cargo_grid_scroll]:
 		if ctrl is Control and is_instance_valid(ctrl):
 			(ctrl as Control).size_flags_horizontal = Control.SIZE_EXPAND_FILL
 			(ctrl as Control).size_flags_vertical = Control.SIZE_EXPAND_FILL
-			(ctrl as Control).size_flags_stretch_ratio = 10.0 # Force inventory to take all remaining space
+			(ctrl as Control).size_flags_stretch_ratio = 10.0
+	# Vehicle inventory gets ~10% less vertical space to prevent overflow
+	for ctrl in [vehicle_inventory_panel, vehicle_grid_scroll]:
+		if ctrl is Control and is_instance_valid(ctrl):
+			(ctrl as Control).size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			(ctrl as Control).size_flags_vertical = Control.SIZE_EXPAND_FILL
+			(ctrl as Control).size_flags_stretch_ratio = 9.0
 	
 	for hbox in [
 		store_cargo_btn.get_parent() if is_instance_valid(store_cargo_btn) else null,
@@ -228,7 +234,7 @@ func _tune_inventory_panels_layout() -> void:
 	]:
 		if is_instance_valid(hbox) and hbox is BoxContainer:
 			hbox.vertical = is_portrait
-			hbox.add_theme_constant_override("separation", 24 if is_portrait else 8)
+			hbox.add_theme_constant_override("separation", 12 if is_portrait else 4)
 
 	if is_instance_valid(owned_tabs):
 		owned_tabs.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -245,8 +251,8 @@ func _style_tab_container(tc: TabContainer) -> void:
 		return
 	var dsm = get_node_or_null("/root/DeviceStateManager")
 	var is_portrait = dsm.get_is_portrait() if dsm else (get_viewport_rect().size.y > get_viewport_rect().size.x)
-	var tab_h = 180 if is_portrait else 64
-	var font_size = 36 if is_portrait else 18
+	var tab_h = 100 if is_portrait else 40
+	var font_size = 22 if is_portrait else 14
 
 	tc.add_theme_font_size_override("font_size", font_size)
 	
@@ -258,8 +264,8 @@ func _style_tab_container(tc: TabContainer) -> void:
 			var margin = (tab_h - font_size) / 2.0
 			style.content_margin_top = margin
 			style.content_margin_bottom = margin
-			style.content_margin_left = 40 if is_portrait else 20
-			style.content_margin_right = 40 if is_portrait else 20
+			style.content_margin_left = 24 if is_portrait else 12
+			style.content_margin_right = 24 if is_portrait else 12
 			# Set blocky corners
 			style.corner_radius_top_left = 6
 			style.corner_radius_top_right = 6
@@ -297,6 +303,30 @@ func _ensure_background_layers() -> void:
 	# This keeps UI readable even on dark global themes.
 	if not is_inside_tree():
 		return
+
+	# Calculate safe-area margins dynamically based on viewport and orientation.
+	# Mirrors ResponsiveModalPanel's approach to avoid iPhone notch/rounded corner clipping.
+	var dsm = get_node_or_null("/root/DeviceStateManager")
+	var vp_size = get_viewport().get_visible_rect().size
+	var mode = dsm.get_layout_mode() if dsm else 0
+	var is_landscape_mobile = (mode == 1)  # MOBILE_LANDSCAPE
+	var is_portrait = dsm.get_is_portrait() if dsm else (vp_size.y > vp_size.x)
+
+	var h_margin: int
+	var v_margin: int
+	if is_landscape_mobile:
+		# ~5% horizontal buffer to clear iPhone rounded corners and notch dead zone
+		h_margin = int(max(vp_size.x * 0.05, 48))
+		v_margin = int(max(vp_size.y * 0.04, 24))
+	elif is_portrait:
+		h_margin = int(max(vp_size.x * 0.03, 12))
+		v_margin = int(max(vp_size.y * 0.02, 12))
+	else:
+		h_margin = 10
+		v_margin = 10
+
+	var content_padding: int = 8 if is_landscape_mobile else 18
+
 	# Background
 	if not (is_instance_valid(_bg_rect) and _bg_rect.is_inside_tree()):
 		var bg := ColorRect.new()
@@ -323,10 +353,6 @@ func _ensure_background_layers() -> void:
 		frame.anchor_top = 0
 		frame.anchor_right = 1
 		frame.anchor_bottom = 1
-		frame.offset_left = 10
-		frame.offset_top = 10
-		frame.offset_right = -10
-		frame.offset_bottom = -10
 		frame.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		frame.z_index = -50
 		var sb := StyleBoxFlat.new()
@@ -348,27 +374,34 @@ func _ensure_background_layers() -> void:
 		# Keep frame behind MainVBox (which is expected to be child index > 0).
 		move_child(frame, 1)
 		_content_frame = frame
-	# Add some padding so content doesn't touch the frame border.
+	# Update frame and content offsets dynamically on every call (handles orientation changes)
+	if is_instance_valid(_content_frame):
+		_content_frame.offset_left = h_margin
+		_content_frame.offset_top = v_margin
+		_content_frame.offset_right = -h_margin
+		_content_frame.offset_bottom = -v_margin
 	if is_instance_valid(main_vbox):
-		main_vbox.offset_left = 18
-		main_vbox.offset_top = 18
-		main_vbox.offset_right = -18
-		main_vbox.offset_bottom = -18
+		main_vbox.offset_left = h_margin + content_padding
+		main_vbox.offset_top = v_margin + content_padding
+		main_vbox.offset_right = -(h_margin + content_padding)
+		main_vbox.offset_bottom = -(v_margin + content_padding)
 
 func _style_containers() -> void:
+	var dsm = get_node_or_null("/root/DeviceStateManager")
+	var is_portrait = dsm.get_is_portrait() if dsm else (get_viewport_rect().size.y > get_viewport_rect().size.x)
+	var mode = dsm.get_layout_mode() if dsm else 0
+	var is_landscape_mobile = (mode == 1)  # MOBILE_LANDSCAPE
 	if is_instance_valid(main_vbox):
-		main_vbox.add_theme_constant_override("separation", 48)
+		main_vbox.add_theme_constant_override("separation", 16 if is_portrait else (8 if is_landscape_mobile else 16))
 	if is_instance_valid(body_vbox):
-		body_vbox.add_theme_constant_override("separation", 36)
+		body_vbox.add_theme_constant_override("separation", 12 if is_portrait else (6 if is_landscape_mobile else 12))
 		# Key fix: allow Body to expand to consume all remaining height.
 		body_vbox.size_flags_vertical = Control.SIZE_EXPAND_FILL
 		body_vbox.mouse_filter = Control.MOUSE_FILTER_PASS
 	
 	# Apply massive header text to section labels
-	var dsm = get_node_or_null("/root/DeviceStateManager")
-	var is_portrait = dsm.get_is_portrait() if dsm else (get_viewport_rect().size.y > get_viewport_rect().size.x)
-	var header_font_size = 48 if is_portrait else (dsm.get_scaled_base_font_size(24) if dsm else 24)
-	var label_font_size = 36 if is_portrait else (dsm.get_scaled_base_font_size(18) if dsm else 18)
+	var header_font_size = 32 if is_portrait else (dsm.get_scaled_base_font_size(18) if dsm else 18)
+	var label_font_size = 24 if is_portrait else (dsm.get_scaled_base_font_size(14) if dsm else 14)
 	
 	# Scale overview labels specifically
 	for lbl in [summary_label, overview_cargo_label, overview_vehicle_label, cargo_usage_label]:
@@ -435,11 +468,13 @@ func _style_option_button(ob: OptionButton) -> void:
 		return
 	var dsm = get_node_or_null("/root/DeviceStateManager")
 	var is_portrait = dsm.get_is_portrait() if dsm else (get_viewport_rect().size.y > get_viewport_rect().size.x)
-	var btn_h = 220 if is_portrait else 84
-	var btn_min_w = 300 if is_portrait else 150
+	var mode = dsm.get_layout_mode() if dsm else 0
+	var is_landscape_mobile = (mode == 1)  # MOBILE_LANDSCAPE
+	var btn_h = 120 if is_portrait else (44 if is_landscape_mobile else 50)
+	var btn_min_w = 200 if is_portrait else (80 if is_landscape_mobile else 100)
 	ob.custom_minimum_size = Vector2(btn_min_w, btn_h)
 	ob.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	var font_size = 42 if is_portrait else (dsm.get_scaled_base_font_size(24) if dsm else 24)
+	var font_size = 26 if is_portrait else (dsm.get_scaled_base_font_size(16) if dsm else 16)
 	ob.add_theme_font_size_override("font_size", font_size)
 	ob.add_theme_color_override("font_color", Color(0.96, 0.98, 1.0, 1.0))
 	ob.add_theme_color_override("font_color_disabled", Color(0.60, 0.62, 0.68, 1.0))
@@ -524,9 +559,14 @@ func _style_line_edit(le: LineEdit) -> void:
 		return
 	var dsm = get_node_or_null("/root/DeviceStateManager")
 	var is_portrait = dsm.get_is_portrait() if dsm else (get_viewport_rect().size.y > get_viewport_rect().size.x)
-	var btn_h = 220 if is_portrait else 84
-	le.custom_minimum_size = Vector2(le.custom_minimum_size.x, btn_h)
-	var font_size = 36 if is_portrait else (dsm.get_scaled_base_font_size(24) if dsm else 24)
+	var mode = dsm.get_layout_mode() if dsm else 0
+	var is_landscape_mobile = (mode == 1)  # MOBILE_LANDSCAPE
+	var btn_h = 120 if is_portrait else (44 if is_landscape_mobile else 50)
+	var min_w = le.custom_minimum_size.x
+	if is_landscape_mobile:
+		min_w = min(min_w, 160)  # Cap width to prevent horizontal overflow in landscape
+	le.custom_minimum_size = Vector2(min_w, btn_h)
+	var font_size = 22 if is_portrait else (dsm.get_scaled_base_font_size(16) if dsm else 16)
 	le.add_theme_font_size_override("font_size", font_size)
 	le.add_theme_color_override("font_color", Color(0.96, 0.98, 1.0, 1.0))
 	le.add_theme_color_override("placeholder_color", Color(0.70, 0.74, 0.82, 0.85))
@@ -553,7 +593,9 @@ func _style_quantity_control(qc: Control) -> void:
 		return
 	var dsm = get_node_or_null("/root/DeviceStateManager")
 	var is_portrait = dsm.get_is_portrait() if dsm else (get_viewport_rect().size.y > get_viewport_rect().size.x)
-	var h = 220 if is_portrait else 84
+	var mode = dsm.get_layout_mode() if dsm else 0
+	var is_landscape_mobile = (mode == 1)  # MOBILE_LANDSCAPE
+	var h = 120 if is_portrait else (44 if is_landscape_mobile else 50)
 	qc.custom_minimum_size.y = h
 	# QuantityWidget handles its own internal styling, just ensure it has height.
 
@@ -562,7 +604,9 @@ func _style_spin_box(sb: SpinBox) -> void:
 		return
 	var dsm = get_node_or_null("/root/DeviceStateManager")
 	var is_portrait = dsm.get_is_portrait() if dsm else (get_viewport_rect().size.y > get_viewport_rect().size.x)
-	var btn_h = 220 if is_portrait else 84
+	var mode = dsm.get_layout_mode() if dsm else 0
+	var is_landscape_mobile = (mode == 1)  # MOBILE_LANDSCAPE
+	var btn_h = 120 if is_portrait else (44 if is_landscape_mobile else 50)
 	sb.custom_minimum_size = Vector2(0, btn_h)
 	# SpinBox's internal LineEdit draws the background; style it for contrast.
 	var le: LineEdit = sb.get_line_edit()
@@ -592,7 +636,7 @@ func _ensure_info_card_wrapper() -> void:
 	card.name = "InfoCard"
 	card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	card.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	card.custom_minimum_size = Vector2(0, 300)
+	card.custom_minimum_size = Vector2(0, 160)
 
 	var panel_sb := StyleBoxFlat.new()
 	panel_sb.bg_color = Color(0.06, 0.07, 0.09, 0.92)
@@ -646,8 +690,10 @@ func _style_primary_button(btn: Button, accent: Color) -> void:
 		return
 	var dsm = get_node_or_null("/root/DeviceStateManager")
 	var is_portrait = dsm.get_is_portrait() if dsm else (get_viewport_rect().size.y > get_viewport_rect().size.x)
-	var btn_h = 240 if is_portrait else 96
-	btn.custom_minimum_size = Vector2(400 if is_portrait else 280, btn_h)
+	var mode = dsm.get_layout_mode() if dsm else 0
+	var is_landscape_mobile = (mode == 1)  # MOBILE_LANDSCAPE
+	var btn_h = 130 if is_portrait else (48 if is_landscape_mobile else 54)
+	btn.custom_minimum_size = Vector2(280 if is_portrait else (140 if is_landscape_mobile else 180), btn_h)
 	btn.focus_mode = Control.FOCUS_ALL
 
 	var normal := StyleBoxFlat.new()
@@ -684,7 +730,7 @@ func _style_primary_button(btn: Button, accent: Color) -> void:
 	btn.add_theme_color_override("font_color", Color(0.96, 0.98, 1.0, 1.0))
 	btn.add_theme_color_override("font_color_hover", Color(1, 1, 1, 1))
 	btn.add_theme_color_override("font_color_pressed", Color(0.90, 0.94, 1.0, 1.0))
-	var font_size = 48 if is_portrait else (dsm.get_scaled_base_font_size(28) if dsm else 28)
+	var font_size = 28 if is_portrait else (dsm.get_scaled_base_font_size(18) if dsm else 18)
 	btn.add_theme_font_size_override("font_size", font_size)
 
 func _style_secondary_button(btn: Button) -> void:
@@ -693,19 +739,21 @@ func _style_secondary_button(btn: Button) -> void:
 	
 	var dsm = get_node_or_null("/root/DeviceStateManager")
 	var is_portrait = dsm.get_is_portrait() if dsm else (get_viewport_rect().size.y > get_viewport_rect().size.x)
+	var mode = dsm.get_layout_mode() if dsm else 0
+	var is_landscape_mobile = (mode == 1)  # MOBILE_LANDSCAPE
 
 	if btn == back_button:
 		# Specifically scale the back button to be chunky too
-		btn.custom_minimum_size = Vector2(400 if is_portrait else 200, 220 if is_portrait else 84)
-		btn.add_theme_font_size_override("font_size", 42 if is_portrait else 24)
+		btn.custom_minimum_size = Vector2(280 if is_portrait else (120 if is_landscape_mobile else 140), 110 if is_portrait else (40 if is_landscape_mobile else 50))
+		btn.add_theme_font_size_override("font_size", 24 if is_portrait else 16)
 		return
 
-	var btn_h = 240 if is_portrait else 110
-	var btn_w = 400 if is_portrait else 220
+	var btn_h = 130 if is_portrait else (48 if is_landscape_mobile else 54)
+	var btn_w = 280 if is_portrait else (100 if is_landscape_mobile else 140)
 	btn.custom_minimum_size = Vector2(btn_w, btn_h)
 	btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL # Allow button to fight for space
 	btn.mouse_filter = Control.MOUSE_FILTER_STOP # Buttons should catch input
-	btn.add_theme_font_size_override("font_size", 42 if is_portrait else 24)
+	btn.add_theme_font_size_override("font_size", 24 if is_portrait else 16)
 	var normal := StyleBoxFlat.new()
 	normal.bg_color = Color(0.12, 0.13, 0.16, 1.0)
 	normal.border_color = Color(0.32, 0.36, 0.44, 1.0)
@@ -1715,7 +1763,7 @@ func _update_cargo_usage_label() -> void:
 func _update_overview_bars() -> void:
 	var dsm = get_node_or_null("/root/DeviceStateManager")
 	var is_portrait = dsm.get_is_portrait() if dsm else (get_viewport_rect().size.y > get_viewport_rect().size.x)
-	var bar_h = 100 if is_portrait else 32
+	var bar_h = 60 if is_portrait else 24
 	if is_instance_valid(overview_cargo_bar):
 		overview_cargo_bar.custom_minimum_size.y = bar_h
 	if is_instance_valid(overview_vehicle_bar):
@@ -1769,6 +1817,11 @@ func _update_overview_bars() -> void:
 func _render_cargo_grid() -> void:
 	if not is_instance_valid(cargo_grid):
 		return
+	# Set columns dynamically: fewer in landscape mobile to prevent horizontal overflow
+	var _dsm = get_node_or_null("/root/DeviceStateManager")
+	var _mode = _dsm.get_layout_mode() if _dsm else 0
+	var _is_lm = (_mode == 1)  # MOBILE_LANDSCAPE
+	cargo_grid.columns = 3 if _is_lm else 4
 	# Clear existing
 	for c in cargo_grid.get_children():
 		c.queue_free()
@@ -1800,11 +1853,14 @@ func _render_cargo_grid() -> void:
 			var qty := int(wi.get("quantity", 0))
 			var dsm = get_node_or_null("/root/DeviceStateManager")
 			var is_portrait = dsm.get_is_portrait() if dsm else (get_viewport_rect().size.y > get_viewport_rect().size.x)
+			var mode = dsm.get_layout_mode() if dsm else 0
+			var is_landscape_mobile = (mode == 1)  # MOBILE_LANDSCAPE
 			var item_h = 140 if is_portrait else 72
+			var item_w = 200 if not is_landscape_mobile else 140
 			var font_size = dsm.get_scaled_base_font_size(22) if dsm else (42 if is_portrait else 22)
 			
 			var panel := PanelContainer.new()
-			panel.custom_minimum_size = Vector2(200, item_h)
+			panel.custom_minimum_size = Vector2(item_w, item_h)
 			panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 			var vb := VBoxContainer.new()
 			vb.alignment = BoxContainer.ALIGNMENT_CENTER
@@ -1819,6 +1875,11 @@ func _render_cargo_grid() -> void:
 func _render_vehicle_grid() -> void:
 	if not is_instance_valid(vehicle_grid):
 		return
+	# Set columns dynamically: fewer in landscape mobile to prevent horizontal overflow
+	var _dsm = get_node_or_null("/root/DeviceStateManager")
+	var _mode = _dsm.get_layout_mode() if _dsm else 0
+	var _is_lm = (_mode == 1)  # MOBILE_LANDSCAPE
+	vehicle_grid.columns = 3 if _is_lm else 4
 	for c in vehicle_grid.get_children():
 		c.queue_free()
 	if not (_warehouse is Dictionary):
@@ -1839,11 +1900,14 @@ func _render_vehicle_grid() -> void:
 			var vehicle_name := String(v.get("name", "Vehicle"))
 			var dsm = get_node_or_null("/root/DeviceStateManager")
 			var is_portrait = dsm.get_is_portrait() if dsm else (get_viewport_rect().size.y > get_viewport_rect().size.x)
+			var mode = dsm.get_layout_mode() if dsm else 0
+			var is_landscape_mobile = (mode == 1)  # MOBILE_LANDSCAPE
 			var item_h = 140 if is_portrait else 72
+			var item_w = 200 if not is_landscape_mobile else 140
 			var font_size = dsm.get_scaled_base_font_size(22) if dsm else (42 if is_portrait else 22)
 
 			var panel := PanelContainer.new()
-			panel.custom_minimum_size = Vector2(200, item_h)
+			panel.custom_minimum_size = Vector2(item_w, item_h)
 			panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 			var vb := VBoxContainer.new()
 			vb.alignment = BoxContainer.ALIGNMENT_CENTER
@@ -1930,7 +1994,7 @@ func _adjust_inventory_panel_height(panel_ctrl: Control, scroll_ctrl: ScrollCont
 	var dsm = get_node_or_null("/root/DeviceStateManager")
 	var is_portrait = dsm.get_is_portrait() if dsm else (get_viewport_rect().size.y > get_viewport_rect().size.x)
 	
-	scroll_ctrl.custom_minimum_size = Vector2(scroll_ctrl.custom_minimum_size.x, 300 if is_portrait else 220)
+	scroll_ctrl.custom_minimum_size = Vector2(scroll_ctrl.custom_minimum_size.x, 240 if is_portrait else 180)
 	
 	# Allow the container to expand as much as possible
 	scroll_ctrl.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -1946,7 +2010,6 @@ func _update_store_qty_limit() -> void:
 		max_qty = max(1, _get_convoy_cargo_quantity_for_meta(cargo_meta))
 	cargo_qty_store.min_value = 1
 	cargo_qty_store.step = 1
-	cargo_qty_store.allow_greater = false
 	cargo_qty_store.max_value = float(max_qty)
 	if cargo_qty_store.value > cargo_qty_store.max_value:
 		cargo_qty_store.value = cargo_qty_store.max_value
@@ -1963,7 +2026,6 @@ func _update_retrieve_qty_limit() -> void:
 		max_qty = max(1, _get_warehouse_cargo_quantity_for_meta(cargo_meta))
 	cargo_qty_retrieve.min_value = 1
 	cargo_qty_retrieve.step = 1
-	cargo_qty_retrieve.allow_greater = false
 	cargo_qty_retrieve.max_value = float(max_qty)
 	if cargo_qty_retrieve.value > cargo_qty_retrieve.max_value:
 		cargo_qty_retrieve.value = cargo_qty_retrieve.max_value
