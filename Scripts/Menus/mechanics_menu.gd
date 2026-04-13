@@ -13,7 +13,7 @@ signal changes_committed(convoy_id: String, vehicle_id: String, swaps: Array, es
 @onready var pending_vbox: VBoxContainer = $MainVBox/TabContainer/Pending/PendingVBox
 @onready var back_button: Button = $MainVBox/BottomBar/BackButton
 @onready var apply_button: Button = $MainVBox/BottomBar/ApplyButton
-@onready var vendor_hint_label: Label = $MainVBox/VendorHintLabel
+@onready var bottom_bar: HBoxContainer = $MainVBox/BottomBar
 @onready var _overlay: ColorRect = $ColorRect
 
 # State
@@ -148,9 +148,9 @@ func _apply_embedded_mode_visibility() -> void:
 		title_label.visible = not embedded_mode
 	if is_instance_valid(vehicle_option_button):
 		vehicle_option_button.visible = not embedded_mode
-	# Back button is redundant inside a tab; keep Apply visible
-	if is_instance_valid(back_button):
-		back_button.visible = not embedded_mode
+	# Hide the entire bottom bar when embedded, as parent menu handles these actions
+	if is_instance_valid(bottom_bar):
+		bottom_bar.visible = not embedded_mode
 	# Remove dark overlay when embedded inside a tab for visual consistency
 	if is_instance_valid(_overlay):
 		_overlay.visible = not embedded_mode
@@ -623,15 +623,8 @@ func _ready():
 			_rebuild_pending_tab()
 		)
 		row.add_child(cb)
-		# Insert after the vendor hint label if present; otherwise append before bottom bar
-		var inserted := false
-		if is_instance_valid(vendor_hint_label):
-			var idx := vendor_hint_label.get_index()
-			main_vb.add_child(row)
-			row.get_parent().move_child(row, idx + 1)
-			inserted = true
-		if not inserted:
-			main_vb.add_child(row)
+		# Append before bottom bar by default
+		main_vb.add_child(row)
 		_breakdown_toggle = cb
 
 	# Ensure MenuBase hooks are installed.
@@ -640,8 +633,6 @@ func _ready():
 	if _is_mobile():
 		var win_size_ready = get_viewport_rect().size if is_inside_tree() else Vector2(0, 0)
 		var is_portrait_ready = win_size_ready.y > win_size_ready.x
-		if is_instance_valid(vendor_hint_label):
-			vendor_hint_label.add_theme_font_size_override("font_size", _get_font_size(12))
 		if is_instance_valid(tab_container):
 			_apply_mechanics_mobile_tab_styles(tab_container)
 			tab_container.add_theme_font_size_override("font_size", _get_font_size(16))
@@ -2385,6 +2376,9 @@ func _add_pending_swap(slot_name: String, from_part: Dictionary, to_part: Dictio
 		if not _install_price_cache.has(key):
 			_mechanics_service.check_part_compatibility(vehicle_id, uid)
 
+func apply_pending_changes() -> void:
+	_on_apply_pressed()
+
 func _on_apply_pressed():
 	if _pending_swaps.is_empty():
 		return
@@ -2807,8 +2801,6 @@ func _on_part_compatibility_ready(payload: Dictionary) -> void:
 			if not bool(_slot_vendor_availability.get(slot_name, false)):
 				_slot_vendor_availability[slot_name] = true
 				_restyle_swap_buttons_for_slot(slot_name)
-				# Ensure the hint label shows now that at least one slot is available
-				if is_instance_valid(vendor_hint_label): vendor_hint_label.visible = true
 			# Also refresh inventory-based highlights in case this payload pertains to a convoy cargo item
 			_refresh_slot_inventory_availability()
 

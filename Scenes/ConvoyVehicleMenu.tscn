@@ -34,13 +34,17 @@ grow_horizontal = 2
 grow_vertical = 2
 theme_override_constants/separation = 10
 
-[node name="TitleLabel" type="Label" parent="MainVBox"]
+[node name="TopRow" type="HBoxContainer" parent="MainVBox"]
+layout_mode = 2
+theme_override_constants/separation = 10
+
+[node name="TitleLabel" type="Label" parent="MainVBox/TopRow"]
 layout_mode = 2
 size_flags_horizontal = 3
 theme_override_font_sizes/font_size = 20
 text = "Vehicle Management"
 
-[node name="VehicleOptionButton" type="OptionButton" parent="MainVBox"]
+[node name="VehicleOptionButton" type="OptionButton" parent="MainVBox/TopRow"]
 layout_mode = 2
 size_flags_horizontal = 3
 selected = 0
@@ -139,7 +143,23 @@ layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
 
-[node name="BackButton" type="Button" parent="MainVBox"]
+[node name="BottomRow" type="HBoxContainer" parent="MainVBox"]
 layout_mode = 2
-size_flags_horizontal = 4
+theme_override_constants/separation = 10
+
+[node name="BackButton" type="Button" parent="MainVBox/BottomRow"]
+layout_mode = 2
+size_flags_horizontal = 3
 text = "Back"
+
+[node name="ManifestButton" type="Button" parent="MainVBox/BottomRow"]
+visible = false
+layout_mode = 2
+size_flags_horizontal = 3
+text = "View Cargo Manifest"
+
+[node name="ApplyButton" type="Button" parent="MainVBox/BottomRow"]
+visible = false
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Apply Changes"

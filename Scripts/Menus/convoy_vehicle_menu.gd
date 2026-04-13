@@ -9,9 +9,12 @@ signal inspect_all_convoy_cargo_requested(convoy_data)
 signal inspect_specific_convoy_cargo_requested(convoy_data, item_data)
 
 # @onready variables for UI elements
-@onready var title_label: Label = $MainVBox/TitleLabel
-@onready var vehicle_option_button: OptionButton = $MainVBox/VehicleOptionButton
-@onready var back_button: Button = $MainVBox/BackButton
+@onready var title_label: Label = $MainVBox/TopRow/TitleLabel
+@onready var vehicle_option_button: OptionButton = $MainVBox/TopRow/VehicleOptionButton
+@onready var back_button: Button = $MainVBox/BottomRow/BackButton
+@onready var manifest_button: Button = $MainVBox/BottomRow/ManifestButton
+@onready var apply_button: Button = $MainVBox/BottomRow/ApplyButton
+@onready var tab_container: TabContainer = $MainVBox/VehicleTabContainer
 
 @onready var overview_vbox: VBoxContainer = $MainVBox/VehicleTabContainer/Overview/OverviewVBox
 @onready var stats_vbox: VBoxContainer = $MainVBox/VehicleTabContainer/Stats/StatsVBox
@@ -102,31 +105,25 @@ func _get_font_size(base: int) -> int:
 	return int(base * boost)
 
 func _ready():
-	# Wrap back_button in an HBox if not already wrapped, and add Cargo Manifest button
+	# Initialize back button and tab signals
 	if is_instance_valid(back_button):
 		if not back_button.is_connected("pressed", Callable(self, "_on_back_button_pressed")):
 			back_button.pressed.connect(_on_back_button_pressed)
-		
-		var parent = back_button.get_parent()
-		var hbox = HBoxContainer.new()
-		hbox.name = "BottomButtonsHBox"
-		var idx = back_button.get_index()
-		parent.add_child(hbox)
-		parent.move_child(hbox, idx)
-		parent.remove_child(back_button)
-		hbox.add_child(back_button)
-		
-		back_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		style_back_button(back_button)
-		
-		var manifest_btn = Button.new()
-		manifest_btn.text = "View Cargo Manifest"
-		manifest_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		manifest_btn.pressed.connect(_on_inspect_all_cargo_pressed)
-		hbox.add_child(manifest_btn)
-		style_back_button(manifest_btn)
 	else:
 		printerr("ConvoyVehicleMenu: CRITICAL - BackButton node NOT found or is not a Button.")
+
+	if is_instance_valid(manifest_button):
+		manifest_button.pressed.connect(_on_inspect_all_cargo_pressed)
+		style_back_button(manifest_button)
+
+	if is_instance_valid(apply_button):
+		apply_button.pressed.connect(func(): if is_instance_valid(mechanics_embed) and mechanics_embed.has_method("apply_pending_changes"): mechanics_embed.apply_pending_changes())
+		style_back_button(apply_button)
+
+	if is_instance_valid(tab_container):
+		if not tab_container.is_connected("tab_changed", Callable(self, "_on_tab_changed")):
+			tab_container.tab_changed.connect(_on_tab_changed)
 
 	# Connect the vehicle selection signal
 	if is_instance_valid(vehicle_option_button):
@@ -163,8 +160,7 @@ func _ready():
 
 	# Mobile: enlarge TabContainer tab strips + MechanicButton
 	if _is_mobile():
-		var tab_container := $MainVBox/VehicleTabContainer if has_node("MainVBox/VehicleTabContainer") else null
-		if is_instance_valid(tab_container) and tab_container is TabContainer:
+		if is_instance_valid(tab_container):
 			_apply_mobile_tab_styles(tab_container)
 			var is_portrait = (get_viewport_rect().size.y > get_viewport_rect().size.x) if is_inside_tree() else false
 			tab_container.add_theme_font_size_override("font_size", _get_font_size(24 if is_portrait else 16))
@@ -214,6 +210,20 @@ func _apply_mobile_tab_styles(tc: TabContainer) -> void:
 func _on_back_button_pressed():
 	print("ConvoyVehicleMenu: Back button pressed. Emitting 'back_requested' signal.")
 	emit_signal("back_requested")
+
+func _on_tab_changed(tab_idx: int) -> void:
+	if not is_instance_valid(apply_button) or not is_instance_valid(manifest_button):
+		return
+	
+	apply_button.visible = false
+	manifest_button.visible = false
+	
+	if is_instance_valid(tab_container) and tab_idx >= 0 and tab_idx < tab_container.get_child_count():
+		var current_node = tab_container.get_child(tab_idx)
+		if current_node.name == "Service":
+			apply_button.visible = true
+		elif current_node.name == "Cargo":
+			manifest_button.visible = true
 
 func _clear_all_tabs():
 	var all_vboxes = [overview_vbox, stats_vbox, parts_vbox, cargo_vbox]
