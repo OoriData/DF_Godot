@@ -205,6 +205,9 @@ func _on_layout_mode_changed(_mode: int = -1, _size: Vector2 = Vector2.ZERO, _is
 		_render_vehicle_grid()
 
 func _tune_inventory_panels_layout() -> void:
+	var dsm = get_node_or_null("/root/DeviceStateManager")
+	var is_portrait = dsm.get_is_portrait() if dsm else (get_viewport_rect().size.y > get_viewport_rect().size.x)
+
 	# Keep panels expanded vertically to fill the modal as requested.
 	# Use stretch_ratio to ensure inventory grids dominate the vertical space
 	# when competing with other expanding elements.
@@ -214,6 +217,19 @@ func _tune_inventory_panels_layout() -> void:
 			(ctrl as Control).size_flags_vertical = Control.SIZE_EXPAND_FILL
 			(ctrl as Control).size_flags_stretch_ratio = 10.0 # Force inventory to take all remaining space
 	
+	for hbox in [
+		store_cargo_btn.get_parent() if is_instance_valid(store_cargo_btn) else null,
+		retrieve_cargo_btn.get_parent() if is_instance_valid(retrieve_cargo_btn) else null,
+		store_vehicle_btn.get_parent() if is_instance_valid(store_vehicle_btn) else null,
+		retrieve_vehicle_btn.get_parent() if is_instance_valid(retrieve_vehicle_btn) else null,
+		spawn_convoy_btn.get_parent() if is_instance_valid(spawn_convoy_btn) else null,
+		expand_cargo_btn.get_parent() if is_instance_valid(expand_cargo_btn) else null,
+		expand_vehicle_btn.get_parent() if is_instance_valid(expand_vehicle_btn) else null
+	]:
+		if is_instance_valid(hbox) and hbox is BoxContainer:
+			hbox.vertical = is_portrait
+			hbox.add_theme_constant_override("separation", 24 if is_portrait else 8)
+
 	if is_instance_valid(owned_tabs):
 		owned_tabs.size_flags_vertical = Control.SIZE_EXPAND_FILL
 		owned_tabs.custom_minimum_size.y = 0 
@@ -258,6 +274,13 @@ func _style_buy_menu_ui() -> void:
 	_ensure_info_card_wrapper()
 	_style_primary_button(buy_button, Color(0.35, 0.65, 1.0, 1.0))
 	_style_secondary_button(back_button)
+	_style_secondary_button(expand_cargo_btn)
+	_style_secondary_button(expand_vehicle_btn)
+	_style_secondary_button(store_cargo_btn)
+	_style_secondary_button(retrieve_cargo_btn)
+	_style_secondary_button(store_vehicle_btn)
+	_style_secondary_button(retrieve_vehicle_btn)
+	_style_secondary_button(spawn_convoy_btn)
 	_style_info_label(info_label)
 	# Tabs are the "owned" state; keep label card hidden when tabs show.
 	if is_instance_valid(owned_tabs) and is_instance_valid(info_label):
@@ -682,7 +705,7 @@ func _style_secondary_button(btn: Button) -> void:
 	btn.custom_minimum_size = Vector2(btn_w, btn_h)
 	btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL # Allow button to fight for space
 	btn.mouse_filter = Control.MOUSE_FILTER_STOP # Buttons should catch input
-	btn.add_theme_font_size_override("font_size", 32 if is_portrait else 18)
+	btn.add_theme_font_size_override("font_size", 42 if is_portrait else 24)
 	var normal := StyleBoxFlat.new()
 	normal.bg_color = Color(0.12, 0.13, 0.16, 1.0)
 	normal.border_color = Color(0.32, 0.36, 0.44, 1.0)
@@ -713,7 +736,6 @@ func _style_secondary_button(btn: Button) -> void:
 	btn.add_theme_stylebox_override("disabled", disabled)
 	btn.add_theme_color_override("font_color", Color(0.92, 0.95, 1.0, 1.0))
 	btn.add_theme_color_override("font_color_disabled", Color(0.60, 0.62, 0.68, 1.0))
-	btn.add_theme_font_size_override("font_size", 16)
 
 func _set_expand_buttons_enabled(enabled: bool) -> void:
 	# Central helper so we can uniformly toggle & log state
@@ -1846,16 +1868,16 @@ func _set_inventory_panel_empty_state(panel_ctrl: Control, empty_panel_name: Str
 		panel_ctrl.visible = true
 		# Restore content-sized behavior (no vertical expand)
 		if panel_ctrl is Control:
-			(panel_ctrl as Control).size_flags_vertical = Control.SIZE_FILL
+			(panel_ctrl as Control).size_flags_vertical = Control.SIZE_EXPAND_FILL
 		# Also ensure the internal scroll doesn't expand to fill the tab.
 		if panel_ctrl.has_node("CargoGridScroll"):
 			var sc := panel_ctrl.get_node_or_null("CargoGridScroll")
 			if sc is Control:
-				(sc as Control).size_flags_vertical = Control.SIZE_FILL
+				(sc as Control).size_flags_vertical = Control.SIZE_EXPAND_FILL
 		elif panel_ctrl.has_node("VehicleGridScroll"):
 			var sc2 := panel_ctrl.get_node_or_null("VehicleGridScroll")
 			if sc2 is Control:
-				(sc2 as Control).size_flags_vertical = Control.SIZE_FILL
+				(sc2 as Control).size_flags_vertical = Control.SIZE_EXPAND_FILL
 		if existing:
 			existing.queue_free()
 		return
@@ -1905,17 +1927,14 @@ func _adjust_inventory_panel_height(panel_ctrl: Control, scroll_ctrl: ScrollCont
 	# Clamp the inventory panel height to its content so we don't get a giant blank area.
 	if not (is_instance_valid(panel_ctrl) and is_instance_valid(scroll_ctrl)):
 		return
-	columns = max(1, columns)
-	var rows := int(ceil(float(max(item_count, 1)) / float(columns)))
-	# Rough row height: our panels are 32px min + margins.
-	var row_h := 40
-	var desired := 20 + rows * row_h
-	# Clamp so it never takes half the menu.
-	var clamped := clampi(desired, 70, 220)
-	scroll_ctrl.custom_minimum_size = Vector2(scroll_ctrl.custom_minimum_size.x, float(clamped))
-	# Ensure the container doesn't expand beyond its minimum.
-	scroll_ctrl.size_flags_vertical = Control.SIZE_FILL
-	panel_ctrl.size_flags_vertical = Control.SIZE_FILL
+	var dsm = get_node_or_null("/root/DeviceStateManager")
+	var is_portrait = dsm.get_is_portrait() if dsm else (get_viewport_rect().size.y > get_viewport_rect().size.x)
+	
+	scroll_ctrl.custom_minimum_size = Vector2(scroll_ctrl.custom_minimum_size.x, 300 if is_portrait else 220)
+	
+	# Allow the container to expand as much as possible
+	scroll_ctrl.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	panel_ctrl.size_flags_vertical = Control.SIZE_EXPAND_FILL
 
 # Enforce SpinBox max based on selected cargo quantities
 func _update_store_qty_limit() -> void:
