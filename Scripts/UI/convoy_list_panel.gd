@@ -24,6 +24,11 @@ func _ready():
 	if _is_mobile():
 		_apply_mobile_popup_style()
 
+	# Connect to DeviceStateManager for reactive layout updates
+	var dsm = get_node_or_null("/root/DeviceStateManager")
+	if is_instance_valid(dsm):
+		dsm.layout_mode_changed.connect(_on_layout_mode_changed)
+
 	# Attempt to connect to MenuManager's signal to auto-close this panel.
 	# Since MenuManager is an Autoload, it's globally available.
 	var menu_manager_node = get_node_or_null("/root/MenuManager")
@@ -54,35 +59,8 @@ func _ready():
 		# Ensure button has a reasonable minimum size since we're clearing its text
 		# Standard Scaling
 		toggle_button.custom_minimum_size = Vector2(240, 48)
+		_update_button_layout()
 
-		# We'll use a RichTextLabel child for BBCode styling on the button
-		var rtl = RichTextLabel.new()
-		rtl.name = "StyleLabel"
-		rtl.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		rtl.bbcode_enabled = true
-		rtl.fit_content = true
-		# Using full rect so [center] has the button width to work with
-		rtl.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-		
-		# Mobile Scaling 1.6x (Reverted from 1.8x)
-		# Mobile Scaling
-		var win_size = get_viewport_rect().size if is_inside_tree() else Vector2(0, 0)
-		var is_portrait = win_size.y > win_size.x
-		if is_portrait:
-			toggle_button.custom_minimum_size = Vector2(400, 100)
-			rtl.add_theme_font_size_override("normal_font_size", _get_font_size(16))
-			rtl.offset_top = 28
-		elif _is_mobile():
-			toggle_button.custom_minimum_size = Vector2(300, 64)
-			rtl.add_theme_font_size_override("normal_font_size", _get_font_size(16))
-			rtl.offset_top = 14
-		else:
-			rtl.add_theme_font_size_override("normal_font_size", _get_font_size(16))
-			rtl.offset_top = 4
-		
-		rtl.autowrap_mode = TextServer.AUTOWRAP_OFF
-		toggle_button.add_child(rtl)
-		toggle_button.text = "" # Use child for display
 		
 	# Initialize display
 	_update_toggle_button_display(false)
@@ -274,19 +252,68 @@ func _on_convoy_item_pressed(convoy_item_data: Dictionary) -> void:
 	close_list()
 
 func _is_mobile() -> bool:
-	if OS.has_feature("mobile") or OS.has_feature("web_android") or OS.has_feature("web_ios") or DisplayServer.get_name() in ["Android", "iOS"]:
-		return true
-	if is_inside_tree():
-		var win_size = get_viewport_rect().size
-		if win_size.y > win_size.x:
-			return true
-	return false
+	var dsm = get_node_or_null("/root/DeviceStateManager")
+	if is_instance_valid(dsm):
+		return dsm.is_mobile
+	return OS.has_feature("mobile") or OS.has_feature("web_android") or OS.has_feature("web_ios") or DisplayServer.get_name() in ["Android", "iOS"]
 
 func _get_font_size(base: int) -> int:
+	var dsm = get_node_or_null("/root/DeviceStateManager")
+	if is_instance_valid(dsm):
+		return dsm.get_scaled_base_font_size(base)
+	
 	var win_size = get_viewport_rect().size if is_inside_tree() else Vector2(0, 0)
 	var is_portrait = win_size.y > win_size.x
 	var boost = 2.5 if is_portrait else (1.6 if _is_mobile() else 1.2)
 	return int(base * boost)
+
+func _on_layout_mode_changed(_mode, _screen_size, _is_mobile_flag) -> void:
+	_update_button_layout()
+	# Repopulate list if needed or just update item sizes next time it opens
+	if convoy_popup.is_visible():
+		_on_toggle_button_pressed() # Refresh positioning/sizing
+
+func _update_button_layout() -> void:
+	if not is_instance_valid(toggle_button):
+		return
+		
+	var rtl = toggle_button.get_node_or_null("StyleLabel")
+	if not is_instance_valid(rtl):
+		rtl = RichTextLabel.new()
+		rtl.name = "StyleLabel"
+		rtl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		rtl.bbcode_enabled = true
+		rtl.fit_content = true
+		rtl.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		rtl.autowrap_mode = TextServer.AUTOWRAP_OFF
+		toggle_button.add_child(rtl)
+		toggle_button.text = ""
+
+	var is_portrait = false
+	var dsm = get_node_or_null("/root/DeviceStateManager")
+	if is_instance_valid(dsm):
+		is_portrait = dsm.get_is_portrait()
+	else:
+		var win_size = get_viewport_rect().size if is_inside_tree() else Vector2(0, 0)
+		is_portrait = win_size.y > win_size.x
+
+	if is_portrait:
+		# Chunky Portrait Scaling
+		toggle_button.custom_minimum_size = Vector2(520, 140)
+		rtl.add_theme_font_size_override("normal_font_size", _get_font_size(16))
+		rtl.offset_top = 48 # Better vertical centering for 140 height
+	elif _is_mobile():
+		# Landscape Mobile
+		toggle_button.custom_minimum_size = Vector2(320, 80)
+		rtl.add_theme_font_size_override("normal_font_size", _get_font_size(16))
+		rtl.offset_top = 22
+	else:
+		# Desktop
+		toggle_button.custom_minimum_size = Vector2(240, 52)
+		rtl.add_theme_font_size_override("normal_font_size", _get_font_size(16))
+		rtl.offset_top = 6
+	
+	_update_toggle_button_display(convoy_popup.is_visible() if is_instance_valid(convoy_popup) else false)
 
 func _apply_mobile_popup_style() -> void:
 	var ledger = StyleBoxFlat.new()

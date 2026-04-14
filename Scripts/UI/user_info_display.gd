@@ -70,13 +70,10 @@ func _ready() -> void:
 	queue_redraw()
 
 func _is_mobile() -> bool:
-	if OS.has_feature("mobile") or OS.has_feature("web_android") or OS.has_feature("web_ios") or DisplayServer.get_name() in ["Android", "iOS"]:
-		return true
-	if is_inside_tree():
-		var win_size = get_viewport().get_visible_rect().size
-		if win_size.y > win_size.x:
-			return true
-	return false
+	var dsm = get_node_or_null("/root/DeviceStateManager")
+	if is_instance_valid(dsm):
+		return dsm.is_mobile
+	return OS.has_feature("mobile") or OS.has_feature("web_android") or OS.has_feature("web_ios") or DisplayServer.get_name() in ["Android", "iOS"]
 
 func _apply_mobile_optimizations() -> void:
 	# 1. Scaling & Touch Targets
@@ -166,14 +163,21 @@ func _apply_mobile_optimizations() -> void:
 func _update_mobile_sizing() -> void:
 	if not _is_mobile():
 		return
-	var win_size = get_viewport_rect().size if is_inside_tree() else Vector2(0, 0)
-	var is_portrait = win_size.y > win_size.x
-	if is_portrait:
-		custom_minimum_size.y = 170
-		if is_instance_valid(settings_button): settings_button.custom_minimum_size.y = 120
-		if is_instance_valid(report_bug_button): report_bug_button.custom_minimum_size.y = 120
+		
+	var is_portrait = false
+	var dsm = get_node_or_null("/root/DeviceStateManager")
+	if is_instance_valid(dsm):
+		is_portrait = dsm.get_is_portrait()
 	else:
-		custom_minimum_size.y = 90
+		var win_size = get_viewport_rect().size if is_inside_tree() else Vector2(0, 0)
+		is_portrait = win_size.y > win_size.x
+
+	if is_portrait:
+		custom_minimum_size.y = 200 # Increased from 170 for better clearance
+		if is_instance_valid(settings_button): settings_button.custom_minimum_size.y = 130
+		if is_instance_valid(report_bug_button): report_bug_button.custom_minimum_size.y = 130
+	else:
+		custom_minimum_size.y = 96
 		if is_instance_valid(settings_button): settings_button.custom_minimum_size.y = 64
 		if is_instance_valid(report_bug_button): report_bug_button.custom_minimum_size.y = 64
 
