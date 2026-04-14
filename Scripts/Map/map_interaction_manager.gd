@@ -264,7 +264,8 @@ func _handle_touch_input(event: InputEvent):
 				# Check if we clicked a settlement or convoy
 				if debug_logging:
 					print("[MIM] Touch release/tap detected at ", event.position)
-				_handle_tap_interaction(event.position) # Handle tap for selection
+				if _handle_tap_interaction(event.position): # Handle tap for selection
+					get_viewport().set_input_as_handled()
 		return # Consumed
 
 	if event is InputEventScreenDrag and event.index == _pan_touch_index:
@@ -284,7 +285,7 @@ func _handle_touch_input(event: InputEvent):
 	# For example, detecting a drag start on a panel with touch.
 	# The _handle_tap_interaction above handles map element clicks.
 
-func _handle_tap_interaction(_position: Vector2) -> void:
+func _handle_tap_interaction(_position: Vector2) -> bool:
 	# Check if we tapped on a settlement or convoy using current hover info
 	if debug_logging:
 		print("[MIM] _handle_tap_interaction called, hover_type=", _current_hover_info.get('type'))
@@ -295,6 +296,7 @@ func _handle_tap_interaction(_position: Vector2) -> void:
 			if debug_logging:
 				print("[MIM] Tapped settlement at coords: ", settlement_coords)
 			emit_signal("settlement_clicked", settlement_coords)
+			return true
 	elif _current_hover_info.get('type') == 'convoy':
 		# Should we also emit convoy_menu_requested here? 
 		# Probably, to double-check that taps work for convoys too.
@@ -305,6 +307,8 @@ func _handle_tap_interaction(_position: Vector2) -> void:
 				if debug_logging:
 					print("[MIM] Tapped convoy ID: ", cid)
 				emit_signal("convoy_menu_requested", convoy_data)
+				return true
+	return false
 
 # Add boolean return type
 func _handle_panel_drag_motion_only(event: InputEventMouseMotion) -> bool:

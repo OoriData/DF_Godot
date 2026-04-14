@@ -85,6 +85,10 @@ var _has_fitted_camera: bool = false
 var _touches: Dictionary = {} # index (int) -> global_position (Vector2)
 var _last_pinch_distance: float = 0.0
 
+# --- Tap Detection State ---
+var _press_start_pos: Vector2 = Vector2.ZERO
+var _press_start_time: int = 0
+
 # --- Options snapshot (from SettingsManager) ---
 var _opt_invert_pan := false
 var _opt_invert_zoom := false
@@ -445,9 +449,11 @@ func _on_map_view_gui_input(event: InputEvent):
 		return
 
 	# 1. Let the interaction manager handle its specific inputs first (clicks, panel drags).
+	var consumed_by_manager = false
 	if is_instance_valid(map_interaction_manager) and map_interaction_manager.has_method("handle_map_input"):
 		map_interaction_manager.handle_map_input(event)
 		if get_viewport().is_input_handled():
+			consumed_by_manager = true
 			# The interaction manager consumed the event (e.g., started a panel drag, clicked a convoy).
 			# Reset panning state just in case and stop further processing.
 			_is_panning = false
@@ -458,10 +464,22 @@ func _on_map_view_gui_input(event: InputEvent):
 	if event is InputEventScreenTouch:
 		if event.pressed:
 			_touches[event.index] = event.position
+			if _touches.size() == 1:
+				_press_start_pos = event.position
+				_press_start_time = Time.get_ticks_msec()
 		else:
 			if _touches.has(event.index):
 				_touches.erase(event.index)
 			_last_pinch_distance = 0.0 # Reset pinch distance when any finger is lifted
+			
+			# Detect tap on release of the last pointing finger
+			if _touches.size() == 0:
+				var time_delta = Time.get_ticks_msec() - _press_start_time
+				var pos_delta = event.position.distance_to(_press_start_pos)
+				if pos_delta < 15.0 and time_delta < 300:
+					var menu_manager = get_node_or_null("/root/MenuManager")
+					if menu_manager and menu_manager.has_method("is_any_menu_active") and menu_manager.is_any_menu_active():
+						menu_manager.close_all_menus()
 		
 		# If we have 2 touches, initialize the pinch distance
 		if _touches.size() == 2:
@@ -510,12 +528,9 @@ func _on_map_view_gui_input(event: InputEvent):
 	if event is InputEventMouseButton:
 		if event.button_index == MOUSE_BUTTON_LEFT:
 			if event.pressed:
-				# Close any open menu when clicking the map
-				var menu_manager = get_node_or_null("/root/MenuManager")
-				if menu_manager and menu_manager.has_method("is_any_menu_active") and menu_manager.is_any_menu_active():
-					menu_manager.close_all_menus() # This will close all menus and update layout
-					get_viewport().set_input_as_handled()
-					return
+				_press_start_pos = event.position
+				_press_start_time = Time.get_ticks_msec()
+				
 				_is_panning = true
 				Input.set_default_cursor_shape(Input.CURSOR_DRAG)
 				get_viewport().set_input_as_handled() # Consume the event
@@ -524,6 +539,15 @@ func _on_map_view_gui_input(event: InputEvent):
 				_touches.clear() # Clear any touches that might have been tracked via emulation
 				_last_pinch_distance = 0.0
 				Input.set_default_cursor_shape(Input.CURSOR_ARROW)
+				
+				# Detect tap-to-close on release
+				var time_delta = Time.get_ticks_msec() - _press_start_time
+				var pos_delta = event.position.distance_to(_press_start_pos)
+				if pos_delta < 15.0 and time_delta < 300 and not consumed_by_manager:
+					var menu_manager = get_node_or_null("/root/MenuManager")
+					if menu_manager and menu_manager.has_method("is_any_menu_active") and menu_manager.is_any_menu_active():
+						menu_manager.close_all_menus()
+				
 				get_viewport().set_input_as_handled() # Consume the event
 		elif event.button_index == MOUSE_BUTTON_WHEEL_UP and event.pressed:
 			var inc: float = float(map_camera_controller.camera_zoom_factor_increment)
