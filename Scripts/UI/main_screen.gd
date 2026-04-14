@@ -826,6 +826,8 @@ func _update_camera_occlusion_from_menu():
 	var occlusion_y = 0.0
 	if _is_portrait():
 		occlusion_y = _current_menu_occlusion_px
+		if _current_menu_occlusion_px > 0.0:
+			occlusion_y += _get_bottom_safe_margin()
 	else:
 		occlusion_x = _current_menu_occlusion_px
 
@@ -1426,17 +1428,29 @@ func _on_convoy_menu_requested(convoy_data: Dictionary):
 
 # Called when the map_ready_for_focus signal is emitted from main.gd
 func _on_map_ready_for_focus():
-	# print("[DFCAM-DEBUG] MainScreen: Received map_ready_for_focus signal.")
 	_map_ready_for_focus = true
-	await get_tree().process_frame  # Wait for UI to settle
+	# Wait for UI layout to settle
+	await get_tree().process_frame
+	
 	if is_instance_valid(map_camera_controller) and not _has_fitted_camera:
 		var map_rect = _get_map_display_rect()
-		# print("[DFCAM-DEBUG] MainScreen: map_ready_for_focus, updating camera viewport display rect=", map_rect)
+		
+		# DIAGNOSTICS: Verify if we have a valid map rect before fitting
+		if onboarding_log_enabled:
+			print("[MainScreen] Map ready for focus. map_rect=%s, screen_size=%s" % [str(map_rect), str(get_viewport_rect().size)])
+		
+		# If the map rect is suspiciously small or invalid, wait another frame
+		if map_rect.size.x < 10 or map_rect.size.y < 10:
+			if onboarding_log_enabled:
+				print("[MainScreen] map_rect is too small; waiting one more frame for layout stabilization...")
+			await get_tree().process_frame
+			map_rect = _get_map_display_rect()
+
 		map_camera_controller.update_map_viewport_rect(map_rect)
 		if map_camera_controller.has_method("fit_camera_to_tilemap"):
+			# Ensure we are fit using strict COVER mode for initial load to avoid background exposure
 			map_camera_controller.fit_camera_to_tilemap()
 		_has_fitted_camera = true
-		# print("[DFCAM-DEBUG] MainScreen: fit_camera_to_tilemap called.")
 
 	# Inform TutorialManager that the map is now ready so the tutorial
 	# can safely start once convoy/dialog conditions are satisfied.

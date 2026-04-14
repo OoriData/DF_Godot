@@ -458,6 +458,12 @@ func _draw_interactive_labels(current_hover_info: Dictionary):
 		if not settlement_coords_to_display.has(pinned_coords):
 			settlement_coords_to_display.append(pinned_coords)
 
+	# Include preview route destination
+	if _is_preview_active and _preview_route_x.size() > 0:
+		var end_tile_coords := Vector2i(int(_preview_route_x.back()), int(_preview_route_y.back()))
+		if not settlement_coords_to_display.has(end_tile_coords):
+			settlement_coords_to_display.append(end_tile_coords)
+
 	# Draw Settlement Labels (for selected convoys' start/end, then hovered settlement)
 	if not _selected_convoy_ids_cache.is_empty():
 		for convoy_data in _all_convoy_data_cache:
@@ -965,6 +971,14 @@ func _on_connector_lines_container_draw():
 				convoy_connector_lines_container.draw_polyline(offset_points, Color(1,1,1,0.95), outline_w)
 				# Colored path matching convoy icon (top stroke)
 				convoy_connector_lines_container.draw_polyline(offset_points, convoy_color, connector_line_width)
+				
+				# Destination Marker
+				var dest_pt = offset_points[offset_points.size() - 1]
+				var marker_radius = connector_line_width * 1.5
+				var outline_radius = marker_radius + (route_line_outline_extra_width * 0.75)
+				convoy_connector_lines_container.draw_circle(dest_pt, outline_radius, Color(1,1,1,0.95))
+				convoy_connector_lines_container.draw_circle(dest_pt, marker_radius, convoy_color)
+
 	# --- Preview Route Drawing (after existing routes so it appears on top) ---
 	if _is_preview_active and _preview_route_x.size() >= 2 and _preview_route_x.size() == _preview_route_y.size():
 		var preview_points_base: Array[Vector2] = []
@@ -1054,6 +1068,13 @@ func _on_connector_lines_container_draw():
 			convoy_connector_lines_container.draw_polyline(preview_offset_points, Color(1,1,1,0.95), preview_outline_w)
 			# Colored overlay matching convoy color
 			convoy_connector_lines_container.draw_polyline(preview_offset_points, _preview_color, _preview_line_width)
+			
+			# Destination Marker
+			var dest_pt = preview_offset_points[preview_offset_points.size() - 1]
+			var marker_radius = _preview_line_width * 1.5
+			var outline_radius = marker_radius + (route_line_outline_extra_width * 0.75)
+			convoy_connector_lines_container.draw_circle(dest_pt, outline_radius, Color(1,1,1,0.95))
+			convoy_connector_lines_container.draw_circle(dest_pt, marker_radius, _preview_color)
 
 func set_convoy_user_position(convoy_id_str: String, position: Vector2):
 	_convoy_label_user_positions[convoy_id_str] = position
