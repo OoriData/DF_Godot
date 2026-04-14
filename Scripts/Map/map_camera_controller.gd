@@ -104,6 +104,13 @@ func update_map_viewport_rect(new_rect: Rect2):
 	if new_rect.size.x > 0 and new_rect.size.y > 0:
 		sub_viewport_node.size = Vector2i(new_rect.size)
 		map_viewport_rect = Rect2(Vector2.ZERO, new_rect.size)
+		var is_new_portrait: bool = new_rect.size.y > new_rect.size.x
+		var was_portrait: bool = _full_viewport_size.y > _full_viewport_size.x
+		if _full_viewport_size != Vector2.ZERO and is_new_portrait != was_portrait:
+			# Aspect ratio flipped. Invalidate the cache to prevent stale layout tracking.
+			_full_viewport_size = new_rect.size
+		
+		# Now perform the normal maximums tracking
 		if map_viewport_rect.size.x > _full_viewport_size.x or map_viewport_rect.size.y > _full_viewport_size.y:
 			_full_viewport_size = map_viewport_rect.size
 		# print("[DFCAM-DEBUG] update_map_viewport_rect: Synced SubViewport size to ", sub_viewport_node.size)

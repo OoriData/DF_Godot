@@ -295,6 +295,10 @@ func _on_main_screen_size_changed():
 	if _menu_anim_in_progress == false and is_instance_valid(menu_container) and menu_container.visible:
 		_refresh_menu_layout()
 	_update_menu_container_anchors()
+
+	# Wait for Godot layout to recalculate UI bounds before updating camera
+	await get_tree().process_frame
+
 	_update_camera_viewport_rect_on_resize()
 	_update_onboarding_layer_rect_to_map()
 
@@ -304,6 +308,9 @@ func _on_layout_mode_changed(mode, screen_size, is_mobile):
 	if _menu_anim_in_progress == false and is_instance_valid(menu_container) and menu_container.visible:
 		_refresh_menu_layout()
 	
+	# Wait for Godot layout to recalculate UI bounds before updating camera
+	await get_tree().process_frame
+
 	_update_camera_viewport_rect_on_resize()
 	_update_onboarding_layer_rect_to_map()
 
@@ -413,6 +420,13 @@ func _update_camera_viewport_rect_on_resize():
 		# The root control can include extra UI chrome; using it causes camera/map edge mismatch.
 		var map_rect = _get_map_display_rect()
 		map_camera_controller.update_map_viewport_rect(map_rect)
+		
+		# CRITICAL: Re-sync occlusion after viewport size update. 
+		# If we just rotated, the previous occlusion might have been clamped against
+		# the OLD orientation's bounds. Re-sending it now ensures it's correctly applied
+		# to the NEW bounds.
+		_update_camera_occlusion_from_menu()
+		
 		# Preserve current camera state on resize; limits are updated by controller
 
 
