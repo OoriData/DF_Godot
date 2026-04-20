@@ -151,6 +151,9 @@ func _on_layout_mode_changed(_mode: int, _size: Vector2, _is_mobile_val: bool) -
 		_style_top_bar_button(warehouse_button)
 	if is_instance_valid(back_button):
 		_style_back_button(back_button)
+	
+	# Regenerate UI completely on layout change to ensure correct bounds.
+	call_deferred("_display_settlement_info")
 
 
 

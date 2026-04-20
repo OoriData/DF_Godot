@@ -32,12 +32,9 @@ func _emit_install_requested(item: Variant, quantity: int, vendor_id: String) ->
 @onready var item_info_rich_text: RichTextLabel = %ItemInfoRichText
 @onready var fitment_panel: VBoxContainer = %FitmentPanel
 @onready var fitment_rich_text: RichTextLabel = %FitmentRichText
-@onready var comparison_panel: PanelContainer = %ComparisonPanel
 @onready var description_toggle_button: Button = %DescriptionToggleButton
 @onready var description_panel: VBoxContainer = %DescriptionPanel
 @onready var item_description_rich_text: RichTextLabel = %ItemDescriptionRichText
-@onready var selected_item_stats: RichTextLabel = %SelectedItemStats
-@onready var equipped_item_stats: RichTextLabel = %EquippedItemStats
 @onready var quantity_spinbox: QuantityWidget = %QuantitySpinBox
 @onready var delivery_reward_label: RichTextLabel = %DeliveryRewardLabel
 @onready var price_label: RichTextLabel = %PriceLabel
@@ -626,26 +623,61 @@ func _get_bold_font_for(node: Control) -> FontVariation:
 	return _bold_font_cache
 
 # Deleted: _get_portrait_font_size
+
+func _on_layout_mode_changed(_mode: int, _screen_size: Vector2, _is_mobile: bool) -> void:
+	_update_layout_scaling()
+
+func _update_layout_scaling() -> void:
+	var dsm = get_node_or_null("/root/DeviceStateManager")
+	if not is_instance_valid(dsm): return
+	
+	var mode = dsm.get_layout_mode()
+	var is_portrait = (mode == 2) # MOBILE_PORTRAIT
+	
+	var dyn_font_sz = dsm.get_scaled_base_font_size(16)
+	if is_portrait:
+		dyn_font_sz = int(dyn_font_sz * 1.1)
+		
+	var curr_theme = theme
+	if curr_theme == null:
+		curr_theme = Theme.new()
+		theme = curr_theme
+	curr_theme.default_font_size = dyn_font_sz
+	
+	if is_instance_valid(trade_mode_tab_container):
+		trade_mode_tab_container.theme = curr_theme
+		var tab_bar = trade_mode_tab_container.get_tab_bar()
+		if is_instance_valid(tab_bar):
+			tab_bar.add_theme_font_size_override("font_size", dyn_font_sz)
+
+	var btn_min_h = 100.0 if is_portrait else 34.0
+	if is_instance_valid(action_button):
+		action_button.custom_minimum_size.y = btn_min_h
+	if is_instance_valid(max_button):
+		max_button.custom_minimum_size.y = btn_min_h
+	if is_instance_valid(install_button):
+		install_button.custom_minimum_size.y = btn_min_h
+		
+	if is_instance_valid(quantity_spinbox):
+		quantity_spinbox.custom_minimum_size.y = btn_min_h if is_portrait else 0.0
+
+	var bar_min_h = 60.0 if is_portrait else 24.0
+	if is_instance_valid(convoy_volume_bar):
+		convoy_volume_bar.custom_minimum_size.y = bar_min_h
+	if is_instance_valid(convoy_weight_bar):
+		convoy_weight_bar.custom_minimum_size.y = bar_min_h
+
+	if is_instance_valid(cargo_sort_button):
+		var sort_h = 80.0 if is_portrait else 34.0
+		cargo_sort_button.custom_minimum_size.y = sort_h
+
 func _ready() -> void:
 	var dsm = get_node_or_null("/root/DeviceStateManager")
 	if is_instance_valid(dsm):
-		var mode = dsm.get_layout_mode()
-		var dyn_font_sz = dsm.get_scaled_base_font_size(16)
-		if mode == 2: # MOBILE_PORTRAIT
-			dyn_font_sz = int(dyn_font_sz * 1.1)
-		
-		var curr_theme = theme
-		if curr_theme == null:
-			curr_theme = Theme.new()
-			theme = curr_theme
-		curr_theme.default_font_size = dyn_font_sz
-		
-		# Explicitly boost tabs if available
-		if is_instance_valid(trade_mode_tab_container):
-			trade_mode_tab_container.theme = curr_theme
-			var tab_bar = trade_mode_tab_container.get_tab_bar()
-			if is_instance_valid(tab_bar):
-				tab_bar.add_theme_font_size_override("font_size", dyn_font_sz)
+		if not dsm.layout_mode_changed.is_connected(_on_layout_mode_changed):
+			dsm.layout_mode_changed.connect(_on_layout_mode_changed)
+			
+	_update_layout_scaling()
 
 	# Connect signals from UI elements
 	vendor_item_tree.item_selected.connect(_on_vendor_item_selected)
@@ -688,10 +720,7 @@ func _ready() -> void:
 
 	if is_instance_valid(cargo_sort_button):
 		_load_cargo_sort_metric_from_settings()
-		var win_size = get_viewport_rect().size if is_inside_tree() else Vector2(0, 0)
-		var vp_is_portrait = win_size.y > win_size.x
-		var sort_h = 80 if vp_is_portrait else 34
-		cargo_sort_button.custom_minimum_size = Vector2(100, sort_h) # Thinner button
+		cargo_sort_button.custom_minimum_size.x = 100 # Thinner button
 		cargo_sort_button.add_theme_color_override("font_color", Color(0.93, 0.93, 0.93, 1.0))
 		cargo_sort_button.add_theme_color_override("font_hover_color", Color(0.98, 0.98, 0.98, 1.0))
 		
@@ -784,25 +813,11 @@ func _ready() -> void:
 	if is_instance_valid(convoy_cargo_label):
 		convoy_cargo_label.autowrap_mode = TextServer.AUTOWRAP_WORD
 
-	# Initially hide comparison panel until an item is selected
-	comparison_panel.hide()
-	# Scale action buttons according to orientation
-	var win_size_btn = get_viewport_rect().size if is_inside_tree() else Vector2(0, 0)
-	var is_portrait_btn = win_size_btn.y > win_size_btn.x
-	var btn_min_h = 100.0 if is_portrait_btn else 34.0
+	# Action buttons minimum sizes are handled by _update_layout_scaling()
 	if is_instance_valid(action_button):
 		action_button.disabled = true
-		action_button.custom_minimum_size.y = btn_min_h
 	if is_instance_valid(max_button):
 		max_button.disabled = true
-		max_button.custom_minimum_size.y = btn_min_h
-	if is_instance_valid(install_button):
-		install_button.custom_minimum_size.y = btn_min_h
-		
-	# Boost quantity selector buttons natively
-	if is_instance_valid(quantity_spinbox):
-		if is_portrait_btn:
-			quantity_spinbox.custom_minimum_size.y = btn_min_h
 
 	# Ensure loading overlay never blocks input during tutorial debugging
 	if is_instance_valid(loading_panel):
@@ -887,28 +902,17 @@ func _apply_text_readability_fixes() -> void:
 		if is_instance_valid(lbl) and lbl is Label:
 			lbl.add_theme_font_override("font", _get_semi_bold_font_for(lbl))
 	
-	# Scale the in-bar percentage text on cargo capacity bars natively via y limits
-	var win_size = get_viewport_rect().size if is_inside_tree() else Vector2(0, 0)
-	var is_portrait = win_size.y > win_size.x
-	
-	for bar_node_name in ["%ConvoyVolumeBar", "%ConvoyWeightBar"]:
-		var bar = get_node_or_null(bar_node_name)
-		if not is_instance_valid(bar):
-			bar = get_node_or_null("HBoxContainer/RightPanel/CapacityBars/ConvoyVolumeBar")
-		if is_instance_valid(bar):
-			if is_portrait:
-				bar.custom_minimum_size.y = 60
-	
-	# Scale cargo bars from @onready vars
-	if is_portrait:
-		if is_instance_valid(convoy_volume_bar):
-			convoy_volume_bar.custom_minimum_size.y = 60
-		if is_instance_valid(convoy_weight_bar):
-			convoy_weight_bar.custom_minimum_size.y = 60
+	pass
 
 
 func _exit_tree() -> void:
-	# Disconnect from Hub/Store/API signals that we connected in _ready
+	# Disconnect from Hub/Store/API/Global signals that we connected in _ready
+	var dsm = get_node_or_null("/root/DeviceStateManager")
+	if is_instance_valid(dsm) and dsm.has_signal("layout_mode_changed"):
+		var cb_dsm := Callable(self, "_on_layout_mode_changed")
+		if dsm.layout_mode_changed.is_connected(cb_dsm):
+			dsm.layout_mode_changed.disconnect(cb_dsm)
+			
 	if is_instance_valid(_hub) and _hub.has_signal("vendor_panel_ready"):
 		var cb_hub := Callable(self, "_on_hub_vendor_panel_ready")
 		if _hub.vendor_panel_ready.is_connected(cb_hub):
@@ -1022,7 +1026,7 @@ func _on_service_vehicle_data_received(data: Dictionary) -> void:
 			if not sel.has(k):
 				sel[k] = (data as Dictionary)[k]
 		_update_inspector()
-		_update_comparison()
+		# _update_comparison() removed - deprecated.
 
 func _resolve_settlement_for_vendor_or_convoy(vendor_id: String, convoy_id: String) -> Dictionary:
 	return VendorPanelContextController.resolve_settlement_for_vendor_or_convoy(self, vendor_id, convoy_id)
@@ -1569,15 +1573,9 @@ func _on_api_transaction_error(error_message: String) -> void:
 	var friendly_message: String = ErrorTranslator.translate(error_message)
 	show_transaction_feedback(friendly_message, "error")
 
-# Updates the comparison panel (stub, fill in as needed)
+# Updates the comparison panel (stub, deprecated)
 func _update_comparison() -> void:
-	# Hide comparison for vehicles, as there's nothing to compare against.
-	if selected_item and selected_item.has("item_data") and selected_item.item_data.has("vehicle_id"):
-		if is_instance_valid(comparison_panel):
-			comparison_panel.hide()
-		return
-	
-	# Future: Implement comparison logic for parts, etc.
+	pass
 
 # Clears the inspector panel (stub, fill in as needed)
 func _clear_inspector() -> void:

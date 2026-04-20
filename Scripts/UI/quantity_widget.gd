@@ -65,17 +65,18 @@ func _ready() -> void:
 	add_theme_constant_override("separation", sep)
 
 func set_value(new_val: float) -> void:
+	var old_val = value
 	value = clampf(new_val, min_value, max_value)
 	if is_instance_valid(_value_label):
 		_value_label.text = str(int(value))
+	if value != old_val:
+		value_changed.emit(value)
 
 func _on_minus() -> void:
 	set_value(value - step)
-	value_changed.emit(value)
 
 func _on_plus() -> void:
 	set_value(value + step)
-	value_changed.emit(value)
 
 func _on_text_submitted(text: String) -> void:
 	_commit_text(text)
@@ -87,7 +88,6 @@ func _on_focus_exited() -> void:
 func _commit_text(text: String) -> void:
 	if text.is_valid_float():
 		set_value(float(text))
-		value_changed.emit(value)
 	else:
 		# Reset to current value if invalid
 		if is_instance_valid(_value_label):

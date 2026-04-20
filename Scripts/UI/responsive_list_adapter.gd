@@ -45,6 +45,12 @@ func _ready() -> void:
 		if not dsm.is_connected("layout_mode_changed", _on_layout_mode_changed):
 			dsm.layout_mode_changed.connect(_on_layout_mode_changed)
 
+func _exit_tree() -> void:
+	var dsm = get_node_or_null("/root/DeviceStateManager")
+	if is_instance_valid(dsm) and dsm.has_signal("layout_mode_changed"):
+		if dsm.layout_mode_changed.is_connected(_on_layout_mode_changed):
+			dsm.layout_mode_changed.disconnect(_on_layout_mode_changed)
+
 func _on_layout_mode_changed(_mode: int, _size: Vector2, _is_mobile_val: bool) -> void:
 	if Engine.is_editor_hint():
 		return
@@ -144,8 +150,12 @@ func _apply_size_to_node(node: Node, target_h: float) -> void:
 		
 		if _is_mobile() or large_text:
 			# TabContainer uses 'font_size' theme override for the tab titles
-			var base_fs = node.get_theme_font_size("font_size")
-			if base_fs <= 16: base_fs = 18 # Ensure a reasonable base for scaling
+			# Use saved original to prevent multiplicative accumulation on re-apply.
+			var base_fs: int = node.get_meta("_rla_orig_font_size", -1)
+			if base_fs < 0:
+				base_fs = node.get_theme_font_size("font_size")
+				if base_fs <= 16: base_fs = 18
+				node.set_meta("_rla_orig_font_size", base_fs)
 			node.add_theme_font_size_override("font_size", int(base_fs * font_b))
 			# Reduce side margins to fit more tabs/content without clipping
 			node.add_theme_constant_override("side_margin", int(8 * font_b))
@@ -185,18 +195,34 @@ func _apply_large_text(node: Control) -> void:
 	
 	if b < 0.1: b = 1.6
 	
+	# IMPORTANT: Save the original (un-boosted) font size on first application.
+	# On subsequent calls (e.g. orientation change), read from the saved original
+	# to prevent multiplicative accumulation (16 -> 25 -> 40 -> 64 -> crash).
 	if node is Label:
-		var fs = node.get_theme_font_size("font_size")
-		node.add_theme_font_size_override("font_size", int(fs * b))
+		var orig_fs: int = node.get_meta("_rla_orig_font_size", -1)
+		if orig_fs < 0:
+			orig_fs = node.get_theme_font_size("font_size")
+			node.set_meta("_rla_orig_font_size", orig_fs)
+		node.add_theme_font_size_override("font_size", int(orig_fs * b))
 	elif node is RichTextLabel:
-		var fs = node.get_theme_font_size("normal_font_size")
-		node.add_theme_font_size_override("normal_font_size", int(fs * b))
-		if node.theme_override_font_sizes.has("bold_font_size"):
-			node.add_theme_font_size_override("bold_font_size", int(node.get_theme_font_size("bold_font_size") * b))
+		var orig_fs: int = node.get_meta("_rla_orig_normal_fs", -1)
+		if orig_fs < 0:
+			orig_fs = node.get_theme_font_size("normal_font_size")
+			node.set_meta("_rla_orig_normal_fs", orig_fs)
+		node.add_theme_font_size_override("normal_font_size", int(orig_fs * b))
+		var orig_bold: int = node.get_meta("_rla_orig_bold_fs", -1)
+		if orig_bold < 0 and node.theme_override_font_sizes.has("bold_font_size"):
+			orig_bold = node.get_theme_font_size("bold_font_size")
+			node.set_meta("_rla_orig_bold_fs", orig_bold)
+		if orig_bold > 0:
+			node.add_theme_font_size_override("bold_font_size", int(orig_bold * b))
 	elif node is Tree:
-		var fs = node.get_theme_font_size("font_size")
-		node.add_theme_font_size_override("font_size", int(fs * b))
-		node.add_theme_font_size_override("title_button_font_size", int(fs * b))
+		var orig_fs: int = node.get_meta("_rla_orig_font_size", -1)
+		if orig_fs < 0:
+			orig_fs = node.get_theme_font_size("font_size")
+			node.set_meta("_rla_orig_font_size", orig_fs)
+		node.add_theme_font_size_override("font_size", int(orig_fs * b))
+		node.add_theme_font_size_override("title_button_font_size", int(orig_fs * b))
 
 func _apply_style_to_button(btn: Button) -> void:
 	# Add a subtle background/border to buttons on mobile so they are recognizable touch targets
