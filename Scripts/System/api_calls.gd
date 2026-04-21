@@ -144,6 +144,7 @@ var _current_auth_poll_provider: String = "discord"
 var _current_request_start_time: float = 0.0
 var _request_timeout_timer: Timer
 var _disable_request_timeouts_for_tests: bool = false
+var _current_request_details: Dictionary = {}
 const REQUEST_TIMEOUT_SECONDS := {
 	RequestPurpose.MAP_DATA: 5.0,
 	RequestPurpose.AUTH_URL: 5.0,
@@ -265,15 +266,30 @@ func _extract_query_param(url: String, key: String) -> String:
 	return ""
 
 func _diag_enqueue(tag: String, details: Dictionary) -> void:
+	var method_i := int(details.get("method", HTTPClient.METHOD_GET))
+	var url_s := String(details.get("url", ""))
+	var is_patch_txn := (method_i == HTTPClient.METHOD_PATCH and String(details.get("signal_name", "")) != "")
+
+	# --- Deduplication (GET only) ---
+	if method_i == HTTPClient.METHOD_GET:
+		var is_duplicate = false
+		if _is_request_in_progress and _last_requested_url == url_s and _current_request_method == HTTPClient.METHOD_GET:
+			is_duplicate = true
+		else:
+			for r in _request_queue:
+				if r.get("url", "") == url_s and r.get("method", HTTPClient.METHOD_GET) == HTTPClient.METHOD_GET:
+					is_duplicate = true
+					break
+		if is_duplicate:
+			_log_debug("[APICalls][Deduplicate] Skipping identical GET request for url=" + url_s)
+			return
+
 	# Stamp enqueue time and client txn id for tracing if it's a PATCH or interesting GET
 	var qlen_before := _request_queue.size()
 	_client_txn_seq += 1
 	details["client_txn_id"] = _client_txn_seq
 	details["enqueued_at_ms"] = Time.get_ticks_msec()
 	details["debug_tag"] = tag
-	var method_i := int(details.get("method", HTTPClient.METHOD_GET))
-	var url_s := String(details.get("url", ""))
-	var is_patch_txn := (method_i == HTTPClient.METHOD_PATCH and String(details.get("signal_name", "")) != "")
 	_log_debug("[APICalls][Enqueue] tag=" + tag + " id=" + str(_client_txn_seq) + " method=" + str(method_i) + " qlen_before=" + str(qlen_before) + " in_progress=" + str(_is_request_in_progress) + " url=" + url_s + " prio_patch=" + str(is_patch_txn))
 	print("[APICalls][Debug] Enqueuing request tag=%s. Queue size: %d" % [tag, _request_queue.size()])
 	if is_patch_txn:
@@ -2081,6 +2097,7 @@ func _process_queue() -> void:
 	_is_request_in_progress = true
 	print("[APICalls] _process_queue(): dequeuing next request. Remaining (before pop)=%d" % _request_queue.size())
 	var next_request: Dictionary = _request_queue.pop_front()
+	_current_request_details = next_request
 	var q_after := _request_queue.size()
 	var enq_ms := int(next_request.get("enqueued_at_ms", -1))
 	var now_ms := Time.get_ticks_msec()
@@ -2204,6 +2221,19 @@ func _on_request_completed(result: int, response_code: int, _headers: PackedStri
 		"body_preview": resp_preview,
 	}
 	_log_info("[APICalls] _on_request_completed() purpose=%s result=%d code=%d url=%s id=%d http_ms=%d" % [RequestPurpose.keys()[_current_request_purpose], result, response_code, _last_requested_url, _current_client_txn_id, http_elapsed_ms])
+
+	if result == HTTPRequest.RESULT_CONNECTION_ERROR and _current_request_details.get("retry_count", 0) < 3:
+		var retries = _current_request_details.get("retry_count", 0) + 1
+		_log_warn("APICalls: Connection error (code 4). Retrying %d/3 for URL=%s" % [retries, _last_requested_url])
+		_current_request_details["retry_count"] = retries
+		_request_queue.push_front(_current_request_details)
+		_is_request_in_progress = false
+		_current_request_purpose = RequestPurpose.NONE
+		var timer = get_tree().create_timer(0.5 * retries * retries)
+		timer.process_mode = Node.PROCESS_MODE_ALWAYS
+		timer.timeout.connect(Callable(self, "_process_queue"))
+		return
+
 	if _current_debug_tag == "bug_report":
 		_log_info("[APICalls][BugReport] complete result=%d code=%d body_bytes=%d preview=%s" % [result, response_code, body.size(), resp_preview])
 	if _current_patch_signal_name == "warehouse_convoy_spawned":

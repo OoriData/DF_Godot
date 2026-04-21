@@ -137,6 +137,10 @@ func _ready():
 	# Phase 4: UI no longer listens to APICalls transaction signals. Authoritative
 	# refreshes are driven via services + GameStore/SignalHub events.
 
+	if is_instance_valid(vendor_tab_container):
+		if not vendor_tab_container.tab_changed.is_connected(_on_vendor_tab_changed):
+			vendor_tab_container.tab_changed.connect(_on_vendor_tab_changed)
+
 	var dsm = get_node_or_null("/root/DeviceStateManager")
 	if is_instance_valid(dsm):
 		if not dsm.is_connected("layout_mode_changed", _on_layout_mode_changed):
@@ -574,15 +578,29 @@ func _post_txn_update_ui():
 func _refresh_all_vendor_panels():
 	# Only call refresh_data, never initialize, and always pass deep copies.
 	# IMPORTANT: Skip refreshing the currently active vendor tab; the active
-	# panel already performs its own authoritative refresh
-	# vendor_panel_data_ready. Double-refreshing it causes selection flicker
-	# during transactions.
+	# panel already performs its own authoritative refresh.
+	# Inactive tabs are now lazily loaded using metadata tracking to prevent a "refresh storm".
+	if not is_instance_valid(vendor_tab_container):
+		return
+		
 	var active_idx: int = vendor_tab_container.current_tab
 	for i in range(vendor_tab_container.get_tab_count()):
 		if i == active_idx:
 			continue
 		var tab_content = vendor_tab_container.get_tab_control(i)
-		if tab_content is Control and tab_content.has_method("refresh_data"):
+		if is_instance_valid(tab_content):
+			tab_content.set_meta("needs_refresh", true)
+			
+	# Also refresh top up button when vendor data may have changed
+	_update_top_up_button()
+
+func _on_vendor_tab_changed(tab_idx: int) -> void:
+	if not is_instance_valid(vendor_tab_container):
+		return
+	var tab_content = vendor_tab_container.get_tab_control(tab_idx)
+	if is_instance_valid(tab_content) and tab_content.has_meta("needs_refresh") and tab_content.get_meta("needs_refresh"):
+		tab_content.set_meta("needs_refresh", false)
+		if tab_content.has_method("refresh_data"):
 			var full_vendor_name = tab_content.name
 			var vendor_data = _find_vendor_by_name(full_vendor_name)
 			if vendor_data:
@@ -592,9 +610,7 @@ func _refresh_all_vendor_panels():
 					_settlement_data.duplicate(true),
 					_all_settlement_data.duplicate(true)
 				)
-	# Also refresh top up button when vendor data may have changed
-	_update_top_up_button()
-
+	
 func _find_vendor_by_name(vendor_name: String) -> Dictionary:
 	if _settlement_data and _settlement_data.has("vendors"):
 		for vendor in _settlement_data.vendors:

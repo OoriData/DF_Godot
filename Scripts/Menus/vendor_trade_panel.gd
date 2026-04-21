@@ -210,6 +210,8 @@ func _apply_committed_projection_scale(quantity: int, added_volume: float, added
 		return {"added_volume": 0.0, "added_weight": 0.0}
 
 	var scale_factor: float = float(uncommitted_qty) / float(quantity)
+	if not is_finite(scale_factor):
+		scale_factor = 0.0
 	return {"added_volume": added_volume * scale_factor, "added_weight": added_weight * scale_factor}
 
 func _get_effective_projection_deltas() -> Dictionary:
@@ -228,7 +230,11 @@ func _get_effective_projection_deltas() -> Dictionary:
 	var added_w: float = float(pr.get("added_weight", 0.0))
 	var added_v: float = float(pr.get("added_volume", 0.0))
 	var scaled := _apply_committed_projection_scale(quantity, added_v, added_w)
-	return {"volume": float(scaled.get("added_volume", 0.0)), "weight": float(scaled.get("added_weight", 0.0))}
+	var final_v = float(scaled.get("added_volume", 0.0))
+	var final_w = float(scaled.get("added_weight", 0.0))
+	if not is_finite(final_v): final_v = 0.0
+	if not is_finite(final_w): final_w = 0.0
+	return {"volume": final_v, "weight": final_w}
 
 func _commit_projection_from_pending_tx() -> void:
 	if not (_pending_tx is Dictionary):
@@ -1487,7 +1493,12 @@ func _update_transaction_panel() -> void:
 			action_button.text = "Sell"
 
 func _refresh_capacity_bars(projected_volume_delta: float, projected_weight_delta: float) -> void:
-	VendorPanelConvoyStatsController.refresh_capacity_bars(self, projected_volume_delta, projected_weight_delta)
+	var dsm = get_node_or_null("/root/DeviceStateManager")
+	if is_instance_valid(dsm) and dsm.get_layout_mode() == 2: # MOBILE_PORTRAIT
+		# Ensure layout settles before rendering highlight overlays
+		VendorPanelConvoyStatsController.refresh_capacity_bars.call_deferred(self, projected_volume_delta, projected_weight_delta)
+	else:
+		VendorPanelConvoyStatsController.refresh_capacity_bars(self, projected_volume_delta, projected_weight_delta)
 
 func _is_positive_number(v: Variant) -> bool:
 	return (v is float or v is int) and float(v) > 0.0
