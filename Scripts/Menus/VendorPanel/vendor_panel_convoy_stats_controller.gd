@@ -139,6 +139,10 @@ static func _update_projection_overlay(bar: ProgressBar, base_value: float, proj
 		(proj_marker as CanvasItem).visible = false
 
 	if not projection_active:
+		bar.remove_meta("proj_delta")
+		bar.remove_meta("proj_total_value")
+		bar.remove_meta("proj_base_value")
+		bar.remove_meta("proj_projected_value")
 		return
 
 	# Store state in metadata for reactive layout updates (e.g. on resize)
@@ -160,10 +164,7 @@ static func update_projection_overlay_layout(bar: ProgressBar) -> void:
 	var projected_value: float = float(bar.get_meta("proj_projected_value", 0.0))
 
 	# Hide overlay when no projection is active.
-	var projection_active: bool = abs(delta) > 0.00001 and total_value > 0.0 and bar.visible and abs(projected_value - base_value) > 0.00001
-	segment.visible = projection_active
-	if not projection_active:
-		return
+	var projection_active: bool = abs(delta) > 0.00001 and total_value > 0.0001 and bar.visible and abs(projected_value - base_value) > 0.00001
 
 	# 1) Ensure overlay is clipped.
 	bar.clip_contents = true
@@ -180,7 +181,6 @@ static func update_projection_overlay_layout(bar: ProgressBar) -> void:
 	var left_ratio: float = clamp(min(base_value, projected_value) / max(0.00001, total_value), 0.0, 1.0)
 	var right_ratio: float = clamp(max(base_value, projected_value) / max(0.00001, total_value), 0.0, 1.0)
 
-	segment.set_anchors_preset(Control.PRESET_FULL_RECT)
 	segment.anchor_left = left_ratio
 	segment.anchor_right = right_ratio
 	
@@ -208,6 +208,10 @@ static func update_projection_overlay_layout(bar: ProgressBar) -> void:
 	elif bg_sb_actual != null and bg_sb_actual is StyleBoxFlat:
 		var b_sb := bg_sb_actual as StyleBoxFlat
 		radius = maxi(int(b_sb.corner_radius_top_left), int(b_sb.corner_radius_top_right))
+	
+	# BUGFIX: Prevent StyleBoxFlat explosion on very narrow slivers
+	var expected_px_width: float = (right_ratio - left_ratio) * bar.size.x
+	radius = mini(radius, max(0, int(expected_px_width)))
 	
 	var touches_left: bool = left_ratio <= 0.01
 	var touches_right: bool = right_ratio >= 0.99
@@ -260,12 +264,14 @@ static func _ensure_projection_segment(bar: ProgressBar) -> Panel:
 		container.name = container_name
 		container.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		container.set_anchors_preset(Control.PRESET_FULL_RECT)
+		container.clip_contents = true
 		
 		# Inner container handles the percentage anchors cleanly without fighting margins
 		var inner = Control.new()
 		inner.name = "ProjectionInner"
 		inner.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		inner.set_anchors_preset(Control.PRESET_FULL_RECT)
+		inner.clip_contents = true
 		container.add_child(inner)
 		
 		var p = Panel.new()

@@ -259,9 +259,9 @@ static func build_price_presenter(item_data_source: Dictionary, mode: String, qu
         if not is_finite(unit_volume):
             unit_volume = 0.0
         var added_volume := unit_volume * float(quantity)
-        if not is_finite(added_volume):
+        if not is_finite(added_volume) or added_volume > 1000000.0:
             added_volume = 0.0
-
+        
         if mode == "sell":
             added_weight = -added_weight
             added_volume = -added_volume

@@ -211,7 +211,7 @@ func _apply_large_text(node: Control) -> void:
 			node.set_meta("_rla_orig_normal_fs", orig_fs)
 		node.add_theme_font_size_override("normal_font_size", int(orig_fs * b))
 		var orig_bold: int = node.get_meta("_rla_orig_bold_fs", -1)
-		if orig_bold < 0 and node.theme_override_font_sizes.has("bold_font_size"):
+		if orig_bold < 0:
 			orig_bold = node.get_theme_font_size("bold_font_size")
 			node.set_meta("_rla_orig_bold_fs", orig_bold)
 		if orig_bold > 0:

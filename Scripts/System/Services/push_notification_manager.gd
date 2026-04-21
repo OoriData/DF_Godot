@@ -30,8 +30,9 @@ func _setup_ios() -> void:
 	if apn.has_signal("push_message_received"):
 		apn.connect("push_message_received", _on_push_message_received)
 	
-	# Start initialization (must happen after connects)
-	apn.init()
+	# Start initialization (must happen after connects) if supported
+	if apn.has_method("init"):
+		apn.init()
 
 func _setup_android() -> void:
 	if not Engine.has_singleton("FirebaseApp"):

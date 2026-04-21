@@ -146,6 +146,8 @@ func _ready():
 		if not dsm.is_connected("layout_mode_changed", _on_layout_mode_changed):
 			dsm.layout_mode_changed.connect(_on_layout_mode_changed)
 
+	_style_vendor_tabs()
+
 func _on_layout_mode_changed(_mode: int, _size: Vector2, _is_mobile_val: bool) -> void:
 	if is_instance_valid(top_up_button):
 		_style_top_bar_button(top_up_button)
@@ -155,6 +157,8 @@ func _on_layout_mode_changed(_mode: int, _size: Vector2, _is_mobile_val: bool) -
 		_style_top_bar_button(warehouse_button)
 	if is_instance_valid(back_button):
 		_style_back_button(back_button)
+	
+	_style_vendor_tabs()
 	
 	# Regenerate UI completely on layout change to ensure correct bounds.
 	call_deferred("_display_settlement_info")
@@ -268,6 +272,8 @@ func _display_settlement_info():
 					if vendor_tab_container.get_tab_title(i) == previous_tab_title:
 						vendor_tab_container.current_tab = i
 						break
+
+			_style_vendor_tabs()
 			
 			# After creating vendor tabs compute top up plan
 			_update_top_up_button()
@@ -1139,6 +1145,53 @@ func _style_back_button(button: Button) -> void:
 	button.add_theme_color_override("font_color", Color(0.95, 0.95, 1.0))
 	button.add_theme_color_override("font_color_hover", Color(1.0, 1.0, 1.0))
 	button.add_theme_color_override("font_color_pressed", Color(0.8, 0.9, 1.0))
+
+func _style_vendor_tabs() -> void:
+	if not is_instance_valid(vendor_tab_container):
+		return
+	var tab_bar = get_vendor_tab_bar()
+	if not (tab_bar is TabBar):
+		return
+		
+	var dsm = get_node_or_null("/root/DeviceStateManager")
+	var is_portrait = false
+	var fs = 18
+	
+	if is_instance_valid(dsm):
+		is_portrait = dsm.get_is_portrait()
+		fs = dsm.get_scaled_base_font_size(18)
+		
+	# Focus on horizontal expansion for mobile
+	if is_portrait:
+		tab_bar.tab_alignment = TabBar.ALIGNMENT_CENTER
+		tab_bar.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	else:
+		tab_bar.tab_alignment = TabBar.ALIGNMENT_LEFT
+		tab_bar.size_flags_horizontal = Control.SIZE_FILL
+		
+	tab_bar.add_theme_font_size_override("font_size", fs)
+	
+	# Create style overrides for tabs
+	var bg_normal = StyleBoxFlat.new()
+	bg_normal.bg_color = Color(0.12, 0.14, 0.18, 0.95)
+	var bg_selected = StyleBoxFlat.new()
+	bg_selected.bg_color = Color(0.20, 0.25, 0.35, 1.0)
+	bg_selected.border_color = Color(0.40, 0.60, 0.90)
+	bg_selected.border_width_bottom = 4
+	
+	# Apply common settings
+	for style in [bg_normal, bg_selected]:
+		style.corner_radius_top_left = 6
+		style.corner_radius_top_right = 6
+		# Increase horizontal margins significantly to make tabs wider, focusing on width over height
+		style.content_margin_left = 44 if is_portrait else 16
+		style.content_margin_right = 44 if is_portrait else 16
+		# Modestly increase vertical padding
+		style.content_margin_top = 16 if is_portrait else 8
+		style.content_margin_bottom = 16 if is_portrait else 8
+
+	tab_bar.add_theme_stylebox_override("tab_unselected", bg_normal)
+	tab_bar.add_theme_stylebox_override("tab_selected", bg_selected)
 
 
 # --- Custom Tooltip Override ---

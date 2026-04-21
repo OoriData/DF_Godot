@@ -662,12 +662,27 @@ static func _aggregate_vendor_item(agg_dict: Dictionary, item: Dictionary, missi
 			print("[VendorCargoAggregator] _aggregate_vendor_item set mission_vendor_name=", mission_vendor_name, " for ", item_name)
 		agg_dict[item_name].mission_vendor_name = mission_vendor_name
 	agg_dict[item_name].total_quantity += item_quantity
-	# Vendor inventory payloads typically report per-unit weight/volume with a stock quantity.
-	# To keep transaction projections correct, scale per-unit values by quantity.
-	var w_any: Variant = item.get("unit_weight", item.get("weight", 0.0))
-	var v_any: Variant = item.get("unit_volume", item.get("volume", 0.0))
-	var w_add: float = float(w_any) * float(item_quantity) if (w_any is float or w_any is int) else 0.0
-	var v_add: float = float(v_any) * float(item_quantity) if (v_any is float or v_any is int) else 0.0
+	# Aggregation Rule:
+	# - If unit_weight/unit_volume is provided, multiply by quantity.
+	# - If only weight/volume is provided, treat it as the stack total (do not multiply).
+	var uw_any: Variant = item.get("unit_weight")
+	var uv_any: Variant = item.get("unit_volume")
+	var w_any: Variant = item.get("weight")
+	var v_any: Variant = item.get("volume")
+	
+	var w_add: float = 0.0
+	var v_add: float = 0.0
+	
+	if uw_any != null:
+		w_add = float(uw_any) * float(item_quantity)
+	else:
+		w_add = float(w_any) # Stack Total
+
+	if uv_any != null:
+		v_add = float(uv_any) * float(item_quantity)
+	else:
+		v_add = float(v_any) # Stack Total
+
 	agg_dict[item_name].total_weight += w_add
 	agg_dict[item_name].total_volume += v_add
 	if item.get("food") is float or item.get("food") is int:
