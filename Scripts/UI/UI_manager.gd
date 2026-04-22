@@ -18,8 +18,8 @@ var settlement_label_settings: LabelSettings
 # --- UI Constants (copied and consolidated from main.gd) ---
 @export_group("Font Scaling")
 ## Target screen font size for convoy titles (if font_render_scale and map_zoom are 1.0). Adjust for desired on-screen readability. (Prev: 12)
-@export var base_convoy_title_font_size: int = 29 # 22 * 1.33
-@export var base_settlement_font_size: int = 24 # 18 * 1.33
+@export var base_convoy_title_font_size: int = 36 # Was 29
+@export var base_settlement_font_size: int = 32 # Was 24
 ## Minimum font size to set on the Label node.
 @export var min_node_font_size: int = 8
 ## Maximum font size to set on the Label node.
@@ -190,14 +190,10 @@ func _ready():
 	settlement_label_settings.outline_color = Color.BLACK
 
 	# Ensure a valid Font is assigned to both LabelSettings to avoid "font is NOT VALID" errors.
-	var fallback_font: Font = load("res://Assets/Roboto-VariableFont_wdth,wght.ttf")
+	var fallback_font: Font = load("res://Assets/main_font.tres")
 	if not is_instance_valid(fallback_font):
 		fallback_font = ThemeDB.fallback_font
 	if is_instance_valid(fallback_font):
-		# Duplicate before modifying to avoid editor resource mutation/reload prompts.
-		if fallback_font is FontFile:
-			fallback_font = (fallback_font as FontFile).duplicate(true)
-			(fallback_font as FontFile).oversampling = 2.0
 		label_settings.font = fallback_font
 		settlement_label_settings.font = fallback_font
 
@@ -434,7 +430,12 @@ func _clamp_panel_position(panel: Panel): # Original function, now less used but
 	panel.position.y = clamp(panel.position.y, padded_min_y, padded_max_y)
 
 func toggle_settlement_pin(coords: Vector2i):
-	print("[UIManager] Toggling settlement pin for: ", coords)
+	var settlement_name = "Unknown"
+	var settlement_info = _find_settlement_at_tile(coords.x, coords.y)
+	if settlement_info != null:
+		settlement_name = settlement_info.get("name", "Unknown")
+
+	print("[UIManager] Toggling settlement pin for: ", coords, " (", settlement_name, ")")
 	if _pinned_settlement_coords.has(coords):
 		print("[UIManager]   Removing pin")
 		_pinned_settlement_coords.erase(coords)
@@ -598,7 +599,12 @@ func _create_settlement_panel() -> Panel:
 	var style_box := StyleBoxFlat.new()
 	panel.add_theme_stylebox_override('panel', style_box)
 	panel.set_meta("style_box_ref", style_box)
-	# Settlement panels are not draggable by default, so no MOUSE_FILTER_STOP needed unless specified.
+
+	# Settlement panels are visual overlays rendered in a Node2D inside a CanvasLayer.
+	# Controls inside Node2D containers don't participate in Godot's GUI input
+	# routing, so mouse_filter has no reliable effect here. Click handling is done
+	# entirely via hit-rect tests in MapInteractionManager.
+	panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
 
 	var label_node := Label.new()
 	label_node.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
@@ -607,6 +613,11 @@ func _create_settlement_panel() -> Panel:
 	panel.set_meta("label_node_ref", label_node)
 
 	return panel
+
+## Schedules a label redraw on the next frame so the pin state change is
+## immediately reflected without needing a hover or selection change.
+func _force_draw_interactive_labels_deferred() -> void:
+	call_deferred("_draw_interactive_labels", {})
 
 func _update_settlement_panel_content(panel: Panel, settlement_info: Dictionary):
 	if not is_instance_valid(panel): return
