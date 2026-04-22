@@ -17,7 +17,7 @@ platform :ios do
       readonly: ENV['MATCH_READONLY'] != 'false',
       keychain_name: ENV['MATCH_KEYCHAIN_NAME'],
       keychain_password: ENV['MATCH_KEYCHAIN_PASSWORD'],
-      git_url: 'git@github.com:OoriData/mobile-signing-certs.git',
+      git_url: ENV['MATCH_GIT_URL'] || 'git@github.com:OoriData/mobile-signing-certs.git',
       app_identifier: 'com.ooridata.desolate-frontiers'
     )
   end
@@ -58,11 +58,11 @@ platform :mac do
     match(
       api_key: api_key,
       type: 'appstore',
-      platform: 'macos',
+      platform: 'mac',
       readonly: ENV['MATCH_READONLY'] != 'false',
       keychain_name: ENV['MATCH_KEYCHAIN_NAME'],
       keychain_password: ENV['MATCH_KEYCHAIN_PASSWORD'],
-      git_url: 'git@github.com:OoriData/mobile-signing-certs.git',
+      git_url: ENV['MATCH_GIT_URL'] || 'git@github.com:OoriData/mobile-signing-certs.git',
       app_identifier: 'com.ooridata.desolate-frontiers'
     )
 
@@ -72,13 +72,13 @@ platform :mac do
     match(
       api_key: api_key,
       type: 'mac_installer_distribution',
-      platform: 'macos',
+      platform: 'mac',
       skip_provisioning_profiles: true,
       skip_certificate_matching: true,
       readonly: ENV['MATCH_READONLY'] != 'false', # Allow override for seeding
       keychain_name: ENV['MATCH_KEYCHAIN_NAME'],
       keychain_password: ENV['MATCH_KEYCHAIN_PASSWORD'],
-      git_url: 'git@github.com:OoriData/mobile-signing-certs.git',
+      git_url: ENV['MATCH_GIT_URL'] || 'git@github.com:OoriData/mobile-signing-certs.git',
       app_identifier: 'com.ooridata.desolate-frontiers'
     )
   end

@@ -97,3 +97,13 @@ Steam requires clear-text credentials for automated uploads. Use a dedicated ser
 ## 2026-04-22 - Fix: Update macOS Runner
 - **Issue**: Apple rejected the build because iOS 18.5 SDK is deprecated and requires iOS 26 SDK (Xcode 26) as of April 2026.
 - **Resolution**: Updated `runs-on` in `_build-ios-appstore.yml` from `macos-latest` to `macos-26` to force GitHub Actions to use the newest environment.
+
+## 2026-04-22 - Spellist Parity Sync
+- **Web Modernization**: Replaced `peaceiris/actions-gh-pages` with GitHub native Pages deployment artifacts (`upload-pages-artifact`). The web export is also zipped into `Desolate_Frontiers_Webapp.zip` for inclusion in the GitHub Release.
+- **Unified Releases**: Centralized the GitHub Release creation into `build-and-release.yml`. This job waits for all 5 platforms and compiles all generated artifacts (ZIP, AAB, IPA, PKG) into a single draft release. It is gated by `is_full_build` to prevent partial releases.
+- **HTTPS Fastlane Sync**: Switched all iOS and macOS Fastlane cert syncing away from SSH to HTTPS using `${{ secrets.GIT_TOKEN }}` to resolve persistent `Permission denied` errors on GitHub runners.
+- **Headless Build Stability**: 
+  - Android: Full `android_source.zip` is extracted, and `.gdignore` is used to prevent recursive crashes.
+  - Headless Imports: All platform workflows explicitly run `godot --headless --import` prior to export. On macOS, this is suffixed with `|| true` to suppress the known GodotApplePlugins cleanup segfault.
+  - Excluded `GodotGoogleSignIn` via `.gdignore` on non-Android platforms to silence plugin loading errors.
+- **Export Observability**: Added `--log-file /tmp/godot_*.log` to all export commands.

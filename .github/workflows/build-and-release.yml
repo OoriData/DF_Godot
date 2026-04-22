@@ -30,6 +30,7 @@ jobs:
       build_macos: ${{ steps.check.outputs.build_macos }}
       build_steam: ${{ steps.check.outputs.build_steam }}
       version: ${{ steps.version.outputs.tag }}
+      is_full_build: ${{ steps.check.outputs.is_full_build }}
     steps:
       - id: version
         run: |
@@ -54,6 +55,12 @@ jobs:
           if [[ "$PLATFORMS" == *"ios"* ]]; then echo "build_ios=true" >> $GITHUB_OUTPUT; else echo "build_ios=false" >> $GITHUB_OUTPUT; fi
           if [[ "$PLATFORMS" == *"macos"* ]]; then echo "build_macos=true" >> $GITHUB_OUTPUT; else echo "build_macos=false" >> $GITHUB_OUTPUT; fi
           if [[ "$PLATFORMS" == *"steam"* ]]; then echo "build_steam=true" >> $GITHUB_OUTPUT; else echo "build_steam=false" >> $GITHUB_OUTPUT; fi
+          
+          if [[ "$PLATFORMS" == *"web"* ]] && [[ "$PLATFORMS" == *"android"* ]] && [[ "$PLATFORMS" == *"ios"* ]] && [[ "$PLATFORMS" == *"macos"* ]] && [[ "$PLATFORMS" == *"steam"* ]]; then
+            echo "is_full_build=true" >> $GITHUB_OUTPUT
+          else
+            echo "is_full_build=false" >> $GITHUB_OUTPUT
+          fi
 
   # Web Build
   web:
@@ -125,3 +132,44 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - run: echo "Builds completed."
+
+  # Unified GitHub Release
+  release:
+    needs: [setup, web, android, ios, macos, steam]
+    if: always() && needs.setup.outputs.is_full_build == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Download Web Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: web-build
+          path: artifacts/
+        continue-on-error: true
+        
+      - name: Download Windows Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: desktop-build-windows
+          path: artifacts/
+        continue-on-error: true
+          
+      - name: Download macOS Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: desktop-build-macos
+          path: artifacts/
+        continue-on-error: true
+          
+      - name: Publish GitHub Release
+        uses: ncipollo/release-action@v1
+        with:
+          tag: "v${{ needs.setup.outputs.version }}"
+          name: "Release v${{ needs.setup.outputs.version }}"
+          artifacts: "artifacts/*.zip"
+          allowUpdates: true
+          replacesArtifacts: true
+          token: ${{ github.token }}
