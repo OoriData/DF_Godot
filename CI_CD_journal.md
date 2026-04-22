@@ -48,3 +48,8 @@ Steam requires clear-text credentials for automated uploads. Use a dedicated ser
 ## 2026-03-26 - Push Notifications CI Update
 - **`_build-ios-appstore.yml`**: Integrated an automated Python step to dynamically inject the `entitlements/push_notifications="Production"` flag into `export_presets.cfg` during the headless Xcode export. This solves the issue of missing capabilities when exporting strictly via GitHub Actions without opening Xcode.
 - **Local Debug vs CI Codesigning**: Removed hardcoded App Store provisioning profiles (`application/provisioning_profile_specifier_release`) and distribution certificates (`application/code_sign_identity_release`) from `export_presets.cfg`. This allows developers to natively debug push notifications on local devices via automatic Xcode signing. To maintain flawless App Store headless exports, the specific Apple Distribution code-signing identity is now dynamically injected into the build pipeline at runtime exclusively via `_build-ios-appstore.yml`.
+
+## 2026-04-22 - Security: addressable gem bump
+- **`Gemfile.lock`**: Bumped `addressable` from `2.8.9` → `2.9.0` to resolve **CVE-2026-35611** (High severity ReDoS vulnerability affecting versions `>= 2.3.0, < 2.9.0`).
+  - `fastlane`'s existing constraint (`>= 2.8, < 3.0.0`) already accepts 2.9.x — no other lock file entries required updating.
+  - The transitive `public_suffix` dependency constraint (`>= 2.0.2, < 8.0`) is unchanged between versions.
