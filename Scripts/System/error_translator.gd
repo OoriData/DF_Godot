@@ -71,6 +71,7 @@ const ERROR_MAP: Dictionary = {
 	"Failed to parse": "Received an unexpected response from the server. Please try again.",
 	"HTTPRequest initiation failed": "Could not connect to the game server. Please check your internet connection.",
 	"Network error": "A network error occurred. Please check your internet connection and try again.",
+	"result code: 5": "A secure connection error occurred. This often happens if your internet connection is unstable or your device clock is out of sync.",
 }
 
 # A list of technical error substrings that should NOT be shown to the user.

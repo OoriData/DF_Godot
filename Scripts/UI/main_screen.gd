@@ -1074,6 +1074,7 @@ func _show_error_dialog(message: String, raw_message: String = ""):
 	var error_dialog = _error_dialog_scene.instantiate()
 	error_dialog.name = "ErrorDialog"
 	dialog_host.add_child(error_dialog)
+	modal_layer.process_mode = Node.PROCESS_MODE_ALWAYS
 	modal_layer.show()
 
 	error_dialog.show_message(message, raw_message)
