@@ -1,7 +1,7 @@
 [config]
 name="PushNotifications"
-binary="apn.debug.xcframework"
-binary_release="apn.xcframework"
+binary="apn.xcframework"
+binary_debug="apn.debug.xcframework"
 
 initialization="godot_apn_init"
 deinitialization="godot_apn_deinit"
