@@ -8,6 +8,7 @@ signal login_successful(user_id: String)
 @onready var subtitle_label: Label = $CenterContainer/VBoxContainer/SubtitleLabel
 @onready var background_overlay: ColorRect = $Background
 @onready var title_logo: TextureRect = $CenterContainer/VBoxContainer/TitleLogo
+@onready var loading_bar: ProgressBar = $CenterContainer/VBoxContainer/LoadingBar
 
 # Brand colors
 const DISCORD_BLURPLE := Color("5865F2")
@@ -124,6 +125,9 @@ func set_loading_mode(active: bool, message: String = "") -> void:
 		_set_oauth_active(true)
 		if is_instance_valid(subtitle_label):
 			subtitle_label.visible = false
+		if is_instance_valid(loading_bar):
+			loading_bar.visible = true
+			loading_bar.value = 0
 		for btn in [_discord_button, _apple_button, _google_button, _steam_button]:
 			if is_instance_valid(btn):
 				btn.visible = false
@@ -131,6 +135,8 @@ func set_loading_mode(active: bool, message: String = "") -> void:
 		_set_oauth_active(false)
 		if is_instance_valid(subtitle_label):
 			subtitle_label.visible = true
+		if is_instance_valid(loading_bar):
+			loading_bar.visible = false
 		for btn in [_discord_button, _apple_button, _google_button, _steam_button]:
 			if is_instance_valid(btn):
 				# Don't show steam button if disabled initially
@@ -142,6 +148,11 @@ func set_loading_mode(active: bool, message: String = "") -> void:
 
 func _process(_delta: float) -> void:
 	_update_map_background(_delta)
+	
+	if is_instance_valid(loading_bar) and loading_bar.visible:
+		# Simple "indeterminate" pulse animation
+		loading_bar.value = 50.0 + sin(_bg_time * 5.0) * 50.0
+
 	if _oauth_in_progress:
 		_spin_status()
 
@@ -189,6 +200,13 @@ func _apply_portrait_layout() -> void:
 			var logo_f: float = (scale_f + 1.0) / 2.0
 			title_logo.custom_minimum_size = Vector2(520.0 * logo_f, 160.0 * logo_f)
 
+		if is_instance_valid(loading_bar):
+			loading_bar.custom_minimum_size = Vector2(btn_w, 8 * scale_f)
+
+		if is_instance_valid(status_label) and status_label.label_settings:
+			status_label.label_settings.font_size = int(round(52.0 * scale_f))
+			status_label.custom_minimum_size = Vector2(btn_w, 96 * scale_f)
+
 		# Zoom the background camera so the map bleeds off all 4 edges
 		if is_instance_valid(_bg_camera):
 			_bg_camera.zoom = Vector2(4.5, 4.5)
@@ -201,6 +219,11 @@ func _apply_portrait_layout() -> void:
 			btn.custom_minimum_size = Vector2(340, 54)
 			btn.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 			btn.remove_theme_font_size_override("font_size")
+		if is_instance_valid(status_label) and status_label.label_settings:
+			status_label.label_settings.font_size = 36
+			status_label.custom_minimum_size = Vector2(300, 56)
+		if is_instance_valid(loading_bar):
+			loading_bar.custom_minimum_size = Vector2(340, 8)
 		if is_instance_valid(_bg_camera):
 			_bg_camera.zoom = Vector2(1.05, 1.05)
 
@@ -250,30 +273,31 @@ func _build_login_buttons() -> void:
 		vbox_container.move_child(_google_button, insert_idx)
 		insert_idx += 1
 
-	# --- Steam (always shown; disabled if Steam client isn't running) ---
-	_steam_button = _create_login_button(
-		"SteamLoginButton", "Continue with Steam",
-		STEAM_DARK, STEAM_HOVER, STEAM_DARK,
-		_on_steam_login_pressed
-	)
-	# Add Steam accent border
-	var steam_normal: StyleBoxFlat = _steam_button.get_theme_stylebox("normal")
-	if steam_normal:
-		steam_normal.border_width_bottom = 2
-		steam_normal.border_color = STEAM_ACCENT
-	var steam_hover: StyleBoxFlat = _steam_button.get_theme_stylebox("hover")
-	if steam_hover:
-		steam_hover.border_width_bottom = 2
-		steam_hover.border_color = STEAM_ACCENT
+	# --- Steam (only shown on desktop; disabled if Steam client isn't running) ---
+	if not _is_mobile():
+		_steam_button = _create_login_button(
+			"SteamLoginButton", "Continue with Steam",
+			STEAM_DARK, STEAM_HOVER, STEAM_DARK,
+			_on_steam_login_pressed
+		)
+		# Add Steam accent border
+		var steam_normal: StyleBoxFlat = _steam_button.get_theme_stylebox("normal")
+		if steam_normal:
+			steam_normal.border_width_bottom = 2
+			steam_normal.border_color = STEAM_ACCENT
+		var steam_hover: StyleBoxFlat = _steam_button.get_theme_stylebox("hover")
+		if steam_hover:
+			steam_hover.border_width_bottom = 2
+			steam_hover.border_color = STEAM_ACCENT
 
-	vbox_container.add_child(_steam_button)
-	vbox_container.move_child(_steam_button, insert_idx)
+		vbox_container.add_child(_steam_button)
+		vbox_container.move_child(_steam_button, insert_idx)
 
-	# Enable/disable Steam based on current state
-	if SteamManager.is_steam_running():
-		_enable_steam_button()
-	else:
-		_disable_steam_button()
+		# Enable/disable Steam based on current state
+		if SteamManager.is_steam_running():
+			_enable_steam_button()
+		else:
+			_disable_steam_button()
 
 func _create_login_button(
 	btn_name: String, label: String,
