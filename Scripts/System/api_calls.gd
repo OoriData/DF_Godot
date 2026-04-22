@@ -2058,12 +2058,14 @@ func _start_request_status_probe():
 			var st = _http_request.get_http_client_status()
 			print('[APICalls][Probe] in_progress purpose=%s status=%d queue_len=%d url=%s' % [RequestPurpose.keys()[_current_request_purpose], st, _request_queue.size(), _last_requested_url])
 			if _current_request_purpose == RequestPurpose.AUTH_URL:
+				# 1=RESOLVING, 2=CONNECTING. If we stay here for 5s, we're definitely stalled.
 				if st == HTTPClient.STATUS_RESOLVING or st == HTTPClient.STATUS_CONNECTING:
 					_probe_stalled_count += 1
 				else:
 					_probe_stalled_count = 0
+				
 				if _probe_stalled_count >= 10: # ~5s
-					print('[APICalls][Probe] AUTH_URL request appears stalled; retrying with alternate host.')
+					print('[APICalls][Probe] AUTH_URL request appears stalled (status=%d); retrying with alternate host.' % st)
 					_probe_stalled_count = 0
 					_retry_auth_url_alternate_host()
 	)
@@ -2078,6 +2080,8 @@ func _retry_auth_url_alternate_host():
 	elif BASE_URL.find('localhost') != -1:
 		alt_host = BASE_URL.replace('localhost', '127.0.0.1')
 	else:
+		# If we're already on a public URL and it's stalling, retrying won't help unless we change something.
+		# For now, just allow one retry to catch transient DNS/connection blips.
 		alt_host = BASE_URL
 	print('[APICalls] Retrying AUTH_URL against alt host base=%s' % alt_host)
 	if _http_request:
@@ -2208,11 +2212,18 @@ func _process_queue() -> void:
 	_arm_request_timeout()
 	var error: Error = _http_request.request(_last_requested_url, headers, method, body)
 	if error != OK:
-		var error_msg = "APICalls (_process_queue): HTTPRequest initiation failed with error code %s for URL: %s" % [error, _last_requested_url]
+		var st = _http_request.get_http_client_status()
+		var error_msg = "APICalls (_process_queue): HTTPRequest initiation failed (Error: %d, HTTP Status: %d) for URL: %s" % [error, st, _last_requested_url]
 		printerr(error_msg)
+		if error == ERR_BUSY:
+			printerr("APICalls: Request node busy. Forcing cancel and re-queueing.")
+			_http_request.cancel_request()
+		
 		emit_signal('fetch_error', error_msg)
 		_is_request_in_progress = false
 		_current_request_purpose = RequestPurpose.NONE
+		# Push back to the front to try again after clear
+		_request_queue.push_front(_current_request_details)
 		call_deferred("_process_queue")
 
 func _arm_request_timeout():
@@ -2239,13 +2250,19 @@ func _handle_request_timeout():
 	var elapsed = Time.get_unix_time_from_system() - _current_request_start_time
 	var purpose_str = RequestPurpose.keys()[_current_request_purpose]
 	print("[APICalls][Timeout] Purpose=%s elapsed=%.2fs (timeout triggered)" % [purpose_str, elapsed])
-	# Cancel only long-running map fetch to unblock auth
-	if _current_request_purpose == RequestPurpose.MAP_DATA:
-		if _http_request:
+	# Cancel the request explicitly to unblock the HTTPRequest node.
+	# Godot's HTTPRequest needs a cancel_request() call to clear its internal state if it hasn't completed.
+	if _http_request:
+		var st = _http_request.get_http_client_status()
+		if st != HTTPClient.STATUS_DISCONNECTED:
 			_http_request.cancel_request()
-			print("[APICalls][Timeout] Canceled MAP_DATA request; will retry later after auth.")
-		# Requeue map data for later (optional)
+			print("[APICalls][Timeout] Canceled current request (purpose=%s, status=%d) to unblock queue." % [purpose_str, st])
+
+	# Special handling for MAP_DATA requeue
+	if _current_request_purpose == RequestPurpose.MAP_DATA:
+		print("[APICalls][Timeout] Will retry MAP_DATA later after auth.")
 		_requeue_map_after_auth()
+
 	# Mark request complete with error
 	_is_request_in_progress = false
 	_current_request_purpose = RequestPurpose.NONE

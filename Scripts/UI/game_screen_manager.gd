@@ -100,7 +100,14 @@ func logout_to_login() -> void:
 	# Transition back to the login screen without restarting the app process.
 	# Note: autoload singletons persist, so we also clear store snapshots and stop polling.
 	current_user_id = ""
-
+	
+	# Transition MainScreen out FIRST before cleaning up data to prevent context-switching bugs.
+	if is_instance_valid(main_screen):
+		main_screen.visible = false
+		main_screen.process_mode = Node.PROCESS_MODE_DISABLED
+		if main_screen.has_method("set_map_interactive"):
+			main_screen.set_map_interactive(false)
+	
 	var refresh := get_node_or_null("/root/RefreshScheduler")
 	if is_instance_valid(refresh) and refresh.has_method("enable_polling"):
 		refresh.enable_polling(false)
@@ -108,12 +115,6 @@ func logout_to_login() -> void:
 	var store := get_node_or_null("/root/GameStore")
 	if is_instance_valid(store) and store.has_method("reset_all"):
 		store.reset_all()
-
-	if is_instance_valid(main_screen):
-		main_screen.visible = false
-		main_screen.process_mode = Node.PROCESS_MODE_DISABLED
-		if main_screen.has_method("set_map_interactive"):
-			main_screen.set_map_interactive(false)
 
 	# Recreate LoginScreen if it was freed after a previous successful login.
 	if not is_instance_valid(login_screen):

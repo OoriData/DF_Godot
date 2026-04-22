@@ -82,12 +82,13 @@ func refresh_all(force: bool = true) -> void:
 		logger.info("ConvoyService.refresh_all using uid=%s", uid)
 	if uid != "" and _api.has_method("get_user_convoys"):
 		_api.get_user_convoys(uid)
-	elif _api.has_method("get_all_in_transit_convoys"):
+	elif _api.has_method("get_all_in_transit_convoys") and _api.has_method("is_auth_token_valid") and _api.is_auth_token_valid():
 		if is_instance_valid(logger) and logger.has_method("info"):
 			logger.info("ConvoyService.refresh_all falling back to ALL_CONVOYS")
 		_api.get_all_in_transit_convoys()
 	else:
-		printerr("ConvoyService: APICalls missing convoy fetch methods.")
+		if is_instance_valid(logger) and logger.has_method("info"):
+			logger.info("ConvoyService.refresh_all skipped: No user ID and no valid auth token.")
 
 func refresh_single(convoy_id: String) -> void:
 	if convoy_id == "":

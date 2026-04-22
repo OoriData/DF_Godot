@@ -470,14 +470,20 @@ func _on_auth_url_received(data: Dictionary) -> void:
 
 func _on_api_error(message: String) -> void:
 	var friendly := ErrorTranslator.translate(message)
-	if friendly.is_empty():
-		return
+	
+	# Always reset oauth state on API error to prevent UI hang, 
+	# even if the error message itself is silenced.
 	if _oauth_in_progress:
-		set_loading_mode(false)
-		status_label.text = friendly
-	else:
-		set_loading_mode(false)
-		status_label.text = friendly
+		_set_oauth_active(false)
+	
+	if friendly.is_empty():
+		# If it's a silenced auth error (like 401 during background poll), 
+		# we don't want to overwrite the status label if we're not currently in an OAuth flow.
+		if _oauth_in_progress:
+			status_label.text = "Authentication failed."
+		return
+		
+	status_label.text = friendly
 
 func _on_auth_state_changed(state: String) -> void:
 	match state:
@@ -540,6 +546,16 @@ func _set_oauth_active(active: bool) -> void:
 	elif not active and _spinner_timer:
 		_spinner_timer.queue_free()
 		_spinner_timer = null
+	
+	# OAuth Failsafe: if we're stuck in 'Loading' for more than 20s, reset.
+	if active:
+		var failsafe := get_tree().create_timer(20.0)
+		failsafe.timeout.connect(func():
+			if _oauth_in_progress and status_label.text.begins_with("Authenticating"):
+				print("[LoginScreen] OAuth failsafe triggered after 20s stall.")
+				_set_oauth_active(false)
+				status_label.text = "Authentication timed out. Please try again."
+		)
 
 # ────────────────────────────────────────────────────────────────────
 # Signal wiring

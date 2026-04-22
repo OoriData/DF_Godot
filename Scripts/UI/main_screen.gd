@@ -923,6 +923,14 @@ func _on_store_user_changed(_user: Dictionary):
 	_check_or_prompt_new_convoy_from_store()
 
 func _check_or_prompt_new_convoy_from_store():
+	# Guard: don't prompt if we're hidden or disabled (e.g. during logout)
+	if not is_visible_in_tree() or process_mode == Node.PROCESS_MODE_DISABLED:
+		return
+
+	var api = get_node_or_null("/root/APICalls")
+	if is_instance_valid(api) and not api.is_auth_token_valid():
+		return
+
 	var store = get_node_or_null("/root/GameStore")
 	if not is_instance_valid(store):
 		return

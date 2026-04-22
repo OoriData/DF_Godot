@@ -74,7 +74,9 @@ const ERROR_MAP: Dictionary = {
 const IGNORED_SUBSTRINGS: Array[String] = [
 	"Logged out.", # This is a normal event, not an error to display.
 	"Unauthorized", # This is a standard auth challenge, not an error to display in a modal. The auth flow will handle showing the login screen.
-	"Map request HTTP 401" # Suppress 401 errors for map requests (common before login)
+	"Map request HTTP 401", # Suppress 401 errors for map requests (common before login)
+	"Not authenticated",
+	"Not logged in"
 ]
 
 # A list of error substrings that should be handled by a local UI component (like a toast)
