@@ -56,7 +56,13 @@ func get_color_for(convoy_id: String, fallback: Color = Color.GRAY) -> Color:
 		return fallback
 	return _convoy_id_to_color_map.get(convoy_id, fallback)
 
-func refresh_all() -> void:
+func refresh_all(force: bool = true) -> void:
+	if not force and not get_convoys().is_empty():
+		var logger := get_node_or_null("/root/Logger")
+		if is_instance_valid(logger) and logger.has_method("info"):
+			logger.info("ConvoyService.refresh_all(force=false) skipped, already have convoys")
+		return
+
 	# Triggers a transport call; APICalls will route results into GameStore.
 	if not is_instance_valid(_api):
 		return

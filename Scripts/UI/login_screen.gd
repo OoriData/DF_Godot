@@ -5,6 +5,7 @@ signal login_successful(user_id: String)
 @onready var center_container: CenterContainer = $CenterContainer
 @onready var vbox_container: VBoxContainer = $CenterContainer/VBoxContainer
 @onready var status_label: Label = $CenterContainer/VBoxContainer/StatusLabel
+@onready var subtitle_label: Label = $CenterContainer/VBoxContainer/SubtitleLabel
 @onready var background_overlay: ColorRect = $Background
 @onready var title_logo: TextureRect = $CenterContainer/VBoxContainer/TitleLogo
 
@@ -110,9 +111,34 @@ func _ready() -> void:
 	# Attempt automatic session reuse if token already valid
 	var api = _api()
 	if api and api.is_auth_token_valid():
-		status_label.text = "Resuming session..."
+		set_loading_mode(true, "Resuming session...")
+	else:
+		set_loading_mode(false)
 
 	_add_version_label()
+
+func set_loading_mode(active: bool, message: String = "") -> void:
+	if active:
+		if message != "":
+			status_label.text = message
+		_set_oauth_active(true)
+		if is_instance_valid(subtitle_label):
+			subtitle_label.visible = false
+		for btn in [_discord_button, _apple_button, _google_button, _steam_button]:
+			if is_instance_valid(btn):
+				btn.visible = false
+	else:
+		_set_oauth_active(false)
+		if is_instance_valid(subtitle_label):
+			subtitle_label.visible = true
+		for btn in [_discord_button, _apple_button, _google_button, _steam_button]:
+			if is_instance_valid(btn):
+				# Don't show steam button if disabled initially
+				if btn == _steam_button and not SteamManager.is_steam_running():
+					btn.visible = true
+					_disable_steam_button()
+				else:
+					btn.visible = true
 
 func _process(_delta: float) -> void:
 	_update_map_background(_delta)
@@ -447,25 +473,23 @@ func _on_api_error(message: String) -> void:
 	if friendly.is_empty():
 		return
 	if _oauth_in_progress:
+		set_loading_mode(false)
 		status_label.text = friendly
-		_set_oauth_active(false)
 	else:
+		set_loading_mode(false)
 		status_label.text = friendly
 
 func _on_auth_state_changed(state: String) -> void:
 	match state:
 		"pending":
-			_set_oauth_active(true)
-			if not status_label.text.begins_with("Authenticating"):
-				status_label.text = "Authenticating"
+			set_loading_mode(true, "Authenticating")
 		"authenticated":
-			status_label.text = "Session established. Resolving user..."
-			_set_oauth_active(false)
+			set_loading_mode(true, "Session established. Resolving user...")
 		"expired":
-			_set_oauth_active(false)
+			set_loading_mode(false)
 			status_label.text = "Session expired. Please login."
 		"failed":
-			_set_oauth_active(false)
+			set_loading_mode(false)
 			if status_label.text == "Authenticating" or status_label.text == "" or status_label.text.begins_with("Authenticating"):
 				status_label.text = "Authentication failed."
 		_:
@@ -473,14 +497,14 @@ func _on_auth_state_changed(state: String) -> void:
 
 func _on_hub_error_occurred(domain: String, _code: String, message: String, inline: bool) -> void:
 	if domain == "auth" or not inline:
+		set_loading_mode(false)
 		show_error(message)
 
 func _on_store_user_changed(user: Dictionary) -> void:
 	var uid := String(user.get("user_id", user.get("id", "")))
 	if uid == "":
 		return
-	status_label.text = "Welcome."
-	_set_oauth_active(false)
+	status_label.text = "Loading game data..."
 	emit_signal("login_successful", uid)
 
 func _on_auth_expired() -> void:

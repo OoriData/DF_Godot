@@ -113,6 +113,13 @@ var convoys_in_transit: Array = []  # This will store the latest parsed list of 
 var _last_requested_url: String = "" # To store the URL for logging on error
 var _is_local_user_attempt: bool = false # Flag to track if the current USER_CONVOYS request is the initial local one
 
+# --- Parallel Queue ---
+const PARALLEL_MAX_SLOTS: int = 4
+var _parallel_pool: Array[HTTPRequest] = []
+var _parallel_idle: Array[HTTPRequest] = []
+var _parallel_inflight_urls: Dictionary = {}
+var _parallel_active_details: Dictionary = {} # HTTPRequest -> Dictionary of details
+
 # --- Request Queue ---
 var _request_queue: Array = []
 var _is_request_in_progress: bool = false
@@ -275,6 +282,8 @@ func _diag_enqueue(tag: String, details: Dictionary) -> void:
 		var is_duplicate = false
 		if _is_request_in_progress and _last_requested_url == url_s and _current_request_method == HTTPClient.METHOD_GET:
 			is_duplicate = true
+		elif _parallel_inflight_urls.has(url_s):
+			is_duplicate = true
 		else:
 			for r in _request_queue:
 				if r.get("url", "") == url_s and r.get("method", HTTPClient.METHOD_GET) == HTTPClient.METHOD_GET:
@@ -329,6 +338,15 @@ func _ready() -> void:
 	var hub := get_node_or_null("/root/SignalHub")
 	if is_instance_valid(hub) and hub.has_signal("user_refresh_requested"):
 		hub.user_refresh_requested.connect(resolve_current_user_id.bind(true))
+
+	# Initialize parallel HTTPRequest pool for leaf data
+	for i in range(PARALLEL_MAX_SLOTS):
+		var req = HTTPRequest.new()
+		req.name = "ParallelHTTPRequest_%d" % i
+		add_child(req)
+		req.request_completed.connect(_on_parallel_request_completed.bind(req))
+		_parallel_pool.append(req)
+		_parallel_idle.append(req)
 
 	# No persistent requester for mechanics; we will create ephemeral HTTPRequest nodes per request
 	_start_request_status_probe()
@@ -2081,18 +2099,83 @@ func _retry_auth_url_alternate_host():
 		'method': HTTPClient.METHOD_GET
 	})
 	_process_queue()
+func _dispatch_parallel(req_data: Dictionary) -> void:
+	if _parallel_idle.is_empty():
+		return
+	var requester: HTTPRequest = _parallel_idle.pop_back()
+	var url = req_data.get("url", "")
+	var headers = _apply_auth_header(req_data.get("headers", []))
+	var method = req_data.get("method", HTTPClient.METHOD_GET)
+	
+	_parallel_inflight_urls[url] = true
+	_parallel_active_details[requester] = req_data
+	req_data["start_ms"] = Time.get_ticks_msec()
+	
+	var purpose_str = RequestPurpose.keys()[req_data.get("purpose", RequestPurpose.NONE)]
+	print("[APICalls][Parallel] Dispatching purpose=%s URL=%s" % [purpose_str, url])
+	
+	var err = requester.request(url, headers, method)
+	if err != OK:
+		printerr("[APICalls][Parallel] Initiation failed err=%d URL=%s" % [err, url])
+		_parallel_inflight_urls.erase(url)
+		_parallel_active_details.erase(requester)
+		_parallel_idle.append(requester)
+
+func _on_parallel_request_completed(result: int, response_code: int, _headers: PackedStringArray, body: PackedByteArray, requester: HTTPRequest) -> void:
+	if not _parallel_active_details.has(requester):
+		return
+	var req_data: Dictionary = _parallel_active_details[requester]
+	var url = req_data.get("url", "")
+	var purpose = req_data.get("purpose", RequestPurpose.NONE)
+	var start_ms = req_data.get("start_ms", Time.get_ticks_msec())
+	var elapsed = Time.get_ticks_msec() - start_ms
+	
+	_parallel_inflight_urls.erase(url)
+	_parallel_active_details.erase(requester)
+	_parallel_idle.append(requester)
+	
+	print("[APICalls][Parallel] Completed purpose=%s code=%d ms=%d url=%s" % [RequestPurpose.keys()[purpose], response_code, elapsed, url])
+	
+	if result != HTTPRequest.RESULT_SUCCESS or not (response_code >= 200 and response_code < 300):
+		printerr("[APICalls][Parallel] Request failed code=%d url=%s" % [response_code, url])
+		return
+		
+	var body_text = body.get_string_from_utf8()
+	var json_res = JSON.parse_string(body_text)
+	if typeof(json_res) != TYPE_DICTIONARY:
+		printerr("[APICalls][Parallel] Invalid JSON response url=%s" % url)
+		return
+		
+	if purpose == RequestPurpose.CARGO_DATA:
+		emit_signal('cargo_data_received', json_res)
+	elif purpose == RequestPurpose.VENDOR_DATA:
+		emit_signal('vendor_data_received', json_res)
+	
+	call_deferred("_process_queue")
+
 func _process_queue() -> void:
 	print("[APICalls][Debug] _process_queue(): entry. in_progress=%s queue_len=%d" % [str(_is_request_in_progress), _request_queue.size()])
-	# When instantiated as a plain script (e.g., unit tests), we are not in the scene tree
-	# and should not attempt to dispatch HTTP requests.
 	if not is_inside_tree():
 		return
-	if _is_request_in_progress or _request_queue.is_empty():
-		return
-	if _is_auth_token_expired():
+
+	if _is_auth_token_expired() and not _request_queue.is_empty():
 		print("[APICalls] Session token expired; clearing before request.")
 		clear_auth_session_token()
 		emit_signal("fetch_error", "Session expired. Please log in again.")
+		return
+
+	# First, extract any parallel-eligible requests if we have pool slots
+	var i := 0
+	while i < _request_queue.size() and not _parallel_idle.is_empty():
+		var purpose = _request_queue[i].get("purpose", RequestPurpose.NONE)
+		if purpose == RequestPurpose.CARGO_DATA or purpose == RequestPurpose.VENDOR_DATA:
+			var req_data = _request_queue[i]
+			_request_queue.remove_at(i)
+			_dispatch_parallel(req_data)
+			continue # DO NOT increment i, as elements shifted down
+		i += 1
+
+	if _is_request_in_progress or _request_queue.is_empty():
 		return
 	_is_request_in_progress = true
 	print("[APICalls] _process_queue(): dequeuing next request. Remaining (before pop)=%d" % _request_queue.size())
@@ -2417,7 +2500,7 @@ func _on_request_completed(result: int, response_code: int, _headers: PackedStri
 		return
 
 	# Successful HTTP response routing by purpose
-	if request_purpose_at_start == RequestPurpose.ALL_CONVOYS or request_purpose_at_start == RequestPurpose.USER_CONVOYS:
+	if request_purpose_at_start == RequestPurpose.ALL_CONVOYS or request_purpose_at_start == RequestPurpose.USER_CONVOYS or request_purpose_at_start == RequestPurpose.USER_DATA:
 		var response_body_text: String = body.get_string_from_utf8()
 		var json_response = JSON.parse_string(response_body_text)
 		if json_response == null:
@@ -2434,7 +2517,17 @@ func _on_request_completed(result: int, response_code: int, _headers: PackedStri
 		elif json_response is Dictionary:
 			# This is likely a user object from /user/get, which contains a convoy list.
 			# Also emit the full user object for downstream consumers.
-			if request_purpose_at_start == RequestPurpose.USER_CONVOYS:
+			if request_purpose_at_start == RequestPurpose.USER_CONVOYS or request_purpose_at_start == RequestPurpose.USER_DATA:
+				var store := get_node_or_null('/root/GameStore') if is_inside_tree() else null
+				if is_instance_valid(store) and store.has_method('set_user'):
+					var existing_user = store.get_user()
+					if existing_user is Dictionary and not existing_user.is_empty():
+						# Preserve locally-injected IDs if backend is lagging or omitting them
+						if (not json_response.has("steam_id") or json_response.get("steam_id") == null) and existing_user.has("steam_id") and existing_user.get("steam_id") != null:
+							json_response["steam_id"] = existing_user.get("steam_id")
+						if (not json_response.has("discord_id") or json_response.get("discord_id") == null) and existing_user.has("discord_id") and existing_user.get("discord_id") != null:
+							json_response["discord_id"] = existing_user.get("discord_id")
+					store.set_user(json_response)
 				emit_signal('user_data_received', json_response)
 
 				var extracted: Array = []
@@ -2536,37 +2629,7 @@ func _on_request_completed(result: int, response_code: int, _headers: PackedStri
 		_complete_current_request()
 		return
 	
-	elif request_purpose_at_start == RequestPurpose.USER_DATA:
-		var response_body_text: String = body.get_string_from_utf8()
-		var json_response = JSON.parse_string(response_body_text)
 
-		if json_response == null:
-			var error_msg_json = 'APICalls (_on_request_completed - USER_DATA): Failed to parse JSON. URL: %s' % _last_requested_url
-			printerr(error_msg_json)
-			printerr('  Raw Body: %s' % response_body_text)
-			emit_signal('fetch_error', error_msg_json)
-		elif not json_response is Dictionary:
-			var error_msg_type = 'APICalls (_on_request_completed - USER_DATA): Expected Dictionary, got %s. URL: %s' % [typeof(json_response), _last_requested_url]
-			printerr(error_msg_type)
-			emit_signal('fetch_error', error_msg_type)
-		else:
-			# SUCCESS with user data
-			print("APICalls (_on_request_completed - USER_DATA): Successfully fetched user data. URL: %s" % _last_requested_url)
-			# Update GameStore then emit legacy signal
-			var store := get_node_or_null('/root/GameStore') if is_inside_tree() else null
-			if is_instance_valid(store) and store.has_method('set_user'):
-				var existing_user = store.get_user()
-				if existing_user is Dictionary and not existing_user.is_empty():
-					# Preserve locally-injected IDs if backend is lagging or omitting them
-					if (not json_response.has("steam_id") or json_response.get("steam_id") == null) and existing_user.has("steam_id") and existing_user.get("steam_id") != null:
-						json_response["steam_id"] = existing_user.get("steam_id")
-					if (not json_response.has("discord_id") or json_response.get("discord_id") == null) and existing_user.has("discord_id") and existing_user.get("discord_id") != null:
-						json_response["discord_id"] = existing_user.get("discord_id")
-				store.set_user(json_response)
-			emit_signal('user_data_received', json_response)
-
-		_complete_current_request()
-		return
 
 	elif request_purpose_at_start == RequestPurpose.VENDOR_DATA:
 		# Clear pending flag for this vendor id on completion
