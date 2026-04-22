@@ -53,3 +53,8 @@ Steam requires clear-text credentials for automated uploads. Use a dedicated ser
 - **`Gemfile.lock`**: Bumped `addressable` from `2.8.9` → `2.9.0` to resolve **CVE-2026-35611** (High severity ReDoS vulnerability affecting versions `>= 2.3.0, < 2.9.0`).
   - `fastlane`'s existing constraint (`>= 2.8, < 3.0.0`) already accepts 2.9.x — no other lock file entries required updating.
   - The transitive `public_suffix` dependency constraint (`>= 2.0.2, < 8.0`) is unchanged between versions.
+
+## 2026-04-22 - Fix: Push Notification Entitlement Enabled for Local Installs
+- **`export_presets.cfg`**: Changed `entitlements/push_notifications` from `"Disabled"` to `"Production"` for the iOS preset (preset 7).
+  - **Root cause**: With the entitlement disabled, Apple's APNs refuses to issue a device token when `register_push_notifications()` is called. The `APN` singleton's `device_address_changed` signal never fires, so `register_push_token()` is never called, and no tokens are stored in the backend DB — resulting in zero push notifications delivered.
+  - **Note on CI**: The `_build-ios-appstore.yml` pipeline already dynamically injects `"Production"` at build time (see 2026-03-26 entry), so App Store/TestFlight builds were unaffected. This fix restores push notification functionality for **local device installs** made via the Godot editor's one-click deploy.

@@ -522,7 +522,7 @@ func _notification(what: int) -> void:
 func _update_mobile_dependent_layout() -> void:
 	var is_portrait = _is_portrait_view()
 	var use_mobile = _is_mobile()
-	
+
 	if is_portrait:
 		VENDOR_ITEM_BUTTON_MIN_WIDTH = 400.0
 		VENDOR_ITEM_BUTTON_HEIGHT = 300.0
@@ -532,19 +532,19 @@ func _update_mobile_dependent_layout() -> void:
 	else:
 		VENDOR_ITEM_BUTTON_MIN_WIDTH = 190.0
 		VENDOR_ITEM_BUTTON_HEIGHT = 72.0
-		
+
 	# Super-scale stats in portrait by stacking them vertically
 	var res_hbox := $MainVBox/ScrollContainer/ContentVBox/ResourceStatsHBox as BoxContainer
 	var perf_hbox := $MainVBox/ScrollContainer/ContentVBox/PerformanceStatsHBox as BoxContainer
-	
+
 	var stat_height = 120.0 if is_portrait else 50.0
-	
+
 	if is_instance_valid(res_hbox):
 		res_hbox.add_theme_constant_override("separation", 8 if is_portrait else 4)
 		for child in res_hbox.get_children():
 			if child is Control:
 				child.custom_minimum_size.y = stat_height
-				
+
 	if is_instance_valid(perf_hbox):
 		perf_hbox.add_theme_constant_override("separation", 8 if is_portrait else 4)
 		for child in perf_hbox.get_children():
@@ -580,11 +580,11 @@ func _update_mobile_dependent_layout() -> void:
 				vendor_content_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
 				vendor_content_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 				vendor_content_scroll.custom_minimum_size.y = 120.0
-				
+
 	# Back Button
 	if is_instance_valid(back_button):
 		back_button.custom_minimum_size = Vector2(back_button.custom_minimum_size.x, 120.0 if is_portrait else (60.0 if use_mobile else 34.0))
-		
+
 	# Bottom Bar Panel and children styles
 	var bottom_panel := $MainVBox/BottomBarPanel if has_node("MainVBox/BottomBarPanel") else null
 	if is_instance_valid(bottom_panel):
@@ -611,7 +611,7 @@ func _update_mobile_dependent_layout() -> void:
 	_style_menu_button(journey_menu_button)
 	_style_menu_button(settlement_menu_button)
 	_style_menu_button(cargo_menu_button)
-	
+
 	if is_instance_valid(_mission_sort_option_button):
 		if is_portrait:
 			_mission_sort_option_button.custom_minimum_size = Vector2(400, 80)
@@ -619,7 +619,7 @@ func _update_mobile_dependent_layout() -> void:
 		else:
 			_mission_sort_option_button.custom_minimum_size = Vector2(300, 34)
 			_mission_sort_option_button.add_theme_font_size_override("font_size", 14)
-	
+
 	if is_instance_valid(vendor_item_grid):
 		for child in vendor_item_grid.get_children():
 			if child is Control and child.has_meta("nav_intent"):
@@ -629,11 +629,11 @@ func _update_vendor_grid_columns() -> void:
 	# Make the vendor item grid responsive: choose columns based on available width.
 	if not is_instance_valid(vendor_item_grid):
 		return
-		
+
 	var is_portrait = _is_portrait_view()
 	var on_mobile = _is_mobile()
 	var is_narrow_screen = get_viewport_rect().size.x < 1150
-	
+
 	if on_mobile or is_narrow_screen:
 		if is_portrait:
 			# Split into 2 rows by setting columns to ceil(valid_items / 2.0)
@@ -641,7 +641,7 @@ func _update_vendor_grid_columns() -> void:
 			for child in vendor_item_grid.get_children():
 				if is_instance_valid(child) and not child.is_queued_for_deletion():
 					valid_count += 1
-			
+
 			var cols = max(1, int(ceil(valid_count / 2.0)))
 			if _debug_convoy_menu:
 				print("[ConvoyMenu] Portrait 2-row layout: items=", valid_count, " columns=", cols)
@@ -649,7 +649,7 @@ func _update_vendor_grid_columns() -> void:
 		else:
 			vendor_item_grid.columns = 9999
 		return
-	
+
 	var grid_width := vendor_item_grid.size.x
 	if grid_width <= 0:
 		# Fall back to parent/container width if grid has not sized yet
@@ -1156,7 +1156,7 @@ func _build_vendor_preview_button(item_string: String) -> Control:
 			# If this looks like a slot summary (e.g., "Engine (2)") rather than a real item,
 			# keep navigation but expect focus to be best-effort.
 	button.set_meta("nav_intent", nav_intent)
-	
+
 	# Mobile tap detection logic to replace Button press
 	button.mouse_filter = Control.MOUSE_FILTER_PASS
 	button.gui_input.connect(func(event):
