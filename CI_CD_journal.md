@@ -58,3 +58,8 @@ Steam requires clear-text credentials for automated uploads. Use a dedicated ser
 - **`export_presets.cfg`**: Changed `entitlements/push_notifications` from `"Disabled"` to `"Production"` for the iOS preset (preset 7).
   - **Root cause**: With the entitlement disabled, Apple's APNs refuses to issue a device token when `register_push_notifications()` is called. The `APN` singleton's `device_address_changed` signal never fires, so `register_push_token()` is never called, and no tokens are stored in the backend DB — resulting in zero push notifications delivered.
   - **Note on CI**: The `_build-ios-appstore.yml` pipeline already dynamically injects `"Production"` at build time (see 2026-03-26 entry), so App Store/TestFlight builds were unaffected. This fix restores push notification functionality for **local device installs** made via the Godot editor's one-click deploy.
+
+## 2026-04-22 - Fix: APN Singleton Name Corrected in PushNotificationManager
+- **`Scripts/System/Services/push_notification_manager.gd`**: Changed all `Engine.has_singleton("APN")` / `Engine.get_singleton("APN")` calls to use `"PushNotifications"` — the name registered by `ios/plugins/apn.gdip`.
+  - **Root cause**: The `.gdip` manifest registers the plugin under the name `"PushNotifications"`, so `Engine.has_singleton("APN")` always returned `false`. This caused `_setup_ios()` to return immediately, skipping signal connections entirely. No `device_address_changed` signal was ever received, so `register_push_token()` was never called and the DB remained empty.
+  - Also removed the dead `apn.init()` call (the plugin has no `init()` method — initialization happens automatically via `godot_apn_init`) and added `print()` logging to make future debugging easier.
