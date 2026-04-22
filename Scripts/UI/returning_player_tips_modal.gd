@@ -24,13 +24,13 @@ func _apply_mobile_scaling() -> void:
 	
 	var panel = $Panel
 	if is_port:
-		var target_w = win_size.x - 40
-		var target_h = win_size.y - 200 # Leave room for top bar and some bottom gap
+		var target_w = int(win_size.x * 0.88)
+		var target_h = int(win_size.y * 0.72) # Capped to look like a modal
 		panel.custom_minimum_size = Vector2(target_w, target_h)
 		panel.offset_left = -target_w / 2
 		panel.offset_right = target_w / 2
-		panel.offset_top = -target_h / 2 + 160 # Shift down to clear nav bar
-		panel.offset_bottom = target_h / 2 + 160
+		panel.offset_top = -target_h / 2
+		panel.offset_bottom = target_h / 2
 	else:
 		panel.custom_minimum_size = Vector2(min(800, win_size.x - 40), min(600, win_size.y - 40))
 	

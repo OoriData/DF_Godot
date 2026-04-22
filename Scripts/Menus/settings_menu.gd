@@ -57,9 +57,9 @@ func _update_layout() -> void:
 	var target_h: int
 	
 	if is_portrait:
-		# Portrait: Absolute full width and height
-		target_w = int(win_size.x)
-		target_h = int(win_size.y)
+		# Portrait: Reduced size to look like a modal
+		target_w = int(win_size.x * 0.92)
+		target_h = int(win_size.y * 0.82)
 	else:
 		# Landscape: width capped but comfortable, height strictly respects borders
 		target_w = int(min(1200, win_size.x * 0.85))
@@ -77,14 +77,14 @@ func _update_layout() -> void:
 			panel.offset_top = -target_h / 2
 			panel.offset_bottom = target_h / 2
 			
-		# Remove borders and corners in portrait for a flush full-screen look
+		# Always use borders and corners to maintain modal appearance
 		var style = panel.get_theme_stylebox("panel").duplicate()
 		if style is StyleBoxFlat:
-			style.set_border_width_all(0 if is_portrait else 1)
-			style.corner_radius_top_left = 0 if is_portrait else 12
-			style.corner_radius_top_right = 0 if is_portrait else 12
-			style.corner_radius_bottom_left = 0 if is_portrait else 12
-			style.corner_radius_bottom_right = 0 if is_portrait else 12
+			style.set_border_width_all(1)
+			style.corner_radius_top_left = 12
+			style.corner_radius_top_right = 12
+			style.corner_radius_bottom_left = 12
+			style.corner_radius_bottom_right = 12
 			panel.add_theme_stylebox_override("panel", style)
 			
 	var scroll = %Scroll
