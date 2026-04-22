@@ -122,6 +122,9 @@ static func _update_projection_overlay(bar: ProgressBar, base_value: float, proj
 	if not is_instance_valid(bar):
 		return
 
+	if not is_finite(base_value) or not is_finite(projected_value) or not is_finite(total_value) or not is_finite(delta):
+		return
+
 	# Hide overlay when no projection is active.
 	var projection_active: bool = abs(delta) > 0.00001 and total_value > 0.0 and bar.visible and abs(projected_value - base_value) > 0.00001
 	var segment: Panel = _ensure_projection_segment(bar)
@@ -136,49 +139,67 @@ static func _update_projection_overlay(bar: ProgressBar, base_value: float, proj
 		(proj_marker as CanvasItem).visible = false
 
 	if not projection_active:
+		bar.remove_meta("proj_delta")
+		bar.remove_meta("proj_total_value")
+		bar.remove_meta("proj_base_value")
+		bar.remove_meta("proj_projected_value")
 		return
 
-	# 1) Ensure overlay is clipped to the bar rect.
-	# (This is rectangular clipping; the segment itself will be rounded to match.)
+	# Store state in metadata for reactive layout updates (e.g. on resize)
+	bar.set_meta("proj_delta", delta)
+	bar.set_meta("proj_total_value", total_value)
+	bar.set_meta("proj_base_value", base_value)
+	bar.set_meta("proj_projected_value", projected_value)
+
+	update_projection_overlay_layout(bar)
+
+static func update_projection_overlay_layout(bar: ProgressBar) -> void:
+	if not is_instance_valid(bar):
+		return
+	
+	var segment: Panel = _ensure_projection_segment(bar)
+	var delta: float = float(bar.get_meta("proj_delta", 0.0))
+	var total_value: float = float(bar.get_meta("proj_total_value", 0.0))
+	var base_value: float = float(bar.get_meta("proj_base_value", 0.0))
+	var projected_value: float = float(bar.get_meta("proj_projected_value", 0.0))
+
+	# Hide overlay when no projection is active.
+	var projection_active: bool = abs(delta) > 0.00001 and total_value > 0.0001 and bar.visible and abs(projected_value - base_value) > 0.00001
+
+	# 1) Ensure overlay is clipped.
 	bar.clip_contents = true
 
-	# Place the overlay segment between base and projected positions.
-	# We align to the bar's content margins but allow the height to fill more
-	# to avoid looking disconnected.
-	var inner_pos := Vector2.ZERO
-	var w: float = bar.size.x
-	var h: float = bar.size.y
+	var container = segment.get_parent().get_parent() as MarginContainer
+	if is_instance_valid(container):
+		var bg_sb: StyleBox = bar.get_theme_stylebox("background")
+		if bg_sb != null:
+			container.add_theme_constant_override("margin_left", int(bg_sb.get_content_margin(SIDE_LEFT)))
+			container.add_theme_constant_override("margin_right", int(bg_sb.get_content_margin(SIDE_RIGHT)))
+			container.add_theme_constant_override("margin_top", int(bg_sb.get_content_margin(SIDE_TOP)))
+			container.add_theme_constant_override("margin_bottom", int(bg_sb.get_content_margin(SIDE_BOTTOM)))
 	
-	var bg_sb: StyleBox = bar.get_theme_stylebox("background")
-	if bg_sb != null:
-		var l := float(bg_sb.get_content_margin(SIDE_LEFT))
-		var r := float(bg_sb.get_content_margin(SIDE_RIGHT))
-		var t := float(bg_sb.get_content_margin(SIDE_TOP))
-		var b := float(bg_sb.get_content_margin(SIDE_BOTTOM))
-		inner_pos = Vector2(l, t)
-		w = max(1.0, bar.size.x - l - r)
-		# Force full height to perfectly cover the bar.
-		inner_pos.y = 0.0
-		h = bar.size.y
+	var left_ratio: float = clamp(min(base_value, projected_value) / max(0.00001, total_value), 0.0, 1.0)
+	var right_ratio: float = clamp(max(base_value, projected_value) / max(0.00001, total_value), 0.0, 1.0)
 
-	var base_x: float = inner_pos.x + (clamp(base_value, 0.0, total_value) / max(0.00001, total_value)) * w
-	var proj_x: float = inner_pos.x + (clamp(projected_value, 0.0, total_value) / max(0.00001, total_value)) * w
-	var left_x: float = min(base_x, proj_x)
-	var right_x: float = max(base_x, proj_x)
-	segment.position = Vector2(left_x, inner_pos.y)
-	segment.size = Vector2(max(1.0, right_x - left_x), h)
+	segment.anchor_left = left_ratio
+	segment.anchor_right = right_ratio
+	
+	segment.offset_left = 0.0
+	segment.offset_right = 0.0
+	segment.offset_top = 0.0
+	segment.offset_bottom = 0.0
+	
 	segment.z_index = 100
 
 	# Styling: translucent fill + white border.
 	var sb := StyleBoxFlat.new()
 	var is_adding: bool = delta > 0.0
 	sb.bg_color = (Color(0.25, 0.95, 0.85, 0.30) if is_adding else Color(1.0, 0.45, 0.45, 0.25))
-	sb.border_color = Color(1.0, 1.0, 1.0, 0.80) # Brighter, clearer border
+	sb.border_color = Color(1.0, 1.0, 1.0, 0.80) 
 	
-	# Fetch rounding from the bar's theme.
 	var fill_sb: StyleBox = bar.get_theme_stylebox("fill")
 	var bg_sb_actual: StyleBox = bar.get_theme_stylebox("background")
-	var radius: int = int(round(h * 0.5)) # Default to pill shape
+	var radius: int = int(round(bar.size.y * 0.5)) 
 	
 	if fill_sb != null and fill_sb is StyleBoxFlat:
 		var f := fill_sb as StyleBoxFlat
@@ -188,41 +209,32 @@ static func _update_projection_overlay(bar: ProgressBar, base_value: float, proj
 		var b_sb := bg_sb_actual as StyleBoxFlat
 		radius = maxi(int(b_sb.corner_radius_top_left), int(b_sb.corner_radius_top_right))
 	
-	var touches_left: bool = left_x <= (bar.get_theme_stylebox("background").get_content_margin(SIDE_LEFT) + 1.0) if bar.get_theme_stylebox("background") else left_x <= 1.0
-	var touches_right: bool = right_x >= (bar.size.x - (bar.get_theme_stylebox("background").get_content_margin(SIDE_RIGHT) if bar.get_theme_stylebox("background") else 0.0) - 1.0)
+	# BUGFIX: Prevent StyleBoxFlat explosion on very narrow slivers
+	var expected_px_width: float = (right_ratio - left_ratio) * bar.size.x
+	radius = mini(radius, max(0, int(expected_px_width)))
 	
-	# Border and corner logic for "flush" appearance:
-	# - Both ends now have a border for clarity (1px for inner, 2px for front).
+	var touches_left: bool = left_ratio <= 0.01
+	var touches_right: bool = right_ratio >= 0.99
+	
 	sb.set_border_width_all(1)
-	
 	if is_adding:
-		# The left side (left_x) is the "inner" start.
-		# The right side (right_x) is the "front" (leading edge).
 		sb.corner_radius_top_left = 0
 		sb.corner_radius_bottom_left = 0
-		sb.border_width_left = 1 # Inner start
-		sb.border_width_right = 2 # Front
-		
-		# The right side is the "tip" of the bar.
+		sb.border_width_left = 1 
+		sb.border_width_right = 2 
 		sb.corner_radius_top_right = radius
 		sb.corner_radius_bottom_right = radius
 	else:
-		# The left side (left_x) is the "front" (new tip of green).
-		# The right side (right_x) is the "inner" start (where cargo used to end).
 		sb.corner_radius_top_left = radius
 		sb.corner_radius_bottom_left = radius
-		sb.border_width_left = 2 # Front
-		sb.border_width_right = 1 # Inner start
-		
-		# The right side is where the bar used to end.
+		sb.border_width_left = 2 
+		sb.border_width_right = 1 
 		sb.corner_radius_top_right = radius if touches_right else 0
 		sb.corner_radius_bottom_right = radius if touches_right else 0
 	
-	# Override: if we touch the absolute left, always round.
 	if touches_left:
 		sb.corner_radius_top_left = radius
 		sb.corner_radius_bottom_left = radius
-		# If it's touching the left at 0, both edges are visible/important.
 
 	segment.add_theme_stylebox_override("panel", sb)
 
@@ -240,17 +252,40 @@ static func _ensure_marker(bar: ProgressBar, name: String) -> ColorRect:
 
 
 static func _ensure_projection_segment(bar: ProgressBar) -> Panel:
-	var existing: Node = bar.get_node_or_null("ProjectionSegment")
-	if existing != null and existing is Panel:
-		return existing as Panel
-	# If a previous version created ProjectionSegment as a ColorRect, remove it.
-	if existing != null and is_instance_valid(existing):
-		existing.queue_free()
-	var p := Panel.new()
-	p.name = "ProjectionSegment"
-	p.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	bar.add_child(p)
-	return p
+	var old_segment: Node = bar.get_node_or_null("ProjectionSegment")
+	if old_segment != null and old_segment is Panel and old_segment.get_parent() == bar:
+		old_segment.name = "OldProjectionSegment"
+		old_segment.queue_free()
+
+	var container_name = "ProjectionContainer"
+	var container = bar.get_node_or_null(container_name)
+	if not container:
+		container = MarginContainer.new()
+		container.name = container_name
+		container.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		container.set_anchors_preset(Control.PRESET_FULL_RECT)
+		container.clip_contents = true
+		
+		# Inner container handles the percentage anchors cleanly without fighting margins
+		var inner = Control.new()
+		inner.name = "ProjectionInner"
+		inner.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		inner.set_anchors_preset(Control.PRESET_FULL_RECT)
+		inner.clip_contents = true
+		container.add_child(inner)
+		
+		var p = Panel.new()
+		p.name = "ProjectionSegment"
+		p.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		inner.add_child(p)
+		
+		bar.add_child(container)
+		
+	if not bar.is_connected("resized", update_projection_overlay_layout):
+		bar.resized.connect(update_projection_overlay_layout.bind(bar))
+		
+	var target = container.get_node("ProjectionInner/ProjectionSegment")
+	return target as Panel
 
 
 static func _bar_color_for_pct(pct: float) -> Color:

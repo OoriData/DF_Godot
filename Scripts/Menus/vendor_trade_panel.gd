@@ -32,13 +32,10 @@ func _emit_install_requested(item: Variant, quantity: int, vendor_id: String) ->
 @onready var item_info_rich_text: RichTextLabel = %ItemInfoRichText
 @onready var fitment_panel: VBoxContainer = %FitmentPanel
 @onready var fitment_rich_text: RichTextLabel = %FitmentRichText
-@onready var comparison_panel: PanelContainer = %ComparisonPanel
 @onready var description_toggle_button: Button = %DescriptionToggleButton
 @onready var description_panel: VBoxContainer = %DescriptionPanel
 @onready var item_description_rich_text: RichTextLabel = %ItemDescriptionRichText
-@onready var selected_item_stats: RichTextLabel = %SelectedItemStats
-@onready var equipped_item_stats: RichTextLabel = %EquippedItemStats
-@onready var quantity_spinbox: SpinBox = %QuantitySpinBox
+@onready var quantity_spinbox: QuantityWidget = %QuantitySpinBox
 @onready var delivery_reward_label: RichTextLabel = %DeliveryRewardLabel
 @onready var price_label: RichTextLabel = %PriceLabel
 @onready var convoy_volume_bar: ProgressBar = %ConvoyVolumeBar
@@ -51,7 +48,7 @@ func _emit_install_requested(item: Variant, quantity: int, vendor_id: String) ->
 @onready var convoy_cargo_label: Label = %ConvoyCargoLabel
 @onready var trade_mode_tab_container: TabContainer = %TradeModeTabContainer
 @onready var toast_notification: Control = %ToastNotification
-@onready var cargo_sort_option_button: OptionButton = get_node_or_null("%CargoSortOptionButton")
+@onready var cargo_sort_button: MenuButton = get_node_or_null("%CargoSortButton")
 var loading_panel: Panel = null
 
 # --- Data ---
@@ -137,8 +134,8 @@ func _save_cargo_sort_metric_to_settings(metric: int) -> void:
 		sm.set_and_save("ui.cargo_sort_metric", metric)
 
 func _set_cargo_sort_ui_visible(visible: bool) -> void:
-	if is_instance_valid(cargo_sort_option_button):
-		var p := cargo_sort_option_button.get_parent()
+	if is_instance_valid(cargo_sort_button):
+		var p := cargo_sort_button.get_parent()
 		if is_instance_valid(p):
 			p.visible = visible
 
@@ -213,6 +210,8 @@ func _apply_committed_projection_scale(quantity: int, added_volume: float, added
 		return {"added_volume": 0.0, "added_weight": 0.0}
 
 	var scale_factor: float = float(uncommitted_qty) / float(quantity)
+	if not is_finite(scale_factor):
+		scale_factor = 0.0
 	return {"added_volume": added_volume * scale_factor, "added_weight": added_weight * scale_factor}
 
 func _get_effective_projection_deltas() -> Dictionary:
@@ -231,7 +230,11 @@ func _get_effective_projection_deltas() -> Dictionary:
 	var added_w: float = float(pr.get("added_weight", 0.0))
 	var added_v: float = float(pr.get("added_volume", 0.0))
 	var scaled := _apply_committed_projection_scale(quantity, added_v, added_w)
-	return {"volume": float(scaled.get("added_volume", 0.0)), "weight": float(scaled.get("added_weight", 0.0))}
+	var final_v = float(scaled.get("added_volume", 0.0))
+	var final_w = float(scaled.get("added_weight", 0.0))
+	if not is_finite(final_v): final_v = 0.0
+	if not is_finite(final_w): final_w = 0.0
+	return {"volume": final_v, "weight": final_w}
 
 func _commit_projection_from_pending_tx() -> void:
 	if not (_pending_tx is Dictionary):
@@ -625,7 +628,63 @@ func _get_bold_font_for(node: Control) -> FontVariation:
 		_bold_font_cache = bf
 	return _bold_font_cache
 
+# Deleted: _get_portrait_font_size
+
+func _on_layout_mode_changed(_mode: int, _screen_size: Vector2, _is_mobile: bool) -> void:
+	_update_layout_scaling()
+
+func _update_layout_scaling() -> void:
+	var dsm = get_node_or_null("/root/DeviceStateManager")
+	if not is_instance_valid(dsm): return
+	
+	var mode = dsm.get_layout_mode()
+	var is_portrait = (mode == 2) # MOBILE_PORTRAIT
+	
+	var dyn_font_sz = dsm.get_scaled_base_font_size(16)
+	if is_portrait:
+		dyn_font_sz = int(dyn_font_sz * 1.1)
+		
+	var curr_theme = theme
+	if curr_theme == null:
+		curr_theme = Theme.new()
+		theme = curr_theme
+	curr_theme.default_font_size = dyn_font_sz
+	
+	if is_instance_valid(trade_mode_tab_container):
+		trade_mode_tab_container.theme = curr_theme
+		var tab_bar = trade_mode_tab_container.get_tab_bar()
+		if is_instance_valid(tab_bar):
+			tab_bar.add_theme_font_size_override("font_size", dyn_font_sz)
+
+	var btn_min_h = 100.0 if is_portrait else 34.0
+	if is_instance_valid(action_button):
+		action_button.custom_minimum_size.y = btn_min_h
+	if is_instance_valid(max_button):
+		max_button.custom_minimum_size.y = btn_min_h
+	if is_instance_valid(install_button):
+		install_button.custom_minimum_size.y = btn_min_h
+		
+	if is_instance_valid(quantity_spinbox):
+		quantity_spinbox.custom_minimum_size.y = btn_min_h if is_portrait else 0.0
+
+	var bar_min_h = 60.0 if is_portrait else 24.0
+	if is_instance_valid(convoy_volume_bar):
+		convoy_volume_bar.custom_minimum_size.y = bar_min_h
+	if is_instance_valid(convoy_weight_bar):
+		convoy_weight_bar.custom_minimum_size.y = bar_min_h
+
+	if is_instance_valid(cargo_sort_button):
+		var sort_h = 80.0 if is_portrait else 34.0
+		cargo_sort_button.custom_minimum_size.y = sort_h
+
 func _ready() -> void:
+	var dsm = get_node_or_null("/root/DeviceStateManager")
+	if is_instance_valid(dsm):
+		if not dsm.layout_mode_changed.is_connected(_on_layout_mode_changed):
+			dsm.layout_mode_changed.connect(_on_layout_mode_changed)
+			
+	_update_layout_scaling()
+
 	# Connect signals from UI elements
 	vendor_item_tree.item_selected.connect(_on_vendor_item_selected)
 	# Use item_selected for Tree to update the inspector on a single click.
@@ -665,11 +724,12 @@ func _ready() -> void:
 	else:
 		printerr("VendorTradePanel: 'DescriptionToggleButton' node not found. Please check the scene file.")
 
-	if is_instance_valid(cargo_sort_option_button):
+	if is_instance_valid(cargo_sort_button):
 		_load_cargo_sort_metric_from_settings()
-		cargo_sort_option_button.custom_minimum_size = Vector2(280, 34)
-		cargo_sort_option_button.add_theme_color_override("font_color", Color(0.93, 0.93, 0.93, 1.0))
-		cargo_sort_option_button.add_theme_color_override("font_hover_color", Color(0.98, 0.98, 0.98, 1.0))
+		cargo_sort_button.custom_minimum_size.x = 100 # Thinner button
+		cargo_sort_button.add_theme_color_override("font_color", Color(0.93, 0.93, 0.93, 1.0))
+		cargo_sort_button.add_theme_color_override("font_hover_color", Color(0.98, 0.98, 0.98, 1.0))
+		
 		var sort_normal := StyleBoxFlat.new()
 		sort_normal.bg_color = Color(0.24, 0.24, 0.24, 0.96)
 		sort_normal.border_width_left = 1
@@ -685,28 +745,31 @@ func _ready() -> void:
 		sort_normal.content_margin_right = 10
 		sort_normal.content_margin_top = 4
 		sort_normal.content_margin_bottom = 4
+		
 		var sort_hover := sort_normal.duplicate()
 		sort_hover.bg_color = Color(0.31, 0.31, 0.31, 0.98)
 		sort_hover.border_color = Color(0.70, 0.70, 0.70, 1.0)
 		var sort_pressed := sort_normal.duplicate()
 		sort_pressed.bg_color = Color(0.18, 0.18, 0.18, 1.0)
-		cargo_sort_option_button.add_theme_stylebox_override("normal", sort_normal)
-		cargo_sort_option_button.add_theme_stylebox_override("hover", sort_hover)
-		cargo_sort_option_button.add_theme_stylebox_override("pressed", sort_pressed)
-		cargo_sort_option_button.add_theme_stylebox_override("focus", sort_hover)
-		var sort_parent := cargo_sort_option_button.get_parent()
-		if is_instance_valid(sort_parent):
-			sort_parent.add_theme_constant_override("separation", 8)
+		
+		cargo_sort_button.add_theme_stylebox_override("normal", sort_normal)
+		cargo_sort_button.add_theme_stylebox_override("hover", sort_hover)
+		cargo_sort_button.add_theme_stylebox_override("pressed", sort_pressed)
+		cargo_sort_button.add_theme_stylebox_override("focus", sort_hover)
+		
+		var popup = cargo_sort_button.get_popup()
+		popup.clear()
+		popup.add_radio_check_item("Profit Margin/Unit", 0)
+		popup.add_radio_check_item("Profit Density/Weight", 1)
+		popup.add_radio_check_item("Profit Density/Volume", 2)
+		popup.add_radio_check_item("Total Order Profit", 3)
+		popup.add_radio_check_item("Distance to Recipient", 4)
+		
+		_cargo_sort_metric = clampi(_cargo_sort_metric, 0, max(0, popup.item_count - 1))
+		for i in range(popup.item_count):
+			popup.set_item_checked(i, i == _cargo_sort_metric)
 			
-		cargo_sort_option_button.clear()
-		cargo_sort_option_button.add_item("Sort: Profit Margin/Unit")
-		cargo_sort_option_button.add_item("Sort: Profit Density/Weight")
-		cargo_sort_option_button.add_item("Sort: Profit Density/Volume")
-		cargo_sort_option_button.add_item("Sort: Total Order Profit")
-		cargo_sort_option_button.add_item("Sort: Distance to Recipient")
-		_cargo_sort_metric = clampi(_cargo_sort_metric, 0, max(0, cargo_sort_option_button.item_count - 1))
-		cargo_sort_option_button.select(_cargo_sort_metric)
-		cargo_sort_option_button.item_selected.connect(_on_cargo_sort_selected)
+		popup.index_pressed.connect(_on_cargo_sort_selected)
 		_update_sort_dropdown_visibility_fast()
 
 	# Subscribe to canonical sources (Hub/Store) instead of GameDataManager.
@@ -756,8 +819,7 @@ func _ready() -> void:
 	if is_instance_valid(convoy_cargo_label):
 		convoy_cargo_label.autowrap_mode = TextServer.AUTOWRAP_WORD
 
-	# Initially hide comparison panel until an item is selected
-	comparison_panel.hide()
+	# Action buttons minimum sizes are handled by _update_layout_scaling()
 	if is_instance_valid(action_button):
 		action_button.disabled = true
 	if is_instance_valid(max_button):
@@ -833,7 +895,7 @@ func _get_semi_bold_font_for(node: Control) -> FontVariation:
 	return _semi_bold_font_cache
 
 func _apply_text_readability_fixes() -> void:
-	# Apply semibold font to small labels to make them appear "thicker" and more readable
+	# Apply semibold font where needed (sizes scale via root theme natively now!)
 	var labels_to_fix = [
 		get_node_or_null("%VolumeLabel"), # Using unique names from tscn
 		get_node_or_null("HBoxContainer/RightPanel/CapacityBars/VolumeLabel"), # Fallback path
@@ -845,10 +907,18 @@ func _apply_text_readability_fixes() -> void:
 	for lbl in labels_to_fix:
 		if is_instance_valid(lbl) and lbl is Label:
 			lbl.add_theme_font_override("font", _get_semi_bold_font_for(lbl))
+	
+	pass
 
 
 func _exit_tree() -> void:
-	# Disconnect from Hub/Store/API signals that we connected in _ready
+	# Disconnect from Hub/Store/API/Global signals that we connected in _ready
+	var dsm = get_node_or_null("/root/DeviceStateManager")
+	if is_instance_valid(dsm) and dsm.has_signal("layout_mode_changed"):
+		var cb_dsm := Callable(self, "_on_layout_mode_changed")
+		if dsm.layout_mode_changed.is_connected(cb_dsm):
+			dsm.layout_mode_changed.disconnect(cb_dsm)
+			
 	if is_instance_valid(_hub) and _hub.has_signal("vendor_panel_ready"):
 		var cb_hub := Callable(self, "_on_hub_vendor_panel_ready")
 		if _hub.vendor_panel_ready.is_connected(cb_hub):
@@ -962,7 +1032,7 @@ func _on_service_vehicle_data_received(data: Dictionary) -> void:
 			if not sel.has(k):
 				sel[k] = (data as Dictionary)[k]
 		_update_inspector()
-		_update_comparison()
+		# _update_comparison() removed - deprecated.
 
 func _resolve_settlement_for_vendor_or_convoy(vendor_id: String, convoy_id: String) -> Dictionary:
 	return VendorPanelContextController.resolve_settlement_for_vendor_or_convoy(self, vendor_id, convoy_id)
@@ -1072,7 +1142,7 @@ func _populate_vendor_list() -> void:
 	_populate_category(vendor_item_tree, root, "Other", buckets.get("other", {}))
 	_populate_category(vendor_item_tree, root, "Resources", buckets.get("resources", {}))
 
-	if is_instance_valid(cargo_sort_option_button):
+	if is_instance_valid(cargo_sort_button):
 		_set_cargo_sort_ui_visible(has_delivery_cargo or _has_delivery_cargo_fast_for_mode("buy"))
 
 	# Vendor list is now rebuilt; apply any queued deep-link focus request.
@@ -1182,7 +1252,7 @@ func _populate_convoy_list() -> void:
 	_populate_category(convoy_item_tree, root, "Resources", buckets.get("resources", {}))
 
 	# Show sorting if either list has delivery cargo, according to Active Tab
-	if is_instance_valid(cargo_sort_option_button):
+	if is_instance_valid(cargo_sort_button):
 		if current_mode == "sell":
 			_set_cargo_sort_ui_visible(has_delivery_cargo or _has_delivery_cargo_fast_for_mode("sell"))
 
@@ -1423,7 +1493,12 @@ func _update_transaction_panel() -> void:
 			action_button.text = "Sell"
 
 func _refresh_capacity_bars(projected_volume_delta: float, projected_weight_delta: float) -> void:
-	VendorPanelConvoyStatsController.refresh_capacity_bars(self, projected_volume_delta, projected_weight_delta)
+	var dsm = get_node_or_null("/root/DeviceStateManager")
+	if is_instance_valid(dsm) and dsm.get_layout_mode() == 2: # MOBILE_PORTRAIT
+		# Ensure layout settles before rendering highlight overlays
+		VendorPanelConvoyStatsController.refresh_capacity_bars.call_deferred(self, projected_volume_delta, projected_weight_delta)
+	else:
+		VendorPanelConvoyStatsController.refresh_capacity_bars(self, projected_volume_delta, projected_weight_delta)
 
 func _is_positive_number(v: Variant) -> bool:
 	return (v is float or v is int) and float(v) > 0.0
@@ -1509,15 +1584,9 @@ func _on_api_transaction_error(error_message: String) -> void:
 	var friendly_message: String = ErrorTranslator.translate(error_message)
 	show_transaction_feedback(friendly_message, "error")
 
-# Updates the comparison panel (stub, fill in as needed)
+# Updates the comparison panel (stub, deprecated)
 func _update_comparison() -> void:
-	# Hide comparison for vehicles, as there's nothing to compare against.
-	if selected_item and selected_item.has("item_data") and selected_item.item_data.has("vehicle_id"):
-		if is_instance_valid(comparison_panel):
-			comparison_panel.hide()
-		return
-	
-	# Future: Implement comparison logic for parts, etc.
+	pass
 
 # Clears the inspector panel (stub, fill in as needed)
 func _clear_inspector() -> void:
@@ -1698,6 +1767,11 @@ func _flash_capacity_bars() -> void:
 func _on_cargo_sort_selected(index: int) -> void:
 	_cargo_sort_metric = index
 	_save_cargo_sort_metric_to_settings(index)
+	
+	if is_instance_valid(cargo_sort_button):
+		var popup = cargo_sort_button.get_popup()
+		for i in range(popup.item_count):
+			popup.set_item_checked(i, i == index)
 
 	_populate_vendor_list()
 	_populate_convoy_list()

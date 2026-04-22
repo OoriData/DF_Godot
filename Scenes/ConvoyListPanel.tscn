@@ -1,6 +1,7 @@
 [gd_scene load_steps=2 format=3 uid="uid://dkvjop71jseg6"]
 
 [ext_resource type="Script" uid="uid://d1gl1k4yeqmp8" path="res://Scripts/UI/convoy_list_panel.gd" id="1_7so3h"]
+[ext_resource type="Script" path="res://Scripts/UI/responsive_list_adapter.gd" id="2_resp"]
 
 [node name="ConvoyListPanel" type="VBoxContainer"]
 size_flags_horizontal = 3
@@ -8,6 +9,7 @@ size_flags_vertical = 4
 script = ExtResource("1_7so3h")
 
 [node name="ToggleButton" type="Button" parent="."]
+custom_minimum_size = Vector2(280, 80)
 layout_mode = 2
 size_flags_horizontal = 3
 text = "Convoys ▼"
@@ -31,3 +33,6 @@ unique_name_in_owner = true
 layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
+
+[node name="ResponsiveListAdapter" type="Node" parent="ConvoyPopup/ListScrollContainer/ConvoyItemsContainer"]
+script = ExtResource("2_resp")

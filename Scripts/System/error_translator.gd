@@ -30,6 +30,8 @@ const ERROR_MAP: Dictionary = {
 	# Selling a vehicle with cargo — match on specific substring so it wins over generic prefixes
 	"contains cargo": "You cannot sell a vehicle while it still has cargo. Remove the cargo and try again.",
 	"Invalid item for this vendor": "This item cannot be bought or sold at this location.",
+	"does not own vehicle": "You do not have permission to access this vehicle's details.",
+	"vehicle not found": "The requested vehicle could not be found.",
 
 	# --- Specific Route Finding Errors ---
 	"Route find failed: No path found": "A route to this destination could not be found. The path may be blocked or across an ocean.",
@@ -61,6 +63,7 @@ const ERROR_MAP: Dictionary = {
 	"PATCH 'vehicle_sold' failed:": "Could not sell vehicle: ",
 	"PATCH 'resource_bought' failed:": "Could not buy resource: ",
 	"PATCH 'resource_sold' failed:": "Could not sell resource: ",
+	"GET 'vehicle_data_received' failed:": "Could not load vehicle details: ",
 	# Warehouses (DF+ required) — show server-provided detail
 	"PATCH 'warehouse_created' failed:": "Warehouse purchase unavailable: Support the developers and upgrade to DF+",
 
@@ -74,7 +77,9 @@ const ERROR_MAP: Dictionary = {
 const IGNORED_SUBSTRINGS: Array[String] = [
 	"Logged out.", # This is a normal event, not an error to display.
 	"Unauthorized", # This is a standard auth challenge, not an error to display in a modal. The auth flow will handle showing the login screen.
-	"Map request HTTP 401" # Suppress 401 errors for map requests (common before login)
+	"Map request HTTP 401", # Suppress 401 errors for map requests (common before login)
+	"Not authenticated",
+	"Not logged in"
 ]
 
 # A list of error substrings that should be handled by a local UI component (like a toast)

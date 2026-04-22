@@ -5,7 +5,9 @@ signal login_successful(user_id: String)
 @onready var center_container: CenterContainer = $CenterContainer
 @onready var vbox_container: VBoxContainer = $CenterContainer/VBoxContainer
 @onready var status_label: Label = $CenterContainer/VBoxContainer/StatusLabel
+@onready var subtitle_label: Label = $CenterContainer/VBoxContainer/SubtitleLabel
 @onready var background_overlay: ColorRect = $Background
+@onready var title_logo: TextureRect = $CenterContainer/VBoxContainer/TitleLogo
 
 # Brand colors
 const DISCORD_BLURPLE := Color("5865F2")
@@ -99,6 +101,9 @@ func _ready() -> void:
 	if is_instance_valid(background_overlay):
 		background_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
 
+	# Apply portrait layout before first frame
+	_apply_portrait_layout()
+
 	# Focus the first button
 	if is_instance_valid(_discord_button):
 		_discord_button.grab_focus()
@@ -106,14 +111,98 @@ func _ready() -> void:
 	# Attempt automatic session reuse if token already valid
 	var api = _api()
 	if api and api.is_auth_token_valid():
-		status_label.text = "Resuming session..."
+		set_loading_mode(true, "Resuming session...")
+	else:
+		set_loading_mode(false)
 
 	_add_version_label()
+
+func set_loading_mode(active: bool, message: String = "") -> void:
+	if active:
+		if message != "":
+			status_label.text = message
+		_set_oauth_active(true)
+		if is_instance_valid(subtitle_label):
+			subtitle_label.visible = false
+		for btn in [_discord_button, _apple_button, _google_button, _steam_button]:
+			if is_instance_valid(btn):
+				btn.visible = false
+	else:
+		_set_oauth_active(false)
+		if is_instance_valid(subtitle_label):
+			subtitle_label.visible = true
+		for btn in [_discord_button, _apple_button, _google_button, _steam_button]:
+			if is_instance_valid(btn):
+				# Don't show steam button if disabled initially
+				if btn == _steam_button and not SteamManager.is_steam_running():
+					btn.visible = true
+					_disable_steam_button()
+				else:
+					btn.visible = true
 
 func _process(_delta: float) -> void:
 	_update_map_background(_delta)
 	if _oauth_in_progress:
 		_spin_status()
+
+# ────────────────────────────────────────────────────────────────────
+# Portrait / Mobile helpers
+# ────────────────────────────────────────────────────────────────────
+
+func _is_portrait() -> bool:
+	var sz := get_viewport_rect().size
+	return sz.y > sz.x
+
+func _is_mobile() -> bool:
+	return OS.has_feature("mobile") or DisplayServer.get_name() in ["Android", "iOS"]
+
+## Re-sizes buttons and spacing to fill portrait screen width on mobile.
+func _apply_portrait_layout() -> void:
+	if not is_instance_valid(vbox_container):
+		return
+
+	var viewport_sz := get_viewport_rect().size
+	var portrait := _is_portrait()
+	var mobile := _is_mobile()
+
+	if portrait and mobile:
+		# Derive a uniform scale so all elements grow proportionally.
+		# Reference width is 340 px (original button). Target 88 % of screen.
+		var scale_f: float = (viewport_sz.x * 0.88) / 340.0
+
+		var btn_w: float  = 340.0 * scale_f
+		var btn_h: float  = 54.0  * scale_f
+		var font_sz: int  = int(round(16.0 * scale_f))
+		var vbox_sep: int = int(round(10.0 * scale_f))
+
+		vbox_container.add_theme_constant_override("separation", vbox_sep)
+
+		for btn in [_discord_button, _apple_button, _google_button, _steam_button]:
+			if not is_instance_valid(btn):
+				continue
+			btn.custom_minimum_size = Vector2(btn_w, btn_h)
+			btn.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+			btn.add_theme_font_size_override("font_size", font_sz)
+
+		# Scale the logo halfway between original and full scale (avoids clipping)
+		if is_instance_valid(title_logo):
+			var logo_f: float = (scale_f + 1.0) / 2.0
+			title_logo.custom_minimum_size = Vector2(520.0 * logo_f, 160.0 * logo_f)
+
+		# Zoom the background camera so the map bleeds off all 4 edges
+		if is_instance_valid(_bg_camera):
+			_bg_camera.zoom = Vector2(4.5, 4.5)
+	else:
+		# Restore defaults
+		vbox_container.add_theme_constant_override("separation", 8)
+		for btn in [_discord_button, _apple_button, _google_button, _steam_button]:
+			if not is_instance_valid(btn):
+				continue
+			btn.custom_minimum_size = Vector2(340, 54)
+			btn.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+			btn.remove_theme_font_size_override("font_size")
+		if is_instance_valid(_bg_camera):
+			_bg_camera.zoom = Vector2(1.05, 1.05)
 
 # ────────────────────────────────────────────────────────────────────
 # Button creation
@@ -381,28 +470,32 @@ func _on_auth_url_received(data: Dictionary) -> void:
 
 func _on_api_error(message: String) -> void:
 	var friendly := ErrorTranslator.translate(message)
-	if friendly.is_empty():
-		return
+	
+	# Always reset oauth state on API error to prevent UI hang, 
+	# even if the error message itself is silenced.
 	if _oauth_in_progress:
-		status_label.text = friendly
 		_set_oauth_active(false)
-	else:
-		status_label.text = friendly
+	
+	if friendly.is_empty():
+		# If it's a silenced auth error (like 401 during background poll), 
+		# we don't want to overwrite the status label if we're not currently in an OAuth flow.
+		if _oauth_in_progress:
+			status_label.text = "Authentication failed."
+		return
+		
+	status_label.text = friendly
 
 func _on_auth_state_changed(state: String) -> void:
 	match state:
 		"pending":
-			_set_oauth_active(true)
-			if not status_label.text.begins_with("Authenticating"):
-				status_label.text = "Authenticating"
+			set_loading_mode(true, "Authenticating")
 		"authenticated":
-			status_label.text = "Session established. Resolving user..."
-			_set_oauth_active(false)
+			set_loading_mode(true, "Session established. Resolving user...")
 		"expired":
-			_set_oauth_active(false)
+			set_loading_mode(false)
 			status_label.text = "Session expired. Please login."
 		"failed":
-			_set_oauth_active(false)
+			set_loading_mode(false)
 			if status_label.text == "Authenticating" or status_label.text == "" or status_label.text.begins_with("Authenticating"):
 				status_label.text = "Authentication failed."
 		_:
@@ -410,14 +503,14 @@ func _on_auth_state_changed(state: String) -> void:
 
 func _on_hub_error_occurred(domain: String, _code: String, message: String, inline: bool) -> void:
 	if domain == "auth" or not inline:
+		set_loading_mode(false)
 		show_error(message)
 
 func _on_store_user_changed(user: Dictionary) -> void:
 	var uid := String(user.get("user_id", user.get("id", "")))
 	if uid == "":
 		return
-	status_label.text = "Welcome."
-	_set_oauth_active(false)
+	status_label.text = "Loading game data..."
 	emit_signal("login_successful", uid)
 
 func _on_auth_expired() -> void:
@@ -453,6 +546,16 @@ func _set_oauth_active(active: bool) -> void:
 	elif not active and _spinner_timer:
 		_spinner_timer.queue_free()
 		_spinner_timer = null
+	
+	# OAuth Failsafe: if we're stuck in 'Loading' for more than 20s, reset.
+	if active:
+		var failsafe := get_tree().create_timer(20.0)
+		failsafe.timeout.connect(func():
+			if _oauth_in_progress and status_label.text.begins_with("Authenticating"):
+				print("[LoginScreen] OAuth failsafe triggered after 20s stall.")
+				_set_oauth_active(false)
+				status_label.text = "Authentication timed out. Please try again."
+		)
 
 # ────────────────────────────────────────────────────────────────────
 # Signal wiring
@@ -518,7 +621,7 @@ func _setup_map_background() -> void:
 	_bg_texture_rect = TextureRect.new()
 	_bg_texture_rect.name = "MapBackground"
 	_bg_texture_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_bg_texture_rect.stretch_mode = TextureRect.STRETCH_SCALE
+	_bg_texture_rect.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
 	_bg_texture_rect.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
 	_bg_texture_rect.modulate = Color(1, 1, 1, 0.26)
 	_bg_texture_rect.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -576,6 +679,7 @@ func _on_viewport_size_changed() -> void:
 	if _bg_viewport == null:
 		return
 	_bg_viewport.size = get_viewport_rect().size
+	_apply_portrait_layout()
 
 func _build_tile_lookup(tile_set: TileSet) -> void:
 	_bg_tile_name_to_entry.clear()

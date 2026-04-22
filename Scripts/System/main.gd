@@ -97,10 +97,11 @@ func initialize_all_components():
 
 	# Initialize MainScreen
 	if is_instance_valid(main_screen):
+		var ui_manager_node = get_node_or_null("UIManager") # UIManager is a sibling of Main in MapView.tscn
 		# Show a simple loading overlay while the map and UI initialize.
 		if main_screen.has_method("_set_map_loading"):
 			main_screen.call_deferred("_set_map_loading", true)
-		main_screen.initialize(self, map_camera_controller, map_interaction_manager)
+		main_screen.initialize(self, map_camera_controller, map_interaction_manager, ui_manager_node)
 		# Connect this node's signal to a method on the main_screen node.
 		if not self.is_connected("map_ready_for_focus", Callable(main_screen, "_on_map_ready_for_focus")):
 			self.connect("map_ready_for_focus", Callable(main_screen, "_on_map_ready_for_focus"))

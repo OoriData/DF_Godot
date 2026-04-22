@@ -28,6 +28,10 @@ func _update_safe_area():
 	var right = screen_size.x - safe_area.end.x
 	var bottom = screen_size.y - safe_area.end.y
 
+	# Add extra padding in portrait to avoid Dynamic Island / notch
+	if window_size.y > window_size.x and top > 0:
+		top += 20 # Push it down slightly further
+
 	# Set margins
 	add_theme_constant_override("margin_left", left)
 	add_theme_constant_override("margin_top", top)

@@ -21,6 +21,14 @@ func _ready():
 	# The popup hides itself when focus is lost. We connect to its signal to update our button.
 	convoy_popup.popup_hide.connect(_on_popup_hide)
 
+	if _is_mobile():
+		_apply_mobile_popup_style()
+
+	# Connect to DeviceStateManager for reactive layout updates
+	var dsm = get_node_or_null("/root/DeviceStateManager")
+	if is_instance_valid(dsm):
+		dsm.layout_mode_changed.connect(_on_layout_mode_changed)
+
 	# Attempt to connect to MenuManager's signal to auto-close this panel.
 	# Since MenuManager is an Autoload, it's globally available.
 	var menu_manager_node = get_node_or_null("/root/MenuManager")
@@ -49,21 +57,10 @@ func _ready():
 	# Setup styling for toggle button if it exists
 	if is_instance_valid(toggle_button):
 		# Ensure button has a reasonable minimum size since we're clearing its text
-		toggle_button.custom_minimum_size = Vector2(200, 36)
-		toggle_button.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-		
-		# We'll use a RichTextLabel child for BBCode styling on the button
-		var rtl = RichTextLabel.new()
-		rtl.name = "StyleLabel"
-		rtl.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		rtl.bbcode_enabled = true
-		rtl.fit_content = true
-		# Using full rect so [center] has the button width to work with
-		rtl.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-		rtl.offset_top = 4 # Vertical offset for centering
-		rtl.autowrap_mode = TextServer.AUTOWRAP_OFF
-		toggle_button.add_child(rtl)
-		toggle_button.text = "" # Use child for display
+		# Standard Scaling
+		toggle_button.custom_minimum_size = Vector2(240, 48)
+		_update_button_layout()
+
 		
 	# Initialize display
 	_update_toggle_button_display(false)
@@ -81,10 +78,28 @@ func _on_toggle_button_pressed() -> void:
 	if convoy_popup.is_visible():
 		convoy_popup.hide()
 	else:
-		var item_count = max(1, list_item_container.get_child_count()) # Avoid 0
-		var popup_height = clamp(item_count * 30 + 10, 50, 300) # e.g., 30px per item + padding
+		# Determine actual convoy count for accurate height calculation
+		var convoys = []
+		if is_instance_valid(_store) and _store.has_method("get_convoys"):
+			convoys = _store.get_convoys()
+		
+		var item_count = convoys.size() if not convoys.is_empty() else 1 # 1 for "No convoys" label
+		
+		var win_size = DisplayServer.window_get_size()
+		var is_portrait = win_size.y > win_size.x
+		var is_mobile = _is_mobile()
+		var item_h = 100 if is_portrait else (64 if is_mobile else 32)
+		var separation = 16 if is_portrait else (12 if is_mobile else 4)
+		
+		# Calculate total height: items + separations + top/bottom padding
+		var total_content_h = (item_count * item_h) + (max(0, item_count - 1) * separation) + 60
+		
+		# Clamp height to reasonable limits
+		var max_h = 800 if is_portrait else (600 if is_mobile else 300)
+		var min_h = 100 if is_portrait else (80 if is_mobile else 50)
+		var popup_height = clamp(total_content_h, min_h, max_h)
+		
 		convoy_popup.size = Vector2(toggle_button.size.x, popup_height)
-
 
 		# Use popup(Rect2i) for robust positioning in Godot 4.
 		# This positions the popup relative to the viewport, using global coordinates.
@@ -152,7 +167,13 @@ func populate_convoy_list(convoys_data: Array) -> void:
 
 		var item_button = Button.new()
 		item_button.name = "ConvoyButton_%s" % str(convoy_id)
-		item_button.custom_minimum_size = Vector2(0, 32)
+		
+		var win_size = DisplayServer.window_get_size()
+		var is_portrait = win_size.y > win_size.x
+		var is_mobile = _is_mobile()
+		var item_h = 100 if is_portrait else (64 if is_mobile else 32)
+		
+		item_button.custom_minimum_size = Vector2(0, item_h)
 		item_button.clip_contents = true
 		item_button.text = "" # Clear default text
 		
@@ -170,6 +191,7 @@ func populate_convoy_list(convoys_data: Array) -> void:
 		var name_label = Label.new()
 		name_label.text = convoy_name
 		name_label.add_theme_color_override("font_color", Color(1.0, 1.0, 1.0)) # Bright White
+		name_label.add_theme_font_size_override("font_size", _get_font_size(16))
 		hbox.add_child(name_label)
 		
 		var journey: Variant = convoy_item_data.get("journey")
@@ -226,9 +248,88 @@ func _on_convoy_item_pressed(convoy_item_data: Dictionary) -> void:
 	# Tell the canonical selection bus about the intent.
 	if is_instance_valid(_hub) and _hub.has_signal("convoy_selection_requested"):
 		_hub.convoy_selection_requested.emit(str(convoy_item_data.get("convoy_id", "")), false)
-
-	# Close the list after an item is selected
+			# Close the list after an item is selected
 	close_list()
+
+func _is_mobile() -> bool:
+	var dsm = get_node_or_null("/root/DeviceStateManager")
+	if is_instance_valid(dsm):
+		return dsm.is_mobile
+	return OS.has_feature("mobile") or OS.has_feature("web_android") or OS.has_feature("web_ios") or DisplayServer.get_name() in ["Android", "iOS"]
+
+func _get_font_size(base: int) -> int:
+	var dsm = get_node_or_null("/root/DeviceStateManager")
+	if is_instance_valid(dsm):
+		return dsm.get_scaled_base_font_size(base)
+	
+	var win_size = get_viewport_rect().size if is_inside_tree() else Vector2(0, 0)
+	var is_portrait = win_size.y > win_size.x
+	var boost = 2.5 if is_portrait else (1.6 if _is_mobile() else 1.2)
+	return int(base * boost)
+
+func _on_layout_mode_changed(_mode, _screen_size, _is_mobile_flag) -> void:
+	_update_button_layout()
+	# Repopulate list if needed or just update item sizes next time it opens
+	if convoy_popup.is_visible():
+		_on_toggle_button_pressed() # Refresh positioning/sizing
+
+func _update_button_layout() -> void:
+	if not is_instance_valid(toggle_button):
+		return
+		
+	var rtl = toggle_button.get_node_or_null("StyleLabel")
+	if not is_instance_valid(rtl):
+		rtl = RichTextLabel.new()
+		rtl.name = "StyleLabel"
+		rtl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		rtl.bbcode_enabled = true
+		rtl.fit_content = true
+		rtl.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		rtl.autowrap_mode = TextServer.AUTOWRAP_OFF
+		toggle_button.add_child(rtl)
+		toggle_button.text = ""
+
+	var is_portrait = false
+	var dsm = get_node_or_null("/root/DeviceStateManager")
+	if is_instance_valid(dsm):
+		is_portrait = dsm.get_is_portrait()
+	else:
+		var win_size = get_viewport_rect().size if is_inside_tree() else Vector2(0, 0)
+		is_portrait = win_size.y > win_size.x
+
+	if is_portrait:
+		# Chunky Portrait Scaling
+		toggle_button.custom_minimum_size = Vector2(520, 140)
+		rtl.add_theme_font_size_override("normal_font_size", _get_font_size(16))
+		rtl.offset_top = 48 # Better vertical centering for 140 height
+	elif _is_mobile():
+		# Landscape Mobile
+		toggle_button.custom_minimum_size = Vector2(320, 80)
+		rtl.add_theme_font_size_override("normal_font_size", _get_font_size(16))
+		rtl.offset_top = 22
+	else:
+		# Desktop
+		toggle_button.custom_minimum_size = Vector2(240, 52)
+		rtl.add_theme_font_size_override("normal_font_size", _get_font_size(16))
+		rtl.offset_top = 6
+	
+	_update_toggle_button_display(convoy_popup.is_visible() if is_instance_valid(convoy_popup) else false)
+
+func _apply_mobile_popup_style() -> void:
+	var ledger = StyleBoxFlat.new()
+	ledger.bg_color = Color(0.1, 0.12, 0.15, 0.98) # Dark slate
+	ledger.border_width_left = 2
+	ledger.border_width_right = 2
+	ledger.border_width_top = 2
+	ledger.border_width_bottom = 2
+	ledger.border_color = Color(0.3, 0.35, 0.4, 1.0) # Steel
+	ledger.corner_radius_top_left = 6
+	ledger.corner_radius_top_right = 6
+	ledger.corner_radius_bottom_left = 6
+	ledger.corner_radius_bottom_right = 6
+	convoy_popup.add_theme_stylebox_override("panel", ledger)
+	
+	list_item_container.add_theme_constant_override("separation", 12)
 
 # Add this handler to update the list when convoy data changes
 func _on_convoy_data_updated(all_convoy_data: Array) -> void:

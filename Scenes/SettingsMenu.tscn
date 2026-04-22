@@ -1,137 +1,353 @@
-[gd_scene load_steps=2 format=3]
+[gd_scene load_steps=3 format=3]
 
 [ext_resource type="Script" path="res://Scripts/Menus/settings_menu.gd" id="1_9e5r6"]
 
-[node name="SettingsMenu" type="Window"]
-title = "Options"
-position = Vector2i(100, 80)
-size = Vector2i(720, 560)
-resizable = true
-always_on_top = false
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_settings_panel"]
+bg_color = Color(0.12, 0.12, 0.12, 0.98)
+border_width_left = 1
+border_width_top = 1
+border_width_right = 1
+border_width_bottom = 1
+border_color = Color(0.3, 0.3, 0.3, 1)
+corner_radius_top_left = 12
+corner_radius_top_right = 12
+corner_radius_bottom_left = 12
+corner_radius_bottom_right = 12
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_CloseButton"]
+bg_color = Color(0.18, 0.18, 0.18, 1)
+border_width_left = 1
+border_width_top = 1
+border_width_right = 1
+border_width_bottom = 1
+border_color = Color(0.4, 0.4, 0.4, 1)
+corner_radius_top_left = 8
+corner_radius_top_right = 8
+corner_radius_bottom_left = 8
+corner_radius_bottom_right = 8
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_CloseButton_Hover"]
+bg_color = Color(0.25, 0.25, 0.25, 1)
+border_width_left = 1
+border_width_top = 1
+border_width_right = 1
+border_width_bottom = 1
+border_color = Color(0.5, 0.5, 0.5, 1)
+corner_radius_top_left = 8
+corner_radius_top_right = 8
+corner_radius_bottom_left = 8
+corner_radius_bottom_right = 8
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_LogoutButton"]
+bg_color = Color(0.44, 0.15, 0.15, 1)
+corner_radius_top_left = 8
+corner_radius_top_right = 8
+corner_radius_bottom_left = 8
+corner_radius_bottom_right = 8
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_LogoutButton_Hover"]
+bg_color = Color(0.55, 0.2, 0.2, 1)
+corner_radius_top_left = 8
+corner_radius_top_right = 8
+corner_radius_bottom_left = 8
+corner_radius_bottom_right = 8
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_ResetButton"]
+bg_color = Color(0.18, 0.18, 0.18, 1)
+border_width_left = 1
+border_width_top = 1
+border_width_right = 1
+border_width_bottom = 1
+border_color = Color(0.4, 0.4, 0.4, 1)
+corner_radius_top_left = 8
+corner_radius_top_right = 8
+corner_radius_bottom_left = 8
+corner_radius_bottom_right = 8
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_ResetButton_Hover"]
+bg_color = Color(0.25, 0.25, 0.25, 1)
+border_width_left = 1
+border_width_top = 1
+border_width_right = 1
+border_width_bottom = 1
+border_color = Color(0.5, 0.5, 0.5, 1)
+corner_radius_top_left = 8
+corner_radius_top_right = 8
+corner_radius_bottom_left = 8
+corner_radius_bottom_right = 8
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_ToggleButton"]
+bg_color = Color(1, 1, 1, 0.05)
+corner_radius_top_left = 8
+corner_radius_top_right = 8
+corner_radius_bottom_left = 8
+corner_radius_bottom_right = 8
+content_margin_left = 12
+content_margin_top = 8
+content_margin_right = 12
+content_margin_bottom = 8
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_ToggleButton_Hover"]
+bg_color = Color(1, 1, 1, 0.1)
+border_width_left = 1
+border_width_top = 1
+border_width_right = 1
+border_width_bottom = 1
+border_color = Color(1, 1, 1, 0.2)
+corner_radius_top_left = 8
+corner_radius_top_right = 8
+corner_radius_bottom_left = 8
+corner_radius_bottom_right = 8
+content_margin_left = 12
+content_margin_top = 8
+content_margin_right = 12
+content_margin_bottom = 8
+
+[node name="SettingsMenu" type="CanvasLayer"]
+layer = 100
 script = ExtResource("1_9e5r6")
 
-[node name="Margin" type="MarginContainer" parent="."]
+[node name="Root" type="Control" parent="."]
+layout_mode = 3
 anchors_preset = 15
 anchor_right = 1.0
 anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
+
+[node name="DimBackground" type="ColorRect" parent="Root"]
+unique_name_in_owner = true
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+color = Color(0, 0, 0, 0.470588)
+
+[node name="Container" type="Control" parent="Root"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+
+[node name="Panel" type="PanelContainer" parent="Root/Container"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(800, 600)
+layout_mode = 1
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -400.0
+offset_top = -300.0
+offset_right = 400.0
+offset_bottom = 300.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_styles/panel = SubResource("StyleBoxFlat_settings_panel")
+
+[node name="Margin" type="MarginContainer" parent="Root/Container/Panel"]
+unique_name_in_owner = true
+layout_mode = 2
 theme_override_constants/margin_left = 12
 theme_override_constants/margin_top = 12
 theme_override_constants/margin_right = 12
 theme_override_constants/margin_bottom = 12
 
-[node name="VBox" type="VBoxContainer" parent="Margin"]
+[node name="ContentVBox" type="VBoxContainer" parent="Root/Container/Panel/Margin"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_constants/separation = 12
+
+[node name="Scroll" type="ScrollContainer" parent="Root/Container/Panel/Margin/ContentVBox"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 100)
+layout_mode = 2
+size_flags_vertical = 3
+horizontal_scroll_mode = 0
+
+[node name="VBox" type="VBoxContainer" parent="Root/Container/Panel/Margin/ContentVBox/Scroll"]
+unique_name_in_owner = true
 layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
 theme_override_constants/separation = 10
 
-[node name="Header" type="Label" parent="Margin/VBox"]
+[node name="Header" type="Label" parent="Root/Container/Panel/Margin/ContentVBox/Scroll/VBox"]
 layout_mode = 2
+theme_override_colors/font_color = Color(0.18, 0.72, 0.58, 1)
+theme_override_font_sizes/font_size = 24
 text = "Settings"
 horizontal_alignment = 1
 
-[node name="DisplaySection" type="VBoxContainer" parent="Margin/VBox"]
+[node name="DisplaySection" type="VBoxContainer" parent="Root/Container/Panel/Margin/ContentVBox/Scroll/VBox"]
+unique_name_in_owner = true
 layout_mode = 2
 theme_override_constants/separation = 6
 
-[node name="DisplayTitle" type="Label" parent="Margin/VBox/DisplaySection"]
+[node name="DisplayTitle" type="Label" parent="Root/Container/Panel/Margin/ContentVBox/Scroll/VBox/DisplaySection"]
 layout_mode = 2
 text = "Display"
 
-[node name="FullscreenCheck" type="CheckBox" parent="Margin/VBox/DisplaySection"]
+[node name="FullscreenCheck" type="CheckButton" parent="Root/Container/Panel/Margin/ContentVBox/Scroll/VBox/DisplaySection"]
+unique_name_in_owner = true
 layout_mode = 2
+theme_override_styles/normal = SubResource("StyleBoxFlat_ToggleButton")
+theme_override_styles/hover = SubResource("StyleBoxFlat_ToggleButton_Hover")
+theme_override_styles/pressed = SubResource("StyleBoxFlat_ToggleButton_Hover")
+theme_override_styles/focus = SubResource("StyleBoxFlat_ToggleButton_Hover")
 text = "Fullscreen"
 
+[node name="HSeparator1" type="HSeparator" parent="Root/Container/Panel/Margin/ContentVBox/Scroll/VBox"]
+layout_mode = 2
+theme_override_constants/separation = 20
 
-[node name="UISec" type="VBoxContainer" parent="Margin/VBox"]
+[node name="UISec" type="VBoxContainer" parent="Root/Container/Panel/Margin/ContentVBox/Scroll/VBox"]
+unique_name_in_owner = true
 layout_mode = 2
 theme_override_constants/separation = 6
 
-[node name="UITitle" type="Label" parent="Margin/VBox/UISec"]
+[node name="UITitle" type="Label" parent="Root/Container/Panel/Margin/ContentVBox/Scroll/VBox/UISec"]
 layout_mode = 2
 text = "UI"
 
-[node name="DynamicScaleCheck" type="CheckBox" parent="Margin/VBox/UISec"]
+[node name="DynamicScaleCheck" type="CheckButton" parent="Root/Container/Panel/Margin/ContentVBox/Scroll/VBox/UISec"]
+unique_name_in_owner = true
 layout_mode = 2
+theme_override_styles/normal = SubResource("StyleBoxFlat_ToggleButton")
+theme_override_styles/hover = SubResource("StyleBoxFlat_ToggleButton_Hover")
+theme_override_styles/pressed = SubResource("StyleBoxFlat_ToggleButton_Hover")
+theme_override_styles/focus = SubResource("StyleBoxFlat_ToggleButton_Hover")
 text = "Dynamic Scaling (Auto)"
 
-[node name="UIScaleRow" type="HBoxContainer" parent="Margin/VBox/UISec"]
+[node name="UIScaleRow" type="HBoxContainer" parent="Root/Container/Panel/Margin/ContentVBox/Scroll/VBox/UISec"]
+unique_name_in_owner = true
 layout_mode = 2
 
-[node name="UIScaleLabel" type="Label" parent="Margin/VBox/UISec/UIScaleRow"]
+[node name="UIScaleLabel" type="Label" parent="Root/Container/Panel/Margin/ContentVBox/Scroll/VBox/UISec/UIScaleRow"]
 layout_mode = 2
 text = "UI Scale"
 
-[node name="UIScaleSlider" type="HSlider" parent="Margin/VBox/UISec/UIScaleRow"]
+[node name="UIScaleSlider" type="HSlider" parent="Root/Container/Panel/Margin/ContentVBox/Scroll/VBox/UISec/UIScaleRow"]
+unique_name_in_owner = true
 layout_mode = 2
 size_flags_horizontal = 3
 min_value = 0.75
 max_value = 2.0
 step = 0.05
 
-[node name="MenuWidthRow" type="HBoxContainer" parent="Margin/VBox/UISec"]
+[node name="MenuWidthRow" type="HBoxContainer" parent="Root/Container/Panel/Margin/ContentVBox/Scroll/VBox/UISec"]
+unique_name_in_owner = true
 layout_mode = 2
 
-[node name="MenuWidthLabel" type="Label" parent="Margin/VBox/UISec/MenuWidthRow"]
+[node name="MenuWidthLabel" type="Label" parent="Root/Container/Panel/Margin/ContentVBox/Scroll/VBox/UISec/MenuWidthRow"]
 layout_mode = 2
 text = "Menu Width Ratio"
 
-[node name="MenuWidthRatioSlider" type="HSlider" parent="Margin/VBox/UISec/MenuWidthRow"]
+[node name="MenuWidthRatioSlider" type="HSlider" parent="Root/Container/Panel/Margin/ContentVBox/Scroll/VBox/UISec/MenuWidthRow"]
+unique_name_in_owner = true
 layout_mode = 2
 size_flags_horizontal = 3
 min_value = 1.2
 max_value = 3.5
 step = 0.1
 
-[node name="ControlsSec" type="VBoxContainer" parent="Margin/VBox"]
+[node name="HSeparator2" type="HSeparator" parent="Root/Container/Panel/Margin/ContentVBox/Scroll/VBox"]
+layout_mode = 2
+theme_override_constants/separation = 20
+
+[node name="ControlsSec" type="VBoxContainer" parent="Root/Container/Panel/Margin/ContentVBox/Scroll/VBox"]
 layout_mode = 2
 theme_override_constants/separation = 6
 
-[node name="ControlsTitle" type="Label" parent="Margin/VBox/ControlsSec"]
+[node name="ControlsTitle" type="Label" parent="Root/Container/Panel/Margin/ContentVBox/Scroll/VBox/ControlsSec"]
 layout_mode = 2
 text = "Controls"
 
-[node name="InvertPanCheck" type="CheckBox" parent="Margin/VBox/ControlsSec"]
+[node name="InvertPanCheck" type="CheckButton" parent="Root/Container/Panel/Margin/ContentVBox/Scroll/VBox/ControlsSec"]
+unique_name_in_owner = true
 layout_mode = 2
+theme_override_styles/normal = SubResource("StyleBoxFlat_ToggleButton")
+theme_override_styles/hover = SubResource("StyleBoxFlat_ToggleButton_Hover")
+theme_override_styles/pressed = SubResource("StyleBoxFlat_ToggleButton_Hover")
+theme_override_styles/focus = SubResource("StyleBoxFlat_ToggleButton_Hover")
 text = "Invert Pan"
 
-[node name="InvertZoomCheck" type="CheckBox" parent="Margin/VBox/ControlsSec"]
+[node name="InvertZoomCheck" type="CheckButton" parent="Root/Container/Panel/Margin/ContentVBox/Scroll/VBox/ControlsSec"]
+unique_name_in_owner = true
 layout_mode = 2
+theme_override_styles/normal = SubResource("StyleBoxFlat_ToggleButton")
+theme_override_styles/hover = SubResource("StyleBoxFlat_ToggleButton_Hover")
+theme_override_styles/pressed = SubResource("StyleBoxFlat_ToggleButton_Hover")
+theme_override_styles/focus = SubResource("StyleBoxFlat_ToggleButton_Hover")
 text = "Invert Zoom"
 
-[node name="GesturesCheck" type="CheckBox" parent="Margin/VBox/ControlsSec"]
+[node name="GesturesCheck" type="CheckButton" parent="Root/Container/Panel/Margin/ContentVBox/Scroll/VBox/ControlsSec"]
+unique_name_in_owner = true
 layout_mode = 2
+theme_override_styles/normal = SubResource("StyleBoxFlat_ToggleButton")
+theme_override_styles/hover = SubResource("StyleBoxFlat_ToggleButton_Hover")
+theme_override_styles/pressed = SubResource("StyleBoxFlat_ToggleButton_Hover")
+theme_override_styles/focus = SubResource("StyleBoxFlat_ToggleButton_Hover")
 text = "Enable Touch Gestures"
 
-[node name="GameplaySec" type="VBoxContainer" parent="Margin/VBox"]
+[node name="HSeparator3" type="HSeparator" parent="Root/Container/Panel/Margin/ContentVBox/Scroll/VBox"]
+layout_mode = 2
+theme_override_constants/separation = 20
+
+[node name="GameplaySec" type="VBoxContainer" parent="Root/Container/Panel/Margin/ContentVBox/Scroll/VBox"]
 layout_mode = 2
 theme_override_constants/separation = 6
 
-[node name="GameplayTitle" type="Label" parent="Margin/VBox/GameplaySec"]
+[node name="GameplayTitle" type="Label" parent="Root/Container/Panel/Margin/ContentVBox/Scroll/VBox/GameplaySec"]
 layout_mode = 2
 text = "Gameplay & Accessibility"
 
-[node name="HighContrastCheck" type="CheckBox" parent="Margin/VBox/GameplaySec"]
+[node name="HighContrastCheck" type="CheckButton" parent="Root/Container/Panel/Margin/ContentVBox/Scroll/VBox/GameplaySec"]
+unique_name_in_owner = true
 layout_mode = 2
+theme_override_styles/normal = SubResource("StyleBoxFlat_ToggleButton")
+theme_override_styles/hover = SubResource("StyleBoxFlat_ToggleButton_Hover")
+theme_override_styles/pressed = SubResource("StyleBoxFlat_ToggleButton_Hover")
+theme_override_styles/focus = SubResource("StyleBoxFlat_ToggleButton_Hover")
 text = "High Contrast Labels"
 
-[node name="ButtonsRow" type="HBoxContainer" parent="Margin/VBox"]
+[node name="ButtonsRow" type="HBoxContainer" parent="Root/Container/Panel/Margin/ContentVBox"]
+unique_name_in_owner = true
 layout_mode = 2
 
-[node name="LeftSpacer" type="Control" parent="Margin/VBox/ButtonsRow"]
+[node name="LeftSpacer" type="Control" parent="Root/Container/Panel/Margin/ContentVBox/ButtonsRow"]
 layout_mode = 2
 size_flags_horizontal = 3
 
-[node name="LogoutButton" type="Button" parent="Margin/VBox/ButtonsRow"]
+[node name="LogoutButton" type="Button" parent="Root/Container/Panel/Margin/ContentVBox/ButtonsRow"]
+unique_name_in_owner = true
 layout_mode = 2
+theme_override_styles/normal = SubResource("StyleBoxFlat_LogoutButton")
+theme_override_styles/hover = SubResource("StyleBoxFlat_LogoutButton_Hover")
+theme_override_styles/pressed = SubResource("StyleBoxFlat_LogoutButton_Hover")
+theme_override_styles/focus = SubResource("StyleBoxFlat_LogoutButton_Hover")
 text = "Log Out"
 
-[node name="ResetDefaultsButton" type="Button" parent="Margin/VBox/ButtonsRow"]
+[node name="ResetDefaultsButton" type="Button" parent="Root/Container/Panel/Margin/ContentVBox/ButtonsRow"]
+unique_name_in_owner = true
 layout_mode = 2
+theme_override_styles/normal = SubResource("StyleBoxFlat_ResetButton")
+theme_override_styles/hover = SubResource("StyleBoxFlat_ResetButton_Hover")
+theme_override_styles/pressed = SubResource("StyleBoxFlat_ResetButton_Hover")
+theme_override_styles/focus = SubResource("StyleBoxFlat_ResetButton_Hover")
 text = "Reset to Defaults"
 
-[node name="CloseButton" type="Button" parent="Margin/VBox/ButtonsRow"]
+[node name="CloseButton" type="Button" parent="Root/Container/Panel/Margin/ContentVBox/ButtonsRow"]
+unique_name_in_owner = true
 layout_mode = 2
+theme_override_styles/normal = SubResource("StyleBoxFlat_CloseButton")
+theme_override_styles/hover = SubResource("StyleBoxFlat_CloseButton_Hover")
+theme_override_styles/pressed = SubResource("StyleBoxFlat_CloseButton_Hover")
+theme_override_styles/focus = SubResource("StyleBoxFlat_CloseButton_Hover")
 text = "Close"

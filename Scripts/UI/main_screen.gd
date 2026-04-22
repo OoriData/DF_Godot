@@ -13,6 +13,7 @@ var _pending_interactive_state: bool = false
 var _onboarding_layer: Control = null
 var _map_is_interactive: bool = true # New flag to control map input
 var _map_loading_overlay: Control = null
+var ui_manager: Node = null
 
 @onready var menu_container = $MainContainer/MainContent/MapAndMenuContainer/MenuContainer
 @onready var top_bar = $MainContainer/TopBar
@@ -23,10 +24,18 @@ const ERROR_DIALOG_SCENE_PATH := "res://Scenes/ErrorDialog.tscn"
 var _error_dialog_scene: PackedScene
 const AUTO_SELL_RECEIPT_MODAL_SCENE_PATH := "res://Scenes/UI/AutoSellReceiptModal.tscn"
 
-func initialize(p_map_view: Control, p_camera_controller: Node, p_interaction_manager: Node):
+func initialize(p_map_view: Control, p_camera_controller: Node, p_interaction_manager: Node, p_ui_manager: Node = null):
 	self.map_view = p_map_view
 	map_camera_controller = p_camera_controller
 	map_interaction_manager = p_interaction_manager
+	ui_manager = p_ui_manager
+
+	# Connect signals from interaction manager
+	if is_instance_valid(map_interaction_manager):
+		if not map_interaction_manager.is_connected("convoy_menu_requested", Callable(self, "_on_convoy_menu_requested")):
+			map_interaction_manager.convoy_menu_requested.connect(_on_convoy_menu_requested)
+		if map_interaction_manager.has_signal("settlement_clicked") and not map_interaction_manager.is_connected("settlement_clicked", Callable(self, "_on_settlement_clicked")):
+			map_interaction_manager.settlement_clicked.connect(_on_settlement_clicked)
 
 	# Connect to the MapView's specific input signal
 	if is_instance_valid(map_view):
@@ -72,6 +81,14 @@ var _is_panning := false
 var _map_ready_for_focus: bool = false
 var _has_fitted_camera: bool = false
 
+# --- Mobile Touch State ---
+var _touches: Dictionary = {} # index (int) -> global_position (Vector2)
+var _last_pinch_distance: float = 0.0
+
+# --- Tap Detection State ---
+var _press_start_pos: Vector2 = Vector2.ZERO
+var _press_start_time: int = 0
+
 # --- Options snapshot (from SettingsManager) ---
 var _opt_invert_pan := false
 var _opt_invert_zoom := false
@@ -88,7 +105,7 @@ var _menu_anim_tween: Tween = null
 var _last_focused_convoy_data: Dictionary = {}
 var _current_menu_occlusion_px: float = 0.0 # animated width used to inform camera occlusion
 @export var debug_menu_camera: bool = false # master toggle for menu-camera diagnostic logging
-@export var onboarding_log_enabled: bool = false # gate onboarding-related logs
+@export var onboarding_log_enabled: bool = true # gate onboarding-related logs
 var _menu_anim_in_progress: bool = false # true while menu open/close tween is active to suppress duplicate focus requests
 
 # Coalesce potentially-frequent menu occlusion changes into a single Map UI refresh.
@@ -189,6 +206,12 @@ func _ready():
 		if not hub.is_connected("auto_sell_receipt_ready", Callable(self, "_on_auto_sell_receipt_ready")):
 			hub.auto_sell_receipt_ready.connect(_on_auto_sell_receipt_ready)
 
+	# Connect to Layout Mode Changes
+	var dsm = get_node_or_null("/root/DeviceStateManager")
+	if is_instance_valid(dsm):
+		if not dsm.is_connected("layout_mode_changed", Callable(self, "_on_layout_mode_changed")):
+			dsm.layout_mode_changed.connect(_on_layout_mode_changed)
+
 	_error_dialog_scene = load(ERROR_DIALOG_SCENE_PATH)
 # Respond to Control resize events
 
@@ -269,8 +292,117 @@ func _notification(what):
 
 func _on_main_screen_size_changed():
 	# Called when MainScreen is resized (window resize or layout change)
+	if _menu_anim_in_progress == false and is_instance_valid(menu_container) and menu_container.visible:
+		_refresh_menu_layout()
+	_update_menu_container_anchors()
+
+	# Wait for Godot layout to recalculate UI bounds before updating camera
+	await get_tree().process_frame
+
 	_update_camera_viewport_rect_on_resize()
 	_update_onboarding_layer_rect_to_map()
+
+func _on_layout_mode_changed(mode, screen_size, is_mobile):
+	# Directly handle layout mode flips (Portrait <-> Landscape)
+	_update_menu_container_anchors()
+	if _menu_anim_in_progress == false and is_instance_valid(menu_container) and menu_container.visible:
+		_refresh_menu_layout()
+	
+	# Wait for Godot layout to recalculate UI bounds before updating camera
+	await get_tree().process_frame
+
+	_update_camera_viewport_rect_on_resize()
+	_update_onboarding_layer_rect_to_map()
+
+func _refresh_menu_layout():
+	# Update Target Width
+	var viewport_sz = get_viewport_rect().size
+	var full_w: float = viewport_sz.y if _is_portrait() else viewport_sz.x
+	var ratios = _get_menu_ratios()
+	var ratio_pct = lerp(ratios.x, ratios.y, _opt_menu_ratio_open)
+	_menu_target_width = full_w * ratio_pct
+	
+	if _menu_target_width < 320.0:
+		_menu_target_width = 320.0
+	if _menu_target_width > full_w * 0.85:
+		_menu_target_width = full_w * 0.85
+		
+	# Apply final bounds manually to snap the view instantly during transitions
+	_current_menu_occlusion_px = _menu_target_width
+	if _is_portrait():
+		var bottom_margin = _get_bottom_safe_margin()
+		menu_container.offset_top = -_menu_target_width - bottom_margin
+		menu_container.offset_bottom = 0
+		# Ensure we zero out left/right offsets to prevent layout skewing from previous landscape mode
+		menu_container.offset_left = 0
+		menu_container.offset_right = 0
+	else:
+		menu_container.offset_left = -_menu_target_width
+		# Also reset right offset, and zero out top/bottom that might have been polluted by portrait mode
+		menu_container.offset_right = 0
+		menu_container.offset_top = 0
+		menu_container.offset_bottom = 0
+
+	_update_camera_occlusion_from_menu()
+	
+	# Reposition camera to keep convoy focused if possible
+	if not _last_focused_convoy_data.is_empty() and is_instance_valid(map_camera_controller):
+		if map_camera_controller.has_method("focus_on_convoy"):
+			map_camera_controller.focus_on_convoy(_last_focused_convoy_data)
+
+
+func _update_menu_container_anchors():
+	if not is_instance_valid(menu_container):
+		return
+	if _is_portrait():
+		menu_container.anchor_left = 0.0
+		menu_container.anchor_right = 1.0
+		menu_container.anchor_top = 1.0
+		menu_container.anchor_bottom = 1.0
+	else:
+		menu_container.anchor_left = 1.0
+		menu_container.anchor_right = 1.0
+		menu_container.anchor_top = 0.0
+		menu_container.anchor_bottom = 1.0
+	
+	_update_menu_container_style()
+
+func _update_menu_container_style():
+	if not is_instance_valid(menu_container):
+		return
+		
+	var style: StyleBoxFlat = menu_container.get_theme_stylebox("panel")
+	if style:
+		style = style.duplicate()
+	else:
+		style = StyleBoxFlat.new()
+		
+	var bottom_margin = _get_bottom_safe_margin()
+	
+	if _is_portrait():
+		# Bottom sheet style: rounded top, square bottom
+		style.corner_radius_top_left = 12
+		style.corner_radius_top_right = 12
+		style.corner_radius_bottom_left = 0
+		style.corner_radius_bottom_right = 0
+		# Increase side margins slightly for portrait
+		style.content_margin_left = 12
+		style.content_margin_right = 12
+		style.content_margin_top = 10
+		# Push content up to respect safe area
+		style.content_margin_bottom = 10.0 + bottom_margin
+	else:
+		# Sidebar style: rounded left, square right
+		style.corner_radius_top_left = 12
+		style.corner_radius_bottom_left = 12
+		style.corner_radius_top_right = 0
+		style.corner_radius_bottom_right = 0
+		style.content_margin_left = 8
+		style.content_margin_right = 8
+		style.content_margin_top = 6
+		style.content_margin_bottom = 6
+		
+	menu_container.add_theme_stylebox_override("panel", style)
 
 func _on_map_view_size_changed():
 	# Called when MapView is resized (e.g., due to menu open/close or container resize)
@@ -288,6 +420,13 @@ func _update_camera_viewport_rect_on_resize():
 		# The root control can include extra UI chrome; using it causes camera/map edge mismatch.
 		var map_rect = _get_map_display_rect()
 		map_camera_controller.update_map_viewport_rect(map_rect)
+		
+		# CRITICAL: Re-sync occlusion after viewport size update. 
+		# If we just rotated, the previous occlusion might have been clamped against
+		# the OLD orientation's bounds. Re-sending it now ensures it's correctly applied
+		# to the NEW bounds.
+		_update_camera_occlusion_from_menu()
+		
 		# Preserve current camera state on resize; limits are updated by controller
 
 
@@ -324,31 +463,105 @@ func _on_map_view_gui_input(event: InputEvent):
 		return
 
 	# 1. Let the interaction manager handle its specific inputs first (clicks, panel drags).
+	var consumed_by_manager = false
 	if is_instance_valid(map_interaction_manager) and map_interaction_manager.has_method("handle_map_input"):
 		map_interaction_manager.handle_map_input(event)
 		if get_viewport().is_input_handled():
+			consumed_by_manager = true
 			# The interaction manager consumed the event (e.g., started a panel drag, clicked a convoy).
 			# Reset panning state just in case and stop further processing.
 			_is_panning = false
 			Input.set_default_cursor_shape(Input.CURSOR_ARROW)
 			return
 
-	# 2. If the event was not consumed by the interaction manager, handle camera movement and menu closing.
+	# 2. Handle Screen Touch Events (Touchscreens)
+	if event is InputEventScreenTouch:
+		if event.pressed:
+			_touches[event.index] = event.position
+			if _touches.size() == 1:
+				_press_start_pos = event.position
+				_press_start_time = Time.get_ticks_msec()
+		else:
+			if _touches.has(event.index):
+				_touches.erase(event.index)
+			_last_pinch_distance = 0.0 # Reset pinch distance when any finger is lifted
+			
+			# Detect tap on release of the last pointing finger
+			if _touches.size() == 0:
+				var time_delta = Time.get_ticks_msec() - _press_start_time
+				var pos_delta = event.position.distance_to(_press_start_pos)
+				if pos_delta < 15.0 and time_delta < 300:
+					var menu_manager = get_node_or_null("/root/MenuManager")
+					if menu_manager and menu_manager.has_method("is_any_menu_active") and menu_manager.is_any_menu_active():
+						menu_manager.close_all_menus()
+		
+		# If we have 2 touches, initialize the pinch distance
+		if _touches.size() == 2:
+			var touch_ids = _touches.keys()
+			_last_pinch_distance = _touches[touch_ids[0]].distance_to(_touches[touch_ids[1]])
+		
+		# Prevent mouse emulation from starting a pan if we have multiple touches
+		if _touches.size() > 1:
+			_is_panning = false
+			Input.set_default_cursor_shape(Input.CURSOR_ARROW)
+
+	elif event is InputEventScreenDrag:
+		_touches[event.index] = event.position
+		
+		# Handle Pinch-to-Zoom
+		if _touches.size() == 2:
+			var touch_ids = _touches.keys()
+			var current_dist = _touches[touch_ids[0]].distance_to(_touches[touch_ids[1]])
+			
+			if _last_pinch_distance > 0:
+				var zoom_factor = current_dist / _last_pinch_distance
+				var pinch_center = (_touches[touch_ids[0]] + _touches[touch_ids[1]]) * 0.5
+				
+				# Use global position for center, converted to subviewport screen space
+				var global_center = map_view.get_global_transform() * pinch_center
+				var sub_center = _to_subviewport_screen(global_center)
+				
+				if abs(zoom_factor - 1.0) > 0.0001:
+					map_camera_controller.zoom_at_screen_pos(zoom_factor, sub_center)
+			
+			_last_pinch_distance = current_dist
+			get_viewport().set_input_as_handled()
+			return # Pinch zoom consumes the event
+		
+		# Handle Single-Finger Panning
+		elif _touches.size() == 1:
+			var delta = event.relative
+			if not _opt_invert_pan:
+				delta = -delta
+			if is_instance_valid(map_camera_controller) and map_camera_controller.has_method("pan"):
+				map_camera_controller.pan(delta)
+			get_viewport().set_input_as_handled()
+			return # Pan consumes the event
+
+	# 3. If the event was not consumed by the interaction manager or touch, handle camera movement and menu closing.
 	if event is InputEventMouseButton:
 		if event.button_index == MOUSE_BUTTON_LEFT:
 			if event.pressed:
-				# Close any open menu when clicking the map
-				var menu_manager = get_node_or_null("/root/MenuManager")
-				if menu_manager and menu_manager.has_method("is_any_menu_active") and menu_manager.is_any_menu_active():
-					menu_manager.close_all_menus() # This will close all menus and update layout
-					get_viewport().set_input_as_handled()
-					return
+				_press_start_pos = event.position
+				_press_start_time = Time.get_ticks_msec()
+				
 				_is_panning = true
 				Input.set_default_cursor_shape(Input.CURSOR_DRAG)
 				get_viewport().set_input_as_handled() # Consume the event
 			else:
 				_is_panning = false
+				_touches.clear() # Clear any touches that might have been tracked via emulation
+				_last_pinch_distance = 0.0
 				Input.set_default_cursor_shape(Input.CURSOR_ARROW)
+				
+				# Detect tap-to-close on release
+				var time_delta = Time.get_ticks_msec() - _press_start_time
+				var pos_delta = event.position.distance_to(_press_start_pos)
+				if pos_delta < 15.0 and time_delta < 300 and not consumed_by_manager:
+					var menu_manager = get_node_or_null("/root/MenuManager")
+					if menu_manager and menu_manager.has_method("is_any_menu_active") and menu_manager.is_any_menu_active():
+						menu_manager.close_all_menus()
+				
 				get_viewport().set_input_as_handled() # Consume the event
 		elif event.button_index == MOUSE_BUTTON_WHEEL_UP and event.pressed:
 			var inc: float = float(map_camera_controller.camera_zoom_factor_increment)
@@ -392,17 +605,41 @@ func _on_map_view_gui_input(event: InputEvent):
 
 # Called by the MenuManager's signal when a menu is opened or closed.
 
+func _is_portrait() -> bool:
+	var viewport_sz = get_viewport_rect().size
+	return viewport_sz.y > viewport_sz.x
+
+func _get_menu_ratios() -> Vector2:
+	# Portrait: Use 40-60% of screen height
+	if _is_portrait():
+		return Vector2(0.4, 0.6)
+	# Landscape: Use 35-85% of screen width (Increased by 10% from 0.25-0.75)
+	else:
+		return Vector2(0.35, 0.85)
+
+func _get_bottom_safe_margin() -> float:
+	var is_mobile = OS.has_feature("mobile") or OS.has_feature("web_android") or OS.has_feature("web_ios") or DisplayServer.get_name() in ["Android", "iOS"]
+	if not is_mobile:
+		return 0.0
+	var safe_area = DisplayServer.get_display_safe_area()
+	var window_size = DisplayServer.window_get_size()
+	if safe_area.size.y > 0 and safe_area.end.y < window_size.y:
+		return max(34.0, float(window_size.y - safe_area.end.y))
+	return 34.0
+
 func _on_menu_visibility_changed(is_open: bool, _menu_name: String):
 	# Overlay behavior: map stays full size; slide menu over it.
 	if not is_instance_valid(menu_container): return
+	_update_menu_container_anchors()
+	
 	var viewport_sz = get_viewport_rect().size
-	var full_w: float = viewport_sz.x
-	# Map 0.0-1.0 to 25%-75% of screen width
-	var ratio_pct = lerp(0.25, 0.75, _opt_menu_ratio_open)
+	var full_w: float = viewport_sz.y if _is_portrait() else viewport_sz.x
+	
+	var ratios = _get_menu_ratios()
+	var ratio_pct = lerp(ratios.x, ratios.y, _opt_menu_ratio_open)
 	_menu_target_width = full_w * ratio_pct
 	
-	# Detect and prevent cramming: Enforce a minimum width in logical pixels.
-	# 320 logical pixels is generally enough for most sidebars.
+	# Detect and prevent cramming: Enforce a minimum width/height in logical pixels.
 	if _menu_target_width < 320.0:
 		_menu_target_width = 320.0
 		
@@ -493,10 +730,18 @@ func _slide_menu_open(convoy_data: Dictionary):
 	if not is_instance_valid(menu_container): return
 	_kill_menu_anim_tween()
 	_menu_anim_in_progress = true
-	# Initial hidden state: width 0 at right edge.
+	# Initial hidden state: width 0 at right edge (or bottom edge).
 	menu_container.visible = true
-	menu_container.offset_right = 0
-	menu_container.offset_left = 0 # zero width
+	if _is_portrait():
+		menu_container.offset_bottom = 0
+		menu_container.offset_top = 0 # zero height
+		menu_container.offset_right = 0
+		menu_container.offset_left = 0
+	else:
+		menu_container.offset_right = 0
+		menu_container.offset_left = 0 # zero width
+		menu_container.offset_bottom = 0
+		menu_container.offset_top = 0
 	# Fade in contents synced to slide to avoid early appearance
 	menu_container.modulate.a = 0.0
 	_dbg_menu("slide_open_start", {"menu_target_w": _menu_target_width, "convoy_empty": convoy_data.is_empty(), "cam_pos_pre": (map_camera_controller.camera_node.position if (is_instance_valid(map_camera_controller) and map_camera_controller.has_method("camera_node")) else "<none>")})
@@ -504,29 +749,36 @@ func _slide_menu_open(convoy_data: Dictionary):
 	# Acquire convoy data if missing (ensure deterministic centering on selected convoy).
 	if convoy_data.is_empty():
 		convoy_data = _get_primary_convoy_data()
-	# Smoothly focus using FINAL occlusion width target so convoy ends centered in reduced visible map view.
+	# Smoothly focus using FINAL occlusion target so convoy ends centered in reduced visible map view.
 	if is_instance_valid(map_camera_controller):
 		if not convoy_data.is_empty() and map_camera_controller.has_method("smooth_focus_on_convoy_with_final_occlusion"):
 			_dbg_menu("slide_open_focus_convoy", {})
-			map_camera_controller.smooth_focus_on_convoy_with_final_occlusion(convoy_data, _menu_target_width, MENU_CAMERA_FOCUS_DURATION)
+			map_camera_controller.smooth_focus_on_convoy_with_final_occlusion(convoy_data, _menu_target_width, MENU_CAMERA_FOCUS_DURATION, _is_portrait())
 		elif map_camera_controller.has_method("smooth_focus_on_world_pos") and map_camera_controller.has_method("get_current_zoom"):
 			_dbg_menu("slide_open_focus_fallback", {})
 			# Fallback: shift camera center relative to current center (no convoy data available).
 			var zoom: float = max(map_camera_controller.get_current_zoom(), 0.0001)
 			var occlusion_world_w: float = _menu_target_width / zoom
 			var current_center: Vector2 = map_camera_controller.camera_node.position
-			map_camera_controller.smooth_focus_on_world_pos(current_center + Vector2(occlusion_world_w * 0.5, 0), MENU_CAMERA_FOCUS_DURATION)
+			var shift: Vector2 = Vector2(0, occlusion_world_w * 0.5) if _is_portrait() else Vector2(occlusion_world_w * 0.5, 0)
+			map_camera_controller.smooth_focus_on_world_pos(current_center + shift, MENU_CAMERA_FOCUS_DURATION)
 
-	# Animate menu width (offset_left negative width).
+	# Animate menu width (offset_left negative width) or height (offset_top negative height).
 	_menu_anim_tween = create_tween()
 	_menu_anim_tween.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
-	_menu_anim_tween.parallel().tween_property(menu_container, "offset_left", -_menu_target_width, MENU_ANIM_DURATION)
+	var prop = "offset_top" if _is_portrait() else "offset_left"
+	var target_val = -_menu_target_width - _get_bottom_safe_margin() if _is_portrait() else -_menu_target_width
+	_menu_anim_tween.parallel().tween_property(menu_container, prop, target_val, MENU_ANIM_DURATION)
 	_menu_anim_tween.parallel().tween_property(menu_container, "modulate:a", 1.0, MENU_ANIM_DURATION)
 	# Occlusion already set to final; no need to animate it for camera logic.
 	_menu_anim_tween.finished.connect(func():
-		_dbg_menu("slide_open_finished", {"final_offset_left": menu_container.offset_left})
-		# Ensure final width exact
-		menu_container.offset_left = -_menu_target_width
+		_dbg_menu("slide_open_finished", {"final_offset": menu_container.get(prop)})
+		# Ensure final size exact
+		if _is_portrait():
+			menu_container.offset_top = -_menu_target_width - _get_bottom_safe_margin()
+			menu_container.offset_bottom = 0
+		else:
+			menu_container.offset_left = -_menu_target_width
 		# (Camera occlusion already correct)
 		menu_container.modulate.a = 1.0
 		_menu_anim_in_progress = false
@@ -551,9 +803,11 @@ func _slide_menu_close(convoy_data: Dictionary):
 	_menu_anim_tween.parallel().tween_method(Callable(self, "_close_anim_step"), 0.0, 1.0, MENU_ANIM_DURATION)
 	_menu_anim_tween.parallel().tween_property(menu_container, "modulate:a", 0.0, MENU_ANIM_DURATION)
 	_menu_anim_tween.finished.connect(func():
-		_dbg_menu("slide_close_finished", {"final_offset_left": menu_container.offset_left})
+		_dbg_menu("slide_close_finished", {"final_offset": (menu_container.offset_top if _is_portrait() else menu_container.offset_left)})
 		menu_container.visible = false
 		menu_container.offset_left = 0.0
+		menu_container.offset_top = 0.0
+		menu_container.offset_bottom = 0.0
 		menu_container.modulate.a = 1.0
 		_current_menu_occlusion_px = 0.0
 		_menu_anim_in_progress = false
@@ -568,7 +822,12 @@ var _close_anim_start_width: float = 0.0
 func _close_anim_step(progress: float):
 	var w = lerp(_close_anim_start_width, 0.0, progress)
 	_current_menu_occlusion_px = w
-	menu_container.offset_left = -w
+	if _is_portrait():
+		var b_margin = _get_bottom_safe_margin()
+		menu_container.offset_top = -w - b_margin
+		menu_container.offset_bottom = 0
+	else:
+		menu_container.offset_left = -w
 	_update_camera_occlusion_from_menu()
 	if is_instance_valid(map_camera_controller) and not _close_anim_convoy.is_empty():
 		if map_camera_controller.has_method("focus_on_convoy"):
@@ -577,20 +836,33 @@ func _close_anim_step(progress: float):
 
 # Update camera controller with current animated occlusion width
 func _update_camera_occlusion_from_menu():
-	if is_instance_valid(map_camera_controller) and map_camera_controller.has_method("set_overlay_occlusion_width"):
-		map_camera_controller.set_overlay_occlusion_width(_current_menu_occlusion_px)
-		_dbg_menu("occlusion_update", {"occlusion_px": _current_menu_occlusion_px})
+	var occlusion_x = 0.0
+	var occlusion_y = 0.0
+	if _is_portrait():
+		occlusion_y = _current_menu_occlusion_px
+		if _current_menu_occlusion_px > 0.0:
+			occlusion_y += _get_bottom_safe_margin()
+	else:
+		occlusion_x = _current_menu_occlusion_px
+
+	if is_instance_valid(map_camera_controller):
+		if map_camera_controller.has_method("set_overlay_occlusion"):
+			map_camera_controller.set_overlay_occlusion(occlusion_x, occlusion_y)
+		elif map_camera_controller.has_method("set_overlay_occlusion_width"):
+			map_camera_controller.set_overlay_occlusion_width(occlusion_x)
+
+		_dbg_menu("occlusion_update", {"occlusion_px_x": occlusion_x, "occlusion_px_y": occlusion_y})
+
 	# Keep convoy labels out from under the menu overlay.
 	var clm := _get_convoy_label_manager_node()
-	if is_instance_valid(clm) and clm.has_method("set_menu_occlusion_width"):
-		# During menu tweens, suppress label occlusion updates so labels don't snap
-		# multiple times while the menu slides.
-		if _menu_anim_in_progress:
-			return
-		clm.set_menu_occlusion_width(_current_menu_occlusion_px)
-		# Reclamping alone doesn't guarantee collision resolution; request a full
-		# convoy label reflow via the normal UI update pipeline.
-		_request_map_ui_refresh_due_to_occlusion()
+	if is_instance_valid(clm):
+		if clm.has_method("set_menu_occlusion"):
+			if not _menu_anim_in_progress: clm.set_menu_occlusion(occlusion_x, occlusion_y)
+		elif clm.has_method("set_menu_occlusion_width"):
+			if not _menu_anim_in_progress: clm.set_menu_occlusion_width(occlusion_x)
+		
+		if not _menu_anim_in_progress:
+			_request_map_ui_refresh_due_to_occlusion()
 
 # Helper: attempt to retrieve currently selected convoy data for focusing.
 func _get_primary_convoy_data() -> Dictionary:
@@ -651,6 +923,14 @@ func _on_store_user_changed(_user: Dictionary):
 	_check_or_prompt_new_convoy_from_store()
 
 func _check_or_prompt_new_convoy_from_store():
+	# Guard: don't prompt if we're hidden or disabled (e.g. during logout)
+	if not is_visible_in_tree() or process_mode == Node.PROCESS_MODE_DISABLED:
+		return
+
+	var api = get_node_or_null("/root/APICalls")
+	if is_instance_valid(api) and not api.is_auth_token_valid():
+		return
+
 	var store = get_node_or_null("/root/GameStore")
 	if not is_instance_valid(store):
 		return
@@ -767,14 +1047,14 @@ func _on_signal_hub_error_occurred(_domain: String, _code: String, message: Stri
 	if display_message.is_empty():
 		return # Ignored error
 
-	_show_error_dialog(display_message)
+	_show_error_dialog(display_message, message)
 
 func _on_api_fetch_error(message: String):
 	# Fallback/Legacy handler if anything still wires directly to APICalls (should be none)
 	# Reuse the new handler logic
 	_on_signal_hub_error_occurred("API", "FETCH_ERROR", message, ErrorTranslator.is_inline_error(message))
 
-func _show_error_dialog(message: String):
+func _show_error_dialog(message: String, raw_message: String = ""):
 	if not is_instance_valid(_error_dialog_scene):
 		printerr("Error dialog scene not loaded!")
 		return
@@ -796,7 +1076,7 @@ func _show_error_dialog(message: String):
 	dialog_host.add_child(error_dialog)
 	modal_layer.show()
 
-	error_dialog.show_message(message)
+	error_dialog.show_message(message, raw_message)
 
 	# When the dialog is closed (freed), hide the modal layer if nothing else is in the host.
 	error_dialog.tree_exited.connect(func():
@@ -1143,30 +1423,18 @@ func _apply_menu_ratio_if_open():
 	if not is_instance_valid(menu_container) or not menu_container.visible:
 		return
 		
-	var viewport_sz = get_viewport_rect().size
-	var full_w: float = viewport_sz.x
-	# Map 0.0-1.0 to 25%-75% of screen width
-	var ratio_pct = lerp(0.25, 0.75, _opt_menu_ratio_open)
-	_menu_target_width = full_w * ratio_pct
-	
-	# Detect and prevent cramming
-	if _menu_target_width < 320.0:
-		_menu_target_width = 320.0
-	if _menu_target_width > full_w * 0.85:
-		_menu_target_width = full_w * 0.85
-	
-	# Apply immediately if visible and not currently animating
 	if not _menu_anim_in_progress:
-		menu_container.offset_left = -_menu_target_width
-		_current_menu_occlusion_px = _menu_target_width
-		_update_camera_occlusion_from_menu()
-		# Reposition camera to keep convoy focused if possible
-		if not _last_focused_convoy_data.is_empty() and is_instance_valid(map_camera_controller):
-			if map_camera_controller.has_method("focus_on_convoy"):
-				map_camera_controller.focus_on_convoy(_last_focused_convoy_data)
+		_refresh_menu_layout()
 
 # Called when the menu asks specifically to focus on a convoy (with data)
-func _on_convoy_menu_focus_requested(convoy_data: Dictionary):
+func _on_settlement_clicked(coords: Vector2i):
+	if onboarding_log_enabled:
+		print("[MainScreen] Settlement clicked at coords:", coords)
+	if is_instance_valid(ui_manager):
+		ui_manager.toggle_settlement_pin(coords)
+		_force_map_ui_refresh()
+
+func _on_convoy_menu_requested(convoy_data: Dictionary):
 	# Ensure layout has settled and camera sees final rect
 	await get_tree().process_frame
 	if not is_instance_valid(map_camera_controller):
@@ -1182,17 +1450,29 @@ func _on_convoy_menu_focus_requested(convoy_data: Dictionary):
 
 # Called when the map_ready_for_focus signal is emitted from main.gd
 func _on_map_ready_for_focus():
-	# print("[DFCAM-DEBUG] MainScreen: Received map_ready_for_focus signal.")
 	_map_ready_for_focus = true
-	await get_tree().process_frame  # Wait for UI to settle
+	# Wait for UI layout to settle
+	await get_tree().process_frame
+	
 	if is_instance_valid(map_camera_controller) and not _has_fitted_camera:
 		var map_rect = _get_map_display_rect()
-		# print("[DFCAM-DEBUG] MainScreen: map_ready_for_focus, updating camera viewport display rect=", map_rect)
+		
+		# DIAGNOSTICS: Verify if we have a valid map rect before fitting
+		if onboarding_log_enabled:
+			print("[MainScreen] Map ready for focus. map_rect=%s, screen_size=%s" % [str(map_rect), str(get_viewport_rect().size)])
+		
+		# If the map rect is suspiciously small or invalid, wait another frame
+		if map_rect.size.x < 10 or map_rect.size.y < 10:
+			if onboarding_log_enabled:
+				print("[MainScreen] map_rect is too small; waiting one more frame for layout stabilization...")
+			await get_tree().process_frame
+			map_rect = _get_map_display_rect()
+
 		map_camera_controller.update_map_viewport_rect(map_rect)
 		if map_camera_controller.has_method("fit_camera_to_tilemap"):
+			# Ensure we are fit using strict COVER mode for initial load to avoid background exposure
 			map_camera_controller.fit_camera_to_tilemap()
 		_has_fitted_camera = true
-		# print("[DFCAM-DEBUG] MainScreen: fit_camera_to_tilemap called.")
 
 	# Inform TutorialManager that the map is now ready so the tutorial
 	# can safely start once convoy/dialog conditions are satisfied.

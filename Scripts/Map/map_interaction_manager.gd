@@ -1,6 +1,6 @@
 extends Node
 
-@export var debug_logging: bool = false
+@export var debug_logging: bool = true
 
 # --- Signals ---
 # Emitted when the hovered map element or UI panel changes.
@@ -26,6 +26,7 @@ signal camera_zoom_changed(new_zoom_level: float)
 
 # Emitted when a convoy icon is clicked/tapped, requesting its menu.
 signal convoy_menu_requested(convoy_data: Dictionary)
+signal settlement_clicked(coords: Vector2i)
 
 # --- Node References (to be set by main.gd via initialize method) ---
 var map_display: TileMapLayer = null
@@ -194,10 +195,18 @@ func handle_map_input(event: InputEvent):
 
 	# 2. Handle Left Mouse Button interactions (clicks, panel drag start/end)
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
+		if debug_logging:
+			print("[MIM] handle_map_input: Mouse button event, pressed=", event.pressed, " pos=", event.position)
 		# We pass the camera reference because it's needed to convert screen to world coordinates
 		if _handle_lmb_interactions(event, camera):
 			get_viewport().set_input_as_handled()
 			return # Consumed by LMB interaction
+
+	# 3. Handle Screen Touch events (Mobile)
+	if event is InputEventScreenTouch:
+		if debug_logging:
+			print("[MIM] handle_map_input: Screen touch event, index=", event.index, " pressed=", event.pressed, " pos=", event.position)
+		_handle_touch_input(event)
 
 	# Note: Hover is handled separately in _process, not here.
 	# Note: Camera movement (panning, zooming) is handled by MainScreen.gd before this function is called
@@ -237,20 +246,26 @@ func _handle_touch_input(event: InputEvent):
 	# Touch Panning (Single finger drag)
 	if event is InputEventScreenTouch:
 		if event.pressed:
+			# Track touch for hover updates if needed, though mouse emulation usually handles this.
+			_update_hover(event.position)
 			# Only track the touch index for potential tap, not for panning.
 			# Panning is handled by InputEventPanGesture.
 			if _pan_touch_index == -1:
 				_pan_touch_index = event.index
-				# _is_camera_panning = false # Ensure this is not set for single touch
-				get_viewport().set_input_as_handled()
+				# We don't consume press, so panning/gestures can see it too.
 		else: # released
-			if event.index == _pan_touch_index: # If the finger that started the pan is released
 				_pan_touch_index = -1
 				# _is_camera_panning = false # Ensure this is not set for single touch
-				get_viewport().set_input_as_handled()
-				# Check if it was a "tap" (short press, little movement)
-				# For simplicity, we'll assume any touch release not part of a PanGesture could be a tap.
-				_handle_tap_interaction(event.position) # Handle tap for selection
+				# But we DO consume on release if we handle a tap.
+				
+				# On release, we check for hover one last time at the release position to be sure.
+				_update_hover(event.position)
+				
+				# Check if we clicked a settlement or convoy
+				if debug_logging:
+					print("[MIM] Touch release/tap detected at ", event.position)
+				if _handle_tap_interaction(event.position): # Handle tap for selection
+					get_viewport().set_input_as_handled()
 		return # Consumed
 
 	if event is InputEventScreenDrag and event.index == _pan_touch_index:
@@ -270,9 +285,30 @@ func _handle_touch_input(event: InputEvent):
 	# For example, detecting a drag start on a panel with touch.
 	# The _handle_tap_interaction above handles map element clicks.
 
-func _handle_tap_interaction(_position: Vector2) -> void:
-	# Stub for touch tap interaction. Add selection or menu logic here if needed.
-	pass
+func _handle_tap_interaction(_position: Vector2) -> bool:
+	# Check if we tapped on a settlement or convoy using current hover info
+	if debug_logging:
+		print("[MIM] _handle_tap_interaction called, hover_type=", _current_hover_info.get('type'))
+	
+	if _current_hover_info.get('type') == 'settlement':
+		var settlement_coords = _current_hover_info.get('coords')
+		if settlement_coords is Vector2i:
+			if debug_logging:
+				print("[MIM] Tapped settlement at coords: ", settlement_coords)
+			emit_signal("settlement_clicked", settlement_coords)
+			return true
+	elif _current_hover_info.get('type') == 'convoy':
+		# Should we also emit convoy_menu_requested here? 
+		# Probably, to double-check that taps work for convoys too.
+		var cid = _current_hover_info.get('id')
+		if cid != null:
+			var convoy_data = _find_convoy_data_by_id(str(cid))
+			if convoy_data:
+				if debug_logging:
+					print("[MIM] Tapped convoy ID: ", cid)
+				emit_signal("convoy_menu_requested", convoy_data)
+				return true
+	return false
 
 # Add boolean return type
 func _handle_panel_drag_motion_only(event: InputEventMouseMotion) -> bool:
@@ -313,29 +349,28 @@ func _handle_panel_drag_motion_only(event: InputEventMouseMotion) -> bool:
 
 func _perform_hover_detection_only(event: InputEventMouseMotion):
 	"""Performs ONLY hover detection. Called from _process via throttle."""
-	# Ensure we are not dragging a panel when performing hover detection
+	_update_hover(event.global_position)
+
+func _update_hover(global_pos: Vector2):
 	if not (is_instance_valid(camera) and is_instance_valid(map_display)):
 		return
 
-	# Convert mouse position (main viewport) -> SubViewport screen -> SubViewport world
-	var new_hover_info: Dictionary = {}
-	var _found_hover_element_unused: bool = false
-
 	if not is_instance_valid(_sub_viewport) or not is_instance_valid(_map_texture_rect):
 		# Fallback to previous behavior (may be incorrect if SubViewport is used)
-		var mouse_world_pos_fallback = camera.get_canvas_transform().affine_inverse() * event.position
-		return _perform_hover_tests_at_world(mouse_world_pos_fallback)
+		var mouse_world_pos_fallback = camera.get_canvas_transform().affine_inverse() * global_pos
+		_perform_hover_tests_at_world(mouse_world_pos_fallback)
+		return
 
 	var display_rect: Rect2 = _map_texture_rect.get_global_rect()
-	if not display_rect.has_point(event.global_position):
+	if not display_rect.has_point(global_pos):
 		# Outside the map area -> clear hover if needed
-		if self._current_hover_info != new_hover_info:
-			self._current_hover_info = new_hover_info
+		if self._current_hover_info != {}:
+			self._current_hover_info = {}
 			emit_signal("hover_changed", self._current_hover_info)
 		return
 
 	# Position within the TextureRect (0..rect.size)
-	var local_in_display: Vector2 = event.global_position - display_rect.position
+	var local_in_display: Vector2 = global_pos - display_rect.position
 	# Map to SubViewport pixel space
 	var sub_size: Vector2i = _sub_viewport.size
 	var sub_screen: Vector2 = Vector2(
@@ -503,12 +538,28 @@ func _handle_lmb_interactions(event: InputEventMouseButton, p_camera: Camera2D) 
 							clicked_convoy_data = convoy_data_item
 							break
 
-			if clicked_convoy_data != null:
+			if clicked_convoy_data:
 				emit_signal("convoy_menu_requested", clicked_convoy_data)
 				return true # Click on convoy handled
+
+			# --- Handle Click on Settlement (if no convoy clicked) ---
+			if _current_hover_info.get('type') == 'settlement':
+				var settlement_coords = _current_hover_info.get('coords')
+				if settlement_coords is Vector2i:
+					emit_signal("settlement_clicked", settlement_coords)
+					if debug_logging:
+						print("[MIM] Settlement clicked at coords:", settlement_coords)
+					return true # Click on settlement handled
 			# ...existing code...
 	return false # Ensure all code paths return a value
 
+
+func _find_convoy_data_by_id(cid: String) -> Dictionary:
+	for convoy_data_item in all_convoy_data:
+		var check_id = str(convoy_data_item.get("convoy_id", convoy_data_item.get("id", "")))
+		if check_id == cid:
+			return convoy_data_item
+	return {}
 
 func get_dragging_panel_node() -> Panel:
 	return _dragging_panel_node

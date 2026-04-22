@@ -1,13 +1,14 @@
-extends HBoxContainer
+extends PanelContainer
 
 ## Emitted when a convoy is selected from the dropdown, requesting its menu to be opened.
 @warning_ignore("unused_signal")
 signal convoy_menu_requested(convoy_id: String)
 
-@onready var username_label: Label = $UsernameLabel
-@onready var user_money_label: Label = $UserMoneyLabel
-@onready var settings_button: MenuButton = $SettingsButton
-var _settings_menu_instance: Window
+@onready var username_label: Label = %UsernameLabel
+@onready var user_money_label: Label = %UserMoneyLabel
+@onready var settings_button: MenuButton = %SettingsButton
+@onready var report_bug_button: Button = %ReportBugButton
+var _settings_menu_instance: CanvasLayer
 var _bug_report_window: BugReportWindow
 var _discord_popup: PopupPanel
 var _account_links_popup: CanvasLayer
@@ -52,9 +53,197 @@ func _ready() -> void:
 	else:
 		printerr("UserInfoDisplay: ui_scale_manager autoload not found at /root/ui_scale_manager. UI scaling will not be dynamic.")
 
+	# Connect standalone report bug button
+	if is_instance_valid(report_bug_button):
+		report_bug_button.pressed.connect(call_deferred.bind("_on_bug_report_pressed"))
+
 	# Options dropdown (replaces separate top-row buttons)
 	_configure_options_dropdown()
+	
+	# Initial desktop sizing/styling if not mobile
+	if not _is_mobile():
+		_apply_desktop_styling()
+	
+	if _is_mobile():
+		_apply_mobile_optimizations()
+	
 	queue_redraw()
+
+func _is_mobile() -> bool:
+	var dsm = get_node_or_null("/root/DeviceStateManager")
+	if is_instance_valid(dsm):
+		return dsm.is_mobile
+	return OS.has_feature("mobile") or OS.has_feature("web_android") or OS.has_feature("web_ios") or DisplayServer.get_name() in ["Android", "iOS"]
+
+func _apply_mobile_optimizations() -> void:
+	# 1. Scaling & Touch Targets
+	_update_mobile_sizing()
+	
+	# 2. Aggressive Typography Boost for Portrait
+	var win_size = get_viewport().get_visible_rect().size if is_inside_tree() else Vector2(0, 0)
+	var is_portrait = win_size.y > win_size.x
+	var boost = 3.2 if is_portrait else 2.2
+	
+	var labels = [username_label, user_money_label]
+	for label in labels:
+		if is_instance_valid(label):
+			var fs = label.get_theme_font_size("font_size")
+			label.add_theme_font_size_override("font_size", int(fs * boost))
+	
+	# Settings button scaling
+	if is_instance_valid(settings_button):
+		var btn_fs = settings_button.get_theme_font_size("font_size")
+		settings_button.add_theme_font_size_override("font_size", int(btn_fs * boost))
+		settings_button.custom_minimum_size.y = 100 if is_portrait else 60
+		var sb_btn = StyleBoxFlat.new()
+		sb_btn.bg_color = Color(0.12, 0.15, 0.2, 0.95)
+		sb_btn.border_width_left = 1
+		sb_btn.border_width_right = 1
+		sb_btn.border_width_top = 1
+		sb_btn.border_width_bottom = 1
+		sb_btn.border_color = Color(0.4, 0.45, 0.5, 0.8)
+		sb_btn.corner_radius_top_left = 8
+		sb_btn.corner_radius_top_right = 8
+		sb_btn.corner_radius_bottom_left = 8
+		sb_btn.corner_radius_bottom_right = 8
+		sb_btn.content_margin_left = 28
+		sb_btn.content_margin_right = 28
+		settings_button.add_theme_stylebox_override("normal", sb_btn)
+
+	# Report Bug button scaling & red styling
+	if is_instance_valid(report_bug_button):
+		var bug_fs = report_bug_button.get_theme_font_size("font_size")
+		report_bug_button.add_theme_font_size_override("font_size", int(bug_fs * boost))
+		report_bug_button.custom_minimum_size.y = 100 if is_portrait else 60
+		var bug_style = StyleBoxFlat.new()
+		bug_style.bg_color = Color(0.7, 0.1, 0.15, 0.95) # Prominent Red
+		bug_style.border_width_left = 2
+		bug_style.border_width_right = 2
+		bug_style.border_width_top = 2
+		bug_style.border_width_bottom = 2
+		bug_style.border_color = Color(1.0, 0.4, 0.4, 0.8)
+		bug_style.corner_radius_top_left = 8
+		bug_style.corner_radius_top_right = 8
+		bug_style.corner_radius_bottom_left = 8
+		bug_style.corner_radius_bottom_right = 8
+		bug_style.content_margin_left = 28
+		bug_style.content_margin_right = 28
+		report_bug_button.add_theme_stylebox_override("normal", bug_style)
+		# Hover/Pressed states
+		var bug_style_hover = bug_style.duplicate()
+		bug_style_hover.bg_color = Color(0.85, 0.15, 0.2, 1.0)
+		report_bug_button.add_theme_stylebox_override("hover", bug_style_hover)
+		report_bug_button.add_theme_stylebox_override("pressed", bug_style_hover)
+	
+	# 3. Layout & Density (16px margins)
+	add_theme_constant_override("separation", 16)
+	
+	# 4. Safe Area Handling (Curved corners and notches)
+	_update_safe_margins()
+	if not get_viewport().size_changed.is_connected(_update_safe_margins):
+		get_viewport().size_changed.connect(_update_safe_margins)
+	
+	# 5. Ledger Style for Username Chip
+	var ledger_chip = StyleBoxFlat.new()
+	ledger_chip.bg_color = Color(0.12, 0.15, 0.2, 0.95) # Deep slate
+	ledger_chip.border_width_left = 1
+	ledger_chip.border_width_right = 1
+	ledger_chip.border_width_top = 1
+	ledger_chip.border_width_bottom = 1
+	ledger_chip.border_color = Color(0.4, 0.45, 0.5, 0.8) # Steel border
+	ledger_chip.corner_radius_top_left = 6
+	ledger_chip.corner_radius_top_right = 6
+	ledger_chip.corner_radius_bottom_left = 6
+	ledger_chip.corner_radius_bottom_right = 6
+	ledger_chip.content_margin_left = 12
+	ledger_chip.content_margin_right = 12
+	if is_instance_valid(username_label):
+		username_label.add_theme_stylebox_override("normal", ledger_chip)
+
+func _update_mobile_sizing() -> void:
+	if not _is_mobile():
+		return
+		
+	var is_portrait = false
+	var dsm = get_node_or_null("/root/DeviceStateManager")
+	if is_instance_valid(dsm):
+		is_portrait = dsm.get_is_portrait()
+	else:
+		var win_size = get_viewport_rect().size if is_inside_tree() else Vector2(0, 0)
+		is_portrait = win_size.y > win_size.x
+
+	if is_portrait:
+		custom_minimum_size.y = 200 # Increased from 170 for better clearance
+		if is_instance_valid(settings_button): settings_button.custom_minimum_size.y = 130
+		if is_instance_valid(report_bug_button): report_bug_button.custom_minimum_size.y = 130
+	else:
+		custom_minimum_size.y = 96
+		if is_instance_valid(settings_button): settings_button.custom_minimum_size.y = 64
+		if is_instance_valid(report_bug_button): report_bug_button.custom_minimum_size.y = 64
+
+func _apply_desktop_styling() -> void:
+	custom_minimum_size.y = 68 # Reverted from 56 (closer to original 48-60 range)
+	
+	var boost = 1.3 # Slightly reduced from 1.2
+	var btn_fs = settings_button.get_theme_font_size("font_size")
+	if btn_fs <= 0: btn_fs = 16
+	
+	settings_button.add_theme_font_size_override("font_size", int(btn_fs * boost))
+	settings_button.custom_minimum_size.y = 52 # Reverted from 44
+	
+	if is_instance_valid(report_bug_button):
+		report_bug_button.add_theme_font_size_override("font_size", int(btn_fs * boost))
+		report_bug_button.custom_minimum_size.y = 52
+		var bug_style = StyleBoxFlat.new()
+		bug_style.bg_color = Color(0.6, 0.1, 0.1, 0.9)
+		bug_style.corner_radius_top_left = 4
+		bug_style.corner_radius_top_right = 4
+		bug_style.corner_radius_bottom_left = 4
+		bug_style.corner_radius_bottom_right = 4
+		bug_style.content_margin_left = 16
+		bug_style.content_margin_right = 16
+		report_bug_button.add_theme_stylebox_override("normal", bug_style)
+		
+		var bug_style_hover = bug_style.duplicate()
+		bug_style_hover.bg_color = Color(0.8, 0.15, 0.15, 1.0)
+		report_bug_button.add_theme_stylebox_override("hover", bug_style_hover)
+
+func _update_safe_margins() -> void:
+	if not _is_mobile():
+		return
+	
+	var safe_area = DisplayServer.get_display_safe_area()
+	var screen_size = DisplayServer.window_get_size() # Use window size for logical coordinates
+	var screen_full = DisplayServer.screen_get_size()
+	
+	# Godot 4.3+ safe_area is in screen pixels. We need logical pixels if content_scale_factor is used.
+	# However, since we're setting theme constants, we use the raw pixel offsets relative to the screen.
+	# Actually, the best way is to let MarginContainer handle it or calculate relative to window.
+	
+	var left_pad = max(32.0, safe_area.position.x)
+	var right_pad = max(32.0, screen_full.x - safe_area.end.x)
+	var top_pad = safe_area.position.y
+	
+	if screen_size.y > screen_size.x:
+		top_pad += 24.0 # Add extra clearance for dynamic islands in portrait
+	
+	# Update stylebox content margins instead of outer margins
+	# This ensures the background remains full-width while content clears corners
+	var style = get_theme_stylebox("panel").duplicate()
+	if style is StyleBoxFlat:
+		style.bg_color = Color(0.08, 0.1, 0.12, 0.96) # Deep Slate
+		style.border_width_bottom = 1
+		style.border_color = Color(0.3, 0.35, 0.4, 0.8) # Steel border
+		
+		style.content_margin_left = int(left_pad)
+		style.content_margin_right = int(right_pad)
+		style.content_margin_top = int(top_pad)
+		add_theme_stylebox_override("panel", style)
+	
+	# Remove any outer margins set previously to ensure the bar stays full-width
+	remove_theme_constant_override("margin_left")
+	remove_theme_constant_override("margin_right")
+	remove_theme_constant_override("margin_top")
 
 
 
@@ -78,7 +267,9 @@ func _notification(what: int) -> void:
 		_update_display()
 		queue_redraw()
 	elif what == NOTIFICATION_RESIZED:
+		_update_mobile_sizing()
 		queue_redraw()
+
 
 func _draw() -> void:
 	# Explicit background so the navbar stays grey even if the project clear color is black.
@@ -135,7 +326,6 @@ func _configure_options_dropdown() -> void:
 
 	popup.clear()
 	popup.add_item("Settings", _OPTIONS_SETTINGS_ID)
-	popup.add_item("Report Bug", _OPTIONS_REPORT_BUG_ID)
 	popup.add_item("Join Discord", _OPTIONS_DISCORD_ID)
 	popup.add_item("Connect Accounts", _OPTIONS_CONNECT_ACCOUNTS_ID)
 	popup.add_separator()
@@ -143,6 +333,28 @@ func _configure_options_dropdown() -> void:
 
 	if not popup.id_pressed.is_connected(_on_options_menu_id_pressed):
 		popup.id_pressed.connect(_on_options_menu_id_pressed)
+		
+	if _is_mobile():
+		popup.add_theme_font_size_override("font_size", int(16 * 2.2))
+		popup.add_theme_constant_override("v_separation", 48)
+		popup.add_theme_constant_override("item_start_padding", 48)
+		popup.add_theme_constant_override("item_end_padding", 48)
+		var popup_style = StyleBoxFlat.new()
+		popup_style.bg_color = Color(0.12, 0.15, 0.2, 0.98)
+		popup_style.content_margin_left = 32
+		popup_style.content_margin_right = 32
+		popup_style.content_margin_top = 24
+		popup_style.content_margin_bottom = 24
+		popup_style.border_width_left = 1
+		popup_style.border_width_right = 1
+		popup_style.border_width_top = 1
+		popup_style.border_width_bottom = 1
+		popup_style.border_color = Color(0.4, 0.45, 0.5, 0.8)
+		popup_style.corner_radius_top_left = 6
+		popup_style.corner_radius_top_right = 6
+		popup_style.corner_radius_bottom_left = 6
+		popup_style.corner_radius_bottom_right = 6
+		popup.add_theme_stylebox_override("panel", popup_style)
 
 
 func _on_options_menu_id_pressed(id: int) -> void:
@@ -167,6 +379,7 @@ func _on_highlights_tips_pressed() -> void:
 
 
 func _on_discord_pressed() -> void:
+	print("[UserInfoDisplay] _on_discord_pressed called | LOUD LOG")
 	# Lazy-create discord popup
 	if not is_instance_valid(_discord_popup):
 		var script := load("res://Scripts/UI/discord_popup.gd")
@@ -248,16 +461,14 @@ func _on_settings_button_pressed():
 		var scene: PackedScene = load("res://Scenes/SettingsMenu.tscn")
 		if scene:
 			_settings_menu_instance = scene.instantiate()
-			# Add to the root so it behaves like a popup window
+			# Add to the root so it behaves like a full-screen overlay
 			get_tree().root.add_child(_settings_menu_instance)
-			_settings_menu_instance.title = "Options"
-			_settings_menu_instance.min_size = Vector2(600, 480)
 		else:
 			push_error("Failed to load SettingsMenu.tscn")
 			return
-	# Popup centered each time
+	
 	if _settings_menu_instance:
-		if _settings_menu_instance.has_method("popup_centered"):
-			_settings_menu_instance.popup_centered(Vector2i(720, 560))
-		else:
-			_settings_menu_instance.show()
+		_settings_menu_instance.show()
+		# Refresh layout/sizing for the current screen orientation
+		if _settings_menu_instance.has_method("_apply_mobile_optimizations"):
+			_settings_menu_instance.call("_apply_mobile_optimizations")
