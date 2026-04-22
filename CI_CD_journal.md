@@ -84,3 +84,12 @@ Steam requires clear-text credentials for automated uploads. Use a dedicated ser
 - **Export Method Mapping**:
   - **Issue**: ARCHIVE SUCCEEDED, but EXPORT FAILED because 'export_method_release=2' mapped to 'Ad Hoc'.
   - **Resolution**: Changed 'export_method_release' to '1' (App Store) in the CI override script.
+
+## 2026-04-22 - Correction: Export Method Mappings & Root Cause
+- **The True Root Cause**: We previously assumed `application/export_method_release=0` meant "Development" because Godot was linking the debug APN plugin during CI. **This was a false correlation.** Godot *was* building a Release build (using `libgodot.ios.release.xcframework`), but because `apn.gdip` incorrectly used `binary="apn.debug.xcframework"`, it pulled the debug plugin into the release build.
+- **The Final Integer Mapping**:
+  - `0` = **App Store** (The correct value we need!)
+  - `1` = **Development** (What caused the last CI failure)
+  - `2` = **Ad Hoc** (What caused the previous CI failure)
+  - `3` = **Enterprise**
+- **Resolution**: Updated `_build-ios-appstore.yml` to force `"application/export_method_release": "0"` (App Store).
