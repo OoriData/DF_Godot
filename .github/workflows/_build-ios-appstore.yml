@@ -174,7 +174,8 @@ jobs:
                   "application/version": f"\"{build_number}\"",
                   "application/short_version": f"\"{short_version}\"",
                   "entitlements/push_notifications": "\"Production\"",
-                  "application/export_project_only": "false"
+                  "application/export_project_only": "false",
+                  "application/export_method_release": "2"
               }
               
               for key, val in overrides.items():
