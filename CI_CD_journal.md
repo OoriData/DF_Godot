@@ -76,3 +76,11 @@ Steam requires clear-text credentials for automated uploads. Use a dedicated ser
   - **Root cause 2**: The `apn.gdip` file was configured with `binary="apn.debug.xcframework"` and `binary_release="apn.xcframework"`. Godot 4.x parses `.gdip` files and expects `binary` to be the primary (usually release) library and `binary_debug` for debug. When `binary_release` was ignored or it fell back, Godot copied the `apn.debug.xcframework` into the iOS build. When Xcode linked this debug library against the release Godot engine (`libgodot.ios.release.xcframework`), it failed with `Undefined symbols for architecture arm64` because the debug plugin expected debug engine symbols (like `D_METHOD` vs `D_METHODP`).
   - **Fix 1**: Added `"application/export_method_release": "2"` (App Store) to the dynamic python override script in the CI pipeline to ensure Godot builds using the correct release export configuration.
   - **Fix 2**: Updated `ios/plugins/apn.gdip` to explicitly use `binary="apn.xcframework"` (which acts as the default/release target) and `binary_debug="apn.debug.xcframework"`. This guarantees Godot copies the release plugin when building for release, preventing architecture mismatch link errors.
+
+## 2026-04-22 - Fix: Provisioning Profile Push Capability & Export Mapping
+- **'fastlane match appstore --force'**:
+  - **Issue**: The archive failed because the downloaded provisioning profile lacked the 'aps-environment' (Push Notifications) capability.
+  - **Resolution**: User ran 'bundle exec fastlane match appstore --force' locally to regenerate the profile.
+- **Export Method Mapping**:
+  - **Issue**: ARCHIVE SUCCEEDED, but EXPORT FAILED because 'export_method_release=2' mapped to 'Ad Hoc'.
+  - **Resolution**: Changed 'export_method_release' to '1' (App Store) in the CI override script.
