@@ -32,7 +32,7 @@ on:
 
 jobs:
   build:
-    runs-on: macos-latest
+    runs-on: macos-26
     outputs:
       status: ${{ steps.export.outcome }}
     steps:

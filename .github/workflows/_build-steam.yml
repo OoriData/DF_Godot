@@ -38,7 +38,7 @@ jobs:
           path: build/Desolate_Frontiers_Windows.zip
 
   build_macos:
-    runs-on: macos-latest
+    runs-on: macos-26
     steps:
       - uses: actions/checkout@v4
       

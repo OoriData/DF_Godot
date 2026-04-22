@@ -93,3 +93,7 @@ Steam requires clear-text credentials for automated uploads. Use a dedicated ser
   - `2` = **Ad Hoc** (What caused the previous CI failure)
   - `3` = **Enterprise**
 - **Resolution**: Updated `_build-ios-appstore.yml` to force `"application/export_method_release": "0"` (App Store).
+
+## 2026-04-22 - Fix: Update macOS Runner
+- **Issue**: Apple rejected the build because iOS 18.5 SDK is deprecated and requires iOS 26 SDK (Xcode 26) as of April 2026.
+- **Resolution**: Updated `runs-on` in `_build-ios-appstore.yml` from `macos-latest` to `macos-26` to force GitHub Actions to use the newest environment.
