@@ -173,7 +173,8 @@ jobs:
                   "application/code_sign_identity_release": "\"Apple Distribution: Oori Data LLC\"",
                   "application/version": f"\"{build_number}\"",
                   "application/short_version": f"\"{short_version}\"",
-                  "entitlements/push_notifications": "\"Production\""
+                  "entitlements/push_notifications": "\"Production\"",
+                  "application/export_project_only": "false"
               }
               
               for key, val in overrides.items():

@@ -63,3 +63,9 @@ Steam requires clear-text credentials for automated uploads. Use a dedicated ser
 - **`Scripts/System/Services/push_notification_manager.gd`**: Changed all `Engine.has_singleton("APN")` / `Engine.get_singleton("APN")` calls to use `"PushNotifications"` — the name registered by `ios/plugins/apn.gdip`.
   - **Root cause**: The `.gdip` manifest registers the plugin under the name `"PushNotifications"`, so `Engine.has_singleton("APN")` always returned `false`. This caused `_setup_ios()` to return immediately, skipping signal connections entirely. No `device_address_changed` signal was ever received, so `register_push_token()` was never called and the DB remained empty.
   - Also removed the dead `apn.init()` call (the plugin has no `init()` method — initialization happens automatically via `godot_apn_init`) and added `print()` logging to make future debugging easier.
+
+## 2026-04-22 - Fix: iOS CI Export Project Only Override
+- **`export_presets.cfg`** and **`.github/workflows/_build-ios-appstore.yml`**:
+  - **Root cause**: The `application/export_project_only` setting in `export_presets.cfg` was accidentally enabled (along with changing the export path to `.xcodeproj`). This caused the Godot headless export in CI to output an Xcode project directory instead of an `.ipa` file, causing Fastlane's `upload_to_testflight` to fail with `Could not find ipa file`.
+  - **Fix**: Added `"application/export_project_only": "false"` to the dynamic python override script in `_build-ios-appstore.yml`. This ensures the pipeline always forces Godot to compile and export the `.ipa` regardless of local preset changes.
+  - **Local Convenience**: Kept `application/export_project_only=true` and `export_path="... .xcodeproj"` in the local `export_presets.cfg` to support seamless "one-click deploy" testing from the editor, as the CI now handles the override automatically.
