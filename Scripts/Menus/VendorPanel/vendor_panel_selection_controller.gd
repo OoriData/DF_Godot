@@ -64,8 +64,17 @@ static func handle_new_item_selection(panel: Object, p_selected_item: Variant) -
 			# If missing critical pricing/stats, fetch
 			if not idata.has("value") or not idata.has("base_top_speed"):
 				var vid := str(idata.get("vehicle_id", ""))
-				if vid != "" and is_instance_valid(panel._vendor_service):
-					panel._vendor_service.request_vehicle(vid)
+				if vid != "":
+					# Guard: Only request details if it's NOT a Market vehicle (buy mode),
+					# as the backend restricts detailed stats to owners.
+					var is_market_vehicle: bool = (panel.get("current_mode") == "buy")
+					if not is_market_vehicle and is_instance_valid(panel._vendor_service):
+						if panel.perf_log_enabled:
+							print("DEBUG: Fetching detailed vehicle stats for owned vehicle: ", vid)
+						panel._vendor_service.request_vehicle(vid)
+					else:
+						if panel.perf_log_enabled:
+							print("DEBUG: Skipping vehicle detail fetch for market vehicle (unauthorized): ", vid)
 		# 2. Mission recipient details
 		var rid := str(idata.get("recipient", ""))
 		if rid == "":

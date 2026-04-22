@@ -1047,14 +1047,14 @@ func _on_signal_hub_error_occurred(_domain: String, _code: String, message: Stri
 	if display_message.is_empty():
 		return # Ignored error
 
-	_show_error_dialog(display_message)
+	_show_error_dialog(display_message, message)
 
 func _on_api_fetch_error(message: String):
 	# Fallback/Legacy handler if anything still wires directly to APICalls (should be none)
 	# Reuse the new handler logic
 	_on_signal_hub_error_occurred("API", "FETCH_ERROR", message, ErrorTranslator.is_inline_error(message))
 
-func _show_error_dialog(message: String):
+func _show_error_dialog(message: String, raw_message: String = ""):
 	if not is_instance_valid(_error_dialog_scene):
 		printerr("Error dialog scene not loaded!")
 		return
@@ -1076,7 +1076,7 @@ func _show_error_dialog(message: String):
 	dialog_host.add_child(error_dialog)
 	modal_layer.show()
 
-	error_dialog.show_message(message)
+	error_dialog.show_message(message, raw_message)
 
 	# When the dialog is closed (freed), hide the modal layer if nothing else is in the host.
 	error_dialog.tree_exited.connect(func():

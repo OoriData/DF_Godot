@@ -30,6 +30,8 @@ const ERROR_MAP: Dictionary = {
 	# Selling a vehicle with cargo — match on specific substring so it wins over generic prefixes
 	"contains cargo": "You cannot sell a vehicle while it still has cargo. Remove the cargo and try again.",
 	"Invalid item for this vendor": "This item cannot be bought or sold at this location.",
+	"does not own vehicle": "You do not have permission to access this vehicle's details.",
+	"vehicle not found": "The requested vehicle could not be found.",
 
 	# --- Specific Route Finding Errors ---
 	"Route find failed: No path found": "A route to this destination could not be found. The path may be blocked or across an ocean.",
@@ -61,6 +63,7 @@ const ERROR_MAP: Dictionary = {
 	"PATCH 'vehicle_sold' failed:": "Could not sell vehicle: ",
 	"PATCH 'resource_bought' failed:": "Could not buy resource: ",
 	"PATCH 'resource_sold' failed:": "Could not sell resource: ",
+	"GET 'vehicle_data_received' failed:": "Could not load vehicle details: ",
 	# Warehouses (DF+ required) — show server-provided detail
 	"PATCH 'warehouse_created' failed:": "Warehouse purchase unavailable: Support the developers and upgrade to DF+",
 

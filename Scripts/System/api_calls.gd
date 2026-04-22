@@ -2468,7 +2468,14 @@ func _on_request_completed(result: int, response_code: int, _headers: PackedStri
 			if _current_debug_tag == "bug_report" and _current_patch_signal_name == "bug_report_submitted":
 				emit_signal('fetch_error', "Bug report submit failed (HTTP %d): %s" % [response_code, detail_msg])
 			else:
-				var prefix = "PATCH '" + _current_patch_signal_name + "' failed: "
+				var method_str = "PATCH"
+				match _current_request_method:
+					HTTPClient.METHOD_GET: method_str = "GET"
+					HTTPClient.METHOD_POST: method_str = "POST"
+					HTTPClient.METHOD_PUT: method_str = "PUT"
+					HTTPClient.METHOD_DELETE: method_str = "DELETE"
+				
+				var prefix = method_str + " '" + _current_patch_signal_name + "' failed: "
 				# If the error message already has a meaningful prefix or is translated, don't double-prefix if it looks like a full sentence
 				emit_signal('fetch_error', prefix + detail_msg)
 			_complete_current_request()

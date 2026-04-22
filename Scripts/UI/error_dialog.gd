@@ -2,6 +2,7 @@
 extends AcceptDialog
 
 var _report_btn: Button
+var _raw_error_text: String = ""
 
 func _ready() -> void:
 	# When the dialog is confirmed (OK button) or closed (X button), it should free itself.
@@ -36,11 +37,11 @@ func _apply_layout() -> void:
 	var avail_h = int(vp_size.y)
 	
 	var target_w = 500
-	var target_h = 250
+	var target_h = 300
 	
 	if mode == 2: # MOBILE_PORTRAIT
 		target_w = int(avail_w * 0.9)
-		target_h = int(avail_h * 0.5)
+		target_h = int(avail_h * 0.6)
 	elif mode == 1: # MOBILE_LANDSCAPE
 		target_w = int(avail_w * 0.7)
 		target_h = int(avail_h * 0.6)
@@ -55,8 +56,9 @@ func _apply_layout() -> void:
 		theme = curr_theme
 	curr_theme.default_font_size = dyn_font_sz
 
-func show_message(message: String) -> void:
+func show_message(message: String, raw_message: String = "") -> void:
 	dialog_text = message
+	_raw_error_text = raw_message
 	
 	# Keep layout fresh just before popup
 	_apply_layout()
@@ -89,7 +91,7 @@ func _submit_quick_bug_report() -> void:
 	var payload: Dictionary = {
 		"title": "[Auto] " + title,
 		"summary": "Automated report from Error Dialog",
-		"description": "User clicked Report Bug from an error dialog.\n\n## Error Message\n" + dialog_text,
+		"description": "User clicked Report Bug from an error dialog.\n\n## Error Message (Friendly)\n" + dialog_text + "\n\n## Technical Detail (Raw)\n" + _raw_error_text,
 		"consent": true
 	}
 	
