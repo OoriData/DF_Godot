@@ -204,11 +204,11 @@ func _get_error_message(data: Variant, body_text: String) -> String:
 			return String(first)
 		elif detail is String:
 			return detail
-		
+
 		var msg = data.get("message", data.get("error", null))
 		if msg != null:
 			return String(msg)
-	
+
 	if body_text != "" and body_text.length() < 500:
 		var json = JSON.parse_string(body_text)
 		if json is Array and json.size() > 0:
@@ -216,7 +216,7 @@ func _get_error_message(data: Variant, body_text: String) -> String:
 			if first is Dictionary and first.has("msg"):
 				return String(first.get("msg"))
 		return body_text
-	
+
 	return "Unknown error."
 
 
@@ -616,9 +616,9 @@ func login_with_steam(steam_id: String, persona_name: String = "") -> void:
 		body_dict["persona_name"] = persona_name
 		body_dict["username"] = persona_name
 	var body := JSON.stringify(body_dict)
-	
+
 	_log_info("[APICalls] Initiating Steam login for ID: %s (persona: %s)" % [steam_id, persona_name])
-	
+
 	var request_details: Dictionary = {
 		"url": url,
 		"headers": headers,
@@ -634,9 +634,9 @@ func login_with_apple(identity_token: String) -> void:
 	var headers: PackedStringArray = ['accept: application/json', 'content-type: application/json']
 	var body_dict: Dictionary = {"identity_token": identity_token}
 	var body := JSON.stringify(body_dict)
-	
+
 	_log_info("[APICalls] Initiating Apple login")
-	
+
 	var request_details: Dictionary = {
 		"url": url,
 		"headers": headers,
@@ -654,9 +654,9 @@ func login_with_google(id_token: String, nonce: String = "") -> void:
 	if nonce != "":
 		body_dict["nonce"] = nonce
 	var body := JSON.stringify(body_dict)
-	
+
 	_log_info("[APICalls] Initiating Google login")
-	
+
 	var request_details: Dictionary = {
 		"url": url,
 		"headers": headers,
@@ -711,7 +711,7 @@ func _on_steam_link_completed(result: int, response_code: int, _headers: PackedS
 	if response_code == 200:
 		var st_id := String(data.get("steam_id", ""))
 		var u_id := String(data.get("user_id", ""))
-		
+
 		# Optimistically update the store if possible
 		var store := get_node_or_null("/root/GameStore")
 		if is_instance_valid(store) and store.has_method("get_user"):
@@ -720,9 +720,9 @@ func _on_steam_link_completed(result: int, response_code: int, _headers: PackedS
 				var updated_user = u.duplicate(true)
 				updated_user["steam_id"] = st_id
 				store.set_user(updated_user)
-				
+
 		resolve_current_user_id(true)
-		
+
 		emit_signal("steam_account_linked", {
 			"ok": true,
 			"steam_id": st_id,
@@ -740,21 +740,21 @@ func _on_steam_link_completed(result: int, response_code: int, _headers: PackedS
 				var detail_raw = data.get("detail", null)
 				if detail_raw is Dictionary:
 					conflict_data.merge(detail_raw)
-				
+
 				var conf_raw = data.get("conflict", null)
 				if conf_raw is Dictionary:
 					conflict_data.merge(conf_raw)
-				
+
 				if data.has("merge_token"):
 					conflict_data["merge_token"] = data.get("merge_token")
-				
+
 				# If we still have nothing but it's a 409, take the whole thing
 				if conflict_data.is_empty():
 					conflict_data = data.duplicate()
-		
+
 		if response_code != 200:
 			_log_info("[APICalls][link_steam_account] Error %d: %s" % [response_code, text])
-		
+
 		emit_signal("steam_account_linked", {
 			"ok": false,
 			"steam_id": "",
@@ -868,7 +868,7 @@ func _on_google_link_url_completed(result: int, response_code: int, _headers: Pa
 	if response_code == 200:
 		var link_url := str(data.get("url", ""))
 		var state := str(data.get("state", ""))
-		
+
 		emit_signal("google_link_url_received", link_url, state)
 	else:
 		emit_signal("google_link_url_received", "", "")
@@ -901,14 +901,14 @@ func _on_google_link_completed(result: int, response_code: int, _headers: Packed
 	if is_instance_valid(requester):
 		requester.queue_free()
 	var text := body.get_string_from_utf8()
-	
+
 	if result != HTTPRequest.RESULT_SUCCESS:
 		printerr("[APICalls][link_google_account] Network fail. HttpResult=", result)
 		_emit_provider_link_result("google", {"ok": false, "error_code": -1, "message": "Network error.", "conflict": false})
 		return
-		
+
 	var payload_result: Dictionary = {"ok": false, "error_code": response_code, "message": "Unknown error."}
-	
+
 	if response_code >= 200 and response_code < 300:
 		payload_result["ok"] = true
 	else:
@@ -919,12 +919,12 @@ func _on_google_link_completed(result: int, response_code: int, _headers: Packed
 				payload_result["message"] = dict["detail"]
 			elif dict.has("message") and dict["message"] is String:
 				payload_result["message"] = dict["message"]
-				
+
 			if response_code == 409 and dict.has("conflict"):
 				payload_result["conflict"] = dict["conflict"]
 		else:
 			payload_result["message"] = "Server error %d" % response_code
-			
+
 	_emit_provider_link_result("google", payload_result)
 
 func _on_apple_link_url_completed(result: int, response_code: int, _headers: PackedStringArray, body: PackedByteArray, requester: HTTPRequest) -> void:
@@ -1090,10 +1090,10 @@ func _on_merge_commit_completed(result: int, response_code: int, _headers: Packe
 	if response_code == 200:
 		# Success! Refresh identity from /auth/me before signaling done
 		resolve_current_user_id(true)
-		
+
 		var uid := String(data.get("user_id", ""))
 		get_user_data(uid, true)
-		
+
 		emit_signal("merge_committed", {
 			"ok": true,
 			"user_id": uid,
@@ -1301,12 +1301,12 @@ func update_user_metadata(user_id: String, metadata: Dictionary) -> void:
 	var url := "%s/user/update_metadata?user_id=%s" % [BASE_URL, user_id]
 	var headers: PackedStringArray = ['accept: application/json', 'content-type: application/json']
 	headers = _apply_auth_header(headers)
-	
+
 	# The body should be the metadata dictionary itself, not wrapped in another object.
 	var body_json := JSON.stringify(metadata)
-	
+
 	print("[APICalls][DEBUG] update_user_metadata: url=", url, " body=", body_json)
-	
+
 	_diag_enqueue("update_user_metadata", {
 		"url": url,
 		"headers": headers,
@@ -2068,7 +2068,7 @@ func _start_request_status_probe():
 					_probe_stalled_count += 1
 				else:
 					_probe_stalled_count = 0
-				
+
 				if _probe_stalled_count >= 10: # ~5s
 					print('[APICalls][Probe] AUTH_URL request appears stalled (status=%d); retrying with alternate host.' % st)
 					_probe_stalled_count = 0
@@ -2115,14 +2115,14 @@ func _dispatch_parallel(req_data: Dictionary) -> void:
 	var url = req_data.get("url", "")
 	var headers = _apply_auth_header(req_data.get("headers", []))
 	var method = req_data.get("method", HTTPClient.METHOD_GET)
-	
+
 	_parallel_inflight_urls[url] = true
 	_parallel_active_details[requester] = req_data
 	req_data["start_ms"] = Time.get_ticks_msec()
-	
+
 	var purpose_str = RequestPurpose.keys()[req_data.get("purpose", RequestPurpose.NONE)]
 	print("[APICalls][Parallel] Dispatching purpose=%s URL=%s" % [purpose_str, url])
-	
+
 	var err = requester.request(url, headers, method)
 	if err != OK:
 		printerr("[APICalls][Parallel] Initiation failed err=%d URL=%s" % [err, url])
@@ -2138,28 +2138,28 @@ func _on_parallel_request_completed(result: int, response_code: int, _headers: P
 	var purpose = req_data.get("purpose", RequestPurpose.NONE)
 	var start_ms = req_data.get("start_ms", Time.get_ticks_msec())
 	var elapsed = Time.get_ticks_msec() - start_ms
-	
+
 	_parallel_inflight_urls.erase(url)
 	_parallel_active_details.erase(requester)
 	_parallel_idle.append(requester)
-	
+
 	print("[APICalls][Parallel] Completed purpose=%s code=%d ms=%d url=%s" % [RequestPurpose.keys()[purpose], response_code, elapsed, url])
-	
+
 	if result != HTTPRequest.RESULT_SUCCESS or not (response_code >= 200 and response_code < 300):
 		printerr("[APICalls][Parallel] Request failed code=%d url=%s" % [response_code, url])
 		return
-		
+
 	var body_text = body.get_string_from_utf8()
 	var json_res = JSON.parse_string(body_text)
 	if typeof(json_res) != TYPE_DICTIONARY:
 		printerr("[APICalls][Parallel] Invalid JSON response url=%s" % url)
 		return
-		
+
 	if purpose == RequestPurpose.CARGO_DATA:
 		emit_signal('cargo_data_received', json_res)
 	elif purpose == RequestPurpose.VENDOR_DATA:
 		emit_signal('vendor_data_received', json_res)
-	
+
 	call_deferred("_process_queue")
 
 func _process_queue() -> void:
@@ -2223,7 +2223,7 @@ func _process_queue() -> void:
 		if error == ERR_BUSY:
 			printerr("APICalls: Request node busy. Forcing cancel and re-queueing.")
 			_http_request.cancel_request()
-		
+
 		emit_signal('fetch_error', error_msg)
 		_is_request_in_progress = false
 		_current_request_purpose = RequestPurpose.NONE
@@ -2335,8 +2335,8 @@ func _on_request_completed(result: int, response_code: int, _headers: PackedStri
 		_request_queue.push_front(_current_request_details)
 		_is_request_in_progress = false
 		_current_request_purpose = RequestPurpose.NONE
-		var timer = get_tree().create_timer(0.5 * retries * retries)
-		timer.process_mode = Node.PROCESS_MODE_ALWAYS
+		# process_always=true, process_in_physics=false, ignore_time_scale=true
+		var timer = get_tree().create_timer(0.5 * retries * retries, true, false, true)
 		timer.timeout.connect(Callable(self, "_process_queue"))
 		return
 
@@ -2395,7 +2395,7 @@ func _on_request_completed(result: int, response_code: int, _headers: PackedStri
 					emit_signal(sig2, json_response)
 				else:
 					_log_info("APICalls: Transaction '%s' successful. Skipping emit (services will refresh or signal removed)." % sig2)
-			
+
 			_complete_current_request()
 			return
 		else:
@@ -2480,7 +2480,7 @@ func _on_request_completed(result: int, response_code: int, _headers: PackedStri
 					HTTPClient.METHOD_POST: method_str = "POST"
 					HTTPClient.METHOD_PUT: method_str = "PUT"
 					HTTPClient.METHOD_DELETE: method_str = "DELETE"
-				
+
 				var prefix = method_str + " '" + _current_patch_signal_name + "' failed: "
 				# If the error message already has a meaningful prefix or is translated, don't double-prefix if it looks like a full sentence
 				emit_signal('fetch_error', prefix + detail_msg)
@@ -2511,21 +2511,21 @@ func _on_request_completed(result: int, response_code: int, _headers: PackedStri
 				response_text = str(body)
 		else:
 			response_text = "[No response body]"
-		
+
 		print("*** API ERROR RESPONSE BODY ***\n" + response_text + "\n*****************************")
 		printerr("API error response code: ", response_code)
 		printerr("API error response body: ", response_text)
-		
+
 		# Try to extract meaningful error from JSON
 		var json_result = JSON.parse_string(response_text)
 		var error_msg = _get_error_message(json_result, response_text)
 		emit_signal('fetch_error', error_msg)
-		
+
 		if request_purpose_at_start == RequestPurpose.CARGO_DATA:
 			var cid := _extract_query_param(_last_requested_url, "cargo_id")
 			if cid != "":
 				emit_signal("cargo_data_failed", cid)
-		
+
 		_complete_current_request()
 		return
 
@@ -2658,7 +2658,7 @@ func _on_request_completed(result: int, response_code: int, _headers: PackedStri
 			emit_signal('map_data_received', deserialized_map_data)
 		_complete_current_request()
 		return
-	
+
 
 
 	elif request_purpose_at_start == RequestPurpose.VENDOR_DATA:
@@ -2757,19 +2757,19 @@ func _on_request_completed(result: int, response_code: int, _headers: PackedStri
 			emit_signal('auth_token_received', {"raw": response_body_text})
 		else:
 			print("APICalls (_on_request_completed - AUTH_TOKEN): Token exchange successful.")
-			
+
 			var token = str(json_response.get("session_token", ""))
 			if token != "":
 				set_auth_session_token(token)
 				emit_signal('auth_session_received', token)
-				
+
 				# Force user resolution
 				_auth_me_requested = false
 				_auth_me_resolve_attempts = 0
 				print('[APICalls][AUTH_TOKEN] Forcing /auth/me resolution now that token is set.')
 				resolve_current_user_id(true)
 				_emit_hub_auth_state('authenticated')
-			
+
 			emit_signal('auth_token_received', json_response)
 
 		_complete_current_request()
@@ -2809,7 +2809,7 @@ func _on_request_completed(result: int, response_code: int, _headers: PackedStri
 			elif status == 'complete':
 				_auth_poll.active = false
 				_login_in_progress = false
-				
+
 				# Check if this was a linking operation vs login
 				var res_dict = json_response.get('result', {})
 				if res_dict.get('linked', false):
@@ -2865,9 +2865,9 @@ func _on_request_completed(result: int, response_code: int, _headers: PackedStri
 			else:
 				_auth_poll.active = false
 				_login_in_progress = false
-				
+
 				var err_msg := _get_error_message(json_response, response_body_text.substr(0, 200))
-				
+
 				# Check for conflict in status-poll error detail (Account Merge flow)
 				var status_code = int(json_response.get("code", 0))
 				if (status == "error" or status == "failed") and (status_code == 409 or json_response.has("conflict")):
@@ -2879,7 +2879,7 @@ func _on_request_completed(result: int, response_code: int, _headers: PackedStri
 						conflict_data.merge(json_response.get("conflict", {}))
 					if json_response.has("merge_token"):
 						conflict_data["merge_token"] = json_response.get("merge_token")
-					
+
 					_emit_provider_link_result(status_provider, {
 						"ok": false,
 						"error_code": 409,
@@ -2892,7 +2892,7 @@ func _on_request_completed(result: int, response_code: int, _headers: PackedStri
 				printerr('[APICalls][AUTH_STATUS] failure status=%s error=%s' % [status, err_msg])
 				emit_signal('auth_poll_finished', false)
 				emit_signal('fetch_error', err_msg)
-				
+
 				# Re-use discord_account_linked for link-specific errors if polling for link
 				if _auth_poll.state != "":
 					_emit_provider_link_result(status_provider, {

@@ -21,6 +21,14 @@ func _ready() -> void:
 	if is_instance_valid(hub) and hub.has_signal("user_changed"):
 		hub.user_changed.connect(_on_user_changed)
 
+	# Check if the user is already loaded from cached credentials
+	var store = get_node_or_null("/root/GameStore")
+	if is_instance_valid(store) and store.has_method("get_user"):
+		var cached_user = store.get_user()
+		if cached_user is Dictionary and not cached_user.is_empty():
+			print("[PushManager] User already logged in from cache. Triggering push registration.")
+			_on_user_changed(cached_user)
+
 func _setup_ios() -> void:
 	if not Engine.has_singleton("APN"):
 		push_warning("[PushManager] APN singleton not found — push notifications unavailable.")
@@ -31,45 +39,33 @@ func _setup_ios() -> void:
 	if apn.has_signal("push_message_received"):
 		apn.connect("push_message_received", _on_push_message_received)
 	print("[PushManager] APN plugin found and signals connected.")
-	
+
 	# Start initialization (must happen after connects)
 	if apn.has_method("init"):
 		apn.init()
 
 func _setup_android() -> void:
-	if not Engine.has_singleton("FirebaseApp"):
+	if not Engine.has_singleton("GodotFirebaseCloudMessaging"):
+		push_warning("[PushManager] GodotFirebaseCloudMessaging singleton not found — push unavailable.")
 		return
-	# Wait for Firebase to initialize
-	var firebase = Engine.get_singleton("Firebase")
-	if is_instance_valid(firebase) and firebase.get("Auth"):
-		# Godot Firebase generally emits a token signal from its CloudMessaging module
-		# We'll hook into it if we're using Godot Firebase.
-		# Note: You need to have FirebaseCloudMessaging enabled in your Godot editor.
-		if firebase.has_signal("cloud_message_setup"):
-			# Custom event or depends on exact Firebase addon API
-			pass
+	var fcm = Engine.get_singleton("GodotFirebaseCloudMessaging")
+	if fcm.has_signal("token_received"):
+		fcm.connect("token_received", _on_token_received)
+	if fcm.has_signal("message_received"):
+		fcm.connect("message_received", _on_push_message_received)
+	print("[PushManager] GodotFirebaseCloudMessaging plugin found and signals connected.")
 
-	# For Native Android FCM Plugins (like cengiz-ismail/godot-firebase-cloud-messaging)
-	var fcm = Engine.get_singleton("FirebaseCloudMessaging") if Engine.has_singleton("FirebaseCloudMessaging") else null
-	if fcm:
-		if fcm.has_signal("token_received"):
-			fcm.connect("token_received", _on_token_received)
-		if fcm.has_signal("message_received"):
-			fcm.connect("message_received", _on_push_message_received)
-		
-		# For Android 13+, we might need to explicitly ask for permission
-		if OS.get_name() == "Android" and OS.get_version() >= "13":
-			OS.request_permissions()
+
 
 func _on_user_changed(user: Dictionary) -> void:
 	if user.is_empty():
 		_has_registered_this_session = false
 		return
-	
+
 	if _has_registered_this_session:
 		return
 	_has_registered_this_session = true
-	
+
 	# Request permissions / fetch token now that we're logged in.
 	var api = get_node_or_null("/root/APICalls")
 	if not is_instance_valid(api):
@@ -81,16 +77,11 @@ func _on_user_changed(user: Dictionary) -> void:
 			apn.register_push_notifications(apn.PUSH_SOUND | apn.PUSH_BADGE | apn.PUSH_ALERT)
 			print("[PushManager] register_push_notifications() called.")
 	elif _platform == "android":
-		var fcm = Engine.get_singleton("FirebaseCloudMessaging") if Engine.has_singleton("FirebaseCloudMessaging") else null
+		var fcm = Engine.get_singleton("GodotFirebaseCloudMessaging") \
+			if Engine.has_singleton("GodotFirebaseCloudMessaging") else null
 		if fcm:
-			# If FCM is valid, it usually auto-requests on startup, but we can grab token here
-			var token = ""
-			if fcm.has_method("getCloudMessagingToken"):
-				token = fcm.getCloudMessagingToken()
-			elif "get_token" in fcm:
-				token = fcm.get_token()
-			if token != "":
-				api.register_push_token(token, _platform)
+			fcm.requestPermission()
+			fcm.getToken()  # Triggers token_received signal asynchronously
 
 func _on_token_received(token_raw: Variant) -> void:
 	var token: String = ""
@@ -100,7 +91,7 @@ func _on_token_received(token_raw: Variant) -> void:
 		token = token_raw.hex_encode()
 	else:
 		token = str(token_raw)
-		
+
 	print("[PushManager] Device token received: %s" % token)
 	# Whenever the token refreshes, send it to the backend IF we have a user
 	var api = get_node_or_null("/root/APICalls")
@@ -110,7 +101,7 @@ func _on_token_received(token_raw: Variant) -> void:
 
 func _on_push_message_received(payload: Dictionary) -> void:
 	print("[PushManager] Received Push Payload: ", payload)
-	
+
 	var dialogue_id: String = ""
 	var title: String = ""
 	var body: String = ""
@@ -127,7 +118,7 @@ func _on_push_message_received(payload: Dictionary) -> void:
 		# Godot Firebase generally nests the data payload inside the dictionary.
 		var data = payload.get("data", payload)
 		var notification = payload.get("notification", {})
-		
+
 		if data is Dictionary:
 			dialogue_id = str(data.get("dialogue_id", ""))
 		if notification is Dictionary:
@@ -141,7 +132,7 @@ func _on_push_message_received(payload: Dictionary) -> void:
 			get_tree().root.add_child.call_deferred(_toast_instance)
 			if _toast_instance.has_signal("toast_tapped"):
 				_toast_instance.toast_tapped.connect(_fire_dialogue)
-		
+
 		# Show the toast so the user can tap it if they are in-game
 		if _toast_instance.has_method("show_toast"):
 			_toast_instance.call_deferred("show_toast", title, body, dialogue_id)
