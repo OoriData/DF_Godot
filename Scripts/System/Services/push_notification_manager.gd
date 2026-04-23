@@ -37,29 +37,19 @@ func _setup_ios() -> void:
 		apn.init()
 
 func _setup_android() -> void:
-	if not Engine.has_singleton("FirebaseApp"):
+	if not Engine.has_singleton("GodotFirebaseCloudMessaging"):
+		push_warning("[PushManager] GodotFirebaseCloudMessaging singleton not found — push unavailable.")
 		return
-	# Wait for Firebase to initialize
-	var firebase = Engine.get_singleton("Firebase")
-	if is_instance_valid(firebase) and firebase.get("Auth"):
-		# Godot Firebase generally emits a token signal from its CloudMessaging module
-		# We'll hook into it if we're using Godot Firebase.
-		# Note: You need to have FirebaseCloudMessaging enabled in your Godot editor.
-		if firebase.has_signal("cloud_message_setup"):
-			# Custom event or depends on exact Firebase addon API
-			pass
+	var fcm = Engine.get_singleton("GodotFirebaseCloudMessaging")
+	if fcm.has_signal("token_received"):
+		fcm.connect("token_received", _on_token_received)
+	if fcm.has_signal("message_received"):
+		fcm.connect("message_received", _on_push_message_received)
+	print("[PushManager] GodotFirebaseCloudMessaging plugin found and signals connected.")
 
-	# For Native Android FCM Plugins (like cengiz-ismail/godot-firebase-cloud-messaging)
-	var fcm = Engine.get_singleton("FirebaseCloudMessaging") if Engine.has_singleton("FirebaseCloudMessaging") else null
-	if fcm:
-		if fcm.has_signal("token_received"):
-			fcm.connect("token_received", _on_token_received)
-		if fcm.has_signal("message_received"):
-			fcm.connect("message_received", _on_push_message_received)
-		
-		# For Android 13+, we might need to explicitly ask for permission
-		if OS.get_name() == "Android" and OS.get_version() >= "13":
-			OS.request_permissions()
+	# Request notification permission on Android 13+
+	if fcm.has_method("requestPermission"):
+		fcm.requestPermission()
 
 func _on_user_changed(user: Dictionary) -> void:
 	if user.is_empty():
@@ -81,16 +71,10 @@ func _on_user_changed(user: Dictionary) -> void:
 			apn.register_push_notifications(apn.PUSH_SOUND | apn.PUSH_BADGE | apn.PUSH_ALERT)
 			print("[PushManager] register_push_notifications() called.")
 	elif _platform == "android":
-		var fcm = Engine.get_singleton("FirebaseCloudMessaging") if Engine.has_singleton("FirebaseCloudMessaging") else null
-		if fcm:
-			# If FCM is valid, it usually auto-requests on startup, but we can grab token here
-			var token = ""
-			if fcm.has_method("getCloudMessagingToken"):
-				token = fcm.getCloudMessagingToken()
-			elif "get_token" in fcm:
-				token = fcm.get_token()
-			if token != "":
-				api.register_push_token(token, _platform)
+		var fcm = Engine.get_singleton("GodotFirebaseCloudMessaging") \
+			if Engine.has_singleton("GodotFirebaseCloudMessaging") else null
+		if fcm and fcm.has_method("getToken"):
+			fcm.getToken()  # Triggers token_received signal asynchronously
 
 func _on_token_received(token_raw: Variant) -> void:
 	var token: String = ""
