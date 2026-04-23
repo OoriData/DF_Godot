@@ -17,8 +17,13 @@ exports/
 desolate_frontiers.keystore
 
 # Godot Android build template
-android/build/
+android/build/*
 !android/build/.gdignore
+!android/build/build.gradle
+!android/build/settings.gradle
+!android/build/config.gradle
+!android/build/gradle.properties
+!android/build/google-services.json
 
 # re-include Android Godot plugins
 !android/plugins/**/*.aar

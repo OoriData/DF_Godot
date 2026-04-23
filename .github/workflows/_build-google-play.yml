@@ -111,6 +111,11 @@ jobs:
 
       - name: Restore Android Libraries
         run: |
+          # Save our custom Gradle files (template extraction will overwrite them)
+          cp android/build/build.gradle /tmp/build.gradle.custom
+          cp android/build/settings.gradle /tmp/settings.gradle.custom
+          cp android/build/google-services.json /tmp/google-services.json 2>/dev/null || true
+
           # The .aar files are excluded from the repo due to size.
           # We extract them from the Godot export templates provided by setup-godot.
           TEMPLATES_DIR="$HOME/.local/share/godot/export_templates/${{ inputs.godot_version }}.stable"
@@ -135,6 +140,11 @@ jobs:
               exit 1
             fi
           fi
+
+          # Restore our customizations (google-services plugin + config)
+          cp /tmp/build.gradle.custom android/build/build.gradle
+          cp /tmp/settings.gradle.custom android/build/settings.gradle
+          cp /tmp/google-services.json android/build/google-services.json 2>/dev/null || true
 
       - name: Import Assets
         run: godot --headless --import
