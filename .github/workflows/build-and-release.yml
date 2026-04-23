@@ -11,8 +11,13 @@ on:
       platforms:
         description: 'Platforms to build (comma-separated: web,android,ios,macos,steam)'
         required: true
-        default: 'web'
+        default: 'web,android,ios,macos,steam'
         type: string
+      dispatch_publish:
+        description: 'Publish and release the builds to distribution storefronts, host the new web build on GitHub Pages, and create a new tagged release on GitHub (only for workflow_dispatch)'
+        required: false
+        default: false
+        type: boolean
   push:
     branches:
       - release        # Change this if you want it to trigger on other branches
@@ -30,6 +35,7 @@ jobs:
       build_macos: ${{ steps.check.outputs.build_macos }}
       build_steam: ${{ steps.check.outputs.build_steam }}
       version: ${{ steps.version.outputs.tag }}
+      is_full_build: ${{ steps.check.outputs.is_full_build }}
     steps:
       - id: version
         run: |
@@ -41,19 +47,32 @@ jobs:
 
       - id: check
         run: |
-          PLATFORMS="${{ inputs.platforms }}"
-          if [[ "${{ github.event_name }}" == "push" ]]; then
-            # Build all platforms on tag/push
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            PLATFORMS="${{ inputs.platforms }}"
+          else
+            # Automated runs (push/tag) default to all platforms
             PLATFORMS="web,android,ios,macos,steam"
           fi
           
+          echo "Event: ${{ github.event_name }}"
           echo "Building platforms: $PLATFORMS"
+          
+          if [[ -z "$PLATFORMS" ]]; then
+            echo "::error::No platforms specified for build."
+            exit 1
+          fi
           
           if [[ "$PLATFORMS" == *"web"* ]]; then echo "build_web=true" >> $GITHUB_OUTPUT; else echo "build_web=false" >> $GITHUB_OUTPUT; fi
           if [[ "$PLATFORMS" == *"android"* ]]; then echo "build_android=true" >> $GITHUB_OUTPUT; else echo "build_android=false" >> $GITHUB_OUTPUT; fi
           if [[ "$PLATFORMS" == *"ios"* ]]; then echo "build_ios=true" >> $GITHUB_OUTPUT; else echo "build_ios=false" >> $GITHUB_OUTPUT; fi
           if [[ "$PLATFORMS" == *"macos"* ]]; then echo "build_macos=true" >> $GITHUB_OUTPUT; else echo "build_macos=false" >> $GITHUB_OUTPUT; fi
           if [[ "$PLATFORMS" == *"steam"* ]]; then echo "build_steam=true" >> $GITHUB_OUTPUT; else echo "build_steam=false" >> $GITHUB_OUTPUT; fi
+          
+          if [[ "$PLATFORMS" == *"web"* ]] && [[ "$PLATFORMS" == *"android"* ]] && [[ "$PLATFORMS" == *"ios"* ]] && [[ "$PLATFORMS" == *"macos"* ]] && [[ "$PLATFORMS" == *"steam"* ]]; then
+            echo "is_full_build=true" >> $GITHUB_OUTPUT
+          else
+            echo "is_full_build=false" >> $GITHUB_OUTPUT
+          fi
 
   # Web Build
   web:
@@ -125,3 +144,66 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - run: echo "Builds completed."
+
+  # Unified GitHub Release
+  release:
+    needs: [setup, web, android, ios, macos, steam]
+    # Only publish if it's a full build, and it's either an automated trigger (tag/release branch) OR the publish checkbox was checked.
+    if: always() && needs.setup.outputs.is_full_build == 'true' && (github.ref_type == 'tag' || github.ref_name == 'release' || github.event.inputs.dispatch_publish == 'true')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Download Web Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: web-build
+          path: artifacts/
+        continue-on-error: true
+        
+      - name: Download Windows Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: desktop-build-windows
+          path: artifacts/
+        continue-on-error: true
+          
+      - name: Download macOS Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: desktop-build-macos
+          path: artifacts/
+        continue-on-error: true
+
+      - name: Download Android Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: mobile-build-android
+          path: artifacts/
+        continue-on-error: true
+
+      - name: Download iOS Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: mobile-build-ios
+          path: artifacts/
+        continue-on-error: true
+
+      - name: Download macOS Store Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: store-build-macos
+          path: artifacts/
+        continue-on-error: true
+          
+      - name: Publish GitHub Release
+        uses: ncipollo/release-action@v1
+        with:
+          tag: "v${{ needs.setup.outputs.version }}"
+          name: "Release v${{ needs.setup.outputs.version }}"
+          artifacts: "artifacts/*.zip,artifacts/*.aab,artifacts/*.apk,artifacts/*.ipa,artifacts/*.pkg"
+          allowUpdates: true
+          replacesArtifacts: true
+          token: ${{ github.token }}

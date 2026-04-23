@@ -104,19 +104,18 @@ jobs:
           rm /tmp/apple_dist.p12
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k actions temp.keychain
 
-      - name: Configure SSH for Match
-        uses: webfactory/ssh-agent@v0.9.0
-        with:
-          ssh-private-key: ${{ secrets.MATCH_SSH_KEY }}
+      - name: Silence Android Plugin Warnings
+        run: |
+          mkdir -p addons/GodotGoogleSignIn
+          touch addons/GodotGoogleSignIn/.gdignore
 
       - name: Fastlane Match (iOS)
         env:
           MATCH_PASSWORD: ${{ secrets.MATCH_PASSWORD }}
-          MATCH_GIT_URL: ${{ secrets.MATCH_GIT_URL }}
+          GIT_TOKEN: ${{ secrets.GIT_TOKEN }}
         run: |
-          # Use SSH URL from secret, or ensure the Matchfile uses git@github.com format
-          # We override the git_url here to force SSH if the Matchfile has HTTPS
-          bundle exec fastlane match appstore --readonly --keychain_name temp.keychain --keychain_password actions --git_url "git@github.com:OoriData/mobile-signing-certs.git" --app_identifier "com.ooridata.desolate-frontiers"
+          export MATCH_GIT_URL="https://${GIT_TOKEN}@github.com/OoriData/mobile-signing-certs.git"
+          bundle exec fastlane match appstore --readonly --keychain_name temp.keychain --keychain_password actions --git_url "$MATCH_GIT_URL" --app_identifier "com.ooridata.desolate-frontiers"
 
       - name: Capture Provisioning Profile Name
         run: |
@@ -190,11 +189,14 @@ jobs:
           GITHUB_RUN_NUMBER: ${{ github.run_number }}
           GITHUB_RUN_ATTEMPT: ${{ github.run_attempt }}
 
+      - name: Import Assets
+        run: godot --headless --import || true
+
       - name: Build with Godot (Export)
         id: export
         run: |
           mkdir -p build/ios
-          godot --headless --export-release "iOS" "build/ios/Desolate_Frontiers.ipa"
+          godot --headless --log-file /tmp/godot_ios.log --export-release "iOS" "build/ios/Desolate_Frontiers.ipa"
 
       - name: Upload to TestFlight
         env:
@@ -206,3 +208,10 @@ jobs:
           MATCH_KEYCHAIN_PASSWORD: actions
         run: |
           bundle exec fastlane ios release
+
+      - name: Upload iOS Artifact
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mobile-build-ios
+          path: build/ios/Desolate_Frontiers.ipa
