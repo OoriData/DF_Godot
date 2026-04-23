@@ -58,7 +58,7 @@ platform :mac do
     match(
       api_key: api_key,
       type: 'appstore',
-      platform: 'mac',
+      platform: 'macos',
       readonly: ENV['MATCH_READONLY'] != 'false',
       keychain_name: ENV['MATCH_KEYCHAIN_NAME'],
       keychain_password: ENV['MATCH_KEYCHAIN_PASSWORD'],
@@ -72,7 +72,7 @@ platform :mac do
     match(
       api_key: api_key,
       type: 'mac_installer_distribution',
-      platform: 'mac',
+      platform: 'macos',
       skip_provisioning_profiles: true,
       skip_certificate_matching: true,
       readonly: ENV['MATCH_READONLY'] != 'false', # Allow override for seeding

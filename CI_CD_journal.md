@@ -68,3 +68,36 @@ Steam requires clear-text credentials for automated uploads. Use a dedicated ser
 - **Log Upload on Failure**: Added `Upload Export Logs (on failure)` steps to both iOS and macOS workflows for easier debugging of future build failures.
 - **Artifact Paths**: Changed artifact upload to use directory paths (`path: build/ios/`, `path: build/macos-store/`) instead of exact file paths, matching Spellist's convention.
 - **Runner Update**: Updated both `_build-ios-appstore.yml` and `_build-macos-appstore.yml` from `macos-latest` to `macos-26` for Xcode 26 / iOS 26 SDK compliance (Apple's April 2026 deadline).
+
+## 2026-04-22 - Post-Merge Restoration & Full Spellist Parity
+
+### Background
+The `mobile-ui` branch merge clobbered many of the CI/CD modernization changes made earlier in this session. A full audit and restoration was performed to bring all workflow files back to parity with Spellist's working architecture.
+
+### `build-and-release.yml` (Full Rewrite)
+- **Version Extraction**: Replaced tag-ref-based versioning with `grep 'config/version' project.godot` + semver validation, matching Spellist.
+- **Changelog Extraction**: Added Python step to parse `CHANGELOG.md` for release notes (previously hardcoded as `"Automated Release"`).
+- **Setup Checkout**: Added `actions/checkout@v4` to the setup job (needed for project.godot and CHANGELOG.md reads).
+- **Web Permissions**: Removed stale `pages: write` and `id-token: write` from the `web` job (these belong on `publish` only).
+- **Removed `sync-platforms`**: Eliminated the no-op sync job that was creating visual noise in the workflow graph.
+- **Publish Lever**: Fixed `dispatch_publish` comparison from string (`== 'true'`) to boolean (`== true`), added option A/B/C comments.
+- **Job Order**: Moved `report` after `publish` to match Spellist's cleaner graph flow.
+
+### `_build-ios-appstore.yml`
+- **Inject Signing**: Switched from `python3 -c '...'` to `shell: python` for cleaner YAML.
+- **Export Overrides**: Fixed quoting on `export_project_only` and `export_method_release` to use `"\"false\""` / `"\"0\""` instead of bare `"false"` / `"0"`.
+
+### `_build-macos-appstore.yml`
+- **Capture Provisioning Profile Path**: Added dynamic step that searches the filesystem for the installed `.provisionprofile` and uses it in the signing configuration, instead of a hardcoded filename.
+- **Inject Signing**: Same `shell: python` and quoting fixes as iOS.
+
+### `_publish.yml`
+- **Runner**: Updated `apple-stores` job from `macos-14` to `macos-26`.
+- **Auth Pattern**: Replaced the inline `export MATCH_GIT_URL=...` with the proper `Setup Fastlane Match` step using the `@` detection pattern.
+- **Secrets**: Added `MATCH_GIT_URL` to the workflow's secret declarations.
+
+### `fastlane/Fastfile`
+- **Platform Fix**: Changed `platform: 'mac'` to `platform: 'macos'` in both macOS match calls (reverted by the merge).
+
+### New Files
+- **`CHANGELOG.md`**: Created initial changelog for DF_Godot, required by the new `build-and-release.yml` changelog extraction step.

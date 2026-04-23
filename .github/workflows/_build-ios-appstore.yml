@@ -149,8 +149,8 @@ jobs:
           fi
 
       - name: Inject Signing Configuration
+        shell: python
         run: |
-          python3 -c '
           import re
           import os
           import sys
@@ -166,23 +166,24 @@ jobs:
           with open("export_presets.cfg", "r") as f:
               content = f.read()
           
-          # Dynamically find the preset index for "iOS"
-          preset_match = re.search(r"^\[preset\.(\d+)\]\s+name=\"iOS\"", content, re.MULTILINE)
+          # Find the preset index for "iOS"
+          preset_match = re.search(r'^\\[preset\\.(\d+)\\]\\s+name="iOS"', content, re.MULTILINE)
           if not preset_match:
-              print("Error: Could not find preset named \"iOS\"")
+              print("Error: Could not find preset named 'iOS'")
               sys.exit(1)
-          
+              
           preset_index = preset_match.group(1)
-          print(f"Found \"iOS\" at index {preset_index}")
-          
-          # Match the options section for this preset
-          section_regex = r"(\[preset\." + preset_index + r"\.options\].*?)(?=\n\[|$)"
+          print(f"Found 'iOS' at index {preset_index}")
+
+          # Match the options section for that preset
+          section_regex = r"(\\[preset\\.{}\\.options\\].*?)(?=\\n\\[|$)".format(preset_index)
           
           def set_key(match):
               section = match.group(1)
               specifier = os.environ.get("IOS_PROFILE_NAME", "match AppStore com.ooridata.desolate-frontiers")
               
               # Build Number logic: base + (run_number * 10) + run_attempt
+              # Using a high base to ensure it stays above previous manual uploads
               build_number = str(100 + (int(os.environ["GITHUB_RUN_NUMBER"]) * 10) + int(os.environ["GITHUB_RUN_ATTEMPT"]))
               
               overrides = {
@@ -190,9 +191,9 @@ jobs:
                   "application/code_sign_identity_release": "\"Apple Distribution: Oori Data LLC\"",
                   "application/version": f"\"{build_number}\"",
                   "application/short_version": f"\"{short_version}\"",
-                  "entitlements/push_notifications": "\"Production\"",
-                  "application/export_project_only": "false",
-                  "application/export_method_release": "0"
+                  "application/export_project_only": "\"false\"",
+                  "application/export_method_release": "\"0\"",
+                  "entitlements/push_notifications": "\"Production\""
               }
               
               for key, val in overrides.items():
@@ -201,10 +202,10 @@ jobs:
                   else:
                       section += f"\n{key}={val}"
               return section
+
           new_content = re.sub(section_regex, set_key, content, flags=re.DOTALL)
           with open("export_presets.cfg", "w") as f:
               f.write(new_content)
-          '
         env:
           GITHUB_RUN_NUMBER: ${{ github.run_number }}
           GITHUB_RUN_ATTEMPT: ${{ github.run_attempt }}

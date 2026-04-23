@@ -34,6 +34,8 @@ on:
         required: false
       GIT_TOKEN:
         required: false
+      MATCH_GIT_URL:
+        required: false
 
 jobs:
   github-pages:
@@ -76,7 +78,7 @@ jobs:
 
   apple-stores:
     if: inputs.publish_apple
-    runs-on: macos-14
+    runs-on: macos-26
     steps:
       - uses: actions/checkout@v4
       - name: Download iOS Build
@@ -99,6 +101,20 @@ jobs:
           ruby-version: '3.3'
           bundler-cache: true
 
+      - name: Setup Fastlane Match
+        env:
+          GIT_TOKEN: ${{ secrets.GIT_TOKEN }}
+          MATCH_GIT_URL_SECRET: ${{ secrets.MATCH_GIT_URL }}
+        run: |
+          # Prioritize the authenticated MATCH_GIT_URL if it contains a token
+          if [[ "$MATCH_GIT_URL_SECRET" == *"@"* ]]; then
+            echo "MATCH_GIT_URL=$MATCH_GIT_URL_SECRET" >> $GITHUB_ENV
+          elif [ -n "$GIT_TOKEN" ]; then
+            echo "MATCH_GIT_URL=https://${GIT_TOKEN}@github.com/OoriData/mobile-signing-certs.git" >> $GITHUB_ENV
+          else
+             echo "MATCH_GIT_URL=$MATCH_GIT_URL_SECRET" >> $GITHUB_ENV
+          fi
+
       - name: Upload to TestFlight and App Store
         env:
           APP_STORE_CONNECT_API_KEY: ${{ secrets.APP_STORE_CONNECT_API_KEY }}
@@ -107,7 +123,6 @@ jobs:
           MATCH_PASSWORD: ${{ secrets.MATCH_PASSWORD }}
           MATCH_KEYCHAIN_NAME: temp.keychain
           MATCH_KEYCHAIN_PASSWORD: actions
-          GIT_TOKEN: ${{ secrets.GIT_TOKEN }}
         run: |
           # Create temporary keychain for fastlane match
           security create-keychain -p "$MATCH_KEYCHAIN_PASSWORD" "$MATCH_KEYCHAIN_NAME"
@@ -115,7 +130,6 @@ jobs:
           security unlock-keychain -p "$MATCH_KEYCHAIN_PASSWORD" "$MATCH_KEYCHAIN_NAME"
           security default-keychain -s "$MATCH_KEYCHAIN_NAME"
           
-          export MATCH_GIT_URL="https://${GIT_TOKEN}@github.com/OoriData/mobile-signing-certs.git"
           bundle exec fastlane ios release
           bundle exec fastlane mac release
 

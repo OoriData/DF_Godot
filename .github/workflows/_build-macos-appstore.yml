@@ -102,9 +102,21 @@ jobs:
           security unlock-keychain -p actions temp.keychain
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k actions temp.keychain
 
-      - name: Inject Signing Configuration
+      - name: Capture Provisioning Profile Path
         run: |
-          python3 -c '
+          # Find the installed macOS provisioning profile and extract its absolute path
+          PROFILE_PATH=$(find ~/Library/Developer/Xcode/UserData/Provisioning\ Profiles ~/Library/MobileDevice/Provisioning\ Profiles -name "*.provisionprofile" 2>/dev/null | head -1)
+          if [ -n "$PROFILE_PATH" ]; then
+            echo "MAC_PROFILE_PATH=$PROFILE_PATH" >> $GITHUB_ENV
+            echo "Found profile at: $PROFILE_PATH"
+          else
+            echo "MAC_PROFILE_PATH=Oori_Data_Desolate_Frontiers_Mac_App_Store.provisionprofile" >> $GITHUB_ENV
+            echo "No profile found, using default legacy path"
+          fi
+
+      - name: Inject Signing Configuration
+        shell: python
+        run: |
           import re
           import os
           import sys
@@ -116,24 +128,25 @@ jobs:
               match = re.search(r"config/version=\"([^\"]+)\"", godot_content)
               if match:
                   short_version = match.group(1)
+
           with open("export_presets.cfg", "r") as f:
               content = f.read()
           
-          # Dynamically find the preset index for "macOS (App Store)"
-          preset_match = re.search(r"^\[preset\.(\d+)\]\s+name=\"macOS \(App Store\)\"", content, re.MULTILINE)
+          # Find the preset index for "macOS (App Store)"
+          preset_match = re.search(r'^\[preset\.(\d+)\]\s+name="macOS \(App Store\)"', content, re.MULTILINE)
           if not preset_match:
-              print("Error: Could not find preset named \"macOS (App Store)\"")
+              print("Error: Could not find preset named 'macOS (App Store)'")
               sys.exit(1)
-          
+
           preset_index = preset_match.group(1)
-          print(f"Found \"macOS (App Store)\" at index {preset_index}")
-          
-          # Match the options section for this preset
-          section_regex = r"(\[preset\." + preset_index + r"\.options\].*?)(?=\n\[|$)"
+          print(f"Found 'macOS (App Store)' at index {preset_index}")
+
+          # Match the options section for that preset
+          section_regex = r"(\[preset\.{}\.options\].*?)(?=\n\[|$)".format(preset_index)
           
           def set_key(match):
               section = match.group(1)
-              profile_path = "Oori_Data_Desolate_Frontiers_Mac_App_Store.provisionprofile"
+              profile_path = os.environ.get("MAC_PROFILE_PATH", "Oori_Data_Desolate_Frontiers_Mac_App_Store.provisionprofile")
               # Build number logic: base + run_number * 10 + run_attempt
               build_number = str(100 + (int(os.environ["GITHUB_RUN_NUMBER"]) * 10) + int(os.environ["GITHUB_RUN_ATTEMPT"]))
               
@@ -151,10 +164,10 @@ jobs:
                   else:
                       section += f"\n{key}={val}"
               return section
+
           new_content = re.sub(section_regex, set_key, content, flags=re.DOTALL)
           with open("export_presets.cfg", "w") as f:
               f.write(new_content)
-          '
         env:
           GITHUB_RUN_NUMBER: ${{ github.run_number }}
           GITHUB_RUN_ATTEMPT: ${{ github.run_attempt }}
