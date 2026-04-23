@@ -92,7 +92,15 @@ func _on_user_changed(user: Dictionary) -> void:
 			if token != "":
 				api.register_push_token(token, _platform)
 
-func _on_token_received(token: String) -> void:
+func _on_token_received(token_raw: Variant) -> void:
+	var token: String = ""
+	if typeof(token_raw) == TYPE_STRING:
+		token = token_raw
+	elif typeof(token_raw) == TYPE_PACKED_BYTE_ARRAY:
+		token = token_raw.hex_encode()
+	else:
+		token = str(token_raw)
+		
 	print("[PushManager] Device token received: %s" % token)
 	# Whenever the token refreshes, send it to the backend IF we have a user
 	var api = get_node_or_null("/root/APICalls")
