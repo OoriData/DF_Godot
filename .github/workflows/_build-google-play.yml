@@ -144,19 +144,9 @@ jobs:
           mkdir -p build/android
           godot --headless --log-file /tmp/godot_android.log --export-release "Android (Play Store)" build/android/Desolate_Frontiers.aab
 
-      - name: Deploy to Play Store
-        if: success()
-        uses: r0adkll/upload-google-play@v1
-        with:
-          serviceAccountJsonPlainText: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
-          packageName: com.ooridata.desolate_frontiers
-          releaseFiles: build/android/Desolate_Frontiers.aab
-          track: internal # Default to internal for safety
-          status: draft # Default to draft
-
       - name: Upload Android Artifact
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: mobile-build-android
+          name: android-build
           path: build/android/Desolate_Frontiers.aab

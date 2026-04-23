@@ -80,6 +80,8 @@ jobs:
     if: needs.setup.outputs.build_web == 'true'
     permissions:
       contents: write
+      pages: write
+      id-token: write
     uses: ./.github/workflows/_build-web.yml
     with:
       godot_version: ${{ inputs.godot_version || '4.6.0' }}
@@ -139,71 +141,27 @@ jobs:
 
   # Final Report
   report:
-    needs: [sync-platforms, steam]
+    needs: [publish]
     if: always()
     runs-on: ubuntu-latest
     steps:
-      - run: echo "Builds completed."
+      - run: echo "Builds and Publish completed."
 
-  # Unified GitHub Release
-  release:
+  publish:
     needs: [setup, web, android, ios, macos, steam]
-    # Only publish if it's a full build, and it's either an automated trigger (tag/release branch) OR the publish checkbox was checked.
-    if: always() && needs.setup.outputs.is_full_build == 'true' && (github.ref_type == 'tag' || github.ref_name == 'release' || github.event.inputs.dispatch_publish == 'true')
-    runs-on: ubuntu-latest
     permissions:
       contents: write
-    steps:
-      - uses: actions/checkout@v4
-      
-      - name: Download Web Artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: web-build
-          path: artifacts/
-        continue-on-error: true
-        
-      - name: Download Windows Artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: desktop-build-windows
-          path: artifacts/
-        continue-on-error: true
-          
-      - name: Download macOS Artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: desktop-build-macos
-          path: artifacts/
-        continue-on-error: true
-
-      - name: Download Android Artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: mobile-build-android
-          path: artifacts/
-        continue-on-error: true
-
-      - name: Download iOS Artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: mobile-build-ios
-          path: artifacts/
-        continue-on-error: true
-
-      - name: Download macOS Store Artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: store-build-macos
-          path: artifacts/
-        continue-on-error: true
-          
-      - name: Publish GitHub Release
-        uses: ncipollo/release-action@v1
-        with:
-          tag: "v${{ needs.setup.outputs.version }}"
-          name: "Release v${{ needs.setup.outputs.version }}"
-          artifacts: "artifacts/*.zip,artifacts/*.aab,artifacts/*.apk,artifacts/*.ipa,artifacts/*.pkg"
-          allowUpdates: true
-          replacesArtifacts: true
-          token: ${{ github.token }}
+      pages: write
+      id-token: write
+    
+    # Only publish if all build jobs succeeded (on relevant branches/tags, OR when manually triggered)
+    if: always() && needs.setup.result == 'success' && (github.ref_type == 'tag' || github.ref_name == 'release' || github.event.inputs.dispatch_publish == 'true') && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled')
+    uses: ./.github/workflows/_publish.yml
+    with:
+      version: ${{ needs.setup.outputs.version }}
+      changelog: "Automated Release"
+      publish_web: ${{ needs.setup.outputs.build_web == 'true' }}
+      publish_google_play: ${{ needs.setup.outputs.build_android == 'true' }}
+      publish_apple: ${{ (needs.setup.outputs.build_ios == 'true' || needs.setup.outputs.build_macos == 'true') }}
+      publish_github_release: ${{ needs.setup.outputs.is_full_build == 'true' }}
+    secrets: inherit

@@ -198,20 +198,9 @@ jobs:
           mkdir -p build/ios
           godot --headless --log-file /tmp/godot_ios.log --export-release "iOS" "build/ios/Desolate_Frontiers.ipa"
 
-      - name: Upload to TestFlight
-        env:
-          APP_STORE_CONNECT_API_KEY: ${{ secrets.APP_STORE_CONNECT_API_KEY }}
-          APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
-          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
-          MATCH_PASSWORD: ${{ secrets.MATCH_PASSWORD }}
-          MATCH_KEYCHAIN_NAME: temp.keychain
-          MATCH_KEYCHAIN_PASSWORD: actions
-        run: |
-          bundle exec fastlane ios release
-
       - name: Upload iOS Artifact
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: mobile-build-ios
+          name: ios-build
           path: build/ios/Desolate_Frontiers.ipa

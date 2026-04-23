@@ -42,7 +42,7 @@ jobs:
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: desktop-build-windows
+          name: steam-build-windows
           path: build/Desolate_Frontiers_Windows.zip
 
   build_macos:
@@ -74,7 +74,7 @@ jobs:
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: desktop-build-macos
+          name: steam-build-macos
           path: build/Desolate_Frontiers_macOS.zip
 
 
