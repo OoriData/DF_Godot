@@ -467,6 +467,7 @@ func _ready():
 
 	# Initial font size update
 	call_deferred("_update_font_sizes")
+	TextScale.register_tree(self)
 	if _debug_convoy_menu:
 		print("[ConvoyMenu][Debug] services api=", is_instance_valid(_api), " vendor_service=", is_instance_valid(_vendor_service))
 

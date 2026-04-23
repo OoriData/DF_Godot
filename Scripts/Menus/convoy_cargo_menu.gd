@@ -246,6 +246,7 @@ func _ready():
 		cargo_sort_option_button.add_item("Sort: Distance to Recipient")
 		_cargo_sort_metric = clampi(_cargo_sort_metric, 0, max(0, cargo_sort_option_button.item_count - 1))
 		cargo_sort_option_button.select(_cargo_sort_metric)
+		TextScale.register(cargo_sort_option_button)
 		cargo_sort_option_button.item_selected.connect(func(idx: int):
 			_cargo_sort_metric = idx
 			if Engine.has_singleton("SettingsManager"):
@@ -383,6 +384,8 @@ func _ready():
 		if is_instance_valid(title_label):
 			title_label.add_theme_font_size_override("font_size", _get_font_size(20))
 			title_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	
+	TextScale.register_tree(self)
 
 func _update_organize_button_text() -> void:
 	if organization_mode == "by_type":

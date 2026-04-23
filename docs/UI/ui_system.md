@@ -39,6 +39,14 @@ A generic structural container that changes its internal padding automatically b
 - Simply replace any root `MarginContainer` in your popups with a `ResponsiveMarginContainer.new()` and configure its export variables:
   `mobile_portrait_margins`, `desktop_margins`, `mobile_landscape_margins`.
 
+### 4. `TextScale`
+An Autoload script (`/root/TextScale`) that manages font size caps to ensure readability on mobile.
+- **Minimum Font Size**: Enforced at **12pt** for mobile platforms.
+- **Orientation Awareness**: Re-calculates font sizes automatically when the screen rotates or the layout mode changes.
+- **Usage**: 
+  - `TextScale.register(node)`: Register a specific Label, Button, or RichTextLabel.
+  - `TextScale.register_tree(parent)`: Recursively register all compatible children in a panel or menu.
+
 ---
 
 ## Migration Guide for Existing Windows
