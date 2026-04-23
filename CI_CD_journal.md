@@ -48,3 +48,23 @@ Steam requires clear-text credentials for automated uploads. Use a dedicated ser
 ## 2026-03-26 - Push Notifications CI Update
 - **`_build-ios-appstore.yml`**: Integrated an automated Python step to dynamically inject the `entitlements/push_notifications="Production"` flag into `export_presets.cfg` during the headless Xcode export. This solves the issue of missing capabilities when exporting strictly via GitHub Actions without opening Xcode.
 - **Local Debug vs CI Codesigning**: Removed hardcoded App Store provisioning profiles (`application/provisioning_profile_specifier_release`) and distribution certificates (`application/code_sign_identity_release`) from `export_presets.cfg`. This allows developers to natively debug push notifications on local devices via automatic Xcode signing. To maintain flawless App Store headless exports, the specific Apple Distribution code-signing identity is now dynamically injected into the build pipeline at runtime exclusively via `_build-ios-appstore.yml`.
+- **Decoupled Deployment Architecture**: Fully extracted all storefront deployment and GitHub Pages hosting logic from the individual `_build-*.yml` workflows into a centralized `_publish.yml` workflow, matching Spellist's 1:1 architecture and significantly improving workflow security.
+
+## 2026-04-22 - APN Plugin Migration & Match Auth Fix
+
+### iOS Build Fix: APN → GodotApplePlugins
+- **Root Cause**: The iOS build was failing with `Undefined symbols for architecture arm64` linker errors. The standalone `apn.debug.xcframework` (old-style `.gdip` plugin) was compiled against a different Godot API version, causing symbol mismatches for `D_METHOD` and `ClassDB::bind_methodfi`.
+- **Resolution**: Removed the legacy `ios/plugins/apn.*` files (`.gdip`, `.debug.xcframework`, `.xcframework`) and replaced them with the `GodotApplePlugins` GDExtension addon (copied from Spellist). This addon provides the `PushNotifications` singleton via a proper `.gdextension` architecture that links correctly with Godot 4.6.
+- **`push_notification_manager.gd`**: Updated all references from `Engine.get_singleton("APN")` to `Engine.get_singleton("PushNotifications")` and adjusted signal/method names (`device_address_changed` → `token_received`, `init()` → `initialize()`, `register_push_notifications()` → `register_for_push_notifications()`).
+- **Export Presets**: The `export_presets.cfg` already had `plugins/PushNotifications=true` (set previously), which is correct for the new GodotApplePlugins addon.
+
+### macOS Build Fix: Fastlane Match SSH → HTTPS Auth
+- **Root Cause**: The macOS build was failing with `git@github.com: Permission denied (publickey)` because Fastlane match was using the SSH git URL to clone the signing certificates repo, but GitHub Actions runners don't have SSH keys configured.
+- **Resolution**: Aligned all `match()` calls in `fastlane/Fastfile` to read `ENV['MATCH_GIT_URL']` with SSH fallback. Updated both `_build-ios-appstore.yml` and `_build-macos-appstore.yml` to use the robust HTTPS auth pattern from Spellist: check if `MATCH_GIT_URL` secret already contains auth (`@`), otherwise construct it from `GIT_TOKEN`.
+
+### Workflow Parity with Spellist
+- **Import Assets**: Moved the `godot --headless --import` step earlier in both iOS and macOS workflows (before Fastlane Match), with `|| true` crash tolerance for the known GodotApplePlugins deinit segfault.
+- **Plugin Silence**: Added `touch addons/GodotApplePlugins/.gdignore` to both iOS and macOS workflows to prevent editor warnings about the macOS-only desktop framework files during iOS headless export.
+- **Log Upload on Failure**: Added `Upload Export Logs (on failure)` steps to both iOS and macOS workflows for easier debugging of future build failures.
+- **Artifact Paths**: Changed artifact upload to use directory paths (`path: build/ios/`, `path: build/macos-store/`) instead of exact file paths, matching Spellist's convention.
+- **Runner Update**: Updated both `_build-ios-appstore.yml` and `_build-macos-appstore.yml` from `macos-latest` to `macos-26` for Xcode 26 / iOS 26 SDK compliance (Apple's April 2026 deadline).

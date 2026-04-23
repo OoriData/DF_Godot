@@ -22,15 +22,19 @@ func _ready() -> void:
 		hub.user_changed.connect(_on_user_changed)
 
 func _setup_ios() -> void:
-	if not Engine.has_singleton("APN"):
-		push_warning("[PushManager] APN singleton 'APN' not found — push notifications unavailable.")
+	if not Engine.has_singleton("PushNotifications"):
+		push_warning("[PushManager] PushNotifications singleton not found — push notifications unavailable.")
 		return
-	var apn = Engine.get_singleton("APN")
-	if apn.has_signal("device_address_changed"):
-		apn.connect("device_address_changed", _on_token_received)
+	var apn = Engine.get_singleton("PushNotifications")
+	if apn.has_signal("token_received"):
+		apn.connect("token_received", _on_token_received)
 	if apn.has_signal("push_message_received"):
 		apn.connect("push_message_received", _on_push_message_received)
-	print("[PushManager] APN plugin found and signals connected.")
+	print("[PushManager] PushNotifications plugin found and signals connected.")
+	
+	# Start initialization (must happen after connects)
+	if apn.has_method("initialize"):
+		apn.initialize()
 
 func _setup_android() -> void:
 	if not Engine.has_singleton("FirebaseApp"):
@@ -71,12 +75,11 @@ func _on_user_changed(user: Dictionary) -> void:
 	if not is_instance_valid(api):
 		return
 
-	if _platform == "ios" and Engine.has_singleton("APN"):
-		var apn = Engine.get_singleton("APN")
-		apn.register_push_notifications(
-			apn.PUSH_SOUND | apn.PUSH_BADGE | apn.PUSH_ALERT
-		)
-		print("[PushManager] register_push_notifications() called.")
+	if _platform == "ios" and Engine.has_singleton("PushNotifications"):
+		var apn = Engine.get_singleton("PushNotifications")
+		if apn.has_method("register_for_push_notifications"):
+			apn.register_for_push_notifications()
+			print("[PushManager] register_for_push_notifications() called.")
 	elif _platform == "android":
 		var fcm = Engine.get_singleton("FirebaseCloudMessaging") if Engine.has_singleton("FirebaseCloudMessaging") else null
 		if fcm:
