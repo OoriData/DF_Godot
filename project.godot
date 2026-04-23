@@ -57,7 +57,7 @@ window/handheld/orientation=6
 
 [editor_plugins]
 
-enabled=PackedStringArray("res://addons/GodotGoogleSignIn/plugin.cfg")
+enabled=PackedStringArray("res://addons/GodotFirebaseCloudMessaging/plugin.cfg", "res://addons/GodotGoogleSignIn/plugin.cfg")
 
 [gui]
 

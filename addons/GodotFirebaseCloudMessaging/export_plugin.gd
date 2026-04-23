@@ -46,6 +46,9 @@ class AndroidExportPlugin extends EditorExportPlugin:
 				<action android:name="com.google.firebase.MESSAGING_EVENT"/>
 			</intent-filter>
 		</service>
+		<meta-data
+			android:name="org.godotengine.plugin.v2.GodotFirebaseCloudMessaging"
+			android:value="com.ooridata.godotfcm.GodotFCMPlugin" />
 		"""
 
 	func _get_android_manifest_element_contents(platform, debug):

@@ -15,6 +15,10 @@ All notable changes to Desolate Frontiers will be documented in this file.
 - CI/CD: Updated macOS runners to `macos-26` for Xcode 26 / iOS 26 SDK compliance
 - CI/CD: Restored decoupled deployment architecture after merge clobber
 - CI/CD: Android build workflow now preserves custom Gradle files during template extraction
+- Fixed `SceneTreeTimer.process_mode` crash in `api_calls.gd`
+- Fixed `generate_tiles.gd` attempting to write to read-only `res://` on exported Android builds
+- Fixed Android push token registration failing when using cached credentials
+- Bypassed Godot 4.x `has_method()` bug that prevented Android Firebase plugins from initializing
 
 ### Changed
 - Push notification manager now uses `GodotFirebaseCloudMessaging` singleton for Android (replaces dead Firebase/FirebaseApp code)
