@@ -22,9 +22,7 @@ jobs:
       status: ${{ steps.export.outcome }}
     
     permissions:
-      contents: write # Required for deploying to gh-pages or artifact
-      pages: write
-      id-token: write
+      contents: write # Required for downloading artifacts internally
 
     steps:
       - name: Checkout
@@ -64,12 +62,3 @@ jobs:
         with:
           name: web-build
           path: build/Desolate_Frontiers_Webapp.zip
-
-      - name: Upload Pages Artifact
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: build/web
-
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v4
