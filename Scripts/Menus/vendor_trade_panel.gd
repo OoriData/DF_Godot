@@ -765,11 +765,40 @@ func _ready() -> void:
 		popup.add_radio_check_item("Total Order Profit", 3)
 		popup.add_radio_check_item("Distance to Recipient", 4)
 		
+		# Mobile scaling for Vendor Trade Panel sort popup
+		var use_mobile = false
+		var is_portrait = false
+		if is_instance_valid(dsm):
+			is_portrait = dsm.get_is_portrait()
+			use_mobile = is_portrait or dsm.get_layout_mode() == 1 # MOBILE_LANDSCAPE
+			
+		if use_mobile:
+			var dyn_font_sz = dsm.get_scaled_base_font_size(16)
+			popup.add_theme_font_size_override("font_size", dyn_font_sz)
+			popup.add_theme_constant_override("v_separation", 16 if is_portrait else 12)
+			var popup_style = StyleBoxFlat.new()
+			popup_style.bg_color = Color(0.15, 0.15, 0.15, 0.98)
+			popup_style.content_margin_left = 24
+			popup_style.content_margin_right = 24
+			popup_style.content_margin_top = 16 if is_portrait else 12
+			popup_style.content_margin_bottom = 16 if is_portrait else 12
+			popup_style.border_width_left = 1
+			popup_style.border_width_right = 1
+			popup_style.border_width_top = 1
+			popup_style.border_width_bottom = 1
+			popup_style.border_color = Color(0.4, 0.4, 0.4, 1.0)
+			popup_style.corner_radius_top_left = 6
+			popup_style.corner_radius_top_right = 6
+			popup_style.corner_radius_bottom_left = 6
+			popup_style.corner_radius_bottom_right = 6
+			popup.add_theme_stylebox_override("panel", popup_style)
+		
 		_cargo_sort_metric = clampi(_cargo_sort_metric, 0, max(0, popup.item_count - 1))
 		for i in range(popup.item_count):
 			popup.set_item_checked(i, i == _cargo_sort_metric)
 			
 		popup.index_pressed.connect(_on_cargo_sort_selected)
+		_update_cargo_sort_button_text()
 		_update_sort_dropdown_visibility_fast()
 
 	# Subscribe to canonical sources (Hub/Store) instead of GameDataManager.
@@ -1773,5 +1802,15 @@ func _on_cargo_sort_selected(index: int) -> void:
 		for i in range(popup.item_count):
 			popup.set_item_checked(i, i == index)
 
+	_update_cargo_sort_button_text()
 	_populate_vendor_list()
 	_populate_convoy_list()
+
+func _update_cargo_sort_button_text() -> void:
+	if not is_instance_valid(cargo_sort_button):
+		return
+	var sort_names = ["Margin/Unit", "Profit/Weight", "Profit/Volume", "Total Profit", "Distance"]
+	if _cargo_sort_metric >= 0 and _cargo_sort_metric < sort_names.size():
+		cargo_sort_button.text = "Sort: " + sort_names[_cargo_sort_metric] + " ▼"
+	else:
+		cargo_sort_button.text = "Sort ▼"

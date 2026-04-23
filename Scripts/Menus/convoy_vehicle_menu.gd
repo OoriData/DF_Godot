@@ -160,15 +160,28 @@ func _ready():
 
 	# Mobile: enlarge TabContainer tab strips + MechanicButton
 	if _is_mobile():
+		var is_portrait = (get_viewport_rect().size.y > get_viewport_rect().size.x) if is_inside_tree() else false
 		if is_instance_valid(tab_container):
 			_apply_mobile_tab_styles(tab_container)
-			var is_portrait = (get_viewport_rect().size.y > get_viewport_rect().size.x) if is_inside_tree() else false
 			tab_container.add_theme_font_size_override("font_size", _get_font_size(24 if is_portrait else 16))
 			tab_container.tab_alignment = 1 # Center alignment
 		var mechanic_btn := $MainVBox/ActionButtons/MechanicButton if has_node("MainVBox/ActionButtons/MechanicButton") else null
 		if is_instance_valid(mechanic_btn):
 			mechanic_btn.custom_minimum_size.y = 72.0 if _is_mobile() else 44.0
 			mechanic_btn.add_theme_font_size_override("font_size", _get_font_size(16))
+			
+		# Scale Parts headers
+		var name_header = $MainVBox/VehicleTabContainer/Parts/PartsHeader/NameHeader if has_node("MainVBox/VehicleTabContainer/Parts/PartsHeader/NameHeader") else null
+		var slot_header = $MainVBox/VehicleTabContainer/Parts/PartsHeader/SlotHeader if has_node("MainVBox/VehicleTabContainer/Parts/PartsHeader/SlotHeader") else null
+		var parts_header = $MainVBox/VehicleTabContainer/Parts/PartsHeader if has_node("MainVBox/VehicleTabContainer/Parts/PartsHeader") else null
+		if is_instance_valid(name_header) and is_instance_valid(slot_header):
+			var font_sz = _get_font_size(18)
+			name_header.add_theme_font_size_override("font_size", font_sz)
+			slot_header.add_theme_font_size_override("font_size", font_sz)
+			slot_header.custom_minimum_size.x = 180 if is_portrait else 150
+			
+			if is_instance_valid(parts_header):
+				parts_header.add_theme_constant_override("separation", 16 if is_portrait else 10)
 
 	# Check new VBox validity
 	if not is_instance_valid(overview_vbox) or not is_instance_valid(stats_vbox) or not is_instance_valid(parts_vbox) or not is_instance_valid(cargo_vbox):

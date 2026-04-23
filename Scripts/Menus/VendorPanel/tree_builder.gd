@@ -154,7 +154,9 @@ static func _tree_column_count(tree: Tree) -> int:
 static func _normalize_category_title(category_name: String) -> String:
 	var title := category_name
 	var _lc := str(category_name).to_lower()
-	if _lc == "parts":
+	if _lc == "missions":
+		title = "Delivery Cargo"
+	elif _lc == "parts":
 		title = "Part Cargo"
 	elif _lc == "resources":
 		title = "Resource Cargo"

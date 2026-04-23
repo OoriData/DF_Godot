@@ -14,6 +14,28 @@ static func _to_float_any(v: Variant) -> float:
             return float(int(s))
     return 0.0
 
+static func get_unit_delivery_reward(item_data_source: Dictionary, selected_item: Variant = null) -> float:
+    if item_data_source == null:
+        return 0.0
+    if item_data_source.has("unit_delivery_reward"):
+        var udr = item_data_source.get("unit_delivery_reward")
+        if udr is float or udr is int:
+            return float(udr)
+    if item_data_source.has("delivery_reward"):
+        var dr = item_data_source.get("delivery_reward")
+        if dr is float or dr is int:
+            var qty = 1
+            if selected_item is Dictionary and (selected_item as Dictionary).has("total_quantity"):
+                qty = int((selected_item as Dictionary).get("total_quantity"))
+            elif item_data_source.has("quantity"):
+                qty = int(item_data_source.get("quantity"))
+            
+            # Additional fallback check to ensure stack divisions happen safely
+            if qty <= 0:
+                qty = 1
+            return float(dr) / float(qty)
+    return 0.0
+
 static func raw_resource_type(item_data_source: Dictionary) -> String:
     if item_data_source == null:
         return ""
@@ -170,13 +192,8 @@ static func build_price_presenter(item_data_source: Dictionary, mode: String, qu
         unit_price /= 2.0
     var total_price: float = unit_price * float(quantity)
 
-    var unit_delivery_reward: float = 0.0
-    var total_delivery_reward: float = 0.0
-    if item_data_source.has("unit_delivery_reward"):
-        var udr_val = item_data_source.get("unit_delivery_reward")
-        if udr_val is float or udr_val is int:
-            unit_delivery_reward = float(udr_val)
-            total_delivery_reward = unit_delivery_reward * float(quantity)
+    var unit_delivery_reward: float = get_unit_delivery_reward(item_data_source, selected_item)
+    var total_delivery_reward: float = unit_delivery_reward * float(quantity)
 
     var bb: String = ""
     if is_vehicle:

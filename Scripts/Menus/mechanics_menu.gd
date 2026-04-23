@@ -2315,7 +2315,10 @@ func _ensure_slot_row(slot_name: String) -> void:
 	if not header_present:
 		var header = Label.new()
 		header.text = slot_name.capitalize().replace("_", " ")
-		header.add_theme_font_size_override("font_size", 16)
+		# Scale dynamically added slot headers
+		var is_portrait = (get_viewport_rect().size.y > get_viewport_rect().size.x) if is_inside_tree() else false
+		var font_sz = _get_font_size(24 if is_portrait else 18) if has_method("_get_font_size") else 16
+		header.add_theme_font_size_override("font_size", font_sz)
 		header.add_theme_color_override("font_color", Color.YELLOW)
 		parts_vbox.add_child(header)
 	# Add placeholder row
