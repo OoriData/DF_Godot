@@ -625,6 +625,7 @@ func _add_version_label() -> void:
 	var settings = LabelSettings.new()
 	settings.font_size = 14
 	label.label_settings = settings
+	TextScale.register(label)
 
 	label.set_anchors_and_offsets_preset(Control.PRESET_TOP_RIGHT)
 	label.offset_left -= 12

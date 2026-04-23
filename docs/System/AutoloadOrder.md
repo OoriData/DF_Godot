@@ -19,4 +19,4 @@ Recommended order in [project.godot](../project.godot) under `[autoload]`:
 - Map, Convoy, User, Vendor, Mechanics, Route, Warehouse, RefreshScheduler (under [Scripts/System/Services](../Scripts/System/Services))
 
 5) UI managers:
-- [Scripts/Menus/menu_manager.gd](../Scripts/Menus/menu_manager.gd), UI scale manager, TutorialManager
+- [Scripts/Menus/menu_manager.gd](../Scripts/Menus/menu_manager.gd), UI scale manager, TutorialManager, [Scripts/System/text_scale.gd](../Scripts/System/text_scale.gd)
