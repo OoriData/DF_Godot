@@ -55,7 +55,7 @@ If you are refactoring legacy windows (like `settings_menu.gd` or `cargo_menu.gd
 
 1. **Delete manual overrides**: Remove `_is_portrait()`, `_is_mobile()`, `_get_font_size()` from the script.
 2. **Delete loop checks**: Remove any `_apply_ui_scaling_recursive` functions. 
-3. **Delete manual font boots**: Remove hardcoded font sizes. `ResponsiveModalPanel` generates an adaptive Godot Theme at its root level natively. Modifying individual font sizes is generally unnecessary unless dealing with special header weights.
+3. **Delete manual font boots**: Remove hardcoded font sizes. `ResponsiveModalPanel` generates an adaptive Godot Theme at its root level natively. Modifying individual font sizes is generally unnecessary unless dealing with special header weights or dynamically instantiated UI nodes that might bypass the global theme. In such edge cases, a local sizing helper like `_get_font_size(base_size)` may be necessary to ensure mobile clarity.
 4. **Extend**: Change `extends PopupPanel` to `extends ResponsiveModalPanel`.
 5. **Adjust Spawning Logic**: Replace `popup_centered(...)` with `open_modal()`. Replace `hide()` with `close_modal()`.
 6. **Adjust Content Insertion**: Rename all top layer `add_child(xyz)` statements where `xyz` is your root UI struct to `add_content(xyz)`.

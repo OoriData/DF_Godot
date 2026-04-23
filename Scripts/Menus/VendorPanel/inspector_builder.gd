@@ -341,8 +341,8 @@ static func rebuild_info_sections(item_info_rich_text: RichTextLabel, item_data_
 				unit_volume = float(item_data_source.get("volume", 0.0)) / float(item_data_source.get("quantity", 1.0))
 		if unit_volume > 0.0:
 			rows_unit.append({"k": "Volume", "v": NumberFormat.fmt_float(unit_volume, 2)})
-		var unit_delivery_reward_val = item_data_source.get("unit_delivery_reward")
-		if (unit_delivery_reward_val is float or unit_delivery_reward_val is int) and float(unit_delivery_reward_val) > 0.0:
+		var unit_delivery_reward_val = VendorTradeVM.get_unit_delivery_reward(item_data_source, selected_item)
+		if unit_delivery_reward_val > 0.0:
 			rows_unit.append({"k": "Delivery Reward", "v": "$" + NumberFormat.fmt_float(unit_delivery_reward_val, 2)})
 		if rows_unit.size() > 0:
 			container.add_child(_make_panel("Per Unit", rows_unit))
