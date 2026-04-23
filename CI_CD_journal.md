@@ -85,7 +85,7 @@ The `mobile-ui` branch merge clobbered many of the CI/CD modernization changes m
 
 ### `_build-ios-appstore.yml`
 - **Inject Signing**: Switched from `python3 -c '...'` to `shell: python` for cleaner YAML.
-- **Export Overrides**: Fixed quoting on `export_project_only` and `export_method_release` to use `"\"false\""` / `"\"0\""` instead of bare `"false"` / `"0"`.
+- **Export Overrides**: Removed escaped quotes on `export_project_only` and `export_method_release` (restored to bare `"false"` / `"0"`). The previous attempt to use `"\"false\""` caused Godot to interpret the value as a non-empty string (true), which incorrectly triggered an Xcode project export instead of an `.ipa`.
 
 ### `_build-macos-appstore.yml`
 - **Capture Provisioning Profile Path**: Added dynamic step that searches the filesystem for the installed `.provisionprofile` and uses it in the signing configuration, instead of a hardcoded filename.

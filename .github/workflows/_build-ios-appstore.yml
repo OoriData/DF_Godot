@@ -167,7 +167,7 @@ jobs:
               content = f.read()
           
           # Find the preset index for "iOS"
-          preset_match = re.search(r'^\\[preset\\.(\d+)\\]\\s+name="iOS"', content, re.MULTILINE)
+          preset_match = re.search(r'^\[preset\.(\d+)\]\s+name="iOS"', content, re.MULTILINE)
           if not preset_match:
               print("Error: Could not find preset named 'iOS'")
               sys.exit(1)
@@ -176,7 +176,7 @@ jobs:
           print(f"Found 'iOS' at index {preset_index}")
 
           # Match the options section for that preset
-          section_regex = r"(\\[preset\\.{}\\.options\\].*?)(?=\\n\\[|$)".format(preset_index)
+          section_regex = r"(\[preset\.{}\.options\].*?)(?=\n\[|$)".format(preset_index)
           
           def set_key(match):
               section = match.group(1)
@@ -191,8 +191,8 @@ jobs:
                   "application/code_sign_identity_release": "\"Apple Distribution: Oori Data LLC\"",
                   "application/version": f"\"{build_number}\"",
                   "application/short_version": f"\"{short_version}\"",
-                  "application/export_project_only": "\"false\"",
-                  "application/export_method_release": "\"0\"",
+                  "application/export_project_only": "false",
+                  "application/export_method_release": "0",
                   "entitlements/push_notifications": "\"Production\""
               }
               
