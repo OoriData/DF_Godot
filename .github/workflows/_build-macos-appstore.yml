@@ -32,7 +32,7 @@ on:
 
 jobs:
   build:
-    runs-on: macos-latest
+    runs-on: macos-26
     outputs:
       status: ${{ steps.export.outcome }}
     steps:
@@ -62,22 +62,40 @@ jobs:
         run: |
           mkdir -p addons/GodotGoogleSignIn
           touch addons/GodotGoogleSignIn/.gdignore
+          touch addons/GodotApplePlugins/.gdignore
+
+      - name: Import Assets
+        run: |
+          # Explicitly import assets to resolve font errors in headless mode
+          # Note: On macOS, this may crash during cleanup (GodotApplePlugins deinit), so we ignore the exit code.
+          godot --headless --import --log-file /tmp/godot_import.log || true
 
       - name: Fastlane Match (macOS)
         env:
           MATCH_PASSWORD: ${{ secrets.MATCH_PASSWORD }}
           GIT_TOKEN: ${{ secrets.GIT_TOKEN }}
+          MATCH_GIT_URL_SECRET: ${{ secrets.MATCH_GIT_URL }}
           APP_STORE_CONNECT_API_KEY: ${{ secrets.APP_STORE_CONNECT_API_KEY }}
           APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
           APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
           MATCH_KEYCHAIN_NAME: 'temp.keychain'
           MATCH_KEYCHAIN_PASSWORD: 'actions'
         run: |
+          # Use the provided MATCH_GIT_URL secret if it already contains authentication (has @)
+          # Otherwise, attempt to use GIT_TOKEN to authenticate.
+          if [[ "$MATCH_GIT_URL_SECRET" == *"@"* ]]; then
+            FINAL_GIT_URL="$MATCH_GIT_URL_SECRET"
+          elif [ -n "$GIT_TOKEN" ]; then
+            FINAL_GIT_URL="https://${GIT_TOKEN}@github.com/OoriData/mobile-signing-certs.git"
+          else
+            FINAL_GIT_URL="$MATCH_GIT_URL_SECRET"
+          fi
+          
+          echo "Using Git URL: ${FINAL_GIT_URL/@/:***}" # Log URL without full token for safety
           # Ensure Fastlane is up to date to support mac_installer
           bundle update fastlane
           # Sync certificates using the Fastfile lane (handles both appstore and installer certs)
-          export MATCH_GIT_URL="https://${GIT_TOKEN}@github.com/OoriData/mobile-signing-certs.git"
-          bundle exec fastlane mac sync_certificates
+          MATCH_GIT_URL="$FINAL_GIT_URL" bundle exec fastlane mac sync_certificates
 
       - name: Allow Codesign Access to Keys
         run: |
@@ -148,19 +166,24 @@ jobs:
           curl -O https://www.apple.com/certificateauthority/AppleWWDRCAG4.cer
           sudo security import AppleWWDRCAG4.cer -k temp.keychain -T /usr/bin/codesign -T /usr/bin/productbuild || true
           
-      - name: Import Assets
-        run: godot --headless --import || true
+          
 
       - name: Build with Godot (Export)
         id: export
         run: |
           mkdir -p build/macos-store
           # Export to .pkg for Mac App Store
-          godot --headless --log-file /tmp/godot_macos.log --export-release "macOS (App Store)" "build/macos-store/Desolate_Frontiers.pkg"
+          godot --headless --export-release "macOS (App Store)" "build/macos-store/Desolate_Frontiers.pkg" --log-file /tmp/godot_macos_export.log
 
-      - name: Upload macOS Store Artifact
-        if: success()
+      - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
           name: macos-appstore-build
-          path: build/macos-store/Desolate_Frontiers.pkg
+          path: build/macos-store/
+
+      - name: Upload Export Logs (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: godot-macos-export-logs
+          path: /tmp/godot_macos_export.log

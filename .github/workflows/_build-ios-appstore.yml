@@ -34,7 +34,7 @@ on:
 
 jobs:
   build:
-    runs-on: macos-latest
+    runs-on: macos-26
     outputs:
       status: ${{ steps.export.outcome }}
     steps:
@@ -108,14 +108,32 @@ jobs:
         run: |
           mkdir -p addons/GodotGoogleSignIn
           touch addons/GodotGoogleSignIn/.gdignore
+          touch addons/GodotApplePlugins/.gdignore
+
+      - name: Import Assets
+        run: |
+          # Explicitly import assets to resolve font errors in headless mode
+          # Note: On macOS, this may crash during cleanup (GodotApplePlugins deinit), so we ignore the exit code.
+          godot --headless --import --log-file /tmp/godot_import.log || true
 
       - name: Fastlane Match (iOS)
         env:
           MATCH_PASSWORD: ${{ secrets.MATCH_PASSWORD }}
           GIT_TOKEN: ${{ secrets.GIT_TOKEN }}
+          MATCH_GIT_URL_SECRET: ${{ secrets.MATCH_GIT_URL }}
         run: |
-          export MATCH_GIT_URL="https://${GIT_TOKEN}@github.com/OoriData/mobile-signing-certs.git"
-          bundle exec fastlane match appstore --readonly --keychain_name temp.keychain --keychain_password actions --git_url "$MATCH_GIT_URL" --app_identifier "com.ooridata.desolate-frontiers"
+          # Use the provided MATCH_GIT_URL secret if it already contains authentication (has @)
+          # Otherwise, attempt to use GIT_TOKEN to authenticate.
+          if [[ "$MATCH_GIT_URL_SECRET" == *"@"* ]]; then
+            FINAL_GIT_URL="$MATCH_GIT_URL_SECRET"
+          elif [ -n "$GIT_TOKEN" ]; then
+            FINAL_GIT_URL="https://${GIT_TOKEN}@github.com/OoriData/mobile-signing-certs.git"
+          else
+            FINAL_GIT_URL="$MATCH_GIT_URL_SECRET"
+          fi
+          
+          echo "Using Git URL: ${FINAL_GIT_URL/@/:***}" # Log URL without full token for safety
+          bundle exec fastlane match appstore --readonly --keychain_name temp.keychain --keychain_password actions --git_url "$FINAL_GIT_URL" --app_identifier "com.ooridata.desolate-frontiers"
 
       - name: Capture Provisioning Profile Name
         run: |
@@ -189,18 +207,22 @@ jobs:
           GITHUB_RUN_NUMBER: ${{ github.run_number }}
           GITHUB_RUN_ATTEMPT: ${{ github.run_attempt }}
 
-      - name: Import Assets
-        run: godot --headless --import || true
-
       - name: Build with Godot (Export)
         id: export
         run: |
           mkdir -p build/ios
-          godot --headless --log-file /tmp/godot_ios.log --export-release "iOS" "build/ios/Desolate_Frontiers.ipa"
+          godot --headless --export-release "iOS" "build/ios/Desolate_Frontiers.ipa" --log-file /tmp/godot_ios_export.log
 
       - name: Upload iOS Artifact
         if: success()
         uses: actions/upload-artifact@v4
         with:
           name: ios-build
-          path: build/ios/Desolate_Frontiers.ipa
+          path: build/ios/
+
+      - name: Upload Export Logs (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: godot-ios-export-logs
+          path: /tmp/godot_ios_export.log
