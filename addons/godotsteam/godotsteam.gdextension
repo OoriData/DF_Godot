@@ -17,6 +17,7 @@ windows.debug.x86_64 = "res://addons/godotsteam/win64/libgodotsteam.windows.temp
 windows.debug.x86_32 = "res://addons/godotsteam/win32/libgodotsteam.windows.template_debug.x86_32.dll"
 windows.release.x86_64 = "res://addons/godotsteam/win64/libgodotsteam.windows.template_release.x86_64.dll"
 windows.release.x86_32 = "res://addons/godotsteam/win32/libgodotsteam.windows.template_release.x86_32.dll"
+ios.arm64 = ""
 
 [dependencies]
 android.arm64 = { "res://addons/godotsteam/androidarm64/libsteam_api.so": "" }

@@ -30,19 +30,19 @@ func _ready() -> void:
 			_on_user_changed(cached_user)
 
 func _setup_ios() -> void:
-	if not Engine.has_singleton("APN"):
-		push_warning("[PushManager] APN singleton not found — push notifications unavailable.")
+	if not Engine.has_singleton("PushNotifications"):
+		push_warning("[PushManager] PushNotifications singleton not found — push notifications unavailable.")
 		return
-	var apn = Engine.get_singleton("APN")
-	if apn.has_signal("device_address_changed"):
-		apn.connect("device_address_changed", _on_token_received)
-	if apn.has_signal("push_message_received"):
-		apn.connect("push_message_received", _on_push_message_received)
-	print("[PushManager] APN plugin found and signals connected.")
+	var push_notifications = Engine.get_singleton("PushNotifications")
+	if push_notifications.has_signal("token_received"):
+		push_notifications.connect("token_received", _on_token_received)
+	if push_notifications.has_signal("push_message_received"):
+		push_notifications.connect("push_message_received", _on_push_message_received)
+	print("[PushManager] PushNotifications plugin found and signals connected.")
 
 	# Start initialization (must happen after connects)
-	if apn.has_method("init"):
-		apn.init()
+	if push_notifications.has_method("initialize"):
+		push_notifications.initialize()
 
 func _setup_android() -> void:
 	if not Engine.has_singleton("GodotFirebaseCloudMessaging"):
@@ -71,11 +71,11 @@ func _on_user_changed(user: Dictionary) -> void:
 	if not is_instance_valid(api):
 		return
 
-	if _platform == "ios" and Engine.has_singleton("APN"):
-		var apn = Engine.get_singleton("APN")
-		if apn.has_method("register_push_notifications"):
-			apn.register_push_notifications(apn.PUSH_SOUND | apn.PUSH_BADGE | apn.PUSH_ALERT)
-			print("[PushManager] register_push_notifications() called.")
+	if _platform == "ios" and Engine.has_singleton("PushNotifications"):
+		var push_notifications = Engine.get_singleton("PushNotifications")
+		if push_notifications.has_method("register_for_push_notifications"):
+			push_notifications.register_for_push_notifications()
+			print("[PushManager] register_for_push_notifications() called.")
 	elif _platform == "android":
 		var fcm = Engine.get_singleton("GodotFirebaseCloudMessaging") \
 			if Engine.has_singleton("GodotFirebaseCloudMessaging") else null
