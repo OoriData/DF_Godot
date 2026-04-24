@@ -101,3 +101,25 @@ The `mobile-ui` branch merge clobbered many of the CI/CD modernization changes m
 
 ### New Files
 - **`CHANGELOG.md`**: Created initial changelog for DF_Godot, required by the new `build-and-release.yml` changelog extraction step.
+
+## 2026-04-23 - iOS One-Click Deploy & macOS Signing Stability
+
+### iOS: Restoring One-Click Deploy
+- **Root Cause**: The local "One-Click Deploy" from the Godot editor was failing because the checked-in `export_presets.cfg` contained hardcoded production signing identities and active Push Notification entitlements. This triggered "Code Signing" errors in Xcode because local developer machines lack the production certs.
+- **Local Configuration**:
+    - Cleared `application/code_sign_identity_release` and `application/provisioning_profile_specifier_release` in the "iOS" preset.
+    - Set `plugins/PushNotifications=false` and `entitlements/push_notifications=""` locally.
+    - These changes allow Xcode's **Automatic Signing** to take over for local debug builds, restoring the fast one-click iteration loop.
+- **CI/CD Injection**:
+    - Updated `_build-ios-appstore.yml` to dynamically re-enable `plugins/PushNotifications=true` and `entitlements/push_notifications="Production"` during the automated build.
+    - This ensures that while local builds are lean and signing-agnostic, the official TestFlight builds remain full-featured.
+
+### macOS: Signing & CI/CD Stability
+- **Local Preset (macOS)**: Switched Preset 0 ("macOS") from "Identity" to **Ad-hoc** signing (`codesign/codesign=2`) by default. This fixes the "App is damaged" error for local "one-click" builds on the developer's Mac without requiring manual configuration toggles.
+- **`_build-steam.yml` Restoration**:
+    - Added missing `Setup Godot`, `Silence Android Plugin Warnings`, and `Import Assets` steps that were missing from the Steam build workflow.
+    - Removed problematic signing steps that were failing due to missing **Developer ID** certificates in the Match repository.
+- **Fastlane Match**: Updated `fastlane/Fastfile` to support `developer_id` certificate sync. (Note: These certs must be manually seeded from a local machine using `MATCH_READONLY=false` before the CI/CD can sign direct-distribution builds).
+
+### Workflow Robustness
+- **Decoupled Configuration**: Solidified the strategy of "Safe Local Defaults + Forced CI/CD Overrides." This minimizes friction for developers while maintaining strict requirements for production releases.
