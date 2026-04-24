@@ -49,7 +49,7 @@ jobs:
     runs-on: macos-26
     steps:
       - uses: actions/checkout@v4
-      
+
       - name: Setup Godot
         uses: chickensoft-games/setup-godot@v2
         with:
@@ -65,10 +65,45 @@ jobs:
       - name: Import Assets
         run: godot --headless --import || true
 
+      - name: Inject CI/CD Overrides
+        shell: python
+        run: |
+          import re
+          import os
+          import sys
+          
+          with open("export_presets.cfg", "r") as f:
+              content = f.read()
+          
+          # Find the preset index for "macOS" (Preset 0)
+          preset_match = re.search(r'^\[preset\.(\d+)\]\s+name="macOS"', content, re.MULTILINE)
+          if not preset_match:
+              print("Error: Could not find preset named 'macOS'")
+              sys.exit(1)
+
+          preset_index = preset_match.group(1)
+          section_regex = r"(\[preset\.{}\.options\].*?)(?=\n\[|$)".format(preset_index)
+          
+          def set_key(match):
+              section = match.group(1)
+              # Force codesign to 0 (Disabled) to bypass rcodesign path errors in headless CI/CD
+              overrides = {
+                  "codesign/codesign": "0"
+              }
+              for key, val in overrides.items():
+                  if f"{key}=" in section:
+                      section = re.sub(f"{re.escape(key)}=.*", f"{key}={val}", section)
+                  else:
+                      section += f"\n{key}={val}"
+              return section
+
+          new_content = re.sub(section_regex, set_key, content, flags=re.DOTALL)
+          with open("export_presets.cfg", "w") as f:
+              f.write(new_content)
+
       - name: Export macOS
         run: |
           mkdir -p build
-          # Godot macOS export creates a .zip by default when targeting a .zip extension
           godot --headless --log-file /tmp/godot_steam_macos.log --export-release "macOS" build/Desolate_Frontiers_macOS.zip
           
       - name: Upload Artifact

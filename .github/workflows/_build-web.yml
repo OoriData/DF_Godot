@@ -53,12 +53,19 @@ jobs:
         run: |
           mkdir -p build/web
           godot --headless --log-file /tmp/godot_web.log --export-release "Web" build/web/index.html
+          touch build/web/.nojekyll
           cd build/web
           zip -r ../Desolate_Frontiers_Webapp.zip .
           cd ../..
 
-      - name: Upload Web Artifact
+      - name: Upload Web Artifact (for Pages)
         uses: actions/upload-artifact@v4
         with:
           name: web-build
+          path: build/web/
+
+      - name: Upload Web Release (for GitHub Release)
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-release
           path: build/Desolate_Frontiers_Webapp.zip
