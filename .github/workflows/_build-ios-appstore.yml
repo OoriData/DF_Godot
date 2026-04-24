@@ -193,6 +193,7 @@ jobs:
                   "application/short_version": f"\"{short_version}\"",
                   "application/export_project_only": "false",
                   "application/export_method_release": "0",
+                  "plugins/PushNotifications": "true",
                   "entitlements/push_notifications": "\"Production\""
               }
               

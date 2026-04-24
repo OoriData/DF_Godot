@@ -2,6 +2,13 @@
 
 All notable changes to Desolate Frontiers will be documented in this file.
 
+## [0.3.20]
+
+### Fixed
+- iOS local builds: Restored "One-Click Deploy" functionality by disabling the Push Notifications plugin and entitlements in the checked-in `export_presets.cfg`.
+- CI/CD: Updated the build pipeline to dynamically re-enable the `PushNotifications` plugin and production entitlements at runtime, ensuring no impact on TestFlight releases.
+- iOS local builds: Cleared hardcoded signing fields to allow native "Automatic Signing" on local developer machines.
+
 ## [0.3.19]
 
 ### Added
