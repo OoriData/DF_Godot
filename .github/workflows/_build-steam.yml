@@ -65,10 +65,78 @@ jobs:
       - name: Import Assets
         run: godot --headless --import || true
 
+      - name: Setup Keychain
+        run: |
+          security create-keychain -p actions temp.keychain
+          security default-keychain -s temp.keychain
+          security unlock-keychain -p actions temp.keychain
+          security set-keychain-settings -t 3600 -u temp.keychain
+          security list-keychains -d user -s temp.keychain login.keychain-db
+
+      - name: Fastlane Match (macOS)
+        env:
+          MATCH_PASSWORD: ${{ secrets.MATCH_PASSWORD }}
+          GIT_TOKEN: ${{ secrets.GIT_TOKEN }}
+          MATCH_GIT_URL_SECRET: ${{ secrets.MATCH_GIT_URL }}
+          APP_STORE_CONNECT_API_KEY: ${{ secrets.APP_STORE_CONNECT_API_KEY }}
+          APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          MATCH_KEYCHAIN_NAME: 'temp.keychain'
+          MATCH_KEYCHAIN_PASSWORD: 'actions'
+        run: |
+          if [[ "$MATCH_GIT_URL_SECRET" == *"@"* ]]; then
+            FINAL_GIT_URL="$MATCH_GIT_URL_SECRET"
+          elif [ -n "$GIT_TOKEN" ]; then
+            FINAL_GIT_URL="https://${GIT_TOKEN}@github.com/OoriData/mobile-signing-certs.git"
+          else
+            FINAL_GIT_URL="$MATCH_GIT_URL_SECRET"
+          fi
+          MATCH_GIT_URL="$FINAL_GIT_URL" bundle exec fastlane mac sync_certificates
+
+      - name: Allow Codesign Access to Keys
+        run: |
+          security unlock-keychain -p actions temp.keychain
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k actions temp.keychain
+
+      - name: Inject Signing Configuration
+        shell: python
+        run: |
+          import re
+          import os
+          import sys
+          
+          with open("export_presets.cfg", "r") as f:
+              content = f.read()
+          
+          # Find the preset index for "macOS" (Preset 0)
+          preset_match = re.search(r'^\[preset\.(\d+)\]\s+name="macOS"', content, re.MULTILINE)
+          if not preset_match:
+              print("Error: Could not find preset named 'macOS'")
+              sys.exit(1)
+
+          preset_index = preset_match.group(1)
+          section_regex = r"(\[preset\.{}\.options\].*?)(?=\n\[|$)".format(preset_index)
+          
+          def set_key(match):
+              section = match.group(1)
+              overrides = {
+                  "codesign/codesign": "3",  # Switch from Ad-hoc to Identity
+                  "codesign/identity": "\"Developer ID Application: Oori Data LLC (3XQ7W4UW9M)\""
+              }
+              for key, val in overrides.items():
+                  if f"{key}=" in section:
+                      section = re.sub(f"{re.escape(key)}=.*", f"{key}={val}", section)
+                  else:
+                      section += f"\n{key}={val}"
+              return section
+
+          new_content = re.sub(section_regex, set_key, content, flags=re.DOTALL)
+          with open("export_presets.cfg", "w") as f:
+              f.write(new_content)
+
       - name: Export macOS
         run: |
           mkdir -p build
-          # Godot macOS export creates a .zip by default when targeting a .zip extension
           godot --headless --log-file /tmp/godot_steam_macos.log --export-release "macOS" build/Desolate_Frontiers_macOS.zip
           
       - name: Upload Artifact

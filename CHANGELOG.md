@@ -6,8 +6,10 @@ All notable changes to Desolate Frontiers will be documented in this file.
 
 ### Fixed
 - iOS local builds: Restored "One-Click Deploy" functionality by disabling the Push Notifications plugin and entitlements in the checked-in `export_presets.cfg`.
-- CI/CD: Updated the build pipeline to dynamically re-enable the `PushNotifications` plugin and production entitlements at runtime, ensuring no impact on TestFlight releases.
+- CI/CD: Updated the build pipeline to dynamically re-enable the `PushNotifications` plugin and production entitlements at runtime.
 - iOS local builds: Cleared hardcoded signing fields to allow native "Automatic Signing" on local developer machines.
+- macOS builds: Set Preset 0 ("macOS") to Ad-hoc signing by default, fixing local builds on developer machines.
+- CI/CD: Added keychain setup, Developer ID certificate sync, and signing injection to the macOS Steam/Direct builds, fixing the "App is damaged" error for distributed artifacts.
 
 ## [0.3.19]
 
