@@ -1,17 +1,63 @@
 *.DS_Store
 
-# Godot 4+ specific ignores
+# Godot-specific ignores
+.agents/*
 .godot/
-.vscode/*
+.import/
+export.cfg
 Other/*
+
+# VScode ignores
+.vscode
+
+# Build output
+exports/
+
+# Secrets
 desolate_frontiers.keystore
 
 # Godot Android build template
-!android/build/
-android/build/.gradle/
-android/build/build/
-!android/build/assetPackInstallTime/
-android/build/assetPackInstallTime/build/
-android/build/assetPackInstallTime/src/main/assets/
-android/build/libs/
-*.aar
+android/build/*
+!android/build/.gdignore
+!android/build/build.gradle
+!android/build/settings.gradle
+!android/build/config.gradle
+!android/build/gradle.properties
+!android/build/google-services.json
+
+# re-include Android Godot plugins
+!android/plugins/**/*.aar
+
+# Plugin junk
+.gradle/
+build/
+
+# Addon bin/ directories: ignore everything, then whitelist the specific
+# binary artifacts we DO want to commit (.aar, .xcframework, .framework, .gdip)
+# We use recursive patterns to allow nested /release/ or /debug/ folders.
+addons/*/bin/**
+!addons/*/bin/**/
+!addons/*/bin/**/*.aar
+!addons/*/bin/**/*.a
+!addons/*/bin/**/*.gdip
+
+# Whitelist framework contents but allow internal ignores
+!addons/*/bin/**/*.framework/
+!addons/*/bin/**/*.framework/**
+!addons/*/bin/**/*.xcframework/
+!addons/*/bin/**/*.xcframework/**
+
+# Ignore framework internal clutter (docs, headers) wherever they appear in the bundle
+addons/*/bin/**/doc_classes/**
+addons/*/bin/**/Headers/**
+addons/*/bin/**/private/**
+
+# iOS ignores (keep plugins, ignore generated Xcode projects)
+ios/*
+!ios/.gdignore
+!ios/plugins/
+
+# iOS plugin binaries
+!ios/plugins/**/*.a
+!ios/plugins/**/*.xcframework
+!ios/plugins/**/*.gdip

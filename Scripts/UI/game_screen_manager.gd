@@ -51,15 +51,26 @@ func _on_login_successful(user_id: String) -> void:
 			var logger := get_node_or_null("/root/Logger")
 			if is_instance_valid(logger) and logger.has_method("info"):
 				logger.info("GameScreenManager: user_changed received; triggering convoy refresh")
-			convoy_service.refresh_all()
+			convoy_service.refresh_all(false)
 		# Connect as one-shot to auto-disconnect after first emission
 		store.user_changed.connect(cb, Object.CONNECT_ONE_SHOT)
 	elif is_instance_valid(convoy_service) and convoy_service.has_method("refresh_all"):
-		convoy_service.refresh_all()
+		convoy_service.refresh_all(false)
 	var map_service := get_node_or_null("/root/MapService")
 	if is_instance_valid(map_service) and map_service.has_method("request_map"):
 		map_service.request_map()
 
+	if is_instance_valid(login_screen) and login_screen.has_method("set_loading_mode"):
+		login_screen.set_loading_mode(true, "Loading profile...")
+
+	var hub := get_node_or_null("/root/SignalHub")
+	if is_instance_valid(hub) and hub.has_signal("initial_data_ready"):
+		if not hub.initial_data_ready.is_connected(_on_initial_data_ready):
+			hub.initial_data_ready.connect(_on_initial_data_ready, Object.CONNECT_ONE_SHOT)
+	else:
+		_on_initial_data_ready() # fallback
+
+func _on_initial_data_ready() -> void:
 	# Remove the login screen completely to prevent any input blocking.
 	if is_instance_valid(login_screen):
 		login_screen.queue_free()
@@ -70,13 +81,13 @@ func _on_login_successful(user_id: String) -> void:
 	
 	get_tree().paused = false # IMPORTANT: Un-pause the game tree
 
-	# NEW: Explicitly enable interaction on the main screen.
+	# Explicitly enable interaction on the main screen.
 	if main_screen.has_method("set_map_interactive"):
 		main_screen.set_map_interactive(true)
 	else:
 		printerr("GameScreenManager: MainScreen is missing the 'set_map_interactive' method.")
 
-	# NEW: Force camera update after main screen is visible and unpaused
+	# Force camera update after main screen is visible and unpaused
 	if main_screen.has_method("force_camera_update"):
 		await main_screen.force_camera_update()
 	else:
@@ -89,7 +100,14 @@ func logout_to_login() -> void:
 	# Transition back to the login screen without restarting the app process.
 	# Note: autoload singletons persist, so we also clear store snapshots and stop polling.
 	current_user_id = ""
-
+	
+	# Transition MainScreen out FIRST before cleaning up data to prevent context-switching bugs.
+	if is_instance_valid(main_screen):
+		main_screen.visible = false
+		main_screen.process_mode = Node.PROCESS_MODE_DISABLED
+		if main_screen.has_method("set_map_interactive"):
+			main_screen.set_map_interactive(false)
+	
 	var refresh := get_node_or_null("/root/RefreshScheduler")
 	if is_instance_valid(refresh) and refresh.has_method("enable_polling"):
 		refresh.enable_polling(false)
@@ -97,12 +115,6 @@ func logout_to_login() -> void:
 	var store := get_node_or_null("/root/GameStore")
 	if is_instance_valid(store) and store.has_method("reset_all"):
 		store.reset_all()
-
-	if is_instance_valid(main_screen):
-		main_screen.visible = false
-		main_screen.process_mode = Node.PROCESS_MODE_DISABLED
-		if main_screen.has_method("set_map_interactive"):
-			main_screen.set_map_interactive(false)
 
 	# Recreate LoginScreen if it was freed after a previous successful login.
 	if not is_instance_valid(login_screen):

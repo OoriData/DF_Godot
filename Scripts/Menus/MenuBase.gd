@@ -114,3 +114,43 @@ func reset_view() -> void:
 
 func _has_relevant_changes(old_data: Dictionary, new_data: Dictionary) -> bool:
 	return old_data.hash() != new_data.hash()
+
+func style_back_button(btn: Button) -> void:
+	if not is_instance_valid(btn):
+		return
+	var dsm = get_node_or_null("/root/DeviceStateManager")
+	var is_portrait = false
+	var is_mobile = false
+	var font_size = 18
+	if dsm and dsm.has_method("get_is_portrait"):
+		is_portrait = dsm.get_is_portrait()
+		is_mobile = dsm.is_mobile
+		font_size = dsm.get_scaled_base_font_size(18)
+	else:
+		var win_size = get_viewport_rect().size if is_inside_tree() else Vector2(0, 0)
+		is_portrait = win_size.y > win_size.x
+		is_mobile = is_portrait # fallback logic
+		
+	btn.custom_minimum_size.y = 100 if is_portrait else (72 if is_mobile else 50)
+	btn.add_theme_font_size_override("font_size", font_size)
+	
+	var sb = StyleBoxFlat.new()
+	sb.bg_color = Color(0.18, 0.22, 0.32, 0.95)
+	sb.border_width_left = 2
+	sb.border_width_right = 2
+	sb.border_width_top = 2
+	sb.border_width_bottom = 2
+	sb.border_color = Color(0.40, 0.50, 0.70, 0.9)
+	sb.corner_radius_top_left = 8
+	sb.corner_radius_top_right = 8
+	sb.corner_radius_bottom_left = 8
+	sb.corner_radius_bottom_right = 8
+	btn.add_theme_stylebox_override("normal", sb)
+	
+	var sb_hover = sb.duplicate() as StyleBoxFlat
+	sb_hover.bg_color = Color(0.25, 0.30, 0.45, 1.0)
+	btn.add_theme_stylebox_override("hover", sb_hover)
+	
+	var sb_pressed = sb.duplicate() as StyleBoxFlat
+	sb_pressed.bg_color = Color(0.12, 0.15, 0.22, 1.0)
+	btn.add_theme_stylebox_override("pressed", sb_pressed)

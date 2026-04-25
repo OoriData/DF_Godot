@@ -41,14 +41,28 @@ static func _make_panel(title: String, rows: Array) -> PanelContainer:
 	sb.content_margin_top = 6
 	sb.content_margin_bottom = 6
 	panel.add_theme_stylebox_override("panel", sb)
+	panel.mouse_filter = Control.MOUSE_FILTER_PASS
 
 	var vb := VBoxContainer.new()
+	vb.mouse_filter = Control.MOUSE_FILTER_PASS
 	vb.add_theme_constant_override("separation", 4)
 	panel.add_child(vb)
 
+	var dsm = Engine.get_main_loop().root.get_node_or_null("DeviceStateManager")
+	var hdr_sz := 16
+	var txt_sz := 13
+	if is_instance_valid(dsm):
+		hdr_sz = dsm.get_scaled_base_font_size(16)
+		txt_sz = dsm.get_scaled_base_font_size(13)
+		var mode = dsm.get_layout_mode()
+		if mode == 2: # MOBILE_PORTRAIT
+			hdr_sz = int(hdr_sz * 1.1)
+			txt_sz = int(txt_sz * 1.1)
+
 	var hdr := Label.new()
 	hdr.text = title
-	hdr.add_theme_font_size_override("font_size", 16)
+	hdr.mouse_filter = Control.MOUSE_FILTER_PASS
+	hdr.add_theme_font_size_override("font_size", hdr_sz)
 	hdr.modulate = Color(1.0, 0.85, 0.35, 1.0)
 	vb.add_child(hdr)
 
@@ -59,13 +73,13 @@ static func _make_panel(title: String, rows: Array) -> PanelContainer:
 		line.add_theme_constant_override("separation", 6)
 		var k := Label.new()
 		k.text = str(r.get("k", ""))
-		k.add_theme_font_size_override("font_size", 13)
+		k.add_theme_font_size_override("font_size", txt_sz)
 		k.modulate = Color(0.92, 0.94, 1.0, 0.95)
 		k.size_flags_horizontal = Control.SIZE_FILL
 		k.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 		var v := Label.new()
 		v.text = str(r.get("v", ""))
-		v.add_theme_font_size_override("font_size", 13)
+		v.add_theme_font_size_override("font_size", txt_sz)
 		v.modulate = Color(0.86, 0.92, 1.0, 1)
 		v.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		v.size_flags_vertical = Control.SIZE_SHRINK_CENTER
@@ -85,6 +99,7 @@ static func rebuild_info_sections(item_info_rich_text: RichTextLabel, item_data_
 	if container == null:
 		container = VBoxContainer.new()
 		container.name = "InfoSectionsContainer"
+		container.mouse_filter = Control.MOUSE_FILTER_PASS
 		container.add_theme_constant_override("separation", 6)
 		parent_node.add_child(container)
 		var idx: int = parent_node.get_children().find(item_info_rich_text)
@@ -107,10 +122,9 @@ static func rebuild_info_sections(item_info_rich_text: RichTextLabel, item_data_
 		fb_sb.corner_radius_all = 8
 		fb_sb.content_margin_all = 20
 		fb_panel.add_theme_stylebox_override("panel", fb_sb)
-		fb_panel.size_flags_vertical = Control.SIZE_EXPAND_FILL
+		fb_panel.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
 		
 		var fb_vb: VBoxContainer = VBoxContainer.new()
-		fb_vb.alignment = BoxContainer.ALIGNMENT_CENTER
 		fb_panel.add_child(fb_vb)
 		
 		var fb_hdr: Label = Label.new()
@@ -334,16 +348,22 @@ static func rebuild_info_sections(item_info_rich_text: RichTextLabel, item_data_
 			container.add_child(_make_panel("Per Unit", rows_unit))
 
 	var rows_total: Array = []
-	if not is_vehicle and not is_part:
+	if not is_vehicle:
 		var total_quantity = 0
 		if selected_item and (selected_item is Dictionary):
 			total_quantity = (selected_item as Dictionary).get("total_quantity", 0)
 			
-		var q_val = int(panel.get("quantity_spinbox").value) if is_instance_valid(panel) and panel.get("quantity_spinbox") != null else 1
-		var price_pres = VendorTradeVM.build_price_presenter(item_data_source, str(current_mode), q_val, selected_item)
-		var total_price = price_pres.get("total_price", 0.0)
-		rows_total.append({"k": "Total Price", "v": NumberFormat.format_money(total_price)})
+		# Total Order panel shows the price/reward for the ENTIRE stack (total_quantity)
+		# rather than the transient quantity in the spinbox.
+		var q_val_for_total = int(total_quantity) if int(total_quantity) > 0 else 1
+		var price_pres = VendorTradeVM.build_price_presenter(item_data_source, str(current_mode), q_val_for_total, selected_item)
+		var full_stack_price = price_pres.get("total_price", 0.0)
+		rows_total.append({"k": "Total Price", "v": NumberFormat.format_money(full_stack_price)})
 		
+		var full_stack_reward = price_pres.get("total_delivery_reward", 0.0)
+		if full_stack_reward > 0.0:
+			rows_total.append({"k": "Total Reward", "v": NumberFormat.format_money(full_stack_reward)})
+
 		if int(total_quantity) > 0:
 			rows_total.append({"k": "Quantity", "v": NumberFormat.format_number(int(total_quantity))})
 		var total_weight = 0.0

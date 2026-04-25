@@ -4,6 +4,7 @@ extends Node
 # Controls periodic refreshes (e.g., convoy polling).
 
 @onready var _convoys: Node = get_node_or_null("/root/ConvoyService")
+@onready var _api: Node = get_node_or_null("/root/APICalls")
 @onready var _hub: Node = get_node_or_null("/root/SignalHub")
 var _timer: Timer
 var _interval_sec: float = 10.0
@@ -18,9 +19,16 @@ func _ready() -> void:
 	else:
 		# Fallback: start immediately if hub missing
 		_start_convoy_polling()
+	
+	if is_instance_valid(_api):
+		if not _api.logged_out.is_connected(_on_logged_out):
+			_api.logged_out.connect(_on_logged_out)
 
 func _on_initial_ready() -> void:
 	_start_convoy_polling()
+
+func _on_logged_out() -> void:
+	_stop_convoy_polling()
 
 func enable_polling(enable: bool) -> void:
 	_enabled = enable

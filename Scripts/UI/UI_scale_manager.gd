@@ -68,10 +68,20 @@ func _on_size_changed():
 func _auto_adjust_scale():
 	if DisplayServer.get_name() == "headless":
 		return
-	var screen_width = DisplayServer.window_get_size().x
+	var win_sz = DisplayServer.window_get_size()
+	var screen_width = win_sz.x
+	var screen_height = win_sz.y
+	var is_portrait = screen_height > screen_width
 	var is_mobile = DisplayServer.get_name() == "Android" or DisplayServer.get_name() == "iOS"
 
-	var target_width = TARGET_LOGICAL_WIDTH_MOBILE if is_mobile else TARGET_LOGICAL_WIDTH_DESKTOP
+	var base_target = TARGET_LOGICAL_WIDTH_MOBILE if is_mobile else TARGET_LOGICAL_WIDTH_DESKTOP
+	var target_width = base_target
+	
+	if is_portrait:
+		# In portrait, the screen is much narrower. To maintain "landscape-like" 
+		# proportions and readability, we target a significantly smaller logical width.
+		# This effectively increases the scale factor.
+		target_width = base_target * 0.5 # e.g. 1600 -> 800
 	
 	# Calculate the scale needed to achieve the target width
 	# scale = physical_width / logical_width
@@ -81,8 +91,6 @@ func _auto_adjust_scale():
 	var max_safe = get_max_safe_scale()
 	target_scale = clampf(target_scale, 0.75, max_safe)
 	
-	# Check if we should apply this. If a SettingsManager exists and has a value, 
-	# that should probably win, unless this is the first boot.
 	# Check if we should apply this. 
 	# If Dynamic Scaling is ON, we ALWAYS apply.
 	# If OFF, we only apply if no manual setting exists (first boot).
@@ -97,16 +105,26 @@ func _auto_adjust_scale():
 
 	_auto_adjust_done = true
 	set_global_ui_scale(target_scale)
-	print("[UIScaleManager] Applied auto-scale: ", target_scale, " (Width:", screen_width, " Target:", target_width, ")")
+	print("[UIScaleManager] Applied auto-scale: ", target_scale, " (Width:", screen_width, " Target:", target_width, " Portrait:", is_portrait, ")")
 
 ## The global multiplier for all UI elements. 1.0 is default.
 func get_global_ui_scale() -> float:
 	return _global_ui_scale
 
 func get_max_safe_scale() -> float:
-	var screen_width = DisplayServer.window_get_size().x
+	var win_sz = DisplayServer.window_get_size()
+	var screen_width = win_sz.x
+	var screen_height = win_sz.y
+	var is_portrait = screen_height > screen_width
+	
+	var min_logical = MIN_LOGICAL_WIDTH
+	if is_portrait:
+		# In portrait, we must allow a much smaller logical width to enable 
+		# readable scaling factors on narrow screens.
+		min_logical = MIN_LOGICAL_WIDTH * 0.5 # e.g. 1150 -> 575
+	
 	# Max scale = physical / min_logical 
-	return float(screen_width) / MIN_LOGICAL_WIDTH
+	return float(screen_width) / min_logical
 
 func set_global_ui_scale(value: float):
 	if DisplayServer.get_name() == "headless":

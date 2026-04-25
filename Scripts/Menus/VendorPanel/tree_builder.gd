@@ -128,11 +128,16 @@ static func populate_tree_vendor_rows(tree: Tree, agg: Dictionary) -> int:
 	return total_rows
 
 static func _get_bold_font_for_tree(node: Control) -> FontVariation:
+	if is_instance_valid(node) and node.has_meta("cached_bold_font"):
+		return node.get_meta("cached_bold_font")
+		
 	var default_font = node.get_theme_font("font") if is_instance_valid(node) else null
 	if default_font:
 		var bf = FontVariation.new()
 		bf.set_base_font(default_font)
 		bf.set_variation_embolden(1.0)
+		if is_instance_valid(node):
+			node.set_meta("cached_bold_font", bf)
 		return bf
 	return null
 

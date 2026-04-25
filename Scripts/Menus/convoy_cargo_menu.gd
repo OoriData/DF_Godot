@@ -166,6 +166,21 @@ func _extract_item_display_name(item: Dictionary) -> String:
 		return str(item.get("specific_name"))
 	return "Unknown Item"
 
+func _is_mobile() -> bool:
+	if OS.has_feature("mobile") or OS.has_feature("web_android") or OS.has_feature("web_ios") or DisplayServer.get_name() in ["Android", "iOS"]:
+		return true
+	if is_inside_tree():
+		var win_size = get_viewport_rect().size
+		if win_size.y > win_size.x:
+			return true
+	return false
+
+func _get_font_size(base: int) -> int:
+	var win_size = get_viewport_rect().size if is_inside_tree() else Vector2(0, 0)
+	var is_portrait = win_size.y > win_size.x
+	var boost = 2.5 if is_portrait else (1.6 if _is_mobile() else 1.2)
+	return int(base * boost)
+
 func _is_displayable_cargo(item: Dictionary) -> bool:
 	if item.is_empty():
 		return false
@@ -187,7 +202,12 @@ func _ready():
 	if is_instance_valid(cargo_sort_option_button):
 		if Engine.has_singleton("SettingsManager"):
 			_cargo_sort_metric = get_node("/root/SettingsManager").get_value("ui.cargo_sort_metric", 0)
-		cargo_sort_option_button.custom_minimum_size = Vector2(280, 34)
+		
+		var win_size = get_viewport_rect().size if is_inside_tree() else Vector2(0, 0)
+		var is_portrait = win_size.y > win_size.x
+		var sort_h = 100 if is_portrait else (60 if _is_mobile() else 44)
+		cargo_sort_option_button.custom_minimum_size = Vector2(280, sort_h)
+		cargo_sort_option_button.add_theme_font_size_override("font_size", _get_font_size(15))
 		cargo_sort_option_button.add_theme_color_override("font_color", Color(0.93, 0.93, 0.93, 1.0))
 		cargo_sort_option_button.add_theme_color_override("font_hover_color", Color(0.98, 0.98, 0.98, 1.0))
 		var sort_normal := StyleBoxFlat.new()
@@ -197,14 +217,14 @@ func _ready():
 		sort_normal.border_width_top = 1
 		sort_normal.border_width_bottom = 1
 		sort_normal.border_color = Color(0.56, 0.56, 0.56, 0.95)
-		sort_normal.corner_radius_top_left = 4
-		sort_normal.corner_radius_top_right = 4
-		sort_normal.corner_radius_bottom_left = 4
-		sort_normal.corner_radius_bottom_right = 4
-		sort_normal.content_margin_left = 10
-		sort_normal.content_margin_right = 10
-		sort_normal.content_margin_top = 4
-		sort_normal.content_margin_bottom = 4
+		sort_normal.corner_radius_top_left = 6
+		sort_normal.corner_radius_top_right = 6
+		sort_normal.corner_radius_bottom_left = 6
+		sort_normal.corner_radius_bottom_right = 6
+		sort_normal.content_margin_left = 24 if _is_mobile() else 10
+		sort_normal.content_margin_right = 24 if _is_mobile() else 10
+		sort_normal.content_margin_top = 12 if _is_mobile() else 4
+		sort_normal.content_margin_bottom = 12 if _is_mobile() else 4
 		var sort_hover := sort_normal.duplicate()
 		sort_hover.bg_color = Color(0.31, 0.31, 0.31, 0.98)
 		sort_hover.border_color = Color(0.70, 0.70, 0.70, 1.0)
@@ -216,7 +236,7 @@ func _ready():
 		cargo_sort_option_button.add_theme_stylebox_override("focus", sort_hover)
 		var sort_parent := cargo_sort_option_button.get_parent()
 		if is_instance_valid(sort_parent):
-			sort_parent.add_theme_constant_override("separation", 8)
+			sort_parent.add_theme_constant_override("separation", 12 if _is_mobile() else 8)
 			
 		cargo_sort_option_button.clear()
 		cargo_sort_option_button.add_item("Sort: Profit Margin/Unit")
@@ -233,7 +253,39 @@ func _ready():
 			_populate_cargo_list()
 		)
 		
+		if _is_mobile():
+			var popup = cargo_sort_option_button.get_popup()
+			popup.add_theme_font_size_override("font_size", _get_font_size(14))
+			popup.add_theme_constant_override("v_separation", 12)
+			var popup_style = StyleBoxFlat.new()
+			popup_style.bg_color = Color(0.15, 0.15, 0.15, 0.98)
+			popup_style.content_margin_left = 24
+			popup_style.content_margin_right = 24
+			popup_style.content_margin_top = 12
+			popup_style.content_margin_bottom = 12
+			popup_style.border_width_left = 1
+			popup_style.border_width_right = 1
+			popup_style.border_width_top = 1
+			popup_style.border_width_bottom = 1
+			popup_style.border_color = Color(0.4, 0.4, 0.4, 1.0)
+			popup_style.corner_radius_top_left = 6
+			popup_style.corner_radius_top_right = 6
+			popup_style.corner_radius_bottom_left = 6
+			popup_style.corner_radius_bottom_right = 6
+			popup.add_theme_stylebox_override("panel", popup_style)
+		
 	if is_instance_valid(back_button):
+		var win_size = get_viewport_rect().size if is_inside_tree() else Vector2(0, 0)
+		var is_portrait = win_size.y > win_size.x
+		if is_portrait:
+			back_button.custom_minimum_size.y = 110
+			back_button.add_theme_font_size_override("font_size", _get_font_size(16))
+		elif _is_mobile():
+			back_button.custom_minimum_size.y = 72
+			back_button.add_theme_font_size_override("font_size", _get_font_size(16))
+		else:
+			back_button.custom_minimum_size.y = 44
+			back_button.add_theme_font_size_override("font_size", _get_font_size(16))
 		if not back_button.is_connected("pressed", Callable(self, "_on_back_button_pressed")):
 			back_button.pressed.connect(_on_back_button_pressed, CONNECT_ONE_SHOT)
 
@@ -249,14 +301,14 @@ func _ready():
 	style_normal.border_width_top = 1
 	style_normal.border_width_bottom = 1
 	style_normal.border_color = Color(0.5, 0.55, 0.6, 0.9)
-	style_normal.corner_radius_top_left = 5
-	style_normal.corner_radius_top_right = 5
-	style_normal.corner_radius_bottom_left = 5
-	style_normal.corner_radius_bottom_right = 5
-	style_normal.content_margin_left = 12
-	style_normal.content_margin_right = 12
-	style_normal.content_margin_top = 6
-	style_normal.content_margin_bottom = 6
+	style_normal.corner_radius_top_left = 6
+	style_normal.corner_radius_top_right = 6
+	style_normal.corner_radius_bottom_left = 6
+	style_normal.corner_radius_bottom_right = 6
+	style_normal.content_margin_left = 24 if _is_mobile() else 12
+	style_normal.content_margin_right = 24 if _is_mobile() else 12
+	style_normal.content_margin_top = 12 if _is_mobile() else 6
+	style_normal.content_margin_bottom = 12 if _is_mobile() else 6
 
 	var style_hover = style_normal.duplicate()
 	style_hover.bg_color = style_normal.bg_color.lightened(0.1)
@@ -264,9 +316,13 @@ func _ready():
 	var style_pressed = style_normal.duplicate()
 	style_pressed.bg_color = style_normal.bg_color.darkened(0.1)
 
+	var win_size = get_viewport_rect().size if is_inside_tree() else Vector2(0, 0)
+	var is_portrait = win_size.y > win_size.x
 	_organize_button.add_theme_stylebox_override("normal", style_normal)
 	_organize_button.add_theme_stylebox_override("hover", style_hover)
 	_organize_button.add_theme_stylebox_override("pressed", style_pressed)
+	_organize_button.add_theme_font_size_override("font_size", _get_font_size(14))
+	_organize_button.custom_minimum_size.y = 80 if is_portrait else (60 if _is_mobile() else 44)
 
 	var main_vbox = get_node_or_null("MainVBox")
 	if is_instance_valid(main_vbox):
@@ -277,6 +333,11 @@ func _ready():
 		organize_container.add_child(_organize_button)
 		main_vbox.add_child(organize_container)
 		main_vbox.move_child(organize_container, 1) # Place it after the title
+		
+		# Mobile: tighter separation between containers, more breathing room in margins
+		if _is_mobile():
+			main_vbox.add_theme_constant_override("separation", 6)
+			main_vbox.set_offsets_preset(Control.PRESET_FULL_RECT, Control.PRESET_MODE_MINSIZE, 14)
 	else:
 		printerr("ConvoyCargoMenu: MainVBox not found, cannot add organization button.")
 
@@ -309,9 +370,19 @@ func _ready():
 	var sc := get_node_or_null("MainVBox/ScrollContainer")
 	if sc is ScrollContainer:
 		sc.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+		sc.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+		sc.mouse_filter = Control.MOUSE_FILTER_PASS
+		var cv := sc.get_node_or_null("CargoItemsVBox")
+		if is_instance_valid(cv):
+			cv.mouse_filter = Control.MOUSE_FILTER_PASS
 
 	# Ensure MenuBase hooks are installed.
 	super._ready()
+	
+	if _is_mobile():
+		if is_instance_valid(title_label):
+			title_label.add_theme_font_size_override("font_size", _get_font_size(20))
+			title_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 
 func _update_organize_button_text() -> void:
 	if organization_mode == "by_type":
@@ -521,15 +592,26 @@ func _add_section_header(parent: VBoxContainer, text: String) -> void:
 	var lbl := Label.new()
 	lbl.text = text
 	lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
-	lbl.add_theme_font_size_override("font_size", 18)
+	lbl.add_theme_font_size_override("font_size", _get_font_size(18))
 	parent.add_child(lbl)
 
 func _add_grid(parent: VBoxContainer, data: Dictionary, keys: Array) -> int:
 	# Reworked: build styled row list instead of plain grid.
 	var shown := 0
-	var rows_container := VBoxContainer.new()
+	var rows_container: Control
+	if _is_mobile():
+		var grid := GridContainer.new()
+		grid.columns = 2
+		grid.add_theme_constant_override("h_separation", 14)
+		grid.add_theme_constant_override("v_separation", 8)
+		rows_container = grid
+	else:
+		var vbox := VBoxContainer.new()
+		vbox.add_theme_constant_override("separation", 2)
+		rows_container = vbox
+	
 	rows_container.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	rows_container.add_theme_constant_override("separation", 2)
+	rows_container.mouse_filter = Control.MOUSE_FILTER_PASS
 
 	var key_display_map := {
 		"weight": "Total Weight",
@@ -554,6 +636,14 @@ func _add_grid(parent: VBoxContainer, data: Dictionary, keys: Array) -> int:
 			desc_label.text = _format_value(value)
 			desc_label.autowrap_mode = TextServer.AUTOWRAP_WORD
 			desc_label.modulate = Color(0.9, 0.9, 0.95, 1)
+			desc_label.add_theme_font_size_override("font_size", _get_font_size(13))
+			if _is_mobile():
+				desc_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+				# On mobile grid, description takes full span if we use a helper or just append to parent VBox
+				# For now, let's just let it be in the grid but it might look weird. 
+				# Actually, if it's a grid, it'll take one cell.
+				# Better: if it's a grid, we might need to handle full-width items.
+				pass
 			rows_container.add_child(desc_label)
 			shown += 1
 			continue
@@ -573,14 +663,16 @@ func _add_grid(parent: VBoxContainer, data: Dictionary, keys: Array) -> int:
 			var line := HBoxContainer.new()
 			line.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 			line.add_theme_constant_override("separation", 6)
+			line.mouse_filter = Control.MOUSE_FILTER_PASS
 			var k_lbl2 := Label.new()
 			k_lbl2.text = _nice_key(k) + ":"
-			k_lbl2.add_theme_font_size_override("font_size", 14)
+			k_lbl2.add_theme_font_size_override("font_size", _get_font_size(14))
 			k_lbl2.modulate = Color(0.95, 0.95, 1, 0.95)
 			k_lbl2.size_flags_horizontal = Control.SIZE_FILL
 			k_lbl2.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 			stats_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 			stats_label.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+			stats_label.add_theme_font_size_override("font_size", _get_font_size(13))
 			line.add_child(k_lbl2)
 			line.add_child(stats_label)
 			rows_container.add_child(line)
@@ -590,23 +682,41 @@ func _add_grid(parent: VBoxContainer, data: Dictionary, keys: Array) -> int:
 		# Build a row: use a PanelContainer with a StyleBox for alternating backgrounds
 		var row_panel := PanelContainer.new()
 		row_panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		row_panel.mouse_filter = Control.MOUSE_FILTER_PASS
 		var sb := StyleBoxFlat.new()
-		if shown % 2 == 0:
-			sb.bg_color = Color(0.15, 0.15, 0.18, 0.6)
+		if _is_mobile():
+			sb.bg_color = Color(0.15, 0.16, 0.18, 0.8) # Card background
+			sb.corner_radius_top_left = 6
+			sb.corner_radius_top_right = 6
+			sb.corner_radius_bottom_left = 6
+			sb.corner_radius_bottom_right = 6
+			sb.content_margin_left = 10
+			sb.content_margin_right = 10
+			sb.content_margin_top = 8
+			sb.content_margin_bottom = 8
+			sb.border_width_left = 1
+			sb.border_width_right = 1
+			sb.border_width_top = 1
+			sb.border_width_bottom = 1
+			sb.border_color = Color(0.3, 0.35, 0.4, 0.6)
 		else:
-			sb.bg_color = Color(0, 0, 0, 0)
+			if shown % 2 == 0:
+				sb.bg_color = Color(0.15, 0.15, 0.18, 0.6)
+			else:
+				sb.bg_color = Color(0, 0, 0, 0)
 		row_panel.add_theme_stylebox_override("panel", sb)
 
 		var row := HBoxContainer.new()
 		row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		row.add_theme_constant_override("separation", 6)
+		row.mouse_filter = Control.MOUSE_FILTER_PASS
 		row_panel.add_child(row)
 
 		var k_lbl := Label.new()
 		var key_text: String = key_display_map.get(k, _nice_key(k))
-		k_lbl.text = key_text + ":"
-		k_lbl.add_theme_font_size_override("font_size", 14)
-		k_lbl.modulate = Color(0.95, 0.95, 1, 0.95)
+		k_lbl.text = (key_text + ":") if not _is_mobile() else key_text
+		k_lbl.add_theme_font_size_override("font_size", _get_font_size(14))
+		k_lbl.modulate = Color(173.0/255.0, 216.0/255.0, 230.0/255.0, 0.95) # Light Blue for labels
 		k_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		k_lbl.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 
@@ -615,7 +725,8 @@ func _add_grid(parent: VBoxContainer, data: Dictionary, keys: Array) -> int:
 		v_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
 		v_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		v_lbl.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-		v_lbl.modulate = Color(0.85, 0.9, 1, 1)
+		v_lbl.modulate = Color(0.0, 1.0, 1.0, 1) # Vibrant Cyan for interactive values
+		v_lbl.add_theme_font_size_override("font_size", _get_font_size(14))
 		v_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD
 
 		# Badge styling for notable numeric/status fields
@@ -743,41 +854,79 @@ func _build_cargo_row(vehicle_vbox: VBoxContainer, display_name: String, quantit
 	outer_row.set_meta("agg_data", agg_data)
 	outer_row.add_theme_constant_override("separation", 0)
 	outer_row.mouse_filter = Control.MOUSE_FILTER_PASS
-
-	var item_data = agg_data["item_data_sample"]
-	if CARGO_MENU_DEBUG:
-		print("[CargoUI] BuildRow idx:", item_index, " name:", display_name, " qty:", quantity, " tw:", agg_data.get("total_weight", 0.0), " tv:", agg_data.get("total_volume", 0.0))
+	outer_row.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+	
 	# Background panel spans full width; content placed inside.
 	var bg_panel := PanelContainer.new()
 	bg_panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	bg_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
 
-	# Create flat stylebox with alternating shade.
+	# Create flat stylebox with alternating shade (Refined: moved up for lambda capture)
 	var sb := StyleBoxFlat.new()
-	if item_index % 2 == 0:
-		sb.bg_color = Color(0.13, 0.15, 0.19, 1)
+	if _is_mobile():
+		sb.bg_color = Color(0.10, 0.11, 0.13, 1.0) # Ledger Deep Slate
+		sb.border_width_left = 1
+		sb.border_width_right = 1
+		sb.border_width_top = 1
+		sb.border_width_bottom = 1
+		sb.border_color = Color(0.35, 0.4, 0.45, 1.0) # Steel border
+		sb.corner_radius_top_left = 6
+		sb.corner_radius_top_right = 6
+		sb.corner_radius_bottom_left = 6
+		sb.corner_radius_bottom_right = 6
+		sb.content_margin_left = 14
+		sb.content_margin_right = 14
+		sb.content_margin_top = 14
+		sb.content_margin_bottom = 14
 	else:
-		sb.bg_color = Color(0.10, 0.12, 0.16, 1)
-	sb.border_width_left = 0
-	sb.border_width_right = 0
-	sb.border_width_top = 0
-	sb.border_width_bottom = 1
-	sb.border_color = Color(0.18, 0.20, 0.25, 1)
+		if item_index % 2 == 0:
+			sb.bg_color = Color(0.13, 0.15, 0.19, 1)
+		else:
+			sb.bg_color = Color(0.10, 0.12, 0.16, 1)
+		sb.border_width_left = 0
+		sb.border_width_right = 0
+		sb.border_width_top = 0
+		sb.border_width_bottom = 1
+		sb.border_color = Color(0.18, 0.20, 0.25, 1)
 	bg_panel.add_theme_stylebox_override("panel", sb)
 
+	# Connect gui_input for click-to-expand behavior (Refined: tap vs scroll detection + Visual feedback)
+	outer_row.gui_input.connect(func(event):
+		if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
+			if event.pressed:
+				outer_row.set_meta("tap_start_pos", event.global_position)
+				if sb:
+					outer_row.set_meta("pre_press_color", sb.bg_color)
+					sb.bg_color = sb.bg_color.lightened(0.1)
+			else:
+				if sb and outer_row.has_meta("pre_press_color"):
+					sb.bg_color = outer_row.get_meta("pre_press_color")
+				
+				var start_pos = outer_row.get_meta("tap_start_pos", event.global_position)
+				var distance = (event.global_position - start_pos).length()
+				# If movement is minimal, treat it as a tap
+				if distance < 10:
+					_on_inspect_cargo_item_pressed(agg_data, vehicle_vbox, outer_row, null)
+					get_viewport().set_input_as_handled()
+	)
+
+	var item_data = agg_data["item_data_sample"]
+	if CARGO_MENU_DEBUG:
+		print("[CargoUI] BuildRow idx:", item_index, " name:", display_name, " qty:", quantity, " tw:", agg_data.get("total_weight", 0.0), " tv:", agg_data.get("total_volume", 0.0))
 	outer_row.add_child(bg_panel)
 
 	var content_row := HBoxContainer.new()
 	content_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	content_row.add_theme_constant_override("separation", 8)
+	content_row.add_theme_constant_override("separation", 14 if _is_mobile() else 8)
+	content_row.mouse_filter = Control.MOUSE_FILTER_PASS
 	bg_panel.add_child(content_row)
 
 	var qty_badge := Label.new()
 	qty_badge.text = str(quantity)
-	qty_badge.custom_minimum_size = Vector2(34, 22)
+	qty_badge.custom_minimum_size = Vector2(48 if _is_mobile() else 34, 32 if _is_mobile() else 22)
 	qty_badge.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	qty_badge.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	qty_badge.add_theme_font_size_override("font_size", 14)
+	qty_badge.add_theme_font_size_override("font_size", _get_font_size(14))
 	if quantity >= 100:
 		qty_badge.modulate = Color(0.3, 0.8, 0.4, 1)
 	elif quantity >= 50:
@@ -789,6 +938,7 @@ func _build_cargo_row(vehicle_vbox: VBoxContainer, display_name: String, quantit
 	item_label.text = display_name
 	item_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	item_label.modulate = Color(0.9, 0.95, 1, 1)
+	item_label.add_theme_font_size_override("font_size", _get_font_size(16))
 	item_label.autowrap_mode = TextServer.AUTOWRAP_WORD
 
 	# Build consistent column order: Qty | ItemName(expand) | Quality | Condition | Inspect
@@ -799,10 +949,11 @@ func _build_cargo_row(vehicle_vbox: VBoxContainer, display_name: String, quantit
 
 	# NEW: Context column for vehicle or item type
 	var context_label := Label.new()
-	context_label.custom_minimum_size = Vector2(120, 22)
+	context_label.custom_minimum_size = Vector2(140 if _is_mobile() else 120, 22)
 	context_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
 	context_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	context_label.modulate = Color(0.8, 0.8, 0.8, 1)
+	context_label.add_theme_font_size_override("font_size", _get_font_size(14))
 	content_row.add_child(context_label)
 
 	if organization_mode == "by_type":
@@ -844,33 +995,37 @@ func _build_cargo_row(vehicle_vbox: VBoxContainer, display_name: String, quantit
 	# Add Weight and Volume labels to the main row
 	var weight_label := Label.new()
 	weight_label.text = NumberFormat.fmt_float(agg_data.get("total_weight", 0.0), 2) + " kg"
-	weight_label.custom_minimum_size = Vector2(80, 22)
+	weight_label.custom_minimum_size = Vector2(90 if _is_mobile() else 80, 22)
 	weight_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	weight_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	weight_label.modulate = Color(0.8, 0.85, 0.9, 1)
+	weight_label.add_theme_font_size_override("font_size", _get_font_size(13))
 	content_row.add_child(weight_label)
 
 	var volume_label := Label.new()
 	volume_label.text = NumberFormat.fmt_float(agg_data.get("total_volume", 0.0), 2) + " m³"
-	volume_label.custom_minimum_size = Vector2(80, 22)
+	volume_label.custom_minimum_size = Vector2(90 if _is_mobile() else 80, 22)
 	volume_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	volume_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	volume_label.modulate = Color(0.8, 0.9, 0.85, 1)
+	volume_label.add_theme_font_size_override("font_size", _get_font_size(13))
 	content_row.add_child(volume_label)
 
 	# (Removed) Tag column: omit category/type/subtype label per request.
 
 	# Quality column (or placeholder)
 	var quality_holder := Control.new()
-	quality_holder.custom_minimum_size = Vector2(34, 22)
+	quality_holder.custom_minimum_size = Vector2(40 if _is_mobile() else 34, 22)
+	quality_holder.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	if item_data.has("quality"):
 		var q_val = int(item_data.get("quality", 0))
 		var q_label := Label.new()
 		q_label.text = "Q" + str(q_val)
-		q_label.add_theme_font_size_override("font_size", 12)
-		q_label.custom_minimum_size = Vector2(34, 22)
+		q_label.add_theme_font_size_override("font_size", _get_font_size(12))
+		q_label.custom_minimum_size = Vector2(40 if _is_mobile() else 34, 22)
 		q_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		q_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		q_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		if q_val >= 80:
 			q_label.modulate = Color(0.3, 0.85, 0.45, 1)
 		elif q_val >= 50:
@@ -882,15 +1037,17 @@ func _build_cargo_row(vehicle_vbox: VBoxContainer, display_name: String, quantit
 
 	# Condition column (or placeholder)
 	var condition_holder := Control.new()
-	condition_holder.custom_minimum_size = Vector2(34, 22)
+	condition_holder.custom_minimum_size = Vector2(40 if _is_mobile() else 34, 22)
+	condition_holder.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	if item_data.has("condition"):
 		var c_val = int(item_data.get("condition", 0))
 		var c_label := Label.new()
 		c_label.text = "C" + str(c_val)
-		c_label.add_theme_font_size_override("font_size", 12)
-		c_label.custom_minimum_size = Vector2(34, 22)
+		c_label.add_theme_font_size_override("font_size", _get_font_size(12))
+		c_label.custom_minimum_size = Vector2(40 if _is_mobile() else 34, 22)
 		c_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		c_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		c_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		if c_val >= 75:
 			c_label.modulate = Color(0.35, 0.8, 0.95, 1)
 		elif c_val >= 40:
@@ -900,17 +1057,6 @@ func _build_cargo_row(vehicle_vbox: VBoxContainer, display_name: String, quantit
 		condition_holder.add_child(c_label)
 	content_row.add_child(condition_holder)
 
-	# Weight/Volume displayed in Item Overview; omit row badges per request.
-
-	# Inspect/Hide toggle button (always last)
-	var inspect_button := Button.new()
-	inspect_button.name = "InspectButton"
-	inspect_button.text = "Inspect"
-	inspect_button.custom_minimum_size = Vector2(90, 26)
-	inspect_button.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	inspect_button.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	inspect_button.pressed.connect(_on_inspect_cargo_item_pressed.bind(agg_data, vehicle_vbox, outer_row, inspect_button))
-	content_row.add_child(inspect_button)
 	vehicle_vbox.add_child(outer_row)
 
 	# Hover highlight: lighten background stylebox only (keeps text consistent)
@@ -920,10 +1066,13 @@ func _build_cargo_row(vehicle_vbox: VBoxContainer, display_name: String, quantit
 	)
 	outer_row.mouse_exited.connect(func():
 		if sb:
-			if item_index % 2 == 0:
-				sb.bg_color = Color(0.13, 0.15, 0.19, 1)
+			if _is_mobile():
+				sb.bg_color = Color(0.10, 0.11, 0.13, 1.0)
 			else:
-				sb.bg_color = Color(0.10, 0.12, 0.16, 1)
+				if item_index % 2 == 0:
+					sb.bg_color = Color(0.13, 0.15, 0.19, 1)
+				else:
+					sb.bg_color = Color(0.10, 0.12, 0.16, 1)
 	)
 
 func _has_any_keys(data: Dictionary, keys: Array) -> bool:
@@ -966,7 +1115,10 @@ func _create_collapsible_section(title: String, keys: Array, data_copy: Dictiona
 	toggle_btn.flat = true
 	toggle_btn.focus_mode = Control.FOCUS_NONE
 	toggle_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	toggle_btn.add_theme_font_size_override("font_size", 16)
+	toggle_btn.add_theme_font_size_override("font_size", _get_font_size(16))
+	
+	if _is_mobile():
+		toggle_btn.custom_minimum_size.y = 50
 
 	panel_vbox.add_child(header)
 	header.add_child(toggle_btn)
@@ -1060,20 +1212,22 @@ func _add_category_section(parent: VBoxContainer, title: String, agg_data: Dicti
 	header_panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	var header_style := StyleBoxFlat.new()
 	header_style.bg_color = Color(0.2, 0.22, 0.28, 1)
-	header_style.content_margin_left = 8
-	header_style.content_margin_top = 4
-	header_style.content_margin_bottom = 4
-	header_style.content_margin_right = 8
+	header_style.content_margin_left = 14 if _is_mobile() else 8
+	header_style.content_margin_top = 8 if _is_mobile() else 4
+	header_style.content_margin_bottom = 8 if _is_mobile() else 4
+	header_style.content_margin_right = 14 if _is_mobile() else 8
 	header_panel.add_theme_stylebox_override("panel", header_style)
+	header_panel.mouse_filter = Control.MOUSE_FILTER_PASS
 	
 	# Use HBoxContainer to allow for both label and button
 	var header_hbox := HBoxContainer.new()
 	header_hbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	header_hbox.mouse_filter = Control.MOUSE_FILTER_PASS
 	header_panel.add_child(header_hbox)
 	
 	var header_label := Label.new()
 	header_label.text = title
-	header_label.add_theme_font_size_override("font_size", 20)
+	header_label.add_theme_font_size_override("font_size", _get_font_size(20))
 	header_label.modulate = Color.GOLD
 	header_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	header_hbox.add_child(header_label)
@@ -1094,8 +1248,8 @@ func _add_category_section(parent: VBoxContainer, title: String, agg_data: Dicti
 
 		var bars_vbox := VBoxContainer.new()
 		bars_vbox.name = "VehicleMiniBars"
-		bars_vbox.add_theme_constant_override("separation", 2)
-		bars_vbox.custom_minimum_size = Vector2(160, 0)
+		bars_vbox.add_theme_constant_override("separation", 4 if _is_mobile() else 2)
+		bars_vbox.custom_minimum_size = Vector2(200 if _is_mobile() else 160, 0)
 		bars_vbox.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 		bars_vbox.size_flags_horizontal = Control.SIZE_SHRINK_END
 
@@ -1108,7 +1262,7 @@ func _add_category_section(parent: VBoxContainer, title: String, agg_data: Dicti
 		vol_lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 		vol_lbl.modulate = Color(0.8, 0.9, 0.85, 1)
 		var vol_bar := ProgressBar.new()
-		vol_bar.custom_minimum_size = Vector2(140, 10)
+		vol_bar.custom_minimum_size = Vector2(140, 14 if _is_mobile() else 10)
 		vol_bar.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		vol_bar.show_percentage = false
 		_set_capacity_progressbar_style(vol_bar, used_volume, total_volume)
@@ -1125,7 +1279,7 @@ func _add_category_section(parent: VBoxContainer, title: String, agg_data: Dicti
 		wt_lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 		wt_lbl.modulate = Color(0.8, 0.85, 0.9, 1)
 		var wt_bar := ProgressBar.new()
-		wt_bar.custom_minimum_size = Vector2(140, 10)
+		wt_bar.custom_minimum_size = Vector2(140, 14 if _is_mobile() else 10)
 		wt_bar.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		wt_bar.show_percentage = false
 		_set_capacity_progressbar_style(wt_bar, used_weight, total_weight)
@@ -1141,8 +1295,11 @@ func _add_category_section(parent: VBoxContainer, title: String, agg_data: Dicti
 	if vehicle_id != "":
 		var inspect_button := Button.new()
 		inspect_button.text = "Inspect"
-		inspect_button.custom_minimum_size = Vector2(90, 26)
+		var btn_w = 140 if _is_mobile() else 90
+		var btn_h = 72 if _is_mobile() else 44
+		inspect_button.custom_minimum_size = Vector2(btn_w, btn_h)
 		inspect_button.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		inspect_button.add_theme_font_size_override("font_size", _get_font_size(13))
 		inspect_button.pressed.connect(_on_vehicle_inspect_pressed.bind(vehicle_id))
 		header_hbox.add_child(inspect_button)
 	
@@ -1781,11 +1938,9 @@ func _reopen_inspects() -> void:
 					should_reopen = true
 					break
 			if should_reopen:
-				var toggle_button: Button = child.find_child("InspectButton", true, false)
-				if is_instance_valid(toggle_button):
-					_on_inspect_cargo_item_pressed(agg_data, cargo_items_vbox, child, toggle_button)
-					_diag("inspect_reopen", "row", {"name": agg_data.get("display_name", ""), "count_items": items.size()})
-					reopen_count += 1
+				_on_inspect_cargo_item_pressed(agg_data, cargo_items_vbox, child, null)
+				_diag("inspect_reopen", "row", {"name": agg_data.get("display_name", ""), "count_items": items.size()})
+				reopen_count += 1
 	_diag("inspect_reopen", "done", {"count": reopen_count})
 
 func _build_inline_inspect_panel(agg_data: Dictionary, _item_row_hbox: HBoxContainer) -> VBoxContainer:
@@ -1794,13 +1949,36 @@ func _build_inline_inspect_panel(agg_data: Dictionary, _item_row_hbox: HBoxConta
 	var container := VBoxContainer.new()
 	container.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	container.add_theme_constant_override("separation", 4)
+	container.mouse_filter = Control.MOUSE_FILTER_PASS
 
 	var frame := PanelContainer.new()
 	frame.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	frame.mouse_filter = Control.MOUSE_FILTER_PASS
+	
+	if _is_mobile():
+		var ledger := StyleBoxFlat.new()
+		ledger.bg_color = Color(0.12, 0.13, 0.16, 0.95)
+		ledger.border_width_left = 1
+		ledger.border_width_right = 1
+		ledger.border_width_top = 1
+		ledger.border_width_bottom = 1
+		ledger.border_color = Color(0.4, 0.45, 0.5, 0.8)
+		ledger.corner_radius_top_left = 6
+		ledger.corner_radius_top_right = 6
+		ledger.corner_radius_bottom_left = 6
+		ledger.corner_radius_bottom_right = 6
+		ledger.content_margin_left = 20
+		ledger.content_margin_right = 20
+		ledger.content_margin_top = 20
+		ledger.content_margin_bottom = 20
+		frame.add_theme_stylebox_override("panel", ledger)
+	
+	container.add_child(frame)
 
 	var inner := VBoxContainer.new()
 	inner.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	inner.add_theme_constant_override("separation", 8)
+	inner.mouse_filter = Control.MOUSE_FILTER_PASS
 
 	# No header controls; panel is toggled via the row button.
 

@@ -11,6 +11,10 @@ var _app_id: int = 480 # Default Spacewar ID for testing, replace with actual Ap
 var _steam_ref: Object = null
 
 func _ready() -> void:
+	var cfg := ConfigFile.new()
+	if cfg.load("res://app_config.cfg") == OK:
+		_app_id = cfg.get_value("steam", "app_id", 480)
+	
 	# Attempt to initialize Steam
 	_initialize_steam()
 

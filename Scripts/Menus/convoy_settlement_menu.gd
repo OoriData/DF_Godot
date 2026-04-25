@@ -88,6 +88,7 @@ func _ready():
 	# It's crucial to connect signals here for the UI to be interactive.
 	if is_instance_valid(back_button):
 		back_button.pressed.connect(_on_back_button_pressed)
+		_style_back_button(back_button)
 	else:
 		printerr("ConvoySettlementMenu: BackButton node not found.")
 	
@@ -101,9 +102,8 @@ func _ready():
 		if not top_up_button.is_connected("pressed", Callable(self, "_on_top_up_button_pressed")):
 			top_up_button.pressed.connect(_on_top_up_button_pressed)
 		_update_top_up_button()
-		_style_top_up_button()
+		_style_top_bar_button(top_up_button)
 
-	# Add a Warehouse button to the top bar (only once)
 	if is_instance_valid(top_bar_hbox):
 		var existing_btn: Button = top_bar_hbox.get_node_or_null("WarehouseButton")
 		if existing_btn == null:
@@ -111,7 +111,7 @@ func _ready():
 			warehouse_btn.name = "WarehouseButton"
 			warehouse_btn.text = "Warehouse"
 			warehouse_btn.tooltip_text = "View or buy a Warehouse in this settlement"
-			warehouse_btn.size_flags_horizontal = Control.SIZE_SHRINK_END
+			warehouse_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 			top_bar_hbox.add_child(warehouse_btn)
 
 			warehouse_btn.pressed.connect(_on_warehouse_button_pressed)
@@ -120,6 +120,11 @@ func _ready():
 		warehouse_button = top_bar_hbox.get_node_or_null("WarehouseButton")
 		if is_instance_valid(warehouse_button):
 			warehouse_button.disabled = false
+			_style_top_bar_button(warehouse_button)
+
+	# Apply styling to title label as well
+	if is_instance_valid(title_label):
+		_style_top_bar_button(title_label)
 
 	# Subscribe to canonical snapshots (store 'convoys_changed' handled by MenuBase)
 	if is_instance_valid(_store):
@@ -131,6 +136,33 @@ func _ready():
 	# Also listen directly to APICalls transaction outcomes so we can trigger timely refreshes
 	# Phase 4: UI no longer listens to APICalls transaction signals. Authoritative
 	# refreshes are driven via services + GameStore/SignalHub events.
+
+	if is_instance_valid(vendor_tab_container):
+		if not vendor_tab_container.tab_changed.is_connected(_on_vendor_tab_changed):
+			vendor_tab_container.tab_changed.connect(_on_vendor_tab_changed)
+
+	var dsm = get_node_or_null("/root/DeviceStateManager")
+	if is_instance_valid(dsm):
+		if not dsm.is_connected("layout_mode_changed", _on_layout_mode_changed):
+			dsm.layout_mode_changed.connect(_on_layout_mode_changed)
+
+	_style_vendor_tabs()
+
+func _on_layout_mode_changed(_mode: int, _size: Vector2, _is_mobile_val: bool) -> void:
+	if is_instance_valid(top_up_button):
+		_style_top_bar_button(top_up_button)
+	if is_instance_valid(title_label):
+		_style_top_bar_button(title_label)
+	if is_instance_valid(warehouse_button):
+		_style_top_bar_button(warehouse_button)
+	if is_instance_valid(back_button):
+		_style_back_button(back_button)
+	
+	_style_vendor_tabs()
+	
+	# Regenerate UI completely on layout change to ensure correct bounds.
+	call_deferred("_display_settlement_info")
+
 
 
 func _display_error(message: String):
@@ -240,6 +272,8 @@ func _display_settlement_info():
 					if vendor_tab_container.get_tab_title(i) == previous_tab_title:
 						vendor_tab_container.current_tab = i
 						break
+
+			_style_vendor_tabs()
 			
 			# After creating vendor tabs compute top up plan
 			_update_top_up_button()
@@ -550,15 +584,29 @@ func _post_txn_update_ui():
 func _refresh_all_vendor_panels():
 	# Only call refresh_data, never initialize, and always pass deep copies.
 	# IMPORTANT: Skip refreshing the currently active vendor tab; the active
-	# panel already performs its own authoritative refresh
-	# vendor_panel_data_ready. Double-refreshing it causes selection flicker
-	# during transactions.
+	# panel already performs its own authoritative refresh.
+	# Inactive tabs are now lazily loaded using metadata tracking to prevent a "refresh storm".
+	if not is_instance_valid(vendor_tab_container):
+		return
+		
 	var active_idx: int = vendor_tab_container.current_tab
 	for i in range(vendor_tab_container.get_tab_count()):
 		if i == active_idx:
 			continue
 		var tab_content = vendor_tab_container.get_tab_control(i)
-		if tab_content is Control and tab_content.has_method("refresh_data"):
+		if is_instance_valid(tab_content):
+			tab_content.set_meta("needs_refresh", true)
+			
+	# Also refresh top up button when vendor data may have changed
+	_update_top_up_button()
+
+func _on_vendor_tab_changed(tab_idx: int) -> void:
+	if not is_instance_valid(vendor_tab_container):
+		return
+	var tab_content = vendor_tab_container.get_tab_control(tab_idx)
+	if is_instance_valid(tab_content) and tab_content.has_meta("needs_refresh") and tab_content.get_meta("needs_refresh"):
+		tab_content.set_meta("needs_refresh", false)
+		if tab_content.has_method("refresh_data"):
 			var full_vendor_name = tab_content.name
 			var vendor_data = _find_vendor_by_name(full_vendor_name)
 			if vendor_data:
@@ -568,9 +616,7 @@ func _refresh_all_vendor_panels():
 					_settlement_data.duplicate(true),
 					_all_settlement_data.duplicate(true)
 				)
-	# Also refresh top up button when vendor data may have changed
-	_update_top_up_button()
-
+	
 func _find_vendor_by_name(vendor_name: String) -> Dictionary:
 	if _settlement_data and _settlement_data.has("vendors"):
 		for vendor in _settlement_data.vendors:
@@ -976,10 +1022,10 @@ func _get_settlement_name_from_convoy_coords() -> String:
 					return String(s.get("name", ""))
 	return ""
 
-func _style_top_up_button():
-	if not is_instance_valid(top_up_button):
+func _style_top_bar_button(button: Button) -> void:
+	if not is_instance_valid(button):
 		return
-	# --- Button StyleBoxes ---
+		
 	var normal = StyleBoxFlat.new()
 	normal.bg_color = Color(0.15, 0.15, 0.18, 1.0)
 	normal.corner_radius_top_left = 6
@@ -1007,14 +1053,13 @@ func _style_top_up_button():
 	disabled.border_color = Color(0.20, 0.20, 0.20)
 	disabled.shadow_size = 0
 
-	top_up_button.add_theme_stylebox_override("normal", normal)
-	top_up_button.add_theme_stylebox_override("hover", hover)
-	top_up_button.add_theme_stylebox_override("pressed", pressed)
-	top_up_button.add_theme_stylebox_override("disabled", disabled)
+	button.add_theme_stylebox_override("normal", normal)
+	button.add_theme_stylebox_override("hover", hover)
+	button.add_theme_stylebox_override("pressed", pressed)
+	button.add_theme_stylebox_override("disabled", disabled)
 
 	# --- Tooltip Style ---
 	var tooltip_panel = StyleBoxFlat.new()
-	# Make fully opaque for readability (user requested less transparency)
 	tooltip_panel.bg_color = Color(0.05, 0.05, 0.06, 1.0)
 	tooltip_panel.corner_radius_top_left = 4
 	tooltip_panel.corner_radius_top_right = 4
@@ -1027,25 +1072,126 @@ func _style_top_up_button():
 	tooltip_panel.border_width_bottom = 1
 	tooltip_panel.shadow_color = Color(0,0,0,0.7)
 	tooltip_panel.shadow_size = 4
-	# Extra padding inside tooltip for clarity
 	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
 		tooltip_panel.set_content_margin(side, 6)
-	top_up_button.add_theme_stylebox_override("tooltip_panel", tooltip_panel)
+	button.add_theme_stylebox_override("tooltip_panel", tooltip_panel)
 
 	# --- Font & Colors ---
-	top_up_button.add_theme_color_override("font_color", Color(0.92, 0.96, 1.0))
-	top_up_button.add_theme_color_override("font_color_hover", Color(1.0, 1.0, 1.0))
-	top_up_button.add_theme_color_override("font_color_pressed", Color(0.85, 0.90, 1.0))
-	top_up_button.add_theme_color_override("font_color_disabled", Color(0.55, 0.55, 0.60))
-	# Slightly larger font to pop
-	top_up_button.add_theme_font_size_override("font_size", 18)
+	button.add_theme_color_override("font_color", Color(0.92, 0.96, 1.0))
+	button.add_theme_color_override("font_color_hover", Color(1.0, 1.0, 1.0))
+	button.add_theme_color_override("font_color_pressed", Color(0.85, 0.90, 1.0))
+	button.add_theme_color_override("font_color_disabled", Color(0.55, 0.55, 0.60))
+	
+	var dsm = get_node_or_null("/root/DeviceStateManager")
+	var fs = 18
+	if is_instance_valid(dsm):
+		fs = dsm.get_scaled_base_font_size(18)
+	button.add_theme_font_size_override("font_size", fs)
 
-	# Optional: Increase content margin for a beefier look
 	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
 		normal.set_content_margin(side, normal.get_content_margin(side) + 2)
 		hover.set_content_margin(side, hover.get_content_margin(side) + 2)
 		pressed.set_content_margin(side, pressed.get_content_margin(side) + 2)
 		disabled.set_content_margin(side, disabled.get_content_margin(side) + 2)
+
+func _style_back_button(button: Button) -> void:
+	if not is_instance_valid(button):
+		return
+		
+	var dsm = get_node_or_null("/root/DeviceStateManager")
+	var is_portrait = false
+	var is_mobile = false
+	var fs = 18
+	
+	if is_instance_valid(dsm):
+		is_portrait = dsm.get_is_portrait()
+		is_mobile = dsm.is_mobile
+		fs = dsm.get_scaled_base_font_size(24 if is_portrait else 20)
+	else:
+		var win_size = get_viewport_rect().size if is_inside_tree() else Vector2(0, 0)
+		is_portrait = win_size.y > win_size.x
+		is_mobile = is_portrait
+
+	# Chunky height for touch targets
+	button.custom_minimum_size.y = 100 if is_portrait else (72 if is_mobile else 54)
+	button.add_theme_font_size_override("font_size", fs)
+
+	var normal = StyleBoxFlat.new()
+	normal.bg_color = Color(0.12, 0.14, 0.18, 0.95)
+	normal.corner_radius_top_left = 8
+	normal.corner_radius_top_right = 8
+	normal.corner_radius_bottom_left = 8
+	normal.corner_radius_bottom_right = 8
+	normal.border_width_left = 2
+	normal.border_width_right = 2
+	normal.border_width_top = 2
+	normal.border_width_bottom = 2
+	normal.border_color = Color(0.40, 0.60, 0.90) # Consistent blue border
+	normal.shadow_color = Color(0, 0, 0, 0.5)
+	normal.shadow_size = 4
+	
+	var hover = normal.duplicate()
+	hover.bg_color = Color(0.20, 0.25, 0.35, 1.0)
+	hover.border_color = Color(0.55, 0.75, 1.0)
+	
+	var pressed = normal.duplicate()
+	pressed.bg_color = Color(0.08, 0.10, 0.14, 1.0)
+	pressed.border_color = Color(0.30, 0.50, 0.80)
+	
+	button.add_theme_stylebox_override("normal", normal)
+	button.add_theme_stylebox_override("hover", hover)
+	button.add_theme_stylebox_override("pressed", pressed)
+	
+	button.add_theme_color_override("font_color", Color(0.95, 0.95, 1.0))
+	button.add_theme_color_override("font_color_hover", Color(1.0, 1.0, 1.0))
+	button.add_theme_color_override("font_color_pressed", Color(0.8, 0.9, 1.0))
+
+func _style_vendor_tabs() -> void:
+	if not is_instance_valid(vendor_tab_container):
+		return
+	var tab_bar = get_vendor_tab_bar()
+	if not (tab_bar is TabBar):
+		return
+		
+	var dsm = get_node_or_null("/root/DeviceStateManager")
+	var is_portrait = false
+	var fs = 18
+	
+	if is_instance_valid(dsm):
+		is_portrait = dsm.get_is_portrait()
+		fs = dsm.get_scaled_base_font_size(18)
+		
+	# Focus on horizontal expansion for mobile
+	if is_portrait:
+		tab_bar.tab_alignment = TabBar.ALIGNMENT_CENTER
+		tab_bar.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	else:
+		tab_bar.tab_alignment = TabBar.ALIGNMENT_LEFT
+		tab_bar.size_flags_horizontal = Control.SIZE_FILL
+		
+	tab_bar.add_theme_font_size_override("font_size", fs)
+	
+	# Create style overrides for tabs
+	var bg_normal = StyleBoxFlat.new()
+	bg_normal.bg_color = Color(0.12, 0.14, 0.18, 0.95)
+	var bg_selected = StyleBoxFlat.new()
+	bg_selected.bg_color = Color(0.20, 0.25, 0.35, 1.0)
+	bg_selected.border_color = Color(0.40, 0.60, 0.90)
+	bg_selected.border_width_bottom = 4
+	
+	# Apply common settings
+	for style in [bg_normal, bg_selected]:
+		style.corner_radius_top_left = 6
+		style.corner_radius_top_right = 6
+		# Increase horizontal margins significantly to make tabs wider, focusing on width over height
+		style.content_margin_left = 44 if is_portrait else 16
+		style.content_margin_right = 44 if is_portrait else 16
+		# Modestly increase vertical padding
+		style.content_margin_top = 16 if is_portrait else 8
+		style.content_margin_bottom = 16 if is_portrait else 8
+
+	tab_bar.add_theme_stylebox_override("tab_unselected", bg_normal)
+	tab_bar.add_theme_stylebox_override("tab_selected", bg_selected)
 
 
 # --- Custom Tooltip Override ---

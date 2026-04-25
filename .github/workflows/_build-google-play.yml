@@ -111,6 +111,11 @@ jobs:
 
       - name: Restore Android Libraries
         run: |
+          # Save our custom Gradle files (template extraction will overwrite them)
+          cp android/build/build.gradle /tmp/build.gradle.custom
+          cp android/build/settings.gradle /tmp/settings.gradle.custom
+          cp android/build/google-services.json /tmp/google-services.json 2>/dev/null || true
+
           # The .aar files are excluded from the repo due to size.
           # We extract them from the Godot export templates provided by setup-godot.
           TEMPLATES_DIR="$HOME/.local/share/godot/export_templates/${{ inputs.godot_version }}.stable"
@@ -119,14 +124,16 @@ jobs:
           if [ -f "$SOURCE_ZIP" ]; then
             echo "Found templates zip at $SOURCE_ZIP"
             mkdir -p android/build/
-            unzip -o "$SOURCE_ZIP" "libs/*" -d android/build/
+            unzip -o "$SOURCE_ZIP" -d android/build/
+            touch android/build/.gdignore
           else
             echo "Templates zip not found at $SOURCE_ZIP, searching..."
             SOURCE_ZIP=$(find $HOME -name "android_source.zip" | head -n 1)
             if [ -n "$SOURCE_ZIP" ]; then
               echo "Found source zip at $SOURCE_ZIP"
               mkdir -p android/build/
-              unzip -o "$SOURCE_ZIP" "libs/*" -d android/build/
+              unzip -o "$SOURCE_ZIP" -d android/build/
+              touch android/build/.gdignore
             else
               echo "Error: Could not find android_source.zip. Listing home for debug:"
               ls -R $HOME/.local/share/godot || true
@@ -134,17 +141,22 @@ jobs:
             fi
           fi
 
+          # Restore our customizations (google-services plugin + config)
+          cp /tmp/build.gradle.custom android/build/build.gradle
+          cp /tmp/settings.gradle.custom android/build/settings.gradle
+          cp /tmp/google-services.json android/build/google-services.json 2>/dev/null || true
+
+      - name: Import Assets
+        run: godot --headless --import
+
       - name: Export Android
         run: |
           mkdir -p build/android
-          godot --headless --export-release "Android (Play Store)" build/android/Desolate_Frontiers.aab
+          godot --headless --log-file /tmp/godot_android.log --export-release "Android (Play Store)" build/android/Desolate_Frontiers.aab
 
-      - name: Deploy to Play Store
+      - name: Upload Android Artifact
         if: success()
-        uses: r0adkll/upload-google-play@v1
+        uses: actions/upload-artifact@v4
         with:
-          serviceAccountJsonPlainText: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
-          packageName: com.ooridata.desolate_frontiers
-          releaseFiles: build/android/Desolate_Frontiers.aab
-          track: internal # Default to internal for safety
-          status: draft # Default to draft
+          name: android-build
+          path: build/android/Desolate_Frontiers.aab

@@ -239,7 +239,11 @@ static func build_price_presenter(item_data_source: Dictionary, mode: String, qu
                 unit_weight = float(item_data_source.get("unit_weight"))
             elif item_data_source.has("weight") and item_data_source.has("quantity") and float(item_data_source.get("quantity", 0.0)) > 0.0:
                 unit_weight = float(item_data_source.get("weight", 0.0)) / float(item_data_source.get("quantity", 1.0))
+        if not is_finite(unit_weight):
+            unit_weight = 0.0
         var added_weight := unit_weight * float(quantity)
+        if not is_finite(added_weight):
+            added_weight = 0.0
 
         var unit_volume := 0.0
         if selected_item and (selected_item is Dictionary):
@@ -252,8 +256,12 @@ static func build_price_presenter(item_data_source: Dictionary, mode: String, qu
                 unit_volume = float(item_data_source.get("unit_volume"))
             elif item_data_source.has("volume") and item_data_source.has("quantity") and float(item_data_source.get("quantity", 0.0)) > 0.0:
                 unit_volume = float(item_data_source.get("volume", 0.0)) / float(item_data_source.get("quantity", 1.0))
+        if not is_finite(unit_volume):
+            unit_volume = 0.0
         var added_volume := unit_volume * float(quantity)
-
+        if not is_finite(added_volume) or added_volume > 1000000.0:
+            added_volume = 0.0
+        
         if mode == "sell":
             added_weight = -added_weight
             added_volume = -added_volume

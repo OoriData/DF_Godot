@@ -163,6 +163,8 @@ In [Scripts/Menus/vendor_trade_panel.gd](../../Scripts/Menus/vendor_trade_panel.
 	- `action_button.pressed` → `_on_action_button_pressed`
 	- `install_button.pressed` → `_on_install_button_pressed`
 
+> **Mobile note**: `quantity_spinbox` (`%QuantitySpinBox`) is a `QuantityWidget` ([Scripts/UI/quantity_widget.gd](../../Scripts/UI/quantity_widget.gd)), not a `SpinBox`. `QuantityWidget` exposes the same API (`value`, `max_value`, `step`, `value_changed`) but renders large `+`/`-` buttons for touchscreen usability. All controllers access it via the same `quantity_spinbox` reference.
+
 - Discovers services (autoloads) by path:
 	- `/root/GameStore` → `_store`
 	- `/root/SignalHub` → `_hub`

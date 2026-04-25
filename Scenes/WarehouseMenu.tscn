@@ -1,6 +1,8 @@
 [gd_scene load_steps=5 format=3 uid="uid://warehouse_menu_scene"]
 
 [ext_resource type="Script" path="res://Scripts/Menus/warehouse_menu.gd" id="1"]
+[ext_resource type="Script" path="res://Scripts/UI/responsive_list_adapter.gd" id="2_resp"]
+[ext_resource type="Script" path="res://Scripts/UI/quantity_widget.gd" id="2_qw"]
 
 [sub_resource type="StyleBoxFlat" id="1"]
 bg_color = Color(0.12, 0.15, 0.19, 1)
@@ -30,17 +32,23 @@ corner_radius_bottom_right = 3
 
 [node name="WarehouseMenu" type="Control"]
 layout_mode = 3
+anchors_preset = 15
 anchor_right = 1.0
 anchor_bottom = 1.0
-mouse_filter = 2
+grow_horizontal = 2
+grow_vertical = 2
 script = ExtResource("1")
 
+
+
 [node name="MainVBox" type="VBoxContainer" parent="."]
-layout_mode = 2
+layout_mode = 1
+anchors_preset = 15
 anchor_right = 1.0
 anchor_bottom = 1.0
-size_flags_vertical = 3
-custom_minimum_size = Vector2(0, 300)
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 1
 
 [node name="TopBarHBox" type="HBoxContainer" parent="MainVBox"]
 layout_mode = 2
@@ -61,14 +69,19 @@ text = "Buy"
 [node name="Body" type="VBoxContainer" parent="MainVBox"]
 layout_mode = 2
 size_flags_vertical = 3
+mouse_filter = 1
 
 [node name="OwnedTabs" type="TabContainer" parent="MainVBox/Body"]
 layout_mode = 2
 size_flags_vertical = 3
+mouse_filter = 1
+
+
 
 [node name="Overview" type="VBoxContainer" parent="MainVBox/Body/OwnedTabs"]
 layout_mode = 2
 size_flags_vertical = 3
+mouse_filter = 1
 
 [node name="SummaryLabel" type="Label" parent="MainVBox/Body/OwnedTabs/Overview"]
 layout_mode = 2
@@ -87,7 +100,7 @@ size_flags_horizontal = 3
 value = 0.0
 max_value = 1.0
 show_percentage = false
-custom_minimum_size = Vector2(0, 22)
+custom_minimum_size = Vector2(0, 100)
 theme_override_styles/background = SubResource("1")
 theme_override_styles/fill = SubResource("2")
 
@@ -104,7 +117,7 @@ size_flags_horizontal = 3
 value = 0.0
 max_value = 1.0
 show_percentage = false
-custom_minimum_size = Vector2(0, 22)
+custom_minimum_size = Vector2(0, 100)
 theme_override_styles/background = SubResource("1")
 theme_override_styles/fill = SubResource("3")
 
@@ -133,6 +146,8 @@ text = "Upgrade Vehicle"
 [node name="Cargo" type="VBoxContainer" parent="MainVBox/Body/OwnedTabs"]
 layout_mode = 2
 size_flags_vertical = 3
+mouse_filter = 1
+size_flags_vertical = 3
 
 [node name="CargoUsageLabel" type="Label" parent="MainVBox/Body/OwnedTabs/Cargo"]
 layout_mode = 2
@@ -144,16 +159,19 @@ text = "Store cargo from convoy"
 
 [node name="CargoStoreHBox" type="HBoxContainer" parent="MainVBox/Body/OwnedTabs/Cargo"]
 layout_mode = 2
+size_flags_vertical = 0
+mouse_filter = 1
 
 [node name="CargoStoreDropdown" type="OptionButton" parent="MainVBox/Body/OwnedTabs/Cargo/CargoStoreHBox"]
 layout_mode = 2
 size_flags_horizontal = 3
 
-[node name="CargoQtyStore" type="SpinBox" parent="MainVBox/Body/OwnedTabs/Cargo/CargoStoreHBox"]
+[node name="CargoQtyStore" type="HBoxContainer" parent="MainVBox/Body/OwnedTabs/Cargo/CargoStoreHBox"]
 layout_mode = 2
+mouse_filter = 1
+script = ExtResource("2_qw")
 min_value = 1.0
 max_value = 1000000.0
-step = 1.0
 value = 1.0
 
 [node name="StoreCargoBtn" type="Button" parent="MainVBox/Body/OwnedTabs/Cargo/CargoStoreHBox"]
@@ -166,6 +184,8 @@ text = "Retrieve cargo from warehouse"
 
 [node name="CargoRetrieveHBox" type="HBoxContainer" parent="MainVBox/Body/OwnedTabs/Cargo"]
 layout_mode = 2
+size_flags_vertical = 0
+mouse_filter = 1
 
 [node name="CargoRetrieveDropdown" type="OptionButton" parent="MainVBox/Body/OwnedTabs/Cargo/CargoRetrieveHBox"]
 layout_mode = 2
@@ -175,11 +195,12 @@ size_flags_horizontal = 3
 layout_mode = 2
 size_flags_horizontal = 3
 
-[node name="CargoQtyRetrieve" type="SpinBox" parent="MainVBox/Body/OwnedTabs/Cargo/CargoRetrieveHBox"]
+[node name="CargoQtyRetrieve" type="HBoxContainer" parent="MainVBox/Body/OwnedTabs/Cargo/CargoRetrieveHBox"]
 layout_mode = 2
+mouse_filter = 1
+script = ExtResource("2_qw")
 min_value = 1.0
 max_value = 1000000.0
-step = 1.0
 value = 1.0
 
 [node name="RetrieveCargoBtn" type="Button" parent="MainVBox/Body/OwnedTabs/Cargo/CargoRetrieveHBox"]
@@ -205,6 +226,7 @@ columns = 4
 [node name="Vehicles" type="VBoxContainer" parent="MainVBox/Body/OwnedTabs"]
 layout_mode = 2
 size_flags_vertical = 3
+mouse_filter = 1
 
 [node name="VehicleStoreLabel" type="Label" parent="MainVBox/Body/OwnedTabs/Vehicles"]
 layout_mode = 2
@@ -212,6 +234,7 @@ text = "Store vehicle from convoy"
 
 [node name="VehicleStoreHBox" type="HBoxContainer" parent="MainVBox/Body/OwnedTabs/Vehicles"]
 layout_mode = 2
+size_flags_vertical = 0
 
 [node name="VehicleStoreDropdown" type="OptionButton" parent="MainVBox/Body/OwnedTabs/Vehicles/VehicleStoreHBox"]
 layout_mode = 2
@@ -227,6 +250,7 @@ text = "Retrieve vehicle from warehouse"
 
 [node name="VehicleRetrieveHBox" type="HBoxContainer" parent="MainVBox/Body/OwnedTabs/Vehicles"]
 layout_mode = 2
+size_flags_vertical = 0
 
 [node name="VehicleRetrieveDropdown" type="OptionButton" parent="MainVBox/Body/OwnedTabs/Vehicles/VehicleRetrieveHBox"]
 layout_mode = 2
@@ -242,6 +266,7 @@ text = "Spawn convoy from stored vehicle"
 
 [node name="SpawnHBox" type="HBoxContainer" parent="MainVBox/Body/OwnedTabs/Vehicles"]
 layout_mode = 2
+size_flags_vertical = 0
 
 [node name="SpawnVehicleDropdown" type="OptionButton" parent="MainVBox/Body/OwnedTabs/Vehicles/SpawnHBox"]
 layout_mode = 2

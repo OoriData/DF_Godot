@@ -1,6 +1,7 @@
 [gd_scene load_steps=2 format=3 uid="uid://c53414078170s"]
 
 [ext_resource type="Script" uid="uid://do81c8ifoqgjo" path="res://Scripts/Menus/route_selection_menu.gd" id="1_84q0y"]
+[ext_resource type="Script" path="res://Scripts/UI/responsive_list_adapter.gd" id="2_resp"]
 
 [node name="RouteSelectionMenu" type="Control"]
 layout_mode = 3
@@ -25,27 +26,28 @@ layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
 anchor_bottom = 1.0
-offset_left = 75.0
-offset_top = 50.0
-offset_right = -75.0
-offset_bottom = -50.0
+offset_left = 16.0
+offset_top = 24.0
+offset_right = -16.0
+offset_bottom = -24.0
 grow_horizontal = 2
 grow_vertical = 2
-theme_override_constants/separation = 10
+theme_override_constants/separation = 20
 
 [node name="TitleLabel" type="Label" parent="MainVBox"]
 layout_mode = 2
-theme_override_font_sizes/font_size = 24
+theme_override_font_sizes/font_size = 28
 text = "Journey Details"
 horizontal_alignment = 1
 
 [node name="HSeparator" type="HSeparator" parent="MainVBox"]
 layout_mode = 2
 
-[node name="ColumnsHBox" type="HBoxContainer" parent="MainVBox"]
+[node name="ColumnsHBox" type="BoxContainer" parent="MainVBox"]
 layout_mode = 2
 size_flags_vertical = 3
 theme_override_constants/separation = 20
+vertical = true
 
 [node name="LeftColumn" type="VBoxContainer" parent="MainVBox/ColumnsHBox"]
 layout_mode = 2
@@ -108,6 +110,9 @@ size_flags_vertical = 3
 [node name="VehicleExpensesVBox" type="VBoxContainer" parent="MainVBox/ColumnsHBox/LeftColumn/ScrollContainer"]
 layout_mode = 2
 size_flags_horizontal = 3
+
+[node name="ResponsiveListAdapter" type="Node" parent="MainVBox/ColumnsHBox/LeftColumn/ScrollContainer/VehicleExpensesVBox"]
+script = ExtResource("2_resp")
 
 [node name="PlaceholderLabel" type="Label" parent="MainVBox/ColumnsHBox/LeftColumn/ScrollContainer/VehicleExpensesVBox"]
 layout_mode = 2

@@ -69,14 +69,19 @@ var _pinned_convoy_ids: Array[String] = []
 
 # Pixels on the right side covered by the menu overlay (global/screen space).
 var _menu_occlusion_px_x: float = 0.0
+var _menu_occlusion_px_y: float = 0.0
 var _last_map_screen_rect_for_clamping: Rect2 = Rect2()
 
 
-func set_menu_occlusion_width(px: float) -> void:
-	_menu_occlusion_px_x = maxf(0.0, px)
+func set_menu_occlusion(px_x: float, px_y: float) -> void:
+	_menu_occlusion_px_x = maxf(0.0, px_x)
+	_menu_occlusion_px_y = maxf(0.0, px_y)
 	# Re-clamp currently visible panels immediately so they don't sit under the menu.
 	if _last_map_screen_rect_for_clamping.size != Vector2.ZERO:
 		_reclamp_active_panels(_last_map_screen_rect_for_clamping)
+
+func set_menu_occlusion_width(px: float) -> void:
+	set_menu_occlusion(px, _menu_occlusion_px_y)
 
 
 func _reclamp_active_panels(p_map_screen_rect_for_clamping: Rect2) -> void:
@@ -91,6 +96,8 @@ func _get_effective_clamp_rect_local(p_map_screen_rect_for_clamping: Rect2) -> R
 	var effective_clamp_rect: Rect2 = p_map_screen_rect_for_clamping
 	if _menu_occlusion_px_x > 0.0 and effective_clamp_rect.size.x > 0.0:
 		effective_clamp_rect.size.x = maxf(0.0, effective_clamp_rect.size.x - _menu_occlusion_px_x)
+	if _menu_occlusion_px_y > 0.0 and effective_clamp_rect.size.y > 0.0:
+		effective_clamp_rect.size.y = maxf(0.0, effective_clamp_rect.size.y - _menu_occlusion_px_y)
 	var container_global_transform := _convoy_label_container_ref.get_global_transform_with_canvas()
 	return container_global_transform.affine_inverse() * effective_clamp_rect
 
@@ -595,6 +602,8 @@ func _clamp_panel_position(panel: Panel, p_current_map_screen_rect_for_clamping:
 	var effective_clamp_rect: Rect2 = p_current_map_screen_rect_for_clamping
 	if _menu_occlusion_px_x > 0.0 and effective_clamp_rect.size.x > 0.0:
 		effective_clamp_rect.size.x = maxf(0.0, effective_clamp_rect.size.x - _menu_occlusion_px_x)
+	if _menu_occlusion_px_y > 0.0 and effective_clamp_rect.size.y > 0.0:
+		effective_clamp_rect.size.y = maxf(0.0, effective_clamp_rect.size.y - _menu_occlusion_px_y)
 
 	var container_global_transform = _convoy_label_container_ref.get_global_transform_with_canvas()
 	var clamp_rect_local_to_container = container_global_transform.affine_inverse() * effective_clamp_rect

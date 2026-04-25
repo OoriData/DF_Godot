@@ -19,7 +19,7 @@ corner_radius_top_right = 5
 corner_radius_bottom_right = 5
 corner_radius_bottom_left = 5
 
-[node name="UserInfoDisplay" type="HBoxContainer"]
+[node name="UserInfoDisplay" type="PanelContainer"]
 z_index = 10
 anchors_preset = 10
 anchor_right = 1.0
@@ -27,32 +27,46 @@ offset_bottom = 60.0
 grow_horizontal = 2
 script = ExtResource("1_83a3p")
 
-[node name="UsernameLabel" type="Label" parent="."]
+[node name="HBoxContent" type="HBoxContainer" parent="."]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="UsernameLabel" type="Label" parent="HBoxContent"]
+unique_name_in_owner = true
 layout_mode = 2
 theme_override_styles/normal = SubResource("2_chip_label")
 text = "Player"
 vertical_alignment = 1
 
-[node name="SettingsButton" type="MenuButton" parent="."]
+[node name="SettingsButton" type="MenuButton" parent="HBoxContent"]
+unique_name_in_owner = true
 layout_mode = 2
 text = "Options"
 
-[node name="VSeparator" type="VSeparator" parent="."]
+[node name="ReportBugButton" type="Button" parent="HBoxContent"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_colors/font_color = Color(1, 1, 1, 1)
+text = "Feedback"
+
+[node name="VSeparator" type="VSeparator" parent="HBoxContent"]
 layout_mode = 2
 
-[node name="LeftSpacer" type="Control" parent="."]
+[node name="LeftSpacer" type="Control" parent="HBoxContent"]
 layout_mode = 2
 size_flags_horizontal = 3
 
-[node name="UserMoneyLabel" type="Label" parent="."]
+[node name="UserMoneyLabel" type="Label" parent="HBoxContent"]
+unique_name_in_owner = true
 layout_mode = 2
 text = "$0"
 horizontal_alignment = 1
 vertical_alignment = 1
 
-[node name="RightSpacer" type="Control" parent="."]
+[node name="RightSpacer" type="Control" parent="HBoxContent"]
 layout_mode = 2
 size_flags_horizontal = 3
 
-[node name="ConvoyListPanel" parent="." instance=ExtResource("2_y7b05")]
+[node name="ConvoyListPanel" parent="HBoxContent" instance=ExtResource("2_y7b05")]
 layout_mode = 2
