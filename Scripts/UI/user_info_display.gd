@@ -425,27 +425,37 @@ func _configure_options_dropdown() -> void:
 	if not popup.id_pressed.is_connected(_on_options_menu_id_pressed):
 		popup.id_pressed.connect(_on_options_menu_id_pressed)
 		
+	# Solid Background Styling (Unified for Desktop and Mobile)
+	var popup_style = StyleBoxFlat.new()
+	popup_style.bg_color = Color("#25282a") # Oori Dark Grey
+	popup_style.draw_center = true
+	popup_style.border_width_left = 2
+	popup_style.border_width_right = 2
+	popup_style.border_width_top = 2
+	popup_style.border_width_bottom = 2
+	popup_style.border_color = Color("#393d47") # Oori Grey
+	popup_style.corner_radius_top_left = 6
+	popup_style.corner_radius_top_right = 6
+	popup_style.corner_radius_bottom_left = 6
+	popup_style.corner_radius_bottom_right = 6
+	
 	if _is_mobile():
 		popup.add_theme_font_size_override("font_size", int(16 * 2.2))
 		popup.add_theme_constant_override("v_separation", 48)
 		popup.add_theme_constant_override("item_start_padding", 48)
 		popup.add_theme_constant_override("item_end_padding", 48)
-		var popup_style = StyleBoxFlat.new()
-		popup_style.bg_color = Color(0.12, 0.15, 0.2, 0.98)
 		popup_style.content_margin_left = 32
 		popup_style.content_margin_right = 32
 		popup_style.content_margin_top = 24
 		popup_style.content_margin_bottom = 24
-		popup_style.border_width_left = 1
-		popup_style.border_width_right = 1
-		popup_style.border_width_top = 1
-		popup_style.border_width_bottom = 1
-		popup_style.border_color = Color(0.4, 0.45, 0.5, 0.8)
-		popup_style.corner_radius_top_left = 6
-		popup_style.corner_radius_top_right = 6
-		popup_style.corner_radius_bottom_left = 6
-		popup_style.corner_radius_bottom_right = 6
-		popup.add_theme_stylebox_override("panel", popup_style)
+	else:
+		popup.add_theme_font_size_override("font_size", 16)
+		popup_style.content_margin_left = 12
+		popup_style.content_margin_right = 12
+		popup_style.content_margin_top = 8
+		popup_style.content_margin_bottom = 8
+		
+	popup.add_theme_stylebox_override("panel", popup_style)
 
 
 func _on_options_menu_id_pressed(id: int) -> void:
