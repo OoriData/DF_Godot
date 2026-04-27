@@ -986,6 +986,17 @@ func _on_top_up_button_pressed():
 		top_up_button.disabled = true
 		top_up_button.text = "Top Up (Processing...)"
 
+	# Display a summary banner on the active vendor panel
+	var res_summary_parts: Array = []
+	for res_type in _top_up_plan.get("resources", {}):
+		var r_data: Dictionary = _top_up_plan.resources[res_type]
+		res_summary_parts.append("%d %s" % [int(r_data.total_quantity), res_type.capitalize()])
+	
+	var summary_msg := "Successfully Topped Up: %s for %s" % [", ".join(res_summary_parts), NumberFormat.format_money(_top_up_plan.get("total_cost", 0.0))]
+	var active_panel = get_active_vendor_panel_node()
+	if is_instance_valid(active_panel) and active_panel.has_method("show_transaction_feedback"):
+		active_panel.show_transaction_feedback(summary_msg, "success")
+
 
 func _on_store_user_changed(_user: Dictionary) -> void:
 	# Money changes affect top-up affordability/tooltips.

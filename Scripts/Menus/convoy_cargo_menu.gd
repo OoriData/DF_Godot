@@ -83,7 +83,7 @@ func _cargo_signature(convoy: Dictionary) -> int:
 				continue
 			var d: Dictionary = it
 			var cid := String(d.get("cargo_id", d.get("id", "")))
-			var qty := int(d.get("quantity", d.get("qty", 1)))
+			var qty := NumberFormat.to_i(d.get("quantity", d.get("qty", 1)), 1, "cargo_sig_qty")
 			var uid := String(d.get("part_uid", d.get("uid", "")))
 			rows.append("%s|%s|%s|%s" % [vid, cid, qty, uid])
 
@@ -96,7 +96,7 @@ func _cargo_signature(convoy: Dictionary) -> int:
 				if pd.has("vehicle_id") and pd.get("vehicle_id") != null:
 					continue
 				var cid2 := String(pd.get("cargo_id", pd.get("id", "")))
-				var qty2 := int(pd.get("quantity", pd.get("qty", 1)))
+				var qty2 := NumberFormat.to_i(pd.get("quantity", pd.get("qty", 1)), 1, "cargo_sig_qty2")
 				var uid2 := String(pd.get("part_uid", pd.get("uid", "")))
 				rows.append("%s|%s|%s|%s" % [vid, cid2, qty2, uid2])
 
@@ -1021,21 +1021,22 @@ func _build_cargo_row(vehicle_vbox: VBoxContainer, display_name: String, quantit
 	quality_holder.custom_minimum_size = Vector2(40 if _is_mobile() else 34, 22)
 	quality_holder.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	if item_data.has("quality"):
-		var q_val = int(item_data.get("quality", 0))
-		var q_label := Label.new()
-		q_label.text = "Q" + str(q_val)
-		q_label.add_theme_font_size_override("font_size", _get_font_size(12))
-		q_label.custom_minimum_size = Vector2(40 if _is_mobile() else 34, 22)
-		q_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		q_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-		q_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		if q_val >= 80:
-			q_label.modulate = Color(0.3, 0.85, 0.45, 1)
-		elif q_val >= 50:
-			q_label.modulate = Color(0.85, 0.75, 0.25, 1)
-		else:
-			q_label.modulate = Color(0.85, 0.45, 0.35, 1)
-		quality_holder.add_child(q_label)
+		var q_val = NumberFormat.to_i(item_data.get("quality", 0), 0, "inspect:quality")
+		if q_val > 0:
+			var q_label := Label.new()
+			q_label.text = "Q" + str(q_val)
+			q_label.add_theme_font_size_override("font_size", _get_font_size(12))
+			q_label.custom_minimum_size = Vector2(40 if _is_mobile() else 34, 22)
+			q_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+			q_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+			q_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			if q_val >= 80:
+				q_label.modulate = Color(0.3, 0.85, 0.45, 1)
+			elif q_val >= 50:
+				q_label.modulate = Color(0.85, 0.75, 0.25, 1)
+			else:
+				q_label.modulate = Color(0.85, 0.45, 0.35, 1)
+			quality_holder.add_child(q_label)
 	content_row.add_child(quality_holder)
 
 	# Condition column (or placeholder)
@@ -1043,21 +1044,22 @@ func _build_cargo_row(vehicle_vbox: VBoxContainer, display_name: String, quantit
 	condition_holder.custom_minimum_size = Vector2(40 if _is_mobile() else 34, 22)
 	condition_holder.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	if item_data.has("condition"):
-		var c_val = int(item_data.get("condition", 0))
-		var c_label := Label.new()
-		c_label.text = "C" + str(c_val)
-		c_label.add_theme_font_size_override("font_size", _get_font_size(12))
-		c_label.custom_minimum_size = Vector2(40 if _is_mobile() else 34, 22)
-		c_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		c_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-		c_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		if c_val >= 75:
-			c_label.modulate = Color(0.35, 0.8, 0.95, 1)
-		elif c_val >= 40:
-			c_label.modulate = Color(0.95, 0.6, 0.25, 1)
-		else:
-			c_label.modulate = Color(0.9, 0.35, 0.3, 1)
-		condition_holder.add_child(c_label)
+		var c_val = NumberFormat.to_i(item_data.get("condition", 0), 0, "inspect:condition")
+		if c_val > 0:
+			var c_label := Label.new()
+			c_label.text = "C" + str(c_val)
+			c_label.add_theme_font_size_override("font_size", _get_font_size(12))
+			c_label.custom_minimum_size = Vector2(40 if _is_mobile() else 34, 22)
+			c_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+			c_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+			c_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			if c_val >= 75:
+				c_label.modulate = Color(0.35, 0.8, 0.95, 1)
+			elif c_val >= 40:
+				c_label.modulate = Color(0.95, 0.6, 0.25, 1)
+			else:
+				c_label.modulate = Color(0.9, 0.35, 0.3, 1)
+			condition_holder.add_child(c_label)
 	content_row.add_child(condition_holder)
 
 	vehicle_vbox.add_child(outer_row)
@@ -1147,6 +1149,16 @@ func _create_collapsible_section(title: String, keys: Array, data_copy: Dictiona
 
 	return outer
 
+func _toggle_item_inspect(cargo_id: String, item: Dictionary) -> void:
+	if _open_inspects.has(cargo_id):
+		_open_inspects.erase(cargo_id)
+	else:
+		var item_quantity = NumberFormat.to_i(item.get("quantity", 0), 1, "inspect:qty")
+		_open_inspects[cargo_id] = {
+			"expanded": true,
+			"quantity": item_quantity
+		}
+
 func _aggregate_cargo_item(agg_dict: Dictionary, item: Dictionary, vehicle_name: String = "") -> void:
 	# Use name as aggregation key. Could be improved with a more unique ID if available.
 	var agg_key = _extract_item_display_name(item)
@@ -1162,7 +1174,7 @@ func _aggregate_cargo_item(agg_dict: Dictionary, item: Dictionary, vehicle_name:
 			"items": []
 		}
 
-	var item_quantity = int(item.get("quantity", 0))
+	var item_quantity = NumberFormat.to_i(item.get("quantity", 0), 1, "inspect:qty")
 	if item_quantity <= 0: item_quantity = 1 # Assume 1 if quantity is missing/zero for single items
 
 	agg_dict[agg_key]["total_quantity"] += item_quantity
@@ -1184,10 +1196,10 @@ func _aggregate_cargo_item(agg_dict: Dictionary, item: Dictionary, vehicle_name:
 
 	# --- Determine unit weight and add to total ---
 	var unit_w := 0.0
-	if item.has("unit_weight") and item.get("unit_weight") != null:
-		unit_w = float(item.get("unit_weight", 0.0))
-	elif item.has("weight") and item.get("weight") != null:
-		var total_w = float(item.get("weight", 0.0))
+	if item.has("unit_weight"):
+		unit_w = NumberFormat.to_f(item.get("unit_weight", 0.0), 0.0, "inspect:unit_weight")
+	elif item.has("weight"):
+		var total_w = NumberFormat.to_f(item.get("weight", 0.0), 0.0, "inspect:total_weight")
 		if item_quantity > 0:
 			unit_w = total_w / float(item_quantity)
 	agg_dict[agg_key]["total_weight"] += unit_w * item_quantity
@@ -1196,10 +1208,10 @@ func _aggregate_cargo_item(agg_dict: Dictionary, item: Dictionary, vehicle_name:
 
 	# --- Determine unit volume and add to total ---
 	var unit_v := 0.0
-	if item.has("unit_volume") and item.get("unit_volume") != null:
-		unit_v = float(item.get("unit_volume", 0.0))
-	elif item.has("volume") and item.get("volume") != null:
-		var total_v = float(item.get("volume", 0.0))
+	if item.has("unit_volume"):
+		unit_v = NumberFormat.to_f(item.get("unit_volume", 0.0), 0.0, "inspect:unit_volume")
+	elif item.has("volume"):
+		var total_v = NumberFormat.to_f(item.get("volume", 0.0), 0.0, "inspect:total_volume")
 		if item_quantity > 0:
 			unit_v = total_v / float(item_quantity)
 	agg_dict[agg_key]["total_volume"] += unit_v * item_quantity
@@ -1238,16 +1250,16 @@ func _add_category_section(parent: VBoxContainer, title: String, agg_data: Dicti
 	# In "by_vehicle" organization mode, show mini volume/weight bars for the vehicle
 	# between the name and the inspect button.
 	if vehicle_id != "" and organization_mode == "by_vehicle":
-		var caps: Dictionary = _vehicle_capacity_by_id.get(vehicle_id, {})
-		var total_volume: float = float(caps.get("cargo_capacity", 0.0))
-		var total_weight: float = float(caps.get("weight_capacity", 0.0))
+		var caps = _vehicle_capacity_by_id.get(vehicle_id, {})
+		var total_volume: float = NumberFormat.to_f(caps.get("cargo_capacity", 0.0), 0.0, "vehicle:cap_vol")
+		var total_weight: float = NumberFormat.to_f(caps.get("weight_capacity", 0.0), 0.0, "vehicle:cap_weight")
 
-		var used_volume: float = 0.0
-		var used_weight: float = 0.0
+		var used_volume := 0.0
+		var used_weight := 0.0
 		for v in agg_data.values():
 			if v is Dictionary:
-				used_volume += float((v as Dictionary).get("total_volume", 0.0))
-				used_weight += float((v as Dictionary).get("total_weight", 0.0))
+				used_volume += NumberFormat.to_f((v as Dictionary).get("total_volume", 0.0), 0.0, "vehicle:used_vol")
+				used_weight += NumberFormat.to_f((v as Dictionary).get("total_weight", 0.0), 0.0, "vehicle:used_weight")
 
 		var bars_vbox := VBoxContainer.new()
 		bars_vbox.name = "VehicleMiniBars"
@@ -1665,11 +1677,11 @@ func _populate_by_vehicle():
 			continue
 
 		# Cache per-vehicle capacities for mini bars.
-		var cached_vehicle_id := String((vehicle_data as Dictionary).get("vehicle_id", (vehicle_data as Dictionary).get("id", "")))
-		if cached_vehicle_id != "":
-			_vehicle_capacity_by_id[cached_vehicle_id] = {
-				"cargo_capacity": float((vehicle_data as Dictionary).get("cargo_capacity", (vehicle_data as Dictionary).get("max_volume", 0.0))),
-				"weight_capacity": float((vehicle_data as Dictionary).get("weight_capacity", (vehicle_data as Dictionary).get("max_weight", 0.0)))
+		var vid := String((vehicle_data as Dictionary).get("vehicle_id", (vehicle_data as Dictionary).get("id", "")))
+		if (vehicle_data as Dictionary).has("cargo_capacity") or (vehicle_data as Dictionary).has("max_volume"):
+			_vehicle_capacity_by_id[vid] = {
+				"cargo_capacity": NumberFormat.to_f((vehicle_data as Dictionary).get("cargo_capacity", (vehicle_data as Dictionary).get("max_volume", 0.0)), 0.0, "vehicle_data:cargo_cap"),
+				"weight_capacity": NumberFormat.to_f((vehicle_data as Dictionary).get("weight_capacity", (vehicle_data as Dictionary).get("max_weight", 0.0)), 0.0, "vehicle_data:weight_cap")
 			}
 
 		# A single aggregation dictionary for all cargo within this vehicle.
@@ -1864,6 +1876,16 @@ func _on_inspect_cargo_item_pressed(agg_data: Dictionary, list_container: VBoxCo
 		return
 
 	# Debounce any external refreshes that rebuild the list (e.g., convoy_data_updated)
+	if convoy_data_received.has("vehicle_details_list"):
+		var list = convoy_data_received.get("vehicle_details_list", [])
+		if list is Array:
+			var prev_count := NumberFormat.to_i(list.size(), 0, "rebuild:prev_size")
+			_deferred_convoy_payload = convoy_data_received.duplicate(true)
+			var new_list = _deferred_convoy_payload.get("vehicle_details_list", [])
+			var new_count := NumberFormat.to_i(new_list.size(), 0, "rebuild:new_size")
+			if prev_count != new_count:
+				_diag("refresh", "Vehicle count changed, ignoring suppress", {"old": prev_count, "new": new_count})
+				_suppress_refresh_until_msec = 0
 	_suppress_refresh_until_msec = Time.get_ticks_msec() + 400
 	_diag("inspect", "open_requested", {"suppress_until": _suppress_refresh_until_msec, "name": agg_data.get("display_name", "")})
 
@@ -1947,7 +1969,6 @@ func _reopen_inspects() -> void:
 	_diag("inspect_reopen", "done", {"count": reopen_count})
 
 func _build_inline_inspect_panel(agg_data: Dictionary, _item_row_hbox: HBoxContainer) -> VBoxContainer:
-	var item_data_sample: Dictionary = agg_data["item_data_sample"]
 	_diag("inspect_panel", "build_start", {"name": agg_data.get("display_name", ""), "qty": agg_data.get("total_quantity", 0)})
 	var container := VBoxContainer.new()
 	container.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -1977,6 +1998,13 @@ func _build_inline_inspect_panel(agg_data: Dictionary, _item_row_hbox: HBoxConta
 		frame.add_theme_stylebox_override("panel", ledger)
 	
 	container.add_child(frame)
+	
+	var item_data_sample: Dictionary = agg_data.get("item_data_sample", {})
+	var data_copy: Dictionary = item_data_sample.duplicate(true)
+	# Source of truth for the entire stack.
+	data_copy["quantity"] = agg_data.get("total_quantity", 0)
+	data_copy["weight"] = NumberFormat.to_f(agg_data.get("total_weight", 0.0), 0.0, "inspect:agg_weight")
+	data_copy["volume"] = NumberFormat.to_f(agg_data.get("total_volume", 0.0), 0.0, "inspect:agg_volume")
 
 	var inner := VBoxContainer.new()
 	inner.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -1985,37 +2013,30 @@ func _build_inline_inspect_panel(agg_data: Dictionary, _item_row_hbox: HBoxConta
 
 	# No header controls; panel is toggled via the row button.
 
-	var data_copy: Dictionary = item_data_sample.duplicate(true)
-	# Overwrite/ensure core aggregated values are present and correct.
-	# This is the source of truth for the entire stack. We use .get() and float()
-	# to be defensive against malformed data, ensuring we always have a number to display.
-	data_copy["quantity"] = agg_data["total_quantity"]
-	data_copy["weight"] = float(agg_data.get("total_weight", 0.0))
-	data_copy["volume"] = float(agg_data.get("total_volume", 0.0))
-
 	# Fallback: synthesize totals from unit values if totals are missing/zero
-	var f_qty := float(data_copy.get("quantity", 0))
+	var f_qty := NumberFormat.to_f(data_copy.get("quantity", 0), 1.0, "inspect:f_qty")
 	var unit_w := 0.0
 	var unit_v := 0.0
-	if data_copy.has("unit_weight") and data_copy.get("unit_weight") != null:
-		unit_w = float(data_copy.get("unit_weight", 0.0))
-	elif data_copy.has("weight") and f_qty > 0 and float(data_copy.get("weight", 0.0)) > 0:
-		# Infer unit from total if needed
-		unit_w = float(data_copy.get("weight", 0.0)) / f_qty
-	if data_copy.has("unit_volume") and data_copy.get("unit_volume") != null:
-		unit_v = float(data_copy.get("unit_volume", 0.0))
-	elif data_copy.has("volume") and f_qty > 0 and float(data_copy.get("volume", 0.0)) > 0:
-		unit_v = float(data_copy.get("volume", 0.0)) / f_qty
+	
+	if data_copy.has("unit_weight"):
+		unit_w = NumberFormat.to_f(data_copy.get("unit_weight", 0.0), 0.0, "inspect:u_weight")
+	elif data_copy.has("weight") and f_qty > 0 and NumberFormat.to_f(data_copy.get("weight", 0.0), 0.0, "inspect:weight_check") > 0:
+		unit_w = NumberFormat.to_f(data_copy.get("weight", 0.0), 0.0, "inspect:weight_calc") / f_qty
+	
+	if data_copy.has("unit_volume"):
+		unit_v = NumberFormat.to_f(data_copy.get("unit_volume", 0.0), 0.0, "inspect:u_volume")
+	elif data_copy.has("volume") and f_qty > 0 and NumberFormat.to_f(data_copy.get("volume", 0.0), 0.0, "inspect:volume_check") > 0:
+		unit_v = NumberFormat.to_f(data_copy.get("volume", 0.0), 0.0, "inspect:volume_calc") / f_qty
 
-	if float(data_copy.get("weight", 0.0)) <= 0.0 and unit_w > 0.0 and f_qty > 0.0:
+	if NumberFormat.to_f(data_copy.get("weight", 0.0), 0.0, "inspect:weight_final") <= 0.0 and unit_w > 0.0 and f_qty > 0.0:
 		data_copy["weight"] = unit_w * f_qty
-	if float(data_copy.get("volume", 0.0)) <= 0.0 and unit_v > 0.0 and f_qty > 0.0:
+	if NumberFormat.to_f(data_copy.get("volume", 0.0), 0.0, "inspect:volume_final") <= 0.0 and unit_v > 0.0 and f_qty > 0.0:
 		data_copy["volume"] = unit_v * f_qty
 
 	# Ensure unit values exist for display in "Other Details"
-	var f_quantity = float(data_copy.get("quantity", 0))
-	var total_w = float(data_copy.get("weight", 0))
-	var total_v = float(data_copy.get("volume", 0))
+	var f_quantity = NumberFormat.to_f(data_copy.get("quantity", 0), 1.0, "inspect:f_qty2")
+	var total_w = NumberFormat.to_f(data_copy.get("weight", 0), 0.0, "inspect:total_w")
+	var total_v = NumberFormat.to_f(data_copy.get("volume", 0), 0.0, "inspect:total_v")
 	if not data_copy.has("unit_weight") and f_quantity > 0 and total_w > 0:
 		data_copy["unit_weight"] = total_w / f_quantity
 	if not data_copy.has("unit_volume") and f_quantity > 0 and total_v > 0:

@@ -115,7 +115,7 @@ static func rebuild_info_sections(item_info_rich_text: RichTextLabel, item_data_
 		var fb: Dictionary = panel.get("_feedback_data")
 		var fb_panel: PanelContainer = PanelContainer.new()
 		var fb_sb: StyleBoxFlat = StyleBoxFlat.new()
-		var fb_color: Color = Color(0.15, 0.45, 0.15, 0.8) if fb.get("type") == "success" else Color(0.45, 0.15, 0.15, 0.8)
+		var fb_color: Color = Color(0.15, 0.45, 0.15, 1.0) if fb.get("type") == "success" else Color(0.45, 0.15, 0.15, 1.0)
 		fb_sb.bg_color = fb_color
 		fb_sb.border_color = Color(1, 1, 1, 0.3)
 		fb_sb.border_width_all = 1

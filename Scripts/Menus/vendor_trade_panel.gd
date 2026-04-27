@@ -1601,7 +1601,8 @@ func _on_api_transaction_result(result: Dictionary) -> void:
 	VendorPanelRefreshController.on_api_transaction_result(self, result)
 	
 	# Show success feedback and flash bars
-	show_transaction_feedback(msg, "success")
+	if bool(_transaction_in_progress):
+		show_transaction_feedback(msg, "success")
 	_flash_capacity_bars()
 
 	if is_instance_valid(_hub) and _hub.has_signal("user_refresh_requested"):

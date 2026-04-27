@@ -63,3 +63,36 @@ static func format_money(amount: Variant, currency_prefix: String = "$") -> Stri
 	var s = String.num(abs_val, 2)
 	var out = format_number(s)
 	return ("-" if neg else "") + currency_prefix + out
+
+static func to_f(v: Variant, default_val: float = 0.0, context: String = "") -> float:
+	if v is float or v is int:
+		return float(v)
+	if v == null:
+		return default_val
+	if v is String:
+		if (v as String).is_valid_float():
+			return v.to_float()
+	
+	# Unexpected type (Dictionary, Array, etc.)
+	if Engine.has_singleton("Logger"):
+		Engine.get_singleton("Logger").warn("Numeric Conversion: Unexpected type %s for context '%s': %s", type_string(typeof(v)), context, str(v))
+	else:
+		print("[WARN] Numeric Conversion: Unexpected type %s for context '%s': %s" % [type_string(typeof(v)), context, str(v)])
+		
+	return default_val
+
+static func to_i(v: Variant, default_val: int = 0, context: String = "") -> int:
+	if v is int or v is float:
+		return int(v)
+	if v == null:
+		return default_val
+	if v is String:
+		if (v as String).is_valid_int():
+			return v.to_int()
+			
+	if Engine.has_singleton("Logger"):
+		Engine.get_singleton("Logger").warn("Numeric Conversion: Unexpected type %s for context '%s': %s", type_string(typeof(v)), context, str(v))
+	else:
+		print("[WARN] Numeric Conversion: Unexpected type %s for context '%s': %s" % [type_string(typeof(v)), context, str(v)])
+		
+	return default_val
