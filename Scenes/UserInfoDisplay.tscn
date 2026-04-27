@@ -23,21 +23,32 @@ corner_radius_bottom_left = 5
 z_index = 10
 anchors_preset = 10
 anchor_right = 1.0
-offset_bottom = 60.0
+offset_bottom = 68.0
 grow_horizontal = 2
 script = ExtResource("1_83a3p")
 
 [node name="HBoxContent" type="HBoxContainer" parent="."]
 unique_name_in_owner = true
 layout_mode = 2
-theme_override_constants/separation = 8
+theme_override_constants/separation = 12
 
-[node name="UsernameLabel" type="Label" parent="HBoxContent"]
+[node name="LeftPadding" type="Control" parent="HBoxContent"]
+custom_minimum_size = Vector2(16, 0)
+layout_mode = 2
+
+[node name="UserChip" type="PanelContainer" parent="HBoxContent"]
 unique_name_in_owner = true
 layout_mode = 2
-theme_override_styles/normal = SubResource("2_chip_label")
+size_flags_vertical = 4
+
+[node name="UsernameLabel" type="Label" parent="HBoxContent/UserChip"]
+unique_name_in_owner = true
+layout_mode = 2
 text = "Player"
 vertical_alignment = 1
+
+[node name="VSeparator" type="VSeparator" parent="HBoxContent"]
+layout_mode = 2
 
 [node name="SettingsButton" type="MenuButton" parent="HBoxContent"]
 unique_name_in_owner = true
@@ -50,16 +61,19 @@ layout_mode = 2
 theme_override_colors/font_color = Color(1, 1, 1, 1)
 text = "Feedback"
 
-[node name="VSeparator" type="VSeparator" parent="HBoxContent"]
-layout_mode = 2
-
 [node name="LeftSpacer" type="Control" parent="HBoxContent"]
 layout_mode = 2
 size_flags_horizontal = 3
 
-[node name="UserMoneyLabel" type="Label" parent="HBoxContent"]
+[node name="MoneyChip" type="PanelContainer" parent="HBoxContent"]
 unique_name_in_owner = true
 layout_mode = 2
+size_flags_vertical = 4
+
+[node name="UserMoneyLabel" type="Label" parent="HBoxContent/MoneyChip"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_font_sizes/font_size = 20
 text = "$0"
 horizontal_alignment = 1
 vertical_alignment = 1
@@ -69,4 +83,8 @@ layout_mode = 2
 size_flags_horizontal = 3
 
 [node name="ConvoyListPanel" parent="HBoxContent" instance=ExtResource("2_y7b05")]
+layout_mode = 2
+
+[node name="RightPadding" type="Control" parent="HBoxContent"]
+custom_minimum_size = Vector2(16, 0)
 layout_mode = 2

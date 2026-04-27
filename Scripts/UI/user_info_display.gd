@@ -8,6 +8,8 @@ signal convoy_menu_requested(convoy_id: String)
 @onready var user_money_label: Label = %UserMoneyLabel
 @onready var settings_button: MenuButton = %SettingsButton
 @onready var report_bug_button: Button = %ReportBugButton
+@onready var user_chip: PanelContainer = %UserChip
+@onready var money_chip: PanelContainer = %MoneyChip
 var _settings_menu_instance: CanvasLayer
 var _bug_report_window: BugReportWindow
 var _discord_popup: PopupPanel
@@ -182,31 +184,122 @@ func _update_mobile_sizing() -> void:
 		if is_instance_valid(report_bug_button): report_bug_button.custom_minimum_size.y = 64
 
 func _apply_desktop_styling() -> void:
-	custom_minimum_size.y = 68 # Reverted from 56 (closer to original 48-60 range)
+	custom_minimum_size.y = 60 # Balanced height
 	
-	var boost = 1.3 # Slightly reduced from 1.2
-	var btn_fs = settings_button.get_theme_font_size("font_size")
-	if btn_fs <= 0: btn_fs = 16
+	# Oori Theme Palette
+	var oori_grey = Color("#393d47")
+	var oori_dark_grey = Color("#25282a")
+	var oori_white = Color("#dbe2e9")
+	var oori_yellow = Color("#f3d54e")
+	var oori_red = Color("#8a2b2b")
+
+	# 1. Main Background Style (Oori Texture - Aspect Covered)
+	var bg_rect = get_node_or_null("OoriBackground")
+	if not is_instance_valid(bg_rect):
+		bg_rect = TextureRect.new()
+		bg_rect.name = "OoriBackground"
+		bg_rect.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		bg_rect.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+		bg_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		add_child(bg_rect)
+		move_child(bg_rect, 0) # Put in back
+		bg_rect.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	
-	settings_button.add_theme_font_size_override("font_size", int(btn_fs * boost))
-	settings_button.custom_minimum_size.y = 52 # Reverted from 44
+	var bg_tex = load("res://Assets/Themes/Oori Backround.png")
+	if bg_tex:
+		bg_rect.texture = bg_tex
 	
-	if is_instance_valid(report_bug_button):
-		report_bug_button.add_theme_font_size_override("font_size", int(btn_fs * boost))
-		report_bug_button.custom_minimum_size.y = 52
-		var bug_style = StyleBoxFlat.new()
-		bug_style.bg_color = Color(0.6, 0.1, 0.1, 0.9)
-		bug_style.corner_radius_top_left = 4
-		bug_style.corner_radius_top_right = 4
-		bug_style.corner_radius_bottom_left = 4
-		bug_style.corner_radius_bottom_right = 4
-		bug_style.content_margin_left = 16
-		bug_style.content_margin_right = 16
-		report_bug_button.add_theme_stylebox_override("normal", bug_style)
+	# Transparent Panel so the background is visible
+	var main_style = StyleBoxFlat.new()
+	main_style.bg_color = Color(0, 0, 0, 0) # Transparent
+	main_style.border_width_bottom = 2
+	main_style.border_color = oori_grey
+	main_style.content_margin_top = 4
+	main_style.content_margin_bottom = 4
+	add_theme_stylebox_override("panel", main_style)
+
+	# 2. Chips (Username & Money)
+	if is_instance_valid(user_chip):
+		var opaque_style = StyleBoxFlat.new()
+		opaque_style.bg_color = oori_dark_grey # Solid Oori Dark Grey
+		opaque_style.border_width_left = 3
+		opaque_style.border_width_right = 3
+		opaque_style.border_width_top = 3
+		opaque_style.border_width_bottom = 3
+		opaque_style.border_color = oori_grey
+		opaque_style.corner_radius_top_left = 4
+		opaque_style.corner_radius_top_right = 4
+		opaque_style.corner_radius_bottom_left = 4
+		opaque_style.corner_radius_bottom_right = 4
+		opaque_style.content_margin_left = 12
+		opaque_style.content_margin_right = 12
 		
-		var bug_style_hover = bug_style.duplicate()
-		bug_style_hover.bg_color = Color(0.8, 0.15, 0.15, 1.0)
-		report_bug_button.add_theme_stylebox_override("hover", bug_style_hover)
+		user_chip.add_theme_stylebox_override("panel", opaque_style)
+		username_label.add_theme_font_size_override("font_size", 16)
+		username_label.add_theme_color_override("font_color", oori_white)
+	
+	if is_instance_valid(money_chip):
+		var vault_style = StyleBoxFlat.new()
+		vault_style.bg_color = oori_dark_grey.lerp(Color.BLACK, 0.2) # Deep recessed look
+		vault_style.border_width_left = 3
+		vault_style.border_width_right = 3
+		vault_style.border_width_top = 3
+		vault_style.border_width_bottom = 3
+		vault_style.border_color = oori_grey
+		vault_style.corner_radius_top_left = 4
+		vault_style.corner_radius_top_right = 4
+		vault_style.corner_radius_bottom_left = 4
+		vault_style.corner_radius_bottom_right = 4
+		vault_style.content_margin_left = 20
+		vault_style.content_margin_right = 20
+		
+		money_chip.add_theme_stylebox_override("panel", vault_style)
+		user_money_label.add_theme_font_size_override("font_size", 24)
+		user_money_label.add_theme_color_override("font_color", oori_yellow)
+
+	# 3. Buttons (Oori Professional Style with Full Borders)
+	var btn_normal = StyleBoxFlat.new()
+	btn_normal.bg_color = oori_grey
+	btn_normal.border_width_left = 3
+	btn_normal.border_width_right = 3
+	btn_normal.border_width_top = 3
+	btn_normal.border_width_bottom = 5
+	btn_normal.border_color = oori_grey.lerp(Color.BLACK, 0.3)
+	btn_normal.corner_radius_top_left = 4
+	btn_normal.corner_radius_top_right = 4
+	btn_normal.corner_radius_bottom_left = 4
+	btn_normal.corner_radius_bottom_right = 4
+	btn_normal.content_margin_left = 16
+	btn_normal.content_margin_right = 16
+	
+	var btn_hover = btn_normal.duplicate()
+	btn_hover.bg_color = oori_grey.lerp(oori_white, 0.1)
+	btn_hover.border_color = oori_white.lerp(Color.BLACK, 0.2)
+	
+	if is_instance_valid(settings_button):
+		settings_button.flat = false
+		settings_button.add_theme_stylebox_override("normal", btn_normal)
+		settings_button.add_theme_stylebox_override("hover", btn_hover)
+		settings_button.add_theme_stylebox_override("pressed", btn_hover)
+		settings_button.add_theme_color_override("font_color", oori_white)
+		settings_button.add_theme_font_size_override("font_size", 16)
+		settings_button.custom_minimum_size = Vector2(120, 38)
+		
+	if is_instance_valid(report_bug_button):
+		var bug_normal = btn_normal.duplicate()
+		bug_normal.bg_color = oori_red
+		bug_normal.border_color = oori_red.lerp(Color.BLACK, 0.3)
+		
+		var bug_hover = bug_normal.duplicate()
+		bug_hover.bg_color = oori_red.lerp(Color.WHITE, 0.1)
+		
+		report_bug_button.flat = false
+		report_bug_button.add_theme_stylebox_override("normal", bug_normal)
+		report_bug_button.add_theme_stylebox_override("hover", bug_hover)
+		report_bug_button.add_theme_stylebox_override("pressed", bug_hover)
+		report_bug_button.add_theme_color_override("font_color", oori_white)
+		report_bug_button.add_theme_font_size_override("font_size", 16)
+		report_bug_button.custom_minimum_size = Vector2(120, 38)
 
 func _update_safe_margins() -> void:
 	if not _is_mobile():
@@ -272,10 +365,8 @@ func _notification(what: int) -> void:
 
 
 func _draw() -> void:
-	# Explicit background so the navbar stays grey even if the project clear color is black.
-	if size.x <= 0.0 or size.y <= 0.0:
-		return
-	draw_rect(Rect2(Vector2.ZERO, size), navbar_background_color, true)
+	# Background is now handled via StyleBox on the PanelContainer for better gradient support.
+	pass
 
 func _on_user_data_updated(user_data: Dictionary):
 	_update_display(user_data)

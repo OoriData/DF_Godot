@@ -308,10 +308,36 @@ func _update_button_layout() -> void:
 		rtl.add_theme_font_size_override("normal_font_size", _get_font_size(16))
 		rtl.offset_top = 22
 	else:
-		# Desktop
-		toggle_button.custom_minimum_size = Vector2(240, 52)
-		rtl.add_theme_font_size_override("normal_font_size", _get_font_size(16))
-		rtl.offset_top = 6
+		# Desktop - Oori Theme
+		var oori_grey = Color("#393d47")
+		var oori_dark_grey = Color("#25282a")
+		var oori_white = Color("#dbe2e9")
+
+		toggle_button.custom_minimum_size = Vector2(240, 38)
+		rtl.add_theme_font_size_override("normal_font_size", 16)
+		rtl.offset_top = 4
+		
+		var btn_style = StyleBoxFlat.new()
+		btn_style.bg_color = oori_grey
+		btn_style.border_width_left = 3
+		btn_style.border_width_right = 3
+		btn_style.border_width_top = 3
+		btn_style.border_width_bottom = 5
+		btn_style.border_color = oori_grey.lerp(Color.BLACK, 0.3)
+		btn_style.corner_radius_top_left = 4
+		btn_style.corner_radius_top_right = 4
+		btn_style.corner_radius_bottom_left = 4
+		btn_style.corner_radius_bottom_right = 4
+		
+		var btn_hover = btn_style.duplicate()
+		btn_hover.bg_color = oori_grey.lerp(oori_white, 0.1)
+		btn_hover.border_color = oori_white.lerp(Color.BLACK, 0.2)
+		
+		toggle_button.flat = false
+		toggle_button.add_theme_stylebox_override("normal", btn_style)
+		toggle_button.add_theme_stylebox_override("hover", btn_hover)
+		toggle_button.add_theme_stylebox_override("pressed", btn_hover)
+		toggle_button.add_theme_color_override("font_color", oori_white)
 	
 	_update_toggle_button_display(convoy_popup.is_visible() if is_instance_valid(convoy_popup) else false)
 
