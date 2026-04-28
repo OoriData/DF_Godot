@@ -44,8 +44,6 @@ func _emit_install_requested(item: Variant, quantity: int, vendor_id: String) ->
 @onready var action_button: Button = %ActionButton
 @onready var install_button: Button = %InstallButton
 @onready var transaction_quantity_container: HBoxContainer = %TransactionQuantityContainer
-@onready var convoy_money_label: Label = %ConvoyMoneyLabel
-@onready var convoy_cargo_label: Label = %ConvoyCargoLabel
 @onready var trade_mode_tab_container: TabContainer = %TradeModeTabContainer
 @onready var toast_notification: Control = %ToastNotification
 @onready var cargo_sort_button: MenuButton = get_node_or_null("%CargoSortButton")
@@ -220,7 +218,7 @@ func _get_effective_projection_deltas() -> Dictionary:
 			"volume": float(_pending_tx.get("volume_delta", 0.0)),
 			"weight": float(_pending_tx.get("weight_delta", 0.0)),
 		}
-	if not (_panel_initialized and selected_item):
+	if not selected_item:
 		return {"volume": 0.0, "weight": 0.0}
 
 	var item_data_source = selected_item.item_data if selected_item.has("item_data") and not selected_item.item_data.is_empty() else selected_item
@@ -850,9 +848,6 @@ func _ready() -> void:
 	if is_instance_valid(_api) and _api.has_signal("cargo_data_received") and not _api.cargo_data_received.is_connected(_on_cargo_data_received):
 		_api.cargo_data_received.connect(_on_cargo_data_received)
 
-	# Enable wrapping for convoy cargo label so multi-line text keeps panel narrow
-	if is_instance_valid(convoy_cargo_label):
-		convoy_cargo_label.autowrap_mode = TextServer.AUTOWRAP_WORD
 
 	# Action buttons minimum sizes are handled by _update_layout_scaling()
 	if is_instance_valid(action_button):
