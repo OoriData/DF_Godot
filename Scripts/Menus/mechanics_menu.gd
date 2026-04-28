@@ -1,5 +1,8 @@
 extends MenuBase
 
+func _init() -> void:
+	auto_apply_oori_background = false
+
 # Signals
 signal changes_committed(convoy_id: String, vehicle_id: String, swaps: Array, estimated_cost: float)
 

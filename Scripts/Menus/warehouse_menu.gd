@@ -1,5 +1,8 @@
 extends MenuBase
 
+func _init() -> void:
+	auto_apply_oori_background = false
+
 const ItemsData = preload("res://Scripts/Data/Items.gd")
 
 @onready var title_label: Label = $MainVBox/TopBarHBox/TitleLabel

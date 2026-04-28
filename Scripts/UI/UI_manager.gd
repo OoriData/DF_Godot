@@ -44,7 +44,7 @@ var settlement_label_settings: LabelSettings
 @export var base_convoy_panel_padding_h: float = 13.3 # 10.0 * 1.33
 @export var base_convoy_panel_padding_v: float = 6.65 # 5.0 * 1.33
 ## Background color for convoy label panels.
-@export var convoy_panel_background_color: Color = Color(0.12, 0.12, 0.15, 0.88) 
+@export var convoy_panel_background_color: Color = Color("25282adc") # Oori Dark Grey with 0.86 alpha
 ## Target screen border width for convoy label panels. Adjust for desired on-screen look. (Prev: 1.0)
 @export var base_convoy_panel_border_width: float = 1.66 # 1.25 * 1.33
 ## Minimum corner radius to set on the panel node.
@@ -68,7 +68,7 @@ var settlement_label_settings: LabelSettings
 ## Target screen vertical padding inside settlement label panels. Adjust for desired on-screen look. (Prev: 2.0)
 @export var base_settlement_panel_padding_v: float = 3.33 # 2.5 * 1.33
 ## Background color for settlement label panels.
-@export var settlement_panel_background_color: Color = Color(0.15, 0.12, 0.12, 0.85) 
+@export var settlement_panel_background_color: Color = Color("25282ad9") # Oori Dark Grey with 0.85 alpha
 
 @export_group("Label Positioning")
 ## Amount to shift a label panel vertically to avoid collision with another.

@@ -37,6 +37,11 @@ func initialize(p_map_view: Control, p_camera_controller: Node, p_interaction_ma
 		if map_interaction_manager.has_signal("settlement_clicked") and not map_interaction_manager.is_connected("settlement_clicked", Callable(self, "_on_settlement_clicked")):
 			map_interaction_manager.settlement_clicked.connect(_on_settlement_clicked)
 
+	# TEST: Remove the modal scrim (dim layer) to see if it's contributing to the darkness
+	var scrim = get_node_or_null("ModalLayer/Scrim")
+	if is_instance_valid(scrim):
+		scrim.color.a = 0.0
+
 	# Connect to the MapView's specific input signal
 	if is_instance_valid(map_view):
 		if not map_view.is_connected("gui_input", Callable(self, "_on_map_view_gui_input")):
@@ -371,38 +376,24 @@ func _update_menu_container_style():
 	if not is_instance_valid(menu_container):
 		return
 		
-	var style: StyleBoxFlat = menu_container.get_theme_stylebox("panel")
-	if style:
-		style = style.duplicate()
-	else:
-		style = StyleBoxFlat.new()
-		
-	var bottom_margin = _get_bottom_safe_margin()
+	# Use StyleBoxEmpty to guarantee absolutely no background is drawn natively
+	var style = StyleBoxEmpty.new()
 	
-	if _is_portrait():
-		# Bottom sheet style: rounded top, square bottom
-		style.corner_radius_top_left = 12
-		style.corner_radius_top_right = 12
-		style.corner_radius_bottom_left = 0
-		style.corner_radius_bottom_right = 0
-		# Increase side margins slightly for portrait
-		style.content_margin_left = 12
-		style.content_margin_right = 12
-		style.content_margin_top = 10
-		# Push content up to respect safe area
-		style.content_margin_bottom = 10.0 + bottom_margin
-	else:
-		# Sidebar style: rounded left, square right
-		style.corner_radius_top_left = 12
-		style.corner_radius_bottom_left = 12
-		style.corner_radius_top_right = 0
-		style.corner_radius_bottom_right = 0
-		style.content_margin_left = 8
-		style.content_margin_right = 8
-		style.content_margin_top = 6
-		style.content_margin_bottom = 6
-		
 	menu_container.add_theme_stylebox_override("panel", style)
+	
+	# Apply background texture if not already present
+	var bg = menu_container.get_node_or_null("OoriBackground")
+	if not is_instance_valid(bg):
+		bg = TextureRect.new()
+		bg.name = "OoriBackground"
+		bg.texture = load("res://Assets/Themes/Oori Backround.png")
+		if is_instance_valid(bg.texture):
+			bg.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+			bg.stretch_mode = TextureRect.STRETCH_TILE
+			bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+			menu_container.add_child(bg)
+			menu_container.move_child(bg, 0)
 
 func _on_map_view_size_changed():
 	# Called when MapView is resized (e.g., due to menu open/close or container resize)

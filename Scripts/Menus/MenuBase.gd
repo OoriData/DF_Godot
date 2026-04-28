@@ -7,6 +7,8 @@ signal back_requested
 var convoy_id: String = ""
 var extra: Variant = null
 var _last_convoy_data: Dictionary = {}
+## If true, automatically add a subtle Oori background texture on ready.
+var auto_apply_oori_background: bool = true
 
 func _ensure_store_subscription() -> void:
 	var store = get_node_or_null("/root/GameStore")
@@ -54,6 +56,65 @@ func refresh_now() -> void:
 
 func _ready() -> void:
 	_ensure_store_subscription()
+	if auto_apply_oori_background:
+		_apply_oori_background()
+
+func _apply_oori_background() -> void:
+	# Subtle tileable background
+	if get_node_or_null("OoriBackground"): return
+	
+	print("[MenuBase] Applying Oori Background to ", name)
+	
+	# Detect and hide existing scene-level background rects that would block the texture
+	var legacy_bg = get_node_or_null("ColorRect")
+	if is_instance_valid(legacy_bg):
+		legacy_bg.visible = false
+		
+	var bg = TextureRect.new()
+	bg.name = "OoriBackground"
+	bg.texture = load("res://Assets/Themes/Oori Backround.png")
+	if bg.texture == null:
+		printerr("[MenuBase] ERROR: Failed to load background texture at res://Assets/Themes/Oori Backround.png")
+		return
+		
+	bg.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	bg.stretch_mode = TextureRect.STRETCH_TILE
+	bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	
+	add_child(bg)
+	
+	# Ensure the texture is behind the main VBox but on top of legacy layers
+	var ContentNode = get_node_or_null("MainVBox")
+	if is_instance_valid(ContentNode):
+		move_child(bg, ContentNode.get_index())
+	else:
+		move_child(bg, 0)
+		
+	# NEW: Maximize transparency across the whole hierarchy to let the texture shine through
+	_maximize_transparency_recursive(self)
+
+func _maximize_transparency_recursive(node: Node) -> void:
+	if not is_instance_valid(node): return
+	
+	# Panel nodes: Enforce an Empty StyleBox so that no grey backgrounds are ever drawn
+	if node is PanelContainer or node is Panel or node is TabContainer or node is ScrollContainer:
+		var style_keys := ["panel"]
+		if node is TabContainer:
+			style_keys.append("tabbar_panel")
+			
+		for key in style_keys:
+			var empty = StyleBoxEmpty.new()
+			node.add_theme_stylebox_override(key, empty)
+				
+	# If it's a ProgressBar, make its background transparent too
+	if node is ProgressBar:
+		var empty = StyleBoxEmpty.new()
+		node.add_theme_stylebox_override("background", empty)
+
+	# Recursively check children
+	for child in node.get_children():
+		_maximize_transparency_recursive(child)
 
 func _notification(what: int) -> void:
 	# Important for embedded menus inside hidden tabs:

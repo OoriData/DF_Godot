@@ -1843,7 +1843,7 @@ func _disable_destination_buttons():
 					sub.set_meta("disabled", true)
 					sub.modulate.a = 0.5
 	if is_instance_valid(_next_route_button):
-		_next_route_button.disabled = true
+		_set_btn_disabled(_next_route_button, true)
 
 func _enable_destination_buttons():
 	for child in content_vbox.get_children():
@@ -1860,7 +1860,7 @@ func _enable_destination_buttons():
 					sub.set_meta("disabled", false)
 					sub.modulate.a = 1.0
 	if is_instance_valid(_next_route_button):
-		_next_route_button.disabled = false
+		_set_btn_disabled(_next_route_button, false)
 
 func _show_loading_indicator(text: String):
 	if _loading_label == null:

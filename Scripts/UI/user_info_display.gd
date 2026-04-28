@@ -30,6 +30,13 @@ var _original_money_font_size: int
 
 @export var navbar_background_color: Color = Color(0.16, 0.16, 0.16, 0.92)
 
+# Oori Theme Palette
+const OORI_GREY = Color("#393d47")
+const OORI_DARK_GREY = Color("#25282a")
+const OORI_WHITE = Color("#dbe2e9")
+const OORI_YELLOW = Color("#f3d54e")
+const OORI_RED = Color("#8a2b2b")
+
 func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_PASS
 	for child in get_children():
@@ -61,6 +68,8 @@ func _ready() -> void:
 
 	# Options dropdown (replaces separate top-row buttons)
 	_configure_options_dropdown()
+
+	_apply_base_styling()
 	
 	# Initial desktop sizing/styling if not mobile
 	if not _is_mobile():
@@ -98,12 +107,12 @@ func _apply_mobile_optimizations() -> void:
 		settings_button.add_theme_font_size_override("font_size", int(btn_fs * boost))
 		settings_button.custom_minimum_size.y = 100 if is_portrait else 60
 		var sb_btn = StyleBoxFlat.new()
-		sb_btn.bg_color = Color(0.12, 0.15, 0.2, 0.95)
+		sb_btn.bg_color = OORI_DARK_GREY
 		sb_btn.border_width_left = 1
 		sb_btn.border_width_right = 1
 		sb_btn.border_width_top = 1
 		sb_btn.border_width_bottom = 1
-		sb_btn.border_color = Color(0.4, 0.45, 0.5, 0.8)
+		sb_btn.border_color = OORI_GREY
 		sb_btn.corner_radius_top_left = 8
 		sb_btn.corner_radius_top_right = 8
 		sb_btn.corner_radius_bottom_left = 8
@@ -147,12 +156,12 @@ func _apply_mobile_optimizations() -> void:
 	
 	# 5. Ledger Style for Username Chip
 	var ledger_chip = StyleBoxFlat.new()
-	ledger_chip.bg_color = Color(0.12, 0.15, 0.2, 0.95) # Deep slate
+	ledger_chip.bg_color = OORI_DARK_GREY
 	ledger_chip.border_width_left = 1
 	ledger_chip.border_width_right = 1
 	ledger_chip.border_width_top = 1
 	ledger_chip.border_width_bottom = 1
-	ledger_chip.border_color = Color(0.4, 0.45, 0.5, 0.8) # Steel border
+	ledger_chip.border_color = OORI_GREY
 	ledger_chip.corner_radius_top_left = 6
 	ledger_chip.corner_radius_top_right = 6
 	ledger_chip.corner_radius_bottom_left = 6
@@ -183,23 +192,15 @@ func _update_mobile_sizing() -> void:
 		if is_instance_valid(settings_button): settings_button.custom_minimum_size.y = 64
 		if is_instance_valid(report_bug_button): report_bug_button.custom_minimum_size.y = 64
 
-func _apply_desktop_styling() -> void:
-	custom_minimum_size.y = 60 # Balanced height
-	
-	# Oori Theme Palette
-	var oori_grey = Color("#393d47")
-	var oori_dark_grey = Color("#25282a")
-	var oori_white = Color("#dbe2e9")
-	var oori_yellow = Color("#f3d54e")
-	var oori_red = Color("#8a2b2b")
-
-	# 1. Main Background Style (Oori Texture - Aspect Covered)
+func _apply_base_styling() -> void:
+	# 1. Main Background Style (Oori Texture)
 	var bg_rect = get_node_or_null("OoriBackground")
 	if not is_instance_valid(bg_rect):
 		bg_rect = TextureRect.new()
 		bg_rect.name = "OoriBackground"
+		# Set to tile mode as prepared for tileable background
 		bg_rect.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-		bg_rect.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+		bg_rect.stretch_mode = TextureRect.STRETCH_TILE 
 		bg_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		add_child(bg_rect)
 		move_child(bg_rect, 0) # Put in back
@@ -213,20 +214,23 @@ func _apply_desktop_styling() -> void:
 	var main_style = StyleBoxFlat.new()
 	main_style.bg_color = Color(0, 0, 0, 0) # Transparent
 	main_style.border_width_bottom = 2
-	main_style.border_color = oori_grey
+	main_style.border_color = OORI_GREY
 	main_style.content_margin_top = 4
 	main_style.content_margin_bottom = 4
 	add_theme_stylebox_override("panel", main_style)
 
+func _apply_desktop_styling() -> void:
+	custom_minimum_size.y = 60 # Balanced height
+
 	# 2. Chips (Username & Money)
 	if is_instance_valid(user_chip):
 		var opaque_style = StyleBoxFlat.new()
-		opaque_style.bg_color = oori_dark_grey # Solid Oori Dark Grey
+		opaque_style.bg_color = OORI_DARK_GREY # Solid Oori Dark Grey
 		opaque_style.border_width_left = 3
 		opaque_style.border_width_right = 3
 		opaque_style.border_width_top = 3
 		opaque_style.border_width_bottom = 3
-		opaque_style.border_color = oori_grey
+		opaque_style.border_color = OORI_GREY
 		opaque_style.corner_radius_top_left = 4
 		opaque_style.corner_radius_top_right = 4
 		opaque_style.corner_radius_bottom_left = 4
@@ -236,16 +240,16 @@ func _apply_desktop_styling() -> void:
 		
 		user_chip.add_theme_stylebox_override("panel", opaque_style)
 		username_label.add_theme_font_size_override("font_size", 16)
-		username_label.add_theme_color_override("font_color", oori_white)
+		username_label.add_theme_color_override("font_color", OORI_WHITE)
 	
 	if is_instance_valid(money_chip):
 		var vault_style = StyleBoxFlat.new()
-		vault_style.bg_color = oori_dark_grey.lerp(Color.BLACK, 0.2) # Deep recessed look
+		vault_style.bg_color = OORI_DARK_GREY.lerp(Color.BLACK, 0.2) # Deep recessed look
 		vault_style.border_width_left = 3
 		vault_style.border_width_right = 3
 		vault_style.border_width_top = 3
 		vault_style.border_width_bottom = 3
-		vault_style.border_color = oori_grey
+		vault_style.border_color = OORI_GREY
 		vault_style.corner_radius_top_left = 4
 		vault_style.corner_radius_top_right = 4
 		vault_style.corner_radius_bottom_left = 4
@@ -255,16 +259,16 @@ func _apply_desktop_styling() -> void:
 		
 		money_chip.add_theme_stylebox_override("panel", vault_style)
 		user_money_label.add_theme_font_size_override("font_size", 24)
-		user_money_label.add_theme_color_override("font_color", oori_yellow)
+		user_money_label.add_theme_color_override("font_color", OORI_YELLOW)
 
 	# 3. Buttons (Oori Professional Style with Full Borders)
 	var btn_normal = StyleBoxFlat.new()
-	btn_normal.bg_color = oori_grey
+	btn_normal.bg_color = OORI_GREY
 	btn_normal.border_width_left = 3
 	btn_normal.border_width_right = 3
 	btn_normal.border_width_top = 3
 	btn_normal.border_width_bottom = 5
-	btn_normal.border_color = oori_grey.lerp(Color.BLACK, 0.3)
+	btn_normal.border_color = OORI_GREY.lerp(Color.BLACK, 0.3)
 	btn_normal.corner_radius_top_left = 4
 	btn_normal.corner_radius_top_right = 4
 	btn_normal.corner_radius_bottom_left = 4
@@ -273,31 +277,32 @@ func _apply_desktop_styling() -> void:
 	btn_normal.content_margin_right = 16
 	
 	var btn_hover = btn_normal.duplicate()
-	btn_hover.bg_color = oori_grey.lerp(oori_white, 0.1)
-	btn_hover.border_color = oori_white.lerp(Color.BLACK, 0.2)
+	btn_hover.bg_color = OORI_GREY.lerp(OORI_WHITE, 0.1)
+	btn_hover.border_color = OORI_WHITE.lerp(Color.BLACK, 0.2)
 	
 	if is_instance_valid(settings_button):
 		settings_button.flat = false
 		settings_button.add_theme_stylebox_override("normal", btn_normal)
 		settings_button.add_theme_stylebox_override("hover", btn_hover)
 		settings_button.add_theme_stylebox_override("pressed", btn_hover)
-		settings_button.add_theme_color_override("font_color", oori_white)
+		settings_button.add_theme_color_override("font_color", OORI_WHITE)
 		settings_button.add_theme_font_size_override("font_size", 16)
 		settings_button.custom_minimum_size = Vector2(120, 38)
 		
 	if is_instance_valid(report_bug_button):
 		var bug_normal = btn_normal.duplicate()
-		bug_normal.bg_color = oori_red
-		bug_normal.border_color = oori_red.lerp(Color.BLACK, 0.3)
+		bug_normal.bg_color = OORI_RED
+		bug_normal.border_color = OORI_RED.lerp(Color.BLACK, 0.3)
 		
 		var bug_hover = bug_normal.duplicate()
-		bug_hover.bg_color = oori_red.lerp(Color.WHITE, 0.1)
+		bug_hover.bg_color = OORI_RED.lerp(Color.WHITE, 0.1)
+		bug_hover.border_color = Color.WHITE
 		
 		report_bug_button.flat = false
 		report_bug_button.add_theme_stylebox_override("normal", bug_normal)
 		report_bug_button.add_theme_stylebox_override("hover", bug_hover)
 		report_bug_button.add_theme_stylebox_override("pressed", bug_hover)
-		report_bug_button.add_theme_color_override("font_color", oori_white)
+		report_bug_button.add_theme_color_override("font_color", OORI_WHITE)
 		report_bug_button.add_theme_font_size_override("font_size", 16)
 		report_bug_button.custom_minimum_size = Vector2(120, 38)
 

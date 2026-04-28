@@ -678,12 +678,15 @@ func _update_layout_scaling() -> void:
 		cargo_sort_button.custom_minimum_size.y = sort_h
 
 func _ready() -> void:
+
 	var dsm = get_node_or_null("/root/DeviceStateManager")
 	if is_instance_valid(dsm):
 		if not dsm.layout_mode_changed.is_connected(_on_layout_mode_changed):
 			dsm.layout_mode_changed.connect(_on_layout_mode_changed)
 			
 	_update_layout_scaling()
+
+
 
 	# Connect signals from UI elements
 	vendor_item_tree.item_selected.connect(_on_vendor_item_selected)
@@ -731,12 +734,12 @@ func _ready() -> void:
 		cargo_sort_button.add_theme_color_override("font_hover_color", Color(0.98, 0.98, 0.98, 1.0))
 		
 		var sort_normal := StyleBoxFlat.new()
-		sort_normal.bg_color = Color(0.24, 0.24, 0.24, 0.96)
+		sort_normal.bg_color = Color("#25282a") # Oori Dark Grey
 		sort_normal.border_width_left = 1
 		sort_normal.border_width_right = 1
 		sort_normal.border_width_top = 1
 		sort_normal.border_width_bottom = 1
-		sort_normal.border_color = Color(0.56, 0.56, 0.56, 0.95)
+		sort_normal.border_color = Color("#393d47") # Oori Grey
 		sort_normal.corner_radius_top_left = 4
 		sort_normal.corner_radius_top_right = 4
 		sort_normal.corner_radius_bottom_left = 4
@@ -747,10 +750,10 @@ func _ready() -> void:
 		sort_normal.content_margin_bottom = 4
 		
 		var sort_hover := sort_normal.duplicate()
-		sort_hover.bg_color = Color(0.31, 0.31, 0.31, 0.98)
-		sort_hover.border_color = Color(0.70, 0.70, 0.70, 1.0)
+		sort_hover.bg_color = Color("#393d47") # Oori Grey
+		sort_hover.border_color = Color("#dbe2e9").lerp(Color.BLACK, 0.3) # Oori White-ish
 		var sort_pressed := sort_normal.duplicate()
-		sort_pressed.bg_color = Color(0.18, 0.18, 0.18, 1.0)
+		sort_pressed.bg_color = Color("#25282a").lerp(Color.BLACK, 0.2) # Deep Dark
 		
 		cargo_sort_button.add_theme_stylebox_override("normal", sort_normal)
 		cargo_sort_button.add_theme_stylebox_override("hover", sort_hover)
@@ -777,7 +780,7 @@ func _ready() -> void:
 			popup.add_theme_font_size_override("font_size", dyn_font_sz)
 			popup.add_theme_constant_override("v_separation", 16 if is_portrait else 12)
 			var popup_style = StyleBoxFlat.new()
-			popup_style.bg_color = Color(0.15, 0.15, 0.15, 0.98)
+			popup_style.bg_color = Color("#25282a") # Oori Dark Grey
 			popup_style.content_margin_left = 24
 			popup_style.content_margin_right = 24
 			popup_style.content_margin_top = 16 if is_portrait else 12
@@ -786,7 +789,7 @@ func _ready() -> void:
 			popup_style.border_width_right = 1
 			popup_style.border_width_top = 1
 			popup_style.border_width_bottom = 1
-			popup_style.border_color = Color(0.4, 0.4, 0.4, 1.0)
+			popup_style.border_color = Color("#393d47") # Oori Grey
 			popup_style.corner_radius_top_left = 6
 			popup_style.corner_radius_top_right = 6
 			popup_style.corner_radius_bottom_left = 6

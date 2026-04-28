@@ -5,6 +5,13 @@ signal open_warehouse_menu_requested(convoy_data)
 # Preload the new panel scene for instancing.
 const VendorTradePanel = preload("res://Scenes/VendorTradePanel.tscn")
 
+# Oori Theme Palette
+const OORI_GREY = Color("#393d47")
+const OORI_DARK_GREY = Color("#25282a")
+const OORI_WHITE = Color("#dbe2e9")
+const OORI_YELLOW = Color("#f3d54e")
+const OORI_RED = Color("#8a2b2b")
+
 # Node references using @onready. Paths are relative to the node this script is attached to.
 # %NodeName syntax is used for nodes with "unique_name_in_owner" enabled.
 # $Path/To/Node is used for direct or indirect children without unique names.
@@ -1038,7 +1045,7 @@ func _style_top_bar_button(button: Button) -> void:
 		return
 		
 	var normal = StyleBoxFlat.new()
-	normal.bg_color = Color(0.15, 0.15, 0.18, 1.0)
+	normal.bg_color = OORI_DARK_GREY.lerp(OORI_GREY, 0.4)
 	normal.corner_radius_top_left = 6
 	normal.corner_radius_top_right = 6
 	normal.corner_radius_bottom_left = 6
@@ -1047,21 +1054,21 @@ func _style_top_bar_button(button: Button) -> void:
 	normal.border_width_right = 2
 	normal.border_width_top = 2
 	normal.border_width_bottom = 2
-	normal.border_color = Color(0.40, 0.60, 0.90)
+	normal.border_color = OORI_GREY.lerp(Color.BLACK, 0.2)
 	normal.shadow_color = Color(0,0,0,0.6)
 	normal.shadow_size = 3
 
 	var hover = normal.duplicate()
-	hover.bg_color = Color(0.22, 0.22, 0.28, 1.0)
-	hover.border_color = Color(0.55, 0.75, 1.0)
+	hover.bg_color = OORI_GREY
+	hover.border_color = OORI_WHITE.lerp(OORI_GREY, 0.5)
 
 	var pressed = normal.duplicate()
-	pressed.bg_color = Color(0.10, 0.10, 0.14, 1.0)
-	pressed.border_color = Color(0.30, 0.50, 0.80)
+	pressed.bg_color = OORI_DARK_GREY
+	pressed.border_color = OORI_YELLOW
 
 	var disabled = normal.duplicate()
-	disabled.bg_color = Color(0.08, 0.08, 0.09, 1.0)
-	disabled.border_color = Color(0.20, 0.20, 0.20)
+	disabled.bg_color = OORI_DARK_GREY.lerp(Color.BLACK, 0.4)
+	disabled.border_color = OORI_DARK_GREY.lerp(Color.BLACK, 0.2)
 	disabled.shadow_size = 0
 
 	button.add_theme_stylebox_override("normal", normal)
@@ -1071,12 +1078,12 @@ func _style_top_bar_button(button: Button) -> void:
 
 	# --- Tooltip Style ---
 	var tooltip_panel = StyleBoxFlat.new()
-	tooltip_panel.bg_color = Color(0.05, 0.05, 0.06, 1.0)
+	tooltip_panel.bg_color = OORI_DARK_GREY
 	tooltip_panel.corner_radius_top_left = 4
 	tooltip_panel.corner_radius_top_right = 4
 	tooltip_panel.corner_radius_bottom_left = 4
 	tooltip_panel.corner_radius_bottom_right = 4
-	tooltip_panel.border_color = Color(0.60, 0.60, 0.70)
+	tooltip_panel.border_color = OORI_GREY
 	tooltip_panel.border_width_left = 1
 	tooltip_panel.border_width_right = 1
 	tooltip_panel.border_width_top = 1
@@ -1088,10 +1095,10 @@ func _style_top_bar_button(button: Button) -> void:
 	button.add_theme_stylebox_override("tooltip_panel", tooltip_panel)
 
 	# --- Font & Colors ---
-	button.add_theme_color_override("font_color", Color(0.92, 0.96, 1.0))
+	button.add_theme_color_override("font_color", OORI_WHITE)
 	button.add_theme_color_override("font_color_hover", Color(1.0, 1.0, 1.0))
-	button.add_theme_color_override("font_color_pressed", Color(0.85, 0.90, 1.0))
-	button.add_theme_color_override("font_color_disabled", Color(0.55, 0.55, 0.60))
+	button.add_theme_color_override("font_color_pressed", OORI_WHITE.lerp(Color.WHITE, 0.5))
+	button.add_theme_color_override("font_color_disabled", OORI_GREY)
 	
 	var dsm = get_node_or_null("/root/DeviceStateManager")
 	var fs = 18
@@ -1128,7 +1135,7 @@ func _style_back_button(button: Button) -> void:
 	button.add_theme_font_size_override("font_size", fs)
 
 	var normal = StyleBoxFlat.new()
-	normal.bg_color = Color(0.12, 0.14, 0.18, 0.95)
+	normal.bg_color = OORI_DARK_GREY
 	normal.corner_radius_top_left = 8
 	normal.corner_radius_top_right = 8
 	normal.corner_radius_bottom_left = 8
@@ -1137,25 +1144,25 @@ func _style_back_button(button: Button) -> void:
 	normal.border_width_right = 2
 	normal.border_width_top = 2
 	normal.border_width_bottom = 2
-	normal.border_color = Color(0.40, 0.60, 0.90) # Consistent blue border
+	normal.border_color = OORI_GREY
 	normal.shadow_color = Color(0, 0, 0, 0.5)
 	normal.shadow_size = 4
 	
 	var hover = normal.duplicate()
-	hover.bg_color = Color(0.20, 0.25, 0.35, 1.0)
-	hover.border_color = Color(0.55, 0.75, 1.0)
+	hover.bg_color = OORI_GREY
+	hover.border_color = OORI_WHITE.lerp(OORI_GREY, 0.5)
 	
 	var pressed = normal.duplicate()
-	pressed.bg_color = Color(0.08, 0.10, 0.14, 1.0)
-	pressed.border_color = Color(0.30, 0.50, 0.80)
+	pressed.bg_color = OORI_DARK_GREY.lerp(Color.BLACK, 0.2)
+	pressed.border_color = OORI_YELLOW
 	
 	button.add_theme_stylebox_override("normal", normal)
 	button.add_theme_stylebox_override("hover", hover)
 	button.add_theme_stylebox_override("pressed", pressed)
 	
-	button.add_theme_color_override("font_color", Color(0.95, 0.95, 1.0))
+	button.add_theme_color_override("font_color", OORI_WHITE)
 	button.add_theme_color_override("font_color_hover", Color(1.0, 1.0, 1.0))
-	button.add_theme_color_override("font_color_pressed", Color(0.8, 0.9, 1.0))
+	button.add_theme_color_override("font_color_pressed", OORI_YELLOW)
 
 func _style_vendor_tabs() -> void:
 	if not is_instance_valid(vendor_tab_container):
@@ -1184,10 +1191,10 @@ func _style_vendor_tabs() -> void:
 	
 	# Create style overrides for tabs
 	var bg_normal = StyleBoxFlat.new()
-	bg_normal.bg_color = Color(0.12, 0.14, 0.18, 0.95)
+	bg_normal.bg_color = OORI_DARK_GREY.lerp(Color.BLACK, 0.2)
 	var bg_selected = StyleBoxFlat.new()
-	bg_selected.bg_color = Color(0.20, 0.25, 0.35, 1.0)
-	bg_selected.border_color = Color(0.40, 0.60, 0.90)
+	bg_selected.bg_color = OORI_GREY
+	bg_selected.border_color = OORI_YELLOW
 	bg_selected.border_width_bottom = 4
 	
 	# Apply common settings

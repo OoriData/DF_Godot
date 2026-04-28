@@ -1,6 +1,11 @@
 extends VBoxContainer
 
-
+# Oori Theme Palette
+const OORI_GREY = Color("#393d47")
+const OORI_DARK_GREY = Color("#25282a")
+const OORI_WHITE = Color("#dbe2e9")
+const OORI_YELLOW = Color("#f3d54e")
+const OORI_RED = Color("#8a2b2b")
 @onready var toggle_button: Button = $ToggleButton
 @onready var convoy_popup: PopupPanel = %ConvoyPopup
 @onready var list_item_container: VBoxContainer = %ConvoyItemsContainer
@@ -220,17 +225,17 @@ func populate_convoy_list(convoys_data: Array) -> void:
 
 		# Oori Button Styling
 		var btn_style = StyleBoxFlat.new()
-		btn_style.bg_color = Color("#393d47") # Oori Grey
+		btn_style.bg_color = OORI_GREY
 		btn_style.border_width_bottom = 2
-		btn_style.border_color = Color("#25282a") # Oori Dark Grey
+		btn_style.border_color = OORI_DARK_GREY
 		btn_style.corner_radius_top_left = 4
 		btn_style.corner_radius_top_right = 4
 		btn_style.corner_radius_bottom_left = 4
 		btn_style.corner_radius_bottom_right = 4
 		
 		var btn_hover = btn_style.duplicate()
-		btn_hover.bg_color = Color("#4a4f5a")
-		btn_hover.border_color = Color("#f3d54e") # Oori Yellow accent
+		btn_hover.bg_color = OORI_GREY.lerp(OORI_WHITE, 0.15)
+		btn_hover.border_color = OORI_YELLOW
 		
 		item_button.add_theme_stylebox_override("normal", btn_style)
 		item_button.add_theme_stylebox_override("hover", btn_hover)
@@ -325,48 +330,45 @@ func _update_button_layout() -> void:
 		rtl.add_theme_font_size_override("normal_font_size", _get_font_size(16))
 		rtl.offset_top = 22
 	else:
-		# Desktop - Oori Theme
-		var oori_grey = Color("#393d47")
-		var oori_dark_grey = Color("#25282a")
-		var oori_white = Color("#dbe2e9")
-
+		# Desktop
 		toggle_button.custom_minimum_size = Vector2(240, 38)
 		rtl.add_theme_font_size_override("normal_font_size", 16)
 		rtl.offset_top = 4
 		
-		var btn_style = StyleBoxFlat.new()
-		btn_style.bg_color = oori_grey
-		btn_style.border_width_left = 3
-		btn_style.border_width_right = 3
-		btn_style.border_width_top = 3
-		btn_style.border_width_bottom = 5
-		btn_style.border_color = oori_grey.lerp(Color.BLACK, 0.3)
-		btn_style.corner_radius_top_left = 4
-		btn_style.corner_radius_top_right = 4
-		btn_style.corner_radius_bottom_left = 4
-		btn_style.corner_radius_bottom_right = 4
-		
-		var btn_hover = btn_style.duplicate()
-		btn_hover.bg_color = oori_grey.lerp(oori_white, 0.1)
-		btn_hover.border_color = oori_white.lerp(Color.BLACK, 0.2)
-		
-		toggle_button.flat = false
-		toggle_button.add_theme_stylebox_override("normal", btn_style)
-		toggle_button.add_theme_stylebox_override("hover", btn_hover)
-		toggle_button.add_theme_stylebox_override("pressed", btn_hover)
-		toggle_button.add_theme_color_override("font_color", oori_white)
+	var btn_style = StyleBoxFlat.new()
+	btn_style.bg_color = OORI_GREY
+	btn_style.border_width_left = 3
+	btn_style.border_width_right = 3
+	btn_style.border_width_top = 3
+	btn_style.border_width_bottom = 5
+	btn_style.border_color = OORI_GREY.lerp(Color.BLACK, 0.3)
+	btn_style.corner_radius_top_left = 4
+	btn_style.corner_radius_top_right = 4
+	btn_style.corner_radius_bottom_left = 4
+	btn_style.corner_radius_bottom_right = 4
+	
+	var btn_hover = btn_style.duplicate()
+	btn_hover.bg_color = OORI_GREY.lerp(OORI_WHITE, 0.1)
+	btn_hover.border_color = OORI_WHITE.lerp(Color.BLACK, 0.2)
+	
+	toggle_button.flat = false
+	toggle_button.add_theme_stylebox_override("normal", btn_style)
+	toggle_button.add_theme_stylebox_override("hover", btn_hover)
+	toggle_button.add_theme_stylebox_override("pressed", btn_hover)
+	toggle_button.add_theme_color_override("font_color", OORI_WHITE)
 	
 	_update_toggle_button_display(convoy_popup.is_visible() if is_instance_valid(convoy_popup) else false)
 
 func _apply_popup_styling() -> void:
 	var popup_style = StyleBoxFlat.new()
-	popup_style.bg_color = Color("#1e2124") # Solid Deep Dark
+	popup_style.bg_color = OORI_DARK_GREY.lerp(Color.BLACK, 0.2) # Solid Deep Dark
 	popup_style.draw_center = true
 	popup_style.border_width_left = 2
 	popup_style.border_width_right = 2
 	popup_style.border_width_top = 2
 	popup_style.border_width_bottom = 2
-	popup_style.border_color = Color("#393d47") # Oori Grey
+	popup_style.border_color = OORI_GREY
+
 	popup_style.corner_radius_top_left = 6
 	popup_style.corner_radius_top_right = 6
 	popup_style.corner_radius_bottom_left = 6
