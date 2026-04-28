@@ -325,22 +325,21 @@ func _ready():
 	_organize_button.add_theme_font_size_override("font_size", _get_font_size(14))
 	_organize_button.custom_minimum_size.y = 80 if is_portrait else (60 if _is_mobile() else 44)
 
-	var main_vbox = get_node_or_null("MainVBox")
-	if is_instance_valid(main_vbox):
-		# Place button in a container to center it
-		var organize_container = HBoxContainer.new()
-		organize_container.name = "OrganizeContainer"
-		organize_container.alignment = BoxContainer.ALIGNMENT_CENTER
-		organize_container.add_child(_organize_button)
-		main_vbox.add_child(organize_container)
-		main_vbox.move_child(organize_container, 1) # Place it after the title
+	var sort_settings_container = get_node_or_null("MainVBox/SortSettingsContainer")
+	if is_instance_valid(sort_settings_container):
+		sort_settings_container.alignment = BoxContainer.ALIGNMENT_CENTER
+		sort_settings_container.add_child(_organize_button)
+		sort_settings_container.move_child(_organize_button, 0)
+		sort_settings_container.add_theme_constant_override("separation", 24 if _is_mobile() else 16)
 		
 		# Mobile: tighter separation between containers, more breathing room in margins
 		if _is_mobile():
-			main_vbox.add_theme_constant_override("separation", 6)
-			main_vbox.set_offsets_preset(Control.PRESET_FULL_RECT, Control.PRESET_MODE_MINSIZE, 14)
+			var main_vbox = get_node_or_null("MainVBox")
+			if is_instance_valid(main_vbox):
+				main_vbox.add_theme_constant_override("separation", 6)
+				main_vbox.set_offsets_preset(Control.PRESET_FULL_RECT, Control.PRESET_MODE_MINSIZE, 14)
 	else:
-		printerr("ConvoyCargoMenu: MainVBox not found, cannot add organization button.")
+		printerr("ConvoyCargoMenu: SortSettingsContainer not found, cannot add organization button.")
 
 	_organize_button.pressed.connect(_on_organize_button_pressed)
 
@@ -777,26 +776,24 @@ func _looks_like_part(d: Dictionary) -> bool:
 func _looks_like_mission(d: Dictionary) -> bool:
 	if not d:
 		return false
-	# Concrete rule alignment: prefer presence of recipient.
+	if ItemsData != null and ItemsData.MissionItem:
+		return ItemsData.MissionItem._looks_like_mission_dict(d)
+	# Legacy fallback
 	if d.has("recipient") and d.get("recipient") != null:
 		return true
-	# Keep additional Item rules for compatibility with older data.
 	if d.get("is_mission", false):
 		return true
-	if d.has("mission_id") and d.get("mission_id") != null and str(d.get("mission_id")) != "":
+	if NumberFormat.to_f(d.get("delivery_reward"), 0.0) > 0.0:
 		return true
-	if d.has("mission_vendor_id") and d.get("mission_vendor_id") != null and str(d.get("mission_vendor_id")) != "":
-		return true
-	if d.has("delivery_reward"):
-		var dr = d.get("delivery_reward")
-		if dr != null and (dr is float or dr is int) and float(dr) > 0.0:
-			return true
 	return false
 
 # Determine if dictionary represents a resource cargo item (raw resources or supplies).
 func _looks_like_resource(d: Dictionary) -> bool:
 	if not d:
 		return false
+	if ItemsData != null and ItemsData.ResourceItem:
+		return ItemsData.ResourceItem._looks_like_resource_dict(d)
+	# Legacy fallback
 	if d.get("is_raw_resource", false):
 		return true
 	if d.has("resource_type"):

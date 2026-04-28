@@ -1343,8 +1343,7 @@ func _resolve_vendor_focus_for_item(item_name: String, category_hint: String) ->
 				if ItemsData != null and ItemsData.MissionItem:
 					mission_ok = ItemsData.MissionItem._looks_like_mission_dict(it)
 				if not mission_ok:
-					var dr = it.get("delivery_reward")
-					mission_ok = (dr is float or dr is int) and float(dr) > 0.0
+					mission_ok = NumberFormat.to_f(it.get("delivery_reward"), 0.0) > 0.0 or NumberFormat.to_f(it.get("unit_delivery_reward"), 0.0) > 0.0
 				if not mission_ok:
 					continue
 
@@ -1609,7 +1608,7 @@ func _is_resource_item(d: Dictionary) -> bool:
 		return true
 	for k in ["fuel", "water", "food"]:
 		var v = d.get(k)
-		if (v is float or v is int) and float(v) > 0.0:
+		if NumberFormat.to_f(v, 0.0) > 0.0:
 			return true
 	return false
 
@@ -1628,11 +1627,8 @@ func _is_part_item(d: Dictionary) -> bool:
 func _looks_like_mission_item(item: Dictionary) -> bool:
 	# Prefer centralized classification when available
 	if ItemsData != null and ItemsData.MissionItem:
-		# Keep central classification but ensure reward-positive
-		if not item:
-			return false
-		var dr_any = item.get("delivery_reward")
-		if dr_any != null and (dr_any is float or dr_any is int) and float(dr_any) > 0.0:
+		var looks_mission := ItemsData.MissionItem._looks_like_mission_dict(item)
+		if looks_mission:
 			return true
 		return false
 	# Local rule: mission cargo must have positive delivery_reward and not be an intrinsic part
@@ -1642,8 +1638,7 @@ func _looks_like_mission_item(item: Dictionary) -> bool:
 		return false
 	if _is_part_item(item):
 		return false
-	var dr = item.get("delivery_reward")
-	return (dr is float or dr is int) and float(dr) > 0.0
+	return NumberFormat.to_f(item.get("delivery_reward"), 0.0) > 0.0 or NumberFormat.to_f(item.get("unit_delivery_reward"), 0.0) > 0.0
 
 # Helper: scan an array of settlement records and aggregate mission items into agg
 func _scan_settlement_array(arr: Array, agg: Dictionary) -> void:
@@ -1767,8 +1762,7 @@ func _collect_settlement_mission_items() -> Array[String]:
 			if ItemsData != null and ItemsData.MissionItem:
 				is_mission = ItemsData.MissionItem._looks_like_mission_dict(ci)
 			else:
-				var dr = ci.get("delivery_reward")
-				is_mission = (dr is float or dr is int) and float(dr) > 0.0
+				is_mission = NumberFormat.to_f(ci.get("delivery_reward"), 0.0) > 0.0 or NumberFormat.to_f(ci.get("unit_delivery_reward"), 0.0) > 0.0
 			if not is_mission:
 				continue
 			var nm2 := String(ci.get("name", ci.get("base_name", "Item")))
@@ -1836,8 +1830,7 @@ func _on_cargo_data_received(cargo: Dictionary) -> void:
 	if ItemsData != null and ItemsData.MissionItem:
 		looks_mission = ItemsData.MissionItem._looks_like_mission_dict(cargo)
 	else:
-		var dr = cargo.get("delivery_reward")
-		looks_mission = (dr is float or dr is int) and float(dr) > 0.0
+		looks_mission = NumberFormat.to_f(cargo.get("delivery_reward"), 0.0) > 0.0 or NumberFormat.to_f(cargo.get("unit_delivery_reward"), 0.0) > 0.0
 
 	var looks_part := false
 	if ItemsData != null and ItemsData.PartItem:

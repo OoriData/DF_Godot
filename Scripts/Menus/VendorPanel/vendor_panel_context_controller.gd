@@ -66,18 +66,34 @@ static func resolve_settlement_for_vendor_or_convoy(panel: Object, vendor_id: St
 
 
 static func get_vendor_name_for_recipient(panel: Object, recipient_id: Variant) -> String:
-	var rid: String = str(recipient_id)
-	if rid != "" and panel._vendor_id_to_name.has(rid):
-		return str(panel._vendor_id_to_name[rid])
+	var rid: String = str(recipient_id).strip_edges()
+	if rid == "" or rid == "00000000-0000-0000-0000-000000000000":
+		return ""
 
-	if rid != "" and panel._vendors_from_settlements_by_id.has(rid):
+	var vendor_name := ""
+	var settlement_name := ""
+
+	if panel._vendor_id_to_name.has(rid):
+		vendor_name = str(panel._vendor_id_to_name[rid])
+	elif panel._vendors_from_settlements_by_id.has(rid):
 		var vd_any: Variant = panel._vendors_from_settlements_by_id[rid]
 		if vd_any is Dictionary:
 			var vd: Dictionary = vd_any
-			var nm: String = str(vd.get("name", ""))
-			if nm != "":
-				panel._vendor_id_to_name[rid] = nm
-				return nm
+			vendor_name = str(vd.get("name", ""))
+			if vendor_name != "":
+				panel._vendor_id_to_name[rid] = vendor_name
+
+	if panel._vendor_id_to_settlement.has(rid):
+		var s_any: Variant = panel._vendor_id_to_settlement[rid]
+		if s_any is Dictionary:
+			settlement_name = str((s_any as Dictionary).get("name", ""))
+
+	if settlement_name != "" and vendor_name != "":
+		return "%s (%s)" % [settlement_name, vendor_name]
+	if settlement_name != "":
+		return settlement_name
+	if vendor_name != "":
+		return vendor_name
 
 	# Fallback: keep legacy behavior.
 	return "Unknown Vendor"

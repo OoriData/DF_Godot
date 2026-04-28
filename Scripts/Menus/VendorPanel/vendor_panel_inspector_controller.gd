@@ -16,7 +16,8 @@ static func update_non_vehicle(
 	fitment_panel: VBoxContainer,
 	fitment_rich_text: RichTextLabel,
 	convoy_data: Dictionary,
-	compat_cache: Dictionary
+	compat_cache: Dictionary,
+	perf_log_enabled: bool = false
 ) -> void:
 	print("[Inspector] update_non_vehicle called, selected_item:", selected_item)
 	if selected_item == null:
@@ -80,7 +81,8 @@ static func update_non_vehicle(
 		selected_item,
 		str(current_mode),
 		convoy_data,
-		compat_cache
+		compat_cache,
+		perf_log_enabled
 	)
 
 
@@ -133,5 +135,6 @@ static func update_vehicle(panel: Object, vehicle_data: Dictionary) -> void:
 		panel.selected_item,
 		str(panel.current_mode),
 		panel.convoy_data,
-		panel._compat_cache
+		panel._compat_cache,
+		panel.perf_log_enabled
 	)
