@@ -62,7 +62,7 @@ func _ready():
 	if is_instance_valid(toggle_button):
 		# Ensure button has a reasonable minimum size since we're clearing its text
 		# Standard Scaling
-		toggle_button.custom_minimum_size = Vector2(240, 48)
+		toggle_button.custom_minimum_size = Vector2(140, 38)
 		_update_button_layout()
 
 		
@@ -321,19 +321,19 @@ func _update_button_layout() -> void:
 
 	if is_portrait:
 		# Chunky Portrait Scaling
-		toggle_button.custom_minimum_size = Vector2(520, 140)
-		rtl.add_theme_font_size_override("normal_font_size", _get_font_size(16))
-		rtl.offset_top = 48 # Better vertical centering for 140 height
+		toggle_button.custom_minimum_size = Vector2(280, 110)
+		rtl.add_theme_font_size_override("normal_font_size", _get_font_size(19))
+		rtl.offset_top = 34
 	elif _is_mobile():
 		# Landscape Mobile
-		toggle_button.custom_minimum_size = Vector2(320, 80)
-		rtl.add_theme_font_size_override("normal_font_size", _get_font_size(16))
-		rtl.offset_top = 22
+		toggle_button.custom_minimum_size = Vector2(180, 60)
+		rtl.add_theme_font_size_override("normal_font_size", _get_font_size(19))
+		rtl.offset_top = 16
 	else:
 		# Desktop
-		toggle_button.custom_minimum_size = Vector2(240, 38)
-		rtl.add_theme_font_size_override("normal_font_size", 16)
-		rtl.offset_top = 4
+		toggle_button.custom_minimum_size = Vector2(140, 34)
+		rtl.add_theme_font_size_override("normal_font_size", 19)
+		rtl.offset_top = 3
 		
 	var btn_style = StyleBoxFlat.new()
 	btn_style.bg_color = OORI_GREY

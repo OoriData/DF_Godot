@@ -542,17 +542,26 @@ func _update_mobile_dependent_layout() -> void:
 
 	var stat_height = 120.0 if is_portrait else 50.0
 
+	var dsm_stat = get_node_or_null("/root/DeviceStateManager")
+	var stat_fs = dsm_stat.get_scaled_base_font_size(22) if dsm_stat else 22
+
 	if is_instance_valid(res_hbox):
 		res_hbox.add_theme_constant_override("separation", 8 if is_portrait else 4)
 		for child in res_hbox.get_children():
 			if child is Control:
 				child.custom_minimum_size.y = stat_height
+				for grand_child in child.get_children():
+					if grand_child is Label:
+						grand_child.add_theme_font_size_override("font_size", stat_fs)
 
 	if is_instance_valid(perf_hbox):
 		perf_hbox.add_theme_constant_override("separation", 8 if is_portrait else 4)
 		for child in perf_hbox.get_children():
 			if child is Control:
 				child.custom_minimum_size.y = stat_height
+				for grand_child in child.get_children():
+					if grand_child is Label:
+						grand_child.add_theme_font_size_override("font_size", stat_fs)
 
 	# Scale cargo bars taller in portrait so the built-in % text is readable
 	var cargo_bars_hbox := $MainVBox/ScrollContainer/ContentVBox/CargoBarsHBox if has_node("MainVBox/ScrollContainer/ContentVBox/CargoBarsHBox") else null
@@ -581,12 +590,19 @@ func _update_mobile_dependent_layout() -> void:
 			if use_mobile:
 				vendor_content_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
 				vendor_content_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-				vendor_content_scroll.custom_minimum_size.y = 650.0 if is_portrait else 90.0
+				
+				# Calculate height for exactly 2 rows
+				var sep_v = 16 if use_mobile else 10
+				var rows = 2.0
+				var total_h = (VENDOR_ITEM_BUTTON_HEIGHT * rows) + (sep_v * (rows - 1)) + (40.0 if is_portrait else 20.0)
+				
+				vendor_content_scroll.custom_minimum_size.y = total_h
 				vendor_content_scroll.scroll_deadzone = 8
 			else:
 				vendor_content_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
 				vendor_content_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-				vendor_content_scroll.custom_minimum_size.y = 120.0
+				var sep_v = 10
+				vendor_content_scroll.custom_minimum_size.y = (VENDOR_ITEM_BUTTON_HEIGHT * 2) + sep_v + 20.0
 
 	# Back Button
 	if is_instance_valid(back_button):
@@ -657,24 +673,28 @@ func _update_mobile_dependent_layout() -> void:
 			if child is Control and child.has_meta("nav_intent"):
 				_style_vendor_item_button(child, _current_vendor_tab)
 
-func _update_vendor_grid_columns() -> void:
+func _update_vendor_grid_columns(override_count: int = -1) -> void:
 	if not is_instance_valid(vendor_item_grid):
 		return
 
-	# Use viewport width directly to avoid circular dependency where an expanded 
-	# grid expands its parent, which then tells the grid it has more room.
-	var available_width = get_viewport_rect().size.x - 40.0 # Margin for scrollbars/padding
+	# To prioritize 2 rows while maintaining horizontal scrolling, 
+	# we set columns to half the item count (rounded up).
+	# Use override_count if provided, otherwise use current child count.
+	var item_count = override_count if override_count >= 0 else vendor_item_grid.get_child_count()
 	
-	var item_w = VENDOR_ITEM_BUTTON_MIN_WIDTH
-	var separation = vendor_item_grid.get_theme_constant("h_separation")
-	if separation <= 0: separation = 8
-	
-	var cols = max(1, int(floor(available_width / (item_w + separation))))
+	# If we are using the live child count, we must subtract any that are queue_freed
+	# but not yet removed from the tree.
+	if override_count < 0:
+		var active_count = 0
+		for child in vendor_item_grid.get_children():
+			if not child.is_queued_for_deletion():
+				active_count += 1
+		item_count = active_count
+
+	vendor_item_grid.columns = max(1, ceil(item_count / 2.0))
 	
 	if _debug_convoy_menu:
-		print("[ConvoyMenu] Dynamic columns: available=", available_width, " item_w=", item_w, " cols=", cols)
-		
-	vendor_item_grid.columns = cols
+		print("[ConvoyMenu] 2-row horizontal scrolling: items=", item_count, " cols=", vendor_item_grid.columns)
 
 func _on_back_button_pressed():
 	print("ConvoyMenu: Back button pressed. Emitting 'back_requested' signal.")
@@ -1116,6 +1136,11 @@ func _build_vendor_preview_button(item_string: String) -> Control:
 	name_label.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.95))
 	name_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	name_label.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	
+	var dsm_cargo = get_node_or_null("/root/DeviceStateManager")
+	var cargo_fs = dsm_cargo.get_scaled_base_font_size(32) if dsm_cargo else 32
+	name_label.add_theme_font_size_override("font_size", cargo_fs)
+
 	vbox.add_child(name_label)
 
 	if dest_text != "":
@@ -1131,6 +1156,7 @@ func _build_vendor_preview_button(item_string: String) -> Control:
 		dest_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		dest_label.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 		dest_label.add_theme_color_override("font_color", COLOR_YELLOW)
+		dest_label.add_theme_font_size_override("font_size", cargo_fs)
 		vbox.add_child(dest_label)
 
 	button.set_meta("name_label", name_label)
@@ -1272,7 +1298,7 @@ func _render_vendor_preview_display() -> void:
 
 	# Ensure font sizes and grid columns are updated
 
-	call_deferred("_update_vendor_grid_columns")
+	_update_vendor_grid_columns(content_list.size())
 
 
 func _get_current_settlement_dict() -> Dictionary:
@@ -2412,7 +2438,7 @@ func _set_progressbar_style(progressbar_node: ProgressBar, current_value: float,
 
 	# Scale placeholder button fonts if they are valid
 	var dsm = get_node_or_null("/root/DeviceStateManager")
-	var btn_fs = dsm.get_scaled_base_font_size(16) if dsm else 16
+	var btn_fs = dsm.get_scaled_base_font_size(19) if dsm else 19
 	if is_instance_valid(vehicle_menu_button):
 		vehicle_menu_button.add_theme_font_size_override("font_size", btn_fs)
 	if is_instance_valid(journey_menu_button):
@@ -2423,7 +2449,7 @@ func _set_progressbar_style(progressbar_node: ProgressBar, current_value: float,
 		cargo_menu_button.add_theme_font_size_override("font_size", btn_fs)
 
 	# Scale vendor tab buttons
-	var tab_fs = dsm.get_scaled_base_font_size(18) if dsm else 18
+	var tab_fs = dsm.get_scaled_base_font_size(22) if dsm else 22
 	if is_instance_valid(convoy_missions_tab_button):
 		convoy_missions_tab_button.add_theme_font_size_override("font_size", tab_fs)
 	if is_instance_valid(settlement_missions_tab_button):

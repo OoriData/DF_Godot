@@ -68,12 +68,13 @@ func _ready() -> void:
 
 	# Options dropdown (replaces separate top-row buttons)
 	_configure_options_dropdown()
+	if is_instance_valid(settings_button):
+		settings_button.text = "Options"
 
 	_apply_base_styling()
 	
-	# Initial desktop sizing/styling if not mobile
-	if not _is_mobile():
-		_apply_desktop_styling()
+	# Always apply base styling for consistent Oori theming
+	_apply_desktop_styling()
 	
 	if _is_mobile():
 		_apply_mobile_optimizations()
@@ -90,85 +91,13 @@ func _apply_mobile_optimizations() -> void:
 	# 1. Scaling & Touch Targets
 	_update_mobile_sizing()
 	
-	# 2. Aggressive Typography Boost for Portrait
-	var win_size = get_viewport().get_visible_rect().size if is_inside_tree() else Vector2(0, 0)
-	var is_portrait = win_size.y > win_size.x
-	var boost = 1.0 # Rely on global scaling instead of local boosts
+	# 2. Layout & Density (12px separation)
+	add_theme_constant_override("separation", 12)
 	
-	var labels = [username_label, user_money_label]
-	for label in labels:
-		if is_instance_valid(label):
-			# Use theme default or global scale instead of multiplying here
-			pass # label.add_theme_font_size_override("font_size", int(fs * boost))
-	
-	# Settings button scaling
-	if is_instance_valid(settings_button):
-		# var btn_fs = settings_button.get_theme_font_size("font_size")
-		# settings_button.add_theme_font_size_override("font_size", int(btn_fs * boost))
-		settings_button.custom_minimum_size.y = 100 if is_portrait else 60
-		var sb_btn = StyleBoxFlat.new()
-		sb_btn.bg_color = OORI_DARK_GREY
-		sb_btn.border_width_left = 1
-		sb_btn.border_width_right = 1
-		sb_btn.border_width_top = 1
-		sb_btn.border_width_bottom = 1
-		sb_btn.border_color = OORI_GREY
-		sb_btn.corner_radius_top_left = 8
-		sb_btn.corner_radius_top_right = 8
-		sb_btn.corner_radius_bottom_left = 8
-		sb_btn.corner_radius_bottom_right = 8
-		sb_btn.content_margin_left = 28
-		sb_btn.content_margin_right = 28
-		settings_button.add_theme_stylebox_override("normal", sb_btn)
-
-	# Report Bug button scaling & red styling
-	if is_instance_valid(report_bug_button):
-		# report_bug_button.add_theme_font_size_override("font_size", int(bug_fs * boost))
-		report_bug_button.custom_minimum_size.y = 100 if is_portrait else 60
-		var bug_style = StyleBoxFlat.new()
-		bug_style.bg_color = Color(0.7, 0.1, 0.15, 0.95) # Prominent Red
-		bug_style.border_width_left = 2
-		bug_style.border_width_right = 2
-		bug_style.border_width_top = 2
-		bug_style.border_width_bottom = 2
-		bug_style.border_color = Color(1.0, 0.4, 0.4, 0.8)
-		bug_style.corner_radius_top_left = 8
-		bug_style.corner_radius_top_right = 8
-		bug_style.corner_radius_bottom_left = 8
-		bug_style.corner_radius_bottom_right = 8
-		bug_style.content_margin_left = 28
-		bug_style.content_margin_right = 28
-		report_bug_button.add_theme_stylebox_override("normal", bug_style)
-		# Hover/Pressed states
-		var bug_style_hover = bug_style.duplicate()
-		bug_style_hover.bg_color = Color(0.85, 0.15, 0.2, 1.0)
-		report_bug_button.add_theme_stylebox_override("hover", bug_style_hover)
-		report_bug_button.add_theme_stylebox_override("pressed", bug_style_hover)
-	
-	# 3. Layout & Density (16px margins)
-	add_theme_constant_override("separation", 16)
-	
-	# 4. Safe Area Handling (Curved corners and notches)
+	# 3. Safe Area Handling (Curved corners and notches)
 	_update_safe_margins()
 	if not get_viewport().size_changed.is_connected(_update_safe_margins):
 		get_viewport().size_changed.connect(_update_safe_margins)
-	
-	# 5. Ledger Style for Username Chip
-	var ledger_chip = StyleBoxFlat.new()
-	ledger_chip.bg_color = OORI_DARK_GREY
-	ledger_chip.border_width_left = 1
-	ledger_chip.border_width_right = 1
-	ledger_chip.border_width_top = 1
-	ledger_chip.border_width_bottom = 1
-	ledger_chip.border_color = OORI_GREY
-	ledger_chip.corner_radius_top_left = 6
-	ledger_chip.corner_radius_top_right = 6
-	ledger_chip.corner_radius_bottom_left = 6
-	ledger_chip.corner_radius_bottom_right = 6
-	ledger_chip.content_margin_left = 12
-	ledger_chip.content_margin_right = 12
-	if is_instance_valid(username_label):
-		username_label.add_theme_stylebox_override("normal", ledger_chip)
 
 func _update_mobile_sizing() -> void:
 	if not _is_mobile():
@@ -216,6 +145,8 @@ func _apply_base_styling() -> void:
 	main_style.border_color = OORI_GREY
 	main_style.content_margin_top = 4
 	main_style.content_margin_bottom = 4
+	main_style.content_margin_left = 12
+	main_style.content_margin_right = 12
 	add_theme_stylebox_override("panel", main_style)
 
 func _apply_desktop_styling() -> void:
@@ -238,7 +169,7 @@ func _apply_desktop_styling() -> void:
 		opaque_style.content_margin_right = 12
 		
 		user_chip.add_theme_stylebox_override("panel", opaque_style)
-		username_label.add_theme_font_size_override("font_size", 16)
+		username_label.add_theme_font_size_override("font_size", 32)
 		username_label.add_theme_color_override("font_color", OORI_WHITE)
 	
 	if is_instance_valid(money_chip):
@@ -253,11 +184,11 @@ func _apply_desktop_styling() -> void:
 		vault_style.corner_radius_top_right = 4
 		vault_style.corner_radius_bottom_left = 4
 		vault_style.corner_radius_bottom_right = 4
-		vault_style.content_margin_left = 20
-		vault_style.content_margin_right = 20
+		vault_style.content_margin_left = 12
+		vault_style.content_margin_right = 12
 		
 		money_chip.add_theme_stylebox_override("panel", vault_style)
-		user_money_label.add_theme_font_size_override("font_size", 24)
+		user_money_label.add_theme_font_size_override("font_size", 34)
 		user_money_label.add_theme_color_override("font_color", OORI_YELLOW)
 
 	# 3. Buttons (Oori Professional Style with Full Borders)
@@ -267,13 +198,13 @@ func _apply_desktop_styling() -> void:
 	btn_normal.border_width_right = 3
 	btn_normal.border_width_top = 3
 	btn_normal.border_width_bottom = 5
-	btn_normal.border_color = OORI_GREY.lerp(Color.BLACK, 0.3)
+	btn_normal.border_color = OORI_WHITE.lerp(Color.BLACK, 0.4) # Slightly brighter border for more prominence
 	btn_normal.corner_radius_top_left = 4
 	btn_normal.corner_radius_top_right = 4
 	btn_normal.corner_radius_bottom_left = 4
 	btn_normal.corner_radius_bottom_right = 4
-	btn_normal.content_margin_left = 16
-	btn_normal.content_margin_right = 16
+	btn_normal.content_margin_left = 12
+	btn_normal.content_margin_right = 12
 	
 	var btn_hover = btn_normal.duplicate()
 	btn_hover.bg_color = OORI_GREY.lerp(OORI_WHITE, 0.1)
@@ -285,8 +216,8 @@ func _apply_desktop_styling() -> void:
 		settings_button.add_theme_stylebox_override("hover", btn_hover)
 		settings_button.add_theme_stylebox_override("pressed", btn_hover)
 		settings_button.add_theme_color_override("font_color", OORI_WHITE)
-		settings_button.add_theme_font_size_override("font_size", 16)
-		settings_button.custom_minimum_size = Vector2(120, 38)
+		settings_button.add_theme_font_size_override("font_size", 24)
+		settings_button.custom_minimum_size = Vector2(0, 46)
 		
 	if is_instance_valid(report_bug_button):
 		var bug_normal = btn_normal.duplicate()
@@ -302,8 +233,8 @@ func _apply_desktop_styling() -> void:
 		report_bug_button.add_theme_stylebox_override("hover", bug_hover)
 		report_bug_button.add_theme_stylebox_override("pressed", bug_hover)
 		report_bug_button.add_theme_color_override("font_color", OORI_WHITE)
-		report_bug_button.add_theme_font_size_override("font_size", 16)
-		report_bug_button.custom_minimum_size = Vector2(120, 38)
+		report_bug_button.add_theme_font_size_override("font_size", 24)
+		report_bug_button.custom_minimum_size = Vector2(0, 46)
 
 func _update_safe_margins() -> void:
 	if not _is_mobile():
@@ -317,8 +248,8 @@ func _update_safe_margins() -> void:
 	# However, since we're setting theme constants, we use the raw pixel offsets relative to the screen.
 	# Actually, the best way is to let MarginContainer handle it or calculate relative to window.
 	
-	var left_pad = max(32.0, safe_area.position.x)
-	var right_pad = max(32.0, screen_full.x - safe_area.end.x)
+	var left_pad = max(12.0, safe_area.position.x)
+	var right_pad = max(12.0, screen_full.x - safe_area.end.x)
 	var top_pad = safe_area.position.y
 	
 	if screen_size.y > screen_size.x:
