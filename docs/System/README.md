@@ -15,6 +15,9 @@ Transport & Utilities underpinning services and UI.
 - ErrorTranslator: [Scripts/System/error_translator.gd](../../Scripts/System/error_translator.gd)
   - Role: map raw errors to friendly messages and inline vs blocking.
 
+- TextScale: [Scripts/System/text_scale.gd](../../Scripts/System/text_scale.gd)
+  - Role: ensures minimum font size readability across mobile devices and orientations.
+
 - Tools (binary): [Scripts/System/tools.gd](../../Scripts/System/tools.gd)
   - Role: big-endian deserialization for cargo, vehicles, vendors, settlements, map.
 

@@ -89,7 +89,7 @@ static func _make_panel(title: String, rows: Array) -> PanelContainer:
 		vb.add_child(line)
 	return panel
 
-static func rebuild_info_sections(item_info_rich_text: RichTextLabel, item_data_source: Dictionary, selected_item: Variant, current_mode: String, convoy_data: Dictionary, compat_cache: Dictionary) -> void:
+static func rebuild_info_sections(item_info_rich_text: RichTextLabel, item_data_source: Dictionary, selected_item: Variant, current_mode: String, convoy_data: Dictionary, compat_cache: Dictionary, perf_log_enabled: bool = false) -> void:
 	var parent_node: Node = null
 	if is_instance_valid(item_info_rich_text):
 		parent_node = item_info_rich_text.get_parent()
@@ -115,7 +115,7 @@ static func rebuild_info_sections(item_info_rich_text: RichTextLabel, item_data_
 		var fb: Dictionary = panel.get("_feedback_data")
 		var fb_panel: PanelContainer = PanelContainer.new()
 		var fb_sb: StyleBoxFlat = StyleBoxFlat.new()
-		var fb_color: Color = Color(0.15, 0.45, 0.15, 0.8) if fb.get("type") == "success" else Color(0.45, 0.15, 0.15, 0.8)
+		var fb_color: Color = Color(0.15, 0.45, 0.15, 1.0) if fb.get("type") == "success" else Color(0.45, 0.15, 0.15, 1.0)
 		fb_sb.bg_color = fb_color
 		fb_sb.border_color = Color(1, 1, 1, 0.3)
 		fb_sb.border_width_all = 1
@@ -177,9 +177,43 @@ static func rebuild_info_sections(item_info_rich_text: RichTextLabel, item_data_
 		container.add_child(_make_panel("Summary", rows_summary))
 		return
 
-	if selected_item and (selected_item is Dictionary) and (selected_item as Dictionary).has("mission_vendor_name") and str((selected_item as Dictionary).mission_vendor_name) != "":
-		rows_summary.append({"k": "Destination", "v": str((selected_item as Dictionary).mission_vendor_name)})
+	var dest_name: String = ""
+	if selected_item and (selected_item is Dictionary) and (selected_item as Dictionary).has("mission_vendor_name"):
+		dest_name = str((selected_item as Dictionary).get("mission_vendor_name", "")).strip_edges()
 
+	if perf_log_enabled:
+		print("[VendorInspectorBuilder] Rebuilding Summary. selected_item.mission_vendor_name='", dest_name, "'")
+
+	if dest_name == "" or dest_name == "Unknown Vendor":
+		# Check selected_item itself for destination keys (aggregator may have resolved these)
+		var dest_keys_si := ["mission_vendor_name", "recipient_settlement_name", "destination_settlement_name", "destination_name", "dest_settlement"]
+		if selected_item and (selected_item is Dictionary):
+			for k in dest_keys_si:
+				var v = str((selected_item as Dictionary).get(k, "")).strip_edges()
+				if v != "" and v != "Unknown Vendor":
+					dest_name = v
+					break
+
+	if dest_name == "" or dest_name == "Unknown Vendor":
+		var dest_keys := ["recipient_settlement_name", "destination_settlement_name", "dest_settlement", "destination_name", "recipient_vendor_name", "distributor", "recipient", "mission_vendor_id", "recipient_vendor_id", "destination_vendor_id", "dest_vendor_id"]
+		for k in dest_keys:
+			if item_data_source.has(k) and str(item_data_source.get(k)).strip_edges() != "":
+				var candidate := str(item_data_source.get(k)).strip_edges()
+				# Skip raw UUIDs (zero UUID or any UUID-shaped string with no letters beyond hex)
+				if candidate == "00000000-0000-0000-0000-000000000000":
+					continue
+				# If it looks like a UUID, skip it — it's not a display name
+				if candidate.length() == 36 and candidate.count("-") == 4:
+					continue
+				dest_name = candidate
+				if perf_log_enabled:
+					print("[VendorInspectorBuilder] Found fallback destination in '", k, "': '", dest_name, "'")
+				break
+
+	if dest_name != "" and dest_name != "Unknown Vendor":
+		if perf_log_enabled:
+			print("[VendorInspectorBuilder] Building Destination row with value='", dest_name, "'")
+		rows_summary.append({"k": "Destination", "v": dest_name})
 	if is_vehicle:
 		var stat_map = {
 			"top_speed": "Top Speed",
@@ -341,8 +375,8 @@ static func rebuild_info_sections(item_info_rich_text: RichTextLabel, item_data_
 				unit_volume = float(item_data_source.get("volume", 0.0)) / float(item_data_source.get("quantity", 1.0))
 		if unit_volume > 0.0:
 			rows_unit.append({"k": "Volume", "v": NumberFormat.fmt_float(unit_volume, 2)})
-		var unit_delivery_reward_val = item_data_source.get("unit_delivery_reward")
-		if (unit_delivery_reward_val is float or unit_delivery_reward_val is int) and float(unit_delivery_reward_val) > 0.0:
+		var unit_delivery_reward_val = VendorTradeVM.get_unit_delivery_reward(item_data_source, selected_item)
+		if unit_delivery_reward_val > 0.0:
 			rows_unit.append({"k": "Delivery Reward", "v": "$" + NumberFormat.fmt_float(unit_delivery_reward_val, 2)})
 		if rows_unit.size() > 0:
 			container.add_child(_make_panel("Per Unit", rows_unit))

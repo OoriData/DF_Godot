@@ -13,10 +13,14 @@ All notable changes to Desolate Frontiers will be documented in this file.
 - Updated vehicle setup: Improved trailer attachment logic to look for parts in the `trailer` slot.
 - Temporarily disabled trailers to stabilize current build for commit.
 - Standardized UI scaling logic to explicitly handle portrait vs landscape orientations.
+- **Reconciled Oori Visual Identity Overhaul**: Successfully merged major UI branding changes across all main menus (`convoy_menu.gd`, `convoy_cargo_menu.gd`, `settings_menu.gd`, etc.).
+- Standardized the use of `TextureRect` tiled backgrounds (`res://Assets/Themes/Oori Backround.png`) and `StyleBoxEmpty` overrides across the menu system.
 
 ### Fixed
-- Resolved merge conflicts in `Scripts/UI/UI_scale_manager.gd`, `Scripts/UI/main_screen.gd`, and `Scripts/Menus/convoy_menu.gd` following main branch synchronization.
-
+- Fixed missing function and variable declarations (`background_margin`, `_on_viewport_size_changed`, `_update_layout`) in `convoy_menu.gd` and `convoy_cargo_menu.gd`.
+- Enabled `unique_name_in_owner` for `MenuContainer` in `MainScreen.tscn` to resolve runtime null reference errors.
+- Removed redundant calls to missing styling functions in `convoy_list_panel.gd`.
+- Restored project stability and successful headless initialization.
 ## [0.3.20]
 
 ### Fixed

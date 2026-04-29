@@ -27,11 +27,25 @@ shadow_offset = Vector2(0, 2)
 shadow_color = Color(0, 0, 0, 0.25)
 
 [sub_resource type="LabelSettings" id="LabelSettings_Status"]
-font_size = 22
+font_size = 36
 font_color = Color(1, 0.4, 0.4, 1)
 shadow_size = 2
 shadow_offset = Vector2(0, 2)
 shadow_color = Color(0, 0, 0, 0.25)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_ProgressBg"]
+bg_color = Color(0.188235, 0.188235, 0.188235, 1)
+corner_radius_top_left = 4
+corner_radius_top_right = 4
+corner_radius_bottom_left = 4
+corner_radius_bottom_right = 4
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_ProgressFill"]
+bg_color = Color(1, 0.4, 0.4, 1)
+corner_radius_top_left = 4
+corner_radius_top_right = 4
+corner_radius_bottom_left = 4
+corner_radius_bottom_right = 4
 
 [node name="LoginScreen" type="Control"]
 layout_mode = 3
@@ -85,13 +99,23 @@ custom_minimum_size = Vector2(0, 18)
 layout_mode = 2
 
 [node name="StatusLabel" type="Label" parent="CenterContainer/VBoxContainer"]
-custom_minimum_size = Vector2(200, 36)
+custom_minimum_size = Vector2(300, 48)
 layout_mode = 2
 size_flags_horizontal = 4
 text = "Status messages appear here."
 horizontal_alignment = 1
 autowrap_mode = 2
 label_settings = SubResource("LabelSettings_Status")
+
+[node name="LoadingBar" type="ProgressBar" parent="CenterContainer/VBoxContainer"]
+visible = false
+custom_minimum_size = Vector2(340, 8)
+layout_mode = 2
+size_flags_horizontal = 4
+theme_override_styles/background = SubResource("StyleBoxFlat_ProgressBg")
+theme_override_styles/fill = SubResource("StyleBoxFlat_ProgressFill")
+value = 50.0
+show_percentage = false
 
 [node name="NewUsernameLineEdit" type="LineEdit" parent="CenterContainer/VBoxContainer"]
 visible = false

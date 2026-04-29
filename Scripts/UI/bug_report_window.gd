@@ -107,8 +107,8 @@ func _build_ui() -> void:
 	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	scroll.size_flags_stretch_ratio = 1.0
 	var scroll_style := StyleBoxFlat.new()
-	scroll_style.bg_color = Color("#151515")
-	scroll_style.border_color = Color("#2A2A2A")
+	scroll_style.bg_color = Color("#25282a") # Oori Dark Grey
+	scroll_style.border_color = Color("#393d47") # Oori Grey
 	scroll_style.set_border_width_all(1)
 	scroll_style.corner_radius_top_left = 10
 	scroll_style.corner_radius_top_right = 10

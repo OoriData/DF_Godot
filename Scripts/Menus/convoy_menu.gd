@@ -100,6 +100,7 @@ var all_cargo_label: Label = null
 @onready var journey_menu_button: Button = $MainVBox/BottomBarPanel/BottomMenuButtonsHBox/JourneyMenuButton
 @onready var settlement_menu_button: Button = $MainVBox/BottomBarPanel/BottomMenuButtonsHBox/SettlementMenuButton
 @onready var cargo_menu_button: Button = $MainVBox/BottomBarPanel/BottomMenuButtonsHBox/CargoMenuButton
+@onready var background_margin: Control = self
 
 # --- Signals for Sub-Menu Navigation ---
 signal open_vehicle_menu_requested(convoy_data)
@@ -269,6 +270,21 @@ func _ready():
 		vendor_item_grid.add_theme_constant_override("h_separation", sep_h)
 		vendor_item_grid.add_theme_constant_override("v_separation", sep_v)
 
+func _apply_oori_background() -> void:
+	if not is_instance_valid(background_margin): return
+
+	if background_margin.get_node_or_null("OoriBackground"): return
+
+	var bg = TextureRect.new()
+	bg.name = "OoriBackground"
+	bg.texture = load("res://Assets/Themes/Oori Backround.png")
+	bg.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	bg.stretch_mode = TextureRect.STRETCH_TILE
+	bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	background_margin.add_child(bg)
+	background_margin.move_child(bg, 0) # Background layer
+
 	if has_node("MainVBox/ScrollContainer/ContentVBox/VendorPreviewPanel/VendorPreviewVBox"):
 		var preview_vbox = $MainVBox/ScrollContainer/ContentVBox/VendorPreviewPanel/VendorPreviewVBox
 		var sort_dropdown_container := preview_vbox.get_node_or_null("SortDropdownContainer") as HBoxContainer
@@ -430,19 +446,15 @@ func _ready():
 	# Connect placeholder menu buttons
 	if is_instance_valid(vehicle_menu_button):
 		if not vehicle_menu_button.is_connected("pressed", Callable(self, "_on_vehicle_menu_button_pressed")):
-			_style_menu_button(vehicle_menu_button)
 			vehicle_menu_button.pressed.connect(_on_vehicle_menu_button_pressed)
 	if is_instance_valid(journey_menu_button):
 		if not journey_menu_button.is_connected("pressed", Callable(self, "_on_journey_menu_button_pressed")):
-			_style_menu_button(journey_menu_button)
 			journey_menu_button.pressed.connect(_on_journey_menu_button_pressed)
 	if is_instance_valid(settlement_menu_button):
 		if not settlement_menu_button.is_connected("pressed", Callable(self, "_on_settlement_menu_button_pressed")):
-			_style_menu_button(settlement_menu_button)
 			settlement_menu_button.pressed.connect(_on_settlement_menu_button_pressed)
 	if is_instance_valid(cargo_menu_button):
 		if not cargo_menu_button.is_connected("pressed", Callable(self, "_on_cargo_menu_button_pressed")):
-			_style_menu_button(cargo_menu_button)
 			cargo_menu_button.pressed.connect(_on_cargo_menu_button_pressed)
 
 	# Connect vendor preview tab buttons
@@ -470,6 +482,11 @@ func _ready():
 	_vendor_preview_update_timer.timeout.connect(_update_vendor_preview)
 	add_child(_vendor_preview_update_timer)
 
+	_apply_oori_background()
+
+	get_viewport().size_changed.connect(_on_viewport_size_changed)
+	_on_viewport_size_changed()
+
 	# initialize_with_data can run before _ready; if so, we may have missed the initial preview refresh.
 	if _vendor_preview_update_pending:
 		_vendor_preview_update_pending = false
@@ -479,6 +496,7 @@ func _ready():
 
 	# Initial font size update
 	call_deferred("_update_font_sizes")
+	TextScale.register_tree(self)
 	if _debug_convoy_menu:
 		print("[ConvoyMenu][Debug] services api=", is_instance_valid(_api), " vendor_service=", is_instance_valid(_vendor_service))
 
@@ -563,6 +581,16 @@ func _update_mobile_dependent_layout() -> void:
 			if child is Control:
 				child.custom_minimum_size.y = stat_height
 
+	_fix_remaining_layout_pieces()
+
+func _on_viewport_size_changed() -> void:
+	_update_mobile_dependent_layout()
+	_update_font_sizes()
+
+func _fix_remaining_layout_pieces() -> void:
+	var is_portrait = _is_portrait_view()
+	var use_mobile = _is_mobile()
+
 	# Scale cargo bars taller in portrait so the built-in % text is readable
 	var cargo_bars_hbox := $MainVBox/ScrollContainer/ContentVBox/CargoBarsHBox if has_node("MainVBox/ScrollContainer/ContentVBox/CargoBarsHBox") else null
 	if is_instance_valid(cargo_bars_hbox):
@@ -631,6 +659,27 @@ func _update_mobile_dependent_layout() -> void:
 		else:
 			_mission_sort_option_button.custom_minimum_size = Vector2(300, 34)
 			_mission_sort_option_button.add_theme_font_size_override("font_size", 14)
+
+		if use_mobile:
+			var popup = _mission_sort_option_button.get_popup()
+			popup.add_theme_font_size_override("font_size", _get_font_size(16))
+			popup.add_theme_constant_override("v_separation", 16 if is_portrait else 12)
+			var popup_style = StyleBoxFlat.new()
+			popup_style.bg_color = Color(0.15, 0.15, 0.15, 0.98)
+			popup_style.content_margin_left = 24
+			popup_style.content_margin_right = 24
+			popup_style.content_margin_top = 16 if is_portrait else 12
+			popup_style.content_margin_bottom = 16 if is_portrait else 12
+			popup_style.border_width_left = 1
+			popup_style.border_width_right = 1
+			popup_style.border_width_top = 1
+			popup_style.border_width_bottom = 1
+			popup_style.border_color = Color(0.4, 0.4, 0.4, 1.0)
+			popup_style.corner_radius_top_left = 6
+			popup_style.corner_radius_top_right = 6
+			popup_style.corner_radius_bottom_left = 6
+			popup_style.corner_radius_bottom_right = 6
+			popup.add_theme_stylebox_override("panel", popup_style)
 
 	if is_instance_valid(vendor_item_grid):
 		for child in vendor_item_grid.get_children():
@@ -1333,8 +1382,7 @@ func _resolve_vendor_focus_for_item(item_name: String, category_hint: String) ->
 				if ItemsData != null and ItemsData.MissionItem:
 					mission_ok = ItemsData.MissionItem._looks_like_mission_dict(it)
 				if not mission_ok:
-					var dr = it.get("delivery_reward")
-					mission_ok = (dr is float or dr is int) and float(dr) > 0.0
+					mission_ok = NumberFormat.to_f(it.get("delivery_reward"), 0.0) > 0.0 or NumberFormat.to_f(it.get("unit_delivery_reward"), 0.0) > 0.0
 				if not mission_ok:
 					continue
 
@@ -1599,7 +1647,7 @@ func _is_resource_item(d: Dictionary) -> bool:
 		return true
 	for k in ["fuel", "water", "food"]:
 		var v = d.get(k)
-		if (v is float or v is int) and float(v) > 0.0:
+		if NumberFormat.to_f(v, 0.0) > 0.0:
 			return true
 	return false
 
@@ -1618,11 +1666,8 @@ func _is_part_item(d: Dictionary) -> bool:
 func _looks_like_mission_item(item: Dictionary) -> bool:
 	# Prefer centralized classification when available
 	if ItemsData != null and ItemsData.MissionItem:
-		# Keep central classification but ensure reward-positive
-		if not item:
-			return false
-		var dr_any = item.get("delivery_reward")
-		if dr_any != null and (dr_any is float or dr_any is int) and float(dr_any) > 0.0:
+		var looks_mission := ItemsData.MissionItem._looks_like_mission_dict(item)
+		if looks_mission:
 			return true
 		return false
 	# Local rule: mission cargo must have positive delivery_reward and not be an intrinsic part
@@ -1632,8 +1677,7 @@ func _looks_like_mission_item(item: Dictionary) -> bool:
 		return false
 	if _is_part_item(item):
 		return false
-	var dr = item.get("delivery_reward")
-	return (dr is float or dr is int) and float(dr) > 0.0
+	return NumberFormat.to_f(item.get("delivery_reward"), 0.0) > 0.0 or NumberFormat.to_f(item.get("unit_delivery_reward"), 0.0) > 0.0
 
 # Helper: scan an array of settlement records and aggregate mission items into agg
 func _scan_settlement_array(arr: Array, agg: Dictionary) -> void:
@@ -1757,8 +1801,7 @@ func _collect_settlement_mission_items() -> Array[String]:
 			if ItemsData != null and ItemsData.MissionItem:
 				is_mission = ItemsData.MissionItem._looks_like_mission_dict(ci)
 			else:
-				var dr = ci.get("delivery_reward")
-				is_mission = (dr is float or dr is int) and float(dr) > 0.0
+				is_mission = NumberFormat.to_f(ci.get("delivery_reward"), 0.0) > 0.0 or NumberFormat.to_f(ci.get("unit_delivery_reward"), 0.0) > 0.0
 			if not is_mission:
 				continue
 			var nm2 := String(ci.get("name", ci.get("base_name", "Item")))
@@ -1826,8 +1869,7 @@ func _on_cargo_data_received(cargo: Dictionary) -> void:
 	if ItemsData != null and ItemsData.MissionItem:
 		looks_mission = ItemsData.MissionItem._looks_like_mission_dict(cargo)
 	else:
-		var dr = cargo.get("delivery_reward")
-		looks_mission = (dr is float or dr is int) and float(dr) > 0.0
+		looks_mission = NumberFormat.to_f(cargo.get("delivery_reward"), 0.0) > 0.0 or NumberFormat.to_f(cargo.get("unit_delivery_reward"), 0.0) > 0.0
 
 	var looks_part := false
 	if ItemsData != null and ItemsData.PartItem:

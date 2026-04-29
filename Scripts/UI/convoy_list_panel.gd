@@ -1,6 +1,11 @@
 extends VBoxContainer
 
-
+# Oori Theme Palette
+const OORI_GREY = Color("#393d47")
+const OORI_DARK_GREY = Color("#25282a")
+const OORI_WHITE = Color("#dbe2e9")
+const OORI_YELLOW = Color("#f3d54e")
+const OORI_RED = Color("#8a2b2b")
 @onready var toggle_button: Button = $ToggleButton
 @onready var convoy_popup: PopupPanel = %ConvoyPopup
 @onready var list_item_container: VBoxContainer = %ConvoyItemsContainer
@@ -20,14 +25,17 @@ func _ready():
 	toggle_button.pressed.connect(_on_toggle_button_pressed)
 	# The popup hides itself when focus is lost. We connect to its signal to update our button.
 	convoy_popup.popup_hide.connect(_on_popup_hide)
-
-	if _is_mobile():
-		_apply_mobile_popup_style()
+	
+	_apply_popup_styling()
 
 	# Connect to DeviceStateManager for reactive layout updates
 	var dsm = get_node_or_null("/root/DeviceStateManager")
 	if is_instance_valid(dsm):
 		dsm.layout_mode_changed.connect(_on_layout_mode_changed)
+
+	# _apply_popup_styling handles mobile scaling internally.
+
+
 
 	# Attempt to connect to MenuManager's signal to auto-close this panel.
 	# Since MenuManager is an Autoload, it's globally available.
@@ -219,6 +227,24 @@ func populate_convoy_list(convoys_data: Array) -> void:
 			prog_label.add_theme_font_size_override("font_size", 14)
 			hbox.add_child(prog_label)
 
+		# Oori Button Styling
+		var btn_style = StyleBoxFlat.new()
+		btn_style.bg_color = OORI_GREY
+		btn_style.border_width_bottom = 2
+		btn_style.border_color = OORI_DARK_GREY
+		btn_style.corner_radius_top_left = 4
+		btn_style.corner_radius_top_right = 4
+		btn_style.corner_radius_bottom_left = 4
+		btn_style.corner_radius_bottom_right = 4
+		
+		var btn_hover = btn_style.duplicate()
+		btn_hover.bg_color = OORI_GREY.lerp(OORI_WHITE, 0.15)
+		btn_hover.border_color = OORI_YELLOW
+		
+		item_button.add_theme_stylebox_override("normal", btn_style)
+		item_button.add_theme_stylebox_override("hover", btn_hover)
+		item_button.add_theme_stylebox_override("pressed", btn_hover)
+
 		# Connect the button's pressed signal to a local handler, binding the full convoy_item_data
 		item_button.pressed.connect(_on_convoy_item_pressed.bind(convoy_item_data))
 		list_item_container.add_child(item_button)
@@ -309,27 +335,63 @@ func _update_button_layout() -> void:
 		rtl.offset_top = 22
 	else:
 		# Desktop
-		toggle_button.custom_minimum_size = Vector2(240, 52)
-		rtl.add_theme_font_size_override("normal_font_size", _get_font_size(16))
-		rtl.offset_top = 6
+		toggle_button.custom_minimum_size = Vector2(240, 38)
+		rtl.add_theme_font_size_override("normal_font_size", 16)
+		rtl.offset_top = 4
+		
+	var btn_style = StyleBoxFlat.new()
+	btn_style.bg_color = OORI_GREY
+	btn_style.border_width_left = 3
+	btn_style.border_width_right = 3
+	btn_style.border_width_top = 3
+	btn_style.border_width_bottom = 5
+	btn_style.border_color = OORI_GREY.lerp(Color.BLACK, 0.3)
+	btn_style.corner_radius_top_left = 4
+	btn_style.corner_radius_top_right = 4
+	btn_style.corner_radius_bottom_left = 4
+	btn_style.corner_radius_bottom_right = 4
+	
+	var btn_hover = btn_style.duplicate()
+	btn_hover.bg_color = OORI_GREY.lerp(OORI_WHITE, 0.1)
+	btn_hover.border_color = OORI_WHITE.lerp(Color.BLACK, 0.2)
+	
+	toggle_button.flat = false
+	toggle_button.add_theme_stylebox_override("normal", btn_style)
+	toggle_button.add_theme_stylebox_override("hover", btn_hover)
+	toggle_button.add_theme_stylebox_override("pressed", btn_hover)
+	toggle_button.add_theme_color_override("font_color", OORI_WHITE)
 	
 	_update_toggle_button_display(convoy_popup.is_visible() if is_instance_valid(convoy_popup) else false)
 
-func _apply_mobile_popup_style() -> void:
-	var ledger = StyleBoxFlat.new()
-	ledger.bg_color = Color(0.1, 0.12, 0.15, 0.98) # Dark slate
-	ledger.border_width_left = 2
-	ledger.border_width_right = 2
-	ledger.border_width_top = 2
-	ledger.border_width_bottom = 2
-	ledger.border_color = Color(0.3, 0.35, 0.4, 1.0) # Steel
-	ledger.corner_radius_top_left = 6
-	ledger.corner_radius_top_right = 6
-	ledger.corner_radius_bottom_left = 6
-	ledger.corner_radius_bottom_right = 6
-	convoy_popup.add_theme_stylebox_override("panel", ledger)
+func _apply_popup_styling() -> void:
+	var popup_style = StyleBoxFlat.new()
+	popup_style.bg_color = OORI_DARK_GREY.lerp(Color.BLACK, 0.2) # Solid Deep Dark
+	popup_style.draw_center = true
+	popup_style.border_width_left = 2
+	popup_style.border_width_right = 2
+	popup_style.border_width_top = 2
+	popup_style.border_width_bottom = 2
+	popup_style.border_color = OORI_GREY
+
+	popup_style.corner_radius_top_left = 6
+	popup_style.corner_radius_top_right = 6
+	popup_style.corner_radius_bottom_left = 6
+	popup_style.corner_radius_bottom_right = 6
 	
-	list_item_container.add_theme_constant_override("separation", 12)
+	if _is_mobile():
+		popup_style.content_margin_left = 24
+		popup_style.content_margin_right = 24
+		popup_style.content_margin_top = 16
+		popup_style.content_margin_bottom = 16
+		list_item_container.add_theme_constant_override("separation", 16)
+	else:
+		popup_style.content_margin_left = 12
+		popup_style.content_margin_right = 12
+		popup_style.content_margin_top = 8
+		popup_style.content_margin_bottom = 8
+		list_item_container.add_theme_constant_override("separation", 8)
+		
+	convoy_popup.add_theme_stylebox_override("panel", popup_style)
 
 # Add this handler to update the list when convoy data changes
 func _on_convoy_data_updated(all_convoy_data: Array) -> void:

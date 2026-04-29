@@ -46,6 +46,7 @@ AutoSellService="*res://Scripts/System/Services/auto_sell_service.gd"
 PushNotificationManager="*res://Scripts/System/Services/push_notification_manager.gd"
 GoogleAuthService="*res://Scripts/System/Services/google_auth_service.gd"
 DeviceStateManager="*res://Scripts/System/device_state_manager.gd"
+TextScale="*res://Scripts/System/text_scale.gd"
 
 [display]
 

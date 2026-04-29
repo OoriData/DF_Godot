@@ -32,6 +32,24 @@ func _ready():
 	_update_layout()
 	get_viewport().size_changed.connect(_update_layout)
 
+	_apply_oori_background()
+
+func _apply_oori_background() -> void:
+	var panel = %Panel
+	if not is_instance_valid(panel): return
+	
+	if panel.get_node_or_null("OoriBackground"): return
+	
+	var bg = TextureRect.new()
+	bg.name = "OoriBackground"
+	bg.texture = load("res://Assets/Themes/Oori Backround.png")
+	bg.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	bg.stretch_mode = TextureRect.STRETCH_TILE
+	bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	panel.add_child(bg)
+	panel.move_child(bg, 0) # Background layer
+
 func _is_portrait() -> bool:
 	var win_size = get_viewport().get_visible_rect().size
 	return win_size.y > win_size.x

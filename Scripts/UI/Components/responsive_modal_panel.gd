@@ -131,22 +131,28 @@ func _setup_panel_style() -> void:
 		_panel.theme = curr_theme
 	curr_theme.default_font_size = dyn_font_sz
 	
-	var style = _panel.get_theme_stylebox("panel")
-	if style == null or not style is StyleBoxFlat:
-		style = StyleBoxFlat.new()
-		style.bg_color = Color("#1E1E1E")
-		style.border_color = Color("#2E2E2E")
-	else:
-		style = style.duplicate()
+	# Force NO background to be drawn by the native panel
+	var empty_style = StyleBoxEmpty.new()
+	_panel.add_theme_stylebox_override("panel", empty_style)
+	
+	_setup_background_texture()
 
-	# Force opaque to prevent see-through overlapping!
-	style.bg_color.a = 1.0 
+func _setup_background_texture() -> void:
+	if not is_instance_valid(_panel): return
+	var bg = _panel.get_node_or_null("ModalBackground")
+	if not is_instance_valid(bg):
+		print("[ResponsiveModalPanel] Applying ModalBackground to ", name)
+		bg = TextureRect.new()
+		bg.name = "ModalBackground"
+		bg.texture = load("res://Assets/Themes/Oori Backround.png")
+		if bg.texture == null:
+			printerr("[ResponsiveModalPanel] ERROR: Failed to load background texture")
+			return
+		bg.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		bg.stretch_mode = TextureRect.STRETCH_TILE
+		bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		_panel.add_child(bg)
+		_panel.move_child(bg, 0)
 	
-	# Keep the rounded borders clean so it floats centrally as a 'card'
-	style.set_border_width_all(1)
-	style.corner_radius_top_left = default_corner_radius
-	style.corner_radius_top_right = default_corner_radius
-	style.corner_radius_bottom_left = default_corner_radius
-	style.corner_radius_bottom_right = default_corner_radius
-	
-	_panel.add_theme_stylebox_override("panel", style)
+	# Keep it covering the whole panel area
+	bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)

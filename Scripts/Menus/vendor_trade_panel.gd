@@ -44,8 +44,6 @@ func _emit_install_requested(item: Variant, quantity: int, vendor_id: String) ->
 @onready var action_button: Button = %ActionButton
 @onready var install_button: Button = %InstallButton
 @onready var transaction_quantity_container: HBoxContainer = %TransactionQuantityContainer
-@onready var convoy_money_label: Label = %ConvoyMoneyLabel
-@onready var convoy_cargo_label: Label = %ConvoyCargoLabel
 @onready var trade_mode_tab_container: TabContainer = %TradeModeTabContainer
 @onready var toast_notification: Control = %ToastNotification
 @onready var cargo_sort_button: MenuButton = get_node_or_null("%CargoSortButton")
@@ -148,8 +146,7 @@ func _has_delivery_cargo_in_array(inv_any: Variant) -> bool:
 		var d: Dictionary = entry_any
 		if ItemsData != null and ItemsData.MissionItem and ItemsData.MissionItem._looks_like_mission_dict(d):
 			return true
-		var dr: Variant = d.get("delivery_reward", null)
-		if (dr is float or dr is int) and float(dr) > 0.0:
+		if NumberFormat.to_f(d.get("delivery_reward"), 0.0) > 0.0 or NumberFormat.to_f(d.get("unit_delivery_reward"), 0.0) > 0.0:
 			return true
 		if d.get("recipient", null) != null:
 			return true
@@ -221,7 +218,7 @@ func _get_effective_projection_deltas() -> Dictionary:
 			"volume": float(_pending_tx.get("volume_delta", 0.0)),
 			"weight": float(_pending_tx.get("weight_delta", 0.0)),
 		}
-	if not (_panel_initialized and selected_item):
+	if not selected_item:
 		return {"volume": 0.0, "weight": 0.0}
 
 	var item_data_source = selected_item.item_data if selected_item.has("item_data") and not selected_item.item_data.is_empty() else selected_item
@@ -488,6 +485,7 @@ var _latest_settlement_models: Array = []
 var _vendors_from_settlements_by_id: Dictionary = {} # vendor_id -> vendor Dictionary
 var _vendor_id_to_settlement: Dictionary = {} # vendor_id -> settlement Dictionary
 var _vendor_id_to_name: Dictionary = {} # vendor_id -> vendor name String
+var _pending_cargo_recipient_lookups: Dictionary = {} # cargo_id -> aggregated item dict ref
 
 # Throttles noisy price-fallback diagnostics (vendor_id -> true)
 var _price_fallback_diag_seen: Dictionary = {}
@@ -731,12 +729,12 @@ func _ready() -> void:
 		cargo_sort_button.add_theme_color_override("font_hover_color", Color(0.98, 0.98, 0.98, 1.0))
 		
 		var sort_normal := StyleBoxFlat.new()
-		sort_normal.bg_color = Color(0.24, 0.24, 0.24, 0.96)
+		sort_normal.bg_color = Color("#25282a") # Oori Dark Grey
 		sort_normal.border_width_left = 1
 		sort_normal.border_width_right = 1
 		sort_normal.border_width_top = 1
 		sort_normal.border_width_bottom = 1
-		sort_normal.border_color = Color(0.56, 0.56, 0.56, 0.95)
+		sort_normal.border_color = Color("#393d47") # Oori Grey
 		sort_normal.corner_radius_top_left = 4
 		sort_normal.corner_radius_top_right = 4
 		sort_normal.corner_radius_bottom_left = 4
@@ -747,10 +745,10 @@ func _ready() -> void:
 		sort_normal.content_margin_bottom = 4
 		
 		var sort_hover := sort_normal.duplicate()
-		sort_hover.bg_color = Color(0.31, 0.31, 0.31, 0.98)
-		sort_hover.border_color = Color(0.70, 0.70, 0.70, 1.0)
+		sort_hover.bg_color = Color("#393d47") # Oori Grey
+		sort_hover.border_color = Color("#dbe2e9").lerp(Color.BLACK, 0.3) # Oori White-ish
 		var sort_pressed := sort_normal.duplicate()
-		sort_pressed.bg_color = Color(0.18, 0.18, 0.18, 1.0)
+		sort_pressed.bg_color = Color("#25282a").lerp(Color.BLACK, 0.2) # Deep Dark
 		
 		cargo_sort_button.add_theme_stylebox_override("normal", sort_normal)
 		cargo_sort_button.add_theme_stylebox_override("hover", sort_hover)
@@ -770,6 +768,36 @@ func _ready() -> void:
 			popup.set_item_checked(i, i == _cargo_sort_metric)
 			
 		popup.index_pressed.connect(_on_cargo_sort_selected)
+		
+		# Mobile scaling for Vendor Trade Panel sort popup
+		var use_mobile = false
+		var is_portrait = false
+		if is_instance_valid(dsm):
+			is_portrait = dsm.get_is_portrait()
+			use_mobile = is_portrait or dsm.get_layout_mode() == 1 # MOBILE_LANDSCAPE
+			
+		if use_mobile:
+			var dyn_font_sz = dsm.get_scaled_base_font_size(16)
+			popup.add_theme_font_size_override("font_size", dyn_font_sz)
+			popup.add_theme_constant_override("v_separation", 16 if is_portrait else 12)
+			var popup_style = StyleBoxFlat.new()
+			popup_style.bg_color = Color("#25282a") # Oori Dark Grey
+			popup_style.content_margin_left = 24
+			popup_style.content_margin_right = 24
+			popup_style.content_margin_top = 16 if is_portrait else 12
+			popup_style.content_margin_bottom = 16 if is_portrait else 12
+			popup_style.border_width_left = 1
+			popup_style.border_width_right = 1
+			popup_style.border_width_top = 1
+			popup_style.border_width_bottom = 1
+			popup_style.border_color = Color("#393d47") # Oori Grey
+			popup_style.corner_radius_top_left = 6
+			popup_style.corner_radius_top_right = 6
+			popup_style.corner_radius_bottom_left = 6
+			popup_style.corner_radius_bottom_right = 6
+			popup.add_theme_stylebox_override("panel", popup_style)
+		
+		_update_cargo_sort_button_text()
 		_update_sort_dropdown_visibility_fast()
 
 	# Subscribe to canonical sources (Hub/Store) instead of GameDataManager.
@@ -815,9 +843,9 @@ func _ready() -> void:
 		if _api.has_signal(sig) and not _api.is_connected(sig, txn_cb):
 			_api.connect(sig, txn_cb)
 
-	# Enable wrapping for convoy cargo label so multi-line text keeps panel narrow
-	if is_instance_valid(convoy_cargo_label):
-		convoy_cargo_label.autowrap_mode = TextServer.AUTOWRAP_WORD
+	if is_instance_valid(_api) and _api.has_signal("cargo_data_received") and not _api.cargo_data_received.is_connected(_on_cargo_data_received):
+		_api.cargo_data_received.connect(_on_cargo_data_received)
+
 
 	# Action buttons minimum sizes are handled by _update_layout_scaling()
 	if is_instance_valid(action_button):
@@ -947,6 +975,8 @@ func _exit_tree() -> void:
 		for sig in ["cargo_bought", "cargo_sold", "vehicle_bought", "vehicle_sold", "resource_bought", "resource_sold"]:
 			if _api.has_signal(sig) and _api.is_connected(sig, txn_cb):
 				_api.disconnect(sig, txn_cb)
+		if _api.has_signal("cargo_data_received") and _api.cargo_data_received.is_connected(_on_cargo_data_received):
+			_api.cargo_data_received.disconnect(_on_cargo_data_received)
 	if is_instance_valid(_vendor_service) and _vendor_service.has_signal("vehicle_data_received"):
 		if _vendor_service.vehicle_data_received.is_connected(_on_service_vehicle_data_received):
 			_vendor_service.vehicle_data_received.disconnect(_on_service_vehicle_data_received)
@@ -1033,6 +1063,29 @@ func _on_service_vehicle_data_received(data: Dictionary) -> void:
 				sel[k] = (data as Dictionary)[k]
 		_update_inspector()
 		# _update_comparison() removed - deprecated.
+
+func _on_cargo_data_received(cargo: Dictionary) -> void:
+	var cargo_id := str(cargo.get("cargo_id", ""))
+	if perf_log_enabled:
+		print("[VendorPanel][AsyncCargo] Received cargo_data for id=", cargo_id, " has_pending=", _pending_cargo_recipient_lookups.has(cargo_id))
+	if not _pending_cargo_recipient_lookups.has(cargo_id):
+		return
+	var recipient_id := str(cargo.get("recipient", ""))
+	if recipient_id == "" or recipient_id == "00000000-0000-0000-0000-000000000000":
+		if perf_log_enabled:
+			print("[VendorPanel][AsyncCargo] Cargo ", cargo_id, " has no recipient in rich payload.")
+		return
+	var name := _get_vendor_name_for_recipient(recipient_id)
+	if perf_log_enabled:
+		print("[VendorPanel][AsyncCargo] Resolved recipient_id=", recipient_id, " to name='", name, "'")
+	var item: Dictionary = _pending_cargo_recipient_lookups[cargo_id]
+	item["mission_vendor_name"] = name
+	_pending_cargo_recipient_lookups.erase(cargo_id)
+	# If this item is currently selected, refresh the inspector
+	if selected_item and (selected_item as Dictionary).get("item_data", {}).get("cargo_id", "") == cargo_id:
+		if perf_log_enabled:
+			print("[VendorPanel][AsyncCargo] Refreshing inspector for selected cargo ", cargo_id)
+		_update_inspector()
 
 func _resolve_settlement_for_vendor_or_convoy(vendor_id: String, convoy_id: String) -> Dictionary:
 	return VendorPanelContextController.resolve_settlement_for_vendor_or_convoy(self, vendor_id, convoy_id)
@@ -1142,6 +1195,21 @@ func _populate_vendor_list() -> void:
 	_populate_category(vendor_item_tree, root, "Other", buckets.get("other", {}))
 	_populate_category(vendor_item_tree, root, "Resources", buckets.get("resources", {}))
 
+	if has_delivery_cargo and is_instance_valid(_api):
+		var mission_bucket: Dictionary = buckets.get("missions", {})
+		if perf_log_enabled:
+			print("[VendorPanel][AsyncCargo] Mission bucket items: ", mission_bucket.keys())
+		for key in mission_bucket:
+			var dict: Dictionary = mission_bucket[key]
+			var idata: Dictionary = dict.get("item_data", {})
+			var cid = str(idata.get("cargo_id", ""))
+			var m_v_name = str(dict.get("mission_vendor_name", ""))
+			if cid != "" and (m_v_name == "" or m_v_name == "Unknown Vendor" or "00000000" in m_v_name):
+				if perf_log_enabled:
+					print("[VendorPanel][AsyncCargo] Triggering get_cargo for cid=", cid)
+				_pending_cargo_recipient_lookups[cid] = dict
+				if _api.has_method("get_cargo"):
+					_api.get_cargo(cid)
 	if is_instance_valid(cargo_sort_button):
 		_set_cargo_sort_ui_visible(has_delivery_cargo or _has_delivery_cargo_fast_for_mode("buy"))
 
@@ -1341,7 +1409,7 @@ func _on_convoy_item_selected() -> void:
 	call_deferred("_handle_new_item_selection", item)
 
 func _populate_category(target_tree: Tree, root_item: TreeItem, category_name: String, agg_dict: Dictionary) -> void:
-	VendorTreeBuilder.populate_category(target_tree, root_item, category_name, agg_dict, _cargo_sort_metric)
+	VendorTreeBuilder.populate_category(target_tree, root_item, category_name, agg_dict, _cargo_sort_metric, perf_log_enabled)
 
 func _ensure_tree_columns(tree: Tree) -> void:
 	if not is_instance_valid(tree):
@@ -1417,7 +1485,8 @@ func _update_inspector() -> void:
 		fitment_panel,
 		fitment_rich_text,
 		convoy_data,
-		_compat_cache
+		_compat_cache,
+		perf_log_enabled
 	)
 	call_deferred("_log_size_after_update")
 
@@ -1572,7 +1641,8 @@ func _on_api_transaction_result(result: Dictionary) -> void:
 	VendorPanelRefreshController.on_api_transaction_result(self, result)
 	
 	# Show success feedback and flash bars
-	show_transaction_feedback(msg, "success")
+	if bool(_transaction_in_progress):
+		show_transaction_feedback(msg, "success")
 	_flash_capacity_bars()
 
 	if is_instance_valid(_hub) and _hub.has_signal("user_refresh_requested"):
@@ -1773,5 +1843,15 @@ func _on_cargo_sort_selected(index: int) -> void:
 		for i in range(popup.item_count):
 			popup.set_item_checked(i, i == index)
 
+	_update_cargo_sort_button_text()
 	_populate_vendor_list()
 	_populate_convoy_list()
+
+func _update_cargo_sort_button_text() -> void:
+	if not is_instance_valid(cargo_sort_button):
+		return
+	var sort_names = ["Margin/Unit", "Profit/Weight", "Profit/Volume", "Total Profit", "Distance"]
+	if _cargo_sort_metric >= 0 and _cargo_sort_metric < sort_names.size():
+		cargo_sort_button.text = "Sort: " + sort_names[_cargo_sort_metric] + " ▼"
+	else:
+		cargo_sort_button.text = "Sort ▼"

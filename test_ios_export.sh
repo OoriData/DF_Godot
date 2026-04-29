@@ -40,7 +40,8 @@ with open("export_presets.cfg", "w") as f:
 echo "🚀 Running Godot headless export (this will take a minute or two)..."
 mkdir -p build/ios
 # We run Godot. If it fails, the script will catch the error.
-if /Applications/Godot.app/Contents/MacOS/Godot --headless --export-release "iOS" "build/ios/test_export.ipa"; then
+GODOT_BIN="/Applications/Godot.app/Contents/MacOS/Godot"
+if $GODOT_BIN --headless --export-release "iOS" "build/ios/test_export.ipa"; then
     echo "✅ Export succeeded! The plugin linking issue is officially resolved."
 else
     echo "❌ Export failed! Check the output above."

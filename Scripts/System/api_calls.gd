@@ -2327,9 +2327,10 @@ func _on_request_completed(result: int, response_code: int, _headers: PackedStri
 	}
 	_log_info("[APICalls] _on_request_completed() purpose=%s result=%d code=%d url=%s id=%d http_ms=%d" % [RequestPurpose.keys()[_current_request_purpose], result, response_code, _last_requested_url, _current_client_txn_id, http_elapsed_ms])
 
-	if result == HTTPRequest.RESULT_CONNECTION_ERROR and _current_request_details.get("retry_count", 0) < 3:
+	var is_transient_error := (result == HTTPRequest.RESULT_CONNECTION_ERROR or result == 5) # 5 = RESULT_SSL_HANDSHAKE_ERROR
+	if is_transient_error and _current_request_details.get("retry_count", 0) < 3:
 		var retries = _current_request_details.get("retry_count", 0) + 1
-		_log_warn("APICalls: Connection error (code 4). Retrying %d/3 for URL=%s" % [retries, _last_requested_url])
+		_log_warn("APICalls: Transient network error (result %d). Retrying %d/3 for URL=%s" % [result, retries, _last_requested_url])
 		_current_request_details["retry_count"] = retries
 		_request_queue.push_front(_current_request_details)
 		_is_request_in_progress = false

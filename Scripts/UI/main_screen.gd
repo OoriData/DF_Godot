@@ -15,7 +15,7 @@ var _map_is_interactive: bool = true # New flag to control map input
 var _map_loading_overlay: Control = null
 var ui_manager: Node = null
 
-@onready var menu_container = $MainContainer/MainContent/MapAndMenuContainer/MenuContainer
+@onready var menu_container: PanelContainer = %MenuContainer
 @onready var top_bar = $MainContainer/TopBar
 @onready var visualizer_container = $MainContainer/MainContent/MapAndMenuContainer/VisualizerContainer
 @onready var convoy_visualizer = $MainContainer/MainContent/MapAndMenuContainer/VisualizerContainer/ConvoyVisualizer
@@ -39,6 +39,9 @@ func initialize(p_map_view: Control, p_camera_controller: Node, p_interaction_ma
 			map_interaction_manager.convoy_menu_requested.connect(_on_convoy_menu_requested)
 		if map_interaction_manager.has_signal("settlement_clicked") and not map_interaction_manager.is_connected("settlement_clicked", Callable(self, "_on_settlement_clicked")):
 			map_interaction_manager.settlement_clicked.connect(_on_settlement_clicked)
+
+	# Update layout based on current orientation
+	_refresh_menu_layout()
 
 	# Connect to the MapView's specific input signal
 	if is_instance_valid(map_view):
@@ -388,42 +391,41 @@ func _update_menu_container_anchors():
 	
 	_update_menu_container_style()
 
-func _update_menu_container_style():
+func _update_menu_container_style() -> void:
 	if not is_instance_valid(menu_container):
 		return
-		
-	var style: StyleBoxFlat = menu_container.get_theme_stylebox("panel")
-	if style:
-		style = style.duplicate()
-	else:
-		style = StyleBoxFlat.new()
-		
+	
+	var style = StyleBoxEmpty.new()
 	var bottom_margin = _get_bottom_safe_margin()
 	
 	if _is_portrait():
-		# Bottom sheet style: rounded top, square bottom
-		style.corner_radius_top_left = 12
-		style.corner_radius_top_right = 12
-		style.corner_radius_bottom_left = 0
-		style.corner_radius_bottom_right = 0
-		# Increase side margins slightly for portrait
+		# Bottom sheet style: margins for safe area
 		style.content_margin_left = 12
 		style.content_margin_right = 12
 		style.content_margin_top = 10
 		# Push content up to respect safe area
 		style.content_margin_bottom = 10.0 + bottom_margin
 	else:
-		# Sidebar style: rounded left, square right
-		style.corner_radius_top_left = 12
-		style.corner_radius_bottom_left = 12
-		style.corner_radius_top_right = 0
-		style.corner_radius_bottom_right = 0
+		# Sidebar style
 		style.content_margin_left = 8
 		style.content_margin_right = 8
 		style.content_margin_top = 6
 		style.content_margin_bottom = 6
-		
+	
 	menu_container.add_theme_stylebox_override("panel", style)
+	
+	# Apply background texture if not already present
+	var bg = menu_container.get_node_or_null("OoriBackground")
+	if not is_instance_valid(bg):
+		bg = TextureRect.new()
+		bg.name = "OoriBackground"
+		bg.texture = load("res://Assets/Themes/Oori Backround.png")
+		bg.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		bg.stretch_mode = TextureRect.STRETCH_TILE
+		bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		menu_container.add_child(bg)
+		menu_container.move_child(bg, 0)
+		bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 
 func _on_map_view_size_changed():
 	# Called when MapView is resized (e.g., due to menu open/close or container resize)
@@ -1231,6 +1233,7 @@ func _show_error_dialog(message: String, raw_message: String = ""):
 	var error_dialog = _error_dialog_scene.instantiate()
 	error_dialog.name = "ErrorDialog"
 	dialog_host.add_child(error_dialog)
+	modal_layer.process_mode = Node.PROCESS_MODE_ALWAYS
 	modal_layer.show()
 
 	error_dialog.show_message(message, raw_message)
@@ -1610,6 +1613,7 @@ func _on_map_ready_for_focus():
 	_map_ready_for_focus = true
 	# Wait for UI layout to settle
 	await get_tree().process_frame
+
 	if is_instance_valid(map_camera_controller) and not _has_fitted_camera:
 		var map_rect = _get_map_display_rect()
 		

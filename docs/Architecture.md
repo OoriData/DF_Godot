@@ -7,6 +7,7 @@ Event flow:
 Autoloads:
 - Hub: [Scripts/System/Services/signal_hub.gd](../Scripts/System/Services/signal_hub.gd)
 - Store: [Scripts/System/Services/game_store.gd](../Scripts/System/Services/game_store.gd)
+- TextScale: [Scripts/System/text_scale.gd](../Scripts/System/text_scale.gd)
 
 Canonical domain events via Hub/Store:
 - Map: `map_changed(tiles, settlements)`

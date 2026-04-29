@@ -39,6 +39,13 @@ A generic structural container that changes its internal padding automatically b
 - Simply replace any root `MarginContainer` in your popups with a `ResponsiveMarginContainer.new()` and configure its export variables:
   `mobile_portrait_margins`, `desktop_margins`, `mobile_landscape_margins`.
 
+### 4. `TextScale`
+An Autoload script (`/root/TextScale`) that manages font size caps to ensure readability on mobile.
+- **Minimum Font Size**: Enforced at **12pt** for mobile platforms.
+- **Orientation Awareness**: Re-calculates font sizes automatically when the screen rotates or the layout mode changes.
+- **Usage**: 
+  - `TextScale.register(node)`: Register a specific Label, Button, or RichTextLabel.
+  - `TextScale.register_tree(parent)`: Recursively register all compatible children in a panel or menu.
 ---
 
 ## Migration Guide for Existing Windows
@@ -47,7 +54,7 @@ If you are refactoring legacy windows (like `settings_menu.gd` or `cargo_menu.gd
 
 1. **Delete manual overrides**: Remove `_is_portrait()`, `_is_mobile()`, `_get_font_size()` from the script.
 2. **Delete loop checks**: Remove any `_apply_ui_scaling_recursive` functions. 
-3. **Delete manual font boots**: Remove hardcoded font sizes. `ResponsiveModalPanel` generates an adaptive Godot Theme at its root level natively. Modifying individual font sizes is generally unnecessary unless dealing with special header weights.
+3. **Delete manual font boots**: Remove hardcoded font sizes. `ResponsiveModalPanel` generates an adaptive Godot Theme at its root level natively. Modifying individual font sizes is generally unnecessary unless dealing with special header weights or dynamically instantiated UI nodes that might bypass the global theme. In such edge cases, a local sizing helper like `_get_font_size(base_size)` may be necessary to ensure mobile clarity.
 4. **Extend**: Change `extends PopupPanel` to `extends ResponsiveModalPanel`.
 5. **Adjust Spawning Logic**: Replace `popup_centered(...)` with `open_modal()`. Replace `hide()` with `close_modal()`.
 6. **Adjust Content Insertion**: Rename all top layer `add_child(xyz)` statements where `xyz` is your root UI struct to `add_content(xyz)`.

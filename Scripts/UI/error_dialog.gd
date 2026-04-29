@@ -5,6 +5,9 @@ var _report_btn: Button
 var _raw_error_text: String = ""
 
 func _ready() -> void:
+	# Ensure the dialog remains active even if the tree is paused or parent is disabled.
+	process_mode = PROCESS_MODE_ALWAYS
+	
 	# When the dialog is confirmed (OK button) or closed (X button), it should free itself.
 	confirmed.connect(queue_free)
 	canceled.connect(queue_free)

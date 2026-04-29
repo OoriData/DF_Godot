@@ -12,14 +12,14 @@ var ui_overall_scale_multiplier: float = 1.0
 @export var convoy_label_manager: Node
 
 # Label settings and default font (will be initialized in _ready)
-var label_settings: LabelSettings
-var settlement_label_settings: LabelSettings
+var label_settings: LabelSettings = LabelSettings.new()
+var settlement_label_settings: LabelSettings = LabelSettings.new()
 
 # --- UI Constants (copied and consolidated from main.gd) ---
 @export_group("Font Scaling")
 ## Target screen font size for convoy titles (if font_render_scale and map_zoom are 1.0). Adjust for desired on-screen readability. (Prev: 12)
-@export var base_convoy_title_font_size: int = 29 # 22 * 1.33
-@export var base_settlement_font_size: int = 24 # 18 * 1.33
+@export var base_convoy_title_font_size: int = 36 # Was 29
+@export var base_settlement_font_size: int = 32 # Was 24
 ## Minimum font size to set on the Label node.
 @export var min_node_font_size: int = 8
 ## Maximum font size to set on the Label node.
@@ -27,7 +27,7 @@ var settlement_label_settings: LabelSettings
 ## The map tile size that font scaling is based on. Should ideally match map_render's base_tile_size_for_proportions.
 @export var font_scaling_base_tile_size: float = 32.0 # 24 * 1.33
 ## Exponent for font scaling (1.0 = linear, <1.0 less aggressive shrink/grow).
-@export var font_scaling_exponent: float = 0.6 
+@export var font_scaling_exponent: float = 0.6
 
 @export_group("Label Offsets")
 ## Base horizontal offset from the convoy's center for its label panel. Scaled.
@@ -44,7 +44,7 @@ var settlement_label_settings: LabelSettings
 @export var base_convoy_panel_padding_h: float = 13.3 # 10.0 * 1.33
 @export var base_convoy_panel_padding_v: float = 6.65 # 5.0 * 1.33
 ## Background color for convoy label panels.
-@export var convoy_panel_background_color: Color = Color(0.12, 0.12, 0.15, 0.88) 
+@export var convoy_panel_background_color: Color = Color("25282adc") # Oori Dark Grey with 0.86 alpha
 ## Target screen border width for convoy label panels. Adjust for desired on-screen look. (Prev: 1.0)
 @export var base_convoy_panel_border_width: float = 1.66 # 1.25 * 1.33
 ## Minimum corner radius to set on the panel node.
@@ -68,15 +68,15 @@ var settlement_label_settings: LabelSettings
 ## Target screen vertical padding inside settlement label panels. Adjust for desired on-screen look. (Prev: 2.0)
 @export var base_settlement_panel_padding_v: float = 3.33 # 2.5 * 1.33
 ## Background color for settlement label panels.
-@export var settlement_panel_background_color: Color = Color(0.15, 0.12, 0.12, 0.85) 
+@export var settlement_panel_background_color: Color = Color("25282ad9") # Oori Dark Grey with 0.85 alpha
 
 @export_group("Label Positioning")
 ## Amount to shift a label panel vertically to avoid collision with another.
-@export var label_anti_collision_y_shift: float = 5.0 
+@export var label_anti_collision_y_shift: float = 5.0
 ## Radius around convoy icons to keep settlement labels out of.
 @export var settlement_convoy_keepout_radius: float = 24.0
 ## Padding from the viewport edges (in pixels) used to clamp label panels.
-@export var label_map_edge_padding: float = 5.0 
+@export var label_map_edge_padding: float = 5.0
 
 # Data constants, not typically exported for Inspector editing
 const CONVOY_STAT_EMOJIS: Dictionary = {
@@ -99,7 +99,7 @@ const SETTLEMENT_EMOJIS: Dictionary = {
 # --- Connector Line constants ---
 @export_group("Connector Lines")
 ## Color for lines connecting convoy icons to their label panels.
-@export var connector_line_color: Color = Color(0.9, 0.9, 0.9, 0.6) 
+@export var connector_line_color: Color = Color(0.9, 0.9, 0.9, 0.6)
 ## Width of the connector lines.
 @export var connector_line_width: float = 3.0 # slightly thicker center line
 ## Extra width (in pixels) added to the white outline under journey / preview lines
@@ -149,7 +149,7 @@ func _ready():
 	print("  convoy_label_container valid:", is_instance_valid(convoy_label_container))
 	print("  convoy_label_manager valid:", is_instance_valid(convoy_label_manager))
 	print("  terrain_tilemap valid:", is_instance_valid(terrain_tilemap))
-	
+
 	# --- Critical Dependency Validation ---
 	# Ensure all child Control nodes do not block input
 	for child in get_children():
@@ -178,9 +178,7 @@ func _ready():
 	if is_instance_valid(convoy_label_container):
 		convoy_label_container.z_index = LABEL_CONTAINER_Z_INDEX
 
-	# Initialize label settings
-	label_settings = LabelSettings.new()
-	settlement_label_settings = LabelSettings.new()
+	# Initialize label settings (already done at declaration, but resetting values here)
 
 	label_settings.font_color = Color.WHITE
 	label_settings.outline_size = 6
@@ -190,14 +188,10 @@ func _ready():
 	settlement_label_settings.outline_color = Color.BLACK
 
 	# Ensure a valid Font is assigned to both LabelSettings to avoid "font is NOT VALID" errors.
-	var fallback_font: Font = load("res://Assets/Roboto-VariableFont_wdth,wght.ttf")
+	var fallback_font: Font = load("res://Assets/main_font.tres")
 	if not is_instance_valid(fallback_font):
 		fallback_font = ThemeDB.fallback_font
 	if is_instance_valid(fallback_font):
-		# Duplicate before modifying to avoid editor resource mutation/reload prompts.
-		if fallback_font is FontFile:
-			fallback_font = (fallback_font as FontFile).duplicate(true)
-			(fallback_font as FontFile).oversampling = 2.0
 		label_settings.font = fallback_font
 		settlement_label_settings.font = fallback_font
 
@@ -310,8 +304,8 @@ func update_ui_elements(
 	convoy_id_to_color_map: Dictionary,
 	current_hover_info: Dictionary,
 	selected_convoy_ids: Array, # Expecting array of strings
-	convoy_label_user_positions_from_main: Dictionary, 
-	dragging_panel_node_from_main: Panel, 
+	convoy_label_user_positions_from_main: Dictionary,
+	dragging_panel_node_from_main: Panel,
 	dragged_convoy_id_str_from_main: String,
 	p_current_map_screen_rect_for_clamping: Rect2, # Moved before optional params
 	_is_light_ui_update: bool = false,
@@ -322,6 +316,9 @@ func update_ui_elements(
 	_all_settlement_data_cache = all_settlement_data
 	_convoy_id_to_color_map_cache = convoy_id_to_color_map
 	_selected_convoy_ids_cache = selected_convoy_ids
+
+	# Safety check: if label_settings is not fully initialized (e.g. font is missing),
+	# we might want to skip or use a fallback. But the declaration ensures the object exists.
 
 	_current_map_screen_rect_for_clamping = p_current_map_screen_rect_for_clamping
 	# Rebuild the convoy_data_by_id_cache for faster lookups
@@ -358,7 +355,7 @@ func update_ui_elements(
 	# for s in _all_settlement_data_cache:
 	# 	if s is Dictionary:
 	# 		print("  Settlement:", s.get('name', 'N/A'), "coords:", s.get('x', 'N/A'), s.get('y', 'N/A'))
-	
+
 	# Always update settlement labels - they are not focus-sensitive and should respond
 	# to hover and selection changes immediately, even when UI elements have focus.
 	_draw_interactive_labels(current_hover_info)
@@ -434,7 +431,12 @@ func _clamp_panel_position(panel: Panel): # Original function, now less used but
 	panel.position.y = clamp(panel.position.y, padded_min_y, padded_max_y)
 
 func toggle_settlement_pin(coords: Vector2i):
-	print("[UIManager] Toggling settlement pin for: ", coords)
+	var settlement_name = "Unknown"
+	var settlement_info = _find_settlement_at_tile(coords.x, coords.y)
+	if settlement_info != null:
+		settlement_name = settlement_info.get("name", "Unknown")
+
+	print("[UIManager] Toggling settlement pin for: ", coords, " (", settlement_name, ")")
 	if _pinned_settlement_coords.has(coords):
 		print("[UIManager]   Removing pin")
 		_pinned_settlement_coords.erase(coords)
@@ -452,7 +454,7 @@ func _draw_interactive_labels(current_hover_info: Dictionary):
 	var all_drawn_label_rects_this_update: Array[Rect2] = [] # This will be used by SettlementLabelManager and ConvoyLabelManager internally or passed to them
 	var convoy_ids_to_display: Array[String] = []
 	var settlement_coords_to_display: Array[Vector2i] = []
-	
+
 	# Include pinned settlements
 	for pinned_coords in _pinned_settlement_coords:
 		if not settlement_coords_to_display.has(pinned_coords):
@@ -483,10 +485,10 @@ func _draw_interactive_labels(current_hover_info: Dictionary):
 						var route_y_coords: Array = []
 						if raw_route_y is Array:
 							route_y_coords = raw_route_y
-							
+
 						if route_x_coords is Array and route_y_coords is Array and \
 						   route_x_coords.size() == route_y_coords.size() and not route_x_coords.is_empty():
-							
+
 							var start_tile_x: int = floori(float(route_x_coords[0]))
 							var start_tile_y: int = floori(float(route_y_coords[0]))
 							var start_tile_coords := Vector2i(start_tile_x, start_tile_y)
@@ -556,7 +558,7 @@ func _draw_interactive_labels(current_hover_info: Dictionary):
 		# print("UIManager:_draw_interactive_labels - Positioning/Clamping settlement panel for coords: ", settlement_coord_to_draw, " at pos: ", panel_node.position) # DEBUG
 		_position_settlement_panel(panel_node, settlement_data_for_panel, all_drawn_label_rects_this_update)
 		_clamp_panel_position(panel_node)
-		
+
 		var current_settlement_panel_actual_size = panel_node.size
 		if current_settlement_panel_actual_size.x <= 0 or current_settlement_panel_actual_size.y <= 0:
 			current_settlement_panel_actual_size = panel_node.get_minimum_size()
@@ -598,7 +600,12 @@ func _create_settlement_panel() -> Panel:
 	var style_box := StyleBoxFlat.new()
 	panel.add_theme_stylebox_override('panel', style_box)
 	panel.set_meta("style_box_ref", style_box)
-	# Settlement panels are not draggable by default, so no MOUSE_FILTER_STOP needed unless specified.
+
+	# Settlement panels are visual overlays rendered in a Node2D inside a CanvasLayer.
+	# Controls inside Node2D containers don't participate in Godot's GUI input
+	# routing, so mouse_filter has no reliable effect here. Click handling is done
+	# entirely via hit-rect tests in MapInteractionManager.
+	panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
 
 	var label_node := Label.new()
 	label_node.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
@@ -607,6 +614,11 @@ func _create_settlement_panel() -> Panel:
 	panel.set_meta("label_node_ref", label_node)
 
 	return panel
+
+## Schedules a label redraw on the next frame so the pin state change is
+## immediately reflected without needing a hover or selection change.
+func _force_draw_interactive_labels_deferred() -> void:
+	call_deferred("_draw_interactive_labels", {})
 
 func _update_settlement_panel_content(panel: Panel, settlement_info: Dictionary):
 	if not is_instance_valid(panel): return
@@ -682,7 +694,7 @@ func _position_settlement_panel(panel: Panel, settlement_info: Dictionary, _exis
 	# Get the local position of the tile center using TerrainTileMap (SubViewport-local)
 	var tile_center = terrain_tilemap.map_to_local(Vector2i(tile_x, tile_y))
 	var current_settlement_offset_above_center: float = base_settlement_offset_above_tile_center
-	
+
 	# Position label above the tile center, centered horizontally
 	var panel_desired_x = tile_center.x - (panel_actual_size.x / 2.0)
 	var panel_desired_y = tile_center.y - panel_actual_size.y - current_settlement_offset_above_center
@@ -692,14 +704,14 @@ func _position_settlement_panel(panel: Panel, settlement_info: Dictionary, _exis
 	var attempt := 0
 	while attempt < 20: # Max attempts to find a clear spot
 		var panel_rect := Rect2(panel.position, panel_actual_size)
-		
+
 		# Check against other labels
 		var overlaps_labels := false
 		for r in _existing_label_rects:
 			if panel_rect.intersects(r.grow(2), true):
 				overlaps_labels = true
 				break
-		
+
 		# Check against convoy icons
 		var overlaps_convoys := _settlement_panel_overlaps_convoy(panel_rect)
 
@@ -728,7 +740,7 @@ func _settlement_panel_overlaps_convoy(panel_rect: Rect2) -> bool:
 	var tile_size = terrain_tilemap.tile_set.tile_size
 	for convoy_data in _all_convoy_data_cache:
 		if not (convoy_data is Dictionary): continue
-		
+
 		var convoy_tile_x: float = convoy_data.get('x', -1.0)
 		var convoy_tile_y: float = convoy_data.get('y', -1.0)
 		if convoy_tile_x < 0.0: continue
@@ -740,7 +752,7 @@ func _settlement_panel_overlaps_convoy(panel_rect: Rect2) -> bool:
 
 		if _rect_overlaps_circle(panel_rect, convoy_center_pos, settlement_convoy_keepout_radius):
 			return true
-			
+
 	return false
 
 func _find_settlement_at_tile(tile_x: int, tile_y: int) -> Variant:
@@ -830,7 +842,7 @@ func _on_connector_lines_container_draw():
 					shared_segments_membership[seg_key] = []
 				if not shared_segments_membership[seg_key].has(cid_c):
 					shared_segments_membership[seg_key].append(cid_c)
-		
+
 		# --- Add Preview Route to membership if active ---
 		if _is_preview_active and _preview_route_x.size() >= 2:
 			var preview_cid := "PREVIEW_ROUTE"
@@ -884,17 +896,17 @@ func _on_connector_lines_container_draw():
 				var b_tile := Vector2i(int(route_x[si + 1]), int(route_y[si + 1]))
 				var p_min_tile := a_tile if (a_tile.x < b_tile.x or (a_tile.x == b_tile.x and a_tile.y < b_tile.y)) else b_tile
 				var p_max_tile := b_tile if (p_min_tile == a_tile) else a_tile
-				
+
 				var pA_canonical := terrain_tilemap.map_to_local(p_min_tile)
 				var pB_canonical := terrain_tilemap.map_to_local(p_max_tile)
 				var dir_canonical := pB_canonical - pA_canonical
-				
+
 				var normal_canonical := Vector2.ZERO
 				if dir_canonical.length() > 0.0001:
 					normal_canonical = Vector2(-dir_canonical.y, dir_canonical.x).normalized()
-				
+
 				seg_normals.append(normal_canonical)
-				
+
 				# Determine lane offset multiplier for this segment based on membership index
 				var seg_key := "%d,%d-%d,%d" % [p_min_tile.x, p_min_tile.y, p_max_tile.x, p_max_tile.y]
 				var members: Array = shared_segments_membership.get(seg_key, [])
@@ -953,7 +965,7 @@ func _on_connector_lines_container_draw():
 							var miter_len: float = base_sep_px / max(0.1, n_prev.dot(miter))							# The lane offset should ideally be consistent, but we use the next segment's lane
 							# as the authoritative one if they differ (though they shouldn't on a continuous path).
 							off_vec = miter * lane_next * miter_len
-					
+
 					# Enforce a small minimum gap at the junction if any segment is shared
 					if (count_prev > 1 or count_next > 1):
 						var use_next := count_next > 1
@@ -971,7 +983,7 @@ func _on_connector_lines_container_draw():
 				convoy_connector_lines_container.draw_polyline(offset_points, Color(1,1,1,0.95), outline_w)
 				# Colored path matching convoy icon (top stroke)
 				convoy_connector_lines_container.draw_polyline(offset_points, convoy_color, connector_line_width)
-				
+
 				# Destination Marker
 				var dest_pt = offset_points[offset_points.size() - 1]
 				var marker_radius = connector_line_width * 1.5
@@ -986,31 +998,31 @@ func _on_connector_lines_container_draw():
 			var px = int(_preview_route_x[j])
 			var py = int(_preview_route_y[j])
 			preview_points_base.append(terrain_tilemap.map_to_local(Vector2i(px, py)))
-		
+
 		var preview_offset_points: PackedVector2Array = []
 		var preview_cid := "PREVIEW_ROUTE"
 		var min_gap_px: float = 2.0
-		
+
 		# Compute per-segment normals and lane index for the preview
 		var p_seg_normals: Array[Vector2] = []
 		var p_seg_lane_offsets: Array[float] = []
 		var p_seg_member_counts: Array[int] = []
-		
+
 		for si in range(_preview_route_x.size() - 1):
 			var a_tile := Vector2i(int(_preview_route_x[si]), int(_preview_route_y[si]))
 			var b_tile := Vector2i(int(_preview_route_x[si + 1]), int(_preview_route_y[si + 1]))
 			var p_min_tile := a_tile if (a_tile.x < b_tile.x or (a_tile.x == b_tile.x and a_tile.y < b_tile.y)) else b_tile
 			var p_max_tile := b_tile if (p_min_tile == a_tile) else a_tile
-			
+
 			var pA_canonical := terrain_tilemap.map_to_local(p_min_tile)
 			var pB_canonical := terrain_tilemap.map_to_local(p_max_tile)
 			var dir_canonical := pB_canonical - pA_canonical
 			var normal_canonical := Vector2.ZERO
 			if dir_canonical.length() > 0.0001:
 				normal_canonical = Vector2(-dir_canonical.y, dir_canonical.x).normalized()
-			
+
 			p_seg_normals.append(normal_canonical)
-			
+
 			var seg_key := "%d,%d-%d,%d" % [p_min_tile.x, p_min_tile.y, p_max_tile.x, p_max_tile.y]
 			var members: Array = shared_segments_membership.get(seg_key, [])
 			var idx: int = members.find(preview_cid)
@@ -1039,7 +1051,7 @@ func _on_connector_lines_container_draw():
 				var lane_next := p_seg_lane_offsets[vi]
 				var cp_prev := p_seg_member_counts[vi - 1]
 				var cp_next := p_seg_member_counts[vi]
-				
+
 				if cp_prev <= 1 and cp_next > 1:
 					off_vec = n_next * lane_next * base_sep_px
 				elif cp_prev > 1 and cp_next <= 1:
@@ -1052,7 +1064,7 @@ func _on_connector_lines_container_draw():
 					else:
 						var miter_len: float = base_sep_px / max(0.1, n_prev.dot(miter))
 						off_vec = miter * lane_next * miter_len
-				
+
 				if cp_prev > 1 or cp_next > 1:
 					var use_next := cp_next > 1
 					var chosen_n := n_next if use_next else n_prev
@@ -1068,7 +1080,7 @@ func _on_connector_lines_container_draw():
 			convoy_connector_lines_container.draw_polyline(preview_offset_points, Color(1,1,1,0.95), preview_outline_w)
 			# Colored overlay matching convoy color
 			convoy_connector_lines_container.draw_polyline(preview_offset_points, _preview_color, _preview_line_width)
-			
+
 			# Destination Marker
 			var dest_pt = preview_offset_points[preview_offset_points.size() - 1]
 			var marker_radius = _preview_line_width * 1.5

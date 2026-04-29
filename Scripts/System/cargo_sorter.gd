@@ -89,11 +89,11 @@ static func get_unit_profit_margin(cargo: Dictionary, context: Dictionary) -> fl
 
 ## Gets the unit price/cost for the cargo
 static func get_unit_purchase_price(cargo: Dictionary) -> float:
-	if cargo.has("unit_price"): return float(cargo.get("unit_price"))
-	if cargo.has("price"): return float(cargo.get("price"))
-	if cargo.has("base_price"): return float(cargo.get("base_price"))
-	if cargo.has("value"): return float(cargo.get("value"))
-	if cargo.has("base_value"): return float(cargo.get("base_value"))
+	if cargo.has("unit_price"): return NumberFormat.to_f(cargo.get("unit_price"), 0.0, "unit_price")
+	if cargo.has("price"): return NumberFormat.to_f(cargo.get("price"), 0.0, "price")
+	if cargo.has("base_price"): return NumberFormat.to_f(cargo.get("base_price"), 0.0, "base_price")
+	if cargo.has("value"): return NumberFormat.to_f(cargo.get("value"), 0.0, "value")
+	if cargo.has("base_value"): return NumberFormat.to_f(cargo.get("base_value"), 0.0, "base_value")
 	return 0.0
 
 ## Gets the unit delivery reward for the cargo
@@ -103,15 +103,14 @@ static func get_unit_delivery_reward(cargo: Dictionary, context: Dictionary) -> 
 		var ro_dict: Dictionary = context.get("reward_override")
 		var cargo_id: String = str(cargo.get("id", cargo.get("cargo_id", "")))
 		if ro_dict.has(cargo_id):
-			return float(ro_dict.get(cargo_id))
+			return NumberFormat.to_f(ro_dict.get(cargo_id), 0.0, "reward_override:" + cargo_id)
 
-	if cargo.has("unit_delivery_reward"): return float(cargo.get("unit_delivery_reward"))
+	if cargo.has("unit_delivery_reward"): return NumberFormat.to_f(cargo.get("unit_delivery_reward"), 0.0, "unit_delivery_reward")
 	# If no specific delivery reward, it might just be the value/sell price
 	if cargo.has("delivery_reward"):
 		var qty = get_quantity(cargo)
 		if qty > 0:
-			return float(cargo.get("delivery_reward")) / float(qty)
-
+			return NumberFormat.to_f(cargo.get("delivery_reward"), 0.0, "delivery_reward") / float(qty)
 	# Fallback to sell price if this is not a delivery but a pure market transaction?
 	# Typically the mission gives "unit_delivery_reward", but if not, let's use base value
 	# so it returns at least something for market items being traded manually.
@@ -119,8 +118,8 @@ static func get_unit_delivery_reward(cargo: Dictionary, context: Dictionary) -> 
 
 ## Gets the quantity of the cargo item stack
 static func get_quantity(cargo: Dictionary) -> int:
-	if cargo.has("quantity"): return int(cargo.get("quantity"))
-	if cargo.has("total_quantity"): return int(cargo.get("total_quantity"))
+	if cargo.has("quantity"): return NumberFormat.to_i(cargo.get("quantity"), 1, "quantity")
+	if cargo.has("total_quantity"): return NumberFormat.to_i(cargo.get("total_quantity"), 1, "total_quantity")
 	return 1
 
 ## Gets the total order profit: (unit_margin) * quantity
@@ -131,27 +130,27 @@ static func get_total_order_profit(cargo: Dictionary, context: Dictionary) -> fl
 	return unit_margin * qty
 
 static func get_unit_weight(cargo: Dictionary) -> float:
-	if cargo.has("unit_weight"): return float(cargo.get("unit_weight"))
+	if cargo.has("unit_weight"): return NumberFormat.to_f(cargo.get("unit_weight"), 0.0, "unit_weight")
 	if cargo.has("weight"):
 		var qty = float(get_quantity(cargo))
 		if qty > 0:
-			return float(cargo.get("weight")) / qty
+			return NumberFormat.to_f(cargo.get("weight"), 0.0, "weight") / qty
 	if cargo.has("total_weight"):
 		var qty = float(get_quantity(cargo))
 		if qty > 0:
-			return float(cargo.get("total_weight")) / qty
+			return NumberFormat.to_f(cargo.get("total_weight"), 0.0, "total_weight") / qty
 	return 0.0
 
 static func get_unit_volume(cargo: Dictionary) -> float:
-	if cargo.has("unit_volume"): return float(cargo.get("unit_volume"))
+	if cargo.has("unit_volume"): return NumberFormat.to_f(cargo.get("unit_volume"), 0.0, "unit_volume")
 	if cargo.has("volume"):
 		var qty = float(get_quantity(cargo))
 		if qty > 0:
-			return float(cargo.get("volume")) / qty
+			return NumberFormat.to_f(cargo.get("volume"), 0.0, "volume") / qty
 	if cargo.has("total_volume"):
 		var qty = float(get_quantity(cargo))
 		if qty > 0:
-			return float(cargo.get("total_volume")) / qty
+			return NumberFormat.to_f(cargo.get("total_volume"), 0.0, "total_volume") / qty
 	return 0.0
 
 static func get_route_distance(cargo: Dictionary, context: Dictionary) -> float:
@@ -160,15 +159,14 @@ static func get_route_distance(cargo: Dictionary, context: Dictionary) -> float:
 		var d_map: Dictionary = context.get("distance_map")
 		var dest: String = str(cargo.get("destination", cargo.get("destination_id", "")))
 		if d_map.has(dest):
-			return float(d_map.get(dest))
+			return NumberFormat.to_f(d_map.get(dest), 1.0, "distance_map:" + dest)
 
 	# Priority 2: Standard context override
 	if context.has("route_distance"):
-		return float(context.get("route_distance"))
+		return NumberFormat.to_f(context.get("route_distance"), 1.0, "route_distance_context")
 
 	# Priority 3: Distance bundled on the cargo itself
-	if cargo.has("route_distance"): return float(cargo.get("route_distance"))
-	if cargo.has("distance"): return float(cargo.get("distance"))
-
+	if cargo.has("route_distance"): return NumberFormat.to_f(cargo.get("route_distance"), 1.0, "route_distance")
+	if cargo.has("distance"): return NumberFormat.to_f(cargo.get("distance"), 1.0, "distance")
 	# Default to 1.0 to avoid divide-by-zero if distance isn't provided
 	return 1.0

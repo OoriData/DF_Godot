@@ -21,3 +21,8 @@ static func assert_approx(a: float, b: float, eps: float = 0.0001, msg: String =
 	if abs(a - b) > eps:
 		push_error("ASSERT_APPROX failed: %s (got=%s expected=%s eps=%s)" % [msg, str(a), str(b), str(eps)])
 		failures += 1
+
+static func assert_false(cond: bool, msg: String = "") -> void:
+	if cond:
+		push_error("ASSERT_FALSE failed: %s" % msg)
+		failures += 1

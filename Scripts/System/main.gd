@@ -1,4 +1,3 @@
-@tool
 extends Control
 
 # --- Debug Overlay Flag ---
@@ -20,9 +19,9 @@ signal map_ready_for_focus
 @onready var main_screen: Control = get_owner()
 
 # --- Autoloads / Singletons ---
-@onready var _store: Node = get_node_or_null("/root/GameStore")
-@onready var _hub: Node = get_node_or_null("/root/SignalHub")
-@onready var _convoy_service: Node = get_node_or_null("/root/ConvoyService")
+var _store: Node = null
+var _hub: Node = null
+var _convoy_service: Node = null
 
 # --- Data Variables ---
 var map_tiles: Array = []
@@ -51,6 +50,25 @@ func _ready():
 
 func initialize_all_components():
 	print("--- Main Initialization Start ---")
+	
+	# Fetch Autoloads now to ensure they are ready
+	_store = get_node_or_null("/root/GameStore")
+	_hub = get_node_or_null("/root/SignalHub")
+	_convoy_service = get_node_or_null("/root/ConvoyService")
+
+	if not is_instance_valid(_store):
+		# Fallback check: maybe it's not at root yet?
+		printerr("[Main] WARN: GameStore not found at /root/GameStore. Checking tree...")
+		for child in get_tree().root.get_children():
+			if child.name == "GameStore":
+				_store = child
+				break
+	
+	if not is_instance_valid(_store):
+		printerr("[Main] ERROR: GameStore could not be located in the scene tree.")
+	else:
+		print("[Main] GameStore located successfully.")
+
 	# Ensure SubViewport continuous update (avoid white screen)
 	if is_instance_valid(sub_viewport):
 		if sub_viewport.render_target_update_mode != SubViewport.UPDATE_ALWAYS:
@@ -98,14 +116,24 @@ func initialize_all_components():
 	# Initialize MainScreen
 	if is_instance_valid(main_screen):
 		var ui_manager_node = get_node_or_null("UIManager") # UIManager is a sibling of Main in MapView.tscn
-		# Show a simple loading overlay while the map and UI initialize.
+		
+		# Check if it's a placeholder
+		if main_screen.get_script() == null:
+			printerr("[Main] ERROR: main_screen (", main_screen.name, ") has NO script attached! It might be a placeholder instance.")
+		elif not main_screen.has_method("initialize"):
+			printerr("[Main] ERROR: main_screen (", main_screen.name, ") has script ", main_screen.get_script().resource_path, " but missing 'initialize' method.")
+		else:
+			print("[Main] Calling main_screen.initialize...")
+			main_screen.initialize(self, map_camera_controller, map_interaction_manager, ui_manager_node)
+		
 		if main_screen.has_method("_set_map_loading"):
 			main_screen.call_deferred("_set_map_loading", true)
-		main_screen.initialize(self, map_camera_controller, map_interaction_manager, ui_manager_node)
 		# Connect this node's signal to a method on the main_screen node.
 		if not self.is_connected("map_ready_for_focus", Callable(main_screen, "_on_map_ready_for_focus")):
 			self.connect("map_ready_for_focus", Callable(main_screen, "_on_map_ready_for_focus"))
 			print("[Main] Connected self.map_ready_for_focus to main_screen._on_map_ready_for_focus")
+	else:
+		printerr("[Main] ERROR: main_screen reference is invalid.")
 
 	# Initialize MapInteractionManager with correct UIManager node path
 	if is_instance_valid(map_interaction_manager):

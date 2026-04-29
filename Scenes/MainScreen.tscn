@@ -77,6 +77,7 @@ size_flags_horizontal = 3
 layout_mode = 1
 
 [node name="MenuContainer" type="PanelContainer" parent="MainContainer/MainContent/MapAndMenuContainer" unique_id=1182338784]
+unique_name_in_owner = true
 visible = false
 clip_contents = true
 layout_mode = 1

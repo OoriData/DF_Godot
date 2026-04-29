@@ -154,7 +154,9 @@ static func _tree_column_count(tree: Tree) -> int:
 static func _normalize_category_title(category_name: String) -> String:
 	var title := category_name
 	var _lc := str(category_name).to_lower()
-	if _lc == "parts":
+	if _lc == "missions":
+		title = "Delivery Cargo"
+	elif _lc == "parts":
 		title = "Part Cargo"
 	elif _lc == "resources":
 		title = "Resource Cargo"
@@ -163,7 +165,7 @@ static func _normalize_category_title(category_name: String) -> String:
 	return title
 
 # Populate a single category section mirroring panel styling and metadata.
-static func populate_category(target_tree: Tree, root_item: TreeItem, category_name: String, agg_dict: Dictionary, sort_metric: int = -1) -> void:
+static func populate_category(target_tree: Tree, root_item: TreeItem, category_name: String, agg_dict: Dictionary, sort_metric: int = -1, perf_log_enabled: bool = false) -> void:
 	if agg_dict == null or agg_dict.is_empty():
 		return
 	var title := _normalize_category_title(category_name)
@@ -226,6 +228,8 @@ static func populate_category(target_tree: Tree, root_item: TreeItem, category_n
 	for row in rows:
 		var agg_data = row["data"]
 		var display_name: String = row["dn"]
+		if _normalize_category_title(category_name) == "Other Cargo" and perf_log_enabled:
+			print("[VendorTreeBuilder]   Adding to Other Cargo: '", display_name, "' data keys=", agg_data.keys() if agg_data is Dictionary else "NON-DICT")
 		var tree_child_item = target_tree.create_item(category_item)
 		tree_child_item.set_text(0, display_name)
 		tree_child_item.set_autowrap_mode(0, TextServer.AUTOWRAP_WORD)

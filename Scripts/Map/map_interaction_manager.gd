@@ -67,6 +67,10 @@ enum ControlScheme { MOUSE_AND_KEYBOARD, TOUCH }
 
 
 var _pan_touch_index: int = -1 # For tracking which finger started a touch pan
+var _touch_start_pos: Vector2 = Vector2.ZERO
+var _touch_start_time: int = 0
+const TAP_MAX_DISTANCE: float = 25.0
+const TAP_MAX_DURATION_MS: int = 300
 
 var _hover_update_timer: float = 0.0
 const HOVER_UPDATE_INTERVAL: float = 0.05 # Time in seconds (e.g., 0.05 for 20 FPS hover updates)
@@ -82,6 +86,12 @@ var _dragged_convoy_id_actual_str: String = "" # The ID of the convoy whose pane
 var _current_drag_clamp_rect: Rect2 # Global screen coordinates for clamping the dragged panel
 var _current_map_screen_rect: Rect2 # The actual screen rect the map is displayed in
 
+# --- Mouse Click Tracking ---
+var _mouse_start_pos: Vector2 = Vector2.ZERO
+var _mouse_start_time: int = 0
+var _last_touch_event_msec: int = 0
+
+
 
 
 func _ready():
@@ -92,7 +102,10 @@ func _ready():
 	var OS_name = OS.get_name()
 	if OS_name == "Android" or OS_name == "iOS":
 		active_control_scheme = ControlScheme.TOUCH
-		# print("[MIM] Detected mobile platform, switching to TOUCH control scheme.")
+		# Increase radii for better touch accuracy on mobile, especially with larger labels
+		settlement_hover_radius_on_texture_sq = 3600.0 # 60*60
+		convoy_hover_radius_on_texture_sq = 4900.0 # 70*70
+		# print("[MIM] Detected mobile platform, switching to TOUCH control scheme with increased hit radii.")
 	
 	if is_instance_valid(get_viewport()):
 		_current_map_screen_rect = get_viewport().get_visible_rect() # Initialize
@@ -195,6 +208,11 @@ func handle_map_input(event: InputEvent):
 
 	# 2. Handle Left Mouse Button interactions (clicks, panel drag start/end)
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
+		if Time.get_ticks_msec() - _last_touch_event_msec < 300:
+			if debug_logging:
+				print("[MIM] handle_map_input: Ignoring mouse button event due to recent touch deduplication.")
+			return # Ignore emulated mouse click just after a touch
+
 		if debug_logging:
 			print("[MIM] handle_map_input: Mouse button event, pressed=", event.pressed, " pos=", event.position)
 		# We pass the camera reference because it's needed to convert screen to world coordinates
@@ -203,8 +221,9 @@ func handle_map_input(event: InputEvent):
 			return # Consumed by LMB interaction
 
 	# 3. Handle Screen Touch events (Mobile)
-	if event is InputEventScreenTouch:
-		if debug_logging:
+	if event is InputEventScreenTouch or event is InputEventScreenDrag:
+		_last_touch_event_msec = Time.get_ticks_msec()
+		if debug_logging and event is InputEventScreenTouch:
 			print("[MIM] handle_map_input: Screen touch event, index=", event.index, " pressed=", event.pressed, " pos=", event.position)
 		_handle_touch_input(event)
 
@@ -252,27 +271,30 @@ func _handle_touch_input(event: InputEvent):
 			# Panning is handled by InputEventPanGesture.
 			if _pan_touch_index == -1:
 				_pan_touch_index = event.index
+				_touch_start_pos = event.position
+				_touch_start_time = Time.get_ticks_msec()
 				# We don't consume press, so panning/gestures can see it too.
 		else: # released
-				_pan_touch_index = -1
-				# _is_camera_panning = false # Ensure this is not set for single touch
-				# But we DO consume on release if we handle a tap.
+			if event.index == _pan_touch_index:
+				var time_delta = Time.get_ticks_msec() - _touch_start_time
+				var pos_delta = event.position.distance_to(_touch_start_pos)
 				
 				# On release, we check for hover one last time at the release position to be sure.
 				_update_hover(event.position)
 				
-				# Check if we clicked a settlement or convoy
-				if debug_logging:
-					print("[MIM] Touch release/tap detected at ", event.position)
-				if _handle_tap_interaction(event.position): # Handle tap for selection
-					get_viewport().set_input_as_handled()
+				# ONLY handle tap if it was short and didn't move much
+				if time_delta < TAP_MAX_DURATION_MS and pos_delta < TAP_MAX_DISTANCE:
+					if debug_logging:
+						print("[MIM] Valid Touch Tap detected: time=%dms, dist=%.1f" % [time_delta, pos_delta])
+					if _handle_tap_interaction(event.position):
+						get_viewport().set_input_as_handled()
+				
+				_pan_touch_index = -1
 		return # Consumed
 
 	if event is InputEventScreenDrag and event.index == _pan_touch_index:
-		# Single finger drag is no longer used for camera panning.
-		# It could be used for other interactions in the future (e.g., dragging map items if implemented).
-		# For now, we can let it pass or consume it if no other single-drag interaction is planned.
-		# get_viewport().set_input_as_handled() # Optionally consume if no other use
+		# Update hover during drag so labels don't "flicker" or disappear at pan start
+		_update_hover(event.position)
 		return # Consumed
 
 	# Touch Zooming (Pinch Gesture)
@@ -285,22 +307,42 @@ func _handle_touch_input(event: InputEvent):
 	# For example, detecting a drag start on a panel with touch.
 	# The _handle_tap_interaction above handles map element clicks.
 
-func _handle_tap_interaction(_position: Vector2) -> bool:
-	# Check if we tapped on a settlement or convoy using current hover info
+func _handle_tap_interaction(tap_position: Vector2) -> bool:
+	if not (is_instance_valid(map_display) and is_instance_valid(camera)):
+		return false
 	if debug_logging:
-		print("[MIM] _handle_tap_interaction called, hover_type=", _current_hover_info.get('type'))
-	
-	if _current_hover_info.get('type') == 'settlement':
-		var settlement_coords = _current_hover_info.get('coords')
+		print("[MIM] _handle_tap_interaction: doing fresh hit test at ", tap_position)
+
+	# Forcibly clear current hover state to prevent UI elements 
+	# sticking around (like a hovered settlement) after being successfully toggled off via tap.
+	if self._current_hover_info and not self._current_hover_info.is_empty():
+		self._current_hover_info = {}
+		emit_signal("hover_changed", self._current_hover_info)
+
+	# --- Guard: if the tap lands on an already-visible pinned settlement panel,
+	# toggle the pin directly and skip the tile-center hit test.
+	# This handles the case where the label is offset above the tile and the
+	# panel's own gui_input cannot fire for touch events on a CanvasLayer node.
+	var hit_panel_coords := _get_settlement_panel_at_screen_pos(tap_position)
+	if hit_panel_coords.x >= 0:
+		if debug_logging:
+			print("[MIM] Tap on pinned settlement panel at coords: ", hit_panel_coords)
+		emit_signal("settlement_clicked", hit_panel_coords)
+		return true
+
+	# --- Do a fresh, direct hit test at the tap position ---
+	# This is critical on mobile: the cached _current_hover_info may be stale.
+	var hit_info := _get_element_at_screen_pos(tap_position)
+
+	if hit_info.get('type') == 'settlement':
+		var settlement_coords = hit_info.get('coords')
 		if settlement_coords is Vector2i:
 			if debug_logging:
 				print("[MIM] Tapped settlement at coords: ", settlement_coords)
 			emit_signal("settlement_clicked", settlement_coords)
 			return true
-	elif _current_hover_info.get('type') == 'convoy':
-		# Should we also emit convoy_menu_requested here? 
-		# Probably, to double-check that taps work for convoys too.
-		var cid = _current_hover_info.get('id')
+	elif hit_info.get('type') == 'convoy':
+		var cid = hit_info.get('id')
 		if cid != null:
 			var convoy_data = _find_convoy_data_by_id(str(cid))
 			if convoy_data:
@@ -309,6 +351,109 @@ func _handle_tap_interaction(_position: Vector2) -> bool:
 				emit_signal("convoy_menu_requested", convoy_data)
 				return true
 	return false
+
+## Returns the tile coords of a visible settlement label panel whose screen rect
+## contains tap_pos, or Vector2i(-1,-1) if none found.
+func _get_settlement_panel_at_screen_pos(tap_pos: Vector2) -> Vector2i:
+	if not is_instance_valid(ui_manager):
+		return Vector2i(-1, -1)
+	var slc = ui_manager.get("settlement_label_container")
+	if not is_instance_valid(slc):
+		return Vector2i(-1, -1)
+	var active_panels = ui_manager.get("_active_settlement_panels")
+	if not (active_panels is Dictionary):
+		return Vector2i(-1, -1)
+	var best_distance_sq: float = INF
+	var best_coords: Vector2i = Vector2i(-1, -1)
+	
+	# Iterate known coord strings so we can return the actual coords directly.
+	for coord_str in active_panels.keys():
+		var panel_node = active_panels[coord_str]
+		if not (panel_node is Panel and is_instance_valid(panel_node) and panel_node.visible):
+			continue
+		var panel_size = panel_node.size
+		if panel_size.x <= 0:
+			panel_size = panel_node.get_minimum_size()
+		# panel_node.position is in settlement_label_container (Node2D) local space.
+		# Convert to global screen space via the container's canvas transform.
+		var container_xform = slc.get_global_transform_with_canvas()
+		var panel_global_top_left: Vector2 = container_xform * panel_node.position
+		
+		# Scale the size by the transform if there is any scale (though usually it's just positional translation + canvas scale)
+		var panel_global_size: Vector2 = container_xform.get_scale() * panel_size
+		var panel_global_rect := Rect2(panel_global_top_left, panel_global_size)
+		
+		# Use a slightly larger grow (12.0) so edge taps still register, specifically on mobile.
+		if panel_global_rect.grow(12.0).has_point(tap_pos):
+			# If it hits, calculate how close the tap is to the center of this panel.
+			var center_distance_sq = tap_pos.distance_squared_to(panel_global_rect.get_center())
+			if center_distance_sq < best_distance_sq:
+				best_distance_sq = center_distance_sq
+				var parts: PackedStringArray = coord_str.split("_")
+				if parts.size() == 2:
+					best_coords = Vector2i(parts[0].to_int(), parts[1].to_int())
+					
+	if debug_logging and best_coords != Vector2i(-1, -1):
+		print("[MIM] Closest hit settlement panel: ", best_coords, " distance sq: ", best_distance_sq)
+		
+	return best_coords
+
+## Returns hover info for a given global screen position, without mutating _current_hover_info.
+func _get_element_at_screen_pos(global_pos: Vector2) -> Dictionary:
+	if not (is_instance_valid(camera) and is_instance_valid(map_display) and is_instance_valid(map_display.tile_set)):
+		return {}
+
+	var mouse_world_pos := Vector2.ZERO
+
+	if is_instance_valid(_sub_viewport) and is_instance_valid(_map_texture_rect):
+		var display_rect: Rect2 = _map_texture_rect.get_global_rect()
+		if not display_rect.has_point(global_pos):
+			return {}
+		var local_in_display: Vector2 = global_pos - display_rect.position
+		var sub_size: Vector2i = _sub_viewport.size
+		var sub_screen := Vector2(
+			(local_in_display.x / max(1.0, display_rect.size.x)) * float(sub_size.x),
+			(local_in_display.y / max(1.0, display_rect.size.y)) * float(sub_size.y)
+		)
+		mouse_world_pos = camera.get_canvas_transform().affine_inverse() * sub_screen
+	else:
+		mouse_world_pos = camera.get_canvas_transform().affine_inverse() * global_pos
+
+	var tile_size = map_display.tile_set.tile_size
+	var tile_w: float = tile_size.x
+	var tile_h: float = tile_size.y
+
+	# Check convoys first
+	for convoy_data_item in all_convoy_data:
+		if not convoy_data_item is Dictionary: continue
+		var cx: float = convoy_data_item.get('x', -1.0)
+		var cy: float = convoy_data_item.get('y', -1.0)
+		var cid = convoy_data_item.get('convoy_id')
+		if cx >= 0.0 and cy >= 0.0 and cid != null:
+			var dx = mouse_world_pos.x - (cx + 0.5) * tile_w
+			var dy = mouse_world_pos.y - (cy + 0.5) * tile_h
+			if (dx * dx + dy * dy) < convoy_hover_radius_on_texture_sq:
+				return {'type': 'convoy', 'id': str(cid)}
+
+	# Check settlements
+	var closest_dist_sq := settlement_hover_radius_on_texture_sq + 1.0
+	var best_coords := Vector2i(-1, -1)
+	for settlement_info in all_settlement_data:
+		if not settlement_info is Dictionary: continue
+		var sx: int = settlement_info.get('x', -1)
+		var sy: int = settlement_info.get('y', -1)
+		if sx >= 0 and sy >= 0:
+			var dx = mouse_world_pos.x - (float(sx) + 0.5) * tile_w
+			var dy = mouse_world_pos.y - (float(sy) + 0.5) * tile_h
+			var dist_sq = dx * dx + dy * dy
+			if dist_sq < settlement_hover_radius_on_texture_sq and dist_sq < closest_dist_sq:
+				closest_dist_sq = dist_sq
+				best_coords = Vector2i(sx, sy)
+	if best_coords.x != -1:
+		return {'type': 'settlement', 'coords': best_coords}
+
+	return {}
+
 
 # Add boolean return type
 func _handle_panel_drag_motion_only(event: InputEventMouseMotion) -> bool:
@@ -450,6 +595,9 @@ func _handle_lmb_interactions(event: InputEventMouseButton, p_camera: Camera2D) 
 		return false
 
 	if event.pressed:
+		_mouse_start_pos = event.global_position
+		_mouse_start_time = Time.get_ticks_msec()
+
 		# --- Check for Panel Drag Start ---
 		var convoy_label_container_node: Node = null
 		if is_instance_valid(ui_manager):
@@ -514,6 +662,25 @@ func _handle_lmb_interactions(event: InputEventMouseButton, p_camera: Camera2D) 
 			_dragging_panel_node = null # Reset dragging panel
 			return true # Drag ended
 		else:
+			# --- Validate as Click (not a pan) ---
+			var time_delta = Time.get_ticks_msec() - _mouse_start_time
+			var pos_delta = event.global_position.distance_to(_mouse_start_pos)
+			
+			if pos_delta > TAP_MAX_DISTANCE or time_delta > TAP_MAX_DURATION_MS:
+				if debug_logging:
+					print("[MIM] Mouse release ignored as click (too much movement or duration: %.1fpx, %dms)" % [pos_delta, time_delta])
+				return false
+
+			# --- Check if click lands on a visible settlement label panel first ---
+			# The label is rendered offset above the tile, so we hit-test its screen
+			# rect explicitly before falling through to the tile-center world test.
+			var hit_panel_coords := _get_settlement_panel_at_screen_pos(event.global_position)
+			if hit_panel_coords.x >= 0:
+				if debug_logging:
+					print("[MIM] LMB on settlement label panel at:", hit_panel_coords)
+				emit_signal("settlement_clicked", hit_panel_coords)
+				return true
+
 			# --- Handle Click on Convoy (if not dragging) ---
 			var clicked_convoy_data = null
 			var mouse_world_pos = camera.get_canvas_transform().affine_inverse() * event.position
@@ -542,15 +709,18 @@ func _handle_lmb_interactions(event: InputEventMouseButton, p_camera: Camera2D) 
 				emit_signal("convoy_menu_requested", clicked_convoy_data)
 				return true # Click on convoy handled
 
-			# --- Handle Click on Settlement (if no convoy clicked) ---
-			if _current_hover_info.get('type') == 'settlement':
-				var settlement_coords = _current_hover_info.get('coords')
+			# --- Handle Click on Settlement (fresh hit test at click position) ---
+			# Use _get_element_at_screen_pos instead of stale _current_hover_info so
+			# that only a click physically over the settlement tile triggers the toggle.
+			var hit_info := _get_element_at_screen_pos(event.global_position)
+			if hit_info.get('type') == 'settlement':
+				var settlement_coords = hit_info.get('coords')
 				if settlement_coords is Vector2i:
 					emit_signal("settlement_clicked", settlement_coords)
 					if debug_logging:
 						print("[MIM] Settlement clicked at coords:", settlement_coords)
 					return true # Click on settlement handled
-			# ...existing code...
+
 	return false # Ensure all code paths return a value
 
 

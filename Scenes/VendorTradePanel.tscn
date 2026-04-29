@@ -293,18 +293,8 @@ size_flags_horizontal = 3
 text = "Install"
 visible = false
 
-[node name="HSeparator" type="HSeparator" parent="HBoxContainer/RightPanel"]
-layout_mode = 2
 
-[node name="ConvoyInfoLabel" type="Label" parent="HBoxContainer/RightPanel"]
-layout_mode = 2
-text = "Convoy Info"
-theme_override_font_sizes/font_size = 20
 
-[node name="ConvoyMoneyLabel" type="Label" parent="HBoxContainer/RightPanel"]
-unique_name_in_owner = true
-layout_mode = 2
-text = "Money: 0"
 
 # Loading overlay (kept non-blocking; label removed)
 [node name="LoadingPanel" type="Panel" parent="."]
@@ -321,10 +311,6 @@ theme_override_styles/panel = SubResource("StyleBoxFlat_loading")
 
 ; Removed blocking banner nodes under LoadingPanel
 
-[node name="ConvoyCargoLabel" type="Label" parent="HBoxContainer/RightPanel"]
-unique_name_in_owner = true
-layout_mode = 2
-text = "Cargo: 0/0"
 
 [node name="ToastNotification" parent="." instance=ExtResource("2_toast")]
 unique_name_in_owner = true
