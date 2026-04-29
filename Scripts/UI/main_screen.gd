@@ -748,16 +748,20 @@ func _slide_menu_open(convoy_data: Dictionary):
 		convoy_data = _get_primary_convoy_data()
 	# Smoothly focus using FINAL occlusion target so convoy ends centered in reduced visible map view.
 	if is_instance_valid(map_camera_controller):
+		var total_occlusion_px = _menu_target_width
+		if _is_portrait() and total_occlusion_px > 0.0:
+			total_occlusion_px += _get_bottom_safe_margin()
+			
 		if not convoy_data.is_empty() and map_camera_controller.has_method("smooth_focus_on_convoy_with_final_occlusion"):
-			_dbg_menu("slide_open_focus_convoy", {})
-			map_camera_controller.smooth_focus_on_convoy_with_final_occlusion(convoy_data, _menu_target_width, MENU_CAMERA_FOCUS_DURATION, _is_portrait())
+			_dbg_menu("slide_open_focus_convoy", {"total_occ": total_occlusion_px})
+			map_camera_controller.smooth_focus_on_convoy_with_final_occlusion(convoy_data, total_occlusion_px, MENU_CAMERA_FOCUS_DURATION, _is_portrait())
 		elif map_camera_controller.has_method("smooth_focus_on_world_pos") and map_camera_controller.has_method("get_current_zoom"):
-			_dbg_menu("slide_open_focus_fallback", {})
+			_dbg_menu("slide_open_focus_fallback", {"total_occ": total_occlusion_px})
 			# Fallback: shift camera center relative to current center (no convoy data available).
 			var zoom: float = max(map_camera_controller.get_current_zoom(), 0.0001)
-			var occlusion_world_w: float = _menu_target_width / zoom
+			var occlusion_world_bias: float = (total_occlusion_px / zoom) * 0.5
 			var current_center: Vector2 = map_camera_controller.camera_node.position
-			var shift: Vector2 = Vector2(0, occlusion_world_w * 0.5) if _is_portrait() else Vector2(occlusion_world_w * 0.5, 0)
+			var shift: Vector2 = Vector2(0, occlusion_world_bias) if _is_portrait() else Vector2(occlusion_world_bias, 0)
 			map_camera_controller.smooth_focus_on_world_pos(current_center + shift, MENU_CAMERA_FOCUS_DURATION)
 
 	# Animate menu width (offset_left negative width) or height (offset_top negative height).

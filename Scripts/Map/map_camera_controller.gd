@@ -585,8 +585,20 @@ func smooth_focus_on_world_pos(world_pos: Vector2, duration: float = 0.5) -> voi
 
 func smooth_focus_on_convoy(convoy_data: Dictionary, duration: float = 0.5) -> void:
 	var target_world := get_convoy_world_position(convoy_data)
-	if target_world != Vector2.ZERO:
-		smooth_focus_on_world_pos(target_world, duration)
+	if target_world == Vector2.ZERO:
+		return
+	
+	# ACCOUNT FOR OCCLUSION: Just like immediate focus_on_convoy, smooth focus must
+	# respect the current overlay occlusion to ensure the convoy is centered in the visible area.
+	var zoom = max(camera_node.zoom.x, 0.0001)
+	if _overlay_occlusion_px_x > 0.0:
+		var occlusion_world_w: float = _overlay_occlusion_px_x / zoom
+		target_world.x += occlusion_world_w * 0.5
+	if _overlay_occlusion_px_y > 0.0:
+		var occlusion_world_h: float = _overlay_occlusion_px_y / zoom
+		target_world.y += occlusion_world_h * 0.5
+
+	smooth_focus_on_world_pos(target_world, duration)
 
 # Focus convoy expecting a final overlay occlusion width (in pixels). Bias computed from provided value, not current animated value.
 func smooth_focus_on_convoy_with_final_occlusion(convoy_data: Dictionary, final_occlusion_px: float, duration: float = 0.5, is_vertical: bool = false) -> void:
@@ -905,8 +917,6 @@ func _get_clamped_camera_pos(pos: Vector2) -> Vector2:
 	if not is_instance_valid(camera_node):
 		return pos
 
-	# This logic is a copy of _clamp_camera_position, but it returns a
-	# clamped position instead of modifying the camera directly.
 	var cell_size = _get_cell_size()
 	var map_width = map_size.x * cell_size.x
 	var map_height = map_size.y * cell_size.y
@@ -951,10 +961,16 @@ func _get_clamped_camera_pos(pos: Vector2) -> Vector2:
 		min_y = lerp(min_y, 0.0, margin_factor)
 		max_y = lerp(max_y, map_height, margin_factor)
 
-	if map_width <= full_world_w:
-		min_x = map_width * 0.5; max_x = map_width * 0.5
-	if map_height <= full_world_h:
-		min_y = map_height * 0.5; max_y = map_height * 0.5
+	# If the map is smaller than the visible non-occluded world area, center the camera
+	var adjusted_world_w = max(0.0, viewport_size.x - _overlay_occlusion_px_x) / max(zoom, 0.0001)
+	var adjusted_world_h = max(0.0, viewport_size.y - _overlay_occlusion_px_y) / max(zoom, 0.0001)
+	
+	if map_width <= adjusted_world_w:
+		min_x = map_origin.x + map_width * 0.5 + occlusion_world_w * 0.5
+		max_x = min_x
+	if map_height <= adjusted_world_h:
+		min_y = map_origin.y + map_height * 0.5 + occlusion_world_h * 0.5
+		max_y = min_y
 
 	return Vector2(clamp(pos.x, min_x, max_x), clamp(pos.y, min_y, max_y))
 
