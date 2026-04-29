@@ -52,10 +52,19 @@ size_flags_horizontal = 3
 text = "Mechanic"
 visible = false
 
+[node name="TabScroll" type="ScrollContainer" parent="MainVBox"]
+layout_mode = 2
+vertical_scroll_mode = 0
+
+[node name="TabHBox" type="HBoxContainer" parent="MainVBox/TabScroll"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 10
+
 [node name="VehicleTabContainer" type="TabContainer" parent="MainVBox"]
 layout_mode = 2
 size_flags_vertical = 3
-
+tabs_visible = false
 [node name="Overview" type="ScrollContainer" parent="MainVBox/VehicleTabContainer"]
 layout_mode = 2
 

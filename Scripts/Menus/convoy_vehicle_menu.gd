@@ -32,6 +32,7 @@ var current_vehicle_list: Array = []
 var _current_convoy_data: Dictionary # To store the full convoy data
 var _selected_vehicle_id: String = "" # Persist selection across refreshes
 var _last_refresh_convoy_id: String = "" # Avoid spamming refresh requests
+var _custom_tab_buttons: Array[Button] = []
 
 const CONSUMABLE_CLASS_IDS = [
 	"4ccf7ae4-2297-420c-af71-97eda72dceca", # MRE Boxes
@@ -190,6 +191,7 @@ func _ready():
 
 	_clear_all_tabs() # Now safe to call
 	_show_initial_detail_message("Initializing...") # Now safe to call
+	_setup_custom_tabs()
 
 	# Subscribe to canonical events (store convoys_changed handled by MenuBase).
 	if is_instance_valid(_hub) and _hub.has_signal("convoy_updated") and not _hub.convoy_updated.is_connected(_on_hub_convoy_updated):
@@ -220,11 +222,112 @@ func _apply_mobile_tab_styles(tc: TabContainer) -> void:
 			style.border_color = Color(0.45, 0.55, 0.75, 0.9)
 		tc.add_theme_stylebox_override(style_name, style)
 
+func _setup_custom_tabs() -> void:
+	var tab_hbox = get_node_or_null("MainVBox/TabScroll/TabHBox")
+	var tab_scroll = get_node_or_null("MainVBox/TabScroll")
+	if not is_instance_valid(tab_hbox) or not is_instance_valid(tab_container):
+		return
+	
+	if is_instance_valid(tab_scroll):
+		tab_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+		tab_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+		tab_scroll.custom_minimum_size.y = 80 if _is_portrait() else (64 if _is_mobile() else 44)
+		tab_scroll.mouse_filter = Control.MOUSE_FILTER_PASS
+		
+	# Clear any existing buttons just in case
+	for child in tab_hbox.get_children():
+		child.queue_free()
+	_custom_tab_buttons.clear()
+	
+	var is_portrait = _is_portrait()
+	
+	# Create a button for each tab
+	var tab_count = tab_container.get_child_count()
+	for i in range(tab_count):
+		var btn = Button.new()
+		var tab_name = tab_container.get_tab_title(i)
+		if tab_name.is_empty():
+			tab_name = tab_container.get_child(i).name
+		btn.text = tab_name
+		btn.toggle_mode = true
+		btn.add_theme_font_size_override("font_size", _get_font_size(16))
+		
+		btn.custom_minimum_size = Vector2(160 if is_portrait else 120, 0)
+		
+		# Optional: add custom styling to match Oori design
+		var normal_style = StyleBoxFlat.new()
+		normal_style.bg_color = Color(0.15, 0.15, 0.18, 0.9)
+		normal_style.corner_radius_top_left = 6
+		normal_style.corner_radius_top_right = 6
+		normal_style.corner_radius_bottom_left = 6
+		normal_style.corner_radius_bottom_right = 6
+		normal_style.border_width_left = 1
+		normal_style.border_width_right = 1
+		normal_style.border_width_top = 1
+		normal_style.border_width_bottom = 1
+		normal_style.border_color = Color(0.3, 0.35, 0.4, 0.6)
+		normal_style.content_margin_left = 16
+		normal_style.content_margin_right = 16
+		
+		var pressed_style = normal_style.duplicate()
+		pressed_style.bg_color = Color(0.25, 0.35, 0.55, 0.9)
+		pressed_style.border_color = Color(0.45, 0.55, 0.75, 0.9)
+		
+		btn.add_theme_stylebox_override("normal", normal_style)
+		btn.add_theme_stylebox_override("pressed", pressed_style)
+		btn.add_theme_stylebox_override("hover", normal_style.duplicate())
+		btn.add_theme_color_override("font_color", Color(0.7, 0.7, 0.7, 1.0))
+		btn.add_theme_color_override("font_pressed_color", Color(1.0, 1.0, 1.0, 1.0))
+		
+		# Connect press
+		btn.pressed.connect(func():
+			tab_container.current_tab = i
+			_update_custom_tab_buttons(i)
+		)
+		
+		tab_hbox.add_child(btn)
+		_custom_tab_buttons.append(btn)
+		
+	# Select the first one initially
+	if tab_count > 0:
+		_update_custom_tab_buttons(tab_container.current_tab)
+
+func _update_custom_tab_buttons(active_index: int) -> void:
+	for i in range(_custom_tab_buttons.size()):
+		var btn = _custom_tab_buttons[i]
+		btn.set_pressed_no_signal(i == active_index)
+		
+		if i == active_index:
+			btn.add_theme_color_override("font_color", Color(1.0, 1.0, 1.0, 1.0))
+			var pressed_style = btn.get_theme_stylebox("pressed")
+			btn.add_theme_stylebox_override("normal", pressed_style)
+		else:
+			btn.add_theme_color_override("font_color", Color(0.7, 0.7, 0.7, 1.0))
+			var normal_style = StyleBoxFlat.new()
+			normal_style.bg_color = Color(0.15, 0.15, 0.18, 0.9)
+			normal_style.corner_radius_top_left = 6
+			normal_style.corner_radius_top_right = 6
+			normal_style.corner_radius_bottom_left = 6
+			normal_style.corner_radius_bottom_right = 6
+			normal_style.border_width_left = 1
+			normal_style.border_width_right = 1
+			normal_style.border_width_top = 1
+			normal_style.border_width_bottom = 1
+			normal_style.border_color = Color(0.3, 0.35, 0.4, 0.6)
+			normal_style.content_margin_left = 16
+			normal_style.content_margin_right = 16
+			btn.add_theme_stylebox_override("normal", normal_style)
+
+func _is_portrait() -> bool:
+	var win_size = get_viewport_rect().size if is_inside_tree() else Vector2(0, 0)
+	return win_size.y > win_size.x
+
 func _on_back_button_pressed():
 	print("ConvoyVehicleMenu: Back button pressed. Emitting 'back_requested' signal.")
 	emit_signal("back_requested")
 
 func _on_tab_changed(tab_idx: int) -> void:
+	_update_custom_tab_buttons(tab_idx)
 	if not is_instance_valid(apply_button) or not is_instance_valid(manifest_button):
 		return
 	

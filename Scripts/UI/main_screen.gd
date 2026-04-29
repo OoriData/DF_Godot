@@ -377,15 +377,13 @@ func _update_menu_container_style():
 	if not is_instance_valid(menu_container):
 		return
 		
-	# Use StyleBoxEmpty to guarantee absolutely no background is drawn natively, but preserve margins
+	# Use StyleBoxEmpty to guarantee absolutely no background is drawn natively.
+	# We also force margins to 0 so the background texture reaches edge-to-edge.
 	var style = StyleBoxEmpty.new()
-	if menu_container.has_theme_stylebox("panel"):
-		var current = menu_container.get_theme_stylebox("panel")
-		if current:
-			style.content_margin_left = current.content_margin_left
-			style.content_margin_right = current.content_margin_right
-			style.content_margin_top = current.content_margin_top
-			style.content_margin_bottom = current.content_margin_bottom
+	style.content_margin_left = 0
+	style.content_margin_right = 0
+	style.content_margin_top = 0
+	style.content_margin_bottom = 0
 			
 	menu_container.add_theme_stylebox_override("panel", style)
 	
