@@ -255,7 +255,16 @@ func _show_menu(menu_scene_resource, data_to_pass = null, add_to_stack: bool = t
 			# Only emit visibility change on initial open, not during submenu switches.
 			if not was_visible:
 				emit_signal("menu_visibility_changed", true, "convoy_menu")
-			menu_node_control.anchor_left = 1.0 / 3.0
+			
+			var is_portrait = false
+			var dsm = get_node_or_null("/root/DeviceStateManager")
+			if is_instance_valid(dsm) and dsm.has_method("get_is_portrait"):
+				is_portrait = dsm.get_is_portrait()
+			else:
+				var win_size = get_viewport_rect().size
+				is_portrait = win_size.y > win_size.x
+				
+			menu_node_control.anchor_left = 0.0 if is_portrait else 1.0 / 3.0
 			menu_node_control.anchor_right = 1.0
 			menu_node_control.anchor_top = 0.0
 			menu_node_control.anchor_bottom = 1.0

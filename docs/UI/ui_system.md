@@ -1,14 +1,34 @@
 # Responsive UI System
 
-This document outlines the standard architecture for creating UI windows and menus in *Desolate Frontiers* that automatically adapt to Desktop, Mobile Landscape, and Mobile Portrait orientations without relying on hacks like `custom_minimum_size` manipulation or manual tree climbs.
+This document outlines the standard architecture for creating UI windows and menus in *Desolate Frontiers* that automatically adapt to Desktop, Mobile Landscape, and Mobile Portrait orientations.
 
-## Core Lessons & Limitations Discovered
+## System Audit & Architecture (April 2026)
 
-During our initial iterations of the UI system, we discovered several Godot-specific limitations that dictate how we build menus:
+After significant debugging of horizontal UI clipping on mobile devices, the UI architecture has been formalized into a strict top-down scaling system.
 
-1. **PopupPanel vs CanvasLayer Limitations**: Godot's native `PopupPanel` and OS-level `Window` nodes have their own aggressive positioning logic. Modifying their coordinates manually often results in the window being reset or jammed into the corner of the screen. **Solution**: The `ResponsiveModalPanel` explicitly inherits from `CanvasLayer` instead of `PopupPanel`, establishing a virtual viewport layer that relies entirely on dependable Container Math (`Control.SIZE_SHRINK_CENTER`) rather than buggy OS-level popup boundaries.
-2. **DisplayServer vs Viewport Scaling**: Because the `ui_scale_manager` forces `content_scale_factor` multipliers on the scene to make it readable, retrieving physical screen bounds via `DisplayServer.window_get_size()` will return absolute hardware pixels. Mixing physical hardware sizes with multiplied logical container coordinates forces your UI to balloon massively out of frame. **Rule**: ONLY use `get_viewport().get_visible_rect().size` if you ever need to read screen geometries. 
-3. **Corner Clipping on Mobile**: Extending a layout to absolutely 100% of the screen limits on portrait mode results in UI elements hiding under modern phone hardware bezels, camera notches, or rounded corners. **Rule**: Never use a 100% fullscreen stretch without padding. `ResponsiveModalPanel` enforces a rigid 4-5% hardware safety buffer on portrait layout, preserving visibility regardless of device model.
+### How the UI Works (The "Single Source of Truth")
+
+1. **Global Scaling Engine (`UIScaleManager`)**
+   The `ui_scale_manager` autoload is the absolute authority on screen sizing. Instead of relying on manual multiplier math, it leverages Godot 4's native `content_scale_size` combined with Project Settings (`stretch/mode = canvas_items` and `stretch/aspect = expand`).
+   - **Portrait Target**: Forces a logical width of **800px**. This ensures the layout is "zoomed in" and text remains perfectly readable without requiring manual font size overrides.
+   - **Landscape/Desktop Targets**: Forces logical widths of **1600px** and **1920px** respectively to provide wider views.
+
+2. **Container Fluidity (Breaking the "Ghost" Constraints)**
+   The primary cause of UI clipping was rigid `custom_minimum_size` constraints buried deep within nested containers. When the global scale zoomed in, these rigid containers refused to shrink, pushing the UI off the edge of the screen.
+   - **Grid Containers**: Grids MUST NOT calculate their column counts based on their parent's width if the parent is an expanding container (this causes an infinite loop). Always use `get_viewport_rect().size.x` for available width calculations.
+   - **Labels**: Long labels in `HBoxContainers` force minimum widths. All text-heavy labels must have `autowrap_mode = TextServer.AUTOWRAP_WORD_SMART` AND `size_flags_horizontal = Control.SIZE_EXPAND_FILL` to allow them to shrink below their unwrapped text size.
+
+### What Doesn't Work (Anti-Patterns to Avoid)
+
+- ❌ **Local Font Boosts**: DO NOT multiply font sizes in local scripts (e.g., `font_size * 3.2`). Because the global scaling engine already zooms the viewport to 800px, multiplying the font size locally creates comically huge text that explodes the layout containers horizontally.
+- ❌ **`DisplayServer.window_get_size()` for Layout**: This returns physical hardware pixels. Because we use logical scaling (`content_scale_size`), physical pixels are meaningless for UI math. **Rule**: ALWAYS use `get_viewport_rect().size`.
+- ❌ **Hardcoded Container Minimums**: Avoid setting `custom_minimum_size.x` greater than `0` on high-level containers. Let the children dictate size fluidly.
+
+### What We Should Improve
+
+1. **Unify Theme Inheritance**: Instead of manually styling buttons and panels via script in every menu (e.g., `StyleBoxFlat.new()`), we should migrate all Oori-style visual tokens into a single global Godot Theme resource (`.tres`).
+2. **Remove `DeviceStateManager` Redundancy**: `DeviceStateManager` currently handles some font scaling multipliers (`font_multiplier_portrait`). These should ideally be phased out in favor of the global viewport scaling provided by `UIScaleManager`, simplifying the pipeline.
+3. **Safe Area Management**: The `SafeAreaHandler` currently calculates padding in physical pixels, which conflicts with our logical viewport scale. It needs to be refactored to apply margins dynamically in logical space to prevent notch clipping on newer iPhones/Androids.
 
 ---
 
@@ -16,12 +36,8 @@ During our initial iterations of the UI system, we discovered several Godot-spec
 
 To build a responsive modal/window, rely on the following components:
 
-### 1. `DeviceStateManager`
-An Autoload script (`/root/DeviceStateManager`) that determines the current layout device state automatically.
-- **Signal**: `layout_mode_changed(mode, screen_size, is_mobile)`
-- **Enum LayoutMode**: `DESKTOP`, `MOBILE_LANDSCAPE`, `MOBILE_PORTRAIT`
-- Use `DeviceStateManager.get_layout_mode()` to check layout state.
-- **Fonts**: Use `DeviceStateManager.get_scaled_base_font_size(base_size_here)` if a specific custom label requires scaling explicitly (though the system handles global UI themes implicitly).
+### 1. `UIScaleManager`
+The autoload that forces the viewport logical resolution. Automatically runs on boot to lock the width to the appropriate target for the current hardware orientation.
 
 ### 2. `ResponsiveModalPanel`
 Any UI popup that should look like a floating menu on Desktop but seamlessly transition to full screen on Mobile Portrait should extend this class. It inherits from `CanvasLayer` to guarantee perfectly centered coordinates across all aspect ratios without OS Window shifting bugs!
@@ -36,35 +52,13 @@ Any UI popup that should look like a floating menu on Desktop but seamlessly tra
 A generic structural container that changes its internal padding automatically based on the device.
 - Portrait: Snug margins (e.g. 12px) to maximize screen space.
 - Desktop: Generous margins (e.g. 24px-32px).
-- Simply replace any root `MarginContainer` in your popups with a `ResponsiveMarginContainer.new()` and configure its export variables:
-  `mobile_portrait_margins`, `desktop_margins`, `mobile_landscape_margins`.
-
-### 4. `TextScale`
-An Autoload script (`/root/TextScale`) that manages font size caps to ensure readability on mobile.
-- **Minimum Font Size**: Enforced at **12pt** for mobile platforms.
-- **Orientation Awareness**: Re-calculates font sizes automatically when the screen rotates or the layout mode changes.
-- **Usage**: 
-  - `TextScale.register(node)`: Register a specific Label, Button, or RichTextLabel.
-  - `TextScale.register_tree(parent)`: Recursively register all compatible children in a panel or menu.
 
 ---
 
-## Migration Guide for Existing Windows
+## Troubleshooting Checklist
 
-If you are refactoring legacy windows (like `settings_menu.gd` or `cargo_menu.gd`):
-
-1. **Delete manual overrides**: Remove `_is_portrait()`, `_is_mobile()`, `_get_font_size()` from the script.
-2. **Delete loop checks**: Remove any `_apply_ui_scaling_recursive` functions. 
-3. **Delete manual font boots**: Remove hardcoded font sizes. `ResponsiveModalPanel` generates an adaptive Godot Theme at its root level natively. Modifying individual font sizes is generally unnecessary unless dealing with special header weights or dynamically instantiated UI nodes that might bypass the global theme. In such edge cases, a local sizing helper like `_get_font_size(base_size)` may be necessary to ensure mobile clarity.
-4. **Extend**: Change `extends PopupPanel` to `extends ResponsiveModalPanel`.
-5. **Adjust Spawning Logic**: Replace `popup_centered(...)` with `open_modal()`. Replace `hide()` with `close_modal()`.
-6. **Adjust Content Insertion**: Rename all top layer `add_child(xyz)` statements where `xyz` is your root UI struct to `add_content(xyz)`.
-7. **Adjust Containers**: Wrap elements that need to break fluidly into a `FlowContainer` rather than calculating if they fit. Allow `ScrollContainers` to stretch vertically using `Control.SIZE_EXPAND_FILL` without injecting arbitrary minimum lengths (`custom_minimum_size`).
-
----
-
-## Troubleshooting
-
-- **Text clipping outside the panel**: Check if you have hardcoded a `custom_minimum_size` value on children (like line edits or textures) that exceeds the newly padded screen width on portrait mode.
-- **Scroll area is "tiny"**: Remove `custom_minimum_size` on the scroll container. Ensure `size_flags_vertical = Control.SIZE_EXPAND_FILL` is set so it recursively climbs to fill available height below your headers without squeezing into a rigid hardcoded box.
-- **Window stuck on huge size**: Double-check that none of your scripts are doing coordinate math with `DisplayServer.window_get_size()`.
+If your UI is clipping off the side of the screen on mobile:
+1. **Check for Local Font Boosts**: Search your script for `add_theme_font_size_override` multiplied by a variable. Remove it and rely on the global scale.
+2. **Check Grid Columns**: Ensure `GridContainers` are not calculating dynamic columns based on an expanding parent.
+3. **Check Label Wrapping**: Ensure long text blocks have `SIZE_EXPAND_FILL`.
+4. **Check HBoxes**: Check any `HBoxContainer` or `HFlowContainer` for elements with large `custom_minimum_size.x`.

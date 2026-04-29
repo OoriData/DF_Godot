@@ -169,12 +169,6 @@ func _is_mobile() -> bool:
 			return true
 	return false
 
-func _get_font_size(base: int) -> int:
-	var win_size = get_viewport_rect().size if is_inside_tree() else Vector2(0, 0)
-	var is_portrait = win_size.y > win_size.x
-	var boost = 2.5 if is_portrait else (1.6 if _is_mobile() else 1.2)
-	return int(base * boost)
-
 func _load_cargo_sort_metric_from_settings() -> void:
 	var sm := _get_settings_manager()
 	if is_instance_valid(sm) and sm.has_method("get_value"):
@@ -242,7 +236,17 @@ func _set_latest_settlements_snapshot(settlements: Array) -> void:
 				_vendor_id_to_name[vid] = nm
 
 func _ready():
+	# Ensure we don't force a minimum width that breaks the parent container
+	custom_minimum_size.x = 0
+	if has_node("MainVBox"):
+		$MainVBox.custom_minimum_size.x = 0
+		$MainVBox.clip_contents = true
+		if has_node("MainVBox/ScrollContainer"):
+			$MainVBox/ScrollContainer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			$MainVBox/ScrollContainer.custom_minimum_size.x = 0
+	
 	_update_mobile_dependent_layout()
+	call_deferred("_enforce_label_wrapping", self)
 
 	# Resolve optional nodes that might be missing depending on scene variant
 	all_cargo_label = get_node_or_null("MainVBox/ScrollContainer/ContentVBox/AllCargoLabel")
@@ -466,7 +470,6 @@ func _ready():
 		_queue_vendor_preview_update()
 
 	# Initial font size update
-	call_deferred("_update_font_sizes")
 	TextScale.register_tree(self)
 	if _debug_convoy_menu:
 		print("[ConvoyMenu][Debug] services api=", is_instance_valid(_api), " vendor_service=", is_instance_valid(_vendor_service))
@@ -517,7 +520,6 @@ func _notification(what: int) -> void:
 	if what == NOTIFICATION_RESIZED:
 		# Call deferred to ensure the new size is fully applied before calculating font sizes
 		call_deferred("_update_mobile_dependent_layout")
-		call_deferred("_update_font_sizes")
 		call_deferred("_update_vendor_grid_columns")
 
 func _update_mobile_dependent_layout() -> void:
@@ -525,10 +527,10 @@ func _update_mobile_dependent_layout() -> void:
 	var use_mobile = _is_mobile()
 
 	if is_portrait:
-		VENDOR_ITEM_BUTTON_MIN_WIDTH = 400.0
-		VENDOR_ITEM_BUTTON_HEIGHT = 300.0
+		VENDOR_ITEM_BUTTON_MIN_WIDTH = 340.0
+		VENDOR_ITEM_BUTTON_HEIGHT = 280.0
 	elif use_mobile:
-		VENDOR_ITEM_BUTTON_MIN_WIDTH = 240.0
+		VENDOR_ITEM_BUTTON_MIN_WIDTH = 220.0
 		VENDOR_ITEM_BUTTON_HEIGHT = 100.0
 	else:
 		VENDOR_ITEM_BUTTON_MIN_WIDTH = 190.0
@@ -562,10 +564,14 @@ func _update_mobile_dependent_layout() -> void:
 				# Scale the label inside the cargo bar container
 				for sub in child.get_children():
 					if sub is Label:
-						sub.add_theme_font_size_override("font_size", _get_font_size(13))
+						var dsm = get_node_or_null("/root/DeviceStateManager")
+						var fs = dsm.get_scaled_base_font_size(13) if dsm else 13
+						sub.add_theme_font_size_override("font_size", fs)
 					elif sub is ProgressBar:
 						# Make in-bar % text bigger in portrait
-						sub.add_theme_font_size_override("font_size", _get_font_size(16))
+						var dsm = get_node_or_null("/root/DeviceStateManager")
+						var fs = dsm.get_scaled_base_font_size(16) if dsm else 16
+						sub.add_theme_font_size_override("font_size", fs)
 
 	# Update vendor scroll handling
 	var vendor_preview_panel := $MainVBox/ScrollContainer/ContentVBox/VendorPreviewPanel if has_node("MainVBox/ScrollContainer/ContentVBox/VendorPreviewPanel") else null
@@ -616,14 +622,18 @@ func _update_mobile_dependent_layout() -> void:
 	if is_instance_valid(_mission_sort_option_button):
 		if is_portrait:
 			_mission_sort_option_button.custom_minimum_size = Vector2(400, 80)
-			_mission_sort_option_button.add_theme_font_size_override("font_size", _get_font_size(18))
+			var dsm = get_node_or_null("/root/DeviceStateManager")
+			var fs = dsm.get_scaled_base_font_size(18) if dsm else 18
+			_mission_sort_option_button.add_theme_font_size_override("font_size", fs)
 		else:
 			_mission_sort_option_button.custom_minimum_size = Vector2(300, 34)
 			_mission_sort_option_button.add_theme_font_size_override("font_size", 14)
 			
 		if use_mobile:
 			var popup = _mission_sort_option_button.get_popup()
-			popup.add_theme_font_size_override("font_size", _get_font_size(16))
+			var dsm = get_node_or_null("/root/DeviceStateManager")
+			var fs = dsm.get_scaled_base_font_size(16) if dsm else 16
+			popup.add_theme_font_size_override("font_size", fs)
 			popup.add_theme_constant_override("v_separation", 16 if is_portrait else 12)
 			var popup_style = StyleBoxFlat.new()
 			popup_style.bg_color = Color(0.15, 0.15, 0.15, 0.98)
@@ -648,43 +658,22 @@ func _update_mobile_dependent_layout() -> void:
 				_style_vendor_item_button(child, _current_vendor_tab)
 
 func _update_vendor_grid_columns() -> void:
-	# Make the vendor item grid responsive: choose columns based on available width.
 	if not is_instance_valid(vendor_item_grid):
 		return
 
-	var is_portrait = _is_portrait_view()
-	var on_mobile = _is_mobile()
-	var is_narrow_screen = get_viewport_rect().size.x < 1150
-
-	if on_mobile or is_narrow_screen:
-		if is_portrait:
-			# Split into 2 rows by setting columns to ceil(valid_items / 2.0)
-			var valid_count := 0
-			for child in vendor_item_grid.get_children():
-				if is_instance_valid(child) and not child.is_queued_for_deletion():
-					valid_count += 1
-
-			var cols = max(1, int(ceil(valid_count / 2.0)))
-			if _debug_convoy_menu:
-				print("[ConvoyMenu] Portrait 2-row layout: items=", valid_count, " columns=", cols)
-			vendor_item_grid.columns = cols
-		else:
-			vendor_item_grid.columns = 9999
-		return
-
-	var grid_width := vendor_item_grid.size.x
-	if grid_width <= 0:
-		# Fall back to parent/container width if grid has not sized yet
-		var parent := vendor_item_grid.get_parent()
-		if is_instance_valid(parent):
-			grid_width = parent.size.x
-	# Target a comfortable card width ~210px (optimized for density)
-	var target_card_px := 210.0
-	var min_cols := 2
-	var max_cols := 6 # Allowed for more horizontal density
-	var cols := int(max(min_cols, min(max_cols, floor(grid_width / (target_card_px + 8))))) # Include separation in calculation
-	if cols <= 0:
-		cols = min_cols
+	# Use viewport width directly to avoid circular dependency where an expanded 
+	# grid expands its parent, which then tells the grid it has more room.
+	var available_width = get_viewport_rect().size.x - 40.0 # Margin for scrollbars/padding
+	
+	var item_w = VENDOR_ITEM_BUTTON_MIN_WIDTH
+	var separation = vendor_item_grid.get_theme_constant("h_separation")
+	if separation <= 0: separation = 8
+	
+	var cols = max(1, int(floor(available_width / (item_w + separation))))
+	
+	if _debug_convoy_menu:
+		print("[ConvoyMenu] Dynamic columns: available=", available_width, " item_w=", item_w, " cols=", cols)
+		
 	vendor_item_grid.columns = cols
 
 func _on_back_button_pressed():
@@ -967,7 +956,7 @@ func initialize_with_data(data_or_id: Variant, extra_arg: Variant = null) -> voi
 		# Queue an update. This will be debounced with other signals that fire on open.
 		_queue_vendor_preview_update()
 		# Initial font size update after data is populated
-		call_deferred("_update_font_sizes")
+	
 
 func _queue_vendor_preview_update() -> void:
 	# Debounce updates to prevent UI thrashing from rapid signals.
@@ -1282,7 +1271,7 @@ func _render_vendor_preview_display() -> void:
 			vendor_item_grid.add_child(button)
 
 	# Ensure font sizes and grid columns are updated
-	call_deferred("_update_font_sizes")
+
 	call_deferred("_update_vendor_grid_columns")
 
 
@@ -2414,108 +2403,27 @@ func _set_progressbar_style(progressbar_node: ProgressBar, current_value: float,
 	progressbar_node.add_theme_color_override("font_outline_color", Color(0, 0, 0, 1))
 	progressbar_node.add_theme_constant_override("outline_size", 2)
 
-func _update_font_sizes() -> void:
-	if not is_instance_valid(self):
-		return
-	if REFERENCE_MENU_HEIGHT <= 0:
-		printerr("ConvoyMenu: REFERENCE_MENU_HEIGHT is not positive. Cannot scale fonts.")
-		return
-
-	var current_menu_height: float = self.size.y
-	if current_menu_height <= 200: # Menu might not have a size yet or is minimized/animating
-		return
-
-	var scale_factor: float = current_menu_height / REFERENCE_MENU_HEIGHT
-
-	if _debug_convoy_menu:
-		print("[ConvoyMenu][Debug] Scaling fonts. Height=", current_menu_height, " Factor=", scale_factor)
-
-	var win_size = get_viewport_rect().size if is_inside_tree() else Vector2(0, 0)
-	var is_portrait = win_size.y > win_size.x
-	var boost = 2.5 if is_portrait else (1.6 if _is_mobile() else 1.2)
-	var new_font_size: int = clamp(int(BASE_FONT_SIZE * scale_factor * boost / 1.6), MIN_FONT_SIZE, MAX_FONT_SIZE + 20)
-	var new_title_font_size: int = clamp(int(BASE_TITLE_FONT_SIZE * scale_factor * boost / 1.6), MIN_FONT_SIZE, MAX_TITLE_FONT_SIZE + 20)
-
-	var labels_to_scale: Array[Label] = [
-		fuel_text_label, water_text_label, food_text_label,
-		speed_text_label, offroad_text_label, efficiency_text_label,
-		cargo_volume_text_label, cargo_weight_text_label,
-		journey_dest_label, journey_progress_label, journey_eta_label,
-		vehicles_label, all_cargo_label, vendor_no_items_label,
-		# Add text of placeholder buttons if they need scaling
-		# vehicle_menu_button, journey_menu_button,
-		# settlement_menu_button, cargo_menu_button
-	]
-	# title_label is handled separately as it's the main convoy name title
-
-	if is_instance_valid(title_label):
-		title_label.add_theme_font_size_override("font_size", new_title_font_size)
-
-	if is_instance_valid(preview_title_label):
-		preview_title_label.add_theme_font_size_override("font_size", new_font_size + 2)
-
-	# Update font sizes for dynamically created vendor item buttons and their RichTextLabels
-	if is_instance_valid(vendor_item_grid):
-		for child in vendor_item_grid.get_children():
-			if child is Button or child is PanelContainer:
-				# Increase font for mission/parts item buttons to improve readability
-				child.add_theme_font_size_override("font_size", new_font_size + 2)
-				# Update font sizes for NameLabel and DestLabel using metadata for performance
-				var name_l: Label = child.get_meta("name_label") if child.has_meta("name_label") else (child.find_child("NameLabel", true, false) as Label)
-				var dest_l: Label = child.get_meta("dest_label") if child.has_meta("dest_label") else (child.find_child("DestLabel", true, false) as Label)
-
-				var raw_len: int = name_l.text.length() if is_instance_valid(name_l) else 0
-				if is_instance_valid(dest_l):
-					raw_len = max(raw_len, dest_l.text.length() - 2)
-
-				var effective_font_size = new_font_size + 4 # Default basis
-				if is_portrait:
-					effective_font_size = int(effective_font_size * 3.0)
-				elif _is_mobile():
-					effective_font_size = int(effective_font_size * 1.4)
-
-				if raw_len > 40:
-					effective_font_size = max(MIN_FONT_SIZE, effective_font_size - 4)
-				elif raw_len > 25:
-					effective_font_size = max(MIN_FONT_SIZE, effective_font_size - 2)
-				elif raw_len < 12:
-					effective_font_size = effective_font_size + 4
-
-				# Keep two centered lines visible inside fixed-height item cards.
-				var has_dest_line := is_instance_valid(dest_l)
-				var is_port = get_viewport_rect().size.y > get_viewport_rect().size.x
-				var max_button_label_size := 60 if is_port else (30 if _is_mobile() else (19 if has_dest_line else 22))
-				effective_font_size = clamp(effective_font_size + 1, MIN_FONT_SIZE, max_button_label_size)
-
-				var text_width: float = child.size.x - (VENDOR_ITEM_BUTTON_PADDING_X * 2.0) if child.size.x > 50 else (VENDOR_ITEM_BUTTON_MIN_WIDTH - (VENDOR_ITEM_BUTTON_PADDING_X * 2.0))
-				text_width = max(120.0, text_width)
-
-				if is_instance_valid(name_l):
-					name_l.add_theme_font_size_override("font_size", effective_font_size)
-					name_l.custom_minimum_size.x = text_width
-				if is_instance_valid(dest_l):
-					dest_l.add_theme_font_size_override("font_size", effective_font_size)
-					dest_l.custom_minimum_size.x = text_width
-
-	for label_node in labels_to_scale:
-		if is_instance_valid(label_node):
-			label_node.add_theme_font_size_override("font_size", new_font_size)
+	pass
 
 	if is_instance_valid(back_button):
-		back_button.add_theme_font_size_override("font_size", new_font_size)
+		var dsm = get_node_or_null("/root/DeviceStateManager")
+		var fs = dsm.get_scaled_base_font_size(18) if dsm else 18
+		back_button.add_theme_font_size_override("font_size", fs)
 
 	# Scale placeholder button fonts if they are valid
+	var dsm = get_node_or_null("/root/DeviceStateManager")
+	var btn_fs = dsm.get_scaled_base_font_size(16) if dsm else 16
 	if is_instance_valid(vehicle_menu_button):
-		vehicle_menu_button.add_theme_font_size_override("font_size", new_font_size)
+		vehicle_menu_button.add_theme_font_size_override("font_size", btn_fs)
 	if is_instance_valid(journey_menu_button):
-		journey_menu_button.add_theme_font_size_override("font_size", new_font_size)
+		journey_menu_button.add_theme_font_size_override("font_size", btn_fs)
 	if is_instance_valid(settlement_menu_button):
-		settlement_menu_button.add_theme_font_size_override("font_size", new_font_size)
+		settlement_menu_button.add_theme_font_size_override("font_size", btn_fs)
 	if is_instance_valid(cargo_menu_button):
-		cargo_menu_button.add_theme_font_size_override("font_size", new_font_size)
+		cargo_menu_button.add_theme_font_size_override("font_size", btn_fs)
 
 	# Scale vendor tab buttons
-	var tab_fs = (new_font_size + 10) if is_portrait else (new_font_size + 2 if _is_mobile() else new_font_size - 2)
+	var tab_fs = dsm.get_scaled_base_font_size(18) if dsm else 18
 	if is_instance_valid(convoy_missions_tab_button):
 		convoy_missions_tab_button.add_theme_font_size_override("font_size", tab_fs)
 	if is_instance_valid(settlement_missions_tab_button):
@@ -2776,3 +2684,13 @@ func _update_ui(convoy: Dictionary) -> void:
 		cargo_weight_text_label.text = "Cargo Weight: %s / %s" % [NumberFormat.fmt_float(used_weight, 2), NumberFormat.fmt_float(total_weight, 2)]
 	if is_instance_valid(cargo_weight_bar):
 		_set_progressbar_style(cargo_weight_bar, used_weight, total_weight)
+
+func _enforce_label_wrapping(node: Node):
+	if node is Label:
+		node.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		node.custom_minimum_size.x = 10 # Allow it to shrink very small if needed
+		# Ensure it doesn't force its parent to expand to unwrapped text size
+		if "size_flags_horizontal" in node:
+			node.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	for child in node.get_children():
+		_enforce_label_wrapping(child)

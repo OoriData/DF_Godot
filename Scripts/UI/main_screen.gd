@@ -24,6 +24,7 @@ const ERROR_DIALOG_SCENE_PATH := "res://Scenes/ErrorDialog.tscn"
 var _error_dialog_scene: PackedScene
 const AUTO_SELL_RECEIPT_MODAL_SCENE_PATH := "res://Scenes/UI/AutoSellReceiptModal.tscn"
 
+
 func initialize(p_map_view: Control, p_camera_controller: Node, p_interaction_manager: Node, p_ui_manager: Node = null):
 	self.map_view = p_map_view
 	map_camera_controller = p_camera_controller
@@ -376,9 +377,16 @@ func _update_menu_container_style():
 	if not is_instance_valid(menu_container):
 		return
 		
-	# Use StyleBoxEmpty to guarantee absolutely no background is drawn natively
+	# Use StyleBoxEmpty to guarantee absolutely no background is drawn natively, but preserve margins
 	var style = StyleBoxEmpty.new()
-	
+	if menu_container.has_theme_stylebox("panel"):
+		var current = menu_container.get_theme_stylebox("panel")
+		if current:
+			style.content_margin_left = current.content_margin_left
+			style.content_margin_right = current.content_margin_right
+			style.content_margin_top = current.content_margin_top
+			style.content_margin_bottom = current.content_margin_bottom
+			
 	menu_container.add_theme_stylebox_override("panel", style)
 	
 	# Apply background texture if not already present

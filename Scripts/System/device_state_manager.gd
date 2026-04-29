@@ -9,6 +9,11 @@ enum LayoutMode {
 
 signal layout_mode_changed(mode: LayoutMode, screen_size: Vector2, is_mobile: bool)
 
+@export_group("Font Scaling Multipliers")
+@export var font_multiplier_portrait: float = 1.6
+@export var font_multiplier_landscape: float = 1.6
+@export var font_multiplier_desktop: float = 1.2
+
 var current_mode: LayoutMode = LayoutMode.DESKTOP
 var is_mobile: bool = false
 var screen_size: Vector2 = Vector2.ZERO
@@ -35,17 +40,13 @@ func _update_state() -> void:
 	is_mobile = OS.has_feature("mobile") or OS.has_feature("web_android") or OS.has_feature("web_ios") or DisplayServer.get_name() in ["Android", "iOS"]
 	
 	# Evaluate Layout Mode globally
-	if is_mobile:
-		if is_portrait:
-			current_mode = LayoutMode.MOBILE_PORTRAIT
-		else:
-			current_mode = LayoutMode.MOBILE_LANDSCAPE
+	# Evaluate Layout Mode globally
+	if is_portrait:
+		current_mode = LayoutMode.MOBILE_PORTRAIT
+	elif is_mobile:
+		current_mode = LayoutMode.MOBILE_LANDSCAPE
 	else:
-		# On desktop, treat extreme vertical windows like a vertical mobile view for fluid layout response
-		if is_portrait and screen_size.x < 1000:
-			current_mode = LayoutMode.MOBILE_PORTRAIT
-		else:
-			current_mode = LayoutMode.DESKTOP
+		current_mode = LayoutMode.DESKTOP
 			
 	if old_mode != current_mode:
 		layout_mode_changed.emit(current_mode, screen_size, is_mobile)
@@ -53,11 +54,11 @@ func _update_state() -> void:
 
 func get_font_multiplier() -> float:
 	if current_mode == LayoutMode.MOBILE_PORTRAIT:
-		return 2.5
+		return font_multiplier_portrait
 	elif current_mode == LayoutMode.MOBILE_LANDSCAPE:
-		return 1.6
+		return font_multiplier_landscape
 	else:
-		return 1.2
+		return font_multiplier_desktop
 
 func get_scaled_base_font_size(base_size: int = 16) -> int:
 	return int(base_size * get_font_multiplier())

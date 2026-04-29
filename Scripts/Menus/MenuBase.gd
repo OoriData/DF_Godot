@@ -105,6 +105,13 @@ func _maximize_transparency_recursive(node: Node) -> void:
 			
 		for key in style_keys:
 			var empty = StyleBoxEmpty.new()
+			if node.has_theme_stylebox(key):
+				var current = node.get_theme_stylebox(key)
+				if current:
+					empty.content_margin_left = current.content_margin_left
+					empty.content_margin_right = current.content_margin_right
+					empty.content_margin_top = current.content_margin_top
+					empty.content_margin_bottom = current.content_margin_bottom
 			node.add_theme_stylebox_override(key, empty)
 				
 	# If it's a ProgressBar, make its background transparent too

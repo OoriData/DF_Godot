@@ -93,18 +93,18 @@ func _apply_mobile_optimizations() -> void:
 	# 2. Aggressive Typography Boost for Portrait
 	var win_size = get_viewport().get_visible_rect().size if is_inside_tree() else Vector2(0, 0)
 	var is_portrait = win_size.y > win_size.x
-	var boost = 3.2 if is_portrait else 2.2
+	var boost = 1.0 # Rely on global scaling instead of local boosts
 	
 	var labels = [username_label, user_money_label]
 	for label in labels:
 		if is_instance_valid(label):
-			var fs = label.get_theme_font_size("font_size")
-			label.add_theme_font_size_override("font_size", int(fs * boost))
+			# Use theme default or global scale instead of multiplying here
+			pass # label.add_theme_font_size_override("font_size", int(fs * boost))
 	
 	# Settings button scaling
 	if is_instance_valid(settings_button):
-		var btn_fs = settings_button.get_theme_font_size("font_size")
-		settings_button.add_theme_font_size_override("font_size", int(btn_fs * boost))
+		# var btn_fs = settings_button.get_theme_font_size("font_size")
+		# settings_button.add_theme_font_size_override("font_size", int(btn_fs * boost))
 		settings_button.custom_minimum_size.y = 100 if is_portrait else 60
 		var sb_btn = StyleBoxFlat.new()
 		sb_btn.bg_color = OORI_DARK_GREY
@@ -123,8 +123,7 @@ func _apply_mobile_optimizations() -> void:
 
 	# Report Bug button scaling & red styling
 	if is_instance_valid(report_bug_button):
-		var bug_fs = report_bug_button.get_theme_font_size("font_size")
-		report_bug_button.add_theme_font_size_override("font_size", int(bug_fs * boost))
+		# report_bug_button.add_theme_font_size_override("font_size", int(bug_fs * boost))
 		report_bug_button.custom_minimum_size.y = 100 if is_portrait else 60
 		var bug_style = StyleBoxFlat.new()
 		bug_style.bg_color = Color(0.7, 0.1, 0.15, 0.95) # Prominent Red
