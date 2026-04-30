@@ -193,6 +193,9 @@ static func on_action_button_pressed(panel: Object) -> void:
 	panel._pending_tx.volume_delta = v_delta if str(panel.current_mode) == "buy" else -v_delta
 
 	# Apply optimistic capacity/money projection without triggering an immediate data refresh.
+	var mode_label := "buy" if str(panel.current_mode) == "buy" else "sell"
+	var item_name_diag: String = str(item_data_source.get("name", "Unknown"))
+	print("[VendorPanel][DIAG] Action Button Pressed: %s on instance_id=%d for %d x %s" % [mode_label, panel.get_instance_id(), quantity, item_name_diag])
 	panel._transaction_in_progress = true
 	if is_instance_valid(panel.action_button):
 		panel.action_button.disabled = true
@@ -240,7 +243,6 @@ static func dispatch_buy(panel: Object, vendor_id: String, convoy_id: String, it
 		var vehicle_id: String = str(item_data_source.get("vehicle_id", ""))
 		if vehicle_id != "" and panel._vendor_service.has_method("buy_vehicle"):
 			panel._vendor_service.buy_vehicle(vendor_id, convoy_id, vehicle_id)
-			panel._request_authoritative_refresh(convoy_id, vendor_id)
 		return
 
 	if bool(item_data_source.get("is_raw_resource", false)):
@@ -258,13 +260,11 @@ static func dispatch_buy(panel: Object, vendor_id: String, convoy_id: String, it
 				return
 		if res_type != "" and panel._vendor_service.has_method("buy_resource"):
 			panel._vendor_service.buy_resource(vendor_id, convoy_id, res_type, float(quantity))
-			panel._request_authoritative_refresh(convoy_id, vendor_id)
 		return
 
 	var cargo_id: String = str(item_data_source.get("cargo_id", ""))
 	if cargo_id != "" and panel._vendor_service.has_method("buy_cargo"):
 		panel._vendor_service.buy_cargo(vendor_id, convoy_id, cargo_id, int(quantity))
-		panel._request_authoritative_refresh(convoy_id, vendor_id)
 
 
 static func dispatch_sell(panel: Object, vendor_id: String, convoy_id: String, item_data_source: Dictionary, quantity: int) -> void:
@@ -275,7 +275,6 @@ static func dispatch_sell(panel: Object, vendor_id: String, convoy_id: String, i
 		var vehicle_id: String = str(item_data_source.get("vehicle_id", ""))
 		if vehicle_id != "" and panel._vendor_service.has_method("sell_vehicle"):
 			panel._vendor_service.sell_vehicle(vendor_id, convoy_id, vehicle_id)
-			panel._request_authoritative_refresh(convoy_id, vendor_id)
 		return
 
 	if bool(item_data_source.get("is_raw_resource", false)):
@@ -299,7 +298,6 @@ static func dispatch_sell(panel: Object, vendor_id: String, convoy_id: String, i
 				return
 		if res_type != "" and panel._vendor_service.has_method("sell_resource"):
 			panel._vendor_service.sell_resource(vendor_id, convoy_id, res_type, float(quantity))
-			panel._request_authoritative_refresh(convoy_id, vendor_id)
 		return
 
 	# Resource-bearing cargo (containers, etc.) should only be sellable when vendor has
@@ -320,4 +318,3 @@ static func dispatch_sell(panel: Object, vendor_id: String, convoy_id: String, i
 	var cargo_id: String = str(item_data_source.get("cargo_id", ""))
 	if cargo_id != "" and panel._vendor_service.has_method("sell_cargo"):
 		panel._vendor_service.sell_cargo(vendor_id, convoy_id, cargo_id, int(quantity))
-		panel._request_authoritative_refresh(convoy_id, vendor_id)

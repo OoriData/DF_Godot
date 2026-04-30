@@ -213,6 +213,12 @@ layout_mode = 2
 text = "Transaction"
 theme_override_font_sizes/font_size = 20
 
+[node name="ConvoyMoneyLabel" type="Label" parent="HBoxContainer/RightPanel"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_colors/font_color = Color(0.952941, 0.835294, 0.305882, 1)
+text = "Money: 0"
+
 [node name="TransactionQuantityContainer" type="HBoxContainer" parent="HBoxContainer/RightPanel"]
 unique_name_in_owner = true
 layout_mode = 2

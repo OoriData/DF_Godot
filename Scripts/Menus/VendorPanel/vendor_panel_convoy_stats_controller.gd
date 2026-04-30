@@ -8,7 +8,10 @@ static func update_convoy_info_display(panel: Object, projected_volume_delta: fl
 	if not panel.is_node_ready():
 		return
 
-	# Money display is removed per requirements.
+	# Update money display if the label exists
+	if is_instance_valid(panel.convoy_money_label) and panel.convoy_data and (panel.convoy_data is Dictionary) and (panel.convoy_data as Dictionary).has("money"):
+		var current_money: float = float((panel.convoy_data as Dictionary).get("money", 0.0))
+		panel.convoy_money_label.text = NumberFormat.format_money(current_money, "")
 
 	if panel.convoy_data == null or not (panel.convoy_data is Dictionary):
 		return

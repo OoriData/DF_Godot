@@ -40,6 +40,7 @@ func _emit_install_requested(item: Variant, quantity: int, vendor_id: String) ->
 @onready var price_label: RichTextLabel = %PriceLabel
 @onready var convoy_volume_bar: ProgressBar = %ConvoyVolumeBar
 @onready var convoy_weight_bar: ProgressBar = %ConvoyWeightBar
+@onready var convoy_money_label: Label = %ConvoyMoneyLabel
 @onready var max_button: Button = %MaxButton
 @onready var action_button: Button = %ActionButton
 @onready var install_button: Button = %InstallButton
@@ -352,9 +353,12 @@ func _maybe_finalize_optimistic_tx_on_incoming_convoy(convoy: Dictionary) -> voi
 		matches_w = abs(incoming_used_w - expected_used_w) <= tol_w
 
 	if matches_v and matches_w:
+		# The server snapshot already reflects our change.
+		# We "commit" the projection (which effectively stops applying the delta on top of the baseline)
+		# but we do NOT clear _pending_tx yet, because we still need it for the final API result toast.
 		_commit_projection_from_pending_tx()
-		_transaction_in_progress = false
-		_clear_pending_tx()
+		_transaction_in_progress = false # This stops the optimistic projection from being added to totals
+		# DO NOT call _clear_pending_tx() here!
 		_activate_baseline_guard(mode, incoming_used_v, incoming_used_w)
 
 func _try_set_convoy_data(next_convoy: Dictionary) -> bool:
@@ -1186,9 +1190,11 @@ func refresh_data(p_vendor_data, p_convoy_data, p_current_settlement_data, p_all
 func _populate_vendor_list() -> void:
 	vendor_item_tree.clear()
 	if not vendor_data:
+		vendor_items = {}
 		return
 	var vd_for_agg := _vendor_data_with_price_fallback(vendor_data)
 	var buckets := VendorCargoAggregatorScript.build_vendor_buckets(vd_for_agg, perf_log_enabled, Callable(self, "_get_vendor_name_for_recipient"))
+	self.vendor_items = buckets
 	var root = vendor_item_tree.create_item()
 	var has_delivery_cargo = not buckets.get("missions", {}).is_empty()
 	_populate_category(vendor_item_tree, root, "Delivery Cargo", buckets.get("missions", {}))
@@ -1276,13 +1282,15 @@ func _try_apply_pending_focus_intent() -> bool:
 
 func _populate_convoy_list() -> void:
 	convoy_item_tree.clear()
-	if not convoy_data:
+	if not (convoy_data is Dictionary) or convoy_data.is_empty():
+		convoy_items = {}
 		return
 	var allow_vehicle_sell := _should_show_vehicle_sell_category()
 	# Always use price fallback for aggregation to ensure consistent grouping (e.g. water/food).
 	# Transaction logic will still enforce vendor's actual buying prices.
 	var vd_for_agg = _vendor_data_with_price_fallback(vendor_data)
 	var buckets := VendorCargoAggregatorScript.build_convoy_buckets(convoy_data, vd_for_agg, current_mode, perf_log_enabled, Callable(self, "_get_vendor_name_for_recipient"), allow_vehicle_sell)
+	self.convoy_items = buckets
 	if perf_log_enabled and str(current_mode) == "sell":
 		var vd: Dictionary = vendor_data if (vendor_data is Dictionary) else {}
 		var vdx: Dictionary = vd_for_agg
@@ -1613,18 +1621,77 @@ func _on_part_compatibility_ready(payload: Dictionary) -> void:
 # Returns the price per unit for the given item, depending on buy/sell mode.
  
 
+func _optimistically_update_vendor_stock(item_name: String, qty_delta: int) -> void:
+	print("[VendorPanel][DIAG] _optimistically_update_vendor_stock starting for '%s'" % item_name)
+	if vendor_items == null or not (vendor_items is Dictionary):
+		print("[VendorPanel][DIAG] FAILED: vendor_items is null or invalid")
+		return
+	
+	var target_name := item_name.strip_edges()
+	print("[VendorPanel][DIAG] Searching buckets for '%s'..." % target_name)
+	
+	var found := false
+	for bucket_key in (vendor_items as Dictionary):
+		var bucket: Variant = (vendor_items as Dictionary).get(bucket_key)
+		if bucket is Dictionary:
+			# Try exact match and stripped match
+			var entry: Dictionary = {}
+			if (bucket as Dictionary).has(target_name):
+				entry = (bucket as Dictionary).get(target_name)
+			else:
+				# Search for a stripped match if exact match fails
+				for k in (bucket as Dictionary).keys():
+					if str(k).strip_edges() == target_name:
+						entry = (bucket as Dictionary).get(k)
+						break
+			
+			if not entry.is_empty():
+				var old_qty: int = int(entry.get("total_quantity", 0))
+				entry["total_quantity"] = max(0, old_qty + qty_delta)
+				found = true
+				print("[VendorPanel][DIAG] SUCCESS: updated '%s' in bucket '%s': %d -> %d" % [target_name, bucket_key, old_qty, int(entry["total_quantity"])])
+				
+				# Also update the underlying item_data quantity if it's a raw resource
+				var item_data: Variant = entry.get("item_data")
+				if item_data is Dictionary and (item_data as Dictionary).get("is_raw_resource", false):
+					(item_data as Dictionary)["quantity"] = entry["total_quantity"]
+					# Update the top-level vendor_data if applicable
+					if vendor_data is Dictionary:
+						if target_name.begins_with("Fuel"): vendor_data["fuel"] = entry["total_quantity"]
+						elif target_name.begins_with("Water"): vendor_data["water"] = entry["total_quantity"]
+						elif target_name.begins_with("Food"): vendor_data["food"] = entry["total_quantity"]
+				break
+	
+	if found:
+		_update_vendor_ui(true, false)
+	else:
+		print("[VendorPanel][DIAG] FAILED: item '%s' not found in any bucket. Buckets searched: %s" % [target_name, (vendor_items as Dictionary).keys()])
+
 func _on_api_transaction_result(result: Dictionary) -> void:
-	# Capture feedback info BEFORE we potentially clear _pending_tx
+	var pending_qty: int = int(_pending_tx.get("quantity", 0))
+	var has_pending_data: bool = (pending_qty > 0)
+	
+	print("[VendorPanel][DIAG] _on_api_transaction_result entered on instance_id=%d. in_progress=%s, has_pending=%s" % [get_instance_id(), str(_transaction_in_progress), str(has_pending_data)])
+	
+	# Capture feedback info regardless of in_progress flag, as long as we have data
 	var mode_str: String = "bought" if str(current_mode) == "buy" else "sold"
 	var qty: int = int(_pending_tx.get("quantity", 1))
 	var item_name: String = str(_pending_tx.get("item", {}).get("name", "Item"))
 	var total_price: float = abs(float(_pending_tx.get("money_delta", 0.0)))
 	var msg: String = "Successfully %s %d %s for %s" % [mode_str, qty, item_name, NumberFormat.format_money(total_price, "")]
 
-	# Commit this transaction's projection so subsequent authoritative convoy updates
-	# don't reset the bars to an incorrect projected value.
-	if bool(_transaction_in_progress):
+	if has_pending_data:
+		# Optimistically update vendor stock
+		var stock_delta: int = -qty if str(current_mode) == "buy" else qty
+		print("[VendorPanel][DIAG] Triggering optimistic vendor update for '%s' delta %d" % [item_name, stock_delta])
+		_optimistically_update_vendor_stock(item_name, stock_delta)
+		
+		# Ensure projection is committed if it hasn't been yet
 		_commit_projection_from_pending_tx()
+		
+		# Signal that we are done with the transaction part of the UI state
+		_transaction_in_progress = false
+		# We'll clear _pending_tx below after checking authoritative state
 
 	# If the transaction result contains an updated convoy object, apply it immediately
 	# to the UI. This provides faster feedback than waiting for a full refresh cycle.
@@ -1644,8 +1711,9 @@ func _on_api_transaction_result(result: Dictionary) -> void:
 	VendorPanelRefreshController.on_api_transaction_result(self, result)
 	
 	# Show success feedback and flash bars
-	if bool(_transaction_in_progress):
+	if has_pending_data:
 		show_transaction_feedback(msg, "success")
+		_clear_pending_tx()
 	_flash_capacity_bars()
 
 	if is_instance_valid(_hub) and _hub.has_signal("user_refresh_requested"):

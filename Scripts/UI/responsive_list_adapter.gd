@@ -288,6 +288,6 @@ func _apply_ledger_style(node: Control) -> void:
 		bg.name = "LedgerBackground"
 		bg.add_theme_stylebox_override("panel", ledger)
 		bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		node.add_child(bg)
-		node.move_child(bg, 0) # Put in back
+		node.call_deferred("add_child", bg)
+		node.call_deferred("move_child", bg, 0) # Put in back
 		bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)

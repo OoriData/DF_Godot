@@ -1325,10 +1325,11 @@ func request_vendor_data(vendor_id: String) -> void:
 	if _pending_vendor_refresh.has(vendor_id) or (_is_request_in_progress and _current_request_purpose == RequestPurpose.VENDOR_DATA and _inflight_vendor_id == vendor_id):
 		print("[APICalls][Coalesce] Skip duplicate VENDOR_DATA for vendor_id=", vendor_id)
 		return
-	var url := "%s/vendor/get?vendor_id=%s" % [BASE_URL, vendor_id]
+	var ts := Time.get_ticks_msec()
+	var url := "%s/vendor/get?vendor_id=%s&_ts=%d" % [BASE_URL, vendor_id, ts]
 	# Optional user_id for scenario logging purposes.
 	if current_user_id != "" and _is_valid_uuid(current_user_id):
-		url += "&user_id=%s" % current_user_id
+		url += "&user_id=" + current_user_id
 	var headers: PackedStringArray = ['accept: application/json']
 	headers = _apply_auth_header(headers)
 	# Remove any queued older VENDOR_DATA for the same vendor
@@ -2177,8 +2178,10 @@ func _process_queue() -> void:
 	var i := 0
 	while i < _request_queue.size() and not _parallel_idle.is_empty():
 		var purpose = _request_queue[i].get("purpose", RequestPurpose.NONE)
+		var tag_p = _request_queue[i].get("debug_tag", "unknown")
 		if purpose == RequestPurpose.CARGO_DATA or purpose == RequestPurpose.VENDOR_DATA:
 			var req_data = _request_queue[i]
+			print("[APICalls][DIAG] Parallel-popping: tag=%s" % tag_p)
 			_request_queue.remove_at(i)
 			_dispatch_parallel(req_data)
 			continue # DO NOT increment i, as elements shifted down
@@ -2187,15 +2190,15 @@ func _process_queue() -> void:
 	if _is_request_in_progress or _request_queue.is_empty():
 		return
 	_is_request_in_progress = true
-	print("[APICalls] _process_queue(): dequeuing next request. Remaining (before pop)=%d" % _request_queue.size())
 	var next_request: Dictionary = _request_queue.pop_front()
+	var dbg_tag := String(next_request.get("debug_tag", ""))
+	print("[APICalls][DIAG] Main-popping: tag=%s" % dbg_tag)
 	_current_request_details = next_request
 	var q_after := _request_queue.size()
 	var enq_ms := int(next_request.get("enqueued_at_ms", -1))
 	var now_ms := Time.get_ticks_msec()
 	var wait_ms := (now_ms - enq_ms) if enq_ms >= 0 else -1
 	_current_client_txn_id = int(next_request.get("client_txn_id", -1))
-	var dbg_tag := String(next_request.get("debug_tag", ""))
 	_current_debug_tag = dbg_tag
 	print("[APICalls][Dequeue] tag=", dbg_tag, " id=", _current_client_txn_id, " wait_ms=", wait_ms, " qlen_after=", q_after)
 	_last_requested_url = next_request.get("url", "")
@@ -2215,6 +2218,7 @@ func _process_queue() -> void:
 	_current_request_start_time = Time.get_unix_time_from_system()
 	_current_request_start_ms = Time.get_ticks_msec()
 	_arm_request_timeout()
+	print("[APICalls][DIAG] Dispatching id=%d tag=%s method=%d url=%s" % [_current_client_txn_id, dbg_tag, method, _last_requested_url])
 	var error: Error = _http_request.request(_last_requested_url, headers, method, body)
 	if error != OK:
 		var st = _http_request.get_http_client_status()
@@ -2306,6 +2310,7 @@ func _abort_map_request_for_auth():
 func _on_request_completed(result: int, response_code: int, _headers: PackedStringArray, body: PackedByteArray) -> void:
 	var done_ms := Time.get_ticks_msec()
 	var http_elapsed_ms := done_ms - _current_request_start_ms
+	print("[APICalls][DIAG] _on_request_completed: id=%d purpose=%s signal=%s code=%d result=%d" % [_current_client_txn_id, RequestPurpose.keys()[_current_request_purpose], _current_patch_signal_name, response_code, result])
 	var resp_preview := ""
 	if body.size() > 0:
 		resp_preview = body.get_string_from_utf8()
@@ -2355,12 +2360,14 @@ func _on_request_completed(result: int, response_code: int, _headers: PackedStri
 	# PATCH transaction responses (purpose == NONE, but signal_name is set)
 	if _current_request_purpose == RequestPurpose.NONE and _current_patch_signal_name != "":
 		if result == HTTPRequest.RESULT_SUCCESS and (response_code >= 200 and response_code < 300):
-			_log_info("[APICalls][PATCH_TXN] signal=%s code=%d size=%d url=%s id=%d http_ms=%d" % [_current_patch_signal_name, response_code, body.size(), _last_requested_url, _current_client_txn_id, http_elapsed_ms])
+			print("[APICalls][DIAG] Processing transaction result for signal '%s'" % _current_patch_signal_name)
 			var response_body_text = body.get_string_from_utf8()
-			var preview = response_body_text.substr(0, 400)
-			print("[APICalls][Debug] Transaction Response Body: ", response_body_text)
-			_log_debug("[APICalls][PATCH_TXN] body_preview=" + preview)
+			print("[APICalls][DIAG] Response Body Length: %d" % response_body_text.length())
 			var json_response = JSON.parse_string(response_body_text)
+			
+			var sig_dbg := _current_patch_signal_name
+			var connections = get_signal_connection_list(sig_dbg)
+			print("[APICalls][DIAG] Signal '%s' has %d listeners connected." % [sig_dbg, connections.size()])
 			if json_response == null:
 				# Accept plain-text bodies (e.g., UUID). For transaction signals we still emit a Dictionary
 				# so UI feedback + refresh wiring stays consistent.
@@ -2386,14 +2393,17 @@ func _on_request_completed(result: int, response_code: int, _headers: PackedStri
 					json_response = {"data": json_response, "ok": true}
 				if typeof(json_response) == TYPE_DICTIONARY and not skip_emit and can_emit2:
 					if json_response.has("convoy_after") and typeof(json_response["convoy_after"]) == TYPE_DICTIONARY:
+						print("[APICalls][DIAG] Emitting UNWRAPPED transaction signal '%s'" % sig2)
 						_log_info("[APICalls][PATCH_TXN] Unwrapping 'convoy_after' for signal '" + sig2 + "'.")
 						emit_signal(sig2, json_response["convoy_after"])
 						_complete_current_request()
 						return
 				if not skip_emit and can_emit2:
+					print("[APICalls][DIAG] Emitting transaction signal '%s' with data keys: %s" % [sig2, json_response.keys() if json_response is Dictionary else "none"])
 					_log_info("APICalls: Transaction '%s' successful. Emitting signal with data." % sig2)
 					emit_signal(sig2, json_response)
 				else:
+					print("[APICalls][DIAG] SKIP transaction signal '%s': skip_emit=%s, can_emit=%s" % [sig2, str(skip_emit), str(can_emit2)])
 					_log_info("APICalls: Transaction '%s' successful. Skipping emit (services will refresh or signal removed)." % sig2)
 
 			_complete_current_request()
