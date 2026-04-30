@@ -1,6 +1,5 @@
 extends MenuBase
 signal find_route_requested(convoy_data, destination_data)
-signal return_to_convoy_overview_requested(convoy_data)
 signal route_preview_started(route_data)
 signal route_preview_ended
 
@@ -81,11 +80,9 @@ func _log_debug(msg: String, a: Variant = null, b: Variant = null, c: Variant = 
 		_logger.debug(msg, a, b, c)
 
 func _ready():
-	# Connect the back button signal
+	# Replace back button with shared navigation bar
 	if is_instance_valid(back_button):
-		if not back_button.is_connected("pressed", Callable(self, "_on_back_button_pressed")):
-			back_button.pressed.connect(_on_back_button_pressed)
-		style_back_button(back_button)
+		setup_convoy_navigation_bar(back_button)
 	
 	# Make the title label clickable to return to the convoy overview
 	if is_instance_valid(title_label):
@@ -156,20 +153,6 @@ func _notification(what):
 		# Ensure preview is cleaned up if this menu is closed unexpectedly.
 		emit_signal("route_preview_ended")
 
-func _on_back_button_pressed():
-	print("ConvoyJourneyMenu: Back button pressed. Emitting 'back_requested' signal.")
-	# If the route selection menu is open, this back button shouldn't be clickable,
-	# but as a safeguard, we ensure it's closed if we go back.
-	if is_instance_valid(_route_selection_menu_instance):
-		_route_selection_menu_instance.queue_free()
-		emit_signal("route_preview_ended") # Clean up the preview
-
-	# If confirmation panel is open, go back to destination list
-	if is_instance_valid(_confirmation_panel) and _confirmation_panel.visible:
-		_on_change_destination_pressed()
-		return
-		
-	emit_signal("back_requested")
 
 func _process(_delta: float):
 	pass

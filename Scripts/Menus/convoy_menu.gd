@@ -100,12 +100,6 @@ var all_cargo_label: Label = null
 @onready var settlement_menu_button: Button = $MainVBox/BottomBarPanel/BottomMenuButtonsHBox/SettlementMenuButton
 @onready var cargo_menu_button: Button = $MainVBox/BottomBarPanel/BottomMenuButtonsHBox/CargoMenuButton
 
-# --- Signals for Sub-Menu Navigation ---
-signal open_vehicle_menu_requested(convoy_data)
-signal open_journey_menu_requested(convoy_data)
-signal open_settlement_menu_requested(convoy_data)
-signal open_cargo_menu_requested(convoy_data)
-
 # --- Deep-link navigation from Settlement Preview buttons ---
 # Used by MenuManager to open destination menu with a focus intent via extra_arg.
 signal open_settlement_menu_with_focus_requested(convoy_data: Dictionary, focus_intent: Dictionary)

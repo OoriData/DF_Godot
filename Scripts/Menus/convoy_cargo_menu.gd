@@ -25,8 +25,8 @@ const CAPACITY_COLOR_RED: Color = Color("ef5350")
 
 ## Back signal provided by MenuBase
 
-signal return_to_convoy_overview_requested(convoy_data)
-signal open_vehicle_menu_requested(convoy_data, vehicle_id)
+# Vehicle inspect from cargo header: opens vehicle menu focused on a specific vehicle
+signal open_vehicle_menu_with_focus_requested(convoy_data, vehicle_id)
 var convoy_data_received: Dictionary
 
 @onready var title_label: Label = $MainVBox/TitleLabel
@@ -276,19 +276,7 @@ func _ready():
 			popup.add_theme_stylebox_override("panel", popup_style)
 		
 	if is_instance_valid(back_button):
-		var win_size = get_viewport_rect().size if is_inside_tree() else Vector2(0, 0)
-		var is_portrait = win_size.y > win_size.x
-		if is_portrait:
-			back_button.custom_minimum_size.y = 110
-			back_button.add_theme_font_size_override("font_size", _get_font_size(16))
-		elif _is_mobile():
-			back_button.custom_minimum_size.y = 72
-			back_button.add_theme_font_size_override("font_size", _get_font_size(16))
-		else:
-			back_button.custom_minimum_size.y = 44
-			back_button.add_theme_font_size_override("font_size", _get_font_size(16))
-		if not back_button.is_connected("pressed", Callable(self, "_on_back_button_pressed")):
-			back_button.pressed.connect(_on_back_button_pressed, CONNECT_ONE_SHOT)
+		setup_convoy_navigation_bar(back_button)
 
 	# --- NEW: Single Organization Toggle Button ---
 	_organize_button = Button.new()
@@ -1863,9 +1851,7 @@ func _set_capacity_progressbar_style(progressbar_node: ProgressBar, current_valu
 	bg_style.shadow_offset = Vector2(0, 2)
 	progressbar_node.add_theme_stylebox_override("background", bg_style)
 
-func _on_back_button_pressed():
-	# print("ConvoyCargoMenu: Back button pressed. Emitting 'back_requested' signal.") # DEBUG
-	emit_signal("back_requested")
+
 
 func _on_inspect_cargo_item_pressed(agg_data: Dictionary, list_container: VBoxContainer, item_row_hbox: HBoxContainer, toggle_button: Button = null):
 	# Prevent re-entrancy (e.g., double click during build)
@@ -2135,7 +2121,7 @@ func _on_vehicle_inspect_pressed(vehicle_id: String) -> void:
 	# Called when inspect button is pressed on a vehicle header
 	if not convoy_data_received.is_empty():
 		_diag("vehicle_inspect", "clicked", {"vehicle_id": vehicle_id})
-		emit_signal("open_vehicle_menu_requested", convoy_data_received, vehicle_id)
+		emit_signal("open_vehicle_menu_with_focus_requested", convoy_data_received, vehicle_id)
 
 
 func _on_store_convoys_changed(all_convoy_data: Array) -> void:

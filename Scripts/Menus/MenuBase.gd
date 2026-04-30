@@ -4,6 +4,12 @@ class_name MenuBase
 @warning_ignore("unused_signal")
 signal back_requested
 
+signal open_vehicle_menu_requested(convoy_data)
+signal open_journey_menu_requested(convoy_data)
+signal open_settlement_menu_requested(convoy_data)
+signal open_cargo_menu_requested(convoy_data)
+signal return_to_convoy_overview_requested(convoy_data)
+
 var convoy_id: String = ""
 var extra: Variant = null
 var _last_convoy_data: Dictionary = {}
@@ -222,3 +228,208 @@ func style_back_button(btn: Button) -> void:
 	var sb_pressed = sb.duplicate() as StyleBoxFlat
 	sb_pressed.bg_color = Color(0.12, 0.15, 0.22, 1.0)
 	btn.add_theme_stylebox_override("pressed", sb_pressed)
+
+## Style a button to match the convoy navigation bar buttons (light grey, black text).
+## Use this for auxiliary buttons that sit alongside the nav bar (e.g. Manifest, Apply).
+func style_convoy_nav_button(button_node: Button) -> void:
+	if not is_instance_valid(button_node):
+		return
+	
+	var dsm_node = get_node_or_null("/root/DeviceStateManager")
+	var on_mobile := false
+	if is_instance_valid(dsm_node) and dsm_node.get("is_mobile") != null:
+		on_mobile = dsm_node.is_mobile
+	elif OS.has_feature("mobile") or OS.has_feature("web_android") or OS.has_feature("web_ios"):
+		on_mobile = true
+	
+	var corner_r := 6 if on_mobile else 4
+	var v_pad := 8.0 if on_mobile else 4.0
+	var min_h := 70.0 if on_mobile else 34.0
+	if button_node.custom_minimum_size.y < min_h:
+		button_node.custom_minimum_size.y = min_h
+	if on_mobile:
+		button_node.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	
+	var COLOR_BG := Color("b0b0b0")
+	var COLOR_FONT := Color("000000")
+	
+	var sb_n := StyleBoxFlat.new()
+	sb_n.bg_color = COLOR_BG
+	sb_n.corner_radius_top_left = corner_r
+	sb_n.corner_radius_top_right = corner_r
+	sb_n.corner_radius_bottom_left = corner_r
+	sb_n.corner_radius_bottom_right = corner_r
+	sb_n.border_width_left = 1
+	sb_n.border_width_right = 1
+	sb_n.border_width_top = 1
+	sb_n.border_width_bottom = 1
+	sb_n.border_color = COLOR_FONT.darkened(0.2)
+	sb_n.shadow_size = 4
+	sb_n.shadow_color = Color(0, 0, 0, 0.4)
+	sb_n.content_margin_top = v_pad
+	sb_n.content_margin_bottom = v_pad
+	
+	var sb_h := sb_n.duplicate() as StyleBoxFlat
+	sb_h.bg_color = COLOR_BG.lightened(0.1)
+	
+	var sb_p := sb_n.duplicate() as StyleBoxFlat
+	sb_p.bg_color = COLOR_BG.darkened(0.15)
+	sb_p.shadow_size = 2
+	sb_p.shadow_color = Color(0, 0, 0, 0.25)
+	
+	button_node.add_theme_stylebox_override("normal", sb_n)
+	button_node.add_theme_stylebox_override("hover", sb_h)
+	button_node.add_theme_stylebox_override("pressed", sb_p)
+	button_node.add_theme_color_override("font_color", COLOR_FONT)
+
+func setup_convoy_navigation_bar(back_button_node: Node) -> void:
+	if not is_instance_valid(back_button_node):
+		return
+	
+	var parent = back_button_node.get_parent()
+	var index = back_button_node.get_index()
+	
+	# --- Device/layout detection ---
+	var dsm = get_node_or_null("/root/DeviceStateManager")
+	var is_portrait := false
+	var use_mobile := false
+	var font_size := 16
+	if is_instance_valid(dsm):
+		if dsm.has_method("get_is_portrait"):
+			is_portrait = dsm.get_is_portrait()
+		if dsm.get("is_mobile") != null:
+			use_mobile = dsm.is_mobile
+		elif OS.has_feature("mobile") or OS.has_feature("web_android") or OS.has_feature("web_ios"):
+			use_mobile = true
+		if dsm.has_method("get_scaled_base_font_size"):
+			font_size = dsm.get_scaled_base_font_size(16)
+	else:
+		if is_inside_tree():
+			var win_size = get_viewport_rect().size
+			is_portrait = win_size.y > win_size.x
+			use_mobile = is_portrait or OS.has_feature("mobile")
+	
+	# --- Create PanelContainer (bar background) matching convoy_menu.gd ---
+	var bottom_panel = PanelContainer.new()
+	bottom_panel.name = "BottomBarPanel"
+	
+	var bar_style = StyleBoxFlat.new()
+	bar_style.bg_color = Color(0.18, 0.18, 0.18, 0.85)
+	bar_style.corner_radius_top_left = 6
+	bar_style.corner_radius_top_right = 6
+	bar_style.border_width_top = 1
+	bar_style.border_color = Color(0.28, 0.28, 0.28)
+	# Content margins match convoy_menu._update_mobile_dependent_layout
+	var bar_margin := 10.0 if is_portrait else (6.0 if use_mobile else 0.0)
+	bar_style.content_margin_top = bar_margin
+	bar_style.content_margin_bottom = bar_margin
+	bar_style.content_margin_left = bar_margin
+	bar_style.content_margin_right = bar_margin
+	bottom_panel.add_theme_stylebox_override("panel", bar_style)
+	
+	# NOTE: Don't add bottom_panel to tree yet — insertion point depends on
+	# whether back_button has siblings (handled at the end of this method).
+	
+	# --- HFlowContainer for the buttons (matches scene: HFlowContainer, centered, 10px gaps) ---
+	var hbox = HFlowContainer.new()
+	hbox.name = "BottomMenuButtonsHBox"
+	hbox.add_theme_constant_override("h_separation", 10)
+	hbox.add_theme_constant_override("v_separation", 10)
+	hbox.alignment = FlowContainer.ALIGNMENT_CENTER
+	bottom_panel.add_child(hbox)
+	
+	# --- Button configs ---
+	var btn_configs = [
+		{"name": "VehicleMenuButton", "text": "Vehicles", "signal": "open_vehicle_menu_requested"},
+		{"name": "JourneyMenuButton", "text": "Journey", "signal": "open_journey_menu_requested"},
+		{"name": "SettlementMenuButton", "text": "Settlement", "signal": "open_settlement_menu_requested"},
+		{"name": "CargoMenuButton", "text": "Cargo", "signal": "open_cargo_menu_requested"}
+	]
+	
+	# Button height matching convoy_menu._update_mobile_dependent_layout
+	var btn_min_h := 140.0 if is_portrait else (70.0 if use_mobile else 34.0)
+	# Button corner radius and padding matching convoy_menu._style_menu_button
+	var corner_r := 6 if use_mobile else 4
+	var v_pad := 8.0 if use_mobile else 4.0
+	
+	# Color constants matching convoy_menu.gd
+	var COLOR_MENU_BUTTON_GREY_BG := Color("b0b0b0")
+	var COLOR_BOX_FONT := Color("000000")
+	
+	for config in btn_configs:
+		var btn = Button.new()
+		btn.name = config["name"]
+		btn.text = config["text"]
+		btn.custom_minimum_size = Vector2(110, btn_min_h)
+		btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		btn.add_theme_font_size_override("font_size", font_size)
+		
+		# --- Style matching convoy_menu._style_menu_button exactly ---
+		var sb_normal := StyleBoxFlat.new()
+		sb_normal.bg_color = COLOR_MENU_BUTTON_GREY_BG
+		sb_normal.corner_radius_top_left = corner_r
+		sb_normal.corner_radius_top_right = corner_r
+		sb_normal.corner_radius_bottom_left = corner_r
+		sb_normal.corner_radius_bottom_right = corner_r
+		sb_normal.border_width_left = 1
+		sb_normal.border_width_right = 1
+		sb_normal.border_width_top = 1
+		sb_normal.border_width_bottom = 1
+		sb_normal.border_color = COLOR_BOX_FONT.darkened(0.2)
+		sb_normal.shadow_size = 4
+		sb_normal.shadow_color = Color(0, 0, 0, 0.4)
+		sb_normal.content_margin_top = v_pad
+		sb_normal.content_margin_bottom = v_pad
+		
+		var sb_hover := sb_normal.duplicate() as StyleBoxFlat
+		sb_hover.bg_color = COLOR_MENU_BUTTON_GREY_BG.lightened(0.1)
+		
+		var sb_pressed := sb_normal.duplicate() as StyleBoxFlat
+		sb_pressed.bg_color = COLOR_MENU_BUTTON_GREY_BG.darkened(0.15)
+		sb_pressed.shadow_size = 2
+		sb_pressed.shadow_color = Color(0, 0, 0, 0.25)
+		
+		btn.add_theme_stylebox_override("normal", sb_normal)
+		btn.add_theme_stylebox_override("hover", sb_hover)
+		btn.add_theme_stylebox_override("pressed", sb_pressed)
+		btn.add_theme_color_override("font_color", COLOR_BOX_FONT)
+		
+		# Connect signal to emit the respective menu navigation signal with _last_convoy_data
+		btn.pressed.connect(func():
+			emit_signal(config["signal"], _last_convoy_data)
+		)
+		
+		hbox.add_child(btn)
+	
+	# If the back button has siblings (e.g. vehicle menu's BottomRow with Manifest/Apply),
+	# reparent those siblings into our flow container and replace the entire old container.
+	var siblings_to_reparent: Array[Node] = []
+	for child in parent.get_children():
+		if child != back_button_node:
+			siblings_to_reparent.append(child)
+	
+	if not siblings_to_reparent.is_empty() and parent != get_node_or_null("MainVBox"):
+		# Parent is a wrapper container (e.g. BottomRow HBox) — replace it entirely
+		var grandparent = parent.get_parent()
+		var parent_index = parent.get_index()
+		
+		# Reparent siblings into the nav bar's flow container
+		for sibling in siblings_to_reparent:
+			parent.remove_child(sibling)
+			hbox.add_child(sibling)
+		
+		# Insert the nav bar where the old container was
+		grandparent.add_child(bottom_panel)
+		grandparent.move_child(bottom_panel, parent_index)
+		
+		# Remove the old container (it still contains just the back button)
+		grandparent.remove_child(parent)
+		parent.remove_child(back_button_node)
+		back_button_node.queue_free()
+		parent.queue_free()
+	else:
+		# Simple case: back button is a direct child of MainVBox — insert nav bar at same position
+		parent.add_child(bottom_panel)
+		parent.move_child(bottom_panel, index)
+		parent.remove_child(back_button_node)
+		back_button_node.queue_free()

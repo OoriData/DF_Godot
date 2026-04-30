@@ -94,8 +94,7 @@ func _ready():
 	print("ConvoySettlementMenu: _ready() started processing.")
 	# It's crucial to connect signals here for the UI to be interactive.
 	if is_instance_valid(back_button):
-		back_button.pressed.connect(_on_back_button_pressed)
-		_style_back_button(back_button)
+		setup_convoy_navigation_bar(back_button)
 	else:
 		printerr("ConvoySettlementMenu: BackButton node not found.")
 	
@@ -162,8 +161,6 @@ func _on_layout_mode_changed(_mode: int, _size: Vector2, _is_mobile_val: bool) -
 		_style_top_bar_button(title_label)
 	if is_instance_valid(warehouse_button):
 		_style_top_bar_button(warehouse_button)
-	if is_instance_valid(back_button):
-		_style_back_button(back_button)
 	
 	_style_vendor_tabs()
 	
@@ -516,10 +513,6 @@ func _add_detail_row(parent: Container, label_text: String, value_text: String, 
 	hbox.add_child(label_node)
 	hbox.add_child(value_node)
 	parent.add_child(hbox)
-
-func _on_back_button_pressed():
-	# MenuManager is connected to this signal and will handle closing the menu.
-	emit_signal("back_requested")
 
 func _on_title_label_pressed():
 	# When the title (which is now a button) is pressed, go back to the convoy menu.

@@ -4,7 +4,6 @@ const VehicleModel = preload("res://Scripts/Data/Models/Vehicle.gd")
 
 # Back signal provided by MenuBase
 # Signal to open the full cargo manifest for the entire convoy
-signal return_to_convoy_overview_requested(convoy_data)
 signal inspect_all_convoy_cargo_requested(convoy_data)
 signal inspect_specific_convoy_cargo_requested(convoy_data, item_data)
 
@@ -108,19 +107,17 @@ func _get_font_size(base: int) -> int:
 func _ready():
 	# Initialize back button and tab signals
 	if is_instance_valid(back_button):
-		if not back_button.is_connected("pressed", Callable(self, "_on_back_button_pressed")):
-			back_button.pressed.connect(_on_back_button_pressed)
-		style_back_button(back_button)
+		setup_convoy_navigation_bar(back_button)
 	else:
 		printerr("ConvoyVehicleMenu: CRITICAL - BackButton node NOT found or is not a Button.")
 
 	if is_instance_valid(manifest_button):
 		manifest_button.pressed.connect(_on_inspect_all_cargo_pressed)
-		style_back_button(manifest_button)
+		style_convoy_nav_button(manifest_button)
 
 	if is_instance_valid(apply_button):
 		apply_button.pressed.connect(func(): if is_instance_valid(mechanics_embed) and mechanics_embed.has_method("apply_pending_changes"): mechanics_embed.apply_pending_changes())
-		style_back_button(apply_button)
+		style_convoy_nav_button(apply_button)
 
 	if is_instance_valid(tab_container):
 		if not tab_container.is_connected("tab_changed", Callable(self, "_on_tab_changed")):
@@ -321,10 +318,6 @@ func _update_custom_tab_buttons(active_index: int) -> void:
 func _is_portrait() -> bool:
 	var win_size = get_viewport_rect().size if is_inside_tree() else Vector2(0, 0)
 	return win_size.y > win_size.x
-
-func _on_back_button_pressed():
-	print("ConvoyVehicleMenu: Back button pressed. Emitting 'back_requested' signal.")
-	emit_signal("back_requested")
 
 func _on_tab_changed(tab_idx: int) -> void:
 	_update_custom_tab_buttons(tab_idx)

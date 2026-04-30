@@ -310,49 +310,42 @@ func _show_menu(menu_scene_resource, data_to_pass = null, add_to_stack: bool = t
 	if current_active_menu.has_signal("back_requested"):
 		current_active_menu.back_requested.connect(go_back, CONNECT_ONE_SHOT)
 
-	if menu_type == "convoy_overview":
+	var is_convoy_submenu = menu_type in ["convoy_overview", "convoy_vehicle_submenu", "convoy_journey_submenu", "convoy_cargo_submenu", "convoy_settlement_submenu"]
+
+	if is_convoy_submenu:
+		# Standard navigation bar signals
 		if current_active_menu.has_signal("open_vehicle_menu_requested"):
 			current_active_menu.open_vehicle_menu_requested.connect(open_convoy_vehicle_menu, CONNECT_ONE_SHOT)
 		if current_active_menu.has_signal("open_journey_menu_requested"):
 			current_active_menu.open_journey_menu_requested.connect(open_convoy_journey_menu, CONNECT_ONE_SHOT)
 		if current_active_menu.has_signal("open_settlement_menu_requested"):
-			print("MenuManager: Attempting to connect 'open_settlement_menu_requested'...")
 			current_active_menu.open_settlement_menu_requested.connect(open_convoy_settlement_menu, CONNECT_ONE_SHOT)
-		else:
-			printerr("MenuManager: FAILED to connect. ConvoyMenu is missing the 'open_settlement_menu_requested' signal declaration.")
-		# Deep-link: open settlement menu and focus a specific vendor/item
-		if current_active_menu.has_signal("open_settlement_menu_with_focus_requested"):
-			current_active_menu.open_settlement_menu_with_focus_requested.connect(open_convoy_settlement_menu_with_focus, CONNECT_ONE_SHOT)
 		if current_active_menu.has_signal("open_cargo_menu_requested"):
 			current_active_menu.open_cargo_menu_requested.connect(open_convoy_cargo_menu, CONNECT_ONE_SHOT)
-		# Deep-link: open cargo menu and inspect a specific item (expects {cargo_id})
-		if current_active_menu.has_signal("open_cargo_menu_inspect_requested"):
-			current_active_menu.open_cargo_menu_inspect_requested.connect(open_convoy_cargo_menu_for_item, CONNECT_ONE_SHOT)
-	elif menu_type == "convoy_vehicle_submenu":
-		if current_active_menu.has_signal("inspect_all_convoy_cargo_requested"):
-			current_active_menu.inspect_all_convoy_cargo_requested.connect(open_convoy_cargo_menu, CONNECT_ONE_SHOT)
-		if current_active_menu.has_signal("inspect_specific_convoy_cargo_requested"):
-			current_active_menu.inspect_specific_convoy_cargo_requested.connect(open_convoy_cargo_menu_for_item, CONNECT_ONE_SHOT)
 		if current_active_menu.has_signal("return_to_convoy_overview_requested"):
 			current_active_menu.return_to_convoy_overview_requested.connect(open_convoy_menu, CONNECT_ONE_SHOT)
-		# Optional: if vehicle menu exposes "open_mechanics_menu_requested", connect it
-		if current_active_menu.has_signal("open_mechanics_menu_requested"):
-			current_active_menu.open_mechanics_menu_requested.connect(open_mechanics_menu, CONNECT_ONE_SHOT)
-	elif menu_type == "convoy_journey_submenu":
-		if current_active_menu.has_signal("return_to_convoy_overview_requested"):
-			current_active_menu.return_to_convoy_overview_requested.connect(open_convoy_menu, CONNECT_ONE_SHOT)
-	elif menu_type == "convoy_cargo_submenu":
-		if current_active_menu.has_signal("return_to_convoy_overview_requested"):
-			current_active_menu.return_to_convoy_overview_requested.connect(open_convoy_menu, CONNECT_ONE_SHOT)
-		if current_active_menu.has_signal("open_vehicle_menu_requested"):
-			current_active_menu.open_vehicle_menu_requested.connect(open_convoy_vehicle_menu_with_focus, CONNECT_ONE_SHOT)
-	elif menu_type == "convoy_settlement_submenu":
-		# Hook from settlement menu mechanics tab
-		if current_active_menu.has_signal("open_mechanics_menu_requested"):
-			current_active_menu.open_mechanics_menu_requested.connect(open_mechanics_menu, CONNECT_ONE_SHOT)
-		# Also forward Warehouse open requests
-		if current_active_menu.has_signal("open_warehouse_menu_requested"):
-			current_active_menu.open_warehouse_menu_requested.connect(open_warehouse_menu, CONNECT_ONE_SHOT)
+			
+		# Specific sub-menu signals and deep-links
+		if menu_type == "convoy_overview":
+			if current_active_menu.has_signal("open_settlement_menu_with_focus_requested"):
+				current_active_menu.open_settlement_menu_with_focus_requested.connect(open_convoy_settlement_menu_with_focus, CONNECT_ONE_SHOT)
+			if current_active_menu.has_signal("open_cargo_menu_inspect_requested"):
+				current_active_menu.open_cargo_menu_inspect_requested.connect(open_convoy_cargo_menu_for_item, CONNECT_ONE_SHOT)
+		elif menu_type == "convoy_vehicle_submenu":
+			if current_active_menu.has_signal("inspect_all_convoy_cargo_requested"):
+				current_active_menu.inspect_all_convoy_cargo_requested.connect(open_convoy_cargo_menu, CONNECT_ONE_SHOT)
+			if current_active_menu.has_signal("inspect_specific_convoy_cargo_requested"):
+				current_active_menu.inspect_specific_convoy_cargo_requested.connect(open_convoy_cargo_menu_for_item, CONNECT_ONE_SHOT)
+			if current_active_menu.has_signal("open_mechanics_menu_requested"):
+				current_active_menu.open_mechanics_menu_requested.connect(open_mechanics_menu, CONNECT_ONE_SHOT)
+		elif menu_type == "convoy_cargo_submenu":
+			if current_active_menu.has_signal("open_vehicle_menu_with_focus_requested"):
+				current_active_menu.open_vehicle_menu_with_focus_requested.connect(open_convoy_vehicle_menu_with_focus, CONNECT_ONE_SHOT)
+		elif menu_type == "convoy_settlement_submenu":
+			if current_active_menu.has_signal("open_mechanics_menu_requested"):
+				current_active_menu.open_mechanics_menu_requested.connect(open_mechanics_menu, CONNECT_ONE_SHOT)
+			if current_active_menu.has_signal("open_warehouse_menu_requested"):
+				current_active_menu.open_warehouse_menu_requested.connect(open_warehouse_menu, CONNECT_ONE_SHOT)
 
 func _extract_convoy_id_or_passthrough(d: Variant) -> Variant:
 	if d is Dictionary:
