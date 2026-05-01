@@ -247,9 +247,13 @@ func _ready():
 	if all_cargo_label == null:
 		if _debug_convoy_menu:
 			printerr("[ConvoyMenu] Optional AllCargoLabel not found at path MainVBox/ScrollContainer/ContentVBox/AllCargoLabel")
-	# --- DIAGNOSTIC: Check if UI nodes are valid ---
-	if not is_instance_valid(title_label):
+	# --- Banner Setup ---
+	if is_instance_valid(title_label):
+		setup_convoy_top_banner(title_label, "", false, false)
+	else:
+
 		printerr("ConvoyMenu: CRITICAL - TitleLabel node not found. Check the path in the script.")
+
 
 	# --- Layout Tuning: GridContainer Separation ---
 	if is_instance_valid(vendor_item_grid):
@@ -809,8 +813,8 @@ func initialize_with_data(data_or_id: Variant, extra_arg: Variant = null) -> voi
 					_destinations_cache[nm3] = dest3
 
 		# --- Convoy Name as Title ---
-		if is_instance_valid(title_label):
-			title_label.text = convoy_data_received.get("convoy_name", "N/A")
+
+
 
 		# --- Resources (Fuel, Water, Food) ---
 		var current_fuel = convoy_data_received.get("fuel", 0.0)
@@ -2639,17 +2643,11 @@ func _update_ui(convoy: Dictionary) -> void:
 	# If we received a shallow snapshot, request full details once and avoid rendering misleading 0/0.
 	if not incoming_complete:
 		_ensure_full_convoy_loaded(convoy_id, convoy_data_received)
-		if is_instance_valid(title_label):
-			title_label.text = String(convoy_data_received.get("convoy_name", convoy_data_received.get("name", title_label.text)))
 		if is_instance_valid(cargo_volume_text_label):
 			cargo_volume_text_label.text = "Cargo Volume: loading…"
 		if is_instance_valid(cargo_weight_text_label):
 			cargo_weight_text_label.text = "Cargo Weight: loading…"
 		return
-
-	# Title
-	if is_instance_valid(title_label):
-		title_label.text = String(convoy_data_received.get("convoy_name", convoy_data_received.get("name", title_label.text)))
 
 	# Resources (prefer max_*; fall back to capacity keys if present)
 	var current_fuel: float = float(convoy_data_received.get("fuel", 0.0))

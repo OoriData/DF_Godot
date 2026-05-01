@@ -60,8 +60,6 @@ func initialize_with_data(data_or_id: Variant, extra_arg: Variant = null) -> voi
 		var d: Dictionary = data_or_id as Dictionary
 		convoy_id = String(d.get("convoy_id", d.get("id", "")))
 		_convoy_data = d
-		# Set the main title to the convoy's name, fallback to 'name' if needed
-		title_label.text = String(d.get("convoy_name", d.get("name", "Settlement Interactions")))
 	else:
 		convoy_id = String(data_or_id)
 		_convoy_data = {}
@@ -98,11 +96,6 @@ func _ready():
 	else:
 		printerr("ConvoySettlementMenu: BackButton node not found.")
 	
-	# Connect the title label (now a Button) to go back to the convoy menu
-	if is_instance_valid(title_label):
-		if not title_label.is_connected("pressed", Callable(self, "_on_title_label_pressed")):
-			title_label.pressed.connect(_on_title_label_pressed)
-
 	# Connect top up button
 	if is_instance_valid(top_up_button):
 		if not top_up_button.is_connected("pressed", Callable(self, "_on_top_up_button_pressed")):
@@ -127,6 +120,12 @@ func _ready():
 		if is_instance_valid(warehouse_button):
 			warehouse_button.disabled = false
 			_style_top_bar_button(warehouse_button)
+
+	# Setup standardized top banner
+	if is_instance_valid(title_label):
+		setup_convoy_top_banner(title_label, "Settlement", true, false)
+
+
 
 	# Apply styling to title label as well
 	if is_instance_valid(title_label):
@@ -284,10 +283,6 @@ func _display_settlement_info():
 
 	else:
 		# No settlement on this tile (likely in transit). Show convoy name and disable settlement-only controls.
-		if is_instance_valid(title_label):
-			var convoy_name: String = String(_convoy_data.get("convoy_name", title_label.text))
-			if not convoy_name.is_empty():
-				title_label.text = convoy_name
 		if is_instance_valid(warehouse_button):
 			warehouse_button.disabled = true
 			warehouse_button.tooltip_text = "Warehouse unavailable while in transit."
@@ -416,8 +411,8 @@ func _update_ui(convoy: Dictionary) -> void:
 	var old_data = _convoy_data
 	_convoy_data = convoy.duplicate(true)
 	
-	if is_instance_valid(title_label):
-		title_label.text = String(_convoy_data.get("convoy_name", title_label.text))
+
+
 
 	var old_x = int(round(float(old_data.get("x", -9999))))
 	var old_y = int(round(float(old_data.get("y", -9999))))

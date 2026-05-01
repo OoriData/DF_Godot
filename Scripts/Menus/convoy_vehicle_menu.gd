@@ -144,13 +144,12 @@ func _ready():
 	else:
 		printerr("ConvoyVehicleMenu: CRITICAL - VehicleOptionButton node NOT found.")
 	
-	# Make the title label clickable to return to the convoy overview
+	# Setup standardized top banner
 	if is_instance_valid(title_label):
-		title_label.add_theme_color_override("font_color", Color.YELLOW)
-		title_label.mouse_filter = Control.MOUSE_FILTER_STOP # Allow it to receive mouse events
-		title_label.gui_input.connect(_on_title_label_gui_input)
-		if _is_mobile():
-			title_label.add_theme_font_size_override("font_size", _get_font_size(20))
+		setup_convoy_top_banner(title_label, "Vehicles", true, false)
+
+
+
 
 	# Configuration for Service tab
 	if is_instance_valid(mechanics_embed) and mechanics_embed.has_method("set_embedded_mode"):
@@ -374,14 +373,11 @@ func initialize_with_data(data_or_id: Variant, extra_arg: Variant = null) -> voi
 		mechanics_embed.initialize_with_data(data_or_id)
 
 	if data_or_id is Dictionary:
+		_current_convoy_data = (data_or_id as Dictionary).duplicate(true) # Store the full convoy data
 		print("ConvoyVehicleMenu: initialize_with_data called. Data keys: ", (data_or_id as Dictionary).keys())
 		print("ConvoyVehicleMenu: vehicle_details_list: ", (data_or_id as Dictionary).get("vehicle_details_list", []))
 		if (data_or_id as Dictionary).has("vehicle_details_list") and (data_or_id as Dictionary)["vehicle_details_list"].size() > 0:
 			print("ConvoyVehicleMenu: First vehicle keys: ", (data_or_id as Dictionary)["vehicle_details_list"][0].keys())
-
-	if data_or_id is Dictionary and is_instance_valid(title_label):
-		_current_convoy_data = (data_or_id as Dictionary).duplicate(true) # Store the full convoy data
-		title_label.text = _current_convoy_data.get("convoy_name", _current_convoy_data.get("name", "Convoy"))
 
 	# Deterministically sort vehicles for stable ordering
 	# Fallback to the canonical 'vehicles' array when 'vehicle_details_list' is absent.
@@ -480,8 +476,8 @@ func _on_vehicle_selected(index: int):
 
 func _update_ui(convoy: Dictionary) -> void:
 	_current_convoy_data = convoy.duplicate(true)
-	if is_instance_valid(title_label):
-		title_label.text = _current_convoy_data.get("convoy_name", title_label.text)
+
+
 	# Rebuild vehicle list and selection
 	current_vehicle_list = _stable_sort_vehicles(
 		_current_convoy_data.get("vehicle_details_list", _current_convoy_data.get("vehicles", []))

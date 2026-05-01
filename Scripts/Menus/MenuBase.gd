@@ -13,6 +13,10 @@ signal return_to_convoy_overview_requested(convoy_data)
 var convoy_id: String = ""
 var extra: Variant = null
 var _last_convoy_data: Dictionary = {}
+var _top_banner_convoy_button: Button = null
+var _top_banner_suffix_label: Label = null
+var _top_banner_menu_name: String = ""
+
 ## If true, automatically add a subtle Oori background texture on ready.
 var auto_apply_oori_background: bool = true
 
@@ -36,6 +40,7 @@ func initialize_with_data(data_or_id: Variant, extra_arg: Variant = null) -> voi
 		convoy_id = str(convoy.get("convoy_id", convoy.get("id", "")))
 		if not convoy.is_empty():
 			_last_convoy_data = convoy.duplicate(true)
+			_update_top_banner_text(convoy)
 			_update_ui(convoy)
 		else:
 			_last_convoy_data = {}
@@ -44,6 +49,7 @@ func initialize_with_data(data_or_id: Variant, extra_arg: Variant = null) -> voi
 		convoy_id = str(data_or_id)
 		_last_convoy_data = {}
 		_refresh_from_store()
+
 
 func set_convoy_context(id: String, extra_arg: Variant = null) -> void:
 	_ensure_store_subscription()
@@ -161,7 +167,10 @@ func _refresh_from_store() -> void:
 			var vdl = convoy.get("vehicle_details_list", [])
 			print("[MenuBase] _refresh_from_store: convoy found. ID=", convoy_id, " Keys=", convoy.keys().size(), " VDL size=", vdl.size() if vdl else "null")
 			
+			_update_top_banner_text(convoy)
+			
 			if _has_relevant_changes(_last_convoy_data, convoy):
+
 				_last_convoy_data = convoy.duplicate(true)
 				print("[MenuBase] Found relevant changes, calling _update_ui for: ", name)
 				_update_ui(convoy)
@@ -433,3 +442,210 @@ func setup_convoy_navigation_bar(back_button_node: Node) -> void:
 		parent.move_child(bottom_panel, index)
 		parent.remove_child(back_button_node)
 		back_button_node.queue_free()
+
+## Sets up a standardized top banner with a clickable convoy name and menu title.
+func setup_convoy_top_banner(title_node: Control, menu_name_suffix: String, break_out_siblings: bool = false, use_dark_bg: bool = true) -> void:
+
+
+	if not is_instance_valid(title_node):
+		return
+	
+	_top_banner_menu_name = menu_name_suffix
+	
+	var parent = title_node.get_parent()
+	var index = title_node.get_index()
+	
+	# --- Create the Banner Panel ---
+	var banner_panel = PanelContainer.new()
+	banner_panel.name = "TopBannerPanel"
+	
+	var banner_style = StyleBoxFlat.new()
+	if use_dark_bg:
+		# Subtle vertical gradient: dark grey to slightly darker grey
+		banner_style.bg_color = Color(0.15, 0.16, 0.18, 0.95)
+		# Depth with shadow
+		banner_style.shadow_color = Color(0, 0, 0, 0.5)
+		banner_style.shadow_size = 4
+		banner_style.shadow_offset = Vector2(0, 2)
+	else:
+		banner_style.bg_color = Color(0, 0, 0, 0) # Transparent
+		banner_style.shadow_size = 0
+
+	banner_style.border_width_bottom = 4
+	# Oori Accent Blue - Solid
+	banner_style.border_color = Color(0.25, 0.55, 0.85, 1.0) 
+
+	
+	banner_style.content_margin_top = 10
+	banner_style.content_margin_bottom = 10
+	banner_style.content_margin_left = 16
+	banner_style.content_margin_right = 16
+	banner_panel.add_theme_stylebox_override("panel", banner_style)
+
+
+	
+	# --- Create the HBox Container ---
+	var hbox = HBoxContainer.new()
+	hbox.name = "BannerHBox"
+	hbox.alignment = BoxContainer.ALIGNMENT_CENTER
+	banner_panel.add_child(hbox)
+	
+	# --- Create the Convoy Name Button ---
+	_top_banner_convoy_button = Button.new()
+	_top_banner_convoy_button.name = "ConvoyNameButton"
+	_top_banner_convoy_button.text = "Convoy" # Placeholder
+	
+	# Premium Button Styling (Link-like but clearly a button)
+	var btn_normal = StyleBoxFlat.new()
+	btn_normal.bg_color = Color(1, 1, 1, 0.03) # Very subtle background to show it's interactive
+	btn_normal.border_width_left = 1
+	btn_normal.border_color = Color(0.95, 0.95, 0.5, 0.2) # Soft left border hint
+	btn_normal.content_margin_left = 12
+	btn_normal.content_margin_right = 12
+	btn_normal.corner_radius_top_left = 4
+	btn_normal.corner_radius_bottom_left = 4
+	btn_normal.corner_radius_top_right = 4
+	btn_normal.corner_radius_bottom_right = 4
+
+	
+	var btn_hover = btn_normal.duplicate()
+	btn_hover.bg_color = Color(1, 1, 1, 0.05) # Very subtle highlight
+	btn_hover.border_width_bottom = 1
+	btn_hover.border_color = Color(0.95, 0.95, 0.4, 0.6) # Underline glow
+	
+	var btn_pressed = btn_normal.duplicate()
+	btn_pressed.bg_color = Color(1, 1, 1, 0.1)
+	
+	_top_banner_convoy_button.add_theme_stylebox_override("normal", btn_normal)
+	_top_banner_convoy_button.add_theme_stylebox_override("hover", btn_hover)
+	_top_banner_convoy_button.add_theme_stylebox_override("pressed", btn_pressed)
+	_top_banner_convoy_button.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
+	
+	_top_banner_convoy_button.add_theme_color_override("font_color", Color(0.95, 0.95, 0.5)) # Soft gold
+	_top_banner_convoy_button.add_theme_color_override("font_hover_color", Color(1.0, 1.0, 0.8))
+	_top_banner_convoy_button.add_theme_color_override("font_pressed_color", Color(1.0, 1.0, 0.4))
+
+	
+	# Scale font size based on device
+	var dsm = get_node_or_null("/root/DeviceStateManager")
+	var title_fs = 22
+	var suffix_fs = 20
+	if is_instance_valid(dsm) and dsm.has_method("get_scaled_base_font_size"):
+		title_fs = dsm.get_scaled_base_font_size(22)
+		suffix_fs = dsm.get_scaled_base_font_size(20)
+		
+	_top_banner_convoy_button.add_theme_font_size_override("font_size", title_fs)
+	
+	_top_banner_convoy_button.pressed.connect(func():
+		emit_signal("return_to_convoy_overview_requested", _last_convoy_data)
+	)
+	
+	_top_banner_convoy_button.tooltip_text = "Return to Convoy Overview"
+	
+	hbox.add_child(_top_banner_convoy_button)
+
+	
+	# --- Create the Suffix Label ---
+	if menu_name_suffix != "":
+		_top_banner_suffix_label = Label.new()
+		_top_banner_suffix_label.name = "MenuSuffixLabel"
+		_top_banner_suffix_label.text = " | " + menu_name_suffix.to_upper()
+		_top_banner_suffix_label.add_theme_font_size_override("font_size", suffix_fs)
+		_top_banner_suffix_label.add_theme_color_override("font_color", Color(0.7, 0.7, 0.7))
+		# Monospaced or clean font feel
+		_top_banner_suffix_label.add_theme_constant_override("outline_size", 1)
+		_top_banner_suffix_label.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.2))
+		hbox.add_child(_top_banner_suffix_label)
+
+	
+	# --- Handle Insertion ---
+	var final_parent = parent
+	var final_index = index
+	
+	# If parent is a wrapper (TopBarHBox or TopRow), replace it and swallow siblings
+	if parent is HBoxContainer and (parent.name.contains("TopBar") or parent.name.contains("TopRow")):
+		final_parent = parent.get_parent()
+		final_index = parent.get_index()
+		
+		# Move siblings into banner or into a secondary row
+		var siblings = parent.get_children()
+		var secondary_row: Control = null
+		var flow_container: HFlowContainer = null
+
+		
+		if break_out_siblings:
+			var sub_panel = PanelContainer.new()
+			sub_panel.name = "SecondaryBannerPanel"
+			
+			flow_container = HFlowContainer.new()
+			flow_container.name = "SecondaryBannerRow"
+			flow_container.alignment = FlowContainer.ALIGNMENT_CENTER
+			flow_container.add_theme_constant_override("h_separation", 15)
+			flow_container.add_theme_constant_override("v_separation", 10)
+			
+			# Subtle background for the breakout row to keep it grounded
+			var sub_style = StyleBoxFlat.new()
+			if use_dark_bg:
+				sub_style.bg_color = Color(0.1, 0.1, 0.1, 0.4)
+			else:
+				sub_style.bg_color = Color(0, 0, 0, 0)
+			
+			sub_style.content_margin_top = 6
+			sub_style.content_margin_bottom = 6
+			sub_style.content_margin_left = 10
+			sub_style.content_margin_right = 10
+			sub_style.corner_radius_bottom_left = 8
+			sub_style.corner_radius_bottom_right = 8
+			sub_panel.add_theme_stylebox_override("panel", sub_style)
+			
+			sub_panel.add_child(flow_container)
+			secondary_row = sub_panel
+		
+		for s in siblings:
+			if s != title_node:
+				parent.remove_child(s)
+				if break_out_siblings:
+					flow_container.add_child(s)
+				else:
+					hbox.add_child(s)
+
+				
+				# If it's the old back button, we might want to hide it as navigation is at bottom now
+				if s.name == "BackButton":
+					s.visible = false
+		
+		final_parent.add_child(banner_panel)
+		final_parent.move_child(banner_panel, final_index)
+		
+		if break_out_siblings and secondary_row.get_child_count() > 0:
+			final_parent.add_child(secondary_row)
+			final_parent.move_child(secondary_row, final_index + 1)
+		
+		final_parent.remove_child(parent)
+		parent.queue_free()
+
+	else:
+		# Direct child of MainVBox
+		parent.add_child(banner_panel)
+		parent.move_child(banner_panel, index)
+		parent.remove_child(title_node)
+		title_node.queue_free()
+
+	# Update text immediately if we have data
+	if not _last_convoy_data.is_empty():
+		_update_top_banner_text(_last_convoy_data)
+
+func _update_top_banner_text(convoy_data: Dictionary) -> void:
+	if is_instance_valid(_top_banner_convoy_button):
+		var cname = convoy_data.get("convoy_name", convoy_data.get("name", "Convoy"))
+		# Add a back indicator if we have a suffix (meaning we are in a sub-menu)
+		if _top_banner_menu_name != "":
+			_top_banner_convoy_button.text = "« " + str(cname)
+		else:
+			_top_banner_convoy_button.text = str(cname)
+
+
+func set_menu_title_suffix(suffix: String) -> void:
+	_top_banner_menu_name = suffix
+	if is_instance_valid(_top_banner_suffix_label):
+		_top_banner_suffix_label.text = " - " + suffix

@@ -331,12 +331,13 @@ func _ready():
 
 	_organize_button.pressed.connect(_on_organize_button_pressed)
 
-	# Make the title label clickable to return to the convoy overview
+	# Setup standardized top banner
 	if is_instance_valid(title_label):
-		title_label.mouse_filter = Control.MOUSE_FILTER_STOP # Allow it to receive mouse events
-		title_label.gui_input.connect(_on_title_label_gui_input)
+		setup_convoy_top_banner(title_label, "Cargo", false, true)
+
 	else:
-		printerr("ConvoyCargoMenu: BackButton node not found. Ensure it's named 'BackButton' in the scene.")
+		printerr("ConvoyCargoMenu: TitleLabel node not found.")
+
 
 	# Phase C: subscribe to canonical sources instead of GameDataManager.
 	# NOTE: MenuBase already subscribes to `GameStore.convoys_changed`; avoid a second
@@ -1365,9 +1366,8 @@ func initialize_with_data(data_or_id: Variant, extra_arg: Variant = null) -> voi
 				# UI will repopulate on GameStore.convoys_changed
 	# print("ConvoyCargoMenu: Initialized with data: ", convoy_data_received) # DEBUG
 
-	if is_instance_valid(title_label):
-		var title_val: String = String(convoy_data_received.get("convoy_name", convoy_data_received.get("name", "Cargo Hold")))
-		title_label.text = "%s" % title_val
+
+
 	
 	_populate_cargo_list()
 	_diag("populate", "called_from_initialize")
@@ -1396,9 +1396,8 @@ func _update_ui(convoy: Dictionary) -> void:
 		_diag("update_ui", "suppressed", {"now": now, "suppress_until": _suppress_refresh_until_msec})
 		return
 	convoy_data_received = convoy.duplicate(true)
-	if is_instance_valid(title_label):
-		var title_val := String(convoy_data_received.get("convoy_name", title_label.text))
-		title_label.text = "%s" % title_val
+
+
 	_populate_cargo_list()
 
 func _populate_by_type():

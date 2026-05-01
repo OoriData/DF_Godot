@@ -84,12 +84,13 @@ func _ready():
 	if is_instance_valid(back_button):
 		setup_convoy_navigation_bar(back_button)
 	
-	# Make the title label clickable to return to the convoy overview
+	# Setup standardized top banner
 	if is_instance_valid(title_label):
-		title_label.mouse_filter = Control.MOUSE_FILTER_STOP # Allow it to receive mouse events
-		title_label.gui_input.connect(_on_title_label_gui_input)
+		setup_convoy_top_banner(title_label, "Journey", false, false)
 	else:
-		printerr("ConvoyJourneyMenu: CRITICAL - TitleLabel node NOT found or is not a Label.")
+
+		printerr("ConvoyJourneyMenu: CRITICAL - TitleLabel node NOT found.")
+
 
 	# Canonical route lifecycle + convoy update events.
 	if is_instance_valid(_hub):
@@ -177,9 +178,8 @@ func _update_ui(convoy: Dictionary) -> void:
 	convoy_data_received = convoy.duplicate(true)
 	var journey_raw: Variant = convoy_data_received.get("journey")
 	var has_journey := journey_raw is Dictionary and not (journey_raw as Dictionary).is_empty()
-	if is_instance_valid(title_label):
-		var convoy_name = convoy_data_received.get("convoy_name", convoy_data_received.get("name", "Convoy"))
-		title_label.text = String(convoy_name) + " - " + ("Journey Details" if has_journey else "Journey Planner")
+	set_menu_title_suffix("Journey Details" if has_journey else "Journey Planner")
+
 
 	# If a confirmation preview is open, don't clobber it on background refresh.
 	if is_instance_valid(_confirmation_panel) and _confirmation_panel.visible:
@@ -1807,9 +1807,8 @@ func _on_journey_canceled(updated_convoy: Dictionary):
 	# Also update the title line to reflect planner state if no active journey
 	var j = updated_convoy.get("journey")
 	if not (j is Dictionary) or j.is_empty():
-		if is_instance_valid(title_label):
-			var convoy_name = String(updated_convoy.get("name", "Convoy"))
-			title_label.text = convoy_name + " - Journey Planner"
+		set_menu_title_suffix("Journey Planner")
+
 
 func _disable_destination_buttons():
 	for child in content_vbox.get_children():
