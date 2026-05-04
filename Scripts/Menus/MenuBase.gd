@@ -149,6 +149,20 @@ func _on_convoys_changed(_convoys: Array) -> void:
 	print("[MenuBase] _on_convoys_changed triggered for: ", name, " (convoy_id: ", convoy_id, ")")
 	_refresh_from_store()
 
+func _update_navigation_bar_visibility(convoy: Dictionary) -> void:
+	var journey_data = convoy.get("journey")
+	var has_journey = journey_data != null and not journey_data.is_empty()
+	
+	# Look for the navigation bar in common paths
+	var nav_bar = get_node_or_null("MainVBox/BottomBarPanel/BottomMenuButtonsHBox")
+	if not is_instance_valid(nav_bar):
+		nav_bar = find_child("BottomMenuButtonsHBox", true, false)
+		
+	if is_instance_valid(nav_bar):
+		var settlement_btn = nav_bar.get_node_or_null("SettlementMenuButton")
+		if is_instance_valid(settlement_btn):
+			settlement_btn.visible = not has_journey
+
 func _refresh_from_store() -> void:
 	print("[MenuBase] _refresh_from_store executing for: ", name)
 	var store = get_node_or_null("/root/GameStore")
@@ -174,8 +188,11 @@ func _refresh_from_store() -> void:
 				_last_convoy_data = convoy.duplicate(true)
 				print("[MenuBase] Found relevant changes, calling _update_ui for: ", name)
 				_update_ui(convoy)
+				_update_navigation_bar_visibility(convoy)
 			else:
 				print("[MenuBase] No relevant changes, skipping update for: ", name)
+				# Still update nav bar visibility in case it was just created
+				_update_navigation_bar_visibility(convoy)
 		else:
 			_last_convoy_data = {}
 			print("[MenuBase] Convoy data empty/missing, calling reset_view for: ", name)
@@ -495,35 +512,49 @@ func setup_convoy_top_banner(title_node: Control, menu_name_suffix: String, brea
 	_top_banner_convoy_button.name = "ConvoyNameButton"
 	_top_banner_convoy_button.text = "Convoy" # Placeholder
 	
-	# Premium Button Styling (Link-like but clearly a button)
+	# Premium Button Styling (Tactile and clearly a button)
 	var btn_normal = StyleBoxFlat.new()
-	btn_normal.bg_color = Color(1, 1, 1, 0.03) # Very subtle background to show it's interactive
-	btn_normal.border_width_left = 1
-	btn_normal.border_color = Color(0.95, 0.95, 0.5, 0.2) # Soft left border hint
-	btn_normal.content_margin_left = 12
-	btn_normal.content_margin_right = 12
-	btn_normal.corner_radius_top_left = 4
-	btn_normal.corner_radius_bottom_left = 4
-	btn_normal.corner_radius_top_right = 4
-	btn_normal.corner_radius_bottom_right = 4
-
+	# Rich dark background with slight transparency
+	btn_normal.bg_color = Color(0.22, 0.24, 0.28, 0.9) 
+	btn_normal.border_width_left = 2
+	btn_normal.border_width_top = 2
+	btn_normal.border_width_right = 2
+	btn_normal.border_width_bottom = 2
+	# Oori Accent Blue / Gold-ish border
+	btn_normal.border_color = Color(0.45, 0.55, 0.75, 0.7) 
 	
+	btn_normal.content_margin_left = 14
+	btn_normal.content_margin_right = 14
+	btn_normal.content_margin_top = 6
+	btn_normal.content_margin_bottom = 6
+	
+	btn_normal.corner_radius_top_left = 8
+	btn_normal.corner_radius_bottom_left = 8
+	btn_normal.corner_radius_top_right = 8
+	btn_normal.corner_radius_bottom_right = 8
+	
+	btn_normal.shadow_color = Color(0, 0, 0, 0.35)
+	btn_normal.shadow_size = 3
+	btn_normal.shadow_offset = Vector2(0, 2)
+
 	var btn_hover = btn_normal.duplicate()
-	btn_hover.bg_color = Color(1, 1, 1, 0.05) # Very subtle highlight
-	btn_hover.border_width_bottom = 1
-	btn_hover.border_color = Color(0.95, 0.95, 0.4, 0.6) # Underline glow
+	btn_hover.bg_color = Color(0.28, 0.32, 0.38, 1.0)
+	btn_hover.border_color = Color(0.6, 0.75, 1.0, 0.9) # Brighten border on hover
 	
 	var btn_pressed = btn_normal.duplicate()
-	btn_pressed.bg_color = Color(1, 1, 1, 0.1)
+	btn_pressed.bg_color = Color(0.15, 0.16, 0.18, 1.0)
+	btn_pressed.border_color = Color(0.3, 0.4, 0.6, 0.8)
+	btn_pressed.shadow_size = 1
+	btn_pressed.shadow_offset = Vector2(0, 1)
 	
 	_top_banner_convoy_button.add_theme_stylebox_override("normal", btn_normal)
 	_top_banner_convoy_button.add_theme_stylebox_override("hover", btn_hover)
 	_top_banner_convoy_button.add_theme_stylebox_override("pressed", btn_pressed)
 	_top_banner_convoy_button.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
 	
-	_top_banner_convoy_button.add_theme_color_override("font_color", Color(0.95, 0.95, 0.5)) # Soft gold
-	_top_banner_convoy_button.add_theme_color_override("font_hover_color", Color(1.0, 1.0, 0.8))
-	_top_banner_convoy_button.add_theme_color_override("font_pressed_color", Color(1.0, 1.0, 0.4))
+	_top_banner_convoy_button.add_theme_color_override("font_color", Color(0.95, 0.95, 0.6)) # Warm gold
+	_top_banner_convoy_button.add_theme_color_override("font_hover_color", Color(1.0, 1.0, 1.0))
+	_top_banner_convoy_button.add_theme_color_override("font_pressed_color", Color(0.8, 0.8, 0.8))
 
 	
 	# Scale font size based on device

@@ -230,6 +230,7 @@ func _set_latest_settlements_snapshot(settlements: Array) -> void:
 				_vendor_id_to_name[vid] = nm
 
 func _ready():
+	super._ready()
 	# Ensure we don't force a minimum width that breaks the parent container
 	custom_minimum_size.x = 0
 	if has_node("MainVBox"):
@@ -2702,6 +2703,9 @@ func _update_ui(convoy: Dictionary) -> void:
 		cargo_weight_text_label.text = "Cargo Weight: %s / %s" % [NumberFormat.fmt_float(used_weight, 2), NumberFormat.fmt_float(total_weight, 2)]
 	if is_instance_valid(cargo_weight_bar):
 		_set_progressbar_style(cargo_weight_bar, used_weight, total_weight)
+	
+	# Update navigation bar visibility (Settlement button should be hidden during journey)
+	_update_navigation_bar_visibility(convoy_data_received)
 
 func _enforce_label_wrapping(node: Node):
 	if node is Label:

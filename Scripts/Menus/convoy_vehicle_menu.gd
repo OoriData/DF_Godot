@@ -31,6 +31,7 @@ var _current_convoy_data: Dictionary # To store the full convoy data
 var _selected_vehicle_id: String = "" # Persist selection across refreshes
 var _last_refresh_convoy_id: String = "" # Avoid spamming refresh requests
 var _custom_tab_buttons: Array[Button] = []
+var _last_has_journey: bool = false # Track journey status to trigger tab rebuilds
 
 const CONSUMABLE_CLASS_IDS = [
 	"4ccf7ae4-2297-420c-af71-97eda72dceca", # MRE Boxes
@@ -234,7 +235,26 @@ func _setup_custom_tabs() -> void:
 	
 	# Create a button for each tab
 	var tab_count = tab_container.get_child_count()
+	var has_journey = _has_journey()
+	_last_has_journey = has_journey
+
+	# If we are on a journey and the service tab is active, switch to overview
+	if has_journey:
+		var current_tab_child = tab_container.get_child(tab_container.current_tab)
+		if current_tab_child.name == "Service":
+			tab_container.current_tab = 0
+			_update_custom_tab_buttons(0)
+
 	for i in range(tab_count):
+		var child = tab_container.get_child(i)
+		var is_service = child.name == "Service"
+		
+		if is_service and has_journey:
+			tab_container.set_tab_hidden(i, true)
+			continue
+		
+		tab_container.set_tab_hidden(i, false)
+		
 		var btn = Button.new()
 		var tab_name = tab_container.get_tab_title(i)
 		if tab_name.is_empty():
@@ -271,6 +291,7 @@ func _setup_custom_tabs() -> void:
 		btn.add_theme_color_override("font_pressed_color", Color(1.0, 1.0, 1.0, 1.0))
 		
 		# Connect press
+		btn.set_meta("tab_index", i)
 		btn.pressed.connect(func():
 			tab_container.current_tab = i
 			_update_custom_tab_buttons(i)
@@ -283,12 +304,13 @@ func _setup_custom_tabs() -> void:
 	if tab_count > 0:
 		_update_custom_tab_buttons(tab_container.current_tab)
 
-func _update_custom_tab_buttons(active_index: int) -> void:
-	for i in range(_custom_tab_buttons.size()):
-		var btn = _custom_tab_buttons[i]
-		btn.set_pressed_no_signal(i == active_index)
+func _update_custom_tab_buttons(active_tab_index: int) -> void:
+	for btn in _custom_tab_buttons:
+		if not is_instance_valid(btn): continue
+		var btn_tab_idx = btn.get_meta("tab_index", -1)
+		btn.set_pressed_no_signal(btn_tab_idx == active_tab_index)
 		
-		if i == active_index:
+		if btn_tab_idx == active_tab_index:
 			btn.add_theme_color_override("font_color", Color(1.0, 1.0, 1.0, 1.0))
 			var pressed_style = btn.get_theme_stylebox("pressed")
 			btn.add_theme_stylebox_override("normal", pressed_style)
@@ -491,6 +513,11 @@ func _update_ui(convoy: Dictionary) -> void:
 			if vehicle_option_button.get_item_count() > 0:
 				vehicle_option_button.select(target_index)
 				_on_vehicle_selected(target_index)
+	
+	# Check if journey status changed to rebuild tabs
+	var has_journey = _has_journey()
+	if has_journey != _last_has_journey:
+		_setup_custom_tabs()
 	# Do not call super.initialize_with_data here; this is a UI refresh
 
 func _add_styled_detail_row(parent: Container, label_text: String, value_text: String, item_index: int, value_autowrap: bool = false):
@@ -1667,3 +1694,9 @@ func _stable_sort_vehicles(vehicles: Array) -> Array:
 			return am < bm
 		return an < bn)
 	return copy
+
+func _has_journey() -> bool:
+	if _current_convoy_data.is_empty():
+		return false
+	var journey_data = _current_convoy_data.get("journey")
+	return journey_data != null and not journey_data.is_empty()
