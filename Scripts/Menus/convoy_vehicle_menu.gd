@@ -10,9 +10,8 @@ signal inspect_specific_convoy_cargo_requested(convoy_data, item_data)
 # @onready variables for UI elements
 @onready var title_label: Label = $MainVBox/TopRow/TitleLabel
 @onready var vehicle_option_button: OptionButton = $MainVBox/TopRow/VehicleOptionButton
-@onready var back_button: Button = $MainVBox/BottomRow/BackButton
-@onready var manifest_button: Button = $MainVBox/BottomRow/ManifestButton
-@onready var apply_button: Button = $MainVBox/BottomRow/ApplyButton
+@onready var back_button: Button = $MainVBox/BackButton
+@onready var manifest_button: Button = $MainVBox/VehicleTabContainer/Cargo/CargoVBox/CargoHeader/ManifestButton
 @onready var tab_container: TabContainer = $MainVBox/VehicleTabContainer
 
 @onready var overview_vbox: VBoxContainer = $MainVBox/VehicleTabContainer/Overview/OverviewVBox
@@ -114,10 +113,6 @@ func _ready():
 	if is_instance_valid(manifest_button):
 		manifest_button.pressed.connect(_on_inspect_all_cargo_pressed)
 		style_convoy_nav_button(manifest_button)
-
-	if is_instance_valid(apply_button):
-		apply_button.pressed.connect(func(): if is_instance_valid(mechanics_embed) and mechanics_embed.has_method("apply_pending_changes"): mechanics_embed.apply_pending_changes())
-		style_convoy_nav_button(apply_button)
 
 	if is_instance_valid(tab_container):
 		if not tab_container.is_connected("tab_changed", Callable(self, "_on_tab_changed")):
@@ -320,18 +315,6 @@ func _is_portrait() -> bool:
 
 func _on_tab_changed(tab_idx: int) -> void:
 	_update_custom_tab_buttons(tab_idx)
-	if not is_instance_valid(apply_button) or not is_instance_valid(manifest_button):
-		return
-	
-	apply_button.visible = false
-	manifest_button.visible = false
-	
-	if is_instance_valid(tab_container) and tab_idx >= 0 and tab_idx < tab_container.get_child_count():
-		var current_node = tab_container.get_child(tab_idx)
-		if current_node.name == "Service":
-			apply_button.visible = true
-		elif current_node.name == "Cargo":
-			manifest_button.visible = true
 
 func _clear_all_tabs():
 	var all_vboxes = [overview_vbox, stats_vbox, parts_vbox, cargo_vbox]

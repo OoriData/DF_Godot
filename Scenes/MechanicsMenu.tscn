@@ -37,36 +37,55 @@ text = "Mechanic"
 layout_mode = 2
 size_flags_horizontal = 3
 
+	[node name="TabsRow" type="HBoxContainer" parent="MainVBox"]
+	layout_mode = 2
+	theme_override_constants/separation = 10
 
-[node name="TabContainer" type="TabContainer" parent="MainVBox"]
-layout_mode = 2
-size_flags_vertical = 3
+	[node name="TabScroll" type="ScrollContainer" parent="MainVBox/TabsRow"]
+	layout_mode = 2
+	size_flags_horizontal = 3
+	vertical_scroll_mode = 0
 
-[node name="Parts" type="ScrollContainer" parent="MainVBox/TabContainer"]
-layout_mode = 2
+	[node name="TabHBox" type="HBoxContainer" parent="MainVBox/TabsRow/TabScroll"]
+	layout_mode = 2
+	size_flags_horizontal = 3
+	theme_override_constants/separation = 10
 
-[node name="PartsVBox" type="VBoxContainer" parent="MainVBox/TabContainer/Parts"]
-layout_mode = 2
-size_flags_horizontal = 3
-size_flags_vertical = 3
+	[node name="ContextButtons" type="HBoxContainer" parent="MainVBox/TabsRow"]
+	layout_mode = 2
+	theme_override_constants/separation = 10
 
-[node name="Pending" type="ScrollContainer" parent="MainVBox/TabContainer"]
-layout_mode = 2
+	[node name="ApplyButton" type="Button" parent="MainVBox/TabsRow/ContextButtons"]
+	layout_mode = 2
+	size_flags_horizontal = 3
+	text = "Apply Changes"
 
-[node name="PendingVBox" type="VBoxContainer" parent="MainVBox/TabContainer/Pending"]
-layout_mode = 2
-size_flags_horizontal = 3
-size_flags_vertical = 3
+	[node name="TabContainer" type="TabContainer" parent="MainVBox"]
+	layout_mode = 2
+	size_flags_vertical = 3
+	tabs_visible = false
 
-[node name="BottomBar" type="HBoxContainer" parent="MainVBox"]
-layout_mode = 2
+	[node name="Parts" type="ScrollContainer" parent="MainVBox/TabContainer"]
+	layout_mode = 2
 
-[node name="BackButton" type="Button" parent="MainVBox/BottomBar"]
-layout_mode = 2
-size_flags_horizontal = 3
-text = "Back"
+	[node name="PartsVBox" type="VBoxContainer" parent="MainVBox/TabContainer/Parts"]
+	layout_mode = 2
+	size_flags_horizontal = 3
+	size_flags_vertical = 3
 
-[node name="ApplyButton" type="Button" parent="MainVBox/BottomBar"]
-layout_mode = 2
-size_flags_horizontal = 3
-text = "Apply Changes"
+	[node name="Pending" type="ScrollContainer" parent="MainVBox/TabContainer"]
+	layout_mode = 2
+
+	[node name="PendingVBox" type="VBoxContainer" parent="MainVBox/TabContainer/Pending"]
+	layout_mode = 2
+	size_flags_horizontal = 3
+	size_flags_vertical = 3
+
+	[node name="BottomBar" type="HBoxContainer" parent="MainVBox"]
+	layout_mode = 2
+
+	[node name="BackButton" type="Button" parent="MainVBox/BottomBar"]
+	layout_mode = 2
+	size_flags_horizontal = 3
+	text = "Back"
+
