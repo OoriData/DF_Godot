@@ -125,8 +125,6 @@ func _ready():
 	if is_instance_valid(title_label):
 		setup_convoy_top_banner(title_label, "Settlement", true, false)
 
-
-
 	# Apply styling to title label as well
 	if is_instance_valid(title_label):
 		_style_top_bar_button(title_label)

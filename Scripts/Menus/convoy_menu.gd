@@ -252,7 +252,6 @@ func _ready():
 	if is_instance_valid(title_label):
 		setup_convoy_top_banner(title_label, "", false, false)
 	else:
-
 		printerr("ConvoyMenu: CRITICAL - TitleLabel node not found. Check the path in the script.")
 
 
@@ -383,21 +382,18 @@ func _ready():
 	# Style the new journey progress bar
 	if is_instance_valid(journey_progress_bar):
 		_style_journey_progress_bar(journey_progress_bar)
-	# IMPORTANT: Ensure you have a Button node in your ConvoyMenu.tscn scene
-	# and that its name is "BackButton".
-	# The third argument 'false' for find_child means 'owned by this node' is not checked,
-	# which is usually fine for finding children within a scene instance.
-	# var back_button = find_child("BackButton", true, false) # Now using @onready var
 
-	if back_button and back_button is Button:
-		# print("ConvoyMenu: BackButton found. Connecting its 'pressed' signal.") # DEBUG
-		# Check if already connected to prevent duplicate connections if _ready is called multiple times (unlikely for menus but good practice)
+	if is_instance_valid(back_button):
 		if not back_button.is_connected("pressed", Callable(self, "_on_back_button_pressed")):
-			back_button.pressed.connect(_on_back_button_pressed, CONNECT_ONE_SHOT) # Use ONE_SHOT as menu is freed
+			back_button.pressed.connect(_on_back_button_pressed, CONNECT_ONE_SHOT)
 		if _is_mobile():
 			back_button.custom_minimum_size = Vector2(back_button.custom_minimum_size.x, 60.0)
 	else:
 		printerr("ConvoyMenu: CRITICAL - BackButton node NOT found or is not a Button. Ensure it's named 'BackButton' in ConvoyMenu.tscn.")
+
+	var bottom_panel_node = get_node_or_null("MainVBox/BottomBarPanel")
+	if is_instance_valid(bottom_panel_node):
+		setup_convoy_navigation_bar(bottom_panel_node)
 
 	# Cache GameDataManager and connect relevant signals for live updates
 	# Phase C: subscribe to canonical sources (Hub/Store/APICalls) instead of GameDataManager.
@@ -542,7 +538,7 @@ func _update_mobile_dependent_layout() -> void:
 	var stat_height = 120.0 if is_portrait else 50.0
 
 	var dsm_stat = get_node_or_null("/root/DeviceStateManager")
-	var stat_fs = dsm_stat.get_scaled_base_font_size(22) if dsm_stat else 22
+	var stat_fs = dsm_stat.get_scaled_base_font_size(28) if dsm_stat else 28
 
 	if is_instance_valid(res_hbox):
 		res_hbox.add_theme_constant_override("separation", 8 if is_portrait else 4)
@@ -602,37 +598,6 @@ func _update_mobile_dependent_layout() -> void:
 				vendor_content_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 				var sep_v = 10
 				vendor_content_scroll.custom_minimum_size.y = (VENDOR_ITEM_BUTTON_HEIGHT * 2) + sep_v + 20.0
-
-	# Back Button
-	if is_instance_valid(back_button):
-		back_button.custom_minimum_size = Vector2(back_button.custom_minimum_size.x, 120.0 if is_portrait else (60.0 if use_mobile else 34.0))
-
-	# Bottom Bar Panel and children styles
-	var bottom_panel := $MainVBox/BottomBarPanel if has_node("MainVBox/BottomBarPanel") else null
-	if is_instance_valid(bottom_panel):
-		var bar_style = bottom_panel.get_theme_stylebox("panel")
-		if bar_style is StyleBoxFlat:
-			bar_style.content_margin_top = 10.0 if is_portrait else (6.0 if use_mobile else 0.0)
-			bar_style.content_margin_bottom = 10.0 if is_portrait else (6.0 if use_mobile else 0.0)
-			bar_style.content_margin_left = 10.0 if is_portrait else (6.0 if use_mobile else 0.0)
-			bar_style.content_margin_right = 10.0 if is_portrait else (6.0 if use_mobile else 0.0)
-
-		var hbox := bottom_panel.get_node_or_null("BottomMenuButtonsHBox")
-		if is_instance_valid(hbox):
-			# Use FlowContainer wrapping for better vertical density
-			hbox.alignment = BoxContainer.ALIGNMENT_CENTER
-
-	# Placeholder menu buttons (Vehicles, Journey, etc.)
-	var btn_min_h = 140.0 if is_portrait else (70.0 if use_mobile else 34.0)
-	for btn in [vehicle_menu_button, journey_menu_button, settlement_menu_button, cargo_menu_button]:
-		if is_instance_valid(btn):
-			btn.custom_minimum_size.y = btn_min_h
-			btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-
-	_style_menu_button(vehicle_menu_button)
-	_style_menu_button(journey_menu_button)
-	_style_menu_button(settlement_menu_button)
-	_style_menu_button(cargo_menu_button)
 
 	if is_instance_valid(_mission_sort_option_button):
 		if is_portrait:
@@ -2471,7 +2436,8 @@ func _style_menu_button(button_node: Button) -> void:
 
 	# On mobile enforce tall touch targets; on desktop keep scene defaults.
 	var on_mobile := _is_mobile()
-	var min_h := 70.0 if on_mobile else 34.0
+	var is_portrait_btn := _is_portrait_view()
+	var min_h := 140.0 if is_portrait_btn else (85.0 if on_mobile else 50.0)
 	var corner_r := 6 if on_mobile else 4
 	var v_pad := 8.0 if on_mobile else 4.0
 	if button_node.custom_minimum_size.y < min_h:

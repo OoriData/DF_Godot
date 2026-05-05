@@ -110,6 +110,9 @@ func _apply_size_to_node(node: Node, target_h: float) -> void:
 	if node == self or node.has_meta("responsive_scaled"):
 		return
 	
+	if node.name == "BottomBarPanel" or (node.get_parent() and node.get_parent().name in ["BottomBarPanel", "BottomMenuButtonsHBox"]):
+		return
+		
 	if target_h <= 0.0:
 		return
 	

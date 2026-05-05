@@ -308,6 +308,7 @@ func style_convoy_nav_button(button_node: Button) -> void:
 	button_node.add_theme_stylebox_override("pressed", sb_p)
 	button_node.add_theme_color_override("font_color", COLOR_FONT)
 
+
 func setup_convoy_navigation_bar(back_button_node: Node) -> void:
 	if not is_instance_valid(back_button_node):
 		return
@@ -586,11 +587,11 @@ func setup_convoy_top_banner(title_node: Control, menu_name_suffix: String, brea
 	
 	# Scale font size based on device
 	var dsm = get_node_or_null("/root/DeviceStateManager")
-	var title_fs = 22
-	var suffix_fs = 20
+	var title_fs = 28
+	var suffix_fs = 22
 	if is_instance_valid(dsm) and dsm.has_method("get_scaled_base_font_size"):
-		title_fs = dsm.get_scaled_base_font_size(22)
-		suffix_fs = dsm.get_scaled_base_font_size(20)
+		title_fs = dsm.get_scaled_base_font_size(28)
+		suffix_fs = dsm.get_scaled_base_font_size(22)
 		
 	_top_banner_convoy_button.add_theme_font_size_override("font_size", title_fs)
 	

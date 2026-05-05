@@ -88,7 +88,6 @@ func _ready():
 	if is_instance_valid(title_label):
 		setup_convoy_top_banner(title_label, "Journey", false, false)
 	else:
-
 		printerr("ConvoyJourneyMenu: CRITICAL - TitleLabel node NOT found.")
 
 
