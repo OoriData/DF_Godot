@@ -113,8 +113,8 @@ func _update_mobile_sizing() -> void:
 
 	if is_portrait:
 		custom_minimum_size.y = 200 # Increased from 170 for better clearance
-		if is_instance_valid(settings_button): settings_button.custom_minimum_size.y = 130
-		if is_instance_valid(report_bug_button): report_bug_button.custom_minimum_size.y = 130
+		if is_instance_valid(settings_button): settings_button.custom_minimum_size = Vector2(240, 130)
+		if is_instance_valid(report_bug_button): report_bug_button.custom_minimum_size = Vector2(160, 130)
 	else:
 		custom_minimum_size.y = 96
 		if is_instance_valid(settings_button): settings_button.custom_minimum_size.y = 64

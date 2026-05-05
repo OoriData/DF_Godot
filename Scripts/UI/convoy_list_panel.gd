@@ -181,47 +181,72 @@ func populate_convoy_list(convoys_data: Array) -> void:
 		item_button.clip_contents = true
 		item_button.text = "" # Clear default text
 		
-		var hbox = HBoxContainer.new()
-		hbox.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-		hbox.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		hbox.alignment = BoxContainer.ALIGNMENT_BEGIN
-		hbox.add_theme_constant_override("separation", 8)
+		var content_container: BoxContainer
+		if is_portrait:
+			content_container = VBoxContainer.new()
+			content_container.alignment = BoxContainer.ALIGNMENT_CENTER
+			content_container.add_theme_constant_override("separation", -2) # Tighten vertical stacking
+		else:
+			content_container = HBoxContainer.new()
+			content_container.alignment = BoxContainer.ALIGNMENT_BEGIN
+			content_container.add_theme_constant_override("separation", 8)
+		
+		content_container.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		content_container.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		
 		# Add margins so text isn't flush with button edge
-		var margin = 8
-		hbox.offset_left = margin
-		hbox.offset_right = -margin
-		item_button.add_child(hbox)
+		var margin = 12 if is_portrait else 8
+		content_container.offset_left = margin
+		content_container.offset_right = -margin
+		item_button.add_child(content_container)
 
 		var name_label = Label.new()
 		name_label.text = convoy_name
 		name_label.add_theme_color_override("font_color", Color(1.0, 1.0, 1.0)) # Bright White
 		name_label.add_theme_font_size_override("font_size", _get_font_size(16))
-		hbox.add_child(name_label)
+		name_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+		name_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		if is_portrait:
+			name_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		content_container.add_child(name_label)
 		
 		var journey: Variant = convoy_item_data.get("journey")
 		if journey is Dictionary and not (journey as Dictionary).is_empty():
 			var j_dict := journey as Dictionary
 			var dest_x = j_dict.get("dest_x")
 			var dest_y = j_dict.get("dest_y")
-			var dest_name = _get_settlement_name(dest_x, dest_y)
+			var dest_name = str(j_dict.get("destination_name", j_dict.get("dest_name", "")))
+			if dest_name.is_empty():
+				dest_name = _get_settlement_name(dest_x, dest_y)
 			
-			var progress: float = j_dict.get("progress", 0.0)
-			var length: float = j_dict.get("length", 0.0)
-			var progress_percentage := 0.0
-			if length > 0.001:
-				progress_percentage = (progress / length) * 100.0
-			
-			var dest_label = Label.new()
-			dest_label.text = "to %s" % dest_name
-			dest_label.add_theme_color_override("font_color", Color(0.16, 0.71, 0.96)) # Cyan
-			dest_label.add_theme_font_size_override("font_size", 15)
-			hbox.add_child(dest_label)
-			
-			var prog_label = Label.new()
-			prog_label.text = "(%.0f%%)" % progress_percentage
-			prog_label.add_theme_color_override("font_color", Color(1.0, 0.9, 0.4)) # Light Yellow
-			prog_label.add_theme_font_size_override("font_size", 14)
-			hbox.add_child(prog_label)
+			if not dest_name.is_empty():
+				var progress: float = j_dict.get("progress", 0.0)
+				var length: float = j_dict.get("length", 0.0)
+				var progress_percentage := 0.0
+				if length > 0.001:
+					progress_percentage = (progress / length) * 100.0
+				
+				var journey_row: BoxContainer
+				if is_portrait:
+					journey_row = HBoxContainer.new()
+					journey_row.alignment = BoxContainer.ALIGNMENT_CENTER
+					journey_row.add_theme_constant_override("separation", 4) # Tighter for portrait row
+					content_container.add_child(journey_row)
+				else:
+					journey_row = content_container
+				
+				var dest_label = Label.new()
+				dest_label.text = "to %s" % dest_name
+				dest_label.add_theme_color_override("font_color", Color(0.16, 0.71, 0.96)) # Cyan
+				dest_label.add_theme_font_size_override("font_size", _get_font_size(15))
+				# Removed text_overrun_behavior to prevent it from collapsing in portrait
+				journey_row.add_child(dest_label)
+				
+				var prog_label = Label.new()
+				prog_label.text = "(%.0f%%)" % progress_percentage
+				prog_label.add_theme_color_override("font_color", Color(1.0, 0.9, 0.4)) # Light Yellow
+				prog_label.add_theme_font_size_override("font_size", _get_font_size(14))
+				journey_row.add_child(prog_label)
 
 		# Oori Button Styling
 		var btn_style = StyleBoxFlat.new()
@@ -251,16 +276,20 @@ func _get_settlement_name(coord_x, coord_y) -> String:
 	if coord_x == null or coord_y == null:
 		return "Unknown"
 		
+	var settlements = _store.get_settlements()
+	if settlements.is_empty():
+		return "" # Settlements data not loaded yet
+		
 	var x_int := roundi(float(coord_x))
 	var y_int := roundi(float(coord_y))
-	for s in _store.get_settlements():
+	for s in settlements:
 		if s is Dictionary:
 			var sx := int((s as Dictionary).get("x", -9999))
 			var sy := int((s as Dictionary).get("y", -9999))
 			if sx == x_int and sy == y_int:
 				var settlement_name := str((s as Dictionary).get("name", "Unknown"))
 				return settlement_name if settlement_name != "" else "Unknown"
-	return "Uncharted Location"
+	return "Uncharted"
 
 func _on_convoy_item_pressed(convoy_item_data: Dictionary) -> void:
 	if not is_instance_valid(convoy_popup) or not is_instance_valid(toggle_button):
@@ -321,17 +350,17 @@ func _update_button_layout() -> void:
 
 	if is_portrait:
 		# Chunky Portrait Scaling
-		toggle_button.custom_minimum_size = Vector2(280, 110)
+		toggle_button.custom_minimum_size = Vector2(400, 110)
 		rtl.add_theme_font_size_override("normal_font_size", _get_font_size(19))
 		rtl.offset_top = 34
 	elif _is_mobile():
 		# Landscape Mobile
-		toggle_button.custom_minimum_size = Vector2(180, 60)
+		toggle_button.custom_minimum_size = Vector2(320, 60)
 		rtl.add_theme_font_size_override("normal_font_size", _get_font_size(19))
 		rtl.offset_top = 16
 	else:
 		# Desktop
-		toggle_button.custom_minimum_size = Vector2(140, 34)
+		toggle_button.custom_minimum_size = Vector2(260, 34)
 		rtl.add_theme_font_size_override("normal_font_size", 19)
 		rtl.offset_top = 3
 		
@@ -425,8 +454,11 @@ func _update_toggle_button_display(is_open: bool) -> void:
 			var j_dict := journey as Dictionary
 			var dest_x = j_dict.get("dest_x")
 			var dest_y = j_dict.get("dest_y")
-			var dest_name = _get_settlement_name(dest_x, dest_y)
-			status_text = " [font_size=15][color=#29b6f6]to %s[/color][/font_size]" % dest_name
+			var dest_name = str(j_dict.get("destination_name", j_dict.get("dest_name", "")))
+			if dest_name.is_empty():
+				dest_name = _get_settlement_name(dest_x, dest_y)
+			if not dest_name.is_empty():
+				status_text = " [font_size=%d][color=#29b6f6]to %s[/color][/font_size]" % [_get_font_size(15), dest_name]
 		
 		display_text = "%s%s %s" % [convoy_name, status_text, arrow]
 	
