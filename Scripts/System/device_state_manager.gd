@@ -10,9 +10,9 @@ enum LayoutMode {
 signal layout_mode_changed(mode: LayoutMode, screen_size: Vector2, is_mobile: bool)
 
 @export_group("Font Scaling Multipliers")
-@export var font_multiplier_portrait: float = 1.6
-@export var font_multiplier_landscape: float = 1.6
-@export var font_multiplier_desktop: float = 1.2
+@export var font_multiplier_portrait: float = 1.1
+@export var font_multiplier_landscape: float = 1.1
+@export var font_multiplier_desktop: float = 1.0
 
 var current_mode: LayoutMode = LayoutMode.DESKTOP
 var is_mobile: bool = false

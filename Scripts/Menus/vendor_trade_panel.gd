@@ -652,19 +652,43 @@ func _update_layout_scaling() -> void:
 		theme = curr_theme
 	curr_theme.default_font_size = dyn_font_sz
 	
+	# Significant boost for buttons and tabs in portrait mode to fill the 100px tall targets
+	var btn_font_sz = dyn_font_sz
+	var tab_font_sz = dyn_font_sz
+	if is_portrait:
+		btn_font_sz = int(dyn_font_sz * 1.8)
+		tab_font_sz = int(dyn_font_sz * 1.4)
+	
 	if is_instance_valid(trade_mode_tab_container):
 		trade_mode_tab_container.theme = curr_theme
 		var tab_bar = trade_mode_tab_container.get_tab_bar()
 		if is_instance_valid(tab_bar):
-			tab_bar.add_theme_font_size_override("font_size", dyn_font_sz)
+			tab_bar.add_theme_font_size_override("font_size", tab_font_sz)
 
 	var btn_min_h = 100.0 if is_portrait else 34.0
 	if is_instance_valid(action_button):
 		action_button.custom_minimum_size.y = btn_min_h
+		action_button.add_theme_font_size_override("font_size", btn_font_sz)
+		if is_portrait:
+			action_button.add_theme_font_override("font", _get_bold_font_for(action_button))
+		else:
+			action_button.remove_theme_font_override("font")
+			
 	if is_instance_valid(max_button):
 		max_button.custom_minimum_size.y = btn_min_h
+		max_button.add_theme_font_size_override("font_size", btn_font_sz)
+		if is_portrait:
+			max_button.add_theme_font_override("font", _get_bold_font_for(max_button))
+		else:
+			max_button.remove_theme_font_override("font")
+			
 	if is_instance_valid(install_button):
 		install_button.custom_minimum_size.y = btn_min_h
+		install_button.add_theme_font_size_override("font_size", btn_font_sz)
+		if is_portrait:
+			install_button.add_theme_font_override("font", _get_bold_font_for(install_button))
+		else:
+			install_button.remove_theme_font_override("font")
 		
 	if is_instance_valid(quantity_spinbox):
 		quantity_spinbox.custom_minimum_size.y = btn_min_h if is_portrait else 0.0
@@ -678,6 +702,11 @@ func _update_layout_scaling() -> void:
 	if is_instance_valid(cargo_sort_button):
 		var sort_h = 80.0 if is_portrait else 34.0
 		cargo_sort_button.custom_minimum_size.y = sort_h
+		cargo_sort_button.add_theme_font_size_override("font_size", int(btn_font_sz * 0.85) if is_portrait else dyn_font_sz)
+		if is_portrait:
+			cargo_sort_button.add_theme_font_override("font", _get_bold_font_for(cargo_sort_button))
+		else:
+			cargo_sort_button.remove_theme_font_override("font")
 
 func _ready() -> void:
 

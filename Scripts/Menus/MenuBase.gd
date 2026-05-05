@@ -319,7 +319,7 @@ func setup_convoy_navigation_bar(back_button_node: Node) -> void:
 	var dsm = get_node_or_null("/root/DeviceStateManager")
 	var is_portrait := false
 	var use_mobile := false
-	var font_size := 16
+	
 	if is_instance_valid(dsm):
 		if dsm.has_method("get_is_portrait"):
 			is_portrait = dsm.get_is_portrait()
@@ -327,13 +327,16 @@ func setup_convoy_navigation_bar(back_button_node: Node) -> void:
 			use_mobile = dsm.is_mobile
 		elif OS.has_feature("mobile") or OS.has_feature("web_android") or OS.has_feature("web_ios"):
 			use_mobile = true
-		if dsm.has_method("get_scaled_base_font_size"):
-			font_size = dsm.get_scaled_base_font_size(16)
 	else:
 		if is_inside_tree():
 			var win_size = get_viewport_rect().size
 			is_portrait = win_size.y > win_size.x
 			use_mobile = is_portrait or OS.has_feature("mobile")
+			
+	var base_font_size: int = 28 if is_portrait else 18
+	var font_size: int = base_font_size
+	if is_instance_valid(dsm) and dsm.has_method("get_scaled_base_font_size"):
+		font_size = dsm.get_scaled_base_font_size(base_font_size)
 	
 	# --- Create PanelContainer (bar background) matching convoy_menu.gd ---
 	var bottom_panel = PanelContainer.new()
@@ -353,7 +356,7 @@ func setup_convoy_navigation_bar(back_button_node: Node) -> void:
 	bar_style.content_margin_right = bar_margin
 	bottom_panel.add_theme_stylebox_override("panel", bar_style)
 	
-	# NOTE: Don't add bottom_panel to tree yet — insertion point depends on
+	# NOTE: Don't add bottom_panel to tree yet - insertion point depends on
 	# whether back_button has siblings (handled at the end of this method).
 	
 	# --- HFlowContainer for the buttons (matches scene: HFlowContainer, centered, 10px gaps) ---
@@ -366,14 +369,14 @@ func setup_convoy_navigation_bar(back_button_node: Node) -> void:
 	
 	# --- Button configs ---
 	var btn_configs = [
-		{"name": "VehicleMenuButton", "text": "Vehicles", "signal": "open_vehicle_menu_requested"},
-		{"name": "JourneyMenuButton", "text": "Journey", "signal": "open_journey_menu_requested"},
-		{"name": "SettlementMenuButton", "text": "Settlement", "signal": "open_settlement_menu_requested"},
-		{"name": "CargoMenuButton", "text": "Cargo", "signal": "open_cargo_menu_requested"}
+		{"name": "VehicleMenuButton", "text": "Vehicles", "signal": "open_vehicle_menu_requested", "type": "convoy_vehicle_submenu"},
+		{"name": "JourneyMenuButton", "text": "Journey", "signal": "open_journey_menu_requested", "type": "convoy_journey_submenu"},
+		{"name": "SettlementMenuButton", "text": "Settlement", "signal": "open_settlement_menu_requested", "type": "convoy_settlement_submenu"},
+		{"name": "CargoMenuButton", "text": "Cargo", "signal": "open_cargo_menu_requested", "type": "convoy_cargo_submenu"}
 	]
 	
 	# Button height matching convoy_menu._update_mobile_dependent_layout
-	var btn_min_h := 140.0 if is_portrait else (70.0 if use_mobile else 34.0)
+	var btn_min_h := 140.0 if is_portrait else (85.0 if use_mobile else 50.0)
 	# Button corner radius and padding matching convoy_menu._style_menu_button
 	var corner_r := 6 if use_mobile else 4
 	var v_pad := 8.0 if use_mobile else 4.0
@@ -390,9 +393,16 @@ func setup_convoy_navigation_bar(back_button_node: Node) -> void:
 		btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		btn.add_theme_font_size_override("font_size", font_size)
 		
+		var is_active_menu = self.get_meta("menu_type", "") == config.get("type", "")
+		
 		# --- Style matching convoy_menu._style_menu_button exactly ---
 		var sb_normal := StyleBoxFlat.new()
-		sb_normal.bg_color = COLOR_MENU_BUTTON_GREY_BG
+		if is_active_menu:
+			# subtle yellow shade
+			sb_normal.bg_color = Color(0.72, 0.72, 0.65)
+		else:
+			sb_normal.bg_color = COLOR_MENU_BUTTON_GREY_BG
+			
 		sb_normal.corner_radius_top_left = corner_r
 		sb_normal.corner_radius_top_right = corner_r
 		sb_normal.corner_radius_bottom_left = corner_r
@@ -400,29 +410,48 @@ func setup_convoy_navigation_bar(back_button_node: Node) -> void:
 		sb_normal.border_width_left = 1
 		sb_normal.border_width_right = 1
 		sb_normal.border_width_top = 1
-		sb_normal.border_width_bottom = 1
-		sb_normal.border_color = COLOR_BOX_FONT.darkened(0.2)
+		sb_normal.border_width_bottom = 3 if is_active_menu else 1
+		
+		if is_active_menu:
+			sb_normal.border_color = Color(0.85, 0.75, 0.2, 0.9)
+		else:
+			sb_normal.border_color = COLOR_BOX_FONT.darkened(0.2)
+			
 		sb_normal.shadow_size = 4
 		sb_normal.shadow_color = Color(0, 0, 0, 0.4)
 		sb_normal.content_margin_top = v_pad
 		sb_normal.content_margin_bottom = v_pad
 		
 		var sb_hover := sb_normal.duplicate() as StyleBoxFlat
-		sb_hover.bg_color = COLOR_MENU_BUTTON_GREY_BG.lightened(0.1)
+		if is_active_menu:
+			sb_hover.bg_color = sb_normal.bg_color.lightened(0.1)
+		else:
+			sb_hover.bg_color = COLOR_MENU_BUTTON_GREY_BG.lightened(0.1)
 		
 		var sb_pressed := sb_normal.duplicate() as StyleBoxFlat
-		sb_pressed.bg_color = COLOR_MENU_BUTTON_GREY_BG.darkened(0.15)
+		if is_active_menu:
+			sb_pressed.bg_color = sb_normal.bg_color.darkened(0.15)
+		else:
+			sb_pressed.bg_color = COLOR_MENU_BUTTON_GREY_BG.darkened(0.15)
+			
 		sb_pressed.shadow_size = 2
 		sb_pressed.shadow_color = Color(0, 0, 0, 0.25)
 		
 		btn.add_theme_stylebox_override("normal", sb_normal)
 		btn.add_theme_stylebox_override("hover", sb_hover)
 		btn.add_theme_stylebox_override("pressed", sb_pressed)
+		
 		btn.add_theme_color_override("font_color", COLOR_BOX_FONT)
+		if is_active_menu:
+			btn.add_theme_color_override("font_hover_color", COLOR_BOX_FONT)
+			btn.add_theme_color_override("font_pressed_color", COLOR_BOX_FONT.lightened(0.2))
 		
 		# Connect signal to emit the respective menu navigation signal with _last_convoy_data
 		btn.pressed.connect(func():
-			emit_signal(config["signal"], _last_convoy_data)
+			if is_active_menu:
+				emit_signal("return_to_convoy_overview_requested", _last_convoy_data)
+			else:
+				emit_signal(config["signal"], _last_convoy_data)
 		)
 		
 		hbox.add_child(btn)
@@ -435,7 +464,7 @@ func setup_convoy_navigation_bar(back_button_node: Node) -> void:
 			siblings_to_reparent.append(child)
 	
 	if not siblings_to_reparent.is_empty() and parent != get_node_or_null("MainVBox"):
-		# Parent is a wrapper container (e.g. BottomRow HBox) — replace it entirely
+		# Parent is a wrapper container (e.g. BottomRow HBox) - replace it entirely
 		var grandparent = parent.get_parent()
 		var parent_index = parent.get_index()
 		
@@ -454,7 +483,7 @@ func setup_convoy_navigation_bar(back_button_node: Node) -> void:
 		back_button_node.queue_free()
 		parent.queue_free()
 	else:
-		# Simple case: back button is a direct child of MainVBox — insert nav bar at same position
+		# Simple case: back button is a direct child of MainVBox - insert nav bar at same position
 		parent.add_child(bottom_panel)
 		parent.move_child(bottom_panel, index)
 		parent.remove_child(back_button_node)
@@ -462,8 +491,6 @@ func setup_convoy_navigation_bar(back_button_node: Node) -> void:
 
 ## Sets up a standardized top banner with a clickable convoy name and menu title.
 func setup_convoy_top_banner(title_node: Control, menu_name_suffix: String, break_out_siblings: bool = false, use_dark_bg: bool = true) -> void:
-
-
 	if not is_instance_valid(title_node):
 		return
 	
@@ -671,7 +698,7 @@ func _update_top_banner_text(convoy_data: Dictionary) -> void:
 		var cname = convoy_data.get("convoy_name", convoy_data.get("name", "Convoy"))
 		# Add a back indicator if we have a suffix (meaning we are in a sub-menu)
 		if _top_banner_menu_name != "":
-			_top_banner_convoy_button.text = "« " + str(cname)
+			_top_banner_convoy_button.text = "< " + str(cname)
 		else:
 			_top_banner_convoy_button.text = str(cname)
 

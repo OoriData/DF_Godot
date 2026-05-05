@@ -93,11 +93,6 @@ func _apply_mobile_optimizations() -> void:
 	
 	# 2. Layout & Density (12px separation)
 	add_theme_constant_override("separation", 12)
-	
-	# 3. Safe Area Handling (Curved corners and notches)
-	_update_safe_margins()
-	if not get_viewport().size_changed.is_connected(_update_safe_margins):
-		get_viewport().size_changed.connect(_update_safe_margins)
 
 func _update_mobile_sizing() -> void:
 	if not _is_mobile():
@@ -169,7 +164,7 @@ func _apply_desktop_styling() -> void:
 		opaque_style.content_margin_right = 12
 		
 		user_chip.add_theme_stylebox_override("panel", opaque_style)
-		username_label.add_theme_font_size_override("font_size", 32)
+		username_label.add_theme_font_size_override("font_size", 24)
 		username_label.add_theme_color_override("font_color", OORI_WHITE)
 	
 	if is_instance_valid(money_chip):
@@ -188,7 +183,7 @@ func _apply_desktop_styling() -> void:
 		vault_style.content_margin_right = 12
 		
 		money_chip.add_theme_stylebox_override("panel", vault_style)
-		user_money_label.add_theme_font_size_override("font_size", 34)
+		user_money_label.add_theme_font_size_override("font_size", 24)
 		user_money_label.add_theme_color_override("font_color", OORI_YELLOW)
 
 	# 3. Buttons (Oori Professional Style with Full Borders)
@@ -216,7 +211,7 @@ func _apply_desktop_styling() -> void:
 		settings_button.add_theme_stylebox_override("hover", btn_hover)
 		settings_button.add_theme_stylebox_override("pressed", btn_hover)
 		settings_button.add_theme_color_override("font_color", OORI_WHITE)
-		settings_button.add_theme_font_size_override("font_size", 24)
+		settings_button.add_theme_font_size_override("font_size", 20)
 		settings_button.custom_minimum_size = Vector2(0, 46)
 		
 	if is_instance_valid(report_bug_button):
@@ -233,45 +228,12 @@ func _apply_desktop_styling() -> void:
 		report_bug_button.add_theme_stylebox_override("hover", bug_hover)
 		report_bug_button.add_theme_stylebox_override("pressed", bug_hover)
 		report_bug_button.add_theme_color_override("font_color", OORI_WHITE)
-		report_bug_button.add_theme_font_size_override("font_size", 24)
+		report_bug_button.add_theme_font_size_override("font_size", 20)
 		report_bug_button.custom_minimum_size = Vector2(0, 46)
 
 func _update_safe_margins() -> void:
-	if not _is_mobile():
-		return
-	
-	var safe_area = DisplayServer.get_display_safe_area()
-	var screen_size = DisplayServer.window_get_size() # Use window size for logical coordinates
-	var screen_full = DisplayServer.screen_get_size()
-	
-	# Godot 4.3+ safe_area is in screen pixels. We need logical pixels if content_scale_factor is used.
-	# However, since we're setting theme constants, we use the raw pixel offsets relative to the screen.
-	# Actually, the best way is to let MarginContainer handle it or calculate relative to window.
-	
-	var left_pad = max(12.0, safe_area.position.x)
-	var right_pad = max(12.0, screen_full.x - safe_area.end.x)
-	var top_pad = safe_area.position.y
-	
-	if screen_size.y > screen_size.x:
-		top_pad += 24.0 # Add extra clearance for dynamic islands in portrait
-	
-	# Update stylebox content margins instead of outer margins
-	# This ensures the background remains full-width while content clears corners
-	var style = get_theme_stylebox("panel").duplicate()
-	if style is StyleBoxFlat:
-		style.bg_color = Color(0.08, 0.1, 0.12, 0.96) # Deep Slate
-		style.border_width_bottom = 1
-		style.border_color = Color(0.3, 0.35, 0.4, 0.8) # Steel border
-		
-		style.content_margin_left = int(left_pad)
-		style.content_margin_right = int(right_pad)
-		style.content_margin_top = int(top_pad)
-		add_theme_stylebox_override("panel", style)
-	
-	# Remove any outer margins set previously to ensure the bar stays full-width
-	remove_theme_constant_override("margin_left")
-	remove_theme_constant_override("margin_right")
-	remove_theme_constant_override("margin_top")
+	pass
+
 
 
 

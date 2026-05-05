@@ -105,6 +105,22 @@ func get_max_safe_scale() -> float:
 	# Max scale = physical / min_logical 
 	return float(screen_width) / min_logical
 
+func get_logical_safe_margins() -> Rect2:
+	var safe_area = DisplayServer.get_display_safe_area()
+	var margins = Rect2()
+	var screen_size = DisplayServer.screen_get_size()
+	
+	if _global_ui_scale <= 0.001:
+		return margins
+		
+	# Convert physical margins to logical pixels
+	margins.position.x = safe_area.position.x / _global_ui_scale
+	margins.position.y = safe_area.position.y / _global_ui_scale
+	margins.size.x = (screen_size.x - safe_area.end.x) / _global_ui_scale
+	margins.size.y = (screen_size.y - safe_area.end.y) / _global_ui_scale
+	
+	return margins
+
 func set_global_ui_scale(value: float):
 	# Calculate target logical width based on the desired scale
 	# Scale = Physical / Logical  => Logical = Physical / Scale

@@ -18,20 +18,28 @@ var _plus_btn: Button
 func _ready() -> void:
 	var dsm = get_node_or_null("/root/DeviceStateManager")
 	var is_portrait: bool = false
+	var base_font_sz = 16
 	if is_instance_valid(dsm):
 		is_portrait = (dsm.get_layout_mode() == 2)
+		base_font_sz = dsm.get_scaled_base_font_size(16)
 	else:
 		if is_inside_tree() and get_viewport_rect().size.y > get_viewport_rect().size.x:
 			is_portrait = true
 			
 	var btn_h = 100 if is_portrait else 40
 	var btn_w = 90 if is_portrait else 42
+	var btn_font_sz = base_font_sz
+	if is_portrait:
+		btn_font_sz = int(base_font_sz * 1.8)
 	
 	_minus_btn = Button.new()
 	_minus_btn.text = "-"
 	_minus_btn.custom_minimum_size = Vector2(btn_w, btn_h)
 	_minus_btn.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	_minus_btn.mouse_filter = Control.MOUSE_FILTER_PASS
+	_minus_btn.add_theme_font_size_override("font_size", btn_font_sz)
+	if is_portrait:
+		_minus_btn.add_theme_font_override("font", _get_bold_font(_minus_btn))
 	_apply_btn_style(_minus_btn, Color(0.55, 0.15, 0.15))
 	add_child(_minus_btn)
 	
@@ -43,6 +51,9 @@ func _ready() -> void:
 	_value_label.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	_value_label.mouse_filter = Control.MOUSE_FILTER_PASS
 	_value_label.editable = true
+	_value_label.add_theme_font_size_override("font_size", int(btn_font_sz * 0.8))
+	if is_portrait:
+		_value_label.add_theme_font_override("font", _get_bold_font(_value_label))
 	# Let inheriting Theme scale text natively without arbitrary overrides!
 	add_child(_value_label)
 	
@@ -51,6 +62,9 @@ func _ready() -> void:
 	_plus_btn.custom_minimum_size = Vector2(btn_w, btn_h)
 	_plus_btn.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	_plus_btn.mouse_filter = Control.MOUSE_FILTER_PASS
+	_plus_btn.add_theme_font_size_override("font_size", btn_font_sz)
+	if is_portrait:
+		_plus_btn.add_theme_font_override("font", _get_bold_font(_plus_btn))
 	_apply_btn_style(_plus_btn, Color(0.15, 0.45, 0.15))
 	add_child(_plus_btn)
 	
@@ -63,6 +77,15 @@ func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_PASS
 	var sep = 16 if is_portrait else 2
 	add_theme_constant_override("separation", sep)
+
+func _get_bold_font(node: Control) -> FontVariation:
+	var default_font = node.get_theme_font("font")
+	if default_font:
+		var bf = FontVariation.new()
+		bf.set_base_font(default_font)
+		bf.set_variation_embolden(1.2)
+		return bf
+	return null
 
 func set_value(new_val: float) -> void:
 	var old_val = value

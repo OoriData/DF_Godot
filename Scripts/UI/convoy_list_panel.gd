@@ -315,7 +315,7 @@ func _get_font_size(base: int) -> int:
 	
 	var win_size = get_viewport_rect().size if is_inside_tree() else Vector2(0, 0)
 	var is_portrait = win_size.y > win_size.x
-	var boost = 2.5 if is_portrait else (1.6 if _is_mobile() else 1.2)
+	var boost = 1.3 if is_portrait else (1.1 if _is_mobile() else 1.0)
 	return int(base * boost)
 
 func _on_layout_mode_changed(_mode, _screen_size, _is_mobile_flag) -> void:

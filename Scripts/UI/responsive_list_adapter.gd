@@ -13,7 +13,7 @@ class_name ResponsiveListAdapter
 @export var ledger_style: bool = false ## If true, applies a lighter "ledger" background to the node (if it is a container).
 @export var large_text: bool = false ## If true, forces large text boost even on desktop.
 @export var boost: float = 1.4 ## Font scale multiplier when large_text is true or on mobile.
-@export var portrait_boost: float = 1.6 ## Font scale multiplier specifically for mobile portrait.
+@export var portrait_boost: float = 1.8 ## Font scale multiplier specifically for mobile portrait.
 @export var scroll_pass_through: bool = true ## If true, sets mouse_filter to PASS on interactive controls.
 
 func _ready() -> void:
@@ -74,6 +74,9 @@ func _is_mobile() -> bool:
 	return OS.has_feature("mobile") or OS.has_feature("web_android") or OS.has_feature("web_ios") or DisplayServer.get_name() in ["Android", "iOS"]
 
 func _get_target_height() -> float:
+	if not is_inside_tree():
+		return desktop_min_height
+		
 	var dsm = get_node_or_null("/root/DeviceStateManager")
 	if dsm and dsm.get_layout_mode() == 2: # MOBILE_PORTRAIT
 		return mobile_min_height * 1.2
@@ -89,6 +92,8 @@ func _apply_to_existing_children(node: Node) -> void:
 	for child in node.get_children(true):
 		_apply_size_to_node(child, target_h)
 		if recursive and (child is Container or child is Control):
+			if not child.child_entered_tree.is_connected(_on_parent_child_entered_tree):
+				child.child_entered_tree.connect(_on_parent_child_entered_tree)
 			_apply_to_existing_children(child)
 
 func _on_parent_child_entered_tree(node: Node) -> void:
@@ -97,6 +102,8 @@ func _on_parent_child_entered_tree(node: Node) -> void:
 		# Defer so node fully initializes first, preventing layout constraint overrides from failing immediately
 		_apply_size_to_node.call_deferred(node, target_h)
 		if recursive and (node is Container or node is Control):
+			if not node.child_entered_tree.is_connected(_on_parent_child_entered_tree):
+				node.child_entered_tree.connect(_on_parent_child_entered_tree)
 			_apply_to_existing_children.call_deferred(node)
 
 func _apply_size_to_node(node: Node, target_h: float) -> void:
@@ -118,6 +125,8 @@ func _apply_size_to_node(node: Node, target_h: float) -> void:
 	if node is Tree:
 		var extra = max(0.0, target_h - 30.0)
 		node.add_theme_constant_override("v_separation", int(extra))
+		if _is_mobile() or large_text:
+			_apply_large_text(node)
 	elif node is TabContainer:
 		# Increase tab height via content margins in the tab styleboxes
 		for style_name in ["tab_selected", "tab_unselected", "tab_disabled", "tab_hovered"]:
@@ -143,22 +152,10 @@ func _apply_size_to_node(node: Node, target_h: float) -> void:
 					node.add_theme_stylebox_override(style_name, style)
 		
 		# Specifically scale the TabContainer font size
-		var dsm = get_node_or_null("/root/DeviceStateManager")
-		var font_b = boost
-		if dsm and dsm.get_layout_mode() == 2: # MOBILE_PORTRAIT
-			font_b = portrait_boost
-		
 		if _is_mobile() or large_text:
-			# TabContainer uses 'font_size' theme override for the tab titles
-			# Use saved original to prevent multiplicative accumulation on re-apply.
-			var base_fs: int = node.get_meta("_rla_orig_font_size", -1)
-			if base_fs < 0:
-				base_fs = node.get_theme_font_size("font_size")
-				if base_fs <= 16: base_fs = 18
-				node.set_meta("_rla_orig_font_size", base_fs)
-			node.add_theme_font_size_override("font_size", int(base_fs * font_b))
+			_apply_large_text(node)
 			# Reduce side margins to fit more tabs/content without clipping
-			node.add_theme_constant_override("side_margin", int(8 * font_b))
+			node.add_theme_constant_override("side_margin", int(8 * 1.5)) # use approx boost
 	elif node is SpinBox:
 		# Basic height for touch; width is NOT forced since Godot 4 arrow sizing is done via updown icon
 		node.custom_minimum_size.y = target_h
@@ -167,13 +164,15 @@ func _apply_size_to_node(node: Node, target_h: float) -> void:
 			for child in node.get_children(true):
 				if child is LineEdit:
 					child.add_theme_color_override("font_color", Color(0.2, 0.7, 1.0))
+					_apply_large_text(child)
 	
 	elif node is Button:
 		if node.custom_minimum_size.y < target_h:
 			node.custom_minimum_size.y = target_h
 		
-		if _is_mobile():
+		if _is_mobile() or large_text:
 			_apply_style_to_button(node)
+			_apply_large_text(node)
 			# Widen the Back button specifically as requested
 			if "Back" in node.name:
 				node.custom_minimum_size.x = max(node.custom_minimum_size.x, 300)
@@ -188,10 +187,11 @@ func _apply_size_to_node(node: Node, target_h: float) -> void:
 			node.custom_minimum_size.y = max(node.custom_minimum_size.y, 40)
 
 func _apply_large_text(node: Control) -> void:
-	var dsm = get_node_or_null("/root/DeviceStateManager")
 	var b = boost
-	if dsm and dsm.get_layout_mode() == 2: # MOBILE_PORTRAIT
-		b = portrait_boost
+	if is_inside_tree():
+		var dsm = get_node_or_null("/root/DeviceStateManager")
+		if dsm and dsm.get_layout_mode() == 2: # MOBILE_PORTRAIT
+			b = portrait_boost
 	
 	if b < 0.1: b = 1.6
 	
@@ -216,6 +216,25 @@ func _apply_large_text(node: Control) -> void:
 			node.set_meta("_rla_orig_bold_fs", orig_bold)
 		if orig_bold > 0:
 			node.add_theme_font_size_override("bold_font_size", int(orig_bold * b))
+	elif node is Button:
+		var orig_fs: int = node.get_meta("_rla_orig_font_size", -1)
+		if orig_fs < 0:
+			orig_fs = node.get_theme_font_size("font_size")
+			node.set_meta("_rla_orig_font_size", orig_fs)
+		node.add_theme_font_size_override("font_size", int(orig_fs * b))
+	elif node is LineEdit:
+		var orig_fs: int = node.get_meta("_rla_orig_font_size", -1)
+		if orig_fs < 0:
+			orig_fs = node.get_theme_font_size("font_size")
+			node.set_meta("_rla_orig_font_size", orig_fs)
+		node.add_theme_font_size_override("font_size", int(orig_fs * b))
+	elif node is TabContainer:
+		var base_fs: int = node.get_meta("_rla_orig_font_size", -1)
+		if base_fs < 0:
+			base_fs = node.get_theme_font_size("font_size")
+			if base_fs <= 16: base_fs = 18
+			node.set_meta("_rla_orig_font_size", base_fs)
+		node.add_theme_font_size_override("font_size", int(base_fs * b))
 	elif node is Tree:
 		var orig_fs: int = node.get_meta("_rla_orig_font_size", -1)
 		if orig_fs < 0:

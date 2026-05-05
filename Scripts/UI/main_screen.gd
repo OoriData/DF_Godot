@@ -15,8 +15,8 @@ var _map_is_interactive: bool = true # New flag to control map input
 var _map_loading_overlay: Control = null
 var ui_manager: Node = null
 
-@onready var menu_container = $MainContainer/MainContent/MapAndMenuContainer/MenuContainer
-@onready var top_bar = $MainContainer/TopBar
+@onready var menu_container = $SafeRegionContainer/MainContainer/MainContent/MapAndMenuContainer/MenuContainer
+@onready var top_bar = $SafeRegionContainer/MainContainer/TopBar
 var _new_convoy_dialog: Control = null
 const NEW_CONVOY_DIALOG_SCENE_PATH := "res://Scenes/NewConvoyDialog.tscn"
 @export var new_convoy_dialog_scene: PackedScene = null
@@ -39,7 +39,7 @@ func initialize(p_map_view: Control, p_camera_controller: Node, p_interaction_ma
 			map_interaction_manager.settlement_clicked.connect(_on_settlement_clicked)
 
 	# TEST: Remove the modal scrim (dim layer) to see if it's contributing to the darkness
-	var scrim = get_node_or_null("ModalLayer/Scrim")
+	var scrim = get_node_or_null("SafeRegionContainer/ModalLayer/Scrim")
 	if is_instance_valid(scrim):
 		scrim.color.a = 0.0
 
@@ -618,6 +618,13 @@ func _get_bottom_safe_margin() -> float:
 	var is_mobile = OS.has_feature("mobile") or OS.has_feature("web_android") or OS.has_feature("web_ios") or DisplayServer.get_name() in ["Android", "iOS"]
 	if not is_mobile:
 		return 0.0
+		
+	var sm = get_node_or_null("/root/ui_scale_manager")
+	if is_instance_valid(sm) and sm.has_method("get_logical_safe_margins"):
+		var margins = sm.get_logical_safe_margins()
+		return max(24.0, margins.size.y)
+		
+	# Fallback
 	var safe_area = DisplayServer.get_display_safe_area()
 	var window_size = DisplayServer.window_get_size()
 	if safe_area.size.y > 0 and safe_area.end.y < window_size.y:
@@ -1012,7 +1019,7 @@ func _on_auto_sell_receipt_ready(receipt_data: Variant) -> void:
 		printerr("[AutoSell] main_screen: Could not load AutoSellReceiptModal scene!")
 		return
 	
-	var modal_layer: Control = get_node_or_null("ModalLayer")
+	var modal_layer: Control = get_node_or_null("SafeRegionContainer/ModalLayer")
 	var host: Node = modal_layer.get_node_or_null("DialogHost") if is_instance_valid(modal_layer) else null
 	if not is_instance_valid(host):
 		printerr("[AutoSell] main_screen: ModalLayer or DialogHost not found for AutoSellReceiptModal!")
@@ -1060,7 +1067,7 @@ func _show_error_dialog(message: String, raw_message: String = ""):
 		printerr("Error dialog scene not loaded!")
 		return
 
-	var modal_layer: Control = get_node_or_null("ModalLayer")
+	var modal_layer: Control = get_node_or_null("SafeRegionContainer/ModalLayer")
 	var dialog_host: CenterContainer = modal_layer.get_node_or_null("DialogHost") if is_instance_valid(modal_layer) else null
 
 	if not is_instance_valid(dialog_host):
@@ -1088,7 +1095,7 @@ func _show_error_dialog(message: String, raw_message: String = ""):
 func _show_new_convoy_dialog():
 	if onboarding_log_enabled:
 		print("[Onboarding] _show_new_convoy_dialog invoked.")
-	var modal_layer: Control = get_node_or_null("ModalLayer")
+	var modal_layer: Control = get_node_or_null("SafeRegionContainer/ModalLayer")
 	if not is_instance_valid(_new_convoy_dialog):
 		var scene_res: Resource = new_convoy_dialog_scene if new_convoy_dialog_scene != null else load(NEW_CONVOY_DIALOG_SCENE_PATH)
 		if scene_res == null or not (scene_res is PackedScene):
@@ -1100,7 +1107,7 @@ func _show_new_convoy_dialog():
 				print("[Onboarding] Instantiating NewConvoyDialog scene…")
 			_new_convoy_dialog = scene.instantiate()
 		# The host for the modal dialog is the full-screen CenterContainer from the scene file.
-		modal_layer = get_node_or_null("ModalLayer")
+		modal_layer = get_node_or_null("SafeRegionContainer/ModalLayer")
 		var host: Node = modal_layer.get_node_or_null("DialogHost") if is_instance_valid(modal_layer) else null
 		if not is_instance_valid(host):
 			printerr("[Onboarding] CRITICAL: ModalLayer or its DialogHost child not found in MainScreen.tscn!")
@@ -1113,7 +1120,7 @@ func _show_new_convoy_dialog():
 			_new_convoy_dialog.connect("create_requested", Callable(self, "_on_new_convoy_create"))
 		if _new_convoy_dialog.has_signal("canceled"):
 			_new_convoy_dialog.connect("canceled", Callable(self, "_on_new_convoy_canceled"))
-	modal_layer = get_node_or_null("ModalLayer")
+	modal_layer = get_node_or_null("SafeRegionContainer/ModalLayer")
 	if _new_convoy_dialog.has_method("open"):
 		if onboarding_log_enabled:
 			print("[Onboarding] Opening NewConvoyDialog…")
@@ -1130,7 +1137,7 @@ func show_returning_player_tips() -> bool:
 		printerr("[MainScreen] Failed to load ReturningPlayerTipsModal.tscn")
 		return false
 	var tips = tips_scene.instantiate()
-	var modal_layer: Control = get_node_or_null("ModalLayer")
+	var modal_layer: Control = get_node_or_null("SafeRegionContainer/ModalLayer")
 	var host: Node = modal_layer.get_node_or_null("DialogHost") if is_instance_valid(modal_layer) else null
 	if not is_instance_valid(host):
 		printerr("[MainScreen] DialogHost not found; cannot show tips.")
@@ -1334,7 +1341,7 @@ func _hide_new_convoy_dialog():
 		_maybe_hide_modal_layer()
 
 func _maybe_hide_modal_layer():
-	var modal_layer: Control = get_node_or_null("ModalLayer")
+	var modal_layer: Control = get_node_or_null("SafeRegionContainer/ModalLayer")
 	var host: Node = modal_layer.get_node_or_null("DialogHost") if is_instance_valid(modal_layer) else null
 	if not is_instance_valid(modal_layer) or not is_instance_valid(host):
 		return
