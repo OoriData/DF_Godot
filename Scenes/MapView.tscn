@@ -34,7 +34,7 @@ terrain_tilemap = NodePath("../MapContainer/SubViewport/TerrainTileMap")
 [node name="MapContainer" type="Node2D" parent="."]
 
 [node name="MapDisplay" type="TextureRect" parent="MapContainer"]
-texture_filter = 4
+texture_filter = 1
 mouse_filter = 2
 texture = SubResource("ViewportTexture_k7gy6")
 stretch_mode = 5

@@ -397,10 +397,11 @@ func _clamp_panel_position_optimized(panel: Panel, precalculated_clamp_rect_loca
 	if panel_actual_size.x <= 0 or panel_actual_size.y <= 0:
 		panel_actual_size = panel.get_minimum_size()
 
+	var scaled_size = panel_actual_size * panel.scale
 	var padded_min_x = precalculated_clamp_rect_local_to_container.position.x + label_map_edge_padding
 	var padded_min_y = precalculated_clamp_rect_local_to_container.position.y + label_map_edge_padding
-	var padded_max_x = precalculated_clamp_rect_local_to_container.position.x + precalculated_clamp_rect_local_to_container.size.x - panel_actual_size.x - label_map_edge_padding
-	var padded_max_y = precalculated_clamp_rect_local_to_container.position.y + precalculated_clamp_rect_local_to_container.size.y - panel_actual_size.y - label_map_edge_padding
+	var padded_max_x = precalculated_clamp_rect_local_to_container.position.x + precalculated_clamp_rect_local_to_container.size.x - scaled_size.x - label_map_edge_padding
+	var padded_max_y = precalculated_clamp_rect_local_to_container.position.y + precalculated_clamp_rect_local_to_container.size.y - scaled_size.y - label_map_edge_padding
 
 	panel.position.x = clamp(panel.position.x, padded_min_x, padded_max_x)
 	panel.position.y = clamp(panel.position.y, padded_min_y, padded_max_y)
@@ -421,10 +422,11 @@ func _clamp_panel_position(panel: Panel): # Original function, now less used but
 	if panel_actual_size.x <= 0 or panel_actual_size.y <= 0:
 		panel_actual_size = panel.get_minimum_size()
 
+	var scaled_size = panel_actual_size * panel.scale
 	var padded_min_x = clamp_rect_local_to_container.position.x + label_map_edge_padding
 	var padded_min_y = clamp_rect_local_to_container.position.y + label_map_edge_padding
-	var padded_max_x = clamp_rect_local_to_container.position.x + clamp_rect_local_to_container.size.x - panel_actual_size.x - label_map_edge_padding
-	var padded_max_y = clamp_rect_local_to_container.position.y + clamp_rect_local_to_container.size.y - panel_actual_size.y - label_map_edge_padding
+	var padded_max_x = clamp_rect_local_to_container.position.x + clamp_rect_local_to_container.size.x - scaled_size.x - label_map_edge_padding
+	var padded_max_y = clamp_rect_local_to_container.position.y + clamp_rect_local_to_container.size.y - scaled_size.y - label_map_edge_padding
 
 	panel.position.x = clamp(panel.position.x, padded_min_x, padded_max_x)
 	panel.position.y = clamp(panel.position.y, padded_min_y, padded_max_y)
@@ -561,7 +563,8 @@ func _draw_interactive_labels(current_hover_info: Dictionary):
 		var current_settlement_panel_actual_size = panel_node.size
 		if current_settlement_panel_actual_size.x <= 0 or current_settlement_panel_actual_size.y <= 0:
 			current_settlement_panel_actual_size = panel_node.get_minimum_size()
-		all_drawn_label_rects_this_update.append(Rect2(panel_node.position, current_settlement_panel_actual_size))
+		var scaled_size = current_settlement_panel_actual_size * panel_node.scale
+		all_drawn_label_rects_this_update.append(Rect2(panel_node.position, scaled_size))
 		if not drawn_settlement_tile_coords_this_update.has(settlement_coord_to_draw):
 			drawn_settlement_tile_coords_this_update.append(settlement_coord_to_draw)
 
@@ -625,27 +628,13 @@ func _update_settlement_panel_content(panel: Panel, settlement_info: Dictionary)
 	var style_box: StyleBoxFlat = panel.get_meta("style_box_ref")
 	if not is_instance_valid(label_node) or not is_instance_valid(style_box): return
 	# Font size and panel sizing now rely on content_scale_factor
-	var current_settlement_font_size: int = clamp(
-		roundi(base_settlement_font_size / max(0.0001, _current_map_zoom_cache)),
-		min_node_font_size,
-		max_node_font_size
-	)
-	# Scale panel visuals inversely with zoom so the box scales along with the text
-	var current_settlement_panel_corner_radius: float = clamp(
-		base_settlement_panel_corner_radius / max(0.0001, _current_map_zoom_cache),
-		min_node_panel_corner_radius,
-		max_node_panel_corner_radius
-	)
-	var current_settlement_panel_padding_h: float = clamp(
-		base_settlement_panel_padding_h / max(0.0001, _current_map_zoom_cache),
-		min_node_panel_padding,
-		max_node_panel_padding
-	)
-	var current_settlement_panel_padding_v: float = clamp(
-		base_settlement_panel_padding_v / max(0.0001, _current_map_zoom_cache),
-		min_node_panel_padding,
-		max_node_panel_padding
-	)
+	var current_settlement_font_size: int = base_settlement_font_size
+	var current_settlement_panel_corner_radius: float = base_settlement_panel_corner_radius
+	var current_settlement_panel_padding_h: float = base_settlement_panel_padding_h
+	var current_settlement_panel_padding_v: float = base_settlement_panel_padding_v
+	
+	var zoom_factor = max(0.0001, _current_map_zoom_cache)
+	panel.scale = Vector2(1.0 / zoom_factor, 1.0 / zoom_factor)
 	var settlement_name_local: String = settlement_info.get('name', 'N/A')
 	if settlement_name_local == 'N/A': return
 	if not is_instance_valid(settlement_label_settings.font):
@@ -694,15 +683,17 @@ func _position_settlement_panel(panel: Panel, settlement_info: Dictionary, _exis
 	var tile_center = terrain_tilemap.map_to_local(Vector2i(tile_x, tile_y))
 	var current_settlement_offset_above_center: float = base_settlement_offset_above_tile_center
 	
+	var scaled_size = panel_actual_size * panel.scale
+	
 	# Position label above the tile center, centered horizontally
-	var panel_desired_x = tile_center.x - (panel_actual_size.x / 2.0)
-	var panel_desired_y = tile_center.y - panel_actual_size.y - current_settlement_offset_above_center
+	var panel_desired_x = tile_center.x - (scaled_size.x / 2.0)
+	var panel_desired_y = tile_center.y - scaled_size.y - current_settlement_offset_above_center
 	panel.position = Vector2(panel_desired_x, panel_desired_y)
 
 	# --- Anti-collision logic ---
 	var attempt := 0
 	while attempt < 20: # Max attempts to find a clear spot
-		var panel_rect := Rect2(panel.position, panel_actual_size)
+		var panel_rect := Rect2(panel.position, scaled_size)
 		
 		# Check against other labels
 		var overlaps_labels := false
