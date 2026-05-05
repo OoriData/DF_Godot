@@ -292,18 +292,23 @@ static func _update_bar_percentage_label(bar: ProgressBar, pct: float) -> void:
 		label.set_anchors_preset(Control.PRESET_FULL_RECT)
 		label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		label.add_theme_font_size_override("font_size", 12)
-		# Add a subtle shadow/outline for readability on top of bars
-		label.add_theme_constant_override("outline_size", 4)
-		label.add_theme_color_override("font_outline_color", Color.BLACK)
 		bar.add_child(label)
 	
 	label.text = "%d%%" % int(round(pct * 100.0))
+	
+	if pct > 0.75 and pct <= 0.95:
+		label.add_theme_color_override("font_color", Color.BLACK)
+		label.add_theme_constant_override("outline_size", 0)
+	else:
+		label.add_theme_color_override("font_color", Color.WHITE)
+		label.add_theme_color_override("font_outline_color", Color.BLACK)
+		label.add_theme_constant_override("outline_size", 4)
 
 static func _bar_color_for_pct(pct: float) -> Color:
-	# Green <= 70%, Yellow <= 90%, Red > 90%
-	if pct <= 0.7:
-		return Color(0.2, 0.8, 0.2)
-	elif pct <= 0.9:
-		return Color(1.0, 0.8, 0.2)
+	# Green <= 75%, Yellow <= 95%, Red > 95%
+	if pct <= 0.75:
+		return Color("66bb6a") # Material Green 400
+	elif pct <= 0.95:
+		return Color("ffee58") # Material Yellow 400
 	else:
-		return Color(1.0, 0.3, 0.3)
+		return Color("ef5350") # Material Red 400
