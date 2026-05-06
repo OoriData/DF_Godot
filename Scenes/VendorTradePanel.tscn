@@ -16,6 +16,8 @@ anchor_right = 1.0
 anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
 script = ExtResource("1_script")
 
 [node name="ResponsiveListAdapter" type="Node" parent="."]
@@ -165,7 +167,7 @@ visible = false
 [node name="ItemInfoRichText" type="RichTextLabel" parent="HBoxContainer/MiddlePanel/InfoScrollContainer/InfoVBox"]
 unique_name_in_owner = true
 layout_mode = 2
-size_flags_vertical = 3
+size_flags_vertical = 0
 bbcode_enabled = true
 text = "Item description and stats here."
 fit_content = true

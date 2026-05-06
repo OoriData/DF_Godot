@@ -95,12 +95,17 @@ static func rebuild_info_sections(item_info_rich_text: RichTextLabel, item_data_
 		parent_node = item_info_rich_text.get_parent()
 	if not is_instance_valid(parent_node):
 		return
+	
+	if parent_node is BoxContainer:
+		parent_node.alignment = BoxContainer.ALIGNMENT_BEGIN
+		
 	var container: Node = parent_node.get_node_or_null("InfoSectionsContainer")
 	if container == null:
 		container = VBoxContainer.new()
 		container.name = "InfoSectionsContainer"
 		container.mouse_filter = Control.MOUSE_FILTER_PASS
 		container.add_theme_constant_override("separation", 6)
+		container.alignment = BoxContainer.ALIGNMENT_BEGIN
 		parent_node.add_child(container)
 		var idx: int = parent_node.get_children().find(item_info_rich_text)
 		if idx != -1:

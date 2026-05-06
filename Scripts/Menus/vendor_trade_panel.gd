@@ -707,15 +707,41 @@ func _update_layout_scaling() -> void:
 			cargo_sort_button.add_theme_font_override("font", _get_bold_font_for(cargo_sort_button))
 		else:
 			cargo_sort_button.remove_theme_font_override("font")
+	
+	# Force top alignment for the middle and right columns to prevent centering in landscape/desktop
+	var middle = get_node_or_null("HBoxContainer/MiddlePanel")
+	if is_instance_valid(middle):
+		_force_top_alignment(middle)
+	var right = get_node_or_null("HBoxContainer/RightPanel")
+	if is_instance_valid(right):
+		_force_top_alignment(right)
+
+func _force_top_alignment(node: Node) -> void:
+	if not is_instance_valid(node): return
+	if node is BoxContainer:
+		node.alignment = BoxContainer.ALIGNMENT_BEGIN
+	for child in node.get_children():
+		_force_top_alignment(child)
 
 func _ready() -> void:
 
 	var dsm = get_node_or_null("/root/DeviceStateManager")
+	
+	# Ensure the whole panel fills the MenuContainer (PanelContainer) provided by MainScreen
+	# This prevents the parent from centering the menu if its content is smaller than the screen.
+	size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	size_flags_vertical = Control.SIZE_EXPAND_FILL
+	
 	if is_instance_valid(dsm):
 		if not dsm.layout_mode_changed.is_connected(_on_layout_mode_changed):
 			dsm.layout_mode_changed.connect(_on_layout_mode_changed)
 			
 	_update_layout_scaling()
+	
+	# Fix for "Bottom Alignment" bug: ensure the legacy label doesn't act as a vertical spacer
+	var legacy_label = get_node_or_null("%ItemInfoRichText")
+	if is_instance_valid(legacy_label):
+		legacy_label.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
 
 
 
@@ -911,6 +937,13 @@ func _ready() -> void:
 	_apply_text_readability_fixes()
 
 func _make_panels_responsive() -> void:
+	# Only apply aggressive scrolling wrappers on Mobile Portrait.
+	# Desktop and Landscape have enough vertical real estate to use the native .tscn layout,
+	# which prevents nested ScrollContainer layout bugs.
+	var dsm = get_node_or_null("/root/DeviceStateManager")
+	if is_instance_valid(dsm) and dsm.get_layout_mode() != 2: # 2 == MOBILE_PORTRAIT
+		return
+
 	# Programmatically wrap Middle and Right panels in ScrollContainers
 	var hbox = get_node_or_null("HBoxContainer")
 	if not is_instance_valid(hbox): return
@@ -942,6 +975,8 @@ func _wrap_inv_scroll(panel: Control, stretch_ratio_h: float, _stretch_ratio_v: 
 	# Reset panel flags to fit inside scroll
 	panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	panel.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	if panel is BoxContainer:
+		panel.alignment = BoxContainer.ALIGNMENT_BEGIN
 	panel.size_flags_stretch_ratio = 1.0 # Reset ratio as parent scroll handles it
 
 var _semi_bold_font_cache: FontVariation = null
@@ -1780,12 +1815,18 @@ func _clear_inspector() -> void:
 	_feedback_data = {}
 	
 	# Clear the segmented sections container
-	# Clear the segmented sections container
-	if is_instance_valid(item_info_rich_text):
-		var container: Node = item_info_rich_text.get_parent().get_node_or_null("InfoSectionsContainer")
-		if is_instance_valid(container):
-			for ch in container.get_children():
-				ch.queue_free()
+	var parent_node = item_info_rich_text.get_parent()
+	if not is_instance_valid(parent_node):
+		return
+	
+	# Force top alignment for the container holding segments
+	if parent_node is BoxContainer:
+		parent_node.alignment = BoxContainer.ALIGNMENT_BEGIN
+	
+	var container: Node = parent_node.get_node_or_null("InfoSectionsContainer")
+	if is_instance_valid(container):
+		for ch in container.get_children():
+			ch.queue_free()
 
 # Helper: recompute aggregate convoy cargo stats (not currently used directly; kept for future refactors)
 func _recalculate_convoy_cargo_stats() -> Dictionary:
