@@ -70,6 +70,8 @@ func _ready() -> void:
 	_ensure_store_subscription()
 	if auto_apply_oori_background:
 		_apply_oori_background()
+	
+	_apply_standard_margins()
 
 func _apply_oori_background() -> void:
 	# Subtle tileable background
@@ -139,8 +141,34 @@ func _notification(what: int) -> void:
 	# Important for embedded menus inside hidden tabs:
 	# they may miss refreshes while hidden, so refresh when shown.
 	if what == NOTIFICATION_VISIBILITY_CHANGED:
+		if is_visible_in_tree():
+			_ensure_store_subscription()
+			_apply_standard_margins()
 		if is_visible_in_tree() and convoy_id != "":
 			_refresh_from_store()
+	elif what == NOTIFICATION_RESIZED:
+		_apply_standard_margins()
+
+func _on_user_changed(_user: Dictionary) -> void:
+	# Virtual: override in subclasses to update UI on money/user changes
+	pass
+
+## Centralized logic to ensure consistent side buffers in portrait mode.
+func _apply_standard_margins() -> void:
+	var main_vbox = get_node_or_null("MainVBox")
+	if not is_instance_valid(main_vbox):
+		return
+		
+	var dsm = get_node_or_null("/root/DeviceStateManager")
+	var is_portrait = dsm.get_is_portrait() if is_instance_valid(dsm) else false
+	
+	if is_portrait:
+		# Standard 14px buffer for portrait elements from the screen edge.
+		# This prevents UI elements from being flush against the glass.
+		main_vbox.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT, Control.PRESET_MODE_MINSIZE, 14)
+	else:
+		# Landscape/Desktop: usually edge-to-edge content is preferred for horizontal density
+		main_vbox.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT, Control.PRESET_MODE_MINSIZE, 0)
 
 func _on_convoys_changed(_convoys: Array) -> void:
 	# Only refresh if this menu is visible and has a convoy context.
@@ -349,8 +377,8 @@ func setup_convoy_navigation_bar(back_button_node: Node) -> void:
 	bar_style.corner_radius_top_right = 6
 	bar_style.border_width_top = 1
 	bar_style.border_color = Color(0.28, 0.28, 0.28)
-	# Content margins match convoy_menu._update_mobile_dependent_layout
-	var bar_margin := 10.0 if is_portrait else (6.0 if use_mobile else 0.0)
+	# Content margins match standard portrait buffers
+	var bar_margin := 14.0 if is_portrait else (6.0 if use_mobile else 0.0)
 	bar_style.content_margin_top = bar_margin
 	bar_style.content_margin_bottom = bar_margin
 	bar_style.content_margin_left = bar_margin

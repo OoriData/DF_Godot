@@ -14,6 +14,16 @@ var mechanics_menu_scene = preload("res://Scenes/MechanicsMenu.tscn")
 var warehouse_menu_scene = load("res://Scenes/WarehouseMenu.tscn")
 var premium_upgrade_modal_scene = preload("res://Scenes/UI/PremiumUpgradeModal.tscn")
 
+const MENU_ORDER = {
+	"convoy_overview": 0,
+	"convoy_vehicle_submenu": 1,
+	"convoy_journey_submenu": 2,    # Nav bar order: Vehicles | Journey | Settlement | Cargo
+	"convoy_settlement_submenu": 3,
+	"warehouse_submenu": 4,
+	"mechanics_submenu": 5,
+	"convoy_cargo_submenu": 6
+}
+var _switch_tween: Tween = null
 
 var current_active_menu = null
 var menu_stack = [] # To keep track of the navigation path for "back" functionality
@@ -179,6 +189,9 @@ func _show_menu(menu_scene_resource, data_to_pass = null, add_to_stack: bool = t
 	var was_visible := visible
 	visible = true
 
+	var old_menu = null
+	var old_menu_type = "default"
+
 	if current_active_menu:
 		if add_to_stack:
 			menu_stack.append({
@@ -186,11 +199,10 @@ func _show_menu(menu_scene_resource, data_to_pass = null, add_to_stack: bool = t
 				"data": current_active_menu.get_meta("menu_data", null),
 				"type": current_active_menu.get_meta("menu_type", "default")
 			})
-		var closed_menu_type = current_active_menu.get_meta("menu_type", "default")
-		emit_signal("menu_closed", current_active_menu, closed_menu_type)
-		current_active_menu.queue_free()
+		old_menu_type = current_active_menu.get_meta("menu_type", "default")
+		emit_signal("menu_closed", current_active_menu, old_menu_type)
+		old_menu = current_active_menu
 		current_active_menu = null
-
 	current_active_menu = menu_scene_resource.instantiate()
 	if not is_instance_valid(current_active_menu):
 		printerr("MenuManager: Failed to instantiate menu scene: ", menu_scene_resource.resource_path if menu_scene_resource else "null resource")
@@ -216,6 +228,12 @@ func _show_menu(menu_scene_resource, data_to_pass = null, add_to_stack: bool = t
 		use_convoy_style_layout = true
 	elif menu_scene_resource == convoy_cargo_menu_scene:
 		menu_type = "convoy_cargo_submenu"
+		use_convoy_style_layout = true
+	elif menu_scene_resource == warehouse_menu_scene:
+		menu_type = "warehouse_submenu"
+		use_convoy_style_layout = true
+	elif menu_scene_resource == mechanics_menu_scene:
+		menu_type = "mechanics_submenu"
 		use_convoy_style_layout = true
 	elif menu_scene_resource == premium_upgrade_modal_scene:
 		menu_type = "modal"
@@ -293,6 +311,12 @@ func _show_menu(menu_scene_resource, data_to_pass = null, add_to_stack: bool = t
 			menu_node_control.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 			menu_node_control.offset_top = top_margin
 
+	if old_menu:
+		if use_convoy_style_layout and old_menu.get_meta("menu_type", "default") in MENU_ORDER and menu_type in MENU_ORDER:
+			_animate_menu_switch(old_menu, current_active_menu, old_menu_type, menu_type)
+		else:
+			old_menu.queue_free()
+
 	# --- DIAGNOSTIC TEST: Force all menu layers to ignore input ---
 	# A menu is now active. This manager will now intercept all clicks.
 	# mouse_filter = MOUSE_FILTER_STOP
@@ -347,6 +371,84 @@ func _show_menu(menu_scene_resource, data_to_pass = null, add_to_stack: bool = t
 			if current_active_menu.has_signal("open_warehouse_menu_requested"):
 				current_active_menu.open_warehouse_menu_requested.connect(open_warehouse_menu, CONNECT_ONE_SHOT)
 
+# Animation constants for menu switching
+const SWITCH_DURATION := 0.42
+const SWITCH_PARALLAX := 0.35 # Outgoing menu travels this fraction of the distance, creating depth
+
+func _animate_menu_switch(old_menu: Control, new_menu: Control, old_type: String, new_type: String) -> void:
+	if _switch_tween and _switch_tween.is_valid():
+		_switch_tween.kill()
+
+	var old_idx = MENU_ORDER.get(old_type, 0)
+	var new_idx = MENU_ORDER.get(new_type, 0)
+
+	var direction = 1 if new_idx > old_idx else -1
+	if new_idx == old_idx: direction = 1
+
+	var slide_distance = _menu_container_host.size.x if is_instance_valid(_menu_container_host) else 400.0
+
+	# Defer one frame so new menu layout settles before reading position.
+	call_deferred("_start_menu_switch_animation", old_menu, new_menu, direction, slide_distance)
+
+## Recursively sets MOUSE_FILTER_IGNORE on a node and all descendants.
+## Used to prevent click-through on the outgoing menu during a transition.
+func _disable_mouse_recursive(node: Node) -> void:
+	if node is Control:
+		(node as Control).mouse_filter = Control.MOUSE_FILTER_IGNORE
+	for child in node.get_children():
+		_disable_mouse_recursive(child)
+
+func _start_menu_switch_animation(old_menu: Control, new_menu: Control, direction: int, slide_distance: float) -> void:
+	if not is_instance_valid(new_menu) or not is_instance_valid(old_menu):
+		if is_instance_valid(old_menu): old_menu.queue_free()
+		return
+
+	# Kill input on the outgoing menu immediately
+	_disable_mouse_recursive(old_menu)
+	new_menu.move_to_front()
+
+	# Hide per-menu tiled backgrounds (host container provides the same texture statically)
+	var old_bg = old_menu.get_node_or_null("OoriBackground")
+	var new_bg = new_menu.get_node_or_null("OoriBackground")
+	if is_instance_valid(old_bg): old_bg.visible = false
+	if is_instance_valid(new_bg): new_bg.visible = false
+
+	# CRITICAL: Clip the host so only one panel is visible at a time.
+	# This is what makes the slideshow work -- both menus slide as a unit
+	# but the clip rect acts as the "window", showing only whats in frame.
+	if is_instance_valid(_menu_container_host):
+		_menu_container_host.clip_contents = true
+
+	# SLIDESHOW LAYOUT:
+	# Old menu: currently at its normal position (in frame).
+	# New menu: starts exactly one panel-width to the entry side (out of frame).
+	# Both slide the same distance at the same speed -- like two cards on a rail.
+	# Because they are always separated by slide_distance, they can never overlap.
+	var base_x := old_menu.position.x
+	var old_exit_x := base_x - (direction * slide_distance)
+	var new_start_x := base_x + (direction * slide_distance)
+	var new_target_x := base_x
+
+	new_menu.position.x = new_start_x
+	new_menu.modulate.a = 1.0 # New menu is fully opaque -- no fade needed
+
+	_switch_tween = create_tween()
+	_switch_tween.set_parallel(true)
+	_switch_tween.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN_OUT)
+
+	# Old slides out, new slides in -- same duration, same easing = true slideshow
+	_switch_tween.tween_property(old_menu, "position:x", old_exit_x, SWITCH_DURATION)
+	_switch_tween.tween_property(new_menu, "position:x", new_target_x, SWITCH_DURATION)
+
+	_switch_tween.chain().tween_callback(func():
+		if is_instance_valid(old_menu): old_menu.queue_free()
+		if is_instance_valid(new_menu):
+			new_menu.position.x = new_target_x
+			# Restore per-menu background once the slide is done
+			var restored_bg = new_menu.get_node_or_null("OoriBackground")
+			if is_instance_valid(restored_bg): restored_bg.visible = true
+	)
+
 func _extract_convoy_id_or_passthrough(d: Variant) -> Variant:
 	if d is Dictionary:
 		var cid := String((d as Dictionary).get("convoy_id", (d as Dictionary).get("id", "")))
@@ -396,10 +498,8 @@ func go_back():
 		visible = false
 		return
 
-	var _closed_menu_type2 = current_active_menu.get_meta("menu_type", "default")
-	emit_signal("menu_closed", current_active_menu, _closed_menu_type2)
-	current_active_menu.queue_free()
-	current_active_menu = null
+	# Let _show_menu handle the 'menu_closed' emission and queue_free for the old menu so it can animate.
+	# We just pop the previous info and let _show_menu take over.
 	var _previous_menu_info2 = menu_stack.pop_back()
 	var _prev_scene_path2 = _previous_menu_info2.get("scene_path")
 	var _prev_data2 = _previous_menu_info2.get("data")

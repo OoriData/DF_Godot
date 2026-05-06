@@ -320,12 +320,10 @@ func _ready():
 		sort_settings_container.move_child(_organize_button, 0)
 		sort_settings_container.add_theme_constant_override("separation", 24 if _is_mobile() else 16)
 		
-		# Mobile: tighter separation between containers, more breathing room in margins
 		if _is_mobile():
 			var main_vbox = get_node_or_null("MainVBox")
 			if is_instance_valid(main_vbox):
 				main_vbox.add_theme_constant_override("separation", 6)
-				main_vbox.set_offsets_preset(Control.PRESET_FULL_RECT, Control.PRESET_MODE_MINSIZE, 14)
 	else:
 		printerr("ConvoyCargoMenu: SortSettingsContainer not found, cannot add organization button.")
 
