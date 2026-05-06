@@ -33,6 +33,20 @@ var _submit_button: Button
 
 var _pending: bool = false
 var _root: Control
+var _scroll_container: ScrollContainer
+
+# Scaling references
+var _title_lbl: Label
+var _close_btn: Button
+var _statement_lbl: Label
+var _preview_label: Label
+var _cancel_btn: Button
+var _collapsible_headers: Array[Button] = []
+var _text_edits: Array[TextEdit] = []
+var _check_boxes: Array[CheckBox] = []
+var _flow_container: FlowContainer
+var _content_vbox: VBoxContainer
+var _btn_row: HBoxContainer
 
 func _ready() -> void:
 	super._ready() # Important for ResponsiveModalPanel
@@ -42,11 +56,93 @@ func _ready() -> void:
 	_convoy_selection_service = get_node_or_null("/root/ConvoySelectionService")
 	_vendor_service = get_node_or_null("/root/VendorService")
 
-	max_desktop_width = 1100
-	max_desktop_height = 950
+	max_desktop_width = 1400 # Increased from 1100
+	max_desktop_height = 1000 # Increased from 950
 
 	_build_ui()
 	_update_submit_enabled()
+	
+	var dsm = get_node_or_null("/root/DeviceStateManager")
+	if is_instance_valid(dsm):
+		if not dsm.layout_mode_changed.is_connected(_on_layout_mode_changed):
+			dsm.layout_mode_changed.connect(_on_layout_mode_changed)
+		_apply_scaling(dsm.get_layout_mode())
+
+func _on_layout_mode_changed(mode: int, _screen_size: Vector2, _is_mobile: bool) -> void:
+	_apply_scaling(mode)
+
+func _apply_scaling(mode: int) -> void:
+	var is_portrait = (mode == 2) # MOBILE_PORTRAIT
+	
+	# Font sizes
+	var title_size = 40 if is_portrait else 32
+	var base_size = 30 if is_portrait else 22
+	var small_size = 26 if is_portrait else 18
+	
+	# Dimensions
+	var btn_h = 100 if is_portrait else 64
+	var input_h = 80 if is_portrait else 60
+	var text_edit_min_h = 300 if is_portrait else 200
+	var separation = 32 if is_portrait else 24
+	var header_btn_h = 80 if is_portrait else 56
+	
+	if is_instance_valid(_title_lbl):
+		_title_lbl.add_theme_font_size_override("font_size", title_size)
+	
+	if is_instance_valid(_close_btn):
+		_close_btn.custom_minimum_size = Vector2(header_btn_h, header_btn_h)
+		_close_btn.add_theme_font_size_override("font_size", title_size)
+		
+	if is_instance_valid(_statement_lbl):
+		_statement_lbl.add_theme_font_size_override("font_size", base_size)
+		
+	if is_instance_valid(_preview_label):
+		_preview_label.add_theme_font_size_override("font_size", base_size)
+		
+	if is_instance_valid(_status_label):
+		_status_label.add_theme_font_size_override("font_size", small_size)
+		
+	if is_instance_valid(_summary):
+		_summary.custom_minimum_size.y = input_h
+		_summary.add_theme_font_size_override("font_size", base_size)
+		
+	if is_instance_valid(_cancel_btn):
+		_cancel_btn.custom_minimum_size = Vector2(200 if is_portrait else 140, btn_h)
+		_cancel_btn.add_theme_font_size_override("font_size", base_size)
+		
+	if is_instance_valid(_submit_button):
+		_submit_button.custom_minimum_size = Vector2(240 if is_portrait else 180, btn_h)
+		_submit_button.add_theme_font_size_override("font_size", base_size)
+		
+	for btn in _collapsible_headers:
+		if is_instance_valid(btn):
+			btn.custom_minimum_size.y = header_btn_h
+			btn.add_theme_font_size_override("font_size", base_size)
+			
+	for te in _text_edits:
+		if is_instance_valid(te):
+			te.custom_minimum_size.y = text_edit_min_h
+			te.add_theme_font_size_override("font_size", base_size)
+			
+	for cb in _check_boxes:
+		if is_instance_valid(cb):
+			cb.add_theme_font_size_override("font_size", base_size)
+			# Godot CheckBox icon doesn't scale easily with font, 
+			# but we can try to increase separation
+			cb.add_theme_constant_override("h_separation", 20 if is_portrait else 12)
+
+	if is_instance_valid(_content_vbox):
+		_content_vbox.add_theme_constant_override("separation", separation)
+		
+	if is_instance_valid(_root):
+		_root.add_theme_constant_override("separation", separation)
+		
+	if is_instance_valid(_flow_container):
+		_flow_container.add_theme_constant_override("h_separation", separation)
+		_flow_container.add_theme_constant_override("v_separation", separation)
+
+	if is_instance_valid(_btn_row):
+		_btn_row.add_theme_constant_override("separation", separation)
 
 func set_screenshot_png_bytes(png_bytes: PackedByteArray) -> void:
 	_screenshot_png_bytes = png_bytes if png_bytes != null else PackedByteArray()
@@ -92,6 +188,7 @@ func _build_ui() -> void:
 	title_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	title_lbl.add_theme_color_override("font_color", Color("#FFFFFF"))
 	header.add_child(title_lbl)
+	_title_lbl = title_lbl
 
 	var close_btn := Button.new()
 	close_btn.text = "✕"
@@ -99,6 +196,7 @@ func _build_ui() -> void:
 	close_btn.pressed.connect(_on_close_pressed)
 	close_btn.custom_minimum_size = Vector2(40, 40)
 	header.add_child(close_btn)
+	_close_btn = close_btn
 
 	# Scrollable content (form fields + screenshot preview)
 	var scroll := ScrollContainer.new()
@@ -133,12 +231,14 @@ func _build_ui() -> void:
 	content.add_theme_constant_override("separation", 24)
 	content.mouse_filter = Control.MOUSE_FILTER_PASS
 	content_margin.add_child(content)
+	_content_vbox = content
 
 	# Statement
 	var stmt := Label.new()
 	stmt.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	stmt.text = "Submitting sends the information you select (screenshot, logs, game/account metadata) to the developers to help debug. Do not include passwords or secrets."
 	content.add_child(stmt)
+	_statement_lbl = stmt
 
 	# Toggles row (Wrapped in FlowContainer for automatic responsiveness)
 	var toggles := FlowContainer.new()
@@ -146,6 +246,7 @@ func _build_ui() -> void:
 	toggles.add_theme_constant_override("v_separation", 16)
 	toggles.mouse_filter = Control.MOUSE_FILTER_PASS
 	content.add_child(toggles)
+	_flow_container = toggles
 
 	_include_screenshot = CheckBox.new()
 	_include_screenshot.text = "Include screenshot"
@@ -164,6 +265,10 @@ func _build_ui() -> void:
 	_include_metadata.button_pressed = true
 	_include_metadata.toggled.connect(func(_v): _update_submit_enabled())
 	toggles.add_child(_include_metadata)
+	
+	_check_boxes.append(_include_screenshot)
+	_check_boxes.append(_include_logs)
+	_check_boxes.append(_include_metadata)
 
 	# Consent
 	_consent = CheckBox.new()
@@ -171,6 +276,7 @@ func _build_ui() -> void:
 	_consent.button_pressed = false
 	_consent.toggled.connect(func(_v): _update_submit_enabled())
 	content.add_child(_consent)
+	_check_boxes.append(_consent)
 
 	_summary = LineEdit.new()
 	_summary.placeholder_text = "Summary (required)"
@@ -184,6 +290,7 @@ func _build_ui() -> void:
 	var preview_label := Label.new()
 	preview_label.text = "Screenshot preview"
 	content.add_child(preview_label)
+	_preview_label = preview_label
 
 	_screenshot_preview = TextureRect.new()
 	_screenshot_preview.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
@@ -208,12 +315,14 @@ func _build_ui() -> void:
 	btn_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	btn_row.add_theme_constant_override("separation", 16)
 	root.add_child(btn_row)
+	_btn_row = btn_row
 
 	var cancel_btn := Button.new()
 	cancel_btn.text = "Cancel"
 	cancel_btn.custom_minimum_size = Vector2(100, 50)
 	cancel_btn.pressed.connect(_on_close_pressed)
 	btn_row.add_child(cancel_btn)
+	_cancel_btn = cancel_btn
 
 	_submit_button = Button.new()
 	_submit_button.text = "Submit"
@@ -234,6 +343,7 @@ func _add_collapsible_text_block(parent: Control, title_text: String, expanded_b
 	header_btn.alignment = HORIZONTAL_ALIGNMENT_LEFT
 	header_btn.custom_minimum_size = Vector2(0, 45)
 	box.add_child(header_btn)
+	_collapsible_headers.append(header_btn)
 
 	var inner := VBoxContainer.new()
 	inner.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -248,6 +358,7 @@ func _add_collapsible_text_block(parent: Control, title_text: String, expanded_b
 	te.scroll_fit_content_height = true
 	te.text_changed.connect(func(): _update_submit_enabled())
 	inner.add_child(te)
+	_text_edits.append(te)
 
 	header_btn.toggled.connect(func(on: bool):
 		inner.visible = on

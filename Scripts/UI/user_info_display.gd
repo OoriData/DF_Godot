@@ -108,12 +108,27 @@ func _update_mobile_sizing() -> void:
 
 	if is_portrait:
 		custom_minimum_size.y = 200 # Increased from 170 for better clearance
-		if is_instance_valid(settings_button): settings_button.custom_minimum_size = Vector2(240, 130)
-		if is_instance_valid(report_bug_button): report_bug_button.custom_minimum_size = Vector2(160, 130)
+		if is_instance_valid(settings_button): 
+			settings_button.custom_minimum_size = Vector2(240, 130)
+			settings_button.add_theme_font_size_override("font_size", 36)
+		if is_instance_valid(report_bug_button): 
+			report_bug_button.custom_minimum_size = Vector2(160, 130)
+			report_bug_button.add_theme_font_size_override("font_size", 36)
+		
+		# Also scale username and money for portrait clarity
+		if is_instance_valid(username_label): username_label.add_theme_font_size_override("font_size", 32)
+		if is_instance_valid(user_money_label): user_money_label.add_theme_font_size_override("font_size", 32)
 	else:
 		custom_minimum_size.y = 96
-		if is_instance_valid(settings_button): settings_button.custom_minimum_size.y = 64
-		if is_instance_valid(report_bug_button): report_bug_button.custom_minimum_size.y = 64
+		if is_instance_valid(settings_button): 
+			settings_button.custom_minimum_size.y = 64
+			settings_button.add_theme_font_size_override("font_size", 24)
+		if is_instance_valid(report_bug_button): 
+			report_bug_button.custom_minimum_size.y = 64
+			report_bug_button.add_theme_font_size_override("font_size", 24)
+		
+		if is_instance_valid(username_label): username_label.add_theme_font_size_override("font_size", 28)
+		if is_instance_valid(user_money_label): user_money_label.add_theme_font_size_override("font_size", 28)
 
 func _apply_base_styling() -> void:
 	# 1. Main Background Style (Oori Texture)
