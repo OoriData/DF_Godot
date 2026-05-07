@@ -34,6 +34,7 @@ var _all_settlement_data: Array # Cached settlements snapshot
 var _pending_focus_intent: Dictionary = {}
 var _pending_focus_retry_attempts_left: int = 0
 var _pending_focus_retry_in_flight: bool = false
+var _pending_ui_state: Dictionary = {}
 
 @onready var _store: Node = get_node_or_null("/root/GameStore")
 @onready var _user_service: Node = get_node_or_null("/root/UserService")
@@ -65,9 +66,11 @@ func initialize_with_data(data_or_id: Variant, extra_arg: Variant = null) -> voi
 		_convoy_data = {}
 	# Delegate initial UI to MenuBase; it will apply store snapshot when possible
 	super.initialize_with_data(data_or_id, extra_arg)
-	# Defer the display logic to ensure readiness
-	print("ConvoySettlementMenu: initialize_with_data - Deferring _display_settlement_info.")
-	call_deferred("_display_settlement_info")
+	
+	# Execute display logic if ready; otherwise it will be handled in _ready()
+	if is_node_ready():
+		_display_settlement_info()
+	
 	# Best-effort: apply focus after the UI is built.
 	if not _pending_focus_intent.is_empty():
 		call_deferred("_apply_pending_focus_intent")
@@ -89,6 +92,8 @@ func _schedule_pending_focus_retry(delay_seconds: float) -> void:
 
 
 func _ready():
+	persistence_enabled = true
+	super._ready()
 	print("ConvoySettlementMenu: _ready() started processing.")
 	# It's crucial to connect signals here for the UI to be interactive.
 	if is_instance_valid(back_button):
@@ -149,6 +154,9 @@ func _ready():
 		if not dsm.is_connected("layout_mode_changed", _on_layout_mode_changed):
 			dsm.layout_mode_changed.connect(_on_layout_mode_changed)
 
+	# Build initial UI now that @onready vars are set.
+	_display_settlement_info()
+
 	_style_vendor_tabs()
 
 func _on_layout_mode_changed(_mode: int, _size: Vector2, _is_mobile_val: bool) -> void:
@@ -195,6 +203,7 @@ func _display_error(message: String):
 
 
 func _display_settlement_info():
+	print("[DIAGNOSTIC] ConvoySettlementMenu _display_settlement_info called.")
 	if not is_instance_valid(_store) or not _store.has_method("get_tiles"):
 		_display_error("GameStore not available. Cannot load settlement data.")
 		return
@@ -255,6 +264,8 @@ func _display_settlement_info():
 			# print("ConvoySettlementMenu: Found ", _settlement_data.vendors.size(), " vendors in settlement.") # Debug line
 
 			for vendor in _settlement_data.vendors:
+				var vid = vendor.get("vendor_id", "NO_ID")
+				print("[DIAGNOSTIC] ConvoySettlementMenu building vendor tab for: ", vid)
 				_create_vendor_tab(vendor)
 
 			# Tutorial Helper: If the tutorial is on Level 1, proactively select the Dealership tab
@@ -285,6 +296,12 @@ func _display_settlement_info():
 			warehouse_button.disabled = true
 			warehouse_button.tooltip_text = "Warehouse unavailable while in transit."
 		_display_error("No settlement found at convoy coordinates: (%d, %d)" % [current_convoy_x, current_convoy_y])
+
+	if not _pending_ui_state.is_empty():
+		var cached = _pending_ui_state
+		_pending_ui_state = {}
+		print("[DIAGNOSTIC] ConvoySettlementMenu: Applying cached state after tabs built.")
+		apply_ui_state(cached)
 
 
 func _on_store_convoys_changed(all_convoys_data: Array) -> void:
@@ -319,6 +336,7 @@ func _create_vendor_tab(vendor_data: Dictionary):
 	if vendor_id_str != "":
 		vendor_panel_instance.set_meta("vendor_id", vendor_id_str)
 	vendor_tab_container.set_tab_title(vendor_tab_container.get_tab_count() - 1, short_vendor_name)
+	print("[DIAGNOSTIC] ConvoySettlementMenu _create_vendor_tab created tab with title: '", short_vendor_name, "'")
 	# Pass deep copies to avoid reference bugs!
 	vendor_panel_instance.initialize(
 		vendor_data.duplicate(true),
@@ -1249,3 +1267,53 @@ func get_active_vendor_panel_node() -> Node:
 	if not is_instance_valid(vendor_tab_container):
 		return null
 	return vendor_tab_container.get_tab_control(vendor_tab_container.current_tab)
+
+func get_ui_state() -> Dictionary:
+	var state = {}
+	if is_instance_valid(vendor_tab_container) and vendor_tab_container.get_tab_count() > 0:
+		var curr_idx = vendor_tab_container.current_tab
+		if curr_idx >= 0:
+			state["active_vendor_tab_title"] = vendor_tab_container.get_tab_title(curr_idx)
+			
+		var vendor_states = {}
+		for i in range(vendor_tab_container.get_tab_count()):
+			var tab_content = vendor_tab_container.get_tab_control(i)
+			if is_instance_valid(tab_content) and tab_content.has_method("get_ui_state"):
+				var v_title = vendor_tab_container.get_tab_title(i)
+				var v_state = tab_content.get_ui_state()
+				vendor_states[v_title] = v_state
+				print("[DIAGNOSTIC] ConvoySettlementMenu saved state for tab: '", v_title, "' state: ", v_state)
+		state["vendor_panel_states"] = vendor_states
+	print("[DIAGNOSTIC] ConvoySettlementMenu total get_ui_state: ", state)
+	return state
+
+func apply_ui_state(state) -> void:
+	print("[DIAGNOSTIC] ConvoySettlementMenu apply_ui_state called with: ", state)
+	if not is_instance_valid(vendor_tab_container):
+		print("[DIAGNOSTIC] ConvoySettlementMenu: vendor_tab_container invalid!")
+		return
+	if vendor_tab_container.get_tab_count() == 0:
+		print("[DIAGNOSTIC] ConvoySettlementMenu: Tabs not built yet. Caching state.")
+		_pending_ui_state = state
+		return
+		
+	if state.has("active_vendor_tab_title"):
+		var target_title = state["active_vendor_tab_title"]
+		for i in range(vendor_tab_container.get_tab_count()):
+			if vendor_tab_container.get_tab_title(i) == target_title:
+				vendor_tab_container.current_tab = i
+				_on_vendor_tab_changed(i)
+				break
+				
+	if state.has("vendor_panel_states"):
+		var vendor_states = state["vendor_panel_states"]
+		for i in range(vendor_tab_container.get_tab_count()):
+			var v_title = vendor_tab_container.get_tab_title(i)
+			if vendor_states.has(v_title):
+				print("[DIAGNOSTIC] ConvoySettlementMenu passing state to tab: '", v_title, "'")
+				var tab_content = vendor_tab_container.get_tab_control(i)
+				if is_instance_valid(tab_content) and tab_content.has_method("apply_ui_state"):
+					print("[DIAGNOSTIC] ConvoySettlementMenu: INVOKING apply_ui_state() synchronously on tab: ", v_title)
+					tab_content.apply_ui_state(vendor_states[v_title])
+			else:
+				print("[DIAGNOSTIC] ConvoySettlementMenu NO state found for tab: '", v_title, "'")

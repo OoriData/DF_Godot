@@ -1423,6 +1423,7 @@ func _populate_by_type():
 	_diag("clear_rows", "type_begin", {"children": _clr})
 	_snapshot_open_inspects("inspect_state_before_clear_type")
 	for child in direct_vbox_ref.get_children():
+		direct_vbox_ref.remove_child(child)
 		child.queue_free()
 	_diag("clear_rows", "type_end", {"removed": _clr})
 
@@ -1638,6 +1639,7 @@ func _populate_by_vehicle():
 	_diag("clear_rows", "vehicle_begin", {"children": _clr})
 	_snapshot_open_inspects("inspect_state_before_clear_vehicle")
 	for child in direct_vbox_ref.get_children():
+		direct_vbox_ref.remove_child(child)
 		child.queue_free()
 	_diag("clear_rows", "vehicle_end", {"removed": _clr})
 
@@ -1921,6 +1923,8 @@ func _call_verify_inspect_persistence(row: HBoxContainer, token: String, delay_s
 	# Use a timer to re-check panel presence and log if missing
 	var t := get_tree().create_timer(delay_sec)
 	t.timeout.connect(func():
+		if not is_instance_valid(row):
+			return
 		var present := row.has_meta("inspect_panel") and is_instance_valid(row.get_meta("inspect_panel"))
 		var status := "present" if present else "missing"
 		_diag("inspect_verify", status, {"after_sec": delay_sec, "token": token})
@@ -2142,3 +2146,37 @@ func _on_store_convoys_changed(all_convoy_data: Array) -> void:
 			_populate_cargo_list()
 			_diag("store_update", "repopulate_done")
 			break
+
+func get_ui_state() -> Dictionary:
+	var state = {}
+	state["open_inspects"] = _open_inspects.duplicate(true)
+	state["organization_mode"] = organization_mode
+	state["cargo_sort_metric"] = _cargo_sort_metric
+	var sc = get_node_or_null("MainVBox/ScrollContainer")
+	if is_instance_valid(sc) and sc is ScrollContainer:
+		state["scroll_v"] = sc.scroll_vertical
+	return state
+
+func apply_ui_state(state: Dictionary) -> void:
+	var needs_repopulate = false
+	if state.has("open_inspects"):
+		_open_inspects = state["open_inspects"].duplicate(true)
+		needs_repopulate = true
+	if state.has("organization_mode") and state["organization_mode"] != organization_mode:
+		organization_mode = state["organization_mode"]
+		_update_organize_button_text()
+		needs_repopulate = true
+	if state.has("cargo_sort_metric") and state["cargo_sort_metric"] != _cargo_sort_metric:
+		_cargo_sort_metric = state["cargo_sort_metric"]
+		if is_instance_valid(cargo_sort_option_button):
+			cargo_sort_option_button.select(_cargo_sort_metric)
+		needs_repopulate = true
+		
+	if needs_repopulate:
+		_populate_cargo_list()
+		
+	if state.has("scroll_v"):
+		var sc = get_node_or_null("MainVBox/ScrollContainer")
+		if is_instance_valid(sc) and sc is ScrollContainer:
+			# Needs to be deferred to wait for _populate_cargo_list rendering
+			sc.call_deferred("set_v_scroll", state["scroll_v"])

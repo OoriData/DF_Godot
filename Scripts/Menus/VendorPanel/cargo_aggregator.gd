@@ -694,6 +694,7 @@ static func _aggregate_vendor_item(agg_dict: Dictionary, item: Dictionary, missi
 			"total_water": 0.0,
 			"total_fuel": 0.0,
 			"mission_vendor_name": mission_vendor_name,
+			"stable_key": "name:" + item_name,
 		}
 	var item_quantity = int(item.get("quantity", 1.0))
 	if item.get("is_raw_resource", false):

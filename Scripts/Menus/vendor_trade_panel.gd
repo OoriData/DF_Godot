@@ -98,10 +98,12 @@ var _pending_tx: Dictionary = {
 # so that when the authoritative convoy snapshot updates, the bars don't double-count.
 var _committed_projection: Dictionary = {
 	"selection_key": "",
-	"selection_tree": "",
-	"mode": "",
-	"quantity": 0,
+	"volume": 0.0,
+	"weight": 0.0
 }
+
+# Guard to prevent selection logic from wiping _last_selected_restore_id during tree clear/rebuild.
+var _ignore_selection_signals: bool = false
 
 # Short-lived guard to reject out-of-order convoy snapshots during refresh bursts.
 const BASELINE_GUARD_MS: int = 1500
@@ -408,6 +410,9 @@ func _is_panel_initialized() -> bool:
 # by external controllers (which Godot's linter does not treat as "usage").
 func _get_last_selected_item_id() -> Variant:
 	return _last_selected_item_id
+
+func _get_last_selected_restore_id() -> Variant:
+	return _last_selected_restore_id
 
 func _get_last_selected_ref() -> Variant:
 	return _last_selected_ref
@@ -1205,6 +1210,7 @@ func _populate_tree_from_agg(tree: Tree, agg: Dictionary) -> void:
 
 # --- Data Initialization ---
 func initialize(p_vendor_data, p_convoy_data, p_current_settlement_data, p_all_settlement_data_global) -> void:
+	print("[DIAGNOSTIC] VendorTradePanel initialize called for: ", self.name)
 	self.vendor_data = p_vendor_data
 	self.convoy_data = p_convoy_data
 	self.current_settlement_data = p_current_settlement_data
@@ -1252,9 +1258,11 @@ func refresh_data(p_vendor_data, p_convoy_data, p_current_settlement_data, p_all
 	_try_apply_pending_focus_intent()
 
 func _populate_vendor_list() -> void:
+	_ignore_selection_signals = true
 	vendor_item_tree.clear()
 	if not vendor_data:
 		vendor_items = {}
+		_ignore_selection_signals = false
 		return
 	var vd_for_agg := _vendor_data_with_price_fallback(vendor_data)
 	var buckets := VendorCargoAggregatorScript.build_vendor_buckets(vd_for_agg, perf_log_enabled, Callable(self, "_get_vendor_name_for_recipient"))
@@ -1266,6 +1274,7 @@ func _populate_vendor_list() -> void:
 	_populate_category(vendor_item_tree, root, "Parts", buckets.get("parts", {}))
 	_populate_category(vendor_item_tree, root, "Other", buckets.get("other", {}))
 	_populate_category(vendor_item_tree, root, "Resources", buckets.get("resources", {}))
+	_ignore_selection_signals = false
 
 	if has_delivery_cargo and is_instance_valid(_api):
 		var mission_bucket: Dictionary = buckets.get("missions", {})
@@ -1345,9 +1354,11 @@ func _try_apply_pending_focus_intent() -> bool:
 	return ok
 
 func _populate_convoy_list() -> void:
+	_ignore_selection_signals = true
 	convoy_item_tree.clear()
 	if not (convoy_data is Dictionary) or convoy_data.is_empty():
 		convoy_items = {}
+		_ignore_selection_signals = false
 		return
 	var allow_vehicle_sell := _should_show_vehicle_sell_category()
 	# Always use price fallback for aggregation to ensure consistent grouping (e.g. water/food).
@@ -1393,6 +1404,7 @@ func _populate_convoy_list() -> void:
 		_populate_category(convoy_item_tree, root, "Parts", buckets.get("parts", {}))
 	_populate_category(convoy_item_tree, root, "Other", buckets.get("other", {}))
 	_populate_category(convoy_item_tree, root, "Resources", buckets.get("resources", {}))
+	_ignore_selection_signals = false
 
 	# Show sorting if either list has delivery cargo, according to Active Tab
 	if is_instance_valid(cargo_sort_button):
@@ -1462,6 +1474,8 @@ func _on_tab_changed(tab_index: int) -> void:
 		_populate_convoy_list()
 
 func _on_vendor_item_selected() -> void:
+	if _ignore_selection_signals:
+		return
 	var tree_item = vendor_item_tree.get_selected()
 	# --- START TUTORIAL DEBUG LOG ---
 	var item_text = tree_item.get_text(0) if is_instance_valid(tree_item) else "<none>"
@@ -1471,16 +1485,17 @@ func _on_vendor_item_selected() -> void:
 	_last_selected_tree = "vendor"
 	_last_selection_change_ms = Time.get_ticks_msec()
 	var item = tree_item.get_metadata(0) if tree_item and tree_item.get_metadata(0) != null else null
-	# Defer handling to the next idle frame. This is critical to prevent a race condition
-	# where the panel resizes in the same frame as the input, causing the Tree to lose focus and deselect the item.
+	# Defer handling to the next idle frame.
 	call_deferred("_handle_new_item_selection", item)
 
 func _on_convoy_item_selected() -> void:
+	if _ignore_selection_signals:
+		return
 	var tree_item = convoy_item_tree.get_selected()
 	_last_selected_tree = "convoy"
 	_last_selection_change_ms = Time.get_ticks_msec()
 	var item = tree_item.get_metadata(0) if tree_item and tree_item.get_metadata(0) != null else null
-	# Defer handling to prevent UI race conditions, same as for the vendor tree.
+	# Defer handling to prevent UI race conditions.
 	call_deferred("_handle_new_item_selection", item)
 
 func _populate_category(target_tree: Tree, root_item: TreeItem, category_name: String, agg_dict: Dictionary) -> void:
@@ -1516,6 +1531,8 @@ func _tree_column_count(tree: Tree) -> int:
 	return 1
 
 func _handle_new_item_selection(p_selected_item) -> void:
+	if not is_inside_tree():
+		return
 	VendorPanelSelectionController.handle_new_item_selection(self, p_selected_item)
 
 func _on_max_button_pressed() -> void:
@@ -1637,6 +1654,8 @@ func _update_transaction_panel() -> void:
 			action_button.text = "Sell"
 
 func _refresh_capacity_bars(projected_volume_delta: float, projected_weight_delta: float) -> void:
+	if not is_inside_tree():
+		return
 	var dsm = get_node_or_null("/root/DeviceStateManager")
 	if is_instance_valid(dsm) and dsm.get_layout_mode() == 2: # MOBILE_PORTRAIT
 		# Ensure layout settles before rendering highlight overlays
@@ -1890,10 +1909,10 @@ func _log_size_after_update():
 	if perf_log_enabled:
 		print("[VendorPanel][LOG] _update_inspector finished. New panel size: %s" % str(size))
 
-func _restore_selection(tree: Tree, item_id) -> bool:
+func _restore_selection(tree: Tree, item_id, clear_on_fail: bool = true) -> bool:
 	var on_select := Callable(self, "_handle_new_item_selection")
 	var match_fn := Callable(self, "_matches_restore_key")
-	return VendorSelectionManager.restore_selection(tree, item_id, on_select, match_fn)
+	return VendorSelectionManager.restore_selection(tree, item_id, on_select, match_fn, clear_on_fail)
 
 # Helper function to match by special restore keys
 func _matches_restore_key(agg_data: Dictionary, key: String) -> bool:
@@ -1996,3 +2015,39 @@ func _update_cargo_sort_button_text() -> void:
 		cargo_sort_button.text = "Sort: " + sort_names[_cargo_sort_metric] + " ▼"
 	else:
 		cargo_sort_button.text = "Sort ▼"
+
+func get_ui_state() -> Dictionary:
+	var state = {}
+	state["last_selected_tree"] = _last_selected_tree
+	state["last_selected_restore_id"] = _last_selected_restore_id
+	if is_instance_valid(trade_mode_tab_container):
+		state["current_mode_tab"] = trade_mode_tab_container.current_tab
+	print("[DIAGNOSTIC] VendorTradePanel get_ui_state for ", self.name, " returns: ", state)
+	return state
+
+func apply_ui_state(state) -> void:
+	print("[DIAGNOSTIC] VendorTradePanel apply_ui_state called for vendor: ", self.name, " State: ", state)
+	if perf_log_enabled:
+		print("[VendorPanel] apply_ui_state: ", state)
+	if state.has("last_selected_tree"):
+		_last_selected_tree = state["last_selected_tree"]
+	if state.has("last_selected_restore_id"):
+		_last_selected_restore_id = state["last_selected_restore_id"]
+		print("[DIAGNOSTIC] VendorTradePanel _last_selected_restore_id SET to: ", _last_selected_restore_id)
+		
+	if state.has("current_mode_tab") and is_instance_valid(trade_mode_tab_container):
+		var target_tab = state["current_mode_tab"]
+		if target_tab >= 0 and target_tab < trade_mode_tab_container.get_child_count():
+			trade_mode_tab_container.current_tab = target_tab
+			_on_tab_changed(target_tab)
+			
+	# Trigger immediate restoration if data is already present
+	# Do not wipe the restore ID on fail here (pass false), as the full data might still be loading.
+	if _last_selected_restore_id != "":
+		print("[DIAGNOSTIC] VendorTradePanel Attempting immediate restore of ID: ", _last_selected_restore_id, " in tree: ", _last_selected_tree)
+		var success := false
+		if _last_selected_tree == "vendor" and is_instance_valid(vendor_item_tree):
+			success = _restore_selection(vendor_item_tree, _last_selected_restore_id, false)
+		elif _last_selected_tree == "convoy" and is_instance_valid(convoy_item_tree):
+			success = _restore_selection(convoy_item_tree, _last_selected_restore_id, false)
+		print("[DIAGNOSTIC] VendorTradePanel Immediate restore result: ", success)

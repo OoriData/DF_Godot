@@ -1700,3 +1700,27 @@ func _has_journey() -> bool:
 		return false
 	var journey_data = _current_convoy_data.get("journey")
 	return journey_data != null and not journey_data.is_empty()
+
+func get_ui_state() -> Dictionary:
+	var state = {}
+	state["selected_vehicle_id"] = _selected_vehicle_id
+	if is_instance_valid(tab_container):
+		state["current_tab"] = tab_container.current_tab
+	return state
+
+func apply_ui_state(state: Dictionary) -> void:
+	if state.has("selected_vehicle_id"):
+		_selected_vehicle_id = state["selected_vehicle_id"]
+		if is_instance_valid(vehicle_option_button):
+			for idx in range(vehicle_option_button.get_item_count()):
+				var meta = vehicle_option_button.get_item_metadata(idx)
+				if String(meta) == _selected_vehicle_id:
+					vehicle_option_button.select(idx)
+					_on_vehicle_selected(idx)
+					break
+					
+	if state.has("current_tab") and is_instance_valid(tab_container):
+		var target_tab = state["current_tab"]
+		if target_tab >= 0 and target_tab < tab_container.get_child_count() and not tab_container.is_tab_hidden(target_tab):
+			tab_container.current_tab = target_tab
+			_update_custom_tab_buttons(target_tab)

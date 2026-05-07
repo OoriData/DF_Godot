@@ -2967,3 +2967,27 @@ func _on_mechanic_vendor_slot_availability(vehicle_id: String, slot_availability
 				_restyle_swap_buttons_for_slot(s)
 			# Also refresh inventory-based highlights in case this payload pertains to a convoy cargo item
 			_refresh_slot_inventory_availability()
+
+func get_ui_state() -> Dictionary:
+	var state = {}
+	state["selected_vehicle_idx"] = _selected_vehicle_idx
+	state["pending_swaps"] = _pending_swaps.duplicate(true)
+	if is_instance_valid(tab_container):
+		state["current_tab"] = tab_container.current_tab
+	return state
+
+func apply_ui_state(state: Dictionary) -> void:
+	if state.has("pending_swaps"):
+		_pending_swaps = state["pending_swaps"].duplicate(true)
+		
+	if state.has("selected_vehicle_idx"):
+		var idx = state["selected_vehicle_idx"]
+		if is_instance_valid(vehicle_option_button) and idx >= 0 and idx < vehicle_option_button.get_item_count():
+			vehicle_option_button.select(idx)
+			_on_vehicle_selected(idx)
+			
+	if state.has("current_tab") and is_instance_valid(tab_container):
+		var target_tab = state["current_tab"]
+		if target_tab >= 0 and target_tab < tab_container.get_child_count() and not tab_container.is_tab_hidden(target_tab):
+			tab_container.current_tab = target_tab
+			_update_custom_tab_buttons(target_tab)

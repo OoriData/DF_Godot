@@ -20,6 +20,10 @@ var _top_banner_menu_name: String = ""
 ## If true, automatically add a subtle Oori background texture on ready.
 var auto_apply_oori_background: bool = true
 
+## If true, MenuManager will cache this menu node instead of destroying it on navigation.
+## The node will be detached from the tree and re-attached on return, preserving all UI state.
+var persistence_enabled: bool = false
+
 func _ensure_store_subscription() -> void:
 	var store = get_node_or_null("/root/GameStore")
 	if store and store.has_signal("convoys_changed"):
@@ -242,6 +246,23 @@ func reset_view() -> void:
 
 func _has_relevant_changes(old_data: Dictionary, new_data: Dictionary) -> bool:
 	return old_data.hash() != new_data.hash()
+
+## Returns a unique key to identify the state of this menu instance.
+## Defaults to combination of menu_type and convoy_id.
+func get_menu_state_key() -> String:
+	var menu_type = get_meta("menu_type", "default")
+	var key = menu_type
+	if convoy_id != "":
+		key += "_" + convoy_id
+	return key
+
+## Virtual: override in subclasses to return a dictionary of UI state (e.g., scroll position).
+func get_ui_state() -> Dictionary:
+	return {}
+
+## Virtual: override in subclasses to restore UI state from a dictionary.
+func apply_ui_state(_state: Dictionary) -> void:
+	pass
 
 func style_back_button(btn: Button) -> void:
 	if not is_instance_valid(btn):

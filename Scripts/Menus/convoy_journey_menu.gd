@@ -3,6 +3,9 @@ signal find_route_requested(convoy_data, destination_data)
 signal route_preview_started(route_data)
 signal route_preview_ended
 
+func _init():
+	persistence_enabled = true
+
 var convoy_data_received: Dictionary
 var _route_selection_menu_instance: Control = null
 
@@ -80,6 +83,7 @@ func _log_debug(msg: String, a: Variant = null, b: Variant = null, c: Variant = 
 		_logger.debug(msg, a, b, c)
 
 func _ready():
+	super._ready()
 	# Replace back button with shared navigation bar
 	if is_instance_valid(back_button):
 		setup_convoy_navigation_bar(back_button)
@@ -150,8 +154,10 @@ func _get_settlement_emoji(settlement_data: Dictionary) -> String:
 
 func _notification(what):
 	if what == NOTIFICATION_PREDELETE:
-		# Ensure preview is cleaned up if this menu is closed unexpectedly.
-		emit_signal("route_preview_ended")
+		# We no longer clear the preview line on PREDELETE.
+		# The user wants the planning line to stay visible on the map even if the menu is closed,
+		# unless they explicitly change or cancel the plan.
+		pass
 
 
 func _process(_delta: float):
@@ -2503,3 +2509,25 @@ func _style_top_up_button():
 func _on_store_user_changed(_user: Dictionary) -> void:
 	# Money changes affect top-up affordability/tooltips.
 	_update_top_up_button()
+
+func get_ui_state() -> Dictionary:
+	var state = {}
+	state["is_confirmation_open"] = is_instance_valid(_confirmation_panel) and _confirmation_panel.visible
+	if state["is_confirmation_open"]:
+		state["destination_data"] = _destination_data.duplicate(true)
+		state["current_route_choice_index"] = _current_route_choice_index
+		state["route_choices_cache"] = _route_choices_cache.duplicate(true)
+	return state
+
+func apply_ui_state(state: Dictionary) -> void:
+	if state.has("is_confirmation_open") and state["is_confirmation_open"]:
+		if state.has("destination_data"):
+			_destination_data = state["destination_data"].duplicate(true)
+		if state.has("route_choices_cache"):
+			_route_choices_cache = state["route_choices_cache"].duplicate(true)
+		if state.has("current_route_choice_index"):
+			_current_route_choice_index = state["current_route_choice_index"]
+			
+		# Restore confirmation panel
+		if not _route_choices_cache.is_empty() and _current_route_choice_index >= 0 and _current_route_choice_index < _route_choices_cache.size():
+			call_deferred("_show_confirmation_panel", _route_choices_cache[_current_route_choice_index])
