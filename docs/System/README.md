@@ -6,6 +6,7 @@ Transport & Utilities underpinning services and UI.
   - Role: HTTP transport + request queue; emits data/auth/errors.
   - Public API: auth, user/convoys, map, vendors, mechanics, routing, warehouse.
   - Testing: queue ordering, timeouts, auth using stubbed HTTPRequest.
+  - Identity: See [Identity.md](Identity.md) for auth/linking/merging deep-dive.
 
 - SettingsManager: [Scripts/System/settings_manager.gd](../../Scripts/System/settings_manager.gd)
   - Role: persistent settings; emits `setting_changed(key, value)`; applies display/UI side effects.
@@ -13,6 +14,9 @@ Transport & Utilities underpinning services and UI.
 
 - ErrorTranslator: [Scripts/System/error_translator.gd](../../Scripts/System/error_translator.gd)
   - Role: map raw errors to friendly messages and inline vs blocking.
+
+- TextScale: [Scripts/System/text_scale.gd](../../Scripts/System/text_scale.gd)
+  - Role: ensures minimum font size readability across mobile devices and orientations.
 
 - Tools (binary): [Scripts/System/tools.gd](../../Scripts/System/tools.gd)
   - Role: big-endian deserialization for cargo, vehicles, vendors, settlements, map.

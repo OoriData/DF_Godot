@@ -41,14 +41,28 @@ static func _make_panel(title: String, rows: Array) -> PanelContainer:
 	sb.content_margin_top = 6
 	sb.content_margin_bottom = 6
 	panel.add_theme_stylebox_override("panel", sb)
+	panel.mouse_filter = Control.MOUSE_FILTER_PASS
 
 	var vb := VBoxContainer.new()
+	vb.mouse_filter = Control.MOUSE_FILTER_PASS
 	vb.add_theme_constant_override("separation", 4)
 	panel.add_child(vb)
 
+	var dsm = Engine.get_main_loop().root.get_node_or_null("DeviceStateManager")
+	var hdr_sz := 16
+	var txt_sz := 13
+	if is_instance_valid(dsm):
+		hdr_sz = dsm.get_scaled_base_font_size(16)
+		txt_sz = dsm.get_scaled_base_font_size(13)
+		var mode = dsm.get_layout_mode()
+		if mode == 2: # MOBILE_PORTRAIT
+			hdr_sz = int(hdr_sz * 1.1)
+			txt_sz = int(txt_sz * 1.1)
+
 	var hdr := Label.new()
 	hdr.text = title
-	hdr.add_theme_font_size_override("font_size", 16)
+	hdr.mouse_filter = Control.MOUSE_FILTER_PASS
+	hdr.add_theme_font_size_override("font_size", hdr_sz)
 	hdr.modulate = Color(1.0, 0.85, 0.35, 1.0)
 	vb.add_child(hdr)
 
@@ -59,13 +73,13 @@ static func _make_panel(title: String, rows: Array) -> PanelContainer:
 		line.add_theme_constant_override("separation", 6)
 		var k := Label.new()
 		k.text = str(r.get("k", ""))
-		k.add_theme_font_size_override("font_size", 13)
+		k.add_theme_font_size_override("font_size", txt_sz)
 		k.modulate = Color(0.92, 0.94, 1.0, 0.95)
 		k.size_flags_horizontal = Control.SIZE_FILL
 		k.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 		var v := Label.new()
 		v.text = str(r.get("v", ""))
-		v.add_theme_font_size_override("font_size", 13)
+		v.add_theme_font_size_override("font_size", txt_sz)
 		v.modulate = Color(0.86, 0.92, 1.0, 1)
 		v.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		v.size_flags_vertical = Control.SIZE_SHRINK_CENTER
@@ -75,17 +89,23 @@ static func _make_panel(title: String, rows: Array) -> PanelContainer:
 		vb.add_child(line)
 	return panel
 
-static func rebuild_info_sections(item_info_rich_text: RichTextLabel, item_data_source: Dictionary, selected_item: Variant, current_mode: String, convoy_data: Dictionary, compat_cache: Dictionary) -> void:
+static func rebuild_info_sections(item_info_rich_text: RichTextLabel, item_data_source: Dictionary, selected_item: Variant, current_mode: String, convoy_data: Dictionary, compat_cache: Dictionary, perf_log_enabled: bool = false) -> void:
 	var parent_node: Node = null
 	if is_instance_valid(item_info_rich_text):
 		parent_node = item_info_rich_text.get_parent()
 	if not is_instance_valid(parent_node):
 		return
+	
+	if parent_node is BoxContainer:
+		parent_node.alignment = BoxContainer.ALIGNMENT_BEGIN
+		
 	var container: Node = parent_node.get_node_or_null("InfoSectionsContainer")
 	if container == null:
 		container = VBoxContainer.new()
 		container.name = "InfoSectionsContainer"
+		container.mouse_filter = Control.MOUSE_FILTER_PASS
 		container.add_theme_constant_override("separation", 6)
+		container.alignment = BoxContainer.ALIGNMENT_BEGIN
 		parent_node.add_child(container)
 		var idx: int = parent_node.get_children().find(item_info_rich_text)
 		if idx != -1:
@@ -100,17 +120,16 @@ static func rebuild_info_sections(item_info_rich_text: RichTextLabel, item_data_
 		var fb: Dictionary = panel.get("_feedback_data")
 		var fb_panel: PanelContainer = PanelContainer.new()
 		var fb_sb: StyleBoxFlat = StyleBoxFlat.new()
-		var fb_color: Color = Color(0.15, 0.45, 0.15, 0.8) if fb.get("type") == "success" else Color(0.45, 0.15, 0.15, 0.8)
+		var fb_color: Color = Color(0.15, 0.45, 0.15, 1.0) if fb.get("type") == "success" else Color(0.45, 0.15, 0.15, 1.0)
 		fb_sb.bg_color = fb_color
 		fb_sb.border_color = Color(1, 1, 1, 0.3)
 		fb_sb.border_width_all = 1
 		fb_sb.corner_radius_all = 8
 		fb_sb.content_margin_all = 20
 		fb_panel.add_theme_stylebox_override("panel", fb_sb)
-		fb_panel.size_flags_vertical = Control.SIZE_EXPAND_FILL
+		fb_panel.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
 		
 		var fb_vb: VBoxContainer = VBoxContainer.new()
-		fb_vb.alignment = BoxContainer.ALIGNMENT_CENTER
 		fb_panel.add_child(fb_vb)
 		
 		var fb_hdr: Label = Label.new()
@@ -163,9 +182,43 @@ static func rebuild_info_sections(item_info_rich_text: RichTextLabel, item_data_
 		container.add_child(_make_panel("Summary", rows_summary))
 		return
 
-	if selected_item and (selected_item is Dictionary) and (selected_item as Dictionary).has("mission_vendor_name") and str((selected_item as Dictionary).mission_vendor_name) != "":
-		rows_summary.append({"k": "Destination", "v": str((selected_item as Dictionary).mission_vendor_name)})
+	var dest_name: String = ""
+	if selected_item and (selected_item is Dictionary) and (selected_item as Dictionary).has("mission_vendor_name"):
+		dest_name = str((selected_item as Dictionary).get("mission_vendor_name", "")).strip_edges()
 
+	if perf_log_enabled:
+		print("[VendorInspectorBuilder] Rebuilding Summary. selected_item.mission_vendor_name='", dest_name, "'")
+
+	if dest_name == "" or dest_name == "Unknown Vendor":
+		# Check selected_item itself for destination keys (aggregator may have resolved these)
+		var dest_keys_si := ["mission_vendor_name", "recipient_settlement_name", "destination_settlement_name", "destination_name", "dest_settlement"]
+		if selected_item and (selected_item is Dictionary):
+			for k in dest_keys_si:
+				var v = str((selected_item as Dictionary).get(k, "")).strip_edges()
+				if v != "" and v != "Unknown Vendor":
+					dest_name = v
+					break
+
+	if dest_name == "" or dest_name == "Unknown Vendor":
+		var dest_keys := ["recipient_settlement_name", "destination_settlement_name", "dest_settlement", "destination_name", "recipient_vendor_name", "distributor", "recipient", "mission_vendor_id", "recipient_vendor_id", "destination_vendor_id", "dest_vendor_id"]
+		for k in dest_keys:
+			if item_data_source.has(k) and str(item_data_source.get(k)).strip_edges() != "":
+				var candidate := str(item_data_source.get(k)).strip_edges()
+				# Skip raw UUIDs (zero UUID or any UUID-shaped string with no letters beyond hex)
+				if candidate == "00000000-0000-0000-0000-000000000000":
+					continue
+				# If it looks like a UUID, skip it — it's not a display name
+				if candidate.length() == 36 and candidate.count("-") == 4:
+					continue
+				dest_name = candidate
+				if perf_log_enabled:
+					print("[VendorInspectorBuilder] Found fallback destination in '", k, "': '", dest_name, "'")
+				break
+
+	if dest_name != "" and dest_name != "Unknown Vendor":
+		if perf_log_enabled:
+			print("[VendorInspectorBuilder] Building Destination row with value='", dest_name, "'")
+		rows_summary.append({"k": "Destination", "v": dest_name})
 	if is_vehicle:
 		var stat_map = {
 			"top_speed": "Top Speed",
@@ -327,23 +380,29 @@ static func rebuild_info_sections(item_info_rich_text: RichTextLabel, item_data_
 				unit_volume = float(item_data_source.get("volume", 0.0)) / float(item_data_source.get("quantity", 1.0))
 		if unit_volume > 0.0:
 			rows_unit.append({"k": "Volume", "v": NumberFormat.fmt_float(unit_volume, 2)})
-		var unit_delivery_reward_val = item_data_source.get("unit_delivery_reward")
-		if (unit_delivery_reward_val is float or unit_delivery_reward_val is int) and float(unit_delivery_reward_val) > 0.0:
+		var unit_delivery_reward_val = VendorTradeVM.get_unit_delivery_reward(item_data_source, selected_item)
+		if unit_delivery_reward_val > 0.0:
 			rows_unit.append({"k": "Delivery Reward", "v": "$" + NumberFormat.fmt_float(unit_delivery_reward_val, 2)})
 		if rows_unit.size() > 0:
 			container.add_child(_make_panel("Per Unit", rows_unit))
 
 	var rows_total: Array = []
-	if not is_vehicle and not is_part:
+	if not is_vehicle:
 		var total_quantity = 0
 		if selected_item and (selected_item is Dictionary):
 			total_quantity = (selected_item as Dictionary).get("total_quantity", 0)
 			
-		var q_val = int(panel.get("quantity_spinbox").value) if is_instance_valid(panel) and panel.get("quantity_spinbox") != null else 1
-		var price_pres = VendorTradeVM.build_price_presenter(item_data_source, str(current_mode), q_val, selected_item)
-		var total_price = price_pres.get("total_price", 0.0)
-		rows_total.append({"k": "Total Price", "v": NumberFormat.format_money(total_price)})
+		# Total Order panel shows the price/reward for the ENTIRE stack (total_quantity)
+		# rather than the transient quantity in the spinbox.
+		var q_val_for_total = int(total_quantity) if int(total_quantity) > 0 else 1
+		var price_pres = VendorTradeVM.build_price_presenter(item_data_source, str(current_mode), q_val_for_total, selected_item)
+		var full_stack_price = price_pres.get("total_price", 0.0)
+		rows_total.append({"k": "Total Price", "v": NumberFormat.format_money(full_stack_price)})
 		
+		var full_stack_reward = price_pres.get("total_delivery_reward", 0.0)
+		if full_stack_reward > 0.0:
+			rows_total.append({"k": "Total Reward", "v": NumberFormat.format_money(full_stack_reward)})
+
 		if int(total_quantity) > 0:
 			rows_total.append({"k": "Quantity", "v": NumberFormat.format_number(int(total_quantity))})
 		var total_weight = 0.0

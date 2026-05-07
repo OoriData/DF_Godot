@@ -44,7 +44,7 @@ func _on_opened() -> void:
 				persona = _steam_mgr.get_steam_username()
 			var hint := "Detected Steam ID: %s" % sid
 			if persona != "":
-				hint += "  (%s)" % persona
+				hint = "Detected Steam Account: '%s'" % persona
 			_status_label.add_theme_color_override("font_color", _STEAM_ACCENT)
 			_status_label.text = hint
 	_link_button.disabled = false
@@ -74,9 +74,13 @@ func _build_ui() -> void:
 	panel_style.corner_radius_bottom_right = 10
 	panel.add_theme_stylebox_override("panel", panel_style)
 	
-	panel.custom_minimum_size = Vector2(380, 180)
-	panel.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
 	_overlay.add_child(panel)
+	panel.custom_minimum_size = Vector2(380, 180)
+	panel.layout_mode = 1 # Anchors
+	panel.anchors_preset = Control.PRESET_CENTER
+	panel.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	panel.grow_vertical = Control.GROW_DIRECTION_BOTH
+	panel.set_anchors_and_offsets_preset(Control.PRESET_CENTER, Control.PRESET_MODE_MINSIZE)
 
 	var margin := MarginContainer.new()
 	margin.add_theme_constant_override("margin_left",   16)

@@ -5,6 +5,13 @@ signal open_warehouse_menu_requested(convoy_data)
 # Preload the new panel scene for instancing.
 const VendorTradePanel = preload("res://Scenes/VendorTradePanel.tscn")
 
+# Oori Theme Palette
+const OORI_GREY = Color("#393d47")
+const OORI_DARK_GREY = Color("#25282a")
+const OORI_WHITE = Color("#dbe2e9")
+const OORI_YELLOW = Color("#f3d54e")
+const OORI_RED = Color("#8a2b2b")
+
 # Node references using @onready. Paths are relative to the node this script is attached to.
 # %NodeName syntax is used for nodes with "unique_name_in_owner" enabled.
 # $Path/To/Node is used for direct or indirect children without unique names.
@@ -27,6 +34,7 @@ var _all_settlement_data: Array # Cached settlements snapshot
 var _pending_focus_intent: Dictionary = {}
 var _pending_focus_retry_attempts_left: int = 0
 var _pending_focus_retry_in_flight: bool = false
+var _pending_ui_state: Dictionary = {}
 
 @onready var _store: Node = get_node_or_null("/root/GameStore")
 @onready var _user_service: Node = get_node_or_null("/root/UserService")
@@ -53,16 +61,16 @@ func initialize_with_data(data_or_id: Variant, extra_arg: Variant = null) -> voi
 		var d: Dictionary = data_or_id as Dictionary
 		convoy_id = String(d.get("convoy_id", d.get("id", "")))
 		_convoy_data = d
-		# Set the main title to the convoy's name, fallback to 'name' if needed
-		title_label.text = String(d.get("convoy_name", d.get("name", "Settlement Interactions")))
 	else:
 		convoy_id = String(data_or_id)
 		_convoy_data = {}
 	# Delegate initial UI to MenuBase; it will apply store snapshot when possible
 	super.initialize_with_data(data_or_id, extra_arg)
-	# Defer the display logic to ensure readiness
-	print("ConvoySettlementMenu: initialize_with_data - Deferring _display_settlement_info.")
-	call_deferred("_display_settlement_info")
+	
+	# Execute display logic if ready; otherwise it will be handled in _ready()
+	if is_node_ready():
+		_display_settlement_info()
+	
 	# Best-effort: apply focus after the UI is built.
 	if not _pending_focus_intent.is_empty():
 		call_deferred("_apply_pending_focus_intent")
@@ -84,26 +92,22 @@ func _schedule_pending_focus_retry(delay_seconds: float) -> void:
 
 
 func _ready():
+	persistence_enabled = true
+	super._ready()
 	print("ConvoySettlementMenu: _ready() started processing.")
 	# It's crucial to connect signals here for the UI to be interactive.
 	if is_instance_valid(back_button):
-		back_button.pressed.connect(_on_back_button_pressed)
+		setup_convoy_navigation_bar(back_button)
 	else:
 		printerr("ConvoySettlementMenu: BackButton node not found.")
 	
-	# Connect the title label (now a Button) to go back to the convoy menu
-	if is_instance_valid(title_label):
-		if not title_label.is_connected("pressed", Callable(self, "_on_title_label_pressed")):
-			title_label.pressed.connect(_on_title_label_pressed)
-
 	# Connect top up button
 	if is_instance_valid(top_up_button):
 		if not top_up_button.is_connected("pressed", Callable(self, "_on_top_up_button_pressed")):
 			top_up_button.pressed.connect(_on_top_up_button_pressed)
 		_update_top_up_button()
-		_style_top_up_button()
+		_style_top_bar_button(top_up_button)
 
-	# Add a Warehouse button to the top bar (only once)
 	if is_instance_valid(top_bar_hbox):
 		var existing_btn: Button = top_bar_hbox.get_node_or_null("WarehouseButton")
 		if existing_btn == null:
@@ -111,7 +115,7 @@ func _ready():
 			warehouse_btn.name = "WarehouseButton"
 			warehouse_btn.text = "Warehouse"
 			warehouse_btn.tooltip_text = "View or buy a Warehouse in this settlement"
-			warehouse_btn.size_flags_horizontal = Control.SIZE_SHRINK_END
+			warehouse_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 			top_bar_hbox.add_child(warehouse_btn)
 
 			warehouse_btn.pressed.connect(_on_warehouse_button_pressed)
@@ -120,6 +124,15 @@ func _ready():
 		warehouse_button = top_bar_hbox.get_node_or_null("WarehouseButton")
 		if is_instance_valid(warehouse_button):
 			warehouse_button.disabled = false
+			_style_top_bar_button(warehouse_button)
+
+	# Setup standardized top banner
+	if is_instance_valid(title_label):
+		setup_convoy_top_banner(title_label, "Settlement", true, false)
+
+	# Apply styling to title label as well
+	if is_instance_valid(title_label):
+		_style_top_bar_button(title_label)
 
 	# Subscribe to canonical snapshots (store 'convoys_changed' handled by MenuBase)
 	if is_instance_valid(_store):
@@ -131,6 +144,34 @@ func _ready():
 	# Also listen directly to APICalls transaction outcomes so we can trigger timely refreshes
 	# Phase 4: UI no longer listens to APICalls transaction signals. Authoritative
 	# refreshes are driven via services + GameStore/SignalHub events.
+
+	if is_instance_valid(vendor_tab_container):
+		if not vendor_tab_container.tab_changed.is_connected(_on_vendor_tab_changed):
+			vendor_tab_container.tab_changed.connect(_on_vendor_tab_changed)
+
+	var dsm = get_node_or_null("/root/DeviceStateManager")
+	if is_instance_valid(dsm):
+		if not dsm.is_connected("layout_mode_changed", _on_layout_mode_changed):
+			dsm.layout_mode_changed.connect(_on_layout_mode_changed)
+
+	# Build initial UI now that @onready vars are set.
+	_display_settlement_info()
+
+	_style_vendor_tabs()
+
+func _on_layout_mode_changed(_mode: int, _size: Vector2, _is_mobile_val: bool) -> void:
+	if is_instance_valid(top_up_button):
+		_style_top_bar_button(top_up_button)
+	if is_instance_valid(title_label):
+		_style_top_bar_button(title_label)
+	if is_instance_valid(warehouse_button):
+		_style_top_bar_button(warehouse_button)
+	
+	_style_vendor_tabs()
+	
+	# Regenerate UI completely on layout change to ensure correct bounds.
+	call_deferred("_display_settlement_info")
+
 
 
 func _display_error(message: String):
@@ -162,6 +203,7 @@ func _display_error(message: String):
 
 
 func _display_settlement_info():
+	print("[DIAGNOSTIC] ConvoySettlementMenu _display_settlement_info called.")
 	if not is_instance_valid(_store) or not _store.has_method("get_tiles"):
 		_display_error("GameStore not available. Cannot load settlement data.")
 		return
@@ -222,6 +264,8 @@ func _display_settlement_info():
 			# print("ConvoySettlementMenu: Found ", _settlement_data.vendors.size(), " vendors in settlement.") # Debug line
 
 			for vendor in _settlement_data.vendors:
+				var vid = vendor.get("vendor_id", "NO_ID")
+				print("[DIAGNOSTIC] ConvoySettlementMenu building vendor tab for: ", vid)
 				_create_vendor_tab(vendor)
 
 			# Tutorial Helper: If the tutorial is on Level 1, proactively select the Dealership tab
@@ -240,20 +284,24 @@ func _display_settlement_info():
 					if vendor_tab_container.get_tab_title(i) == previous_tab_title:
 						vendor_tab_container.current_tab = i
 						break
+
+			_style_vendor_tabs()
 			
 			# After creating vendor tabs compute top up plan
 			_update_top_up_button()
 
 	else:
 		# No settlement on this tile (likely in transit). Show convoy name and disable settlement-only controls.
-		if is_instance_valid(title_label):
-			var convoy_name: String = String(_convoy_data.get("convoy_name", title_label.text))
-			if not convoy_name.is_empty():
-				title_label.text = convoy_name
 		if is_instance_valid(warehouse_button):
 			warehouse_button.disabled = true
 			warehouse_button.tooltip_text = "Warehouse unavailable while in transit."
 		_display_error("No settlement found at convoy coordinates: (%d, %d)" % [current_convoy_x, current_convoy_y])
+
+	if not _pending_ui_state.is_empty():
+		var cached = _pending_ui_state
+		_pending_ui_state = {}
+		print("[DIAGNOSTIC] ConvoySettlementMenu: Applying cached state after tabs built.")
+		apply_ui_state(cached)
 
 
 func _on_store_convoys_changed(all_convoys_data: Array) -> void:
@@ -288,6 +336,7 @@ func _create_vendor_tab(vendor_data: Dictionary):
 	if vendor_id_str != "":
 		vendor_panel_instance.set_meta("vendor_id", vendor_id_str)
 	vendor_tab_container.set_tab_title(vendor_tab_container.get_tab_count() - 1, short_vendor_name)
+	print("[DIAGNOSTIC] ConvoySettlementMenu _create_vendor_tab created tab with title: '", short_vendor_name, "'")
 	# Pass deep copies to avoid reference bugs!
 	vendor_panel_instance.initialize(
 		vendor_data.duplicate(true),
@@ -378,8 +427,8 @@ func _update_ui(convoy: Dictionary) -> void:
 	var old_data = _convoy_data
 	_convoy_data = convoy.duplicate(true)
 	
-	if is_instance_valid(title_label):
-		title_label.text = String(_convoy_data.get("convoy_name", title_label.text))
+
+
 
 	var old_x = int(round(float(old_data.get("x", -9999))))
 	var old_y = int(round(float(old_data.get("y", -9999))))
@@ -476,10 +525,6 @@ func _add_detail_row(parent: Container, label_text: String, value_text: String, 
 	hbox.add_child(value_node)
 	parent.add_child(hbox)
 
-func _on_back_button_pressed():
-	# MenuManager is connected to this signal and will handle closing the menu.
-	emit_signal("back_requested")
-
 func _on_title_label_pressed():
 	# When the title (which is now a button) is pressed, go back to the convoy menu.
 	print("ConvoySettlementMenu: Title label pressed. Emitting 'back_requested' signal.")
@@ -550,15 +595,29 @@ func _post_txn_update_ui():
 func _refresh_all_vendor_panels():
 	# Only call refresh_data, never initialize, and always pass deep copies.
 	# IMPORTANT: Skip refreshing the currently active vendor tab; the active
-	# panel already performs its own authoritative refresh
-	# vendor_panel_data_ready. Double-refreshing it causes selection flicker
-	# during transactions.
+	# panel already performs its own authoritative refresh.
+	# Inactive tabs are now lazily loaded using metadata tracking to prevent a "refresh storm".
+	if not is_instance_valid(vendor_tab_container):
+		return
+		
 	var active_idx: int = vendor_tab_container.current_tab
 	for i in range(vendor_tab_container.get_tab_count()):
 		if i == active_idx:
 			continue
 		var tab_content = vendor_tab_container.get_tab_control(i)
-		if tab_content is Control and tab_content.has_method("refresh_data"):
+		if is_instance_valid(tab_content):
+			tab_content.set_meta("needs_refresh", true)
+			
+	# Also refresh top up button when vendor data may have changed
+	_update_top_up_button()
+
+func _on_vendor_tab_changed(tab_idx: int) -> void:
+	if not is_instance_valid(vendor_tab_container):
+		return
+	var tab_content = vendor_tab_container.get_tab_control(tab_idx)
+	if is_instance_valid(tab_content) and tab_content.has_meta("needs_refresh") and tab_content.get_meta("needs_refresh"):
+		tab_content.set_meta("needs_refresh", false)
+		if tab_content.has_method("refresh_data"):
 			var full_vendor_name = tab_content.name
 			var vendor_data = _find_vendor_by_name(full_vendor_name)
 			if vendor_data:
@@ -568,9 +627,7 @@ func _refresh_all_vendor_panels():
 					_settlement_data.duplicate(true),
 					_all_settlement_data.duplicate(true)
 				)
-	# Also refresh top up button when vendor data may have changed
-	_update_top_up_button()
-
+	
 func _find_vendor_by_name(vendor_name: String) -> Dictionary:
 	if _settlement_data and _settlement_data.has("vendors"):
 		for vendor in _settlement_data.vendors:
@@ -940,6 +997,17 @@ func _on_top_up_button_pressed():
 		top_up_button.disabled = true
 		top_up_button.text = "Top Up (Processing...)"
 
+	# Display a summary banner on the active vendor panel
+	var res_summary_parts: Array = []
+	for res_type in _top_up_plan.get("resources", {}):
+		var r_data: Dictionary = _top_up_plan.resources[res_type]
+		res_summary_parts.append("%d %s" % [int(r_data.total_quantity), res_type.capitalize()])
+	
+	var summary_msg := "Successfully Topped Up: %s for %s" % [", ".join(res_summary_parts), NumberFormat.format_money(_top_up_plan.get("total_cost", 0.0))]
+	var active_panel = get_active_vendor_panel_node()
+	if is_instance_valid(active_panel) and active_panel.has_method("show_transaction_feedback"):
+		active_panel.show_transaction_feedback(summary_msg, "success")
+
 
 func _on_store_user_changed(_user: Dictionary) -> void:
 	# Money changes affect top-up affordability/tooltips.
@@ -976,12 +1044,12 @@ func _get_settlement_name_from_convoy_coords() -> String:
 					return String(s.get("name", ""))
 	return ""
 
-func _style_top_up_button():
-	if not is_instance_valid(top_up_button):
+func _style_top_bar_button(button: Button) -> void:
+	if not is_instance_valid(button):
 		return
-	# --- Button StyleBoxes ---
+		
 	var normal = StyleBoxFlat.new()
-	normal.bg_color = Color(0.15, 0.15, 0.18, 1.0)
+	normal.bg_color = OORI_DARK_GREY.lerp(OORI_GREY, 0.4)
 	normal.corner_radius_top_left = 6
 	normal.corner_radius_top_right = 6
 	normal.corner_radius_bottom_left = 6
@@ -990,62 +1058,162 @@ func _style_top_up_button():
 	normal.border_width_right = 2
 	normal.border_width_top = 2
 	normal.border_width_bottom = 2
-	normal.border_color = Color(0.40, 0.60, 0.90)
+	normal.border_color = OORI_GREY.lerp(Color.BLACK, 0.2)
 	normal.shadow_color = Color(0,0,0,0.6)
 	normal.shadow_size = 3
 
 	var hover = normal.duplicate()
-	hover.bg_color = Color(0.22, 0.22, 0.28, 1.0)
-	hover.border_color = Color(0.55, 0.75, 1.0)
+	hover.bg_color = OORI_GREY
+	hover.border_color = OORI_WHITE.lerp(OORI_GREY, 0.5)
 
 	var pressed = normal.duplicate()
-	pressed.bg_color = Color(0.10, 0.10, 0.14, 1.0)
-	pressed.border_color = Color(0.30, 0.50, 0.80)
+	pressed.bg_color = OORI_DARK_GREY
+	pressed.border_color = OORI_YELLOW
 
 	var disabled = normal.duplicate()
-	disabled.bg_color = Color(0.08, 0.08, 0.09, 1.0)
-	disabled.border_color = Color(0.20, 0.20, 0.20)
+	disabled.bg_color = OORI_DARK_GREY.lerp(Color.BLACK, 0.4)
+	disabled.border_color = OORI_DARK_GREY.lerp(Color.BLACK, 0.2)
 	disabled.shadow_size = 0
 
-	top_up_button.add_theme_stylebox_override("normal", normal)
-	top_up_button.add_theme_stylebox_override("hover", hover)
-	top_up_button.add_theme_stylebox_override("pressed", pressed)
-	top_up_button.add_theme_stylebox_override("disabled", disabled)
+	button.add_theme_stylebox_override("normal", normal)
+	button.add_theme_stylebox_override("hover", hover)
+	button.add_theme_stylebox_override("pressed", pressed)
+	button.add_theme_stylebox_override("disabled", disabled)
 
 	# --- Tooltip Style ---
 	var tooltip_panel = StyleBoxFlat.new()
-	# Make fully opaque for readability (user requested less transparency)
-	tooltip_panel.bg_color = Color(0.05, 0.05, 0.06, 1.0)
+	tooltip_panel.bg_color = OORI_DARK_GREY
 	tooltip_panel.corner_radius_top_left = 4
 	tooltip_panel.corner_radius_top_right = 4
 	tooltip_panel.corner_radius_bottom_left = 4
 	tooltip_panel.corner_radius_bottom_right = 4
-	tooltip_panel.border_color = Color(0.60, 0.60, 0.70)
+	tooltip_panel.border_color = OORI_GREY
 	tooltip_panel.border_width_left = 1
 	tooltip_panel.border_width_right = 1
 	tooltip_panel.border_width_top = 1
 	tooltip_panel.border_width_bottom = 1
 	tooltip_panel.shadow_color = Color(0,0,0,0.7)
 	tooltip_panel.shadow_size = 4
-	# Extra padding inside tooltip for clarity
 	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
 		tooltip_panel.set_content_margin(side, 6)
-	top_up_button.add_theme_stylebox_override("tooltip_panel", tooltip_panel)
+	button.add_theme_stylebox_override("tooltip_panel", tooltip_panel)
 
 	# --- Font & Colors ---
-	top_up_button.add_theme_color_override("font_color", Color(0.92, 0.96, 1.0))
-	top_up_button.add_theme_color_override("font_color_hover", Color(1.0, 1.0, 1.0))
-	top_up_button.add_theme_color_override("font_color_pressed", Color(0.85, 0.90, 1.0))
-	top_up_button.add_theme_color_override("font_color_disabled", Color(0.55, 0.55, 0.60))
-	# Slightly larger font to pop
-	top_up_button.add_theme_font_size_override("font_size", 18)
+	button.add_theme_color_override("font_color", OORI_WHITE)
+	button.add_theme_color_override("font_color_hover", Color(1.0, 1.0, 1.0))
+	button.add_theme_color_override("font_color_pressed", OORI_WHITE.lerp(Color.WHITE, 0.5))
+	button.add_theme_color_override("font_color_disabled", OORI_GREY)
+	
+	var dsm = get_node_or_null("/root/DeviceStateManager")
+	var fs = 18
+	if is_instance_valid(dsm):
+		fs = dsm.get_scaled_base_font_size(18)
+	button.add_theme_font_size_override("font_size", fs)
 
-	# Optional: Increase content margin for a beefier look
 	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
 		normal.set_content_margin(side, normal.get_content_margin(side) + 2)
 		hover.set_content_margin(side, hover.get_content_margin(side) + 2)
 		pressed.set_content_margin(side, pressed.get_content_margin(side) + 2)
 		disabled.set_content_margin(side, disabled.get_content_margin(side) + 2)
+
+func _style_back_button(button: Button) -> void:
+	if not is_instance_valid(button):
+		return
+		
+	var dsm = get_node_or_null("/root/DeviceStateManager")
+	var is_portrait = false
+	var is_mobile = false
+	var fs = 18
+	
+	if is_instance_valid(dsm):
+		is_portrait = dsm.get_is_portrait()
+		is_mobile = dsm.is_mobile
+		fs = dsm.get_scaled_base_font_size(24 if is_portrait else 20)
+	else:
+		var win_size = get_viewport_rect().size if is_inside_tree() else Vector2(0, 0)
+		is_portrait = win_size.y > win_size.x
+		is_mobile = is_portrait
+
+	# Chunky height for touch targets
+	button.custom_minimum_size.y = 100 if is_portrait else (72 if is_mobile else 54)
+	button.add_theme_font_size_override("font_size", fs)
+
+	var normal = StyleBoxFlat.new()
+	normal.bg_color = OORI_DARK_GREY
+	normal.corner_radius_top_left = 8
+	normal.corner_radius_top_right = 8
+	normal.corner_radius_bottom_left = 8
+	normal.corner_radius_bottom_right = 8
+	normal.border_width_left = 2
+	normal.border_width_right = 2
+	normal.border_width_top = 2
+	normal.border_width_bottom = 2
+	normal.border_color = OORI_GREY
+	normal.shadow_color = Color(0, 0, 0, 0.5)
+	normal.shadow_size = 4
+	
+	var hover = normal.duplicate()
+	hover.bg_color = OORI_GREY
+	hover.border_color = OORI_WHITE.lerp(OORI_GREY, 0.5)
+	
+	var pressed = normal.duplicate()
+	pressed.bg_color = OORI_DARK_GREY.lerp(Color.BLACK, 0.2)
+	pressed.border_color = OORI_YELLOW
+	
+	button.add_theme_stylebox_override("normal", normal)
+	button.add_theme_stylebox_override("hover", hover)
+	button.add_theme_stylebox_override("pressed", pressed)
+	
+	button.add_theme_color_override("font_color", OORI_WHITE)
+	button.add_theme_color_override("font_color_hover", Color(1.0, 1.0, 1.0))
+	button.add_theme_color_override("font_color_pressed", OORI_YELLOW)
+
+func _style_vendor_tabs() -> void:
+	if not is_instance_valid(vendor_tab_container):
+		return
+	var tab_bar = get_vendor_tab_bar()
+	if not (tab_bar is TabBar):
+		return
+		
+	var dsm = get_node_or_null("/root/DeviceStateManager")
+	var is_portrait = false
+	var fs = 18
+	
+	if is_instance_valid(dsm):
+		is_portrait = dsm.get_is_portrait()
+		fs = dsm.get_scaled_base_font_size(18)
+		
+	# Focus on horizontal expansion for mobile
+	if is_portrait:
+		tab_bar.tab_alignment = TabBar.ALIGNMENT_CENTER
+		tab_bar.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	else:
+		tab_bar.tab_alignment = TabBar.ALIGNMENT_LEFT
+		tab_bar.size_flags_horizontal = Control.SIZE_FILL
+		
+	tab_bar.add_theme_font_size_override("font_size", fs)
+	
+	# Create style overrides for tabs
+	var bg_normal = StyleBoxFlat.new()
+	bg_normal.bg_color = OORI_DARK_GREY.lerp(Color.BLACK, 0.2)
+	var bg_selected = StyleBoxFlat.new()
+	bg_selected.bg_color = OORI_GREY
+	bg_selected.border_color = OORI_YELLOW
+	bg_selected.border_width_bottom = 4
+	
+	# Apply common settings
+	for style in [bg_normal, bg_selected]:
+		style.corner_radius_top_left = 6
+		style.corner_radius_top_right = 6
+		# Increase horizontal margins significantly to make tabs wider, focusing on width over height
+		style.content_margin_left = 44 if is_portrait else 16
+		style.content_margin_right = 44 if is_portrait else 16
+		# Modestly increase vertical padding
+		style.content_margin_top = 16 if is_portrait else 8
+		style.content_margin_bottom = 16 if is_portrait else 8
+
+	tab_bar.add_theme_stylebox_override("tab_unselected", bg_normal)
+	tab_bar.add_theme_stylebox_override("tab_selected", bg_selected)
 
 
 # --- Custom Tooltip Override ---
@@ -1099,3 +1267,53 @@ func get_active_vendor_panel_node() -> Node:
 	if not is_instance_valid(vendor_tab_container):
 		return null
 	return vendor_tab_container.get_tab_control(vendor_tab_container.current_tab)
+
+func get_ui_state() -> Dictionary:
+	var state = {}
+	if is_instance_valid(vendor_tab_container) and vendor_tab_container.get_tab_count() > 0:
+		var curr_idx = vendor_tab_container.current_tab
+		if curr_idx >= 0:
+			state["active_vendor_tab_title"] = vendor_tab_container.get_tab_title(curr_idx)
+			
+		var vendor_states = {}
+		for i in range(vendor_tab_container.get_tab_count()):
+			var tab_content = vendor_tab_container.get_tab_control(i)
+			if is_instance_valid(tab_content) and tab_content.has_method("get_ui_state"):
+				var v_title = vendor_tab_container.get_tab_title(i)
+				var v_state = tab_content.get_ui_state()
+				vendor_states[v_title] = v_state
+				print("[DIAGNOSTIC] ConvoySettlementMenu saved state for tab: '", v_title, "' state: ", v_state)
+		state["vendor_panel_states"] = vendor_states
+	print("[DIAGNOSTIC] ConvoySettlementMenu total get_ui_state: ", state)
+	return state
+
+func apply_ui_state(state) -> void:
+	print("[DIAGNOSTIC] ConvoySettlementMenu apply_ui_state called with: ", state)
+	if not is_instance_valid(vendor_tab_container):
+		print("[DIAGNOSTIC] ConvoySettlementMenu: vendor_tab_container invalid!")
+		return
+	if vendor_tab_container.get_tab_count() == 0:
+		print("[DIAGNOSTIC] ConvoySettlementMenu: Tabs not built yet. Caching state.")
+		_pending_ui_state = state
+		return
+		
+	if state.has("active_vendor_tab_title"):
+		var target_title = state["active_vendor_tab_title"]
+		for i in range(vendor_tab_container.get_tab_count()):
+			if vendor_tab_container.get_tab_title(i) == target_title:
+				vendor_tab_container.current_tab = i
+				_on_vendor_tab_changed(i)
+				break
+				
+	if state.has("vendor_panel_states"):
+		var vendor_states = state["vendor_panel_states"]
+		for i in range(vendor_tab_container.get_tab_count()):
+			var v_title = vendor_tab_container.get_tab_title(i)
+			if vendor_states.has(v_title):
+				print("[DIAGNOSTIC] ConvoySettlementMenu passing state to tab: '", v_title, "'")
+				var tab_content = vendor_tab_container.get_tab_control(i)
+				if is_instance_valid(tab_content) and tab_content.has_method("apply_ui_state"):
+					print("[DIAGNOSTIC] ConvoySettlementMenu: INVOKING apply_ui_state() synchronously on tab: ", v_title)
+					tab_content.apply_ui_state(vendor_states[v_title])
+			else:
+				print("[DIAGNOSTIC] ConvoySettlementMenu NO state found for tab: '", v_title, "'")

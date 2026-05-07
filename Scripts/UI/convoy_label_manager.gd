@@ -69,14 +69,19 @@ var _pinned_convoy_ids: Array[String] = []
 
 # Pixels on the right side covered by the menu overlay (global/screen space).
 var _menu_occlusion_px_x: float = 0.0
+var _menu_occlusion_px_y: float = 0.0
 var _last_map_screen_rect_for_clamping: Rect2 = Rect2()
 
 
-func set_menu_occlusion_width(px: float) -> void:
-	_menu_occlusion_px_x = maxf(0.0, px)
+func set_menu_occlusion(px_x: float, px_y: float) -> void:
+	_menu_occlusion_px_x = maxf(0.0, px_x)
+	_menu_occlusion_px_y = maxf(0.0, px_y)
 	# Re-clamp currently visible panels immediately so they don't sit under the menu.
 	if _last_map_screen_rect_for_clamping.size != Vector2.ZERO:
 		_reclamp_active_panels(_last_map_screen_rect_for_clamping)
+
+func set_menu_occlusion_width(px: float) -> void:
+	set_menu_occlusion(px, _menu_occlusion_px_y)
 
 
 func _reclamp_active_panels(p_map_screen_rect_for_clamping: Rect2) -> void:
@@ -91,6 +96,8 @@ func _get_effective_clamp_rect_local(p_map_screen_rect_for_clamping: Rect2) -> R
 	var effective_clamp_rect: Rect2 = p_map_screen_rect_for_clamping
 	if _menu_occlusion_px_x > 0.0 and effective_clamp_rect.size.x > 0.0:
 		effective_clamp_rect.size.x = maxf(0.0, effective_clamp_rect.size.x - _menu_occlusion_px_x)
+	if _menu_occlusion_px_y > 0.0 and effective_clamp_rect.size.y > 0.0:
+		effective_clamp_rect.size.y = maxf(0.0, effective_clamp_rect.size.y - _menu_occlusion_px_y)
 	var container_global_transform := _convoy_label_container_ref.get_global_transform_with_canvas()
 	return container_global_transform.affine_inverse() * effective_clamp_rect
 
@@ -275,22 +282,20 @@ func _update_convoy_panel_content(panel: Panel, convoy_data: Dictionary, p_convo
 
 	var current_convoy_id_str = str(convoy_data.get('convoy_id'))
 
-	# Panel appearance (content_scale_factor handles global sizing)
 	var scaled_target_screen_corner_radius = _base_convoy_panel_corner_radius * font_render_scale
-	var node_corner_radius_before_clamp = scaled_target_screen_corner_radius / _current_map_zoom_cache
-	var current_panel_corner_radius: float = clamp(node_corner_radius_before_clamp, _min_node_panel_corner_radius, _max_node_panel_corner_radius)
+	var current_panel_corner_radius: float = scaled_target_screen_corner_radius
 
 	var scaled_target_screen_padding_h = _base_convoy_panel_padding_h * font_render_scale
-	var node_padding_h_before_clamp = scaled_target_screen_padding_h / _current_map_zoom_cache
-	var current_panel_padding_h: float = clamp(node_padding_h_before_clamp, _min_node_panel_padding, _max_node_panel_padding)
+	var current_panel_padding_h: float = scaled_target_screen_padding_h
 
 	var scaled_target_screen_padding_v = _base_convoy_panel_padding_v * font_render_scale
-	var node_padding_v_before_clamp = scaled_target_screen_padding_v / _current_map_zoom_cache
-	var current_panel_padding_v: float = clamp(node_padding_v_before_clamp, _min_node_panel_padding, _max_node_panel_padding)
+	var current_panel_padding_v: float = scaled_target_screen_padding_v
 
 	var scaled_target_screen_border_width = _base_convoy_panel_border_width * font_render_scale
-	var node_border_width_before_clamp = scaled_target_screen_border_width / _current_map_zoom_cache
-	var current_panel_border_width: int = clamp(roundi(node_border_width_before_clamp), _min_node_panel_border_width, _max_node_panel_border_width)
+	var current_panel_border_width: int = roundi(scaled_target_screen_border_width)
+	
+	var zoom_factor = max(0.0001, _current_map_zoom_cache)
+	panel.scale = Vector2(1.0 / zoom_factor, 1.0 / zoom_factor)
 
 	# Label Text Generation
 	var convoy_name: String = convoy_data.get('convoy_name', 'N/A')
@@ -435,14 +440,15 @@ func _position_convoy_panel(panel: Panel, convoy_data: Dictionary, existing_labe
 	# Calculate panel's desired local/world position.
 	# If the right side is occluded by a menu, prefer placing the label on the left
 	# when the right-side position would overlap the occluded region.
-	var panel_desired_local_y: float = convoy_center_local_y - (panel_actual_size.y / 2.0) # Vertically center panel against icon's y
+	var scaled_size = panel_actual_size * panel.scale
+	var panel_desired_local_y: float = convoy_center_local_y - (scaled_size.y / 2.0) # Vertically center panel against icon's y
 	var panel_desired_local_x_right: float = convoy_center_local_x + current_horizontal_offset_world
-	var panel_desired_local_x_left: float = convoy_center_local_x - current_horizontal_offset_world - panel_actual_size.x
+	var panel_desired_local_x_left: float = convoy_center_local_x - current_horizontal_offset_world - scaled_size.x
 	var panel_desired_local_x: float = panel_desired_local_x_right
 	if _menu_occlusion_px_x > 0.0 and _last_map_screen_rect_for_clamping.size != Vector2.ZERO:
 		var clamp_local: Rect2 = _get_effective_clamp_rect_local(_last_map_screen_rect_for_clamping)
 		if clamp_local.size != Vector2.ZERO:
-			var max_x_allowed: float = clamp_local.end.x - panel_actual_size.x - _label_map_edge_padding
+			var max_x_allowed: float = clamp_local.end.x - scaled_size.x - _label_map_edge_padding
 			# If right-side placement would be pushed under the menu (beyond visible clamp), flip to left.
 			if panel_desired_local_x_right > max_x_allowed:
 				panel_desired_local_x = panel_desired_local_x_left
@@ -460,7 +466,7 @@ func _position_convoy_panel(panel: Panel, convoy_data: Dictionary, existing_labe
 		panel.position = p_convoy_label_user_positions[current_convoy_id_str] # User positions are local
 		if debug_logging:
 			print("[ConvoyLabelManager] Using user-defined position for convoy_id:", current_convoy_id_str, panel.position)
-		var current_panel_rect = Rect2(panel.position, panel_actual_size)
+		var current_panel_rect = Rect2(panel.position, scaled_size)
 		for _attempt in range(12): # Max attempts
 			var collides_with_existing: bool = false
 			var colliding_rect_for_shift_calc: Rect2 
@@ -479,7 +485,7 @@ func _position_convoy_panel(panel: Panel, convoy_data: Dictionary, existing_labe
 				var label_min_size_for_shift = label_node.get_minimum_size()
 				var y_shift_amount = _label_anti_collision_y_shift + max(label_min_size_for_shift.y * 0.1, shift_based_on_collided_height)
 				panel.position.y += y_shift_amount
-				current_panel_rect = Rect2(panel.position, panel_actual_size)
+				current_panel_rect = Rect2(panel.position, scaled_size)
 			else:
 				break # No collision
 
@@ -488,7 +494,7 @@ func _position_convoy_panel(panel: Panel, convoy_data: Dictionary, existing_labe
 	var try_side_toggle_every := 4
 	var attempt := 0
 	while attempt < 20:
-		var panel_rect := Rect2(panel.position, panel_actual_size)
+		var panel_rect := Rect2(panel.position, scaled_size)
 		var overlaps_labels := false
 		for r in existing_label_rects:
 			if panel_rect.intersects(r.grow_individual(2,2,2,2), true):
@@ -507,7 +513,7 @@ func _position_convoy_panel(panel: Panel, convoy_data: Dictionary, existing_labe
 			var side_dir := 1.0 if base_side_right else -1.0
 			var extra_x: float = (abs(current_horizontal_offset_world) * 0.5) + (attempt * 0.25)
 			panel.position.x = convoy_center_local_x + side_dir * (current_horizontal_offset_world + extra_x)
-			panel.position.y = convoy_center_local_y - (panel_actual_size.y / 2.0)
+			panel.position.y = convoy_center_local_y - (scaled_size.y / 2.0)
 		attempt += 1
 
 	# print("ConvoyLabelManager (_position_convoy_panel) for %s: FinalLocalPos: %s" % [panel.name, panel.position]) # DEBUG
@@ -595,6 +601,8 @@ func _clamp_panel_position(panel: Panel, p_current_map_screen_rect_for_clamping:
 	var effective_clamp_rect: Rect2 = p_current_map_screen_rect_for_clamping
 	if _menu_occlusion_px_x > 0.0 and effective_clamp_rect.size.x > 0.0:
 		effective_clamp_rect.size.x = maxf(0.0, effective_clamp_rect.size.x - _menu_occlusion_px_x)
+	if _menu_occlusion_px_y > 0.0 and effective_clamp_rect.size.y > 0.0:
+		effective_clamp_rect.size.y = maxf(0.0, effective_clamp_rect.size.y - _menu_occlusion_px_y)
 
 	var container_global_transform = _convoy_label_container_ref.get_global_transform_with_canvas()
 	var clamp_rect_local_to_container = container_global_transform.affine_inverse() * effective_clamp_rect
@@ -607,10 +615,11 @@ func _clamp_panel_position(panel: Panel, p_current_map_screen_rect_for_clamping:
 		# printerr("ConvoyLabelManager: Cannot clamp panel %s due to invalid size: %s" % [panel.name, panel_actual_size])
 		return
 
+	var scaled_size = panel_actual_size * panel.scale
 	var padded_min_x = clamp_rect_local_to_container.position.x + _label_map_edge_padding
 	var padded_min_y = clamp_rect_local_to_container.position.y + _label_map_edge_padding
-	var padded_max_x = clamp_rect_local_to_container.end.x - panel_actual_size.x - _label_map_edge_padding
-	var padded_max_y = clamp_rect_local_to_container.end.y - panel_actual_size.y - _label_map_edge_padding
+	var padded_max_x = clamp_rect_local_to_container.end.x - scaled_size.x - _label_map_edge_padding
+	var padded_max_y = clamp_rect_local_to_container.end.y - scaled_size.y - _label_map_edge_padding
 	
 	padded_max_x = max(padded_min_x, padded_max_x)
 	padded_max_y = max(padded_min_y, padded_max_y)
@@ -647,7 +656,7 @@ func update_convoy_labels(
 	if _font_scaling_base_tile_size > 0.001:
 		base_linear_font_scale = effective_tile_size_on_texture / _font_scaling_base_tile_size
 	var font_render_scale: float = pow(base_linear_font_scale, _font_scaling_exponent)
-	var node_font_size_before_clamp = (_base_convoy_title_font_size_ref * font_render_scale) / _current_map_zoom_cache
+	var node_font_size_before_clamp = (_base_convoy_title_font_size_ref * font_render_scale)
 	if is_instance_valid(_dynamic_label_settings):
 		_dynamic_label_settings.font_size = clamp(roundi(node_font_size_before_clamp), _min_node_font_size, _max_node_font_size)
 
@@ -721,7 +730,8 @@ func update_convoy_labels(
 			var dragged_panel_actual_size = p_dragging_panel_node.size
 			if dragged_panel_actual_size.x <= 0 or dragged_panel_actual_size.y <= 0:
 				dragged_panel_actual_size = p_dragging_panel_node.get_minimum_size()
-			all_drawn_label_rects_this_update.append(Rect2(p_dragging_panel_node.position, dragged_panel_actual_size))
+			var dragged_scaled_size = dragged_panel_actual_size * p_dragging_panel_node.scale
+			all_drawn_label_rects_this_update.append(Rect2(p_dragging_panel_node.position, dragged_scaled_size))
 			
 			if not drawn_convoy_ids_this_update.has(p_dragged_convoy_id_actual_str):
 				drawn_convoy_ids_this_update.append(p_dragged_convoy_id_actual_str)
@@ -756,7 +766,8 @@ func update_convoy_labels(
 
 		var panel_actual_size = panel_node.size
 		if panel_actual_size.x <= 0 or panel_actual_size.y <= 0: panel_actual_size = panel_node.get_minimum_size()
-		all_drawn_label_rects_this_update.append(Rect2(panel_node.position, panel_actual_size))
+		var scaled_size = panel_actual_size * panel_node.scale
+		all_drawn_label_rects_this_update.append(Rect2(panel_node.position, scaled_size))
 		drawn_convoy_ids_this_update.append(convoy_id_str_to_display)
 
 	# Hide panels that are no longer needed

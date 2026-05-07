@@ -34,7 +34,7 @@ on:
 
 jobs:
   build:
-    runs-on: macos-latest
+    runs-on: macos-26
     outputs:
       status: ${{ steps.export.outcome }}
     steps:
@@ -104,19 +104,36 @@ jobs:
           rm /tmp/apple_dist.p12
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k actions temp.keychain
 
-      - name: Configure SSH for Match
-        uses: webfactory/ssh-agent@v0.9.0
-        with:
-          ssh-private-key: ${{ secrets.MATCH_SSH_KEY }}
+      - name: Silence Android Plugin Warnings
+        run: |
+          mkdir -p addons/GodotGoogleSignIn
+          touch addons/GodotGoogleSignIn/.gdignore
+          touch addons/GodotApplePlugins/.gdignore
+
+      - name: Import Assets
+        run: |
+          # Explicitly import assets to resolve font errors in headless mode
+          # Note: On macOS, this may crash during cleanup (GodotApplePlugins deinit), so we ignore the exit code.
+          godot --headless --import --log-file /tmp/godot_import.log || true
 
       - name: Fastlane Match (iOS)
         env:
           MATCH_PASSWORD: ${{ secrets.MATCH_PASSWORD }}
-          MATCH_GIT_URL: ${{ secrets.MATCH_GIT_URL }}
+          GIT_TOKEN: ${{ secrets.GIT_TOKEN }}
+          MATCH_GIT_URL_SECRET: ${{ secrets.MATCH_GIT_URL }}
         run: |
-          # Use SSH URL from secret, or ensure the Matchfile uses git@github.com format
-          # We override the git_url here to force SSH if the Matchfile has HTTPS
-          bundle exec fastlane match appstore --readonly --keychain_name temp.keychain --keychain_password actions --git_url "git@github.com:OoriData/mobile-signing-certs.git" --app_identifier "com.ooridata.desolate-frontiers"
+          # Use the provided MATCH_GIT_URL secret if it already contains authentication (has @)
+          # Otherwise, attempt to use GIT_TOKEN to authenticate.
+          if [[ "$MATCH_GIT_URL_SECRET" == *"@"* ]]; then
+            FINAL_GIT_URL="$MATCH_GIT_URL_SECRET"
+          elif [ -n "$GIT_TOKEN" ]; then
+            FINAL_GIT_URL="https://${GIT_TOKEN}@github.com/OoriData/mobile-signing-certs.git"
+          else
+            FINAL_GIT_URL="$MATCH_GIT_URL_SECRET"
+          fi
+          
+          echo "Using Git URL: ${FINAL_GIT_URL/@/:***}" # Log URL without full token for safety
+          bundle exec fastlane match appstore --readonly --keychain_name temp.keychain --keychain_password actions --git_url "$FINAL_GIT_URL" --app_identifier "com.ooridata.desolate-frontiers"
 
       - name: Capture Provisioning Profile Name
         run: |
@@ -132,8 +149,8 @@ jobs:
           fi
 
       - name: Inject Signing Configuration
+        shell: python
         run: |
-          python3 -c '
           import re
           import os
           import sys
@@ -149,29 +166,35 @@ jobs:
           with open("export_presets.cfg", "r") as f:
               content = f.read()
           
-          # Dynamically find the preset index for "iOS"
-          preset_match = re.search(r"^\[preset\.(\d+)\]\s+name=\"iOS\"", content, re.MULTILINE)
+          # Find the preset index for "iOS"
+          preset_match = re.search(r'^\[preset\.(\d+)\]\s+name="iOS"', content, re.MULTILINE)
           if not preset_match:
-              print("Error: Could not find preset named \"iOS\"")
+              print("Error: Could not find preset named 'iOS'")
               sys.exit(1)
-          
+              
           preset_index = preset_match.group(1)
-          print(f"Found \"iOS\" at index {preset_index}")
-          
-          # Match the options section for this preset
-          section_regex = r"(\[preset\." + preset_index + r"\.options\].*?)(?=\n\[|$)"
+          print(f"Found 'iOS' at index {preset_index}")
+
+          # Match the options section for that preset
+          section_regex = r"(\[preset\.{}\.options\].*?)(?=\n\[|$)".format(preset_index)
           
           def set_key(match):
               section = match.group(1)
               specifier = os.environ.get("IOS_PROFILE_NAME", "match AppStore com.ooridata.desolate-frontiers")
               
               # Build Number logic: base + (run_number * 10) + run_attempt
+              # Using a high base to ensure it stays above previous manual uploads
               build_number = str(100 + (int(os.environ["GITHUB_RUN_NUMBER"]) * 10) + int(os.environ["GITHUB_RUN_ATTEMPT"]))
               
               overrides = {
                   "application/provisioning_profile_specifier_release": f"\"{specifier}\"",
+                  "application/code_sign_identity_release": "\"Apple Distribution: Oori Data LLC\"",
                   "application/version": f"\"{build_number}\"",
-                  "application/short_version": f"\"{short_version}\""
+                  "application/short_version": f"\"{short_version}\"",
+                  "application/export_project_only": "false",
+                  "application/export_method_release": "0",
+                  "plugins/PushNotifications": "true",
+                  "entitlements/push_notifications": "\"Production\""
               }
               
               for key, val in overrides.items():
@@ -180,10 +203,10 @@ jobs:
                   else:
                       section += f"\n{key}={val}"
               return section
+
           new_content = re.sub(section_regex, set_key, content, flags=re.DOTALL)
           with open("export_presets.cfg", "w") as f:
               f.write(new_content)
-          '
         env:
           GITHUB_RUN_NUMBER: ${{ github.run_number }}
           GITHUB_RUN_ATTEMPT: ${{ github.run_attempt }}
@@ -192,15 +215,18 @@ jobs:
         id: export
         run: |
           mkdir -p build/ios
-          godot --headless --export-release "iOS" "build/ios/Desolate_Frontiers.ipa"
+          godot --headless --export-release "iOS" "build/ios/Desolate_Frontiers.ipa" --log-file /tmp/godot_ios_export.log
 
-      - name: Upload to TestFlight
-        env:
-          APP_STORE_CONNECT_API_KEY: ${{ secrets.APP_STORE_CONNECT_API_KEY }}
-          APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
-          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
-          MATCH_PASSWORD: ${{ secrets.MATCH_PASSWORD }}
-          MATCH_KEYCHAIN_NAME: temp.keychain
-          MATCH_KEYCHAIN_PASSWORD: actions
-        run: |
-          bundle exec fastlane ios release
+      - name: Upload iOS Artifact
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-build
+          path: build/ios/
+
+      - name: Upload Export Logs (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: godot-ios-export-logs
+          path: /tmp/godot_ios_export.log

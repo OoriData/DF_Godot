@@ -2,14 +2,32 @@ extends Control
 
 signal login_successful(user_id: String)
 
-# Removed obsolete InstructionsLabel (not present in scene)
 @onready var center_container: CenterContainer = $CenterContainer
 @onready var vbox_container: VBoxContainer = $CenterContainer/VBoxContainer
 @onready var status_label: Label = $CenterContainer/VBoxContainer/StatusLabel
-@onready var discord_button: Button = $CenterContainer/VBoxContainer/GoogleLoginButton
+@onready var subtitle_label: Label = $CenterContainer/VBoxContainer/SubtitleLabel
 @onready var background_overlay: ColorRect = $Background
+@onready var title_logo: TextureRect = $CenterContainer/VBoxContainer/TitleLogo
+@onready var loading_bar: ProgressBar = $CenterContainer/VBoxContainer/LoadingBar
 
+# Brand colors
 const DISCORD_BLURPLE := Color("5865F2")
+const DISCORD_HOVER := Color("6D78F6")
+const DISCORD_PRESSED := Color("4752C4")
+
+const APPLE_BLACK := Color("111111")
+const APPLE_HOVER := Color("1f1f1f")
+const APPLE_PRESSED := Color("000000")
+
+const GOOGLE_BLUE := Color("4285F4")
+const GOOGLE_HOVER := Color("5b97f5")
+const GOOGLE_PRESSED := Color("3367d6")
+
+const STEAM_DARK := Color("171a21")
+const STEAM_HOVER := Color("2a475e")
+const STEAM_ACCENT := Color("66c0f4")
+
+const DISABLED_BG := Color("2a2a2a")
 
 const _TERRAIN_INT_TO_NAME := {
 	0: "impassable",
@@ -51,74 +69,584 @@ var _bg_drift_speed: Vector2 = Vector2(18.0, 10.0)
 var _bg_time: float = 0.0
 var _bg_has_real_map: bool = false
 
-var _steam_login_button: Button = null
+var _discord_button: Button = null
+var _apple_button: Button = null
+var _google_button: Button = null
+var _steam_button: Button = null
+var _active_oauth_provider_label: String = "Discord"
+
+# ────────────────────────────────────────────────────────────────────
+# Lifecycle
+# ────────────────────────────────────────────────────────────────────
 
 func _ready() -> void:
 	print("[LoginScreen] _ready() called.")
 	_setup_map_background()
-	if is_instance_valid(discord_button):
-		discord_button.pressed.connect(_on_discord_login_pressed)
-	
+
 	if SteamManager.has_signal("steam_initialized"):
 		if not SteamManager.steam_initialized.is_connected(_on_steam_initialized):
 			SteamManager.steam_initialized.connect(_on_steam_initialized)
-	
+
+	if GoogleAuthService.has_signal("sign_in_success"):
+		if not GoogleAuthService.sign_in_success.is_connected(_on_google_native_login_success):
+			GoogleAuthService.sign_in_success.connect(_on_google_native_login_success)
+		if not GoogleAuthService.sign_in_failed.is_connected(_on_google_native_login_error):
+			GoogleAuthService.sign_in_failed.connect(_on_google_native_login_error)
+
 	_connect_hub_store_signals()
 	_connect_api_signals()
-	_style_discord_button()
-	_ensure_coming_soon_section()
+	_build_login_buttons()
 	_try_use_real_map_background()
+
 	# Ensure overlay sits above the generated map background.
 	if is_instance_valid(background_overlay):
 		background_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	# Focus now goes to OAuth button if needed
-	if is_instance_valid(discord_button):
-		discord_button.grab_focus()
+
+	# Apply portrait layout before first frame
+	_apply_portrait_layout()
+
+	# Focus the first button
+	if is_instance_valid(_discord_button):
+		_discord_button.grab_focus()
+
 	# Attempt automatic session reuse if token already valid
 	var api = _api()
 	if api and api.is_auth_token_valid():
-		status_label.text = "Resuming session..."
-		# APICalls autoload will resolve the session/user automatically.
-	
+		set_loading_mode(true, "Resuming session...")
+	else:
+		set_loading_mode(false)
+
 	_add_version_label()
+
+func set_loading_mode(active: bool, message: String = "") -> void:
+	if active:
+		if message != "":
+			status_label.text = message
+		_set_oauth_active(true)
+		if is_instance_valid(subtitle_label):
+			subtitle_label.visible = false
+		if is_instance_valid(loading_bar):
+			loading_bar.visible = true
+			loading_bar.value = 0
+		for btn in [_discord_button, _apple_button, _google_button, _steam_button]:
+			if is_instance_valid(btn):
+				btn.visible = false
+	else:
+		_set_oauth_active(false)
+		if is_instance_valid(subtitle_label):
+			subtitle_label.visible = true
+		if is_instance_valid(loading_bar):
+			loading_bar.visible = false
+		for btn in [_discord_button, _apple_button, _google_button, _steam_button]:
+			if is_instance_valid(btn):
+				# Don't show steam button if disabled initially
+				if btn == _steam_button and not SteamManager.is_steam_running():
+					btn.visible = true
+					_disable_steam_button()
+				else:
+					btn.visible = true
+
+func _process(_delta: float) -> void:
+	_update_map_background(_delta)
+	
+	if is_instance_valid(loading_bar) and loading_bar.visible:
+		# Simple "indeterminate" pulse animation
+		loading_bar.value = 50.0 + sin(_bg_time * 5.0) * 50.0
+
+	if _oauth_in_progress:
+		_spin_status()
+
+# ────────────────────────────────────────────────────────────────────
+# Portrait / Mobile helpers
+# ────────────────────────────────────────────────────────────────────
+
+func _is_portrait() -> bool:
+	var sz := get_viewport_rect().size
+	return sz.y > sz.x
+
+func _is_mobile() -> bool:
+	return OS.has_feature("mobile") or DisplayServer.get_name() in ["Android", "iOS"]
+
+## Re-sizes buttons and spacing to fill portrait screen width on mobile.
+func _apply_portrait_layout() -> void:
+	if not is_instance_valid(vbox_container):
+		return
+
+	var viewport_sz := get_viewport_rect().size
+	var portrait := _is_portrait()
+	var mobile := _is_mobile()
+
+	if portrait and mobile:
+		# Derive a uniform scale so all elements grow proportionally.
+		# Reference width is 340 px (original button). Target 88 % of screen.
+		var scale_f: float = (viewport_sz.x * 0.88) / 340.0
+
+		var btn_w: float  = 340.0 * scale_f
+		var btn_h: float  = 54.0  * scale_f
+		var font_sz: int  = int(round(16.0 * scale_f))
+		var vbox_sep: int = int(round(10.0 * scale_f))
+
+		vbox_container.add_theme_constant_override("separation", vbox_sep)
+
+		for btn in [_discord_button, _apple_button, _google_button, _steam_button]:
+			if not is_instance_valid(btn):
+				continue
+			btn.custom_minimum_size = Vector2(btn_w, btn_h)
+			btn.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+			btn.add_theme_font_size_override("font_size", font_sz)
+
+		# Scale the logo halfway between original and full scale (avoids clipping)
+		if is_instance_valid(title_logo):
+			var logo_f: float = (scale_f + 1.0) / 2.0
+			title_logo.custom_minimum_size = Vector2(520.0 * logo_f, 160.0 * logo_f)
+
+		if is_instance_valid(loading_bar):
+			loading_bar.custom_minimum_size = Vector2(btn_w, 8 * scale_f)
+
+		if is_instance_valid(status_label) and status_label.label_settings:
+			status_label.label_settings.font_size = int(round(52.0 * scale_f))
+			status_label.custom_minimum_size = Vector2(btn_w, 96 * scale_f)
+
+		# Zoom the background camera so the map bleeds off all 4 edges
+		if is_instance_valid(_bg_camera):
+			_bg_camera.zoom = Vector2(4.5, 4.5)
+	else:
+		# Restore defaults
+		vbox_container.add_theme_constant_override("separation", 8)
+		for btn in [_discord_button, _apple_button, _google_button, _steam_button]:
+			if not is_instance_valid(btn):
+				continue
+			btn.custom_minimum_size = Vector2(340, 54)
+			btn.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+			btn.remove_theme_font_size_override("font_size")
+		if is_instance_valid(status_label) and status_label.label_settings:
+			status_label.label_settings.font_size = 36
+			status_label.custom_minimum_size = Vector2(300, 56)
+		if is_instance_valid(loading_bar):
+			loading_bar.custom_minimum_size = Vector2(340, 8)
+		if is_instance_valid(_bg_camera):
+			_bg_camera.zoom = Vector2(1.05, 1.05)
+
+# ────────────────────────────────────────────────────────────────────
+# Button creation
+# ────────────────────────────────────────────────────────────────────
+
+func _build_login_buttons() -> void:
+	if not is_instance_valid(vbox_container):
+		return
+
+	# Determine the insert index — right before StatusLabel
+	var insert_idx := 0
+	for i in range(vbox_container.get_child_count()):
+		if vbox_container.get_child(i) == status_label:
+			insert_idx = i
+			break
+
+	# --- Discord (always shown) ---
+	_discord_button = _create_login_button(
+		"DiscordLoginButton", "Continue with Discord",
+		DISCORD_BLURPLE, DISCORD_HOVER, DISCORD_PRESSED,
+		_on_discord_login_pressed
+	)
+	vbox_container.add_child(_discord_button)
+	vbox_container.move_child(_discord_button, insert_idx)
+	insert_idx += 1
+
+	# --- Apple (always shown — native plugin on macOS/iOS, web OAuth elsewhere) ---
+	_apple_button = _create_login_button(
+		"AppleLoginButton", "Continue with Apple",
+		APPLE_BLACK, APPLE_HOVER, APPLE_PRESSED,
+		_on_apple_login_pressed
+	)
+	vbox_container.add_child(_apple_button)
+	vbox_container.move_child(_apple_button, insert_idx)
+	insert_idx += 1
+
+	# --- Google (only when the native service is available) ---
+	if GoogleAuthService.is_available():
+		_google_button = _create_login_button(
+			"GoogleLoginButton", "Continue with Google",
+			GOOGLE_BLUE, GOOGLE_HOVER, GOOGLE_PRESSED,
+			_on_google_login_pressed
+		)
+		vbox_container.add_child(_google_button)
+		vbox_container.move_child(_google_button, insert_idx)
+		insert_idx += 1
+
+	# --- Steam (only shown on desktop; disabled if Steam client isn't running) ---
+	if not _is_mobile():
+		_steam_button = _create_login_button(
+			"SteamLoginButton", "Continue with Steam",
+			STEAM_DARK, STEAM_HOVER, STEAM_DARK,
+			_on_steam_login_pressed
+		)
+		# Add Steam accent border
+		var steam_normal: StyleBoxFlat = _steam_button.get_theme_stylebox("normal")
+		if steam_normal:
+			steam_normal.border_width_bottom = 2
+			steam_normal.border_color = STEAM_ACCENT
+		var steam_hover: StyleBoxFlat = _steam_button.get_theme_stylebox("hover")
+		if steam_hover:
+			steam_hover.border_width_bottom = 2
+			steam_hover.border_color = STEAM_ACCENT
+
+		vbox_container.add_child(_steam_button)
+		vbox_container.move_child(_steam_button, insert_idx)
+
+		# Enable/disable Steam based on current state
+		if SteamManager.is_steam_running():
+			_enable_steam_button()
+		else:
+			_disable_steam_button()
+
+func _create_login_button(
+	btn_name: String, label: String,
+	color_normal: Color, color_hover: Color, color_pressed: Color,
+	callback: Callable
+) -> Button:
+	var b := Button.new()
+	b.name = btn_name
+	b.text = label
+	b.custom_minimum_size = Vector2(340, 54)
+	b.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+
+	# Font colors
+	b.add_theme_color_override("font_color", Color.WHITE)
+	b.add_theme_color_override("font_hover_color", Color.WHITE)
+	b.add_theme_color_override("font_pressed_color", Color.WHITE)
+	b.add_theme_color_override("font_disabled_color", Color(1, 1, 1, 0.6))
+
+	# Normal
+	var normal := StyleBoxFlat.new()
+	normal.bg_color = color_normal
+	normal.corner_radius_top_left = 10
+	normal.corner_radius_top_right = 10
+	normal.corner_radius_bottom_left = 10
+	normal.corner_radius_bottom_right = 10
+	normal.content_margin_left = 14
+	normal.content_margin_right = 14
+	normal.content_margin_top = 10
+	normal.content_margin_bottom = 10
+
+	# Hover
+	var hover := normal.duplicate()
+	hover.bg_color = color_hover
+
+	# Pressed
+	var pressed := normal.duplicate()
+	pressed.bg_color = color_pressed
+
+	# Disabled
+	var disabled := normal.duplicate()
+	disabled.bg_color = DISABLED_BG
+
+	# Focus
+	var focus := normal.duplicate()
+	focus.border_width_left = 2
+	focus.border_width_right = 2
+	focus.border_width_top = 2
+	focus.border_width_bottom = 2
+	focus.border_color = Color(1, 1, 1, 0.35)
+
+	b.add_theme_stylebox_override("normal", normal)
+	b.add_theme_stylebox_override("hover", hover)
+	b.add_theme_stylebox_override("pressed", pressed)
+	b.add_theme_stylebox_override("disabled", disabled)
+	b.add_theme_stylebox_override("focus", focus)
+
+	b.pressed.connect(callback)
+	return b
+
+# ────────────────────────────────────────────────────────────────────
+# Steam button helpers
+# ────────────────────────────────────────────────────────────────────
+
+func _enable_steam_button() -> void:
+	if not is_instance_valid(_steam_button):
+		return
+	print("[LoginScreen] Enabling Steam login button.")
+	_steam_button.disabled = false
+	_steam_button.tooltip_text = ""
+
+func _disable_steam_button() -> void:
+	if not is_instance_valid(_steam_button):
+		return
+	_steam_button.disabled = true
+	_steam_button.tooltip_text = "Steam client is not running"
+	_steam_button.focus_mode = Control.FOCUS_NONE
+
+func _on_steam_initialized() -> void:
+	print("[LoginScreen] Steam initialized signal received.")
+	_enable_steam_button()
+
+# ────────────────────────────────────────────────────────────────────
+# Auth handlers
+# ────────────────────────────────────────────────────────────────────
+
+func _on_discord_login_pressed() -> void:
+	if _oauth_in_progress:
+		return
+	_active_oauth_provider_label = "Discord"
+	status_label.text = "Starting Discord auth..."
+	var api = _api()
+	if api == null:
+		status_label.text = "Auth system not ready."
+		return
+	api.get_auth_url("discord")
+
+func _on_apple_login_pressed() -> void:
+	if _oauth_in_progress:
+		return
+	_active_oauth_provider_label = "Apple"
+	status_label.text = "Starting Apple auth..."
+	_set_oauth_active(true)
+	var api = _api()
+	if api == null:
+		status_label.text = "Auth system not ready."
+		_set_oauth_active(false)
+		return
+
+	# Attempt to use native Plugin on macOS/iOS
+	if OS.get_name() in ["macOS", "iOS"]:
+		if Engine.has_singleton("SignInWithApple"):
+			var apple = Engine.get_singleton("SignInWithApple")
+			if not apple.is_connected("on_login_success", Callable(self, "_on_apple_native_login_success")):
+				apple.connect("on_login_success", Callable(self, "_on_apple_native_login_success"))
+				apple.connect("on_login_error", Callable(self, "_on_apple_native_login_error"))
+			apple.login()
+			return
+		elif Engine.has_singleton("AppleAuth"):
+			var apple = Engine.get_singleton("AppleAuth")
+			apple.login()
+			return
+
+	# Fallback to Web OAuth flow
+	api.get_auth_url("apple")
+
+func _on_apple_native_login_success(identity_token: String, _auth_code: String = "") -> void:
+	var api = _api()
+	if api:
+		status_label.text = "Verifying Apple session..."
+		api.login_with_apple(identity_token)
+
+func _on_apple_native_login_error(error_msg: String) -> void:
+	status_label.text = "Apple sign-in failed: " + error_msg
+	_set_oauth_active(false)
+
+func _on_google_login_pressed() -> void:
+	if _oauth_in_progress:
+		return
+	_active_oauth_provider_label = "Google"
+	status_label.text = "Starting Google auth..."
+	_set_oauth_active(true)
+	var api = _api()
+	if api == null:
+		status_label.text = "Auth system not ready."
+		_set_oauth_active(false)
+		return
+
+	GoogleAuthService.sign_in()
+
+func _on_google_native_login_success(id_token: String, email: String, display_name: String, nonce: String) -> void:
+	var api = _api()
+	if api:
+		status_label.text = "Verifying Google session..."
+		api.login_with_google(id_token, nonce)
+
+func _on_google_native_login_error(error_msg: String) -> void:
+	status_label.text = "Google sign-in failed: " + error_msg
+	_set_oauth_active(false)
+
+func _on_steam_login_pressed() -> void:
+	if _oauth_in_progress:
+		return
+	status_label.text = "Checking Steam ID..."
+	var steam_id = SteamManager.get_steam_id()
+	if steam_id == "":
+		status_label.text = "Error: Could not get Steam ID."
+		return
+
+	status_label.text = "Logging in with Steam..."
+	_set_oauth_active(true)
+	var api = _api()
+	if api:
+		var persona := ""
+		if SteamManager.has_method("get_steam_username"):
+			persona = SteamManager.get_steam_username()
+		api.login_with_steam(steam_id, persona)
+	else:
+		status_label.text = "API System offline."
+		_set_oauth_active(false)
+
+# ────────────────────────────────────────────────────────────────────
+# OAuth / auth-state plumbing
+# ────────────────────────────────────────────────────────────────────
+
+func _on_auth_url_received(data: Dictionary) -> void:
+	var auth_url: String = str(data.get("url", ""))
+	_pkce_state = str(data.get("state", ""))
+	_pkce_code_verifier = str(data.get("code_verifier", ""))
+	if auth_url == "":
+		status_label.text = "Failed to get auth URL."
+		return
+	OS.shell_open(auth_url)
+	status_label.text = "Browser opened. Complete %s sign-in..." % _active_oauth_provider_label
+
+func _on_api_error(message: String) -> void:
+	var friendly := ErrorTranslator.translate(message)
+	
+	# Always reset oauth state on API error to prevent UI hang, 
+	# even if the error message itself is silenced.
+	if _oauth_in_progress:
+		_set_oauth_active(false)
+	
+	if friendly.is_empty():
+		# If it's a silenced auth error (like 401 during background poll), 
+		# we don't want to overwrite the status label if we're not currently in an OAuth flow.
+		if _oauth_in_progress:
+			status_label.text = "Authentication failed."
+		return
+		
+	status_label.text = friendly
+
+func _on_auth_state_changed(state: String) -> void:
+	match state:
+		"pending":
+			set_loading_mode(true, "Authenticating")
+		"authenticated":
+			set_loading_mode(true, "Session established. Resolving user...")
+		"expired":
+			set_loading_mode(false)
+			status_label.text = "Session expired. Please login."
+		"failed":
+			set_loading_mode(false)
+			if status_label.text == "Authenticating" or status_label.text == "" or status_label.text.begins_with("Authenticating"):
+				status_label.text = "Authentication failed."
+		_:
+			pass
+
+func _on_hub_error_occurred(domain: String, _code: String, message: String, inline: bool) -> void:
+	if domain == "auth" or not inline:
+		set_loading_mode(false)
+		show_error(message)
+
+func _on_store_user_changed(user: Dictionary) -> void:
+	var uid := String(user.get("user_id", user.get("id", "")))
+	if uid == "":
+		return
+	status_label.text = "Loading game data..."
+	emit_signal("login_successful", uid)
+
+func _on_auth_expired() -> void:
+	_set_oauth_active(false)
+	status_label.text = "Session expired. Please login."
+
+func _spin_status() -> void:
+	if not status_label.text.begins_with("Authenticating"):
+		return
+	var dots = (_spinner_phase % 4)
+	var base = "Authenticating" + ".".repeat(dots)
+	status_label.text = base
+	_spinner_phase += 1
+
+func _set_oauth_active(active: bool) -> void:
+	_oauth_in_progress = active
+	if is_instance_valid(_discord_button):
+		_discord_button.disabled = active
+	if is_instance_valid(_apple_button):
+		_apple_button.disabled = active
+	if is_instance_valid(_google_button):
+		_google_button.disabled = active
+	if is_instance_valid(_steam_button) and not _steam_button.disabled:
+		# Only toggle if steam was enabled in the first place
+		_steam_button.disabled = active
+	if active and _spinner_timer == null:
+		_spinner_timer = Timer.new()
+		_spinner_timer.wait_time = 0.5
+		_spinner_timer.autostart = true
+		_spinner_timer.one_shot = false
+		add_child(_spinner_timer)
+		_spinner_timer.timeout.connect(_spin_status)
+	elif not active and _spinner_timer:
+		_spinner_timer.queue_free()
+		_spinner_timer = null
+	
+	# OAuth Failsafe: if we're stuck in 'Loading' for more than 20s, reset.
+	if active:
+		var failsafe := get_tree().create_timer(20.0)
+		failsafe.timeout.connect(func():
+			if _oauth_in_progress and status_label.text.begins_with("Authenticating"):
+				print("[LoginScreen] OAuth failsafe triggered after 20s stall.")
+				_set_oauth_active(false)
+				status_label.text = "Authentication timed out. Please try again."
+		)
+
+# ────────────────────────────────────────────────────────────────────
+# Signal wiring
+# ────────────────────────────────────────────────────────────────────
+
+func _connect_hub_store_signals() -> void:
+	var hub := get_node_or_null("/root/SignalHub")
+	if is_instance_valid(hub):
+		if hub.has_signal("auth_state_changed") and not hub.auth_state_changed.is_connected(_on_auth_state_changed):
+			hub.auth_state_changed.connect(_on_auth_state_changed)
+		if hub.has_signal("map_changed") and not hub.map_changed.is_connected(_on_map_changed):
+			hub.map_changed.connect(_on_map_changed)
+		if hub.has_signal("error_occurred") and not hub.error_occurred.is_connected(_on_hub_error_occurred):
+			hub.error_occurred.connect(_on_hub_error_occurred)
+	var store := get_node_or_null("/root/GameStore")
+	if is_instance_valid(store):
+		if store.has_signal("map_changed") and not store.map_changed.is_connected(_on_map_changed):
+			store.map_changed.connect(_on_map_changed)
+		if store.has_signal("user_changed") and not store.user_changed.is_connected(_on_store_user_changed):
+			store.user_changed.connect(_on_store_user_changed)
+
+func _connect_api_signals() -> void:
+	var api = _api()
+	if is_instance_valid(api):
+		if api.has_signal("auth_url_received") and not api.auth_url_received.is_connected(_on_auth_url_received):
+			api.auth_url_received.connect(_on_auth_url_received)
+		if api.has_signal("fetch_error") and not api.fetch_error.is_connected(_on_api_error):
+			api.fetch_error.connect(_on_api_error)
+		if api.has_signal("auth_expired") and not api.auth_expired.is_connected(_on_auth_expired):
+			api.auth_expired.connect(_on_auth_expired)
+
+# ────────────────────────────────────────────────────────────────────
+# Version label
+# ────────────────────────────────────────────────────────────────────
 
 func _add_version_label() -> void:
 	var version = ProjectSettings.get_setting("application/config/version", "0.0.0")
 	var label = Label.new()
 	label.text = "v" + str(version)
 	label.name = "VersionLabel"
-	
-	# Style
+
 	label.modulate = Color(1, 1, 1, 0.4)
 	var settings = LabelSettings.new()
 	settings.font_size = 14
 	label.label_settings = settings
-	
-	# Positioning
+	TextScale.register(label)
+
 	label.set_anchors_and_offsets_preset(Control.PRESET_TOP_RIGHT)
 	label.offset_left -= 12
 	label.offset_top += 12
 	label.grow_horizontal = Control.GROW_DIRECTION_BEGIN
 	label.grow_vertical = Control.GROW_DIRECTION_END
-	
+
 	add_child(label)
 
-func _process(_delta: float) -> void:
-	_update_map_background(_delta)
-	# Lightweight spinner animation when OAuth in progress
-	if _oauth_in_progress:
-		_spin_status()
+# ────────────────────────────────────────────────────────────────────
+# Map background
+# ────────────────────────────────────────────────────────────────────
 
 func _setup_map_background() -> void:
-	# Creates a lightweight "map-like" background from the game's TileSet.
-	# This avoids depending on live API/GameStore map data during login.
 	if _bg_viewport != null:
 		return
 
 	_bg_texture_rect = TextureRect.new()
 	_bg_texture_rect.name = "MapBackground"
 	_bg_texture_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_bg_texture_rect.stretch_mode = TextureRect.STRETCH_SCALE
+	_bg_texture_rect.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
 	_bg_texture_rect.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
 	_bg_texture_rect.modulate = Color(1, 1, 1, 0.26)
 	_bg_texture_rect.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -145,7 +673,6 @@ func _setup_map_background() -> void:
 	_bg_camera.zoom = Vector2(1.05, 1.05)
 	_bg_root.add_child(_bg_camera)
 
-	# TileSet shared with the actual map.
 	var tile_set: TileSet = load("res://Assets/tiles/tile_set.tres")
 	if tile_set == null:
 		return
@@ -154,17 +681,13 @@ func _setup_map_background() -> void:
 	_build_tile_lookup(tile_set)
 	_populate_placeholder_tiles(tile_set)
 
-	# Insert behind everything else.
 	add_child(_bg_texture_rect)
 	move_child(_bg_texture_rect, 0)
 	_bg_texture_rect.add_child(_bg_viewport)
-	# Only make current after the camera is inside the scene tree.
 	call_deferred("_make_bg_camera_current")
 
-	# Render viewport into the TextureRect.
 	_bg_texture_rect.texture = _bg_viewport.get_texture()
 
-	# Keep viewport sized to the screen.
 	if not get_viewport().size_changed.is_connected(_on_viewport_size_changed):
 		get_viewport().size_changed.connect(_on_viewport_size_changed)
 
@@ -181,6 +704,7 @@ func _on_viewport_size_changed() -> void:
 	if _bg_viewport == null:
 		return
 	_bg_viewport.size = get_viewport_rect().size
+	_apply_portrait_layout()
 
 func _build_tile_lookup(tile_set: TileSet) -> void:
 	_bg_tile_name_to_entry.clear()
@@ -195,13 +719,11 @@ func _build_tile_lookup(tile_set: TileSet) -> void:
 		if tex == null or tex.resource_path == "":
 			continue
 		var texture_name := tex.resource_path.get_file().get_basename()
-		# Pick the first tile in that atlas source.
 		if source.has_method("get_tiles_count") and source.get_tiles_count() > 0:
 			var coords := source.get_tile_id(0)
 			_bg_tile_name_to_entry[texture_name] = {"source_id": source_id, "coords": coords}
 
 func _pick_tile_name(v: float) -> String:
-	# Rough terrain mix that looks like the game map.
 	if v < -0.55:
 		return "mountains"
 	if v < -0.25:
@@ -234,13 +756,10 @@ func _populate_placeholder_tiles(tile_set: TileSet) -> void:
 				continue
 			_bg_tilemap.set_cell(Vector2i(x, y), int(entry["source_id"]), entry["coords"])
 
-	# Center camera roughly.
 	var map_px := Vector2(_bg_map_size.x * tile_size.x, _bg_map_size.y * tile_size.y)
 	_bg_camera.position = map_px * 0.5
 
 func _try_use_real_map_background() -> void:
-	# Prefer rendering the actual game map if it is already present in GameStore.
-	# If we have a valid session token, request the map as well.
 	var store := get_node_or_null("/root/GameStore")
 	if is_instance_valid(store) and store.has_method("get_tiles"):
 		var tiles: Array = store.get_tiles()
@@ -323,299 +842,16 @@ func _update_map_background(delta: float) -> void:
 		_bg_camera.position = map_px * 0.5
 		return
 
-	# Subtle drifting with a little sinusoidal wobble.
 	var wobble := Vector2(sin(_bg_time * 0.35) * 6.0, cos(_bg_time * 0.28) * 5.0)
 	_bg_camera.position += (_bg_drift_speed * delta) + (wobble * delta)
 
-	# Wrap within the safe bounds so we never reveal empty space.
 	var span := max_pos - min_pos
 	_bg_camera.position.x = min_pos.x + fposmod(_bg_camera.position.x - min_pos.x, span.x)
 	_bg_camera.position.y = min_pos.y + fposmod(_bg_camera.position.y - min_pos.y, span.y)
 
-func _connect_hub_store_signals() -> void:
-	var hub := get_node_or_null("/root/SignalHub")
-	if is_instance_valid(hub):
-		if hub.has_signal("auth_state_changed") and not hub.auth_state_changed.is_connected(_on_auth_state_changed):
-			hub.auth_state_changed.connect(_on_auth_state_changed)
-		if hub.has_signal("map_changed") and not hub.map_changed.is_connected(_on_map_changed):
-			hub.map_changed.connect(_on_map_changed)
-		if hub.has_signal("error_occurred") and not hub.error_occurred.is_connected(_on_hub_error_occurred):
-			hub.error_occurred.connect(_on_hub_error_occurred)
-	var store := get_node_or_null("/root/GameStore")
-	if is_instance_valid(store):
-		if store.has_signal("map_changed") and not store.map_changed.is_connected(_on_map_changed):
-			store.map_changed.connect(_on_map_changed)
-		if store.has_signal("user_changed") and not store.user_changed.is_connected(_on_store_user_changed):
-			store.user_changed.connect(_on_store_user_changed)
-
-func _connect_api_signals() -> void:
-	var api = _api()
-	if is_instance_valid(api):
-		if api.has_signal("auth_url_received") and not api.auth_url_received.is_connected(_on_auth_url_received):
-			api.auth_url_received.connect(_on_auth_url_received)
-		if api.has_signal("fetch_error") and not api.fetch_error.is_connected(_on_api_error):
-			api.fetch_error.connect(_on_api_error)
-		if api.has_signal("auth_expired") and not api.auth_expired.is_connected(_on_auth_expired):
-			api.auth_expired.connect(_on_auth_expired)
-
-func _on_discord_login_pressed() -> void:
-	if _oauth_in_progress:
-		return
-	status_label.text = "Starting Discord auth..."
-	var api = _api()
-	if api == null:
-		status_label.text = "Auth system not ready."
-		return
-	api.get_auth_url()
-
-func _on_steam_login_pressed() -> void:
-	if _oauth_in_progress:
-		return
-	status_label.text = "Checking Steam ID..."
-	var steam_id = SteamManager.get_steam_id()
-	if steam_id == "":
-		status_label.text = "Error: Could not get Steam ID."
-		return
-		
-	status_label.text = "Logging in with Steam..."
-	_set_oauth_active(true)
-	var api = _api()
-	if api:
-		var persona := ""
-		if SteamManager.has_method("get_steam_username"):
-			persona = SteamManager.get_steam_username()
-		api.login_with_steam(steam_id, persona)
-	else:
-		status_label.text = "API System offline."
-		_set_oauth_active(false)
-
-func _on_auth_url_received(data: Dictionary) -> void:
-	var auth_url: String = str(data.get("url", ""))
-	_pkce_state = str(data.get("state", ""))
-	_pkce_code_verifier = str(data.get("code_verifier", ""))
-	if auth_url == "":
-		status_label.text = "Failed to get auth URL."
-		return
-	OS.shell_open(auth_url)
-	status_label.text = "Browser opened. Complete Discord sign-in..."
-
-func _on_api_error(message: String) -> void:
-	if _oauth_in_progress:
-		status_label.text = "Auth error: %s" % message
-		_set_oauth_active(false)
-	else:
-		status_label.text = message
-
-func _on_auth_state_changed(state: String) -> void:
-	# Drive UI from canonical Hub auth state.
-	match state:
-		"pending":
-			_set_oauth_active(true)
-			if not status_label.text.begins_with("Authenticating"):
-				status_label.text = "Authenticating"
-		"authenticated":
-			# User resolution will arrive via GameStore.user_changed
-			status_label.text = "Session established. Resolving user..."
-			_set_oauth_active(false)
-		"expired":
-			_set_oauth_active(false)
-			status_label.text = "Session expired. Please login."
-		"failed":
-			_set_oauth_active(false)
-			if status_label.text == "Authenticating" or status_label.text == "":
-				status_label.text = "Authentication failed."
-		_: # default
-			pass
-
-func _on_hub_error_occurred(domain: String, _code: String, message: String, inline: bool) -> void:
-	if domain == "auth" or not inline:
-		show_error(message)
-
-func _on_store_user_changed(user: Dictionary) -> void:
-	var uid := String(user.get("user_id", user.get("id", "")))
-	if uid == "":
-		return
-	status_label.text = "Welcome."
-	_set_oauth_active(false)
-	emit_signal("login_successful", uid)
-
-func _on_auth_expired() -> void:
-	_set_oauth_active(false)
-	status_label.text = "Session expired. Please login."
-
-func _spin_status() -> void:
-	if not status_label.text.begins_with("Authenticating"):
-		return
-	var dots = (_spinner_phase % 4)
-	var base = "Authenticating" + ".".repeat(dots)
-	status_label.text = base
-	_spinner_phase += 1
-
-func _set_oauth_active(active: bool) -> void:
-	_oauth_in_progress = active
-	if is_instance_valid(discord_button):
-		discord_button.disabled = active
-	if active and _spinner_timer == null:
-		_spinner_timer = Timer.new()
-		_spinner_timer.wait_time = 0.5
-		_spinner_timer.autostart = true
-		_spinner_timer.one_shot = false
-		add_child(_spinner_timer)
-		_spinner_timer.timeout.connect(_spin_status)
-	elif not active and _spinner_timer:
-		_spinner_timer.queue_free()
-		_spinner_timer = null
-
-func _style_discord_button() -> void:
-	if not is_instance_valid(discord_button):
-		return
-	if discord_button.text.strip_edges() == "":
-		discord_button.text = "Continue with Discord"
-	discord_button.add_theme_color_override("font_color", Color.WHITE)
-	discord_button.add_theme_color_override("font_hover_color", Color.WHITE)
-	discord_button.add_theme_color_override("font_pressed_color", Color.WHITE)
-	discord_button.add_theme_color_override("font_disabled_color", Color(1, 1, 1, 0.6))
-
-	var normal := StyleBoxFlat.new()
-	normal.bg_color = DISCORD_BLURPLE
-	normal.corner_radius_top_left = 10
-	normal.corner_radius_top_right = 10
-	normal.corner_radius_bottom_left = 10
-	normal.corner_radius_bottom_right = 10
-	normal.content_margin_left = 14
-	normal.content_margin_right = 14
-	normal.content_margin_top = 10
-	normal.content_margin_bottom = 10
-
-	var hover := normal.duplicate()
-	hover.bg_color = Color("6D78F6")
-
-	var pressed := normal.duplicate()
-	pressed.bg_color = Color("4752C4")
-
-	var disabled := normal.duplicate()
-	disabled.bg_color = Color("3A3D47")
-
-	var focus := normal.duplicate()
-	focus.bg_color = normal.bg_color
-	focus.border_width_left = 2
-	focus.border_width_right = 2
-	focus.border_width_top = 2
-	focus.border_width_bottom = 2
-	focus.border_color = Color(1, 1, 1, 0.35)
-
-	discord_button.add_theme_stylebox_override("normal", normal)
-	discord_button.add_theme_stylebox_override("hover", hover)
-	discord_button.add_theme_stylebox_override("pressed", pressed)
-	discord_button.add_theme_stylebox_override("disabled", disabled)
-	discord_button.add_theme_stylebox_override("focus", focus)
-	discord_button.custom_minimum_size = Vector2(340, 54)
-	discord_button.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-
-func _ensure_coming_soon_section() -> void:
-	if not is_instance_valid(vbox_container):
-		return
-	if vbox_container.has_node("ComingSoonSection"):
-		return
-
-	var section := VBoxContainer.new()
-	section.name = "ComingSoonSection"
-	section.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	section.add_theme_constant_override("separation", 8)
-
-	var title := Label.new()
-	title.text = "More login options (coming soon)"
-	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	title.modulate = Color(1, 1, 1, 0.75)
-
-	var row := HBoxContainer.new()
-	row.alignment = BoxContainer.ALIGNMENT_CENTER
-	row.add_theme_constant_override("separation", 10)
-
-	row.add_child(_make_coming_soon_button("Steam"))
-	row.add_child(_make_coming_soon_button("iOS"))
-	row.add_child(_make_coming_soon_button("Android"))
-
-	section.add_child(title)
-	section.add_child(row)
-	vbox_container.add_child(section)
-
-
-	# Place the section just below the Discord button when possible.
-	if is_instance_valid(discord_button) and discord_button.get_parent() == vbox_container:
-		var idx := vbox_container.get_children().find(discord_button)
-		if idx != -1:
-			vbox_container.move_child(section, min(idx + 1, vbox_container.get_child_count() - 1))
-
-func _make_coming_soon_button(text: String) -> Button:
-	var b := Button.new()
-	b.text = text
-	
-	if text == "Steam":
-		_steam_login_button = b
-		if SteamManager.is_steam_running():
-			_style_active_steam_button(b)
-			return b
-
-	b.disabled = true
-	b.focus_mode = Control.FOCUS_NONE
-	b.custom_minimum_size = Vector2(140, 44)
-
-	b.add_theme_color_override("font_color", Color(1, 1, 1, 0.6))
-	b.add_theme_color_override("font_disabled_color", Color(1, 1, 1, 0.6))
-
-	var normal := StyleBoxFlat.new()
-	normal.bg_color = Color(0.2, 0.21, 0.23, 0.75)
-	normal.corner_radius_top_left = 10
-	normal.corner_radius_top_right = 10
-	normal.corner_radius_bottom_left = 10
-	normal.corner_radius_bottom_right = 10
-	normal.content_margin_left = 12
-	normal.content_margin_right = 12
-	normal.content_margin_top = 8
-	normal.content_margin_bottom = 8
-
-	b.add_theme_stylebox_override("normal", normal)
-	b.add_theme_stylebox_override("disabled", normal)
-	return b
-
-func _on_steam_initialized() -> void:
-	print("[LoginScreen] Steam initialized signal received.")
-	if is_instance_valid(_steam_login_button):
-		_style_active_steam_button(_steam_login_button)
-
-func _style_active_steam_button(b: Button) -> void:
-	if not is_instance_valid(b):
-		return
-	print("[LoginScreen] Enabling Steam login button.")
-	b.disabled = false
-	b.focus_mode = Control.FOCUS_ALL
-	b.add_theme_color_override("font_color", Color.WHITE)
-	b.add_theme_color_override("font_hover_color", Color.WHITE)
-	if not b.pressed.is_connected(_on_steam_login_pressed):
-		b.pressed.connect(_on_steam_login_pressed)
-	
-	# Make it look active (Steam thematic blue)
-	var normal_steam := StyleBoxFlat.new()
-	normal_steam.bg_color = Color("171a21") # Steam dark blue
-	normal_steam.border_width_bottom = 2
-	normal_steam.border_color = Color("66c0f4") # Steam light blue
-	normal_steam.corner_radius_top_left = 10
-	normal_steam.corner_radius_top_right = 10
-	normal_steam.corner_radius_bottom_left = 10
-	normal_steam.corner_radius_bottom_right = 10
-	normal_steam.content_margin_left = 12
-	normal_steam.content_margin_right = 12
-	normal_steam.content_margin_top = 8
-	normal_steam.content_margin_bottom = 8
-	
-	var hover_steam := normal_steam.duplicate()
-	hover_steam.bg_color = Color("2a475e")
-	
-	b.add_theme_stylebox_override("normal", normal_steam)
-	b.add_theme_stylebox_override("hover", hover_steam)
-	b.add_theme_stylebox_override("pressed", normal_steam)
-	b.add_theme_stylebox_override("focus", hover_steam)
+# ────────────────────────────────────────────────────────────────────
+# Utilities
+# ────────────────────────────────────────────────────────────────────
 
 func show_error(message: String) -> void:
 	status_label.text = message

@@ -128,11 +128,16 @@ static func populate_tree_vendor_rows(tree: Tree, agg: Dictionary) -> int:
 	return total_rows
 
 static func _get_bold_font_for_tree(node: Control) -> FontVariation:
+	if is_instance_valid(node) and node.has_meta("cached_bold_font"):
+		return node.get_meta("cached_bold_font")
+		
 	var default_font = node.get_theme_font("font") if is_instance_valid(node) else null
 	if default_font:
 		var bf = FontVariation.new()
 		bf.set_base_font(default_font)
 		bf.set_variation_embolden(1.0)
+		if is_instance_valid(node):
+			node.set_meta("cached_bold_font", bf)
 		return bf
 	return null
 
@@ -149,7 +154,9 @@ static func _tree_column_count(tree: Tree) -> int:
 static func _normalize_category_title(category_name: String) -> String:
 	var title := category_name
 	var _lc := str(category_name).to_lower()
-	if _lc == "parts":
+	if _lc == "missions":
+		title = "Delivery Cargo"
+	elif _lc == "parts":
 		title = "Part Cargo"
 	elif _lc == "resources":
 		title = "Resource Cargo"
@@ -158,7 +165,7 @@ static func _normalize_category_title(category_name: String) -> String:
 	return title
 
 # Populate a single category section mirroring panel styling and metadata.
-static func populate_category(target_tree: Tree, root_item: TreeItem, category_name: String, agg_dict: Dictionary) -> void:
+static func populate_category(target_tree: Tree, root_item: TreeItem, category_name: String, agg_dict: Dictionary, sort_metric: int = -1, perf_log_enabled: bool = false) -> void:
 	if agg_dict == null or agg_dict.is_empty():
 		return
 	var title := _normalize_category_title(category_name)
@@ -185,12 +192,44 @@ static func populate_category(target_tree: Tree, root_item: TreeItem, category_n
 		else:
 			dn = str(agg_key)
 		rows.append({"key": agg_key, "data": agg_data, "dn": dn, "sort": dn.to_lower()})
-	rows.sort_custom(func(a, b): return a["sort"] < b["sort"])
+	if sort_metric >= 0 and _normalize_category_title(category_name) == "Delivery Cargo":
+		var CargoSorter = preload("res://Scripts/System/cargo_sorter.gd")
+		var items_to_sort = []
+		for r in rows:
+			var data = r["data"]
+			if data is Dictionary and data.has("item_data") and data["item_data"] is Dictionary:
+				items_to_sort.append(data["item_data"])
+			else:
+				items_to_sort.append(data)
+		
+		# Sort items using the CargoSorter
+		var sorted_items = CargoSorter.sort_cargo(items_to_sort, sort_metric, false)
+		
+		# Rebuild `rows` matching the sorted order
+		var new_rows: Array = []
+		for sorted_item in sorted_items:
+			for i in range(rows.size()):
+				var r = rows[i]
+				var r_data = r["data"]
+				var r_item_data = r_data.get("item_data", r_data) if r_data is Dictionary else r_data
+				if r_item_data == sorted_item:
+					new_rows.append(r)
+					rows.remove_at(i)
+					break
+		
+		# Any leftovers (shouldn't happen, but just in case)
+		for r in rows:
+			new_rows.append(r)
+		rows = new_rows
+	else:
+		rows.sort_custom(func(a, b): return a["sort"] < b["sort"])
 
 	var row_index: int = 0
 	for row in rows:
 		var agg_data = row["data"]
 		var display_name: String = row["dn"]
+		if _normalize_category_title(category_name) == "Other Cargo" and perf_log_enabled:
+			print("[VendorTreeBuilder]   Adding to Other Cargo: '", display_name, "' data keys=", agg_data.keys() if agg_data is Dictionary else "NON-DICT")
 		var tree_child_item = target_tree.create_item(category_item)
 		tree_child_item.set_text(0, display_name)
 		tree_child_item.set_autowrap_mode(0, TextServer.AUTOWRAP_WORD)

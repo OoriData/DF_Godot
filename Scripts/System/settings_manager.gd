@@ -11,6 +11,7 @@ var data := {
 	"ui.scale": 1.4,
 	"ui.auto_scale": false, # Dynamic scaling (adjusts to window size)
 	"ui.menu_open_ratio": 0.5, # Midpoint of the 25%-75% range
+	"ui.cargo_sort_metric": 0, # Default cargo sort mode
 
 
 	"access.high_contrast": false,

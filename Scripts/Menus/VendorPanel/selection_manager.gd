@@ -44,11 +44,11 @@ static func start_watchdog(tree: SceneTree, refresh_id: int, timeout_ms: int, on
 # - tree: target Tree
 # - item_id: prior id or special key (e.g., "name:...", "res:fuel")
 # - on_select: Callable to invoke with the selected agg_data (deferred)
-# - matches_fn: Optional Callable(agg_data: Dictionary, key: String) -> bool for custom match logic
-static func restore_selection(tree: Tree, item_id, on_select: Callable, matches_fn: Callable = Callable()) -> bool:
+# - clear_on_fail: If true, calls on_select(null) when not found to wipe state.
+static func restore_selection(tree: Tree, item_id, on_select: Callable, matches_fn: Callable = Callable(), clear_on_fail: bool = true) -> bool:
 	if not is_instance_valid(tree) or tree.get_root() == null:
-		if on_select.is_valid():
-			on_select.call_deferred(null)
+		# Do not invoke on_select with null if the tree is simply unpopulated.
+		# This preserves the restore ID so it can be used when data finally arrives.
 		return false
 	var root = tree.get_root()
 	var cat = root.get_first_child()
@@ -59,6 +59,7 @@ static func restore_selection(tree: Tree, item_id, on_select: Callable, matches_
 			if agg_data and (agg_data is Dictionary) and (agg_data as Dictionary).has("item_data"):
 				var idata: Dictionary = agg_data.item_data
 				var id = idata.get("cargo_id", idata.get("vehicle_id", null))
+				print("[DIAGNOSTIC] VendorSelectionManager comparing explicit ID: ", id, " with item_id: ", item_id)
 				if id != null and str(id) == str(item_id):
 					it.select(0)
 					if on_select.is_valid():
@@ -70,6 +71,7 @@ static func restore_selection(tree: Tree, item_id, on_select: Callable, matches_
 						matched = bool(matches_fn.call(agg_data, str(item_id)))
 					else:
 						matched = _default_matches_restore_key(agg_data, str(item_id))
+					print("[DIAGNOSTIC] VendorSelectionManager comparing STRING id: ", item_id, " against item: ", idata.get("name"), " Match: ", matched)
 					if matched:
 						it.select(0)
 						if on_select.is_valid():
@@ -78,7 +80,8 @@ static func restore_selection(tree: Tree, item_id, on_select: Callable, matches_
 			it = it.get_next()
 		cat = cat.get_next()
 	# Not found; clear selection via callback with null
-	if on_select.is_valid():
+	print("[DIAGNOSTIC] VendorSelectionManager failed to find ID: ", item_id, " clear_on_fail: ", clear_on_fail)
+	if clear_on_fail and on_select.is_valid():
 		on_select.call_deferred(null)
 	return false
 

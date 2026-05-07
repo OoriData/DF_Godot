@@ -18,8 +18,8 @@ var settlement_label_settings: LabelSettings
 # --- UI Constants (copied and consolidated from main.gd) ---
 @export_group("Font Scaling")
 ## Target screen font size for convoy titles (if font_render_scale and map_zoom are 1.0). Adjust for desired on-screen readability. (Prev: 12)
-@export var base_convoy_title_font_size: int = 29 # 22 * 1.33
-@export var base_settlement_font_size: int = 24 # 18 * 1.33
+@export var base_convoy_title_font_size: int = 36 # Was 29
+@export var base_settlement_font_size: int = 32 # Was 24
 ## Minimum font size to set on the Label node.
 @export var min_node_font_size: int = 8
 ## Maximum font size to set on the Label node.
@@ -44,7 +44,7 @@ var settlement_label_settings: LabelSettings
 @export var base_convoy_panel_padding_h: float = 13.3 # 10.0 * 1.33
 @export var base_convoy_panel_padding_v: float = 6.65 # 5.0 * 1.33
 ## Background color for convoy label panels.
-@export var convoy_panel_background_color: Color = Color(0.12, 0.12, 0.15, 0.88) 
+@export var convoy_panel_background_color: Color = Color("25282adc") # Oori Dark Grey with 0.86 alpha
 ## Target screen border width for convoy label panels. Adjust for desired on-screen look. (Prev: 1.0)
 @export var base_convoy_panel_border_width: float = 1.66 # 1.25 * 1.33
 ## Minimum corner radius to set on the panel node.
@@ -68,7 +68,7 @@ var settlement_label_settings: LabelSettings
 ## Target screen vertical padding inside settlement label panels. Adjust for desired on-screen look. (Prev: 2.0)
 @export var base_settlement_panel_padding_v: float = 3.33 # 2.5 * 1.33
 ## Background color for settlement label panels.
-@export var settlement_panel_background_color: Color = Color(0.15, 0.12, 0.12, 0.85) 
+@export var settlement_panel_background_color: Color = Color("25282ad9") # Oori Dark Grey with 0.85 alpha
 
 @export_group("Label Positioning")
 ## Amount to shift a label panel vertically to avoid collision with another.
@@ -121,6 +121,7 @@ var _current_map_zoom_cache: float = 1.0 # Cache for current map zoom level
 var _current_map_screen_rect_for_clamping: Rect2
 
 var _active_settlement_panels: Dictionary = {} # { "tile_coord_str": PanelNode }
+var _pinned_settlement_coords: Array[Vector2i] = []
 
 # Z-index for label containers within MapContainer, relative to MapDisplay and ConvoyNodes
 const LABEL_CONTAINER_Z_INDEX = 2
@@ -189,14 +190,10 @@ func _ready():
 	settlement_label_settings.outline_color = Color.BLACK
 
 	# Ensure a valid Font is assigned to both LabelSettings to avoid "font is NOT VALID" errors.
-	var fallback_font: Font = load("res://Assets/Roboto-VariableFont_wdth,wght.ttf")
+	var fallback_font: Font = load("res://Assets/main_font.tres")
 	if not is_instance_valid(fallback_font):
 		fallback_font = ThemeDB.fallback_font
 	if is_instance_valid(fallback_font):
-		# Duplicate before modifying to avoid editor resource mutation/reload prompts.
-		if fallback_font is FontFile:
-			fallback_font = (fallback_font as FontFile).duplicate(true)
-			(fallback_font as FontFile).oversampling = 2.0
 		label_settings.font = fallback_font
 		settlement_label_settings.font = fallback_font
 
@@ -400,10 +397,11 @@ func _clamp_panel_position_optimized(panel: Panel, precalculated_clamp_rect_loca
 	if panel_actual_size.x <= 0 or panel_actual_size.y <= 0:
 		panel_actual_size = panel.get_minimum_size()
 
+	var scaled_size = panel_actual_size * panel.scale
 	var padded_min_x = precalculated_clamp_rect_local_to_container.position.x + label_map_edge_padding
 	var padded_min_y = precalculated_clamp_rect_local_to_container.position.y + label_map_edge_padding
-	var padded_max_x = precalculated_clamp_rect_local_to_container.position.x + precalculated_clamp_rect_local_to_container.size.x - panel_actual_size.x - label_map_edge_padding
-	var padded_max_y = precalculated_clamp_rect_local_to_container.position.y + precalculated_clamp_rect_local_to_container.size.y - panel_actual_size.y - label_map_edge_padding
+	var padded_max_x = precalculated_clamp_rect_local_to_container.position.x + precalculated_clamp_rect_local_to_container.size.x - scaled_size.x - label_map_edge_padding
+	var padded_max_y = precalculated_clamp_rect_local_to_container.position.y + precalculated_clamp_rect_local_to_container.size.y - scaled_size.y - label_map_edge_padding
 
 	panel.position.x = clamp(panel.position.x, padded_min_x, padded_max_x)
 	panel.position.y = clamp(panel.position.y, padded_min_y, padded_max_y)
@@ -424,13 +422,31 @@ func _clamp_panel_position(panel: Panel): # Original function, now less used but
 	if panel_actual_size.x <= 0 or panel_actual_size.y <= 0:
 		panel_actual_size = panel.get_minimum_size()
 
+	var scaled_size = panel_actual_size * panel.scale
 	var padded_min_x = clamp_rect_local_to_container.position.x + label_map_edge_padding
 	var padded_min_y = clamp_rect_local_to_container.position.y + label_map_edge_padding
-	var padded_max_x = clamp_rect_local_to_container.position.x + clamp_rect_local_to_container.size.x - panel_actual_size.x - label_map_edge_padding
-	var padded_max_y = clamp_rect_local_to_container.position.y + clamp_rect_local_to_container.size.y - panel_actual_size.y - label_map_edge_padding
+	var padded_max_x = clamp_rect_local_to_container.position.x + clamp_rect_local_to_container.size.x - scaled_size.x - label_map_edge_padding
+	var padded_max_y = clamp_rect_local_to_container.position.y + clamp_rect_local_to_container.size.y - scaled_size.y - label_map_edge_padding
 
 	panel.position.x = clamp(panel.position.x, padded_min_x, padded_max_x)
 	panel.position.y = clamp(panel.position.y, padded_min_y, padded_max_y)
+
+func toggle_settlement_pin(coords: Vector2i):
+	var settlement_name = "Unknown"
+	var settlement_info = _find_settlement_at_tile(coords.x, coords.y)
+	if settlement_info != null:
+		settlement_name = settlement_info.get("name", "Unknown")
+
+	print("[UIManager] Toggling settlement pin for: ", coords, " (", settlement_name, ")")
+	if _pinned_settlement_coords.has(coords):
+		print("[UIManager]   Removing pin")
+		_pinned_settlement_coords.erase(coords)
+	else:
+		print("[UIManager]   Adding pin")
+		_pinned_settlement_coords.append(coords)
+
+func clear_all_settlement_pins():
+	_pinned_settlement_coords.clear()
 
 func _draw_interactive_labels(current_hover_info: Dictionary):
 	if is_instance_valid(_dragging_panel_node):
@@ -439,6 +455,18 @@ func _draw_interactive_labels(current_hover_info: Dictionary):
 	var all_drawn_label_rects_this_update: Array[Rect2] = [] # This will be used by SettlementLabelManager and ConvoyLabelManager internally or passed to them
 	var convoy_ids_to_display: Array[String] = []
 	var settlement_coords_to_display: Array[Vector2i] = []
+	
+	# Include pinned settlements
+	for pinned_coords in _pinned_settlement_coords:
+		if not settlement_coords_to_display.has(pinned_coords):
+			settlement_coords_to_display.append(pinned_coords)
+
+	# Include preview route destination
+	if _is_preview_active and _preview_route_x.size() > 0:
+		var end_tile_coords := Vector2i(int(_preview_route_x.back()), int(_preview_route_y.back()))
+		if not settlement_coords_to_display.has(end_tile_coords):
+			settlement_coords_to_display.append(end_tile_coords)
+
 	# Draw Settlement Labels (for selected convoys' start/end, then hovered settlement)
 	if not _selected_convoy_ids_cache.is_empty():
 		for convoy_data in _all_convoy_data_cache:
@@ -535,7 +563,8 @@ func _draw_interactive_labels(current_hover_info: Dictionary):
 		var current_settlement_panel_actual_size = panel_node.size
 		if current_settlement_panel_actual_size.x <= 0 or current_settlement_panel_actual_size.y <= 0:
 			current_settlement_panel_actual_size = panel_node.get_minimum_size()
-		all_drawn_label_rects_this_update.append(Rect2(panel_node.position, current_settlement_panel_actual_size))
+		var scaled_size = current_settlement_panel_actual_size * panel_node.scale
+		all_drawn_label_rects_this_update.append(Rect2(panel_node.position, scaled_size))
 		if not drawn_settlement_tile_coords_this_update.has(settlement_coord_to_draw):
 			drawn_settlement_tile_coords_this_update.append(settlement_coord_to_draw)
 
@@ -573,7 +602,12 @@ func _create_settlement_panel() -> Panel:
 	var style_box := StyleBoxFlat.new()
 	panel.add_theme_stylebox_override('panel', style_box)
 	panel.set_meta("style_box_ref", style_box)
-	# Settlement panels are not draggable by default, so no MOUSE_FILTER_STOP needed unless specified.
+
+	# Settlement panels are visual overlays rendered in a Node2D inside a CanvasLayer.
+	# Controls inside Node2D containers don't participate in Godot's GUI input
+	# routing, so mouse_filter has no reliable effect here. Click handling is done
+	# entirely via hit-rect tests in MapInteractionManager.
+	panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
 
 	var label_node := Label.new()
 	label_node.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
@@ -583,33 +617,24 @@ func _create_settlement_panel() -> Panel:
 
 	return panel
 
+## Schedules a label redraw on the next frame so the pin state change is
+## immediately reflected without needing a hover or selection change.
+func _force_draw_interactive_labels_deferred() -> void:
+	call_deferred("_draw_interactive_labels", {})
+
 func _update_settlement_panel_content(panel: Panel, settlement_info: Dictionary):
 	if not is_instance_valid(panel): return
 	var label_node: Label = panel.get_meta("label_node_ref")
 	var style_box: StyleBoxFlat = panel.get_meta("style_box_ref")
 	if not is_instance_valid(label_node) or not is_instance_valid(style_box): return
 	# Font size and panel sizing now rely on content_scale_factor
-	var current_settlement_font_size: int = clamp(
-		roundi(base_settlement_font_size / max(0.0001, _current_map_zoom_cache)),
-		min_node_font_size,
-		max_node_font_size
-	)
-	# Scale panel visuals inversely with zoom so the box scales along with the text
-	var current_settlement_panel_corner_radius: float = clamp(
-		base_settlement_panel_corner_radius / max(0.0001, _current_map_zoom_cache),
-		min_node_panel_corner_radius,
-		max_node_panel_corner_radius
-	)
-	var current_settlement_panel_padding_h: float = clamp(
-		base_settlement_panel_padding_h / max(0.0001, _current_map_zoom_cache),
-		min_node_panel_padding,
-		max_node_panel_padding
-	)
-	var current_settlement_panel_padding_v: float = clamp(
-		base_settlement_panel_padding_v / max(0.0001, _current_map_zoom_cache),
-		min_node_panel_padding,
-		max_node_panel_padding
-	)
+	var current_settlement_font_size: int = base_settlement_font_size
+	var current_settlement_panel_corner_radius: float = base_settlement_panel_corner_radius
+	var current_settlement_panel_padding_h: float = base_settlement_panel_padding_h
+	var current_settlement_panel_padding_v: float = base_settlement_panel_padding_v
+	
+	var zoom_factor = max(0.0001, _current_map_zoom_cache)
+	panel.scale = Vector2(1.0 / zoom_factor, 1.0 / zoom_factor)
 	var settlement_name_local: String = settlement_info.get('name', 'N/A')
 	if settlement_name_local == 'N/A': return
 	if not is_instance_valid(settlement_label_settings.font):
@@ -658,15 +683,17 @@ func _position_settlement_panel(panel: Panel, settlement_info: Dictionary, _exis
 	var tile_center = terrain_tilemap.map_to_local(Vector2i(tile_x, tile_y))
 	var current_settlement_offset_above_center: float = base_settlement_offset_above_tile_center
 	
+	var scaled_size = panel_actual_size * panel.scale
+	
 	# Position label above the tile center, centered horizontally
-	var panel_desired_x = tile_center.x - (panel_actual_size.x / 2.0)
-	var panel_desired_y = tile_center.y - panel_actual_size.y - current_settlement_offset_above_center
+	var panel_desired_x = tile_center.x - (scaled_size.x / 2.0)
+	var panel_desired_y = tile_center.y - scaled_size.y - current_settlement_offset_above_center
 	panel.position = Vector2(panel_desired_x, panel_desired_y)
 
 	# --- Anti-collision logic ---
 	var attempt := 0
 	while attempt < 20: # Max attempts to find a clear spot
-		var panel_rect := Rect2(panel.position, panel_actual_size)
+		var panel_rect := Rect2(panel.position, scaled_size)
 		
 		# Check against other labels
 		var overlaps_labels := false
@@ -946,6 +973,14 @@ func _on_connector_lines_container_draw():
 				convoy_connector_lines_container.draw_polyline(offset_points, Color(1,1,1,0.95), outline_w)
 				# Colored path matching convoy icon (top stroke)
 				convoy_connector_lines_container.draw_polyline(offset_points, convoy_color, connector_line_width)
+				
+				# Destination Marker
+				var dest_pt = offset_points[offset_points.size() - 1]
+				var marker_radius = connector_line_width * 1.5
+				var outline_radius = marker_radius + (route_line_outline_extra_width * 0.75)
+				convoy_connector_lines_container.draw_circle(dest_pt, outline_radius, Color(1,1,1,0.95))
+				convoy_connector_lines_container.draw_circle(dest_pt, marker_radius, convoy_color)
+
 	# --- Preview Route Drawing (after existing routes so it appears on top) ---
 	if _is_preview_active and _preview_route_x.size() >= 2 and _preview_route_x.size() == _preview_route_y.size():
 		var preview_points_base: Array[Vector2] = []
@@ -1035,6 +1070,13 @@ func _on_connector_lines_container_draw():
 			convoy_connector_lines_container.draw_polyline(preview_offset_points, Color(1,1,1,0.95), preview_outline_w)
 			# Colored overlay matching convoy color
 			convoy_connector_lines_container.draw_polyline(preview_offset_points, _preview_color, _preview_line_width)
+			
+			# Destination Marker
+			var dest_pt = preview_offset_points[preview_offset_points.size() - 1]
+			var marker_radius = _preview_line_width * 1.5
+			var outline_radius = marker_radius + (route_line_outline_extra_width * 0.75)
+			convoy_connector_lines_container.draw_circle(dest_pt, outline_radius, Color(1,1,1,0.95))
+			convoy_connector_lines_container.draw_circle(dest_pt, marker_radius, _preview_color)
 
 func set_convoy_user_position(convoy_id_str: String, position: Vector2):
 	_convoy_label_user_positions[convoy_id_str] = position

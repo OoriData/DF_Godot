@@ -1,13 +1,16 @@
-extends HBoxContainer
+extends PanelContainer
 
 ## Emitted when a convoy is selected from the dropdown, requesting its menu to be opened.
 @warning_ignore("unused_signal")
 signal convoy_menu_requested(convoy_id: String)
 
-@onready var username_label: Label = $UsernameLabel
-@onready var user_money_label: Label = $UserMoneyLabel
-@onready var settings_button: MenuButton = $SettingsButton
-var _settings_menu_instance: Window
+@onready var username_label: Label = %UsernameLabel
+@onready var user_money_label: Label = %UserMoneyLabel
+@onready var settings_button: MenuButton = %SettingsButton
+@onready var report_bug_button: Button = %ReportBugButton
+@onready var user_chip: PanelContainer = %UserChip
+@onready var money_chip: PanelContainer = %MoneyChip
+var _settings_menu_instance: CanvasLayer
 var _bug_report_window: BugReportWindow
 var _discord_popup: PopupPanel
 var _account_links_popup: CanvasLayer
@@ -26,6 +29,13 @@ var _original_money_font_size: int
 @onready var _user_service: Node = get_node_or_null("/root/UserService")
 
 @export var navbar_background_color: Color = Color(0.16, 0.16, 0.16, 0.92)
+
+# Oori Theme Palette
+const OORI_GREY = Color("#393d47")
+const OORI_DARK_GREY = Color("#25282a")
+const OORI_WHITE = Color("#dbe2e9")
+const OORI_YELLOW = Color("#f3d54e")
+const OORI_RED = Color("#8a2b2b")
 
 func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_PASS
@@ -52,9 +62,193 @@ func _ready() -> void:
 	else:
 		printerr("UserInfoDisplay: ui_scale_manager autoload not found at /root/ui_scale_manager. UI scaling will not be dynamic.")
 
+	# Connect standalone report bug button
+	if is_instance_valid(report_bug_button):
+		report_bug_button.pressed.connect(call_deferred.bind("_on_bug_report_pressed"))
+
 	# Options dropdown (replaces separate top-row buttons)
 	_configure_options_dropdown()
+	if is_instance_valid(settings_button):
+		settings_button.text = "Options"
+
+	_apply_base_styling()
+	
+	# Always apply base styling for consistent Oori theming
+	_apply_desktop_styling()
+	
+	if _is_mobile():
+		_apply_mobile_optimizations()
+	
 	queue_redraw()
+
+func _is_mobile() -> bool:
+	var dsm = get_node_or_null("/root/DeviceStateManager")
+	if is_instance_valid(dsm):
+		return dsm.is_mobile
+	return OS.has_feature("mobile") or OS.has_feature("web_android") or OS.has_feature("web_ios") or DisplayServer.get_name() in ["Android", "iOS"]
+
+func _apply_mobile_optimizations() -> void:
+	# 1. Scaling & Touch Targets
+	_update_mobile_sizing()
+	
+	# 2. Layout & Density (12px separation)
+	add_theme_constant_override("separation", 12)
+
+func _update_mobile_sizing() -> void:
+	if not _is_mobile():
+		return
+		
+	var is_portrait = false
+	var dsm = get_node_or_null("/root/DeviceStateManager")
+	if is_instance_valid(dsm):
+		is_portrait = dsm.get_is_portrait()
+	else:
+		var win_size = get_viewport_rect().size if is_inside_tree() else Vector2(0, 0)
+		is_portrait = win_size.y > win_size.x
+
+	if is_portrait:
+		custom_minimum_size.y = 200 # Increased from 170 for better clearance
+		if is_instance_valid(settings_button): 
+			settings_button.custom_minimum_size = Vector2(240, 130)
+			settings_button.add_theme_font_size_override("font_size", 36)
+		if is_instance_valid(report_bug_button): 
+			report_bug_button.custom_minimum_size = Vector2(160, 130)
+			report_bug_button.add_theme_font_size_override("font_size", 36)
+		
+		# Also scale username and money for portrait clarity
+		if is_instance_valid(username_label): username_label.add_theme_font_size_override("font_size", 32)
+		if is_instance_valid(user_money_label): user_money_label.add_theme_font_size_override("font_size", 32)
+	else:
+		custom_minimum_size.y = 96
+		if is_instance_valid(settings_button): 
+			settings_button.custom_minimum_size.y = 64
+			settings_button.add_theme_font_size_override("font_size", 24)
+		if is_instance_valid(report_bug_button): 
+			report_bug_button.custom_minimum_size.y = 64
+			report_bug_button.add_theme_font_size_override("font_size", 24)
+		
+		if is_instance_valid(username_label): username_label.add_theme_font_size_override("font_size", 28)
+		if is_instance_valid(user_money_label): user_money_label.add_theme_font_size_override("font_size", 28)
+
+func _apply_base_styling() -> void:
+	# 1. Main Background Style (Oori Texture)
+	var bg_rect = get_node_or_null("OoriBackground")
+	if not is_instance_valid(bg_rect):
+		bg_rect = TextureRect.new()
+		bg_rect.name = "OoriBackground"
+		# Set to tile mode as prepared for tileable background
+		bg_rect.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		bg_rect.stretch_mode = TextureRect.STRETCH_TILE 
+		bg_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		add_child(bg_rect)
+		move_child(bg_rect, 0) # Put in back
+		bg_rect.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	
+	var bg_tex = load("res://Assets/Themes/Oori Backround.png")
+	if bg_tex:
+		bg_rect.texture = bg_tex
+	
+	# Transparent Panel so the background is visible
+	var main_style = StyleBoxFlat.new()
+	main_style.bg_color = Color(0, 0, 0, 0) # Transparent
+	main_style.border_width_bottom = 2
+	main_style.border_color = OORI_GREY
+	main_style.content_margin_top = 4
+	main_style.content_margin_bottom = 4
+	main_style.content_margin_left = 12
+	main_style.content_margin_right = 12
+	add_theme_stylebox_override("panel", main_style)
+
+func _apply_desktop_styling() -> void:
+	custom_minimum_size.y = 60 # Balanced height
+
+	# 2. Chips (Username & Money)
+	if is_instance_valid(user_chip):
+		var opaque_style = StyleBoxFlat.new()
+		opaque_style.bg_color = OORI_DARK_GREY # Solid Oori Dark Grey
+		opaque_style.border_width_left = 3
+		opaque_style.border_width_right = 3
+		opaque_style.border_width_top = 3
+		opaque_style.border_width_bottom = 3
+		opaque_style.border_color = OORI_GREY
+		opaque_style.corner_radius_top_left = 4
+		opaque_style.corner_radius_top_right = 4
+		opaque_style.corner_radius_bottom_left = 4
+		opaque_style.corner_radius_bottom_right = 4
+		opaque_style.content_margin_left = 12
+		opaque_style.content_margin_right = 12
+		
+		user_chip.add_theme_stylebox_override("panel", opaque_style)
+		username_label.add_theme_font_size_override("font_size", 24)
+		username_label.add_theme_color_override("font_color", OORI_WHITE)
+	
+	if is_instance_valid(money_chip):
+		var vault_style = StyleBoxFlat.new()
+		vault_style.bg_color = OORI_DARK_GREY.lerp(Color.BLACK, 0.2) # Deep recessed look
+		vault_style.border_width_left = 3
+		vault_style.border_width_right = 3
+		vault_style.border_width_top = 3
+		vault_style.border_width_bottom = 3
+		vault_style.border_color = OORI_GREY
+		vault_style.corner_radius_top_left = 4
+		vault_style.corner_radius_top_right = 4
+		vault_style.corner_radius_bottom_left = 4
+		vault_style.corner_radius_bottom_right = 4
+		vault_style.content_margin_left = 12
+		vault_style.content_margin_right = 12
+		
+		money_chip.add_theme_stylebox_override("panel", vault_style)
+		user_money_label.add_theme_font_size_override("font_size", 24)
+		user_money_label.add_theme_color_override("font_color", OORI_YELLOW)
+
+	# 3. Buttons (Oori Professional Style with Full Borders)
+	var btn_normal = StyleBoxFlat.new()
+	btn_normal.bg_color = OORI_GREY
+	btn_normal.border_width_left = 3
+	btn_normal.border_width_right = 3
+	btn_normal.border_width_top = 3
+	btn_normal.border_width_bottom = 5
+	btn_normal.border_color = OORI_WHITE.lerp(Color.BLACK, 0.4) # Slightly brighter border for more prominence
+	btn_normal.corner_radius_top_left = 4
+	btn_normal.corner_radius_top_right = 4
+	btn_normal.corner_radius_bottom_left = 4
+	btn_normal.corner_radius_bottom_right = 4
+	btn_normal.content_margin_left = 12
+	btn_normal.content_margin_right = 12
+	
+	var btn_hover = btn_normal.duplicate()
+	btn_hover.bg_color = OORI_GREY.lerp(OORI_WHITE, 0.1)
+	btn_hover.border_color = OORI_WHITE.lerp(Color.BLACK, 0.2)
+	
+	if is_instance_valid(settings_button):
+		settings_button.flat = false
+		settings_button.add_theme_stylebox_override("normal", btn_normal)
+		settings_button.add_theme_stylebox_override("hover", btn_hover)
+		settings_button.add_theme_stylebox_override("pressed", btn_hover)
+		settings_button.add_theme_color_override("font_color", OORI_WHITE)
+		settings_button.add_theme_font_size_override("font_size", 20)
+		settings_button.custom_minimum_size = Vector2(0, 46)
+		
+	if is_instance_valid(report_bug_button):
+		var bug_normal = btn_normal.duplicate()
+		bug_normal.bg_color = OORI_RED
+		bug_normal.border_color = OORI_RED.lerp(Color.BLACK, 0.3)
+		
+		var bug_hover = bug_normal.duplicate()
+		bug_hover.bg_color = OORI_RED.lerp(Color.WHITE, 0.1)
+		bug_hover.border_color = Color.WHITE
+		
+		report_bug_button.flat = false
+		report_bug_button.add_theme_stylebox_override("normal", bug_normal)
+		report_bug_button.add_theme_stylebox_override("hover", bug_hover)
+		report_bug_button.add_theme_stylebox_override("pressed", bug_hover)
+		report_bug_button.add_theme_color_override("font_color", OORI_WHITE)
+		report_bug_button.add_theme_font_size_override("font_size", 20)
+		report_bug_button.custom_minimum_size = Vector2(0, 46)
+
+func _update_safe_margins() -> void:
+	pass
+
 
 
 
@@ -78,13 +272,13 @@ func _notification(what: int) -> void:
 		_update_display()
 		queue_redraw()
 	elif what == NOTIFICATION_RESIZED:
+		_update_mobile_sizing()
 		queue_redraw()
 
+
 func _draw() -> void:
-	# Explicit background so the navbar stays grey even if the project clear color is black.
-	if size.x <= 0.0 or size.y <= 0.0:
-		return
-	draw_rect(Rect2(Vector2.ZERO, size), navbar_background_color, true)
+	# Background is now handled via StyleBox on the PanelContainer for better gradient support.
+	pass
 
 func _on_user_data_updated(user_data: Dictionary):
 	_update_display(user_data)
@@ -135,12 +329,45 @@ func _configure_options_dropdown() -> void:
 
 	popup.clear()
 	popup.add_item("Settings", _OPTIONS_SETTINGS_ID)
-	popup.add_item("Report Bug", _OPTIONS_REPORT_BUG_ID)
 	popup.add_item("Join Discord", _OPTIONS_DISCORD_ID)
 	popup.add_item("Connect Accounts", _OPTIONS_CONNECT_ACCOUNTS_ID)
+	popup.add_separator()
+	popup.add_item("Highlights & Tips", 100) # Using 100 as a unique ID for Tips
 
 	if not popup.id_pressed.is_connected(_on_options_menu_id_pressed):
 		popup.id_pressed.connect(_on_options_menu_id_pressed)
+		
+	# Solid Background Styling (Unified for Desktop and Mobile)
+	var popup_style = StyleBoxFlat.new()
+	popup_style.bg_color = Color("#25282a") # Oori Dark Grey
+	popup_style.draw_center = true
+	popup_style.border_width_left = 2
+	popup_style.border_width_right = 2
+	popup_style.border_width_top = 2
+	popup_style.border_width_bottom = 2
+	popup_style.border_color = Color("#393d47") # Oori Grey
+	popup_style.corner_radius_top_left = 6
+	popup_style.corner_radius_top_right = 6
+	popup_style.corner_radius_bottom_left = 6
+	popup_style.corner_radius_bottom_right = 6
+	
+	if _is_mobile():
+		popup.add_theme_font_size_override("font_size", int(16 * 2.2))
+		popup.add_theme_constant_override("v_separation", 48)
+		popup.add_theme_constant_override("item_start_padding", 48)
+		popup.add_theme_constant_override("item_end_padding", 48)
+		popup_style.content_margin_left = 32
+		popup_style.content_margin_right = 32
+		popup_style.content_margin_top = 24
+		popup_style.content_margin_bottom = 24
+	else:
+		popup.add_theme_font_size_override("font_size", 16)
+		popup_style.content_margin_left = 12
+		popup_style.content_margin_right = 12
+		popup_style.content_margin_top = 8
+		popup_style.content_margin_bottom = 8
+		
+	popup.add_theme_stylebox_override("panel", popup_style)
 
 
 func _on_options_menu_id_pressed(id: int) -> void:
@@ -153,11 +380,19 @@ func _on_options_menu_id_pressed(id: int) -> void:
 			call_deferred("_on_discord_pressed")
 		_OPTIONS_CONNECT_ACCOUNTS_ID:
 			call_deferred("_on_connect_accounts_pressed")
+		100:
+			_on_highlights_tips_pressed()
 		_:
 			pass
 
+func _on_highlights_tips_pressed() -> void:
+	var main_screen := get_tree().root.find_child("MainScreen", true, false)
+	if is_instance_valid(main_screen) and main_screen.has_method("show_returning_player_tips"):
+		main_screen.show_returning_player_tips()
+
 
 func _on_discord_pressed() -> void:
+	print("[UserInfoDisplay] _on_discord_pressed called | LOUD LOG")
 	# Lazy-create discord popup
 	if not is_instance_valid(_discord_popup):
 		var script := load("res://Scripts/UI/discord_popup.gd")
@@ -239,16 +474,14 @@ func _on_settings_button_pressed():
 		var scene: PackedScene = load("res://Scenes/SettingsMenu.tscn")
 		if scene:
 			_settings_menu_instance = scene.instantiate()
-			# Add to the root so it behaves like a popup window
+			# Add to the root so it behaves like a full-screen overlay
 			get_tree().root.add_child(_settings_menu_instance)
-			_settings_menu_instance.title = "Options"
-			_settings_menu_instance.min_size = Vector2(600, 480)
 		else:
 			push_error("Failed to load SettingsMenu.tscn")
 			return
-	# Popup centered each time
+	
 	if _settings_menu_instance:
-		if _settings_menu_instance.has_method("popup_centered"):
-			_settings_menu_instance.popup_centered(Vector2i(720, 560))
-		else:
-			_settings_menu_instance.show()
+		_settings_menu_instance.show()
+		# Refresh layout/sizing for the current screen orientation
+		if _settings_menu_instance.has_method("_apply_mobile_optimizations"):
+			_settings_menu_instance.call("_apply_mobile_optimizations")

@@ -12,35 +12,27 @@ grow_horizontal = 2
 grow_vertical = 2
 script = ExtResource("1_script")
 
-[node name="ColorRect" type="ColorRect" parent="."]
-layout_mode = 1
-anchors_preset = 15
-anchor_right = 1.0
-anchor_bottom = 1.0
-grow_horizontal = 2
-grow_vertical = 2
-color = Color(0.1, 0.1, 0.1, 0.8)
-
 [node name="MainVBox" type="VBoxContainer" parent="."]
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
 anchor_bottom = 1.0
-offset_left = 10.0
-offset_top = 10.0
-offset_right = -10.0
-offset_bottom = -10.0
 grow_horizontal = 2
 grow_vertical = 2
+
 theme_override_constants/separation = 10
 
-[node name="TitleLabel" type="Label" parent="MainVBox"]
+[node name="TopRow" type="HBoxContainer" parent="MainVBox"]
+layout_mode = 2
+theme_override_constants/separation = 10
+
+[node name="TitleLabel" type="Label" parent="MainVBox/TopRow"]
 layout_mode = 2
 size_flags_horizontal = 3
 theme_override_font_sizes/font_size = 20
 text = "Vehicle Management"
 
-[node name="VehicleOptionButton" type="OptionButton" parent="MainVBox"]
+[node name="VehicleOptionButton" type="OptionButton" parent="MainVBox/TopRow"]
 layout_mode = 2
 size_flags_horizontal = 3
 selected = 0
@@ -57,80 +49,112 @@ size_flags_horizontal = 3
 text = "Mechanic"
 visible = false
 
-[node name="VehicleTabContainer" type="TabContainer" parent="MainVBox"]
-layout_mode = 2
-size_flags_vertical = 3
+	[node name="TabScroll" type="ScrollContainer" parent="MainVBox"]
+	layout_mode = 2
+	vertical_scroll_mode = 0
 
-[node name="Overview" type="ScrollContainer" parent="MainVBox/VehicleTabContainer"]
-layout_mode = 2
+	[node name="TabHBox" type="HBoxContainer" parent="MainVBox/TabScroll"]
+	layout_mode = 2
+	size_flags_horizontal = 3
+	theme_override_constants/separation = 10
 
-[node name="OverviewVBox" type="VBoxContainer" parent="MainVBox/VehicleTabContainer/Overview"]
-layout_mode = 2
-size_flags_horizontal = 3
-size_flags_vertical = 3
+	[node name="VehicleTabContainer" type="TabContainer" parent="MainVBox"]
+	layout_mode = 2
+	size_flags_vertical = 3
+	tabs_visible = false
 
-[node name="Parts" type="VBoxContainer" parent="MainVBox/VehicleTabContainer"]
-visible = false
-layout_mode = 2
-theme_override_constants/separation = 5
+	[node name="Overview" type="ScrollContainer" parent="MainVBox/VehicleTabContainer"]
+	layout_mode = 2
 
-[node name="PartsHeader" type="HBoxContainer" parent="MainVBox/VehicleTabContainer/Parts"]
-layout_mode = 2
-theme_override_constants/separation = 10
+	[node name="OverviewVBox" type="VBoxContainer" parent="MainVBox/VehicleTabContainer/Overview"]
+	layout_mode = 2
+	size_flags_horizontal = 3
+	size_flags_vertical = 3
 
-[node name="NameHeader" type="Label" parent="MainVBox/VehicleTabContainer/Parts/PartsHeader"]
-layout_mode = 2
-size_flags_horizontal = 3
-text = "Part Name"
-theme_override_colors/font_color = Color(0.8, 0.8, 0.8, 1)
+	[node name="Stats" type="ScrollContainer" parent="MainVBox/VehicleTabContainer"]
+	visible = false
+	layout_mode = 2
 
-[node name="SlotHeader" type="Label" parent="MainVBox/VehicleTabContainer/Parts/PartsHeader"]
-custom_minimum_size = Vector2(150, 0)
-layout_mode = 2
-text = "Slot"
-horizontal_alignment = 2
-theme_override_colors/font_color = Color(0.8, 0.8, 0.8, 1)
+	[node name="StatsVBox" type="VBoxContainer" parent="MainVBox/VehicleTabContainer/Stats"]
+	layout_mode = 2
+	size_flags_horizontal = 3
+	size_flags_vertical = 3
 
-[node name="InspectHeaderPlaceholder" type="Control" parent="MainVBox/VehicleTabContainer/Parts/PartsHeader"]
-custom_minimum_size = Vector2(80, 0)
-layout_mode = 2
+	[node name="Parts" type="VBoxContainer" parent="MainVBox/VehicleTabContainer"]
+	visible = false
+	layout_mode = 2
+	theme_override_constants/separation = 5
 
-[node name="PartsHeaderSeparator" type="HSeparator" parent="MainVBox/VehicleTabContainer/Parts"]
-layout_mode = 2
+	[node name="PartsHeader" type="HBoxContainer" parent="MainVBox/VehicleTabContainer/Parts"]
+	layout_mode = 2
+	theme_override_constants/separation = 10
 
-[node name="PartsScroll" type="ScrollContainer" parent="MainVBox/VehicleTabContainer/Parts"]
-layout_mode = 2
-size_flags_vertical = 3
+	[node name="NameHeader" type="Label" parent="MainVBox/VehicleTabContainer/Parts/PartsHeader"]
+	layout_mode = 2
+	size_flags_horizontal = 3
+	text = "Part Name"
+	theme_override_colors/font_color = Color(0.8, 0.8, 0.8, 1)
 
-[node name="PartsVBox" type="VBoxContainer" parent="MainVBox/VehicleTabContainer/Parts/PartsScroll"]
-layout_mode = 2
-size_flags_horizontal = 3
-size_flags_vertical = 3
+	[node name="SlotHeader" type="Label" parent="MainVBox/VehicleTabContainer/Parts/PartsHeader"]
+	custom_minimum_size = Vector2(150, 0)
+	layout_mode = 2
+	text = "Slot"
+	horizontal_alignment = 2
+	theme_override_colors/font_color = Color(0.8, 0.8, 0.8, 1)
 
-[node name="Service" type="ScrollContainer" parent="MainVBox/VehicleTabContainer"]
-visible = false
-layout_mode = 2
+	[node name="InspectHeaderPlaceholder" type="Control" parent="MainVBox/VehicleTabContainer/Parts/PartsHeader"]
+	custom_minimum_size = Vector2(80, 0)
+	layout_mode = 2
 
-[node name="ServiceVBox" type="VBoxContainer" parent="MainVBox/VehicleTabContainer/Service"]
-layout_mode = 2
-size_flags_horizontal = 3
-size_flags_vertical = 3
+	[node name="PartsHeaderSeparator" type="HSeparator" parent="MainVBox/VehicleTabContainer/Parts"]
+	layout_mode = 2
 
-[node name="MechanicsEmbed" parent="MainVBox/VehicleTabContainer/Service/ServiceVBox" instance=ExtResource("2_mechanics_scene")]
-layout_mode = 2
-size_flags_horizontal = 3
-size_flags_vertical = 3
+	[node name="PartsScroll" type="ScrollContainer" parent="MainVBox/VehicleTabContainer/Parts"]
+	layout_mode = 2
+	size_flags_vertical = 3
 
-[node name="Cargo" type="ScrollContainer" parent="MainVBox/VehicleTabContainer"]
-visible = false
-layout_mode = 2
+	[node name="PartsVBox" type="VBoxContainer" parent="MainVBox/VehicleTabContainer/Parts/PartsScroll"]
+	layout_mode = 2
+	size_flags_horizontal = 3
+	size_flags_vertical = 3
 
-[node name="CargoVBox" type="VBoxContainer" parent="MainVBox/VehicleTabContainer/Cargo"]
-layout_mode = 2
-size_flags_horizontal = 3
-size_flags_vertical = 3
+	[node name="Service" type="ScrollContainer" parent="MainVBox/VehicleTabContainer"]
+	visible = false
+	layout_mode = 2
 
-[node name="BackButton" type="Button" parent="MainVBox"]
-layout_mode = 2
-size_flags_horizontal = 4
-text = "Back"
+	[node name="ServiceVBox" type="VBoxContainer" parent="MainVBox/VehicleTabContainer/Service"]
+	layout_mode = 2
+	size_flags_horizontal = 3
+	size_flags_vertical = 3
+
+	[node name="MechanicsEmbed" parent="MainVBox/VehicleTabContainer/Service/ServiceVBox" instance=ExtResource("2_mechanics_scene")]
+	layout_mode = 2
+	size_flags_horizontal = 3
+	size_flags_vertical = 3
+
+	[node name="Cargo" type="ScrollContainer" parent="MainVBox/VehicleTabContainer"]
+	visible = false
+	layout_mode = 2
+
+	[node name="CargoVBox" type="VBoxContainer" parent="MainVBox/VehicleTabContainer/Cargo"]
+	layout_mode = 2
+	size_flags_horizontal = 3
+	size_flags_vertical = 3
+
+	[node name="CargoHeader" type="HBoxContainer" parent="MainVBox/VehicleTabContainer/Cargo/CargoVBox"]
+	layout_mode = 2
+	theme_override_constants/separation = 10
+
+	[node name="Spacer" type="Control" parent="MainVBox/VehicleTabContainer/Cargo/CargoVBox/CargoHeader"]
+	layout_mode = 2
+	size_flags_horizontal = 3
+
+	[node name="ManifestButton" type="Button" parent="MainVBox/VehicleTabContainer/Cargo/CargoVBox/CargoHeader"]
+	layout_mode = 2
+	text = "View Convoy Manifest"
+
+	[node name="BackButton" type="Button" parent="MainVBox"]
+	layout_mode = 2
+	size_flags_horizontal = 3
+	text = "Back"
+

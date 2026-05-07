@@ -11,27 +11,39 @@ func _ready():
 		get_viewport().size_changed.connect(_update_safe_area)
 
 func _update_safe_area():
-	var safe_area = DisplayServer.get_display_safe_area()
-	var window_size = DisplayServer.window_get_size()
-	
-	if window_size.x == 0 or window_size.y == 0:
+	var win_sz = DisplayServer.window_get_size()
+	if win_sz.x == 0 or win_sz.y == 0:
 		return
 
-	# Convert safe_area (screen pixels) to margins
-	# Godot's safe_area is in screen coordinates, we need to map it to our viewport
-	var screen_size = DisplayServer.screen_get_size()
-	
-	# For most mobile platforms, safe_area is provided correctly.
-	# We calculate the distance from each edge.
-	var left = safe_area.position.x
-	var top = safe_area.position.y
-	var right = screen_size.x - safe_area.end.x
-	var bottom = screen_size.y - safe_area.end.y
+	var sm = get_node_or_null("/root/ui_scale_manager")
+	var margins = Rect2()
+	if is_instance_valid(sm) and sm.has_method("get_logical_safe_margins"):
+		margins = sm.get_logical_safe_margins()
+	else:
+		# Fallback to physical if scale manager not found
+		var safe_area = DisplayServer.get_display_safe_area()
+		var screen_size = DisplayServer.screen_get_size()
+		margins.position.x = safe_area.position.x
+		margins.position.y = safe_area.position.y
+		margins.size.x = screen_size.x - safe_area.end.x
+		margins.size.y = screen_size.y - safe_area.end.y
+
+	var left = margins.position.x
+	var top = margins.position.y
+	var right = margins.size.x
+	var bottom = margins.size.y
+
+	# Add extra padding in portrait to avoid Dynamic Island / notch
+	if win_sz.y > win_sz.x and top > 0:
+		top += 14 # Push it down slightly further (logical pixels)
+
+	# Ensure minimum padding to keep UI from sticking completely to edges even without safe area
+	if win_sz.y > win_sz.x:
+		left = max(left, 8.0)
+		right = max(right, 8.0)
 
 	# Set margins
-	add_theme_constant_override("margin_left", left)
-	add_theme_constant_override("margin_top", top)
-	add_theme_constant_override("margin_right", right)
-	add_theme_constant_override("margin_bottom", bottom)
-
-	# print("[SafeRegion] Applied margins: L:%d T:%d R:%d B:%d" % [left, top, right, bottom])
+	add_theme_constant_override("margin_left", int(left))
+	add_theme_constant_override("margin_top", int(top))
+	add_theme_constant_override("margin_right", int(right))
+	add_theme_constant_override("margin_bottom", int(bottom))

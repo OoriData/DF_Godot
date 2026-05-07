@@ -163,6 +163,8 @@ In [Scripts/Menus/vendor_trade_panel.gd](../../Scripts/Menus/vendor_trade_panel.
 	- `action_button.pressed` → `_on_action_button_pressed`
 	- `install_button.pressed` → `_on_install_button_pressed`
 
+> **Mobile note**: `quantity_spinbox` (`%QuantitySpinBox`) is a `QuantityWidget` ([Scripts/UI/quantity_widget.gd](../../Scripts/UI/quantity_widget.gd)), not a `SpinBox`. `QuantityWidget` exposes the same API (`value`, `max_value`, `step`, `value_changed`) but renders large `+`/`-` buttons for touchscreen usability. All controllers access it via the same `quantity_spinbox` reference.
+
 - Discovers services (autoloads) by path:
 	- `/root/GameStore` → `_store`
 	- `/root/SignalHub` → `_hub`
@@ -235,13 +237,15 @@ Buckets are dictionaries with standard category keys:
 
 #### Vendor aggregation specifics
 - Skips “intrinsic” parts (`intrinsic_part_id`) so they don’t show as separate inventory.
-- Classifies “part cargo” via robust heuristics (slot, nested parts, flags, stat hints).
+- Classifies "mission cargo" using robust, centralized heuristics via `ItemsData.MissionItem`, including fallback destination parsing. If explicit `recipient` keys are omitted from the server payload, the vendor aggregation dynamically falls back to the `distributor` key to derive the accurate destination settlement and vendor names. This guarantees proper display in the UI.
+- Classifies “part cargo” using `ItemsData.PartItem` (slot, nested parts, flags, stat hints).
+- Classifies "resource cargo" dynamically using `ItemsData.ResourceItem` rules natively.
 - Creates virtual rows for bulk resources from `vendor_data.fuel/water/food` (if the corresponding price exists).
 - Aggregates vehicles from `vendor_data.vehicle_inventory` (keyed by vehicle_id).
 
 #### Convoy aggregation specifics
 - Traverses `convoy_data.vehicle_details_list`:
-	- Cargo items are aggregated into categories.
+	- Cargo items are aggregated into categories, identically aligning with Vendor logic via `ItemsData` classifications.
 	- Parts are aggregated into the `parts` bucket.
 	- Optionally injects vehicles into a `vehicles` bucket when SELL mode + vendor supports vehicle selling.
 - Omits intrinsic fuel tank cargo (installed resource containers) so it does not appear as tradable resource cargo.
@@ -401,6 +405,8 @@ Use cases:
 	- Fallback: common keys like `unit_price`, `price`, `value` when PriceUtil cannot infer.
 - `VendorTradeVM.build_price_presenter(...)`:
 	- Produces bbcode for the price area and returns computed deltas (weight/volume)
+- **Data Parsing Utilities**:
+	- Uses `_to_float_any()` safely to avoid `float(String)` parser exceptions when handling backend metadata (such as extracting `unit_delivery_reward` or unit capacities), ensuring stable type conversions.
 
 Panel usage:
 - `_update_transaction_panel()` calls `VendorTradeVM.build_price_presenter` and then updates capacity bars based on the returned deltas.

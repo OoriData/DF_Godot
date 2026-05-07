@@ -32,7 +32,7 @@ on:
 
 jobs:
   build:
-    runs-on: macos-latest
+    runs-on: macos-26
     outputs:
       status: ${{ steps.export.outcome }}
     steps:
@@ -58,48 +58,65 @@ jobs:
           security set-keychain-settings -t 3600 -u temp.keychain
           security list-keychains -d user -s temp.keychain login.keychain-db
 
-      - name: Import Apple Distribution Certificate
-        env:
-          P12_BASE64: ${{ secrets.APPLE_DISTRIBUTION_P12 }}
+      - name: Silence Android Plugin Warnings
         run: |
-          echo "$P12_BASE64" | base64 --decode > /tmp/apple_dist.p12
-          echo "=== Verifying .p12 contents ==="
-          openssl pkcs12 -in /tmp/apple_dist.p12 -passin pass: -nokeys -info 2>&1 | head -10 || true
-          echo "=== Checking for private key ==="
-          openssl pkcs12 -in /tmp/apple_dist.p12 -passin pass: -nocerts -nodes 2>&1 | head -5 || true
-          echo "=== Importing into keychain ==="
-          security import /tmp/apple_dist.p12 -k temp.keychain -P "" -T /usr/bin/codesign -T /usr/bin/productbuild -T /usr/bin/security
-          rm /tmp/apple_dist.p12
-          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k actions temp.keychain
+          mkdir -p addons/GodotGoogleSignIn
+          touch addons/GodotGoogleSignIn/.gdignore
+          touch addons/GodotApplePlugins/.gdignore
 
-      - name: Configure SSH for Match
-        uses: webfactory/ssh-agent@v0.9.0
-        with:
-          ssh-private-key: ${{ secrets.MATCH_SSH_KEY }}
+      - name: Import Assets
+        run: |
+          # Explicitly import assets to resolve font errors in headless mode
+          # Note: On macOS, this may crash during cleanup (GodotApplePlugins deinit), so we ignore the exit code.
+          godot --headless --import --log-file /tmp/godot_import.log || true
 
       - name: Fastlane Match (macOS)
         env:
           MATCH_PASSWORD: ${{ secrets.MATCH_PASSWORD }}
-          MATCH_GIT_URL: ${{ secrets.MATCH_GIT_URL }}
+          GIT_TOKEN: ${{ secrets.GIT_TOKEN }}
+          MATCH_GIT_URL_SECRET: ${{ secrets.MATCH_GIT_URL }}
           APP_STORE_CONNECT_API_KEY: ${{ secrets.APP_STORE_CONNECT_API_KEY }}
           APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
           APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
           MATCH_KEYCHAIN_NAME: 'temp.keychain'
           MATCH_KEYCHAIN_PASSWORD: 'actions'
         run: |
+          # Use the provided MATCH_GIT_URL secret if it already contains authentication (has @)
+          # Otherwise, attempt to use GIT_TOKEN to authenticate.
+          if [[ "$MATCH_GIT_URL_SECRET" == *"@"* ]]; then
+            FINAL_GIT_URL="$MATCH_GIT_URL_SECRET"
+          elif [ -n "$GIT_TOKEN" ]; then
+            FINAL_GIT_URL="https://${GIT_TOKEN}@github.com/OoriData/mobile-signing-certs.git"
+          else
+            FINAL_GIT_URL="$MATCH_GIT_URL_SECRET"
+          fi
+          
+          echo "Using Git URL: ${FINAL_GIT_URL/@/:***}" # Log URL without full token for safety
           # Ensure Fastlane is up to date to support mac_installer
           bundle update fastlane
           # Sync certificates using the Fastfile lane (handles both appstore and installer certs)
-          bundle exec fastlane mac sync_certificates
+          MATCH_GIT_URL="$FINAL_GIT_URL" bundle exec fastlane mac sync_certificates
 
       - name: Allow Codesign Access to Keys
         run: |
           security unlock-keychain -p actions temp.keychain
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k actions temp.keychain
 
-      - name: Inject Signing Configuration
+      - name: Capture Provisioning Profile Path
         run: |
-          python3 -c '
+          # Find the installed macOS provisioning profile and extract its absolute path
+          PROFILE_PATH=$(find ~/Library/Developer/Xcode/UserData/Provisioning\ Profiles ~/Library/MobileDevice/Provisioning\ Profiles -name "*.provisionprofile" 2>/dev/null | head -1)
+          if [ -n "$PROFILE_PATH" ]; then
+            echo "MAC_PROFILE_PATH=$PROFILE_PATH" >> $GITHUB_ENV
+            echo "Found profile at: $PROFILE_PATH"
+          else
+            echo "MAC_PROFILE_PATH=Oori_Data_Desolate_Frontiers_Mac_App_Store.provisionprofile" >> $GITHUB_ENV
+            echo "No profile found, using default legacy path"
+          fi
+
+      - name: Inject Signing Configuration
+        shell: python
+        run: |
           import re
           import os
           import sys
@@ -111,24 +128,25 @@ jobs:
               match = re.search(r"config/version=\"([^\"]+)\"", godot_content)
               if match:
                   short_version = match.group(1)
+
           with open("export_presets.cfg", "r") as f:
               content = f.read()
           
-          # Dynamically find the preset index for "macOS (App Store)"
-          preset_match = re.search(r"^\[preset\.(\d+)\]\s+name=\"macOS \(App Store\)\"", content, re.MULTILINE)
+          # Find the preset index for "macOS (App Store)"
+          preset_match = re.search(r'^\[preset\.(\d+)\]\s+name="macOS \(App Store\)"', content, re.MULTILINE)
           if not preset_match:
-              print("Error: Could not find preset named \"macOS (App Store)\"")
+              print("Error: Could not find preset named 'macOS (App Store)'")
               sys.exit(1)
-          
+
           preset_index = preset_match.group(1)
-          print(f"Found \"macOS (App Store)\" at index {preset_index}")
-          
-          # Match the options section for this preset
-          section_regex = r"(\[preset\." + preset_index + r"\.options\].*?)(?=\n\[|$)"
+          print(f"Found 'macOS (App Store)' at index {preset_index}")
+
+          # Match the options section for that preset
+          section_regex = r"(\[preset\.{}\.options\].*?)(?=\n\[|$)".format(preset_index)
           
           def set_key(match):
               section = match.group(1)
-              profile_path = "Oori_Data_Desolate_Frontiers_Mac_App_Store.provisionprofile"
+              profile_path = os.environ.get("MAC_PROFILE_PATH", "Oori_Data_Desolate_Frontiers_Mac_App_Store.provisionprofile")
               # Build number logic: base + run_number * 10 + run_attempt
               build_number = str(100 + (int(os.environ["GITHUB_RUN_NUMBER"]) * 10) + int(os.environ["GITHUB_RUN_ATTEMPT"]))
               
@@ -146,10 +164,10 @@ jobs:
                   else:
                       section += f"\n{key}={val}"
               return section
+
           new_content = re.sub(section_regex, set_key, content, flags=re.DOTALL)
           with open("export_presets.cfg", "w") as f:
               f.write(new_content)
-          '
         env:
           GITHUB_RUN_NUMBER: ${{ github.run_number }}
           GITHUB_RUN_ATTEMPT: ${{ github.run_attempt }}
@@ -161,17 +179,24 @@ jobs:
           curl -O https://www.apple.com/certificateauthority/AppleWWDRCAG4.cer
           sudo security import AppleWWDRCAG4.cer -k temp.keychain -T /usr/bin/codesign -T /usr/bin/productbuild || true
           
+          
+
       - name: Build with Godot (Export)
         id: export
         run: |
           mkdir -p build/macos-store
           # Export to .pkg for Mac App Store
-          godot --headless --export-release "macOS (App Store)" "build/macos-store/Desolate_Frontiers.pkg"
+          godot --headless --export-release "macOS (App Store)" "build/macos-store/Desolate_Frontiers.pkg" --log-file /tmp/godot_macos_export.log
 
-      - name: Upload to App Store
-        env:
-          APP_STORE_CONNECT_API_KEY: ${{ secrets.APP_STORE_CONNECT_API_KEY }}
-          APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
-          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
-        run: |
-          bundle exec fastlane mac release
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-appstore-build
+          path: build/macos-store/
+
+      - name: Upload Export Logs (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: godot-macos-export-logs
+          path: /tmp/godot_macos_export.log

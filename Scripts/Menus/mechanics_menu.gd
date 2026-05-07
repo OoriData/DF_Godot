@@ -1,5 +1,8 @@
 extends MenuBase
 
+func _init() -> void:
+	auto_apply_oori_background = false
+
 # Signals
 signal changes_committed(convoy_id: String, vehicle_id: String, swaps: Array, estimated_cost: float)
 
@@ -12,9 +15,11 @@ signal changes_committed(convoy_id: String, vehicle_id: String, swaps: Array, es
 @onready var pending_scroll: ScrollContainer = $MainVBox/TabContainer/Pending
 @onready var pending_vbox: VBoxContainer = $MainVBox/TabContainer/Pending/PendingVBox
 @onready var back_button: Button = $MainVBox/BottomBar/BackButton
-@onready var apply_button: Button = $MainVBox/BottomBar/ApplyButton
-@onready var vendor_hint_label: Label = $MainVBox/VendorHintLabel
+@onready var apply_button: Button = $MainVBox/TabsRow/ContextButtons/ApplyButton
+@onready var bottom_bar: HBoxContainer = $MainVBox/BottomBar
 @onready var _overlay: ColorRect = $ColorRect
+
+var _custom_tab_buttons: Array[Button] = []
 
 # State
 var _convoy: Dictionary = {}
@@ -38,6 +43,21 @@ var _last_vendor_payload_sig: String = ""
 
 var _awaiting_swap_completion: bool = false
 @export var debug_part_compat_ui: bool = true
+
+func _is_mobile() -> bool:
+	if OS.has_feature("mobile") or OS.has_feature("web_android") or OS.has_feature("web_ios") or DisplayServer.get_name() in ["Android", "iOS"]:
+		return true
+	if is_inside_tree():
+		var win_size = get_viewport_rect().size
+		if win_size.y > win_size.x:
+			return true
+	return false
+
+func _get_font_size(base: int) -> int:
+	var win_size = get_viewport_rect().size if is_inside_tree() else Vector2(0, 0)
+	var is_portrait = win_size.y > win_size.x
+	var boost = 2.5 if is_portrait else (1.6 if _is_mobile() else 1.2)
+	return int(base * boost)
 
 func _looks_like_uuid(s: String) -> bool:
 	# Very small heuristic to recognize UUIDs without regex.
@@ -133,9 +153,14 @@ func _apply_embedded_mode_visibility() -> void:
 		title_label.visible = not embedded_mode
 	if is_instance_valid(vehicle_option_button):
 		vehicle_option_button.visible = not embedded_mode
-	# Back button is redundant inside a tab; keep Apply visible
-	if is_instance_valid(back_button):
-		back_button.visible = not embedded_mode
+	# Hide the entire bottom bar when embedded, as parent menu handles these actions
+	if is_instance_valid(bottom_bar):
+		bottom_bar.visible = not embedded_mode
+	
+	# ApplyButton is now in TabsRow, keep it visible so user can commit changes within the tab
+	if is_instance_valid(apply_button):
+		apply_button.visible = true
+	
 	# Remove dark overlay when embedded inside a tab for visual consistency
 	if is_instance_valid(_overlay):
 		_overlay.visible = not embedded_mode
@@ -497,7 +522,8 @@ func _create_styled_part_row(part: Dictionary, slot_name: String, item_index: in
 		sb.bg_color = Color(0.13, 0.15, 0.19, 0.8)
 	else:
 		sb.bg_color = Color(0.10, 0.12, 0.16, 0.8)
-	sb.set_content_margin_all(6)
+	var row_margin := 12 if _is_mobile() else 6
+	sb.set_content_margin_all(row_margin)
 	bg_panel.add_theme_stylebox_override("panel", sb)
 	
 	outer_row.add_child(bg_panel)
@@ -513,12 +539,17 @@ func _create_styled_part_row(part: Dictionary, slot_name: String, item_index: in
 	name_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	name_label.clip_text = true
 	name_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	name_label.add_theme_font_size_override("font_size", _get_font_size(16))
 	content_row.add_child(name_label)
 
 	var change_btn = Button.new()
+	var win_size_row = get_viewport_rect().size if is_inside_tree() else Vector2(0, 0)
+	var is_portrait_row = win_size_row.y > win_size_row.x
 	change_btn.name = "SwapButton"
 	change_btn.text = "Swap…"
-	change_btn.custom_minimum_size.x = 80
+	var btn_h = 80 if is_portrait_row else (64 if _is_mobile() else 44)
+	change_btn.custom_minimum_size = Vector2(140 if _is_mobile() else 80, btn_h)
+	change_btn.add_theme_font_size_override("font_size", _get_font_size(14))
 	change_btn.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	_style_swap_button(change_btn, slot_name)
 	change_btn.pressed.connect(_on_swap_part_pressed.bind(slot_name, part))
@@ -555,14 +586,29 @@ func _is_part_already_pending(part: Dictionary) -> bool:
 func _ready():
 	if is_instance_valid(back_button):
 		back_button.pressed.connect(func(): emit_signal("back_requested"))
+		back_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		style_back_button(back_button)
 	if is_instance_valid(apply_button):
 		apply_button.pressed.connect(_on_apply_pressed)
+		apply_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		# Use standard convoy nav style for consistency with outer tabs
+		style_convoy_nav_button(apply_button)
+		# Match tab height
+		var tab_h = 80 if _is_portrait() else (64 if _is_mobile() else 44)
+		apply_button.custom_minimum_size.y = tab_h
+
 	if is_instance_valid(vehicle_option_button):
 		vehicle_option_button.item_selected.connect(_on_vehicle_selected)
+	
+	if is_instance_valid(tab_container):
+		if not tab_container.is_connected("tab_changed", Callable(self, "_on_tab_changed")):
+			tab_container.tab_changed.connect(_on_tab_changed)
+
 	# If we're embedded in a tab, ensure chrome matches
 	_apply_embedded_mode_visibility()
 	# Rename the 'Pending' tab to 'Cart' for better UX wording
 	_rename_pending_tab_to_cart()
+	_setup_custom_tabs()
 	_refresh_apply_state()
 	# Listen for compatibility checks directly from APICalls.
 	if is_instance_valid(_api) and _api.has_signal("part_compatibility_checked") and not _api.part_compatibility_checked.is_connected(_on_part_compatibility_ready):
@@ -598,19 +644,135 @@ func _ready():
 			_rebuild_pending_tab()
 		)
 		row.add_child(cb)
-		# Insert after the vendor hint label if present; otherwise append before bottom bar
-		var inserted := false
-		if is_instance_valid(vendor_hint_label):
-			var idx := vendor_hint_label.get_index()
-			main_vb.add_child(row)
-			row.get_parent().move_child(row, idx + 1)
-			inserted = true
-		if not inserted:
-			main_vb.add_child(row)
+		# Append before bottom bar by default
+		main_vb.add_child(row)
 		_breakdown_toggle = cb
 
 	# Ensure MenuBase hooks are installed.
 	super._ready()
+	
+	if _is_mobile():
+		var win_size_ready = get_viewport_rect().size if is_inside_tree() else Vector2(0, 0)
+		var is_portrait_ready = win_size_ready.y > win_size_ready.x
+		if is_instance_valid(tab_container):
+			_apply_mechanics_mobile_tab_styles(tab_container)
+			tab_container.add_theme_font_size_override("font_size", _get_font_size(16))
+	
+	_setup_custom_tabs()
+
+func _on_tab_changed(tab_idx: int) -> void:
+	_update_custom_tab_buttons(tab_idx)
+
+func _setup_custom_tabs() -> void:
+	var tab_hbox = get_node_or_null("MainVBox/TabsRow/TabScroll/TabHBox")
+	var tab_scroll = get_node_or_null("MainVBox/TabsRow/TabScroll")
+	if not is_instance_valid(tab_hbox) or not is_instance_valid(tab_container):
+		return
+	
+	if is_instance_valid(tab_scroll):
+		tab_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+		tab_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+		tab_scroll.custom_minimum_size.y = 80 if _is_portrait() else (64 if _is_mobile() else 44)
+		tab_scroll.mouse_filter = Control.MOUSE_FILTER_PASS
+		
+	# Clear any existing buttons just in case
+	for child in tab_hbox.get_children():
+		child.queue_free()
+	_custom_tab_buttons.clear()
+	
+	var is_portrait = _is_portrait()
+	
+	# Create a button for each tab
+	var tab_count = tab_container.get_child_count()
+	for i in range(tab_count):
+		var btn = Button.new()
+		var tab_name = tab_container.get_tab_title(i)
+		if tab_name.is_empty():
+			tab_name = tab_container.get_child(i).name
+		btn.text = tab_name
+		btn.toggle_mode = true
+		btn.add_theme_font_size_override("font_size", _get_font_size(14)) # Slightly smaller for inner tabs
+		
+		btn.custom_minimum_size = Vector2(140 if is_portrait else 110, 0)
+		
+		# Match Oori design (copied from ConvoyVehicleMenu)
+		var normal_style = StyleBoxFlat.new()
+		normal_style.bg_color = Color(0.12, 0.12, 0.15, 0.9) # Slightly darker for nested
+		normal_style.corner_radius_top_left = 6
+		normal_style.corner_radius_top_right = 6
+		normal_style.corner_radius_bottom_left = 6
+		normal_style.corner_radius_bottom_right = 6
+		normal_style.border_width_left = 1
+		normal_style.border_width_right = 1
+		normal_style.border_width_top = 1
+		normal_style.border_width_bottom = 1
+		normal_style.border_color = Color(0.25, 0.3, 0.35, 0.6)
+		normal_style.content_margin_left = 12
+		normal_style.content_margin_right = 12
+		
+		var pressed_style = normal_style.duplicate()
+		pressed_style.bg_color = Color(0.2, 0.3, 0.45, 0.9)
+		pressed_style.border_color = Color(0.4, 0.5, 0.7, 0.9)
+		
+		btn.add_theme_stylebox_override("normal", normal_style)
+		btn.add_theme_stylebox_override("pressed", pressed_style)
+		btn.add_theme_stylebox_override("hover", normal_style.duplicate())
+		btn.add_theme_color_override("font_color", Color(0.6, 0.6, 0.6, 1.0))
+		btn.add_theme_color_override("font_pressed_color", Color(1.0, 1.0, 1.0, 1.0))
+		
+		# Connect press
+		btn.pressed.connect(func():
+			tab_container.current_tab = i
+			_update_custom_tab_buttons(i)
+		)
+		
+		tab_hbox.add_child(btn)
+		_custom_tab_buttons.append(btn)
+		
+	# Select the current one
+	_update_custom_tab_buttons(tab_container.current_tab)
+
+func _update_custom_tab_buttons(active_index: int) -> void:
+	for i in range(_custom_tab_buttons.size()):
+		var btn = _custom_tab_buttons[i]
+		btn.set_pressed_no_signal(i == active_index)
+		
+		if i == active_index:
+			btn.add_theme_color_override("font_color", Color(1.0, 1.0, 1.0, 1.0))
+			var pressed_style = btn.get_theme_stylebox("pressed")
+			btn.add_theme_stylebox_override("normal", pressed_style)
+		else:
+			btn.add_theme_color_override("font_color", Color(0.6, 0.6, 0.6, 1.0))
+			var normal_style = btn.get_theme_stylebox("hover") # Use the base style
+			btn.add_theme_stylebox_override("normal", normal_style)
+
+func _is_portrait() -> bool:
+	var win_size = get_viewport_rect().size if is_inside_tree() else Vector2(0, 0)
+	return win_size.y > win_size.x
+
+func _apply_mechanics_mobile_tab_styles(tc: TabContainer) -> void:
+	var win_size = get_viewport_rect().size if is_inside_tree() else Vector2(0, 0)
+	var is_portrait = win_size.y > win_size.x
+	for style_name in ["tab_selected", "tab_unselected", "tab_disabled", "tab_hovered"]:
+		var base = tc.get_theme_stylebox(style_name)
+		var style: StyleBoxFlat
+		if base is StyleBoxFlat:
+			style = base.duplicate() as StyleBoxFlat
+		else:
+			style = StyleBoxFlat.new()
+			style.bg_color = Color(0.2, 0.2, 0.2, 1.0) if style_name == "tab_selected" else Color(0.12, 0.12, 0.12, 1.0)
+		style.content_margin_top = 32.0 if is_portrait else 18.0
+		style.content_margin_bottom = 32.0 if is_portrait else 18.0
+		style.content_margin_left = 32.0 if is_portrait else 28.0
+		style.content_margin_right = 32.0 if is_portrait else 28.0
+		style.corner_radius_top_left = 5
+		style.corner_radius_top_right = 5
+		if style_name == "tab_selected":
+			style.border_width_left = 1
+			style.border_width_right = 1
+			style.border_width_top = 1
+			style.border_color = Color(0.45, 0.55, 0.75, 0.9)
+		tc.add_theme_stylebox_override(style_name, style)
 
 func _rename_pending_tab_to_cart() -> void:
 	if not is_instance_valid(tab_container) or not is_instance_valid(pending_scroll):
@@ -924,7 +1086,8 @@ func _rebuild_parts_tab(vehicle_data: Dictionary):
 			continue
 		var header = Label.new()
 		header.text = slot_name.capitalize().replace("_", " ")
-		header.add_theme_font_size_override("font_size", 16)
+		var is_portrait = (get_viewport_rect().size.y > get_viewport_rect().size.x) if is_inside_tree() else false
+		header.add_theme_font_size_override("font_size", _get_font_size(24 if is_portrait else 18))
 		header.add_theme_color_override("font_color", Color.YELLOW)
 		parts_vbox.add_child(header)
 
@@ -1268,7 +1431,8 @@ func _rebuild_pending_tab():
 				sb.bg_color = Color(0.13, 0.15, 0.19, 0.8)
 			else:
 				sb.bg_color = Color(0.10, 0.12, 0.16, 0.8)
-			sb.set_content_margin_all(8)
+			var row_margin := 14 if _is_mobile() else 8
+			sb.set_content_margin_all(row_margin)
 			panel.add_theme_stylebox_override("panel", sb)
 
 			# Hover effect
@@ -1289,7 +1453,7 @@ func _rebuild_pending_tab():
 
 			var left_vb = VBoxContainer.new()
 			left_vb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-			left_vb.add_theme_constant_override("separation", 2)
+			left_vb.add_theme_constant_override("separation", 2 if not _is_mobile() else 6)
 			row_hb.add_child(left_vb)
 
 			var title_lbl = Label.new()
@@ -1297,7 +1461,7 @@ func _rebuild_pending_tab():
 			var to_n = String(e.get("to_name", "New"))
 			var slot_title = String(e.get("slot","slot")).capitalize()
 			title_lbl.text = "%s: %s → %s" % [slot_title, from_n, to_n]
-			title_lbl.add_theme_font_size_override("font_size", 14)
+			title_lbl.add_theme_font_size_override("font_size", _get_font_size(14))
 			title_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD
 			left_vb.add_child(title_lbl)
 
@@ -1308,6 +1472,7 @@ func _rebuild_pending_tab():
 			if sref_any is Dictionary:
 				src_str = String((sref_any as Dictionary).get("source", ""))
 			src_lbl.text = "Source: %s" % ("Vendor" if src_str == "vendor" else "Inventory")
+			src_lbl.add_theme_font_size_override("font_size", _get_font_size(12))
 			if src_str == "vendor":
 				src_lbl.add_theme_color_override("font_color", Color(0.75, 1.0, 0.75))
 			else:
@@ -1328,6 +1493,7 @@ func _rebuild_pending_tab():
 				# Inventory: only installation cost
 				costs_lbl.text = "Installation " + NumberFormat.format_money(install_cost)
 			costs_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD
+			costs_lbl.add_theme_font_size_override("font_size", _get_font_size(12))
 			left_vb.add_child(costs_lbl)
 
 			# Value line: clearly separated
@@ -1339,6 +1505,7 @@ func _rebuild_pending_tab():
 				value_text += " (removable)"
 			value_lbl.text = value_text
 			value_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD
+			value_lbl.add_theme_font_size_override("font_size", _get_font_size(12))
 			left_vb.add_child(value_lbl)
 
 			# Optional stat deltas
@@ -1361,7 +1528,8 @@ func _rebuild_pending_tab():
 
 			var remove_btn = Button.new()
 			remove_btn.text = "Remove"
-			remove_btn.custom_minimum_size = Vector2(100, 28)
+			remove_btn.custom_minimum_size = Vector2(120 if _is_mobile() else 100, 64 if _is_mobile() else 28)
+			remove_btn.add_theme_font_size_override("font_size", _get_font_size(14))
 			remove_btn.size_flags_horizontal = Control.SIZE_SHRINK_END
 			remove_btn.pressed.connect(func():
 				_pending_swaps.erase(swap_ref_local)
@@ -1379,23 +1547,23 @@ func _rebuild_pending_tab():
 	if grand_parts_cost > 0.0:
 		var parts_label = Label.new()
 		parts_label.text = "Parts cost: " + NumberFormat.format_money(grand_parts_cost)
-		parts_label.add_theme_font_size_override("font_size", 16)
+		parts_label.add_theme_font_size_override("font_size", _get_font_size(16))
 		pending_vbox.add_child(parts_label)
 
 		var install_label = Label.new()
 		install_label.text = "Installation: " + NumberFormat.format_money(grand_install_cost)
-		install_label.add_theme_font_size_override("font_size", 16)
+		install_label.add_theme_font_size_override("font_size", _get_font_size(16))
 		pending_vbox.add_child(install_label)
 
 		var total_label = Label.new()
 		var grand_total := grand_parts_cost + grand_install_cost
 		total_label.text = "Total: " + NumberFormat.format_money(grand_total)
-		total_label.add_theme_font_size_override("font_size", 16)
+		total_label.add_theme_font_size_override("font_size", _get_font_size(18))
 		pending_vbox.add_child(total_label)
 	else:
 		var install_label = Label.new()
 		install_label.text = "Installation: " + NumberFormat.format_money(grand_install_cost)
-		install_label.add_theme_font_size_override("font_size", 16)
+		install_label.add_theme_font_size_override("font_size", _get_font_size(16))
 		pending_vbox.add_child(install_label)
 	_refresh_apply_state()
 
@@ -1757,12 +1925,38 @@ func _on_swap_part_pressed(slot_name: String, current_part: Dictionary):
 
 	var chooser = AcceptDialog.new()
 	chooser.title = "Swap: " + slot_name.capitalize().replace("_", " ")
-	chooser.min_size = Vector2(700, 520)
+	
+	var win_size = DisplayServer.window_get_size()
+	
+	# Scale dialog natively using our font helpers
+	var dlg_font = _get_font_size(20 if _is_mobile() else 14)
+	chooser.get_label().add_theme_font_size_override("font_size", dlg_font)
+	var ok_btn = chooser.get_ok_button()
+	if is_instance_valid(ok_btn):
+		ok_btn.add_theme_font_size_override("font_size", dlg_font)
+		ok_btn.custom_minimum_size.y = 80 if _is_mobile() else 40
+
+	var target_w = min(1100, win_size.x - 32)
+	var target_h = min(900, win_size.y - 64)
+	chooser.min_size = Vector2(target_w, target_h)
+	
 	var root = VBoxContainer.new()
 	root.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	root.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	root.add_theme_constant_override("separation", 8)
-	chooser.add_child(root)
+	root.add_theme_constant_override("separation", 16 if _is_mobile() else 12)
+	
+	# Add some margin to the root VBox
+	var margin_container = MarginContainer.new()
+	margin_container.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	margin_container.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	var m = 16 if _is_mobile() else 8
+	margin_container.add_theme_constant_override("margin_left", m)
+	margin_container.add_theme_constant_override("margin_right", m)
+	margin_container.add_theme_constant_override("margin_top", m)
+	margin_container.add_theme_constant_override("margin_bottom", m)
+	margin_container.add_child(root)
+	chooser.add_child(margin_container)
+
 	var veh_id: String = str(vehicle.get("vehicle_id", ""))
 	_current_swap_ctx = {"dialog": chooser, "vehicle_id": veh_id, "row_map": {}}
 
@@ -1773,45 +1967,54 @@ func _on_swap_part_pressed(slot_name: String, current_part: Dictionary):
 	hdr_left.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	var title_lbl = Label.new()
 	title_lbl.text = "Slot: " + slot_name.capitalize().replace("_", " ")
-	title_lbl.add_theme_font_size_override("font_size", 18)
+	title_lbl.add_theme_font_size_override("font_size", _get_font_size(26 if _is_mobile() else 20))
+	title_lbl.add_theme_color_override("font_color", Color(1.0, 0.85, 0.35))
+	
 	var current_lbl = Label.new()
 	current_lbl.text = "Current: " + String(current_part.get("name", "None")) + " " + _part_summary(current_part)
 	current_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD
+	current_lbl.add_theme_font_size_override("font_size", _get_font_size(18 if _is_mobile() else 14))
+	current_lbl.modulate = Color(0.8, 0.8, 0.8)
+	
 	hdr_left.add_child(title_lbl)
 	hdr_left.add_child(current_lbl)
 	header.add_child(hdr_left)
 	root.add_child(header)
-
-	var sep = HSeparator.new()
-	root.add_child(sep)
+	
+	root.add_child(HSeparator.new())
 
 	# Lists: Compatible first, then Incompatible
-	var compatible_box = VBoxContainer.new()
-	compatible_box.add_theme_constant_override("separation", 6)
-	var comp_header = Label.new()
-	comp_header.text = "Compatible replacements"
-	comp_header.add_theme_color_override("font_color", Color.YELLOW)
-	comp_header.add_theme_font_size_override("font_size", 16)
-	compatible_box.add_child(comp_header)
-
-	var incompatible_box = VBoxContainer.new()
-	incompatible_box.add_theme_constant_override("separation", 6)
-	var incomp_header = Label.new()
-	incomp_header.text = "Not compatible"
-	incomp_header.add_theme_color_override("font_color", Color.YELLOW)
-	incomp_header.add_theme_font_size_override("font_size", 16)
-	incompatible_box.add_child(incomp_header)
-
 	var scroll = ScrollContainer.new()
 	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	root.add_child(scroll)
+	
 	var lists_vb = VBoxContainer.new()
 	lists_vb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	lists_vb.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	lists_vb.add_child(compatible_box)
-	lists_vb.add_child(HSeparator.new())
-	lists_vb.add_child(incompatible_box)
+	lists_vb.add_theme_constant_override("separation", 20 if _is_mobile() else 14)
 	scroll.add_child(lists_vb)
-	root.add_child(scroll)
+
+	var compatible_box = VBoxContainer.new()
+	compatible_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	compatible_box.add_theme_constant_override("separation", 8)
+	var comp_header = Label.new()
+	comp_header.text = "Compatible Replacements"
+	comp_header.add_theme_color_override("font_color", Color.YELLOW)
+	comp_header.add_theme_font_size_override("font_size", _get_font_size(24 if _is_mobile() else 16))
+	compatible_box.add_child(comp_header)
+	lists_vb.add_child(compatible_box)
+
+	lists_vb.add_child(HSeparator.new())
+
+	var incompatible_box = VBoxContainer.new()
+	incompatible_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	incompatible_box.add_theme_constant_override("separation", 8)
+	var incomp_header = Label.new()
+	incomp_header.text = "Not Compatible"
+	incomp_header.add_theme_color_override("font_color", Color(0.8, 0.4, 0.4))
+	incomp_header.add_theme_font_size_override("font_size", _get_font_size(24 if _is_mobile() else 16))
+	incompatible_box.add_child(incomp_header)
+	lists_vb.add_child(incompatible_box)
 
 	# Stash containers for dynamic re-parenting when backend results arrive
 	_current_swap_ctx["compatible_box"] = compatible_box
@@ -1825,18 +2028,16 @@ func _on_swap_part_pressed(slot_name: String, current_part: Dictionary):
 	for v in _collect_vendor_parts_for_slot(slot_name):
 		all_candidates.append(v) # expects {part, source:"vendor", price, vendor_id?}
 
-	# Kick off compatibility checks for each candidate using backend, log responses when they arrive
+	# Kick off compatibility checks
 	var vehicle_id: String = str(vehicle.get("vehicle_id", ""))
 	if is_instance_valid(_mechanics_service) and _mechanics_service.has_method("check_part_compatibility") and not vehicle_id.is_empty():
 		for entry in all_candidates:
 			var cand: Dictionary = entry.get("part", {})
-			# Prefer cargo_id for compatibility endpoint; fall back to part_id
 			var cid_req: String = str(cand.get("cargo_id", ""))
 			if cid_req == "":
 				cid_req = str(cand.get("part_id", ""))
 			if cid_req == "":
 				continue
-			# Use per-vehicle cache key
 			var ck := "%s||%s" % [vehicle_id, cid_req]
 			if not _compat_cache.has(ck):
 				_mechanics_service.check_part_compatibility(vehicle_id, cid_req)
@@ -1844,17 +2045,21 @@ func _on_swap_part_pressed(slot_name: String, current_part: Dictionary):
 	if all_candidates.is_empty():
 		var none = Label.new()
 		none.text = "No parts found for this slot in convoy inventory or shop."
-		root.add_child(none)
+		none.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		none.modulate = Color.GRAY
+		compatible_box.add_child(none)
 	else:
+		var item_index = 0
 		for entry in all_candidates:
 			var cand: Dictionary = entry.get("part", {})
 			var source: String = String(entry.get("source", "inventory"))
 			var price: float = float(entry.get("price", 0.0))
 			var vendor_id_for_entry: String = String(entry.get("vendor_id", ""))
-			# Seed from backend cache if available for this vehicle+part
-			# Start with a light local check: slot match only; backend refines
 			var comp_ok := (_detect_slot_for_item(cand) == slot_name)
-			var row = _make_candidate_row(cand, source, price, comp_ok)
+			
+			var row = _make_candidate_row(cand, current_part, source, price, comp_ok, item_index)
+			item_index += 1
+			
 			var id2: String = str(cand.get("cargo_id", ""))
 			if id2 == "":
 				id2 = str(cand.get("part_id", ""))
@@ -1863,34 +2068,33 @@ func _on_swap_part_pressed(slot_name: String, current_part: Dictionary):
 				var cache_key := "%s||%s" % [str(vehicle.get("vehicle_id", "")), id2]
 				if _compat_cache.has(cache_key):
 					_update_row_from_compat_payload(_compat_cache[cache_key])
-				# Attach context for dynamic price updates and refresh price
-				# Guard: vehicle must be a Dictionary; otherwise diagnose why
-				var _veh_id_val := ""
-				if typeof(vehicle) == TYPE_DICTIONARY:
-					_veh_id_val = str(vehicle.get("vehicle_id", ""))
-				else:
-					print("[MechanicsMenu][Diag] Unexpected vehicle type when setting meta. typeof=", typeof(vehicle), " value=", vehicle)
-				row.set_meta("vehicle_id", _veh_id_val)
+				
+				row.set_meta("vehicle_id", veh_id)
 				row.set_meta("part_uid", id2)
+				
 				# Set delta label vs current part
 				var delta_lbl: Label = row.get_node_or_null("DeltaLabel")
 				if is_instance_valid(delta_lbl):
-					var delta_txt = _part_delta_summary(current_part, cand)
-					delta_lbl.text = delta_txt
+					var ds = _part_delta_summary(current_part, cand)
+					if ds != "":
+						delta_lbl.text = ds
+					else:
+						delta_lbl.text = _part_summary(cand)
 				_update_row_price_from_cache(row)
-				# If already pending in cart, reflect that in UI and disable selection
+				
+				# If already pending in cart
 				if _is_part_id_already_pending(id2):
 					var compat_lbl_pending: Label = row.get_node_or_null("CompatLabel")
 					if is_instance_valid(compat_lbl_pending):
-						compat_lbl_pending.text = "In cart"
+						compat_lbl_pending.text = "In Cart"
 						compat_lbl_pending.add_theme_color_override("font_color", Color(0.95, 0.85, 0.4))
-						compat_lbl_pending.tooltip_text = "This item is already in the pending changes."
 					var select_btn_pending: Button = row.get_node_or_null("SelectBtn")
 					if is_instance_valid(select_btn_pending):
 						select_btn_pending.text = "In Cart"
 						select_btn_pending.disabled = true
+			
+			# Select Button setup
 			if comp_ok:
-				# attach select handler
 				var select_btn: Button = row.get_node_or_null("SelectBtn")
 				if is_instance_valid(select_btn) and not _is_part_id_already_pending(id2):
 					select_btn.pressed.connect(func():
@@ -1901,7 +2105,6 @@ func _on_swap_part_pressed(slot_name: String, current_part: Dictionary):
 				if row.get_parent() == null:
 					compatible_box.add_child(row)
 			else:
-				# annotate with reason
 				var reason = _compat_reason(vehicle, slot_name, cand)
 				row.tooltip_text = reason
 				var select_btn_in: Button = row.get_node_or_null("SelectBtn")
@@ -1911,7 +2114,7 @@ func _on_swap_part_pressed(slot_name: String, current_part: Dictionary):
 					incompatible_box.add_child(row)
 
 	get_tree().root.add_child(chooser)
-	chooser.popup_centered_ratio(0.8)
+	chooser.popup_centered_ratio(0.85)
 	chooser.connect("confirmed", Callable(chooser, "queue_free"))
 	chooser.connect("canceled", Callable(chooser, "queue_free"))
 	chooser.connect("close_requested", Callable(chooser, "queue_free"))
@@ -2245,7 +2448,10 @@ func _ensure_slot_row(slot_name: String) -> void:
 	if not header_present:
 		var header = Label.new()
 		header.text = slot_name.capitalize().replace("_", " ")
-		header.add_theme_font_size_override("font_size", 16)
+		# Scale dynamically added slot headers
+		var is_portrait = (get_viewport_rect().size.y > get_viewport_rect().size.x) if is_inside_tree() else false
+		var font_sz = _get_font_size(24 if is_portrait else 18) if has_method("_get_font_size") else 16
+		header.add_theme_font_size_override("font_size", font_sz)
 		header.add_theme_color_override("font_color", Color.YELLOW)
 		parts_vbox.add_child(header)
 	# Add placeholder row
@@ -2306,6 +2512,9 @@ func _add_pending_swap(slot_name: String, from_part: Dictionary, to_part: Dictio
 		if not _install_price_cache.has(key):
 			_mechanics_service.check_part_compatibility(vehicle_id, uid)
 
+func apply_pending_changes() -> void:
+	_on_apply_pressed()
+
 func _on_apply_pressed():
 	if _pending_swaps.is_empty():
 		return
@@ -2351,133 +2560,93 @@ func _on_apply_pressed():
 	_pending_swaps.clear()
 	_rebuild_pending_tab()
 
-func _make_candidate_row(part: Dictionary, source: String, _price: float, compatible: bool) -> HBoxContainer:
-	var hb = HBoxContainer.new()
-	hb.name = "Row"
-	hb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	hb.add_theme_constant_override("separation", 8)
-	# Track cargo id on the row for later updates
-	var mid_val = part.get("cargo_id", null)
-	if typeof(mid_val) == TYPE_STRING and mid_val != "":
-		var cargo_id_row: String = mid_val
-		hb.set_meta("cargo_id", cargo_id_row)
-	# Store full part dict for later use (deltas/price fallback)
-	hb.set_meta("part_dict", part)
+func _make_candidate_row(part: Dictionary, from_part: Dictionary, _source: String, _price: float, compatible: bool, item_index: int = 0) -> HBoxContainer:
+	var outer_row := HBoxContainer.new()
+	outer_row.name = "CandidateRow"
+	outer_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	outer_row.mouse_filter = Control.MOUSE_FILTER_PASS
 
-	# Source badge
-	var badge = Label.new()
-	badge.text = "Vendor" if source == "vendor" else "Inventory"
-	var sb = StyleBoxFlat.new()
-	sb.bg_color = Color(0.20, 0.35, 0.15, 1.0) if source == "vendor" else Color(0.15, 0.25, 0.38, 1.0)
-	sb.border_color = Color(0.8, 0.8, 0.9)
-	sb.border_width_left = 1
-	sb.border_width_top = 1
-	sb.border_width_right = 1
-	sb.border_width_bottom = 1
-	sb.corner_radius_top_left = 4
-	sb.corner_radius_top_right = 4
-	sb.corner_radius_bottom_left = 4
-	sb.corner_radius_bottom_right = 4
-	badge.add_theme_stylebox_override("normal", sb)
-	badge.add_theme_color_override("font_color", Color(0.9, 0.97, 1.0))
-	badge.custom_minimum_size = Vector2(80, 26)
-	badge.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	badge.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	hb.add_child(badge)
+	var bg_panel := PanelContainer.new()
+	bg_panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	bg_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
 
-	# Name + summary (two-line)
+	var sb := StyleBoxFlat.new()
+	if item_index % 2 == 0:
+		sb.bg_color = Color(0.13, 0.15, 0.19, 0.8)
+	else:
+		sb.bg_color = Color(0.10, 0.12, 0.16, 0.8)
+	var row_margin := 14 if _is_mobile() else 6
+	sb.set_content_margin_all(row_margin)
+	sb.set_corner_radius_all(6)
+	bg_panel.add_theme_stylebox_override("panel", sb)
+	outer_row.add_child(bg_panel)
+
+	var content_row := HBoxContainer.new()
+	content_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	content_row.add_theme_constant_override("separation", 12)
+	bg_panel.add_child(content_row)
+
+	# Track part data
+	outer_row.set_meta("part_dict", part)
+	outer_row.set_meta("from_part", from_part)
+	var mid_val = part.get("cargo_id", part.get("part_id", ""))
+	if str(mid_val) != "":
+		outer_row.set_meta("cargo_id", str(mid_val))
+
+	# Name + Summary (Standardized with Vehicle Menu style)
 	var name_vb = VBoxContainer.new()
 	name_vb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	name_vb.add_theme_constant_override("separation", 2)
+	
 	var name_lbl = Label.new()
-	name_lbl.text = String(part.get("name", "Part")) + " " + _part_summary(part)
-	name_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD
+	name_lbl.name = "NameLabel"
+	name_lbl.text = _safe_str(part.get("name"), "Part")
+	name_lbl.add_theme_font_size_override("font_size", _get_font_size(16))
+	name_lbl.clip_text = true
 	name_vb.add_child(name_lbl)
-	# Delta vs current is unknown here; show intrinsic summary only
+	
 	var delta_lbl = Label.new()
 	delta_lbl.name = "DeltaLabel"
-	delta_lbl.text = ""
-	delta_lbl.add_theme_color_override("font_color", Color(0.75, 0.85, 1.0))
+	delta_lbl.text = _part_summary(part)
+	delta_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD
+	delta_lbl.add_theme_color_override("font_color", Color(0.7, 0.85, 1.0))
+	delta_lbl.add_theme_font_size_override("font_size", _get_font_size(12))
 	name_vb.add_child(delta_lbl)
-	hb.add_child(name_vb)
+	content_row.add_child(name_vb)
 
-	# Compatibility status label (updated asynchronously from backend)
-	var compat_lbl = Label.new()
-	compat_lbl.name = "CompatLabel"
-	compat_lbl.text = "Checking…"
-	compat_lbl.add_theme_color_override("font_color", Color(0.9, 0.9, 0.6))
-	compat_lbl.tooltip_text = "Awaiting backend check"
-	hb.add_child(compat_lbl)
-
-	# Price label for both vendor and inventory (inventory vendor_price is 0)
+	# Price Label (Fixed width, right aligned)
 	var price_lbl = Label.new()
 	price_lbl.name = "PriceLabel"
-	# Store metas so we can update when install price arrives from compat
+	price_lbl.custom_minimum_size.x = 180 if _is_mobile() else 140
+	price_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	price_lbl.add_theme_color_override("font_color", Color(0.85, 1.0, 0.85))
+	price_lbl.add_theme_font_size_override("font_size", _get_font_size(14))
+	content_row.add_child(price_lbl)
+	
+	# Store metas for updates
 	var part_price := float(_price)
 	if part_price <= 0.0:
-		# Attempt to derive a vendor-listed price first
 		part_price = _extract_price_from_dict(part)
-	# If still zero and this is a vendor-sourced item, fall back to intrinsic value for display
-	if part_price <= 0.0 and source == "vendor":
+	if part_price <= 0.0 and _source == "vendor":
 		part_price = _get_part_value(part)
-	hb.set_meta("vendor_price", part_price)
-	hb.set_meta("source", source)
-	var veh_ctx := ""
-	if not _current_swap_ctx.is_empty():
-		veh_ctx = String(_current_swap_ctx.get("vehicle_id", ""))
-	hb.set_meta("vehicle_id", veh_ctx)
-	var uid_ctx := _get_part_unique_id(part)
-	hb.set_meta("part_uid", uid_ctx)
-	var install_price := _get_install_price_from_cache(veh_ctx, uid_ctx)
-	if install_price <= 0.0:
-		var removable := _is_part_removable(part)
-		install_price = 0.0 if removable else _estimate_install_price(veh_ctx, part)
-	# Cost audit for initial row render
-	_log_cost_audit("row_init", {
-		"phase": "init",
-		"vehicle_id": veh_ctx,
-		"part_uid": uid_ctx,
-		"vendor_price": part_price,
-		"install_price": install_price,
-		"removable": _is_part_removable(part),
-		"vehicle_value": _get_vehicle_value(veh_ctx),
-		"part_value": _get_part_value(part),
-	})
-	var price_text := ""
-	if source == "vendor":
-		price_text = _format_price_label(part_price, install_price)
-	else:
-		# Inventory: only installation is charged
-		price_text = "Installation $%s" % ["%.2f" % install_price]
-	price_lbl.text = price_text
-	price_lbl.add_theme_color_override("font_color", Color(0.85, 1.0, 0.85))
-	hb.add_child(price_lbl)
-	if part_price <= 0.0:
-		_log_cost_audit("vendor_price_zero_row_init", {
-			"part_uid": uid_ctx,
-			"vehicle_id": veh_ctx,
-			"price_fields_present": [
-				part.has("unit_price"), part.has("base_unit_price"), part.has("price"), part.has("container_price")
-			],
-			"raw_price_fields": {
-				"unit_price": part.get("unit_price", null),
-				"base_unit_price": part.get("base_unit_price", null),
-				"price": part.get("price", null),
-				"container_price": part.get("container_price", null),
-			}
-		})
+	outer_row.set_meta("vendor_price", part_price)
+	outer_row.set_meta("source", _source)
+	
+	# Action Button (Standardized with Vehicle Menu size)
+	var select_btn = Button.new()
+	select_btn.name = "SelectBtn"
+	select_btn.text = "Select" if compatible else "NO"
+	select_btn.custom_minimum_size = Vector2(140 if _is_mobile() else 80, 64 if _is_mobile() else 36)
+	select_btn.add_theme_font_size_override("font_size", _get_font_size(14))
+	content_row.add_child(select_btn)
 
-	# Optional cost breakdown label (developer toggle)
-	var use_server_init := _get_install_price_from_cache(veh_ctx, uid_ctx) > 0.0
-	var breakdown_txt := _make_breakdown_text(veh_ctx, part, install_price, use_server_init)
-	_attach_or_update_breakdown_label(hb, breakdown_txt)
+	# Hover effect
+	outer_row.mouse_entered.connect(func(): sb.bg_color = sb.bg_color.lightened(0.1))
+	outer_row.mouse_exited.connect(func():
+		sb.bg_color = Color(0.13, 0.15, 0.19, 0.8) if item_index % 2 == 0 else Color(0.10, 0.12, 0.16, 0.8)
+	)
 
-	# Select button
-	var btn = Button.new()
-	btn.name = "SelectBtn"
-	btn.text = "Select" if compatible else "Incompatible"
-	hb.add_child(btn)
-	return hb
+	return outer_row
 
 func _update_row_from_compat_payload(payload: Dictionary) -> void:
 	if _current_swap_ctx.is_empty():
@@ -2492,58 +2661,98 @@ func _update_row_from_compat_payload(payload: Dictionary) -> void:
 	var row_map: Dictionary = _current_swap_ctx.get("row_map", {})
 	if not row_map.has(cid):
 		return
-	var row_any: Variant = row_map.get(cid, null)
-	if not (is_instance_valid(row_any) and row_any is HBoxContainer):
+	var row: HBoxContainer = row_map.get(cid)
+	if not is_instance_valid(row):
 		return
-	var row: HBoxContainer = row_any
-	var compat_lbl: Label = row.get_node_or_null("CompatLabel")
+	
 	var btn: Button = row.get_node_or_null("SelectBtn")
+	var delta_lbl: Label = row.get_node_or_null("DeltaLabel")
+	var name_lbl: Label = row.get_node_or_null("NameLabel")
+	var price_lbl: Label = row.get_node_or_null("PriceLabel")
+	
 	var data: Dictionary = payload.get("data", {}) if payload.get("data") is Dictionary else {}
 	var status_code := int(payload.get("status", 0))
 	var compatible := false
 	var reason := ""
-	if data.has("compatible"):
+	
+	# If data is an array (list of parts), take the first one as the representative data
+	var part_data := {}
+	if payload.get("data") is Array and (payload.get("data") as Array).size() > 0:
+		part_data = payload.get("data")[0]
+		compatible = true
+	elif data.has("compatible"):
 		compatible = bool(data.get("compatible"))
-	elif data.has("fitment") and data.get("fitment") is Dictionary and data.fitment.has("compatible"):
-		compatible = bool(data.fitment.get("compatible"))
-		reason = String(data.fitment.get("reason", ""))
-	else:
-		# Treat HTTP 2xx with array payload as compatible (backend returns list of matching part(s))
-		if status_code >= 200 and status_code < 300:
-			var any_data = payload.get("data")
-			if any_data is Array and (any_data as Array).size() > 0:
-				compatible = true
-	# Special-case common 400 responses for better UX labeling
+		part_data = data
+	elif data.has("fitment") and data.get("fitment") is Dictionary:
+		var fit = data.get("fitment")
+		compatible = bool(fit.get("compatible"))
+		reason = String(fit.get("reason", ""))
+		part_data = data 
+	
+	# Update part stats if present in payload
+	if not part_data.is_empty():
+		var old_part = row.get_meta("part_dict", {})
+		for k in part_data.keys():
+			old_part[k] = part_data[k]
+		row.set_meta("part_dict", old_part)
+		
+		if is_instance_valid(name_lbl):
+			var n = _safe_str(part_data.get("name"), "Part")
+			if n != "": name_lbl.text = n
+		
+		if is_instance_valid(delta_lbl):
+			var from_part = row.get_meta("from_part", {})
+			var ds = _part_delta_summary(from_part, old_part)
+			var abs_s = _part_summary(old_part)
+			
+			if ds != "":
+				delta_lbl.text = ds
+			else:
+				delta_lbl.text = abs_s
+			
+			if delta_lbl.text == "":
+				delta_lbl.text = "Compatible Replacement"
+			
+			delta_lbl.add_theme_color_override("font_color", Color(0.7, 0.85, 1.0))
+
+	# Update Price (including install price)
+	if is_instance_valid(price_lbl):
+		var base_p = float(row.get_meta("vendor_price", 0.0))
+		var install_p = float(part_data.get("installation_price", 0.0))
+		if install_p <= 0.0:
+			install_p = _get_install_price_from_cache(vehicle_id_ctx, cid)
+		
+		if install_p > 0.0:
+			price_lbl.text = "$%s (+$%s install)" % [NumberFormat.format_number(int(base_p)), NumberFormat.format_number(int(install_p))]
+		elif base_p > 0.0:
+			price_lbl.text = "$%s" % NumberFormat.format_number(int(base_p))
+
+	# Update button and tooltips
 	if status_code >= 400:
 		var detail_text := String(data.get("detail", ""))
-		var dl := detail_text.to_lower()
-		if is_instance_valid(compat_lbl):
-			if dl.find("already installed") != -1:
-				compat_lbl.text = "Already installed"
-				compat_lbl.add_theme_color_override("font_color", Color(0.95, 0.85, 0.4)) # amber
-				compat_lbl.tooltip_text = detail_text
-			elif dl.find("does not contain a part") != -1:
-				compat_lbl.text = "Not a vehicle part"
-				compat_lbl.add_theme_color_override("font_color", Color(1.0, 0.6, 0.6))
-				compat_lbl.tooltip_text = detail_text
-			else:
-				compat_lbl.text = "Not compatible"
-				compat_lbl.add_theme_color_override("font_color", Color(1.0, 0.6, 0.6))
-				compat_lbl.tooltip_text = detail_text if detail_text != "" else ""
+		if detail_text == "" and data.has("fitment") and data.fitment is Dictionary:
+			detail_text = String(data.fitment.get("reason", ""))
+		
+		if is_instance_valid(delta_lbl) and detail_text != "":
+			delta_lbl.text = detail_text
+			delta_lbl.add_theme_color_override("font_color", Color(1.0, 0.6, 0.6)) # Pinkish-red for errors
+		
 		if is_instance_valid(btn):
-			btn.text = "Already installed" if dl.find("already installed") != -1 else "Incompatible"
+			var dl := detail_text.to_lower()
+			btn.text = "Already Installed" if dl.find("already installed") != -1 else "Incompatible"
 			btn.disabled = true
+			btn.tooltip_text = detail_text
 		return
-	if is_instance_valid(compat_lbl):
-		compat_lbl.text = "Compatible" if compatible else "Not compatible"
-		compat_lbl.add_theme_color_override("font_color", Color(0.6, 1.0, 0.6) if compatible else Color(1.0, 0.6, 0.6))
-		if reason != "":
-			compat_lbl.tooltip_text = reason
-		else:
-			compat_lbl.tooltip_text = ""
+	
 	if is_instance_valid(btn):
-		btn.text = "Select" if compatible else "Incompatible"
-		btn.disabled = not compatible
+		if _is_part_id_already_pending(cid):
+			btn.text = "In Cart"
+			btn.disabled = true
+		else:
+			btn.text = "Select" if compatible else "Incompatible"
+			btn.disabled = not compatible
+			if reason != "":
+				btn.tooltip_text = reason
 
 	# Move the row to the appropriate container based on final backend decision
 	var compat_box: VBoxContainer = _current_swap_ctx.get("compatible_box", null)
@@ -2558,35 +2767,50 @@ func _update_row_from_compat_payload(payload: Dictionary) -> void:
 			if is_instance_valid(parent):
 				parent.remove_child(row)
 			incomp_box.add_child(row)
-		# Hide incompatible section if it only has its header
-		if incomp_box.get_child_count() <= 1:
-			incomp_box.visible = false
-		else:
-			incomp_box.visible = true
+		
+		# Auto-hide incompatible section if empty
+		if is_instance_valid(incomp_box):
+			incomp_box.visible = (incomp_box.get_child_count() > 1)
 
-	# Final override: if this item is already in the cart, mark accordingly regardless of compat
-	if _is_part_id_already_pending(cid):
-		if is_instance_valid(compat_lbl):
-			compat_lbl.text = "In cart"
-			compat_lbl.add_theme_color_override("font_color", Color(0.95, 0.85, 0.4))
-			compat_lbl.tooltip_text = "This item is already in the pending changes."
-		if is_instance_valid(btn):
-			btn.text = "In Cart"
-			btn.disabled = true
 
 func _part_summary(part: Dictionary) -> String:
+	if part == null: return ""
 	var bits: Array[String] = []
+	
+	# Core Stats
 	var keys = ["top_speed_add", "efficiency_add", "offroad_capability_add", "cargo_capacity_add", "weight_capacity_add"]
-	var labels = {"top_speed_add": "Spd", "efficiency_add": "Eff", "offroad_capability_add": "Off", "cargo_capacity_add": "Cargo", "weight_capacity_add": "Weight"}
+	var labels = {"top_speed_add": "Spd", "efficiency_add": "Eff", "offroad_capability_add": "Off", "cargo_capacity_add": "Volume", "weight_capacity_add": "Weight"}
 	for k in keys:
-		var v = part.get(k, null)
-		if v != null and float(v) != 0.0:
+		var v = part.get(k)
+		if v != null and (v is float or v is int) and float(v) != 0.0:
 			bits.append("%s %+.0f" % [labels.get(k, k), float(v)])
-	if part.has("fuel_capacity") and part.fuel_capacity:
-		bits.append("FuelCap %.0f" % float(part.fuel_capacity))
-	if part.has("kwh_capacity") and part.kwh_capacity:
-		bits.append("kWh %.0f" % float(part.kwh_capacity))
-	return "" if bits.is_empty() else "(" + ", ".join(bits) + ")"
+	
+	# Engine & Capacity
+	if part.get("kw") != null and float(part.kw) > 0: bits.append("%.0fkW" % float(part.kw))
+	if part.get("nm") != null and float(part.nm) > 0: bits.append("%.0fNm" % float(part.nm))
+	if part.get("fuel_capacity") != null and float(part.fuel_capacity) > 0: bits.append("Fuel %.0fL" % float(part.fuel_capacity))
+	if part.get("kwh_capacity") != null and float(part.kwh_capacity) > 0: bits.append("%.0fkWh" % float(part.kwh_capacity))
+	
+	# Chassis & Other
+	if part.get("wp") != null and float(part.wp) > 0: bits.append("%.0f WP" % float(part.wp))
+	if part.get("weight_class") != null and float(part.weight_class) > 0: bits.append("Class %.0f" % float(part.weight_class))
+	
+	var stats = ""
+	if not bits.is_empty():
+		stats = "(" + ", ".join(bits) + ")"
+	
+	var desc = _safe_str(part.get("description", part.get("base_desc")), "")
+	
+	if desc != "" and stats != "":
+		return desc + " " + stats
+	return desc if desc != "" else stats
+
+func _safe_str(v: Variant, default_val: String = "") -> String:
+	if v == null: return default_val
+	var s = str(v).strip_edges()
+	if s.to_lower() == "null" or s == "":
+		return default_val
+	return s
 
 func _is_part_compatible(vehicle: Dictionary, slot_name: String, part: Dictionary) -> bool:
 	# Baseline rule: slot must match (be robust to alternative keys)
@@ -2721,8 +2945,6 @@ func _on_part_compatibility_ready(payload: Dictionary) -> void:
 			if not bool(_slot_vendor_availability.get(slot_name, false)):
 				_slot_vendor_availability[slot_name] = true
 				_restyle_swap_buttons_for_slot(slot_name)
-				# Ensure the hint label shows now that at least one slot is available
-				if is_instance_valid(vendor_hint_label): vendor_hint_label.visible = true
 			# Also refresh inventory-based highlights in case this payload pertains to a convoy cargo item
 			_refresh_slot_inventory_availability()
 
@@ -2743,3 +2965,29 @@ func _on_mechanic_vendor_slot_availability(vehicle_id: String, slot_availability
 			if not bool(_slot_vendor_availability.get(s, false)):
 				_slot_vendor_availability[s] = true
 				_restyle_swap_buttons_for_slot(s)
+			# Also refresh inventory-based highlights in case this payload pertains to a convoy cargo item
+			_refresh_slot_inventory_availability()
+
+func get_ui_state() -> Dictionary:
+	var state = {}
+	state["selected_vehicle_idx"] = _selected_vehicle_idx
+	state["pending_swaps"] = _pending_swaps.duplicate(true)
+	if is_instance_valid(tab_container):
+		state["current_tab"] = tab_container.current_tab
+	return state
+
+func apply_ui_state(state: Dictionary) -> void:
+	if state.has("pending_swaps"):
+		_pending_swaps = state["pending_swaps"].duplicate(true)
+		
+	if state.has("selected_vehicle_idx"):
+		var idx = state["selected_vehicle_idx"]
+		if is_instance_valid(vehicle_option_button) and idx >= 0 and idx < vehicle_option_button.get_item_count():
+			vehicle_option_button.select(idx)
+			_on_vehicle_selected(idx)
+			
+	if state.has("current_tab") and is_instance_valid(tab_container):
+		var target_tab = state["current_tab"]
+		if target_tab >= 0 and target_tab < tab_container.get_child_count() and not tab_container.is_tab_hidden(target_tab):
+			tab_container.current_tab = target_tab
+			_update_custom_tab_buttons(target_tab)

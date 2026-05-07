@@ -13,6 +13,13 @@ Subscribers to `GameStore` snapshots and `SignalHub` events.
 
 - UIManager: [Scripts/UI/UI_manager.gd](../../Scripts/UI/UI_manager.gd)
   - Keep settlement labels and lines; convoy panel logic lives in `convoy_label_manager.gd`.
+  - Manages overlays and modal popups (Errors, Identity).
+
+- Identity & Auth UI:
+  - LoginScreen: [Scripts/UI/login_screen.gd](../../Scripts/UI/login_screen.gd) - Entry point for Steam/Discord auth.
+  - AccountLinksPopup: [Scripts/UI/account_links_popup.gd](../../Scripts/UI/account_links_popup.gd) - Overview of linked providers.
+  - SteamLinkPopup / DiscordLinkPopup: specific linking confirmation flows.
+  - AccountMergeModal: conflict resolution and data consolidation preview.
 
 Acceptance:
 - No direct `GameDataManager` wiring; updates flow via store/hub.

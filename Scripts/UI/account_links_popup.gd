@@ -9,6 +9,8 @@ const _TEXT_LIGHT       := Color("#eaeaea")
 const _TEXT_DIM         := Color("#9a9ab0")
 const _ACCENT_PRIMARY   := Color("#5865F2") # Discord Blurple
 const _ACCENT_SECONDARY := Color("#66c0f4") # Steam Light Blue
+const _ACCENT_APPLE     := Color("#d0d0d0")
+const _ACCENT_GOOGLE    := Color("#4285F4")
 const _GREEN_SUCCESS    := Color("#a4d007")
 const _RED_ERROR        := Color("#e94560")
 
@@ -16,10 +18,14 @@ var _overlay: Control
 var _root: VBoxContainer
 var _steam_id_label: Label
 var _discord_id_label: Label
+var _apple_id_label: Label
+var _google_id_label: Label
 var _status_label: Label
 
 var _steam_connect_btn: Button
 var _discord_connect_btn: Button
+var _apple_connect_btn: Button
+var _google_connect_btn: Button
 
 var _api: Node
 var _hub: Node
@@ -31,8 +37,23 @@ func _ready() -> void:
 	_hub = get_node_or_null("/root/SignalHub")
 	_build_ui()
 	_connect_signals()
+	_apply_ui_scaling_recursive(self)
+
+func _is_portrait() -> bool:
+	if is_inside_tree():
+		var win_size = get_viewport().get_visible_rect().size
+		return win_size.y > win_size.x
+	return false
+
+func _is_mobile() -> bool:
+	return OS.has_feature("mobile") or DisplayServer.get_name() in ["Android", "iOS"] or _is_portrait()
+
+func _get_font_size(base: int) -> int:
+	var boost = 2.2 if _is_portrait() else (1.7 if _is_mobile() else 1.2)
+	return int(base * boost)
 
 func open_centered() -> void:
+	print("[AccountLinksPopup] open_centered called | LOUD LOG")
 	show()
 	_refresh_data()
 
@@ -41,8 +62,12 @@ func _connect_signals() -> void:
 		return
 	_api.auth_links_received.connect(_on_auth_links_received)
 	_api.discord_account_linked.connect(_on_discord_link_result)
+	_api.apple_account_linked.connect(_on_apple_link_result)
 	_api.steam_account_linked.connect(_on_steam_link_result)
+	_api.google_account_linked.connect(_on_google_link_result)
 	_api.discord_link_url_received.connect(_on_discord_url_received)
+	_api.apple_link_url_received.connect(_on_apple_url_received)
+	_api.google_link_url_received.connect(_on_google_url_received)
 	
 	if not _api.user_data_received.is_connected(_on_user_data_refreshed):
 		_api.user_data_received.connect(_on_user_data_refreshed)
@@ -74,6 +99,8 @@ func _on_auth_links_received(links: Array) -> void:
 	
 	var steam_linked := "Not Linked"
 	var discord_linked := "Not Linked"
+	var apple_linked := "Not Linked"
+	var google_linked := "Not Linked"
 	
 	for link in links:
 		var provider = link.get("provider", "")
@@ -86,6 +113,10 @@ func _on_auth_links_received(links: Array) -> void:
 			steam_linked = pid
 		elif provider == "discord":
 			discord_linked = pid
+		elif provider == "apple":
+			apple_linked = pid
+		elif provider == "google":
+			google_linked = pid
 			
 	# Update UI based on the link list (Primary source of truth)
 	if steam_linked != "Not Linked":
@@ -101,9 +132,25 @@ func _on_auth_links_received(links: Array) -> void:
 	else:
 		_discord_id_label.text = "Not Linked"
 		_discord_id_label.add_theme_color_override("font_color", _TEXT_DIM)
+
+	if apple_linked != "Not Linked":
+		_apple_id_label.text = "✅ Connected"
+		_apple_id_label.add_theme_color_override("font_color", _GREEN_SUCCESS)
+	else:
+		_apple_id_label.text = "Not Linked"
+		_apple_id_label.add_theme_color_override("font_color", _TEXT_DIM)
+
+	if google_linked != "Not Linked":
+		_google_id_label.text = "✅ Connected"
+		_google_id_label.add_theme_color_override("font_color", _GREEN_SUCCESS)
+	else:
+		_google_id_label.text = "Not Linked"
+		_google_id_label.add_theme_color_override("font_color", _TEXT_DIM)
 	
 	_steam_connect_btn.disabled = (steam_linked != "Not Linked")
 	_discord_connect_btn.disabled = (discord_linked != "Not Linked")
+	_apple_connect_btn.disabled = (apple_linked != "Not Linked")
+	_google_connect_btn.disabled = (google_linked != "Not Linked")
 	
 	_set_status("Accounts updated.", _GREEN_SUCCESS)
 	await get_tree().create_timer(2.0).timeout
@@ -118,7 +165,28 @@ func _on_discord_url_received(url: String, state: String) -> void:
 		
 	_set_status("Opening browser... Poll started.", _ACCENT_PRIMARY)
 	OS.shell_open(url)
-	_api.start_auth_poll(state)
+	_api.start_auth_poll(state, 1.5, 120.0, "discord")
+
+func _on_apple_url_received(url: String, state: String) -> void:
+	if url == "" or state == "":
+		_set_status("Failed to get Apple linking URL.", _RED_ERROR)
+		_apple_connect_btn.disabled = false
+		return
+
+	_set_status("Opening browser... Poll started.", _ACCENT_APPLE)
+	OS.shell_open(url)
+	_api.start_auth_poll(state, 1.5, 120.0, "apple")
+
+func _on_google_url_received(url: String, state: String) -> void:
+	if url == "" or state == "":
+		_set_status("Failed to get Google linking URL.", _RED_ERROR)
+		_google_connect_btn.disabled = false
+		return
+
+	_set_status("Opening browser... Poll started.", _ACCENT_GOOGLE)
+	OS.shell_open(url)
+	_api.start_auth_poll(state, 1.5, 120.0, "google")
+
 
 func _on_discord_link_result(result: Dictionary) -> void:
 	_discord_connect_btn.disabled = false
@@ -142,6 +210,31 @@ func _on_steam_link_result(result: Dictionary) -> void:
 			_open_merge_modal(result.get("conflict", {}))
 		else:
 			_set_status("Error: %s" % result.get("message", "Link failed"), _RED_ERROR)
+
+func _on_apple_link_result(result: Dictionary) -> void:
+	_apple_connect_btn.disabled = false
+	if result.get("ok", false):
+		_set_status("✅ Apple linked!", _GREEN_SUCCESS)
+		_refresh_data()
+	else:
+		var code = result.get("error_code", 0)
+		if code == 409:
+			_open_merge_modal(result.get("conflict", {}))
+		else:
+			_set_status("Error: %s" % result.get("message", "Link failed"), _RED_ERROR)
+
+func _on_google_link_result(result: Dictionary) -> void:
+	_google_connect_btn.disabled = false
+	if result.get("ok", false):
+		_set_status("✅ Google linked!", _GREEN_SUCCESS)
+		_refresh_data()
+	else:
+		var code = result.get("error_code", 0)
+		if code == 409:
+			_open_merge_modal(result.get("conflict", {}))
+		else:
+			_set_status("Error: %s" % result.get("message", "Link failed"), _RED_ERROR)
+
 
 # ── UI Actions ───────────────────────────────────────────────────────────────
 
@@ -167,6 +260,30 @@ func _on_connect_steam_pressed() -> void:
 		popup.open_centered()
 		popup.closed.connect(func(): _refresh_data())
 
+func _on_connect_apple_pressed() -> void:
+	_apple_connect_btn.disabled = true
+	if is_instance_valid(_api):
+		_api.get_apple_link_url()
+
+func _on_connect_google_pressed() -> void:
+	_google_connect_btn.disabled = true
+	if Engine.has_singleton("GoogleAuthService"):
+		var google_auth = Engine.get_singleton("GoogleAuthService")
+		if google_auth.has_method("connect_account"):
+			google_auth.connect_account()
+			return
+	
+	# Fallback if Autoload is used directly
+	if has_node("/root/GoogleAuthService"):
+		var google_auth = get_node("/root/GoogleAuthService")
+		if google_auth.has_method("connect_account"):
+			google_auth.connect_account()
+			return
+			
+	_set_status("GoogleAuthService not available.", _RED_ERROR)
+	_google_connect_btn.disabled = false
+
+
 func _open_merge_modal(conflict: Dictionary) -> void:
 	hide()
 	var script := load("res://Scripts/UI/account_merge_modal.gd")
@@ -186,6 +303,7 @@ func _open_merge_modal(conflict: Dictionary) -> void:
 # ── Build UI ─────────────────────────────────────────────────────────────────
 
 func _build_ui() -> void:
+	var is_port = _is_portrait()
 	# Full-screen overlay to block input and stay open
 	_overlay = Control.new()
 	_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -207,19 +325,41 @@ func _build_ui() -> void:
 	panel_style.corner_radius_bottom_right = 12
 	panel.add_theme_stylebox_override("panel", panel_style)
 	
-	panel.custom_minimum_size = Vector2(420, 260)
-	panel.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
 	_overlay.add_child(panel)
+	var win_size = DisplayServer.window_get_size()
+	var win_w: int
+	var win_h: int
+	if is_port:
+		win_w = win_size.x - 16
+		win_h = win_size.y - 180
+		panel.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
+		panel.offset_top += 70 # Shift down to clear nav bar
+		panel.offset_bottom += 70
+	elif _is_mobile():
+		win_w = 640
+		win_h = 560
+	else:
+		win_w = 480
+		win_h = 400
+	
+	panel.custom_minimum_size = Vector2(win_w, win_h)
+	panel.layout_mode = 1 # Anchors
+	panel.anchors_preset = Control.PRESET_CENTER
+	panel.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	panel.grow_vertical = Control.GROW_DIRECTION_BOTH
+	panel.set_anchors_and_offsets_preset(Control.PRESET_CENTER, Control.PRESET_MODE_MINSIZE)
 
 	var margin := MarginContainer.new()
-	margin.add_theme_constant_override("margin_left", 20)
-	margin.add_theme_constant_override("margin_right", 20)
-	margin.add_theme_constant_override("margin_top", 16)
-	margin.add_theme_constant_override("margin_bottom", 16)
+	var h_pad = 32 if is_port else (32 if _is_mobile() else 20)
+	var v_pad = 28 if is_port else (24 if _is_mobile() else 16)
+	margin.add_theme_constant_override("margin_left", h_pad)
+	margin.add_theme_constant_override("margin_right", h_pad)
+	margin.add_theme_constant_override("margin_top", v_pad)
+	margin.add_theme_constant_override("margin_bottom", v_pad)
 	panel.add_child(margin)
 
 	var root := VBoxContainer.new()
-	root.add_theme_constant_override("separation", 12)
+	root.add_theme_constant_override("separation", 18 if is_port else 12)
 	margin.add_child(root)
 	_root = root
 
@@ -227,7 +367,7 @@ func _build_ui() -> void:
 	var title := Label.new()
 	title.text = "Connected Accounts"
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	title.add_theme_font_size_override("font_size", 18)
+	title.add_theme_font_size_override("font_size", _get_font_size(18))
 	title.add_theme_color_override("font_color", _TEXT_LIGHT)
 	root.add_child(title)
 
@@ -242,7 +382,7 @@ func _build_ui() -> void:
 
 	var rows := VBoxContainer.new()
 	rows.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	rows.add_theme_constant_override("separation", 16)
+	rows.add_theme_constant_override("separation", 24 if is_port else 16)
 	scroll.add_child(rows)
 
 	# Steam Row
@@ -255,28 +395,44 @@ func _build_ui() -> void:
 	rows.add_child(_create_row("Discord", _ACCENT_PRIMARY, _discord_id_label, _on_connect_discord_pressed, "DiscordRow"))
 	_discord_connect_btn = rows.get_node("DiscordRow/ConnectBtn")
 
+	# Apple Row
+	_apple_id_label = Label.new()
+	rows.add_child(_create_row("Apple", _ACCENT_APPLE, _apple_id_label, _on_connect_apple_pressed, "AppleRow"))
+	_apple_connect_btn = rows.get_node("AppleRow/ConnectBtn")
+
+	# Google Row
+	_google_id_label = Label.new()
+	rows.add_child(_create_row("Google", _ACCENT_GOOGLE, _google_id_label, _on_connect_google_pressed, "GoogleRow"))
+	_google_connect_btn = rows.get_node("GoogleRow/ConnectBtn")
+
+
 	# Status Label
 	_status_label = Label.new()
 	_status_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_status_label.add_theme_font_size_override("font_size", 12)
+	_status_label.add_theme_font_size_override("font_size", _get_font_size(12))
 	_status_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	root.add_child(_status_label)
 
 	# Close Button
 	var close_btn := Button.new()
 	close_btn.text = "Close"
-	close_btn.custom_minimum_size = Vector2(100, 32)
+	var btn_h = 100 if is_port else (72 if _is_mobile() else 32)
+	var btn_w = 240 if is_port else (160 if _is_mobile() else 100)
+	close_btn.custom_minimum_size = Vector2(btn_w, btn_h)
 	close_btn.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	close_btn.pressed.connect(func(): hide(); closed.emit())
 	root.add_child(close_btn)
 
 func _create_row(label_text: String, accent_color: Color, id_val_label: Label, on_pressed: Callable, node_name: String) -> HBoxContainer:
+	var is_port = _is_portrait()
 	var row := HBoxContainer.new()
 	row.name = node_name
 	row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.add_theme_constant_override("separation", 16 if is_port else 8)
 	
 	var icon_placeholder := ColorRect.new()
-	icon_placeholder.custom_minimum_size = Vector2(32, 32)
+	var icon_size = 48 if is_port else 32
+	icon_placeholder.custom_minimum_size = Vector2(icon_size, icon_size)
 	icon_placeholder.color = accent_color.darkened(0.5)
 	row.add_child(icon_placeholder)
 	
@@ -286,19 +442,21 @@ func _create_row(label_text: String, accent_color: Color, id_val_label: Label, o
 	
 	var name_lbl := Label.new()
 	name_lbl.text = label_text
-	name_lbl.add_theme_font_size_override("font_size", 14)
+	name_lbl.add_theme_font_size_override("font_size", _get_font_size(14))
 	name_lbl.add_theme_color_override("font_color", accent_color)
 	text_stack.add_child(name_lbl)
 	
 	id_val_label.text = "Loading..."
-	id_val_label.add_theme_font_size_override("font_size", 11)
+	id_val_label.add_theme_font_size_override("font_size", _get_font_size(11))
 	id_val_label.add_theme_color_override("font_color", _TEXT_DIM)
 	text_stack.add_child(id_val_label)
 	
 	var connect_btn := Button.new()
 	connect_btn.name = "ConnectBtn"
 	connect_btn.text = "Connect"
-	connect_btn.custom_minimum_size = Vector2(80, 28)
+	var c_btn_h = 72 if is_port else (28 if not _is_mobile() else 52)
+	var c_btn_w = 120 if is_port else 80
+	connect_btn.custom_minimum_size = Vector2(c_btn_w, c_btn_h)
 	connect_btn.pressed.connect(on_pressed)
 	row.add_child(connect_btn)
 	
@@ -307,3 +465,25 @@ func _create_row(label_text: String, accent_color: Color, id_val_label: Label, o
 func _set_status(text: String, color: Color) -> void:
 	_status_label.text = text
 	_status_label.add_theme_color_override("font_color", color)
+
+func _apply_ui_scaling_recursive(node: Node) -> void:
+	var is_port = _is_portrait()
+	if node is Button:
+		node.add_theme_font_size_override("font_size", _get_font_size(14))
+		# Adjust min height if not already set large
+		var btn_name: String = node.name.to_lower() if is_instance_valid(node) else ""
+		var want_huge = btn_name.contains("close") or btn_name.contains("cancel") or btn_name.contains("okay") or btn_name.contains("back")
+		var target_h: int
+		if is_port:
+			target_h = 100 if want_huge else 72
+		else:
+			target_h = (72 if want_huge else 64) if _is_mobile() else 36
+		if node.custom_minimum_size.y < target_h:
+			node.custom_minimum_size.y = target_h
+	elif node is Label:
+		var current_fs = node.get_theme_font_size("font_size")
+		if current_fs <= 0: current_fs = 14
+		node.add_theme_font_size_override("font_size", _get_font_size(current_fs))
+	
+	for child in node.get_children():
+		_apply_ui_scaling_recursive(child)

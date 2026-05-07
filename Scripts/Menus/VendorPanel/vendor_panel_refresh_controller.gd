@@ -33,31 +33,46 @@ static func request_authoritative_refresh(panel: Object, convoy_id: String, vend
 
 
 static func on_api_transaction_result(panel: Object, result: Dictionary) -> void:
+	print("[VendorPanel][DIAG] RefreshController.on_api_transaction_result entered for instance_id=%d" % panel.get_instance_id())
 	if panel.perf_log_enabled:
 		print("DEBUG: _on_api_transaction_result called with result: ", result)
 		if int(panel._txn_t0_ms) >= 0:
 			var now_ms: int = Time.get_ticks_msec()
 			print("[VendorPanel][Perf] API result +%d ms" % int(now_ms - int(panel._txn_t0_ms)))
 
-	# Prefer an immediate refresh for responsiveness.
-	if panel.vendor_data and panel.convoy_data and not bool(panel._awaiting_panel_data) and not bool(panel._refresh_in_flight):
-		var cid: String = str((panel.convoy_data as Dictionary).get("convoy_id", "")) if (panel.convoy_data is Dictionary) else ""
-		var vid: String = str((panel.vendor_data as Dictionary).get("vendor_id", "")) if (panel.vendor_data is Dictionary) else ""
-		if cid != "" and vid != "":
-			request_authoritative_refresh(panel, cid, vid)
-			if panel.perf_log_enabled:
-				print("[VendorPanel][Perf] immediate refresh requested cid=", cid, " vid=", vid, " id=", int(panel._current_refresh_id))
-			return
-
+	# Always re-enable UI controls regardless of refresh state.
 	if is_instance_valid(panel.action_button):
 		panel.action_button.disabled = false
 		panel.action_button.text = "Buy" if str(panel.current_mode) == "buy" else "Sell"
 	if is_instance_valid(panel.max_button):
 		panel.max_button.disabled = false
 
-	# Fallback: if guards prevent immediate request, schedule a short debounced refresh.
-	panel._pending_refresh = true
-	panel._schedule_refresh()
+	# Prefer an immediate refresh for responsiveness.
+	# Transactions are hard sync points; we clear previous flight flags to ensure the refresh dispatches.
+	panel._awaiting_panel_data = false
+	panel._refresh_in_flight = false
+
+	if panel.vendor_data and panel.convoy_data:
+		var cid: String = str((panel.convoy_data as Dictionary).get("convoy_id", "")) if (panel.convoy_data is Dictionary) else ""
+		var vid: String = str((panel.vendor_data as Dictionary).get("vendor_id", "")) if (panel.vendor_data is Dictionary) else ""
+		
+		# Fallback to stored IDs if data objects are partially cleared
+		if cid == "" and panel.get("_active_convoy_id"): cid = str(panel._active_convoy_id)
+		if vid == "" and panel.get("_active_vendor_id"): vid = str(panel._active_vendor_id)
+		
+		if cid != "" and vid != "":
+			print("[VendorPanel][DIAG] Requesting authoritative refresh for vid=%s cid=%s" % [vid, cid])
+			request_authoritative_refresh(panel, cid, vid)
+		else:
+			print("[VendorPanel][DIAG] SKIP authoritative refresh: cid='%s', vid='%s' (both must be non-empty). Scheduling retry." % [cid, vid])
+			panel._pending_refresh = true
+			panel._schedule_refresh()
+	else:
+		var has_v := (panel.vendor_data != null)
+		var has_c := (panel.convoy_data != null)
+		print("[VendorPanel][DIAG] SKIP authoritative refresh: data objects missing (has_v=%s, has_c=%s). Scheduling retry." % [str(has_v), str(has_c)])
+		panel._pending_refresh = true
+		panel._schedule_refresh()
 
 
 static func on_api_transaction_error(panel: Object, error_message: String) -> void:

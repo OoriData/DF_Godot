@@ -207,16 +207,16 @@ class MissionItem:
 		if d.has("recipient") and d.get("recipient") != null:
 			return true
 		if d.get("is_mission", false): return true
-		# Check for non-null and non-empty string IDs
-		if d.has("mission_id") and d.get("mission_id") != null and str(d.get("mission_id")).strip_edges() != "":
-			return true
-		if d.has("mission_vendor_id") and d.get("mission_vendor_id") != null and str(d.get("mission_vendor_id")).strip_edges() != "":
-			return true
-		# Mission cargo must have a positive delivery_reward
-		if d.has("delivery_reward"):
-			var dr = d.get("delivery_reward")
-			if dr != null and (dr is float or dr is int) and float(dr) > 0.0:
+		# Check for non-null and non-empty string IDs or destination fields
+		var id_fields := ["mission_id", "mission_vendor_id", "recipient_vendor_id", "destination_vendor_id", "dest_vendor_id", "recipient_settlement_name", "destination_settlement_name", "dest_settlement", "destination_name"]
+		for k in id_fields:
+			if d.has(k) and d.get(k) != null and str(d.get(k)).strip_edges() != "":
 				return true
+		# Mission cargo must have a positive delivery_reward or unit_delivery_reward
+		if _to_float(d.get("delivery_reward", 0)) > 0.0:
+			return true
+		if _to_float(d.get("unit_delivery_reward", 0)) > 0.0:
+			return true
 		return false
 
 	static func _from_mission_dict(d: Dictionary) -> MissionItem:

@@ -1,0 +1,156 @@
+name: Publish and Release
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        required: true
+        type: string
+      changelog:
+        required: true
+        type: string
+      publish_web:
+        type: boolean
+        default: false
+      publish_google_play:
+        type: boolean
+        default: false
+      publish_apple:
+        type: boolean
+        default: false
+      publish_github_release:
+        type: boolean
+        default: false
+    secrets:
+      GOOGLE_PLAY_SERVICE_ACCOUNT_JSON:
+        required: false
+      APP_STORE_CONNECT_API_KEY:
+        required: false
+      APP_STORE_CONNECT_KEY_ID:
+        required: false
+      APP_STORE_CONNECT_ISSUER_ID:
+        required: false
+      MATCH_PASSWORD:
+        required: false
+      GIT_TOKEN:
+        required: false
+      MATCH_GIT_URL:
+        required: false
+
+jobs:
+  github-pages:
+    if: inputs.publish_web
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    steps:
+      - name: Download Web Build
+        uses: actions/download-artifact@v4
+        with:
+          name: web-build
+          path: build/web
+      - name: Upload Pages Artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: build/web
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
+
+  google-play:
+    if: inputs.publish_google_play
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download Android Build
+        uses: actions/download-artifact@v4
+        with:
+          name: android-build
+          path: build/android
+      - name: Deploy to Play Store
+        uses: r0adkll/upload-google-play@v1
+        with:
+          serviceAccountJsonPlainText: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
+          packageName: com.ooridata.desolate_frontiers
+          releaseFiles: build/android/Desolate_Frontiers.aab
+          track: internal
+          status: draft
+
+  apple-stores:
+    if: inputs.publish_apple
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download iOS Build
+        uses: actions/download-artifact@v4
+        with:
+          name: ios-build
+          path: build/ios
+      - name: Download macOS App Store Build
+        uses: actions/download-artifact@v4
+        with:
+          name: macos-appstore-build
+          path: build/macos-store
+      - name: Debug Artifacts
+        run: |
+          echo "Listing build directory contents:"
+          ls -R build/
+      - name: Setup Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.3'
+          bundler-cache: true
+
+      - name: Setup Fastlane Match
+        env:
+          GIT_TOKEN: ${{ secrets.GIT_TOKEN }}
+          MATCH_GIT_URL_SECRET: ${{ secrets.MATCH_GIT_URL }}
+        run: |
+          # Prioritize the authenticated MATCH_GIT_URL if it contains a token
+          if [[ "$MATCH_GIT_URL_SECRET" == *"@"* ]]; then
+            echo "MATCH_GIT_URL=$MATCH_GIT_URL_SECRET" >> $GITHUB_ENV
+          elif [ -n "$GIT_TOKEN" ]; then
+            echo "MATCH_GIT_URL=https://${GIT_TOKEN}@github.com/OoriData/mobile-signing-certs.git" >> $GITHUB_ENV
+          else
+             echo "MATCH_GIT_URL=$MATCH_GIT_URL_SECRET" >> $GITHUB_ENV
+          fi
+
+      - name: Upload to TestFlight and App Store
+        env:
+          APP_STORE_CONNECT_API_KEY: ${{ secrets.APP_STORE_CONNECT_API_KEY }}
+          APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          MATCH_PASSWORD: ${{ secrets.MATCH_PASSWORD }}
+          MATCH_KEYCHAIN_NAME: temp.keychain
+          MATCH_KEYCHAIN_PASSWORD: actions
+        run: |
+          # Create temporary keychain for fastlane match
+          security create-keychain -p "$MATCH_KEYCHAIN_PASSWORD" "$MATCH_KEYCHAIN_NAME"
+          security set-keychain-settings -lut 21600 "$MATCH_KEYCHAIN_NAME"
+          security unlock-keychain -p "$MATCH_KEYCHAIN_PASSWORD" "$MATCH_KEYCHAIN_NAME"
+          security default-keychain -s "$MATCH_KEYCHAIN_NAME"
+          
+          bundle exec fastlane ios release
+          bundle exec fastlane mac release
+
+  github-release:
+    if: inputs.publish_github_release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download All Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+      - name: Publish GitHub Release
+        uses: ncipollo/release-action@v1
+        with:
+          tag: "v${{ inputs.version }}"
+          name: "Release v${{ inputs.version }}"
+          body: "${{ inputs.changelog }}"
+          artifacts: "release-assets/*.zip,release-assets/*.apk,release-assets/*.aab,release-assets/*.ipa,release-assets/*.pkg,release-assets/*.exe,release-assets/*.dmg"
+          allowUpdates: true
+          replacesArtifacts: true
+          token: ${{ github.token }}

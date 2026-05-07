@@ -30,6 +30,8 @@ const ERROR_MAP: Dictionary = {
 	# Selling a vehicle with cargo — match on specific substring so it wins over generic prefixes
 	"contains cargo": "You cannot sell a vehicle while it still has cargo. Remove the cargo and try again.",
 	"Invalid item for this vendor": "This item cannot be bought or sold at this location.",
+	"does not own vehicle": "You do not have permission to access this vehicle's details.",
+	"vehicle not found": "The requested vehicle could not be found.",
 
 	# --- Specific Route Finding Errors ---
 	"Route find failed: No path found": "A route to this destination could not be found. The path may be blocked or across an ocean.",
@@ -42,6 +44,11 @@ const ERROR_MAP: Dictionary = {
 	"Session expired": "Your session has expired. Please log in again.",
 	"Authentication timed out": "Authentication timed out. Please try logging in again.",
 	"Auth complete but no session_token": "There was a problem logging you in. Please try again.",
+	"Field required": "Authentication was cancelled by the user.",
+	"Login cancelled.": "Authentication was cancelled by the user.",
+	"Access denied.": "Access denied.",
+	"access_denied": "Authentication was denied or cancelled.",
+	"cancelled": "Authentication was cancelled by the user.",
 
 	# --- Input Validation Errors ---
 	"is not a valid UUID": "An internal error occurred (Invalid ID).",
@@ -56,6 +63,7 @@ const ERROR_MAP: Dictionary = {
 	"PATCH 'vehicle_sold' failed:": "Could not sell vehicle: ",
 	"PATCH 'resource_bought' failed:": "Could not buy resource: ",
 	"PATCH 'resource_sold' failed:": "Could not sell resource: ",
+	"GET 'vehicle_data_received' failed:": "Could not load vehicle details: ",
 	# Warehouses (DF+ required) — show server-provided detail
 	"PATCH 'warehouse_created' failed:": "Warehouse purchase unavailable: Support the developers and upgrade to DF+",
 
@@ -63,13 +71,16 @@ const ERROR_MAP: Dictionary = {
 	"Failed to parse": "Received an unexpected response from the server. Please try again.",
 	"HTTPRequest initiation failed": "Could not connect to the game server. Please check your internet connection.",
 	"Network error": "A network error occurred. Please check your internet connection and try again.",
+	"result code: 5": "A secure connection error occurred. This often happens if your internet connection is unstable or your device clock is out of sync.",
 }
 
 # A list of technical error substrings that should NOT be shown to the user.
 const IGNORED_SUBSTRINGS: Array[String] = [
 	"Logged out.", # This is a normal event, not an error to display.
 	"Unauthorized", # This is a standard auth challenge, not an error to display in a modal. The auth flow will handle showing the login screen.
-	"Map request HTTP 401" # Suppress 401 errors for map requests (common before login)
+	"Map request HTTP 401", # Suppress 401 errors for map requests (common before login)
+	"Not authenticated",
+	"Not logged in"
 ]
 
 # A list of error substrings that should be handled by a local UI component (like a toast)

@@ -11,15 +11,6 @@ grow_horizontal = 2
 grow_vertical = 2
 script = ExtResource("1")
 
-[node name="ColorRect" type="ColorRect" parent="."]
-layout_mode = 1
-anchors_preset = 15
-anchor_right = 1.0
-anchor_bottom = 1.0
-grow_horizontal = 2
-grow_vertical = 2
-color = Color(0.1, 0.1, 0.1, 0.8)
-
 [node name="MainVBox" type="VBoxContainer" parent="."]
 layout_mode = 1
 anchors_preset = 15
@@ -46,42 +37,55 @@ text = "Mechanic"
 layout_mode = 2
 size_flags_horizontal = 3
 
-[node name="VendorHintLabel" type="Label" parent="MainVBox"]
-layout_mode = 2
-size_flags_horizontal = 3
-text = "Highlighted Swap buttons mean the mechanic has parts for that slot."
-theme_override_font_sizes/font_size = 12
-theme_override_colors/font_color = Color(0.75, 0.9, 0.75, 1)
+	[node name="TabsRow" type="HBoxContainer" parent="MainVBox"]
+	layout_mode = 2
+	theme_override_constants/separation = 10
 
-[node name="TabContainer" type="TabContainer" parent="MainVBox"]
-layout_mode = 2
-size_flags_vertical = 3
+	[node name="TabScroll" type="ScrollContainer" parent="MainVBox/TabsRow"]
+	layout_mode = 2
+	size_flags_horizontal = 3
+	vertical_scroll_mode = 0
 
-[node name="Parts" type="ScrollContainer" parent="MainVBox/TabContainer"]
-layout_mode = 2
+	[node name="TabHBox" type="HBoxContainer" parent="MainVBox/TabsRow/TabScroll"]
+	layout_mode = 2
+	size_flags_horizontal = 3
+	theme_override_constants/separation = 10
 
-[node name="PartsVBox" type="VBoxContainer" parent="MainVBox/TabContainer/Parts"]
-layout_mode = 2
-size_flags_horizontal = 3
-size_flags_vertical = 3
+	[node name="ContextButtons" type="HBoxContainer" parent="MainVBox/TabsRow"]
+	layout_mode = 2
+	theme_override_constants/separation = 10
 
-[node name="Pending" type="ScrollContainer" parent="MainVBox/TabContainer"]
-layout_mode = 2
+	[node name="ApplyButton" type="Button" parent="MainVBox/TabsRow/ContextButtons"]
+	layout_mode = 2
+	size_flags_horizontal = 3
+	text = "Apply Changes"
 
-[node name="PendingVBox" type="VBoxContainer" parent="MainVBox/TabContainer/Pending"]
-layout_mode = 2
-size_flags_horizontal = 3
-size_flags_vertical = 3
+	[node name="TabContainer" type="TabContainer" parent="MainVBox"]
+	layout_mode = 2
+	size_flags_vertical = 3
+	tabs_visible = false
 
-[node name="BottomBar" type="HBoxContainer" parent="MainVBox"]
-layout_mode = 2
+	[node name="Parts" type="ScrollContainer" parent="MainVBox/TabContainer"]
+	layout_mode = 2
 
-[node name="BackButton" type="Button" parent="MainVBox/BottomBar"]
-layout_mode = 2
-size_flags_horizontal = 3
-text = "Back"
+	[node name="PartsVBox" type="VBoxContainer" parent="MainVBox/TabContainer/Parts"]
+	layout_mode = 2
+	size_flags_horizontal = 3
+	size_flags_vertical = 3
 
-[node name="ApplyButton" type="Button" parent="MainVBox/BottomBar"]
-layout_mode = 2
-size_flags_horizontal = 3
-text = "Apply Changes"
+	[node name="Pending" type="ScrollContainer" parent="MainVBox/TabContainer"]
+	layout_mode = 2
+
+	[node name="PendingVBox" type="VBoxContainer" parent="MainVBox/TabContainer/Pending"]
+	layout_mode = 2
+	size_flags_horizontal = 3
+	size_flags_vertical = 3
+
+	[node name="BottomBar" type="HBoxContainer" parent="MainVBox"]
+	layout_mode = 2
+
+	[node name="BackButton" type="Button" parent="MainVBox/BottomBar"]
+	layout_mode = 2
+	size_flags_horizontal = 3
+	text = "Back"
+

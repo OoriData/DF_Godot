@@ -38,6 +38,7 @@ var _pending_viewport_rect: Rect2 = Rect2() # Stored most recent rect while supp
 var _active_focus_tween: Tween = null # Active tween for smooth camera focusing
 var _active_focus_tween_is_fit: bool = false
 var _overlay_occlusion_px_x: float = 0.0 # Horizontal pixels on right side covered by overlay (menu) and thus not visible
+var _overlay_occlusion_px_y: float = 0.0 # Vertical pixels on bottom side covered by overlay (menu) and thus not visible
 var _debug_menu_focus: bool = false # Toggle detailed menu focus diagnostics (set to false to disable overlay)
 var _debug_overlay_label: Label = null
 var _last_tween_target: Vector2 = Vector2.ZERO
@@ -81,14 +82,11 @@ func _ready():
 	# Debug overlay is now disabled by default
 	
 	# Listen to viewport changes directly to ensure synchronization
-	if is_instance_valid(get_viewport()):
-		get_viewport().size_changed.connect(_on_viewport_size_changed)
-
-func _on_viewport_size_changed():
-	# When the window resizes, we need to update our internal rect
-	if is_instance_valid(get_viewport()):
-		var new_rect = get_viewport().get_visible_rect()
-		update_map_viewport_rect(new_rect)
+	# NOTE: We do NOT connect to window viewport's size_changed here.
+	# The authoritative viewport rect comes from update_map_viewport_rect(),
+	# which is called by MainScreen with the actual map_display global rect.
+	# Listening to the raw window size caused the camera to reset to the full
+	# window height (ignoring the TopBar), which prevented reaching the map bottom.
 
 
 func update_map_viewport_rect(new_rect: Rect2):
@@ -106,6 +104,13 @@ func update_map_viewport_rect(new_rect: Rect2):
 	if new_rect.size.x > 0 and new_rect.size.y > 0:
 		sub_viewport_node.size = Vector2i(new_rect.size)
 		map_viewport_rect = Rect2(Vector2.ZERO, new_rect.size)
+		var is_new_portrait: bool = new_rect.size.y > new_rect.size.x
+		var was_portrait: bool = _full_viewport_size.y > _full_viewport_size.x
+		if _full_viewport_size != Vector2.ZERO and is_new_portrait != was_portrait:
+			# Aspect ratio flipped. Invalidate the cache to prevent stale layout tracking.
+			_full_viewport_size = new_rect.size
+		
+		# Now perform the normal maximums tracking
 		if map_viewport_rect.size.x > _full_viewport_size.x or map_viewport_rect.size.y > _full_viewport_size.y:
 			_full_viewport_size = map_viewport_rect.size
 		# print("[DFCAM-DEBUG] update_map_viewport_rect: Synced SubViewport size to ", sub_viewport_node.size)
@@ -123,10 +128,19 @@ func update_map_viewport_rect(new_rect: Rect2):
 		if not is_equal_approx(cur_z, new_z):
 			camera_node.zoom = Vector2(new_z, new_z)
 			emit_signal("camera_zoom_changed", new_z)
+	
 	# Preserve current zoom/position on layout changes; just clamp to new bounds
 	_clamp_camera_position()
+	
+	# DIAGNOSTICS:
+	if debug_logging:
+		print("[MCC] update_map_viewport_rect: new_rect=%s, sub_size=%s, min_zoom=%.4f, current_zoom=%.4f, cam_pos=%s" % [
+			str(new_rect), str(sub_viewport_node.size), min_camera_zoom_level, 
+			(camera_node.zoom.x if is_instance_valid(camera_node) else -1.0),
+			(camera_node.position if is_instance_valid(camera_node) else Vector2.ZERO)
+		])
+	
 	_dbg("update_map_viewport_rect", {"sub_size": sub_viewport_node.size, "map_viewport_rect": map_viewport_rect, "zoom": (camera_node.zoom.x if is_instance_valid(camera_node) else -1.0), "cam_pos": (camera_node.position if is_instance_valid(camera_node) else Vector2.ZERO)})
-	# print("[DFCAM-DEBUG] update_map_viewport_rect: camera_position=", camera_node.position, ", camera_zoom=", camera_node.zoom)
 
 func _clamp_camera_position():
 	if not is_instance_valid(camera_node):
@@ -155,12 +169,17 @@ func _clamp_camera_position():
 	var adjusted_viewport_w_px = max(0.0, viewport_size.x - _overlay_occlusion_px_x)
 	var adjusted_world_w = adjusted_viewport_w_px / max(zoom, 0.0001) # width of visible (non-occluded) region
 	var full_world_w = viewport_size.x / max(zoom, 0.0001) # width if no occlusion considered
-	var visible_world_h = viewport_size.y / max(zoom, 0.0001)
+	
+	var adjusted_viewport_h_px = max(0.0, viewport_size.y - _overlay_occlusion_px_y)
+	var adjusted_world_h = adjusted_viewport_h_px / max(zoom, 0.0001)
+	var full_world_h = viewport_size.y / max(zoom, 0.0001)
+	
 	var half_full_w = full_world_w * 0.5
-	var half_visible_h = visible_world_h * 0.5
+	var half_full_h = full_world_h * 0.5
 
-	# World width covered by the overlay (menu) – we can extend the right limit by this without exposing off-map in visible region.
+	# World width covered by the overlay (menu) – we can extend the limit by this without exposing off-map in visible region.
 	var occlusion_world_w: float = _overlay_occlusion_px_x / max(zoom, 0.1)
+	var occlusion_world_h: float = _overlay_occlusion_px_y / max(zoom, 0.1)
 
 	# Left bound: use half of FULL width so left edge never shows off-map.
 	var min_x = map_origin.x + half_full_w
@@ -170,8 +189,11 @@ func _clamp_camera_position():
 	# Ensure max_x is at least min_x (for very small maps)
 	if max_x < min_x:
 		max_x = min_x
-	var min_y = map_origin.y + half_visible_h
-	var max_y = map_origin.y + map_height - half_visible_h
+		
+	var min_y = map_origin.y + half_full_h
+	var max_y = map_origin.y + map_height - half_full_h + occlusion_world_h
+	if max_y < min_y:
+		max_y = min_y
 
 	if allow_map_edge_exposure:
 		# Allow camera center closer to edges; reduce margin by 75% (configurable strategy)
@@ -181,13 +203,13 @@ func _clamp_camera_position():
 		min_y = lerp(min_y, 0.0, margin_factor)
 		max_y = lerp(max_y, map_height, margin_factor)
 
-	# If the map is smaller than the visible world area, center the camera
-	if map_width <= full_world_w:
-		min_x = map_width * 0.5
-		max_x = map_width * 0.5
-	if map_height <= visible_world_h:
-		min_y = map_height * 0.5
-		max_y = map_height * 0.5
+	# If the map is smaller than the visible non-occluded world area, center the camera
+	if map_width <= adjusted_world_w:
+		min_x = map_origin.x + map_width * 0.5 + occlusion_world_w * 0.5
+		max_x = min_x
+	if map_height <= adjusted_world_h:
+		min_y = map_origin.y + map_height * 0.5 + occlusion_world_h * 0.5
+		max_y = min_y
 
 	camera_node.position.x = clamp(camera_node.position.x, min_x, max_x)
 	camera_node.position.y = clamp(camera_node.position.y, min_y, max_y)
@@ -197,15 +219,18 @@ func _clamp_camera_position():
 		"map_origin": map_origin,
 		"view_px": viewport_size,
 		"overlay_px_x": _overlay_occlusion_px_x,
+		"overlay_px_y": _overlay_occlusion_px_y,
 		"raw_view_px": map_viewport_rect.size,
 		"full_view_px": _full_viewport_size,
 		"menu_open": _menu_open,
 		"zoom": zoom,
 		"world_w_full": full_world_w,
 		"world_w_visible": adjusted_world_w,
-		"world_h": visible_world_h,
+		"world_h_full": full_world_h,
+		"world_h_visible": adjusted_world_h,
 		"min_x": min_x, "max_x": max_x, "min_y": min_y, "max_y": max_y,
 		"occlusion_world_w": occlusion_world_w,
+		"occlusion_world_h": occlusion_world_h,
 		"cam_pos": camera_node.position
 	})
 
@@ -246,7 +271,8 @@ func _update_camera_limits():
 	if _menu_open and freeze_zoom_for_menu_bounds:
 		zoom = max(_menu_open_reference_zoom, 0.0001)
 	var adjusted_w_px = max(0.0, effective_viewport_px.x - _overlay_occlusion_px_x)
-	var visible_world = Vector2(adjusted_w_px / zoom, effective_viewport_px.y / zoom)
+	var adjusted_h_px = max(0.0, effective_viewport_px.y - _overlay_occlusion_px_y)
+	var visible_world = Vector2(adjusted_w_px / zoom, adjusted_h_px / zoom)
 
 	# Nothing to set on Camera2D limits (we clamp manually), but log useful info
 	var will_center_x = visible_world.x >= map_world_bounds.size.x
@@ -256,6 +282,7 @@ func _update_camera_limits():
 		"map_bounds": map_world_bounds,
 		"viewport_px": effective_viewport_px,
 		"overlay_px_x": _overlay_occlusion_px_x,
+		"overlay_px_y": _overlay_occlusion_px_y,
 		"raw_viewport_px": viewport_px,
 		"full_viewport_px": _full_viewport_size,
 		"menu_open": _menu_open,
@@ -353,6 +380,12 @@ func fit_camera_to_tilemap():
 	camera_node.position = map_world_bounds.get_center()
 	_update_camera_limits()
 	_clamp_camera_position()
+	
+	if debug_logging:
+		print("[MCC] fit_camera_to_tilemap: viewport=%s, map_bounds=%s, target_zoom=%.4f, min_zoom=%.4f, final_pos=%s" % [
+			str(viewport_size), str(map_world_bounds), target_zoom, min_camera_zoom_level, camera_node.position
+		])
+
 	emit_signal("camera_zoom_changed", target_zoom)
 	_dbg("fit", {"map_bounds": map_world_bounds, "viewport": viewport_size, "target_zoom": target_zoom, "cam_pos": camera_node.position})
 
@@ -363,12 +396,16 @@ func get_current_zoom() -> float:
 func focus_on_world_pos(world_pos: Vector2):
 	if not is_instance_valid(camera_node):
 		return
-	# If overlay occludes right edge, bias camera center further right so target appears in visible area.
+	# If overlay occludes right or bottom edge, bias camera center so target appears in visible area.
 	var zoom = max(camera_node.zoom.x, 0.0001)
 	if _overlay_occlusion_px_x > 0.0:
 		var occlusion_world_w: float = _overlay_occlusion_px_x / zoom
-		# Shift by half occlusion width so target moves left out from under menu.
+		# Shift right by half horizontal occlusion width.
 		world_pos.x += occlusion_world_w * 0.5
+	if _overlay_occlusion_px_y > 0.0:
+		var occlusion_world_h: float = _overlay_occlusion_px_y / zoom
+		# Shift down by half vertical occlusion width.
+		world_pos.y += occlusion_world_h * 0.5
 	camera_node.position = world_pos
 	_clamp_camera_position()
 
@@ -442,22 +479,30 @@ func get_current_pan_bounds() -> Rect2:
 	var visible_world_h = effective_viewport_size.y / zoom
 	var half_w = visible_world_w * 0.5
 	var half_h = visible_world_h * 0.5
+	var occlusion_world_w: float = _overlay_occlusion_px_x / zoom
+	var occlusion_world_h: float = _overlay_occlusion_px_y / zoom
 	var min_x = map_origin.x + half_w
-	var max_x = map_origin.x + map_width - half_w
+	var max_x = map_origin.x + map_width - half_w + occlusion_world_w
+	if max_x < min_x:
+		max_x = min_x
 	var min_y = map_origin.y + half_h
-	var max_y = map_origin.y + map_height - half_h
+	var max_y = map_origin.y + map_height - half_h + occlusion_world_h
+	if max_y < min_y:
+		max_y = min_y
 	if allow_map_edge_exposure:
 		var margin_factor := 0.25
 		min_x = lerp(min_x, 0.0, margin_factor)
 		max_x = lerp(max_x, map_width, margin_factor)
 		min_y = lerp(min_y, 0.0, margin_factor)
 		max_y = lerp(max_y, map_height, margin_factor)
-	if map_width <= visible_world_w:
-		min_x = map_width * 0.5
-		max_x = map_width * 0.5
-	if map_height <= visible_world_h:
-		min_y = map_height * 0.5
-		max_y = map_height * 0.5
+	var adjusted_world_w = max(0.0, effective_viewport_size.x - _overlay_occlusion_px_x) / zoom
+	var adjusted_world_h = max(0.0, effective_viewport_size.y - _overlay_occlusion_px_y) / zoom
+	if map_width <= adjusted_world_w:
+		min_x = map_origin.x + map_width * 0.5 + occlusion_world_w * 0.5
+		max_x = min_x
+	if map_height <= adjusted_world_h:
+		min_y = map_origin.y + map_height * 0.5 + occlusion_world_h * 0.5
+		max_y = min_y
 	return Rect2(Vector2(min_x, min_y), Vector2(max_x - min_x, max_y - min_y))
 
 func set_menu_open_state(is_open: bool, and_clamp_immediately: bool = true):
@@ -540,11 +585,23 @@ func smooth_focus_on_world_pos(world_pos: Vector2, duration: float = 0.5) -> voi
 
 func smooth_focus_on_convoy(convoy_data: Dictionary, duration: float = 0.5) -> void:
 	var target_world := get_convoy_world_position(convoy_data)
-	if target_world != Vector2.ZERO:
-		smooth_focus_on_world_pos(target_world, duration)
+	if target_world == Vector2.ZERO:
+		return
+	
+	# ACCOUNT FOR OCCLUSION: Just like immediate focus_on_convoy, smooth focus must
+	# respect the current overlay occlusion to ensure the convoy is centered in the visible area.
+	var zoom = max(camera_node.zoom.x, 0.0001)
+	if _overlay_occlusion_px_x > 0.0:
+		var occlusion_world_w: float = _overlay_occlusion_px_x / zoom
+		target_world.x += occlusion_world_w * 0.5
+	if _overlay_occlusion_px_y > 0.0:
+		var occlusion_world_h: float = _overlay_occlusion_px_y / zoom
+		target_world.y += occlusion_world_h * 0.5
+
+	smooth_focus_on_world_pos(target_world, duration)
 
 # Focus convoy expecting a final overlay occlusion width (in pixels). Bias computed from provided value, not current animated value.
-func smooth_focus_on_convoy_with_final_occlusion(convoy_data: Dictionary, final_occlusion_px: float, duration: float = 0.5) -> void:
+func smooth_focus_on_convoy_with_final_occlusion(convoy_data: Dictionary, final_occlusion_px: float, duration: float = 0.5, is_vertical: bool = false) -> void:
 	if not is_instance_valid(camera_node):
 		return
 	var target_world := get_convoy_world_position(convoy_data)
@@ -552,12 +609,16 @@ func smooth_focus_on_convoy_with_final_occlusion(convoy_data: Dictionary, final_
 		return
 	var zoom = max(camera_node.zoom.x, 0.0001)
 	var bias_world: float = (final_occlusion_px / zoom) * 0.5
-	# Shift right so convoy appears centered inside reduced visible region (left side).
-	var biased_target := target_world + Vector2(bias_world, 0)
+	var biased_target := target_world 
+	if is_vertical:
+		biased_target.y += bias_world
+	else:
+		biased_target.x += bias_world
 	if _debug_menu_focus:
 		_dbg("menu_focus_compute", {
 			"raw_target": target_world,
 			"final_occlusion_px": final_occlusion_px,
+			"is_vertical": is_vertical,
 			"zoom": zoom,
 			"bias_world": bias_world,
 			"biased_target": biased_target,
@@ -567,7 +628,8 @@ func smooth_focus_on_convoy_with_final_occlusion(convoy_data: Dictionary, final_
 
 # --- NEW: Fit helpers (zoom + pan to bounds) ---
 # Smoothly zoom out/in so a world-space rect is fully visible in the *non-occluded* map area.
-func smooth_fit_world_rect(world_rect: Rect2, duration: float = 0.6, margin: float = 0.92) -> void:
+# If target_focus_point is provided, camera will prioritize keeping that point in view when zoom is restricted.
+func smooth_fit_world_rect(world_rect: Rect2, duration: float = 0.6, margin: float = 0.92, target_focus_point: Vector2 = Vector2.INF) -> void:
 	if not is_instance_valid(camera_node):
 		return
 	# Allow 0 width/height (perfectly straight routes) by treating as thin rects.
@@ -589,7 +651,7 @@ func smooth_fit_world_rect(world_rect: Rect2, duration: float = 0.6, margin: flo
 
 	# Available width excludes overlay occlusion.
 	var visible_w_px: float = max(1.0, viewport_px.x - _overlay_occlusion_px_x)
-	var visible_h_px: float = max(1.0, viewport_px.y)
+	var visible_h_px: float = max(1.0, viewport_px.y - _overlay_occlusion_px_y)
 	var rect_w: float = max(1.0, world_rect.size.x)
 	var rect_h: float = max(1.0, world_rect.size.y)
 
@@ -597,8 +659,14 @@ func smooth_fit_world_rect(world_rect: Rect2, duration: float = 0.6, margin: flo
 	var zoom_x: float = visible_w_px / rect_w
 	var zoom_y: float = visible_h_px / rect_h
 	var target_zoom: float = min(zoom_x, zoom_y) * clamp(margin, 0.5, 1.0)
-	# Allow zooming out further than min_camera_zoom_level if needed for long routes.
-	# Still clamp to a conservative floor to avoid numerical weirdness.
+	
+	# CRITICAL FIX: Never zoom out beyond min_camera_zoom_level to keep map in bounds and avoid showing background.
+	var absolute_min = min_camera_zoom_level
+	if target_zoom < absolute_min:
+		if debug_logging:
+			print("[MCC] smooth_fit_world_rect: target_zoom %.4f capped to min_camera_zoom_level %.4f" % [target_zoom, absolute_min])
+		target_zoom = absolute_min
+
 	target_zoom = clamp(target_zoom, 0.05, max_camera_zoom_level)
 
 	# If menu is open and we freeze zoom for bounds, keep the reference in sync.
@@ -606,9 +674,9 @@ func smooth_fit_world_rect(world_rect: Rect2, duration: float = 0.6, margin: flo
 		_menu_open_reference_zoom = target_zoom
 
 	var start_zoom: float = maxf(camera_node.zoom.x, 0.0001)
-	# Compute a good center at the *current* zoom, then pan there first.
-	var start_center: Vector2 = _get_fit_center_for_world_rect_and_zoom(world_rect, start_zoom)
-	var final_center: Vector2 = _get_fit_center_for_world_rect_and_zoom(world_rect, target_zoom)
+	# Compute centers. If target_focus_point is INF, defaults to rect center.
+	var start_center: Vector2 = _get_fit_center_for_world_rect_and_zoom(world_rect, start_zoom, target_focus_point)
+	var final_center: Vector2 = _get_fit_center_for_world_rect_and_zoom(world_rect, target_zoom, target_focus_point)
 
 	if duration <= 0.0:
 		duration = focus_tween_duration_default
@@ -622,7 +690,7 @@ func smooth_fit_world_rect(world_rect: Rect2, duration: float = 0.6, margin: flo
 		_active_focus_tween.tween_property(camera_node, "position", start_center, pan_time)
 	# During zoom, keep the rect fully visible (bias changes with zoom).
 	_active_focus_tween.tween_method(
-		Callable(self, "_apply_fit_zoom_step").bind(world_rect),
+		Callable(self, "_apply_fit_zoom_step").bind(world_rect, target_focus_point),
 		start_zoom,
 		target_zoom,
 		zoom_time
@@ -652,7 +720,16 @@ func smooth_fit_route_preview(route_data: Dictionary, duration: float = 0.6, mar
 	# Pad so endpoints/line thickness aren't tight against edges.
 	var pad := _get_cell_size() * 0.75
 	bounds = bounds.grow_individual(pad.x, pad.y, pad.x, pad.y)
-	smooth_fit_world_rect(bounds, duration, margin)
+	
+	# Determine destination world position to prioritize as focus point
+	var dest_tile := Vector2i(int(route_x.back()), int(route_y.back()))
+	var dest_world := Vector2.ZERO
+	if is_instance_valid(tilemap_ref):
+		dest_world = tilemap_ref.map_to_local(dest_tile)
+	else:
+		dest_world = Vector2(dest_tile) * _get_cell_size()
+
+	smooth_fit_world_rect(bounds, duration, margin, dest_world)
 
 func _get_route_world_bounds(route_x: Array, route_y: Array) -> Rect2:
 	var minv := Vector2(INF, INF)
@@ -693,17 +770,21 @@ func _get_clamped_camera_pos_for_zoom(pos: Vector2, zoom_val: float) -> Vector2:
 
 	var zoom: float = maxf(zoom_val, 0.0001)
 	var full_world_w = viewport_size.x / zoom
-	var visible_world_h = viewport_size.y / zoom
+	var full_world_h = viewport_size.y / zoom
 	var half_full_w = full_world_w * 0.5
-	var half_visible_h = visible_world_h * 0.5
+	var half_full_h = full_world_h * 0.5
 
 	var occlusion_world_w: float = _overlay_occlusion_px_x / zoom
+	var occlusion_world_h: float = _overlay_occlusion_px_y / zoom
+	
 	var min_x = map_origin.x + half_full_w
 	var max_x = map_origin.x + map_width - half_full_w + occlusion_world_w
 	if max_x < min_x:
 		max_x = min_x
-	var min_y = map_origin.y + half_visible_h
-	var max_y = map_origin.y + map_height - half_visible_h
+	var min_y = map_origin.y + half_full_h
+	var max_y = map_origin.y + map_height - half_full_h + occlusion_world_h
+	if max_y < min_y:
+		max_y = min_y
 
 	if allow_map_edge_exposure:
 		var margin_factor := 0.25
@@ -712,17 +793,21 @@ func _get_clamped_camera_pos_for_zoom(pos: Vector2, zoom_val: float) -> Vector2:
 		min_y = lerp(min_y, 0.0, margin_factor)
 		max_y = lerp(max_y, map_height, margin_factor)
 
-	if map_width <= full_world_w:
-		min_x = map_width * 0.5; max_x = map_width * 0.5
-	if map_height <= visible_world_h:
-		min_y = map_height * 0.5; max_y = map_height * 0.5
+	var adjusted_world_w = max(0.0, viewport_size.x - _overlay_occlusion_px_x) / zoom
+	var adjusted_world_h = max(0.0, viewport_size.y - _overlay_occlusion_px_y) / zoom
+	if map_width <= adjusted_world_w:
+		min_x = map_origin.x + map_width * 0.5 + occlusion_world_w * 0.5; max_x = min_x
+	if map_height <= adjusted_world_h:
+		min_y = map_origin.y + map_height * 0.5 + occlusion_world_h * 0.5; max_y = min_y
 
 	return Vector2(clamp(pos.x, min_x, max_x), clamp(pos.y, min_y, max_y))
 
-func _get_fit_center_for_world_rect_and_zoom(world_rect: Rect2, zoom_val: float) -> Vector2:
-	# Chooses a camera center that keeps world_rect inside the *visible* (non-occluded) region.
-	# This is intentionally NOT clamped to map bounds, because long routes near edges may
-	# require showing some off-map area to keep the whole route visible.
+func _get_fit_center_for_world_rect_and_zoom(world_rect: Rect2, zoom_val: float, target_focus_point: Vector2 = Vector2.INF) -> Vector2:
+	# Chooses a camera center that keeps world_rect visible in the non-occluded area.
+	# Priority logic:
+	# - If the full route fits at this zoom: center on the route rect.
+	# - If zoom is capped and route is clipped: lerp toward target_focus_point (destination).
+	# - Final safety clamp always prevents background exposure.
 	var current_viewport_px: Vector2 = map_viewport_rect.size
 	if is_instance_valid(sub_viewport_node):
 		current_viewport_px = Vector2(sub_viewport_node.size)
@@ -736,10 +821,11 @@ func _get_fit_center_for_world_rect_and_zoom(world_rect: Rect2, zoom_val: float)
 	var half_full_w: float = full_world_w * 0.5
 	var half_full_h: float = full_world_h * 0.5
 	var occlusion_world_w: float = _overlay_occlusion_px_x / zoom
+	var occlusion_world_h: float = _overlay_occlusion_px_y / zoom
+	# Non-occluded visible area in world units.
+	var visible_world_w: float = max(0.0, viewport_size.x - _overlay_occlusion_px_x) / zoom
+	var visible_world_h: float = max(0.0, viewport_size.y - _overlay_occlusion_px_y) / zoom
 
-	# If the visible height is larger than the map height, center the map vertically so
-	# any off-map area is split evenly above/below.
-	var lock_y_to_map_center: bool = false
 	var map_origin: Vector2 = Vector2.ZERO
 	if is_instance_valid(tilemap_ref):
 		map_origin = tilemap_ref.position
@@ -750,32 +836,62 @@ func _get_fit_center_for_world_rect_and_zoom(world_rect: Rect2, zoom_val: float)
 	var rect_top: float = world_rect.position.y
 	var rect_right: float = world_rect.position.x + world_rect.size.x
 	var rect_bottom: float = world_rect.position.y + world_rect.size.y
+	var rect_w: float = world_rect.size.x
+	var rect_h: float = world_rect.size.y
 
+	# Start at the route rect center.
 	var desired: Vector2 = world_rect.get_center()
-	# Bias right so the rect is centered in the visible region (left side).
+
+	# When a focus point exists (e.g. journey destination), blend toward it based on overflow.
+	# If the entire route fits on screen we keep the center; if heavily clipped we move to dest.
+	# Use 90% of visible area as the threshold so there's a 10% buffer of breathing room,
+	# keeping the convoy panel and route line comfortably inside view.
+	if target_focus_point != Vector2.INF:
+		var buffered_w: float = visible_world_w * 0.9
+		var buffered_h: float = visible_world_h * 0.9
+		var overflow_w: float = 0.0
+		var overflow_h: float = 0.0
+		if buffered_w > 0.0:
+			overflow_w = clampf((rect_w - buffered_w) / buffered_w, 0.0, 1.0)
+		if buffered_h > 0.0:
+			overflow_h = clampf((rect_h - buffered_h) / buffered_h, 0.0, 1.0)
+		var blend: float = maxf(overflow_w, overflow_h)
+		desired = desired.lerp(target_focus_point, blend)
+
+	# Occlusion bias: shift desired so the non-occluded visible area is centered on the route.
 	if _overlay_occlusion_px_x > 0.0:
 		desired.x += occlusion_world_w * 0.5
-	if map_height > 0.0 and map_height <= full_world_h:
-		desired.y = map_origin.y + map_height * 0.5
-		lock_y_to_map_center = true
+	if _overlay_occlusion_px_y > 0.0:
+		desired.y += occlusion_world_h * 0.5
 
-	# Horizontal clamp so the *visible* right edge includes rect_right.
-	# Visible right edge (non-occluded): cam_x + half_full_w - occlusion_world_w
+	# === Y-axis clamping ===
+	# Only lock to map vertical center when there is NO destination focus active.
+	# (When there IS a destination focus, the camera must NOT snap to map center —
+	# that was the root cause of the "jumps to top of map" bug.)
+	if target_focus_point == Vector2.INF and map_height > 0.0 and map_height <= full_world_h:
+		# Map fits vertically; center it so off-map is split evenly above/below.
+		desired.y = map_origin.y + map_height * 0.5
+	else:
+		# Clamp vertically so the route stays inside the non-occluded visible area.
+		var min_center_y: float = rect_bottom - half_full_h + occlusion_world_h
+		var max_center_y: float = rect_top + half_full_h
+		if min_center_y <= max_center_y:
+			desired.y = clampf(desired.y, min_center_y, max_center_y)
+		# If min > max (route taller than screen), do NOT flip-clamp (that causes jumps).
+		# The final safety clamp below keeps us inside the map.
+
+	# === X-axis clamping ===
 	var min_center_x: float = rect_right - half_full_w + occlusion_world_w
 	var max_center_x: float = rect_left + half_full_w
 	if min_center_x <= max_center_x:
 		desired.x = clampf(desired.x, min_center_x, max_center_x)
+	# Route wider than screen: do not flip-clamp; final safety clamp handles it.
 
-	# Vertical clamp so the rect stays in view.
-	if not lock_y_to_map_center:
-		var min_center_y: float = rect_bottom - half_full_h
-		var max_center_y: float = rect_top + half_full_h
-		if min_center_y <= max_center_y:
-			desired.y = clampf(desired.y, min_center_y, max_center_y)
+	# FINAL SAFETY CLAMP: Ensures camera stays inside map (no background exposure).
+	return _get_clamped_camera_pos_for_zoom(desired, zoom)
 
-	return desired
 
-func _apply_fit_zoom_step(zoom_level: float, world_rect: Rect2) -> void:
+func _apply_fit_zoom_step(zoom_level: float, world_rect: Rect2, target_focus_point: Vector2 = Vector2.INF) -> void:
 	if not is_instance_valid(camera_node):
 		return
 	var z: float = maxf(zoom_level, 0.0001)
@@ -783,7 +899,7 @@ func _apply_fit_zoom_step(zoom_level: float, world_rect: Rect2) -> void:
 	# If menu is open and we freeze zoom for bounds, keep the reference in sync.
 	if _menu_open and freeze_zoom_for_menu_bounds:
 		_menu_open_reference_zoom = z
-	camera_node.position = _get_fit_center_for_world_rect_and_zoom(world_rect, z)
+	camera_node.position = _get_fit_center_for_world_rect_and_zoom(world_rect, z, target_focus_point)
 
 func _on_focus_tween_finished() -> void:
 	# For fit tweens, don't snap back to map clamp, since that can hide long routes
@@ -801,8 +917,6 @@ func _get_clamped_camera_pos(pos: Vector2) -> Vector2:
 	if not is_instance_valid(camera_node):
 		return pos
 
-	# This logic is a copy of _clamp_camera_position, but it returns a
-	# clamped position instead of modifying the camera directly.
 	var cell_size = _get_cell_size()
 	var map_width = map_size.x * cell_size.x
 	var map_height = map_size.y * cell_size.y
@@ -824,18 +938,21 @@ func _get_clamped_camera_pos(pos: Vector2) -> Vector2:
 		zoom = _menu_open_reference_zoom
 	
 	var full_world_w = viewport_size.x / max(zoom, 0.0001)
-	var visible_world_h = viewport_size.y / max(zoom, 0.0001)
+	var full_world_h = viewport_size.y / max(zoom, 0.0001)
 	var half_full_w = full_world_w * 0.5
-	var half_visible_h = visible_world_h * 0.5
+	var half_full_h = full_world_h * 0.5
 
 	var occlusion_world_w: float = _overlay_occlusion_px_x / max(zoom, 0.0001)
+	var occlusion_world_h: float = _overlay_occlusion_px_y / max(zoom, 0.0001)
 
 	var min_x = map_origin.x + half_full_w
 	var max_x = map_origin.x + map_width - half_full_w + occlusion_world_w
 	if max_x < min_x:
 		max_x = min_x
-	var min_y = map_origin.y + half_visible_h
-	var max_y = map_origin.y + map_height - half_visible_h
+	var min_y = map_origin.y + half_full_h
+	var max_y = map_origin.y + map_height - half_full_h + occlusion_world_h
+	if max_y < min_y:
+		max_y = min_y
 
 	if allow_map_edge_exposure:
 		var margin_factor := 0.25
@@ -844,28 +961,42 @@ func _get_clamped_camera_pos(pos: Vector2) -> Vector2:
 		min_y = lerp(min_y, 0.0, margin_factor)
 		max_y = lerp(max_y, map_height, margin_factor)
 
-	if map_width <= full_world_w:
-		min_x = map_width * 0.5; max_x = map_width * 0.5
-	if map_height <= visible_world_h:
-		min_y = map_height * 0.5; max_y = map_height * 0.5
+	# If the map is smaller than the visible non-occluded world area, center the camera
+	var adjusted_world_w = max(0.0, viewport_size.x - _overlay_occlusion_px_x) / max(zoom, 0.0001)
+	var adjusted_world_h = max(0.0, viewport_size.y - _overlay_occlusion_px_y) / max(zoom, 0.0001)
+	
+	if map_width <= adjusted_world_w:
+		min_x = map_origin.x + map_width * 0.5 + occlusion_world_w * 0.5
+		max_x = min_x
+	if map_height <= adjusted_world_h:
+		min_y = map_origin.y + map_height * 0.5 + occlusion_world_h * 0.5
+		max_y = min_y
 
 	return Vector2(clamp(pos.x, min_x, max_x), clamp(pos.y, min_y, max_y))
 
 # --- Overlay occlusion width setter (for sliding menu overlay) ---
-func set_overlay_occlusion_width(px: float) -> void:
-	_overlay_occlusion_px_x = clamp(px, 0.0, map_viewport_rect.size.x)
+func set_overlay_occlusion(px_x: float, px_y: float) -> void:
+	_overlay_occlusion_px_x = clamp(px_x, 0.0, map_viewport_rect.size.x)
+	_overlay_occlusion_px_y = clamp(px_y, 0.0, map_viewport_rect.size.y)
 	_update_camera_limits()
 	# Avoid immediate clamp reposition (snap) if a smooth focus tween is in progress.
 	if not (_active_focus_tween and _active_focus_tween.is_valid()):
 		_clamp_camera_position()
 	if _debug_menu_focus:
 		_dbg("occlusion_set", {
-			"occlusion_px": _overlay_occlusion_px_x,
+			"occlusion_px_x": _overlay_occlusion_px_x,
+			"occlusion_px_y": _overlay_occlusion_px_y,
 			"viewport_px": map_viewport_rect.size,
 			"active_tween": (_active_focus_tween and _active_focus_tween.is_valid()),
 			"cam_pos": (camera_node.position if is_instance_valid(camera_node) else Vector2.ZERO)
 		})
 	_update_debug_overlay()
+
+func set_overlay_occlusion_width(px: float) -> void:
+	set_overlay_occlusion(px, _overlay_occlusion_px_y)
+
+func set_overlay_occlusion_height(px: float) -> void:
+	set_overlay_occlusion(_overlay_occlusion_px_x, px)
 
 # --- Helpers ---
 func _get_cell_size() -> Vector2:
@@ -907,7 +1038,8 @@ func _update_debug_overlay():
 		_debug_overlay_label.text = "<no camera>"
 		return
 	var zoom = camera_node.zoom.x
-	var occlusion = _overlay_occlusion_px_x
+	var occlusion_x = _overlay_occlusion_px_x
+	var occlusion_y = _overlay_occlusion_px_y
 	var cam_pos = camera_node.position
 	var target = _last_tween_target
-	_debug_overlay_label.text = "Zoom:" + str(zoom) + "\nOccPx:" + str(occlusion) + "\nCam:" + str(cam_pos) + "\nTweenTarget:" + str(target)
+	_debug_overlay_label.text = "Zoom:" + str(zoom) + "\nOccPxX:" + str(occlusion_x) + "\nOccPxY:" + str(occlusion_y) + "\nCam:" + str(cam_pos) + "\nTweenTarget:" + str(target)

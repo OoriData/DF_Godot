@@ -8,8 +8,6 @@ class FakePanel:
 	var convoy_data: Variant = {}
 	var all_settlement_data_global: Array = []
 
-	var convoy_money_label: Label = Label.new()
-	var convoy_cargo_label: Label = Label.new()
 	var convoy_volume_bar: ProgressBar = ProgressBar.new()
 	var convoy_weight_bar: ProgressBar = ProgressBar.new()
 
@@ -26,7 +24,6 @@ func test_missing_keys_hides_bars_and_does_not_crash() -> void:
 
 	ConvoyStats.update_convoy_info_display(p)
 
-	assert_true(p.convoy_cargo_label.text.begins_with("Volume:"), "Should still render a Volume label")
 	assert_false(p.convoy_volume_bar.visible, "Volume bar hidden when capacity is 0")
 	assert_false(p.convoy_weight_bar.visible, "Weight bar hidden when capacity is 0")
 
@@ -46,11 +43,11 @@ func test_negative_free_space_clamps_bar_value_to_capacity() -> void:
 
 	assert_true(p.convoy_volume_bar.visible)
 	assert_eq(p.convoy_volume_bar.max_value, 10.0)
-	assert_eq(p.convoy_volume_bar.value, 10.0, "Projected volume should clamp to capacity")
+	assert_eq(p.convoy_volume_bar.value, 10.0, "Base volume should clamp to capacity")
 
 	assert_true(p.convoy_weight_bar.visible)
 	assert_eq(p.convoy_weight_bar.max_value, 100.0)
-	assert_eq(p.convoy_weight_bar.value, 100.0, "Projected weight should clamp to capacity")
+	assert_eq(p.convoy_weight_bar.value, 100.0, "Base weight should clamp to capacity")
 
 
 func test_weight_falls_back_to_sum_of_vehicle_cargo_and_parts() -> void:
@@ -91,12 +88,12 @@ func test_refresh_capacity_bars_applies_projection_and_color() -> void:
 	p._convoy_total_weight = 100.0
 	p._convoy_used_weight = 50.0
 
-	ConvoyStats.refresh_capacity_bars(p, 10.0, 10.0) # -> 60%
+	ConvoyStats.refresh_capacity_bars(p, 10.0, 10.0) # delta is 10
 
 	assert_true(p.convoy_volume_bar.visible)
-	assert_eq(p.convoy_volume_bar.value, 60.0)
+	assert_eq(p.convoy_volume_bar.value, 50.0, "Normal bar should show base capacity")
 	assert_eq(p.convoy_volume_bar.self_modulate, Color(0.2, 0.8, 0.2), "<=70% should be green")
 
 	assert_true(p.convoy_weight_bar.visible)
-	assert_eq(p.convoy_weight_bar.value, 60.0)
+	assert_eq(p.convoy_weight_bar.value, 50.0, "Normal bar should show base capacity")
 	assert_eq(p.convoy_weight_bar.self_modulate, Color(0.2, 0.8, 0.2), "<=70% should be green")

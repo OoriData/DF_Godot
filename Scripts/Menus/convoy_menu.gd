@@ -39,6 +39,13 @@ const COLOR_TAB_DISABLED_FONT: Color = Color("a0a0a0") # Lighter gray for disabl
 const COLOR_ITEM_BUTTON_BG: Color = Color("5a5a5a") # Dark-medium gray for item buttons
 const COLOR_JOURNEY_PROGRESS_FILL: Color = Color("29b6f6") # Material Light Blue 400
 
+# --- Vendor Item Button Layout ---
+var VENDOR_ITEM_BUTTON_MIN_WIDTH: float = 190.0
+var VENDOR_ITEM_BUTTON_HEIGHT: float = 72.0
+const VENDOR_ITEM_BUTTON_PADDING_X: float = 12.0
+const VENDOR_ITEM_BUTTON_TOP_PADDING: float = 6.0
+const VENDOR_ITEM_BUTTON_BOTTOM_CLEARANCE: float = 6.0
+
 # --- @onready vars for new labels ---
 # Paths updated to reflect the new TopBarHBox container in the scene.
 @onready var title_label: Label = $MainVBox/TopBarHBox/TitleLabel
@@ -59,10 +66,10 @@ const COLOR_JOURNEY_PROGRESS_FILL: Color = Color("29b6f6") # Material Light Blue
 @onready var efficiency_text_label: Label = $MainVBox/ScrollContainer/ContentVBox/PerformanceStatsHBox/EfficiencyBox/EfficiencyTextLabel
 
 # Cargo Progress Bars and Labels
-@onready var cargo_volume_text_label: Label = $MainVBox/ScrollContainer/ContentVBox/CargoVolumeContainer/CargoVolumeTextLabel
-@onready var cargo_volume_bar: ProgressBar = $MainVBox/ScrollContainer/ContentVBox/CargoVolumeContainer/CargoVolumeBar
-@onready var cargo_weight_text_label: Label = $MainVBox/ScrollContainer/ContentVBox/CargoWeightContainer/CargoWeightTextLabel
-@onready var cargo_weight_bar: ProgressBar = $MainVBox/ScrollContainer/ContentVBox/CargoWeightContainer/CargoWeightBar
+@onready var cargo_volume_text_label: Label = $MainVBox/ScrollContainer/ContentVBox/CargoBarsHBox/CargoVolumeContainer/CargoVolumeTextLabel
+@onready var cargo_volume_bar: ProgressBar = $MainVBox/ScrollContainer/ContentVBox/CargoBarsHBox/CargoVolumeContainer/CargoVolumeBar
+@onready var cargo_weight_text_label: Label = $MainVBox/ScrollContainer/ContentVBox/CargoBarsHBox/CargoWeightContainer/CargoWeightTextLabel
+@onready var cargo_weight_bar: ProgressBar = $MainVBox/ScrollContainer/ContentVBox/CargoBarsHBox/CargoWeightContainer/CargoWeightBar
 
 @onready var scroll_container: ScrollContainer = $MainVBox/ScrollContainer
 @onready var content_vbox: VBoxContainer = $MainVBox/ScrollContainer/ContentVBox
@@ -92,12 +99,6 @@ var all_cargo_label: Label = null
 @onready var journey_menu_button: Button = $MainVBox/BottomBarPanel/BottomMenuButtonsHBox/JourneyMenuButton
 @onready var settlement_menu_button: Button = $MainVBox/BottomBarPanel/BottomMenuButtonsHBox/SettlementMenuButton
 @onready var cargo_menu_button: Button = $MainVBox/BottomBarPanel/BottomMenuButtonsHBox/CargoMenuButton
-
-# --- Signals for Sub-Menu Navigation ---
-signal open_vehicle_menu_requested(convoy_data)
-signal open_journey_menu_requested(convoy_data)
-signal open_settlement_menu_requested(convoy_data)
-signal open_cargo_menu_requested(convoy_data)
 
 # --- Deep-link navigation from Settlement Preview buttons ---
 # Used by MenuManager to open destination menu with a focus intent via extra_arg.
@@ -132,6 +133,9 @@ var _vendor_id_to_settlement: Dictionary = {} # vendor_id -> settlement Dictiona
 var _vendor_id_to_name: Dictionary = {} # vendor_id -> vendor name String (from map snapshot + vendor previews)
 var _vendor_preview_update_timer: Timer = null # For debouncing updates
 var _vendor_preview_update_pending: bool = false
+var _cargo_sort_metric: int = 0
+var _mission_sort_container: HBoxContainer = null
+var _mission_sort_option_button: OptionButton = null
 var _destinations_cache: Dictionary = {} # item_name -> recipient_settlement_name (or destination string)
 
 # Avoid spamming vendor detail requests when Available Missions refreshes.
@@ -140,6 +144,34 @@ var _requested_vendor_details: Dictionary = {} # vendor_id -> true
 # For deep-linking Active Missions -> Cargo menu, preserve at least one representative cargo_id per mission item name.
 var _active_mission_cargo_id_by_name: Dictionary = {} # item_name -> cargo_id
 var _active_mission_cargo_id_by_display: Dictionary = {} # "name — to DEST" -> cargo_id
+
+func _get_settings_manager() -> Node:
+	return get_node_or_null("/root/SettingsManager")
+
+func _is_portrait_view() -> bool:
+	if not is_inside_tree(): return false
+	var win_size = get_viewport_rect().size
+	return win_size.y > win_size.x
+
+func _is_mobile() -> bool:
+	if OS.has_feature("mobile") or OS.has_feature("web_android") or OS.has_feature("web_ios") or DisplayServer.get_name() in ["Android", "iOS"]:
+		return true
+	if is_inside_tree():
+		var win_size = get_viewport_rect().size
+		# Catch short landscape screens or portrait
+		if win_size.y > win_size.x or win_size.y < 500:
+			return true
+	return false
+
+func _load_cargo_sort_metric_from_settings() -> void:
+	var sm := _get_settings_manager()
+	if is_instance_valid(sm) and sm.has_method("get_value"):
+		_cargo_sort_metric = int(sm.get_value("ui.cargo_sort_metric", 0))
+
+func _save_cargo_sort_metric_to_settings(metric: int) -> void:
+	var sm := _get_settings_manager()
+	if is_instance_valid(sm) and sm.has_method("set_and_save"):
+		sm.set_and_save("ui.cargo_sort_metric", metric)
 
 
 
@@ -198,14 +230,107 @@ func _set_latest_settlements_snapshot(settlements: Array) -> void:
 				_vendor_id_to_name[vid] = nm
 
 func _ready():
+	super._ready()
+	# Ensure we don't force a minimum width that breaks the parent container
+	custom_minimum_size.x = 0
+	if has_node("MainVBox"):
+		$MainVBox.custom_minimum_size.x = 0
+		$MainVBox.clip_contents = true
+		if has_node("MainVBox/ScrollContainer"):
+			$MainVBox/ScrollContainer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			$MainVBox/ScrollContainer.custom_minimum_size.x = 0
+	
+	_update_mobile_dependent_layout()
+	call_deferred("_enforce_label_wrapping", self)
+
 	# Resolve optional nodes that might be missing depending on scene variant
 	all_cargo_label = get_node_or_null("MainVBox/ScrollContainer/ContentVBox/AllCargoLabel")
 	if all_cargo_label == null:
 		if _debug_convoy_menu:
 			printerr("[ConvoyMenu] Optional AllCargoLabel not found at path MainVBox/ScrollContainer/ContentVBox/AllCargoLabel")
-	# --- DIAGNOSTIC: Check if UI nodes are valid ---
-	if not is_instance_valid(title_label):
+	# --- Banner Setup ---
+	if is_instance_valid(title_label):
+		setup_convoy_top_banner(title_label, "", false, false)
+	else:
 		printerr("ConvoyMenu: CRITICAL - TitleLabel node not found. Check the path in the script.")
+
+
+	# --- Layout Tuning: GridContainer Separation ---
+	if is_instance_valid(vendor_item_grid):
+		var sep_h = 12 if _is_mobile() else 8
+		var sep_v = 16 if _is_mobile() else 10
+		vendor_item_grid.add_theme_constant_override("h_separation", sep_h)
+		vendor_item_grid.add_theme_constant_override("v_separation", sep_v)
+
+
+	if has_node("MainVBox/ScrollContainer/ContentVBox/VendorPreviewPanel/VendorPreviewVBox"):
+		var preview_vbox = $MainVBox/ScrollContainer/ContentVBox/VendorPreviewPanel/VendorPreviewVBox
+		var sort_dropdown_container := preview_vbox.get_node_or_null("SortDropdownContainer") as HBoxContainer
+		if not is_instance_valid(sort_dropdown_container):
+			sort_dropdown_container = HBoxContainer.new()
+			sort_dropdown_container.name = "SortDropdownContainer"
+			sort_dropdown_container.alignment = BoxContainer.ALIGNMENT_END
+			sort_dropdown_container.visible = false
+
+		var sort_option := sort_dropdown_container.get_node_or_null("MissionSortOptionButton") as OptionButton
+		if not is_instance_valid(sort_option):
+			sort_option = OptionButton.new()
+			sort_option.name = "MissionSortOptionButton"
+			sort_dropdown_container.add_child(sort_option)
+
+		# Make sort control stand out against dark backgrounds.
+		sort_dropdown_container.add_theme_constant_override("separation", 8)
+		sort_option.custom_minimum_size = Vector2(300, 34)
+		sort_option.add_theme_color_override("font_color", Color(0.93, 0.93, 0.93, 1.0))
+		sort_option.add_theme_color_override("font_hover_color", Color(0.98, 0.98, 0.98, 1.0))
+		var so_normal := StyleBoxFlat.new()
+		so_normal.bg_color = Color(0.24, 0.24, 0.24, 0.96)
+		so_normal.border_width_left = 1
+		so_normal.border_width_right = 1
+		so_normal.border_width_top = 1
+		so_normal.border_width_bottom = 1
+		so_normal.border_color = Color(0.56, 0.56, 0.56, 0.95)
+		so_normal.corner_radius_top_left = 4
+		so_normal.corner_radius_top_right = 4
+		so_normal.corner_radius_bottom_left = 4
+		so_normal.corner_radius_bottom_right = 4
+		so_normal.content_margin_left = 10
+		so_normal.content_margin_right = 10
+		so_normal.content_margin_top = 4
+		so_normal.content_margin_bottom = 4
+		var so_hover := so_normal.duplicate()
+		so_hover.bg_color = Color(0.31, 0.31, 0.31, 0.98)
+		so_hover.border_color = Color(0.70, 0.70, 0.70, 1.0)
+		var so_pressed := so_normal.duplicate()
+		so_pressed.bg_color = Color(0.18, 0.18, 0.18, 1.0)
+		sort_option.add_theme_stylebox_override("normal", so_normal)
+		sort_option.add_theme_stylebox_override("hover", so_hover)
+		sort_option.add_theme_stylebox_override("pressed", so_pressed)
+		sort_option.add_theme_stylebox_override("focus", so_hover)
+
+		_load_cargo_sort_metric_from_settings()
+
+		sort_option.clear()
+		sort_option.add_item("Sort: Profit Margin/Unit")
+		sort_option.add_item("Sort: Profit Density/Weight")
+		sort_option.add_item("Sort: Profit Density/Volume")
+		sort_option.add_item("Sort: Total Order Profit")
+		sort_option.add_item("Sort: Distance to Recipient")
+		_cargo_sort_metric = clampi(_cargo_sort_metric, 0, max(0, sort_option.item_count - 1))
+		sort_option.select(_cargo_sort_metric)
+		if sort_option.item_selected.is_connected(_on_mission_sort_selected):
+			sort_option.item_selected.disconnect(_on_mission_sort_selected)
+		sort_option.item_selected.connect(_on_mission_sort_selected)
+		_mission_sort_container = sort_dropdown_container
+		_mission_sort_option_button = sort_option
+
+		if sort_dropdown_container.get_parent() == null:
+			# Insert below VendorTabsHBox
+			var tabs_hbox = preview_vbox.get_node_or_null("VendorTabsHBox")
+			if tabs_hbox:
+				preview_vbox.add_child(sort_dropdown_container)
+				preview_vbox.move_child(sort_dropdown_container, tabs_hbox.get_index() + 1)
+
 
 	# Style bottom bar panel if present
 	var bottom_panel := $MainVBox/BottomBarPanel if has_node("MainVBox/BottomBarPanel") else null
@@ -216,6 +341,16 @@ func _ready():
 		bar_style.corner_radius_top_right = 6
 		bar_style.border_width_top = 1
 		bar_style.border_color = Color(0.28, 0.28, 0.28)
+		if _is_mobile():
+			bar_style.content_margin_top = 6.0
+			bar_style.content_margin_bottom = 6.0
+			bar_style.content_margin_left = 6.0
+			bar_style.content_margin_right = 6.0
+			# Also make the HBox inside fill edge-to-edge on mobile
+			var hbox := bottom_panel.get_node_or_null("BottomMenuButtonsHBox")
+			if is_instance_valid(hbox):
+				hbox.alignment = BoxContainer.ALIGNMENT_BEGIN
+				hbox.add_theme_constant_override("separation", 4)
 		bottom_panel.add_theme_stylebox_override("panel", bar_style)
 
 	# Style vendor preview panel if present
@@ -243,23 +378,22 @@ func _ready():
 			content_style.corner_radius_top_left = 4
 			content_style.corner_radius_bottom_right = 4
 			content_panel.add_theme_stylebox_override("panel", content_style)
-	
+
 	# Style the new journey progress bar
 	if is_instance_valid(journey_progress_bar):
 		_style_journey_progress_bar(journey_progress_bar)
-	# IMPORTANT: Ensure you have a Button node in your ConvoyMenu.tscn scene
-	# and that its name is "BackButton".
-	# The third argument 'false' for find_child means 'owned by this node' is not checked,
-	# which is usually fine for finding children within a scene instance.
-	# var back_button = find_child("BackButton", true, false) # Now using @onready var
 
-	if back_button and back_button is Button:
-		# print("ConvoyMenu: BackButton found. Connecting its 'pressed' signal.") # DEBUG
-		# Check if already connected to prevent duplicate connections if _ready is called multiple times (unlikely for menus but good practice)
+	if is_instance_valid(back_button):
 		if not back_button.is_connected("pressed", Callable(self, "_on_back_button_pressed")):
-			back_button.pressed.connect(_on_back_button_pressed, CONNECT_ONE_SHOT) # Use ONE_SHOT as menu is freed
+			back_button.pressed.connect(_on_back_button_pressed, CONNECT_ONE_SHOT)
+		if _is_mobile():
+			back_button.custom_minimum_size = Vector2(back_button.custom_minimum_size.x, 60.0)
 	else:
 		printerr("ConvoyMenu: CRITICAL - BackButton node NOT found or is not a Button. Ensure it's named 'BackButton' in ConvoyMenu.tscn.")
+
+	var bottom_panel_node = get_node_or_null("MainVBox/BottomBarPanel")
+	if is_instance_valid(bottom_panel_node):
+		setup_convoy_navigation_bar(bottom_panel_node)
 
 	# Cache GameDataManager and connect relevant signals for live updates
 	# Phase C: subscribe to canonical sources (Hub/Store/APICalls) instead of GameDataManager.
@@ -287,19 +421,15 @@ func _ready():
 	# Connect placeholder menu buttons
 	if is_instance_valid(vehicle_menu_button):
 		if not vehicle_menu_button.is_connected("pressed", Callable(self, "_on_vehicle_menu_button_pressed")):
-			_style_menu_button(vehicle_menu_button)
 			vehicle_menu_button.pressed.connect(_on_vehicle_menu_button_pressed)
 	if is_instance_valid(journey_menu_button):
 		if not journey_menu_button.is_connected("pressed", Callable(self, "_on_journey_menu_button_pressed")):
-			_style_menu_button(journey_menu_button)
 			journey_menu_button.pressed.connect(_on_journey_menu_button_pressed)
 	if is_instance_valid(settlement_menu_button):
 		if not settlement_menu_button.is_connected("pressed", Callable(self, "_on_settlement_menu_button_pressed")):
-			_style_menu_button(settlement_menu_button)
 			settlement_menu_button.pressed.connect(_on_settlement_menu_button_pressed)
 	if is_instance_valid(cargo_menu_button):
 		if not cargo_menu_button.is_connected("pressed", Callable(self, "_on_cargo_menu_button_pressed")):
-			_style_menu_button(cargo_menu_button)
 			cargo_menu_button.pressed.connect(_on_cargo_menu_button_pressed)
 
 	# Connect vendor preview tab buttons
@@ -335,7 +465,7 @@ func _ready():
 		_queue_vendor_preview_update()
 
 	# Initial font size update
-	call_deferred("_update_font_sizes")
+	TextScale.register_tree(self)
 	if _debug_convoy_menu:
 		print("[ConvoyMenu][Debug] services api=", is_instance_valid(_api), " vendor_service=", is_instance_valid(_vendor_service))
 
@@ -384,27 +514,151 @@ func _request_vendor_details(vendor_id: String) -> void:
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_RESIZED:
 		# Call deferred to ensure the new size is fully applied before calculating font sizes
-		call_deferred("_update_font_sizes")
+		call_deferred("_update_mobile_dependent_layout")
 		call_deferred("_update_vendor_grid_columns")
 
-func _update_vendor_grid_columns() -> void:
-	# Make the vendor item grid responsive: choose columns based on available width.
+func _update_mobile_dependent_layout() -> void:
+	var is_portrait = _is_portrait_view()
+	var use_mobile = _is_mobile()
+
+	if is_portrait:
+		VENDOR_ITEM_BUTTON_MIN_WIDTH = 340.0
+		VENDOR_ITEM_BUTTON_HEIGHT = 280.0
+	elif use_mobile:
+		VENDOR_ITEM_BUTTON_MIN_WIDTH = 220.0
+		VENDOR_ITEM_BUTTON_HEIGHT = 100.0
+	else:
+		VENDOR_ITEM_BUTTON_MIN_WIDTH = 190.0
+		VENDOR_ITEM_BUTTON_HEIGHT = 72.0
+
+	# Super-scale stats in portrait by stacking them vertically
+	var res_hbox := $MainVBox/ScrollContainer/ContentVBox/ResourceStatsHBox as BoxContainer
+	var perf_hbox := $MainVBox/ScrollContainer/ContentVBox/PerformanceStatsHBox as BoxContainer
+
+	var stat_height = 120.0 if is_portrait else 50.0
+
+	var dsm_stat = get_node_or_null("/root/DeviceStateManager")
+	var stat_fs = dsm_stat.get_scaled_base_font_size(28) if dsm_stat else 28
+
+	if is_instance_valid(res_hbox):
+		res_hbox.add_theme_constant_override("separation", 8 if is_portrait else 4)
+		for child in res_hbox.get_children():
+			if child is Control:
+				child.custom_minimum_size.y = stat_height
+				for grand_child in child.get_children():
+					if grand_child is Label:
+						grand_child.add_theme_font_size_override("font_size", stat_fs)
+
+	if is_instance_valid(perf_hbox):
+		perf_hbox.add_theme_constant_override("separation", 8 if is_portrait else 4)
+		for child in perf_hbox.get_children():
+			if child is Control:
+				child.custom_minimum_size.y = stat_height
+				for grand_child in child.get_children():
+					if grand_child is Label:
+						grand_child.add_theme_font_size_override("font_size", stat_fs)
+
+	# Scale cargo bars taller in portrait so the built-in % text is readable
+	var cargo_bars_hbox := $MainVBox/ScrollContainer/ContentVBox/CargoBarsHBox if has_node("MainVBox/ScrollContainer/ContentVBox/CargoBarsHBox") else null
+	if is_instance_valid(cargo_bars_hbox):
+		var cargo_bar_h = 80.0 if is_portrait else (48.0 if use_mobile else 28.0)
+		for child in cargo_bars_hbox.get_children():
+			if child is Control:
+				child.custom_minimum_size.y = cargo_bar_h
+				# Scale the label inside the cargo bar container
+				for sub in child.get_children():
+					if sub is Label:
+						var dsm = get_node_or_null("/root/DeviceStateManager")
+						var fs = dsm.get_scaled_base_font_size(13) if dsm else 13
+						sub.add_theme_font_size_override("font_size", fs)
+					elif sub is ProgressBar:
+						# Make in-bar % text bigger in portrait
+						var dsm = get_node_or_null("/root/DeviceStateManager")
+						var fs = dsm.get_scaled_base_font_size(16) if dsm else 16
+						sub.add_theme_font_size_override("font_size", fs)
+
+	# Update vendor scroll handling
+	var vendor_preview_panel := $MainVBox/ScrollContainer/ContentVBox/VendorPreviewPanel if has_node("MainVBox/ScrollContainer/ContentVBox/VendorPreviewPanel") else null
+	if is_instance_valid(vendor_preview_panel):
+		var vendor_content_scroll = vendor_preview_panel.get_node_or_null("VendorPreviewVBox/VendorContentPanel/VendorContentScroll")
+		if is_instance_valid(vendor_content_scroll) and vendor_content_scroll is ScrollContainer:
+			if use_mobile:
+				vendor_content_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+				vendor_content_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+				
+				# Calculate height for exactly 2 rows
+				var sep_v = 16 if use_mobile else 10
+				var rows = 2.0
+				var total_h = (VENDOR_ITEM_BUTTON_HEIGHT * rows) + (sep_v * (rows - 1)) + (40.0 if is_portrait else 20.0)
+				
+				vendor_content_scroll.custom_minimum_size.y = total_h
+				vendor_content_scroll.scroll_deadzone = 8
+			else:
+				vendor_content_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+				vendor_content_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+				var sep_v = 10
+				vendor_content_scroll.custom_minimum_size.y = (VENDOR_ITEM_BUTTON_HEIGHT * 2) + sep_v + 20.0
+
+	if is_instance_valid(_mission_sort_option_button):
+		if is_portrait:
+			_mission_sort_option_button.custom_minimum_size = Vector2(400, 80)
+			var dsm = get_node_or_null("/root/DeviceStateManager")
+			var fs = dsm.get_scaled_base_font_size(18) if dsm else 18
+			_mission_sort_option_button.add_theme_font_size_override("font_size", fs)
+		else:
+			_mission_sort_option_button.custom_minimum_size = Vector2(300, 34)
+			_mission_sort_option_button.add_theme_font_size_override("font_size", 14)
+			
+		if use_mobile:
+			var popup = _mission_sort_option_button.get_popup()
+			var dsm = get_node_or_null("/root/DeviceStateManager")
+			var fs = dsm.get_scaled_base_font_size(16) if dsm else 16
+			popup.add_theme_font_size_override("font_size", fs)
+			popup.add_theme_constant_override("v_separation", 16 if is_portrait else 12)
+			var popup_style = StyleBoxFlat.new()
+			popup_style.bg_color = Color(0.15, 0.15, 0.15, 0.98)
+			popup_style.content_margin_left = 24
+			popup_style.content_margin_right = 24
+			popup_style.content_margin_top = 16 if is_portrait else 12
+			popup_style.content_margin_bottom = 16 if is_portrait else 12
+			popup_style.border_width_left = 1
+			popup_style.border_width_right = 1
+			popup_style.border_width_top = 1
+			popup_style.border_width_bottom = 1
+			popup_style.border_color = Color(0.4, 0.4, 0.4, 1.0)
+			popup_style.corner_radius_top_left = 6
+			popup_style.corner_radius_top_right = 6
+			popup_style.corner_radius_bottom_left = 6
+			popup_style.corner_radius_bottom_right = 6
+			popup.add_theme_stylebox_override("panel", popup_style)
+
+	if is_instance_valid(vendor_item_grid):
+		for child in vendor_item_grid.get_children():
+			if child is Control and child.has_meta("nav_intent"):
+				_style_vendor_item_button(child, _current_vendor_tab)
+
+func _update_vendor_grid_columns(override_count: int = -1) -> void:
 	if not is_instance_valid(vendor_item_grid):
 		return
-	var grid_width := vendor_item_grid.size.x
-	if grid_width <= 0:
-		# Fall back to parent/container width if grid has not sized yet
-		var parent := vendor_item_grid.get_parent()
-		if is_instance_valid(parent):
-			grid_width = parent.size.x
-	# Target a comfortable card width ~220px with some gap
-	var target_card_px := 220.0
-	var min_cols := 2
-	var max_cols := 6
-	var cols := int(max(min_cols, min(max_cols, floor(grid_width / target_card_px))))
-	if cols <= 0:
-		cols = min_cols
-	vendor_item_grid.columns = cols
+
+	# To prioritize 2 rows while maintaining horizontal scrolling, 
+	# we set columns to half the item count (rounded up).
+	# Use override_count if provided, otherwise use current child count.
+	var item_count = override_count if override_count >= 0 else vendor_item_grid.get_child_count()
+	
+	# If we are using the live child count, we must subtract any that are queue_freed
+	# but not yet removed from the tree.
+	if override_count < 0:
+		var active_count = 0
+		for child in vendor_item_grid.get_children():
+			if not child.is_queued_for_deletion():
+				active_count += 1
+		item_count = active_count
+
+	vendor_item_grid.columns = max(1, ceil(item_count / 2.0))
+	
+	if _debug_convoy_menu:
+		print("[ConvoyMenu] 2-row horizontal scrolling: items=", item_count, " cols=", vendor_item_grid.columns)
 
 func _on_back_button_pressed():
 	print("ConvoyMenu: Back button pressed. Emitting 'back_requested' signal.")
@@ -525,8 +779,8 @@ func initialize_with_data(data_or_id: Variant, extra_arg: Variant = null) -> voi
 					_destinations_cache[nm3] = dest3
 
 		# --- Convoy Name as Title ---
-		if is_instance_valid(title_label):
-			title_label.text = convoy_data_received.get("convoy_name", "N/A")
+
+
 
 		# --- Resources (Fuel, Water, Food) ---
 		var current_fuel = convoy_data_received.get("fuel", 0.0)
@@ -646,7 +900,7 @@ func initialize_with_data(data_or_id: Variant, extra_arg: Variant = null) -> voi
 				var progress_percentage = 0.0
 				if length > 0:
 					progress_percentage = (progress / length) * 100.0
-				
+
 				journey_progress_bar.value = progress_percentage
 				journey_progress_label.text = NumberFormat.fmt_float(progress_percentage, 2) + "%"
 
@@ -686,7 +940,7 @@ func initialize_with_data(data_or_id: Variant, extra_arg: Variant = null) -> voi
 		# Queue an update. This will be debounced with other signals that fire on open.
 		_queue_vendor_preview_update()
 		# Initial font size update after data is populated
-		call_deferred("_update_font_sizes")
+	
 
 func _queue_vendor_preview_update() -> void:
 	# Debounce updates to prevent UI thrashing from rapid signals.
@@ -705,7 +959,7 @@ func _update_vendor_preview() -> void:
 	# Mission cargo preview: show items marked mission-critical if present
 	_convoy_mission_items = _collect_mission_cargo_items(convoy_data_received)
 	_settlement_mission_items = _collect_settlement_mission_items()
-	
+
 	# Compatible parts preview: use GDM mechanic vendor availability snapshot if available
 	var compat_summary: Array[String] = []
 	if is_instance_valid(_mechanics_service) and _mechanics_service.has_method("get_mechanic_probe_snapshot"):
@@ -797,6 +1051,145 @@ func _update_vendor_preview() -> void:
 	# Ensure grid is responsive after content updates
 	_update_vendor_grid_columns()
 
+
+func _build_vendor_preview_button(item_string: String) -> Control:
+	var button := PanelContainer.new()
+	# Support destination annotations in two formats:
+	# "name — to DEST" (em dash syntax) or "name -> DEST" (arrow syntax)
+	var name_qty := item_string
+	var lookup_key := item_string
+	var dest_text := ""
+	var sep_idx := name_qty.find(" — to ")
+	var sep_len := 6 # length of " — to "
+	if sep_idx == -1:
+		sep_idx = name_qty.find(" -> ")
+		sep_len = 4
+	if sep_idx != -1:
+		dest_text = name_qty.substr(sep_idx + sep_len)
+		name_qty = name_qty.substr(0, sep_idx)
+	# No quantity display: use item name only
+	var item_name := name_qty
+
+	# Constrain text within explicit padded bounds inside the button.
+	var text_bounds := MarginContainer.new()
+	text_bounds.name = "TextBounds"
+	text_bounds.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	text_bounds.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	text_bounds.add_theme_constant_override("margin_left", int(VENDOR_ITEM_BUTTON_PADDING_X))
+	text_bounds.add_theme_constant_override("margin_right", int(VENDOR_ITEM_BUTTON_PADDING_X))
+	text_bounds.add_theme_constant_override("margin_top", int(VENDOR_ITEM_BUTTON_TOP_PADDING))
+	text_bounds.add_theme_constant_override("margin_bottom", int(VENDOR_ITEM_BUTTON_BOTTOM_CLEARANCE))
+	button.add_child(text_bounds)
+
+	var vbox := VBoxContainer.new()
+	vbox.name = "ButtonVBox"
+	vbox.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	vbox.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	vbox.alignment = BoxContainer.ALIGNMENT_CENTER
+	vbox.add_theme_constant_override("separation", 2)
+	text_bounds.add_child(vbox)
+
+	var name_label := Label.new()
+	name_label.name = "NameLabel"
+	name_label.text = item_name
+	name_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	name_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	name_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	name_label.clip_text = true
+	name_label.add_theme_constant_override("outline_size", 2)
+	name_label.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.95))
+	name_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	name_label.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	
+	var dsm_cargo = get_node_or_null("/root/DeviceStateManager")
+	var cargo_fs = dsm_cargo.get_scaled_base_font_size(32) if dsm_cargo else 32
+	name_label.add_theme_font_size_override("font_size", cargo_fs)
+
+	vbox.add_child(name_label)
+
+	if dest_text != "":
+		var dest_label := Label.new()
+		dest_label.name = "DestLabel"
+		dest_label.text = "→ " + dest_text
+		dest_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		dest_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		dest_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+		dest_label.clip_text = true
+		dest_label.add_theme_constant_override("outline_size", 2)
+		dest_label.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.95))
+		dest_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		dest_label.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		dest_label.add_theme_color_override("font_color", COLOR_YELLOW)
+		dest_label.add_theme_font_size_override("font_size", cargo_fs)
+		vbox.add_child(dest_label)
+
+	button.set_meta("name_label", name_label)
+	if dest_text != "":
+		button.set_meta("dest_label", vbox.get_child(1) if vbox.get_child_count() > 1 else null)
+
+	# Set flexible default width. The labels will adapt based on Control.SIZE_EXPAND_FILL behavior
+	# but text_overrun_behavior stops them from pushing button minimum bounds outward.
+	var default_text_width := 10.0
+	name_label.custom_minimum_size.x = default_text_width
+	if vbox.get_child_count() > 1 and vbox.get_child(1) is Label:
+		(vbox.get_child(1) as Label).custom_minimum_size.x = default_text_width
+
+	# Force fixed dimension by avoiding EXPAND fill.
+	button.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN if _is_mobile() else Control.SIZE_EXPAND_FILL
+	button.custom_minimum_size.x = VENDOR_ITEM_BUTTON_MIN_WIDTH
+	button.custom_minimum_size.y = VENDOR_ITEM_BUTTON_HEIGHT
+	button.clip_contents = true
+
+	# Attach a deep-link intent so clicks can navigate to the right destination.
+	var nav_intent: Dictionary = {}
+	match _current_vendor_tab:
+		VendorTab.CONVOY_MISSIONS:
+			var cid := String(_active_mission_cargo_id_by_display.get(lookup_key, ""))
+			if cid == "":
+				cid = String(_active_mission_cargo_id_by_name.get(item_name, ""))
+			nav_intent = {"target": "cargo_inspect", "cargo_id": cid, "item_name": item_name}
+			if cid == "":
+				button.tooltip_text = "Open Cargo (no cargo_id available for deep-link)"
+		VendorTab.SETTLEMENT_MISSIONS:
+			nav_intent = _build_settlement_focus_intent(item_name, "missions")
+		VendorTab.COMPATIBLE_PARTS:
+			nav_intent = _build_settlement_focus_intent(item_name, "parts")
+			# If this looks like a slot summary (e.g., "Engine (2)") rather than a real item,
+			# keep navigation but expect focus to be best-effort.
+	button.set_meta("nav_intent", nav_intent)
+
+	# Mobile tap detection logic to replace Button press
+	button.mouse_filter = Control.MOUSE_FILTER_PASS
+	button.gui_input.connect(func(event):
+		if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
+			if event.pressed:
+				button.set_meta("tap_start_pos", event.global_position)
+				# Update background to pressed style
+				var custom_style = StyleBoxFlat.new()
+				custom_style.bg_color = COLOR_ITEM_BUTTON_BG.darkened(0.2)
+				custom_style.corner_radius_top_left = 4
+				custom_style.corner_radius_top_right = 4
+				custom_style.corner_radius_bottom_left = 4
+				custom_style.corner_radius_bottom_right = 4
+				custom_style.content_margin_top = 1
+				button.add_theme_stylebox_override("panel", custom_style)
+			else:
+				# Reset style
+				_style_vendor_item_button(button, _current_vendor_tab)
+				var start_pos = button.get_meta("tap_start_pos", event.global_position)
+				var move_dist = (event.global_position - start_pos).length()
+				if move_dist < 10:
+					_on_vendor_preview_item_button_pressed(button)
+					get_viewport().set_input_as_handled()
+	)
+
+	button.set_meta("name_label", name_label)
+	if dest_text != "":
+		button.set_meta("dest_label", vbox.get_node_or_null("DestLabel"))
+
+	_style_vendor_item_button(button, _current_vendor_tab)
+	return button
+
 func _render_vendor_preview_display() -> void:
 	# Update button text with counts
 	if is_instance_valid(convoy_missions_tab_button):
@@ -845,61 +1238,31 @@ func _render_vendor_preview_display() -> void:
 		VendorTab.COMPATIBLE_PARTS:
 			content_list = _compatible_part_items
 
+	var sort_container: HBoxContainer = _mission_sort_container
+	if not is_instance_valid(sort_container):
+		var preview_vbox = get_node_or_null("MainVBox/ScrollContainer/ContentVBox/VendorPreviewPanel/VendorPreviewVBox")
+		sort_container = preview_vbox.get_node_or_null("SortDropdownContainer") if preview_vbox else null
+		_mission_sort_container = sort_container
+	if sort_container:
+		if content_list.is_empty() or _current_vendor_tab == VendorTab.COMPATIBLE_PARTS:
+			sort_container.visible = false
+		else:
+			sort_container.visible = true
+
 	if content_list.is_empty():
 		vendor_item_container.visible = false
 		vendor_no_items_label.visible = true
 	else:
 		vendor_item_container.visible = true
 		vendor_no_items_label.visible = false
+		var item_count = content_list.size()
 		for item_string in content_list:
-			var button := Button.new()
-			# Support destination annotations in two formats:
-			# "name — to DEST" (em dash syntax) or "name -> DEST" (arrow syntax)
-			var name_qty := item_string
-			var lookup_key := item_string
-			var dest_text := ""
-			var sep_idx := name_qty.find(" — to ")
-			var sep_len := 6 # length of " — to "
-			if sep_idx == -1:
-				sep_idx = name_qty.find(" -> ")
-				sep_len = 4
-			if sep_idx != -1:
-				dest_text = name_qty.substr(sep_idx + sep_len)
-				name_qty = name_qty.substr(0, sep_idx)
-			# No quantity display: use item name only
-			var item_name = name_qty
-			# GDScript does not have C-style ternary; use if/else
-			var dest_line := ""
-			if dest_text != "":
-				dest_line = "\n→ " + dest_text
-			button.text = "%s%s" % [item_name, dest_line]
-			button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-			# NOTE: Button text is clipped by default; allow enough height for the optional 2nd line.
-			button.custom_minimum_size.y = 54 if dest_text != "" else 36
-			button.clip_text = false if dest_text != "" else true
-			# Attach a deep-link intent so clicks can navigate to the right destination.
-			var nav_intent: Dictionary = {}
-			match _current_vendor_tab:
-				VendorTab.CONVOY_MISSIONS:
-					var cid := String(_active_mission_cargo_id_by_display.get(lookup_key, ""))
-					if cid == "":
-						cid = String(_active_mission_cargo_id_by_name.get(item_name, ""))
-					nav_intent = {"target": "cargo_inspect", "cargo_id": cid, "item_name": item_name}
-					if cid == "":
-						button.tooltip_text = "Open Cargo (no cargo_id available for deep-link)"
-				VendorTab.SETTLEMENT_MISSIONS:
-					nav_intent = _build_settlement_focus_intent(item_name, "missions")
-				VendorTab.COMPATIBLE_PARTS:
-					nav_intent = _build_settlement_focus_intent(item_name, "parts")
-					# If this looks like a slot summary (e.g., "Engine (2)") rather than a real item,
-					# keep navigation but expect focus to be best-effort.
-			button.set_meta("nav_intent", nav_intent)
-			button.pressed.connect(_on_vendor_preview_item_button_pressed.bind(button))
-			_style_vendor_item_button(button, _current_vendor_tab)
+			var button := _build_vendor_preview_button(item_string)
 			vendor_item_grid.add_child(button)
-	
-	# Ensure font sizes are applied to newly created buttons
-	_update_font_sizes()
+
+	# Ensure font sizes and grid columns are updated
+
+	_update_vendor_grid_columns(content_list.size())
 
 
 func _get_current_settlement_dict() -> Dictionary:
@@ -959,8 +1322,7 @@ func _resolve_vendor_focus_for_item(item_name: String, category_hint: String) ->
 				if ItemsData != null and ItemsData.MissionItem:
 					mission_ok = ItemsData.MissionItem._looks_like_mission_dict(it)
 				if not mission_ok:
-					var dr = it.get("delivery_reward")
-					mission_ok = (dr is float or dr is int) and float(dr) > 0.0
+					mission_ok = NumberFormat.to_f(it.get("delivery_reward"), 0.0) > 0.0 or NumberFormat.to_f(it.get("unit_delivery_reward"), 0.0) > 0.0
 				if not mission_ok:
 					continue
 
@@ -989,7 +1351,7 @@ func _build_settlement_focus_intent(item_name: String, category_hint: String) ->
 	return intent
 
 
-func _on_vendor_preview_item_button_pressed(button: Button) -> void:
+func _on_vendor_preview_item_button_pressed(button: Control) -> void:
 	if not is_instance_valid(button):
 		return
 	if not (convoy_data_received is Dictionary) or convoy_data_received.is_empty():
@@ -1034,6 +1396,7 @@ func _collect_mission_cargo_items(convoy: Dictionary) -> Array[String]:
 	var out: Array[String] = []
 	var found_any_cargo := false
 	var agg: Dictionary = {} # display_key -> total quantity
+	var agg_data: Dictionary = {} # display_key -> raw item
 	_active_mission_cargo_id_by_name.clear()
 	_active_mission_cargo_id_by_display.clear()
 	var diag_typed_mission := 0
@@ -1104,6 +1467,8 @@ func _collect_mission_cargo_items(convoy: Dictionary) -> Array[String]:
 							if q_any != null:
 								qty = int(q_any)
 						agg[display_key] = int(agg.get(display_key, 0)) + qty
+						if not agg_data.has(display_key):
+							agg_data[display_key] = raw_item.duplicate()
 						diag_typed_mission += 1
 				# Also scan raw cargo for mission items regardless of typed presence
 				var cargo_arr: Array = vehicle.get("cargo", [])
@@ -1129,6 +1494,8 @@ func _collect_mission_cargo_items(convoy: Dictionary) -> Array[String]:
 							if _debug_convoy_menu:
 								print("[ConvoyMenu][Debug] raw mission item=", item_name2, " q=", qty2)
 							agg[display_key2] = int(agg.get(display_key2, 0)) + qty2
+							if not agg_data.has(display_key2):
+								agg_data[display_key2] = item.duplicate()
 							diag_raw_mission += 1
 
 	# Fallback to convoy-level inventory if nothing was found in vehicles
@@ -1153,6 +1520,8 @@ func _collect_mission_cargo_items(convoy: Dictionary) -> Array[String]:
 				if _debug_convoy_menu:
 					print("[ConvoyMenu][Debug] inventory mission item=", item_name3, " q=", qty3)
 				agg[display_key3] = int(agg.get(display_key3, 0)) + qty3
+				if not agg_data.has(display_key3):
+					agg_data[display_key3] = item.duplicate()
 				diag_raw_mission += 1
 
 	# Also scan convoy-level all_cargo for mission stacks
@@ -1178,14 +1547,28 @@ func _collect_mission_cargo_items(convoy: Dictionary) -> Array[String]:
 					_active_mission_cargo_id_by_display[display_key4] = cid4
 				var aq := int(ac.get("quantity", 1))
 				agg[display_key4] = int(agg.get(display_key4, 0)) + (aq if aq > 0 else 1)
+				if not agg_data.has(display_key4):
+					agg_data[display_key4] = ac.duplicate()
 				if _debug_convoy_menu:
 					print("[ConvoyMenu][Debug] all_cargo mission item=", aname, " q=", aq)
 				diag_allcargo_mission += 1
 
-	# Build display strings from aggregated totals.
-	# Keys are already in "name" or "name — to DEST" form.
+
+	var CargoSorter = null
+	if _cargo_sort_metric >= 0:
+		CargoSorter = preload("res://Scripts/System/cargo_sorter.gd")
+	var items_to_sort = []
 	for k in agg.keys():
-		out.append(String(k))
+		var data = agg_data.get(k, {}).duplicate()
+		data["display_name"] = String(k)
+		data["total_quantity"] = agg[k]
+		items_to_sort.append(data)
+
+	if CargoSorter and _cargo_sort_metric >= 0:
+		items_to_sort = CargoSorter.sort_cargo(items_to_sort, _cargo_sort_metric, false)
+
+	for sorted_item in items_to_sort:
+		out.append(sorted_item["display_name"])
 	if _debug_convoy_menu:
 		print("[ConvoyMenu][Debug] mission agg result=", out)
 		print("[ConvoyMenu][Debug] diag typed=", diag_typed_mission, " raw=", diag_raw_mission, " all=", diag_allcargo_mission)
@@ -1204,7 +1587,7 @@ func _is_resource_item(d: Dictionary) -> bool:
 		return true
 	for k in ["fuel", "water", "food"]:
 		var v = d.get(k)
-		if (v is float or v is int) and float(v) > 0.0:
+		if NumberFormat.to_f(v, 0.0) > 0.0:
 			return true
 	return false
 
@@ -1223,11 +1606,8 @@ func _is_part_item(d: Dictionary) -> bool:
 func _looks_like_mission_item(item: Dictionary) -> bool:
 	# Prefer centralized classification when available
 	if ItemsData != null and ItemsData.MissionItem:
-		# Keep central classification but ensure reward-positive
-		if not item:
-			return false
-		var dr_any = item.get("delivery_reward")
-		if dr_any != null and (dr_any is float or dr_any is int) and float(dr_any) > 0.0:
+		var looks_mission := ItemsData.MissionItem._looks_like_mission_dict(item)
+		if looks_mission:
 			return true
 		return false
 	# Local rule: mission cargo must have positive delivery_reward and not be an intrinsic part
@@ -1237,8 +1617,7 @@ func _looks_like_mission_item(item: Dictionary) -> bool:
 		return false
 	if _is_part_item(item):
 		return false
-	var dr = item.get("delivery_reward")
-	return (dr is float or dr is int) and float(dr) > 0.0
+	return NumberFormat.to_f(item.get("delivery_reward"), 0.0) > 0.0 or NumberFormat.to_f(item.get("unit_delivery_reward"), 0.0) > 0.0
 
 # Helper: scan an array of settlement records and aggregate mission items into agg
 func _scan_settlement_array(arr: Array, agg: Dictionary) -> void:
@@ -1283,6 +1662,7 @@ func _extract_coords_from_dict(d: Dictionary) -> Vector2i:
 # Collect available mission cargo at the current settlement (not in convoy)
 func _collect_settlement_mission_items() -> Array[String]:
 	var out: Array[String] = []
+	var raw_items = []
 	if convoy_data_received == null:
 		return out
 	var diag_budget: int = 6
@@ -1361,8 +1741,7 @@ func _collect_settlement_mission_items() -> Array[String]:
 			if ItemsData != null and ItemsData.MissionItem:
 				is_mission = ItemsData.MissionItem._looks_like_mission_dict(ci)
 			else:
-				var dr = ci.get("delivery_reward")
-				is_mission = (dr is float or dr is int) and float(dr) > 0.0
+				is_mission = NumberFormat.to_f(ci.get("delivery_reward"), 0.0) > 0.0 or NumberFormat.to_f(ci.get("unit_delivery_reward"), 0.0) > 0.0
 			if not is_mission:
 				continue
 			var nm2 := String(ci.get("name", ci.get("base_name", "Item")))
@@ -1400,7 +1779,20 @@ func _collect_settlement_mission_items() -> Array[String]:
 			var entry2 := "%s" % [nm2]
 			if dest2 != "":
 				entry2 += " — to %s" % dest2
-			out.append(entry2)
+
+			var sort_data = ci.duplicate()
+			sort_data["display_name"] = entry2
+			raw_items.append(sort_data)
+
+
+	var CargoSorter = null
+	if _cargo_sort_metric >= 0:
+		CargoSorter = preload("res://Scripts/System/cargo_sorter.gd")
+	if CargoSorter and _cargo_sort_metric >= 0:
+		raw_items = CargoSorter.sort_cargo(raw_items, _cargo_sort_metric, false)
+
+	for ri in raw_items:
+		out.append(ri["display_name"])
 
 	if _debug_convoy_menu:
 		print("[ConvoyMenu][Debug] Settlement missions via vendor fallback: ", out)
@@ -1417,8 +1809,7 @@ func _on_cargo_data_received(cargo: Dictionary) -> void:
 	if ItemsData != null and ItemsData.MissionItem:
 		looks_mission = ItemsData.MissionItem._looks_like_mission_dict(cargo)
 	else:
-		var dr = cargo.get("delivery_reward")
-		looks_mission = (dr is float or dr is int) and float(dr) > 0.0
+		looks_mission = NumberFormat.to_f(cargo.get("delivery_reward"), 0.0) > 0.0 or NumberFormat.to_f(cargo.get("unit_delivery_reward"), 0.0) > 0.0
 
 	var looks_part := false
 	if ItemsData != null and ItemsData.PartItem:
@@ -1729,7 +2120,7 @@ func _extract_destination_from_item(item: Dictionary) -> String:
 	if _debug_convoy_menu:
 		print("[ConvoyMenu][Debug] destination unresolved for item=", String(item.get("name", item.get("base_name", "?"))))
 	return ""
-	
+
 func _on_part_compat_ready(_payload: Dictionary) -> void:
 	_queue_vendor_preview_update()
 
@@ -1860,6 +2251,11 @@ func _on_vendor_tab_pressed(tab_index: VendorTab) -> void:
 	_current_vendor_tab = tab_index
 	_render_vendor_preview_display()
 
+func _on_mission_sort_selected(idx: int) -> void:
+	_cargo_sort_metric = idx
+	_save_cargo_sort_metric_to_settings(idx)
+	_update_vendor_preview()
+
 # --- Placeholder Button Handlers ---
 func _on_vehicle_menu_button_pressed():
 	print("ConvoyMenu: Vehicle Menu button pressed. Emitting 'open_vehicle_menu_requested'.")
@@ -1952,7 +2348,7 @@ func _set_fixed_color_box_style(panel_node: PanelContainer, label_node: Label, p
 	style_box.shadow_offset = Vector2(0, 2)
 	panel_node.add_theme_stylebox_override("panel", style_box)
 	label_node.add_theme_color_override("font_color", p_font_color)
-	
+
 	# Center text
 	label_node.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	label_node.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
@@ -1961,7 +2357,7 @@ func _set_fixed_color_box_style(panel_node: PanelContainer, label_node: Label, p
 func _set_progressbar_style(progressbar_node: ProgressBar, current_value: float, max_value: float):
 	if not is_instance_valid(progressbar_node):
 		return
-	
+
 	var percentage: float = 0.0
 	if max_value > 0:
 		percentage = clamp(current_value / max_value, 0.0, 1.0)
@@ -1993,75 +2389,43 @@ func _set_progressbar_style(progressbar_node: ProgressBar, current_value: float,
 
 	# Ensure in-bar percentage text is visible and readable
 	progressbar_node.show_percentage = true
-	progressbar_node.add_theme_color_override("font_color", Color(1, 1, 1, 1))
-	progressbar_node.add_theme_color_override("font_outline_color", Color(0, 0, 0, 1))
-	progressbar_node.add_theme_constant_override("outline_size", 2)
+	if percentage > 0.75 and percentage <= 0.95:
+		progressbar_node.add_theme_color_override("font_color", COLOR_BOX_FONT)
+		progressbar_node.add_theme_constant_override("outline_size", 0)
+	else:
+		progressbar_node.add_theme_color_override("font_color", Color(1, 1, 1, 1))
+		progressbar_node.add_theme_color_override("font_outline_color", Color(0, 0, 0, 1))
+		progressbar_node.add_theme_constant_override("outline_size", 2)
 
-func _update_font_sizes() -> void:
-	if REFERENCE_MENU_HEIGHT <= 0:
-		printerr("ConvoyMenu: REFERENCE_MENU_HEIGHT is not positive. Cannot scale fonts.")
-		return
-
-	var current_menu_height: float = self.size.y
-	if current_menu_height <= 0: # Menu might not have a size yet if called too early
-		return
-
-	var scale_factor: float = current_menu_height / REFERENCE_MENU_HEIGHT
-
-	var new_font_size: int = clamp(int(BASE_FONT_SIZE * scale_factor), MIN_FONT_SIZE, MAX_FONT_SIZE)
-	var new_title_font_size: int = clamp(int(BASE_TITLE_FONT_SIZE * scale_factor), MIN_FONT_SIZE, MAX_TITLE_FONT_SIZE)
-
-	var labels_to_scale: Array[Label] = [
-		fuel_text_label, water_text_label, food_text_label,
-		speed_text_label, offroad_text_label, efficiency_text_label,
-		cargo_volume_text_label, cargo_weight_text_label,
-		journey_dest_label, journey_progress_label, journey_eta_label,
-		vehicles_label, all_cargo_label, vendor_no_items_label,
-		# Add text of placeholder buttons if they need scaling
-		# vehicle_menu_button, journey_menu_button, 
-		# settlement_menu_button, cargo_menu_button 
-	]
-	# title_label is handled separately as it's the main convoy name title
-
-	if is_instance_valid(title_label):
-		title_label.add_theme_font_size_override("font_size", new_title_font_size)
-
-	if is_instance_valid(preview_title_label):
-		preview_title_label.add_theme_font_size_override("font_size", new_font_size + 2)
-
-	# Scale fonts for dynamically created vendor item buttons
-	if is_instance_valid(vendor_item_grid):
-		for child in vendor_item_grid.get_children():
-			if child is Button:
-				# Increase font for mission/parts item buttons to improve readability
-				child.add_theme_font_size_override("font_size", new_font_size + 2)
-				
-	for label_node in labels_to_scale:
-		if is_instance_valid(label_node):
-			label_node.add_theme_font_size_override("font_size", new_font_size)
+	pass
 
 	if is_instance_valid(back_button):
-		back_button.add_theme_font_size_override("font_size", new_font_size)
-	
+		var dsm = get_node_or_null("/root/DeviceStateManager")
+		var fs = dsm.get_scaled_base_font_size(18) if dsm else 18
+		back_button.add_theme_font_size_override("font_size", fs)
+
 	# Scale placeholder button fonts if they are valid
+	var dsm = get_node_or_null("/root/DeviceStateManager")
+	var btn_fs = dsm.get_scaled_base_font_size(19) if dsm else 19
 	if is_instance_valid(vehicle_menu_button):
-		vehicle_menu_button.add_theme_font_size_override("font_size", new_font_size)
+		vehicle_menu_button.add_theme_font_size_override("font_size", btn_fs)
 	if is_instance_valid(journey_menu_button):
-		journey_menu_button.add_theme_font_size_override("font_size", new_font_size)
+		journey_menu_button.add_theme_font_size_override("font_size", btn_fs)
 	if is_instance_valid(settlement_menu_button):
-		settlement_menu_button.add_theme_font_size_override("font_size", new_font_size)
+		settlement_menu_button.add_theme_font_size_override("font_size", btn_fs)
 	if is_instance_valid(cargo_menu_button):
-		cargo_menu_button.add_theme_font_size_override("font_size", new_font_size)
-	
+		cargo_menu_button.add_theme_font_size_override("font_size", btn_fs)
+
 	# Scale vendor tab buttons
+	var tab_fs = dsm.get_scaled_base_font_size(22) if dsm else 22
 	if is_instance_valid(convoy_missions_tab_button):
-		convoy_missions_tab_button.add_theme_font_size_override("font_size", new_font_size - 2)
+		convoy_missions_tab_button.add_theme_font_size_override("font_size", tab_fs)
 	if is_instance_valid(settlement_missions_tab_button):
-		settlement_missions_tab_button.add_theme_font_size_override("font_size", new_font_size - 2)
+		settlement_missions_tab_button.add_theme_font_size_override("font_size", tab_fs)
 	if is_instance_valid(compatible_parts_tab_button):
-		compatible_parts_tab_button.add_theme_font_size_override("font_size", new_font_size - 2)
+		compatible_parts_tab_button.add_theme_font_size_override("font_size", tab_fs)
 	if is_instance_valid(journey_tab_button):
-		journey_tab_button.add_theme_font_size_override("font_size", new_font_size - 2)
+		journey_tab_button.add_theme_font_size_override("font_size", tab_fs)
 
 	# print("ConvoyMenu: Updated font sizes. Scale: %.2f, Base: %d, Title: %d" % [scale_factor, new_font_size, new_title_font_size]) # DEBUG
 
@@ -2070,16 +2434,23 @@ func _style_menu_button(button_node: Button) -> void:
 	if not is_instance_valid(button_node):
 		return
 
-	# Consistent min height already set in scene; enforce if loaded dynamically
-	if button_node.custom_minimum_size.y < 30.0:
-		button_node.custom_minimum_size = Vector2(button_node.custom_minimum_size.x, 34.0)
+	# On mobile enforce tall touch targets; on desktop keep scene defaults.
+	var on_mobile := _is_mobile()
+	var is_portrait_btn := _is_portrait_view()
+	var min_h := 140.0 if is_portrait_btn else (85.0 if on_mobile else 50.0)
+	var corner_r := 6 if on_mobile else 4
+	var v_pad := 8.0 if on_mobile else 4.0
+	if button_node.custom_minimum_size.y < min_h:
+		button_node.custom_minimum_size = Vector2(button_node.custom_minimum_size.x, min_h)
+	if on_mobile:
+		button_node.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 
 	var style_box_normal := StyleBoxFlat.new()
 	style_box_normal.bg_color = COLOR_MENU_BUTTON_GREY_BG
-	style_box_normal.corner_radius_top_left = 4
-	style_box_normal.corner_radius_top_right = 4
-	style_box_normal.corner_radius_bottom_left = 4
-	style_box_normal.corner_radius_bottom_right = 4
+	style_box_normal.corner_radius_top_left = corner_r
+	style_box_normal.corner_radius_top_right = corner_r
+	style_box_normal.corner_radius_bottom_left = corner_r
+	style_box_normal.corner_radius_bottom_right = corner_r
 	style_box_normal.border_width_left = 1
 	style_box_normal.border_width_right = 1
 	style_box_normal.border_width_top = 1
@@ -2087,6 +2458,8 @@ func _style_menu_button(button_node: Button) -> void:
 	style_box_normal.border_color = COLOR_BOX_FONT.darkened(0.2)
 	style_box_normal.shadow_size = 4
 	style_box_normal.shadow_color = Color(0,0,0,0.4)
+	style_box_normal.content_margin_top = v_pad
+	style_box_normal.content_margin_bottom = v_pad
 
 	var style_box_hover := style_box_normal.duplicate()
 	style_box_hover.bg_color = COLOR_MENU_BUTTON_GREY_BG.lightened(0.1)
@@ -2105,18 +2478,32 @@ func _initialize_tab_button_styles(button: Button) -> void:
 	if not is_instance_valid(button):
 		return
 
+	var win_size = get_viewport_rect().size if is_inside_tree() else Vector2(0, 0)
+	var is_portrait = win_size.y > win_size.x
+	var on_mobile := _is_mobile()
+	var tab_corner_r := 5 if on_mobile else 3
+	var tab_v_pad := 14.0 if is_portrait else (10.0 if on_mobile else 4.0)
+	if on_mobile:
+		var tab_h = 80.0 if is_portrait else 52.0
+		button.custom_minimum_size = Vector2(0.0, tab_h)
+		button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+
 	var style_normal := StyleBoxFlat.new()
 	style_normal.bg_color = COLOR_TAB_INACTIVE_BG
-	style_normal.corner_radius_top_left = 3
-	style_normal.corner_radius_top_right = 3
+	style_normal.corner_radius_top_left = tab_corner_r
+	style_normal.corner_radius_top_right = tab_corner_r
+	style_normal.content_margin_top = tab_v_pad
+	style_normal.content_margin_bottom = tab_v_pad
 
 	var style_hover := style_normal.duplicate() as StyleBoxFlat
 	style_hover.bg_color = COLOR_TAB_INACTIVE_BG.lightened(0.15)
 
 	var style_pressed := StyleBoxFlat.new()
 	style_pressed.bg_color = COLOR_TAB_ACTIVE_BG # This is the "active" color
-	style_pressed.corner_radius_top_left = 3
-	style_pressed.corner_radius_top_right = 3
+	style_pressed.corner_radius_top_left = tab_corner_r
+	style_pressed.corner_radius_top_right = tab_corner_r
+	style_pressed.content_margin_top = tab_v_pad
+	style_pressed.content_margin_bottom = tab_v_pad
 
 	var style_disabled := style_normal.duplicate() as StyleBoxFlat
 	style_disabled.bg_color = COLOR_TAB_INACTIVE_BG.darkened(0.3)
@@ -2124,14 +2511,13 @@ func _initialize_tab_button_styles(button: Button) -> void:
 	button.add_theme_color_override("font_disabled_color", COLOR_TAB_DISABLED_FONT)
 	button.add_theme_stylebox_override("normal", style_normal)
 	button.add_theme_stylebox_override("hover", style_hover)
-	button.add_theme_stylebox_override("pressed", style_pressed)
 	button.add_theme_stylebox_override("disabled", style_disabled)
 
-func _style_vendor_item_button(button: Button, tab_type: VendorTab) -> void:
+func _style_vendor_item_button(button: Control, tab_type: VendorTab) -> void:
 	var font_color: Color
 	match tab_type:
 		VendorTab.CONVOY_MISSIONS, VendorTab.SETTLEMENT_MISSIONS:
-			font_color = COLOR_MISSION_TEXT
+			font_color = Color.WHITE
 		VendorTab.COMPATIBLE_PARTS:
 			font_color = COLOR_PART_TEXT
 		_:
@@ -2140,29 +2526,40 @@ func _style_vendor_item_button(button: Button, tab_type: VendorTab) -> void:
 	var style_normal := StyleBoxFlat.new()
 	style_normal.bg_color = COLOR_ITEM_BUTTON_BG
 	style_normal.border_width_top = 1
-	style_normal.border_width_bottom = 1
+	style_normal.border_width_bottom = 2 # Subtle 3D shadow effect
 	style_normal.border_width_left = 1
 	style_normal.border_width_right = 1
-	style_normal.border_color = COLOR_ITEM_BUTTON_BG.darkened(0.4)
+	style_normal.content_margin_left = 0
+	style_normal.content_margin_right = 0
+	style_normal.content_margin_top = 0
+	style_normal.content_margin_bottom = 0
+	style_normal.border_color = COLOR_ITEM_BUTTON_BG.darkened(0.3)
 	style_normal.corner_radius_top_left = 4
 	style_normal.corner_radius_top_right = 4
 	style_normal.corner_radius_bottom_left = 4
 	style_normal.corner_radius_bottom_right = 4
 
-	var style_hover := style_normal.duplicate() as StyleBoxFlat
-	style_hover.bg_color = COLOR_ITEM_BUTTON_BG.lightened(0.2)
-	style_hover.border_color = style_hover.bg_color.darkened(0.4)
+	if button is PanelContainer:
+		button.add_theme_stylebox_override("panel", style_normal)
+		if button.has_meta("name_label"):
+			var lbl = button.get_meta("name_label")
+			if is_instance_valid(lbl):
+				lbl.add_theme_color_override("font_color", font_color)
+	elif button is Button:
+		var style_hover := style_normal.duplicate() as StyleBoxFlat
+		style_hover.bg_color = COLOR_ITEM_BUTTON_BG.lightened(0.15)
+		style_hover.border_color = style_hover.bg_color.darkened(0.3)
 
-	var style_pressed := style_normal.duplicate() as StyleBoxFlat
-	style_pressed.bg_color = COLOR_ITEM_BUTTON_BG.darkened(0.2)
-	style_pressed.content_margin_top = 2 # Add a little press-down effect
+		var style_pressed := style_normal.duplicate() as StyleBoxFlat
+		style_pressed.bg_color = COLOR_ITEM_BUTTON_BG.darkened(0.2)
+		style_pressed.content_margin_top = 1 # Subtle press-down effect
 
-	button.add_theme_color_override("font_color", font_color)
-	button.add_theme_color_override("font_hover_color", font_color.lightened(0.1))
-	button.add_theme_color_override("font_pressed_color", font_color)
-	button.add_theme_stylebox_override("normal", style_normal)
-	button.add_theme_stylebox_override("hover", style_hover)
-	button.add_theme_stylebox_override("pressed", style_pressed)
+		button.add_theme_color_override("font_color", font_color)
+		button.add_theme_color_override("font_hover_color", font_color.lightened(0.1))
+		button.add_theme_color_override("font_pressed_color", font_color)
+		button.add_theme_stylebox_override("normal", style_normal)
+		button.add_theme_stylebox_override("hover", style_hover)
+		button.add_theme_stylebox_override("pressed", style_pressed)
 
 func _style_journey_progress_bar(bar: ProgressBar) -> void:
 	if not is_instance_valid(bar):
@@ -2217,17 +2614,11 @@ func _update_ui(convoy: Dictionary) -> void:
 	# If we received a shallow snapshot, request full details once and avoid rendering misleading 0/0.
 	if not incoming_complete:
 		_ensure_full_convoy_loaded(convoy_id, convoy_data_received)
-		if is_instance_valid(title_label):
-			title_label.text = String(convoy_data_received.get("convoy_name", convoy_data_received.get("name", title_label.text)))
 		if is_instance_valid(cargo_volume_text_label):
 			cargo_volume_text_label.text = "Cargo Volume: loading…"
 		if is_instance_valid(cargo_weight_text_label):
 			cargo_weight_text_label.text = "Cargo Weight: loading…"
 		return
-
-	# Title
-	if is_instance_valid(title_label):
-		title_label.text = String(convoy_data_received.get("convoy_name", convoy_data_received.get("name", title_label.text)))
 
 	# Resources (prefer max_*; fall back to capacity keys if present)
 	var current_fuel: float = float(convoy_data_received.get("fuel", 0.0))
@@ -2282,3 +2673,16 @@ func _update_ui(convoy: Dictionary) -> void:
 		cargo_weight_text_label.text = "Cargo Weight: %s / %s" % [NumberFormat.fmt_float(used_weight, 2), NumberFormat.fmt_float(total_weight, 2)]
 	if is_instance_valid(cargo_weight_bar):
 		_set_progressbar_style(cargo_weight_bar, used_weight, total_weight)
+	
+	# Update navigation bar visibility (Settlement button should be hidden during journey)
+	_update_navigation_bar_visibility(convoy_data_received)
+
+func _enforce_label_wrapping(node: Node):
+	if node is Label:
+		node.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		node.custom_minimum_size.x = 10 # Allow it to shrink very small if needed
+		# Ensure it doesn't force its parent to expand to unwrapped text size
+		if "size_flags_horizontal" in node:
+			node.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	for child in node.get_children():
+		_enforce_label_wrapping(child)

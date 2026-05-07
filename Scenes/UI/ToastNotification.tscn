@@ -3,7 +3,7 @@
 [ext_resource type="Script" path="res://Scripts/UI/toast_notification.gd" id="1_abcde"]
 
 [sub_resource type="StyleBoxFlat" id="StyleBoxFlat_xyz12"]
-bg_color = Color(0.1, 0.1, 0.1, 0.8)
+bg_color = Color(0.1, 0.1, 0.1, 1)
 corner_radius_top_left = 5
 corner_radius_top_right = 5
 corner_radius_bottom_right = 5

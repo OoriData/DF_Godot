@@ -32,25 +32,22 @@ func _emit_install_requested(item: Variant, quantity: int, vendor_id: String) ->
 @onready var item_info_rich_text: RichTextLabel = %ItemInfoRichText
 @onready var fitment_panel: VBoxContainer = %FitmentPanel
 @onready var fitment_rich_text: RichTextLabel = %FitmentRichText
-@onready var comparison_panel: PanelContainer = %ComparisonPanel
 @onready var description_toggle_button: Button = %DescriptionToggleButton
 @onready var description_panel: VBoxContainer = %DescriptionPanel
 @onready var item_description_rich_text: RichTextLabel = %ItemDescriptionRichText
-@onready var selected_item_stats: RichTextLabel = %SelectedItemStats
-@onready var equipped_item_stats: RichTextLabel = %EquippedItemStats
-@onready var quantity_spinbox: SpinBox = %QuantitySpinBox
+@onready var quantity_spinbox: QuantityWidget = %QuantitySpinBox
 @onready var delivery_reward_label: RichTextLabel = %DeliveryRewardLabel
 @onready var price_label: RichTextLabel = %PriceLabel
 @onready var convoy_volume_bar: ProgressBar = %ConvoyVolumeBar
 @onready var convoy_weight_bar: ProgressBar = %ConvoyWeightBar
+@onready var convoy_money_label: Label = %ConvoyMoneyLabel
 @onready var max_button: Button = %MaxButton
 @onready var action_button: Button = %ActionButton
 @onready var install_button: Button = %InstallButton
 @onready var transaction_quantity_container: HBoxContainer = %TransactionQuantityContainer
-@onready var convoy_money_label: Label = %ConvoyMoneyLabel
-@onready var convoy_cargo_label: Label = %ConvoyCargoLabel
 @onready var trade_mode_tab_container: TabContainer = %TradeModeTabContainer
 @onready var toast_notification: Control = %ToastNotification
+@onready var cargo_sort_button: MenuButton = get_node_or_null("%CargoSortButton")
 var loading_panel: Panel = null
 
 # --- Data ---
@@ -62,6 +59,7 @@ var current_settlement_data # Will hold the current settlement data for local ve
 var all_settlement_data_global: Array # New: Will hold all settlement data for global vendor lookup
 var selected_item = null
 var current_mode = "buy" # or "sell"
+var _cargo_sort_metric: int = 0 # CargoSorter.SortMetric
 var _last_selected_item_id = null # <-- Add this line
 var _last_selected_ref = null # Track last selected aggregated data reference to avoid resetting quantity repeatedly
 var _last_selection_unique_key: String = "" # Used to detect same logical selection even if reference changes
@@ -100,10 +98,12 @@ var _pending_tx: Dictionary = {
 # so that when the authoritative convoy snapshot updates, the bars don't double-count.
 var _committed_projection: Dictionary = {
 	"selection_key": "",
-	"selection_tree": "",
-	"mode": "",
-	"quantity": 0,
+	"volume": 0.0,
+	"weight": 0.0
 }
+
+# Guard to prevent selection logic from wiping _last_selected_restore_id during tree clear/rebuild.
+var _ignore_selection_signals: bool = false
 
 # Short-lived guard to reject out-of-order convoy snapshots during refresh bursts.
 const BASELINE_GUARD_MS: int = 1500
@@ -120,6 +120,70 @@ var _baseline_guard: Dictionary = {
 
 # Feedback state for transaction success/failure in the middle panel
 var _feedback_data: Dictionary = {} # { "message": "", "type": "success" }
+
+func _get_settings_manager() -> Node:
+	return get_node_or_null("/root/SettingsManager")
+
+func _load_cargo_sort_metric_from_settings() -> void:
+	var sm := _get_settings_manager()
+	if is_instance_valid(sm) and sm.has_method("get_value"):
+		_cargo_sort_metric = int(sm.get_value("ui.cargo_sort_metric", 0))
+
+func _save_cargo_sort_metric_to_settings(metric: int) -> void:
+	var sm := _get_settings_manager()
+	if is_instance_valid(sm) and sm.has_method("set_and_save"):
+		sm.set_and_save("ui.cargo_sort_metric", metric)
+
+func _set_cargo_sort_ui_visible(visible: bool) -> void:
+	if is_instance_valid(cargo_sort_button):
+		var p := cargo_sort_button.get_parent()
+		if is_instance_valid(p):
+			p.visible = visible
+
+func _has_delivery_cargo_in_array(inv_any: Variant) -> bool:
+	if not (inv_any is Array):
+		return false
+	for entry_any in (inv_any as Array):
+		if not (entry_any is Dictionary):
+			continue
+		var d: Dictionary = entry_any
+		if ItemsData != null and ItemsData.MissionItem and ItemsData.MissionItem._looks_like_mission_dict(d):
+			return true
+		if NumberFormat.to_f(d.get("delivery_reward"), 0.0) > 0.0 or NumberFormat.to_f(d.get("unit_delivery_reward"), 0.0) > 0.0:
+			return true
+		if d.get("recipient", null) != null:
+			return true
+	return false
+
+func _has_delivery_cargo_fast_for_mode(mode: String) -> bool:
+	if mode == "sell":
+		if convoy_data is Dictionary:
+			var cd: Dictionary = convoy_data
+			if _has_delivery_cargo_in_array(cd.get("cargo_inventory", [])):
+				return true
+			if _has_delivery_cargo_in_array(cd.get("all_cargo", [])):
+				return true
+			if cd.has("vehicle_details_list") and cd.get("vehicle_details_list") is Array:
+				for v_any in (cd.get("vehicle_details_list") as Array):
+					if not (v_any is Dictionary):
+						continue
+					var v: Dictionary = v_any
+					if _has_delivery_cargo_in_array(v.get("cargo_inventory", [])):
+						return true
+					if _has_delivery_cargo_in_array(v.get("cargo_items_typed", [])):
+						return true
+		return false
+
+	if vendor_data is Dictionary:
+		var vd: Dictionary = vendor_data
+		if _has_delivery_cargo_in_array(vd.get("cargo_inventory", [])):
+			return true
+		if _has_delivery_cargo_in_array(vd.get("all_cargo", [])):
+			return true
+	return false
+
+func _update_sort_dropdown_visibility_fast() -> void:
+	_set_cargo_sort_ui_visible(_has_delivery_cargo_fast_for_mode(current_mode))
 
 func _clear_committed_projection() -> void:
 	_committed_projection.selection_key = ""
@@ -146,6 +210,8 @@ func _apply_committed_projection_scale(quantity: int, added_volume: float, added
 		return {"added_volume": 0.0, "added_weight": 0.0}
 
 	var scale_factor: float = float(uncommitted_qty) / float(quantity)
+	if not is_finite(scale_factor):
+		scale_factor = 0.0
 	return {"added_volume": added_volume * scale_factor, "added_weight": added_weight * scale_factor}
 
 func _get_effective_projection_deltas() -> Dictionary:
@@ -155,7 +221,7 @@ func _get_effective_projection_deltas() -> Dictionary:
 			"volume": float(_pending_tx.get("volume_delta", 0.0)),
 			"weight": float(_pending_tx.get("weight_delta", 0.0)),
 		}
-	if not (_panel_initialized and selected_item):
+	if not selected_item:
 		return {"volume": 0.0, "weight": 0.0}
 
 	var item_data_source = selected_item.item_data if selected_item.has("item_data") and not selected_item.item_data.is_empty() else selected_item
@@ -164,7 +230,11 @@ func _get_effective_projection_deltas() -> Dictionary:
 	var added_w: float = float(pr.get("added_weight", 0.0))
 	var added_v: float = float(pr.get("added_volume", 0.0))
 	var scaled := _apply_committed_projection_scale(quantity, added_v, added_w)
-	return {"volume": float(scaled.get("added_volume", 0.0)), "weight": float(scaled.get("added_weight", 0.0))}
+	var final_v = float(scaled.get("added_volume", 0.0))
+	var final_w = float(scaled.get("added_weight", 0.0))
+	if not is_finite(final_v): final_v = 0.0
+	if not is_finite(final_w): final_w = 0.0
+	return {"volume": final_v, "weight": final_w}
 
 func _commit_projection_from_pending_tx() -> void:
 	if not (_pending_tx is Dictionary):
@@ -285,9 +355,12 @@ func _maybe_finalize_optimistic_tx_on_incoming_convoy(convoy: Dictionary) -> voi
 		matches_w = abs(incoming_used_w - expected_used_w) <= tol_w
 
 	if matches_v and matches_w:
+		# The server snapshot already reflects our change.
+		# We "commit" the projection (which effectively stops applying the delta on top of the baseline)
+		# but we do NOT clear _pending_tx yet, because we still need it for the final API result toast.
 		_commit_projection_from_pending_tx()
-		_transaction_in_progress = false
-		_clear_pending_tx()
+		_transaction_in_progress = false # This stops the optimistic projection from being added to totals
+		# DO NOT call _clear_pending_tx() here!
 		_activate_baseline_guard(mode, incoming_used_v, incoming_used_w)
 
 func _try_set_convoy_data(next_convoy: Dictionary) -> bool:
@@ -337,6 +410,9 @@ func _is_panel_initialized() -> bool:
 # by external controllers (which Godot's linter does not treat as "usage").
 func _get_last_selected_item_id() -> Variant:
 	return _last_selected_item_id
+
+func _get_last_selected_restore_id() -> Variant:
+	return _last_selected_restore_id
 
 func _get_last_selected_ref() -> Variant:
 	return _last_selected_ref
@@ -418,6 +494,7 @@ var _latest_settlement_models: Array = []
 var _vendors_from_settlements_by_id: Dictionary = {} # vendor_id -> vendor Dictionary
 var _vendor_id_to_settlement: Dictionary = {} # vendor_id -> settlement Dictionary
 var _vendor_id_to_name: Dictionary = {} # vendor_id -> vendor name String
+var _pending_cargo_recipient_lookups: Dictionary = {} # cargo_id -> aggregated item dict ref
 
 # Throttles noisy price-fallback diagnostics (vendor_id -> true)
 var _price_fallback_diag_seen: Dictionary = {}
@@ -558,7 +635,121 @@ func _get_bold_font_for(node: Control) -> FontVariation:
 		_bold_font_cache = bf
 	return _bold_font_cache
 
+# Deleted: _get_portrait_font_size
+
+func _on_layout_mode_changed(_mode: int, _screen_size: Vector2, _is_mobile: bool) -> void:
+	_update_layout_scaling()
+
+func _update_layout_scaling() -> void:
+	var dsm = get_node_or_null("/root/DeviceStateManager")
+	if not is_instance_valid(dsm): return
+	
+	var mode = dsm.get_layout_mode()
+	var is_portrait = (mode == 2) # MOBILE_PORTRAIT
+	
+	var dyn_font_sz = dsm.get_scaled_base_font_size(16)
+	if is_portrait:
+		dyn_font_sz = int(dyn_font_sz * 1.1)
+		
+	var curr_theme = theme
+	if curr_theme == null:
+		curr_theme = Theme.new()
+		theme = curr_theme
+	curr_theme.default_font_size = dyn_font_sz
+	
+	# Significant boost for buttons and tabs in portrait mode to fill the 100px tall targets
+	var btn_font_sz = dyn_font_sz
+	var tab_font_sz = dyn_font_sz
+	if is_portrait:
+		btn_font_sz = int(dyn_font_sz * 1.8)
+		tab_font_sz = int(dyn_font_sz * 1.4)
+	
+	if is_instance_valid(trade_mode_tab_container):
+		trade_mode_tab_container.theme = curr_theme
+		var tab_bar = trade_mode_tab_container.get_tab_bar()
+		if is_instance_valid(tab_bar):
+			tab_bar.add_theme_font_size_override("font_size", tab_font_sz)
+
+	var btn_min_h = 100.0 if is_portrait else 34.0
+	if is_instance_valid(action_button):
+		action_button.custom_minimum_size.y = btn_min_h
+		action_button.add_theme_font_size_override("font_size", btn_font_sz)
+		if is_portrait:
+			action_button.add_theme_font_override("font", _get_bold_font_for(action_button))
+		else:
+			action_button.remove_theme_font_override("font")
+			
+	if is_instance_valid(max_button):
+		max_button.custom_minimum_size.y = btn_min_h
+		max_button.add_theme_font_size_override("font_size", btn_font_sz)
+		if is_portrait:
+			max_button.add_theme_font_override("font", _get_bold_font_for(max_button))
+		else:
+			max_button.remove_theme_font_override("font")
+			
+	if is_instance_valid(install_button):
+		install_button.custom_minimum_size.y = btn_min_h
+		install_button.add_theme_font_size_override("font_size", btn_font_sz)
+		if is_portrait:
+			install_button.add_theme_font_override("font", _get_bold_font_for(install_button))
+		else:
+			install_button.remove_theme_font_override("font")
+		
+	if is_instance_valid(quantity_spinbox):
+		quantity_spinbox.custom_minimum_size.y = btn_min_h if is_portrait else 0.0
+
+	var bar_min_h = 60.0 if is_portrait else 24.0
+	if is_instance_valid(convoy_volume_bar):
+		convoy_volume_bar.custom_minimum_size.y = bar_min_h
+	if is_instance_valid(convoy_weight_bar):
+		convoy_weight_bar.custom_minimum_size.y = bar_min_h
+
+	if is_instance_valid(cargo_sort_button):
+		var sort_h = 80.0 if is_portrait else 34.0
+		cargo_sort_button.custom_minimum_size.y = sort_h
+		cargo_sort_button.add_theme_font_size_override("font_size", int(btn_font_sz * 0.85) if is_portrait else dyn_font_sz)
+		if is_portrait:
+			cargo_sort_button.add_theme_font_override("font", _get_bold_font_for(cargo_sort_button))
+		else:
+			cargo_sort_button.remove_theme_font_override("font")
+	
+	# Force top alignment for the middle and right columns to prevent centering in landscape/desktop
+	var middle = get_node_or_null("HBoxContainer/MiddlePanel")
+	if is_instance_valid(middle):
+		_force_top_alignment(middle)
+	var right = get_node_or_null("HBoxContainer/RightPanel")
+	if is_instance_valid(right):
+		_force_top_alignment(right)
+
+func _force_top_alignment(node: Node) -> void:
+	if not is_instance_valid(node): return
+	if node is BoxContainer:
+		node.alignment = BoxContainer.ALIGNMENT_BEGIN
+	for child in node.get_children():
+		_force_top_alignment(child)
+
 func _ready() -> void:
+
+	var dsm = get_node_or_null("/root/DeviceStateManager")
+	
+	# Ensure the whole panel fills the MenuContainer (PanelContainer) provided by MainScreen
+	# This prevents the parent from centering the menu if its content is smaller than the screen.
+	size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	size_flags_vertical = Control.SIZE_EXPAND_FILL
+	
+	if is_instance_valid(dsm):
+		if not dsm.layout_mode_changed.is_connected(_on_layout_mode_changed):
+			dsm.layout_mode_changed.connect(_on_layout_mode_changed)
+			
+	_update_layout_scaling()
+	
+	# Fix for "Bottom Alignment" bug: ensure the legacy label doesn't act as a vertical spacer
+	var legacy_label = get_node_or_null("%ItemInfoRichText")
+	if is_instance_valid(legacy_label):
+		legacy_label.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+
+
+
 	# Connect signals from UI elements
 	vendor_item_tree.item_selected.connect(_on_vendor_item_selected)
 	# Use item_selected for Tree to update the inspector on a single click.
@@ -597,6 +788,83 @@ func _ready() -> void:
 		description_toggle_button.pressed.connect(_on_description_toggle_pressed)
 	else:
 		printerr("VendorTradePanel: 'DescriptionToggleButton' node not found. Please check the scene file.")
+
+	if is_instance_valid(cargo_sort_button):
+		_load_cargo_sort_metric_from_settings()
+		cargo_sort_button.custom_minimum_size.x = 100 # Thinner button
+		cargo_sort_button.add_theme_color_override("font_color", Color(0.93, 0.93, 0.93, 1.0))
+		cargo_sort_button.add_theme_color_override("font_hover_color", Color(0.98, 0.98, 0.98, 1.0))
+		
+		var sort_normal := StyleBoxFlat.new()
+		sort_normal.bg_color = Color("#25282a") # Oori Dark Grey
+		sort_normal.border_width_left = 1
+		sort_normal.border_width_right = 1
+		sort_normal.border_width_top = 1
+		sort_normal.border_width_bottom = 1
+		sort_normal.border_color = Color("#393d47") # Oori Grey
+		sort_normal.corner_radius_top_left = 4
+		sort_normal.corner_radius_top_right = 4
+		sort_normal.corner_radius_bottom_left = 4
+		sort_normal.corner_radius_bottom_right = 4
+		sort_normal.content_margin_left = 10
+		sort_normal.content_margin_right = 10
+		sort_normal.content_margin_top = 4
+		sort_normal.content_margin_bottom = 4
+		
+		var sort_hover := sort_normal.duplicate()
+		sort_hover.bg_color = Color("#393d47") # Oori Grey
+		sort_hover.border_color = Color("#dbe2e9").lerp(Color.BLACK, 0.3) # Oori White-ish
+		var sort_pressed := sort_normal.duplicate()
+		sort_pressed.bg_color = Color("#25282a").lerp(Color.BLACK, 0.2) # Deep Dark
+		
+		cargo_sort_button.add_theme_stylebox_override("normal", sort_normal)
+		cargo_sort_button.add_theme_stylebox_override("hover", sort_hover)
+		cargo_sort_button.add_theme_stylebox_override("pressed", sort_pressed)
+		cargo_sort_button.add_theme_stylebox_override("focus", sort_hover)
+		
+		var popup = cargo_sort_button.get_popup()
+		popup.clear()
+		popup.add_radio_check_item("Profit Margin/Unit", 0)
+		popup.add_radio_check_item("Profit Density/Weight", 1)
+		popup.add_radio_check_item("Profit Density/Volume", 2)
+		popup.add_radio_check_item("Total Order Profit", 3)
+		popup.add_radio_check_item("Distance to Recipient", 4)
+		
+		# Mobile scaling for Vendor Trade Panel sort popup
+		var use_mobile = false
+		var is_portrait = false
+		if is_instance_valid(dsm):
+			is_portrait = dsm.get_is_portrait()
+			use_mobile = is_portrait or dsm.get_layout_mode() == 1 # MOBILE_LANDSCAPE
+			
+		if use_mobile:
+			var dyn_font_sz = dsm.get_scaled_base_font_size(16)
+			popup.add_theme_font_size_override("font_size", dyn_font_sz)
+			popup.add_theme_constant_override("v_separation", 16 if is_portrait else 12)
+			var popup_style = StyleBoxFlat.new()
+			popup_style.bg_color = Color("#25282a") # Oori Dark Grey
+			popup_style.content_margin_left = 24
+			popup_style.content_margin_right = 24
+			popup_style.content_margin_top = 16 if is_portrait else 12
+			popup_style.content_margin_bottom = 16 if is_portrait else 12
+			popup_style.border_width_left = 1
+			popup_style.border_width_right = 1
+			popup_style.border_width_top = 1
+			popup_style.border_width_bottom = 1
+			popup_style.border_color = Color("#393d47") # Oori Grey
+			popup_style.corner_radius_top_left = 6
+			popup_style.corner_radius_top_right = 6
+			popup_style.corner_radius_bottom_left = 6
+			popup_style.corner_radius_bottom_right = 6
+			popup.add_theme_stylebox_override("panel", popup_style)
+		
+		_cargo_sort_metric = clampi(_cargo_sort_metric, 0, max(0, popup.item_count - 1))
+		for i in range(popup.item_count):
+			popup.set_item_checked(i, i == _cargo_sort_metric)
+			
+		popup.index_pressed.connect(_on_cargo_sort_selected)
+		_update_cargo_sort_button_text()
+		_update_sort_dropdown_visibility_fast()
 
 	# Subscribe to canonical sources (Hub/Store) instead of GameDataManager.
 	if is_instance_valid(_hub):
@@ -641,12 +909,11 @@ func _ready() -> void:
 		if _api.has_signal(sig) and not _api.is_connected(sig, txn_cb):
 			_api.connect(sig, txn_cb)
 
-	# Enable wrapping for convoy cargo label so multi-line text keeps panel narrow
-	if is_instance_valid(convoy_cargo_label):
-		convoy_cargo_label.autowrap_mode = TextServer.AUTOWRAP_WORD
+	if is_instance_valid(_api) and _api.has_signal("cargo_data_received") and not _api.cargo_data_received.is_connected(_on_cargo_data_received):
+		_api.cargo_data_received.connect(_on_cargo_data_received)
 
-	# Initially hide comparison panel until an item is selected
-	comparison_panel.hide()
+
+	# Action buttons minimum sizes are handled by _update_layout_scaling()
 	if is_instance_valid(action_button):
 		action_button.disabled = true
 	if is_instance_valid(max_button):
@@ -675,6 +942,13 @@ func _ready() -> void:
 	_apply_text_readability_fixes()
 
 func _make_panels_responsive() -> void:
+	# Only apply aggressive scrolling wrappers on Mobile Portrait.
+	# Desktop and Landscape have enough vertical real estate to use the native .tscn layout,
+	# which prevents nested ScrollContainer layout bugs.
+	var dsm = get_node_or_null("/root/DeviceStateManager")
+	if is_instance_valid(dsm) and dsm.get_layout_mode() != 2: # 2 == MOBILE_PORTRAIT
+		return
+
 	# Programmatically wrap Middle and Right panels in ScrollContainers
 	var hbox = get_node_or_null("HBoxContainer")
 	if not is_instance_valid(hbox): return
@@ -706,6 +980,8 @@ func _wrap_inv_scroll(panel: Control, stretch_ratio_h: float, _stretch_ratio_v: 
 	# Reset panel flags to fit inside scroll
 	panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	panel.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	if panel is BoxContainer:
+		panel.alignment = BoxContainer.ALIGNMENT_BEGIN
 	panel.size_flags_stretch_ratio = 1.0 # Reset ratio as parent scroll handles it
 
 var _semi_bold_font_cache: FontVariation = null
@@ -722,7 +998,7 @@ func _get_semi_bold_font_for(node: Control) -> FontVariation:
 	return _semi_bold_font_cache
 
 func _apply_text_readability_fixes() -> void:
-	# Apply semibold font to small labels to make them appear "thicker" and more readable
+	# Apply semibold font where needed (sizes scale via root theme natively now!)
 	var labels_to_fix = [
 		get_node_or_null("%VolumeLabel"), # Using unique names from tscn
 		get_node_or_null("HBoxContainer/RightPanel/CapacityBars/VolumeLabel"), # Fallback path
@@ -734,10 +1010,18 @@ func _apply_text_readability_fixes() -> void:
 	for lbl in labels_to_fix:
 		if is_instance_valid(lbl) and lbl is Label:
 			lbl.add_theme_font_override("font", _get_semi_bold_font_for(lbl))
+	
+	pass
 
 
 func _exit_tree() -> void:
-	# Disconnect from Hub/Store/API signals that we connected in _ready
+	# Disconnect from Hub/Store/API/Global signals that we connected in _ready
+	var dsm = get_node_or_null("/root/DeviceStateManager")
+	if is_instance_valid(dsm) and dsm.has_signal("layout_mode_changed"):
+		var cb_dsm := Callable(self, "_on_layout_mode_changed")
+		if dsm.layout_mode_changed.is_connected(cb_dsm):
+			dsm.layout_mode_changed.disconnect(cb_dsm)
+			
 	if is_instance_valid(_hub) and _hub.has_signal("vendor_panel_ready"):
 		var cb_hub := Callable(self, "_on_hub_vendor_panel_ready")
 		if _hub.vendor_panel_ready.is_connected(cb_hub):
@@ -766,6 +1050,8 @@ func _exit_tree() -> void:
 		for sig in ["cargo_bought", "cargo_sold", "vehicle_bought", "vehicle_sold", "resource_bought", "resource_sold"]:
 			if _api.has_signal(sig) and _api.is_connected(sig, txn_cb):
 				_api.disconnect(sig, txn_cb)
+		if _api.has_signal("cargo_data_received") and _api.cargo_data_received.is_connected(_on_cargo_data_received):
+			_api.cargo_data_received.disconnect(_on_cargo_data_received)
 	if is_instance_valid(_vendor_service) and _vendor_service.has_signal("vehicle_data_received"):
 		if _vendor_service.vehicle_data_received.is_connected(_on_service_vehicle_data_received):
 			_vendor_service.vehicle_data_received.disconnect(_on_service_vehicle_data_received)
@@ -851,7 +1137,30 @@ func _on_service_vehicle_data_received(data: Dictionary) -> void:
 			if not sel.has(k):
 				sel[k] = (data as Dictionary)[k]
 		_update_inspector()
-		_update_comparison()
+		# _update_comparison() removed - deprecated.
+
+func _on_cargo_data_received(cargo: Dictionary) -> void:
+	var cargo_id := str(cargo.get("cargo_id", ""))
+	if perf_log_enabled:
+		print("[VendorPanel][AsyncCargo] Received cargo_data for id=", cargo_id, " has_pending=", _pending_cargo_recipient_lookups.has(cargo_id))
+	if not _pending_cargo_recipient_lookups.has(cargo_id):
+		return
+	var recipient_id := str(cargo.get("recipient", ""))
+	if recipient_id == "" or recipient_id == "00000000-0000-0000-0000-000000000000":
+		if perf_log_enabled:
+			print("[VendorPanel][AsyncCargo] Cargo ", cargo_id, " has no recipient in rich payload.")
+		return
+	var name := _get_vendor_name_for_recipient(recipient_id)
+	if perf_log_enabled:
+		print("[VendorPanel][AsyncCargo] Resolved recipient_id=", recipient_id, " to name='", name, "'")
+	var item: Dictionary = _pending_cargo_recipient_lookups[cargo_id]
+	item["mission_vendor_name"] = name
+	_pending_cargo_recipient_lookups.erase(cargo_id)
+	# If this item is currently selected, refresh the inspector
+	if selected_item and (selected_item as Dictionary).get("item_data", {}).get("cargo_id", "") == cargo_id:
+		if perf_log_enabled:
+			print("[VendorPanel][AsyncCargo] Refreshing inspector for selected cargo ", cargo_id)
+		_update_inspector()
 
 func _resolve_settlement_for_vendor_or_convoy(vendor_id: String, convoy_id: String) -> Dictionary:
 	return VendorPanelContextController.resolve_settlement_for_vendor_or_convoy(self, vendor_id, convoy_id)
@@ -901,10 +1210,12 @@ func _populate_tree_from_agg(tree: Tree, agg: Dictionary) -> void:
 
 # --- Data Initialization ---
 func initialize(p_vendor_data, p_convoy_data, p_current_settlement_data, p_all_settlement_data_global) -> void:
+	print("[DIAGNOSTIC] VendorTradePanel initialize called for: ", self.name)
 	self.vendor_data = p_vendor_data
 	self.convoy_data = p_convoy_data
 	self.current_settlement_data = p_current_settlement_data
 	self.all_settlement_data_global = p_all_settlement_data_global
+	_update_sort_dropdown_visibility_fast()
 
 	# Request an authoritative refresh via services
 	var vid := str((self.vendor_data if self.vendor_data is Dictionary else {}).get("vendor_id", ""))
@@ -925,6 +1236,7 @@ func refresh_data(p_vendor_data, p_convoy_data, p_current_settlement_data, p_all
 	self.convoy_data = p_convoy_data
 	self.current_settlement_data = p_current_settlement_data
 	self.all_settlement_data_global = p_all_settlement_data_global
+	_update_sort_dropdown_visibility_fast()
 
 	# Preserve current selection context for restore after repopulation
 	var prev_selected_id := _last_selected_restore_id
@@ -946,17 +1258,43 @@ func refresh_data(p_vendor_data, p_convoy_data, p_current_settlement_data, p_all
 	_try_apply_pending_focus_intent()
 
 func _populate_vendor_list() -> void:
+	_ignore_selection_signals = true
 	vendor_item_tree.clear()
 	if not vendor_data:
+		vendor_items = {}
+		_ignore_selection_signals = false
 		return
 	var vd_for_agg := _vendor_data_with_price_fallback(vendor_data)
 	var buckets := VendorCargoAggregatorScript.build_vendor_buckets(vd_for_agg, perf_log_enabled, Callable(self, "_get_vendor_name_for_recipient"))
+	self.vendor_items = buckets
 	var root = vendor_item_tree.create_item()
+	var has_delivery_cargo = not buckets.get("missions", {}).is_empty()
 	_populate_category(vendor_item_tree, root, "Delivery Cargo", buckets.get("missions", {}))
 	_populate_category(vendor_item_tree, root, "Vehicles", buckets.get("vehicles", {}))
 	_populate_category(vendor_item_tree, root, "Parts", buckets.get("parts", {}))
 	_populate_category(vendor_item_tree, root, "Other", buckets.get("other", {}))
 	_populate_category(vendor_item_tree, root, "Resources", buckets.get("resources", {}))
+	_ignore_selection_signals = false
+
+	if has_delivery_cargo and is_instance_valid(_api):
+		var mission_bucket: Dictionary = buckets.get("missions", {})
+		if perf_log_enabled:
+			print("[VendorPanel][AsyncCargo] Mission bucket items: ", mission_bucket.keys())
+		for key in mission_bucket:
+			var dict: Dictionary = mission_bucket[key]
+			var idata: Dictionary = dict.get("item_data", {})
+			var cid = str(idata.get("cargo_id", ""))
+			var m_v_name = str(dict.get("mission_vendor_name", ""))
+			if cid != "" and (m_v_name == "" or m_v_name == "Unknown Vendor" or "00000000" in m_v_name):
+				if perf_log_enabled:
+					print("[VendorPanel][AsyncCargo] Triggering get_cargo for cid=", cid)
+				_pending_cargo_recipient_lookups[cid] = dict
+				if _api.has_method("get_cargo"):
+					_api.get_cargo(cid)
+
+	if is_instance_valid(cargo_sort_button):
+		_set_cargo_sort_ui_visible(has_delivery_cargo or _has_delivery_cargo_fast_for_mode("buy"))
+
 	# Vendor list is now rebuilt; apply any queued deep-link focus request.
 	_try_apply_pending_focus_intent()
 
@@ -1016,14 +1354,18 @@ func _try_apply_pending_focus_intent() -> bool:
 	return ok
 
 func _populate_convoy_list() -> void:
+	_ignore_selection_signals = true
 	convoy_item_tree.clear()
-	if not convoy_data:
+	if not (convoy_data is Dictionary) or convoy_data.is_empty():
+		convoy_items = {}
+		_ignore_selection_signals = false
 		return
 	var allow_vehicle_sell := _should_show_vehicle_sell_category()
 	# Always use price fallback for aggregation to ensure consistent grouping (e.g. water/food).
 	# Transaction logic will still enforce vendor's actual buying prices.
 	var vd_for_agg = _vendor_data_with_price_fallback(vendor_data)
 	var buckets := VendorCargoAggregatorScript.build_convoy_buckets(convoy_data, vd_for_agg, current_mode, perf_log_enabled, Callable(self, "_get_vendor_name_for_recipient"), allow_vehicle_sell)
+	self.convoy_items = buckets
 	if perf_log_enabled and str(current_mode) == "sell":
 		var vd: Dictionary = vendor_data if (vendor_data is Dictionary) else {}
 		var vdx: Dictionary = vd_for_agg
@@ -1053,6 +1395,7 @@ func _populate_convoy_list() -> void:
 			" allow_vehicle_sell=", allow_vehicle_sell,
 			" bucket_sizes(m/v/p/o/r)=", int((buckets.get("missions", {}) as Dictionary).size()), "/", int((buckets.get("vehicles", {}) as Dictionary).size()), "/", int((buckets.get("parts", {}) as Dictionary).size()), "/", int((buckets.get("other", {}) as Dictionary).size()), "/", int((buckets.get("resources", {}) as Dictionary).size()))
 	var root = convoy_item_tree.create_item()
+	var has_delivery_cargo = not buckets.get("missions", {}).is_empty()
 	_populate_category(convoy_item_tree, root, "Delivery Cargo", buckets.get("missions", {}))
 	if allow_vehicle_sell and not (buckets.get("vehicles", {}) as Dictionary).is_empty():
 		_populate_category(convoy_item_tree, root, "Vehicles", buckets.get("vehicles", {}))
@@ -1061,6 +1404,12 @@ func _populate_convoy_list() -> void:
 		_populate_category(convoy_item_tree, root, "Parts", buckets.get("parts", {}))
 	_populate_category(convoy_item_tree, root, "Other", buckets.get("other", {}))
 	_populate_category(convoy_item_tree, root, "Resources", buckets.get("resources", {}))
+	_ignore_selection_signals = false
+
+	# Show sorting if either list has delivery cargo, according to Active Tab
+	if is_instance_valid(cargo_sort_button):
+		if current_mode == "sell":
+			_set_cargo_sort_ui_visible(has_delivery_cargo or _has_delivery_cargo_fast_for_mode("sell"))
 
 func _update_convoy_info_display() -> void:
 	var deltas := _get_effective_projection_deltas()
@@ -1103,6 +1452,7 @@ func _on_convoy_updated(convoy: Dictionary) -> void:
 func _on_tab_changed(tab_index: int) -> void:
 	current_mode = "buy" if tab_index == 0 else "sell"
 	action_button.text = "Buy" if current_mode == "buy" else "Sell"
+	_update_sort_dropdown_visibility_fast()
 	
 	# Clear selection and inspector when switching tabs
 	selected_item = null
@@ -1124,6 +1474,8 @@ func _on_tab_changed(tab_index: int) -> void:
 		_populate_convoy_list()
 
 func _on_vendor_item_selected() -> void:
+	if _ignore_selection_signals:
+		return
 	var tree_item = vendor_item_tree.get_selected()
 	# --- START TUTORIAL DEBUG LOG ---
 	var item_text = tree_item.get_text(0) if is_instance_valid(tree_item) else "<none>"
@@ -1133,20 +1485,21 @@ func _on_vendor_item_selected() -> void:
 	_last_selected_tree = "vendor"
 	_last_selection_change_ms = Time.get_ticks_msec()
 	var item = tree_item.get_metadata(0) if tree_item and tree_item.get_metadata(0) != null else null
-	# Defer handling to the next idle frame. This is critical to prevent a race condition
-	# where the panel resizes in the same frame as the input, causing the Tree to lose focus and deselect the item.
+	# Defer handling to the next idle frame.
 	call_deferred("_handle_new_item_selection", item)
 
 func _on_convoy_item_selected() -> void:
+	if _ignore_selection_signals:
+		return
 	var tree_item = convoy_item_tree.get_selected()
 	_last_selected_tree = "convoy"
 	_last_selection_change_ms = Time.get_ticks_msec()
 	var item = tree_item.get_metadata(0) if tree_item and tree_item.get_metadata(0) != null else null
-	# Defer handling to prevent UI race conditions, same as for the vendor tree.
+	# Defer handling to prevent UI race conditions.
 	call_deferred("_handle_new_item_selection", item)
 
 func _populate_category(target_tree: Tree, root_item: TreeItem, category_name: String, agg_dict: Dictionary) -> void:
-	VendorTreeBuilder.populate_category(target_tree, root_item, category_name, agg_dict)
+	VendorTreeBuilder.populate_category(target_tree, root_item, category_name, agg_dict, _cargo_sort_metric, perf_log_enabled)
 
 func _ensure_tree_columns(tree: Tree) -> void:
 	if not is_instance_valid(tree):
@@ -1178,6 +1531,8 @@ func _tree_column_count(tree: Tree) -> int:
 	return 1
 
 func _handle_new_item_selection(p_selected_item) -> void:
+	if not is_inside_tree():
+		return
 	VendorPanelSelectionController.handle_new_item_selection(self, p_selected_item)
 
 func _on_max_button_pressed() -> void:
@@ -1222,7 +1577,8 @@ func _update_inspector() -> void:
 		fitment_panel,
 		fitment_rich_text,
 		convoy_data,
-		_compat_cache
+		_compat_cache,
+		perf_log_enabled
 	)
 	call_deferred("_log_size_after_update")
 
@@ -1298,7 +1654,14 @@ func _update_transaction_panel() -> void:
 			action_button.text = "Sell"
 
 func _refresh_capacity_bars(projected_volume_delta: float, projected_weight_delta: float) -> void:
-	VendorPanelConvoyStatsController.refresh_capacity_bars(self, projected_volume_delta, projected_weight_delta)
+	if not is_inside_tree():
+		return
+	var dsm = get_node_or_null("/root/DeviceStateManager")
+	if is_instance_valid(dsm) and dsm.get_layout_mode() == 2: # MOBILE_PORTRAIT
+		# Ensure layout settles before rendering highlight overlays
+		VendorPanelConvoyStatsController.refresh_capacity_bars.call_deferred(self, projected_volume_delta, projected_weight_delta)
+	else:
+		VendorPanelConvoyStatsController.refresh_capacity_bars(self, projected_volume_delta, projected_weight_delta)
 
 func _is_positive_number(v: Variant) -> bool:
 	return (v is float or v is int) and float(v) > 0.0
@@ -1341,18 +1704,77 @@ func _on_part_compatibility_ready(payload: Dictionary) -> void:
 # Returns the price per unit for the given item, depending on buy/sell mode.
  
 
+func _optimistically_update_vendor_stock(item_name: String, qty_delta: int) -> void:
+	print("[VendorPanel][DIAG] _optimistically_update_vendor_stock starting for '%s'" % item_name)
+	if vendor_items == null or not (vendor_items is Dictionary):
+		print("[VendorPanel][DIAG] FAILED: vendor_items is null or invalid")
+		return
+	
+	var target_name := item_name.strip_edges()
+	print("[VendorPanel][DIAG] Searching buckets for '%s'..." % target_name)
+	
+	var found := false
+	for bucket_key in (vendor_items as Dictionary):
+		var bucket: Variant = (vendor_items as Dictionary).get(bucket_key)
+		if bucket is Dictionary:
+			# Try exact match and stripped match
+			var entry: Dictionary = {}
+			if (bucket as Dictionary).has(target_name):
+				entry = (bucket as Dictionary).get(target_name)
+			else:
+				# Search for a stripped match if exact match fails
+				for k in (bucket as Dictionary).keys():
+					if str(k).strip_edges() == target_name:
+						entry = (bucket as Dictionary).get(k)
+						break
+			
+			if not entry.is_empty():
+				var old_qty: int = int(entry.get("total_quantity", 0))
+				entry["total_quantity"] = max(0, old_qty + qty_delta)
+				found = true
+				print("[VendorPanel][DIAG] SUCCESS: updated '%s' in bucket '%s': %d -> %d" % [target_name, bucket_key, old_qty, int(entry["total_quantity"])])
+				
+				# Also update the underlying item_data quantity if it's a raw resource
+				var item_data: Variant = entry.get("item_data")
+				if item_data is Dictionary and (item_data as Dictionary).get("is_raw_resource", false):
+					(item_data as Dictionary)["quantity"] = entry["total_quantity"]
+					# Update the top-level vendor_data if applicable
+					if vendor_data is Dictionary:
+						if target_name.begins_with("Fuel"): vendor_data["fuel"] = entry["total_quantity"]
+						elif target_name.begins_with("Water"): vendor_data["water"] = entry["total_quantity"]
+						elif target_name.begins_with("Food"): vendor_data["food"] = entry["total_quantity"]
+				break
+	
+	if found:
+		_update_vendor_ui(true, false)
+	else:
+		print("[VendorPanel][DIAG] FAILED: item '%s' not found in any bucket. Buckets searched: %s" % [target_name, (vendor_items as Dictionary).keys()])
+
 func _on_api_transaction_result(result: Dictionary) -> void:
-	# Capture feedback info BEFORE we potentially clear _pending_tx
+	var pending_qty: int = int(_pending_tx.get("quantity", 0))
+	var has_pending_data: bool = (pending_qty > 0)
+	
+	print("[VendorPanel][DIAG] _on_api_transaction_result entered on instance_id=%d. in_progress=%s, has_pending=%s" % [get_instance_id(), str(_transaction_in_progress), str(has_pending_data)])
+	
+	# Capture feedback info regardless of in_progress flag, as long as we have data
 	var mode_str: String = "bought" if str(current_mode) == "buy" else "sold"
 	var qty: int = int(_pending_tx.get("quantity", 1))
 	var item_name: String = str(_pending_tx.get("item", {}).get("name", "Item"))
 	var total_price: float = abs(float(_pending_tx.get("money_delta", 0.0)))
 	var msg: String = "Successfully %s %d %s for %s" % [mode_str, qty, item_name, NumberFormat.format_money(total_price, "")]
 
-	# Commit this transaction's projection so subsequent authoritative convoy updates
-	# don't reset the bars to an incorrect projected value.
-	if bool(_transaction_in_progress):
+	if has_pending_data:
+		# Optimistically update vendor stock
+		var stock_delta: int = -qty if str(current_mode) == "buy" else qty
+		print("[VendorPanel][DIAG] Triggering optimistic vendor update for '%s' delta %d" % [item_name, stock_delta])
+		_optimistically_update_vendor_stock(item_name, stock_delta)
+		
+		# Ensure projection is committed if it hasn't been yet
 		_commit_projection_from_pending_tx()
+		
+		# Signal that we are done with the transaction part of the UI state
+		_transaction_in_progress = false
+		# We'll clear _pending_tx below after checking authoritative state
 
 	# If the transaction result contains an updated convoy object, apply it immediately
 	# to the UI. This provides faster feedback than waiting for a full refresh cycle.
@@ -1372,7 +1794,9 @@ func _on_api_transaction_result(result: Dictionary) -> void:
 	VendorPanelRefreshController.on_api_transaction_result(self, result)
 	
 	# Show success feedback and flash bars
-	show_transaction_feedback(msg, "success")
+	if has_pending_data:
+		show_transaction_feedback(msg, "success")
+		_clear_pending_tx()
 	_flash_capacity_bars()
 
 	if is_instance_valid(_hub) and _hub.has_signal("user_refresh_requested"):
@@ -1384,15 +1808,9 @@ func _on_api_transaction_error(error_message: String) -> void:
 	var friendly_message: String = ErrorTranslator.translate(error_message)
 	show_transaction_feedback(friendly_message, "error")
 
-# Updates the comparison panel (stub, fill in as needed)
+# Updates the comparison panel (stub, deprecated)
 func _update_comparison() -> void:
-	# Hide comparison for vehicles, as there's nothing to compare against.
-	if selected_item and selected_item.has("item_data") and selected_item.item_data.has("vehicle_id"):
-		if is_instance_valid(comparison_panel):
-			comparison_panel.hide()
-		return
-	
-	# Future: Implement comparison logic for parts, etc.
+	pass
 
 # Clears the inspector panel (stub, fill in as needed)
 func _clear_inspector() -> void:
@@ -1416,12 +1834,18 @@ func _clear_inspector() -> void:
 	_feedback_data = {}
 	
 	# Clear the segmented sections container
-	# Clear the segmented sections container
-	if is_instance_valid(item_info_rich_text):
-		var container: Node = item_info_rich_text.get_parent().get_node_or_null("InfoSectionsContainer")
-		if is_instance_valid(container):
-			for ch in container.get_children():
-				ch.queue_free()
+	var parent_node = item_info_rich_text.get_parent()
+	if not is_instance_valid(parent_node):
+		return
+	
+	# Force top alignment for the container holding segments
+	if parent_node is BoxContainer:
+		parent_node.alignment = BoxContainer.ALIGNMENT_BEGIN
+	
+	var container: Node = parent_node.get_node_or_null("InfoSectionsContainer")
+	if is_instance_valid(container):
+		for ch in container.get_children():
+			ch.queue_free()
 
 # Helper: recompute aggregate convoy cargo stats (not currently used directly; kept for future refactors)
 func _recalculate_convoy_cargo_stats() -> Dictionary:
@@ -1485,10 +1909,10 @@ func _log_size_after_update():
 	if perf_log_enabled:
 		print("[VendorPanel][LOG] _update_inspector finished. New panel size: %s" % str(size))
 
-func _restore_selection(tree: Tree, item_id) -> bool:
+func _restore_selection(tree: Tree, item_id, clear_on_fail: bool = true) -> bool:
 	var on_select := Callable(self, "_handle_new_item_selection")
 	var match_fn := Callable(self, "_matches_restore_key")
-	return VendorSelectionManager.restore_selection(tree, item_id, on_select, match_fn)
+	return VendorSelectionManager.restore_selection(tree, item_id, on_select, match_fn, clear_on_fail)
 
 # Helper function to match by special restore keys
 func _matches_restore_key(agg_data: Dictionary, key: String) -> bool:
@@ -1569,3 +1993,61 @@ func _flash_capacity_bars() -> void:
 		var tw: Tween = create_tween()
 		tw.tween_property(convoy_weight_bar, "modulate", flash_color, duration * 0.3)
 		tw.tween_property(convoy_weight_bar, "modulate", Color.WHITE, duration * 0.7)
+
+func _on_cargo_sort_selected(index: int) -> void:
+	_cargo_sort_metric = index
+	_save_cargo_sort_metric_to_settings(index)
+	
+	if is_instance_valid(cargo_sort_button):
+		var popup = cargo_sort_button.get_popup()
+		for i in range(popup.item_count):
+			popup.set_item_checked(i, i == index)
+
+	_update_cargo_sort_button_text()
+	_populate_vendor_list()
+	_populate_convoy_list()
+
+func _update_cargo_sort_button_text() -> void:
+	if not is_instance_valid(cargo_sort_button):
+		return
+	var sort_names = ["Margin/Unit", "Profit/Weight", "Profit/Volume", "Total Profit", "Distance"]
+	if _cargo_sort_metric >= 0 and _cargo_sort_metric < sort_names.size():
+		cargo_sort_button.text = "Sort: " + sort_names[_cargo_sort_metric] + " ▼"
+	else:
+		cargo_sort_button.text = "Sort ▼"
+
+func get_ui_state() -> Dictionary:
+	var state = {}
+	state["last_selected_tree"] = _last_selected_tree
+	state["last_selected_restore_id"] = _last_selected_restore_id
+	if is_instance_valid(trade_mode_tab_container):
+		state["current_mode_tab"] = trade_mode_tab_container.current_tab
+	print("[DIAGNOSTIC] VendorTradePanel get_ui_state for ", self.name, " returns: ", state)
+	return state
+
+func apply_ui_state(state) -> void:
+	print("[DIAGNOSTIC] VendorTradePanel apply_ui_state called for vendor: ", self.name, " State: ", state)
+	if perf_log_enabled:
+		print("[VendorPanel] apply_ui_state: ", state)
+	if state.has("last_selected_tree"):
+		_last_selected_tree = state["last_selected_tree"]
+	if state.has("last_selected_restore_id"):
+		_last_selected_restore_id = state["last_selected_restore_id"]
+		print("[DIAGNOSTIC] VendorTradePanel _last_selected_restore_id SET to: ", _last_selected_restore_id)
+		
+	if state.has("current_mode_tab") and is_instance_valid(trade_mode_tab_container):
+		var target_tab = state["current_mode_tab"]
+		if target_tab >= 0 and target_tab < trade_mode_tab_container.get_child_count():
+			trade_mode_tab_container.current_tab = target_tab
+			_on_tab_changed(target_tab)
+			
+	# Trigger immediate restoration if data is already present
+	# Do not wipe the restore ID on fail here (pass false), as the full data might still be loading.
+	if _last_selected_restore_id != "":
+		print("[DIAGNOSTIC] VendorTradePanel Attempting immediate restore of ID: ", _last_selected_restore_id, " in tree: ", _last_selected_tree)
+		var success := false
+		if _last_selected_tree == "vendor" and is_instance_valid(vendor_item_tree):
+			success = _restore_selection(vendor_item_tree, _last_selected_restore_id, false)
+		elif _last_selected_tree == "convoy" and is_instance_valid(convoy_item_tree):
+			success = _restore_selection(convoy_item_tree, _last_selected_restore_id, false)
+		print("[DIAGNOSTIC] VendorTradePanel Immediate restore result: ", success)
