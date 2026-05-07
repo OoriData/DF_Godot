@@ -388,7 +388,7 @@ func _animate_menu_switch(old_menu: Control, new_menu: Control, old_type: String
 	var slide_distance = _menu_container_host.size.x if is_instance_valid(_menu_container_host) else 400.0
 
 	# Defer one frame so new menu layout settles before reading position.
-	call_deferred("_start_menu_switch_animation", old_menu, new_menu, direction, slide_distance)
+	call_deferred("_start_menu_switch_animation", old_menu, new_menu, direction, slide_distance, old_type, new_type)
 
 ## Recursively sets MOUSE_FILTER_IGNORE on a node and all descendants.
 ## Used to prevent click-through on the outgoing menu during a transition.
@@ -398,7 +398,7 @@ func _disable_mouse_recursive(node: Node) -> void:
 	for child in node.get_children():
 		_disable_mouse_recursive(child)
 
-func _start_menu_switch_animation(old_menu: Control, new_menu: Control, direction: int, slide_distance: float) -> void:
+func _start_menu_switch_animation(old_menu: Control, new_menu: Control, direction: int, slide_distance: float, old_type: String = "", new_type: String = "") -> void:
 	if not is_instance_valid(new_menu) or not is_instance_valid(old_menu):
 		if is_instance_valid(old_menu): old_menu.queue_free()
 		return
@@ -414,29 +414,70 @@ func _start_menu_switch_animation(old_menu: Control, new_menu: Control, directio
 	if is_instance_valid(new_bg): new_bg.visible = false
 
 	# CRITICAL: Clip the host so only one panel is visible at a time.
-	# This is what makes the slideshow work -- both menus slide as a unit
-	# but the clip rect acts as the "window", showing only whats in frame.
 	if is_instance_valid(_menu_container_host):
 		_menu_container_host.clip_contents = true
 
-	# SLIDESHOW LAYOUT:
+	# --- OVERARCHING MENU LOGIC (Convoy Overview) ---
+	# If we are entering or leaving the Convoy Overview, use a vertical swipe.
+	# "convoy_overview" is treated as a layer "above" the others.
+	var is_vertical := (old_type == "convoy_overview" or new_type == "convoy_overview")
+	
+	if is_vertical:
+		var slide_height = _menu_container_host.size.y if is_instance_valid(_menu_container_host) else 800.0
+		var base_y := old_menu.position.y
+		
+		# Ensure X is consistent
+		new_menu.position.x = old_menu.position.x
+		
+		if new_type == "convoy_overview":
+			# Entering Overview: swipes DOWN from the top (covering the submenu)
+			new_menu.position.y = base_y - slide_height
+			new_menu.modulate.a = 1.0
+			new_menu.move_to_front() 
+			
+			_switch_tween = create_tween()
+			_switch_tween.set_parallel(true)
+			_switch_tween.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+			_switch_tween.tween_property(new_menu, "position:y", base_y, SWITCH_DURATION)
+			# Fade out the background menu slightly
+			_switch_tween.tween_property(old_menu, "modulate:a", 0.0, SWITCH_DURATION * 0.5)
+		else:
+			# Leaving Overview: swipes UP to the top (revealing the submenu)
+			new_menu.position.y = base_y
+			new_menu.modulate.a = 0.0 # Submenu fades in behind
+			old_menu.move_to_front() # Keep Overview on top
+			
+			_switch_tween = create_tween()
+			_switch_tween.set_parallel(true)
+			_switch_tween.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN)
+			_switch_tween.tween_property(old_menu, "position:y", base_y - slide_height, SWITCH_DURATION)
+			_switch_tween.tween_property(new_menu, "modulate:a", 1.0, SWITCH_DURATION)
+			
+		_switch_tween.chain().tween_callback(func():
+			if is_instance_valid(old_menu): old_menu.queue_free()
+			if is_instance_valid(new_menu):
+				new_menu.position.y = base_y
+				new_menu.modulate.a = 1.0
+				var restored_bg = new_menu.get_node_or_null("OoriBackground")
+				if is_instance_valid(restored_bg): restored_bg.visible = true
+		)
+		return
+
+	# --- SLIDESHOW LAYOUT (Submenus) ---
 	# Old menu: currently at its normal position (in frame).
 	# New menu: starts exactly one panel-width to the entry side (out of frame).
-	# Both slide the same distance at the same speed -- like two cards on a rail.
-	# Because they are always separated by slide_distance, they can never overlap.
 	var base_x := old_menu.position.x
 	var old_exit_x := base_x - (direction * slide_distance)
 	var new_start_x := base_x + (direction * slide_distance)
 	var new_target_x := base_x
 
 	new_menu.position.x = new_start_x
-	new_menu.modulate.a = 1.0 # New menu is fully opaque -- no fade needed
+	new_menu.modulate.a = 1.0 
 
 	_switch_tween = create_tween()
 	_switch_tween.set_parallel(true)
 	_switch_tween.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN_OUT)
 
-	# Old slides out, new slides in -- same duration, same easing = true slideshow
 	_switch_tween.tween_property(old_menu, "position:x", old_exit_x, SWITCH_DURATION)
 	_switch_tween.tween_property(new_menu, "position:x", new_target_x, SWITCH_DURATION)
 
@@ -444,7 +485,6 @@ func _start_menu_switch_animation(old_menu: Control, new_menu: Control, directio
 		if is_instance_valid(old_menu): old_menu.queue_free()
 		if is_instance_valid(new_menu):
 			new_menu.position.x = new_target_x
-			# Restore per-menu background once the slide is done
 			var restored_bg = new_menu.get_node_or_null("OoriBackground")
 			if is_instance_valid(restored_bg): restored_bg.visible = true
 	)
