@@ -3,24 +3,24 @@
 This document explains how the **Vendor Trade Panel** works end-to-end, with an emphasis on how its subsystems interact. It is intended to be “reference grade”: when you need to modify behavior later (refresh timing, selection restore, price math, install/compat, etc.), you should be able to find the owning module, its entrypoints, what state it reads/writes, and what other systems it depends on.
 
 Primary implementation file:
-- [Scripts/Menus/vendor_trade_panel.gd](../../Scripts/Menus/vendor_trade_panel.gd)
+- [Scripts/Menus/vendor_trade_panel.gd](../../../Scripts/Menus/vendor_trade_panel.gd)
 
 Primary subsystem modules (controllers/builders):
-- [Scripts/Menus/VendorPanel/vendor_panel_refresh_controller.gd](../../Scripts/Menus/VendorPanel/vendor_panel_refresh_controller.gd)
-- [Scripts/Menus/VendorPanel/vendor_panel_refresh_scheduler_controller.gd](../../Scripts/Menus/VendorPanel/vendor_panel_refresh_scheduler_controller.gd)
-- [Scripts/Menus/VendorPanel/vendor_panel_selection_controller.gd](../../Scripts/Menus/VendorPanel/vendor_panel_selection_controller.gd)
-- [Scripts/Menus/VendorPanel/vendor_panel_transaction_controller.gd](../../Scripts/Menus/VendorPanel/vendor_panel_transaction_controller.gd)
-- [Scripts/Menus/VendorPanel/vendor_panel_compat_controller.gd](../../Scripts/Menus/VendorPanel/vendor_panel_compat_controller.gd)
-- [Scripts/Menus/VendorPanel/vendor_panel_convoy_stats_controller.gd](../../Scripts/Menus/VendorPanel/vendor_panel_convoy_stats_controller.gd)
-- [Scripts/Menus/VendorPanel/vendor_panel_context_controller.gd](../../Scripts/Menus/VendorPanel/vendor_panel_context_controller.gd)
-- [Scripts/Menus/VendorPanel/vendor_panel_inspector_controller.gd](../../Scripts/Menus/VendorPanel/vendor_panel_inspector_controller.gd)
-- [Scripts/Menus/VendorPanel/vendor_panel_vehicle_sell_controller.gd](../../Scripts/Menus/VendorPanel/vendor_panel_vehicle_sell_controller.gd)
-- [Scripts/Menus/VendorPanel/vendor_panel_tutorial_controller.gd](../../Scripts/Menus/VendorPanel/vendor_panel_tutorial_controller.gd)
-- [Scripts/Menus/VendorPanel/cargo_aggregator.gd](../../Scripts/Menus/VendorPanel/cargo_aggregator.gd)
-- [Scripts/Menus/VendorPanel/tree_builder.gd](../../Scripts/Menus/VendorPanel/tree_builder.gd)
-- [Scripts/Menus/VendorPanel/inspector_builder.gd](../../Scripts/Menus/VendorPanel/inspector_builder.gd)
-- [Scripts/Menus/VendorPanel/vendor_trade_vm.gd](../../Scripts/Menus/VendorPanel/vendor_trade_vm.gd)
-- [Scripts/Menus/VendorPanel/selection_manager.gd](../../Scripts/Menus/VendorPanel/selection_manager.gd)
+- [Scripts/Menus/VendorPanel/vendor_panel_refresh_controller.gd](../../../Scripts/Menus/VendorPanel/vendor_panel_refresh_controller.gd)
+- [Scripts/Menus/VendorPanel/vendor_panel_refresh_scheduler_controller.gd](../../../Scripts/Menus/VendorPanel/vendor_panel_refresh_scheduler_controller.gd)
+- [Scripts/Menus/VendorPanel/vendor_panel_selection_controller.gd](../../../Scripts/Menus/VendorPanel/vendor_panel_selection_controller.gd)
+- [Scripts/Menus/VendorPanel/vendor_panel_transaction_controller.gd](../../../Scripts/Menus/VendorPanel/vendor_panel_transaction_controller.gd)
+- [Scripts/Menus/VendorPanel/vendor_panel_compat_controller.gd](../../../Scripts/Menus/VendorPanel/vendor_panel_compat_controller.gd)
+- [Scripts/Menus/VendorPanel/vendor_panel_convoy_stats_controller.gd](../../../Scripts/Menus/VendorPanel/vendor_panel_convoy_stats_controller.gd)
+- [Scripts/Menus/VendorPanel/vendor_panel_context_controller.gd](../../../Scripts/Menus/VendorPanel/vendor_panel_context_controller.gd)
+- [Scripts/Menus/VendorPanel/vendor_panel_inspector_controller.gd](../../../Scripts/Menus/VendorPanel/vendor_panel_inspector_controller.gd)
+- [Scripts/Menus/VendorPanel/vendor_panel_vehicle_sell_controller.gd](../../../Scripts/Menus/VendorPanel/vendor_panel_vehicle_sell_controller.gd)
+- [Scripts/Menus/VendorPanel/vendor_panel_tutorial_controller.gd](../../../Scripts/Menus/VendorPanel/vendor_panel_tutorial_controller.gd)
+- [Scripts/Menus/VendorPanel/cargo_aggregator.gd](../../../Scripts/Menus/VendorPanel/cargo_aggregator.gd)
+- [Scripts/Menus/VendorPanel/tree_builder.gd](../../../Scripts/Menus/VendorPanel/tree_builder.gd)
+- [Scripts/Menus/VendorPanel/inspector_builder.gd](../../../Scripts/Menus/VendorPanel/inspector_builder.gd)
+- [Scripts/Menus/VendorPanel/vendor_trade_vm.gd](../../../Scripts/Menus/VendorPanel/vendor_trade_vm.gd)
+- [Scripts/Menus/VendorPanel/selection_manager.gd](../../../Scripts/Menus/VendorPanel/selection_manager.gd)
 
 Related tests:
 - [Tests/test_vendor_panel_convoy_stats_controller.gd](../../Tests/test_vendor_panel_convoy_stats_controller.gd)
@@ -152,7 +152,7 @@ The panel stores:
 ## Lifecycle: how the panel runs
 
 ### 1) Panel creation and wiring (`_ready`)
-In [Scripts/Menus/vendor_trade_panel.gd](../../Scripts/Menus/vendor_trade_panel.gd):
+In [Scripts/Menus/vendor_trade_panel.gd](../../../Scripts/Menus/vendor_trade_panel.gd):
 
 - Connects UI signals:
 	- `vendor_item_tree.item_selected` → `_on_vendor_item_selected`
@@ -163,7 +163,7 @@ In [Scripts/Menus/vendor_trade_panel.gd](../../Scripts/Menus/vendor_trade_panel.
 	- `action_button.pressed` → `_on_action_button_pressed`
 	- `install_button.pressed` → `_on_install_button_pressed`
 
-> **Mobile note**: `quantity_spinbox` (`%QuantitySpinBox`) is a `QuantityWidget` ([Scripts/UI/quantity_widget.gd](../../Scripts/UI/quantity_widget.gd)), not a `SpinBox`. `QuantityWidget` exposes the same API (`value`, `max_value`, `step`, `value_changed`) but renders large `+`/`-` buttons for touchscreen usability. All controllers access it via the same `quantity_spinbox` reference.
+> **Mobile note**: `quantity_spinbox` (`%QuantitySpinBox`) is a `QuantityWidget` ([Scripts/UI/quantity_widget.gd](../../../Scripts/UI/quantity_widget.gd)), not a `SpinBox`. `QuantityWidget` exposes the same API (`value`, `max_value`, `step`, `value_changed`) but renders large `+`/`-` buttons for touchscreen usability. All controllers access it via the same `quantity_spinbox` reference.
 
 - Discovers services (autoloads) by path:
 	- `/root/GameStore` → `_store`
@@ -227,7 +227,7 @@ Some refreshes are deferred and/or retried:
 ## Inventory trees: aggregation → rendering → selection
 
 ### Aggregation (data → buckets)
-Aggregation happens in [Scripts/Menus/VendorPanel/cargo_aggregator.gd](../../Scripts/Menus/VendorPanel/cargo_aggregator.gd):
+Aggregation happens in [Scripts/Menus/VendorPanel/cargo_aggregator.gd](../../../Scripts/Menus/VendorPanel/cargo_aggregator.gd):
 
 - `VendorCargoAggregator.build_vendor_buckets(vendor_data, perf_log_enabled, get_vendor_name_for_recipient)`
 - `VendorCargoAggregator.build_convoy_buckets(convoy_data, vendor_data, current_mode, perf_log_enabled, get_vendor_name_for_recipient, allow_vehicle_sell)`
@@ -268,7 +268,7 @@ In **SELL** mode, the convoy tree only shows items that the current vendor is al
 	- This rule is enforced both in aggregation (so the row is hidden) and in the transaction controller (so a stale selection can’t dispatch an invalid API call).
 
 ### Rendering (buckets → TreeItems)
-Rendering is handled by [Scripts/Menus/VendorPanel/tree_builder.gd](../../Scripts/Menus/VendorPanel/tree_builder.gd):
+Rendering is handled by [Scripts/Menus/VendorPanel/tree_builder.gd](../../../Scripts/Menus/VendorPanel/tree_builder.gd):
 
 - `VendorTreeBuilder.populate_category(tree, root_item, category_name, agg_dict)`
 - `VendorTreeBuilder.populate_tree_vendor_rows(tree, agg)` (used by `_populate_tree_from_agg` for performance)
@@ -317,7 +317,7 @@ The selection controller:
 	- Otherwise it uses `VendorPanelInspectorController.update_non_vehicle(...)`.
 
 ### Inspector rendering (controller)
-[Scripts/Menus/VendorPanel/vendor_panel_inspector_controller.gd](../../Scripts/Menus/VendorPanel/vendor_panel_inspector_controller.gd) owns the middle-column content:
+[Scripts/Menus/VendorPanel/vendor_panel_inspector_controller.gd](../../../Scripts/Menus/VendorPanel/vendor_panel_inspector_controller.gd) owns the middle-column content:
 
 - `update_non_vehicle(...)`
 	- Sets name, icon visibility
@@ -331,7 +331,7 @@ The selection controller:
 	- Delegates segmented panels to `VendorInspectorBuilder.rebuild_info_sections(...)`
 
 ### Segmented info panels (builder)
-[Scripts/Menus/VendorPanel/inspector_builder.gd](../../Scripts/Menus/VendorPanel/inspector_builder.gd) creates a UI container (`InfoSectionsContainer`) next to the RichTextLabel and populates it with styled `PanelContainer` sections.
+[Scripts/Menus/VendorPanel/inspector_builder.gd](../../../Scripts/Menus/VendorPanel/inspector_builder.gd) creates a UI container (`InfoSectionsContainer`) next to the RichTextLabel and populates it with styled `PanelContainer` sections.
 
 The builder is where most “what do we show?” logic lives:
 - Summary panel (mission destination, vehicle stats, part modifiers)
@@ -348,7 +348,7 @@ This keeps the inspector controller simple and prevents the main panel file from
 ## Transaction system: max quantity, optimistic projection, dispatch
 
 ### Quantity + “Max” button
-[Scripts/Menus/VendorPanel/vendor_panel_transaction_controller.gd](../../Scripts/Menus/VendorPanel/vendor_panel_transaction_controller.gd) owns Max logic.
+[Scripts/Menus/VendorPanel/vendor_panel_transaction_controller.gd](../../../Scripts/Menus/VendorPanel/vendor_panel_transaction_controller.gd) owns Max logic.
 
 `on_max_button_pressed(panel)`:
 - In SELL mode: max is simply the selected aggregate quantity (or resource amount for bulk resources).
@@ -394,7 +394,7 @@ Signals are emitted via tiny wrapper methods (`_emit_item_purchased`, etc.) so c
 
 ## Pricing and presentation: `VendorTradeVM` + `PriceUtil`
 
-[Scripts/Menus/VendorPanel/vendor_trade_vm.gd](../../Scripts/Menus/VendorPanel/vendor_trade_vm.gd) is the panel-facing view-model utility.
+[Scripts/Menus/VendorPanel/vendor_trade_vm.gd](../../../Scripts/Menus/VendorPanel/vendor_trade_vm.gd) is the panel-facing view-model utility.
 
 Use cases:
 - `VendorTradeVM.is_vehicle_item(d)`:
@@ -425,7 +425,7 @@ When a part-like item is selected, the selection controller requests compatibili
 Compatibility results arrive via `APICalls.part_compatibility_checked`.
 
 ### Cache update + install price
-[Scripts/Menus/VendorPanel/vendor_panel_compat_controller.gd](../../Scripts/Menus/VendorPanel/vendor_panel_compat_controller.gd):
+[Scripts/Menus/VendorPanel/vendor_panel_compat_controller.gd](../../../Scripts/Menus/VendorPanel/vendor_panel_compat_controller.gd):
 
 - `on_part_compatibility_ready(panel, payload)` stores:
 	- raw payload into `panel._compat_cache[key]`
@@ -443,7 +443,7 @@ Important: install itself is not performed by the vendor panel; it delegates to 
 
 This subsystem is isolated because it had historically buggy/flaky math paths.
 
-[Scripts/Menus/VendorPanel/vendor_panel_convoy_stats_controller.gd](../../Scripts/Menus/VendorPanel/vendor_panel_convoy_stats_controller.gd):
+[Scripts/Menus/VendorPanel/vendor_panel_convoy_stats_controller.gd](../../../Scripts/Menus/VendorPanel/vendor_panel_convoy_stats_controller.gd):
 
 ### `update_convoy_info_display(panel)`
 Responsibilities:
@@ -480,7 +480,7 @@ Responsibilities:
 
 ## Vendor/settlement context and name resolution
 
-[Scripts/Menus/VendorPanel/vendor_panel_context_controller.gd](../../Scripts/Menus/VendorPanel/vendor_panel_context_controller.gd) centralizes “where is this vendor / what is this vendor named?” logic.
+[Scripts/Menus/VendorPanel/vendor_panel_context_controller.gd](../../../Scripts/Menus/VendorPanel/vendor_panel_context_controller.gd) centralizes “where is this vendor / what is this vendor named?” logic.
 
 ### Settlements snapshot ingestion
 `set_latest_settlements_snapshot(panel, settlements)`:
@@ -505,7 +505,7 @@ When `SignalHub.vendor_preview_ready` arrives, the panel caches vendor name via 
 
 When selling, the convoy tree can optionally include a **Vehicles** category for selling vehicles.
 
-[Scripts/Menus/VendorPanel/vendor_panel_vehicle_sell_controller.gd](../../Scripts/Menus/VendorPanel/vendor_panel_vehicle_sell_controller.gd):
+[Scripts/Menus/VendorPanel/vendor_panel_vehicle_sell_controller.gd](../../../Scripts/Menus/VendorPanel/vendor_panel_vehicle_sell_controller.gd):
 
 - `should_show_vehicle_sell_category(panel)`:
 	- true only in SELL mode
@@ -526,7 +526,7 @@ This logic is deliberately separated so BUY mode aggregation stays simple and SE
 The panel exposes a small API used by tutorial/highlight code.
 Those helpers are isolated in:
 
-- [Scripts/Menus/VendorPanel/vendor_panel_tutorial_controller.gd](../../Scripts/Menus/VendorPanel/vendor_panel_tutorial_controller.gd)
+- [Scripts/Menus/VendorPanel/vendor_panel_tutorial_controller.gd](../../../Scripts/Menus/VendorPanel/vendor_panel_tutorial_controller.gd)
 
 Functions:
 - `get_action_button_node(panel)` → returns the Buy/Sell button
@@ -608,11 +608,11 @@ For math-heavy or schema-tolerant logic (like convoy capacity and fallbacks), pr
 Use this section as a “pre-flight / post-flight” checklist when changing vendor panel behavior. It is biased toward catching the kinds of regressions this panel historically hit: selection flicker, duplicate rows, stale caches, and schema drift.
 
 ### Before you change anything
-- Identify the owning subsystem first (see “Where to change behavior”). Avoid adding new logic to [Scripts/Menus/vendor_trade_panel.gd](../../Scripts/Menus/vendor_trade_panel.gd) unless it’s pure wiring.
+- Identify the owning subsystem first (see “Where to change behavior”). Avoid adding new logic to [Scripts/Menus/vendor_trade_panel.gd](../../../Scripts/Menus/vendor_trade_panel.gd) unless it’s pure wiring.
 - Confirm which snapshot fields you are relying on (vendor vs convoy). If you’re reading a “maybe present” key, plan a fallback.
 
 ### Refresh changes (timing, debouncing, flicker)
-- Update logic in [Scripts/Menus/VendorPanel/vendor_panel_refresh_controller.gd](../../Scripts/Menus/VendorPanel/vendor_panel_refresh_controller.gd) and/or [Scripts/Menus/VendorPanel/vendor_panel_refresh_scheduler_controller.gd](../../Scripts/Menus/VendorPanel/vendor_panel_refresh_scheduler_controller.gd), not in the panel.
+- Update logic in [Scripts/Menus/VendorPanel/vendor_panel_refresh_controller.gd](../../../Scripts/Menus/VendorPanel/vendor_panel_refresh_controller.gd) and/or [Scripts/Menus/VendorPanel/vendor_panel_refresh_scheduler_controller.gd](../../../Scripts/Menus/VendorPanel/vendor_panel_refresh_scheduler_controller.gd), not in the panel.
 - Preserve the “atomic rebuild” sequence:
 	- disconnect tree selection signals
 	- rebuild trees + convoy stats
@@ -627,7 +627,7 @@ Use this section as a “pre-flight / post-flight” checklist when changing ven
 	- verify selection does not drop during rapid buy/sell clicks
 
 ### Selection / restore changes
-- All selection handling should remain in [Scripts/Menus/VendorPanel/vendor_panel_selection_controller.gd](../../Scripts/Menus/VendorPanel/vendor_panel_selection_controller.gd).
+- All selection handling should remain in [Scripts/Menus/VendorPanel/vendor_panel_selection_controller.gd](../../../Scripts/Menus/VendorPanel/vendor_panel_selection_controller.gd).
 - If you add a new kind of row identity:
 	- extend `handle_new_item_selection` to produce a stable unique key
 	- extend panel `_matches_restore_key` logic (used by restore)
@@ -637,16 +637,16 @@ Use this section as a “pre-flight / post-flight” checklist when changing ven
 	- confirm quantity resets only when the semantic selection changes
 
 ### Aggregation / duplicate row changes
-- Adjust bucketing/keying only in [Scripts/Menus/VendorPanel/cargo_aggregator.gd](../../Scripts/Menus/VendorPanel/cargo_aggregator.gd).
+- Adjust bucketing/keying only in [Scripts/Menus/VendorPanel/cargo_aggregator.gd](../../../Scripts/Menus/VendorPanel/cargo_aggregator.gd).
 - When changing convoy aggregation, ensure grouped rows share a stable `stable_key` and that it remains deterministic across refreshes.
-- If you change category placement (missions/parts/etc.), ensure [Scripts/Menus/VendorPanel/tree_builder.gd](../../Scripts/Menus/VendorPanel/tree_builder.gd) still renders it correctly and metadata contracts remain unchanged.
+- If you change category placement (missions/parts/etc.), ensure [Scripts/Menus/VendorPanel/tree_builder.gd](../../../Scripts/Menus/VendorPanel/tree_builder.gd) still renders it correctly and metadata contracts remain unchanged.
 - Validation:
 	- confirm convoy tree does not show duplicate logical items
 	- confirm tooltips (locations/destination) still appear when expected
 
 ### Transaction changes (max quantity, projection, dispatch)
-- Update constraints/dispatch in [Scripts/Menus/VendorPanel/vendor_panel_transaction_controller.gd](../../Scripts/Menus/VendorPanel/vendor_panel_transaction_controller.gd).
-- If you modify price math, do it in [Scripts/Menus/VendorPanel/vendor_trade_vm.gd](../../Scripts/Menus/VendorPanel/vendor_trade_vm.gd) or the underlying `PriceUtil` (not in the controller).
+- Update constraints/dispatch in [Scripts/Menus/VendorPanel/vendor_panel_transaction_controller.gd](../../../Scripts/Menus/VendorPanel/vendor_panel_transaction_controller.gd).
+- If you modify price math, do it in [Scripts/Menus/VendorPanel/vendor_trade_vm.gd](../../../Scripts/Menus/VendorPanel/vendor_trade_vm.gd) or the underlying `PriceUtil` (not in the controller).
 - Preserve optimistic projection semantics:
 	- set `_transaction_in_progress`
 	- compute and store `_pending_tx` deltas
@@ -657,7 +657,7 @@ Use this section as a “pre-flight / post-flight” checklist when changing ven
 	- simulate error and confirm projection is reverted
 
 ### Compatibility / install changes
-- Install visibility rules live in [Scripts/Menus/VendorPanel/vendor_panel_compat_controller.gd](../../Scripts/Menus/VendorPanel/vendor_panel_compat_controller.gd) and `CompatAdapter`.
+- Install visibility rules live in [Scripts/Menus/VendorPanel/vendor_panel_compat_controller.gd](../../../Scripts/Menus/VendorPanel/vendor_panel_compat_controller.gd) and `CompatAdapter`.
 - If you change compat key semantics, update both:
 	- selection-time compatibility requests (selection controller)
 	- payload caching (`on_part_compatibility_ready`)
@@ -666,7 +666,7 @@ Use this section as a “pre-flight / post-flight” checklist when changing ven
 	- confirm install button visibility matches Buy mode and selection type
 
 ### Convoy stats / capacity math changes
-- Keep math and fallbacks in [Scripts/Menus/VendorPanel/vendor_panel_convoy_stats_controller.gd](../../Scripts/Menus/VendorPanel/vendor_panel_convoy_stats_controller.gd).
+- Keep math and fallbacks in [Scripts/Menus/VendorPanel/vendor_panel_convoy_stats_controller.gd](../../../Scripts/Menus/VendorPanel/vendor_panel_convoy_stats_controller.gd).
 - If you add new schema keys, add them as additional fallbacks (don’t remove old keys unless the backend schema is fully migrated).
 - Update/extend tests in [Tests/test_vendor_panel_convoy_stats_controller.gd](../../Tests/test_vendor_panel_convoy_stats_controller.gd).
 - Validation:
@@ -674,14 +674,14 @@ Use this section as a “pre-flight / post-flight” checklist when changing ven
 	- test over-capacity conditions: values clamp and colors match thresholds
 
 ### Inspector content changes
-- Non-vehicle orchestration belongs in [Scripts/Menus/VendorPanel/vendor_panel_inspector_controller.gd](../../Scripts/Menus/VendorPanel/vendor_panel_inspector_controller.gd).
-- Section layout and per-type display rules belong in [Scripts/Menus/VendorPanel/inspector_builder.gd](../../Scripts/Menus/VendorPanel/inspector_builder.gd).
+- Non-vehicle orchestration belongs in [Scripts/Menus/VendorPanel/vendor_panel_inspector_controller.gd](../../../Scripts/Menus/VendorPanel/vendor_panel_inspector_controller.gd).
+- Section layout and per-type display rules belong in [Scripts/Menus/VendorPanel/inspector_builder.gd](../../../Scripts/Menus/VendorPanel/inspector_builder.gd).
 - Validation:
 	- check vehicle vs non-vehicle paths
 	- confirm fitment/compat section reflects cache contents
 
 ### Tutorial API changes
-- Keep tutorial-facing methods stable in the panel, but implement details in [Scripts/Menus/VendorPanel/vendor_panel_tutorial_controller.gd](../../Scripts/Menus/VendorPanel/vendor_panel_tutorial_controller.gd).
+- Keep tutorial-facing methods stable in the panel, but implement details in [Scripts/Menus/VendorPanel/vendor_panel_tutorial_controller.gd](../../../Scripts/Menus/VendorPanel/vendor_panel_tutorial_controller.gd).
 - Validation:
 	- tutorial highlight rects still resolve even when categories are collapsed
 
