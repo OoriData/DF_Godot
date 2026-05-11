@@ -430,7 +430,7 @@ func initialize_with_data(data_or_id: Variant, extra_arg: Variant = null) -> voi
 			if _selected_vehicle_id != "":
 				for idx in range(vehicle_option_button.get_item_count()):
 					var meta = vehicle_option_button.get_item_metadata(idx)
-					if String(meta) == _selected_vehicle_id:
+					if str(meta) == _selected_vehicle_id:
 						target_index = idx
 						break
 			if vehicle_option_button.get_item_count() > 0:
@@ -455,7 +455,7 @@ func initialize_with_data(data_or_id: Variant, extra_arg: Variant = null) -> voi
 		if is_instance_valid(vehicle_option_button):
 			for idx in range(vehicle_option_button.get_item_count()):
 				var meta = vehicle_option_button.get_item_metadata(idx)
-				if String(meta) == _selected_vehicle_id:
+				if str(meta) == _selected_vehicle_id:
 					vehicle_option_button.select(idx)
 					_on_vehicle_selected(idx)
 					break
@@ -507,7 +507,7 @@ func _update_ui(convoy: Dictionary) -> void:
 			if _selected_vehicle_id != "":
 				for idx in range(vehicle_option_button.get_item_count()):
 					var meta = vehicle_option_button.get_item_metadata(idx)
-					if String(meta) == _selected_vehicle_id:
+					if str(meta) == _selected_vehicle_id:
 						target_index = idx
 						break
 			if vehicle_option_button.get_item_count() > 0:
@@ -1714,7 +1714,7 @@ func apply_ui_state(state: Dictionary) -> void:
 		if is_instance_valid(vehicle_option_button):
 			for idx in range(vehicle_option_button.get_item_count()):
 				var meta = vehicle_option_button.get_item_metadata(idx)
-				if String(meta) == _selected_vehicle_id:
+				if str(meta) == _selected_vehicle_id:
 					vehicle_option_button.select(idx)
 					_on_vehicle_selected(idx)
 					break

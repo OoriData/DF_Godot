@@ -56,9 +56,158 @@ signal menu_visibility_changed(is_open: bool, menu_name: String)
 ## NEW: Emitted with convoy_data when opening a convoy-related menu.
 signal convoy_menu_focus_requested(convoy_data: Dictionary)
 
+var _menu_wrapper: VBoxContainer = null
+var _menu_content_area: Control = null
+var _static_bottom_nav: PanelContainer = null
+var _nav_hbox: HFlowContainer = null
+var _nav_buttons: Dictionary = {} # menu_type -> Button
+
 func register_menu_container(container: Control):
 	_menu_container_host = container
 	print("[MenuManager] Successfully registered menu container: ", container.name)
+	
+	# Setup the static hierarchy
+	if is_instance_valid(_menu_wrapper):
+		_menu_wrapper.queue_free()
+	
+	_menu_wrapper = VBoxContainer.new()
+	_menu_wrapper.name = "MenuWrapperVBox"
+	_menu_wrapper.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_menu_wrapper.add_theme_constant_override("separation", 0)
+	_menu_container_host.add_child(_menu_wrapper)
+	
+	_menu_content_area = Control.new()
+	_menu_content_area.name = "MenuContentArea"
+	_menu_content_area.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_menu_content_area.clip_contents = true
+	_menu_wrapper.add_child(_menu_content_area)
+	
+	_setup_static_bottom_nav()
+
+func _setup_static_bottom_nav():
+	_static_bottom_nav = PanelContainer.new()
+	_static_bottom_nav.name = "StaticBottomNav"
+	_static_bottom_nav.visible = false
+	_menu_wrapper.add_child(_static_bottom_nav)
+	
+	# Base styling (matching MenuBase logic)
+	var bar_style = StyleBoxFlat.new()
+	bar_style.bg_color = Color(0.18, 0.18, 0.18, 0.95)
+	bar_style.corner_radius_top_left = 6
+	bar_style.corner_radius_top_right = 6
+	bar_style.border_width_top = 1
+	bar_style.border_color = Color(0.28, 0.28, 0.28)
+	_static_bottom_nav.add_theme_stylebox_override("panel", bar_style)
+	
+	_nav_hbox = HFlowContainer.new()
+	_nav_hbox.name = "NavButtonsHBox"
+	_nav_hbox.add_theme_constant_override("h_separation", 10)
+	_nav_hbox.add_theme_constant_override("v_separation", 10)
+	_nav_hbox.alignment = FlowContainer.ALIGNMENT_CENTER
+	_static_bottom_nav.add_child(_nav_hbox)
+	
+	var btn_configs = [
+		{"name": "VehicleMenuButton", "text": "Vehicles", "signal": "open_vehicle_menu_requested", "type": "convoy_vehicle_submenu"},
+		{"name": "JourneyMenuButton", "text": "Journey", "signal": "open_journey_menu_requested", "type": "convoy_journey_submenu"},
+		{"name": "SettlementMenuButton", "text": "Settlement", "signal": "open_settlement_menu_requested", "type": "convoy_settlement_submenu"},
+		{"name": "CargoMenuButton", "text": "Cargo", "signal": "open_cargo_menu_requested", "type": "convoy_cargo_submenu"}
+	]
+	
+	for config in btn_configs:
+		var btn = Button.new()
+		btn.name = config["name"]
+		btn.text = config["text"]
+		btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		btn.pressed.connect(func():
+			var data = {}
+			if is_instance_valid(current_active_menu) and current_active_menu.has_meta("menu_data"):
+				data = current_active_menu.get_meta("menu_data")
+			
+			# If already on this menu, go back to overview (matches legacy behavior)
+			if current_active_menu and current_active_menu.get_meta("menu_type") == config["type"]:
+				open_convoy_menu(data)
+			else:
+				# Call the respective open function
+				match config["type"]:
+					"convoy_vehicle_submenu": open_convoy_vehicle_menu(data)
+					"convoy_journey_submenu": open_journey_journey_menu_if_available(data)
+					"convoy_settlement_submenu": open_convoy_settlement_menu(data)
+					"convoy_cargo_submenu": open_convoy_cargo_menu(data)
+		)
+		_nav_hbox.add_child(btn)
+		_nav_buttons[config["type"]] = btn
+
+func open_journey_journey_menu_if_available(data):
+	open_convoy_journey_menu(data)
+
+func _update_static_nav_bar_ui(active_type: String):
+	if not is_instance_valid(_static_bottom_nav): return
+	
+	var is_convoy_submenu = active_type in ["convoy_overview", "convoy_vehicle_submenu", "convoy_journey_submenu", "convoy_cargo_submenu", "convoy_settlement_submenu"]
+	_static_bottom_nav.visible = is_convoy_submenu
+	
+	if not is_convoy_submenu: return
+	
+	# Update layout based on device
+	var dsm = get_node_or_null("/root/DeviceStateManager")
+	var is_portrait = dsm.get_is_portrait() if is_instance_valid(dsm) else false
+	var use_mobile = dsm.is_mobile if is_instance_valid(dsm) else false
+	
+	var bar_margin := 14.0 if is_portrait else (6.0 if use_mobile else 0.0)
+	var style = _static_bottom_nav.get_theme_stylebox("panel")
+	style.content_margin_top = bar_margin
+	style.content_margin_bottom = bar_margin
+	style.content_margin_left = bar_margin
+	style.content_margin_right = bar_margin
+	
+	var btn_min_h := 140.0 if is_portrait else (85.0 if use_mobile else 50.0)
+	var base_font_size: int = 28 if is_portrait else 18
+	var font_size: int = dsm.get_scaled_base_font_size(base_font_size) if is_instance_valid(dsm) else base_font_size
+	
+	for type in _nav_buttons:
+		var btn = _nav_buttons[type]
+		btn.custom_minimum_size = Vector2(110, btn_min_h)
+		btn.add_theme_font_size_override("font_size", font_size)
+		
+		var is_active = (active_type == type)
+		_style_nav_button(btn, is_active, use_mobile)
+
+func _style_nav_button(btn: Button, is_active: bool, use_mobile: bool):
+	var corner_r := 6 if use_mobile else 4
+	var v_pad := 8.0 if use_mobile else 4.0
+	var COLOR_BG := Color("b0b0b0")
+	var COLOR_FONT := Color("000000")
+	
+	var sb_normal := StyleBoxFlat.new()
+	if is_active:
+		sb_normal.bg_color = Color(0.72, 0.72, 0.65) # subtle yellow
+	else:
+		sb_normal.bg_color = COLOR_BG
+		
+	sb_normal.corner_radius_top_left = corner_r
+	sb_normal.corner_radius_top_right = corner_r
+	sb_normal.corner_radius_bottom_left = corner_r
+	sb_normal.corner_radius_bottom_right = corner_r
+	sb_normal.border_width_left = 1
+	sb_normal.border_width_right = 1
+	sb_normal.border_width_top = 1
+	sb_normal.border_width_bottom = 3 if is_active else 1
+	sb_normal.border_color = Color(0.85, 0.75, 0.2, 0.9) if is_active else COLOR_FONT.darkened(0.2)
+	sb_normal.shadow_size = 4
+	sb_normal.shadow_color = Color(0, 0, 0, 0.4)
+	sb_normal.content_margin_top = v_pad
+	sb_normal.content_margin_bottom = v_pad
+	
+	btn.add_theme_stylebox_override("normal", sb_normal)
+	btn.add_theme_color_override("font_color", COLOR_FONT)
+	# ... other states ...
+	var sb_hover = sb_normal.duplicate()
+	sb_hover.bg_color = sb_normal.bg_color.lightened(0.1)
+	btn.add_theme_stylebox_override("hover", sb_hover)
+	
+	var sb_pressed = sb_normal.duplicate()
+	sb_pressed.bg_color = sb_normal.bg_color.darkened(0.15)
+	btn.add_theme_stylebox_override("pressed", sb_pressed)
 
 func _ready():
 	# Initially, no menu is shown. Hide MenuManager so it does not block input.
@@ -155,7 +304,7 @@ func open_convoy_cargo_menu(convoy_data = null):
 		_show_menu(convoy_cargo_menu_scene, {"vehicle_details_list": [], "convoy_name": "Unknown Convoy"})
 		return
 
-	print("MenuManager: open_convoy_cargo_menu called. Original Convoy Data Keys: ", convoy_data.keys())
+	print("MenuManager: open_convoy_cargo_menu called. Data: ", convoy_data.keys() if convoy_data is Dictionary else convoy_data)
 	var arg = _extract_convoy_id_or_passthrough(convoy_data)
 	_show_menu(convoy_cargo_menu_scene, arg)
 
@@ -291,10 +440,13 @@ func _show_menu(menu_scene_resource, data_to_pass = null, add_to_stack: bool = t
 		return
 
 	# Add to tree (re-parent if coming from cache; regular add_child if new)
+	var host = _menu_content_area if is_instance_valid(_menu_content_area) else _menu_container_host
 	if not current_active_menu.is_inside_tree():
-		_menu_container_host.add_child(current_active_menu)
-	elif current_active_menu.get_parent() != _menu_container_host:
-		current_active_menu.reparent(_menu_container_host)
+		host.add_child(current_active_menu)
+	elif current_active_menu.get_parent() != host:
+		current_active_menu.reparent(host)
+	
+	_update_static_nav_bar_ui(menu_type)
 
 	# Only the menu panel itself should block input, not the entire MenuManager
 	if current_active_menu is Control:
@@ -359,39 +511,8 @@ func _show_menu(menu_scene_resource, data_to_pass = null, add_to_stack: bool = t
 			if not was_visible:
 				emit_signal("menu_visibility_changed", true, "convoy_menu")
 			
-			var is_portrait = false
-			var dsm = get_node_or_null("/root/DeviceStateManager")
-			if is_instance_valid(dsm) and dsm.has_method("get_is_portrait"):
-				is_portrait = dsm.get_is_portrait()
-			else:
-				var win_size = get_viewport_rect().size
-				is_portrait = win_size.y > win_size.x
-				
-			menu_node_control.anchor_left = 0.0 if is_portrait else 1.0 / 3.0
-			menu_node_control.anchor_right = 1.0
-			menu_node_control.anchor_top = 0.0
-			menu_node_control.anchor_bottom = 1.0
-			menu_node_control.offset_left = 0
-			menu_node_control.offset_right = 0
+			menu_node_control.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 			menu_node_control.offset_top = top_margin
-			menu_node_control.offset_bottom = 0
-		elif false:
-			var menu_size = menu_node_control.custom_minimum_size
-			if menu_size.x == 0 or menu_size.y == 0:
-				menu_node_control.update_minimum_size()
-				menu_size = menu_node_control.get_combined_minimum_size()
-				if menu_size.x == 0 or menu_size.y == 0:
-					printerr("MenuManager: ConvoyMenu's size could not be determined (custom_minimum_size and get_combined_minimum_size are zero). Using fallback size (300, 400). This may lead to incorrect layout. Please set custom_minimum_size in ConvoyMenu.tscn or ensure its content defines a size.")
-					if menu_size.x == 0: menu_size.x = 300
-					if menu_size.y == 0: menu_size.y = 400
-			menu_node_control.anchor_left = 1.0
-			menu_node_control.anchor_right = 1.0
-			menu_node_control.anchor_top = 0.5
-			menu_node_control.anchor_bottom = 0.5
-			menu_node_control.offset_left = -menu_size.x
-			menu_node_control.offset_right = 0
-			menu_node_control.offset_top = -menu_size.y / 2.0 + top_margin / 2.0
-			menu_node_control.offset_bottom = menu_size.y / 2.0 + top_margin / 2.0
 		else:
 			menu_node_control.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 			menu_node_control.offset_top = top_margin
@@ -402,9 +523,9 @@ func _show_menu(menu_scene_resource, data_to_pass = null, add_to_stack: bool = t
 		if use_convoy_style_layout and old_menu.get_meta("menu_type", "default") in MENU_ORDER and menu_type in MENU_ORDER:
 			_animate_menu_switch(old_menu, current_active_menu, old_menu_type, menu_type, old_is_persistent)
 		else:
-			if old_is_persistent and is_instance_valid(_menu_container_host):
+			if old_is_persistent and is_instance_valid(host):
 				print("[MenuManager] Detaching persistent old menu: ", old_menu.name)
-				_menu_container_host.remove_child(old_menu)
+				host.remove_child(old_menu)
 			else:
 				print("[MenuManager] Freeing non-persistent old menu: ", old_menu.name)
 				old_menu.queue_free()
@@ -479,7 +600,7 @@ func _animate_menu_switch(old_menu: Control, new_menu: Control, old_type: String
 	var direction = 1 if new_idx > old_idx else -1
 	if new_idx == old_idx: direction = 1
 
-	var slide_distance = _menu_container_host.size.x if is_instance_valid(_menu_container_host) else 400.0
+	var slide_distance = _menu_content_area.size.x if is_instance_valid(_menu_content_area) else 400.0
 
 	# Defer one frame so new menu layout settles before reading position.
 	call_deferred("_start_menu_switch_animation", old_menu, new_menu, direction, slide_distance, old_type, new_type, old_is_persistent)
@@ -505,10 +626,12 @@ func _restore_mouse_recursive(node: Node) -> void:
 		_restore_mouse_recursive(child)
 
 func _start_menu_switch_animation(old_menu: Control, new_menu: Control, direction: int, slide_distance: float, old_type: String = "", new_type: String = "", old_is_persistent: bool = false) -> void:
+	var host = _menu_content_area if is_instance_valid(_menu_content_area) else _menu_container_host
+	
 	if not is_instance_valid(new_menu) or not is_instance_valid(old_menu):
 		if is_instance_valid(old_menu):
-			if old_is_persistent and is_instance_valid(_menu_container_host):
-				_menu_container_host.remove_child(old_menu)
+			if old_is_persistent and is_instance_valid(host):
+				host.remove_child(old_menu)
 			else:
 				old_menu.queue_free()
 		return
@@ -524,8 +647,8 @@ func _start_menu_switch_animation(old_menu: Control, new_menu: Control, directio
 	if is_instance_valid(new_bg): new_bg.visible = false
 
 	# CRITICAL: Clip the host so only one panel is visible at a time.
-	if is_instance_valid(_menu_container_host):
-		_menu_container_host.clip_contents = true
+	if is_instance_valid(host):
+		host.clip_contents = true
 
 	# --- OVERARCHING MENU LOGIC (Convoy Overview) ---
 	# If we are entering or leaving the Convoy Overview, use a vertical swipe.
@@ -533,7 +656,7 @@ func _start_menu_switch_animation(old_menu: Control, new_menu: Control, directio
 	var is_vertical := (old_type == "convoy_overview" or new_type == "convoy_overview")
 	
 	if is_vertical:
-		var slide_height = _menu_container_host.size.y if is_instance_valid(_menu_container_host) else 800.0
+		var slide_height = host.size.y if is_instance_valid(host) else 800.0
 		var base_y := old_menu.position.y
 		
 		# Ensure X is consistent
@@ -565,9 +688,9 @@ func _start_menu_switch_animation(old_menu: Control, new_menu: Control, directio
 			
 		_switch_tween.chain().tween_callback(func():
 			if is_instance_valid(old_menu):
-				if old_is_persistent and is_instance_valid(_menu_container_host):
+				if old_is_persistent and is_instance_valid(host):
 					print("[MenuManager] Animation finished: Detaching persistent old menu: ", old_menu.name)
-					_menu_container_host.remove_child(old_menu)
+					host.remove_child(old_menu)
 				else:
 					print("[MenuManager] Animation finished: Freeing non-persistent old menu: ", old_menu.name)
 					old_menu.queue_free()
@@ -599,9 +722,9 @@ func _start_menu_switch_animation(old_menu: Control, new_menu: Control, directio
 
 	_switch_tween.chain().tween_callback(func():
 		if is_instance_valid(old_menu):
-			if old_is_persistent and is_instance_valid(_menu_container_host):
+			if old_is_persistent and is_instance_valid(host):
 				print("[MenuManager] Animation finished: Detaching persistent old menu: ", old_menu.name)
-				_menu_container_host.remove_child(old_menu)
+				host.remove_child(old_menu)
 			else:
 				print("[MenuManager] Animation finished: Freeing non-persistent old menu: ", old_menu.name)
 				old_menu.queue_free()
@@ -643,6 +766,7 @@ func go_back():
 		# Deselect any globally selected convoy so the user isn't forced to click again to clear it.
 		_request_clear_selection()
 		emit_signal("menu_visibility_changed", false, "")
+		_update_static_nav_bar_ui("")
 		visible = false
 		return
 
@@ -661,6 +785,7 @@ func go_back():
 		# We're closing the last open menu. Clear convoy selection to remove the highlight in the convoy list.
 		_request_clear_selection()
 		emit_signal("menu_visibility_changed", false, "")
+		_update_static_nav_bar_ui("")
 		visible = false
 		return
 

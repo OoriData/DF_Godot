@@ -94,11 +94,11 @@ var all_cargo_label: Label = null
 @onready var journey_progress_label: Label = $MainVBox/ScrollContainer/ContentVBox/VendorPreviewPanel/VendorPreviewVBox/VendorContentPanel/VendorContentScroll/ContentWrapper/JourneyInfoVBox/JourneyProgressControl/JourneyProgressLabel
 @onready var journey_eta_label: Label = $MainVBox/ScrollContainer/ContentVBox/VendorPreviewPanel/VendorPreviewVBox/VendorContentPanel/VendorContentScroll/ContentWrapper/JourneyInfoVBox/JourneyETALabel
 
-# --- Placeholder Menu Buttons ---
-@onready var vehicle_menu_button: Button = $MainVBox/BottomBarPanel/BottomMenuButtonsHBox/VehicleMenuButton
-@onready var journey_menu_button: Button = $MainVBox/BottomBarPanel/BottomMenuButtonsHBox/JourneyMenuButton
-@onready var settlement_menu_button: Button = $MainVBox/BottomBarPanel/BottomMenuButtonsHBox/SettlementMenuButton
-@onready var cargo_menu_button: Button = $MainVBox/BottomBarPanel/BottomMenuButtonsHBox/CargoMenuButton
+# --- Placeholder Menu Buttons (Deprecated - now handled by MenuManager) ---
+@onready var vehicle_menu_button: Button = get_node_or_null("MainVBox/BottomBarPanel/BottomMenuButtonsHBox/VehicleMenuButton")
+@onready var journey_menu_button: Button = get_node_or_null("MainVBox/BottomBarPanel/BottomMenuButtonsHBox/JourneyMenuButton")
+@onready var settlement_menu_button: Button = get_node_or_null("MainVBox/BottomBarPanel/BottomMenuButtonsHBox/SettlementMenuButton")
+@onready var cargo_menu_button: Button = get_node_or_null("MainVBox/BottomBarPanel/BottomMenuButtonsHBox/CargoMenuButton")
 
 # --- Deep-link navigation from Settlement Preview buttons ---
 # Used by MenuManager to open destination menu with a focus intent via extra_arg.
@@ -330,28 +330,7 @@ func _ready():
 			if tabs_hbox:
 				preview_vbox.add_child(sort_dropdown_container)
 				preview_vbox.move_child(sort_dropdown_container, tabs_hbox.get_index() + 1)
-
-
-	# Style bottom bar panel if present
-	var bottom_panel := $MainVBox/BottomBarPanel if has_node("MainVBox/BottomBarPanel") else null
-	if is_instance_valid(bottom_panel):
-		var bar_style := StyleBoxFlat.new()
-		bar_style.bg_color = Color(0.18, 0.18, 0.18, 0.85)
-		bar_style.corner_radius_top_left = 6
-		bar_style.corner_radius_top_right = 6
-		bar_style.border_width_top = 1
-		bar_style.border_color = Color(0.28, 0.28, 0.28)
-		if _is_mobile():
-			bar_style.content_margin_top = 6.0
-			bar_style.content_margin_bottom = 6.0
-			bar_style.content_margin_left = 6.0
-			bar_style.content_margin_right = 6.0
-			# Also make the HBox inside fill edge-to-edge on mobile
-			var hbox := bottom_panel.get_node_or_null("BottomMenuButtonsHBox")
-			if is_instance_valid(hbox):
-				hbox.alignment = BoxContainer.ALIGNMENT_BEGIN
-				hbox.add_theme_constant_override("separation", 4)
-		bottom_panel.add_theme_stylebox_override("panel", bar_style)
+	# Bottom bar styling is now handled by MenuManager
 
 	# Style vendor preview panel if present
 	var vendor_preview_panel := $MainVBox/ScrollContainer/ContentVBox/VendorPreviewPanel if has_node("MainVBox/ScrollContainer/ContentVBox/VendorPreviewPanel") else null
@@ -418,19 +397,7 @@ func _ready():
 			if _debug_convoy_menu:
 				print("[ConvoyMenu][Debug] pre-cached settlements count=", _latest_all_settlements.size())
 
-	# Connect placeholder menu buttons
-	if is_instance_valid(vehicle_menu_button):
-		if not vehicle_menu_button.is_connected("pressed", Callable(self, "_on_vehicle_menu_button_pressed")):
-			vehicle_menu_button.pressed.connect(_on_vehicle_menu_button_pressed)
-	if is_instance_valid(journey_menu_button):
-		if not journey_menu_button.is_connected("pressed", Callable(self, "_on_journey_menu_button_pressed")):
-			journey_menu_button.pressed.connect(_on_journey_menu_button_pressed)
-	if is_instance_valid(settlement_menu_button):
-		if not settlement_menu_button.is_connected("pressed", Callable(self, "_on_settlement_menu_button_pressed")):
-			settlement_menu_button.pressed.connect(_on_settlement_menu_button_pressed)
-	if is_instance_valid(cargo_menu_button):
-		if not cargo_menu_button.is_connected("pressed", Callable(self, "_on_cargo_menu_button_pressed")):
-			cargo_menu_button.pressed.connect(_on_cargo_menu_button_pressed)
+	# Placeholder menu button connections are now handled by MenuManager
 
 	# Connect vendor preview tab buttons
 	if is_instance_valid(convoy_missions_tab_button):
