@@ -5,9 +5,9 @@ This section covers the core simulation and gameplay mechanics of *Desolate Fron
 ## Key Systems
 - [**Game Lifecycle**](GameLifecycle.md): Visualized state machines for Auth, Journeys, and Mechanics.
 - [**Items & Missions**](ItemsAndMissions.md): Unified item model and mission detection logic.
-- [**Map System**](README.md): Tile rendering, camera control, and settlement management.
+- [**Map System**](MapSystem/README.md): Detailed reference for rendering, camera, and interactions.
 - [**Mechanics & Parts**](Mechanics.md): Vehicle customization and part compatibility.
-- [**Tutorial System**](Tutorials.md): Managing onboarding levels, steps, and UI highlights.
+- [**Tutorial System**](TutorialSystem/README.md): Event-driven onboarding, highlights, and level controllers.
 
 ---
 

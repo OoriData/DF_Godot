@@ -19,6 +19,22 @@ The Mechanics system in *Desolate Frontiers* governs the customization and repai
 ### 3. Compatibility
 - Not every part fits every vehicle. The **MechanicsService** provides a `check_part_compatibility` flow that asks the backend for a detailed breakdown of whether a part fits and, if not, why (e.g., "Incompatible Chassis").
 
+### Logic Flow
+
+```mermaid
+graph TD
+    Open[Menu Opens] --> Warm[Service: warm_mechanics_data]
+    Warm --> Fetch[Request Rich Part Metadata]
+    Fetch --> Update[Update UI Lists]
+    
+    Select[User Selects Part] --> CompCheck[Service: check_part_compatibility]
+    CompCheck --> Backend[Backend: Validate Slot/Tags]
+    Backend --> Result{Compatible?}
+    
+    Result -->|Yes| Highlight[UI: Show 'Install' Button]
+    Result -->|No| Reason[UI: Show Incompatibility Reason]
+```
+
 ---
 
 ## The `MechanicsService`

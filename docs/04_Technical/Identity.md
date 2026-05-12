@@ -25,21 +25,38 @@ The primary entry point. Supports:
 
 A user can link multiple social identities (Steam, Discord) to a single Desolate Frontiers account.
 
-### Linking Flow
-1. **Trigger**: UI calls `APICalls.link_steam_account()` or `APICalls.get_discord_link_url()`.
-2. **Success**: Identity added to the current user; `auth_links_received` signal emitted.
-3. **Conflict (409)**: Occurs if the provider identity is already linked to *another* account.
-    - API returns a 409 error with a `merge_token` and conflict details.
-    - UI displays `AccountMergeModal`.
+### Linking & Merging Journey
 
-### Merging Flow (Conflict Resolution)
-When a 409 conflict occurs, the system initiates a merge preview:
-1. **Preview**: `APICalls.preview_merge(token, source, target)` returns a summary of data changes.
-2. **Review**: User reviews which account's data will be preserved (typically the target/existing account).
-3. **Commit**: `APICalls.commit_merge(...)` finalizes the consolidation.
-4. **Resync**: After merge, the client refreshes session and user data to reflect the new state.
+```mermaid
+graph TD
+    Start[User Clicks 'Link Account'] --> LinkType{Provider?}
+    LinkType -->|Steam| SteamAPI[APICalls: link_steam_account]
+    LinkType -->|Discord| DiscordAPI[APICalls: get_discord_link_url]
+    
+    SteamAPI --> BackendLink[Backend: Process Link]
+    DiscordAPI --> Browser[UI: Open Browser & User Links]
+    Browser --> BackendLink
+    
+    BackendLink --> Result{Result?}
+    Result -->|Success| Linked[Identity Linked & Signal Emitted]
+    Result -->|409 Conflict| Conflict[Show AccountMergeModal]
+    
+    Conflict --> Preview[Fetch Merge Preview Data]
+    Preview --> Review[User Reviews Diff]
+    Review --> Choice{User Confirms?}
+    Choice -->|No| Cancel[Cancel Merge]
+    Choice -->|Yes| Commit[APICalls: commit_merge]
+    
+    Commit --> Resync[Refresh User Data & Session]
+    Resync --> Linked
+```
+
+1. **Trigger**: UI initiates linking via `APICalls`.
+2. **Conflict Handling**: If a 409 occurs, the `AccountMergeModal` is triggered to handle data consolidation.
+3. **Completion**: All paths lead to a session resync and a `user_id_resolved` signal.
 
 ## Persistent Storage
+
 - **Path**: `user://session.cfg`
 - **Keys**:
   - `auth/session_token`: The JWT used for Authorization headers.

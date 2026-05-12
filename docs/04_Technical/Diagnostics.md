@@ -34,6 +34,21 @@ Every 0.5s, the system probes the status of the active `HTTPRequest` node.
 - **Stall Detection**: If a request (especially `AUTH_URL`) stays in `STATUS_RESOLVING` or `STATUS_CONNECTING` for more than 5s, the probe will force a retry with an alternate host.
 - **Log pattern**: `[APICalls][Probe] in_progress purpose=AUTH_URL status=1...`
 
+### Network Self-Healing Logic
+
+```mermaid
+graph TD
+    Queue[Request Queue has Pending Items] --> Watchdog[Watchdog Timer: 1.0s]
+    Watchdog --> StallCheck{Is Queue Processing?}
+    
+    StallCheck -->|No| Force[Force Call _process_queue]
+    StallCheck -->|Yes| OK[Continue Normal Ops]
+    
+    Probe[Status Probe: 0.5s] --> TargetCheck{Request = AUTH_URL?}
+    TargetCheck -->|Yes| TimeCheck{Duration > 5s?}
+    TimeCheck -->|Yes| Retry[Force Retry with Alternate Host]
+```
+
 ### HTTP Tracing
 When `http_trace = true` is set in the config, the console will show:
 - Full URL and headers for every request.

@@ -30,7 +30,7 @@ The *Desolate Frontiers* UI is built on a service-backed architecture that ensur
 - [**Cargo Sub-menu**](../../../Scripts/Menus/convoy_cargo_menu.gd): Full manifest and item inspection.
 - [**Warehouse Menu**](../../../Scripts/Menus/warehouse_menu.gd): Storing and retrieving cargo/vehicles.
 - [**Mechanics Menu**](../../../Scripts/Menus/mechanics_menu.gd): Complex part repairs and swaps.
-- [**Vendor Trade Panel**](VendorTradePanel.md): Buying and selling goods.
+- [**Vendor Panel**](VendorPanel/README.md): Detailed reference for the complex trading and inventory system.
 
 ---
 

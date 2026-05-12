@@ -12,6 +12,29 @@ The `MenuManager` is the central orchestrator for all full-screen UI navigation 
 4. **Transition Animations**: Handles directional sliding (horizontal for sub-menus, vertical for the Overview) to provide a polished, premium feel.
 5. **Static Bottom Navigation**: Manages the common navigation bar (`StaticBottomNav`) that stays visible across all convoy-related menus.
 
+### Opening & Transition Flow
+
+```mermaid
+graph TD
+    Request[Call open_menu] --> CheckCache{In Persistent Cache?}
+    
+    CheckCache -->|Yes| Restore[Reparent existing node]
+    CheckCache -->|No| Create[Instantiate new .tscn]
+    
+    Restore --> Direction{Navigation Type?}
+    Create --> Direction
+    
+    Direction -->|Sub-menu Sibling| SlideH[Horizontal Slide: Tweens]
+    Direction -->|Overview Open| SlideD[Vertical Slide: Swipe Down]
+    Direction -->|Overview Close| SlideU[Vertical Slide: Swipe Up]
+    
+    SlideH --> Clean[Cleanup old menu nodes]
+    SlideD --> Clean
+    SlideU --> Clean
+    
+    Clean --> Ready[Emit menu_opened signal]
+```
+
 ---
 
 ## Architecture & Integration

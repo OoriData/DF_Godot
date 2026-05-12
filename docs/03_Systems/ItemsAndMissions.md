@@ -24,6 +24,22 @@ The `MissionItem._looks_like_mission_dict()` function checks for:
 2.  **Delivery Reward**: Any item with a `delivery_reward > 0`.
 3.  **Explicit Flag**: The `is_mission: true` metadata.
 
+### Detection Logic
+
+```mermaid
+graph TD
+    Raw[Raw JSON Payload] --> Parse[CargoItem.from_dict]
+    Parse --> Check{_looks_like_mission?}
+    
+    Check -->|Has recipient_id?| Yes[Is Mission]
+    Check -->|Reward > 0?| Yes
+    Check -->|is_mission: true?| Yes
+    Check -->|Otherwise| No[Is Standard Cargo]
+    
+    Yes --> Classify[Cast to MissionItem]
+    Classify --> UI[Group in 'Delivery Cargo']
+```
+
 ### Data Signature
 ```json
 {

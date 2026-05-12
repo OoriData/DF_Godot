@@ -4,12 +4,31 @@ Desolate Frontiers uses a unidirectional data flow pattern to ensure UI consiste
 
 ## The Pipeline
 
-The data flow follows this standard path:
-`APICalls` → `Domain Service` → `GameStore` → `SignalHub` → `UI Components`
+The data flow follows a strict unidirectional path to maintain a "Single Source of Truth":
+
+```mermaid
+graph TD
+    API[Backend API] -->|HTTP Response| AC[APICalls]
+    AC -->|emit data_received| DS[Domain Service]
+    
+    subgraph Logic_Layer [Logic Layer]
+    DS -->|Normalize & Validate| GS[GameStore]
+    end
+    
+    subgraph State_Layer [State Layer]
+    GS -->|Update Snapshot| SH[SignalHub]
+    end
+    
+    subgraph View_Layer [View Layer]
+    SH -->|emit domain_signal| UI[Menu / Component]
+    UI -->|Redraw using Store| UI
+    end
+```
+
 
 ### 1. `APICalls` (Transport)
 - The low-level layer responsible for making HTTP requests to the backend.
-- Handles JWT authentication and JWT session token storage.
+- Handles JWT authentication and session token storage.
 - Emits `fetch_error` for network/backend errors.
 
 ### 2. `Domain Services` (Logic)
@@ -20,7 +39,7 @@ The data flow follows this standard path:
 ### 3. `GameStore` (State Snapshot)
 - The "Single Source of Truth" for the application's current state.
 - Stores snapshots of data (e.g., `_convoys`, `_user`, `_tiles`).
-- When state is updated via a `set_*` method, it emits a local signal AND triggers the corresponding signal on `SignalHub`.
+- When state is updated via a `set_*` method, it updates the local snapshot and notifies `SignalHub`.
 
 ### 4. `SignalHub` (Event Bus)
 - A global dispatcher for domain-level events.
@@ -29,6 +48,7 @@ The data flow follows this standard path:
 ### 5. `UI Components` (View)
 - Menus (extending `MenuBase`) subscribe to `SignalHub` (e.g., `convoys_changed`).
 - They use the data snapshot from `GameStore` to redraw themselves efficiently.
+
 
 ---
 
