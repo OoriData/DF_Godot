@@ -1513,7 +1513,7 @@ func _resolve_and_highlight(step: Dictionary) -> bool:
 	if res.get("ok", false):
 		var node: Node = res.get("node")
 		var rect: Rect2 = res.get("rect", Rect2())
-		_maybe_switch_overlay_scope_for_rect(rect)
+		_maybe_switch_overlay_scope_for_target(node, rect)
 		if ov.has_method("highlight_node"):
 			# DEFERRED CALL: Wait until idle time in the current frame for layouts to settle.
 			ov.call_deferred("highlight_node", node, rect)
@@ -1548,6 +1548,7 @@ func _on_highlight_retry() -> void:
 	if res.get("ok", false):
 		var node: Node = res.get("node")
 		var rect: Rect2 = res.get("rect", Rect2())
+		_maybe_switch_overlay_scope_for_target(node, rect)
 		if ov and ov.has_method("highlight_node"):
 			# DEFERRED CALL: Wait until idle time for layouts to settle.
 			ov.call_deferred("highlight_node", node, rect)
@@ -1604,19 +1605,31 @@ func _on_viewport_size_changed() -> void:
 
 
 # Scope switching: reparent overlay to cover Map (default) or full UI
-func _maybe_switch_overlay_scope_for_rect(rect: Rect2) -> void:
+func _maybe_switch_overlay_scope_for_target(node: Node, rect: Rect2) -> void:
 	var ms: Control = _main_screen as Control
 	if ms == null:
 		return
-	var map_host: Control = null
-	if _main_screen and _main_screen.has_method("get_onboarding_layer"):
-		map_host = _main_screen.call("get_onboarding_layer")
-	map_host = map_host if is_instance_valid(map_host) else ms
-	var map_rect := map_host.get_global_rect() if map_host is Control else Rect2(Vector2.ZERO, Vector2.ZERO)
-	var ui_rect := ms.get_global_rect() if ms is Control else Rect2(Vector2.ZERO, Vector2.ZERO)
-	var intersects_map := rect.intersection(map_rect).has_area()
-	var want := "map" if intersects_map else "ui"
-	print("[Tutorial] Scope pick: target_rect=", rect, " map_rect=", map_rect, " ui_rect=", ui_rect, " -> ", want)
+	
+	# Determine if the target node lives within the MapView hierarchy.
+	# Cities and map locations should use 'map' scope (clipped to MapView).
+	# Menu buttons and top bar should use 'ui' scope (full screen).
+	var is_in_map := false
+	if is_instance_valid(node):
+		var map_view = ms.get_node_or_null("MainContainer/MainContent/MapAndMenuContainer/Main")
+		if map_view and map_view.is_ancestor_of(node):
+			is_in_map = true
+	
+	# Fallback: if node is invalid or we can't find MapView, use the old rect logic
+	if not is_in_map and not is_instance_valid(node):
+		var map_host: Control = null
+		if _main_screen and _main_screen.has_method("get_onboarding_layer"):
+			map_host = _main_screen.call("get_onboarding_layer")
+		map_host = map_host if is_instance_valid(map_host) else ms
+		var map_rect := map_host.get_global_rect() if map_host is Control else Rect2(Vector2.ZERO, Vector2.ZERO)
+		is_in_map = rect.intersection(map_rect).has_area()
+	
+	var want := "map" if is_in_map else "ui"
+	print("[Tutorial] Scope pick: target_node=", (node.name if is_instance_valid(node) else "<null>"), " is_in_map=", is_in_map, " -> ", want)
 	if want != _overlay_scope:
 		_attach_overlay_scope(want)
 
@@ -1641,7 +1654,7 @@ func _attach_overlay_scope(scope: String) -> void:
 		host.move_child(ov, host.get_child_count() - 1)
 		ov.set_anchors_preset(Control.PRESET_FULL_RECT)
 		if ov.has_method("set_safe_area_insets"):
-			ov.call("set_safe_area_insets", 8)
+			ov.call("set_safe_area_insets", 8, 0)
 		_overlay_scope = "map"
 	else:
 		# Parent directly under root viewport to avoid container-driven collapse
@@ -1654,7 +1667,7 @@ func _attach_overlay_scope(scope: String) -> void:
 		ov.top_level = false
 		ov.set_anchors_preset(Control.PRESET_FULL_RECT)
 		if ov.has_method("set_safe_area_insets"):
-			ov.call("set_safe_area_insets", _get_top_bar_inset())
+			ov.call("set_safe_area_insets", _get_top_bar_inset(), _get_bottom_safe_inset())
 		_overlay_scope = "ui"
 	# Ensure on top
 	if ov.has_method("bring_to_front"):
@@ -1671,6 +1684,14 @@ func _get_top_bar_inset() -> int:
 	var top: Control = ms.get_node_or_null("MainContainer/TopBar")
 	if top:
 		return int(round(top.size.y))
+	return 0
+
+func _get_bottom_safe_inset() -> int:
+	# Check the UI scale manager for the logical safe area margins
+	var sm := get_node_or_null("/root/UIScaleManager")
+	if is_instance_valid(sm) and sm.has_method("get_logical_safe_margins"):
+		var margins: Rect2 = sm.call("get_logical_safe_margins")
+		return int(round(margins.size.y))
 	return 0
 
 # --- MenuManager integration ---

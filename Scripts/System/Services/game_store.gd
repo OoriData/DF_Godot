@@ -115,6 +115,11 @@ func set_user(user: Dictionary) -> void:
 	if is_instance_valid(hub):
 		hub.user_changed.emit(_user)
 
+func set_session_token(token: String) -> void:
+	var api = get_node_or_null("/root/APICalls")
+	if is_instance_valid(api) and api.has_method("set_auth_session_token"):
+		api.set_auth_session_token(token)
+
 # Getters
 func get_tiles() -> Array:
 	return _tiles

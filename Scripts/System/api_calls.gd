@@ -440,7 +440,7 @@ func is_auth_token_valid() -> bool:
 	return _auth_bearer_token != "" and not _is_auth_token_expired()
 
 func _is_auth_token_expired() -> bool:
-	if _auth_bearer_token == "":
+	if _auth_bearer_token == "" or _auth_bearer_token == "DEBUG_BYPASS_TOKEN":
 		return false
 	return _auth_token_expiry <= Time.get_unix_time_from_system()
 

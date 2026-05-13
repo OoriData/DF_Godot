@@ -299,6 +299,17 @@ func _build_login_buttons() -> void:
 		else:
 			_disable_steam_button()
 
+	# --- Debug Bypass (only in debug builds) ---
+	if OS.is_debug_build():
+		var debug_btn = _create_login_button(
+			"DebugSkipButton", "DEBUG: Skip Login",
+			Color("444444"), Color("555555"), Color("333333"),
+			_on_debug_skip_pressed
+		)
+		vbox_container.add_child(debug_btn)
+		# Place at the bottom
+		vbox_container.move_child(debug_btn, vbox_container.get_child_count() - 1)
+
 func _create_login_button(
 	btn_name: String, label: String,
 	color_normal: Color, color_hover: Color, color_pressed: Color,
@@ -477,6 +488,28 @@ func _on_steam_login_pressed() -> void:
 	else:
 		status_label.text = "API System offline."
 		_set_oauth_active(false)
+
+func _on_debug_skip_pressed() -> void:
+	if _oauth_in_progress:
+		return
+	_active_oauth_provider_label = "Debug Bypass"
+	status_label.text = "Starting Debug Bypass..."
+	_set_oauth_active(true)
+	var api = _api()
+	if api == null:
+		status_label.text = "Auth system not ready."
+		_set_oauth_active(false)
+		return
+	
+	print("[LoginScreen] Debug bypass triggered. Setting dummy token.")
+	var store := get_node_or_null("/root/GameStore")
+	if is_instance_valid(store) and store.has_method("set_session_token"):
+		store.set_session_token("DEBUG_BYPASS_TOKEN")
+	else:
+		api.set_auth_session_token("DEBUG_BYPASS_TOKEN")
+		
+	status_label.text = "Bypassing authentication..."
+	api.resolve_current_user_id(true)
 
 # ────────────────────────────────────────────────────────────────────
 # OAuth / auth-state plumbing

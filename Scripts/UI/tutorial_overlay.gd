@@ -5,10 +5,10 @@ extends Control
 # Appearance
 const OVERLAY_COLOR := Color(0, 0, 0, 0.35)
 const PANEL_BG := Color(0.1, 0.1, 0.1, 0.95)
-const PANEL_PAD := 16
-const PANEL_SIDE_MARGIN := 12
-const PANEL_TOP_MARGIN := 12
-const PANEL_MAX_WIDTH := 360.0
+const PANEL_PAD := 24
+const PANEL_SIDE_MARGIN := 16
+const PANEL_TOP_MARGIN := 16
+const PANEL_MAX_WIDTH := 600.0
 
 var _message_label: RichTextLabel = null
 var _continue_button: Button = null
@@ -18,6 +18,7 @@ var _highlight_rect: Rect2 = Rect2()
 var _has_highlight: bool = false
 var _local_highlight_rect: Rect2 = Rect2() # Cached local-space rect for drawing
 var _safe_top_inset: int = 0
+var _safe_bottom_inset: int = 0
 var _panel: PanelContainer = null
 
 var _managed_node: Control = null
@@ -42,7 +43,6 @@ func _ready() -> void:
 	visible = false # hidden until explicitly shown
 	# Ensure we render on top of all other UI. The TopBar (UserInfoDisplay) has a z_index of 10.
 	z_index = 100
-	_set_full_rect()
 	_normalize_full_rect_layout()
 	_ensure_ui_built()
 	# Initial layout sizing within map area
@@ -72,31 +72,49 @@ func _ensure_ui_built() -> void:
 
 	if _panel == null:
 		_panel = PanelContainer.new()
-		_panel.custom_minimum_size = Vector2(320, 160)
+		_panel.custom_minimum_size = Vector2(400, 200)
 		_panel.set_anchors_preset(Control.PRESET_TOP_LEFT)
 		_panel.offset_top =  _safe_top_inset + PANEL_TOP_MARGIN
 		_panel.offset_left = PANEL_SIDE_MARGIN
 		_panel.add_theme_stylebox_override("panel", _make_panel_style())
 		add_child(_panel)
 		var vb := VBoxContainer.new()
-		vb.custom_minimum_size = Vector2(320, 0)
-		vb.add_theme_constant_override("separation", 10)
+		vb.custom_minimum_size = Vector2(380, 0)
+		vb.add_theme_constant_override("separation", 16)
 		_panel.add_child(vb)
 
 		_message_label = RichTextLabel.new()
 		_message_label.bbcode_enabled = true
 		_message_label.fit_content = true
 		_message_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		_message_label.add_theme_font_size_override("normal_font_size", _get_font_size(22))
 		vb.add_child(_message_label)
 
 		_checklist_container = VBoxContainer.new()
 		_checklist_container.name = "ChecklistContainer"
-		_checklist_container.add_theme_constant_override("separation", 4)
+		_checklist_container.add_theme_constant_override("separation", 8)
 		_checklist_container.visible = false
 		vb.add_child(_checklist_container)
 
 		_continue_button = Button.new()
 		_continue_button.text = "Continue"
+		_continue_button.custom_minimum_size = Vector2(0, 64)
+		_continue_button.add_theme_font_size_override("font_size", _get_font_size(24))
+		
+		# Give it Oori styling
+		var btn_style = StyleBoxFlat.new()
+		btn_style.bg_color = Color("#393d47") # OORI_GREY
+		btn_style.border_width_bottom = 3
+		btn_style.border_color = Color("#25282a") # OORI_DARK_GREY
+		btn_style.corner_radius_top_left = 6
+		btn_style.corner_radius_top_right = 6
+		btn_style.corner_radius_bottom_left = 6
+		btn_style.corner_radius_bottom_right = 6
+		
+		_continue_button.add_theme_stylebox_override("normal", btn_style)
+		_continue_button.add_theme_stylebox_override("hover", btn_style)
+		_continue_button.add_theme_stylebox_override("pressed", btn_style)
+		
 		_continue_button.pressed.connect(_on_continue_pressed)
 		vb.add_child(_continue_button)
 
@@ -121,6 +139,16 @@ func _ensure_ui_built() -> void:
 		_shield_center = Control.new()
 		_shield_center.mouse_filter = Control.MOUSE_FILTER_STOP
 		add_child(_shield_center)
+
+func _get_font_size(base: int) -> int:
+	var dsm = get_node_or_null("/root/DeviceStateManager")
+	if is_instance_valid(dsm):
+		return dsm.get_scaled_base_font_size(base)
+	
+	var win_size = get_viewport_rect().size if is_inside_tree() else Vector2(0, 0)
+	var is_portrait = win_size.y > win_size.x
+	var boost = 1.3 if is_portrait else 1.0
+	return int(base * boost)
 
 func _debug_log_placement() -> void:
 	# Called deferred from manager to inspect parent and sizing after layout
@@ -154,7 +182,9 @@ func _log_layout_state(tag: String) -> void:
 		" rect=", rect,
 		" viewport=", vp_rect.size,
 		" root=", root_size,
-		" basisX=", x_basis, " basisY=", y_basis
+		" basisX=", x_basis, " basisY=", y_basis,
+		" global_trans=", get_global_transform(),
+		" canvas_trans=", get_global_transform_with_canvas()
 	)
 
 func _on_root_size_changed() -> void:
@@ -198,33 +228,34 @@ func _on_ui_scale_changed(_new_scale: float) -> void:
 	_relayout_panel()
 	_layout_blockers()
 
-func _set_full_rect() -> void:
-	# Ensure anchors mode is used so full-rect anchors take effect.
-	set_anchors_preset(Control.PRESET_FULL_RECT)
-	# Do not rely on inherited offsets; make them zero to span parent fully.
-	offset_left = 0
-	offset_top = 0
-	offset_right = 0
-	offset_bottom = 0
-
+var _is_normalizing: bool = false
 # Ensure anchors and offsets represent a full-rect layout. Call defensively during transitions.
 func _normalize_full_rect_layout() -> void:
-	# If our offsets are negative and equal to parent size, we collapse to zero. Reset them.
-	var p := get_parent()
-	var parent_size: Vector2 = Vector2.ZERO
-	if p and p is Control:
-		parent_size = (p as Control).size
-	# Reset anchors and offsets to full rect whenever size is suspicious or offsets are negative.
-	var suspicious := size.x <= 1.0 or size.y <= 1.0 or offset_right < 0 or offset_bottom < 0
-	if suspicious:
-		set_anchors_preset(Control.PRESET_FULL_RECT)
-		offset_left = 0
-		offset_top = 0
-		offset_right = 0
-		offset_bottom = 0
-		# Optional: if parent has a non-zero top inset requirement, panel will handle via _safe_top_inset.
-		# Log after normalization for visibility
-		_log_layout_state("normalized_full_rect")
+	if _is_normalizing:
+		return
+	
+	# If we're already perfectly covering the full rect, skip to avoid notification loops
+	if anchor_left == 0.0 and anchor_top == 0.0 and anchor_right == 1.0 and anchor_bottom == 1.0 \
+		and offset_left == 0 and offset_top == 0 and offset_right == 0 and offset_bottom == 0:
+		return
+
+	_is_normalizing = true
+	
+	# Use set_anchors_preset to ensure the Control covers the entire viewport/parent.
+	set_anchors_preset(Control.PRESET_FULL_RECT)
+	
+	# Explicitly zero out offsets to ensure perfect alignment with parent boundaries.
+	if offset_left != 0: offset_left = 0
+	if offset_top != 0: offset_top = 0
+	if offset_right != 0: offset_right = 0
+	if offset_bottom != 0: offset_bottom = 0
+	
+	# We no longer manually set 'size' here. The PRESET_FULL_RECT anchors handle this
+	# automatically. Setting it manually triggers a "size overridden" warning in Godot
+	# and can cause infinite recursion when called from NOTIFICATION_RESIZED.
+	
+	_is_normalizing = false
+	_log_layout_state("normalized_full_rect")
 
 func _make_panel_style() -> StyleBoxFlat:
 	var sb := StyleBoxFlat.new()
@@ -455,13 +486,13 @@ func clear_highlight_and_gating() -> void:
 	clear_highlight()
 	set_gating_mode(GatingMode.NONE)
 
-# Allow host to push safe-area insets (e.g., keep panel below top bar)
-func set_safe_area_insets(top_inset: int) -> void:
+# Allow host to push safe-area insets (e.g., keep panel below top bar or above home indicator)
+func set_safe_area_insets(top_inset: int, bottom_inset: int = 0) -> void:
 	_safe_top_inset = max(0, top_inset)
-	# Adjust any top-anchored children (message panel)
-	for c in get_children():
-		if c is PanelContainer:
-			c.offset_top = _safe_top_inset + PANEL_TOP_MARGIN
+	_safe_bottom_inset = max(0, bottom_inset)
+	# --- START TUTORIAL DEBUG LOG ---
+	print("[TutorialOverlay][LOG] Insets updated: top=%d, bottom=%d" % [_safe_top_inset, _safe_bottom_inset])
+	# --- END TUTORIAL DEBUG LOG ---
 	queue_redraw()
 	_relayout_panel()
 	_layout_blockers()
