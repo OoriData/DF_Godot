@@ -620,15 +620,21 @@ func _get_bottom_safe_margin() -> float:
 		return 0.0
 		
 	var sm = get_node_or_null("/root/ui_scale_manager")
-	if is_instance_valid(sm) and sm.has_method("get_logical_safe_margins"):
-		var margins = sm.get_logical_safe_margins()
-		return max(24.0, margins.size.y)
+	var scale = 1.0
+	if is_instance_valid(sm):
+		if sm.has_method("get_global_ui_scale"):
+			scale = sm.get_global_ui_scale()
 		
-	# Fallback
+		if sm.has_method("get_logical_safe_margins"):
+			var margins = sm.get_logical_safe_margins()
+			return max(24.0, margins.size.y)
+		
+	# Fallback: Convert physical to logical
 	var safe_area = DisplayServer.get_display_safe_area()
 	var window_size = DisplayServer.window_get_size()
 	if safe_area.size.y > 0 and safe_area.end.y < window_size.y:
-		return max(34.0, float(window_size.y - safe_area.end.y))
+		var phys_bottom = float(window_size.y - safe_area.end.y)
+		return max(34.0, phys_bottom / scale)
 	return 34.0
 
 func _on_menu_visibility_changed(is_open: bool, _menu_name: String):

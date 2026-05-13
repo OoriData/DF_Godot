@@ -80,3 +80,17 @@ A central reference for domain-specific and technical terminology used in *Desol
 - **MSDF Fonts**: Resolution-independent font scaling.
   - *Asset*: `Assets/main_font.tres` (must have MSDF enabled)
 
+
+## Tutorial System
+
+- **TutorialManager**: The central engine that manages the sequential step loop.
+  - *Logic*: `Scripts/UI/tutorial_manager.gd`
+  - *Doc*: [Tutorial Architecture](file:///Users/aidan/Work/DF_Godot/docs/03_Systems/TutorialSystem/Architecture.md)
+- **TargetResolver**: Logic for locating specific UI nodes via text search, node names, or specialized logic (e.g., finding the "Convoy" toggle).
+  - *Logic*: `Scripts/UI/target_resolver.gd`
+- **TutorialOverlay**: The "Hole-Punch" mask that provides visual highlights and input gating.
+  - *Logic*: `Scripts/UI/tutorial_overlay.gd`
+- **GatingMode**: Dictates how the overlay handles user input.
+  - `NONE`: Visual only.
+  - `SOFT`: Blocks everything except the target "hole".
+  - `HARD`: Blocks all input (modal).

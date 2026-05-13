@@ -573,7 +573,7 @@ func _ensure_overlay_visible() -> void:
 			ov.call_deferred("bring_to_front")
 	# Ensure safe-area inset applied for UI scope.
 	if ov.has_method("set_safe_area_insets"):
-		ov.call("set_safe_area_insets", _get_top_bar_inset())
+		ov.call("set_safe_area_insets", _get_top_bar_inset(), _get_bottom_safe_inset())
 
 func _configure_overlay_insets_deferred() -> void:
 	call_deferred("_configure_overlay_insets")
@@ -1688,7 +1688,7 @@ func _get_top_bar_inset() -> int:
 
 func _get_bottom_safe_inset() -> int:
 	# Check the UI scale manager for the logical safe area margins
-	var sm := get_node_or_null("/root/UIScaleManager")
+	var sm := get_node_or_null("/root/ui_scale_manager")
 	if is_instance_valid(sm) and sm.has_method("get_logical_safe_margins"):
 		var margins: Rect2 = sm.call("get_logical_safe_margins")
 		return int(round(margins.size.y))

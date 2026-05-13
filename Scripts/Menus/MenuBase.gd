@@ -185,7 +185,12 @@ func _update_navigation_bar_visibility(convoy: Dictionary) -> void:
 	var journey_data = convoy.get("journey")
 	var has_journey = journey_data != null and not journey_data.is_empty()
 	
-	# Look for the navigation bar in common paths
+	# Check MenuManager first (new centralized location)
+	var menu_mgr := get_tree().get_root().get_node_or_null("MenuManager")
+	if is_instance_valid(menu_mgr) and menu_mgr.has_method("set_nav_button_visible"):
+		menu_mgr.set_nav_button_visible("convoy_settlement_submenu", not has_journey)
+	
+	# Fallback for legacy internal navigation bars
 	var nav_bar = get_node_or_null("MainVBox/BottomBarPanel/BottomMenuButtonsHBox")
 	if not is_instance_valid(nav_bar):
 		nav_bar = find_child("BottomMenuButtonsHBox", true, false)

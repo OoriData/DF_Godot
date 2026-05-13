@@ -36,3 +36,11 @@ The `TargetResolver` is designed to handle dynamic UI changes:
 1.  **Resolution Retries**: If a node is found but its size is `(0,0)` (common in the first frame of a menu opening), the resolver will retry after a short delay.
 2.  **Parent Matching**: If an exact button cannot be found, the resolver can highlight the parent container (e.g., the whole "Market Tab") to provide a general hint.
 3.  **Top-Level Safety**: Highlights are rendered on a high Z-index layer to ensure they appear above all other menus.
+
+## Scaling & Coordinate Safety
+
+When mapping highlights across different UI layers (e.g., from a deeply nested button to a root-level overlay), the system must account for Godot 4's logical viewport scaling:
+
+1.  **Logical Coordinates**: Use `get_global_transform_with_canvas().affine_inverse()` to map physical screen coordinates into the logical space of the `TutorialOverlay`. This ensures the highlight "hole" stays perfectly aligned regardless of the `UIScaleManager` settings.
+2.  **Viewport Matching**: The `TutorialOverlay` must explicitly force its size to match the logical viewport (`get_viewport_rect().size`) during orientation or resolution changes. Relying on basic anchors alone can cause the overlay to "clip" or "desync" when parented to the root `Window`.
+3.  **Frame-Perfect Tracking**: The overlay must update the highlight position in `_process` to track UI elements that move during menu animations or transitions.

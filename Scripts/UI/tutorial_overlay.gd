@@ -341,13 +341,12 @@ func highlight_node(node: Node, rect: Rect2) -> void:
 	# This avoids all layout-related bugs where the node's position would reset.
 	if node is Control:
 		_managed_node = node as Control
-		# Proactively track the node via rect-change signals for tighter sync.
+		# Connect signals for local resizes
 		_connect_managed_node_signals()
-		# We don't need per-frame tracking if we have signal-driven updates.
-		set_process(false)
-	else:
-		# For non-Control nodes (like sprites), they might move every frame.
-		set_process(true)
+		
+	# ALWAYS use per-frame tracking because item_rect_changed does NOT fire 
+	# when a parent container moves (e.g., during menu sliding animations).
+	set_process(true)
 
 	print("[TutorialOverlay] Highlighting rect for node: ", node, " rect: ", rect)
 
@@ -436,13 +435,8 @@ func _update_highlight_from_managed_node() -> void:
 		print("  - New rect: %s" % str(new_rect))
 		# --- END TUTORIAL DEBUG LOG ---
 		_highlight_rect = new_rect
-		# Defer the redraw and blocker layout. This is critical to prevent race conditions.
-		# When a user clicks a UI element that causes the highlighted node to resize (like selecting
-		# an item in a list, which shows an inspector panel), this function is called immediately.
-		# If we redraw synchronously, we can interfere with the input event processing of the
-		# node that was just clicked, causing it to lose focus or its selection state.
-		call_deferred("queue_redraw")
-		call_deferred("_layout_blockers")
+		queue_redraw()
+		_layout_blockers()
 		print("[TutorialOverlay][LOG] Deferred redraw and layout.")
 
 func _connect_managed_node_signals() -> void:

@@ -140,6 +140,15 @@ func _setup_static_bottom_nav():
 func open_journey_journey_menu_if_available(data):
 	open_convoy_journey_menu(data)
 
+## Public helper for tutorial/diagnostic tools to find nav buttons in the static bar.
+func get_nav_button_by_name(btn_name: String) -> Button:
+	if not is_instance_valid(_nav_hbox): return null
+	return _nav_hbox.find_child(btn_name, true, false) as Button
+
+func set_nav_button_visible(type: String, is_visible: bool):
+	if _nav_buttons.has(type):
+		_nav_buttons[type].visible = is_visible
+
 func _update_static_nav_bar_ui(active_type: String):
 	if not is_instance_valid(_static_bottom_nav): return
 	

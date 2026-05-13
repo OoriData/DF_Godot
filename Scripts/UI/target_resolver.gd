@@ -171,13 +171,25 @@ func _resolve_button_with_text(target: Dictionary) -> Dictionary:
 	if is_instance_valid(menu_mgr):
 		var nav_btn: Button = null
 		if token.to_lower().find("settlement") != -1:
-			nav_btn = menu_mgr.find_child("SettlementMenuButton", true, false)
+			if menu_mgr.has_method("get_nav_button_by_name"):
+				nav_btn = menu_mgr.get_nav_button_by_name("SettlementMenuButton")
+			else:
+				nav_btn = menu_mgr.find_child("SettlementMenuButton", true, false)
 		elif token.to_lower().find("journey") != -1:
-			nav_btn = menu_mgr.find_child("JourneyMenuButton", true, false)
+			if menu_mgr.has_method("get_nav_button_by_name"):
+				nav_btn = menu_mgr.get_nav_button_by_name("JourneyMenuButton")
+			else:
+				nav_btn = menu_mgr.find_child("JourneyMenuButton", true, false)
 		elif token.to_lower().find("cargo") != -1:
-			nav_btn = menu_mgr.find_child("CargoMenuButton", true, false)
+			if menu_mgr.has_method("get_nav_button_by_name"):
+				nav_btn = menu_mgr.get_nav_button_by_name("CargoMenuButton")
+			else:
+				nav_btn = menu_mgr.find_child("CargoMenuButton", true, false)
 		elif token.to_lower().find("vehicle") != -1:
-			nav_btn = menu_mgr.find_child("VehicleMenuButton", true, false)
+			if menu_mgr.has_method("get_nav_button_by_name"):
+				nav_btn = menu_mgr.get_nav_button_by_name("VehicleMenuButton")
+			else:
+				nav_btn = menu_mgr.find_child("VehicleMenuButton", true, false)
 			
 		if is_instance_valid(nav_btn) and nav_btn.visible and nav_btn.is_visible_in_tree():
 			var rect_direct := _rect_for_control(nav_btn)
