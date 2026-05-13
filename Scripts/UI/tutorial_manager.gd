@@ -1667,7 +1667,8 @@ func _attach_overlay_scope(scope: String) -> void:
 		ov.top_level = false
 		ov.set_anchors_preset(Control.PRESET_FULL_RECT)
 		if ov.has_method("set_safe_area_insets"):
-			ov.call("set_safe_area_insets", _get_top_bar_inset(), _get_bottom_safe_inset())
+			var side_margins := _get_side_safe_insets()
+			ov.call("set_safe_area_insets", _get_top_bar_inset(), _get_bottom_safe_inset(), side_margins.x, side_margins.y)
 		_overlay_scope = "ui"
 	# Ensure on top
 	if ov.has_method("bring_to_front"):
@@ -1681,18 +1682,51 @@ func _get_top_bar_inset() -> int:
 	var ms: Control = _main_screen as Control
 	if ms == null:
 		return 0
-	var top: Control = ms.get_node_or_null("MainContainer/TopBar")
-	if top:
-		return int(round(top.size.y))
+	# The TopBar bottom in global coordinates is the true "top" of the map area.
+	var top: Control = ms.get_node_or_null("SafeRegionContainer/MainContainer/TopBar")
+	if is_instance_valid(top) and top.is_visible_in_tree():
+		return int(round(top.get_global_rect().end.y))
+	
+	# Fallback: check scale manager for raw safe area if TopBar isn't found
+	var sm = get_node_or_null("/root/ui_scale_manager")
+	if is_instance_valid(sm) and sm.has_method("get_logical_safe_margins"):
+		return int(sm.get_logical_safe_margins().position.y)
 	return 0
 
 func _get_bottom_safe_inset() -> int:
-	# Check the UI scale manager for the logical safe area margins
+	var ms: Control = _main_screen as Control
+	if ms == null:
+		return 0
+		
+	# If a menu is open, the "bottom" of the map area is the top of the menu.
+	var menu: Control = ms.get_node_or_null("SafeRegionContainer/MainContainer/MainContent/MapAndMenuContainer/MenuContainer")
+	if is_instance_valid(menu) and menu.visible and menu.offset_top < 0:
+		# In portrait, menu.get_global_rect().position.y is the top edge.
+		return int(round(get_viewport().get_visible_rect().size.y - menu.get_global_rect().position.y))
+
+	# Fallback: check the UI scale manager for the logical safe area margins
 	var sm := get_node_or_null("/root/ui_scale_manager")
 	if is_instance_valid(sm) and sm.has_method("get_logical_safe_margins"):
 		var margins: Rect2 = sm.call("get_logical_safe_margins")
 		return int(round(margins.size.y))
 	return 0
+
+func _get_side_safe_insets() -> Vector2:
+	var ms: Control = _main_screen as Control
+	if is_instance_valid(ms):
+		var src: Control = ms.get_node_or_null("SafeRegionContainer")
+		if is_instance_valid(src):
+			var gr := src.get_global_rect()
+			var left := int(round(gr.position.x))
+			var right := int(round(get_viewport().get_visible_rect().size.x - gr.end.x))
+			return Vector2(left, right)
+
+	# Fallback: check the UI scale manager for the logical safe area margins
+	var sm := get_node_or_null("/root/ui_scale_manager")
+	if is_instance_valid(sm) and sm.has_method("get_logical_safe_margins"):
+		var margins: Rect2 = sm.call("get_logical_safe_margins")
+		return Vector2(margins.position.x, margins.size.x)
+	return Vector2.ZERO
 
 # --- MenuManager integration ---
 func _on_menu_opened(menu_node: Node, menu_type: String) -> void:

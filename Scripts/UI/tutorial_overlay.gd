@@ -6,8 +6,8 @@ extends Control
 const OVERLAY_COLOR := Color(0, 0, 0, 0.35)
 const PANEL_BG := Color(0.1, 0.1, 0.1, 0.95)
 const PANEL_PAD := 24
-const PANEL_SIDE_MARGIN := 16
-const PANEL_TOP_MARGIN := 16
+const PANEL_SIDE_MARGIN := 40
+const PANEL_TOP_MARGIN := 40
 const PANEL_MAX_WIDTH := 600.0
 
 var _message_label: RichTextLabel = null
@@ -19,6 +19,8 @@ var _has_highlight: bool = false
 var _local_highlight_rect: Rect2 = Rect2() # Cached local-space rect for drawing
 var _safe_top_inset: int = 0
 var _safe_bottom_inset: int = 0
+var _safe_left_inset: int = 0
+var _safe_right_inset: int = 0
 var _panel: PanelContainer = null
 
 var _managed_node: Control = null
@@ -87,19 +89,19 @@ func _ensure_ui_built() -> void:
 		_message_label.bbcode_enabled = true
 		_message_label.fit_content = true
 		_message_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		_message_label.add_theme_font_size_override("normal_font_size", _get_font_size(22))
+		_message_label.add_theme_font_size_override("normal_font_size", _get_font_size(32))
 		vb.add_child(_message_label)
 
 		_checklist_container = VBoxContainer.new()
 		_checklist_container.name = "ChecklistContainer"
-		_checklist_container.add_theme_constant_override("separation", 8)
+		_checklist_container.add_theme_constant_override("separation", 12)
 		_checklist_container.visible = false
 		vb.add_child(_checklist_container)
 
 		_continue_button = Button.new()
 		_continue_button.text = "Continue"
-		_continue_button.custom_minimum_size = Vector2(0, 64)
-		_continue_button.add_theme_font_size_override("font_size", _get_font_size(24))
+		_continue_button.custom_minimum_size = Vector2(0, 72)
+		_continue_button.add_theme_font_size_override("font_size", _get_font_size(28))
 		
 		# Give it Oori styling
 		var btn_style = StyleBoxFlat.new()
@@ -147,7 +149,7 @@ func _get_font_size(base: int) -> int:
 	
 	var win_size = get_viewport_rect().size if is_inside_tree() else Vector2(0, 0)
 	var is_portrait = win_size.y > win_size.x
-	var boost = 1.3 if is_portrait else 1.0
+	var boost = 1.4 if is_portrait else 1.0
 	return int(base * boost)
 
 func _debug_log_placement() -> void:
@@ -259,12 +261,20 @@ func _normalize_full_rect_layout() -> void:
 
 func _make_panel_style() -> StyleBoxFlat:
 	var sb := StyleBoxFlat.new()
-	sb.bg_color = PANEL_BG
-	sb.set_content_margin_all(PANEL_PAD)
-	sb.corner_radius_top_left = 8
-	sb.corner_radius_top_right = 8
-	sb.corner_radius_bottom_left = 8
-	sb.corner_radius_bottom_right = 8
+	sb.bg_color = Color(0.12, 0.14, 0.2, 0.95) # Deeper blue-grey
+	sb.set_border_width_all(2)
+	sb.border_color = Color(0.28, 0.72, 0.66, 0.6) # Teal accent
+	sb.corner_radius_top_left = 12
+	sb.corner_radius_top_right = 12
+	sb.corner_radius_bottom_left = 12
+	sb.corner_radius_bottom_right = 12
+	sb.shadow_color = Color(0, 0, 0, 0.4)
+	sb.shadow_size = 8
+	sb.shadow_offset = Vector2(0, 4)
+	sb.content_margin_left = PANEL_PAD
+	sb.content_margin_right = PANEL_PAD
+	sb.content_margin_top = PANEL_PAD
+	sb.content_margin_bottom = PANEL_PAD
 	return sb
 
 # Public API
@@ -310,6 +320,7 @@ func _update_checklist(items: Array) -> void:
 
 		var label := Label.new()
 		label.text = text
+		label.add_theme_font_size_override("font_size", _get_font_size(26))
 		if completed:
 			label.add_theme_color_override("font_color", Color(0.6, 0.6, 0.6))
 		hbox.add_child(label)
@@ -405,8 +416,8 @@ func clear_highlight() -> void:
 	_reset_managed_node()
 	queue_redraw()
 	_layout_blockers()
-	# Always disable the process loop when no highlight is active.
-	set_process(false)
+	# Keep process running to continually sync safe area insets
+	set_process(true)
 
 func _on_managed_node_resized() -> void:
 	# Re-sync the highlight rect on target node resize
@@ -416,12 +427,57 @@ func _on_managed_node_item_rect_changed() -> void:
 	_update_highlight_from_managed_node()
 
 func _process(_delta: float) -> void:
+	# Continuously poll the actual UI for safe area boundaries
+	_sync_dynamic_insets()
+	
 	# Follow the target node if it moves after initial layout
 	if _has_highlight and is_instance_valid(_managed_node):
 		_update_highlight_from_managed_node()
 	elif _has_highlight and not is_instance_valid(_managed_node):
 		# Target disappeared; clear to avoid stale hole at (0,0)
 		clear_highlight()
+
+func _sync_dynamic_insets() -> void:
+	var ms = get_node_or_null("/root/GameRoot/MainScreen")
+	if not is_instance_valid(ms):
+		return
+	
+	var changed := false
+	
+	# Left/Right insets from SafeRegionContainer
+	var src = ms.get_node_or_null("SafeRegionContainer")
+	if is_instance_valid(src):
+		var gr = src.get_global_rect()
+		var new_l = max(0, int(round(gr.position.x)))
+		var new_r = max(0, int(round(get_viewport_rect().size.x - gr.end.x)))
+		if new_l != _safe_left_inset or new_r != _safe_right_inset:
+			_safe_left_inset = new_l
+			_safe_right_inset = new_r
+			changed = true
+	
+	# Top inset from TopBar
+	var top = ms.get_node_or_null("SafeRegionContainer/MainContainer/TopBar")
+	if is_instance_valid(top) and top.is_visible_in_tree():
+		var new_t = int(round(top.get_global_rect().end.y))
+		if new_t != _safe_top_inset:
+			_safe_top_inset = new_t
+			changed = true
+	
+	# Bottom inset from MenuContainer
+	var menu = ms.get_node_or_null("SafeRegionContainer/MainContainer/MainContent/MapAndMenuContainer/MenuContainer")
+	var new_b = 0
+	if is_instance_valid(menu) and menu.is_visible_in_tree() and menu.offset_top < 0:
+		new_b = int(round(get_viewport_rect().size.y - menu.get_global_rect().position.y))
+	elif is_instance_valid(src):
+		# fallback to raw bottom safe area
+		new_b = max(0, int(round(get_viewport_rect().size.y - src.get_global_rect().end.y)))
+	
+	if new_b != _safe_bottom_inset:
+		_safe_bottom_inset = new_b
+		changed = true
+	
+	if changed:
+		_relayout_panel()
 
 func _update_highlight_from_managed_node() -> void:
 	if not is_instance_valid(_managed_node):
@@ -481,11 +537,13 @@ func clear_highlight_and_gating() -> void:
 	set_gating_mode(GatingMode.NONE)
 
 # Allow host to push safe-area insets (e.g., keep panel below top bar or above home indicator)
-func set_safe_area_insets(top_inset: int, bottom_inset: int = 0) -> void:
+func set_safe_area_insets(top_inset: int, bottom_inset: int = 0, left_inset: int = 0, right_inset: int = 0) -> void:
 	_safe_top_inset = max(0, top_inset)
 	_safe_bottom_inset = max(0, bottom_inset)
+	_safe_left_inset = max(0, left_inset)
+	_safe_right_inset = max(0, right_inset)
 	# --- START TUTORIAL DEBUG LOG ---
-	print("[TutorialOverlay][LOG] Insets updated: top=%d, bottom=%d" % [_safe_top_inset, _safe_bottom_inset])
+	print("[TutorialOverlay][LOG] Insets updated: top=%d, bottom=%d, left=%d, right=%d" % [_safe_top_inset, _safe_bottom_inset, _safe_left_inset, _safe_right_inset])
 	# --- END TUTORIAL DEBUG LOG ---
 	queue_redraw()
 	_relayout_panel()
@@ -542,13 +600,37 @@ func _notification(what: int) -> void:
 func _relayout_panel() -> void:
 	if _panel == null:
 		return
-	# Constrain width to fit within the current map view area.
-	var avail_w: float = max(0.0, size.x - (PANEL_SIDE_MARGIN * 2.0))
+
+	# Dynamically sync side insets with the actual game UI safe region
+	var ms = get_node_or_null("/root/GameRoot/MainScreen")
+	if is_instance_valid(ms):
+		var src = ms.get_node_or_null("SafeRegionContainer")
+		if is_instance_valid(src):
+			var gr = src.get_global_rect()
+			_safe_left_inset = max(0, int(round(gr.position.x)))
+			_safe_right_inset = max(0, int(round(get_viewport_rect().size.x - gr.end.x)))
+
+	# Constrain width to fit within the current map view area, respecting side insets (notches).
+	var avail_w: float = max(0.0, size.x - _safe_left_inset - _safe_right_inset - (PANEL_SIDE_MARGIN * 2.0))
 	var target_w: float = min(PANEL_MAX_WIDTH, avail_w)
 	_panel.custom_minimum_size.x = target_w
-	# Keep it pinned to top-left, below safe area inset.
-	_panel.offset_left = PANEL_SIDE_MARGIN
-	_panel.offset_top = _safe_top_inset + PANEL_TOP_MARGIN
+	
+	# Ensure the panel stays within the vertical bounds of the map view 
+	# (between the top info bar and bottom navigation area).
+	# Added extra 8px buffer to safe insets to ensure clearance of hardware islands.
+	_panel.offset_left = _safe_left_inset + PANEL_SIDE_MARGIN + 8
+	_panel.offset_top = _safe_top_inset + PANEL_TOP_MARGIN + 8
+	
+	# If the panel is too tall, it could overlap the bottom nav.
+	# We can't easily scroll it here without a ScrollContainer, but we can 
+	# at least ensure it has enough padding.
+	var max_h = size.y - _safe_top_inset - _safe_bottom_inset - (PANEL_TOP_MARGIN * 2.0)
+	# Force a maximum height to prevent overlapping bottom UI elements.
+	# The panel's internal scroll/VBox will handle overflow if necessary, 
+	# but we must bound the container.
+	_panel.custom_minimum_size.y = 0 # reset
+	if _panel.size.y > max_h:
+		_panel.custom_minimum_size.y = max(200.0, max_h)
 
 # Utility: allow host to bring this overlay to the top within its parent
 func bring_to_front() -> void:
