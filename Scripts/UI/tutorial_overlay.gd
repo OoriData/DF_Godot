@@ -297,8 +297,9 @@ func _update_checklist(items: Array) -> void:
 	if not is_instance_valid(_checklist_container):
 		return
 
-	# Clear previous items
+	# Clear previous items immediately to avoid duplicates in the same frame
 	for child in _checklist_container.get_children():
+		_checklist_container.remove_child(child)
 		child.queue_free()
 
 	if items.is_empty():

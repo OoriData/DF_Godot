@@ -50,6 +50,7 @@ var _polling_tab_timer: float = 0.0
 var _suspended_by_inline_error: bool = false
 const _POLL_TAB_INTERVAL: float = 0.5
 var _awaiting_menu_open: bool = false
+var _allowed_vendor_tab_idx: int = -1
 var _vendor_panel_connected: bool = false
 var _supply_override_counts: Dictionary = {"mre": 0, "water": 0}
 var _urchin_override_count: int = 0
@@ -408,19 +409,19 @@ func _build_level_steps(level: int) -> Array:
 					target = { resolver = "top_up_button" },
 					lock = "soft"
 				},
+				{
+					id = "l4_return_to_convoy",
+					copy = "Your vehicle is refueled and restocked! Click the active 'Settlement' button again to return to the convoy menu and plan your journey.",
+					action = "await_menu_open",
+					target = { resolver = "button_with_text", text_contains = "Settlement" },
+					lock = "soft"
+				},
 			]
 		5: # Level 5: Embark on Your Journey
 			return [
 				{
-					id = "l5_open_convoy_menu",
-					copy = "Great! You have the delivery cargo. Return to the convoy menu to plan your journey.",
-					action = "await_menu_open",
-					target = { resolver = "convoy_return_button" },
-					lock = "soft"
-				},
-				{
 					id = "l5_open_journey_menu",
-					copy = "Now, open the Journey menu.",
+					copy = "Now that you're back at the convoy overview, open the 'Journey' menu to plan your first delivery.",
 					action = "await_journey_menu",
 					target = { resolver = "button_with_text", text_contains = "Journey" },
 					lock = "soft"
@@ -585,23 +586,30 @@ func _configure_overlay_insets() -> void:
 		ov.call("set_safe_area_insets", 8)
 
 func _on_vendor_panel_refreshed(_vendor_panel_data: Dictionary):
-	if not _started or not _suspended_by_inline_error:
+	if not _started:
 		return
 	# Simple throttle to avoid overlapping re-runs if multiple payloads arrive together
 	var now_ms := Time.get_ticks_msec()
 	var last := int(_last_vendor_panel_refresh_ms)
 	var delta := (now_ms - last) if last >= 0 else 999999
-	print("[Tutorial][Perf] Vendor panel refreshed; delta since last=", delta, " ms")
+	
 	if delta < 250:
-		print("[Tutorial] Skipping tutorial resume (cooldown) to avoid overlap.")
 		return
+	
 	_last_vendor_panel_refresh_ms = now_ms
+	
+	# Always ensure signals are connected when a panel refreshes, 
+	# as it might have been recreated or its state reset.
+	_connect_vendor_panel_signals()
+	
+	if not _suspended_by_inline_error:
+		return
+		
 	print("[Tutorial] Vendor panel refreshed. Resuming tutorial overlay after one frame.")
 	_suspended_by_inline_error = false
 	# Re-run the current step to re-evaluate highlights and show the overlay again, after a frame.
 	await get_tree().process_frame
 	call_deferred("_run_current_step")
-	_connect_vendor_panel_signals()
 
 func _run_current_step() -> void:
 	if _step < 0 or _step >= _steps.size():
@@ -656,6 +664,10 @@ func _run_current_step() -> void:
 	]
 	if action in lock_tabs_for_actions:
 		_lock_vendor_tabs(step)
+		var tabs := _get_vendor_tab_container()
+		if is_instance_valid(tabs):
+			if not tabs.tab_selected.is_connected(_on_vendor_tab_selected):
+				tabs.tab_selected.connect(_on_vendor_tab_selected)
 	else:
 		_unlock_vendor_tabs()
 
@@ -818,6 +830,12 @@ func _show_message(text: String, show_continue: bool = true) -> void:
 		print("[Tutorial] ", text, " [Click to continue]")
 
 func _get_journey_menu() -> Node:
+	var mm := get_node_or_null("/root/MenuManager")
+	if is_instance_valid(mm) and is_instance_valid(mm.get("current_active_menu")):
+		var active = mm.get("current_active_menu")
+		if active.name.contains("ConvoyJourneyMenu") and not active.is_queued_for_deletion():
+			return active
+			
 	return get_tree().get_root().find_child("ConvoyJourneyMenu", true, false)
 
 func _watch_for_destination_pick() -> void:
@@ -973,12 +991,27 @@ func _emit_finished() -> void:
 # ---- Internal watchers and helpers ----
 
 func _get_settlement_menu() -> Node:
-	# Find an instance of ConvoySettlementMenu anywhere in the tree
+	# Prioritize the active menu from MenuManager to avoid stale instances
+	var mm := get_node_or_null("/root/MenuManager")
+	if is_instance_valid(mm):
+		var active = mm.get("current_active_menu")
+		if is_instance_valid(active):
+			if active.name.contains("ConvoySettlementMenu") and not active.is_queued_for_deletion():
+				return active
+			else:
+				# Log if it's NOT what we expected
+				pass
+	
+	# Fallback search
 	var root := get_tree().get_root()
-	if root == null:
-		return null
-	var found := root.find_child("ConvoySettlementMenu", true, false)
-	return found
+	if root == null: return null
+	var candidates = root.find_children("ConvoySettlementMenu", "Control", true, false)
+	for c in candidates:
+		if is_instance_valid(c) and not c.is_queued_for_deletion():
+			# We'll allow non-visible nodes if they are the only ones found,
+			# as they might be in a transition.
+			return c
+	return null
 
 func _watch_for_settlement_menu() -> void:
 	# Poll briefly until the settlement menu appears, then advance.
@@ -998,14 +1031,16 @@ func _get_vendor_tab_container() -> TabContainer:
 	var menu := _get_settlement_menu()
 	if not is_instance_valid(menu):
 		return null
-	# More robustly get the tab container by accessing the menu's own @onready variable
-	# rather than relying on a hardcoded scene path.
-	if menu.has_method("get") and "vendor_tab_container" in menu:
+	
+	# Try accessing the @onready variable directly
+	if "vendor_tab_container" in menu:
 		var tabs = menu.get("vendor_tab_container")
-		if tabs is TabContainer:
+		if is_instance_valid(tabs):
 			return tabs
-	# Fallback to the old path for safety
+			
+	# Fallback to the path for safety
 	return menu.get_node_or_null("MainVBox/VendorTabContainer")
+
 
 func _watch_for_tab_selected(target: Dictionary) -> void:
 	# This function now starts a polling loop within the _process function,
@@ -1064,7 +1099,12 @@ func _watch_for_top_up() -> void:
 		call_deferred("_watch_for_top_up")
 		return
 
+	# Robust lookup matching the resolver
 	_top_up_button_ref = menu.get_node_or_null("MainVBox/TopBarHBox/TopUpButton")
+	if not is_instance_valid(_top_up_button_ref):
+		_top_up_button_ref = menu.get_node_or_null("%TopUpButton")
+	if not is_instance_valid(_top_up_button_ref):
+		_top_up_button_ref = menu.find_child("TopUpButton", true, false)
 
 	# Check if already full to avoid softlock
 	if is_instance_valid(_top_up_button_ref):
@@ -1202,6 +1242,9 @@ func _on_urchin_check(_all_convoys: Array) -> void:
 		if not (item is Dictionary): continue
 		var item_name := String(item.get("name", "")).to_lower()
 		var quantity := int(item.get("quantity", 0))
+		print("[Tutorial][DIAG] Urchin check: found '%s' x%d" % [item_name, quantity])
+		
+		print("[Tutorial][DIAG] Urchin check: found item '%s' x%d" % [item_name, quantity])
 
 		if item_name.contains("mountain urchin"):
 			urchin_count += quantity
@@ -1213,9 +1256,10 @@ func _on_urchin_check(_all_convoys: Array) -> void:
 		# Urchins purchased. Disconnect the watcher.
 		if is_instance_valid(_store) and _store.is_connected("convoys_changed", Callable(self, "_on_urchin_check")):
 			_store.disconnect("convoys_changed", Callable(self, "_on_urchin_check"))
-		# Finish level 4 and transition to level 5. This will also update the server stage to 5.
-		print("[Tutorial] Urchins purchased. Finishing level 4 to advance to level 5.")
-		_emit_finished()
+		
+		# Advance to next step (Top Up), do NOT finish level yet.
+		print("[Tutorial] Urchins purchased. Advancing to next step.")
+		_advance()
 
 func _update_urchin_purchase_ui(urchin_count: int) -> void:
 	if _step < 0 or _step >= _steps.size() or _steps[_step].get("action") != "await_urchin_purchase":
@@ -1323,6 +1367,7 @@ func _update_supply_purchase_ui(mre_count: int, water_count: int) -> void:
 
 	var ov = _ensure_overlay()
 	if ov and ov.has_method("show_message"):
+		print("[Tutorial][DIAG] Updating UI: MRE=%d/%d, Water=%d/%d" % [display_mre, mre_needed, display_water, water_needed])
 		ov.call("show_message", copy, false, Callable(), checklist_items)
 
 func _watch_for_vehicle_purchase() -> void:
@@ -1369,13 +1414,13 @@ func _on_convoy_updated_for_vehicle_check(_all_convoys: Array) -> void:
 
 func _get_active_vendor_panel_node() -> Node:
 	var tabs := _get_vendor_tab_container()
-	if not is_instance_valid(tabs):
+	if not is_instance_valid(tabs) or tabs.is_queued_for_deletion():
 		return null
 	var idx := tabs.current_tab
 	if idx < 0:
 		return null
 	var container := tabs.get_child(idx) if idx < tabs.get_child_count() else null
-	if not is_instance_valid(container):
+	if not is_instance_valid(container) or container.is_queued_for_deletion():
 		return null
 
 	# Prefer finding by script path to avoid name-based mismatch.
@@ -1413,26 +1458,64 @@ func _get_active_vendor_panel_node() -> Node:
 
 # --- Vendor panel signal bridge (instant tutorial feedback) ---
 func _connect_vendor_panel_signals() -> void:
-	if _vendor_panel_connected:
+	print("[Tutorial][DIAG] _connect_vendor_panel_signals called.")
+	var tabs := _get_vendor_tab_container()
+	if not is_instance_valid(tabs):
+		print("[Tutorial][DIAG] VendorTabContainer NOT found.")
 		return
-	var panel := _get_active_vendor_panel_node()
-	if not is_instance_valid(panel):
-		# Retry shortly in case the panel is still building
-		var t := get_tree().create_timer(0.3, false)
-		t.timeout.connect(func(): _connect_vendor_panel_signals())
-		return
-	if panel.has_signal("item_purchased") and not panel.is_connected("item_purchased", Callable(self, "_on_vendor_item_purchased")):
-		panel.connect("item_purchased", Callable(self, "_on_vendor_item_purchased"))
-	# Optional: hook item_sold if needed later
-	_vendor_panel_connected = true
+
+	print("[Tutorial][DIAG] VendorTabContainer found: %s (id=%d) child_count=%d current_tab=%d" % [tabs.name, tabs.get_instance_id(), tabs.get_child_count(), tabs.current_tab])
+	
+	var connected_count := 0
+	var c := Callable(self, "_on_vendor_item_purchased")
+	
+	# Connect to EVERY child that has the signal, regardless of whether it's the 'active' one.
+	# This avoids missing signals when the user switches tabs or when current_tab is stale.
+	for i in range(tabs.get_child_count()):
+		var child = tabs.get_child(i)
+		# Deep search for the signal in the child or its descendants (in case of wrappers)
+		var target_node = _find_panel_with_signal(child, "item_purchased")
+		if is_instance_valid(target_node):
+			if not target_node.is_connected("item_purchased", c):
+				target_node.connect("item_purchased", c)
+				print("[Tutorial][DIAG] CONNECTED to panel: %s (id=%d)" % [target_node.name, target_node.get_instance_id()])
+			else:
+				# print("[Tutorial][DIAG] Already connected to panel: %s" % target_node.name)
+				pass
+			connected_count += 1
+	
+	if connected_count == 0:
+		print("[Tutorial][DIAG] No vendor panels with 'item_purchased' found to connect.")
+	else:
+		_vendor_panel_connected = true
+
+func _find_panel_with_signal(node: Node, signal_name: String) -> Node:
+	if node.has_signal(signal_name):
+		return node
+	for child in node.get_children():
+		var found = _find_panel_with_signal(child, signal_name)
+		if found:
+			return found
+	return null
 
 func _disconnect_vendor_panel_signals() -> void:
-	var panel := _get_active_vendor_panel_node()
-	if is_instance_valid(panel):
+	var tabs := _get_vendor_tab_container()
+	if is_instance_valid(tabs):
 		var c := Callable(self, "_on_vendor_item_purchased")
-		if panel.has_signal("item_purchased") and panel.is_connected("item_purchased", c):
-			panel.disconnect("item_purchased", c)
+		for i in range(tabs.get_child_count()):
+			var child = tabs.get_child(i)
+			var target_node = _find_panel_with_signal(child, "item_purchased")
+			if is_instance_valid(target_node) and target_node.is_connected("item_purchased", c):
+				target_node.disconnect("item_purchased", c)
 	_vendor_panel_connected = false
+
+func _on_vendor_tab_selected(idx: int) -> void:
+	var tabs := _get_vendor_tab_container()
+	if not is_instance_valid(tabs):
+		return
+	if _allowed_vendor_tab_idx >= 0 and idx != _allowed_vendor_tab_idx:
+		print("[Tutorial] Forced tab return from %d to %d" % [idx, _allowed_vendor_tab_idx])
+		tabs.current_tab = _allowed_vendor_tab_idx
 
 func _on_vendor_item_purchased(item: Variant, quantity: int, _total_price: float) -> void:
 	# Normalize item name
@@ -1441,6 +1524,8 @@ func _on_vendor_item_purchased(item: Variant, quantity: int, _total_price: float
 		item_name = String((item as Dictionary).get("name", "")).to_lower()
 	else:
 		item_name = String(item).to_lower()
+	
+	print("[Tutorial][DIAG] _on_vendor_item_purchased REACHED: item_name='%s' qty=%d" % [item_name, quantity])
 
 	# Supply step: track MRE boxes and Water Jerry Cans
 	if _step >= 0 and _step < _steps.size() and _steps[_step].get("action") == "await_supply_purchase":
@@ -1509,7 +1594,7 @@ func _resolve_and_highlight(step: Dictionary) -> bool:
 	var target: Dictionary = step.get("target", {})
 	if _resolver == null:
 		return false
-	var res: Dictionary = _resolver.call("resolve", target)
+	var res = await _resolver.resolve(target)
 	if res.get("ok", false):
 		var node: Node = res.get("node")
 		var rect: Rect2 = res.get("rect", Rect2())
@@ -1520,15 +1605,32 @@ func _resolve_and_highlight(step: Dictionary) -> bool:
 		elif ov.has_method("set_highlight_rect"): # Fallback for safety
 			ov.call_deferred("set_highlight_rect", rect)
 		print("[Tutorial] Highlight step=", step.get("id", ""), " rect=", rect, " node=", node)
+		
+		# If the target is dynamic (like a list item), we need to keep polling
+		# to ensure we follow it if the list is rebuilt.
+		var resolver_kind = String(target.get("resolver", ""))
+		if resolver_kind.contains("destination") or resolver_kind.contains("vendor"):
+			var timer := get_tree().create_timer(0.5, true)
+			timer.timeout.connect(func(): 
+				if _started and _step < _steps.size() and _steps[_step] == step:
+					_resolve_and_highlight(step)
+			)
+		
 		return true
 	else:
 		# Guardrail: if not found, clear highlight and downgrade lock after a short delay
-		if ov.has_method("clear_highlight"):
+		if is_instance_valid(ov) and ov.has_method("clear_highlight"):
 			ov.call("clear_highlight")
+		
+		# Retry logic
+		if not fast_mode:
+			var timer := get_tree().create_timer(0.6, true)
+			timer.timeout.connect(func(): 
+				if _started and _step < _steps.size() and _steps[_step] == step:
+					_resolve_and_highlight(step)
+			)
 		print("[Tutorial] Highlight resolve failed for step=", step.get("id", ""), " reason=", res.get("reason", ""))
-		# Start/continue retry loop
-	_start_highlight_retry(step)
-	return false
+		return false
 
 func _start_highlight_retry(step: Dictionary) -> void:
 	_active_highlight_step = step.duplicate(true)
@@ -1544,7 +1646,7 @@ func _on_highlight_retry() -> void:
 	# Re-resolve, but if still failing a few times, relax lock
 	var ov := _ensure_overlay()
 	var target: Dictionary = _active_highlight_step.get("target", {})
-	var res: Dictionary = _resolver.call("resolve", target)
+	var res = await _resolver.resolve(target)
 	if res.get("ok", false):
 		var node: Node = res.get("node")
 		var rect: Rect2 = res.get("rect", Rect2())
@@ -1784,10 +1886,10 @@ func _lock_vendor_tabs(step: Dictionary) -> void:
 	if target_token.is_empty():
 		# No token provided, lock all tabs except the current one. This is for steps
 		# that happen *after* a tab has been selected, like buying an item.
-		var current_tab_idx = tabs.current_tab
-		print("[Tutorial] Locking vendor tabs, allowing current tab (index %d)" % current_tab_idx)
+		_allowed_vendor_tab_idx = tabs.current_tab
+		print("[Tutorial] Locking vendor tabs, allowing current tab (index %d)" % _allowed_vendor_tab_idx)
 		for i in range(tabs.get_tab_count()):
-			if i != current_tab_idx:
+			if i != _allowed_vendor_tab_idx:
 				tabs.set_tab_disabled(i, true)
 			else:
 				tabs.set_tab_disabled(i, false)
@@ -1806,9 +1908,12 @@ func _lock_vendor_tabs(step: Dictionary) -> void:
 				if title_lower.find("market") != -1 or title_lower.find("gas") != -1:
 					is_allowed = false
 			
+			if is_allowed:
+				_allowed_vendor_tab_idx = i
 			tabs.set_tab_disabled(i, not is_allowed)
 
 func _unlock_vendor_tabs() -> void:
+	_allowed_vendor_tab_idx = -1
 	var tabs := _get_vendor_tab_container()
 	if not is_instance_valid(tabs):
 		return

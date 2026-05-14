@@ -16,6 +16,7 @@ signal item_sold(item, quantity, total_price)
 signal install_requested(item, quantity, vendor_id)
 
 func _emit_item_purchased(item: Variant, quantity: int, total_price: float) -> void:
+	print("[VendorTradePanel][DIAG] EMITTING item_purchased on instance_id=%d: %s x%d" % [get_instance_id(), str(item.get("name", "Unknown")) if item is Dictionary else str(item), quantity])
 	emit_signal("item_purchased", item, quantity, total_price)
 
 func _emit_item_sold(item: Variant, quantity: int, total_price: float) -> void:
@@ -1751,11 +1752,9 @@ func _optimistically_update_vendor_stock(item_name: String, qty_delta: int) -> v
 		print("[VendorPanel][DIAG] FAILED: item '%s' not found in any bucket. Buckets searched: %s" % [target_name, (vendor_items as Dictionary).keys()])
 
 func _on_api_transaction_result(result: Dictionary) -> void:
-	var pending_qty: int = int(_pending_tx.get("quantity", 0))
-	var has_pending_data: bool = (pending_qty > 0)
-	
-	print("[VendorPanel][DIAG] _on_api_transaction_result entered on instance_id=%d. in_progress=%s, has_pending=%s" % [get_instance_id(), str(_transaction_in_progress), str(has_pending_data)])
-	
+	print("[VendorPanel][DIAG] _on_api_transaction_result ENTERED on instance_id=%d" % get_instance_id())
+	var has_pending_data: bool = not _pending_tx.item.is_empty()
+	print("[VendorPanel][DIAG] in_progress=%s, has_pending=%s" % [str(_transaction_in_progress), str(has_pending_data)])
 	# Capture feedback info regardless of in_progress flag, as long as we have data
 	var mode_str: String = "bought" if str(current_mode) == "buy" else "sold"
 	var qty: int = int(_pending_tx.get("quantity", 1))
