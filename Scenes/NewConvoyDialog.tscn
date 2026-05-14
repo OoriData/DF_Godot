@@ -71,12 +71,6 @@ layout_mode = 2
 theme_override_constants/separation = 30
 alignment = 1
 
-[node name="CancelButton" type="Button" parent="VBox/Buttons"]
-custom_minimum_size = Vector2(240, 80)
-layout_mode = 2
-theme_override_font_sizes/font_size = 32
-text = "Cancel"
-
 [node name="CreateButton" type="Button" parent="VBox/Buttons"]
 custom_minimum_size = Vector2(240, 80)
 layout_mode = 2

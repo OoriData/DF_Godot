@@ -1,11 +1,9 @@
 extends PanelContainer
 
 signal create_requested(name: String)
-signal canceled
 
 @onready var name_edit: LineEdit = $VBox/NameEdit
 @onready var create_button: Button = $VBox/Buttons/CreateButton
-@onready var cancel_button: Button = $VBox/Buttons/CancelButton
 @onready var error_label: Label = $VBox/ErrorLabel
 
 func _ready():
@@ -13,8 +11,6 @@ func _ready():
 	_error("")
 	if is_instance_valid(create_button):
 		create_button.pressed.connect(_on_create_pressed)
-	if is_instance_valid(cancel_button):
-		cancel_button.pressed.connect(_on_cancel_pressed)
 	if is_instance_valid(name_edit):
 		name_edit.text_submitted.connect(func(_t): _on_create_pressed())
 
@@ -35,8 +31,6 @@ func close():
 func set_busy(is_busy: bool):
 	if is_instance_valid(create_button):
 		create_button.disabled = is_busy
-	if is_instance_valid(cancel_button):
-		cancel_button.disabled = is_busy
 	if is_instance_valid(name_edit):
 		name_edit.editable = not is_busy
 
@@ -53,10 +47,6 @@ func _on_create_pressed():
 	_error("")
 	set_busy(true)
 	emit_signal("create_requested", nm)
-
-func _on_cancel_pressed():
-	emit_signal("canceled")
-	close()
 
 func _error(msg: String):
 	if is_instance_valid(error_label):

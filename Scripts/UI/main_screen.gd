@@ -1387,7 +1387,7 @@ func _hide_new_convoy_dialog():
 		_maybe_hide_modal_layer()
 
 func _update_new_convoy_dialog_layout():
-	if not is_instance_valid(_new_convoy_dialog) or not _new_convoy_dialog.visible:
+	if not is_instance_valid(_new_convoy_dialog):
 		return
 	
 	# Ensure it's centered by default relative to the ModalLayer
@@ -1399,8 +1399,10 @@ func _update_new_convoy_dialog_layout():
 	
 	if not _is_portrait():
 		# Landscape: Shift up significantly to stay above the virtual keyboard.
-		# We shift it up by 150px.
+		# Reverting to the original 150px shift as requested, but maintaining 
+		# the bug fix that allows this to work on the first frame.
 		var shift_up = 150
+		
 		_new_convoy_dialog.offset_left = -half_w
 		_new_convoy_dialog.offset_right = half_w
 		_new_convoy_dialog.offset_top = -half_h - shift_up
