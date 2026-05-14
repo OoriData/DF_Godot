@@ -307,6 +307,7 @@ func _on_main_screen_size_changed():
 
 	_update_camera_viewport_rect_on_resize()
 	_update_onboarding_layer_rect_to_map()
+	_update_new_convoy_dialog_layout()
 
 func _on_layout_mode_changed(mode, screen_size, is_mobile):
 	# Directly handle layout mode flips (Portrait <-> Landscape)
@@ -319,6 +320,7 @@ func _on_layout_mode_changed(mode, screen_size, is_mobile):
 
 	_update_camera_viewport_rect_on_resize()
 	_update_onboarding_layer_rect_to_map()
+	_update_new_convoy_dialog_layout()
 
 func _refresh_menu_layout():
 	# Update Target Width
@@ -1017,6 +1019,33 @@ func _on_store_map_changed(_tiles: Array, _settlements: Array):
 
 func _on_auto_sell_receipt_ready(receipt_data: Variant) -> void:
 	print("[AutoSell] main_screen received auto_sell_receipt_ready signal")
+	
+	# NEW: Suppress receipt modal if tutorial is active to avoid interfering with onboarding.
+	var tutorial_manager := get_node_or_null("/root/TutorialManager")
+	var is_active = is_instance_valid(tutorial_manager) and tutorial_manager.has_method("is_tutorial_active") and tutorial_manager.is_tutorial_active()
+	
+	# Also check store metadata in case TutorialManager hasn't started yet (e.g. for brand new users).
+	var store = get_node_or_null("/root/GameStore")
+	var tutorial_stage := -1
+	if is_instance_valid(store):
+		var user = store.get_user()
+		var md = user.get("metadata", {})
+		if md is Dictionary and md.has("tutorial"):
+			tutorial_stage = int(md["tutorial"])
+		else:
+			# Fallback: if no metadata, check if they are at spawn (Tutorial City) or have no convoys.
+			var convoys = store.get_convoys()
+			var has_any = convoys is Array and convoys.size() > 0
+			var at_spawn = false
+			if has_any and convoys[0] is Dictionary:
+				at_spawn = abs(float(convoys[0].get("x", 0.0))) < 0.1 and abs(float(convoys[0].get("y", 0.0))) < 0.1
+			if not has_any or at_spawn:
+				tutorial_stage = 1
+	
+	if is_active or (tutorial_stage >= 1 and tutorial_stage < 8):
+		print("[AutoSell] main_screen: Tutorial active or stage %d; suppressing receipt modal." % tutorial_stage)
+		return
+
 	if not (receipt_data is Dictionary) or receipt_data.get("items", []).is_empty():
 		return
 	
@@ -1113,12 +1142,10 @@ func _show_new_convoy_dialog():
 				print("[Onboarding] Instantiating NewConvoyDialog scene…")
 			_new_convoy_dialog = scene.instantiate()
 		# The host for the modal dialog is the full-screen CenterContainer from the scene file.
-		modal_layer = get_node_or_null("SafeRegionContainer/ModalLayer")
-		var host: Node = modal_layer.get_node_or_null("DialogHost") if is_instance_valid(modal_layer) else null
-		if not is_instance_valid(host):
-			printerr("[Onboarding] CRITICAL: ModalLayer or its DialogHost child not found in MainScreen.tscn!")
+		if not is_instance_valid(modal_layer):
+			printerr("[Onboarding] CRITICAL: ModalLayer not found in MainScreen.tscn!")
 			return
-		host.add_child(_new_convoy_dialog)
+		modal_layer.add_child(_new_convoy_dialog)
 		if onboarding_log_enabled:
 			print("[Onboarding] NewConvoyDialog added to ModalLayer.")
 		# Connect signals
@@ -1131,10 +1158,12 @@ func _show_new_convoy_dialog():
 		if onboarding_log_enabled:
 			print("[Onboarding] Opening NewConvoyDialog…")
 		if is_instance_valid(modal_layer): modal_layer.show()
+		_update_new_convoy_dialog_layout()
 		_new_convoy_dialog.call_deferred("open")
 	else:
 		printerr("[Onboarding] WARN: Dialog missing 'open' method; forcing visible true.")
 		if is_instance_valid(modal_layer): modal_layer.show()
+		_update_new_convoy_dialog_layout()
 		_new_convoy_dialog.visible = true
 
 func show_returning_player_tips() -> bool:
@@ -1216,7 +1245,7 @@ func _maybe_show_returning_player_tips() -> void:
 func _build_inline_new_convoy_dialog() -> Control:
 	var dlg := PanelContainer.new()
 	dlg.name = "NewConvoyDialog"
-	dlg.custom_minimum_size = Vector2(420, 180)
+	dlg.custom_minimum_size = Vector2(1000, 480)
 	# Build structure before attaching script and adding to tree
 	var v := VBoxContainer.new()
 	v.name = "VBox"
@@ -1224,18 +1253,23 @@ func _build_inline_new_convoy_dialog() -> Control:
 	v.grow_horizontal = Control.GROW_DIRECTION_BOTH
 	v.grow_vertical = Control.GROW_DIRECTION_BOTH
 	v.alignment = BoxContainer.ALIGNMENT_CENTER
+	v.add_theme_constant_override("separation", 40)
 	dlg.add_child(v)
 
 	var title := Label.new()
 	title.name = "Title"
 	title.text = "Welcome to Desolate Frontiers!  \nLets start by naming your first convoy."
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	title.add_theme_font_size_override("font_size", 48)
 	v.add_child(title)
 
 	var name_edit := LineEdit.new()
 	name_edit.name = "NameEdit"
 	name_edit.placeholder_text = "Convoy name"
 	name_edit.max_length = 40
+	name_edit.alignment = HORIZONTAL_ALIGNMENT_CENTER
+	name_edit.custom_minimum_size = Vector2(0, 80)
+	name_edit.add_theme_font_size_override("font_size", 32)
 	v.add_child(name_edit)
 
 	var error_label := Label.new()
@@ -1243,21 +1277,27 @@ func _build_inline_new_convoy_dialog() -> Control:
 	error_label.visible = false
 	error_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	error_label.modulate = Color(1, 0.6, 0.6)
+	error_label.add_theme_font_size_override("font_size", 28)
 	v.add_child(error_label)
 
 	var buttons := HBoxContainer.new()
 	buttons.name = "Buttons"
 	buttons.alignment = BoxContainer.ALIGNMENT_CENTER
+	buttons.add_theme_constant_override("separation", 30)
 	v.add_child(buttons)
 
 	var cancel_btn := Button.new()
 	cancel_btn.name = "CancelButton"
 	cancel_btn.text = "Cancel"
+	cancel_btn.custom_minimum_size = Vector2(240, 80)
+	cancel_btn.add_theme_font_size_override("font_size", 32)
 	buttons.add_child(cancel_btn)
 
 	var create_btn := Button.new()
 	create_btn.name = "CreateButton"
 	create_btn.text = "Create"
+	create_btn.custom_minimum_size = Vector2(240, 80)
+	create_btn.add_theme_font_size_override("font_size", 32)
 	buttons.add_child(create_btn)
 
 	# Attach behavior script
@@ -1346,6 +1386,32 @@ func _hide_new_convoy_dialog():
 		# We don't nullify here if it's persistent, but we should ensure layer check
 		_maybe_hide_modal_layer()
 
+func _update_new_convoy_dialog_layout():
+	if not is_instance_valid(_new_convoy_dialog) or not _new_convoy_dialog.visible:
+		return
+	
+	# Ensure it's centered by default relative to the ModalLayer
+	_new_convoy_dialog.set_anchors_preset(Control.PRESET_CENTER)
+	
+	# The base sizes from the .tscn/builder (1000x480)
+	var half_w = 500
+	var half_h = 240
+	
+	if not _is_portrait():
+		# Landscape: Shift up significantly to stay above the virtual keyboard.
+		# We shift it up by 150px.
+		var shift_up = 150
+		_new_convoy_dialog.offset_left = -half_w
+		_new_convoy_dialog.offset_right = half_w
+		_new_convoy_dialog.offset_top = -half_h - shift_up
+		_new_convoy_dialog.offset_bottom = half_h - shift_up
+	else:
+		# Portrait: Standard center.
+		_new_convoy_dialog.offset_left = -half_w
+		_new_convoy_dialog.offset_right = half_w
+		_new_convoy_dialog.offset_top = -half_h
+		_new_convoy_dialog.offset_bottom = half_h
+
 func _maybe_hide_modal_layer():
 	var modal_layer: Control = get_node_or_null("SafeRegionContainer/ModalLayer")
 	var host: Node = modal_layer.get_node_or_null("DialogHost") if is_instance_valid(modal_layer) else null
@@ -1357,6 +1423,10 @@ func _maybe_hide_modal_layer():
 		if child is Control and child.visible and not child.is_queued_for_deletion():
 			has_visible_dialog = true
 			break
+	
+	# Also check the new convoy dialog since it's now a direct child of ModalLayer
+	if not has_visible_dialog and is_instance_valid(_new_convoy_dialog) and _new_convoy_dialog.visible:
+		has_visible_dialog = true
 	
 	if not has_visible_dialog:
 		modal_layer.hide()
