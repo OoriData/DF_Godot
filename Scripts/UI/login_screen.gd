@@ -299,8 +299,10 @@ func _build_login_buttons() -> void:
 		else:
 			_disable_steam_button()
 
-	# --- Debug Bypass (only in debug builds) ---
-	if OS.is_debug_build():
+	# --- Debug Bypass (only when active_env = "dev" in app_config.cfg) ---
+	var api_node = get_node_or_null("/root/APICalls")
+	var _is_dev_env := is_instance_valid(api_node) and String(api_node.get("active_env")).to_lower() == "dev"
+	if _is_dev_env:
 		var debug_btn = _create_login_button(
 			"DebugSkipButton", "DEBUG: Skip Login",
 			Color("444444"), Color("555555"), Color("333333"),

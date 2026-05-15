@@ -73,6 +73,8 @@ signal google_account_linked(result: Dictionary)     # { ok, error_code, message
 signal bug_report_submitted(result: Dictionary)
 
 var BASE_URL: String = 'http://127.0.0.1:1337' # default (overridden via config/env)
+var active_env: String = "dev" # "dev" or "prod"
+
 # Allow override via configuration and environment (cannot be const due to runtime lookup)
 func _init():
 	_load_base_url_from_config()
@@ -92,7 +94,7 @@ func _load_base_url_from_config() -> void:
 	if direct != "":
 		BASE_URL = direct
 		return
-	var active_env := String(cfg.get_value("api", "active_env", "dev")).to_lower()
+	active_env = String(cfg.get_value("api", "active_env", "dev")).to_lower()
 	var dev := String(cfg.get_value("api", "base_url_dev", BASE_URL))
 	var prod := String(cfg.get_value("api", "base_url_prod", BASE_URL))
 	match active_env:
