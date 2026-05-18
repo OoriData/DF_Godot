@@ -10,7 +10,7 @@ This section covers the underlying infrastructure, identity management, and qual
 - [**Deployment & Environment**](Deployment.md): Build targets and CI/CD pipelines.
 - [**Identity & Auth**](Identity.md): Account linking, merging, and session management.
 - [**Apple Auth**](AppleAuth.md): Specific notes on iOS/macOS authentication providers.
-
+- [**Cargo Destination Implementation**](CargoDestinationButtonImplementation.md): Plan for implementing the cargo destination button.
 ---
 
 ## Testing & QA
