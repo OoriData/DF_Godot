@@ -195,11 +195,278 @@ func _ready():
 		print("[WarehouseMenu][Debug] Connected spawn_convoy_btn pressed signal path=", spawn_convoy_btn.get_path())
 	
 	# Initial style pass
+	_setup_dual_column_layout()
 	_on_layout_mode_changed()
 	_update_ui()
 
+func _setup_dual_column_layout() -> void:
+	if not is_instance_valid(body_vbox): return
+	if body_vbox.has_node("Columns"): return
+
+	var columns = BoxContainer.new()
+	columns.name = "Columns"
+	columns.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	columns.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	
+	# Wrap Left Column in a sleek styled panel surface
+	var left_panel = PanelContainer.new()
+	left_panel.name = "LeftPanel"
+	left_panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	left_panel.size_flags_stretch_ratio = 1.0
+	left_panel.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_style_panel_surface(left_panel)
+	
+	var left_margin = MarginContainer.new()
+	left_margin.add_theme_constant_override("margin_left", 20)
+	left_margin.add_theme_constant_override("margin_right", 20)
+	left_margin.add_theme_constant_override("margin_top", 20)
+	left_margin.add_theme_constant_override("margin_bottom", 20)
+	left_panel.add_child(left_margin)
+	
+	var left_col = VBoxContainer.new()
+	left_col.name = "LeftColumn"
+	left_col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	left_col.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	left_col.add_theme_constant_override("separation", 24)
+	left_margin.add_child(left_col)
+	
+	var right_col = VBoxContainer.new()
+	right_col.name = "RightColumn"
+	right_col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	right_col.size_flags_stretch_ratio = 1.8
+	right_col.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	
+	columns.add_child(left_panel)
+	columns.add_child(right_col)
+	
+	if is_instance_valid(owned_tabs):
+		var overview_tab = owned_tabs.get_node_or_null("Overview")
+		if is_instance_valid(overview_tab):
+			owned_tabs.remove_child(overview_tab)
+			
+			# Add a nice section title to Left Panel
+			var title_lbl = Label.new()
+			title_lbl.text = "STORAGE MONITOR"
+			title_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+			title_lbl.add_theme_font_size_override("font_size", 16)
+			title_lbl.add_theme_color_override("font_color", Color(0.0, 0.66, 1.0, 1.0)) # Oori Blue
+			left_col.add_child(title_lbl)
+			
+			left_col.add_child(overview_tab)
+			overview_tab.size_flags_vertical = Control.SIZE_EXPAND_FILL
+			overview_tab.add_theme_constant_override("separation", 20)
+			
+			# Hide dry default summary label
+			var summary_lbl = overview_tab.get_node_or_null("SummaryLabel")
+			if is_instance_valid(summary_lbl):
+				summary_lbl.visible = false
+		
+		if owned_tabs.get_parent() == body_vbox:
+			body_vbox.remove_child(owned_tabs)
+			right_col.add_child(owned_tabs)
+	
+	body_vbox.add_child(columns)
+	
+	# Centered Radial Gauge Setup
+	var gauge_script = load("res://Scripts/UI/radial_progress_gauge.gd")
+	var overview_tab = left_col.get_node_or_null("Overview")
+	if gauge_script and is_instance_valid(overview_tab) and is_instance_valid(overview_cargo_bar):
+		var center_container = CenterContainer.new()
+		center_container.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		
+		var gauge = gauge_script.new()
+		gauge.custom_minimum_size = Vector2(180, 180)
+		gauge.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+		gauge.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		center_container.add_child(gauge)
+		
+		# Center the circle gauge at the very top of overview panel
+		overview_tab.add_child(center_container)
+		overview_tab.move_child(center_container, 0)
+		
+		overview_cargo_bar.visible = false
+		
+		# Align Cargo label cleanly under the gauge
+		if is_instance_valid(overview_cargo_label):
+			var parent_hbox = overview_cargo_label.get_parent() as HBoxContainer
+			if parent_hbox:
+				parent_hbox.alignment = BoxContainer.ALIGNMENT_CENTER
+				overview_cargo_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+				overview_cargo_label.add_theme_font_size_override("font_size", 15)
+		
+		set_meta("radial_gauge", gauge)
+		
+	# Clean up loose upgrade elements and wrap them in structured sub-panels
+	if is_instance_valid(overview_tab):
+		var expand_cargo_hbox = overview_tab.get_node_or_null("ExpandCargoHBox") as HBoxContainer
+		var expand_cargo_label = overview_tab.get_node_or_null("ExpandCargoHBox/ExpandCargoLabel") as Label
+		var expand_cargo_btn = overview_tab.get_node_or_null("ExpandCargoHBox/ExpandCargoBtn") as Button
+		_style_upgrade_box(expand_cargo_hbox, expand_cargo_label, expand_cargo_btn)
+		
+		var expand_veh_hbox = overview_tab.get_node_or_null("ExpandVehicleHBox") as HBoxContainer
+		var expand_veh_label = overview_tab.get_node_or_null("ExpandVehicleHBox/ExpandVehicleLabel") as Label
+		var expand_veh_btn = overview_tab.get_node_or_null("ExpandVehicleHBox/ExpandVehicleBtn") as Button
+		_style_upgrade_box(expand_veh_hbox, expand_veh_label, expand_veh_btn)
+		
+		# Slim and style vehicle slots progress bar row
+		var veh_hbox = overview_tab.get_node_or_null("OverviewVehicleHBox") as HBoxContainer
+		var veh_label = overview_tab.get_node_or_null("OverviewVehicleHBox/OverviewVehicleLabel") as Label
+		var veh_bar = overview_tab.get_node_or_null("OverviewVehicleHBox/OverviewVehicleBar") as ProgressBar
+		if veh_hbox and veh_label and veh_bar:
+			veh_hbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			veh_label.add_theme_font_size_override("font_size", 14)
+			veh_bar.custom_minimum_size.y = 12
+			
+			var sb_bg = StyleBoxFlat.new()
+			sb_bg.bg_color = Color(0.06, 0.07, 0.09, 1.0)
+			sb_bg.corner_radius_top_left = 3
+			sb_bg.corner_radius_top_right = 3
+			sb_bg.corner_radius_bottom_left = 3
+			sb_bg.corner_radius_bottom_right = 3
+			var sb_fg = StyleBoxFlat.new()
+			sb_fg.bg_color = Color(0.0, 0.66, 1.0, 1.0) # Theme blue
+			sb_fg.corner_radius_top_left = 3
+			sb_fg.corner_radius_top_right = 3
+			sb_fg.corner_radius_bottom_left = 3
+			sb_fg.corner_radius_bottom_right = 3
+			veh_bar.add_theme_stylebox_override("background", sb_bg)
+			veh_bar.add_theme_stylebox_override("fill", sb_fg)
+
+func _style_upgrade_box(hbox: HBoxContainer, label: Label, btn: Button) -> void:
+	if not is_instance_valid(hbox) or not is_instance_valid(label) or not is_instance_valid(btn):
+		return
+	var parent = hbox.get_parent()
+	if not parent: return
+	if parent is PanelContainer and parent.name.ends_with("_wrapper"):
+		return
+		
+	var wrapper = PanelContainer.new()
+	wrapper.name = hbox.name + "_wrapper"
+	wrapper.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	
+	var sb = StyleBoxFlat.new()
+	sb.bg_color = Color(0.12, 0.14, 0.18, 0.6)
+	sb.border_color = Color(0.25, 0.35, 0.45, 0.5)
+	sb.border_width_left = 1
+	sb.border_width_top = 1
+	sb.border_width_right = 1
+	sb.border_width_bottom = 1
+	sb.corner_radius_top_left = 6
+	sb.corner_radius_top_right = 6
+	sb.corner_radius_bottom_left = 6
+	sb.corner_radius_bottom_right = 6
+	wrapper.add_theme_stylebox_override("panel", sb)
+	
+	var margin = MarginContainer.new()
+	margin.add_theme_constant_override("margin_left", 12)
+	margin.add_theme_constant_override("margin_right", 12)
+	margin.add_theme_constant_override("margin_top", 10)
+	margin.add_theme_constant_override("margin_bottom", 10)
+	wrapper.add_child(margin)
+	
+	var idx = hbox.get_index()
+	parent.remove_child(hbox)
+	margin.add_child(hbox)
+	parent.add_child(wrapper)
+	parent.move_child(wrapper, idx)
+	
+	hbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	label.add_theme_font_size_override("font_size", 13)
+	label.add_theme_color_override("font_color", Color(0.85, 0.85, 0.9, 1.0))
+	_style_primary_button(btn, Color(0.0, 0.66, 1.0, 1.0))
+
+func _apply_column_responsiveness() -> void:
+	if not is_instance_valid(body_vbox): return
+	var columns = body_vbox.get_node_or_null("Columns")
+	if not columns: return
+	var dsm = get_node_or_null("/root/DeviceStateManager")
+	var is_portrait = dsm.get_is_portrait() if dsm else (get_viewport_rect().size.y > get_viewport_rect().size.x)
+	columns.vertical = is_portrait
+	
+	var left_panel = columns.get_node_or_null("LeftPanel")
+	var radial_gauge = get_meta("radial_gauge") as Control if has_meta("radial_gauge") else null
+	var overview_tab = left_panel.find_child("Overview", true, false) if is_instance_valid(left_panel) else null
+	
+	# Keep all elements top-aligned so extra screen height is placed at the bottom
+	body_vbox.alignment = BoxContainer.ALIGNMENT_BEGIN
+	columns.alignment = BoxContainer.ALIGNMENT_BEGIN
+	
+	if is_portrait:
+		columns.add_theme_constant_override("separation", 14)
+		if is_instance_valid(left_panel):
+			# Strip out EXPAND flags from the left panel and its children so it completely shrink-wraps
+			left_panel.size_flags_vertical = Control.SIZE_FILL
+			left_panel.size_flags_stretch_ratio = 1.0
+			var inner_col = left_panel.find_child("LeftColumn", true, false)
+			if inner_col: inner_col.size_flags_vertical = Control.SIZE_FILL
+		if is_instance_valid(radial_gauge):
+			radial_gauge.custom_minimum_size = Vector2(120, 120)
+		if is_instance_valid(overview_tab):
+			overview_tab.add_theme_constant_override("separation", 10)
+			# Keep overview widgets packed tightly at top of LeftPanel in portrait
+			overview_tab.size_flags_vertical = Control.SIZE_FILL
+			
+			# Increase upgrade label sizes in portrait for better readability (matching general 24px portrait labels)
+			var lbl_cargo = overview_tab.find_child("ExpandCargoLabel", true, false) as Label
+			if lbl_cargo: lbl_cargo.add_theme_font_size_override("font_size", 24)
+			var lbl_veh = overview_tab.find_child("ExpandVehicleLabel", true, false) as Label
+			if lbl_veh: lbl_veh.add_theme_font_size_override("font_size", 24)
+			
+			# Increase button text sizes in portrait too
+			var btn_cargo = overview_tab.find_child("ExpandCargoBtn", true, false) as Button
+			if btn_cargo: btn_cargo.add_theme_font_size_override("font_size", 20)
+			var btn_veh = overview_tab.find_child("ExpandVehicleBtn", true, false) as Button
+			if btn_veh: btn_veh.add_theme_font_size_override("font_size", 20)
+	else:
+		columns.add_theme_constant_override("separation", 24)
+		if is_instance_valid(left_panel):
+			# Expand fully in landscape to balance with right columns
+			left_panel.size_flags_vertical = Control.SIZE_EXPAND_FILL
+			left_panel.size_flags_stretch_ratio = 1.0
+			var inner_col = left_panel.find_child("LeftColumn", true, false)
+			if inner_col: inner_col.size_flags_vertical = Control.SIZE_EXPAND_FILL
+		if is_instance_valid(radial_gauge):
+			radial_gauge.custom_minimum_size = Vector2(180, 180)
+		if is_instance_valid(overview_tab):
+			overview_tab.add_theme_constant_override("separation", 20)
+			# Fill entire vertical panel height in landscape/desktop
+			overview_tab.size_flags_vertical = Control.SIZE_EXPAND_FILL
+			
+			# Restore standard size in landscape
+			var lbl_cargo = overview_tab.find_child("ExpandCargoLabel", true, false) as Label
+			if lbl_cargo: lbl_cargo.add_theme_font_size_override("font_size", 13)
+			var lbl_veh = overview_tab.find_child("ExpandVehicleLabel", true, false) as Label
+			if lbl_veh: lbl_veh.add_theme_font_size_override("font_size", 13)
+			
+			# Restore standard button sizes
+			var btn_cargo = overview_tab.find_child("ExpandCargoBtn", true, false) as Button
+			if btn_cargo: btn_cargo.remove_theme_font_size_override("font_size")
+			var btn_veh = overview_tab.find_child("ExpandVehicleBtn", true, false) as Button
+			if btn_veh: btn_veh.remove_theme_font_size_override("font_size")
+
+func _on_cargo_card_selected(item_data: Dictionary) -> void:
+	var meta_to_select = _encode_cargo_meta([{"cargo_id": str(item_data.get("cargo_id", "")), "quantity": int(item_data.get("quantity", 0))}])
+	if is_instance_valid(cargo_retrieve_dd):
+		for i in range(cargo_retrieve_dd.item_count):
+			if str(cargo_retrieve_dd.get_item_metadata(i)) == meta_to_select:
+				cargo_retrieve_dd.select(i)
+				_update_retrieve_qty_limit()
+				if is_instance_valid(cargo_qty_retrieve) and cargo_qty_retrieve.has_method("set_value"):
+					cargo_qty_retrieve.set_value(cargo_qty_retrieve.max_value)
+				break
+
+func _on_vehicle_card_selected(item_data: Dictionary) -> void:
+	var meta_to_select = str(item_data.get("meta", ""))
+	if is_instance_valid(vehicle_retrieve_dd):
+		for i in range(vehicle_retrieve_dd.item_count):
+			if str(vehicle_retrieve_dd.get_item_metadata(i)) == meta_to_select:
+				vehicle_retrieve_dd.select(i)
+				break
+
 func _on_layout_mode_changed(_mode: int = -1, _size: Vector2 = Vector2.ZERO, _is_mobile_val: bool = false) -> void:
 	# Centralized UI refresh for orientation changes
+	_apply_column_responsiveness()
 	_style_buy_menu_ui()
 	_tune_inventory_panels_layout()
 	_update_ui()
@@ -1795,6 +2062,10 @@ func _update_overview_bars() -> void:
 	if is_instance_valid(overview_cargo_bar):
 		overview_cargo_bar.max_value = cap_cargo
 		overview_cargo_bar.value = clamp(display_used_cargo, 0.0, cap_cargo)
+	var gauge = get_meta("radial_gauge") if has_meta("radial_gauge") else null
+	if is_instance_valid(gauge):
+		gauge.max_value = float(cap_cargo)
+		gauge.value = float(display_used_cargo)
 	if is_instance_valid(overview_cargo_label):
 		overview_cargo_label.text = "Cargo Usage: %s / %s L" % [str(int(used_cargo)), str(int(cap_cargo))]
 	# Vehicle bar (derive from counts if capacity key exists, else hide)
@@ -1820,11 +2091,17 @@ func _update_overview_bars() -> void:
 func _render_cargo_grid() -> void:
 	if not is_instance_valid(cargo_grid):
 		return
-	# Set columns dynamically: fewer in landscape mobile to prevent horizontal overflow
+	# Set columns dynamically: fewer in landscape mobile / portrait mobile to prevent overflow
 	var _dsm = get_node_or_null("/root/DeviceStateManager")
+	var _is_portrait = _dsm.get_is_portrait() if _dsm else (get_viewport_rect().size.y > get_viewport_rect().size.x)
 	var _mode = _dsm.get_layout_mode() if _dsm else 0
 	var _is_lm = (_mode == 1)  # MOBILE_LANDSCAPE
-	cargo_grid.columns = 3 if _is_lm else 4
+	if _is_portrait:
+		cargo_grid.columns = 2
+	elif _is_lm:
+		cargo_grid.columns = 3
+	else:
+		cargo_grid.columns = 4
 	# Clear existing
 	for c in cargo_grid.get_children():
 		c.queue_free()
@@ -1858,31 +2135,33 @@ func _render_cargo_grid() -> void:
 			var is_portrait = dsm.get_is_portrait() if dsm else (get_viewport_rect().size.y > get_viewport_rect().size.x)
 			var mode = dsm.get_layout_mode() if dsm else 0
 			var is_landscape_mobile = (mode == 1)  # MOBILE_LANDSCAPE
-			var item_h = 140 if is_portrait else 72
-			var item_w = 200 if not is_landscape_mobile else 140
+			var item_h = 140 if is_portrait else (100 if is_landscape_mobile else 160)
+			var item_w = 140 if is_portrait else (140 if is_landscape_mobile else 160)
 			var font_size = dsm.get_scaled_base_font_size(22) if dsm else (42 if is_portrait else 22)
 			
-			var panel := PanelContainer.new()
-			panel.custom_minimum_size = Vector2(item_w, item_h)
-			panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-			var vb := VBoxContainer.new()
-			vb.alignment = BoxContainer.ALIGNMENT_CENTER
-			var label := Label.new()
-			label.text = "%s x%d" % [item_name, qty]
-			label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-			label.add_theme_font_size_override("font_size", font_size)
-			vb.add_child(label)
-			panel.add_child(vb)
-			cargo_grid.add_child(panel)
+			var card_script = load("res://Scripts/UI/warehouse_item_card.gd")
+			if card_script:
+				var card = card_script.new()
+				card.custom_minimum_size = Vector2(item_w, item_h)
+				cargo_grid.add_child(card)
+				card.setup(wi)
+				if not card.transfer_requested.is_connected(_on_cargo_card_selected):
+					card.transfer_requested.connect(_on_cargo_card_selected)
 
 func _render_vehicle_grid() -> void:
 	if not is_instance_valid(vehicle_grid):
 		return
-	# Set columns dynamically: fewer in landscape mobile to prevent horizontal overflow
+	# Set columns dynamically: fewer in landscape mobile / portrait mobile to prevent overflow
 	var _dsm = get_node_or_null("/root/DeviceStateManager")
+	var _is_portrait = _dsm.get_is_portrait() if _dsm else (get_viewport_rect().size.y > get_viewport_rect().size.x)
 	var _mode = _dsm.get_layout_mode() if _dsm else 0
 	var _is_lm = (_mode == 1)  # MOBILE_LANDSCAPE
-	vehicle_grid.columns = 3 if _is_lm else 4
+	if _is_portrait:
+		vehicle_grid.columns = 2
+	elif _is_lm:
+		vehicle_grid.columns = 3
+	else:
+		vehicle_grid.columns = 4
 	for c in vehicle_grid.get_children():
 		c.queue_free()
 	if not (_warehouse is Dictionary):
@@ -1905,22 +2184,20 @@ func _render_vehicle_grid() -> void:
 			var is_portrait = dsm.get_is_portrait() if dsm else (get_viewport_rect().size.y > get_viewport_rect().size.x)
 			var mode = dsm.get_layout_mode() if dsm else 0
 			var is_landscape_mobile = (mode == 1)  # MOBILE_LANDSCAPE
-			var item_h = 140 if is_portrait else 72
-			var item_w = 200 if not is_landscape_mobile else 140
+			var item_h = 140 if is_portrait else (100 if is_landscape_mobile else 160)
+			var item_w = 140 if is_portrait else (140 if is_landscape_mobile else 160)
 			var font_size = dsm.get_scaled_base_font_size(22) if dsm else (42 if is_portrait else 22)
 
-			var panel := PanelContainer.new()
-			panel.custom_minimum_size = Vector2(item_w, item_h)
-			panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-			var vb := VBoxContainer.new()
-			vb.alignment = BoxContainer.ALIGNMENT_CENTER
-			var label := Label.new()
-			label.text = vehicle_name
-			label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-			label.add_theme_font_size_override("font_size", font_size)
-			vb.add_child(label)
-			panel.add_child(vb)
-			vehicle_grid.add_child(panel)
+			var card_script = load("res://Scripts/UI/warehouse_item_card.gd")
+			if card_script:
+				var card = card_script.new()
+				card.custom_minimum_size = Vector2(item_w, item_h)
+				vehicle_grid.add_child(card)
+				v["name"] = vehicle_name
+				v["quantity"] = 1
+				card.setup(v)
+				if not card.transfer_requested.is_connected(_on_vehicle_card_selected):
+					card.transfer_requested.connect(_on_vehicle_card_selected)
 
 func _set_inventory_panel_empty_state(panel_ctrl: Control, empty_panel_name: String, empty_message: String, show_inventory_panel: bool = false) -> void:
 	# When inventories are empty, the ScrollContainer panels in the scene expand
