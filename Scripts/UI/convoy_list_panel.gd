@@ -92,15 +92,15 @@ func _on_toggle_button_pressed() -> void:
 		var win_size = DisplayServer.window_get_size()
 		var is_portrait = win_size.y > win_size.x
 		var is_mobile = _is_mobile()
-		var item_h = 100 if is_portrait else (64 if is_mobile else 32)
-		var separation = 16 if is_portrait else (12 if is_mobile else 4)
+		var item_h = 100 if is_portrait else (64 if is_mobile else 52) # Taller desktop items (52px instead of 32px)
+		var separation = 16 if is_portrait else (12 if is_mobile else 8) # Spacing (8px instead of 4px)
 		
 		# Calculate total height: items + separations + top/bottom padding
 		var total_content_h = (item_count * item_h) + (max(0, item_count - 1) * separation) + 60
 		
 		# Clamp height to reasonable limits
-		var max_h = 800 if is_portrait else (600 if is_mobile else 300)
-		var min_h = 100 if is_portrait else (80 if is_mobile else 50)
+		var max_h = 800 if is_portrait else (600 if is_mobile else 500) # Increased max height on desktop
+		var min_h = 100 if is_portrait else (80 if is_mobile else 80)
 		var popup_height = clamp(total_content_h, min_h, max_h)
 		
 		convoy_popup.size = Vector2(toggle_button.size.x, popup_height)
@@ -154,10 +154,18 @@ func populate_convoy_list(convoys_data: Array) -> void:
 	for child in list_item_container.get_children():
 		child.queue_free()
 
+	var win_size = DisplayServer.window_get_size()
+	var is_portrait = win_size.y > win_size.x
+	var is_mobile = _is_mobile()
+
 	if convoys_data.is_empty():
 		var no_convoys_label = Label.new()
 		no_convoys_label.text = "No convoys available."
 		no_convoys_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		var no_convoys_font_size = _get_font_size(16)
+		if not is_portrait and not is_mobile:
+			no_convoys_font_size = 22 # Larger empty state on desktop
+		no_convoys_label.add_theme_font_size_override("font_size", no_convoys_font_size)
 		list_item_container.add_child(no_convoys_label)
 		return
 
@@ -172,10 +180,7 @@ func populate_convoy_list(convoys_data: Array) -> void:
 		var item_button = Button.new()
 		item_button.name = "ConvoyButton_%s" % str(convoy_id)
 		
-		var win_size = DisplayServer.window_get_size()
-		var is_portrait = win_size.y > win_size.x
-		var is_mobile = _is_mobile()
-		var item_h = 100 if is_portrait else (64 if is_mobile else 32)
+		var item_h = 100 if is_portrait else (64 if is_mobile else 52) # Taller desktop items
 		
 		item_button.custom_minimum_size = Vector2(0, item_h)
 		item_button.clip_contents = true
@@ -203,7 +208,10 @@ func populate_convoy_list(convoys_data: Array) -> void:
 		var name_label = Label.new()
 		name_label.text = convoy_name
 		name_label.add_theme_color_override("font_color", Color(1.0, 1.0, 1.0)) # Bright White
-		name_label.add_theme_font_size_override("font_size", _get_font_size(16))
+		var name_font_size = _get_font_size(16)
+		if not is_portrait and not is_mobile:
+			name_font_size = 23 # Large convoy name font on desktop
+		name_label.add_theme_font_size_override("font_size", name_font_size)
 		name_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 		name_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		if is_portrait:
@@ -238,14 +246,20 @@ func populate_convoy_list(convoys_data: Array) -> void:
 				var dest_label = Label.new()
 				dest_label.text = "to %s" % dest_name
 				dest_label.add_theme_color_override("font_color", Color(0.16, 0.71, 0.96)) # Cyan
-				dest_label.add_theme_font_size_override("font_size", _get_font_size(15))
+				var dest_font_size = _get_font_size(15)
+				if not is_portrait and not is_mobile:
+					dest_font_size = 21 # Large destination font on desktop
+				dest_label.add_theme_font_size_override("font_size", dest_font_size)
 				# Removed text_overrun_behavior to prevent it from collapsing in portrait
 				journey_row.add_child(dest_label)
 				
 				var prog_label = Label.new()
 				prog_label.text = "(%.0f%%)" % progress_percentage
 				prog_label.add_theme_color_override("font_color", Color(1.0, 0.9, 0.4)) # Light Yellow
-				prog_label.add_theme_font_size_override("font_size", _get_font_size(14))
+				var prog_font_size = _get_font_size(14)
+				if not is_portrait and not is_mobile:
+					prog_font_size = 20 # Large progress font on desktop
+				prog_label.add_theme_font_size_override("font_size", prog_font_size)
 				journey_row.add_child(prog_label)
 
 		# Oori Button Styling
@@ -360,9 +374,9 @@ func _update_button_layout() -> void:
 		rtl.offset_top = 16
 	else:
 		# Desktop
-		toggle_button.custom_minimum_size = Vector2(260, 34)
-		rtl.add_theme_font_size_override("normal_font_size", 19)
-		rtl.offset_top = 3
+		toggle_button.custom_minimum_size = Vector2(300, 56) # Taller premium button height on desktop
+		rtl.add_theme_font_size_override("normal_font_size", 25) # Larger text font size
+		rtl.offset_top = 10 # Adjusted vertical centering offset
 		
 	var btn_style = StyleBoxFlat.new()
 	btn_style.bg_color = OORI_GREY
@@ -458,7 +472,12 @@ func _update_toggle_button_display(is_open: bool) -> void:
 			if dest_name.is_empty():
 				dest_name = _get_settlement_name(dest_x, dest_y)
 			if not dest_name.is_empty():
-				status_text = " [font_size=%d][color=#29b6f6]to %s[/color][/font_size]" % [_get_font_size(15), dest_name]
+				var status_font_size = _get_font_size(15)
+				var dsm = get_node_or_null("/root/DeviceStateManager")
+				var is_portrait_mode = dsm.get_is_portrait() if is_instance_valid(dsm) else (get_viewport_rect().size.y > get_viewport_rect().size.x if is_inside_tree() else false)
+				if not is_portrait_mode and not _is_mobile():
+					status_font_size = 21 # Larger desktop status text
+				status_text = " [font_size=%d][color=#29b6f6]to %s[/color][/font_size]" % [status_font_size, dest_name]
 		
 		display_text = "%s%s %s" % [convoy_name, status_text, arrow]
 	

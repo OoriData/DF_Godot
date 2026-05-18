@@ -160,7 +160,7 @@ func _apply_base_styling() -> void:
 	add_theme_stylebox_override("panel", main_style)
 
 func _apply_desktop_styling() -> void:
-	custom_minimum_size.y = 60 # Balanced height
+	custom_minimum_size.y = 80 # Taller premium height on desktop
 
 	# 2. Chips (Username & Money)
 	if is_instance_valid(user_chip):
@@ -179,7 +179,7 @@ func _apply_desktop_styling() -> void:
 		opaque_style.content_margin_right = 12
 		
 		user_chip.add_theme_stylebox_override("panel", opaque_style)
-		username_label.add_theme_font_size_override("font_size", 24)
+		username_label.add_theme_font_size_override("font_size", 30) # Larger username text
 		username_label.add_theme_color_override("font_color", OORI_WHITE)
 	
 	if is_instance_valid(money_chip):
@@ -198,7 +198,7 @@ func _apply_desktop_styling() -> void:
 		vault_style.content_margin_right = 12
 		
 		money_chip.add_theme_stylebox_override("panel", vault_style)
-		user_money_label.add_theme_font_size_override("font_size", 24)
+		user_money_label.add_theme_font_size_override("font_size", 30) # Larger money text
 		user_money_label.add_theme_color_override("font_color", OORI_YELLOW)
 
 	# 3. Buttons (Oori Professional Style with Full Borders)
@@ -226,8 +226,8 @@ func _apply_desktop_styling() -> void:
 		settings_button.add_theme_stylebox_override("hover", btn_hover)
 		settings_button.add_theme_stylebox_override("pressed", btn_hover)
 		settings_button.add_theme_color_override("font_color", OORI_WHITE)
-		settings_button.add_theme_font_size_override("font_size", 20)
-		settings_button.custom_minimum_size = Vector2(0, 46)
+		settings_button.add_theme_font_size_override("font_size", 26) # Bigger button font size
+		settings_button.custom_minimum_size = Vector2(0, 56) # Taller settings button
 		
 	if is_instance_valid(report_bug_button):
 		var bug_normal = btn_normal.duplicate()
@@ -243,8 +243,8 @@ func _apply_desktop_styling() -> void:
 		report_bug_button.add_theme_stylebox_override("hover", bug_hover)
 		report_bug_button.add_theme_stylebox_override("pressed", bug_hover)
 		report_bug_button.add_theme_color_override("font_color", OORI_WHITE)
-		report_bug_button.add_theme_font_size_override("font_size", 20)
-		report_bug_button.custom_minimum_size = Vector2(0, 46)
+		report_bug_button.add_theme_font_size_override("font_size", 26) # Bigger button font size
+		report_bug_button.custom_minimum_size = Vector2(0, 56) # Taller feedback button
 
 func _update_safe_margins() -> void:
 	pass
@@ -361,11 +361,14 @@ func _configure_options_dropdown() -> void:
 		popup_style.content_margin_top = 24
 		popup_style.content_margin_bottom = 24
 	else:
-		popup.add_theme_font_size_override("font_size", 16)
-		popup_style.content_margin_left = 12
-		popup_style.content_margin_right = 12
-		popup_style.content_margin_top = 8
-		popup_style.content_margin_bottom = 8
+		popup.add_theme_font_size_override("font_size", 22) # Larger font size in desktop menu dropdown
+		popup.add_theme_constant_override("v_separation", 16) # Increased spacing
+		popup.add_theme_constant_override("item_start_padding", 16)
+		popup.add_theme_constant_override("item_end_padding", 16)
+		popup_style.content_margin_left = 18
+		popup_style.content_margin_right = 18
+		popup_style.content_margin_top = 12
+		popup_style.content_margin_bottom = 12
 		
 	popup.add_theme_stylebox_override("panel", popup_style)
 

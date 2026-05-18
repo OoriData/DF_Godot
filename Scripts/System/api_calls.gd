@@ -368,32 +368,59 @@ func set_user_id(p_user_id: String) -> void:
 func set_auth_session_token(token: String) -> void:
 	_auth_bearer_token = token
 	_auth_token_expiry = _decode_jwt_expiry(token)
-	_log_info("[APICalls] Auth session set (len=" + str(token.length()) + ", exp=" + str(_auth_token_expiry) + ")")
+	_log_info("[APICalls] Auth session set (len=" + str(token.length()) + ", exp=" + str(_auth_token_expiry) + ") for env=" + active_env)
 	var cfg := ConfigFile.new()
-	cfg.set_value("auth", "session_token", token)
-	cfg.set_value("auth", "token_expiry", _auth_token_expiry)
+	cfg.load(SESSION_CFG_PATH) # Load existing to preserve device login history and other environments
+	var section := "auth_" + active_env
+	cfg.set_value(section, "session_token", token)
+	cfg.set_value(section, "token_expiry", _auth_token_expiry)
 	cfg.save(SESSION_CFG_PATH)
 
 func clear_auth_session_token() -> void:
 	_auth_bearer_token = ""
 	_auth_token_expiry = 0
 	var cfg := ConfigFile.new()
-	cfg.set_value("auth", "session_token", "")
-	cfg.set_value("auth", "token_expiry", 0)
+	cfg.load(SESSION_CFG_PATH)
+	var section := "auth_" + active_env
+	cfg.set_value(section, "session_token", "")
+	cfg.set_value(section, "token_expiry", 0)
 	cfg.save(SESSION_CFG_PATH)
-	_log_info("[APICalls] Auth session cleared.")
+	_log_info("[APICalls] Auth session cleared for env: " + active_env)
 
 func _load_auth_session_token() -> void:
 	var cfg := ConfigFile.new()
 	var err := cfg.load(SESSION_CFG_PATH)
 	if err != OK:
 		return
-	var token: String = String(cfg.get_value("auth", "session_token", ""))
-	var expiry: int = int(cfg.get_value("auth", "token_expiry", 0))
+	
+	var section := "auth_" + active_env
+	var token: String = ""
+	var expiry: int = 0
+	
+	if cfg.has_section(section):
+		token = String(cfg.get_value(section, "session_token", ""))
+		expiry = int(cfg.get_value(section, "token_expiry", 0))
+	elif cfg.has_section("auth"):
+		# Legacy fallback: migrate non-debug tokens to the current env, or clean up if it's a debug token in prod
+		var legacy_token = String(cfg.get_value("auth", "session_token", ""))
+		var is_legacy_debug := (legacy_token == "DEBUG_TOKEN" or legacy_token == "DEBUG_BYPASS_TOKEN")
+		if active_env == "dev" or not is_legacy_debug:
+			token = legacy_token
+			expiry = int(cfg.get_value("auth", "token_expiry", 0))
+			cfg.set_value(section, "session_token", token)
+			cfg.set_value(section, "token_expiry", expiry)
+			cfg.erase_section("auth")
+			cfg.save(SESSION_CFG_PATH)
+			print("[APICalls] Migrated legacy auth session to %s" % section)
+		else:
+			cfg.erase_section("auth")
+			cfg.save(SESSION_CFG_PATH)
+			print("[APICalls] Ignored and cleared legacy debug auth session while in prod env.")
+			
 	if token != "":
 		_auth_bearer_token = token
 		_auth_token_expiry = expiry
-		print("[APICalls] Loaded persisted session token (len=%d, exp=%d)" % [token.length(), expiry])
+		print("[APICalls] Loaded persisted session token for %s (len=%d, exp=%d)" % [active_env, token.length(), expiry])
 
 func is_first_login_on_device(p_user_id: String) -> bool:
 	if p_user_id == "":
@@ -439,10 +466,13 @@ func _apply_auth_header(headers: PackedStringArray) -> PackedStringArray:
 			out.append("Authorization: Bearer %s" % _auth_bearer_token)
 	return out
 func is_auth_token_valid() -> bool:
+	# A debug/bypass token should never be considered valid in the production environment
+	if active_env == "prod" and (_auth_bearer_token == "DEBUG_TOKEN" or _auth_bearer_token == "DEBUG_BYPASS_TOKEN"):
+		return false
 	return _auth_bearer_token != "" and not _is_auth_token_expired()
 
 func _is_auth_token_expired() -> bool:
-	if _auth_bearer_token == "" or _auth_bearer_token == "DEBUG_BYPASS_TOKEN":
+	if _auth_bearer_token == "" or _auth_bearer_token == "DEBUG_BYPASS_TOKEN" or _auth_bearer_token == "DEBUG_TOKEN":
 		return false
 	return _auth_token_expiry <= Time.get_unix_time_from_system()
 

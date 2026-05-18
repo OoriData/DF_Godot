@@ -647,6 +647,7 @@ func _update_layout_scaling() -> void:
 	
 	var mode = dsm.get_layout_mode()
 	var is_portrait = (mode == 2) # MOBILE_PORTRAIT
+	var use_mobile = dsm.is_mobile
 	
 	var dyn_font_sz = dsm.get_scaled_base_font_size(16)
 	if is_portrait:
@@ -658,12 +659,32 @@ func _update_layout_scaling() -> void:
 		theme = curr_theme
 	curr_theme.default_font_size = dyn_font_sz
 	
-	# Significant boost for buttons and tabs in portrait mode to fill the 100px tall targets
 	var btn_font_sz = dyn_font_sz
 	var tab_font_sz = dyn_font_sz
+	var tree_font_sz = dyn_font_sz
+	var btn_min_h = 34.0
+	var bar_min_h = 24.0
+	var sort_h = 34.0
+	
 	if is_portrait:
 		btn_font_sz = int(dyn_font_sz * 1.8)
 		tab_font_sz = int(dyn_font_sz * 1.4)
+		btn_min_h = 100.0
+		bar_min_h = 60.0
+		sort_h = 80.0
+	elif use_mobile:
+		btn_font_sz = 22
+		tab_font_sz = 22
+		btn_min_h = 60.0
+		bar_min_h = 30.0
+		sort_h = 48.0
+	else: # DESKTOP
+		btn_font_sz = 30
+		tab_font_sz = 26
+		tree_font_sz = 22
+		btn_min_h = 72.0
+		bar_min_h = 48.0
+		sort_h = 60.0
 	
 	if is_instance_valid(trade_mode_tab_container):
 		trade_mode_tab_container.theme = curr_theme
@@ -671,7 +692,31 @@ func _update_layout_scaling() -> void:
 		if is_instance_valid(tab_bar):
 			tab_bar.add_theme_font_size_override("font_size", tab_font_sz)
 
-	var btn_min_h = 100.0 if is_portrait else 34.0
+	if is_instance_valid(vendor_item_tree):
+		vendor_item_tree.add_theme_font_size_override("font_size", tree_font_sz)
+	if is_instance_valid(convoy_item_tree):
+		convoy_item_tree.add_theme_font_size_override("font_size", tree_font_sz)
+
+	if is_instance_valid(item_name_label):
+		var name_sz = 38 if is_portrait else (30 if use_mobile else 38)
+		item_name_label.add_theme_font_size_override("font_size", name_sz)
+
+	if is_instance_valid(description_toggle_button):
+		description_toggle_button.custom_minimum_size.y = sort_h
+		description_toggle_button.add_theme_font_size_override("font_size", tab_font_sz)
+	if is_instance_valid(item_description_rich_text):
+		var desc_sz = 16 if is_portrait else (14 if use_mobile else 20)
+		item_description_rich_text.add_theme_font_size_override("normal_font_size", desc_sz)
+		item_description_rich_text.add_theme_font_size_override("bold_font_size", desc_sz)
+	if is_instance_valid(item_info_rich_text):
+		var desc_sz = 16 if is_portrait else (14 if use_mobile else 20)
+		item_info_rich_text.add_theme_font_size_override("normal_font_size", desc_sz)
+		item_info_rich_text.add_theme_font_size_override("bold_font_size", desc_sz)
+	if is_instance_valid(fitment_rich_text):
+		var desc_sz = 16 if is_portrait else (14 if use_mobile else 20)
+		fitment_rich_text.add_theme_font_size_override("normal_font_size", desc_sz)
+		fitment_rich_text.add_theme_font_size_override("bold_font_size", desc_sz)
+
 	if is_instance_valid(action_button):
 		action_button.custom_minimum_size.y = btn_min_h
 		action_button.add_theme_font_size_override("font_size", btn_font_sz)
@@ -697,24 +742,53 @@ func _update_layout_scaling() -> void:
 			install_button.remove_theme_font_override("font")
 		
 	if is_instance_valid(quantity_spinbox):
-		quantity_spinbox.custom_minimum_size.y = btn_min_h if is_portrait else 0.0
+		quantity_spinbox.custom_minimum_size.y = btn_min_h
 
-	var bar_min_h = 60.0 if is_portrait else 24.0
 	if is_instance_valid(convoy_volume_bar):
 		convoy_volume_bar.custom_minimum_size.y = bar_min_h
 	if is_instance_valid(convoy_weight_bar):
 		convoy_weight_bar.custom_minimum_size.y = bar_min_h
 
 	if is_instance_valid(cargo_sort_button):
-		var sort_h = 80.0 if is_portrait else 34.0
 		cargo_sort_button.custom_minimum_size.y = sort_h
 		cargo_sort_button.add_theme_font_size_override("font_size", int(btn_font_sz * 0.85) if is_portrait else dyn_font_sz)
 		if is_portrait:
 			cargo_sort_button.add_theme_font_override("font", _get_bold_font_for(cargo_sort_button))
 		else:
 			cargo_sort_button.remove_theme_font_override("font")
+
+	var right_panel = get_node_or_null("HBoxContainer/RightPanel")
+	if is_instance_valid(right_panel):
+		var title_sz = 30 if is_portrait else (22 if use_mobile else 30)
+		var label_sz = 24 if is_portrait else (16 if use_mobile else 24)
+		var money_sz = 28 if is_portrait else (18 if use_mobile else 28)
+		
+		var transaction_label = right_panel.get_node_or_null("TransactionLabel")
+		if is_instance_valid(transaction_label):
+			transaction_label.add_theme_font_size_override("font_size", title_sz)
+			
+		var convoy_money_lbl = right_panel.get_node_or_null("%ConvoyMoneyLabel")
+		if is_instance_valid(convoy_money_lbl):
+			convoy_money_lbl.add_theme_font_size_override("font_size", money_sz)
+			
+		var vol_lbl = right_panel.get_node_or_null("CapacityBars/VolumeLabel")
+		if is_instance_valid(vol_lbl):
+			vol_lbl.add_theme_font_size_override("font_size", label_sz)
+			
+		var mass_lbl = right_panel.get_node_or_null("CapacityBars/MassLabel")
+		if is_instance_valid(mass_lbl):
+			mass_lbl.add_theme_font_size_override("font_size", label_sz)
+			
+	if is_instance_valid(price_label):
+		var price_sz = 24 if is_portrait else (16 if use_mobile else 24)
+		price_label.add_theme_font_size_override("normal_font_size", price_sz)
+		price_label.add_theme_font_size_override("bold_font_size", price_sz)
+		
+	if is_instance_valid(delivery_reward_label):
+		var reward_sz = 24 if is_portrait else (16 if use_mobile else 24)
+		delivery_reward_label.add_theme_font_size_override("normal_font_size", reward_sz)
+		delivery_reward_label.add_theme_font_size_override("bold_font_size", reward_sz)
 	
-	# Force top alignment for the middle and right columns to prevent centering in landscape/desktop
 	var middle = get_node_or_null("HBoxContainer/MiddlePanel")
 	if is_instance_valid(middle):
 		_force_top_alignment(middle)

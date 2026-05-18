@@ -169,8 +169,8 @@ func _update_static_nav_bar_ui(active_type: String):
 	style.content_margin_left = bar_margin
 	style.content_margin_right = bar_margin
 	
-	var btn_min_h := 140.0 if is_portrait else (85.0 if use_mobile else 50.0)
-	var base_font_size: int = 28 if is_portrait else 18
+	var btn_min_h := 140.0 if is_portrait else (85.0 if use_mobile else 90.0)
+	var base_font_size: int = 28 if is_portrait else (22 if use_mobile else 28)
 	var font_size: int = dsm.get_scaled_base_font_size(base_font_size) if is_instance_valid(dsm) else base_font_size
 	
 	for type in _nav_buttons:

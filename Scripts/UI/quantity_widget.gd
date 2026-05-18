@@ -17,20 +17,36 @@ var _plus_btn: Button
 
 func _ready() -> void:
 	var dsm = get_node_or_null("/root/DeviceStateManager")
-	var is_portrait: bool = false
+	var layout_mode = 0 # 0=DESKTOP, 1=MOBILE_LANDSCAPE, 2=MOBILE_PORTRAIT
 	var base_font_sz = 16
 	if is_instance_valid(dsm):
-		is_portrait = (dsm.get_layout_mode() == 2)
+		layout_mode = dsm.get_layout_mode()
 		base_font_sz = dsm.get_scaled_base_font_size(16)
 	else:
-		if is_inside_tree() and get_viewport_rect().size.y > get_viewport_rect().size.x:
-			is_portrait = true
+		if is_inside_tree():
+			var vpsz = get_viewport_rect().size
+			if vpsz.y > vpsz.x:
+				layout_mode = 2
+			elif vpsz.x < 1280:
+				layout_mode = 1
+				
+	var is_portrait = (layout_mode == 2)
 			
-	var btn_h = 100 if is_portrait else 40
-	var btn_w = 90 if is_portrait else 42
+	var btn_h = 40
+	var btn_w = 42
 	var btn_font_sz = base_font_sz
-	if is_portrait:
+	if layout_mode == 2:
+		btn_h = 100
+		btn_w = 90
 		btn_font_sz = int(base_font_sz * 1.8)
+	elif layout_mode == 1:
+		btn_h = 60
+		btn_w = 56
+		btn_font_sz = 22
+	else:
+		btn_h = 72
+		btn_w = 72
+		btn_font_sz = 30
 	
 	_minus_btn = Button.new()
 	_minus_btn.text = "-"
