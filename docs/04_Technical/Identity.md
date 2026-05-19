@@ -1,3 +1,13 @@
+---
+type: technical
+tags:
+  - technical
+  - codex/identity
+aliases:
+  - "Identity System"
+created: 2026-05-18
+---
+
 # Identity System
 
 The Identity System manages user authentication, session persistence, and multi-provider account linking/merging.

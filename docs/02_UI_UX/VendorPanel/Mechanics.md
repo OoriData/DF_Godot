@@ -1,3 +1,15 @@
+---
+type: ui-ux
+tags:
+  - ui
+  - ux
+  - ui/vendor
+  - codex/mechanics
+aliases:
+  - "Mechanics: Compatibility & Install"
+created: 2026-05-18
+---
+
 # Mechanics: Compatibility & Install
 
 The Vendor Panel integrates with the `MechanicsService` to allow players to check part compatibility and initiate installations directly from the trade screen.

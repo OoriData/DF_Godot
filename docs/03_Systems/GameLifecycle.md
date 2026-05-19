@@ -1,3 +1,13 @@
+---
+type: system
+tags:
+  - system
+  - codex/gamelifecycle
+aliases:
+  - "Game Lifecycle & State Machines"
+created: 2026-05-18
+---
+
 # Game Lifecycle & State Machines
 
 This document visualizes the high-level logic flows for the most critical systems in *Desolate Frontiers*.

@@ -1,3 +1,15 @@
+---
+type: ui-ux
+tags:
+  - ui
+  - ux
+  - ui/vendor
+  - codex/lifecycle
+aliases:
+  - "Lifecycle: Refresh & Selection Stability"
+created: 2026-05-18
+---
+
 # Lifecycle: Refresh & Selection Stability
 
 The Vendor Panel uses a sophisticated refresh system to ensure the UI stays synchronized with the server without losing the user's current selection.

@@ -1,3 +1,14 @@
+---
+type: ui-ux
+tags:
+  - ui
+  - ux
+  - codex/ui_system
+aliases:
+  - "Responsive UI System"
+created: 2026-05-18
+---
+
 # Responsive UI System
 
 This document outlines the standard architecture for creating UI windows and menus in *Desolate Frontiers* that automatically adapt to Desktop, Mobile Landscape, and Mobile Portrait orientations.

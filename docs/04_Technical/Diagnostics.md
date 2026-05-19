@@ -1,3 +1,13 @@
+---
+type: technical
+tags:
+  - technical
+  - codex/diagnostics
+aliases:
+  - "Diagnostics & Troubleshooting"
+created: 2026-05-18
+---
+
 # Diagnostics & Troubleshooting
 
 This guide provides a runbook for debugging network issues, UI stalls, and application crashes.

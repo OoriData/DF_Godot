@@ -1,3 +1,13 @@
+---
+type: technical
+tags:
+  - technical
+  - codex/deployment
+aliases:
+  - "Deployment & Environment"
+created: 2026-05-18
+---
+
 # Deployment & Environment
 
 This document outlines how to configure, build, and deploy *Desolate Frontiers* across various platforms and environments.

@@ -1,3 +1,15 @@
+---
+type: ui-ux
+tags:
+  - ui
+  - ux
+  - ui/vendor
+  - codex/data
+aliases:
+  - "Data Management: Aggregation & Selection"
+created: 2026-05-18
+---
+
 # Data Management: Aggregation & Selection
 
 The Vendor Panel transforms raw backend JSON snapshots into structured UI "Buckets" using the **`VendorCargoAggregator`**.

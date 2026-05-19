@@ -1,3 +1,14 @@
+---
+type: system
+tags:
+  - system
+  - system/map
+  - codex/interactions
+aliases:
+  - "Interactions: Clicks & Taps"
+created: 2026-05-18
+---
+
 # Interactions: Clicks & Taps
 
 The `MapInteractionManager` (MIM) translates raw input events into meaningful game actions like selecting a settlement or opening a convoy menu.

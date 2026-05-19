@@ -1,3 +1,15 @@
+---
+type: ui-ux
+tags:
+  - ui
+  - ux
+  - ui/vendor
+  - codex/convoystats
+aliases:
+  - "Convoy Stats: Capacity & Math"
+created: 2026-05-18
+---
+
 # Convoy Stats: Capacity & Math
 
 This system manages the calculation of convoy volume and weight utilization, providing visual feedback to the player during trade.

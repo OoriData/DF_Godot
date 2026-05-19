@@ -1,3 +1,12 @@
+---
+type: ui-ux
+tags:
+  - ui
+  - ux
+  - codex/menumanager
+created: 2026-05-18
+---
+
 # MenuManager
 
 The `MenuManager` is the central orchestrator for all full-screen UI navigation in *Desolate Frontiers*. It manages menu lifecycles, navigation history (the stack), and UI state persistence.

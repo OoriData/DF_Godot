@@ -1,3 +1,14 @@
+---
+type: system
+tags:
+  - system
+  - system/map
+  - codex/visuals
+aliases:
+  - "Visuals: Convoys & Labels"
+created: 2026-05-18
+---
+
 # Visuals: Convoys & Labels
 
 This system manages the life-cycle of dynamic map elements like convoy icons, movement interpolation, and screen-space labels.

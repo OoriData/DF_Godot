@@ -1,3 +1,13 @@
+---
+type: system
+tags:
+  - system
+  - codex/mechanics
+aliases:
+  - "Mechanics & Parts System"
+created: 2026-05-18
+---
+
 # Mechanics & Parts System
 
 The Mechanics system in *Desolate Frontiers* governs the customization and repair of vehicles. It manages the lifecycle of **Parts**—how they are discovered, purchased, attached, and swapped.

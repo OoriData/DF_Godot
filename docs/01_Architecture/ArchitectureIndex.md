@@ -1,3 +1,13 @@
+---
+type: architecture
+tags:
+  - architecture
+  - codex/readme
+aliases:
+  - "Architecture & Core"
+created: 2026-05-18
+---
+
 # Architecture & Core
 
 This section defines the high-level design patterns and data management strategies used across the project.

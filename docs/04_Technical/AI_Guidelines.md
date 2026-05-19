@@ -1,3 +1,13 @@
+---
+type: technical
+tags:
+  - technical
+  - codex/ai_guidelines
+aliases:
+  - "AI Agent Coding Guidelines"
+created: 2026-05-18
+---
+
 # AI Agent Coding Guidelines
 
 This document provides specific instructions and constraints for AI agents (like Antigravity) working on the *Desolate Frontiers* codebase. Adhering to these patterns ensures consistency, performance, and UI responsiveness.

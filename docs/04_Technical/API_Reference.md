@@ -1,3 +1,13 @@
+---
+type: technical
+tags:
+  - technical
+  - codex/api_reference
+aliases:
+  - "Backend API Reference"
+created: 2026-05-18
+---
+
 # Backend API Reference
 
 This document defines the communication contract between the *Desolate Frontiers* Godot client and the backend simulation server.

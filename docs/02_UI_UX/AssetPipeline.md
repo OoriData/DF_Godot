@@ -1,3 +1,14 @@
+---
+type: ui-ux
+tags:
+  - ui
+  - ux
+  - codex/assetpipeline
+aliases:
+  - "Asset Pipeline & Standards"
+created: 2026-05-18
+---
+
 # Asset Pipeline & Standards
 
 This document defines the technical standards for adding and managing visual assets in *Desolate Frontiers*.

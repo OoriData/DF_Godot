@@ -1,3 +1,13 @@
+---
+type: technical
+tags:
+  - technical
+  - codex/appleauth
+aliases:
+  - "Apple Authentication Plan"
+created: 2026-05-18
+---
+
 # Apple Authentication Plan
 
 This document is the implementation plan for adding **Sign in with Apple** to Desolate Frontiers, aligned with the existing identity architecture (APICalls → Services → Store/Hub → UI) and current provider patterns (Discord + Steam).

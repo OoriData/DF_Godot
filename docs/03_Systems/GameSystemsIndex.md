@@ -1,3 +1,13 @@
+---
+type: system
+tags:
+  - system
+  - codex/readme
+aliases:
+  - "Game Systems"
+created: 2026-05-18
+---
+
 # Game Systems
 
 This section covers the core simulation and gameplay mechanics of *Desolate Frontiers*.
@@ -5,9 +15,10 @@ This section covers the core simulation and gameplay mechanics of *Desolate Fron
 ## Key Systems
 - [**Game Lifecycle**](GameLifecycle.md): Visualized state machines for Auth, Journeys, and Mechanics.
 - [**Items & Missions**](ItemsAndMissions.md): Unified item model and mission detection logic.
-- [**Map System**](MapSystem/README.md): Detailed reference for rendering, camera, and interactions.
+- [**Auto-Sell System**](AutoSellSystem.md): Post-journey cargo detection, snapshot diffing, and receipt modal.
+- [**Map System**](MapSystem/MapSystemOverview.md): Detailed reference for rendering, camera, and interactions.
 - [**Mechanics & Parts**](Mechanics.md): Vehicle customization and part compatibility.
-- [**Tutorial System**](TutorialSystem/README.md): Event-driven onboarding, highlights, and level controllers.
+- [**Tutorial System**](TutorialSystem/TutorialSystemOverview.md): Event-driven onboarding, highlights, and level controllers.
 
 ---
 
@@ -19,9 +30,11 @@ This section covers the core simulation and gameplay mechanics of *Desolate Fron
 - **Primary Scene**: [MapView.tscn](../../../Scenes/MapView.tscn)
 
 ### Simulation & Mechanics
-- **Mechanics Service**: [mechanics_service.gd](../../../Scripts/System/Services/mechanics_service.gd)
-- **Convoy Service**: [convoy_service.gd](../../../Scripts/System/Services/convoy_service.gd)
-- **Route Service**: [route_service.gd](../../../Scripts/System/Services/route_service.gd)
+- **State Management**: [State & Cursor](StateManagement.md)
+- **Settlement Economy**: [Warehouse & Bulk Services](SettlementEconomy.md)
+- **Mechanics Service**: [Mechanics Service](MechanicsService.md)
+- **Convoy Service**: [Convoy Service](ConvoyService.md)
+- **Route Service**: [Route Service](RouteService.md)
 
 ### Onboarding
 - **Tutorial Manager**: [tutorial_manager.gd](../../../Scripts/UI/tutorial_manager.gd)

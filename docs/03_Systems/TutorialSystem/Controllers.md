@@ -1,3 +1,14 @@
+---
+type: system
+tags:
+  - system
+  - system/tutorial
+  - codex/controllers
+aliases:
+  - "Level Controllers: Custom Logic"
+created: 2026-05-18
+---
+
 # Level Controllers: Custom Logic
 
 While simple steps (like "Click a Button") can be handled by the generic Engine, complex steps (like "Buy exactly 2 MREs") require a **Level Controller**.

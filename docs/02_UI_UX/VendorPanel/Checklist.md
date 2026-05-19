@@ -1,3 +1,15 @@
+---
+type: ui-ux
+tags:
+  - ui
+  - ux
+  - ui/vendor
+  - codex/checklist
+aliases:
+  - "Maintenance Checklist"
+created: 2026-05-18
+---
+
 # Maintenance Checklist
 
 Use this guide when modifying Vendor Panel behavior to prevent common regressions (selection flicker, stale caches, math errors).

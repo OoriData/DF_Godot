@@ -1,3 +1,14 @@
+---
+type: ui-ux
+tags:
+  - ui
+  - ux
+  - codex/readme
+aliases:
+  - "UI & UX System"
+created: 2026-05-18
+---
+
 # UI & UX System
 
 The *Desolate Frontiers* UI is built on a service-backed architecture that ensures data consistency and responsive layout across all devices.
@@ -23,14 +34,14 @@ The *Desolate Frontiers* UI is built on a service-backed architecture that ensur
 ---
 
 ## Available Menus
-- [**Convoy Overview**](../../../Scripts/Menus/convoy_menu.gd): The landing page for a specific convoy.
-- [**Vehicle Sub-menu**](../../../Scripts/Menus/convoy_vehicle_menu.gd): Vehicle stats, parts, and damage.
-- [**Journey Sub-menu**](../../../Scripts/Menus/convoy_journey_menu.gd): Navigation, route selection, and progress.
-- [**Settlement Sub-menu**](../../../Scripts/Menus/convoy_settlement_menu.gd): Local services and info.
-- [**Cargo Sub-menu**](../../../Scripts/Menus/convoy_cargo_menu.gd): Full manifest and item inspection.
-- [**Warehouse Menu**](../../../Scripts/Menus/warehouse_menu.gd): Storing and retrieving cargo/vehicles.
-- [**Mechanics Menu**](../../../Scripts/Menus/mechanics_menu.gd): Complex part repairs and swaps.
-- [**Vendor Panel**](VendorPanel/README.md): Detailed reference for the complex trading and inventory system.
+- [**Convoy Overview**](ConvoyMenu.md): The landing page for a specific convoy. See also `Scripts/Menus/convoy_menu.gd`.
+- [**Vehicle Sub-menu**](VehicleMenu.md): Vehicle stats, parts, and damage.
+- [**Journey Sub-menu**](JourneyMenu.md): Navigation, route selection, and progress.
+- [**Settlement Sub-menu**](SettlementMenu.md): Local services and info.
+- [**Cargo Sub-menu**](ConvoyCargoMenu.md): Full manifest, item inspection, sorting, and aggregation. See also `Scripts/Menus/convoy_cargo_menu.gd`.
+- [**Warehouse Menu**](WarehouseMenu.md): Storing and retrieving cargo/vehicles. See also `Scripts/Menus/warehouse_menu.gd`.
+- [**Mechanics Menu**](MechanicsMenu.md): Complex part repairs and swaps.
+- [**Vendor Panel**](VendorPanel/VendorPanelOverview.md): Detailed reference for the complex trading and inventory system.
 
 ---
 

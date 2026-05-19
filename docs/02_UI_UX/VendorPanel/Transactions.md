@@ -1,3 +1,15 @@
+---
+type: ui-ux
+tags:
+  - ui
+  - ux
+  - ui/vendor
+  - codex/transactions
+aliases:
+  - "Transactions: Pricing & Projections"
+created: 2026-05-18
+---
+
 # Transactions: Pricing & Projections
 
 The transaction system manages how goods are bought and sold, including price calculations and immediate UI feedback before server confirmation.

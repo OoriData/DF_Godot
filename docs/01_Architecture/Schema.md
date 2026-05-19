@@ -1,3 +1,13 @@
+---
+type: architecture
+tags:
+  - architecture
+  - codex/schema
+aliases:
+  - "Data Schema: Core Contracts"
+created: 2026-05-18
+---
+
 # Data Schema: Core Contracts
 
 This document defines the "Source of Truth" for the core data objects in *Desolate Frontiers*. Both the Godot client and the backend must adhere to these schemas.
@@ -77,3 +87,66 @@ graph TD
 ## Stability & Keys
 - **`cargo_id`**: Ephemeral. Changes if a stack is split or merged by the backend.
 - **`stable_key`**: (Client-Side) Derived from `class_id` + `metadata`. Used to maintain UI selection during refreshes.
+
+---
+
+## 5. The User Object
+The `User` dictionary is stored in `GameStore._user` and emitted via `SignalHub.user_changed`.
+
+| Key | Type | Description |
+| :--- | :--- | :--- |
+| `user_id` | `uuid` | The canonical player identifier. |
+| `name` | `string` | Display name. |
+| `money` | `int` | Current funds (normalised to `int` by `GameStore.set_user()`). |
+| `metadata` | `Dictionary` | Freeform server metadata. |
+| `metadata.tutorial` | `int?` | Current tutorial stage. Absent = completed. `1`–`7` = in progress. `8` = done. |
+
+> [!IMPORTANT]
+> `money` in the raw API payload can arrive as a `String`, `int`, or `float`. Always read from `GameStore.get_user()` which normalises it to `int`. Never parse `money` from a raw convoy or user payload directly.
+
+---
+
+## 6. The Settlement Object
+Settlements are nested inside tile data and extracted into a flat array by `GameStore._derive_settlements_from_tiles()`. Model: `Scripts/Data/Models/Settlement.gd`.
+
+| Key | Type | Description |
+| :--- | :--- | :--- |
+| `sett_id` | `uuid` | Unique identifier. Also aliased as `id` in some payloads. |
+| `name` | `string` | Display name (e.g., "Fort Ironhold"). |
+| `sett_type` | `string` | Settlement tier: `"village"`, `"town"`, `"city"`, `"city-state"`, `"dome"`, `"military_base"`. |
+| `x`, `y` | `int` | Tile-space coordinates. |
+| `vendors` | `Array[Vendor]` | Vendors present at this settlement. May be partial (shallow) in map snapshots. |
+
+> [!NOTE]
+> The canonical flat settlements array lives in `GameStore.get_settlements()`. Individual menus cache it locally via `_set_latest_settlements_snapshot()` to support fast lookups (e.g. mission destination resolution).
+
+---
+
+## 7. The Vendor Object
+Vendors are embedded in `Settlement.vendors`. Model: `Scripts/Data/Models/Vendor.gd`.
+
+| Key | Type | Description |
+| :--- | :--- | :--- |
+| `vendor_id` | `uuid` | Unique identifier. Also aliased as `id`. |
+| `name` | `string` | Vendor display name (e.g., "Dr. Aris"). |
+| `sett_id` | `uuid` | Parent settlement ID. |
+| `cargo_inventory` | `Array[Cargo]` | Items available for purchase. **May be empty** in map snapshots — requires a `VendorService.request_vendor()` call to populate. |
+| `vehicle_inventory` | `Array[Vehicle]` | Vehicles for sale. |
+| `fuel_price`, `water_price`, `food_price` | `float?` | Resource prices. Presence of these keys is used as a heuristic to detect a "full" vs. "shallow" vendor payload. |
+
+---
+
+## 8. The Journey Object
+The `journey` key on a Convoy is `null` when idle and a `Dictionary` when en route.
+
+| Key | Type | Description |
+| :--- | :--- | :--- |
+| `destination_settlement_id` | `uuid` | Target settlement. |
+| `destination_settlement_name` | `string` | Human-readable destination. |
+| `progress` | `float` | Completion ratio `0.0`–`1.0`. |
+| `eta` | `string` | ISO-8601 timestamp of estimated arrival. |
+| `route` | `Array` | Ordered list of tile waypoints. |
+
+> [!TIP]
+> Always guard journey access with a null check: `var has_journey = journey_data != null and not journey_data.is_empty()`. Shallow convoy snapshots may omit the `journey` key entirely.
+

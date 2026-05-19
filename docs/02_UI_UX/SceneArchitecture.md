@@ -1,3 +1,14 @@
+---
+type: ui-ux
+tags:
+  - ui
+  - ux
+  - codex/scenearchitecture
+aliases:
+  - "Scene & Layer Architecture"
+created: 2026-05-18
+---
+
 # Scene & Layer Architecture
 
 The *Desolate Frontiers* UI is built as a stacked series of layers, managed primarily by the `MainScreen.tscn` and orchestrated by `MenuManager` and `UIManager`.

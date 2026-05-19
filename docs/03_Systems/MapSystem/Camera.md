@@ -1,3 +1,14 @@
+---
+type: system
+tags:
+  - system
+  - system/map
+  - codex/camera
+aliases:
+  - "Camera: Navigation & Focus"
+created: 2026-05-18
+---
+
 # Camera: Navigation & Focus
 
 The `MapCameraController` (MCC) is the authoritative manager for the player's view into the world. It handles the complexities of viewport clamping, smooth focusing, and mobile-friendly zooming.

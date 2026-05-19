@@ -1,3 +1,14 @@
+---
+type: system
+tags:
+  - system
+  - system/map
+  - codex/data
+aliases:
+  - "Data: Payload & Parsing"
+created: 2026-05-18
+---
+
 # Data: Payload & Parsing
 
 The Map Data is the largest payload in the game (averaging 4MB for a full world). To keep network transit efficient, the backend sends this as a **Binary Packed Stream** rather than raw JSON.

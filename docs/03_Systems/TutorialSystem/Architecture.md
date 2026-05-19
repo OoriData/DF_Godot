@@ -1,3 +1,14 @@
+---
+type: system
+tags:
+  - system
+  - system/tutorial
+  - codex/architecture
+aliases:
+  - "Architecture: The Step Loop"
+created: 2026-05-18
+---
+
 # Architecture: The Step Loop
 
 The Tutorial System operates on a sequential "Step Loop". Each step must be completed before the next is shown.

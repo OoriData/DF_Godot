@@ -1,3 +1,14 @@
+---
+type: ui-ux
+tags:
+  - ui
+  - ux
+  - codex/menubase
+aliases:
+  - "MenuBase Contract"
+created: 2026-05-18
+---
+
 # MenuBase Contract
 
 Purpose: Standardize initialization, navigation, and state management across all menus.

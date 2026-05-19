@@ -1,3 +1,13 @@
+---
+type: technical
+tags:
+  - technical
+  - codex/dependencies
+aliases:
+  - "Autoload Dependency Graph"
+created: 2026-05-18
+---
+
 # Autoload Dependency Graph
 
 This document visualizes how the global singletons (Autoloads) depend on each other. Understanding this graph is critical to avoiding circular dependencies and ensuring a clean initialization order.

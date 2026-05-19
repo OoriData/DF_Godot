@@ -1,3 +1,14 @@
+---
+type: system
+tags:
+  - system
+  - system/tutorial
+  - codex/stepschema
+aliases:
+  - "Step Schema: The Tutorial Contract"
+created: 2026-05-18
+---
+
 # Step Schema: The Tutorial Contract
 
 Tutorial steps are defined in a JSON array. Each step is a dictionary that tells the Engine what to show, what to highlight, and what to wait for.

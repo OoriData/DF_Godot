@@ -1,3 +1,14 @@
+---
+type: system
+tags:
+  - system
+  - system/map
+  - codex/readme
+aliases:
+  - "Map System: High-Level Overview"
+created: 2026-05-18
+---
+
 # Map System: High-Level Overview
 
 The Map System is the core spatial engine of *Desolate Frontiers*, responsible for rendering the hex grid, managing the camera, and handling player interactions with settlements and convoys.
@@ -35,6 +46,8 @@ Understanding the relationship between these three spaces is critical for intera
 - **[MapInteractionManager](Interactions.md)**: Translates screen taps into map actions.
 - **[ConvoyVisualsManager](Visuals.md)**: Spawns and updates convoy icons.
 - **[MapService](Data.md)**: Authoritative source for map data snapshots.
+- **[Map Rendering](Rendering.md)**: SubViewport configurations and visual layer details.
+- **[Terrain Math](TerrainMath.md)**: Hex grids, multipliers, and fog of war calculations.
 
 ## Key Files
 - **Scene**: [MapView.tscn](../../../Scenes/MapView.tscn)

@@ -1,3 +1,13 @@
+---
+type: architecture
+tags:
+  - architecture
+  - codex/architecture
+aliases:
+  - "Architecture Overview"
+created: 2026-05-18
+---
+
 # Architecture Overview
 
 ## Core Systems Overview

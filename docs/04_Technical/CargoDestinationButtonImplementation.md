@@ -1,3 +1,13 @@
+---
+type: technical
+tags:
+  - technical
+  - codex/cargodestinationbuttonimplementation
+aliases:
+  - "Implementing the Cargo Destination Button"
+created: 2026-05-18
+---
+
 # Implementing the Cargo Destination Button
 
 ## Objective

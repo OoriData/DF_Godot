@@ -1,3 +1,14 @@
+---
+type: ui-ux
+tags:
+  - ui
+  - ux
+  - codex/devicestate
+aliases:
+  - "Device State & Orientation Management"
+created: 2026-05-18
+---
+
 # Device State & Orientation Management
 
 This system coordinates hardware orientation, viewport scaling, and UI safe-area adjustments to ensure a consistent experience across all devices.

@@ -1,3 +1,14 @@
+---
+type: ui-ux
+tags:
+  - ui
+  - ux
+  - codex/designsystem
+aliases:
+  - "UI Design System"
+created: 2026-05-18
+---
+
 # UI Design System
 
 *Desolate Frontiers* uses a "premium-utilitarian" aesthetic, combining rugged, industrial elements with clean, modern digital overlays.

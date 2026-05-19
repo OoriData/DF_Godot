@@ -1,3 +1,13 @@
+---
+type: architecture
+tags:
+  - architecture
+  - codex/dataflow
+aliases:
+  - "Data Flow Architecture"
+created: 2026-05-18
+---
+
 # Data Flow Architecture
 
 Desolate Frontiers uses a unidirectional data flow pattern to ensure UI consistency and simplify state management across the application.

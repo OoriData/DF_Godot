@@ -1,3 +1,15 @@
+---
+type: ui-ux
+tags:
+  - ui
+  - ux
+  - ui/vendor
+  - codex/readme
+aliases:
+  - "Vendor Trade Panel: High-Level Overview"
+created: 2026-05-18
+---
+
 # Vendor Trade Panel: High-Level Overview
 
 The Vendor Trade Panel is the central UI for trading goods, managing vehicle parts, and viewing settlement/vendor inventory.
@@ -46,3 +58,13 @@ graph TD
 - **Logic Shell**: [vendor_trade_panel.gd](../../../Scripts/Menus/vendor_trade_panel.gd)
 - **Controllers**: Located in `Scripts/Menus/VendorPanel/`
 - **Tests**: [test_vendor_panel_convoy_stats_controller.gd](../../../Tests/test_vendor_panel_convoy_stats_controller.gd)
+
+## Detailed References
+- [**Transaction Controller**](Transactions.md): Projections, price math, and execution.
+- [**UI Inspector**](UI_Inspector.md): Dynamic item cards and mobile scaling in the middle pane.
+- [**Fitment Compatibility**](Mechanics.md): Rules for installing vehicle parts.
+- [**Convoy Stats Feed**](ConvoyStats.md): Continuous volume/weight capacity calculations.
+- [**Panel Lifecycle**](Lifecycle.md): Initialization sequence, state cleanup, and event bindings.
+- [**Checklist & Verification**](Checklist.md): Quality checklist for adding new vendor types.
+- [**Data Models**](Data.md): JSON structures and parsing rules for vendors.
+

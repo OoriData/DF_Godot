@@ -1,3 +1,14 @@
+---
+type: system
+tags:
+  - system
+  - system/tutorial
+  - codex/readme
+aliases:
+  - "Tutorial System: Modular Overhaul"
+created: 2026-05-18
+---
+
 # Tutorial System: Modular Overhaul
 
 The Tutorial System guides new players through the core loops of *Desolate Frontiers*. It is designed to be **event-driven**, ensuring the tutorial remains synchronized even if the player navigates menus faster than expected.
@@ -26,6 +37,7 @@ graph TD
 - **[Architecture & Flow](Architecture.md)**: How the manager and controllers interact.
 - **[Step Schema](StepSchema.md)**: Defining the JSON contract for steps.
 - **[Level Controllers](Controllers.md)**: How to write logic for a new tutorial level.
+- **[Target Resolution](TargetResolution.md)**: Resolving string identifiers to UI nodes.
 
 ## Primary Files
 - **Manager**: `Scripts/UI/tutorial_manager.gd`

@@ -1,3 +1,14 @@
+---
+type: system
+tags:
+  - system
+  - system/map
+  - codex/rendering
+aliases:
+  - "Rendering: TileMaps & Fog of War"
+created: 2026-05-18
+---
+
 # Rendering: TileMaps & Fog of War
 
 The map uses Godot 4's `TileMapLayer` nodes to efficiently render thousands of hexes and dynamic visibility masks.

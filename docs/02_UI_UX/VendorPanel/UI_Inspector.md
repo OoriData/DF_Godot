@@ -1,3 +1,15 @@
+---
+type: ui-ux
+tags:
+  - ui
+  - ux
+  - ui/vendor
+  - codex/ui_inspector
+aliases:
+  - "UI Components: Trees & Inspector"
+created: 2026-05-18
+---
+
 # UI Components: Trees & Inspector
 
 The Vendor Panel UI is split into two main sections: the **Inventory Trees** and the **Segmented Inspector**.
