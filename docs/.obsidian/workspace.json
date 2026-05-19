@@ -11,10 +11,14 @@
             "id": "1d0040f2f704965a",
             "type": "leaf",
             "state": {
-              "type": "graph",
-              "state": {},
-              "icon": "lucide-git-fork",
-              "title": "Graph view"
+              "type": "markdown",
+              "state": {
+                "file": "AI_ONBOARDING.md",
+                "mode": "source",
+                "source": false
+              },
+              "icon": "lucide-file",
+              "title": "AI_ONBOARDING"
             }
           }
         ]
@@ -90,6 +94,7 @@
             "state": {
               "type": "backlink",
               "state": {
+                "file": "AI_ONBOARDING.md",
                 "collapseAll": false,
                 "extraContext": false,
                 "sortOrder": "alphabetical",
@@ -99,7 +104,7 @@
                 "unlinkedCollapsed": true
               },
               "icon": "links-coming-in",
-              "title": "Backlinks"
+              "title": "Backlinks for AI_ONBOARDING"
             }
           },
           {
@@ -108,11 +113,12 @@
             "state": {
               "type": "outgoing-link",
               "state": {
+                "file": "AI_ONBOARDING.md",
                 "linksCollapsed": false,
                 "unlinkedCollapsed": true
               },
               "icon": "links-going-out",
-              "title": "Outgoing links"
+              "title": "Outgoing links from AI_ONBOARDING"
             }
           },
           {
@@ -162,6 +168,8 @@
   },
   "active": "1d0040f2f704965a",
   "lastOpenFiles": [
+    "04_Technical/AI_Guidelines.md",
+    "03_Systems/ItemsAndMissions.md",
     "AI_ONBOARDING.md",
     "04_Technical/UserSettings.md",
     "03_Systems/SettlementEconomy.md",
@@ -185,8 +193,6 @@
     "02_UI_UX/VehicleMenu.md",
     "02_UI_UX/ConvoyCargoMenu.md",
     "04_Technical/SignalHub.md",
-    "03_Systems/GameSystemsIndex.md",
-    "02_UI_UX/ConvoyMenu.md",
-    "04_Technical/ErrorSystem.md"
+    "03_Systems/GameSystemsIndex.md"
   ]
 }

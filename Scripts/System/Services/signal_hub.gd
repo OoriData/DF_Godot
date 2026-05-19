@@ -5,6 +5,8 @@ extends Node
 
 # Map and Settlements
 signal map_changed(tiles: Array, settlements: Array)
+signal map_camera_focus_settlement_requested(settlement_name: String)
+signal map_camera_return_to_convoy_requested()
 
 # Convoys
 signal convoys_changed(convoys: Array)

@@ -121,6 +121,7 @@ var _baseline_guard: Dictionary = {
 
 # Feedback state for transaction success/failure in the middle panel
 var _feedback_data: Dictionary = {} # { "message": "", "type": "success" }
+var _is_previewing_destination: bool = false
 
 func _get_settings_manager() -> Node:
 	return get_node_or_null("/root/SettingsManager")
@@ -1090,6 +1091,7 @@ func _apply_text_readability_fixes() -> void:
 
 
 func _exit_tree() -> void:
+	_reset_destination_preview_if_active()
 	# Disconnect from Hub/Store/API/Global signals that we connected in _ready
 	var dsm = get_node_or_null("/root/DeviceStateManager")
 	if is_instance_valid(dsm) and dsm.has_signal("layout_mode_changed"):
@@ -1525,6 +1527,7 @@ func _on_convoy_updated(convoy: Dictionary) -> void:
 
 # --- Signal Handlers ---
 func _on_tab_changed(tab_index: int) -> void:
+	_reset_destination_preview_if_active()
 	current_mode = "buy" if tab_index == 0 else "sell"
 	action_button.text = "Buy" if current_mode == "buy" else "Sell"
 	_update_sort_dropdown_visibility_fast()
@@ -1608,6 +1611,7 @@ func _tree_column_count(tree: Tree) -> int:
 func _handle_new_item_selection(p_selected_item) -> void:
 	if not is_inside_tree():
 		return
+	_reset_destination_preview_if_active()
 	VendorPanelSelectionController.handle_new_item_selection(self, p_selected_item)
 
 func _on_max_button_pressed() -> void:
@@ -1887,6 +1891,7 @@ func _update_comparison() -> void:
 
 # Clears the inspector panel (stub, fill in as needed)
 func _clear_inspector() -> void:
+	_reset_destination_preview_if_active()
 	if is_instance_valid(item_info_rich_text):
 		item_info_rich_text.text = ""
 	if is_instance_valid(item_name_label):
@@ -1919,6 +1924,16 @@ func _clear_inspector() -> void:
 	if is_instance_valid(container):
 		for ch in container.get_children():
 			ch.queue_free()
+
+func _reset_destination_preview_if_active() -> void:
+	print("[VendorTradePanel] _reset_destination_preview_if_active: Called. _is_previewing_destination = ", _is_previewing_destination)
+	if _is_previewing_destination:
+		_is_previewing_destination = false
+		if is_instance_valid(_hub) and _hub.has_signal("map_camera_return_to_convoy_requested"):
+			print("[VendorTradePanel] _reset_destination_preview_if_active: Emitting map_camera_return_to_convoy_requested to SignalHub")
+			_hub.emit_signal("map_camera_return_to_convoy_requested")
+		else:
+			printerr("[VendorTradePanel] _reset_destination_preview_if_active: SignalHub or signal 'map_camera_return_to_convoy_requested' is missing!")
 
 # Helper: recompute aggregate convoy cargo stats (not currently used directly; kept for future refactors)
 func _recalculate_convoy_cargo_stats() -> Dictionary:

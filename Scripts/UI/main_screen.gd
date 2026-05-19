@@ -211,6 +211,10 @@ func _ready():
 			hub.error_occurred.connect(_on_signal_hub_error_occurred)
 		if not hub.is_connected("auto_sell_receipt_ready", Callable(self, "_on_auto_sell_receipt_ready")):
 			hub.auto_sell_receipt_ready.connect(_on_auto_sell_receipt_ready)
+		if hub.has_signal("map_camera_focus_settlement_requested") and not hub.is_connected("map_camera_focus_settlement_requested", Callable(self, "_on_map_camera_focus_settlement_requested")):
+			hub.map_camera_focus_settlement_requested.connect(_on_map_camera_focus_settlement_requested)
+		if hub.has_signal("map_camera_return_to_convoy_requested") and not hub.is_connected("map_camera_return_to_convoy_requested", Callable(self, "_on_map_camera_return_to_convoy_requested")):
+			hub.map_camera_return_to_convoy_requested.connect(_on_map_camera_return_to_convoy_requested)
 
 	# Connect to Layout Mode Changes
 	var dsm = get_node_or_null("/root/DeviceStateManager")
@@ -1533,6 +1537,129 @@ func _on_convoy_menu_requested(convoy_data: Dictionary):
 	if map_camera_controller.has_method("smooth_focus_on_convoy"):
 		_dbg_menu("focus_request_applied", {})
 		map_camera_controller.smooth_focus_on_convoy(convoy_data, MENU_CAMERA_FOCUS_DURATION)
+
+
+func _on_map_camera_focus_settlement_requested(settlement_name: String) -> void:
+	print("[MainScreen] Received focus request for settlement/destination: '", settlement_name, "'")
+	if not is_instance_valid(map_camera_controller):
+		printerr("[MainScreen] map_camera_controller is invalid!")
+		return
+	var store = get_node_or_null("/root/GameStore")
+	if not is_instance_valid(store) or not store.has_method("get_settlements"):
+		printerr("[MainScreen] GameStore not found or lacks get_settlements!")
+		return
+		
+	var settlements = store.get_settlements()
+	var target_name = settlement_name.strip_edges()
+	
+	# Parse out the settlement name if it contains paren details (e.g. "Oasis (Oasis Dealership)")
+	if "(" in target_name:
+		target_name = target_name.split("(")[0].strip_edges()
+	
+	print("[MainScreen] Normalized target name to: '", target_name, "'")
+	
+	var found_settlement: Dictionary = {}
+	
+	# 1. Try direct settlement name match (case-insensitive)
+	for s in settlements:
+		if s is Dictionary:
+			var s_name := str(s.get("name", "")).strip_edges()
+			if s_name.to_lower() == target_name.to_lower():
+				found_settlement = s
+				print("[MainScreen] Found settlement directly matching name: '", s_name, "'")
+				break
+				
+	# 2. Try match by vendor name or ID within any settlement
+	if found_settlement.is_empty():
+		for s in settlements:
+			if s is Dictionary and s.has("vendors") and s.vendors is Array:
+				for v in s.vendors:
+					if v is Dictionary:
+						var v_name := str(v.get("name", "")).strip_edges()
+						var v_id := str(v.get("vendor_id", v.get("id", ""))).strip_edges()
+						if v_name.to_lower() == target_name.to_lower() or v_id.to_lower() == target_name.to_lower():
+							found_settlement = s
+							print("[MainScreen] Found settlement '", s.get("name", ""), "' matching vendor name/ID: '", target_name, "'")
+							break
+				if not found_settlement.is_empty():
+					break
+					
+	# 3. Last resort: Try partial matching of the name
+	if found_settlement.is_empty():
+		for s in settlements:
+			if s is Dictionary:
+				var s_name := str(s.get("name", "")).strip_edges()
+				if s_name.to_lower() in target_name.to_lower() or target_name.to_lower() in s_name.to_lower():
+					found_settlement = s
+					print("[MainScreen] Found settlement by partial match: '", s_name, "'")
+					break
+
+	if not found_settlement.is_empty():
+		var sx := int(found_settlement.get("x", 0))
+		var sy := int(found_settlement.get("y", 0))
+		var pos := Vector2.ZERO
+		if "tilemap_ref" in map_camera_controller and is_instance_valid(map_camera_controller.tilemap_ref):
+			pos = map_camera_controller.tilemap_ref.map_to_local(Vector2i(sx, sy))
+		elif map_camera_controller.has_method("_get_cell_size"):
+			var sz: Vector2 = map_camera_controller.call("_get_cell_size")
+			pos = Vector2(sx * sz.x, sy * sz.y)
+		else:
+			pos = Vector2(sx * 256, sy * 256)
+		
+		# Apply layout-based overlay occlusion shifts so it centers in the visible map view, not screen center
+		var zoom := 1.0
+		if "camera_node" in map_camera_controller and is_instance_valid(map_camera_controller.camera_node):
+			zoom = max(map_camera_controller.camera_node.zoom.x, 0.0001)
+
+		var shift := Vector2.ZERO
+		if "_overlay_occlusion_px_x" in map_camera_controller and map_camera_controller._overlay_occlusion_px_x > 0.0:
+			var occlusion_world_w: float = map_camera_controller._overlay_occlusion_px_x / zoom
+			shift.x += occlusion_world_w * 0.5
+		if "_overlay_occlusion_px_y" in map_camera_controller and map_camera_controller._overlay_occlusion_px_y > 0.0:
+			var occlusion_world_h: float = map_camera_controller._overlay_occlusion_px_y / zoom
+			shift.y += occlusion_world_h * 0.5
+		pos += shift
+
+		# Display the label for the settlement during this time
+		if is_instance_valid(ui_manager):
+			ui_manager.set("_preview_settlement_coords", Vector2i(sx, sy))
+			if ui_manager.has_method("_force_draw_interactive_labels_deferred"):
+				ui_manager.call("_force_draw_interactive_labels_deferred")
+			elif ui_manager.has_method("_draw_interactive_labels"):
+				ui_manager.call("_draw_interactive_labels", {})
+
+		print("[MainScreen] Focusing map camera (with occlusion shift ", shift, ") on tile coordinates (", sx, ", ", sy, ") -> world pos: ", pos)
+		if map_camera_controller.has_method("smooth_focus_on_world_pos"):
+			map_camera_controller.smooth_focus_on_world_pos(pos, MENU_CAMERA_FOCUS_DURATION)
+		else:
+			printerr("[MainScreen] smooth_focus_on_world_pos method not found in map_camera_controller!")
+	else:
+		printerr("[MainScreen] Could not resolve settlement for destination '", settlement_name, "'!")
+
+func _on_map_camera_return_to_convoy_requested() -> void:
+	print("[MainScreen] _on_map_camera_return_to_convoy_requested: Received return request.")
+	if is_instance_valid(ui_manager):
+		print("[MainScreen] _on_map_camera_return_to_convoy_requested: Resetting _preview_settlement_coords to null on ui_manager.")
+		ui_manager.set("_preview_settlement_coords", null)
+		if ui_manager.has_method("_force_draw_interactive_labels_deferred"):
+			ui_manager.call("_force_draw_interactive_labels_deferred")
+		elif ui_manager.has_method("_draw_interactive_labels"):
+			ui_manager.call("_draw_interactive_labels", {})
+
+	if not is_instance_valid(map_camera_controller):
+		printerr("[MainScreen] _on_map_camera_return_to_convoy_requested: map_camera_controller is INVALID!")
+		return
+		
+	var convoy_data = _get_primary_convoy_data()
+	print("[MainScreen] _on_map_camera_return_to_convoy_requested: Retrieved primary convoy data: ", convoy_data)
+	if not convoy_data.is_empty():
+		if map_camera_controller.has_method("smooth_focus_on_convoy"):
+			print("[MainScreen] _on_map_camera_return_to_convoy_requested: Focusing camera smoothly on convoy.")
+			map_camera_controller.smooth_focus_on_convoy(convoy_data, MENU_CAMERA_FOCUS_DURATION)
+		else:
+			printerr("[MainScreen] _on_map_camera_return_to_convoy_requested: map_camera_controller has NO smooth_focus_on_convoy method!")
+	else:
+		printerr("[MainScreen] _on_map_camera_return_to_convoy_requested: convoy_data is EMPTY, cannot focus camera on convoy!")
 
 
 # Called when the map_ready_for_focus signal is emitted from main.gd

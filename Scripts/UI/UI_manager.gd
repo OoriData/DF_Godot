@@ -137,6 +137,7 @@ var _preview_route_y: Array = []
 var _preview_color: Color = Color(1.0, 0.6, 0.0, 0.85)
 var _preview_line_width: float = 3.5
 var _high_contrast_enabled: bool = false
+var _preview_settlement_coords: Variant = null
 
 var _convoy_label_manager_initialized: bool = false
 
@@ -466,6 +467,11 @@ func _draw_interactive_labels(current_hover_info: Dictionary):
 		var end_tile_coords := Vector2i(int(_preview_route_x.back()), int(_preview_route_y.back()))
 		if not settlement_coords_to_display.has(end_tile_coords):
 			settlement_coords_to_display.append(end_tile_coords)
+
+	# Include destination preview settlement
+	if _preview_settlement_coords is Vector2i:
+		if not settlement_coords_to_display.has(_preview_settlement_coords):
+			settlement_coords_to_display.append(_preview_settlement_coords)
 
 	# Draw Settlement Labels (for selected convoys' start/end, then hovered settlement)
 	if not _selected_convoy_ids_cache.is_empty():

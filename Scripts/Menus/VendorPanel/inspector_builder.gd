@@ -23,6 +23,18 @@ static func get_stat_value(item_data_source: Dictionary, key: String) -> Variant
 				return fps
 	return null
 
+static func _find_vendor_trade_panel(node: Node) -> Node:
+	if not is_instance_valid(node):
+		return null
+	var scr = node.get_script()
+	if scr and scr.resource_path.ends_with("vendor_trade_panel.gd"):
+		return node
+	for child in node.get_children():
+		var res = _find_vendor_trade_panel(child)
+		if res:
+			return res
+	return null
+
 static func _make_panel(title: String, rows: Array) -> PanelContainer:
 	var panel := PanelContainer.new()
 	var sb := StyleBoxFlat.new()
@@ -81,13 +93,77 @@ static func _make_panel(title: String, rows: Array) -> PanelContainer:
 		k.modulate = Color(0.92, 0.94, 1.0, 0.95)
 		k.size_flags_horizontal = Control.SIZE_FILL
 		k.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-		var v := Label.new()
-		v.text = str(r.get("v", ""))
-		v.add_theme_font_size_override("font_size", txt_sz)
-		v.modulate = Color(0.86, 0.92, 1.0, 1)
-		v.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		v.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-		v.autowrap_mode = TextServer.AUTOWRAP_WORD
+		
+		var v: Control
+		if str(r.get("k", "")) == "Destination":
+			var btn := Button.new()
+			btn.text = "Preview: " + str(r.get("v", ""))
+			btn.add_theme_font_size_override("font_size", txt_sz)
+			btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			btn.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+			
+			var is_mobile_layout: bool = false
+			if is_instance_valid(dsm):
+				var mode = dsm.get_layout_mode()
+				is_mobile_layout = (mode == 1 or mode == 2)
+			
+			if is_mobile_layout:
+				btn.custom_minimum_size = Vector2(0, 70)
+			else:
+				btn.custom_minimum_size = Vector2(0, 40)
+			
+			# Let's style the button nicely to match premium UI
+			btn.flat = false
+			var sb_normal := StyleBoxFlat.new()
+			sb_normal.bg_color = Color(0.25, 0.28, 0.35, 0.8)
+			sb_normal.border_color = Color(0.55, 0.60, 0.70, 0.8)
+			sb_normal.border_width_left = 1
+			sb_normal.border_width_right = 1
+			sb_normal.border_width_top = 1
+			sb_normal.border_width_bottom = 1
+			sb_normal.corner_radius_top_left = 4
+			sb_normal.corner_radius_top_right = 4
+			sb_normal.corner_radius_bottom_left = 4
+			sb_normal.corner_radius_bottom_right = 4
+			btn.add_theme_stylebox_override("normal", sb_normal)
+			
+			var sb_hover = sb_normal.duplicate()
+			sb_hover.bg_color = Color(0.32, 0.36, 0.45, 0.9)
+			btn.add_theme_stylebox_override("hover", sb_hover)
+			
+			var sb_pressed = sb_normal.duplicate()
+			sb_pressed.bg_color = Color(0.18, 0.20, 0.25, 0.9)
+			btn.add_theme_stylebox_override("pressed", sb_pressed)
+
+			# Connect the pressed signal
+			var dest_val = str(r.get("v", ""))
+			btn.pressed.connect(func():
+				print("[VendorInspectorBuilder] Clicked Destination Button: '", dest_val, "'")
+				var hub = Engine.get_main_loop().root.get_node_or_null("SignalHub")
+				if is_instance_valid(hub) and hub.has_signal("map_camera_focus_settlement_requested"):
+					var root = Engine.get_main_loop().root
+					var trade_panel = _find_vendor_trade_panel(root)
+					if is_instance_valid(trade_panel):
+						print("[VendorInspectorBuilder] Successfully located active VendorTradePanel. Setting _is_previewing_destination = true.")
+						trade_panel._is_previewing_destination = true
+					else:
+						printerr("[VendorInspectorBuilder] FAILED to locate active VendorTradePanel in scene tree!")
+					print("[VendorInspectorBuilder] Emitting map_camera_focus_settlement_requested: '", dest_val, "'")
+					hub.emit_signal("map_camera_focus_settlement_requested", dest_val)
+				else:
+					printerr("[VendorInspectorBuilder] SignalHub or 'map_camera_focus_settlement_requested' signal is missing!")
+			)
+			v = btn
+		else:
+			var lbl := Label.new()
+			lbl.text = str(r.get("v", ""))
+			lbl.add_theme_font_size_override("font_size", txt_sz)
+			lbl.modulate = Color(0.86, 0.92, 1.0, 1)
+			lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			lbl.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+			lbl.autowrap_mode = TextServer.AUTOWRAP_WORD
+			v = lbl
+			
 		line.add_child(k)
 		line.add_child(v)
 		vb.add_child(line)
