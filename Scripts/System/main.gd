@@ -83,13 +83,11 @@ func initialize_all_components():
 		move_child(map_display, 0)
 		map_display.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 		
-		# Set ViewportTexture programmatically with explicit relative path.
-		# This guarantees robust rendering on macOS / GL Compatibility renderer.
+		# Set ViewportTexture programmatically using the pre-resolved direct texture.
+		# This guarantees robust rendering on macOS / GL Compatibility renderer while avoiding Godot 4's ViewportTexture.new() runtime resolution bug.
 		if is_instance_valid(sub_viewport):
-			var vp_tex = ViewportTexture.new()
-			vp_tex.viewport_path = map_display.get_path_to(sub_viewport)
-			map_display.texture = vp_tex
-			print("[Main] Programmatically assigned ViewportTexture path: ", vp_tex.viewport_path)
+			map_display.texture = sub_viewport.get_texture()
+			print("[Main] Programmatically assigned pre-resolved ViewportTexture directly once.")
 		else:
 			printerr("[Main] SubViewport node is invalid; cannot assign texture.")
 		
@@ -202,10 +200,8 @@ func _replay_store_snapshots():
 			print('[Main][ReplayDBG] TileMap empty after replay; repopulating...')
 			populate_tilemap_from_data(preloaded_tiles)
 	if is_instance_valid(map_display) and map_display.texture == null and is_instance_valid(sub_viewport):
-		var vp_tex = ViewportTexture.new()
-		vp_tex.viewport_path = map_display.get_path_to(sub_viewport)
-		map_display.texture = vp_tex
-		print("[Main][Replay] Fallback programmatically assigned ViewportTexture path: ", vp_tex.viewport_path)
+		map_display.texture = sub_viewport.get_texture()
+		print("[Main][Replay] Fallback assigned SubViewport texture directly once.")
 	# Optionally refit camera now that tiles are confirmed
 	if is_instance_valid(map_camera_controller) and map_camera_controller.has_method('fit_camera_to_tilemap'):
 		map_camera_controller.fit_camera_to_tilemap()

@@ -26,13 +26,13 @@ This document provides specific instructions and constraints for AI agents (like
 
 ### Viewport & Rendering Standards (GL Compatibility / Cross-Platform)
 - **No Dynamic Every-Frame Texture Re-assignments**: Never call `viewport.get_texture()` and re-assign it to a `TextureRect.texture` inside a `_process()` loop. Doing so breaks texture caching and triggers severe GPU state-transition thrashing under the OpenGL Compatibility renderer (especially on macOS Apple Silicon), leading to pitch-black rendering.
-- **Explicit Programmatic ViewportTexture Paths**: If you need to set a `ViewportTexture` programmatically, always instantiate it and set the explicit relative path once:
+- **No Programmatic `ViewportTexture.new()` instantiation**: In Godot 4.x, instantiating `ViewportTexture.new()` programmatically at runtime fails to resolve local-to-scene relative paths correctly on many stable versions, resulting in a persistent black texture.
+- **The Correct Pattern**: Get the pre-resolved texture reference via `viewport.get_texture()` and assign it **only once** (e.g., in `_ready()` or during layout setup):
   ```gdscript
-  var vp_tex = ViewportTexture.new()
-  vp_tex.viewport_path = texture_rect.get_path_to(viewport)
-  texture_rect.texture = vp_tex
+  if is_instance_valid(viewport):
+      texture_rect.texture = viewport.get_texture()
   ```
-  This establishes the deterministic rendering dependency graph, letting the engine resolve rendering orders safely across all platforms (macOS, Windows, Linux, iOS, Android, and Web/HTML5).
+  This is 100% stable, resolves instantly without path-lookup bugs, and avoids all GPU state-transition thrashing.
 
 ## 2. Data Flow & State Management
 

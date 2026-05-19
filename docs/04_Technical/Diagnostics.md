@@ -73,9 +73,9 @@ When `http_trace = true` is set in the config, the console will show:
 If the map fails to render or looks completely "black" or "frozen":
 1.  **SubViewport Update Mode**: Verify that `SubViewport.render_target_update_mode` is set to `UPDATE_ALWAYS` (4).
 2.  **Texture Assignment & Churn**: Ensure you are not dynamically re-assigning the viewport's texture inside a `_process()` loop or repetitive frame callbacks. Continuous `get_texture()` assignments will trigger GPU state-transition stalls on strict platforms (especially macOS/Apple Silicon under the GL Compatibility renderer), forcing the texture to render black.
-3.  **Explicit Path Bindings**: Ensure programmatic viewport textures are initialized **once** using a strict relative `viewport_path` via `ViewportTexture.new()`.
+3.  **Programmatic Instantiation Bug**: Never use `ViewportTexture.new()` programmatically at runtime. In Godot 4, runtime `ViewportTexture` resources fail to resolve their paths under the active scene context, rendering them black. Always assign `viewport.get_texture()` **once** at startup.
 4.  **Layout Settling**: If the camera viewport rect sizes are incorrect at startup, ensure the scene unpausing sequence allows **two process frames** to settle Control nodes before fetching sizes.
-5.  **Logs**: Check console output for `--- Main Initialization Start ---` and `[Main] Programmatically assigned ViewportTexture path:`.
+5.  **Logs**: Check console output for `--- Main Initialization Start ---` and `[Main] Programmatically assigned pre-resolved ViewportTexture directly once.`.
 
 ### Mobile Layout Issues
 If elements are clipping on mobile:
