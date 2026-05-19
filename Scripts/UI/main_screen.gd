@@ -414,7 +414,8 @@ func _on_map_view_size_changed():
 
 # Call this after the main screen is visible and unpaused to ensure camera is correct
 func force_camera_update():
-	await get_tree().process_frame  # Wait for layout to settle
+	await get_tree().process_frame  # Wait first frame for layout to start settling
+	await get_tree().process_frame  # Wait second frame to ensure global transforms are fully updated
 	_update_camera_viewport_rect_on_resize()
 
 func _update_camera_viewport_rect_on_resize():
@@ -1745,7 +1746,9 @@ func _to_subviewport_screen(global_pos: Vector2) -> Vector2:
 func _get_map_display_rect() -> Rect2:
 	if not is_instance_valid(map_view):
 		return Rect2()
-	var map_display: TextureRect = map_view.get_node_or_null("MapContainer/MapDisplay")
+	var map_display = map_view.get_node_or_null("MapDisplay")
+	if not is_instance_valid(map_display):
+		map_display = map_view.get_node_or_null("MapContainer/MapDisplay")
 	if is_instance_valid(map_display):
 		return map_display.get_global_rect()
 	return map_view.get_global_rect()

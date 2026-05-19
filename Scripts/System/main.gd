@@ -82,7 +82,18 @@ func initialize_all_components():
 		# Ensure it's drawn behind other UI elements within this control
 		move_child(map_display, 0)
 		map_display.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-		print("[Main] Reparented MapDisplay to self (MapView).")
+		
+		# Set ViewportTexture programmatically with explicit relative path.
+		# This guarantees robust rendering on macOS / GL Compatibility renderer.
+		if is_instance_valid(sub_viewport):
+			var vp_tex = ViewportTexture.new()
+			vp_tex.viewport_path = map_display.get_path_to(sub_viewport)
+			map_display.texture = vp_tex
+			print("[Main] Programmatically assigned ViewportTexture path: ", vp_tex.viewport_path)
+		else:
+			printerr("[Main] SubViewport node is invalid; cannot assign texture.")
+		
+		print("[Main] Reparented MapDisplay to self (MapView) and set ViewportTexture.")
 	else:
 		printerr("[Main] MapDisplay node is invalid.")
 
@@ -190,16 +201,11 @@ func _replay_store_snapshots():
 		if used == 0 and not preloaded_tiles.is_empty():
 			print('[Main][ReplayDBG] TileMap empty after replay; repopulating...')
 			populate_tilemap_from_data(preloaded_tiles)
-	if is_instance_valid(map_display):
-		map_display.texture = sub_viewport.get_texture()
-		if map_display.texture == null:
-			print('[Main][ReplayDBG] Texture still null; adding debug ColorRect')
-			if is_instance_valid(sub_viewport) and sub_viewport.get_node_or_null('ReplayDebugRect') == null:
-				var cr = ColorRect.new()
-				cr.name = 'ReplayDebugRect'
-				cr.color = Color(1,0,1,1)
-				cr.size = Vector2(128,128)
-				sub_viewport.add_child(cr)
+	if is_instance_valid(map_display) and map_display.texture == null and is_instance_valid(sub_viewport):
+		var vp_tex = ViewportTexture.new()
+		vp_tex.viewport_path = map_display.get_path_to(sub_viewport)
+		map_display.texture = vp_tex
+		print("[Main][Replay] Fallback programmatically assigned ViewportTexture path: ", vp_tex.viewport_path)
 	# Optionally refit camera now that tiles are confirmed
 	if is_instance_valid(map_camera_controller) and map_camera_controller.has_method('fit_camera_to_tilemap'):
 		map_camera_controller.fit_camera_to_tilemap()
@@ -210,13 +216,8 @@ func _process(_delta: float):
 	if not _map_and_ui_setup_complete:
 		return
 	_frame_counter += 1
-	# if _frame_counter % 60 == 0 and is_instance_valid(map_camera):
-		# print('[Main][DBG] frame=%d cam_pos=%s zoom=%s tex_null=%s' % [_frame_counter, str(map_camera.position), str(map_camera.zoom), str(map_display.texture == null)])
-	var map_view = self
-	if not is_instance_valid(map_view):
-		return
-	if is_instance_valid(map_display):
-		map_display.texture = sub_viewport.get_texture()
+	# Dynamic texture assignment every frame is disabled to prevent OpenGL/Compatibility renderer black screen bugs on macOS M1 Max.
+	# ViewportTexture automatically updates without daily re-assignments.
 
 func populate_tilemap_from_data(tile_data_2d: Array):
 	if not is_instance_valid(terrain_tilemap):

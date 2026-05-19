@@ -24,6 +24,16 @@ This document provides specific instructions and constraints for AI agents (like
 - **Fluid Containers**: Avoid rigid `custom_minimum_size`. If a container is clipping on mobile, check for nested `HBoxContainers` or `GridContainers` that are forcing a width larger than the 800px logical target.
 - **Label Wrapping**: text-heavy labels must use `AUTOWRAP_WORD_SMART` and `SIZE_EXPAND_FILL` to prevent them from pushing their parent containers off-screen.
 
+### Viewport & Rendering Standards (GL Compatibility / Cross-Platform)
+- **No Dynamic Every-Frame Texture Re-assignments**: Never call `viewport.get_texture()` and re-assign it to a `TextureRect.texture` inside a `_process()` loop. Doing so breaks texture caching and triggers severe GPU state-transition thrashing under the OpenGL Compatibility renderer (especially on macOS Apple Silicon), leading to pitch-black rendering.
+- **Explicit Programmatic ViewportTexture Paths**: If you need to set a `ViewportTexture` programmatically, always instantiate it and set the explicit relative path once:
+  ```gdscript
+  var vp_tex = ViewportTexture.new()
+  vp_tex.viewport_path = texture_rect.get_path_to(viewport)
+  texture_rect.texture = vp_tex
+  ```
+  This establishes the deterministic rendering dependency graph, letting the engine resolve rendering orders safely across all platforms (macOS, Windows, Linux, iOS, Android, and Web/HTML5).
+
 ## 2. Data Flow & State Management
 
 ### The Unidirectional Pipeline

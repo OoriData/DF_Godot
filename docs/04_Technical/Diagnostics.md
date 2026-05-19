@@ -69,11 +69,13 @@ When `http_trace = true` is set in the config, the console will show:
 
 ## 3. UI Diagnostics
 
-### The "White Screen" or Frozen Map
-If the map fails to render or looks "frozen":
-1.  Check the **SubViewport** update mode. It must be `UPDATE_ALWAYS`.
-2.  Check the **MapDisplay** texture. If `null`, the `main.gd` initialization failed.
-3.  Check the **Main Initialization** logs: `--- Main Initialization Start ---`.
+### The "White Screen", "Black Screen", or Frozen Map
+If the map fails to render or looks completely "black" or "frozen":
+1.  **SubViewport Update Mode**: Verify that `SubViewport.render_target_update_mode` is set to `UPDATE_ALWAYS` (4).
+2.  **Texture Assignment & Churn**: Ensure you are not dynamically re-assigning the viewport's texture inside a `_process()` loop or repetitive frame callbacks. Continuous `get_texture()` assignments will trigger GPU state-transition stalls on strict platforms (especially macOS/Apple Silicon under the GL Compatibility renderer), forcing the texture to render black.
+3.  **Explicit Path Bindings**: Ensure programmatic viewport textures are initialized **once** using a strict relative `viewport_path` via `ViewportTexture.new()`.
+4.  **Layout Settling**: If the camera viewport rect sizes are incorrect at startup, ensure the scene unpausing sequence allows **two process frames** to settle Control nodes before fetching sizes.
+5.  **Logs**: Check console output for `--- Main Initialization Start ---` and `[Main] Programmatically assigned ViewportTexture path:`.
 
 ### Mobile Layout Issues
 If elements are clipping on mobile:
