@@ -101,6 +101,11 @@ func initialize_all_components():
 			_store.map_changed.connect(_on_store_map_changed)
 		if _store.has_signal("convoys_changed") and not _store.convoys_changed.is_connected(_on_store_convoys_changed):
 			_store.convoys_changed.connect(_on_store_convoys_changed)
+			
+	# Connect to SignalHub selection signal
+	if is_instance_valid(_hub):
+		if _hub.has_signal("selected_convoy_ids_changed") and not _hub.selected_convoy_ids_changed.is_connected(_on_global_selected_convoy_ids_changed):
+			_hub.selected_convoy_ids_changed.connect(_on_global_selected_convoy_ids_changed)
 	else:
 		printerr("Main: GameStore not found.")
 
@@ -347,11 +352,26 @@ func _on_selection_changed(selected_ids: Array):
 		_hub.selected_convoy_ids_changed.emit(selected_ids)
 	_update_ui_manager(false)
 
+func _on_global_selected_convoy_ids_changed(selected_ids: Array) -> void:
+	var ids: Array[String] = []
+	for id in selected_ids:
+		ids.append(str(id))
+	_selected_convoy_ids = ids
+	if is_instance_valid(convoy_visuals_manager):
+		convoy_visuals_manager.update_selected_convoys(ids)
+	_update_ui_manager(false)
+
 func _on_hover_changed(hover_info: Dictionary):
 	_current_hover_info = hover_info
 	_update_ui_manager(true)
 
 func _on_convoy_menu_requested(convoy_data: Dictionary):
+	# Sync global selection when clicked on map
+	if convoy_data.has("convoy_id"):
+		var cid = str(convoy_data.get("convoy_id"))
+		if is_instance_valid(_hub) and _hub.has_signal("convoy_selection_requested"):
+			_hub.convoy_selection_requested.emit(cid, false)
+
 	var menu_manager = get_node_or_null("/root/MenuManager")
 	if menu_manager:
 		menu_manager.request_convoy_menu(convoy_data)

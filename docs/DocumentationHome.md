@@ -48,6 +48,7 @@ Welcome to the technical documentation for *Desolate Frontiers*. This folder is 
 - [**Auto-Sell System**](03_Systems/AutoSellSystem.md): Post-journey cargo detection, snapshot diffing, and receipt modal.
 - [**Mechanics & Parts**](03_Systems/Mechanics.md): Vehicle customization and part compatibility.
 - [**Map System**](03_Systems/MapSystem/MapSystemOverview.md): Tile rendering, camera, and settlement management.
+  - [**Map Menu & Overlays**](03_Systems/MapSystem/MapMenuSystem.md): Visual layers, toggles, signals, and architectural design.
 - [**Tutorial System**](03_Systems/TutorialSystem/TutorialSystemOverview.md): Managing onboarding levels, steps, and UI highlights.
 
 ---

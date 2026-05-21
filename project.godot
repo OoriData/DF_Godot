@@ -29,6 +29,8 @@ APICalls="*res://Scripts/System/api_calls.gd"
 SignalHub="*res://Scripts/System/Services/signal_hub.gd"
 GameStore="*res://Scripts/System/Services/game_store.gd"
 MapService="*res://Scripts/System/Services/map_service.gd"
+MapSettingsService="*res://Scripts/System/Services/map_settings_service.gd"
+
 ConvoyService="*res://Scripts/System/Services/convoy_service.gd"
 UserService="*res://Scripts/System/Services/user_service.gd"
 VendorService="*res://Scripts/System/Services/vendor_service.gd"

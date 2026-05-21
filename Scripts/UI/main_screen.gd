@@ -164,6 +164,15 @@ func _ready():
 	call_deferred("_initial_camera_and_ui_setup")
 	call_deferred("_connect_deferred_signals")
 
+	# Add Map Overlay Settings floating tab
+	var map_overlay_panel_script = load("res://Scripts/UI/map_overlay_settings_panel.gd")
+	if map_overlay_panel_script:
+		var overlay_panel = map_overlay_panel_script.new()
+		overlay_panel.name = "MapOverlaySettingsPanel"
+		$SafeRegionContainer/MainContainer/MainContent/MapAndMenuContainer.add_child(overlay_panel)
+
+
+
 	# Connect to the MenuManager's signal that indicates when a menu is opened or closed.
 	var menu_manager = get_node_or_null("/root/MenuManager")
 	if menu_manager:
