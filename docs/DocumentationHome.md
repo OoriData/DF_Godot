@@ -28,16 +28,16 @@ Welcome to the technical documentation for *Desolate Frontiers*. This folder is 
 ---
 
 ## 02 UI & UX System
-- [**Scene Architecture**](02_UI_UX/SceneArchitecture.md): Viewport layering, MainScreen hierarchy, and menu composition.
-- [**Responsive UI System**](02_UI_UX/ui_system.md): Logical scaling, orientation handling, and mobile design patterns.
-- [**Device State Management**](02_UI_UX/DeviceState.md): Orientation detection and viewport scaling coordination.
-- [**Design System**](02_UI_UX/DesignSystem.md): Visual tokens, typography, and premium component standards.
-- [**Asset Pipeline**](02_UI_UX/AssetPipeline.md): Standards for textures, fonts, and map tiles.
-- [**MenuManager**](02_UI_UX/MenuManager.md): Navigation hub, transitions, and state persistence.
-- [**MenuBase Contract**](02_UI_UX/MenuBase.md): Standardizing menu initialization and lifecycle.
-- [**Convoy Menu**](02_UI_UX/ConvoyMenu.md): The primary convoy landing screen — vendor tabs, payload guard, debounce pattern.
-- [**Warehouse Menu**](02_UI_UX/WarehouseMenu.md): Warehouse purchase, upgrades, cargo/vehicle management.
-- [**Vendor Panel**](02_UI_UX/VendorPanel/VendorPanelOverview.md): Detailed reference for the complex trading and inventory system.
+
+> [!TIP]
+> Start with the [**UI Element Audit**](02_UI_UX/UIAudit.md) for any UI task — it contains the layer map, script mapping, per-element inventory, implementation patterns, and all known issues.
+
+- [**UI Element Audit**](02_UI_UX/UIAudit.md) ⭐ — **Start here for all UI work.** Full inventory of every element, layer map, script mapping, implementation patterns, known issues, and links to every per-menu doc.
+
+**Supporting deep-dives** (linked from UIAudit):
+- [Scene Architecture](02_UI_UX/SceneArchitecture.md) · [Responsive UI / Scaling](02_UI_UX/ui_system.md) · [Device State](02_UI_UX/DeviceState.md)
+- [MenuBase Contract](02_UI_UX/MenuBase.md) · [MenuManager](02_UI_UX/MenuManager.md) · [Design System](02_UI_UX/DesignSystem.md)
+- [Convoy Menu](02_UI_UX/ConvoyMenu.md) · [Cargo Menu](02_UI_UX/ConvoyCargoMenu.md) · [Warehouse Menu](02_UI_UX/WarehouseMenu.md) · [Vendor Panel](02_UI_UX/VendorPanel/VendorPanelOverview.md)
 
 ---
 
