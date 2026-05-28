@@ -304,9 +304,9 @@ func _ingest_vendor_inventory(vendor: Variant) -> void:
 				print("[MechanicsService] Ingested part: ", d.get("name", "Unknown"), " cid=", cid, " slot=", slot)
 		else:
 			# If it's not a mission and not a resource, proactively enrich it as a potential part.
-			var is_mission := false
-			if ItemsData != null and ItemsData.MissionItem:
-				is_mission = ItemsData.MissionItem._looks_like_mission_dict(d)
+			var is_delivery := false
+			if ItemsData != null and ItemsData.DeliveryCargoItem:
+				is_delivery = ItemsData.DeliveryCargoItem._looks_like_delivery_dict(d)
 			
 			var is_resource := false
 			if ItemsData != null and ItemsData.ResourceItem:
@@ -318,15 +318,15 @@ func _ingest_vendor_inventory(vendor: Variant) -> void:
 						is_resource = true
 						break
 			
-			var is_vehicle := d.has("vehicle_id") or d.has("packed_vehicle")
-			if not is_mission and not is_resource and not is_vehicle:
+			var is_vehicle := ItemsData != null and ItemsData.VehicleItem and ItemsData.VehicleItem._looks_like_vehicle_dict(d)
+			if not is_delivery and not is_resource and not is_vehicle:
 				if _debug_mechanics:
 					print("[MechanicsService] Proactively enriching potential part: ", d.get("name", "Unknown"), " cid=", cid)
 				ensure_cargo_details(cid)
 			elif _debug_mechanics:
 				# Extra verbose: find out why it's not a part
 				var nm := String(d.get("name", "Unknown"))
-				print("[MechanicsService] Item skipped (is_mission=%s is_resource=%s is_vehicle=%s): " % [is_mission, is_resource, is_vehicle], nm, " cid=", cid)
+				print("[MechanicsService] Item skipped (is_delivery=%s is_resource=%s is_vehicle=%s): " % [is_delivery, is_resource, is_vehicle], nm, " cid=", cid)
 
 
 func _on_store_map_changed(_tiles: Array, _settlements: Array) -> void:

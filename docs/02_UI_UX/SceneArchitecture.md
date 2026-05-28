@@ -39,9 +39,8 @@ The `MainScreen` is the master container for the entire game session. It acts as
 Menus are not fixed scenes; they are dynamically instanced and animated into the `MenuContainer`.
 
 - **Persistent Top Bar**: The `TopBar` stays visible even when a menu is open, providing breadcrumbs and global stats.
-- **Slide-in Animation**: 
-  - On **Landscape/Desktop**, the menu slides in from the **Right**.
-  - On **Portrait/Mobile**, the menu slides up from the **Bottom**.
+- **Sub-menu Switch Animation**: When switching between sibling sub-menus (e.g. Vehicles → Cargo), the new menu slides in **horizontally** (left or right based on MENU_ORDER index). The outgoing menu slides out in the opposite direction.
+- **Convoy Overview Vertical Swipe**: Opening the Convoy Overview swipes it **down from the top** (covering the sub-menu). Closing it swipes it **up**, revealing the sub-menu underneath.
 - **Camera Interaction**: When a menu opens, it informs the `CameraController` of its "occlusion width". The camera then smoothly shifts the world-view center to keep the selected convoy visible in the remaining screen space.
 
 ---

@@ -22,7 +22,17 @@ This document provides specific instructions and constraints for AI agents (like
 ### Responsive Design Standards
 - **Safe Areas**: All critical UI elements must be children of a `SafeRegionContainer` to avoid hardware notches.
 - **Fluid Containers**: Avoid rigid `custom_minimum_size`. If a container is clipping on mobile, check for nested `HBoxContainers` or `GridContainers` that are forcing a width larger than the 800px logical target.
-- **Label Wrapping**: text-heavy labels must use `AUTOWRAP_WORD_SMART` and `SIZE_EXPAND_FILL` to prevent them from pushing their parent containers off-screen.
+- **Label Wrapping**: Text-heavy labels must use `AUTOWRAP_WORD` and `SIZE_EXPAND_FILL` to prevent them from pushing their parent containers off-screen.
+- **Dynamic Font & Responsive Panel Sizing**:
+  - Always implement a dynamic font-scaling helper in programmatic controls to ensure legibility on both mobile (high-DPI) and desktop landscape:
+    ```gdscript
+    func _get_font_size(base: int) -> int:
+        var boost = 2.6 if _is_portrait() else (2.0 if _is_mobile() else 1.6)
+        return int(base * boost)
+    ```
+  - Base sizes must be large enough: Title (Base `22`–`24`), Row Header (Base `16`–`18`), Description Subtext (Base `12`–`14`).
+  - Panel widths must be responsive rather than hardcoded. For floating slide-out panels, use screen width percentages in portrait (e.g., `win_size.x * 0.75`) and ample horizontal width in landscape (e.g., `440px`) to let large text wrap beautifully with sufficient padding.
+  - Wrap custom toggle items and lists inside individual **glassmorphic containers** (`StyleBoxFlat` with thin border accents) and supply helper subtext descriptions to fill out space and make the UI look complete.
 
 ### Viewport & Rendering Standards (GL Compatibility / Cross-Platform)
 - **No Dynamic Every-Frame Texture Re-assignments**: Never call `viewport.get_texture()` and re-assign it to a `TextureRect.texture` inside a `_process()` loop. Doing so breaks texture caching and triggers severe GPU state-transition thrashing under the OpenGL Compatibility renderer (especially on macOS Apple Silicon), leading to pitch-black rendering.

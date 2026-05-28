@@ -13,7 +13,7 @@ var unit_weight: float = 0.0      # weight per unit
 var unit_volume: float = 0.0      # volume per unit
 var total_weight: float = 0.0     # cached total (quantity * unit_weight)
 var total_volume: float = 0.0     # cached total (quantity * unit_volume)
-var category: String = "other"    # coarse bucket: part / mission / resource / vehicle / other
+var category: String = "other"    # coarse bucket: part / delivery / resource / vehicle / other
 var base_desc: String = ""        # base description if present
 var quality: float = -1.0         # -1 when not applicable
 var condition: float = -1.0       # -1 when not applicable
@@ -57,8 +57,8 @@ static func from_dict(d: Dictionary) -> CargoItem:
 	# - Resource: has `.water` OR `.food` OR `.fuel`/`.Fuel`
 	# - Vehicle: vehicle-looking dictionary without `cargo_id`
 	# - Other:   anything else
-	if MissionItem._looks_like_mission_dict(d):
-		return MissionItem._from_mission_dict(d)
+	if DeliveryCargoItem._looks_like_delivery_dict(d):
+		return DeliveryCargoItem._from_delivery_dict(d)
 	if PartItem._looks_like_part_dict(d):
 		return PartItem._from_part_dict(d)
 	if ResourceItem._looks_like_resource_dict(d):
@@ -103,7 +103,9 @@ func get_total_volume() -> float:
 
 func is_part() -> bool: return category == "part"
 func is_resource() -> bool: return category == "resource"
-func is_mission() -> bool: return category == "mission"
+func is_delivery() -> bool: return category == "delivery"
+# Deprecated: use is_delivery instead
+func is_mission() -> bool: return is_delivery()
 func is_vehicle() -> bool: return category == "vehicle"
 
 func summary_line() -> String:
@@ -194,42 +196,54 @@ class PartItem:
 		var base := super.summary_line()
 		return base + (" " + modifiers_summary if modifiers_summary != "" else "")
 
-# ================= MissionItem =================
-class MissionItem:
+# ================= DeliveryCargoItem =================
+class DeliveryCargoItem:
 	extends CargoItem
+	var recipient_id: String = ""
+	
+	# Deprecated fields for compatibility
 	var mission_id: String = ""
 	var mission_vendor_id: String = ""
 	var mission_type: String = ""
 
-	static func _looks_like_mission_dict(d: Dictionary) -> bool:
-		if not d: return false
-		# Concrete rule: presence of `.recipient` means mission cargo.
+	static func _looks_like_delivery_dict(d: Dictionary) -> bool:
+		if not d: 
+			return false
 		if d.has("recipient") and d.get("recipient") != null:
-			return true
+			var rec = str(d.get("recipient")).strip_edges()
+			if rec != "" and rec != "00000000-0000-0000-0000-000000000000":
+				return true
+		
+		# Compatibility fallback for old mock payloads without 'recipient' field
 		if d.get("is_mission", false): return true
-		# Check for non-null and non-empty string IDs or destination fields
 		var id_fields := ["mission_id", "mission_vendor_id", "recipient_vendor_id", "destination_vendor_id", "dest_vendor_id", "recipient_settlement_name", "destination_settlement_name", "dest_settlement", "destination_name"]
 		for k in id_fields:
 			if d.has(k) and d.get(k) != null and str(d.get(k)).strip_edges() != "":
 				return true
-		# Mission cargo must have a positive delivery_reward or unit_delivery_reward
 		if _to_float(d.get("delivery_reward", 0)) > 0.0:
 			return true
 		if _to_float(d.get("unit_delivery_reward", 0)) > 0.0:
 			return true
 		return false
 
-	static func _from_mission_dict(d: Dictionary) -> MissionItem:
-		var m := MissionItem.new()
+	static func _from_delivery_dict(d: Dictionary) -> DeliveryCargoItem:
+		var m := DeliveryCargoItem.new()
 		var base := CargoItem._parse_base(d)
 		for f in ["id","name","quantity","unit_weight","unit_volume","total_weight","total_volume","base_desc","quality","condition","tags"]:
 			m.set(f, base.get(f))
 		m.raw = base.raw
-		m.category = "mission"
+		m.category = "delivery"
+		m.recipient_id = str(d.get("recipient", ""))
 		m.mission_id = str(d.get("mission_id",""))
 		m.mission_vendor_id = str(d.get("mission_vendor_id",""))
 		m.mission_type = str(d.get("mission_type", d.get("type", "")))
 		return m
+
+# Deprecated compatibility class
+class MissionItem:
+	extends DeliveryCargoItem
+	static func _looks_like_mission_dict(d: Dictionary) -> bool:
+		return DeliveryCargoItem._looks_like_delivery_dict(d)
 
 # ================= ResourceItem =================
 class ResourceItem:
@@ -241,9 +255,10 @@ class ResourceItem:
 		if not d: return false
 		if d.get("is_raw_resource", false): return true
 		if d.has("resource_type"): return true # explicit type
-		# Concrete rule: presence of any of these resource keys means resource cargo.
+		# Concrete rule: presence of any of these resource keys with a positive value means resource cargo.
+		# NOTE: Many non-resource items (delivery cargo, parts) carry these keys set to 0.0 — must check > 0.
 		for k in ["water", "food", "fuel", "Fuel"]:
-			if d.has(k) and d.get(k) != null:
+			if d.has(k) and d.get(k) != null and float(d.get(k)) > 0.0:
 				return true
 		return false
 
@@ -319,9 +334,10 @@ static func classify_many(raw_items: Array) -> Array:
 	return out
 
 static func bucket_by_category(items: Array) -> Dictionary:
-	var buckets := {"mission": [], "part": [], "resource": [], "vehicle": [], "other": []}
+	var buckets := {"delivery": [], "part": [], "resource": [], "vehicle": [], "other": []}
 	for it in items:
 		var cat = it.category if it is CargoItem else "other"
+		if cat == "mission": cat = "delivery" # Handle legacy category gracefully
 		if not buckets.has(cat): buckets[cat] = []
 		buckets[cat].append(it)
 	return buckets

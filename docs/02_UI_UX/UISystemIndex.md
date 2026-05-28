@@ -11,46 +11,20 @@ created: 2026-05-18
 
 # UI & UX System
 
-The *Desolate Frontiers* UI is built on a service-backed architecture that ensures data consistency and responsive layout across all devices.
+> [!NOTE]
+> This index has been consolidated into the **[UI Element Audit](UIAudit.md)**, which is now the single entry point for all UI documentation, element inventory, script mapping, implementation patterns, and known issues.
 
-## Core Architecture
-- [**Scene Architecture**](SceneArchitecture.md): Viewport layering, MainScreen hierarchy, and menu composition.
-- [**Responsive UI System**](ui_system.md): Logical scaling, orientation handling, and mobile design patterns.
-- [**Design System**](DesignSystem.md): Visual tokens, typography, and component standards.
-- [**Asset Pipeline**](AssetPipeline.md): Standards for textures, fonts, and map tiles.
-- [**MenuManager**](MenuManager.md): Navigation hub, transition logic, and state persistence.
-- [**MenuBase Contract**](MenuBase.md): Standardizing menu initialization and lifecycle.
+## Quick Links
 
----
-
-## Technical Mapping (Scripts)
-
-- **Main (MapView)**: [main.gd](../../../Scripts/System/main.gd)
-- **MapInteractionManager**: [map_interaction_manager.gd](../../../Scripts/Map/map_interaction_manager.gd)
-- **ConvoyVisualsManager**: [convoy_visuals_manager.gd](../../../Scripts/Map/convoy_visuals_manager.gd)
-- **UIManager**: [UI_manager.gd](../../../Scripts/UI/UI_manager.gd)
-- **ScaleManager**: [UI_scale_manager.gd](../../../Scripts/UI/UI_scale_manager.gd)
-
----
-
-## Available Menus
-- [**Convoy Overview**](ConvoyMenu.md): The landing page for a specific convoy. See also `Scripts/Menus/convoy_menu.gd`.
-- [**Vehicle Sub-menu**](VehicleMenu.md): Vehicle stats, parts, and damage.
-- [**Journey Sub-menu**](JourneyMenu.md): Navigation, route selection, and progress.
-- [**Settlement Sub-menu**](SettlementMenu.md): Local services and info.
-- [**Cargo Sub-menu**](ConvoyCargoMenu.md): Full manifest, item inspection, sorting, and aggregation. See also `Scripts/Menus/convoy_cargo_menu.gd`.
-- [**Warehouse Menu**](WarehouseMenu.md): Storing and retrieving cargo/vehicles. See also `Scripts/Menus/warehouse_menu.gd`.
-- [**Mechanics Menu**](MechanicsMenu.md): Complex part repairs and swaps.
-- [**Vendor Panel**](VendorPanel/VendorPanelOverview.md): Detailed reference for the complex trading and inventory system.
-
----
-
-## Implementation Patterns
-
-### 1. Convoy Context
-Most menus operate on a "Convoy Context". They are initialized with a `convoy_id` and subscribe to `GameStore.convoys_changed`. This allows the UI to stay perfectly in sync with backend updates without manual polling.
-
-### 2. Mobile-First Standard
-- **Touch Targets**: Minimum 70px height for buttons in portrait.
-- **Safe Areas**: Use `SafeRegionContainer` to prevent notch clipping.
-- **Fluid Layouts**: Labels must have `SIZE_EXPAND_FILL` and `AUTOWRAP` to prevent horizontal clipping.
+| What you need | Go to |
+|---|---|
+| Full element inventory + layer map | [UIAudit.md → Layer Map](UIAudit.md#layer-map-z-order-top-to-bottom) |
+| Script mapping (main.gd, MenuManager, etc.) | [UIAudit.md → Quick Reference](UIAudit.md#quick-reference) |
+| Implementation patterns (Convoy Context, Mobile-First) | [UIAudit.md → Implementation Patterns](UIAudit.md#implementation-patterns) |
+| Adding a new menu | [UIAudit.md → Adding a New Menu](UIAudit.md#adding-a-new-menu) |
+| Per-menu docs (Cargo, Journey, etc.) | [UIAudit.md → Related Documentation](UIAudit.md#related-documentation) |
+| Cross-cutting issues to fix | [UIAudit.md → Cross-Cutting Issues](UIAudit.md#cross-cutting-issues-summary) |
+| Scaling / responsive rules | [ui_system.md](ui_system.md) |
+| Visual design tokens | [DesignSystem.md](DesignSystem.md) |
+| MenuBase contract | [MenuBase.md](MenuBase.md) |
+| Navigation & transitions | [MenuManager.md](MenuManager.md) |

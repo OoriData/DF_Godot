@@ -598,6 +598,7 @@ func _clamp_panel_position(panel: Panel, p_current_map_screen_rect_for_clamping:
 	if not is_instance_valid(panel) or not is_instance_valid(_convoy_label_container_ref):
 		return
 
+
 	var effective_clamp_rect: Rect2 = p_current_map_screen_rect_for_clamping
 	if _menu_occlusion_px_x > 0.0 and effective_clamp_rect.size.x > 0.0:
 		effective_clamp_rect.size.x = maxf(0.0, effective_clamp_rect.size.x - _menu_occlusion_px_x)
@@ -762,7 +763,8 @@ func update_convoy_labels(
 		panel_node.visible = true
 		_update_convoy_panel_content(panel_node, convoy_data, p_convoy_id_to_color_map)
 		_position_convoy_panel(panel_node, convoy_data, all_drawn_label_rects_this_update, p_selected_convoy_ids, p_convoy_label_user_positions)
-		_clamp_panel_position(panel_node, p_current_map_screen_rect_for_clamping)
+		# Intentionally disabled: let static convoy panels pan off-screen naturally
+		# _clamp_panel_position(panel_node, p_current_map_screen_rect_for_clamping)
 
 		var panel_actual_size = panel_node.size
 		if panel_actual_size.x <= 0 or panel_actual_size.y <= 0: panel_actual_size = panel_node.get_minimum_size()

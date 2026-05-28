@@ -7,6 +7,7 @@ extends Node
 signal map_changed(tiles: Array, settlements: Array)
 signal map_camera_focus_settlement_requested(settlement_name: String)
 signal map_camera_return_to_convoy_requested()
+signal map_overlay_settings_changed(settings: Dictionary)
 
 # Convoys
 signal convoys_changed(convoys: Array)

@@ -47,6 +47,7 @@ Understanding the relationship between these three spaces is critical for intera
 - **[ConvoyVisualsManager](Visuals.md)**: Spawns and updates convoy icons.
 - **[MapService](Data.md)**: Authoritative source for map data snapshots.
 - **[Map Rendering](Rendering.md)**: SubViewport configurations and visual layer details.
+- **[Map Menu & Overlays](MapMenuSystem.md)**: Visual layer toggles, signals, and architectural design.
 - **[Terrain Math](TerrainMath.md)**: Hex grids, multipliers, and fog of war calculations.
 
 ## Key Files

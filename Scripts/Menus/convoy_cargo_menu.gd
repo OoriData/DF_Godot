@@ -759,14 +759,16 @@ func _looks_like_part(d: Dictionary) -> bool:
 	# Defer to the centralized classification logic in the ItemsData factory.
 	return ItemsData.PartItem._looks_like_part_dict(d)
 
-func _looks_like_mission(d: Dictionary) -> bool:
+func _looks_like_delivery(d: Dictionary) -> bool:
 	if not d:
 		return false
-	if ItemsData != null and ItemsData.MissionItem:
-		return ItemsData.MissionItem._looks_like_mission_dict(d)
+	if ItemsData != null and ItemsData.DeliveryCargoItem:
+		return ItemsData.DeliveryCargoItem._looks_like_delivery_dict(d)
 	# Legacy fallback
 	if d.has("recipient") and d.get("recipient") != null:
-		return true
+		var rec = str(d.get("recipient")).strip_edges()
+		if rec != "" and rec != "00000000-0000-0000-0000-000000000000":
+			return true
 	if d.get("is_mission", false):
 		return true
 	if NumberFormat.to_f(d.get("delivery_reward"), 0.0) > 0.0:
@@ -968,7 +970,7 @@ func _build_cargo_row(vehicle_vbox: VBoxContainer, display_name: String, quantit
 		
 		var display_text: String
 		match category_name:
-			"mission":
+			"delivery":
 				display_text = "Delivery Cargo"
 			"part":
 				display_text = "Part Cargo"
@@ -1427,7 +1429,7 @@ func _populate_by_type():
 		child.queue_free()
 	_diag("clear_rows", "type_end", {"removed": _clr})
 
-	var aggregated_missions: Dictionary = {}
+	var aggregated_deliveries: Dictionary = {}
 	var aggregated_parts: Dictionary = {}
 	var aggregated_resources: Dictionary = {}
 	var aggregated_other: Dictionary = {} # Fallback category
@@ -1495,15 +1497,15 @@ func _populate_by_type():
 						raw_item["category"] = "resource"
 						if CARGO_MENU_DEBUG:
 							print("[CargoClassify][Typed][Rebucket] OTHER -> RESOURCE:", JSON.stringify(raw_item.get("name", raw_item.get("base_name", ""))))
-					elif _looks_like_mission(raw_item):
-						effective_category = "mission"
-						raw_item["category"] = "mission"
+					elif _looks_like_delivery(raw_item):
+						effective_category = "delivery"
+						raw_item["category"] = "delivery"
 						if CARGO_MENU_DEBUG:
-							print("[CargoClassify][Typed][Rebucket] OTHER -> MISSION:", JSON.stringify(raw_item.get("name", raw_item.get("base_name", ""))))
+							print("[CargoClassify][Typed][Rebucket] OTHER -> DELIVERY:", JSON.stringify(raw_item.get("name", raw_item.get("base_name", ""))))
 
 				match effective_category:
-					"mission":
-						_aggregate_cargo_item(aggregated_missions, raw_item, vehicle_name)
+					"delivery":
+						_aggregate_cargo_item(aggregated_deliveries, raw_item, vehicle_name)
 					"part":
 						# Only aggregate if uninstalled (vehicle_id == null)
 						if not raw_item.has("vehicle_id") or raw_item["vehicle_id"] == null:
@@ -1535,9 +1537,12 @@ func _populate_by_type():
 				if not (item is Dictionary and _is_displayable_cargo(item)):
 					continue
 				any_cargo_found_in_convoy = true
-				# Mission items: prefer presence-based recipient signal.
-				if item.get("recipient") != null:
-					_aggregate_cargo_item(aggregated_missions, item, vehicle_name)
+				# Delivery items: prefer presence-based recipient signal.
+				if item.has("recipient") and item.get("recipient") != null:
+					var rec = str(item.get("recipient")).strip_edges()
+					if rec != "" and rec != "00000000-0000-0000-0000-000000000000":
+						_aggregate_cargo_item(aggregated_deliveries, item, vehicle_name)
+						continue
 				# Detect parts even if they appear in the main cargo list
 				elif _looks_like_part(item):
 					# Normalize hint to aid downstream UI and filtering
@@ -1602,18 +1607,18 @@ func _populate_by_type():
 		for k in moved_keys:
 			aggregated_other.erase(k)
 
-	_add_category_section(direct_vbox_ref, "Delivery Cargo", aggregated_missions)
+	_add_category_section(direct_vbox_ref, "Delivery Cargo", aggregated_deliveries)
 	_add_category_section(direct_vbox_ref, "Part Cargo", aggregated_parts)
 	_add_category_section(direct_vbox_ref, "Resource Cargo", aggregated_resources)
 	_add_category_section(direct_vbox_ref, "Other Cargo", aggregated_other)
-	_diag("populate_type", "sections_added", {"missions": aggregated_missions.size(), "parts": aggregated_parts.size(), "resources": aggregated_resources.size(), "other": aggregated_other.size()})
+	_diag("populate_type", "sections_added", {"deliveries": aggregated_deliveries.size(), "parts": aggregated_parts.size(), "resources": aggregated_resources.size(), "other": aggregated_other.size()})
 
-	if is_instance_valid(cargo_sort_option_button):
-		cargo_sort_option_button.get_parent().visible = not aggregated_missions.is_empty()
+	if is_instance_valid(cargo_sort_option_button) and is_instance_valid(cargo_sort_option_button.get_parent()):
+		cargo_sort_option_button.get_parent().visible = not aggregated_deliveries.is_empty()
 
 	# Debug counts summary
 	if CARGO_MENU_DEBUG:
-		print("[ConvoyCargoMenu][DEBUG] Category counts -> Missions:%d Parts:%d Resources:%d Other:%d" % [aggregated_missions.size(), aggregated_parts.size(), aggregated_resources.size(), aggregated_other.size()])
+		print("[ConvoyCargoMenu][DEBUG] Category counts -> Deliveries:%d Parts:%d Resources:%d Other:%d" % [aggregated_deliveries.size(), aggregated_parts.size(), aggregated_resources.size(), aggregated_other.size()])
 		if aggregated_parts.size() > 0:
 			print("[CargoClassify] Parts keys:", JSON.stringify(aggregated_parts.keys()))
 		if aggregated_other.size() > 0:
@@ -1715,11 +1720,11 @@ func _populate_by_vehicle():
 						raw_item["category"] = "resource"
 						if CARGO_MENU_DEBUG:
 							print("[CargoClassify][ByVehicle][Typed][Rebucket] OTHER -> RESOURCE:", JSON.stringify(raw_item.get("name", raw_item.get("base_name", ""))))
-					elif _looks_like_mission(raw_item):
-						effective_category = "mission"
-						raw_item["category"] = "mission"
+					elif _looks_like_delivery(raw_item):
+						effective_category = "delivery"
+						raw_item["category"] = "delivery"
 						if CARGO_MENU_DEBUG:
-							print("[CargoClassify][ByVehicle][Typed][Rebucket] OTHER -> MISSION:", JSON.stringify(raw_item.get("name", raw_item.get("base_name", ""))))
+							print("[CargoClassify][ByVehicle][Typed][Rebucket] OTHER -> DELIVERY:", JSON.stringify(raw_item.get("name", raw_item.get("base_name", ""))))
 
 				# Only aggregate if uninstalled (vehicle_id == null) for parts
 				if String(typed.category) == "part":
@@ -1727,7 +1732,7 @@ func _populate_by_vehicle():
 						continue
 				_aggregate_cargo_item(vehicle_aggregated_all_cargo, raw_item)
 				# Flag if this is delivery cargo
-				if effective_category == "mission":
+				if effective_category == "delivery":
 					global_has_delivery_cargo = true
 				# If still 'other', log it for diagnosis
 				if CARGO_MENU_DEBUG and effective_category == "other":
@@ -1746,8 +1751,8 @@ func _populate_by_vehicle():
 				# Replicate the classification logic from `_populate_by_type` to ensure
 				# the `category` hint is correctly injected before aggregation. This helps
 				# the ItemsData factory correctly classify the item later.
-				if _looks_like_mission(item):
-					item["category"] = "mission"
+				if _looks_like_delivery(item):
+					item["category"] = "delivery"
 					global_has_delivery_cargo = true
 				elif _looks_like_part(item):
 					item["category"] = "part"

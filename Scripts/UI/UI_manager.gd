@@ -1,5 +1,13 @@
 extends CanvasLayer
 
+@onready var _settings_service: Node = get_node_or_null("/root/MapSettingsService")
+@onready var _user_service: Node = get_node_or_null("/root/UserService")
+@onready var _hub: Node = get_node_or_null("/root/SignalHub")
+
+const _debug_map_menu: bool = true
+
+
+
 # References to label containers managed by UIManager
 # These should be children of the Node this script is attached to.
 # The global UI scale is now managed by the UIScaleManager singleton.
@@ -118,6 +126,7 @@ var _convoy_id_to_color_map_cache: Dictionary
 var _convoy_data_by_id_cache: Dictionary # New cache for quick lookup
 var _selected_convoy_ids_cache: Array # Stored as strings
 var _current_map_zoom_cache: float = 1.0 # Cache for current map zoom level
+var _current_hover_info_cache: Dictionary = {} # Cache for hover state
 var _current_map_screen_rect_for_clamping: Rect2
 
 var _active_settlement_panels: Dictionary = {} # { "tile_coord_str": PanelNode }
@@ -247,6 +256,12 @@ func _ready():
 		if not settings_mgr.is_connected("setting_changed", Callable(self, "_on_setting_changed")):
 			settings_mgr.setting_changed.connect(_on_setting_changed)
 
+	# --- Map Settings Overlay Signal Integration ---
+	if is_instance_valid(_hub) and _hub.has_signal("map_overlay_settings_changed"):
+		if not _hub.map_overlay_settings_changed.is_connected(_on_map_overlay_settings_changed):
+			_hub.map_overlay_settings_changed.connect(_on_map_overlay_settings_changed)
+
+
 func _print_ui_tree(node: Node, indent: int):
 	var prefix = "  ".repeat(indent)
 	var mf = ""
@@ -325,10 +340,11 @@ func update_ui_elements(
 	_convoy_data_by_id_cache.clear()
 	if _all_convoy_data_cache is Array:
 		for convoy_data_item in _all_convoy_data_cache:
-			if convoy_data_item is Dictionary and convoy_data_item.has("convoy_id"):
+			if convoy_data_item is Dictionary and str(convoy_data_item.get("convoy_id")) != "":
 				_convoy_data_by_id_cache[str(convoy_data_item.get("convoy_id"))] = convoy_data_item
 
 	_current_map_zoom_cache = current_map_zoom # Cache the zoom level
+	_current_hover_info_cache = current_hover_info # Cache hover info for redraw logic
 
 	# One-time init for ConvoyLabelManager so it can use the same font scaling constants.
 	if not _convoy_label_manager_initialized and is_instance_valid(convoy_label_manager) and convoy_label_manager.has_method("initialize_font_settings"):
@@ -387,7 +403,8 @@ func update_ui_elements(
 		var clamp_rect_local_to_settlement_container = container_global_transform_settlement.affine_inverse() * _current_map_screen_rect_for_clamping
 		for panel_node in settlement_label_container.get_children():
 			if panel_node is Panel:
-				_clamp_panel_position_optimized(panel_node, clamp_rect_local_to_settlement_container)
+				pass # Intentionally disabled: let settlement panels pan off-screen naturally
+				# _clamp_panel_position_optimized(panel_node, clamp_rect_local_to_settlement_container)
 
 func _clamp_panel_position_optimized(panel: Panel, precalculated_clamp_rect_local_to_container: Rect2):
 	# Helper to clamp a panel's position to the viewport boundaries using a precalculated clamping rectangle in the panel's parent container's local space.
@@ -448,41 +465,176 @@ func toggle_settlement_pin(coords: Vector2i):
 
 func clear_all_settlement_pins():
 	_pinned_settlement_coords.clear()
+	_force_draw_interactive_labels_deferred()
 
 func _draw_interactive_labels(current_hover_info: Dictionary):
 	if is_instance_valid(_dragging_panel_node):
-		pass # Let's assume main.gd already checked this or UIManager will handle it.
+		pass # Let's assume UIManager will handle it.
 	var drawn_settlement_tile_coords_this_update: Array[Vector2i] = []
-	var all_drawn_label_rects_this_update: Array[Rect2] = [] # This will be used by SettlementLabelManager and ConvoyLabelManager internally or passed to them
+	var all_drawn_label_rects_this_update: Array[Rect2] = []
 	var convoy_ids_to_display: Array[String] = []
 	var settlement_coords_to_display: Array[Vector2i] = []
+	var coords_to_targeting_convoys: Dictionary = {}
+
+	var add_settlement_target = func(coords: Vector2i, convoy_id_str: String = ""):
+		if not settlement_coords_to_display.has(coords):
+			settlement_coords_to_display.append(coords)
+		if convoy_id_str != "":
+			if not coords_to_targeting_convoys.has(coords):
+				coords_to_targeting_convoys[coords] = []
+			if not coords_to_targeting_convoys[coords].has(convoy_id_str):
+				coords_to_targeting_convoys[coords].append(convoy_id_str)
+
+	# Retrieve current overlay settings
+	var show_all_settlements: bool = true
+	var show_active_dests: bool = true
+	var show_local_sett_dests: bool = true
+	var show_all_convoy_dests: bool = false
+
+	var show_warehouses: bool = true
 	
+	if is_instance_valid(_settings_service):
+		show_all_settlements = _settings_service.settlement_labels
+		show_active_dests = _settings_service.active_delivery_destinations
+		show_local_sett_dests = _settings_service.settlement_delivery_destinations
+		show_all_convoy_dests = _settings_service.all_convoy_destinations
+		show_warehouses = _settings_service.warehouse_labels
+
+	# --- Strategy 3: Progressive Zoom LOD ---
+	var is_far_zoom: bool = _current_map_zoom_cache < 0.6
+	
+	# --- Strategy 1: Smart Focus (Selected + Hovered) ---
+	var focused_convoy_ids: Array[String] = []
+	if not _selected_convoy_ids_cache.is_empty():
+		for fcid in _selected_convoy_ids_cache:
+			focused_convoy_ids.append(str(fcid))
+		
+	if current_hover_info.get('type') == 'convoy':
+		var hover_id = str(current_hover_info.get('id', ''))
+		if hover_id != '' and not focused_convoy_ids.has(hover_id):
+			focused_convoy_ids.append(hover_id)
+
+	if is_far_zoom:
+		# ONLY hide generic settlements on far zoom, but leave the active/local targets visible!
+		show_all_settlements = false
+		show_warehouses = false # Minimalist map
+
 	# Include pinned settlements
 	for pinned_coords in _pinned_settlement_coords:
-		if not settlement_coords_to_display.has(pinned_coords):
-			settlement_coords_to_display.append(pinned_coords)
+		add_settlement_target.call(pinned_coords)
 
 	# Include preview route destination
 	if _is_preview_active and _preview_route_x.size() > 0:
 		var end_tile_coords := Vector2i(int(_preview_route_x.back()), int(_preview_route_y.back()))
-		if not settlement_coords_to_display.has(end_tile_coords):
-			settlement_coords_to_display.append(end_tile_coords)
+		var targeting_cid = ""
+		if not focused_convoy_ids.is_empty():
+			targeting_cid = focused_convoy_ids[0]
+		add_settlement_target.call(end_tile_coords, targeting_cid)
 
 	# Include destination preview settlement
 	if _preview_settlement_coords is Vector2i:
-		if not settlement_coords_to_display.has(_preview_settlement_coords):
-			settlement_coords_to_display.append(_preview_settlement_coords)
+		add_settlement_target.call(_preview_settlement_coords)
 
-	# Draw Settlement Labels (for selected convoys' start/end, then hovered settlement)
-	if not _selected_convoy_ids_cache.is_empty():
+	# Show ALL Discovered Settlements (if setting is enabled)
+	if show_all_settlements and _all_settlement_data_cache is Array:
+		for s in _all_settlement_data_cache:
+			if s is Dictionary:
+				var coords = Vector2i(int(s.get("x", 0)), int(s.get("y", 0)))
+				add_settlement_target.call(coords)
+
+	# Show Warehouse Indicators (if setting is enabled)
+	if show_warehouses:
+		var warehouse_sett_ids = _get_player_warehouse_settlement_ids()
+		if _all_settlement_data_cache is Array:
+			for s in _all_settlement_data_cache:
+				if s is Dictionary:
+					var sett_id = str(s.get("sett_id", s.get("id", "")))
+					if sett_id != "" and warehouse_sett_ids.has(sett_id):
+						var coords = Vector2i(int(s.get("x", 0)), int(s.get("y", 0)))
+						add_settlement_target.call(coords)
+
+	# Active Convoy Targets: cargo destinations in focused convoy(s)
+	if show_active_dests and not focused_convoy_ids.is_empty():
 		for convoy_data in _all_convoy_data_cache:
 			if convoy_data is Dictionary:
 				var convoy_id = convoy_data.get('convoy_id')
 				var convoy_id_str = str(convoy_id)
-				if convoy_id != null and _selected_convoy_ids_cache.has(convoy_id_str):
-					var journey_data: Dictionary = convoy_data.get('journey')
-					if journey_data is Dictionary:
+				if convoy_id != null and focused_convoy_ids.has(convoy_id_str):
+					var dests = _get_convoy_cargo_destination_coords(convoy_data)
+					for d in dests:
+						add_settlement_target.call(d, convoy_id_str)
 
+	# Local Settlement Targets: departing routes from focused convoy's current city, hovered settlement, or pinned settlements
+	if show_local_sett_dests:
+		# A. From focused convoys
+		if not focused_convoy_ids.is_empty():
+			for convoy_data in _all_convoy_data_cache:
+				if convoy_data is Dictionary:
+					var convoy_id = convoy_data.get('convoy_id')
+					var convoy_id_str = str(convoy_id)
+					if convoy_id != null and focused_convoy_ids.has(convoy_id_str):
+						var cx = float(convoy_data.get("x", -999.0))
+						var cy = float(convoy_data.get("y", -999.0))
+						var local_sett = _find_closest_settlement(cx, cy, 2.5)
+						if local_sett is Dictionary:
+							var dests = _get_settlement_departing_destinations(local_sett)
+							if not dests.is_empty():
+								print("[UIManager] Found departing targets for convoy's city (", local_sett.get("name"), "): ", dests)
+							for d in dests:
+								add_settlement_target.call(d)
+
+		# B. From currently hovered settlement
+		if current_hover_info.get('type') == 'settlement':
+			var hovered_coords = current_hover_info.get('coords')
+			if hovered_coords is Vector2i:
+				var local_sett = _find_settlement_at_tile(hovered_coords.x, hovered_coords.y)
+				if local_sett is Dictionary:
+					var dests = _get_settlement_departing_destinations(local_sett)
+					if not dests.is_empty():
+						print("[UIManager] Found departing targets for hovered settlement (", local_sett.get("name"), "): ", dests)
+					for d in dests:
+						add_settlement_target.call(d)
+
+		# C. From pinned settlements
+		for pinned_coords in _pinned_settlement_coords:
+			var local_sett = _find_settlement_at_tile(pinned_coords.x, pinned_coords.y)
+			if local_sett is Dictionary:
+				var dests = _get_settlement_departing_destinations(local_sett)
+				if not dests.is_empty():
+					print("[UIManager] Found departing targets for pinned settlement (", local_sett.get("name"), "): ", dests)
+				for d in dests:
+					add_settlement_target.call(d)
+
+	# All Convoy Targets: destinations of ALL active player convoy journeys and cargo
+	if show_all_convoy_dests and _all_convoy_data_cache is Array:
+		for convoy_data in _all_convoy_data_cache:
+			if convoy_data is Dictionary:
+				var convoy_id = convoy_data.get('convoy_id')
+				var convoy_id_str = str(convoy_id)
+				if convoy_id_str != "":
+					# 1. Cargo destinations of this convoy
+					var dests = _get_convoy_cargo_destination_coords(convoy_data)
+					for d in dests:
+						add_settlement_target.call(d, convoy_id_str)
+						
+					# 2. Active journey destination
+					var journey_data = convoy_data.get('journey')
+					if journey_data is Dictionary:
+						var rx = journey_data.get('route_x')
+						var ry = journey_data.get('route_y')
+						if rx is Array and ry is Array and rx.size() > 0 and rx.size() == ry.size():
+							var end_coords = Vector2i(int(rx[rx.size() - 1]), int(ry[ry.size() - 1]))
+							add_settlement_target.call(end_coords, convoy_id_str)
+
+	# Active Convoy Route Targets: start/end coordinates of focused convoy routes
+	if not focused_convoy_ids.is_empty():
+		for convoy_data in _all_convoy_data_cache:
+			if convoy_data is Dictionary:
+				var convoy_id = convoy_data.get('convoy_id')
+				var convoy_id_str = str(convoy_id)
+				if convoy_id != null and focused_convoy_ids.has(convoy_id_str):
+					var journey_data = convoy_data.get('journey')
+					if journey_data is Dictionary:
 						var raw_route_x = journey_data.get('route_x')
 						var route_x_coords: Array = []
 						if raw_route_x is Array:
@@ -499,23 +651,21 @@ func _draw_interactive_labels(current_hover_info: Dictionary):
 							var start_tile_x: int = floori(float(route_x_coords[0]))
 							var start_tile_y: int = floori(float(route_y_coords[0]))
 							var start_tile_coords := Vector2i(start_tile_x, start_tile_y)
-							if not settlement_coords_to_display.has(start_tile_coords):
-								settlement_coords_to_display.append(start_tile_coords)
+							add_settlement_target.call(start_tile_coords, convoy_id_str)
 
 							if route_x_coords.size() > 0:
 								var end_tile_x: int = floori(float(route_x_coords.back()))
 								var end_tile_y: int = floori(float(route_y_coords.back()))
 								var end_tile_coords := Vector2i(end_tile_x, end_tile_y)
-								if end_tile_coords != start_tile_coords and \
-								   not settlement_coords_to_display.has(end_tile_coords):
-									settlement_coords_to_display.append(end_tile_coords)
+								if end_tile_coords != start_tile_coords:
+									add_settlement_target.call(end_tile_coords, convoy_id_str)
 
 	# Ensure hovered settlement coords are added
 	if current_hover_info.get('type') == 'settlement':
 		var hovered_tile_coords = current_hover_info.get('coords')
 		if hovered_tile_coords is Vector2i and hovered_tile_coords.x >= 0 and hovered_tile_coords.y >= 0:
-			if not settlement_coords_to_display.has(hovered_tile_coords):
-				settlement_coords_to_display.append(hovered_tile_coords)
+			add_settlement_target.call(hovered_tile_coords)
+
 
 	# Determine Convoy Labels to Display (Selected then Hovered)
 	# Always include hovered convoy ID if present
@@ -540,7 +690,9 @@ func _draw_interactive_labels(current_hover_info: Dictionary):
 	for settlement_coord_to_draw in settlement_coords_to_display:
 		var settlement_coord_str = "%s_%s" % [settlement_coord_to_draw.x, settlement_coord_to_draw.y]
 		var settlement_data_for_panel = _find_settlement_at_tile(settlement_coord_to_draw.x, settlement_coord_to_draw.y)
-		if not settlement_data_for_panel: continue
+		if not settlement_data_for_panel: 
+			print("[UIManager] WARNING: Could not find settlement data for resolved target coordinate: ", settlement_coord_to_draw)
+			continue
 
 		var panel_node: Panel
 		if _active_settlement_panels.has(settlement_coord_str):
@@ -560,11 +712,13 @@ func _draw_interactive_labels(current_hover_info: Dictionary):
 			_active_settlement_panels[settlement_coord_str] = panel_node
 			settlement_label_container.add_child(panel_node)
 
-		_update_settlement_panel_content(panel_node, settlement_data_for_panel)
+		var targeting_convoys = coords_to_targeting_convoys.get(settlement_coord_to_draw, [])
+		_update_settlement_panel_content(panel_node, settlement_data_for_panel, targeting_convoys)
 		panel_node.visible = true
 		# print("UIManager:_draw_interactive_labels - Positioning/Clamping settlement panel for coords: ", settlement_coord_to_draw, " at pos: ", panel_node.position) # DEBUG
 		_position_settlement_panel(panel_node, settlement_data_for_panel, all_drawn_label_rects_this_update)
-		_clamp_panel_position(panel_node)
+		# Intentionally disabled: let settlement panels pan off-screen naturally
+		# _clamp_panel_position(panel_node)
 		
 		var current_settlement_panel_actual_size = panel_node.size
 		if current_settlement_panel_actual_size.x <= 0 or current_settlement_panel_actual_size.y <= 0:
@@ -628,7 +782,207 @@ func _create_settlement_panel() -> Panel:
 func _force_draw_interactive_labels_deferred() -> void:
 	call_deferred("_draw_interactive_labels", {})
 
-func _update_settlement_panel_content(panel: Panel, settlement_info: Dictionary):
+func _on_map_overlay_settings_changed(_settings: Dictionary) -> void:
+	if _debug_map_menu:
+		print("[UIManager] Map overlay settings updated. Forcing redraw.")
+	_force_draw_interactive_labels_deferred()
+
+func _find_settlement_by_name(s_name: String) -> Variant:
+	if s_name.is_empty() or not _all_settlement_data_cache: return null
+	
+	var target_name = s_name.strip_edges()
+	if "(" in target_name:
+		target_name = target_name.split("(")[0].strip_edges()
+		
+	# 1. Direct search by settlement name
+	for s in _all_settlement_data_cache:
+		if s is Dictionary:
+			if str(s.get("name", "")).strip_edges().to_lower() == target_name.to_lower():
+				return s
+				
+	# 2. Fallback search by checking vendor name
+	for s in _all_settlement_data_cache:
+		if s is Dictionary:
+			var vendors = s.get("vendors", [])
+			if vendors is Array:
+				for v in vendors:
+					if v is Dictionary:
+						if str(v.get("name", "")).strip_edges().to_lower() == target_name.to_lower():
+							return s
+							
+	# 3. Partial match as last resort
+	for s in _all_settlement_data_cache:
+		if s is Dictionary:
+			var s_n := str(s.get("name", "")).strip_edges().to_lower()
+			if s_n in target_name.to_lower() or target_name.to_lower() in s_n:
+				return s
+				
+	return null
+
+func _find_settlement_by_id(s_id: String) -> Variant:
+	if s_id.is_empty() or not _all_settlement_data_cache: return null
+	# 1. Direct search by settlement id or sett_id
+	for s in _all_settlement_data_cache:
+		if s is Dictionary:
+			var sid = str(s.get("sett_id", s.get("id", "")))
+			if sid == s_id:
+				return s
+	
+	# 2. Fallback search by checking if s_id is a vendor ID belonging to any settlement
+	for s in _all_settlement_data_cache:
+		if s is Dictionary:
+			var vendors = s.get("vendors", [])
+			if vendors is Array:
+				for v in vendors:
+					if v is Dictionary:
+						var vid = str(v.get("vendor_id", v.get("id", "")))
+						if vid == s_id:
+							return s
+	return null
+
+func _get_player_warehouse_settlement_ids() -> Array[String]:
+	var ids: Array[String] = []
+	if is_instance_valid(_user_service) and _user_service.has_method("get_user"):
+		var user = _user_service.get_user()
+		if user is Dictionary:
+			var warehouses = user.get("warehouses", [])
+			if warehouses is Array:
+				for w in warehouses:
+					if w is Dictionary:
+						var sett_id = str(w.get("sett_id", ""))
+						if sett_id != "":
+							ids.append(sett_id)
+	return ids
+
+func _resolve_cargo_destination_coords(item: Dictionary) -> Variant:
+	# 1. Gather all possible ID fields
+	var id_fields := ["recipient", "recipient_settlement_id", "settlement_id", "sett_id", "mission_vendor_id", "recipient_vendor_id", "destination_vendor_id", "dest_vendor_id", "distributor"]
+	for k in id_fields:
+		var raw_val = item.get(k)
+		if raw_val is Dictionary: # e.g. "recipient": { "settlement_id": "..." }
+			var r_sid = raw_val.get("recipient_settlement_id", raw_val.get("sett_id", raw_val.get("settlement_id", "")))
+			if str(r_sid) != "":
+				var s = _find_settlement_by_id(str(r_sid))
+				if s is Dictionary:
+					return Vector2i(int(s.get("x", 0)), int(s.get("y", 0)))
+			var r_name = raw_val.get("name", "")
+			if str(r_name) != "":
+				var s = _find_settlement_by_name(str(r_name))
+				if s is Dictionary:
+					return Vector2i(int(s.get("x", 0)), int(s.get("y", 0)))
+		elif raw_val != null and str(raw_val).strip_edges() != "" and str(raw_val) != "00000000-0000-0000-0000-000000000000":
+			var s = _find_settlement_by_id(str(raw_val).strip_edges())
+			if s is Dictionary:
+				return Vector2i(int(s.get("x", 0)), int(s.get("y", 0)))
+
+	# 2. Gather all possible Name fields
+	var name_fields := ["recipient_settlement_name", "destination_settlement_name", "destination", "destination_name", "dest_settlement"]
+	for k in name_fields:
+		var rsn = item.get(k, "")
+		if str(rsn) != "":
+			var s = _find_settlement_by_id(str(rsn)) # Some names might accidentally be UUIDs
+			if s is Dictionary:
+				return Vector2i(int(s.get("x", 0)), int(s.get("y", 0)))
+			s = _find_settlement_by_name(str(rsn))
+			if s is Dictionary:
+				return Vector2i(int(s.get("x", 0)), int(s.get("y", 0)))
+
+	return null
+
+func _get_convoy_cargo_destination_coords(convoy: Dictionary) -> Array[Vector2i]:
+	var dest_coords: Array[Vector2i] = []
+	var inspect_item = func(item: Dictionary, _source_name: String):
+		var coords = _resolve_cargo_destination_coords(item)
+		if coords != null and not dest_coords.has(coords):
+			dest_coords.append(coords)
+		
+	# Scan convoy-level cargo
+	var inv = convoy.get("cargo_inventory", [])
+	if inv is Array:
+		for it in inv:
+			if it is Dictionary:
+				inspect_item.call(it, "convoy_root_cargo_inventory")
+				
+	# Scan vehicle cargo
+	var vehicles = convoy.get("vehicle_details_list", convoy.get("vehicles", []))
+	if vehicles is Array:
+		for i in range(vehicles.size()):
+			var v = vehicles[i]
+			if v is Dictionary:
+				var v_name = "Vehicle " + str(i)
+				for it in v.get("cargo_items", []):
+					if it is Dictionary: inspect_item.call(it, v_name + "_cargo_items")
+				for it in v.get("cargo_inventory", []):
+					if it is Dictionary: inspect_item.call(it, v_name + "_cargo_inventory")
+				for it in v.get("cargo", []):
+					if it is Dictionary: inspect_item.call(it, v_name + "_cargo")
+				for it in v.get("cargo_items_typed", []):
+					if it is Dictionary: inspect_item.call(it, v_name + "_typed")
+	return dest_coords
+
+func _get_settlement_departing_destinations(settlement: Dictionary) -> Array[Vector2i]:
+	var dest_coords: Array[Vector2i] = []
+	var sett_id = str(settlement.get("sett_id", settlement.get("id", "")))
+	
+	var ItemsData = load("res://Scripts/Data/Items.gd")
+	
+	var inspect_cargo_array = func(cargo: Array, source_name: String):
+		for item in cargo:
+			if item is Dictionary:
+				var is_delivery = false
+				if ItemsData and ItemsData.DeliveryCargoItem:
+					is_delivery = ItemsData.DeliveryCargoItem._looks_like_delivery_dict(item)
+				else:
+					is_delivery = item.get("recipient") != null or item.get("delivery_reward", 0.0) > 0.0 or item.get("unit_delivery_reward", 0.0) > 0.0
+					
+				if is_delivery:
+					# Available vendor contracts have no destination in the backend payload —
+					# the destination is only known after pickup. So we mark the origin
+					# settlement itself as the target ("missions available here").
+					var coords = _resolve_cargo_destination_coords(item)
+					if coords == null:
+						coords = Vector2i(int(settlement.get("x", 0)), int(settlement.get("y", 0)))
+					if not dest_coords.has(coords):
+						dest_coords.append(coords)
+					
+	# 1. Direct cargo keys on the settlement dictionary itself
+	for key in ["cargo_inventory", "cargo", "cargo_items", "cargo_items_typed", "contracts", "missions"]:
+		var cargo = settlement.get(key)
+		if cargo is Array and not cargo.is_empty():
+			inspect_cargo_array.call(cargo, "settlement key: " + key)
+					
+	# 2. Inspect cargo stored in the vendors of this settlement
+	var vendors = settlement.get("vendors", [])
+	if vendors is Array:
+		for v in vendors:
+			if v is Dictionary:
+				var v_name = str(v.get("name", "Unknown Vendor"))
+				for key in ["cargo_inventory", "cargo", "cargo_items", "cargo_items_typed", "contracts", "missions"]:
+					var cargo = v.get(key)
+					if cargo is Array and not cargo.is_empty():
+						inspect_cargo_array.call(cargo, "vendor (" + v_name + ") key: " + key)
+						
+	# 3. Inspect cargo stored in the player's warehouse at this settlement
+	if sett_id != "" and is_instance_valid(_user_service) and _user_service.has_method("get_user"):
+		var user = _user_service.get_user()
+		if user is Dictionary:
+			var warehouses = user.get("warehouses", [])
+			if warehouses is Array:
+				for w in warehouses:
+					if w is Dictionary:
+						var w_sett_id = str(w.get("sett_id", ""))
+						if w_sett_id == sett_id:
+							for key in ["cargo_inventory", "cargo", "cargo_items", "cargo_items_typed"]:
+								var cargo = w.get(key)
+								if cargo is Array and not cargo.is_empty():
+									inspect_cargo_array.call(cargo, "warehouse key: " + key)
+									
+	if dest_coords.is_empty():
+		pass # No departing destinations found — settlement has no accepted mission cargo with destinations
+	return dest_coords
+
+
+func _update_settlement_panel_content(panel: Panel, settlement_info: Dictionary, targeting_convoys: Array = []):
 	if not is_instance_valid(panel): return
 	var label_node: Label = panel.get_meta("label_node_ref")
 	var style_box: StyleBoxFlat = panel.get_meta("style_box_ref")
@@ -648,8 +1002,41 @@ func _update_settlement_panel_content(panel: Panel, settlement_info: Dictionary)
 	settlement_label_settings.font_size = current_settlement_font_size
 	var settlement_type = settlement_info.get('sett_type', '')
 	var settlement_emoji = SETTLEMENT_EMOJIS.get(settlement_type, '')
-	label_node.text = settlement_emoji + ' ' + settlement_name_local if not settlement_emoji.is_empty() else settlement_name_local
+	
+	var final_text = settlement_emoji + ' ' + settlement_name_local if not settlement_emoji.is_empty() else settlement_name_local
+	
+	# Prepend warehouse indicator (🏭) if player owns a warehouse here
+	var sett_id = str(settlement_info.get("sett_id", settlement_info.get("id", "")))
+	var has_warehouse = false
+	if sett_id != "" and _get_player_warehouse_settlement_ids().has(sett_id):
+		final_text = "🏭 " + final_text
+		has_warehouse = true
+		
+	label_node.text = final_text
 	style_box.bg_color = settlement_panel_background_color
+	
+	# Apply premium visual border accents based on targeting convoys or warehouse status
+	if not targeting_convoys.is_empty():
+		var first_convoy_id = targeting_convoys[0]
+		var border_color = _convoy_id_to_color_map_cache.get(first_convoy_id, Color(0.9, 0.9, 0.9, 0.8))
+		style_box.border_width_left = 3
+		style_box.border_width_right = 3
+		style_box.border_width_top = 3
+		style_box.border_width_bottom = 3
+		style_box.border_color = border_color
+	elif has_warehouse:
+		style_box.border_width_left = 2
+		style_box.border_width_right = 2
+		style_box.border_width_top = 2
+		style_box.border_width_bottom = 2
+		style_box.border_color = Color(0.25, 0.55, 0.95, 0.8) # Premium interactive blue glow
+		style_box.bg_color = Color(0.12, 0.16, 0.24, 0.9)     # Deep glassmorphic tech-blue
+	else:
+		style_box.border_width_left = 0
+		style_box.border_width_right = 0
+		style_box.border_width_top = 0
+		style_box.border_width_bottom = 0
+
 	style_box.corner_radius_top_left = floori(current_settlement_panel_corner_radius)
 	style_box.corner_radius_top_right = floori(current_settlement_panel_corner_radius)
 	style_box.corner_radius_bottom_left = floori(current_settlement_panel_corner_radius)
@@ -688,6 +1075,16 @@ func _position_settlement_panel(panel: Panel, settlement_info: Dictionary, _exis
 	# Get the local position of the tile center using TerrainTileMap (SubViewport-local)
 	var tile_center = terrain_tilemap.map_to_local(Vector2i(tile_x, tile_y))
 	var current_settlement_offset_above_center: float = base_settlement_offset_above_tile_center
+	
+	# Dynamically shift the label higher if any convoy is parked on this exact tile
+	if _all_convoy_data_cache:
+		for convoy_data in _all_convoy_data_cache:
+			if convoy_data is Dictionary:
+				var cx = convoy_data.get('x', -1)
+				var cy = convoy_data.get('y', -1)
+				if cx == tile_x and cy == tile_y:
+					current_settlement_offset_above_center += 45.0 # Extra vertical clearance
+					break
 	
 	var scaled_size = panel_actual_size * panel.scale
 	
@@ -755,11 +1152,25 @@ func _find_settlement_at_tile(tile_x: int, tile_y: int) -> Variant:
 	if not _all_settlement_data_cache: return null # Guard against null cache
 	for settlement_data_entry in _all_settlement_data_cache:
 		if settlement_data_entry is Dictionary:
-			var s_tile_x = settlement_data_entry.get('x', -1)
-			var s_tile_y = settlement_data_entry.get('y', -1)
+			var s_tile_x = int(round(float(settlement_data_entry.get('x', -1))))
+			var s_tile_y = int(round(float(settlement_data_entry.get('y', -1))))
 			if s_tile_x == tile_x and s_tile_y == tile_y:
 				return settlement_data_entry
 	return null
+
+func _find_closest_settlement(cx: float, cy: float, max_dist: float = 1.5) -> Variant:
+	if not _all_settlement_data_cache: return null
+	var closest_sett = null
+	var min_dist = max_dist
+	for s in _all_settlement_data_cache:
+		if s is Dictionary:
+			var sx = float(s.get("x", -999.0))
+			var sy = float(s.get("y", -999.0))
+			var dist = sqrt((sx - cx)*(sx - cx) + (sy - cy)*(sy - cy))
+			if dist < min_dist:
+				min_dist = dist
+				closest_sett = s
+	return closest_sett
 
 
 func _on_menu_manager_menu_opened(menu_node: Node, menu_type: String):
@@ -812,19 +1223,46 @@ func _on_connector_lines_container_draw():
 	var base_sep_px: float = max(1.0, min(tile_size_vec.x, tile_size_vec.y) * 0.32) # slightly more separation between lanes
 
 	if _all_convoy_data_cache is Array:
+		# --- Strategy 3: Progressive Zoom LOD ---
+		var is_far_zoom: bool = _current_map_zoom_cache < 0.6
+		
+		# --- Strategy 1: Smart Focus Line Filter ---
+		var show_all_lines: bool = false
+		var show_active_lines: bool = true # Smart focus default
+		if is_instance_valid(_settings_service):
+			show_all_lines = _settings_service.all_convoy_destinations
+			show_active_lines = _settings_service.active_delivery_destinations
+			
+		var focused_convoy_ids: Array[String] = []
+		for cid in _selected_convoy_ids_cache:
+			focused_convoy_ids.append(str(cid))
+		if _current_hover_info_cache.get('type') == 'convoy':
+			var hover_id = str(_current_hover_info_cache.get('id', ''))
+			if hover_id != '' and not focused_convoy_ids.has(hover_id):
+				focused_convoy_ids.append(hover_id)
+
 		# Pass 1: collect segment membership across all convoys
 		for convoy_collect in _all_convoy_data_cache:
 			if not (convoy_collect is Dictionary and convoy_collect.has("journey")):
 				continue
+			
+			var cid_c: String = str(convoy_collect.get("convoy_id", ""))
+			if cid_c == "":
+				continue
+				
+			# Apply Zoom LOD and Smart Focus filter
+			if is_far_zoom:
+				continue # Draw no lines when far out
+			if not show_all_lines:
+				if not show_active_lines or not focused_convoy_ids.has(cid_c):
+					continue # Skip drawing this route if it's not focused!
+
 			var j_collect = convoy_collect.get("journey")
 			if not (j_collect is Dictionary and j_collect.has("route_x") and j_collect.has("route_y")):
 				continue
 			var rx_c: Array = j_collect["route_x"]
 			var ry_c: Array = j_collect["route_y"]
 			if rx_c.size() < 2 or ry_c.size() != rx_c.size():
-				continue
-			var cid_c: String = str(convoy_collect.get("convoy_id", ""))
-			if cid_c == "":
 				continue
 			for si in range(rx_c.size() - 1):
 				var a := Vector2i(int(rx_c[si]), int(ry_c[si]))
@@ -861,15 +1299,23 @@ func _on_connector_lines_container_draw():
 		for convoy in _all_convoy_data_cache:
 			if not (convoy is Dictionary and convoy.has("journey")):
 				continue
+			var cid: String = str(convoy.get("convoy_id", ""))
+			if cid == "":
+				continue
+				
+			# Apply Zoom LOD and Smart Focus filter
+			if is_far_zoom:
+				continue 
+			if not show_all_lines:
+				if not show_active_lines or not focused_convoy_ids.has(cid):
+					continue # Skip drawing
+
 			var journey = convoy["journey"]
 			if not (journey is Dictionary and journey.has("route_x") and journey.has("route_y")):
 				continue
 			var route_x: Array = journey["route_x"]
 			var route_y: Array = journey["route_y"]
 			if route_x.size() < 2 or route_y.size() != route_x.size():
-				continue
-			var cid: String = str(convoy.get("convoy_id", ""))
-			if cid == "":
 				continue
 
 			# Compute pixel-space points for the route

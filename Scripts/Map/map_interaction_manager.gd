@@ -319,8 +319,21 @@ func _handle_tap_interaction(tap_position: Vector2) -> bool:
 		self._current_hover_info = {}
 		emit_signal("hover_changed", self._current_hover_info)
 
-	# --- Guard: if the tap lands on an already-visible pinned settlement panel,
-	# toggle the pin directly and skip the tile-center hit test.
+	# --- Do a fresh, direct hit test at the tap position ---
+	# We check this FIRST to prioritize convoys if they are stacked at the same tile.
+	var hit_info := _get_element_at_screen_pos(tap_position)
+
+	if hit_info.get('type') == 'convoy':
+		var cid = hit_info.get('id')
+		if cid != null:
+			var convoy_data = _find_convoy_data_by_id(str(cid))
+			if convoy_data:
+				if debug_logging:
+					print("[MIM] Tapped convoy ID: ", cid)
+				emit_signal("convoy_menu_requested", convoy_data)
+				return true
+				
+	# --- Guard: if no convoy was hit, check if the tap lands on an already-visible pinned settlement panel.
 	# This handles the case where the label is offset above the tile and the
 	# panel's own gui_input cannot fire for touch events on a CanvasLayer node.
 	var hit_panel_coords := _get_settlement_panel_at_screen_pos(tap_position)
@@ -330,10 +343,7 @@ func _handle_tap_interaction(tap_position: Vector2) -> bool:
 		emit_signal("settlement_clicked", hit_panel_coords)
 		return true
 
-	# --- Do a fresh, direct hit test at the tap position ---
-	# This is critical on mobile: the cached _current_hover_info may be stale.
-	var hit_info := _get_element_at_screen_pos(tap_position)
-
+	# Fallback to the settlement tile hit test
 	if hit_info.get('type') == 'settlement':
 		var settlement_coords = hit_info.get('coords')
 		if settlement_coords is Vector2i:
@@ -341,15 +351,7 @@ func _handle_tap_interaction(tap_position: Vector2) -> bool:
 				print("[MIM] Tapped settlement at coords: ", settlement_coords)
 			emit_signal("settlement_clicked", settlement_coords)
 			return true
-	elif hit_info.get('type') == 'convoy':
-		var cid = hit_info.get('id')
-		if cid != null:
-			var convoy_data = _find_convoy_data_by_id(str(cid))
-			if convoy_data:
-				if debug_logging:
-					print("[MIM] Tapped convoy ID: ", cid)
-				emit_signal("convoy_menu_requested", convoy_data)
-				return true
+
 	return false
 
 ## Returns the tile coords of a visible settlement label panel whose screen rect
@@ -671,17 +673,7 @@ func _handle_lmb_interactions(event: InputEventMouseButton, p_camera: Camera2D) 
 					print("[MIM] Mouse release ignored as click (too much movement or duration: %.1fpx, %dms)" % [pos_delta, time_delta])
 				return false
 
-			# --- Check if click lands on a visible settlement label panel first ---
-			# The label is rendered offset above the tile, so we hit-test its screen
-			# rect explicitly before falling through to the tile-center world test.
-			var hit_panel_coords := _get_settlement_panel_at_screen_pos(event.global_position)
-			if hit_panel_coords.x >= 0:
-				if debug_logging:
-					print("[MIM] LMB on settlement label panel at:", hit_panel_coords)
-				emit_signal("settlement_clicked", hit_panel_coords)
-				return true
-
-			# --- Handle Click on Convoy (if not dragging) ---
+			# --- Handle Click on Convoy FIRST (if not dragging) ---
 			var clicked_convoy_data = null
 			var mouse_world_pos = camera.get_canvas_transform().affine_inverse() * event.position
 			# Get tile size for world coordinate conversion
@@ -709,7 +701,17 @@ func _handle_lmb_interactions(event: InputEventMouseButton, p_camera: Camera2D) 
 				emit_signal("convoy_menu_requested", clicked_convoy_data)
 				return true # Click on convoy handled
 
-			# --- Handle Click on Settlement (fresh hit test at click position) ---
+			# --- Check if click lands on a visible settlement label panel next ---
+			# The label is rendered offset above the tile, so we hit-test its screen
+			# rect explicitly before falling through to the tile-center world test.
+			var hit_panel_coords := _get_settlement_panel_at_screen_pos(event.global_position)
+			if hit_panel_coords.x >= 0:
+				if debug_logging:
+					print("[MIM] LMB on settlement label panel at:", hit_panel_coords)
+				emit_signal("settlement_clicked", hit_panel_coords)
+				return true
+
+			# --- Handle Click on Settlement Tile (fresh hit test at click position) ---
 			# Use _get_element_at_screen_pos instead of stale _current_hover_info so
 			# that only a click physically over the settlement tile triggers the toggle.
 			var hit_info := _get_element_at_screen_pos(event.global_position)

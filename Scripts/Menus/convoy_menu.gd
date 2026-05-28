@@ -1286,8 +1286,8 @@ func _resolve_vendor_focus_for_item(item_name: String, category_hint: String) ->
 			if category_hint == "missions":
 				# Accept either central classification or presence of delivery_reward.
 				var mission_ok := false
-				if ItemsData != null and ItemsData.MissionItem:
-					mission_ok = ItemsData.MissionItem._looks_like_mission_dict(it)
+				if ItemsData != null and ItemsData.DeliveryCargoItem:
+					mission_ok = ItemsData.DeliveryCargoItem._looks_like_delivery_dict(it)
 				if not mission_ok:
 					mission_ok = NumberFormat.to_f(it.get("delivery_reward"), 0.0) > 0.0 or NumberFormat.to_f(it.get("unit_delivery_reward"), 0.0) > 0.0
 				if not mission_ok:
@@ -1446,7 +1446,7 @@ func _collect_mission_cargo_items(convoy: Dictionary) -> Array[String]:
 							continue
 						if item.has("intrinsic_part_id") and item.get("intrinsic_part_id") != null:
 							continue
-						if _looks_like_mission_item(item):
+						if _looks_like_delivery_item(item):
 							var item_name2 := String(item.get("name", "Item"))
 							var dest_key2 := _extract_destination_from_item(item)
 							var display_key2 := item_name2
@@ -1472,7 +1472,7 @@ func _collect_mission_cargo_items(convoy: Dictionary) -> Array[String]:
 				continue
 			if item.has("intrinsic_part_id") and item.get("intrinsic_part_id") != null:
 				continue
-			if _looks_like_mission_item(item):
+			if _looks_like_delivery_item(item):
 				var item_name3 := String(item.get("name", "Item"))
 				var dest_key3 := _extract_destination_from_item(item)
 				var display_key3 := item_name3
@@ -1501,7 +1501,7 @@ func _collect_mission_cargo_items(convoy: Dictionary) -> Array[String]:
 				continue
 			if ac.has("intrinsic_part_id") and ac.get("intrinsic_part_id") != null:
 				continue
-			if _looks_like_mission_item(ac):
+			if _looks_like_delivery_item(ac):
 				var aname := String(ac.get("name", "Item"))
 				var dest_key4 := _extract_destination_from_item(ac)
 				var display_key4 := aname
@@ -1570,11 +1570,11 @@ func _is_part_item(d: Dictionary) -> bool:
 			return true
 	return false
 
-func _looks_like_mission_item(item: Dictionary) -> bool:
+func _looks_like_delivery_item(item: Dictionary) -> bool:
 	# Prefer centralized classification when available
-	if ItemsData != null and ItemsData.MissionItem:
-		var looks_mission := ItemsData.MissionItem._looks_like_mission_dict(item)
-		if looks_mission:
+	if ItemsData != null and ItemsData.DeliveryCargoItem:
+		var looks_delivery := ItemsData.DeliveryCargoItem._looks_like_delivery_dict(item)
+		if looks_delivery:
 			return true
 		return false
 	# Local rule: mission cargo must have positive delivery_reward and not be an intrinsic part
@@ -1594,8 +1594,8 @@ func _scan_settlement_array(arr: Array, agg: Dictionary) -> void:
 		if it.has("intrinsic_part_id") and it.get("intrinsic_part_id") != null:
 			continue
 		var mission_ok := false
-		if ItemsData != null and ItemsData.MissionItem:
-			mission_ok = ItemsData.MissionItem._looks_like_mission_dict(it)
+		if ItemsData != null and ItemsData.DeliveryCargoItem:
+			mission_ok = ItemsData.DeliveryCargoItem._looks_like_delivery_dict(it)
 		if _debug_convoy_menu:
 			print("[ConvoyMenu][Debug] _scan_settlement_array item=", String(it.get("name", it.get("base_name", "?"))), " mission=", mission_ok)
 		if mission_ok:
@@ -1704,12 +1704,12 @@ func _collect_settlement_mission_items() -> Array[String]:
 				continue
 			var ci: Dictionary = ci_any
 			# Use centralized mission detection when available
-			var is_mission := false
-			if ItemsData != null and ItemsData.MissionItem:
-				is_mission = ItemsData.MissionItem._looks_like_mission_dict(ci)
+			var is_delivery := false
+			if ItemsData and ItemsData.DeliveryCargoItem:
+				is_delivery = ItemsData.DeliveryCargoItem._looks_like_delivery_dict(ci)
 			else:
-				is_mission = NumberFormat.to_f(ci.get("delivery_reward"), 0.0) > 0.0 or NumberFormat.to_f(ci.get("unit_delivery_reward"), 0.0) > 0.0
-			if not is_mission:
+				is_delivery = NumberFormat.to_f(ci.get("delivery_reward"), 0.0) > 0.0 or NumberFormat.to_f(ci.get("unit_delivery_reward"), 0.0) > 0.0
+			if not is_delivery:
 				continue
 			var nm2 := String(ci.get("name", ci.get("base_name", "Item")))
 			# Force-request full vendor payload based on the mission item's origin vendor_id.
@@ -1772,17 +1772,17 @@ func _on_cargo_data_received(cargo: Dictionary) -> void:
 	if not (cargo is Dictionary) or cargo.is_empty():
 		return
 	# Keep this cheap: only queue a refresh if this looks like mission cargo or has useful destination fields.
-	var looks_mission := false
-	if ItemsData != null and ItemsData.MissionItem:
-		looks_mission = ItemsData.MissionItem._looks_like_mission_dict(cargo)
+	var looks_delivery := false
+	if ItemsData != null and ItemsData.DeliveryCargoItem:
+		looks_delivery = ItemsData.DeliveryCargoItem._looks_like_delivery_dict(cargo)
 	else:
-		looks_mission = NumberFormat.to_f(cargo.get("delivery_reward"), 0.0) > 0.0 or NumberFormat.to_f(cargo.get("unit_delivery_reward"), 0.0) > 0.0
+		looks_delivery = NumberFormat.to_f(cargo.get("delivery_reward"), 0.0) > 0.0 or NumberFormat.to_f(cargo.get("unit_delivery_reward"), 0.0) > 0.0
 
 	var looks_part := false
 	if ItemsData != null and ItemsData.PartItem:
 		looks_part = ItemsData.PartItem._looks_like_part_dict(cargo)
 
-	if not looks_mission and not looks_part and cargo.get("recipient_settlement_name") == null and cargo.get("recipient") == null and cargo.get("mission_vendor_id") == null:
+	if not looks_delivery and not looks_part and cargo.get("recipient_settlement_name") == null and cargo.get("recipient") == null and cargo.get("mission_vendor_id") == null:
 		return
 	_queue_vendor_preview_update()
 
@@ -2143,10 +2143,10 @@ func _on_vendor_preview_ready(vendor_any: Variant) -> void:
 			if not (it is Dictionary):
 				continue
 			# Mission items in vendor inventory help us map destinations.
-			var is_mission := false
-			if ItemsData != null and ItemsData.MissionItem:
-				is_mission = ItemsData.MissionItem._looks_like_mission_dict(it)
-			if not is_mission:
+			var is_delivery := false
+			if ItemsData and ItemsData.DeliveryCargoItem:
+				is_delivery = ItemsData.DeliveryCargoItem._looks_like_delivery_dict(it)
+			if not is_delivery:
 				continue
 			var nm := String((it as Dictionary).get("name", (it as Dictionary).get("base_name", "Item")))
 			var dest := _extract_destination_from_item(it)

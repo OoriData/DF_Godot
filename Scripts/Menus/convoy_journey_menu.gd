@@ -3,6 +3,8 @@ signal find_route_requested(convoy_data, destination_data)
 signal route_preview_started(route_data)
 signal route_preview_ended
 
+const ItemsData = preload("res://Scripts/Data/Items.gd")
+
 func _init():
 	persistence_enabled = true
 
@@ -500,8 +502,8 @@ func _populate_destination_list():
 	
 
 
-	# Find any mission-specific destinations by resolving recipient IDs to settlement names.
-	var mission_destinations: Dictionary = {}
+	# Find any delivery-specific destinations by resolving recipient IDs to settlement names.
+	var delivery_destinations: Dictionary = {}
 	
 	print("[ConvoyJourneyMenu] Convoy Data Keys: ", convoy_data_received.keys())
 	
@@ -542,17 +544,14 @@ func _populate_destination_list():
 					var rsn = str(cargo_item.get("recipient_settlement_name"))
 					if not rsn.is_empty():
 						# Exact match logic
-						if mission_destinations.has(rsn):
+						if delivery_destinations.has(rsn):
 							match_found = true
 						# Check if this name is a valid settlement
 						elif vendor_to_settlement_map.values().has(rsn):
-							mission_destinations[rsn] = cargo_item.get("name", "Delivery Cargo")
+							delivery_destinations[rsn] = cargo_item.get("name", "Delivery Cargo")
 							match_found = true
 				
 				if match_found: continue
-
-				if match_found:
-					continue
 
 				# Gather all candidate keys that might identify the destination
 				var candidate_keys = []
@@ -607,8 +606,8 @@ func _populate_destination_list():
 									break
 
 					if resolved_settlement != "":
-						if not mission_destinations.has(resolved_settlement):
-							mission_destinations[resolved_settlement] = cargo_item.get("name", "Delivery Cargo")
+						if not delivery_destinations.has(resolved_settlement):
+							delivery_destinations[resolved_settlement] = cargo_item.get("name", "Delivery Cargo")
 						match_found = true
 						print("[ConvoyJourneyMenu] MATCH FOUND for cargo '%s': resolved to '%s' via key '%s'" % [cargo_item.get("name"), resolved_settlement, val])
 						break
@@ -620,7 +619,13 @@ func _populate_destination_list():
 					continue
 				
 				# Validation / Debug for loose items
-				if cargo_item.get("is_mission", false) or (cargo_item.get("mission_id", "") != ""):
+				var is_delivery_cargo = false
+				if ItemsData and ItemsData.DeliveryCargoItem:
+					is_delivery_cargo = ItemsData.DeliveryCargoItem._looks_like_delivery_dict(cargo_item)
+				else:
+					is_delivery_cargo = cargo_item.get("recipient") != null or cargo_item.get("delivery_reward", 0.0) > 0.0
+				
+				if is_delivery_cargo:
 					# Valid mission item but destination unknown.
 					pass
 
@@ -651,23 +656,23 @@ func _populate_destination_list():
 		var distance = convoy_pos.distance_to(settlement_pos)
 		potential_destinations.append({"data": settlement_data, "distance": distance})
 
-	# Sort destinations: mission destinations first, then by distance.
+	# Sort destinations: delivery destinations first, then by distance.
 	potential_destinations.sort_custom(func(a, b):
 		var a_name = a.data.get("name", "")
 		var b_name = b.data.get("name", "")
-		var a_is_mission = mission_destinations.has(a_name)
-		var b_is_mission = mission_destinations.has(b_name)
+		var a_is_delivery = delivery_destinations.has(a_name)
+		var b_is_delivery = delivery_destinations.has(b_name)
 		
-		if a_is_mission != b_is_mission:
-			return a_is_mission # true (mission) comes before false
+		if a_is_delivery != b_is_delivery:
+			return a_is_delivery # true (delivery) comes before false
 
-		# If both are missions or both are not, sort by distance
+		# If both are deliveries or both are not, sort by distance
 		return a.distance < b.distance
 	)
 	
-	print("[ConvoyJourneyMenu] Mission Destinations Found: ", mission_destinations.keys())
+	print("[ConvoyJourneyMenu] Delivery Destinations Found: ", delivery_destinations.keys())
 	for d in potential_destinations:
-		if mission_destinations.has(d.data.get("name", "")):
+		if delivery_destinations.has(d.data.get("name", "")):
 			print("[ConvoyJourneyMenu] Priority Dest: %s" % d.data.get("name"))
 
 	for destination_entry in potential_destinations:
@@ -678,8 +683,8 @@ func _populate_destination_list():
 		var emoji := _get_settlement_emoji(settlement_data)
 		var display_name: String = (emoji + " " + settlement_name) if emoji != "" else settlement_name
 		var button_text = "%s (%.1f units)" % [display_name, distance]
-		if mission_destinations.has(settlement_name):
-			var cargo_name = mission_destinations[settlement_name]
+		if delivery_destinations.has(settlement_name):
+			var cargo_name = delivery_destinations[settlement_name]
 			button_text = "[%s] %s" % [cargo_name, button_text]
 
 		# Create a tap-detecting container for mobile scrolling support
