@@ -31,8 +31,7 @@
               "title": "Graph view"
             }
           }
-        ],
-        "currentTab": 1
+        ]
       },
       {
         "id": "c97ffac0088dc79b",
@@ -195,7 +194,7 @@
       "bases:Create new base": false
     }
   },
-  "active": "1ae821d75f551279",
+  "active": "9a1c2f41c589531a",
   "lastOpenFiles": [
     "99_Reference/data_dumps/Map_example_new.md",
     "99_Reference/data_dumps/Map_example.json",

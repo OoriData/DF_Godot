@@ -22,7 +22,4 @@ UI :
 	- [ ] UI scale,  Text sizes and mobile translation could use some standardization
 	- [ ] Label hit boxes are not in line with the actual icons
 	- [ ] Map camera not lining up with borders of the map 
-System
-- [ ] Standardize how we access the destination/recipient for cargo,  the current system is super clunky.  The Map doesnt include all of the aspects of the cargo such as recipient id and we need to translate it through a few levels to get the settlement name that its going to.
-- [ ] 
 
