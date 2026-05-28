@@ -149,7 +149,7 @@ func _has_delivery_cargo_in_array(inv_any: Variant) -> bool:
 		if not (entry_any is Dictionary):
 			continue
 		var d: Dictionary = entry_any
-		if ItemsData != null and ItemsData.MissionItem and ItemsData.MissionItem._looks_like_mission_dict(d):
+		if ItemsData != null and ItemsData.DeliveryCargoItem and ItemsData.DeliveryCargoItem._looks_like_delivery_dict(d):
 			return true
 		if NumberFormat.to_f(d.get("delivery_reward"), 0.0) > 0.0 or NumberFormat.to_f(d.get("unit_delivery_reward"), 0.0) > 0.0:
 			return true
@@ -1345,8 +1345,8 @@ func _populate_vendor_list() -> void:
 	var buckets := VendorCargoAggregatorScript.build_vendor_buckets(vd_for_agg, perf_log_enabled, Callable(self, "_get_vendor_name_for_recipient"))
 	self.vendor_items = buckets
 	var root = vendor_item_tree.create_item()
-	var has_delivery_cargo = not buckets.get("missions", {}).is_empty()
-	_populate_category(vendor_item_tree, root, "Delivery Cargo", buckets.get("missions", {}))
+	var has_delivery_cargo = not buckets.get("delivery", {}).is_empty()
+	_populate_category(vendor_item_tree, root, "Delivery Cargo", buckets.get("delivery", {}))
 	_populate_category(vendor_item_tree, root, "Vehicles", buckets.get("vehicles", {}))
 	_populate_category(vendor_item_tree, root, "Parts", buckets.get("parts", {}))
 	_populate_category(vendor_item_tree, root, "Other", buckets.get("other", {}))
@@ -1354,7 +1354,7 @@ func _populate_vendor_list() -> void:
 	_ignore_selection_signals = false
 
 	if has_delivery_cargo and is_instance_valid(_api):
-		var mission_bucket: Dictionary = buckets.get("missions", {})
+		var mission_bucket: Dictionary = buckets.get("delivery", {})
 		if perf_log_enabled:
 			print("[VendorPanel][AsyncCargo] Mission bucket items: ", mission_bucket.keys())
 		for key in mission_bucket:
@@ -1470,10 +1470,10 @@ func _populate_convoy_list() -> void:
 			" prices_used(f/w/food)=", str(vdx.get("fuel_price", "<none>")), "/", str(vdx.get("water_price", "<none>")), "/", str(vdx.get("food_price", "<none>")),
 			" settlement_prices(f/w/food)=", sv_prices,
 			" allow_vehicle_sell=", allow_vehicle_sell,
-			" bucket_sizes(m/v/p/o/r)=", int((buckets.get("missions", {}) as Dictionary).size()), "/", int((buckets.get("vehicles", {}) as Dictionary).size()), "/", int((buckets.get("parts", {}) as Dictionary).size()), "/", int((buckets.get("other", {}) as Dictionary).size()), "/", int((buckets.get("resources", {}) as Dictionary).size()))
+			" bucket_sizes(d/v/p/o/r)=", int((buckets.get("delivery", {}) as Dictionary).size()), "/", int((buckets.get("vehicles", {}) as Dictionary).size()), "/", int((buckets.get("parts", {}) as Dictionary).size()), "/", int((buckets.get("other", {}) as Dictionary).size()), "/", int((buckets.get("resources", {}) as Dictionary).size()))
 	var root = convoy_item_tree.create_item()
-	var has_delivery_cargo = not buckets.get("missions", {}).is_empty()
-	_populate_category(convoy_item_tree, root, "Delivery Cargo", buckets.get("missions", {}))
+	var has_delivery_cargo = not buckets.get("delivery", {}).is_empty()
+	_populate_category(convoy_item_tree, root, "Delivery Cargo", buckets.get("delivery", {}))
 	if allow_vehicle_sell and not (buckets.get("vehicles", {}) as Dictionary).is_empty():
 		_populate_category(convoy_item_tree, root, "Vehicles", buckets.get("vehicles", {}))
 	# Only show loose/aggregated parts when BUYING. In SELL mode installed vehicle parts are not sellable.

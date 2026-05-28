@@ -197,10 +197,17 @@
   },
   "active": "1ae821d75f551279",
   "lastOpenFiles": [
+    "99_Reference/data_dumps/Map_example_new.md",
+    "99_Reference/data_dumps/Map_example.json",
+    "99_Reference/data_dumps/Map_example_new.json",
+    "03_Systems/MapSystem/Data.md",
+    "TODO.md",
+    "99_Reference/data_dumps/scripts/regenerate_map_example.py",
+    "99_Reference/data_dumps/scripts",
+    "99_Reference/data_dumps/Map_examplemap.json",
     "02_UI_UX/UIAudit.md",
     "02_UI_UX/MenuManager.md",
     "02_UI_UX/UISystemIndex.md",
-    "TODO.md",
     "99_Reference/Glossary.md",
     "Pasted image 20260521131852.png.import",
     "Pasted image 20260521131852.png",
@@ -221,9 +228,6 @@
     "03_Systems/MapSystem/TerrainMath.md",
     "03_Systems/TutorialSystem/TargetResolution.md",
     "04_Technical/NetworkLayer.md",
-    "02_UI_UX/VendorPanel/UI_Inspector.md",
-    "04_Technical/Dependencies.md",
-    "04_Technical/TextScale.md",
-    "03_Systems/RouteService.md"
+    "02_UI_UX/VendorPanel/UI_Inspector.md"
   ]
 }

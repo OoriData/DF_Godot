@@ -4,7 +4,7 @@ const ItemsData = preload("res://Scripts/Data/Items.gd") # ensures CargoItem cla
 const INTRINSIC_RESOURCE_CONTAINER_PART_ID := "7d1c1f56-e215-4b16-89f9-dca416a2d58e"
 
 # Helper to aggregate vendor and convoy cargo into category buckets.
-# Buckets use stable keys: "missions", "vehicles", "parts", "other", "resources".
+# Buckets use stable keys: "delivery", "vehicles", "parts", "other", "resources".
 
 
 static func _to_float_any(v: Variant) -> float:
@@ -69,7 +69,7 @@ static func _is_intrinsic_resource_container(item: Dictionary) -> bool:
 	return pid != "" and pid == INTRINSIC_RESOURCE_CONTAINER_PART_ID
 
 static func build_vendor_buckets(vendor_data: Dictionary, perf_log_enabled: bool, get_vendor_name_for_recipient: Callable) -> Dictionary:
-	var aggregated_missions: Dictionary = {}
+	var aggregated_deliveries: Dictionary = {}
 	var aggregated_resources: Dictionary = {}
 	var aggregated_vehicles: Dictionary = {}
 	var aggregated_parts: Dictionary = {}
@@ -77,7 +77,7 @@ static func build_vendor_buckets(vendor_data: Dictionary, perf_log_enabled: bool
 
 	if vendor_data == null:
 		return {
-			"missions": aggregated_missions,
+			"delivery": aggregated_deliveries,
 			"vehicles": aggregated_vehicles,
 			"parts": aggregated_parts,
 			"other": aggregated_other,
@@ -103,17 +103,17 @@ static func build_vendor_buckets(vendor_data: Dictionary, perf_log_enabled: bool
 			if not item.has("food_price") or item.get("food_price") == null: item["food_price"] = v_food_p
 
 		# consolidate mission detection and recipient resolution
-		var is_mission := false
-		if ItemsData != null and ItemsData.MissionItem:
-			is_mission = ItemsData.MissionItem._looks_like_mission_dict(item)
+		var is_delivery := false
+		if ItemsData != null and ItemsData.DeliveryCargoItem:
+			is_delivery = ItemsData.DeliveryCargoItem._looks_like_delivery_dict(item)
 		else:
-			is_mission = item.get("recipient") != null or _to_float_any(item.get("delivery_reward")) > 0.0 or _to_float_any(item.get("unit_delivery_reward")) > 0.0
+			is_delivery = item.get("recipient") != null or _to_float_any(item.get("delivery_reward")) > 0.0 or _to_float_any(item.get("unit_delivery_reward")) > 0.0
 
 		var recipient_id_any: Variant = null
 		var direct_name_any: Variant = null
 		
 		# Keys that represent IDs for lookup
-		var id_fields := ["recipient", "mission_vendor_id", "recipient_vendor_id", "destination_vendor_id", "dest_vendor_id", "distributor"]
+		var id_fields := ["recipient", "recipient_id", "mission_vendor_id", "recipient_vendor_id", "destination_vendor_id", "dest_vendor_id", "distributor"]
 		for k in id_fields:
 			if item.get(k) != null and str(item.get(k)).strip_edges() != "":
 				recipient_id_any = item.get(k)
@@ -126,11 +126,11 @@ static func build_vendor_buckets(vendor_data: Dictionary, perf_log_enabled: bool
 				direct_name_any = item.get(k)
 				break
 
-		if is_mission:
+		if is_delivery:
 			if perf_log_enabled:
-				print("[VendorCargoAggregator] CLASSIFIED AS MISSION:", item.get("name"), " keys=", item.keys())
+				print("[VendorCargoAggregator] CLASSIFIED AS DELIVERY:", item.get("name"), " keys=", item.keys())
 				print("[VendorCargoAggregator]   parent_vendor_id=", vendor_data.get("vendor_id", ""), " cargo_vendor_id=", item.get("vendor_id", ""), " distributor=", item.get("distributor", ""))
-			category_dict = aggregated_missions
+			category_dict = aggregated_deliveries
 			if direct_name_any != null:
 				mission_vendor_name = str(direct_name_any)
 			elif recipient_id_any != null and get_vendor_name_for_recipient.is_valid():
@@ -155,10 +155,10 @@ static func build_vendor_buckets(vendor_data: Dictionary, perf_log_enabled: bool
 			if perf_log_enabled:
 				print("[VendorCargoAggregator] CLASSIFIED AS OTHER:", item.get("name"))
 		
-		# Skip logging here as it was noisy, only logs if is_mission was found missing recipient
-		if is_mission and not item.has("recipient") and not item.has("mission_vendor_id") and not item.has("recipient_vendor_id"):
+		# Skip logging here as it was noisy, only logs if is_delivery was found missing recipient
+		if is_delivery and not item.has("recipient") and not item.has("mission_vendor_id") and not item.has("recipient_vendor_id"):
 			if perf_log_enabled:
-				print("[VendorCargoAggregator] WARNING: mission item ", item.get("name"), " has NO recipient/vendor keys!")
+				print("[VendorCargoAggregator] WARNING: delivery item ", item.get("name"), " has NO recipient/vendor keys!")
 
 		_aggregate_vendor_item(category_dict, item, mission_vendor_name, perf_log_enabled)
 
@@ -254,27 +254,27 @@ static func build_vendor_buckets(vendor_data: Dictionary, perf_log_enabled: bool
 			_aggregate_vendor_item(aggregated_vehicles, vehicle, "", perf_log_enabled)
 
 	var buckets_res = {
-		"missions": aggregated_missions,
+		"delivery": aggregated_deliveries,
 		"vehicles": aggregated_vehicles,
 		"parts": aggregated_parts,
 		"other": aggregated_other,
 		"resources": aggregated_resources,
 	}
 	if perf_log_enabled:
-		print("[VendorCargoAggregator] buckets_res missions:", aggregated_missions.keys(), " other:", aggregated_other.keys())
+		print("[VendorCargoAggregator] buckets_res delivery:", aggregated_deliveries.keys(), " other:", aggregated_other.keys())
 	return buckets_res
 
 
 static func build_convoy_buckets(convoy_data: Dictionary, vendor_data: Dictionary, _current_mode: String, perf_log_enabled: bool, get_vendor_name_for_recipient: Callable, allow_vehicle_sell: bool) -> Dictionary:
-	var aggregated_missions: Dictionary = {}
+	var aggregated_deliveries: Dictionary = {}
 	var aggregated_resources: Dictionary = {}
-	var aggregated_parts: Dictionary = {}
 	var aggregated_vehicles: Dictionary = {}
+	var aggregated_parts: Dictionary = {}
 	var aggregated_other: Dictionary = {}
 
 	if convoy_data == null:
 		return {
-			"missions": aggregated_missions,
+			"delivery": aggregated_deliveries,
 			"vehicles": aggregated_vehicles,
 			"parts": aggregated_parts,
 			"other": aggregated_other,
@@ -356,26 +356,27 @@ static func build_convoy_buckets(convoy_data: Dictionary, vendor_data: Dictionar
 					if "stats" in typed and typed.stats is Dictionary and not typed.stats.is_empty():
 						raw_item["stats"] = typed.stats.duplicate(true)
 					var category_dict: Dictionary = aggregated_other
-					var is_mission_item: bool = false
+					var is_delivery_item: bool = false
 					var mission_vendor_name: String = ""
 					match typed.category:
-						"mission":
-							category_dict = aggregated_missions
-							is_mission_item = true
+						"delivery":
+							category_dict = aggregated_deliveries
+							is_delivery_item = true
 						"resource":
 							category_dict = aggregated_resources
 						"part":
 							category_dict = aggregated_parts
 					
-					if ItemsData != null and ItemsData.MissionItem:
-						is_mission_item = ItemsData.MissionItem._looks_like_mission_dict(raw_item)
+					if ItemsData != null and ItemsData.DeliveryCargoItem:
+						is_delivery_item = ItemsData.DeliveryCargoItem._looks_like_delivery_dict(raw_item)
 					else:
-						is_mission_item = raw_item.get("recipient") != null or _to_float_any(raw_item.get("delivery_reward")) > 0.0 or _to_float_any(raw_item.get("unit_delivery_reward")) > 0.0
+						is_delivery_item = raw_item.get("recipient") != null or _to_float_any(raw_item.get("delivery_reward")) > 0.0 or _to_float_any(raw_item.get("unit_delivery_reward")) > 0.0
 					
-					if is_mission_item:
-						category_dict = aggregated_missions
-					if is_mission_item:
+					if is_delivery_item:
+						category_dict = aggregated_deliveries
+					if is_delivery_item:
 						var recipient_id: Variant = raw_item.get("recipient")
+						if recipient_id == null: recipient_id = raw_item.get("recipient_id")
 						if recipient_id == null: recipient_id = raw_item.get("distributor")
 						if recipient_id == null: recipient_id = raw_item.get("mission_vendor_id")
 						if recipient_id == null: recipient_id = raw_item.get("recipient_vendor_id")
@@ -389,7 +390,7 @@ static func build_convoy_buckets(convoy_data: Dictionary, vendor_data: Dictionar
 					if is_sell_mode:
 						# Resource-bearing cargo is only sellable if the vendor has a positive price for
 						# ALL contained resource types, regardless of which bucket it would land in.
-						if not is_mission_item and not VendorTradeVM.vendor_can_buy_item_resources(vendor_data if (vendor_data is Dictionary) else {}, raw_item):
+						if not is_delivery_item and not VendorTradeVM.vendor_can_buy_item_resources(vendor_data if (vendor_data is Dictionary) else {}, raw_item):
 							if perf_log_enabled and sell_skip_diag_count < 8:
 								var req := VendorTradeVM.required_resource_types(raw_item)
 								if not req.is_empty():
@@ -399,7 +400,7 @@ static func build_convoy_buckets(convoy_data: Dictionary, vendor_data: Dictionar
 										" required=", req,
 										" vendor_prices(f/w/food)=", str((vendor_data.get("fuel_price", "<none>") if vendor_data != null else "<none>")), "/", str((vendor_data.get("water_price", "<none>") if vendor_data != null else "<none>")), "/", str((vendor_data.get("food_price", "<none>") if vendor_data != null else "<none>")))
 							continue
-						# Non-resource cargo (and parts-as-cargo) are always sellable; missions are always allowed.
+						# Non-resource cargo (and parts-as-cargo) are always sellable; delivery cargo is always allowed.
 					_aggregate_item(category_dict, raw_item, vehicle_name, mission_vendor_name, perf_log_enabled)
 			else:
 				for item in vehicle.get("cargo", []):
@@ -409,15 +410,15 @@ static func build_convoy_buckets(convoy_data: Dictionary, vendor_data: Dictionar
 
 					found_any_cargo = true
 					var category_dict2: Dictionary = aggregated_other
-					var is_mission_item2: bool = false
+					var is_delivery_item2: bool = false
 					var mission_vendor_name2: String = ""
-					if ItemsData != null and ItemsData.MissionItem:
-						is_mission_item2 = ItemsData.MissionItem._looks_like_mission_dict(item)
+					if ItemsData != null and ItemsData.DeliveryCargoItem:
+						is_delivery_item2 = ItemsData.DeliveryCargoItem._looks_like_delivery_dict(item)
 					else:
-						is_mission_item2 = item.get("recipient") != null or _to_float_any(item.get("delivery_reward")) > 0.0 or _to_float_any(item.get("unit_delivery_reward")) > 0.0
+						is_delivery_item2 = item.get("recipient") != null or _to_float_any(item.get("delivery_reward")) > 0.0 or _to_float_any(item.get("unit_delivery_reward")) > 0.0
 					
-					if is_mission_item2:
-						category_dict2 = aggregated_missions
+					if is_delivery_item2:
+						category_dict2 = aggregated_deliveries
 					elif (item.has("food") and item.get("food") != null and item.get("food") > 0) or \
 						 (item.has("water") and item.get("water") != null and item.get("water") > 0) or \
 						 (item.has("fuel") and item.get("fuel") != null and item.get("fuel") > 0):
@@ -427,8 +428,8 @@ static func build_convoy_buckets(convoy_data: Dictionary, vendor_data: Dictionar
 						category_dict2 = aggregated_other if is_sell_mode else aggregated_parts
 					else:
 						category_dict2 = aggregated_other
-					if is_mission_item2:
-						var rid2: Variant = item.get("recipient", item.get("distributor", item.get("mission_vendor_id", item.get("recipient_vendor_id"))))
+					if is_delivery_item2:
+						var rid2: Variant = item.get("recipient", item.get("recipient_id", item.get("distributor", item.get("mission_vendor_id", item.get("recipient_vendor_id")))))
 						var dname2 = item.get("recipient_settlement_name", item.get("destination_settlement_name", item.get("destination_name", "")))
 						if str(dname2) != "":
 							mission_vendor_name2 = str(dname2)
@@ -436,7 +437,7 @@ static func build_convoy_buckets(convoy_data: Dictionary, vendor_data: Dictionar
 							mission_vendor_name2 = str(get_vendor_name_for_recipient.call(rid2))
 					# SELL: only include what this vendor can buy.
 					if is_sell_mode:
-						if not is_mission_item2 and not VendorTradeVM.vendor_can_buy_item_resources(vendor_data if (vendor_data is Dictionary) else {}, item):
+						if not is_delivery_item2 and not VendorTradeVM.vendor_can_buy_item_resources(vendor_data if (vendor_data is Dictionary) else {}, item):
 							if perf_log_enabled and sell_skip_diag_count < 8:
 								var req2 := VendorTradeVM.required_resource_types(item)
 								if not req2.is_empty():
@@ -466,15 +467,15 @@ static func build_convoy_buckets(convoy_data: Dictionary, vendor_data: Dictionar
 				if not item.has("food_price") or item.get("food_price") == null: item["food_price"] = v_food_p
 
 			var category_dict3: Dictionary = aggregated_other
-			var is_mission_item3: bool = false
+			var is_delivery_item3: bool = false
 			var mission_vendor_name3: String = ""
-			if ItemsData != null and ItemsData.MissionItem:
-				is_mission_item3 = ItemsData.MissionItem._looks_like_mission_dict(item)
+			if ItemsData != null and ItemsData.DeliveryCargoItem:
+				is_delivery_item3 = ItemsData.DeliveryCargoItem._looks_like_delivery_dict(item)
 			else:
-				is_mission_item3 = item.get("recipient") != null or _to_float_any(item.get("delivery_reward")) > 0.0 or _to_float_any(item.get("unit_delivery_reward")) > 0.0
+				is_delivery_item3 = item.get("recipient") != null or _to_float_any(item.get("delivery_reward")) > 0.0 or _to_float_any(item.get("unit_delivery_reward")) > 0.0
 			
-			if is_mission_item3:
-				category_dict3 = aggregated_missions
+			if is_delivery_item3:
+				category_dict3 = aggregated_deliveries
 			elif (item.has("food") and item.get("food") != null and item.get("food") > 0) or \
 				 (item.has("water") and item.get("water") != null and item.get("water") > 0) or \
 				 (item.has("fuel") and item.get("fuel") != null and item.get("fuel") > 0):
@@ -483,8 +484,8 @@ static func build_convoy_buckets(convoy_data: Dictionary, vendor_data: Dictionar
 				category_dict3 = aggregated_other if is_sell_mode else aggregated_parts
 			else:
 				category_dict3 = aggregated_other
-			if is_mission_item3:
-				var rid3: Variant = item.get("recipient", item.get("distributor", item.get("mission_vendor_id", item.get("recipient_vendor_id"))))
+			if is_delivery_item3:
+				var rid3: Variant = item.get("recipient", item.get("recipient_id", item.get("distributor", item.get("mission_vendor_id", item.get("recipient_vendor_id")))))
 				var dname3 = item.get("recipient_settlement_name", item.get("destination_settlement_name", item.get("destination_name", "")))
 				if str(dname3) != "":
 					mission_vendor_name3 = str(dname3)
@@ -492,7 +493,7 @@ static func build_convoy_buckets(convoy_data: Dictionary, vendor_data: Dictionar
 					mission_vendor_name3 = str(get_vendor_name_for_recipient.call(rid3))
 			# SELL: only include what this vendor can buy.
 			if is_sell_mode:
-				if not is_mission_item3 and not VendorTradeVM.vendor_can_buy_item_resources(vendor_data if (vendor_data is Dictionary) else {}, item):
+				if not is_delivery_item3 and not VendorTradeVM.vendor_can_buy_item_resources(vendor_data if (vendor_data is Dictionary) else {}, item):
 					if perf_log_enabled and sell_skip_diag_count < 8:
 						var req3 := VendorTradeVM.required_resource_types(item)
 						if not req3.is_empty():
@@ -502,7 +503,7 @@ static func build_convoy_buckets(convoy_data: Dictionary, vendor_data: Dictionar
 								" required=", req3,
 								" vendor_prices(f/w/food)=", str((vendor_data.get("fuel_price", "<none>") if vendor_data != null else "<none>")), "/", str((vendor_data.get("water_price", "<none>") if vendor_data != null else "<none>")), "/", str((vendor_data.get("food_price", "<none>") if vendor_data != null else "<none>")))
 					continue
-				# Non-resource cargo (and parts-as-cargo) are always sellable; missions are always allowed.
+				# Non-resource cargo (and parts-as-cargo) are always sellable; delivery cargo is always allowed.
 			_aggregate_item(category_dict3, item, "Convoy", mission_vendor_name3, perf_log_enabled)
 
 	# Fallback: some snapshots provide a flattened `all_cargo` array instead of `cargo_inventory`.
@@ -540,15 +541,15 @@ static func build_convoy_buckets(convoy_data: Dictionary, vendor_data: Dictionar
 
 			found_any_cargo = true
 			var category_dict4: Dictionary = aggregated_other
-			var is_mission_item4: bool = false
+			var is_delivery_item4: bool = false
 			var mission_vendor_name4: String = ""
-			if ItemsData != null and ItemsData.MissionItem:
-				is_mission_item4 = ItemsData.MissionItem._looks_like_mission_dict(item)
+			if ItemsData != null and ItemsData.DeliveryCargoItem:
+				is_delivery_item4 = ItemsData.DeliveryCargoItem._looks_like_delivery_dict(item)
 			else:
-				is_mission_item4 = item.get("recipient") != null or _to_float_any(item.get("delivery_reward")) > 0.0 or _to_float_any(item.get("unit_delivery_reward")) > 0.0
+				is_delivery_item4 = item.get("recipient") != null or _to_float_any(item.get("delivery_reward")) > 0.0 or _to_float_any(item.get("unit_delivery_reward")) > 0.0
 			
-			if is_mission_item4:
-				category_dict4 = aggregated_missions
+			if is_delivery_item4:
+				category_dict4 = aggregated_deliveries
 			elif item_category == "resource" or (item.has("food") and item.get("food") != null and item.get("food") > 0) or \
 					 (item.has("water") and item.get("water") != null and item.get("water") > 0) or \
 					 (item.has("fuel") and item.get("fuel") != null and item.get("fuel") > 0):
@@ -557,8 +558,8 @@ static func build_convoy_buckets(convoy_data: Dictionary, vendor_data: Dictionar
 				category_dict4 = aggregated_other if is_sell_mode else aggregated_parts
 			else:
 				category_dict4 = aggregated_other
-			if is_mission_item4:
-				var rid4: Variant = item.get("recipient", item.get("distributor", item.get("mission_vendor_id", item.get("recipient_vendor_id"))))
+			if is_delivery_item4:
+				var rid4: Variant = item.get("recipient", item.get("recipient_id", item.get("distributor", item.get("mission_vendor_id", item.get("recipient_vendor_id")))))
 				var dname4 = item.get("recipient_settlement_name", item.get("destination_settlement_name", item.get("destination_name", "")))
 				if str(dname4) != "":
 					mission_vendor_name4 = str(dname4)
@@ -566,7 +567,7 @@ static func build_convoy_buckets(convoy_data: Dictionary, vendor_data: Dictionar
 					mission_vendor_name4 = str(get_vendor_name_for_recipient.call(rid4))
 			# SELL: only include what this vendor can buy.
 			if is_sell_mode:
-				if not is_mission_item4 and not VendorTradeVM.vendor_can_buy_item_resources(vendor_data if (vendor_data is Dictionary) else {}, item):
+				if not is_delivery_item4 and not VendorTradeVM.vendor_can_buy_item_resources(vendor_data if (vendor_data is Dictionary) else {}, item):
 					if perf_log_enabled and sell_skip_diag_count < 8:
 						var req4 := VendorTradeVM.required_resource_types(item)
 						if not req4.is_empty():
@@ -576,7 +577,7 @@ static func build_convoy_buckets(convoy_data: Dictionary, vendor_data: Dictionar
 								" required=", req4,
 								" vendor_prices(f/w/food)=", str((vendor_data.get("fuel_price", "<none>") if vendor_data != null else "<none>")), "/", str((vendor_data.get("water_price", "<none>") if vendor_data != null else "<none>")), "/", str((vendor_data.get("food_price", "<none>") if vendor_data != null else "<none>")))
 					continue
-				# Non-resource cargo (and parts-as-cargo) are always sellable; missions are always allowed.
+				# Non-resource cargo (and parts-as-cargo) are always sellable; delivery cargo is always allowed.
 			_aggregate_item(category_dict4, item, "Convoy", mission_vendor_name4, perf_log_enabled)
 
 	# Vehicles fallback: some convoy snapshots provide `vehicles` instead of `vehicle_details_list`.
@@ -665,14 +666,14 @@ static func build_convoy_buckets(convoy_data: Dictionary, vendor_data: Dictionar
 		print("[VendorCargoAggregator] Skipping convoy bulk food (unexpected state)")
 
 	if perf_log_enabled and is_sell_mode:
-		print("[VendorCargoAggregator][SellDiag] buckets sizes missions=", aggregated_missions.size(),
+		print("[VendorCargoAggregator][SellDiag] buckets sizes delivery=", aggregated_deliveries.size(),
 			" vehicles=", aggregated_vehicles.size(),
 			" parts=", aggregated_parts.size(),
 			" other=", aggregated_other.size(),
 			" resources=", aggregated_resources.size())
 
 	return {
-		"missions": aggregated_missions,
+		"delivery": aggregated_deliveries,
 		"vehicles": aggregated_vehicles,
 		"parts": aggregated_parts,
 		"other": aggregated_other,
@@ -802,20 +803,22 @@ static func _stable_key_for_convoy_item(item: Dictionary) -> String:
 		mods = str(item.get("modifiers")).strip_edges()
 	var mods_suffix := ("|mods=" + mods) if mods != "" else ""
 	# Missions should stay separated by recipient/mission target.
-	var looks_mission := false
-	if ItemsData != null and ItemsData.MissionItem:
-		looks_mission = ItemsData.MissionItem._looks_like_mission_dict(item)
+	var looks_delivery := false
+	if ItemsData != null and ItemsData.DeliveryCargoItem:
+		looks_delivery = ItemsData.DeliveryCargoItem._looks_like_delivery_dict(item)
 	else:
-		looks_mission = item.get("recipient") != null or _to_float_any(item.get("delivery_reward")) > 0.0 or _to_float_any(item.get("unit_delivery_reward")) > 0.0
-	if looks_mission:
+		looks_delivery = item.get("recipient") != null or _to_float_any(item.get("delivery_reward")) > 0.0 or _to_float_any(item.get("unit_delivery_reward")) > 0.0
+	if looks_delivery:
 		var recipient_id := ""
 		if item.get("recipient") != null:
 			recipient_id = str(item.get("recipient"))
+		elif item.get("recipient_id") != null:
+			recipient_id = str(item.get("recipient_id"))
 		elif item.get("mission_vendor_id") != null:
 			recipient_id = str(item.get("mission_vendor_id"))
 		if recipient_id != "":
-			return ("mission:%s:%s" % [recipient_id, item_name]) + mods_suffix
-		return ("mission:%s" % item_name) + mods_suffix
+			return ("delivery:%s:%s" % [recipient_id, item_name]) + mods_suffix
+		return ("delivery:%s" % item_name) + mods_suffix
 	# Parts should typically not be grouped only by name if slot is available.
 	var slot_val := ""
 	if item.has("slot") and item.get("slot") != null:

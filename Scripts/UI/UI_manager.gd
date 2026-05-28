@@ -929,13 +929,13 @@ func _get_settlement_departing_destinations(settlement: Dictionary) -> Array[Vec
 	var inspect_cargo_array = func(cargo: Array, source_name: String):
 		for item in cargo:
 			if item is Dictionary:
-				var is_mission = false
-				if ItemsData and ItemsData.MissionItem:
-					is_mission = ItemsData.MissionItem._looks_like_mission_dict(item)
+				var is_delivery = false
+				if ItemsData and ItemsData.DeliveryCargoItem:
+					is_delivery = ItemsData.DeliveryCargoItem._looks_like_delivery_dict(item)
 				else:
-					is_mission = item.get("recipient") != null or item.get("delivery_reward", 0.0) > 0.0 or item.get("unit_delivery_reward", 0.0) > 0.0
+					is_delivery = item.get("recipient") != null or item.get("delivery_reward", 0.0) > 0.0 or item.get("unit_delivery_reward", 0.0) > 0.0
 					
-				if is_mission:
+				if is_delivery:
 					# Available vendor contracts have no destination in the backend payload —
 					# the destination is only known after pickup. So we mark the origin
 					# settlement itself as the target ("missions available here").
