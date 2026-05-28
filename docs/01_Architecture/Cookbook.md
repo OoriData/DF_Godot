@@ -98,7 +98,7 @@ Every major menu uses a per-instance boolean flag to gate verbose `print()` call
    if MyNewItem._looks_like_my_item(raw):
        return MyNewItem.new(raw)
    ```
-3. **Add UI grouping**: In `ConvoyCargoMenu._build_cargo_sections()`, add a new section header for the new type (similar to "Delivery Cargo" for `MissionItem`).
+3. **Add UI grouping**: In `ConvoyCargoMenu._build_cargo_sections()`, add a new section header for the new type (similar to "Delivery Cargo" for `DeliveryCargoItem`).
 4. **Update the Schema**: Add a row to the Cargo Object table in [Schema.md](Schema.md) documenting the new key.
 
 ---

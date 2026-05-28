@@ -50,12 +50,12 @@ A central reference for domain-specific and technical terminology used in *Desol
   - *Logic*: `Scripts/Data/Items.gd`
   - *Doc*: [Items & Missions](../03_Systems/ItemsAndMissions.md)
 - **CargoItem**: Base class for all items. Has `cargo_id`, `quantity`, `unit_volume`, `unit_weight`.
-- **MissionItem**: A `CargoItem` representing a delivery obligation. Detected by `recipient_vendor_id` or `delivery_reward > 0`.
+- **DeliveryCargoItem**: A `CargoItem` representing a delivery obligation. Primary detection field is `recipient` (UUID). `MissionItem` is a deprecated alias.
   - *Doc*: [Items & Missions §2](../03_Systems/ItemsAndMissions.md)
 - **PartItem**: A `CargoItem` with a `slot` field (e.g., `"engine"`, `"tires"`). Installed into vehicle slots via MechanicsService.
 - **ResourceItem**: Consumable `CargoItem` (fuel, water, food).
 - **VehicleItem**: A complete vehicle record found in vendor inventories.
-- **delivery_reward**: Credits awarded when a `MissionItem` is delivered. On the cargo dict. Can be `null` — always guard before summing.
+- **delivery_reward**: Credits awarded when a `DeliveryCargoItem` is delivered. On the cargo dict. Can be `null` — always guard before summing. `unit_delivery_reward` is also checked as a detection signal.
 - **Auto-Sell**: The client-side process that detects cargo items that disappeared between sessions (delivered by the backend) and shows the player a receipt.
   - *Doc*: [AutoSellSystem](../03_Systems/AutoSellSystem.md)
 - **cargo snapshot**: The local file (`user://cargo_snapshot.json`) containing the last-known cargo state. Used by `AutoSellService` to diff against current state.

@@ -20,33 +20,35 @@ All cargo in the game (Convoys, Vendors, Warehouses) is parsed into `CargoItem` 
 - **`PartItem`**: Items with a `.slot` (e.g., "Engine", "Tires"). They contain `modifiers` that affect vehicle performance.
 - **`ResourceItem`**: Consumables like `fuel`, `water`, and `food`.
 - **`VehicleItem`**: Complete vehicle records (typically found in Vendor inventories).
-- **`MissionItem`**: Delivery cargo (see below).
+- **`DeliveryCargoItem`**: Delivery cargo (see below). `MissionItem` is a deprecated compatibility alias that extends `DeliveryCargoItem`.
 
 ---
 
 ## 2. Mission Detection Logic
 
-A `CargoItem` is classified as a **Mission** if it passes the "Looks like a mission" check in `Items.gd`.
+A `CargoItem` is classified as a **Delivery** if it passes the check in `Items.gd`.
 
-### Criteria for Mission Detection
-The `MissionItem._looks_like_mission_dict()` function checks for:
-1.  **Recipient Field**: Presence of `recipient`, `recipient_vendor_id`, or `recipient_settlement_name`.
-2.  **Delivery Reward**: Any item with a `delivery_reward > 0`.
-3.  **Explicit Flag**: The `is_mission: true` metadata.
+### Criteria for Delivery Detection
+`DeliveryCargoItem._looks_like_delivery_dict()` checks (in order):
+1. **Primary Recipient Field**: `recipient` is present, non-null, and not the null UUID (`00000000-...`).
+2. **Compatibility fallbacks** (legacy/mock payloads): any of `mission_id`, `mission_vendor_id`, `recipient_vendor_id`, `destination_vendor_id`, `dest_vendor_id`, `recipient_settlement_name`, `destination_settlement_name`, `dest_settlement`, `destination_name`.
+3. **Delivery Reward**: `delivery_reward > 0` or `unit_delivery_reward > 0`.
+4. **Explicit Flag**: `is_mission: true`.
 
 ### Detection Logic
 
 ```mermaid
 graph TD
     Raw[Raw JSON Payload] --> Parse[CargoItem.from_dict]
-    Parse --> Check{_looks_like_mission?}
+    Parse --> Check{_looks_like_delivery_dict?}
     
-    Check -->|Has recipient_id?| Yes[Is Mission]
-    Check -->|Reward > 0?| Yes
+    Check -->|recipient UUID present?| Yes[Is Delivery]
+    Check -->|Legacy id fields?| Yes
+    Check -->|delivery_reward > 0?| Yes
     Check -->|is_mission: true?| Yes
     Check -->|Otherwise| No[Is Standard Cargo]
     
-    Yes --> Classify[Cast to MissionItem]
+    Yes --> Classify[Cast to DeliveryCargoItem]
     Classify --> UI[Group in 'Delivery Cargo']
 ```
 
@@ -55,10 +57,8 @@ graph TD
 {
   "cargo_id": "uuid",
   "name": "Emergency Medical Supplies",
-  "recipient_vendor_id": "vendor-uuid",
-  "recipient_vendor_name": "Dr. Aris",
-  "delivery_reward": 500,
-  "is_mission": true
+  "recipient": "vendor-uuid",
+  "delivery_reward": 500
 }
 ```
 
@@ -80,7 +80,7 @@ When trading with a vendor who is the **recipient** of a mission item:
 ## 4. Implementation Guidelines
 
 - **Adding a new Part**: Ensure it has a `slot` property and `modifiers` (e.g., `top_speed_add`).
-- **Adding a new Mission**: Ensure the backend payload includes a `recipient_vendor_id`. The client will automatically categorize it as a mission.
+- **Adding a new Mission**: Ensure the backend payload includes a `recipient` field (UUID). The client will automatically categorize it as delivery cargo. `recipient_vendor_id` still works as a compatibility fallback but `recipient` is the primary field.
 - **Data Safety**: Always use `CargoItem.from_dict(raw)` to ensure units and categories are normalized before using them in UI math.
 
 ---
@@ -119,13 +119,13 @@ sequenceDiagram
 5. **Money refresh**: After delivery, `GameStore.set_user()` will reflect the updated balance when the next convoy refresh arrives. Money is on the `User` object, not the `Cargo` item.
 
 ### The `delivery_reward` Field
-Mission items carry a `delivery_reward` field that specifies the credits awarded on delivery:
+Delivery items carry a `delivery_reward` field that specifies the credits awarded on delivery:
 ```json
 {
     "cargo_id": "uuid",
     "name": "Emergency Medical Supplies",
     "delivery_reward": 500,
-    "recipient_vendor_id": "vendor-uuid"
+    "recipient": "vendor-uuid"
 }
 ```
 `AutoSellService` sums `delivery_reward` across all detected missing items to calculate `receipt_payload.total_credits`.
