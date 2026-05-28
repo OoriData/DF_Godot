@@ -150,6 +150,9 @@ var _preview_settlement_coords: Variant = null
 
 var _convoy_label_manager_initialized: bool = false
 
+# Settlement overlay: draws callout tails and tile icons (settlement_overlay_draw.gd)
+var _settlement_overlay: Node = null
+
 func _ready():
 	await get_tree().process_frame
 
@@ -208,6 +211,9 @@ func _ready():
 		settlement_label_settings.font = fallback_font
 
 	_current_map_screen_rect_for_clamping = get_viewport().get_visible_rect() # Initialize
+
+	# Create the settlement overlay draw node (tails + tile icons)
+	_ensure_settlement_overlay()
 
 	# Programmatically assign the convoy_label_container to the ConvoyLabelManager
 	if is_instance_valid(convoy_label_manager) and convoy_label_manager.has_method("set_convoy_label_container"):
@@ -578,8 +584,6 @@ func _draw_interactive_labels(current_hover_info: Dictionary):
 						var local_sett = _find_closest_settlement(cx, cy, 2.5)
 						if local_sett is Dictionary:
 							var dests = _get_settlement_departing_destinations(local_sett)
-							if not dests.is_empty():
-								print("[UIManager] Found departing targets for convoy's city (", local_sett.get("name"), "): ", dests)
 							for d in dests:
 								add_settlement_target.call(d)
 
@@ -590,8 +594,6 @@ func _draw_interactive_labels(current_hover_info: Dictionary):
 				var local_sett = _find_settlement_at_tile(hovered_coords.x, hovered_coords.y)
 				if local_sett is Dictionary:
 					var dests = _get_settlement_departing_destinations(local_sett)
-					if not dests.is_empty():
-						print("[UIManager] Found departing targets for hovered settlement (", local_sett.get("name"), "): ", dests)
 					for d in dests:
 						add_settlement_target.call(d)
 
@@ -600,8 +602,6 @@ func _draw_interactive_labels(current_hover_info: Dictionary):
 			var local_sett = _find_settlement_at_tile(pinned_coords.x, pinned_coords.y)
 			if local_sett is Dictionary:
 				var dests = _get_settlement_departing_destinations(local_sett)
-				if not dests.is_empty():
-					print("[UIManager] Found departing targets for pinned settlement (", local_sett.get("name"), "): ", dests)
 				for d in dests:
 					add_settlement_target.call(d)
 
@@ -746,6 +746,9 @@ func _draw_interactive_labels(current_hover_info: Dictionary):
 	if is_instance_valid(convoy_connector_lines_container):
 		convoy_connector_lines_container.queue_redraw()
 
+	# Refresh settlement tails + tile icons overlay
+	_refresh_settlement_overlay(drawn_settlement_tile_coords_this_update)
+
 # The following functions related to convoy panels will be moved to ConvoyLabelManager.gd:
 # _create_convoy_panel
 # _update_convoy_panel_content
@@ -781,6 +784,86 @@ func _create_settlement_panel() -> Panel:
 ## immediately reflected without needing a hover or selection change.
 func _force_draw_interactive_labels_deferred() -> void:
 	call_deferred("_draw_interactive_labels", {})
+
+
+# -------------------------------------------------------------------
+# Settlement overlay helpers (callout tails + tile icons)
+# -------------------------------------------------------------------
+
+func _ensure_settlement_overlay() -> void:
+	if is_instance_valid(_settlement_overlay):
+		return
+	if not is_instance_valid(settlement_label_container):
+		return
+	var script = load("res://Scripts/UI/settlement_overlay_draw.gd")
+	if script == null:
+		printerr("[UIManager] Could not load settlement_overlay_draw.gd")
+		return
+	_settlement_overlay = Node2D.new()
+	_settlement_overlay.set_script(script)
+	_settlement_overlay.z_index = -1  # render behind label panels
+	# Pass the font once after LabelSettings is initialised
+	if is_instance_valid(settlement_label_settings) and is_instance_valid(settlement_label_settings.font):
+		_settlement_overlay.icon_font = settlement_label_settings.font
+	settlement_label_container.add_child(_settlement_overlay)
+
+
+## Collect tail + icon data from all visible panels and push to the overlay node.
+## Called at the end of _draw_interactive_labels after all panels are positioned.
+func _refresh_settlement_overlay(drawn_coords: Array) -> void:
+	_ensure_settlement_overlay()
+	if not is_instance_valid(_settlement_overlay):
+		return
+	if not is_instance_valid(terrain_tilemap):
+		_settlement_overlay.clear_frame()
+		return
+
+	# Keep the font in sync (font may load after _ready).
+	if is_instance_valid(settlement_label_settings) and is_instance_valid(settlement_label_settings.font):
+		_settlement_overlay.icon_font = settlement_label_settings.font
+
+	var tail_list: Array = []
+	var icon_list: Array = []
+
+	for coords in drawn_coords:
+		var coord_str := "%s_%s" % [coords.x, coords.y]
+		var panel: Panel = _active_settlement_panels.get(coord_str)
+		if not is_instance_valid(panel) or not panel.visible:
+			continue
+
+		var sett_info = _find_settlement_at_tile(coords.x, coords.y)
+		if not sett_info is Dictionary:
+			continue
+
+		var tile_center := terrain_tilemap.map_to_local(coords)
+		var panel_scale := panel.scale.x  # uniform scale = 1/zoom
+
+		# --- Tail ---
+		var actual_size := panel.size
+		if actual_size.x <= 0 or actual_size.y <= 0:
+			actual_size = panel.get_minimum_size()
+		var scaled_size := actual_size * panel.scale
+		var panel_bottom_center := panel.position + Vector2(scaled_size.x * 0.5, scaled_size.y)
+		var bg_color: Color = panel.get_meta("bg_color", settlement_panel_background_color)
+
+		tail_list.append({
+			"panel_bottom_center": panel_bottom_center,
+			"tile_center":         tile_center,
+			"bg_color":            bg_color,
+			"panel_scale":         panel_scale,
+		})
+
+		# --- Tile icon ---
+		var sett_type: String = panel.get_meta("sett_type", "")
+		var emoji: String = SETTLEMENT_EMOJIS.get(sett_type, "")
+		if not emoji.is_empty():
+			icon_list.append({
+				"tile_center": tile_center,
+				"emoji":       emoji,
+			})
+
+	_settlement_overlay.update_frame(tail_list, icon_list, _current_map_zoom_cache, settlement_label_settings.font)
+
 
 func _on_map_overlay_settings_changed(_settings: Dictionary) -> void:
 	if _debug_map_menu:
@@ -923,18 +1006,12 @@ func _get_convoy_cargo_destination_coords(convoy: Dictionary) -> Array[Vector2i]
 func _get_settlement_departing_destinations(settlement: Dictionary) -> Array[Vector2i]:
 	var dest_coords: Array[Vector2i] = []
 	var sett_id = str(settlement.get("sett_id", settlement.get("id", "")))
-	
-	var ItemsData = load("res://Scripts/Data/Items.gd")
-	
+	var sett_name = str(settlement.get("name", sett_id))
+
 	var inspect_cargo_array = func(cargo: Array, source_name: String):
 		for item in cargo:
 			if item is Dictionary:
-				var is_delivery = false
-				if ItemsData and ItemsData.DeliveryCargoItem:
-					is_delivery = ItemsData.DeliveryCargoItem._looks_like_delivery_dict(item)
-				else:
-					is_delivery = item.get("recipient") != null or item.get("delivery_reward", 0.0) > 0.0 or item.get("unit_delivery_reward", 0.0) > 0.0
-					
+				var is_delivery = CargoItem.DeliveryCargoItem._looks_like_delivery_dict(item)
 				if is_delivery:
 					# Available vendor contracts have no destination in the backend payload —
 					# the destination is only known after pickup. So we mark the origin
@@ -944,13 +1021,16 @@ func _get_settlement_departing_destinations(settlement: Dictionary) -> Array[Vec
 						coords = Vector2i(int(settlement.get("x", 0)), int(settlement.get("y", 0)))
 					if not dest_coords.has(coords):
 						dest_coords.append(coords)
-					
+
+	if _debug_map_menu:
+		print("[UIManager] _get_settlement_departing_destinations: scanning '%s' (id=%s)" % [sett_name, sett_id])
+
 	# 1. Direct cargo keys on the settlement dictionary itself
 	for key in ["cargo_inventory", "cargo", "cargo_items", "cargo_items_typed", "contracts", "missions"]:
 		var cargo = settlement.get(key)
 		if cargo is Array and not cargo.is_empty():
 			inspect_cargo_array.call(cargo, "settlement key: " + key)
-					
+
 	# 2. Inspect cargo stored in the vendors of this settlement
 	var vendors = settlement.get("vendors", [])
 	if vendors is Array:
@@ -961,7 +1041,7 @@ func _get_settlement_departing_destinations(settlement: Dictionary) -> Array[Vec
 					var cargo = v.get(key)
 					if cargo is Array and not cargo.is_empty():
 						inspect_cargo_array.call(cargo, "vendor (" + v_name + ") key: " + key)
-						
+
 	# 3. Inspect cargo stored in the player's warehouse at this settlement
 	if sett_id != "" and is_instance_valid(_user_service) and _user_service.has_method("get_user"):
 		var user = _user_service.get_user()
@@ -976,9 +1056,9 @@ func _get_settlement_departing_destinations(settlement: Dictionary) -> Array[Vec
 								var cargo = w.get(key)
 								if cargo is Array and not cargo.is_empty():
 									inspect_cargo_array.call(cargo, "warehouse key: " + key)
-									
-	if dest_coords.is_empty():
-		pass # No departing destinations found — settlement has no accepted mission cargo with destinations
+
+	if _debug_map_menu:
+		print("[UIManager] _get_settlement_departing_destinations: '%s' → %d destinations found" % [sett_name, dest_coords.size()])
 	return dest_coords
 
 
@@ -1014,6 +1094,7 @@ func _update_settlement_panel_content(panel: Panel, settlement_info: Dictionary,
 		
 	label_node.text = final_text
 	style_box.bg_color = settlement_panel_background_color
+	panel.set_meta("sett_type", settlement_type) # used by overlay draw for tile icon
 	
 	# Apply premium visual border accents based on targeting convoys or warehouse status
 	if not targeting_convoys.is_empty():
@@ -1036,6 +1117,9 @@ func _update_settlement_panel_content(panel: Panel, settlement_info: Dictionary,
 		style_box.border_width_right = 0
 		style_box.border_width_top = 0
 		style_box.border_width_bottom = 0
+
+	# Store final resolved bg color so the callout tail can match it.
+	panel.set_meta("bg_color", style_box.bg_color)
 
 	style_box.corner_radius_top_left = floori(current_settlement_panel_corner_radius)
 	style_box.corner_radius_top_right = floori(current_settlement_panel_corner_radius)

@@ -15,6 +15,7 @@ signal map_ready_for_focus
 @onready var map_interaction_manager: Node = $MapInteractionManager
 @onready var map_camera_controller: Node = $MapInteractionManager/MapCameraController
 @onready var convoy_visuals_manager: Node = $ConvoyVisualsManager
+@onready var convoy_icon_container: Node2D = $MapContainer/SubViewport/ConvoyIconContainer
 # The owner of an instanced scene is the root node of the scene that contains the instance.
 # In this case, MainScreen.tscn instances MapView.tscn, so MainScreen is the owner.
 @onready var main_screen: Control = get_owner()
@@ -146,7 +147,8 @@ func initialize_all_components():
 			map_camera,
 			sub_viewport,
 			_selected_convoy_ids,
-			_convoy_label_user_positions
+			_convoy_label_user_positions,
+			map_display  # TextureRect — passed directly since it was reparented before this call
 		)
 		if not map_interaction_manager.is_connected("selection_changed", Callable(self, "_on_selection_changed")):
 			map_interaction_manager.connect("selection_changed", Callable(self, "_on_selection_changed"))
@@ -167,7 +169,9 @@ func initialize_all_components():
 				if convoy_visuals_manager.get_parent():
 					convoy_visuals_manager.get_parent().remove_child(convoy_visuals_manager)
 				sub_viewport.add_child(convoy_visuals_manager)
-		convoy_visuals_manager.initialize(convoy_visuals_manager, terrain_tilemap)
+		# ConvoyIconContainer is a Node2D inside the SubViewport so icons render
+		# in the same coordinate space as the tilemap and labels.
+		convoy_visuals_manager.initialize(convoy_icon_container, terrain_tilemap)
 
 	print("--- Main Initialization Complete ---")
 	_map_and_ui_setup_complete = true
