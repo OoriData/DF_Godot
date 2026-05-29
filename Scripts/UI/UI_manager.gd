@@ -802,13 +802,10 @@ func _ensure_settlement_overlay() -> void:
 	_settlement_overlay = Node2D.new()
 	_settlement_overlay.set_script(script)
 	_settlement_overlay.z_index = -1  # render behind label panels
-	# Pass the font once after LabelSettings is initialised
-	if is_instance_valid(settlement_label_settings) and is_instance_valid(settlement_label_settings.font):
-		_settlement_overlay.icon_font = settlement_label_settings.font
 	settlement_label_container.add_child(_settlement_overlay)
 
 
-## Collect tail + icon data from all visible panels and push to the overlay node.
+## Collect tail + outline data from all visible panels and push to the overlay node.
 ## Called at the end of _draw_interactive_labels after all panels are positioned.
 func _refresh_settlement_overlay(drawn_coords: Array) -> void:
 	_ensure_settlement_overlay()
@@ -818,12 +815,12 @@ func _refresh_settlement_overlay(drawn_coords: Array) -> void:
 		_settlement_overlay.clear_frame()
 		return
 
-	# Keep the font in sync (font may load after _ready).
-	if is_instance_valid(settlement_label_settings) and is_instance_valid(settlement_label_settings.font):
-		_settlement_overlay.icon_font = settlement_label_settings.font
+	var tile_size: Vector2 = Vector2(32.0, 32.0)
+	if is_instance_valid(terrain_tilemap) and is_instance_valid(terrain_tilemap.tile_set):
+		tile_size = Vector2(terrain_tilemap.tile_set.tile_size)
 
-	var tail_list: Array = []
-	var icon_list: Array = []
+	var tail_list: Array    = []
+	var outline_list: Array = []
 
 	for coords in drawn_coords:
 		var coord_str := "%s_%s" % [coords.x, coords.y]
@@ -835,16 +832,16 @@ func _refresh_settlement_overlay(drawn_coords: Array) -> void:
 		if not sett_info is Dictionary:
 			continue
 
-		var tile_center := terrain_tilemap.map_to_local(coords)
-		var panel_scale := panel.scale.x  # uniform scale = 1/zoom
+		var tile_center: Vector2 = terrain_tilemap.map_to_local(coords)
+		var panel_scale: float   = panel.scale.x  # uniform scale = 1/zoom
 
 		# --- Tail ---
-		var actual_size := panel.size
+		var actual_size: Vector2 = panel.size
 		if actual_size.x <= 0 or actual_size.y <= 0:
 			actual_size = panel.get_minimum_size()
-		var scaled_size := actual_size * panel.scale
-		var panel_bottom_center := panel.position + Vector2(scaled_size.x * 0.5, scaled_size.y)
-		var bg_color: Color = panel.get_meta("bg_color", settlement_panel_background_color)
+		var scaled_size: Vector2        = actual_size * panel.scale
+		var panel_bottom_center: Vector2 = panel.position + Vector2(scaled_size.x * 0.5, scaled_size.y)
+		var bg_color: Color             = panel.get_meta("bg_color", settlement_panel_background_color)
 
 		tail_list.append({
 			"panel_bottom_center": panel_bottom_center,
@@ -853,16 +850,12 @@ func _refresh_settlement_overlay(drawn_coords: Array) -> void:
 			"panel_scale":         panel_scale,
 		})
 
-		# --- Tile icon ---
-		var sett_type: String = panel.get_meta("sett_type", "")
-		var emoji: String = SETTLEMENT_EMOJIS.get(sett_type, "")
-		if not emoji.is_empty():
-			icon_list.append({
-				"tile_center": tile_center,
-				"emoji":       emoji,
-			})
+		# --- Tile outline ---
+		outline_list.append({
+			"tile_center": tile_center,
+		})
 
-	_settlement_overlay.update_frame(tail_list, icon_list, _current_map_zoom_cache, settlement_label_settings.font)
+	_settlement_overlay.update_frame(tail_list, outline_list, _current_map_zoom_cache, tile_size)
 
 
 func _on_map_overlay_settings_changed(_settings: Dictionary) -> void:
