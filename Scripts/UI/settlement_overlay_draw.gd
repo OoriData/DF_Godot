@@ -1,52 +1,65 @@
 extends Node2D
 ## settlement_overlay_draw.gd
 ##
-## Draws two world-space overlays for every visible settlement label:
-##   1. Callout tail  — filled triangle from label panel bottom-center to tile center.
-##   2. Tile outline  — contrasting rectangle drawn exactly around the settlement tile.
+## Draws four world-space overlays for visible settlement labels:
+##   1. Route arcs    — curved arrows from focus origin to each cargo destination.
+##   2. Callout tails — filled triangle from label panel bottom-center to tile center.
+##   3. Tile outlines — contrasting rectangle drawn exactly around a settlement tile.
+##   4. Focus pins    — location-pin shape above tiles that are the active focus origin.
 ##
 ## This node should be a child of settlement_label_container (Node2D, world-space).
 ## UIManager calls update_frame() each draw pass to push fresh data.
 
 # --- Data structs fed by UIManager each frame ---
 
-## One entry per visible settlement panel.
 ## {
-##   "panel_bottom_center": Vector2,  # world-space bottom-center of the label panel
-##   "tile_center":         Vector2,  # world-space tile center (map_to_local)
-##   "bg_color":            Color,    # panel background color so the tail blends in
-##   "panel_scale":         float,    # 1/zoom — tail width is expressed in world units
+##   "panel_bottom_center": Vector2,
+##   "tile_center":         Vector2,
+##   "bg_color":            Color,
+##   "panel_scale":         float,
 ## }
 var tail_data: Array = []
 
-## One entry per visible settlement — just needs tile_center.
 ## {
 ##   "tile_center": Vector2,
+##   "color":       Color,
 ## }
 var outline_data: Array = []
 
+## {
+##   "tile_center": Vector2,
+##   "color":       Color,
+## }
+var focus_pins_data: Array = []
+
+## {
+##   "from":  Vector2,   # world-space source tile center
+##   "to":    Vector2,   # world-space destination tile center
+##   "color": Color,
+## }
+var arc_data: Array = []
+
 # --- Appearance tweakables ---
 
-## Half-width of the tail base in screen-pixels (counter-scaled per tail entry).
-var tail_half_width_px: float = 5.5
+var tail_half_width_px: float  = 5.5
+var tail_min_dist: float       = 6.0
+var outline_width_px: float    = 2.0
+var outline_color: Color       = Color(1.0, 1.0, 1.0, 0.75)
+var outline_inset_px: float    = 1.0
+var pin_head_radius_px: float  = 5.0
+var pin_gap_px: float          = 2.0
 
-## Minimum panel-to-tile distance before a tail is drawn (world units at zoom 1).
-var tail_min_dist: float = 6.0
+## Stroke width of arc lines in screen-pixels.
+var arc_width_px: float        = 1.5
+## Arrowhead size in screen-pixels.
+var arc_arrow_size_px: float   = 7.0
+## Number of line segments used to approximate each arc.
+var arc_segments: int          = 28
+## How much the arc bows sideways — fraction of the chord length.
+var arc_bow_fraction: float    = 0.28
 
-## Tile outline stroke width in screen-pixels.  Counter-scaled so it stays crisp at any zoom.
-var outline_width_px: float = 2.0
-
-## Tile outline color.  Bright with slight transparency so it reads on any terrain.
-var outline_color: Color = Color(1.0, 1.0, 1.0, 0.75)
-
-## Inset the outline inward by this many screen-pixels so it sits fully inside the tile edge.
-var outline_inset_px: float = 1.0
-
-# Tile size in world units — set from UIManager via update_frame().
 var _tile_size: Vector2 = Vector2(32.0, 32.0)
-
-# Current zoom, used to counter-scale screen-constant elements.
-var _zoom: float = 1.0
+var _zoom: float        = 1.0
 
 
 # -------------------------------------------------------------------
@@ -57,28 +70,79 @@ func update_frame(
 		p_tail_data: Array,
 		p_outline_data: Array,
 		p_zoom: float,
-		p_tile_size: Vector2
+		p_tile_size: Vector2,
+		p_focus_pins_data: Array = [],
+		p_arc_data: Array = []
 ) -> void:
-	tail_data    = p_tail_data
-	outline_data = p_outline_data
-	_zoom        = p_zoom
-	_tile_size   = p_tile_size
+	tail_data       = p_tail_data
+	outline_data    = p_outline_data
+	focus_pins_data = p_focus_pins_data
+	arc_data        = p_arc_data
+	_zoom           = p_zoom
+	_tile_size      = p_tile_size
 	queue_redraw()
 
 
 func clear_frame() -> void:
-	tail_data    = []
-	outline_data = []
+	tail_data       = []
+	outline_data    = []
+	focus_pins_data = []
+	arc_data        = []
 	queue_redraw()
 
 
 # -------------------------------------------------------------------
-# Draw
+# Draw  (order matters for layering)
 # -------------------------------------------------------------------
 
 func _draw() -> void:
+	_draw_arcs()          # beneath everything
 	_draw_tile_outlines()
 	_draw_tails()
+	_draw_focus_pins()    # on top
+
+
+func _draw_arcs() -> void:
+	if arc_data.is_empty():
+		return
+	var inv_zoom: float  = 1.0 / max(0.001, _zoom)
+	var line_w: float    = arc_width_px  * inv_zoom
+	var arrow_sz: float  = arc_arrow_size_px * inv_zoom
+
+	for d in arc_data:
+		var src: Vector2 = d.get("from",  Vector2.ZERO)
+		var dst: Vector2 = d.get("to",    Vector2.ZERO)
+		var col: Color   = d.get("color", Color(1.0, 1.0, 1.0, 0.55))
+		if col.a < 0.01:
+			continue
+		var chord: float = src.distance_to(dst)
+		if chord < _tile_size.x * 0.5:
+			continue
+
+		# Control point: perpendicular left of travel direction, bowing outward.
+		var dir: Vector2  = (dst - src) / chord
+		var perp: Vector2 = Vector2(-dir.y, dir.x)
+		var ctrl: Vector2 = (src + dst) * 0.5 + perp * chord * arc_bow_fraction
+
+		# Sample quadratic bezier.
+		var pts: PackedVector2Array = PackedVector2Array()
+		pts.resize(arc_segments + 1)
+		for i in range(arc_segments + 1):
+			var t: float  = float(i) / float(arc_segments)
+			var mt: float = 1.0 - t
+			pts[i] = mt * mt * src + 2.0 * mt * t * ctrl + t * t * dst
+
+		draw_polyline(pts, col, line_w, true)
+
+		# Arrowhead at destination — tangent at t=1 is (dst - ctrl).
+		var a_dir: Vector2  = (dst - ctrl).normalized()
+		var a_perp: Vector2 = Vector2(-a_dir.y, a_dir.x)
+		var base: Vector2   = dst - a_dir * arrow_sz
+		draw_colored_polygon(PackedVector2Array([
+			dst,
+			base + a_perp * arrow_sz * 0.45,
+			base - a_perp * arrow_sz * 0.45,
+		]), col)
 
 
 func _draw_tile_outlines() -> void:
@@ -89,12 +153,14 @@ func _draw_tile_outlines() -> void:
 
 	for d in outline_data:
 		var center: Vector2 = d.get("tile_center", Vector2.ZERO)
-		# Build the inset rect so the stroke stays fully inside the tile.
+		var col: Color      = d.get("color", outline_color)
+		if col.a < 0.01:
+			continue
 		var rect: Rect2 = Rect2(
 			center - half + Vector2(inset, inset),
 			_tile_size - Vector2(inset, inset) * 2.0
 		)
-		draw_rect(rect, outline_color, false, stroke)
+		draw_rect(rect, col, false, stroke)
 
 
 func _draw_tails() -> void:
@@ -103,21 +169,48 @@ func _draw_tails() -> void:
 		var tip: Vector2    = d.get("tile_center",          Vector2.ZERO)
 		var bg: Color       = d.get("bg_color",             Color(0.14, 0.16, 0.21, 0.90))
 		var pscale: float   = d.get("panel_scale",          1.0)
-
-		var dist: float = bottom.distance_to(tip)
+		var dist: float     = bottom.distance_to(tip)
 		if dist < tail_min_dist:
 			continue
+		var dir: Vector2  = (tip - bottom) / dist
+		var perp: Vector2 = Vector2(-dir.y, dir.x)
+		var hw: float     = tail_half_width_px * pscale
+		draw_colored_polygon(PackedVector2Array([
+			bottom - perp * hw,
+			bottom + perp * hw,
+			tip,
+		]), bg)
 
-		# Direction from panel bottom toward tile center.
-		var dir: Vector2  = (tip - bottom) / dist   # normalised
-		var perp: Vector2 = Vector2(-dir.y, dir.x)  # perpendicular
 
-		# Tail base width in world units = screen px * panel_scale (= 1/zoom).
-		var hw: float = tail_half_width_px * pscale
+func _draw_focus_pins() -> void:
+	if focus_pins_data.is_empty():
+		return
+	var inv_zoom: float = 1.0 / max(0.001, _zoom)
+	var head_r: float   = pin_head_radius_px * inv_zoom
+	var gap: float      = pin_gap_px * inv_zoom
+	var half_y: float   = _tile_size.y * 0.5
 
-		var pts: PackedVector2Array = PackedVector2Array([
-			bottom - perp * hw,   # base left
-			bottom + perp * hw,   # base right
-			tip                   # tip at tile center
-		])
-		draw_colored_polygon(pts, bg)
+	for d in focus_pins_data:
+		var center: Vector2 = d.get("tile_center", Vector2.ZERO)
+		var col: Color      = d.get("color", Color.WHITE)
+		if col.a < 0.01:
+			continue
+		var tile_top: Vector2 = center + Vector2(0.0, -half_y)
+		var pin_tip: Vector2  = tile_top  - Vector2(0.0, gap)
+		var head_c: Vector2   = pin_tip   - Vector2(0.0, head_r * 1.8)
+
+		# Shadow.
+		draw_circle(head_c + Vector2(inv_zoom, inv_zoom * 1.5), head_r + inv_zoom,
+				Color(0.0, 0.0, 0.0, col.a * 0.45))
+
+		# Body triangle.
+		var body_hw: float = head_r * 0.55
+		draw_colored_polygon(PackedVector2Array([
+			head_c + Vector2(-body_hw,  head_r * 0.55),
+			head_c + Vector2( body_hw,  head_r * 0.55),
+			pin_tip,
+		]), col)
+
+		# Head circle + inner dot.
+		draw_circle(head_c, head_r, col)
+		draw_circle(head_c, head_r * 0.38, Color(1.0, 1.0, 1.0, col.a * 0.85))

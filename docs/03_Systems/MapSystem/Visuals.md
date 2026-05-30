@@ -43,7 +43,19 @@ Map labels are built to stay readable at all zoom levels and prevent UI clutter.
 - **Anti-Collision**: `convoy_label_manager.gd` calculates the screen-space bounding boxes of all labels. If two labels overlap, it applies a vertical offset (stacking) to keep them both readable.
 - **Scaling**: Labels dynamically scale based on camera zoom to avoid overwhelming the map view at high altitudes.
 
+## Settlement Overlay
+
+A separate overlay system annotates settlement tiles with callout tails, tile outlines, focus pins, and route arcs. See [[SettlementOverlay]] for full details.
+
+**Key points:**
+- Drawn by `settlement_overlay_draw.gd` (a `Node2D` with a custom `_draw()` implementation).
+- Two instances are created at runtime — one at `z_index = -1` (tails, outlines, arcs behind panels) and one at `z_index = 10` (pins in front of panels).
+- All sizes are specified in screen-pixels and divided by zoom so they stay constant regardless of camera zoom.
+- Route arcs use quadratic Bézier curves bowing left of the travel direction.
+- Color coding and alpha dimming communicate which settlements correlate to which convoy.
+
 ## Controllers
 - `convoy_visuals_manager.gd`
 - `convoy_label_manager.gd`
+- `settlement_overlay_draw.gd`
 - [ConvoyNode.gd](../../../Scripts/Map/ConvoyNode.gd)

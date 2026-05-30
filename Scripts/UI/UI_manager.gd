@@ -37,6 +37,10 @@ var settlement_label_settings: LabelSettings
 ## Exponent for font scaling (1.0 = linear, <1.0 less aggressive shrink/grow).
 @export var font_scaling_exponent: float = 0.6 
 
+@export_group("Zoom Smoothing")
+## How fast label panels lerp to the new zoom scale. Higher = snappier. ~8 feels smooth, ~20 is near-instant.
+@export var zoom_lerp_speed: float = 10.0
+
 @export_group("Label Offsets")
 ## Base horizontal offset from the convoy's center for its label panel. Scaled.
 @export var base_horizontal_label_offset_from_center: float = 20.0 # 15 * 1.33
@@ -125,12 +129,17 @@ var _all_settlement_data_cache: Array
 var _convoy_id_to_color_map_cache: Dictionary
 var _convoy_data_by_id_cache: Dictionary # New cache for quick lookup
 var _selected_convoy_ids_cache: Array # Stored as strings
-var _current_map_zoom_cache: float = 1.0 # Cache for current map zoom level
+var _current_map_zoom_cache: float = 1.0 # Cache for current map zoom level (the real/target zoom)
+var _display_zoom: float = 1.0            # Smoothed zoom used for panel scale — lerps toward _current_map_zoom_cache
 var _current_hover_info_cache: Dictionary = {} # Cache for hover state
 var _current_map_screen_rect_for_clamping: Rect2
 
 var _active_settlement_panels: Dictionary = {} # { "tile_coord_str": PanelNode }
 var _pinned_settlement_coords: Array[Vector2i] = []
+
+# Set each draw pass — used by overlay and dimming logic.
+var _coords_to_targeting_convoys: Dictionary = {}  # Vector2i → Array[String convoy_id]
+var _focused_convoy_ids_last: Array[String] = []   # focused convoy IDs from last draw pass
 
 # Z-index for label containers within MapContainer, relative to MapDisplay and ConvoyNodes
 const LABEL_CONTAINER_Z_INDEX = 2
@@ -151,7 +160,8 @@ var _preview_settlement_coords: Variant = null
 var _convoy_label_manager_initialized: bool = false
 
 # Settlement overlay: draws callout tails and tile icons (settlement_overlay_draw.gd)
-var _settlement_overlay: Node = null
+var _settlement_overlay: Node = null  # tails + outlines (z_index -1, behind panels)
+var _pin_overlay: Node = null          # focus pins only  (z_index 10, in front of panels)
 
 func _ready():
 	await get_tree().process_frame
@@ -266,6 +276,37 @@ func _ready():
 	if is_instance_valid(_hub) and _hub.has_signal("map_overlay_settings_changed"):
 		if not _hub.map_overlay_settings_changed.is_connected(_on_map_overlay_settings_changed):
 			_hub.map_overlay_settings_changed.connect(_on_map_overlay_settings_changed)
+
+
+func _process(delta: float) -> void:
+	# Smoothly lerp the display zoom toward the real zoom each frame.
+	# While it's still converging, redraw so panel scales animate continuously.
+	if is_equal_approx(_display_zoom, _current_map_zoom_cache):
+		return
+	_display_zoom = lerp(_display_zoom, _current_map_zoom_cache, clampf(delta * zoom_lerp_speed, 0.0, 1.0))
+	# Snap to target when close enough to avoid infinite micro-animation.
+	if absf(_display_zoom - _current_map_zoom_cache) < 0.0005:
+		_display_zoom = _current_map_zoom_cache
+	# Redraw settlement labels with smoothed zoom.
+	_draw_interactive_labels(_current_hover_info_cache)
+	# Redraw convoy labels with smoothed zoom.
+	if is_instance_valid(convoy_label_manager) \
+			and convoy_label_manager.has_method("update_drawing_parameters") \
+			and is_instance_valid(terrain_tilemap) \
+			and is_instance_valid(terrain_tilemap.tile_set):
+		var ts = terrain_tilemap.tile_set.tile_size
+		convoy_label_manager.update_drawing_parameters(ts.x, ts.y, _display_zoom, 1.0, 0.0, 0.0)
+	if is_instance_valid(convoy_label_manager) and convoy_label_manager.has_method("update_convoy_labels"):
+		convoy_label_manager.update_convoy_labels(
+			_all_convoy_data_cache,
+			_convoy_id_to_color_map_cache,
+			_current_hover_info_cache,
+			_selected_convoy_ids_cache,
+			_convoy_label_user_positions,
+			_dragging_panel_node,
+			_dragged_convoy_id_actual_str,
+			_current_map_screen_rect_for_clamping,
+		)
 
 
 func _print_ui_tree(node: Node, indent: int):
@@ -387,7 +428,7 @@ func update_ui_elements(
 			and is_instance_valid(terrain_tilemap) \
 			and is_instance_valid(terrain_tilemap.tile_set):
 		var ts = terrain_tilemap.tile_set.tile_size
-		convoy_label_manager.update_drawing_parameters(ts.x, ts.y, current_map_zoom, 1.0, 0.0, 0.0)
+		convoy_label_manager.update_drawing_parameters(ts.x, ts.y, _display_zoom, 1.0, 0.0, 0.0)
 	# Delegate convoy label updates to ConvoyLabelManager.
 	if is_instance_valid(convoy_label_manager) and convoy_label_manager.has_method("update_convoy_labels"):
 		convoy_label_manager.update_convoy_labels(
@@ -514,11 +555,13 @@ func _draw_interactive_labels(current_hover_info: Dictionary):
 	if not _selected_convoy_ids_cache.is_empty():
 		for fcid in _selected_convoy_ids_cache:
 			focused_convoy_ids.append(str(fcid))
-		
+
 	if current_hover_info.get('type') == 'convoy':
 		var hover_id = str(current_hover_info.get('id', ''))
 		if hover_id != '' and not focused_convoy_ids.has(hover_id):
 			focused_convoy_ids.append(hover_id)
+
+	_focused_convoy_ids_last = focused_convoy_ids
 
 	if is_far_zoom:
 		# ONLY hide generic settlements on far zoom, but leave the active/local targets visible!
@@ -742,12 +785,93 @@ func _draw_interactive_labels(current_hover_info: Dictionary):
 			if is_instance_valid(panel_to_hide): panel_to_hide.queue_free() # Or just hide
 			_active_settlement_panels.erase(existing_coord_str)
 
+	# Persist targeting map for overlay + dimming.
+	_coords_to_targeting_convoys = coords_to_targeting_convoys
+
+	# --- Dimming: determine which panels are "related" to the current focus ---
+	_apply_settlement_panel_dimming(
+		focused_convoy_ids,
+		current_hover_info,
+		coords_to_targeting_convoys,
+		drawn_settlement_tile_coords_this_update
+	)
+
 	# Request redraw for connector lines (this part is fine)
 	if is_instance_valid(convoy_connector_lines_container):
 		convoy_connector_lines_container.queue_redraw()
 
-	# Refresh settlement tails + tile icons overlay
+	# Refresh settlement tails + tile outlines overlay
 	_refresh_settlement_overlay(drawn_settlement_tile_coords_this_update)
+
+## Dim settlement panels that are unrelated to the current focus (selected/hovered convoy or settlement).
+## Related panels stay at full opacity; unrelated ones fade to DIM_ALPHA.
+func _apply_settlement_panel_dimming(
+		focused_ids: Array[String],
+		hover_info: Dictionary,
+		targeting_map: Dictionary,
+		drawn_coords: Array
+) -> void:
+	const DIM_ALPHA: float = 0.25
+	const FULL_ALPHA: float = 1.0
+
+	var hover_type: String  = hover_info.get("type", "")
+	var hover_coords: Variant = hover_info.get("coords", null)
+	var is_settlement_hovered: bool = hover_type == "settlement" and hover_coords is Vector2i
+
+	# No focus at all → restore everything to full brightness.
+	if focused_ids.is_empty() and not is_settlement_hovered:
+		for coord_str in _active_settlement_panels.keys():
+			var p: Panel = _active_settlement_panels[coord_str]
+			if is_instance_valid(p):
+				p.modulate = Color.WHITE
+		return
+
+	# Build the set of "related" coords.
+	var related: Dictionary = {}  # Vector2i → true (used as a set)
+
+	# 1. Settlements targeted by any focused convoy.
+	for coord in targeting_map.keys():
+		var ids: Array = targeting_map[coord]
+		for fid in focused_ids:
+			if ids.has(fid):
+				related[coord] = true
+				break
+
+	# 2. Settlement the focused convoy is currently sitting on.
+	for convoy_data in _all_convoy_data_cache:
+		if not convoy_data is Dictionary:
+			continue
+		var cid: String = str(convoy_data.get("convoy_id", ""))
+		if not focused_ids.has(cid):
+			continue
+		var cx: float = float(convoy_data.get("x", -999.0))
+		var cy: float = float(convoy_data.get("y", -999.0))
+		var sett = _find_closest_settlement(cx, cy, 2.5)
+		if sett is Dictionary:
+			related[Vector2i(int(sett.get("x", 0)), int(sett.get("y", 0)))] = true
+
+	# 3. Hovered settlement + its route-mates.
+	if is_settlement_hovered:
+		related[hover_coords] = true
+		var hovered_ids: Array = targeting_map.get(hover_coords, [])
+		for coord in targeting_map.keys():
+			var ids: Array = targeting_map[coord]
+			for tid in ids:
+				if hovered_ids.has(tid):
+					related[coord] = true
+					break
+
+	# Apply modulate to every visible panel.
+	for coord_str in _active_settlement_panels.keys():
+		var p: Panel = _active_settlement_panels[coord_str]
+		if not is_instance_valid(p) or not p.visible:
+			continue
+		var parts: PackedStringArray = coord_str.split("_")
+		if parts.size() != 2:
+			continue
+		var coord := Vector2i(parts[0].to_int(), parts[1].to_int())
+		p.modulate = Color(1.0, 1.0, 1.0, FULL_ALPHA if related.has(coord) else DIM_ALPHA)
+
 
 # The following functions related to convoy panels will be moved to ConvoyLabelManager.gd:
 # _create_convoy_panel
@@ -801,8 +925,13 @@ func _ensure_settlement_overlay() -> void:
 		return
 	_settlement_overlay = Node2D.new()
 	_settlement_overlay.set_script(script)
-	_settlement_overlay.z_index = -1  # render behind label panels
+	_settlement_overlay.z_index = -1  # behind panels — tails + outlines only
 	settlement_label_container.add_child(_settlement_overlay)
+
+	_pin_overlay = Node2D.new()
+	_pin_overlay.set_script(script)
+	_pin_overlay.z_index = 10  # in front of panels — pins only
+	settlement_label_container.add_child(_pin_overlay)
 
 
 ## Collect tail + outline data from all visible panels and push to the overlay node.
@@ -813,6 +942,8 @@ func _refresh_settlement_overlay(drawn_coords: Array) -> void:
 		return
 	if not is_instance_valid(terrain_tilemap):
 		_settlement_overlay.clear_frame()
+		if is_instance_valid(_pin_overlay):
+			_pin_overlay.clear_frame()
 		return
 
 	var tile_size: Vector2 = Vector2(32.0, 32.0)
@@ -822,6 +953,7 @@ func _refresh_settlement_overlay(drawn_coords: Array) -> void:
 	var tail_list: Array    = []
 	var outline_list: Array = []
 
+	# --- Build panel-based tails and outlines ---
 	for coords in drawn_coords:
 		var coord_str := "%s_%s" % [coords.x, coords.y]
 		var panel: Panel = _active_settlement_panels.get(coord_str)
@@ -839,9 +971,10 @@ func _refresh_settlement_overlay(drawn_coords: Array) -> void:
 		var actual_size: Vector2 = panel.size
 		if actual_size.x <= 0 or actual_size.y <= 0:
 			actual_size = panel.get_minimum_size()
-		var scaled_size: Vector2        = actual_size * panel.scale
+		var scaled_size: Vector2         = actual_size * panel.scale
 		var panel_bottom_center: Vector2 = panel.position + Vector2(scaled_size.x * 0.5, scaled_size.y)
-		var bg_color: Color             = panel.get_meta("bg_color", settlement_panel_background_color)
+		var bg_color: Color              = panel.get_meta("bg_color", settlement_panel_background_color)
+		bg_color.a *= panel.modulate.a
 
 		tail_list.append({
 			"panel_bottom_center": panel_bottom_center,
@@ -851,11 +984,123 @@ func _refresh_settlement_overlay(drawn_coords: Array) -> void:
 		})
 
 		# --- Tile outline ---
+		var outline_col: Color = panel.get_meta("outline_color", Color.TRANSPARENT)
+		if outline_col == Color.TRANSPARENT:
+			outline_col = Color(1.0, 1.0, 1.0, 0.55)
+		outline_col.a *= panel.modulate.a
 		outline_list.append({
 			"tile_center": tile_center,
+			"color":       outline_col,
 		})
 
-	_settlement_overlay.update_frame(tail_list, outline_list, _current_map_zoom_cache, tile_size)
+	# --- Focus pins — built from persistent state, not hover ---
+	# Pins mark the origin of the current focus so the user always knows what's highlighted.
+	# Sources (all persistent, not hover-dependent):
+	#   1. Selected convoys  (_selected_convoy_ids_cache)
+	#   2. Pinned convoys    (convoy_label_manager._pinned_convoy_ids via accessor)
+	#   3. Pinned settlements (_pinned_settlement_coords)
+	# Hover adds a temporary extra pin on top.
+	var focus_pins: Array = []
+
+	# Collect all persistent focused convoy IDs (selected + pinned).
+	var persistent_convoy_ids: Dictionary = {}  # id → true (set)
+	if _selected_convoy_ids_cache is Array:
+		for cid in _selected_convoy_ids_cache:
+			persistent_convoy_ids[str(cid)] = true
+	if is_instance_valid(convoy_label_manager) and convoy_label_manager.has_method("get_pinned_convoy_ids"):
+		for cid in convoy_label_manager.get_pinned_convoy_ids():
+			persistent_convoy_ids[str(cid)] = true
+
+	# Pin at each focused convoy's current tile.
+	for convoy_data in _all_convoy_data_cache:
+		if not convoy_data is Dictionary:
+			continue
+		var cid: String = str(convoy_data.get("convoy_id", ""))
+		if not persistent_convoy_ids.has(cid):
+			continue
+		var cx: float = float(convoy_data.get("x", -999.0))
+		var cy: float = float(convoy_data.get("y", -999.0))
+		if cx < 0.0 or cy < 0.0:
+			continue
+		var convoy_col: Color = _convoy_id_to_color_map_cache.get(cid, Color.WHITE)
+		focus_pins.append({
+			"tile_center": terrain_tilemap.map_to_local(Vector2i(floori(cx), floori(cy))),
+			"color":       convoy_col,
+		})
+
+	# Pin at each pinned settlement.
+	for pinned_coords in _pinned_settlement_coords:
+		focus_pins.append({
+			"tile_center": terrain_tilemap.map_to_local(pinned_coords),
+			"color":       Color(1.0, 1.0, 1.0, 0.95),
+		})
+
+	# Hover adds a temporary pin (hovered convoy or settlement) on top.
+	var hover_type: String    = _current_hover_info_cache.get("type", "")
+	var hover_coords: Variant = _current_hover_info_cache.get("coords", null)
+	if hover_type == "settlement" and hover_coords is Vector2i:
+		focus_pins.append({
+			"tile_center": terrain_tilemap.map_to_local(hover_coords),
+			"color":       Color(1.0, 1.0, 1.0, 0.95),
+		})
+	elif hover_type == "convoy":
+		var hid: String = str(_current_hover_info_cache.get("id", ""))
+		if not hid.is_empty() and not persistent_convoy_ids.has(hid):
+			# Only add hover pin if not already shown as a persistent pin.
+			for convoy_data in _all_convoy_data_cache:
+				if not convoy_data is Dictionary: continue
+				if str(convoy_data.get("convoy_id", "")) != hid: continue
+				var cx: float = float(convoy_data.get("x", -999.0))
+				var cy: float = float(convoy_data.get("y", -999.0))
+				if cx >= 0.0 and cy >= 0.0:
+					var hcol: Color = _convoy_id_to_color_map_cache.get(hid, Color.WHITE)
+					focus_pins.append({
+						"tile_center": terrain_tilemap.map_to_local(Vector2i(floori(cx), floori(cy))),
+						"color":       hcol,
+					})
+				break
+
+	# --- Route arcs: focused convoy → cargo destinations; pinned settlement → departing destinations ---
+	var arc_list: Array = []
+
+	# Arcs from each focused/selected convoy.
+	for convoy_data in _all_convoy_data_cache:
+		if not convoy_data is Dictionary:
+			continue
+		var cid: String = str(convoy_data.get("convoy_id", ""))
+		if not persistent_convoy_ids.has(cid):
+			continue
+		var cx: float = float(convoy_data.get("x", -999.0))
+		var cy: float = float(convoy_data.get("y", -999.0))
+		if cx < 0.0 or cy < 0.0:
+			continue
+		var src: Vector2    = terrain_tilemap.map_to_local(Vector2i(floori(cx), floori(cy)))
+		var convoy_col: Color = _convoy_id_to_color_map_cache.get(cid, Color.WHITE)
+		var arc_col: Color    = Color(convoy_col.r, convoy_col.g, convoy_col.b, 0.55)
+		for dest_coords in _get_convoy_cargo_destination_coords(convoy_data):
+			arc_list.append({
+				"from":  src,
+				"to":    terrain_tilemap.map_to_local(dest_coords),
+				"color": arc_col,
+			})
+
+	# Arcs from each pinned settlement.
+	for pinned_coords in _pinned_settlement_coords:
+		var sett = _find_settlement_at_tile(pinned_coords.x, pinned_coords.y)
+		if not sett is Dictionary:
+			continue
+		var src: Vector2 = terrain_tilemap.map_to_local(pinned_coords)
+		for dest_coords in _get_settlement_departing_destinations(sett):
+			arc_list.append({
+				"from":  src,
+				"to":    terrain_tilemap.map_to_local(dest_coords),
+				"color": Color(1.0, 1.0, 1.0, 0.45),
+			})
+
+	# Tails + outlines + arcs go behind panels; pins go in front.
+	_settlement_overlay.update_frame(tail_list, outline_list, _current_map_zoom_cache, tile_size, [], arc_list)
+	if is_instance_valid(_pin_overlay):
+		_pin_overlay.update_frame([], [], _current_map_zoom_cache, tile_size, focus_pins)
 
 
 func _on_map_overlay_settings_changed(_settings: Dictionary) -> void:
@@ -1066,7 +1311,7 @@ func _update_settlement_panel_content(panel: Panel, settlement_info: Dictionary,
 	var current_settlement_panel_padding_h: float = base_settlement_panel_padding_h
 	var current_settlement_panel_padding_v: float = base_settlement_panel_padding_v
 	
-	var zoom_factor = max(0.0001, _current_map_zoom_cache)
+	var zoom_factor: float = max(0.0001, _display_zoom)
 	panel.scale = Vector2(1.0 / zoom_factor, 1.0 / zoom_factor)
 	var settlement_name_local: String = settlement_info.get('name', 'N/A')
 	if settlement_name_local == 'N/A': return
@@ -1089,15 +1334,26 @@ func _update_settlement_panel_content(panel: Panel, settlement_info: Dictionary,
 	style_box.bg_color = settlement_panel_background_color
 	panel.set_meta("sett_type", settlement_type) # used by overlay draw for tile icon
 	
-	# Apply premium visual border accents based on targeting convoys or warehouse status
+	# Apply border accent from the owning convoy's color.
+	# Prioritise a focused/selected convoy; fall back to the first targeting convoy.
+	var convoy_accent_color: Color = Color.TRANSPARENT
 	if not targeting_convoys.is_empty():
-		var first_convoy_id = targeting_convoys[0]
-		var border_color = _convoy_id_to_color_map_cache.get(first_convoy_id, Color(0.9, 0.9, 0.9, 0.8))
-		style_box.border_width_left = 3
-		style_box.border_width_right = 3
-		style_box.border_width_top = 3
-		style_box.border_width_bottom = 3
-		style_box.border_color = border_color
+		var chosen_id: String = targeting_convoys[0]
+		for cid in targeting_convoys:
+			if _focused_convoy_ids_last.has(cid):
+				chosen_id = cid
+				break
+		convoy_accent_color = _convoy_id_to_color_map_cache.get(chosen_id, Color(0.9, 0.9, 0.9, 0.8))
+
+	panel.set_meta("outline_color", convoy_accent_color)  # used by tile outline overlay
+
+	if not targeting_convoys.is_empty():
+		var bw: int = 3 if not _focused_convoy_ids_last.is_empty() else 2
+		style_box.border_width_left   = bw
+		style_box.border_width_right  = bw
+		style_box.border_width_top    = bw
+		style_box.border_width_bottom = bw
+		style_box.border_color = convoy_accent_color
 	elif has_warehouse:
 		style_box.border_width_left = 2
 		style_box.border_width_right = 2

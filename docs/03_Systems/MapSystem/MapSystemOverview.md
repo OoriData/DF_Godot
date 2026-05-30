@@ -15,13 +15,13 @@ The Map System is the core spatial engine of *Desolate Frontiers*, responsible f
 
 ## Architecture
 
-The map is rendered within a dedicated **SubViewport** to isolate its 2D world space from the primary UI overlay. This allows for independent scaling, post-processing (like Fog of War), and clean coordinate translation.
+The map is rendered within a dedicated **SubViewport** to isolate its 2D world space from the primary UI overlay. This allows for independent scaling, post-processing (like Fog of War), and clean coordinate translation. Rather than a `SubViewportContainer`, the SubViewport's `ViewportTexture` is shown through a `MapDisplay` `TextureRect` that is stretched to fill the window (see [Rendering](Rendering.md) for why `expand_mode` matters here).
 
 ```mermaid
 graph TD
-    Main[MainScreen: UI Overlay] --> ViewportContainer[SubViewportContainer]
-    ViewportContainer --> Viewport[SubViewport: Isolation Layer]
-    Viewport --> MapView[MapView: The 2D World]
+    Main[MainScreen: UI Overlay] --> MapDisplay[MapDisplay: TextureRect, FULL_RECT]
+    MapDisplay -- displays ViewportTexture --> Viewport[SubViewport: Isolation Layer]
+    Viewport --> MapView_Layers
     
     subgraph MapView_Layers
     Tiles[Terrain TileMapLayer]
@@ -29,8 +29,6 @@ graph TD
     Routes[Route Drawing: Line2D]
     Convoys[Convoy Parent: ConvoyNode Instances]
     end
-    
-    MapView --> MapView_Layers
 ```
 
 ## Coordinate Systems

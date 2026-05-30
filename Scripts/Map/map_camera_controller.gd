@@ -17,6 +17,12 @@ signal focus_tween_finished
 @export var freeze_zoom_for_menu_bounds: bool = true # If true, when menu opens capture zoom and use it for bounds until menu closes
 @export var allow_map_edge_exposure: bool = false # If true, camera center can approach true map edge (viewport may show off-map)
 @export var fit_margin: float = 1.0 # 1.0 means exact fit, < 1.0 adds margin (e.g. 0.95)
+# Fraction of the map (on the axis that fully fills the viewport) that should remain pannable at the
+# DEFAULT view. With FitMode.COVER the binding axis exactly fills the viewport at the fill zoom, leaving
+# zero pan headroom on that axis until the user zooms in. By zooming the default view in by this fraction
+# we guarantee the camera can pan to both edges of that axis without forcing the user to zoom first.
+# 0.0 restores the old behavior (default zoom == fill zoom == pinned). 0.12 ≈ 12% of the map is pannable.
+@export_range(0.0, 0.5, 0.01) var default_view_pan_headroom: float = 0.12
 
 enum FitMode { CONTAIN, COVER }
 @export var fit_mode: FitMode = FitMode.COVER
@@ -149,6 +155,20 @@ func _clamp_camera_position():
 	var cell_size = _get_cell_size()
 	var map_width = map_size.x * cell_size.x
 	var map_height = map_size.y * cell_size.y
+	var _dbg_sub_size = sub_viewport_node.size if is_instance_valid(sub_viewport_node) else Vector2i(-1,-1)
+	var _dbg_zoom = camera_node.zoom.x
+	var _dbg_half_h = Vector2(_dbg_sub_size).y / max(_dbg_zoom, 0.0001) / 2.0
+	var _dbg_max_y = map_height - _dbg_half_h
+	var _dbg_win := Vector2.ZERO
+	if is_inside_tree() and get_viewport():
+		_dbg_win = get_viewport().get_visible_rect().size
+	print("[CLAMP] sub_vp=%s win=%s mvr=%s sub_aspect=%.3f win_aspect=%.3f zoom=%.4f half_full_h=%.1f map_h=%.1f min_y=%.1f max_y=%.1f cam_y=%.1f" % [
+		str(_dbg_sub_size), str(_dbg_win), str(map_viewport_rect.size),
+		(float(_dbg_sub_size.x) / max(1.0, float(_dbg_sub_size.y))),
+		(_dbg_win.x / max(1.0, _dbg_win.y)),
+		_dbg_zoom, _dbg_half_h, map_height,
+		_dbg_half_h, _dbg_max_y, camera_node.position.y
+	])
 	# Account for possible tilemap positional offset (non-zero origin)
 	var map_origin: Vector2 = Vector2.ZERO
 	if is_instance_valid(tilemap_ref):
@@ -265,6 +285,12 @@ func _update_camera_limits():
 			var zoom_min_x = effective_viewport_px.x / map_w
 			var zoom_min_y = effective_viewport_px.y / map_h
 			var requested_min = max(zoom_min_x, zoom_min_y) if fit_mode == FitMode.COVER else min(zoom_min_x, zoom_min_y)
+			# Raise the zoom floor just above the exact COVER fill zoom so the binding axis (the one that
+			# fully fills the viewport) keeps pan headroom at EVERY zoom level. Without this the user can
+			# zoom out to the fill zoom where that axis is pinned (min_y == max_y) and cannot pan to the
+			# map's far edge. This is the authoritative floor; fit_camera_to_tilemap mirrors it.
+			if fit_mode == FitMode.COVER and default_view_pan_headroom > 0.0:
+				requested_min = requested_min / (1.0 - clampf(default_view_pan_headroom, 0.0, 0.5))
 			min_camera_zoom_level = requested_min
 	
 	var zoom = max(camera_node.zoom.x, 0.0001)
@@ -334,6 +360,7 @@ func zoom_at_screen_pos(zoom_multiplier: float, screen_zoom_center: Vector2):
 func fit_camera_to_tilemap():
 	if not is_instance_valid(camera_node):
 		return
+	_trace_focus("fit_camera_to_tilemap")
 
 	var cell_size = _get_cell_size()
 	var map_world_bounds: Rect2
@@ -361,10 +388,12 @@ func fit_camera_to_tilemap():
 		target_zoom = max(zoom_x, zoom_y)
 	else: # FitMode.CONTAIN
 		target_zoom = min(zoom_x, zoom_y)
-		
+
 	target_zoom *= fit_margin
 
-	# If auto-limiting zoom out, update min_camera_zoom_level dynamically
+	# If auto-limiting zoom out, update min_camera_zoom_level dynamically.
+	# NOTE: this is the zoom at which the binding axis EXACTLY fills the viewport. At this zoom there is
+	# zero pan headroom on that axis, so it is the floor for zooming OUT, not the default view.
 	if auto_limit_zoom_out:
 		var min_fill_zoom = max(zoom_x, zoom_y)
 		var min_fit_zoom = min(zoom_x, zoom_y)
@@ -372,8 +401,14 @@ func fit_camera_to_tilemap():
 		# If we want to ALWAYS fill the screen, use min_fill_zoom.
 		# Let's default to min_fit_zoom if CONTAIN, or min_fill_zoom if COVER.
 		var requested_min = min_fill_zoom if fit_mode == FitMode.COVER else min_fit_zoom
+		# Mirror the headroom-adjusted floor from _update_camera_limits so the default view and the
+		# zoom-out floor agree: the binding axis keeps pan headroom even when fully zoomed out.
+		if fit_mode == FitMode.COVER and default_view_pan_headroom > 0.0:
+			requested_min = requested_min / (1.0 - clampf(default_view_pan_headroom, 0.0, 0.5))
 		min_camera_zoom_level = requested_min
-	
+
+	# Clamp the default view into the (headroom-adjusted) zoom range. For COVER this raises the default
+	# up to the floor so the camera starts with pan headroom on both axes instead of being pinned.
 	target_zoom = clamp(target_zoom, min_camera_zoom_level, max_camera_zoom_level)
 	camera_node.zoom = Vector2(target_zoom, target_zoom)
 	# camera_node.offset = Vector2.ZERO
@@ -396,6 +431,7 @@ func get_current_zoom() -> float:
 func focus_on_world_pos(world_pos: Vector2):
 	if not is_instance_valid(camera_node):
 		return
+	_trace_focus("focus_on_world_pos", world_pos)
 	# If overlay occludes right or bottom edge, bias camera center so target appears in visible area.
 	var zoom = max(camera_node.zoom.x, 0.0001)
 	if _overlay_occlusion_px_x > 0.0:
@@ -566,6 +602,7 @@ func suppress_viewport_updates(suppress: bool) -> void:
 func smooth_focus_on_world_pos(world_pos: Vector2, duration: float = 0.5) -> void:
 	if not is_instance_valid(camera_node):
 		return
+	_trace_focus("smooth_focus_on_world_pos", world_pos)
 	if _active_focus_tween and _active_focus_tween.is_valid():
 		_active_focus_tween.kill()
 	_active_focus_tween_is_fit = false
@@ -632,6 +669,7 @@ func smooth_focus_on_convoy_with_final_occlusion(convoy_data: Dictionary, final_
 func smooth_fit_world_rect(world_rect: Rect2, duration: float = 0.6, margin: float = 0.92, target_focus_point: Vector2 = Vector2.INF) -> void:
 	if not is_instance_valid(camera_node):
 		return
+	_trace_focus("smooth_fit_world_rect", world_rect)
 	# Allow 0 width/height (perfectly straight routes) by treating as thin rects.
 	if world_rect.size.x <= 0.0 and world_rect.size.y <= 0.0:
 		return
@@ -1004,6 +1042,20 @@ func _get_cell_size() -> Vector2:
 		return Vector2(tilemap_ref.tile_set.tile_size)
 	# Sensible fallback
 	return Vector2(16, 16)
+
+# TEMP DIAGNOSTIC: logs which code path is driving the camera, with the caller chain.
+# Remove once the "glued to top / y~676 pull" source is identified.
+@export var trace_focus_calls: bool = true
+func _trace_focus(tag: String, target: Variant = null):
+	if not trace_focus_calls:
+		return
+	var chain := ""
+	for frame in get_stack():
+		chain += str(frame.get("source", "?")).get_file() + ":" + str(frame.get("function", "?")) + ":" + str(frame.get("line", -1)) + " <- "
+	print("[FOCUS_TRACE] ", tag, " target=", target,
+		" cam_y=", (camera_node.position.y if is_instance_valid(camera_node) else -1.0),
+		" zoom=", (camera_node.zoom.x if is_instance_valid(camera_node) else -1.0),
+		"\n    callers: ", chain)
 
 func _dbg(tag: String, data: Dictionary = {}):
 	if debug_logging:

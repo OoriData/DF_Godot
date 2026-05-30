@@ -700,6 +700,137 @@ These are **not Control nodes** — they are `Node2D` children drawn in world sp
 
 ---
 
+## Visual & Feel Improvement Audit
+
+> Captured 2026-05-29 from live screenshots (map overlay panel open + convoy overview menu open).
+> These are feel/polish issues distinct from the structural inventory above.
+> Priority order reflects gameplay impact vs effort.
+
+---
+
+### Priority 1 — Tab bar has no visible active state
+**Location**: `ConvoyMenu.tscn / VendorTabsHBox` — buttons `ConvoyMissionsTabButton`, `SettlementMissionsTabButton`, `CompatiblePartsTabButton`, `JourneyTabButton`
+
+**Problem**: Tabs use `toggle_mode = true` with a `ButtonGroup` (correct functionally) but have no styled pressed/active state. All four tabs look identical when one is selected — players cannot tell which tab they are on without reading the list content.
+
+**Fix direction**: Add a `StyleBoxFlat` override for the `pressed` / `focus` state — brighter background fill or a 3px bottom border accent in the convoy's highlight color. Same treatment as `StaticBottomNav` active button style (§3).
+
+**Effort**: Low — theme override on the ButtonGroup or per-button stylebox.
+
+---
+
+### Priority 2 — Bottom nav feels like form buttons, not navigation
+**Location**: `ConvoyMenu.tscn / BottomBarPanel/BottomMenuButtonsHBox` (legacy) and `StaticBottomNav` (canonical, §3)
+
+**Problem**: In the screenshot the bottom row (Vehicles / Journey / Settlement / Cargo) reads as a row of equal-weight action buttons. No active state is apparent. The `HFlowContainer` means buttons can wrap on small screens, breaking the visual rhythm. The stat boxes are `PanelContainer` with text `horizontal_alignment = 0` (left) but appear centered — inconsistent styling between scene and runtime.
+
+**Fix direction**:
+- Confirm `BottomBarPanel` in `ConvoyMenu.tscn` is truly dead (see Cross-Cutting Issue #3) and remove it.
+- Ensure `StaticBottomNav` active state is always applied — verify `_update_navigation_bar()` fires on every menu transition.
+- Replace `HFlowContainer` with a fixed `HBoxContainer` so buttons never wrap.
+
+**Effort**: Low (removal) + Medium (nav bar verification).
+
+---
+
+### Priority 3 — Cargo delivery items are visually sparse
+**Location**: `ConvoyCargoMenu.tscn` / dynamically built item rows in `convoy_cargo_menu.gd`
+
+**Problem**: Delivery entries show just two text lines (`Salt` / `→ Salt Lake City`) with no container, no weight/volume hint, no status indicator. Large amounts of whitespace around each item make the list feel empty even when it has 11 entries. The gold `→` destination color is a good touch and should be preserved.
+
+**Fix direction**: Wrap each item in a subtle card — `StyleBoxFlat` with ~1px border (`#393d47`), 6–8px corner radius, 6px internal padding. Add a secondary line with cargo weight or volume in muted text. Consider a left-edge colored stripe tied to delivery urgency or convoy color.
+
+**Effort**: Medium — requires changes to the dynamic item builder in `convoy_cargo_menu.gd`.
+
+---
+
+### Priority 4 — Stat panels are flat and hard to scan
+**Location**: `ConvoyMenu.tscn / PerformanceStatsHBox` — `SpeedBox`, `OffroadBox`, `EfficiencyBox`
+
+**Problem**: Each stat is a `PanelContainer` with a single `Label` showing e.g. "Top Speed: 25". The label text's `horizontal_alignment = 0` (left) creates visual misalignment with the equal-width boxes. There is no visual hierarchy — the number "25" looks the same weight as the prefix "Top Speed:". At a glance you cannot quickly read the three numbers.
+
+**Fix direction**: Split label and value. Small muted label text on top (or left), large bold value below (or right). Optionally a small icon per stat. This requires replacing the single `Label` per box with a `VBoxContainer` (label + value) or a custom component.
+
+**Effort**: Medium — scene restructure per stat box, minimal script changes.
+
+---
+
+### Priority 5 — Convoy name "plant" is unanchored
+**Location**: The convoy name label that floats above the convoy menu panel (rendered in `convoy_label_manager.gd` or as a map-layer label)
+
+**Problem**: The name appears as a bare floating chip above the panel with no visual connection to the panel content below it. It reads like a tooltip or a map label that happened to be near the menu, not as the panel's own identity/header.
+
+**Fix direction**: Integrate the convoy name as a styled header row at the top of the menu panel — dark background, slight bottom-border separator, optional left-edge accent in the convoy's color. This is the `TitleLabel` in `ConvoyMenu.tscn/TopBarHBox` (currently font_size 22, no background) — give it a stylebox treatment.
+
+**Effort**: Low — styled header treatment on the existing `TitleLabel` node.
+
+---
+
+### Priority 6 — Resource bar text contrast is inconsistent
+**Location**: `ConvoyMenu.tscn / ResourceStatsHBox` — `WaterBox`, `FoodBox`, `FuelBox`
+
+**Problem**: Each resource bar overlays a `Label` on a `ProgressBar` using `anchors_preset = 15` (full fill). When the bar is near-full (green fills the background) the white label text on green background has low contrast. The bar height is 50px but default font size (~16px) feels undersized relative to the bar.
+
+**Fix direction**:
+- Add a text outline/shadow to the labels (matching what map labels use — `label_settings.outline_size`).
+- Increase the label font size to better fill the 50px bar height (suggested: 18–20px).
+- Or convert to a custom resource bar component that controls this consistently.
+
+**Effort**: Low — add `theme_override_font_sizes/font_size` and `LabelSettings` with outline to each `WaterTextLabel`, `FoodTextLabel`, `FuelTextLabel`.
+
+---
+
+### Priority 7 — Sort dropdown is oversized and ambiguous
+**Location**: `ConvoyCargoMenu` — sort `OptionButton` (built dynamically in `convoy_cargo_menu.gd`)
+
+**Problem**: In the screenshot the sort dropdown ("Sort: Distance to Recipient") spans the full panel width and sits directly below the tab bar at similar height, making it visually ambiguous — it looks like a fourth tab rather than a control for the current tab's content.
+
+**Fix direction**: Right-align the dropdown at a capped width (~180–200px) and reduce its height to clearly subordinate it to the tab row. Alternatively, place it inline with the tab bar on the right side.
+
+**Effort**: Low — width cap + right-align in `convoy_cargo_menu.gd`.
+
+---
+
+### Priority 8 — HSeparators are nearly invisible
+**Location**: `ConvoyMenu.tscn` — `HSeparator2`, `HSeparator3`, `HSeparator4`
+
+**Problem**: Default `HSeparator` on a dark background (`#1a1a1f`–`#25282a`) is nearly invisible. The separators provide structural grouping in the `.tscn` that is completely lost visually. Players cannot quickly read where "resources" end and "performance stats" begin.
+
+**Fix direction**: Either:
+- Theme the separators with a lighter color (e.g. `#393d47` at 80% alpha).
+- Replace with small section header labels ("RESOURCES", "PERFORMANCE" in small-caps muted text, ~11px) that also communicate section identity.
+
+**Effort**: Low.
+
+---
+
+### Priority 9 — No consistent spacing system
+**Location**: Project-wide across all `.tscn` files and script-built UI
+
+**Problem**: `theme_override_constants/separation` values jump between 4, 6, 8, 10, 12px with no documented system. Internal margins vary similarly (`8/6/8/6`, `10/10/10/10`, etc.). This creates visual jitter when scanning vertically through any panel.
+
+**Fix direction**: Establish a base unit of **8px** with allowed multiples: 4, 8, 12, 16, 24, 32. Document in `DesignSystem.md`. Normalize the most visible menus (ConvoyMenu, CargoMenu) first.
+
+**Effort**: High (broad) — prioritize the highest-traffic menus first.
+
+---
+
+### Visual Audit Summary Table
+
+| # | Location | Issue | Priority | Effort |
+|---|---|---|---|---|
+| 1 | `VendorTabsHBox` | No active state on tabs | High | Low |
+| 2 | Bottom nav | Looks like form buttons; wraps on small screens | High | Low–Med |
+| 3 | Cargo item rows | No card container; no secondary info | High | Medium |
+| 4 | Stat panels | Single label, no value/label hierarchy | Medium | Medium |
+| 5 | Convoy name label | Floats unanchored above panel | Medium | Low |
+| 6 | Resource bars | Low text contrast at high fill levels | Medium | Low |
+| 7 | Sort dropdown | Full-width; visually ambiguous with tab bar | Low | Low |
+| 8 | HSeparators | Near-invisible on dark background | Low | Low |
+| 9 | Spacing system | No base unit; inconsistent across all menus | Medium | High |
+
+---
+
 ## Pending Standalone Docs
 
 These UI elements are fully audited here but have no dedicated documentation file. Create these if the component becomes a change target:

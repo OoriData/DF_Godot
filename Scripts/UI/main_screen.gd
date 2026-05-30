@@ -432,9 +432,10 @@ func _update_camera_viewport_rect_on_resize():
 		# Use the actual MapDisplay (TextureRect) rect, not the root map_view rect.
 		# The root control can include extra UI chrome; using it causes camera/map edge mismatch.
 		var map_rect = _get_map_display_rect()
+		print("[RESIZE] map_rect=%s" % str(map_rect))
 		map_camera_controller.update_map_viewport_rect(map_rect)
-		
-		# CRITICAL: Re-sync occlusion after viewport size update. 
+
+		# CRITICAL: Re-sync occlusion after viewport size update.
 		# If we just rotated, the previous occlusion might have been clamped against
 		# the OLD orientation's bounds. Re-sending it now ensures it's correctly applied
 		# to the NEW bounds.
@@ -820,14 +821,23 @@ func _slide_menu_close(convoy_data: Dictionary):
 	if not is_instance_valid(menu_container): return
 	_kill_menu_anim_tween()
 	_menu_anim_in_progress = true
-	if convoy_data.is_empty():
-		convoy_data = _get_primary_convoy_data()
+	# NOTE: Do NOT fabricate a primary convoy here. If no convoy was genuinely
+	# focused (e.g. an automatic/initialization close emitted on map load), we must
+	# not pull the camera toward an arbitrary convoy — that was the cause of the
+	# "camera glued to the top of the map on load" bug. Only recenter when a real
+	# selection exists.
 	_dbg_menu("slide_close_start", {"convoy_empty": convoy_data.is_empty(), "cam_pos_pre": (map_camera_controller.camera_node.position if (is_instance_valid(map_camera_controller) and map_camera_controller.has_method("camera_node")) else "<none>")})
 	var start_w := _current_menu_occlusion_px
 	if start_w <= 0.0:
 		start_w = _menu_target_width
-	_close_anim_convoy = convoy_data
 	_close_anim_start_width = start_w
+	# Recenter on the genuinely-selected convoy with a SINGLE smooth tween (final
+	# occlusion = 0, since the menu is fully retracting). This replaces the old
+	# per-frame focus_on_convoy() hard-set in _close_anim_step that ran every
+	# animation frame, fought user panning, and snapped the camera at min zoom.
+	if is_instance_valid(map_camera_controller) and not convoy_data.is_empty():
+		if map_camera_controller.has_method("smooth_focus_on_convoy_with_final_occlusion"):
+			map_camera_controller.smooth_focus_on_convoy_with_final_occlusion(convoy_data, 0.0, MENU_ANIM_DURATION, _is_portrait())
 	_menu_anim_tween = create_tween()
 	_menu_anim_tween.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
 	_menu_anim_tween.parallel().tween_method(Callable(self, "_close_anim_step"), 0.0, 1.0, MENU_ANIM_DURATION)
@@ -846,7 +856,6 @@ func _slide_menu_close(convoy_data: Dictionary):
 		_clear_pinned_convoy_label(false)
 	)
 
-var _close_anim_convoy: Dictionary = {}
 var _close_anim_start_width: float = 0.0
 
 func _close_anim_step(progress: float):
@@ -859,9 +868,9 @@ func _close_anim_step(progress: float):
 	else:
 		menu_container.offset_left = -w
 	_update_camera_occlusion_from_menu()
-	if is_instance_valid(map_camera_controller) and not _close_anim_convoy.is_empty():
-		if map_camera_controller.has_method("focus_on_convoy"):
-			map_camera_controller.focus_on_convoy(_close_anim_convoy)
+	# Camera recentering is handled by a single smooth tween started in
+	# _slide_menu_close(); we intentionally do NOT re-focus the camera here every
+	# frame. _close_anim_step now only animates the menu/occlusion geometry.
 	_dbg_menu("close_step", {"p": progress, "w": w})
 
 # Update camera controller with current animated occlusion width
@@ -1739,7 +1748,10 @@ func set_map_interactive(is_interactive: bool):
 func _to_subviewport_screen(global_pos: Vector2) -> Vector2:
 	if not is_instance_valid(map_view):
 		return global_pos
-	var map_display: TextureRect = map_view.get_node_or_null("MapContainer/MapDisplay")
+	# MapDisplay is reparented by main.gd to be a direct child of map_view; try both paths.
+	var map_display: TextureRect = map_view.get_node_or_null("MapDisplay")
+	if not is_instance_valid(map_display):
+		map_display = map_view.get_node_or_null("MapContainer/MapDisplay")
 	var sub_viewport: SubViewport = map_view.get_node_or_null("MapContainer/SubViewport")
 	if not is_instance_valid(map_display) or not is_instance_valid(sub_viewport):
 		return global_pos

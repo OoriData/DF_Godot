@@ -115,6 +115,9 @@ func set_pinned_convoy_ids(ids: Array) -> void:
 func clear_pinned_convoy_ids() -> void:
 	_pinned_convoy_ids.clear()
 
+func get_pinned_convoy_ids() -> Array[String]:
+	return _pinned_convoy_ids
+
 
 func set_convoy_label_container(p_container: Node2D):
 	if not is_instance_valid(p_container):
@@ -329,10 +332,14 @@ func _update_convoy_panel_content(panel: Panel, convoy_data: Dictionary, p_convo
 	var unique_convoy_color: Color = p_convoy_id_to_color_map.get(current_convoy_id_str, Color.GRAY)
 	style_box.bg_color = Color(0, 0, 0, 0.95) if _high_contrast_enabled else _convoy_panel_background_color
 	style_box.border_color = unique_convoy_color
-	style_box.border_width_left = current_panel_border_width
-	style_box.border_width_top = current_panel_border_width
-	style_box.border_width_right = current_panel_border_width
-	style_box.border_width_bottom = current_panel_border_width
+
+	# Thicker border = this panel is the active focus source (selected), not just hovered.
+	var is_focus_source: bool = panel.get_meta("is_focus_source", false)
+	var bw: int = current_panel_border_width + (2 if is_focus_source else 0)
+	style_box.border_width_left   = bw
+	style_box.border_width_top    = bw
+	style_box.border_width_right  = bw
+	style_box.border_width_bottom = bw
 	style_box.content_margin_left = current_panel_padding_h
 	style_box.content_margin_right = current_panel_padding_h
 	style_box.content_margin_top = current_panel_padding_v
@@ -761,6 +768,9 @@ func update_convoy_labels(
 			_convoy_label_container_ref.add_child(panel_node)
 
 		panel_node.visible = true
+		# Mark whether this panel is the active focus source (selected) vs just hovered.
+		var is_selected: bool = p_selected_convoy_ids.has(convoy_id_str_to_display)
+		panel_node.set_meta("is_focus_source", is_selected)
 		_update_convoy_panel_content(panel_node, convoy_data, p_convoy_id_to_color_map)
 		_position_convoy_panel(panel_node, convoy_data, all_drawn_label_rects_this_update, p_selected_convoy_ids, p_convoy_label_user_positions)
 		# Intentionally disabled: let static convoy panels pan off-screen naturally

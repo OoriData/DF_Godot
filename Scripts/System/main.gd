@@ -82,6 +82,13 @@ func initialize_all_components():
 		self.add_child(map_display)
 		# Ensure it's drawn behind other UI elements within this control
 		move_child(map_display, 0)
+		# CRITICAL: The SubViewport texture has a large native size (e.g. 2650x1790). By default a
+		# TextureRect uses EXPAND_KEEP_SIZE, which makes its MINIMUM size equal to that texture size.
+		# That minimum propagates up through the MainScreen containers and forces the whole MapView to
+		# the texture size — larger than the actual window — so the bottom is clipped off-screen and the
+		# camera (which syncs its viewport to this control) can never reach the map's bottom edge.
+		# IGNORE_SIZE lets the control shrink to fill the real window instead.
+		map_display.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 		map_display.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 		
 		# Set ViewportTexture programmatically using the pre-resolved direct texture.
@@ -156,6 +163,8 @@ func initialize_all_components():
 			map_interaction_manager.connect("hover_changed", Callable(self, "_on_hover_changed"))
 		if not map_interaction_manager.is_connected("convoy_menu_requested", Callable(self, "_on_convoy_menu_requested")):
 			map_interaction_manager.connect("convoy_menu_requested", Callable(self, "_on_convoy_menu_requested"))
+		if not map_interaction_manager.is_connected("camera_zoom_changed", Callable(self, "_on_camera_zoom_changed")):
+			map_interaction_manager.connect("camera_zoom_changed", Callable(self, "_on_camera_zoom_changed"))
 
 		# Ensure UIManager knows the terrain tilemap explicitly
 		if is_instance_valid(ui_manager_node):
@@ -312,25 +321,22 @@ func _on_map_data_loaded(p_map_tiles: Array):
 			if row is Array and row.size() > map_width:
 				map_width = row.size()
 	var map_size = Vector2i(map_width, map_height)
+
+	# Sync the SubViewport size to the actual display rect BEFORE set_map_size triggers
+	# fit_camera_to_tilemap. Without this, fit_camera_to_tilemap uses the scene-default
+	# SubViewport size (2650×1790) instead of the true display area, causing the minimum
+	# zoom to be calculated too high and preventing panning to the map bottom.
+	if is_instance_valid(map_camera_controller) and map_camera_controller.has_method("update_map_viewport_rect") and is_instance_valid(map_display):
+		var display_rect: Rect2 = map_display.get_global_rect()
+		print("[MAP_LOAD] map_display.get_global_rect()=%s" % str(display_rect))
+		if display_rect.size.x > 10 and display_rect.size.y > 10:
+			map_camera_controller.update_map_viewport_rect(display_rect)
+
 	if is_instance_valid(map_camera_controller) and map_camera_controller.has_method("set_map_size"):
 		map_camera_controller.set_map_size(map_size)
 		print("[main.gd] Set map_camera_controller map_size to ", map_size)
 	else:
 		printerr("[main.gd] map_camera_controller is invalid or missing set_map_size method!")
-
-	# After setting map size, force camera center if controller did not adjust yet
-	if is_instance_valid(terrain_tilemap) and is_instance_valid(map_camera):
-		var tile_set = terrain_tilemap.tile_set
-		if tile_set:
-			var tsize = tile_set.tile_size
-			print('[Main][DBG] tile_size=', tsize)
-			var width_px = map_size.x * tsize.x
-			var height_px = map_size.y * tsize.y
-			var target = Vector2(width_px * 0.5, height_px * 0.5)
-			map_camera.position = target
-			map_camera.zoom = Vector2(1,1)
-			# Limits skipped (Godot 4 constant names differ or controller handles)
-			# print('[Main][DBG] Forced camera center to', target, ' map_px=', Vector2(width_px,height_px))
 
 	print('[main.gd] Emitting map_ready_for_focus signal...')
 	emit_signal('map_ready_for_focus')
@@ -364,6 +370,10 @@ func _on_global_selected_convoy_ids_changed(selected_ids: Array) -> void:
 	if is_instance_valid(convoy_visuals_manager):
 		convoy_visuals_manager.update_selected_convoys(ids)
 	_update_ui_manager(false)
+
+func _on_camera_zoom_changed(_new_zoom: float) -> void:
+	# Notify UIManager so _current_map_zoom_cache updates and the smooth lerp can start.
+	_update_ui_manager(true)
 
 func _on_hover_changed(hover_info: Dictionary):
 	_current_hover_info = hover_info

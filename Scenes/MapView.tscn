@@ -37,6 +37,7 @@ terrain_tilemap = NodePath("../MapContainer/SubViewport/TerrainTileMap")
 texture_filter = 1
 mouse_filter = 2
 texture = SubResource("ViewportTexture_k7gy6")
+expand_mode = 1
 stretch_mode = 5
 metadata/_edit_use_anchors_ = true
 
