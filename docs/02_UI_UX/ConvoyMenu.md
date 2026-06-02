@@ -19,17 +19,21 @@ MainVBox
 ├── TopBarHBox
 │   ├── BackButton
 │   └── TitleLabel
-├── ContentHBox
-│   ├── StatsVBox (Left Side)
-│   │   ├── ResourceStatsHBox  (Fuel / Water / Food bars)
-│   │   ├── PerformanceStatsHBox  (Speed / Offroad / Efficiency)
-│   │   └── CargoBarsHBox  (Volume and Weight progress bars)
-│   └── ActionsVBox (Right Side)
-│       └── VendorPreviewPanel
-│           └── VendorPreviewVBox
-│               ├── PreviewTitleLabel
-│               ├── VendorTabsHBox  (e.g., Active Deliveries, Available Parts)
-│               └── VendorContentPanel  (scrollable list)
+├── ScrollContainer  (scroll DISABLED — layout must fit without scrolling)
+│   └── ContentVBox  → split at runtime into MainSplit (HBoxContainer)
+│       ├── StatsColumn (Left Side, ~25% width)
+│       │   ├── ResourceStatsHBox  (Fuel / Water / Food bars, vertical stack)
+│       │   ├── PerformanceStatsHBox  (Speed / Offroad / Efficiency — HBoxContainer, compact side-by-side)
+│       │   ├── CargoBarsHBox  (Volume and Weight progress bars)
+│       │   └── ConvoyVisualizer  (hero panel, expands to fill remaining height)
+│       └── ContentColumn (Right Side, ~75% width)
+│           └── VendorPreviewPanel
+│               └── VendorPreviewVBox
+│                   ├── PreviewTitleLabel
+│                   ├── VendorTabsHBox  (e.g., Active Deliveries, Available Parts)
+│                   └── VendorContentPanel
+│                       └── VendorContentScroll  (VERTICAL scroll — cards stack down)
+│                           └── VendorItemGrid  (GridContainer, columns = 1)
 └── BottomBarPanel  (navigation bar — managed by MenuManager)
 ```
 

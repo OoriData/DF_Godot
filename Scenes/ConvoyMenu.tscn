@@ -55,6 +55,7 @@ layout_mode = 2
 layout_mode = 2
 size_flags_vertical = 3
 horizontal_scroll_mode = 0
+vertical_scroll_mode = 0
 
 [node name="ContentVBox" type="VBoxContainer" parent="MainVBox/ScrollContainer"]
 layout_mode = 2
@@ -144,9 +145,9 @@ vertical_alignment = 1
 [node name="HSeparator2" type="HSeparator" parent="MainVBox/ScrollContainer/ContentVBox"]
 layout_mode = 2
 
-[node name="PerformanceStatsHBox" type="VBoxContainer" parent="MainVBox/ScrollContainer/ContentVBox"]
+[node name="PerformanceStatsHBox" type="HBoxContainer" parent="MainVBox/ScrollContainer/ContentVBox"]
 layout_mode = 2
-theme_override_constants/separation = 8
+theme_override_constants/separation = 4
 
 [node name="SpeedBox" type="PanelContainer" parent="MainVBox/ScrollContainer/ContentVBox/PerformanceStatsHBox"]
 custom_minimum_size = Vector2(0, 50)
@@ -341,8 +342,8 @@ theme_override_constants/separation = 4
 layout_mode = 2
 size_flags_horizontal = 3
 theme_override_constants/h_separation = 2
-theme_override_constants/v_separation = 2
-columns = 999
+theme_override_constants/v_separation = 6
+columns = 1
 
 [node name="VendorNoItemsLabel" type="Label" parent="MainVBox/ScrollContainer/ContentVBox/VendorPreviewPanel/VendorPreviewVBox/VendorContentPanel/VendorContentScroll/ContentWrapper"]
 visible = false

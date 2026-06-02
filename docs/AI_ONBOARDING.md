@@ -14,8 +14,11 @@ Welcome, Agent. To maintain the architectural integrity and visual standards of 
 ## ⚖️ The Five Laws of Development
 
 1.  **The Law of Logical Pixels**: 
-    - Always target an **800px width** for Portrait and **1600px width** for Landscape. 
-    - Use `UIScaleManager` to handle scaling; never hardcode physical pixel sizes for UI elements.
+    - `UIScaleManager` is the **single authority** on all UI scaling. It sets `content_scale_factor` — a pure float multiplier applied to the entire rendered canvas. Every Control, Label, and Button scales together automatically.
+    - Target logical widths: **800px** Portrait · **1600px** Mobile Landscape · **1920px** Desktop (÷ `ui.scale` user preference). Desktop users can adjust zoom via the Settings slider.
+    - Font sizes are **fixed logical values** set once (e.g. `add_theme_font_size_override("font_size", 16)`). **Never** multiply a font size at runtime. `TextScale` and `DeviceStateManager.get_scaled_base_font_size()` are **deleted** — do not recreate them.
+    - For heavier-weight text, use `FontVariation.variation_embolden` on a `FontVariation` resource. Do not import a separate bold font file.
+    - `DeviceStateManager` is for orientation/platform queries only (`get_is_portrait()`, `get_layout_mode()`, `is_mobile`). It no longer has any font-scaling role.
 2.  **The Law of Unidirectional Data**:
     - Data flows: `API → Service → GameStore → SignalHub → UI`.
     - The UI **never** calls `APICalls` directly. It only listens to the `SignalHub` and reads from the `GameStore` snapshots.
@@ -35,10 +38,11 @@ Welcome, Agent. To maintain the architectural integrity and visual standards of 
 ---
 
 ## 🛠️ Visual Standards
-- **Fonts**: Use **MSDF** versions of fonts for map labels and scaling UI.
+- **Fonts**: **MSDF** is required for **map labels** only — they zoom with `Camera2D` and need to stay sharp across a large zoom range. Regular UI Controls (`Label`, `Button`, etc.) do **not** need MSDF; `content_scale_factor` handles crispness at all window sizes.
+- **Font weight**: `Lexend Light` is the project font. To increase weight, create a `FontVariation` with `variation_embolden = 0.8` and apply it via `add_theme_font_override("font", ...)`. See `convoy_menu.gd:_make_bold_font()` for the pattern.
 - **Buttons**: Minimum **70px height** for mobile touch targets.
 - **Layouts**: Use `SafeRegionContainer` for any element that might be clipped by a camera notch.
-- **DeviceStateManager**: Query `DeviceStateManager.get_is_portrait()` and `get_layout_mode()` for orientation-aware branching. Don't use raw viewport size comparisons.
+- **Orientation branching**: Query `DeviceStateManager.get_is_portrait()` and `get_layout_mode()` for orientation-aware branching. Never compare raw viewport sizes directly.
 
 ---
 

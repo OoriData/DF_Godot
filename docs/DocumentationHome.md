@@ -29,6 +29,9 @@ Welcome to the technical documentation for *Desolate Frontiers*. This folder is 
 
 ## 02 UI & UX System
 
+> [!IMPORTANT]
+> **Scaling model (June 2026):** All UI scaling is now handled by a single `content_scale_factor` set in `UIScaleManager`. There is no per-node font scaling — `TextScale` (deleted) and `DeviceStateManager.get_scaled_base_font_size()` (deleted) must not be recreated. Font sizes are fixed logical values. See [Responsive UI / Scaling](02_UI_UX/ui_system.md) for the full model before touching any font or layout code.
+
 > [!TIP]
 > Start with the [**UI Element Audit**](02_UI_UX/UIAudit.md) for any UI task — it contains the layer map, script mapping, per-element inventory, implementation patterns, and all known issues.
 

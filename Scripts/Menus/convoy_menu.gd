@@ -501,14 +501,14 @@ func _update_mobile_dependent_layout() -> void:
 	var use_mobile = _is_mobile()
 
 	if is_portrait:
-		VENDOR_ITEM_BUTTON_MIN_WIDTH = 340.0
-		VENDOR_ITEM_BUTTON_HEIGHT = 310.0
-	elif use_mobile:
-		VENDOR_ITEM_BUTTON_MIN_WIDTH = 220.0
-		VENDOR_ITEM_BUTTON_HEIGHT = 112.0
-	else:
-		VENDOR_ITEM_BUTTON_MIN_WIDTH = 190.0
+		VENDOR_ITEM_BUTTON_MIN_WIDTH = 200.0
 		VENDOR_ITEM_BUTTON_HEIGHT = 100.0
+	elif use_mobile:
+		VENDOR_ITEM_BUTTON_MIN_WIDTH = 180.0
+		VENDOR_ITEM_BUTTON_HEIGHT = 80.0
+	else:
+		VENDOR_ITEM_BUTTON_MIN_WIDTH = 160.0
+		VENDOR_ITEM_BUTTON_HEIGHT = 70.0
 
 	# Two-column split: side-by-side on desktop, stacked on mobile/portrait.
 	if is_instance_valid(_main_split):
@@ -543,13 +543,10 @@ func _update_mobile_dependent_layout() -> void:
 						grand_child.add_theme_font_size_override("font_size", stat_fs)
 
 	if is_instance_valid(perf_hbox):
-		perf_hbox.add_theme_constant_override("separation", 8 if is_portrait else 4)
+		perf_hbox.add_theme_constant_override("separation", 4)
 		for child in perf_hbox.get_children():
 			if child is Control:
-				child.custom_minimum_size.y = stat_height
-				for grand_child in child.get_children():
-					if grand_child is Label:
-						grand_child.add_theme_font_size_override("font_size", stat_fs)
+				child.custom_minimum_size.y = 48  # compact, always horizontal row
 
 	# Scale cargo bars taller in portrait so the built-in % text is readable
 	var cargo_bars_hbox := _cargo_bars_hbox
@@ -575,22 +572,10 @@ func _update_mobile_dependent_layout() -> void:
 	if is_instance_valid(vendor_preview_panel):
 		var vendor_content_scroll = vendor_preview_panel.get_node_or_null("VendorPreviewVBox/VendorContentPanel/VendorContentScroll")
 		if is_instance_valid(vendor_content_scroll) and vendor_content_scroll is ScrollContainer:
-			if use_mobile:
-				vendor_content_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
-				vendor_content_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-				
-				# Calculate height for exactly 2 rows
-				var sep_v = 16 if use_mobile else 10
-				var rows = 2.0
-				var total_h = (VENDOR_ITEM_BUTTON_HEIGHT * rows) + (sep_v * (rows - 1)) + (40.0 if is_portrait else 20.0)
-				
-				vendor_content_scroll.custom_minimum_size.y = total_h
-				vendor_content_scroll.scroll_deadzone = 8
-			else:
-				vendor_content_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
-				vendor_content_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-				var sep_v = 10
-				vendor_content_scroll.custom_minimum_size.y = (VENDOR_ITEM_BUTTON_HEIGHT * 2) + sep_v + 20.0
+			vendor_content_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+			vendor_content_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+			vendor_content_scroll.custom_minimum_size.y = 0
+			vendor_content_scroll.scroll_deadzone = 8
 
 	if is_instance_valid(_mission_sort_option_button):
 		if is_portrait:
@@ -648,10 +633,10 @@ func _update_vendor_grid_columns(override_count: int = -1) -> void:
 				active_count += 1
 		item_count = active_count
 
-	vendor_item_grid.columns = max(1, ceil(item_count / 2.0))
-	
+	vendor_item_grid.columns = 1
+
 	if _debug_convoy_menu:
-		print("[ConvoyMenu] 2-row horizontal scrolling: items=", item_count, " cols=", vendor_item_grid.columns)
+		print("[ConvoyMenu] vertical scroll: items=", item_count, " cols=1")
 
 func _on_back_button_pressed():
 	print("ConvoyMenu: Back button pressed. Emitting 'back_requested' signal.")
@@ -1110,7 +1095,7 @@ func _build_vendor_preview_button(item_string: String, item_meta: Dictionary = {
 	name_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	name_label.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	
-	var cargo_fs = 32
+	var cargo_fs = 20 if not _is_mobile() else (22 if _is_portrait_view() else 20)
 	name_label.add_theme_font_size_override("font_size", cargo_fs)
 
 	vbox.add_child(name_label)
@@ -1156,8 +1141,7 @@ func _build_vendor_preview_button(item_string: String, item_meta: Dictionary = {
 	if vbox.get_child_count() > 1 and vbox.get_child(1) is Label:
 		(vbox.get_child(1) as Label).custom_minimum_size.x = default_text_width
 
-	# Force fixed dimension by avoiding EXPAND fill.
-	button.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN if _is_mobile() else Control.SIZE_EXPAND_FILL
+	button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	button.custom_minimum_size.x = VENDOR_ITEM_BUTTON_MIN_WIDTH
 	button.custom_minimum_size.y = VENDOR_ITEM_BUTTON_HEIGHT
 	button.clip_contents = true
@@ -2369,9 +2353,9 @@ func _set_resource_bar_style(bar_node: ProgressBar, label_node: Label, current_v
 	label_node.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.7))
 
 func _upgrade_stat_boxes() -> void:
-	_upgrade_single_stat_box(speed_box, speed_text_label, "🏎️ SPEED")
-	_upgrade_single_stat_box(offroad_box, offroad_text_label, "🏔️ OFFROAD")
-	_upgrade_single_stat_box(efficiency_box, efficiency_text_label, "⚡ EFFICIENCY")
+	_upgrade_single_stat_box(speed_box, speed_text_label, "🏎️ SPEED", true)
+	_upgrade_single_stat_box(offroad_box, offroad_text_label, "🏔️ OFFROAD", true)
+	_upgrade_single_stat_box(efficiency_box, efficiency_text_label, "⚡ EFFICIENCY", true)
 	_style_supply_labels()
 	_style_cargo_bar_labels()
 
@@ -2460,11 +2444,11 @@ func _setup_two_column_layout() -> void:
 		if is_instance_valid(n):
 			n.reparent(_stats_column, false)
 
-	# Add Convoy Hero Visual Placeholder to the bottom of the Stats column
+	# Add Convoy Visualizer placeholder to the bottom of the Stats column
 	var hero_panel = PanelContainer.new()
-	hero_panel.name = "ConvoyHeroVisual"
+	hero_panel.name = "ConvoyVisualizer"
 	hero_panel.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	hero_panel.custom_minimum_size = Vector2(0, 350)
+	hero_panel.custom_minimum_size = Vector2(0, 200)
 	var hero_style = StyleBoxFlat.new()
 	hero_style.bg_color = Color(0.1, 0.1, 0.12, 0.8)
 	hero_style.border_width_left = 1
@@ -2476,26 +2460,43 @@ func _setup_two_column_layout() -> void:
 	hero_style.corner_radius_top_right = UITheme.RADIUS_MD
 	hero_style.corner_radius_bottom_left = UITheme.RADIUS_MD
 	hero_style.corner_radius_bottom_right = UITheme.RADIUS_MD
+	hero_style.content_margin_left = 8.0
+	hero_style.content_margin_right = 8.0
+	hero_style.content_margin_top = 8.0
+	hero_style.content_margin_bottom = 8.0
 	hero_panel.add_theme_stylebox_override("panel", hero_style)
-	
+
+	# PanelContainer sizes all direct children to fill its content rect.
+	# Using alignment on each label positions them visually without needing nested containers.
 	var hero_label = Label.new()
-	hero_label.text = "[ Convoy Hero Visual ]"
+	hero_label.text = "[ Convoy Visualizer ]"
 	hero_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	hero_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	hero_label.add_theme_color_override("font_color", UITheme.TEXT_MUTED)
+	hero_label.add_theme_font_size_override("font_size", 14)
 	hero_panel.add_child(hero_label)
+
+	# Expand hint in top-right — signals this will one day open a dedicated menu
+	var expand_icon = Label.new()
+	expand_icon.text = "⛶"
+	expand_icon.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	expand_icon.vertical_alignment = VERTICAL_ALIGNMENT_TOP
+	expand_icon.add_theme_color_override("font_color", UITheme.TEXT_MUTED)
+	expand_icon.add_theme_font_size_override("font_size", 15)
+	hero_panel.add_child(expand_icon)
+
 	_stats_column.add_child(hero_panel)
 
 	if is_instance_valid(_vendor_preview_panel_node):
 		_vendor_preview_panel_node.reparent(_content_column, false)
 
-func _upgrade_single_stat_box(box: PanelContainer, value_label: Label, key: String) -> void:
+func _upgrade_single_stat_box(box: PanelContainer, value_label: Label, key: String, compact: bool = false) -> void:
 	if not is_instance_valid(box) or not is_instance_valid(value_label): return
 	var vbox := VBoxContainer.new()
 	vbox.alignment = BoxContainer.ALIGNMENT_CENTER
 	vbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	vbox.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	vbox.add_theme_constant_override("separation", 2)
+	vbox.add_theme_constant_override("separation", 1 if compact else 2)
 	var key_lbl := Label.new()
 	key_lbl.text = key
 	key_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -2507,9 +2508,9 @@ func _upgrade_single_stat_box(box: PanelContainer, value_label: Label, key: Stri
 	vbox.add_child(key_lbl)
 	vbox.add_child(value_label)
 	box.add_child(vbox)
-	key_lbl.add_theme_font_size_override("font_size", 13)
+	key_lbl.add_theme_font_size_override("font_size", 10 if compact else 13)
 	key_lbl.add_theme_font_override("font", _make_bold_font())
-	value_label.add_theme_font_size_override("font_size", 24)
+	value_label.add_theme_font_size_override("font_size", 17 if compact else 24)
 	value_label.add_theme_font_override("font", _make_bold_font())
 
 func _set_fixed_color_box_style(panel_node: PanelContainer, label_node: Label, _p_bg_color: Color, _p_font_color: Color):

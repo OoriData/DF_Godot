@@ -23,7 +23,7 @@ After significant debugging of horizontal UI clipping on mobile devices, the UI 
 ### How the UI Works (The "Single Source of Truth")
 
 1. **Global Scaling Engine (`UIScaleManager`)**
-   The `ui_scale_manager` autoload is the absolute authority on screen sizing. It does **no** manual multiplier math on individual nodes; it leverages Godot 4's native `content_scale_size` combined with Project Settings (`stretch/mode = canvas_items` and `stretch/aspect = expand`). It picks one **fixed** logical width for the current orientation and sets it once; the engine stretches the whole canvas to the physical window.
+   The `ui_scale_manager` autoload is the absolute authority on all UI sizing. It sets **`content_scale_factor`** — a pure float multiplier applied uniformly to the entire rendered canvas by Godot's `canvas_items` stretch system. Every Control, Label, and Button scales together with no per-node code. The factor is derived from the current window width divided by the target logical width for the active orientation.
    - **Portrait Target**: Fixed logical width of **800px**. The narrow logical width means everything (including text) is physically larger — no per-node font overrides required.
    - **Mobile Landscape Target**: Fixed logical width of **1600px**.
    - **Desktop Target**: **1920px**, optionally divided by the user's desktop UI-scale slider (`ui.scale`, default 1.4) for a manual zoom. Narrow desktop windows (< 1200px) fall back to a 1200px target.

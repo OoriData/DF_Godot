@@ -50,7 +50,7 @@ This document catalogs every UI element in the project: its scene file, owning s
 |---|---|---|
 | `Main` (MapView root) | `Scripts/System/main.gd` | Scene mediator, camera occlusion, modal triggers |
 | `UIManager` | `Scripts/UI/UI_manager.gd` | In-world settlement + convoy labels |
-| `UIScaleManager` | `Scripts/UI/UI_scale_manager.gd` | Logical resolution authority (`content_scale_size`) |
+| `UIScaleManager` | `Scripts/UI/UI_scale_manager.gd` | Scaling authority — sets `content_scale_factor` to scale the entire canvas |
 | `MenuManager` | `Scripts/Menus/menu_manager.gd` | Navigation stack, transitions, static bottom nav |
 | `MapInteractionManager` | `Scripts/Map/map_interaction_manager.gd` | Touch/mouse input → camera |
 | `ConvoyVisualsManager` | `Scripts/Map/convoy_visuals_manager.gd` | Convoy sprites + route rendering |
@@ -206,7 +206,7 @@ Each button (`Button`) is named `ConvoyButton_{convoy_id}` and contains:
 ### Known Issues / Gaps
 - ❌ `convoy_list_panel.gd:92` calls `DisplayServer.window_get_size()` — violates logical pixel rule
 - ❌ Contains duplicate Oori color palette `const` values
-- ⚠️ Local `_get_font_size()` helpers (e.g. `convoy_cargo_menu.gd`, `settings_menu.gd`) still apply a per-orientation font boost — a leftover of the pre-June-2026 multiplier model. They should be flattened to fixed logical sizes now that `content_scale_size` handles all scaling.
+- ⚠️ Local `_get_font_size()` helpers (e.g. `convoy_cargo_menu.gd`, `settings_menu.gd`) still apply a per-orientation font boost — a leftover of the pre-June-2026 multiplier model. They should be flattened to fixed logical sizes now that `content_scale_factor` handles all scaling.
 - ❌ `ToggleButton` in `.tscn` has `custom_minimum_size = Vector2(280, 80)` but script overrides to 300×56 or 400×110
 
 ---
@@ -642,7 +642,7 @@ These are **not Control nodes** — they are `Node2D` children drawn in world sp
 
 | Script | Role | Owner |
 |---|---|---|
-| `UI_scale_manager.gd` | Logical resolution authority (`content_scale_size`) | Autoload |
+| `UI_scale_manager.gd` | Scaling authority — sets `content_scale_factor` | Autoload |
 | `safe_area_handler.gd` | Applies `DisplayServer.get_display_safe_area()` margins | `SafeRegionContainer` |
 | `UI_manager.gd` | Manages in-world settlement + convoy labels | `MapView/UIManager` |
 | `convoy_label_manager.gd` | Convoy bubble lifecycle + pinned state | `ConvoyLabelContainer` |

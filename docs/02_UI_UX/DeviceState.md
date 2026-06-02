@@ -25,7 +25,7 @@ graph TD
     Orientation -->|Portrait| Port[Set Logical Width: 800px]
     Orientation -->|Landscape| Land[Set Logical Width: 1600px]
     
-    Port --> Scale[UIScaleManager: Apply content_scale_size]
+    Port --> Scale[UIScaleManager: Apply content_scale_factor]
     Land --> Scale
     
     Scale --> Safe[SafeAreaHandler: Recalculate Margins]
@@ -46,7 +46,7 @@ The primary listener for window/hardware events.
 
 ### 2. UIScaleManager (`ui_scale_manager.gd`)
 The authority on viewport scaling.
-- **Responsibility**: Calculates the exact `content_scale_size` based on the orientation target (e.g., 800px).
+- **Responsibility**: Calculates `content_scale_factor` = `physical_window_width / target_logical_width` for the active orientation. This is the only scaling operation — no per-node font math.
 - **Rule**: All UI logic must assume these logical units, not raw physical pixels.
 
 ### 3. SafeAreaHandler (`safe_area_handler.gd`)
