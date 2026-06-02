@@ -59,7 +59,7 @@ signal convoy_menu_focus_requested(convoy_data: Dictionary)
 var _menu_wrapper: VBoxContainer = null
 var _menu_content_area: Control = null
 var _static_bottom_nav: PanelContainer = null
-var _nav_hbox: HFlowContainer = null
+var _nav_hbox: HBoxContainer = null
 var _nav_buttons: Dictionary = {} # menu_type -> Button
 
 func register_menu_container(container: Control):
@@ -90,20 +90,20 @@ func _setup_static_bottom_nav():
 	_static_bottom_nav.visible = false
 	_menu_wrapper.add_child(_static_bottom_nav)
 	
-	# Base styling (matching MenuBase logic)
+	# Bar chrome — metal palette, seats the nav buttons (UITheme tokens).
 	var bar_style = StyleBoxFlat.new()
-	bar_style.bg_color = Color(0.18, 0.18, 0.18, 0.95)
-	bar_style.corner_radius_top_left = 6
-	bar_style.corner_radius_top_right = 6
-	bar_style.border_width_top = 1
-	bar_style.border_color = Color(0.28, 0.28, 0.28)
+	bar_style.bg_color = UITheme.METAL_BASE
+	bar_style.corner_radius_top_left = UITheme.RADIUS_MD
+	bar_style.corner_radius_top_right = UITheme.RADIUS_MD
+	bar_style.border_width_top = UITheme.BORDER_THIN
+	bar_style.border_color = UITheme.METAL_EDGE
 	_static_bottom_nav.add_theme_stylebox_override("panel", bar_style)
-	
-	_nav_hbox = HFlowContainer.new()
+
+	# Fixed HBox so the four nav buttons never wrap and keep a stable rhythm.
+	_nav_hbox = HBoxContainer.new()
 	_nav_hbox.name = "NavButtonsHBox"
-	_nav_hbox.add_theme_constant_override("h_separation", 10)
-	_nav_hbox.add_theme_constant_override("v_separation", 10)
-	_nav_hbox.alignment = FlowContainer.ALIGNMENT_CENTER
+	_nav_hbox.add_theme_constant_override("separation", UITheme.SPACE_SM)
+	_nav_hbox.alignment = BoxContainer.ALIGNMENT_CENTER
 	_static_bottom_nav.add_child(_nav_hbox)
 	
 	var btn_configs = [
@@ -171,7 +171,7 @@ func _update_static_nav_bar_ui(active_type: String):
 	
 	var btn_min_h := 140.0 if is_portrait else (85.0 if use_mobile else 90.0)
 	var base_font_size: int = 28 if is_portrait else (22 if use_mobile else 28)
-	var font_size: int = dsm.get_scaled_base_font_size(base_font_size) if is_instance_valid(dsm) else base_font_size
+	var font_size: int = base_font_size if is_instance_valid(dsm) else base_font_size
 	
 	for type in _nav_buttons:
 		var btn = _nav_buttons[type]
@@ -179,44 +179,7 @@ func _update_static_nav_bar_ui(active_type: String):
 		btn.add_theme_font_size_override("font_size", font_size)
 		
 		var is_active = (active_type == type)
-		_style_nav_button(btn, is_active, use_mobile)
-
-func _style_nav_button(btn: Button, is_active: bool, use_mobile: bool):
-	var corner_r := 6 if use_mobile else 4
-	var v_pad := 8.0 if use_mobile else 4.0
-	var COLOR_BG := Color("b0b0b0")
-	var COLOR_FONT := Color("000000")
-	
-	var sb_normal := StyleBoxFlat.new()
-	if is_active:
-		sb_normal.bg_color = Color(0.72, 0.72, 0.65) # subtle yellow
-	else:
-		sb_normal.bg_color = COLOR_BG
-		
-	sb_normal.corner_radius_top_left = corner_r
-	sb_normal.corner_radius_top_right = corner_r
-	sb_normal.corner_radius_bottom_left = corner_r
-	sb_normal.corner_radius_bottom_right = corner_r
-	sb_normal.border_width_left = 1
-	sb_normal.border_width_right = 1
-	sb_normal.border_width_top = 1
-	sb_normal.border_width_bottom = 3 if is_active else 1
-	sb_normal.border_color = Color(0.85, 0.75, 0.2, 0.9) if is_active else COLOR_FONT.darkened(0.2)
-	sb_normal.shadow_size = 4
-	sb_normal.shadow_color = Color(0, 0, 0, 0.4)
-	sb_normal.content_margin_top = v_pad
-	sb_normal.content_margin_bottom = v_pad
-	
-	btn.add_theme_stylebox_override("normal", sb_normal)
-	btn.add_theme_color_override("font_color", COLOR_FONT)
-	# ... other states ...
-	var sb_hover = sb_normal.duplicate()
-	sb_hover.bg_color = sb_normal.bg_color.lightened(0.1)
-	btn.add_theme_stylebox_override("hover", sb_hover)
-	
-	var sb_pressed = sb_normal.duplicate()
-	sb_pressed.bg_color = sb_normal.bg_color.darkened(0.15)
-	btn.add_theme_stylebox_override("pressed", sb_pressed)
+		btn.theme_type_variation = &"NavButtonActive" if is_active else &"NavButton"
 
 func _ready():
 	# Initially, no menu is shown. Hide MenuManager so it does not block input.

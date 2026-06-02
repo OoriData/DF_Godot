@@ -279,7 +279,7 @@ func style_back_button(btn: Button) -> void:
 	if dsm and dsm.has_method("get_is_portrait"):
 		is_portrait = dsm.get_is_portrait()
 		is_mobile = dsm.is_mobile
-		font_size = dsm.get_scaled_base_font_size(18)
+		font_size = 18
 	else:
 		var win_size = get_viewport_rect().size if is_inside_tree() else Vector2(0, 0)
 		is_portrait = win_size.y > win_size.x
@@ -390,19 +390,16 @@ func setup_convoy_top_banner(title_node: Control, menu_name_suffix: String, brea
 	
 	var banner_style = StyleBoxFlat.new()
 	if use_dark_bg:
-		# Subtle vertical gradient: dark grey to slightly darker grey
-		banner_style.bg_color = Color(0.15, 0.16, 0.18, 0.95)
-		# Depth with shadow
+		banner_style.bg_color = UITheme.METAL_BASE
 		banner_style.shadow_color = Color(0, 0, 0, 0.5)
 		banner_style.shadow_size = 4
 		banner_style.shadow_offset = Vector2(0, 2)
 	else:
-		banner_style.bg_color = Color(0, 0, 0, 0) # Transparent
+		banner_style.bg_color = Color(0, 0, 0, 0)
 		banner_style.shadow_size = 0
 
-	banner_style.border_width_bottom = 4
-	# Oori Accent Blue - Solid
-	banner_style.border_color = Color(0.25, 0.55, 0.85, 1.0) 
+	banner_style.border_width_bottom = 3
+	banner_style.border_color = UITheme.ACCENT_VERDIGRIS
 
 	
 	banner_style.content_margin_top = 10
@@ -432,8 +429,7 @@ func setup_convoy_top_banner(title_node: Control, menu_name_suffix: String, brea
 	btn_normal.border_width_top = 2
 	btn_normal.border_width_right = 2
 	btn_normal.border_width_bottom = 2
-	# Oori Accent Blue / Gold-ish border
-	btn_normal.border_color = Color(0.45, 0.55, 0.75, 0.7) 
+	btn_normal.border_color = UITheme.ACCENT_BRASS
 	
 	btn_normal.content_margin_left = 14
 	btn_normal.content_margin_right = 14
@@ -451,7 +447,7 @@ func setup_convoy_top_banner(title_node: Control, menu_name_suffix: String, brea
 
 	var btn_hover = btn_normal.duplicate()
 	btn_hover.bg_color = Color(0.28, 0.32, 0.38, 1.0)
-	btn_hover.border_color = Color(0.6, 0.75, 1.0, 0.9) # Brighten border on hover
+	btn_hover.border_color = UITheme.ACCENT_BRASS
 	
 	var btn_pressed = btn_normal.duplicate()
 	btn_pressed.bg_color = Color(0.15, 0.16, 0.18, 1.0)
@@ -464,19 +460,14 @@ func setup_convoy_top_banner(title_node: Control, menu_name_suffix: String, brea
 	_top_banner_convoy_button.add_theme_stylebox_override("pressed", btn_pressed)
 	_top_banner_convoy_button.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
 	
-	_top_banner_convoy_button.add_theme_color_override("font_color", Color(0.95, 0.95, 0.6)) # Warm gold
+	_top_banner_convoy_button.add_theme_color_override("font_color", UITheme.ACCENT_BRASS)
 	_top_banner_convoy_button.add_theme_color_override("font_hover_color", Color(1.0, 1.0, 1.0))
 	_top_banner_convoy_button.add_theme_color_override("font_pressed_color", Color(0.8, 0.8, 0.8))
 
 	
-	# Scale font size based on device
-	var dsm = get_node_or_null("/root/DeviceStateManager")
+	# Fixed logical font sizes; the canvas scale handles per-device sizing.
 	var title_fs = 28
 	var suffix_fs = 22
-	if is_instance_valid(dsm) and dsm.has_method("get_scaled_base_font_size"):
-		title_fs = dsm.get_scaled_base_font_size(28)
-		suffix_fs = dsm.get_scaled_base_font_size(22)
-		
 	_top_banner_convoy_button.add_theme_font_size_override("font_size", title_fs)
 	
 	_top_banner_convoy_button.pressed.connect(func():

@@ -124,7 +124,7 @@ func _setup_panel_style() -> void:
 	var is_portrait = (mode == 2) # MOBILE_PORTRAIT
 	
 	# Apply global dynamic font sizing automatically
-	var dyn_font_sz = _dsm.get_scaled_base_font_size(16)
+	var dyn_font_sz = 16
 	var curr_theme = _panel.theme
 	if curr_theme == null:
 		curr_theme = Theme.new()

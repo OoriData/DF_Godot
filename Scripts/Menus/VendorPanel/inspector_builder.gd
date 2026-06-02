@@ -66,14 +66,14 @@ static func _make_panel(title: String, rows: Array) -> PanelContainer:
 	if is_instance_valid(dsm):
 		var mode = dsm.get_layout_mode()
 		if mode == 2: # MOBILE_PORTRAIT
-			hdr_sz = dsm.get_scaled_base_font_size(18)
-			txt_sz = dsm.get_scaled_base_font_size(14)
+			hdr_sz = 18
+			txt_sz = 14
 		elif mode == 1: # MOBILE_LANDSCAPE
-			hdr_sz = dsm.get_scaled_base_font_size(16)
-			txt_sz = dsm.get_scaled_base_font_size(13)
+			hdr_sz = 16
+			txt_sz = 13
 		else: # DESKTOP
-			hdr_sz = dsm.get_scaled_base_font_size(26)
-			txt_sz = dsm.get_scaled_base_font_size(20)
+			hdr_sz = 26
+			txt_sz = 20
 
 	var hdr := Label.new()
 	hdr.text = title

@@ -11,26 +11,43 @@ created: 2026-05-18
 
 # UI Design System
 
-*Desolate Frontiers* uses a "premium-utilitarian" aesthetic, combining rugged, industrial elements with clean, modern digital overlays.
+*Desolate Frontiers* uses a **rugged-rusted industrial aesthetic being reclaimed by life** — a solarpunk hybrid. Dark weathered-metal structure, warm brass/cappuccino accents, and verdigris as the "living growth" signal, finished with clean glowing HUD overlays.
+
+> [!IMPORTANT]
+> Colors and spacing are **not** declared ad-hoc. The single source of truth is the `UITheme` autoload (`Scripts/System/ui_theme.gd`) for tokens, and the global `Assets/df_theme.tres` for control styling (wired via `gui/theme/custom` in `project.godot`). Do not re-declare palette `const`s in individual scripts — reference `UITheme.*`.
 
 ## Color Palette
 
-### Core Colors
-- **Oori Dark Grey** (`#25282a`): Used for backgrounds and primary containers. Often applied with an alpha of `0.85 - 0.95`.
-- **Oori Blue** (`#00aaff`): The primary accent color for active states, selection highlights, and progress bars.
-- **Status Green** (`#44ff44`): Success states, full capacity.
-- **Warning Yellow** (`#ffff44`): High capacity, low resources.
-- **Danger Red** (`#ff4444`): Critical errors, empty resources, damage.
+### Core Oori Brand
+- **Oori Dark Grey** (`#25282a`) → `UITheme.METAL_BASE`: primary container fill (alpha `0.85–0.95`).
+- **Oori Grey** (`#393d47`) → `UITheme.METAL_EDGE`: borders, bevels, dividers.
+- **Oori White** (`#dbe2e9`) → `UITheme.TEXT_PRIMARY`: primary text + light elements (replaces pure white).
+- **Oori Yellow** (`#f3d54e`) → `UITheme.ACCENT_BRASS`: primary accent, currency, active-state glow.
+- **Oori Red** (`#8a2b2b`) → `UITheme.DANGER`: critical errors, empty resources, damage.
+- **Cappuccino** (`#633f33`) → `UITheme.SURFACE_WARM`: warm rugged surfaces (leather/wood/rust tone).
+
+### Extensions (solarpunk half — not core Oori brand)
+- **Verdigris** (`#5aa192`) → `UITheme.ACCENT_VERDIGRIS`: the only sanctioned non-brand accent. Living/growth/resource signal, active-tab tint, progress-bar fill.
+- **Metal Dark** (`#1a1a1f`) → `UITheme.METAL_DARK`: deepest shadow / recessed wells.
+
+### Accent Temperature Rule
+Two temperatures, never muddied on the same element: **warm** (brass / cappuccino) = industrial & economic; **cool** (verdigris) = living & digital.
+
+### Status Thresholds (resource/capacity bars)
+- Good/full → verdigris `#5aa192`; Caution/low → brass `#f3d54e`; Critical/empty → red `#8a2b2b`. Use `UITheme.status_for_ratio(ratio)`.
 
 ### Text Colors
-- **Primary**: `Color.WHITE` (with 6px black outline for readability on map).
-- **Secondary**: `Color(0.8, 0.8, 0.8)` (for descriptions and auxiliary info).
+- **Primary**: `UITheme.TEXT_PRIMARY` (`#dbe2e9`) — with outline for readability on the map.
+- **Secondary/Muted**: `UITheme.TEXT_MUTED` (`#8b929c`) — descriptions, captions, auxiliary info.
+
+## Spacing System
+Base unit **8px**. Allowed steps via `UITheme`: `SPACE_XS` 4, `SPACE_SM` 8, `SPACE_MD` 12, `SPACE_LG` 16, `SPACE_XL` 24, `SPACE_XXL` 32. Corner radii: `RADIUS_SM` 4, `RADIUS_MD` 6, `RADIUS_LG` 8.
 
 ---
 
 ## Typography
 
-- **Primary Font**: `res://Assets/main_font.tres` (Outfit/Inter).
+- **Primary Font**: `res://Assets/main_font.tres` (Lexend Light base, with math + emoji fallbacks). Set as the theme `default_font` in `df_theme.tres`.
 - **MSDF Enabled**: All UI fonts must use Multi-channel Signed Distance Field (MSDF) for crisp scaling at any resolution.
 - **Standard Sizes (Logical 800px width)**:
   - **Headers**: 36pt - 42pt.

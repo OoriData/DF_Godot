@@ -670,8 +670,8 @@ func _style_containers() -> void:
 		body_vbox.mouse_filter = Control.MOUSE_FILTER_PASS
 	
 	# Apply massive header text to section labels
-	var header_font_size = 32 if is_portrait else (dsm.get_scaled_base_font_size(18) if dsm else 18)
-	var label_font_size = 24 if is_portrait else (dsm.get_scaled_base_font_size(14) if dsm else 14)
+	var header_font_size = 32 if is_portrait else (18)
+	var label_font_size = 24 if is_portrait else (14)
 	
 	# Scale overview labels specifically
 	for lbl in [summary_label, overview_cargo_label, overview_vehicle_label, cargo_usage_label]:
@@ -744,7 +744,7 @@ func _style_option_button(ob: OptionButton) -> void:
 	var btn_min_w = 200 if is_portrait else (80 if is_landscape_mobile else 100)
 	ob.custom_minimum_size = Vector2(btn_min_w, btn_h)
 	ob.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	var font_size = 26 if is_portrait else (dsm.get_scaled_base_font_size(16) if dsm else 16)
+	var font_size = 26 if is_portrait else (16)
 	ob.add_theme_font_size_override("font_size", font_size)
 	ob.add_theme_color_override("font_color", Color(0.96, 0.98, 1.0, 1.0))
 	ob.add_theme_color_override("font_color_disabled", Color(0.60, 0.62, 0.68, 1.0))
@@ -794,7 +794,7 @@ func _style_popup_menu(pm: PopupMenu) -> void:
 		return
 	var dsm = get_node_or_null("/root/DeviceStateManager")
 	var is_portrait = dsm.get_is_portrait() if dsm else (get_viewport_rect().size.y > get_viewport_rect().size.x)
-	var font_size = 32 if is_portrait else (dsm.get_scaled_base_font_size(18) if dsm else 18)
+	var font_size = 32 if is_portrait else (18)
 	pm.add_theme_font_size_override("font_size", font_size)
 	pm.add_theme_constant_override("v_separation", 32 if is_portrait else 8)
 	pm.add_theme_color_override("font_color", Color(0.96, 0.98, 1.0, 1.0))
@@ -836,7 +836,7 @@ func _style_line_edit(le: LineEdit) -> void:
 	if is_landscape_mobile:
 		min_w = min(min_w, 160)  # Cap width to prevent horizontal overflow in landscape
 	le.custom_minimum_size = Vector2(min_w, btn_h)
-	var font_size = 22 if is_portrait else (dsm.get_scaled_base_font_size(16) if dsm else 16)
+	var font_size = 22 if is_portrait else (16)
 	le.add_theme_font_size_override("font_size", font_size)
 	le.add_theme_color_override("font_color", Color(0.96, 0.98, 1.0, 1.0))
 	le.add_theme_color_override("placeholder_color", Color(0.70, 0.74, 0.82, 0.85))
@@ -947,7 +947,7 @@ func _style_info_label(lbl: Label) -> void:
 	lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	lbl.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	var font_size = dsm.get_scaled_base_font_size(28) if dsm else 34
+	var font_size = 28
 	lbl.add_theme_font_size_override("font_size", font_size)
 	lbl.add_theme_color_override("font_color", Color(0.92, 0.95, 1.0, 1.0))
 	lbl.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.55))
@@ -1000,7 +1000,7 @@ func _style_primary_button(btn: Button, accent: Color) -> void:
 	btn.add_theme_color_override("font_color", Color(0.96, 0.98, 1.0, 1.0))
 	btn.add_theme_color_override("font_color_hover", Color(1, 1, 1, 1))
 	btn.add_theme_color_override("font_color_pressed", Color(0.90, 0.94, 1.0, 1.0))
-	var font_size = 28 if is_portrait else (dsm.get_scaled_base_font_size(18) if dsm else 18)
+	var font_size = 28 if is_portrait else (18)
 	btn.add_theme_font_size_override("font_size", font_size)
 
 func _style_secondary_button(btn: Button) -> void:
@@ -2137,7 +2137,7 @@ func _render_cargo_grid() -> void:
 			var is_landscape_mobile = (mode == 1)  # MOBILE_LANDSCAPE
 			var item_h = 140 if is_portrait else (100 if is_landscape_mobile else 160)
 			var item_w = 140 if is_portrait else (140 if is_landscape_mobile else 160)
-			var font_size = dsm.get_scaled_base_font_size(22) if dsm else (42 if is_portrait else 22)
+			var font_size = 22
 			
 			var card_script = load("res://Scripts/UI/warehouse_item_card.gd")
 			if card_script:
@@ -2186,7 +2186,7 @@ func _render_vehicle_grid() -> void:
 			var is_landscape_mobile = (mode == 1)  # MOBILE_LANDSCAPE
 			var item_h = 140 if is_portrait else (100 if is_landscape_mobile else 160)
 			var item_w = 140 if is_portrait else (140 if is_landscape_mobile else 160)
-			var font_size = dsm.get_scaled_base_font_size(22) if dsm else (42 if is_portrait else 22)
+			var font_size = 22
 
 			var card_script = load("res://Scripts/UI/warehouse_item_card.gd")
 			if card_script:

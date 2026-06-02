@@ -14,21 +14,22 @@ The Convoy Menu (`convoy_menu.gd`) is the **primary landing screen** for a selec
 
 ## Scene Layout
 
-```
+```text
 MainVBox
 ├── TopBarHBox
 │   ├── BackButton
 │   └── TitleLabel
-├── ScrollContainer
-│   └── ContentVBox
-│       ├── ResourceStatsHBox  (Fuel / Water / Food bars)
-│       ├── PerformanceStatsHBox  (Speed / Offroad / Efficiency)
-│       ├── CargoBarsHBox  (Volume and Weight progress bars)
+├── ContentHBox
+│   ├── StatsVBox (Left Side)
+│   │   ├── ResourceStatsHBox  (Fuel / Water / Food bars)
+│   │   ├── PerformanceStatsHBox  (Speed / Offroad / Efficiency)
+│   │   └── CargoBarsHBox  (Volume and Weight progress bars)
+│   └── ActionsVBox (Right Side)
 │       └── VendorPreviewPanel
 │           └── VendorPreviewVBox
 │               ├── PreviewTitleLabel
-│               ├── VendorTabsHBox  (4 tabs)
-│               └── VendorContentPanel  (scrollable grid)
+│               ├── VendorTabsHBox  (e.g., Active Deliveries, Available Parts)
+│               └── VendorContentPanel  (scrollable list)
 └── BottomBarPanel  (navigation bar — managed by MenuManager)
 ```
 

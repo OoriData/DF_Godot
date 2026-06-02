@@ -206,7 +206,7 @@ Each button (`Button`) is named `ConvoyButton_{convoy_id}` and contains:
 ### Known Issues / Gaps
 - ❌ `convoy_list_panel.gd:92` calls `DisplayServer.window_get_size()` — violates logical pixel rule
 - ❌ Contains duplicate Oori color palette `const` values
-- ❌ `_get_font_size()` duplicates `DeviceStateManager.get_scaled_base_font_size()` logic
+- ⚠️ Local `_get_font_size()` helpers (e.g. `convoy_cargo_menu.gd`, `settings_menu.gd`) still apply a per-orientation font boost — a leftover of the pre-June-2026 multiplier model. They should be flattened to fixed logical sizes now that `content_scale_size` handles all scaling.
 - ❌ `ToggleButton` in `.tscn` has `custom_minimum_size = Vector2(280, 80)` but script overrides to 300×56 or 400×110
 
 ---
@@ -525,8 +525,7 @@ RouteSelectionMenu (Control, full-rect)
 | Control | Type | Setting |
 |---|---|---|
 | Fullscreen | `CheckButton` | Display mode |
-| Dynamic Scaling (Auto) | `CheckButton` | `ui.auto_scale` |
-| UI Scale | `HSlider` (0.75–2.0, step 0.05) | `ui.scale` |
+| UI Scale | `HSlider` (0.75–2.0, step 0.05) | `ui.scale` (desktop manual zoom) |
 | Menu Width Ratio | `HSlider` (1.2–3.5, step 0.1) | `ui.menu_ratio` |
 | Invert Pan | `CheckButton` | Camera pan direction |
 | Invert Zoom | `CheckButton` | Camera zoom direction |

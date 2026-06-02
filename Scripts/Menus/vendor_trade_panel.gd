@@ -650,7 +650,7 @@ func _update_layout_scaling() -> void:
 	var is_portrait = (mode == 2) # MOBILE_PORTRAIT
 	var use_mobile = dsm.is_mobile
 	
-	var dyn_font_sz = dsm.get_scaled_base_font_size(16)
+	var dyn_font_sz = 16
 	if is_portrait:
 		dyn_font_sz = int(dyn_font_sz * 1.1)
 		
@@ -914,7 +914,7 @@ func _ready() -> void:
 			use_mobile = is_portrait or dsm.get_layout_mode() == 1 # MOBILE_LANDSCAPE
 			
 		if use_mobile:
-			var dyn_font_sz = dsm.get_scaled_base_font_size(16)
+			var dyn_font_sz = 16
 			popup.add_theme_font_size_override("font_size", dyn_font_sz)
 			popup.add_theme_constant_override("v_separation", 16 if is_portrait else 12)
 			var popup_style = StyleBoxFlat.new()

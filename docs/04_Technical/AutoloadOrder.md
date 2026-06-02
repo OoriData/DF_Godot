@@ -30,8 +30,7 @@ Recommended order in [project.godot](../project.godot) under `[autoload]` to ens
 
 ### 4) UI & Device Managers
 - **MenuManager**: Central navigation hub.
-- **ui_scale_manager**: Global viewport scaling.
-- **TextScale**: [TextScale Manager](TextScale.md) for dynamic typography scaling.
+- **ui_scale_manager**: Global viewport scaling (the single source of truth for all UI/font sizing).
 - **DeviceStateManager**: Orientation and platform tracking.
 - **TutorialManager**: Overlay management.
 - **PushNotificationManager**: Deep-linking.

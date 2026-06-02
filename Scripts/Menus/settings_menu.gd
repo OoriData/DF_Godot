@@ -1,7 +1,6 @@
 extends CanvasLayer
 
 @onready var s_ui_scale: HSlider = %UIScaleSlider
-@onready var c_dynamic_scale: CheckButton = %DynamicScaleCheck
 @onready var c_fullscreen: CheckButton = %FullscreenCheck
 @onready var c_invert_pan: CheckButton = %InvertPanCheck
 @onready var c_invert_zoom: CheckButton = %InvertZoomCheck
@@ -11,6 +10,8 @@ extends CanvasLayer
 @onready var btn_reset: Button = %ResetDefaultsButton
 @onready var btn_close: Button = %CloseButton
 @onready var btn_logout: Button = %LogoutButton
+
+var _debug_settings_menu: bool = true
 
 var SM: Node
 var API: Node
@@ -136,10 +137,7 @@ func _update_layout() -> void:
 	var menu_width_row = %MenuWidthRow
 	if is_instance_valid(menu_width_row):
 		menu_width_row.visible = not is_mobile
-	
-	if is_instance_valid(c_dynamic_scale):
-		c_dynamic_scale.visible = not is_mobile
-	
+
 	var display_sec = %DisplaySection
 	if is_instance_valid(display_sec):
 		display_sec.visible = not is_mobile
@@ -250,14 +248,10 @@ func _init_values():
 		s_ui_scale.max_value = sm_scale.get_max_safe_scale()
 	
 	s_ui_scale.value = float(SM.get_value("ui.scale", 1.4))
-	
-	var dyn = bool(SM.get_value("ui.auto_scale", false))
-	if is_instance_valid(c_dynamic_scale):
-		c_dynamic_scale.button_pressed = dyn
-	s_ui_scale.editable = not dyn # Disable slider if dynamic is on
-	
+
 	c_fullscreen.button_pressed = bool(SM.get_value("display.fullscreen", false))
 	c_invert_pan.button_pressed = bool(SM.get_value("controls.invert_pan", false))
+	if _debug_settings_menu: print("[SettingsMenu] _init_values: invert_pan loaded as ", SM.get_value("controls.invert_pan", false))
 	c_invert_zoom.button_pressed = bool(SM.get_value("controls.invert_zoom", false))
 	c_gestures.button_pressed = bool(SM.get_value("controls.gestures_enabled", true))
 	s_menu_ratio.value = float(SM.get_value("ui.menu_open_ratio", 0.5))
@@ -266,20 +260,13 @@ func _init_values():
 func _wire_events():
 	s_ui_scale.value_changed.connect(_on_ui_scale_value_changed)
 	s_ui_scale.drag_ended.connect(_on_ui_scale_drag_ended)
-	
-	if is_instance_valid(c_dynamic_scale):
-		c_dynamic_scale.toggled.connect(func(b):
-			SM.set_and_save("ui.auto_scale", b)
-			s_ui_scale.editable = not b
-			if b:
-				# Trigger auto-adjust immediately
-				var sm_scale = get_node_or_null("/root/ui_scale_manager")
-				if is_instance_valid(sm_scale) and sm_scale.has_method("_auto_adjust_scale"):
-					sm_scale._auto_adjust_scale()
-		)
-	
+
 	c_fullscreen.toggled.connect(func(b): SM.set_and_save("display.fullscreen", b))
-	c_invert_pan.toggled.connect(func(b): SM.set_and_save("controls.invert_pan", b))
+	c_invert_pan.toggled.connect(func(b):
+		if _debug_settings_menu: print("[SettingsMenu] invert_pan toggled -> ", b)
+		SM.set_and_save("controls.invert_pan", b)
+		if _debug_settings_menu: print("[SettingsMenu] invert_pan after save: SM.get_value = ", SM.get_value("controls.invert_pan"))
+	)
 	c_invert_zoom.toggled.connect(func(b): SM.set_and_save("controls.invert_zoom", b))
 	c_gestures.toggled.connect(func(b): SM.set_and_save("controls.gestures_enabled", b))
 	s_menu_ratio.value_changed.connect(func(v): SM.set_and_save("ui.menu_open_ratio", v))
@@ -313,8 +300,7 @@ func _wire_events():
 
 func _on_reset_defaults():
 	var defaults := {
-		"ui.scale": 1.4,
-		"ui.auto_scale": false, # Default off
+		"ui.scale": 1.0,
 		"ui.menu_open_ratio": 0.5, # Match new default
 		"ui.click_closes_menus": false,
 		"access.high_contrast": false,

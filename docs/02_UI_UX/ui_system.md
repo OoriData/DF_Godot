@@ -13,16 +13,20 @@ created: 2026-05-18
 
 This document outlines the standard architecture for creating UI windows and menus in *Desolate Frontiers* that automatically adapt to Desktop, Mobile Landscape, and Mobile Portrait orientations.
 
-## System Audit & Architecture (April 2026)
+## System Audit & Architecture (June 2026)
+
+> [!NOTE]
+> **Scaling refactor (June 2026).** Three overlapping scaling systems were collapsed into one. The old `TextScale` autoload (per-node font registration) and `DeviceStateManager.get_scaled_base_font_size()` / `get_font_multiplier()` (runtime font multipliers) were **deleted**. There is no per-node font scaling anywhere anymore. `UIScaleManager` is now the *only* scaling mechanism: it locks one fixed logical width per orientation via `content_scale_size`, and Godot's `canvas_items` stretch scales the entire frame — fonts, layout, icons — proportionally. Fonts use fixed logical sizes (in the theme or as plain `add_theme_font_size_override` constants); they are never multiplied at runtime.
 
 After significant debugging of horizontal UI clipping on mobile devices, the UI architecture has been formalized into a strict top-down scaling system.
 
 ### How the UI Works (The "Single Source of Truth")
 
 1. **Global Scaling Engine (`UIScaleManager`)**
-   The `ui_scale_manager` autoload is the absolute authority on screen sizing. Instead of relying on manual multiplier math, it leverages Godot 4's native `content_scale_size` combined with Project Settings (`stretch/mode = canvas_items` and `stretch/aspect = expand`).
-   - **Portrait Target**: Forces a logical width of **800px**. This ensures the layout is "zoomed in" and text remains perfectly readable without requiring manual font size overrides.
-   - **Landscape/Desktop Targets**: Forces logical widths of **1600px** and **1920px** respectively to provide wider views.
+   The `ui_scale_manager` autoload is the absolute authority on screen sizing. It does **no** manual multiplier math on individual nodes; it leverages Godot 4's native `content_scale_size` combined with Project Settings (`stretch/mode = canvas_items` and `stretch/aspect = expand`). It picks one **fixed** logical width for the current orientation and sets it once; the engine stretches the whole canvas to the physical window.
+   - **Portrait Target**: Fixed logical width of **800px**. The narrow logical width means everything (including text) is physically larger — no per-node font overrides required.
+   - **Mobile Landscape Target**: Fixed logical width of **1600px**.
+   - **Desktop Target**: **1920px**, optionally divided by the user's desktop UI-scale slider (`ui.scale`, default 1.4) for a manual zoom. Narrow desktop windows (< 1200px) fall back to a 1200px target.
 
 ### 2. Container Fluidity (Breaking the "Ghost" Constraints)
    The primary cause of UI clipping was rigid `custom_minimum_size` constraints buried deep within nested containers. When the global scale zoomed in, these rigid containers refused to shrink, pushing the UI off the edge of the screen.
@@ -57,8 +61,8 @@ To ensure a premium feel on mobile, adhere to these standards:
 
 ### 2. Logical Scaling vs. Physical Pixels
 - **Rule**: Never use `DisplayServer.window_get_size()` for layout math.
-- **Rule**: Never use `add_theme_font_size_override` with a hardcoded multiplier.
-- The `UIScaleManager` handles the "zoom" at the viewport level. If text is too small, check if the logical resolution (e.g., 800px) is correctly set, rather than boosting the font.
+- **Rule**: Never multiply a font size at runtime (no `base * multiplier`, no `get_scaled_base_font_size()`, no `TextScale` — all removed). Set a fixed logical size and let the canvas do the work.
+- The `UIScaleManager` handles the "zoom" at the viewport level. If text is too small, check that the logical resolution (e.g., 800px) is correctly set for the orientation, rather than boosting the font.
 
 ### 3. Safe Zones & Margins
 - Use **14px** as the standard side-margin for portrait layouts. This is automatically applied by `MenuBase._apply_standard_margins()`.
@@ -69,7 +73,7 @@ To ensure a premium feel on mobile, adhere to these standards:
 ## Troubleshooting Checklist
 
 If your UI is clipping off the side of the screen on mobile:
-1. **Check for Local Font Boosts**: Search your script for `add_theme_font_size_override` multiplied by a variable. Remove it and rely on the global scale.
+1. **Check for Local Font Boosts**: Search your script for any font size multiplied by a variable (e.g. a local `_get_font_size(base)` helper that applies a per-orientation boost). Remove the boost and rely on the global canvas scale.
 2. **Check Grid Columns**: Ensure `GridContainers` are not calculating dynamic columns based on an expanding parent.
 3. **Check Label Wrapping**: Ensure long text blocks have `SIZE_EXPAND_FILL`.
 4. **Check HBoxes**: Check any `HBoxContainer` or `HFlowContainer` for elements with large `custom_minimum_size.x`.

@@ -243,7 +243,7 @@ func _update_ui(convoy: Dictionary) -> void:
 	eta_headline.text = "ETA: %s" % eta_val
 	eta_headline.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	var is_portrait = DeviceStateManager.get_is_portrait()
-	eta_headline.add_theme_font_size_override("font_size", DeviceStateManager.get_scaled_base_font_size(35 if is_portrait else 29))
+	eta_headline.add_theme_font_size_override("font_size", 35 if is_portrait else 29)
 	eta_headline.add_theme_color_override("font_color", Color(0.92, 0.97, 1))
 	details_vbox.add_child(eta_headline)
 
@@ -260,7 +260,7 @@ func _update_ui(convoy: Dictionary) -> void:
 	loc_grid.add_theme_constant_override("h_separation", 14)
 	loc_grid.add_theme_constant_override("v_separation", 8 if is_portrait else 6)
 	details_vbox.add_child(loc_grid)
-	var loc_label_fs := DeviceStateManager.get_scaled_base_font_size(22) if DeviceStateManager.is_mobile else 22
+	var loc_label_fs := 22
 	# Current
 	var curr_title := Label.new()
 	curr_title.text = "📍 Current"
@@ -322,7 +322,7 @@ func _update_ui(convoy: Dictionary) -> void:
 	var progress_bar = ProgressBar.new()
 	progress_bar.custom_minimum_size = Vector2(0, 40 if is_portrait else 20)
 	progress_bar.value = progress_percentage
-	progress_bar.add_theme_font_size_override("font_size", DeviceStateManager.get_scaled_base_font_size(22))
+	progress_bar.add_theme_font_size_override("font_size", 22)
 	# Match ConvoyMenu: background 2a2a2a with light border; fill uses Color("29b6f6")
 	var bg_style := StyleBoxFlat.new()
 	bg_style.bg_color = Color("2a2a2a")
@@ -398,7 +398,7 @@ func _update_ui(convoy: Dictionary) -> void:
 		var c_lbl = Label.new()
 		c_lbl.text = "Cancel Journey"
 		c_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		c_lbl.add_theme_font_size_override("font_size", DeviceStateManager.get_scaled_base_font_size(29) if DeviceStateManager.is_mobile else 22)
+		c_lbl.add_theme_font_size_override("font_size", 29 if DeviceStateManager.is_mobile else 22)
 		c_lbl.add_theme_color_override("font_color", Color(1, 0.92, 0.92))
 		cancel_container.add_child(c_lbl)
 		details_vbox.add_child(cancel_container)
@@ -731,7 +731,7 @@ func _populate_destination_list():
 		var lbl = Label.new()
 		lbl.text = button_text
 		lbl.mouse_filter = Control.MOUSE_FILTER_PASS
-		lbl.add_theme_font_size_override("font_size", DeviceStateManager.get_scaled_base_font_size(26) if is_portrait else DeviceStateManager.get_scaled_base_font_size(22))
+		lbl.add_theme_font_size_override("font_size", 26 if is_portrait else 22)
 		item_container.add_child(lbl)
 		
 		content_vbox.add_child(item_container)
@@ -1286,7 +1286,7 @@ func _show_confirmation_panel(route_data: Dictionary):
 		for i in range(header_labels.size()):
 			var hl = _create_col_label.call(header_labels[i], (HORIZONTAL_ALIGNMENT_RIGHT if i > 0 else HORIZONTAL_ALIGNMENT_LEFT), col_widths[i])
 			hl.add_theme_color_override("font_color", Color(0.6, 0.7, 0.8))
-			hl.add_theme_font_size_override("font_size", DeviceStateManager.get_scaled_base_font_size(21))
+			hl.add_theme_font_size_override("font_size", 21)
 			header_hbox.add_child(hl)
 
 	# -- Rows VBox --
@@ -1340,7 +1340,7 @@ func _show_confirmation_panel(route_data: Dictionary):
 			
 			var title_lbl = Label.new()
 			title_lbl.text = name_text
-			title_lbl.add_theme_font_size_override("font_size", DeviceStateManager.get_scaled_base_font_size(29))
+			title_lbl.add_theme_font_size_override("font_size", 29)
 			if status == "critical": title_lbl.add_theme_color_override("font_color", Color(1, 0.4, 0.4))
 			elif status == "warn": title_lbl.add_theme_color_override("font_color", Color(1, 0.8, 0.4))
 			title_hbox.add_child(title_lbl)
@@ -1357,12 +1357,12 @@ func _show_confirmation_panel(route_data: Dictionary):
 				sv.add_theme_constant_override("separation", 0)
 				var pl = Label.new()
 				pl.text = pfx
-				pl.add_theme_font_size_override("font_size", DeviceStateManager.get_scaled_base_font_size(19))
+				pl.add_theme_font_size_override("font_size", 19)
 				pl.add_theme_color_override("font_color", Color(0.6, 0.6, 0.6))
 				sv.add_child(pl)
 				var vl = Label.new()
 				vl.text = val
-				vl.add_theme_font_size_override("font_size", DeviceStateManager.get_scaled_base_font_size(24))
+				vl.add_theme_font_size_override("font_size", 24)
 				vl.add_theme_color_override("font_color", color)
 				sv.add_child(vl)
 				stats_grid.add_child(sv)
@@ -1458,7 +1458,7 @@ func _show_confirmation_panel(route_data: Dictionary):
 				var nums_lbl = Label.new()
 				nums_lbl.text = "%s/%s kWh" % [NumberFormat.fmt_float(e.used, 1), NumberFormat.fmt_float(e.capacity, 1)]
 				nums_lbl.add_theme_color_override("font_color", Color(0.8, 0.8, 0.8))
-				nums_lbl.add_theme_font_size_override("font_size", DeviceStateManager.get_scaled_base_font_size(19))
+				nums_lbl.add_theme_font_size_override("font_size", 19)
 				top_hbox.add_child(nums_lbl)
 				
 				var bar = ProgressBar.new()
@@ -1581,8 +1581,8 @@ func _show_confirmation_panel(route_data: Dictionary):
 			row.add_child(v_lbl)
 			m_vbox.add_child(row)
 			if DeviceStateManager.get_is_portrait():
-				n_lbl.add_theme_font_size_override("font_size", DeviceStateManager.get_scaled_base_font_size(22))
-				v_lbl.add_theme_font_size_override("font_size", DeviceStateManager.get_scaled_base_font_size(22))
+				n_lbl.add_theme_font_size_override("font_size", 22)
+				v_lbl.add_theme_font_size_override("font_size", 22)
 				row.custom_minimum_size.y = 40
 			
 		m_vbox.add_child(HSeparator.new())
@@ -1651,7 +1651,7 @@ func _show_confirmation_panel(route_data: Dictionary):
 		var t_lbl = Label.new()
 		t_lbl.text = "Top Up"
 		t_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		t_lbl.add_theme_font_size_override("font_size", DeviceStateManager.get_scaled_base_font_size(24))
+		t_lbl.add_theme_font_size_override("font_size", 24)
 		top_up_container.add_child(t_lbl)
 		top_up_container.set_meta("label", t_lbl) # Store for text updates
 		buttons_hbox.add_child(top_up_container)
@@ -1699,7 +1699,7 @@ func _show_confirmation_panel(route_data: Dictionary):
 		var n_lbl = Label.new()
 		n_lbl.text = "Next Route"
 		n_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		n_lbl.add_theme_font_size_override("font_size", DeviceStateManager.get_scaled_base_font_size(24))
+		n_lbl.add_theme_font_size_override("font_size", 24)
 		next_container.add_child(n_lbl)
 		next_container.set_meta("label", n_lbl) # Store for text updates
 		buttons_hbox.add_child(next_container)
@@ -1743,7 +1743,7 @@ func _show_confirmation_panel(route_data: Dictionary):
 	var c_lbl = Label.new()
 	c_lbl.text = "Confirm Journey"
 	c_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	c_lbl.add_theme_font_size_override("font_size", DeviceStateManager.get_scaled_base_font_size(24))
+	c_lbl.add_theme_font_size_override("font_size", 24)
 	confirm_container.add_child(c_lbl)
 	confirm_container.set_meta("label", c_lbl) # Store for text updates
 	buttons_hbox.add_child(confirm_container)

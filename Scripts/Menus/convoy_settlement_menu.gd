@@ -1107,7 +1107,7 @@ func _style_top_bar_button(button: Button) -> void:
 	var dsm = get_node_or_null("/root/DeviceStateManager")
 	var fs = 18
 	if is_instance_valid(dsm):
-		fs = dsm.get_scaled_base_font_size(18)
+		fs = 18
 	button.add_theme_font_size_override("font_size", fs)
 
 	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
@@ -1128,7 +1128,7 @@ func _style_back_button(button: Button) -> void:
 	if is_instance_valid(dsm):
 		is_portrait = dsm.get_is_portrait()
 		is_mobile = dsm.is_mobile
-		fs = dsm.get_scaled_base_font_size(24 if is_portrait else 20)
+		fs = 24 if is_portrait else 20
 	else:
 		var win_size = get_viewport_rect().size if is_inside_tree() else Vector2(0, 0)
 		is_portrait = win_size.y > win_size.x
@@ -1181,7 +1181,7 @@ func _style_vendor_tabs() -> void:
 	
 	if is_instance_valid(dsm):
 		is_portrait = dsm.get_is_portrait()
-		fs = dsm.get_scaled_base_font_size(18)
+		fs = 18
 		
 	# Focus on horizontal expansion for mobile
 	if is_portrait:

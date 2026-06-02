@@ -46,13 +46,14 @@ AutoSellService="*res://Scripts/System/Services/auto_sell_service.gd"
 PushNotificationManager="*res://Scripts/System/Services/push_notification_manager.gd"
 GoogleAuthService="*res://Scripts/System/Services/google_auth_service.gd"
 DeviceStateManager="*res://Scripts/System/device_state_manager.gd"
-TextScale="*res://Scripts/System/text_scale.gd"
+UITheme="*res://Scripts/System/ui_theme.gd"
 
 [display]
 
-window/size/viewport_width=2556
-window/size/viewport_height=1179
+window/size/viewport_width=1920
+window/size/viewport_height=1080
 window/size/initial_position_type=2
+window/dpi/allow_hidpi=true
 window/stretch/mode="canvas_items"
 window/stretch/aspect="expand"
 window/handheld/orientation=6
@@ -63,6 +64,7 @@ enabled=PackedStringArray("res://addons/GodotFirebaseCloudMessaging/plugin.cfg",
 
 [gui]
 
+theme/custom="res://Assets/df_theme.tres"
 theme/custom_font="res://Assets/main_font.tres"
 
 [rendering]

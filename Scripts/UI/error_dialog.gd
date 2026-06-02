@@ -52,7 +52,7 @@ func _apply_layout() -> void:
 	min_size = Vector2i(target_w, target_h)
 	
 	# Apply font scaling
-	var dyn_font_sz = _dsm.get_scaled_base_font_size(16)
+	var dyn_font_sz = 16
 	var curr_theme = theme
 	if curr_theme == null:
 		curr_theme = Theme.new()

@@ -34,6 +34,9 @@ graph TD
     Menu --> Redraw[Final UI Redraw]
 ```
 
+> [!NOTE]
+> As of the June 2026 scaling refactor, `DeviceStateManager` no longer scales fonts. The old `get_font_multiplier()` / `get_scaled_base_font_size()` methods were removed. The single `content_scale_size` set by `UIScaleManager` scales all text via the canvas; DeviceStateManager only reports orientation/mode for layout decisions.
+
 ## Key Components
 
 ### 1. DeviceStateManager (`device_state_manager.gd`)

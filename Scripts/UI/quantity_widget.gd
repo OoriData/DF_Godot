@@ -21,7 +21,7 @@ func _ready() -> void:
 	var base_font_sz = 16
 	if is_instance_valid(dsm):
 		layout_mode = dsm.get_layout_mode()
-		base_font_sz = dsm.get_scaled_base_font_size(16)
+		base_font_sz = 16
 	else:
 		if is_inside_tree():
 			var vpsz = get_viewport_rect().size

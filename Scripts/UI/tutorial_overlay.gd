@@ -145,7 +145,7 @@ func _ensure_ui_built() -> void:
 func _get_font_size(base: int) -> int:
 	var dsm = get_node_or_null("/root/DeviceStateManager")
 	if is_instance_valid(dsm):
-		return dsm.get_scaled_base_font_size(base)
+		return base
 	
 	var win_size = get_viewport_rect().size if is_inside_tree() else Vector2(0, 0)
 	var is_portrait = win_size.y > win_size.x
