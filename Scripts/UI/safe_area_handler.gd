@@ -33,14 +33,24 @@ func _update_safe_area():
 	var right = margins.size.x
 	var bottom = margins.size.y
 
+	var is_landscape = win_sz.x > win_sz.y
+
 	# Add extra padding in portrait to avoid Dynamic Island / notch
-	if win_sz.y > win_sz.x and top > 0:
+	if not is_landscape and top > 0:
 		top += 14 # Push it down slightly further (logical pixels)
 
 	# Ensure minimum padding to keep UI from sticking completely to edges even without safe area
-	if win_sz.y > win_sz.x:
+	if not is_landscape:
 		left = max(left, 8.0)
 		right = max(right, 8.0)
+	else:
+		# In landscape, the game fills edge-to-edge on all sides. Safe-area insets are
+		# handled at the element level (overlay panel offset, top bar), so the root
+		# MarginContainer should not indent the layout — otherwise we get black bars.
+		left = 0.0
+		right = 0.0
+		top = 0.0
+		bottom = 0.0
 
 	# Set margins
 	add_theme_constant_override("margin_left", int(left))

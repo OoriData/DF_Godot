@@ -510,20 +510,20 @@ func _update_mobile_dependent_layout() -> void:
 		VENDOR_ITEM_BUTTON_MIN_WIDTH = 160.0
 		VENDOR_ITEM_BUTTON_HEIGHT = 70.0
 
-	# Two-column split: side-by-side on desktop, stacked on mobile/portrait.
+	# Two-column split: side-by-side in landscape (desktop and mobile), stacked in portrait.
 	if is_instance_valid(_main_split):
-		var stack := is_portrait or use_mobile
+		var stack: bool = is_portrait
 		_main_split.vertical = stack
 		if is_instance_valid(_stats_column) and is_instance_valid(_content_column):
 			if stack:
 				_stats_column.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 				_content_column.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 			else:
-				# Stats take ~25%, content ~75% of the row.
+				# Stats take ~35%, content ~65% of the row in landscape.
 				_stats_column.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 				_content_column.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-				_stats_column.size_flags_stretch_ratio = 1.0
-				_content_column.size_flags_stretch_ratio = 3.0
+				_stats_column.size_flags_stretch_ratio = 1.35
+				_content_column.size_flags_stretch_ratio = 2.65
 
 	# Super-scale stats in portrait by stacking them vertically
 	var res_hbox := _res_stats_hbox
@@ -764,17 +764,17 @@ func initialize_with_data(data_or_id: Variant, extra_arg: Variant = null) -> voi
 		var current_fuel = convoy_data_received.get("fuel", 0.0)
 		var max_fuel = convoy_data_received.get("max_fuel", 0.0)
 		if is_instance_valid(fuel_text_label): fuel_text_label.text = "⛽ Fuel: %s / %s" % [NumberFormat.fmt_float(current_fuel, 2), NumberFormat.fmt_float(max_fuel, 2)]
-		if is_instance_valid(fuel_bar): _set_resource_bar_style(fuel_bar, fuel_text_label, current_fuel, max_fuel, Color("ef5350"))
+		if is_instance_valid(fuel_bar): _set_resource_bar_style(fuel_bar, fuel_text_label, current_fuel, max_fuel)
 
 		var current_water = convoy_data_received.get("water", 0.0)
 		var max_water = convoy_data_received.get("max_water", 0.0)
 		if is_instance_valid(water_text_label): water_text_label.text = "💧 Water: %s / %s" % [NumberFormat.fmt_float(current_water, 2), NumberFormat.fmt_float(max_water, 2)]
-		if is_instance_valid(water_bar): _set_resource_bar_style(water_bar, water_text_label, current_water, max_water, Color("29b6f6"))
+		if is_instance_valid(water_bar): _set_resource_bar_style(water_bar, water_text_label, current_water, max_water)
 
 		var current_food = convoy_data_received.get("food", 0.0)
 		var max_food = convoy_data_received.get("max_food", 0.0)
 		if is_instance_valid(food_text_label): food_text_label.text = "🍖 Food: %s / %s" % [NumberFormat.fmt_float(current_food, 2), NumberFormat.fmt_float(max_food, 2)]
-		if is_instance_valid(food_bar): _set_resource_bar_style(food_bar, food_text_label, current_food, max_food, Color("ffa726"))
+		if is_instance_valid(food_bar): _set_resource_bar_style(food_bar, food_text_label, current_food, max_food)
 
 		# --- Performance Stats (Speed, Offroad, Efficiency) ---
 		# Assuming these are rated 0-100 for coloring, adjust max_value if different

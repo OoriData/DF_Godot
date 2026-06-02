@@ -58,9 +58,25 @@ func _ready() -> void:
 		if not _hub.map_overlay_settings_changed.is_connected(_on_map_overlay_settings_changed):
 			_hub.map_overlay_settings_changed.connect(_on_map_overlay_settings_changed)
 
-	# Start fully constructed
-	_update_layout(false)
+	# Re-collapse/re-expand correctly whenever the window or orientation changes.
+	# The panel itself is offset-anchored to zero width, so its own NOTIFICATION_RESIZED
+	# may not fire — listen on the viewport instead.
+	if is_inside_tree():
+		var vp = get_viewport()
+		if is_instance_valid(vp) and not vp.size_changed.is_connected(_on_viewport_resized):
+			vp.size_changed.connect(_on_viewport_resized)
+
+	# Start fully constructed — defer one frame so the parent's global rect is settled
+	call_deferred("_update_layout", false)
 	_sync_toggles_with_service()
+
+func _on_viewport_resized() -> void:
+	# Recompute panel width (portrait vs landscape) and re-apply collapsed/expanded offset.
+	if is_instance_valid(_content_panel):
+		_content_panel.custom_minimum_size.x = _get_panel_width()
+	if is_instance_valid(_tab_button):
+		_tab_button.custom_minimum_size.x = _get_tab_width()
+	call_deferred("_update_layout", false)
 
 func _on_map_overlay_settings_changed(_settings: Dictionary) -> void:
 	_sync_toggles_with_service()
@@ -262,11 +278,19 @@ func _on_tab_button_pressed() -> void:
 func _update_layout(animate: bool = false) -> void:
 	if _anim_tween and _anim_tween.is_valid():
 		_anim_tween.kill()
-		
-	# If expanded, flush against the left edge (offset_left = 0)
-	# If closed, slide completely off to the left, leaving only the tab handle visible
-	var target_left = 0 if _is_expanded else -_get_panel_width()
-	
+
+	# When collapsed, slide the panel far enough left that its content is fully off-screen.
+	# The parent container may start at a non-zero screen X (e.g. safe area margin), so we
+	# must add that parent offset to ensure the content panel clears the screen left edge.
+	var panel_width = _get_panel_width()
+	var parent_screen_x = 0.0
+	if not _is_expanded and is_inside_tree():
+		var parent = get_parent()
+		if is_instance_valid(parent) and parent is Control:
+			parent_screen_x = (parent as Control).get_global_rect().position.x
+
+	var target_left = 0.0 if _is_expanded else -(panel_width + parent_screen_x)
+
 	if animate:
 		_anim_tween = create_tween().set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
 		_anim_tween.tween_property(self, "offset_left", target_left, 0.3)
