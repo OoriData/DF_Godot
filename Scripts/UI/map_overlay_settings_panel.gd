@@ -32,8 +32,12 @@ func _is_portrait() -> bool:
 	var win_size = get_viewport_rect().size if is_inside_tree() else Vector2(0, 0)
 	return win_size.y > win_size.x
 
+func _is_landscape_mobile() -> bool:
+	return _is_mobile() and not _is_portrait()
+
 func _get_font_size(base: int) -> int:
-	var boost = 2.6 if _is_portrait() else (2.0 if _is_mobile() else 1.6)
+	# Landscape mobile is vertically cramped, so use a much smaller boost there.
+	var boost = 2.6 if _is_portrait() else (1.35 if _is_landscape_mobile() else 1.6)
 	return int(base * boost)
 
 func _get_panel_width() -> float:
@@ -48,9 +52,12 @@ func _get_panel_width() -> float:
 func _get_tab_width() -> float:
 	return 80.0 if _is_portrait() else 55.0
 
+var _was_portrait: bool = false
+
 func _ready() -> void:
+	_was_portrait = _is_portrait()
 	_build_ui()
-	
+
 	# Menu visibility no longer hides this panel, it remains accessible at all times!
 			
 	# Connect to Settings Service updates via SignalHub to maintain 100% synchronization
@@ -71,12 +78,27 @@ func _ready() -> void:
 	_sync_toggles_with_service()
 
 func _on_viewport_resized() -> void:
+	# Orientation flip changes compact-ness (fonts/spacing/descriptions), so rebuild the
+	# rows from scratch when portrait <-> landscape changes.
+	var now_portrait = _is_portrait()
+	if now_portrait != _was_portrait:
+		_was_portrait = now_portrait
+		_rebuild_ui()
+		return
 	# Recompute panel width (portrait vs landscape) and re-apply collapsed/expanded offset.
 	if is_instance_valid(_content_panel):
 		_content_panel.custom_minimum_size.x = _get_panel_width()
 	if is_instance_valid(_tab_button):
 		_tab_button.custom_minimum_size.x = _get_tab_width()
 	call_deferred("_update_layout", false)
+
+func _rebuild_ui() -> void:
+	if is_instance_valid(_main_hbox):
+		_main_hbox.queue_free()
+		_main_hbox = null
+	_build_ui()
+	call_deferred("_update_layout", false)
+	_sync_toggles_with_service()
 
 func _on_map_overlay_settings_changed(_settings: Dictionary) -> void:
 	_sync_toggles_with_service()
@@ -144,26 +166,37 @@ func _build_ui() -> void:
 	content_sb.border_width_right = 3
 	content_sb.border_color = Color(0.25, 0.35, 0.55, 0.6)
 	
-	var pad_lr = 28 if _is_portrait() else 20
-	var pad_tb = 36 if _is_portrait() else 28
+	var compact = _is_landscape_mobile()
+	var pad_lr = 28 if _is_portrait() else (14 if compact else 20)
+	var pad_tb = 36 if _is_portrait() else (12 if compact else 28)
 	content_sb.content_margin_left = pad_lr
 	content_sb.content_margin_right = pad_lr
 	content_sb.content_margin_top = pad_tb
 	content_sb.content_margin_bottom = pad_tb
 	_content_panel.add_theme_stylebox_override("panel", content_sb)
-	
+
+	# Scroll fallback: if the rows ever exceed the available height (short landscape
+	# screens, notches), they scroll instead of dropping below the screen edge.
+	var scroll = ScrollContainer.new()
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+	_content_panel.add_child(scroll)
+
 	_vbox = VBoxContainer.new()
-	_vbox.add_theme_constant_override("separation", 24 if _is_portrait() else 18)
-	_content_panel.add_child(_vbox)
-	
+	_vbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_vbox.add_theme_constant_override("separation", 24 if _is_portrait() else (7 if compact else 18))
+	scroll.add_child(_vbox)
+
 	var title = Label.new()
 	title.text = "Map Overlays"
-	title.add_theme_font_size_override("font_size", _get_font_size(22))
+	title.add_theme_font_size_override("font_size", _get_font_size(18 if compact else 22))
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_vbox.add_child(title)
-	
-	var sep = HSeparator.new()
-	_vbox.add_child(sep)
+
+	if not compact:
+		var sep = HSeparator.new()
+		_vbox.add_child(sep)
 	
 	# Toggles with descriptive rows
 	active_dest_toggle = _add_toggle_row(
@@ -208,7 +241,8 @@ func _add_toggle_row(text: String, icon: String, description: String) -> CheckBu
 	row_sb.border_width_right = 4
 	row_sb.border_color = Color(0.35, 0.45, 0.65, 0.6)
 	
-	var r_pad = 16 if _is_portrait() else 10
+	var compact = _is_landscape_mobile()
+	var r_pad = 16 if _is_portrait() else (6 if compact else 10)
 	row_sb.content_margin_left = r_pad
 	row_sb.content_margin_right = r_pad
 	row_sb.content_margin_top = r_pad
@@ -216,9 +250,9 @@ func _add_toggle_row(text: String, icon: String, description: String) -> CheckBu
 	row_sb.corner_radius_top_right = 8
 	row_sb.corner_radius_bottom_right = 8
 	row_panel.add_theme_stylebox_override("panel", row_sb)
-	
+
 	var main_vbox = VBoxContainer.new()
-	main_vbox.add_theme_constant_override("separation", 6)
+	main_vbox.add_theme_constant_override("separation", 2 if compact else 6)
 	row_panel.add_child(main_vbox)
 	
 	var row = HBoxContainer.new()
@@ -242,7 +276,8 @@ func _add_toggle_row(text: String, icon: String, description: String) -> CheckBu
 	row.add_child(label)
 	row.add_child(toggle)
 	
-	if not description.is_empty():
+	# Descriptions are hidden in landscape mobile to keep all rows on-screen.
+	if not description.is_empty() and not compact:
 		var desc_label = Label.new()
 		desc_label.text = description
 		desc_label.autowrap_mode = TextServer.AUTOWRAP_WORD

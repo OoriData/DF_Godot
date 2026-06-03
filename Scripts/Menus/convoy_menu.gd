@@ -525,6 +525,10 @@ func _update_mobile_dependent_layout() -> void:
 				_stats_column.size_flags_stretch_ratio = 1.35
 				_content_column.size_flags_stretch_ratio = 2.65
 
+	# In mobile landscape the full-width top banner clips off the top of the cramped menu,
+	# so relocate the convoy name into the top of the stats column instead.
+	_relocate_convoy_banner(use_mobile and not is_portrait)
+
 	# Super-scale stats in portrait by stacking them vertically
 	var res_hbox := _res_stats_hbox
 	var perf_hbox := _perf_stats_hbox
@@ -534,13 +538,31 @@ func _update_mobile_dependent_layout() -> void:
 	var stat_fs = 28
 
 	if is_instance_valid(res_hbox):
+		# Resources stack vertically in portrait, but sit side-by-side in landscape
+		# (like the performance stats row) to save vertical space.
+		res_hbox.vertical = is_portrait
 		res_hbox.add_theme_constant_override("separation", 8 if is_portrait else 4)
+		# In landscape the three bars share the row width; in portrait they stack full-width.
+		var res_box_h = stat_height if is_portrait else 44.0
+		var supply_fs = stat_fs if is_portrait else 14
 		for child in res_hbox.get_children():
 			if child is Control:
-				child.custom_minimum_size.y = stat_height
+				child.custom_minimum_size.y = res_box_h
+				if is_portrait:
+					child.custom_minimum_size.x = 0
+					child.size_flags_horizontal = Control.SIZE_FILL
+				else:
+					# Equal-width columns in the landscape row.
+					child.custom_minimum_size.x = 0
+					child.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 				for grand_child in child.get_children():
 					if grand_child is Label:
-						grand_child.add_theme_font_size_override("font_size", stat_fs)
+						grand_child.add_theme_font_size_override("font_size", supply_fs)
+						if not is_portrait:
+							# Keep long values from overflowing the narrow columns.
+							grand_child.clip_text = true
+							grand_child.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+							grand_child.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 
 	if is_instance_valid(perf_hbox):
 		perf_hbox.add_theme_constant_override("separation", 4)
@@ -614,6 +636,55 @@ func _update_mobile_dependent_layout() -> void:
 		for child in vendor_item_grid.get_children():
 			if child is Control and child.has_meta("nav_intent"):
 				_style_vendor_item_button(child, _current_vendor_tab)
+
+func _get_convoy_display_name() -> String:
+	if convoy_data_received is Dictionary:
+		var n = convoy_data_received.get("convoy_name", convoy_data_received.get("name", ""))
+		if n != null and str(n) != "":
+			return str(n)
+	return "Convoy"
+
+func _refresh_convoy_name_header() -> void:
+	if not is_instance_valid(_stats_column):
+		return
+	var lbl := _stats_column.get_node_or_null("ConvoyNameHeader") as Label
+	if is_instance_valid(lbl):
+		lbl.text = _get_convoy_display_name()
+
+func _relocate_convoy_banner(into_stats_column: bool) -> void:
+	# In mobile landscape the heavy full-width top banner clips off the top of the cramped
+	# menu, so hide it and show the convoy name as a compact flowing Label header at the
+	# top of the stats column (a Label flows in the VBox like the section headers, so it
+	# never overflows the top edge).
+	var banner := find_child("TopBannerPanel", true, false)
+
+	if into_stats_column and is_instance_valid(_stats_column):
+		if is_instance_valid(banner):
+			banner.visible = false
+		var lbl := _stats_column.get_node_or_null("ConvoyNameHeader") as Label
+		if lbl == null:
+			lbl = Label.new()
+			lbl.name = "ConvoyNameHeader"
+			lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+			lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+			lbl.clip_text = true
+			lbl.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+			lbl.add_theme_color_override("font_color", UITheme.ACCENT_BRASS)
+			lbl.add_theme_constant_override("outline_size", 1)
+			lbl.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.8))
+			lbl.add_theme_font_size_override("font_size", 20)
+			lbl.add_theme_font_override("font", _make_bold_font())
+			_stats_column.add_child(lbl)
+		_stats_column.move_child(lbl, 0)
+		lbl.visible = true
+		lbl.text = _get_convoy_display_name()
+	else:
+		if is_instance_valid(banner):
+			banner.visible = true
+		if is_instance_valid(_stats_column):
+			var lbl := _stats_column.get_node_or_null("ConvoyNameHeader")
+			if is_instance_valid(lbl):
+				lbl.visible = false
 
 func _update_vendor_grid_columns(override_count: int = -1) -> void:
 	if not is_instance_valid(vendor_item_grid):
@@ -757,23 +828,24 @@ func initialize_with_data(data_or_id: Variant, extra_arg: Variant = null) -> voi
 					_destinations_cache[nm3] = dest3
 
 		# --- Convoy Name as Title ---
-
-
+		# Keep the landscape stats-column name header in sync with the latest convoy data.
+		_refresh_convoy_name_header()
 
 		# --- Resources (Fuel, Water, Food) ---
+		# On mobile the boxes are narrow, so show a compact percentage; desktop shows full values.
 		var current_fuel = convoy_data_received.get("fuel", 0.0)
 		var max_fuel = convoy_data_received.get("max_fuel", 0.0)
-		if is_instance_valid(fuel_text_label): fuel_text_label.text = "⛽ Fuel: %s / %s" % [NumberFormat.fmt_float(current_fuel, 2), NumberFormat.fmt_float(max_fuel, 2)]
+		if is_instance_valid(fuel_text_label): fuel_text_label.text = _format_resource_label("⛽", "Fuel", current_fuel, max_fuel)
 		if is_instance_valid(fuel_bar): _set_resource_bar_style(fuel_bar, fuel_text_label, current_fuel, max_fuel)
 
 		var current_water = convoy_data_received.get("water", 0.0)
 		var max_water = convoy_data_received.get("max_water", 0.0)
-		if is_instance_valid(water_text_label): water_text_label.text = "💧 Water: %s / %s" % [NumberFormat.fmt_float(current_water, 2), NumberFormat.fmt_float(max_water, 2)]
+		if is_instance_valid(water_text_label): water_text_label.text = _format_resource_label("💧", "Water", current_water, max_water)
 		if is_instance_valid(water_bar): _set_resource_bar_style(water_bar, water_text_label, current_water, max_water)
 
 		var current_food = convoy_data_received.get("food", 0.0)
 		var max_food = convoy_data_received.get("max_food", 0.0)
-		if is_instance_valid(food_text_label): food_text_label.text = "🍖 Food: %s / %s" % [NumberFormat.fmt_float(current_food, 2), NumberFormat.fmt_float(max_food, 2)]
+		if is_instance_valid(food_text_label): food_text_label.text = _format_resource_label("🍖", "Food", current_food, max_food)
 		if is_instance_valid(food_bar): _set_resource_bar_style(food_bar, food_text_label, current_food, max_food)
 
 		# --- Performance Stats (Speed, Offroad, Efficiency) ---
@@ -2301,6 +2373,15 @@ func _get_color_for_capacity(percentage: float) -> Color:
 		return COLOR_YELLOW
 	else:
 		return COLOR_GREEN
+
+func _format_resource_label(icon: String, name: String, current_value: float, max_value: float) -> String:
+	# Mobile: compact percentage (e.g. "⛽ 83%"). Desktop: full "⛽ Fuel: 56.27 / 68".
+	if _is_mobile():
+		var pct: float = 0.0
+		if max_value > 0:
+			pct = (current_value / max_value) * 100.0
+		return "%s %d%%" % [icon, roundi(pct)]
+	return "%s %s: %s / %s" % [icon, name, NumberFormat.fmt_float(current_value, 2), NumberFormat.fmt_float(max_value, 2)]
 
 func _set_resource_bar_style(bar_node: ProgressBar, label_node: Label, current_value: float, max_value: float, custom_color: Color = Color.TRANSPARENT):
 	if not is_instance_valid(bar_node) or not is_instance_valid(label_node):
