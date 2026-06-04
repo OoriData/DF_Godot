@@ -406,9 +406,9 @@ func _update_menu_container_style():
 	style.content_margin_right = 0
 	style.content_margin_top = 0
 	style.content_margin_bottom = 0
-			
+
 	menu_container.add_theme_stylebox_override("panel", style)
-	
+
 	# Apply background texture if not already present
 	var bg = menu_container.get_node_or_null("OoriBackground")
 	if not is_instance_valid(bg):

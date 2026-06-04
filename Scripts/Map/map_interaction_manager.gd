@@ -275,7 +275,7 @@ func _handle_touch_input(event: InputEvent):
 	if event is InputEventScreenTouch:
 		if event.pressed:
 			# Track touch for hover updates if needed, though mouse emulation usually handles this.
-			_update_hover(event.position)
+			_update_hover(_touch_local_to_global(event.position))
 			# Only track the touch index for potential tap, not for panning.
 			# Panning is handled by InputEventPanGesture.
 			if _pan_touch_index == -1:
@@ -287,23 +287,23 @@ func _handle_touch_input(event: InputEvent):
 			if event.index == _pan_touch_index:
 				var time_delta = Time.get_ticks_msec() - _touch_start_time
 				var pos_delta = event.position.distance_to(_touch_start_pos)
-				
+
 				# On release, we check for hover one last time at the release position to be sure.
-				_update_hover(event.position)
-				
+				_update_hover(_touch_local_to_global(event.position))
+
 				# ONLY handle tap if it was short and didn't move much
 				if time_delta < TAP_MAX_DURATION_MS and pos_delta < TAP_MAX_DISTANCE:
 					if debug_logging:
 						print("[MIM] Valid Touch Tap detected: time=%dms, dist=%.1f" % [time_delta, pos_delta])
-					if _handle_tap_interaction(event.position):
+					if _handle_tap_interaction(_touch_local_to_global(event.position)):
 						get_viewport().set_input_as_handled()
-				
+
 				_pan_touch_index = -1
 		return # Consumed
 
 	if event is InputEventScreenDrag and event.index == _pan_touch_index:
 		# Update hover during drag so labels don't "flicker" or disappear at pan start
-		_update_hover(event.position)
+		_update_hover(_touch_local_to_global(event.position))
 		return # Consumed
 
 	# Touch Zooming (Pinch Gesture)
@@ -601,6 +601,15 @@ func _perform_hover_tests_at_world(mouse_world_pos: Vector2):
 		self._current_hover_info = new_hover_info
 		emit_signal("hover_changed", self._current_hover_info)
 
+
+## Converts a position from the MapView Control's local space to global screen space.
+## gui_input touch events (InputEventScreenTouch/Drag) arrive with positions already
+## transformed to the receiving Control's local space via xformed_by(); our hit-tests
+## use get_global_rect() which is in screen space, so we must convert before comparing.
+func _touch_local_to_global(local_pos: Vector2) -> Vector2:
+	if is_instance_valid(_map_texture_rect):
+		return _map_texture_rect.get_global_transform() * local_pos
+	return local_pos
 
 ## Converts a main-viewport screen position to SubViewport world coordinates.
 ## Mirrors the same mapping used by _update_hover so all hit tests agree.
