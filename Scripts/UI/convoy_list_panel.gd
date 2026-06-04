@@ -363,8 +363,11 @@ func _update_button_layout() -> void:
 		is_portrait = win_size.y > win_size.x
 
 	if is_portrait:
-		# Chunky Portrait Scaling
-		toggle_button.custom_minimum_size = Vector2(400, 110)
+		# Chunky Portrait Scaling. Width is kept well under the 800px logical portrait
+		# width so the whole top bar (username + Options + Feedback + money + selector)
+		# fits a single row — otherwise the bar's min width exceeds 800px and MainContainer
+		# (grow_horizontal = BOTH) balloons, pushing the entire UI off both screen edges.
+		toggle_button.custom_minimum_size = Vector2(160, 110)
 		rtl.add_theme_font_size_override("normal_font_size", _get_font_size(19))
 		rtl.offset_top = 34
 	elif _is_mobile():

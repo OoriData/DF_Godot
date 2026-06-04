@@ -86,6 +86,11 @@ var _main_split: BoxContainer = null
 var _stats_column: VBoxContainer = null
 var _content_column: VBoxContainer = null
 
+# Portrait summary strip (built at runtime) — compact stat chips that replace the full
+# stats column on the cramped portrait bottom sheet.
+var _portrait_summary_panel: PanelContainer = null
+var _portrait_summary_flow: HFlowContainer = null
+
 @onready var vehicles_label: Label = get_node_or_null("MainVBox/ScrollContainer/ContentVBox/VehiclesLabel")
 # Optional: AllCargoLabel may not exist in the scene variant.
 var all_cargo_label: Label = null
@@ -529,6 +534,21 @@ func _update_mobile_dependent_layout() -> void:
 	# so relocate the convoy name into the top of the stats column instead.
 	_relocate_convoy_banner(use_mobile and not is_portrait)
 
+	# Portrait: replace the tall stats column with a compact chip strip; the vendor preview
+	# (with its tabs) then fills the rest of the bottom-sheet height.
+	if is_portrait:
+		_ensure_portrait_summary()
+		_refresh_portrait_summary()
+		if is_instance_valid(_portrait_summary_panel):
+			_portrait_summary_panel.visible = true
+		if is_instance_valid(_stats_column):
+			_stats_column.visible = false
+	else:
+		if is_instance_valid(_portrait_summary_panel):
+			_portrait_summary_panel.visible = false
+		if is_instance_valid(_stats_column):
+			_stats_column.visible = true
+
 	# Super-scale stats in portrait by stacking them vertically
 	var res_hbox := _res_stats_hbox
 	var perf_hbox := _perf_stats_hbox
@@ -686,6 +706,104 @@ func _relocate_convoy_banner(into_stats_column: bool) -> void:
 			if is_instance_valid(lbl):
 				lbl.visible = false
 
+# --- Portrait summary strip -------------------------------------------------
+
+func _pct(current_value, max_value) -> float:
+	var c := NumberFormat.to_f(current_value, 0.0)
+	var m := NumberFormat.to_f(max_value, 0.0)
+	if m <= 0.0:
+		return 0.0
+	return clampf((c / m) * 100.0, 0.0, 100.0)
+
+func _resource_pct_color(pct: float) -> Color:
+	if pct >= 50.0:
+		return COLOR_GREEN
+	if pct >= 25.0:
+		return COLOR_YELLOW
+	return COLOR_RED
+
+func _ensure_portrait_summary() -> void:
+	if is_instance_valid(_portrait_summary_panel):
+		return
+	if not is_instance_valid(content_vbox):
+		return
+	_portrait_summary_panel = PanelContainer.new()
+	_portrait_summary_panel.name = "PortraitSummary"
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = UITheme.METAL_DARK
+	sb.corner_radius_top_left = UITheme.RADIUS_SM
+	sb.corner_radius_top_right = UITheme.RADIUS_SM
+	sb.corner_radius_bottom_left = UITheme.RADIUS_SM
+	sb.corner_radius_bottom_right = UITheme.RADIUS_SM
+	sb.content_margin_left = 8
+	sb.content_margin_right = 8
+	sb.content_margin_top = 8
+	sb.content_margin_bottom = 8
+	_portrait_summary_panel.add_theme_stylebox_override("panel", sb)
+
+	_portrait_summary_flow = HFlowContainer.new()
+	_portrait_summary_flow.name = "SummaryFlow"
+	_portrait_summary_flow.alignment = FlowContainer.ALIGNMENT_CENTER
+	_portrait_summary_flow.add_theme_constant_override("h_separation", 8)
+	_portrait_summary_flow.add_theme_constant_override("v_separation", 6)
+	_portrait_summary_panel.add_child(_portrait_summary_flow)
+
+	content_vbox.add_child(_portrait_summary_panel)
+	content_vbox.move_child(_portrait_summary_panel, 0)
+
+func _add_summary_chip(text: String, color: Color) -> void:
+	var chip := PanelContainer.new()
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color(0.16, 0.18, 0.22, 0.92)
+	sb.corner_radius_top_left = 6
+	sb.corner_radius_top_right = 6
+	sb.corner_radius_bottom_left = 6
+	sb.corner_radius_bottom_right = 6
+	sb.content_margin_left = 10
+	sb.content_margin_right = 10
+	sb.content_margin_top = 5
+	sb.content_margin_bottom = 5
+	chip.add_theme_stylebox_override("panel", sb)
+	var lbl := Label.new()
+	lbl.text = text
+	lbl.add_theme_font_size_override("font_size", 18)
+	lbl.add_theme_color_override("font_color", color)
+	lbl.add_theme_font_override("font", _make_bold_font())
+	chip.add_child(lbl)
+	_portrait_summary_flow.add_child(chip)
+
+func _refresh_portrait_summary() -> void:
+	if not is_instance_valid(_portrait_summary_flow):
+		return
+	if not (convoy_data_received is Dictionary) or convoy_data_received.is_empty():
+		return
+	for c in _portrait_summary_flow.get_children():
+		c.queue_free()
+
+	# Resources (colour-coded by remaining %)
+	var fuel_pct := _pct(convoy_data_received.get("fuel", 0.0), convoy_data_received.get("max_fuel", 0.0))
+	var water_pct := _pct(convoy_data_received.get("water", 0.0), convoy_data_received.get("max_water", 0.0))
+	var food_pct := _pct(convoy_data_received.get("food", 0.0), convoy_data_received.get("max_food", 0.0))
+	_add_summary_chip("⛽ %d%%" % roundi(fuel_pct), _resource_pct_color(fuel_pct))
+	_add_summary_chip("💧 %d%%" % roundi(water_pct), _resource_pct_color(water_pct))
+	_add_summary_chip("🍖 %d%%" % roundi(food_pct), _resource_pct_color(food_pct))
+
+	# Cargo capacity (neutral colour — higher just means fuller)
+	var total_vol := NumberFormat.to_f(convoy_data_received.get("total_cargo_capacity", 0.0), 0.0)
+	var used_vol := total_vol - NumberFormat.to_f(convoy_data_received.get("total_free_space", 0.0), 0.0)
+	var total_wt := NumberFormat.to_f(convoy_data_received.get("total_weight_capacity", 0.0), 0.0)
+	var used_wt := total_wt - NumberFormat.to_f(convoy_data_received.get("total_remaining_capacity", 0.0), 0.0)
+	_add_summary_chip("📦 %d%%" % roundi(_pct(used_vol, total_vol)), UITheme.TEXT_PRIMARY)
+	_add_summary_chip("⚖️ %d%%" % roundi(_pct(used_wt, total_wt)), UITheme.TEXT_PRIMARY)
+
+	# Performance (raw ratings, brass)
+	var spd := NumberFormat.to_f(convoy_data_received.get("top_speed", 0.0), 0.0)
+	var off := NumberFormat.to_f(convoy_data_received.get("offroad_capability", 0.0), 0.0)
+	var eff := NumberFormat.to_f(convoy_data_received.get("efficiency", 0.0), 0.0)
+	_add_summary_chip("🏎️ %s" % NumberFormat.fmt_float(spd, 0), UITheme.ACCENT_BRASS)
+	_add_summary_chip("🏔️ %s" % NumberFormat.fmt_float(off, 0), UITheme.ACCENT_BRASS)
+	_add_summary_chip("⚡ %s" % NumberFormat.fmt_float(eff, 0), UITheme.ACCENT_BRASS)
+
 func _update_vendor_grid_columns(override_count: int = -1) -> void:
 	if not is_instance_valid(vendor_item_grid):
 		return
@@ -830,6 +948,8 @@ func initialize_with_data(data_or_id: Variant, extra_arg: Variant = null) -> voi
 		# --- Convoy Name as Title ---
 		# Keep the landscape stats-column name header in sync with the latest convoy data.
 		_refresh_convoy_name_header()
+		# Keep the portrait summary chips in sync too.
+		_refresh_portrait_summary()
 
 		# --- Resources (Fuel, Water, Food) ---
 		# On mobile the boxes are narrow, so show a compact percentage; desktop shows full values.
@@ -2747,6 +2867,13 @@ func _initialize_tab_button_styles(button: Button) -> void:
 	button.add_theme_stylebox_override("focus", active_style)
 	button.add_theme_stylebox_override("normal", normal_style)
 	button.add_theme_stylebox_override("hover", normal_style)
+
+	# Clip the (long) tab labels so they never force a minimum width larger than the menu.
+	# Without this, the tab text inflates VendorTabsHBox, which inflates the whole menu's
+	# minimum width — and because MenuContainer grows in both directions, the entire menu
+	# (and the nav bar) overflow off both screen edges.
+	button.clip_text = true
+	button.autowrap_mode = TextServer.AUTOWRAP_OFF
 
 	var on_mobile := _is_mobile()
 	if on_mobile:

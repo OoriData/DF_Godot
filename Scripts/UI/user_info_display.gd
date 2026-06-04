@@ -78,7 +78,9 @@ func _ready() -> void:
 	
 	if _is_mobile():
 		_apply_mobile_optimizations()
-	
+
+	# Must run AFTER styling so the panel stylebox exists; insets the content to safe area.
+	_update_safe_margins()
 	queue_redraw()
 
 func _is_mobile() -> bool:
@@ -108,16 +110,26 @@ func _update_mobile_sizing() -> void:
 
 	if is_portrait:
 		custom_minimum_size.y = 200 # Increased from 170 for better clearance
-		if is_instance_valid(settings_button): 
-			settings_button.custom_minimum_size = Vector2(240, 130)
-			settings_button.add_theme_font_size_override("font_size", 36)
-		if is_instance_valid(report_bug_button): 
-			report_bug_button.custom_minimum_size = Vector2(160, 130)
-			report_bug_button.add_theme_font_size_override("font_size", 36)
-		
+		# Portrait logical width is only 800px (see UIScaleManager). Fixed button widths
+		# (240/160) plus the convoy selector overflowed the row, ballooning the whole UI.
+		# Let the buttons size to their content (keep the tall touch height) and use a
+		# smaller font so the bar fits a single 800px row.
+		if is_instance_valid(settings_button):
+			settings_button.custom_minimum_size = Vector2(0, 120)
+			settings_button.add_theme_font_size_override("font_size", 26)
+		if is_instance_valid(report_bug_button):
+			report_bug_button.custom_minimum_size = Vector2(0, 120)
+			report_bug_button.add_theme_font_size_override("font_size", 26)
+
 		# Also scale username and money for portrait clarity
-		if is_instance_valid(username_label): username_label.add_theme_font_size_override("font_size", 32)
-		if is_instance_valid(user_money_label): user_money_label.add_theme_font_size_override("font_size", 32)
+		if is_instance_valid(username_label): username_label.add_theme_font_size_override("font_size", 26)
+		if is_instance_valid(user_money_label): user_money_label.add_theme_font_size_override("font_size", 26)
+
+		# Tighten HBoxContent gap in portrait (12px × 9 gaps = 108px; 6px saves 54px,
+		# keeping the bar's total min-width comfortably under the 800px logical limit).
+		var hbox = get_node_or_null("HBoxContent")
+		if is_instance_valid(hbox):
+			hbox.add_theme_constant_override("separation", 6)
 	else:
 		custom_minimum_size.y = 96
 		if is_instance_valid(settings_button): 
@@ -247,7 +259,27 @@ func _apply_desktop_styling() -> void:
 		report_bug_button.custom_minimum_size = Vector2(0, 56) # Taller feedback button
 
 func _update_safe_margins() -> void:
-	pass
+	# Inset the bar CONTENT (buttons/labels) to the safe area so nothing sits under the
+	# notch or rounded corners, while the OoriBackground keeps bleeding to the physical
+	# edges (no black bars). The bar's panel stylebox content margins are the lever.
+	var style = get_theme_stylebox("panel")
+	if not (style is StyleBoxFlat):
+		return
+	var safe := Rect2()
+	var sm = get_node_or_null("/root/ui_scale_manager")
+	if is_instance_valid(sm) and sm.has_method("get_logical_safe_margins"):
+		safe = sm.get_logical_safe_margins()
+	var dsm = get_node_or_null("/root/DeviceStateManager")
+	var is_portrait := false
+	if is_instance_valid(dsm):
+		is_portrait = dsm.get_is_portrait()
+	else:
+		var vp := get_viewport_rect().size
+		is_portrait = vp.y > vp.x
+	var side_min := 8.0 if is_portrait else 8.0
+	style.content_margin_left = maxf(side_min, safe.position.x)
+	style.content_margin_right = maxf(side_min, safe.size.x)
+	style.content_margin_top = 4.0 + safe.position.y  # clear the notch / status bar
 
 
 
@@ -273,6 +305,7 @@ func _notification(what: int) -> void:
 		queue_redraw()
 	elif what == NOTIFICATION_RESIZED:
 		_update_mobile_sizing()
+		_update_safe_margins()
 		queue_redraw()
 
 

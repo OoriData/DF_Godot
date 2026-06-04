@@ -149,6 +149,13 @@ func set_nav_button_visible(type: String, is_visible: bool):
 	if _nav_buttons.has(type):
 		_nav_buttons[type].visible = is_visible
 
+func _get_logical_safe_margins() -> Rect2:
+	# Rect2(position = (left, top), size = (right, bottom)) in logical pixels.
+	var sm = get_node_or_null("/root/ui_scale_manager")
+	if is_instance_valid(sm) and sm.has_method("get_logical_safe_margins"):
+		return sm.get_logical_safe_margins()
+	return Rect2()
+
 func _update_static_nav_bar_ui(active_type: String):
 	if not is_instance_valid(_static_bottom_nav): return
 	
@@ -163,29 +170,49 @@ func _update_static_nav_bar_ui(active_type: String):
 	var use_mobile = dsm.is_mobile if is_instance_valid(dsm) else false
 	
 	var bar_margin := 14.0 if is_portrait else (6.0 if use_mobile else 0.0)
+	# Inset the nav-button CONTENT to the safe area (rounded corners + home indicator) while
+	# the bar background still bleeds to the physical edges (no black bars). Side margins get
+	# a rounded-corner minimum; the bottom margin lifts buttons off the home indicator.
+	var safe := _get_logical_safe_margins()
+	var side_inset := maxf(bar_margin, maxf(safe.position.x, safe.size.x))
+	if is_portrait:
+		side_inset = maxf(side_inset, 16.0)
+	var bottom_inset := bar_margin + safe.size.y
 	var style = _static_bottom_nav.get_theme_stylebox("panel")
 	style.content_margin_top = bar_margin
-	style.content_margin_bottom = bar_margin
-	style.content_margin_left = bar_margin
-	style.content_margin_right = bar_margin
-	
+	style.content_margin_bottom = bottom_inset
+	style.content_margin_left = side_inset
+	style.content_margin_right = side_inset
+
 	var btn_min_h := 140.0 if is_portrait else (85.0 if use_mobile else 90.0)
 	var base_font_size: int = 28 if is_portrait else (22 if use_mobile else 28)
 	var font_size: int = base_font_size if is_instance_valid(dsm) else base_font_size
-	
+
 	for type in _nav_buttons:
 		var btn = _nav_buttons[type]
-		btn.custom_minimum_size = Vector2(110, btn_min_h)
+		btn.custom_minimum_size = Vector2(72, btn_min_h)
+		# Clip the label so long nav text ("Settlement") can't force the 4 buttons past the
+		# logical width and push the bar off both screen edges.
+		btn.clip_text = true
 		btn.add_theme_font_size_override("font_size", font_size)
 		
 		var is_active = (active_type == type)
 		btn.theme_type_variation = &"NavButtonActive" if is_active else &"NavButton"
+
+func _on_viewport_resized_navbar() -> void:
+	# Re-apply nav-bar safe insets / button clipping when the device rotates with a menu open.
+	if is_instance_valid(current_active_menu) and current_active_menu.has_meta("menu_type"):
+		_update_static_nav_bar_ui(str(current_active_menu.get_meta("menu_type")))
 
 func _ready():
 	# Initially, no menu is shown. Hide MenuManager so it does not block input.
 	visible = false
 	mouse_filter = MOUSE_FILTER_IGNORE
 	_base_z_index = self.z_index # Store initial z_index
+
+	var vp := get_viewport()
+	if is_instance_valid(vp) and not vp.size_changed.is_connected(_on_viewport_resized_navbar):
+		vp.size_changed.connect(_on_viewport_resized_navbar)
 
 	if is_instance_valid(_hub):
 		if _hub.has_signal("convoy_selection_changed") and not _hub.convoy_selection_changed.is_connected(_on_hub_convoy_selection_changed):

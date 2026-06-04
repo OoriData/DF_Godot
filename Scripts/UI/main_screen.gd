@@ -327,13 +327,14 @@ func _on_layout_mode_changed(mode, screen_size, is_mobile):
 	_update_menu_container_anchors()
 	if _menu_anim_in_progress == false and is_instance_valid(menu_container) and menu_container.visible:
 		_refresh_menu_layout()
-	
+
 	# Wait for Godot layout to recalculate UI bounds before updating camera
 	await get_tree().process_frame
 
 	_update_camera_viewport_rect_on_resize()
 	_update_onboarding_layer_rect_to_map()
 	_update_new_convoy_dialog_layout()
+	_diag_dump_offscreen("layout_mode_changed")
 
 func _refresh_menu_layout():
 	# Update Target Width
@@ -654,9 +655,53 @@ func _get_bottom_safe_margin() -> float:
 		return max(34.0, phys_bottom / scale)
 	return 34.0
 
+var _debug_layout_overflow: bool = true
+
+func _diag_dump_offscreen(reason: String) -> void:
+	if not _debug_layout_overflow:
+		return
+	# Use a short timer instead of await-frames so this is safe to call from call_deferred.
+	get_tree().create_timer(0.15).timeout.connect(func(): _diag_run_dump(reason))
+
+func _diag_run_dump(reason: String) -> void:
+	var vp := get_viewport()
+	if not is_instance_valid(vp):
+		return
+	var view_w: float = vp.get_visible_rect().size.x
+	var view_h: float = vp.get_visible_rect().size.y
+	print("[LAYOUT-OVERFLOW] ===== reason=", reason, " =====")
+	print("[LAYOUT-OVERFLOW] viewport_logical=", vp.get_visible_rect().size, " window=", DisplayServer.window_get_size(), " csf=", get_window().content_scale_factor)
+	var rows: Array = []
+	_diag_walk(get_tree().root, view_w, view_h, rows)
+	if rows.is_empty():
+		print("[LAYOUT-OVERFLOW] none — no controls cross horizontal edges")
+	else:
+		for r in rows:
+			print("[LAYOUT-OVERFLOW] ", r)
+	print("[LAYOUT-OVERFLOW] ===== end =====")
+
+func _diag_walk(node: Node, view_w: float, _view_h: float, rows: Array, depth: int = 0) -> void:
+	if node is Control and (node as Control).is_visible_in_tree():
+		var c := node as Control
+		var gr := c.get_global_rect()
+		var off_left := gr.position.x < -0.5
+		var off_right := gr.end.x > view_w + 0.5
+		if off_left or off_right:
+			var tag := ""
+			if off_left: tag += " <OFF-LEFT %.0f>" % gr.position.x
+			if off_right: tag += " <OFF-RIGHT end=%.0f over=%.0f>" % [gr.end.x, gr.end.x - view_w]
+			rows.append("%s%s [%s] rect=(x=%.0f w=%.0f) minW=%.0f flagsH=%d%s" % [
+				"  ".repeat(depth), c.name, c.get_class(), gr.position.x, gr.size.x,
+				c.get_combined_minimum_size().x, c.size_flags_horizontal, tag])
+	for ch in node.get_children():
+		_diag_walk(ch, view_w, _view_h, rows, depth + 1)
+
 func _on_menu_visibility_changed(is_open: bool, _menu_name: String):
 	# Overlay behavior: map stays full size; slide menu over it.
 	if not is_instance_valid(menu_container): return
+	if is_open:
+		# Diagnostic: after layout settles, report any UI crossing screen edges.
+		_diag_dump_offscreen("menu_opened:" + str(_menu_name))
 	_update_menu_container_anchors()
 	
 	var viewport_sz = get_viewport_rect().size

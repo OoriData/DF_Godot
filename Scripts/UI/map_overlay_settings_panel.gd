@@ -53,13 +53,20 @@ func _get_tab_width() -> float:
 	return 80.0 if _is_portrait() else 55.0
 
 var _was_portrait: bool = false
+var _menu_open: bool = false
+@onready var _menu_manager: Node = get_node_or_null("/root/MenuManager")
 
 func _ready() -> void:
 	_was_portrait = _is_portrait()
 	_build_ui()
 
-	# Menu visibility no longer hides this panel, it remains accessible at all times!
-			
+	# In portrait the map overlay only makes sense while the map is full-screen. When a
+	# menu (bottom sheet) is open it would intersect the menu, so hide it until the menu
+	# closes. Landscape keeps it always available (the map is never fully covered).
+	if is_instance_valid(_menu_manager) and _menu_manager.has_signal("menu_visibility_changed"):
+		if not _menu_manager.menu_visibility_changed.is_connected(_on_menu_visibility_changed):
+			_menu_manager.menu_visibility_changed.connect(_on_menu_visibility_changed)
+
 	# Connect to Settings Service updates via SignalHub to maintain 100% synchronization
 	if is_instance_valid(_hub) and _hub.has_signal("map_overlay_settings_changed"):
 		if not _hub.map_overlay_settings_changed.is_connected(_on_map_overlay_settings_changed):
@@ -74,8 +81,26 @@ func _ready() -> void:
 			vp.size_changed.connect(_on_viewport_resized)
 
 	# Start fully constructed — defer one frame so the parent's global rect is settled
-	call_deferred("_update_layout", false)
+	_apply_collapsed_after_layout()
 	_sync_toggles_with_service()
+	_update_overlay_presence()
+
+func _on_menu_visibility_changed(is_open: bool, _menu_name: String) -> void:
+	_menu_open = is_open
+	_update_overlay_presence()
+
+func _update_overlay_presence() -> void:
+	# Hide the whole overlay (panel + tab) in portrait while a menu is open.
+	visible = not (_is_portrait() and _menu_open)
+
+func _apply_collapsed_after_layout() -> void:
+	# Apply once now, then again after the container has measured its real size, so the
+	# collapse distance uses the actual rendered width (prevents content peeking).
+	_update_layout(false)
+	await get_tree().process_frame
+	await get_tree().process_frame
+	if is_instance_valid(self):
+		_update_layout(false)
 
 func _on_viewport_resized() -> void:
 	# Orientation flip changes compact-ness (fonts/spacing/descriptions), so rebuild the
@@ -83,8 +108,10 @@ func _on_viewport_resized() -> void:
 	var now_portrait = _is_portrait()
 	if now_portrait != _was_portrait:
 		_was_portrait = now_portrait
+		_update_overlay_presence()
 		_rebuild_ui()
 		return
+	_update_overlay_presence()
 	# Recompute panel width (portrait vs landscape) and re-apply collapsed/expanded offset.
 	if is_instance_valid(_content_panel):
 		_content_panel.custom_minimum_size.x = _get_panel_width()
@@ -97,7 +124,7 @@ func _rebuild_ui() -> void:
 		_main_hbox.queue_free()
 		_main_hbox = null
 	_build_ui()
-	call_deferred("_update_layout", false)
+	_apply_collapsed_after_layout()
 	_sync_toggles_with_service()
 
 func _on_map_overlay_settings_changed(_settings: Dictionary) -> void:
@@ -314,17 +341,20 @@ func _update_layout(animate: bool = false) -> void:
 	if _anim_tween and _anim_tween.is_valid():
 		_anim_tween.kill()
 
-	# When collapsed, slide the panel far enough left that its content is fully off-screen.
-	# The parent container may start at a non-zero screen X (e.g. safe area margin), so we
-	# must add that parent offset to ensure the content panel clears the screen left edge.
-	var panel_width = _get_panel_width()
+	# When collapsed, slide the panel far enough left that its content is fully off-screen,
+	# leaving only the tab handle. Use the ACTUAL rendered content width (which can exceed
+	# the minimum width on tall portrait fonts) plus the parent's screen X (safe-area margin)
+	# and a small cushion, so nothing ever peeks past the left edge.
+	var collapse_width = _get_panel_width()
+	if is_instance_valid(_content_panel):
+		collapse_width = max(collapse_width, _content_panel.size.x)
 	var parent_screen_x = 0.0
 	if not _is_expanded and is_inside_tree():
 		var parent = get_parent()
 		if is_instance_valid(parent) and parent is Control:
 			parent_screen_x = (parent as Control).get_global_rect().position.x
 
-	var target_left = 0.0 if _is_expanded else -(panel_width + parent_screen_x)
+	var target_left = 0.0 if _is_expanded else -(collapse_width + parent_screen_x + 8.0)
 
 	if animate:
 		_anim_tween = create_tween().set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
