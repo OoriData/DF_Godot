@@ -184,12 +184,12 @@
   },
   "active": "1ae821d75f551279",
   "lastOpenFiles": [
+    "Pasted image 20260521131852.png",
     "02_UI_UX/ConvoyMenu.md",
     "02_UI_UX/UIAudit.md",
     "TODO.md",
     "03_Systems/MapSystem/SettlementOverlay.md",
     "Pasted image 20260521131852.png.import",
-    "Pasted image 20260521131852.png",
     "99_Reference/data_dumps/Map_example_new.md",
     "99_Reference/data_dumps/Map_example.json",
     "03_Systems/MapSystem/MapMenuSystem.md",
@@ -216,7 +216,6 @@
     "03_Systems/StateManagement.md",
     "04_Technical/PushNotifications.md",
     "03_Systems/MapSystem/TerrainMath.md",
-    "03_Systems/TutorialSystem/TargetResolution.md",
-    "04_Technical/NetworkLayer.md"
+    "03_Systems/TutorialSystem/TargetResolution.md"
   ]
 }
