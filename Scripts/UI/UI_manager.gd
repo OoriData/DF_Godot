@@ -162,6 +162,7 @@ var _convoy_label_manager_initialized: bool = false
 # Settlement overlay: draws callout tails and tile icons (settlement_overlay_draw.gd)
 var _settlement_overlay: Node = null  # tails + outlines (z_index -1, behind panels)
 var _pin_overlay: Node = null          # focus pins only  (z_index 10, in front of panels)
+var _grid_overlay: Node = null         # coordinate grid lines (child of terrain tilemap)
 
 func _ready():
 	await get_tree().process_frame
@@ -522,6 +523,8 @@ func _draw_interactive_labels(current_hover_info: Dictionary):
 	var convoy_ids_to_display: Array[String] = []
 	var settlement_coords_to_display: Array[Vector2i] = []
 	var coords_to_targeting_convoys: Dictionary = {}
+	var coords_to_cargo_names: Dictionary = {}  # Vector2i -> Array[String] of cargo headed there
+	var warehouse_ids_cache: Array[String] = _get_player_warehouse_settlement_ids()
 
 	var add_settlement_target = func(coords: Vector2i, convoy_id_str: String = ""):
 		if not settlement_coords_to_display.has(coords):
@@ -593,12 +596,11 @@ func _draw_interactive_labels(current_hover_info: Dictionary):
 
 	# Show Warehouse Indicators (if setting is enabled)
 	if show_warehouses:
-		var warehouse_sett_ids = _get_player_warehouse_settlement_ids()
 		if _all_settlement_data_cache is Array:
 			for s in _all_settlement_data_cache:
 				if s is Dictionary:
 					var sett_id = str(s.get("sett_id", s.get("id", "")))
-					if sett_id != "" and warehouse_sett_ids.has(sett_id):
+					if sett_id != "" and warehouse_ids_cache.has(sett_id):
 						var coords = Vector2i(int(s.get("x", 0)), int(s.get("y", 0)))
 						add_settlement_target.call(coords)
 
@@ -609,7 +611,7 @@ func _draw_interactive_labels(current_hover_info: Dictionary):
 				var convoy_id = convoy_data.get('convoy_id')
 				var convoy_id_str = str(convoy_id)
 				if convoy_id != null and focused_convoy_ids.has(convoy_id_str):
-					var dests = _get_convoy_cargo_destination_coords(convoy_data)
+					var dests = _get_convoy_cargo_destination_coords(convoy_data, coords_to_cargo_names)
 					for d in dests:
 						add_settlement_target.call(d, convoy_id_str)
 
@@ -626,7 +628,7 @@ func _draw_interactive_labels(current_hover_info: Dictionary):
 						var cy = float(convoy_data.get("y", -999.0))
 						var local_sett = _find_closest_settlement(cx, cy, 2.5)
 						if local_sett is Dictionary:
-							var dests = _get_settlement_departing_destinations(local_sett)
+							var dests = _get_settlement_departing_destinations(local_sett, coords_to_cargo_names)
 							for d in dests:
 								add_settlement_target.call(d)
 
@@ -636,7 +638,7 @@ func _draw_interactive_labels(current_hover_info: Dictionary):
 			if hovered_coords is Vector2i:
 				var local_sett = _find_settlement_at_tile(hovered_coords.x, hovered_coords.y)
 				if local_sett is Dictionary:
-					var dests = _get_settlement_departing_destinations(local_sett)
+					var dests = _get_settlement_departing_destinations(local_sett, coords_to_cargo_names)
 					for d in dests:
 						add_settlement_target.call(d)
 
@@ -644,7 +646,7 @@ func _draw_interactive_labels(current_hover_info: Dictionary):
 		for pinned_coords in _pinned_settlement_coords:
 			var local_sett = _find_settlement_at_tile(pinned_coords.x, pinned_coords.y)
 			if local_sett is Dictionary:
-				var dests = _get_settlement_departing_destinations(local_sett)
+				var dests = _get_settlement_departing_destinations(local_sett, coords_to_cargo_names)
 				for d in dests:
 					add_settlement_target.call(d)
 
@@ -656,7 +658,7 @@ func _draw_interactive_labels(current_hover_info: Dictionary):
 				var convoy_id_str = str(convoy_id)
 				if convoy_id_str != "":
 					# 1. Cargo destinations of this convoy
-					var dests = _get_convoy_cargo_destination_coords(convoy_data)
+					var dests = _get_convoy_cargo_destination_coords(convoy_data, coords_to_cargo_names)
 					for d in dests:
 						add_settlement_target.call(d, convoy_id_str)
 						
@@ -756,7 +758,13 @@ func _draw_interactive_labels(current_hover_info: Dictionary):
 			settlement_label_container.add_child(panel_node)
 
 		var targeting_convoys = coords_to_targeting_convoys.get(settlement_coord_to_draw, [])
-		_update_settlement_panel_content(panel_node, settlement_data_for_panel, targeting_convoys)
+		var cargo_names: Array = coords_to_cargo_names.get(settlement_coord_to_draw, [])
+		# A delivery destination (has cargo headed to it) is never a "plain" label.
+		var is_plain := cargo_names.is_empty() and _is_plain_settlement_label(
+			settlement_coord_to_draw, settlement_data_for_panel, targeting_convoys,
+			show_all_settlements, current_hover_info, warehouse_ids_cache
+		)
+		_update_settlement_panel_content(panel_node, settlement_data_for_panel, targeting_convoys, cargo_names, is_plain)
 		panel_node.visible = true
 		# print("UIManager:_draw_interactive_labels - Positioning/Clamping settlement panel for coords: ", settlement_coord_to_draw, " at pos: ", panel_node.position) # DEBUG
 		_position_settlement_panel(panel_node, settlement_data_for_panel, all_drawn_label_rects_this_update)
@@ -803,6 +811,9 @@ func _draw_interactive_labels(current_hover_info: Dictionary):
 	# Refresh settlement tails + tile outlines overlay
 	_refresh_settlement_overlay(drawn_settlement_tile_coords_this_update)
 
+	# Refresh coordinate grid overlay (independent of settlement labels)
+	_refresh_grid_overlay()
+
 ## Dim settlement panels that are unrelated to the current focus (selected/hovered convoy or settlement).
 ## Related panels stay at full opacity; unrelated ones fade to DIM_ALPHA.
 func _apply_settlement_panel_dimming(
@@ -818,12 +829,14 @@ func _apply_settlement_panel_dimming(
 	var hover_coords: Variant = hover_info.get("coords", null)
 	var is_settlement_hovered: bool = hover_type == "settlement" and hover_coords is Vector2i
 
-	# No focus at all → restore everything to full brightness.
+	# No focus at all → restore everything to its base brightness (plain labels stay
+	# translucent when "Settlement Labels" is on; everything else goes full opacity).
 	if focused_ids.is_empty() and not is_settlement_hovered:
 		for coord_str in _active_settlement_panels.keys():
 			var p: Panel = _active_settlement_panels[coord_str]
 			if is_instance_valid(p):
-				p.modulate = Color.WHITE
+				var base_a: float = p.get_meta("plain_alpha", 1.0)
+				p.modulate = Color(1.0, 1.0, 1.0, base_a)
 		return
 
 	# Build the set of "related" coords.
@@ -870,7 +883,8 @@ func _apply_settlement_panel_dimming(
 		if parts.size() != 2:
 			continue
 		var coord := Vector2i(parts[0].to_int(), parts[1].to_int())
-		p.modulate = Color(1.0, 1.0, 1.0, FULL_ALPHA if related.has(coord) else DIM_ALPHA)
+		var base_a: float = p.get_meta("plain_alpha", FULL_ALPHA)
+		p.modulate = Color(1.0, 1.0, 1.0, base_a if related.has(coord) else minf(base_a, DIM_ALPHA))
 
 
 # The following functions related to convoy panels will be moved to ConvoyLabelManager.gd:
@@ -908,6 +922,74 @@ func _create_settlement_panel() -> Panel:
 ## immediately reflected without needing a hover or selection change.
 func _force_draw_interactive_labels_deferred() -> void:
 	call_deferred("_draw_interactive_labels", {})
+
+## A "plain" label is a generic discovered-city label shown only because the
+## "Settlement Labels" overlay is on. Delivery targets, warehouses, pinned, and
+## hovered settlements are NOT plain (they keep full size + opacity).
+func _is_plain_settlement_label(
+		coords: Vector2i,
+		sett_info: Dictionary,
+		targeting_convoys: Array,
+		show_all_settlements: bool,
+		hover_info: Dictionary,
+		warehouse_ids: Array
+) -> bool:
+	if not show_all_settlements:
+		return false
+	if not targeting_convoys.is_empty():
+		return false
+	if _pinned_settlement_coords.has(coords):
+		return false
+	if hover_info.get('type') == 'settlement' and hover_info.get('coords') == coords:
+		return false
+	var sid := str(sett_info.get("sett_id", sett_info.get("id", "")))
+	if sid != "" and warehouse_ids.has(sid):
+		return false
+	return true
+
+
+# -------------------------------------------------------------------
+# Coordinate grid overlay
+# -------------------------------------------------------------------
+
+func _ensure_grid_overlay() -> void:
+	if is_instance_valid(_grid_overlay):
+		return
+	if not is_instance_valid(terrain_tilemap):
+		return
+	var script = load("res://Scripts/UI/map_grid_overlay.gd")
+	if script == null:
+		printerr("[UIManager] Could not load map_grid_overlay.gd")
+		return
+	_grid_overlay = Node2D.new()
+	_grid_overlay.set_script(script)
+	_grid_overlay.z_index = 0  # above terrain tiles, beneath labels/convoys
+	# Child of the tilemap so local coords match TileMapLayer.map_to_local().
+	terrain_tilemap.add_child(_grid_overlay)
+
+## Pushes current grid parameters to the grid overlay. Safe to call every frame;
+## the overlay only redraws when something visible actually changed.
+func _refresh_grid_overlay() -> void:
+	var enabled: bool = is_instance_valid(_settings_service) and _settings_service.grid_lines
+	if not enabled:
+		if is_instance_valid(_grid_overlay) and _grid_overlay.has_method("update_grid"):
+			_grid_overlay.update_grid(false, Vector2.ZERO, 0, 0, Vector2.ONE, _display_zoom)
+		return
+	if not is_instance_valid(terrain_tilemap):
+		return
+	_ensure_grid_overlay()
+	if not is_instance_valid(_grid_overlay):
+		return
+	var tile_size: Vector2 = Vector2(32.0, 32.0)
+	if is_instance_valid(terrain_tilemap.tile_set):
+		tile_size = Vector2(terrain_tilemap.tile_set.tile_size)
+	var used: Rect2i = terrain_tilemap.get_used_rect()
+	if used.size.x <= 0 or used.size.y <= 0:
+		_grid_overlay.update_grid(false, Vector2.ZERO, 0, 0, tile_size, _display_zoom)
+		return
+	# map_to_local returns the cell center; shift to the cell's top-left corner.
+	var origin: Vector2 = terrain_tilemap.map_to_local(used.position) - tile_size * 0.5
+	_grid_overlay.update_grid(true, origin, used.size.x, used.size.y, tile_size, _display_zoom)
 
 
 # -------------------------------------------------------------------
@@ -1210,13 +1292,33 @@ func _resolve_cargo_destination_coords(item: Dictionary) -> Variant:
 
 	return null
 
-func _get_convoy_cargo_destination_coords(convoy: Dictionary) -> Array[Vector2i]:
+## Best display name for a cargo/delivery item dict.
+func _cargo_item_display_name(item: Dictionary) -> String:
+	for k in ["name", "base_name", "specific_name", "cargo_name"]:
+		var v = item.get(k, "")
+		if str(v).strip_edges() != "":
+			return str(v).strip_edges()
+	return ""
+
+## Records a cargo name against a destination coord in `names_out` (deduplicated).
+func _record_cargo_name(names_out: Dictionary, coords: Vector2i, item: Dictionary) -> void:
+	var nm := _cargo_item_display_name(item)
+	if nm == "":
+		return
+	if not names_out.has(coords):
+		names_out[coords] = []
+	if not names_out[coords].has(nm):
+		names_out[coords].append(nm)
+
+func _get_convoy_cargo_destination_coords(convoy: Dictionary, names_out: Dictionary = {}) -> Array[Vector2i]:
 	var dest_coords: Array[Vector2i] = []
 	var inspect_item = func(item: Dictionary, _source_name: String):
 		var coords = _resolve_cargo_destination_coords(item)
-		if coords != null and not dest_coords.has(coords):
-			dest_coords.append(coords)
-		
+		if coords != null:
+			if not dest_coords.has(coords):
+				dest_coords.append(coords)
+			_record_cargo_name(names_out, coords, item)
+
 	# Scan convoy-level cargo
 	var inv = convoy.get("cargo_inventory", [])
 	if inv is Array:
@@ -1241,7 +1343,7 @@ func _get_convoy_cargo_destination_coords(convoy: Dictionary) -> Array[Vector2i]
 					if it is Dictionary: inspect_item.call(it, v_name + "_typed")
 	return dest_coords
 
-func _get_settlement_departing_destinations(settlement: Dictionary) -> Array[Vector2i]:
+func _get_settlement_departing_destinations(settlement: Dictionary, names_out: Dictionary = {}) -> Array[Vector2i]:
 	var dest_coords: Array[Vector2i] = []
 	var sett_id = str(settlement.get("sett_id", settlement.get("id", "")))
 	var sett_name = str(settlement.get("name", sett_id))
@@ -1259,6 +1361,7 @@ func _get_settlement_departing_destinations(settlement: Dictionary) -> Array[Vec
 						coords = Vector2i(int(settlement.get("x", 0)), int(settlement.get("y", 0)))
 					if not dest_coords.has(coords):
 						dest_coords.append(coords)
+					_record_cargo_name(names_out, coords, item)
 
 	if _debug_map_menu:
 		print("[UIManager] _get_settlement_departing_destinations: scanning '%s' (id=%s)" % [sett_name, sett_id])
@@ -1300,7 +1403,13 @@ func _get_settlement_departing_destinations(settlement: Dictionary) -> Array[Vec
 	return dest_coords
 
 
-func _update_settlement_panel_content(panel: Panel, settlement_info: Dictionary, targeting_convoys: Array = []):
+## When "Settlement Labels" (show all discovered cities) is on, most labels are generic
+## "plain" labels. These are rendered smaller + translucent so the map stays readable; the
+## relevant ones (delivery targets, warehouses, pinned, hovered) keep full size/opacity.
+const PLAIN_LABEL_SCALE: float = 0.7
+const PLAIN_LABEL_ALPHA: float = 0.55
+
+func _update_settlement_panel_content(panel: Panel, settlement_info: Dictionary, targeting_convoys: Array = [], cargo_names: Array = [], is_plain: bool = false):
 	if not is_instance_valid(panel): return
 	var label_node: Label = panel.get_meta("label_node_ref")
 	var style_box: StyleBoxFlat = panel.get_meta("style_box_ref")
@@ -1312,7 +1421,10 @@ func _update_settlement_panel_content(panel: Panel, settlement_info: Dictionary,
 	var current_settlement_panel_padding_v: float = base_settlement_panel_padding_v
 	
 	var zoom_factor: float = max(0.0001, _display_zoom)
-	panel.scale = Vector2(1.0 / zoom_factor, 1.0 / zoom_factor)
+	var label_scale: float = PLAIN_LABEL_SCALE if is_plain else 1.0
+	panel.scale = Vector2(label_scale / zoom_factor, label_scale / zoom_factor)
+	# Base opacity used by the dimming pass: plain labels start translucent.
+	panel.set_meta("plain_alpha", PLAIN_LABEL_ALPHA if is_plain else 1.0)
 	var settlement_name_local: String = settlement_info.get('name', 'N/A')
 	if settlement_name_local == 'N/A': return
 	if not is_instance_valid(settlement_label_settings.font):
@@ -1329,7 +1441,18 @@ func _update_settlement_panel_content(panel: Panel, settlement_info: Dictionary,
 	if sett_id != "" and _get_player_warehouse_settlement_ids().has(sett_id):
 		final_text = "🏭 " + final_text
 		has_warehouse = true
-		
+
+	# Append the cargo headed to this destination (first item + "(+N more)").
+	if not cargo_names.is_empty():
+		var cargo_line: String = "📦 " + str(cargo_names[0])
+		var extra: int = cargo_names.size() - 1
+		if extra > 0:
+			cargo_line += " (+%d more)" % extra
+		final_text += "\n" + cargo_line
+		label_node.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	else:
+		label_node.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+
 	label_node.text = final_text
 	style_box.bg_color = settlement_panel_background_color
 	panel.set_meta("sett_type", settlement_type) # used by overlay draw for tile icon

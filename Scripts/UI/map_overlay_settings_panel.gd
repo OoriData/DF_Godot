@@ -14,6 +14,7 @@ var curr_sett_dest_toggle: CheckButton
 var all_convoy_dest_toggle: CheckButton
 var settlement_labels_toggle: CheckButton
 var warehouse_labels_toggle: CheckButton
+var grid_lines_toggle: CheckButton
 
 @onready var _settings_service: Node = get_node_or_null("/root/MapSettingsService")
 @onready var _hub: Node = get_node_or_null("/root/SignalHub")
@@ -227,9 +228,9 @@ func _build_ui() -> void:
 	
 	# Toggles with descriptive rows
 	active_dest_toggle = _add_toggle_row(
-		"Active Convoy Targets", 
-		"🎯", 
-		"Highlight destinations matching cargo in the selected convoy."
+		"Delivery Targets",
+		"🎯",
+		"Highlight destinations for cargo in the selected convoy, with what's being delivered."
 	)
 	curr_sett_dest_toggle = _add_toggle_row(
 		"Local Settlement Targets", 
@@ -247,16 +248,22 @@ func _build_ui() -> void:
 		"Draw overhead names for all discovered cities."
 	)
 	warehouse_labels_toggle = _add_toggle_row(
-		"Warehouse Indicators", 
-		"🏭", 
+		"Warehouse Indicators",
+		"🏭",
 		"Display markers over settlements where you own warehouses."
 	)
-	
+	grid_lines_toggle = _add_toggle_row(
+		"Grid Lines",
+		"#️⃣",
+		"Overlay a coordinate grid on the map."
+	)
+
 	active_dest_toggle.toggled.connect(func(v): _update_setting("active_delivery_destinations", v))
 	curr_sett_dest_toggle.toggled.connect(func(v): _update_setting("settlement_delivery_destinations", v))
 	all_convoy_dest_toggle.toggled.connect(func(v): _update_setting("all_convoy_destinations", v))
 	settlement_labels_toggle.toggled.connect(func(v): _update_setting("settlement_labels", v))
 	warehouse_labels_toggle.toggled.connect(func(v): _update_setting("warehouse_labels", v))
+	grid_lines_toggle.toggled.connect(func(v): _update_setting("grid_lines", v))
 	
 	_main_hbox.add_child(_content_panel)
 	_main_hbox.add_child(tab_container)
@@ -322,6 +329,7 @@ func _sync_toggles_with_service() -> void:
 	_set_toggle_value_quietly(all_convoy_dest_toggle, _settings_service.all_convoy_destinations)
 	_set_toggle_value_quietly(settlement_labels_toggle, _settings_service.settlement_labels)
 	_set_toggle_value_quietly(warehouse_labels_toggle, _settings_service.warehouse_labels)
+	_set_toggle_value_quietly(grid_lines_toggle, _settings_service.grid_lines)
 
 func _set_toggle_value_quietly(toggle: CheckButton, value: bool) -> void:
 	if is_instance_valid(toggle):

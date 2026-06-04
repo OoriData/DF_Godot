@@ -14,6 +14,7 @@ var settlement_delivery_destinations: bool = false
 var settlement_labels: bool = false
 var warehouse_labels: bool = false
 var all_convoy_destinations: bool = false
+var grid_lines: bool = false
 
 @onready var _hub: Node = get_node_or_null("/root/SignalHub")
 
@@ -28,6 +29,7 @@ func _ready() -> void:
 		settlement_labels = sm.get_value("map.settlement_labels", false)
 		warehouse_labels = sm.get_value("map.warehouse_labels", false)
 		all_convoy_destinations = sm.get_value("map.all_convoy_destinations", false)
+		grid_lines = sm.get_value("map.grid_lines", false)
 	
 	if _debug_map_menu:
 		print("[MapSettingsService] Initialized with persisted overlay settings.")
@@ -48,6 +50,8 @@ func update_setting(setting_name: String, value: bool) -> void:
 			warehouse_labels = value
 		"all_convoy_destinations":
 			all_convoy_destinations = value
+		"grid_lines":
+			grid_lines = value
 		_:
 			printerr("[MapSettingsService] Error: Unknown setting '%s'" % setting_name)
 			return
@@ -73,5 +77,6 @@ func get_settings_dict() -> Dictionary:
 		"settlement_delivery_destinations": settlement_delivery_destinations,
 		"settlement_labels": settlement_labels,
 		"warehouse_labels": warehouse_labels,
-		"all_convoy_destinations": all_convoy_destinations
+		"all_convoy_destinations": all_convoy_destinations,
+		"grid_lines": grid_lines
 	}
