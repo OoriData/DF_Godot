@@ -90,17 +90,9 @@ func _apply_oori_background() -> void:
 		
 	var bg = TextureRect.new()
 	bg.name = "OoriBackground"
-	bg.texture = load("res://Assets/Themes/Oori Backround.png")
-	if bg.texture == null:
-		printerr("[MenuBase] ERROR: Failed to load background texture at res://Assets/Themes/Oori Backround.png")
-		return
-		
-	bg.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	bg.stretch_mode = TextureRect.STRETCH_TILE
-	bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	
 	add_child(bg)
+	UITheme.apply_oori_bg(bg)
 	
 	# Ensure the texture is behind the main VBox but on top of legacy layers
 	var ContentNode = get_node_or_null("MainVBox")

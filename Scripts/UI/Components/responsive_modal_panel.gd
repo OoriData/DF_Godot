@@ -144,15 +144,7 @@ func _setup_background_texture() -> void:
 		print("[ResponsiveModalPanel] Applying ModalBackground to ", name)
 		bg = TextureRect.new()
 		bg.name = "ModalBackground"
-		bg.texture = load("res://Assets/Themes/Oori Backround.png")
-		if bg.texture == null:
-			printerr("[ResponsiveModalPanel] ERROR: Failed to load background texture")
-			return
-		bg.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-		bg.stretch_mode = TextureRect.STRETCH_TILE
-		bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		_panel.add_child(bg)
 		_panel.move_child(bg, 0)
-	
-	# Keep it covering the whole panel area
 	bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	UITheme.apply_oori_bg(bg)

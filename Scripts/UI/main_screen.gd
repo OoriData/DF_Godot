@@ -164,6 +164,12 @@ func _ready():
 	call_deferred("_initial_camera_and_ui_setup")
 	call_deferred("_connect_deferred_signals")
 
+	# Fill the full-screen background layer with the Oori tile so the
+	# notch / status-bar area (above the TopBar content margin) is never black.
+	var bg_layer = get_node_or_null("BackgroundLayer")
+	if bg_layer is TextureRect:
+		UITheme.apply_oori_bg(bg_layer)
+
 	# Add Map Overlay Settings floating tab
 	var map_overlay_panel_script = load("res://Scripts/UI/map_overlay_settings_panel.gd")
 	if map_overlay_panel_script:
@@ -408,14 +414,10 @@ func _update_menu_container_style():
 	if not is_instance_valid(bg):
 		bg = TextureRect.new()
 		bg.name = "OoriBackground"
-		bg.texture = load("res://Assets/Themes/Oori Backround.png")
-		if is_instance_valid(bg.texture):
-			bg.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-			bg.stretch_mode = TextureRect.STRETCH_TILE
-			bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
-			bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-			menu_container.add_child(bg)
-			menu_container.move_child(bg, 0)
+		bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		menu_container.add_child(bg)
+		menu_container.move_child(bg, 0)
+	UITheme.apply_oori_bg(bg)
 
 func _on_map_view_size_changed():
 	# Called when MapView is resized (e.g., due to menu open/close or container resize)

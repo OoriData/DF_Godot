@@ -148,21 +148,15 @@ func _apply_base_styling() -> void:
 	if not is_instance_valid(bg_rect):
 		bg_rect = TextureRect.new()
 		bg_rect.name = "OoriBackground"
-		# Set to tile mode as prepared for tileable background
-		bg_rect.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-		bg_rect.stretch_mode = TextureRect.STRETCH_TILE 
-		bg_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		add_child(bg_rect)
-		move_child(bg_rect, 0) # Put in back
+		move_child(bg_rect, 0)
 		bg_rect.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	UITheme.apply_oori_bg(bg_rect)
 	
-	var bg_tex = load("res://Assets/Themes/Oori Backround.png")
-	if bg_tex:
-		bg_rect.texture = bg_tex
-	
-	# Transparent Panel so the background is visible
+	# Semi-transparent dark overlay so the notch area reads as a distinct "bar"
+	# while still letting the Oori tile show through from BackgroundLayer below.
 	var main_style = StyleBoxFlat.new()
-	main_style.bg_color = Color(0, 0, 0, 0) # Transparent
+	main_style.bg_color = Color(0, 0, 0, 0.45)
 	main_style.border_width_bottom = 2
 	main_style.border_color = OORI_GREY
 	main_style.content_margin_top = 4

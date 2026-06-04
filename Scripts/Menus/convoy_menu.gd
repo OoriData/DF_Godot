@@ -750,7 +750,7 @@ func _ensure_portrait_summary() -> void:
 	content_vbox.add_child(_portrait_summary_panel)
 	content_vbox.move_child(_portrait_summary_panel, 0)
 
-func _add_summary_chip(text: String, color: Color) -> void:
+func _add_summary_chip(label: String, value: String, color: Color) -> void:
 	var chip := PanelContainer.new()
 	var sb := StyleBoxFlat.new()
 	sb.bg_color = Color(0.16, 0.18, 0.22, 0.92)
@@ -763,12 +763,26 @@ func _add_summary_chip(text: String, color: Color) -> void:
 	sb.content_margin_top = 5
 	sb.content_margin_bottom = 5
 	chip.add_theme_stylebox_override("panel", sb)
-	var lbl := Label.new()
-	lbl.text = text
-	lbl.add_theme_font_size_override("font_size", 18)
-	lbl.add_theme_color_override("font_color", color)
-	lbl.add_theme_font_override("font", _make_bold_font())
-	chip.add_child(lbl)
+
+	var vbox := VBoxContainer.new()
+	vbox.add_theme_constant_override("separation", 1)
+	chip.add_child(vbox)
+
+	var label_lbl := Label.new()
+	label_lbl.text = label.to_upper()
+	label_lbl.add_theme_font_size_override("font_size", 11)
+	label_lbl.add_theme_color_override("font_color", Color(0.6, 0.65, 0.7, 1.0))
+	label_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	vbox.add_child(label_lbl)
+
+	var value_lbl := Label.new()
+	value_lbl.text = value
+	value_lbl.add_theme_font_size_override("font_size", 18)
+	value_lbl.add_theme_color_override("font_color", color)
+	value_lbl.add_theme_font_override("font", _make_bold_font())
+	value_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	vbox.add_child(value_lbl)
+
 	_portrait_summary_flow.add_child(chip)
 
 func _refresh_portrait_summary() -> void:
@@ -783,25 +797,25 @@ func _refresh_portrait_summary() -> void:
 	var fuel_pct := _pct(convoy_data_received.get("fuel", 0.0), convoy_data_received.get("max_fuel", 0.0))
 	var water_pct := _pct(convoy_data_received.get("water", 0.0), convoy_data_received.get("max_water", 0.0))
 	var food_pct := _pct(convoy_data_received.get("food", 0.0), convoy_data_received.get("max_food", 0.0))
-	_add_summary_chip("⛽ %d%%" % roundi(fuel_pct), _resource_pct_color(fuel_pct))
-	_add_summary_chip("💧 %d%%" % roundi(water_pct), _resource_pct_color(water_pct))
-	_add_summary_chip("🍖 %d%%" % roundi(food_pct), _resource_pct_color(food_pct))
+	_add_summary_chip("Fuel", "%d%%" % roundi(fuel_pct), _resource_pct_color(fuel_pct))
+	_add_summary_chip("Water", "%d%%" % roundi(water_pct), _resource_pct_color(water_pct))
+	_add_summary_chip("Food", "%d%%" % roundi(food_pct), _resource_pct_color(food_pct))
 
 	# Cargo capacity (neutral colour — higher just means fuller)
 	var total_vol := NumberFormat.to_f(convoy_data_received.get("total_cargo_capacity", 0.0), 0.0)
 	var used_vol := total_vol - NumberFormat.to_f(convoy_data_received.get("total_free_space", 0.0), 0.0)
 	var total_wt := NumberFormat.to_f(convoy_data_received.get("total_weight_capacity", 0.0), 0.0)
 	var used_wt := total_wt - NumberFormat.to_f(convoy_data_received.get("total_remaining_capacity", 0.0), 0.0)
-	_add_summary_chip("📦 %d%%" % roundi(_pct(used_vol, total_vol)), UITheme.TEXT_PRIMARY)
-	_add_summary_chip("⚖️ %d%%" % roundi(_pct(used_wt, total_wt)), UITheme.TEXT_PRIMARY)
+	_add_summary_chip("Volume", "%d%%" % roundi(_pct(used_vol, total_vol)), UITheme.TEXT_PRIMARY)
+	_add_summary_chip("Weight", "%d%%" % roundi(_pct(used_wt, total_wt)), UITheme.TEXT_PRIMARY)
 
 	# Performance (raw ratings, brass)
 	var spd := NumberFormat.to_f(convoy_data_received.get("top_speed", 0.0), 0.0)
 	var off := NumberFormat.to_f(convoy_data_received.get("offroad_capability", 0.0), 0.0)
 	var eff := NumberFormat.to_f(convoy_data_received.get("efficiency", 0.0), 0.0)
-	_add_summary_chip("🏎️ %s" % NumberFormat.fmt_float(spd, 0), UITheme.ACCENT_BRASS)
-	_add_summary_chip("🏔️ %s" % NumberFormat.fmt_float(off, 0), UITheme.ACCENT_BRASS)
-	_add_summary_chip("⚡ %s" % NumberFormat.fmt_float(eff, 0), UITheme.ACCENT_BRASS)
+	_add_summary_chip("Speed", NumberFormat.fmt_float(spd, 0), UITheme.ACCENT_BRASS)
+	_add_summary_chip("Offroad", NumberFormat.fmt_float(off, 0), UITheme.ACCENT_BRASS)
+	_add_summary_chip("Efficiency", NumberFormat.fmt_float(eff, 0), UITheme.ACCENT_BRASS)
 
 func _update_vendor_grid_columns(override_count: int = -1) -> void:
 	if not is_instance_valid(vendor_item_grid):

@@ -43,13 +43,10 @@ func _apply_oori_background() -> void:
 	
 	var bg = TextureRect.new()
 	bg.name = "OoriBackground"
-	bg.texture = load("res://Assets/Themes/Oori Backround.png")
-	bg.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	bg.stretch_mode = TextureRect.STRETCH_TILE
-	bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	panel.add_child(bg)
-	panel.move_child(bg, 0) # Background layer
+	panel.move_child(bg, 0)
+	UITheme.apply_oori_bg(bg)
 
 
 func _is_portrait() -> bool:

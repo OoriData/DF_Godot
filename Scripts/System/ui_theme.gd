@@ -71,3 +71,43 @@ func status_for_ratio(ratio: float) -> Color:
 	elif ratio <= 0.45:
 		return STATUS_WARN
 	return STATUS_GOOD
+
+# ---------------------------------------------------------------------------
+# Oori background — screen-space tiled texture
+# ---------------------------------------------------------------------------
+const OORI_BG_TEXTURE  := "res://Assets/Themes/Oori Backround.png"
+const OORI_BG_SHADER   := "res://Assets/Themes/oori_background.gdshader"
+## Physical pixel dimensions of the source tile image.
+const OORI_BG_TEX_SIZE := Vector2(2210.0, 1604.0)
+## Scale factor: fraction of the source image that equals one tile on screen.
+## 0.5 ≈ one tile per 1105×802 physical px — adjust to taste.
+const OORI_BG_SCALE    := 0.5
+
+## Returns a ShaderMaterial that tiles the Oori background using FRAGCOORD so
+## every panel sharing this material stays perfectly aligned with neighbours.
+## Call once and reuse the result — ShaderMaterial is safe to share.
+func make_oori_bg_material() -> ShaderMaterial:
+	var shader = load(OORI_BG_SHADER) as Shader
+	if not shader:
+		push_warning("UITheme: could not load Oori background shader at %s" % OORI_BG_SHADER)
+		return null
+	var mat := ShaderMaterial.new()
+	mat.shader = shader
+	var tex = load(OORI_BG_TEXTURE) as Texture2D
+	mat.set_shader_parameter("tile_tex", tex)
+	mat.set_shader_parameter("tile_size", OORI_BG_TEX_SIZE)
+	mat.set_shader_parameter("scale", OORI_BG_SCALE)
+	return mat
+
+## Applies the screen-space Oori tile shader to a TextureRect in-place.
+## Sets the texture, expand/stretch mode, and material so every call site is
+## a one-liner: UITheme.apply_oori_bg(my_texture_rect)
+func apply_oori_bg(rect: TextureRect) -> void:
+	if not is_instance_valid(rect):
+		return
+	var tex = load(OORI_BG_TEXTURE) as Texture2D
+	rect.texture = tex
+	rect.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	rect.stretch_mode = TextureRect.STRETCH_TILE
+	rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	rect.material = make_oori_bg_material()
