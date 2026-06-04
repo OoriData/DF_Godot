@@ -501,9 +501,6 @@ func _update_display(data: Dictionary = {}):
 	username_label.text = username
 	user_money_label.text = NumberFormat.format_money(money_amount)
 
-func _format_money(amount: Variant) -> String:
-	return NumberFormat.format_money(amount)
-
 func _on_settings_button_pressed():
 	# Lazy-load the settings menu
 	if not is_instance_valid(_settings_menu_instance):

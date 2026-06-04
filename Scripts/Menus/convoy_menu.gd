@@ -24,7 +24,6 @@ const COLOR_YELLOW: Color = Color("ffee58") # Material Yellow 400
 const COLOR_RED: Color = Color("ef5350")   # Material Red 400
 const COLOR_BOX_FONT: Color = Color("000000") # Black font for boxes for contrast
 const COLOR_PERFORMANCE_BOX_BG: Color = Color("404040cc") # Dark Gray, 80% opaque
-const COLOR_MENU_BUTTON_GREY_BG: Color = Color("b0b0b0") # Light-Medium Grey for menu buttons
 const COLOR_PERFORMANCE_BOX_FONT: Color = Color.WHITE   # White
 
 # --- Vendor Preview Tab Constants ---
@@ -1776,23 +1775,6 @@ func _collect_mission_cargo_items(convoy: Dictionary) -> Array[String]:
 		print("[ConvoyMenu][Debug] diag typed=", diag_typed_mission, " raw=", diag_raw_mission, " all=", diag_allcargo_mission)
 	return out
 
-func _is_resource_item(d: Dictionary) -> bool:
-	if not d:
-		return false
-	# Prefer centralized classification
-	if ItemsData != null and ItemsData.ResourceItem:
-		return ItemsData.ResourceItem._looks_like_resource_dict(d)
-	# Fallback heuristics
-	if d.get("is_raw_resource", false):
-		return true
-	if String(d.get("category", "")).to_lower() == "resource":
-		return true
-	for k in ["fuel", "water", "food"]:
-		var v = d.get(k)
-		if NumberFormat.to_f(v, 0.0) > 0.0:
-			return true
-	return false
-
 func _is_part_item(d: Dictionary) -> bool:
 	if not d:
 		return false
@@ -2022,56 +2004,6 @@ func _on_cargo_data_received(cargo: Dictionary) -> void:
 	if not looks_delivery and not looks_part and cargo.get("recipient_settlement_name") == null and cargo.get("recipient") == null and cargo.get("mission_vendor_id") == null:
 		return
 	_queue_vendor_preview_update()
-
-func _infer_destination_for_item(convoy: Dictionary, item_name: String) -> String:
-	# Attempt to find destination for a given mission item within convoy cargo structures.
-	# Look into vehicle cargo typed/raw and convoy-level cargo inventory for fields like
-	# 'recipient_settlement_name', 'destination', 'dest_settlement', or coordinates.
-	var candidates: Array[String] = []
-	# Scan vehicles
-	var vehicles: Array = convoy.get("vehicle_details_list", [])
-	for vehicle in vehicles:
-		if not (vehicle is Dictionary):
-			continue
-		var typed_arr: Array = vehicle.get("cargo_items_typed", [])
-		for typed in typed_arr:
-			var raw: Dictionary = {}
-			if typed is Dictionary:
-				raw = (typed as Dictionary).get("raw", {})
-			else:
-				var raw_any = typed.get("raw") if typed is Object else null
-				if raw_any is Dictionary:
-					raw = raw_any
-			if raw.is_empty():
-				continue
-			if String(raw.get("name", "")) != item_name:
-				continue
-			var dest := _extract_destination_from_item(raw)
-			if dest != "":
-				candidates.append(dest)
-		var cargo_arr: Array = vehicle.get("cargo", [])
-		for ci in cargo_arr:
-			if not (ci is Dictionary):
-				continue
-			if String(ci.get("name", "")) != item_name:
-				continue
-			var dest2 := _extract_destination_from_item(ci)
-			if dest2 != "":
-				candidates.append(dest2)
-	# Scan convoy-level inventory
-	var inv: Array = convoy.get("cargo_inventory", [])
-	for ci2 in inv:
-		if not (ci2 is Dictionary):
-			continue
-		if String(ci2.get("name", "")) != item_name:
-			continue
-		var dest3 := _extract_destination_from_item(ci2)
-		if dest3 != "":
-			candidates.append(dest3)
-	# Return the first distinct destination if any
-	if candidates.size() > 0:
-		return candidates[0]
-	return ""
 
 func _extract_destination_from_item(item: Dictionary) -> String:
 	if _debug_convoy_menu:
@@ -2460,24 +2392,6 @@ func _on_mission_sort_selected(idx: int) -> void:
 	_save_cargo_sort_metric_to_settings(idx)
 	_update_vendor_preview()
 
-# --- Placeholder Button Handlers ---
-func _on_vehicle_menu_button_pressed():
-	print("ConvoyMenu: Vehicle Menu button pressed. Emitting 'open_vehicle_menu_requested'.")
-	emit_signal("open_vehicle_menu_requested", convoy_data_received)
-
-func _on_journey_menu_button_pressed():
-	print("ConvoyMenu: Journey Menu button pressed. Emitting 'open_journey_menu_requested'.")
-	emit_signal("open_journey_menu_requested", convoy_data_received)
-
-func _on_settlement_menu_button_pressed():
-	print("ConvoyMenu: Settlement Menu button pressed. Emitting 'open_settlement_menu_requested'.")
-	emit_signal("open_settlement_menu_requested", convoy_data_received)
-
-func _on_cargo_menu_button_pressed():
-	print("ConvoyMenu: Cargo Menu button pressed. Emitting 'open_cargo_menu_requested'.")
-	emit_signal("open_cargo_menu_requested", convoy_data_received)
-
-
 func _get_color_for_percentage(percentage: float) -> Color:
 	if percentage > 0.7:
 		return COLOR_GREEN
@@ -2802,50 +2716,6 @@ func _set_progressbar_style(progressbar_node: ProgressBar, current_value: float,
 
 	# print("ConvoyMenu: Updated font sizes. Scale: %.2f, Base: %d, Title: %d" % [scale_factor, new_font_size, new_title_font_size]) # DEBUG
 
-
-func _style_menu_button(button_node: Button) -> void:
-	if not is_instance_valid(button_node):
-		return
-
-	# On mobile enforce tall touch targets; on desktop keep scene defaults.
-	var on_mobile := _is_mobile()
-	var is_portrait_btn := _is_portrait_view()
-	var min_h := 140.0 if is_portrait_btn else (85.0 if on_mobile else 50.0)
-	var corner_r := 6 if on_mobile else 4
-	var v_pad := 8.0 if on_mobile else 4.0
-	if button_node.custom_minimum_size.y < min_h:
-		button_node.custom_minimum_size = Vector2(button_node.custom_minimum_size.x, min_h)
-	if on_mobile:
-		button_node.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-
-	var style_box_normal := StyleBoxFlat.new()
-	style_box_normal.bg_color = COLOR_MENU_BUTTON_GREY_BG
-	style_box_normal.corner_radius_top_left = corner_r
-	style_box_normal.corner_radius_top_right = corner_r
-	style_box_normal.corner_radius_bottom_left = corner_r
-	style_box_normal.corner_radius_bottom_right = corner_r
-	style_box_normal.border_width_left = 1
-	style_box_normal.border_width_right = 1
-	style_box_normal.border_width_top = 1
-	style_box_normal.border_width_bottom = 1
-	style_box_normal.border_color = COLOR_BOX_FONT.darkened(0.2)
-	style_box_normal.shadow_size = 4
-	style_box_normal.shadow_color = Color(0,0,0,0.4)
-	style_box_normal.content_margin_top = v_pad
-	style_box_normal.content_margin_bottom = v_pad
-
-	var style_box_hover := style_box_normal.duplicate()
-	style_box_hover.bg_color = COLOR_MENU_BUTTON_GREY_BG.lightened(0.1)
-
-	var style_box_pressed := style_box_normal.duplicate()
-	style_box_pressed.bg_color = COLOR_MENU_BUTTON_GREY_BG.darkened(0.15)
-	style_box_pressed.shadow_size = 2
-	style_box_pressed.shadow_color = Color(0,0,0,0.25)
-
-	button_node.add_theme_stylebox_override("normal", style_box_normal)
-	button_node.add_theme_stylebox_override("hover", style_box_hover)
-	button_node.add_theme_stylebox_override("pressed", style_box_pressed)
-	button_node.add_theme_color_override("font_color", COLOR_BOX_FONT)
 
 func _initialize_tab_button_styles(button: Button) -> void:
 	if not is_instance_valid(button): return

@@ -35,7 +35,6 @@ func _update_state() -> void:
 	is_mobile = OS.has_feature("mobile") or OS.has_feature("web_android") or OS.has_feature("web_ios") or DisplayServer.get_name() in ["Android", "iOS"]
 	
 	# Evaluate Layout Mode globally
-	# Evaluate Layout Mode globally
 	if is_portrait:
 		current_mode = LayoutMode.MOBILE_PORTRAIT
 	elif is_mobile:
