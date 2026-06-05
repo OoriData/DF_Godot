@@ -1254,8 +1254,8 @@ func _sync_vendor_selector() -> void:
 	if is_instance_valid(dsm):
 		var mode = dsm.get_layout_mode()
 		is_mobile = (mode == 1 or mode == 2) # MOBILE_LANDSCAPE or MOBILE_PORTRAIT
-	var tab_count := vendor_tab_container.get_tab_count()
-	var has_vendor_tabs := tab_count > 0
+	var tab_count: int = vendor_tab_container.get_tab_count()
+	var has_vendor_tabs: bool = tab_count > 0
 	if tab_count == 1:
 		var only_ctrl = vendor_tab_container.get_tab_control(0)
 		if only_ctrl is Label and only_ctrl.name == "InfoMessage":
@@ -1272,7 +1272,7 @@ func _sync_vendor_selector() -> void:
 	vendor_selector.clear()
 	for i in range(tab_count):
 		vendor_selector.add_item(String(vendor_tab_container.get_tab_title(i)), i)
-	var cur := vendor_tab_container.current_tab
+	var cur: int = vendor_tab_container.current_tab
 	if cur >= 0 and cur < tab_count:
 		vendor_selector.select(cur)
 	vendor_selector.visible = true
