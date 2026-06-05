@@ -122,7 +122,7 @@ There is **no shared responsive-column framework** — the Convoy refactor was i
 **Build order (low-risk → core):**
 1. ✅ **Buy/Sell segmented toggle** *(done)* — `TradeModeTabContainer` set `tabs_visible=false`; an external `ModeToggle` (ButtonGroup) drives `current_tab` with two-way sync and a styled active state. Fixes the L1 landscape overlap.
 2. ✅ **Vendor-type selector orientation-aware** *(done — `convoy_settlement_menu.gd`)* — DESKTOP keeps the `VendorTabContainer` strip; MOBILE hides the tab bar and drives the same tab content from a styled `VendorSelector` `OptionButton`, kept in two-way sync via `_sync_vendor_selector()` / `_on_vendor_tab_changed`.
-3. **`TopBarHBox` right-size** — drop equal `size_flags_horizontal=3`; Top Up / Warehouse become shrink-end utility buttons (or move to the utility row).
+3. ✅ **`TopBarHBox` right-size** *(done — `convoy_settlement_menu.gd::_apply_top_bar_sizing`)* — Title keeps `EXPAND_FILL` + `clip_text` (breadcrumb truncates gracefully); Top Up / Warehouse switched to `SHRINK_END` so they size to their own text. Fixes the "Top Up (Fu…" truncation (P4/L4) on every viewport. Re-applied on layout-mode change.
 4. **Custom list widget** — replace `VendorItemTree`/`ConvoyItemTree` with the VBox-of-rows list + `responsive_list_adapter`. Wire selection → `selected_item` (preserve existing selection-restore logic in `selection_controller`).
 5. **Column reflow ladder** — `_apply_layout()` reparents the three builders:
    - DESKTOP: 3-col HBox (list 0.3 | inspector 0.35 | txn 320px) — as today.

@@ -117,7 +117,7 @@ func _ready():
 			warehouse_btn.name = "WarehouseButton"
 			warehouse_btn.text = "Warehouse"
 			warehouse_btn.tooltip_text = "View or buy a Warehouse in this settlement"
-			warehouse_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			warehouse_btn.size_flags_horizontal = Control.SIZE_SHRINK_END
 			top_bar_hbox.add_child(warehouse_btn)
 
 			warehouse_btn.pressed.connect(_on_warehouse_button_pressed)
@@ -135,6 +135,9 @@ func _ready():
 	# Apply styling to title label as well
 	if is_instance_valid(title_label):
 		_style_top_bar_button(title_label)
+
+	# Title absorbs slack (breadcrumb truncates); action buttons size to their text — no more equal-thirds truncation.
+	_apply_top_bar_sizing()
 
 	# Subscribe to canonical snapshots (store 'convoys_changed' handled by MenuBase)
 	if is_instance_valid(_store):
@@ -173,7 +176,8 @@ func _on_layout_mode_changed(_mode: int, _size: Vector2, _is_mobile_val: bool) -
 		_style_top_bar_button(title_label)
 	if is_instance_valid(warehouse_button):
 		_style_top_bar_button(warehouse_button)
-	
+	_apply_top_bar_sizing()
+
 	_style_vendor_tabs()
 	
 	# Regenerate UI completely on layout change to ensure correct bounds.
@@ -1126,6 +1130,19 @@ func _style_top_bar_button(button: Button) -> void:
 		hover.set_content_margin(side, hover.get_content_margin(side) + 2)
 		pressed.set_content_margin(side, pressed.get_content_margin(side) + 2)
 		disabled.set_content_margin(side, disabled.get_content_margin(side) + 2)
+
+func _apply_top_bar_sizing() -> void:
+	# Title (breadcrumb) absorbs leftover width and clips gracefully; Top Up / Warehouse
+	# size to their own text so labels like "Top Up (Full)" are never truncated.
+	if is_instance_valid(title_label):
+		title_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		title_label.clip_text = true
+	if is_instance_valid(top_up_button):
+		top_up_button.size_flags_horizontal = Control.SIZE_SHRINK_END
+		top_up_button.clip_text = false
+	if is_instance_valid(warehouse_button):
+		warehouse_button.size_flags_horizontal = Control.SIZE_SHRINK_END
+		warehouse_button.clip_text = false
 
 func _style_back_button(button: Button) -> void:
 	if not is_instance_valid(button):
