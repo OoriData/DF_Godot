@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Vendor Menu — Portrait Concepts</title>
+<style>
+  :root{
+    --bg:#15171c; --panel:#1f2229; --panel2:#25282e; --chip:#2b2f37;
+    --border:#393d47; --ink:#e7e9ee; --muted:#9aa1ac; --gold:#f3d54e;
+    --cyan:#4fd1e0; --green:#3f9d52; --red:#a23b3b; --buy:#2f7d3a;
+  }
+  *{box-sizing:border-box;font-family:-apple-system,Segoe UI,Roboto,sans-serif}
+  body{margin:0;background:#0c0d10;color:var(--ink);padding:28px}
+  h1{font-weight:600;font-size:22px;margin:0 0 4px}
+  .sub{color:var(--muted);font-size:13px;margin:0 0 24px}
+  .row{display:flex;gap:34px;flex-wrap:wrap;align-items:flex-start}
+  .col{width:330px}
+  .col h2{font-size:15px;font-weight:600;margin:0 0 2px;color:var(--gold)}
+  .col p{font-size:12px;color:var(--muted);margin:0 0 12px;min-height:48px;line-height:1.45}
+  /* phone */
+  .phone{width:330px;height:680px;background:var(--bg);border:2px solid #2a2d34;
+    border-radius:26px;overflow:hidden;display:flex;flex-direction:column;
+    box-shadow:0 10px 40px rgba(0,0,0,.5)}
+  /* top bar */
+  .topbar{display:flex;align-items:center;gap:8px;padding:8px 10px;background:#23262d;
+    border-bottom:1px solid var(--border);font-size:12px}
+  .topbar .name{background:#25282a;border:2px solid var(--border);border-radius:5px;padding:4px 8px}
+  .topbar .money{color:var(--gold);margin-left:auto}
+  /* map */
+  .map{height:150px;position:relative;
+    background:
+      linear-gradient(135deg,#3a5a3c 0%,#33513a 40%,#2c6a72 70%,#1d3f74 100%);
+    border-bottom:2px solid #11343a;overflow:hidden}
+  .map::after{content:"";position:absolute;inset:0;
+    background-image:linear-gradient(#0003 1px,transparent 1px),linear-gradient(90deg,#0003 1px,transparent 1px);
+    background-size:22px 22px;opacity:.5}
+  .road{position:absolute;background:#caa07a;height:7px;border-radius:3px}
+  .pin{position:absolute;left:48%;top:46%;color:#e23b2e;font-size:18px;z-index:2}
+  .maptag{position:absolute;right:14px;top:50%;background:#1c1f24cc;border:1px solid var(--red);
+    border-radius:4px;padding:2px 7px;font-size:11px}
+  /* settlement banner */
+  .banner{display:flex;align-items:center;gap:8px;padding:7px 10px;border-bottom:1px solid #154e54;
+    box-shadow:inset 0 -2px 0 #2bd4d4}
+  .banner .back{color:var(--gold);border:1px solid var(--gold);border-radius:6px;padding:4px 10px;font-weight:600;font-size:13px}
+  .banner .kind{color:var(--muted);font-size:11px;letter-spacing:2px}
+  /* vendor region */
+  .vendor{flex:1;display:flex;flex-direction:column;min-height:0;background:#1a1c22;padding:8px}
+  .selrow{display:flex;gap:8px;margin-bottom:8px}
+  .dropdown{flex:1;background:var(--chip);border:1px solid var(--border);border-radius:7px;
+    padding:9px 11px;font-size:13px;font-weight:600;display:flex;align-items:center;justify-content:space-between}
+  .dropdown .car{color:var(--muted)}
+  .seg{display:flex;background:#16181d;border:1px solid var(--border);border-radius:7px;overflow:hidden}
+  .seg span{padding:9px 12px;font-size:12px;color:var(--muted)}
+  .seg .on{background:#3a3f49;color:#fff}
+  .util{display:flex;gap:6px;margin-bottom:8px}
+  .util .b{flex:1;text-align:center;background:#23262d;border:1px solid var(--border);border-radius:6px;padding:6px;font-size:11px;color:var(--muted)}
+  /* list */
+  .list{flex:1;overflow:hidden;display:flex;flex-direction:column;gap:5px;min-height:0}
+  .li{background:var(--panel);border:1px solid var(--border);border-radius:7px;padding:8px 10px;
+    display:flex;align-items:center;gap:8px;font-size:13px}
+  .li .nm{flex:1}
+  .li .pr{color:var(--gold);font-size:12px}
+  .li.sel{border-color:var(--gold);background:#26282b}
+  .li.exp{flex-direction:column;align-items:stretch;gap:6px}
+  .li .erow{display:flex;width:100%;align-items:center;gap:8px}
+  .li .det{font-size:11px;color:var(--muted);line-height:1.5;border-top:1px dashed var(--border);padding-top:6px}
+  .li .det b{color:var(--ink);font-weight:600}
+  .li .tag{font-size:10px;color:var(--cyan)}
+  /* footer transaction */
+  .foot{margin-top:8px;background:#202329;border:1px solid var(--border);border-radius:9px;padding:9px 10px}
+  .foot.draw{padding-top:6px}
+  .handle{width:42px;height:4px;background:#4a4f59;border-radius:3px;margin:0 auto 8px}
+  .frow{display:flex;align-items:center;gap:8px;font-size:12px;margin-bottom:7px}
+  .frow .sel-nm{font-weight:600;font-size:13px;flex:1}
+  .frow .tot{color:var(--gold);font-weight:600}
+  .qty{display:flex;align-items:center;gap:6px}
+  .qbtn{width:30px;height:30px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:17px;font-weight:700}
+  .qbtn.m{background:var(--red)} .qbtn.p{background:var(--buy)}
+  .qval{min-width:34px;text-align:center;background:#16181d;border:1px solid var(--border);border-radius:6px;padding:5px 0;font-size:13px}
+  .maxb{margin-left:auto;background:#2b2f37;border:1px solid var(--border);border-radius:6px;padding:6px 12px;font-size:12px}
+  .bars{display:flex;gap:10px;margin:6px 0}
+  .bar{flex:1}
+  .bar .lbl{font-size:10px;color:var(--muted);margin-bottom:2px;display:flex;justify-content:space-between}
+  .bar .track{height:8px;background:#16181d;border-radius:5px;overflow:hidden;border:1px solid var(--border)}
+  .bar .fill{height:100%;background:var(--gold)}
+  .buybtn{width:100%;background:var(--buy);border:1px solid #3da34c;border-radius:7px;padding:11px;
+    text-align:center;font-weight:700;font-size:15px;margin-top:4px}
+  .drawhdr{display:flex;align-items:center;justify-content:space-between;font-size:12px;color:var(--muted)}
+  .chev{color:var(--muted)}
+  /* two-pane */
+  .panes{flex:1;display:flex;gap:8px;min-height:0}
+  .pane-l{width:42%;display:flex;flex-direction:column;gap:5px;overflow:hidden}
+  .pane-r{flex:1;background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:9px;display:flex;flex-direction:column;min-height:0}
+  .pane-r .ttl{font-size:14px;font-weight:600;margin-bottom:4px}
+  .pane-r .det{font-size:11px;color:var(--muted);line-height:1.6;flex:1}
+  .li.sm{font-size:12px;padding:7px 8px}
+  /* bottom nav */
+  .nav{display:flex;border-top:1px solid var(--border);background:#1c1c1c}
+  .nav span{flex:1;text-align:center;padding:11px 0;font-size:12px;color:#cfcfcf}
+  .nav .on{color:var(--gold);background:#2a2c2f;box-shadow:inset 0 -3px 0 var(--gold)}
+  /* sheet (concept C) */
+  .sheetmap{flex:1;position:relative;background:linear-gradient(135deg,#3a5a3c,#2c6a72 70%,#1d3f74);overflow:hidden}
+  .sheetmap::after{content:"";position:absolute;inset:0;background-image:linear-gradient(#0003 1px,transparent 1px),linear-gradient(90deg,#0003 1px,transparent 1px);background-size:22px 22px;opacity:.5}
+  .sheet{position:absolute;left:0;right:0;bottom:0;background:#1a1c22;border-top:2px solid var(--gold);
+    border-radius:16px 16px 0 0;padding:8px;box-shadow:0 -8px 24px #0008;display:flex;flex-direction:column}
+  .badge{position:absolute;top:8px;left:10px;background:#1c1f24cc;border:1px solid var(--border);border-radius:6px;padding:3px 8px;font-size:10px;color:var(--muted)}
+</style>
+</head>
+<body>
+  <h1>Vendor Menu — Portrait Concepts</h1>
+  <p class="sub">Map stays visible · panel in bottom region · no horizontal scroll · vendor-type = dropdown on mobile</p>
+
+  <div class="row">
+
+    <!-- CONCEPT A -->
+    <div class="col">
+      <h2>Concept A — List + sticky transaction footer</h2>
+      <p>Scrolling list; tap a row to expand its inspector inline. A slim transaction bar is pinned to the bottom and always shows the selected item + Buy.</p>
+      <div class="phone">
+        <div class="topbar"><span class="name">Aidan!!</span><span>Options</span><span class="money">$1,779,516</span></div>
+        <div class="map">
+          <div class="road" style="left:10%;top:60%;width:55%"></div>
+          <div class="road" style="left:40%;top:20%;width:6px;height:60px"></div>
+          <div class="pin">▶</div><div class="maptag">USPS Reborn</div>
+        </div>
+        <div class="banner"><span class="back">&lt; USPS Reborn</span><span class="kind">SETTLEMENT</span></div>
+        <div class="vendor">
+          <div class="selrow">
+            <div class="dropdown">Mega-Dealership <span class="car">▾</span></div>
+            <div class="seg"><span class="on">Buy</span><span>Sell</span></div>
+          </div>
+          <div class="util"><div class="b">Top Up</div><div class="b">Warehouse</div><div class="b">Sort: Profit/Vol ▾</div></div>
+          <div class="list">
+            <div class="li"><span class="nm">Linens</span><span class="pr">$12</span></div>
+            <div class="li sel exp">
+              <div class="erow"><span class="nm" style="font-weight:600">Electronics Components</span><span class="pr">$19</span></div>
+              <div class="det"><b>Weight</b> 1 · <b>Volume</b> 4 · <b>Delivery</b> $682<br><span class="tag">→ Atlanta</span> · Qty available 100</div>
+            </div>
+            <div class="li"><span class="nm">Cereal</span><span class="pr">$8</span></div>
+            <div class="li"><span class="nm">Refrigerators</span><span class="pr">$140</span></div>
+            <div class="li"><span class="nm">Textiles</span><span class="pr">$22</span></div>
+          </div>
+          <div class="foot">
+            <div class="frow"><span class="sel-nm">Electronics Components</span><span>Total</span><span class="tot">$1,900</span></div>
+            <div class="frow"><div class="qty"><div class="qbtn m">−</div><div class="qval">100</div><div class="qbtn p">+</div></div><div class="maxb">Max</div></div>
+            <div class="bars">
+              <div class="bar"><div class="lbl"><span>Volume</span><span>33%</span></div><div class="track"><div class="fill" style="width:33%"></div></div></div>
+              <div class="bar"><div class="lbl"><span>Mass</span><span>80%</span></div><div class="track"><div class="fill" style="width:80%"></div></div></div>
+            </div>
+            <div class="buybtn">Buy</div>
+          </div>
+        </div>
+        <div class="nav"><span>Vehicles</span><span>Journey</span><span class="on">Settlement</span><span>Cargo</span></div>
+      </div>
+    </div>
+
+    <!-- CONCEPT B -->
+    <div class="col">
+      <h2>Concept B — Mini two-pane</h2>
+      <p>List on the left (~42%), inspector + transaction on the right. One tap swaps the right pane. Nothing hidden — same shape as the landscape hybrid, just narrower.</p>
+      <div class="phone">
+        <div class="topbar"><span class="name">Aidan!!</span><span>Options</span><span class="money">$1,779,516</span></div>
+        <div class="map">
+          <div class="road" style="left:10%;top:60%;width:55%"></div>
+          <div class="pin">▶</div><div class="maptag">USPS Reborn</div>
+        </div>
+        <div class="banner"><span class="back">&lt; USPS Reborn</span><span class="kind">SETTLEMENT</span></div>
+        <div class="vendor">
+          <div class="selrow">
+            <div class="dropdown">Mega-Dealership <span class="car">▾</span></div>
+            <div class="seg"><span class="on">Buy</span><span>Sell</span></div>
+          </div>
+          <div class="panes">
+            <div class="pane-l">
+              <div class="li sm"><span class="nm">Linens</span></div>
+              <div class="li sm sel"><span class="nm">Electronics</span></div>
+              <div class="li sm"><span class="nm">Cereal</span></div>
+              <div class="li sm"><span class="nm">Refrigerators</span></div>
+              <div class="li sm"><span class="nm">Textiles</span></div>
+              <div class="li sm"><span class="nm">Steel Sheet</span></div>
+            </div>
+            <div class="pane-r">
+              <div class="ttl">Electronics Components</div>
+              <div class="det"><span class="tag">→ Atlanta</span><br>Buy $19 · Wt 1 · Vol 4<br>Delivery reward $682<br>Available 100
+                <div class="bars"><div class="bar"><div class="lbl"><span>Vol</span><span>33%</span></div><div class="track"><div class="fill" style="width:33%"></div></div></div></div>
+              </div>
+              <div class="frow"><div class="qty"><div class="qbtn m">−</div><div class="qval">1</div><div class="qbtn p">+</div></div><div class="maxb">Max</div></div>
+              <div class="buybtn">Buy</div>
+            </div>
+          </div>
+        </div>
+        <div class="nav"><span>Vehicles</span><span>Journey</span><span class="on">Settlement</span><span>Cargo</span></div>
+      </div>
+    </div>
+
+    <!-- CONCEPT C -->
+    <div class="col">
+      <h2>Concept C — Resizable sheet (detents)</h2>
+      <p>Vendor panel is a draggable sheet over the map. Drag the handle between <i>Peek</i> (selected item + Buy only) and <i>Expanded</i> (full list). Most map control; needs gesture code. Shown: Expanded.</p>
+      <div class="phone">
+        <div class="topbar"><span class="name">Aidan!!</span><span>Options</span><span class="money">$1,779,516</span></div>
+        <div class="sheetmap">
+          <div class="badge">Map visible behind · drag ↕ to resize</div>
+          <div class="road" style="left:10%;top:30%;width:55%"></div>
+          <div class="pin" style="top:20%">▶</div>
+          <div class="sheet" style="height:74%">
+            <div class="handle"></div>
+            <div class="selrow">
+              <div class="dropdown">Mega-Dealership <span class="car">▾</span></div>
+              <div class="seg"><span class="on">Buy</span><span>Sell</span></div>
+            </div>
+            <div class="list" style="max-height:210px">
+              <div class="li"><span class="nm">Linens</span><span class="pr">$12</span></div>
+              <div class="li sel"><span class="nm">Electronics Components</span><span class="pr">$19</span></div>
+              <div class="li"><span class="nm">Cereal</span><span class="pr">$8</span></div>
+              <div class="li"><span class="nm">Refrigerators</span><span class="pr">$140</span></div>
+            </div>
+            <div class="foot draw">
+              <div class="drawhdr"><span>Transaction · Electronics</span><span class="chev">▴ collapse</span></div>
+              <div class="frow" style="margin-top:7px"><div class="qty"><div class="qbtn m">−</div><div class="qval">100</div><div class="qbtn p">+</div></div><div class="maxb">Max</div><span class="tot" style="margin-left:auto">$1,900</span></div>
+              <div class="buybtn">Buy</div>
+            </div>
+          </div>
+        </div>
+        <div class="nav"><span>Vehicles</span><span>Journey</span><span class="on">Settlement</span><span>Cargo</span></div>
+      </div>
+    </div>
+
+  </div>
+</body>
+</html>

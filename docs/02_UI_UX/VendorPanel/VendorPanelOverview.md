@@ -60,6 +60,7 @@ graph TD
 - **Tests**: [test_vendor_panel_convoy_stats_controller.gd](../../../Tests/test_vendor_panel_convoy_stats_controller.gd)
 
 ## Detailed References
+- [**Responsive Refactor — Audit & Requirements**](ResponsiveRefactor.md) ⭐ *(in progress)*: Screenshot audit, locked-in requirements, and the 1→2→3-column responsive design.
 - [**Transaction Controller**](Transactions.md): Projections, price math, and execution.
 - [**UI Inspector**](UI_Inspector.md): Dynamic item cards and mobile scaling in the middle pane.
 - [**Fitment Compatibility**](Mechanics.md): Rules for installing vehicle parts.

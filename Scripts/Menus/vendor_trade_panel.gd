@@ -47,6 +47,8 @@ func _emit_install_requested(item: Variant, quantity: int, vendor_id: String) ->
 @onready var install_button: Button = %InstallButton
 @onready var transaction_quantity_container: HBoxContainer = %TransactionQuantityContainer
 @onready var trade_mode_tab_container: TabContainer = %TradeModeTabContainer
+@onready var buy_mode_button: Button = get_node_or_null("%BuyModeButton")
+@onready var sell_mode_button: Button = get_node_or_null("%SellModeButton")
 @onready var toast_notification: Control = %ToastNotification
 @onready var cargo_sort_button: MenuButton = get_node_or_null("%CargoSortButton")
 var loading_panel: Panel = null
@@ -692,6 +694,11 @@ func _update_layout_scaling() -> void:
 		var tab_bar = trade_mode_tab_container.get_tab_bar()
 		if is_instance_valid(tab_bar):
 			tab_bar.add_theme_font_size_override("font_size", tab_font_sz)
+	# Tab bar is hidden; the segmented toggle is the visible mode selector.
+	if is_instance_valid(buy_mode_button):
+		buy_mode_button.add_theme_font_size_override("font_size", tab_font_sz)
+	if is_instance_valid(sell_mode_button):
+		sell_mode_button.add_theme_font_size_override("font_size", tab_font_sz)
 
 	if is_instance_valid(vendor_item_tree):
 		vendor_item_tree.add_theme_font_size_override("font_size", tree_font_sz)
@@ -831,6 +838,13 @@ func _ready() -> void:
 	# Use item_selected for Tree to update the inspector on a single click.
 	convoy_item_tree.item_selected.connect(_on_convoy_item_selected)
 	trade_mode_tab_container.tab_changed.connect(_on_tab_changed)
+	# Buy/Sell segmented toggle drives the (tab-bar-hidden) TabContainer pages.
+	if is_instance_valid(buy_mode_button):
+		buy_mode_button.pressed.connect(_select_trade_mode.bind(0))
+	if is_instance_valid(sell_mode_button):
+		sell_mode_button.pressed.connect(_select_trade_mode.bind(1))
+	_style_mode_toggle()
+	_sync_mode_toggle_buttons(trade_mode_tab_container.current_tab)
 
 	# Optional loading overlay: bind only if present
 	if has_node("%LoadingPanel"):
@@ -1526,10 +1540,48 @@ func _on_convoy_updated(convoy: Dictionary) -> void:
 
 
 # --- Signal Handlers ---
+func _select_trade_mode(tab_index: int) -> void:
+	# External segmented toggle handler. Setting current_tab fires tab_changed → _on_tab_changed.
+	if is_instance_valid(trade_mode_tab_container):
+		trade_mode_tab_container.current_tab = tab_index
+
+func _sync_mode_toggle_buttons(tab_index: int) -> void:
+	# Reflect the active page on the segmented toggle (no-loop: button_pressed emits toggled, not pressed).
+	if is_instance_valid(buy_mode_button):
+		buy_mode_button.button_pressed = (tab_index == 0)
+	if is_instance_valid(sell_mode_button):
+		sell_mode_button.button_pressed = (tab_index == 1)
+
+func _style_mode_toggle() -> void:
+	for b in [buy_mode_button, sell_mode_button]:
+		if not is_instance_valid(b):
+			continue
+		b.focus_mode = Control.FOCUS_NONE
+		var normal := StyleBoxFlat.new()
+		normal.bg_color = Color(0.086, 0.094, 0.114, 1.0) # #16181d
+		normal.set_border_width_all(1)
+		normal.border_color = Color(0.224, 0.239, 0.278, 1.0) # #393d47
+		normal.set_corner_radius_all(6)
+		normal.content_margin_top = 8
+		normal.content_margin_bottom = 8
+		var pressed := normal.duplicate()
+		pressed.bg_color = Color(0.227, 0.247, 0.286, 1.0) # #3a3f49
+		pressed.border_color = Color(0.952941, 0.835294, 0.305882, 1.0) # Oori gold
+		pressed.border_width_bottom = 3
+		b.add_theme_stylebox_override("normal", normal)
+		b.add_theme_stylebox_override("hover", normal)
+		b.add_theme_stylebox_override("pressed", pressed)
+		b.add_theme_stylebox_override("hover_pressed", pressed)
+		b.add_theme_color_override("font_color", Color(0.6, 0.64, 0.7, 1.0))
+		b.add_theme_color_override("font_pressed_color", Color(1, 1, 1, 1.0))
+		b.add_theme_color_override("font_hover_color", Color(0.85, 0.88, 0.92, 1.0))
+		b.add_theme_color_override("font_hover_pressed_color", Color(1, 1, 1, 1.0))
+
 func _on_tab_changed(tab_index: int) -> void:
 	_reset_destination_preview_if_active()
 	current_mode = "buy" if tab_index == 0 else "sell"
 	action_button.text = "Buy" if current_mode == "buy" else "Sell"
+	_sync_mode_toggle_buttons(tab_index)
 	_update_sort_dropdown_visibility_fast()
 	
 	# Clear selection and inspector when switching tabs

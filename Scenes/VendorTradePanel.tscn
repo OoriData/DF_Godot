@@ -1,4 +1,4 @@
-[gd_scene load_steps=5 format=3 uid="uid://dpsk1w1gqj3h7"]
+[gd_scene load_steps=6 format=3 uid="uid://dpsk1w1gqj3h7"]
 
 [ext_resource type="Script" path="res://Scripts/Menus/vendor_trade_panel.gd" id="1_script"]
 [ext_resource type="PackedScene" path="res://Scenes/UI/ToastNotification.tscn" id="2_toast"]
@@ -7,6 +7,8 @@
 
 [sub_resource type="StyleBoxFlat" id="StyleBoxFlat_loading"]
 bg_color = Color(0, 0, 0, 0.5)
+
+[sub_resource type="ButtonGroup" id="ButtonGroup_mode"]
 
 
 [node name="VendorTradePanel" type="Control"]
@@ -59,11 +61,34 @@ popup/item_3/id = 3
 popup/item_4/text = "Distance to Recipient"
 popup/item_4/id = 4
 
+[node name="ModeToggle" type="HBoxContainer" parent="HBoxContainer/LeftPanel"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_constants/separation = 0
+
+[node name="BuyModeButton" type="Button" parent="HBoxContainer/LeftPanel/ModeToggle"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+toggle_mode = true
+button_pressed = true
+button_group = SubResource("ButtonGroup_mode")
+text = "Buy"
+
+[node name="SellModeButton" type="Button" parent="HBoxContainer/LeftPanel/ModeToggle"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+toggle_mode = true
+button_group = SubResource("ButtonGroup_mode")
+text = "Sell"
+
 [node name="TradeModeTabContainer" type="TabContainer" parent="HBoxContainer/LeftPanel"]
 unique_name_in_owner = true
 layout_mode = 2
 size_flags_vertical = 3
 tab_alignment = 1
+tabs_visible = false
 
 [node name="ResponsiveListAdapter" type="Node" parent="HBoxContainer/LeftPanel/TradeModeTabContainer"]
 script = ExtResource("3_resp")
