@@ -1343,6 +1343,8 @@ func _reorganize_top_bar() -> void:
 				tu_parent.remove_child(top_up_button)
 			row.add_child(top_up_button)
 			top_up_button.size_flags_horizontal = Control.SIZE_SHRINK_END
+			# A little wider so it reads as a chunky square-ish button rather than text-tight.
+			top_up_button.custom_minimum_size.x = 150
 	# --- Warehouse becomes the settlement-name button in the banner; hide the static suffix ---
 	if is_instance_valid(warehouse_button) and is_instance_valid(_top_banner_convoy_button):
 		var banner_hbox: Node = _top_banner_convoy_button.get_parent()
