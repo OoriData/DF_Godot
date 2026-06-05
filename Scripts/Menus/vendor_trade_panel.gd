@@ -1039,17 +1039,48 @@ func _make_panels_responsive() -> void:
 	if is_instance_valid(dsm) and dsm.get_layout_mode() != 2: # 2 == MOBILE_PORTRAIT
 		return
 
-	# Programmatically wrap Middle and Right panels in ScrollContainers
 	var hbox = get_node_or_null("HBoxContainer")
 	if not is_instance_valid(hbox): return
-	
+	_apply_portrait_stack(hbox)
+
+func _apply_portrait_stack(hbox: Control) -> void:
+	# Godot 4.6 locks `vertical` on HBoxContainer, so we can't flip it. Instead move the
+	# three columns into a real VBoxContainer: list → inspector → transaction footer.
+	if hbox.has_meta("portrait_stacked"):
+		return
+	var parent := hbox.get_parent()
+	if not is_instance_valid(parent):
+		return
+
+	var left = hbox.get_node_or_null("LeftPanel")
 	var middle = hbox.get_node_or_null("MiddlePanel")
-	if is_instance_valid(middle) and not (middle.get_parent() is ScrollContainer):
-		_wrap_inv_scroll(middle, 0.4, 2.0)
-		
 	var right = hbox.get_node_or_null("RightPanel")
-	if is_instance_valid(right) and not (right.get_parent() is ScrollContainer):
-		_wrap_inv_scroll(right, 0.3, 1.0)
+
+	var vbox := VBoxContainer.new()
+	vbox.name = "PortraitStack"
+	vbox.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	vbox.offset_top = 16
+	vbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	vbox.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	vbox.add_theme_constant_override("separation", 8)
+
+	# List takes the most height; inspector a bit less; transaction sits at the
+	# bottom sized to its content (the Concept A pinned-footer feel).
+	for entry in [[left, Control.SIZE_EXPAND_FILL, 1.3], [middle, Control.SIZE_EXPAND_FILL, 1.0], [right, Control.SIZE_SHRINK_END, 1.0]]:
+		var p: Control = entry[0]
+		if not is_instance_valid(p):
+			continue
+		hbox.remove_child(p)
+		p.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		p.size_flags_vertical = entry[1]
+		p.size_flags_stretch_ratio = entry[2]
+		p.custom_minimum_size = Vector2(0, p.custom_minimum_size.y) # drop the 320px column width
+		vbox.add_child(p)
+
+	parent.add_child(vbox)
+	parent.move_child(vbox, hbox.get_index())
+	hbox.visible = false # now only holds the (unused) vertical separators
+	hbox.set_meta("portrait_stacked", true)
 
 func _wrap_inv_scroll(panel: Control, stretch_ratio_h: float, _stretch_ratio_v: float) -> void:
 	var parent = panel.get_parent()
