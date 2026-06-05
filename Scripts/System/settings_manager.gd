@@ -25,6 +25,7 @@ var data := {
 	"map.settlement_labels": false,
 	"map.warehouse_labels": false,
 	"map.all_convoy_destinations": false,
+	"map.grid_lines": false,
 }
 
 func _ready() -> void:
