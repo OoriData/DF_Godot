@@ -25,6 +25,7 @@ const OORI_RED = Color("#8a2b2b")
 # The SettlementInfoTab has been removed. All tabs are now dynamically generated.
 @onready var back_button: Button = $MainVBox/BackButton
 var warehouse_button: Button = null
+var _top_bar_reorganized: bool = false
 
 # This will be populated by MenuManager with the specific convoy's data.
 var _convoy_data: Dictionary
@@ -138,6 +139,10 @@ func _ready():
 
 	# Title absorbs slack (breadcrumb truncates); action buttons size to their text — no more equal-thirds truncation.
 	_apply_top_bar_sizing()
+
+	# Compact the top bar: Top Up sits beside the vendor dropdown, Warehouse becomes the
+	# settlement-name button in the banner. Removes the bulky stand-alone Top Up/Warehouse row.
+	_reorganize_top_bar()
 
 	# Subscribe to canonical snapshots (store 'convoys_changed' handled by MenuBase)
 	if is_instance_valid(_store):
@@ -300,12 +305,14 @@ func _display_settlement_info():
 			
 			# After creating vendor tabs compute top up plan
 			_update_top_up_button()
+			_update_settlement_banner_button()
 
 	else:
 		# No settlement on this tile (likely in transit). Show convoy name and disable settlement-only controls.
 		if is_instance_valid(warehouse_button):
 			warehouse_button.disabled = true
 			warehouse_button.tooltip_text = "Warehouse unavailable while in transit."
+		_update_settlement_banner_button()
 		_display_error("No settlement found at convoy coordinates: (%d, %d)" % [current_convoy_x, current_convoy_y])
 
 	if not _pending_ui_state.is_empty():
@@ -1286,7 +1293,12 @@ func _style_vendor_selector() -> void:
 	if not is_instance_valid(vendor_selector):
 		return
 	vendor_selector.alignment = HORIZONTAL_ALIGNMENT_CENTER
-	vendor_selector.add_theme_font_size_override("font_size", 18)
+	vendor_selector.add_theme_font_size_override("font_size", 22)
+	# The dropdown popup renders in its own window and does NOT inherit content_scale_factor,
+	# so its items look tiny on mobile — give it an explicit, touch-readable size.
+	var popup: PopupMenu = vendor_selector.get_popup()
+	if is_instance_valid(popup):
+		popup.add_theme_font_size_override("font_size", 34)
 	var normal := StyleBoxFlat.new()
 	normal.bg_color = OORI_DARK_GREY.lerp(Color.BLACK, 0.2)
 	normal.set_border_width_all(1)
@@ -1308,6 +1320,84 @@ func _style_vendor_selector() -> void:
 	vendor_selector.add_theme_color_override("font_color", OORI_WHITE)
 	vendor_selector.add_theme_color_override("font_hover_color", OORI_WHITE)
 	vendor_selector.add_theme_color_override("font_pressed_color", OORI_YELLOW)
+
+func _reorganize_top_bar() -> void:
+	# One-shot restructure (banner is built once in _ready).
+	if _top_bar_reorganized:
+		return
+	# --- Top Up moves into a row beside the vendor dropdown ---
+	if is_instance_valid(vendor_selector) and is_instance_valid(top_up_button):
+		var sel_parent: Node = vendor_selector.get_parent()
+		if sel_parent is VBoxContainer:
+			var row := HBoxContainer.new()
+			row.name = "VendorSelectorRow"
+			row.add_theme_constant_override("separation", 8)
+			var idx: int = vendor_selector.get_index()
+			sel_parent.add_child(row)
+			sel_parent.move_child(row, idx)
+			sel_parent.remove_child(vendor_selector)
+			row.add_child(vendor_selector)
+			vendor_selector.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			var tu_parent: Node = top_up_button.get_parent()
+			if is_instance_valid(tu_parent):
+				tu_parent.remove_child(top_up_button)
+			row.add_child(top_up_button)
+			top_up_button.size_flags_horizontal = Control.SIZE_SHRINK_END
+	# --- Warehouse becomes the settlement-name button in the banner; hide the static suffix ---
+	if is_instance_valid(warehouse_button) and is_instance_valid(_top_banner_convoy_button):
+		var banner_hbox: Node = _top_banner_convoy_button.get_parent()
+		if is_instance_valid(banner_hbox):
+			var wh_parent: Node = warehouse_button.get_parent()
+			if is_instance_valid(wh_parent):
+				wh_parent.remove_child(warehouse_button)
+			banner_hbox.add_child(warehouse_button)
+			_style_banner_settlement_button(warehouse_button)
+		if is_instance_valid(_top_banner_suffix_label):
+			_top_banner_suffix_label.visible = false
+	# --- The old breakout row is now empty — hide it ---
+	var secondary: Node = $MainVBox.get_node_or_null("SecondaryBannerPanel")
+	if is_instance_valid(secondary):
+		secondary.visible = false
+	_top_bar_reorganized = true
+	_update_settlement_banner_button()
+
+func _style_banner_settlement_button(btn: Button) -> void:
+	if not is_instance_valid(btn):
+		return
+	btn.focus_mode = Control.FOCUS_NONE
+	btn.add_theme_font_size_override("font_size", 22)
+	btn.tooltip_text = "Open Warehouse for this settlement"
+	var normal := StyleBoxFlat.new()
+	normal.bg_color = Color(0.15, 0.16, 0.18, 0.6)
+	normal.set_border_width_all(1)
+	normal.border_color = OORI_GREY
+	normal.set_corner_radius_all(6)
+	normal.content_margin_left = 12
+	normal.content_margin_right = 12
+	normal.content_margin_top = 6
+	normal.content_margin_bottom = 6
+	var hover := normal.duplicate()
+	hover.border_color = OORI_YELLOW
+	hover.bg_color = Color(0.2, 0.22, 0.26, 0.9)
+	var pressed := normal.duplicate()
+	pressed.bg_color = OORI_DARK_GREY
+	pressed.border_color = OORI_YELLOW
+	btn.add_theme_stylebox_override("normal", normal)
+	btn.add_theme_stylebox_override("hover", hover)
+	btn.add_theme_stylebox_override("pressed", pressed)
+	btn.add_theme_stylebox_override("disabled", normal)
+	btn.add_theme_color_override("font_color", OORI_WHITE)
+	btn.add_theme_color_override("font_color_hover", Color(1, 1, 1))
+	btn.add_theme_color_override("font_color_pressed", OORI_YELLOW)
+
+func _update_settlement_banner_button() -> void:
+	# Banner Warehouse button shows the current settlement's name (falls back to "Warehouse" in transit).
+	if not is_instance_valid(warehouse_button):
+		return
+	var sname: String = ""
+	if _settlement_data is Dictionary:
+		sname = String(_settlement_data.get("name", ""))
+	warehouse_button.text = sname if sname != "" else "Warehouse"
 
 
 # --- Custom Tooltip Override ---
