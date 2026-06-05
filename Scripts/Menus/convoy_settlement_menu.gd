@@ -19,6 +19,8 @@ const OORI_RED = Color("#8a2b2b")
 @onready var top_up_button: Button = $MainVBox/TopBarHBox/TopUpButton
 @onready var top_bar_hbox: HBoxContainer = $MainVBox/TopBarHBox
 @onready var vendor_tab_container = %VendorTabContainer
+# Mobile-only vendor-type selector; replaces the overflowing tab strip on phones.
+@onready var vendor_selector: OptionButton = get_node_or_null("%VendorSelector")
 # The node 'SettlementInfoTab' is renamed to 'Settlement Info' by its 'name' property in the scene file.
 # The SettlementInfoTab has been removed. All tabs are now dynamically generated.
 @onready var back_button: Button = $MainVBox/BackButton
@@ -148,6 +150,11 @@ func _ready():
 	if is_instance_valid(vendor_tab_container):
 		if not vendor_tab_container.tab_changed.is_connected(_on_vendor_tab_changed):
 			vendor_tab_container.tab_changed.connect(_on_vendor_tab_changed)
+
+	if is_instance_valid(vendor_selector):
+		if not vendor_selector.item_selected.is_connected(_on_vendor_selector_selected):
+			vendor_selector.item_selected.connect(_on_vendor_selector_selected)
+		_style_vendor_selector()
 
 	var dsm = get_node_or_null("/root/DeviceStateManager")
 	if is_instance_valid(dsm):
@@ -614,6 +621,10 @@ func _refresh_all_vendor_panels():
 func _on_vendor_tab_changed(tab_idx: int) -> void:
 	if not is_instance_valid(vendor_tab_container):
 		return
+	# Keep the mobile dropdown in sync with programmatic/tutorial tab changes (select() emits nothing → no loop).
+	if is_instance_valid(vendor_selector) and vendor_selector.visible and tab_idx >= 0 and tab_idx < vendor_selector.item_count:
+		if vendor_selector.selected != tab_idx:
+			vendor_selector.select(tab_idx)
 	var tab_content = vendor_tab_container.get_tab_control(tab_idx)
 	if is_instance_valid(tab_content) and tab_content.has_meta("needs_refresh") and tab_content.get_meta("needs_refresh"):
 		tab_content.set_meta("needs_refresh", false)
@@ -1214,6 +1225,72 @@ func _style_vendor_tabs() -> void:
 
 	tab_bar.add_theme_stylebox_override("tab_unselected", bg_normal)
 	tab_bar.add_theme_stylebox_override("tab_selected", bg_selected)
+
+	# On mobile, the tab strip can't fit long vendor names — drive selection via a dropdown instead.
+	_sync_vendor_selector()
+
+func _sync_vendor_selector() -> void:
+	if not is_instance_valid(vendor_selector) or not is_instance_valid(vendor_tab_container):
+		return
+	var dsm = get_node_or_null("/root/DeviceStateManager")
+	var is_mobile := false
+	if is_instance_valid(dsm):
+		var mode = dsm.get_layout_mode()
+		is_mobile = (mode == 1 or mode == 2) # MOBILE_LANDSCAPE or MOBILE_PORTRAIT
+	var tab_count := vendor_tab_container.get_tab_count()
+	var has_vendor_tabs := tab_count > 0
+	if tab_count == 1:
+		var only_ctrl = vendor_tab_container.get_tab_control(0)
+		if only_ctrl is Label and only_ctrl.name == "InfoMessage":
+			has_vendor_tabs = false
+	if not (is_mobile and has_vendor_tabs):
+		# Desktop, or nothing to show: dropdown hidden, the tab strip is the selector.
+		vendor_selector.visible = false
+		if not is_mobile and has_vendor_tabs and vendor_tab_container.has_method("set_tabs_visible"):
+			vendor_tab_container.set_tabs_visible(true)
+		return
+	# Mobile with real vendor tabs: hide the tab bar, drive selection from the dropdown.
+	if vendor_tab_container.has_method("set_tabs_visible"):
+		vendor_tab_container.set_tabs_visible(false)
+	vendor_selector.clear()
+	for i in range(tab_count):
+		vendor_selector.add_item(String(vendor_tab_container.get_tab_title(i)), i)
+	var cur := vendor_tab_container.current_tab
+	if cur >= 0 and cur < tab_count:
+		vendor_selector.select(cur)
+	vendor_selector.visible = true
+
+func _on_vendor_selector_selected(idx: int) -> void:
+	if is_instance_valid(vendor_tab_container) and idx >= 0 and idx < vendor_tab_container.get_tab_count():
+		if vendor_tab_container.current_tab != idx:
+			vendor_tab_container.current_tab = idx # fires tab_changed → _on_vendor_tab_changed
+
+func _style_vendor_selector() -> void:
+	if not is_instance_valid(vendor_selector):
+		return
+	vendor_selector.alignment = HORIZONTAL_ALIGNMENT_CENTER
+	vendor_selector.add_theme_font_size_override("font_size", 18)
+	var normal := StyleBoxFlat.new()
+	normal.bg_color = OORI_DARK_GREY.lerp(Color.BLACK, 0.2)
+	normal.set_border_width_all(1)
+	normal.border_color = OORI_GREY
+	normal.set_corner_radius_all(6)
+	normal.content_margin_left = 14
+	normal.content_margin_right = 14
+	normal.content_margin_top = 12
+	normal.content_margin_bottom = 12
+	var hover := normal.duplicate()
+	hover.border_color = OORI_YELLOW
+	var pressed := normal.duplicate()
+	pressed.bg_color = OORI_GREY
+	pressed.border_color = OORI_YELLOW
+	vendor_selector.add_theme_stylebox_override("normal", normal)
+	vendor_selector.add_theme_stylebox_override("hover", hover)
+	vendor_selector.add_theme_stylebox_override("pressed", pressed)
+	vendor_selector.add_theme_stylebox_override("focus", normal)
+	vendor_selector.add_theme_color_override("font_color", OORI_WHITE)
+	vendor_selector.add_theme_color_override("font_hover_color", OORI_WHITE)
+	vendor_selector.add_theme_color_override("font_pressed_color", OORI_YELLOW)
 
 
 # --- Custom Tooltip Override ---

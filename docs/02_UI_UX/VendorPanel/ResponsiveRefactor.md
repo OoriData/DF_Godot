@@ -120,8 +120,8 @@ There is **no shared responsive-column framework** — the Convoy refactor was i
   - `_build_transaction_block()` — current RightPanel content (qty/Max/price/Volume+Mass/Buy).
 
 **Build order (low-risk → core):**
-1. **Buy/Sell segmented toggle** — replace `TradeModeTabContainer` (TabContainer) with a 2-button ButtonGroup segmented control with a styled pressed state. Fixes the L1 landscape overlap. Self-contained.
-2. **Vendor-type selector orientation-aware** *(in `convoy_settlement_menu.gd`)* — DESKTOP keeps the `VendorTabContainer` strip (`clip_tabs=true`); MOBILE hides the tab bar and drives the same tab content from an `OptionButton`.
+1. ✅ **Buy/Sell segmented toggle** *(done)* — `TradeModeTabContainer` set `tabs_visible=false`; an external `ModeToggle` (ButtonGroup) drives `current_tab` with two-way sync and a styled active state. Fixes the L1 landscape overlap.
+2. ✅ **Vendor-type selector orientation-aware** *(done — `convoy_settlement_menu.gd`)* — DESKTOP keeps the `VendorTabContainer` strip; MOBILE hides the tab bar and drives the same tab content from a styled `VendorSelector` `OptionButton`, kept in two-way sync via `_sync_vendor_selector()` / `_on_vendor_tab_changed`.
 3. **`TopBarHBox` right-size** — drop equal `size_flags_horizontal=3`; Top Up / Warehouse become shrink-end utility buttons (or move to the utility row).
 4. **Custom list widget** — replace `VendorItemTree`/`ConvoyItemTree` with the VBox-of-rows list + `responsive_list_adapter`. Wire selection → `selected_item` (preserve existing selection-restore logic in `selection_controller`).
 5. **Column reflow ladder** — `_apply_layout()` reparents the three builders:
