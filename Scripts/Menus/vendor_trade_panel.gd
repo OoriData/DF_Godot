@@ -1083,6 +1083,7 @@ func _apply_portrait_stack(hbox: Control) -> void:
 	if is_instance_valid(middle):
 		middle.visible = false
 		_portrait_inspector = middle
+		_slim_portrait_inspector(middle)
 
 	# Slim the transaction block into a footer: drop the redundant title/money lines
 	# (money is already in the top bar) so it reads as one compact strip.
@@ -1099,6 +1100,14 @@ func _slim_transaction_footer(right: Control) -> void:
 		var n = right.get_node_or_null(child_name)
 		if is_instance_valid(n):
 			n.visible = false
+
+func _slim_portrait_inspector(middle: Control) -> void:
+	# The inspector is revealed in a capped (~25%) section, so drop the big 150px preview image —
+	# the name + scrollable stats/description are what matter in that space. The InfoScrollContainer
+	# already expands, so the detail scrolls within the capped height instead of overflowing.
+	var preview = middle.get_node_or_null("ItemPreview")
+	if is_instance_valid(preview):
+		preview.visible = false
 
 func _reveal_portrait_inspector() -> void:
 	# Called on selection so the inspector appears (capped) once the user picks an item.
