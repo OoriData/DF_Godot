@@ -268,7 +268,7 @@ func _ensure_row_visible(panel: Control) -> void:
 		return
 	ensure_control_visible(panel)
 
-# --- Inline detail body: compact stats line(s) from agg_data ---
+# --- Inline detail body: stat chips from agg_data ---
 func _build_row_body(agg_data: Variant) -> Control:
 	if not (agg_data is Dictionary):
 		return null
@@ -276,24 +276,66 @@ func _build_row_body(agg_data: Variant) -> Control:
 	if stats.is_empty():
 		return null
 	var wrap := VBoxContainer.new()
-	wrap.add_theme_constant_override("separation", 3)
+	wrap.add_theme_constant_override("separation", 4)
 	wrap.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	var sep := HSeparator.new()
-	wrap.add_child(sep)
-	var line := RichTextLabel.new()
-	line.bbcode_enabled = true
-	line.fit_content = true
-	line.scroll_active = false
-	line.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	line.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	line.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	line.add_theme_font_size_override("normal_font_size", max(12, name_font_size - 4))
-	line.text = _stat_pairs_to_bbcode(stats)
-	wrap.add_child(line)
+	wrap.add_child(HSeparator.new())
+	wrap.add_child(build_stat_chips(agg_data, list_mode, max(12, name_font_size - 3)))
 	return wrap
 
-# Public/static: the compact "Label value • Label value" stat line for an agg item. Reused by the
-# landscape inspector so its summary matches the inline row body exactly.
+# Public/static: a wrapping grid of "Label value" chips for an agg item. Reused by the landscape
+# inspector so its summary matches the inline row body. Replaces the old run-on bbcode line —
+# discrete cards read far better than a comma-soup string.
+static func build_stat_chips(agg_data: Variant, mode: String = "buy", font_size: int = 14) -> Control:
+	var flow := HFlowContainer.new()
+	flow.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	flow.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	flow.add_theme_constant_override("h_separation", 6)
+	flow.add_theme_constant_override("v_separation", 6)
+	if not (agg_data is Dictionary):
+		return flow
+	for p in _stat_pairs(agg_data, mode):
+		flow.add_child(_make_stat_chip(p, font_size))
+	return flow
+
+static func _make_stat_chip(pair: Array, font_size: int) -> Control:
+	var chip := PanelContainer.new()
+	chip.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color(0.105, 0.114, 0.137, 0.94)
+	sb.set_border_width_all(1)
+	sb.border_color = Color(0.18, 0.196, 0.231, 1.0)
+	sb.set_corner_radius_all(6)
+	sb.content_margin_left = 9
+	sb.content_margin_right = 9
+	sb.content_margin_top = 4
+	sb.content_margin_bottom = 4
+	chip.add_theme_stylebox_override("panel", sb)
+	var hb := HBoxContainer.new()
+	hb.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	hb.add_theme_constant_override("separation", 6)
+	var lab := Label.new()
+	lab.text = str(pair[0])
+	lab.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	lab.add_theme_color_override("font_color", Color(0.5, 0.55, 0.62, 1.0))
+	lab.add_theme_font_size_override("font_size", max(11, font_size - 2))
+	var val := Label.new()
+	val.text = str(pair[1])
+	val.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	val.add_theme_color_override("font_color", _chip_value_color(pair))
+	val.add_theme_font_size_override("font_size", font_size)
+	hb.add_child(lab)
+	hb.add_child(val)
+	chip.add_child(hb)
+	return chip
+
+static func _chip_value_color(pair: Array) -> Color:
+	if pair.size() >= 3 and str(pair[2]) != "":
+		return Color(str(pair[2]))
+	if str(pair[1]).begins_with("$"):
+		return Color(0.953, 0.835, 0.306) # gold for money
+	return Color(0.933, 0.945, 0.965)
+
+# Public/static: the compact "Label value • Label value" stat line for an agg item (legacy/bbcode).
 static func stat_line_bbcode(agg_data: Variant, mode: String = "buy") -> String:
 	if not (agg_data is Dictionary):
 		return ""

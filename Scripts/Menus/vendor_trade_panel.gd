@@ -129,9 +129,9 @@ var _is_previewing_destination: bool = false
 # Portrait Concept A — holds the MiddlePanel inspector so it can be revealed on first item tap
 var _portrait_inspector: Control = null
 
-# Landscape compact inspector: a one-line stat summary (Off-road · Cargo · Volume · Value · …)
+# Landscape compact inspector: a wrapping grid of stat chips (Off-road, Cargo, Value, Profit, …)
 # that replaces the tall verbose Per Unit / Total Order section panels.
-var _landscape_stat_label: RichTextLabel = null
+var _landscape_stat_box: VBoxContainer = null
 
 func _is_portrait_layout() -> bool:
 	var dsm = get_node_or_null("/root/DeviceStateManager")
@@ -1243,38 +1243,35 @@ func _apply_landscape_two_pane(hbox: Control) -> void:
 	hbox.set_meta("landscape_two_paned", true)
 
 func _build_landscape_stat_label() -> void:
-	# A compact one-line stat summary inserted right under the item name, replacing the verbose
+	# A wrapping grid of stat chips inserted right under the item name, replacing the verbose
 	# Per Unit / Total Order section panels (which were crammed into a scroll strip in landscape).
-	if is_instance_valid(_landscape_stat_label):
+	if is_instance_valid(_landscape_stat_box):
 		return
 	if not is_instance_valid(item_name_label):
 		return
 	var parent_m := item_name_label.get_parent()
 	if not is_instance_valid(parent_m):
 		return
-	var lbl := RichTextLabel.new()
-	lbl.name = "LandscapeStatLine"
-	lbl.bbcode_enabled = true
-	lbl.fit_content = true
-	lbl.scroll_active = false
-	lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	lbl.add_theme_font_size_override("normal_font_size", 17)
-	lbl.add_theme_font_size_override("bold_font_size", 17)
-	lbl.add_theme_constant_override("line_separation", 6)
-	lbl.visible = false
-	_landscape_stat_label = lbl
-	parent_m.add_child(lbl)
-	parent_m.move_child(lbl, item_name_label.get_index() + 1)
+	var box := VBoxContainer.new()
+	box.name = "LandscapeStatBox"
+	box.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	box.add_theme_constant_override("separation", 0)
+	box.visible = false
+	_landscape_stat_box = box
+	parent_m.add_child(box)
+	parent_m.move_child(box, item_name_label.get_index() + 1)
 
 func _update_landscape_summary() -> void:
-	# Populate the compact stat line and suppress the verbose section panels / destination box.
-	if not is_instance_valid(_landscape_stat_label):
+	# Rebuild the stat chips and suppress the verbose sections + description toggle in landscape.
+	if not is_instance_valid(_landscape_stat_box):
 		return
-	var line := VendorItemList.stat_line_bbcode(selected_item, str(current_mode))
-	_landscape_stat_label.text = line
-	_landscape_stat_label.visible = selected_item != null and line != ""
+	for c in _landscape_stat_box.get_children():
+		c.queue_free()
+	var has_item: bool = selected_item != null
+	if has_item:
+		_landscape_stat_box.add_child(VendorItemList.build_stat_chips(selected_item, str(current_mode), 16))
+	_landscape_stat_box.visible = has_item
 	# Hide the tall Per Unit / Total Order / Destination section panels in landscape.
 	if is_instance_valid(item_info_rich_text):
 		var info_vbox := item_info_rich_text.get_parent()
@@ -1282,6 +1279,9 @@ func _update_landscape_summary() -> void:
 			var sections = info_vbox.get_node_or_null("InfoSectionsContainer")
 			if is_instance_valid(sections):
 				sections.visible = false
+	# Drop the Description toggle in landscape — not needed in the compact inspector.
+	if is_instance_valid(description_panel):
+		description_panel.visible = false
 
 func _reorg_landscape_transaction(right: Control) -> void:
 	# Tidy the bottom of the right pane to match the mockup: the quantity stepper and the Buy
