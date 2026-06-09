@@ -304,49 +304,107 @@ static func _stat_pairs_to_bbcode(stats: Array) -> String:
 		parts.append("[color=#9aa1ac]%s[/color] [color=#e0e4ea]%s[/color]" % [p[0], p[1]])
 	return "  •  ".join(parts)
 
-# Tolerant key stat extraction with units, mirroring the inspector's stat line. Shows up to 6
-# present fields. Each candidate is [label, [keys...], unit] where unit "$" means a money prefix.
+# Comprehensive stat extraction — surfaces every data field the old verbose inspector exposed
+# (Per Unit + Total Order + Pricing + stats + destination), so no buyable item loses information.
+# Per-unit weight/volume/resource content are derived from the aggregate totals (matching the old
+# "Per Unit" math) and fall back to the item's own unit fields.
 static func _stat_pairs(agg_data: Dictionary) -> Array:
 	var item: Dictionary = agg_data.get("item_data", agg_data) if agg_data is Dictionary else {}
 	if not (item is Dictionary):
 		return []
-	var candidates := [
-		["Off-road", ["offroad_capability", "off_road"], ""],
-		["Top spd", ["top_speed"], ""],
-		["Eff", ["fuel_efficiency", "efficiency"], ""],
-		["Cargo", ["cargo_capacity"], " kg"],
-		["Wt cap", ["weight_capacity"], " kg"],
-		["Slot", ["slot"], ""],
-		["Weight", ["unit_weight", "weight"], " kg"],
-		["Volume", ["unit_volume", "volume"], " m³"],
-		["Value", ["value", "base_price", "price"], "$"],
-		["Qty", ["total_quantity"], ""],
-		["Delivery", ["delivery_reward", "mission_reward"], "$"],
-	]
+	var tq: int = int(agg_data.get("total_quantity", 0)) if agg_data is Dictionary else 0
 	var out: Array = []
-	for c in candidates:
-		var label: String = c[0]
-		var unit: String = c[2]
-		for k in c[1]:
-			var src: Dictionary = agg_data if (label == "Qty" and agg_data.has("total_quantity")) else item
-			if src.has(k) and src.get(k) != null:
-				var v = src.get(k)
-				if (v is float or v is int) and float(v) == 0.0:
-					break
-				out.append([label, _fmt_stat_unit(v, unit)])
-				break
-		if out.size() >= 6:
-			break
-	# Vendor stock count → "Available N" (vehicles/parts), distinct from a cargo "Qty".
-	if agg_data.has("total_quantity") and int(agg_data.get("total_quantity")) > 0:
-		var has_qty := false
-		for pair in out:
-			if pair[0] == "Qty":
-				has_qty = true
-				break
-		if not has_qty and out.size() < 6:
-			out.append(["Available", str(int(agg_data.get("total_quantity")))])
+	var is_vehicle: bool = item.has("vehicle_id") or (not item.has("cargo_id") and (item.has("cargo_capacity") or item.has("weight_capacity")))
+
+	if is_vehicle:
+		# Vehicle capabilities + capacities (labels match the mockup: Cargo=weight cap, Volume=cargo cap).
+		_push_num(out, item, "Off-road", ["offroad_capability", "off_road"], "")
+		_push_num(out, item, "Top spd", ["top_speed"], "")
+		_push_num(out, item, "Eff", ["fuel_efficiency", "efficiency"], "")
+		_push_num(out, item, "Cargo", ["weight_capacity"], " kg")
+		_push_num(out, item, "Volume", ["cargo_capacity"], " m³")
+		_push_num(out, item, "Fuel cap", ["fuel_capacity", "kwh_capacity"], "")
+		_push_money(out, item, "Value", ["value", "base_price", "price"])
+	else:
+		# Cargo / parts / resources — per-unit physicals + pricing.
+		var uw := _unit_from_totals(agg_data, item, "total_weight", ["unit_weight", "weight"], tq)
+		if uw > 0.0:
+			out.append(["Weight", _fmt_stat(uw) + " kg"])
+		var uv := _unit_from_totals(agg_data, item, "total_volume", ["unit_volume", "volume"], tq)
+		if uv > 0.0:
+			out.append(["Volume", _fmt_stat(uv) + " m³"])
+		_push_money(out, item, "Price", ["price", "base_price", "value"])
+		_push_money(out, item, "Delivery", ["unit_delivery_reward", "delivery_reward", "mission_reward"])
+		# Resource content (food / water / fuel) carried per unit.
+		var uf := _unit_from_totals(agg_data, item, "total_food", ["food"], tq)
+		if uf > 0.0:
+			out.append(["Food", _fmt_stat(uf)])
+		var uwa := _unit_from_totals(agg_data, item, "total_water", ["water"], tq)
+		if uwa > 0.0:
+			out.append(["Water", _fmt_stat(uwa)])
+		var ufu := _unit_from_totals(agg_data, item, "total_fuel", ["fuel"], tq)
+		if ufu > 0.0:
+			out.append(["Fuel", _fmt_stat(ufu)])
+		_push_num(out, item, "Slot", ["slot"], "")
+		# Arbitrary part/modifier stats.
+		if item.has("stats") and item["stats"] is Dictionary:
+			for sk in (item["stats"] as Dictionary):
+				var sv = (item["stats"] as Dictionary)[sk]
+				if sv != null and str(sv) != "" and not (sv is float and float(sv) == 0.0):
+					out.append([str(sk).capitalize().replace("_", " "), _fmt_stat(sv)])
+
+	# Stock count, common to all buyables.
+	if tq > 0:
+		out.append(["Available", str(tq)])
+	# Delivery destination, when present.
+	var dest := _destination_name(agg_data, item)
+	if dest != "":
+		out.append(["Dest", dest])
 	return out
+
+# Per-unit value: prefer aggregate total / quantity (matches the old Per Unit math), else the item's
+# own unit field.
+static func _unit_from_totals(agg_data: Dictionary, item: Dictionary, total_key: String, unit_keys: Array, tq: int) -> float:
+	if agg_data is Dictionary and tq > 0 and agg_data.has(total_key):
+		var tot := float(agg_data.get(total_key, 0.0))
+		if tot > 0.0:
+			return tot / float(tq)
+	for k in unit_keys:
+		if item.has(k) and item.get(k) != null:
+			var v = item.get(k)
+			if (v is float or v is int) and float(v) > 0.0:
+				return float(v)
+	return 0.0
+
+static func _push_num(out: Array, item: Dictionary, label: String, keys: Array, unit: String) -> void:
+	for k in keys:
+		if item.has(k) and item.get(k) != null:
+			var v = item.get(k)
+			if (v is float or v is int) and float(v) == 0.0:
+				return
+			out.append([label, _fmt_stat(v) + unit])
+			return
+
+static func _push_money(out: Array, item: Dictionary, label: String, keys: Array) -> void:
+	for k in keys:
+		if item.has(k) and item.get(k) != null:
+			var v = item.get(k)
+			if (v is float or v is int) and float(v) <= 0.0:
+				return
+			out.append([label, "$%s" % NumberFormat.fmt_qty(v)])
+			return
+
+static func _destination_name(agg_data: Dictionary, item: Dictionary) -> String:
+	for src in [agg_data, item]:
+		if not (src is Dictionary):
+			continue
+		for k in ["mission_vendor_name", "recipient_settlement_name", "destination_settlement_name", "destination_name", "dest_settlement"]:
+			var v = (src as Dictionary).get(k)
+			if v != null:
+				var s := str(v).strip_edges()
+				if s != "" and s != "Unknown Vendor" and not ("00000000" in s):
+					return s
+	return ""
 
 static func _fmt_stat(v: Variant) -> String:
 	if v is float:
