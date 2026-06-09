@@ -141,6 +141,10 @@ func _is_compact_footer_layout() -> bool:
 	var m: int = dsm.get_layout_mode()
 	return m == 1 or m == 2 # MOBILE_LANDSCAPE or MOBILE_PORTRAIT
 
+func _is_landscape_layout() -> bool:
+	var dsm = get_node_or_null("/root/DeviceStateManager")
+	return is_instance_valid(dsm) and dsm.get_layout_mode() == 1 # MOBILE_LANDSCAPE
+
 func _get_settings_manager() -> Node:
 	return get_node_or_null("/root/SettingsManager")
 
@@ -1192,6 +1196,7 @@ func _apply_landscape_two_pane(hbox: Control) -> void:
 	# Transaction pinned at the bottom of the right pane. Slim it (money lives in the top bar) so
 	# the Buy button always sits above the nav bar instead of being clipped below it.
 	_slim_transaction_footer(right)
+	_reorg_landscape_transaction(right)
 	right.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	right.size_flags_vertical = Control.SIZE_SHRINK_END
 	right.size_flags_stretch_ratio = 1.0
@@ -1206,6 +1211,36 @@ func _apply_landscape_two_pane(hbox: Control) -> void:
 	left.size_flags_stretch_ratio = 0.45
 
 	hbox.set_meta("landscape_two_paned", true)
+
+func _reorg_landscape_transaction(right: Control) -> void:
+	# Tidy the bottom of the right pane to match the mockup: the quantity stepper and the Buy
+	# button share ONE row (Buy carries the price), with the capacity meters sitting just above.
+	# Order ends up: [ … price (hidden) ][ Volume/Mass meters ][ (− qty + Max)  |  Buy $X ].
+	if not is_instance_valid(right) or right.has_meta("landscape_tx_reorged"):
+		return
+	var qty_container := right.get_node_or_null("TransactionQuantityContainer")
+	var act := right.get_node_or_null("ActionButton")
+	if not (is_instance_valid(qty_container) and is_instance_valid(act)):
+		return
+	var row := HBoxContainer.new()
+	row.name = "TxActionRow"
+	row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.add_theme_constant_override("separation", 10)
+	# Re-home the stepper + Buy into the shared row.
+	right.remove_child(qty_container)
+	right.remove_child(act)
+	qty_container.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	qty_container.size_flags_stretch_ratio = 1.2
+	act.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	act.size_flags_stretch_ratio = 1.0
+	act.size_flags_vertical = Control.SIZE_FILL
+	row.add_child(qty_container)
+	row.add_child(act)
+	right.add_child(row) # appended last → bottom of the pinned footer
+	# Price now rides on the Buy button, so the standalone price line is redundant here.
+	if is_instance_valid(price_label):
+		price_label.visible = false
+	right.set_meta("landscape_tx_reorged", true)
 
 func _style_footer_module(right: Control) -> void:
 	# Give the transaction footer a distinct "module" look so it reads as its own panel,
@@ -2010,6 +2045,11 @@ func _update_transaction_panel() -> void:
 	_update_install_button_state()
 	if is_instance_valid(action_button):
 		action_button.disabled = not can_transact
+		# Landscape carries the price on the Buy/Sell button itself (the standalone price line is
+		# hidden there), matching the mockup's "Buy  $5,000".
+		if _is_landscape_layout():
+			var verb: String = "Buy" if str(current_mode) == "buy" else "Sell"
+			action_button.text = "%s  %s" % [verb, NumberFormat.format_money(float(pr.get("total_price", 0.0)))]
 		if not can_transact:
 			action_button.text = "Sell"
 

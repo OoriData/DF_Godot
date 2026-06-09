@@ -37,6 +37,9 @@ static func _find_vendor_trade_panel(node: Node) -> Node:
 
 static func _make_panel(title: String, rows: Array) -> PanelContainer:
 	var panel := PanelContainer.new()
+	# Sit at the top and (when the parent is an HBox in landscape) share width evenly.
+	panel.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+	panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	var sb := StyleBoxFlat.new()
 	sb.bg_color = Color(0.18, 0.20, 0.24, 0.9)
 	sb.border_color = Color(0.45, 0.50, 0.58, 0.9)
@@ -179,13 +182,25 @@ static func rebuild_info_sections(item_info_rich_text: RichTextLabel, item_data_
 	if parent_node is BoxContainer:
 		parent_node.alignment = BoxContainer.ALIGNMENT_BEGIN
 		
-	var container: Node = parent_node.get_node_or_null("InfoSectionsContainer")
+	# In landscape the inspector is wide but short, so stack the section panels HORIZONTALLY
+	# (side-by-side) to use the width and avoid a tall, scroll-heavy column. Portrait/desktop
+	# keep the vertical stack.
+	var dsm_layout = Engine.get_main_loop().root.get_node_or_null("DeviceStateManager")
+	var is_landscape: bool = is_instance_valid(dsm_layout) and dsm_layout.get_layout_mode() == 1 # MOBILE_LANDSCAPE
+	var container: BoxContainer = parent_node.get_node_or_null("InfoSectionsContainer")
+	# If orientation changed the desired container type, rebuild it.
+	if container != null:
+		var is_h := container is HBoxContainer
+		if is_h != is_landscape:
+			container.queue_free()
+			container = null
 	if container == null:
-		container = VBoxContainer.new()
+		container = HBoxContainer.new() if is_landscape else VBoxContainer.new()
 		container.name = "InfoSectionsContainer"
 		container.mouse_filter = Control.MOUSE_FILTER_PASS
 		container.add_theme_constant_override("separation", 6)
 		container.alignment = BoxContainer.ALIGNMENT_BEGIN
+		container.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		parent_node.add_child(container)
 		var idx: int = parent_node.get_children().find(item_info_rich_text)
 		if idx != -1:
