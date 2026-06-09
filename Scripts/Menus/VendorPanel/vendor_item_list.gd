@@ -287,16 +287,26 @@ func _build_row_body(agg_data: Variant) -> Control:
 	line.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	line.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	line.add_theme_font_size_override("normal_font_size", max(12, name_font_size - 4))
-	var parts: Array = []
-	for p in stats:
-		parts.append("[color=#9aa1ac]%s[/color] [color=#e0e4ea]%s[/color]" % [p[0], p[1]])
-	line.text = "  •  ".join(parts)
+	line.text = _stat_pairs_to_bbcode(stats)
 	wrap.add_child(line)
 	return wrap
 
+# Public/static: the compact "Label value • Label value" stat line for an agg item. Reused by the
+# landscape inspector so its summary matches the inline row body exactly.
+static func stat_line_bbcode(agg_data: Variant) -> String:
+	if not (agg_data is Dictionary):
+		return ""
+	return _stat_pairs_to_bbcode(_stat_pairs(agg_data))
+
+static func _stat_pairs_to_bbcode(stats: Array) -> String:
+	var parts: Array = []
+	for p in stats:
+		parts.append("[color=#9aa1ac]%s[/color] [color=#e0e4ea]%s[/color]" % [p[0], p[1]])
+	return "  •  ".join(parts)
+
 # Tolerant key stat extraction with units, mirroring the inspector's stat line. Shows up to 6
 # present fields. Each candidate is [label, [keys...], unit] where unit "$" means a money prefix.
-func _stat_pairs(agg_data: Dictionary) -> Array:
+static func _stat_pairs(agg_data: Dictionary) -> Array:
 	var item: Dictionary = agg_data.get("item_data", agg_data) if agg_data is Dictionary else {}
 	if not (item is Dictionary):
 		return []
@@ -338,12 +348,12 @@ func _stat_pairs(agg_data: Dictionary) -> Array:
 			out.append(["Available", str(int(agg_data.get("total_quantity")))])
 	return out
 
-func _fmt_stat(v: Variant) -> String:
+static func _fmt_stat(v: Variant) -> String:
 	if v is float:
 		return NumberFormat.fmt_float(v, 2)
 	return str(v)
 
-func _fmt_stat_unit(v: Variant, unit: String) -> String:
+static func _fmt_stat_unit(v: Variant, unit: String) -> String:
 	if unit == "$":
 		return "$%s" % NumberFormat.fmt_qty(v)
 	return _fmt_stat(v) + unit

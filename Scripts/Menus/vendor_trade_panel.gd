@@ -129,6 +129,10 @@ var _is_previewing_destination: bool = false
 # Portrait Concept A — holds the MiddlePanel inspector so it can be revealed on first item tap
 var _portrait_inspector: Control = null
 
+# Landscape compact inspector: a one-line stat summary (Off-road · Cargo · Volume · Value · …)
+# that replaces the tall verbose Per Unit / Total Order section panels.
+var _landscape_stat_label: RichTextLabel = null
+
 func _is_portrait_layout() -> bool:
 	var dsm = get_node_or_null("/root/DeviceStateManager")
 	return is_instance_valid(dsm) and dsm.get_layout_mode() == 2 # 2 == MOBILE_PORTRAIT
@@ -1188,6 +1192,7 @@ func _apply_landscape_two_pane(hbox: Control) -> void:
 	# pushed the Buy button off the bottom (behind the nav). Drop the preview; the inspector's
 	# scrollable stats/description take that space, and the transaction stays pinned + visible.
 	_slim_portrait_inspector(middle)
+	_build_landscape_stat_label()
 	pane.add_child(middle)
 
 	var div := HSeparator.new()
@@ -1203,14 +1208,71 @@ func _apply_landscape_two_pane(hbox: Control) -> void:
 	right.custom_minimum_size = Vector2(0, right.custom_minimum_size.y) # drop the 320px fixed width
 	pane.add_child(right)
 
-	hbox.add_child(pane)
-	hbox.move_child(pane, insert_idx)
+	# Wrap the right pane in a styled, bordered "module" panel to match the mockup.
+	var pane_wrap := PanelContainer.new()
+	pane_wrap.name = "LandscapeRightPaneWrap"
+	pane_wrap.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	pane_wrap.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	pane_wrap.size_flags_stretch_ratio = 0.55
+	var ps := StyleBoxFlat.new()
+	ps.bg_color = Color(0.078, 0.086, 0.106, 0.95)
+	ps.set_border_width_all(1)
+	ps.border_color = Color(0.224, 0.239, 0.278, 1.0) # #393d47
+	ps.set_corner_radius_all(12)
+	ps.content_margin_left = 14
+	ps.content_margin_right = 14
+	ps.content_margin_top = 12
+	ps.content_margin_bottom = 12
+	pane_wrap.add_theme_stylebox_override("panel", ps)
+	pane_wrap.add_child(pane)
+
+	hbox.add_child(pane_wrap)
+	hbox.move_child(pane_wrap, insert_idx)
 
 	# List takes the remaining ~45%.
 	left.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	left.size_flags_stretch_ratio = 0.45
 
 	hbox.set_meta("landscape_two_paned", true)
+
+func _build_landscape_stat_label() -> void:
+	# A compact one-line stat summary inserted right under the item name, replacing the verbose
+	# Per Unit / Total Order section panels (which were crammed into a scroll strip in landscape).
+	if is_instance_valid(_landscape_stat_label):
+		return
+	if not is_instance_valid(item_name_label):
+		return
+	var parent_m := item_name_label.get_parent()
+	if not is_instance_valid(parent_m):
+		return
+	var lbl := RichTextLabel.new()
+	lbl.name = "LandscapeStatLine"
+	lbl.bbcode_enabled = true
+	lbl.fit_content = true
+	lbl.scroll_active = false
+	lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	lbl.add_theme_font_size_override("normal_font_size", 16)
+	lbl.visible = false
+	_landscape_stat_label = lbl
+	parent_m.add_child(lbl)
+	parent_m.move_child(lbl, item_name_label.get_index() + 1)
+
+func _update_landscape_summary() -> void:
+	# Populate the compact stat line and suppress the verbose section panels / destination box.
+	if not is_instance_valid(_landscape_stat_label):
+		return
+	var line := VendorItemList.stat_line_bbcode(selected_item)
+	_landscape_stat_label.text = line
+	_landscape_stat_label.visible = selected_item != null and line != ""
+	# Hide the tall Per Unit / Total Order / Destination section panels in landscape.
+	if is_instance_valid(item_info_rich_text):
+		var info_vbox := item_info_rich_text.get_parent()
+		if is_instance_valid(info_vbox):
+			var sections = info_vbox.get_node_or_null("InfoSectionsContainer")
+			if is_instance_valid(sections):
+				sections.visible = false
 
 func _reorg_landscape_transaction(right: Control) -> void:
 	# Tidy the bottom of the right pane to match the mockup: the quantity stepper and the Buy
@@ -1945,6 +2007,8 @@ func _update_inspector() -> void:
 		VendorPanelInspectorController.update_vehicle(self, vehicle_data)
 		# Fitment panel should be updated for all items, including vehicles (to hide it).
 		_update_fitment_panel()
+		if _is_landscape_layout():
+			_update_landscape_summary()
 		return
 
 	VendorPanelInspectorController.update_non_vehicle(
@@ -1962,6 +2026,8 @@ func _update_inspector() -> void:
 		_compat_cache,
 		perf_log_enabled
 	)
+	if _is_landscape_layout():
+		_update_landscape_summary()
 	call_deferred("_log_size_after_update")
 
 func _update_fitment_panel() -> void:

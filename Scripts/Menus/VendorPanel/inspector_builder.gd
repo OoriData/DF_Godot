@@ -182,20 +182,11 @@ static func rebuild_info_sections(item_info_rich_text: RichTextLabel, item_data_
 	if parent_node is BoxContainer:
 		parent_node.alignment = BoxContainer.ALIGNMENT_BEGIN
 		
-	# In landscape the inspector is wide but short, so stack the section panels HORIZONTALLY
-	# (side-by-side) to use the width and avoid a tall, scroll-heavy column. Portrait/desktop
-	# keep the vertical stack.
-	var dsm_layout = Engine.get_main_loop().root.get_node_or_null("DeviceStateManager")
-	var is_landscape: bool = is_instance_valid(dsm_layout) and dsm_layout.get_layout_mode() == 1 # MOBILE_LANDSCAPE
-	var container: BoxContainer = parent_node.get_node_or_null("InfoSectionsContainer")
-	# If orientation changed the desired container type, rebuild it.
-	if container != null:
-		var is_h := container is HBoxContainer
-		if is_h != is_landscape:
-			container.queue_free()
-			container = null
+	# Landscape replaces these verbose section panels with a compact one-line stat summary
+	# (built by the panel itself and hidden here), so they only render in portrait/desktop.
+	var container: Node = parent_node.get_node_or_null("InfoSectionsContainer")
 	if container == null:
-		container = HBoxContainer.new() if is_landscape else VBoxContainer.new()
+		container = VBoxContainer.new()
 		container.name = "InfoSectionsContainer"
 		container.mouse_filter = Control.MOUSE_FILTER_PASS
 		container.add_theme_constant_override("separation", 6)
