@@ -696,9 +696,11 @@ func _update_layout_scaling() -> void:
 		var tab_bar = trade_mode_tab_container.get_tab_bar()
 		if is_instance_valid(tab_bar):
 			tab_bar.add_theme_font_size_override("font_size", tab_font_sz)
-	# Tab bar is hidden; the single flip button is the visible mode selector.
+	# Tab bar is hidden; the single flip button is the visible mode selector. It's a compact
+	# secondary control (the primary Buy/Sell action lives in the footer), so keep it small —
+	# content-sized via size_flags and a modest fixed font rather than the larger tab size.
 	if is_instance_valid(mode_flip_button):
-		mode_flip_button.add_theme_font_size_override("font_size", tab_font_sz)
+		mode_flip_button.add_theme_font_size_override("font_size", 18 if is_portrait else 16)
 
 	if is_instance_valid(vendor_item_tree):
 		vendor_item_tree.add_theme_font_size_override("font_size", tree_font_sz)
@@ -1626,10 +1628,10 @@ func _style_mode_toggle() -> void:
 	normal.border_color = accent
 	normal.border_width_bottom = 3
 	normal.set_corner_radius_all(6)
-	normal.content_margin_top = 8
-	normal.content_margin_bottom = 8
-	normal.content_margin_left = 12
-	normal.content_margin_right = 12
+	normal.content_margin_top = 5
+	normal.content_margin_bottom = 5
+	normal.content_margin_left = 14
+	normal.content_margin_right = 14
 	var hover := normal.duplicate()
 	hover.bg_color = Color(0.16, 0.173, 0.2, 1.0)
 	b.add_theme_stylebox_override("normal", normal)
