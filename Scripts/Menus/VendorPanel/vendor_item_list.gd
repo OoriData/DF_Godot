@@ -294,42 +294,59 @@ func _build_row_body(agg_data: Variant) -> Control:
 	wrap.add_child(line)
 	return wrap
 
-# Tolerant key stat extraction; shows up to 5 present fields.
+# Tolerant key stat extraction with units, mirroring the inspector's stat line. Shows up to 6
+# present fields. Each candidate is [label, [keys...], unit] where unit "$" means a money prefix.
 func _stat_pairs(agg_data: Dictionary) -> Array:
 	var item: Dictionary = agg_data.get("item_data", agg_data) if agg_data is Dictionary else {}
 	if not (item is Dictionary):
 		return []
 	var candidates := [
-		["Cargo", ["cargo_capacity"]],
-		["Wt cap", ["weight_capacity"]],
-		["Top spd", ["top_speed"]],
-		["Eff", ["fuel_efficiency", "efficiency"]],
-		["Offroad", ["offroad_capability", "off_road"]],
-		["Slot", ["slot"]],
-		["Weight", ["unit_weight", "weight"]],
-		["Volume", ["unit_volume", "volume"]],
-		["Qty", ["total_quantity"]],
-		["Delivery", ["delivery_reward", "mission_reward"]],
+		["Off-road", ["offroad_capability", "off_road"], ""],
+		["Top spd", ["top_speed"], ""],
+		["Eff", ["fuel_efficiency", "efficiency"], ""],
+		["Cargo", ["cargo_capacity"], " kg"],
+		["Wt cap", ["weight_capacity"], " kg"],
+		["Slot", ["slot"], ""],
+		["Weight", ["unit_weight", "weight"], " kg"],
+		["Volume", ["unit_volume", "volume"], " m³"],
+		["Value", ["value", "base_price", "price"], "$"],
+		["Qty", ["total_quantity"], ""],
+		["Delivery", ["delivery_reward", "mission_reward"], "$"],
 	]
 	var out: Array = []
 	for c in candidates:
 		var label: String = c[0]
+		var unit: String = c[2]
 		for k in c[1]:
 			var src: Dictionary = agg_data if (label == "Qty" and agg_data.has("total_quantity")) else item
 			if src.has(k) and src.get(k) != null:
 				var v = src.get(k)
 				if (v is float or v is int) and float(v) == 0.0:
 					break
-				out.append([label, _fmt_stat(v)])
+				out.append([label, _fmt_stat_unit(v, unit)])
 				break
-		if out.size() >= 5:
+		if out.size() >= 6:
 			break
+	# Vendor stock count → "Available N" (vehicles/parts), distinct from a cargo "Qty".
+	if agg_data.has("total_quantity") and int(agg_data.get("total_quantity")) > 0:
+		var has_qty := false
+		for pair in out:
+			if pair[0] == "Qty":
+				has_qty = true
+				break
+		if not has_qty and out.size() < 6:
+			out.append(["Available", str(int(agg_data.get("total_quantity")))])
 	return out
 
 func _fmt_stat(v: Variant) -> String:
 	if v is float:
 		return NumberFormat.fmt_float(v, 2)
 	return str(v)
+
+func _fmt_stat_unit(v: Variant, unit: String) -> String:
+	if unit == "$":
+		return "$%s" % NumberFormat.fmt_qty(v)
+	return _fmt_stat(v) + unit
 
 # --- helpers ---
 func _row_style(selected: bool, alt: bool) -> StyleBoxFlat:

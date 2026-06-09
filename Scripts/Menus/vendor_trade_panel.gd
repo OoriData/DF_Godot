@@ -133,6 +133,14 @@ func _is_portrait_layout() -> bool:
 	var dsm = get_node_or_null("/root/DeviceStateManager")
 	return is_instance_valid(dsm) and dsm.get_layout_mode() == 2 # 2 == MOBILE_PORTRAIT
 
+func _is_compact_footer_layout() -> bool:
+	# Both mobile orientations use the slim, pinned transaction footer (one-line price).
+	var dsm = get_node_or_null("/root/DeviceStateManager")
+	if not is_instance_valid(dsm):
+		return false
+	var m: int = dsm.get_layout_mode()
+	return m == 1 or m == 2 # MOBILE_LANDSCAPE or MOBILE_PORTRAIT
+
 func _get_settings_manager() -> Node:
 	return get_node_or_null("/root/SettingsManager")
 
@@ -686,12 +694,12 @@ func _update_layout_scaling() -> void:
 		btn_min_h = 60.0
 		bar_min_h = 22.0 # thin one-line meter (label sits beside the bar now, not above)
 		sort_h = 52.0
-	elif use_mobile:
-		btn_font_sz = 22
-		tab_font_sz = 22
-		btn_min_h = 60.0
-		bar_min_h = 20.0
-		sort_h = 48.0
+	elif use_mobile: # MOBILE_LANDSCAPE — short viewport, keep the pinned transaction compact
+		btn_font_sz = 20
+		tab_font_sz = 20
+		btn_min_h = 46.0
+		bar_min_h = 18.0
+		sort_h = 44.0
 	else: # DESKTOP
 		btn_font_sz = 30
 		tab_font_sz = 26
@@ -1172,11 +1180,18 @@ func _apply_landscape_two_pane(hbox: Control) -> void:
 	middle.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	middle.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	middle.size_flags_stretch_ratio = 1.0
+	# The 150px preview image + tall transaction block overflowed the short landscape height and
+	# pushed the Buy button off the bottom (behind the nav). Drop the preview; the inspector's
+	# scrollable stats/description take that space, and the transaction stays pinned + visible.
+	_slim_portrait_inspector(middle)
 	pane.add_child(middle)
 
 	var div := HSeparator.new()
 	pane.add_child(div)
 
+	# Transaction pinned at the bottom of the right pane. Slim it (money lives in the top bar) so
+	# the Buy button always sits above the nav bar instead of being clipped below it.
+	_slim_transaction_footer(right)
 	right.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	right.size_flags_vertical = Control.SIZE_SHRINK_END
 	right.size_flags_stretch_ratio = 1.0
@@ -1962,7 +1977,7 @@ func _update_transaction_panel() -> void:
 	var quantity = int(quantity_spinbox.value) if is_instance_valid(quantity_spinbox) else 1
 	var pr = VendorTradeVM.build_price_presenter(item_data_source, str(current_mode), quantity, selected_item)
 	var total_reward: float = float(pr.get("total_delivery_reward", 0.0))
-	var is_portrait_now := _is_portrait_layout()
+	var is_portrait_now := _is_compact_footer_layout()
 	if is_instance_valid(delivery_reward_label):
 		# In portrait the reward is folded into the single compact price line below, so the
 		# separate reward label is only shown on desktop/landscape.
