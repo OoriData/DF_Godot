@@ -26,6 +26,7 @@ const OORI_RED = Color("#8a2b2b")
 @onready var back_button: Button = $MainVBox/BackButton
 var warehouse_button: Button = null
 var _top_bar_reorganized: bool = false
+var _top_bar_spacer: Control = null # flex spacer in the banner row; expands in landscape/desktop, hidden in portrait
 
 # This will be populated by MenuManager with the specific convoy's data.
 var _convoy_data: Dictionary
@@ -137,12 +138,10 @@ func _ready():
 	if is_instance_valid(title_label):
 		_style_top_bar_button(title_label)
 
-	# Title absorbs slack (breadcrumb truncates); action buttons size to their text — no more equal-thirds truncation.
-	_apply_top_bar_sizing()
-
-	# Compact the top bar: Top Up sits beside the vendor dropdown, Warehouse becomes the
-	# settlement-name button in the banner. Removes the bulky stand-alone Top Up/Warehouse row.
+	# Consolidate everything onto the single banner row (breadcrumb + settlement + dropdown + Top Up),
+	# then size it for the current orientation. Reorg first so sizing operates on the final node set.
 	_reorganize_top_bar()
+	_apply_top_bar_sizing()
 
 	# Subscribe to canonical snapshots (store 'convoys_changed' handled by MenuBase)
 	if is_instance_valid(_store):
@@ -1138,18 +1137,53 @@ func _style_top_bar_button(button: Button) -> void:
 		pressed.set_content_margin(side, pressed.get_content_margin(side) + 2)
 		disabled.set_content_margin(side, disabled.get_content_margin(side) + 2)
 
+func _current_layout_mode() -> int:
+	var dsm = get_node_or_null("/root/DeviceStateManager")
+	if is_instance_valid(dsm) and dsm.has_method("get_layout_mode"):
+		return int(dsm.get_layout_mode()) # 0=DESKTOP, 1=MOBILE_LANDSCAPE, 2=MOBILE_PORTRAIT
+	return 0
+
 func _apply_top_bar_sizing() -> void:
-	# Title (breadcrumb) absorbs leftover width and clips gracefully; Top Up / Warehouse
-	# size to their own text so labels like "Top Up (Full)" are never truncated.
-	if is_instance_valid(title_label):
-		title_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		title_label.clip_text = true
+	# Single consolidated banner row:
+	#   [< Convoy]  [Settlement]  [spacer]  [Vendor ▾]  [Top Up]
+	# Anti-clip rule: settlement name, dropdown and Top Up are ALWAYS content-sized, so they can never
+	# clip. The convoy breadcrumb is the sole flex/clip element.
+	#   • Mobile (portrait/landscape): breadcrumb expands+clips and absorbs all slack; spacer hidden.
+	#     A long convoy name truncates itself rather than pushing the settlement off the edge.
+	#   • Desktop: the dropdown is hidden (tab strip is the selector) and there is ample width, so the
+	#     breadcrumb stays content-sized and the spacer expands to keep Top Up pinned right.
+	var mode: int = _current_layout_mode()
+	var is_mobile: bool = (mode == 1 or mode == 2)
+
+	# Convoy breadcrumb — the only element allowed to yield/clip.
+	if is_instance_valid(_top_banner_convoy_button):
+		_top_banner_convoy_button.clip_text = true
+		_top_banner_convoy_button.size_flags_horizontal = (
+			Control.SIZE_EXPAND_FILL if is_mobile else Control.SIZE_SHRINK_BEGIN)
+
+	# Settlement name — always full, never clipped.
+	if is_instance_valid(warehouse_button):
+		warehouse_button.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+		warehouse_button.clip_text = false
+		warehouse_button.custom_minimum_size.x = 0
+
+	# Spacer — expands only on desktop (where the breadcrumb is content-sized).
+	if is_instance_valid(_top_bar_spacer):
+		_top_bar_spacer.visible = not is_mobile
+		_top_bar_spacer.size_flags_horizontal = (
+			Control.SIZE_FILL if is_mobile else Control.SIZE_EXPAND_FILL)
+
+	# Vendor dropdown — content-sized in every mode (fixes the "super-wide dropdown").
+	if is_instance_valid(vendor_selector):
+		vendor_selector.clip_text = true
+		vendor_selector.size_flags_horizontal = Control.SIZE_SHRINK_END
+		vendor_selector.custom_minimum_size.x = 180
+
+	# Top Up — content-sized, pinned right, never clipped.
 	if is_instance_valid(top_up_button):
 		top_up_button.size_flags_horizontal = Control.SIZE_SHRINK_END
 		top_up_button.clip_text = false
-	if is_instance_valid(warehouse_button):
-		warehouse_button.size_flags_horizontal = Control.SIZE_SHRINK_END
-		warehouse_button.clip_text = false
+		top_up_button.custom_minimum_size.x = 130
 
 func _style_back_button(button: Button) -> void:
 	if not is_instance_valid(button):
@@ -1322,44 +1356,60 @@ func _style_vendor_selector() -> void:
 	vendor_selector.add_theme_color_override("font_pressed_color", OORI_YELLOW)
 
 func _reorganize_top_bar() -> void:
-	# One-shot restructure (banner is built once in _ready).
+	# One-shot restructure: collapse the breadcrumb + settlement-name + vendor dropdown + Top Up
+	# onto the single banner row. Order in the HBox:
+	#   [< Convoy]  [Settlement]  [spacer]  [Vendor ▾]  [Top Up]
+	# Orientation sizing is applied separately by _apply_top_bar_sizing().
 	if _top_bar_reorganized:
 		return
-	# --- Top Up moves into a row beside the vendor dropdown ---
-	if is_instance_valid(vendor_selector) and is_instance_valid(top_up_button):
-		var sel_parent: Node = vendor_selector.get_parent()
-		if sel_parent is VBoxContainer:
-			var row := HBoxContainer.new()
-			row.name = "VendorSelectorRow"
-			row.add_theme_constant_override("separation", 8)
-			var idx: int = vendor_selector.get_index()
-			sel_parent.add_child(row)
-			sel_parent.move_child(row, idx)
-			sel_parent.remove_child(vendor_selector)
-			row.add_child(vendor_selector)
-			vendor_selector.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-			var tu_parent: Node = top_up_button.get_parent()
-			if is_instance_valid(tu_parent):
-				tu_parent.remove_child(top_up_button)
-			row.add_child(top_up_button)
-			top_up_button.size_flags_horizontal = Control.SIZE_SHRINK_END
-			# A little wider so it reads as a chunky square-ish button rather than text-tight.
-			top_up_button.custom_minimum_size.x = 150
-	# --- Warehouse becomes the settlement-name button in the banner; hide the static suffix ---
-	if is_instance_valid(warehouse_button) and is_instance_valid(_top_banner_convoy_button):
-		var banner_hbox: Node = _top_banner_convoy_button.get_parent()
-		if is_instance_valid(banner_hbox):
-			var wh_parent: Node = warehouse_button.get_parent()
-			if is_instance_valid(wh_parent):
-				wh_parent.remove_child(warehouse_button)
-			banner_hbox.add_child(warehouse_button)
-			_style_banner_settlement_button(warehouse_button)
-		if is_instance_valid(_top_banner_suffix_label):
-			_top_banner_suffix_label.visible = false
-	# --- The old breakout row is now empty — hide it ---
+	if not is_instance_valid(_top_banner_convoy_button):
+		return
+	var banner_hbox: Node = _top_banner_convoy_button.get_parent()
+	if not (banner_hbox is HBoxContainer):
+		return
+	var bhb: HBoxContainer = banner_hbox
+	bhb.alignment = BoxContainer.ALIGNMENT_BEGIN
+	bhb.add_theme_constant_override("separation", 8)
+
+	# Slim the convoy breadcrumb so it no longer dominates the bar.
+	_top_banner_convoy_button.add_theme_font_size_override("font_size", 20)
+	_top_banner_convoy_button.clip_text = true
+	# The static "| SETTLEMENT" suffix is redundant — the settlement name carries that meaning.
+	if is_instance_valid(_top_banner_suffix_label):
+		_top_banner_suffix_label.visible = false
+
+	# Settlement-name button (opens Warehouse) sits right after the breadcrumb.
+	if is_instance_valid(warehouse_button):
+		var wh_parent: Node = warehouse_button.get_parent()
+		if is_instance_valid(wh_parent):
+			wh_parent.remove_child(warehouse_button)
+		bhb.add_child(warehouse_button)
+		_style_banner_settlement_button(warehouse_button)
+
+	# Flex spacer — expands in landscape/desktop to right-group the dropdown + Top Up.
+	_top_bar_spacer = Control.new()
+	_top_bar_spacer.name = "TopBarSpacer"
+	bhb.add_child(_top_bar_spacer)
+
+	# Vendor dropdown.
+	if is_instance_valid(vendor_selector):
+		var vs_parent: Node = vendor_selector.get_parent()
+		if is_instance_valid(vs_parent):
+			vs_parent.remove_child(vendor_selector)
+		bhb.add_child(vendor_selector)
+
+	# Top Up pinned to the far right.
+	if is_instance_valid(top_up_button):
+		var tu_parent: Node = top_up_button.get_parent()
+		if is_instance_valid(tu_parent):
+			tu_parent.remove_child(top_up_button)
+		bhb.add_child(top_up_button)
+
+	# The old breakout row is now unused.
 	var secondary: Node = $MainVBox.get_node_or_null("SecondaryBannerPanel")
 	if is_instance_valid(secondary):
 		secondary.visible = false
+
 	_top_bar_reorganized = true
 	_update_settlement_banner_button()
 
