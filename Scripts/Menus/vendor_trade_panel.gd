@@ -26,8 +26,10 @@ func _emit_install_requested(item: Variant, quantity: int, vendor_id: String) ->
 	emit_signal("install_requested", item, quantity, vendor_id)
 
 # --- Node References ---
-@onready var vendor_item_tree: Tree = %VendorItemTree
-@onready var convoy_item_tree: Tree = %ConvoyItemTree
+# These nodes are now VendorItemList (custom inline-expand list) — the names are kept as
+# *_tree to limit churn across the panel + controllers; they are NOT Godot Trees anymore.
+@onready var vendor_item_tree: VendorItemList = %VendorItemTree
+@onready var convoy_item_tree: VendorItemList = %ConvoyItemTree
 @onready var item_name_label: Label = %ItemNameLabel
 @onready var item_preview: TextureRect = %ItemPreview
 @onready var item_info_rich_text: RichTextLabel = %ItemInfoRichText
@@ -703,9 +705,9 @@ func _update_layout_scaling() -> void:
 		mode_flip_button.add_theme_font_size_override("font_size", 18 if is_portrait else 16)
 
 	if is_instance_valid(vendor_item_tree):
-		vendor_item_tree.add_theme_font_size_override("font_size", tree_font_sz)
+		vendor_item_tree.set_name_font_size(tree_font_sz)
 	if is_instance_valid(convoy_item_tree):
-		convoy_item_tree.add_theme_font_size_override("font_size", tree_font_sz)
+		convoy_item_tree.set_name_font_size(tree_font_sz)
 
 	if is_instance_valid(item_name_label):
 		var name_sz = 38 if is_portrait else (30 if use_mobile else 38)
@@ -1036,7 +1038,14 @@ func _make_panels_responsive() -> void:
 	# Desktop and Landscape have enough vertical real estate to use the native .tscn layout,
 	# which prevents nested ScrollContainer layout bugs.
 	var dsm = get_node_or_null("/root/DeviceStateManager")
-	if is_instance_valid(dsm) and dsm.get_layout_mode() != 2: # 2 == MOBILE_PORTRAIT
+	var is_portrait: bool = is_instance_valid(dsm) and dsm.get_layout_mode() == 2 # 2 == MOBILE_PORTRAIT
+	# Inline-expand is the inspector in PORTRAIT only. Desktop/landscape keep the separate
+	# MiddlePanel inspector column, so rows there don't expand.
+	if is_instance_valid(vendor_item_tree):
+		vendor_item_tree.inline_expand_enabled = is_portrait
+	if is_instance_valid(convoy_item_tree):
+		convoy_item_tree.inline_expand_enabled = is_portrait
+	if not is_portrait:
 		return
 
 	var hbox = get_node_or_null("HBoxContainer")
@@ -1064,11 +1073,11 @@ func _apply_portrait_stack(hbox: Control) -> void:
 	vbox.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	vbox.add_theme_constant_override("separation", 6)
 
-	# Concept A: the LIST dominates. The inspector is hidden until an item is selected
-	# (and then capped to a minority share); the transaction is a slim pinned footer.
-	# left ratio 3 : middle ratio 1 → list gets ~75% of the expand space when the
-	# inspector is shown, and ~100% when it's hidden.
-	for entry in [[left, Control.SIZE_EXPAND_FILL, 3.0], [middle, Control.SIZE_EXPAND_FILL, 1.0], [right, Control.SIZE_SHRINK_END, 1.0]]:
+	# Inline-expand Concept A: the LIST owns all the height and each row expands its own
+	# inspector in place; the transaction is a slim pinned footer. The separate MiddlePanel
+	# inspector is NOT stacked here (the inline row body replaces it in portrait) — it stays
+	# parked in the now-hidden hbox.
+	for entry in [[left, Control.SIZE_EXPAND_FILL, 3.0], [right, Control.SIZE_SHRINK_END, 1.0]]:
 		var p: Control = entry[0]
 		if not is_instance_valid(p):
 			continue
@@ -1079,11 +1088,10 @@ func _apply_portrait_stack(hbox: Control) -> void:
 		p.custom_minimum_size = Vector2(0, p.custom_minimum_size.y) # drop the 320px column width
 		vbox.add_child(p)
 
-	# Inspector starts hidden so the list owns the whole panel until you tap an item.
+	# MiddlePanel stays hidden in portrait — the inline row body is the inspector.
 	if is_instance_valid(middle):
 		middle.visible = false
-		_portrait_inspector = middle
-		_slim_portrait_inspector(middle)
+		_portrait_inspector = null # disable the capped reveal; inline-expand handles inspection
 
 	# Slim the transaction block into a footer: drop the redundant title/money lines
 	# (money is already in the top bar) so it reads as one compact strip.
@@ -1335,15 +1343,13 @@ func _update_vendor_ui(update_vendor: bool = true, update_convoy: bool = true) -
 	# Use self.vendor_items and self.convoy_items to populate the UI.
 	# Allow callers to update only the relevant tree to reduce rebuild cost.
 	if update_vendor:
-		_ensure_tree_columns(vendor_item_tree)
-		_populate_tree_from_agg(vendor_item_tree, self.vendor_items)
+		_populate_list_from_agg(vendor_item_tree, self.vendor_items)
 	if update_convoy:
-		_ensure_tree_columns(convoy_item_tree)
 		var agg_to_use: Dictionary = self.convoy_items if (self.convoy_items is Dictionary) else {}
 		# In SELL mode, allow selling whole vehicles when appropriate for this vendor
 		if _should_show_vehicle_sell_category():
 			agg_to_use = _convoy_items_with_sellable_vehicles(agg_to_use)
-		_populate_tree_from_agg(convoy_item_tree, agg_to_use)
+		_populate_list_from_agg(convoy_item_tree, agg_to_use)
 	_update_convoy_info_display()
 
 func _should_show_vehicle_sell_category() -> bool:
@@ -1352,14 +1358,22 @@ func _should_show_vehicle_sell_category() -> bool:
 func _convoy_items_with_sellable_vehicles(base_agg: Dictionary) -> Dictionary:
 	return VendorPanelVehicleSellController.convoy_items_with_sellable_vehicles(self, base_agg)
 
-func _populate_tree_from_agg(tree: Tree, agg: Dictionary) -> void:
-	var t0 := 0
-	if perf_log_enabled:
-		t0 = Time.get_ticks_msec()
-	var rows := VendorTreeBuilder.populate_tree_vendor_rows(tree, agg)
-	if perf_log_enabled:
-		var dt = Time.get_ticks_msec() - t0
-		print("[VendorPanel][Perf] _populate_tree_from_agg rows=", rows, " dt=", dt, " ms for ", tree.name)
+func _populate_list_from_agg(list: VendorItemList, agg: Dictionary) -> void:
+	# Mirrors the old VendorTreeBuilder.populate_tree_vendor_rows: rebucket parts out of "other",
+	# then add the standard category sections to the custom list.
+	if not is_instance_valid(list):
+		return
+	list.clear_items()
+	var display_agg: Dictionary = VendorTreeBuilder.make_display_agg_with_parts_rebucket(agg)
+	# Category key -> friendly title (matches the _populate_*_list naming).
+	var order := [["missions", "Delivery Cargo"], ["vehicles", "Vehicles"], ["parts", "Parts"], ["other", "Other"], ["resources", "Resources"]]
+	for entry in order:
+		var key: String = entry[0]
+		var title: String = entry[1]
+		var bucket: Variant = display_agg.get(key, {})
+		if bucket is Dictionary and not (bucket as Dictionary).is_empty():
+			var sm: int = _cargo_sort_metric if title == "Delivery Cargo" else -1
+			list.add_category(title, bucket, sm)
 
 
 # --- Data Initialization ---
@@ -1413,7 +1427,7 @@ func refresh_data(p_vendor_data, p_convoy_data, p_current_settlement_data, p_all
 
 func _populate_vendor_list() -> void:
 	_ignore_selection_signals = true
-	vendor_item_tree.clear()
+	vendor_item_tree.clear_items()
 	if not vendor_data:
 		vendor_items = {}
 		_ignore_selection_signals = false
@@ -1421,13 +1435,12 @@ func _populate_vendor_list() -> void:
 	var vd_for_agg := _vendor_data_with_price_fallback(vendor_data)
 	var buckets := VendorCargoAggregatorScript.build_vendor_buckets(vd_for_agg, perf_log_enabled, Callable(self, "_get_vendor_name_for_recipient"))
 	self.vendor_items = buckets
-	var root = vendor_item_tree.create_item()
 	var has_delivery_cargo = not buckets.get("delivery", {}).is_empty()
-	_populate_category(vendor_item_tree, root, "Delivery Cargo", buckets.get("delivery", {}))
-	_populate_category(vendor_item_tree, root, "Vehicles", buckets.get("vehicles", {}))
-	_populate_category(vendor_item_tree, root, "Parts", buckets.get("parts", {}))
-	_populate_category(vendor_item_tree, root, "Other", buckets.get("other", {}))
-	_populate_category(vendor_item_tree, root, "Resources", buckets.get("resources", {}))
+	vendor_item_tree.add_category("Delivery Cargo", buckets.get("delivery", {}), _cargo_sort_metric)
+	vendor_item_tree.add_category("Vehicles", buckets.get("vehicles", {}), -1)
+	vendor_item_tree.add_category("Parts", buckets.get("parts", {}), -1)
+	vendor_item_tree.add_category("Other", buckets.get("other", {}), -1)
+	vendor_item_tree.add_category("Resources", buckets.get("resources", {}), -1)
 	_ignore_selection_signals = false
 
 	if has_delivery_cargo and is_instance_valid(_api):
@@ -1509,7 +1522,7 @@ func _try_apply_pending_focus_intent() -> bool:
 
 func _populate_convoy_list() -> void:
 	_ignore_selection_signals = true
-	convoy_item_tree.clear()
+	convoy_item_tree.clear_items()
 	if not (convoy_data is Dictionary) or convoy_data.is_empty():
 		convoy_items = {}
 		_ignore_selection_signals = false
@@ -1548,16 +1561,15 @@ func _populate_convoy_list() -> void:
 			" settlement_prices(f/w/food)=", sv_prices,
 			" allow_vehicle_sell=", allow_vehicle_sell,
 			" bucket_sizes(d/v/p/o/r)=", int((buckets.get("delivery", {}) as Dictionary).size()), "/", int((buckets.get("vehicles", {}) as Dictionary).size()), "/", int((buckets.get("parts", {}) as Dictionary).size()), "/", int((buckets.get("other", {}) as Dictionary).size()), "/", int((buckets.get("resources", {}) as Dictionary).size()))
-	var root = convoy_item_tree.create_item()
 	var has_delivery_cargo = not buckets.get("delivery", {}).is_empty()
-	_populate_category(convoy_item_tree, root, "Delivery Cargo", buckets.get("delivery", {}))
+	convoy_item_tree.add_category("Delivery Cargo", buckets.get("delivery", {}), _cargo_sort_metric)
 	if allow_vehicle_sell and not (buckets.get("vehicles", {}) as Dictionary).is_empty():
-		_populate_category(convoy_item_tree, root, "Vehicles", buckets.get("vehicles", {}))
+		convoy_item_tree.add_category("Vehicles", buckets.get("vehicles", {}), -1)
 	# Only show loose/aggregated parts when BUYING. In SELL mode installed vehicle parts are not sellable.
 	if current_mode == "buy":
-		_populate_category(convoy_item_tree, root, "Parts", buckets.get("parts", {}))
-	_populate_category(convoy_item_tree, root, "Other", buckets.get("other", {}))
-	_populate_category(convoy_item_tree, root, "Resources", buckets.get("resources", {}))
+		convoy_item_tree.add_category("Parts", buckets.get("parts", {}), -1)
+	convoy_item_tree.add_category("Other", buckets.get("other", {}), -1)
+	convoy_item_tree.add_category("Resources", buckets.get("resources", {}), -1)
 	_ignore_selection_signals = false
 
 	# Show sorting if either list has delivery cargo, according to Active Tab
@@ -1663,10 +1675,10 @@ func _on_tab_changed(tab_index: int) -> void:
 	# Clear selection and inspector when switching tabs
 	selected_item = null
 	_clear_committed_projection()
-	if vendor_item_tree.get_selected():
-		vendor_item_tree.get_selected().deselect(0)
-	if convoy_item_tree.get_selected():
-		convoy_item_tree.get_selected().deselect(0)
+	if is_instance_valid(vendor_item_tree):
+		vendor_item_tree.deselect_all()
+	if is_instance_valid(convoy_item_tree):
+		convoy_item_tree.deselect_all()
 	_clear_inspector()
 	if is_instance_valid(action_button):
 		action_button.disabled = true
@@ -1679,44 +1691,31 @@ func _on_tab_changed(tab_index: int) -> void:
 	if is_node_ready():
 		_populate_convoy_list()
 
-func _on_vendor_item_selected() -> void:
+func _on_vendor_item_selected(agg_data = null) -> void:
 	if _ignore_selection_signals:
 		return
-	var tree_item = vendor_item_tree.get_selected()
-	# --- START TUTORIAL DEBUG LOG ---
-	var item_text = tree_item.get_text(0) if is_instance_valid(tree_item) else "<none>"
+	# VendorItemList.item_selected passes the row's agg_data directly (mirrors Tree get_metadata(0)).
+	if agg_data == null and is_instance_valid(vendor_item_tree):
+		agg_data = vendor_item_tree.get_selected_data()
 	if perf_log_enabled:
-		print("[VendorPanel][LOG] _on_vendor_item_selected. Item: '%s'" % item_text)
-	# --- END TUTORIAL DEBUG LOG ---
+		var nm := str((agg_data as Dictionary).get("display_name", "")) if agg_data is Dictionary else "<none>"
+		print("[VendorPanel][LOG] _on_vendor_item_selected. Item: '%s'" % nm)
 	_last_selected_tree = "vendor"
 	_last_selection_change_ms = Time.get_ticks_msec()
-	var item = tree_item.get_metadata(0) if tree_item and tree_item.get_metadata(0) != null else null
 	_reveal_portrait_inspector()
 	# Defer handling to the next idle frame.
-	call_deferred("_handle_new_item_selection", item)
+	call_deferred("_handle_new_item_selection", agg_data)
 
-func _on_convoy_item_selected() -> void:
+func _on_convoy_item_selected(agg_data = null) -> void:
 	if _ignore_selection_signals:
 		return
-	var tree_item = convoy_item_tree.get_selected()
+	if agg_data == null and is_instance_valid(convoy_item_tree):
+		agg_data = convoy_item_tree.get_selected_data()
 	_last_selected_tree = "convoy"
 	_last_selection_change_ms = Time.get_ticks_msec()
-	var item = tree_item.get_metadata(0) if tree_item and tree_item.get_metadata(0) != null else null
 	_reveal_portrait_inspector()
 	# Defer handling to prevent UI race conditions.
-	call_deferred("_handle_new_item_selection", item)
-
-func _populate_category(target_tree: Tree, root_item: TreeItem, category_name: String, agg_dict: Dictionary) -> void:
-	VendorTreeBuilder.populate_category(target_tree, root_item, category_name, agg_dict, _cargo_sort_metric, perf_log_enabled)
-
-func _ensure_tree_columns(tree: Tree) -> void:
-	if not is_instance_valid(tree):
-		return
-	# Configure a simple single-column layout (previous behavior)
-	tree.set_columns(1)
-	tree.set_meta("cols", 1)
-	tree.set_column_titles_visible(false)
-	tree.set_column_expand(0, true)
+	call_deferred("_handle_new_item_selection", agg_data)
 
 # --- Display formatting helpers (visual-only) ---
 func _fmt_qty(v: Variant) -> String:
@@ -2127,10 +2126,17 @@ func _log_size_after_update():
 	if perf_log_enabled:
 		print("[VendorPanel][LOG] _update_inspector finished. New panel size: %s" % str(size))
 
-func _restore_selection(tree: Tree, item_id, clear_on_fail: bool = true) -> bool:
+func _restore_selection(list: VendorItemList, item_id, clear_on_fail: bool = true) -> bool:
+	# List-native restore: iterate rows, match via the same data-level _matches_restore_key,
+	# and drive _handle_new_item_selection exactly like the old Tree path.
+	if not is_instance_valid(list):
+		return false
 	var on_select := Callable(self, "_handle_new_item_selection")
 	var match_fn := Callable(self, "_matches_restore_key")
-	return VendorSelectionManager.restore_selection(tree, item_id, on_select, match_fn, clear_on_fail)
+	var ok: bool = list.restore_by_match(item_id, match_fn, on_select)
+	if not ok and clear_on_fail:
+		list.deselect_all()
+	return ok
 
 # Helper function to match by special restore keys
 func _matches_restore_key(agg_data: Dictionary, key: String) -> bool:
