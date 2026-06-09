@@ -31,6 +31,7 @@ var _selected_key: String = ""
 var row_min_height: float = 52.0
 var name_font_size: int = 18
 var inline_expand_enabled: bool = true # portrait shows the inline body; desktop/landscape may disable
+var list_mode: String = "buy" # "buy" (vendor wares) or "sell" (convoy cargo) — drives priced stats
 
 # Tap-vs-drag tracking so touch scrolling isn't hijacked by row selection.
 const _TAP_SLOP := 12.0
@@ -271,7 +272,7 @@ func _ensure_row_visible(panel: Control) -> void:
 func _build_row_body(agg_data: Variant) -> Control:
 	if not (agg_data is Dictionary):
 		return null
-	var stats := _stat_pairs(agg_data)
+	var stats := _stat_pairs(agg_data, list_mode)
 	if stats.is_empty():
 		return null
 	var wrap := VBoxContainer.new()
@@ -293,10 +294,10 @@ func _build_row_body(agg_data: Variant) -> Control:
 
 # Public/static: the compact "Label value • Label value" stat line for an agg item. Reused by the
 # landscape inspector so its summary matches the inline row body exactly.
-static func stat_line_bbcode(agg_data: Variant) -> String:
+static func stat_line_bbcode(agg_data: Variant, mode: String = "buy") -> String:
 	if not (agg_data is Dictionary):
 		return ""
-	return _stat_pairs_to_bbcode(_stat_pairs(agg_data))
+	return _stat_pairs_to_bbcode(_stat_pairs(agg_data, mode))
 
 static func _stat_pairs_to_bbcode(stats: Array) -> String:
 	var parts: Array = []
@@ -308,13 +309,13 @@ static func _stat_pairs_to_bbcode(stats: Array) -> String:
 # (Per Unit + Total Order + Pricing + stats + destination), so no buyable item loses information.
 # Per-unit weight/volume/resource content are derived from the aggregate totals (matching the old
 # "Per Unit" math) and fall back to the item's own unit fields.
-static func _stat_pairs(agg_data: Dictionary) -> Array:
+static func _stat_pairs(agg_data: Dictionary, mode: String = "buy") -> Array:
 	var item: Dictionary = agg_data.get("item_data", agg_data) if agg_data is Dictionary else {}
 	if not (item is Dictionary):
 		return []
 	var tq: int = int(agg_data.get("total_quantity", 0)) if agg_data is Dictionary else 0
 	var out: Array = []
-	var is_vehicle: bool = item.has("vehicle_id") or (not item.has("cargo_id") and (item.has("cargo_capacity") or item.has("weight_capacity")))
+	var is_vehicle: bool = VendorTradeVM.is_vehicle_item(item)
 
 	if is_vehicle:
 		# Vehicle capabilities + capacities (labels match the mockup: Cargo=weight cap, Volume=cargo cap).
@@ -324,17 +325,25 @@ static func _stat_pairs(agg_data: Dictionary) -> Array:
 		_push_num(out, item, "Cargo", ["weight_capacity"], " kg")
 		_push_num(out, item, "Volume", ["cargo_capacity"], " m³")
 		_push_num(out, item, "Fuel cap", ["fuel_capacity", "kwh_capacity"], "")
-		_push_money(out, item, "Value", ["value", "base_price", "price"])
+		# Money via the VM (raw fields aren't reliably present).
+		var vp: float = VendorTradeVM.vehicle_price(item)
+		if vp > 0.0:
+			out.append(["Value", NumberFormat.format_money(vp)])
 	else:
-		# Cargo / parts / resources — per-unit physicals + pricing.
+		# Cargo / parts / resources — pricing computed by the VM (same source the old inspector used).
+		var cup: float = VendorTradeVM.contextual_unit_price(item, mode)
+		if cup > 0.0:
+			out.append([("Sell price" if mode == "sell" else "Price"), NumberFormat.format_money(cup)])
+		# Per-unit physicals derived from aggregate totals (matches the old Per Unit math).
 		var uw := _unit_from_totals(agg_data, item, "total_weight", ["unit_weight", "weight"], tq)
 		if uw > 0.0:
 			out.append(["Weight", _fmt_stat(uw) + " kg"])
 		var uv := _unit_from_totals(agg_data, item, "total_volume", ["unit_volume", "volume"], tq)
 		if uv > 0.0:
 			out.append(["Volume", _fmt_stat(uv) + " m³"])
-		_push_money(out, item, "Price", ["price", "base_price", "value"])
-		_push_money(out, item, "Delivery", ["unit_delivery_reward", "delivery_reward", "mission_reward"])
+		var dr: float = VendorTradeVM.get_unit_delivery_reward(item, agg_data)
+		if dr > 0.0:
+			out.append(["Delivery", NumberFormat.format_money(dr)])
 		# Resource content (food / water / fuel) carried per unit.
 		var uf := _unit_from_totals(agg_data, item, "total_food", ["food"], tq)
 		if uf > 0.0:

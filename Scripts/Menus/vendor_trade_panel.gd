@@ -860,6 +860,13 @@ func _ready() -> void:
 
 
 
+	# The vendor list always shows buyable wares; the convoy list always shows sellable cargo.
+	# This drives which price (buy vs sell) the compact stat line computes.
+	if is_instance_valid(vendor_item_tree):
+		vendor_item_tree.list_mode = "buy"
+	if is_instance_valid(convoy_item_tree):
+		convoy_item_tree.list_mode = "sell"
+
 	# Connect signals from UI elements
 	vendor_item_tree.item_selected.connect(_on_vendor_item_selected)
 	# Use item_selected for Tree to update the inspector on a single click.
@@ -1263,7 +1270,7 @@ func _update_landscape_summary() -> void:
 	# Populate the compact stat line and suppress the verbose section panels / destination box.
 	if not is_instance_valid(_landscape_stat_label):
 		return
-	var line := VendorItemList.stat_line_bbcode(selected_item)
+	var line := VendorItemList.stat_line_bbcode(selected_item, str(current_mode))
 	_landscape_stat_label.text = line
 	_landscape_stat_label.visible = selected_item != null and line != ""
 	# Hide the tall Per Unit / Total Order / Destination section panels in landscape.
