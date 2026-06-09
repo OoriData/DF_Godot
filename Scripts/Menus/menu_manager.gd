@@ -204,8 +204,22 @@ func _update_static_nav_bar_ui(active_type: String):
 
 func _on_viewport_resized_navbar() -> void:
 	# Re-apply nav-bar safe insets / button clipping when the device rotates with a menu open.
+	# NOTE: raw size_changed can fire BEFORE DeviceStateManager updates its layout_mode, so this
+	# pass may compute with a stale mode. We re-run on DSM.layout_mode_changed (authoritative) and
+	# also defer one frame here so the height settles to the correct value instead of snapping
+	# drastically on the next menu switch.
 	if is_instance_valid(current_active_menu) and current_active_menu.has_meta("menu_type"):
 		_update_static_nav_bar_ui(str(current_active_menu.get_meta("menu_type")))
+		call_deferred("_reapply_nav_bar_for_active_menu")
+
+func _reapply_nav_bar_for_active_menu() -> void:
+	if is_instance_valid(current_active_menu) and current_active_menu.has_meta("menu_type"):
+		_update_static_nav_bar_ui(str(current_active_menu.get_meta("menu_type")))
+
+func _on_dsm_layout_mode_changed(_mode: int, _screen_size: Vector2, _is_mobile: bool) -> void:
+	# Authoritative layout change — recompute the nav bar height now that DSM has settled, so the
+	# bar doesn't keep a stale (e.g. portrait 140px) height after rotating into landscape.
+	_reapply_nav_bar_for_active_menu()
 
 func _ready():
 	# Initially, no menu is shown. Hide MenuManager so it does not block input.
@@ -216,6 +230,12 @@ func _ready():
 	var vp := get_viewport()
 	if is_instance_valid(vp) and not vp.size_changed.is_connected(_on_viewport_resized_navbar):
 		vp.size_changed.connect(_on_viewport_resized_navbar)
+
+	# Recompute the nav bar on the authoritative layout-mode change (DSM has settled by then),
+	# not just on the raw viewport resize which can run with a stale mode.
+	var dsm = get_node_or_null("/root/DeviceStateManager")
+	if is_instance_valid(dsm) and dsm.has_signal("layout_mode_changed") and not dsm.layout_mode_changed.is_connected(_on_dsm_layout_mode_changed):
+		dsm.layout_mode_changed.connect(_on_dsm_layout_mode_changed)
 
 	if is_instance_valid(_hub):
 		if _hub.has_signal("convoy_selection_changed") and not _hub.convoy_selection_changed.is_connected(_on_hub_convoy_selection_changed):
