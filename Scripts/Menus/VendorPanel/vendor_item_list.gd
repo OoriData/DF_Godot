@@ -300,10 +300,17 @@ static func stat_line_bbcode(agg_data: Variant, mode: String = "buy") -> String:
 	return _stat_pairs_to_bbcode(_stat_pairs(agg_data, mode))
 
 static func _stat_pairs_to_bbcode(stats: Array) -> String:
+	# Muted small label + bold value; money values pick up the gold price accent; stats are
+	# divided by a dim middot so the line reads as discrete data points.
 	var parts: Array = []
 	for p in stats:
-		parts.append("[color=#9aa1ac]%s[/color] [color=#e0e4ea]%s[/color]" % [p[0], p[1]])
-	return "  •  ".join(parts)
+		var label: String = str(p[0])
+		var value: String = str(p[1])
+		var vcol: String = "#eef1f6"
+		if value.begins_with("$"):
+			vcol = "#f3d54e" # gold — matches the row price accent
+		parts.append("[color=#7f8794]%s[/color] [color=%s][b]%s[/b][/color]" % [label, vcol, value])
+	return "[color=#454b57]   ·   [/color]".join(parts)
 
 # Comprehensive stat extraction — surfaces every data field the old verbose inspector exposed
 # (Per Unit + Total Order + Pricing + stats + destination), so no buyable item loses information.

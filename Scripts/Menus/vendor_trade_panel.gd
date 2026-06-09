@@ -1260,7 +1260,9 @@ func _build_landscape_stat_label() -> void:
 	lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	lbl.add_theme_font_size_override("normal_font_size", 16)
+	lbl.add_theme_font_size_override("normal_font_size", 17)
+	lbl.add_theme_font_size_override("bold_font_size", 17)
+	lbl.add_theme_constant_override("line_separation", 6)
 	lbl.visible = false
 	_landscape_stat_label = lbl
 	parent_m.add_child(lbl)
