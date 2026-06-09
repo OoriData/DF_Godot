@@ -131,7 +131,7 @@ func _apply_selection(panel: PanelContainer) -> void:
 # Select by stable key after a rebuild (mirrors the Tree's selection-restore).
 func select_key(key: String) -> bool:
 	for child in _vbox.get_children():
-		if child is PanelContainer and String(child.get_meta("agg_key", "")) == key:
+		if child is PanelContainer and child.has_meta("agg_key") and String(child.get_meta("agg_key")) == key:
 			_select_panel(child)
 			return true
 	return false

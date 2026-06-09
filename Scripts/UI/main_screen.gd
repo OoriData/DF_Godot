@@ -627,9 +627,11 @@ func _is_portrait() -> bool:
 	return viewport_sz.y > viewport_sz.x
 
 func _get_menu_ratios() -> Vector2:
-	# Portrait: Use 40-60% of screen height
+	# Portrait: Use 55-72% of screen height.
+	# The map strip remains visible above (~28-45%) while the trade panel has room to breathe.
+	# Previously 40-60%; bumped to give vendor/convoy panels more vertical space on mobile portrait.
 	if _is_portrait():
-		return Vector2(0.4, 0.6)
+		return Vector2(0.55, 0.72)
 	# Landscape: Use 35-85% of screen width (Increased by 10% from 0.25-0.75)
 	else:
 		return Vector2(0.35, 0.85)

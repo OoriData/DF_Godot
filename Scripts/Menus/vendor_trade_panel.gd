@@ -125,6 +125,9 @@ var _baseline_guard: Dictionary = {
 var _feedback_data: Dictionary = {} # { "message": "", "type": "success" }
 var _is_previewing_destination: bool = false
 
+# Portrait Concept A — holds the MiddlePanel inspector so it can be revealed on first item tap
+var _portrait_inspector: Control = null
+
 func _get_settings_manager() -> Node:
 	return get_node_or_null("/root/SettingsManager")
 
@@ -1059,14 +1062,16 @@ func _apply_portrait_stack(hbox: Control) -> void:
 	var vbox := VBoxContainer.new()
 	vbox.name = "PortraitStack"
 	vbox.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	vbox.offset_top = 16
+	vbox.offset_top = 8
 	vbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	vbox.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	vbox.add_theme_constant_override("separation", 8)
+	vbox.add_theme_constant_override("separation", 6)
 
-	# List takes the most height; inspector a bit less; transaction sits at the
-	# bottom sized to its content (the Concept A pinned-footer feel).
-	for entry in [[left, Control.SIZE_EXPAND_FILL, 1.3], [middle, Control.SIZE_EXPAND_FILL, 1.0], [right, Control.SIZE_SHRINK_END, 1.0]]:
+	# Concept A: the LIST dominates. The inspector is hidden until an item is selected
+	# (and then capped to a minority share); the transaction is a slim pinned footer.
+	# left ratio 3 : middle ratio 1 → list gets ~75% of the expand space when the
+	# inspector is shown, and ~100% when it's hidden.
+	for entry in [[left, Control.SIZE_EXPAND_FILL, 3.0], [middle, Control.SIZE_EXPAND_FILL, 1.0], [right, Control.SIZE_SHRINK_END, 1.0]]:
 		var p: Control = entry[0]
 		if not is_instance_valid(p):
 			continue
@@ -1077,10 +1082,31 @@ func _apply_portrait_stack(hbox: Control) -> void:
 		p.custom_minimum_size = Vector2(0, p.custom_minimum_size.y) # drop the 320px column width
 		vbox.add_child(p)
 
+	# Inspector starts hidden so the list owns the whole panel until you tap an item.
+	if is_instance_valid(middle):
+		middle.visible = false
+		_portrait_inspector = middle
+
+	# Slim the transaction block into a footer: drop the redundant title/money lines
+	# (money is already in the top bar) so it reads as one compact strip.
+	if is_instance_valid(right):
+		_slim_transaction_footer(right)
+
 	parent.add_child(vbox)
 	parent.move_child(vbox, hbox.get_index())
 	hbox.visible = false # now only holds the (unused) vertical separators
 	hbox.set_meta("portrait_stacked", true)
+
+func _slim_transaction_footer(right: Control) -> void:
+	for child_name in ["TransactionLabel", "ConvoyMoneyLabel"]:
+		var n = right.get_node_or_null(child_name)
+		if is_instance_valid(n):
+			n.visible = false
+
+func _reveal_portrait_inspector() -> void:
+	# Called on selection so the inspector appears (capped) once the user picks an item.
+	if is_instance_valid(_portrait_inspector) and not _portrait_inspector.visible:
+		_portrait_inspector.visible = true
 
 func _wrap_inv_scroll(panel: Control, stretch_ratio_h: float, _stretch_ratio_v: float) -> void:
 	var parent = panel.get_parent()
@@ -1646,6 +1672,7 @@ func _on_vendor_item_selected() -> void:
 	_last_selected_tree = "vendor"
 	_last_selection_change_ms = Time.get_ticks_msec()
 	var item = tree_item.get_metadata(0) if tree_item and tree_item.get_metadata(0) != null else null
+	_reveal_portrait_inspector()
 	# Defer handling to the next idle frame.
 	call_deferred("_handle_new_item_selection", item)
 
@@ -1656,6 +1683,7 @@ func _on_convoy_item_selected() -> void:
 	_last_selected_tree = "convoy"
 	_last_selection_change_ms = Time.get_ticks_msec()
 	var item = tree_item.get_metadata(0) if tree_item and tree_item.get_metadata(0) != null else null
+	_reveal_portrait_inspector()
 	# Defer handling to prevent UI race conditions.
 	call_deferred("_handle_new_item_selection", item)
 
