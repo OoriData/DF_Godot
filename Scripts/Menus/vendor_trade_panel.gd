@@ -147,10 +147,10 @@ func _save_cargo_sort_metric_to_settings(metric: int) -> void:
 		sm.set_and_save("ui.cargo_sort_metric", metric)
 
 func _set_cargo_sort_ui_visible(visible: bool) -> void:
+	# Toggle the Sort button itself (not its container) — the flip button now shares that row,
+	# so hiding the whole container would wrongly hide the Buy/Sell flip too.
 	if is_instance_valid(cargo_sort_button):
-		var p := cargo_sort_button.get_parent()
-		if is_instance_valid(p):
-			p.visible = visible
+		cargo_sort_button.visible = visible
 
 func _has_delivery_cargo_in_array(inv_any: Variant) -> bool:
 	if not (inv_any is Array):
@@ -1037,8 +1037,30 @@ func _ready() -> void:
 			conn_ok = _hub.vendor_panel_ready.is_connected(Callable(self, "_on_hub_vendor_panel_ready"))
 		print("[VendorPanel][DIAG] _ready instance_id=%d perf=%s hub_vendor_panel_ready_connected=%s" % [get_instance_id(), str(perf_log_enabled), str(conn_ok)])
 
+	_consolidate_control_row()
 	_make_panels_responsive()
 	_apply_text_readability_fixes()
+
+func _consolidate_control_row() -> void:
+	# The flip button (Buy ⇄) and the Sort dropdown lived on two separate sparse rows, leaving a
+	# big dead band above the list. Merge them onto ONE row: [ Buy ⇄ ][ Sort ▾ ]. The Sort button
+	# still hides itself (via _set_cargo_sort_ui_visible) when there's no delivery cargo, but the
+	# row — and the flip button — always remain.
+	var sort_container := get_node_or_null("HBoxContainer/LeftPanel/SortSettingsContainer")
+	var mode_toggle := get_node_or_null("HBoxContainer/LeftPanel/ModeToggle")
+	if not is_instance_valid(sort_container) or not is_instance_valid(mode_toggle) or not is_instance_valid(mode_flip_button):
+		return
+	if sort_container.has_meta("control_row_merged"):
+		return
+	# Move the flip button to the front of the Sort row, then retire the now-empty toggle row.
+	var flip_parent := mode_flip_button.get_parent()
+	if is_instance_valid(flip_parent):
+		flip_parent.remove_child(mode_flip_button)
+	sort_container.add_child(mode_flip_button)
+	sort_container.move_child(mode_flip_button, 0)
+	sort_container.add_theme_constant_override("separation", 10)
+	mode_toggle.visible = false
+	sort_container.set_meta("control_row_merged", true)
 
 func _make_panels_responsive() -> void:
 	# Layout-specific restructuring of the native 3-column .tscn:
@@ -1111,6 +1133,7 @@ func _apply_portrait_stack(hbox: Control) -> void:
 	# (money is already in the top bar) so it reads as one compact strip.
 	if is_instance_valid(right):
 		_slim_transaction_footer(right)
+		_style_footer_module(right)
 
 	parent.add_child(vbox)
 	parent.move_child(vbox, hbox.get_index())
@@ -1168,6 +1191,41 @@ func _apply_landscape_two_pane(hbox: Control) -> void:
 	left.size_flags_stretch_ratio = 0.45
 
 	hbox.set_meta("landscape_two_paned", true)
+
+func _style_footer_module(right: Control) -> void:
+	# Give the transaction footer a distinct "module" look so it reads as its own panel,
+	# visually separated from the scrolling list above it.
+	if not (right is Control):
+		return
+	if right.has_meta("footer_styled"):
+		return
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color(0.086, 0.094, 0.114, 0.96) # slightly lighter than the page, opaque-ish
+	sb.set_border_width_all(0)
+	sb.border_width_top = 2
+	sb.border_color = Color(0.247, 0.616, 0.322, 0.55) # subtle green accent rail along the top edge
+	sb.set_corner_radius_all(10)
+	sb.content_margin_left = 12
+	sb.content_margin_right = 12
+	sb.content_margin_top = 10
+	sb.content_margin_bottom = 10
+	# RightPanel is a VBoxContainer (doesn't paint). Wrap it in a PanelContainer so the styled
+	# background sits behind the transaction controls.
+	var parent := right.get_parent()
+	if not is_instance_valid(parent):
+		return
+	var idx := right.get_index()
+	var wrap := PanelContainer.new()
+	wrap.name = "FooterModule"
+	wrap.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	wrap.size_flags_vertical = right.size_flags_vertical
+	wrap.size_flags_stretch_ratio = right.size_flags_stretch_ratio
+	wrap.add_theme_stylebox_override("panel", sb)
+	parent.remove_child(right)
+	wrap.add_child(right)
+	parent.add_child(wrap)
+	parent.move_child(wrap, idx)
+	right.set_meta("footer_styled", true)
 
 func _slim_transaction_footer(right: Control) -> void:
 	for child_name in ["TransactionLabel", "ConvoyMoneyLabel"]:

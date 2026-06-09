@@ -32,6 +32,12 @@ var row_min_height: float = 52.0
 var name_font_size: int = 18
 var inline_expand_enabled: bool = true # portrait shows the inline body; desktop/landscape may disable
 
+# Tap-vs-drag tracking so touch scrolling isn't hijacked by row selection.
+const _TAP_SLOP := 12.0
+var _press_panel: PanelContainer = null
+var _press_pos: Vector2 = Vector2.ZERO
+var _press_moved: bool = false
+
 func _init() -> void:
 	size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -151,18 +157,23 @@ func _add_row(key: String, agg_data: Variant, index: int) -> void:
 	var alt := (index % 2) == 1
 	var panel := PanelContainer.new()
 	panel.custom_minimum_size.y = row_min_height
-	panel.mouse_filter = Control.MOUSE_FILTER_STOP
+	# PASS (not STOP): the row still receives gui_input for tap selection, but the event also
+	# bubbles to the parent ScrollContainer so touch-drag scrolling keeps working. A tap-vs-drag
+	# guard in _on_row_input prevents a scroll gesture from accidentally selecting a row.
+	panel.mouse_filter = Control.MOUSE_FILTER_PASS
 	panel.add_theme_stylebox_override("panel", _row_style(false, alt))
 
 	var body := VBoxContainer.new()
 	body.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	body.add_theme_constant_override("separation", 6)
+	body.mouse_filter = Control.MOUSE_FILTER_IGNORE # let the row panel own all pointer input
 	panel.add_child(body)
 
 	# Header line: name + secondary value.
 	var header_row := HBoxContainer.new()
 	header_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	header_row.add_theme_constant_override("separation", 8)
+	header_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	body.add_child(header_row)
 
 	var nm := _display_name(agg_data)
@@ -173,6 +184,7 @@ func _add_row(key: String, agg_data: Variant, index: int) -> void:
 	name_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD
 	name_lbl.add_theme_font_size_override("font_size", name_font_size)
 	name_lbl.add_theme_color_override("font_color", _NAME_COLOR)
+	name_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	if _is_raw_resource(agg_data):
 		name_lbl.add_theme_color_override("font_color", _VALUE_COLOR)
 	header_row.add_child(name_lbl)
@@ -184,6 +196,7 @@ func _add_row(key: String, agg_data: Variant, index: int) -> void:
 		val_lbl.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 		val_lbl.add_theme_color_override("font_color", _VALUE_COLOR)
 		val_lbl.add_theme_font_size_override("font_size", max(13, name_font_size - 3))
+		val_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		header_row.add_child(val_lbl)
 
 	# Inline-expand body (compact stats), hidden until selected.
@@ -204,10 +217,27 @@ func _add_row(key: String, agg_data: Variant, index: int) -> void:
 		_apply_selection(panel)
 
 func _on_row_input(event: InputEvent, panel: PanelContainer) -> void:
-	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
-		_select_panel(panel, false)
-	elif event is InputEventScreenTouch and event.pressed:
-		_select_panel(panel, false)
+	# Tap-vs-drag: select only on a release that didn't travel far from the press (a tap).
+	# A drag that exceeds the slop is a scroll gesture — leave it for the ScrollContainer.
+	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
+		if event.pressed:
+			_press_panel = panel
+			_press_pos = event.position
+			_press_moved = false
+		elif _press_panel == panel and not _press_moved:
+			_select_panel(panel, false)
+			_press_panel = null
+	elif event is InputEventScreenTouch:
+		if event.pressed:
+			_press_panel = panel
+			_press_pos = event.position
+			_press_moved = false
+		elif _press_panel == panel and not _press_moved:
+			_select_panel(panel, false)
+			_press_panel = null
+	elif event is InputEventMouseMotion or event is InputEventScreenDrag:
+		if _press_panel != null and event.position.distance_to(_press_pos) > _TAP_SLOP:
+			_press_moved = true # this gesture is a scroll, not a tap
 
 func _select_panel(panel: PanelContainer, _silent: bool) -> void:
 	_apply_selection(panel)
@@ -246,6 +276,7 @@ func _build_row_body(agg_data: Variant) -> Control:
 		return null
 	var wrap := VBoxContainer.new()
 	wrap.add_theme_constant_override("separation", 3)
+	wrap.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var sep := HSeparator.new()
 	wrap.add_child(sep)
 	var line := RichTextLabel.new()
@@ -253,6 +284,7 @@ func _build_row_body(agg_data: Variant) -> Control:
 	line.fit_content = true
 	line.scroll_active = false
 	line.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	line.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	line.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	line.add_theme_font_size_override("normal_font_size", max(12, name_font_size - 4))
 	var parts: Array = []

@@ -184,8 +184,11 @@ func _update_static_nav_bar_ui(active_type: String):
 	style.content_margin_left = side_inset
 	style.content_margin_right = side_inset
 
-	var btn_min_h := 140.0 if is_portrait else (85.0 if use_mobile else 90.0)
-	var base_font_size: int = 28 if is_portrait else (22 if use_mobile else 28)
+	# Landscape mobile has a very short viewport, so an 85px nav bar swallowed the menu and
+	# pushed action buttons off-screen. Keep it compact there. Portrait/desktop have the height.
+	var is_landscape_mobile: bool = bool(use_mobile) and not bool(is_portrait)
+	var btn_min_h := 140.0 if is_portrait else (52.0 if is_landscape_mobile else 90.0)
+	var base_font_size: int = 28 if is_portrait else (18 if is_landscape_mobile else 28)
 	var font_size: int = base_font_size if is_instance_valid(dsm) else base_font_size
 
 	for type in _nav_buttons:
