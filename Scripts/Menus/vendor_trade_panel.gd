@@ -675,20 +675,20 @@ func _update_layout_scaling() -> void:
 		btn_font_sz = int(dyn_font_sz * 1.8)
 		tab_font_sz = int(dyn_font_sz * 1.4)
 		btn_min_h = 100.0
-		bar_min_h = 60.0
+		bar_min_h = 22.0 # thin one-line meter (label sits beside the bar now, not above)
 		sort_h = 80.0
 	elif use_mobile:
 		btn_font_sz = 22
 		tab_font_sz = 22
 		btn_min_h = 60.0
-		bar_min_h = 30.0
+		bar_min_h = 20.0
 		sort_h = 48.0
 	else: # DESKTOP
 		btn_font_sz = 30
 		tab_font_sz = 26
 		tree_font_sz = 22
 		btn_min_h = 72.0
-		bar_min_h = 48.0
+		bar_min_h = 22.0
 		sort_h = 60.0
 	
 	if is_instance_valid(trade_mode_tab_container):
@@ -781,11 +781,11 @@ func _update_layout_scaling() -> void:
 		if is_instance_valid(convoy_money_lbl):
 			convoy_money_lbl.add_theme_font_size_override("font_size", money_sz)
 			
-		var vol_lbl = right_panel.get_node_or_null("CapacityBars/VolumeLabel")
+		var vol_lbl = get_node_or_null("%VolumeLabel")
 		if is_instance_valid(vol_lbl):
 			vol_lbl.add_theme_font_size_override("font_size", label_sz)
-			
-		var mass_lbl = right_panel.get_node_or_null("CapacityBars/MassLabel")
+
+		var mass_lbl = get_node_or_null("%MassLabel")
 		if is_instance_valid(mass_lbl):
 			mass_lbl.add_theme_font_size_override("font_size", label_sz)
 			
@@ -1145,9 +1145,9 @@ func _apply_text_readability_fixes() -> void:
 	# Apply semibold font where needed (sizes scale via root theme natively now!)
 	var labels_to_fix = [
 		get_node_or_null("%VolumeLabel"), # Using unique names from tscn
-		get_node_or_null("HBoxContainer/RightPanel/CapacityBars/VolumeLabel"), # Fallback path
+		get_node_or_null("HBoxContainer/RightPanel/CapacityBars/VolumeRow/VolumeLabel"), # Fallback path
 		get_node_or_null("%MassLabel"),
-		get_node_or_null("HBoxContainer/RightPanel/CapacityBars/MassLabel"),
+		get_node_or_null("HBoxContainer/RightPanel/CapacityBars/MassRow/MassLabel"),
 		get_node_or_null("HBoxContainer/RightPanel/TransactionQuantityContainer/Label")
 	]
 	
