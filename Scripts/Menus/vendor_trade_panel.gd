@@ -129,6 +129,10 @@ var _is_previewing_destination: bool = false
 # Portrait Concept A — holds the MiddlePanel inspector so it can be revealed on first item tap
 var _portrait_inspector: Control = null
 
+func _is_portrait_layout() -> bool:
+	var dsm = get_node_or_null("/root/DeviceStateManager")
+	return is_instance_valid(dsm) and dsm.get_layout_mode() == 2 # 2 == MOBILE_PORTRAIT
+
 func _get_settings_manager() -> Node:
 	return get_node_or_null("/root/SettingsManager")
 
@@ -674,11 +678,14 @@ func _update_layout_scaling() -> void:
 	var sort_h = 34.0
 	
 	if is_portrait:
-		btn_font_sz = int(dyn_font_sz * 1.8)
+		btn_font_sz = int(dyn_font_sz * 1.5)
 		tab_font_sz = int(dyn_font_sz * 1.4)
-		btn_min_h = 100.0
+		# Footer controls were 100px tall, which made the transaction strip eat ~half the
+		# panel once an item was selected and pushed the list off-screen. 60px is still a
+		# comfortable touch target while keeping the footer compact.
+		btn_min_h = 60.0
 		bar_min_h = 22.0 # thin one-line meter (label sits beside the bar now, not above)
-		sort_h = 80.0
+		sort_h = 52.0
 	elif use_mobile:
 		btn_font_sz = 22
 		tab_font_sz = 22
@@ -1034,23 +1041,30 @@ func _ready() -> void:
 	_apply_text_readability_fixes()
 
 func _make_panels_responsive() -> void:
-	# Only apply aggressive scrolling wrappers on Mobile Portrait.
-	# Desktop and Landscape have enough vertical real estate to use the native .tscn layout,
-	# which prevents nested ScrollContainer layout bugs.
+	# Layout-specific restructuring of the native 3-column .tscn:
+	#   PORTRAIT  → single vertical stack: inline-expand list + pinned footer (no inspector column).
+	#   LANDSCAPE → 2-pane: list (left) | [inspector + pinned transaction] (right). The fixed 320px
+	#               transaction column is folded under the inspector so it stops crowding the narrow
+	#               (≈55%-width) landscape menu.
+	#   DESKTOP   → native 3-column layout (plenty of room).
 	var dsm = get_node_or_null("/root/DeviceStateManager")
-	var is_portrait: bool = is_instance_valid(dsm) and dsm.get_layout_mode() == 2 # 2 == MOBILE_PORTRAIT
-	# Inline-expand is the inspector in PORTRAIT only. Desktop/landscape keep the separate
-	# MiddlePanel inspector column, so rows there don't expand.
+	var mode: int = dsm.get_layout_mode() if is_instance_valid(dsm) else 0
+	var is_portrait: bool = (mode == 2) # 2 == MOBILE_PORTRAIT
+	var is_landscape: bool = (mode == 1) # 1 == MOBILE_LANDSCAPE
+	# Inline-expand is the inspector in PORTRAIT only. Landscape/desktop keep the separate
+	# MiddlePanel inspector (landscape merges it into the right pane), so rows there don't expand.
 	if is_instance_valid(vendor_item_tree):
 		vendor_item_tree.inline_expand_enabled = is_portrait
 	if is_instance_valid(convoy_item_tree):
 		convoy_item_tree.inline_expand_enabled = is_portrait
-	if not is_portrait:
-		return
 
 	var hbox = get_node_or_null("HBoxContainer")
-	if not is_instance_valid(hbox): return
-	_apply_portrait_stack(hbox)
+	if not is_instance_valid(hbox):
+		return
+	if is_portrait:
+		_apply_portrait_stack(hbox)
+	elif is_landscape:
+		_apply_landscape_two_pane(hbox)
 
 func _apply_portrait_stack(hbox: Control) -> void:
 	# Godot 4.6 locks `vertical` on HBoxContainer, so we can't flip it. Instead move the
@@ -1102,6 +1116,58 @@ func _apply_portrait_stack(hbox: Control) -> void:
 	parent.move_child(vbox, hbox.get_index())
 	hbox.visible = false # now only holds the (unused) vertical separators
 	hbox.set_meta("portrait_stacked", true)
+
+func _apply_landscape_two_pane(hbox: Control) -> void:
+	# Collapse the native 3-column layout to 2 panes for the narrow landscape menu:
+	#   [ list (left, ~45%) ] | [ inspector (expand) + transaction (pinned bottom) (right, ~55%) ]
+	# The transaction column was a 320px FIXED width, which crowded everything in the ~55%-width
+	# landscape menu. Folding it under the inspector as a pinned strip frees that horizontal room.
+	if hbox.has_meta("landscape_two_paned"):
+		return
+	var left = hbox.get_node_or_null("LeftPanel")
+	var middle = hbox.get_node_or_null("MiddlePanel")
+	var right = hbox.get_node_or_null("RightPanel")
+	var vsep2 = hbox.get_node_or_null("VSeparator2")
+	if not (is_instance_valid(left) and is_instance_valid(middle) and is_instance_valid(right)):
+		return
+
+	# Right pane: inspector on top (fills), transaction pinned at the bottom.
+	var pane := VBoxContainer.new()
+	pane.name = "LandscapeRightPane"
+	pane.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	pane.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	pane.size_flags_stretch_ratio = 0.55
+	pane.add_theme_constant_override("separation", 6)
+
+	var insert_idx := middle.get_index()
+	# Detach inspector + transaction from the HBox and re-home them inside the pane.
+	hbox.remove_child(middle)
+	if is_instance_valid(vsep2):
+		vsep2.visible = false
+	hbox.remove_child(right)
+
+	middle.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	middle.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	middle.size_flags_stretch_ratio = 1.0
+	pane.add_child(middle)
+
+	var div := HSeparator.new()
+	pane.add_child(div)
+
+	right.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	right.size_flags_vertical = Control.SIZE_SHRINK_END
+	right.size_flags_stretch_ratio = 1.0
+	right.custom_minimum_size = Vector2(0, right.custom_minimum_size.y) # drop the 320px fixed width
+	pane.add_child(right)
+
+	hbox.add_child(pane)
+	hbox.move_child(pane, insert_idx)
+
+	# List takes the remaining ~45%.
+	left.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	left.size_flags_stretch_ratio = 0.45
+
+	hbox.set_meta("landscape_two_paned", true)
 
 func _slim_transaction_footer(right: Control) -> void:
 	for child_name in ["TransactionLabel", "ConvoyMoneyLabel"]:
@@ -1837,10 +1903,14 @@ func _update_transaction_panel() -> void:
 	# --- START: UNIFIED PRICE & DISPLAY LOGIC via VM ---
 	var quantity = int(quantity_spinbox.value) if is_instance_valid(quantity_spinbox) else 1
 	var pr = VendorTradeVM.build_price_presenter(item_data_source, str(current_mode), quantity, selected_item)
+	var total_reward: float = float(pr.get("total_delivery_reward", 0.0))
+	var is_portrait_now := _is_portrait_layout()
 	if is_instance_valid(delivery_reward_label):
-		delivery_reward_label.visible = float(pr.get("total_delivery_reward", 0.0)) > 0.0
-		if float(pr.get("total_delivery_reward", 0.0)) > 0.0:
-			delivery_reward_label.text = "[b]Total Delivery Reward:[/b] %s" % NumberFormat.format_money(float(pr.get("total_delivery_reward", 0.0)))
+		# In portrait the reward is folded into the single compact price line below, so the
+		# separate reward label is only shown on desktop/landscape.
+		delivery_reward_label.visible = (not is_portrait_now) and total_reward > 0.0
+		if total_reward > 0.0:
+			delivery_reward_label.text = "[b]Total Delivery Reward:[/b] %s" % NumberFormat.format_money(total_reward)
 	var bbcode_text = String(pr.get("bbcode_text", ""))
 	var added_w: float = float(pr.get("added_weight", 0.0))
 	var added_v: float = float(pr.get("added_volume", 0.0))
@@ -1853,8 +1923,17 @@ func _update_transaction_panel() -> void:
 	# Trim trailing newline just in case
 	if bbcode_text.ends_with("\n"):
 		bbcode_text = bbcode_text.substr(0, bbcode_text.length() - 1)
-	# Assign composed text
-	price_label.text = bbcode_text
+	# Assign composed text. In portrait, collapse the multi-line breakdown (Quantity / Total
+	# Price / Order Weight / Order Volume) into ONE line — the per-unit stats already live in the
+	# inline row body, and the order weight/volume are visualized by the capacity bars. This keeps
+	# the footer a fixed, compact height instead of exploding when an item is selected.
+	if is_portrait_now and not VendorTradeVM.is_vehicle_item(item_data_source):
+		var compact := "[b]Total:[/b] %s" % NumberFormat.format_money(float(pr.get("total_price", 0.0)))
+		if total_reward > 0.0:
+			compact += "    [color=#7fd08a]+%s reward[/color]" % NumberFormat.format_money(total_reward)
+		price_label.text = compact
+	else:
+		price_label.text = bbcode_text
 	_update_install_button_state()
 	if is_instance_valid(action_button):
 		action_button.disabled = not can_transact

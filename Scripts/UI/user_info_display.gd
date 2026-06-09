@@ -30,6 +30,20 @@ var _original_money_font_size: int
 
 @export var navbar_background_color: Color = Color(0.16, 0.16, 0.16, 0.92)
 
+# --- Oori tile tuning for the navbar -----------------------------------------
+# The navbar is a thin horizontal bar, so it can only ever show a horizontal SLICE
+# of the square-ish tile. Bigger tiles (higher scale) = the art is legible but you
+# see less of it per slice; the offset then positions that slice on a motif row
+# instead of a flat gap (the source of the "blank spots"). These are exported so
+# the look can be tuned live in the editor.
+## Higher = bigger/zoomed-in tiles (more legible art). ~0.4 ≈ one motif row tall in the bar.
+@export_range(0.05, 0.8, 0.01) var navbar_oori_scale: float = 0.4
+## Screen-space px shift to slide the visible slice onto a motif row (avoid flat gaps).
+@export var navbar_oori_offset: Vector2 = Vector2(0, 0)
+## Multiplies the tile brightness so the bar reads as a distinct, darker band
+## (1.0 = raw texture, lower = darker — also hides slice unevenness).
+@export_range(0.3, 1.0, 0.05) var navbar_oori_darken: float = 0.7
+
 # Oori Theme Palette
 const OORI_GREY = Color("#393d47")
 const OORI_DARK_GREY = Color("#25282a")
@@ -151,14 +165,17 @@ func _apply_base_styling() -> void:
 		add_child(bg_rect)
 		move_child(bg_rect, 0)
 		bg_rect.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	UITheme.apply_oori_bg(bg_rect)
+	# Screen-space tiling (STRETCH_TILE) reliably covers the full bar. Because the bar
+	# is anchored top-left full-width, the pattern is already effectively static under
+	# resize — widening the window just reveals more tiles on the right, it doesn't slide.
+	UITheme.apply_oori_bg(bg_rect, navbar_oori_scale, navbar_oori_offset)
+	# Darken the tile so the bar reads as a distinct band and slice unevenness is muted.
+	bg_rect.modulate = Color(navbar_oori_darken, navbar_oori_darken, navbar_oori_darken, 1.0)
 	
 	# Semi-transparent dark overlay so the notch area reads as a distinct "bar"
 	# while still letting the Oori tile show through from BackgroundLayer below.
 	var main_style = StyleBoxFlat.new()
 	main_style.bg_color = Color(0, 0, 0, 0.45)
-	main_style.border_width_bottom = 2
-	main_style.border_color = OORI_GREY
 	main_style.content_margin_top = 4
 	main_style.content_margin_bottom = 4
 	main_style.content_margin_left = 12

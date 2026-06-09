@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Vendor Menu — Landscape v2 (2-pane)</title>
+<style>
+  :root{
+    --bg:#15171c; --panel:#1f2229; --panel2:#25282e; --chip:#2b2f37;
+    --border:#393d47; --ink:#e7e9ee; --muted:#9aa1ac; --gold:#f3d54e;
+    --cyan:#4fd1e0; --green:#6db86f; --greentrack:#0f2412; --red:#a23b3b; --buy:#2f7d3a;
+  }
+  *{box-sizing:border-box;font-family:-apple-system,Segoe UI,Roboto,sans-serif}
+  body{margin:0;background:#0c0d10;color:var(--ink);padding:28px}
+  h1{font-weight:600;font-size:22px;margin:0 0 4px}
+  .sub{color:var(--muted);font-size:13px;margin:0 0 22px;max-width:860px;line-height:1.5}
+  .sub b{color:var(--gold)}
+  h2{font-size:15px;font-weight:600;margin:24px 0 2px;color:var(--gold)}
+  .cap{font-size:12px;color:var(--muted);margin:0 0 12px;max-width:880px;line-height:1.5}
+
+  /* device frame, landscape phone ~ 880 x 430 logical */
+  .frame{width:880px;height:430px;background:var(--bg);border:2px solid #2a2d34;border-radius:20px;
+    overflow:hidden;display:flex;flex-direction:column;box-shadow:0 10px 40px rgba(0,0,0,.5)}
+  .osbar{display:flex;align-items:center;gap:8px;padding:5px 14px;background:#23262d;
+    border-bottom:1px solid var(--border);font-size:11px;color:var(--muted)}
+  .osbar .money{color:var(--gold);margin-left:auto;font-weight:600}
+  .stage{flex:1;display:flex;min-height:0}
+
+  /* map keeps the LEFT — panel slides in from the right (matches main_screen.gd landscape anchoring) */
+  .map{width:38%;position:relative;background:linear-gradient(135deg,#3a5a3c 0%,#33513a 40%,#2c6a72 70%,#1d3f74 100%);
+    border-right:2px solid #11343a;overflow:hidden}
+  .map::after{content:"";position:absolute;inset:0;
+    background-image:linear-gradient(#0003 1px,transparent 1px),linear-gradient(90deg,#0003 1px,transparent 1px);
+    background-size:24px 24px;opacity:.5}
+  .road{position:absolute;background:#caa07a;height:8px;border-radius:4px}
+  .pin{position:absolute;left:30%;top:48%;color:#e23b2e;font-size:20px;z-index:2}
+  .maptag{position:absolute;left:14px;top:14px;background:#1c1f24cc;border:1px solid var(--red);
+    border-radius:4px;padding:3px 8px;font-size:11px}
+
+  /* the vendor panel occupies the right region */
+  .panel{flex:1;display:flex;flex-direction:column;min-width:0;background:#1a1c22}
+
+  /* === consolidated top bar (single row, spans the panel) === */
+  .topbar{display:flex;align-items:center;gap:8px;padding:8px 10px;
+    border-bottom:1px solid #154e54;box-shadow:inset 0 -2px 0 #2bd4d4;background:#1b1d23}
+  .crumb{display:flex;align-items:center;gap:5px;font-size:13px;font-weight:600;color:var(--gold);
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .crumb .sep{color:var(--muted);font-weight:400}
+  .crumb .set{color:var(--ink)}
+  .dropdown{background:var(--chip);border:1px solid var(--border);border-radius:7px;padding:6px 10px;
+    font-size:12px;font-weight:600;display:flex;align-items:center;gap:6px;white-space:nowrap}
+  .dropdown .car{color:var(--muted)}
+  .seg{display:flex;background:#16181d;border:1px solid var(--border);border-radius:7px;overflow:hidden}
+  .seg span{padding:6px 14px;font-size:12px;color:var(--muted);font-weight:600}
+  .seg .on{background:#3a3f49;color:#fff;box-shadow:inset 0 -2px 0 var(--gold)}
+  .sort{font-size:11px;color:var(--muted);display:flex;align-items:center;gap:4px;
+    background:#1c1f24;border:1px solid var(--border);border-radius:6px;padding:6px 9px}
+  .iconbtn{background:#23262d;border:1px solid var(--border);border-radius:6px;padding:6px 9px;
+    font-size:13px;color:var(--muted);white-space:nowrap}
+  .iconbtn.gold{color:var(--gold)}
+  .spacer{margin-left:auto}
+
+  /* === 2-pane body === */
+  .panes{flex:1;display:flex;gap:8px;min-height:0;padding:8px}
+  .pane-l{width:44%;display:flex;flex-direction:column;min-height:0}
+  .wares{font-size:11px;color:var(--muted);letter-spacing:1px;margin:0 2px 5px;text-transform:uppercase}
+  .list{flex:1;overflow:hidden;display:flex;flex-direction:column;gap:5px;min-height:0}
+  .li{background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:8px 11px;
+    display:flex;align-items:center;gap:8px;font-size:13px}
+  .li .nm{flex:1}
+  .li .fit{font-size:13px;line-height:1}
+  .li .pr{color:var(--gold);font-size:12px;font-weight:600}
+  .li.sel{border-color:var(--gold);background:#26282b}
+
+  .pane-r{flex:1;background:var(--panel);border:1px solid var(--border);border-radius:9px;
+    padding:12px 14px;display:flex;flex-direction:column;min-height:0}
+  .pane-r .ttl{font-size:17px;font-weight:600;margin-bottom:6px}
+  .pane-r .body{flex:1;font-size:12px;color:var(--muted);line-height:1.7;overflow:hidden}
+  .pane-r .body b{color:var(--ink);font-weight:600}
+  .pane-r .descline{color:var(--cyan);margin-top:6px}
+
+  /* thin one-line meters */
+  .meters{display:flex;flex-direction:column;gap:7px;margin:10px 0}
+  .meter{display:flex;align-items:center;gap:9px;font-size:11px;color:var(--muted)}
+  .meter .mlbl{width:42px}
+  .meter .track{flex:1;height:8px;background:var(--greentrack);border-radius:4px;overflow:hidden;border:1px solid #1c3a20}
+  .meter .fill{height:100%;background:var(--green)}
+  .meter .pct{width:34px;text-align:right;color:var(--ink)}
+
+  /* pinned action strip at the base of the right pane */
+  .pinned{border-top:1px dashed var(--border);padding-top:10px;margin-top:4px;display:flex;align-items:center;gap:9px}
+  .qty{display:flex;align-items:center;gap:6px}
+  .qbtn{width:30px;height:30px;border-radius:6px;display:flex;align-items:center;justify-content:center;
+    font-size:17px;font-weight:700;border:1px solid var(--border)}
+  .qbtn.m{background:#2a2024;color:#d77} .qbtn.p{background:#1f2e22;color:#8d8}
+  .qval{min-width:34px;text-align:center;background:#16181d;border:1px solid var(--border);border-radius:6px;padding:5px 0;font-size:13px}
+  .maxb{background:#2b2f37;border:1px solid var(--border);border-radius:6px;padding:6px 13px;font-size:12px}
+  .buybtn{margin-left:auto;background:var(--buy);border:1px solid #3da34c;border-radius:7px;padding:9px 22px;
+    font-weight:700;font-size:14px}
+
+  /* slim bottom nav */
+  .nav{display:flex;border-top:1px solid var(--border);background:#1c1c1c}
+  .nav span{flex:1;text-align:center;padding:7px 0;font-size:11px;color:#bfbfbf}
+  .nav .on{color:var(--gold);background:#2a2c2f;box-shadow:inset 0 -3px 0 var(--gold)}
+
+  .note{font-size:12px;color:var(--muted);margin:12px 2px 0;line-height:1.6;max-width:880px}
+  .note b{color:var(--gold)}
+  .badcol{display:inline-block;background:#241c1c;border:1px solid #5a3030;border-radius:5px;padding:1px 6px;color:#d88;font-size:11px}
+</style>
+</head>
+<body>
+  <h1>Vendor Menu — Landscape v2</h1>
+  <p class="sub">
+    The fix for landscape cramming is to <b>split horizontally instead of stacking</b>. Map keeps the left (panel slides in
+    from the right, matching the current landscape anchoring). The panel = one consolidated top bar + a 2-pane body:
+    wares list on the left, the selected item’s full inspector with a <b>pinned Buy</b> on the right. No nested tab strips,
+    no 3 columns crushed into a short window.
+  </p>
+
+  <h2>Landscape — map left · 2-pane panel right</h2>
+  <p class="cap">“Bloom” selected in the list → its inspector fills the right pane, meters are one line each, qty + Max + Buy pinned at the base. One tap swaps the right pane.</p>
+
+  <div class="frame">
+    <div class="osbar"><span>Aidan!!</span><span class="money">$1,779,516</span></div>
+    <div class="stage">
+
+      <!-- MAP stays visible on the left -->
+      <div class="map">
+        <div class="road" style="left:6%;top:64%;width:80%"></div>
+        <div class="road" style="left:30%;top:20%;width:8px;height:90px"></div>
+        <div class="pin">▶</div>
+        <div class="maptag">USPS Reborn → Atlanta</div>
+      </div>
+
+      <!-- VENDOR PANEL on the right -->
+      <div class="panel">
+        <!-- one consolidated top row -->
+        <div class="topbar">
+          <span class="crumb">&lt; USPS Reborn <span class="sep">›</span> <span class="set">Atlanta</span></span>
+          <div class="dropdown">Mega-Dealership <span class="car">▾</span></div>
+          <div class="seg"><span class="on">Buy</span><span>Sell</span></div>
+          <div class="sort">Sort ▾</div>
+          <span class="iconbtn spacer" title="Warehouse">⌂</span>
+          <span class="iconbtn gold">Top&nbsp;Up</span>
+        </div>
+
+        <div class="panes">
+          <!-- left: list -->
+          <div class="pane-l">
+            <div class="wares">Vendor's Wares</div>
+            <div class="list">
+              <div class="li"><span class="nm">Apex</span><span class="fit">✓</span><span class="pr">$4,000</span></div>
+              <div class="li sel"><span class="nm">Bloom</span><span class="fit">✓</span><span class="pr">$5,000</span></div>
+              <div class="li"><span class="nm">Comet</span><span class="fit" style="color:var(--red)">✕</span><span class="pr">$3,200</span></div>
+              <div class="li"><span class="nm">Drifter</span><span class="fit">✓</span><span class="pr">$2,750</span></div>
+              <div class="li"><span class="nm">Everest</span><span class="fit">✓</span><span class="pr">$8,400</span></div>
+              <div class="li"><span class="nm">Forge</span><span class="fit">✓</span><span class="pr">$1,100</span></div>
+            </div>
+          </div>
+
+          <!-- right: inspector + pinned action -->
+          <div class="pane-r">
+            <div class="ttl">Bloom</div>
+            <div class="body">
+              <b>Off-road</b> 15 &nbsp;·&nbsp; <b>Cargo</b> 301 kg &nbsp;·&nbsp; <b>Volume</b> 436 m³<br>
+              <b>Value</b> $5,000 &nbsp;·&nbsp; Available 4
+              <div class="meters">
+                <div class="meter"><span class="mlbl">Volume</span><div class="track"><div class="fill" style="width:33%"></div></div><span class="pct">33%</span></div>
+                <div class="meter"><span class="mlbl">Mass</span><div class="track"><div class="fill" style="width:57%"></div></div><span class="pct">57%</span></div>
+              </div>
+              <span class="descline">Description ▸</span>
+            </div>
+            <div class="pinned">
+              <div class="qty"><div class="qbtn m">−</div><div class="qval">1</div><div class="qbtn p">+</div></div>
+              <div class="maxb">Max</div>
+              <div class="buybtn">Buy $5,000</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="nav"><span>Vehicles</span><span>Journey</span><span class="on">Settlement</span><span>Cargo</span></div>
+      </div>
+
+    </div>
+  </div>
+
+  <p class="note">
+    <b>vs. today:</b> the current build stacks the 3 desktop columns into a short landscape window so everything crams
+    (<span class="badcol">Buy/Sell overlaps the tab strip</span>, transaction jammed to the edge). Going 2-pane uses the
+    width landscape actually has. The Buy/Sell + Sort live in the single top row, so there’s no second control band.
+  </p>
+  <p class="note">
+    <b>Top-bar width note:</b> if the breadcrumb + dropdown + toggle + Sort + ⌂ + Top Up don’t all fit on one line at the
+    narrowest landscape panel width, the breadcrumb truncates with ellipsis first (lowest-priority), then ⌂/Top Up collapse
+    to icons. The Buy/Sell toggle and dropdown never shrink.
+  </p>
+  <p class="note">
+    <b>Bottom nav</b> shown slimmed here. Optional follow-up: in landscape convert it to a thin vertical icon rail on the
+    far edge to reclaim the bottom band entirely — flagged as a separate framework-level task.
+  </p>
+</body>
+</html>
