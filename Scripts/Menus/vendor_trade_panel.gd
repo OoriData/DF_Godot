@@ -1619,7 +1619,9 @@ func _style_mode_toggle() -> void:
 	if not is_instance_valid(b):
 		return
 	b.focus_mode = Control.FOCUS_NONE
-	b.clip_text = true
+	# Content-sized button: must NOT clip_text, or its minimum size drops the label and it
+	# collapses to just the margins (no text, hairline-thin).
+	b.clip_text = false
 	var is_buy: bool = is_instance_valid(trade_mode_tab_container) and trade_mode_tab_container.current_tab == 0
 	var accent: Color = Color(0.247, 0.616, 0.322, 1.0) if is_buy else Color(0.952941, 0.835294, 0.305882, 1.0) # green buy / gold sell
 	var normal := StyleBoxFlat.new()
