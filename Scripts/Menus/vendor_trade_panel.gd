@@ -1308,9 +1308,8 @@ func _reorg_landscape_transaction(right: Control) -> void:
 	row.add_child(qty_container)
 	row.add_child(act)
 	right.add_child(row) # appended last → bottom of the pinned footer
-	# Price now rides on the Buy button, so the standalone price line is redundant here.
-	if is_instance_valid(price_label):
-		price_label.visible = false
+	# The cost rides on the Buy button; _update_transaction_panel repurposes price_label to show
+	# the order PROFIT in landscape (or hides it when there's no delivery reward).
 	right.set_meta("landscape_tx_reorged", true)
 
 func _style_footer_module(right: Control) -> void:
@@ -2110,13 +2109,29 @@ func _update_transaction_panel() -> void:
 	# Price / Order Weight / Order Volume) into ONE line — the per-unit stats already live in the
 	# inline row body, and the order weight/volume are visualized by the capacity bars. This keeps
 	# the footer a fixed, compact height instead of exploding when an item is selected.
-	if is_portrait_now and not VendorTradeVM.is_vehicle_item(item_data_source):
-		var compact := "[b]Total:[/b] %s" % NumberFormat.format_money(float(pr.get("total_price", 0.0)))
-		if total_reward > 0.0:
-			compact += "    [color=#7fd08a]+%s reward[/color]" % NumberFormat.format_money(total_reward)
+	var total_price_now: float = float(pr.get("total_price", 0.0))
+	var net_profit: float = total_reward - total_price_now # order profit when this is delivery cargo
+	var profit_bb := ""
+	if total_reward > 0.0:
+		var sgn: String = "+" if net_profit >= 0.0 else "-"
+		var pcol: String = "#7fd08a" if net_profit >= 0.0 else "#e3736b"
+		profit_bb = "[color=%s][b]Profit %s%s[/b][/color]" % [pcol, sgn, NumberFormat.format_money(absf(net_profit))]
+	if _is_landscape_layout():
+		# Cost rides on the Buy button; show the order PROFIT here when it's delivery cargo.
+		if profit_bb != "" and not VendorTradeVM.is_vehicle_item(item_data_source):
+			price_label.text = profit_bb
+			price_label.visible = true
+		else:
+			price_label.visible = false
+	elif is_portrait_now and not VendorTradeVM.is_vehicle_item(item_data_source):
+		var compact := "[b]Total:[/b] %s" % NumberFormat.format_money(total_price_now)
+		if profit_bb != "":
+			compact += "    " + profit_bb
 		price_label.text = compact
+		price_label.visible = true
 	else:
 		price_label.text = bbcode_text
+		price_label.visible = true
 	_update_install_button_state()
 	if is_instance_valid(action_button):
 		action_button.disabled = not can_transact

@@ -307,7 +307,9 @@ static func _stat_pairs_to_bbcode(stats: Array) -> String:
 		var label: String = str(p[0])
 		var value: String = str(p[1])
 		var vcol: String = "#eef1f6"
-		if value.begins_with("$"):
+		if p.size() >= 3 and str(p[2]) != "":
+			vcol = str(p[2]) # explicit color hint (e.g. profit green/red)
+		elif value.begins_with("$"):
 			vcol = "#f3d54e" # gold — matches the row price accent
 		parts.append("[color=#7f8794]%s[/color] [color=%s][b]%s[/b][/color]" % [label, vcol, value])
 	return "[color=#454b57]   ·   [/color]".join(parts)
@@ -351,6 +353,11 @@ static func _stat_pairs(agg_data: Dictionary, mode: String = "buy") -> Array:
 		var dr: float = VendorTradeVM.get_unit_delivery_reward(item, agg_data)
 		if dr > 0.0:
 			out.append(["Delivery", NumberFormat.format_money(dr)])
+			# Per-unit profit = reward − cost (same margin the sort uses). Green when it pays off.
+			var profit: float = dr - cup
+			var psign: String = "+" if profit >= 0.0 else "-"
+			var pcol: String = "#7fd08a" if profit >= 0.0 else "#e3736b"
+			out.append(["Profit/unit", "%s%s" % [psign, NumberFormat.format_money(absf(profit))], pcol])
 		# Resource content (food / water / fuel) carried per unit.
 		var uf := _unit_from_totals(agg_data, item, "total_food", ["food"], tq)
 		if uf > 0.0:
