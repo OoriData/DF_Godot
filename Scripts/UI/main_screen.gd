@@ -230,6 +230,8 @@ func _ready():
 			hub.map_camera_focus_settlement_requested.connect(_on_map_camera_focus_settlement_requested)
 		if hub.has_signal("map_camera_return_to_convoy_requested") and not hub.is_connected("map_camera_return_to_convoy_requested", Callable(self, "_on_map_camera_return_to_convoy_requested")):
 			hub.map_camera_return_to_convoy_requested.connect(_on_map_camera_return_to_convoy_requested)
+		if hub.has_signal("settlement_menu_pin_requested") and not hub.is_connected("settlement_menu_pin_requested", Callable(self, "_on_settlement_menu_pin_requested")):
+			hub.settlement_menu_pin_requested.connect(_on_settlement_menu_pin_requested)
 
 	# Connect to Layout Mode Changes
 	var dsm = get_node_or_null("/root/DeviceStateManager")
@@ -1592,6 +1594,25 @@ func _on_settlement_clicked(coords: Vector2i):
 	if is_instance_valid(ui_manager):
 		ui_manager.toggle_settlement_pin(coords)
 		_force_map_ui_refresh()
+
+# Settlement menu keeps the current settlement's label pinned while open. We only remove the pin
+# on close if WE added it — never clobber a settlement the player pinned manually.
+var _menu_pinned_settlement_coords = null # Vector2i or null
+
+func _on_settlement_menu_pin_requested(coords: Vector2i, enabled: bool) -> void:
+	if not is_instance_valid(ui_manager):
+		return
+	if enabled:
+		if ui_manager.has_method("is_settlement_pinned") and ui_manager.is_settlement_pinned(coords):
+			# Player already pinned this settlement — leave it; don't claim ownership.
+			_menu_pinned_settlement_coords = null
+		else:
+			ui_manager.add_settlement_pin(coords)
+			_menu_pinned_settlement_coords = coords
+	else:
+		if _menu_pinned_settlement_coords != null and ui_manager.has_method("remove_settlement_pin"):
+			ui_manager.remove_settlement_pin(_menu_pinned_settlement_coords)
+		_menu_pinned_settlement_coords = null
 
 func _on_convoy_menu_requested(convoy_data: Dictionary):
 	# Ensure layout has settled and camera sees final rect

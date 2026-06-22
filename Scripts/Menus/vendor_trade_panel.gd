@@ -133,6 +133,10 @@ var _portrait_inspector: Control = null
 # that replaces the tall verbose Per Unit / Total Order section panels.
 var _landscape_stat_box: VBoxContainer = null
 
+# The merged control row ([Buy ⇄][Sort ▾]) — cached so the outer settlement menu can mount the
+# vendor-type dropdown here as the first child on mobile: [Vendor ▾][Buy ⇄][Sort ▾].
+var _control_row_container: Container = null
+
 func _is_portrait_layout() -> bool:
 	var dsm = get_node_or_null("/root/DeviceStateManager")
 	return is_instance_valid(dsm) and dsm.get_layout_mode() == 2 # 2 == MOBILE_PORTRAIT
@@ -676,38 +680,33 @@ func _update_layout_scaling() -> void:
 	var is_portrait = (mode == 2) # MOBILE_PORTRAIT
 	var use_mobile = dsm.is_mobile
 	
-	var dyn_font_sz = 16
+	var btn_font_sz: int
+	var tab_font_sz: int
+	var tree_font_sz: int
+	var btn_min_h: float
+	var bar_min_h: float
+	var sort_h: float
+	var sort_font_sz: int
+
 	if is_portrait:
-		dyn_font_sz = int(dyn_font_sz * 1.1)
-		
-	var curr_theme = theme
-	if curr_theme == null:
-		curr_theme = Theme.new()
-		theme = curr_theme
-	curr_theme.default_font_size = dyn_font_sz
-	
-	var btn_font_sz = dyn_font_sz
-	var tab_font_sz = dyn_font_sz
-	var tree_font_sz = dyn_font_sz
-	var btn_min_h = 34.0
-	var bar_min_h = 24.0
-	var sort_h = 34.0
-	
-	if is_portrait:
-		btn_font_sz = int(dyn_font_sz * 1.5)
-		tab_font_sz = int(dyn_font_sz * 1.4)
+		btn_font_sz = 25
+		tab_font_sz = 23
+		tree_font_sz = 17
 		# Footer controls were 100px tall, which made the transaction strip eat ~half the
 		# panel once an item was selected and pushed the list off-screen. 60px is still a
 		# comfortable touch target while keeping the footer compact.
 		btn_min_h = 60.0
 		bar_min_h = 22.0 # thin one-line meter (label sits beside the bar now, not above)
 		sort_h = 52.0
+		sort_font_sz = 21
 	elif use_mobile: # MOBILE_LANDSCAPE — short viewport, keep the pinned transaction compact
 		btn_font_sz = 20
 		tab_font_sz = 20
+		tree_font_sz = 16
 		btn_min_h = 46.0
 		bar_min_h = 18.0
 		sort_h = 44.0
+		sort_font_sz = 16
 	else: # DESKTOP
 		btn_font_sz = 30
 		tab_font_sz = 26
@@ -715,9 +714,9 @@ func _update_layout_scaling() -> void:
 		btn_min_h = 72.0
 		bar_min_h = 22.0
 		sort_h = 60.0
+		sort_font_sz = 16
 	
 	if is_instance_valid(trade_mode_tab_container):
-		trade_mode_tab_container.theme = curr_theme
 		var tab_bar = trade_mode_tab_container.get_tab_bar()
 		if is_instance_valid(tab_bar):
 			tab_bar.add_theme_font_size_override("font_size", tab_font_sz)
@@ -786,7 +785,7 @@ func _update_layout_scaling() -> void:
 
 	if is_instance_valid(cargo_sort_button):
 		cargo_sort_button.custom_minimum_size.y = sort_h
-		cargo_sort_button.add_theme_font_size_override("font_size", int(btn_font_sz * 0.85) if is_portrait else dyn_font_sz)
+		cargo_sort_button.add_theme_font_size_override("font_size", sort_font_sz)
 		if is_portrait:
 			cargo_sort_button.add_theme_font_override("font", _get_bold_font_for(cargo_sort_button))
 		else:
@@ -884,11 +883,13 @@ func _ready() -> void:
 
 	if is_instance_valid(max_button):
 		max_button.pressed.connect(_on_max_button_pressed)
+		_style_neutral_button(max_button)
 	else:
 		printerr("VendorTradePanel: 'MaxButton' node not found. Please check the scene file.")
 
 	if is_instance_valid(action_button):
 		action_button.pressed.connect(_on_action_button_pressed)
+		_style_primary_button(action_button) # the one accented (verdigris) commit button
 	else:
 		printerr("VendorTradePanel: 'ActionButton' node not found. Please check the scene file.")
 
@@ -914,36 +915,9 @@ func _ready() -> void:
 	if is_instance_valid(cargo_sort_button):
 		_load_cargo_sort_metric_from_settings()
 		cargo_sort_button.custom_minimum_size.x = 100 # Thinner button
-		cargo_sort_button.add_theme_color_override("font_color", Color(0.93, 0.93, 0.93, 1.0))
-		cargo_sort_button.add_theme_color_override("font_hover_color", Color(0.98, 0.98, 0.98, 1.0))
-		
-		var sort_normal := StyleBoxFlat.new()
-		sort_normal.bg_color = Color("#25282a") # Oori Dark Grey
-		sort_normal.border_width_left = 1
-		sort_normal.border_width_right = 1
-		sort_normal.border_width_top = 1
-		sort_normal.border_width_bottom = 1
-		sort_normal.border_color = Color("#393d47") # Oori Grey
-		sort_normal.corner_radius_top_left = 4
-		sort_normal.corner_radius_top_right = 4
-		sort_normal.corner_radius_bottom_left = 4
-		sort_normal.corner_radius_bottom_right = 4
-		sort_normal.content_margin_left = 10
-		sort_normal.content_margin_right = 10
-		sort_normal.content_margin_top = 4
-		sort_normal.content_margin_bottom = 4
-		
-		var sort_hover := sort_normal.duplicate()
-		sort_hover.bg_color = Color("#393d47") # Oori Grey
-		sort_hover.border_color = Color("#dbe2e9").lerp(Color.BLACK, 0.3) # Oori White-ish
-		var sort_pressed := sort_normal.duplicate()
-		sort_pressed.bg_color = Color("#25282a").lerp(Color.BLACK, 0.2) # Deep Dark
-		
-		cargo_sort_button.add_theme_stylebox_override("normal", sort_normal)
-		cargo_sort_button.add_theme_stylebox_override("hover", sort_hover)
-		cargo_sort_button.add_theme_stylebox_override("pressed", sort_pressed)
-		cargo_sort_button.add_theme_stylebox_override("focus", sort_hover)
-		
+		# Shared neutral button language (matches the flip + Max buttons).
+		_style_neutral_button(cargo_sort_button)
+
 		var popup = cargo_sort_button.get_popup()
 		popup.clear()
 		popup.add_radio_check_item("Profit Margin/Unit", 0)
@@ -960,8 +934,7 @@ func _ready() -> void:
 			use_mobile = is_portrait or dsm.get_layout_mode() == 1 # MOBILE_LANDSCAPE
 			
 		if use_mobile:
-			var dyn_font_sz = 16
-			popup.add_theme_font_size_override("font_size", dyn_font_sz)
+			popup.add_theme_font_size_override("font_size", 16)
 			popup.add_theme_constant_override("v_separation", 16 if is_portrait else 12)
 			var popup_style = StyleBoxFlat.new()
 			popup_style.bg_color = Color("#25282a") # Oori Dark Grey
@@ -1073,6 +1046,7 @@ func _consolidate_control_row() -> void:
 	var mode_toggle := get_node_or_null("HBoxContainer/LeftPanel/ModeToggle")
 	if not is_instance_valid(sort_container) or not is_instance_valid(mode_toggle) or not is_instance_valid(mode_flip_button):
 		return
+	_control_row_container = sort_container # cache for mount_external_vendor_selector()
 	if sort_container.has_meta("control_row_merged"):
 		return
 	# Move the flip button to the front of the Sort row, then retire the now-empty toggle row.
@@ -1084,6 +1058,22 @@ func _consolidate_control_row() -> void:
 	sort_container.add_theme_constant_override("separation", 10)
 	mode_toggle.visible = false
 	sort_container.set_meta("control_row_merged", true)
+
+func mount_external_vendor_selector(selector: Control) -> void:
+	# Called by ConvoySettlementMenu (mobile only) to place the shared vendor-type dropdown as the
+	# first element of this panel's control row → [Vendor ▾][Buy ⇄][Sort ▾]. Idempotent.
+	if not is_instance_valid(selector) or not is_instance_valid(_control_row_container):
+		return
+	if selector.get_parent() == _control_row_container:
+		_control_row_container.move_child(selector, 0)
+		return
+	if is_instance_valid(selector.get_parent()):
+		selector.get_parent().remove_child(selector)
+	# Hug the current vendor name (no dead space) rather than expanding to fill the row.
+	selector.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+	selector.size_flags_stretch_ratio = 1.0
+	_control_row_container.add_child(selector)
+	_control_row_container.move_child(selector, 0)
 
 func _make_panels_responsive() -> void:
 	# Layout-specific restructuring of the native 3-column .tscn:
@@ -1102,6 +1092,10 @@ func _make_panels_responsive() -> void:
 		vendor_item_tree.inline_expand_enabled = is_portrait
 	if is_instance_valid(convoy_item_tree):
 		convoy_item_tree.inline_expand_enabled = is_portrait
+
+	# Recess each item list into a bordered well so it separates from the patterned background.
+	_wrap_list_in_well(vendor_item_tree)
+	_wrap_list_in_well(convoy_item_tree)
 
 	var hbox = get_node_or_null("HBoxContainer")
 	if not is_instance_valid(hbox):
@@ -1322,8 +1316,8 @@ func _style_footer_module(right: Control) -> void:
 	var sb := StyleBoxFlat.new()
 	sb.bg_color = Color(0.086, 0.094, 0.114, 0.96) # slightly lighter than the page, opaque-ish
 	sb.set_border_width_all(0)
-	sb.border_width_top = 2
-	sb.border_color = Color(0.247, 0.616, 0.322, 0.55) # subtle green accent rail along the top edge
+	sb.border_width_top = 3
+	sb.border_color = Color(0.247, 0.616, 0.322, 0.80) # green accent rail — stronger separation from list
 	sb.set_corner_radius_all(10)
 	sb.content_margin_left = 12
 	sb.content_margin_right = 12
@@ -1365,6 +1359,39 @@ func _reveal_portrait_inspector() -> void:
 	# Called on selection so the inspector appears (capped) once the user picks an item.
 	if is_instance_valid(_portrait_inspector) and not _portrait_inspector.visible:
 		_portrait_inspector.visible = true
+
+func _wrap_list_in_well(list_node: Control) -> void:
+	# Sit the scrolling item list in a recessed, bordered "well" so it reads as its own surface
+	# against the patterned Oori background instead of rows floating loose. Idempotent.
+	if not is_instance_valid(list_node):
+		return
+	var parent := list_node.get_parent()
+	if not is_instance_valid(parent):
+		return
+	if parent is PanelContainer and parent.has_meta("list_well"):
+		return
+	var well := PanelContainer.new()
+	well.name = list_node.name + "Well"
+	well.set_meta("list_well", true)
+	well.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	well.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	well.size_flags_stretch_ratio = list_node.size_flags_stretch_ratio
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = UITheme.METAL_DARK # recessed: darker than the page surface
+	sb.set_border_width_all(1)
+	sb.border_color = UITheme.METAL_EDGE
+	sb.set_corner_radius_all(UITheme.RADIUS_LG)
+	sb.content_margin_left = 4
+	sb.content_margin_right = 4
+	sb.content_margin_top = 4
+	sb.content_margin_bottom = 4
+	well.add_theme_stylebox_override("panel", sb)
+	var idx := list_node.get_index()
+	parent.remove_child(list_node)
+	well.add_child(list_node)
+	parent.add_child(well)
+	parent.move_child(well, idx)
+	list_node.size_flags_vertical = Control.SIZE_EXPAND_FILL
 
 func _wrap_inv_scroll(panel: Control, stretch_ratio_h: float, _stretch_ratio_v: float) -> void:
 	var parent = panel.get_parent()
@@ -1879,35 +1906,71 @@ func _sync_mode_toggle_buttons(tab_index: int) -> void:
 	mode_flip_button.text = "Buy ⇄" if is_buy else "Sell ⇄"
 	_style_mode_toggle()
 
+# Shared neutral button language for the control-row + Max buttons so they all read as one set
+# (METAL_BASE fill, METAL_EDGE border, radius MD). The single accented button is the primary Buy.
+func _style_neutral_button(b: Button) -> void:
+	if not is_instance_valid(b):
+		return
+	b.focus_mode = Control.FOCUS_NONE
+	var normal := StyleBoxFlat.new()
+	normal.bg_color = UITheme.METAL_BASE
+	normal.set_border_width_all(UITheme.BORDER_THIN)
+	normal.border_color = UITheme.METAL_EDGE
+	normal.set_corner_radius_all(UITheme.RADIUS_MD)
+	normal.content_margin_left = 12
+	normal.content_margin_right = 12
+	normal.content_margin_top = 6
+	normal.content_margin_bottom = 6
+	var hover := normal.duplicate()
+	hover.bg_color = UITheme.METAL_HOVER
+	hover.border_color = UITheme.TEXT_MUTED
+	var pressed := normal.duplicate()
+	pressed.bg_color = UITheme.METAL_ACTIVE
+	var disabled := normal.duplicate()
+	disabled.bg_color = UITheme.METAL_DARK
+	disabled.border_color = UITheme.METAL_EDGE.lerp(Color.BLACK, 0.3)
+	for state in [["normal", normal], ["hover", hover], ["pressed", pressed], ["hover_pressed", pressed], ["focus", hover], ["disabled", disabled]]:
+		b.add_theme_stylebox_override(state[0], state[1])
+	b.add_theme_color_override("font_color", UITheme.TEXT_PRIMARY)
+	b.add_theme_color_override("font_hover_color", Color(1, 1, 1))
+	b.add_theme_color_override("font_pressed_color", UITheme.TEXT_PRIMARY)
+	b.add_theme_color_override("font_disabled_color", UITheme.TEXT_MUTED)
+
+# The one accented button: primary Buy/Sell commit action (verdigris green).
+func _style_primary_button(b: Button) -> void:
+	if not is_instance_valid(b):
+		return
+	var normal := StyleBoxFlat.new()
+	normal.bg_color = Color(0.176, 0.290, 0.196) # deep verdigris fill
+	normal.set_border_width_all(UITheme.BORDER_THIN)
+	normal.border_color = UITheme.ACCENT_VERDIGRIS
+	normal.set_corner_radius_all(UITheme.RADIUS_MD)
+	normal.content_margin_left = 14
+	normal.content_margin_right = 14
+	normal.content_margin_top = 8
+	normal.content_margin_bottom = 8
+	var hover := normal.duplicate()
+	hover.bg_color = Color(0.224, 0.357, 0.247)
+	var pressed := normal.duplicate()
+	pressed.bg_color = Color(0.137, 0.235, 0.157)
+	var disabled := normal.duplicate()
+	disabled.bg_color = UITheme.METAL_DARK
+	disabled.border_color = UITheme.METAL_EDGE.lerp(Color.BLACK, 0.3)
+	for state in [["normal", normal], ["hover", hover], ["pressed", pressed], ["hover_pressed", pressed], ["focus", hover], ["disabled", disabled]]:
+		b.add_theme_stylebox_override(state[0], state[1])
+	b.add_theme_color_override("font_color", Color(0.85, 0.93, 0.86))
+	b.add_theme_color_override("font_hover_color", Color(1, 1, 1))
+	b.add_theme_color_override("font_pressed_color", Color(0.85, 0.93, 0.86))
+	b.add_theme_color_override("font_disabled_color", UITheme.TEXT_MUTED)
+
 func _style_mode_toggle() -> void:
 	var b := mode_flip_button
 	if not is_instance_valid(b):
 		return
-	b.focus_mode = Control.FOCUS_NONE
 	# Content-sized button: must NOT clip_text, or its minimum size drops the label and it
 	# collapses to just the margins (no text, hairline-thin).
 	b.clip_text = false
-	var is_buy: bool = is_instance_valid(trade_mode_tab_container) and trade_mode_tab_container.current_tab == 0
-	var accent: Color = Color(0.247, 0.616, 0.322, 1.0) if is_buy else Color(0.952941, 0.835294, 0.305882, 1.0) # green buy / gold sell
-	var normal := StyleBoxFlat.new()
-	normal.bg_color = Color(0.122, 0.133, 0.157, 1.0) # #1f2228
-	normal.set_border_width_all(1)
-	normal.border_color = accent
-	normal.border_width_bottom = 3
-	normal.set_corner_radius_all(6)
-	normal.content_margin_top = 5
-	normal.content_margin_bottom = 5
-	normal.content_margin_left = 14
-	normal.content_margin_right = 14
-	var hover := normal.duplicate()
-	hover.bg_color = Color(0.16, 0.173, 0.2, 1.0)
-	b.add_theme_stylebox_override("normal", normal)
-	b.add_theme_stylebox_override("hover", hover)
-	b.add_theme_stylebox_override("pressed", hover)
-	b.add_theme_stylebox_override("hover_pressed", hover)
-	b.add_theme_color_override("font_color", Color(1, 1, 1, 1.0))
-	b.add_theme_color_override("font_hover_color", Color(1, 1, 1, 1.0))
-	b.add_theme_color_override("font_pressed_color", Color(1, 1, 1, 1.0))
+	_style_neutral_button(b)
 
 func _on_tab_changed(tab_index: int) -> void:
 	_reset_destination_preview_if_active()

@@ -27,6 +27,8 @@ const OORI_RED = Color("#8a2b2b")
 var warehouse_button: Button = null
 var _top_bar_reorganized: bool = false
 var _top_bar_spacer: Control = null # flex spacer in the banner row; expands in landscape/desktop, hidden in portrait
+var _banner_hbox: HBoxContainer = null # the real BannerHBox (inside TopBannerPanel) that hosts the nav buttons
+var _map_label_coords = null # Vector2i of the settlement whose map label we pinned while this menu is open
 
 # This will be populated by MenuManager with the specific convoy's data.
 var _convoy_data: Dictionary
@@ -274,6 +276,7 @@ func _display_settlement_info():
 		if is_instance_valid(warehouse_button):
 			warehouse_button.disabled = false
 		_settlement_data = target_tile.settlements[0] # Assuming we display info for the first settlement.
+		_activate_settlement_map_label()
 
 		if _settlement_data.has("vendors") and _settlement_data.vendors is Array and not _settlement_data.vendors.is_empty():
 			# print("ConvoySettlementMenu: Found ", _settlement_data.vendors.size(), " vendors in settlement.") # Debug line
@@ -635,6 +638,8 @@ func _on_vendor_tab_changed(tab_idx: int) -> void:
 	if is_instance_valid(vendor_selector) and vendor_selector.visible and tab_idx >= 0 and tab_idx < vendor_selector.item_count:
 		if vendor_selector.selected != tab_idx:
 			vendor_selector.select(tab_idx)
+	# The active panel changed → re-home the shared dropdown into the new panel's control row.
+	call_deferred("_mount_vendor_selector_for_layout")
 	var tab_content = vendor_tab_container.get_tab_control(tab_idx)
 	if is_instance_valid(tab_content) and tab_content.has_meta("needs_refresh") and tab_content.get_meta("needs_refresh"):
 		tab_content.set_meta("needs_refresh", false)
@@ -1144,46 +1149,59 @@ func _current_layout_mode() -> int:
 	return 0
 
 func _apply_top_bar_sizing() -> void:
-	# Single consolidated banner row:
-	#   [< Convoy]  [Settlement]  [spacer]  [Vendor ▾]  [Top Up]
-	# Anti-clip rule: settlement name, dropdown and Top Up are ALWAYS content-sized, so they can never
-	# clip. The convoy breadcrumb is the sole flex/clip element.
-	#   • Mobile (portrait/landscape): breadcrumb expands+clips and absorbs all slack; spacer hidden.
-	#     A long convoy name truncates itself rather than pushing the settlement off the edge.
-	#   • Desktop: the dropdown is hidden (tab strip is the selector) and there is ample width, so the
-	#     breadcrumb stays content-sized and the spacer expands to keep Top Up pinned right.
+	# Nav bar row (all viewports): [< Convoy] [🏭] [Top Up] — EQUAL THIRDS. Each element expands to an
+	# equal share of the bar so it reads as a balanced, uniform strip. The vendor dropdown is NOT here
+	# (mobile mounts it into the panel control row; desktop uses the tab strip).
 	var mode: int = _current_layout_mode()
-	var is_mobile: bool = (mode == 1 or mode == 2)
+	var nav_h: float = 72.0 if mode == 2 else (56.0 if mode == 1 else 48.0)
 
-	# Convoy breadcrumb — the only element allowed to yield/clip.
+	# Convoy breadcrumb — equal third, centered text, clips the end if too long.
 	if is_instance_valid(_top_banner_convoy_button):
+		_top_banner_convoy_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		_top_banner_convoy_button.size_flags_stretch_ratio = 1.0
 		_top_banner_convoy_button.clip_text = true
-		_top_banner_convoy_button.size_flags_horizontal = (
-			Control.SIZE_EXPAND_FILL if is_mobile else Control.SIZE_SHRINK_BEGIN)
+		_top_banner_convoy_button.alignment = HORIZONTAL_ALIGNMENT_CENTER
+		_top_banner_convoy_button.custom_minimum_size = Vector2(0, nav_h)
 
-	# Settlement name — always full, never clipped.
+	# Warehouse — equal third, icon centered.
 	if is_instance_valid(warehouse_button):
-		warehouse_button.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+		warehouse_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		warehouse_button.size_flags_stretch_ratio = 1.0
 		warehouse_button.clip_text = false
-		warehouse_button.custom_minimum_size.x = 0
+		warehouse_button.custom_minimum_size = Vector2(0, nav_h)
 
-	# Spacer — expands only on desktop (where the breadcrumb is content-sized).
+	# Spacer not used in equal-thirds layout.
 	if is_instance_valid(_top_bar_spacer):
-		_top_bar_spacer.visible = not is_mobile
-		_top_bar_spacer.size_flags_horizontal = (
-			Control.SIZE_FILL if is_mobile else Control.SIZE_EXPAND_FILL)
+		_top_bar_spacer.visible = false
 
-	# Vendor dropdown — content-sized in every mode (fixes the "super-wide dropdown").
-	if is_instance_valid(vendor_selector):
-		vendor_selector.clip_text = true
-		vendor_selector.size_flags_horizontal = Control.SIZE_SHRINK_END
-		vendor_selector.custom_minimum_size.x = 180
-
-	# Top Up — content-sized, pinned right, never clipped.
+	# Top Up — equal third, centered text.
 	if is_instance_valid(top_up_button):
-		top_up_button.size_flags_horizontal = Control.SIZE_SHRINK_END
-		top_up_button.clip_text = false
-		top_up_button.custom_minimum_size.x = 130
+		top_up_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		top_up_button.size_flags_stretch_ratio = 1.0
+		top_up_button.clip_text = true
+		top_up_button.custom_minimum_size = Vector2(0, nav_h)
+
+	# Mobile mounts the dropdown into the active panel control row; desktop hides it.
+	# Deferred so the active panel is ready when we reparent into it.
+	call_deferred("_mount_vendor_selector_for_layout")
+
+func _style_top_bar_background(panel: Node) -> void:
+	# Subtle solid bar behind the nav buttons so leftover spacing sits on a clean surface instead of
+	# the patterned map background. Keeps the verdigris bottom rail the banner already had.
+	if not (panel is PanelContainer):
+		return
+	if panel.has_meta("top_bar_bg_styled"):
+		return
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color(0.090, 0.098, 0.110, 0.92) # near-METAL_DARK, slightly translucent
+	sb.border_width_bottom = 3
+	sb.border_color = Color("#5aa192") # ACCENT_VERDIGRIS rail
+	sb.content_margin_left = 8
+	sb.content_margin_right = 8
+	sb.content_margin_top = 6
+	sb.content_margin_bottom = 6
+	panel.add_theme_stylebox_override("panel", sb)
+	panel.set_meta("top_bar_bg_styled", true)
 
 func _style_back_button(button: Button) -> void:
 	if not is_instance_valid(button):
@@ -1326,34 +1344,81 @@ func _on_vendor_selector_selected(idx: int) -> void:
 func _style_vendor_selector() -> void:
 	if not is_instance_valid(vendor_selector):
 		return
-	vendor_selector.alignment = HORIZONTAL_ALIGNMENT_CENTER
+	vendor_selector.alignment = HORIZONTAL_ALIGNMENT_LEFT
+	# Default OptionButton reserves width for the LONGEST item (huge dead space for short names like
+	# "Depot"). Size to the CURRENT selection instead so the button hugs its text.
+	vendor_selector.fit_to_longest_item = false
 	vendor_selector.add_theme_font_size_override("font_size", 22)
 	# The dropdown popup renders in its own window and does NOT inherit content_scale_factor,
-	# so its items look tiny on mobile — give it an explicit, touch-readable size.
+	# so its items look tiny on mobile — give it an explicit, touch-readable size. We also override
+	# the panel stylebox with BALANCED margins: the inherited theme panel had a large top margin,
+	# which left dead space above the (small) items and pushed them to the bottom of the popup.
 	var popup: PopupMenu = vendor_selector.get_popup()
 	if is_instance_valid(popup):
-		popup.add_theme_font_size_override("font_size", 34)
+		popup.add_theme_font_size_override("font_size", 28)
+		popup.add_theme_constant_override("v_separation", 10)
+		var pstyle := StyleBoxFlat.new()
+		pstyle.bg_color = OORI_DARK_GREY
+		pstyle.set_border_width_all(1)
+		pstyle.border_color = OORI_GREY
+		pstyle.set_corner_radius_all(6)
+		pstyle.content_margin_left = 16
+		pstyle.content_margin_right = 16
+		pstyle.content_margin_top = 8
+		pstyle.content_margin_bottom = 8
+		popup.add_theme_stylebox_override("panel", pstyle)
+	# Neutral button language — matches the panel's flip / Sort / Max buttons (no gold accent).
 	var normal := StyleBoxFlat.new()
-	normal.bg_color = OORI_DARK_GREY.lerp(Color.BLACK, 0.2)
+	normal.bg_color = OORI_DARK_GREY # #25282a == UITheme.METAL_BASE
 	normal.set_border_width_all(1)
-	normal.border_color = OORI_GREY
+	normal.border_color = OORI_GREY  # #393d47 == UITheme.METAL_EDGE
 	normal.set_corner_radius_all(6)
 	normal.content_margin_left = 14
 	normal.content_margin_right = 14
 	normal.content_margin_top = 12
 	normal.content_margin_bottom = 12
 	var hover := normal.duplicate()
-	hover.border_color = OORI_YELLOW
+	hover.bg_color = Color("#31353a")            # METAL_HOVER
+	hover.border_color = Color("#8b929c")        # TEXT_MUTED
 	var pressed := normal.duplicate()
-	pressed.bg_color = OORI_GREY
-	pressed.border_color = OORI_YELLOW
+	pressed.bg_color = Color("#3a3f47")          # METAL_ACTIVE
 	vendor_selector.add_theme_stylebox_override("normal", normal)
 	vendor_selector.add_theme_stylebox_override("hover", hover)
 	vendor_selector.add_theme_stylebox_override("pressed", pressed)
 	vendor_selector.add_theme_stylebox_override("focus", normal)
 	vendor_selector.add_theme_color_override("font_color", OORI_WHITE)
-	vendor_selector.add_theme_color_override("font_hover_color", OORI_WHITE)
-	vendor_selector.add_theme_color_override("font_pressed_color", OORI_YELLOW)
+	vendor_selector.add_theme_color_override("font_hover_color", Color(1, 1, 1))
+	vendor_selector.add_theme_color_override("font_pressed_color", OORI_WHITE)
+
+func _get_active_vendor_panel() -> Node:
+	if not is_instance_valid(vendor_tab_container):
+		return null
+	var cur: int = vendor_tab_container.current_tab
+	if cur < 0 or cur >= vendor_tab_container.get_tab_count():
+		return null
+	return vendor_tab_container.get_tab_control(cur)
+
+func _mount_vendor_selector_for_layout() -> void:
+	# The vendor-type dropdown belongs ON THE SAME control row as Buy/Sell + Sort, which live inside
+	# the active VendorTradePanel. On mobile (portrait OR landscape) we mount the (single, shared)
+	# selector into the active panel's control row → [Vendor ▾][Buy ⇄][Sort ▾]. On desktop the tab
+	# strip is the selector and the dropdown stays hidden.
+	if not is_instance_valid(vendor_selector):
+		return
+	var is_mobile: bool = (_current_layout_mode() != 0) # 0 == DESKTOP
+	if not is_mobile:
+		# Desktop: park the selector back in the nav bar (it's hidden there by _sync_vendor_selector).
+		var bhb: HBoxContainer = _banner_hbox if is_instance_valid(_banner_hbox) else top_bar_hbox
+		if is_instance_valid(bhb) and vendor_selector.get_parent() != bhb:
+			if is_instance_valid(vendor_selector.get_parent()):
+				vendor_selector.get_parent().remove_child(vendor_selector)
+			bhb.add_child(vendor_selector)
+			if is_instance_valid(top_up_button) and top_up_button.get_parent() == bhb:
+				bhb.move_child(vendor_selector, top_up_button.get_index())
+		return
+	var panel: Node = _get_active_vendor_panel()
+	if is_instance_valid(panel) and panel.has_method("mount_external_vendor_selector"):
+		panel.mount_external_vendor_selector(vendor_selector)
 
 func _reorganize_top_bar() -> void:
 	# One-shot restructure: collapse the breadcrumb + settlement-name + vendor dropdown + Top Up
@@ -1368,30 +1433,49 @@ func _reorganize_top_bar() -> void:
 	if not (banner_hbox is HBoxContainer):
 		return
 	var bhb: HBoxContainer = banner_hbox
+	_banner_hbox = bhb
 	bhb.alignment = BoxContainer.ALIGNMENT_BEGIN
 	bhb.add_theme_constant_override("separation", 8)
 
-	# Slim the convoy breadcrumb so it no longer dominates the bar.
-	_top_banner_convoy_button.add_theme_font_size_override("font_size", 20)
+	# Slim the convoy breadcrumb so it no longer dominates the bar. Left-align + tight padding so the
+	# text hugs the start and a long convoy name just clips at the END (instead of floating centered
+	# in a wide button with big dead space on both sides).
+	_top_banner_convoy_button.add_theme_font_size_override("font_size", 16)
 	_top_banner_convoy_button.clip_text = true
+	_top_banner_convoy_button.alignment = HORIZONTAL_ALIGNMENT_LEFT
+	for sb_name in ["normal", "hover", "pressed", "focus"]:
+		var sb := _top_banner_convoy_button.get_theme_stylebox(sb_name)
+		if sb is StyleBoxFlat:
+			var tight: StyleBoxFlat = sb.duplicate()
+			tight.content_margin_left = 10
+			tight.content_margin_right = 10
+			tight.content_margin_top = 4
+			tight.content_margin_bottom = 4
+			_top_banner_convoy_button.add_theme_stylebox_override(sb_name, tight)
 	# The static "| SETTLEMENT" suffix is redundant — the settlement name carries that meaning.
 	if is_instance_valid(_top_banner_suffix_label):
 		_top_banner_suffix_label.visible = false
 
-	# Settlement-name button (opens Warehouse) sits right after the breadcrumb.
+	# Order: [< Convoy][🏭] grouped left, [spacer], [Top Up] as the right-side action.
+	# Warehouse sits right after the breadcrumb (no gap between the name and the warehouse icon).
 	if is_instance_valid(warehouse_button):
 		var wh_parent: Node = warehouse_button.get_parent()
 		if is_instance_valid(wh_parent):
 			wh_parent.remove_child(warehouse_button)
 		bhb.add_child(warehouse_button)
-		_style_banner_settlement_button(warehouse_button)
+		_style_top_bar_button(warehouse_button)
 
-	# Flex spacer — expands in landscape/desktop to right-group the dropdown + Top Up.
+	# Flex spacer after the title group — absorbs slack so Top Up pins right and the leftover space
+	# is one clean region on the bar background (not a hole in the middle).
 	_top_bar_spacer = Control.new()
 	_top_bar_spacer.name = "TopBarSpacer"
 	bhb.add_child(_top_bar_spacer)
 
-	# Vendor dropdown.
+	# Give the bar its own subtle background so button spacing reads as intentional negative space
+	# instead of the patterned map showing through.
+	_style_top_bar_background(bhb.get_parent())
+
+	# Vendor dropdown (parked here; mobile moves it into the panel control row, desktop hides it).
 	if is_instance_valid(vendor_selector):
 		var vs_parent: Node = vendor_selector.get_parent()
 		if is_instance_valid(vs_parent):
@@ -1413,43 +1497,61 @@ func _reorganize_top_bar() -> void:
 	_top_bar_reorganized = true
 	_update_settlement_banner_button()
 
-func _style_banner_settlement_button(btn: Button) -> void:
-	if not is_instance_valid(btn):
-		return
-	btn.focus_mode = Control.FOCUS_NONE
-	btn.add_theme_font_size_override("font_size", 22)
-	btn.tooltip_text = "Open Warehouse for this settlement"
-	var normal := StyleBoxFlat.new()
-	normal.bg_color = Color(0.15, 0.16, 0.18, 0.6)
-	normal.set_border_width_all(1)
-	normal.border_color = OORI_GREY
-	normal.set_corner_radius_all(6)
-	normal.content_margin_left = 12
-	normal.content_margin_right = 12
-	normal.content_margin_top = 6
-	normal.content_margin_bottom = 6
-	var hover := normal.duplicate()
-	hover.border_color = OORI_YELLOW
-	hover.bg_color = Color(0.2, 0.22, 0.26, 0.9)
-	var pressed := normal.duplicate()
-	pressed.bg_color = OORI_DARK_GREY
-	pressed.border_color = OORI_YELLOW
-	btn.add_theme_stylebox_override("normal", normal)
-	btn.add_theme_stylebox_override("hover", hover)
-	btn.add_theme_stylebox_override("pressed", pressed)
-	btn.add_theme_stylebox_override("disabled", normal)
-	btn.add_theme_color_override("font_color", OORI_WHITE)
-	btn.add_theme_color_override("font_color_hover", Color(1, 1, 1))
-	btn.add_theme_color_override("font_color_pressed", OORI_YELLOW)
-
 func _update_settlement_banner_button() -> void:
-	# Banner Warehouse button shows the current settlement's name (falls back to "Warehouse" in transit).
+	# Icon-only Warehouse button (🏭 — matches the map's warehouse-label glyph). The settlement
+	# NAME is no longer shown here; instead the settlement's own map label is activated while this
+	# menu is open (see _set_settlement_map_label_active).
 	if not is_instance_valid(warehouse_button):
 		return
+	warehouse_button.text = ""
+	# Center the icon in the (wide, equal-third) button — buttons default the icon to the left edge.
+	warehouse_button.icon_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	warehouse_button.vertical_icon_alignment = VERTICAL_ALIGNMENT_CENTER
+	warehouse_button.alignment = HORIZONTAL_ALIGNMENT_CENTER
+	if warehouse_button.icon == null:
+		var wh_icon = load("res://Assets/Icons/warehouse.svg")
+		if wh_icon != null:
+			warehouse_button.icon = wh_icon
+			warehouse_button.expand_icon = true
+			warehouse_button.add_theme_constant_override("icon_max_width", 44)
+			warehouse_button.add_theme_color_override("icon_normal_color", OORI_WHITE)
+			warehouse_button.add_theme_color_override("icon_hover_color", Color(1, 1, 1))
+			warehouse_button.add_theme_color_override("icon_pressed_color", OORI_YELLOW)
 	var sname: String = ""
 	if _settlement_data is Dictionary:
 		sname = String(_settlement_data.get("name", ""))
-	warehouse_button.text = sname if sname != "" else "Warehouse"
+	warehouse_button.tooltip_text = ("Open Warehouse — %s" % sname) if sname != "" else "Open Warehouse"
+
+func _activate_settlement_map_label() -> void:
+	# Pin the current settlement's map label so its name is visible on the map while this menu is open
+	# (replaces the old in-header settlement-name button). Reuses the UIManager pin system via SignalHub.
+	if not (_settlement_data is Dictionary):
+		return
+	var sx: int = int(roundf(float(_settlement_data.get("x", -9999.0))))
+	var sy: int = int(roundf(float(_settlement_data.get("y", -9999.0))))
+	if sx <= -9999 or sy <= -9999:
+		return
+	var coords := Vector2i(sx, sy)
+	if _map_label_coords == coords:
+		return
+	# If we had a different settlement pinned, release it first.
+	_deactivate_settlement_map_label()
+	_map_label_coords = coords
+	var hub = get_node_or_null("/root/SignalHub")
+	if is_instance_valid(hub) and hub.has_signal("settlement_menu_pin_requested"):
+		hub.emit_signal("settlement_menu_pin_requested", coords, true)
+
+func _deactivate_settlement_map_label() -> void:
+	if _map_label_coords == null:
+		return
+	var hub = get_node_or_null("/root/SignalHub")
+	if is_instance_valid(hub) and hub.has_signal("settlement_menu_pin_requested"):
+		hub.emit_signal("settlement_menu_pin_requested", _map_label_coords, false)
+	_map_label_coords = null
+
+func _exit_tree() -> void:
+	_deactivate_settlement_map_label()
+	super._exit_tree()
 
 
 # --- Custom Tooltip Override ---

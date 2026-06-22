@@ -468,8 +468,17 @@ static func _destination_name(agg_data: Dictionary, item: Dictionary) -> String:
 			if v != null:
 				var s := str(v).strip_edges()
 				if s != "" and s != "Unknown Vendor" and not ("00000000" in s):
-					return s
+					return strip_vendor_paren(s)
 	return ""
+
+# "Oasis (Oasis Dealership)" → "Oasis". Drops the trailing "(vendor)" so the destination shows
+# just the settlement name and stops clipping the panel edges.
+static func strip_vendor_paren(name: String) -> String:
+	var s := name.strip_edges()
+	var paren := s.find("(")
+	if paren > 0:
+		s = s.substr(0, paren).strip_edges()
+	return s
 
 static func _fmt_stat(v: Variant) -> String:
 	if v is float:

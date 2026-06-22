@@ -302,6 +302,8 @@ static func rebuild_info_sections(item_info_rich_text: RichTextLabel, item_data_
 				break
 
 	if dest_name != "" and dest_name != "Unknown Vendor":
+		# Show just the settlement name — drop the "(vendor)" parenthetical so it stops clipping edges.
+		dest_name = VendorItemList.strip_vendor_paren(dest_name)
 		if perf_log_enabled:
 			print("[VendorInspectorBuilder] Building Destination row with value='", dest_name, "'")
 		rows_summary.append({"k": "Destination", "v": dest_name})
