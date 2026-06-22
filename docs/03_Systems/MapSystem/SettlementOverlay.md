@@ -156,6 +156,31 @@ The pin tip touches the gap above the tile's top edge. The head center is positi
 
 These are resolved to world-space `tile_center` using `terrain_tilemap.map_to_local(Vector2i(...))` directly — not through the panel draw loop — so pins persist even when the cursor is elsewhere.
 
+### Settlement-pin API (`UIManager`)
+
+`_pinned_settlement_coords` is mutated through these methods (each triggers `_force_draw_interactive_labels_deferred()`):
+
+| Method | Purpose |
+|:-------|:--------|
+| `toggle_settlement_pin(coords)` | User long-press / map-click toggle (does **not** itself redraw). |
+| `add_settlement_pin(coords)` | **Idempotent** add — pin a settlement so its label/pin shows. |
+| `remove_settlement_pin(coords)` | **Idempotent** remove. |
+| `is_settlement_pinned(coords)` | Query without mutating. |
+| `clear_all_settlement_pins()` | Drop all pins. |
+
+### Settlement menu auto-pins its settlement
+
+When `ConvoySettlementMenu` opens, it pins the current settlement so the **name shows on the map** (the in-header settlement-name label was removed — see [Vendor ResponsiveRefactor §10](../../02_UI_UX/VendorPanel/ResponsiveRefactor.md)). Flow (unidirectional, via SignalHub):
+
+```
+ConvoySettlementMenu._activate_settlement_map_label()
+  → SignalHub.settlement_menu_pin_requested(coords, true)
+    → MainScreen._on_settlement_menu_pin_requested()
+      → UIManager.add_settlement_pin(coords)   # only if not already pinned
+```
+
+On close (`_exit_tree` → `..._deactivate_settlement_map_label()`) it emits `settlement_menu_pin_requested(coords, false)`. **Ownership guard:** `MainScreen` only removes the pin on close if *it* added it (`_menu_pinned_settlement_coords`) — it never clears a settlement the player pinned manually.
+
 ---
 
 ## Color Coding and Dimming

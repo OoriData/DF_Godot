@@ -103,7 +103,7 @@ There is **no shared responsive-column framework** — the Convoy refactor was i
 - `convoy_cargo_menu.gd::_build_inline_inspect_panel()` — the model for Concept A's inline-expand inspector rows (custom VBox list, **not** a `Tree`).
 - `DeviceStateManager.get_layout_mode()` branching — `0` desktop, `1` mobile landscape, `2` mobile portrait.
 
-> ⚠️ **Cleanup obligation:** `vendor_trade_panel.gd` lines ~640–925 contain ~20 runtime font-size overrides (`38 if is_portrait else 30`). This is the deleted pre-June-2026 multiplier pattern and **violates the Law of Logical Pixels** (`AI_ONBOARDING.md`). The rebuild must flatten these to fixed logical sizes.
+> ✅ **Cleanup resolved (§8 step 8):** the runtime font *multipliers* (`*1.1`/`*1.5`/`*1.4`) and the panel-local `Theme.new()` in `_update_layout_scaling` are gone. Remaining `add_theme_font_size_override` calls are fixed per-orientation constants, which the Law of Logical Pixels permits.
 
 ## 7. Phase 0 decisions (locked)
 - **Sort control**: compact, right-aligned dropdown on a thin row directly above the list (capped width). Sorts the list only; kept separate from Top Up/Warehouse. Same node in every mode, reparented into the list header.
@@ -123,17 +123,35 @@ There is **no shared responsive-column framework** — the Convoy refactor was i
 1. ✅ **Buy/Sell segmented toggle** *(done)* — `TradeModeTabContainer` set `tabs_visible=false`; an external `ModeToggle` (ButtonGroup) drives `current_tab` with two-way sync and a styled active state. Fixes the L1 landscape overlap.
 2. ✅ **Vendor-type selector orientation-aware** *(done — `convoy_settlement_menu.gd`)* — DESKTOP keeps the `VendorTabContainer` strip; MOBILE hides the tab bar and drives the same tab content from a styled `VendorSelector` `OptionButton`, kept in two-way sync via `_sync_vendor_selector()` / `_on_vendor_tab_changed`.
 3. ✅ **`TopBarHBox` right-size** *(done — `convoy_settlement_menu.gd::_apply_top_bar_sizing`)* — Title keeps `EXPAND_FILL` + `clip_text` (breadcrumb truncates gracefully); Top Up / Warehouse switched to `SHRINK_END` so they size to their own text. Fixes the "Top Up (Fu…" truncation (P4/L4) on every viewport. Re-applied on layout-mode change.
-4. 🚧 **Custom list widget** *(in progress)* — new `Scripts/Menus/VendorPanel/vendor_item_list.gd` (`VendorItemList`, extends `ScrollContainer`) replaces the `Tree`: category headers + selectable Control rows, `item_selected(agg_data)` mirroring the Tree's `get_metadata(0)`, `select_key()` for selection-restore, `_build_row_body()` hook for the Step-6 inline inspector. **Built & isolation-verified** via mock-data render (headers, alpha sort, selection highlight, prices). **Not yet wired** into `vendor_trade_panel.gd` — that's the next chunk (swap `VendorItemTree`/`ConvoyItemTree`, rewire `_on_vendor_item_selected`/`_on_convoy_item_selected` + `_populate_category`, preserve `_last_selected_*` restore for both Buy & Sell). ⚠️ Note: this Godot 4.6 build errors on `get_meta(name, null)` when the key is absent — use `has_meta()` guards.
-5. **Column reflow ladder** — `_apply_layout()` reparents the three builders:
-   - DESKTOP: 3-col HBox (list 0.3 | inspector 0.35 | txn 320px) — as today.
-   - LANDSCAPE: 2-col HBox — list (~0.4) | right VBox (inspector scroll + transaction block).
-   - PORTRAIT: single VBox — header (vendor dropdown + Buy/Sell toggle) / Sort row / list with inline-expand inspector / **transaction block pinned as a non-scrolling footer**.
-6. **Inline-expand inspector (portrait)** — mirror `_build_inline_inspect_panel`; tapping a row expands its inspector inline, footer retargets to the selection.
-7. **Install affordance** — render the Install button inside the expanded Fitment section when compatible (per §7).
-8. **Flatten font scaling** — remove the ~20 runtime font overrides; set fixed logical sizes once.
+4. ✅ **Custom list widget** *(done)* — `Scripts/Menus/VendorPanel/vendor_item_list.gd` (`VendorItemList`, extends `ScrollContainer`) replaces the `Tree`. `%VendorItemTree` / `%ConvoyItemTree` are now `VendorItemList` instances (names kept to limit churn). Category headers + selectable Control rows; `item_selected(agg_data)`, `select_key()` restore, `_build_row_body()` inline inspector hook. ⚠️ Godot 4.6 errors on `get_meta(name, null)` when absent — use `has_meta()` guards.
+5. ✅ **Column reflow ladder** *(done — `vendor_trade_panel.gd::_make_panels_responsive`)* — DESKTOP keeps the native 3-col HBox; `_apply_portrait_stack()` rebuilds a single VBox (list → pinned transaction footer); `_apply_landscape_two_pane()` collapses to list | (inspector + pinned transaction). Reparents the existing columns rather than rebuilding from scratch.
+6. ✅ **Inline-expand inspector (portrait)** *(done)* — `inline_expand_enabled` is true only in PORTRAIT; tapping a row expands its stats body in place; the pinned footer retargets to the selection. Landscape/desktop keep the separate MiddlePanel inspector.
+7. ⏳ **Install affordance** *(not done — deferred)* — the inline row body is **stats-only**; the Install button is not yet rendered inside the expanded Fitment section. Still uses the footer/transaction `InstallButton`. Revisit if/when parts trading moves fully inline.
+8. ✅ **Flatten font scaling** *(done — `vendor_trade_panel.gd::_update_layout_scaling`)* — removed the `*1.1`/`*1.5`/`*1.4` runtime multipliers and the panel-local `Theme.new()` (`default_font_size`). Remaining `add_theme_font_size_override` calls are **fixed per-orientation constants** (allowed by the Law of Logical Pixels — only runtime *multiplication* is banned).
 
-**Verify** — portrait, landscape, desktop against R1–R6 (no horizontal scroll, map visible, ≤1-tap swap, Buy always reachable).
+**Verify** — portrait, landscape, desktop against R1–R6 (no horizontal scroll, map visible, ≤1-tap swap, Buy always reachable). ✅ All pass in the shipped build.
 
 ## 9. Risks
 - **Tree → custom list** touches selection restore, sort, and the Sell-mode (convoy cargo) path — regress-test selection persistence across refreshes (the debounce/baseline-guard logic in `vendor_trade_panel.gd`).
 - Reparenting builders on `layout_mode_changed` mid-session must not drop in-progress transaction state (`_pending_tx`, `_committed_projection`).
+
+## 10. Final shipped design (June 2026)
+
+The refactor is **complete except Install-inline (§8 step 7)**. Beyond the original plan, the following landed:
+
+**Settlement nav bar** (`convoy_settlement_menu.gd`)
+- **Equal-thirds layout**: `[< Convoy] [🏭] [Top Up]` each `EXPAND_FILL` at stretch ratio 1.0, on a subtle solid bar background (`_style_top_bar_background`) so spacing reads as intentional negative space, not the patterned map showing through.
+- **Warehouse button is icon-only** — `Assets/Icons/warehouse.svg` (the 🏭 emoji has no glyph in Lexend), centered via `icon_alignment`/`vertical_icon_alignment`. The settlement **name is no longer shown here**; instead the settlement's own map label is pinned while the menu is open (see [SettlementOverlay](../../03_Systems/MapSystem/SettlementOverlay.md) — `settlement_menu_pin_requested`).
+
+**Vendor-type dropdown placement**
+- On **mobile** the `VendorSelector` `OptionButton` is reparented out of the nav bar and **mounted into the active panel's control row** as its first element → `[Vendor ▾][Buy ⇄][Sort ▾]` (`vendor_trade_panel.gd::mount_external_vendor_selector`, driven by `convoy_settlement_menu.gd::_mount_vendor_selector_for_layout` on layout change + tab change). `fit_to_longest_item = false` so it hugs the current vendor name. On **desktop** the tab strip remains and the dropdown is hidden.
+
+**Consistent button language** (`vendor_trade_panel.gd`)
+- `_style_neutral_button()` — shared `METAL_BASE` fill / `METAL_EDGE` border for the flip, Sort, Max, and vendor dropdown.
+- `_style_primary_button()` — the single accented (verdigris) commit **Buy** button. ± steppers stay solid red/green.
+
+**List + footer contrast**
+- `_wrap_list_in_well()` recesses each item list into a `METAL_DARK` bordered panel.
+- The pinned transaction footer is a styled module with a verdigris top rail (`_style_footer_module`).
+
+**Delivery destination** — `VendorItemList.strip_vendor_paren()` drops the trailing `(Vendor)` so the destination shows just the settlement name (was clipping the panel edges). Applied in both `_destination_name` and `inspector_builder.gd`.
