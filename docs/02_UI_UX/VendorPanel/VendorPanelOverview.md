@@ -63,7 +63,7 @@ graph TD
 
 ## Detailed References
 - [**Responsive Refactor — Audit & Requirements**](ResponsiveRefactor.md) ⭐ *(shipped — see §10)*: Screenshot audit, locked-in requirements, the 1→2→3-column responsive design, and the final nav bar / vendor-dropdown / button-language design.
-- [**Transaction Controller**](Transactions.md): Projections, price math, and execution.
+- [**Transaction Controller**](Transactions.md): Projections, price math, and execution. **Includes the lazy-fetch part pricing architecture** — read before touching price display code.
 - [**UI Inspector**](UI_Inspector.md): Dynamic item cards and mobile scaling in the middle pane.
 - [**Fitment Compatibility**](Mechanics.md): Rules for installing vehicle parts.
 - [**Convoy Stats Feed**](ConvoyStats.md): Continuous volume/weight capacity calculations.
