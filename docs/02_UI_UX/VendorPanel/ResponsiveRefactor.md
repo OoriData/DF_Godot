@@ -146,9 +146,15 @@ The refactor is **complete**. Beyond the original plan, the following landed:
 **Vendor-type dropdown placement**
 - On **mobile** the `VendorSelector` `OptionButton` is reparented out of the nav bar and **mounted into the active panel's control row** as its first element → `[Vendor ▾][Buy ⇄][Sort ▾]` (`vendor_trade_panel.gd::mount_external_vendor_selector`, driven by `convoy_settlement_menu.gd::_mount_vendor_selector_for_layout` on layout change + tab change). `fit_to_longest_item = false` so it hugs the current vendor name. On **desktop** the tab strip remains and the dropdown is hidden.
 
-**Consistent button language** (`vendor_trade_panel.gd`)
-- `_style_neutral_button()` — shared `METAL_BASE` fill / `METAL_EDGE` border for the flip, Sort, Max, and vendor dropdown.
-- `_style_primary_button()` — the single accented (verdigris) commit **Buy** button. ± steppers stay solid red/green.
+**Two-tier button language** (`vendor_trade_panel.gd`, `convoy_settlement_menu.gd`)
+
+Two distinct visual roles keep action buttons and filter controls from looking identical:
+
+- `_style_filter_control(b, active=false)` — **filter / parameter controls** (vendor-type dropdown, Buy/Sell flip, Sort). Recessed `METAL_DARK` fill + verdigris-tinted border (`METAL_EDGE` lerped 55 % toward `ACCENT_VERDIGRIS`). Reads as "this sets state" rather than "this does something". The `active=true` variant (always used on the Buy/Sell flip, which shows the current trade direction) deepens to a full verdigris fill, full-strength `ACCENT_VERDIGRIS` border, and lighter verdigris text. Also sets `flat = false` on the `MenuButton` — without this the normal stylebox is suppressed and no border draws.
+- `_style_neutral_button()` — **neutral action controls** (Max button). `METAL_BASE` fill / `METAL_EDGE` border. Lives in the transaction footer alongside the primary commit button.
+- `_style_primary_button()` — the single accented (verdigris) **Buy / Sell commit** button. ± steppers stay solid red/green.
+
+**Control-row layout** — the three filter controls (`[Vendor ▾][Buy ⇄][Sort ▾]`) share one `HBoxContainer`. The vendor dropdown uses `SIZE_SHRINK_BEGIN` (hugs its name). The Buy/Sell flip uses `SIZE_EXPAND_FILL` (absorbs the row's horizontal slack so there's no dead space on the right, and remains the filler even when Sort hides itself). Sort uses `SIZE_SHRINK_END` (compact, pinned to the right edge).
 
 **List + footer contrast**
 - `_wrap_list_in_well()` recesses each item list into a `METAL_DARK` bordered panel.

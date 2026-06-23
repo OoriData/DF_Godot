@@ -72,6 +72,20 @@ To ensure mobile friendliness, adhere to these minimum logical sizes:
 - **The "Oori" Background**: A tiled, dark textured background applied via `MenuBase.auto_apply_oori_background`.
 - **Transparency**: High-level containers should use `_maximize_transparency_recursive` to ensure the Oori background isn't obscured by redundant panel styles.
 
+### 4. Button / Control Hierarchy
+
+Three visual tiers distinguish how interactive controls behave. Never style them identically — a filter control that looks like a primary action button destroys affordance.
+
+| Tier | Style function | Tokens | Used for |
+|------|---------------|--------|----------|
+| **Primary action** | `_style_primary_button()` | Deep verdigris fill + `ACCENT_VERDIGRIS` border | The single commit button (Buy / Sell). |
+| **Neutral action** | `_style_neutral_button()` | `METAL_BASE` fill + `METAL_EDGE` border | Utility actions that execute immediately: Max, steppers. |
+| **Filter / parameter** | `_style_filter_control(b, active)` | `METAL_DARK` (recessed) fill + verdigris-tinted border (`METAL_EDGE` lerped 55 % toward `ACCENT_VERDIGRIS`) | Controls that **set state** rather than commit an action: vendor-type dropdown, Buy/Sell mode toggle, Sort selector. The `active=true` variant (current trade direction) promotes to full `ACCENT_VERDIGRIS` border + darker verdigris fill + light verdigris text. |
+
+**Key implementation notes for filter controls:**
+- Set `b.flat = false` — Godot `MenuButton` defaults to `flat = true`, which suppresses the `normal` stylebox and makes the border invisible.
+- In a mixed control row, let the always-visible element use `SIZE_EXPAND_FILL` to absorb slack; controls that can hide should use `SIZE_SHRINK_BEGIN` / `SIZE_SHRINK_END` so disappearing doesn't leave a gap.
+
 ---
 
 ## Animation & Transitions
