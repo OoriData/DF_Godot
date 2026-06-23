@@ -1367,21 +1367,24 @@ func _style_vendor_selector() -> void:
 		pstyle.content_margin_top = 8
 		pstyle.content_margin_bottom = 8
 		popup.add_theme_stylebox_override("panel", pstyle)
-	# Neutral button language — matches the panel's flip / Sort / Max buttons (no gold accent).
+	# Filter-control language — matches the panel's Sort / Buy-Sell controls: a recessed METAL_DARK
+	# well with a verdigris trim border, so it reads as a state selector and NOT as an action button
+	# (Top Up / Warehouse). Verdigris = the design system's digital/state cue.
+	var trim := UITheme.METAL_EDGE.lerp(UITheme.ACCENT_VERDIGRIS, 0.55)
 	var normal := StyleBoxFlat.new()
-	normal.bg_color = OORI_DARK_GREY # #25282a == UITheme.METAL_BASE
+	normal.bg_color = UITheme.METAL_DARK # #1a1a1f — recessed well
 	normal.set_border_width_all(1)
-	normal.border_color = OORI_GREY  # #393d47 == UITheme.METAL_EDGE
+	normal.border_color = trim
 	normal.set_corner_radius_all(6)
 	normal.content_margin_left = 14
 	normal.content_margin_right = 14
 	normal.content_margin_top = 12
 	normal.content_margin_bottom = 12
 	var hover := normal.duplicate()
-	hover.bg_color = Color("#31353a")            # METAL_HOVER
-	hover.border_color = Color("#8b929c")        # TEXT_MUTED
+	hover.bg_color = UITheme.METAL_DARK.lerp(UITheme.ACCENT_VERDIGRIS, 0.18)
+	hover.border_color = UITheme.ACCENT_VERDIGRIS
 	var pressed := normal.duplicate()
-	pressed.bg_color = Color("#3a3f47")          # METAL_ACTIVE
+	pressed.bg_color = UITheme.METAL_DARK.lerp(Color.BLACK, 0.2)
 	vendor_selector.add_theme_stylebox_override("normal", normal)
 	vendor_selector.add_theme_stylebox_override("hover", hover)
 	vendor_selector.add_theme_stylebox_override("pressed", pressed)

@@ -918,8 +918,14 @@ func _ready() -> void:
 	if is_instance_valid(cargo_sort_button):
 		_load_cargo_sort_metric_from_settings()
 		cargo_sort_button.custom_minimum_size.x = 100 # Thinner button
-		# Shared neutral button language (matches the flip + Max buttons).
-		_style_neutral_button(cargo_sort_button)
+		# Sort is compact and pinned to the right edge of the row. It can't be the element that fills
+		# the row's slack because it hides itself when there's no delivery cargo (see
+		# _set_cargo_sort_ui_visible) — the always-present Buy/Sell flip fills instead (set in
+		# _consolidate_control_row). With the flip expanding, SHRINK_END pushes Sort flush right.
+		cargo_sort_button.size_flags_horizontal = Control.SIZE_SHRINK_END
+		# Filter-control language: recessed well + verdigris trim, distinct from the action buttons.
+		# (Also sets flat=false so the MenuButton actually draws its border.)
+		_style_filter_control(cargo_sort_button)
 
 		var popup = cargo_sort_button.get_popup()
 		popup.clear()
@@ -1058,6 +1064,10 @@ func _consolidate_control_row() -> void:
 		flip_parent.remove_child(mode_flip_button)
 	sort_container.add_child(mode_flip_button)
 	sort_container.move_child(mode_flip_button, 0)
+	# The flip is the only always-visible control on this row, so it absorbs the horizontal slack
+	# (the vendor dropdown hugs its name at the left; Sort hugs the right and can hide). This keeps
+	# the row filled edge-to-edge instead of left-packing the controls with dead space on the right.
+	mode_flip_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	sort_container.add_theme_constant_override("separation", 10)
 	mode_toggle.visible = false
 	sort_container.set_meta("control_row_merged", true)
@@ -1946,6 +1956,46 @@ func _style_neutral_button(b: Button) -> void:
 	b.add_theme_color_override("font_pressed_color", UITheme.TEXT_PRIMARY)
 	b.add_theme_color_override("font_disabled_color", UITheme.TEXT_MUTED)
 
+# Filter / parameter controls (vendor-type dropdown, Buy/Sell toggle, Sort). These SET STATE rather
+# than commit an action, so they must read differently from the neutral action buttons (Top Up /
+# Warehouse / Max): a recessed METAL_DARK well + a verdigris trim border — the design system's
+# digital/state cue (verdigris = living/digital; warm grey = economic action). `active` marks the
+# currently-selected state (the Buy/Sell flip): a stronger verdigris fill, full-strength border, and
+# lighter verdigris text so the live trade direction reads at a glance.
+func _style_filter_control(b: Button, active: bool = false) -> void:
+	if not is_instance_valid(b):
+		return
+	# MenuButtons default to flat=true, which suppresses the normal stylebox (and thus the border).
+	b.flat = false
+	b.focus_mode = Control.FOCUS_NONE
+	var trim := UITheme.METAL_EDGE.lerp(UITheme.ACCENT_VERDIGRIS, 0.55)
+	var active_fill := Color(0.051, 0.188, 0.145) # deep verdigris well (darker than the Buy commit button)
+	var active_fg := Color(0.627, 0.831, 0.784)   # light verdigris text
+	var normal := StyleBoxFlat.new()
+	normal.bg_color = active_fill if active else UITheme.METAL_DARK
+	normal.set_border_width_all(UITheme.BORDER_THIN)
+	normal.border_color = UITheme.ACCENT_VERDIGRIS if active else trim
+	normal.set_corner_radius_all(UITheme.RADIUS_MD)
+	normal.content_margin_left = 12
+	normal.content_margin_right = 12
+	normal.content_margin_top = 6
+	normal.content_margin_bottom = 6
+	var hover := normal.duplicate()
+	hover.bg_color = (normal.bg_color as Color).lerp(UITheme.ACCENT_VERDIGRIS, 0.18)
+	hover.border_color = UITheme.ACCENT_VERDIGRIS
+	var pressed := normal.duplicate()
+	pressed.bg_color = (normal.bg_color as Color).lerp(Color.BLACK, 0.2)
+	var disabled := normal.duplicate()
+	disabled.bg_color = UITheme.METAL_DARK
+	disabled.border_color = UITheme.METAL_EDGE.lerp(Color.BLACK, 0.3)
+	for state in [["normal", normal], ["hover", hover], ["pressed", pressed], ["hover_pressed", pressed], ["focus", hover], ["disabled", disabled]]:
+		b.add_theme_stylebox_override(state[0], state[1])
+	var fg := active_fg if active else UITheme.TEXT_PRIMARY
+	b.add_theme_color_override("font_color", fg)
+	b.add_theme_color_override("font_hover_color", Color(1, 1, 1))
+	b.add_theme_color_override("font_pressed_color", fg)
+	b.add_theme_color_override("font_disabled_color", UITheme.TEXT_MUTED)
+
 # The one accented button: primary Buy/Sell commit action (verdigris green).
 func _style_primary_button(b: Button) -> void:
 	if not is_instance_valid(b):
@@ -1980,7 +2030,8 @@ func _style_mode_toggle() -> void:
 	# Content-sized button: must NOT clip_text, or its minimum size drops the label and it
 	# collapses to just the margins (no text, hairline-thin).
 	b.clip_text = false
-	_style_neutral_button(b)
+	# The Buy/Sell flip is always the "active state" filter control (current trade direction).
+	_style_filter_control(b, true)
 
 func _on_tab_changed(tab_index: int) -> void:
 	_reset_destination_preview_if_active()
