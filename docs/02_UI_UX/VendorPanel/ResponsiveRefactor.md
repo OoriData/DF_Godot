@@ -126,7 +126,7 @@ There is **no shared responsive-column framework** — the Convoy refactor was i
 4. ✅ **Custom list widget** *(done)* — `Scripts/Menus/VendorPanel/vendor_item_list.gd` (`VendorItemList`, extends `ScrollContainer`) replaces the `Tree`. `%VendorItemTree` / `%ConvoyItemTree` are now `VendorItemList` instances (names kept to limit churn). Category headers + selectable Control rows; `item_selected(agg_data)`, `select_key()` restore, `_build_row_body()` inline inspector hook. ⚠️ Godot 4.6 errors on `get_meta(name, null)` when absent — use `has_meta()` guards.
 5. ✅ **Column reflow ladder** *(done — `vendor_trade_panel.gd::_make_panels_responsive`)* — DESKTOP keeps the native 3-col HBox; `_apply_portrait_stack()` rebuilds a single VBox (list → pinned transaction footer); `_apply_landscape_two_pane()` collapses to list | (inspector + pinned transaction). Reparents the existing columns rather than rebuilding from scratch.
 6. ✅ **Inline-expand inspector (portrait)** *(done)* — `inline_expand_enabled` is true only in PORTRAIT; tapping a row expands its stats body in place; the pinned footer retargets to the selection. Landscape/desktop keep the separate MiddlePanel inspector.
-7. ⏳ **Install affordance** *(not done — deferred)* — the inline row body is **stats-only**; the Install button is not yet rendered inside the expanded Fitment section. Still uses the footer/transaction `InstallButton`. Revisit if/when parts trading moves fully inline.
+7. ✅ **Install affordance** *(done)* — for installable parts (`CompatAdapter.has_install_slot`), the **buy** list's expanded row body renders an inline brass **Install** button (`vendor_item_list.gd::_build_install_button` → `install_pressed(agg_data)` signal). The panel routes it through the existing flow (`_on_inline_install_pressed` → `VendorPanelCompatController.on_install_button_pressed` → `install_requested`). In **portrait** the footer `InstallButton` is suppressed (footer stays uniform Buy/Sell); landscape/desktop keep the footer button.
 8. ✅ **Flatten font scaling** *(done — `vendor_trade_panel.gd::_update_layout_scaling`)* — removed the `*1.1`/`*1.5`/`*1.4` runtime multipliers and the panel-local `Theme.new()` (`default_font_size`). Remaining `add_theme_font_size_override` calls are **fixed per-orientation constants** (allowed by the Law of Logical Pixels — only runtime *multiplication* is banned).
 
 **Verify** — portrait, landscape, desktop against R1–R6 (no horizontal scroll, map visible, ≤1-tap swap, Buy always reachable). ✅ All pass in the shipped build.
@@ -137,7 +137,7 @@ There is **no shared responsive-column framework** — the Convoy refactor was i
 
 ## 10. Final shipped design (June 2026)
 
-The refactor is **complete except Install-inline (§8 step 7)**. Beyond the original plan, the following landed:
+The refactor is **complete**. Beyond the original plan, the following landed:
 
 **Settlement nav bar** (`convoy_settlement_menu.gd`)
 - **Equal-thirds layout**: `[< Convoy] [🏭] [Top Up]` each `EXPAND_FILL` at stretch ratio 1.0, on a subtle solid bar background (`_style_top_bar_background`) so spacing reads as intentional negative space, not the patterned map showing through.

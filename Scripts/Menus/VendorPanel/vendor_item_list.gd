@@ -12,6 +12,11 @@ class_name VendorItemList
 # driving the real purchase; the inline body only shows a compact stats summary.
 
 signal item_selected(agg_data)
+# Fired when the inline "Install" button (shown in the expanded body for installable parts) is
+# pressed. The panel routes this through its compat/install flow.
+signal install_pressed(agg_data)
+
+const _CompatAdapter = preload("res://Scripts/Menus/VendorPanel/compat_adapter.gd")
 
 const _HEADER_COLOR := Color(0.952941, 0.835294, 0.305882, 1.0) # Oori gold
 const _ROW_BORDER := Color(0.224, 0.239, 0.278, 1.0)            # #393d47
@@ -273,14 +278,71 @@ func _build_row_body(agg_data: Variant) -> Control:
 	if not (agg_data is Dictionary):
 		return null
 	var stats := _stat_pairs(agg_data, list_mode)
-	if stats.is_empty():
+	var installable := _is_installable(agg_data)
+	if stats.is_empty() and not installable:
 		return null
 	var wrap := VBoxContainer.new()
-	wrap.add_theme_constant_override("separation", 4)
+	wrap.add_theme_constant_override("separation", 6)
 	wrap.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	wrap.add_child(HSeparator.new())
-	wrap.add_child(build_stat_chips(agg_data, list_mode, max(12, name_font_size - 3)))
+	if not stats.is_empty():
+		wrap.add_child(build_stat_chips(agg_data, list_mode, max(12, name_font_size - 3)))
+	# Fitment: an Install action for parts that have an install slot. The button (mouse_filter STOP)
+	# intercepts its own click so it doesn't re-trigger row selection.
+	if installable:
+		wrap.add_child(_build_install_button(agg_data))
 	return wrap
+
+func _is_installable(agg_data: Dictionary) -> bool:
+	# Only vendor wares (buy list) can be installed onto convoy vehicles.
+	if list_mode != "buy":
+		return false
+	var idata: Variant = agg_data.get("item_data")
+	if not (idata is Dictionary):
+		return false
+	return _CompatAdapter.is_installable_part(idata)
+
+func _build_install_button(agg_data: Dictionary) -> Button:
+	var btn := Button.new()
+	btn.name = "InlineInstall"
+	btn.text = "Install"
+	btn.tooltip_text = "Install this part onto a compatible convoy vehicle"
+	btn.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+	btn.mouse_filter = Control.MOUSE_FILTER_STOP
+	btn.focus_mode = Control.FOCUS_NONE
+	btn.add_theme_font_size_override("font_size", max(13, name_font_size - 3))
+	# Brass-accented so it reads as a distinct contextual action (vs the verdigris Buy).
+	var normal := StyleBoxFlat.new()
+	normal.bg_color = Color(0.149, 0.157, 0.165, 1.0)
+	normal.set_border_width_all(1)
+	normal.border_color = _VALUE_COLOR # Oori brass
+	normal.set_corner_radius_all(6)
+	normal.content_margin_left = 16
+	normal.content_margin_right = 16
+	normal.content_margin_top = 8
+	normal.content_margin_bottom = 8
+	var hover := normal.duplicate()
+	hover.bg_color = Color(0.20, 0.21, 0.22, 1.0)
+	btn.add_theme_stylebox_override("normal", normal)
+	btn.add_theme_stylebox_override("hover", hover)
+	btn.add_theme_stylebox_override("pressed", hover)
+	btn.add_theme_stylebox_override("focus", normal)
+	btn.add_theme_color_override("font_color", _VALUE_COLOR)
+	btn.add_theme_color_override("font_hover_color", Color(1, 1, 1))
+	btn.pressed.connect(func(): install_pressed.emit(agg_data))
+	return btn
+
+func set_selected_install_cost(price: float) -> void:
+	# Panel pushes the resolved install price (from the async compat check) onto the selected row's
+	# inline Install button: "Install" → "Install · $X". price < 0 means "not known yet".
+	if not is_instance_valid(_selected_panel) or not _selected_panel.has_meta("detail"):
+		return
+	var body: Variant = _selected_panel.get_meta("detail")
+	if not (body is Node):
+		return
+	var btn := (body as Node).find_child("InlineInstall", true, false)
+	if btn is Button:
+		(btn as Button).text = "Install" if price < 0.0 else "Install · %s" % NumberFormat.format_money(price)
 
 # Public/static: a wrapping grid of "Label value" chips for an agg item. Reused by the landscape
 # inspector so its summary matches the inline row body. Replaces the old run-on bbcode line —

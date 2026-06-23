@@ -144,16 +144,18 @@ static func build_vendor_buckets(vendor_data: Dictionary, perf_log_enabled: bool
 			if perf_log_enabled:
 				print("[VendorCargoAggregator] CLASSIFIED AS RESOURCE:", item.get("name"))
 		else:
-			# Part identification is strictly slot-based.
-			if ItemsData != null and ItemsData.PartItem and ItemsData.PartItem._looks_like_part_dict(item):
-				category_dict = aggregated_parts
-				if perf_log_enabled:
-					print("[VendorCargoAggregator] CLASSIFIED AS PART:", item.get("name"))
-				_aggregate_vendor_item(category_dict, item, mission_vendor_name, perf_log_enabled)
-				continue
-			category_dict = aggregated_other
+			# Vendor wares that are neither resources nor delivery cargo are installable PARTS.
+			# The vendor listing carries no slot/part_id (those resolve server-side from cargo_id),
+			# so part-ness can't be detected by fields — but structurally, "bare" cargo (no resource
+			# amounts, no delivery reward/recipient) at a vendor is always a part (verified across the
+			# full map dump). Tag is_part so downstream install/compat detection works.
+			if item is Dictionary:
+				item["is_part"] = true
+			category_dict = aggregated_parts
 			if perf_log_enabled:
-				print("[VendorCargoAggregator] CLASSIFIED AS OTHER:", item.get("name"))
+				print("[VendorCargoAggregator] CLASSIFIED AS PART (bare vendor cargo):", item.get("name"))
+			_aggregate_vendor_item(category_dict, item, mission_vendor_name, perf_log_enabled)
+			continue
 		
 		# Skip logging here as it was noisy, only logs if is_delivery was found missing recipient
 		if is_delivery and not item.has("recipient") and not item.has("mission_vendor_id") and not item.has("recipient_vendor_id"):

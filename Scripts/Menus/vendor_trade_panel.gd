@@ -870,6 +870,9 @@ func _ready() -> void:
 	vendor_item_tree.item_selected.connect(_on_vendor_item_selected)
 	# Use item_selected for Tree to update the inspector on a single click.
 	convoy_item_tree.item_selected.connect(_on_convoy_item_selected)
+	# Inline "Install" button in the expanded row body (portrait) routes through the compat flow.
+	if vendor_item_tree.has_signal("install_pressed"):
+		vendor_item_tree.install_pressed.connect(_on_inline_install_pressed)
 	trade_mode_tab_container.tab_changed.connect(_on_tab_changed)
 	# Single Buy/Sell flip button drives the (tab-bar-hidden) TabContainer pages.
 	if is_instance_valid(mode_flip_button):
@@ -2226,10 +2229,45 @@ func _looks_like_part(item_data_source: Dictionary) -> bool:
 # Helper: fetch a modifier value from either top-level or stats dict using a list of alias keys
  
 
+func _best_install_price_for_selection() -> float:
+	# Min install price across all convoy vehicles we've cached a compat result for, for the current
+	# selection. Returns -1 when no compat result has arrived yet.
+	if not selected_item or not (selected_item is Dictionary) or not selected_item.has("item_data"):
+		return -1.0
+	var idata: Dictionary = selected_item.item_data
+	var uid: String = str(idata.get("cargo_id", idata.get("part_id", "")))
+	if uid == "":
+		return -1.0
+	var best: float = -1.0
+	for key in _install_price_cache.keys():
+		if str(key).ends_with("||" + uid):
+			var p: float = float(_install_price_cache[key])
+			if p >= 0.0 and (best < 0.0 or p < best):
+				best = p
+	return best
+
+func _refresh_install_cost_display() -> void:
+	# Show the resolved install cost on whichever Install button is active (inline in portrait,
+	# footer otherwise). Cargo price itself is already shown as a stat chip.
+	var price: float = _best_install_price_for_selection()
+	if _is_portrait_layout():
+		if is_instance_valid(vendor_item_tree) and vendor_item_tree.has_method("set_selected_install_cost"):
+			vendor_item_tree.set_selected_install_cost(price)
+	elif is_instance_valid(install_button) and install_button.visible:
+		install_button.text = "Install" if price < 0.0 else "Install · %s" % NumberFormat.format_money(price)
+
 func _update_install_button_state() -> void:
 	VendorPanelCompatController.update_install_button_state(self)
+	_refresh_install_cost_display()
 
 func _on_install_button_pressed() -> void:
+	VendorPanelCompatController.on_install_button_pressed(self)
+
+func _on_inline_install_pressed(agg_data: Variant) -> void:
+	# The inline body is only visible for the selected row, so `selected_item` already equals this
+	# agg_data; assert it defensively, then reuse the standard install flow.
+	if agg_data is Dictionary:
+		selected_item = agg_data
 	VendorPanelCompatController.on_install_button_pressed(self)
 
 # --- Compatibility plumbing (align with Mechanics) ---
@@ -2237,6 +2275,8 @@ func _on_install_button_pressed() -> void:
 
 func _on_part_compatibility_ready(payload: Dictionary) -> void:
 	VendorPanelCompatController.on_part_compatibility_ready(self, payload)
+	# Install price now cached → reflect it on the active Install button.
+	_refresh_install_cost_display()
 
  
 
