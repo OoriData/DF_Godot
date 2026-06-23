@@ -1579,6 +1579,13 @@ func _on_cargo_data_received(cargo: Dictionary) -> void:
 	var cargo_id := str(cargo.get("cargo_id", ""))
 	if perf_log_enabled:
 		print("[VendorPanel][AsyncCargo] Received cargo_data for id=", cargo_id, " has_pending=", _pending_cargo_recipient_lookups.has(cargo_id))
+	# Priced part detail arrived: if it belongs to the current selection, re-price the footer and
+	# inspector (MechanicsService has already cached it, so _ensure_selection_priced will find it).
+	if cargo_id != "" and selected_item and selected_item.has("item_data"):
+		var sel_cid := str((selected_item.item_data as Dictionary).get("cargo_id", (selected_item.item_data as Dictionary).get("part_id", "")))
+		if sel_cid == cargo_id:
+			_update_inspector()
+			_update_transaction_panel()
 	if not _pending_cargo_recipient_lookups.has(cargo_id):
 		return
 	var recipient_id := str(cargo.get("recipient", ""))
@@ -2073,6 +2080,9 @@ func _update_inspector() -> void:
 	if not selected_item:
 		return
 
+	# Merge any lazily-fetched part price into the selection so the inspector shows the real price.
+	_ensure_selection_priced()
+
 	var item_data_source = selected_item.item_data if selected_item.has("item_data") and not selected_item.item_data.is_empty() else selected_item
 
 	# If the selected item is a vehicle, use a dedicated inspector update function and skip the generic one.
@@ -2149,6 +2159,10 @@ func _update_transaction_panel() -> void:
 			can_transact = false
 
 	# --- START: UNIFIED PRICE & DISPLAY LOGIC via VM ---
+	# Vendor stock parts ship as a thin summary with no price; the priced detail is fetched
+	# lazily by cargo_id (same path the Mechanics menu uses) and merged into the selection when
+	# available, so the presenter below computes a real total.
+	_ensure_selection_priced()
 	var quantity = int(quantity_spinbox.value) if is_instance_valid(quantity_spinbox) else 1
 	var pr = VendorTradeVM.build_price_presenter(item_data_source, str(current_mode), quantity, selected_item)
 	var total_reward: float = float(pr.get("total_delivery_reward", 0.0))
@@ -2225,6 +2239,30 @@ func _is_positive_number(v: Variant) -> bool:
 func _looks_like_part(item_data_source: Dictionary) -> bool:
 	# Defer to the centralized classification logic in the ItemsData factory.
 	return ItemsData.PartItem._looks_like_part_dict(item_data_source)
+
+# Vendor stock parts arrive as a thin summary (cargo_id + name, base_price: 0) with no usable
+# price. The full priced detail is fetched lazily by cargo_id via APICalls.get_cargo and cached
+# in MechanicsService — the same source the Mechanics/Cargo menus read. When the cached detail is
+# available, merge its price fields into the live selection so every consumer (footer, inspector,
+# row) resolves the real price. Idempotent: a no-op once the selection already prices > 0.
+func _ensure_selection_priced() -> void:
+	if not selected_item or not selected_item.has("item_data"):
+		return
+	var idata: Variant = selected_item.item_data
+	if not (idata is Dictionary) or (idata as Dictionary).is_empty():
+		return
+	var d: Dictionary = idata
+	if VendorTradeVM.contextual_unit_price(d, str(current_mode)) > 0.0:
+		return
+	var cid: String = str(d.get("cargo_id", d.get("part_id", "")))
+	if cid == "" or not is_instance_valid(_mechanics_service) or not _mechanics_service.has_method("get_enriched_cargo"):
+		return
+	var rich: Dictionary = _mechanics_service.get_enriched_cargo(cid)
+	if rich.is_empty():
+		return
+	for k in ["price", "unit_price", "base_unit_price", "value"]:
+		if rich.has(k) and rich.get(k) != null:
+			d[k] = rich.get(k)
 
 # Helper: fetch a modifier value from either top-level or stats dict using a list of alias keys
  

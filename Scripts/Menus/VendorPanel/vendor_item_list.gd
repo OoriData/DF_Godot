@@ -587,10 +587,15 @@ func _row_secondary_text(agg_data: Variant) -> String:
 	if agg_data is Dictionary:
 		var d: Dictionary = agg_data
 		var item: Variant = d.get("item_data", d)
-		if item is Dictionary:
-			for f in ["price", "base_price", "value"]:
-				if (item as Dictionary).has(f) and (item as Dictionary).get(f) != null:
-					return "$%s" % NumberFormat.fmt_qty((item as Dictionary).get(f))
+		# Installable parts surface their own cost; the part's price lives in `value`, which a
+		# present-but-zero `base_price` on bare vendor cargo used to shadow (rendering "$0"). Resolve
+		# through the VM so the canonical price wins, and only show it when actually positive.
+		if item is Dictionary and _is_installable(d):
+			var price := VendorTradeVM.contextual_unit_price(item as Dictionary, list_mode)
+			if price > 0.0:
+				return NumberFormat.format_money(price)
+		# Everything else (cargo, resources, deliveries) shows the stock quantity rather than a price —
+		# never "$0".
 		if d.has("total_quantity") and int(d.get("total_quantity")) > 0:
 			return "x%s" % str(int(d.get("total_quantity")))
 	return ""
