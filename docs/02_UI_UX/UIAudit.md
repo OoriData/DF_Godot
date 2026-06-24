@@ -333,8 +333,10 @@ All extend `MenuBase`. Scenes are minimal scaffolding; UI is built in script. Fu
 - Transitions to Mechanics menu for part install/removal via Service tab
 
 **Journey** — [`JourneyMenu.md`](JourneyMenu.md)
-- Route selection from `RouteService`
-- Resource consumption projections (fuel, food, water)
+- Three view states: planner destination list, confirmation preview, in-transit details
+- **Persistent chrome** injected into `MainVBox` around the scroll container: a "‹ Change" sub-header (destination/route/ETA) and a sticky action footer (Top Up / Next Route / Confirm) — both shown only during confirmation. Keeps actions off the scroll region.
+- Confirmation projections render as compact cards: a 4-column resource table (Need · Have/Cap · After), per-vehicle energy bars, delivery manifest. Orientation-aware — portrait = single-column stack; landscape = Resources | Cargo two-column with energy full-width below. Rebuilds on `layout_mode_changed`.
+- Destination rows are tap containers with clear-on-press + clear-on-drag guards so the press-highlight can't stick on multiple rows during a scroll.
 - Calls `RouteSelectionMenu.tscn` as a sub-dialog for embark confirmation (see §16)
 
 **Settlement** — [`SettlementMenu.md`](SettlementMenu.md)
@@ -683,7 +685,7 @@ These are **not Control nodes** — they are `Node2D` children drawn in world sp
 | StaticBottomNav | 2026-05-21 | N/A (runtime) | ✅ | [MenuManager.md](MenuManager.md) |
 | ConvoyMenu (Overview) | 2026-05-21 | ✅ | — | [ConvoyMenu.md](ConvoyMenu.md) ✅ |
 | Convoy Vehicle Submenu | 2026-05-21 | Shallow | — | [VehicleMenu.md](VehicleMenu.md) ✅ |
-| Convoy Journey Submenu | 2026-05-21 | Shallow | — | [JourneyMenu.md](JourneyMenu.md) ✅ |
+| Convoy Journey Submenu | 2026-06-24 | ✅ | ✅ | [JourneyMenu.md](JourneyMenu.md) ✅ |
 | Convoy Settlement Submenu | 2026-05-21 | Shallow | — | [SettlementMenu.md](SettlementMenu.md) ✅ |
 | Convoy Cargo Submenu | 2026-05-21 | Shallow | — | [ConvoyCargoMenu.md](ConvoyCargoMenu.md) ✅ |
 | WarehouseMenu | 2026-05-21 | — | — | [WarehouseMenu.md](WarehouseMenu.md) ✅ |
