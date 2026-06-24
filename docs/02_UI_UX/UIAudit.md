@@ -206,7 +206,7 @@ Each button (`Button`) is named `ConvoyButton_{convoy_id}` and contains:
 ### Known Issues / Gaps
 - ❌ `convoy_list_panel.gd:92` calls `DisplayServer.window_get_size()` — violates logical pixel rule
 - ❌ Contains duplicate Oori color palette `const` values
-- ⚠️ Local `_get_font_size()` helpers (e.g. `convoy_cargo_menu.gd`, `settings_menu.gd`) still apply a per-orientation font boost — a leftover of the pre-June-2026 multiplier model. They should be flattened to fixed logical sizes now that `content_scale_factor` handles all scaling.
+- ✅ `_get_font_size()` double-scaling migration complete (June 2026). All menus (`convoy_vehicle_menu.gd`, `convoy_cargo_menu.gd`, `mechanics_menu.gd`, `route_selection_menu.gd`, `settings_menu.gd`) now return `base` unchanged. `UIScaleManager` is the sole scaling authority.
 - ❌ `ToggleButton` in `.tscn` has `custom_minimum_size = Vector2(280, 80)` but script overrides to 300×56 or 400×110
 
 ---
@@ -325,8 +325,12 @@ All extend `MenuBase`. Scenes are minimal scaffolding; UI is built in script. Fu
 ### Notable Per-Menu Details
 
 **Vehicles** — [`VehicleMenu.md`](VehicleMenu.md)
-- Renders health, fuel efficiency, weight capacities, speed ratings
-- Transitions to Mechanics menu for part install/removal
+- 4 tabs: Summary (stat pills + info grid), Parts (loadout cards), Service (embedded Mechanics), Cargo
+- Custom pill tab buttons (not native TabContainer tabs); vehicle switcher is a styled `OptionButton`
+- Summary layout is orientation-aware: portrait = full-width stack; landscape = 40/60 HBox split (pills left, info right)
+- **Parts tab**: loadout cards (accent-colored left border + slot badge + stat line + Inspect). Portrait = 2-col `GridContainer`, vertical scroll. Landscape = flat `HBoxContainer`, outer `PartsScroll` switches to horizontal scroll. See [VehicleMenu.md](VehicleMenu.md#parts-tab--loadout-cards).
+- **Service tab**: same loadout-card layout via embedded `mechanics_menu.gd`. Swappable slots as cards; empty slots at bottom. Cart tab for pending swaps.
+- Transitions to Mechanics menu for part install/removal via Service tab
 
 **Journey** — [`JourneyMenu.md`](JourneyMenu.md)
 - Route selection from `RouteService`
@@ -403,7 +407,6 @@ All extend `MenuBase`. Scenes are minimal scaffolding; UI is built in script. Fu
 
 ### Known Issues / Gaps
 - ❌ Gate logic (`_has_settlement_at_coords`) lives in `menu_manager.gd` — not in the menu itself
-- ❌ Shallow stub doc (`MechanicsMenu.md`) — scene-level audit not yet complete
 
 ---
 

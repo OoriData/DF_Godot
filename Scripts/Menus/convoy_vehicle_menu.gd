@@ -14,8 +14,7 @@ signal inspect_specific_convoy_cargo_requested(convoy_data, item_data)
 @onready var manifest_button: Button = $MainVBox/VehicleTabContainer/Cargo/CargoVBox/CargoHeader/ManifestButton
 @onready var tab_container: TabContainer = $MainVBox/VehicleTabContainer
 
-@onready var overview_vbox: VBoxContainer = $MainVBox/VehicleTabContainer/Overview/OverviewVBox
-@onready var stats_vbox: VBoxContainer = $MainVBox/VehicleTabContainer/Stats/StatsVBox
+@onready var summary_vbox: VBoxContainer = $MainVBox/VehicleTabContainer/Summary/SummaryVBox
 @onready var parts_vbox: VBoxContainer = $MainVBox/VehicleTabContainer/Parts/PartsScroll/PartsVBox
 @onready var cargo_vbox: VBoxContainer = $MainVBox/VehicleTabContainer/Cargo/CargoVBox
 @onready var back_to_mechanic_button: Button = $MainVBox/BackButton # repurpose later if needed
@@ -99,10 +98,7 @@ func _is_mobile() -> bool:
 	return false
 
 func _get_font_size(base: int) -> int:
-	var win_size = get_viewport_rect().size if is_inside_tree() else Vector2(0, 0)
-	var is_portrait = win_size.y > win_size.x
-	var boost = 2.8 if is_portrait else (1.6 if _is_mobile() else 1.2)
-	return int(base * boost)
+	return base  # UIScaleManager owns all scaling; never multiply here
 
 func _ready():
 	# Initialize back button and tab signals
@@ -126,17 +122,24 @@ func _ready():
 		
 		var win_size = get_viewport_rect().size if is_inside_tree() else Vector2(0, 0)
 		var is_portrait = win_size.y > win_size.x
-		var btn_h = 80.0 if is_portrait else (72.0 if _is_mobile() else 44.0)
+		var btn_h = 88.0 if is_portrait else (80.0 if _is_mobile() else 48.0)
 		vehicle_option_button.custom_minimum_size.y = btn_h
-		vehicle_option_button.add_theme_font_size_override("font_size", _get_font_size(16))
-		
+		vehicle_option_button.add_theme_font_size_override("font_size", _get_font_size(20))
+
 		# Scale the dropdown list (PopupMenu)
 		var popup = vehicle_option_button.get_popup()
-		popup.add_theme_font_size_override("font_size", _get_font_size(16))
-		var pad = 24 if _is_mobile() else 12
-		popup.add_theme_constant_override("item_start_padding", pad)
-		popup.add_theme_constant_override("item_end_padding", pad)
-		popup.add_theme_constant_override("v_separation", 12 if _is_mobile() else 6)
+		popup.add_theme_font_size_override("font_size", _get_font_size(20))
+		popup.add_theme_constant_override("v_separation", 20 if _is_mobile() else 8)
+		# Explicit panel stylebox so there is no excess top padding pushing items down
+		var popup_panel := StyleBoxFlat.new()
+		popup_panel.bg_color = Color(0.12, 0.14, 0.18, 0.97)
+		popup_panel.border_width_left = 1
+		popup_panel.border_width_right = 1
+		popup_panel.border_width_top = 1
+		popup_panel.border_width_bottom = 1
+		popup_panel.border_color = Color(0.35, 0.42, 0.60, 0.8)
+		popup_panel.set_content_margin_all(8)
+		popup.add_theme_stylebox_override("panel", popup_panel)
 	else:
 		printerr("ConvoyVehicleMenu: CRITICAL - VehicleOptionButton node NOT found.")
 	
@@ -177,7 +180,7 @@ func _ready():
 				parts_header.add_theme_constant_override("separation", 16 if is_portrait else 10)
 
 	# Check new VBox validity
-	if not is_instance_valid(overview_vbox) or not is_instance_valid(stats_vbox) or not is_instance_valid(parts_vbox) or not is_instance_valid(cargo_vbox):
+	if not is_instance_valid(summary_vbox) or not is_instance_valid(parts_vbox) or not is_instance_valid(cargo_vbox):
 		printerr("ConvoyVehicleMenu: CRITICAL - One or more tab VBox nodes are not valid in _ready()!")
 		return # Stop further initialization
 
@@ -223,7 +226,7 @@ func _setup_custom_tabs() -> void:
 	if is_instance_valid(tab_scroll):
 		tab_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
 		tab_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-		tab_scroll.custom_minimum_size.y = 80 if _is_portrait() else (64 if _is_mobile() else 44)
+		tab_scroll.custom_minimum_size.y = 92 if _is_portrait() else (72 if _is_mobile() else 48)
 		tab_scroll.mouse_filter = Control.MOUSE_FILTER_PASS
 		
 	# Clear any existing buttons just in case
@@ -261,9 +264,9 @@ func _setup_custom_tabs() -> void:
 			tab_name = tab_container.get_child(i).name
 		btn.text = tab_name
 		btn.toggle_mode = true
-		btn.add_theme_font_size_override("font_size", _get_font_size(16))
-		
-		btn.custom_minimum_size = Vector2(160 if is_portrait else 120, 0)
+		btn.add_theme_font_size_override("font_size", _get_font_size(20))
+
+		btn.custom_minimum_size = Vector2(160 if is_portrait else 120, 80 if is_portrait else 60)
 		
 		# Optional: add custom styling to match Oori design
 		var normal_style = StyleBoxFlat.new()
@@ -279,7 +282,9 @@ func _setup_custom_tabs() -> void:
 		normal_style.border_color = Color(0.3, 0.35, 0.4, 0.6)
 		normal_style.content_margin_left = 16
 		normal_style.content_margin_right = 16
-		
+		normal_style.content_margin_top = 14 if is_portrait else 10
+		normal_style.content_margin_bottom = 14 if is_portrait else 10
+
 		var pressed_style = normal_style.duplicate()
 		pressed_style.bg_color = Color(0.25, 0.35, 0.55, 0.9)
 		pressed_style.border_color = Color(0.45, 0.55, 0.75, 0.9)
@@ -339,7 +344,7 @@ func _on_tab_changed(tab_idx: int) -> void:
 	_update_custom_tab_buttons(tab_idx)
 
 func _clear_all_tabs():
-	var all_vboxes = [overview_vbox, stats_vbox, parts_vbox, cargo_vbox]
+	var all_vboxes = [summary_vbox, parts_vbox, cargo_vbox]
 	for vbox in all_vboxes:
 		if is_instance_valid(vbox):
 			for child in vbox.get_children():
@@ -348,7 +353,7 @@ func _clear_all_tabs():
 
 func _show_initial_detail_message(message: String):
 	_clear_all_tabs() # This also sets VBox separation
-	if not is_instance_valid(overview_vbox): return
+	if not is_instance_valid(summary_vbox): return
 
 	var prompt_label = Label.new()
 	prompt_label.text = message
@@ -357,7 +362,7 @@ func _show_initial_detail_message(message: String):
 	prompt_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	prompt_label.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	prompt_label.add_theme_font_size_override("font_size", _get_font_size(16))
-	overview_vbox.add_child(prompt_label)
+	summary_vbox.add_child(prompt_label)
 
 func initialize_with_data(data_or_id: Variant, extra_arg: Variant = null) -> void:
 	# Ensure this function runs only after the node is fully ready and @onready vars are set.
@@ -441,9 +446,14 @@ func initialize_with_data(data_or_id: Variant, extra_arg: Variant = null) -> voi
 			else: # Should not happen if current_vehicle_list was not empty, but as a fallback
 				print("ConvoyVehicleMenu: OptionButton is empty after trying to populate. Showing initial message.")
 				_show_initial_detail_message("Select a vehicle from the dropdown to view details.")
-	else:
+	elif not is_instance_valid(vehicle_option_button):
+		# Only a genuine fault: the dropdown node is missing from the scene.
 		printerr("ConvoyVehicleMenu: CRITICAL - VehicleOptionButton node NOT found during initialize_with_data.")
 		_show_initial_detail_message("Error: Vehicle selection UI not available.")
+	else:
+		# Initialized with a convoy id (String) rather than a full dict — this is normal.
+		# The dropdown is populated later by _update_ui() once GameStore has the convoy.
+		_show_initial_detail_message("Loading vehicles...")
 
 	# Ensure MenuBase subscriptions and store-driven updates are engaged for this menu
 	super.initialize_with_data(data_or_id, extra_arg)
@@ -520,50 +530,6 @@ func _update_ui(convoy: Dictionary) -> void:
 		_setup_custom_tabs()
 	# Do not call super.initialize_with_data here; this is a UI refresh
 
-func _add_styled_detail_row(parent: Container, label_text: String, value_text: String, item_index: int, value_autowrap: bool = false):
-	var outer_row := HBoxContainer.new()
-	outer_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-
-	var bg_panel := PanelContainer.new()
-	bg_panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	bg_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
-
-	var sb := StyleBoxFlat.new()
-	if item_index % 2 == 0:
-		sb.bg_color = Color(0.13, 0.15, 0.19, 0.8)
-	else:
-		sb.bg_color = Color(0.10, 0.12, 0.16, 0.8)
-	var row_margin := 14 if _is_mobile() else 6
-	sb.set_content_margin_all(row_margin)
-	bg_panel.add_theme_stylebox_override("panel", sb)
-	
-	outer_row.add_child(bg_panel)
-
-	var content_row := HBoxContainer.new()
-	content_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	content_row.add_theme_constant_override("separation", 10)
-	bg_panel.add_child(content_row)
-
-	var label_node = Label.new()
-	label_node.text = label_text
-	label_node.custom_minimum_size.x = 120
-	label_node.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	label_node.add_theme_font_size_override("font_size", _get_font_size(16))
-
-	var value_node = Label.new()
-	value_node.text = value_text
-	value_node.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	value_node.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	value_node.add_theme_font_size_override("font_size", _get_font_size(16))
-	if value_autowrap:
-		value_node.autowrap_mode = TextServer.AUTOWRAP_WORD
-	else:
-		value_node.clip_text = true # Only clip single-line values if they definitely won't wrap
-	
-	content_row.add_child(label_node)
-	content_row.add_child(value_node)
-	parent.add_child(outer_row)
-
 func _add_inspectable_item_row(parent: Container, item_name: String, agg_data: Dictionary, item_index: int):
 	# agg_data contains: quantity, sample, total_weight, total_volume
 	var item_data = agg_data.sample
@@ -581,7 +547,7 @@ func _add_inspectable_item_row(parent: Container, item_name: String, agg_data: D
 		sb.bg_color = Color(0.13, 0.15, 0.19, 0.8)
 	else:
 		sb.bg_color = Color(0.10, 0.12, 0.16, 0.8)
-	var row_margin := 14 if _is_mobile() else 6
+	var row_margin := (14 if _is_portrait() else 8) if _is_mobile() else 6
 	sb.set_content_margin_all(row_margin)
 	bg_panel.add_theme_stylebox_override("panel", sb)
 	
@@ -653,170 +619,192 @@ func _add_inspectable_item_row(parent: Container, item_name: String, agg_data: D
 
 	parent.add_child(outer_row)
 
-func _add_inspectable_part_row(parent: Container, part_data: Dictionary, item_index: int):
-	var outer_row := HBoxContainer.new()
-	outer_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	outer_row.mouse_filter = Control.MOUSE_FILTER_PASS # For hover effects
+# Loadout-style card for an installed part (read-only "Inspect" action). Mirrors the
+# Service tab's slot cards via the shared MenuBase helpers so both tabs stay in sync.
+func _add_inspectable_part_card_r(part_data: Dictionary) -> Control:
+	var slot_name := String(part_data.get("slot", "other"))
+	var accent := _slot_accent(slot_name)
+	var base_bg := Color(0.13, 0.16, 0.20, 0.92)
 
-	var bg_panel := PanelContainer.new()
-	bg_panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	bg_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var card := PanelContainer.new()
+	card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	card.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	card.mouse_filter = Control.MOUSE_FILTER_PASS
+	var sb := _make_card_style(true, accent)
+	card.add_theme_stylebox_override("panel", sb)
 
-	var sb := StyleBoxFlat.new()
-	if item_index % 2 == 0:
-		sb.bg_color = Color(0.13, 0.15, 0.19, 0.8)
-	else:
-		sb.bg_color = Color(0.10, 0.12, 0.16, 0.8)
-	var row_margin := 14 if _is_mobile() else 6
-	sb.set_content_margin_all(row_margin)
-	bg_panel.add_theme_stylebox_override("panel", sb)
-	
-	outer_row.add_child(bg_panel)
+	var vb := VBoxContainer.new()
+	vb.add_theme_constant_override("separation", 6)
+	card.add_child(vb)
 
-	var content_row := HBoxContainer.new()
-	content_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	content_row.add_theme_constant_override("separation", 10)
-	bg_panel.add_child(content_row)
+	# Header: badge + slot name
+	var header := HBoxContainer.new()
+	header.add_theme_constant_override("separation", 8)
+	vb.add_child(header)
+	header.add_child(_make_slot_badge(slot_name, accent, false))
 
-	# Part Name
-	var name_label := Label.new()
-	name_label.text = part_data.get("name", "Unknown Part")
-	name_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	name_label.clip_text = true
-	name_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	name_label.add_theme_font_size_override("font_size", _get_font_size(16))
-	content_row.add_child(name_label)
-
-	# Part Slot
 	var slot_label := Label.new()
-	slot_label.text = String(part_data.get("slot", "other")).capitalize().replace("_", " ")
-	slot_label.custom_minimum_size.x = 150
-	slot_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	slot_label.text = slot_name.capitalize().replace("_", " ")
+	slot_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	slot_label.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	slot_label.autowrap_mode = TextServer.AUTOWRAP_WORD
 	slot_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	slot_label.modulate = Color.LIGHT_GRAY
-	slot_label.add_theme_font_size_override("font_size", _get_font_size(14))
-	content_row.add_child(slot_label)
+	slot_label.add_theme_font_size_override("font_size", _get_font_size(13))
+	slot_label.add_theme_color_override("font_color", accent)
+	header.add_child(slot_label)
 
-	# Inspect Button
-	var inspect_button = Button.new()
+	# Part name
+	var name_label := Label.new()
+	name_label.text = String(part_data.get("name", "Unknown Part"))
+	name_label.autowrap_mode = TextServer.AUTOWRAP_WORD
+	name_label.add_theme_font_size_override("font_size", _get_font_size(15))
+	name_label.add_theme_color_override("font_color", Color(0.94, 0.95, 0.97))
+	vb.add_child(name_label)
+
+	# Stat summary
+	var summary := _get_part_summary_string(part_data)
+	if summary != "":
+		var stat_lbl := Label.new()
+		stat_lbl.text = summary
+		stat_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD
+		stat_lbl.add_theme_font_size_override("font_size", _get_font_size(12))
+		stat_lbl.add_theme_color_override("font_color", Color(0.70, 0.85, 1.0))
+		vb.add_child(stat_lbl)
+
+	# Inspect action
+	var inspect_button := Button.new()
 	inspect_button.text = "Inspect"
-	inspect_button.custom_minimum_size = Vector2(140 if _is_mobile() else 80, 64 if _is_mobile() else 0)
-	inspect_button.add_theme_font_size_override("font_size", _get_font_size(14))
-	inspect_button.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	inspect_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	inspect_button.custom_minimum_size = Vector2(0, 56 if _is_mobile() else 32)
+	inspect_button.add_theme_font_size_override("font_size", _get_font_size(13))
 	inspect_button.pressed.connect(_on_inspect_part_pressed.bind(part_data))
-	content_row.add_child(inspect_button)
+	vb.add_child(inspect_button)
 
-	# Hover effect
-	outer_row.mouse_entered.connect(func():
-		sb.bg_color = sb.bg_color.lightened(0.1)
-	)
-	outer_row.mouse_exited.connect(func():
-		if item_index % 2 == 0:
-			sb.bg_color = Color(0.13, 0.15, 0.19, 0.8)
-		else:
-			sb.bg_color = Color(0.10, 0.12, 0.16, 0.8)
-	)
+	# Hover lightens the whole card
+	card.mouse_entered.connect(func(): sb.bg_color = base_bg.lightened(0.08))
+	card.mouse_exited.connect(func(): sb.bg_color = base_bg)
 
-	parent.add_child(outer_row)
+	return card
 
 func _display_vehicle_details(vehicle_data: Dictionary):
 	print("ConvoyVehicleMenu: _display_vehicle_details called with data: ", vehicle_data.keys())
 	_clear_all_tabs()
 
-	_populate_overview_tab(vehicle_data)
-	_populate_stats_tab(vehicle_data)
+	_populate_summary_tab(vehicle_data)
 	_populate_parts_tab(vehicle_data)
 	_populate_cargo_tab(vehicle_data)
 
 	# Ensure layout updates
-	overview_vbox.call_deferred("update_minimum_size")
-	stats_vbox.call_deferred("update_minimum_size")
+	summary_vbox.call_deferred("update_minimum_size")
 	parts_vbox.call_deferred("update_minimum_size")
 	cargo_vbox.call_deferred("update_minimum_size")
 
-func _populate_overview_tab(vehicle_data: Dictionary):
-	if not is_instance_valid(overview_vbox): return
+## Merged Summary tab: stat pills + compact info grid + collapsible description.
+## Portrait: full-width vertical stack. Landscape: HBox split, pills left (40%), info right (60%).
+func _populate_summary_tab(vehicle_data: Dictionary):
+	if not is_instance_valid(summary_vbox): return
 
-	# Basic Info Section
-	var basic_info_title = Label.new()
-	basic_info_title.text = "Basic Information:"
-	basic_info_title.add_theme_font_size_override("font_size", _get_font_size(18))
-	basic_info_title.add_theme_color_override("font_color", Color.YELLOW)
-	overview_vbox.add_child(basic_info_title)
+	var is_portrait = _is_portrait()
 
-	# Super-robust description retrieval: look for any available text in possible fields.
-	var description_text = ""
-	var candidates = [
+	var stats = [
+		{"label": "Top Speed", "value": "%.0f" % vehicle_data.get("top_speed", 0.0), "type": "top_speed"},
+		{"label": "Offroad", "value": "%.0f" % vehicle_data.get("offroad_capability", 0.0), "type": "offroad_capability"},
+		{"label": "Efficiency", "value": "%.0f" % vehicle_data.get("efficiency", 0.0), "type": "efficiency"},
+		{"label": "Cargo Cap.", "value": "%.0f" % vehicle_data.get("cargo_capacity", 0.0), "type": "cargo_capacity"},
+		{"label": "Weight Cap.", "value": "%.0f" % vehicle_data.get("weight_capacity", 0.0), "type": "weight_capacity"},
+		{"label": "Seats", "value": "%d" % vehicle_data.get("passenger_seats", 0), "type": "passenger_seats"}
+	]
+
+	var details = [
+		{"label": "Name", "value": String(vehicle_data.get("name", ""))},
+		{"label": "Make/Model", "value": str(vehicle_data.get("make_model", ""))},
+		{"label": "Color", "value": String(vehicle_data.get("color", "")).capitalize()},
+		{"label": "Shape", "value": String(vehicle_data.get("shape", "")).capitalize().replace("_", " ")},
+		{"label": "Base Value", "value": "$%s" % int(vehicle_data.get("base_value", 0.0))},
+		{"label": "Current Value", "value": "$%s" % int(vehicle_data.get("value", 0.0))}
+	]
+
+	var description_text = _first_nonempty_string([
 		vehicle_data.get("description"),
 		vehicle_data.get("base_desc"),
 		vehicle_data.get("current_desc"),
 		vehicle_data.get("desc")
-	]
-	
-	for candidate in candidates:
-		if candidate != null:
-			var s = str(candidate).strip_edges()
-			if not s.is_empty() and s != "No description." and s != "No detailed description.":
-				description_text = s
-				break
-	
-	# If STILL empty, but the user says vehicles HAVE descriptions, we add a placeholder 
-	# so the field is visible and we can confirm if it's a data key issue.
-	if description_text.is_empty():
-		description_text = "Description not found in data. (Tested keys: description, base_desc, current_desc, desc)"
+	])
+	if description_text == "No description." or description_text == "No detailed description.":
+		description_text = ""
 
-	var details = [
-		{"label": "Name:", "value": String(vehicle_data.get("name", "")), "wrap": false},
-		{"label": "Make/Model:", "value": vehicle_data.get("make_model", ""), "wrap": false},
-		{"label": "Description:", "value": description_text, "wrap": true},
-		{"label": "Color:", "value": vehicle_data.get("color", "").capitalize(), "wrap": false},
-		{"label": "Shape:", "value": vehicle_data.get("shape", "").capitalize().replace("_", " "), "wrap": false},
-		{"label": "Base Value:", "value": "$%s" % int(vehicle_data.get("base_value", 0.0)), "wrap": false},
-		{"label": "Current Value:", "value": "$%s" % int(vehicle_data.get("value", 0.0)), "wrap": false}
-	]
-	
-	var visible_row_index = 0
-	for i in range(details.size()):
-		var detail = details[i]
-		var val = detail.value
-		
-		# Skip truly empty or placeholder values
-		if val == null:
-			continue
-			
-		var val_str = str(val).strip_edges()
+	var pill_parent: Container
+	var info_parent: Container
+
+	if is_portrait:
+		pill_parent = summary_vbox
+		info_parent = summary_vbox
+	else:
+		# Landscape: pills take the left 40%, info takes the right 60%.
+		var split := HBoxContainer.new()
+		split.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		split.size_flags_vertical = Control.SIZE_EXPAND_FILL
+		split.add_theme_constant_override("separation", 12)
+		summary_vbox.add_child(split)
+
+		var left := VBoxContainer.new()
+		left.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		left.size_flags_stretch_ratio = 2.0
+		left.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+		split.add_child(left)
+		pill_parent = left
+
+		var right := VBoxContainer.new()
+		right.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		right.size_flags_stretch_ratio = 3.0
+		right.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+		split.add_child(right)
+		info_parent = right
+
+	# --- Stats pill grid ---
+	# Portrait: 3 cols (2 rows). Landscape: 2 cols (3 rows) in the narrower left column.
+	var pill_grid := GridContainer.new()
+	pill_grid.columns = 3 if is_portrait else 2
+	pill_grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	pill_grid.add_theme_constant_override("h_separation", 8)
+	pill_grid.add_theme_constant_override("v_separation", 6)
+	pill_parent.add_child(pill_grid)
+
+	for stat in stats:
+		_build_stat_pill(pill_grid, stat.label, stat.value, stat.type, vehicle_data)
+
+	# --- Info grid ---
+	if is_portrait:
+		var info_sep := HSeparator.new()
+		info_sep.custom_minimum_size.y = 6
+		summary_vbox.add_child(info_sep)
+
+	# Landscape right column is ~60% of menu width — 1 col gives each cell full room.
+	var info_grid := GridContainer.new()
+	info_grid.columns = 1
+	info_grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	info_grid.add_theme_constant_override("h_separation", 8)
+	info_grid.add_theme_constant_override("v_separation", 4)
+	info_parent.add_child(info_grid)
+
+	var info_index = 0
+	for detail in details:
+		var val_str = str(detail.value).strip_edges()
 		if val_str.is_empty() or val_str == "N/A" or val_str == "0" or val_str == "$0":
 			continue
-		
-		_add_styled_detail_row(overview_vbox, detail.label, val_str, visible_row_index, detail.wrap)
-		visible_row_index += 1
+		_add_info_cell(info_grid, detail.label, val_str, info_index)
+		info_index += 1
 
-func _populate_stats_tab(vehicle_data: Dictionary):
-	if not is_instance_valid(stats_vbox): return
-
-	var stats = [
-		{"label": "Top Speed:", "value": "%.0f" % vehicle_data.get("top_speed", 0.0), "type": "top_speed"},
-		{"label": "Offroad:", "value": "%.0f" % vehicle_data.get("offroad_capability", 0.0), "type": "offroad_capability"},
-		{"label": "Efficiency:", "value": "%.0f" % vehicle_data.get("efficiency", 0.0), "type": "efficiency"},
-		{"label": "Cargo Capacity:", "value": "%.0f" % vehicle_data.get("cargo_capacity", 0.0), "type": "cargo_capacity"},
-		{"label": "Weight Capacity:", "value": "%.0f" % vehicle_data.get("weight_capacity", 0.0), "type": "weight_capacity"},
-		{"label": "Passenger Seats:", "value": "%d" % vehicle_data.get("passenger_seats", 0), "type": "passenger_seats"}
-	]
-	
-	# --- 2-column stat card grid is now the default for all platforms ---
-	var grid := GridContainer.new()
-	grid.columns = 2
-	grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	grid.add_theme_constant_override("h_separation", 10)
-	grid.add_theme_constant_override("v_separation", 10)
-	stats_vbox.add_child(grid)
-	
-	for stat in stats:
-		_build_stat_card(grid, stat.label, stat.value, stat.type, vehicle_data)
+	# --- Collapsible description (portrait only) ---
+	if is_portrait and not description_text.is_empty():
+		var desc_sep := HSeparator.new()
+		desc_sep.custom_minimum_size.y = 6
+		summary_vbox.add_child(desc_sep)
+		_add_collapsible_description(summary_vbox, description_text)
 
 
-## Stat card helper for grid layout ##
-func _build_stat_card(parent: Container, label_text: String, value_text: String, stat_type: String, vehicle_data: Dictionary) -> void:
+## Compact stat pill: small label stacked over a tappable value button.
+func _build_stat_pill(parent: Container, label_text: String, value_text: String, stat_type: String, vehicle_data: Dictionary) -> void:
 	var card := PanelContainer.new()
 	card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 
@@ -831,31 +819,32 @@ func _build_stat_card(parent: Container, label_text: String, value_text: String,
 	card_style.corner_radius_top_right = 6
 	card_style.corner_radius_bottom_left = 6
 	card_style.corner_radius_bottom_right = 6
-	card_style.content_margin_left = 8
-	card_style.content_margin_right = 8
-	card_style.content_margin_top = 8
-	card_style.content_margin_bottom = 8
+	card_style.content_margin_left = 6
+	card_style.content_margin_right = 6
+	card_style.content_margin_top = 5
+	card_style.content_margin_bottom = 5
 	card.add_theme_stylebox_override("panel", card_style)
 
 	var vbox := VBoxContainer.new()
 	vbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	vbox.add_theme_constant_override("separation", 4)
+	vbox.add_theme_constant_override("separation", 2)
 	card.add_child(vbox)
 
-	# Stat label (e.g. "Top Speed:")
+	var is_portrait = _is_portrait()
+
 	var lbl := Label.new()
 	lbl.text = label_text
 	lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	lbl.add_theme_color_override("font_color", Color(0.75, 0.82, 0.95, 1.0))
-	lbl.add_theme_font_size_override("font_size", _get_font_size(14))
+	lbl.add_theme_font_size_override("font_size", _get_font_size(18 if is_portrait else 13))
 	vbox.add_child(lbl)
 
-	# Value button — tappable to open breakdown
+	# Value button — tappable to open breakdown. The number is the focal point.
 	var btn := Button.new()
 	btn.text = value_text
-	btn.custom_minimum_size = Vector2(0, 64 if _is_mobile() else 52)
+	btn.custom_minimum_size = Vector2(0, (52 if is_portrait else 32) if _is_mobile() else 36)
 	btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	btn.add_theme_font_size_override("font_size", _get_font_size(22))
+	btn.add_theme_font_size_override("font_size", _get_font_size(30 if is_portrait else 22))
 	var btn_style := StyleBoxFlat.new()
 	btn_style.bg_color = Color(0.18, 0.22, 0.32, 0.95)
 	btn_style.border_width_left = 1
@@ -879,6 +868,81 @@ func _build_stat_card(parent: Container, label_text: String, value_text: String,
 	vbox.add_child(btn)
 
 	parent.add_child(card)
+
+
+## Compact "Label: value" cell for the summary info grid.
+func _add_info_cell(parent: Container, label_text: String, value_text: String, item_index: int) -> void:
+	var bg_panel := PanelContainer.new()
+	bg_panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	bg_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+
+	var sb := StyleBoxFlat.new()
+	if item_index % 2 == 0:
+		sb.bg_color = Color(0.13, 0.15, 0.19, 0.8)
+	else:
+		sb.bg_color = Color(0.10, 0.12, 0.16, 0.8)
+	sb.set_content_margin_all((11 if _is_portrait() else 7) if _is_mobile() else 5)
+	bg_panel.add_theme_stylebox_override("panel", sb)
+
+	var content_row := HBoxContainer.new()
+	content_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	content_row.add_theme_constant_override("separation", 8)
+	bg_panel.add_child(content_row)
+
+	var label_node := Label.new()
+	label_node.text = label_text
+	label_node.custom_minimum_size.x = 110
+	label_node.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	label_node.add_theme_color_override("font_color", Color(0.70, 0.78, 0.92, 0.95))
+	label_node.add_theme_font_size_override("font_size", _get_font_size(19))
+	content_row.add_child(label_node)
+
+	var value_node := Label.new()
+	value_node.text = value_text
+	value_node.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	value_node.clip_text = true
+	value_node.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	value_node.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	value_node.add_theme_font_size_override("font_size", _get_font_size(19))
+	content_row.add_child(value_node)
+
+	parent.add_child(bg_panel)
+
+
+## Description clamped to a few lines with a More/Less toggle to expand inline.
+func _add_collapsible_description(parent: Container, text: String) -> void:
+	var collapsed_lines := 3
+	# Roughly the character count that fills collapsed_lines at this width; below it
+	# the text fits without clamping, so no toggle is needed.
+	var toggle_char_threshold := 140
+	var desc_label := Label.new()
+	desc_label.text = text
+	desc_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	desc_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	desc_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	desc_label.add_theme_font_size_override("font_size", _get_font_size(16))
+	parent.add_child(desc_label)
+
+	if text.length() <= toggle_char_threshold:
+		desc_label.max_lines_visible = -1
+		return
+
+	desc_label.max_lines_visible = collapsed_lines
+	var toggle := Button.new()
+	toggle.text = "More ▾"
+	toggle.flat = true
+	toggle.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+	toggle.add_theme_color_override("font_color", Color(0.55, 0.70, 1.0, 1.0))
+	toggle.add_theme_font_size_override("font_size", _get_font_size(13))
+	toggle.pressed.connect(func():
+		if desc_label.max_lines_visible == collapsed_lines:
+			desc_label.max_lines_visible = -1
+			toggle.text = "Less ▴"
+		else:
+			desc_label.max_lines_visible = collapsed_lines
+			toggle.text = "More ▾"
+	)
+	parent.add_child(toggle)
 
 func _populate_parts_tab(vehicle_data: Dictionary):
 	if not is_instance_valid(parts_vbox): return
@@ -909,30 +973,66 @@ func _populate_parts_tab(vehicle_data: Dictionary):
 			categorized_parts[category] = [] # Should not happen if PART_CATEGORY_ORDER is exhaustive
 		categorized_parts[category].append(part_item_data)
 
+	# Switch the outer scroll container's direction based on orientation. In landscape
+	# all cards go in one flat HBox so the whole tab scrolls horizontally — no nested
+	# ScrollContainers, which clip each other and compete for touch events in Godot 4.
+	var landscape := not _is_portrait()
+	var parts_scroll_node := parts_vbox.get_parent() as ScrollContainer
+	var parts_header_node := get_node_or_null("MainVBox/VehicleTabContainer/Parts/PartsHeader")
+	var parts_header_sep := get_node_or_null("MainVBox/VehicleTabContainer/Parts/PartsHeaderSeparator")
+	if is_instance_valid(parts_scroll_node):
+		if landscape:
+			parts_scroll_node.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+			parts_scroll_node.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+		else:
+			parts_scroll_node.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+			parts_scroll_node.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+	if is_instance_valid(parts_header_node):
+		parts_header_node.visible = not landscape
+	if is_instance_valid(parts_header_sep):
+		parts_header_sep.visible = not landscape
+
 	var has_parts_to_display = false
-	var part_row_index = 0
-	for category_name in PART_CATEGORY_ORDER:
-		var parts_in_category = categorized_parts.get(category_name)
-		if parts_in_category and not parts_in_category.is_empty():
-			has_parts_to_display = true
-			# Add category sub-header
-			var sep = HSeparator.new()
-			sep.custom_minimum_size.y = 8
-			parts_vbox.add_child(sep)
-			var category_label = Label.new()
-			category_label.text = category_name + ":"
-			# Make category headers more prominent and match menu accent color
-			var is_portrait = (get_viewport_rect().size.y > get_viewport_rect().size.x) if is_inside_tree() else false
-			category_label.add_theme_font_size_override("font_size", _get_font_size(22 if is_portrait else 18))
-			category_label.add_theme_color_override("font_color", Color.YELLOW)
-			parts_vbox.add_child(category_label)
-
-			# Sort parts within each category deterministically by name (lower), then slot, then id
-			parts_in_category.sort_custom(func(a, b): return String(a.get("name", "")).to_lower() < String(b.get("name", "")).to_lower())
-
+	if landscape:
+		# All parts in one horizontal row — category labels omitted to save space.
+		var hbox := HBoxContainer.new()
+		hbox.add_theme_constant_override("separation", 8)
+		hbox.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+		hbox.size_flags_vertical = Control.SIZE_EXPAND_FILL
+		parts_vbox.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+		parts_vbox.add_child(hbox)
+		var card_min_w := _landscape_card_width()
+		for category_name in PART_CATEGORY_ORDER:
+			var parts_in_category: Array = categorized_parts.get(category_name, [])
 			for part_item_data in parts_in_category:
-				_add_inspectable_part_row(parts_vbox, part_item_data, part_row_index)
-				part_row_index += 1
+				var card := _add_inspectable_part_card_r(part_item_data)
+				card.custom_minimum_size.x = card_min_w
+				card.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+				hbox.add_child(card)
+				has_parts_to_display = true
+	else:
+		parts_vbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		for category_name in PART_CATEGORY_ORDER:
+			var parts_in_category = categorized_parts.get(category_name)
+			if parts_in_category and not parts_in_category.is_empty():
+				has_parts_to_display = true
+				var sep = HSeparator.new()
+				sep.custom_minimum_size.y = 8
+				parts_vbox.add_child(sep)
+				var category_label = Label.new()
+				category_label.text = category_name + ":"
+				category_label.add_theme_font_size_override("font_size", _get_font_size(18))
+				category_label.add_theme_color_override("font_color", Color.YELLOW)
+				parts_vbox.add_child(category_label)
+				parts_in_category.sort_custom(func(a, b): return String(a.get("name", "")).to_lower() < String(b.get("name", "")).to_lower())
+				var grid := GridContainer.new()
+				grid.columns = 2
+				grid.add_theme_constant_override("h_separation", 8)
+				grid.add_theme_constant_override("v_separation", 8)
+				grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+				parts_vbox.add_child(grid)
+				for part_item_data in parts_in_category:
+					grid.add_child(_add_inspectable_part_card_r(part_item_data))
 
 	if not has_parts_to_display:
 		var no_parts_label = Label.new()

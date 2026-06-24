@@ -24,6 +24,11 @@ const MENU_ORDER = {
 	"convoy_cargo_submenu": 6
 }
 var _switch_tween: Tween = null
+# Outgoing menu whose disposal is deferred into the active switch tween's callback.
+# Tracked so an interrupting switch (which kills that tween) can flush it instead of
+# leaving it orphaned in the tree — the cause of the faint "ghost menu" behind a submenu.
+var _pending_switch_old_menu: Control = null
+var _pending_switch_old_persistent: bool = false
 
 var current_active_menu = null
 var menu_stack = [] # To keep track of the navigation path for "back" functionality
@@ -647,16 +652,33 @@ func _restore_mouse_recursive(node: Node) -> void:
 	for child in node.get_children():
 		_restore_mouse_recursive(child)
 
+## Dispose of a switch's outgoing menu: detach if persistent (kept in cache), else free.
+func _finalize_switch_old_menu(node: Control, is_persistent: bool) -> void:
+	if not is_instance_valid(node):
+		return
+	var host = _menu_content_area if is_instance_valid(_menu_content_area) else _menu_container_host
+	if is_persistent and is_instance_valid(host) and node.get_parent() == host:
+		host.remove_child(node)
+	else:
+		node.queue_free()
+
 func _start_menu_switch_animation(old_menu: Control, new_menu: Control, direction: int, slide_distance: float, old_type: String = "", new_type: String = "", old_is_persistent: bool = false) -> void:
 	var host = _menu_content_area if is_instance_valid(_menu_content_area) else _menu_container_host
-	
+
+	# Flush an outgoing menu left over from a prior switch that was interrupted before its
+	# tween callback could dispose of it (otherwise it lingers as a ghost behind the new menu).
+	if is_instance_valid(_pending_switch_old_menu) and _pending_switch_old_menu != old_menu and _pending_switch_old_menu != new_menu:
+		_finalize_switch_old_menu(_pending_switch_old_menu, _pending_switch_old_persistent)
+	_pending_switch_old_menu = null
+
 	if not is_instance_valid(new_menu) or not is_instance_valid(old_menu):
 		if is_instance_valid(old_menu):
-			if old_is_persistent and is_instance_valid(host):
-				host.remove_child(old_menu)
-			else:
-				old_menu.queue_free()
+			_finalize_switch_old_menu(old_menu, old_is_persistent)
 		return
+
+	# Track this switch's outgoing menu so an interrupting switch can flush it.
+	_pending_switch_old_menu = old_menu
+	_pending_switch_old_persistent = old_is_persistent
 
 	# Kill input on the outgoing menu immediately
 	_disable_mouse_recursive(old_menu)
@@ -709,13 +731,9 @@ func _start_menu_switch_animation(old_menu: Control, new_menu: Control, directio
 			_switch_tween.tween_property(new_menu, "modulate:a", 1.0, SWITCH_DURATION)
 			
 		_switch_tween.chain().tween_callback(func():
-			if is_instance_valid(old_menu):
-				if old_is_persistent and is_instance_valid(host):
-					print("[MenuManager] Animation finished: Detaching persistent old menu: ", old_menu.name)
-					host.remove_child(old_menu)
-				else:
-					print("[MenuManager] Animation finished: Freeing non-persistent old menu: ", old_menu.name)
-					old_menu.queue_free()
+			_finalize_switch_old_menu(old_menu, old_is_persistent)
+			if _pending_switch_old_menu == old_menu:
+				_pending_switch_old_menu = null
 			if is_instance_valid(new_menu):
 				new_menu.position.y = base_y
 				new_menu.modulate.a = 1.0
@@ -743,13 +761,9 @@ func _start_menu_switch_animation(old_menu: Control, new_menu: Control, directio
 	_switch_tween.tween_property(new_menu, "position:x", new_target_x, SWITCH_DURATION)
 
 	_switch_tween.chain().tween_callback(func():
-		if is_instance_valid(old_menu):
-			if old_is_persistent and is_instance_valid(host):
-				print("[MenuManager] Animation finished: Detaching persistent old menu: ", old_menu.name)
-				host.remove_child(old_menu)
-			else:
-				print("[MenuManager] Animation finished: Freeing non-persistent old menu: ", old_menu.name)
-				old_menu.queue_free()
+		_finalize_switch_old_menu(old_menu, old_is_persistent)
+		if _pending_switch_old_menu == old_menu:
+			_pending_switch_old_menu = null
 		if is_instance_valid(new_menu):
 			new_menu.position.x = new_target_x
 			var restored_bg = new_menu.get_node_or_null("OoriBackground")

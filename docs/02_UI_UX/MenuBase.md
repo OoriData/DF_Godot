@@ -124,6 +124,53 @@ func apply_ui_state(_state: Dictionary) -> void:
 
 ---
 
+## Loadout Card Helpers
+
+`MenuBase` provides a set of shared helpers for rendering vehicle parts as **loadout cards** — used by the Parts tab (`convoy_vehicle_menu.gd`) and the Service/Parts tab (`mechanics_menu.gd`) so both surfaces stay visually consistent.
+
+### `_slot_accent(slot_name: String) -> Color`
+
+Returns the accent color for a given slot type. The mapping:
+
+| Slot(s) | Color |
+|---|---|
+| `engine`, `ice`, `motor` | Green `#9ec459` |
+| `battery`, `cell` | Teal `#5ccaa6` |
+| `tune`, `ecu`, `chip` | Amber `#f0c74a` |
+| `transmission`, `trans`, `gearbox`, `drivetrain` | Blue `#7d9eda` |
+| `tires`, `tire`, `wheels`, `wheel` | Purple `#bd8dd9` |
+| `chassis`, `frame`, `suspension` | Coral `#d48f6b` |
+| *(everything else)* | Neutral grey `#8c99b2` |
+
+### `_make_card_style(filled: bool, accent: Color) -> StyleBoxFlat`
+
+Returns a rounded `StyleBoxFlat` for a card surface:
+- **Filled** (installed): dark blue-grey background, 3px left border in the slot accent color.
+- **Empty** (no part): slightly darker background, 1px dashed-look border, no accent.
+
+### `_make_slot_badge(slot_name, accent, is_empty) -> Control`
+
+Returns a small `PanelContainer` with the slot's initial letter centred inside, tinted by accent. Used as the leading element in the card header row.
+
+### `_make_slot_container(parent: Control) -> Container`
+
+Builds and attaches the appropriate card container to `parent` for the current orientation:
+- **Portrait** → 2-column `GridContainer` (`SIZE_EXPAND_FILL`).
+- **Landscape** → `HBoxContainer` (`SIZE_SHRINK_BEGIN`) inside a `ScrollContainer` (`horizontal_scroll_mode = AUTO`, `vertical_scroll_mode = DISABLED`). Returns the inner `HBoxContainer` so cards are added directly to it.
+
+> [!IMPORTANT]
+> In practice, menus do **not** use `_make_slot_container` to create nested scroll containers. Instead they switch the **outer** tab scroll container's direction at runtime (`parts_scroll.horizontal_scroll_mode = ...`) and add a flat `HBoxContainer` directly to the VBox. Nested scroll containers fail in Godot 4 — the outer clips the inner's rect and both compete for touch events.
+
+### `_landscape_card_width() -> int`
+
+Returns the fixed minimum card width for a landscape horizontal-scroll strip: `220px` desktop, `190px` mobile. Menus set `card.custom_minimum_size.x = _landscape_card_width()` and `card.size_flags_horizontal = SIZE_SHRINK_BEGIN` so cards don't stretch to fill the HBox.
+
+### `_card_is_mobile() -> bool`
+
+Orientation/device check used internally by the card helpers (portrait = treated as mobile for sizing purposes).
+
+---
+
 ## Visual Helpers
 
 `MenuBase` provides several pre-built visual helpers that menus call from `_update_ui` or `_ready`:

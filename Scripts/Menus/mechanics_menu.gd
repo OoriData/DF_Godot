@@ -21,6 +21,11 @@ signal changes_committed(convoy_id: String, vehicle_id: String, swaps: Array, es
 
 var _custom_tab_buttons: Array[Button] = []
 
+# Loadout-card container ref (Parts tab). Portrait = GridContainer (2 col);
+# landscape = HBoxContainer inside a horizontal ScrollContainer.
+# Installed slots first, empty (but swappable) slots ordered to the bottom.
+var _slot_grid: Container = null
+
 # State
 var _convoy: Dictionary = {}
 var _vehicles: Array = []
@@ -54,10 +59,10 @@ func _is_mobile() -> bool:
 	return false
 
 func _get_font_size(base: int) -> int:
-	var win_size = get_viewport_rect().size if is_inside_tree() else Vector2(0, 0)
-	var is_portrait = win_size.y > win_size.x
-	var boost = 2.5 if is_portrait else (1.6 if _is_mobile() else 1.2)
-	return int(base * boost)
+	return base  # UIScaleManager owns all scaling; never multiply here
+
+# Loadout-card visual language (_slot_accent / _make_card_style / _make_slot_badge
+# / _make_slot_container) lives in MenuBase so both tabs stay in sync.
 
 func _looks_like_uuid(s: String) -> bool:
 	# Very small heuristic to recognize UUIDs without regex.
@@ -507,61 +512,78 @@ func _part_delta_summary(from_part: Dictionary, to_part: Dictionary) -> String:
 			bits.append("%s %s%.0f" % [labels.get(k, k), sym, num])
 	return ", ".join(bits)
 
-func _create_styled_part_row(part: Dictionary, slot_name: String, item_index: int) -> HBoxContainer:
-	var outer_row := HBoxContainer.new()
-	outer_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	outer_row.mouse_filter = Control.MOUSE_FILTER_PASS
-	outer_row.set_meta("slot_name", slot_name) # Keep meta for styling
+# Build a single loadout card for a slot. Filled slots get the accent bar + part
+# name + stat summary; empty slots render dimmed with an "Install…" action.
+# The card keeps meta "slot_name" and a child Button named "SwapButton" so the
+# vendor compatibility-highlight helpers can still find and restyle it.
+func _create_slot_card(part: Dictionary, slot_name: String, is_empty: bool) -> Control:
+	var accent := _slot_accent(slot_name)
+	var filled := not is_empty
+	var base_bg := Color(0.13, 0.16, 0.20, 0.92) if filled else Color(0.10, 0.11, 0.14, 0.85)
 
-	var bg_panel := PanelContainer.new()
-	bg_panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	bg_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var card := PanelContainer.new()
+	card.set_meta("slot_name", slot_name) # Keep meta for compat-highlight helpers
+	card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	card.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	card.mouse_filter = Control.MOUSE_FILTER_PASS
+	var sb := _make_card_style(filled, accent)
+	card.add_theme_stylebox_override("panel", sb)
 
-	var sb := StyleBoxFlat.new()
-	if item_index % 2 == 0:
-		sb.bg_color = Color(0.13, 0.15, 0.19, 0.8)
-	else:
-		sb.bg_color = Color(0.10, 0.12, 0.16, 0.8)
-	var row_margin := 12 if _is_mobile() else 6
-	sb.set_content_margin_all(row_margin)
-	bg_panel.add_theme_stylebox_override("panel", sb)
-	
-	outer_row.add_child(bg_panel)
+	var vb := VBoxContainer.new()
+	vb.add_theme_constant_override("separation", 6)
+	card.add_child(vb)
 
-	var content_row := HBoxContainer.new()
-	content_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	content_row.add_theme_constant_override("separation", 10)
-	bg_panel.add_child(content_row)
+	# Header: badge + slot name
+	var header := HBoxContainer.new()
+	header.add_theme_constant_override("separation", 8)
+	vb.add_child(header)
+	header.add_child(_make_slot_badge(slot_name, accent, is_empty))
 
-	var name_label = Label.new()
-	var part_name_text = "  — None installed —" if String(part.get("name", "None")) == "None" else "  " + String(part.get("name", "Unknown Part"))
-	name_label.text = part_name_text
-	name_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	name_label.clip_text = true
-	name_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	name_label.add_theme_font_size_override("font_size", _get_font_size(16))
-	content_row.add_child(name_label)
+	var slot_lbl := Label.new()
+	slot_lbl.text = slot_name.capitalize().replace("_", " ")
+	slot_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	slot_lbl.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	slot_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD
+	slot_lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	slot_lbl.add_theme_font_size_override("font_size", _get_font_size(15))
+	slot_lbl.add_theme_color_override("font_color", accent if filled else Color(0.60, 0.63, 0.70))
+	header.add_child(slot_lbl)
 
-	var change_btn = Button.new()
-	var win_size_row = get_viewport_rect().size if is_inside_tree() else Vector2(0, 0)
-	var is_portrait_row = win_size_row.y > win_size_row.x
+	# Installed part name (or "Empty")
+	var name_label := Label.new()
+	name_label.text = "Empty" if is_empty else String(part.get("name", "Unknown Part"))
+	name_label.autowrap_mode = TextServer.AUTOWRAP_WORD
+	name_label.add_theme_font_size_override("font_size", _get_font_size(14))
+	name_label.add_theme_color_override("font_color", Color(0.50, 0.53, 0.60) if is_empty else Color(0.94, 0.95, 0.97))
+	vb.add_child(name_label)
+
+	# Stat summary (installed only)
+	if filled:
+		var summary := _part_summary(part)
+		if summary != "":
+			var stat_lbl := Label.new()
+			stat_lbl.text = summary
+			stat_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD
+			stat_lbl.add_theme_font_size_override("font_size", _get_font_size(12))
+			stat_lbl.add_theme_color_override("font_color", Color(0.70, 0.85, 1.0))
+			vb.add_child(stat_lbl)
+
+	# Action button — name + meta preserved for compat helpers
+	var change_btn := Button.new()
 	change_btn.name = "SwapButton"
-	change_btn.text = "Swap…"
-	var btn_h = 80 if is_portrait_row else (64 if _is_mobile() else 44)
-	change_btn.custom_minimum_size = Vector2(140 if _is_mobile() else 80, btn_h)
-	change_btn.add_theme_font_size_override("font_size", _get_font_size(14))
-	change_btn.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	change_btn.text = "Install…" if is_empty else "Swap…"
+	change_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	change_btn.custom_minimum_size = Vector2(0, 56 if _is_mobile() else 32)
+	change_btn.add_theme_font_size_override("font_size", _get_font_size(13))
 	_style_swap_button(change_btn, slot_name)
 	change_btn.pressed.connect(_on_swap_part_pressed.bind(slot_name, part))
-	content_row.add_child(change_btn)
+	vb.add_child(change_btn)
 
-	# Hover effect
-	outer_row.mouse_entered.connect(func(): sb.bg_color = sb.bg_color.lightened(0.1))
-	outer_row.mouse_exited.connect(func():
-		sb.bg_color = Color(0.13, 0.15, 0.19, 0.8) if item_index % 2 == 0 else Color(0.10, 0.12, 0.16, 0.8)
-	)
+	# Hover lightens the whole card
+	card.mouse_entered.connect(func(): sb.bg_color = base_bg.lightened(0.08))
+	card.mouse_exited.connect(func(): sb.bg_color = base_bg)
 
-	return outer_row
+	return card
 
 # Unique ID helpers for deduping pending swaps
 func _get_part_unique_id(part: Dictionary) -> String:
@@ -1078,28 +1100,73 @@ func _rebuild_parts_tab(vehicle_data: Dictionary):
 	var slots_sorted: Array = by_slot.keys()
 	slots_sorted.sort()
 
-	var part_row_index = 0
+	# Split into installed vs empty so empty slots always sort to the bottom,
+	# while only keeping slots that have a swappable candidate available.
+	var installed_entries: Array = []
+	var empty_entries: Array = []
 	for slot_name in slots_sorted:
-		# Skip any slot that has no swappable candidates in inventory or vendor stock.
-		# This ensures that every visible part row corresponds to a slot where a swap is possible.
 		if not _slot_has_swappable_candidate(vehicle_data, slot_name):
 			continue
-		var header = Label.new()
-		header.text = slot_name.capitalize().replace("_", " ")
-		var is_portrait = (get_viewport_rect().size.y > get_viewport_rect().size.x) if is_inside_tree() else false
-		header.add_theme_font_size_override("font_size", _get_font_size(24 if is_portrait else 18))
-		header.add_theme_color_override("font_color", Color.YELLOW)
-		parts_vbox.add_child(header)
-
 		for part in by_slot[slot_name]:
-			var row = _create_styled_part_row(part, slot_name, part_row_index)
-			parts_vbox.add_child(row)
-			part_row_index += 1
-		
-		# Add a separator between slot groups
-		var sep = HSeparator.new()
-		sep.custom_minimum_size.y = 8
-		parts_vbox.add_child(sep)
+			if String(part.get("name", "None")) == "None":
+				empty_entries.append({"part": part, "slot": slot_name})
+			else:
+				installed_entries.append({"part": part, "slot": slot_name})
+
+	# Switch the outer scroll container's direction based on orientation, then
+	# build the matching card container. This avoids nested ScrollContainers, which
+	# clip each other and compete for touch events in Godot 4.
+	var landscape := not _is_portrait()
+	if is_instance_valid(parts_scroll):
+		if landscape:
+			parts_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+			parts_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+		else:
+			parts_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+			parts_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+	if landscape:
+		var hbox := HBoxContainer.new()
+		hbox.add_theme_constant_override("separation", 8)
+		hbox.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+		hbox.size_flags_vertical = Control.SIZE_EXPAND_FILL
+		parts_vbox.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+		parts_vbox.add_child(hbox)
+		_slot_grid = hbox
+	else:
+		var grid := GridContainer.new()
+		grid.columns = 2
+		grid.add_theme_constant_override("h_separation", 8)
+		grid.add_theme_constant_override("v_separation", 8)
+		grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		parts_vbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		parts_vbox.add_child(grid)
+		_slot_grid = grid
+
+	var card_min_w := _landscape_card_width() if landscape else 0
+	for e in installed_entries:
+		var card := _create_slot_card(e["part"], e["slot"], false)
+		if card_min_w > 0:
+			card.custom_minimum_size.x = card_min_w
+			card.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+		_slot_grid.add_child(card)
+	for e in empty_entries:
+		var card := _create_slot_card(e["part"], e["slot"], true)
+		if card_min_w > 0:
+			card.custom_minimum_size.x = card_min_w
+			card.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+		_slot_grid.add_child(card)
+
+	if installed_entries.is_empty() and empty_entries.is_empty():
+		_show_info(parts_vbox, "No swappable parts available here.")
+
+# All slot cards in the grid (cards carry meta "slot_name").
+func _all_slot_cards() -> Array:
+	var out: Array = []
+	if is_instance_valid(_slot_grid):
+		for c in _slot_grid.get_children():
+			if c is Control and (c as Control).has_meta("slot_name"):
+				out.append(c)
+	return out
 
 func _refresh_slot_vendor_availability():
 	# Compute vendor availability WITHOUT clearing to false first; clearing causes visible flicker
@@ -1311,12 +1378,10 @@ func _refresh_slot_inventory_availability() -> void:
 		_restyle_swap_buttons_for_slot(s)
 
 func _restyle_swap_buttons_for_slot(slot_name: String) -> void:
-	for child in parts_vbox.get_children():
-		if not is_instance_valid(child):
-			continue
-		if child is HBoxContainer and child.has_meta("slot_name") and String(child.get_meta("slot_name")) == slot_name:
-			# The button is nested inside the styled row; find it by name.
-			var swap_btn: Button = child.find_child("SwapButton", true, false) as Button
+	for card in _all_slot_cards():
+		if String(card.get_meta("slot_name", "")) == slot_name:
+			# The button is nested inside the card; find it by name.
+			var swap_btn: Button = card.find_child("SwapButton", true, false) as Button
 			if is_instance_valid(swap_btn):
 				_style_swap_button(swap_btn, slot_name)
 
@@ -1426,24 +1491,23 @@ func _rebuild_pending_tab():
 			panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
 			outer_row.add_child(panel)
 
+			var entry_accent := _slot_accent(String(e.get("slot", "")))
+			var base_bg := Color(0.13, 0.16, 0.20, 0.92) if item_index % 2 == 0 else Color(0.10, 0.12, 0.16, 0.9)
 			var sb = StyleBoxFlat.new()
-			if item_index % 2 == 0:
-				sb.bg_color = Color(0.13, 0.15, 0.19, 0.8)
-			else:
-				sb.bg_color = Color(0.10, 0.12, 0.16, 0.8)
+			sb.bg_color = base_bg
+			sb.set_corner_radius_all(8)
+			sb.border_width_left = 3
+			sb.border_color = entry_accent
 			var row_margin := 14 if _is_mobile() else 8
 			sb.set_content_margin_all(row_margin)
 			panel.add_theme_stylebox_override("panel", sb)
 
 			# Hover effect
 			outer_row.mouse_entered.connect(func():
-				sb.bg_color = sb.bg_color.lightened(0.1)
+				sb.bg_color = base_bg.lightened(0.1)
 			)
 			outer_row.mouse_exited.connect(func():
-				if item_index % 2 == 0:
-					sb.bg_color = Color(0.13, 0.15, 0.19, 0.8)
-				else:
-					sb.bg_color = Color(0.10, 0.12, 0.16, 0.8)
+				sb.bg_color = base_bg
 			)
 
 			var row_hb = HBoxContainer.new()
@@ -1658,9 +1722,8 @@ func _make_stat_overview_panel(vehicle_id: String, before_stats: Dictionary, aft
 	sb.border_color = Color(0.4, 0.45, 0.5, 1.0)
 	sb.border_width_left = 1
 	sb.border_width_bottom = 1
-	sb.set_content_margin_all(8)
-	sb.corner_radius_top_left = 4
-	sb.corner_radius_top_right = 4
+	sb.set_content_margin_all(10)
+	sb.set_corner_radius_all(8)
 	panel.add_theme_stylebox_override("panel", sb)
 	panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 
@@ -2431,40 +2494,19 @@ func _get_vendor_id_at_convoy_location() -> String:
 	return ""
 
 func _ensure_slot_row(slot_name: String) -> void:
-	# If the UI has no row for this slot, create a placeholder row to enable swapping
-	var has_any := false
-	for child in parts_vbox.get_children():
-		if child is HBoxContainer and child.has_meta("slot_name") and String(child.get_meta("slot_name")) == slot_name:
-			has_any = true
-			break
-	if has_any:
+	# If the grid has no card for this slot, append an empty placeholder card so the
+	# slot becomes swappable. Appending keeps empty slots at the bottom of the grid.
+	if not is_instance_valid(_slot_grid):
 		return
-	# Insert a header if missing
-	var header_present := false
-	for child in parts_vbox.get_children():
-		if child is Label and String(child.text).to_lower() == slot_name.replace("_", " ").to_lower():
-			header_present = true
-			break
-	if not header_present:
-		var header = Label.new()
-		header.text = slot_name.capitalize().replace("_", " ")
-		# Scale dynamically added slot headers
-		var is_portrait = (get_viewport_rect().size.y > get_viewport_rect().size.x) if is_inside_tree() else false
-		var font_sz = _get_font_size(24 if is_portrait else 18) if has_method("_get_font_size") else 16
-		header.add_theme_font_size_override("font_size", font_sz)
-		header.add_theme_color_override("font_color", Color.YELLOW)
-		parts_vbox.add_child(header)
-	# Add placeholder row
-	var current_part := {"name": "None", "slot": slot_name}
-	# Find the current total number of rows to get the correct index for styling
-	var current_row_count = 0
-	for child in parts_vbox.get_children():
-		# Only count actual part rows, not headers or separators
-		if child is HBoxContainer:
-			current_row_count += 1
-	
-	var row = _create_styled_part_row(current_part, slot_name, current_row_count)
-	parts_vbox.add_child(row)
+	for card in _all_slot_cards():
+		if String(card.get_meta("slot_name", "")) == slot_name:
+			return
+	var placeholder := {"name": "None", "slot": slot_name}
+	var new_card := _create_slot_card(placeholder, slot_name, true)
+	if not _is_portrait():
+		new_card.custom_minimum_size.x = _landscape_card_width()
+		new_card.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+	_slot_grid.add_child(new_card)
 
 func _extract_unit_price(d: Dictionary) -> float:
 	# Mirrors Vendor panel logic to derive a per-unit price
@@ -2570,14 +2612,19 @@ func _make_candidate_row(part: Dictionary, from_part: Dictionary, _source: Strin
 	bg_panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	bg_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
 
+	var cand_slot := _detect_slot_for_item(from_part)
+	if cand_slot == "":
+		cand_slot = _detect_slot_for_item(part)
+	var cand_accent := _slot_accent(cand_slot)
+	var cand_base_bg := Color(0.13, 0.16, 0.20, 0.92) if item_index % 2 == 0 else Color(0.10, 0.12, 0.16, 0.9)
 	var sb := StyleBoxFlat.new()
-	if item_index % 2 == 0:
-		sb.bg_color = Color(0.13, 0.15, 0.19, 0.8)
-	else:
-		sb.bg_color = Color(0.10, 0.12, 0.16, 0.8)
+	sb.bg_color = cand_base_bg
 	var row_margin := 14 if _is_mobile() else 6
 	sb.set_content_margin_all(row_margin)
-	sb.set_corner_radius_all(6)
+	sb.set_corner_radius_all(8)
+	if compatible:
+		sb.border_width_left = 3
+		sb.border_color = cand_accent
 	bg_panel.add_theme_stylebox_override("panel", sb)
 	outer_row.add_child(bg_panel)
 
@@ -2641,10 +2688,8 @@ func _make_candidate_row(part: Dictionary, from_part: Dictionary, _source: Strin
 	content_row.add_child(select_btn)
 
 	# Hover effect
-	outer_row.mouse_entered.connect(func(): sb.bg_color = sb.bg_color.lightened(0.1))
-	outer_row.mouse_exited.connect(func():
-		sb.bg_color = Color(0.13, 0.15, 0.19, 0.8) if item_index % 2 == 0 else Color(0.10, 0.12, 0.16, 0.8)
-	)
+	outer_row.mouse_entered.connect(func(): sb.bg_color = cand_base_bg.lightened(0.1))
+	outer_row.mouse_exited.connect(func(): sb.bg_color = cand_base_bg)
 
 	return outer_row
 
@@ -2878,6 +2923,7 @@ func _debug_swap_open_dump(slot_name: String, current_part: Dictionary, vehicle:
 	}, "Vendor Candidates")
 
 func _clear_parts_ui():
+	_slot_grid = null
 	for c in parts_vbox.get_children():
 		c.queue_free()
 

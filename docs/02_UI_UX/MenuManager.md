@@ -90,3 +90,16 @@ To enable persistence for a menu:
 - `close_all_menus()`: Wipes the stack and hides the UI.
 - `menu_opened(menu_node, menu_type)`: Signal emitted on any menu open.
 - `menu_visibility_changed(is_open, menu_name)`: Signal emitted for high-level visibility state.
+
+---
+
+## Ghost Menu Bug Fix (June 2026)
+
+**Symptom:** A faint copy of the outgoing menu (e.g. Convoy Overview content) was visible behind the newly opened menu, appearing as a transparent ghost.
+
+**Root cause:** The outgoing menu node was only disposed inside the tween's *chained callback*. When the player navigated again before the 0.42 s animation finished, `_switch_tween.kill()` cancelled the tween — and its callback — leaving the old menu node orphaned in the scene tree. Transparent menu backgrounds made it render through as a ghost.
+
+**Fix:** Added `_pending_switch_old_menu: Control` and `_pending_switch_old_persistent: bool` tracking variables, and a `_finalize_switch_old_menu(node, is_persistent)` helper that either detaches (cache) or `queue_free()`s the outgoing menu. At the start of every `_start_menu_switch_animation()` call, any leftover pending menu is flushed before the new animation begins, so rapid navigation cannot orphan a menu.
+
+> [!IMPORTANT]
+> If you add a new tween-based transition path, call `_finalize_switch_old_menu` inside **both** the normal completion callback and the flush guard at the top of `_start_menu_switch_animation`. Never rely solely on the tween callback to dispose a menu node.

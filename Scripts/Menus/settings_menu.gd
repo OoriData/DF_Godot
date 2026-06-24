@@ -59,9 +59,7 @@ func _is_mobile() -> bool:
 	return false
 
 func _get_font_size(base: int) -> int:
-	var is_portrait = _is_portrait()
-	var boost = 3.5 if is_portrait else (1.6 if _is_mobile() else 1.2)
-	return int(base * boost)
+	return base  # UIScaleManager owns all scaling; never multiply here
 
 func _update_layout() -> void:
 	if not is_inside_tree(): return
