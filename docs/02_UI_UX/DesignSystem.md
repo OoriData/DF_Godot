@@ -16,6 +16,9 @@ created: 2026-05-18
 > [!IMPORTANT]
 > Colors and spacing are **not** declared ad-hoc. The single source of truth is the `UITheme` autoload (`Scripts/System/ui_theme.gd`) for tokens, and the global `Assets/df_theme.tres` for control styling (wired via `gui/theme/custom` in `project.godot`). Do not re-declare palette `const`s in individual scripts — reference `UITheme.*`.
 
+> [!NOTE]
+> **Adoption is partial (verified 2026-06-25) — this system is the *target*, not the current state everywhere.** On `UITheme` tokens + tier styles: ✅ `convoy_menu`, `convoy_vehicle_menu`, `mechanics_menu`, `vendor_trade_panel`. ⚠️ partial: `convoy_settlement_menu`. ❌ still raw `Color()`: `convoy_cargo_menu`, `convoy_journey_menu`, `warehouse_menu`. Verify with `grep -c 'UITheme\.' <script>` before assuming a menu follows these tokens.
+
 ## Color Palette
 
 ### Core Oori Brand

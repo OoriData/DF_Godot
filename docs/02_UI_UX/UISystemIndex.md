@@ -23,7 +23,7 @@ created: 2026-05-18
 | Implementation patterns (Convoy Context, Mobile-First) | [UIAudit.md → Implementation Patterns](UIAudit.md#implementation-patterns) |
 | Adding a new menu | [UIAudit.md → Adding a New Menu](UIAudit.md#adding-a-new-menu) |
 | Per-menu docs (Cargo, Journey, etc.) | [UIAudit.md → Related Documentation](UIAudit.md#related-documentation) |
-| Cross-cutting issues to fix | [UIAudit.md → Cross-Cutting Issues](UIAudit.md#cross-cutting-issues-summary) |
+| Known issues / tech debt / in-flight work | [TODO.md](../TODO.md) |
 | Scaling / responsive rules | [ui_system.md](ui_system.md) |
 | Visual design tokens | [DesignSystem.md](DesignSystem.md) |
 | MenuBase contract | [MenuBase.md](MenuBase.md) |

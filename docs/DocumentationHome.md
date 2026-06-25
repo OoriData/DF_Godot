@@ -73,5 +73,5 @@ Welcome to the technical documentation for *Desolate Frontiers*. This folder is 
 
 ## 99 Appendix
 - [**Project Glossary**](99_Reference/Glossary.md): Definitions for all domain, API, and UI terminology.
-- [**Data Examples**](99_Reference/data_dumps/): JSON snapshots of common domain payloads for reference.
+- [**Data Examples**](99_Reference/data_dumps/README.md): Indexed JSON/markdown snapshots of common domain payloads — map, convoy, vehicle, cargo, parts, vendor, tutorial — with the shape and related doc for each.
 

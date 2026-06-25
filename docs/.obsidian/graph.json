@@ -5,8 +5,51 @@
   "showAttachments": false,
   "hideUnresolved": false,
   "showOrphans": true,
-  "collapse-color-groups": true,
-  "colorGroups": [],
+  "collapse-color-groups": false,
+  "colorGroups": [
+    {
+      "query": "file:AI_ONBOARDING OR file:DocumentationHome OR file:PROJECT_MAP OR file:TODO",
+      "color": {
+        "a": 1,
+        "rgb": 15979854
+      }
+    },
+    {
+      "query": "path:\"01_Architecture\"",
+      "color": {
+        "a": 1,
+        "rgb": 13597242
+      }
+    },
+    {
+      "query": "path:\"02_UI_UX\"",
+      "color": {
+        "a": 1,
+        "rgb": 6463578
+      }
+    },
+    {
+      "query": "path:\"03_Systems\"",
+      "color": {
+        "a": 1,
+        "rgb": 9055019
+      }
+    },
+    {
+      "query": "path:\"04_Technical\"",
+      "color": {
+        "a": 1,
+        "rgb": 7157933
+      }
+    },
+    {
+      "query": "path:\"99_Reference\"",
+      "color": {
+        "a": 1,
+        "rgb": 12107977
+      }
+    }
+  ],
   "collapse-display": true,
   "showArrow": false,
   "textFadeMultiplier": 0,
@@ -17,6 +60,6 @@
   "repelStrength": 10,
   "linkStrength": 1,
   "linkDistance": 250,
-  "scale": 0.6404959799800274,
+  "scale": 0.5552483534861827,
   "close": true
 }

@@ -1,62 +1,175 @@
 This document will serve as a flowing state of things needed in the project, what resources are needed for each task.
 
+> **Status:** Items audited against current code 2026-06-25. File:line pointers and reuse targets captured in the **Code Map** below. Work is sequenced into Sprints for locality/efficiency.
+
 ---
+
+# Action Plan (Sprints)
+
+Ordered for efficiency: quick isolated wins first, then by code locality (one subsystem per sprint so each file is opened/tested once), heavier design work last. Settlement-lag investigation can run in parallel.
+
+### Sprint 1 — Quick wins (isolated, low-risk, ship immediately)
+One-liners and tiny changes with no shared surface. Knocks out 4 items fast.
+- **Settings emoji** — `"⚙"` (no emoji-presentation selector) renders as tofu in Lexend on mobile. Change to `"⚙️"` (append U+FE0F) or swap to a texture icon. `map_overlay_settings_panel.gd:166`.
+- **Settlement Preview tab counts** — delete the `(%d)` suffix from the 3 tab labels. `convoy_menu.gd:1407,1409,1411`.
+- **Cargo sort/group label clarity** — relabel the toggle so the action is unambiguous. `convoy_cargo_menu.gd:377-379`.
+- **Portrait zoom-out limit (~3×)** — raise allowed zoom-out. Note `auto_limit_zoom_out` (`map_camera_controller.gd:281-294`) currently *raises the floor* to keep the map filling the viewport; getting 3× more zoom-out means relaxing that floor in portrait (allow letterboxing / map edge exposure), not just lowering `min_camera_zoom_level`. Verify on device.
+
+### Sprint 2 — Map camera & overlay subsystem
+All in `map_camera_controller.gd` + `map_overlay_settings_panel.gd` + safe-area plumbing. Open these files once.
+- **Notch / Dynamic Island safe area** — reserve the cutout so map options + UI don't sit under it. `safe_area_handler.gd`, `UI_scale_manager.gd:109-121`, and the overlay panel's runtime placement.
+- **Map overlay panel double-scaling** — flatten `_get_font_size()` boost (2.6×) to `return base`. `map_overlay_settings_panel.gd:39-42`. (Pairs naturally with the emoji fix — same file.)
+- **Fit Convoy Route clips city labels** — labels render in world space and are not counted in the fit rect. Pad the fit bounds (or lower `fit_margin`) so label extents stay on-screen. `map_camera_controller.gd:360` (`fit_camera_to_tilemap`) + the route-fit path; labels owned by `UI_manager.gd` / `convoy_label_manager.gd`.
+- **Menu close renders off-map then snaps back (portrait)** — clamp isn't enforced during the close tween; bounds re-apply only at the end. Enforce clamp through the transition. `map_camera_controller.gd:544` (`set_menu_open_state`), `loose_pan_when_menu_open` / `freeze_zoom_for_menu_bounds`.
+
+### Sprint 3 — Baby-blue → Oori token sweep
+Mechanical, reviewable-as-one-diff. The brand palette has **no blue** by design; each blue must be *mapped* to a token (decision baked in below, adjustable). Do this before Sprint 4 layout reworks so layout happens on already-themed code.
+- Journey progress fill `#29b6f6` → `UITheme.ACCENT_VERDIGRIS` (progress/resource signal). `convoy_menu.gd:39`, `convoy_journey_menu.gd:361,366`.
+- Convoy-list destination text `#29b6f6` + active `LIGHT_SKY_BLUE` → `ACCENT_BRASS` (active) / `TEXT_MUTED` (dest). `convoy_list_panel.gd:483,507`.
+- Vehicle tappable-stat button navy (`0.18,0.22,0.32` / border `0.35,0.48,0.72`) → `METAL_BASE` + `ACCENT_BRASS` accent. `convoy_vehicle_menu.gd:849-863` (semi-intentional — tokenize, don't delete).
+- Tokens live in `ui_theme.gd:15-41`. Heaviest remaining raw-color menus: `convoy_journey_menu` (73), `warehouse_menu` (68), `convoy_cargo_menu` (58) — fold their token adoption into Sprints 3/4.
+
+### Sprint 4 — Per-menu layout bundles
+Each menu is self-contained; do layout + remaining token adoption in one pass per file.
+- **Cargo (portrait)** — item-card reorg (tighter vertical rhythm, kill mid-card dead space), spread cramped top buttons, cap/right-align the sort control. Overlaps UIAudit Visual **P3** (sparse cards) + **P7** (oversized sort dropdown). `convoy_cargo_menu.gd`.
+- **Convoy stats → tap-to-breakdown modal** — reuse the vehicle menu's pattern verbatim. `convoy_vehicle_menu.gd:1291` (`_on_inspect_stat_pressed`) + helpers `_make_inspect_overlay` / `_make_inspect_panel` / `_add_kv_row`. Wire convoy stat boxes (`convoy_menu.gd:971-995`). Overlaps UIAudit Visual **P4** (stat hierarchy).
+- **Journey loading bar** — upgrade the existing text indicator into an animated bar during route plotting. Hook `route_choices_request_started` → `route_choices_ready`/`error`. `convoy_journey_menu.gd` (`_show_loading_indicator`, signals at :121-126). Reuse the animated `ProgressBar` from `login_screen.gd:152-154`.
+- **Journey confirmation label/value gap (landscape)** — tighten the resource table column gap. `convoy_journey_menu.gd` confirmation panel.
+- **Select Convoy drawer (portrait)** — widen the popup beyond button width, scrollable card list. `convoy_list_panel.gd` (`ConvoyPopup`); also fixes the `DisplayServer.window_get_size()` logical-pixel bug at :92 while in here.
+
+### Sprint 5 — Vendor menu restructure (design-heavy, cross-file)
+Moves controls across three surfaces; do last.
+- **Warehouse** button → bottom nav bar (`menu_manager.gd` `_setup_static_bottom_nav` / StaticBottomNav).
+- **Top Up** button → Base Convoy Menu (`convoy_menu.gd`).
+- **Settings** → expandable side **drawer** (`vendor_trade_panel.gd`).
+- While here: verify/remove the legacy `BottomBarPanel` duplicate nav (UIAudit Visual **P2**, Cross-Cutting #3).
+
+### Parallel investigation — Settlement menu open lag (iOS)
+Profile `convoy_settlement_menu.gd` open path (`_ready` / first-open layout build vs data fetch). Likely synchronous layout/tab construction on open. Confirm on device before optimizing (defer heavy build, or pre-warm).
+
+---
+
+# Code Map (resources per task)
+
+| Task | Primary file:line | Reuse / Notes |
+|---|---|---|
+| Settings emoji (mobile) | `map_overlay_settings_panel.gd:166` | `"⚙"`→`"⚙️"` or texture icon |
+| Map overlay double-scaling | `map_overlay_settings_panel.gd:39-42` | flatten boost → `return base` |
+| Notch / safe area | `safe_area_handler.gd`, `UI_scale_manager.gd:109-121` | `DisplayServer.get_display_safe_area()` |
+| Portrait zoom-out ×3 | `map_camera_controller.gd:8,281-294` | relax `auto_limit_zoom_out` floor in portrait |
+| Fit-route clips labels | `map_camera_controller.gd:360` + route-fit | pad fit rect for world-space label extents |
+| Close shows off-map | `map_camera_controller.gd:544` | enforce clamp through close tween |
+| Settlement Preview counts | `convoy_menu.gd:1407,1409,1411` | drop `(%d)` |
+| Convoy stats modal | `convoy_vehicle_menu.gd:1291` | reuse `_on_inspect_stat_pressed` + `_make_inspect_*` |
+| Cargo cards / buttons / sort | `convoy_cargo_menu.gd:377-379` (sort) | not on UITheme yet (58 raw colors) |
+| Journey loading bar | `convoy_journey_menu.gd:121-126` | reuse `login_screen.gd:152-154` ProgressBar |
+| Journey confirmation gap | `convoy_journey_menu.gd` confirm panel | landscape resource table |
+| Select Convoy drawer | `convoy_list_panel.gd:92` | widen `ConvoyPopup`; fix logical-pixel bug |
+| Vendor restructure | `vendor_trade_panel.gd`, `menu_manager.gd`, `convoy_menu.gd` | warehouse→nav, topup→convoy, settings→drawer |
+| Settlement lag | `convoy_settlement_menu.gd` `_ready` | profile on iOS first |
+| Baby-blue sweep | `ui_theme.gd:15-41` (tokens) | map per-use; no blue token exists |
+
+**Migration status (UITheme adoption):** ✅ `convoy_menu`, `convoy_vehicle_menu`, `mechanics_menu`, `vendor_trade_panel` · ⚠️ `convoy_settlement_menu` (partial) · ❌ `convoy_cargo_menu`, `convoy_journey_menu`, `warehouse_menu` (raw colors).
+
+---
+
+# UIAudit Reconciliation
+
+[`docs/02_UI_UX/UIAudit.md`](02_UI_UX/UIAudit.md) was the prior workstream. Verified against current code:
+- **Visual P3** (sparse cargo cards), **P4** (stat label/value hierarchy), **P7** (oversized sort dropdown) → **folded into the new TODOs** (Sprint 4).
+- **Visual P2** (legacy `BottomBarPanel` dup nav) → handled in Sprint 5.
+- **Double-scaling "complete" claim (UIAudit:209)** → **inaccurate**: menus migrated, but floating panels/modals still boost — see Sprint 2 + this list: `auto_sell_receipt_modal.gd`, `returning_player_tips_modal.gd`, `discord_link_popup.gd`, `account_links_popup.gd`, `map_overlay_settings_panel.gd`.
+- **Visual P1** (tab active state) → verify during Sprint 4 (convoy_menu is now heavily themed; may already be addressed).
+- **Visual P1** (tab active state) → verify during Sprint 4 (convoy_menu is now heavily themed; may already be addressed).
+
+---
+
+# Tech-Debt & Polish Backlog
+
+Relocated from UIAudit (2026-06-25) so the audit stays a structural map. Not blocking the sprints above; pull into a sprint when a relevant file is open. Verify each against current code before acting — these are point-in-time.
+
+**Visual polish (UIAudit Visual Audit P5/P6/P8/P9):**
+- P5 — convoy name label floats unanchored above the panel; integrate as a styled header. `convoy_menu.gd` TitleLabel.
+- P6 — resource-bar text contrast low at high fill; add outline / bump font. `convoy_menu.gd` ResourceStatsHBox.
+- P8 — `HSeparator`s near-invisible on dark bg; theme or replace with section labels.
+- P9 — global spacing consistency; **partly solved** — `UITheme.SPACE_*` tokens now exist, adoption incomplete.
+
+**Cross-cutting tech debt (UIAudit Cross-Cutting Summary):**
+- Duplicate Oori palette `const`s still in `user_info_display.gd`, `convoy_settlement_menu.gd`, `convoy_list_panel.gd` — migrate to `UITheme.*`.
+- `DisplayServer.window_get_size()` (logical-pixel violation) in `convoy_list_panel.gd:92` — fix during the Select Convoy drawer sprint.
+- Legacy `BottomBarPanel` dup nav in `ConvoyMenu.tscn` — remove during vendor restructure sprint.
+- Modals use hardcoded absolute center offsets (not `CenterContainer`) — `auto_sell_receipt_modal`, `returning_player_tips_modal`, `premium_upgrade_modal`.
+- `SettingsMenu` opened outside `MenuManager` (CanvasLayer layer=100) — lifecycle inconsistency.
+- `UserInfoDisplay` height changes not signaled → stale `offset_top` on submenus.
+- `main_screen.gd` wires convoy button via fragile `find_child()`.
+- S/M/L UI-scale preference silently overridden in portrait.
+- Modals not styled with Oori theme (folds into the baby-blue / theming sweep).
+- Floating panels/modals still double-scale fonts (see Sprint 2 + font-scale note).
+
+**Docs needing a standalone page (if they become a change target):** `UserInfoDisplay`+`ConvoyListPanel`, `SettingsMenu`, `RouteSelectionMenu`.
+
+---
+
+# Item Detail
 
 ## Bugs
 
 ### Settings emoji not rendering on map overlay options tab (mobile)
-The settings icon/emoji on the map overlay options tab fails to render on mobile (portrait and landscape). Desktop appears unaffected. Likely a font/emoji fallback issue on mobile renderers — check if the character is supported in the loaded font or needs to be replaced with a texture-based icon.
+The settings icon/emoji on the map overlay options tab fails to render on mobile (portrait and landscape). Desktop appears unaffected. Root cause: the tab button uses bare `"⚙"` (U+2699, no U+FE0F emoji-presentation selector), which Lexend renders as a missing glyph on mobile; the toggle-row icons (🎯📦🚚) are true emoji and fall back fine. Fix: append the variation selector or use a texture-based icon.
 
 ### Auto zoom (Fit Convoy Route) clips city labels
-When Fit Convoy Route auto-zoom triggers, city labels are visible but clipped at the edges of the viewport. Labels exist, they're just cut off. Likely the zoom calculation fits the route geometry without accounting for label overflow outside node bounds — need to add padding to the fit rect so labels have room.
+When Fit Convoy Route auto-zoom triggers, city labels are visible but clipped at the edges of the viewport. Labels exist, they're just cut off. The fit math frames the route/tilemap geometry but ignores world-space label extents that overflow node bounds — add padding to the fit rect so labels have room.
 
 ### Settlement menu lag on open (iOS)
-Noticeable hitch when opening the settlement menu on iOS. First noticed on device but may affect other platforms. Investigate whether the lag is in layout building (node instantiation/resizing on open) or data fetching. Likely candidate: layout recalculation on first open — consider deferring heavy layout work or pre-building the scene.
+Noticeable hitch when opening the settlement menu on iOS. First noticed on device but may affect other platforms. Investigate whether the lag is in layout building (node instantiation/resizing on open) or data fetching. Likely candidate: synchronous layout/tab construction on first open — profile before optimizing.
+
+### Menu close animation shows outside map bounds (portrait)
+When closing a menu in portrait, the camera briefly renders outside the map bounds during the closing animation, then snaps back once the animation completes. The clamp is re-applied at the end of the transition but not enforced mid-animation.
 
 ### Dynamic Island / notch safe area not respected
-UI elements (including map options overlay) are rendering underneath the Dynamic Island or notch area on devices where it's open. Reserve that space using iOS safe area insets so nothing interactive or informational sits beneath the cutout.
+UI elements (including map options overlay) render underneath the Dynamic Island or notch on devices where it's open. Reserve that space using iOS safe-area insets so nothing interactive or informational sits beneath the cutout.
 
 ---
 
 ## Improvements
 
 ### Increase portrait map zoom-out limit (~3x current max)
-The current maximum zoom-out in portrait mode is too restrictive. Increase the zoom-out limit to approximately 3x the current maximum so players can see more of the map at once in portrait orientation.
-
-### Vendor menu — restructure top controls
-The vendor settings panel is proportionally fluid and visually inconsistent with the other controls. Restructure as follows:
-- **Warehouse button** → move into the bottom nav bar alongside the other menu-switching buttons
-- **Top Up button** → move to the Base Convoy Menu (main convoy overview screen)
-- **Settings** → replace the inline settings panel with an expandable side drawer so it's out of the way until needed
-
-This clears the top of the vendor menu of clutter and makes the settings feel intentional rather than crammed in.
-
-### Menu close animation shows outside map bounds (portrait)
-When closing a menu in portrait, the camera briefly renders outside the map bounds during the closing animation, then snaps back once the animation completes. Investigate whether the map camera constraints are being released or bypassed during the transition — the snap suggests the bounds are re-applied at the end but not enforced mid-animation.
+The current maximum zoom-out in portrait is too restrictive. Increase it to ~3× current. Note the floor is governed by `auto_limit_zoom_out` (keeps the map filling the viewport) — achieving 3× more zoom-out means relaxing that in portrait (accepting letterbox / edge exposure), not just lowering the raw `min_camera_zoom_level`.
 
 ### Cargo menu portrait layout — item card reorganization
-In portrait mode, item cards in the cargo list are wide and flat with excessive vertical padding and small text, leaving a lot of dead space in the middle of each card. The double-scaling font migration may have made text smaller without the padding adjusting to match. Investigate whether this is a padding/margin issue or a layout reorganization — cards may benefit from a tighter, more information-dense layout in portrait (e.g. tighter vertical rhythm, better use of horizontal space).
+In portrait, item cards are wide and flat with excessive vertical padding and small text, leaving dead space in the middle of each card. Tighten into a more information-dense layout (tighter vertical rhythm, better horizontal use). Overlaps UIAudit Visual P3.
 
 ### Cargo menu top buttons cramped in portrait
-The action buttons at the top of the cargo menu are stacked too tightly together in portrait. Spread them out — either increase spacing between them or rearrange into a layout that breathes better at portrait widths.
+The action buttons at the top of the cargo menu are stacked too tightly in portrait. Spread them out or rearrange for portrait widths.
 
 ### Cargo menu sort toggle labels are unclear
-The "Sort by Vehicle" and "Sort by Type" toggles sort correctly but the labels don't make the distinction obvious enough. Rework the labels so it's immediately clear what each toggle does.
+The group/sort toggle (`Group by Vehicle` / `Group by Type`) behaves correctly but the labels don't make the distinction obvious. Rework wording for instant clarity.
+
+### Vendor menu — restructure top controls
+The vendor settings panel is proportionally fluid and visually inconsistent with the other controls. Restructure:
+- **Warehouse button** → move into the bottom nav bar alongside the other menu-switching buttons
+- **Top Up button** → move to the Base Convoy Menu (main convoy overview screen)
+- **Settings** → replace the inline settings panel with an expandable side drawer
+
+Clears the top of the vendor menu and makes settings feel intentional rather than crammed in.
 
 ### Select Convoy dropdown too small in portrait (top nav bar)
-The Select Convoy control in the top nav bar is currently a small dropdown roughly the same width as the button. Expand it into a wider panel so the full convoy card is visible when selecting. Scrollable list of cards stacked vertically.
+The Select Convoy control is currently a small dropdown roughly the button's width. Expand into a wider panel so the full convoy card is visible — scrollable list of cards stacked vertically.
 
 ### Settlement Preview — remove item count from tab labels
-The tabs in Settlement Preview show a count in parentheses e.g. "(10)". Remove these numbers entirely — the count adds noise without value at that point in the flow.
-
-### Journey plotting — add loading bar while API works
-While the API is plotting the journey route there's no feedback. Add a loading bar or progress indicator during this wait. A loading screen may exist somewhere in the deprecated code — search the codebase for it as a starting point. A simple animated loading bar overlaid on the journey menu is the target feel.
-
-### Journey confirmation screen — resource label/value gap (landscape)
-In the journey confirmation screen on landscape, the resource labels and their corresponding stat values are far apart with a lot of dead space between them. Tighten the table layout so labels and values feel connected — reduce column gap or align values closer to their labels.
-
-### Replace Godot default baby blue with Oori theme colors
-Buttons and modals throughout the game are rendering with Godot's default baby blue color, indicating the global Oori theme isn't applied everywhere. Audit all menus for this blue bleed-through and replace with the correct Oori palette colors (defined in `Assets/df_theme.tres` and `Scripts/System/ui_theme.gd`). This is a visible symptom of incomplete theme migration.
+The Settlement Preview tabs show a count in parentheses e.g. "(10)". Remove these entirely — noise without value at that point in the flow.
 
 ### Convoy menu stats — tap to open breakdown modal
-Stats displayed in the convoy menu should be tappable, opening the same kind of breakdown modal that already exists for parts and vehicles. Gives players the same level of detail for stats that they get elsewhere in the menu.
+Convoy menu stats should be tappable, opening the same breakdown modal that already exists for parts and vehicles. Reuse the vehicle menu's inspect pattern.
+
+### Parts/service cards — horizontal scroll in landscape
+When viewing vehicle parts or service options in landscape, cards don't fit cleanly in the vertical layout. Convert the parts/service card list to horizontal scrolling (pan side to side) in landscape so cards have room.
+
+### Journey plotting — add loading bar while API works
+While the API plots the journey route there's no feedback. Add an animated loading bar during the wait. A text indicator already exists (`_show_loading_indicator`); upgrade it to a bar driven off the `route_choices_request_started`/`ready` signals. Reuse the login screen's animated ProgressBar.
+
+### Journey confirmation screen — resource label/value gap (landscape)
+In the journey confirmation screen on landscape, resource labels and their stat values are far apart with dead space between. Tighten the table so labels and values feel connected.
+
+### Replace Godot default baby blue with Oori theme colors
+Buttons and modals render with a baby-blue (`#29b6f6` / `LIGHT_SKY_BLUE` / navy stat-button styling) instead of brand colors. Replace with Oori tokens from `ui_theme.gd:15-41`. Note the brand has no blue — each use must be mapped to a token (see Sprint 3 for recommended mappings). Symptom of incomplete theme migration in `convoy_journey_menu`, `warehouse_menu`, `convoy_cargo_menu`.

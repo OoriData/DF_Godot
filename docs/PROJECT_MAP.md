@@ -14,7 +14,7 @@ Use this map to quickly find where specific features or behaviors are implemente
 ## 🚀 Navigation & UI
 
 > [!TIP]
-> Start with the [**UI Element Audit**](02_UI_UX/UIAudit.md) for any UI task — it contains the layer map, script mapping, per-element inventory, and all known issues.
+> For UI *structure* (layer map, script mapping, per-element scene trees) start with the [**UI Element Audit**](02_UI_UX/UIAudit.md). For *current state, known issues, and in-flight work*, see [**TODO.md**](TODO.md).
 
 | Task | Where to go |
 | :--- | :--- |
@@ -31,7 +31,7 @@ Use this map to quickly find where specific features or behaviors are implemente
 | **Warehouse / Vendor / Mechanics** | [WarehouseMenu.md](02_UI_UX/WarehouseMenu.md), [VendorPanel](02_UI_UX/VendorPanel/VendorPanelOverview.md), [MechanicsMenu.md](02_UI_UX/MechanicsMenu.md) |
 | **Modals (receipt, premium, tips)** | [UIAudit → §11](02_UI_UX/UIAudit.md#11-modals-post-journey-premium-tips) |
 | **Map labels / overlays** | `Scripts/UI/convoy_label_manager.gd`, `Scripts/UI/UI_manager.gd` |
-| **Known UI bugs / cross-cutting issues** | [UIAudit → Cross-Cutting Issues](02_UI_UX/UIAudit.md#cross-cutting-issues-summary) |
+| **Known UI bugs / in-flight work / tech debt** | [TODO.md](TODO.md) |
 
 ## 🗺️ Map & Gameplay
 | Feature | File / Directory |
@@ -50,6 +50,7 @@ Use this map to quickly find where specific features or behaviors are implemente
 | **Background Polling** | `Scripts/System/Services/refresh_scheduler.gd` |
 | **Authentication** | `user_service.gd`, [Identity](04_Technical/Identity.md) |
 | **Item Classification** | `Items.gd`, [Items & Missions](03_Systems/ItemsAndMissions.md) |
+| **Example payloads / data shapes** | [data_dumps/README.md](99_Reference/data_dumps/README.md) |
 | **Error Messages** | `Scripts/System/error_translator.gd` |
 
 ## 🛠️ Maintenance
@@ -59,4 +60,4 @@ Use this map to quickly find where specific features or behaviors are implemente
 | **Running Tests** | `Tests/`, `Scripts/Debug/wiring_smoke_test.gd` |
 | **Visual Styling** | `Assets/Themes/`, [DesignSystem.md](02_UI_UX/DesignSystem.md) |
 | **AI Standards** | `docs/04_Technical/AI_Guidelines.md` |
-| **Updating the UI Audit** | [UIAudit.md → Audit Status](02_UI_UX/UIAudit.md#audit-status) — update after any UI scene or script change |
+| **Updating the UI Audit** | [UIAudit.md](02_UI_UX/UIAudit.md) — update the structural map after any UI *scene/script* change; log bugs & polish in [TODO.md](TODO.md) |

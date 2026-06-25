@@ -12,6 +12,9 @@ created: 2026-05-18
 
 This document defines the "Source of Truth" for the core data objects in *Desolate Frontiers*. Both the Godot client and the backend must adhere to these schemas.
 
+> [!TIP]
+> Real example payloads for the objects below live in [Data Examples](../99_Reference/data_dumps/README.md) — convoy, vehicle, cargo, part, vendor, and the full map.
+
 ## 1. The Convoy Object
 A Convoy is a collection of vehicles traveling together.
 

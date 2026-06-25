@@ -12,14 +12,10 @@
             "id": "1ae821d75f551279",
             "type": "leaf",
             "state": {
-              "type": "markdown",
-              "state": {
-                "file": "TODO.md",
-                "mode": "source",
-                "source": false
-              },
-              "icon": "lucide-file",
-              "title": "TODO"
+              "type": "graph",
+              "state": {},
+              "icon": "lucide-git-fork",
+              "title": "Graph view"
             }
           }
         ]
@@ -189,6 +185,11 @@
   },
   "active": "1ae821d75f551279",
   "lastOpenFiles": [
+    "AI_ONBOARDING.md",
+    "99_Reference/data_dumps/Map_example.json",
+    "99_Reference/data_dumps/README.md",
+    "99_Reference/data_dumps/Map_example.md",
+    "TODO.md",
     "02_UI_UX/UIAudit.md",
     "DocumentationHome.md",
     "_mockups/vendor_landscape_v2.html",
@@ -201,10 +202,8 @@
     "Pasted image 20260521131852.png",
     "04_Technical/TextScale.md",
     "02_UI_UX/ConvoyMenu.md",
-    "TODO.md",
     "03_Systems/MapSystem/SettlementOverlay.md",
     "99_Reference/data_dumps/Map_example_new.md",
-    "99_Reference/data_dumps/Map_example.json",
     "03_Systems/MapSystem/MapMenuSystem.md",
     "99_Reference/data_dumps/MapDataExample.json",
     "99_Reference/data_dumps/Map_example_new.json",
@@ -217,13 +216,10 @@
     "01_Architecture/Architecture.md",
     "01_Architecture/Cookbook.md",
     "02_UI_UX/JourneyMenu.md",
-    "AI_ONBOARDING.md",
     "04_Technical/AI_Guidelines.md",
     "03_Systems/ItemsAndMissions.md",
     "04_Technical/UserSettings.md",
     "03_Systems/SettlementEconomy.md",
-    "04_Technical/MultiProviderAuth.md",
-    "03_Systems/StateManagement.md",
-    "04_Technical/PushNotifications.md"
+    "04_Technical/MultiProviderAuth.md"
   ]
 }
