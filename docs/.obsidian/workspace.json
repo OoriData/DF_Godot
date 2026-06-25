@@ -12,10 +12,14 @@
             "id": "1ae821d75f551279",
             "type": "leaf",
             "state": {
-              "type": "graph",
-              "state": {},
-              "icon": "lucide-git-fork",
-              "title": "Graph view"
+              "type": "markdown",
+              "state": {
+                "file": "02_UI_UX/UIAudit.md",
+                "mode": "source",
+                "source": false
+              },
+              "icon": "lucide-file",
+              "title": "UIAudit"
             }
           }
         ]
@@ -184,6 +188,7 @@
   },
   "active": "1ae821d75f551279",
   "lastOpenFiles": [
+    "DocumentationHome.md",
     "_mockups/vendor_landscape_v2.html",
     "_mockups/vendor_consolidated_v2.html",
     "02_UI_UX/VendorPanel/ResponsiveRefactor.md",
@@ -204,11 +209,9 @@
     "99_Reference/data_dumps/Map_example_new.json",
     "03_Systems/MapSystem/Data.md",
     "99_Reference/data_dumps/scripts/regenerate_map_example.py",
-    "99_Reference/data_dumps/scripts",
     "02_UI_UX/MenuManager.md",
     "02_UI_UX/UISystemIndex.md",
     "99_Reference/Glossary.md",
-    "DocumentationHome.md",
     "PROJECT_MAP.md",
     "01_Architecture/Architecture.md",
     "01_Architecture/Cookbook.md",

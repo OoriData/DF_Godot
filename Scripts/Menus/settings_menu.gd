@@ -152,14 +152,15 @@ func _update_layout() -> void:
 		if is_instance_valid(btn):
 			var want_huge = btn.name.to_lower().contains("close")
 			var btn_height: int
-			var btn_width: int
 			if is_portrait:
-				btn_height = 145 if want_huge else 120
-				btn_width = 300
+				# Expand to fill width so 3 buttons never overflow the panel
+				btn_height = 100 if want_huge else 80
+				btn.custom_minimum_size = Vector2(0, btn_height)
+				btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 			else:
 				btn_height = 100 if want_huge else 80
-				btn_width = 260
-			btn.custom_minimum_size = Vector2(btn_width, btn_height)
+				btn.custom_minimum_size = Vector2(260, btn_height)
+				btn.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 			btn.add_theme_font_size_override("font_size", _get_font_size(18))
 			btn.mouse_filter = Control.MOUSE_FILTER_STOP
 
