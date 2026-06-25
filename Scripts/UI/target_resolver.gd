@@ -292,14 +292,17 @@ func _resolve_vendor_tree_item_by_text(target: Dictionary) -> Dictionary:
 	var panel := _get_vendor_trade_panel()
 	if panel == null:
 		return { ok = false, node = null, rect = Rect2(), reason = "vendor-panel-missing" }
-	var tree: Tree = panel.get_node_or_null("%VendorItemTree")
-	if tree == null:
+	# %VendorItemTree is now a VendorItemList (custom inline-expand list) exposing a
+	# global-rect lookup by row name.
+	var list: Control = panel.get_node_or_null("%VendorItemTree")
+	if list == null:
 		return { ok = false, node = panel, rect = _rect_for_control(panel), reason = "vendor-tree-missing" }
-	var item := _find_tree_item_contains(tree, token)
-	if item == null:
-		return { ok = false, node = tree, rect = _rect_for_control(tree), reason = "tree-item-not-found:" + token }
-	var area := tree.get_item_area_rect(item, 0)
-	return { ok = true, node = tree, rect = _rect_for_control(tree, area) }
+	if not list.has_method("find_row_rect_by_text"):
+		return { ok = false, node = list, rect = _rect_for_control(list), reason = "vendor-list-no-rect" }
+	var r: Rect2 = list.find_row_rect_by_text(token)
+	if not r.has_area():
+		return { ok = false, node = list, rect = _rect_for_control(list), reason = "tree-item-not-found:" + token }
+	return { ok = true, node = list, rect = r }
 
 func _find_tree_item_contains(tree: Tree, token: String) -> TreeItem:
 	var root := tree.get_root()

@@ -26,8 +26,10 @@ func _emit_install_requested(item: Variant, quantity: int, vendor_id: String) ->
 	emit_signal("install_requested", item, quantity, vendor_id)
 
 # --- Node References ---
-@onready var vendor_item_tree: Tree = %VendorItemTree
-@onready var convoy_item_tree: Tree = %ConvoyItemTree
+# These nodes are now VendorItemList (custom inline-expand list) — the names are kept as
+# *_tree to limit churn across the panel + controllers; they are NOT Godot Trees anymore.
+@onready var vendor_item_tree: VendorItemList = %VendorItemTree
+@onready var convoy_item_tree: VendorItemList = %ConvoyItemTree
 @onready var item_name_label: Label = %ItemNameLabel
 @onready var item_preview: TextureRect = %ItemPreview
 @onready var item_info_rich_text: RichTextLabel = %ItemInfoRichText
@@ -47,6 +49,7 @@ func _emit_install_requested(item: Variant, quantity: int, vendor_id: String) ->
 @onready var install_button: Button = %InstallButton
 @onready var transaction_quantity_container: HBoxContainer = %TransactionQuantityContainer
 @onready var trade_mode_tab_container: TabContainer = %TradeModeTabContainer
+@onready var mode_flip_button: Button = get_node_or_null("%ModeFlipButton")
 @onready var toast_notification: Control = %ToastNotification
 @onready var cargo_sort_button: MenuButton = get_node_or_null("%CargoSortButton")
 var loading_panel: Panel = null
@@ -123,6 +126,33 @@ var _baseline_guard: Dictionary = {
 var _feedback_data: Dictionary = {} # { "message": "", "type": "success" }
 var _is_previewing_destination: bool = false
 
+# Portrait Concept A — holds the MiddlePanel inspector so it can be revealed on first item tap
+var _portrait_inspector: Control = null
+
+# Landscape compact inspector: a wrapping grid of stat chips (Off-road, Cargo, Value, Profit, …)
+# that replaces the tall verbose Per Unit / Total Order section panels.
+var _landscape_stat_box: VBoxContainer = null
+
+# The merged control row ([Buy ⇄][Sort ▾]) — cached so the outer settlement menu can mount the
+# vendor-type dropdown here as the first child on mobile: [Vendor ▾][Buy ⇄][Sort ▾].
+var _control_row_container: Container = null
+
+func _is_portrait_layout() -> bool:
+	var dsm = get_node_or_null("/root/DeviceStateManager")
+	return is_instance_valid(dsm) and dsm.get_layout_mode() == 2 # 2 == MOBILE_PORTRAIT
+
+func _is_compact_footer_layout() -> bool:
+	# Both mobile orientations use the slim, pinned transaction footer (one-line price).
+	var dsm = get_node_or_null("/root/DeviceStateManager")
+	if not is_instance_valid(dsm):
+		return false
+	var m: int = dsm.get_layout_mode()
+	return m == 1 or m == 2 # MOBILE_LANDSCAPE or MOBILE_PORTRAIT
+
+func _is_landscape_layout() -> bool:
+	var dsm = get_node_or_null("/root/DeviceStateManager")
+	return is_instance_valid(dsm) and dsm.get_layout_mode() == 1 # MOBILE_LANDSCAPE
+
 func _get_settings_manager() -> Node:
 	return get_node_or_null("/root/SettingsManager")
 
@@ -137,10 +167,10 @@ func _save_cargo_sort_metric_to_settings(metric: int) -> void:
 		sm.set_and_save("ui.cargo_sort_metric", metric)
 
 func _set_cargo_sort_ui_visible(visible: bool) -> void:
+	# Toggle the Sort button itself (not its container) — the flip button now shares that row,
+	# so hiding the whole container would wrongly hide the Buy/Sell flip too.
 	if is_instance_valid(cargo_sort_button):
-		var p := cargo_sort_button.get_parent()
-		if is_instance_valid(p):
-			p.visible = visible
+		cargo_sort_button.visible = visible
 
 func _has_delivery_cargo_in_array(inv_any: Variant) -> bool:
 	if not (inv_any is Array):
@@ -650,53 +680,56 @@ func _update_layout_scaling() -> void:
 	var is_portrait = (mode == 2) # MOBILE_PORTRAIT
 	var use_mobile = dsm.is_mobile
 	
-	var dyn_font_sz = 16
+	var btn_font_sz: int
+	var tab_font_sz: int
+	var tree_font_sz: int
+	var btn_min_h: float
+	var bar_min_h: float
+	var sort_h: float
+	var sort_font_sz: int
+
 	if is_portrait:
-		dyn_font_sz = int(dyn_font_sz * 1.1)
-		
-	var curr_theme = theme
-	if curr_theme == null:
-		curr_theme = Theme.new()
-		theme = curr_theme
-	curr_theme.default_font_size = dyn_font_sz
-	
-	var btn_font_sz = dyn_font_sz
-	var tab_font_sz = dyn_font_sz
-	var tree_font_sz = dyn_font_sz
-	var btn_min_h = 34.0
-	var bar_min_h = 24.0
-	var sort_h = 34.0
-	
-	if is_portrait:
-		btn_font_sz = int(dyn_font_sz * 1.8)
-		tab_font_sz = int(dyn_font_sz * 1.4)
-		btn_min_h = 100.0
-		bar_min_h = 60.0
-		sort_h = 80.0
-	elif use_mobile:
-		btn_font_sz = 22
-		tab_font_sz = 22
+		btn_font_sz = 25
+		tab_font_sz = 23
+		tree_font_sz = 17
+		# Footer controls were 100px tall, which made the transaction strip eat ~half the
+		# panel once an item was selected and pushed the list off-screen. 60px is still a
+		# comfortable touch target while keeping the footer compact.
 		btn_min_h = 60.0
-		bar_min_h = 30.0
-		sort_h = 48.0
+		bar_min_h = 22.0 # thin one-line meter (label sits beside the bar now, not above)
+		sort_h = 52.0
+		sort_font_sz = 21
+	elif use_mobile: # MOBILE_LANDSCAPE — short viewport, keep the pinned transaction compact
+		btn_font_sz = 20
+		tab_font_sz = 20
+		tree_font_sz = 16
+		btn_min_h = 46.0
+		bar_min_h = 18.0
+		sort_h = 44.0
+		sort_font_sz = 16
 	else: # DESKTOP
 		btn_font_sz = 30
 		tab_font_sz = 26
 		tree_font_sz = 22
 		btn_min_h = 72.0
-		bar_min_h = 48.0
+		bar_min_h = 22.0
 		sort_h = 60.0
+		sort_font_sz = 16
 	
 	if is_instance_valid(trade_mode_tab_container):
-		trade_mode_tab_container.theme = curr_theme
 		var tab_bar = trade_mode_tab_container.get_tab_bar()
 		if is_instance_valid(tab_bar):
 			tab_bar.add_theme_font_size_override("font_size", tab_font_sz)
+	# Tab bar is hidden; the single flip button is the visible mode selector. It's a compact
+	# secondary control (the primary Buy/Sell action lives in the footer), so keep it small —
+	# content-sized via size_flags and a modest fixed font rather than the larger tab size.
+	if is_instance_valid(mode_flip_button):
+		mode_flip_button.add_theme_font_size_override("font_size", 18 if is_portrait else 16)
 
 	if is_instance_valid(vendor_item_tree):
-		vendor_item_tree.add_theme_font_size_override("font_size", tree_font_sz)
+		vendor_item_tree.set_name_font_size(tree_font_sz)
 	if is_instance_valid(convoy_item_tree):
-		convoy_item_tree.add_theme_font_size_override("font_size", tree_font_sz)
+		convoy_item_tree.set_name_font_size(tree_font_sz)
 
 	if is_instance_valid(item_name_label):
 		var name_sz = 38 if is_portrait else (30 if use_mobile else 38)
@@ -752,7 +785,7 @@ func _update_layout_scaling() -> void:
 
 	if is_instance_valid(cargo_sort_button):
 		cargo_sort_button.custom_minimum_size.y = sort_h
-		cargo_sort_button.add_theme_font_size_override("font_size", int(btn_font_sz * 0.85) if is_portrait else dyn_font_sz)
+		cargo_sort_button.add_theme_font_size_override("font_size", sort_font_sz)
 		if is_portrait:
 			cargo_sort_button.add_theme_font_override("font", _get_bold_font_for(cargo_sort_button))
 		else:
@@ -772,11 +805,11 @@ func _update_layout_scaling() -> void:
 		if is_instance_valid(convoy_money_lbl):
 			convoy_money_lbl.add_theme_font_size_override("font_size", money_sz)
 			
-		var vol_lbl = right_panel.get_node_or_null("CapacityBars/VolumeLabel")
+		var vol_lbl = get_node_or_null("%VolumeLabel")
 		if is_instance_valid(vol_lbl):
 			vol_lbl.add_theme_font_size_override("font_size", label_sz)
-			
-		var mass_lbl = right_panel.get_node_or_null("CapacityBars/MassLabel")
+
+		var mass_lbl = get_node_or_null("%MassLabel")
 		if is_instance_valid(mass_lbl):
 			mass_lbl.add_theme_font_size_override("font_size", label_sz)
 			
@@ -826,11 +859,26 @@ func _ready() -> void:
 
 
 
+	# The vendor list always shows buyable wares; the convoy list always shows sellable cargo.
+	# This drives which price (buy vs sell) the compact stat line computes.
+	if is_instance_valid(vendor_item_tree):
+		vendor_item_tree.list_mode = "buy"
+	if is_instance_valid(convoy_item_tree):
+		convoy_item_tree.list_mode = "sell"
+
 	# Connect signals from UI elements
 	vendor_item_tree.item_selected.connect(_on_vendor_item_selected)
 	# Use item_selected for Tree to update the inspector on a single click.
 	convoy_item_tree.item_selected.connect(_on_convoy_item_selected)
+	# Inline "Install" button in the expanded row body (portrait) routes through the compat flow.
+	if vendor_item_tree.has_signal("install_pressed"):
+		vendor_item_tree.install_pressed.connect(_on_inline_install_pressed)
 	trade_mode_tab_container.tab_changed.connect(_on_tab_changed)
+	# Single Buy/Sell flip button drives the (tab-bar-hidden) TabContainer pages.
+	if is_instance_valid(mode_flip_button):
+		mode_flip_button.pressed.connect(_on_mode_flip_pressed)
+	_style_mode_toggle()
+	_sync_mode_toggle_buttons(trade_mode_tab_container.current_tab)
 
 	# Optional loading overlay: bind only if present
 	if has_node("%LoadingPanel"):
@@ -838,11 +886,13 @@ func _ready() -> void:
 
 	if is_instance_valid(max_button):
 		max_button.pressed.connect(_on_max_button_pressed)
+		_style_neutral_button(max_button)
 	else:
 		printerr("VendorTradePanel: 'MaxButton' node not found. Please check the scene file.")
 
 	if is_instance_valid(action_button):
 		action_button.pressed.connect(_on_action_button_pressed)
+		_style_primary_button(action_button) # the one accented (verdigris) commit button
 	else:
 		printerr("VendorTradePanel: 'ActionButton' node not found. Please check the scene file.")
 
@@ -868,36 +918,15 @@ func _ready() -> void:
 	if is_instance_valid(cargo_sort_button):
 		_load_cargo_sort_metric_from_settings()
 		cargo_sort_button.custom_minimum_size.x = 100 # Thinner button
-		cargo_sort_button.add_theme_color_override("font_color", Color(0.93, 0.93, 0.93, 1.0))
-		cargo_sort_button.add_theme_color_override("font_hover_color", Color(0.98, 0.98, 0.98, 1.0))
-		
-		var sort_normal := StyleBoxFlat.new()
-		sort_normal.bg_color = Color("#25282a") # Oori Dark Grey
-		sort_normal.border_width_left = 1
-		sort_normal.border_width_right = 1
-		sort_normal.border_width_top = 1
-		sort_normal.border_width_bottom = 1
-		sort_normal.border_color = Color("#393d47") # Oori Grey
-		sort_normal.corner_radius_top_left = 4
-		sort_normal.corner_radius_top_right = 4
-		sort_normal.corner_radius_bottom_left = 4
-		sort_normal.corner_radius_bottom_right = 4
-		sort_normal.content_margin_left = 10
-		sort_normal.content_margin_right = 10
-		sort_normal.content_margin_top = 4
-		sort_normal.content_margin_bottom = 4
-		
-		var sort_hover := sort_normal.duplicate()
-		sort_hover.bg_color = Color("#393d47") # Oori Grey
-		sort_hover.border_color = Color("#dbe2e9").lerp(Color.BLACK, 0.3) # Oori White-ish
-		var sort_pressed := sort_normal.duplicate()
-		sort_pressed.bg_color = Color("#25282a").lerp(Color.BLACK, 0.2) # Deep Dark
-		
-		cargo_sort_button.add_theme_stylebox_override("normal", sort_normal)
-		cargo_sort_button.add_theme_stylebox_override("hover", sort_hover)
-		cargo_sort_button.add_theme_stylebox_override("pressed", sort_pressed)
-		cargo_sort_button.add_theme_stylebox_override("focus", sort_hover)
-		
+		# Sort is compact and pinned to the right edge of the row. It can't be the element that fills
+		# the row's slack because it hides itself when there's no delivery cargo (see
+		# _set_cargo_sort_ui_visible) — the always-present Buy/Sell flip fills instead (set in
+		# _consolidate_control_row). With the flip expanding, SHRINK_END pushes Sort flush right.
+		cargo_sort_button.size_flags_horizontal = Control.SIZE_SHRINK_END
+		# Filter-control language: recessed well + verdigris trim, distinct from the action buttons.
+		# (Also sets flat=false so the MenuButton actually draws its border.)
+		_style_filter_control(cargo_sort_button)
+
 		var popup = cargo_sort_button.get_popup()
 		popup.clear()
 		popup.add_radio_check_item("Profit Margin/Unit", 0)
@@ -914,8 +943,7 @@ func _ready() -> void:
 			use_mobile = is_portrait or dsm.get_layout_mode() == 1 # MOBILE_LANDSCAPE
 			
 		if use_mobile:
-			var dyn_font_sz = 16
-			popup.add_theme_font_size_override("font_size", dyn_font_sz)
+			popup.add_theme_font_size_override("font_size", 16)
 			popup.add_theme_constant_override("v_separation", 16 if is_portrait else 12)
 			var popup_style = StyleBoxFlat.new()
 			popup_style.bg_color = Color("#25282a") # Oori Dark Grey
@@ -1014,28 +1042,369 @@ func _ready() -> void:
 			conn_ok = _hub.vendor_panel_ready.is_connected(Callable(self, "_on_hub_vendor_panel_ready"))
 		print("[VendorPanel][DIAG] _ready instance_id=%d perf=%s hub_vendor_panel_ready_connected=%s" % [get_instance_id(), str(perf_log_enabled), str(conn_ok)])
 
+	_consolidate_control_row()
 	_make_panels_responsive()
 	_apply_text_readability_fixes()
 
+func _consolidate_control_row() -> void:
+	# The flip button (Buy ⇄) and the Sort dropdown lived on two separate sparse rows, leaving a
+	# big dead band above the list. Merge them onto ONE row: [ Buy ⇄ ][ Sort ▾ ]. The Sort button
+	# still hides itself (via _set_cargo_sort_ui_visible) when there's no delivery cargo, but the
+	# row — and the flip button — always remain.
+	var sort_container := get_node_or_null("HBoxContainer/LeftPanel/SortSettingsContainer")
+	var mode_toggle := get_node_or_null("HBoxContainer/LeftPanel/ModeToggle")
+	if not is_instance_valid(sort_container) or not is_instance_valid(mode_toggle) or not is_instance_valid(mode_flip_button):
+		return
+	_control_row_container = sort_container # cache for mount_external_vendor_selector()
+	if sort_container.has_meta("control_row_merged"):
+		return
+	# Move the flip button to the front of the Sort row, then retire the now-empty toggle row.
+	var flip_parent := mode_flip_button.get_parent()
+	if is_instance_valid(flip_parent):
+		flip_parent.remove_child(mode_flip_button)
+	sort_container.add_child(mode_flip_button)
+	sort_container.move_child(mode_flip_button, 0)
+	# The flip is the only always-visible control on this row, so it absorbs the horizontal slack
+	# (the vendor dropdown hugs its name at the left; Sort hugs the right and can hide). This keeps
+	# the row filled edge-to-edge instead of left-packing the controls with dead space on the right.
+	mode_flip_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	sort_container.add_theme_constant_override("separation", 10)
+	mode_toggle.visible = false
+	sort_container.set_meta("control_row_merged", true)
+
+func mount_external_vendor_selector(selector: Control) -> void:
+	# Called by ConvoySettlementMenu (mobile only) to place the shared vendor-type dropdown as the
+	# first element of this panel's control row → [Vendor ▾][Buy ⇄][Sort ▾]. Idempotent.
+	if not is_instance_valid(selector) or not is_instance_valid(_control_row_container):
+		return
+	if selector.get_parent() == _control_row_container:
+		_control_row_container.move_child(selector, 0)
+		return
+	if is_instance_valid(selector.get_parent()):
+		selector.get_parent().remove_child(selector)
+	# Hug the current vendor name (no dead space) rather than expanding to fill the row.
+	selector.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+	selector.size_flags_stretch_ratio = 1.0
+	_control_row_container.add_child(selector)
+	_control_row_container.move_child(selector, 0)
+
 func _make_panels_responsive() -> void:
-	# Only apply aggressive scrolling wrappers on Mobile Portrait.
-	# Desktop and Landscape have enough vertical real estate to use the native .tscn layout,
-	# which prevents nested ScrollContainer layout bugs.
+	# Layout-specific restructuring of the native 3-column .tscn:
+	#   PORTRAIT  → single vertical stack: inline-expand list + pinned footer (no inspector column).
+	#   LANDSCAPE → 2-pane: list (left) | [inspector + pinned transaction] (right). The fixed 320px
+	#               transaction column is folded under the inspector so it stops crowding the narrow
+	#               (≈55%-width) landscape menu.
+	#   DESKTOP   → native 3-column layout (plenty of room).
 	var dsm = get_node_or_null("/root/DeviceStateManager")
-	if is_instance_valid(dsm) and dsm.get_layout_mode() != 2: # 2 == MOBILE_PORTRAIT
+	var mode: int = dsm.get_layout_mode() if is_instance_valid(dsm) else 0
+	var is_portrait: bool = (mode == 2) # 2 == MOBILE_PORTRAIT
+	var is_landscape: bool = (mode == 1) # 1 == MOBILE_LANDSCAPE
+	# Inline-expand is the inspector in PORTRAIT only. Landscape/desktop keep the separate
+	# MiddlePanel inspector (landscape merges it into the right pane), so rows there don't expand.
+	if is_instance_valid(vendor_item_tree):
+		vendor_item_tree.inline_expand_enabled = is_portrait
+	if is_instance_valid(convoy_item_tree):
+		convoy_item_tree.inline_expand_enabled = is_portrait
+
+	# Recess each item list into a bordered well so it separates from the patterned background.
+	_wrap_list_in_well(vendor_item_tree)
+	_wrap_list_in_well(convoy_item_tree)
+
+	var hbox = get_node_or_null("HBoxContainer")
+	if not is_instance_valid(hbox):
+		return
+	if is_portrait:
+		_apply_portrait_stack(hbox)
+	elif is_landscape:
+		_apply_landscape_two_pane(hbox)
+
+func _apply_portrait_stack(hbox: Control) -> void:
+	# Godot 4.6 locks `vertical` on HBoxContainer, so we can't flip it. Instead move the
+	# three columns into a real VBoxContainer: list → inspector → transaction footer.
+	if hbox.has_meta("portrait_stacked"):
+		return
+	var parent := hbox.get_parent()
+	if not is_instance_valid(parent):
 		return
 
-	# Programmatically wrap Middle and Right panels in ScrollContainers
-	var hbox = get_node_or_null("HBoxContainer")
-	if not is_instance_valid(hbox): return
-	
+	var left = hbox.get_node_or_null("LeftPanel")
 	var middle = hbox.get_node_or_null("MiddlePanel")
-	if is_instance_valid(middle) and not (middle.get_parent() is ScrollContainer):
-		_wrap_inv_scroll(middle, 0.4, 2.0)
-		
 	var right = hbox.get_node_or_null("RightPanel")
-	if is_instance_valid(right) and not (right.get_parent() is ScrollContainer):
-		_wrap_inv_scroll(right, 0.3, 1.0)
+
+	var vbox := VBoxContainer.new()
+	vbox.name = "PortraitStack"
+	vbox.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	vbox.offset_top = 8
+	vbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	vbox.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	vbox.add_theme_constant_override("separation", 6)
+
+	# Inline-expand Concept A: the LIST owns all the height and each row expands its own
+	# inspector in place; the transaction is a slim pinned footer. The separate MiddlePanel
+	# inspector is NOT stacked here (the inline row body replaces it in portrait) — it stays
+	# parked in the now-hidden hbox.
+	for entry in [[left, Control.SIZE_EXPAND_FILL, 3.0], [right, Control.SIZE_SHRINK_END, 1.0]]:
+		var p: Control = entry[0]
+		if not is_instance_valid(p):
+			continue
+		hbox.remove_child(p)
+		p.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		p.size_flags_vertical = entry[1]
+		p.size_flags_stretch_ratio = entry[2]
+		p.custom_minimum_size = Vector2(0, p.custom_minimum_size.y) # drop the 320px column width
+		vbox.add_child(p)
+
+	# MiddlePanel stays hidden in portrait — the inline row body is the inspector.
+	if is_instance_valid(middle):
+		middle.visible = false
+		_portrait_inspector = null # disable the capped reveal; inline-expand handles inspection
+
+	# Slim the transaction block into a footer: drop the redundant title/money lines
+	# (money is already in the top bar) so it reads as one compact strip.
+	if is_instance_valid(right):
+		_slim_transaction_footer(right)
+		_style_footer_module(right)
+
+	parent.add_child(vbox)
+	parent.move_child(vbox, hbox.get_index())
+	hbox.visible = false # now only holds the (unused) vertical separators
+	hbox.set_meta("portrait_stacked", true)
+
+func _apply_landscape_two_pane(hbox: Control) -> void:
+	# Collapse the native 3-column layout to 2 panes for the narrow landscape menu:
+	#   [ list (left, ~45%) ] | [ inspector (expand) + transaction (pinned bottom) (right, ~55%) ]
+	# The transaction column was a 320px FIXED width, which crowded everything in the ~55%-width
+	# landscape menu. Folding it under the inspector as a pinned strip frees that horizontal room.
+	if hbox.has_meta("landscape_two_paned"):
+		return
+	var left = hbox.get_node_or_null("LeftPanel")
+	var middle = hbox.get_node_or_null("MiddlePanel")
+	var right = hbox.get_node_or_null("RightPanel")
+	var vsep2 = hbox.get_node_or_null("VSeparator2")
+	if not (is_instance_valid(left) and is_instance_valid(middle) and is_instance_valid(right)):
+		return
+
+	# Right pane: inspector on top (fills), transaction pinned at the bottom.
+	var pane := VBoxContainer.new()
+	pane.name = "LandscapeRightPane"
+	pane.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	pane.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	pane.size_flags_stretch_ratio = 0.55
+	pane.add_theme_constant_override("separation", 6)
+
+	var insert_idx := middle.get_index()
+	# Detach inspector + transaction from the HBox and re-home them inside the pane.
+	hbox.remove_child(middle)
+	if is_instance_valid(vsep2):
+		vsep2.visible = false
+	hbox.remove_child(right)
+
+	middle.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	middle.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	middle.size_flags_stretch_ratio = 1.0
+	# The 150px preview image + tall transaction block overflowed the short landscape height and
+	# pushed the Buy button off the bottom (behind the nav). Drop the preview; the inspector's
+	# scrollable stats/description take that space, and the transaction stays pinned + visible.
+	_slim_portrait_inspector(middle)
+	_build_landscape_stat_label()
+	pane.add_child(middle)
+
+	var div := HSeparator.new()
+	pane.add_child(div)
+
+	# Transaction pinned at the bottom of the right pane. Slim it (money lives in the top bar) so
+	# the Buy button always sits above the nav bar instead of being clipped below it.
+	_slim_transaction_footer(right)
+	_reorg_landscape_transaction(right)
+	right.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	right.size_flags_vertical = Control.SIZE_SHRINK_END
+	right.size_flags_stretch_ratio = 1.0
+	right.custom_minimum_size = Vector2(0, right.custom_minimum_size.y) # drop the 320px fixed width
+	pane.add_child(right)
+
+	# Wrap the right pane in a styled, bordered "module" panel to match the mockup.
+	var pane_wrap := PanelContainer.new()
+	pane_wrap.name = "LandscapeRightPaneWrap"
+	pane_wrap.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	pane_wrap.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	pane_wrap.size_flags_stretch_ratio = 0.55
+	var ps := StyleBoxFlat.new()
+	ps.bg_color = Color(0.078, 0.086, 0.106, 0.95)
+	ps.set_border_width_all(1)
+	ps.border_color = Color(0.224, 0.239, 0.278, 1.0) # #393d47
+	ps.set_corner_radius_all(12)
+	ps.content_margin_left = 14
+	ps.content_margin_right = 14
+	ps.content_margin_top = 12
+	ps.content_margin_bottom = 12
+	pane_wrap.add_theme_stylebox_override("panel", ps)
+	pane_wrap.add_child(pane)
+
+	hbox.add_child(pane_wrap)
+	hbox.move_child(pane_wrap, insert_idx)
+
+	# List takes the remaining ~45%.
+	left.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	left.size_flags_stretch_ratio = 0.45
+
+	hbox.set_meta("landscape_two_paned", true)
+
+func _build_landscape_stat_label() -> void:
+	# A wrapping grid of stat chips inserted right under the item name, replacing the verbose
+	# Per Unit / Total Order section panels (which were crammed into a scroll strip in landscape).
+	if is_instance_valid(_landscape_stat_box):
+		return
+	if not is_instance_valid(item_name_label):
+		return
+	var parent_m := item_name_label.get_parent()
+	if not is_instance_valid(parent_m):
+		return
+	var box := VBoxContainer.new()
+	box.name = "LandscapeStatBox"
+	box.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	box.add_theme_constant_override("separation", 0)
+	box.visible = false
+	_landscape_stat_box = box
+	parent_m.add_child(box)
+	parent_m.move_child(box, item_name_label.get_index() + 1)
+
+func _update_landscape_summary() -> void:
+	# Rebuild the stat chips and suppress the verbose sections + description toggle in landscape.
+	if not is_instance_valid(_landscape_stat_box):
+		return
+	for c in _landscape_stat_box.get_children():
+		c.queue_free()
+	var has_item: bool = selected_item != null
+	if has_item:
+		_landscape_stat_box.add_child(VendorItemList.build_stat_chips(selected_item, str(current_mode), 16))
+	_landscape_stat_box.visible = has_item
+	# Hide the tall Per Unit / Total Order / Destination section panels in landscape.
+	if is_instance_valid(item_info_rich_text):
+		var info_vbox := item_info_rich_text.get_parent()
+		if is_instance_valid(info_vbox):
+			var sections = info_vbox.get_node_or_null("InfoSectionsContainer")
+			if is_instance_valid(sections):
+				sections.visible = false
+	# Drop the Description toggle in landscape — not needed in the compact inspector.
+	if is_instance_valid(description_panel):
+		description_panel.visible = false
+
+func _reorg_landscape_transaction(right: Control) -> void:
+	# Tidy the bottom of the right pane to match the mockup: the quantity stepper and the Buy
+	# button share ONE row (Buy carries the price), with the capacity meters sitting just above.
+	# Order ends up: [ … price (hidden) ][ Volume/Mass meters ][ (− qty + Max)  |  Buy $X ].
+	if not is_instance_valid(right) or right.has_meta("landscape_tx_reorged"):
+		return
+	var qty_container := right.get_node_or_null("TransactionQuantityContainer")
+	var act := right.get_node_or_null("ActionButton")
+	if not (is_instance_valid(qty_container) and is_instance_valid(act)):
+		return
+	var row := HBoxContainer.new()
+	row.name = "TxActionRow"
+	row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.add_theme_constant_override("separation", 10)
+	# Re-home the stepper + Buy into the shared row.
+	right.remove_child(qty_container)
+	right.remove_child(act)
+	qty_container.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	qty_container.size_flags_stretch_ratio = 1.2
+	act.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	act.size_flags_stretch_ratio = 1.0
+	act.size_flags_vertical = Control.SIZE_FILL
+	row.add_child(qty_container)
+	row.add_child(act)
+	right.add_child(row) # appended last → bottom of the pinned footer
+	# The cost rides on the Buy button; _update_transaction_panel repurposes price_label to show
+	# the order PROFIT in landscape (or hides it when there's no delivery reward).
+	right.set_meta("landscape_tx_reorged", true)
+
+func _style_footer_module(right: Control) -> void:
+	# Give the transaction footer a distinct "module" look so it reads as its own panel,
+	# visually separated from the scrolling list above it.
+	if not (right is Control):
+		return
+	if right.has_meta("footer_styled"):
+		return
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color(0.086, 0.094, 0.114, 0.96) # slightly lighter than the page, opaque-ish
+	sb.set_border_width_all(0)
+	sb.border_width_top = 3
+	sb.border_color = Color(0.247, 0.616, 0.322, 0.80) # green accent rail — stronger separation from list
+	sb.set_corner_radius_all(10)
+	sb.content_margin_left = 12
+	sb.content_margin_right = 12
+	sb.content_margin_top = 10
+	sb.content_margin_bottom = 10
+	# RightPanel is a VBoxContainer (doesn't paint). Wrap it in a PanelContainer so the styled
+	# background sits behind the transaction controls.
+	var parent := right.get_parent()
+	if not is_instance_valid(parent):
+		return
+	var idx := right.get_index()
+	var wrap := PanelContainer.new()
+	wrap.name = "FooterModule"
+	wrap.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	wrap.size_flags_vertical = right.size_flags_vertical
+	wrap.size_flags_stretch_ratio = right.size_flags_stretch_ratio
+	wrap.add_theme_stylebox_override("panel", sb)
+	parent.remove_child(right)
+	wrap.add_child(right)
+	parent.add_child(wrap)
+	parent.move_child(wrap, idx)
+	right.set_meta("footer_styled", true)
+
+func _slim_transaction_footer(right: Control) -> void:
+	for child_name in ["TransactionLabel", "ConvoyMoneyLabel"]:
+		var n = right.get_node_or_null(child_name)
+		if is_instance_valid(n):
+			n.visible = false
+
+func _slim_portrait_inspector(middle: Control) -> void:
+	# The inspector is revealed in a capped (~25%) section, so drop the big 150px preview image —
+	# the name + scrollable stats/description are what matter in that space. The InfoScrollContainer
+	# already expands, so the detail scrolls within the capped height instead of overflowing.
+	var preview = middle.get_node_or_null("ItemPreview")
+	if is_instance_valid(preview):
+		preview.visible = false
+
+func _reveal_portrait_inspector() -> void:
+	# Called on selection so the inspector appears (capped) once the user picks an item.
+	if is_instance_valid(_portrait_inspector) and not _portrait_inspector.visible:
+		_portrait_inspector.visible = true
+
+func _wrap_list_in_well(list_node: Control) -> void:
+	# Sit the scrolling item list in a recessed, bordered "well" so it reads as its own surface
+	# against the patterned Oori background instead of rows floating loose. Idempotent.
+	if not is_instance_valid(list_node):
+		return
+	var parent := list_node.get_parent()
+	if not is_instance_valid(parent):
+		return
+	if parent is PanelContainer and parent.has_meta("list_well"):
+		return
+	var well := PanelContainer.new()
+	well.name = list_node.name + "Well"
+	well.set_meta("list_well", true)
+	well.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	well.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	well.size_flags_stretch_ratio = list_node.size_flags_stretch_ratio
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = UITheme.METAL_DARK # recessed: darker than the page surface
+	sb.set_border_width_all(1)
+	sb.border_color = UITheme.METAL_EDGE
+	sb.set_corner_radius_all(UITheme.RADIUS_LG)
+	sb.content_margin_left = 4
+	sb.content_margin_right = 4
+	sb.content_margin_top = 4
+	sb.content_margin_bottom = 4
+	well.add_theme_stylebox_override("panel", sb)
+	var idx := list_node.get_index()
+	parent.remove_child(list_node)
+	well.add_child(list_node)
+	parent.add_child(well)
+	parent.move_child(well, idx)
+	list_node.size_flags_vertical = Control.SIZE_EXPAND_FILL
 
 func _wrap_inv_scroll(panel: Control, stretch_ratio_h: float, _stretch_ratio_v: float) -> void:
 	var parent = panel.get_parent()
@@ -1077,9 +1446,9 @@ func _apply_text_readability_fixes() -> void:
 	# Apply semibold font where needed (sizes scale via root theme natively now!)
 	var labels_to_fix = [
 		get_node_or_null("%VolumeLabel"), # Using unique names from tscn
-		get_node_or_null("HBoxContainer/RightPanel/CapacityBars/VolumeLabel"), # Fallback path
+		get_node_or_null("HBoxContainer/RightPanel/CapacityBars/VolumeRow/VolumeLabel"), # Fallback path
 		get_node_or_null("%MassLabel"),
-		get_node_or_null("HBoxContainer/RightPanel/CapacityBars/MassLabel"),
+		get_node_or_null("HBoxContainer/RightPanel/CapacityBars/MassRow/MassLabel"),
 		get_node_or_null("HBoxContainer/RightPanel/TransactionQuantityContainer/Label")
 	]
 	
@@ -1220,6 +1589,13 @@ func _on_cargo_data_received(cargo: Dictionary) -> void:
 	var cargo_id := str(cargo.get("cargo_id", ""))
 	if perf_log_enabled:
 		print("[VendorPanel][AsyncCargo] Received cargo_data for id=", cargo_id, " has_pending=", _pending_cargo_recipient_lookups.has(cargo_id))
+	# Priced part detail arrived: if it belongs to the current selection, re-price the footer and
+	# inspector (MechanicsService has already cached it, so _ensure_selection_priced will find it).
+	if cargo_id != "" and selected_item and selected_item.has("item_data"):
+		var sel_cid := str((selected_item.item_data as Dictionary).get("cargo_id", (selected_item.item_data as Dictionary).get("part_id", "")))
+		if sel_cid == cargo_id:
+			_update_inspector()
+			_update_transaction_panel()
 	if not _pending_cargo_recipient_lookups.has(cargo_id):
 		return
 	var recipient_id := str(cargo.get("recipient", ""))
@@ -1258,15 +1634,13 @@ func _update_vendor_ui(update_vendor: bool = true, update_convoy: bool = true) -
 	# Use self.vendor_items and self.convoy_items to populate the UI.
 	# Allow callers to update only the relevant tree to reduce rebuild cost.
 	if update_vendor:
-		_ensure_tree_columns(vendor_item_tree)
-		_populate_tree_from_agg(vendor_item_tree, self.vendor_items)
+		_populate_list_from_agg(vendor_item_tree, self.vendor_items)
 	if update_convoy:
-		_ensure_tree_columns(convoy_item_tree)
 		var agg_to_use: Dictionary = self.convoy_items if (self.convoy_items is Dictionary) else {}
 		# In SELL mode, allow selling whole vehicles when appropriate for this vendor
 		if _should_show_vehicle_sell_category():
 			agg_to_use = _convoy_items_with_sellable_vehicles(agg_to_use)
-		_populate_tree_from_agg(convoy_item_tree, agg_to_use)
+		_populate_list_from_agg(convoy_item_tree, agg_to_use)
 	_update_convoy_info_display()
 
 func _should_show_vehicle_sell_category() -> bool:
@@ -1275,14 +1649,22 @@ func _should_show_vehicle_sell_category() -> bool:
 func _convoy_items_with_sellable_vehicles(base_agg: Dictionary) -> Dictionary:
 	return VendorPanelVehicleSellController.convoy_items_with_sellable_vehicles(self, base_agg)
 
-func _populate_tree_from_agg(tree: Tree, agg: Dictionary) -> void:
-	var t0 := 0
-	if perf_log_enabled:
-		t0 = Time.get_ticks_msec()
-	var rows := VendorTreeBuilder.populate_tree_vendor_rows(tree, agg)
-	if perf_log_enabled:
-		var dt = Time.get_ticks_msec() - t0
-		print("[VendorPanel][Perf] _populate_tree_from_agg rows=", rows, " dt=", dt, " ms for ", tree.name)
+func _populate_list_from_agg(list: VendorItemList, agg: Dictionary) -> void:
+	# Mirrors the old VendorTreeBuilder.populate_tree_vendor_rows: rebucket parts out of "other",
+	# then add the standard category sections to the custom list.
+	if not is_instance_valid(list):
+		return
+	list.clear_items()
+	var display_agg: Dictionary = VendorTreeBuilder.make_display_agg_with_parts_rebucket(agg)
+	# Category key -> friendly title (matches the _populate_*_list naming).
+	var order := [["missions", "Delivery Cargo"], ["vehicles", "Vehicles"], ["parts", "Parts"], ["other", "Other"], ["resources", "Resources"]]
+	for entry in order:
+		var key: String = entry[0]
+		var title: String = entry[1]
+		var bucket: Variant = display_agg.get(key, {})
+		if bucket is Dictionary and not (bucket as Dictionary).is_empty():
+			var sm: int = _cargo_sort_metric if title == "Delivery Cargo" else -1
+			list.add_category(title, bucket, sm)
 
 
 # --- Data Initialization ---
@@ -1336,7 +1718,7 @@ func refresh_data(p_vendor_data, p_convoy_data, p_current_settlement_data, p_all
 
 func _populate_vendor_list() -> void:
 	_ignore_selection_signals = true
-	vendor_item_tree.clear()
+	vendor_item_tree.clear_items()
 	if not vendor_data:
 		vendor_items = {}
 		_ignore_selection_signals = false
@@ -1344,13 +1726,12 @@ func _populate_vendor_list() -> void:
 	var vd_for_agg := _vendor_data_with_price_fallback(vendor_data)
 	var buckets := VendorCargoAggregatorScript.build_vendor_buckets(vd_for_agg, perf_log_enabled, Callable(self, "_get_vendor_name_for_recipient"))
 	self.vendor_items = buckets
-	var root = vendor_item_tree.create_item()
 	var has_delivery_cargo = not buckets.get("delivery", {}).is_empty()
-	_populate_category(vendor_item_tree, root, "Delivery Cargo", buckets.get("delivery", {}))
-	_populate_category(vendor_item_tree, root, "Vehicles", buckets.get("vehicles", {}))
-	_populate_category(vendor_item_tree, root, "Parts", buckets.get("parts", {}))
-	_populate_category(vendor_item_tree, root, "Other", buckets.get("other", {}))
-	_populate_category(vendor_item_tree, root, "Resources", buckets.get("resources", {}))
+	vendor_item_tree.add_category("Delivery Cargo", buckets.get("delivery", {}), _cargo_sort_metric)
+	vendor_item_tree.add_category("Vehicles", buckets.get("vehicles", {}), -1)
+	vendor_item_tree.add_category("Parts", buckets.get("parts", {}), -1)
+	vendor_item_tree.add_category("Other", buckets.get("other", {}), -1)
+	vendor_item_tree.add_category("Resources", buckets.get("resources", {}), -1)
 	_ignore_selection_signals = false
 
 	if has_delivery_cargo and is_instance_valid(_api):
@@ -1432,7 +1813,7 @@ func _try_apply_pending_focus_intent() -> bool:
 
 func _populate_convoy_list() -> void:
 	_ignore_selection_signals = true
-	convoy_item_tree.clear()
+	convoy_item_tree.clear_items()
 	if not (convoy_data is Dictionary) or convoy_data.is_empty():
 		convoy_items = {}
 		_ignore_selection_signals = false
@@ -1471,16 +1852,15 @@ func _populate_convoy_list() -> void:
 			" settlement_prices(f/w/food)=", sv_prices,
 			" allow_vehicle_sell=", allow_vehicle_sell,
 			" bucket_sizes(d/v/p/o/r)=", int((buckets.get("delivery", {}) as Dictionary).size()), "/", int((buckets.get("vehicles", {}) as Dictionary).size()), "/", int((buckets.get("parts", {}) as Dictionary).size()), "/", int((buckets.get("other", {}) as Dictionary).size()), "/", int((buckets.get("resources", {}) as Dictionary).size()))
-	var root = convoy_item_tree.create_item()
 	var has_delivery_cargo = not buckets.get("delivery", {}).is_empty()
-	_populate_category(convoy_item_tree, root, "Delivery Cargo", buckets.get("delivery", {}))
+	convoy_item_tree.add_category("Delivery Cargo", buckets.get("delivery", {}), _cargo_sort_metric)
 	if allow_vehicle_sell and not (buckets.get("vehicles", {}) as Dictionary).is_empty():
-		_populate_category(convoy_item_tree, root, "Vehicles", buckets.get("vehicles", {}))
+		convoy_item_tree.add_category("Vehicles", buckets.get("vehicles", {}), -1)
 	# Only show loose/aggregated parts when BUYING. In SELL mode installed vehicle parts are not sellable.
 	if current_mode == "buy":
-		_populate_category(convoy_item_tree, root, "Parts", buckets.get("parts", {}))
-	_populate_category(convoy_item_tree, root, "Other", buckets.get("other", {}))
-	_populate_category(convoy_item_tree, root, "Resources", buckets.get("resources", {}))
+		convoy_item_tree.add_category("Parts", buckets.get("parts", {}), -1)
+	convoy_item_tree.add_category("Other", buckets.get("other", {}), -1)
+	convoy_item_tree.add_category("Resources", buckets.get("resources", {}), -1)
 	_ignore_selection_signals = false
 
 	# Show sorting if either list has delivery cargo, according to Active Tab
@@ -1526,19 +1906,147 @@ func _on_convoy_updated(convoy: Dictionary) -> void:
 
 
 # --- Signal Handlers ---
+func _select_trade_mode(tab_index: int) -> void:
+	# Setting current_tab fires tab_changed → _on_tab_changed → _sync_mode_toggle_buttons.
+	if is_instance_valid(trade_mode_tab_container):
+		trade_mode_tab_container.current_tab = tab_index
+
+func _on_mode_flip_pressed() -> void:
+	# Single flip button: toggle Buy(0) <-> Sell(1).
+	if not is_instance_valid(trade_mode_tab_container):
+		return
+	var next_tab: int = 1 if trade_mode_tab_container.current_tab == 0 else 0
+	_select_trade_mode(next_tab)
+
+func _sync_mode_toggle_buttons(tab_index: int) -> void:
+	# Reflect the active mode on the single flip button (label + color).
+	if not is_instance_valid(mode_flip_button):
+		return
+	var is_buy: bool = (tab_index == 0)
+	mode_flip_button.text = "Buy ⇄" if is_buy else "Sell ⇄"
+	_style_mode_toggle()
+
+# Shared neutral button language for the control-row + Max buttons so they all read as one set
+# (METAL_BASE fill, METAL_EDGE border, radius MD). The single accented button is the primary Buy.
+func _style_neutral_button(b: Button) -> void:
+	if not is_instance_valid(b):
+		return
+	b.focus_mode = Control.FOCUS_NONE
+	var normal := StyleBoxFlat.new()
+	normal.bg_color = UITheme.METAL_BASE
+	normal.set_border_width_all(UITheme.BORDER_THIN)
+	normal.border_color = UITheme.METAL_EDGE
+	normal.set_corner_radius_all(UITheme.RADIUS_MD)
+	normal.content_margin_left = 12
+	normal.content_margin_right = 12
+	normal.content_margin_top = 6
+	normal.content_margin_bottom = 6
+	var hover := normal.duplicate()
+	hover.bg_color = UITheme.METAL_HOVER
+	hover.border_color = UITheme.TEXT_MUTED
+	var pressed := normal.duplicate()
+	pressed.bg_color = UITheme.METAL_ACTIVE
+	var disabled := normal.duplicate()
+	disabled.bg_color = UITheme.METAL_DARK
+	disabled.border_color = UITheme.METAL_EDGE.lerp(Color.BLACK, 0.3)
+	for state in [["normal", normal], ["hover", hover], ["pressed", pressed], ["hover_pressed", pressed], ["focus", hover], ["disabled", disabled]]:
+		b.add_theme_stylebox_override(state[0], state[1])
+	b.add_theme_color_override("font_color", UITheme.TEXT_PRIMARY)
+	b.add_theme_color_override("font_hover_color", Color(1, 1, 1))
+	b.add_theme_color_override("font_pressed_color", UITheme.TEXT_PRIMARY)
+	b.add_theme_color_override("font_disabled_color", UITheme.TEXT_MUTED)
+
+# Filter / parameter controls (vendor-type dropdown, Buy/Sell toggle, Sort). These SET STATE rather
+# than commit an action, so they must read differently from the neutral action buttons (Top Up /
+# Warehouse / Max): a recessed METAL_DARK well + a verdigris trim border — the design system's
+# digital/state cue (verdigris = living/digital; warm grey = economic action). `active` marks the
+# currently-selected state (the Buy/Sell flip): a stronger verdigris fill, full-strength border, and
+# lighter verdigris text so the live trade direction reads at a glance.
+func _style_filter_control(b: Button, active: bool = false) -> void:
+	if not is_instance_valid(b):
+		return
+	# MenuButtons default to flat=true, which suppresses the normal stylebox (and thus the border).
+	b.flat = false
+	b.focus_mode = Control.FOCUS_NONE
+	var trim := UITheme.METAL_EDGE.lerp(UITheme.ACCENT_VERDIGRIS, 0.55)
+	var active_fill := Color(0.051, 0.188, 0.145) # deep verdigris well (darker than the Buy commit button)
+	var active_fg := Color(0.627, 0.831, 0.784)   # light verdigris text
+	var normal := StyleBoxFlat.new()
+	normal.bg_color = active_fill if active else UITheme.METAL_DARK
+	normal.set_border_width_all(UITheme.BORDER_THIN)
+	normal.border_color = UITheme.ACCENT_VERDIGRIS if active else trim
+	normal.set_corner_radius_all(UITheme.RADIUS_MD)
+	normal.content_margin_left = 12
+	normal.content_margin_right = 12
+	normal.content_margin_top = 6
+	normal.content_margin_bottom = 6
+	var hover := normal.duplicate()
+	hover.bg_color = (normal.bg_color as Color).lerp(UITheme.ACCENT_VERDIGRIS, 0.18)
+	hover.border_color = UITheme.ACCENT_VERDIGRIS
+	var pressed := normal.duplicate()
+	pressed.bg_color = (normal.bg_color as Color).lerp(Color.BLACK, 0.2)
+	var disabled := normal.duplicate()
+	disabled.bg_color = UITheme.METAL_DARK
+	disabled.border_color = UITheme.METAL_EDGE.lerp(Color.BLACK, 0.3)
+	for state in [["normal", normal], ["hover", hover], ["pressed", pressed], ["hover_pressed", pressed], ["focus", hover], ["disabled", disabled]]:
+		b.add_theme_stylebox_override(state[0], state[1])
+	var fg := active_fg if active else UITheme.TEXT_PRIMARY
+	b.add_theme_color_override("font_color", fg)
+	b.add_theme_color_override("font_hover_color", Color(1, 1, 1))
+	b.add_theme_color_override("font_pressed_color", fg)
+	b.add_theme_color_override("font_disabled_color", UITheme.TEXT_MUTED)
+
+# The one accented button: primary Buy/Sell commit action (verdigris green).
+func _style_primary_button(b: Button) -> void:
+	if not is_instance_valid(b):
+		return
+	var normal := StyleBoxFlat.new()
+	normal.bg_color = Color(0.176, 0.290, 0.196) # deep verdigris fill
+	normal.set_border_width_all(UITheme.BORDER_THIN)
+	normal.border_color = UITheme.ACCENT_VERDIGRIS
+	normal.set_corner_radius_all(UITheme.RADIUS_MD)
+	normal.content_margin_left = 14
+	normal.content_margin_right = 14
+	normal.content_margin_top = 8
+	normal.content_margin_bottom = 8
+	var hover := normal.duplicate()
+	hover.bg_color = Color(0.224, 0.357, 0.247)
+	var pressed := normal.duplicate()
+	pressed.bg_color = Color(0.137, 0.235, 0.157)
+	var disabled := normal.duplicate()
+	disabled.bg_color = UITheme.METAL_DARK
+	disabled.border_color = UITheme.METAL_EDGE.lerp(Color.BLACK, 0.3)
+	for state in [["normal", normal], ["hover", hover], ["pressed", pressed], ["hover_pressed", pressed], ["focus", hover], ["disabled", disabled]]:
+		b.add_theme_stylebox_override(state[0], state[1])
+	b.add_theme_color_override("font_color", Color(0.85, 0.93, 0.86))
+	b.add_theme_color_override("font_hover_color", Color(1, 1, 1))
+	b.add_theme_color_override("font_pressed_color", Color(0.85, 0.93, 0.86))
+	b.add_theme_color_override("font_disabled_color", UITheme.TEXT_MUTED)
+
+func _style_mode_toggle() -> void:
+	var b := mode_flip_button
+	if not is_instance_valid(b):
+		return
+	# Content-sized button: must NOT clip_text, or its minimum size drops the label and it
+	# collapses to just the margins (no text, hairline-thin).
+	b.clip_text = false
+	# The Buy/Sell flip is always the "active state" filter control (current trade direction).
+	_style_filter_control(b, true)
+
 func _on_tab_changed(tab_index: int) -> void:
 	_reset_destination_preview_if_active()
 	current_mode = "buy" if tab_index == 0 else "sell"
 	action_button.text = "Buy" if current_mode == "buy" else "Sell"
+	_sync_mode_toggle_buttons(tab_index)
 	_update_sort_dropdown_visibility_fast()
 	
 	# Clear selection and inspector when switching tabs
 	selected_item = null
 	_clear_committed_projection()
-	if vendor_item_tree.get_selected():
-		vendor_item_tree.get_selected().deselect(0)
-	if convoy_item_tree.get_selected():
-		convoy_item_tree.get_selected().deselect(0)
+	if is_instance_valid(vendor_item_tree):
+		vendor_item_tree.deselect_all()
+	if is_instance_valid(convoy_item_tree):
+		convoy_item_tree.deselect_all()
 	_clear_inspector()
 	if is_instance_valid(action_button):
 		action_button.disabled = true
@@ -1551,42 +2059,31 @@ func _on_tab_changed(tab_index: int) -> void:
 	if is_node_ready():
 		_populate_convoy_list()
 
-func _on_vendor_item_selected() -> void:
+func _on_vendor_item_selected(agg_data = null) -> void:
 	if _ignore_selection_signals:
 		return
-	var tree_item = vendor_item_tree.get_selected()
-	# --- START TUTORIAL DEBUG LOG ---
-	var item_text = tree_item.get_text(0) if is_instance_valid(tree_item) else "<none>"
+	# VendorItemList.item_selected passes the row's agg_data directly (mirrors Tree get_metadata(0)).
+	if agg_data == null and is_instance_valid(vendor_item_tree):
+		agg_data = vendor_item_tree.get_selected_data()
 	if perf_log_enabled:
-		print("[VendorPanel][LOG] _on_vendor_item_selected. Item: '%s'" % item_text)
-	# --- END TUTORIAL DEBUG LOG ---
+		var nm := str((agg_data as Dictionary).get("display_name", "")) if agg_data is Dictionary else "<none>"
+		print("[VendorPanel][LOG] _on_vendor_item_selected. Item: '%s'" % nm)
 	_last_selected_tree = "vendor"
 	_last_selection_change_ms = Time.get_ticks_msec()
-	var item = tree_item.get_metadata(0) if tree_item and tree_item.get_metadata(0) != null else null
+	_reveal_portrait_inspector()
 	# Defer handling to the next idle frame.
-	call_deferred("_handle_new_item_selection", item)
+	call_deferred("_handle_new_item_selection", agg_data)
 
-func _on_convoy_item_selected() -> void:
+func _on_convoy_item_selected(agg_data = null) -> void:
 	if _ignore_selection_signals:
 		return
-	var tree_item = convoy_item_tree.get_selected()
+	if agg_data == null and is_instance_valid(convoy_item_tree):
+		agg_data = convoy_item_tree.get_selected_data()
 	_last_selected_tree = "convoy"
 	_last_selection_change_ms = Time.get_ticks_msec()
-	var item = tree_item.get_metadata(0) if tree_item and tree_item.get_metadata(0) != null else null
+	_reveal_portrait_inspector()
 	# Defer handling to prevent UI race conditions.
-	call_deferred("_handle_new_item_selection", item)
-
-func _populate_category(target_tree: Tree, root_item: TreeItem, category_name: String, agg_dict: Dictionary) -> void:
-	VendorTreeBuilder.populate_category(target_tree, root_item, category_name, agg_dict, _cargo_sort_metric, perf_log_enabled)
-
-func _ensure_tree_columns(tree: Tree) -> void:
-	if not is_instance_valid(tree):
-		return
-	# Configure a simple single-column layout (previous behavior)
-	tree.set_columns(1)
-	tree.set_meta("cols", 1)
-	tree.set_column_titles_visible(false)
-	tree.set_column_expand(0, true)
+	call_deferred("_handle_new_item_selection", agg_data)
 
 # --- Display formatting helpers (visual-only) ---
 func _fmt_qty(v: Variant) -> String:
@@ -1634,6 +2131,9 @@ func _update_inspector() -> void:
 	if not selected_item:
 		return
 
+	# Merge any lazily-fetched part price into the selection so the inspector shows the real price.
+	_ensure_selection_priced()
+
 	var item_data_source = selected_item.item_data if selected_item.has("item_data") and not selected_item.item_data.is_empty() else selected_item
 
 	# If the selected item is a vehicle, use a dedicated inspector update function and skip the generic one.
@@ -1642,6 +2142,8 @@ func _update_inspector() -> void:
 		VendorPanelInspectorController.update_vehicle(self, vehicle_data)
 		# Fitment panel should be updated for all items, including vehicles (to hide it).
 		_update_fitment_panel()
+		if _is_landscape_layout():
+			_update_landscape_summary()
 		return
 
 	VendorPanelInspectorController.update_non_vehicle(
@@ -1659,6 +2161,8 @@ func _update_inspector() -> void:
 		_compat_cache,
 		perf_log_enabled
 	)
+	if _is_landscape_layout():
+		_update_landscape_summary()
 	call_deferred("_log_size_after_update")
 
 func _update_fitment_panel() -> void:
@@ -1706,12 +2210,20 @@ func _update_transaction_panel() -> void:
 			can_transact = false
 
 	# --- START: UNIFIED PRICE & DISPLAY LOGIC via VM ---
+	# Vendor stock parts ship as a thin summary with no price; the priced detail is fetched
+	# lazily by cargo_id (same path the Mechanics menu uses) and merged into the selection when
+	# available, so the presenter below computes a real total.
+	_ensure_selection_priced()
 	var quantity = int(quantity_spinbox.value) if is_instance_valid(quantity_spinbox) else 1
 	var pr = VendorTradeVM.build_price_presenter(item_data_source, str(current_mode), quantity, selected_item)
+	var total_reward: float = float(pr.get("total_delivery_reward", 0.0))
+	var is_portrait_now := _is_compact_footer_layout()
 	if is_instance_valid(delivery_reward_label):
-		delivery_reward_label.visible = float(pr.get("total_delivery_reward", 0.0)) > 0.0
-		if float(pr.get("total_delivery_reward", 0.0)) > 0.0:
-			delivery_reward_label.text = "[b]Total Delivery Reward:[/b] %s" % NumberFormat.format_money(float(pr.get("total_delivery_reward", 0.0)))
+		# In portrait the reward is folded into the single compact price line below, so the
+		# separate reward label is only shown on desktop/landscape.
+		delivery_reward_label.visible = (not is_portrait_now) and total_reward > 0.0
+		if total_reward > 0.0:
+			delivery_reward_label.text = "[b]Total Delivery Reward:[/b] %s" % NumberFormat.format_money(total_reward)
 	var bbcode_text = String(pr.get("bbcode_text", ""))
 	var added_w: float = float(pr.get("added_weight", 0.0))
 	var added_v: float = float(pr.get("added_volume", 0.0))
@@ -1724,11 +2236,41 @@ func _update_transaction_panel() -> void:
 	# Trim trailing newline just in case
 	if bbcode_text.ends_with("\n"):
 		bbcode_text = bbcode_text.substr(0, bbcode_text.length() - 1)
-	# Assign composed text
-	price_label.text = bbcode_text
+	# Assign composed text. In portrait, collapse the multi-line breakdown (Quantity / Total
+	# Price / Order Weight / Order Volume) into ONE line — the per-unit stats already live in the
+	# inline row body, and the order weight/volume are visualized by the capacity bars. This keeps
+	# the footer a fixed, compact height instead of exploding when an item is selected.
+	var total_price_now: float = float(pr.get("total_price", 0.0))
+	var net_profit: float = total_reward - total_price_now # order profit when this is delivery cargo
+	var profit_bb := ""
+	if total_reward > 0.0:
+		var sgn: String = "+" if net_profit >= 0.0 else "-"
+		var pcol: String = "#7fd08a" if net_profit >= 0.0 else "#e3736b"
+		profit_bb = "[color=%s][b]Profit %s%s[/b][/color]" % [pcol, sgn, NumberFormat.format_money(absf(net_profit))]
+	if _is_landscape_layout():
+		# Cost rides on the Buy button; show the order PROFIT here when it's delivery cargo.
+		if profit_bb != "" and not VendorTradeVM.is_vehicle_item(item_data_source):
+			price_label.text = profit_bb
+			price_label.visible = true
+		else:
+			price_label.visible = false
+	elif is_portrait_now and not VendorTradeVM.is_vehicle_item(item_data_source):
+		var compact := "[b]Total:[/b] %s" % NumberFormat.format_money(total_price_now)
+		if profit_bb != "":
+			compact += "    " + profit_bb
+		price_label.text = compact
+		price_label.visible = true
+	else:
+		price_label.text = bbcode_text
+		price_label.visible = true
 	_update_install_button_state()
 	if is_instance_valid(action_button):
 		action_button.disabled = not can_transact
+		# Landscape carries the price on the Buy/Sell button itself (the standalone price line is
+		# hidden there), matching the mockup's "Buy  $5,000".
+		if _is_landscape_layout():
+			var verb: String = "Buy" if str(current_mode) == "buy" else "Sell"
+			action_button.text = "%s  %s" % [verb, NumberFormat.format_money(float(pr.get("total_price", 0.0)))]
 		if not can_transact:
 			action_button.text = "Sell"
 
@@ -1749,13 +2291,72 @@ func _looks_like_part(item_data_source: Dictionary) -> bool:
 	# Defer to the centralized classification logic in the ItemsData factory.
 	return ItemsData.PartItem._looks_like_part_dict(item_data_source)
 
+# Vendor stock parts arrive as a thin summary (cargo_id + name, base_price: 0) with no usable
+# price. The full priced detail is fetched lazily by cargo_id via APICalls.get_cargo and cached
+# in MechanicsService — the same source the Mechanics/Cargo menus read. When the cached detail is
+# available, merge its price fields into the live selection so every consumer (footer, inspector,
+# row) resolves the real price. Idempotent: a no-op once the selection already prices > 0.
+func _ensure_selection_priced() -> void:
+	if not selected_item or not selected_item.has("item_data"):
+		return
+	var idata: Variant = selected_item.item_data
+	if not (idata is Dictionary) or (idata as Dictionary).is_empty():
+		return
+	var d: Dictionary = idata
+	if VendorTradeVM.contextual_unit_price(d, str(current_mode)) > 0.0:
+		return
+	var cid: String = str(d.get("cargo_id", d.get("part_id", "")))
+	if cid == "" or not is_instance_valid(_mechanics_service) or not _mechanics_service.has_method("get_enriched_cargo"):
+		return
+	var rich: Dictionary = _mechanics_service.get_enriched_cargo(cid)
+	if rich.is_empty():
+		return
+	for k in ["price", "unit_price", "base_unit_price", "value"]:
+		if rich.has(k) and rich.get(k) != null:
+			d[k] = rich.get(k)
+
 # Helper: fetch a modifier value from either top-level or stats dict using a list of alias keys
  
 
+func _best_install_price_for_selection() -> float:
+	# Min install price across all convoy vehicles we've cached a compat result for, for the current
+	# selection. Returns -1 when no compat result has arrived yet.
+	if not selected_item or not (selected_item is Dictionary) or not selected_item.has("item_data"):
+		return -1.0
+	var idata: Dictionary = selected_item.item_data
+	var uid: String = str(idata.get("cargo_id", idata.get("part_id", "")))
+	if uid == "":
+		return -1.0
+	var best: float = -1.0
+	for key in _install_price_cache.keys():
+		if str(key).ends_with("||" + uid):
+			var p: float = float(_install_price_cache[key])
+			if p >= 0.0 and (best < 0.0 or p < best):
+				best = p
+	return best
+
+func _refresh_install_cost_display() -> void:
+	# Show the resolved install cost on whichever Install button is active (inline in portrait,
+	# footer otherwise). Cargo price itself is already shown as a stat chip.
+	var price: float = _best_install_price_for_selection()
+	if _is_portrait_layout():
+		if is_instance_valid(vendor_item_tree) and vendor_item_tree.has_method("set_selected_install_cost"):
+			vendor_item_tree.set_selected_install_cost(price)
+	elif is_instance_valid(install_button) and install_button.visible:
+		install_button.text = "Install" if price < 0.0 else "Install · %s" % NumberFormat.format_money(price)
+
 func _update_install_button_state() -> void:
 	VendorPanelCompatController.update_install_button_state(self)
+	_refresh_install_cost_display()
 
 func _on_install_button_pressed() -> void:
+	VendorPanelCompatController.on_install_button_pressed(self)
+
+func _on_inline_install_pressed(agg_data: Variant) -> void:
+	# The inline body is only visible for the selected row, so `selected_item` already equals this
+	# agg_data; assert it defensively, then reuse the standard install flow.
+	if agg_data is Dictionary:
+		selected_item = agg_data
 	VendorPanelCompatController.on_install_button_pressed(self)
 
 # --- Compatibility plumbing (align with Mechanics) ---
@@ -1763,6 +2364,8 @@ func _on_install_button_pressed() -> void:
 
 func _on_part_compatibility_ready(payload: Dictionary) -> void:
 	VendorPanelCompatController.on_part_compatibility_ready(self, payload)
+	# Install price now cached → reflect it on the active Install button.
+	_refresh_install_cost_display()
 
  
 
@@ -1997,10 +2600,17 @@ func _log_size_after_update():
 	if perf_log_enabled:
 		print("[VendorPanel][LOG] _update_inspector finished. New panel size: %s" % str(size))
 
-func _restore_selection(tree: Tree, item_id, clear_on_fail: bool = true) -> bool:
+func _restore_selection(list: VendorItemList, item_id, clear_on_fail: bool = true) -> bool:
+	# List-native restore: iterate rows, match via the same data-level _matches_restore_key,
+	# and drive _handle_new_item_selection exactly like the old Tree path.
+	if not is_instance_valid(list):
+		return false
 	var on_select := Callable(self, "_handle_new_item_selection")
 	var match_fn := Callable(self, "_matches_restore_key")
-	return VendorSelectionManager.restore_selection(tree, item_id, on_select, match_fn, clear_on_fail)
+	var ok: bool = list.restore_by_match(item_id, match_fn, on_select)
+	if not ok and clear_on_fail:
+		list.deselect_all()
+	return ok
 
 # Helper function to match by special restore keys
 func _matches_restore_key(agg_data: Dictionary, key: String) -> bool:

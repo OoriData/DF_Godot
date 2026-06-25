@@ -6,16 +6,20 @@
       {
         "id": "16f98d6698797a56",
         "type": "tabs",
-        "dimension": 63.946459412780655,
+        "dimension": 63.94645941278066,
         "children": [
           {
             "id": "1ae821d75f551279",
             "type": "leaf",
             "state": {
-              "type": "graph",
-              "state": {},
-              "icon": "lucide-git-fork",
-              "title": "Graph view"
+              "type": "markdown",
+              "state": {
+                "file": "TODO.md",
+                "mode": "source",
+                "source": false
+              },
+              "icon": "lucide-file",
+              "title": "TODO"
             }
           }
         ]
@@ -71,7 +75,7 @@
             "state": {
               "type": "search",
               "state": {
-                "query": "",
+                "query": "todo",
                 "matchingCase": false,
                 "explainSearch": false,
                 "collapseAll": false,
@@ -92,7 +96,8 @@
               "title": "Bookmarks"
             }
           }
-        ]
+        ],
+        "currentTab": 1
       }
     ],
     "direction": "horizontal",
@@ -184,12 +189,20 @@
   },
   "active": "1ae821d75f551279",
   "lastOpenFiles": [
-    "Pasted image 20260521131852.png",
-    "02_UI_UX/ConvoyMenu.md",
     "02_UI_UX/UIAudit.md",
+    "DocumentationHome.md",
+    "_mockups/vendor_landscape_v2.html",
+    "_mockups/vendor_consolidated_v2.html",
+    "02_UI_UX/VendorPanel/ResponsiveRefactor.md",
+    "_mockups/index.html",
+    "_mockups/vendor_portrait_concepts.html",
+    "_mockups",
+    "Pasted image 20260521131852.png.import",
+    "Pasted image 20260521131852.png",
+    "04_Technical/TextScale.md",
+    "02_UI_UX/ConvoyMenu.md",
     "TODO.md",
     "03_Systems/MapSystem/SettlementOverlay.md",
-    "Pasted image 20260521131852.png.import",
     "99_Reference/data_dumps/Map_example_new.md",
     "99_Reference/data_dumps/Map_example.json",
     "03_Systems/MapSystem/MapMenuSystem.md",
@@ -197,12 +210,9 @@
     "99_Reference/data_dumps/Map_example_new.json",
     "03_Systems/MapSystem/Data.md",
     "99_Reference/data_dumps/scripts/regenerate_map_example.py",
-    "99_Reference/data_dumps/scripts",
-    "99_Reference/data_dumps/Map_examplemap.json",
     "02_UI_UX/MenuManager.md",
     "02_UI_UX/UISystemIndex.md",
     "99_Reference/Glossary.md",
-    "DocumentationHome.md",
     "PROJECT_MAP.md",
     "01_Architecture/Architecture.md",
     "01_Architecture/Cookbook.md",
@@ -214,8 +224,6 @@
     "03_Systems/SettlementEconomy.md",
     "04_Technical/MultiProviderAuth.md",
     "03_Systems/StateManagement.md",
-    "04_Technical/PushNotifications.md",
-    "03_Systems/MapSystem/TerrainMath.md",
-    "03_Systems/TutorialSystem/TargetResolution.md"
+    "04_Technical/PushNotifications.md"
   ]
 }

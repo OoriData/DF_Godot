@@ -86,7 +86,15 @@ const OORI_BG_SCALE    := 0.5
 ## Returns a ShaderMaterial that tiles the Oori background using FRAGCOORD so
 ## every panel sharing this material stays perfectly aligned with neighbours.
 ## Call once and reuse the result — ShaderMaterial is safe to share.
-func make_oori_bg_material() -> ShaderMaterial:
+##
+## scale_override: pass a value > 0 to use a different on-screen tile size than the
+##   shared OORI_BG_SCALE (e.g. a thin bar wants a denser tile so it fills evenly
+##   instead of showing one arbitrary slice). -1 keeps the global default.
+## offset_px: pixel shift, lets a thin bar centre on a chosen band.
+## use_local: true tiles from the rect's own top-left in logical px so the pattern
+##   stays put when the window is stretched (instead of sliding/scaling in screen
+##   space). Leave false for full-screen/menu backgrounds that want panels aligned.
+func make_oori_bg_material(scale_override: float = -1.0, offset_px: Vector2 = Vector2.ZERO, use_local: bool = false) -> ShaderMaterial:
 	var shader = load(OORI_BG_SHADER) as Shader
 	if not shader:
 		push_warning("UITheme: could not load Oori background shader at %s" % OORI_BG_SHADER)
@@ -96,18 +104,23 @@ func make_oori_bg_material() -> ShaderMaterial:
 	var tex = load(OORI_BG_TEXTURE) as Texture2D
 	mat.set_shader_parameter("tile_tex", tex)
 	mat.set_shader_parameter("tile_size", OORI_BG_TEX_SIZE)
-	mat.set_shader_parameter("scale", OORI_BG_SCALE)
+	mat.set_shader_parameter("scale", OORI_BG_SCALE if scale_override <= 0.0 else scale_override)
+	mat.set_shader_parameter("offset", offset_px)
+	mat.set_shader_parameter("use_local", 1.0 if use_local else 0.0)
 	return mat
 
-## Applies the screen-space Oori tile shader to a TextureRect in-place.
+## Applies the Oori tile shader to a TextureRect in-place.
 ## Sets the texture, expand/stretch mode, and material so every call site is
 ## a one-liner: UITheme.apply_oori_bg(my_texture_rect)
-func apply_oori_bg(rect: TextureRect) -> void:
+## See make_oori_bg_material() for scale_override / offset_px / use_local.
+func apply_oori_bg(rect: TextureRect, scale_override: float = -1.0, offset_px: Vector2 = Vector2.ZERO, use_local: bool = false) -> void:
 	if not is_instance_valid(rect):
 		return
 	var tex = load(OORI_BG_TEXTURE) as Texture2D
 	rect.texture = tex
 	rect.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	rect.stretch_mode = TextureRect.STRETCH_TILE
+	# Local mode needs a single quad (VERTEX = rect-local px); screen-space mode is
+	# unaffected by stretch_mode since it samples by FRAGCOORD.
+	rect.stretch_mode = TextureRect.STRETCH_SCALE if use_local else TextureRect.STRETCH_TILE
 	rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	rect.material = make_oori_bg_material()
+	rect.material = make_oori_bg_material(scale_override, offset_px, use_local)

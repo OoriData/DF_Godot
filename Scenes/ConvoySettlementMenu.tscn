@@ -49,6 +49,11 @@ text = "Top Up"
 tooltip_text = "Automatically purchase needed fuel, water, and food."
 script = ExtResource("2_top_up_btn")
 
+[node name="VendorSelector" type="OptionButton" parent="MainVBox"]
+unique_name_in_owner = true
+layout_mode = 2
+visible = false
+
 [node name="VendorTabContainer" type="TabContainer" parent="MainVBox"]
 unique_name_in_owner = true
 layout_mode = 2

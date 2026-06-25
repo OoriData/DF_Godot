@@ -4,7 +4,6 @@ extends CanvasLayer
 @onready var c_fullscreen: CheckButton = %FullscreenCheck
 @onready var c_invert_pan: CheckButton = %InvertPanCheck
 @onready var c_invert_zoom: CheckButton = %InvertZoomCheck
-@onready var c_gestures: CheckButton = %GesturesCheck
 @onready var s_menu_ratio: HSlider = %MenuWidthRatioSlider
 @onready var c_high_contrast: CheckButton = %HighContrastCheck
 @onready var btn_reset: Button = %ResetDefaultsButton
@@ -59,9 +58,7 @@ func _is_mobile() -> bool:
 	return false
 
 func _get_font_size(base: int) -> int:
-	var is_portrait = _is_portrait()
-	var boost = 3.5 if is_portrait else (1.6 if _is_mobile() else 1.2)
-	return int(base * boost)
+	return base  # UIScaleManager owns all scaling; never multiply here
 
 func _update_layout() -> void:
 	if not is_inside_tree(): return
@@ -154,14 +151,15 @@ func _update_layout() -> void:
 		if is_instance_valid(btn):
 			var want_huge = btn.name.to_lower().contains("close")
 			var btn_height: int
-			var btn_width: int
 			if is_portrait:
-				btn_height = 145 if want_huge else 120
-				btn_width = 300
+				# Expand to fill width so 3 buttons never overflow the panel
+				btn_height = 100 if want_huge else 80
+				btn.custom_minimum_size = Vector2(0, btn_height)
+				btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 			else:
 				btn_height = 100 if want_huge else 80
-				btn_width = 260
-			btn.custom_minimum_size = Vector2(btn_width, btn_height)
+				btn.custom_minimum_size = Vector2(260, btn_height)
+				btn.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 			btn.add_theme_font_size_override("font_size", _get_font_size(18))
 			btn.mouse_filter = Control.MOUSE_FILTER_STOP
 
@@ -250,7 +248,6 @@ func _init_values():
 	c_invert_pan.button_pressed = bool(SM.get_value("controls.invert_pan", false))
 	if _debug_settings_menu: print("[SettingsMenu] _init_values: invert_pan loaded as ", SM.get_value("controls.invert_pan", false))
 	c_invert_zoom.button_pressed = bool(SM.get_value("controls.invert_zoom", false))
-	c_gestures.button_pressed = bool(SM.get_value("controls.gestures_enabled", true))
 	s_menu_ratio.value = float(SM.get_value("ui.menu_open_ratio", 0.5))
 	c_high_contrast.button_pressed = bool(SM.get_value("access.high_contrast", false))
 
@@ -265,7 +262,6 @@ func _wire_events():
 		if _debug_settings_menu: print("[SettingsMenu] invert_pan after save: SM.get_value = ", SM.get_value("controls.invert_pan"))
 	)
 	c_invert_zoom.toggled.connect(func(b): SM.set_and_save("controls.invert_zoom", b))
-	c_gestures.toggled.connect(func(b): SM.set_and_save("controls.gestures_enabled", b))
 	s_menu_ratio.value_changed.connect(func(v): SM.set_and_save("ui.menu_open_ratio", v))
 	c_high_contrast.toggled.connect(func(b): SM.set_and_save("access.high_contrast", b))
 	# removed reduce motion and route preview
@@ -304,7 +300,6 @@ func _on_reset_defaults():
 		"display.fullscreen": false,
 		"controls.invert_pan": false,
 		"controls.invert_zoom": false,
-		"controls.gestures_enabled": true,
 	}
 	for k in defaults.keys():
 		SM.set_and_save(k, defaults[k])

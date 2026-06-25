@@ -515,6 +515,21 @@ func clear_all_settlement_pins():
 	_pinned_settlement_coords.clear()
 	_force_draw_interactive_labels_deferred()
 
+func is_settlement_pinned(coords: Vector2i) -> bool:
+	return _pinned_settlement_coords.has(coords)
+
+func add_settlement_pin(coords: Vector2i) -> void:
+	# Idempotent add (unlike toggle_settlement_pin). Redraws so the label appears immediately.
+	if not _pinned_settlement_coords.has(coords):
+		_pinned_settlement_coords.append(coords)
+		_force_draw_interactive_labels_deferred()
+
+func remove_settlement_pin(coords: Vector2i) -> void:
+	# Idempotent remove. Redraws so the label disappears immediately.
+	if _pinned_settlement_coords.has(coords):
+		_pinned_settlement_coords.erase(coords)
+		_force_draw_interactive_labels_deferred()
+
 func _draw_interactive_labels(current_hover_info: Dictionary):
 	if is_instance_valid(_dragging_panel_node):
 		pass # Let's assume UIManager will handle it.

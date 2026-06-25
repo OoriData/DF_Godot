@@ -37,6 +37,9 @@ static func _find_vendor_trade_panel(node: Node) -> Node:
 
 static func _make_panel(title: String, rows: Array) -> PanelContainer:
 	var panel := PanelContainer.new()
+	# Sit at the top and (when the parent is an HBox in landscape) share width evenly.
+	panel.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+	panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	var sb := StyleBoxFlat.new()
 	sb.bg_color = Color(0.18, 0.20, 0.24, 0.9)
 	sb.border_color = Color(0.45, 0.50, 0.58, 0.9)
@@ -179,6 +182,8 @@ static func rebuild_info_sections(item_info_rich_text: RichTextLabel, item_data_
 	if parent_node is BoxContainer:
 		parent_node.alignment = BoxContainer.ALIGNMENT_BEGIN
 		
+	# Landscape replaces these verbose section panels with a compact one-line stat summary
+	# (built by the panel itself and hidden here), so they only render in portrait/desktop.
 	var container: Node = parent_node.get_node_or_null("InfoSectionsContainer")
 	if container == null:
 		container = VBoxContainer.new()
@@ -186,6 +191,7 @@ static func rebuild_info_sections(item_info_rich_text: RichTextLabel, item_data_
 		container.mouse_filter = Control.MOUSE_FILTER_PASS
 		container.add_theme_constant_override("separation", 6)
 		container.alignment = BoxContainer.ALIGNMENT_BEGIN
+		container.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		parent_node.add_child(container)
 		var idx: int = parent_node.get_children().find(item_info_rich_text)
 		if idx != -1:
@@ -296,6 +302,8 @@ static func rebuild_info_sections(item_info_rich_text: RichTextLabel, item_data_
 				break
 
 	if dest_name != "" and dest_name != "Unknown Vendor":
+		# Show just the settlement name — drop the "(vendor)" parenthetical so it stops clipping edges.
+		dest_name = VendorItemList.strip_vendor_paren(dest_name)
 		if perf_log_enabled:
 			print("[VendorInspectorBuilder] Building Destination row with value='", dest_name, "'")
 		rows_summary.append({"k": "Destination", "v": dest_name})

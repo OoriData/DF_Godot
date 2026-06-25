@@ -24,6 +24,11 @@ const MENU_ORDER = {
 	"convoy_cargo_submenu": 6
 }
 var _switch_tween: Tween = null
+# Outgoing menu whose disposal is deferred into the active switch tween's callback.
+# Tracked so an interrupting switch (which kills that tween) can flush it instead of
+# leaving it orphaned in the tree — the cause of the faint "ghost menu" behind a submenu.
+var _pending_switch_old_menu: Control = null
+var _pending_switch_old_persistent: bool = false
 
 var current_active_menu = null
 var menu_stack = [] # To keep track of the navigation path for "back" functionality
@@ -184,8 +189,11 @@ func _update_static_nav_bar_ui(active_type: String):
 	style.content_margin_left = side_inset
 	style.content_margin_right = side_inset
 
-	var btn_min_h := 140.0 if is_portrait else (85.0 if use_mobile else 90.0)
-	var base_font_size: int = 28 if is_portrait else (22 if use_mobile else 28)
+	# Landscape mobile has a very short viewport, so an 85px nav bar swallowed the menu and
+	# pushed action buttons off-screen. Keep it compact there. Portrait/desktop have the height.
+	var is_landscape_mobile: bool = bool(use_mobile) and not bool(is_portrait)
+	var btn_min_h := 140.0 if is_portrait else (52.0 if is_landscape_mobile else 90.0)
+	var base_font_size: int = 28 if is_portrait else (18 if is_landscape_mobile else 28)
 	var font_size: int = base_font_size if is_instance_valid(dsm) else base_font_size
 
 	for type in _nav_buttons:
@@ -201,8 +209,22 @@ func _update_static_nav_bar_ui(active_type: String):
 
 func _on_viewport_resized_navbar() -> void:
 	# Re-apply nav-bar safe insets / button clipping when the device rotates with a menu open.
+	# NOTE: raw size_changed can fire BEFORE DeviceStateManager updates its layout_mode, so this
+	# pass may compute with a stale mode. We re-run on DSM.layout_mode_changed (authoritative) and
+	# also defer one frame here so the height settles to the correct value instead of snapping
+	# drastically on the next menu switch.
 	if is_instance_valid(current_active_menu) and current_active_menu.has_meta("menu_type"):
 		_update_static_nav_bar_ui(str(current_active_menu.get_meta("menu_type")))
+		call_deferred("_reapply_nav_bar_for_active_menu")
+
+func _reapply_nav_bar_for_active_menu() -> void:
+	if is_instance_valid(current_active_menu) and current_active_menu.has_meta("menu_type"):
+		_update_static_nav_bar_ui(str(current_active_menu.get_meta("menu_type")))
+
+func _on_dsm_layout_mode_changed(_mode: int, _screen_size: Vector2, _is_mobile: bool) -> void:
+	# Authoritative layout change — recompute the nav bar height now that DSM has settled, so the
+	# bar doesn't keep a stale (e.g. portrait 140px) height after rotating into landscape.
+	_reapply_nav_bar_for_active_menu()
 
 func _ready():
 	# Initially, no menu is shown. Hide MenuManager so it does not block input.
@@ -213,6 +235,12 @@ func _ready():
 	var vp := get_viewport()
 	if is_instance_valid(vp) and not vp.size_changed.is_connected(_on_viewport_resized_navbar):
 		vp.size_changed.connect(_on_viewport_resized_navbar)
+
+	# Recompute the nav bar on the authoritative layout-mode change (DSM has settled by then),
+	# not just on the raw viewport resize which can run with a stale mode.
+	var dsm = get_node_or_null("/root/DeviceStateManager")
+	if is_instance_valid(dsm) and dsm.has_signal("layout_mode_changed") and not dsm.layout_mode_changed.is_connected(_on_dsm_layout_mode_changed):
+		dsm.layout_mode_changed.connect(_on_dsm_layout_mode_changed)
 
 	if is_instance_valid(_hub):
 		if _hub.has_signal("convoy_selection_changed") and not _hub.convoy_selection_changed.is_connected(_on_hub_convoy_selection_changed):
@@ -624,16 +652,33 @@ func _restore_mouse_recursive(node: Node) -> void:
 	for child in node.get_children():
 		_restore_mouse_recursive(child)
 
+## Dispose of a switch's outgoing menu: detach if persistent (kept in cache), else free.
+func _finalize_switch_old_menu(node: Control, is_persistent: bool) -> void:
+	if not is_instance_valid(node):
+		return
+	var host = _menu_content_area if is_instance_valid(_menu_content_area) else _menu_container_host
+	if is_persistent and is_instance_valid(host) and node.get_parent() == host:
+		host.remove_child(node)
+	else:
+		node.queue_free()
+
 func _start_menu_switch_animation(old_menu: Control, new_menu: Control, direction: int, slide_distance: float, old_type: String = "", new_type: String = "", old_is_persistent: bool = false) -> void:
 	var host = _menu_content_area if is_instance_valid(_menu_content_area) else _menu_container_host
-	
+
+	# Flush an outgoing menu left over from a prior switch that was interrupted before its
+	# tween callback could dispose of it (otherwise it lingers as a ghost behind the new menu).
+	if is_instance_valid(_pending_switch_old_menu) and _pending_switch_old_menu != old_menu and _pending_switch_old_menu != new_menu:
+		_finalize_switch_old_menu(_pending_switch_old_menu, _pending_switch_old_persistent)
+	_pending_switch_old_menu = null
+
 	if not is_instance_valid(new_menu) or not is_instance_valid(old_menu):
 		if is_instance_valid(old_menu):
-			if old_is_persistent and is_instance_valid(host):
-				host.remove_child(old_menu)
-			else:
-				old_menu.queue_free()
+			_finalize_switch_old_menu(old_menu, old_is_persistent)
 		return
+
+	# Track this switch's outgoing menu so an interrupting switch can flush it.
+	_pending_switch_old_menu = old_menu
+	_pending_switch_old_persistent = old_is_persistent
 
 	# Kill input on the outgoing menu immediately
 	_disable_mouse_recursive(old_menu)
@@ -686,13 +731,9 @@ func _start_menu_switch_animation(old_menu: Control, new_menu: Control, directio
 			_switch_tween.tween_property(new_menu, "modulate:a", 1.0, SWITCH_DURATION)
 			
 		_switch_tween.chain().tween_callback(func():
-			if is_instance_valid(old_menu):
-				if old_is_persistent and is_instance_valid(host):
-					print("[MenuManager] Animation finished: Detaching persistent old menu: ", old_menu.name)
-					host.remove_child(old_menu)
-				else:
-					print("[MenuManager] Animation finished: Freeing non-persistent old menu: ", old_menu.name)
-					old_menu.queue_free()
+			_finalize_switch_old_menu(old_menu, old_is_persistent)
+			if _pending_switch_old_menu == old_menu:
+				_pending_switch_old_menu = null
 			if is_instance_valid(new_menu):
 				new_menu.position.y = base_y
 				new_menu.modulate.a = 1.0
@@ -720,13 +761,9 @@ func _start_menu_switch_animation(old_menu: Control, new_menu: Control, directio
 	_switch_tween.tween_property(new_menu, "position:x", new_target_x, SWITCH_DURATION)
 
 	_switch_tween.chain().tween_callback(func():
-		if is_instance_valid(old_menu):
-			if old_is_persistent and is_instance_valid(host):
-				print("[MenuManager] Animation finished: Detaching persistent old menu: ", old_menu.name)
-				host.remove_child(old_menu)
-			else:
-				print("[MenuManager] Animation finished: Freeing non-persistent old menu: ", old_menu.name)
-				old_menu.queue_free()
+		_finalize_switch_old_menu(old_menu, old_is_persistent)
+		if _pending_switch_old_menu == old_menu:
+			_pending_switch_old_menu = null
 		if is_instance_valid(new_menu):
 			new_menu.position.x = new_target_x
 			var restored_bg = new_menu.get_node_or_null("OoriBackground")

@@ -175,11 +175,14 @@ func _is_mobile() -> bool:
 			return true
 	return false
 
+func _is_portrait() -> bool:
+	if not is_inside_tree():
+		return false
+	var win_size := get_viewport_rect().size
+	return win_size.y > win_size.x
+
 func _get_font_size(base: int) -> int:
-	var win_size = get_viewport_rect().size if is_inside_tree() else Vector2(0, 0)
-	var is_portrait = win_size.y > win_size.x
-	var boost = 2.8 if is_portrait else (1.6 if _is_mobile() else 1.2)
-	return int(base * boost)
+	return base  # UIScaleManager owns all scaling; never multiply here
 
 func _is_displayable_cargo(item: Dictionary) -> bool:
 	if item.is_empty():
@@ -205,8 +208,8 @@ func _ready():
 		
 		var win_size = get_viewport_rect().size if is_inside_tree() else Vector2(0, 0)
 		var is_portrait = win_size.y > win_size.x
-		var sort_h = 100 if is_portrait else (60 if _is_mobile() else 44)
-		cargo_sort_option_button.custom_minimum_size = Vector2(280, sort_h)
+		var sort_h = 70 if is_portrait else (50 if _is_mobile() else 44)
+		cargo_sort_option_button.custom_minimum_size = Vector2(0, sort_h)
 		cargo_sort_option_button.add_theme_font_size_override("font_size", _get_font_size(15))
 		cargo_sort_option_button.add_theme_color_override("font_color", Color(0.93, 0.93, 0.93, 1.0))
 		cargo_sort_option_button.add_theme_color_override("font_hover_color", Color(0.98, 0.98, 0.98, 1.0))
@@ -310,7 +313,7 @@ func _ready():
 	_organize_button.add_theme_stylebox_override("hover", style_hover)
 	_organize_button.add_theme_stylebox_override("pressed", style_pressed)
 	_organize_button.add_theme_font_size_override("font_size", _get_font_size(14))
-	_organize_button.custom_minimum_size.y = 80 if is_portrait else (60 if _is_mobile() else 44)
+	_organize_button.custom_minimum_size.y = 70 if is_portrait else (50 if _is_mobile() else 44)
 
 	var sort_settings_container = get_node_or_null("MainVBox/SortSettingsContainer")
 	if is_instance_valid(sort_settings_container):
@@ -932,15 +935,17 @@ func _build_cargo_row(vehicle_vbox: VBoxContainer, display_name: String, quantit
 	# Item label (expands to take remaining space before fixed columns)
 	content_row.add_child(item_label)
 
-	# NEW: Context column for vehicle or item type
+	# Context column: vehicle or item type. Kept narrow on portrait to avoid row overflow.
 	var context_label := Label.new()
-	context_label.custom_minimum_size = Vector2(140 if _is_mobile() else 120, 22)
+	context_label.custom_minimum_size = Vector2(0, 0)
+	context_label.size_flags_horizontal = Control.SIZE_SHRINK_END
 	context_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
 	context_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	context_label.modulate = Color(0.8, 0.8, 0.8, 1)
 	context_label.add_theme_font_size_override("font_size", _get_font_size(14))
 	content_row.add_child(context_label)
 
+	var portrait := _is_portrait()
 	if organization_mode == "by_type":
 		var locations: Dictionary = agg_data.get("locations", {})
 		if not locations.is_empty():
@@ -948,7 +953,7 @@ func _build_cargo_row(vehicle_vbox: VBoxContainer, display_name: String, quantit
 				context_label.text = locations.keys()[0]
 			else:
 				context_label.text = "Multiple"
-			
+
 			var tooltip_parts: Array[String]
 			for v_name in locations:
 				tooltip_parts.append("%s (x%d)" % [v_name, locations[v_name]])
@@ -964,85 +969,91 @@ func _build_cargo_row(vehicle_vbox: VBoxContainer, display_name: String, quantit
 			category_name = "part"
 			if CARGO_MENU_DEBUG:
 				print("[CargoUI][ByVehicle] Forced category to 'part' for:", display_name)
-		
+
 		var display_text: String
-		match category_name:
-			"delivery":
-				display_text = "Delivery Cargo"
-			"part":
-				display_text = "Part Cargo"
-			"resource":
-				display_text = "Resource Cargo"
-			_: # "other", "vehicle", or anything else
-				display_text = "Other Cargo"
+		if portrait:
+			match category_name:
+				"delivery": display_text = "Delivery"
+				"part":     display_text = "Part"
+				"resource": display_text = "Resource"
+				_:          display_text = "Other"
+		else:
+			match category_name:
+				"delivery": display_text = "Delivery Cargo"
+				"part":     display_text = "Part Cargo"
+				"resource": display_text = "Resource Cargo"
+				_:          display_text = "Other Cargo"
 		context_label.text = display_text
 
-	# Add Weight and Volume labels to the main row
-	var weight_label := Label.new()
-	weight_label.text = NumberFormat.fmt_float(agg_data.get("total_weight", 0.0), 2) + " kg"
-	weight_label.custom_minimum_size = Vector2(90 if _is_mobile() else 80, 22)
-	weight_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-	weight_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	weight_label.modulate = Color(0.8, 0.85, 0.9, 1)
-	weight_label.add_theme_font_size_override("font_size", _get_font_size(13))
-	content_row.add_child(weight_label)
+	# Weight and volume: hide on portrait to keep the row from overflowing.
+	# These values are always visible in the inspector panel.
+	if not portrait:
+		var weight_label := Label.new()
+		weight_label.text = NumberFormat.fmt_float(agg_data.get("total_weight", 0.0), 2) + " kg"
+		weight_label.custom_minimum_size = Vector2(80, 22)
+		weight_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+		weight_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		weight_label.modulate = Color(0.8, 0.85, 0.9, 1)
+		weight_label.add_theme_font_size_override("font_size", _get_font_size(13))
+		content_row.add_child(weight_label)
 
-	var volume_label := Label.new()
-	volume_label.text = NumberFormat.fmt_float(agg_data.get("total_volume", 0.0), 2) + " m³"
-	volume_label.custom_minimum_size = Vector2(90 if _is_mobile() else 80, 22)
-	volume_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-	volume_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	volume_label.modulate = Color(0.8, 0.9, 0.85, 1)
-	volume_label.add_theme_font_size_override("font_size", _get_font_size(13))
-	content_row.add_child(volume_label)
+		var volume_label := Label.new()
+		volume_label.text = NumberFormat.fmt_float(agg_data.get("total_volume", 0.0), 2) + " m³"
+		volume_label.custom_minimum_size = Vector2(80, 22)
+		volume_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+		volume_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		volume_label.modulate = Color(0.8, 0.9, 0.85, 1)
+		volume_label.add_theme_font_size_override("font_size", _get_font_size(13))
+		content_row.add_child(volume_label)
 
 	# (Removed) Tag column: omit category/type/subtype label per request.
 
-	# Quality column (or placeholder)
-	var quality_holder := Control.new()
-	quality_holder.custom_minimum_size = Vector2(40 if _is_mobile() else 34, 22)
-	quality_holder.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	if item_data.has("quality"):
-		var q_val = NumberFormat.to_i(item_data.get("quality", 0), 0, "inspect:quality")
-		if q_val > 0:
-			var q_label := Label.new()
-			q_label.text = "Q" + str(q_val)
-			q_label.add_theme_font_size_override("font_size", _get_font_size(12))
-			q_label.custom_minimum_size = Vector2(40 if _is_mobile() else 34, 22)
-			q_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-			q_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-			q_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-			if q_val >= 80:
-				q_label.modulate = Color(0.3, 0.85, 0.45, 1)
-			elif q_val >= 50:
-				q_label.modulate = Color(0.85, 0.75, 0.25, 1)
-			else:
-				q_label.modulate = Color(0.85, 0.45, 0.35, 1)
-			quality_holder.add_child(q_label)
-	content_row.add_child(quality_holder)
+	# Quality column (hidden on portrait — visible in inspector)
+	if not portrait:
+		var quality_holder := Control.new()
+		quality_holder.custom_minimum_size = Vector2(34, 22)
+		quality_holder.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		if item_data.has("quality"):
+			var q_val = NumberFormat.to_i(item_data.get("quality", 0), 0, "inspect:quality")
+			if q_val > 0:
+				var q_label := Label.new()
+				q_label.text = "Q" + str(q_val)
+				q_label.add_theme_font_size_override("font_size", _get_font_size(12))
+				q_label.custom_minimum_size = Vector2(34, 22)
+				q_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+				q_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+				q_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+				if q_val >= 80:
+					q_label.modulate = Color(0.3, 0.85, 0.45, 1)
+				elif q_val >= 50:
+					q_label.modulate = Color(0.85, 0.75, 0.25, 1)
+				else:
+					q_label.modulate = Color(0.85, 0.45, 0.35, 1)
+				quality_holder.add_child(q_label)
+		content_row.add_child(quality_holder)
 
-	# Condition column (or placeholder)
-	var condition_holder := Control.new()
-	condition_holder.custom_minimum_size = Vector2(40 if _is_mobile() else 34, 22)
-	condition_holder.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	if item_data.has("condition"):
-		var c_val = NumberFormat.to_i(item_data.get("condition", 0), 0, "inspect:condition")
-		if c_val > 0:
-			var c_label := Label.new()
-			c_label.text = "C" + str(c_val)
-			c_label.add_theme_font_size_override("font_size", _get_font_size(12))
-			c_label.custom_minimum_size = Vector2(40 if _is_mobile() else 34, 22)
-			c_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-			c_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-			c_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-			if c_val >= 75:
-				c_label.modulate = Color(0.35, 0.8, 0.95, 1)
-			elif c_val >= 40:
-				c_label.modulate = Color(0.95, 0.6, 0.25, 1)
-			else:
-				c_label.modulate = Color(0.9, 0.35, 0.3, 1)
-			condition_holder.add_child(c_label)
-	content_row.add_child(condition_holder)
+		# Condition column (hidden on portrait — visible in inspector)
+		var condition_holder := Control.new()
+		condition_holder.custom_minimum_size = Vector2(34, 22)
+		condition_holder.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		if item_data.has("condition"):
+			var c_val = NumberFormat.to_i(item_data.get("condition", 0), 0, "inspect:condition")
+			if c_val > 0:
+				var c_label := Label.new()
+				c_label.text = "C" + str(c_val)
+				c_label.add_theme_font_size_override("font_size", _get_font_size(12))
+				c_label.custom_minimum_size = Vector2(34, 22)
+				c_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+				c_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+				c_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+				if c_val >= 75:
+					c_label.modulate = Color(0.35, 0.8, 0.95, 1)
+				elif c_val >= 40:
+					c_label.modulate = Color(0.95, 0.6, 0.25, 1)
+				else:
+					c_label.modulate = Color(0.9, 0.35, 0.3, 1)
+				condition_holder.add_child(c_label)
+		content_row.add_child(condition_holder)
 
 	vehicle_vbox.add_child(outer_row)
 
@@ -1246,7 +1257,7 @@ func _add_category_section(parent: VBoxContainer, title: String, agg_data: Dicti
 		var bars_vbox := VBoxContainer.new()
 		bars_vbox.name = "VehicleMiniBars"
 		bars_vbox.add_theme_constant_override("separation", 4 if _is_mobile() else 2)
-		bars_vbox.custom_minimum_size = Vector2(200 if _is_mobile() else 160, 0)
+		bars_vbox.custom_minimum_size = Vector2(0, 0)
 		bars_vbox.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 		bars_vbox.size_flags_horizontal = Control.SIZE_SHRINK_END
 
@@ -1259,7 +1270,7 @@ func _add_category_section(parent: VBoxContainer, title: String, agg_data: Dicti
 		vol_lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 		vol_lbl.modulate = Color(0.8, 0.9, 0.85, 1)
 		var vol_bar := ProgressBar.new()
-		vol_bar.custom_minimum_size = Vector2(140, 14 if _is_mobile() else 10)
+		vol_bar.custom_minimum_size = Vector2(100, 14 if _is_mobile() else 10)
 		vol_bar.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		vol_bar.show_percentage = false
 		_set_capacity_progressbar_style(vol_bar, used_volume, total_volume)
@@ -1276,7 +1287,7 @@ func _add_category_section(parent: VBoxContainer, title: String, agg_data: Dicti
 		wt_lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 		wt_lbl.modulate = Color(0.8, 0.85, 0.9, 1)
 		var wt_bar := ProgressBar.new()
-		wt_bar.custom_minimum_size = Vector2(140, 14 if _is_mobile() else 10)
+		wt_bar.custom_minimum_size = Vector2(100, 14 if _is_mobile() else 10)
 		wt_bar.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		wt_bar.show_percentage = false
 		_set_capacity_progressbar_style(wt_bar, used_weight, total_weight)
@@ -1292,8 +1303,8 @@ func _add_category_section(parent: VBoxContainer, title: String, agg_data: Dicti
 	if vehicle_id != "":
 		var inspect_button := Button.new()
 		inspect_button.text = "Inspect"
-		var btn_w = 140 if _is_mobile() else 90
-		var btn_h = 72 if _is_mobile() else 44
+		var btn_w = 100 if _is_mobile() else 90
+		var btn_h = 70 if _is_mobile() else 44
 		inspect_button.custom_minimum_size = Vector2(btn_w, btn_h)
 		inspect_button.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 		inspect_button.add_theme_font_size_override("font_size", _get_font_size(13))

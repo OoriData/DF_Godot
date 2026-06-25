@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Vendor Menu — Consolidated v2 (inline-expand)</title>
+<style>
+  :root{
+    --bg:#15171c; --panel:#1f2229; --panel2:#25282e; --chip:#2b2f37;
+    --border:#393d47; --ink:#e7e9ee; --muted:#9aa1ac; --gold:#f3d54e;
+    --cyan:#4fd1e0; --green:#6db86f; --greentrack:#0f2412; --red:#a23b3b; --buy:#2f7d3a;
+  }
+  *{box-sizing:border-box;font-family:-apple-system,Segoe UI,Roboto,sans-serif}
+  body{margin:0;background:#0c0d10;color:var(--ink);padding:28px}
+  h1{font-weight:600;font-size:22px;margin:0 0 4px}
+  .sub{color:var(--muted);font-size:13px;margin:0 0 24px;max-width:760px;line-height:1.5}
+  .row{display:flex;gap:40px;flex-wrap:wrap;align-items:flex-start}
+  .col h2{font-size:15px;font-weight:600;margin:0 0 2px;color:var(--gold)}
+  .col p{font-size:12px;color:var(--muted);margin:0 0 12px;max-width:340px;line-height:1.5}
+
+  /* ---- shared chrome ---- */
+  .frame{background:var(--bg);border:2px solid #2a2d34;border-radius:22px;overflow:hidden;
+    display:flex;flex-direction:column;box-shadow:0 10px 40px rgba(0,0,0,.5)}
+  .phone{width:340px;height:720px}
+  .tablet{width:600px;height:380px}
+
+  /* OS top bar */
+  .osbar{display:flex;align-items:center;gap:8px;padding:6px 12px;background:#23262d;
+    border-bottom:1px solid var(--border);font-size:11px;color:var(--muted)}
+  .osbar .money{color:var(--gold);margin-left:auto;font-weight:600}
+
+  /* map strip */
+  .map{position:relative;background:linear-gradient(135deg,#3a5a3c 0%,#33513a 40%,#2c6a72 70%,#1d3f74 100%);
+    border-bottom:2px solid #11343a;overflow:hidden}
+  .map.tall{height:200px} .map.short{height:120px}
+  .map::after{content:"";position:absolute;inset:0;
+    background-image:linear-gradient(#0003 1px,transparent 1px),linear-gradient(90deg,#0003 1px,transparent 1px);
+    background-size:22px 22px;opacity:.5}
+  .road{position:absolute;background:#caa07a;height:7px;border-radius:3px}
+  .pin{position:absolute;left:46%;top:44%;color:#e23b2e;font-size:18px;z-index:2}
+  .maptag{position:absolute;right:14px;top:50%;background:#1c1f24cc;border:1px solid var(--red);
+    border-radius:4px;padding:2px 7px;font-size:11px}
+
+  /* === THE CONSOLIDATED TOP BAR (1 row) === */
+  .topbar{display:flex;align-items:center;gap:8px;padding:8px 10px;
+    border-bottom:1px solid #154e54;box-shadow:inset 0 -2px 0 #2bd4d4;background:#1b1d23}
+  .crumb{display:flex;align-items:center;gap:5px;font-size:13px;font-weight:600;
+    color:var(--gold);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:42%}
+  .crumb .sep{color:var(--muted);font-weight:400}
+  .crumb .set{color:var(--ink)}
+  .dropdown{background:var(--chip);border:1px solid var(--border);border-radius:7px;
+    padding:7px 10px;font-size:12px;font-weight:600;display:flex;align-items:center;gap:6px;
+    white-space:nowrap}
+  .dropdown.flex{flex:1;justify-content:space-between;min-width:0}
+  .dropdown .car{color:var(--muted)}
+  .iconbtn{background:#23262d;border:1px solid var(--border);border-radius:6px;padding:7px 9px;
+    font-size:13px;color:var(--muted);white-space:nowrap}
+  .iconbtn.gold{color:var(--gold)}
+
+  /* === control row: Buy/Sell + Sort (1 row) === */
+  .ctrl{display:flex;align-items:center;gap:8px;padding:7px 10px 4px}
+  .seg{display:flex;background:#16181d;border:1px solid var(--border);border-radius:7px;overflow:hidden}
+  .seg span{padding:7px 16px;font-size:12px;color:var(--muted);font-weight:600}
+  .seg .on{background:#3a3f49;color:#fff;box-shadow:inset 0 -2px 0 var(--gold)}
+  .sort{margin-left:auto;font-size:11px;color:var(--muted);display:flex;align-items:center;gap:4px;
+    background:#1c1f24;border:1px solid var(--border);border-radius:6px;padding:6px 9px}
+
+  /* vendor region holds the list (the ONE flex element) */
+  .vendor{flex:1;display:flex;flex-direction:column;min-height:0;background:#1a1c22;padding:0 8px 8px}
+  .wares{font-size:11px;color:var(--muted);letter-spacing:1px;margin:6px 2px 4px;text-transform:uppercase}
+  .list{flex:1;overflow:hidden;display:flex;flex-direction:column;gap:5px;min-height:0}
+
+  /* list rows: name + price, tap to expand */
+  .li{background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:9px 11px;
+    display:flex;align-items:center;gap:8px;font-size:13px}
+  .li .nm{flex:1}
+  .li .pr{color:var(--gold);font-size:12px;font-weight:600}
+  .li .fit{font-size:14px;line-height:1}
+  .li.sel{border-color:var(--gold);background:#26282b}
+  .li.exp{flex-direction:column;align-items:stretch;gap:7px}
+  .li .erow{display:flex;width:100%;align-items:center;gap:8px}
+  .li .stats{font-size:11px;color:var(--muted);line-height:1.5}
+  .li .stats b{color:var(--ink);font-weight:600}
+
+  /* thin one-line meters */
+  .meters{display:flex;gap:12px}
+  .meter{flex:1;display:flex;align-items:center;gap:7px;font-size:10px;color:var(--muted)}
+  .meter .mlbl{width:30px}
+  .meter .track{flex:1;height:7px;background:var(--greentrack);border-radius:4px;overflow:hidden;border:1px solid #1c3a20}
+  .meter .fill{height:100%;background:var(--green)}
+  .meter .pct{width:30px;text-align:right;color:var(--ink)}
+
+  /* inline action strip inside the expanded row */
+  .act{display:flex;align-items:center;gap:8px;border-top:1px dashed var(--border);padding-top:7px}
+  .qty{display:flex;align-items:center;gap:5px}
+  .qbtn{width:28px;height:28px;border-radius:6px;display:flex;align-items:center;justify-content:center;
+    font-size:16px;font-weight:700;border:1px solid var(--border)}
+  .qbtn.m{background:#2a2024;color:#d77} .qbtn.p{background:#1f2e22;color:#8d8}
+  .qval{min-width:30px;text-align:center;background:#16181d;border:1px solid var(--border);border-radius:6px;padding:4px 0;font-size:12px}
+  .maxb{background:#2b2f37;border:1px solid var(--border);border-radius:6px;padding:5px 11px;font-size:11px}
+  .buybtn{margin-left:auto;background:var(--buy);border:1px solid #3da34c;border-radius:7px;padding:8px 18px;
+    font-weight:700;font-size:13px}
+
+  /* two-pane (landscape) */
+  .panes{flex:1;display:flex;gap:8px;min-height:0;padding:0 8px 8px}
+  .pane-l{width:44%;display:flex;flex-direction:column;min-height:0}
+  .pane-l .list{gap:4px}
+  .pane-r{flex:1;background:var(--panel);border:1px solid var(--border);border-radius:9px;
+    padding:11px;display:flex;flex-direction:column;min-height:0}
+  .pane-r .ttl{font-size:15px;font-weight:600;margin-bottom:2px}
+  .pane-r .body{flex:1;font-size:11px;color:var(--muted);line-height:1.6;overflow:hidden}
+  .pane-r .body b{color:var(--ink)}
+  .pane-r .pinned{border-top:1px dashed var(--border);padding-top:8px;margin-top:6px}
+  .li.sm{font-size:12px;padding:7px 9px}
+
+  /* slim bottom nav */
+  .nav{display:flex;border-top:1px solid var(--border);background:#1c1c1c}
+  .nav span{flex:1;text-align:center;padding:7px 0;font-size:11px;color:#bfbfbf}
+  .nav .on{color:var(--gold);background:#2a2c2f;box-shadow:inset 0 -3px 0 var(--gold)}
+
+  .tag{color:var(--cyan)}
+  .note{font-size:11px;color:var(--muted);margin:10px 2px 0;line-height:1.5;max-width:340px}
+  .note b{color:var(--gold)}
+</style>
+</head>
+<body>
+  <h1>Vendor Menu — Consolidated v2</h1>
+  <p class="sub">
+    Inline-expand model. Chrome collapses from <b>5 bands → 2</b> (consolidated top bar + control row). The wares
+    list is the single flex element. Selecting a ware expands it in place to reveal stats, thin meters, qty and Buy —
+    no separate inspector or transaction region. Map stays visible · no horizontal scroll.
+  </p>
+
+  <div class="row">
+
+    <!-- ===================== PORTRAIT ===================== -->
+    <div class="col">
+      <h2>Portrait — inline-expand list</h2>
+      <p>One ware tapped (“Bloom”) expands to show stats + thin meters + qty + Buy right in the row. Everything else is the list. Top bar carries breadcrumb + vendor dropdown + Warehouse + Top Up on a single line.</p>
+      <div class="frame phone">
+        <div class="osbar"><span>Aidan!!</span><span>Options</span><span class="money">$1,779,516</span></div>
+        <div class="map short">
+          <div class="road" style="left:8%;top:62%;width:60%"></div>
+          <div class="road" style="left:40%;top:18%;width:6px;height:55px"></div>
+          <div class="pin">▶</div><div class="maptag">USPS Reborn</div>
+        </div>
+
+        <!-- consolidated top bar: breadcrumb + dropdown + warehouse + topup -->
+        <div class="topbar">
+          <span class="crumb">&lt; USPS Reborn <span class="sep">›</span> <span class="set">Atlanta</span></span>
+          <span class="iconbtn" title="Warehouse">⌂</span>
+          <span class="iconbtn gold">Top&nbsp;Up</span>
+        </div>
+        <div class="ctrl">
+          <div class="dropdown flex">Mega-Dealership <span class="car">▾</span></div>
+          <div class="seg"><span class="on">Buy</span><span>Sell</span></div>
+          <div class="sort">Sort ▾</div>
+        </div>
+
+        <div class="vendor">
+          <div class="wares">Vendor's Wares</div>
+          <div class="list">
+            <div class="li"><span class="nm">Apex</span><span class="fit">✓</span><span class="pr">$4,000</span></div>
+
+            <div class="li sel exp">
+              <div class="erow"><span class="nm" style="font-weight:600">Bloom</span><span class="fit">✓</span><span class="pr">$5,000</span></div>
+              <div class="stats"><b>Off-road</b> 15 · <b>Cargo</b> 301 kg · <b>Volume</b> 436 m³</div>
+              <div class="meters">
+                <div class="meter"><span class="mlbl">Vol</span><div class="track"><div class="fill" style="width:33%"></div></div><span class="pct">33%</span></div>
+                <div class="meter"><span class="mlbl">Mass</span><div class="track"><div class="fill" style="width:57%"></div></div><span class="pct">57%</span></div>
+              </div>
+              <div class="act">
+                <div class="qty"><div class="qbtn m">−</div><div class="qval">1</div><div class="qbtn p">+</div></div>
+                <div class="maxb">Max</div>
+                <div class="buybtn">Buy $5,000</div>
+              </div>
+            </div>
+
+            <div class="li"><span class="nm">Comet</span><span class="fit" style="color:var(--red)">✕</span><span class="pr">$3,200</span></div>
+            <div class="li"><span class="nm">Drifter</span><span class="fit">✓</span><span class="pr">$2,750</span></div>
+            <div class="li"><span class="nm">Everest</span><span class="fit">✓</span><span class="pr">$8,400</span></div>
+            <div class="li"><span class="nm">Forge</span><span class="fit">✓</span><span class="pr">$1,100</span></div>
+          </div>
+        </div>
+        <div class="nav"><span>Vehicles</span><span>Journey</span><span class="on">Settlement</span><span>Cargo</span></div>
+      </div>
+      <p class="note"><b>Fit hint</b> (✓/✕) on each collapsed row tells you at a glance whether it fits before you tap. Meters are one line each — no more fat blocks.</p>
+    </div>
+
+    <!-- ===================== LANDSCAPE ===================== -->
+    <div class="col">
+      <h2>Landscape — 2-pane (list | inspector+action)</h2>
+      <p>Same consolidated top bar spanning the width. Below it splits horizontally: list left, the selected item’s full inspector + pinned Buy on the right. Uses the width landscape actually has instead of stacking.</p>
+      <div class="frame tablet">
+        <div class="osbar"><span>Aidan!!</span><span class="money">$1,779,516</span></div>
+
+        <div class="topbar">
+          <span class="crumb">&lt; USPS Reborn <span class="sep">›</span> <span class="set">Atlanta</span></span>
+          <div class="dropdown">Mega-Dealership <span class="car">▾</span></div>
+          <div class="seg"><span class="on">Buy</span><span>Sell</span></div>
+          <div class="sort">Sort ▾</div>
+          <span class="iconbtn" title="Warehouse">⌂</span>
+          <span class="iconbtn gold">Top&nbsp;Up</span>
+        </div>
+
+        <div class="panes">
+          <div class="pane-l">
+            <div class="wares">Vendor's Wares</div>
+            <div class="list">
+              <div class="li sm"><span class="nm">Apex</span><span class="pr">$4,000</span></div>
+              <div class="li sm sel"><span class="nm">Bloom</span><span class="pr">$5,000</span></div>
+              <div class="li sm"><span class="nm">Comet</span><span class="pr">$3,200</span></div>
+              <div class="li sm"><span class="nm">Drifter</span><span class="pr">$2,750</span></div>
+              <div class="li sm"><span class="nm">Everest</span><span class="pr">$8,400</span></div>
+            </div>
+          </div>
+          <div class="pane-r">
+            <div class="ttl">Bloom</div>
+            <div class="body">
+              <b>Off-road</b> 15 · <b>Cargo</b> 301 kg · <b>Volume</b> 436 m³<br>
+              <b>Value</b> $5,000 · Available 4<br><br>
+              <div class="meters" style="margin:4px 0 8px">
+                <div class="meter"><span class="mlbl">Vol</span><div class="track"><div class="fill" style="width:33%"></div></div><span class="pct">33%</span></div>
+                <div class="meter"><span class="mlbl">Mass</span><div class="track"><div class="fill" style="width:57%"></div></div><span class="pct">57%</span></div>
+              </div>
+              Description ▸
+            </div>
+            <div class="pinned">
+              <div class="act" style="border:0;padding:0">
+                <div class="qty"><div class="qbtn m">−</div><div class="qval">1</div><div class="qbtn p">+</div></div>
+                <div class="maxb">Max</div>
+                <div class="buybtn">Buy $5,000</div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="nav"><span>Vehicles</span><span>Journey</span><span class="on">Settlement</span><span>Cargo</span></div>
+      </div>
+      <p class="note"><b>Bottom nav</b> shown slimmed. In landscape it could alternatively become a thin vertical icon rail to reclaim height — flagged as a separate framework-level task.</p>
+    </div>
+
+  </div>
+</body>
+</html>

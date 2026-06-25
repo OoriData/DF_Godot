@@ -37,6 +37,26 @@ Convoy aggregation uses a **Stable Key** system to ensure selection persists acr
 - **Rules**: Keys are derived from item properties (e.g., `item_name` + `metadata`) rather than ephemeral UUIDs.
 - **Duplicates**: Multiple stacks of the same item type are aggregated into a single logical row.
 
+## Vendor Stock Item Data Shape (Parts)
+
+> **Gotcha: vendor `cargo_inventory` items have no price fields.** Do not attempt to read `price`, `unit_price`, or `value` off the raw vendor listing — they won't be there.
+
+A vendor stock part looks like this at aggregation time:
+
+```json
+{
+  "cargo_id": "c6dd4475-...",
+  "name": "6-speed Manual Kit",
+  "base_price": 0,
+  "weight": 12.0,
+  "volume": 123.0,
+  "vehicle_id": "00000000-0000-0000-0000-000000000000",
+  "is_part": true
+}
+```
+
+The `is_part: true` flag is **added by `VendorCargoAggregator`** at classification time — it does not come from the backend. The zero UUID in `vehicle_id` is normal for vendor stock. The full priced detail (`price`, `unit_price`, `parts[]`, `slot`, etc.) only arrives after `APICalls.get_cargo(cargo_id)` — see [Transactions.md](Transactions.md) for how that fetch is wired.
+
 ## Sellability Rules (Gating)
 In **SELL** mode, the convoy tree is filtered to show only what the current vendor is allowed to buy:
 1. **General Cargo**: Always sellable.

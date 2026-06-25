@@ -24,6 +24,102 @@ var auto_apply_oori_background: bool = true
 ## The node will be detached from the tree and re-attached on return, preserving all UI state.
 var persistence_enabled: bool = false
 
+# ── Shared loadout-card visual language ──────────────────────────────────────
+# Self-contained helpers (no dependency on per-menu scaling hooks) so any menu can
+# render parts as consistent "loadout cards". A single accent color per vehicle
+# system keeps cards grouped by type across the Parts and Service tabs.
+func _card_is_mobile() -> bool:
+	if OS.has_feature("mobile") or OS.has_feature("web_android") or OS.has_feature("web_ios") or DisplayServer.get_name() in ["Android", "iOS"]:
+		return true
+	if is_inside_tree():
+		var s := get_viewport_rect().size
+		if s.y > s.x:
+			return true
+	return false
+
+func _slot_accent(slot_name: String) -> Color:
+	match slot_name.to_lower():
+		"engine", "ice", "motor":
+			return Color(0.62, 0.77, 0.35) # green
+		"battery", "cell":
+			return Color(0.36, 0.79, 0.65) # teal
+		"tune", "ecu", "chip":
+			return Color(0.94, 0.78, 0.29) # amber
+		"transmission", "trans", "gearbox", "drivetrain":
+			return Color(0.49, 0.62, 0.85) # blue
+		"tires", "tire", "wheels", "wheel":
+			return Color(0.74, 0.55, 0.85) # purple
+		"chassis", "frame", "suspension":
+			return Color(0.83, 0.56, 0.42) # coral
+		_:
+			return Color(0.55, 0.60, 0.70) # neutral
+
+
+# Rounded card surface used by every slot/cart/candidate card.
+func _make_card_style(filled: bool, accent: Color) -> StyleBoxFlat:
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color(0.13, 0.16, 0.20, 0.92) if filled else Color(0.10, 0.11, 0.14, 0.85)
+	sb.set_corner_radius_all(8)
+	sb.set_content_margin_all(12 if _card_is_mobile() else 10)
+	if filled:
+		sb.border_width_left = 3
+		sb.border_color = accent
+	else:
+		sb.set_border_width_all(1)
+		sb.border_color = Color(1, 1, 1, 0.10)
+	return sb
+
+# Small rounded badge carrying the slot's initial, tinted by its accent.
+func _make_slot_badge(slot_name: String, accent: Color, is_empty: bool) -> Control:
+	var badge := PanelContainer.new()
+	badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var bsb := StyleBoxFlat.new()
+	bsb.bg_color = Color(accent.r, accent.g, accent.b, 0.16 if is_empty else 0.28)
+	bsb.set_corner_radius_all(6)
+	badge.add_theme_stylebox_override("panel", bsb)
+	var sz := 28 if _card_is_mobile() else 24
+	badge.custom_minimum_size = Vector2(sz, sz)
+	var lbl := Label.new()
+	lbl.text = (slot_name.substr(0, 1)).to_upper() if slot_name != "" else "?"
+	lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	lbl.add_theme_font_size_override("font_size", 13)
+	lbl.add_theme_color_override("font_color", accent if not is_empty else Color(0.55, 0.58, 0.65))
+	badge.add_child(lbl)
+	return badge
+
+# Build the card container for the current orientation, attach it to parent,
+# and return the Container that cards should be added to directly.
+# Portrait  → 2-col GridContainer added straight to parent.
+# Landscape → HBoxContainer inside a horizontal ScrollContainer.
+func _make_slot_container(parent: Control) -> Container:
+	var is_port := is_inside_tree() and get_viewport_rect().size.y > get_viewport_rect().size.x
+	if is_port:
+		var grid := GridContainer.new()
+		grid.columns = 2
+		grid.add_theme_constant_override("h_separation", 8)
+		grid.add_theme_constant_override("v_separation", 8)
+		grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		parent.add_child(grid)
+		return grid
+	else:
+		var hscroll := ScrollContainer.new()
+		hscroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+		hscroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+		hscroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		hscroll.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		parent.add_child(hscroll)
+		var hbox := HBoxContainer.new()
+		hbox.add_theme_constant_override("separation", 8)
+		hbox.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+		hbox.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+		hscroll.add_child(hbox)
+		return hbox
+
+# Min card width for a landscape horizontal-scroll strip.
+func _landscape_card_width() -> int:
+	return 190 if _card_is_mobile() else 220
+
 func _ensure_store_subscription() -> void:
 	var store = get_node_or_null("/root/GameStore")
 	if store and store.has_signal("convoys_changed"):

@@ -98,7 +98,6 @@ var _press_start_time: int = 0
 # --- Options snapshot (from SettingsManager) ---
 var _opt_invert_pan := false
 var _opt_invert_zoom := false
-var _opt_gestures_enabled := true
 var _opt_click_closes_menus := true
 var _opt_menu_ratio_open := 0.5
 
@@ -230,6 +229,8 @@ func _ready():
 			hub.map_camera_focus_settlement_requested.connect(_on_map_camera_focus_settlement_requested)
 		if hub.has_signal("map_camera_return_to_convoy_requested") and not hub.is_connected("map_camera_return_to_convoy_requested", Callable(self, "_on_map_camera_return_to_convoy_requested")):
 			hub.map_camera_return_to_convoy_requested.connect(_on_map_camera_return_to_convoy_requested)
+		if hub.has_signal("settlement_menu_pin_requested") and not hub.is_connected("settlement_menu_pin_requested", Callable(self, "_on_settlement_menu_pin_requested")):
+			hub.settlement_menu_pin_requested.connect(_on_settlement_menu_pin_requested)
 
 	# Connect to Layout Mode Changes
 	var dsm = get_node_or_null("/root/DeviceStateManager")
@@ -602,21 +603,18 @@ func _on_map_view_gui_input(event: InputEvent):
 			map_camera_controller.pan(delta)
 			get_viewport().set_input_as_handled()
 	elif event is InputEventMagnifyGesture:
-		if _opt_gestures_enabled:
-			var f: float = float(event.factor)
-			var z: float = f if not _opt_invert_zoom else (1.0 / max(0.0001, f))
-			# Magnify gesture provides local position relative to map_view, convert to global first
-			var global_center3: Vector2 = map_view.get_global_transform() * event.position
-			var center3 := _to_subviewport_screen(global_center3)
-			map_camera_controller.zoom_at_screen_pos(z, center3)
+		var f: float = float(event.factor)
+		var z: float = f if not _opt_invert_zoom else (1.0 / max(0.0001, f))
+		# Magnify gesture provides local position relative to map_view, convert to global first
+		var global_center3: Vector2 = map_view.get_global_transform() * event.position
+		var center3 := _to_subviewport_screen(global_center3)
+		map_camera_controller.zoom_at_screen_pos(z, center3)
 		get_viewport().set_input_as_handled()
 	elif event is InputEventPanGesture:
-		# The camera's pan function expects a screen-space delta
-		if _opt_gestures_enabled:
-			var d: Vector2 = event.delta
-			if not _opt_invert_pan:
-				d = -d
-			map_camera_controller.pan(d)
+		var d: Vector2 = event.delta
+		if not _opt_invert_pan:
+			d = -d
+		map_camera_controller.pan(d)
 		get_viewport().set_input_as_handled()
 
 
@@ -627,9 +625,11 @@ func _is_portrait() -> bool:
 	return viewport_sz.y > viewport_sz.x
 
 func _get_menu_ratios() -> Vector2:
-	# Portrait: Use 40-60% of screen height
+	# Portrait: Use 55-72% of screen height.
+	# The map strip remains visible above (~28-45%) while the trade panel has room to breathe.
+	# Previously 40-60%; bumped to give vendor/convoy panels more vertical space on mobile portrait.
 	if _is_portrait():
-		return Vector2(0.4, 0.6)
+		return Vector2(0.55, 0.72)
 	# Landscape: Use 35-85% of screen width (Increased by 10% from 0.25-0.75)
 	else:
 		return Vector2(0.35, 0.85)
@@ -1563,13 +1563,12 @@ func _apply_settings_snapshot():
 		return
 	_opt_invert_pan = bool(sm.get_value("controls.invert_pan", _opt_invert_pan))
 	_opt_invert_zoom = bool(sm.get_value("controls.invert_zoom", _opt_invert_zoom))
-	_opt_gestures_enabled = bool(sm.get_value("controls.gestures_enabled", _opt_gestures_enabled))
 	_opt_click_closes_menus = bool(sm.get_value("ui.click_closes_menus", _opt_click_closes_menus))
 	_opt_menu_ratio_open = float(sm.get_value("ui.menu_open_ratio", _opt_menu_ratio_open))
 
 func _on_setting_changed(key: String, _value: Variant) -> void:
 	match key:
-		"controls.invert_pan", "controls.invert_zoom", "controls.gestures_enabled", "ui.click_closes_menus":
+		"controls.invert_pan", "controls.invert_zoom", "ui.click_closes_menus":
 			_apply_settings_snapshot()
 		"ui.menu_open_ratio":
 			_apply_settings_snapshot()
@@ -1590,6 +1589,25 @@ func _on_settlement_clicked(coords: Vector2i):
 	if is_instance_valid(ui_manager):
 		ui_manager.toggle_settlement_pin(coords)
 		_force_map_ui_refresh()
+
+# Settlement menu keeps the current settlement's label pinned while open. We only remove the pin
+# on close if WE added it — never clobber a settlement the player pinned manually.
+var _menu_pinned_settlement_coords = null # Vector2i or null
+
+func _on_settlement_menu_pin_requested(coords: Vector2i, enabled: bool) -> void:
+	if not is_instance_valid(ui_manager):
+		return
+	if enabled:
+		if ui_manager.has_method("is_settlement_pinned") and ui_manager.is_settlement_pinned(coords):
+			# Player already pinned this settlement — leave it; don't claim ownership.
+			_menu_pinned_settlement_coords = null
+		else:
+			ui_manager.add_settlement_pin(coords)
+			_menu_pinned_settlement_coords = coords
+	else:
+		if _menu_pinned_settlement_coords != null and ui_manager.has_method("remove_settlement_pin"):
+			ui_manager.remove_settlement_pin(_menu_pinned_settlement_coords)
+		_menu_pinned_settlement_coords = null
 
 func _on_convoy_menu_requested(convoy_data: Dictionary):
 	# Ensure layout has settled and camera sees final rect

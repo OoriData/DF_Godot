@@ -11,7 +11,10 @@ static func update_install_button_state(panel: Object) -> void:
 	if is_instance_valid(panel.trade_mode_tab_container):
 		is_buy_mode = int(panel.trade_mode_tab_container.current_tab) == 0
 	var can_install: bool = VendorTradeVM.can_show_install_button(is_buy_mode, panel.selected_item)
-	panel.install_button.visible = can_install
+	# In portrait the Install action lives inline in the expanded row body, so the footer button is
+	# suppressed there to keep the footer uniform (Buy/Sell). Landscape/desktop use the footer button.
+	var inline_install: bool = panel.has_method("_is_portrait_layout") and panel._is_portrait_layout()
+	panel.install_button.visible = can_install and not inline_install
 	panel.install_button.disabled = not can_install
 
 
