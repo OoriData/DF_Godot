@@ -4,7 +4,6 @@ extends CanvasLayer
 @onready var c_fullscreen: CheckButton = %FullscreenCheck
 @onready var c_invert_pan: CheckButton = %InvertPanCheck
 @onready var c_invert_zoom: CheckButton = %InvertZoomCheck
-@onready var c_gestures: CheckButton = %GesturesCheck
 @onready var s_menu_ratio: HSlider = %MenuWidthRatioSlider
 @onready var c_high_contrast: CheckButton = %HighContrastCheck
 @onready var btn_reset: Button = %ResetDefaultsButton
@@ -249,7 +248,6 @@ func _init_values():
 	c_invert_pan.button_pressed = bool(SM.get_value("controls.invert_pan", false))
 	if _debug_settings_menu: print("[SettingsMenu] _init_values: invert_pan loaded as ", SM.get_value("controls.invert_pan", false))
 	c_invert_zoom.button_pressed = bool(SM.get_value("controls.invert_zoom", false))
-	c_gestures.button_pressed = bool(SM.get_value("controls.gestures_enabled", true))
 	s_menu_ratio.value = float(SM.get_value("ui.menu_open_ratio", 0.5))
 	c_high_contrast.button_pressed = bool(SM.get_value("access.high_contrast", false))
 
@@ -264,7 +262,6 @@ func _wire_events():
 		if _debug_settings_menu: print("[SettingsMenu] invert_pan after save: SM.get_value = ", SM.get_value("controls.invert_pan"))
 	)
 	c_invert_zoom.toggled.connect(func(b): SM.set_and_save("controls.invert_zoom", b))
-	c_gestures.toggled.connect(func(b): SM.set_and_save("controls.gestures_enabled", b))
 	s_menu_ratio.value_changed.connect(func(v): SM.set_and_save("ui.menu_open_ratio", v))
 	c_high_contrast.toggled.connect(func(b): SM.set_and_save("access.high_contrast", b))
 	# removed reduce motion and route preview
@@ -303,7 +300,6 @@ func _on_reset_defaults():
 		"display.fullscreen": false,
 		"controls.invert_pan": false,
 		"controls.invert_zoom": false,
-		"controls.gestures_enabled": true,
 	}
 	for k in defaults.keys():
 		SM.set_and_save(k, defaults[k])

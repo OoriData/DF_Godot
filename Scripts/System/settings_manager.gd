@@ -18,7 +18,6 @@ var data := {
 
 	"controls.invert_pan": false,
 	"controls.invert_zoom": false,
-	"controls.gestures_enabled": true,
 	
 	"map.active_delivery_destinations": false,
 	"map.settlement_delivery_destinations": false,

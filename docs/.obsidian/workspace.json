@@ -14,12 +14,12 @@
             "state": {
               "type": "markdown",
               "state": {
-                "file": "02_UI_UX/UIAudit.md",
+                "file": "TODO.md",
                 "mode": "source",
                 "source": false
               },
               "icon": "lucide-file",
-              "title": "UIAudit"
+              "title": "TODO"
             }
           }
         ]
@@ -75,7 +75,7 @@
             "state": {
               "type": "search",
               "state": {
-                "query": "",
+                "query": "todo",
                 "matchingCase": false,
                 "explainSearch": false,
                 "collapseAll": false,
@@ -96,7 +96,8 @@
               "title": "Bookmarks"
             }
           }
-        ]
+        ],
+        "currentTab": 1
       }
     ],
     "direction": "horizontal",
@@ -188,6 +189,7 @@
   },
   "active": "1ae821d75f551279",
   "lastOpenFiles": [
+    "02_UI_UX/UIAudit.md",
     "DocumentationHome.md",
     "_mockups/vendor_landscape_v2.html",
     "_mockups/vendor_consolidated_v2.html",
@@ -199,7 +201,6 @@
     "Pasted image 20260521131852.png",
     "04_Technical/TextScale.md",
     "02_UI_UX/ConvoyMenu.md",
-    "02_UI_UX/UIAudit.md",
     "TODO.md",
     "03_Systems/MapSystem/SettlementOverlay.md",
     "99_Reference/data_dumps/Map_example_new.md",

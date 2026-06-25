@@ -283,14 +283,6 @@ theme_override_styles/pressed = SubResource("StyleBoxFlat_ToggleButton")
 theme_override_styles/focus = SubResource("StyleBoxFlat_ToggleButton_Hover")
 text = "Invert Zoom"
 
-[node name="GesturesCheck" type="CheckButton" parent="Root/Container/Panel/Margin/ContentVBox/Scroll/VBox/ControlsSec"]
-unique_name_in_owner = true
-layout_mode = 2
-theme_override_styles/normal = SubResource("StyleBoxFlat_ToggleButton")
-theme_override_styles/hover = SubResource("StyleBoxFlat_ToggleButton_Hover")
-theme_override_styles/pressed = SubResource("StyleBoxFlat_ToggleButton")
-theme_override_styles/focus = SubResource("StyleBoxFlat_ToggleButton_Hover")
-text = "Enable Touch Gestures"
 
 [node name="HSeparator3" type="HSeparator" parent="Root/Container/Panel/Margin/ContentVBox/Scroll/VBox"]
 layout_mode = 2
