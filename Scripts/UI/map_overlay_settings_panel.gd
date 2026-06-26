@@ -37,9 +37,11 @@ func _is_landscape_mobile() -> bool:
 	return _is_mobile() and not _is_portrait()
 
 func _get_font_size(base: int) -> int:
-	# Landscape mobile is vertically cramped, so use a much smaller boost there.
-	var boost = 2.6 if _is_portrait() else (1.35 if _is_landscape_mobile() else 1.6)
-	return int(base * boost)
+	# Fonts are FIXED logical sizes; the global content_scale_factor (UIScaleManager) does all
+	# scaling. The old per-orientation boost (2.6x portrait / 1.35x landscape-mobile / 1.6x desktop)
+	# double-scaled this floating panel relative to the migrated menus — that is what made it oversized
+	# and force-scrolling in portrait. Return the base logical size unchanged (Law of Logical Pixels).
+	return base
 
 func _get_panel_width() -> float:
 	var win_size = get_viewport_rect().size if is_inside_tree() else Vector2(0, 0)
@@ -52,6 +54,15 @@ func _get_panel_width() -> float:
 
 func _get_tab_width() -> float:
 	return 80.0 if _is_portrait() else 55.0
+
+func _get_logical_safe_margins() -> Rect2:
+	# Rect2(position = (left, top), size = (right, bottom)) in LOGICAL pixels.
+	# In landscape the notch / Dynamic Island sits on a short edge (left here), in portrait it sits
+	# at the top — so position.x insets the tab/panel off a side cutout and position.y clears a top one.
+	var sm = get_node_or_null("/root/ui_scale_manager")
+	if is_instance_valid(sm) and sm.has_method("get_logical_safe_margins"):
+		return sm.get_logical_safe_margins()
+	return Rect2()
 
 var _was_portrait: bool = false
 var _menu_open: bool = false
@@ -163,7 +174,17 @@ func _build_ui() -> void:
 	tab_container.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	
 	_tab_button = Button.new()
-	_tab_button.text = "⚙"
+	# Texture icon instead of an emoji glyph: the ⚙ codepoint (U+2699, BMP symbols block) does not fall
+	# back to the color-emoji font reliably on mobile the way the supplementary-plane toggle icons do, so
+	# it rendered as tofu. A bundled SVG (imported as CompressedTexture2D) is deterministic everywhere.
+	var gear_icon = load("res://Assets/Icons/gear.svg")
+	if gear_icon != null:
+		_tab_button.icon = gear_icon
+		_tab_button.expand_icon = false
+		_tab_button.icon_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		_tab_button.vertical_icon_alignment = VERTICAL_ALIGNMENT_CENTER
+	else:
+		_tab_button.text = "⚙️" # graceful fallback if the asset is missing
 	_tab_button.custom_minimum_size = Vector2(_get_tab_width(), 100 if _is_portrait() else 80)
 	_tab_button.add_theme_font_size_override("font_size", _get_font_size(24))
 	
@@ -197,9 +218,14 @@ func _build_ui() -> void:
 	var compact = _is_landscape_mobile()
 	var pad_lr = 28 if _is_portrait() else (14 if compact else 20)
 	var pad_tb = 36 if _is_portrait() else (12 if compact else 28)
-	content_sb.content_margin_left = pad_lr
+	# Full-bleed background, inset content: the panel background reaches the screen edge (so a notch /
+	# Dynamic Island lands on top of opaque panel, not see-through to the map), while the option rows
+	# are padded clear of the cutout. safe.position.x = side cutout (landscape), .y = top cutout (portrait);
+	# both ~0 on non-notched layouts. The expanded panel sits flush-left (offset_left 0) for this to work.
+	var safe = _get_logical_safe_margins()
+	content_sb.content_margin_left = pad_lr + safe.position.x
 	content_sb.content_margin_right = pad_lr
-	content_sb.content_margin_top = pad_tb
+	content_sb.content_margin_top = pad_tb + safe.position.y
 	content_sb.content_margin_bottom = pad_tb
 	_content_panel.add_theme_stylebox_override("panel", content_sb)
 
@@ -218,7 +244,7 @@ func _build_ui() -> void:
 
 	var title = Label.new()
 	title.text = "Map Overlays"
-	title.add_theme_font_size_override("font_size", _get_font_size(18 if compact else 22))
+	title.add_theme_font_size_override("font_size", _get_font_size(22 if compact else 26))
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_vbox.add_child(title)
 
@@ -295,13 +321,13 @@ func _add_toggle_row(text: String, icon: String, description: String) -> CheckBu
 	
 	var icon_label = Label.new()
 	icon_label.text = icon
-	icon_label.custom_minimum_size.x = _get_font_size(20)
-	icon_label.add_theme_font_size_override("font_size", _get_font_size(18))
-	
+	icon_label.custom_minimum_size.x = _get_font_size(26)
+	icon_label.add_theme_font_size_override("font_size", _get_font_size(22))
+
 	var label = Label.new()
 	label.text = text
 	label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	label.add_theme_font_size_override("font_size", _get_font_size(15))
+	label.add_theme_font_size_override("font_size", _get_font_size(19))
 	
 	var toggle = CheckButton.new()
 	toggle.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
@@ -315,7 +341,7 @@ func _add_toggle_row(text: String, icon: String, description: String) -> CheckBu
 		var desc_label = Label.new()
 		desc_label.text = description
 		desc_label.autowrap_mode = TextServer.AUTOWRAP_WORD
-		desc_label.add_theme_font_size_override("font_size", _get_font_size(11))
+		desc_label.add_theme_font_size_override("font_size", _get_font_size(14))
 		desc_label.add_theme_color_override("font_color", Color(0.7, 0.75, 0.8, 0.85))
 		main_vbox.add_child(desc_label)
 		
@@ -362,13 +388,32 @@ func _update_layout(animate: bool = false) -> void:
 		if is_instance_valid(parent) and parent is Control:
 			parent_screen_x = (parent as Control).get_global_rect().position.x
 
-	var target_left = 0.0 if _is_expanded else -(collapse_width + parent_screen_x + 8.0)
+	# Expanded: sit flush to the screen's left edge so the panel background bleeds UNDER a side cutout
+	# (the content rows are inset off it via content_margin_left in _build_ui). Collapsed: shift right by
+	# safe_left so the lone gear-tab handle clears the cutout. safe_left ~0 on non-notched layouts.
+	var safe_left = _get_logical_safe_margins().position.x
+	var target_left = 0.0 if _is_expanded else -(collapse_width + parent_screen_x + 8.0) + safe_left
+
+	# Reveal the option rows before sliding the drawer open; hide them once it finishes closing. The
+	# panel background can peek past the safe-area inset beside the tab when collapsed, so we keep the
+	# background (a thin handle strip) but blank the settings so nothing readable shows in that sliver.
+	if _is_expanded:
+		_set_content_visible(true)
 
 	if animate:
 		_anim_tween = create_tween().set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
 		_anim_tween.tween_property(self, "offset_left", target_left, 0.3)
+		if not _is_expanded:
+			# kill() (called at the top on re-toggle) does NOT emit finished, so re-expanding mid-close
+			# cancels this hide safely.
+			_anim_tween.finished.connect(_set_content_visible.bind(false))
 	else:
 		offset_left = target_left
+		_set_content_visible(_is_expanded)
+
+func _set_content_visible(v: bool) -> void:
+	if is_instance_valid(_vbox):
+		_vbox.visible = v
 
 
 

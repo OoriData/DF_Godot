@@ -1402,13 +1402,13 @@ func _build_vendor_preview_button(item_string: String, item_meta: Dictionary = {
 	return button
 
 func _render_vendor_preview_display() -> void:
-	# Update button text with counts
+	# Tab labels (counts intentionally omitted — noise at this point in the flow)
 	if is_instance_valid(convoy_missions_tab_button):
-		convoy_missions_tab_button.text = "Active Deliveries (%d)" % _convoy_mission_items.size()
+		convoy_missions_tab_button.text = "Active Deliveries"
 	if is_instance_valid(settlement_missions_tab_button):
-		settlement_missions_tab_button.text = "Available Deliveries (%d)" % _settlement_mission_items.size()
+		settlement_missions_tab_button.text = "Available Deliveries"
 	if is_instance_valid(compatible_parts_tab_button):
-		compatible_parts_tab_button.text = "Available Parts (%d)" % _compatible_part_items.size()
+		compatible_parts_tab_button.text = "Available Parts"
 	# Journey tab does not need a count
 
 	# Show/hide content containers based on the active tab

@@ -284,34 +284,10 @@ func _ready():
 	_organize_button = Button.new()
 	_organize_button.name = "OrganizeButton"
 
-	# --- NEW: Custom Styling for the button ---
-	var style_normal = StyleBoxFlat.new()
-	style_normal.bg_color = Color(0.2, 0.22, 0.25, 0.9)
-	style_normal.border_width_left = 1
-	style_normal.border_width_right = 1
-	style_normal.border_width_top = 1
-	style_normal.border_width_bottom = 1
-	style_normal.border_color = Color(0.5, 0.55, 0.6, 0.9)
-	style_normal.corner_radius_top_left = 6
-	style_normal.corner_radius_top_right = 6
-	style_normal.corner_radius_bottom_left = 6
-	style_normal.corner_radius_bottom_right = 6
-	style_normal.content_margin_left = 24 if _is_mobile() else 12
-	style_normal.content_margin_right = 24 if _is_mobile() else 12
-	style_normal.content_margin_top = 12 if _is_mobile() else 6
-	style_normal.content_margin_bottom = 12 if _is_mobile() else 6
-
-	var style_hover = style_normal.duplicate()
-	style_hover.bg_color = style_normal.bg_color.lightened(0.1)
-
-	var style_pressed = style_normal.duplicate()
-	style_pressed.bg_color = style_normal.bg_color.darkened(0.1)
-
+	# Styling (border/corners/margins + per-mode toggle tint) is applied in
+	# _update_organize_button_text() / _apply_organize_button_style(), which run below and on every toggle.
 	var win_size = get_viewport_rect().size if is_inside_tree() else Vector2(0, 0)
 	var is_portrait = win_size.y > win_size.x
-	_organize_button.add_theme_stylebox_override("normal", style_normal)
-	_organize_button.add_theme_stylebox_override("hover", style_hover)
-	_organize_button.add_theme_stylebox_override("pressed", style_pressed)
 	_organize_button.add_theme_font_size_override("font_size", _get_font_size(14))
 	_organize_button.custom_minimum_size.y = 70 if is_portrait else (50 if _is_mobile() else 44)
 
@@ -373,10 +349,38 @@ func _ready():
 			title_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 
 func _update_organize_button_text() -> void:
-	if organization_mode == "by_type":
-		_organize_button.text = "Group by Vehicle"
+	if not is_instance_valid(_organize_button):
+		return
+	# Show the CURRENT grouping (state label) and tint the button per state so the two modes
+	# read as distinct toggle positions. Tapping switches to the other grouping.
+	var tint: Color
+	if organization_mode == "by_vehicle":
+		_organize_button.text = "Sort by: Vehicle"
+		tint = Color(0.16, 0.27, 0.28, 0.92) # teal-tinted
 	else:
-		_organize_button.text = "Group by Type"
+		_organize_button.text = "Sort by: Type"
+		tint = Color(0.30, 0.25, 0.17, 0.92) # brass-tinted
+	_apply_organize_button_style(tint)
+
+func _apply_organize_button_style(bg: Color) -> void:
+	if not is_instance_valid(_organize_button):
+		return
+	var style_normal := StyleBoxFlat.new()
+	style_normal.bg_color = bg
+	style_normal.set_border_width_all(1)
+	style_normal.border_color = Color(0.5, 0.55, 0.6, 0.9)
+	style_normal.set_corner_radius_all(6)
+	style_normal.content_margin_left = 24 if _is_mobile() else 12
+	style_normal.content_margin_right = 24 if _is_mobile() else 12
+	style_normal.content_margin_top = 12 if _is_mobile() else 6
+	style_normal.content_margin_bottom = 12 if _is_mobile() else 6
+	var style_hover := style_normal.duplicate()
+	style_hover.bg_color = bg.lightened(0.1)
+	var style_pressed := style_normal.duplicate()
+	style_pressed.bg_color = bg.darkened(0.1)
+	_organize_button.add_theme_stylebox_override("normal", style_normal)
+	_organize_button.add_theme_stylebox_override("hover", style_hover)
+	_organize_button.add_theme_stylebox_override("pressed", style_pressed)
 
 func _on_organize_button_pressed() -> void:
 	organization_mode = "by_vehicle" if organization_mode == "by_type" else "by_type"

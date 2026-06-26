@@ -50,12 +50,14 @@ Reads directly from the `convoy` snapshot in `GameStore`:
 ### 2. Vendor Preview Panel
 The panel at the bottom of the scroll area provides a tabbed preview of local settlement data **without opening the Vendor Trade Panel**. It has 4 tabs:
 
-| Tab | Content |
-|---|---|
-| `CONVOY_MISSIONS` | Active mission items in this convoy's cargo that match vendors at the current settlement |
-| `SETTLEMENT_MISSIONS` | Mission items available *from* this settlement's vendors |
-| `COMPATIBLE_PARTS` | Parts available at the settlement that fit vehicles in this convoy |
-| `JOURNEY` | Active journey progress, destination, and ETA |
+| Tab | Button label | Content |
+|---|---|---|
+| `CONVOY_MISSIONS` | "Active Deliveries" | Active mission items in this convoy's cargo that match vendors at the current settlement |
+| `SETTLEMENT_MISSIONS` | "Available Deliveries" | Mission items available *from* this settlement's vendors |
+| `COMPATIBLE_PARTS` | "Available Parts" | Parts available at the settlement that fit vehicles in this convoy |
+| `JOURNEY` | "Journey" | Active journey progress, destination, and ETA |
+
+> Tab labels do **not** include item counts (e.g. no `(10)` suffix). The count was removed — it was noise at this point in the flow, before the user has opened any tab.
 
 ### 3. Full Convoy Payload Guard
 Because `SignalHub` sometimes emits shallow convoy dictionaries (missing capacity/resource max fields), `ConvoyMenu` has an explicit completeness heuristic:

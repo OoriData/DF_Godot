@@ -8,19 +8,19 @@ This document will serve as a flowing state of things needed in the project, wha
 
 Ordered for efficiency: quick isolated wins first, then by code locality (one subsystem per sprint so each file is opened/tested once), heavier design work last. Settlement-lag investigation can run in parallel.
 
-### Sprint 1 — Quick wins (isolated, low-risk, ship immediately)
+### Sprint 1 — Quick wins (isolated, low-risk, ship immediately) ✅ DONE 2026-06-26
 One-liners and tiny changes with no shared surface. Knocks out 4 items fast.
-- **Settings emoji** — `"⚙"` (no emoji-presentation selector) renders as tofu in Lexend on mobile. Change to `"⚙️"` (append U+FE0F) or swap to a texture icon. `map_overlay_settings_panel.gd:166`.
-- **Settlement Preview tab counts** — delete the `(%d)` suffix from the 3 tab labels. `convoy_menu.gd:1407,1409,1411`.
-- **Cargo sort/group label clarity** — relabel the toggle so the action is unambiguous. `convoy_cargo_menu.gd:377-379`.
-- **Portrait zoom-out limit (~3×)** — raise allowed zoom-out. Note `auto_limit_zoom_out` (`map_camera_controller.gd:281-294`) currently *raises the floor* to keep the map filling the viewport; getting 3× more zoom-out means relaxing that floor in portrait (allow letterboxing / map edge exposure), not just lowering `min_camera_zoom_level`. Verify on device.
+- ✅ **Settings emoji** — U+FE0F alone was insufficient (⚙ U+2699 doesn't reach the emoji-font fallback on mobile). Replaced with a **texture icon** `Assets/Icons/gear.svg` (white-fill, matches `warehouse.svg` precedent), assigned via `_tab_button.icon`. `map_overlay_settings_panel.gd:165`.
+- ✅ **Settlement Preview tab counts** — dropped the `(%d)` suffix from all 3 tab labels. `convoy_menu.gd:1407,1409,1411`.
+- ✅ **Cargo sort/group label clarity** — now a **state-label toggle**: shows current grouping ("Sort by: Vehicle" / "Sort by: Type") with a per-mode tint (teal vs brass) so the two positions read as distinct. `convoy_cargo_menu.gd` `_update_organize_button_text` / `_apply_organize_button_style`.
+- ↩️ **Portrait zoom-out limit (~3×)** — **REVERSED 2026-06-26 after on-device review.** The 3× relaxation worked but exposed empty space beyond the map edges (letterbox), which the player rejected: requirement is now **map must always fully cover the screen — no empty space ever**. `portrait_extra_zoom_out` is kept as an export but **locked at `1.0`** (zoom-out floor stays at the COVER fill). The `_update_camera_limits` relaxation block is now a no-op. `map_camera_controller.gd:35,309-311`.
 
-### Sprint 2 — Map camera & overlay subsystem
-All in `map_camera_controller.gd` + `map_overlay_settings_panel.gd` + safe-area plumbing. Open these files once.
-- **Notch / Dynamic Island safe area** — reserve the cutout so map options + UI don't sit under it. `safe_area_handler.gd`, `UI_scale_manager.gd:109-121`, and the overlay panel's runtime placement.
-- **Map overlay panel double-scaling** — flatten `_get_font_size()` boost (2.6×) to `return base`. `map_overlay_settings_panel.gd:39-42`. (Pairs naturally with the emoji fix — same file.)
-- **Fit Convoy Route clips city labels** — labels render in world space and are not counted in the fit rect. Pad the fit bounds (or lower `fit_margin`) so label extents stay on-screen. `map_camera_controller.gd:360` (`fit_camera_to_tilemap`) + the route-fit path; labels owned by `UI_manager.gd` / `convoy_label_manager.gd`.
-- **Menu close renders off-map then snaps back (portrait)** — clamp isn't enforced during the close tween; bounds re-apply only at the end. Enforce clamp through the transition. `map_camera_controller.gd:544` (`set_menu_open_state`), `loose_pan_when_menu_open` / `freeze_zoom_for_menu_bounds`.
+### Sprint 2 — Map camera & overlay subsystem ✅ DONE 2026-06-26
+All in `map_camera_controller.gd` + `map_overlay_settings_panel.gd` + safe-area plumbing. ⚠️ **All four need on-device verification** (notch behavior, font sizing, label headroom, close animation can't be confirmed off-device).
+- ✅ **Notch / Dynamic Island safe area** — overlay panel now queries `ui_scale_manager.get_logical_safe_margins()` (new `_get_logical_safe_margins()` helper). Portrait top cutout: `safe.position.y` added to the content panel's `content_margin_top` in `_build_ui`. Landscape side cutout: panel + collapsed gear tab shifted right by `safe.position.x` in `_update_layout` (both expanded and collapsed targets). `safe_left ≈ 0` on non-notched layouts → no regression. `map_overlay_settings_panel.gd`.
+- ✅ **Map overlay panel double-scaling** — `_get_font_size()` flattened to `return base` (dropped the 2.6× portrait / 1.35× landscape / 1.6× desktop boost). Fonts now ride `content_scale_factor` like the migrated menus. `map_overlay_settings_panel.gd:39-43`.
+- ✅ **Fit Convoy Route clips city labels** — labels are screen-stable, so room is reserved in **screen space**: `_estimate_fit_zoom()` predicts the fit zoom, then the route bounds grow by `route_fit_label_padding_px / zoom` (new export, default `Vector2(110, 80)` px/side) before `smooth_fit_world_rect`. `map_camera_controller.gd` (`smooth_fit_route_preview`). ⚠️ tune `route_fit_label_padding_px` on device if labels still clip / route reads too small.
+- ✅ **Menu close renders off-map then snaps back (portrait)** — `set_overlay_occlusion()` now enforces `_clamp_camera_position()` every frame while the overlay is **shrinking** (menu closing) even with the convoy-recenter focus tween active; the growing/opening case keeps the old no-snap behavior. The clamp acts as a moving ceiling the camera follows in smoothly instead of snapping at the end. `map_camera_controller.gd` (`set_overlay_occlusion`).
 
 ### Sprint 3 — Baby-blue → Oori token sweep
 Mechanical, reviewable-as-one-diff. The brand palette has **no blue** by design; each blue must be *mapped* to a token (decision baked in below, adjustable). Do this before Sprint 4 layout reworks so layout happens on already-themed code.
@@ -59,9 +59,9 @@ Profile `convoy_settlement_menu.gd` open path (`_ready` / first-open layout buil
 | Portrait zoom-out ×3 | `map_camera_controller.gd:8,281-294` | relax `auto_limit_zoom_out` floor in portrait |
 | Fit-route clips labels | `map_camera_controller.gd:360` + route-fit | pad fit rect for world-space label extents |
 | Close shows off-map | `map_camera_controller.gd:544` | enforce clamp through close tween |
-| Settlement Preview counts | `convoy_menu.gd:1407,1409,1411` | drop `(%d)` |
+| Settlement Preview counts | `convoy_menu.gd:1407,1409,1411` | ✅ done — labels are now plain, no `(%d)` |
 | Convoy stats modal | `convoy_vehicle_menu.gd:1291` | reuse `_on_inspect_stat_pressed` + `_make_inspect_*` |
-| Cargo cards / buttons / sort | `convoy_cargo_menu.gd:377-379` (sort) | not on UITheme yet (58 raw colors) |
+| Cargo cards / buttons / sort | `convoy_cargo_menu.gd` `_update_organize_button_text` | ✅ done — state label + tint; not on UITheme yet (58 raw colors) |
 | Journey loading bar | `convoy_journey_menu.gd:121-126` | reuse `login_screen.gd:152-154` ProgressBar |
 | Journey confirmation gap | `convoy_journey_menu.gd` confirm panel | landscape resource table |
 | Select Convoy drawer | `convoy_list_panel.gd:92` | widen `ConvoyPopup`; fix logical-pixel bug |
@@ -78,7 +78,7 @@ Profile `convoy_settlement_menu.gd` open path (`_ready` / first-open layout buil
 [`docs/02_UI_UX/UIAudit.md`](02_UI_UX/UIAudit.md) was the prior workstream. Verified against current code:
 - **Visual P3** (sparse cargo cards), **P4** (stat label/value hierarchy), **P7** (oversized sort dropdown) → **folded into the new TODOs** (Sprint 4).
 - **Visual P2** (legacy `BottomBarPanel` dup nav) → handled in Sprint 5.
-- **Double-scaling "complete" claim (UIAudit:209)** → **inaccurate**: menus migrated, but floating panels/modals still boost — see Sprint 2 + this list: `auto_sell_receipt_modal.gd`, `returning_player_tips_modal.gd`, `discord_link_popup.gd`, `account_links_popup.gd`, `map_overlay_settings_panel.gd`.
+- **Double-scaling "complete" claim (UIAudit:209)** → **inaccurate**: menus migrated, `map_overlay_settings_panel` fixed 2026-06-26. **Remaining modals still boost**: `auto_sell_receipt_modal.gd`, `returning_player_tips_modal.gd`, `discord_link_popup.gd`, `account_links_popup.gd` — see Sprint 2.
 - **Visual P1** (tab active state) → verify during Sprint 4 (convoy_menu is now heavily themed; may already be addressed).
 - **Visual P1** (tab active state) → verify during Sprint 4 (convoy_menu is now heavily themed; may already be addressed).
 
@@ -142,8 +142,8 @@ In portrait, item cards are wide and flat with excessive vertical padding and sm
 ### Cargo menu top buttons cramped in portrait
 The action buttons at the top of the cargo menu are stacked too tightly in portrait. Spread them out or rearrange for portrait widths.
 
-### Cargo menu sort toggle labels are unclear
-The group/sort toggle (`Group by Vehicle` / `Group by Type`) behaves correctly but the labels don't make the distinction obvious. Rework wording for instant clarity.
+### ✅ Cargo menu sort toggle labels — DONE 2026-06-26
+The toggle is now a state label: "Sort by: Vehicle" / "Sort by: Type" with a per-mode tint (teal/brass). Tapping switches to the other mode.
 
 ### Vendor menu — restructure top controls
 The vendor settings panel is proportionally fluid and visually inconsistent with the other controls. Restructure:

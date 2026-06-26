@@ -49,6 +49,23 @@ All clamp math is computed against the **SubViewport render size** (`sub_viewpor
 >
 > **Diagnostic tip:** The `[CLAMP]` log line prints `sub_aspect` vs `win_aspect`. If they diverge, the render surface is mis-sized — look at control sizing/`expand_mode`, not the clamp math.
 
+## Portrait Zoom-Out Relaxation
+
+In portrait orientation the COVER fit mode forces a high minimum zoom — the tall, narrow viewport must fully fill the map's binding axis, which is very restrictive. `portrait_extra_zoom_out` (exported) can divide the computed floor in portrait only, letting the player pull back further than the COVER fill would otherwise allow.
+
+> **Product decision (2026-06-26): locked at `1.0`.** Pulling back past the COVER fill *necessarily* exposes empty space beyond the map edges (a centered letterbox), and the requirement is that the map must **always fully cover the screen — no empty space ever**. So the relaxation is disabled (`portrait_extra_zoom_out = 1.0`); the zoom-out floor stays at the COVER fill. Raising it above `1.0` re-introduces the letterbox and should only be done if that requirement is dropped.
+
+**Implementation** (`_update_camera_limits`, after the `default_view_pan_headroom` raise) — a no-op while the factor is `1.0`:
+```gdscript
+var is_portrait: bool = effective_viewport_px.y > effective_viewport_px.x
+if is_portrait and portrait_extra_zoom_out > 1.0:
+    requested_min = requested_min / portrait_extra_zoom_out
+```
+
+**Why fill = no empty space**: at the COVER fill zoom the binding axis exactly fills the viewport and the other axis overflows (croppable). `_clamp_camera_position` keeps the camera within the map at every zoom ≥ fill, so the player can pan within the map but the edge never leaves the screen.
+
+**Important constraint**: the default *opening* framing is set in `fit_camera_to_tilemap` (which clamps `target_zoom` to `min_camera_zoom_level` *before* calling `_update_camera_limits`), so the opening view is unaffected regardless of this factor.
+
 ## Movement Logic
 - **Panning**: Linear translation based on mouse drag or touch drag. MCC uses `camera_pan_sensitivity` to normalize movement across different resolutions.
 - **Zooming**: MCC supports "Zoom-at-Point" (scaling around the cursor/pinch center) rather than just zooming into the screen center.

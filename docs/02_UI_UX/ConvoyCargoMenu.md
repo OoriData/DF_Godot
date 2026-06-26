@@ -21,7 +21,7 @@ The Convoy Cargo Menu (`convoy_cargo_menu.gd`) is the primary interface for insp
 MainVBox (VBoxContainer)
 ├── TitleLabel (Label - MSDF font)
 ├── SortSettingsContainer (HBoxContainer)
-│   ├── OrganizeButton (Button - toggles Group by Type / Group by Vehicle)
+│   ├── OrganizeButton (Button - state-label toggle, tinted per mode)
 │   └── CargoSortOptionButton (OptionButton)
 ├── ScrollContainer
 │   └── CargoItemsVBox (VBoxContainer)
@@ -47,12 +47,14 @@ User sort preferences are persistent through `SettingsManager` using the key `ui
 ---
 
 ### 2. Grouping Toggles (Organization Modes)
-The `OrganizeButton` allows the player to dynamically swap the grouping strategy of the cargo list:
+The `OrganizeButton` shows the **current** grouping mode and switches to the other on tap. The label is a state label, not an action label — "Sort by: Vehicle" means that is the active view, not what tapping will do. Each state has a distinct background tint so the two positions read as a toggle rather than a generic button.
 
-| Mode | Visual Structure | Aggregation Rule |
-|---|---|---|
-| `by_vehicle` (Default) | Vehicle Header (Capacity bars) → Cargo list | Items grouped *per vehicle*. |
-| `by_type` | Delivery Cargo → Parts → Consumables | Items aggregated globally across the convoy. |
+| Mode | Button label | Tint | Visual Structure | Aggregation Rule |
+|---|---|---|---|---|
+| `by_vehicle` (Default) | "Sort by: Vehicle" | Teal `Color(0.16, 0.27, 0.28)` | Vehicle Header (Capacity bars) → Cargo list | Items grouped *per vehicle*. |
+| `by_type` | "Sort by: Type" | Brass `Color(0.30, 0.25, 0.17)` | Delivery Cargo → Parts → Consumables | Items aggregated globally across the convoy. |
+
+The tint + border styling is rebuilt on every toggle via `_apply_organize_button_style()`, called from `_update_organize_button_text()`.
 
 - **Filtering rules**: Installed vehicle parts (marked `installed: true` or intrinsic parts with `intrinsic_part_id`) are automatically hidden from the cargo menu as they are managed via the [Mechanics System](../03_Systems/Mechanics.md).
 - **Aggregation logic**: Stacks are merged using the display name as the lookup key to maintain a clean UI during list rebuilds.

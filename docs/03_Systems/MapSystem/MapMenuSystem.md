@@ -153,3 +153,6 @@ To maintain a highly premium look and feel, the Map Menu will implement:
 - **Dynamic CheckButton States**: Custom icons for on/off states instead of default checkbox ticks.
 - **Micro-Animations**: Smooth slide-in animations when the Map Menu submenu is opened.
 - **Clear Indicators**: High-contrast icon overlays added to label nameplates (e.g., target destinations receive a subtle gold target `🎯` or cargo package `📦` icon next to their name).
+
+### Tab button — texture icon
+`map_overlay_settings_panel.gd` uses `Assets/Icons/gear.svg` (loaded as `CompressedTexture2D`, assigned to `_tab_button.icon`) rather than an emoji glyph. U+2699 (⚙) does not fall back to the `NotoColorEmoji` font reliably on mobile — the BMP symbols block misses the fallback that supplementary-plane emoji (🎯📦🚚) hit cleanly. The SVG pattern matches the warehouse button precedent in `convoy_settlement_menu.gd`.

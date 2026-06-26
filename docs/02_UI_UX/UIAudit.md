@@ -206,7 +206,7 @@ Each button (`Button`) is named `ConvoyButton_{convoy_id}` and contains:
 ### Known Issues / Gaps
 - ❌ `convoy_list_panel.gd:92` calls `DisplayServer.window_get_size()` — violates logical pixel rule
 - ❌ Contains duplicate Oori color palette `const` values
-- ⚠️ `_get_font_size()` double-scaling migration (verified 2026-06-25): **menus** done (`convoy_vehicle_menu`, `convoy_cargo_menu`, `mechanics_menu`, `route_selection_menu`, `settings_menu` return `base`), but **floating panels/modals still boost** (`map_overlay_settings_panel`, `auto_sell_receipt_modal`, `returning_player_tips_modal`, `discord_link_popup`, `account_links_popup`). `UIScaleManager` is the intended sole scaling authority. Check with `grep -nA2 _get_font_size <script>`.
+- ⚠️ `_get_font_size()` double-scaling migration (updated 2026-06-26): **menus** done (`convoy_vehicle_menu`, `convoy_cargo_menu`, `mechanics_menu`, `route_selection_menu`, `settings_menu` return `base`), `map_overlay_settings_panel` now also returns `base` (fixed 2026-06-26 as part of Sprint 1/2 work). **Remaining modals still boost**: `auto_sell_receipt_modal`, `returning_player_tips_modal`, `discord_link_popup`, `account_links_popup`. `UIScaleManager` is the intended sole scaling authority. Check with `grep -nA2 _get_font_size <script>`.
 - ❌ `ToggleButton` in `.tscn` has `custom_minimum_size = Vector2(280, 80)` but script overrides to 300×56 or 400×110
 
 ---
@@ -345,7 +345,7 @@ All extend `MenuBase`. Scenes are minimal scaffolding; UI is built in script. Fu
 
 **Cargo** — [`ConvoyCargoMenu.md`](ConvoyCargoMenu.md)
 - 5-metric sort system (`ui.cargo_sort_metric` persisted to `SettingsManager`)
-- Group by Vehicle or by Type toggle
+- State-label grouping toggle: "Sort by: Vehicle" / "Sort by: Type" with per-mode tint (teal/brass)
 - Inline inspector panels per item; debounced refresh guard (`_suppress_refresh_until_msec`)
 - Mobile: fonts scale to 2.8× desktop; option buttons expand to 100px height
 
@@ -445,8 +445,12 @@ The Vendor system has its own dedicated sub-documentation set in `docs/02_UI_UX/
 | **Parent in tree** | Added to `MapAndMenuContainer` at runtime by `main_screen.gd::_ready()` |
 | **Purpose** | Floating toggle panel for map overlay layers |
 
+### Tab button icon
+The expand/collapse tab uses `Assets/Icons/gear.svg` loaded as a `CompressedTexture2D` and assigned to `_tab_button.icon`. A text fallback (`"⚙️"`) is used if the asset is missing. Emoji was tried first (U+2699 + U+FE0F) but U+2699 sits in the BMP symbols block and does not reliably fall back to the `NotoColorEmoji` fallback font on mobile, unlike the supplementary-plane toggle icons (🎯📦🚚).
+
 ### Known Issues / Gaps
 - ❌ Added to `MapAndMenuContainer` directly by `main_screen.gd` — not in scene tree, hard to inspect
+- ✅ `_get_font_size()` double-scaling fixed 2026-06-26 — now returns `base` unchanged (Law of Logical Pixels)
 
 ---
 
