@@ -239,7 +239,7 @@ func _update_ui(convoy: Dictionary) -> void:
 	# ---- Styled container for in-transit details ----
 	var details_panel := PanelContainer.new()
 	var sb := StyleBoxFlat.new()
-	sb.bg_color = Color(0.10, 0.12, 0.16, 0.94)
+	sb.bg_color = Color(UITheme.METAL_BASE, 0.94)
 	if sb.has_method("set_border_width_all"):
 		sb.set_border_width_all(1)
 	else:
@@ -247,7 +247,7 @@ func _update_ui(convoy: Dictionary) -> void:
 		sb.border_width_right = 1
 		sb.border_width_top = 1
 		sb.border_width_bottom = 1
-	sb.border_color = Color(0.25, 0.30, 0.38)
+	sb.border_color = UITheme.METAL_EDGE
 	sb.corner_radius_top_left = 6
 	sb.corner_radius_top_right = 6
 	sb.corner_radius_bottom_left = 6
@@ -346,7 +346,7 @@ func _update_ui(convoy: Dictionary) -> void:
 	progress_bar.custom_minimum_size = Vector2(0, 40 if is_portrait else 20)
 	progress_bar.value = progress_percentage
 	progress_bar.add_theme_font_size_override("font_size", 22)
-	# Match ConvoyMenu: background 2a2a2a with light border; fill uses Color("29b6f6")
+	# Match ConvoyMenu: background 2a2a2a with light border; fill uses UITheme.ACCENT_VERDIGRIS
 	var bg_style := StyleBoxFlat.new()
 	bg_style.bg_color = Color("2a2a2a")
 	bg_style.border_width_left = 1
@@ -358,12 +358,12 @@ func _update_ui(convoy: Dictionary) -> void:
 	bg_style.shadow_size = 2
 	bg_style.shadow_offset = Vector2(0, 2)
 	var fill_style := StyleBoxFlat.new()
-	fill_style.bg_color = Color("29b6f6")
+	fill_style.bg_color = UITheme.ACCENT_VERDIGRIS
 	fill_style.border_width_left = 1
 	fill_style.border_width_right = 1
 	fill_style.border_width_top = 1
 	fill_style.border_width_bottom = 1
-	fill_style.border_color = Color("29b6f6").darkened(0.2)
+	fill_style.border_color = UITheme.ACCENT_VERDIGRIS.darkened(0.2)
 	progress_bar.add_theme_stylebox_override("background", bg_style)
 	progress_bar.add_theme_stylebox_override("fill", fill_style)
 	details_vbox.add_child(progress_bar)
@@ -713,13 +713,13 @@ func _populate_destination_list():
 		# Create a tap-detecting container for mobile scrolling support
 		var item_container = PanelContainer.new()
 		var sb = StyleBoxFlat.new()
-		sb.bg_color = Color(0.12, 0.14, 0.18, 0.9)
+		sb.bg_color = Color(UITheme.METAL_BASE, 0.9)
 		sb.corner_radius_top_left = 6
 		sb.corner_radius_top_right = 6
 		sb.corner_radius_bottom_left = 6
 		sb.corner_radius_bottom_right = 6
 		sb.set_border_width_all(1)
-		sb.border_color = Color(0.25, 0.3, 0.38)
+		sb.border_color = UITheme.METAL_EDGE
 		sb.content_margin_left = 14
 		sb.content_margin_right = 14
 		sb.content_margin_top = 10
@@ -742,10 +742,10 @@ func _populate_destination_list():
 					# so only the row under the finger is ever highlighted.
 					_clear_destination_highlights()
 					item_container.set_meta("tap_start_pos", event.global_position)
-					sb.bg_color = Color(0.2, 0.25, 0.3, 1.0) # Pressed highlight
+					sb.bg_color = Color(UITheme.METAL_ACTIVE, 1.0) # Pressed highlight
 				else:
 					if item_container.get_meta("disabled", false): return
-					sb.bg_color = Color(0.12, 0.14, 0.18, 0.9) # Reset
+					sb.bg_color = Color(UITheme.METAL_BASE, 0.9) # Reset
 					var start_pos = item_container.get_meta("tap_start_pos", event.global_position)
 					var move_dist = (event.global_position - start_pos).length()
 					# If finger moved less than 10px, it's a click
@@ -758,7 +758,7 @@ func _populate_destination_list():
 				# by the scroll gesture.
 				var start_pos = item_container.get_meta("tap_start_pos", event.global_position)
 				if (event.global_position - start_pos).length() >= 10:
-					sb.bg_color = Color(0.12, 0.14, 0.18, 0.9)
+					sb.bg_color = Color(UITheme.METAL_BASE, 0.9)
 		)
 
 		var lbl = Label.new()
@@ -910,9 +910,9 @@ func _build_planning_chrome() -> void:
 	_sub_header = PanelContainer.new()
 	_sub_header.name = "JourneySubHeader"
 	var shsb := StyleBoxFlat.new()
-	shsb.bg_color = Color(0.075, 0.09, 0.125, 0.95)
+	shsb.bg_color = Color(UITheme.METAL_DARK, 0.95)
 	shsb.border_width_bottom = 1
-	shsb.border_color = Color(0.2, 0.24, 0.3)
+	shsb.border_color = UITheme.METAL_EDGE
 	shsb.content_margin_left = 14
 	shsb.content_margin_right = 14
 	shsb.content_margin_top = 8
@@ -923,7 +923,7 @@ func _build_planning_chrome() -> void:
 	sh_hbox.add_theme_constant_override("separation", 12)
 	_sub_header.add_child(sh_hbox)
 
-	var change_btn := _make_touch_button("‹ Change", Color(0.18, 0.2, 0.25, 0.9), Color(0.28, 0.32, 0.4, 1.0), func(): _on_change_destination_pressed(), 22)
+	var change_btn := _make_touch_button("‹ Change", Color(UITheme.METAL_BASE, 0.9), Color(UITheme.METAL_HOVER, 1.0), func(): _on_change_destination_pressed(), 22)
 	change_btn.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	sh_hbox.add_child(change_btn)
 	_change_destination_button = change_btn as Control
@@ -936,12 +936,12 @@ func _build_planning_chrome() -> void:
 
 	_sub_header_title = Label.new()
 	_sub_header_title.add_theme_font_size_override("font_size", 32 if DeviceStateManager.get_is_portrait() else 26)
-	_sub_header_title.add_theme_color_override("font_color", Color(0.91, 0.93, 0.96))
+	_sub_header_title.add_theme_color_override("font_color", UITheme.TEXT_PRIMARY)
 	title_vbox.add_child(_sub_header_title)
 
 	_sub_header_subtitle = Label.new()
 	_sub_header_subtitle.add_theme_font_size_override("font_size", 20)
-	_sub_header_subtitle.add_theme_color_override("font_color", Color(0.6, 0.65, 0.72))
+	_sub_header_subtitle.add_theme_color_override("font_color", UITheme.TEXT_MUTED)
 	title_vbox.add_child(_sub_header_subtitle)
 
 	main_vbox.add_child(_sub_header)
@@ -952,9 +952,9 @@ func _build_planning_chrome() -> void:
 	_sticky_footer = PanelContainer.new()
 	_sticky_footer.name = "JourneyStickyFooter"
 	var fsb := StyleBoxFlat.new()
-	fsb.bg_color = Color(0.085, 0.1, 0.135, 1.0)
+	fsb.bg_color = Color(UITheme.METAL_DARK, 1.0)
 	fsb.border_width_top = 1
-	fsb.border_color = Color(0.2, 0.24, 0.3)
+	fsb.border_color = UITheme.METAL_EDGE
 	fsb.content_margin_left = 12
 	fsb.content_margin_right = 12
 	fsb.content_margin_top = 8
@@ -1011,7 +1011,7 @@ func _build_footer(route_data: Dictionary) -> void:
 	# Top Up — only when parked at a settlement that has vendors.
 	_current_settlement_data = _find_current_settlement()
 	if not _current_settlement_data.is_empty():
-		var tu := _make_touch_button("Top Up", Color(0.2, 0.25, 0.3, 0.9), Color(0.3, 0.4, 0.5, 1.0), func(): _on_top_up_button_pressed())
+		var tu := _make_touch_button("Top Up", Color(UITheme.METAL_BASE, 0.9), Color(UITheme.METAL_HOVER, 1.0), func(): _on_top_up_button_pressed())
 		tu.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		_footer_hbox.add_child(tu)
 		top_up_button = tu as Control
@@ -1475,7 +1475,7 @@ func _show_confirmation_panel(route_data: Dictionary):
 		var l := Label.new()
 		l.text = text
 		l.add_theme_font_size_override("font_size", 20 if is_portrait else 15)
-		l.add_theme_color_override("font_color", Color(0.5, 0.55, 0.62))
+		l.add_theme_color_override("font_color", UITheme.TEXT_MUTED)
 		return l
 
 	var _mk_card = func(border_col: Color, bg_col: Color) -> PanelContainer:
@@ -1497,7 +1497,7 @@ func _show_confirmation_panel(route_data: Dictionary):
 	res_block.add_theme_constant_override("separation", 4)
 	res_block.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	res_block.add_child(_section_label.call("Resources"))
-	var res_card: PanelContainer = _mk_card.call(Color(0.2, 0.25, 0.3), Color(0.08, 0.1, 0.12, 0.85))
+	var res_card: PanelContainer = _mk_card.call(UITheme.METAL_EDGE, Color(UITheme.METAL_DARK, 0.85))
 	res_block.add_child(res_card)
 	var res_grid := GridContainer.new()
 	res_grid.columns = 4
@@ -1510,7 +1510,7 @@ func _show_confirmation_panel(route_data: Dictionary):
 		var l := Label.new()
 		l.text = text
 		l.add_theme_font_size_override("font_size", head_fs)
-		l.add_theme_color_override("font_color", Color(0.5, 0.58, 0.66))
+		l.add_theme_color_override("font_color", UITheme.TEXT_MUTED)
 		if expand:
 			l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		else:
@@ -1523,7 +1523,7 @@ func _show_confirmation_panel(route_data: Dictionary):
 	res_grid.add_child(_head_cell.call("After", false))
 
 	var _res_row = func(emoji_name: String, need_s: String, have_s: String, after_s: String, status: String):
-		var status_col := Color(0.85, 0.9, 0.96)
+		var status_col := UITheme.TEXT_PRIMARY
 		if status == "critical": status_col = Color(1, 0.45, 0.45)
 		elif status == "warn": status_col = Color(1, 0.82, 0.45)
 		var nm := Label.new()
@@ -1540,8 +1540,8 @@ func _show_confirmation_panel(route_data: Dictionary):
 			l.size_flags_horizontal = Control.SIZE_FILL
 			l.add_theme_color_override("font_color", c)
 			res_grid.add_child(l)
-		_val.call(need_s, Color(0.78, 0.82, 0.88))
-		_val.call(have_s, Color(0.78, 0.82, 0.88))
+		_val.call(need_s, UITheme.TEXT_PRIMARY)
+		_val.call(have_s, UITheme.TEXT_PRIMARY)
 		var after_col := Color(0.5, 1.0, 0.5)
 		if status == "critical": after_col = Color(1, 0.45, 0.45)
 		elif status == "warn": after_col = Color(1, 0.82, 0.45)
@@ -1575,7 +1575,7 @@ func _show_confirmation_panel(route_data: Dictionary):
 		energy_block.add_theme_constant_override("separation", 4)
 		energy_block.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		energy_block.add_child(_section_label.call("Vehicle energy"))
-		var en_card: PanelContainer = _mk_card.call(Color(0.2, 0.25, 0.3), Color(0.08, 0.1, 0.12, 0.85))
+		var en_card: PanelContainer = _mk_card.call(UITheme.METAL_EDGE, Color(UITheme.METAL_DARK, 0.85))
 		energy_block.add_child(en_card)
 		var en_vbox := VBoxContainer.new()
 		en_vbox.add_theme_constant_override("separation", 6)
@@ -1604,7 +1604,7 @@ func _show_confirmation_panel(route_data: Dictionary):
 			var nums := Label.new()
 			nums.text = "%s/%s kWh" % [NumberFormat.fmt_float(e.used, 1), NumberFormat.fmt_float(e.capacity, 1)]
 			nums.add_theme_font_size_override("font_size", 18 if is_portrait else 14)
-			nums.add_theme_color_override("font_color", Color(0.7, 0.74, 0.8))
+			nums.add_theme_color_override("font_color", UITheme.TEXT_MUTED)
 			row.add_child(nums)
 			en_vbox.add_child(row)
 
@@ -1773,7 +1773,7 @@ func _clear_destination_highlights() -> void:
 		if child is PanelContainer:
 			var box := (child as PanelContainer).get_theme_stylebox("panel")
 			if box is StyleBoxFlat:
-				(box as StyleBoxFlat).bg_color = Color(0.12, 0.14, 0.18, 0.9)
+				(box as StyleBoxFlat).bg_color = Color(UITheme.METAL_BASE, 0.9)
 
 func _disable_destination_buttons():
 	for child in content_vbox.get_children():
@@ -1840,7 +1840,7 @@ func _make_stat_card(title: String, value_text: String, bg_color: Color) -> Pane
 		sb.border_width_right = 1
 		sb.border_width_top = 1
 		sb.border_width_bottom = 1
-	sb.border_color = Color(0.28,0.34,0.44)
+	sb.border_color = UITheme.METAL_EDGE
 	sb.corner_radius_top_left = 6
 	sb.corner_radius_top_right = 6
 	sb.corner_radius_bottom_left = 6
@@ -1852,7 +1852,7 @@ func _make_stat_card(title: String, value_text: String, bg_color: Color) -> Pane
 	card.add_child(vb)
 	var cap := Label.new()
 	cap.text = title
-	cap.add_theme_color_override("font_color", Color(0.75,0.84,0.95))
+	cap.add_theme_color_override("font_color", UITheme.TEXT_MUTED)
 	cap.add_theme_font_size_override("font_size", 30 if DeviceStateManager.is_mobile else 19)
 	vb.add_child(cap)
 	var val := Label.new()
@@ -2400,7 +2400,7 @@ func _style_top_up_button():
 		return
 	# --- Button StyleBoxes (Cloned) ---
 	var normal = StyleBoxFlat.new()
-	normal.bg_color = Color(0.15, 0.15, 0.18, 1.0)
+	normal.bg_color = Color(UITheme.METAL_BASE, 1.0)
 	normal.corner_radius_top_left = 6
 	normal.corner_radius_top_right = 6
 	normal.corner_radius_bottom_left = 6
@@ -2409,17 +2409,17 @@ func _style_top_up_button():
 	normal.border_width_right = 2
 	normal.border_width_top = 2
 	normal.border_width_bottom = 2
-	normal.border_color = Color(0.40, 0.60, 0.90)
+	normal.border_color = UITheme.ACCENT_BRASS
 	normal.shadow_color = Color(0,0,0,0.6)
 	normal.shadow_size = 3
 
 	var hover = normal.duplicate()
-	hover.bg_color = Color(0.22, 0.22, 0.28, 1.0)
-	hover.border_color = Color(0.55, 0.75, 1.0)
+	hover.bg_color = Color(UITheme.METAL_HOVER, 1.0)
+	hover.border_color = UITheme.ACCENT_BRASS.lightened(0.15)
 
 	var pressed = normal.duplicate()
-	pressed.bg_color = Color(0.10, 0.10, 0.14, 1.0)
-	pressed.border_color = Color(0.30, 0.50, 0.80)
+	pressed.bg_color = Color(UITheme.METAL_DARK, 1.0)
+	pressed.border_color = UITheme.ACCENT_BRASS.darkened(0.2)
 
 	var disabled = normal.duplicate()
 	disabled.bg_color = Color(0.08, 0.08, 0.09, 1.0)
@@ -2442,7 +2442,7 @@ func _style_top_up_button():
 	tooltip_panel.corner_radius_top_right = 4
 	tooltip_panel.corner_radius_bottom_left = 4
 	tooltip_panel.corner_radius_bottom_right = 4
-	tooltip_panel.border_color = Color(0.60, 0.60, 0.70)
+	tooltip_panel.border_color = UITheme.METAL_EDGE
 	tooltip_panel.border_width_left = 1
 	tooltip_panel.border_width_right = 1
 	tooltip_panel.border_width_top = 1
@@ -2454,9 +2454,9 @@ func _style_top_up_button():
 	top_up_button.add_theme_stylebox_override("tooltip_panel", tooltip_panel)
 
 	# --- Font & Colors ---
-	top_up_button.add_theme_color_override("font_color", Color(0.92, 0.96, 1.0))
+	top_up_button.add_theme_color_override("font_color", UITheme.TEXT_PRIMARY)
 	top_up_button.add_theme_color_override("font_color_hover", Color(1.0, 1.0, 1.0))
-	top_up_button.add_theme_color_override("font_color_pressed", Color(0.85, 0.90, 1.0))
+	top_up_button.add_theme_color_override("font_color_pressed", UITheme.TEXT_PRIMARY)
 	top_up_button.add_theme_color_override("font_color_disabled", Color(0.55, 0.55, 0.60))
 	top_up_button.add_theme_font_size_override("font_size", 29)
 

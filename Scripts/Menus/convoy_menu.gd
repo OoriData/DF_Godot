@@ -36,7 +36,8 @@ const COLOR_PART_TEXT: Color = Color("4dd0e1") # Material Cyan 300
 const COLOR_BULLET_POINT: Color = Color("9e9e9e") # Grey 500
 const COLOR_TAB_DISABLED_FONT: Color = Color("a0a0a0") # Lighter gray for disabled text
 const COLOR_ITEM_BUTTON_BG: Color = Color("5a5a5a") # Dark-medium gray for item buttons
-const COLOR_JOURNEY_PROGRESS_FILL: Color = Color("29b6f6") # Material Light Blue 400
+# Journey progress fill: UITheme.ACCENT_VERDIGRIS (living/growth/resource signal).
+# Token is an autoload const (not a compile-time constant expr), so used inline below, not here.
 
 # --- Vendor Item Button Layout ---
 var VENDOR_ITEM_BUTTON_MIN_WIDTH: float = 190.0
@@ -2873,12 +2874,12 @@ func _style_journey_progress_bar(bar: ProgressBar) -> void:
 	bg_style.shadow_offset = Vector2(0, 2)
 
 	var fill_style := StyleBoxFlat.new()
-	fill_style.bg_color = COLOR_JOURNEY_PROGRESS_FILL
+	fill_style.bg_color = UITheme.ACCENT_VERDIGRIS
 	fill_style.border_width_left = 1
 	fill_style.border_width_right = 1
 	fill_style.border_width_top = 1
 	fill_style.border_width_bottom = 1
-	fill_style.border_color = COLOR_JOURNEY_PROGRESS_FILL.darkened(0.2)
+	fill_style.border_color = UITheme.ACCENT_VERDIGRIS.darkened(0.2)
 
 	bar.add_theme_stylebox_override("background", bg_style)
 	bar.add_theme_stylebox_override("fill", fill_style)

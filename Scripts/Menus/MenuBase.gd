@@ -58,7 +58,7 @@ func _slot_accent(slot_name: String) -> Color:
 # Rounded card surface used by every slot/cart/candidate card.
 func _make_card_style(filled: bool, accent: Color) -> StyleBoxFlat:
 	var sb := StyleBoxFlat.new()
-	sb.bg_color = Color(0.13, 0.16, 0.20, 0.92) if filled else Color(0.10, 0.11, 0.14, 0.85)
+	sb.bg_color = Color(UITheme.METAL_BASE, 0.92) if filled else Color(UITheme.METAL_DARK, 0.85)
 	sb.set_corner_radius_all(8)
 	sb.set_content_margin_all(12 if _card_is_mobile() else 10)
 	if filled:
@@ -84,7 +84,7 @@ func _make_slot_badge(slot_name: String, accent: Color, is_empty: bool) -> Contr
 	lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	lbl.add_theme_font_size_override("font_size", 13)
-	lbl.add_theme_color_override("font_color", accent if not is_empty else Color(0.55, 0.58, 0.65))
+	lbl.add_theme_color_override("font_color", accent if not is_empty else UITheme.TEXT_MUTED)
 	badge.add_child(lbl)
 	return badge
 
@@ -377,12 +377,12 @@ func style_back_button(btn: Button) -> void:
 	btn.add_theme_font_size_override("font_size", font_size)
 	
 	var sb = StyleBoxFlat.new()
-	sb.bg_color = Color(0.18, 0.22, 0.32, 0.95)
+	sb.bg_color = Color(UITheme.METAL_BASE, 0.95)
 	sb.border_width_left = 2
 	sb.border_width_right = 2
 	sb.border_width_top = 2
 	sb.border_width_bottom = 2
-	sb.border_color = Color(0.40, 0.50, 0.70, 0.9)
+	sb.border_color = Color(UITheme.METAL_EDGE, 0.9)
 	sb.corner_radius_top_left = 8
 	sb.corner_radius_top_right = 8
 	sb.corner_radius_bottom_left = 8
@@ -390,11 +390,11 @@ func style_back_button(btn: Button) -> void:
 	btn.add_theme_stylebox_override("normal", sb)
 	
 	var sb_hover = sb.duplicate() as StyleBoxFlat
-	sb_hover.bg_color = Color(0.25, 0.30, 0.45, 1.0)
+	sb_hover.bg_color = Color(UITheme.METAL_HOVER, 1.0)
 	btn.add_theme_stylebox_override("hover", sb_hover)
 	
 	var sb_pressed = sb.duplicate() as StyleBoxFlat
-	sb_pressed.bg_color = Color(0.12, 0.15, 0.22, 1.0)
+	sb_pressed.bg_color = Color(UITheme.METAL_DARK, 1.0)
 	btn.add_theme_stylebox_override("pressed", sb_pressed)
 
 ## Style a button to match the convoy navigation bar buttons (light grey, black text).
@@ -512,7 +512,7 @@ func setup_convoy_top_banner(title_node: Control, menu_name_suffix: String, brea
 	# Premium Button Styling (Tactile and clearly a button)
 	var btn_normal = StyleBoxFlat.new()
 	# Rich dark background with slight transparency
-	btn_normal.bg_color = Color(0.22, 0.24, 0.28, 0.9) 
+	btn_normal.bg_color = Color(UITheme.METAL_BASE, 0.9) 
 	btn_normal.border_width_left = 2
 	btn_normal.border_width_top = 2
 	btn_normal.border_width_right = 2
@@ -534,12 +534,12 @@ func setup_convoy_top_banner(title_node: Control, menu_name_suffix: String, brea
 	btn_normal.shadow_offset = Vector2(0, 2)
 
 	var btn_hover = btn_normal.duplicate()
-	btn_hover.bg_color = Color(0.28, 0.32, 0.38, 1.0)
+	btn_hover.bg_color = Color(UITheme.METAL_HOVER, 1.0)
 	btn_hover.border_color = UITheme.ACCENT_BRASS
 	
 	var btn_pressed = btn_normal.duplicate()
 	btn_pressed.bg_color = Color(0.15, 0.16, 0.18, 1.0)
-	btn_pressed.border_color = Color(0.3, 0.4, 0.6, 0.8)
+	btn_pressed.border_color = UITheme.ACCENT_BRASS
 	btn_pressed.shadow_size = 1
 	btn_pressed.shadow_offset = Vector2(0, 1)
 	

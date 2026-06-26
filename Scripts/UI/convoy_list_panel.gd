@@ -245,7 +245,7 @@ func populate_convoy_list(convoys_data: Array) -> void:
 				
 				var dest_label = Label.new()
 				dest_label.text = "to %s" % dest_name
-				dest_label.add_theme_color_override("font_color", Color(0.16, 0.71, 0.96)) # Cyan
+				dest_label.add_theme_color_override("font_color", UITheme.TEXT_MUTED) # Destination = secondary text
 				var dest_font_size = _get_font_size(15)
 				if not is_portrait and not is_mobile:
 					dest_font_size = 21 # Large destination font on desktop
@@ -480,7 +480,7 @@ func _update_toggle_button_display(is_open: bool) -> void:
 				var is_portrait_mode = dsm.get_is_portrait() if is_instance_valid(dsm) else (get_viewport_rect().size.y > get_viewport_rect().size.x if is_inside_tree() else false)
 				if not is_portrait_mode and not _is_mobile():
 					status_font_size = 21 # Larger desktop status text
-				status_text = " [font_size=%d][color=#29b6f6]to %s[/color][/font_size]" % [status_font_size, dest_name]
+				status_text = " [font_size=%d][color=#%s]to %s[/color][/font_size]" % [status_font_size, UITheme.TEXT_MUTED.to_html(false), dest_name]
 		
 		display_text = "%s%s %s" % [convoy_name, status_text, arrow]
 	
@@ -491,7 +491,7 @@ func _update_toggle_button_display(is_open: bool) -> void:
 	if is_instance_valid(rtl) and rtl is RichTextLabel:
 		rtl.text = styled_text
 	else:
-		toggle_button.text = display_text.replace("[color=gray]", "").replace("[/color]", "").replace("[color=#29b6f6]", "")
+		toggle_button.text = display_text.replace("[color=gray]", "").replace("[/color]", "").replace("[color=#%s]" % UITheme.TEXT_MUTED.to_html(false), "")
 
 ## Highlights a specific convoy in the list.
 ## Call this from main.gd when a convoy is selected on the map.
@@ -504,6 +504,6 @@ func highlight_convoy_in_list(selected_convoy_id_str: String) -> void:
 		if child is Button: # Or your custom item type
 			# A more robust way is to check the name or metadata set during creation
 			if child.name == "ConvoyButton_%s" % selected_convoy_id_str:
-				child.modulate = Color.LIGHT_SKY_BLUE # Highlight color
+				child.modulate = UITheme.ACCENT_BRASS # Active/selected highlight tint
 			else:
 				child.modulate = Color.WHITE # Reset others

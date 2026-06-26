@@ -132,12 +132,12 @@ func _ready():
 		popup.add_theme_constant_override("v_separation", 20 if _is_mobile() else 8)
 		# Explicit panel stylebox so there is no excess top padding pushing items down
 		var popup_panel := StyleBoxFlat.new()
-		popup_panel.bg_color = Color(0.12, 0.14, 0.18, 0.97)
+		popup_panel.bg_color = Color(UITheme.METAL_BASE, 0.97)
 		popup_panel.border_width_left = 1
 		popup_panel.border_width_right = 1
 		popup_panel.border_width_top = 1
 		popup_panel.border_width_bottom = 1
-		popup_panel.border_color = Color(0.35, 0.42, 0.60, 0.8)
+		popup_panel.border_color = Color(UITheme.METAL_EDGE, 0.8)
 		popup_panel.set_content_margin_all(8)
 		popup.add_theme_stylebox_override("panel", popup_panel)
 	else:
@@ -214,7 +214,7 @@ func _apply_mobile_tab_styles(tc: TabContainer) -> void:
 			style.border_width_left = 1
 			style.border_width_right = 1
 			style.border_width_top = 1
-			style.border_color = Color(0.45, 0.55, 0.75, 0.9)
+			style.border_color = UITheme.ACCENT_BRASS
 		tc.add_theme_stylebox_override(style_name, style)
 
 func _setup_custom_tabs() -> void:
@@ -279,15 +279,15 @@ func _setup_custom_tabs() -> void:
 		normal_style.border_width_right = 1
 		normal_style.border_width_top = 1
 		normal_style.border_width_bottom = 1
-		normal_style.border_color = Color(0.3, 0.35, 0.4, 0.6)
+		normal_style.border_color = Color(UITheme.METAL_EDGE, 0.6)
 		normal_style.content_margin_left = 16
 		normal_style.content_margin_right = 16
 		normal_style.content_margin_top = 14 if is_portrait else 10
 		normal_style.content_margin_bottom = 14 if is_portrait else 10
 
 		var pressed_style = normal_style.duplicate()
-		pressed_style.bg_color = Color(0.25, 0.35, 0.55, 0.9)
-		pressed_style.border_color = Color(0.45, 0.55, 0.75, 0.9)
+		pressed_style.bg_color = Color(UITheme.METAL_ACTIVE, 0.9)
+		pressed_style.border_color = UITheme.ACCENT_BRASS
 		
 		btn.add_theme_stylebox_override("normal", normal_style)
 		btn.add_theme_stylebox_override("pressed", pressed_style)
@@ -331,7 +331,7 @@ func _update_custom_tab_buttons(active_tab_index: int) -> void:
 			normal_style.border_width_right = 1
 			normal_style.border_width_top = 1
 			normal_style.border_width_bottom = 1
-			normal_style.border_color = Color(0.3, 0.35, 0.4, 0.6)
+			normal_style.border_color = Color(UITheme.METAL_EDGE, 0.6)
 			normal_style.content_margin_left = 16
 			normal_style.content_margin_right = 16
 			btn.add_theme_stylebox_override("normal", normal_style)
@@ -544,9 +544,9 @@ func _add_inspectable_item_row(parent: Container, item_name: String, agg_data: D
 
 	var sb := StyleBoxFlat.new()
 	if item_index % 2 == 0:
-		sb.bg_color = Color(0.13, 0.15, 0.19, 0.8)
+		sb.bg_color = Color(UITheme.METAL_BASE, 0.8)
 	else:
-		sb.bg_color = Color(0.10, 0.12, 0.16, 0.8)
+		sb.bg_color = Color(UITheme.METAL_DARK, 0.8)
 	var row_margin := (14 if _is_portrait() else 8) if _is_mobile() else 6
 	sb.set_content_margin_all(row_margin)
 	bg_panel.add_theme_stylebox_override("panel", sb)
@@ -612,9 +612,9 @@ func _add_inspectable_item_row(parent: Container, item_name: String, agg_data: D
 	)
 	outer_row.mouse_exited.connect(func():
 		if item_index % 2 == 0:
-			sb.bg_color = Color(0.13, 0.15, 0.19, 0.8)
+			sb.bg_color = Color(UITheme.METAL_BASE, 0.8)
 		else:
-			sb.bg_color = Color(0.10, 0.12, 0.16, 0.8)
+			sb.bg_color = Color(UITheme.METAL_DARK, 0.8)
 	)
 
 	parent.add_child(outer_row)
@@ -624,7 +624,7 @@ func _add_inspectable_item_row(parent: Container, item_name: String, agg_data: D
 func _add_inspectable_part_card_r(part_data: Dictionary) -> Control:
 	var slot_name := String(part_data.get("slot", "other"))
 	var accent := _slot_accent(slot_name)
-	var base_bg := Color(0.13, 0.16, 0.20, 0.92)
+	var base_bg := Color(UITheme.METAL_BASE, 0.92)
 
 	var card := PanelContainer.new()
 	card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -668,7 +668,7 @@ func _add_inspectable_part_card_r(part_data: Dictionary) -> Control:
 		stat_lbl.text = summary
 		stat_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD
 		stat_lbl.add_theme_font_size_override("font_size", _get_font_size(12))
-		stat_lbl.add_theme_color_override("font_color", Color(0.70, 0.85, 1.0))
+		stat_lbl.add_theme_color_override("font_color", UITheme.TEXT_MUTED)
 		vb.add_child(stat_lbl)
 
 	# Inspect action
@@ -809,12 +809,12 @@ func _build_stat_pill(parent: Container, label_text: String, value_text: String,
 	card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 
 	var card_style := StyleBoxFlat.new()
-	card_style.bg_color = Color(0.13, 0.16, 0.22, 0.9)
+	card_style.bg_color = Color(UITheme.METAL_BASE, 0.9)
 	card_style.border_width_left = 1
 	card_style.border_width_right = 1
 	card_style.border_width_top = 1
 	card_style.border_width_bottom = 1
-	card_style.border_color = Color(0.30, 0.38, 0.55, 0.85)
+	card_style.border_color = Color(UITheme.METAL_EDGE, 0.85)
 	card_style.corner_radius_top_left = 6
 	card_style.corner_radius_top_right = 6
 	card_style.corner_radius_bottom_left = 6
@@ -835,7 +835,7 @@ func _build_stat_pill(parent: Container, label_text: String, value_text: String,
 	var lbl := Label.new()
 	lbl.text = label_text
 	lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	lbl.add_theme_color_override("font_color", Color(0.75, 0.82, 0.95, 1.0))
+	lbl.add_theme_color_override("font_color", UITheme.TEXT_MUTED)
 	lbl.add_theme_font_size_override("font_size", _get_font_size(18 if is_portrait else 13))
 	vbox.add_child(lbl)
 
@@ -846,21 +846,21 @@ func _build_stat_pill(parent: Container, label_text: String, value_text: String,
 	btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	btn.add_theme_font_size_override("font_size", _get_font_size(30 if is_portrait else 22))
 	var btn_style := StyleBoxFlat.new()
-	btn_style.bg_color = Color(0.18, 0.22, 0.32, 0.95)
+	btn_style.bg_color = UITheme.METAL_BASE
 	btn_style.border_width_left = 1
 	btn_style.border_width_right = 1
 	btn_style.border_width_top = 1
 	btn_style.border_width_bottom = 1
-	btn_style.border_color = Color(0.35, 0.48, 0.72, 0.9)
+	btn_style.border_color = UITheme.ACCENT_BRASS
 	btn_style.corner_radius_top_left = 5
 	btn_style.corner_radius_top_right = 5
 	btn_style.corner_radius_bottom_left = 5
 	btn_style.corner_radius_bottom_right = 5
 	var btn_hover := btn_style.duplicate() as StyleBoxFlat
-	btn_hover.bg_color = Color(0.22, 0.28, 0.42, 1.0)
-	btn_hover.border_color = Color(0.55, 0.68, 0.92, 1.0)
+	btn_hover.bg_color = UITheme.METAL_HOVER
+	btn_hover.border_color = UITheme.ACCENT_BRASS.lightened(0.15)
 	var btn_pressed := btn_style.duplicate() as StyleBoxFlat
-	btn_pressed.bg_color = Color(0.12, 0.16, 0.26, 1.0)
+	btn_pressed.bg_color = UITheme.METAL_ACTIVE
 	btn.add_theme_stylebox_override("normal", btn_style)
 	btn.add_theme_stylebox_override("hover", btn_hover)
 	btn.add_theme_stylebox_override("pressed", btn_pressed)
@@ -878,9 +878,9 @@ func _add_info_cell(parent: Container, label_text: String, value_text: String, i
 
 	var sb := StyleBoxFlat.new()
 	if item_index % 2 == 0:
-		sb.bg_color = Color(0.13, 0.15, 0.19, 0.8)
+		sb.bg_color = Color(UITheme.METAL_BASE, 0.8)
 	else:
-		sb.bg_color = Color(0.10, 0.12, 0.16, 0.8)
+		sb.bg_color = Color(UITheme.METAL_DARK, 0.8)
 	sb.set_content_margin_all((11 if _is_portrait() else 7) if _is_mobile() else 5)
 	bg_panel.add_theme_stylebox_override("panel", sb)
 
@@ -893,7 +893,7 @@ func _add_info_cell(parent: Container, label_text: String, value_text: String, i
 	label_node.text = label_text
 	label_node.custom_minimum_size.x = 110
 	label_node.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	label_node.add_theme_color_override("font_color", Color(0.70, 0.78, 0.92, 0.95))
+	label_node.add_theme_color_override("font_color", UITheme.TEXT_MUTED)
 	label_node.add_theme_font_size_override("font_size", _get_font_size(19))
 	content_row.add_child(label_node)
 
@@ -932,7 +932,7 @@ func _add_collapsible_description(parent: Container, text: String) -> void:
 	toggle.text = "More ▾"
 	toggle.flat = true
 	toggle.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
-	toggle.add_theme_color_override("font_color", Color(0.55, 0.70, 1.0, 1.0))
+	toggle.add_theme_color_override("font_color", UITheme.ACCENT_BRASS)
 	toggle.add_theme_font_size_override("font_size", _get_font_size(13))
 	toggle.pressed.connect(func():
 		if desc_label.max_lines_visible == collapsed_lines:
@@ -1160,9 +1160,9 @@ func _add_stat_row_with_button(parent: Container, label_text: String, stat_value
 
 	var sb := StyleBoxFlat.new()
 	if item_index % 2 == 0:
-		sb.bg_color = Color(0.13, 0.15, 0.19, 0.8)
+		sb.bg_color = Color(UITheme.METAL_BASE, 0.8)
 	else:
-		sb.bg_color = Color(0.10, 0.12, 0.16, 0.8)
+		sb.bg_color = Color(UITheme.METAL_DARK, 0.8)
 	var row_margin := 14 if _is_mobile() else 6
 	sb.set_content_margin_all(row_margin)
 	bg_panel.add_theme_stylebox_override("panel", sb)
@@ -1196,9 +1196,9 @@ func _add_stat_row_with_button(parent: Container, label_text: String, stat_value
 	)
 	outer_row.mouse_exited.connect(func():
 		if item_index % 2 == 0:
-			sb.bg_color = Color(0.13, 0.15, 0.19, 0.8)
+			sb.bg_color = Color(UITheme.METAL_BASE, 0.8)
 		else:
-			sb.bg_color = Color(0.10, 0.12, 0.16, 0.8)
+			sb.bg_color = Color(UITheme.METAL_DARK, 0.8)
 	)
 
 	parent.add_child(outer_row)

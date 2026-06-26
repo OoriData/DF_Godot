@@ -39,6 +39,10 @@ enum FitMode { CONTAIN, COVER }
 # overhang the route geometry — are not clipped at the viewport edges. Converted to world units at
 # the estimated fit zoom in smooth_fit_route_preview. x = horizontal per side, y = vertical per side.
 @export var route_fit_label_padding_px: Vector2 = Vector2(110.0, 80.0)
+# If true, smooth_fit_world_rect (used for journey route preview) is allowed to zoom out past the
+# COVER floor so long routes show both endpoints. The map may briefly show empty space at the edges
+# during the preview; the floor is re-enforced as soon as the user pans/zooms or closes the menu.
+@export var route_fit_allow_zoom_past_cover: bool = true
 
 
 var camera_node: Camera2D = null
@@ -723,9 +727,12 @@ func smooth_fit_world_rect(world_rect: Rect2, duration: float = 0.6, margin: flo
 	var zoom_y: float = visible_h_px / rect_h
 	var target_zoom: float = min(zoom_x, zoom_y) * clamp(margin, 0.5, 1.0)
 	
-	# CRITICAL FIX: Never zoom out beyond min_camera_zoom_level to keep map in bounds and avoid showing background.
+	# Cap zoom-out at the cover floor so the map always fills the screen — unless
+	# route_fit_allow_zoom_past_cover is set, which lets long routes zoom far enough to show both
+	# endpoints even if that briefly exposes map edges. The floor is re-enforced on the next
+	# pan/zoom or menu close.
 	var absolute_min = min_camera_zoom_level
-	if target_zoom < absolute_min:
+	if not route_fit_allow_zoom_past_cover and target_zoom < absolute_min:
 		if debug_logging:
 			print("[MCC] smooth_fit_world_rect: target_zoom %.4f capped to min_camera_zoom_level %.4f" % [target_zoom, absolute_min])
 		target_zoom = absolute_min
