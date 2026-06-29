@@ -671,8 +671,8 @@ func _ready():
 		apply_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		# Use standard convoy nav style for consistency with outer tabs
 		style_convoy_nav_button(apply_button)
-		# Match tab height
-		var tab_h = 80 if _is_portrait() else (64 if _is_mobile() else 44)
+		# Match tab height (trimmed in landscape so the strip leaves more room for part cards)
+		var tab_h = 80 if _is_portrait() else (56 if _is_mobile() else 44)
 		apply_button.custom_minimum_size.y = tab_h
 
 	if is_instance_valid(vehicle_option_button):
@@ -750,7 +750,7 @@ func _setup_custom_tabs() -> void:
 	if is_instance_valid(tab_scroll):
 		tab_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
 		tab_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-		tab_scroll.custom_minimum_size.y = 80 if _is_portrait() else (64 if _is_mobile() else 44)
+		tab_scroll.custom_minimum_size.y = 80 if _is_portrait() else (56 if _is_mobile() else 44)
 		tab_scroll.mouse_filter = Control.MOUSE_FILTER_PASS
 		
 	# Clear any existing buttons just in case
@@ -771,11 +771,13 @@ func _setup_custom_tabs() -> void:
 		btn.toggle_mode = true
 		btn.add_theme_font_size_override("font_size", _get_font_size(14)) # Slightly smaller for inner tabs
 		
-		btn.custom_minimum_size = Vector2(140 if is_portrait else 110, 0)
-		
-		# Match Oori design (copied from ConvoyVehicleMenu)
+		# Match the tab strip height (comfortable touch target, trimmed in landscape).
+		var tab_btn_h := 80 if is_portrait else (56 if _is_mobile() else 44)
+		btn.custom_minimum_size = Vector2(140 if is_portrait else 110, tab_btn_h)
+
+		# Oori token styling (matches ConvoyVehicleMenu's tabs; darker fill since these are nested).
 		var normal_style = StyleBoxFlat.new()
-		normal_style.bg_color = Color(0.12, 0.12, 0.15, 0.9) # Slightly darker for nested
+		normal_style.bg_color = Color(UITheme.METAL_DARK, 0.9) # Slightly darker for nested
 		normal_style.corner_radius_top_left = 6
 		normal_style.corner_radius_top_right = 6
 		normal_style.corner_radius_bottom_left = 6
@@ -784,19 +786,19 @@ func _setup_custom_tabs() -> void:
 		normal_style.border_width_right = 1
 		normal_style.border_width_top = 1
 		normal_style.border_width_bottom = 1
-		normal_style.border_color = Color(0.25, 0.3, 0.35, 0.6)
+		normal_style.border_color = Color(UITheme.METAL_EDGE, 0.6)
 		normal_style.content_margin_left = 12
 		normal_style.content_margin_right = 12
-		
+
 		var pressed_style = normal_style.duplicate()
-		pressed_style.bg_color = Color(0.2, 0.3, 0.45, 0.9)
-		pressed_style.border_color = Color(0.4, 0.5, 0.7, 0.9)
-		
+		pressed_style.bg_color = Color(UITheme.METAL_ACTIVE, 0.9)
+		pressed_style.border_color = UITheme.ACCENT_BRASS
+
 		btn.add_theme_stylebox_override("normal", normal_style)
 		btn.add_theme_stylebox_override("pressed", pressed_style)
 		btn.add_theme_stylebox_override("hover", normal_style.duplicate())
-		btn.add_theme_color_override("font_color", Color(0.6, 0.6, 0.6, 1.0))
-		btn.add_theme_color_override("font_pressed_color", Color(1.0, 1.0, 1.0, 1.0))
+		btn.add_theme_color_override("font_color", UITheme.TEXT_MUTED)
+		btn.add_theme_color_override("font_pressed_color", UITheme.TEXT_PRIMARY)
 		
 		# Connect press
 		btn.pressed.connect(func():
@@ -816,11 +818,11 @@ func _update_custom_tab_buttons(active_index: int) -> void:
 		btn.set_pressed_no_signal(i == active_index)
 		
 		if i == active_index:
-			btn.add_theme_color_override("font_color", Color(1.0, 1.0, 1.0, 1.0))
+			btn.add_theme_color_override("font_color", UITheme.TEXT_PRIMARY)
 			var pressed_style = btn.get_theme_stylebox("pressed")
 			btn.add_theme_stylebox_override("normal", pressed_style)
 		else:
-			btn.add_theme_color_override("font_color", Color(0.6, 0.6, 0.6, 1.0))
+			btn.add_theme_color_override("font_color", UITheme.TEXT_MUTED)
 			var normal_style = btn.get_theme_stylebox("hover") # Use the base style
 			btn.add_theme_stylebox_override("normal", normal_style)
 

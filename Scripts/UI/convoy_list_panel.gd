@@ -88,28 +88,46 @@ func _on_toggle_button_pressed() -> void:
 			convoys = _store.get_convoys()
 		
 		var item_count = convoys.size() if not convoys.is_empty() else 1 # 1 for "No convoys" label
-		
-		var win_size = DisplayServer.window_get_size()
-		var is_portrait = win_size.y > win_size.x
+
+		# Work in LOGICAL pixels (viewport rect), not DisplayServer.window_get_size() which
+		# returns physical pixels and mismatches the Control coordinates used below.
+		var viewport_size = get_viewport_rect().size
+		var is_portrait = _get_is_portrait()
 		var is_mobile = _is_mobile()
 		var item_h = 100 if is_portrait else (64 if is_mobile else 52) # Taller desktop items (52px instead of 32px)
 		var separation = 16 if is_portrait else (12 if is_mobile else 8) # Spacing (8px instead of 4px)
-		
+
 		# Calculate total height: items + separations + top/bottom padding
 		var total_content_h = (item_count * item_h) + (max(0, item_count - 1) * separation) + 60
-		
+
 		# Clamp height to reasonable limits
 		var max_h = 800 if is_portrait else (600 if is_mobile else 500) # Increased max height on desktop
 		var min_h = 100 if is_portrait else (80 if is_mobile else 80)
-		var popup_height = clamp(total_content_h, min_h, max_h)
-		
-		convoy_popup.size = Vector2(toggle_button.size.x, popup_height)
+
+		var button_rect = toggle_button.get_global_rect()
+		# Never let the drawer run past the bottom edge — the ScrollContainer takes over.
+		var available_h = viewport_size.y - button_rect.end.y - 8.0
+		max_h = min(max_h, max(float(min_h), available_h))
+		var popup_height = clamp(float(total_content_h), float(min_h), float(max_h))
+
+		# Portrait: the toggle button is only ~160px wide — far too narrow to read a convoy
+		# name + destination. Widen the drawer well beyond the button and clamp to screen.
+		# Landscape/desktop buttons are already wide, so they keep their own width.
+		var popup_width = toggle_button.size.x
+		if is_portrait:
+			popup_width = clamp(viewport_size.x * 0.7, 300.0, 460.0)
+		popup_width = min(popup_width, viewport_size.x - 16.0)
+
+		convoy_popup.size = Vector2(popup_width, popup_height)
 
 		# Use popup(Rect2i) for robust positioning in Godot 4.
-		# This positions the popup relative to the viewport, using global coordinates.
-		var button_rect = toggle_button.get_global_rect()
-		# Position the popup to start at the bottom-left of the button.
-		var popup_position = Vector2(button_rect.position.x, button_rect.end.y)
+		# Anchor to the button's bottom-left, but shift left if a wider drawer would overflow
+		# the right edge, then keep an 8px gutter from the left.
+		var popup_x = button_rect.position.x
+		if popup_x + popup_width > viewport_size.x - 8.0:
+			popup_x = viewport_size.x - 8.0 - popup_width
+		popup_x = max(popup_x, 8.0)
+		var popup_position = Vector2(popup_x, button_rect.end.y)
 		convoy_popup.popup(Rect2i(popup_position, convoy_popup.size))
 
 		# Update button display to show it's open
@@ -154,8 +172,7 @@ func populate_convoy_list(convoys_data: Array) -> void:
 	for child in list_item_container.get_children():
 		child.queue_free()
 
-	var win_size = DisplayServer.window_get_size()
-	var is_portrait = win_size.y > win_size.x
+	var is_portrait = _get_is_portrait()
 	var is_mobile = _is_mobile()
 
 	if convoys_data.is_empty():
@@ -321,6 +338,16 @@ func _is_mobile() -> bool:
 	if is_instance_valid(dsm):
 		return dsm.is_mobile
 	return OS.has_feature("mobile") or OS.has_feature("web_android") or OS.has_feature("web_ios") or DisplayServer.get_name() in ["Android", "iOS"]
+
+func _get_is_portrait() -> bool:
+	# Use DeviceStateManager (logical orientation) rather than DisplayServer.window_get_size(),
+	# which returns PHYSICAL pixels and is meaningless next to the logical Control coordinates
+	# used for popup sizing/positioning (Law of Logical Pixels).
+	var dsm = get_node_or_null("/root/DeviceStateManager")
+	if is_instance_valid(dsm) and dsm.has_method("get_is_portrait"):
+		return dsm.get_is_portrait()
+	var win_size = get_viewport_rect().size if is_inside_tree() else Vector2(0, 0)
+	return win_size.y > win_size.x
 
 func _get_font_size(base: int) -> int:
 	var dsm = get_node_or_null("/root/DeviceStateManager")

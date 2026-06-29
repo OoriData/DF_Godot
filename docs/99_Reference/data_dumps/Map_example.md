@@ -3,11 +3,11 @@
 
 ## Summary
 - **Tiles**: 120 × 200
-- **Total vendor cargo items**: 1058
-- **Cargo with `recipient` set**: 1058  ← _should be > 0 if DF_Lib update is live_
+- **Total vendor cargo items**: 1053
+- **Cargo with `recipient` set**: 1053  ← _should be > 0 if DF_Lib update is live_
 
 ## Raw payload
 Full JSON (~4.4 MB): [`Map_example.json`](Map_example.json)
 
-Top-level keys: `highlights, lowlights, tiles`. Structure: each tile → `settlements` → `vendors` → `cargo_inventory`.
+Top-level keys: `tiles, highlights, lowlights`. Structure: each tile → `settlements` → `vendors` → `cargo_inventory`.
 See [Schema](../../01_Architecture/Schema.md) and [MapSystem/Data](../../03_Systems/MapSystem/Data.md).

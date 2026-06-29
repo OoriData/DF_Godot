@@ -52,6 +52,9 @@ const RouteSelectionMenuScene = preload("res://Scenes/RouteSelectionMenu.tscn")
 
 var _is_request_in_flight: bool = false
 var _loading_label: Label = null
+var _loading_bar: ProgressBar = null
+var _loading_container: VBoxContainer = null
+var _loading_anim_time: float = 0.0
 var _last_requested_destination: Dictionary = {}
 
 # New confirmation panel references (created dynamically)
@@ -181,8 +184,11 @@ func _notification(what):
 		pass
 
 
-func _process(_delta: float):
-	pass
+func _process(delta: float):
+	# Indeterminate pulse for the route-plotting loading bar (mirrors login_screen.gd).
+	if is_instance_valid(_loading_bar) and _loading_bar.visible:
+		_loading_anim_time += delta
+		_loading_bar.value = 50.0 + sin(_loading_anim_time * 5.0) * 50.0
 
 func _physics_process(_delta: float):
 	pass
@@ -432,9 +438,12 @@ func _populate_destination_list():
 
 	# Reset planner loading state for a clean rebuild.
 	_settlement_poll_attempts = 0
-	# Clear potential prior loading state
+	# Clear potential prior loading state. content_vbox children are freed by the caller, so
+	# just drop the stale refs here (don't queue_free again).
 	_is_request_in_flight = false
 	_loading_label = null
+	_loading_bar = null
+	_loading_container = null
 	_last_requested_destination = {}
 
 	if not is_instance_valid(_store) or not _store.has_method("get_settlements"):
@@ -1501,10 +1510,15 @@ func _show_confirmation_panel(route_data: Dictionary):
 	res_block.add_child(res_card)
 	var res_grid := GridContainer.new()
 	res_grid.columns = 4
-	res_grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	# Landscape places this table beside the cargo block in a half-width column. If the name
+	# column expands to fill, it shoves Need/Have/After to the far right edge, leaving a wide
+	# dead gap between each resource and its numbers. Pack the table tight to the left instead;
+	# portrait keeps the full-width table (reads well on a narrow single column).
+	res_grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL if is_portrait else Control.SIZE_SHRINK_BEGIN
 	res_grid.add_theme_constant_override("h_separation", 12)
 	res_grid.add_theme_constant_override("v_separation", 6)
 	res_card.add_child(res_grid)
+	var _name_col_flag := Control.SIZE_EXPAND_FILL if is_portrait else Control.SIZE_FILL
 
 	var _head_cell = func(text: String, expand: bool):
 		var l := Label.new()
@@ -1517,7 +1531,7 @@ func _show_confirmation_panel(route_data: Dictionary):
 			l.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 			l.size_flags_horizontal = Control.SIZE_FILL
 		return l
-	res_grid.add_child(_head_cell.call("", true))
+	res_grid.add_child(_head_cell.call("", is_portrait))
 	res_grid.add_child(_head_cell.call("Need", false))
 	res_grid.add_child(_head_cell.call("Have / Cap", false))
 	res_grid.add_child(_head_cell.call("After", false))
@@ -1529,7 +1543,7 @@ func _show_confirmation_panel(route_data: Dictionary):
 		var nm := Label.new()
 		nm.text = ("⚠️ " if status == "critical" else "") + emoji_name
 		nm.add_theme_font_size_override("font_size", cell_fs)
-		nm.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		nm.size_flags_horizontal = _name_col_flag
 		nm.add_theme_color_override("font_color", status_col)
 		res_grid.add_child(nm)
 		var _val = func(text: String, c: Color):
@@ -1810,17 +1824,55 @@ func _enable_destination_buttons():
 		_set_btn_disabled(_next_route_button, false)
 
 func _show_loading_indicator(text: String):
-	if _loading_label == null:
+	# Status text + an indeterminate animated bar (pulsed in _process) so route plotting
+	# reads as active work rather than a frozen label. Mirrors login_screen.gd's pattern.
+	if not is_instance_valid(_loading_container):
+		_loading_container = VBoxContainer.new()
+		_loading_container.name = "LoadingIndicator"
+		_loading_container.add_theme_constant_override("separation", 10)
+		_loading_container.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+
 		_loading_label = Label.new()
 		_loading_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		_loading_label.autowrap_mode = TextServer.AUTOWRAP_WORD
-		content_vbox.add_child(_loading_label)
-	_loading_label.text = text
+		_loading_container.add_child(_loading_label)
+
+		_loading_bar = ProgressBar.new()
+		_loading_bar.min_value = 0.0
+		_loading_bar.max_value = 100.0
+		_loading_bar.value = 0.0
+		_loading_bar.show_percentage = false
+		_loading_bar.custom_minimum_size = Vector2(0, 8)
+		_loading_bar.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		_style_loading_bar(_loading_bar)
+		_loading_container.add_child(_loading_bar)
+
+		content_vbox.add_child(_loading_container)
+	# Pin to the top and scroll there — otherwise it's appended below the (long, scrolled)
+	# destination list and never seen while routes are being plotted.
+	content_vbox.move_child(_loading_container, 0)
+	if is_instance_valid(scroll_container):
+		scroll_container.scroll_vertical = 0
+	_loading_anim_time = 0.0
+	if is_instance_valid(_loading_label):
+		_loading_label.text = text
+
+func _style_loading_bar(bar: ProgressBar) -> void:
+	var bg := StyleBoxFlat.new()
+	bg.bg_color = Color(UITheme.METAL_DARK, 0.9)
+	bg.set_corner_radius_all(4)
+	var fill := StyleBoxFlat.new()
+	fill.bg_color = UITheme.ACCENT_VERDIGRIS
+	fill.set_corner_radius_all(4)
+	bar.add_theme_stylebox_override("background", bg)
+	bar.add_theme_stylebox_override("fill", fill)
 
 func _clear_loading_indicator():
-	if _loading_label and is_instance_valid(_loading_label):
-		_loading_label.queue_free()
+	if is_instance_valid(_loading_container):
+		_loading_container.queue_free()
+	_loading_container = null
 	_loading_label = null
+	_loading_bar = null
 
 func _show_error_message(msg: String):
 	var err_label = Label.new()

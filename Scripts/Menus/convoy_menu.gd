@@ -722,6 +722,28 @@ func _resource_pct_color(pct: float) -> Color:
 		return COLOR_YELLOW
 	return COLOR_RED
 
+# Fill color for a capacity bar by fullness (verdigris → brass → danger as it fills up).
+func _capacity_fill_color(ratio: float) -> Color:
+	if ratio >= 0.97:
+		return UITheme.DANGER
+	if ratio >= 0.85:
+		return UITheme.ACCENT_BRASS
+	return UITheme.ACCENT_VERDIGRIS
+
+# Stable, distinct palette for distribution bars (cycles for long lists).
+func _cargo_type_color(index: int) -> Color:
+	const PALETTE := [
+		UITheme.ACCENT_VERDIGRIS,
+		UITheme.ACCENT_BRASS,
+		Color("#6a8caf"), # steel blue
+		Color("#c08552"), # copper
+		Color("#8e9a7c"), # olive
+		Color("#a3729b"), # mauve
+		Color("#6fae9c"), # teal
+		Color("#c2a35a"), # ochre
+	]
+	return PALETTE[index % PALETTE.size()]
+
 func _ensure_portrait_summary() -> void:
 	if is_instance_valid(_portrait_summary_panel):
 		return
@@ -751,7 +773,7 @@ func _ensure_portrait_summary() -> void:
 	content_vbox.add_child(_portrait_summary_panel)
 	content_vbox.move_child(_portrait_summary_panel, 0)
 
-func _add_summary_chip(label: String, value: String, color: Color) -> void:
+func _add_summary_chip(label: String, value: String, color: Color, stat_type: String = "") -> void:
 	var chip := PanelContainer.new()
 	var sb := StyleBoxFlat.new()
 	sb.bg_color = Color(0.16, 0.18, 0.22, 0.92)
@@ -763,10 +785,18 @@ func _add_summary_chip(label: String, value: String, color: Color) -> void:
 	sb.content_margin_right = 10
 	sb.content_margin_top = 5
 	sb.content_margin_bottom = 5
+	# Tappable performance chips get a brass border to advertise the breakdown modal.
+	if stat_type != "":
+		sb.border_width_left = 1
+		sb.border_width_right = 1
+		sb.border_width_top = 1
+		sb.border_width_bottom = 1
+		sb.border_color = UITheme.ACCENT_BRASS
 	chip.add_theme_stylebox_override("panel", sb)
 
 	var vbox := VBoxContainer.new()
 	vbox.add_theme_constant_override("separation", 1)
+	vbox.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	chip.add_child(vbox)
 
 	var label_lbl := Label.new()
@@ -774,6 +804,7 @@ func _add_summary_chip(label: String, value: String, color: Color) -> void:
 	label_lbl.add_theme_font_size_override("font_size", 11)
 	label_lbl.add_theme_color_override("font_color", Color(0.6, 0.65, 0.7, 1.0))
 	label_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	label_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	vbox.add_child(label_lbl)
 
 	var value_lbl := Label.new()
@@ -782,7 +813,14 @@ func _add_summary_chip(label: String, value: String, color: Color) -> void:
 	value_lbl.add_theme_color_override("font_color", color)
 	value_lbl.add_theme_font_override("font", _make_bold_font())
 	value_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	value_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	vbox.add_child(value_lbl)
+
+	if stat_type != "":
+		chip.mouse_filter = Control.MOUSE_FILTER_STOP
+		chip.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+		chip.tooltip_text = "Tap for breakdown"
+		chip.gui_input.connect(_on_stat_box_gui_input.bind(stat_type))
 
 	_portrait_summary_flow.add_child(chip)
 
@@ -798,25 +836,25 @@ func _refresh_portrait_summary() -> void:
 	var fuel_pct := _pct(convoy_data_received.get("fuel", 0.0), convoy_data_received.get("max_fuel", 0.0))
 	var water_pct := _pct(convoy_data_received.get("water", 0.0), convoy_data_received.get("max_water", 0.0))
 	var food_pct := _pct(convoy_data_received.get("food", 0.0), convoy_data_received.get("max_food", 0.0))
-	_add_summary_chip("Fuel", "%d%%" % roundi(fuel_pct), _resource_pct_color(fuel_pct))
-	_add_summary_chip("Water", "%d%%" % roundi(water_pct), _resource_pct_color(water_pct))
-	_add_summary_chip("Food", "%d%%" % roundi(food_pct), _resource_pct_color(food_pct))
+	_add_summary_chip("Fuel", "%d%%" % roundi(fuel_pct), _resource_pct_color(fuel_pct), "fuel")
+	_add_summary_chip("Water", "%d%%" % roundi(water_pct), _resource_pct_color(water_pct), "water")
+	_add_summary_chip("Food", "%d%%" % roundi(food_pct), _resource_pct_color(food_pct), "food")
 
 	# Cargo capacity (neutral colour — higher just means fuller)
 	var total_vol := NumberFormat.to_f(convoy_data_received.get("total_cargo_capacity", 0.0), 0.0)
 	var used_vol := total_vol - NumberFormat.to_f(convoy_data_received.get("total_free_space", 0.0), 0.0)
 	var total_wt := NumberFormat.to_f(convoy_data_received.get("total_weight_capacity", 0.0), 0.0)
 	var used_wt := total_wt - NumberFormat.to_f(convoy_data_received.get("total_remaining_capacity", 0.0), 0.0)
-	_add_summary_chip("Volume", "%d%%" % roundi(_pct(used_vol, total_vol)), UITheme.TEXT_PRIMARY)
-	_add_summary_chip("Weight", "%d%%" % roundi(_pct(used_wt, total_wt)), UITheme.TEXT_PRIMARY)
+	_add_summary_chip("Volume", "%d%%" % roundi(_pct(used_vol, total_vol)), UITheme.TEXT_PRIMARY, "cargo_volume")
+	_add_summary_chip("Weight", "%d%%" % roundi(_pct(used_wt, total_wt)), UITheme.TEXT_PRIMARY, "cargo_weight")
 
 	# Performance (raw ratings, brass)
 	var spd := NumberFormat.to_f(convoy_data_received.get("top_speed", 0.0), 0.0)
 	var off := NumberFormat.to_f(convoy_data_received.get("offroad_capability", 0.0), 0.0)
 	var eff := NumberFormat.to_f(convoy_data_received.get("efficiency", 0.0), 0.0)
-	_add_summary_chip("Speed", NumberFormat.fmt_float(spd, 0), UITheme.ACCENT_BRASS)
-	_add_summary_chip("Offroad", NumberFormat.fmt_float(off, 0), UITheme.ACCENT_BRASS)
-	_add_summary_chip("Efficiency", NumberFormat.fmt_float(eff, 0), UITheme.ACCENT_BRASS)
+	_add_summary_chip("Speed", NumberFormat.fmt_float(spd, 0), UITheme.ACCENT_BRASS, "top_speed")
+	_add_summary_chip("Offroad", NumberFormat.fmt_float(off, 0), UITheme.ACCENT_BRASS, "offroad_capability")
+	_add_summary_chip("Efficiency", NumberFormat.fmt_float(eff, 0), UITheme.ACCENT_BRASS, "efficiency")
 
 func _update_vendor_grid_columns(override_count: int = -1) -> void:
 	if not is_instance_valid(vendor_item_grid):
@@ -2486,8 +2524,612 @@ func _upgrade_stat_boxes() -> void:
 	_upgrade_single_stat_box(speed_box, speed_text_label, "🏎️ SPEED", true)
 	_upgrade_single_stat_box(offroad_box, offroad_text_label, "🏔️ OFFROAD", true)
 	_upgrade_single_stat_box(efficiency_box, efficiency_text_label, "⚡ EFFICIENCY", true)
+	# Each performance stat is an aggregate of the convoy's vehicles — make the box tappable
+	# to open a per-vehicle breakdown (mirrors convoy_vehicle_menu's inspect pattern).
+	_make_stat_box_inspectable(speed_box, "top_speed")
+	_make_stat_box_inspectable(offroad_box, "offroad_capability")
+	_make_stat_box_inspectable(efficiency_box, "efficiency")
+	# Resources (fuel/water/food) and cargo bars are also per-vehicle aggregates — tap to
+	# see where they're stored / how they're distributed. The boxes are the labels' parents.
+	if is_instance_valid(fuel_text_label): _make_stat_box_inspectable(fuel_text_label.get_parent(), "fuel")
+	if is_instance_valid(water_text_label): _make_stat_box_inspectable(water_text_label.get_parent(), "water")
+	if is_instance_valid(food_text_label): _make_stat_box_inspectable(food_text_label.get_parent(), "food")
+	if is_instance_valid(cargo_volume_bar): _make_stat_box_inspectable(cargo_volume_bar.get_parent(), "cargo_volume")
+	if is_instance_valid(cargo_weight_bar): _make_stat_box_inspectable(cargo_weight_bar.get_parent(), "cargo_weight")
 	_style_supply_labels()
 	_style_cargo_bar_labels()
+
+func _make_stat_box_inspectable(box: Control, stat_type: String) -> void:
+	if not is_instance_valid(box):
+		return
+	box.mouse_filter = Control.MOUSE_FILTER_STOP
+	box.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+	box.tooltip_text = "Tap for breakdown"
+	# Children must not eat the tap so it reaches the box's gui_input.
+	for child in box.get_children():
+		_set_mouse_ignore_recursive(child)
+	var cb := _on_stat_box_gui_input.bind(stat_type)
+	if not box.gui_input.is_connected(cb):
+		box.gui_input.connect(cb)
+
+func _set_mouse_ignore_recursive(node: Node) -> void:
+	if node is Control:
+		(node as Control).mouse_filter = Control.MOUSE_FILTER_IGNORE
+	for c in node.get_children():
+		_set_mouse_ignore_recursive(c)
+
+func _on_stat_box_gui_input(event: InputEvent, stat_type: String) -> void:
+	var tapped := false
+	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
+		tapped = true
+	elif event is InputEventScreenTouch and event.pressed:
+		tapped = true
+	if tapped:
+		_on_inspect_convoy_stat_pressed(stat_type)
+
+# ────────────────────────────────────────────────────────────────────
+# Convoy stat breakdown modal (per-vehicle). Ported from convoy_vehicle_menu's
+# inspect pattern (_make_inspect_overlay / _make_inspect_panel / _add_kv_row).
+# ────────────────────────────────────────────────────────────────────
+
+func _on_inspect_convoy_stat_pressed(stat_type: String) -> void:
+	var portrait := _is_portrait_view()
+	var pretty := stat_type.capitalize().replace("_", " ")
+	var ctx := _make_inspect_overlay("Inspect: " + pretty)
+	var overlay: Control = ctx["overlay"]
+	var content_vb: VBoxContainer = ctx["content_vb"]
+
+	var scroll := ScrollContainer.new()
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	content_vb.add_child(scroll)
+
+	var inner_vb := VBoxContainer.new()
+	inner_vb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	inner_vb.add_theme_constant_override("separation", UITheme.SPACE_SM)
+	scroll.add_child(inner_vb)
+
+	# The convoy snapshot carries the vehicle list under either key depending on source
+	# (full snapshot vs lighter payload), so fall back like the rest of the codebase
+	# (mechanics_menu, convoy_cargo_menu, UI_manager all do this).
+	var vehicles: Array = convoy_data_received.get("vehicle_details_list", convoy_data_received.get("vehicles", []))
+
+	match stat_type:
+		"top_speed", "offroad_capability", "efficiency":
+			_build_performance_breakdown(inner_vb, vehicles, stat_type, portrait)
+		"fuel", "water", "food":
+			_build_resource_breakdown(inner_vb, vehicles, stat_type, portrait)
+		"cargo_volume", "cargo_weight":
+			_build_cargo_breakdown(inner_vb, vehicles, stat_type, portrait)
+
+	add_child(overlay)
+
+func _inspect_empty_label(inner_vb: VBoxContainer, portrait: bool) -> void:
+	var none_lbl := Label.new()
+	none_lbl.text = "No vehicles in this convoy."
+	none_lbl.add_theme_color_override("font_color", UITheme.TEXT_MUTED)
+	none_lbl.add_theme_font_size_override("font_size", 20 if portrait else 14)
+	inner_vb.add_child(none_lbl)
+
+func _inspect_rule_label(inner_vb: VBoxContainer, text: String, portrait: bool) -> void:
+	if text.is_empty():
+		return
+	var rule_lbl := Label.new()
+	rule_lbl.text = text
+	rule_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD
+	rule_lbl.add_theme_color_override("font_color", UITheme.TEXT_MUTED)
+	rule_lbl.add_theme_font_size_override("font_size", 18 if portrait else 13)
+	inner_vb.add_child(rule_lbl)
+
+# Performance stats (speed/offroad = minimum across vehicles, efficiency = average).
+func _build_performance_breakdown(inner_vb: VBoxContainer, vehicles: Array, stat_type: String, portrait: bool) -> void:
+	var entries: Array = [] # [{name, value}]
+	for v in vehicles:
+		if not (v is Dictionary):
+			continue
+		entries.append({
+			"name": str((v as Dictionary).get("name", "Vehicle")),
+			"value": float((v as Dictionary).get(stat_type, 0.0)),
+		})
+
+	var convoy_value: float = float(convoy_data_received.get(stat_type, 0.0))
+	var is_min_stat := stat_type in ["top_speed", "offroad_capability"]
+	var limiting_idx := -1
+	if is_min_stat and not entries.is_empty():
+		limiting_idx = 0
+		for i in range(1, entries.size()):
+			if entries[i].value < entries[limiting_idx].value:
+				limiting_idx = i
+
+	var stat_label := ""
+	match stat_type:
+		"top_speed": stat_label = "Top Speed"
+		"offroad_capability": stat_label = "Offroad"
+		"efficiency": stat_label = "Efficiency"
+	inner_vb.add_child(_make_inspect_panel("Convoy", [{"k": stat_label, "v": NumberFormat.fmt_float(convoy_value, 2)}]))
+
+	# Per-vehicle breakdown (highlight the limiting vehicle for min stats).
+	if not entries.is_empty():
+		var per_vehicle_rows: Array = []
+		for i in range(entries.size()):
+			var row := {"k": entries[i].name, "v": NumberFormat.fmt_float(entries[i].value, 2)}
+			if is_min_stat and i == limiting_idx:
+				row["highlight"] = true
+			per_vehicle_rows.append(row)
+		inner_vb.add_child(_make_inspect_panel("Per vehicle", per_vehicle_rows))
+	else:
+		_inspect_empty_label(inner_vb, portrait)
+
+	var rule_text := ""
+	match stat_type:
+		"top_speed": rule_text = "Convoy speed = the slowest vehicle's speed (minimum)."
+		"offroad_capability": rule_text = "Convoy offroad = the least-capable vehicle (minimum)."
+		"efficiency": rule_text = "Convoy efficiency = the average across all vehicles."
+	_inspect_rule_label(inner_vb, rule_text, portrait)
+
+# Resources (fuel/water/food) live inside each vehicle's cargo items — show where they're stored.
+func _build_resource_breakdown(inner_vb: VBoxContainer, vehicles: Array, res_key: String, portrait: bool) -> void:
+	var pretty := res_key.capitalize()
+	var fill_col := _resource_pct_color(_pct(convoy_data_received.get(res_key, 0.0), convoy_data_received.get("max_" + res_key, 0.0)))
+	var current: float = float(convoy_data_received.get(res_key, 0.0))
+	var maximum: float = float(convoy_data_received.get("max_" + res_key, 0.0))
+
+	# Convoy total as a capacity bar (current / max).
+	inner_vb.add_child(_make_bar_panel("Convoy", [{
+		"label": "%s stored" % pretty,
+		"value": "%s / %s" % [NumberFormat.fmt_float(current, 2), NumberFormat.fmt_float(maximum, 2)],
+		"ratio": (current / maximum) if maximum > 0.0 else 0.0,
+		"color": fill_col,
+	}]))
+
+	# Containers: which cargo stacks hold the resource, grouped by vehicle. The cargo
+	# field on each stack is its total amount (stacks sum to the convoy total).
+	var any_carrier := false
+	for v in vehicles:
+		if not (v is Dictionary):
+			continue
+		var vd := v as Dictionary
+		var container_amounts: Dictionary = {} # container name -> amount (merge dupes)
+		var container_order: Array = []
+		for c in vd.get("cargo", []):
+			if not (c is Dictionary):
+				continue
+			var raw = (c as Dictionary).get(res_key)
+			var amt := float(raw) if raw != null else 0.0
+			if amt <= 0.0:
+				continue
+			var cname := str((c as Dictionary).get("name", "Container"))
+			if not container_amounts.has(cname):
+				container_amounts[cname] = 0.0
+				container_order.append(cname)
+			container_amounts[cname] += amt
+		if container_order.is_empty():
+			continue
+		any_carrier = true
+		var rows: Array = []
+		for cname in container_order:
+			rows.append({"k": cname, "v": NumberFormat.fmt_float(container_amounts[cname], 2)})
+		inner_vb.add_child(_make_inspect_panel("📦 %s" % str(vd.get("name", "Vehicle")), rows))
+
+	if vehicles.is_empty():
+		_inspect_empty_label(inner_vb, portrait)
+	elif not any_carrier:
+		_inspect_rule_label(inner_vb, "No vehicle is carrying %s." % pretty.to_lower(), portrait)
+	else:
+		_inspect_rule_label(inner_vb, "%s is held in these cargo containers aboard your vehicles." % pretty, portrait)
+
+# Cargo volume/weight distribution across vehicles (used vs capacity).
+func _build_cargo_breakdown(inner_vb: VBoxContainer, vehicles: Array, kind: String, portrait: bool) -> void:
+	var is_volume := kind == "cargo_volume"
+	var pretty := "Volume" if is_volume else "Weight"
+
+	var convoy_cap: float
+	var convoy_used: float
+	if is_volume:
+		convoy_cap = float(convoy_data_received.get("total_cargo_capacity", 0.0))
+		convoy_used = convoy_cap - float(convoy_data_received.get("total_free_space", 0.0))
+	else:
+		convoy_cap = float(convoy_data_received.get("total_weight_capacity", 0.0))
+		convoy_used = convoy_cap - float(convoy_data_received.get("total_remaining_capacity", 0.0))
+	var fill_ratio := (convoy_used / convoy_cap) if convoy_cap > 0.0 else 0.0
+	inner_vb.add_child(_make_bar_panel("Convoy capacity", [{
+		"label": "Used (%d%% full)" % roundi(fill_ratio * 100.0),
+		"value": "%s / %s" % [NumberFormat.fmt_float(convoy_used, 2), NumberFormat.fmt_float(convoy_cap, 2)],
+		"ratio": fill_ratio,
+		"color": _capacity_fill_color(fill_ratio),
+	}]))
+
+	if vehicles.is_empty():
+		_inspect_empty_label(inner_vb, portrait)
+		return
+
+	# Distribution by cargo type — sum this cargo field across every stack, grouped by name.
+	var type_totals: Dictionary = {} # name -> amount
+	var type_order: Array = []
+	var grand_total := 0.0
+	var field := "volume" if is_volume else "weight"
+	for v in vehicles:
+		if not (v is Dictionary):
+			continue
+		for c in (v as Dictionary).get("cargo", []):
+			if not (c is Dictionary):
+				continue
+			var raw = (c as Dictionary).get(field)
+			var amt := float(raw) if raw != null else 0.0
+			if amt <= 0.0:
+				continue
+			var cname := str((c as Dictionary).get("name", "Cargo"))
+			if not type_totals.has(cname):
+				type_totals[cname] = 0.0
+				type_order.append(cname)
+			type_totals[cname] += amt
+			grand_total += amt
+
+	if grand_total > 0.0:
+		type_order.sort_custom(func(a, b): return type_totals[a] > type_totals[b])
+		# Cap the list so the panel stays readable; lump the tail into "Other".
+		const MAX_TYPES := 8
+		var dist_bars: Array = []
+		var shown := 0
+		var other := 0.0
+		for cname in type_order:
+			if shown < MAX_TYPES:
+				var amt: float = type_totals[cname]
+				dist_bars.append({
+					"label": cname,
+					"value": "%s (%d%%)" % [NumberFormat.fmt_float(amt, 0), roundi(amt / grand_total * 100.0)],
+					"ratio": amt / grand_total,
+					"color": _cargo_type_color(shown),
+				})
+				shown += 1
+			else:
+				other += type_totals[cname]
+		if other > 0.0:
+			dist_bars.append({
+				"label": "Other",
+				"value": "%s (%d%%)" % [NumberFormat.fmt_float(other, 0), roundi(other / grand_total * 100.0)],
+				"ratio": other / grand_total,
+				"color": UITheme.TEXT_MUTED,
+			})
+		inner_vb.add_child(_make_pie_panel("%s by cargo type" % pretty, dist_bars, portrait))
+
+	# Per-vehicle capacity bars (used / capacity).
+	var per_vehicle_bars: Array = []
+	for v in vehicles:
+		if not (v is Dictionary):
+			continue
+		var vd := v as Dictionary
+		var used: float
+		var cap: float
+		if is_volume:
+			cap = float(vd.get("cargo_capacity", 0.0))
+			used = float(vd.get("total_cargo_volume", cap - float(vd.get("free_space", 0.0))))
+		else:
+			cap = float(vd.get("weight_capacity", 0.0))
+			used = float(vd.get("total_cargo_weight", cap - float(vd.get("remaining_capacity", 0.0))))
+		var r := (used / cap) if cap > 0.0 else 0.0
+		per_vehicle_bars.append({
+			"label": str(vd.get("name", "Vehicle")),
+			"value": "%s / %s" % [NumberFormat.fmt_float(used, 0), NumberFormat.fmt_float(cap, 0)],
+			"ratio": r,
+			"color": _capacity_fill_color(r),
+		})
+	inner_vb.add_child(_make_bar_panel("Per vehicle (used / capacity)", per_vehicle_bars))
+
+func _make_inspect_overlay(title: String) -> Dictionary:
+	var portrait := _is_portrait_view()
+	var panel_margin := 16 if portrait else 24
+
+	var overlay := Control.new()
+	overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	overlay.mouse_filter = Control.MOUSE_FILTER_STOP
+
+	var backdrop := ColorRect.new()
+	backdrop.color = Color(0.0, 0.0, 0.0, 0.72)
+	backdrop.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	backdrop.mouse_filter = Control.MOUSE_FILTER_STOP
+	overlay.add_child(backdrop)
+
+	var dialog_panel := PanelContainer.new()
+	dialog_panel.set_anchor(SIDE_LEFT,   0.0)
+	dialog_panel.set_anchor(SIDE_RIGHT,  1.0)
+	dialog_panel.set_anchor(SIDE_TOP,    0.0)
+	dialog_panel.set_anchor(SIDE_BOTTOM, 1.0)
+	dialog_panel.set_offset(SIDE_LEFT,   panel_margin)
+	dialog_panel.set_offset(SIDE_RIGHT,  -panel_margin)
+	dialog_panel.set_offset(SIDE_TOP,    panel_margin)
+	dialog_panel.set_offset(SIDE_BOTTOM, -panel_margin)
+	var panel_sb := StyleBoxFlat.new()
+	panel_sb.bg_color = UITheme.METAL_BASE
+	panel_sb.border_color = UITheme.METAL_EDGE
+	panel_sb.set_border_width_all(1)
+	panel_sb.set_corner_radius_all(UITheme.RADIUS_LG)
+	panel_sb.set_content_margin_all(0)
+	dialog_panel.add_theme_stylebox_override("panel", panel_sb)
+	overlay.add_child(dialog_panel)
+
+	var im_val := UITheme.SPACE_LG if portrait else UITheme.SPACE_MD
+	var inner_margin := MarginContainer.new()
+	inner_margin.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	inner_margin.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	inner_margin.add_theme_constant_override("margin_left",   im_val)
+	inner_margin.add_theme_constant_override("margin_right",  im_val)
+	inner_margin.add_theme_constant_override("margin_top",    im_val)
+	inner_margin.add_theme_constant_override("margin_bottom", im_val)
+	dialog_panel.add_child(inner_margin)
+
+	var shell_vb := VBoxContainer.new()
+	shell_vb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	shell_vb.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	shell_vb.add_theme_constant_override("separation", UITheme.SPACE_MD)
+	inner_margin.add_child(shell_vb)
+
+	var title_row := HBoxContainer.new()
+	title_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var title_lbl := Label.new()
+	title_lbl.text = title
+	title_lbl.add_theme_font_size_override("font_size", 28 if portrait else 20)
+	title_lbl.add_theme_color_override("font_color", UITheme.ACCENT_BRASS)
+	title_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	title_row.add_child(title_lbl)
+	var close_btn := Button.new()
+	close_btn.text = "✕"
+	close_btn.flat = true
+	close_btn.custom_minimum_size = Vector2(56 if portrait else 40, 56 if portrait else 40)
+	close_btn.add_theme_font_size_override("font_size", 22 if portrait else 16)
+	close_btn.add_theme_color_override("font_color", UITheme.TEXT_MUTED)
+	title_row.add_child(close_btn)
+	shell_vb.add_child(title_row)
+	shell_vb.add_child(HSeparator.new())
+
+	var close_fn := func():
+		if is_instance_valid(overlay):
+			overlay.queue_free()
+
+	close_btn.pressed.connect(close_fn)
+	backdrop.gui_input.connect(func(event: InputEvent):
+		if event is InputEventMouseButton and (event as InputEventMouseButton).pressed:
+			close_fn.call()
+	)
+
+	var content_vb := VBoxContainer.new()
+	content_vb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	content_vb.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	content_vb.add_theme_constant_override("separation", UITheme.SPACE_MD)
+	shell_vb.add_child(content_vb)
+
+	return {"overlay": overlay, "content_vb": content_vb, "close_fn": close_fn}
+
+# Titled, bordered panel shell. Returns {panel, vbox} so callers can add k/v rows or bars.
+func _make_inspect_shell(title: String) -> Dictionary:
+	var portrait := _is_portrait_view()
+	var panel := PanelContainer.new()
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = UITheme.METAL_DARK
+	sb.border_color = UITheme.METAL_EDGE
+	sb.set_border_width_all(UITheme.BORDER_THIN)
+	sb.set_corner_radius_all(UITheme.RADIUS_MD)
+	sb.content_margin_left = UITheme.SPACE_MD
+	sb.content_margin_right = UITheme.SPACE_MD
+	sb.content_margin_top = UITheme.SPACE_SM
+	sb.content_margin_bottom = UITheme.SPACE_SM
+	panel.add_theme_stylebox_override("panel", sb)
+
+	var vb := VBoxContainer.new()
+	vb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	vb.add_theme_constant_override("separation", UITheme.SPACE_XS)
+	panel.add_child(vb)
+
+	if not title.is_empty():
+		var hdr := Label.new()
+		hdr.text = title
+		hdr.add_theme_font_size_override("font_size", 22 if portrait else 15)
+		hdr.add_theme_color_override("font_color", UITheme.ACCENT_BRASS)
+		vb.add_child(hdr)
+
+	return {"panel": panel, "vbox": vb}
+
+func _make_inspect_panel(title: String, rows: Array) -> PanelContainer:
+	var shell := _make_inspect_shell(title)
+	var panel: PanelContainer = shell["panel"]
+	var vb: VBoxContainer = shell["vbox"]
+
+	var row_index := 0
+	for r in rows:
+		if not (r is Dictionary):
+			continue
+		var k := str(r.get("k", "")).strip_edges()
+		var v := str(r.get("v", "")).strip_edges()
+		if k.is_empty() or v.is_empty():
+			continue
+		_add_kv_row(vb, k, v, row_index, r.get("highlight", false))
+		row_index += 1
+
+	return panel
+
+# Panel of labeled horizontal bars. `bars` = [{label, value, ratio, color}].
+func _make_bar_panel(title: String, bars: Array) -> PanelContainer:
+	var portrait := _is_portrait_view()
+	var shell := _make_inspect_shell(title)
+	var panel: PanelContainer = shell["panel"]
+	var vb: VBoxContainer = shell["vbox"]
+	vb.add_theme_constant_override("separation", UITheme.SPACE_SM)
+	for b in bars:
+		if not (b is Dictionary):
+			continue
+		vb.add_child(_make_inspect_bar(
+			str(b.get("label", "")),
+			str(b.get("value", "")),
+			float(b.get("ratio", 0.0)),
+			b.get("color", UITheme.ACCENT_VERDIGRIS),
+			portrait))
+	return panel
+
+# A single labeled bar: header row (label left / value right) above a filled track.
+func _make_inspect_bar(label_text: String, value_text: String, ratio: float, fill_color: Color, portrait: bool) -> Control:
+	var vb := VBoxContainer.new()
+	vb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	vb.add_theme_constant_override("separation", 2)
+
+	var header := HBoxContainer.new()
+	header.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	header.add_theme_constant_override("separation", UITheme.SPACE_SM)
+	var lbl := Label.new()
+	lbl.text = label_text
+	lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	lbl.autowrap_mode = TextServer.AUTOWRAP_OFF
+	lbl.clip_text = true
+	lbl.add_theme_color_override("font_color", UITheme.TEXT_MUTED)
+	lbl.add_theme_font_size_override("font_size", 18 if portrait else 13)
+	header.add_child(lbl)
+	var val := Label.new()
+	val.text = value_text
+	val.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	val.add_theme_color_override("font_color", UITheme.TEXT_PRIMARY)
+	val.add_theme_font_size_override("font_size", 18 if portrait else 13)
+	header.add_child(val)
+	vb.add_child(header)
+
+	var bar := ProgressBar.new()
+	bar.min_value = 0.0
+	bar.max_value = 1.0
+	bar.value = clamp(ratio, 0.0, 1.0)
+	bar.show_percentage = false
+	bar.custom_minimum_size.y = 14 if portrait else 10
+	bar.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var bg := StyleBoxFlat.new()
+	bg.bg_color = UITheme.METAL_BASE
+	bg.set_corner_radius_all(UITheme.RADIUS_SM)
+	var fg := StyleBoxFlat.new()
+	fg.bg_color = fill_color
+	fg.set_corner_radius_all(UITheme.RADIUS_SM)
+	bar.add_theme_stylebox_override("background", bg)
+	bar.add_theme_stylebox_override("fill", fg)
+	vb.add_child(bar)
+	return vb
+
+# Pie (donut) chart with a swatch legend. `segments` = [{label, value, ratio, color}].
+func _make_pie_panel(title: String, segments: Array, portrait: bool) -> PanelContainer:
+	var shell := _make_inspect_shell(title)
+	var panel: PanelContainer = shell["panel"]
+	var vb: VBoxContainer = shell["vbox"]
+
+	var row := HBoxContainer.new()
+	row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.add_theme_constant_override("separation", UITheme.SPACE_MD)
+	vb.add_child(row)
+
+	var pie_sz := 150.0 if portrait else 120.0
+	var pie := Control.new()
+	pie.custom_minimum_size = Vector2(pie_sz, pie_sz)
+	pie.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	# Draw from the `draw` signal so we don't need a separate script on the node.
+	pie.draw.connect(_draw_pie.bind(pie, segments))
+	row.add_child(pie)
+
+	var legend := VBoxContainer.new()
+	legend.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	legend.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	legend.add_theme_constant_override("separation", UITheme.SPACE_XS)
+	for seg in segments:
+		if seg is Dictionary:
+			legend.add_child(_make_legend_row(
+				str(seg.get("label", "")),
+				str(seg.get("value", "")),
+				seg.get("color", UITheme.TEXT_MUTED),
+				portrait))
+	row.add_child(legend)
+	return panel
+
+func _make_legend_row(label_text: String, value_text: String, swatch_color: Color, portrait: bool) -> Control:
+	var hb := HBoxContainer.new()
+	hb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	hb.add_theme_constant_override("separation", UITheme.SPACE_SM)
+
+	var swatch := ColorRect.new()
+	var s := 16.0 if portrait else 12.0
+	swatch.custom_minimum_size = Vector2(s, s)
+	swatch.color = swatch_color
+	swatch.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	hb.add_child(swatch)
+
+	var name_lbl := Label.new()
+	name_lbl.text = label_text
+	name_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	name_lbl.clip_text = true
+	name_lbl.add_theme_color_override("font_color", UITheme.TEXT_MUTED)
+	name_lbl.add_theme_font_size_override("font_size", 18 if portrait else 13)
+	hb.add_child(name_lbl)
+
+	var val_lbl := Label.new()
+	val_lbl.text = value_text
+	val_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	val_lbl.add_theme_color_override("font_color", UITheme.TEXT_PRIMARY)
+	val_lbl.add_theme_font_size_override("font_size", 18 if portrait else 13)
+	hb.add_child(val_lbl)
+	return hb
+
+func _draw_pie(pie: Control, segments: Array) -> void:
+	var sz := pie.size
+	var radius: float = min(sz.x, sz.y) * 0.5 - 2.0
+	if radius <= 0.0:
+		return
+	var center := sz * 0.5
+	var start := -PI * 0.5  # begin at 12 o'clock
+	for seg in segments:
+		if not (seg is Dictionary):
+			continue
+		var ratio: float = clamp(float(seg.get("ratio", 0.0)), 0.0, 1.0)
+		if ratio <= 0.0:
+			continue
+		var sweep := ratio * TAU
+		var col: Color = seg.get("color", UITheme.TEXT_MUTED)
+		var steps: int = max(2, int(ceil(sweep / 0.12)))
+		var pts := PackedVector2Array()
+		pts.append(center)
+		for i in range(steps + 1):
+			var a := start + sweep * (float(i) / float(steps))
+			pts.append(center + Vector2(cos(a), sin(a)) * radius)
+		pie.draw_colored_polygon(pts, col)
+		start += sweep
+	# Donut hole matching the panel background for a cleaner look.
+	pie.draw_circle(center, radius * 0.42, UITheme.METAL_DARK)
+
+func _add_kv_row(parent: Container, key_text: String, value_text: String, row_index: int, highlight: bool = false) -> void:
+	var bg_panel := PanelContainer.new()
+	bg_panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	bg_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+
+	var portrait := _is_portrait_view()
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color(UITheme.ACCENT_BRASS, 0.18) if highlight else (UITheme.METAL_BASE if row_index % 2 == 0 else UITheme.METAL_DARK)
+	sb.set_corner_radius_all(UITheme.RADIUS_SM)
+	sb.set_content_margin_all(UITheme.SPACE_SM)
+	bg_panel.add_theme_stylebox_override("panel", sb)
+
+	var content_row := HBoxContainer.new()
+	content_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	content_row.add_theme_constant_override("separation", UITheme.SPACE_MD)
+	bg_panel.add_child(content_row)
+
+	var key_label := Label.new()
+	key_label.text = key_text + ":"
+	key_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	key_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	key_label.autowrap_mode = TextServer.AUTOWRAP_WORD
+	key_label.add_theme_color_override("font_color", UITheme.TEXT_PRIMARY if highlight else UITheme.TEXT_MUTED)
+	key_label.add_theme_font_size_override("font_size", 20 if portrait else 14)
+	content_row.add_child(key_label)
+
+	var value_label := Label.new()
+	value_label.text = value_text
+	value_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	value_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	value_label.add_theme_color_override("font_color", UITheme.TEXT_PRIMARY)
+	value_label.add_theme_font_size_override("font_size", 20 if portrait else 14)
+	content_row.add_child(value_label)
+
+	parent.add_child(bg_panel)
 
 func _style_supply_labels() -> void:
 	for lbl in [water_text_label, food_text_label, fuel_text_label]:
@@ -2627,13 +3269,17 @@ func _upgrade_single_stat_box(box: PanelContainer, value_label: Label, key: Stri
 	vbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	vbox.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	vbox.add_theme_constant_override("separation", 1 if compact else 2)
+	# Let taps fall through to the box (which is wired for the breakdown modal).
+	vbox.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var key_lbl := Label.new()
 	key_lbl.text = key
 	key_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	key_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	key_lbl.add_theme_color_override("font_color", UITheme.TEXT_MUTED)
 	box.remove_child(value_label)
 	value_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	value_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	value_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	value_label.add_theme_color_override("font_color", Color.WHITE)
 	vbox.add_child(key_lbl)
 	vbox.add_child(value_label)
@@ -2655,7 +3301,9 @@ func _set_fixed_color_box_style(panel_node: PanelContainer, label_node: Label, _
 	style_box.border_width_right = 1
 	style_box.border_width_top = 1
 	style_box.border_width_bottom = 1
-	style_box.border_color = UITheme.ACCENT_VERDIGRIS.darkened(0.4)
+	# Brass border signals the box is tappable (opens the per-vehicle breakdown modal),
+	# consistent with convoy_vehicle_menu's inspectable stat affordance.
+	style_box.border_color = UITheme.ACCENT_BRASS
 	style_box.corner_radius_top_left = UITheme.RADIUS_SM
 	style_box.corner_radius_top_right = UITheme.RADIUS_SM
 	style_box.corner_radius_bottom_right = UITheme.RADIUS_SM

@@ -223,10 +223,14 @@ func _setup_custom_tabs() -> void:
 	if not is_instance_valid(tab_hbox) or not is_instance_valid(tab_container):
 		return
 	
+	# Single height drives BOTH the scroll band and the buttons so the strip has no empty band
+	# above/below the tabs. Trimmed in landscape so the tab strip doesn't squeeze the content
+	# below it (the Service tab embeds the mechanics part cards — they were clipping).
+	var tab_strip_h := 80 if _is_portrait() else (56 if _is_mobile() else 44)
 	if is_instance_valid(tab_scroll):
 		tab_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
 		tab_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-		tab_scroll.custom_minimum_size.y = 92 if _is_portrait() else (72 if _is_mobile() else 48)
+		tab_scroll.custom_minimum_size.y = tab_strip_h
 		tab_scroll.mouse_filter = Control.MOUSE_FILTER_PASS
 		
 	# Clear any existing buttons just in case
@@ -266,7 +270,7 @@ func _setup_custom_tabs() -> void:
 		btn.toggle_mode = true
 		btn.add_theme_font_size_override("font_size", _get_font_size(20))
 
-		btn.custom_minimum_size = Vector2(160 if is_portrait else 120, 80 if is_portrait else 60)
+		btn.custom_minimum_size = Vector2(160 if is_portrait else 120, tab_strip_h)
 		
 		# Optional: add custom styling to match Oori design
 		var normal_style = StyleBoxFlat.new()

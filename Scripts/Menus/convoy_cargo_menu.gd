@@ -54,6 +54,9 @@ var _organize_button: Button
 # Debounce UI refresh to prevent instant inspect closure
 var _suppress_refresh_until_msec: int = 0
 var _open_inspects: Dictionary = {}
+# Mobile shows one inspect panel at a time; this tracks the currently-open row so opening a
+# new one collapses it first. Desktop leaves this null and allows multiple open panels.
+var _mobile_open_row: HBoxContainer = null
 var _last_refresh_convoy_id: String = "" # Avoid repeated refresh_single calls
 
 # When a refresh arrives during the suppress window, stash the latest payload and
@@ -210,6 +213,10 @@ func _ready():
 		var is_portrait = win_size.y > win_size.x
 		var sort_h = 70 if is_portrait else (50 if _is_mobile() else 44)
 		cargo_sort_option_button.custom_minimum_size = Vector2(0, sort_h)
+		# Width caps (UIAudit P7 — oversized sort dropdown): size to the CURRENT selection rather
+		# than the widest option, and clip rather than stretch the row.
+		cargo_sort_option_button.fit_to_longest_item = false
+		cargo_sort_option_button.clip_text = true
 		cargo_sort_option_button.add_theme_font_size_override("font_size", _get_font_size(15))
 		cargo_sort_option_button.add_theme_color_override("font_color", Color(0.93, 0.93, 0.93, 1.0))
 		cargo_sort_option_button.add_theme_color_override("font_hover_color", Color(0.98, 0.98, 0.98, 1.0))
@@ -224,8 +231,8 @@ func _ready():
 		sort_normal.corner_radius_top_right = 6
 		sort_normal.corner_radius_bottom_left = 6
 		sort_normal.corner_radius_bottom_right = 6
-		sort_normal.content_margin_left = 24 if _is_mobile() else 10
-		sort_normal.content_margin_right = 24 if _is_mobile() else 10
+		sort_normal.content_margin_left = 14 if _is_mobile() else 10
+		sort_normal.content_margin_right = 14 if _is_mobile() else 10
 		sort_normal.content_margin_top = 12 if _is_mobile() else 4
 		sort_normal.content_margin_bottom = 12 if _is_mobile() else 4
 		var sort_hover := sort_normal.duplicate()
@@ -293,11 +300,23 @@ func _ready():
 
 	var sort_settings_container = get_node_or_null("MainVBox/SortSettingsContainer")
 	if is_instance_valid(sort_settings_container):
-		sort_settings_container.alignment = BoxContainer.ALIGNMENT_CENTER
 		sort_settings_container.add_child(_organize_button)
 		sort_settings_container.move_child(_organize_button, 0)
 		sort_settings_container.add_theme_constant_override("separation", 24 if _is_mobile() else 16)
-		
+
+		# Spread the two cramped top controls to opposite ends (organize ⇠ … ⇢ sort) with an
+		# expanding spacer between, instead of bunching them centered. The sort dropdown then
+		# shrinks to the right edge rather than stretching the bar.
+		sort_settings_container.alignment = BoxContainer.ALIGNMENT_BEGIN
+		var top_spacer := Control.new()
+		top_spacer.name = "TopControlsSpacer"
+		top_spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		top_spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		sort_settings_container.add_child(top_spacer)
+		sort_settings_container.move_child(top_spacer, 1) # between organize (0) and sort (2)
+		if is_instance_valid(cargo_sort_option_button):
+			cargo_sort_option_button.size_flags_horizontal = Control.SIZE_SHRINK_END
+
 		if _is_mobile():
 			var main_vbox = get_node_or_null("MainVBox")
 			if is_instance_valid(main_vbox):
@@ -868,8 +887,10 @@ func _build_cargo_row(vehicle_vbox: VBoxContainer, display_name: String, quantit
 		sb.corner_radius_bottom_right = 6
 		sb.content_margin_left = 14
 		sb.content_margin_right = 14
-		sb.content_margin_top = 14
-		sb.content_margin_bottom = 14
+		# Tighter vertical rhythm on mobile cards — the row is a single line, so the old 14px
+		# top/bottom left a lot of dead space per card (UIAudit P3 — sparse cards).
+		sb.content_margin_top = 10
+		sb.content_margin_bottom = 10
 	else:
 		if item_index % 2 == 0:
 			sb.bg_color = Color(0.13, 0.15, 0.19, 1)
@@ -882,24 +903,31 @@ func _build_cargo_row(vehicle_vbox: VBoxContainer, display_name: String, quantit
 		sb.border_color = Color(0.18, 0.20, 0.25, 1)
 	bg_panel.add_theme_stylebox_override("panel", sb)
 
-	# Connect gui_input for click-to-expand behavior (Refined: tap vs scroll detection + Visual feedback)
+	# Capture the unhighlighted base color ONCE. All highlight changes go base→base±delta so
+	# repeated enter/press events can't compound the color into a permanently-brighter "stuck"
+	# state (the root of the touch drag-highlight bug).
+	var base_color: Color = sb.bg_color
+	var set_highlight := func(on: bool) -> void:
+		if sb:
+			sb.bg_color = base_color.lightened(0.08) if on else base_color
+
+	# Connect gui_input for click-to-expand behavior (tap vs scroll detection + visual feedback).
 	outer_row.gui_input.connect(func(event):
 		if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
 			if event.pressed:
 				outer_row.set_meta("tap_start_pos", event.global_position)
-				if sb:
-					outer_row.set_meta("pre_press_color", sb.bg_color)
-					sb.bg_color = sb.bg_color.lightened(0.1)
+				set_highlight.call(true)
 			else:
-				if sb and outer_row.has_meta("pre_press_color"):
-					sb.bg_color = outer_row.get_meta("pre_press_color")
-				
-				var start_pos = outer_row.get_meta("tap_start_pos", event.global_position)
-				var distance = (event.global_position - start_pos).length()
-				# If movement is minimal, treat it as a tap
-				if distance < 10:
-					_on_inspect_cargo_item_pressed(agg_data, vehicle_vbox, outer_row, null)
-					get_viewport().set_input_as_handled()
+				set_highlight.call(false)
+				# Only treat as a tap if the press actually began on THIS row. Releasing here
+				# after dragging in from another row (no press recorded) must NOT count as a tap.
+				if outer_row.has_meta("tap_start_pos"):
+					var start_pos = outer_row.get_meta("tap_start_pos")
+					outer_row.remove_meta("tap_start_pos")
+					var distance = (event.global_position - start_pos).length()
+					if distance < 10:
+						_on_inspect_cargo_item_pressed(agg_data, vehicle_vbox, outer_row, null)
+						get_viewport().set_input_as_handled()
 	)
 
 	var item_data = agg_data["item_data_sample"]
@@ -1061,20 +1089,16 @@ func _build_cargo_row(vehicle_vbox: VBoxContainer, display_name: String, quantit
 
 	vehicle_vbox.add_child(outer_row)
 
-	# Hover highlight: lighten background stylebox only (keeps text consistent)
-	outer_row.mouse_entered.connect(func():
-		if sb:
-			sb.bg_color = sb.bg_color.lightened(0.08)
-	)
+	# Hover highlight is desktop-only: touch has no real hover, and emulated enter events on a
+	# finger-drag would light a card that then never receives a matching exit on lift — the
+	# classic "stuck highlight". mouse_exited still runs on both platforms as the safety net:
+	# it clears the highlight (and any pending tap) whenever the pointer/finger leaves the row.
+	if not _is_mobile():
+		outer_row.mouse_entered.connect(func(): set_highlight.call(true))
 	outer_row.mouse_exited.connect(func():
-		if sb:
-			if _is_mobile():
-				sb.bg_color = Color(0.10, 0.11, 0.13, 1.0)
-			else:
-				if item_index % 2 == 0:
-					sb.bg_color = Color(0.13, 0.15, 0.19, 1)
-				else:
-					sb.bg_color = Color(0.10, 0.12, 0.16, 1)
+		set_highlight.call(false)
+		if outer_row.has_meta("tap_start_pos"):
+			outer_row.remove_meta("tap_start_pos")
 	)
 
 func _has_any_keys(data: Dictionary, keys: Array) -> bool:
@@ -1904,7 +1928,13 @@ func _on_inspect_cargo_item_pressed(agg_data: Dictionary, list_container: VBoxCo
 					_diag("inspect", "persist_remove", {"cargo_id": cid})
 		if is_instance_valid(toggle_button):
 			toggle_button.text = "Inspect"
+		if item_row_hbox == _mobile_open_row:
+			_mobile_open_row = null
 		return
+
+	# Mobile: only one inspect panel open at a time — collapse the previous one first.
+	if _is_mobile() and is_instance_valid(_mobile_open_row) and _mobile_open_row != item_row_hbox:
+		_close_inspect_for_row(_mobile_open_row)
 
 	item_row_hbox.set_meta("inspect_building", true)
 	var panel := _build_inline_inspect_panel(agg_data, item_row_hbox)
@@ -1926,6 +1956,8 @@ func _on_inspect_cargo_item_pressed(agg_data: Dictionary, list_container: VBoxCo
 				_diag("inspect", "persist_add", {"cargo_id": cid})
 	if is_instance_valid(toggle_button):
 		toggle_button.text = "Hide"
+	if _is_mobile():
+		_mobile_open_row = item_row_hbox
 
 	# Post-open verification: check if panel remains after short delays
 	var verify_token := "" 
@@ -1935,6 +1967,28 @@ func _on_inspect_cargo_item_pressed(agg_data: Dictionary, list_container: VBoxCo
 		verify_token = str(first_dict.get("cargo_id", agg_data.get("display_name", "")))
 	_call_verify_inspect_persistence(item_row_hbox, verify_token, 0.5)
 	_call_verify_inspect_persistence(item_row_hbox, verify_token, 1.2)
+
+func _close_inspect_for_row(row: HBoxContainer) -> void:
+	# Tear down an open inspect panel for `row` (used by mobile single-expand to collapse the
+	# previously-open card). Mirrors the toggle-off branch of _on_inspect_cargo_item_pressed.
+	if not is_instance_valid(row):
+		return
+	if row.has_meta("inspect_panel"):
+		var existing_panel: Node = row.get_meta("inspect_panel")
+		if is_instance_valid(existing_panel):
+			var panel_parent := existing_panel.get_parent()
+			if is_instance_valid(panel_parent):
+				panel_parent.call_deferred("remove_child", existing_panel)
+			existing_panel.call_deferred("queue_free")
+		row.remove_meta("inspect_panel")
+	var agg_meta = row.get_meta("agg_data", null)
+	if agg_meta is Dictionary and (agg_meta as Dictionary).get("items", null) is Array:
+		for it in (agg_meta as Dictionary).get("items", []):
+			var cid := str((it as Dictionary).get("cargo_id", ""))
+			if not cid.is_empty():
+				_open_inspects.erase(cid)
+	if row == _mobile_open_row:
+		_mobile_open_row = null
 
 func _call_verify_inspect_persistence(row: HBoxContainer, token: String, delay_sec: float) -> void:
 	# Use a timer to re-check panel presence and log if missing

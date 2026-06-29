@@ -154,6 +154,12 @@ var _preview_route_y: Array = []
 # Default preview color (fallback) – actual will be per selected convoy color
 var _preview_color: Color = Color(1.0, 0.6, 0.0, 0.85)
 var _preview_line_width: float = 3.5
+# Opacity multiplier for the preview line. 1.0 while the journey menu itself is the active
+# menu; dimmed to PREVIEW_FAINT_ALPHA when the player navigates to a *different* menu tab while
+# a route is still plotted (the journey menu is persistent, so the preview survives the switch).
+# The preview is cleared entirely once all menus fully close (see _on_menu_visibility_changed).
+const PREVIEW_FAINT_ALPHA: float = 0.3
+var _preview_alpha_mul: float = 1.0
 var _high_contrast_enabled: bool = false
 var _preview_settlement_coords: Variant = null
 
@@ -257,6 +263,9 @@ func _ready():
 	if is_instance_valid(menu_manager):
 		if not menu_manager.is_connected("menu_opened", Callable(self, "_on_menu_manager_menu_opened")):
 			menu_manager.menu_opened.connect(_on_menu_manager_menu_opened)
+		# All-menus-closed is the only signal that should fully drop a pending preview line.
+		if menu_manager.has_signal("menu_visibility_changed") and not menu_manager.is_connected("menu_visibility_changed", Callable(self, "_on_menu_visibility_changed")):
+			menu_manager.menu_visibility_changed.connect(_on_menu_visibility_changed)
 	else:
 		printerr("UIManager: MenuManager autoload not found; cannot attach journey preview listeners.")
 
@@ -1652,6 +1661,23 @@ func _on_menu_manager_menu_opened(menu_node: Node, menu_type: String):
 		if menu_node.has_signal("route_preview_ended") and not menu_node.is_connected("route_preview_ended", Callable(self, "_on_preview_route_ended")):
 			menu_node.route_preview_ended.connect(_on_preview_route_ended)
 
+	# Full opacity on the journey menu itself; faint on any other menu while a route is
+	# still plotted (the journey menu is persistent, so its preview line survives a switch).
+	if _is_preview_active:
+		_set_preview_alpha_mul(1.0 if menu_type == "convoy_journey_submenu" else PREVIEW_FAINT_ALPHA)
+
+func _on_menu_visibility_changed(is_open: bool, _menu_name: String) -> void:
+	# Menus fully closed (not a tab switch — those don't toggle visibility) → drop the preview.
+	if not is_open and _is_preview_active:
+		_on_preview_route_ended()
+
+func _set_preview_alpha_mul(value: float) -> void:
+	if is_equal_approx(_preview_alpha_mul, value):
+		return
+	_preview_alpha_mul = value
+	if is_instance_valid(convoy_connector_lines_container):
+		convoy_connector_lines_container.queue_redraw()
+
 func _on_preview_route_started(route_data: Dictionary):
 	# route_data expected to contain nested 'journey' with route_x / route_y arrays.
 	var journey_dict = route_data.get("journey", {})
@@ -1661,6 +1687,8 @@ func _on_preview_route_started(route_data: Dictionary):
 		_preview_route_x = rx.duplicate()
 		_preview_route_y = ry.duplicate()
 		_is_preview_active = true
+		# A preview always starts from the journey menu, which is the active menu at that moment.
+		_preview_alpha_mul = 1.0
 		# Determine convoy color (if convoy_id provided) to match node color
 		var convoy_id_val = route_data.get("convoy_id")
 		if convoy_id_val == null and route_data.has("journey"):
@@ -1676,6 +1704,7 @@ func _on_preview_route_started(route_data: Dictionary):
 
 func _on_preview_route_ended():
 	_is_preview_active = false
+	_preview_alpha_mul = 1.0
 	_preview_route_x.clear()
 	_preview_route_y.clear()
 	if is_instance_valid(convoy_connector_lines_container):
@@ -1989,17 +2018,21 @@ func _on_connector_lines_container_draw():
 
 		if preview_offset_points.size() >= 2:
 			var preview_outline_w = max(0.0, _preview_line_width + route_line_outline_extra_width)
+			# Dim the whole preview (underlay + line + marker) when shown faintly behind another menu.
+			var underlay_col := Color(1, 1, 1, 0.95 * _preview_alpha_mul)
+			var line_col := _preview_color
+			line_col.a *= _preview_alpha_mul
 			# White underlay for preview path (larger outline)
-			convoy_connector_lines_container.draw_polyline(preview_offset_points, Color(1,1,1,0.95), preview_outline_w)
+			convoy_connector_lines_container.draw_polyline(preview_offset_points, underlay_col, preview_outline_w)
 			# Colored overlay matching convoy color
-			convoy_connector_lines_container.draw_polyline(preview_offset_points, _preview_color, _preview_line_width)
-			
+			convoy_connector_lines_container.draw_polyline(preview_offset_points, line_col, _preview_line_width)
+
 			# Destination Marker
 			var dest_pt = preview_offset_points[preview_offset_points.size() - 1]
 			var marker_radius = _preview_line_width * 1.5
 			var outline_radius = marker_radius + (route_line_outline_extra_width * 0.75)
-			convoy_connector_lines_container.draw_circle(dest_pt, outline_radius, Color(1,1,1,0.95))
-			convoy_connector_lines_container.draw_circle(dest_pt, marker_radius, _preview_color)
+			convoy_connector_lines_container.draw_circle(dest_pt, outline_radius, underlay_col)
+			convoy_connector_lines_container.draw_circle(dest_pt, marker_radius, line_col)
 
 func set_convoy_user_position(convoy_id_str: String, position: Vector2):
 	_convoy_label_user_positions[convoy_id_str] = position
