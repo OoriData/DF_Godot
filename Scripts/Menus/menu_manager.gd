@@ -12,16 +12,18 @@ var convoy_settlement_menu_scene = preload("res://Scenes/ConvoySettlementMenu.ts
 var convoy_cargo_menu_scene = preload("res://Scenes/ConvoyCargoMenu.tscn") # Example path
 var mechanics_menu_scene = preload("res://Scenes/MechanicsMenu.tscn")
 var warehouse_menu_scene = load("res://Scenes/WarehouseMenu.tscn")
+var settlement_overview_menu_scene = load("res://Scenes/SettlementOverviewMenu.tscn")
 var premium_upgrade_modal_scene = preload("res://Scenes/UI/PremiumUpgradeModal.tscn")
 
 const MENU_ORDER = {
 	"convoy_overview": 0,
 	"convoy_vehicle_submenu": 1,
 	"convoy_journey_submenu": 2,    # Nav bar order: Vehicles | Journey | Settlement | Cargo
-	"convoy_settlement_submenu": 3,
-	"warehouse_submenu": 4,
-	"mechanics_submenu": 5,
-	"convoy_cargo_submenu": 6
+	"settlement_hub": 3,            # Settlement section landing — takes the old vendor-menu transition slot
+	"convoy_settlement_submenu": 4, # single-vendor trade menu — one level deeper than the hub
+	"warehouse_submenu": 5,
+	"mechanics_submenu": 6,
+	"convoy_cargo_submenu": 7
 }
 var _switch_tween: Tween = null
 # Outgoing menu whose disposal is deferred into the active switch tween's callback.
@@ -128,15 +130,17 @@ func _setup_static_bottom_nav():
 			if is_instance_valid(current_active_menu) and current_active_menu.has_meta("menu_data"):
 				data = current_active_menu.get_meta("menu_data")
 			
-			# If already on this menu, go back to overview (matches legacy behavior)
-			if current_active_menu and current_active_menu.get_meta("menu_type") == config["type"]:
+			# If already in this nav section, go back to convoy overview (matches legacy behavior).
+			# The Settlement section spans two screens (hub + single vendor menu), so compare slots.
+			var active_slot := _nav_slot_for_type(str(current_active_menu.get_meta("menu_type", ""))) if current_active_menu else ""
+			if active_slot == config["type"]:
 				open_convoy_menu(data)
 			else:
 				# Call the respective open function
 				match config["type"]:
 					"convoy_vehicle_submenu": open_convoy_vehicle_menu(data)
 					"convoy_journey_submenu": open_journey_journey_menu_if_available(data)
-					"convoy_settlement_submenu": open_convoy_settlement_menu(data)
+					"convoy_settlement_submenu": open_settlement_overview_menu(data)
 					"convoy_cargo_submenu": open_convoy_cargo_menu(data)
 		)
 		_nav_hbox.add_child(btn)
@@ -154,6 +158,14 @@ func set_nav_button_visible(type: String, is_visible: bool):
 	if _nav_buttons.has(type):
 		_nav_buttons[type].visible = is_visible
 
+## Maps a concrete menu_type to the bottom-nav slot it lights up. The Settlement section spans two
+## screens — the overview hub (settlement_hub) and the single vendor menu (convoy_settlement_submenu) —
+## that both belong to the "Settlement" slot.
+func _nav_slot_for_type(t: String) -> String:
+	if t == "settlement_hub":
+		return "convoy_settlement_submenu"
+	return t
+
 func _get_logical_safe_margins() -> Rect2:
 	# Rect2(position = (left, top), size = (right, bottom)) in logical pixels.
 	var sm = get_node_or_null("/root/ui_scale_manager")
@@ -164,7 +176,7 @@ func _get_logical_safe_margins() -> Rect2:
 func _update_static_nav_bar_ui(active_type: String):
 	if not is_instance_valid(_static_bottom_nav): return
 	
-	var is_convoy_submenu = active_type in ["convoy_overview", "convoy_vehicle_submenu", "convoy_journey_submenu", "convoy_cargo_submenu", "convoy_settlement_submenu"]
+	var is_convoy_submenu = active_type in ["convoy_overview", "convoy_vehicle_submenu", "convoy_journey_submenu", "convoy_cargo_submenu", "convoy_settlement_submenu", "settlement_hub"]
 	_static_bottom_nav.visible = is_convoy_submenu
 	
 	if not is_convoy_submenu: return
@@ -196,6 +208,7 @@ func _update_static_nav_bar_ui(active_type: String):
 	var base_font_size: int = 28 if is_portrait else (18 if is_landscape_mobile else 28)
 	var font_size: int = base_font_size if is_instance_valid(dsm) else base_font_size
 
+	var active_slot := _nav_slot_for_type(active_type)
 	for type in _nav_buttons:
 		var btn = _nav_buttons[type]
 		btn.custom_minimum_size = Vector2(72, btn_min_h)
@@ -204,7 +217,7 @@ func _update_static_nav_bar_ui(active_type: String):
 		btn.clip_text = true
 		btn.add_theme_font_size_override("font_size", font_size)
 		
-		var is_active = (active_type == type)
+		var is_active = (active_slot == type)
 		btn.theme_type_variation = &"NavButtonActive" if is_active else &"NavButton"
 
 func _on_viewport_resized_navbar() -> void:
@@ -325,6 +338,17 @@ func open_warehouse_menu(convoy_data = null):
 	# Do not collapse the payload to convoy_id here.
 	_show_menu(warehouse_menu_scene, convoy_data)
 
+## Convoy-independent settlement view (Sprint 5). Opened from the map when tapping a settlement where
+## the player owns a warehouse. `settlement_data` is the settlement snapshot dict (name, vendors, etc.).
+func open_settlement_overview_menu(settlement_data = null):
+	_show_menu(settlement_overview_menu_scene, settlement_data)
+
+## Overview hub → open the single-vendor trade menu focused on the chosen vendor. Reuses the existing
+## deep-link focus path so the settlement menu lands on this vendor.
+func _on_overview_open_vendor(convoy_data: Dictionary, vendor_id: String) -> void:
+	var intent := {"target": "settlement_vendor", "vendor_id": vendor_id}
+	open_convoy_settlement_menu_with_focus(convoy_data, intent)
+
 func open_convoy_cargo_menu(convoy_data = null):
 	if convoy_data == null:
 		printerr("MenuManager: open_convoy_cargo_menu called with null data.")
@@ -419,6 +443,18 @@ func _show_menu(menu_scene_resource, data_to_pass = null, add_to_stack: bool = t
 	elif menu_scene_resource == warehouse_menu_scene:
 		menu_type = "warehouse_submenu"
 		use_convoy_style_layout = true
+	elif menu_scene_resource == settlement_overview_menu_scene:
+		# Hub (convoy present here → shows bottom nav under the Settlement slot) vs the standalone
+		# map-preview view (no convoy, no bottom nav, Back returns to the map).
+		# The nav may pass a convoy dict OR a bare convoy_id string; either means "hub". The map preview
+		# passes a settlement dict (no convoy_id) → standalone overview.
+		var _ov_has_convoy := false
+		if data_to_pass is Dictionary:
+			_ov_has_convoy = String((data_to_pass as Dictionary).get("convoy_id", "")) != ""
+		elif data_to_pass is String:
+			_ov_has_convoy = String(data_to_pass) != ""
+		menu_type = "settlement_hub" if _ov_has_convoy else "settlement_overview"
+		use_convoy_style_layout = true
 	elif menu_scene_resource == mechanics_menu_scene:
 		menu_type = "mechanics_submenu"
 		use_convoy_style_layout = true
@@ -496,8 +532,13 @@ func _show_menu(menu_scene_resource, data_to_pass = null, add_to_stack: bool = t
 			print("[MenuManager] Cached new persistent menu: ", cache_key)
 	else:
 		# Returning from cache: restore mouse input that was killed by _disable_mouse_recursive
-		# during the outgoing animation, then skip re-initialization.
+		# during the outgoing animation.
 		_restore_mouse_recursive(current_active_menu)
+		# A focus intent (e.g. a specific vendor, or a vehicle) means the caller wants a DIFFERENT target
+		# than whatever the cached instance last showed. The cache key is keyed only by convoy_id, so
+		# without this the cached menu would keep its previous target. Re-apply the intent.
+		if _next_menu_extra_arg != null and current_active_menu.has_method("initialize_with_data"):
+			current_active_menu.call_deferred("initialize_with_data", data_to_pass, _next_menu_extra_arg)
 		_next_menu_extra_arg = null
 		print("[MenuManager] Menu restored from cache — mouse input re-enabled.")
 
@@ -584,8 +625,9 @@ func _show_menu(menu_scene_resource, data_to_pass = null, add_to_stack: bool = t
 			_s.open_vehicle_menu_requested.connect(open_convoy_vehicle_menu, CONNECT_ONE_SHOT)
 		if _s.has_signal("open_journey_menu_requested") and not _s.open_journey_menu_requested.is_connected(open_convoy_journey_menu):
 			_s.open_journey_menu_requested.connect(open_convoy_journey_menu, CONNECT_ONE_SHOT)
-		if _s.has_signal("open_settlement_menu_requested") and not _s.open_settlement_menu_requested.is_connected(open_convoy_settlement_menu):
-			_s.open_settlement_menu_requested.connect(open_convoy_settlement_menu, CONNECT_ONE_SHOT)
+		# Settlement entry now lands on the overview hub (which then opens a single vendor menu).
+		if _s.has_signal("open_settlement_menu_requested") and not _s.open_settlement_menu_requested.is_connected(open_settlement_overview_menu):
+			_s.open_settlement_menu_requested.connect(open_settlement_overview_menu, CONNECT_ONE_SHOT)
 		if _s.has_signal("open_cargo_menu_requested") and not _s.open_cargo_menu_requested.is_connected(open_convoy_cargo_menu):
 			_s.open_cargo_menu_requested.connect(open_convoy_cargo_menu, CONNECT_ONE_SHOT)
 		if _s.has_signal("return_to_convoy_overview_requested") and not _s.return_to_convoy_overview_requested.is_connected(open_convoy_menu):
@@ -612,6 +654,15 @@ func _show_menu(menu_scene_resource, data_to_pass = null, add_to_stack: bool = t
 				_s.open_mechanics_menu_requested.connect(open_mechanics_menu, CONNECT_ONE_SHOT)
 			if _s.has_signal("open_warehouse_menu_requested") and not _s.open_warehouse_menu_requested.is_connected(open_warehouse_menu):
 				_s.open_warehouse_menu_requested.connect(open_warehouse_menu, CONNECT_ONE_SHOT)
+
+	# Settlement overview / hub — forward its Warehouse entry, vendor selection, and Back.
+	if menu_type == "settlement_overview" or menu_type == "settlement_hub":
+		if current_active_menu.has_signal("open_warehouse_menu_requested") and not current_active_menu.open_warehouse_menu_requested.is_connected(open_warehouse_menu):
+			current_active_menu.open_warehouse_menu_requested.connect(open_warehouse_menu, CONNECT_ONE_SHOT)
+		if current_active_menu.has_signal("open_vendor_requested") and not current_active_menu.open_vendor_requested.is_connected(_on_overview_open_vendor):
+			current_active_menu.open_vendor_requested.connect(_on_overview_open_vendor, CONNECT_ONE_SHOT)
+		if current_active_menu.has_signal("back_requested") and not current_active_menu.back_requested.is_connected(go_back):
+			current_active_menu.back_requested.connect(go_back, CONNECT_ONE_SHOT)
 
 # Animation constants for menu switching
 const SWITCH_DURATION := 0.42

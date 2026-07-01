@@ -9,6 +9,7 @@ const ItemsData = preload("res://Scripts/Data/Items.gd")
 const SettlementModel = preload("res://Scripts/Data/Models/Settlement.gd")
 const VendorModel = preload("res://Scripts/Data/Models/Vendor.gd")
 const VendorPanelContextController = preload("res://Scripts/Menus/VendorPanel/vendor_panel_context_controller.gd")
+const TopUpPlanner = preload("res://Scripts/Menus/VendorPanel/top_up_planner.gd")
 
 # --- Font Scaling Parameters ---
 const BASE_FONT_SIZE: float = 18.0  # Increased from 14.0
@@ -124,7 +125,14 @@ signal open_cargo_menu_inspect_requested(convoy_data: Dictionary, item_data: Dic
 @onready var _mechanics_service: Node = get_node_or_null("/root/MechanicsService")
 @onready var _api: Node = get_node_or_null("/root/APICalls")
 @onready var _convoy_service: Node = get_node_or_null("/root/ConvoyService")
+@onready var _user_service: Node = get_node_or_null("/root/UserService")
 var _debug_convoy_menu: bool = true # toggle verbose diagnostics for this menu
+
+# Top Up (Sprint 5): relocated here from the settlement menu. Replenishes Fuel/Water/Food from the
+# vendors of the settlement the convoy currently sits in (cheapest-first leveling via TopUpPlanner).
+# The button is hidden unless the convoy is parked in a settlement that actually sells resources.
+var _top_up_button: Button = null
+var _top_up_plan: Dictionary = {"total_cost": 0.0, "allocations": [], "resources": {}, "planned_list": []}
 
 # ConvoyMenu should always render from a *full* convoy snapshot. Some signal paths provide
 # a shallow convoy dict (missing capacities/resources), which can temporarily render 0/0.
@@ -273,6 +281,8 @@ func _ready():
 	else:
 		printerr("ConvoyMenu: CRITICAL - TitleLabel node not found. Check the path in the script.")
 
+	_setup_top_up_button()
+
 
 	# --- Layout Tuning: GridContainer Separation ---
 	if is_instance_valid(vendor_item_grid):
@@ -389,9 +399,8 @@ func _ready():
 	else:
 		printerr("ConvoyMenu: CRITICAL - BackButton node NOT found or is not a Button. Ensure it's named 'BackButton' in ConvoyMenu.tscn.")
 
-	var bottom_panel_node = get_node_or_null("MainVBox/BottomBarPanel")
-	if is_instance_valid(bottom_panel_node):
-		setup_convoy_navigation_bar(bottom_panel_node)
+	# Legacy BottomBarPanel removed (Sprint 5) — the StaticBottomNav in MenuManager is the only
+	# navigation bar now. The node no longer exists in any scene; the lookup/setup call was dead.
 
 	# Cache GameDataManager and connect relevant signals for live updates
 	# Phase C: subscribe to canonical sources (Hub/Store/APICalls) instead of GameDataManager.
@@ -2320,6 +2329,8 @@ func _on_store_map_changed(_tiles: Array, settlements: Array) -> void:
 		if _debug_convoy_menu:
 			print("[ConvoyMenu][Debug] cached settlements count=", _latest_all_settlements.size())
 	_queue_vendor_preview_update()
+	# Settlement vendor prices/stock just changed → re-evaluate the Top Up plan/affordability.
+	_update_top_up_button()
 	# Ensure mechanics preview is warmed up with the new settlement data
 	if is_instance_valid(_mechanics_service) and _mechanics_service.has_method("warm_mechanics_data_for_convoy"):
 		_mechanics_service.warm_mechanics_data_for_convoy(convoy_data_received)
@@ -3621,6 +3632,197 @@ func _update_ui(convoy: Dictionary) -> void:
 	
 	# Update navigation bar visibility (Settlement button should be hidden during journey)
 	_update_navigation_bar_visibility(convoy_data_received)
+
+	# Top Up reflects the convoy's current resources + the settlement it sits in.
+	_update_top_up_button()
+
+# --- Top Up (relocated from the settlement menu, Sprint 5) ---
+
+func _setup_top_up_button() -> void:
+	if is_instance_valid(_top_up_button):
+		return
+	var top_bar := get_node_or_null("MainVBox/TopBarHBox")
+	if not is_instance_valid(top_bar):
+		return
+	# The RightSpacer only balanced the (now hidden) back button to keep the title centred; with a
+	# right-side action present, drop it so Top Up can pin to the edge.
+	var spacer := top_bar.get_node_or_null("RightSpacer")
+	if is_instance_valid(spacer) and spacer is Control:
+		(spacer as Control).visible = false
+	_top_up_button = Button.new()
+	_top_up_button.name = "TopUpButton"
+	_top_up_button.text = "Top Up"
+	_top_up_button.focus_mode = Control.FOCUS_NONE
+	_top_up_button.size_flags_horizontal = Control.SIZE_SHRINK_END
+	if _is_mobile():
+		_top_up_button.custom_minimum_size.y = 60.0
+	_style_top_up_button()
+	_top_up_button.pressed.connect(_on_top_up_button_pressed)
+	top_bar.add_child(_top_up_button)
+	_top_up_button.visible = false # shown only once we resolve a settlement with resource vendors
+
+	# Money changes affect affordability / the partial-plan split.
+	if is_instance_valid(_store) and _store.has_signal("user_changed") and not _store.user_changed.is_connected(_on_top_up_user_changed):
+		_store.user_changed.connect(_on_top_up_user_changed)
+
+func _style_top_up_button() -> void:
+	if not is_instance_valid(_top_up_button):
+		return
+	var normal := StyleBoxFlat.new()
+	normal.bg_color = UITheme.METAL_BASE
+	normal.set_border_width_all(UITheme.BORDER_THIN)
+	normal.border_color = UITheme.ACCENT_BRASS # action edge
+	normal.set_corner_radius_all(UITheme.RADIUS_MD)
+	normal.content_margin_left = 14
+	normal.content_margin_right = 14
+	normal.content_margin_top = 7
+	normal.content_margin_bottom = 7
+	var hover := normal.duplicate()
+	hover.bg_color = UITheme.METAL_HOVER
+	var pressed := normal.duplicate()
+	pressed.bg_color = UITheme.METAL_ACTIVE
+	var disabled := normal.duplicate()
+	disabled.bg_color = UITheme.METAL_DARK
+	disabled.border_color = UITheme.METAL_EDGE.lerp(Color.BLACK, 0.3)
+	for state in [["normal", normal], ["hover", hover], ["pressed", pressed], ["hover_pressed", pressed], ["focus", hover], ["disabled", disabled]]:
+		_top_up_button.add_theme_stylebox_override(state[0], state[1])
+	_top_up_button.add_theme_color_override("font_color", UITheme.TEXT_PRIMARY)
+	_top_up_button.add_theme_color_override("font_hover_color", Color(1, 1, 1))
+	_top_up_button.add_theme_color_override("font_pressed_color", UITheme.TEXT_PRIMARY)
+	_top_up_button.add_theme_color_override("font_disabled_color", UITheme.TEXT_MUTED)
+
+func _on_top_up_user_changed(_user: Dictionary) -> void:
+	_update_top_up_button()
+
+func _resolve_current_settlement() -> Dictionary:
+	# The settlement the convoy is currently parked on (coord match against the cached snapshot).
+	if not (convoy_data_received is Dictionary) or convoy_data_received.is_empty():
+		return {}
+	if not convoy_data_received.has("x") or not convoy_data_received.has("y"):
+		return {}
+	var cx := roundi(float(convoy_data_received.get("x", -999999.0)))
+	var cy := roundi(float(convoy_data_received.get("y", -999999.0)))
+	for s in _latest_all_settlements:
+		if s is Dictionary:
+			var sx := roundi(float((s as Dictionary).get("x", -999999.0)))
+			var sy := roundi(float((s as Dictionary).get("y", -999999.0)))
+			if sx == cx and sy == cy:
+				return s as Dictionary
+	return {}
+
+func _get_user_money() -> float:
+	if is_instance_valid(_store) and _store.has_method("get_user"):
+		var u: Dictionary = _store.get_user()
+		if u is Dictionary:
+			return float(u.get("money", 0.0))
+	if is_instance_valid(_user_service) and _user_service.has_method("get_user"):
+		var u2: Dictionary = _user_service.get_user()
+		if u2 is Dictionary:
+			return float(u2.get("money", 0.0))
+	return 0.0
+
+func _set_top_up_state(text: String, disabled: bool, tooltip: String) -> void:
+	if not is_instance_valid(_top_up_button):
+		return
+	_top_up_button.visible = true
+	_top_up_button.text = text
+	_top_up_button.disabled = disabled
+	_top_up_button.tooltip_text = tooltip
+
+func _update_top_up_button() -> void:
+	if not is_instance_valid(_top_up_button):
+		return
+	var convoy := convoy_data_received
+	if not (convoy is Dictionary) or convoy.is_empty():
+		_top_up_button.visible = false
+		return
+	var settlement := _resolve_current_settlement()
+	if settlement.is_empty() or not settlement.has("vendors"):
+		# Not parked at a settlement that sells resources — hide rather than show a dead button.
+		_top_up_button.visible = false
+		return
+
+	var full_plan: Dictionary = TopUpPlanner.calculate_plan(convoy, settlement)
+	if (full_plan.get("planned_list", []) as Array).is_empty():
+		_top_up_plan = full_plan
+		_set_top_up_state("Top Up (Full)", true, "Fuel, Water and Food are already at maximum levels.")
+		return
+
+	var needed_cost: float = float(full_plan.get("total_cost", 0.0))
+	var user_money: float = _get_user_money()
+	var is_partial := false
+	if user_money < needed_cost:
+		_top_up_plan = TopUpPlanner.calculate_plan(convoy, settlement, user_money)
+		is_partial = true
+	else:
+		_top_up_plan = full_plan
+
+	var planned_list: Array = _top_up_plan.get("planned_list", [])
+	var total_cost: float = float(_top_up_plan.get("total_cost", 0.0))
+	if planned_list.is_empty() or total_cost <= 0.0001:
+		_set_top_up_state("Top Up", true, "Insufficient funds to purchase any resources.")
+		return
+
+	_top_up_button.visible = true
+	_top_up_button.disabled = false
+	_top_up_button.text = "Top Up (Partial)" if is_partial else "Top Up"
+	_top_up_button.tooltip_text = _build_top_up_tooltip(is_partial, needed_cost, user_money)
+
+func _build_top_up_tooltip(is_partial: bool, needed_cost: float, user_money: float) -> String:
+	var breakdown_lines: Array = []
+	var allocations_by_res: Dictionary = {}
+	for alloc in _top_up_plan.get("allocations", []):
+		var r := String(alloc.get("res", ""))
+		if r == "":
+			continue
+		if not allocations_by_res.has(r):
+			allocations_by_res[r] = []
+		allocations_by_res[r].append(alloc)
+	for r in allocations_by_res.keys():
+		var group: Array = allocations_by_res[r]
+		group.sort_custom(func(a, b): return float(a.price) < float(b.price))
+		var res_total_qty := 0
+		var res_total_cost := 0.0
+		breakdown_lines.append(String(r).capitalize() + ":")
+		for g in group:
+			var qty_i := int(g.get("quantity", 0))
+			var price_i := float(g.get("price", 0.0))
+			var vendor_name := String(g.get("vendor_name", "?"))
+			var sub_i := float(qty_i) * price_i
+			res_total_qty += qty_i
+			res_total_cost += sub_i
+			breakdown_lines.append("  %s: %d @ $%.2f = $%.0f" % [vendor_name, qty_i, price_i, sub_i])
+		breakdown_lines.append("  Subtotal %s: %d = $%.0f" % [r, res_total_qty, res_total_cost])
+	breakdown_lines.append("Total: $%.0f" % float(_top_up_plan.get("total_cost", 0.0)))
+	if is_partial:
+		var missing: float = max(0.0, needed_cost - user_money)
+		breakdown_lines.append("Partial Top Up (Need $%.0f more for full)." % missing)
+	return "Top Up Plan:\n" + "\n".join(breakdown_lines)
+
+func _on_top_up_button_pressed() -> void:
+	if _top_up_plan.is_empty() or (_top_up_plan.get("resources", {}) as Dictionary).is_empty():
+		return
+	var convoy_uuid := String(convoy_data_received.get("convoy_id", convoy_data_received.get("id", "")))
+	if convoy_uuid.is_empty() or not is_instance_valid(_api):
+		return
+	# Execute purchases individually (one PATCH per allocation) from the current plan snapshot.
+	for alloc in _top_up_plan.get("allocations", []):
+		var res := String(alloc.get("res", ""))
+		var vendor_id := String(alloc.get("vendor_id", ""))
+		var send_qty := int(alloc.get("quantity", 0))
+		if res == "" or vendor_id.is_empty() or send_qty <= 0:
+			continue
+		if _debug_convoy_menu:
+			print("[ConvoyMenu][TopUp] Buying %d %s from vendor %s (price=%.2f) convoy=%s" % [send_qty, res, vendor_id, float(alloc.get("price", 0.0)), convoy_uuid])
+		_api.buy_resource(vendor_id, convoy_uuid, res, float(send_qty))
+	# Authoritative refreshes via services; UI updates flow back through Store/Hub → _update_ui.
+	if is_instance_valid(_convoy_service) and _convoy_service.has_method("refresh_single"):
+		_convoy_service.refresh_single(convoy_uuid)
+	if is_instance_valid(_user_service) and _user_service.has_method("refresh_user"):
+		_user_service.refresh_user()
+	if is_instance_valid(_top_up_button):
+		_top_up_button.disabled = true
+		_top_up_button.text = "Topping Up…"
 
 func _enforce_label_wrapping(node: Node):
 	if node is Label:

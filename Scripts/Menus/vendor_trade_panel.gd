@@ -136,6 +136,12 @@ var _landscape_stat_box: VBoxContainer = null
 # The merged control row ([Buy ⇄][Sort ▾]) — cached so the outer settlement menu can mount the
 # vendor-type dropdown here as the first child on mobile: [Vendor ▾][Buy ⇄][Sort ▾].
 var _control_row_container: Container = null
+# Settings drawer removed in Sprint 5 — with the vendor selector gone (selection now happens in the
+# overview hub) only Buy/Sell + Sort remain, so they sit inline on the control row again.
+# Buy/Sell segmented switch (replaces the ambiguous single flip button).
+var _mode_seg_buy: Button = null
+var _mode_seg_sell: Button = null
+var _mode_btn_group: ButtonGroup = null
 
 func _is_portrait_layout() -> bool:
 	var dsm = get_node_or_null("/root/DeviceStateManager")
@@ -1058,16 +1064,14 @@ func _consolidate_control_row() -> void:
 	_control_row_container = sort_container # cache for mount_external_vendor_selector()
 	if sort_container.has_meta("control_row_merged"):
 		return
-	# Move the flip button to the front of the Sort row, then retire the now-empty toggle row.
-	var flip_parent := mode_flip_button.get_parent()
-	if is_instance_valid(flip_parent):
-		flip_parent.remove_child(mode_flip_button)
-	sort_container.add_child(mode_flip_button)
-	sort_container.move_child(mode_flip_button, 0)
-	# The flip is the only always-visible control on this row, so it absorbs the horizontal slack
-	# (the vendor dropdown hugs its name at the left; Sort hugs the right and can hide). This keeps
-	# the row filled edge-to-edge instead of left-packing the controls with dead space on the right.
-	mode_flip_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	# Replace the ambiguous single flip button ("Buy ⇄") with a clear 2-segment Buy | Sell switch at the
+	# front of the Sort row. The original flip button stays in the now-hidden ModeToggle row.
+	mode_flip_button.visible = false
+	var segments := _build_mode_segments()
+	sort_container.add_child(segments)
+	sort_container.move_child(segments, 0)
+	# The switch absorbs the horizontal slack so the row reads edge-to-edge (Sort hugs the right and can hide).
+	segments.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	sort_container.add_theme_constant_override("separation", 10)
 	mode_toggle.visible = false
 	sort_container.set_meta("control_row_merged", true)
@@ -1087,6 +1091,20 @@ func mount_external_vendor_selector(selector: Control) -> void:
 	selector.size_flags_stretch_ratio = 1.0
 	_control_row_container.add_child(selector)
 	_control_row_container.move_child(selector, 0)
+
+func mount_external_title(title_ctrl: Control) -> void:
+	# Called by ConvoySettlementMenu (single-vendor mode) to seat the back/title control as the FIRST
+	# element of this panel's control row → [‹ Vendor][Buy|Sell][Sort], collapsing the separate banner
+	# row into one. Idempotent.
+	if not is_instance_valid(title_ctrl) or not is_instance_valid(_control_row_container):
+		return
+	if title_ctrl.get_parent() == _control_row_container:
+		_control_row_container.move_child(title_ctrl, 0)
+		return
+	if is_instance_valid(title_ctrl.get_parent()):
+		title_ctrl.get_parent().remove_child(title_ctrl)
+	_control_row_container.add_child(title_ctrl)
+	_control_row_container.move_child(title_ctrl, 0)
 
 func _make_panels_responsive() -> void:
 	# Layout-specific restructuring of the native 3-column .tscn:
@@ -1718,6 +1736,7 @@ func refresh_data(p_vendor_data, p_convoy_data, p_current_settlement_data, p_all
 
 func _populate_vendor_list() -> void:
 	_ignore_selection_signals = true
+
 	vendor_item_tree.clear_items()
 	if not vendor_data:
 		vendor_items = {}
@@ -1919,12 +1938,70 @@ func _on_mode_flip_pressed() -> void:
 	_select_trade_mode(next_tab)
 
 func _sync_mode_toggle_buttons(tab_index: int) -> void:
-	# Reflect the active mode on the single flip button (label + color).
-	if not is_instance_valid(mode_flip_button):
-		return
+	# Reflect the active mode on the 2-segment Buy | Sell switch (highlight the active half).
 	var is_buy: bool = (tab_index == 0)
-	mode_flip_button.text = "Buy ⇄" if is_buy else "Sell ⇄"
-	_style_mode_toggle()
+	if is_instance_valid(mode_flip_button):
+		mode_flip_button.text = "Buy ⇄" if is_buy else "Sell ⇄" # legacy (hidden) flip kept in sync
+	if is_instance_valid(_mode_seg_buy):
+		_mode_seg_buy.set_pressed_no_signal(is_buy)
+		_style_mode_segment(_mode_seg_buy, is_buy, true)
+	if is_instance_valid(_mode_seg_sell):
+		_mode_seg_sell.set_pressed_no_signal(not is_buy)
+		_style_mode_segment(_mode_seg_sell, not is_buy, false)
+
+## Build the [ Buy | Sell ] segmented switch. Drives trade_mode_tab_container via _select_trade_mode,
+## which loops back through _on_tab_changed → _sync_mode_toggle_buttons to repaint the active half.
+func _build_mode_segments() -> Control:
+	var box := HBoxContainer.new()
+	box.name = "ModeSegments"
+	box.add_theme_constant_override("separation", 0)
+	_mode_btn_group = ButtonGroup.new()
+	_mode_seg_buy = _make_mode_segment("Buy", 0)
+	_mode_seg_sell = _make_mode_segment("Sell", 1)
+	box.add_child(_mode_seg_buy)
+	box.add_child(_mode_seg_sell)
+	var cur: int = trade_mode_tab_container.current_tab if is_instance_valid(trade_mode_tab_container) else 0
+	_sync_mode_toggle_buttons(cur)
+	return box
+
+func _make_mode_segment(label_text: String, tab_index: int) -> Button:
+	var b := Button.new()
+	b.text = label_text
+	b.focus_mode = Control.FOCUS_NONE
+	b.toggle_mode = true
+	b.button_group = _mode_btn_group
+	b.clip_text = false
+	b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	b.add_theme_font_size_override("font_size", 16)
+	b.pressed.connect(func() -> void: _select_trade_mode(tab_index))
+	return b
+
+func _style_mode_segment(b: Button, active: bool, left_end: bool) -> void:
+	if not is_instance_valid(b):
+		return
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = UITheme.ACCENT_BRASS if active else UITheme.METAL_DARK
+	sb.border_color = UITheme.ACCENT_BRASS if active else UITheme.METAL_EDGE
+	sb.set_border_width_all(2)
+	sb.content_margin_top = 10
+	sb.content_margin_bottom = 10
+	sb.content_margin_left = 16
+	sb.content_margin_right = 16
+	# Pill: round only the outer corners so the two halves read as one switch.
+	var r := UITheme.RADIUS_MD
+	if left_end:
+		sb.corner_radius_top_left = r
+		sb.corner_radius_bottom_left = r
+	else:
+		sb.corner_radius_top_right = r
+		sb.corner_radius_bottom_right = r
+	# Same look across all visual states (we drive the active half manually).
+	for st in ["normal", "hover", "pressed", "focus"]:
+		b.add_theme_stylebox_override(st, sb)
+	var txt: Color = UITheme.METAL_DARK if active else UITheme.TEXT_MUTED
+	b.add_theme_color_override("font_color", txt)
+	b.add_theme_color_override("font_hover_color", UITheme.TEXT_PRIMARY if not active else UITheme.METAL_DARK)
+	b.add_theme_color_override("font_pressed_color", txt)
 
 # Shared neutral button language for the control-row + Max buttons so they all read as one set
 # (METAL_BASE fill, METAL_EDGE border, radius MD). The single accented button is the primary Buy.

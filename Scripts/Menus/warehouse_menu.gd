@@ -100,6 +100,7 @@ const WAREHOUSE_UPGRADE_PRICES := {
 
 func _ready():
 	print("[WarehouseMenu] _ready()")
+	clip_contents = true
 	_warehouse_service = get_node_or_null("/root/WarehouseService")
 	_hub = get_node_or_null("/root/SignalHub")
 	_ensure_inventory_headers()
@@ -244,12 +245,11 @@ func _setup_dual_column_layout() -> void:
 		if is_instance_valid(overview_tab):
 			owned_tabs.remove_child(overview_tab)
 			
-			# Add a nice section title to Left Panel
 			var title_lbl = Label.new()
-			title_lbl.text = "STORAGE MONITOR"
+			title_lbl.text = "STORAGE"
 			title_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-			title_lbl.add_theme_font_size_override("font_size", 16)
-			title_lbl.add_theme_color_override("font_color", Color(0.0, 0.66, 1.0, 1.0)) # Oori Blue
+			title_lbl.add_theme_font_size_override("font_size", 12)
+			title_lbl.add_theme_color_override("font_color", UITheme.TEXT_MUTED)
 			left_col.add_child(title_lbl)
 			
 			left_col.add_child(overview_tab)
@@ -267,34 +267,19 @@ func _setup_dual_column_layout() -> void:
 	
 	body_vbox.add_child(columns)
 	
-	# Centered Radial Gauge Setup
-	var gauge_script = load("res://Scripts/UI/radial_progress_gauge.gd")
+	# Storage summary: two labeled bars (cargo + vehicles) instead of a radial gauge.
 	var overview_tab = left_col.get_node_or_null("Overview")
-	if gauge_script and is_instance_valid(overview_tab) and is_instance_valid(overview_cargo_bar):
-		var center_container = CenterContainer.new()
-		center_container.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		
-		var gauge = gauge_script.new()
-		gauge.custom_minimum_size = Vector2(180, 180)
-		gauge.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-		gauge.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-		center_container.add_child(gauge)
-		
-		# Center the circle gauge at the very top of overview panel
-		overview_tab.add_child(center_container)
-		overview_tab.move_child(center_container, 0)
-		
+	if is_instance_valid(overview_tab) and is_instance_valid(overview_cargo_bar):
+		# Hide the scene-level bars; we'll theme them but show our own labels.
 		overview_cargo_bar.visible = false
-		
-		# Align Cargo label cleanly under the gauge
+		_style_overview_bar(overview_cargo_bar, UITheme.ACCENT_VERDIGRIS)
+		_style_overview_bar(overview_vehicle_bar, UITheme.ACCENT_BRASS)
 		if is_instance_valid(overview_cargo_label):
-			var parent_hbox = overview_cargo_label.get_parent() as HBoxContainer
-			if parent_hbox:
-				parent_hbox.alignment = BoxContainer.ALIGNMENT_CENTER
-				overview_cargo_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-				overview_cargo_label.add_theme_font_size_override("font_size", 15)
-		
-		set_meta("radial_gauge", gauge)
+			overview_cargo_label.add_theme_font_size_override("font_size", 13)
+			overview_cargo_label.add_theme_color_override("font_color", UITheme.TEXT_PRIMARY)
+		if is_instance_valid(overview_vehicle_label):
+			overview_vehicle_label.add_theme_font_size_override("font_size", 13)
+			overview_vehicle_label.add_theme_color_override("font_color", UITheme.TEXT_PRIMARY)
 		
 	# Clean up loose upgrade elements and wrap them in structured sub-panels
 	if is_instance_valid(overview_tab):
@@ -314,23 +299,23 @@ func _setup_dual_column_layout() -> void:
 		var veh_bar = overview_tab.get_node_or_null("OverviewVehicleHBox/OverviewVehicleBar") as ProgressBar
 		if veh_hbox and veh_label and veh_bar:
 			veh_hbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-			veh_label.add_theme_font_size_override("font_size", 14)
-			veh_bar.custom_minimum_size.y = 12
-			
-			var sb_bg = StyleBoxFlat.new()
-			sb_bg.bg_color = Color(0.06, 0.07, 0.09, 1.0)
-			sb_bg.corner_radius_top_left = 3
-			sb_bg.corner_radius_top_right = 3
-			sb_bg.corner_radius_bottom_left = 3
-			sb_bg.corner_radius_bottom_right = 3
-			var sb_fg = StyleBoxFlat.new()
-			sb_fg.bg_color = Color(0.0, 0.66, 1.0, 1.0) # Theme blue
-			sb_fg.corner_radius_top_left = 3
-			sb_fg.corner_radius_top_right = 3
-			sb_fg.corner_radius_bottom_left = 3
-			sb_fg.corner_radius_bottom_right = 3
-			veh_bar.add_theme_stylebox_override("background", sb_bg)
-			veh_bar.add_theme_stylebox_override("fill", sb_fg)
+			veh_label.add_theme_font_size_override("font_size", 13)
+			veh_label.add_theme_color_override("font_color", UITheme.TEXT_PRIMARY)
+			_style_overview_bar(veh_bar, UITheme.ACCENT_BRASS)
+
+func _style_overview_bar(bar: ProgressBar, accent: Color) -> void:
+	if not is_instance_valid(bar):
+		return
+	bar.show_percentage = false
+	bar.custom_minimum_size.y = 10
+	var bg := StyleBoxFlat.new()
+	bg.bg_color = UITheme.METAL_DARK
+	bg.set_corner_radius_all(UITheme.RADIUS_SM)
+	var fill := StyleBoxFlat.new()
+	fill.bg_color = accent
+	fill.set_corner_radius_all(UITheme.RADIUS_SM)
+	bar.add_theme_stylebox_override("background", bg)
+	bar.add_theme_stylebox_override("fill", fill)
 
 func _style_upgrade_box(hbox: HBoxContainer, label: Label, btn: Button) -> void:
 	if not is_instance_valid(hbox) or not is_instance_valid(label) or not is_instance_valid(btn):
@@ -345,16 +330,10 @@ func _style_upgrade_box(hbox: HBoxContainer, label: Label, btn: Button) -> void:
 	wrapper.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	
 	var sb = StyleBoxFlat.new()
-	sb.bg_color = Color(0.12, 0.14, 0.18, 0.6)
-	sb.border_color = Color(0.25, 0.35, 0.45, 0.5)
-	sb.border_width_left = 1
-	sb.border_width_top = 1
-	sb.border_width_right = 1
-	sb.border_width_bottom = 1
-	sb.corner_radius_top_left = 6
-	sb.corner_radius_top_right = 6
-	sb.corner_radius_bottom_left = 6
-	sb.corner_radius_bottom_right = 6
+	sb.bg_color = UITheme.METAL_DARK
+	sb.border_color = UITheme.METAL_EDGE
+	sb.set_border_width_all(1)
+	sb.set_corner_radius_all(UITheme.RADIUS_MD)
 	wrapper.add_theme_stylebox_override("panel", sb)
 	
 	var margin = MarginContainer.new()
@@ -373,8 +352,8 @@ func _style_upgrade_box(hbox: HBoxContainer, label: Label, btn: Button) -> void:
 	hbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	label.add_theme_font_size_override("font_size", 13)
-	label.add_theme_color_override("font_color", Color(0.85, 0.85, 0.9, 1.0))
-	_style_primary_button(btn, Color(0.0, 0.66, 1.0, 1.0))
+	label.add_theme_color_override("font_color", UITheme.TEXT_PRIMARY)
+	_style_primary_button(btn, UITheme.ACCENT_VERDIGRIS)
 
 func _apply_column_responsiveness() -> void:
 	if not is_instance_valid(body_vbox): return
@@ -548,7 +527,7 @@ func _style_buy_menu_ui() -> void:
 	_style_form_controls()
 	# Make the "no warehouse yet" state feel like a real menu instead of raw text.
 	_ensure_info_card_wrapper()
-	_style_primary_button(buy_button, Color(0.35, 0.65, 1.0, 1.0))
+	_style_primary_button(buy_button, UITheme.ACCENT_BRASS)
 	_style_secondary_button(back_button)
 	_style_secondary_button(expand_cargo_btn)
 	_style_secondary_button(expand_vehicle_btn)
@@ -601,7 +580,7 @@ func _ensure_background_layers() -> void:
 	if not (is_instance_valid(_bg_rect) and _bg_rect.is_inside_tree()):
 		var bg := ColorRect.new()
 		bg.name = "WarehouseBackground"
-		bg.color = Color(0.02, 0.03, 0.04, 1.0)
+		bg.color = UITheme.METAL_DARK
 		bg.anchor_left = 0
 		bg.anchor_top = 0
 		bg.anchor_right = 1
@@ -626,19 +605,12 @@ func _ensure_background_layers() -> void:
 		frame.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		frame.z_index = -50
 		var sb := StyleBoxFlat.new()
-		# Slightly lighter than background so the content area pops.
-		sb.bg_color = Color(0.06, 0.07, 0.09, 0.95)
-		sb.border_color = Color(0.35, 0.42, 0.55, 0.9)
-		sb.border_width_left = 1
-		sb.border_width_right = 1
-		sb.border_width_top = 1
-		sb.border_width_bottom = 1
-		sb.corner_radius_top_left = 12
-		sb.corner_radius_top_right = 12
-		sb.corner_radius_bottom_left = 12
-		sb.corner_radius_bottom_right = 12
-		sb.shadow_color = Color(0, 0, 0, 0.6)
-		sb.shadow_size = 10
+		sb.bg_color = UITheme.METAL_BASE
+		sb.border_color = UITheme.METAL_EDGE
+		sb.set_border_width_all(1)
+		sb.set_corner_radius_all(12)
+		sb.shadow_color = Color(0, 0, 0, 0.5)
+		sb.shadow_size = 8
 		frame.add_theme_stylebox_override("panel", sb)
 		add_child(frame)
 		# Keep frame behind MainVBox (which is expected to be child index > 0).
@@ -685,7 +657,7 @@ func _style_containers() -> void:
 			for child in tab.get_children():
 				if child is Label:
 					child.add_theme_font_size_override("font_size", header_font_size)
-					child.add_theme_color_override("font_color", Color(0.85, 0.90, 1.0, 1.0))
+					child.add_theme_color_override("font_color", UITheme.TEXT_PRIMARY)
 					child.size_flags_vertical = 0 # Don't let labels expand, keep them as headers
 
 	if is_instance_valid(top_bar_hbox):
@@ -702,22 +674,15 @@ func _style_containers() -> void:
 		back_button.add_theme_constant_override("hseparation", 16)
 
 func _style_panel_surface(ctrl: Control) -> void:
-	# Apply a consistent panel surface style to containers that draw a panel.
 	if not is_instance_valid(ctrl):
 		return
 	var sb := StyleBoxFlat.new()
-	sb.bg_color = Color(0.08, 0.09, 0.12, 0.96)
-	sb.border_color = Color(0.38, 0.46, 0.60, 0.9)
-	sb.border_width_left = 1
-	sb.border_width_right = 1
-	sb.border_width_top = 1
-	sb.border_width_bottom = 1
-	sb.corner_radius_top_left = 10
-	sb.corner_radius_top_right = 10
-	sb.corner_radius_bottom_left = 10
-	sb.corner_radius_bottom_right = 10
-	sb.shadow_color = Color(0, 0, 0, 0.35)
-	sb.shadow_size = 6
+	sb.bg_color = UITheme.METAL_DARK
+	sb.border_color = UITheme.METAL_EDGE
+	sb.set_border_width_all(1)
+	sb.set_corner_radius_all(UITheme.RADIUS_LG)
+	sb.shadow_color = Color(0, 0, 0, 0.3)
+	sb.shadow_size = 4
 	ctrl.add_theme_stylebox_override("panel", sb)
 
 func _style_form_controls() -> void:
@@ -746,37 +711,27 @@ func _style_option_button(ob: OptionButton) -> void:
 	ob.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	var font_size = 26 if is_portrait else (16)
 	ob.add_theme_font_size_override("font_size", font_size)
-	ob.add_theme_color_override("font_color", Color(0.96, 0.98, 1.0, 1.0))
-	ob.add_theme_color_override("font_color_disabled", Color(0.60, 0.62, 0.68, 1.0))
+	ob.add_theme_color_override("font_color", UITheme.TEXT_PRIMARY)
+	ob.add_theme_color_override("font_color_disabled", UITheme.TEXT_MUTED)
 
 	var normal := StyleBoxFlat.new()
-	normal.bg_color = Color(0.12, 0.14, 0.18, 1.0)
-	normal.border_color = Color(0.55, 0.68, 0.88, 0.95)
-	normal.border_width_left = 1
-	normal.border_width_right = 1
-	normal.border_width_top = 1
-	normal.border_width_bottom = 1
-	normal.corner_radius_top_left = 6
-	normal.corner_radius_top_right = 6
-	normal.corner_radius_bottom_left = 6
-	normal.corner_radius_bottom_right = 6
-	normal.shadow_color = Color(0, 0, 0, 0.35)
-	normal.shadow_size = 3
+	normal.bg_color = UITheme.METAL_BASE
+	normal.border_color = UITheme.METAL_EDGE
+	normal.set_border_width_all(1)
+	normal.set_corner_radius_all(UITheme.RADIUS_MD)
 	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
 		normal.set_content_margin(side, 10)
 
 	var hover := normal.duplicate()
-	hover.bg_color = Color(0.16, 0.18, 0.24, 1.0)
-	hover.border_color = Color(0.70, 0.82, 1.0, 1.0)
+	hover.bg_color = UITheme.METAL_HOVER
+	hover.border_color = UITheme.ACCENT_BRASS
 
 	var pressed := normal.duplicate()
-	pressed.bg_color = Color(0.10, 0.11, 0.15, 1.0)
-	pressed.border_color = Color(0.45, 0.58, 0.78, 1.0)
+	pressed.bg_color = UITheme.METAL_ACTIVE
 
 	var disabled := normal.duplicate()
-	disabled.bg_color = Color(0.10, 0.10, 0.12, 1.0)
-	disabled.border_color = Color(0.25, 0.28, 0.34, 1.0)
-	disabled.shadow_size = 0
+	disabled.bg_color = UITheme.METAL_DARK
+	disabled.border_color = UITheme.METAL_EDGE
 
 	ob.add_theme_stylebox_override("normal", normal)
 	ob.add_theme_stylebox_override("hover", hover)
@@ -797,31 +752,22 @@ func _style_popup_menu(pm: PopupMenu) -> void:
 	var font_size = 32 if is_portrait else (18)
 	pm.add_theme_font_size_override("font_size", font_size)
 	pm.add_theme_constant_override("v_separation", 32 if is_portrait else 8)
-	pm.add_theme_color_override("font_color", Color(0.96, 0.98, 1.0, 1.0))
-	pm.add_theme_color_override("font_hover_color", Color(1, 1, 1, 1))
-	pm.add_theme_color_override("font_disabled_color", Color(0.60, 0.62, 0.68, 1.0))
+	pm.add_theme_color_override("font_color", UITheme.TEXT_PRIMARY)
+	pm.add_theme_color_override("font_hover_color", UITheme.TEXT_PRIMARY)
+	pm.add_theme_color_override("font_disabled_color", UITheme.TEXT_MUTED)
 
 	var panel := StyleBoxFlat.new()
-	panel.bg_color = Color(0.08, 0.09, 0.12, 0.98)
-	panel.border_color = Color(0.55, 0.68, 0.88, 0.9)
-	panel.border_width_left = 1
-	panel.border_width_right = 1
-	panel.border_width_top = 1
-	panel.border_width_bottom = 1
-	panel.corner_radius_top_left = 6
-	panel.corner_radius_top_right = 6
-	panel.corner_radius_bottom_left = 6
-	panel.corner_radius_bottom_right = 6
-	panel.shadow_color = Color(0, 0, 0, 0.65)
-	panel.shadow_size = 10
+	panel.bg_color = UITheme.METAL_BASE
+	panel.border_color = UITheme.METAL_EDGE
+	panel.set_border_width_all(1)
+	panel.set_corner_radius_all(UITheme.RADIUS_MD)
+	panel.shadow_color = Color(0, 0, 0, 0.5)
+	panel.shadow_size = 8
 	pm.add_theme_stylebox_override("panel", panel)
 
 	var hover := StyleBoxFlat.new()
-	hover.bg_color = Color(0.20, 0.28, 0.40, 1.0)
-	hover.corner_radius_top_left = 6
-	hover.corner_radius_top_right = 6
-	hover.corner_radius_bottom_left = 6
-	hover.corner_radius_bottom_right = 6
+	hover.bg_color = UITheme.METAL_HOVER
+	hover.set_corner_radius_all(UITheme.RADIUS_MD)
 	pm.add_theme_stylebox_override("hover", hover)
 
 func _style_line_edit(le: LineEdit) -> void:
@@ -838,24 +784,18 @@ func _style_line_edit(le: LineEdit) -> void:
 	le.custom_minimum_size = Vector2(min_w, btn_h)
 	var font_size = 22 if is_portrait else (16)
 	le.add_theme_font_size_override("font_size", font_size)
-	le.add_theme_color_override("font_color", Color(0.96, 0.98, 1.0, 1.0))
-	le.add_theme_color_override("placeholder_color", Color(0.70, 0.74, 0.82, 0.85))
+	le.add_theme_color_override("font_color", UITheme.TEXT_PRIMARY)
+	le.add_theme_color_override("placeholder_color", UITheme.TEXT_MUTED)
 	var sb := StyleBoxFlat.new()
-	sb.bg_color = Color(0.10, 0.12, 0.16, 1.0)
-	sb.border_color = Color(0.55, 0.68, 0.88, 0.75)
-	sb.border_width_left = 1
-	sb.border_width_right = 1
-	sb.border_width_top = 1
-	sb.border_width_bottom = 1
-	sb.corner_radius_top_left = 12
-	sb.corner_radius_top_right = 12
-	sb.corner_radius_bottom_left = 12
-	sb.corner_radius_bottom_right = 12
+	sb.bg_color = UITheme.METAL_BASE
+	sb.border_color = UITheme.METAL_EDGE
+	sb.set_border_width_all(1)
+	sb.set_corner_radius_all(UITheme.RADIUS_MD)
 	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
 		sb.set_content_margin(side, 18)
 	le.add_theme_stylebox_override("normal", sb)
 	var focus := sb.duplicate()
-	focus.border_color = Color(0.75, 0.88, 1.0, 1.0)
+	focus.border_color = UITheme.ACCENT_BRASS
 	le.add_theme_stylebox_override("focus", focus)
 
 func _style_quantity_control(qc: Control) -> void:
@@ -909,18 +849,12 @@ func _ensure_info_card_wrapper() -> void:
 	card.custom_minimum_size = Vector2(0, 160)
 
 	var panel_sb := StyleBoxFlat.new()
-	panel_sb.bg_color = Color(0.06, 0.07, 0.09, 0.92)
-	panel_sb.border_color = Color(0.35, 0.45, 0.60, 0.9)
-	panel_sb.border_width_left = 1
-	panel_sb.border_width_right = 1
-	panel_sb.border_width_top = 1
-	panel_sb.border_width_bottom = 1
-	panel_sb.corner_radius_top_left = 10
-	panel_sb.corner_radius_top_right = 10
-	panel_sb.corner_radius_bottom_left = 10
-	panel_sb.corner_radius_bottom_right = 10
-	panel_sb.shadow_color = Color(0, 0, 0, 0.55)
-	panel_sb.shadow_size = 6
+	panel_sb.bg_color = UITheme.METAL_BASE
+	panel_sb.border_color = UITheme.METAL_EDGE
+	panel_sb.set_border_width_all(1)
+	panel_sb.set_corner_radius_all(UITheme.RADIUS_LG)
+	panel_sb.shadow_color = Color(0, 0, 0, 0.4)
+	panel_sb.shadow_size = 4
 	card.add_theme_stylebox_override("panel", panel_sb)
 
 	var margin := MarginContainer.new()
@@ -949,7 +883,7 @@ func _style_info_label(lbl: Label) -> void:
 	lbl.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	var font_size = 28
 	lbl.add_theme_font_size_override("font_size", font_size)
-	lbl.add_theme_color_override("font_color", Color(0.92, 0.95, 1.0, 1.0))
+	lbl.add_theme_color_override("font_color", UITheme.TEXT_PRIMARY)
 	lbl.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.55))
 	lbl.add_theme_constant_override("shadow_outline_size", 0)
 	lbl.add_theme_constant_override("shadow_offset_x", 0)
@@ -989,17 +923,17 @@ func _style_primary_button(btn: Button, accent: Color) -> void:
 	pressed.shadow_size = 2
 
 	var disabled := normal.duplicate()
-	disabled.bg_color = Color(0.12, 0.12, 0.14, 1.0)
-	disabled.border_color = Color(0.22, 0.22, 0.26, 1.0)
+	disabled.bg_color = UITheme.METAL_DARK
+	disabled.border_color = UITheme.METAL_EDGE
 	disabled.shadow_size = 0
 
 	btn.add_theme_stylebox_override("normal", normal)
 	btn.add_theme_stylebox_override("hover", hover)
 	btn.add_theme_stylebox_override("pressed", pressed)
 	btn.add_theme_stylebox_override("disabled", disabled)
-	btn.add_theme_color_override("font_color", Color(0.96, 0.98, 1.0, 1.0))
-	btn.add_theme_color_override("font_color_hover", Color(1, 1, 1, 1))
-	btn.add_theme_color_override("font_color_pressed", Color(0.90, 0.94, 1.0, 1.0))
+	btn.add_theme_color_override("font_color", UITheme.TEXT_PRIMARY)
+	btn.add_theme_color_override("font_color_hover", UITheme.TEXT_PRIMARY)
+	btn.add_theme_color_override("font_color_pressed", UITheme.TEXT_PRIMARY)
 	var font_size = 28 if is_portrait else (18)
 	btn.add_theme_font_size_override("font_size", font_size)
 
@@ -1025,8 +959,8 @@ func _style_secondary_button(btn: Button) -> void:
 	btn.mouse_filter = Control.MOUSE_FILTER_STOP # Buttons should catch input
 	btn.add_theme_font_size_override("font_size", 24 if is_portrait else 16)
 	var normal := StyleBoxFlat.new()
-	normal.bg_color = Color(0.12, 0.13, 0.16, 1.0)
-	normal.border_color = Color(0.32, 0.36, 0.44, 1.0)
+	normal.bg_color = UITheme.METAL_BASE
+	normal.border_color = UITheme.METAL_EDGE
 	normal.border_width_left = 1
 	normal.border_width_right = 1
 	normal.border_width_top = 1
@@ -1037,23 +971,23 @@ func _style_secondary_button(btn: Button) -> void:
 	normal.corner_radius_bottom_right = 6
 
 	var hover := normal.duplicate()
-	hover.bg_color = Color(0.16, 0.17, 0.21, 1.0)
-	hover.border_color = Color(0.45, 0.50, 0.62, 1.0)
+	hover.bg_color = UITheme.METAL_HOVER
+	hover.border_color = UITheme.METAL_EDGE
 
 	var pressed := normal.duplicate()
-	pressed.bg_color = Color(0.10, 0.10, 0.12, 1.0)
-	pressed.border_color = Color(0.28, 0.32, 0.40, 1.0)
+	pressed.bg_color = UITheme.METAL_ACTIVE
+	pressed.border_color = UITheme.METAL_EDGE
 
 	var disabled := normal.duplicate()
-	disabled.bg_color = Color(0.10, 0.10, 0.11, 1.0)
-	disabled.border_color = Color(0.20, 0.20, 0.22, 1.0)
+	disabled.bg_color = UITheme.METAL_DARK
+	disabled.border_color = UITheme.METAL_EDGE
 
 	btn.add_theme_stylebox_override("normal", normal)
 	btn.add_theme_stylebox_override("hover", hover)
 	btn.add_theme_stylebox_override("pressed", pressed)
 	btn.add_theme_stylebox_override("disabled", disabled)
-	btn.add_theme_color_override("font_color", Color(0.92, 0.95, 1.0, 1.0))
-	btn.add_theme_color_override("font_color_disabled", Color(0.60, 0.62, 0.68, 1.0))
+	btn.add_theme_color_override("font_color", UITheme.TEXT_PRIMARY)
+	btn.add_theme_color_override("font_color_disabled", UITheme.TEXT_MUTED)
 
 func _set_expand_buttons_enabled(enabled: bool) -> void:
 	# Central helper so we can uniformly toggle & log state
@@ -1096,6 +1030,25 @@ func initialize_with_data(data_or_id: Variant, extra_arg: Variant = null) -> voi
 	_try_load_warehouse_for_settlement()
 	_populate_dropdowns() # initial (may be empty until data arrives)
 
+## When opened without a convoy present (e.g. from the convoy-independent settlement overview, Sprint 5),
+## there's no destination convoy to retrieve cargo/vehicles into — gate those controls and explain why.
+## Buying, viewing, expanding, and spawning a convoy from the warehouse all remain available.
+## A convoy is "present" only when _convoy_data carries a real convoy_id (the overview passes a
+## settlement-context payload with no convoy_id, so is_empty() is not a reliable test here).
+func _apply_convoy_presence_state() -> void:
+	var has_convoy := _convoy_data is Dictionary and String(_convoy_data.get("convoy_id", "")) != ""
+	if has_convoy:
+		return # selection-driven enable/disable logic governs the retrieve controls
+	var note := "Bring a convoy here to retrieve cargo or vehicles into it."
+	if is_instance_valid(retrieve_cargo_btn):
+		retrieve_cargo_btn.disabled = true
+		retrieve_cargo_btn.tooltip_text = note
+	if is_instance_valid(retrieve_vehicle_btn):
+		retrieve_vehicle_btn.disabled = true
+		retrieve_vehicle_btn.tooltip_text = note
+	if is_instance_valid(cargo_retrieve_vehicle_dd):
+		cargo_retrieve_vehicle_dd.disabled = true
+
 func _update_ui(convoy: Dictionary = {}):
 	# MenuBase passes an authoritative convoy snapshot when opened by convoy_id.
 	# Consume it so we can resolve settlement/type/price reliably.
@@ -1125,6 +1078,7 @@ func _update_ui(convoy: Dictionary = {}):
 			summary_label.text = _format_warehouse_summary(_warehouse)
 		# Now that we have warehouse details, repopulate dropdowns that depend on it
 		_populate_dropdowns()
+		_apply_convoy_presence_state()
 		_update_expand_buttons()
 		_update_upgrade_labels()
 		_update_cargo_usage_label()
@@ -2060,12 +2014,9 @@ func _update_overview_bars() -> void:
 	if display_used_cargo > 0.0 and display_used_cargo < one_percent_cargo:
 		display_used_cargo = one_percent_cargo
 	if is_instance_valid(overview_cargo_bar):
+		overview_cargo_bar.visible = true
 		overview_cargo_bar.max_value = cap_cargo
 		overview_cargo_bar.value = clamp(display_used_cargo, 0.0, cap_cargo)
-	var gauge = get_meta("radial_gauge") if has_meta("radial_gauge") else null
-	if is_instance_valid(gauge):
-		gauge.max_value = float(cap_cargo)
-		gauge.value = float(display_used_cargo)
 	if is_instance_valid(overview_cargo_label):
 		overview_cargo_label.text = "Cargo Usage: %s / %s L" % [str(int(used_cargo)), str(int(cap_cargo))]
 	# Vehicle bar (derive from counts if capacity key exists, else hide)
@@ -2233,16 +2184,10 @@ func _set_inventory_panel_empty_state(panel_ctrl: Control, empty_panel_name: Str
 		p.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		p.custom_minimum_size = Vector2(0, 48)
 		var sb := StyleBoxFlat.new()
-		sb.bg_color = Color(0.08, 0.09, 0.12, 0.96)
-		sb.border_color = Color(0.38, 0.46, 0.60, 0.6)
-		sb.border_width_left = 1
-		sb.border_width_right = 1
-		sb.border_width_top = 1
-		sb.border_width_bottom = 1
-		sb.corner_radius_top_left = 10
-		sb.corner_radius_top_right = 10
-		sb.corner_radius_bottom_left = 10
-		sb.corner_radius_bottom_right = 10
+		sb.bg_color = UITheme.METAL_DARK
+		sb.border_color = UITheme.METAL_EDGE
+		sb.set_border_width_all(1)
+		sb.set_corner_radius_all(UITheme.RADIUS_LG)
 		p.add_theme_stylebox_override("panel", sb)
 		var m := MarginContainer.new()
 		m.add_theme_constant_override("margin_left", 12)
@@ -2253,7 +2198,7 @@ func _set_inventory_panel_empty_state(panel_ctrl: Control, empty_panel_name: Str
 		l.text = empty_message
 		l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		l.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
-		l.add_theme_color_override("font_color", Color(0.82, 0.86, 0.92, 1.0))
+		l.add_theme_color_override("font_color", UITheme.TEXT_MUTED)
 		l.add_theme_font_size_override("font_size", 16)
 		m.add_child(l)
 		p.add_child(m)

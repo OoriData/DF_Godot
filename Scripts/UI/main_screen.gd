@@ -37,6 +37,8 @@ func initialize(p_map_view: Control, p_camera_controller: Node, p_interaction_ma
 			map_interaction_manager.convoy_menu_requested.connect(_on_convoy_menu_requested)
 		if map_interaction_manager.has_signal("settlement_clicked") and not map_interaction_manager.is_connected("settlement_clicked", Callable(self, "_on_settlement_clicked")):
 			map_interaction_manager.settlement_clicked.connect(_on_settlement_clicked)
+		if map_interaction_manager.has_signal("settlement_preview_requested") and not map_interaction_manager.is_connected("settlement_preview_requested", Callable(self, "_on_settlement_preview_requested")):
+			map_interaction_manager.settlement_preview_requested.connect(_on_settlement_preview_requested)
 
 	# TEST: Remove the modal scrim (dim layer) to see if it's contributing to the darkness
 	var scrim = get_node_or_null("SafeRegionContainer/ModalLayer/Scrim")
@@ -1586,9 +1588,37 @@ func _apply_menu_ratio_if_open():
 func _on_settlement_clicked(coords: Vector2i):
 	if onboarding_log_enabled:
 		print("[MainScreen] Settlement clicked at coords:", coords)
+	# Tap the tile (or a not-yet-pinned label) to toggle its pin. Once pinned, tapping the floating
+	# label opens the overview preview — that arrives separately via _on_settlement_preview_requested.
 	if is_instance_valid(ui_manager):
 		ui_manager.toggle_settlement_pin(coords)
 		_force_map_ui_refresh()
+
+func _on_settlement_preview_requested(coords: Vector2i) -> void:
+	# Sprint 5: tapping a pinned settlement label opens the convoy-independent overview (browse vendors
+	# + warehouse access), for any settlement — including ones the convoy isn't at.
+	var settlement := _find_settlement_at_coords(coords)
+	if settlement.is_empty():
+		# Couldn't resolve the snapshot — fall back to a plain pin toggle so the tap isn't lost.
+		if is_instance_valid(ui_manager):
+			ui_manager.toggle_settlement_pin(coords)
+			_force_map_ui_refresh()
+		return
+	var menu_manager = get_node_or_null("/root/MenuManager")
+	if is_instance_valid(menu_manager) and menu_manager.has_method("open_settlement_overview_menu"):
+		menu_manager.open_settlement_overview_menu(settlement)
+
+func _find_settlement_at_coords(coords: Vector2i) -> Dictionary:
+	var store = get_node_or_null("/root/GameStore")
+	if not is_instance_valid(store) or not store.has_method("get_settlements"):
+		return {}
+	for s in store.get_settlements():
+		if s is Dictionary:
+			var sx := int(roundf(float((s as Dictionary).get("x", -999999.0))))
+			var sy := int(roundf(float((s as Dictionary).get("y", -999999.0))))
+			if sx == coords.x and sy == coords.y:
+				return s as Dictionary
+	return {}
 
 # Settlement menu keeps the current settlement's label pinned while open. We only remove the pin
 # on close if WE added it — never clobber a settlement the player pinned manually.

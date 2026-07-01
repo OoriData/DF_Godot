@@ -278,15 +278,8 @@ func _update_navigation_bar_visibility(convoy: Dictionary) -> void:
 	if is_instance_valid(menu_mgr) and menu_mgr.has_method("set_nav_button_visible"):
 		menu_mgr.set_nav_button_visible("convoy_settlement_submenu", not has_journey)
 	
-	# Fallback for legacy internal navigation bars
-	var nav_bar = get_node_or_null("MainVBox/BottomBarPanel/BottomMenuButtonsHBox")
-	if not is_instance_valid(nav_bar):
-		nav_bar = find_child("BottomMenuButtonsHBox", true, false)
-		
-	if is_instance_valid(nav_bar):
-		var settlement_btn = nav_bar.get_node_or_null("SettlementMenuButton")
-		if is_instance_valid(settlement_btn):
-			settlement_btn.visible = not has_journey
+	# Legacy BottomBarPanel/BottomMenuButtonsHBox fallback removed (Sprint 5) — that node no longer
+	# exists in any scene; nav-button visibility is owned solely by MenuManager.set_nav_button_visible.
 
 func _refresh_from_store() -> void:
 	print("[MenuBase] _refresh_from_store executing for: ", name)

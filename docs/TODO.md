@@ -1,125 +1,97 @@
 This document will serve as a flowing state of things needed in the project, what resources are needed for each task.
 
-> **Status:** Items audited against current code 2026-06-25. File:line pointers and reuse targets captured in the **Code Map** below. Work is sequenced into Sprints for locality/efficiency.
+> **Status:** Sprints 1–5.5 complete as of 2026-06-30. Code Map below reflects post-sprint state. Sprint 6 is the active plan.
+
+---
+
+# Completed Sprint Summary
+
+| Sprint | Theme | Done |
+|---|---|---|
+| 1 | Quick wins (settings icon, tab counts, cargo sort label, zoom) | ✅ 2026-06-26 |
+| 2 | Map camera & overlay (notch, double-scale fix, route fit, close-off-map) | ✅ 2026-06-26 |
+| 3 | Baby-blue → Oori token sweep (73 replacements across vehicle/journey/MenuBase) | ✅ 2026-06-26 |
+| 4 | Per-menu layout bundles (cargo, mechanics, journey, convoy stats modal, route line) | ✅ 2026-06-29 |
+| 5 | Vendor restructure (Top Up → convoy menu, warehouse without convoy, legacy nav cleanup) | ✅ 2026-06-30 |
+| 5.5 | Settlement hub pivot (overview hub → single-vendor flow, settings drawer removed, map pin preview) | ✅ 2026-06-30 |
+
+Full detail for each sprint is preserved in git history (`600a06b` Sprint 4, `ec0dcdb` Sprint 3, `5498ad0` Sprint 1&2).
 
 ---
 
 # Action Plan (Sprints)
 
-Ordered for efficiency: quick isolated wins first, then by code locality (one subsystem per sprint so each file is opened/tested once), heavier design work last. Settlement-lag investigation can run in parallel.
+### Sprint 6 — Bug fixes (isolated, compile-safe)
+Self-contained bug fixes; each file opened once. Ship immediately after verification.
 
-### Sprint 1 — Quick wins (isolated, low-risk, ship immediately) ✅ DONE 2026-06-26
-One-liners and tiny changes with no shared surface. Knocks out 4 items fast.
-- ✅ **Settings emoji** — U+FE0F alone was insufficient (⚙ U+2699 doesn't reach the emoji-font fallback on mobile). Replaced with a **texture icon** `Assets/Icons/gear.svg` (white-fill, matches `warehouse.svg` precedent), assigned via `_tab_button.icon`. `map_overlay_settings_panel.gd:165`.
-- ✅ **Settlement Preview tab counts** — dropped the `(%d)` suffix from all 3 tab labels. `convoy_menu.gd:1407,1409,1411`.
-- ✅ **Cargo sort/group label clarity** — now a **state-label toggle**: shows current grouping ("Sort by: Vehicle" / "Sort by: Type") with a per-mode tint (teal vs brass) so the two positions read as distinct. `convoy_cargo_menu.gd` `_update_organize_button_text` / `_apply_organize_button_style`.
-- ↩️ **Portrait zoom-out limit (~3×)** — **REVERSED 2026-06-26 after on-device review.** The 3× relaxation worked but exposed empty space beyond the map edges (letterbox), which the player rejected: requirement is now **map must always fully cover the screen — no empty space ever**. `portrait_extra_zoom_out` is kept as an export but **locked at `1.0`** (zoom-out floor stays at the COVER fill). The `_update_camera_limits` relaxation block is now a no-op. `map_camera_controller.gd:35,309-311`.
-- ✅ **Journey route fit zoom locked at cover floor** — `smooth_fit_world_rect` was capping the route-preview zoom at `min_camera_zoom_level` (the COVER fill floor), preventing long routes from fitting both endpoints on screen. Added `route_fit_allow_zoom_past_cover: bool = true` export; when true the cap is bypassed for route fits. The cover floor is still enforced for normal pan/zoom and menu close. `map_camera_controller.gd` (`smooth_fit_world_rect`, ~line 727).
+- [ ] **Cargo delivery reward total** — "Delivery Reward" field currently shows per-unit value instead of `unit_delivery × quantity`. Fix the display calculation. `convoy_cargo_menu.gd`.
+- ✅ **Modals double-scale fonts (receipt + tips)** — `auto_sell_receipt_modal.gd` and `returning_player_tips_modal.gd` flattened to `return base` (2026-07-01).
+- [ ] **Modals double-scale fonts (popups)** — `discord_link_popup.gd` and `account_links_popup.gd` still boost (2.2× portrait). Flatten each to `return base`.
+- [ ] **Menu button mashing / stuck state** — Rapid nav button taps can duplicate menus or leave one stuck mid-transition. Add a transition guard in `menu_manager.gd`: buffer or ignore input while a tween is running. `menu_manager.gd` `_start_menu_switch_animation`.
+- [ ] **Cart slot conflict on part install** — Selecting a part when that slot already has a pending cart item throws an error. Handle gracefully: swap the pending item or show a "replace?" prompt. `mechanics_menu.gd` / cart system.
 
-### Sprint 2 — Map camera & overlay subsystem ✅ DONE 2026-06-26
-All in `map_camera_controller.gd` + `map_overlay_settings_panel.gd` + safe-area plumbing. ⚠️ **All four need on-device verification** (notch behavior, font sizing, label headroom, close animation can't be confirmed off-device).
-- ✅ **Notch / Dynamic Island safe area** — overlay panel now queries `ui_scale_manager.get_logical_safe_margins()` (new `_get_logical_safe_margins()` helper). Portrait top cutout: `safe.position.y` added to the content panel's `content_margin_top` in `_build_ui`. Landscape side cutout: panel + collapsed gear tab shifted right by `safe.position.x` in `_update_layout` (both expanded and collapsed targets). `safe_left ≈ 0` on non-notched layouts → no regression. `map_overlay_settings_panel.gd`.
-- ✅ **Map overlay panel double-scaling** — `_get_font_size()` flattened to `return base` (dropped the 2.6× portrait / 1.35× landscape / 1.6× desktop boost). Fonts now ride `content_scale_factor` like the migrated menus. `map_overlay_settings_panel.gd:39-43`.
-- ✅ **Fit Convoy Route clips city labels** — labels are screen-stable, so room is reserved in **screen space**: `_estimate_fit_zoom()` predicts the fit zoom, then the route bounds grow by `route_fit_label_padding_px / zoom` (new export, default `Vector2(110, 80)` px/side) before `smooth_fit_world_rect`. `map_camera_controller.gd` (`smooth_fit_route_preview`). ⚠️ tune `route_fit_label_padding_px` on device if labels still clip / route reads too small.
-- ✅ **Menu close renders off-map then snaps back (portrait)** — `set_overlay_occlusion()` now enforces `_clamp_camera_position()` every frame while the overlay is **shrinking** (menu closing) even with the convoy-recenter focus tween active; the growing/opening case keeps the old no-snap behavior. The clamp acts as a moving ceiling the camera follows in smoothly instead of snapping at the end. `map_camera_controller.gd` (`set_overlay_occlusion`).
+### Sprint 7 — Mobile / landscape polish
+All layout work; open each file once. ⚠️ Needs on-device verification for all items.
 
-### Sprint 3 — Baby-blue → Oori token sweep ✅ DONE 2026-06-26
-Mechanical, reviewable-as-one-diff. The brand palette has **no blue** by design; each blue must be *mapped* to a token (decision baked in below, adjustable). Do this before Sprint 4 layout reworks so layout happens on already-themed code.
-- ✅ **Journey progress fill** `#29b6f6` → `UITheme.ACCENT_VERDIGRIS`. `convoy_menu.gd` (const dropped — autoload tokens aren't compile-time consts; applied inline at the fill StyleBox ~:2876) and `convoy_journey_menu.gd:361,366`.
-- ✅ **Convoy-list destination text** `#29b6f6` → `TEXT_MUTED` (dropdown items :248, toggle-button BBCode :483 via `TEXT_MUTED.to_html()`, plus matching strip at :494); active highlight `LIGHT_SKY_BLUE` → `ACCENT_BRASS` modulate :507. `convoy_list_panel.gd`.
-- ✅ **Vehicle tappable-stat button** navy → `METAL_BASE` fill + `ACCENT_BRASS` border; hover/pressed → `METAL_HOVER`/`METAL_ACTIVE`. `convoy_vehicle_menu.gd:849-863`.
-- ✅ **Extended navy sweep (vehicle + journey + MenuBase)** — the initial 3 bullets only caught the brightest blues; a follow-up pass found the full **navy-chrome family** (dark navy container fills, steel-blue borders, light-blue label/value text) the user was seeing as "baby-blue boxes." Mapped via `Color(token, alpha)` (alpha preserved): fills→`METAL_BASE`/`METAL_DARK`, borders→`METAL_EDGE` (subtle) or `ACCENT_BRASS` (active/action edges, e.g. Top Up button, selected tab), hover/pressed→`METAL_HOVER`/`METAL_ACTIVE`, label text→`TEXT_PRIMARY`/`TEXT_MUTED`, interactive text→`ACCENT_BRASS`. **73 replacements** across `convoy_vehicle_menu.gd`, `convoy_journey_menu.gd`, `MenuBase.gd` (incl. the shared `style_back_button` navy). **Intentionally preserved:** `MenuBase._slot_accent` categorical palette (blue=transmission, purple=tires, etc. — encodes part category, not chrome). ⚠️ Not yet swept: `warehouse_menu`, `mechanics_menu`, `convoy_cargo_menu`, `inspector_builder`, `map_overlay_settings_panel`, plus the cyan accents (`0.0,0.66,1.0` / `0.35,0.8,0.95`) — Sprint 4.
-- Tokens live in `ui_theme.gd:15-41`. Heaviest remaining raw-color menus: `warehouse_menu` (68), `convoy_cargo_menu` (58) — fold their token adoption into Sprint 4.
+- [ ] **Landscape nav buttons fill width** — Nav bar buttons don't fill available horizontal space in landscape. Expand to fill/evenly distribute. `menu_manager.gd` `StaticBottomNav`.
+- [ ] **Landscape zoom unlock** — Apply the same `route_fit_allow_zoom_past_cover` bypass in landscape so long routes fit without clipping. `map_camera_controller.gd`.
+- [ ] **Warehouse menu mobile layout** — Portrait layout cramped/buggy; landscape one-sided with deadspace. Full layout pass. `warehouse_menu.gd`.
+- [ ] **Parts/service cards horizontal scroll in landscape** — Cards don't fit in vertical layout in landscape. Convert to horizontal scroll. `convoy_vehicle_menu.gd` (Parts tab), `mechanics_menu.gd`.
+- [ ] **Orientation change reflow** — Switching portrait↔landscape mid-session leaves menus in wrong layout mode until closed/reopened. Trigger layout rebuild on `NOTIFICATION_WM_SIZE_CHANGED` / `get_viewport().size_changed` in affected menus. Confirmed case: `mechanics_menu.gd` parts scroll. Audit all orientation-branched menus.
 
-### Sprint 4 — Per-menu layout bundles ✅ DONE 2026-06-29
-Each menu is self-contained; do layout + remaining token adoption in one pass per file. ⚠️ **All items verified by full-project headless compile (autoloads registered) but NOT on-device** — the layout/spacing/touch tunings (cargo padding, sort-control cap, faint-line alpha, single-expand feel) need a real device/landscape pass.
-- ✅ **Cargo (portrait)** — top controls now spread (organize ⇠ spacer ⇢ sort) instead of bunched-center; sort dropdown right-aligned (`SIZE_SHRINK_END`) and capped (`fit_to_longest_item = false` + `clip_text`, trimmed mobile margins) per **P7**; mobile card top/bottom padding 14→10 for tighter vertical rhythm per **P3**. `convoy_cargo_menu.gd`.
-- ✅ **Cargo single-expand on mobile** — new `_mobile_open_row` tracker + `_close_inspect_for_row()`; opening an inspect on mobile collapses the previously-open one. Desktop still allows multiple. `convoy_cargo_menu.gd`.
-- ✅ **Cargo touch-highlight stuck** — capture an immutable `base_color` so enter/press can't compound the tint; hover lighten is desktop-only; `mouse_exited` always clears highlight + pending tap; tap only fires if the press began on that row (also kills the spurious drag-release tap). `convoy_cargo_menu.gd`.
-- ✅ **Mechanics Parts/Cart tabs** — custom tab buttons retokenized (`METAL_DARK`/`METAL_EDGE` fill+border, `METAL_ACTIVE`+`ACCENT_BRASS` selected, `TEXT_MUTED`/`TEXT_PRIMARY` labels) and given real heights (80/64/44, was min-height 0). The hidden `TabContainer` bar (`tabs_visible=false`) was left as-is. `mechanics_menu.gd`.
-- ✅ **Convoy stats → tap-to-breakdown modal** — ported `_make_inspect_overlay`/`_make_inspect_panel`/`_add_kv_row` into `convoy_menu.gd`; Speed/Offroad/Efficiency open a per-vehicle breakdown (convoy total read verbatim from data + aggregation note: min for speed/offroad, average for efficiency, confirmed from `convoy_data_example.json`). Wired on the landscape/desktop stat boxes **and** the portrait summary chips (brass border affordance). `convoy_menu.gd`.
-- ✅ **Journey loading bar** — `_show_loading_indicator` now builds a label + indeterminate `ProgressBar` pulsed in `_process` (`50 + sin(t*5)*50`, verdigris fill), mirroring `login_screen.gd`. `convoy_journey_menu.gd`.
-- ✅ **Journey route line — faint while on other menu, hidden when menus closed** — implemented centrally in `UI_manager.gd` (it owns the line). Journey menu is persistent so the preview survives a tab switch; `_preview_alpha_mul` = 1.0 on the journey menu, `PREVIEW_FAINT_ALPHA` (0.3) on any other menu, and `menu_visibility_changed(false)` (all-closed) clears it. No conflict with `map_overlay_settings_panel` (those toggles don't govern the preview line). `UI_manager.gd`.
-- ✅ **Journey confirmation label/value gap (landscape)** — landscape packs the resource table tight-left (`res_grid` `SHRINK_BEGIN`, name column `SIZE_FILL`) instead of letting the name column expand and shove the values to the far edge; portrait keeps the full-width table. `convoy_journey_menu.gd`.
-- ✅ **Select Convoy drawer (portrait)** — popup widened to `clamp(viewport*0.7, 300, 460)` in portrait (was button width), clamped on-screen with overflow shift; height clamped to available space; `DisplayServer.window_get_size()` (physical px) replaced with logical `get_viewport_rect()` + `DeviceStateManager` portrait. `ListScrollContainer` already provided scrolling. `convoy_list_panel.gd`.
+### Sprint 8 — Tutorial update
+Update the tutorial system to match the new UI navigation flow introduced in Sprints 5–5.5.
 
-**Follow-up (post on-device review, 2026-06-29):**
-- ✅ **Journey loading bar wasn't visible** — `_show_loading_indicator` appended below the (scrolled) destination list, off-screen. Now pinned to `content_vbox` index 0 + `scroll_vertical = 0` so it shows immediately while routes plot. `convoy_journey_menu.gd`.
-- ✅ **Convoy stat breakdown now shows the math** — modal computes the aggregate client-side (min for speed/offroad, average for efficiency), lists every vehicle's value with a `(limiting)` marker on the min, and shows backend-total vs computed side-by-side so the backend formula can be confirmed. (User to verify the backend math.) `convoy_menu.gd`.
-- ✅ **Mechanics/vehicle tab strip empty space + clipping** — the **vehicle menu's** outer `Summary/Parts/Service/Cargo` strip had a scroll band (`92/72/48`) that didn't match its button height (`80/80/60`), leaving ~12px dead band above/below the tabs and squeezing the Service tab (which embeds the mechanics cards → clipping). Unified band+button to one height and trimmed landscape: portrait 80, landscape-mobile 56, desktop 44. Embedded mechanics strip likewise trimmed 64→56 landscape-mobile. Frees ~36px of card height in landscape. `convoy_vehicle_menu.gd`, `mechanics_menu.gd`.
+- [ ] **Audit existing tutorial steps** — Review `res://Data/tutorial_steps.json` for any steps that reference the old settlement flow (multi-vendor list, single settlement screen, Top Up location, vendor selector). Identify all broken node paths and copy. `tutorial_steps.json`, `Scripts/UI/tutorial_manager.gd`.
+- [ ] **Update settlement hub tutorial steps** — Rewrite/add steps that walk the player through: Settlement nav → hub overview → vendor card tap → single-vendor trade → "‹ Settlement" back. Update target node paths in `target_resolver.gd` patterns as needed.
+- [ ] **Update Top Up tutorial step** — Top Up moved from settlement menu to the convoy overview `TopBarHBox`. Update the step target and instructional copy.
+- [ ] **Map pin tutorial** — Add or update the step that teaches pinning a settlement label and tapping the `›` chevron to open the overview. The old "tap settlement on map" behavior has changed.
+- [ ] **Smoke-test full tutorial flow** — Run `wiring_smoke_test.gd` and do a manual pass through the entire tutorial on device. Verify the highlight overlay hits the correct nodes at each step.
 
-### Sprint 5 — Vendor menu restructure (design-heavy, cross-file)
-Moves controls across three surfaces; do last.
-- **Warehouse** button → bottom nav bar (`menu_manager.gd` `_setup_static_bottom_nav` / StaticBottomNav).
-- **Top Up** button → Base Convoy Menu (`convoy_menu.gd`).
-- **Settings** → expandable side **drawer** (`vendor_trade_panel.gd`).
-- **Warehouse access without convoy in settlement** — players currently can't open the warehouse if no convoy is present at the settlement. Add a path to reach the warehouse menu independent of convoy presence (e.g. via the bottom nav or a settlement overview screen). `menu_manager.gd`, `vendor_trade_panel.gd` / `warehouse_menu.gd`.
-- While here: verify/remove the legacy `BottomBarPanel` duplicate nav (UIAudit Visual **P2**, Cross-Cutting #3).
-
-### Parallel investigation — Settlement menu open lag (iOS)
-Profile `convoy_settlement_menu.gd` open path (`_ready` / first-open layout build vs data fetch). Likely synchronous layout/tab construction on open. Confirm on device before optimizing (defer heavy build, or pre-warm).
+### Sprint 9 — Map & misc polish
+- [ ] **Settlement labels tap-only (mobile)** — Labels currently fire on pan gestures. Guard behind `OS.has_feature("mobile")`; show only on explicit `InputEventScreenTouch`, not `InputEventMouseMotion`. Desktop retains hover. Settlement label script / `map_interaction_manager.gd`.
+- [ ] **Map overlay notch clearance** — Gear tab and expanded overlay should always clear the Dynamic Island / notch safe area on all devices, not just when `safe.position.y > 0`. When a menu panel sits under the notch, add a breathing gap between the notch floor and menu content. `map_overlay_settings_panel.gd` `_build_ui` / `_update_layout`.
+- [ ] **Mechanics compatibility preloading** — Pre-fetch compatibility data for all convoy vehicles when the mechanics menu opens; show "N upgrades available" per vehicle card before the user taps in. Requires the cart to handle multi-vehicle, multi-upgrade state. `mechanics_menu.gd`, cart system.
 
 ---
 
-# Code Map (resources per task)
+# Code Map (active tasks)
 
-| Task | Primary file:line | Reuse / Notes |
+| Task | Primary file:line | Notes |
 |---|---|---|
-| Settings emoji (mobile) | `map_overlay_settings_panel.gd:166` | ✅ done — texture icon |
-| Map overlay double-scaling | `map_overlay_settings_panel.gd:39-42` | ✅ done — flattened boost |
-| Notch / safe area | `safe_area_handler.gd`, `UI_scale_manager.gd:109-121` | ✅ done — `get_logical_safe_margins()` |
-| Fit-route clips labels | `map_camera_controller.gd` `smooth_fit_route_preview` | ✅ done — `route_fit_label_padding_px` export |
-| Close shows off-map | `map_camera_controller.gd` `set_overlay_occlusion` | ✅ done — clamp enforced during shrink |
-| Settlement Preview counts | `convoy_menu.gd:1407,1409,1411` | ✅ done — no `(%d)` |
-| Cargo sort label | `convoy_cargo_menu.gd` `_update_organize_button_text` | ✅ done — state label + tint |
-| Baby-blue sweep | `ui_theme.gd:15-41` (tokens) | map per-use; no blue token exists |
-| Journey route line (faint/hidden) | `convoy_journey_menu.gd`, `map_overlay_settings_panel.gd` | faint when on other menu tab; hidden when menus closed |
-| Journey loading bar | `convoy_journey_menu.gd:121-126` | reuse `login_screen.gd:152-154` ProgressBar |
-| Journey confirmation gap | `convoy_journey_menu.gd` confirm panel | landscape resource table |
-| Convoy stats modal | `convoy_vehicle_menu.gd:1291` | reuse `_on_inspect_stat_pressed` + `_make_inspect_*` |
-| Cargo cards / buttons | `convoy_cargo_menu.gd` | portrait layout; 58 raw colors |
-| Cargo single-expand (mobile) | `convoy_cargo_menu.gd` | collapse previous on new expand; mobile-only |
-| Cargo touch-highlight stuck | `convoy_cargo_menu.gd` | fix touch-enter/exit; clear on finger lift |
-| Mechanics Parts/Cart tabs | `mechanics_menu.gd` tab container | Oori token colors; taller tap targets |
-| Select Convoy drawer | `convoy_list_panel.gd:92` | widen `ConvoyPopup`; fix logical-pixel bug |
-| Vendor restructure | `vendor_trade_panel.gd`, `menu_manager.gd`, `convoy_menu.gd` | warehouse→nav, topup→convoy, settings→drawer |
-| Warehouse without convoy | `menu_manager.gd`, `warehouse_menu.gd` | access warehouse independent of convoy presence |
-| Settlement lag | `convoy_settlement_menu.gd` `_ready` | profile on iOS first |
-| Settlement labels — touch only | map settlement label script | mobile: tap-to-show only; desktop: keep hover |
-| Landscape nav fill | `menu_manager.gd` StaticBottomNav | expand buttons to fill bar width in landscape |
-| Landscape zoom unlock | `map_camera_controller.gd` | same zoom-past-cover unlock as portrait |
-| Menu button mashing / stuck state | `menu_manager.gd` transition logic | guard transitions; ignore input while animating |
-| Cart slot conflict error | `mechanics_menu.gd` / cart system | error on install when slot already occupied in cart |
-| Compatibility preloading | `mechanics_menu.gd`, cart system | preload all convoy vehicles on menu open; show "N upgrades available" per vehicle; cart must handle multi-vehicle multi-upgrade |
-
-**Migration status (UITheme adoption):** ✅ `convoy_menu`, `convoy_vehicle_menu`, `mechanics_menu`, `vendor_trade_panel`, `MenuBase` · ⚠️ `convoy_journey_menu` (navy chrome tokenized Sprint 3; other raw colors remain), `convoy_settlement_menu` (partial) · ❌ `convoy_cargo_menu`, `warehouse_menu` (raw colors).
+| Cargo delivery reward total | `convoy_cargo_menu.gd` | `unit_delivery × quantity`; display only |
+| Modal font double-scale | `discord_link_popup.gd`, `account_links_popup.gd` | Flatten `_get_font_size → return base`; receipt + tips ✅ done |
+| Menu mashing guard | `menu_manager.gd` `_start_menu_switch_animation` | Ignore input while tween running |
+| Cart slot conflict | `mechanics_menu.gd` / cart system | Swap or prompt |
+| Landscape nav fill | `menu_manager.gd` `StaticBottomNav` | `SIZE_EXPAND_FILL` on buttons |
+| Landscape zoom unlock | `map_camera_controller.gd` | Match portrait `route_fit_allow_zoom_past_cover` |
+| Warehouse mobile layout | `warehouse_menu.gd` | Portrait + landscape pass |
+| Parts horizontal scroll | `convoy_vehicle_menu.gd` Parts tab, `mechanics_menu.gd` | `HBoxContainer` + outer `PartsScroll` |
+| Orientation reflow | `mechanics_menu.gd` (confirmed), audit others | `NOTIFICATION_WM_SIZE_CHANGED` handler |
+| Tutorial — settlement flow | `res://Data/tutorial_steps.json`, `tutorial_manager.gd` | Hub → vendor → back flow |
+| Tutorial — Top Up | `tutorial_steps.json` | Target moved to convoy overview `TopBarHBox` |
+| Tutorial — map pin | `tutorial_steps.json` | Pinned label `›` chevron as the affordance |
+| Settlement labels mobile | settlement label script, `map_interaction_manager.gd` | Touch-only on mobile |
+| Map overlay notch | `map_overlay_settings_panel.gd` | All-devices clearance + menu breathing gap |
+| Mechanics compat preload | `mechanics_menu.gd`, cart system | Multi-vehicle, multi-upgrade cart |
 
 ---
 
 # Backlog
 
-Not blocking the sprints above. Pull into a sprint when the relevant file is already open, or batch into a future sprint. Verify each against current code before acting — these are point-in-time.
+Not blocking the sprints above. Pull into a sprint when the relevant file is open.
 
 ## Bugs
 
-- **Settlement labels appear during pan (mobile)** — Labels currently trigger during pan gestures; they should only appear on explicit tap/touch. Desktop retains the hover mechanic. Investigate the label display trigger in the settlement label script (likely tied to `InputEventScreenTouch` vs `InputEventMouseMotion`). Mobile-only change — guard behind `OS.has_feature("mobile")` or equivalent.
-- **Cargo delivery reward shows per-unit value instead of total** — The cargo page has two fields: "Unit Delivery" (reward per unit of cargo) and "Delivery Reward" (should be the total payout). Delivery Reward is currently displaying the same per-unit figure instead of `unit_delivery × quantity`. `convoy_cargo_menu.gd`.
-- **Orientation change doesn't reflow layout** — Switching between portrait and landscape mid-session can leave menus in the wrong layout mode (e.g. parts cards stay in horizontal-scroll after rotating back to portrait) until the menu is closed and reopened. Layout rebuild must be triggered on orientation change, not only on open. Affects any menu with orientation-branched layout; `mechanics_menu.gd` parts scroll is the confirmed case. Check `_notification(NOTIFICATION_WM_SIZE_CHANGED)` / `get_viewport().size_changed` handling in each affected menu.
-- **Menu button mashing — UI duplication / stuck state** — Tapping nav buttons rapidly can cause menus to duplicate on screen or get stuck mid-transition (partially on/off screen). Transition logic needs to guard against input while a tween is already running; buffer or ignore subsequent taps until the current transition completes. `menu_manager.gd`.
-- **Cart slot conflict on part install** — Selecting a part to install when that vehicle slot already has a pending item in the cart throws an error instead of prompting to replace. Handle gracefully: either swap the pending item or surface a clear "replace?" confirmation. `mechanics_menu.gd` / cart system.
-- **Modals still double-scale fonts** — `auto_sell_receipt_modal.gd`, `returning_player_tips_modal.gd`, `discord_link_popup.gd`, `account_links_popup.gd` still use the `_get_font_size()` boost pattern. Flatten to `return base` like the migrated menus.
-
-## Polish / UX
-
-- **Map overlay panel — always respect notch/island clearance, and add spacing when menus sit under it** — The gear tab and expanded overlay should always sit below the Dynamic Island / notch safe area on all mobile devices, not just as an additive offset when `safe.position.y > 0`. Additionally, when a menu panel is open and its top edge falls under the notch region, preserve a small breathing gap between the notch floor and the menu content so nothing is clipped or cramped. `map_overlay_settings_panel.gd` `_build_ui` / `_update_layout`.
-- **Landscape zoom unlock** — Portrait mode now allows zooming past the cover floor for route fits (`route_fit_allow_zoom_past_cover`). Apply the same unlock in landscape so long routes also fit on screen without clipping. `map_camera_controller.gd`.
-- **Mechanics compatibility preloading** — Currently the menu makes an API call per vehicle when checking compatible parts, requiring a loading state. Instead: preload compatibility data for all convoy vehicles when the mechanics menu first opens, then show "N upgrades available" on each vehicle card before the user taps in. Requires the cart system to be extended to handle multiple vehicles and multiple pending upgrades simultaneously. `mechanics_menu.gd`, cart system.
-- **Landscape nav buttons — fill width** — Bottom nav bar buttons in landscape don't utilize available horizontal space. Expand them to fill or evenly distribute across the bar. `menu_manager.gd` StaticBottomNav.
-- **Parts/service cards — horizontal scroll in landscape** — Cards don't fit cleanly in vertical layout in landscape. Convert to horizontal scrolling (pan side to side) so cards have room.
 - **Convoy name label (P5)** — floats unanchored above the panel; integrate as a styled header. `convoy_menu.gd` TitleLabel.
 - **Resource-bar text contrast (P6)** — low contrast at high fill; add outline or bump font weight. `convoy_menu.gd` ResourceStatsHBox.
 - **HSeparators near-invisible (P8)** — on dark bg, replace with section labels or themed dividers.
-- **Global spacing consistency (P9)** — `UITheme.SPACE_*` tokens exist but adoption is incomplete across menus.
+
+## Polish / UX
+
+- **Global spacing consistency (P9)** — `UITheme.SPACE_*` tokens exist but adoption is incomplete.
+- **Settlement vendor browse (map preview)** — full read-only inventory list when viewing a settlement without a convoy. Currently shows name + "deals in" summary only. Follow-up to Sprint 5.5.
+- **Convoy stats backend verification** — breakdown modal (`convoy_menu.gd`) shows computed aggregate (min for speed/offroad, average for efficiency) alongside the backend total. Backend formula not yet confirmed — verify on device.
 
 ## Tech Debt
 
@@ -129,3 +101,10 @@ Not blocking the sprints above. Pull into a sprint when the relevant file is alr
 - `UserInfoDisplay` height changes not signaled → stale `offset_top` on submenus.
 - `main_screen.gd` wires convoy button via fragile `find_child()`.
 - S/M/L UI-scale preference silently overridden in portrait.
+
+## Migration Status (UITheme adoption)
+
+✅ `convoy_menu`, `convoy_vehicle_menu`, `mechanics_menu`, `vendor_trade_panel`, `MenuBase`, `convoy_journey_menu` (navy chrome Sprint 3)
+✅ `warehouse_menu`, `warehouse_item_card` (Oori sweep 2026-07-01)
+⚠️ `convoy_settlement_menu` (partial) · `settlement_overview_menu` (new — check token use)
+❌ `convoy_cargo_menu` (raw colors remain)

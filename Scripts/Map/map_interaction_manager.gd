@@ -27,6 +27,9 @@ signal camera_zoom_changed(new_zoom_level: float)
 # Emitted when a convoy icon is clicked/tapped, requesting its menu.
 signal convoy_menu_requested(convoy_data: Dictionary)
 signal settlement_clicked(coords: Vector2i)
+## Emitted when the floating (pinned) settlement label is tapped — opens the settlement overview preview.
+## Tapping the tile itself still toggles the pin via settlement_clicked.
+signal settlement_preview_requested(coords: Vector2i)
 
 # --- Node References (to be set by main.gd via initialize method) ---
 var map_display: TileMapLayer = null
@@ -348,8 +351,13 @@ func _handle_tap_interaction(tap_position: Vector2) -> bool:
 	var hit_panel_coords := _get_settlement_panel_at_screen_pos(tap_position)
 	if hit_panel_coords.x >= 0:
 		if debug_logging:
-			print("[MIM] Tap on pinned settlement panel at coords: ", hit_panel_coords)
-		emit_signal("settlement_clicked", hit_panel_coords)
+			print("[MIM] Tap on settlement panel at coords: ", hit_panel_coords)
+		# The floating pinned label acts as the "preview" button → open the settlement overview.
+		# A label that isn't pinned yet just gets pinned (toggle), matching the tile-tap behaviour.
+		if is_instance_valid(ui_manager) and ui_manager.has_method("is_settlement_pinned") and ui_manager.is_settlement_pinned(hit_panel_coords):
+			emit_signal("settlement_preview_requested", hit_panel_coords)
+		else:
+			emit_signal("settlement_clicked", hit_panel_coords)
 		return true
 
 	# Fallback to the settlement tile hit test

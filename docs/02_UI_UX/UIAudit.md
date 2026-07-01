@@ -206,7 +206,7 @@ Each button (`Button`) is named `ConvoyButton_{convoy_id}` and contains:
 ### Known Issues / Gaps
 - ❌ `convoy_list_panel.gd:92` calls `DisplayServer.window_get_size()` — violates logical pixel rule
 - ❌ Contains duplicate Oori color palette `const` values
-- ⚠️ `_get_font_size()` double-scaling migration (updated 2026-06-26): **menus** done (`convoy_vehicle_menu`, `convoy_cargo_menu`, `mechanics_menu`, `route_selection_menu`, `settings_menu` return `base`), `map_overlay_settings_panel` now also returns `base` (fixed 2026-06-26 as part of Sprint 1/2 work). **Remaining modals still boost**: `auto_sell_receipt_modal`, `returning_player_tips_modal`, `discord_link_popup`, `account_links_popup`. `UIScaleManager` is the intended sole scaling authority. Check with `grep -nA2 _get_font_size <script>`.
+- ⚠️ `_get_font_size()` double-scaling migration: **menus** ✅ done (`convoy_vehicle_menu`, `convoy_cargo_menu`, `mechanics_menu`, `route_selection_menu`, `settings_menu`, `map_overlay_settings_panel`). **Modals** ✅ `auto_sell_receipt_modal`, `returning_player_tips_modal` fixed 2026-07-01. **Remaining popups still boost**: `discord_link_popup`, `account_links_popup` (2.2× portrait). `UIScaleManager` is the intended sole scaling authority. Check with `grep -nA2 _get_font_size <script>`.
 - ❌ `ToggleButton` in `.tscn` has `custom_minimum_size = Vector2(280, 80)` but script overrides to 300×56 or 400×110
 
 ---
@@ -265,12 +265,13 @@ ConvoyMenu (Control, 450px wide default)
     ├─ TopBarHBox
     │   ├─ BackButton (120×34 min)
     │   ├─ TitleLabel (font 22)
+    │   ├─ TopUpButton  ← added Sprint 5; hidden unless convoy parked at a selling settlement
     │   └─ RightSpacer (120px fixed — balances back button)
     ├─ ScrollContainer
     │   └─ ContentVBox
     │       ├─ ResourceStatsHBox  [Water, Food, Fuel] — ProgressBar + Label overlaid
     │       ├─ HSeparator
-    │       ├─ PerformanceStatsHBox  [Speed, Offroad, Efficiency] — PanelContainer chips
+    │       ├─ PerformanceStatsHBox  [Speed, Offroad, Efficiency] — PanelContainer chips (tap → breakdown modal)
     │       ├─ HSeparator
     │       ├─ CargoBarsHBox  [CargoVolume, CargoWeight] — ProgressBar + Label
     │       ├─ HSeparator
@@ -284,22 +285,14 @@ ConvoyMenu (Control, 450px wide default)
     │                   │   ├─ JourneyProgressBar + JourneyProgressLabel (overlaid)
     │                   │   └─ JourneyETALabel
     │                   └─ VendorItemContainer → VendorItemGrid (GridContainer, columns=999)
-    └─ BottomBarPanel (PanelContainer)       ← LEGACY — duplicates StaticBottomNav
-        └─ BottomMenuButtonsHBox (HFlowContainer)
-            ├─ VehicleMenuButton (110×34)
-            ├─ JourneyMenuButton (110×34)
-            ├─ SettlementMenuButton (110×34)
-            └─ CargoMenuButton (110×34)
 ```
 
 ### Known Issues / Gaps
-- ❌ **Duplicate nav bar**: `BottomBarPanel/BottomMenuButtonsHBox` mirrors the `StaticBottomNav` in MenuManager. These are styled differently (unstyled default buttons vs the themed StaticBottomNav). Only one should exist.
 - ❌ `offset_right = 450` hardcoded in scene root — ignored at runtime since `MenuManager` sets `PRESET_FULL_RECT`, but misleading
 - ❌ Vendor tab row (`Convoy | Settlement | Parts | Journey`) uses plain `Button` with `ButtonGroup` — no visual design (no custom stylebox)
 - ❌ Resource stats overlaid label+bar approach uses manual layering, not a custom component
 
 ### Open Design Questions
-- [ ] Remove `BottomBarPanel` entirely? (StaticBottomNav is the canonical implementation)
 - [ ] Should vendor tabs use a tab bar component or styled toggle buttons?
 
 ---
@@ -340,8 +333,9 @@ All extend `MenuBase`. Scenes are minimal scaffolding; UI is built in script. Fu
 - Calls `RouteSelectionMenu.tscn` as a sub-dialog for embark confirmation (see §16)
 
 **Settlement** — [`SettlementMenu.md`](SettlementMenu.md)
-- Service hub: springs to Vendor panels, Warehouse, and refueling
-- Dynamically enables/disables buttons based on `sett_type`
+- As of Sprint 5.5 the nav flow is: **Settlement nav button → SettlementOverviewMenu (hub) → single-vendor ConvoySettlementMenu**
+- `convoy_settlement_menu.gd` is now opened with a `vendor_id` focus — it builds only that vendor's tab, hides the vendor selector, and shows a "‹ Settlement" back button that returns to the hub
+- The hub (`settlement_overview_menu.gd`) handles vendor selection and the Warehouse entry point
 
 **Cargo** — [`ConvoyCargoMenu.md`](ConvoyCargoMenu.md)
 - 5-metric sort system (`ui.cargo_sort_metric` persisted to `SettingsManager`)
@@ -352,6 +346,42 @@ All extend `MenuBase`. Scenes are minimal scaffolding; UI is built in script. Fu
 ### Known Issues / Gaps (Shared)
 - ❌ Top banner is generated procedurally — no scene-level placeholder to inspect in editor
 - ❌ `offset_top` set via `user_info_display.size.y` — stale if `UserInfoDisplay` height changes without signaling
+
+---
+
+## 5b. Settlement Overview Menu (Hub) — `SettlementOverviewMenu.tscn`
+
+| Property | Value |
+|---|---|
+| **Scene** | `res://Scenes/SettlementOverviewMenu.tscn` |
+| **Script** | `Scripts/Menus/settlement_overview_menu.gd` |
+| **Extends** | `MenuBase` |
+| **Menu Type Key** | `settlement_hub` (convoy present, shows bottom nav) · `settlement_overview` (map preview, no nav) |
+| **Opens from** | Settlement nav button (convoy present) · Pinned settlement label tap (map preview) |
+| **Full Doc** | [SettlementMenu.md](SettlementMenu.md) |
+
+### Purpose
+Primary intermediary between the convoy menu and the single-vendor trade menu. Replaces the old multi-vendor `convoy_settlement_menu.gd` as the settlement entry point.
+
+### Layout (built in code)
+```
+SettlementOverviewMenu (Control, MenuBase)
+├─ Banner  (settlement name + type + coords info chips)
+├─ VendorGrid  (2-col portrait / 1-col small; card per vendor)
+│   └─ VendorCard  (name + "deals in" summary + "Trade ›")
+│       → tappable when convoy present; browse-only otherwise
+└─ WarehouseEntry  (brass button → warehouse_menu)
+```
+
+### Two Modes
+| Mode | `menu_type` | Convoy wiring | Vendor taps |
+|---|---|---|---|
+| Hub (convoy parked) | `settlement_hub` | Subscribes `convoys_changed` + `map_changed` | Active — emits `open_vendor_requested(convoy, vendor_id)` |
+| Map preview (no convoy) | `settlement_overview` | None | Disabled (informational only) |
+
+### Known Issues / Gaps
+- ⚠️ Vendor read-only browse in map-preview mode is informational only — full inventory list is a follow-up
+- ⚠️ On-device pass pending (vendor tap → single-vendor slide, back button, nav highlight)
 
 ---
 

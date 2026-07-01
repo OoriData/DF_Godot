@@ -71,8 +71,7 @@
               "title": "DocumentationHome"
             }
           }
-        ],
-        "currentTab": 2
+        ]
       }
     ],
     "direction": "vertical"
@@ -217,7 +216,7 @@
       "bases:Create new base": false
     }
   },
-  "active": "1ae821d75f551279",
+  "active": "9c639cf8e7cf6606",
   "lastOpenFiles": [
     "DocumentationHome.md",
     "AI_ONBOARDING.md",

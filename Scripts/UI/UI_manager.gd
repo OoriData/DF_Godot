@@ -1466,6 +1466,12 @@ func _update_settlement_panel_content(panel: Panel, settlement_info: Dictionary,
 		final_text = "🏭 " + final_text
 		has_warehouse = true
 
+	# Pinned labels double as the "preview" button (tap → settlement overview). A trailing chevron
+	# signals the label is tappable; the tap itself is hit-tested in MapInteractionManager.
+	var sett_coords := Vector2i(int(settlement_info.get('x', -1)), int(settlement_info.get('y', -1)))
+	if _pinned_settlement_coords.has(sett_coords):
+		final_text += "  ›"
+
 	# Append the cargo headed to this destination (first item + "(+N more)").
 	if not cargo_names.is_empty():
 		var cargo_line: String = "📦 " + str(cargo_names[0])

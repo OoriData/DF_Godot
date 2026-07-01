@@ -58,9 +58,21 @@ func _ready():
 ```
 
 ### Menu Types & Ordering
-Menus are categorized to determine their slide direction:
-- `convoy_overview`: The top-level layer (swipes vertically).
-- `convoy_vehicle_submenu`, `convoy_journey_submenu`, etc.: Sibling sub-menus (swipe horizontally).
+Menus are categorized to determine their slide direction. `MENU_ORDER` index determines horizontal slide direction (lower index = left of higher index).
+
+| Menu Type | Index | Slide Behavior |
+|---|---|---|
+| `convoy_overview` | — | Vertical swipe (covers submenus) |
+| `convoy_vehicle_submenu` | 0 | Horizontal |
+| `convoy_journey_submenu` | 1 | Horizontal |
+| `convoy_cargo_submenu` | 2 | Horizontal |
+| `settlement_hub` | 3 | Horizontal (convoy-present overview hub) |
+| `convoy_settlement_submenu` | 4 | Horizontal (single-vendor trade screen) |
+| `warehouse_submenu` | 5 | Horizontal |
+| `mechanics_submenu` | 6 | Horizontal |
+| `settlement_overview` | — | No nav bar; used for map-preview opens (no convoy) |
+
+`_nav_slot_for_type()` maps both `settlement_hub` and `convoy_settlement_submenu` to the **Settlement** nav button so it stays highlighted across both screens.
 
 ---
 
@@ -83,9 +95,11 @@ To enable persistence for a menu:
 
 ## API Summary
 
-- `open_convoy_menu(data)`: Opens the main overview.
+- `open_convoy_menu(data)`: Opens the main convoy overview.
 - `open_convoy_vehicle_menu(data)`: Opens the vehicle sub-menu.
-- `open_convoy_settlement_menu(data)`: Opens the settlement sub-menu.
+- `open_settlement_overview_menu(settlement_or_convoy)`: Opens the settlement hub. Accepts a convoy dict (resolves settlement from coords) or a bare settlement dict (map-preview mode).
+- `open_convoy_settlement_menu_with_focus(convoy, vendor_id)`: Opens the single-vendor trade screen focused on one vendor.
+- `_on_overview_open_vendor(convoy, vendor_id)`: Internal — wires the hub's `open_vendor_requested` signal to the single-vendor open.
 - `go_back()`: Navigates to the previous item in the stack.
 - `close_all_menus()`: Wipes the stack and hides the UI.
 - `menu_opened(menu_node, menu_type)`: Signal emitted on any menu open.
