@@ -2096,6 +2096,21 @@ func _build_inline_inspect_panel(agg_data: Dictionary, _item_row_hbox: HBoxConta
 	if not data_copy.has("unit_volume") and f_quantity > 0 and total_v > 0:
 		data_copy["unit_volume"] = total_v / f_quantity
 
+	# Delivery Reward total (Sprint 6): the "Delivery Reward" row must show the reward for the
+	# whole stack (unit_delivery_reward × quantity), not the per-unit figure. Deriving from the
+	# per-unit field × the aggregated quantity is also correct when a delivery spans multiple
+	# aggregated stacks — using the raw stack `delivery_reward` sample would undercount those.
+	var unit_reward := 0.0
+	if data_copy.has("unit_delivery_reward") and data_copy.get("unit_delivery_reward") != null:
+		unit_reward = NumberFormat.to_f(data_copy.get("unit_delivery_reward"), 0.0, "inspect:unit_reward")
+	if unit_reward <= 0.0 and item_data_sample.has("delivery_reward") and item_data_sample.get("delivery_reward") != null:
+		# Fallback: payload only carries the stack total — convert to per-unit via the sample's own quantity.
+		var sample_qty := NumberFormat.to_f(item_data_sample.get("quantity", 1), 1.0, "inspect:sample_qty")
+		if sample_qty > 0.0:
+			unit_reward = NumberFormat.to_f(item_data_sample.get("delivery_reward"), 0.0, "inspect:sample_reward") / sample_qty
+	if unit_reward > 0.0:
+		data_copy["delivery_reward"] = unit_reward * f_quantity
+
 	# If item looks like a part, inject modifiers so they can appear in Other Details.
 	_inject_part_modifiers(data_copy)
 

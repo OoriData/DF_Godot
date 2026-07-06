@@ -24,11 +24,15 @@ Full detail for each sprint is preserved in git history (`600a06b` Sprint 4, `ec
 ### Sprint 6 — Bug fixes (isolated, compile-safe)
 Self-contained bug fixes; each file opened once. Ship immediately after verification.
 
-- [ ] **Cargo delivery reward total** — "Delivery Reward" field currently shows per-unit value instead of `unit_delivery × quantity`. Fix the display calculation. `convoy_cargo_menu.gd`.
+- ✅ **Cargo delivery reward total** — inspect panel now shows `unit_delivery_reward × quantity` (derived from the per-unit field × aggregated qty, correct across multi-stack aggregation). `convoy_cargo_menu.gd` (2026-07-01).
 - ✅ **Modals double-scale fonts (receipt + tips)** — `auto_sell_receipt_modal.gd` and `returning_player_tips_modal.gd` flattened to `return base` (2026-07-01).
-- [ ] **Modals double-scale fonts (popups)** — `discord_link_popup.gd` and `account_links_popup.gd` still boost (2.2× portrait). Flatten each to `return base`.
-- [ ] **Menu button mashing / stuck state** — Rapid nav button taps can duplicate menus or leave one stuck mid-transition. Add a transition guard in `menu_manager.gd`: buffer or ignore input while a tween is running. `menu_manager.gd` `_start_menu_switch_animation`.
-- [ ] **Cart slot conflict on part install** — Selecting a part when that slot already has a pending cart item throws an error. Handle gracefully: swap the pending item or show a "replace?" prompt. `mechanics_menu.gd` / cart system.
+- ✅ **Modals double-scale fonts (popups)** — `discord_link_popup.gd` and `account_links_popup.gd` flattened to `return base` (2026-07-01).
+- ✅ **Menu button mashing / stuck state** — `menu_manager.gd` now sets `_is_switching` when a switch tween starts and ignores new open/switch requests until it completes (guard at top of `_show_menu`). (2026-07-01).
+- ✅ **Hide map overlay during journey planning** — during route preview, `main_screen` hides the overlay panel (`set_planning_active`) and applies a non-persisting marker override in `MapSettingsService` (`set_planning_override`) that reports all marker layers off; `UI_manager` now reads effective settings so settlements/warehouses/other convoy lines suppress, leaving the convoy + previewed route/destination. Restored on preview end/menu close. `main_screen.gd`, `map_overlay_settings_panel.gd`, `map_settings_service.gd`, `UI_manager.gd` (2026-07-06).
+- ✅ **Journey ETA shows no date for long trips** — trips over 24h (departure→ETA) now force the arrival date via a new `DateTimeUtil.to_unix_utc` + `omit_date_if_today=false`. `convoy_journey_menu.gd`, `date_time_util.gd` (2026-07-06).
+- ✅ **Journey delivery preview shows all cargo** — `_is_for_destination` now guards the empty-string match (an unresolved `dest_name` no longer matches every recipient-less item), so the manifest shows only this stop's deliveries. `convoy_journey_menu.gd` (2026-07-06).
+- ✅ **Connected account page fills screen on mobile** — panel sized from the LOGICAL viewport (`get_visible_rect().size`) instead of physical `DisplayServer.window_get_size()`, which was ~2× the viewport on high-DPI and pushed content off-screen. `account_links_popup.gd` (2026-07-06).
+- ✅ **Cart slot conflict on part install** — cart is now keyed per (vehicle, slot): re-picking a filled slot on a vehicle replaces its pending part. Vendor parts may repeat across vehicles (cart totals per vehicle); inventory parts stay single-use. `mechanics_menu.gd` (2026-07-01).
 
 ### Sprint 7 — Mobile / landscape polish
 All layout work; open each file once. ⚠️ Needs on-device verification for all items.

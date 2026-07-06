@@ -568,11 +568,14 @@ func _draw_interactive_labels(current_hover_info: Dictionary):
 	var show_warehouses: bool = true
 	
 	if is_instance_valid(_settings_service):
-		show_all_settlements = _settings_service.settlement_labels
-		show_active_dests = _settings_service.active_delivery_destinations
-		show_local_sett_dests = _settings_service.settlement_delivery_destinations
-		show_all_convoy_dests = _settings_service.all_convoy_destinations
-		show_warehouses = _settings_service.warehouse_labels
+		# Read EFFECTIVE settings (honors the journey-planning marker override) rather than the raw
+		# member vars, so planning suppresses settlement/warehouse/convoy-destination markers.
+		var eff: Dictionary = _settings_service.get_settings_dict()
+		show_all_settlements = bool(eff.get("settlement_labels", false))
+		show_active_dests = bool(eff.get("active_delivery_destinations", false))
+		show_local_sett_dests = bool(eff.get("settlement_delivery_destinations", false))
+		show_all_convoy_dests = bool(eff.get("all_convoy_destinations", false))
+		show_warehouses = bool(eff.get("warehouse_labels", false))
 
 	# --- Strategy 3: Progressive Zoom LOD ---
 	var is_far_zoom: bool = _current_map_zoom_cache < 0.6
@@ -1736,8 +1739,10 @@ func _on_connector_lines_container_draw():
 		var show_all_lines: bool = false
 		var show_active_lines: bool = true # Smart focus default
 		if is_instance_valid(_settings_service):
-			show_all_lines = _settings_service.all_convoy_destinations
-			show_active_lines = _settings_service.active_delivery_destinations
+			# Effective settings so planning also suppresses convoy destination LINES.
+			var eff_lines: Dictionary = _settings_service.get_settings_dict()
+			show_all_lines = bool(eff_lines.get("all_convoy_destinations", false))
+			show_active_lines = bool(eff_lines.get("active_delivery_destinations", false))
 			
 		var focused_convoy_ids: Array[String] = []
 		for cid in _selected_convoy_ids_cache:

@@ -66,6 +66,7 @@ func _get_logical_safe_margins() -> Rect2:
 
 var _was_portrait: bool = false
 var _menu_open: bool = false
+var _planning_active: bool = false # true while the journey-planning flow hides this panel
 @onready var _menu_manager: Node = get_node_or_null("/root/MenuManager")
 
 func _ready() -> void:
@@ -101,9 +102,17 @@ func _on_menu_visibility_changed(is_open: bool, _menu_name: String) -> void:
 	_menu_open = is_open
 	_update_overlay_presence()
 
+## Hide the overlay options panel entirely during the journey-planning flow (clean map), restoring
+## its normal presence when planning ends. Called by main_screen on route preview start/end.
+func set_planning_active(active: bool) -> void:
+	if _planning_active == active:
+		return
+	_planning_active = active
+	_update_overlay_presence()
+
 func _update_overlay_presence() -> void:
-	# Hide the whole overlay (panel + tab) in portrait while a menu is open.
-	visible = not (_is_portrait() and _menu_open)
+	# Hide the whole overlay (panel + tab) during journey planning, and in portrait while a menu is open.
+	visible = not (_planning_active or (_is_portrait() and _menu_open))
 
 func _apply_collapsed_after_layout() -> void:
 	# Apply once now, then again after the container has measured its real size, so the

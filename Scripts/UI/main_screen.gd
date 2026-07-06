@@ -150,6 +150,9 @@ func _force_map_ui_refresh_after(delay_sec: float) -> void:
 
 # --- Journey preview camera fitting ---
 var _active_journey_menu: Node = null
+# Map overlay panel + settings service, toggled into a clean "planning" state during route preview.
+var _map_overlay_panel: Control = null
+@onready var _map_settings_service: Node = get_node_or_null("/root/MapSettingsService")
 
 func _dbg_menu(tag: String, data: Dictionary = {}):
 	if not debug_menu_camera:
@@ -177,6 +180,7 @@ func _ready():
 		var overlay_panel = map_overlay_panel_script.new()
 		overlay_panel.name = "MapOverlaySettingsPanel"
 		$SafeRegionContainer/MainContainer/MainContent/MapAndMenuContainer.add_child(overlay_panel)
+		_map_overlay_panel = overlay_panel
 
 
 
@@ -258,6 +262,9 @@ func _on_menu_opened(menu_node: Node, menu_type: String) -> void:
 func _on_menu_closed(menu_node_was_active: Node, menu_type: String) -> void:
 	if menu_type != "convoy_journey_submenu":
 		return
+	# Safety net: if the journey menu closes mid-preview (route_preview_ended may not fire), make sure
+	# the overlay panel and map markers are restored rather than left suppressed.
+	_set_journey_planning_active(false)
 	if is_instance_valid(menu_node_was_active):
 		if menu_node_was_active.has_signal("route_preview_started") and menu_node_was_active.is_connected("route_preview_started", Callable(self, "_on_journey_route_preview_started")):
 			menu_node_was_active.disconnect("route_preview_started", Callable(self, "_on_journey_route_preview_started"))
@@ -276,7 +283,17 @@ func _deferred_reset_camera_after_journey_menu() -> void:
 	if map_camera_controller.has_method("reset_camera_to_map_bounds"):
 		map_camera_controller.reset_camera_to_map_bounds()
 
+## Toggle the map into a clean "journey planning" state: hide the overlay options panel and suppress
+## all marker overlays (settlements, warehouses, other convoy destinations) so only the convoy and the
+## previewed route/destination remain. Restored when planning ends.
+func _set_journey_planning_active(active: bool) -> void:
+	if is_instance_valid(_map_overlay_panel) and _map_overlay_panel.has_method("set_planning_active"):
+		_map_overlay_panel.set_planning_active(active)
+	if is_instance_valid(_map_settings_service) and _map_settings_service.has_method("set_planning_override"):
+		_map_settings_service.set_planning_override(active)
+
 func _on_journey_route_preview_started(route_data: Dictionary) -> void:
+	_set_journey_planning_active(true)
 	# When the route loads, zoom/center to show the full line.
 	if not is_instance_valid(map_camera_controller):
 		return
@@ -294,6 +311,7 @@ func _deferred_fit_route_preview(route_data: Dictionary) -> void:
 		map_camera_controller.smooth_fit_route_preview(route_data, 0.75, 0.92)
 
 func _on_journey_route_preview_ended() -> void:
+	_set_journey_planning_active(false)
 	# Route preview is done (e.g. confirm/cancel/back). If we temporarily fit off-map,
 	# return to normal clamped bounds.
 	if not is_instance_valid(map_camera_controller):

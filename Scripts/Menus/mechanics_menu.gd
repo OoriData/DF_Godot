@@ -661,6 +661,24 @@ func _is_part_id_already_pending(id: String) -> bool:
 func _is_part_already_pending(part: Dictionary) -> bool:
 	return _is_part_id_already_pending(_get_part_unique_id(part))
 
+# Chooser gating: is this candidate already represented in the cart for the CURRENT context?
+# Inventory parts are single-use, so being pending anywhere blocks re-selection. Vendor parts may
+# repeat across vehicles, so they only read as "In Cart" when they're the pending pick for THIS
+# vehicle's slot — letting the same vendor part be carted for other vehicles too.
+func _is_candidate_in_cart_for_context(part_uid: String, source: String, vehicle_id: String, slot_name: String) -> bool:
+	if part_uid == "":
+		return false
+	if source != "vendor":
+		return _is_part_id_already_pending(part_uid)
+	for s in _pending_swaps:
+		if _safe_str(s.get("vehicle_id"), "") != vehicle_id:
+			continue
+		if _safe_str(s.get("slot"), "") != slot_name:
+			continue
+		if _get_part_unique_id(s.get("to_part", {})) == part_uid:
+			return true
+	return false
+
 func _ready():
 	if is_instance_valid(back_button):
 		back_button.pressed.connect(func(): emit_signal("back_requested"))
@@ -1725,14 +1743,24 @@ func _rebuild_pending_tab():
 	_refresh_pending_previews()
 
 func _effective_part_cost_for_entry(e: Dictionary) -> float:
-	# Player pays intrinsic part value only when acquiring from vendor. Inventory parts are free (already owned).
+	# Vendor parts cost the VENDOR'S SALE PRICE (unit_price), NOT the part's intrinsic value — the two
+	# differ (e.g. value 12000 vs unit_price 18000), and the server charges the sale price. Install cost
+	# still uses part.value (25%); only the purchase component uses the sale price. Inventory parts are free.
 	var sref_any = e.get("swap_ref", {})
 	if not (sref_any is Dictionary):
 		return 0.0
 	var sref: Dictionary = sref_any
 	if _safe_str(sref.get("source"), "") != "vendor":
 		return 0.0
-	return _get_part_value(sref.get("to_part", {}))
+	# The swap captured the vendor sale price at add time; prefer it, then to_part.unit_price, then value.
+	var stored_price := float(sref.get("price", 0.0))
+	if stored_price > 0.0:
+		return stored_price
+	var to_p: Dictionary = sref.get("to_part", {})
+	var up: Variant = to_p.get("unit_price", null)
+	if up != null and float(up) > 0.0:
+		return float(up)
+	return _get_part_value(to_p)
 
 func _effective_price_for_swap(s: Dictionary) -> float:
 	# Scheduling heuristic: order vendor swaps by intrinsic value (cheaper first) to minimize cumulative install.
@@ -2247,6 +2275,10 @@ func _on_swap_part_pressed(slot_name: String, current_part: Dictionary):
 			var id2: String = str(cand.get("cargo_id", ""))
 			if id2 == "":
 				id2 = str(cand.get("part_id", ""))
+			# Already carted for THIS vehicle's slot? Vendor parts stay selectable for other vehicles;
+			# inventory parts are single-use so they read "In Cart" everywhere. Computed at loop level
+			# so both the "In Cart" label branch and the Select-button gate below can read it.
+			var in_cart_ctx := _is_candidate_in_cart_for_context(id2, source, veh_id, slot_name)
 			if id2 != "":
 				_current_swap_ctx["row_map"][id2] = row
 				var cache_key := "%s||%s" % [str(vehicle.get("vehicle_id", "")), id2]
@@ -2266,8 +2298,7 @@ func _on_swap_part_pressed(slot_name: String, current_part: Dictionary):
 						delta_lbl.text = _part_summary(cand)
 				_update_row_price_from_cache(row)
 				
-				# If already pending in cart
-				if _is_part_id_already_pending(id2):
+				if in_cart_ctx:
 					var compat_lbl_pending: Label = row.get_node_or_null("CompatLabel")
 					if is_instance_valid(compat_lbl_pending):
 						compat_lbl_pending.text = "In Cart"
@@ -2280,7 +2311,7 @@ func _on_swap_part_pressed(slot_name: String, current_part: Dictionary):
 			# Select Button setup
 			if comp_ok:
 				var select_btn: Button = row.find_child("SelectBtn", true, false)
-				if is_instance_valid(select_btn) and not _is_part_id_already_pending(id2):
+				if is_instance_valid(select_btn) and not in_cart_ctx:
 					select_btn.pressed.connect(func():
 						_add_pending_swap(slot_name, current_part, cand, source, price, vendor_id_for_entry)
 						_close_open_swap_dialog()
@@ -2315,6 +2346,26 @@ func _on_swap_part_pressed(slot_name: String, current_part: Dictionary):
 	if incompatible_box.get_child_count() <= 1:
 		incompatible_box.visible = false
 
+# True ONLY when this cargo item's part is explicitly flagged non-removable. Unknown/missing → false
+# (don't hide). The attach endpoint only installs REMOVABLE parts, so non-removable owned parts can't
+# be installed from cargo — they must be bought fresh from a vendor.
+func _is_item_non_removable(item: Dictionary) -> bool:
+	var rv: Variant = item.get("removable", null)
+	if rv == null and item.has("parts") and (item.get("parts") is Array) and not (item.get("parts") as Array).is_empty():
+		var p0: Variant = (item.get("parts") as Array)[0]
+		if p0 is Dictionary:
+			rv = (p0 as Dictionary).get("removable", null)
+	if rv == null:
+		return false
+	if rv is bool:
+		return not rv
+	if rv is int:
+		return int(rv) == 0
+	if rv is String:
+		var s_rv := String(rv).to_lower()
+		return s_rv == "false" or s_rv == "0" or s_rv == "no"
+	return false
+
 func _collect_candidate_parts_for_slot(slot_name: String) -> Array:
 	var out: Array = []
 	# Collect from all vehicles' cargo for now (convoy-wide)
@@ -2330,6 +2381,9 @@ func _collect_candidate_parts_for_slot(slot_name: String) -> Array:
 			# Compatibility API requires a cargo instance id.
 			var cid := _safe_str(item.get("cargo_id"), "")
 			if cid == "":
+				continue
+			# Attach (install-from-cargo) only accepts removable parts; hide non-removable owned parts.
+			if _is_item_non_removable(item):
 				continue
 			out.append(item)
 	return out
@@ -2627,6 +2681,13 @@ func _ensure_slot_row(slot_name: String) -> void:
 	# slot becomes swappable. Appending keeps empty slots at the bottom of the grid.
 	if not is_instance_valid(_slot_grid):
 		return
+	# Gate: only surface a vendor-driven empty slot when at least one candidate is compatible with THIS
+	# vehicle. Vendor stock alone (e.g. turbochargers, which require an ICE engine) must not force the
+	# slot onto vehicles that can't accept it — `_slot_vendor_availability` is keyed by slot only, so
+	# availability otherwise bleeds across vehicles and shows empty slots with nothing selectable inside.
+	if _selected_vehicle_idx >= 0 and _selected_vehicle_idx < _vehicles.size():
+		if not _slot_has_swappable_candidate(_vehicles[_selected_vehicle_idx], slot_name):
+			return
 	for card in _all_slot_cards():
 		if String(card.get_meta("slot_name", "")) == slot_name:
 			return
@@ -2660,13 +2721,26 @@ func _extract_price_from_dict(d: Dictionary) -> float:
 	return _extract_unit_price(d)
 
 func _add_pending_swap(slot_name: String, from_part: Dictionary, to_part: Dictionary, source: String, price: float, vendor_id: String = ""):
-	# Prevent adding the same cargo item twice across vehicles/slots
-	if _is_part_already_pending(to_part):
-		print("[MechanicsMenu] Skipping add: part already in cart ", _get_part_unique_id(to_part))
-		return
 	var vehicle_id := ""
 	if _selected_vehicle_idx >= 0 and _selected_vehicle_idx < _vehicles.size():
 		vehicle_id = _safe_str(_vehicles[_selected_vehicle_idx].get("vehicle_id"), "")
+
+	# Inventory parts are physical and single-use — the same owned part can't be committed to two
+	# slots/vehicles, so block a repeat anywhere in the cart. Vendor parts are buyable in quantity,
+	# so the same vendor part MAY be carted for multiple vehicles (the cart totals per vehicle).
+	if source != "vendor" and _is_part_already_pending(to_part):
+		print("[MechanicsMenu] Skipping add: inventory part already in cart ", _get_part_unique_id(to_part))
+		return
+
+	# One part per (vehicle, slot): re-picking a slot that already holds a pending item on THIS
+	# vehicle replaces the previous choice (a slot fits a single part). Entries for other vehicles
+	# are untouched, so the cart can hold parts for multiple vehicles at once, organized per vehicle.
+	if slot_name != "":
+		for i in range(_pending_swaps.size() - 1, -1, -1):
+			var existing: Dictionary = _pending_swaps[i]
+			if _safe_str(existing.get("vehicle_id"), "") == vehicle_id and _safe_str(existing.get("slot"), "") == slot_name:
+				_pending_swaps.remove_at(i)
+
 	_pending_swaps.append({
 		"slot": slot_name,
 		"from_part": from_part.duplicate(true),
@@ -2692,21 +2766,16 @@ func _on_apply_pressed():
 	if _selected_vehicle_idx < 0 or _selected_vehicle_idx >= _vehicles.size():
 		return
 	var vehicle_id = _safe_str(_vehicles[_selected_vehicle_idx].get("vehicle_id"), "")
-	# Build schedule using the same rules as the pending view
+	# Build schedule using the same rules as the pending view. The cart can hold parts for MULTIPLE
+	# vehicles, so gather EVERY vehicle's scheduled swaps (in schedule order) — otherwise parts on
+	# vehicles other than the selected one silently never apply.
 	var schedules := _compute_pending_schedules()
-	var schedule_for_vehicle: Array = schedules.get(vehicle_id, [])
-	# Extract the ordered swaps in schedule order
 	var ordered_swaps: Array = []
 	var total_cost: float = 0.0
-	for e in schedule_for_vehicle:
-		var s = e.get("swap_ref")
-		ordered_swaps.append(s)
-		var part_cost := _effective_part_cost_for_entry(e)
-		total_cost += part_cost + float(e.get("install_cost", 0.0))
-	# Keep swaps for other vehicles in their original order at the end
-	for s in _pending_swaps:
-		if _safe_str(s.get("vehicle_id"), "") != vehicle_id:
-			ordered_swaps.append(s)
+	for vid_key in schedules.keys():
+		for e in schedules[vid_key]:
+			ordered_swaps.append(e.get("swap_ref"))
+			total_cost += _effective_part_cost_for_entry(e) + float(e.get("install_cost", 0.0))
 	# Try to discover vendor_id at the current settlement for mechanic work
 	var vendor_id := _get_vendor_id_at_convoy_location()
 
@@ -2714,8 +2783,9 @@ func _on_apply_pressed():
 	emit_signal("changes_committed", convoy_id, vehicle_id, ordered_swaps, total_cost)
 	# Fire backend API calls now via MechanicsService
 	if is_instance_valid(_mechanics_service) and _mechanics_service.has_method("apply_swaps"):
-		print("[MechanicsMenu][Apply] Applying ", ordered_swaps.size(), " swap(s) vend=", vendor_id, " vehicle=", vehicle_id, " convoy=", convoy_id, " total=$", "%.2f" % total_cost)
-		_mechanics_service.apply_swaps(convoy_id, vehicle_id, ordered_swaps, vendor_id)
+		print("[MechanicsMenu][Apply] Applying ", ordered_swaps.size(), " swap(s) across ", schedules.size(), " vehicle(s) vend=", vendor_id, " convoy=", convoy_id, " total=$", "%.2f" % total_cost)
+		# Pass "" as the vehicle filter so ALL carted vehicles' swaps apply (each swap carries its own vehicle_id).
+		_mechanics_service.apply_swaps(convoy_id, "", ordered_swaps, vendor_id)
 		
 		# Speculative refresh: Request user data update immediately so money updates even if convoy signal lags.
 		if is_instance_valid(_hub) and _hub.has_signal("user_refresh_requested"):
@@ -2887,6 +2957,12 @@ func _update_row_from_compat_payload(payload: Dictionary) -> void:
 		var old_part = row.get_meta("part_dict", {})
 		for k in part_data.keys():
 			old_part[k] = part_data[k]
+		# The compat payload describes the part DEFINITION and carries cargo_id=null; merging it
+		# wholesale wipes the cargo INSTANCE id needed to actually buy/attach the part. `cid` is the
+		# part_cargo_id this compat check was queried with — the server-recognized cargo instance id —
+		# so re-assert it here (this dict is the same one the cart's swap later stores).
+		if cid != "":
+			old_part["cargo_id"] = cid
 		row.set_meta("part_dict", old_part)
 		
 		if is_instance_valid(name_lbl):

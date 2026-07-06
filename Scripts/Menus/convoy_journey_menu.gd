@@ -267,7 +267,13 @@ func _update_ui(convoy: Dictionary) -> void:
 	# --- ETA headline (centered) ---
 	var journey_data: Dictionary = journey_raw as Dictionary
 	var eta_str = journey_data.get("eta")
-	var eta_val := preload("res://Scripts/System/date_time_util.gd").format_timestamp_display(eta_str, true)
+	var _dt_util = preload("res://Scripts/System/date_time_util.gd")
+	# Long trips (> 24h total) always show the arrival DATE — otherwise an in-progress multi-day journey
+	# that happens to arrive "today" (local) would collapse to a bare clock time.
+	var _dep_unix: int = _dt_util.to_unix_utc(journey_data.get("departure_time"))
+	var _eta_unix: int = _dt_util.to_unix_utc(eta_str)
+	var _long_trip: bool = _dep_unix > 0 and _eta_unix > 0 and (_eta_unix - _dep_unix) > 86400
+	var eta_val: String = _dt_util.format_timestamp_display(eta_str, true, not _long_trip)
 	var eta_headline := Label.new()
 	eta_headline.text = "ETA: %s" % eta_val
 	eta_headline.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -1454,7 +1460,11 @@ func _show_confirmation_panel(route_data: Dictionary):
 	var manifest_items = []
 	var total_earnings = 0.0
 	var _is_for_destination = func(item: Dictionary) -> bool:
-		if str(item.get("recipient_settlement_name", "")) == dest_name: return true
+		# Match by recipient settlement NAME — but only for real deliveries. Guard the empty case: an
+		# unresolved dest_name must not match cargo that also has no recipient ("" == "" would otherwise
+		# pass every non-delivery item, showing the whole convoy cargo list instead of this stop's).
+		var rsn := str(item.get("recipient_settlement_name", ""))
+		if rsn != "" and dest_name != "" and rsn == dest_name: return true
 		var r = str(item.get("recipient", ""))
 		var ids = [r]
 		if item.has("recipient_vendor_id"): ids.append(str(item.get("recipient_vendor_id")))

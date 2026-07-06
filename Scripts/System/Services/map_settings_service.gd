@@ -18,6 +18,11 @@ var grid_lines: bool = false
 
 @onready var _hub: Node = get_node_or_null("/root/SignalHub")
 
+# When true (journey planning), all MARKER overlays are reported OFF by get_settings_dict() so the map
+# is clean — without persisting or mutating the user's real toggle state. Grid lines (a background
+# layer, not a marker) are left as-is. Cleared on planning exit to restore the user's settings.
+var _planning_override_active: bool = false
+
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
 	
@@ -70,8 +75,28 @@ func _broadcast_settings_changed() -> void:
 		if _debug_map_menu:
 			print("[MapSettingsService] Broadcasted updated settings to SignalHub.")
 
-## Returns a copy of the current state dictionary.
+## Temporarily suppress all marker overlays (journey planning) WITHOUT persisting or changing the
+## user's real toggle values. Broadcasts the effective (suppressed) settings; clearing restores them.
+func set_planning_override(active: bool) -> void:
+	if _planning_override_active == active:
+		return
+	_planning_override_active = active
+	if _debug_map_menu:
+		print("[MapSettingsService] Planning marker override: %s" % active)
+	_broadcast_settings_changed()
+
+## Returns the EFFECTIVE state dictionary (marker overlays forced off while the planning override is
+## active; the user's persisted values otherwise). Grid lines are never a marker, so pass through.
 func get_settings_dict() -> Dictionary:
+	if _planning_override_active:
+		return {
+			"active_delivery_destinations": false,
+			"settlement_delivery_destinations": false,
+			"settlement_labels": false,
+			"warehouse_labels": false,
+			"all_convoy_destinations": false,
+			"grid_lines": grid_lines
+		}
 	return {
 		"active_delivery_destinations": active_delivery_destinations,
 		"settlement_delivery_destinations": settlement_delivery_destinations,

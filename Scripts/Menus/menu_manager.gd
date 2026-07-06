@@ -26,6 +26,10 @@ const MENU_ORDER = {
 	"convoy_cargo_submenu": 7
 }
 var _switch_tween: Tween = null
+# True while a menu-switch slide/fade tween is animating. Rapid nav-button mashing during a
+# transition previously duplicated menus or left one stuck mid-slide; we ignore new open/switch
+# requests until the active tween completes (see the guard at the top of _show_menu).
+var _is_switching: bool = false
 # Outgoing menu whose disposal is deferred into the active switch tween's callback.
 # Tracked so an interrupting switch (which kills that tween) can flush it instead of
 # leaving it orphaned in the tree — the cause of the faint "ghost menu" behind a submenu.
@@ -393,6 +397,13 @@ func open_premium_upgrade_menu():
 # _emit_menu_area_changed is only called from menu_manager.gd, never from menu scripts.
 
 func _show_menu(menu_scene_resource, data_to_pass = null, add_to_stack: bool = true):
+	# Transition guard: while a switch tween is animating, drop new open/switch requests so rapid
+	# nav-button mashing can't duplicate menus or strand one mid-slide. Clear any focus arg queued
+	# by an ignored open_*_with_focus() call so it doesn't leak into the next menu that does open.
+	if _is_switching:
+		_next_menu_extra_arg = null
+		return
+
 	# When showing a menu, make MenuManager visible so it can receive input.
 	var was_visible := visible
 	visible = true
@@ -669,6 +680,9 @@ const SWITCH_DURATION := 0.42
 const SWITCH_PARALLAX := 0.35 # Outgoing menu travels this fraction of the distance, creating depth
 
 func _animate_menu_switch(old_menu: Control, new_menu: Control, old_type: String, new_type: String, old_is_persistent: bool = false) -> void:
+	# Mark the transition as in-flight up front so the _show_menu guard covers the deferred gap
+	# below (the tween isn't created until _start_menu_switch_animation runs next frame).
+	_is_switching = true
 	if _switch_tween and _switch_tween.is_valid():
 		_switch_tween.kill()
 
@@ -725,6 +739,7 @@ func _start_menu_switch_animation(old_menu: Control, new_menu: Control, directio
 	if not is_instance_valid(new_menu) or not is_instance_valid(old_menu):
 		if is_instance_valid(old_menu):
 			_finalize_switch_old_menu(old_menu, old_is_persistent)
+		_is_switching = false
 		return
 
 	# Track this switch's outgoing menu so an interrupting switch can flush it.
@@ -790,6 +805,7 @@ func _start_menu_switch_animation(old_menu: Control, new_menu: Control, directio
 				new_menu.modulate.a = 1.0
 				var restored_bg = new_menu.get_node_or_null("OoriBackground")
 				if is_instance_valid(restored_bg): restored_bg.visible = true
+			_is_switching = false
 		)
 		return
 
@@ -819,6 +835,7 @@ func _start_menu_switch_animation(old_menu: Control, new_menu: Control, directio
 			new_menu.position.x = new_target_x
 			var restored_bg = new_menu.get_node_or_null("OoriBackground")
 			if is_instance_valid(restored_bg): restored_bg.visible = true
+		_is_switching = false
 	)
 
 func _extract_convoy_id_or_passthrough(d: Variant) -> Variant:

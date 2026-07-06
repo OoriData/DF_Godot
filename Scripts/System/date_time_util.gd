@@ -84,6 +84,22 @@ static func parse_iso_to_utc_dict(iso_string: String) -> Dictionary:
 			return components
 	return {} # Return empty if parsing failed
 
+# Parse a timestamp (ISO string / numeric string / int / float) to a UTC unix time, or -1 if it
+# can't be parsed. Mirrors the parsing in format_timestamp_display for reuse (e.g. trip-duration checks).
+static func to_unix_utc(timestamp_value) -> int:
+	if timestamp_value == null:
+		return -1
+	if timestamp_value is String:
+		var t: int = Time.get_unix_time_from_datetime_string(timestamp_value)
+		if t == -1 and (timestamp_value as String).is_valid_int():
+			return (timestamp_value as String).to_int()
+		return t
+	elif timestamp_value is float:
+		return int(timestamp_value)
+	elif timestamp_value is int:
+		return timestamp_value
+	return -1
+
 static func format_timestamp_display(timestamp_value, include_remaining_time: bool, omit_date_if_today: bool = true) -> String:
 	if timestamp_value == null:
 		return "N/A"

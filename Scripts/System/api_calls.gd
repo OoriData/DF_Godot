@@ -2380,6 +2380,19 @@ func _on_request_completed(result: int, response_code: int, _headers: PackedStri
 
 	if _current_debug_tag == "bug_report":
 		_log_info("[APICalls][BugReport] complete result=%d code=%d body_bytes=%d preview=%s" % [result, response_code, body.size(), resp_preview])
+	var _mech_tag := _current_debug_tag in ["add_vehicle_part", "attach_vehicle_part", "detach_vehicle_part"]
+	# Instant money update after a mechanic purchase/install: the response body embeds the user's
+	# post-transaction money. Push it to the store immediately so the UI reflects the charge right away
+	# instead of waiting for the follow-up /user/get that's queued behind these PATCH requests.
+	if _mech_tag and result == HTTPRequest.RESULT_SUCCESS and response_code >= 200 and response_code < 300 and body.size() > 0:
+		var mech_json: Variant = JSON.parse_string(body.get_string_from_utf8())
+		if mech_json is Dictionary and (mech_json as Dictionary).has("money"):
+			var mstore := get_node_or_null('/root/GameStore') if is_inside_tree() else null
+			if is_instance_valid(mstore) and mstore.has_method("set_user") and mstore.has_method("get_user"):
+				var cur_user: Dictionary = mstore.get_user()
+				var merged: Dictionary = cur_user.duplicate(true)
+				merged["money"] = (mech_json as Dictionary).get("money")
+				mstore.set_user(merged)
 	if _current_patch_signal_name == "warehouse_convoy_spawned":
 		_log_info("[APICalls][SpawnConvoy] completion result=%d http_code=%d body_bytes=%d" % [result, response_code, body.size()])
 	var request_purpose_at_start = _current_request_purpose
