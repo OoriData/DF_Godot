@@ -1569,21 +1569,10 @@ func warehouse_expand_v2(warehouse_id: String, cargo_units: int, vehicle_units: 
 		"body": "",
 	})
 	_log_debug("[APICalls][warehouse_expand_v2] Enqueued URL=" + url)
-	# Also enqueue JSON fallback immediately (optional) if first returns no change we can trigger manually
-	var body_dict := {
-		"warehouse_id": warehouse_id,
-		"cargo_capacity_upgrade": cargo_u,
-		"vehicle_capacity_upgrade": vehicle_u
-	}
-	var body_json := JSON.stringify(body_dict)
-	_diag_enqueue("warehouse_expand_v2_fallback_json", {
-		"url": "%s/warehouse/expand" % BASE_URL,
-		"headers": _apply_auth_header(['accept: application/json', 'content-type: application/json']),
-		"purpose": RequestPurpose.NONE,
-		"method": HTTPClient.METHOD_PATCH,
-		"body": body_json,
-	})
-	_log_debug("[APICalls][warehouse_expand_v2] (Queued JSON fallback second) body=" + body_json + " queue_len=" + str(_request_queue.size()))
+	# NOTE: The /warehouse/expand endpoint reads *query params*, so the query-string PATCH above is the
+	# one that applies the upgrade. We previously ALSO fired a JSON-body PATCH as a "fallback" — but the
+	# endpoint has no body params, so FastAPI rejected it with 422 on every single upgrade (pure log
+	# noise, and a latent double-charge risk if the backend ever accepted bodies). Removed. (Sprint 8)
 
 func _diagnose_param_types(d: Dictionary) -> Dictionary:
 	var out: Dictionary = {}
