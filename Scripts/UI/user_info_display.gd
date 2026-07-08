@@ -128,22 +128,31 @@ func _update_mobile_sizing() -> void:
 		# (240/160) plus the convoy selector overflowed the row, ballooning the whole UI.
 		# Let the buttons size to their content (keep the tall touch height) and use a
 		# smaller font so the bar fits a single 800px row.
+		# Font 26 across username + Options + Feedback + money + convoy summed the bar's min-width to
+		# ~833px, wider than the 800px portrait viewport — which forced SafeRegionContainer (and every
+		# menu under it, including the warehouse) 33px past the screen edge. 20px keeps every element
+		# legible while dropping the bar's total to ~710px, safely under 800. (Sprint 7 — top-bar overflow)
 		if is_instance_valid(settings_button):
 			settings_button.custom_minimum_size = Vector2(0, 120)
-			settings_button.add_theme_font_size_override("font_size", 26)
+			settings_button.add_theme_font_size_override("font_size", 20)
 		if is_instance_valid(report_bug_button):
 			report_bug_button.custom_minimum_size = Vector2(0, 120)
-			report_bug_button.add_theme_font_size_override("font_size", 26)
+			report_bug_button.add_theme_font_size_override("font_size", 20)
 
 		# Also scale username and money for portrait clarity
-		if is_instance_valid(username_label): username_label.add_theme_font_size_override("font_size", 26)
-		if is_instance_valid(user_money_label): user_money_label.add_theme_font_size_override("font_size", 26)
+		if is_instance_valid(username_label): username_label.add_theme_font_size_override("font_size", 20)
+		if is_instance_valid(user_money_label): user_money_label.add_theme_font_size_override("font_size", 20)
 
 		# Tighten HBoxContent gap in portrait (12px × 9 gaps = 108px; 6px saves 54px,
 		# keeping the bar's total min-width comfortably under the 800px logical limit).
 		var hbox = get_node_or_null("HBoxContent")
 		if is_instance_valid(hbox):
 			hbox.add_theme_constant_override("separation", 6)
+			# The scene's 16px edge paddings add 32px to the bar's min-width; halve them in portrait.
+			for pad_name in ["LeftPadding", "RightPadding"]:
+				var pad = hbox.get_node_or_null(pad_name)
+				if is_instance_valid(pad):
+					pad.custom_minimum_size.x = 8
 	else:
 		custom_minimum_size.y = 96
 		if is_instance_valid(settings_button): 

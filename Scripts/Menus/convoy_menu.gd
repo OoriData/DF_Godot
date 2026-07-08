@@ -452,6 +452,13 @@ func _ready():
 	_vendor_preview_update_timer.timeout.connect(_update_vendor_preview)
 	add_child(_vendor_preview_update_timer)
 
+	# Reflow the two-column split, stat bars, and vendor button sizing when the device rotates
+	# mid-session. Layout-only — no data reprocessing — with the vendor grid re-rendered through the
+	# existing debounce so the new button dimensions apply. (Sprint 7)
+	var dsm := get_node_or_null("/root/DeviceStateManager")
+	if is_instance_valid(dsm) and dsm.has_signal("layout_mode_changed") and not dsm.layout_mode_changed.is_connected(_on_layout_mode_changed):
+		dsm.layout_mode_changed.connect(_on_layout_mode_changed)
+
 	# initialize_with_data can run before _ready; if so, we may have missed the initial preview refresh.
 	if _vendor_preview_update_pending:
 		_vendor_preview_update_pending = false
@@ -509,6 +516,14 @@ func _notification(what: int) -> void:
 		# Call deferred to ensure the new size is fully applied before calculating font sizes
 		call_deferred("_update_mobile_dependent_layout")
 		call_deferred("_update_vendor_grid_columns")
+
+func _on_layout_mode_changed(_mode: int = -1, _screen_size: Vector2 = Vector2.ZERO, _is_mobile_val: bool = false) -> void:
+	if not is_inside_tree():
+		return
+	_update_mobile_dependent_layout()
+	# Re-render the vendor preview grid so items pick up the new orientation button sizing.
+	if convoy_data_received != null and not convoy_data_received.is_empty():
+		_queue_vendor_preview_update()
 
 func _update_mobile_dependent_layout() -> void:
 	var is_portrait = _is_portrait_view()

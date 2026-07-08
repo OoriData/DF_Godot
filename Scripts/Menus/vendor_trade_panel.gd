@@ -1692,6 +1692,12 @@ func initialize(p_vendor_data, p_convoy_data, p_current_settlement_data, p_all_s
 	self.convoy_data = p_convoy_data
 	self.current_settlement_data = p_current_settlement_data
 	self.all_settlement_data_global = p_all_settlement_data_global
+	# If initialize() runs before our @onready nodes exist — the settlement menu rebuilds its vendor
+	# tabs while itself not yet in the tree, so add_child() didn't trigger _ready() — wait for _ready
+	# so trade_mode_tab_container and the item trees are valid. Without this the node lookups below hit
+	# a Nil base (seen when rotating between the vendor and mechanics flows). (Sprint 7)
+	if not is_node_ready():
+		await ready
 	_update_sort_dropdown_visibility_fast()
 
 	# Request an authoritative refresh via services
@@ -1735,6 +1741,10 @@ func refresh_data(p_vendor_data, p_convoy_data, p_current_settlement_data, p_all
 	_try_apply_pending_focus_intent()
 
 func _populate_vendor_list() -> void:
+	# Guard: refresh_data() can fire (e.g. on an orientation-change signal cascade) before this
+	# panel's %VendorItemTree is ready or after it has been torn down — clearing a null node crashes.
+	if not is_instance_valid(vendor_item_tree):
+		return
 	_ignore_selection_signals = true
 
 	vendor_item_tree.clear_items()
@@ -1831,6 +1841,8 @@ func _try_apply_pending_focus_intent() -> bool:
 	return ok
 
 func _populate_convoy_list() -> void:
+	if not is_instance_valid(convoy_item_tree):
+		return
 	_ignore_selection_signals = true
 	convoy_item_tree.clear_items()
 	if not (convoy_data is Dictionary) or convoy_data.is_empty():

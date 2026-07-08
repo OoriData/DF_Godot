@@ -192,6 +192,13 @@ func _ready():
 	if is_instance_valid(_hub) and _hub.has_signal("convoy_updated") and not _hub.convoy_updated.is_connected(_on_hub_convoy_updated):
 		_hub.convoy_updated.connect(_on_hub_convoy_updated)
 
+	# Reflow the orientation-branched layout when the device rotates mid-session. Without this the
+	# Parts tab keeps its build-time scroll direction (2-col grid vs. horizontal strip) and the
+	# Summary split stays stale until the menu is closed and reopened. (Sprint 7)
+	var dsm := get_node_or_null("/root/DeviceStateManager")
+	if is_instance_valid(dsm) and dsm.has_signal("layout_mode_changed") and not dsm.layout_mode_changed.is_connected(_on_layout_mode_changed):
+		dsm.layout_mode_changed.connect(_on_layout_mode_changed)
+
 func _apply_mobile_tab_styles(tc: TabContainer) -> void:
 	var win_size = get_viewport_rect().size if is_inside_tree() else Vector2(0, 0)
 	var is_portrait = win_size.y > win_size.x
@@ -492,6 +499,34 @@ func _on_vehicle_selected(index: int):
 		# Keep Service tab mechanics selection in sync
 		if is_instance_valid(mechanics_embed) and mechanics_embed.has_method("set_selected_vehicle_index"):
 			mechanics_embed.set_selected_vehicle_index(index)
+
+## Orientation changed mid-session — rebuild the orientation-branched chrome (custom tab strip,
+## vehicle dropdown height) and re-render the active vehicle so Summary/Parts/Cargo pick up the new
+## layout. The Parts tab switches between a 2-col grid (portrait, vertical scroll) and a horizontal
+## card strip (landscape); it only reflows here. The embedded Service-tab mechanics menu reflows
+## itself via its own subscription. (Sprint 7)
+func _on_layout_mode_changed(_mode: int = -1, _screen_size: Vector2 = Vector2.ZERO, _is_mobile_val: bool = false) -> void:
+	if not is_inside_tree():
+		return
+	if is_instance_valid(vehicle_option_button):
+		vehicle_option_button.custom_minimum_size.y = 88.0 if _is_portrait() else (80.0 if _is_mobile() else 48.0)
+	_setup_custom_tabs()
+	var vd := _get_selected_vehicle_data()
+	if not vd.is_empty():
+		_display_vehicle_details(vd)
+
+## Returns the currently-displayed vehicle dict — by persisted id first, else the dropdown selection.
+func _get_selected_vehicle_data() -> Dictionary:
+	if current_vehicle_list.is_empty():
+		return {}
+	if _selected_vehicle_id != "":
+		for v in current_vehicle_list:
+			if v is Dictionary and str(v.get("vehicle_id", "")) == _selected_vehicle_id:
+				return v
+	var idx := vehicle_option_button.selected if is_instance_valid(vehicle_option_button) else 0
+	if idx >= 0 and idx < current_vehicle_list.size() and current_vehicle_list[idx] is Dictionary:
+		return current_vehicle_list[idx]
+	return {}
 
 func _update_ui(convoy: Dictionary) -> void:
 	_current_convoy_data = convoy.duplicate(true)

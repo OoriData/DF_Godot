@@ -180,7 +180,7 @@ func _get_logical_safe_margins() -> Rect2:
 func _update_static_nav_bar_ui(active_type: String):
 	if not is_instance_valid(_static_bottom_nav): return
 	
-	var is_convoy_submenu = active_type in ["convoy_overview", "convoy_vehicle_submenu", "convoy_journey_submenu", "convoy_cargo_submenu", "convoy_settlement_submenu", "settlement_hub"]
+	var is_convoy_submenu = active_type in ["convoy_overview", "convoy_vehicle_submenu", "convoy_journey_submenu", "convoy_cargo_submenu", "convoy_settlement_submenu", "settlement_hub", "warehouse_submenu"]
 	_static_bottom_nav.visible = is_convoy_submenu
 	
 	if not is_convoy_submenu: return
@@ -195,9 +195,14 @@ func _update_static_nav_bar_ui(active_type: String):
 	# the bar background still bleeds to the physical edges (no black bars). Side margins get
 	# a rounded-corner minimum; the bottom margin lifts buttons off the home indicator.
 	var safe := _get_logical_safe_margins()
-	var side_inset := maxf(bar_margin, maxf(safe.position.x, safe.size.x))
+	# The nav bar lives INSIDE the menu panel. In portrait the bar spans the full screen width, so it
+	# must inset its content past the notch / rounded corners. In landscape the menu is a right-side
+	# panel nowhere near the screen's horizontal notch, so applying that same safe inset just squeezes
+	# the four buttons into the center with dead space on both sides — instead let them fill the panel
+	# width (buttons already carry SIZE_EXPAND_FILL). (Sprint 7, task 1)
+	var side_inset := bar_margin
 	if is_portrait:
-		side_inset = maxf(side_inset, 16.0)
+		side_inset = maxf(maxf(bar_margin, maxf(safe.position.x, safe.size.x)), 16.0)
 	var bottom_inset := bar_margin + safe.size.y
 	var style = _static_bottom_nav.get_theme_stylebox("panel")
 	style.content_margin_top = bar_margin

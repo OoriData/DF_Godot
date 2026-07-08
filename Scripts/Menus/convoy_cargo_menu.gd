@@ -346,6 +346,12 @@ func _ready():
 	if is_instance_valid(_hub) and _hub.has_signal("vendor_updated") and not _hub.vendor_updated.is_connected(_on_vendor_updated):
 		_hub.vendor_updated.connect(_on_vendor_updated)
 
+	# Rebuild the cargo rows (fonts + row sizing are orientation-branched) when the device rotates
+	# mid-session, and re-apply the sort dropdown height. (Sprint 7)
+	var dsm := get_node_or_null("/root/DeviceStateManager")
+	if is_instance_valid(dsm) and dsm.has_signal("layout_mode_changed") and not dsm.layout_mode_changed.is_connected(_on_layout_mode_changed):
+		dsm.layout_mode_changed.connect(_on_layout_mode_changed)
+
 	# Set initial button text
 	_update_organize_button_text()
 
@@ -1420,6 +1426,15 @@ func _populate_cargo_list():
 		_populate_by_vehicle()
 	_diag("populate", "done")
 	_reopen_inspects()
+
+func _on_layout_mode_changed(_mode: int = -1, _screen_size: Vector2 = Vector2.ZERO, _is_mobile_val: bool = false) -> void:
+	if not is_inside_tree():
+		return
+	if is_instance_valid(cargo_sort_option_button):
+		var sort_h := 70 if _is_portrait() else (50 if _is_mobile() else 44)
+		cargo_sort_option_button.custom_minimum_size = Vector2(0, sort_h)
+	if convoy_data_received != null and not convoy_data_received.is_empty():
+		_populate_cargo_list()
 
 func _update_ui(convoy: Dictionary) -> void:
 	# Reapply cargo population on live updates while attempting to preserve inspect state.

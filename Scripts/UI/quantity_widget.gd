@@ -36,9 +36,12 @@ func _ready() -> void:
 	var btn_w = 42
 	var btn_font_sz = base_font_sz
 	if layout_mode == 2:
-		btn_h = 100
-		btn_w = 90
-		btn_font_sz = int(base_font_sz * 1.8)
+		# Portrait: was 100x90 per button — three of those dominated each store/retrieve row and
+		# squeezed the dropdowns to truncation ("Beer Kegs x", "Fissio"). 64x64 keeps a comfortable
+		# touch target while giving the dropdowns and action button room. (Sprint 7 — ABC)
+		btn_h = 64
+		btn_w = 64
+		btn_font_sz = int(base_font_sz * 1.5)
 	elif layout_mode == 1:
 		btn_h = 60
 		btn_w = 56
@@ -91,7 +94,7 @@ func _ready() -> void:
 	
 	alignment = BoxContainer.ALIGNMENT_CENTER
 	mouse_filter = Control.MOUSE_FILTER_PASS
-	var sep = 16 if is_portrait else 2
+	var sep = 8 if is_portrait else 2
 	add_theme_constant_override("separation", sep)
 
 func _get_bold_font(node: Control) -> FontVariation:

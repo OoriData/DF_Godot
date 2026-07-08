@@ -245,22 +245,29 @@ func _on_user_changed(_user: Dictionary) -> void:
 	# Virtual: override in subclasses to update UI on money/user changes
 	pass
 
-## Centralized logic to ensure consistent side buffers in portrait mode.
+## Centralized logic to ensure a consistent minimum side buffer so menu content never sits flush
+## against the screen edge (glass / rounded corners / notch). Horizontal padding is enforced in BOTH
+## orientations at UITheme.SPACE_LG (Sprint 7, task 5). Vertical padding stays generous in portrait
+## but tight in landscape, where viewport height is scarce.
 func _apply_standard_margins() -> void:
 	var main_vbox = get_node_or_null("MainVBox")
 	if not is_instance_valid(main_vbox):
 		return
-		
+
 	var dsm = get_node_or_null("/root/DeviceStateManager")
 	var is_portrait = dsm.get_is_portrait() if is_instance_valid(dsm) else false
-	
-	if is_portrait:
-		# Standard 14px buffer for portrait elements from the screen edge.
-		# This prevents UI elements from being flush against the glass.
-		main_vbox.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT, Control.PRESET_MODE_MINSIZE, 14)
-	else:
-		# Landscape/Desktop: usually edge-to-edge content is preferred for horizontal density
-		main_vbox.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT, Control.PRESET_MODE_MINSIZE, 0)
+
+	# Anchor to the full rect, then inset. SPACE_LG (16px) is the minimum HORIZONTAL buffer on every
+	# device so content never touches the glass. Vertical insets are left exactly as before (portrait
+	# 14px, landscape edge-to-edge) so this change only affects side margins and never reduces the
+	# menu's usable height.
+	var side := float(UITheme.SPACE_LG)
+	var vert := 14.0 if is_portrait else 0.0
+	main_vbox.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT, Control.PRESET_MODE_MINSIZE, 0)
+	main_vbox.offset_left = side
+	main_vbox.offset_right = -side
+	main_vbox.offset_top = vert
+	main_vbox.offset_bottom = -vert
 
 func _on_convoys_changed(_convoys: Array) -> void:
 	# Only refresh if this menu is visible and has a convoy context.

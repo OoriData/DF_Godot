@@ -104,7 +104,16 @@ func _ready() -> void:
 	# Settlement data arrives via map_changed (tiles + settlements), which MenuBase doesn't watch.
 	if is_instance_valid(_store) and _store.has_signal("map_changed") and not _store.map_changed.is_connected(_on_store_map_changed):
 		_store.map_changed.connect(_on_store_map_changed)
+	# Rebuild the vendor grid / resources row for the new orientation on rotation (portrait 2-col →
+	# landscape 1-col and the side-by-side resources/warehouse split). (Sprint 7)
+	var dsm := get_node_or_null("/root/DeviceStateManager")
+	if is_instance_valid(dsm) and dsm.has_signal("layout_mode_changed") and not dsm.layout_mode_changed.is_connected(_on_layout_mode_changed):
+		dsm.layout_mode_changed.connect(_on_layout_mode_changed)
 	_rebuild()
+
+func _on_layout_mode_changed(_mode: int = -1, _screen_size: Vector2 = Vector2.ZERO, _is_mobile_val: bool = false) -> void:
+	if is_inside_tree():
+		_rebuild()
 
 func _on_store_map_changed(_tiles: Array, _settlements: Array) -> void:
 	if _has_convoy():

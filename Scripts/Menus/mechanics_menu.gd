@@ -706,6 +706,12 @@ func _ready():
 	_rename_pending_tab_to_cart()
 	_setup_custom_tabs()
 	_refresh_apply_state()
+	# Reflow the Parts card container (2-col grid vs. horizontal strip) when the device rotates
+	# mid-session — the direction is otherwise fixed at build time until the vehicle is re-picked.
+	# (Sprint 7)
+	var dsm := get_node_or_null("/root/DeviceStateManager")
+	if is_instance_valid(dsm) and dsm.has_signal("layout_mode_changed") and not dsm.layout_mode_changed.is_connected(_on_layout_mode_changed):
+		dsm.layout_mode_changed.connect(_on_layout_mode_changed)
 	# Listen for compatibility checks directly from APICalls.
 	if is_instance_valid(_api) and _api.has_signal("part_compatibility_checked") and not _api.part_compatibility_checked.is_connected(_on_part_compatibility_ready):
 		_api.part_compatibility_checked.connect(_on_part_compatibility_ready)
@@ -1048,6 +1054,9 @@ func _exit_tree() -> void:
 		_api.part_compatibility_checked.disconnect(_on_part_compatibility_ready)
 	if is_instance_valid(_hub) and _hub.has_signal("vendor_updated") and _hub.vendor_updated.is_connected(_on_hub_vendor_updated):
 		_hub.vendor_updated.disconnect(_on_hub_vendor_updated)
+	var dsm := get_node_or_null("/root/DeviceStateManager")
+	if is_instance_valid(dsm) and dsm.has_signal("layout_mode_changed") and dsm.layout_mode_changed.is_connected(_on_layout_mode_changed):
+		dsm.layout_mode_changed.disconnect(_on_layout_mode_changed)
 
 # Allow parent to set the selected vehicle index directly (to keep tabs in sync)
 func set_selected_vehicle_index(idx: int) -> void:
@@ -1153,6 +1162,22 @@ func _on_vehicle_selected(index: int):
 	# Fire UI-side vendor compatibility checks immediately for this vehicle for better logs/feedback
 	_start_vendor_compat_checks_for_vehicle(_vehicles[index])
 	# (Probe removed: compatibility checks are driven via MechanicsService/APICalls)
+
+## Orientation changed mid-session — re-run the tab strip sizing and rebuild the Parts/Cart tabs so
+## the Parts card container switches between the portrait 2-col grid (vertical scroll) and the
+## landscape horizontal strip. Highlights are restored from caches, so this fires no network calls.
+## (Sprint 7)
+func _on_layout_mode_changed(_mode: int = -1, _screen_size: Vector2 = Vector2.ZERO, _is_mobile_val: bool = false) -> void:
+	if not is_inside_tree():
+		return
+	if is_instance_valid(apply_button):
+		apply_button.custom_minimum_size.y = 80 if _is_portrait() else (56 if _is_mobile() else 44)
+	_setup_custom_tabs()
+	if _selected_vehicle_idx >= 0 and _selected_vehicle_idx < _vehicles.size():
+		_rebuild_parts_tab(_vehicles[_selected_vehicle_idx])
+		_refresh_slot_inventory_availability()
+		_refresh_slot_vendor_availability()
+		_rebuild_pending_tab()
 
 
 func _rebuild_parts_tab(vehicle_data: Dictionary):
