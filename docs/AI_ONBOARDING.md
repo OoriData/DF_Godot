@@ -43,6 +43,8 @@ Welcome, Agent. To maintain the architectural integrity and visual standards of 
 - **Buttons**: Minimum **70px height** for mobile touch targets.
 - **Layouts**: Use `SafeRegionContainer` for any element that might be clipped by a camera notch.
 - **Orientation branching**: Query `DeviceStateManager.get_is_portrait()` and `get_layout_mode()` for orientation-aware branching. Never compare raw viewport sizes directly.
+- **Navigation bar (no per-menu back buttons)**: Convoy/settlement-flow menus must **not** show their own `BackButton`. In `_ready()`, call `setup_convoy_navigation_bar(back_button)` to hide it, and add the menu's `menu_type` to the visibility list in `MenuManager._update_static_nav_bar_ui()` so the shared bottom bar (Vehicles / Journey / Settlement / Cargo) appears. A stray back button stacks at the bottom of `MainVBox` and clips off the sheet edge.
+- **Containment (no clipping)**: A menu body that can grow taller than its sheet must live inside a `ScrollContainer` (see `ConvoyMenu.tscn`'s `MainVBox/ScrollContainer`) so overflow **scrolls** instead of clipping. Do **not** build a `SIZE_EXPAND_FILL` "fill-the-sheet" layout that assumes everything fits — when content exceeds the sheet height, `clip_contents` silently slices the top and bottom off with no error.
 
 ---
 
@@ -60,4 +62,15 @@ Welcome, Agent. To maintain the architectural integrity and visual standards of 
 - Before writing any code, check the **[Developer Cookbook](01_Architecture/Cookbook.md)** for a recipe. If a recipe exists, follow it strictly.
 - When a menu isn't updating, check its `_debug_*` flag first. 9 times out of 10 the `process_mode` or a missed `is_connected` guard is the root cause.
 - `money` from the API can be a `String`. Always read user money from `GameStore.get_user()["money"]` which is normalised to `int`.
+
+---
+
+## 🐛 Debugging a Visual/Layout Bug (read BEFORE instrumenting)
+
+A multi-session bug hunt — "the warehouse crams and breaks in portrait" — turned out to be a single stray back button, *after* hours spent chasing horizontal width and then vertical height. This protocol exists so it never happens again:
+
+1. **Make the user pinpoint the defect first.** Words like *crammed · breaks · readjusts · clipping · colliding* identify neither the **element** nor the **axis**. Before building any diagnostic, ask which specific element is wrong and what it should look like — offer a numbered menu (e.g. *cut off at top/bottom · rows overlapping · jumps on open · a specific widget is oversized*). A screenshot with the bad element called out beats any amount of size-dumping. Guessing the axis costs whole rebuild-and-redeploy cycles.
+2. **Reproduce in the editor, not only on device.** Editor Play (F5) recompiles current source every run; an exported/on-device build is a **frozen snapshot** — your edits do not appear until you **re-export _and_ re-deploy** (and only after **Save All**, since unsaved editor buffers aren't on disk). If a diagnostic's *value* contradicts the source you just wrote, you are running a stale build. A "canary" banner proves nothing about freshness unless it carries a per-build stamp (e.g. `git rev-parse --short HEAD`).
+3. **Measure only after open/slide animations settle.** Menus slide in via `MenuManager`. A readout taken 1–2 frames after `_ready` captures a mid-slide layout and prints impossible, self-contradictory numbers (real example: a 3300px child reported inside a 1000px parent). Wait until the menu's `global_position` stops changing before trusting any `size` or `get_combined_minimum_size()` value.
+4. **Rule out structure before tuning numbers.** Two recurring root causes, both cheap to check: **(a)** a stray per-menu `BackButton` instead of the shared nav bar, and **(b)** a missing `ScrollContainer`, so content clips once it exceeds the sheet (see *Navigation bar* and *Containment* under Visual Standards). Confirm these before touching fonts, margins, or min-sizes.
 

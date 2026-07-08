@@ -35,6 +35,9 @@ Welcome to the technical documentation for *Desolate Frontiers*. This folder is 
 > [!TIP]
 > Start with the [**UI Element Audit**](02_UI_UX/UIAudit.md) for any UI task — it contains the layer map, script mapping, per-element inventory, implementation patterns, and all known issues.
 
+> [!WARNING]
+> **Debugging a "crammed / clipping / broken / colliding" layout?** Read the [**Debugging a Visual/Layout Bug**](AI_ONBOARDING.md) protocol *first*. In short: make the user point at the exact element and axis before you instrument anything; reproduce in-editor (on-device builds go stale until re-exported); measure only **after** slide-in animations settle (mid-animation sizes are garbage); and rule out structural causes — a stray per-menu back button, or a missing `ScrollContainer` — before tuning fonts/margins. Menus use the shared `MenuManager` bottom nav bar (not their own back button) and wrap scrollable bodies in a `ScrollContainer` so they can't clip.
+
 - [**UI Element Audit**](02_UI_UX/UIAudit.md) ⭐ — **Start here for all UI work.** Full inventory of every element, layer map, script mapping, implementation patterns, known issues, and links to every per-menu doc.
 
 **Supporting deep-dives** (linked from UIAudit):
