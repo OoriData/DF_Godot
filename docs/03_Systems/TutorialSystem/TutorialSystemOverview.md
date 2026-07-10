@@ -15,7 +15,9 @@ The Tutorial System guides new players through the core loops of *Desolate Front
 
 ## Mental Model
 The system is built on three pillars:
-1.  **The Content**: A JSON file defining steps, instructional copy, and target UI elements.
+1.  **The Content**: Step definitions (id, instructional copy, action, target). These are **hardcoded in
+    `tutorial_manager.gd::_build_level_steps()`** — *not* an external JSON. The old `res://Data/tutorial_steps.json`
+    loader is disabled (it drifted out of sync); edit the function, not a data file.
 2.  **The Highlight**: A full-screen overlay that masks the UI, creating a "hole" over the target element to focus the player's attention.
 3.  **The Watcher**: Level-specific logic that listens to `SignalHub` to determine when a step is successfully completed.
 
@@ -41,6 +43,6 @@ graph TD
 
 ## Primary Files
 - **Manager**: `Scripts/UI/tutorial_manager.gd`
+- **Steps (content)**: `Scripts/UI/tutorial_manager.gd::_build_level_steps()` — hardcoded, not JSON
 - **Visuals**: `Scripts/UI/tutorial_overlay.gd`
 - **Resolver**: `Scripts/UI/target_resolver.gd`
-- **Data**: `res://Data/tutorial_steps.json`

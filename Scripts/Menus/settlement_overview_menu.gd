@@ -36,6 +36,7 @@ const _RESOURCE_COLORS := {
 }
 
 var _top_up_plan: Dictionary = {}
+var _top_up_btn_ref: Button = null
 
 func initialize_with_data(data: Variant, extra_arg: Variant = null) -> void:
 	# Map-preview entry: a settlement snapshot (no convoy) — build directly, no store/convoy wiring.
@@ -380,6 +381,9 @@ func _make_money_tile() -> Control:
 func _make_top_up_button() -> Button:
 	var btn := Button.new()
 	btn.focus_mode = Control.FOCUS_NONE
+	# Tutorial hook: tag so TutorialTargetResolver can highlight it and the manager can watch its press.
+	btn.set_meta("is_top_up_button", true)
+	_top_up_btn_ref = btn
 	btn.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	_top_up_plan = TopUpPlanner.calculate_plan(_convoy_data, _settlement, float(_convoy_data.get("money", 0.0)))
 	var cost := float(_top_up_plan.get("total_cost", 0.0))
@@ -594,6 +598,11 @@ func _make_vendor_card(vendor: Dictionary, card_h: float = 96.0) -> Control:
 	var panel := PanelContainer.new()
 	panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	panel.custom_minimum_size.y = card_h
+	# Tutorial hook: tag the card so the tutorial resolver can find it by vendor name across rebuilds
+	# (cards are anonymous and rebuilt on every _rebuild(), so name/id metadata is the stable handle).
+	panel.set_meta("is_vendor_card", true)
+	panel.set_meta("vendor_name", String(vendor.get("name", "")))
+	panel.set_meta("vendor_id", String(vendor.get("vendor_id", "")))
 	var style := StyleBoxFlat.new()
 	style.bg_color = UITheme.METAL_BASE
 	style.set_border_width_all(2 if tappable else UITheme.BORDER_THIN)
@@ -676,9 +685,33 @@ func _vendor_deals_summary(vendor: Dictionary) -> String:
 func _array_has_items(v: Variant) -> bool:
 	return v is Array and not (v as Array).is_empty()
 
+## Tutorial hook: the hub's Top Up button (in the resources card), or null when absent/topped-up-hidden.
+func get_top_up_button_node() -> Button:
+	if is_instance_valid(_top_up_btn_ref) and _top_up_btn_ref.is_visible_in_tree():
+		return _top_up_btn_ref
+	return null
+
 func _vendor_list() -> Array:
 	var v: Variant = _settlement.get("vendors", [])
 	return v if v is Array else []
+
+## Tutorial hook: return the vendor card whose name contains `token` (case-insensitive), or null.
+## Used by TutorialTargetResolver's `settlement_hub_vendor_card` resolver to highlight e.g. the
+## "Tutorial City Dealership" card. Matches on the meta set in _make_vendor_card so it survives rebuilds.
+func get_vendor_card_node_by_name_contains(token: String) -> Control:
+	if token.strip_edges() == "":
+		return null
+	var needle := token.to_lower()
+	var stack: Array = [self]
+	while not stack.is_empty():
+		var n: Node = stack.pop_back()
+		if n is Control and n.has_meta("is_vendor_card"):
+			var nm := String(n.get_meta("vendor_name", "")).to_lower()
+			if nm.find(needle) != -1 and (n as Control).is_visible_in_tree():
+				return n
+		for c in n.get_children():
+			stack.push_back(c)
+	return null
 
 func _on_warehouse_pressed() -> void:
 	# Carry the convoy when present so the warehouse menu enables retrieve-into-convoy; otherwise the

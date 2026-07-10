@@ -339,21 +339,21 @@ func _build_level_steps(level: int) -> Array:
 				},
 				{
 					id = "l1_open_settlement",
-					copy = "This is your convoy menu,  but first things first lets get you a vehicle. \n\nClick the Settlement button to view available vendors.",
-					action = "await_settlement_menu",
+					copy = "This is your convoy menu,  but first things first lets get you a vehicle. \n\nTap the Settlement button to open the settlement hub.",
+					action = "await_settlement_hub",
 					target = { resolver = "button_with_text", text_contains = "Settlement" },
 					lock = "soft"
 				},
 				{
 					id = "l1_open_dealership",
-					copy = "In the settlement, go to the Dealership tab.",
-					action = "await_dealership_tab",
-					target = { resolver = "tab_title_contains", token = "Dealership" },
+					copy = "This settlement's vendors are shown as cards.\n\nTap the Tutorial City Dealership to see the vehicles it has for sale.",
+					action = "await_vendor_open",
+					target = { resolver = "settlement_hub_vendor_card", token = "Dealership" },
 					lock = "soft"
 				},
 				{
 					id = "l1_buy_vehicle",
-					copy = "In the Dealership you can scout different vehicles the vendor has in stock. \n\nSome may be more expensive but can carry more,  allowing for a larger profit margin.  Select one press Buy to purchase.",
+					copy = "Scout the vehicles this vendor has in stock \u2014 pricier ones often carry more cargo.\n\nSelect one and press Buy.",
 					action = "await_vehicle_purchase",
 					# By targeting the whole panel, we create a highlight "hole" for the entire trade UI.
 					# The user can now click on items in the list and the buy button.
@@ -365,10 +365,17 @@ func _build_level_steps(level: int) -> Array:
 		2: # Resources
 			return [
 				{
-					id = "l2_open_market_tab",
-					copy = "Now that you have a vehicle, you'll need supplies for the road. Go to the Market tab to purchase some essential items.",
-					action = "await_market_tab",
-					target = { resolver = "tab_title_contains", token = "Market" },
+					id = "l2_return_to_hub",
+					copy = "Now that you have a vehicle, you'll need supplies.\n\nTap the top-left button to head back to the settlement hub.",
+					action = "await_settlement_hub",
+					target = { resolver = "convoy_return_button" },
+					lock = "soft"
+				},
+				{
+					id = "l2_open_market",
+					copy = "Tap the Tutorial City Market to see the supplies it has for sale.",
+					action = "await_vendor_open",
+					target = { resolver = "settlement_hub_vendor_card", token = "Market" },
 					lock = "soft"
 				},
 				{
@@ -379,41 +386,48 @@ func _build_level_steps(level: int) -> Array:
 					lock = "soft"
 				},
 				{
-					id = "l2_top_up_tip",
-					copy = "Great! Now use the 'Top Up' button to automatically fill your vehicle's resource containers. This will complete the current tutorial stage.",
+					id = "l2_return_for_top_up",
+					copy = "Supplies secured.\n\nTap the top-left button to return to the hub, where you can refuel.",
+					action = "await_settlement_hub",
+					target = { resolver = "convoy_return_button" },
+					lock = "soft"
+				},
+				{
+					id = "l2_top_up",
+					copy = "Now use the 'Top Up' button to fill your fuel, water, and food. This completes the current tutorial stage.",
 					action = "await_top_up",
-					target = { resolver = "top_up_button" }, # Highlight it for context
-					lock = "soft",
+					target = { resolver = "top_up_button" },
+					lock = "soft"
 				}
 			]
-		4: # Level 4: Accept Your First Delivery
+		4: # Level 4: Accept Your First Delivery (user is in the settlement hub after the L2 top-up)
 			return [
 				{
-					id = "l4_open_market_tab",
-					copy = "Your vehicle is refueled and restocked. Now, let's accept your first delivery. Go back to the Market tab.",
-					action = "await_market_tab",
-					target = { resolver = "tab_title_contains", token = "Market" },
+					id = "l4_open_market",
+					copy = "Time to accept your first delivery.\n\nTap the Tutorial City Market \u2014 some vendors carry special delivery goods.",
+					action = "await_vendor_open",
+					target = { resolver = "settlement_hub_vendor_card", token = "Market" },
 					lock = "soft"
 				},
 				{
 					id = "l4_buy_urchins",
-					copy = "Some vendors offer special items required for deliveries. Click 'Max' on Mountain Urchins, then Buy.",
+					copy = "Click 'Max' on Mountain Urchins, then Buy.",
 					action = "await_urchin_purchase",
-					target = { resolver = "vendor_trade_panel" }, # Highlight the whole panel
+					target = { resolver = "vendor_trade_panel" },
+					lock = "soft"
+				},
+				{
+					id = "l4_return_for_top_up",
+					copy = "Delivery goods secured.\n\nTap the top-left button to head back to the hub.",
+					action = "await_settlement_hub",
+					target = { resolver = "convoy_return_button" },
 					lock = "soft"
 				},
 				{
 					id = "l4_ensure_top_up",
-					copy = "Make sure your vehicle is fully topped up before leaving.",
+					copy = "Top up your fuel, water, and food before you leave.",
 					action = "await_top_up",
 					target = { resolver = "top_up_button" },
-					lock = "soft"
-				},
-				{
-					id = "l4_return_to_convoy",
-					copy = "Your vehicle is refueled and restocked! Click the active 'Settlement' button again to return to the convoy menu and plan your journey.",
-					action = "await_menu_open",
-					target = { resolver = "button_with_text", text_contains = "Settlement" },
 					lock = "soft"
 				},
 			]
@@ -724,13 +738,16 @@ func _run_current_step() -> void:
 			_apply_lock(step)
 			_resolve_and_highlight(step)
 			_awaiting_menu_open = true
-		"await_settlement_menu":
+		"await_settlement_hub":
 			_show_message(step.get("copy", ""), false)
-			# Apply lock mode from the step definition before trying to resolve the highlight.
-			# This ensures the overlay knows how to behave if resolution fails and needs to retry.
 			_apply_lock(step)
-			_resolve_and_highlight(step) # highlight Settlement button if target provided
-			_watch_for_settlement_menu()
+			_resolve_and_highlight(step) # highlight the Settlement nav button
+			_watch_for_settlement_hub()
+		"await_vendor_open":
+			_show_message(step.get("copy", ""), false)
+			_apply_lock(step)
+			_resolve_and_highlight(step) # highlight the target vendor card in the hub
+			_watch_for_vendor_menu()
 		"await_dealership_tab":
 			# First, check if the tab is already open. This is the "fail safe" the user mentioned.
 			var tabs := _get_vendor_tab_container()
@@ -922,6 +939,51 @@ func _on_journey_menu_opened(_menu_node: Node, menu_type: String) -> void:
 		# The journey menu is open. The next step will highlight the destination button.
 		_advance_after_frame()
 
+func _watch_for_settlement_hub() -> void:
+	var mm := get_node_or_null("/root/MenuManager")
+	if not is_instance_valid(mm):
+		printerr("[Tutorial] MenuManager not found, cannot watch for settlement hub.")
+		return
+	# Fail-safe: if the hub is already the active menu, advance without waiting for a new open.
+	var active = mm.get("current_active_menu")
+	if is_instance_valid(active) and String(active.get_meta("menu_type", "")) == "settlement_hub":
+		call_deferred("_advance")
+		return
+	if not mm.is_connected("menu_opened", Callable(self, "_on_settlement_hub_opened")):
+		mm.menu_opened.connect(Callable(self, "_on_settlement_hub_opened"))
+
+func _on_settlement_hub_opened(_menu_node: Node, menu_type: String) -> void:
+	var mm := get_node_or_null("/root/MenuManager")
+	var still_waiting: bool = _step >= 0 and _step < _steps.size() and _steps[_step].get("action") == "await_settlement_hub"
+	if not still_waiting or menu_type == "settlement_hub":
+		if is_instance_valid(mm) and mm.is_connected("menu_opened", Callable(self, "_on_settlement_hub_opened")):
+			mm.disconnect("menu_opened", Callable(self, "_on_settlement_hub_opened"))
+	if still_waiting and menu_type == "settlement_hub":
+		_advance_after_frame()
+
+func _watch_for_vendor_menu() -> void:
+	var mm := get_node_or_null("/root/MenuManager")
+	if not is_instance_valid(mm):
+		printerr("[Tutorial] MenuManager not found, cannot watch for vendor menu.")
+		return
+	# Fail-safe: the single-vendor menu may already be active (e.g. re-entry).
+	var active = mm.get("current_active_menu")
+	if is_instance_valid(active) and String(active.get_meta("menu_type", "")) == "convoy_settlement_submenu":
+		call_deferred("_advance")
+		return
+	if not mm.is_connected("menu_opened", Callable(self, "_on_vendor_menu_opened")):
+		mm.menu_opened.connect(Callable(self, "_on_vendor_menu_opened"))
+
+func _on_vendor_menu_opened(_menu_node: Node, menu_type: String) -> void:
+	var mm := get_node_or_null("/root/MenuManager")
+	var still_waiting: bool = _step >= 0 and _step < _steps.size() and _steps[_step].get("action") == "await_vendor_open"
+	if not still_waiting or menu_type == "convoy_settlement_submenu":
+		if is_instance_valid(mm) and mm.is_connected("menu_opened", Callable(self, "_on_vendor_menu_opened")):
+			mm.disconnect("menu_opened", Callable(self, "_on_vendor_menu_opened"))
+	if still_waiting and menu_type == "convoy_settlement_submenu":
+		_advance_after_frame()
+
+
 func _advance() -> void:
 	# --- START TUTORIAL DIAGNOSTIC ---
 	# This log shows the exact moment the tutorial advances to the next step.
@@ -1093,36 +1155,54 @@ func _advance_after_frame() -> void:
 
 var _top_up_button_ref: Button = null
 
+func _get_settlement_overview_hub() -> Node:
+	var mm := get_node_or_null("/root/MenuManager")
+	if is_instance_valid(mm):
+		var active = mm.get("current_active_menu")
+		if is_instance_valid(active) and active.name.contains("SettlementOverviewMenu") and not active.is_queued_for_deletion():
+			return active
+	var root := get_tree().get_root()
+	if root == null:
+		return null
+	for c in root.find_children("SettlementOverviewMenu", "Control", true, false):
+		if is_instance_valid(c) and not c.is_queued_for_deletion():
+			return c
+	return null
+
 func _watch_for_top_up() -> void:
-	var menu := _get_settlement_menu()
-	if not is_instance_valid(menu):
-		call_deferred("_watch_for_top_up")
+	_top_up_button_ref = null
+	# Prefer the settlement overview hub's Top Up (relocated there in Sprint 5.5).
+	var hub := _get_settlement_overview_hub()
+	if is_instance_valid(hub) and hub.has_method("get_top_up_button_node"):
+		_top_up_button_ref = hub.call("get_top_up_button_node")
+	# Fall back to the single-vendor settlement menu for any legacy path.
+	if not is_instance_valid(_top_up_button_ref):
+		var menu := _get_settlement_menu()
+		if is_instance_valid(menu):
+			_top_up_button_ref = menu.get_node_or_null("MainVBox/TopBarHBox/TopUpButton")
+			if not is_instance_valid(_top_up_button_ref):
+				_top_up_button_ref = menu.get_node_or_null("%TopUpButton")
+			if not is_instance_valid(_top_up_button_ref):
+				_top_up_button_ref = menu.find_child("TopUpButton", true, false)
+
+	if not is_instance_valid(_top_up_button_ref):
+		# Neither host ready yet; retry shortly.
+		var timer0 := get_tree().create_timer(0.5, true)
+		timer0.timeout.connect(func(): _watch_for_top_up())
 		return
 
-	# Robust lookup matching the resolver
-	_top_up_button_ref = menu.get_node_or_null("MainVBox/TopBarHBox/TopUpButton")
-	if not is_instance_valid(_top_up_button_ref):
-		_top_up_button_ref = menu.get_node_or_null("%TopUpButton")
-	if not is_instance_valid(_top_up_button_ref):
-		_top_up_button_ref = menu.find_child("TopUpButton", true, false)
+	# Already full (hub shows "Topped Up" disabled; legacy menu showed "Full") → advance to avoid softlock.
+	if _top_up_button_ref.disabled and (_top_up_button_ref.text.find("Full") != -1 or _top_up_button_ref.text.find("Topped Up") != -1):
+		print("[Tutorial] Already topped up. Advancing.")
+		if _level == 2:
+			_level = 3
+			_emit_finished()
+		else:
+			call_deferred("_advance")
+		return
 
-	# Check if already full to avoid softlock
-	if is_instance_valid(_top_up_button_ref):
-		if _top_up_button_ref.disabled and _top_up_button_ref.text.find("Full") != -1:
-			print("[Tutorial] Vehicle already topped up. Advancing.")
-			if _level == 2:
-				_level = 3
-				_emit_finished()
-			else:
-				call_deferred("_advance")
-			return
-
-	if is_instance_valid(_top_up_button_ref) and not _top_up_button_ref.is_connected("pressed", Callable(self, "_on_top_up_pressed")):
+	if not _top_up_button_ref.is_connected("pressed", Callable(self, "_on_top_up_pressed")):
 		_top_up_button_ref.pressed.connect(Callable(self, "_on_top_up_pressed"), CONNECT_ONE_SHOT)
-	else:
-		# Retry if button not found yet
-		var timer := get_tree().create_timer(0.5, true)
-		timer.timeout.connect(func(): _watch_for_top_up())
 
 func _on_top_up_pressed() -> void:
 	_top_up_button_ref = null
@@ -2031,6 +2111,12 @@ func _exit_tree() -> void:
 		if mm.is_connected("menu_opened", c2):
 			mm.disconnect("menu_opened", c2)
 		c2 = Callable(self, "_on_journey_menu_opened")
+		if mm.is_connected("menu_opened", c2):
+			mm.disconnect("menu_opened", c2)
+		c2 = Callable(self, "_on_settlement_hub_opened")
+		if mm.is_connected("menu_opened", c2):
+			mm.disconnect("menu_opened", c2)
+		c2 = Callable(self, "_on_vendor_menu_opened")
 		if mm.is_connected("menu_opened", c2):
 			mm.disconnect("menu_opened", c2)
 

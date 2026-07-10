@@ -478,12 +478,19 @@ func _sync_dynamic_insets() -> void:
 		if is_instance_valid(top) and top.is_visible_in_tree():
 			new_t = max(new_t, int(round(top.get_global_rect().end.y)))
 	
-	# 4. Refine Bottom Inset: Must account for the MenuContainer if it's open/peeking
+	# 4. Refine insets for the open MenuContainer. Portrait: bottom sheet (raise bottom inset).
+	#    Landscape: right-side panel (raise right inset) so the tutorial text stays left of the menu.
 	if is_instance_valid(ms):
 		var menu = ms.get_node_or_null("SafeRegionContainer/MainContainer/MainContent/MapAndMenuContainer/MenuContainer")
-		if is_instance_valid(menu) and menu.is_visible_in_tree() and menu.offset_top < 0:
-			var menu_top_y = menu.get_global_rect().position.y
-			new_b = max(new_b, int(round(get_viewport_rect().size.y - menu_top_y)))
+		if is_instance_valid(menu) and menu.is_visible_in_tree():
+			var vp := get_viewport_rect().size
+			var mrect: Rect2 = menu.get_global_rect()
+			if vp.y > vp.x:
+				if menu.offset_top < 0:
+					new_b = max(new_b, int(round(vp.y - mrect.position.y)))
+			else:
+				if mrect.position.x > vp.x * 0.4 and mrect.size.x > 1.0:
+					new_r = max(new_r, int(round(vp.x - mrect.position.x)))
 
 	# Apply changes if anything shifted
 	if new_l != _safe_left_inset or new_r != _safe_right_inset or \
@@ -619,40 +626,24 @@ func _relayout_panel() -> void:
 	if _panel == null:
 		return
 
-	# Dynamically sync side insets with the actual game UI safe region
-	# This is already handled by _sync_dynamic_insets() in _process, 
-	# but we re-verify here just in case of race conditions.
 	var win_size = get_viewport_rect().size
 	var is_portrait = win_size.y > win_size.x
-	
-	# Add extra nudge in landscape to clear the camera island (notch/island)
-	# On many mobile devices, the safe area margin is the bare minimum, 
-	# but we want a more comfortable buffer for the tutorial text.
+
+	# Extra nudge in landscape to clear the camera island (notch/island).
 	var landscape_nudge := 0
 	if not is_portrait:
 		landscape_nudge = 32
 
-	# Constrain width to fit within the current map view area, respecting side insets (notches).
+	# Width: fit within the map view, respecting side insets (notches; in landscape also the side menu,
+	# folded into _safe_right_inset by _sync_dynamic_insets). The panel sizes to content vertically — no
+	# scroll by design; keep per-step copy short enough to fit the map strip (split into two steps if not).
 	var avail_w: float = max(0.0, size.x - _safe_left_inset - _safe_right_inset - (PANEL_SIDE_MARGIN * 2.0) - landscape_nudge)
 	var target_w: float = min(PANEL_MAX_WIDTH, avail_w)
 	_panel.custom_minimum_size.x = target_w
-	
-	# Ensure the panel stays within the vertical bounds of the map view 
-	# (between the top info bar and bottom navigation area).
-	# Added extra 8px buffer to safe insets to ensure clearance of hardware islands.
+
+	# Positioned below the top bar (via _safe_top_inset) and inset from the notch/side menu.
 	_panel.offset_left = _safe_left_inset + PANEL_SIDE_MARGIN + 8 + landscape_nudge
 	_panel.offset_top = _safe_top_inset + PANEL_TOP_MARGIN + 8
-	
-	# If the panel is too tall, it could overlap the bottom nav.
-	# We can't easily scroll it here without a ScrollContainer, but we can 
-	# at least ensure it has enough padding.
-	var max_h = size.y - _safe_top_inset - _safe_bottom_inset - (PANEL_TOP_MARGIN * 2.0)
-	# Force a maximum height to prevent overlapping bottom UI elements.
-	# The panel's internal scroll/VBox will handle overflow if necessary, 
-	# but we must bound the container.
-	_panel.custom_minimum_size.y = 0 # reset
-	if _panel.size.y > max_h:
-		_panel.custom_minimum_size.y = max(200.0, max_h)
 
 # Utility: allow host to bring this overlay to the top within its parent
 func bring_to_front() -> void:

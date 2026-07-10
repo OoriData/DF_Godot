@@ -1479,30 +1479,54 @@ func _hide_new_convoy_dialog():
 func _update_new_convoy_dialog_layout():
 	if not is_instance_valid(_new_convoy_dialog):
 		return
-	
-	# Ensure it's centered by default relative to the ModalLayer
-	_new_convoy_dialog.set_anchors_preset(Control.PRESET_CENTER)
-	
-	# The base sizes from the .tscn/builder (1000x480)
-	var half_w = 500
-	var half_h = 240
-	
-	if not _is_portrait():
-		# Landscape: Shift up significantly to stay above the virtual keyboard.
-		# Reverting to the original 150px shift as requested, but maintaining 
-		# the bug fix that allows this to work on the first frame.
-		var shift_up = 150
-		
-		_new_convoy_dialog.offset_left = -half_w
-		_new_convoy_dialog.offset_right = half_w
-		_new_convoy_dialog.offset_top = -half_h - shift_up
-		_new_convoy_dialog.offset_bottom = half_h - shift_up
-	else:
-		# Portrait: Standard center.
-		_new_convoy_dialog.offset_left = -half_w
-		_new_convoy_dialog.offset_right = half_w
-		_new_convoy_dialog.offset_top = -half_h
-		_new_convoy_dialog.offset_bottom = half_h
+
+	# The .tscn forces a 1000x480 minimum that overflows narrow (portrait) viewports and, centered, sits
+	# behind the on-screen keyboard. Clear the minimum and TOP-anchor the dialog so the keyboard (bottom)
+	# and the bottom/side nav can never cover the name field or Create button. (Sprint 8)
+	_new_convoy_dialog.custom_minimum_size = Vector2.ZERO
+	var vp: Vector2 = get_viewport_rect().size
+	var portrait := _is_portrait()
+	var margin := 24.0
+	var target_w: float = min(720.0, max(280.0, vp.x - margin * 2.0))
+
+	# Compact the contents in landscape so the whole card fits in the upper strip above the (taller,
+	# wider) landscape keyboard. Title wraps within the constrained width in both orientations.
+	var title := _new_convoy_dialog.get_node_or_null("VBox/Title")
+	if title is Label:
+		(title as Label).autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		(title as Label).add_theme_font_size_override("font_size", 48 if portrait else 30)
+	var vbox := _new_convoy_dialog.get_node_or_null("VBox")
+	if vbox is VBoxContainer:
+		(vbox as VBoxContainer).add_theme_constant_override("separation", 40 if portrait else 16)
+	var name_edit := _new_convoy_dialog.get_node_or_null("VBox/NameEdit")
+	if name_edit is LineEdit:
+		(name_edit as LineEdit).add_theme_font_size_override("font_size", 32 if portrait else 24)
+		(name_edit as LineEdit).custom_minimum_size = Vector2(0, 80 if portrait else 60)
+	var create_btn := _new_convoy_dialog.get_node_or_null("VBox/Buttons/CreateButton")
+	if create_btn is Button:
+		(create_btn as Button).add_theme_font_size_override("font_size", 32 if portrait else 24)
+		(create_btn as Button).custom_minimum_size = Vector2(240, 80 if portrait else 60)
+
+	# Top-anchored, horizontally centered; PanelContainer grows downward to fit its content.
+	_new_convoy_dialog.set_anchors_preset(Control.PRESET_TOP_LEFT)
+	_new_convoy_dialog.anchor_left = 0.5
+	_new_convoy_dialog.anchor_right = 0.5
+	_new_convoy_dialog.anchor_top = 0.0
+	_new_convoy_dialog.anchor_bottom = 0.0
+	_new_convoy_dialog.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	_new_convoy_dialog.grow_vertical = Control.GROW_DIRECTION_END
+	# Sit just below the top bar so its title isn't hidden behind it (device feedback); the top anchor
+	# still keeps it clear of the keyboard / bottom nav.
+	var parent_ctrl := _new_convoy_dialog.get_parent() as Control
+	var top_bar := get_node_or_null("SafeRegionContainer/MainContainer/TopBar") as Control
+	var top_inset := 0.0
+	if is_instance_valid(top_bar) and top_bar.is_visible_in_tree() and is_instance_valid(parent_ctrl):
+		top_inset = max(0.0, top_bar.get_global_rect().end.y - parent_ctrl.get_global_rect().position.y)
+	var top_y := top_inset + (margin if portrait else margin * 0.5)
+	_new_convoy_dialog.offset_left = -target_w * 0.5
+	_new_convoy_dialog.offset_right = target_w * 0.5
+	_new_convoy_dialog.offset_top = top_y
+	_new_convoy_dialog.offset_bottom = top_y
 
 func _maybe_hide_modal_layer():
 	var modal_layer: Control = get_node_or_null("SafeRegionContainer/ModalLayer")

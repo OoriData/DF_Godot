@@ -41,6 +41,10 @@ func resolve(target: Dictionary) -> Dictionary:
 			var r = _resolve_vendor_trade_panel(target)
 			_print_resolve_result(kind, r)
 			return r
+		"settlement_hub_vendor_card":
+			var r = await _resolve_settlement_hub_vendor_card(target)
+			_print_resolve_result(kind, r)
+			return r
 		"button_with_text":
 			var r = _resolve_button_with_text(target)
 			_print_resolve_result(kind, r)
@@ -126,6 +130,49 @@ func _get_settlement_menu() -> Node:
 		if is_instance_valid(c) and not c.is_queued_for_deletion() and c.is_visible_in_tree():
 			return c
 	return null
+
+func _get_settlement_overview_menu() -> Node:
+	# Prioritize the active menu from MenuManager to avoid stale instances
+	var mm := get_tree().get_root().get_node_or_null("MenuManager")
+	if is_instance_valid(mm) and mm.get("current_active_menu") != null:
+		var active = mm.get("current_active_menu")
+		if is_instance_valid(active) and active.name.contains("SettlementOverviewMenu") and not active.is_queued_for_deletion():
+			return active
+	var root := get_tree().get_root()
+	var candidates = root.find_children("SettlementOverviewMenu", "Control", true, false)
+	for c in candidates:
+		if is_instance_valid(c) and not c.is_queued_for_deletion() and c.is_visible_in_tree():
+			return c
+	return null
+
+# Highlight a vendor card in the settlement overview hub, matched by vendor name substring
+# (e.g. token "Dealership" -> the "Tutorial City Dealership" card). Resolver kind contains "vendor"
+# so TutorialManager re-polls it, following the card across the hub's rebuilds.
+func _resolve_settlement_hub_vendor_card(target: Dictionary) -> Dictionary:
+	var token := String(target.get("token", target.get("text_contains", "")))
+	var hub := _get_settlement_overview_menu()
+	if hub == null:
+		return { ok = false, node = null, rect = Rect2(), reason = "settlement-hub-missing" }
+	if not hub.has_method("get_vendor_card_node_by_name_contains"):
+		return { ok = false, node = hub, rect = _rect_for_control(hub), reason = "hub-missing-card-helper" }
+	var card: Control = hub.call("get_vendor_card_node_by_name_contains", token)
+	if not is_instance_valid(card):
+		return { ok = false, node = hub, rect = _rect_for_control(hub), reason = "vendor-card-not-found:" + token }
+	# Wait for the hub slide + card-grid layout to settle before measuring, so the highlight does not
+	# flash at the card's pre-animation position. Advance frames until the rect is stable twice running.
+	var rect := _rect_for_control(card)
+	var prev := Rect2()
+	for _i in range(16):
+		if not is_instance_valid(card) or card.is_queued_for_deletion():
+			return { ok = false, node = hub, rect = _rect_for_control(hub), reason = "vendor-card-freed-mid-settle" }
+		rect = _rect_for_control(card)
+		if rect.has_area() and rect.position.length_squared() >= 1.0 and rect == prev:
+			break
+		prev = rect
+		await get_tree().process_frame
+	if not rect.has_area() or rect.position.length_squared() < 1.0:
+		return { ok = false, node = card, rect = rect, reason = "unstable-vendor-card-rect" }
+	return { ok = true, node = card, rect = rect }
 
 func _get_journey_menu() -> Node:
 	# Prioritize active menu from MenuManager
@@ -367,6 +414,15 @@ func _resolve_convoy_return_button(_target: Dictionary) -> Dictionary:
 	return { ok = false, node = null, rect = Rect2(), reason = "convoy-return-button-not-found" }
 
 func _resolve_top_up_button(_target: Dictionary) -> Dictionary:
+	# Prefer the settlement overview hub's Top Up (relocated there in Sprint 5.5). Fall back to the
+	# single-vendor settlement menu only for any legacy path that still hosts the button.
+	var hub := _get_settlement_overview_menu()
+	if is_instance_valid(hub) and hub.has_method("get_top_up_button_node"):
+		var hbtn: Control = hub.call("get_top_up_button_node")
+		if is_instance_valid(hbtn):
+			var hrect := _rect_for_control(hbtn)
+			if hrect.has_area() and hrect.position.length_squared() >= 1.0:
+				return { ok = true, node = hbtn, rect = hrect }
 	var menu := _get_settlement_menu()
 	if not is_instance_valid(menu):
 		return { ok = false, node = null, rect = Rect2(), reason = "settlement-menu-missing" }

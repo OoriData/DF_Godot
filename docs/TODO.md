@@ -61,15 +61,79 @@ All layout work, verified live on iOS. Detail kept here because the big warehous
   - **Debugging lesson captured in [AI_ONBOARDING.md](AI_ONBOARDING.md)** — the multi-session hunt (chased warehouse width, then height, before finding the top bar) produced a "Debugging a Visual/Layout Bug" protocol: pinpoint the element+axis first, reproduce in the editor (device builds are frozen snapshots — re-export + redeploy, and a canary needs a build stamp), measure only after slide animations settle, and rule out structure (stray back button, missing `ScrollContainer`) before tuning numbers.
 
 ### Sprint 8 — Tutorial update
-Update the tutorial system to match the new UI navigation flow introduced in Sprints 5–5.5.
+Re-fit the tutorial's per-step highlights and inter-step flow to the Sprint 5–5.5 settlement-**hub** UI.
+**Preserve the checkpoint skeleton** — the server `metadata.tutorial` stages (L1 buy vehicle → L2
+supplies+topup → L4 delivery → L5 journey → L6/L7 messages) do **not** change; only the *intra-level*
+steps (highlights + the flow between them) get re-fit.
 
-- [ ] **Audit existing tutorial steps** — Review `res://Data/tutorial_steps.json` for any steps that reference the old settlement flow (multi-vendor list, single settlement screen, Top Up location, vendor selector). Identify all broken node paths and copy. `tutorial_steps.json`, `Scripts/UI/tutorial_manager.gd`.
-- [ ] **Update settlement hub tutorial steps** — Rewrite/add steps that walk the player through: Settlement nav → hub overview → vendor card tap → single-vendor trade → "‹ Settlement" back. Update target node paths in `target_resolver.gd` patterns as needed.
-- [ ] **Update Top Up tutorial step** — Top Up moved from settlement menu to the convoy overview `TopBarHBox`. Update the step target and instructional copy.
-- [ ] **Map pin tutorial** — Add or update the step that teaches pinning a settlement label and tapping the `›` chevron to open the overview. The old "tap settlement on map" behavior has changed.
-- [ ] **Smoke-test full tutorial flow** — Run `wiring_smoke_test.gd` and do a manual pass through the entire tutorial on device. Verify the highlight overlay hits the correct nodes at each step.
+**Where the steps actually live:** hardcoded in `tutorial_manager.gd::_build_level_steps()` — **NOT** a
+JSON file. The docs' `res://Data/tutorial_steps.json` doesn't exist and the JSON loader is disabled at
+`tutorial_manager.gd:1851` (it drifted out of sync and ran wrong steps). **Decision:** keep steps in
+GDScript for this sprint and correct the docs to match; a JSON migration is a separate, later task
+(it would only externalize `copy`/`target` — each `action` still needs bespoke watcher code).
+
+**Desktop ⇄ mobile parity is a first-class requirement.** The hub reflows hard between portrait (2-col
+card grid, stacked resources/warehouse) and landscape/desktop (N-col grid, side-by-side) —
+`settlement_overview_menu.gd:210/509`. Every new highlight must resolve by **content identity** (vendor
+name label, button text), never a fixed rect/index, and re-resolve on `layout_mode_changed` rebuilds.
+**Verify every fixed step in portrait, landscape, AND desktop.**
+
+Tutorial-city vendor card labels (match by substring): `Tutorial City Dealership`,
+`Tutorial City Market`, `Tutorial City Gas Station`.
+
+**Status (2026-07-10):** L1 + L2 reworked to the hub flow, compile-clean (standard + warnings-as-errors).
+L1 device-verified through vehicle purchase; L2 pending device test. Device-feedback polish from the first
+L1 pass folded in below. L4/L5, the doc fix, and the smoke test still pending.
+
+- [x] **L1 — settlement entry + vendor card (softlock fix)** — `await_settlement_hub` (waits for
+  `menu_opened("settlement_hub")`) + `await_vendor_open` (waits for `menu_opened("convoy_settlement_submenu")`),
+  new `settlement_hub_vendor_card` resolver matching the card by `vendor_name` meta (hub tags cards +
+  `get_vendor_card_node_by_name_contains()`). Device-verified through buy. `tutorial_manager.gd`,
+  `target_resolver.gd`, `settlement_overview_menu.gd`.
+- [x] **Retarget Top Up** — resolver + `_watch_for_top_up` now prefer the hub's resources-card Top Up button
+  (tagged `is_top_up_button`, exposed via `get_top_up_button_node()`); legacy settlement-menu path kept as
+  fallback. Already-full guard handles the hub's "Topped Up" label.
+- [x] **L2 — hub flow, both supply beats kept** — back to hub → tap Market card → buy 2 MRE + 2 Water → back
+  to hub → Top Up. Compile-clean; **pending device test.**
+- [x] **L4 — first delivery, hub flow** — reworked: (user is in the hub after the L2 top-up) tap Market card →
+  buy Mountain Urchins → back to hub via top-left button → Top Up. The L4 top-up at server stage 4 still
+  triggers the backend warp/teleport. **Pending device test** (esp. the warp).
+- [ ] **L5 — journey (verify only)** — structure intact (`convoy_journey_menu.gd:44-48`, `route_preview_started`,
+  "Confirm Journey"). Confirm on device; watch the warp race (convoy at 0,0 → `l5_pick_destination` suspends).
+- [ ] **Remove now-dead tab machinery** — `await_dealership_tab`/`await_market_tab` handlers + `_lock_vendor_tabs`/
+  `_watch_for_tab_selected`/`_hint_dealership_tab`/`_on_vendor_tab_selected` are no longer referenced by any
+  step (L1/L2/L4 all reworked); safe to delete.
+- [ ] **Smoke-test full flow** — extend `wiring_smoke_test.gd` toward tutorial-flow coverage (today it only
+  asserts autoload wiring), then a manual pass through every level on device in portrait + landscape + desktop.
+- [x] **Docs** — corrected the "steps are JSON" claim in `TutorialSystemOverview.md`.
+
+**Device-feedback polish (round 1) — 2026-07-10:**
+- [x] **Highlight fired before the card settled** — `settlement_hub_vendor_card` resolver waits until the card's
+  rect is stable across two frames before measuring (`target_resolver.gd`), so it no longer flashes at the
+  card's pre-slide position.
+- [x] **First-convoy modal fit + keyboard** — `NewConvoyDialog` was a fixed 1000×480 panel; now sizes to the
+  viewport, wraps the title, compacts fonts/heights in landscape, and is top-anchored. (Refined in round 2.)
+- [~] **Tutorial text overlapped the menu** — first attempt capped the panel + scrolled; reverted in round 2
+  (see below) because scrolling was unwanted.
+
+**Device-feedback polish (round 2, from L1/L2 pass) — 2026-07-10, pending re-verify:**
+- [x] **Modal hidden behind the top bar** — round-1 top-anchor tucked the card under the top bar.
+  `_update_new_convoy_dialog_layout` now offsets it below the top bar's bottom edge (measured relative to the
+  dialog's parent), so the title is fully visible while staying clear of the keyboard.
+- [x] **No more scrolling in the tutorial text box** — reverted the ScrollContainer/height-cap in
+  `tutorial_overlay.gd`; the panel sizes to content (no scroll), stays width-bounded and below the top bar, and
+  the landscape side-menu right-inset is kept. Per-step copy must stay short enough to fit the map strip — long
+  copy is split across steps or trimmed (e.g. the L1 buy-vehicle copy was shortened).
+- [x] **Back-to-hub uses the vendor menu's top-left button** — the L2/L4 "return to settlement" steps now
+  highlight the top-left `TitleLabel` (existing `convoy_return_button` resolver → `back_requested` → `go_back()`
+  reopens the hub and re-emits `menu_opened("settlement_hub")`), instead of asking the player to press the
+  Settlement nav twice.
+
+> **Dropped from scope:** the map-pin teaching step. The tutorial keeps its current entry flow (convoy
+> dropdown → Settlement nav); it does not teach map-label pinning.
 
 ### Sprint 9 — Map & misc polish
+- [ ] **Vehicle stats missing in vendor menu** — vehicle listings only show value and quantity available; speed, capacity, offroad, and other stat fields are not displayed. Check the vehicle card builder in the vendor trade panel. `vendor_trade_panel.gd`.
 - [ ] **Settlement labels tap-only (mobile)** — Labels currently fire on pan gestures. Guard behind `OS.has_feature("mobile")`; show only on explicit `InputEventScreenTouch`, not `InputEventMouseMotion`. Desktop retains hover. Settlement label script / `map_interaction_manager.gd`.
 - [ ] **Map overlay notch clearance** — Gear tab and expanded overlay should always clear the Dynamic Island / notch safe area on all devices, not just when `safe.position.y > 0`. When a menu panel sits under the notch, add a breathing gap between the notch floor and menu content. `map_overlay_settings_panel.gd` `_build_ui` / `_update_layout`.
 - [ ] **Mechanics compatibility preloading** — Pre-fetch compatibility data for all convoy vehicles when the mechanics menu opens; show "N upgrades available" per vehicle card before the user taps in. Requires the cart to handle multi-vehicle, multi-upgrade state. `mechanics_menu.gd`, cart system.
@@ -82,9 +146,9 @@ Sprint 6 and 7 rows removed — all complete (see the Sprint 7 section above). R
 
 | Task | Primary file:line | Notes |
 |---|---|---|
-| Tutorial — settlement flow | `res://Data/tutorial_steps.json`, `tutorial_manager.gd` | Hub → vendor → back flow |
-| Tutorial — Top Up | `tutorial_steps.json` | Target moved to convoy overview `TopBarHBox` |
-| Tutorial — map pin | `tutorial_steps.json` | Pinned label `›` chevron as the affordance |
+| Tutorial — settlement flow | `tutorial_manager.gd::_build_level_steps`, `target_resolver.gd` | Steps are in **code, not JSON**. Hub → vendor card → single-vendor → back |
+| Tutorial — Top Up | `target_resolver.gd:369`, `tutorial_manager.gd:1096` | Retarget to convoy-overview `TopUpButton` / hub resources card |
+| Tutorial — desktop/mobile parity | `settlement_overview_menu.gd:210/509` | Resolve highlights by content identity; verify portrait/landscape/desktop |
 | Settlement labels mobile | settlement label script, `map_interaction_manager.gd` | Touch-only on mobile |
 | Map overlay notch | `map_overlay_settings_panel.gd` | All-devices clearance + menu breathing gap |
 | Mechanics compat preload | `mechanics_menu.gd`, cart system | Multi-vehicle, multi-upgrade cart |
