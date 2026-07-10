@@ -165,6 +165,7 @@ MapView (Control, fills MapAndMenuContainer)
 - ❌ No signal emitted when height changes — `MapView` has no formal notification
 - ❌ Contains duplicate Oori color palette `const` values (also in `convoy_list_panel.gd`, `menu_base.gd`)
 - ❌ Options dropdown uses `add_theme_font_size_override` with manual mobile multiplier (`int(16 * 2.2)`)
+- ⚠️ **Min-width drives every menu's width (Sprint 7).** The TopBar is a child of `SafeRegionContainer`, so its combined *minimum* width sets the floor for `MainContainer` and everything under it — including the sliding menu sheet. At font 26 the username + Options + Feedback + money + convoy chips summed to ~833px, forcing the whole app 33px past the 800px portrait viewport (menus clipped symmetrically off both edges). Fixed by dropping those fonts to 20px and halving the `LeftPadding`/`RightPadding` to 8px. **If a portrait menu clips off both edges, check this bar's min-width first.**
 
 ### Open Design Questions
 - [ ] Should the TopBar collapse to icon-only in mobile portrait?
@@ -245,6 +246,9 @@ Each button (`Button`) is named `ConvoyButton_{convoy_id}` and contains:
 - ❌ Light grey button style on dark menu panel creates strong visual contrast — intentional?
 - ❌ No shadow/depth on the nav bar itself relative to the menu content
 - ❌ `SettlementMenuButton` is hidden when convoy is on a journey via `MenuBase._update_navigation_bar_visibility()` — but `ConvoyMenu.tscn` also has a *separate, legacy* `BottomMenuButtonsHBox` with its own buttons (see §4)
+
+> [!NOTE]
+> **Landscape button fill (Sprint 7).** The four buttons are `SIZE_EXPAND_FILL`, but `_update_static_nav_bar_ui` used to inset the bar content by the screen's horizontal safe-area (notch) margin in *all* orientations — in landscape the menu is a side panel nowhere near the notch, so that inset squeezed the buttons into the centre with dead space on both sides. The horizontal safe inset now applies in **portrait only**; landscape uses `bar_margin`, so the buttons fill the panel width.
 
 ---
 
@@ -656,9 +660,12 @@ Content sections: Early Access, Feedback & Community, Quick Tips. Tutorial secti
 
 Pre-game OAuth login screen. Includes a dev-only "Skip Login" button gated by `app_config.cfg::active_env == "dev"`. Not part of the in-game `MainScreen` / `MenuManager` stack.
 
+**Scaling is bespoke, not the app-standard `content_scale_factor`.** `_apply_portrait_layout` (portrait+mobile branch) derives a local `scale_f = viewport.x * 0.88 / 340` and multiplies element sizes by it. Because the global canvas scale *also* applies, sizes here are effectively double-scaled — so each element's base value must be chosen relative to the others, not in absolute logical px. The `StatusLabel` base is **22px** (Sprint 7 — was 52px, which rendered ~3× the 16px button base and nearly filled the screen).
+
 ### Known Issues / Gaps
 - ❌ Scene-level audit pending (4300 bytes)
 - ❌ "Skip Login" button visibility uses `app_config.cfg` read at `_ready()` — not integrated with the formal `SettingsManager`
+- ⚠️ Bespoke `scale_f` scaling on top of the global canvas scale (see above) — element bases are only meaningful relative to each other
 
 ---
 

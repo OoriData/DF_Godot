@@ -188,7 +188,7 @@ Adds the standard tileable `Oori Backround.png` texture behind all content. It a
 Set `auto_apply_oori_background = false` on a subclass if you need a custom background.
 
 ### `_apply_standard_margins()`
-Checks `DeviceStateManager.get_is_portrait()` and applies a 14px inset on all sides to `MainVBox` in portrait mode (to keep content off the screen edge). In landscape/desktop the inset is 0.
+Anchors `MainVBox` to the full rect, then insets it so content never touches the screen edge (glass / rounded corners / notch). As of Sprint 7 the **horizontal** buffer is `UITheme.SPACE_LG` (16px) in **both** orientations — landscape used to be edge-to-edge (0), which let content sit flush against the edge. The **vertical** inset is unchanged: 14px in portrait, 0 in landscape (kept tight because landscape viewport height is scarce). Menus whose root isn't a `MainVBox` (e.g. `settlement_overview_menu`, which builds its own tree) are unaffected — the helper early-returns.
 
 ### `style_back_button(btn)` / `style_convoy_nav_button(btn)`
 Apply consistent button styles — `style_back_button` produces a dark navy rounded button; `style_convoy_nav_button` produces a light grey button matching the static nav bar.

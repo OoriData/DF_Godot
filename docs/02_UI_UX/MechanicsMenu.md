@@ -58,6 +58,9 @@ Two inner tabs rendered via custom pill buttons (`TabsRow / TabScroll / TabHBox`
 > [!IMPORTANT]
 > **No nested `ScrollContainer`s.** `parts_scroll` (the tab's outer scroll container) is the only scroll container for this tab. Its direction is switched at runtime in `_rebuild_parts_tab()`. Adding an inner `ScrollContainer` fails in Godot 4 — the outer clips the inner's rect and both compete for touch events.
 
+### Orientation reflow (Sprint 7)
+`_ready()` connects to `DeviceStateManager.layout_mode_changed`; the disconnect is in `_exit_tree()`. On rotation, `_on_layout_mode_changed` re-runs `_setup_custom_tabs()`, re-applies the Apply-button height, and rebuilds the Parts + Cart tabs for the selected vehicle — restoring highlights from caches (`_compat_cache`, availability dicts) so it fires **no** network calls. This makes the Parts grid/strip switch on rotation in place; before, it only updated when the vehicle was re-picked. Applies to both standalone and Service-tab-embedded instances.
+
 ### Key internal state
 
 | Variable | Purpose |

@@ -204,8 +204,10 @@ func _apply_portrait_layout() -> void:
 			loading_bar.custom_minimum_size = Vector2(btn_w, 8 * scale_f)
 
 		if is_instance_valid(status_label) and status_label.label_settings:
-			status_label.label_settings.font_size = int(round(52.0 * scale_f))
-			status_label.custom_minimum_size = Vector2(btn_w, 96 * scale_f)
+			# Was 52px base (×scale_f ≈ 2.07 → ~108px), 3× the 16px button base and screen-filling on
+			# mobile. 22px base keeps it prominent-but-proportionate (slightly larger than the buttons).
+			status_label.label_settings.font_size = int(round(22.0 * scale_f))
+			status_label.custom_minimum_size = Vector2(btn_w, 48 * scale_f)
 
 		# Zoom the background camera so the map bleeds off all 4 edges
 		if is_instance_valid(_bg_camera):

@@ -111,16 +111,22 @@ Clicking a cargo card in the inventory grid auto-selects it in the retrieve drop
 ## Responsive Layout
 
 `_on_layout_mode_changed()` is connected to `DeviceStateManager.layout_mode_changed`. On orientation change it:
-1. Calls `_apply_column_responsiveness()` — toggles `Columns.vertical` to stack portrait.
+1. Calls `_apply_column_responsiveness()` — `Columns.vertical` stacks the panels in portrait; in **landscape** `LeftPanel`/`RightColumn` are `SIZE_EXPAND_FILL` with **1:2 stretch ratios** so they share the full row width (fixes the old right-side deadspace).
 2. Calls `_style_buy_menu_ui()` — rescales buttons, dropdowns, and fonts.
 3. Calls `_tune_inventory_panels_layout()` — updates tab heights and action-row direction.
 4. Calls `_update_ui()` — redraws data.
 5. Calls `_render_cargo_grid()` + `_render_vehicle_grid()` — rebuilds inventory cards.
 
-Portrait-specific sizing:
-- `OptionButton` height: **120px** (vs 50px desktop)
-- Tab bar height: **100px** (vs 40px desktop)
-- Upgrade label font: **24px** (vs 13px desktop)
+### Portrait is a short bottom sheet (Sprint 7)
+In portrait the whole menu is a **full-width bottom sheet** — the map stays pinned above it (`main_screen.gd` sizes it to 55–72% of viewport height). So the design goal is **compact height using the full width**, not tall stacking:
+
+- **Action rows stay on one horizontal line** (`_tune_inventory_panels_layout` sets `hbox.vertical = false`). Dropdown + `[− qty +]` + button fit across the full-width sheet; stacking them vertically wasted the scarce height.
+- **Controls shrunk to 72px** (were 120px) — dropdowns, quantity steppers, inputs. Action buttons **140×72** (were 280×130). Tab bar **60px** (was 100).
+- **Dropdowns set `fit_to_longest_item = false` + `clip_text = true`** — an `OptionButton` defaults to growing to its widest item, so once populated with cargo names it blew the row past the screen edge (overflow appeared the frame items loaded). Now they honour `SIZE_EXPAND_FILL` and clip.
+- **Long labels autowrap** (`_apply_label_wrapping`) so "Upgrade Cargo Capacity (Cap: …)" etc. don't force a wide minimum.
+
+> [!IMPORTANT]
+> **The warehouse itself was not the cause of the portrait "cramps and clips off both edges" bug.** The top bar (`user_info_display.gd`) at font 26 summed to a ~833px minimum width, forcing `SafeRegionContainer` — and every menu under it — 33px past the 800px viewport. Fixed in the top bar (fonts 26→20, edge paddings halved). If a menu clips symmetrically off both edges in portrait, measure the **top bar / SafeRegionContainer** min-width before touching the menu. See the debugging protocol in [AI_ONBOARDING.md](../AI_ONBOARDING.md).
 
 ---
 

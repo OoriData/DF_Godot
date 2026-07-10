@@ -147,6 +147,9 @@ Left column (ratio 2.0)      │  Right column (ratio 3.0)
 > [!IMPORTANT]
 > **No nested `ScrollContainer`s.** The outer `PartsScroll` scene node is the only scroll container for the Parts tab. The scroll direction is switched at runtime in `_populate_parts_tab()`. Adding an inner `ScrollContainer` inside the existing one fails in Godot 4 — the outer clips the inner's rect and both compete for touch events, making the inner non-scrollable.
 
+### Orientation reflow (Sprint 7)
+`_ready()` connects to `DeviceStateManager.layout_mode_changed`. On rotation, `_on_layout_mode_changed` re-runs `_setup_custom_tabs()`, re-applies the vehicle dropdown height, and re-renders the active vehicle (`_display_vehicle_details`) — so the Parts tab switches between the portrait 2-col grid and the landscape horizontal strip *in place*, without closing and reopening the menu. Previously the layout was fixed at build time and only updated on reopen. The embedded Service-tab mechanics menu reflows itself via its own subscription.
+
 ---
 
 ## Scaling Rule
