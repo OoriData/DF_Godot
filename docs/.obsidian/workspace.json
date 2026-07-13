@@ -6,7 +6,7 @@
       {
         "id": "16f98d6698797a56",
         "type": "tabs",
-        "dimension": 62.0429252782194,
+        "dimension": 50.695825049701796,
         "children": [
           {
             "id": "1ae821d75f551279",
@@ -23,7 +23,7 @@
       {
         "id": "c97ffac0088dc79b",
         "type": "tabs",
-        "dimension": 37.9570747217806,
+        "dimension": 49.30417495029821,
         "children": [
           {
             "id": "9c639cf8e7cf6606",
@@ -67,7 +67,8 @@
               "title": "DocumentationHome"
             }
           }
-        ]
+        ],
+        "currentTab": 1
       }
     ],
     "direction": "vertical"
@@ -212,7 +213,7 @@
       "bases:Create new base": false
     }
   },
-  "active": "1ae821d75f551279",
+  "active": "ee883a010a050212",
   "lastOpenFiles": [
     "TODO.md",
     "DocumentationHome.md",

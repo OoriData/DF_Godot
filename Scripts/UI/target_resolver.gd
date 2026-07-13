@@ -391,8 +391,19 @@ func _resolve_vendor_action_button(target: Dictionary) -> Dictionary:
 # Highlights the convoy name button inside the settlement menu (TitleLabel) if present;
 # otherwise falls back to the global ConvoyMenuButton in the MainScreen top bar.
 func _resolve_convoy_return_button(_target: Dictionary) -> Dictionary:
-	# Primary: settlement menu title button
 	var settlement_menu := get_tree().get_root().find_child("ConvoySettlementMenu", true, false)
+	# Primary (single-vendor mode): the back control is a PanelContainer named "BackToSettlementButton"
+	# with the "‹ <settlement> / <vendor>" text, mounted inside the active vendor panel's control row.
+	# It doesn't look like a button, so highlighting it is what makes the back path discoverable.
+	if is_instance_valid(settlement_menu):
+		var back_ctrl := settlement_menu.find_child("BackToSettlementButton", true, false)
+		if is_instance_valid(back_ctrl) and back_ctrl is Control and (back_ctrl as Control).is_visible_in_tree():
+			var back_rect := _rect_for_control(back_ctrl)
+			if back_rect.has_area() and back_rect.position.length_squared() >= 1.0:
+				return { ok = true, node = back_ctrl, rect = back_rect }
+			return { ok = false, node = back_ctrl, rect = back_rect, reason = "unstable-back-btn-rect" }
+
+	# Fallback: settlement menu title button (legacy top-banner path).
 	if is_instance_valid(settlement_menu):
 		var title_btn: Button = settlement_menu.get_node_or_null("MainVBox/TopBarHBox/TitleLabel")
 		if is_instance_valid(title_btn):

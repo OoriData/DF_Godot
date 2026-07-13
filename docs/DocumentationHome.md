@@ -58,6 +58,9 @@ Welcome to the technical documentation for *Desolate Frontiers*. This folder is 
   - [**Settlement Overlay System**](03_Systems/MapSystem/SettlementOverlay.md): Tile outlines, focus pins, route arcs, color coding, dimming, and zoom smoothing.
 - [**Tutorial System**](03_Systems/TutorialSystem/TutorialSystemOverview.md): Managing onboarding levels, steps, and UI highlights.
 
+> [!NOTE]
+> **Content gotcha — "Jerry Cans" ≠ "Water Jerry Cans".** These are two distinct cargo types (fuel container vs water container). The Level 2 tutorial supply step must prompt for **Water Jerry Cans** specifically, and its completion watcher must require both `water` and `jerry` in the name — never bare "Jerry Cans". See the [Tutorial System](03_Systems/TutorialSystem/TutorialSystemOverview.md#content-gotcha-jerry-cans--water-jerry-cans) and [Glossary](99_Reference/Glossary.md#items--cargo).
+
 ---
 
 ## 04 Technical Reference

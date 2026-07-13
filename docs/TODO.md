@@ -96,8 +96,9 @@ L1 pass folded in below. L4/L5, the doc fix, and the smoke test still pending.
 - [x] **L2 — hub flow, both supply beats kept** — back to hub → tap Market card → buy 2 MRE + 2 Water → back
   to hub → Top Up. Compile-clean; **pending device test.**
 - [x] **L4 — first delivery, hub flow** — reworked: (user is in the hub after the L2 top-up) tap Market card →
-  buy Mountain Urchins → back to hub via top-left button → Top Up. The L4 top-up at server stage 4 still
-  triggers the backend warp/teleport. **Pending device test** (esp. the warp).
+  buy Mountain Urchins → **straight to the Journey menu** (round 3: dropped the L4 top-up / return-to-settlement
+  steps; resources were filled in L2 and `l5_open_journey_menu` forces stage 6 → warp). **Pending device test**
+  (esp. the warp actually firing without an L4 top-up).
 - [ ] **L5 — journey (verify only)** — structure intact (`convoy_journey_menu.gd:44-48`, `route_preview_started`,
   "Confirm Journey"). Confirm on device; watch the warp race (convoy at 0,0 → `l5_pick_destination` suspends).
 - [ ] **Remove now-dead tab machinery** — `await_dealership_tab`/`await_market_tab` handlers + `_lock_vendor_tabs`/
@@ -124,10 +125,42 @@ L1 pass folded in below. L4/L5, the doc fix, and the smoke test still pending.
   `tutorial_overlay.gd`; the panel sizes to content (no scroll), stays width-bounded and below the top bar, and
   the landscape side-menu right-inset is kept. Per-step copy must stay short enough to fit the map strip — long
   copy is split across steps or trimmed (e.g. the L1 buy-vehicle copy was shortened).
-- [x] **Back-to-hub uses the vendor menu's top-left button** — the L2/L4 "return to settlement" steps now
-  highlight the top-left `TitleLabel` (existing `convoy_return_button` resolver → `back_requested` → `go_back()`
-  reopens the hub and re-emits `menu_opened("settlement_hub")`), instead of asking the player to press the
-  Settlement nav twice.
+- [x] **Back-to-hub uses the vendor menu's top-left button** — the L2 "return to settlement" steps use the
+  `convoy_return_button` resolver → `back_requested` → `go_back()` reopens the hub and re-emits
+  `menu_opened("settlement_hub")`, instead of pressing the Settlement nav twice. (Resolver target corrected in
+  round 3 — see below.)
+
+**Device-feedback polish (round 3, from L1–L4 pass) — 2026-07-10, pending re-verify:**
+- [x] **Back button wasn't highlighting** — the real top-left back control is a `PanelContainer` named
+  `BackToSettlementButton` ("‹ <settlement> / <vendor>") mounted *inside the vendor panel's control row*, not
+  `MainVBox/TopBarHBox/TitleLabel`. `_resolve_convoy_return_button` now finds `BackToSettlementButton` first
+  (`target_resolver.gd`). It doesn't read as a button, so highlighting it is what makes the back path findable.
+- [x] **Top Up highlight blended in** — the hub Top Up button was brass (gold), the same as the gold highlight.
+  Recolored to `UITheme.STATUS_GOOD` (green) in `settlement_overview_menu.gd::_make_top_up_button`.
+- [x] **After urchins: go to Journey, not Settlement** — L4 now ends at the urchin purchase and L5 sends the
+  player straight to the Journey menu (see L4 item above). Sidesteps lingering on the vendor menu that blanks
+  post-purchase. ⚠️ *The vendor-menu-blanks-after-mission-purchase is a separate `convoy_settlement_menu` bug —
+  not yet root-caused; flagged if it still shows.*
+- [x] **Confirm Journey wasn't clickable** — the highlight hole excluded the dynamically-built Confirm button,
+  and the shield blocked the tap. `l5_embark` is now ungated (`lock = "none"`, no target); the whole screen is
+  interactive and the watcher still advances on journey start. Added an empty-target guard in
+  `_resolve_and_highlight` so ungated steps don't spin the resolver retry loop.
+
+**Device-feedback polish (round 4, from L1–L2 landscape pass) — 2026-07-10, pending re-verify:**
+- [x] **Text box overlapped the vendor menu (landscape)** — two root causes: (1) the inset heuristic missed a
+  side menu whose left edge sat below the 40% threshold; (2) the message `RichTextLabel` has `fit_content = true`,
+  so it sized to the **unwrapped** text width and forced the panel wider than any width cap (a `custom_minimum_size.x`
+  floor can't cap it). `tutorial_overlay.gd::_relayout_panel` now: clamps the panel's right edge directly against
+  the live `MenuContainer` rect (no threshold, 16px gap); **bounds the label's `custom_minimum_size.x`** so it
+  wraps to the panel width instead of spilling; drops the VBox's 380px min width; and uses a smaller landscape
+  left margin (`_safe_left_inset + 16`) so the panel uses the empty strip left of the map. No scroll; copy stays short.
+- [x] **Supply step "not updating" — kept the strict Water-Jerry-Cans match** — the vendor stocks BOTH plain
+  `Jerry Cans` (fuel) and `Water Jerry Cans` (water); the water total must require **both** `water` AND `jerry`
+  (never bare `jerry`) so a plain-jerry-can purchase doesn't wrongly satisfy the step. See
+  [[reference_jerry_cans_vs_water]] and the TutorialSystem "Content gotcha" note. Added `[Tutorial][DIAG] supply
+  cargo item=…` logging in `_on_supply_check` so a wrong-item purchase is obvious in the logs. *If a genuine
+  `Water Jerry Cans` buy still doesn't count, those logs will show whether `_on_supply_check` fires and what
+  cargo it sees — root-cause from there.*
 
 > **Dropped from scope:** the map-pin teaching step. The tutorial keeps its current entry flow (convoy
 > dropdown → Settlement nav); it does not teach map-label pinning.

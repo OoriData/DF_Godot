@@ -62,6 +62,7 @@ Welcome, Agent. To maintain the architectural integrity and visual standards of 
 - Before writing any code, check the **[Developer Cookbook](01_Architecture/Cookbook.md)** for a recipe. If a recipe exists, follow it strictly.
 - When a menu isn't updating, check its `_debug_*` flag first. 9 times out of 10 the `process_mode` or a missed `is_connected` guard is the root cause.
 - `money` from the API can be a `String`. Always read user money from `GameStore.get_user()["money"]` which is normalised to `int`.
+- **Item names — "Jerry Cans" ≠ "Water Jerry Cans".** These are **two distinct cargo types**: plain *Jerry Cans* hold **fuel**, *Water Jerry Cans* hold **water**. The Level 2 tutorial supply step must ask for **Water Jerry Cans** specifically — never write bare "Jerry Cans" there, and never loosen a match to just `jerry` (require both `water` and `jerry`). Details in [Tutorial System](03_Systems/TutorialSystem/TutorialSystemOverview.md#content-gotcha-jerry-cans--water-jerry-cans) and the [Glossary](99_Reference/Glossary.md#items--cargo).
 
 ---
 

@@ -353,7 +353,7 @@ func _build_level_steps(level: int) -> Array:
 				},
 				{
 					id = "l1_buy_vehicle",
-					copy = "Scout the vehicles this vendor has in stock \u2014 pricier ones often carry more cargo.\n\nSelect one and press Buy.",
+					copy = "Scout the vehicles \u2014 pricier ones carry more cargo. Pick one and press Buy.",
 					action = "await_vehicle_purchase",
 					# By targeting the whole panel, we create a highlight "hole" for the entire trade UI.
 					# The user can now click on items in the list and the buy button.
@@ -400,7 +400,9 @@ func _build_level_steps(level: int) -> Array:
 					lock = "soft"
 				}
 			]
-		4: # Level 4: Accept Your First Delivery (user is in the settlement hub after the L2 top-up)
+		4: # Level 4: Accept Your First Delivery (user is in the settlement hub after the L2 top-up).
+			# Ends at the urchin purchase; L5 sends the player straight to the Journey menu (no top-up here —
+			# resources were filled in L2, and l5_open_journey_menu forces stage 6 which triggers the warp).
 			return [
 				{
 					id = "l4_open_market",
@@ -416,26 +418,12 @@ func _build_level_steps(level: int) -> Array:
 					target = { resolver = "vendor_trade_panel" },
 					lock = "soft"
 				},
-				{
-					id = "l4_return_for_top_up",
-					copy = "Delivery goods secured.\n\nTap the top-left button to head back to the hub.",
-					action = "await_settlement_hub",
-					target = { resolver = "convoy_return_button" },
-					lock = "soft"
-				},
-				{
-					id = "l4_ensure_top_up",
-					copy = "Top up your fuel, water, and food before you leave.",
-					action = "await_top_up",
-					target = { resolver = "top_up_button" },
-					lock = "soft"
-				},
 			]
 		5: # Level 5: Embark on Your Journey
 			return [
 				{
 					id = "l5_open_journey_menu",
-					copy = "Now that you're back at the convoy overview, open the 'Journey' menu to plan your first delivery.",
+					copy = "Now open the Journey menu to plan your first delivery.",
 					action = "await_journey_menu",
 					target = { resolver = "button_with_text", text_contains = "Journey" },
 					lock = "soft"
@@ -449,10 +437,12 @@ func _build_level_steps(level: int) -> Array:
 				},
 				{
 					id = "l5_embark",
-					copy = "This screen shows different Resource and journey information. \n\n Click Confirm Journey to embark on your first delivery!",
+					copy = "This screen shows resource and journey information.\n\nTap Confirm Journey to embark on your first delivery!",
 					action = "await_journey_confirm",
-					target = { resolver = "journey_confirm_button" },
-					lock = "soft"
+					# No highlight/gating here: the confirm panel builds dynamically and the highlight hole was
+					# excluding the Confirm button, blocking the tap. Leave the whole screen interactive.
+					target = {},
+					lock = "none"
 				},
 				{
 					id = "l5_set_stage_6",
@@ -1407,7 +1397,9 @@ func _on_supply_check(_all_convoys: Array) -> void:
 		var item_name := String(item.get("name", "")).to_lower()
 		var quantity := int(item.get("quantity", 0))
 
-		# Make matching more robust
+		# Match "Water Jerry Cans" specifically — the vendor also stocks plain "Jerry Cans", which must NOT
+		# count for this step. Log every cargo name so a wrong-item purchase is easy to spot in the logs.
+		print("[Tutorial][DIAG] supply cargo item='%s' qty=%d" % [item_name, quantity])
 		if item_name.contains("mre"):
 			mre_count += quantity
 		elif item_name.contains("water") and item_name.contains("jerry"):
@@ -1672,6 +1664,11 @@ func _resolve_and_highlight(step: Dictionary) -> bool:
 	if ov == null:
 		return false
 	var target: Dictionary = step.get("target", {})
+	# No target → message-only / ungated step: clear any highlight and don't spin the resolver retry loop.
+	if target.is_empty():
+		if ov.has_method("clear_highlight"):
+			ov.call("clear_highlight")
+		return true
 	if _resolver == null:
 		return false
 	var res = await _resolver.resolve(target)

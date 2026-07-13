@@ -46,3 +46,16 @@ graph TD
 - **Steps (content)**: `Scripts/UI/tutorial_manager.gd::_build_level_steps()` — hardcoded, not JSON
 - **Visuals**: `Scripts/UI/tutorial_overlay.gd`
 - **Resolver**: `Scripts/UI/target_resolver.gd`
+
+## Content gotcha: "Jerry Cans" ≠ "Water Jerry Cans"
+
+> [!WARNING]
+> The vendor stocks **two different, similarly-named cargo types**: plain **Jerry Cans** (a *fuel* container) and **Water Jerry Cans** (a *water* container). They are **not** the same item.
+
+The **Level 2 supply-purchase step** (`l2_buy_supplies`, `action = "await_supply_purchase"`) must prompt the player for **Water Jerry Cans specifically** — the copy reads *"Purchase 2 MRE Boxes and 2 Water Jerry Cans."* Do **not** write "Jerry Cans" in this step; a player buying plain (fuel) Jerry Cans has bought the wrong thing and must not complete the step.
+
+The completion watcher enforces this: it counts an item toward the "water" total only when the lowercased name contains **both** `water` **and** `jerry` (`tutorial_manager.gd` ~L1405 in `_on_supply_check`, and ~L1606 in the purchase handler). When editing this level:
+- Keep the step copy explicit about **Water** Jerry Cans.
+- Never loosen the match to bare `jerry` — that would let plain fuel Jerry Cans satisfy a water requirement.
+
+See the [Glossary → Items & Cargo](../../99_Reference/Glossary.md#items--cargo) entry for the fuel-vs-water field distinction.

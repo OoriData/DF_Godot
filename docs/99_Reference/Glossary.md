@@ -54,6 +54,7 @@ A central reference for domain-specific and technical terminology used in *Desol
   - *Doc*: [Items & Missions §2](../03_Systems/ItemsAndMissions.md)
 - **PartItem**: A `CargoItem` with a `slot` field (e.g., `"engine"`, `"tires"`). Installed into vehicle slots via MechanicsService.
 - **ResourceItem**: Consumable `CargoItem` (fuel, water, food).
+- **Jerry Cans** vs **Water Jerry Cans** — ⚠️ **two distinct cargo types, not the same item.** *Jerry Cans* are a **fuel** container (carry a `fuel` field); *Water Jerry Cans* are a **water** container (carry a `water` field). They read almost identically in the vendor list, so any step/logic that means one must never match the other. The Level 2 tutorial supply step asks for **Water Jerry Cans** specifically — see [Tutorial System](../03_Systems/TutorialSystem/TutorialSystemOverview.md#content-gotcha-jerry-cans--water-jerry-cans). Match on names containing **both** `water` and `jerry`; never loosen to bare `jerry`.
 - **VehicleItem**: A complete vehicle record found in vendor inventories.
 - **delivery_reward**: Credits awarded when a `DeliveryCargoItem` is delivered. On the cargo dict. Can be `null` — always guard before summing. `unit_delivery_reward` is also checked as a detection signal.
 - **Auto-Sell**: The client-side process that detects cargo items that disappeared between sessions (delivered by the backend) and shows the player a receipt.

@@ -81,7 +81,7 @@ func _ensure_ui_built() -> void:
 		_panel.add_theme_stylebox_override("panel", _make_panel_style())
 		add_child(_panel)
 		var vb := VBoxContainer.new()
-		vb.custom_minimum_size = Vector2(380, 0)
+		vb.custom_minimum_size = Vector2(0, 0)
 		vb.add_theme_constant_override("separation", 16)
 		_panel.add_child(vb)
 
@@ -629,21 +629,33 @@ func _relayout_panel() -> void:
 	var win_size = get_viewport_rect().size
 	var is_portrait = win_size.y > win_size.x
 
-	# Extra nudge in landscape to clear the camera island (notch/island).
-	var landscape_nudge := 0
-	if not is_portrait:
-		landscape_nudge = 32
+	# Smaller side margin in landscape so the panel uses the empty strip on the left of the map instead
+	# of being pushed right onto the menu. _safe_left_inset already clears the notch/island.
+	var side_margin: float = float(PANEL_SIDE_MARGIN) if is_portrait else 16.0
+	_panel.offset_left = _safe_left_inset + side_margin
+	_panel.offset_top = _safe_top_inset + PANEL_TOP_MARGIN + 8
 
-	# Width: fit within the map view, respecting side insets (notches; in landscape also the side menu,
-	# folded into _safe_right_inset by _sync_dynamic_insets). The panel sizes to content vertically — no
-	# scroll by design; keep per-step copy short enough to fit the map strip (split into two steps if not).
-	var avail_w: float = max(0.0, size.x - _safe_left_inset - _safe_right_inset - (PANEL_SIDE_MARGIN * 2.0) - landscape_nudge)
+	var avail_w: float = max(0.0, size.x - _safe_left_inset - _safe_right_inset - side_margin * 2.0)
 	var target_w: float = min(PANEL_MAX_WIDTH, avail_w)
+
+	# Hard guarantee against overlapping the open menu (landscape side panel): clamp the panel's right
+	# edge to the menu's left edge, read directly from the live MenuContainer rect (no threshold), with a
+	# 16px gap. The panel sizes to content vertically — no scroll — so keep per-step copy short.
+	if not is_portrait:
+		var ms = get_node_or_null("/root/GameRoot/MainScreen")
+		if is_instance_valid(ms):
+			var menu = ms.get_node_or_null("SafeRegionContainer/MainContainer/MainContent/MapAndMenuContainer/MenuContainer")
+			if is_instance_valid(menu) and menu is Control and (menu as Control).is_visible_in_tree():
+				var mrect: Rect2 = (menu as Control).get_global_rect()
+				var panel_global_left := get_global_rect().position.x + _panel.offset_left
+				if mrect.size.x > 1.0 and mrect.position.x > panel_global_left + 1.0:
+					target_w = min(target_w, max(0.0, (mrect.position.x - 16.0) - panel_global_left))
 	_panel.custom_minimum_size.x = target_w
 
-	# Positioned below the top bar (via _safe_top_inset) and inset from the notch/side menu.
-	_panel.offset_left = _safe_left_inset + PANEL_SIDE_MARGIN + 8 + landscape_nudge
-	_panel.offset_top = _safe_top_inset + PANEL_TOP_MARGIN + 8
+	# Bound the message label to the panel width so it WRAPS instead of sizing to the unwrapped text
+	# width (a fit_content RichTextLabel otherwise spills the panel over the menu).
+	if is_instance_valid(_message_label):
+		_message_label.custom_minimum_size.x = max(120.0, target_w - float(PANEL_PAD) * 2.0)
 
 # Utility: allow host to bring this overlay to the top within its parent
 func bring_to_front() -> void:

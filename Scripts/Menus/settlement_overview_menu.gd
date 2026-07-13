@@ -389,17 +389,19 @@ func _make_top_up_button() -> Button:
 	var cost := float(_top_up_plan.get("total_cost", 0.0))
 	var has_plan := not (_top_up_plan.get("resources", {}) as Dictionary).is_empty() and cost > 0.0
 
+	# Green (STATUS_GOOD) rather than brass: the tutorial highlight is gold, so a brass button was
+	# indistinguishable from its highlight. Green also reads as a "go / resupply" action.
 	var normal := StyleBoxFlat.new()
-	normal.bg_color = UITheme.ACCENT_BRASS if has_plan else UITheme.METAL_BASE
+	normal.bg_color = UITheme.STATUS_GOOD if has_plan else UITheme.METAL_BASE
 	normal.set_border_width_all(2)
-	normal.border_color = UITheme.ACCENT_BRASS if has_plan else UITheme.METAL_EDGE
+	normal.border_color = UITheme.STATUS_GOOD if has_plan else UITheme.METAL_EDGE
 	normal.set_corner_radius_all(UITheme.RADIUS_MD)
 	normal.content_margin_left = UITheme.SPACE_LG
 	normal.content_margin_right = UITheme.SPACE_LG
 	normal.content_margin_top = UITheme.SPACE_SM + 2
 	normal.content_margin_bottom = UITheme.SPACE_SM + 2
 	var hover := normal.duplicate()
-	hover.bg_color = UITheme.ACCENT_BRASS.lerp(Color.WHITE, 0.12) if has_plan else UITheme.METAL_HOVER
+	hover.bg_color = UITheme.STATUS_GOOD.lerp(Color.WHITE, 0.12) if has_plan else UITheme.METAL_HOVER
 	for st in ["normal", "hover", "pressed", "focus", "disabled"]:
 		btn.add_theme_stylebox_override(st, hover if st == "hover" else normal)
 	btn.add_theme_color_override("font_color", UITheme.METAL_DARK if has_plan else UITheme.TEXT_MUTED)
