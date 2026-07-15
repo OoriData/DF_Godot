@@ -43,6 +43,15 @@ const GATING_NONE := 0
 const GATING_SOFT := 1
 const GATING_HARD := 2
 
+# Menu types that show the shared bottom nav bar (Vehicles / Journey / Settlement / Cargo). When one of
+# these is the active menu, the player is already "in the menus" and can reach any convoy screen. Kept in
+# sync with MenuManager._update_static_nav_bar_ui(). Used by the resume anchor (see `await_convoy_menu`) to
+# decide whether the player still needs to open their convoy menu after a fresh restart.
+const CONVOY_SUBMENU_TYPES := [
+	"convoy_overview", "convoy_vehicle_submenu", "convoy_journey_submenu",
+	"convoy_cargo_submenu", "convoy_settlement_submenu", "settlement_hub", "warehouse_submenu"
+]
+
 # --- Polling state for _process ---
 var _is_polling_for_tab: bool = false
 var _polling_tab_target: Dictionary = {}
@@ -365,6 +374,16 @@ func _build_level_steps(level: int) -> Array:
 		2: # Resources
 			return [
 				{
+					# Resume anchor (see the "await_convoy_menu" handler). On the continuous path the player is
+					# still in the Dealership vendor menu, so this auto-advances. On a restart it reopens their
+					# convoy menu first so the next step's return-to-hub control is reachable.
+					id = "l2_resume_open_convoy",
+					copy = "Select your convoy from the top bar to continue.",
+					action = "await_convoy_menu",
+					target = { resolver = "button_with_text", text_contains = "Convoy" },
+					lock = "soft"
+				},
+				{
 					id = "l2_return_to_hub",
 					copy = "Now that you have a vehicle, you'll need supplies.\n\nTap the top-left button to head back to the settlement hub.",
 					action = "await_settlement_hub",
@@ -386,6 +405,14 @@ func _build_level_steps(level: int) -> Array:
 					lock = "soft"
 				},
 				{
+					# Buy the delivery goods in the SAME Market visit — no need to leave and re-enter later.
+					id = "l2_buy_urchins",
+					copy = "This Market also stocks delivery goods. Click 'Max' on Mountain Urchins, then Buy.",
+					action = "await_urchin_purchase",
+					target = { resolver = "vendor_trade_panel" },
+					lock = "soft"
+				},
+				{
 					id = "l2_return_for_top_up",
 					copy = "Supplies secured.\n\nTap the top-left button to return to the hub, where you can refuel.",
 					action = "await_settlement_hub",
@@ -400,27 +427,31 @@ func _build_level_steps(level: int) -> Array:
 					lock = "soft"
 				}
 			]
-		4: # Level 4: Accept Your First Delivery (user is in the settlement hub after the L2 top-up).
-			# Ends at the urchin purchase; L5 sends the player straight to the Journey menu (no top-up here —
-			# resources were filled in L2, and l5_open_journey_menu forces stage 6 which triggers the warp).
+		4: # Level 4 is now an invisible pass-through. The delivery goods (Mountain Urchins) are bought during
+			# the Level 2 Market visit (see l2_buy_urchins), so the player no longer leaves the hub and
+			# re-enters the Market here. Stage bookkeeping is preserved (L2 top-up sets stage 4; this level
+			# then transitions to L5, where l5_open_journey_menu forces stage 6 to trigger the backend warp).
+			# A single auto-advancing "finish_level" step carries the player straight on to the Journey menu.
 			return [
 				{
-					id = "l4_open_market",
-					copy = "Time to accept your first delivery.\n\nTap the Tutorial City Market \u2014 some vendors carry special delivery goods.",
-					action = "await_vendor_open",
-					target = { resolver = "settlement_hub_vendor_card", token = "Market" },
-					lock = "soft"
-				},
-				{
-					id = "l4_buy_urchins",
-					copy = "Click 'Max' on Mountain Urchins, then Buy.",
-					action = "await_urchin_purchase",
-					target = { resolver = "vendor_trade_panel" },
-					lock = "soft"
+					id = "l4_passthrough",
+					copy = "",
+					action = "finish_level",
+					target = {}
 				},
 			]
 		5: # Level 5: Embark on Your Journey
 			return [
+				{
+					# Resume anchor (see the "await_convoy_menu" handler). Guarantees a convoy menu is open
+					# before the next step highlights the "Journey" nav button, which only exists once the
+					# nav bar is up. Without this, resuming L5 after a restart softlocked at the map root.
+					id = "l5_resume_open_convoy",
+					copy = "Select your convoy from the top bar to continue.",
+					action = "await_convoy_menu",
+					target = { resolver = "button_with_text", text_contains = "Convoy" },
+					lock = "soft"
+				},
 				{
 					id = "l5_open_journey_menu",
 					copy = "Now open the Journey menu to plan your first delivery.",
@@ -695,6 +726,11 @@ func _run_current_step() -> void:
 			_apply_lock(step)
 			_resolve_and_highlight(step)
 			_watch_for_journey_confirm()
+		"finish_level":
+			# Invisible pass-through step: immediately end this level and roll into the next one. Used by
+			# Level 4 now that its urchin purchase moved into Level 2. Mirrors natural end-of-level flow.
+			_clear_highlight()
+			_emit_finished()
 		"set_stage_and_finish":
 			var stage = step.get("target", {}).get("stage", _level + 1)
 			_persist_tutorial_stage(int(stage))
@@ -728,6 +764,22 @@ func _run_current_step() -> void:
 			_apply_lock(step)
 			_resolve_and_highlight(step)
 			_awaiting_menu_open = true
+		"await_convoy_menu":
+			# Resume anchor. Levels whose first step highlights a nav-bar target (L5's "Journey" button,
+			# L2's return-to-hub) assume the player is already inside a convoy menu. That holds on the
+			# continuous path, but on a fresh restart the game reopens at the map root with no menu — the
+			# nav bar (and its Journey/Settlement buttons) doesn't exist yet, so the old first step
+			# highlighted nothing and the player was softlocked. This anchor guarantees a menu context:
+			#  - already in a convoy submenu (continuous flow) -> auto-advance, no prompt, zero disruption.
+			#  - at the map root (restart) -> highlight the always-present convoy dropdown and wait for any
+			#    convoy menu to open (_on_menu_opened advances us), which brings the nav bar up.
+			if _is_convoy_submenu_active():
+				call_deferred("_advance")
+			else:
+				_show_message(step.get("copy", ""), false)
+				_apply_lock(step)
+				_resolve_and_highlight(step)
+				_awaiting_menu_open = true
 		"await_settlement_hub":
 			_show_message(step.get("copy", ""), false)
 			_apply_lock(step)
@@ -884,11 +936,16 @@ func _watch_for_journey_confirm() -> void:
 			journey_menu.route_preview_started.connect(Callable(self, "_on_route_preview_started"))
 
 func _on_route_preview_started(_route_data: Dictionary) -> void:
-	# Re-resolve now that the confirmation panel and button exist.
+	# The confirm screen just appeared. This step is intentionally ungated (lock=none, no target), so the
+	# whole screen must be interactive with NO scrim. Force gating to NONE and clear any leftover highlight
+	# from the destination-pick step deterministically here — relying only on the advance timing can leave a
+	# brief soft-scrim flash over the confirm panel.
 	if _step >= 0 and _step < _steps.size() and _steps[_step].get("action") == "await_journey_confirm":
 		var step: Dictionary = _steps[_step]
 		# Defer one frame to allow layout to settle before resolving the button rect.
 		await get_tree().process_frame
+		_gate_map(GATING_NONE)
+		_clear_highlight()
 		_resolve_and_highlight(step)
 
 func _on_journey_confirmed(all_convoys: Array) -> void:
@@ -984,6 +1041,9 @@ func _advance() -> void:
 		print("[Tutorial][DIAGNOSTIC] --- Advancing from step: '%s' ---" % current_step_id)
 	# --- END TUTORIAL DIAGNOSTIC ---
 	_clear_highlight()
+	# Clear any purchase-success toast from the vendor we're leaving so it can't sit inside the next
+	# step's highlight hole (e.g. covering the return-to-settlement button after buying).
+	_dismiss_vendor_toast()
 
 	# Stop any active polling
 	if _is_polling_for_tab:
@@ -1139,9 +1199,37 @@ func _advance_after_frame() -> void:
 	if profiling_enabled:
 		print("[Tutorial] Waiting one frame for layout...")
 	await get_tree().process_frame
+	# If a menu switch slide/fade is still animating, wait for it to settle before advancing so the
+	# next step's highlight box is placed on the target's FINAL rect, not a mid-slide one (otherwise
+	# the highlight floats over empty space as the menu slides in).
+	await _wait_for_menu_switch_to_settle()
 	if profiling_enabled:
 		print("[Tutorial] Frames waited. Advancing.")
 	_advance()
+
+## Await an in-flight MenuManager slide/fade tween. Returns immediately when no switch is running.
+## Guarded by a timeout so a missed `menu_switch_finished` can never hang the tutorial.
+func _wait_for_menu_switch_to_settle() -> void:
+	var mm := get_node_or_null("/root/MenuManager")
+	if not is_instance_valid(mm):
+		return
+	# `_is_switching` is set true synchronously when a slide tween is queued (before menu_opened fires).
+	if not bool(mm.get("_is_switching")):
+		return
+	if not mm.has_signal("menu_switch_finished"):
+		return
+	if profiling_enabled:
+		print("[Tutorial] Waiting for menu switch to settle before advancing...")
+	var settled := [false]
+	var cb := func(_n, _t): settled[0] = true
+	mm.menu_switch_finished.connect(cb, CONNECT_ONE_SHOT)
+	var elapsed := 0.0
+	# SWITCH_DURATION is 0.42s; 1.2s gives comfortable margin plus the deferred-emit frame.
+	while not settled[0] and elapsed < 1.2:
+		await get_tree().process_frame
+		elapsed += get_process_delta_time()
+	if mm.is_connected("menu_switch_finished", cb):
+		mm.disconnect("menu_switch_finished", cb)
 
 var _top_up_button_ref: Button = null
 
@@ -1483,6 +1571,18 @@ func _on_convoy_updated_for_vehicle_check(_all_convoys: Array) -> void:
 		if is_instance_valid(_store) and _store.has_signal("convoys_changed") and _store.is_connected("convoys_changed", Callable(self, "_on_convoy_updated_for_vehicle_check")):
 			_store.disconnect("convoys_changed", Callable(self, "_on_convoy_updated_for_vehicle_check"))
 		call_deferred("_advance")
+
+## Hide the vendor panel's purchase-success toast. In single-vendor settlement mode the toast is a
+## sibling of the very controls the next tutorial step highlights (e.g. the return-to-settlement
+## button), so a lingering 4s banner sits inside the highlight "hole" and covers the target. Dismiss
+## it whenever the tutorial advances so it can never obscure the next highlight.
+func _dismiss_vendor_toast() -> void:
+	var panel := _get_active_vendor_panel_node()
+	if not is_instance_valid(panel):
+		return
+	var toast: Object = panel.get("toast_notification")
+	if is_instance_valid(toast) and toast is CanvasItem:
+		(toast as CanvasItem).visible = false
 
 func _get_active_vendor_panel_node() -> Node:
 	var tabs := _get_vendor_tab_container()
@@ -1908,6 +2008,17 @@ func _get_side_safe_insets() -> Vector2:
 	return Vector2.ZERO
 
 # --- MenuManager integration ---
+## True when the active menu is a convoy submenu (nav bar visible). Used by the `await_convoy_menu`
+## resume anchor to skip the "open your convoy" prompt on the continuous path.
+func _is_convoy_submenu_active() -> bool:
+	var mm := get_node_or_null("/root/MenuManager")
+	if not is_instance_valid(mm):
+		return false
+	var active = mm.get("current_active_menu")
+	if not is_instance_valid(active):
+		return false
+	return String(active.get_meta("menu_type", "")) in CONVOY_SUBMENU_TYPES
+
 func _on_menu_opened(menu_node: Node, menu_type: String) -> void:
 	if not _awaiting_menu_open:
 		return

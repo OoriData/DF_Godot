@@ -1736,13 +1736,13 @@ func _on_connector_lines_container_draw():
 		var is_far_zoom: bool = _current_map_zoom_cache < 0.6
 		
 		# --- Strategy 1: Smart Focus Line Filter ---
+		# The focused/selected convoy's journey LINE always draws — it's decoupled from the "Delivery
+		# Targets" (active_delivery_destinations) toggle, which now only gates the destination arcs/markers.
+		# all_convoy_destinations still controls whether EVERY convoy's route line shows.
 		var show_all_lines: bool = false
-		var show_active_lines: bool = true # Smart focus default
 		if is_instance_valid(_settings_service):
-			# Effective settings so planning also suppresses convoy destination LINES.
 			var eff_lines: Dictionary = _settings_service.get_settings_dict()
 			show_all_lines = bool(eff_lines.get("all_convoy_destinations", false))
-			show_active_lines = bool(eff_lines.get("active_delivery_destinations", false))
 			
 		var focused_convoy_ids: Array[String] = []
 		for cid in _selected_convoy_ids_cache:
@@ -1765,8 +1765,8 @@ func _on_connector_lines_container_draw():
 			if is_far_zoom:
 				continue # Draw no lines when far out
 			if not show_all_lines:
-				if not show_active_lines or not focused_convoy_ids.has(cid_c):
-					continue # Skip drawing this route if it's not focused!
+				if not focused_convoy_ids.has(cid_c):
+					continue # Non-focused routes need "all convoy destinations"; focused convoy's line always draws.
 
 			var j_collect = convoy_collect.get("journey")
 			if not (j_collect is Dictionary and j_collect.has("route_x") and j_collect.has("route_y")):
@@ -1818,8 +1818,8 @@ func _on_connector_lines_container_draw():
 			if is_far_zoom:
 				continue 
 			if not show_all_lines:
-				if not show_active_lines or not focused_convoy_ids.has(cid):
-					continue # Skip drawing
+				if not focused_convoy_ids.has(cid):
+					continue # Non-focused routes need "all convoy destinations"; focused convoy's line always draws.
 
 			var journey = convoy["journey"]
 			if not (journey is Dictionary and journey.has("route_x") and journey.has("route_y")):

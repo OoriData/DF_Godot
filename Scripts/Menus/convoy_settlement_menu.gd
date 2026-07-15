@@ -207,7 +207,15 @@ func _display_settlement_info():
 	if not is_instance_valid(_store) or not _store.has_method("get_tiles"):
 		_display_error("GameStore not available. Cannot load settlement data.")
 		return
-	
+
+	# Single-vendor guard: right after a mission/delivery-item purchase (e.g. Mountain Urchins) a settlement
+	# snapshot can arrive that momentarily lacks our vendor. Rebuilding on it would _clear_tabs() and then
+	# build nothing (the vendors-present check below fails), blanking the vendor — the "vendor disappears"
+	# bug. If we already show the vendor and the incoming snapshot doesn't include it, keep the current tab.
+	if _single_vendor_id != "" and _has_active_vendor_tab() and not _snapshot_has_vendor(_single_vendor_id):
+		print("[ConvoySettlementMenu] Skip rebuild — snapshot missing single vendor '%s'; keeping current tab." % _single_vendor_id)
+		return
+
 	# Store the title of the currently selected tab before clearing everything.
 	# This allows us to restore the selection if the menu is re-initialized.
 	var previous_tab_title = ""
@@ -321,6 +329,40 @@ func _display_settlement_info():
 		print("[DIAGNOSTIC] ConvoySettlementMenu: Applying cached state after tabs built.")
 		apply_ui_state(cached)
 
+
+func _has_active_vendor_tab() -> bool:
+	return is_instance_valid(vendor_tab_container) and vendor_tab_container.get_tab_count() > 0
+
+## Does the current-tile settlement in the latest store snapshot contain the given vendor_id?
+func _snapshot_has_vendor(vid: String) -> bool:
+	if vid == "" or not is_instance_valid(_store) or not _store.has_method("get_tiles"):
+		return false
+	var cx: int = roundi(float(_convoy_data.get("x", -1.0)))
+	var cy: int = roundi(float(_convoy_data.get("y", -1.0)))
+	if cx < 0 or cy < 0:
+		return false
+	var tiles: Array = _store.get_tiles()
+	if cy >= tiles.size():
+		return false
+	var row: Variant = tiles[cy]
+	if not (row is Array) or cx >= (row as Array).size():
+		return false
+	var tile: Variant = (row as Array)[cx]
+	if not (tile is Dictionary) or not (tile as Dictionary).has("settlements"):
+		return false
+	var setts: Variant = (tile as Dictionary).get("settlements")
+	if not (setts is Array) or (setts as Array).is_empty():
+		return false
+	var sett: Variant = (setts as Array)[0]
+	if not (sett is Dictionary) or not (sett as Dictionary).has("vendors"):
+		return false
+	var vendors: Variant = (sett as Dictionary).get("vendors")
+	if not (vendors is Array):
+		return false
+	for v in (vendors as Array):
+		if v is Dictionary and String((v as Dictionary).get("vendor_id", "")) == vid:
+			return true
+	return false
 
 func _on_store_convoys_changed(all_convoys_data: Array) -> void:
 	_apply_convoy_snapshot_update(all_convoys_data)

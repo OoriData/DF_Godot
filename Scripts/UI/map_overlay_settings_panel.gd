@@ -376,6 +376,14 @@ func _update_setting(setting_name: String, value: bool) -> void:
 	if is_instance_valid(_settings_service) and _settings_service.has_method("update_setting"):
 		_settings_service.update_setting(setting_name, value)
 
+## Global-space rect of the gear tab handle (the always-visible part of this overlay). The tutorial
+## uses this as the guide for where its text panel may sit — placing the panel clear of this tab so
+## the two never overlap. Returns an empty Rect2 when the tab isn't laid out / the overlay is hidden.
+func get_tab_global_rect() -> Rect2:
+	if not visible or not is_instance_valid(_tab_button) or not _tab_button.is_visible_in_tree():
+		return Rect2()
+	return _tab_button.get_global_rect()
+
 func _on_tab_button_pressed() -> void:
 	_is_expanded = !_is_expanded
 	_update_layout(true)

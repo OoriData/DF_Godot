@@ -58,7 +58,14 @@ var _base_z_index: int
 const MENU_MANAGER_ACTIVE_Z_INDEX = 150 
 
 ## Emitted when any menu is opened. Passes the menu node instance.
+## NOTE: This fires at the START of a menu switch (before the slide/fade tween runs). Listeners that
+## need the new menu at its FINAL, settled position (e.g. the tutorial placing a highlight box) must
+## wait for `menu_switch_finished` instead — otherwise they snapshot a mid-slide rect.
 signal menu_opened(menu_node, menu_type: String)
+## Emitted when a menu switch has fully settled: the slide/fade tween completed, or — for a
+## non-animated open (first menu, or a switch that isn't a convoy-style slide) — one frame after
+## `menu_opened` so layout has settled. Passes the now-active menu node and its menu_type.
+signal menu_switch_finished(menu_node, menu_type: String)
 ## Emitted when a menu is closed (either by navigating forward or back). Passes the menu node that was closed.
 signal menu_closed(menu_node_was_active, menu_type: String)
 
@@ -601,11 +608,15 @@ func _show_menu(menu_scene_resource, data_to_pass = null, add_to_stack: bool = t
 			menu_node_control.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 			menu_node_control.offset_top = top_margin
 
+	# Track whether this open kicks off a slide/fade tween. Non-animated opens must still emit
+	# `menu_switch_finished` (deferred, so layout settles) so tutorial highlight waiters don't hang.
+	var did_animate := false
 	if old_menu:
 		var old_is_persistent = old_menu.get("persistence_enabled") == true
 		print("[MenuManager] Old menu: ", old_menu.name, " type: ", old_menu_type, " is_persistent: ", old_is_persistent)
 		if use_convoy_style_layout and old_menu.get_meta("menu_type", "default") in MENU_ORDER and menu_type in MENU_ORDER:
 			_animate_menu_switch(old_menu, current_active_menu, old_menu_type, menu_type, old_is_persistent)
+			did_animate = true
 		else:
 			if old_is_persistent and is_instance_valid(host):
 				print("[MenuManager] Detaching persistent old menu: ", old_menu.name)
@@ -622,6 +633,16 @@ func _show_menu(menu_scene_resource, data_to_pass = null, add_to_stack: bool = t
 
 	self.z_index = MENU_MANAGER_ACTIVE_Z_INDEX
 	emit_signal("menu_opened", current_active_menu, menu_type)
+	# For non-animated opens (no slide tween) the switch is effectively already settled. Emit the
+	# settled signal one frame later so newly-visible controls have finished laying out. Animated
+	# opens emit it from their tween completion callback instead.
+	if not did_animate:
+		var settled_menu = current_active_menu
+		var settled_type = menu_type
+		get_tree().create_timer(0.0).timeout.connect(func():
+			if is_instance_valid(settled_menu):
+				emit_signal("menu_switch_finished", settled_menu, settled_type)
+		)
 
 	# NEW: emit focus request with convoy data if present
 	var menu_data_for_focus: Variant = current_active_menu.get_meta("menu_data", null)
@@ -745,6 +766,9 @@ func _start_menu_switch_animation(old_menu: Control, new_menu: Control, directio
 		if is_instance_valid(old_menu):
 			_finalize_switch_old_menu(old_menu, old_is_persistent)
 		_is_switching = false
+		# No tween will run; still signal completion so waiters (tutorial highlight) don't hang.
+		if is_instance_valid(new_menu):
+			emit_signal("menu_switch_finished", new_menu, new_type)
 		return
 
 	# Track this switch's outgoing menu so an interrupting switch can flush it.
@@ -811,6 +835,7 @@ func _start_menu_switch_animation(old_menu: Control, new_menu: Control, directio
 				var restored_bg = new_menu.get_node_or_null("OoriBackground")
 				if is_instance_valid(restored_bg): restored_bg.visible = true
 			_is_switching = false
+			emit_signal("menu_switch_finished", new_menu, new_type)
 		)
 		return
 
@@ -841,6 +866,7 @@ func _start_menu_switch_animation(old_menu: Control, new_menu: Control, directio
 			var restored_bg = new_menu.get_node_or_null("OoriBackground")
 			if is_instance_valid(restored_bg): restored_bg.visible = true
 		_is_switching = false
+		emit_signal("menu_switch_finished", new_menu, new_type)
 	)
 
 func _extract_convoy_id_or_passthrough(d: Variant) -> Variant:

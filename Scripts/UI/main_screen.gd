@@ -394,10 +394,11 @@ func _refresh_menu_layout():
 
 	_update_camera_occlusion_from_menu()
 	
-	# Reposition camera to keep convoy focused if possible
+	# Reposition camera to keep convoy focused if possible (refresh to live coords — the cached snapshot
+	# goes stale if the convoy moved while the menu was open, e.g. the tutorial warp).
 	if not _last_focused_convoy_data.is_empty() and is_instance_valid(map_camera_controller):
 		if map_camera_controller.has_method("focus_on_convoy"):
-			map_camera_controller.focus_on_convoy(_last_focused_convoy_data)
+			map_camera_controller.focus_on_convoy(_refresh_convoy_data_from_store(_last_focused_convoy_data))
 
 
 func _update_menu_container_anchors():
@@ -843,6 +844,8 @@ func _slide_menu_open(convoy_data: Dictionary):
 	# Acquire convoy data if missing (ensure deterministic centering on selected convoy).
 	if convoy_data.is_empty():
 		convoy_data = _get_primary_convoy_data()
+	# Use live coordinates in case the cached snapshot's position is stale (e.g. post-warp).
+	convoy_data = _refresh_convoy_data_from_store(convoy_data)
 	# Smoothly focus using FINAL occlusion target so convoy ends centered in reduced visible map view.
 	if is_instance_valid(map_camera_controller):
 		var total_occlusion_px = _menu_target_width
@@ -886,6 +889,10 @@ func _slide_menu_open(convoy_data: Dictionary):
 
 func _slide_menu_close(convoy_data: Dictionary):
 	if not is_instance_valid(menu_container): return
+	# Re-resolve live coordinates: the passed dict is the cached _last_focused_convoy_data snapshot from
+	# menu-open, which is stale if the convoy moved while the menu was open (e.g. the tutorial warp). Without
+	# this the close tween pans the camera back to the convoy's old tile.
+	convoy_data = _refresh_convoy_data_from_store(convoy_data)
 	_kill_menu_anim_tween()
 	_menu_anim_in_progress = true
 	# NOTE: Do NOT fabricate a primary convoy here. If no convoy was genuinely
@@ -979,7 +986,9 @@ func _get_primary_convoy_data() -> Dictionary:
 		if active_menu and active_menu.has_meta("menu_data"):
 			var md = active_menu.get_meta("menu_data")
 			if typeof(md) == TYPE_DICTIONARY and not md.is_empty():
-				return md
+				# The meta is a snapshot from menu-open; re-resolve to live coords so callers that focus the
+				# camera (e.g. return-to-convoy) don't pan to a stale pre-warp position.
+				return _refresh_convoy_data_from_store(md)
 			elif typeof(md) == TYPE_STRING:
 				var resolved := _resolve_convoy_dict_from_id(String(md))
 				if not resolved.is_empty():
@@ -991,6 +1000,24 @@ func _get_primary_convoy_data() -> Dictionary:
 		if convoys is Array and not convoys.is_empty():
 			return convoys[0] # TODO: Replace with actual selection logic if needed
 	return {}
+
+# Return a LIVE copy of a convoy dict from GameStore, matched by convoy_id. Cached convoy snapshots
+# (the menu's `menu_data` meta and `_last_focused_convoy_data`) are captured when a menu OPENS and are
+# never updated afterwards, so their top-level x/y go stale the moment the convoy moves — most visibly
+# when the tutorial warps the convoy from (0,0) to its start city while a menu is open. Camera focus
+# reads x/y via get_convoy_world_position(), so focusing on a stale snapshot pans to the old tile. This
+# re-resolves the current position from the store; falls back to the input dict if the id isn't found.
+# Safe: the store dict and the snapshot both lack the runtime interpolation fields
+# (`_current_segment_start_idx` etc., added only on the map-node duplicate), so focus behavior is
+# unchanged apart from using fresh coordinates.
+func _refresh_convoy_data_from_store(convoy_data: Dictionary) -> Dictionary:
+	if convoy_data == null or convoy_data.is_empty():
+		return convoy_data
+	var convoy_id := String(convoy_data.get("convoy_id", convoy_data.get("id", "")))
+	if convoy_id == "":
+		return convoy_data
+	var fresh := _resolve_convoy_dict_from_id(convoy_id)
+	return fresh if not fresh.is_empty() else convoy_data
 
 # Helper: resolve a convoy Dictionary from a convoy_id String using GameStore
 func _resolve_convoy_dict_from_id(convoy_id: String) -> Dictionary:

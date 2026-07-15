@@ -42,12 +42,17 @@ static func make_display_agg_with_parts_rebucket(agg: Dictionary) -> Dictionary:
 	var display_agg: Dictionary = {}
 	if agg == null:
 		return display_agg
-	# Ensure buckets
-	for cat in ["missions", "vehicles", "parts", "other", "resources"]:
+	# Ensure buckets. The aggregator emits the delivery-cargo bucket under "delivery" (renamed from the
+	# old "missions"); pre-seed that name so the copy below never indexes a missing bucket.
+	for cat in ["delivery", "vehicles", "parts", "other", "resources"]:
 		display_agg[cat] = {}
-	# Shallow-copy entries into display buckets
+	# Shallow-copy entries into display buckets. Create any bucket the aggregator adds that we didn't
+	# pre-seed — indexing an un-seeded bucket (e.g. "delivery") is exactly what crashed the vendor tree
+	# rebuild after a purchase ("Invalid access to key 'delivery'").
 	for cat in agg.keys():
 		if agg[cat] is Dictionary:
+			if not display_agg.has(cat):
+				display_agg[cat] = {}
 			for k in agg[cat].keys():
 				display_agg[cat][k] = agg[cat][k]
 	# Move any 'other' entries that look like parts into 'parts'
@@ -81,7 +86,7 @@ static func populate_tree_vendor_rows(tree: Tree, agg: Dictionary) -> int:
 	var root = tree.create_item()
 	var display_agg: Dictionary = make_display_agg_with_parts_rebucket(agg)
 	var total_rows := 0
-	for category in ["missions", "vehicles", "parts", "other", "resources"]:
+	for category in ["delivery", "vehicles", "parts", "other", "resources"]:
 		if not display_agg.has(category):
 			continue
 		var bucket = display_agg[category]
@@ -154,7 +159,7 @@ static func _tree_column_count(tree: Tree) -> int:
 static func _normalize_category_title(category_name: String) -> String:
 	var title := category_name
 	var _lc := str(category_name).to_lower()
-	if _lc == "missions":
+	if _lc == "delivery" or _lc == "missions":
 		title = "Delivery Cargo"
 	elif _lc == "parts":
 		title = "Part Cargo"

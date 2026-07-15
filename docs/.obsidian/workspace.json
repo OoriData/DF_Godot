@@ -67,8 +67,7 @@
               "title": "DocumentationHome"
             }
           }
-        ],
-        "currentTab": 1
+        ]
       }
     ],
     "direction": "vertical"
@@ -213,11 +212,11 @@
       "bases:Create new base": false
     }
   },
-  "active": "ee883a010a050212",
+  "active": "9c639cf8e7cf6606",
   "lastOpenFiles": [
+    "AI_ONBOARDING.md",
     "TODO.md",
     "DocumentationHome.md",
-    "AI_ONBOARDING.md",
     "04_Technical/RefreshScheduler.md",
     "99_Reference/data_dumps/README.md",
     "99_Reference/Glossary.md",

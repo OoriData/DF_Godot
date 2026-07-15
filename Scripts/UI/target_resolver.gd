@@ -97,10 +97,14 @@ func _print_resolve_result(kind: String, r: Dictionary) -> void:
 	else:
 		print("[TutorialResolver] FAIL kind=", kind, " reason=", r.get("reason", ""))
 
-func _rect_for_control(ctrl: Control, local_rect: Rect2 = Rect2()) -> Rect2:
-	if ctrl == null:
+func _rect_for_control(ctrl, local_rect: Rect2 = Rect2()) -> Rect2:
+	# NOTE: `ctrl` is intentionally untyped. A previously-freed node passes `!= null` but fails a typed
+	# `Control` parameter's coercion, crashing at the call boundary with "previously freed ... not a
+	# subclass". Menu switches free nodes mid-flight while a retry timer may still hold a stale reference,
+	# so guard with is_instance_valid here and return an empty rect (→ resolution fails → caller retries).
+	if not is_instance_valid(ctrl) or not (ctrl is Control):
 		return Rect2()
-	var base := ctrl.get_global_rect()
+	var base := (ctrl as Control).get_global_rect()
 	if local_rect.size != Vector2.ZERO or local_rect.position != Vector2.ZERO:
 		return Rect2(base.position + local_rect.position, local_rect.size)
 	return base
@@ -411,6 +415,24 @@ func _resolve_convoy_return_button(_target: Dictionary) -> Dictionary:
 			if rect.has_area():
 				return { ok = true, node = title_btn, rect = rect }
 			return { ok = false, node = title_btn, rect = rect, reason = "unstable-title-btn-rect" }
+
+	# Resume path: no vendor back button means we're not in a single-vendor menu (e.g. the player restarted
+	# and reopened the plain convoy menu). If a convoy submenu is open, the way back to the hub is the shared
+	# Settlement nav button, so highlight that instead of the convoy dropdown (which would just toggle the
+	# menu). This lets Level 2's return-to-hub step guide the player Convoy dropdown -> Settlement -> hub.
+	var menu_mgr := get_tree().get_root().get_node_or_null("MenuManager")
+	if is_instance_valid(menu_mgr):
+		var active_menu = menu_mgr.get("current_active_menu")
+		var active_type := String(active_menu.get_meta("menu_type", "")) if is_instance_valid(active_menu) else ""
+		# Only when a nav bar is up but we're not already at the hub (settlement_hub would have advanced).
+		if active_type in ["convoy_overview", "convoy_vehicle_submenu", "convoy_journey_submenu", "convoy_cargo_submenu", "warehouse_submenu"]:
+			var settle_btn: Button = null
+			if menu_mgr.has_method("get_nav_button_by_name"):
+				settle_btn = menu_mgr.get_nav_button_by_name("SettlementMenuButton")
+			if is_instance_valid(settle_btn) and settle_btn.is_visible_in_tree():
+				var srect := _rect_for_control(settle_btn)
+				if srect.has_area() and srect.position.length_squared() >= 1.0:
+					return { ok = true, node = settle_btn, rect = srect }
 
 	# Fallback: top bar convoy menu button
 	var main_screen := get_tree().get_root().find_child("MainScreen", true, false)

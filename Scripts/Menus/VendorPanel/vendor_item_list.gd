@@ -267,8 +267,13 @@ func _set_body_visible(panel: PanelContainer, vis: bool) -> void:
 			detail.visible = vis
 
 func _ensure_row_visible(panel: Control) -> void:
-	# Scroll the expanded row into view next frame (after the body lays out).
-	await get_tree().process_frame
+	# Scroll the expanded row into view next frame (after the body lays out). On Market re-entry this can
+	# run while the list is still detached from the tree (populate re-selects the previous row before the
+	# node is added), so get_tree() is null — skip the scroll rather than crash; it's only a nicety.
+	var tree := get_tree()
+	if tree == null:
+		return
+	await tree.process_frame
 	if not is_instance_valid(panel) or not is_instance_valid(self):
 		return
 	ensure_control_visible(panel)

@@ -10,6 +10,14 @@ const PANEL_SIDE_MARGIN := 40
 const PANEL_TOP_MARGIN := 40
 const PANEL_MAX_WIDTH := 600.0
 
+# Flip to true to force the panel-placement math to print EVERY frame. Even when false, the diagnostic
+# still prints whenever the panel rect changes by >2px — the fastest way to see WHY the box lands where
+# it does if it ever looks wrong again.
+var _debug_panel_layout: bool = false
+var _last_panel_debug_pos: Vector2 = Vector2(-99999, -99999)
+var _last_panel_debug_w: float = -1.0
+var _last_menu_left_debug: float = -88888.0
+
 var _message_label: RichTextLabel = null
 var _continue_button: Button = null
 var _on_continue_cb: Callable = Callable()
@@ -50,8 +58,10 @@ func _ready() -> void:
 	# Initial layout sizing within map area
 	_relayout_panel()
 	_layout_blockers()
-	# We only need _process when a highlight is active; start disabled
-	set_process(false)
+	# Keep _process running for the whole life of the overlay so the message panel re-clamps every frame
+	# against the (animating) menu — otherwise a menu that opens during a message-only step would never be
+	# detected and the box would stay wide, over the menu. _process no-ops cheaply while hidden.
+	set_process(true)
 
 	# Try to connect to a global UI scale manager (if present) to react
 	# to scale changes that can occur when naming convoys or toggling fullscreen.
@@ -87,7 +97,11 @@ func _ensure_ui_built() -> void:
 
 		_message_label = RichTextLabel.new()
 		_message_label.bbcode_enabled = true
-		_message_label.fit_content = true
+		# fit_content is deliberately OFF. With it ON, the RichTextLabel reports its UNWRAPPED text width as
+		# its minimum size, which overrides the panel's width cap and pushes the whole panel wide enough to
+		# spill over the menu. Instead we give the label a hard width (custom_minimum_size.x, set in
+		# _relayout_panel) and drive its height from get_content_height() so it wraps at exactly our width.
+		_message_label.fit_content = false
 		_message_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		_message_label.add_theme_font_size_override("normal_font_size", _get_font_size(32))
 		vb.add_child(_message_label)
@@ -313,7 +327,8 @@ func _update_checklist(items: Array) -> void:
 		var completed: bool = item.get("completed", false)
 
 		var hbox := HBoxContainer.new()
-		
+		hbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+
 		var checkbox := CheckBox.new()
 		checkbox.disabled = true # Non-interactive
 		checkbox.button_pressed = completed
@@ -322,6 +337,11 @@ func _update_checklist(items: Array) -> void:
 		var label := Label.new()
 		label.text = text
 		label.add_theme_font_size_override("font_size", _get_font_size(26))
+		# Wrap + fill so a long todo ("Mountain Urchins (any amount)") can't inflate the panel's minimum
+		# width past target_w — which would force the box back over the menu (size is clamped up to min).
+		label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		label.custom_minimum_size.x = 0.0
 		if completed:
 			label.add_theme_color_override("font_color", Color(0.6, 0.6, 0.6))
 		hbox.add_child(label)
@@ -406,13 +426,13 @@ func set_highlight_for_node(node: Node, padding: int = 6) -> void:
 
 func clear_highlight() -> void:
 	_has_highlight = false
-	# When no highlight is active, the overlay should block all input,
-	# UNLESS we are in SOFT gating mode. In soft mode, we assume a highlight
-	# is expected to appear (e.g. during a resolution retry), so we don't block.
-	if _gating_mode == GatingMode.SOFT:
-		self.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	else:
+	# Only HARD gating blocks input with no highlight. SOFT expects a highlight hole to reappear (resolution
+	# retry), and NONE means the step is intentionally ungated (e.g. the Confirm Journey step) — in both the
+	# overlay must pass input through to the game, otherwise the full-screen Control silently eats every tap.
+	if _gating_mode == GatingMode.HARD:
 		self.mouse_filter = Control.MOUSE_FILTER_STOP
+	else:
+		self.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_disconnect_managed_node_signals()
 	_reset_managed_node()
 	queue_redraw()
@@ -428,81 +448,18 @@ func _on_managed_node_item_rect_changed() -> void:
 	_update_highlight_from_managed_node()
 
 func _process(_delta: float) -> void:
-	# Continuously poll the actual UI for safe area boundaries
-	_sync_dynamic_insets()
-	
+	# Reposition the message panel every frame while visible so it tracks live global references — the
+	# menu sliding in/out, the gear tab, the safe area. Cheap (a few node lookups) and only runs during
+	# onboarding. This is what keeps the panel off the notch, off the gear tab, and off the menu.
+	if visible and _panel != null:
+		_relayout_panel()
+
 	# Follow the target node if it moves after initial layout
 	if _has_highlight and is_instance_valid(_managed_node):
 		_update_highlight_from_managed_node()
 	elif _has_highlight and not is_instance_valid(_managed_node):
 		# Target disappeared; clear to avoid stale hole at (0,0)
 		clear_highlight()
-
-func _sync_dynamic_insets() -> void:
-	var changed := false
-	
-	# 1. Try to get canonical logical safe margins from the UI Scale Manager
-	var sm = get_node_or_null("/root/ui_scale_manager")
-	var sm_margins := Rect2()
-	var has_sm_margins := false
-	if is_instance_valid(sm) and sm.has_method("get_logical_safe_margins"):
-		sm_margins = sm.get_logical_safe_margins()
-		has_sm_margins = true
-	
-	# 2. Get MainScreen and its components for dynamic height adjustments
-	var ms = get_node_or_null("/root/GameRoot/MainScreen")
-	
-	# Calculate new insets
-	var new_l := 0
-	var new_r := 0
-	var new_t := 0
-	var new_b := 0
-	
-	if has_sm_margins:
-		new_l = int(ceil(sm_margins.position.x))
-		new_r = int(ceil(sm_margins.size.x))
-		new_t = int(ceil(sm_margins.position.y))
-		new_b = int(ceil(sm_margins.size.y))
-	elif is_instance_valid(ms):
-		# Fallback to SafeRegionContainer position if scale manager not available
-		var src = ms.get_node_or_null("SafeRegionContainer")
-		if is_instance_valid(src):
-			var gr = src.get_global_rect()
-			new_l = max(0, int(round(gr.position.x)))
-			new_r = max(0, int(round(get_viewport_rect().size.x - gr.end.x)))
-			new_b = max(0, int(round(get_viewport_rect().size.y - gr.end.y)))
-	
-	# 3. Refine Top Inset: Must be at least the bottom of the TopBar (UserInfoDisplay)
-	if is_instance_valid(ms):
-		var top = ms.get_node_or_null("SafeRegionContainer/MainContainer/TopBar")
-		if is_instance_valid(top) and top.is_visible_in_tree():
-			new_t = max(new_t, int(round(top.get_global_rect().end.y)))
-	
-	# 4. Refine insets for the open MenuContainer. Portrait: bottom sheet (raise bottom inset).
-	#    Landscape: right-side panel (raise right inset) so the tutorial text stays left of the menu.
-	if is_instance_valid(ms):
-		var menu = ms.get_node_or_null("SafeRegionContainer/MainContainer/MainContent/MapAndMenuContainer/MenuContainer")
-		if is_instance_valid(menu) and menu.is_visible_in_tree():
-			var vp := get_viewport_rect().size
-			var mrect: Rect2 = menu.get_global_rect()
-			if vp.y > vp.x:
-				if menu.offset_top < 0:
-					new_b = max(new_b, int(round(vp.y - mrect.position.y)))
-			else:
-				if mrect.position.x > vp.x * 0.4 and mrect.size.x > 1.0:
-					new_r = max(new_r, int(round(vp.x - mrect.position.x)))
-
-	# Apply changes if anything shifted
-	if new_l != _safe_left_inset or new_r != _safe_right_inset or \
-	   new_t != _safe_top_inset or new_b != _safe_bottom_inset:
-		_safe_left_inset = new_l
-		_safe_right_inset = new_r
-		_safe_top_inset = new_t
-		_safe_bottom_inset = new_b
-		changed = true
-	
-	if changed:
-		_relayout_panel()
 
 func _update_highlight_from_managed_node() -> void:
 	if not is_instance_valid(_managed_node):
@@ -579,13 +536,19 @@ func _on_continue_pressed() -> void:
 		_on_continue_cb.call()
 
 func _draw() -> void:
-	# Debug border to verify overlay visibility and bounds
-	if visible:
+	# Debug border to verify overlay visibility and bounds. Gated behind the diagnostic flag so it never
+	# draws a full-screen red outline over shipped tutorial steps (it renders on every visible step,
+	# including the ungated Confirm Journey message).
+	if visible and _debug_panel_layout:
 		var border_col := Color(1, 0, 0, 0.25)
 		draw_rect(Rect2(Vector2.ZERO, size), border_col, false, 2.0)
 
 	if not _has_highlight:
-		# No highlight, just draw the overlay over the whole area
+		# No highlight. For an ungated (GatingMode.NONE) step — e.g. the Confirm Journey message —
+		# the screen is fully interactive, so dimming it is just visual noise. Draw the message panel
+		# with no scrim. HARD/SOFT steps still dim (the scrim conveys "the rest is locked").
+		if _gating_mode == GatingMode.NONE:
+			return
 		draw_rect(Rect2(Vector2.ZERO, size), OVERLAY_COLOR)
 		return
 
@@ -626,36 +589,147 @@ func _relayout_panel() -> void:
 	if _panel == null:
 		return
 
-	var win_size = get_viewport_rect().size
-	var is_portrait = win_size.y > win_size.x
+	# The panel is top_level, so its position/size are in GLOBAL (canvas) space. Every reference rect
+	# below is also global — get_logical_safe_margins() is logical == canvas space, and the top bar, gear
+	# tab and menu rects come from get_global_rect(). No local-space conversion, no scope dependence: the
+	# same math is correct whether the overlay is parented under the MapView layer or the root.
+	var vp: Vector2 = get_viewport_rect().size
+	var is_portrait: bool = vp.y > vp.x
+	var gap := 16.0
 
-	# Smaller side margin in landscape so the panel uses the empty strip on the left of the map instead
-	# of being pushed right onto the menu. _safe_left_inset already clears the notch/island.
-	var side_margin: float = float(PANEL_SIDE_MARGIN) if is_portrait else 16.0
-	_panel.offset_left = _safe_left_inset + side_margin
-	_panel.offset_top = _safe_top_inset + PANEL_TOP_MARGIN + 8
+	var safe := _get_logical_safe_margins() # Rect2(pos=(left,top), size=(right,bottom)) logical insets.
 
-	var avail_w: float = max(0.0, size.x - _safe_left_inset - _safe_right_inset - side_margin * 2.0)
+	# LEFT edge: align with the map-overlay gear tab's LEFT edge — the reference line the user pointed at,
+	# which already sits just inside the notch. This reclaims the empty strip on the left instead of
+	# clearing all the way past the tab. Only trust the tab when it's actually on-screen (>= the safe-area
+	# left): when it's collapsed/hidden it reports a negative off-screen x, which would shove the box off
+	# the left edge. Otherwise fall back to the safe-area left.
+	var panel_left: float = safe.position.x
+	var gear_rect: Rect2 = _get_map_overlay_tab_global_rect()
+	if gear_rect.has_area() and gear_rect.position.x >= safe.position.x:
+		panel_left = gear_rect.position.x
+
+	# TOP edge: below the top bar (which already clears a top notch). Fall back to the raw top safe inset.
+	var top_bound: float = safe.position.y
+	var topbar_rect: Rect2 = _get_top_bar_global_rect()
+	if topbar_rect.has_area():
+		top_bound = max(top_bound, topbar_rect.end.y)
+	var panel_top: float = top_bound + gap
+
+	# RIGHT boundary: in landscape, stop at the open side-menu's LEFT edge so the box stays in the map
+	# strip and never overlaps the menu; otherwise the screen edge minus the right safe inset. We take the
+	# menu's left edge from MenuContainer (a right-anchored PanelContainer — its position.x IS the menu's
+	# left edge) always, with no "> panel_left" guard (the guard silently skipped the clamp).
+	var right_bound: float = vp.x - safe.size.x - gap
+	var menu_left: float = _get_menu_left_edge()
+	if menu_left < INF:
+		right_bound = min(right_bound, menu_left - gap)
+
+	var avail_w: float = max(120.0, right_bound - panel_left)
 	var target_w: float = min(PANEL_MAX_WIDTH, avail_w)
 
-	# Hard guarantee against overlapping the open menu (landscape side panel): clamp the panel's right
-	# edge to the menu's left edge, read directly from the live MenuContainer rect (no threshold), with a
-	# 16px gap. The panel sizes to content vertically — no scroll — so keep per-step copy short.
-	if not is_portrait:
-		var ms = get_node_or_null("/root/GameRoot/MainScreen")
-		if is_instance_valid(ms):
-			var menu = ms.get_node_or_null("SafeRegionContainer/MainContainer/MainContent/MapAndMenuContainer/MenuContainer")
-			if is_instance_valid(menu) and menu is Control and (menu as Control).is_visible_in_tree():
-				var mrect: Rect2 = (menu as Control).get_global_rect()
-				var panel_global_left := get_global_rect().position.x + _panel.offset_left
-				if mrect.size.x > 1.0 and mrect.position.x > panel_global_left + 1.0:
-					target_w = min(target_w, max(0.0, (mrect.position.x - 16.0) - panel_global_left))
-	_panel.custom_minimum_size.x = target_w
-
-	# Bound the message label to the panel width so it WRAPS instead of sizing to the unwrapped text
-	# width (a fit_content RichTextLabel otherwise spills the panel over the menu).
+	# Give the message label a HARD width (fit_content is off) so it wraps at exactly this width. Drive its
+	# height from the wrapped content at that width.
+	var inner_w: float = max(120.0, target_w - float(PANEL_PAD) * 2.0)
 	if is_instance_valid(_message_label):
-		_message_label.custom_minimum_size.x = max(120.0, target_w - float(PANEL_PAD) * 2.0)
+		_message_label.custom_minimum_size.x = inner_w
+		var content_h: float = _message_label.get_content_height()
+		if content_h > 0.0:
+			_message_label.custom_minimum_size.y = content_h
+
+	# Position in GLOBAL space (global_position accounts for the overlay's parent transform, so it is
+	# correct in both "map" and "ui" scopes).
+	_panel.global_position = Vector2(panel_left, panel_top)
+	# CRITICAL: force the panel's actual size, not just its minimum. The overlay is a plain Control (it
+	# does NOT resize its children), and custom_minimum_size only ever GROWS the panel — so once the box
+	# reached its widest (menu far away) it never shrank back when target_w dropped, and it sat over the
+	# menu. Setting size.x directly makes the PanelContainer re-wrap its content into target_w; height then
+	# follows the content's combined minimum at that width.
+	_panel.custom_minimum_size.x = target_w
+	_panel.size.x = target_w
+	_panel.size.y = _panel.get_combined_minimum_size().y
+
+	# Change-triggered diagnostic (unconditional so it always prints): logs only when the resulting panel
+	# rect shifts by >2px, so it captures the real placement without spamming every frame. One line tells us
+	# left/top/target_w, the menu edge used, and the ACTUAL rendered panel rect — enough to see any mismatch.
+	var panel_rect := _panel.get_global_rect()
+	var menu_changed: bool = (menu_left == INF) != (_last_menu_left_debug == INF) or (menu_left != INF and absf(menu_left - _last_menu_left_debug) > 2.0)
+	if _debug_panel_layout or menu_changed or panel_rect.position.distance_to(_last_panel_debug_pos) > 2.0 or absf(panel_rect.size.x - _last_panel_debug_w) > 2.0:
+		_last_panel_debug_pos = panel_rect.position
+		_last_panel_debug_w = panel_rect.size.x
+		_last_menu_left_debug = menu_left
+		var mc := _menu_container_control()
+		var mc_desc := "<none>"
+		if is_instance_valid(mc):
+			mc_desc = "vis=%s rect=%s" % [str(mc.is_visible_in_tree()), mc.get_global_rect()]
+		var am := _active_menu_control()
+		var am_desc := "<none>"
+		if is_instance_valid(am):
+			am_desc = "%s vis=%s rect=%s" % [am.name, str(am.is_visible_in_tree()), am.get_global_rect()]
+		print("[TutorialOverlay][PANEL] vp=%s | panel_left=%.0f menu_left=%s target_w=%.0f | panel_rect=%s (right=%.0f) | MenuContainer=%s | active=%s" % [
+			vp, panel_left, ("INF" if menu_left == INF else "%.0f" % menu_left),
+			target_w, panel_rect, panel_rect.end.x, mc_desc, am_desc])
+
+## --- Global reference rects for panel placement (all in canvas/global space) ---
+func _get_logical_safe_margins() -> Rect2:
+	var sm = get_node_or_null("/root/ui_scale_manager")
+	if is_instance_valid(sm) and sm.has_method("get_logical_safe_margins"):
+		return sm.get_logical_safe_margins()
+	return Rect2()
+
+func _get_map_overlay_tab_global_rect() -> Rect2:
+	var ms = get_node_or_null("/root/GameRoot/MainScreen")
+	if not is_instance_valid(ms):
+		return Rect2()
+	var panel = ms.get_node_or_null("SafeRegionContainer/MainContainer/MainContent/MapAndMenuContainer/MapOverlaySettingsPanel")
+	if is_instance_valid(panel) and panel.has_method("get_tab_global_rect"):
+		var r: Variant = panel.call("get_tab_global_rect")
+		if r is Rect2:
+			return r
+	return Rect2()
+
+func _get_top_bar_global_rect() -> Rect2:
+	var ms = get_node_or_null("/root/GameRoot/MainScreen")
+	if not is_instance_valid(ms):
+		return Rect2()
+	var top = ms.get_node_or_null("SafeRegionContainer/MainContainer/TopBar")
+	if is_instance_valid(top) and top is Control and (top as Control).is_visible_in_tree():
+		return (top as Control).get_global_rect()
+	return Rect2()
+
+# Leftmost global x of the open side menu, or INF when no side menu is showing. MenuContainer is a
+# right-anchored PanelContainer, so its global position.x is exactly the menu's left edge. We also check
+# the active menu node and take the smaller (further-left) edge. A candidate only counts as a real
+# right-side panel if it reaches the right screen edge AND starts in the right portion — this rejects a
+# spurious full-width (x≈0) menu rect that would otherwise collapse the box to nothing.
+func _get_menu_left_edge() -> float:
+	var vp_x: float = get_viewport_rect().size.x
+	var best: float = INF
+	for c in [_menu_container_control(), _active_menu_control()]:
+		if is_instance_valid(c) and (c as Control).is_visible_in_tree():
+			var r: Rect2 = (c as Control).get_global_rect()
+			# A landscape right-side menu: has real width, reaches the right half of the screen, and starts
+			# past the far-left (rejects a full-width portrait bottom-sheet, whose left edge is ~0). We do
+			# NOT cap how wide it may be — a wide menu just clamps the box narrower, which is correct.
+			var is_side_menu := r.size.x > 1.0 and r.end.x > vp_x * 0.6 and r.position.x > vp_x * 0.05
+			if is_side_menu:
+				best = min(best, r.position.x)
+	return best
+
+func _menu_container_control() -> Control:
+	var ms = get_node_or_null("/root/GameRoot/MainScreen")
+	if not is_instance_valid(ms):
+		return null
+	var mc = ms.get_node_or_null("SafeRegionContainer/MainContainer/MainContent/MapAndMenuContainer/MenuContainer")
+	return mc as Control if mc is Control else null
+
+func _active_menu_control() -> Control:
+	var mm = get_node_or_null("/root/MenuManager")
+	if is_instance_valid(mm):
+		var active: Variant = mm.get("current_active_menu")
+		if active is Control:
+			return active as Control
+	return null
 
 # Utility: allow host to bring this overlay to the top within its parent
 func bring_to_front() -> void:

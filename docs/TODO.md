@@ -138,9 +138,8 @@ L1 pass folded in below. L4/L5, the doc fix, and the smoke test still pending.
 - [x] **Top Up highlight blended in** — the hub Top Up button was brass (gold), the same as the gold highlight.
   Recolored to `UITheme.STATUS_GOOD` (green) in `settlement_overview_menu.gd::_make_top_up_button`.
 - [x] **After urchins: go to Journey, not Settlement** — L4 now ends at the urchin purchase and L5 sends the
-  player straight to the Journey menu (see L4 item above). Sidesteps lingering on the vendor menu that blanks
-  post-purchase. ⚠️ *The vendor-menu-blanks-after-mission-purchase is a separate `convoy_settlement_menu` bug —
-  not yet root-caused; flagged if it still shows.*
+  player straight to the Journey menu (see L4 item above). ✅ *The "vendor menu blanks after purchase" bug is now
+  root-caused and fixed — see round 5 below (it was a vendor-tree crash, not a `convoy_settlement_menu` issue).*
 - [x] **Confirm Journey wasn't clickable** — the highlight hole excluded the dynamically-built Confirm button,
   and the shield blocked the tap. `l5_embark` is now ungated (`lock = "none"`, no target); the whole screen is
   interactive and the watcher still advances on journey start. Added an empty-target guard in
@@ -162,10 +161,77 @@ L1 pass folded in below. L4/L5, the doc fix, and the smoke test still pending.
   `Water Jerry Cans` buy still doesn't count, those logs will show whether `_on_supply_check` fires and what
   cargo it sees — root-cause from there.*
 
+**Device-feedback polish (round 5) — 2026-07-10, pending re-verify:**
+- [x] **Vendor menu crashed/blanked after a purchase** — root cause: `VendorTreeBuilder.make_display_agg_with_parts_rebucket`
+  pre-seeded a `"missions"` bucket, but the aggregator (`cargo_aggregator.gd`) emits delivery cargo under `"delivery"`
+  (stale rename). Copying agg's `"delivery"` bucket into a display_agg that lacked it threw *"Invalid access to key
+  'delivery'"* (`tree_builder.gd:52`) during the post-purchase tree rebuild → blank menu. Fix: pre-seed `"delivery"`
+  + defensively create any missing bucket during the copy (`tree_builder.gd`); and the caller's category map now keys
+  on `"delivery"` (`vendor_trade_panel.gd::_populate_list_from_agg`) so **Delivery Cargo (e.g. Mountain Urchins) also
+  renders** instead of silently vanishing. `"missions"` kept as a legacy title alias.
+- [x] **Crash re-entering the Market vendor** — `vendor_item_list.gd::_ensure_row_visible` did `await
+  get_tree().process_frame`, but on re-entry `populate` re-selects the previous row while the list is still
+  **detached from the tree**, so `get_tree()` was null → *"Invalid access to 'process_frame' on a null instance"*.
+  Now guards `get_tree()` and skips the scroll-into-view (a nicety) when detached. (No other unguarded
+  `await get_tree()` in the vendor/settlement rebuild paths.)
+- [x] **Text box still grazed the menu (landscape)** — see round-4 update: the `fit_content` label was the real
+  culprit; now width-bounded so it wraps within the clamped panel.
+
+**Device-feedback polish (round 6) — 2026-07-10, pending re-verify:**
+- [x] **Confirm Journey still un-tappable (round-3 fix incomplete)** — `lock = "none"` hid the shield ring, but
+  the overlay **Control itself** kept `mouse_filter = STOP`: `tutorial_overlay.gd::clear_highlight` set STOP for
+  any non-SOFT gating, so the ungated full-screen overlay silently ate the tap. Now only **HARD** blocks; NONE
+  (ungated) and SOFT (hole) pass input through. Message steps are unaffected (they don't call `clear_highlight`).
+- [x] **Vendor disappears after buying Mountain Urchins** — a `map_changed` right after a mission-item purchase
+  ran `_display_settlement_info`, which `_clear_tabs()` then rebuilt nothing when the fresh snapshot momentarily
+  lacked the vendor → blank. Added a single-vendor guard (`convoy_settlement_menu.gd`): if a tab is already shown
+  and the incoming snapshot doesn't contain `_single_vendor_id`, skip the destructive rebuild and keep the tab.
+  *Hypothesis-based (couldn't repro locally); the existing `[DIAGNOSTIC] _display_settlement_info called` +
+  new skip log will confirm the trigger on device.*
+
+**Device-feedback polish (round 7) — 2026-07-10, pending re-verify:**
+- [x] **Convoy journey route line not showing on selection** — the route LINE and the delivery-destination
+  ARCS were both gated by the same `active_delivery_destinations` ("Delivery Targets") toggle, which defaults
+  off. Per design intent, decoupled them: the focused/selected convoy's **journey line always draws** now
+  (`UI_manager.gd::_on_connector_lines_container_draw` — removed the `show_active_lines` gate on the focused
+  convoy; `all_convoy_destinations` still shows every convoy's line). The **"Delivery Targets" toggle now only
+  gates the curved destination arcs/markers**, which is what it should do. Not a regression from the tutorial
+  work — no map code had been touched; the toggle was simply off (likely reset with the test account).
+
+**Device-feedback polish (round 8, restart softlock) — 2026-07-14, pending device test:**
+- [x] **Softlock when resuming a level from the map root** — the tutorial always resumes at `_step = 0`
+  (`tutorial_manager.gd::_maybe_start` forces it), but several levels' first step assumed the player was
+  already deep in a menu. On a fresh restart the game reopens at the map root with **no menu**, so the
+  shared bottom nav bar (Vehicles / Journey / Settlement / Cargo) doesn't exist — L5's `l5_open_journey_menu`
+  highlighted a "Journey" button that wasn't there, and L2's `l2_return_to_hub` a vendor back button that
+  wasn't there. The instruction pointed at nothing → softlock (reported at the Journey screen). Fix: a
+  **resume anchor** (`await_convoy_menu` action) prepended to L2 and L5. It auto-advances with no prompt when
+  a convoy submenu is already active (continuous path — zero disruption), and on a restart highlights the
+  always-present **convoy dropdown** and waits for any convoy menu to open (which brings the nav bar up).
+  `CONVOY_SUBMENU_TYPES` + `_is_convoy_submenu_active()` gate the fail-safe (kept in sync with
+  `menu_manager.gd::_update_static_nav_bar_ui`). Also made `target_resolver.gd::_resolve_convoy_return_button`
+  adaptive: when there's no vendor back button but a convoy submenu is open, it highlights the **Settlement
+  nav button** (not the convoy dropdown), so L2's return-to-hub step guides Convoy dropdown → Settlement → hub
+  on the restart path. Compile-clean (standard + warnings-as-errors).
+
+**Device-feedback polish (round 9, camera focuses old convoy spot) — 2026-07-14, pending device test:**
+- [x] **Camera pans to the pre-warp location on tutorial exit** — when the tutorial's final menu closes, the
+  camera focuses on the convoy using `_last_focused_convoy_data`, a snapshot captured at **menu-open**. During
+  L5 the backend warps the convoy from (0,0) to its start city, so that snapshot's top-level `x`/`y` are stale
+  and the close tween (`main_screen.gd::_slide_menu_close` → `smooth_focus_on_convoy_with_final_occlusion`)
+  panned to the old tile. Root cause is general: the menu's `menu_data` meta and `_last_focused_convoy_data`
+  are never refreshed after open, and `map_camera_controller.get_convoy_world_position()` reads `x`/`y` from
+  the passed dict. Fix: new `main_screen.gd::_refresh_convoy_data_from_store()` re-resolves the convoy by
+  `convoy_id` from GameStore (live coords) right before every camera-focus call — menu open, menu close, the
+  layout-reposition path, and `_get_primary_convoy_data` (return-to-convoy). Safe because both the snapshot
+  and the store dict lack the runtime interpolation fields, so only the coordinates change. Compile-clean
+  (standard + warnings-as-errors).
+
 > **Dropped from scope:** the map-pin teaching step. The tutorial keeps its current entry flow (convoy
 > dropdown → Settlement nav); it does not teach map-label pinning.
 
 ### Sprint 9 — Map & misc polish
+- [ ] **Map labels occlude journey route line** — when a route is previewed, convoy and settlement labels can overlap the line, hiding segments. Labels should nudge/offset away from the active route polyline where possible. `UI_manager.gd` / map label placement logic, route line renderer.
 - [ ] **Vehicle stats missing in vendor menu** — vehicle listings only show value and quantity available; speed, capacity, offroad, and other stat fields are not displayed. Check the vehicle card builder in the vendor trade panel. `vendor_trade_panel.gd`.
 - [ ] **Settlement labels tap-only (mobile)** — Labels currently fire on pan gestures. Guard behind `OS.has_feature("mobile")`; show only on explicit `InputEventScreenTouch`, not `InputEventMouseMotion`. Desktop retains hover. Settlement label script / `map_interaction_manager.gd`.
 - [ ] **Map overlay notch clearance** — Gear tab and expanded overlay should always clear the Dynamic Island / notch safe area on all devices, not just when `safe.position.y > 0`. When a menu panel sits under the notch, add a breathing gap between the notch floor and menu content. `map_overlay_settings_panel.gd` `_build_ui` / `_update_layout`.

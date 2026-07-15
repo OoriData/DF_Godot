@@ -1675,7 +1675,7 @@ func _populate_list_from_agg(list: VendorItemList, agg: Dictionary) -> void:
 	list.clear_items()
 	var display_agg: Dictionary = VendorTreeBuilder.make_display_agg_with_parts_rebucket(agg)
 	# Category key -> friendly title (matches the _populate_*_list naming).
-	var order := [["missions", "Delivery Cargo"], ["vehicles", "Vehicles"], ["parts", "Parts"], ["other", "Other"], ["resources", "Resources"]]
+	var order := [["delivery", "Delivery Cargo"], ["vehicles", "Vehicles"], ["parts", "Parts"], ["other", "Other"], ["resources", "Resources"]]
 	for entry in order:
 		var key: String = entry[0]
 		var title: String = entry[1]
