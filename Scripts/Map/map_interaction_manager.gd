@@ -273,12 +273,22 @@ func _handle_mouse_camera_controls(_event: InputEvent): # Was part of _handle_mo
 	pass
 
 
+## Mobile is TAP-ONLY for map labels. The transient hover-follow (a settlement/convoy label that
+## tracks the pointer) must NOT fire from touch input — it used to pop up under the finger while
+## PANNING the map, flashing settlement labels across the whole sweep. On mobile only an explicit
+## tap reveals a settlement (via `settlement_clicked` → pin), so we suppress touch-driven hover.
+## A desktop touchscreen keeps `MOUSE_AND_KEYBOARD` scheme, so it still gets hover as before.
+func _touch_hover_enabled() -> bool:
+	return active_control_scheme != ControlScheme.TOUCH
+
 func _handle_touch_input(event: InputEvent):
 	# Touch Panning (Single finger drag)
 	if event is InputEventScreenTouch:
 		if event.pressed:
-			# Track touch for hover updates if needed, though mouse emulation usually handles this.
-			_update_hover(_touch_local_to_global(event.position))
+			# Desktop touchscreen only: reveal a hover label on touch-down. On mobile this is
+			# suppressed (tap-only) so touching the map before a pan doesn't flash a label.
+			if _touch_hover_enabled():
+				_update_hover(_touch_local_to_global(event.position))
 			# Only track the touch index for potential tap, not for panning.
 			# Panning is handled by InputEventPanGesture.
 			if _pan_touch_index == -1:
@@ -291,8 +301,10 @@ func _handle_touch_input(event: InputEvent):
 				var time_delta = Time.get_ticks_msec() - _touch_start_time
 				var pos_delta = event.position.distance_to(_touch_start_pos)
 
-				# On release, we check for hover one last time at the release position to be sure.
-				_update_hover(_touch_local_to_global(event.position))
+				# On release, refresh hover at the release position (desktop touchscreen only). On
+				# mobile a tap is resolved below via _handle_tap_interaction, so no hover is needed.
+				if _touch_hover_enabled():
+					_update_hover(_touch_local_to_global(event.position))
 
 				# ONLY handle tap if it was short and didn't move much
 				if time_delta < TAP_MAX_DURATION_MS and pos_delta < TAP_MAX_DISTANCE:
@@ -305,8 +317,10 @@ func _handle_touch_input(event: InputEvent):
 		return # Consumed
 
 	if event is InputEventScreenDrag and event.index == _pan_touch_index:
-		# Update hover during drag so labels don't "flicker" or disappear at pan start
-		_update_hover(_touch_local_to_global(event.position))
+		# Update hover during drag (desktop touchscreen only). On mobile this is the pan gesture,
+		# and following it with hover is exactly what flashed labels across the map — suppressed.
+		if _touch_hover_enabled():
+			_update_hover(_touch_local_to_global(event.position))
 		return # Consumed
 
 	# Touch Zooming (Pinch Gesture)

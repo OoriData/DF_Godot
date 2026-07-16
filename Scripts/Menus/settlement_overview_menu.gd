@@ -209,7 +209,11 @@ func _build_banner() -> Control:
 ## Their own section, side by side: Resources (convoy gauges + Top Up) on the left, Warehouse on the
 ## right. With no convoy present there's nothing to gauge, so only the Warehouse card shows (full width).
 func _build_resources_and_warehouse_row(parent: VBoxContainer, portrait: bool) -> void:
-	var card_h := 200.0 if portrait else 176.0
+	# Trim the resources/warehouse row in mobile-landscape (176 → 150) so it leaves headroom for the
+	# vendor grid below to fit above the nav bar without scrolling. This is a MINIMUM — the card still
+	# grows if its gauges need more. Portrait and desktop keep their taller rows.
+	var is_landscape_mobile := (not portrait) and _is_mobile()
+	var card_h := 200.0 if portrait else (150.0 if is_landscape_mobile else 176.0)
 	if not _has_convoy():
 		parent.add_child(_make_warehouse_card(card_h))
 		return
@@ -511,11 +515,17 @@ func _build_vendors_section(col: VBoxContainer, portrait: bool) -> void:
 		col.add_child(empty)
 		return
 
-	# Big side-by-side vendor cards (no scroll).
+	# Big side-by-side vendor cards (no scroll). The hub is fixed-height by design, so in the short
+	# MOBILE-LANDSCAPE viewport the grid must stay compact enough to clear the bottom nav bar: pack up
+	# to 4 vendors into ONE row (was ceil(N/2) → 2 rows for 3–4 vendors, which overflowed behind the nav)
+	# and use a shorter card. Desktop keeps its taller, squarer grid — it has the height to spare.
+	var is_landscape_mobile := (not portrait) and _is_mobile()
 	var grid := GridContainer.new()
-	var card_h := 132.0 if portrait else 120.0
+	var card_h := 132.0 if portrait else (96.0 if is_landscape_mobile else 120.0)
 	if portrait:
 		grid.columns = 2
+	elif is_landscape_mobile:
+		grid.columns = clampi(vendors.size(), 2, 4)
 	else:
 		grid.columns = clampi(int(ceil(vendors.size() / 2.0)), 2, 4)
 	grid.add_theme_constant_override("h_separation", UITheme.SPACE_MD)

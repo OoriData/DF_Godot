@@ -17,7 +17,7 @@ Real snapshots of common backend payloads and in-game data structures, captured 
 | [`part_example.json`](part_example.json) | Vehicle parts | `list[15]` dicts | [Mechanics](../../03_Systems/Mechanics.md) |
 | [`part_compat_example.txt`](part_compat_example.txt) | Part-compatibility output | text | [Mechanics](../../03_Systems/Mechanics.md) |
 | [`vendor_example.json`](vendor_example.json) | Vendors | `list[4]` dicts | [VendorPanel/Data](../../02_UI_UX/VendorPanel/Data.md) |
-| [`tutorial_steps.json`](tutorial_steps.json) | Tutorial step schema | dict, keyed by level | [TutorialSystem/StepSchema](../../03_Systems/TutorialSystem/StepSchema.md) |
+| [`tutorial_steps.json`](tutorial_steps.json) | Tutorial step **shape only** — *illustrative, not loaded*. Steps are hardcoded in `tutorial_manager.gd::_build_level_steps()`; this snapshot predates the Sprint 8 hub rework (its `await_dealership_tab`/tab actions are retired). | dict, keyed by level | [TutorialSystem/StepSchema](../../03_Systems/TutorialSystem/StepSchema.md) |
 | [`dump_3920_convoy_c2092202-…json`](dump_3920_convoy_c2092202-e2eb-484c-a4b9-38706f8a5ed5.json) | Diagnostic snapshot (one convoy + settlements sample) | dict | one-off debug capture |
 
 ## Regenerating

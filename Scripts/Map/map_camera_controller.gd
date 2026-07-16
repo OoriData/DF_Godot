@@ -39,6 +39,12 @@ enum FitMode { CONTAIN, COVER }
 # overhang the route geometry — are not clipped at the viewport edges. Converted to world units at
 # the estimated fit zoom in smooth_fit_route_preview. x = horizontal per side, y = vertical per side.
 @export var route_fit_label_padding_px: Vector2 = Vector2(110.0, 80.0)
+# Extra headroom (screen px) added ONLY to the TOP of the route-fit bounds, on top of
+# route_fit_label_padding_px.y. Settlement labels anchor ABOVE their tile, and the route-line
+# anti-collision nudge (UIManager._settlement_panel_overlaps_route) can push the topmost labels
+# further up, so the top edge needs more clearance than the sides/bottom or those labels clip.
+# Converted to world units at the estimated fit zoom, same as route_fit_label_padding_px.
+@export var route_fit_label_top_extra_px: float = 60.0
 # If true, smooth_fit_world_rect (used for journey route preview) is allowed to zoom out past the
 # COVER floor so long routes show both endpoints. The map may briefly show empty space at the edges
 # during the preview; the floor is re-enforced as soon as the user pans/zooms or closes the menu.
@@ -798,7 +804,11 @@ func smooth_fit_route_preview(route_data: Dictionary, duration: float = 0.6, mar
 	var est_zoom := _estimate_fit_zoom(bounds, margin)
 	if est_zoom > 0.0001:
 		var lpad := route_fit_label_padding_px / est_zoom
-		bounds = bounds.grow_individual(lpad.x, lpad.y, lpad.x, lpad.y)
+		# Labels anchor above their tile (and A4's route-nudge pushes the topmost ones further up), so
+		# the TOP gets extra headroom. grow_individual args are (left, top, right, bottom); "top" grows
+		# the -Y (visually upward) side, which is where labels overhang.
+		var top_extra: float = route_fit_label_top_extra_px / est_zoom
+		bounds = bounds.grow_individual(lpad.x, lpad.y + top_extra, lpad.x, lpad.y)
 
 	# Determine destination world position to prioritize as focus point
 	var dest_tile := Vector2i(int(route_x.back()), int(route_y.back()))
@@ -807,6 +817,13 @@ func smooth_fit_route_preview(route_data: Dictionary, duration: float = 0.6, mar
 		dest_world = tilemap_ref.map_to_local(dest_tile)
 	else:
 		dest_world = Vector2(dest_tile) * _get_cell_size()
+
+	# The destination's city label renders ABOVE its tile. For longer routes smooth_fit_world_rect blends
+	# the camera toward this focus point — and if we point at the bare tile, the fit centers below the
+	# label so only its lower half (down to its center) shows. Lift the focus up by the top headroom so
+	# the fit targets where the LABEL sits and keeps the whole thing in view. Same knob as the bounds pad.
+	if est_zoom > 0.0001:
+		dest_world.y -= route_fit_label_top_extra_px / est_zoom
 
 	smooth_fit_world_rect(bounds, duration, margin, dest_world)
 

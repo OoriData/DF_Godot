@@ -87,6 +87,9 @@ var settlement_label_settings: LabelSettings
 @export var label_anti_collision_y_shift: float = 5.0 
 ## Radius around convoy icons to keep settlement labels out of.
 @export var settlement_convoy_keepout_radius: float = 24.0
+## Clearance (px) kept between a settlement label and the previewed journey route line, so labels
+## nudge off the route instead of hiding segments. Only applies while a route preview is active.
+@export var settlement_route_keepout_px: float = 14.0
 ## Padding from the viewport edges (in pixels) used to clamp label panels.
 @export var label_map_edge_padding: float = 5.0 
 
@@ -1597,7 +1600,11 @@ func _position_settlement_panel(panel: Panel, settlement_info: Dictionary, _exis
 		# Check against convoy icons
 		var overlaps_convoys := _settlement_panel_overlaps_convoy(panel_rect)
 
-		if not overlaps_labels and not overlaps_convoys:
+		# Check against the previewed journey route line (no-op unless a preview is active), so the
+		# label doesn't sit on top of the route and hide segments.
+		var overlaps_route := _settlement_panel_overlaps_route(panel_rect)
+
+		if not overlaps_labels and not overlaps_convoys and not overlaps_route:
 			break # Found a clear spot
 
 		# Adjust position if there's an overlap
@@ -1634,7 +1641,51 @@ func _settlement_panel_overlaps_convoy(panel_rect: Rect2) -> bool:
 
 		if _rect_overlaps_circle(panel_rect, convoy_center_pos, settlement_convoy_keepout_radius):
 			return true
-			
+
+	return false
+
+## True if the panel_rect comes within settlement_route_keepout_px of the active preview route
+## polyline. Route points are tile coords converted to the same tile-center local space the panel
+## and the convoy check use ((tile + 0.5) * tile_size). No-op unless a route preview is active.
+func _settlement_panel_overlaps_route(panel_rect: Rect2) -> bool:
+	if not _is_preview_active:
+		return false
+	if _preview_route_x.size() < 2 or _preview_route_x.size() != _preview_route_y.size():
+		return false
+	if not is_instance_valid(terrain_tilemap) or not is_instance_valid(terrain_tilemap.tile_set):
+		return false
+	var tile_size = terrain_tilemap.tile_set.tile_size
+	var grown := panel_rect.grow(settlement_route_keepout_px)
+	var prev := Vector2(
+		(float(_preview_route_x[0]) + 0.5) * tile_size.x,
+		(float(_preview_route_y[0]) + 0.5) * tile_size.y
+	)
+	for i in range(1, _preview_route_x.size()):
+		var cur := Vector2(
+			(float(_preview_route_x[i]) + 0.5) * tile_size.x,
+			(float(_preview_route_y[i]) + 0.5) * tile_size.y
+		)
+		if _segment_hits_rect(prev, cur, grown):
+			return true
+		prev = cur
+	return false
+
+## Exact segment-vs-AABB test: either endpoint inside the rect, or the segment crosses any rect edge.
+func _segment_hits_rect(a: Vector2, b: Vector2, r: Rect2) -> bool:
+	if r.has_point(a) or r.has_point(b):
+		return true
+	var tl := r.position
+	var tr := r.position + Vector2(r.size.x, 0.0)
+	var br := r.position + r.size
+	var bl := r.position + Vector2(0.0, r.size.y)
+	if Geometry2D.segment_intersects_segment(a, b, tl, tr) != null:
+		return true
+	if Geometry2D.segment_intersects_segment(a, b, tr, br) != null:
+		return true
+	if Geometry2D.segment_intersects_segment(a, b, br, bl) != null:
+		return true
+	if Geometry2D.segment_intersects_segment(a, b, bl, tl) != null:
+		return true
 	return false
 
 func _find_settlement_at_tile(tile_x: int, tile_y: int) -> Variant:

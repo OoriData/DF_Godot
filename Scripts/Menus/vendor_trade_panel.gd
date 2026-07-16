@@ -1296,6 +1296,20 @@ func _update_landscape_summary() -> void:
 	var has_item: bool = selected_item != null
 	if has_item:
 		_landscape_stat_box.add_child(VendorItemList.build_stat_chips(selected_item, str(current_mode), 16))
+		# Landscape hides the verbose inspector (and its Description button), so for a vehicle that has a
+		# description, surface a compact popup button here — otherwise the description is unreachable here.
+		var ld_item = selected_item.get("item_data", selected_item) if selected_item is Dictionary else {}
+		if ld_item is Dictionary and VendorTradeVM.is_vehicle_item(ld_item):
+			var ld_desc: String = VendorInspectorBuilder.vehicle_description(ld_item)
+			if ld_desc != "":
+				var desc_btn := Button.new()
+				desc_btn.text = "Description ›"
+				desc_btn.focus_mode = Control.FOCUS_NONE
+				desc_btn.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+				desc_btn.custom_minimum_size.y = 44
+				var ld_title: String = String(ld_item.get("name", "Vehicle"))
+				desc_btn.pressed.connect(func(): VendorInspectorBuilder.show_description_popup(ld_desc, ld_title))
+				_landscape_stat_box.add_child(desc_btn)
 	_landscape_stat_box.visible = has_item
 	# Hide the tall Per Unit / Total Order / Destination section panels in landscape.
 	if is_instance_valid(item_info_rich_text):

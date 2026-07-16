@@ -25,21 +25,21 @@ The system is built on three pillars:
 
 ```mermaid
 graph TD
-    JSON[tutorial_steps.json] --> Manager[TutorialManager: The Engine]
+    Steps["_build_level_steps() in tutorial_manager.gd (hardcoded, not JSON)"] --> Manager[TutorialManager: The Engine]
     Manager --> Overlay[TutorialOverlay: The Visuals]
     Manager --> Resolver[TargetResolver: The Searcher]
     
-    Manager --> Controller[LevelController: The Logic]
-    Controller --> Hub[SignalHub: Listens for Events]
-    Hub --> Controller
-    Controller -->|Advance| Manager
+    Manager --> Watchers["_watch_for_* / _on_*_check (in tutorial_manager.gd)"]
+    Watchers --> Hub[SignalHub: Listens for Events]
+    Hub --> Watchers
+    Watchers -->|Advance| Manager
 ```
 
 ## System Components
-- **[Architecture & Flow](Architecture.md)**: How the manager and controllers interact.
-- **[Step Schema](StepSchema.md)**: Defining the JSON contract for steps.
-- **[Level Controllers](Controllers.md)**: How to write logic for a new tutorial level.
-- **[Target Resolution](TargetResolution.md)**: Resolving string identifiers to UI nodes.
+- **[Architecture & Flow](Architecture.md)**: How the manager, overlay, resolver, and watchers interact.
+- **[Step Schema](StepSchema.md)**: The step dictionary shape (id / copy / action / lock / target) — hardcoded, not JSON.
+- **[Level Logic: Actions & Watchers](Controllers.md)**: How to add a level/step and wire its completion watcher (all in `tutorial_manager.gd`).
+- **[Target Resolution](TargetResolution.md)**: Resolving string identifiers to UI nodes by content identity.
 
 ## Primary Files
 - **Manager**: `Scripts/UI/tutorial_manager.gd`

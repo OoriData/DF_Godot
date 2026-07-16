@@ -20,20 +20,22 @@ sequenceDiagram
     participant M as TutorialManager
     participant R as TargetResolver
     participant O as TutorialOverlay
-    participant C as LevelController
+    participant H as SignalHub
 
     M->>R: resolve(step.target)
     R-->>M: return Rect2
     M->>O: highlight_node(Rect2)
     M->>O: show_message(step.copy)
-    M->>C: start_watching(step.action)
-    
-    Note over C,SignalHub: User interacts with UI...
-    
-    SignalHub-->>C: event(e.g. purchase_complete)
-    C->>M: step_completed()
-    M->>M: advance_to_next_step()
+    M->>H: connect _watch_for_* / _on_*_check (per step.action)
+
+    Note over M,H: User interacts with UI...
+
+    H-->>M: event (e.g. convoys_changed / menu_opened)
+    M->>M: watcher validates → advance_to_next_step()
 ```
+
+> The watcher methods (`_watch_for_*` / `_on_*_check`) live **inside `tutorial_manager.gd`**, not a separate
+> controller — the `match action:` dispatch connects the right one when a step starts. See [Level Logic](Controllers.md).
 
 ## Input Gating (The Mask)
 The `TutorialOverlay` uses a series of invisible blocker controls to gate input based on the current step's `lock` property:

@@ -157,6 +157,42 @@ static func _make_panel(title: String, rows: Array) -> PanelContainer:
 					printerr("[VendorInspectorBuilder] SignalHub or 'map_camera_focus_settlement_requested' signal is missing!")
 			)
 			v = btn
+		elif str(r.get("k", "")) == "Description":
+			# Full description can be long, so surface it behind a button that opens a popup rather than
+			# inflating the row list. Mirrors the Destination button's styling.
+			var dbtn := Button.new()
+			dbtn.text = "View ›"
+			dbtn.add_theme_font_size_override("font_size", txt_sz)
+			dbtn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			dbtn.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+			var is_mobile_desc: bool = false
+			if is_instance_valid(dsm):
+				var dmode = dsm.get_layout_mode()
+				is_mobile_desc = (dmode == 1 or dmode == 2)
+			dbtn.custom_minimum_size = Vector2(0, 70 if is_mobile_desc else 40)
+			dbtn.flat = false
+			var db_sb := StyleBoxFlat.new()
+			db_sb.bg_color = Color(0.25, 0.28, 0.35, 0.8)
+			db_sb.border_color = Color(0.55, 0.60, 0.70, 0.8)
+			db_sb.border_width_left = 1
+			db_sb.border_width_right = 1
+			db_sb.border_width_top = 1
+			db_sb.border_width_bottom = 1
+			db_sb.corner_radius_top_left = 4
+			db_sb.corner_radius_top_right = 4
+			db_sb.corner_radius_bottom_left = 4
+			db_sb.corner_radius_bottom_right = 4
+			dbtn.add_theme_stylebox_override("normal", db_sb)
+			var db_hover = db_sb.duplicate()
+			db_hover.bg_color = Color(0.32, 0.36, 0.45, 0.9)
+			dbtn.add_theme_stylebox_override("hover", db_hover)
+			var db_pressed = db_sb.duplicate()
+			db_pressed.bg_color = Color(0.18, 0.20, 0.25, 0.9)
+			dbtn.add_theme_stylebox_override("pressed", db_pressed)
+			var desc_text := str(r.get("v", ""))
+			var desc_title := str(r.get("title", "Description"))
+			dbtn.pressed.connect(func(): show_description_popup(desc_text, desc_title))
+			v = dbtn
 		else:
 			var lbl := Label.new()
 			lbl.text = str(r.get("v", ""))
@@ -171,6 +207,34 @@ static func _make_panel(title: String, rows: Array) -> PanelContainer:
 		line.add_child(v)
 		vb.add_child(line)
 	return panel
+
+## Vehicle description text, mirroring the summary page's source precedence. "" when none/placeholder.
+static func vehicle_description(src: Dictionary) -> String:
+	for k in ["description", "base_desc", "current_desc", "desc"]:
+		var val: Variant = src.get(k)
+		if val != null:
+			var s := str(val).strip_edges()
+			if s != "" and s != "No description." and s != "No detailed description.":
+				return s
+	return ""
+
+## Popup shown by the vendor inspector's Description button. A self-contained AcceptDialog added to the
+## scene root and freed on close — mirrors how the Destination button reaches the tree from this static
+## builder. content_scale_factor handles sizing; autowrap keeps long copy readable.
+static func show_description_popup(text: String, title: String) -> void:
+	var root = Engine.get_main_loop().root
+	if not is_instance_valid(root):
+		return
+	var dlg := AcceptDialog.new()
+	dlg.title = title if title.strip_edges() != "" else "Description"
+	dlg.dialog_text = text
+	dlg.dialog_autowrap = true
+	dlg.min_size = Vector2i(360, 200)
+	dlg.exclusive = false
+	root.add_child(dlg)
+	dlg.confirmed.connect(dlg.queue_free)
+	dlg.canceled.connect(dlg.queue_free)
+	dlg.popup_centered()
 
 static func rebuild_info_sections(item_info_rich_text: RichTextLabel, item_data_source: Dictionary, selected_item: Variant, current_mode: String, convoy_data: Dictionary, compat_cache: Dictionary, perf_log_enabled: bool = false) -> void:
 	var parent_node: Node = null
@@ -313,14 +377,16 @@ static func rebuild_info_sections(item_info_rich_text: RichTextLabel, item_data_
 			"fuel_efficiency": "Efficiency",
 			"offroad_capability": "Off-road",
 			"weight_capacity": "Weight Capacity",
-			"cargo_capacity": "Volume Capacity"
+			"cargo_capacity": "Volume Capacity",
+			"passenger_seats": "Seats"
 		}
 		var unit_map = {
 			"top_speed": "",
 			"fuel_efficiency": "",
 			"offroad_capability": "",
 			"weight_capacity": "kg",
-			"cargo_capacity": "m³"
+			"cargo_capacity": "m³",
+			"passenger_seats": ""
 		}
 		for key in stat_map:
 			var v: Variant = null
@@ -329,15 +395,22 @@ static func rebuild_info_sections(item_info_rich_text: RichTextLabel, item_data_
 				"top_speed":
 					v = item_data_source.get("top_speed", item_data_source.get("base_top_speed"))
 				"fuel_efficiency":
-					v = item_data_source.get("fuel_efficiency", item_data_source.get("base_fuel_efficiency"))
+					# Prefer the real efficiency (efficiency/base_efficiency, as on owned vehicles). Vendor
+					# stock only sends base_fuel_efficiency = 0 for every vehicle, so fall back to it last and
+					# null-out a 0 result so efficiency is omitted rather than shown as a misleading "0".
+					v = item_data_source.get("efficiency", item_data_source.get("base_efficiency"))
 					if v == null:
-						v = item_data_source.get("efficiency")
+						v = item_data_source.get("fuel_efficiency", item_data_source.get("base_fuel_efficiency"))
+					if v != null and (v is int or v is float) and float(v) == 0.0:
+						v = null
 				"offroad_capability":
 					v = item_data_source.get("offroad_capability", item_data_source.get("base_offroad_capability"))
 				"weight_capacity":
 					v = item_data_source.get("weight_capacity", item_data_source.get("base_weight_capacity"))
 				"cargo_capacity":
 					v = item_data_source.get("cargo_capacity", item_data_source.get("base_cargo_capacity"))
+				"passenger_seats":
+					v = item_data_source.get("passenger_seats", item_data_source.get("base_passenger_seats"))
 				_:
 					v = item_data_source.get(key)
 			if v != null:
@@ -350,6 +423,22 @@ static func rebuild_info_sections(item_info_rich_text: RichTextLabel, item_data_
 				if not str(unit).is_empty():
 					val_str += " " + unit
 				rows_summary.append({"k": stat_map[key], "v": val_str})
+		# Descriptive info fields, mirroring the vehicle summary page. Each shows only when the vendor
+		# payload actually carries it — make_model/color/shape are commonly null on vendor stock, and the
+		# summary page skips empties the same way, so absent fields simply don't render.
+		var mk_v: Variant = item_data_source.get("make_model")
+		if mk_v != null and str(mk_v).strip_edges() != "":
+			rows_summary.append({"k": "Make/Model", "v": str(mk_v).strip_edges()})
+		var col_v: Variant = item_data_source.get("color")
+		if col_v != null and str(col_v).strip_edges() != "":
+			rows_summary.append({"k": "Color", "v": str(col_v).strip_edges().capitalize()})
+		var shp_v: Variant = item_data_source.get("shape")
+		if shp_v != null and str(shp_v).strip_edges() != "":
+			rows_summary.append({"k": "Shape", "v": str(shp_v).strip_edges().capitalize().replace("_", " ")})
+		# Description → rendered as a popup button by _make_panel (keeps long copy out of the row list).
+		var veh_desc: String = vehicle_description(item_data_source)
+		if veh_desc != "":
+			rows_summary.append({"k": "Description", "v": veh_desc, "title": String(item_data_source.get("name", "Vehicle"))})
 	elif is_part:
 		# Show capacity/resource-related part modifiers from top-level or first part in parts array.
 		var stat_fields = [

@@ -292,6 +292,14 @@ func _build_row_body(agg_data: Variant) -> Control:
 	wrap.add_child(HSeparator.new())
 	if not stats.is_empty():
 		wrap.add_child(build_stat_chips(agg_data, list_mode, max(12, name_font_size - 3)))
+	# Portrait inline inspector: a vehicle with a description gets a Description popup button here. The
+	# verbose MiddlePanel inspector (which carries its own Description button) is hidden in portrait, so
+	# without this the description would be unreachable on portrait mobile.
+	var rb_item: Variant = agg_data.get("item_data", agg_data)
+	if rb_item is Dictionary and VendorTradeVM.is_vehicle_item(rb_item):
+		var rb_desc: String = VendorInspectorBuilder.vehicle_description(rb_item)
+		if rb_desc != "":
+			wrap.add_child(_build_description_button(rb_desc, String((rb_item as Dictionary).get("name", "Vehicle"))))
 	# Fitment: an Install action for parts that have an install slot. The button (mouse_filter STOP)
 	# intercepts its own click so it doesn't re-trigger row selection.
 	if installable:
@@ -335,6 +343,34 @@ func _build_install_button(agg_data: Dictionary) -> Button:
 	btn.add_theme_color_override("font_color", _VALUE_COLOR)
 	btn.add_theme_color_override("font_hover_color", Color(1, 1, 1))
 	btn.pressed.connect(func(): install_pressed.emit(agg_data))
+	return btn
+
+## Portrait inline "Description ›" button — opens the shared vendor description popup. mouse_filter STOP
+## so tapping it doesn't re-trigger the row selection (same as the Install button).
+func _build_description_button(desc_text: String, title: String) -> Button:
+	var btn := Button.new()
+	btn.name = "InlineDescription"
+	btn.text = "Description ›"
+	btn.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+	btn.mouse_filter = Control.MOUSE_FILTER_STOP
+	btn.focus_mode = Control.FOCUS_NONE
+	btn.add_theme_font_size_override("font_size", max(13, name_font_size - 3))
+	var normal := StyleBoxFlat.new()
+	normal.bg_color = Color(0.149, 0.157, 0.165, 1.0)
+	normal.set_border_width_all(1)
+	normal.border_color = Color(0.35, 0.45, 0.65, 0.85)
+	normal.set_corner_radius_all(6)
+	normal.content_margin_left = 16
+	normal.content_margin_right = 16
+	normal.content_margin_top = 8
+	normal.content_margin_bottom = 8
+	var hover := normal.duplicate()
+	hover.bg_color = Color(0.20, 0.21, 0.22, 1.0)
+	btn.add_theme_stylebox_override("normal", normal)
+	btn.add_theme_stylebox_override("hover", hover)
+	btn.add_theme_stylebox_override("pressed", hover)
+	btn.add_theme_stylebox_override("focus", normal)
+	btn.pressed.connect(func(): VendorInspectorBuilder.show_description_popup(desc_text, title))
 	return btn
 
 func set_selected_install_cost(price: float) -> void:
@@ -437,12 +473,18 @@ static func _stat_pairs(agg_data: Dictionary, mode: String = "buy") -> Array:
 
 	if is_vehicle:
 		# Vehicle capabilities + capacities (labels match the mockup: Cargo=weight cap, Volume=cargo cap).
-		_push_num(out, item, "Off-road", ["offroad_capability", "off_road"], "")
-		_push_num(out, item, "Top spd", ["top_speed"], "")
-		_push_num(out, item, "Eff", ["fuel_efficiency", "efficiency"], "")
-		_push_num(out, item, "Cargo", ["weight_capacity"], " kg")
-		_push_num(out, item, "Volume", ["cargo_capacity"], " m³")
-		_push_num(out, item, "Fuel cap", ["fuel_capacity", "kwh_capacity"], "")
+		# Vendor vehicle payloads carry these stats under base_* keys — the plain keys are null there — so
+		# every lookup must fall back to base_* or the row shows only price + stock (the reported bug).
+		# Matches the inspector's fallbacks (inspector_builder.gd) so list and detail agree.
+		# Efficiency lives in efficiency/base_efficiency (as on owned vehicles). Vendor stock also carries a
+		# legacy base_fuel_efficiency that is 0 for EVERY vehicle, so it's the last fallback — and being 0,
+		# _push_num drops it, so we omit efficiency rather than printing a misleading "0" everywhere.
+		_push_num(out, item, "Off-road", ["offroad_capability", "base_offroad_capability", "off_road"], "")
+		_push_num(out, item, "Top spd", ["top_speed", "base_top_speed"], "")
+		_push_num(out, item, "Eff", ["efficiency", "base_efficiency", "fuel_efficiency", "base_fuel_efficiency"], "")
+		_push_num(out, item, "Cargo", ["weight_capacity", "base_weight_capacity"], " kg")
+		_push_num(out, item, "Volume", ["cargo_capacity", "base_cargo_capacity"], " m³")
+		_push_num(out, item, "Fuel cap", ["fuel_capacity", "base_fuel_capacity", "kwh_capacity"], "")
 		# Money via the VM (raw fields aren't reliably present).
 		var vp: float = VendorTradeVM.vehicle_price(item)
 		if vp > 0.0:
