@@ -16,6 +16,7 @@ const PANEL_MAX_WIDTH := 600.0
 var _debug_panel_layout: bool = false
 var _last_panel_debug_pos: Vector2 = Vector2(-99999, -99999)
 var _last_panel_debug_w: float = -1.0
+var _last_panel_debug_h: float = -1.0
 var _last_menu_left_debug: float = -88888.0
 
 var _message_label: RichTextLabel = null
@@ -337,9 +338,16 @@ func _update_checklist(items: Array) -> void:
 		var label := Label.new()
 		label.text = text
 		label.add_theme_font_size_override("font_size", _get_font_size(26))
-		# Wrap + fill so a long todo ("Mountain Urchins (any amount)") can't inflate the panel's minimum
-		# width past target_w — which would force the box back over the menu (size is clamped up to min).
-		label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		# Single-line with graceful ellipsis — deliberately NOT autowrap. _update_checklist recreates these
+		# labels on every show_message (fired on each convoys_changed poll). A *fresh* autowrapping Label
+		# shapes its text at its current width, which is 0 for the frame before its container lays it out —
+		# so it reports a wrapped-at-zero-width minimum HEIGHT of many hundreds of px. The panel adopts that
+		# as its minimum (you can't be smaller than your min) and flashes to near-full-screen height for one
+		# frame, then corrects. Single-line makes the row's min height deterministic (one line, independent
+		# of layout timing) so it can't explode vertically; ellipsis + FILL + zero min-width keep min width
+		# ~0 so it still can't inflate the panel horizontally past target_w (the reason autowrap was used).
+		label.autowrap_mode = TextServer.AUTOWRAP_OFF
+		label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 		label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		label.custom_minimum_size.x = 0.0
 		if completed:
@@ -620,9 +628,16 @@ func _relayout_panel() -> void:
 	# strip and never overlaps the menu; otherwise the screen edge minus the right safe inset. We take the
 	# menu's left edge from MenuContainer (a right-anchored PanelContainer — its position.x IS the menu's
 	# left edge) always, with no "> panel_left" guard (the guard silently skipped the clamp).
+	#
+	# PORTRAIT: never clamp to the menu edge. Portrait menus are full-width BOTTOM sheets — the box sits
+	# ABOVE them, never beside them, so the sheet's horizontal position is irrelevant to the box width.
+	# Worse, a portrait sheet slides in HORIZONTALLY (its left edge sweeps 800→0). Tracking that sweep shrank
+	# the box 600→120 frame-by-frame and then snapped it back to 600 the instant the edge crossed the 5%
+	# guard in _get_menu_left_edge() — the jarring flash on the supply-purchase step. Only landscape has a
+	# real right-anchored SIDE menu to dodge. (menu_left is still computed below for the change diagnostic.)
 	var right_bound: float = vp.x - safe.size.x - gap
 	var menu_left: float = _get_menu_left_edge()
-	if menu_left < INF:
+	if not is_portrait and menu_left < INF:
 		right_bound = min(right_bound, menu_left - gap)
 
 	var avail_w: float = max(120.0, right_bound - panel_left)
@@ -631,9 +646,10 @@ func _relayout_panel() -> void:
 	# Give the message label a HARD width (fit_content is off) so it wraps at exactly this width. Drive its
 	# height from the wrapped content at that width.
 	var inner_w: float = max(120.0, target_w - float(PANEL_PAD) * 2.0)
+	var content_h: float = -1.0
 	if is_instance_valid(_message_label):
 		_message_label.custom_minimum_size.x = inner_w
-		var content_h: float = _message_label.get_content_height()
+		content_h = _message_label.get_content_height()
 		if content_h > 0.0:
 			_message_label.custom_minimum_size.y = content_h
 
@@ -654,9 +670,17 @@ func _relayout_panel() -> void:
 	# left/top/target_w, the menu edge used, and the ACTUAL rendered panel rect — enough to see any mismatch.
 	var panel_rect := _panel.get_global_rect()
 	var menu_changed: bool = (menu_left == INF) != (_last_menu_left_debug == INF) or (menu_left != INF and absf(menu_left - _last_menu_left_debug) > 2.0)
-	if _debug_panel_layout or menu_changed or panel_rect.position.distance_to(_last_panel_debug_pos) > 2.0 or absf(panel_rect.size.x - _last_panel_debug_w) > 2.0:
+	# NOTE: height (size.y) is now part of the trigger. The panel is top-anchored, so a height change grows
+	# it downward without moving position — a "flash into a bigger size" that width/position checks miss.
+	# content_h is the RichTextLabel's reported wrapped height this frame; combined_min is what actually
+	# drives panel height. Watch for either jumping frame-to-frame while width/menu are steady.
+	if _debug_panel_layout or menu_changed \
+		or panel_rect.position.distance_to(_last_panel_debug_pos) > 2.0 \
+		or absf(panel_rect.size.x - _last_panel_debug_w) > 2.0 \
+		or absf(panel_rect.size.y - _last_panel_debug_h) > 2.0:
 		_last_panel_debug_pos = panel_rect.position
 		_last_panel_debug_w = panel_rect.size.x
+		_last_panel_debug_h = panel_rect.size.y
 		_last_menu_left_debug = menu_left
 		var mc := _menu_container_control()
 		var mc_desc := "<none>"
@@ -666,9 +690,9 @@ func _relayout_panel() -> void:
 		var am_desc := "<none>"
 		if is_instance_valid(am):
 			am_desc = "%s vis=%s rect=%s" % [am.name, str(am.is_visible_in_tree()), am.get_global_rect()]
-		print("[TutorialOverlay][PANEL] vp=%s | panel_left=%.0f menu_left=%s target_w=%.0f | panel_rect=%s (right=%.0f) | MenuContainer=%s | active=%s" % [
+		print("[TutorialOverlay][PANEL] vp=%s | panel_left=%.0f menu_left=%s target_w=%.0f | content_h=%.0f combined_min_h=%.0f | panel_rect=%s (right=%.0f) | MenuContainer=%s | active=%s" % [
 			vp, panel_left, ("INF" if menu_left == INF else "%.0f" % menu_left),
-			target_w, panel_rect, panel_rect.end.x, mc_desc, am_desc])
+			target_w, content_h, _panel.get_combined_minimum_size().y, panel_rect, panel_rect.end.x, mc_desc, am_desc])
 
 ## --- Global reference rects for panel placement (all in canvas/global space) ---
 func _get_logical_safe_margins() -> Rect2:
