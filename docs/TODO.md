@@ -349,9 +349,31 @@ portrait, landscape, AND desktop where relevant.
     every vehicle. Reverted `allow_zero` entirely, and reordered the efficiency lookup to
     `["efficiency", "base_efficiency", "fuel_efficiency", "base_fuel_efficiency"]` (chips) with a null-out-if-0
     guard in the inspector — so efficiency shows the **real** value when the backend provides it and is **omitted**
-    (no misleading "0") when only the empty legacy field exists. **Backend note:** to actually display efficiency
-    for vendor stock, the API must populate `base_efficiency`/`efficiency` on vendor vehicles — it currently sends
-    only `base_fuel_efficiency: 0`. `vendor_item_list.gd`, `inspector_builder.gd`.
+    (no misleading "0") when only the empty legacy field exists. `vendor_item_list.gd`, `inspector_builder.gd`.
+    - **Root cause CONFIRMED (client-only, no backend change):** the field was **renamed** `base_fuel_efficiency`
+      → `base_efficiency` in the backend (`~/Work/desolate_frontiers`, `vehicle_cls.py::to_JSONable_dict` +
+      `vehicle_class.base_efficiency` column); the client kept reading the obsolete name. Verified prod data is
+      healthy via a read-only query: **118 vehicle classes, 0 with zero efficiency, range 5–80, avg 36.2.** So the
+      backend has served real efficiency all along. The stale `data_dumps/vendor_example.json` (with
+      `base_fuel_efficiency`) is what misled the original client code — data dumps lag the live backend.
+    - **Follow-up 4 (still 0 after rebuild — the actual client bug):** `to_JSONable_dict` emits BOTH computed
+      `efficiency` AND `base_efficiency` (same commit as `base_top_speed`, which renders — proving `base_efficiency`
+      IS in the payload). For a **vendor** vehicle the computed `efficiency` is **0** (no load/parts), and it sat
+      first in the fallback list — but `_push_num`/the inspector arm committed to the first *present* key and
+      **dropped the stat on a 0 without trying the next key**, so the real `base_efficiency` was never reached.
+      Fix: on a 0, **fall through to the next fallback key** instead of aborting (`_push_num` `return`→`continue`;
+      inspector arm rewritten to pick the first non-zero of
+      `[efficiency, base_efficiency, fuel_efficiency, base_fuel_efficiency]`). Robust across all field combos.
+      `vendor_item_list.gd`, `inspector_builder.gd`.
+    - **ACTUAL ground truth (from the live map payload):** the game reads vendor vehicles from **`/map/get`**, not
+      `/vendor/get`. Production's map serves an **old reduced vehicle dict** with the dead `base_fuel_efficiency: 0`
+      and **no `base_efficiency`** (those fields exist only in old git history) — production runs a backend build
+      behind the repo. So the client literally never receives efficiency. **Backend fix made** (in
+      `~/Work/desolate_frontiers`, needs deploy): added lean `Vehicle.to_map_dict()` (compact display dict that
+      includes `base_efficiency` + make_model/shape/color/passenger_seats) and a `Vendor.to_JSONable_dict(lean_vehicles=)`
+      flag; the map (`Settlement.to_JSONable_dict`) now passes `lean_vehicles=True`. `/vendor/get` unchanged (full).
+      Keeps `/map/get` small while carrying efficiency. **After the backend deploys, the client fix above renders it**
+      (and now also Seats/Make/Model/Color for vendor vehicles, which the old payload lacked).
 - [ ] **Mechanics compatibility preloading** — Pre-fetch compatibility data for all convoy vehicles when the mechanics menu opens; show "N upgrades available" per vehicle card before the user taps in. Requires the cart to handle multi-vehicle, multi-upgrade state. `mechanics_menu.gd`, cart system.
 
 ---

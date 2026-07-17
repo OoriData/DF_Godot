@@ -551,11 +551,14 @@ static func _unit_from_totals(agg_data: Dictionary, item: Dictionary, total_key:
 	return 0.0
 
 static func _push_num(out: Array, item: Dictionary, label: String, keys: Array, unit: String) -> void:
+	# Use the first key with a NON-ZERO value. A 0 falls through to the next fallback key rather than
+	# aborting — vendor vehicles report a computed `efficiency` of 0 that would otherwise shadow the real
+	# `base_efficiency`. If every key is 0/absent the stat is omitted (no misleading "0").
 	for k in keys:
 		if item.has(k) and item.get(k) != null:
 			var v = item.get(k)
 			if (v is float or v is int) and float(v) == 0.0:
-				return
+				continue
 			out.append([label, _fmt_stat(v) + unit])
 			return
 

@@ -395,14 +395,15 @@ static func rebuild_info_sections(item_info_rich_text: RichTextLabel, item_data_
 				"top_speed":
 					v = item_data_source.get("top_speed", item_data_source.get("base_top_speed"))
 				"fuel_efficiency":
-					# Prefer the real efficiency (efficiency/base_efficiency, as on owned vehicles). Vendor
-					# stock only sends base_fuel_efficiency = 0 for every vehicle, so fall back to it last and
-					# null-out a 0 result so efficiency is omitted rather than shown as a misleading "0".
-					v = item_data_source.get("efficiency", item_data_source.get("base_efficiency"))
-					if v == null:
-						v = item_data_source.get("fuel_efficiency", item_data_source.get("base_fuel_efficiency"))
-					if v != null and (v is int or v is float) and float(v) == 0.0:
-						v = null
+					# Use the first NON-ZERO among efficiency/base_efficiency (as on owned vehicles) then the
+					# legacy fuel fields. Vendor stock reports a computed efficiency of 0 that would otherwise
+					# shadow the real base_efficiency, so a 0 must fall through rather than win. All-zero → omit.
+					v = null
+					for ek in ["efficiency", "base_efficiency", "fuel_efficiency", "base_fuel_efficiency"]:
+						var ev: Variant = item_data_source.get(ek)
+						if ev != null and not ((ev is int or ev is float) and float(ev) == 0.0):
+							v = ev
+							break
 				"offroad_capability":
 					v = item_data_source.get("offroad_capability", item_data_source.get("base_offroad_capability"))
 				"weight_capacity":
