@@ -61,6 +61,9 @@ Welcome to the technical documentation for *Desolate Frontiers*. This folder is 
 > [!NOTE]
 > **Content gotcha — "Jerry Cans" ≠ "Water Jerry Cans".** These are two distinct cargo types (fuel container vs water container). The Level 2 tutorial supply step must prompt for **Water Jerry Cans** specifically, and its completion watcher must require both `water` and `jerry` in the name — never bare "Jerry Cans". See the [Tutorial System](03_Systems/TutorialSystem/TutorialSystemOverview.md#content-gotcha-jerry-cans--water-jerry-cans) and [Glossary](99_Reference/Glossary.md#items--cargo).
 
+> [!WARNING]
+> **A vendor/vehicle/settlement stat that's blank or 0 everywhere is not necessarily a backend or frontend bug.** The vendor panel and map render vehicles/settlements from the **binary `/map` payload**, whose wire format is defined in a *third*, separate repo ([DF_Lib](04_Technical/DF_Lib.md)) and hand-mirrored in `tools.gd`. A field renamed in the backend's JSON serializer can leave the JSON API fully correct while the binary packer still reads the old key name and silently packs `0`. Before concluding "not backend / not frontend", check whether `df_lib/pylib/map_struct.py` still references the old field name. See the [DF_Lib doc's case study](04_Technical/DF_Lib.md#case-study-the-vanishing-vehicle-efficiency-stat).
+
 ---
 
 ## 04 Technical Reference
@@ -74,6 +77,7 @@ Welcome to the technical documentation for *Desolate Frontiers*. This folder is 
 - [**Deployment & Environment**](04_Technical/Deployment.md): Build targets and CI/CD pipelines.
 - [**Identity & Auth**](04_Technical/Identity.md): Account linking, merging, and session management.
 - [**AI Agent Guidelines**](04_Technical/AI_Guidelines.md): Standards for AI-assisted development.
+- [**DF_Lib: Shared Binary Protocol Library**](04_Technical/DF_Lib.md): The separate repo defining the `/map` binary wire format, its version/publish/deploy workflow, and why a backend field rename can silently break the client without either repo's obviously-relevant code changing.
 
 ---
 

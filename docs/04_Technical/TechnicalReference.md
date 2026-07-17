@@ -24,6 +24,7 @@ This section covers the underlying infrastructure, identity management, and qual
 - **[Error Handling System](ErrorSystem.md)**: ErrorTranslator pipeline, inline vs. modal errors, and how to add new translations.
 - **[Dependency Graph](Dependencies.md)**: Visual mapping of singleton relationships.
 - **[API Reference](API_Reference.md)**: Backend endpoints and JSON contracts.
+- **[DF_Lib: Shared Binary Protocol Library](DF_Lib.md)**: The separate repo/package that defines the `/map` binary wire format — versioning, publish/deploy workflow, and why a backend field rename can silently break the client without touching either repo's "obviously relevant" code.
 - **[Deployment & Environment](Deployment.md)**: Build targets and CI/CD pipelines.
 - **[Identity & Auth](Identity.md)**: Account linking, merging, and session management.
 - **[Apple Auth](AppleAuth.md)**: Specific notes on iOS/macOS authentication providers.

@@ -58,3 +58,4 @@ The binary payload nests settlements *inside* their respective tiles. However, m
 ## Related Files
 - **Binary Parser**: [tools.gd](../../../Scripts/System/tools.gd)
 - **Data Holder**: [game_store.gd](../../../Scripts/System/Services/game_store.gd)
+- **Wire format source of truth (separate repo)**: [DF_Lib](../../04_Technical/DF_Lib.md) — `tools.gd`'s byte offsets are a hand-maintained mirror of `df_lib/pylib/map_struct.py`. A backend field rename can silently zero out a stat here even when the JSON API is fully correct; see the case study in that doc.

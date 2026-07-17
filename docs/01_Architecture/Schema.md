@@ -43,6 +43,9 @@ Vehicles are the primary carriers of cargo and parts.
 | `top_speed` | `float` | Current calculated top speed (includes part modifiers). |
 | `efficiency` | `float` | Current fuel efficiency (lower is better). |
 
+> [!NOTE]
+> This table reflects the JSON schema only. Vehicles arriving via the **binary `/map` payload** (vendor panel, settlement vendor lists) go through a separately-versioned wire format defined in [DF_Lib](../04_Technical/DF_Lib.md) — a field present here can still arrive as blank/0 there if `df_lib` wasn't updated for the same rename. See that doc before assuming a stat's absence is a client or backend bug.
+
 ## 3. The Cargo Object
 Cargo represents items held in vehicles, warehouses, or vendor inventories.
 

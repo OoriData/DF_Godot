@@ -214,6 +214,7 @@
   },
   "active": "9c639cf8e7cf6606",
   "lastOpenFiles": [
+    "04_Technical/DF_Lib.md",
     "AI_ONBOARDING.md",
     "TODO.md",
     "DocumentationHome.md",
@@ -249,7 +250,6 @@
     "02_UI_UX/JourneyMenu.md",
     "04_Technical/AI_Guidelines.md",
     "03_Systems/ItemsAndMissions.md",
-    "04_Technical/UserSettings.md",
-    "03_Systems/SettlementEconomy.md"
+    "04_Technical/UserSettings.md"
   ]
 }
