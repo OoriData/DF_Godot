@@ -81,3 +81,12 @@ Because map snapshots often contain minimal vendor data, the `MechanicsService` 
 - Uses a **Two-Column Layout**: Current parts on the left, available parts/inventory on the right.
 - Uses **Persistence**: Often sets `persistence_enabled = true` to maintain part selections while navigating.
 - **Selection Flow**: Selecting a slot highlights compatible parts in the inventory; selecting a part shows its stats compared to the current part.
+
+### Vehicle selector — available-upgrade count
+The vehicle `OptionButton` labels are prefixed with `[N ↑]`, where **N is the number of slots that have at least one compatible upgrade available** for that vehicle (across convoy cargo **and** the current settlement's vendor stock). Details:
+
+- The count uses the **same criterion as the Parts-tab slot rows** — `_slot_has_swappable_candidate(vehicle, slot)` over `_all_candidate_slots()` — so the number matches what the player sees inside. `_count_available_upgrades()` / `_vehicle_dropdown_label()` in `mechanics_menu.gd`.
+- Backend compatibility is used when cached; otherwise it falls back to the local slot/requirement heuristic (`_is_part_compatible`), so a count is available before the async `check_part_compatibility` results land.
+- The count is a **prefix** (not a suffix) so it survives the collapsed `OptionButton` clipping the often-long make/model at the right edge.
+- Labels are refreshed **in place** (`_update_dropdown_upgrade_counts()`, preserving selection) when: a vehicle is selected, vendor stock loads (`vendor_updated`), and each `part_compatibility_checked` result arrives — so counts firm up from the heuristic to the backend answer for the selected vehicle.
+- Vehicles with 0 available upgrades show no prefix. A `[PartCompatUI] upgrade count …` diagnostic (gated behind `debug_part_compat_ui`) logs the candidate-slot / compatible / vendor-candidate counts.

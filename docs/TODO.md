@@ -1,6 +1,6 @@
 This document will serve as a flowing state of things needed in the project, what resources are needed for each task.
 
-> **Status:** Sprints 1–8 complete. Sprint 8 (tutorial re-fit to the settlement-**hub** UI) is committed and device-verified stable — `725c42f` ("Tutorial stable") plus the `511d2d5` flashing-panel fix — and plays end-to-end in portrait, landscape, and desktop. Two non-blocking closeout items (delete the dead vendor-tab handlers, add tutorial smoke-test coverage) were reclassified out of the sprint — see the Sprint 8 section and Tech Debt / Testing below. **Sprint 9 (map & misc polish) is the next active plan.**
+> **Status:** Sprints 1–8 complete. Sprint 8 (tutorial re-fit to the settlement-**hub** UI) is committed and device-verified stable — `725c42f` ("Tutorial stable") plus the `511d2d5` flashing-panel fix — and plays end-to-end in portrait, landscape, and desktop. Two non-blocking closeout items (delete the dead vendor-tab handlers, add tutorial smoke-test coverage) were reclassified out of the sprint — see the Sprint 8 section and Tech Debt / Testing below. **Sprint 9 (map & misc polish + vendor/mechanics polish) is code-complete and compile-clean; the only thing gating closeout is a batched portrait/landscape/desktop device-test pass** (plus the externally-blocked vendor-efficiency backend deploy). See the trimmed Sprint 9 section below.
 
 ---
 
@@ -254,142 +254,65 @@ sprint (non-blocking):** deleting the dead `await_dealership_tab`/`await_market_
 > **Dropped from scope:** the map-pin teaching step. The tutorial keeps its current entry flow (convoy
 > dropdown → Settlement nav); it does not teach map-label pinning.
 
-### Sprint 9 — Map & misc polish — 🎯 ACTIVE (focus: map/route polish quick wins first)
+### Sprint 9 — Map & misc polish + vendor/mechanics polish — 🎯 WRAPPING UP (code-complete; batched device test pending)
 
-**Batch A — map/route polish.** A1, A3, A4 code-complete + compile-clean (2026-07-16), **pending device test**;
-A2 deferred (not reproduced). Next up: batch the three device tests, then move to Batch B. Verify each fix in
-portrait, landscape, AND desktop where relevant.
+All items are code-complete and compile-clean (standard + warnings-as-errors). Full root-cause
+narratives live in git history and agent memory; only status + primary file are kept here. **Verify
+each in portrait, landscape, AND desktop where relevant.**
 
-- [x] **A1 · Settlement labels tap-only (mobile)** — *code complete 2026-07-16, compile-clean (standard +
-  warnings-as-errors); pending device test.* Root cause was **not** `InputEventMouseMotion` (the `_process` hover
-  path is already gated to `ControlScheme.MOUSE_AND_KEYBOARD`, which `_ready()` never selects on iOS/Android). It
-  was the three `_update_hover()` calls inside `_handle_touch_input` — on touch **drag** (the pan gesture) plus
-  press/release — that flashed labels under the finger while panning. Added `_touch_hover_enabled()` (returns
-  `active_control_scheme != ControlScheme.TOUCH`) and gated all three call sites. On mobile, labels now reveal
-  **only** via an explicit tap (`_handle_tap_interaction` → `settlement_clicked` → pin); a desktop touchscreen
-  keeps `MOUSE_AND_KEYBOARD` scheme, so its hover is unchanged. `map_interaction_manager.gd`.
-- [~] **A2 · Map overlay notch clearance** — **deferred, not reproduced (2026-07-16).** Code audit found the panel
-  already applies safe-area insets on *both* axes, ungated: expanded content clears a top notch via
-  `content_margin_top = pad_tb + safe.position.y` (with `pad_tb` breathing room) and a left notch via
-  `content_margin_left = pad_lr + safe.position.x`; the collapsed gear tab is shifted right by `safe_left`
-  (`_update_layout:412`); and the gear tab is vertically centered, so it clears a top notch by construction. The
-  TODO's "only when `safe.position.y > 0`" premise doesn't match the current code — there's no such gate. User has
-  not observed the symptom, so no change made. Revisit only with a concrete device repro (element + orientation).
-  `map_overlay_settings_panel.gd`.
-- [x] **A3 · Vendor cards clip below nav (mobile-landscape hub)** — *code complete 2026-07-16, compile-clean
-  (standard + warnings-as-errors); pending device test.* **Re-scoped:** the cards live in the **hub**
-  (`settlement_overview_menu.gd`), not `convoy_settlement_menu.gd`, and the hub is **no-scroll by design**
-  (line 144, "I never want to scroll"). Per user decision, fixed by **fit-to-height, not scrolling**: in
-  mobile-landscape only, the vendor grid now packs up to 4 vendors into **one row** (`grid.columns =
-  clampi(vendors.size(), 2, 4)`, was `ceil(N/2)` → 2 rows for 3–4 vendors) with a shorter `card_h` (120→96),
-  and the resources/warehouse row min trimmed (176→150). Portrait and **desktop are untouched** (scoped via
-  `(not portrait) and _is_mobile()`). `settlement_overview_menu.gd`.
-- [x] **A4 · Map labels occlude journey route line** — *code complete 2026-07-16, compile-clean (standard +
-  warnings-as-errors); pending device test.* Turned out to be a clean **extension of the existing anti-collision
-  loop** in `_position_settlement_panel` (which already nudged settlement labels off other labels + convoy icons),
-  not a rewrite. Added `_settlement_panel_overlaps_route(panel_rect)` (mirrors `_settlement_panel_overlaps_convoy`;
-  converts `_preview_route_x/y` tile coords to the same `(tile+0.5)*tile_size` local space) + an exact segment-vs-AABB
-  helper `_segment_hits_rect` (Geometry2D edge tests), and wired `overlaps_route` into the loop's break condition. A
-  new `@export settlement_route_keepout_px = 14.0` sets the clearance (inspector-tunable). No-op unless a preview is
-  active. **Known limitation:** the nudge is vertical-only (existing behavior), so a route running *vertically*
-  through a label may not fully clear — good enough for the common horizontal-ish case ("nudge where possible");
-  revisit with horizontal nudging if device testing shows it's needed. **Scope note:** covers **settlement** labels;
-  convoy labels are managed separately (`convoy_label_manager`) and during preview the convoy sits at the start, so
-  settlement labels along the route are the main occluders. `UI_manager.gd`.
-  - **Follow-up (user ask): zoom out so labels fit the view.** The route-fit already padded for labels
-    (`route_fit_label_padding_px`, symmetric), but settlement labels anchor *above* their tile and A4's nudge can
-    push the topmost ones higher, so the top edge was under-padded. Added `@export route_fit_label_top_extra_px =
-    60.0` (screen px, inspector-tunable) applied **only to the top** of the fit bounds in `smooth_fit_route_preview`
-    (`grow_individual(lpad.x, lpad.y + top_extra, lpad.x, lpad.y)`), so the camera zooms out a touch more and the
-    top labels stay on-screen. `map_camera_controller.gd`.
-  - **Follow-up 2 (device feedback: "only the label's center fits").** Root cause: for anything but a tiny route,
-    `smooth_fit_world_rect` blends the camera toward the focus point (`dest_world`), which was the destination
-    **tile** — the bare point *below* the label — so the fit centered under the label and only its lower half
-    showed. Bounds padding helped short routes but the blend canceled it on longer ones. Fix: lift the focus point
-    up by the top headroom (`dest_world.y -= route_fit_label_top_extra_px / est_zoom`) so the fit targets where the
-    **label** sits, keeping the whole label in view. Single knob (`route_fit_label_top_extra_px`) now drives both the
-    bounds pad and the focus lift. `map_camera_controller.gd::smooth_fit_route_preview`.
+**Batch A — map / route polish**
+- [x] **A1 · Settlement labels tap-only (mobile)** — gated the three `_update_hover()` calls in
+  `_handle_touch_input` so pan-drag no longer flashes labels under the finger; on touch, labels reveal
+  only via an explicit tap. `map_interaction_manager.gd`. *Pending device test.*
+- [~] **A2 · Map overlay notch clearance** — **deferred, not reproduced.** Panel already applies
+  safe-area insets on both axes, ungated. Revisit only with a concrete device repro (element +
+  orientation). `map_overlay_settings_panel.gd`.
+- [x] **A3 · Vendor cards clip below nav (mobile-landscape hub)** — hub is no-scroll by design, so fixed
+  by fit-to-height: pack ≤4 vendors into one row + shorter cards, mobile-landscape only (portrait/desktop
+  untouched). `settlement_overview_menu.gd`. *Pending device test.*
+- [x] **A4 · Map labels occlude route line** — extended the existing anti-collision loop to nudge
+  settlement labels off the active preview route (`_settlement_panel_overlaps_route` + a segment-vs-AABB
+  test), plus a route-fit top-headroom knob (`route_fit_label_top_extra_px`) that drives both the bounds
+  pad and the focus lift so the topmost labels stay on-screen. `UI_manager.gd`, `map_camera_controller.gd`.
+  *Pending device test.* Known limit: nudge is vertical-only.
 
-**Batch B:**
-- [x] **Vehicle stats missing in vendor menu** — *code complete 2026-07-16, compile-clean (standard +
-  warnings-as-errors); pending device test.* **Root cause:** the vehicle stat pairs in
-  `vendor_item_list.gd::_stat_pairs` looked up `top_speed`/`offroad_capability`/`weight_capacity`/`cargo_capacity`/
-  `fuel_efficiency`, but **vendor** vehicle payloads carry those under `base_*` keys (the plain keys are null), so
-  `_push_num` found nothing and the row fell back to just Value + Available. The inspector already had the `base_*`
-  fallbacks; the list rows never did. Fix: added `base_*` fallback keys to each vehicle `_push_num` call (fixes both
-  the landscape chip grid via `build_stat_chips` and the compact bbcode line via `stat_line_bbcode`, which share
-  `_stat_pairs`). `vendor_item_list.gd`.
-- [x] **Vehicle inspector = summary-page info + description popup button** *(user follow-up; code complete
-  2026-07-16, compile-clean; pending device test).* Made the vendor vehicle **inspector** show the same info as the
-  convoy vehicle **summary page**, plus a description popup button. `inspector_builder.gd`: added **Seats**
-  (`passenger_seats`/`base_passenger_seats`) to the vehicle stat block; added conditional **Make/Model / Color /
-  Shape** rows (shown only when present — the summary skips empties the same way); and a **Description** row that
-  `_make_panel` renders as a "View ›" button opening `_show_description_popup` (a self-contained `AcceptDialog`,
-  autowrap, freed on close, titled with the vehicle name). **Data note:** for current vendor stock, `passenger_seats`
-  / `make_model` / `color` / `shape` come through **null** — only `name`, the `base_*` stats, `base_value`, and
-  `base_desc` (description) are populated — so in practice the new visible additions are **Seats (when present) + the
-  Description button**; the rest light up automatically if/when the backend populates them. Popup is functional/plain
-  (Godot `AcceptDialog`); a themed popup is a possible follow-up. `inspector_builder.gd`.
-  - **Follow-up (device: "no change in mobile-landscape").** Root cause: for a vehicle in landscape,
-    `vendor_trade_panel.gd::_update_landscape_summary` **hides `InfoSectionsContainer`** (where the Description button
-    + Seats/Make-Model rows live) and the description panel, showing only compact stat chips — so the button never
-    appeared there (the stat chips *did* pick up the fixed vehicle stats). Per user choice, surfaced a compact
-    **"Description ›"** popup button in the landscape stat summary for vehicles with a description. Made
-    `vehicle_description()` / `show_description_popup()` public on `VendorInspectorBuilder` and reused them.
-    `vendor_trade_panel.gd`, `inspector_builder.gd`.
-  - **Follow-up 2 (device: no description in portrait).** Portrait uses an inline-expand **row body** as its
-    inspector (`_build_row_body`) and hides the whole MiddlePanel — so the Description button was never present in
-    portrait. Added a **"Description ›"** popup button (mouse_filter STOP, like the inline Install button) to the
-    vehicle row body, reusing `VendorInspectorBuilder.show_description_popup`. `vendor_item_list.gd`.
-  - **Follow-up 3 (device: "Efficiency 0 on every vehicle is wrong").** **Data-field bug + a bad first fix.**
-    Vendor vehicle payloads store efficiency in a legacy `base_fuel_efficiency` that is **`0` for every vehicle**
-    (verified across all 8 in `vendor_example.json`); the *real* efficiency lives in `efficiency`/`base_efficiency`
-    (as on owned vehicles — e.g. `efficiency: 21`, `base_efficiency: 35` in `convoy_data_example.json`), which the
-    vendor payload does **not** include. My previous `allow_zero` change forced that meaningless 0 to render on
-    every vehicle. Reverted `allow_zero` entirely, and reordered the efficiency lookup to
-    `["efficiency", "base_efficiency", "fuel_efficiency", "base_fuel_efficiency"]` (chips) with a null-out-if-0
-    guard in the inspector — so efficiency shows the **real** value when the backend provides it and is **omitted**
-    (no misleading "0") when only the empty legacy field exists. `vendor_item_list.gd`, `inspector_builder.gd`.
-    - **Root cause CONFIRMED (client-only, no backend change):** the field was **renamed** `base_fuel_efficiency`
-      → `base_efficiency` in the backend (`~/Work/desolate_frontiers`, `vehicle_cls.py::to_JSONable_dict` +
-      `vehicle_class.base_efficiency` column); the client kept reading the obsolete name. Verified prod data is
-      healthy via a read-only query: **118 vehicle classes, 0 with zero efficiency, range 5–80, avg 36.2.** So the
-      backend has served real efficiency all along. The stale `data_dumps/vendor_example.json` (with
-      `base_fuel_efficiency`) is what misled the original client code — data dumps lag the live backend.
-    - **Follow-up 4 (still 0 after rebuild — the actual client bug):** `to_JSONable_dict` emits BOTH computed
-      `efficiency` AND `base_efficiency` (same commit as `base_top_speed`, which renders — proving `base_efficiency`
-      IS in the payload). For a **vendor** vehicle the computed `efficiency` is **0** (no load/parts), and it sat
-      first in the fallback list — but `_push_num`/the inspector arm committed to the first *present* key and
-      **dropped the stat on a 0 without trying the next key**, so the real `base_efficiency` was never reached.
-      Fix: on a 0, **fall through to the next fallback key** instead of aborting (`_push_num` `return`→`continue`;
-      inspector arm rewritten to pick the first non-zero of
-      `[efficiency, base_efficiency, fuel_efficiency, base_fuel_efficiency]`). Robust across all field combos.
-      `vendor_item_list.gd`, `inspector_builder.gd`.
-    - **ACTUAL ground truth (from the live map payload):** the game reads vendor vehicles from **`/map/get`**, not
-      `/vendor/get`. Production's map serves an **old reduced vehicle dict** with the dead `base_fuel_efficiency: 0`
-      and **no `base_efficiency`** (those fields exist only in old git history) — production runs a backend build
-      behind the repo. So the client literally never receives efficiency. **Backend fix made** (in
-      `~/Work/desolate_frontiers`, needs deploy): added lean `Vehicle.to_map_dict()` (compact display dict that
-      includes `base_efficiency` + make_model/shape/color/passenger_seats) and a `Vendor.to_JSONable_dict(lean_vehicles=)`
-      flag; the map (`Settlement.to_JSONable_dict`) now passes `lean_vehicles=True`. `/vendor/get` unchanged (full).
-      Keeps `/map/get` small while carrying efficiency. **After the backend deploys, the client fix above renders it**
-      (and now also Seats/Make/Model/Color for vendor vehicles, which the old payload lacked).
-- [ ] **Mechanics compatibility preloading** — Pre-fetch compatibility data for all convoy vehicles when the mechanics menu opens; show "N upgrades available" per vehicle card before the user taps in. Requires the cart to handle multi-vehicle, multi-upgrade state. `mechanics_menu.gd`, cart system.
+**Batch B — vendor / mechanics polish**
+- [x] **Vehicle stats in vendor menu** — list rows now fall back to `base_*` keys (vendor payloads null
+  the plain `top_speed`/`cargo_capacity`/… keys). `vendor_item_list.gd`. *Pending device test.*
+- [x] **Vehicle inspector parity + description popup** — vendor vehicle inspector now matches the convoy
+  summary page (Seats / Make-Model / Color / Shape shown when present) plus a Description popup button,
+  surfaced across desktop, mobile-landscape, and portrait. `inspector_builder.gd`, `vendor_trade_panel.gd`,
+  `vendor_item_list.gd`. *Pending device test.*
+- [x] **Mechanics dropdown — upgrade count per vehicle** — vehicle selector shows `[N ↑]` = slots with a
+  compatible upgrade available (convoy cargo + vendor stock), same criterion as the Parts-tab rows;
+  prefixed so it survives OptionButton clipping; refreshes in place on select / vendor-load / compat-ready.
+  `mechanics_menu.gd`. *Compile-verified; pending device test.* (Docs: `03_Systems/Mechanics.md`.)
+- [x] **Available Parts preview — compatible vehicles** — each part lists which convoy vehicles can use it
+  (slot match), with a **green highlight + "Fits:" line** for parts that fit ≥1 vehicle, sorted
+  most-compatible first. `convoy_menu.gd`. *Device-confirmed (preview visible).* (Docs: `02_UI_UX/ConvoyMenu.md`.)
+- [→] **Mechanics compatibility preloading** — **partially delivered** by the per-vehicle upgrade count
+  above. Remaining scope: eager pre-fetch of backend compat for **all** vehicles on open (non-selected
+  vehicles currently use the local slot heuristic until selected), and a multi-vehicle / multi-upgrade
+  cart. `mechanics_menu.gd`, cart system.
+
+**Blocked externally:**
+- [x] **Vendor efficiency = 0** — client fallback is fixed; **blocked on a deploy of the `/map` payload.**
+  Production's `/map/get` serves a lean vehicle dict that omits real efficiency (the binary packer reads a
+  renamed key). See the [DF_Lib case study](04_Technical/DF_Lib.md#case-study-the-vanishing-vehicle-efficiency-stat)
+  and memory [[reference_vendor_efficiency_binary_serializer]]. Once the payload serves efficiency, the
+  client fix renders it (plus Seats/Make/Model/Color for vendor vehicles).
 
 ---
 
 # Code Map (active tasks)
 
-Sprint 6/7/8 rows removed — all complete (see the sprint sections above). Remaining rows are Sprint 9 + reclassified cleanup.
+Sprint 6/7/8 rows removed — all complete. Sprint 9's coded items are also removed (all code-complete;
+they now only need the device-test pass tracked in the Sprint 9 section above). Remaining rows are the
+one open follow-up + reclassified cleanup.
 
 | Task | Primary file:line | Notes |
 |---|---|---|
-| Vendor list clips under nav (landscape) | `convoy_settlement_menu.gd` | Constrain to height above nav bar; wrap in `ScrollContainer` |
-| Map labels occlude route line | `UI_manager.gd` label placement, route renderer | Nudge labels off the active polyline |
-| Vehicle stats missing in vendor menu | `vendor_trade_panel.gd` | Show speed/capacity/offroad, not just value/qty |
-| Settlement labels mobile | settlement label script, `map_interaction_manager.gd` | Touch-only on mobile (guard `InputEventMouseMotion`) |
-| Map overlay notch | `map_overlay_settings_panel.gd` | All-devices clearance + menu breathing gap |
-| Mechanics compat preload | `mechanics_menu.gd`, cart system | Multi-vehicle, multi-upgrade cart |
+| Mechanics compat preload (remaining) | `mechanics_menu.gd`, cart system | Per-vehicle upgrade count shipped; remaining = eager all-vehicle compat pre-fetch + multi-vehicle/multi-upgrade cart |
 | (Tech debt) Delete dead tutorial tab handlers | `tutorial_manager.gd:793`/`821`, `_hint_dealership_tab` | Only the `await_*_tab` arms are dead; keep `_lock_vendor_tabs`/`_on_vendor_tab_selected` (live for purchase steps) |
 
 ---

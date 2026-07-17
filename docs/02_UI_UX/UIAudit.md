@@ -439,6 +439,7 @@ SettlementOverviewMenu (Control, MenuBase)
 ### Responsibilities
 - Repair UI: apply repair kits or spend credits to restore vehicle/part health
 - Slot management: view and swap compatible parts per vehicle slot
+- Vehicle selector (`OptionButton`) is prefixed with `[N ↑]` = count of slots with a compatible upgrade available (convoy cargo + vendor stock); see [Mechanics](../03_Systems/Mechanics.md#vehicle-selector--available-upgrade-count)
 - Condition warnings: alerts for incompatible weight, type mismatch, missing items
 
 ### Known Issues / Gaps

@@ -1228,6 +1228,9 @@ func _update_vendor_preview() -> void:
 						break
 				print("[ConvoyMenu][Debug] mech_probe_snapshot sample=", sample)
 		if c2s is Dictionary and not c2s.is_empty():
+			# Precompute each convoy vehicle's available slots so we can annotate every part
+			# with which vehicles can actually use it (matched by slot).
+			var veh_slot_map: Array = _convoy_vehicle_slot_map()
 			# Attempt to fetch enriched cargo names for each cargo_id
 			if _mechanics_service.has_method("get_enriched_cargo"):
 				for cid in c2s.keys():
@@ -1237,8 +1240,32 @@ func _update_vendor_preview() -> void:
 						# Trigger enrichment for future updates
 						_mechanics_service.ensure_cargo_details(String(cid))
 					if nm != "":
+						var pslot := String(c2s.get(cid, ""))
 						part_names.append(nm)
-						part_metas.append({"slot": String(c2s.get(cid, "")), "weight": cargo.get("weight", 0.0), "volume": cargo.get("volume", 0.0)})
+						part_metas.append({
+							"slot": pslot,
+							"weight": cargo.get("weight", 0.0),
+							"volume": cargo.get("volume", 0.0),
+							"fits": _vehicle_names_for_slot(pslot, veh_slot_map),
+						})
+		# Sort parts so the most broadly compatible (fits the most convoy vehicles) come first;
+		# keep names and metas aligned by sorting a combined view, then rebuilding both.
+		if not part_names.is_empty():
+			var combined: Array = []
+			for idx in range(part_names.size()):
+				combined.append({"name": part_names[idx], "meta": part_metas[idx]})
+			combined.sort_custom(func(a, b):
+				var fa: int = (a.get("meta", {}).get("fits", []) as Array).size()
+				var fb: int = (b.get("meta", {}).get("fits", []) as Array).size()
+				if fa != fb:
+					return fa > fb
+				return String(a.get("name", "")).naturalnocasecmp_to(String(b.get("name", ""))) < 0
+			)
+			part_names.clear()
+			part_metas.clear()
+			for entry in combined:
+				part_names.append(String(entry.get("name", "")))
+				part_metas.append(entry.get("meta", {}))
 		# If names are still empty, fall back to slot summary counts
 		if part_names.is_empty():
 			part_metas.clear()
@@ -1391,7 +1418,10 @@ func _build_vendor_preview_button(item_string: String, item_meta: Dictionary = {
 		meta_label.text = meta_text
 		meta_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
 		meta_label.add_theme_font_size_override("font_size", max(11, int(cargo_fs * 0.72)))
-		meta_label.add_theme_color_override("font_color", UITheme.TEXT_MUTED)
+		# Highlight parts that actually fit a convoy vehicle so they read as actionable.
+		var fits_here: Variant = item_meta.get("fits", [])
+		var fits_ok := _current_vendor_tab == VendorTab.COMPATIBLE_PARTS and (fits_here is Array) and not (fits_here as Array).is_empty()
+		meta_label.add_theme_color_override("font_color", UITheme.STATUS_GOOD if fits_ok else UITheme.TEXT_MUTED)
 		meta_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 		meta_label.clip_text = true
 		meta_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -1399,6 +1429,8 @@ func _build_vendor_preview_button(item_string: String, item_meta: Dictionary = {
 
 	button.set_meta("name_label", name_label)
 	button.set_meta("accent_strip", accent_strip)
+	var fits_meta: Variant = item_meta.get("fits", [])
+	button.set_meta("fits_count", (fits_meta as Array).size() if fits_meta is Array else 0)
 	if dest_text != "":
 		button.set_meta("dest_label", vbox.get_child(1) if vbox.get_child_count() > 1 else null)
 
@@ -3447,6 +3479,37 @@ func _get_current_meta_list() -> Array:
 		VendorTab.COMPATIBLE_PARTS: return _compatible_part_meta
 		_: return []
 
+## Build a per-vehicle slot map for the current convoy: [{name, slots}] where `slots` is a
+## Dictionary(slot_name -> true) derived from each vehicle's installed parts. Used to work out
+## which vehicles a settlement part can be fitted to (slot match) in the Available Parts preview.
+func _convoy_vehicle_slot_map() -> Array:
+	var out: Array = []
+	if not (convoy_data_received is Dictionary):
+		return out
+	var vehicles: Array = convoy_data_received.get("vehicle_details_list", convoy_data_received.get("vehicles", []))
+	for veh in vehicles:
+		if not (veh is Dictionary):
+			continue
+		var slots: Dictionary = {}
+		for p in veh.get("parts", []):
+			if p is Dictionary and p.get("slot") != null:
+				var s := String(p.get("slot"))
+				if s != "":
+					slots[s] = true
+		var nm := String(veh.get("name", veh.get("make_model", "Vehicle")))
+		out.append({"name": nm, "slots": slots})
+	return out
+
+## Names of the convoy vehicles that expose `slot` (and can therefore accept a part in that slot).
+func _vehicle_names_for_slot(slot: String, veh_slot_map: Array) -> Array:
+	var names: Array = []
+	if slot == "":
+		return names
+	for entry in veh_slot_map:
+		if entry is Dictionary and (entry.get("slots", {}) as Dictionary).has(slot):
+			names.append(String(entry.get("name", "")))
+	return names
+
 func _format_slot_name(raw: String) -> String:
 	if raw.is_empty(): return ""
 	var words := raw.replace("_", " ").split(" ")
@@ -3475,7 +3538,15 @@ func _format_item_meta(meta: Dictionary, tab: VendorTab) -> String:
 			if w > 0.0: parts.append("%.0f kg" % w)
 			return "  •  ".join(PackedStringArray(parts))
 		VendorTab.COMPATIBLE_PARTS:
-			return _format_slot_name(String(meta.get("slot", "")))
+			var pieces: Array[String] = []
+			var slot_str := _format_slot_name(String(meta.get("slot", "")))
+			if slot_str != "":
+				pieces.append(slot_str)
+			var fits_any: Variant = meta.get("fits", [])
+			var fits: Array = fits_any if fits_any is Array else []
+			if not fits.is_empty():
+				pieces.append("Fits: " + ", ".join(PackedStringArray(fits)))
+			return "  •  ".join(PackedStringArray(pieces))
 		_:
 			return ""
 
@@ -3483,7 +3554,9 @@ func _style_vendor_item_button(button: Control, tab_type: VendorTab) -> void:
 	var accent_color: Color
 	match tab_type:
 		VendorTab.COMPATIBLE_PARTS:
-			accent_color = UITheme.ACCENT_BRASS
+			# Green accent for parts that fit a convoy vehicle; brass otherwise.
+			var fits_count := int(button.get_meta("fits_count", 0))
+			accent_color = UITheme.STATUS_GOOD if fits_count > 0 else UITheme.ACCENT_BRASS
 		_:
 			accent_color = UITheme.ACCENT_VERDIGRIS
 

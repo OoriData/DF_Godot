@@ -1132,6 +1132,8 @@ func _on_hub_vendor_updated(_vendor: Dictionary) -> void:
 		# IMPORTANT: do not clear highlights to false; start checks and recompute-from-cache.
 		_start_vendor_compat_checks_for_vehicle(_vehicles[_selected_vehicle_idx])
 		_refresh_slot_vendor_availability()
+	# Fresh vendor stock can add upgrade candidates; refresh the dropdown counts for all vehicles.
+	_update_dropdown_upgrade_counts()
 
 func _populate_vehicle_dropdown():
 	vehicle_option_button.clear()
@@ -1144,8 +1146,71 @@ func _populate_vehicle_dropdown():
 	vehicle_option_button.disabled = false
 	for i in range(_vehicles.size()):
 		var v = _vehicles[i]
-		var label = "%s (%s)" % [v.get("name", "Vehicle %d" % (i+1)), v.get("make_model", "")] 
-		vehicle_option_button.add_item(label, i)
+		vehicle_option_button.add_item(_vehicle_dropdown_label(v, i), i)
+
+## Build the dropdown label for a vehicle, appending the count of slots that have a compatible
+## upgrade available (convoy cargo or vendor stock) so the player can see at a glance which
+## vehicles have upgrades waiting before drilling in. Count uses the same criterion as the Parts
+## tab's slot rows (_slot_has_swappable_candidate), so it matches what they'll see inside.
+func _vehicle_dropdown_label(v: Dictionary, i: int) -> String:
+	var base := "%s (%s)" % [v.get("name", "Vehicle %d" % (i + 1)), v.get("make_model", "")]
+	var upgrades := _count_available_upgrades(v)
+	# Prefix the count so it stays visible even when the collapsed OptionButton clips the
+	# (often long) make/model at the right edge.
+	if upgrades > 0:
+		return "[%d ↑]  %s" % [upgrades, base]
+	return base
+
+## Number of distinct slots for which this vehicle has at least one compatible upgrade available
+## (across convoy cargo and the current settlement's vendors). Backend compat is used when cached;
+## otherwise falls back to the local slot/requirement heuristic, so a count is available before the
+## async checks land and firms up via _update_dropdown_upgrade_counts() when they do.
+func _count_available_upgrades(v: Dictionary) -> int:
+	if typeof(v) != TYPE_DICTIONARY or v.is_empty():
+		return 0
+	var count := 0
+	var slots := _all_candidate_slots()
+	for slot in slots:
+		if _slot_has_swappable_candidate(v, slot):
+			count += 1
+	if debug_part_compat_ui:
+		print("[PartCompatUI] upgrade count vehicle=", _safe_str(v.get("name"), "?"),
+			" candidate_slots=", slots.size(), " compatible=", count,
+			" vendor_cands=", _all_vendor_candidates_cache.size())
+	return count
+
+## Union of every slot that has at least one candidate part available anywhere (convoy cargo across
+## all vehicles + this settlement's vendor stock). Compatibility with a specific vehicle is checked
+## per-slot by the caller; this only enumerates which slots are worth checking.
+func _all_candidate_slots() -> Array:
+	var slot_set: Dictionary = {}
+	for v in _vehicles:
+		for item in v.get("cargo", []):
+			if not (item is Dictionary):
+				continue
+			var s := _detect_slot_for_item(item)
+			if s != "":
+				slot_set[s] = true
+	if _all_vendor_candidates_cache.is_empty():
+		_all_vendor_candidates_cache = _collect_all_vendor_part_candidates()
+	for entry in _all_vendor_candidates_cache:
+		if not (entry is Dictionary):
+			continue
+		var p: Dictionary = entry.get("part", {})
+		var s2 := _get_slot_from_item(p)
+		if s2 != "":
+			slot_set[s2] = true
+	return slot_set.keys()
+
+## Refresh the upgrade counts in the dropdown labels in place (preserving the current selection)
+## once backend compatibility results arrive and firm up the local heuristic.
+func _update_dropdown_upgrade_counts() -> void:
+	if not is_instance_valid(vehicle_option_button) or _vehicles.is_empty():
+		return
+	for i in range(_vehicles.size()):
+		if i >= vehicle_option_button.item_count:
+			break
+		vehicle_option_button.set_item_text(i, _vehicle_dropdown_label(_vehicles[i], i))
 
 func _on_vehicle_selected(index: int):
 	if index < 0 or index >= _vehicles.size():
@@ -1162,6 +1227,8 @@ func _on_vehicle_selected(index: int):
 	# Fire UI-side vendor compatibility checks immediately for this vehicle for better logs/feedback
 	_start_vendor_compat_checks_for_vehicle(_vehicles[index])
 	# (Probe removed: compatibility checks are driven via MechanicsService/APICalls)
+	# By now vendor candidates are collected for this settlement, so counts are meaningful.
+	_update_dropdown_upgrade_counts()
 
 ## Orientation changed mid-session — re-run the tab strip sizing and rebuild the Parts/Cart tabs so
 ## the Parts card container switches between the portrait 2-col grid (vertical scroll) and the
@@ -3242,6 +3309,8 @@ func _on_part_compatibility_ready(payload: Dictionary) -> void:
 				_restyle_swap_buttons_for_slot(slot_name)
 			# Also refresh inventory-based highlights in case this payload pertains to a convoy cargo item
 			_refresh_slot_inventory_availability()
+	# Backend result may change the upgrade count for the vehicle this payload targets; refresh labels.
+	_update_dropdown_upgrade_counts()
 
 func _on_mechanic_vendor_slot_availability(vehicle_id: String, slot_availability: Dictionary) -> void:
 	# Only apply for the currently selected vehicle

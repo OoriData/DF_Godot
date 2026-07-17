@@ -59,6 +59,16 @@ The panel at the bottom of the scroll area provides a tabbed preview of local se
 
 > Tab labels do **not** include item counts (e.g. no `(10)` suffix). The count was removed — it was noise at this point in the flow, before the user has opened any tab.
 
+#### Available Parts — per-vehicle fit annotation
+
+Each part in the `COMPATIBLE_PARTS` tab is annotated with **which convoy vehicles can use it**, matched by slot. The fit set is computed once per rebuild from `_convoy_vehicle_slot_map()` (each vehicle's available slots, derived from its installed parts) and `_vehicle_names_for_slot()`, then stashed in the part's meta (`"fits": [vehicle_name, …]`).
+
+- **Meta line**: `_format_item_meta()` renders `<Slot>  •  Fits: <A>, <B>` for the tab; the `Fits:` line is omitted when no convoy vehicle exposes the slot (rather than asserting a misleading "none").
+- **Highlight**: parts that fit ≥1 vehicle get a **green** accent strip and green `Fits:` text (`UITheme.STATUS_GOOD`) so they read as actionable; non-fitting parts stay brass/muted. The fit count is cached on the button as the `fits_count` meta so `_style_vendor_item_button()` keeps the colour after the tap-to-reset restyle.
+- **Sort**: parts are ordered **most-compatible first** (by fit count, ties broken by name) before the list is built.
+
+Part names/slots come from the `MechanicsService` mechanic-probe snapshot (`cargo_id_to_slot`), so this preview depends on the same warmup pipeline as the Mechanics menu.
+
 ### 3. Full Convoy Payload Guard
 Because `SignalHub` sometimes emits shallow convoy dictionaries (missing capacity/resource max fields), `ConvoyMenu` has an explicit completeness heuristic:
 
