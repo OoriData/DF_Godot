@@ -1207,12 +1207,36 @@ func _on_signal_hub_error_occurred(_domain: String, _code: String, message: Stri
 	if display_message.is_empty():
 		return # Ignored error
 
+	# DF+/premium-gated failures (e.g. buying a warehouse without DF+) route to the
+	# upgrade flow instead of the generic error modal. Where a live purchase flow
+	# exists (Steam) we open the PremiumUpgradeModal; otherwise we show the clean DF+
+	# message via the standard dialog (no raw "unexpected error" detail).
+	if ErrorTranslator.is_premium_required(message):
+		if _try_show_premium_upgrade():
+			return
+		_show_error_dialog(display_message)
+		return
+
 	_show_error_dialog(display_message, message)
 
 func _on_api_fetch_error(message: String):
 	# Fallback/Legacy handler if anything still wires directly to APICalls (should be none)
 	# Reuse the new handler logic
 	_on_signal_hub_error_occurred("API", "FETCH_ERROR", message, ErrorTranslator.is_inline_error(message))
+
+## Opens the premium upgrade modal when a working purchase flow is available.
+## Returns true if the modal was shown. Only Steam has a live purchase flow today,
+## so other platforms return false and the caller falls back to a clean DF+ message.
+func _try_show_premium_upgrade() -> bool:
+	var steam := get_node_or_null("/root/SteamManager")
+	var steam_ok: bool = is_instance_valid(steam) and steam.has_method("is_steam_running") and steam.is_steam_running()
+	if not steam_ok:
+		return false
+	var mm := get_node_or_null("/root/MenuManager")
+	if is_instance_valid(mm) and mm.has_method("open_premium_upgrade_menu"):
+		mm.open_premium_upgrade_menu()
+		return true
+	return false
 
 func _show_error_dialog(message: String, raw_message: String = ""):
 	if not is_instance_valid(_error_dialog_scene):

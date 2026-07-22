@@ -85,3 +85,9 @@ Welcome to the technical documentation for *Desolate Frontiers*. This folder is 
 - [**Project Glossary**](99_Reference/Glossary.md): Definitions for all domain, API, and UI terminology.
 - [**Data Examples**](99_Reference/data_dumps/README.md): Indexed JSON/markdown snapshots of common domain payloads — map, convoy, vehicle, cargo, parts, vendor, tutorial — with the shape and related doc for each.
 
+---
+
+## Project Management
+- [**TODO**](TODO.md): The flowing state of active/pending work — current sprint, device-test gate, backlog, and upcoming initiatives.
+- [**Sprint History**](SprintHistory.md): Completed-work archive — full root-cause narratives for Sprints 1–10 and closed backlog items (split out of the TODO so it stays forward-looking).
+

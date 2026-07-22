@@ -1518,6 +1518,11 @@ func _on_hub_error(_domain: String, _code: String, message: String, _inline: boo
 		return
 	if is_instance_valid(buy_button):
 		buy_button.disabled = false
+	# DF+/premium-gated failures (e.g. warehouse purchase without DF+) are handled
+	# centrally by MainScreen, which routes them to the upgrade flow / a clean DF+
+	# message. Skip here so we don't stack a second dialog over it.
+	if ErrorTranslator.has_method("is_premium_required") and ErrorTranslator.is_premium_required(message):
+		return
 	# Route error to modal using ErrorTranslator; avoid printing raw into menu
 	# Optionally filter by domain; for now surface all.
 	_show_error_modal(message)
