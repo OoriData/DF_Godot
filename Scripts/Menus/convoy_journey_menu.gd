@@ -213,8 +213,11 @@ func _update_ui(convoy: Dictionary) -> void:
 	set_menu_title_suffix("Journey Details" if has_journey else "Journey Planner")
 
 
-	# If a confirmation preview is open, don't clobber it on background refresh.
-	if is_instance_valid(_confirmation_panel) and _confirmation_panel.visible:
+	# If a confirmation preview is open during PLANNING, don't clobber it on background
+	# refresh. Once a journey is actually active, the planning preview is obsolete — always
+	# fall through and rebuild the in-transit details (which include the Cancel Journey
+	# button) so a stale confirmation panel can't hide them.
+	if not has_journey and is_instance_valid(_confirmation_panel) and _confirmation_panel.visible:
 		# After a Top Up, rebuild projections using the updated convoy snapshot.
 		if _pending_confirmation_refresh_after_top_up:
 			_pending_confirmation_refresh_after_top_up = false
@@ -380,8 +383,12 @@ func _update_ui(convoy: Dictionary) -> void:
 	progress_bar.add_theme_stylebox_override("fill", fill_style)
 	details_vbox.add_child(progress_bar)
 
-	# Cancel Journey button (in details mode)
-	if journey_data.has("journey_id"):
+	# Cancel Journey button (in details mode). Always present while a journey is active —
+	# we're already past the `if not has_journey: return` guard above, so gating this on the
+	# presence of one specific key wrongly hid the button whenever a convoy snapshot rendered
+	# as in-transit but happened to omit `journey_id`. The id is resolved defensively (dict →
+	# GameStore) at click time instead.
+	if not journey_data.is_empty():
 		var cancel_container = PanelContainer.new()
 		var csb = StyleBoxFlat.new()
 		csb.bg_color = Color(0.4, 0.1, 0.1, 0.9) # Danger red
@@ -416,7 +423,7 @@ func _update_ui(convoy: Dictionary) -> void:
 						# Show a blocking overlay while cancellation propagates
 						_show_blocking_overlay("Canceling journey…")
 						var convoy_id_local := str(convoy_data_received.get("convoy_id"))
-						var journey_id_local := str(journey_data.get("journey_id", ""))
+						var journey_id_local := _resolve_active_journey_id(journey_data, convoy_id_local)
 						if journey_id_local.is_empty():
 							printerr("ConvoyJourneyMenu: Cannot cancel; missing journey_id")
 							_hide_blocking_overlay()
@@ -437,6 +444,23 @@ func _update_ui(convoy: Dictionary) -> void:
 		c_lbl.add_theme_color_override("font_color", Color(1, 0.92, 0.92))
 		cancel_container.add_child(c_lbl)
 		details_vbox.add_child(cancel_container)
+
+# Resolve the active journey's id defensively: prefer the passed journey dict, then fall
+# back to the freshest convoy snapshot in GameStore. Guards the Cancel Journey flow against
+# a convoy snapshot that renders as in-transit but happens to omit the journey_id key.
+func _resolve_active_journey_id(journey_data: Dictionary, convoy_id_local: String = "") -> String:
+	var jid := str(journey_data.get("journey_id", ""))
+	if not jid.is_empty():
+		return jid
+	var cid := convoy_id_local if convoy_id_local != "" else str(convoy_data_received.get("convoy_id", ""))
+	if cid == "" or not is_instance_valid(_store) or not _store.has_method("get_convoys"):
+		return ""
+	for c in _store.get_convoys():
+		if c is Dictionary and str((c as Dictionary).get("convoy_id", "")) == cid:
+			var j: Variant = (c as Dictionary).get("journey")
+			if j is Dictionary:
+				return str((j as Dictionary).get("journey_id", ""))
+	return ""
 
 func _populate_destination_list():
 	if DeviceStateManager.is_mobile:

@@ -52,12 +52,7 @@ const CONVOY_SUBMENU_TYPES := [
 	"convoy_cargo_submenu", "convoy_settlement_submenu", "settlement_hub", "warehouse_submenu"
 ]
 
-# --- Polling state for _process ---
-var _is_polling_for_tab: bool = false
-var _polling_tab_target: Dictionary = {}
-var _polling_tab_timer: float = 0.0
 var _suspended_by_inline_error: bool = false
-const _POLL_TAB_INTERVAL: float = 0.5
 var _awaiting_menu_open: bool = false
 var _allowed_vendor_tab_idx: int = -1
 var _vendor_panel_connected: bool = false
@@ -115,13 +110,6 @@ func _ready() -> void:
 	# Do not create overlay yet; only when the tutorial actually starts
 	# Try starting after a short defer so MainScreen can show onboarding modal first
 	_try_start_deferred()
-
-func _process(delta: float) -> void:
-	if _is_polling_for_tab:
-		_polling_tab_timer -= delta
-		if _polling_tab_timer <= 0.0:
-			_polling_tab_timer = _POLL_TAB_INTERVAL
-			_check_for_tab_selected_poll()
 
 func set_map_ready() -> void:
 	_map_ready = true
@@ -691,9 +679,7 @@ func _run_current_step() -> void:
 	# This prevents the user from switching to other vendor tabs (e.g., Market)
 	# before the tutorial allows it.
 	var lock_tabs_for_actions := [
-		"await_dealership_tab",
 		"await_vehicle_purchase",
-		"await_market_tab",
 		"await_supply_purchase",
 		"await_urchin_purchase"
 	]
@@ -790,58 +776,12 @@ func _run_current_step() -> void:
 			_apply_lock(step)
 			_resolve_and_highlight(step) # highlight the target vendor card in the hub
 			_watch_for_vendor_menu()
-		"await_dealership_tab":
-			# First, check if the tab is already open. This is the "fail safe" the user mentioned.
-			var tabs := _get_vendor_tab_container()
-			if is_instance_valid(tabs):
-				var idx := tabs.current_tab
-				if idx >= 0:
-					var title := tabs.get_tab_title(idx).to_lower()
-					var want := String(step.get("target", {}).get("token", "Dealership")).to_lower()
-					# Make the pre-check case-insensitive to match the watcher.
-					if title.find(want) != -1:
-						# The tab is already open. Defer advance to let UI settle before next step.
-						call_deferred("_advance")
-						return
-
-			# If the tab is not yet open, proceed with the normal highlight and watch logic.
-			_show_message(step.get("copy", ""), false)
-			# Apply lock mode before resolving. This is crucial for the overlay to handle
-			# resolution retries correctly without blocking the whole screen.
-			_apply_lock(step)
-			_resolve_and_highlight(step) # try to highlight tab container as a hint
-			_hint_dealership_tab(step.get("target", {}))
-			_watch_for_tab_selected(step.get("target", {}))
 		"await_vehicle_purchase":
 			_show_message(step.get("copy", ""), false)
 			_apply_lock(step)
 			# The step's target should correctly be { "resolver": "vendor_trade_panel" }
 			_resolve_and_highlight(step)
 			_watch_for_vehicle_purchase()
-		"await_market_tab":
-			# This logic mirrors `await_dealership_tab` for consistency, as requested.
-			# It checks if the tab is already open, and if not, highlights the tab area and waits.
-			var tabs := _get_vendor_tab_container()
-			if is_instance_valid(tabs):
-				var idx := tabs.current_tab
-				if idx >= 0:
-					var title := tabs.get_tab_title(idx).to_lower()
-					var want := String(step.get("target", {}).get("token", "Market")).to_lower()
-					#// --- START LOGGING ---
-					var all_titles: Array = []
-					for i in range(tabs.get_tab_count()): all_titles.append(tabs.get_tab_title(i))
-					print("[Tutorial][Pre-check] Checking if market tab is open. Want: '%s', Current: '%s'. All: %s" % [want, title, all_titles])
-					#// --- END LOGGING ---
-					if title.find(want) != -1:
-						# The tab is already open. Defer advance to let UI settle.
-						print("[Tutorial] Market tab already open, advancing.")
-						call_deferred("_advance")
-						return
-
-			_show_message(step.get("copy", ""), false)
-			_apply_lock(step)
-			_resolve_and_highlight(step)
-			_watch_for_tab_selected(step.get("target", {}))
 		"await_supply_purchase":
 			# Message is now shown via _update_supply_purchase_ui inside the watcher
 			_apply_lock(step)
@@ -1045,11 +985,6 @@ func _advance() -> void:
 	# step's highlight hole (e.g. covering the return-to-settlement button after buying).
 	_dismiss_vendor_toast()
 
-	# Stop any active polling
-	if _is_polling_for_tab:
-		_is_polling_for_tab = false
-		set_process(false)
-
 	_step += 1
 	_awaiting_menu_open = false
 	_save_progress()
@@ -1153,45 +1088,6 @@ func _get_vendor_tab_container() -> TabContainer:
 	# Fallback to the path for safety
 	return menu.get_node_or_null("MainVBox/VendorTabContainer")
 
-
-func _watch_for_tab_selected(target: Dictionary) -> void:
-	# This function now starts a polling loop within the _process function,
-	# which is more robust than using SceneTreeTimers that might fail in a paused tree.
-	var want := String(target.get("token", "Dealership")).to_lower()
-	print("[Tutorial][Watcher] Started. Will poll for tab containing '%s'." % want)
-	_is_polling_for_tab = true
-	_polling_tab_target = target
-	_polling_tab_timer = 0.0 # Check immediately on the next process frame
-	set_process(true)
-
-func _check_for_tab_selected_poll() -> void:
-	var target := _polling_tab_target
-	var want := String(target.get("token", "Dealership")).to_lower()
-
-	print("[Tutorial][Watcher] Polling...")
-	var tabs := _get_vendor_tab_container()
-	if not is_instance_valid(tabs):
-		print("  - FAILED: _get_vendor_tab_container() returned an invalid node.")
-		return
-
-	var idx := tabs.current_tab
-	if idx < 0:
-		print("  - INFO: No tab selected (index is %d)." % idx)
-		return
-
-	var current_title_raw := tabs.get_tab_title(idx)
-	var current_title_lower := current_title_raw.to_lower()
-	var all_titles: Array = []
-	for i in range(tabs.get_tab_count()): all_titles.append(tabs.get_tab_title(i))
-
-	print("  - Polling for tab title containing: '%s'" % want)
-	print("  - Current tab index: %d" % idx)
-	print("  - Current tab title (raw): '%s'" % current_title_raw)
-	print("  - All available tab titles: %s" % all_titles)
-
-	if current_title_lower.find(want) != -1:
-		print("[Tutorial][Watcher] Match found! Advancing step.")
-		_advance_after_frame()
 
 func _advance_after_frame() -> void:
 	# Wait for one full frame to pass. This allows Godot's layout system
@@ -2156,28 +2052,6 @@ func _highlight_node_in_map(node: Node, gating_mode: int = GATING_SOFT) -> void:
 		ov.call_deferred("bring_to_front")
 
 # --- Stub for dealership tab hinting ---
-func _hint_dealership_tab(target: Dictionary) -> void:
-	# This function attempts to refine the highlight for a tab, which is often
-	# difficult to resolve because Godot doesn't expose tab button nodes directly.
-	# It relies on a helper method in the ConvoySettlementMenu script.
-	var menu := _get_settlement_menu()
-	if not is_instance_valid(menu):
-		return
-
-	if not menu.has_method("get_vendor_tab_rect_by_title_contains"):
-		print("[Tutorial] Hinting failed: ConvoySettlementMenu is missing 'get_vendor_tab_rect_by_title_contains' helper.")
-		return
-
-	var token := String(target.get("token", "Dealership"))
-	var rect: Rect2 = menu.call("get_vendor_tab_rect_by_title_contains", token)
-
-	if rect.has_area():
-		var ov := _ensure_overlay()
-		if is_instance_valid(ov) and ov.has_method("highlight_node"):
-			# Refine the highlight to be just the tab button.
-			ov.call_deferred("highlight_node", menu, rect)
-			print("[Tutorial] Refined highlight for tab: ", token)
-
 # --- Cleanup to prevent lingering connections ---
 func _exit_tree() -> void:
 	# Disconnect from Hub/Store signals (Phase C)
@@ -2235,9 +2109,7 @@ func _exit_tree() -> void:
 			_top_up_button_ref.disconnect("pressed", c3)
 		_top_up_button_ref = null
 
-	# Stop polling/timers
-	_is_polling_for_tab = false
-	set_process(false)
+	# Stop timers
 	_highlight_timer = null
 
 	# Disconnect vendor panel signals if connected

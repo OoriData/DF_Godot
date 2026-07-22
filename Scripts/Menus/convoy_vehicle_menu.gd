@@ -153,6 +153,10 @@ func _ready():
 	# Configuration for Service tab
 	if is_instance_valid(mechanics_embed) and mechanics_embed.has_method("set_embedded_mode"):
 		mechanics_embed.set_embedded_mode(true)
+		# Mechanics' own vehicle dropdown is hidden while embedded, so mirror its [N ↑] upgrade counts
+		# onto OUR visible vehicle dropdown and keep them in sync as backend compat results land.
+		if mechanics_embed.has_signal("upgrade_counts_changed") and not mechanics_embed.upgrade_counts_changed.is_connected(_on_mechanics_upgrade_counts_changed):
+			mechanics_embed.upgrade_counts_changed.connect(_on_mechanics_upgrade_counts_changed)
 
 	# Mobile: enlarge TabContainer tab strips + MechanicButton
 	if _is_mobile():
@@ -436,9 +440,9 @@ func initialize_with_data(data_or_id: Variant, extra_arg: Variant = null) -> voi
 				if vehicle_data is Dictionary:
 					var vehicle_name = vehicle_data.get("name", "Unnamed Vehicle %s" % (i + 1))
 					var make_model = vehicle_data.get("make_model", "N/A")
-					vehicle_option_button.add_item("%s (%s)" % [vehicle_name, make_model], i)
 					# Persist id as metadata for stability
 					var vid: String = String(vehicle_data.get("vehicle_id", ""))
+					vehicle_option_button.add_item(_vehicle_dropdown_label(vehicle_name, make_model, vid), i)
 					vehicle_option_button.set_item_metadata(i, vid)
 			print("ConvoyVehicleMenu: VehicleOptionButton populated. Item count: ", vehicle_option_button.get_item_count())
 			# Select previously selected vehicle if present; otherwise first
@@ -480,6 +484,37 @@ func initialize_with_data(data_or_id: Variant, extra_arg: Variant = null) -> voi
 					vehicle_option_button.select(idx)
 					_on_vehicle_selected(idx)
 					break
+
+## Build a vehicle dropdown label, prefixed with [N ↑] when the embedded mechanics reports N slots
+## with an available compatible upgrade for this vehicle. The prefix survives the collapsed
+## OptionButton clipping the (often long) make/model at the right edge.
+func _vehicle_dropdown_label(vehicle_name: String, make_model: String, vid: String) -> String:
+	var base := "%s (%s)" % [vehicle_name, make_model]
+	if vid != "" and is_instance_valid(mechanics_embed) and mechanics_embed.has_method("get_upgrade_count_for_vehicle_id"):
+		var n: int = int(mechanics_embed.call("get_upgrade_count_for_vehicle_id", vid))
+		if n > 0:
+			return "[%d ↑]  %s" % [n, base]
+	return base
+
+func _on_mechanics_upgrade_counts_changed() -> void:
+	_refresh_vehicle_dropdown_upgrade_counts()
+
+## Re-decorate the dropdown labels in place (preserving selection) as backend compat results land.
+## Recomputes each label from current_vehicle_list keyed by the item's stored vehicle_id metadata,
+## so it never double-prefixes an already-decorated label.
+func _refresh_vehicle_dropdown_upgrade_counts() -> void:
+	if not is_instance_valid(vehicle_option_button):
+		return
+	for i in range(vehicle_option_button.get_item_count()):
+		var vid := str(vehicle_option_button.get_item_metadata(i))
+		if vid == "":
+			continue
+		for vehicle_data in current_vehicle_list:
+			if vehicle_data is Dictionary and String(vehicle_data.get("vehicle_id", "")) == vid:
+				var vehicle_name = vehicle_data.get("name", "Vehicle")
+				var make_model = vehicle_data.get("make_model", "N/A")
+				vehicle_option_button.set_item_text(i, _vehicle_dropdown_label(vehicle_name, make_model, vid))
+				break
 
 func _on_vehicle_selected(index: int):
 	print("ConvoyVehicleMenu: _on_vehicle_selected called with index: ", index)
@@ -549,8 +584,8 @@ func _update_ui(convoy: Dictionary) -> void:
 				if vehicle_data is Dictionary:
 					var vehicle_name = vehicle_data.get("name", "Unnamed Vehicle %s" % (i + 1))
 					var make_model = vehicle_data.get("make_model", "N/A")
-					vehicle_option_button.add_item("%s (%s)" % [vehicle_name, make_model], i)
 					var vid := String(vehicle_data.get("vehicle_id", ""))
+					vehicle_option_button.add_item(_vehicle_dropdown_label(vehicle_name, make_model, vid), i)
 					vehicle_option_button.set_item_metadata(i, vid)
 			var target_index := 0
 			if _selected_vehicle_id != "":

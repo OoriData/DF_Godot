@@ -6,7 +6,6 @@ signal closed
 const DISCORD_LINK = "https://discord.gg/nS7NVC7PaK"
 
 var _root: VBoxContainer
-var _debug_lbl: Label
 
 func _ready() -> void:
 	_build_ui()
@@ -24,26 +23,12 @@ func _is_mobile() -> bool:
 	return is_mobile_platform or (is_inside_tree() and _is_portrait())
 
 func _get_font_size(base: int) -> int:
-	var is_mobile_platform = OS.has_feature("mobile") or DisplayServer.get_name() in ["Android", "iOS"]
-	var win_size = get_viewport().get_visible_rect().size if is_inside_tree() else Vector2(0, 0)
-	var is_port = win_size.y > win_size.x
-	
-	# Enlarged base from 14 to 17
-	var effective_base = 17 if base == 14 else base
-	
-	# Less aggressive boost on desktop even if portrait
-	var boost: float
-	if is_mobile_platform:
-		boost = 2.4 if is_port else 1.8 # Increased boost slightly
-	else:
-		boost = 1.6 if is_port else 1.2
-	
-	return int(effective_base * boost)
+	# Font sizes are fixed logical values — content_scale_factor handles all scaling.
+	# The old per-node boost double-scaled on top of content_scale_factor (Law of Logical
+	# Pixels). Flattened to the base value like the other migrated popups.
+	return base
 
 func open_centered() -> void:
-	var v_size = get_viewport().get_visible_rect().size if is_inside_tree() else Vector2(0, 0)
-	print("[DiscordPopup] open_centered. Viewport: %s, OS: %s, Display: %s | LOUD LOG" % [v_size, OS.get_name(), DisplayServer.get_name()])
-	
 	var is_port = _is_portrait()
 	var is_mob = _is_mobile()
 
@@ -73,19 +58,9 @@ func open_centered() -> void:
 	if is_instance_valid(_root):
 		_root.custom_minimum_size.x = win_w - (pad * 2)
 
-	print("[DiscordPopup] Calculated dimensions: %dx%d (is_port=%s, is_mob=%s) | LOUD LOG" % [win_w, win_h, is_port, is_mob])
-	if is_instance_valid(_debug_lbl):
-		_debug_lbl.text = "V:%s P:%dx%d Port:%s Mob:%s" % [v_size, win_w, win_h, is_port, is_mob]
-	
 	# Explicitly set the window size before popup to override any previous state
 	self.size = Vector2i(win_w, win_h)
 	popup_centered(Vector2i(win_w, win_h))
-	
-	# Diagnostic: Check if any child is forcing an expansion
-	var min_sz = _root.get_combined_minimum_size() if is_instance_valid(_root) else Vector2(0,0)
-	print("[DiscordPopup] Post-Popup Root MinSize: %s, Window Size: %s" % [min_sz, self.size])
-	
-	print("[DiscordPopup] Visible Rect after popup_centered: %s" % [get_visible_rect()])
 	call_deferred("_refresh_layout")
 
 func _refresh_layout() -> void:
@@ -162,13 +137,6 @@ func _build_ui() -> void:
 	cancel_btn.focus_mode = Control.FOCUS_NONE
 	cancel_btn.pressed.connect(_on_close_pressed)
 	btn_row.add_child(cancel_btn)
-
-	# Debug Label (tiny at bottom)
-	_debug_lbl = Label.new()
-	_debug_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_debug_lbl.modulate = Color(1, 1, 1, 0.4)
-	_debug_lbl.add_theme_font_size_override("font_size", 10)
-	root.add_child(_debug_lbl)
 
 func _apply_discord_button_style(btn: Button) -> void:
 	var normal := StyleBoxFlat.new()

@@ -1,6 +1,6 @@
 This document will serve as a flowing state of things needed in the project, what resources are needed for each task.
 
-> **Status:** Sprints 1–8 complete. Sprint 8 (tutorial re-fit to the settlement-**hub** UI) is committed and device-verified stable — `725c42f` ("Tutorial stable") plus the `511d2d5` flashing-panel fix — and plays end-to-end in portrait, landscape, and desktop. Two non-blocking closeout items (delete the dead vendor-tab handlers, add tutorial smoke-test coverage) were reclassified out of the sprint — see the Sprint 8 section and Tech Debt / Testing below. **Sprint 9 (map & misc polish + vendor/mechanics polish) is code-complete and compile-clean; the only thing gating closeout is a batched portrait/landscape/desktop device-test pass** (plus the externally-blocked vendor-efficiency backend deploy). See the trimmed Sprint 9 section below.
+> **Status:** Sprints 1–8 complete. Sprint 8 (tutorial re-fit to the settlement-**hub** UI) is committed and device-verified stable — `725c42f` ("Tutorial stable") plus the `511d2d5` flashing-panel fix — and plays end-to-end in portrait, landscape, and desktop. Two non-blocking closeout items (delete the dead vendor-tab handlers, add tutorial smoke-test coverage) were reclassified out of the sprint — see the Sprint 8 section and Tech Debt / Testing below. **Sprints 9 + 10 are now CODE-COMPLETE — every remaining code task has landed and is compile-clean (warnings-as-errors). The only things gating closeout are (a) the batched portrait/landscape/desktop device-test pass, which is device-only by the project's own rules, and (b) the externally-blocked vendor-efficiency backend `/map` deploy.** The final code items landed 2026-07-21: `discord_popup.gd` font flatten (completing the font-scale migration); **removal of the dead tutorial-tab handlers AND their second-layer orphans** (the `_watch_for_tab_selected`/`_check_for_tab_selected_poll` polling machinery + `get_vendor_tab_rect_by_title_contains`); and the last Sprint 9 open item, **Mechanics eager all-vehicle compat pre-fetch** (staggered; the multi-vehicle/multi-upgrade cart already existed from Sprint 6). All folded into the "Sprint 9 + 10 device-test checklist" below. *Note:* the "purge stale data dumps" idea was dropped after review — they're intentionally-kept, already-caveated shape references (see the Testing/Docs note).
 
 ---
 
@@ -290,17 +290,63 @@ each in portrait, landscape, AND desktop where relevant.**
 - [x] **Available Parts preview — compatible vehicles** — each part lists which convoy vehicles can use it
   (slot match), with a **green highlight + "Fits:" line** for parts that fit ≥1 vehicle, sorted
   most-compatible first. `convoy_menu.gd`. *Device-confirmed (preview visible).* (Docs: `02_UI_UX/ConvoyMenu.md`.)
-- [→] **Mechanics compatibility preloading** — **partially delivered** by the per-vehicle upgrade count
-  above. Remaining scope: eager pre-fetch of backend compat for **all** vehicles on open (non-selected
-  vehicles currently use the local slot heuristic until selected), and a multi-vehicle / multi-upgrade
-  cart. `mechanics_menu.gd`, cart system.
+- [x] **Mechanics compatibility preloading** — **code-complete (2026-07-21).** (1) Per-vehicle upgrade
+  count shipped earlier (Sprint 9). (2) **Eager all-vehicle compat pre-fetch on open now added:**
+  `_start_vendor_compat_checks_for_all_vehicles()` warms the backend `_compat_cache` for every
+  *non-selected* vehicle so the dropdown `[N ↑]` counts firm up from the backend on open instead of
+  waiting for a manual selection. Dispatch is **staggered** (one vehicle per 0.12s tick, guarded by a
+  cancel token) because the compat API creates a fresh HTTPRequest per call with no in-flight dedup —
+  a single-frame burst of `vehicles × parts` requests is avoided; each tick's burst matches the
+  existing selected-vehicle path. Wired into the two build paths (`_update_ui`, `_on_hub_convoy_updated`)
+  and `_on_hub_vendor_updated` (new vendor stock re-warms all vehicles); cancelled in `reset_view()`.
+  (3) The **multi-vehicle / multi-upgrade cart already exists** (Sprint 6 rebuild): `_pending_swaps` is
+  keyed per (vehicle, slot) and `_compute_pending_schedules()` groups multiple swaps across multiple
+  vehicles — the old "remaining scope" line was stale. `mechanics_menu.gd`. Compile-clean
+  (warnings-as-errors). *Pending device test* (verify the other vehicles' `[N ↑]` counts populate on
+  open without selecting them, and no request storm).
 
 **Blocked externally:**
-- [x] **Vendor efficiency = 0** — client fallback is fixed; **blocked on a deploy of the `/map` payload.**
-  Production's `/map/get` serves a lean vehicle dict that omits real efficiency (the binary packer reads a
-  renamed key). See the [DF_Lib case study](04_Technical/DF_Lib.md#case-study-the-vanishing-vehicle-efficiency-stat)
-  and memory [[reference_vendor_efficiency_binary_serializer]]. Once the payload serves efficiency, the
-  client fix renders it (plus Seats/Make/Model/Color for vendor vehicles).
+- [x] **Vendor efficiency = 0** — ✅ **RESOLVED on device (2026-07-21).** Device test round 1 confirms vendor
+  vehicle stats now show **real efficiency** (plus top speed / cargo capacity) — the `/map` payload deploy
+  appears to have landed, so the client fallback now renders the real value. See the
+  [DF_Lib case study](04_Technical/DF_Lib.md#case-study-the-vanishing-vehicle-efficiency-stat) and memory
+  [[reference_vendor_efficiency_binary_serializer]] for the history.
+
+### Sprint 9 + 10 — device-test checklist (the closeout gate)
+
+Run on a **touch device** (behaviors marked *touch* can't be proven in the editor). For each row: set the
+orientation, do the gesture, confirm **new** vs **old**. Test each orientation listed.
+
+> **Device test round 1 — 2026-07-21 (iPhone, remote deploy). Results:**
+> - ✅ **Vendor vehicle stats incl. efficiency** — real numbers show (efficiency blocker resolved, see above).
+> - ✅ **Tutorial tab-lock** — holds; purchases advance. Dead-arm removal safe.
+> - ✅ **Mechanics eager prefetch (staggering)** — logs confirm one-vehicle-at-a-time `[PartCompatUI] Dispatching`
+>   bursts (no flood).
+> - 🔧 **`[N ↑]` count + swap glow not visible → FIXED** — root cause: Mechanics runs **embedded** in the convoy
+>   vehicle menu, hiding its own counted dropdown; the parent's dropdown never got the prefix. Now propagated to
+>   the parent + the swap-button glow restored. See the Batch-B row. **Re-test.**
+> - 🔧 **Discord popup logs → FIXED** — sizing good; removed the leftover visible `_debug_lbl` + `| LOUD LOG`
+>   prints (`discord_popup.gd`). Quick re-test.
+> - ↩️ **"Labels behind the overlay box" → reclassified as a minor cosmetic clip** — device diagnostics proved
+>   it's NOT a map label but the screen-space `ConvoyListPanel` toggle clipping the gear tab's edge; works
+>   normally. Two mis-aimed map-label attempts were reverted. Low-priority UI margin nit. See A5.
+
+**Batch A — map / route** *(all during a live convoy on the map)*
+- [ ] **A1 · Labels tap-only** *(touch; portrait + landscape)* — **pan-drag across settlements**: labels must **not** flash under the finger; a settlement label reveals **only on an explicit tap**. *Old:* labels flickered on during drag.
+- [ ] **A3 · Hub vendor cards fit** *(mobile-landscape only)* — open a settlement with **3–4 vendors**: all cards pack into **one row**, shorter, **no clip below the nav bar**, no scroll. *Old:* cards clipped under the nav. (Re-check portrait/desktop are unchanged.)
+- [ ] **A4 · Labels dodge the route** *(portrait + landscape)* — start **journey planning** and preview a route that passes near labeled settlements: labels **nudge vertically off** the route line; the **topmost** labels stay on-screen (not cut off the top). *Known limit:* nudge is vertical-only, so a horizontal overlap may remain — note it if seen.
+- [ ] **A5 · "Conv 1" box clips against the gear tab** *(reclassified 2026-07-21: minor cosmetic, works normally)* — **NOT a map-label occlusion.** Device diagnostics proved the occluded thing is **not** a `ConvoyLabelManager` map label (the map's one convoy label sits top-right, no overlap). It's the **`ConvoyListPanel` toggle box** ("Conv 1", the screen-space convoy picker in the top bar / `UserInfoDisplay`) whose edge **clips slightly against the overlay gear tab** in landscape. User: *"not completely stuck behind, just clipping a bit… works normally."* So this is a small **UI-vs-UI margin nit**, not occlusion. **Two mis-aimed attempts at convoy *map-label* nudging were reverted** (`convoy_label_manager.gd`, `main_screen.gd`, `map_overlay_settings_panel.gd` all restored). **Fix (pending a precise pinpoint):** a small spacing/offset between the ConvoyListPanel toggle and the gear tab; needs a zoomed screenshot of exactly which two edges overlap before touching layout (map-layout inference has been unreliable). Low priority.
+
+**Batch B — vendor / mechanics**
+- [x] **Vendor vehicle stats** *(device round 1: PASS)* — top speed / cargo capacity / **efficiency** all show real numbers on device (efficiency blocker resolved).
+- [ ] **Vendor vehicle inspector parity** *(portrait + landscape + desktop)* — open the vehicle **inspector**: shows **Seats / Make-Model / Color / Shape** when present, plus a working **Description popup** button. Matches the convoy summary page.
+- [~] **Mechanics `[N ↑]` upgrade count + swap glow** *(device round 1: NOT VISIBLE → ROOT-CAUSED + FIXED 2026-07-21; re-test)* — logs proved the count was non-zero (`compatible=1/2/3`), so **not** a 0-count/glyph issue. **Root cause:** Mechanics is **embedded** in the convoy vehicle menu (`convoy_vehicle_menu.gd:154` `set_embedded_mode(true)`), which **hides** `mechanics_menu`'s own `VehicleOptionButton` — the exact dropdown the `[N ↑]` counts were written to. The visible dropdown is the **parent** menu's, which never got the prefix. **Fix:** `mechanics_menu` now exposes `get_upgrade_count_for_vehicle_id()` + emits `upgrade_counts_changed`; `convoy_vehicle_menu` decorates ITS dropdown labels with `[N ↑]` and refreshes in place on that signal as compat results land. **Also:** the swap-button **glow was a no-op** (`_style_swap_button` cleared styling by design) — restored a green (`UITheme.STATUS_GOOD`) highlight on Swap buttons whose slot has an available upgrade. Both compile-clean; **re-test on device.**
+- [x] **Mechanics eager all-vehicle prefetch (staggering)** *(device round 1: PASS)* — logs show one-vehicle-at-a-time `[PartCompatUI] Dispatching` bursts, no flood. (Visibility of the resulting counts is the `[N ↑]` row above.)
+- [ ] **Available Parts "Fits:" preview** *(portrait + landscape + desktop)* — in the convoy/parts preview, parts that fit ≥1 vehicle show a **green highlight + "Fits: …" line**, sorted most-compatible first. *(Already device-confirmed once; re-verify after the batch.)*
+
+**Sprint 10 additions**
+- [~] **Discord popup sizing** *(device round 1: sizing PASS; debug label removed → re-test)* — text is normal-sized. **But** a leftover visible `_debug_lbl` (viewport/size diagnostic) + `| LOUD LOG` console prints were rendering; **removed 2026-07-21** (`discord_popup.gd`, compile-clean). Re-open the popup to confirm the debug text is gone.
+- [x] **Tutorial tab-lock regression** *(device round 1: PASS)* — lock holds through L1/L2 purchases; each purchase advances the step. Dead-arm removal confirmed safe.
 
 ---
 
@@ -312,8 +358,8 @@ one open follow-up + reclassified cleanup.
 
 | Task | Primary file:line | Notes |
 |---|---|---|
-| Mechanics compat preload (remaining) | `mechanics_menu.gd`, cart system | Per-vehicle upgrade count shipped; remaining = eager all-vehicle compat pre-fetch + multi-vehicle/multi-upgrade cart |
-| (Tech debt) Delete dead tutorial tab handlers | `tutorial_manager.gd:793`/`821`, `_hint_dealership_tab` | Only the `await_*_tab` arms are dead; keep `_lock_vendor_tabs`/`_on_vendor_tab_selected` (live for purchase steps) |
+| ~~Mechanics compat preload~~ | `mechanics_menu.gd` | ✅ **DONE (2026-07-21).** Eager all-vehicle compat pre-fetch added (staggered); multi-vehicle/multi-upgrade cart already existed. Pending device test only. |
+| ~~(Follow-up) Second-layer tutorial-tab orphans~~ | `tutorial_manager.gd`, `convoy_settlement_menu.gd` | ✅ **DONE (2026-07-21).** Removed `_watch_for_tab_selected` + `_check_for_tab_selected_poll` + the `_process` polling branch + polling state vars (`_is_polling_for_tab`/`_polling_tab_target`/`_polling_tab_timer`/`_POLL_TAB_INTERVAL`) in `tutorial_manager.gd`, and `get_vendor_tab_rect_by_title_contains` in `convoy_settlement_menu.gd`. No remaining references; compile-clean (warnings-as-errors). |
 
 ---
 
@@ -323,13 +369,15 @@ Not blocking the sprints above. Pull into a sprint when the relevant file is ope
 
 ## Bugs
 
+- **Sold-out vendor items linger in the list** — a vehicle (or any item) that is bought out / fully depleted stays visible in the vendor UI after purchase; it must be removed from the list once its stock hits 0. Likely the post-purchase tree rebuild isn't dropping zero-quantity rows. `vendor_trade_panel.gd` / `vendor_item_list.gd` (verify against the tree-rebuild path).
 - **Convoy name label (P5)** — floats unanchored above the panel; integrate as a styled header. `convoy_menu.gd` TitleLabel.
 - **Resource-bar text contrast (P6)** — low contrast at high fill; add outline or bump font weight. `convoy_menu.gd` ResourceStatsHBox.
 - **HSeparators near-invisible (P8)** — on dark bg, replace with section labels or themed dividers.
-- **`discord_popup.gd` font double-scale** — the `DiscordPopup` PopupPanel (loaded by `user_info_display.gd:445`; distinct from the already-migrated `discord_link_popup.gd`) still boosts in `_get_font_size` (`int(effective_base * boost)`). Flatten to `return base` like the other popups. Found 2026-07-06 while auditing the font migration.
+- ✅ **`discord_popup.gd` font double-scale** — **DONE (Sprint 10, 2026-07-21).** `_get_font_size` flattened to `return base` (`Scripts/UI/discord_popup.gd`), the last holdout of the font-scale migration. Compile-clean (standard + warnings-as-errors). *Pending device test* (portrait/landscape sizing of the Discord popup). This closes [[project_font_scale_migration]].
 
 ## Polish / UX
 
+- **Vendor action buttons live on the selected item** — move all action buttons (buy / sell / etc.) into the selected item's row/inspector in the vendor menu, rather than a separate/global control area, so actions read as belonging to the item you picked. `vendor_trade_panel.gd` / `vendor_item_list.gd`.
 - **Global spacing consistency (P9)** — `UITheme.SPACE_*` tokens exist but adoption is incomplete.
 - **Settlement vendor browse (map preview)** — full read-only inventory list when viewing a settlement without a convoy. Currently shows name + "deals in" summary only. Follow-up to Sprint 5.5.
 - **Convoy stats backend verification** — breakdown modal (`convoy_menu.gd`) shows computed aggregate (min for speed/offroad, average for efficiency) alongside the backend total. Backend formula not yet confirmed — verify on device.
@@ -342,11 +390,17 @@ Not blocking the sprints above. Pull into a sprint when the relevant file is ope
 - `UserInfoDisplay` height changes not signaled → stale `offset_top` on submenus.
 - `main_screen.gd` wires convoy button via fragile `find_child()`.
 - S/M/L UI-scale preference silently overridden in portrait.
-- **Dead tutorial tab handlers** — `await_dealership_tab`/`await_market_tab` match arms (`tutorial_manager.gd:793`/`821`) + `_hint_dealership_tab` are no longer emitted by any step after the Sprint 8 hub rework. Safe to delete. **Do not** delete `_lock_vendor_tabs`/`_watch_for_tab_selected`/`_on_vendor_tab_selected` — the `lock_tabs_for_actions` list (`tutorial_manager.gd:693`) still wires them to the live `await_vehicle_purchase`/`await_supply_purchase`/`await_urchin_purchase` steps. First confirm the hub's single-vendor menu still has a `TabContainer` (`_get_vendor_tab_container()`); if it doesn't, the lock is already a no-op and the whole block can go.
+- ✅ **Dead tutorial tab handlers** — **DONE (Sprint 10, 2026-07-21).** Removed the `await_dealership_tab`/`await_market_tab` match arms, their two entries in the `lock_tabs_for_actions` list, and the `_hint_dealership_tab` helper (`tutorial_manager.gd`). Kept `_lock_vendor_tabs`/`_on_vendor_tab_selected` (still live for `await_vehicle_purchase`/`await_supply_purchase`/`await_urchin_purchase`) and the `VendorTabContainer` (confirmed still in `ConvoySettlementMenu.tscn`, so the lock is not a no-op). Compile-clean (standard + warnings-as-errors).
+  - **Correction:** the old note claimed the lock list wires `_watch_for_tab_selected` — it does not. That watcher (and `_check_for_tab_selected_poll`) was only reachable from the two deleted arms, so it is now **orphaned**. Deleting `_hint_dealership_tab` also orphaned `convoy_settlement_menu.gd::get_vendor_tab_rect_by_title_contains` (`:1368`, its only caller). Both were left in place to keep this pass minimal — see the second-layer cleanup follow-up below.
+- ✅ **(Follow-up) Second-layer tutorial-tab orphans** — **DONE (2026-07-21).** Removed the now-dead `tutorial_manager.gd::_watch_for_tab_selected` + `_check_for_tab_selected_poll`, the `_is_polling_for_tab` polling branch in `_process` (the whole `_process` override went, since polling was its only body) and its resets in `_advance`/`_exit_tree`, the polling state members (`_is_polling_for_tab`, `_polling_tab_target`, `_polling_tab_timer`, `_POLL_TAB_INTERVAL`), and `convoy_settlement_menu.gd::get_vendor_tab_rect_by_title_contains`. Verified no live path emits a tab-selection step (only the deleted arms did). No remaining references; compile-clean (warnings-as-errors). Kept `_get_vendor_tab_container`/`_advance_after_frame` (still live) and the adjacent `get_vendor_tab_bar`/`select_vendor_tab_by_title_contains` (used elsewhere in the settlement menu).
 
 ## Testing
 
 - **Tutorial-flow smoke coverage** — `Scripts/Debug/wiring_smoke_test.gd` only asserts autoload wiring today. Extend it toward tutorial-flow coverage (step build, resolver resolution per level) so a hub/menu rename can't silently break onboarding. Sprint 8 shipped on a manual portrait/landscape/desktop pass instead.
+
+## Docs / data hygiene
+
+- **Data dumps are stale but intentionally kept — do NOT purge.** Reviewed 2026-07-21: `docs/99_Reference/data_dumps/{cargo,vendor,vehicle,part}_example.json` are point-in-time (Feb 2026, pre-`base_efficiency` rename), but the README already caveats them ("reference dumps, not fixtures … verify against live data before relying on exact keys"), they're indexed, and they still document object **shape** correctly. `tutorial_steps.json` is likewise explicitly documented as "shape only — illustrative, not loaded … its `await_dealership_tab`/tab actions are retired." Deleting any of these would break README/StepSchema links for negative value; regenerating needs live backend access (`~/Work/desolate_frontiers` + adminer tunnel). If desired, the lightweight improvement is to **regenerate** the four stale JSONs from prod, not delete them. `dump_3920_convoy_…json` is the only deletion candidate, and only "once that investigation is closed" (the vendor-efficiency work is still open).
 
 ## Migration Status (UITheme adoption)
 

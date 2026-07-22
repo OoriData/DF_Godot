@@ -5,6 +5,10 @@ func _init() -> void:
 
 # Signals
 signal changes_committed(convoy_id: String, vehicle_id: String, swaps: Array, estimated_cost: float)
+## Emitted whenever the per-vehicle upgrade counts are recomputed. When Mechanics is embedded in the
+## convoy vehicle menu our own VehicleOptionButton is hidden, so the parent listens to this to refresh
+## the [N ↑] prefixes on ITS visible vehicle dropdown (via get_upgrade_count_for_vehicle_id).
+signal upgrade_counts_changed
 
 # UI refs
 @onready var title_label: Label = get_node_or_null("MainVBox/TitleLabel")
@@ -36,6 +40,7 @@ var _pending_swaps: Array = []
 var _slot_vendor_availability: Dictionary = {}
 var _slot_inventory_availability: Dictionary = {} # highlights when convoy cargo has compatible upgrade
 var _compat_cache: Dictionary = {} # key: vehicle_id||part_cargo_id -> payload
+var _compat_prefetch_token: int = 0 # bumped to cancel an in-flight staggered all-vehicle prefetch
 var _current_swap_ctx: Dictionary = {} # { dialog: Control (overlay), vehicle_id: String, row_map: { part_cargo_id: HBoxContainer } }
 var _cargo_to_slot: Dictionary = {} # cargo_id -> slot_name for vendor candidates
 var _all_vendor_candidates_cache: Array = [] # cached vendor part candidates at current settlement
@@ -996,8 +1001,11 @@ func _update_ui(convoy: Dictionary) -> void:
 	if is_instance_valid(vehicle_option_button):
 		vehicle_option_button.select(idx)
 	_on_vehicle_selected(idx)
+	# Warm backend compatibility for the OTHER vehicles too, so their dropdown [N ↑] counts are
+	# backend-accurate on open rather than relying on the local heuristic until each is selected.
+	_start_vendor_compat_checks_for_all_vehicles()
 	_refresh_apply_state()
-	
+
 	if _awaiting_swap_completion:
 		_awaiting_swap_completion = false
 		if is_instance_valid(_hub) and _hub.has_signal("user_refresh_requested"):
@@ -1005,6 +1013,7 @@ func _update_ui(convoy: Dictionary) -> void:
 
 
 func reset_view() -> void:
+	_compat_prefetch_token += 1 # cancel any in-flight all-vehicle compat prefetch
 	_convoy = {}
 	_vehicles = []
 	_selected_vehicle_idx = -1
@@ -1097,6 +1106,7 @@ func _on_hub_convoy_updated(updated_convoy: Dictionary) -> void:
 	if _vehicles.size() > 0:
 		var idx: int = int(clamp(_selected_vehicle_idx, 0, _vehicles.size() - 1))
 		_on_vehicle_selected(idx if _selected_vehicle_idx >= 0 else 0)
+		_start_vendor_compat_checks_for_all_vehicles()
 	_refresh_apply_state()
 	
 	if _awaiting_swap_completion:
@@ -1132,6 +1142,9 @@ func _on_hub_vendor_updated(_vendor: Dictionary) -> void:
 		# IMPORTANT: do not clear highlights to false; start checks and recompute-from-cache.
 		_start_vendor_compat_checks_for_vehicle(_vehicles[_selected_vehicle_idx])
 		_refresh_slot_vendor_availability()
+	# Fresh vendor stock can add upgrade candidates for every vehicle — warm the non-selected ones
+	# too so their dropdown counts reflect the new stock without needing a manual selection.
+	_start_vendor_compat_checks_for_all_vehicles()
 	# Fresh vendor stock can add upgrade candidates; refresh the dropdown counts for all vehicles.
 	_update_dropdown_upgrade_counts()
 
@@ -1205,12 +1218,24 @@ func _all_candidate_slots() -> Array:
 ## Refresh the upgrade counts in the dropdown labels in place (preserving the current selection)
 ## once backend compatibility results arrive and firm up the local heuristic.
 func _update_dropdown_upgrade_counts() -> void:
-	if not is_instance_valid(vehicle_option_button) or _vehicles.is_empty():
-		return
-	for i in range(_vehicles.size()):
-		if i >= vehicle_option_button.item_count:
-			break
-		vehicle_option_button.set_item_text(i, _vehicle_dropdown_label(_vehicles[i], i))
+	# Our own dropdown is hidden in embedded mode, but still valid — update it when shown.
+	if is_instance_valid(vehicle_option_button) and not _vehicles.is_empty():
+		for i in range(_vehicles.size()):
+			if i >= vehicle_option_button.item_count:
+				break
+			vehicle_option_button.set_item_text(i, _vehicle_dropdown_label(_vehicles[i], i))
+	# Notify the parent menu (embedded case) so it can decorate its own visible vehicle dropdown.
+	upgrade_counts_changed.emit()
+
+## Public accessor for the parent convoy vehicle menu (embedded mode): how many slots have a
+## compatible upgrade available for the vehicle with this id. Same criterion as the [N ↑] prefix.
+func get_upgrade_count_for_vehicle_id(vid: String) -> int:
+	if vid == "":
+		return 0
+	for v in _vehicles:
+		if v is Dictionary and _safe_str((v as Dictionary).get("vehicle_id"), "") == vid:
+			return _count_available_upgrades(v as Dictionary)
+	return 0
 
 func _on_vehicle_selected(index: int):
 	if index < 0 or index >= _vehicles.size():
@@ -1651,15 +1676,59 @@ func _start_vendor_compat_checks_for_vehicle(vehicle: Dictionary) -> void:
 				print("[PartCompatUI] REQUEST vehicle=", vehicle_id, " part_cargo_id=", cid)
 			_mechanics_service.check_part_compatibility(vehicle_id, cid)
 
+## Eagerly warm the per-vehicle compatibility cache for EVERY vehicle in the convoy so the vehicle
+## dropdown's [N ↑] upgrade counts firm up from the backend on open, instead of only after each
+## vehicle is manually selected. Dispatch is STAGGERED (one vehicle per short tick) so we never
+## fire the whole convoy's worth of requests in a single frame — each tick's burst is the same
+## size as the selected-vehicle path already produces. The currently-selected vehicle is skipped
+## (it is already warmed by _on_vehicle_selected/_on_hub_vendor_updated), and
+## _start_vendor_compat_checks_for_vehicle() dedups against _compat_cache so already-warmed
+## (vehicle, part) pairs cost nothing. Safe to call repeatedly.
+func _start_vendor_compat_checks_for_all_vehicles() -> void:
+	if _vehicles.size() <= 1:
+		return # nothing beyond the selected vehicle to prefetch
+	_compat_prefetch_token += 1 # cancel any prefetch already in flight and start fresh
+	_prefetch_vehicles_staggered(_compat_prefetch_token)
+
+func _prefetch_vehicles_staggered(token: int) -> void:
+	for i in range(_vehicles.size()):
+		# Bail if the menu was rebuilt/reset/closed (token bumped or detached) while we yielded.
+		if token != _compat_prefetch_token or not is_inside_tree() or i >= _vehicles.size():
+			return
+		if i == _selected_vehicle_idx:
+			continue # already warmed by the selection path
+		var v: Variant = _vehicles[i]
+		if v is Dictionary and not (v as Dictionary).is_empty():
+			_start_vendor_compat_checks_for_vehicle(v as Dictionary)
+			# Spread the next vehicle's requests across frames to avoid a burst.
+			await get_tree().create_timer(0.12).timeout
+	# Results land asynchronously; refresh the dropdown counts once the sweep has been dispatched.
+	if token == _compat_prefetch_token and is_inside_tree():
+		_update_dropdown_upgrade_counts()
+
 func _style_swap_button(btn: Button, slot_name: String):
 	if not is_instance_valid(btn):
 		return
 
-	# Reset to a neutral, non-highlighted style. All visible rows already
-	# represent swappable slots, so we no longer need special button coloring.
-	btn.remove_theme_stylebox_override("normal")
-	btn.remove_theme_color_override("font_color")
-	btn.tooltip_text = ""
+	# Glow the Swap button green when this slot has a compatible upgrade available (convoy cargo or
+	# vendor stock), so the player can spot upgradeable slots at a glance. Availability firms up as
+	# backend compat results land, so this is re-applied via _restyle_swap_buttons_for_slot().
+	var has_upgrade := bool(_slot_vendor_availability.get(slot_name, false)) or bool(_slot_inventory_availability.get(slot_name, false))
+	if has_upgrade:
+		var sb := StyleBoxFlat.new()
+		sb.bg_color = UITheme.STATUS_GOOD
+		sb.set_corner_radius_all(6)
+		sb.content_margin_left = 10
+		sb.content_margin_right = 10
+		sb.content_margin_top = 4
+		sb.content_margin_bottom = 4
+		btn.add_theme_stylebox_override("normal", sb)
+		btn.add_theme_color_override("font_color", Color.WHITE)
+		btn.tooltip_text = "An upgrade is available for this slot"
+	else:
+		btn.remove_theme_stylebox_override("normal")
+		btn.remove_theme_color_override("font_color")
+		btn.tooltip_text = ""
 
 func _rebuild_pending_tab():
 	for c in pending_vbox.get_children():
