@@ -198,20 +198,41 @@ The `_apply_settlement_panel_dimming()` method in `UIManager` manages the `panel
 
 ## Smooth Zoom Transitions
 
-Settlement panel scale (`panel.scale = Vector2(1/zoom, 1/zoom)`) previously snapped instantly when the camera zoom changed. This was replaced with a lerp in `UIManager._process()`:
+Settlement panel scale (`panel.scale = Vector2(1/zoom, 1/zoom)`) previously snapped instantly when the camera zoom changed. This was replaced with a lerp in `UIManager._process()`, which redraws labels each frame while the display zoom is still converging. As of 2026-07-21 the same per-frame redraw **also fires while the camera is panning** (position change, not just zoom) so the label edge/gear clamp (below) tracks fluidly instead of snapping when the camera settles:
 
 ```gdscript
 func _process(delta: float) -> void:
-    if is_equal_approx(_display_zoom, _current_map_zoom_cache):
-        return
-    _display_zoom = lerp(_display_zoom, _current_map_zoom_cache,
-                         clampf(delta * zoom_lerp_speed, 0.0, 1.0))
-    if absf(_display_zoom - _current_map_zoom_cache) < 0.0005:
-        _display_zoom = _current_map_zoom_cache
-    _draw_interactive_labels(_current_hover_info_cache)
+    var zoom_converging := not is_equal_approx(_display_zoom, _current_map_zoom_cache)
+    # Detect a pure pan: the map's canvas transform changes even when zoom is stable.
+    var camera_moved := false
+    if is_instance_valid(terrain_tilemap):
+        var xf := terrain_tilemap.get_global_transform_with_canvas()
+        if not xf.is_equal_approx(_last_map_canvas_xf):
+            _last_map_canvas_xf = xf
+            camera_moved = true
+    if not zoom_converging and not camera_moved:
+        return                       # idle: no cost
+    if zoom_converging:
+        _display_zoom = lerp(_display_zoom, _current_map_zoom_cache,
+                             clampf(delta * zoom_lerp_speed, 0.0, 1.0))
+        ...
+    _draw_interactive_labels(_current_hover_info_cache)   # + convoy label redraw
 ```
 
-`zoom_lerp_speed` (default `10.0`) is an `@export` on UIManager under the "Zoom Smoothing" group. The overlay's `update_frame()` always receives `_current_map_zoom_cache` (true camera zoom) for world-space size calculations, while panels use `_display_zoom` for their scale.
+`zoom_lerp_speed` (default `10.0`) is an `@export` on UIManager under the "Zoom Smoothing" group. The overlay's `update_frame()` always receives `_current_map_zoom_cache` (true camera zoom) for world-space size calculations, while panels use `_display_zoom` for their scale. Panels are **reused** (`_active_settlement_panels`), so per-frame redraws during a pan reposition rather than rebuild.
+
+---
+
+## Label Edge / Overlay-Box Clamping
+
+Map labels (both convoy and settlement) were previously allowed to pan off-screen freely — the clamp calls in both `ConvoyLabelManager` and `UIManager._draw_interactive_labels()` were intentionally disabled ("let panels pan off-screen naturally"). That let an **on-screen** convoy/settlement's label clip off the left/right screen edge and hide behind the left-anchored map overlay **gear box** (`MapOverlaySettingsPanel`). Fixed 2026-07-21 with a single shared safe rect:
+
+- **`UIManager._get_label_safe_screen_rect()`** returns the map's screen rect with its **left edge pushed right past the gear box's live screen right edge** (`MapOverlaySettingsPanel.get_tab_global_rect()`, cached lookup). One rect that excludes both the screen edges *and* the gear box; the right edge still prevents right-side clipping.
+- **Convoy labels**: `ConvoyLabelManager._clamp_label_within_bounds_if_convoy_visible()` clamps the panel's X to that rect — fed from both `update_convoy_labels()` call sites.
+- **Settlement labels**: `UIManager._clamp_settlement_panel_x()`, called at the end of `_position_settlement_panel()`.
+- Both clamp **horizontally only**, and **only when the anchor (convoy icon / settlement tile) is on-screen** — an off-screen convoy/settlement still lets its label pan away naturally, preserving the original intent.
+
+> **Gotcha for future debugging:** these labels live inside the map **SubViewport** (world space) while the gear box is a screen-space UI panel. The safe rect works because `map_display_node.get_global_rect()` (the clamp rect) and the overlay panel's `get_global_rect()` are in the **same** (main-window) coordinate space, and each label system transforms that rect into its own container-local space via `get_global_transform_with_canvas().affine_inverse()`. Do not confuse the screen-space `ConvoyListPanel` toggle (top bar) with a map label — an early fix chased the wrong element for several rounds. See Sprint 9 A5 in `TODO.md`.
 
 ---
 

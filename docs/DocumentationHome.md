@@ -55,7 +55,7 @@ Welcome to the technical documentation for *Desolate Frontiers*. This folder is 
 - [**Mechanics & Parts**](03_Systems/Mechanics.md): Vehicle customization and part compatibility.
 - [**Map System**](03_Systems/MapSystem/MapSystemOverview.md): Tile rendering, camera, and settlement management.
   - [**Map Menu & Overlays**](03_Systems/MapSystem/MapMenuSystem.md): Visual layers, toggles, signals, and architectural design.
-  - [**Settlement Overlay System**](03_Systems/MapSystem/SettlementOverlay.md): Tile outlines, focus pins, route arcs, color coding, dimming, and zoom smoothing.
+  - [**Settlement Overlay System**](03_Systems/MapSystem/SettlementOverlay.md): Tile outlines, focus pins, route arcs, color coding, dimming, zoom smoothing, and **map-label edge/overlay-box clamping** (labels stay clear of the screen edges + gear box, re-clamped fluidly during camera moves).
 - [**Tutorial System**](03_Systems/TutorialSystem/TutorialSystemOverview.md): Managing onboarding levels, steps, and UI highlights.
 
 > [!NOTE]

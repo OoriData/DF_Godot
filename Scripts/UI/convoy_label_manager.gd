@@ -773,8 +773,9 @@ func update_convoy_labels(
 		panel_node.set_meta("is_focus_source", is_selected)
 		_update_convoy_panel_content(panel_node, convoy_data, p_convoy_id_to_color_map)
 		_position_convoy_panel(panel_node, convoy_data, all_drawn_label_rects_this_update, p_selected_convoy_ids, p_convoy_label_user_positions)
-		# Intentionally disabled: let static convoy panels pan off-screen naturally
-		# _clamp_panel_position(panel_node, p_current_map_screen_rect_for_clamping)
+		# Full clamping stays off so a convoy that pans OFF-screen lets its label pan away too. But when
+		# the convoy is ON-screen, keep its label from clipping off the map's left/right edge.
+		_clamp_label_within_bounds_if_convoy_visible(panel_node, convoy_data, p_current_map_screen_rect_for_clamping)
 
 		var panel_actual_size = panel_node.size
 		if panel_actual_size.x <= 0 or panel_actual_size.y <= 0: panel_actual_size = panel_node.get_minimum_size()
@@ -794,6 +795,29 @@ func update_convoy_labels(
 			# _ids_to_remove_from_active.append(existing_id_str) 
 	# for id_to_remove in _ids_to_remove_from_active:
 		# _active_convoy_panels.erase(id_to_remove)
+
+## Keep an ON-screen convoy's label from clipping off the map's left/right edge. We intentionally do
+## NOT clamp when the convoy icon is off-screen — those labels should pan away with the map (which is
+## why blanket clamping is disabled). Horizontal-only, matching the reported "clipping the side" issue.
+func _clamp_label_within_bounds_if_convoy_visible(panel: Panel, convoy_data: Dictionary, p_map_screen_rect_for_clamping: Rect2) -> void:
+	if not is_instance_valid(panel) or not is_instance_valid(_convoy_label_container_ref):
+		return
+	var clamp_local := _get_effective_clamp_rect_local(p_map_screen_rect_for_clamping)
+	if clamp_local.size.x <= 0.0:
+		return
+	# Convoy icon center in the same local space as the panel (matches _panel_overlaps_icon_or_route).
+	var conv_x: float = convoy_data.get('x', 0.0)
+	var conv_y: float = convoy_data.get('y', 0.0)
+	var icon_center := Vector2((conv_x + 0.5) * _cached_actual_tile_width_on_texture, (conv_y + 0.5) * _cached_actual_tile_height_on_texture)
+	if not clamp_local.has_point(icon_center):
+		return # convoy off-screen — leave the label alone so it pans away naturally
+	var panel_size: Vector2 = panel.size
+	if panel_size.x <= 0.0 or panel_size.y <= 0.0:
+		panel_size = panel.get_minimum_size()
+	var scaled_x := panel_size.x * panel.scale.x
+	var min_x := clamp_local.position.x + _label_map_edge_padding
+	var max_x := maxf(min_x, clamp_local.end.x - scaled_x - _label_map_edge_padding)
+	panel.position.x = clampf(panel.position.x, min_x, max_x)
 
 func _on_ui_scale_changed(new_scale: float):
 	_ui_overall_scale_multiplier = new_scale

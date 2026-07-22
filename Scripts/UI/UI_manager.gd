@@ -134,6 +134,7 @@ var _convoy_data_by_id_cache: Dictionary # New cache for quick lookup
 var _selected_convoy_ids_cache: Array # Stored as strings
 var _current_map_zoom_cache: float = 1.0 # Cache for current map zoom level (the real/target zoom)
 var _display_zoom: float = 1.0            # Smoothed zoom used for panel scale — lerps toward _current_map_zoom_cache
+var _last_map_canvas_xf: Transform2D = Transform2D() # last map canvas transform, to detect camera pan/zoom per-frame
 var _current_hover_info_cache: Dictionary = {} # Cache for hover state
 var _current_map_screen_rect_for_clamping: Rect2
 
@@ -292,15 +293,24 @@ func _ready():
 
 
 func _process(delta: float) -> void:
-	# Smoothly lerp the display zoom toward the real zoom each frame.
-	# While it's still converging, redraw so panel scales animate continuously.
-	if is_equal_approx(_display_zoom, _current_map_zoom_cache):
+	# Redraw labels each frame while EITHER the zoom is still lerping OR the camera is panning, so the
+	# label edge-clamp follows fluidly instead of snapping only once the camera settles.
+	var zoom_converging: bool = not is_equal_approx(_display_zoom, _current_map_zoom_cache)
+	var camera_moved: bool = false
+	if is_instance_valid(terrain_tilemap):
+		var xf: Transform2D = terrain_tilemap.get_global_transform_with_canvas()
+		if not xf.is_equal_approx(_last_map_canvas_xf):
+			_last_map_canvas_xf = xf
+			camera_moved = true
+	if not zoom_converging and not camera_moved:
 		return
-	_display_zoom = lerp(_display_zoom, _current_map_zoom_cache, clampf(delta * zoom_lerp_speed, 0.0, 1.0))
-	# Snap to target when close enough to avoid infinite micro-animation.
-	if absf(_display_zoom - _current_map_zoom_cache) < 0.0005:
-		_display_zoom = _current_map_zoom_cache
-	# Redraw settlement labels with smoothed zoom.
+	if zoom_converging:
+		# Smoothly lerp the display zoom toward the real zoom so panel scales animate continuously.
+		_display_zoom = lerp(_display_zoom, _current_map_zoom_cache, clampf(delta * zoom_lerp_speed, 0.0, 1.0))
+		# Snap to target when close enough to avoid infinite micro-animation.
+		if absf(_display_zoom - _current_map_zoom_cache) < 0.0005:
+			_display_zoom = _current_map_zoom_cache
+	# Redraw settlement labels (re-clamps them to the safe rect every frame while moving).
 	_draw_interactive_labels(_current_hover_info_cache)
 	# Redraw convoy labels with smoothed zoom.
 	if is_instance_valid(convoy_label_manager) \
@@ -318,7 +328,7 @@ func _process(delta: float) -> void:
 			_convoy_label_user_positions,
 			_dragging_panel_node,
 			_dragged_convoy_id_actual_str,
-			_current_map_screen_rect_for_clamping,
+			_get_label_safe_screen_rect(),
 		)
 
 
@@ -452,7 +462,7 @@ func update_ui_elements(
 			_convoy_label_user_positions,
 			_dragging_panel_node,
 			_dragged_convoy_id_actual_str,
-			_current_map_screen_rect_for_clamping,
+			_get_label_safe_screen_rect(),
 		)
 	# Request redraw for connector lines
 	if is_instance_valid(convoy_connector_lines_container):
@@ -465,6 +475,54 @@ func update_ui_elements(
 			if panel_node is Panel:
 				pass # Intentionally disabled: let settlement panels pan off-screen naturally
 				# _clamp_panel_position_optimized(panel_node, clamp_rect_local_to_settlement_container)
+
+var _overlay_settings_panel_cache: Node = null
+
+## The left-anchored map overlay gear box (MapOverlaySettingsPanel), cached. Used to keep map labels
+## from hiding behind it.
+func _get_overlay_settings_panel() -> Node:
+	if is_instance_valid(_overlay_settings_panel_cache):
+		return _overlay_settings_panel_cache
+	if is_inside_tree():
+		_overlay_settings_panel_cache = get_tree().get_root().find_child("MapOverlaySettingsPanel", true, false)
+	return _overlay_settings_panel_cache
+
+## The map's screen rect with its LEFT edge pushed right past the overlay gear box (screen space), so
+## any label clamped to it can't hide behind the box OR clip the left screen edge. Right/top/bottom are
+## the map rect, so the right edge still prevents right-side clipping.
+func _get_label_safe_screen_rect() -> Rect2:
+	var r: Rect2 = _current_map_screen_rect_for_clamping
+	var panel := _get_overlay_settings_panel()
+	if is_instance_valid(panel) and panel.has_method("get_tab_global_rect"):
+		var box: Rect2 = panel.call("get_tab_global_rect")
+		if box.size.x > 0.0:
+			var box_right := box.position.x + box.size.x
+			if box_right > r.position.x:
+				var inset: float = minf(box_right - r.position.x, r.size.x)
+				r.position.x += inset
+				r.size.x = maxf(0.0, r.size.x - inset)
+	return r
+
+## Keep an on-screen settlement label from clipping off the map's side edge or hiding behind the gear
+## box. Off-screen settlements (tile not within the map rect) are left alone so they pan away naturally.
+## Horizontal-only, matching the reported "labels clipping the side" issue.
+func _clamp_settlement_panel_x(panel: Panel, tile_center_local: Vector2) -> void:
+	if not is_instance_valid(panel) or not is_instance_valid(settlement_label_container):
+		return
+	var inv := settlement_label_container.get_global_transform_with_canvas().affine_inverse()
+	var full_local: Rect2 = inv * _current_map_screen_rect_for_clamping
+	if not full_local.has_point(tile_center_local):
+		return # settlement off-screen — leave it
+	var safe_local: Rect2 = inv * _get_label_safe_screen_rect()
+	if safe_local.size.x <= 0.0:
+		return
+	var sz: Vector2 = panel.size
+	if sz.x <= 0.0 or sz.y <= 0.0:
+		sz = panel.get_minimum_size()
+	var scaled_x := sz.x * panel.scale.x
+	var min_x := safe_local.position.x + label_map_edge_padding
+	var max_x := maxf(min_x, safe_local.end.x - scaled_x - label_map_edge_padding)
+	panel.position.x = clampf(panel.position.x, min_x, max_x)
 
 func _clamp_panel_position_optimized(panel: Panel, precalculated_clamp_rect_local_to_container: Rect2):
 	# Helper to clamp a panel's position to the viewport boundaries using a precalculated clamping rectangle in the panel's parent container's local space.
@@ -1614,6 +1672,10 @@ func _position_settlement_panel(panel: Panel, settlement_info: Dictionary, _exis
 		# Nudge away from the settlement icon (upwards is negative y)
 		panel.position.y = panel_desired_y - (nudge_factor * label_anti_collision_y_shift * sign_dir)
 		attempt += 1
+
+	# Finally, keep the label from clipping off the map's side edge or hiding behind the overlay gear
+	# box (only when the settlement itself is on-screen — off-screen ones pan away naturally).
+	_clamp_settlement_panel_x(panel, tile_center)
 
 func _rect_overlaps_circle(r: Rect2, c: Vector2, radius: float) -> bool:
 	var closest_x = clamp(c.x, r.position.x, r.position.x + r.size.x)
