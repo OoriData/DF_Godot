@@ -525,6 +525,14 @@ func _get_refresh_t0_ms() -> int:
 var _active_convoy_id: String = ""
 var _active_vendor_id: String = ""
 
+# Vehicle_ids sold from this vendor during this panel session (used as a set). The vehicle list is
+# ultimately sourced from the lagging binary /map settlements snapshot, which a full re-aggregation
+# (authoritative /vendor/get refresh, or the settlement menu's refresh_data on map_changed) can
+# re-inject a moment after we optimistically removed a just-bought vehicle — making it reappear.
+# A sold vehicle instance is gone permanently (vehicle_ids are unique per instance), so we re-strip
+# these ids on every vendor-list rebuild until the panel is re-initialized for a fresh vendor context.
+var _sold_vehicle_ids: Dictionary = {}
+
 var _latest_settlements: Array = []
 
 # Typed/cache helpers for high-traffic vendor + settlement lookups
@@ -1768,6 +1776,7 @@ func _populate_vendor_list() -> void:
 		return
 	var vd_for_agg := _vendor_data_with_price_fallback(vendor_data)
 	var buckets := VendorCargoAggregatorScript.build_vendor_buckets(vd_for_agg, perf_log_enabled, Callable(self, "_get_vendor_name_for_recipient"))
+	_strip_sold_vehicles(buckets)
 	self.vendor_items = buckets
 	var has_delivery_cargo = not buckets.get("delivery", {}).is_empty()
 	vendor_item_tree.add_category("Delivery Cargo", buckets.get("delivery", {}), _cargo_sort_metric)
@@ -2535,6 +2544,45 @@ func _optimistically_update_vendor_stock(item_name: String, qty_delta: int) -> v
 	else:
 		print("[VendorPanel][DIAG] FAILED: item '%s' not found in any bucket. Buckets searched: %s" % [target_name, (vendor_items as Dictionary).keys()])
 
+# Remove a just-purchased vehicle from the vendor immediately. Vehicles are keyed by vehicle_id
+# in the "vehicles" bucket (unlike cargo, which is keyed by name), so _optimistically_update_vendor_stock
+# can't touch them. We drop the row from the cached bucket AND from the raw vendor_data.vehicle_inventory
+# so both a cached rebuild (_update_vendor_ui → _populate_list_from_agg) and a full re-aggregation of this
+# same vendor_data (_populate_vendor_list, e.g. on an orientation-change refresh) keep it gone until the
+# authoritative /vendor/get refresh lands.
+func _optimistically_remove_vendor_vehicle(vehicle_id: String) -> void:
+	if vehicle_id == "":
+		return
+	print("[VendorPanel][DIAG] _optimistically_remove_vendor_vehicle id=%s" % vehicle_id)
+	# Remember it so every later rebuild re-strips it (see _sold_vehicle_ids / _strip_sold_vehicles).
+	_sold_vehicle_ids[vehicle_id] = true
+	if vendor_items is Dictionary and (vendor_items as Dictionary).has("vehicles"):
+		var vb: Variant = (vendor_items as Dictionary).get("vehicles")
+		if vb is Dictionary and (vb as Dictionary).has(vehicle_id):
+			(vb as Dictionary).erase(vehicle_id)
+	if vendor_data is Dictionary:
+		var inv: Variant = (vendor_data as Dictionary).get("vehicle_inventory")
+		if inv is Array:
+			var kept: Array = []
+			for v in (inv as Array):
+				if v is Dictionary and str((v as Dictionary).get("vehicle_id", "")) == vehicle_id:
+					continue
+				kept.append(v)
+			(vendor_data as Dictionary)["vehicle_inventory"] = kept
+	_update_vendor_ui(true, false)
+
+# Remove any vehicles sold this session from a freshly-built bucket set, so a re-aggregation off the
+# lagging /map snapshot can't resurrect a just-bought vehicle. No-op once _sold_vehicle_ids is empty.
+func _strip_sold_vehicles(buckets: Dictionary) -> void:
+	if _sold_vehicle_ids.is_empty():
+		return
+	var vb: Variant = buckets.get("vehicles")
+	if not (vb is Dictionary):
+		return
+	for sold_id in _sold_vehicle_ids.keys():
+		if (vb as Dictionary).has(sold_id):
+			(vb as Dictionary).erase(sold_id)
+
 func _on_api_transaction_result(result: Dictionary) -> void:
 	print("[VendorPanel][DIAG] _on_api_transaction_result ENTERED on instance_id=%d" % get_instance_id())
 	var has_pending_data: bool = not _pending_tx.item.is_empty()
@@ -2550,7 +2598,15 @@ func _on_api_transaction_result(result: Dictionary) -> void:
 		# Optimistically update vendor stock
 		var stock_delta: int = -qty if str(current_mode) == "buy" else qty
 		print("[VendorPanel][DIAG] Triggering optimistic vendor update for '%s' delta %d" % [item_name, stock_delta])
-		_optimistically_update_vendor_stock(item_name, stock_delta)
+		# Vehicles are keyed by vehicle_id in the "vehicles" bucket (not by name), so the name-based
+		# stock decrement below can never find them — on a BUY the purchased vehicle would linger in
+		# the vendor list. Remove it outright by id instead so it leaves immediately (and stays gone
+		# across any re-aggregation of this same vendor_data, until authoritative data lands).
+		var pend_item: Dictionary = (_pending_tx.get("item") if (_pending_tx.get("item") is Dictionary) else {})
+		if str(current_mode) == "buy" and VendorTradeVM.is_vehicle_item(pend_item):
+			_optimistically_remove_vendor_vehicle(str(pend_item.get("vehicle_id", "")))
+		else:
+			_optimistically_update_vendor_stock(item_name, stock_delta)
 		
 		# Ensure projection is committed if it hasn't been yet
 		_commit_projection_from_pending_tx()

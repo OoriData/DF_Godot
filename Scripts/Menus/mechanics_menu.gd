@@ -1174,46 +1174,65 @@ func _vehicle_dropdown_label(v: Dictionary, i: int) -> String:
 		return "[%d ↑]  %s" % [upgrades, base]
 	return base
 
-## Number of distinct slots for which this vehicle has at least one compatible upgrade available
-## (across convoy cargo and the current settlement's vendors). Backend compat is used when cached;
-## otherwise falls back to the local slot/requirement heuristic, so a count is available before the
-## async checks land and firms up via _update_dropdown_upgrade_counts() when they do.
+## Number of slot cards the Parts tab will render for this vehicle — i.e. the count of the vehicle's
+## own installed slots that have a compatible swappable upgrade available (convoy cargo or the current
+## settlement's vendors). This is deliberately the SAME set the Parts tab builds (via
+## _swappable_slot_entries), so the [N ↑] dropdown badge always equals the number of cards the player
+## sees inside. Backend compat is used when cached; otherwise it falls back to the local slot/
+## requirement heuristic, so a count is available before the async checks land and firms up via
+## _update_dropdown_upgrade_counts() when they do.
 func _count_available_upgrades(v: Dictionary) -> int:
 	if typeof(v) != TYPE_DICTIONARY or v.is_empty():
 		return 0
-	var count := 0
-	var slots := _all_candidate_slots()
-	for slot in slots:
-		if _slot_has_swappable_candidate(v, slot):
-			count += 1
+	var count := _swappable_slot_entries(v).size()
 	if debug_part_compat_ui:
 		print("[PartCompatUI] upgrade count vehicle=", _safe_str(v.get("name"), "?"),
-			" candidate_slots=", slots.size(), " compatible=", count,
-			" vendor_cands=", _all_vendor_candidates_cache.size())
+			" slot_cards=", count, " vendor_cands=", _all_vendor_candidates_cache.size())
 	return count
 
-## Union of every slot that has at least one candidate part available anywhere (convoy cargo across
-## all vehicles + this settlement's vendor stock). Compatibility with a specific vehicle is checked
-## per-slot by the caller; this only enumerates which slots are worth checking.
-func _all_candidate_slots() -> Array:
-	var slot_set: Dictionary = {}
-	for v in _vehicles:
-		for item in v.get("cargo", []):
-			if not (item is Dictionary):
-				continue
-			var s := _detect_slot_for_item(item)
-			if s != "":
-				slot_set[s] = true
-	if _all_vendor_candidates_cache.is_empty():
-		_all_vendor_candidates_cache = _collect_all_vendor_part_candidates()
-	for entry in _all_vendor_candidates_cache:
-		if not (entry is Dictionary):
+## Single source of truth for the Parts tab grid AND the dropdown [N ↑] count: the slot cards to show
+## for a vehicle. One entry per installed part whose slot has a compatible swappable candidate
+## available (convoy cargo or vendor stock). Entries are ordered installed-first, then empty slots,
+## matching the Parts tab render order. Each entry: {part, slot, is_empty}. Only iterates THIS
+## vehicle's installed parts — never the cross-vehicle/vendor slot union — so the count can't include
+## slots the vehicle doesn't physically have (which would render no card and cause a count mismatch).
+func _swappable_slot_entries(vehicle_data: Dictionary) -> Array:
+	var entries: Array = []
+	if typeof(vehicle_data) != TYPE_DICTIONARY or vehicle_data.is_empty():
+		return entries
+	var installed_parts: Array = []
+	if vehicle_data.has("parts") and vehicle_data.parts is Array:
+		installed_parts.append_array(vehicle_data.parts)
+	if installed_parts.is_empty():
+		return entries
+	# Group by slot
+	var by_slot: Dictionary = {}
+	for p in installed_parts:
+		var slot := _detect_slot_for_item(p)
+		if slot == "":
+			slot = "other"
+		if not by_slot.has(slot):
+			by_slot[slot] = []
+		by_slot[slot].append(p)
+	var slots_sorted: Array = by_slot.keys()
+	slots_sorted.sort()
+
+	# Keep only slots that have a swappable candidate. Empty slots always sort to the bottom.
+	var installed_entries: Array = []
+	var empty_entries: Array = []
+	for slot_name in slots_sorted:
+		if not _slot_has_swappable_candidate(vehicle_data, slot_name):
 			continue
-		var p: Dictionary = entry.get("part", {})
-		var s2 := _get_slot_from_item(p)
-		if s2 != "":
-			slot_set[s2] = true
-	return slot_set.keys()
+		for part in by_slot[slot_name]:
+			var is_empty := _safe_str(part.get("name"), "None") == "None"
+			var entry := {"part": part, "slot": slot_name, "is_empty": is_empty}
+			if is_empty:
+				empty_entries.append(entry)
+			else:
+				installed_entries.append(entry)
+	entries.append_array(installed_entries)
+	entries.append_array(empty_entries)
+	return entries
 
 ## Refresh the upgrade counts in the dropdown labels in place (preserving the current selection)
 ## once backend compatibility results arrive and firm up the local heuristic.
@@ -1274,36 +1293,14 @@ func _on_layout_mode_changed(_mode: int = -1, _screen_size: Vector2 = Vector2.ZE
 
 func _rebuild_parts_tab(vehicle_data: Dictionary):
 	_clear_parts_ui()
-	var installed_parts: Array = []
-	if vehicle_data.has("parts") and vehicle_data.parts is Array:
-		installed_parts.append_array(vehicle_data.parts)
-	if installed_parts.is_empty():
+	var has_installed_parts := vehicle_data.has("parts") and vehicle_data.parts is Array and not (vehicle_data.parts as Array).is_empty()
+	if not has_installed_parts:
 		_show_info(parts_vbox, "No installed parts detected.")
 		return
-	# Group by slot
-	var by_slot: Dictionary = {}
-	for p in installed_parts:
-		var slot := _detect_slot_for_item(p)
-		if slot == "":
-			slot = "other"
-		if not by_slot.has(slot):
-			by_slot[slot] = []
-		by_slot[slot].append(p)
-	var slots_sorted: Array = by_slot.keys()
-	slots_sorted.sort()
 
-	# Split into installed vs empty so empty slots always sort to the bottom,
-	# while only keeping slots that have a swappable candidate available.
-	var installed_entries: Array = []
-	var empty_entries: Array = []
-	for slot_name in slots_sorted:
-		if not _slot_has_swappable_candidate(vehicle_data, slot_name):
-			continue
-		for part in by_slot[slot_name]:
-			if _safe_str(part.get("name"), "None") == "None":
-				empty_entries.append({"part": part, "slot": slot_name})
-			else:
-				installed_entries.append({"part": part, "slot": slot_name})
+	# Shared source of truth with the dropdown [N ↑] count: the exact slot cards to render.
+	# Entries are already ordered installed-first, then empty slots, and each carries an is_empty flag.
+	var entries := _swappable_slot_entries(vehicle_data)
 
 	# Switch the outer scroll container's direction based on orientation, then
 	# build the matching card container. This avoids nested ScrollContainers, which
@@ -1335,22 +1332,15 @@ func _rebuild_parts_tab(vehicle_data: Dictionary):
 		_slot_grid = grid
 
 	var card_min_w := _landscape_card_width() if landscape else 0
-	for e in installed_entries:
+	for e in entries:
 		var pending := _pending_part_for_slot(e["slot"])
-		var card := _create_slot_card(e["part"], e["slot"], false, pending)
-		if card_min_w > 0:
-			card.custom_minimum_size.x = card_min_w
-			card.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
-		_slot_grid.add_child(card)
-	for e in empty_entries:
-		var pending := _pending_part_for_slot(e["slot"])
-		var card := _create_slot_card(e["part"], e["slot"], true, pending)
+		var card := _create_slot_card(e["part"], e["slot"], bool(e["is_empty"]), pending)
 		if card_min_w > 0:
 			card.custom_minimum_size.x = card_min_w
 			card.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
 		_slot_grid.add_child(card)
 
-	if installed_entries.is_empty() and empty_entries.is_empty():
+	if entries.is_empty():
 		_show_info(parts_vbox, "No swappable parts available here.")
 
 # All slot cards in the grid (cards carry meta "slot_name").

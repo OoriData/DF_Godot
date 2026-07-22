@@ -65,6 +65,22 @@ func clear_items() -> void:
 func add_category(title: String, agg_dict: Dictionary, sort_metric: int = -1) -> void:
 	if agg_dict == null or agg_dict.is_empty():
 		return
+	var ordered: Array = _ordered_keys(agg_dict, title, sort_metric)
+	# Drop sold-out / depleted rows: an entry whose stock has reached 0 (a bought-out vehicle,
+	# a fully-depleted cargo/resource) must not linger. This is the single render chokepoint hit
+	# by BOTH the immediate optimistic post-purchase decrement (via _update_vendor_ui →
+	# _populate_list_from_agg) and the authoritative post-transaction refresh (re-aggregated from
+	# vendor_data), so a bought-out item disappears at once and stays gone. Missing total_quantity
+	# defaults to 1 (show) so non-stock rows are never hidden; the entry stays in the underlying
+	# bucket dict (this filters rendering only), so selection-restore / optimistic-stock still work.
+	var visible_keys: Array = []
+	for k in ordered:
+		var e: Variant = agg_dict[k]
+		if e is Dictionary and int((e as Dictionary).get("total_quantity", 1)) <= 0:
+			continue
+		visible_keys.append(k)
+	if visible_keys.is_empty():
+		return
 	var header := Label.new()
 	header.text = title
 	header.add_theme_color_override("font_color", _HEADER_COLOR)
@@ -72,9 +88,8 @@ func add_category(title: String, agg_dict: Dictionary, sort_metric: int = -1) ->
 	header.add_theme_constant_override("outline_size", 1)
 	_vbox.add_child(header)
 
-	var ordered: Array = _ordered_keys(agg_dict, title, sort_metric)
 	var idx := 0
-	for k in ordered:
+	for k in visible_keys:
 		_add_row(String(k), agg_dict[k], idx)
 		idx += 1
 
