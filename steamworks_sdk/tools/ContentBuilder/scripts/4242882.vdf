@@ -8,4 +8,7 @@
         "DepotPath" "."
         "Recursive" "1"
   }
+    "FileExclusion" "*.DS_Store"
+    "FileExclusion" "__MACOSX*"
+    "FileExclusion" "*.pdb"
 }
