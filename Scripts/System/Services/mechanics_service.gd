@@ -304,9 +304,9 @@ func _ingest_vendor_inventory(vendor: Variant) -> void:
 				print("[MechanicsService] Ingested part: ", d.get("name", "Unknown"), " cid=", cid, " slot=", slot)
 		else:
 			# If it's not a mission and not a resource, proactively enrich it as a potential part.
-			var is_mission := false
-			if ItemsData != null and ItemsData.MissionItem:
-				is_mission = ItemsData.MissionItem._looks_like_mission_dict(d)
+			var is_delivery := false
+			if ItemsData != null and ItemsData.DeliveryCargoItem:
+				is_delivery = ItemsData.DeliveryCargoItem._looks_like_delivery_dict(d)
 			
 			var is_resource := false
 			if ItemsData != null and ItemsData.ResourceItem:
@@ -318,15 +318,15 @@ func _ingest_vendor_inventory(vendor: Variant) -> void:
 						is_resource = true
 						break
 			
-			var is_vehicle := d.has("vehicle_id") or d.has("packed_vehicle")
-			if not is_mission and not is_resource and not is_vehicle:
+			var is_vehicle := ItemsData != null and ItemsData.VehicleItem and ItemsData.VehicleItem._looks_like_vehicle_dict(d)
+			if not is_delivery and not is_resource and not is_vehicle:
 				if _debug_mechanics:
 					print("[MechanicsService] Proactively enriching potential part: ", d.get("name", "Unknown"), " cid=", cid)
 				ensure_cargo_details(cid)
 			elif _debug_mechanics:
 				# Extra verbose: find out why it's not a part
 				var nm := String(d.get("name", "Unknown"))
-				print("[MechanicsService] Item skipped (is_mission=%s is_resource=%s is_vehicle=%s): " % [is_mission, is_resource, is_vehicle], nm, " cid=", cid)
+				print("[MechanicsService] Item skipped (is_delivery=%s is_resource=%s is_vehicle=%s): " % [is_delivery, is_resource, is_vehicle], nm, " cid=", cid)
 
 
 func _on_store_map_changed(_tiles: Array, _settlements: Array) -> void:
@@ -379,50 +379,53 @@ func add_part_from_vendor(vendor_id: String, convoy_id: String, vehicle_id: Stri
 		if is_instance_valid(_convoy_service) and _convoy_service.has_method("refresh_single"):
 			_convoy_service.refresh_single(convoy_id)
 
+# Robust Variant→String. The String(...) constructor throws "Invalid call 'String' constructor"
+# on some Variant types (e.g. StringName in Godot 4.6); str() is total. null collapses to "" so the
+# empty-id guards below still hold.
+func _safe_str(v: Variant) -> String:
+	if v == null:
+		return ""
+	return str(v)
+
 func apply_swaps(convoy_id: String, vehicle_id: String, ordered_swaps: Array, vendor_id: String = "") -> void:
-	# Mirrors legacy GameDataManager.apply_mechanic_swaps routing: inventory+removable -> attach;
-	# otherwise vendor add when vendor_id is available; else attach fallback.
+	# Routing: inventory parts -> attach (already owned); otherwise vendor add when a vendor is
+	# available; else attach fallback. When vehicle_id is "" every carted vehicle's swaps are applied.
 	if not is_instance_valid(_api):
 		return
 	var _issued: bool = false
 	for s in ordered_swaps:
 		if not (s is Dictionary):
 			continue
-		var vid := String(s.get("vehicle_id", ""))
+		var vid := _safe_str(s.get("vehicle_id", ""))
 		if vid == "" or (vehicle_id != "" and vid != vehicle_id):
 			continue
 		var to_part: Dictionary = s.get("to_part", {})
-		var cargo_id_str := String(to_part.get("cargo_id", ""))
-		var part_id_str := String(to_part.get("part_id", ""))
+		var cargo_id_str := _safe_str(to_part.get("cargo_id", ""))
+		var part_id_str := _safe_str(to_part.get("part_id", ""))
 		if part_id_str == "":
-			part_id_str = String(to_part.get("id", ""))
-		if cargo_id_str == "" and part_id_str == "":
+			part_id_str = _safe_str(to_part.get("id", ""))
+		# The attach/add endpoints take ONE part id. Vendor parts from the "top-level part with slot"
+		# path carry only part_id (cargo_id is null), so resolve cargo_id first, then fall back to
+		# part_id — matching the chooser's id2 and the compatibility-check id.
+		var resolved_id := cargo_id_str if cargo_id_str != "" else part_id_str
+		if resolved_id == "":
 			continue
-		var swap_vendor_id := String(s.get("vendor_id", ""))
+		var swap_vendor_id := _safe_str(s.get("vendor_id", ""))
 		var effective_vendor := swap_vendor_id if swap_vendor_id != "" else vendor_id
-		var source := String(s.get("source", "")).to_lower()
-		var removable := false
-		var rv: Variant = to_part.get("removable", false)
-		if rv is bool:
-			removable = rv
-		elif rv is int:
-			removable = int(rv) != 0
-		elif rv is String:
-			var rvs := String(rv).to_lower()
-			removable = (rvs == "true" or rvs == "1" or rvs == "yes")
+		var source := _safe_str(s.get("source", "")).to_lower()
 
 		_vehicle_to_convoy_id[vid] = convoy_id
-		var prefer_attach := (source == "inventory" and removable and cargo_id_str != "")
+		# Inventory parts are already owned by the convoy — ATTACH them (install from cargo), never route
+		# them through the vendor buy endpoint. Only vendor-sourced parts are purchased via add_vehicle_part.
+		var prefer_attach := (source == "inventory" and resolved_id != "")
 		if prefer_attach and _api.has_method("attach_vehicle_part"):
-			_api.attach_vehicle_part(vid, cargo_id_str)
+			_api.attach_vehicle_part(vid, resolved_id)
 			_issued = true
 		elif effective_vendor != "" and _api.has_method("add_vehicle_part"):
-			if cargo_id_str == "":
-				continue
-			_api.add_vehicle_part(effective_vendor, convoy_id, vid, cargo_id_str)
+			_api.add_vehicle_part(effective_vendor, convoy_id, vid, resolved_id)
 			_issued = true
-		elif _api.has_method("attach_vehicle_part") and cargo_id_str != "":
-			_api.attach_vehicle_part(vid, cargo_id_str)
+		elif _api.has_method("attach_vehicle_part"):
+			_api.attach_vehicle_part(vid, resolved_id)
 			_issued = true
 	# Phase 4: Immediately refresh convoy snapshot after swap operations.
 	if _issued and is_instance_valid(_convoy_service) and _convoy_service.has_method("refresh_single"):

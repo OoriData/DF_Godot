@@ -12,18 +12,29 @@ var convoy_settlement_menu_scene = preload("res://Scenes/ConvoySettlementMenu.ts
 var convoy_cargo_menu_scene = preload("res://Scenes/ConvoyCargoMenu.tscn") # Example path
 var mechanics_menu_scene = preload("res://Scenes/MechanicsMenu.tscn")
 var warehouse_menu_scene = load("res://Scenes/WarehouseMenu.tscn")
+var settlement_overview_menu_scene = load("res://Scenes/SettlementOverviewMenu.tscn")
 var premium_upgrade_modal_scene = preload("res://Scenes/UI/PremiumUpgradeModal.tscn")
 
 const MENU_ORDER = {
 	"convoy_overview": 0,
 	"convoy_vehicle_submenu": 1,
 	"convoy_journey_submenu": 2,    # Nav bar order: Vehicles | Journey | Settlement | Cargo
-	"convoy_settlement_submenu": 3,
-	"warehouse_submenu": 4,
-	"mechanics_submenu": 5,
-	"convoy_cargo_submenu": 6
+	"settlement_hub": 3,            # Settlement section landing — takes the old vendor-menu transition slot
+	"convoy_settlement_submenu": 4, # single-vendor trade menu — one level deeper than the hub
+	"warehouse_submenu": 5,
+	"mechanics_submenu": 6,
+	"convoy_cargo_submenu": 7
 }
 var _switch_tween: Tween = null
+# True while a menu-switch slide/fade tween is animating. Rapid nav-button mashing during a
+# transition previously duplicated menus or left one stuck mid-slide; we ignore new open/switch
+# requests until the active tween completes (see the guard at the top of _show_menu).
+var _is_switching: bool = false
+# Outgoing menu whose disposal is deferred into the active switch tween's callback.
+# Tracked so an interrupting switch (which kills that tween) can flush it instead of
+# leaving it orphaned in the tree — the cause of the faint "ghost menu" behind a submenu.
+var _pending_switch_old_menu: Control = null
+var _pending_switch_old_persistent: bool = false
 
 var current_active_menu = null
 var menu_stack = [] # To keep track of the navigation path for "back" functionality
@@ -47,7 +58,14 @@ var _base_z_index: int
 const MENU_MANAGER_ACTIVE_Z_INDEX = 150 
 
 ## Emitted when any menu is opened. Passes the menu node instance.
+## NOTE: This fires at the START of a menu switch (before the slide/fade tween runs). Listeners that
+## need the new menu at its FINAL, settled position (e.g. the tutorial placing a highlight box) must
+## wait for `menu_switch_finished` instead — otherwise they snapshot a mid-slide rect.
 signal menu_opened(menu_node, menu_type: String)
+## Emitted when a menu switch has fully settled: the slide/fade tween completed, or — for a
+## non-animated open (first menu, or a switch that isn't a convoy-style slide) — one frame after
+## `menu_opened` so layout has settled. Passes the now-active menu node and its menu_type.
+signal menu_switch_finished(menu_node, menu_type: String)
 ## Emitted when a menu is closed (either by navigating forward or back). Passes the menu node that was closed.
 signal menu_closed(menu_node_was_active, menu_type: String)
 
@@ -56,15 +74,202 @@ signal menu_visibility_changed(is_open: bool, menu_name: String)
 ## NEW: Emitted with convoy_data when opening a convoy-related menu.
 signal convoy_menu_focus_requested(convoy_data: Dictionary)
 
+var _menu_wrapper: VBoxContainer = null
+var _menu_content_area: Control = null
+var _static_bottom_nav: PanelContainer = null
+var _nav_hbox: HBoxContainer = null
+var _nav_buttons: Dictionary = {} # menu_type -> Button
+
 func register_menu_container(container: Control):
 	_menu_container_host = container
 	print("[MenuManager] Successfully registered menu container: ", container.name)
+	
+	# Setup the static hierarchy
+	if is_instance_valid(_menu_wrapper):
+		_menu_wrapper.queue_free()
+	
+	_menu_wrapper = VBoxContainer.new()
+	_menu_wrapper.name = "MenuWrapperVBox"
+	_menu_wrapper.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_menu_wrapper.add_theme_constant_override("separation", 0)
+	_menu_container_host.add_child(_menu_wrapper)
+	
+	_menu_content_area = Control.new()
+	_menu_content_area.name = "MenuContentArea"
+	_menu_content_area.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_menu_content_area.clip_contents = true
+	_menu_wrapper.add_child(_menu_content_area)
+	
+	_setup_static_bottom_nav()
+
+func _setup_static_bottom_nav():
+	_static_bottom_nav = PanelContainer.new()
+	_static_bottom_nav.name = "StaticBottomNav"
+	_static_bottom_nav.visible = false
+	_menu_wrapper.add_child(_static_bottom_nav)
+	
+	# Bar chrome — metal palette, seats the nav buttons (UITheme tokens).
+	var bar_style = StyleBoxFlat.new()
+	bar_style.bg_color = UITheme.METAL_BASE
+	bar_style.corner_radius_top_left = UITheme.RADIUS_MD
+	bar_style.corner_radius_top_right = UITheme.RADIUS_MD
+	bar_style.border_width_top = UITheme.BORDER_THIN
+	bar_style.border_color = UITheme.METAL_EDGE
+	_static_bottom_nav.add_theme_stylebox_override("panel", bar_style)
+
+	# Fixed HBox so the four nav buttons never wrap and keep a stable rhythm.
+	_nav_hbox = HBoxContainer.new()
+	_nav_hbox.name = "NavButtonsHBox"
+	_nav_hbox.add_theme_constant_override("separation", UITheme.SPACE_SM)
+	_nav_hbox.alignment = BoxContainer.ALIGNMENT_CENTER
+	_static_bottom_nav.add_child(_nav_hbox)
+	
+	var btn_configs = [
+		{"name": "VehicleMenuButton", "text": "Vehicles", "signal": "open_vehicle_menu_requested", "type": "convoy_vehicle_submenu"},
+		{"name": "JourneyMenuButton", "text": "Journey", "signal": "open_journey_menu_requested", "type": "convoy_journey_submenu"},
+		{"name": "SettlementMenuButton", "text": "Settlement", "signal": "open_settlement_menu_requested", "type": "convoy_settlement_submenu"},
+		{"name": "CargoMenuButton", "text": "Cargo", "signal": "open_cargo_menu_requested", "type": "convoy_cargo_submenu"}
+	]
+	
+	for config in btn_configs:
+		var btn = Button.new()
+		btn.name = config["name"]
+		btn.text = config["text"]
+		btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		btn.pressed.connect(func():
+			var data = {}
+			if is_instance_valid(current_active_menu) and current_active_menu.has_meta("menu_data"):
+				data = current_active_menu.get_meta("menu_data")
+			
+			# If already in this nav section, go back to convoy overview (matches legacy behavior).
+			# The Settlement section spans two screens (hub + single vendor menu), so compare slots.
+			var active_slot := _nav_slot_for_type(str(current_active_menu.get_meta("menu_type", ""))) if current_active_menu else ""
+			if active_slot == config["type"]:
+				open_convoy_menu(data)
+			else:
+				# Call the respective open function
+				match config["type"]:
+					"convoy_vehicle_submenu": open_convoy_vehicle_menu(data)
+					"convoy_journey_submenu": open_journey_journey_menu_if_available(data)
+					"convoy_settlement_submenu": open_settlement_overview_menu(data)
+					"convoy_cargo_submenu": open_convoy_cargo_menu(data)
+		)
+		_nav_hbox.add_child(btn)
+		_nav_buttons[config["type"]] = btn
+
+func open_journey_journey_menu_if_available(data):
+	open_convoy_journey_menu(data)
+
+## Public helper for tutorial/diagnostic tools to find nav buttons in the static bar.
+func get_nav_button_by_name(btn_name: String) -> Button:
+	if not is_instance_valid(_nav_hbox): return null
+	return _nav_hbox.find_child(btn_name, true, false) as Button
+
+func set_nav_button_visible(type: String, is_visible: bool):
+	if _nav_buttons.has(type):
+		_nav_buttons[type].visible = is_visible
+
+## Maps a concrete menu_type to the bottom-nav slot it lights up. The Settlement section spans two
+## screens — the overview hub (settlement_hub) and the single vendor menu (convoy_settlement_submenu) —
+## that both belong to the "Settlement" slot.
+func _nav_slot_for_type(t: String) -> String:
+	if t == "settlement_hub":
+		return "convoy_settlement_submenu"
+	return t
+
+func _get_logical_safe_margins() -> Rect2:
+	# Rect2(position = (left, top), size = (right, bottom)) in logical pixels.
+	var sm = get_node_or_null("/root/ui_scale_manager")
+	if is_instance_valid(sm) and sm.has_method("get_logical_safe_margins"):
+		return sm.get_logical_safe_margins()
+	return Rect2()
+
+func _update_static_nav_bar_ui(active_type: String):
+	if not is_instance_valid(_static_bottom_nav): return
+	
+	var is_convoy_submenu = active_type in ["convoy_overview", "convoy_vehicle_submenu", "convoy_journey_submenu", "convoy_cargo_submenu", "convoy_settlement_submenu", "settlement_hub", "warehouse_submenu"]
+	_static_bottom_nav.visible = is_convoy_submenu
+	
+	if not is_convoy_submenu: return
+	
+	# Update layout based on device
+	var dsm = get_node_or_null("/root/DeviceStateManager")
+	var is_portrait = dsm.get_is_portrait() if is_instance_valid(dsm) else false
+	var use_mobile = dsm.is_mobile if is_instance_valid(dsm) else false
+	
+	var bar_margin := 14.0 if is_portrait else (6.0 if use_mobile else 0.0)
+	# Inset the nav-button CONTENT to the safe area (rounded corners + home indicator) while
+	# the bar background still bleeds to the physical edges (no black bars). Side margins get
+	# a rounded-corner minimum; the bottom margin lifts buttons off the home indicator.
+	var safe := _get_logical_safe_margins()
+	# The nav bar lives INSIDE the menu panel. In portrait the bar spans the full screen width, so it
+	# must inset its content past the notch / rounded corners. In landscape the menu is a right-side
+	# panel nowhere near the screen's horizontal notch, so applying that same safe inset just squeezes
+	# the four buttons into the center with dead space on both sides — instead let them fill the panel
+	# width (buttons already carry SIZE_EXPAND_FILL). (Sprint 7, task 1)
+	var side_inset := bar_margin
+	if is_portrait:
+		side_inset = maxf(maxf(bar_margin, maxf(safe.position.x, safe.size.x)), 16.0)
+	var bottom_inset := bar_margin + safe.size.y
+	var style = _static_bottom_nav.get_theme_stylebox("panel")
+	style.content_margin_top = bar_margin
+	style.content_margin_bottom = bottom_inset
+	style.content_margin_left = side_inset
+	style.content_margin_right = side_inset
+
+	# Landscape mobile has a very short viewport, so an 85px nav bar swallowed the menu and
+	# pushed action buttons off-screen. Keep it compact there. Portrait/desktop have the height.
+	var is_landscape_mobile: bool = bool(use_mobile) and not bool(is_portrait)
+	var btn_min_h := 140.0 if is_portrait else (52.0 if is_landscape_mobile else 90.0)
+	var base_font_size: int = 28 if is_portrait else (18 if is_landscape_mobile else 28)
+	var font_size: int = base_font_size if is_instance_valid(dsm) else base_font_size
+
+	var active_slot := _nav_slot_for_type(active_type)
+	for type in _nav_buttons:
+		var btn = _nav_buttons[type]
+		btn.custom_minimum_size = Vector2(72, btn_min_h)
+		# Clip the label so long nav text ("Settlement") can't force the 4 buttons past the
+		# logical width and push the bar off both screen edges.
+		btn.clip_text = true
+		btn.add_theme_font_size_override("font_size", font_size)
+		
+		var is_active = (active_slot == type)
+		btn.theme_type_variation = &"NavButtonActive" if is_active else &"NavButton"
+
+func _on_viewport_resized_navbar() -> void:
+	# Re-apply nav-bar safe insets / button clipping when the device rotates with a menu open.
+	# NOTE: raw size_changed can fire BEFORE DeviceStateManager updates its layout_mode, so this
+	# pass may compute with a stale mode. We re-run on DSM.layout_mode_changed (authoritative) and
+	# also defer one frame here so the height settles to the correct value instead of snapping
+	# drastically on the next menu switch.
+	if is_instance_valid(current_active_menu) and current_active_menu.has_meta("menu_type"):
+		_update_static_nav_bar_ui(str(current_active_menu.get_meta("menu_type")))
+		call_deferred("_reapply_nav_bar_for_active_menu")
+
+func _reapply_nav_bar_for_active_menu() -> void:
+	if is_instance_valid(current_active_menu) and current_active_menu.has_meta("menu_type"):
+		_update_static_nav_bar_ui(str(current_active_menu.get_meta("menu_type")))
+
+func _on_dsm_layout_mode_changed(_mode: int, _screen_size: Vector2, _is_mobile: bool) -> void:
+	# Authoritative layout change — recompute the nav bar height now that DSM has settled, so the
+	# bar doesn't keep a stale (e.g. portrait 140px) height after rotating into landscape.
+	_reapply_nav_bar_for_active_menu()
 
 func _ready():
 	# Initially, no menu is shown. Hide MenuManager so it does not block input.
 	visible = false
 	mouse_filter = MOUSE_FILTER_IGNORE
 	_base_z_index = self.z_index # Store initial z_index
+
+	var vp := get_viewport()
+	if is_instance_valid(vp) and not vp.size_changed.is_connected(_on_viewport_resized_navbar):
+		vp.size_changed.connect(_on_viewport_resized_navbar)
+
+	# Recompute the nav bar on the authoritative layout-mode change (DSM has settled by then),
+	# not just on the raw viewport resize which can run with a stale mode.
+	var dsm = get_node_or_null("/root/DeviceStateManager")
+	if is_instance_valid(dsm) and dsm.has_signal("layout_mode_changed") and not dsm.layout_mode_changed.is_connected(_on_dsm_layout_mode_changed):
+		dsm.layout_mode_changed.connect(_on_dsm_layout_mode_changed)
 
 	if is_instance_valid(_hub):
 		if _hub.has_signal("convoy_selection_changed") and not _hub.convoy_selection_changed.is_connected(_on_hub_convoy_selection_changed):
@@ -149,13 +354,24 @@ func open_warehouse_menu(convoy_data = null):
 	# Do not collapse the payload to convoy_id here.
 	_show_menu(warehouse_menu_scene, convoy_data)
 
+## Convoy-independent settlement view (Sprint 5). Opened from the map when tapping a settlement where
+## the player owns a warehouse. `settlement_data` is the settlement snapshot dict (name, vendors, etc.).
+func open_settlement_overview_menu(settlement_data = null):
+	_show_menu(settlement_overview_menu_scene, settlement_data)
+
+## Overview hub → open the single-vendor trade menu focused on the chosen vendor. Reuses the existing
+## deep-link focus path so the settlement menu lands on this vendor.
+func _on_overview_open_vendor(convoy_data: Dictionary, vendor_id: String) -> void:
+	var intent := {"target": "settlement_vendor", "vendor_id": vendor_id}
+	open_convoy_settlement_menu_with_focus(convoy_data, intent)
+
 func open_convoy_cargo_menu(convoy_data = null):
 	if convoy_data == null:
 		printerr("MenuManager: open_convoy_cargo_menu called with null data.")
 		_show_menu(convoy_cargo_menu_scene, {"vehicle_details_list": [], "convoy_name": "Unknown Convoy"})
 		return
 
-	print("MenuManager: open_convoy_cargo_menu called. Original Convoy Data Keys: ", convoy_data.keys())
+	print("MenuManager: open_convoy_cargo_menu called. Data: ", convoy_data.keys() if convoy_data is Dictionary else convoy_data)
 	var arg = _extract_convoy_id_or_passthrough(convoy_data)
 	_show_menu(convoy_cargo_menu_scene, arg)
 
@@ -193,6 +409,13 @@ func open_premium_upgrade_menu():
 # _emit_menu_area_changed is only called from menu_manager.gd, never from menu scripts.
 
 func _show_menu(menu_scene_resource, data_to_pass = null, add_to_stack: bool = true):
+	# Transition guard: while a switch tween is animating, drop new open/switch requests so rapid
+	# nav-button mashing can't duplicate menus or strand one mid-slide. Clear any focus arg queued
+	# by an ignored open_*_with_focus() call so it doesn't leak into the next menu that does open.
+	if _is_switching:
+		_next_menu_extra_arg = null
+		return
+
 	# When showing a menu, make MenuManager visible so it can receive input.
 	var was_visible := visible
 	visible = true
@@ -243,6 +466,18 @@ func _show_menu(menu_scene_resource, data_to_pass = null, add_to_stack: bool = t
 	elif menu_scene_resource == warehouse_menu_scene:
 		menu_type = "warehouse_submenu"
 		use_convoy_style_layout = true
+	elif menu_scene_resource == settlement_overview_menu_scene:
+		# Hub (convoy present here → shows bottom nav under the Settlement slot) vs the standalone
+		# map-preview view (no convoy, no bottom nav, Back returns to the map).
+		# The nav may pass a convoy dict OR a bare convoy_id string; either means "hub". The map preview
+		# passes a settlement dict (no convoy_id) → standalone overview.
+		var _ov_has_convoy := false
+		if data_to_pass is Dictionary:
+			_ov_has_convoy = String((data_to_pass as Dictionary).get("convoy_id", "")) != ""
+		elif data_to_pass is String:
+			_ov_has_convoy = String(data_to_pass) != ""
+		menu_type = "settlement_hub" if _ov_has_convoy else "settlement_overview"
+		use_convoy_style_layout = true
 	elif menu_scene_resource == mechanics_menu_scene:
 		menu_type = "mechanics_submenu"
 		use_convoy_style_layout = true
@@ -291,10 +526,13 @@ func _show_menu(menu_scene_resource, data_to_pass = null, add_to_stack: bool = t
 		return
 
 	# Add to tree (re-parent if coming from cache; regular add_child if new)
+	var host = _menu_content_area if is_instance_valid(_menu_content_area) else _menu_container_host
 	if not current_active_menu.is_inside_tree():
-		_menu_container_host.add_child(current_active_menu)
-	elif current_active_menu.get_parent() != _menu_container_host:
-		current_active_menu.reparent(_menu_container_host)
+		host.add_child(current_active_menu)
+	elif current_active_menu.get_parent() != host:
+		current_active_menu.reparent(host)
+	
+	_update_static_nav_bar_ui(menu_type)
 
 	# Only the menu panel itself should block input, not the entire MenuManager
 	if current_active_menu is Control:
@@ -317,8 +555,13 @@ func _show_menu(menu_scene_resource, data_to_pass = null, add_to_stack: bool = t
 			print("[MenuManager] Cached new persistent menu: ", cache_key)
 	else:
 		# Returning from cache: restore mouse input that was killed by _disable_mouse_recursive
-		# during the outgoing animation, then skip re-initialization.
+		# during the outgoing animation.
 		_restore_mouse_recursive(current_active_menu)
+		# A focus intent (e.g. a specific vendor, or a vehicle) means the caller wants a DIFFERENT target
+		# than whatever the cached instance last showed. The cache key is keyed only by convoy_id, so
+		# without this the cached menu would keep its previous target. Re-apply the intent.
+		if _next_menu_extra_arg != null and current_active_menu.has_method("initialize_with_data"):
+			current_active_menu.call_deferred("initialize_with_data", data_to_pass, _next_menu_extra_arg)
 		_next_menu_extra_arg = null
 		print("[MenuManager] Menu restored from cache — mouse input re-enabled.")
 
@@ -359,52 +602,25 @@ func _show_menu(menu_scene_resource, data_to_pass = null, add_to_stack: bool = t
 			if not was_visible:
 				emit_signal("menu_visibility_changed", true, "convoy_menu")
 			
-			var is_portrait = false
-			var dsm = get_node_or_null("/root/DeviceStateManager")
-			if is_instance_valid(dsm) and dsm.has_method("get_is_portrait"):
-				is_portrait = dsm.get_is_portrait()
-			else:
-				var win_size = get_viewport_rect().size
-				is_portrait = win_size.y > win_size.x
-				
-			menu_node_control.anchor_left = 0.0 if is_portrait else 1.0 / 3.0
-			menu_node_control.anchor_right = 1.0
-			menu_node_control.anchor_top = 0.0
-			menu_node_control.anchor_bottom = 1.0
-			menu_node_control.offset_left = 0
-			menu_node_control.offset_right = 0
+			menu_node_control.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 			menu_node_control.offset_top = top_margin
-			menu_node_control.offset_bottom = 0
-		elif false:
-			var menu_size = menu_node_control.custom_minimum_size
-			if menu_size.x == 0 or menu_size.y == 0:
-				menu_node_control.update_minimum_size()
-				menu_size = menu_node_control.get_combined_minimum_size()
-				if menu_size.x == 0 or menu_size.y == 0:
-					printerr("MenuManager: ConvoyMenu's size could not be determined (custom_minimum_size and get_combined_minimum_size are zero). Using fallback size (300, 400). This may lead to incorrect layout. Please set custom_minimum_size in ConvoyMenu.tscn or ensure its content defines a size.")
-					if menu_size.x == 0: menu_size.x = 300
-					if menu_size.y == 0: menu_size.y = 400
-			menu_node_control.anchor_left = 1.0
-			menu_node_control.anchor_right = 1.0
-			menu_node_control.anchor_top = 0.5
-			menu_node_control.anchor_bottom = 0.5
-			menu_node_control.offset_left = -menu_size.x
-			menu_node_control.offset_right = 0
-			menu_node_control.offset_top = -menu_size.y / 2.0 + top_margin / 2.0
-			menu_node_control.offset_bottom = menu_size.y / 2.0 + top_margin / 2.0
 		else:
 			menu_node_control.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 			menu_node_control.offset_top = top_margin
 
+	# Track whether this open kicks off a slide/fade tween. Non-animated opens must still emit
+	# `menu_switch_finished` (deferred, so layout settles) so tutorial highlight waiters don't hang.
+	var did_animate := false
 	if old_menu:
 		var old_is_persistent = old_menu.get("persistence_enabled") == true
 		print("[MenuManager] Old menu: ", old_menu.name, " type: ", old_menu_type, " is_persistent: ", old_is_persistent)
 		if use_convoy_style_layout and old_menu.get_meta("menu_type", "default") in MENU_ORDER and menu_type in MENU_ORDER:
 			_animate_menu_switch(old_menu, current_active_menu, old_menu_type, menu_type, old_is_persistent)
+			did_animate = true
 		else:
-			if old_is_persistent and is_instance_valid(_menu_container_host):
+			if old_is_persistent and is_instance_valid(host):
 				print("[MenuManager] Detaching persistent old menu: ", old_menu.name)
-				_menu_container_host.remove_child(old_menu)
+				host.remove_child(old_menu)
 			else:
 				print("[MenuManager] Freeing non-persistent old menu: ", old_menu.name)
 				old_menu.queue_free()
@@ -417,6 +633,16 @@ func _show_menu(menu_scene_resource, data_to_pass = null, add_to_stack: bool = t
 
 	self.z_index = MENU_MANAGER_ACTIVE_Z_INDEX
 	emit_signal("menu_opened", current_active_menu, menu_type)
+	# For non-animated opens (no slide tween) the switch is effectively already settled. Emit the
+	# settled signal one frame later so newly-visible controls have finished laying out. Animated
+	# opens emit it from their tween completion callback instead.
+	if not did_animate:
+		var settled_menu = current_active_menu
+		var settled_type = menu_type
+		get_tree().create_timer(0.0).timeout.connect(func():
+			if is_instance_valid(settled_menu):
+				emit_signal("menu_switch_finished", settled_menu, settled_type)
+		)
 
 	# NEW: emit focus request with convoy data if present
 	var menu_data_for_focus: Variant = current_active_menu.get_meta("menu_data", null)
@@ -436,8 +662,9 @@ func _show_menu(menu_scene_resource, data_to_pass = null, add_to_stack: bool = t
 			_s.open_vehicle_menu_requested.connect(open_convoy_vehicle_menu, CONNECT_ONE_SHOT)
 		if _s.has_signal("open_journey_menu_requested") and not _s.open_journey_menu_requested.is_connected(open_convoy_journey_menu):
 			_s.open_journey_menu_requested.connect(open_convoy_journey_menu, CONNECT_ONE_SHOT)
-		if _s.has_signal("open_settlement_menu_requested") and not _s.open_settlement_menu_requested.is_connected(open_convoy_settlement_menu):
-			_s.open_settlement_menu_requested.connect(open_convoy_settlement_menu, CONNECT_ONE_SHOT)
+		# Settlement entry now lands on the overview hub (which then opens a single vendor menu).
+		if _s.has_signal("open_settlement_menu_requested") and not _s.open_settlement_menu_requested.is_connected(open_settlement_overview_menu):
+			_s.open_settlement_menu_requested.connect(open_settlement_overview_menu, CONNECT_ONE_SHOT)
 		if _s.has_signal("open_cargo_menu_requested") and not _s.open_cargo_menu_requested.is_connected(open_convoy_cargo_menu):
 			_s.open_cargo_menu_requested.connect(open_convoy_cargo_menu, CONNECT_ONE_SHOT)
 		if _s.has_signal("return_to_convoy_overview_requested") and not _s.return_to_convoy_overview_requested.is_connected(open_convoy_menu):
@@ -465,11 +692,23 @@ func _show_menu(menu_scene_resource, data_to_pass = null, add_to_stack: bool = t
 			if _s.has_signal("open_warehouse_menu_requested") and not _s.open_warehouse_menu_requested.is_connected(open_warehouse_menu):
 				_s.open_warehouse_menu_requested.connect(open_warehouse_menu, CONNECT_ONE_SHOT)
 
+	# Settlement overview / hub — forward its Warehouse entry, vendor selection, and Back.
+	if menu_type == "settlement_overview" or menu_type == "settlement_hub":
+		if current_active_menu.has_signal("open_warehouse_menu_requested") and not current_active_menu.open_warehouse_menu_requested.is_connected(open_warehouse_menu):
+			current_active_menu.open_warehouse_menu_requested.connect(open_warehouse_menu, CONNECT_ONE_SHOT)
+		if current_active_menu.has_signal("open_vendor_requested") and not current_active_menu.open_vendor_requested.is_connected(_on_overview_open_vendor):
+			current_active_menu.open_vendor_requested.connect(_on_overview_open_vendor, CONNECT_ONE_SHOT)
+		if current_active_menu.has_signal("back_requested") and not current_active_menu.back_requested.is_connected(go_back):
+			current_active_menu.back_requested.connect(go_back, CONNECT_ONE_SHOT)
+
 # Animation constants for menu switching
 const SWITCH_DURATION := 0.42
 const SWITCH_PARALLAX := 0.35 # Outgoing menu travels this fraction of the distance, creating depth
 
 func _animate_menu_switch(old_menu: Control, new_menu: Control, old_type: String, new_type: String, old_is_persistent: bool = false) -> void:
+	# Mark the transition as in-flight up front so the _show_menu guard covers the deferred gap
+	# below (the tween isn't created until _start_menu_switch_animation runs next frame).
+	_is_switching = true
 	if _switch_tween and _switch_tween.is_valid():
 		_switch_tween.kill()
 
@@ -479,7 +718,7 @@ func _animate_menu_switch(old_menu: Control, new_menu: Control, old_type: String
 	var direction = 1 if new_idx > old_idx else -1
 	if new_idx == old_idx: direction = 1
 
-	var slide_distance = _menu_container_host.size.x if is_instance_valid(_menu_container_host) else 400.0
+	var slide_distance = _menu_content_area.size.x if is_instance_valid(_menu_content_area) else 400.0
 
 	# Defer one frame so new menu layout settles before reading position.
 	call_deferred("_start_menu_switch_animation", old_menu, new_menu, direction, slide_distance, old_type, new_type, old_is_persistent)
@@ -504,14 +743,37 @@ func _restore_mouse_recursive(node: Node) -> void:
 	for child in node.get_children():
 		_restore_mouse_recursive(child)
 
+## Dispose of a switch's outgoing menu: detach if persistent (kept in cache), else free.
+func _finalize_switch_old_menu(node: Control, is_persistent: bool) -> void:
+	if not is_instance_valid(node):
+		return
+	var host = _menu_content_area if is_instance_valid(_menu_content_area) else _menu_container_host
+	if is_persistent and is_instance_valid(host) and node.get_parent() == host:
+		host.remove_child(node)
+	else:
+		node.queue_free()
+
 func _start_menu_switch_animation(old_menu: Control, new_menu: Control, direction: int, slide_distance: float, old_type: String = "", new_type: String = "", old_is_persistent: bool = false) -> void:
+	var host = _menu_content_area if is_instance_valid(_menu_content_area) else _menu_container_host
+
+	# Flush an outgoing menu left over from a prior switch that was interrupted before its
+	# tween callback could dispose of it (otherwise it lingers as a ghost behind the new menu).
+	if is_instance_valid(_pending_switch_old_menu) and _pending_switch_old_menu != old_menu and _pending_switch_old_menu != new_menu:
+		_finalize_switch_old_menu(_pending_switch_old_menu, _pending_switch_old_persistent)
+	_pending_switch_old_menu = null
+
 	if not is_instance_valid(new_menu) or not is_instance_valid(old_menu):
 		if is_instance_valid(old_menu):
-			if old_is_persistent and is_instance_valid(_menu_container_host):
-				_menu_container_host.remove_child(old_menu)
-			else:
-				old_menu.queue_free()
+			_finalize_switch_old_menu(old_menu, old_is_persistent)
+		_is_switching = false
+		# No tween will run; still signal completion so waiters (tutorial highlight) don't hang.
+		if is_instance_valid(new_menu):
+			emit_signal("menu_switch_finished", new_menu, new_type)
 		return
+
+	# Track this switch's outgoing menu so an interrupting switch can flush it.
+	_pending_switch_old_menu = old_menu
+	_pending_switch_old_persistent = old_is_persistent
 
 	# Kill input on the outgoing menu immediately
 	_disable_mouse_recursive(old_menu)
@@ -524,8 +786,8 @@ func _start_menu_switch_animation(old_menu: Control, new_menu: Control, directio
 	if is_instance_valid(new_bg): new_bg.visible = false
 
 	# CRITICAL: Clip the host so only one panel is visible at a time.
-	if is_instance_valid(_menu_container_host):
-		_menu_container_host.clip_contents = true
+	if is_instance_valid(host):
+		host.clip_contents = true
 
 	# --- OVERARCHING MENU LOGIC (Convoy Overview) ---
 	# If we are entering or leaving the Convoy Overview, use a vertical swipe.
@@ -533,7 +795,7 @@ func _start_menu_switch_animation(old_menu: Control, new_menu: Control, directio
 	var is_vertical := (old_type == "convoy_overview" or new_type == "convoy_overview")
 	
 	if is_vertical:
-		var slide_height = _menu_container_host.size.y if is_instance_valid(_menu_container_host) else 800.0
+		var slide_height = host.size.y if is_instance_valid(host) else 800.0
 		var base_y := old_menu.position.y
 		
 		# Ensure X is consistent
@@ -564,18 +826,16 @@ func _start_menu_switch_animation(old_menu: Control, new_menu: Control, directio
 			_switch_tween.tween_property(new_menu, "modulate:a", 1.0, SWITCH_DURATION)
 			
 		_switch_tween.chain().tween_callback(func():
-			if is_instance_valid(old_menu):
-				if old_is_persistent and is_instance_valid(_menu_container_host):
-					print("[MenuManager] Animation finished: Detaching persistent old menu: ", old_menu.name)
-					_menu_container_host.remove_child(old_menu)
-				else:
-					print("[MenuManager] Animation finished: Freeing non-persistent old menu: ", old_menu.name)
-					old_menu.queue_free()
+			_finalize_switch_old_menu(old_menu, old_is_persistent)
+			if _pending_switch_old_menu == old_menu:
+				_pending_switch_old_menu = null
 			if is_instance_valid(new_menu):
 				new_menu.position.y = base_y
 				new_menu.modulate.a = 1.0
 				var restored_bg = new_menu.get_node_or_null("OoriBackground")
 				if is_instance_valid(restored_bg): restored_bg.visible = true
+			_is_switching = false
+			emit_signal("menu_switch_finished", new_menu, new_type)
 		)
 		return
 
@@ -598,17 +858,15 @@ func _start_menu_switch_animation(old_menu: Control, new_menu: Control, directio
 	_switch_tween.tween_property(new_menu, "position:x", new_target_x, SWITCH_DURATION)
 
 	_switch_tween.chain().tween_callback(func():
-		if is_instance_valid(old_menu):
-			if old_is_persistent and is_instance_valid(_menu_container_host):
-				print("[MenuManager] Animation finished: Detaching persistent old menu: ", old_menu.name)
-				_menu_container_host.remove_child(old_menu)
-			else:
-				print("[MenuManager] Animation finished: Freeing non-persistent old menu: ", old_menu.name)
-				old_menu.queue_free()
+		_finalize_switch_old_menu(old_menu, old_is_persistent)
+		if _pending_switch_old_menu == old_menu:
+			_pending_switch_old_menu = null
 		if is_instance_valid(new_menu):
 			new_menu.position.x = new_target_x
 			var restored_bg = new_menu.get_node_or_null("OoriBackground")
 			if is_instance_valid(restored_bg): restored_bg.visible = true
+		_is_switching = false
+		emit_signal("menu_switch_finished", new_menu, new_type)
 	)
 
 func _extract_convoy_id_or_passthrough(d: Variant) -> Variant:
@@ -643,6 +901,7 @@ func go_back():
 		# Deselect any globally selected convoy so the user isn't forced to click again to clear it.
 		_request_clear_selection()
 		emit_signal("menu_visibility_changed", false, "")
+		_update_static_nav_bar_ui("")
 		visible = false
 		return
 
@@ -661,6 +920,7 @@ func go_back():
 		# We're closing the last open menu. Clear convoy selection to remove the highlight in the convoy list.
 		_request_clear_selection()
 		emit_signal("menu_visibility_changed", false, "")
+		_update_static_nav_bar_ui("")
 		visible = false
 		return
 

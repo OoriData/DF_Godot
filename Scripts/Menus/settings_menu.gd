@@ -1,16 +1,16 @@
 extends CanvasLayer
 
 @onready var s_ui_scale: HSlider = %UIScaleSlider
-@onready var c_dynamic_scale: CheckButton = %DynamicScaleCheck
 @onready var c_fullscreen: CheckButton = %FullscreenCheck
 @onready var c_invert_pan: CheckButton = %InvertPanCheck
 @onready var c_invert_zoom: CheckButton = %InvertZoomCheck
-@onready var c_gestures: CheckButton = %GesturesCheck
 @onready var s_menu_ratio: HSlider = %MenuWidthRatioSlider
 @onready var c_high_contrast: CheckButton = %HighContrastCheck
 @onready var btn_reset: Button = %ResetDefaultsButton
 @onready var btn_close: Button = %CloseButton
 @onready var btn_logout: Button = %LogoutButton
+
+var _debug_settings_menu: bool = true
 
 var SM: Node
 var API: Node
@@ -42,13 +42,10 @@ func _apply_oori_background() -> void:
 	
 	var bg = TextureRect.new()
 	bg.name = "OoriBackground"
-	bg.texture = load("res://Assets/Themes/Oori Backround.png")
-	bg.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	bg.stretch_mode = TextureRect.STRETCH_TILE
-	bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	panel.add_child(bg)
-	panel.move_child(bg, 0) # Background layer
+	panel.move_child(bg, 0)
+	UITheme.apply_oori_bg(bg)
 
 
 func _is_portrait() -> bool:
@@ -61,9 +58,7 @@ func _is_mobile() -> bool:
 	return false
 
 func _get_font_size(base: int) -> int:
-	var is_portrait = _is_portrait()
-	var boost = 3.5 if is_portrait else (1.6 if _is_mobile() else 1.2)
-	return int(base * boost)
+	return base  # UIScaleManager owns all scaling; never multiply here
 
 func _update_layout() -> void:
 	if not is_inside_tree(): return
@@ -136,10 +131,7 @@ func _update_layout() -> void:
 	var menu_width_row = %MenuWidthRow
 	if is_instance_valid(menu_width_row):
 		menu_width_row.visible = not is_mobile
-	
-	if is_instance_valid(c_dynamic_scale):
-		c_dynamic_scale.visible = not is_mobile
-	
+
 	var display_sec = %DisplaySection
 	if is_instance_valid(display_sec):
 		display_sec.visible = not is_mobile
@@ -159,14 +151,15 @@ func _update_layout() -> void:
 		if is_instance_valid(btn):
 			var want_huge = btn.name.to_lower().contains("close")
 			var btn_height: int
-			var btn_width: int
 			if is_portrait:
-				btn_height = 145 if want_huge else 120
-				btn_width = 300
+				# Expand to fill width so 3 buttons never overflow the panel
+				btn_height = 100 if want_huge else 80
+				btn.custom_minimum_size = Vector2(0, btn_height)
+				btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 			else:
 				btn_height = 100 if want_huge else 80
-				btn_width = 260
-			btn.custom_minimum_size = Vector2(btn_width, btn_height)
+				btn.custom_minimum_size = Vector2(260, btn_height)
+				btn.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 			btn.add_theme_font_size_override("font_size", _get_font_size(18))
 			btn.mouse_filter = Control.MOUSE_FILTER_STOP
 
@@ -250,38 +243,25 @@ func _init_values():
 		s_ui_scale.max_value = sm_scale.get_max_safe_scale()
 	
 	s_ui_scale.value = float(SM.get_value("ui.scale", 1.4))
-	
-	var dyn = bool(SM.get_value("ui.auto_scale", false))
-	if is_instance_valid(c_dynamic_scale):
-		c_dynamic_scale.button_pressed = dyn
-	s_ui_scale.editable = not dyn # Disable slider if dynamic is on
-	
+
 	c_fullscreen.button_pressed = bool(SM.get_value("display.fullscreen", false))
 	c_invert_pan.button_pressed = bool(SM.get_value("controls.invert_pan", false))
+	if _debug_settings_menu: print("[SettingsMenu] _init_values: invert_pan loaded as ", SM.get_value("controls.invert_pan", false))
 	c_invert_zoom.button_pressed = bool(SM.get_value("controls.invert_zoom", false))
-	c_gestures.button_pressed = bool(SM.get_value("controls.gestures_enabled", true))
 	s_menu_ratio.value = float(SM.get_value("ui.menu_open_ratio", 0.5))
 	c_high_contrast.button_pressed = bool(SM.get_value("access.high_contrast", false))
 
 func _wire_events():
 	s_ui_scale.value_changed.connect(_on_ui_scale_value_changed)
 	s_ui_scale.drag_ended.connect(_on_ui_scale_drag_ended)
-	
-	if is_instance_valid(c_dynamic_scale):
-		c_dynamic_scale.toggled.connect(func(b):
-			SM.set_and_save("ui.auto_scale", b)
-			s_ui_scale.editable = not b
-			if b:
-				# Trigger auto-adjust immediately
-				var sm_scale = get_node_or_null("/root/ui_scale_manager")
-				if is_instance_valid(sm_scale) and sm_scale.has_method("_auto_adjust_scale"):
-					sm_scale._auto_adjust_scale()
-		)
-	
+
 	c_fullscreen.toggled.connect(func(b): SM.set_and_save("display.fullscreen", b))
-	c_invert_pan.toggled.connect(func(b): SM.set_and_save("controls.invert_pan", b))
+	c_invert_pan.toggled.connect(func(b):
+		if _debug_settings_menu: print("[SettingsMenu] invert_pan toggled -> ", b)
+		SM.set_and_save("controls.invert_pan", b)
+		if _debug_settings_menu: print("[SettingsMenu] invert_pan after save: SM.get_value = ", SM.get_value("controls.invert_pan"))
+	)
 	c_invert_zoom.toggled.connect(func(b): SM.set_and_save("controls.invert_zoom", b))
-	c_gestures.toggled.connect(func(b): SM.set_and_save("controls.gestures_enabled", b))
 	s_menu_ratio.value_changed.connect(func(v): SM.set_and_save("ui.menu_open_ratio", v))
 	c_high_contrast.toggled.connect(func(b): SM.set_and_save("access.high_contrast", b))
 	# removed reduce motion and route preview
@@ -313,15 +293,13 @@ func _wire_events():
 
 func _on_reset_defaults():
 	var defaults := {
-		"ui.scale": 1.4,
-		"ui.auto_scale": false, # Default off
+		"ui.scale": 1.0,
 		"ui.menu_open_ratio": 0.5, # Match new default
 		"ui.click_closes_menus": false,
 		"access.high_contrast": false,
 		"display.fullscreen": false,
 		"controls.invert_pan": false,
 		"controls.invert_zoom": false,
-		"controls.gestures_enabled": true,
 	}
 	for k in defaults.keys():
 		SM.set_and_save(k, defaults[k])

@@ -2,7 +2,7 @@
 
 [ext_resource type="FontFile" uid="uid://bgq4aye8k7t84" path="res://Assets/Lexend Light.ttf" id="1_base"]
 [ext_resource type="FontFile" uid="uid://b2hcvt5pfoqdh" path="res://Assets/NotoSansMath-Regular.ttf" id="2_math"]
-[ext_resource type="FontVariation" path="res://Assets/emoji_fallback.tres" id="3_emoji"]
+[ext_resource type="FontFile" uid="uid://dwhtvlre0bnpe" path="res://Assets/NotoColorEmoji.ttf" id="3_emoji"]
 
 [resource]
 base_font = ExtResource("1_base")

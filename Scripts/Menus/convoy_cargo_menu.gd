@@ -54,6 +54,9 @@ var _organize_button: Button
 # Debounce UI refresh to prevent instant inspect closure
 var _suppress_refresh_until_msec: int = 0
 var _open_inspects: Dictionary = {}
+# Mobile shows one inspect panel at a time; this tracks the currently-open row so opening a
+# new one collapses it first. Desktop leaves this null and allows multiple open panels.
+var _mobile_open_row: HBoxContainer = null
 var _last_refresh_convoy_id: String = "" # Avoid repeated refresh_single calls
 
 # When a refresh arrives during the suppress window, stash the latest payload and
@@ -175,11 +178,14 @@ func _is_mobile() -> bool:
 			return true
 	return false
 
+func _is_portrait() -> bool:
+	if not is_inside_tree():
+		return false
+	var win_size := get_viewport_rect().size
+	return win_size.y > win_size.x
+
 func _get_font_size(base: int) -> int:
-	var win_size = get_viewport_rect().size if is_inside_tree() else Vector2(0, 0)
-	var is_portrait = win_size.y > win_size.x
-	var boost = 2.8 if is_portrait else (1.6 if _is_mobile() else 1.2)
-	return int(base * boost)
+	return base  # UIScaleManager owns all scaling; never multiply here
 
 func _is_displayable_cargo(item: Dictionary) -> bool:
 	if item.is_empty():
@@ -205,8 +211,12 @@ func _ready():
 		
 		var win_size = get_viewport_rect().size if is_inside_tree() else Vector2(0, 0)
 		var is_portrait = win_size.y > win_size.x
-		var sort_h = 100 if is_portrait else (60 if _is_mobile() else 44)
-		cargo_sort_option_button.custom_minimum_size = Vector2(280, sort_h)
+		var sort_h = 70 if is_portrait else (50 if _is_mobile() else 44)
+		cargo_sort_option_button.custom_minimum_size = Vector2(0, sort_h)
+		# Width caps (UIAudit P7 — oversized sort dropdown): size to the CURRENT selection rather
+		# than the widest option, and clip rather than stretch the row.
+		cargo_sort_option_button.fit_to_longest_item = false
+		cargo_sort_option_button.clip_text = true
 		cargo_sort_option_button.add_theme_font_size_override("font_size", _get_font_size(15))
 		cargo_sort_option_button.add_theme_color_override("font_color", Color(0.93, 0.93, 0.93, 1.0))
 		cargo_sort_option_button.add_theme_color_override("font_hover_color", Color(0.98, 0.98, 0.98, 1.0))
@@ -221,8 +231,8 @@ func _ready():
 		sort_normal.corner_radius_top_right = 6
 		sort_normal.corner_radius_bottom_left = 6
 		sort_normal.corner_radius_bottom_right = 6
-		sort_normal.content_margin_left = 24 if _is_mobile() else 10
-		sort_normal.content_margin_right = 24 if _is_mobile() else 10
+		sort_normal.content_margin_left = 14 if _is_mobile() else 10
+		sort_normal.content_margin_right = 14 if _is_mobile() else 10
 		sort_normal.content_margin_top = 12 if _is_mobile() else 4
 		sort_normal.content_margin_bottom = 12 if _is_mobile() else 4
 		var sort_hover := sort_normal.duplicate()
@@ -246,7 +256,6 @@ func _ready():
 		cargo_sort_option_button.add_item("Distance to Recipient")
 		_cargo_sort_metric = clampi(_cargo_sort_metric, 0, max(0, cargo_sort_option_button.item_count - 1))
 		cargo_sort_option_button.select(_cargo_sort_metric)
-		TextScale.register(cargo_sort_option_button)
 		cargo_sort_option_button.item_selected.connect(func(idx: int):
 			_cargo_sort_metric = idx
 			if Engine.has_singleton("SettingsManager"):
@@ -282,44 +291,32 @@ func _ready():
 	_organize_button = Button.new()
 	_organize_button.name = "OrganizeButton"
 
-	# --- NEW: Custom Styling for the button ---
-	var style_normal = StyleBoxFlat.new()
-	style_normal.bg_color = Color(0.2, 0.22, 0.25, 0.9)
-	style_normal.border_width_left = 1
-	style_normal.border_width_right = 1
-	style_normal.border_width_top = 1
-	style_normal.border_width_bottom = 1
-	style_normal.border_color = Color(0.5, 0.55, 0.6, 0.9)
-	style_normal.corner_radius_top_left = 6
-	style_normal.corner_radius_top_right = 6
-	style_normal.corner_radius_bottom_left = 6
-	style_normal.corner_radius_bottom_right = 6
-	style_normal.content_margin_left = 24 if _is_mobile() else 12
-	style_normal.content_margin_right = 24 if _is_mobile() else 12
-	style_normal.content_margin_top = 12 if _is_mobile() else 6
-	style_normal.content_margin_bottom = 12 if _is_mobile() else 6
-
-	var style_hover = style_normal.duplicate()
-	style_hover.bg_color = style_normal.bg_color.lightened(0.1)
-
-	var style_pressed = style_normal.duplicate()
-	style_pressed.bg_color = style_normal.bg_color.darkened(0.1)
-
+	# Styling (border/corners/margins + per-mode toggle tint) is applied in
+	# _update_organize_button_text() / _apply_organize_button_style(), which run below and on every toggle.
 	var win_size = get_viewport_rect().size if is_inside_tree() else Vector2(0, 0)
 	var is_portrait = win_size.y > win_size.x
-	_organize_button.add_theme_stylebox_override("normal", style_normal)
-	_organize_button.add_theme_stylebox_override("hover", style_hover)
-	_organize_button.add_theme_stylebox_override("pressed", style_pressed)
 	_organize_button.add_theme_font_size_override("font_size", _get_font_size(14))
-	_organize_button.custom_minimum_size.y = 80 if is_portrait else (60 if _is_mobile() else 44)
+	_organize_button.custom_minimum_size.y = 70 if is_portrait else (50 if _is_mobile() else 44)
 
 	var sort_settings_container = get_node_or_null("MainVBox/SortSettingsContainer")
 	if is_instance_valid(sort_settings_container):
-		sort_settings_container.alignment = BoxContainer.ALIGNMENT_CENTER
 		sort_settings_container.add_child(_organize_button)
 		sort_settings_container.move_child(_organize_button, 0)
 		sort_settings_container.add_theme_constant_override("separation", 24 if _is_mobile() else 16)
-		
+
+		# Spread the two cramped top controls to opposite ends (organize ⇠ … ⇢ sort) with an
+		# expanding spacer between, instead of bunching them centered. The sort dropdown then
+		# shrinks to the right edge rather than stretching the bar.
+		sort_settings_container.alignment = BoxContainer.ALIGNMENT_BEGIN
+		var top_spacer := Control.new()
+		top_spacer.name = "TopControlsSpacer"
+		top_spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		top_spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		sort_settings_container.add_child(top_spacer)
+		sort_settings_container.move_child(top_spacer, 1) # between organize (0) and sort (2)
+		if is_instance_valid(cargo_sort_option_button):
+			cargo_sort_option_button.size_flags_horizontal = Control.SIZE_SHRINK_END
+
 		if _is_mobile():
 			var main_vbox = get_node_or_null("MainVBox")
 			if is_instance_valid(main_vbox):
@@ -349,6 +346,12 @@ func _ready():
 	if is_instance_valid(_hub) and _hub.has_signal("vendor_updated") and not _hub.vendor_updated.is_connected(_on_vendor_updated):
 		_hub.vendor_updated.connect(_on_vendor_updated)
 
+	# Rebuild the cargo rows (fonts + row sizing are orientation-branched) when the device rotates
+	# mid-session, and re-apply the sort dropdown height. (Sprint 7)
+	var dsm := get_node_or_null("/root/DeviceStateManager")
+	if is_instance_valid(dsm) and dsm.has_signal("layout_mode_changed") and not dsm.layout_mode_changed.is_connected(_on_layout_mode_changed):
+		dsm.layout_mode_changed.connect(_on_layout_mode_changed)
+
 	# Set initial button text
 	_update_organize_button_text()
 
@@ -369,14 +372,40 @@ func _ready():
 		if is_instance_valid(title_label):
 			title_label.add_theme_font_size_override("font_size", _get_font_size(20))
 			title_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	
-	TextScale.register_tree(self)
 
 func _update_organize_button_text() -> void:
-	if organization_mode == "by_type":
-		_organize_button.text = "Group by Vehicle"
+	if not is_instance_valid(_organize_button):
+		return
+	# Show the CURRENT grouping (state label) and tint the button per state so the two modes
+	# read as distinct toggle positions. Tapping switches to the other grouping.
+	var tint: Color
+	if organization_mode == "by_vehicle":
+		_organize_button.text = "Sort by: Vehicle"
+		tint = Color(0.16, 0.27, 0.28, 0.92) # teal-tinted
 	else:
-		_organize_button.text = "Group by Type"
+		_organize_button.text = "Sort by: Type"
+		tint = Color(0.30, 0.25, 0.17, 0.92) # brass-tinted
+	_apply_organize_button_style(tint)
+
+func _apply_organize_button_style(bg: Color) -> void:
+	if not is_instance_valid(_organize_button):
+		return
+	var style_normal := StyleBoxFlat.new()
+	style_normal.bg_color = bg
+	style_normal.set_border_width_all(1)
+	style_normal.border_color = Color(0.5, 0.55, 0.6, 0.9)
+	style_normal.set_corner_radius_all(6)
+	style_normal.content_margin_left = 24 if _is_mobile() else 12
+	style_normal.content_margin_right = 24 if _is_mobile() else 12
+	style_normal.content_margin_top = 12 if _is_mobile() else 6
+	style_normal.content_margin_bottom = 12 if _is_mobile() else 6
+	var style_hover := style_normal.duplicate()
+	style_hover.bg_color = bg.lightened(0.1)
+	var style_pressed := style_normal.duplicate()
+	style_pressed.bg_color = bg.darkened(0.1)
+	_organize_button.add_theme_stylebox_override("normal", style_normal)
+	_organize_button.add_theme_stylebox_override("hover", style_hover)
+	_organize_button.add_theme_stylebox_override("pressed", style_pressed)
 
 func _on_organize_button_pressed() -> void:
 	organization_mode = "by_vehicle" if organization_mode == "by_type" else "by_type"
@@ -759,14 +788,16 @@ func _looks_like_part(d: Dictionary) -> bool:
 	# Defer to the centralized classification logic in the ItemsData factory.
 	return ItemsData.PartItem._looks_like_part_dict(d)
 
-func _looks_like_mission(d: Dictionary) -> bool:
+func _looks_like_delivery(d: Dictionary) -> bool:
 	if not d:
 		return false
-	if ItemsData != null and ItemsData.MissionItem:
-		return ItemsData.MissionItem._looks_like_mission_dict(d)
+	if ItemsData != null and ItemsData.DeliveryCargoItem:
+		return ItemsData.DeliveryCargoItem._looks_like_delivery_dict(d)
 	# Legacy fallback
 	if d.has("recipient") and d.get("recipient") != null:
-		return true
+		var rec = str(d.get("recipient")).strip_edges()
+		if rec != "" and rec != "00000000-0000-0000-0000-000000000000":
+			return true
 	if d.get("is_mission", false):
 		return true
 	if NumberFormat.to_f(d.get("delivery_reward"), 0.0) > 0.0:
@@ -862,8 +893,10 @@ func _build_cargo_row(vehicle_vbox: VBoxContainer, display_name: String, quantit
 		sb.corner_radius_bottom_right = 6
 		sb.content_margin_left = 14
 		sb.content_margin_right = 14
-		sb.content_margin_top = 14
-		sb.content_margin_bottom = 14
+		# Tighter vertical rhythm on mobile cards — the row is a single line, so the old 14px
+		# top/bottom left a lot of dead space per card (UIAudit P3 — sparse cards).
+		sb.content_margin_top = 10
+		sb.content_margin_bottom = 10
 	else:
 		if item_index % 2 == 0:
 			sb.bg_color = Color(0.13, 0.15, 0.19, 1)
@@ -876,24 +909,31 @@ func _build_cargo_row(vehicle_vbox: VBoxContainer, display_name: String, quantit
 		sb.border_color = Color(0.18, 0.20, 0.25, 1)
 	bg_panel.add_theme_stylebox_override("panel", sb)
 
-	# Connect gui_input for click-to-expand behavior (Refined: tap vs scroll detection + Visual feedback)
+	# Capture the unhighlighted base color ONCE. All highlight changes go base→base±delta so
+	# repeated enter/press events can't compound the color into a permanently-brighter "stuck"
+	# state (the root of the touch drag-highlight bug).
+	var base_color: Color = sb.bg_color
+	var set_highlight := func(on: bool) -> void:
+		if sb:
+			sb.bg_color = base_color.lightened(0.08) if on else base_color
+
+	# Connect gui_input for click-to-expand behavior (tap vs scroll detection + visual feedback).
 	outer_row.gui_input.connect(func(event):
 		if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
 			if event.pressed:
 				outer_row.set_meta("tap_start_pos", event.global_position)
-				if sb:
-					outer_row.set_meta("pre_press_color", sb.bg_color)
-					sb.bg_color = sb.bg_color.lightened(0.1)
+				set_highlight.call(true)
 			else:
-				if sb and outer_row.has_meta("pre_press_color"):
-					sb.bg_color = outer_row.get_meta("pre_press_color")
-				
-				var start_pos = outer_row.get_meta("tap_start_pos", event.global_position)
-				var distance = (event.global_position - start_pos).length()
-				# If movement is minimal, treat it as a tap
-				if distance < 10:
-					_on_inspect_cargo_item_pressed(agg_data, vehicle_vbox, outer_row, null)
-					get_viewport().set_input_as_handled()
+				set_highlight.call(false)
+				# Only treat as a tap if the press actually began on THIS row. Releasing here
+				# after dragging in from another row (no press recorded) must NOT count as a tap.
+				if outer_row.has_meta("tap_start_pos"):
+					var start_pos = outer_row.get_meta("tap_start_pos")
+					outer_row.remove_meta("tap_start_pos")
+					var distance = (event.global_position - start_pos).length()
+					if distance < 10:
+						_on_inspect_cargo_item_pressed(agg_data, vehicle_vbox, outer_row, null)
+						get_viewport().set_input_as_handled()
 	)
 
 	var item_data = agg_data["item_data_sample"]
@@ -933,15 +973,17 @@ func _build_cargo_row(vehicle_vbox: VBoxContainer, display_name: String, quantit
 	# Item label (expands to take remaining space before fixed columns)
 	content_row.add_child(item_label)
 
-	# NEW: Context column for vehicle or item type
+	# Context column: vehicle or item type. Kept narrow on portrait to avoid row overflow.
 	var context_label := Label.new()
-	context_label.custom_minimum_size = Vector2(140 if _is_mobile() else 120, 22)
+	context_label.custom_minimum_size = Vector2(0, 0)
+	context_label.size_flags_horizontal = Control.SIZE_SHRINK_END
 	context_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
 	context_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	context_label.modulate = Color(0.8, 0.8, 0.8, 1)
 	context_label.add_theme_font_size_override("font_size", _get_font_size(14))
 	content_row.add_child(context_label)
 
+	var portrait := _is_portrait()
 	if organization_mode == "by_type":
 		var locations: Dictionary = agg_data.get("locations", {})
 		if not locations.is_empty():
@@ -949,7 +991,7 @@ func _build_cargo_row(vehicle_vbox: VBoxContainer, display_name: String, quantit
 				context_label.text = locations.keys()[0]
 			else:
 				context_label.text = "Multiple"
-			
+
 			var tooltip_parts: Array[String]
 			for v_name in locations:
 				tooltip_parts.append("%s (x%d)" % [v_name, locations[v_name]])
@@ -965,102 +1007,104 @@ func _build_cargo_row(vehicle_vbox: VBoxContainer, display_name: String, quantit
 			category_name = "part"
 			if CARGO_MENU_DEBUG:
 				print("[CargoUI][ByVehicle] Forced category to 'part' for:", display_name)
-		
+
 		var display_text: String
-		match category_name:
-			"mission":
-				display_text = "Delivery Cargo"
-			"part":
-				display_text = "Part Cargo"
-			"resource":
-				display_text = "Resource Cargo"
-			_: # "other", "vehicle", or anything else
-				display_text = "Other Cargo"
+		if portrait:
+			match category_name:
+				"delivery": display_text = "Delivery"
+				"part":     display_text = "Part"
+				"resource": display_text = "Resource"
+				_:          display_text = "Other"
+		else:
+			match category_name:
+				"delivery": display_text = "Delivery Cargo"
+				"part":     display_text = "Part Cargo"
+				"resource": display_text = "Resource Cargo"
+				_:          display_text = "Other Cargo"
 		context_label.text = display_text
 
-	# Add Weight and Volume labels to the main row
-	var weight_label := Label.new()
-	weight_label.text = NumberFormat.fmt_float(agg_data.get("total_weight", 0.0), 2) + " kg"
-	weight_label.custom_minimum_size = Vector2(90 if _is_mobile() else 80, 22)
-	weight_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-	weight_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	weight_label.modulate = Color(0.8, 0.85, 0.9, 1)
-	weight_label.add_theme_font_size_override("font_size", _get_font_size(13))
-	content_row.add_child(weight_label)
+	# Weight and volume: hide on portrait to keep the row from overflowing.
+	# These values are always visible in the inspector panel.
+	if not portrait:
+		var weight_label := Label.new()
+		weight_label.text = NumberFormat.fmt_float(agg_data.get("total_weight", 0.0), 2) + " kg"
+		weight_label.custom_minimum_size = Vector2(80, 22)
+		weight_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+		weight_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		weight_label.modulate = Color(0.8, 0.85, 0.9, 1)
+		weight_label.add_theme_font_size_override("font_size", _get_font_size(13))
+		content_row.add_child(weight_label)
 
-	var volume_label := Label.new()
-	volume_label.text = NumberFormat.fmt_float(agg_data.get("total_volume", 0.0), 2) + " m³"
-	volume_label.custom_minimum_size = Vector2(90 if _is_mobile() else 80, 22)
-	volume_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-	volume_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	volume_label.modulate = Color(0.8, 0.9, 0.85, 1)
-	volume_label.add_theme_font_size_override("font_size", _get_font_size(13))
-	content_row.add_child(volume_label)
+		var volume_label := Label.new()
+		volume_label.text = NumberFormat.fmt_float(agg_data.get("total_volume", 0.0), 2) + " m³"
+		volume_label.custom_minimum_size = Vector2(80, 22)
+		volume_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+		volume_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		volume_label.modulate = Color(0.8, 0.9, 0.85, 1)
+		volume_label.add_theme_font_size_override("font_size", _get_font_size(13))
+		content_row.add_child(volume_label)
 
 	# (Removed) Tag column: omit category/type/subtype label per request.
 
-	# Quality column (or placeholder)
-	var quality_holder := Control.new()
-	quality_holder.custom_minimum_size = Vector2(40 if _is_mobile() else 34, 22)
-	quality_holder.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	if item_data.has("quality"):
-		var q_val = NumberFormat.to_i(item_data.get("quality", 0), 0, "inspect:quality")
-		if q_val > 0:
-			var q_label := Label.new()
-			q_label.text = "Q" + str(q_val)
-			q_label.add_theme_font_size_override("font_size", _get_font_size(12))
-			q_label.custom_minimum_size = Vector2(40 if _is_mobile() else 34, 22)
-			q_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-			q_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-			q_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-			if q_val >= 80:
-				q_label.modulate = Color(0.3, 0.85, 0.45, 1)
-			elif q_val >= 50:
-				q_label.modulate = Color(0.85, 0.75, 0.25, 1)
-			else:
-				q_label.modulate = Color(0.85, 0.45, 0.35, 1)
-			quality_holder.add_child(q_label)
-	content_row.add_child(quality_holder)
+	# Quality column (hidden on portrait — visible in inspector)
+	if not portrait:
+		var quality_holder := Control.new()
+		quality_holder.custom_minimum_size = Vector2(34, 22)
+		quality_holder.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		if item_data.has("quality"):
+			var q_val = NumberFormat.to_i(item_data.get("quality", 0), 0, "inspect:quality")
+			if q_val > 0:
+				var q_label := Label.new()
+				q_label.text = "Q" + str(q_val)
+				q_label.add_theme_font_size_override("font_size", _get_font_size(12))
+				q_label.custom_minimum_size = Vector2(34, 22)
+				q_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+				q_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+				q_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+				if q_val >= 80:
+					q_label.modulate = Color(0.3, 0.85, 0.45, 1)
+				elif q_val >= 50:
+					q_label.modulate = Color(0.85, 0.75, 0.25, 1)
+				else:
+					q_label.modulate = Color(0.85, 0.45, 0.35, 1)
+				quality_holder.add_child(q_label)
+		content_row.add_child(quality_holder)
 
-	# Condition column (or placeholder)
-	var condition_holder := Control.new()
-	condition_holder.custom_minimum_size = Vector2(40 if _is_mobile() else 34, 22)
-	condition_holder.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	if item_data.has("condition"):
-		var c_val = NumberFormat.to_i(item_data.get("condition", 0), 0, "inspect:condition")
-		if c_val > 0:
-			var c_label := Label.new()
-			c_label.text = "C" + str(c_val)
-			c_label.add_theme_font_size_override("font_size", _get_font_size(12))
-			c_label.custom_minimum_size = Vector2(40 if _is_mobile() else 34, 22)
-			c_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-			c_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-			c_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-			if c_val >= 75:
-				c_label.modulate = Color(0.35, 0.8, 0.95, 1)
-			elif c_val >= 40:
-				c_label.modulate = Color(0.95, 0.6, 0.25, 1)
-			else:
-				c_label.modulate = Color(0.9, 0.35, 0.3, 1)
-			condition_holder.add_child(c_label)
-	content_row.add_child(condition_holder)
+		# Condition column (hidden on portrait — visible in inspector)
+		var condition_holder := Control.new()
+		condition_holder.custom_minimum_size = Vector2(34, 22)
+		condition_holder.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		if item_data.has("condition"):
+			var c_val = NumberFormat.to_i(item_data.get("condition", 0), 0, "inspect:condition")
+			if c_val > 0:
+				var c_label := Label.new()
+				c_label.text = "C" + str(c_val)
+				c_label.add_theme_font_size_override("font_size", _get_font_size(12))
+				c_label.custom_minimum_size = Vector2(34, 22)
+				c_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+				c_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+				c_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+				if c_val >= 75:
+					c_label.modulate = Color(0.35, 0.8, 0.95, 1)
+				elif c_val >= 40:
+					c_label.modulate = Color(0.95, 0.6, 0.25, 1)
+				else:
+					c_label.modulate = Color(0.9, 0.35, 0.3, 1)
+				condition_holder.add_child(c_label)
+		content_row.add_child(condition_holder)
 
 	vehicle_vbox.add_child(outer_row)
 
-	# Hover highlight: lighten background stylebox only (keeps text consistent)
-	outer_row.mouse_entered.connect(func():
-		if sb:
-			sb.bg_color = sb.bg_color.lightened(0.08)
-	)
+	# Hover highlight is desktop-only: touch has no real hover, and emulated enter events on a
+	# finger-drag would light a card that then never receives a matching exit on lift — the
+	# classic "stuck highlight". mouse_exited still runs on both platforms as the safety net:
+	# it clears the highlight (and any pending tap) whenever the pointer/finger leaves the row.
+	if not _is_mobile():
+		outer_row.mouse_entered.connect(func(): set_highlight.call(true))
 	outer_row.mouse_exited.connect(func():
-		if sb:
-			if _is_mobile():
-				sb.bg_color = Color(0.10, 0.11, 0.13, 1.0)
-			else:
-				if item_index % 2 == 0:
-					sb.bg_color = Color(0.13, 0.15, 0.19, 1)
-				else:
-					sb.bg_color = Color(0.10, 0.12, 0.16, 1)
+		set_highlight.call(false)
+		if outer_row.has_meta("tap_start_pos"):
+			outer_row.remove_meta("tap_start_pos")
 	)
 
 func _has_any_keys(data: Dictionary, keys: Array) -> bool:
@@ -1247,7 +1291,7 @@ func _add_category_section(parent: VBoxContainer, title: String, agg_data: Dicti
 		var bars_vbox := VBoxContainer.new()
 		bars_vbox.name = "VehicleMiniBars"
 		bars_vbox.add_theme_constant_override("separation", 4 if _is_mobile() else 2)
-		bars_vbox.custom_minimum_size = Vector2(200 if _is_mobile() else 160, 0)
+		bars_vbox.custom_minimum_size = Vector2(0, 0)
 		bars_vbox.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 		bars_vbox.size_flags_horizontal = Control.SIZE_SHRINK_END
 
@@ -1260,7 +1304,7 @@ func _add_category_section(parent: VBoxContainer, title: String, agg_data: Dicti
 		vol_lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 		vol_lbl.modulate = Color(0.8, 0.9, 0.85, 1)
 		var vol_bar := ProgressBar.new()
-		vol_bar.custom_minimum_size = Vector2(140, 14 if _is_mobile() else 10)
+		vol_bar.custom_minimum_size = Vector2(100, 14 if _is_mobile() else 10)
 		vol_bar.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		vol_bar.show_percentage = false
 		_set_capacity_progressbar_style(vol_bar, used_volume, total_volume)
@@ -1277,7 +1321,7 @@ func _add_category_section(parent: VBoxContainer, title: String, agg_data: Dicti
 		wt_lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 		wt_lbl.modulate = Color(0.8, 0.85, 0.9, 1)
 		var wt_bar := ProgressBar.new()
-		wt_bar.custom_minimum_size = Vector2(140, 14 if _is_mobile() else 10)
+		wt_bar.custom_minimum_size = Vector2(100, 14 if _is_mobile() else 10)
 		wt_bar.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		wt_bar.show_percentage = false
 		_set_capacity_progressbar_style(wt_bar, used_weight, total_weight)
@@ -1293,8 +1337,8 @@ func _add_category_section(parent: VBoxContainer, title: String, agg_data: Dicti
 	if vehicle_id != "":
 		var inspect_button := Button.new()
 		inspect_button.text = "Inspect"
-		var btn_w = 140 if _is_mobile() else 90
-		var btn_h = 72 if _is_mobile() else 44
+		var btn_w = 100 if _is_mobile() else 90
+		var btn_h = 70 if _is_mobile() else 44
 		inspect_button.custom_minimum_size = Vector2(btn_w, btn_h)
 		inspect_button.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 		inspect_button.add_theme_font_size_override("font_size", _get_font_size(13))
@@ -1383,6 +1427,15 @@ func _populate_cargo_list():
 	_diag("populate", "done")
 	_reopen_inspects()
 
+func _on_layout_mode_changed(_mode: int = -1, _screen_size: Vector2 = Vector2.ZERO, _is_mobile_val: bool = false) -> void:
+	if not is_inside_tree():
+		return
+	if is_instance_valid(cargo_sort_option_button):
+		var sort_h := 70 if _is_portrait() else (50 if _is_mobile() else 44)
+		cargo_sort_option_button.custom_minimum_size = Vector2(0, sort_h)
+	if convoy_data_received != null and not convoy_data_received.is_empty():
+		_populate_cargo_list()
+
 func _update_ui(convoy: Dictionary) -> void:
 	# Reapply cargo population on live updates while attempting to preserve inspect state.
 	var now := Time.get_ticks_msec()
@@ -1427,7 +1480,7 @@ func _populate_by_type():
 		child.queue_free()
 	_diag("clear_rows", "type_end", {"removed": _clr})
 
-	var aggregated_missions: Dictionary = {}
+	var aggregated_deliveries: Dictionary = {}
 	var aggregated_parts: Dictionary = {}
 	var aggregated_resources: Dictionary = {}
 	var aggregated_other: Dictionary = {} # Fallback category
@@ -1495,15 +1548,15 @@ func _populate_by_type():
 						raw_item["category"] = "resource"
 						if CARGO_MENU_DEBUG:
 							print("[CargoClassify][Typed][Rebucket] OTHER -> RESOURCE:", JSON.stringify(raw_item.get("name", raw_item.get("base_name", ""))))
-					elif _looks_like_mission(raw_item):
-						effective_category = "mission"
-						raw_item["category"] = "mission"
+					elif _looks_like_delivery(raw_item):
+						effective_category = "delivery"
+						raw_item["category"] = "delivery"
 						if CARGO_MENU_DEBUG:
-							print("[CargoClassify][Typed][Rebucket] OTHER -> MISSION:", JSON.stringify(raw_item.get("name", raw_item.get("base_name", ""))))
+							print("[CargoClassify][Typed][Rebucket] OTHER -> DELIVERY:", JSON.stringify(raw_item.get("name", raw_item.get("base_name", ""))))
 
 				match effective_category:
-					"mission":
-						_aggregate_cargo_item(aggregated_missions, raw_item, vehicle_name)
+					"delivery":
+						_aggregate_cargo_item(aggregated_deliveries, raw_item, vehicle_name)
 					"part":
 						# Only aggregate if uninstalled (vehicle_id == null)
 						if not raw_item.has("vehicle_id") or raw_item["vehicle_id"] == null:
@@ -1535,9 +1588,12 @@ func _populate_by_type():
 				if not (item is Dictionary and _is_displayable_cargo(item)):
 					continue
 				any_cargo_found_in_convoy = true
-				# Mission items: prefer presence-based recipient signal.
-				if item.get("recipient") != null:
-					_aggregate_cargo_item(aggregated_missions, item, vehicle_name)
+				# Delivery items: prefer presence-based recipient signal.
+				if item.has("recipient") and item.get("recipient") != null:
+					var rec = str(item.get("recipient")).strip_edges()
+					if rec != "" and rec != "00000000-0000-0000-0000-000000000000":
+						_aggregate_cargo_item(aggregated_deliveries, item, vehicle_name)
+						continue
 				# Detect parts even if they appear in the main cargo list
 				elif _looks_like_part(item):
 					# Normalize hint to aid downstream UI and filtering
@@ -1602,18 +1658,18 @@ func _populate_by_type():
 		for k in moved_keys:
 			aggregated_other.erase(k)
 
-	_add_category_section(direct_vbox_ref, "Delivery Cargo", aggregated_missions)
+	_add_category_section(direct_vbox_ref, "Delivery Cargo", aggregated_deliveries)
 	_add_category_section(direct_vbox_ref, "Part Cargo", aggregated_parts)
 	_add_category_section(direct_vbox_ref, "Resource Cargo", aggregated_resources)
 	_add_category_section(direct_vbox_ref, "Other Cargo", aggregated_other)
-	_diag("populate_type", "sections_added", {"missions": aggregated_missions.size(), "parts": aggregated_parts.size(), "resources": aggregated_resources.size(), "other": aggregated_other.size()})
+	_diag("populate_type", "sections_added", {"deliveries": aggregated_deliveries.size(), "parts": aggregated_parts.size(), "resources": aggregated_resources.size(), "other": aggregated_other.size()})
 
-	if is_instance_valid(cargo_sort_option_button):
-		cargo_sort_option_button.get_parent().visible = not aggregated_missions.is_empty()
+	if is_instance_valid(cargo_sort_option_button) and is_instance_valid(cargo_sort_option_button.get_parent()):
+		cargo_sort_option_button.get_parent().visible = not aggregated_deliveries.is_empty()
 
 	# Debug counts summary
 	if CARGO_MENU_DEBUG:
-		print("[ConvoyCargoMenu][DEBUG] Category counts -> Missions:%d Parts:%d Resources:%d Other:%d" % [aggregated_missions.size(), aggregated_parts.size(), aggregated_resources.size(), aggregated_other.size()])
+		print("[ConvoyCargoMenu][DEBUG] Category counts -> Deliveries:%d Parts:%d Resources:%d Other:%d" % [aggregated_deliveries.size(), aggregated_parts.size(), aggregated_resources.size(), aggregated_other.size()])
 		if aggregated_parts.size() > 0:
 			print("[CargoClassify] Parts keys:", JSON.stringify(aggregated_parts.keys()))
 		if aggregated_other.size() > 0:
@@ -1715,11 +1771,11 @@ func _populate_by_vehicle():
 						raw_item["category"] = "resource"
 						if CARGO_MENU_DEBUG:
 							print("[CargoClassify][ByVehicle][Typed][Rebucket] OTHER -> RESOURCE:", JSON.stringify(raw_item.get("name", raw_item.get("base_name", ""))))
-					elif _looks_like_mission(raw_item):
-						effective_category = "mission"
-						raw_item["category"] = "mission"
+					elif _looks_like_delivery(raw_item):
+						effective_category = "delivery"
+						raw_item["category"] = "delivery"
 						if CARGO_MENU_DEBUG:
-							print("[CargoClassify][ByVehicle][Typed][Rebucket] OTHER -> MISSION:", JSON.stringify(raw_item.get("name", raw_item.get("base_name", ""))))
+							print("[CargoClassify][ByVehicle][Typed][Rebucket] OTHER -> DELIVERY:", JSON.stringify(raw_item.get("name", raw_item.get("base_name", ""))))
 
 				# Only aggregate if uninstalled (vehicle_id == null) for parts
 				if String(typed.category) == "part":
@@ -1727,7 +1783,7 @@ func _populate_by_vehicle():
 						continue
 				_aggregate_cargo_item(vehicle_aggregated_all_cargo, raw_item)
 				# Flag if this is delivery cargo
-				if effective_category == "mission":
+				if effective_category == "delivery":
 					global_has_delivery_cargo = true
 				# If still 'other', log it for diagnosis
 				if CARGO_MENU_DEBUG and effective_category == "other":
@@ -1746,8 +1802,8 @@ func _populate_by_vehicle():
 				# Replicate the classification logic from `_populate_by_type` to ensure
 				# the `category` hint is correctly injected before aggregation. This helps
 				# the ItemsData factory correctly classify the item later.
-				if _looks_like_mission(item):
-					item["category"] = "mission"
+				if _looks_like_delivery(item):
+					item["category"] = "delivery"
 					global_has_delivery_cargo = true
 				elif _looks_like_part(item):
 					item["category"] = "part"
@@ -1887,7 +1943,13 @@ func _on_inspect_cargo_item_pressed(agg_data: Dictionary, list_container: VBoxCo
 					_diag("inspect", "persist_remove", {"cargo_id": cid})
 		if is_instance_valid(toggle_button):
 			toggle_button.text = "Inspect"
+		if item_row_hbox == _mobile_open_row:
+			_mobile_open_row = null
 		return
+
+	# Mobile: only one inspect panel open at a time — collapse the previous one first.
+	if _is_mobile() and is_instance_valid(_mobile_open_row) and _mobile_open_row != item_row_hbox:
+		_close_inspect_for_row(_mobile_open_row)
 
 	item_row_hbox.set_meta("inspect_building", true)
 	var panel := _build_inline_inspect_panel(agg_data, item_row_hbox)
@@ -1909,6 +1971,8 @@ func _on_inspect_cargo_item_pressed(agg_data: Dictionary, list_container: VBoxCo
 				_diag("inspect", "persist_add", {"cargo_id": cid})
 	if is_instance_valid(toggle_button):
 		toggle_button.text = "Hide"
+	if _is_mobile():
+		_mobile_open_row = item_row_hbox
 
 	# Post-open verification: check if panel remains after short delays
 	var verify_token := "" 
@@ -1918,6 +1982,28 @@ func _on_inspect_cargo_item_pressed(agg_data: Dictionary, list_container: VBoxCo
 		verify_token = str(first_dict.get("cargo_id", agg_data.get("display_name", "")))
 	_call_verify_inspect_persistence(item_row_hbox, verify_token, 0.5)
 	_call_verify_inspect_persistence(item_row_hbox, verify_token, 1.2)
+
+func _close_inspect_for_row(row: HBoxContainer) -> void:
+	# Tear down an open inspect panel for `row` (used by mobile single-expand to collapse the
+	# previously-open card). Mirrors the toggle-off branch of _on_inspect_cargo_item_pressed.
+	if not is_instance_valid(row):
+		return
+	if row.has_meta("inspect_panel"):
+		var existing_panel: Node = row.get_meta("inspect_panel")
+		if is_instance_valid(existing_panel):
+			var panel_parent := existing_panel.get_parent()
+			if is_instance_valid(panel_parent):
+				panel_parent.call_deferred("remove_child", existing_panel)
+			existing_panel.call_deferred("queue_free")
+		row.remove_meta("inspect_panel")
+	var agg_meta = row.get_meta("agg_data", null)
+	if agg_meta is Dictionary and (agg_meta as Dictionary).get("items", null) is Array:
+		for it in (agg_meta as Dictionary).get("items", []):
+			var cid := str((it as Dictionary).get("cargo_id", ""))
+			if not cid.is_empty():
+				_open_inspects.erase(cid)
+	if row == _mobile_open_row:
+		_mobile_open_row = null
 
 func _call_verify_inspect_persistence(row: HBoxContainer, token: String, delay_sec: float) -> void:
 	# Use a timer to re-check panel presence and log if missing
@@ -2024,6 +2110,21 @@ func _build_inline_inspect_panel(agg_data: Dictionary, _item_row_hbox: HBoxConta
 		data_copy["unit_weight"] = total_w / f_quantity
 	if not data_copy.has("unit_volume") and f_quantity > 0 and total_v > 0:
 		data_copy["unit_volume"] = total_v / f_quantity
+
+	# Delivery Reward total (Sprint 6): the "Delivery Reward" row must show the reward for the
+	# whole stack (unit_delivery_reward × quantity), not the per-unit figure. Deriving from the
+	# per-unit field × the aggregated quantity is also correct when a delivery spans multiple
+	# aggregated stacks — using the raw stack `delivery_reward` sample would undercount those.
+	var unit_reward := 0.0
+	if data_copy.has("unit_delivery_reward") and data_copy.get("unit_delivery_reward") != null:
+		unit_reward = NumberFormat.to_f(data_copy.get("unit_delivery_reward"), 0.0, "inspect:unit_reward")
+	if unit_reward <= 0.0 and item_data_sample.has("delivery_reward") and item_data_sample.get("delivery_reward") != null:
+		# Fallback: payload only carries the stack total — convert to per-unit via the sample's own quantity.
+		var sample_qty := NumberFormat.to_f(item_data_sample.get("quantity", 1), 1.0, "inspect:sample_qty")
+		if sample_qty > 0.0:
+			unit_reward = NumberFormat.to_f(item_data_sample.get("delivery_reward"), 0.0, "inspect:sample_reward") / sample_qty
+	if unit_reward > 0.0:
+		data_copy["delivery_reward"] = unit_reward * f_quantity
 
 	# If item looks like a part, inject modifiers so they can appear in Other Details.
 	_inject_part_modifiers(data_copy)

@@ -10,11 +10,16 @@ static func has_install_slot(item_data: Dictionary) -> bool:
 			return true
 	return false
 
+static func is_installable_part(item_data: Dictionary) -> bool:
+	# A part either exposes a slot (rich data) OR was tagged is_part by the aggregator (thin vendor
+	# cargo, where slot/part_id resolve server-side from cargo_id).
+	return has_install_slot(item_data) or bool(item_data.get("is_part", false))
+
 static func can_show_install_button(_is_buy_mode: bool, selected_item: Variant) -> bool:
 	if selected_item == null or not (selected_item is Dictionary) or not (selected_item as Dictionary).has("item_data"):
 		return false
 	var idata: Dictionary = (selected_item as Dictionary).item_data
-	return has_install_slot(idata)
+	return is_installable_part(idata)
 
 static func compat_key(vehicle_id: String, part_uid: String) -> String:
 	return "%s||%s" % [vehicle_id, part_uid]

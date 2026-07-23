@@ -60,6 +60,7 @@ static func deserialize_cargo(p_binary_data: PackedByteArray, p_offset: int) -> 
 	cargo['vehicle_id'] = _unpack_string(p_binary_data, p_offset, 36); p_offset += 36
 	cargo['warehouse_id'] = _unpack_string(p_binary_data, p_offset, 36); p_offset += 36
 	cargo['vendor_id'] = _unpack_string(p_binary_data, p_offset, 36); p_offset += 36
+	cargo['recipient'] = _unpack_string(p_binary_data, p_offset, 36); p_offset += 36
 	return {"data": cargo, "offset": p_offset}
 
 static func deserialize_vehicle(p_binary_data: PackedByteArray, p_offset: int) -> Dictionary:

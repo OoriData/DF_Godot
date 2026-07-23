@@ -64,8 +64,10 @@ const ERROR_MAP: Dictionary = {
 	"PATCH 'resource_bought' failed:": "Could not buy resource: ",
 	"PATCH 'resource_sold' failed:": "Could not sell resource: ",
 	"GET 'vehicle_data_received' failed:": "Could not load vehicle details: ",
-	# Warehouses (DF+ required) — show server-provided detail
-	"PATCH 'warehouse_created' failed:": "Warehouse purchase unavailable: Support the developers and upgrade to DF+",
+	# Warehouses (DF+ required) — verb-agnostic (server may send POST or PATCH); clean
+	# full-replacement message. Premium-gated failures are additionally routed to the
+	# upgrade flow by callers via is_premium_required() below.
+	"'warehouse_created' failed:": "Warehouses require Desolate Frontiers+ (DF+). Upgrade to purchase and manage warehouses.",
 
 	# --- Network/Parsing Errors ---
 	"Failed to parse": "Received an unexpected response from the server. Please try again.",
@@ -94,6 +96,23 @@ const INLINE_ERROR_KEYS: Array[String] = [
 
 func is_inline_error(raw_message: String) -> bool:
 	for key in INLINE_ERROR_KEYS:
+		if raw_message.find(key) != -1:
+			return true
+	return false
+
+# Substrings that mark a DF+/premium-gated backend failure (e.g. buying a warehouse
+# or exceeding the free vehicle cap without DF+). Callers use this to route to the
+# premium upgrade flow instead of the generic error modal. Kept phrasing-tolerant so
+# future gated actions (vehicle cap, etc.) are caught without a code change.
+const PREMIUM_REQUIRED_KEYS: Array[String] = [
+	"upgrade to DF+",
+	"requires DF+",
+	"DF+ required",
+	"DF+ to purchase",
+]
+
+func is_premium_required(raw_message: String) -> bool:
+	for key in PREMIUM_REQUIRED_KEYS:
 		if raw_message.find(key) != -1:
 			return true
 	return false

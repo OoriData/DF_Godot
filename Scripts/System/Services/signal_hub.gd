@@ -5,6 +5,12 @@ extends Node
 
 # Map and Settlements
 signal map_changed(tiles: Array, settlements: Array)
+signal map_camera_focus_settlement_requested(settlement_name: String)
+signal map_camera_return_to_convoy_requested()
+# Settlement menu asks the map to keep a settlement's label pinned while the menu is open.
+# enabled=true on open, false on close. Reuses the settlement-pin system (UIManager).
+signal settlement_menu_pin_requested(coords: Vector2i, enabled: bool)
+signal map_overlay_settings_changed(settings: Dictionary)
 
 # Convoys
 signal convoys_changed(convoys: Array)

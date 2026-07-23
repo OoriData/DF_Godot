@@ -30,6 +30,20 @@ var _original_money_font_size: int
 
 @export var navbar_background_color: Color = Color(0.16, 0.16, 0.16, 0.92)
 
+# --- Oori tile tuning for the navbar -----------------------------------------
+# The navbar is a thin horizontal bar, so it can only ever show a horizontal SLICE
+# of the square-ish tile. Bigger tiles (higher scale) = the art is legible but you
+# see less of it per slice; the offset then positions that slice on a motif row
+# instead of a flat gap (the source of the "blank spots"). These are exported so
+# the look can be tuned live in the editor.
+## Higher = bigger/zoomed-in tiles (more legible art). ~0.4 ≈ one motif row tall in the bar.
+@export_range(0.05, 0.8, 0.01) var navbar_oori_scale: float = 0.4
+## Screen-space px shift to slide the visible slice onto a motif row (avoid flat gaps).
+@export var navbar_oori_offset: Vector2 = Vector2(0, 0)
+## Multiplies the tile brightness so the bar reads as a distinct, darker band
+## (1.0 = raw texture, lower = darker — also hides slice unevenness).
+@export_range(0.3, 1.0, 0.05) var navbar_oori_darken: float = 0.7
+
 # Oori Theme Palette
 const OORI_GREY = Color("#393d47")
 const OORI_DARK_GREY = Color("#25282a")
@@ -78,7 +92,9 @@ func _ready() -> void:
 	
 	if _is_mobile():
 		_apply_mobile_optimizations()
-	
+
+	# Must run AFTER styling so the panel stylebox exists; insets the content to safe area.
+	_update_safe_margins()
 	queue_redraw()
 
 func _is_mobile() -> bool:
@@ -108,16 +124,35 @@ func _update_mobile_sizing() -> void:
 
 	if is_portrait:
 		custom_minimum_size.y = 200 # Increased from 170 for better clearance
-		if is_instance_valid(settings_button): 
-			settings_button.custom_minimum_size = Vector2(240, 130)
-			settings_button.add_theme_font_size_override("font_size", 36)
-		if is_instance_valid(report_bug_button): 
-			report_bug_button.custom_minimum_size = Vector2(160, 130)
-			report_bug_button.add_theme_font_size_override("font_size", 36)
-		
+		# Portrait logical width is only 800px (see UIScaleManager). Fixed button widths
+		# (240/160) plus the convoy selector overflowed the row, ballooning the whole UI.
+		# Let the buttons size to their content (keep the tall touch height) and use a
+		# smaller font so the bar fits a single 800px row.
+		# Font 26 across username + Options + Feedback + money + convoy summed the bar's min-width to
+		# ~833px, wider than the 800px portrait viewport — which forced SafeRegionContainer (and every
+		# menu under it, including the warehouse) 33px past the screen edge. 20px keeps every element
+		# legible while dropping the bar's total to ~710px, safely under 800. (Sprint 7 — top-bar overflow)
+		if is_instance_valid(settings_button):
+			settings_button.custom_minimum_size = Vector2(0, 120)
+			settings_button.add_theme_font_size_override("font_size", 20)
+		if is_instance_valid(report_bug_button):
+			report_bug_button.custom_minimum_size = Vector2(0, 120)
+			report_bug_button.add_theme_font_size_override("font_size", 20)
+
 		# Also scale username and money for portrait clarity
-		if is_instance_valid(username_label): username_label.add_theme_font_size_override("font_size", 32)
-		if is_instance_valid(user_money_label): user_money_label.add_theme_font_size_override("font_size", 32)
+		if is_instance_valid(username_label): username_label.add_theme_font_size_override("font_size", 20)
+		if is_instance_valid(user_money_label): user_money_label.add_theme_font_size_override("font_size", 20)
+
+		# Tighten HBoxContent gap in portrait (12px × 9 gaps = 108px; 6px saves 54px,
+		# keeping the bar's total min-width comfortably under the 800px logical limit).
+		var hbox = get_node_or_null("HBoxContent")
+		if is_instance_valid(hbox):
+			hbox.add_theme_constant_override("separation", 6)
+			# The scene's 16px edge paddings add 32px to the bar's min-width; halve them in portrait.
+			for pad_name in ["LeftPadding", "RightPadding"]:
+				var pad = hbox.get_node_or_null(pad_name)
+				if is_instance_valid(pad):
+					pad.custom_minimum_size.x = 8
 	else:
 		custom_minimum_size.y = 96
 		if is_instance_valid(settings_button): 
@@ -136,23 +171,20 @@ func _apply_base_styling() -> void:
 	if not is_instance_valid(bg_rect):
 		bg_rect = TextureRect.new()
 		bg_rect.name = "OoriBackground"
-		# Set to tile mode as prepared for tileable background
-		bg_rect.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-		bg_rect.stretch_mode = TextureRect.STRETCH_TILE 
-		bg_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		add_child(bg_rect)
-		move_child(bg_rect, 0) # Put in back
+		move_child(bg_rect, 0)
 		bg_rect.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	# Screen-space tiling (STRETCH_TILE) reliably covers the full bar. Because the bar
+	# is anchored top-left full-width, the pattern is already effectively static under
+	# resize — widening the window just reveals more tiles on the right, it doesn't slide.
+	UITheme.apply_oori_bg(bg_rect, navbar_oori_scale, navbar_oori_offset)
+	# Darken the tile so the bar reads as a distinct band and slice unevenness is muted.
+	bg_rect.modulate = Color(navbar_oori_darken, navbar_oori_darken, navbar_oori_darken, 1.0)
 	
-	var bg_tex = load("res://Assets/Themes/Oori Backround.png")
-	if bg_tex:
-		bg_rect.texture = bg_tex
-	
-	# Transparent Panel so the background is visible
+	# Semi-transparent dark overlay so the notch area reads as a distinct "bar"
+	# while still letting the Oori tile show through from BackgroundLayer below.
 	var main_style = StyleBoxFlat.new()
-	main_style.bg_color = Color(0, 0, 0, 0) # Transparent
-	main_style.border_width_bottom = 2
-	main_style.border_color = OORI_GREY
+	main_style.bg_color = Color(0, 0, 0, 0.45)
 	main_style.content_margin_top = 4
 	main_style.content_margin_bottom = 4
 	main_style.content_margin_left = 12
@@ -160,7 +192,7 @@ func _apply_base_styling() -> void:
 	add_theme_stylebox_override("panel", main_style)
 
 func _apply_desktop_styling() -> void:
-	custom_minimum_size.y = 60 # Balanced height
+	custom_minimum_size.y = 80 # Taller premium height on desktop
 
 	# 2. Chips (Username & Money)
 	if is_instance_valid(user_chip):
@@ -179,7 +211,7 @@ func _apply_desktop_styling() -> void:
 		opaque_style.content_margin_right = 12
 		
 		user_chip.add_theme_stylebox_override("panel", opaque_style)
-		username_label.add_theme_font_size_override("font_size", 24)
+		username_label.add_theme_font_size_override("font_size", 30) # Larger username text
 		username_label.add_theme_color_override("font_color", OORI_WHITE)
 	
 	if is_instance_valid(money_chip):
@@ -198,7 +230,7 @@ func _apply_desktop_styling() -> void:
 		vault_style.content_margin_right = 12
 		
 		money_chip.add_theme_stylebox_override("panel", vault_style)
-		user_money_label.add_theme_font_size_override("font_size", 24)
+		user_money_label.add_theme_font_size_override("font_size", 30) # Larger money text
 		user_money_label.add_theme_color_override("font_color", OORI_YELLOW)
 
 	# 3. Buttons (Oori Professional Style with Full Borders)
@@ -226,8 +258,8 @@ func _apply_desktop_styling() -> void:
 		settings_button.add_theme_stylebox_override("hover", btn_hover)
 		settings_button.add_theme_stylebox_override("pressed", btn_hover)
 		settings_button.add_theme_color_override("font_color", OORI_WHITE)
-		settings_button.add_theme_font_size_override("font_size", 20)
-		settings_button.custom_minimum_size = Vector2(0, 46)
+		settings_button.add_theme_font_size_override("font_size", 26) # Bigger button font size
+		settings_button.custom_minimum_size = Vector2(0, 56) # Taller settings button
 		
 	if is_instance_valid(report_bug_button):
 		var bug_normal = btn_normal.duplicate()
@@ -243,11 +275,31 @@ func _apply_desktop_styling() -> void:
 		report_bug_button.add_theme_stylebox_override("hover", bug_hover)
 		report_bug_button.add_theme_stylebox_override("pressed", bug_hover)
 		report_bug_button.add_theme_color_override("font_color", OORI_WHITE)
-		report_bug_button.add_theme_font_size_override("font_size", 20)
-		report_bug_button.custom_minimum_size = Vector2(0, 46)
+		report_bug_button.add_theme_font_size_override("font_size", 26) # Bigger button font size
+		report_bug_button.custom_minimum_size = Vector2(0, 56) # Taller feedback button
 
 func _update_safe_margins() -> void:
-	pass
+	# Inset the bar CONTENT (buttons/labels) to the safe area so nothing sits under the
+	# notch or rounded corners, while the OoriBackground keeps bleeding to the physical
+	# edges (no black bars). The bar's panel stylebox content margins are the lever.
+	var style = get_theme_stylebox("panel")
+	if not (style is StyleBoxFlat):
+		return
+	var safe := Rect2()
+	var sm = get_node_or_null("/root/ui_scale_manager")
+	if is_instance_valid(sm) and sm.has_method("get_logical_safe_margins"):
+		safe = sm.get_logical_safe_margins()
+	var dsm = get_node_or_null("/root/DeviceStateManager")
+	var is_portrait := false
+	if is_instance_valid(dsm):
+		is_portrait = dsm.get_is_portrait()
+	else:
+		var vp := get_viewport_rect().size
+		is_portrait = vp.y > vp.x
+	var side_min := 8.0 if is_portrait else 8.0
+	style.content_margin_left = maxf(side_min, safe.position.x)
+	style.content_margin_right = maxf(side_min, safe.size.x)
+	style.content_margin_top = 4.0 + safe.position.y  # clear the notch / status bar
 
 
 
@@ -273,6 +325,7 @@ func _notification(what: int) -> void:
 		queue_redraw()
 	elif what == NOTIFICATION_RESIZED:
 		_update_mobile_sizing()
+		_update_safe_margins()
 		queue_redraw()
 
 
@@ -361,11 +414,14 @@ func _configure_options_dropdown() -> void:
 		popup_style.content_margin_top = 24
 		popup_style.content_margin_bottom = 24
 	else:
-		popup.add_theme_font_size_override("font_size", 16)
-		popup_style.content_margin_left = 12
-		popup_style.content_margin_right = 12
-		popup_style.content_margin_top = 8
-		popup_style.content_margin_bottom = 8
+		popup.add_theme_font_size_override("font_size", 22) # Larger font size in desktop menu dropdown
+		popup.add_theme_constant_override("v_separation", 16) # Increased spacing
+		popup.add_theme_constant_override("item_start_padding", 16)
+		popup.add_theme_constant_override("item_end_padding", 16)
+		popup_style.content_margin_left = 18
+		popup_style.content_margin_right = 18
+		popup_style.content_margin_top = 12
+		popup_style.content_margin_bottom = 12
 		
 	popup.add_theme_stylebox_override("panel", popup_style)
 
@@ -464,9 +520,6 @@ func _update_display(data: Dictionary = {}):
 
 	username_label.text = username
 	user_money_label.text = NumberFormat.format_money(money_amount)
-
-func _format_money(amount: Variant) -> String:
-	return NumberFormat.format_money(amount)
 
 func _on_settings_button_pressed():
 	# Lazy-load the settings menu

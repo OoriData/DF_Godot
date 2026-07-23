@@ -64,6 +64,7 @@ var _optimistic_money_after: float = 0.0
 var _info_card: PanelContainer = null
 var _bg_rect: ColorRect = null
 var _content_frame: PanelContainer = null
+var _vehicle_segments: HBoxContainer = null  # Segmented slot indicator, replaces the vehicle ProgressBar
 
 var _post_buy_refresh_attempts_left: int = 0
 var _post_buy_refresh_in_flight: bool = false
@@ -100,6 +101,7 @@ const WAREHOUSE_UPGRADE_PRICES := {
 
 func _ready():
 	print("[WarehouseMenu] _ready()")
+	clip_contents = true
 	_warehouse_service = get_node_or_null("/root/WarehouseService")
 	_hub = get_node_or_null("/root/SignalHub")
 	_ensure_inventory_headers()
@@ -118,10 +120,12 @@ func _ready():
 		if not dsm.layout_mode_changed.is_connected(_on_layout_mode_changed):
 			dsm.layout_mode_changed.connect(_on_layout_mode_changed)
 			
-	# Remove top title per request
-	if is_instance_valid(title_label):
-		title_label.visible = false
-		title_label.text = ""
+	# Wrap the title in the standardized top-banner panel so it gets the same edge buffer every
+	# other convoy submenu has (see MenuBase.setup_convoy_top_banner). The bare label used to sit
+	# flush against the clipped top edge and bleed onto the map above; the banner's opaque backing
+	# + 10px internal padding + verdigris underline guarantee a buffer and match the other menus.
+	# Text is refreshed with the settlement name in _update_ui.
+	_setup_title_banner()
 	# UI polish (buy state card + button styling)
 	_style_buy_menu_ui()
 	_tune_inventory_panels_layout()
@@ -142,8 +146,10 @@ func _ready():
 	# Schedule a deferred re-check to ensure connections after scene tree stabilization
 	call_deferred("_post_ready_expand_diag")
 	if is_instance_valid(back_button):
-		back_button.pressed.connect(func(): emit_signal("back_requested"))
-		style_back_button(back_button)
+		# Hide our own BackButton and defer navigation to the shared MenuManager bottom bar
+		# (Vehicles/Journey/Settlement/Cargo), like the other convoy submenus. The standalone back
+		# button was stacked at the bottom of MainVBox and clipped off the portrait sheet. (Sprint 7)
+		setup_convoy_navigation_bar(back_button)
 	if is_instance_valid(buy_button):
 		buy_button.pressed.connect(_on_buy_pressed)
 	# Selection change hooks to enforce quantity limits
@@ -195,11 +201,352 @@ func _ready():
 		print("[WarehouseMenu][Debug] Connected spawn_convoy_btn pressed signal path=", spawn_convoy_btn.get_path())
 	
 	# Initial style pass
+	_setup_dual_column_layout()
+	_apply_label_wrapping()
 	_on_layout_mode_changed()
 	_update_ui()
 
+## Wraps the top bar (title + buy button) in a slim banner panel so the title gets an opaque backing
+## (it can't bleed onto the map above) plus a small edge buffer, without eating the scarce vertical
+## height of the short portrait sheet. Idempotent.
+func _setup_title_banner() -> void:
+	if not is_instance_valid(top_bar_hbox) or not is_instance_valid(main_vbox):
+		return
+	if top_bar_hbox.get_parent() is PanelContainer and top_bar_hbox.get_parent().name == "TitleBannerPanel":
+		return  # Already wrapped (guard against re-entry).
+
+	var banner := PanelContainer.new()
+	banner.name = "TitleBannerPanel"
+	banner.mouse_filter = Control.MOUSE_FILTER_PASS
+
+	var banner_style := StyleBoxFlat.new()
+	banner_style.bg_color = UITheme.METAL_BASE
+	banner_style.border_width_bottom = 2
+	banner_style.border_color = UITheme.ACCENT_VERDIGRIS
+	# Kept tight — the portrait sheet is short; a fat header was crowding the content below it.
+	banner_style.content_margin_top = 4
+	banner_style.content_margin_bottom = 4
+	banner_style.content_margin_left = 14
+	banner_style.content_margin_right = 14
+	banner.add_theme_stylebox_override("panel", banner_style)
+
+	# Slot the banner where TopBarHBox currently sits, then reparent TopBarHBox inside it.
+	var idx := top_bar_hbox.get_index()
+	main_vbox.add_child(banner)
+	main_vbox.move_child(banner, idx)
+	top_bar_hbox.reparent(banner)
+	top_bar_hbox.alignment = BoxContainer.ALIGNMENT_BEGIN
+
+	# Title reads as a proper header against the banner backing.
+	if is_instance_valid(title_label):
+		title_label.visible = true
+		title_label.text = "Warehouse"
+		title_label.add_theme_font_size_override("font_size", 17)
+		title_label.add_theme_color_override("font_color", UITheme.TEXT_PRIMARY)
+		title_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		title_label.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+
+func _setup_dual_column_layout() -> void:
+	if not is_instance_valid(body_vbox): return
+	if body_vbox.has_node("Columns"): return
+
+	var columns = BoxContainer.new()
+	columns.name = "Columns"
+	columns.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	columns.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	
+	# Wrap Left Column in a sleek styled panel surface
+	var left_panel = PanelContainer.new()
+	left_panel.name = "LeftPanel"
+	left_panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	left_panel.size_flags_stretch_ratio = 1.0
+	left_panel.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_style_panel_surface(left_panel)
+	
+	var left_margin = MarginContainer.new()
+	left_margin.add_theme_constant_override("margin_left", 20)
+	left_margin.add_theme_constant_override("margin_right", 20)
+	left_margin.add_theme_constant_override("margin_top", 20)
+	left_margin.add_theme_constant_override("margin_bottom", 20)
+	left_panel.add_child(left_margin)
+	
+	var left_col = VBoxContainer.new()
+	left_col.name = "LeftColumn"
+	left_col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	left_col.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	left_col.add_theme_constant_override("separation", 24)
+	left_margin.add_child(left_col)
+	
+	var right_col = VBoxContainer.new()
+	right_col.name = "RightColumn"
+	right_col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	right_col.size_flags_stretch_ratio = 1.8
+	right_col.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	
+	columns.add_child(left_panel)
+	columns.add_child(right_col)
+	
+	if is_instance_valid(owned_tabs):
+		var overview_tab = owned_tabs.get_node_or_null("Overview")
+		if is_instance_valid(overview_tab):
+			owned_tabs.remove_child(overview_tab)
+			
+			var title_lbl = Label.new()
+			title_lbl.text = "STORAGE"
+			title_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+			title_lbl.add_theme_font_size_override("font_size", 12)
+			title_lbl.add_theme_color_override("font_color", UITheme.TEXT_MUTED)
+			left_col.add_child(title_lbl)
+			
+			left_col.add_child(overview_tab)
+			overview_tab.size_flags_vertical = Control.SIZE_EXPAND_FILL
+			overview_tab.add_theme_constant_override("separation", 20)
+			
+			# Hide dry default summary label
+			var summary_lbl = overview_tab.get_node_or_null("SummaryLabel")
+			if is_instance_valid(summary_lbl):
+				summary_lbl.visible = false
+		
+		if owned_tabs.get_parent() == body_vbox:
+			body_vbox.remove_child(owned_tabs)
+			right_col.add_child(owned_tabs)
+	
+	body_vbox.add_child(columns)
+	
+	# Storage summary: two labeled bars (cargo + vehicles) instead of a radial gauge.
+	var overview_tab = left_col.get_node_or_null("Overview")
+	if is_instance_valid(overview_tab) and is_instance_valid(overview_cargo_bar):
+		# Hide the scene-level bars; we'll theme them but show our own labels.
+		overview_cargo_bar.visible = false
+		_style_overview_bar(overview_cargo_bar, UITheme.ACCENT_VERDIGRIS)
+		_style_overview_bar(overview_vehicle_bar, UITheme.ACCENT_BRASS)
+		if is_instance_valid(overview_cargo_label):
+			overview_cargo_label.add_theme_font_size_override("font_size", 13)
+			overview_cargo_label.add_theme_color_override("font_color", UITheme.TEXT_PRIMARY)
+		if is_instance_valid(overview_vehicle_label):
+			overview_vehicle_label.add_theme_font_size_override("font_size", 13)
+			overview_vehicle_label.add_theme_color_override("font_color", UITheme.TEXT_PRIMARY)
+		
+	# Collapse the two stacked "label + button" upgrade rows into a single row of two side-by-side
+	# buttons. The side labels only duplicated the cap already shown in the storage bars above, and
+	# stacking two full rows was burning the scarce portrait height. (Sprint 8 — decompress)
+	if is_instance_valid(overview_tab):
+		_build_upgrade_button_row(overview_tab)
+
+		# Slim and style vehicle slots progress bar row
+		var veh_hbox = overview_tab.get_node_or_null("OverviewVehicleHBox") as HBoxContainer
+		var veh_label = overview_tab.get_node_or_null("OverviewVehicleHBox/OverviewVehicleLabel") as Label
+		var veh_bar = overview_tab.get_node_or_null("OverviewVehicleHBox/OverviewVehicleBar") as ProgressBar
+		if veh_hbox and veh_label and veh_bar:
+			veh_hbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			veh_label.add_theme_font_size_override("font_size", 13)
+			veh_label.add_theme_color_override("font_color", UITheme.TEXT_PRIMARY)
+			_style_overview_bar(veh_bar, UITheme.ACCENT_BRASS)
+
+func _style_overview_bar(bar: ProgressBar, accent: Color) -> void:
+	if not is_instance_valid(bar):
+		return
+	bar.show_percentage = false
+	bar.custom_minimum_size.y = 12
+	var bg := StyleBoxFlat.new()
+	# Tinted, bordered track so the bar still reads as a progress bar at 0% (the old METAL_DARK
+	# fill vanished against the equally-dark panel behind it). (Sprint 8)
+	bg.bg_color = Color(accent.r, accent.g, accent.b, 0.16)
+	bg.border_color = Color(accent.r, accent.g, accent.b, 0.5)
+	bg.set_border_width_all(1)
+	bg.set_corner_radius_all(UITheme.RADIUS_SM)
+	var fill := StyleBoxFlat.new()
+	fill.bg_color = accent
+	fill.set_corner_radius_all(UITheme.RADIUS_SM)
+	bar.add_theme_stylebox_override("background", bg)
+	bar.add_theme_stylebox_override("fill", fill)
+
+## Puts the two upgrade buttons side by side in a single styled panel and drops the redundant side
+## labels (the capacity they showed is already in the storage bars above). The button's own text
+## ("Upgrade Cargo" / "Upgrade Vehicle") carries the meaning; the cost stays in the tooltip. Idempotent.
+func _build_upgrade_button_row(overview_tab: Control) -> void:
+	if overview_tab.has_node("UpgradeButtonRow"):
+		return
+	var cargo_hbox := overview_tab.get_node_or_null("ExpandCargoHBox") as HBoxContainer
+	var veh_hbox := overview_tab.get_node_or_null("ExpandVehicleHBox") as HBoxContainer
+	var cargo_btn := overview_tab.get_node_or_null("ExpandCargoHBox/ExpandCargoBtn") as Button
+	var veh_btn := overview_tab.get_node_or_null("ExpandVehicleHBox/ExpandVehicleBtn") as Button
+	if not (is_instance_valid(cargo_hbox) and is_instance_valid(veh_hbox) \
+			and is_instance_valid(cargo_btn) and is_instance_valid(veh_btn)):
+		return
+
+	var wrapper := PanelContainer.new()
+	wrapper.name = "UpgradeButtonRow"
+	wrapper.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = UITheme.METAL_DARK
+	sb.border_color = UITheme.METAL_EDGE
+	sb.set_border_width_all(1)
+	sb.set_corner_radius_all(UITheme.RADIUS_MD)
+	wrapper.add_theme_stylebox_override("panel", sb)
+
+	var margin := MarginContainer.new()
+	margin.add_theme_constant_override("margin_left", 10)
+	margin.add_theme_constant_override("margin_right", 10)
+	margin.add_theme_constant_override("margin_top", 8)
+	margin.add_theme_constant_override("margin_bottom", 8)
+	wrapper.add_child(margin)
+
+	var row := HBoxContainer.new()
+	row.name = "UpgradeButtonsHBox"
+	row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.add_theme_constant_override("separation", 10)
+	margin.add_child(row)
+
+	# Insert the row where the first upgrade block used to be, then move both buttons into it.
+	var idx := cargo_hbox.get_index()
+	overview_tab.add_child(wrapper)
+	overview_tab.move_child(wrapper, idx)
+	cargo_btn.reparent(row)
+	veh_btn.reparent(row)
+	cargo_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	veh_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_style_primary_button(cargo_btn, UITheme.ACCENT_VERDIGRIS)
+	_style_primary_button(veh_btn, UITheme.ACCENT_VERDIGRIS)
+
+	# The now-empty label rows are hidden (kept alive so @onready label refs stay valid).
+	cargo_hbox.visible = false
+	veh_hbox.visible = false
+
+## Long labels ("Upgrade Cargo Capacity (Cap: 100000)", "Retrieve cargo from warehouse", …) must wrap
+## and be allowed to shrink — otherwise their unwrapped text sets a minimum width that forces the row,
+## and the whole menu, wider than the screen and it clips off both edges. (Sprint 7, task 3)
+func _apply_label_wrapping() -> void:
+	for lbl in [expand_cargo_label, expand_vehicle_label, cargo_usage_label, summary_label,
+			overview_cargo_label, overview_vehicle_label, info_label]:
+		if is_instance_valid(lbl):
+			(lbl as Label).autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+			(lbl as Label).size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	# The section headers above each action row. Found by name because _setup_dual_column_layout
+	# reparents the tabs at runtime, so hardcoded paths would be stale.
+	for lbl_name in ["StoreFromConvoyLabel", "RetrieveFromWarehouseLabel", "VehicleStoreLabel",
+			"VehicleRetrieveLabel", "SpawnFromVehicleLabel"]:
+		var lbl := find_child(lbl_name, true, false) as Label
+		if is_instance_valid(lbl):
+			lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+			lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+
+func _apply_column_responsiveness() -> void:
+	if not is_instance_valid(body_vbox): return
+	var columns = body_vbox.get_node_or_null("Columns")
+	if not columns: return
+	var dsm = get_node_or_null("/root/DeviceStateManager")
+	var is_portrait = dsm.get_is_portrait() if dsm else (get_viewport_rect().size.y > get_viewport_rect().size.x)
+	columns.vertical = is_portrait
+	
+	var left_panel = columns.get_node_or_null("LeftPanel")
+	var radial_gauge = get_meta("radial_gauge") as Control if has_meta("radial_gauge") else null
+	var overview_tab = left_panel.find_child("Overview", true, false) if is_instance_valid(left_panel) else null
+	
+	# Keep all elements top-aligned so extra screen height is placed at the bottom
+	body_vbox.alignment = BoxContainer.ALIGNMENT_BEGIN
+	columns.alignment = BoxContainer.ALIGNMENT_BEGIN
+	
+	var right_column = columns.get_node_or_null("RightColumn")
+	if is_portrait:
+		columns.add_theme_constant_override("separation", 14)
+		if is_instance_valid(left_panel):
+			# Stacked vertically: span the full width but shrink-wrap height so the inventory column
+			# below gets the remaining space. (Sprint 7, task 3)
+			left_panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			left_panel.size_flags_vertical = Control.SIZE_FILL
+			left_panel.size_flags_stretch_ratio = 1.0
+			var inner_col = left_panel.find_child("LeftColumn", true, false)
+			if inner_col: inner_col.size_flags_vertical = Control.SIZE_FILL
+			# Trim the panel's inner vertical padding (built at 20px) so the strip is shorter. (Sprint 7 — E)
+			if left_panel.get_child_count() > 0:
+				var lp_margin := left_panel.get_child(0)
+				if lp_margin is MarginContainer:
+					(lp_margin as MarginContainer).add_theme_constant_override("margin_top", 10)
+					(lp_margin as MarginContainer).add_theme_constant_override("margin_bottom", 10)
+		if is_instance_valid(right_column):
+			right_column.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			right_column.size_flags_vertical = Control.SIZE_EXPAND_FILL
+			right_column.size_flags_stretch_ratio = 1.0
+		if is_instance_valid(radial_gauge):
+			# Compact gauge — the storage strip has to share a short bottom sheet with the map above.
+			radial_gauge.custom_minimum_size = Vector2(88, 88)
+		if is_instance_valid(overview_tab):
+			overview_tab.add_theme_constant_override("separation", 4)
+			# Keep overview widgets packed tightly at top of LeftPanel in portrait
+			overview_tab.size_flags_vertical = Control.SIZE_FILL
+
+			# Condensed upgrade labels/buttons so the storage strip stays short and doesn't push the
+			# tabs below off the bottom of the sheet. (Sprint 7 — E: slim STORAGE block)
+			var lbl_cargo = overview_tab.find_child("ExpandCargoLabel", true, false) as Label
+			if lbl_cargo: lbl_cargo.add_theme_font_size_override("font_size", 15)
+			var lbl_veh = overview_tab.find_child("ExpandVehicleLabel", true, false) as Label
+			if lbl_veh: lbl_veh.add_theme_font_size_override("font_size", 15)
+
+			var btn_cargo = overview_tab.find_child("ExpandCargoBtn", true, false) as Button
+			if btn_cargo:
+				btn_cargo.add_theme_font_size_override("font_size", 14)
+				btn_cargo.custom_minimum_size.y = 52
+			var btn_veh = overview_tab.find_child("ExpandVehicleBtn", true, false) as Button
+			if btn_veh:
+				btn_veh.add_theme_font_size_override("font_size", 14)
+				btn_veh.custom_minimum_size.y = 52
+	else:
+		columns.add_theme_constant_override("separation", 24)
+		if is_instance_valid(left_panel):
+			# Both columns must EXPAND horizontally so they share the full row width — without this they
+			# shrink-wrap to content and leave dead space on the right in landscape. LeftPanel (storage
+			# monitor) takes ~1/3, RightColumn (inventory tabs) ~2/3. (Sprint 7, task 3)
+			left_panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			left_panel.size_flags_vertical = Control.SIZE_EXPAND_FILL
+			left_panel.size_flags_stretch_ratio = 1.0
+			var inner_col = left_panel.find_child("LeftColumn", true, false)
+			if inner_col: inner_col.size_flags_vertical = Control.SIZE_EXPAND_FILL
+		if is_instance_valid(right_column):
+			right_column.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			right_column.size_flags_vertical = Control.SIZE_EXPAND_FILL
+			right_column.size_flags_stretch_ratio = 2.0
+		if is_instance_valid(radial_gauge):
+			radial_gauge.custom_minimum_size = Vector2(180, 180)
+		if is_instance_valid(overview_tab):
+			overview_tab.add_theme_constant_override("separation", 20)
+			# Fill entire vertical panel height in landscape/desktop
+			overview_tab.size_flags_vertical = Control.SIZE_EXPAND_FILL
+			
+			# Restore standard size in landscape
+			var lbl_cargo = overview_tab.find_child("ExpandCargoLabel", true, false) as Label
+			if lbl_cargo: lbl_cargo.add_theme_font_size_override("font_size", 13)
+			var lbl_veh = overview_tab.find_child("ExpandVehicleLabel", true, false) as Label
+			if lbl_veh: lbl_veh.add_theme_font_size_override("font_size", 13)
+			
+			# Restore standard button sizes
+			var btn_cargo = overview_tab.find_child("ExpandCargoBtn", true, false) as Button
+			if btn_cargo: btn_cargo.remove_theme_font_size_override("font_size")
+			var btn_veh = overview_tab.find_child("ExpandVehicleBtn", true, false) as Button
+			if btn_veh: btn_veh.remove_theme_font_size_override("font_size")
+
+func _on_cargo_card_selected(item_data: Dictionary) -> void:
+	var meta_to_select = _encode_cargo_meta([{"cargo_id": str(item_data.get("cargo_id", "")), "quantity": int(item_data.get("quantity", 0))}])
+	if is_instance_valid(cargo_retrieve_dd):
+		for i in range(cargo_retrieve_dd.item_count):
+			if str(cargo_retrieve_dd.get_item_metadata(i)) == meta_to_select:
+				cargo_retrieve_dd.select(i)
+				_update_retrieve_qty_limit()
+				if is_instance_valid(cargo_qty_retrieve) and cargo_qty_retrieve.has_method("set_value"):
+					cargo_qty_retrieve.set_value(cargo_qty_retrieve.max_value)
+				break
+
+func _on_vehicle_card_selected(item_data: Dictionary) -> void:
+	var meta_to_select = str(item_data.get("meta", ""))
+	if is_instance_valid(vehicle_retrieve_dd):
+		for i in range(vehicle_retrieve_dd.item_count):
+			if str(vehicle_retrieve_dd.get_item_metadata(i)) == meta_to_select:
+				vehicle_retrieve_dd.select(i)
+				break
+
 func _on_layout_mode_changed(_mode: int = -1, _size: Vector2 = Vector2.ZERO, _is_mobile_val: bool = false) -> void:
 	# Centralized UI refresh for orientation changes
+	_apply_column_responsiveness()
 	_style_buy_menu_ui()
 	_tune_inventory_panels_layout()
 	_update_ui()
@@ -207,24 +554,48 @@ func _on_layout_mode_changed(_mode: int = -1, _size: Vector2 = Vector2.ZERO, _is
 		_render_cargo_grid()
 		_render_vehicle_grid()
 
+## Fixed height of the horizontal inventory strip — one card row plus room for the h-scrollbar and
+## the panel's inner padding. Matches the per-mode card heights used in _render_cargo/vehicle_grid.
+func _inventory_strip_height() -> int:
+	var dsm = get_node_or_null("/root/DeviceStateManager")
+	var is_portrait = dsm.get_is_portrait() if dsm else (get_viewport_rect().size.y > get_viewport_rect().size.x)
+	var mode = dsm.get_layout_mode() if dsm else 0
+	var is_landscape_mobile = (mode == 1)  # MOBILE_LANDSCAPE
+	if is_landscape_mobile:
+		return 132  # card 100 + strip chrome
+	elif is_portrait:
+		return 172  # card 140 + strip chrome
+	return 192      # card 160 + strip chrome
+
 func _tune_inventory_panels_layout() -> void:
 	var dsm = get_node_or_null("/root/DeviceStateManager")
 	var is_portrait = dsm.get_is_portrait() if dsm else (get_viewport_rect().size.y > get_viewport_rect().size.x)
 
-	# Keep panels expanded vertically to fill the modal as requested.
-	# Use stretch_ratio to ensure inventory grids dominate the vertical space
-	# when competing with other expanding elements.
-	for ctrl in [cargo_inventory_panel, cargo_grid_scroll]:
-		if ctrl is Control and is_instance_valid(ctrl):
-			(ctrl as Control).size_flags_horizontal = Control.SIZE_EXPAND_FILL
-			(ctrl as Control).size_flags_vertical = Control.SIZE_EXPAND_FILL
-			(ctrl as Control).size_flags_stretch_ratio = 10.0
-	# Vehicle inventory gets ~10% less vertical space to prevent overflow
-	for ctrl in [vehicle_inventory_panel, vehicle_grid_scroll]:
-		if ctrl is Control and is_instance_valid(ctrl):
-			(ctrl as Control).size_flags_horizontal = Control.SIZE_EXPAND_FILL
-			(ctrl as Control).size_flags_vertical = Control.SIZE_EXPAND_FILL
-			(ctrl as Control).size_flags_stretch_ratio = 9.0
+	# Inventory is a compact horizontal strip: one row of cards that pans sideways when there are more
+	# than fit. It no longer expands to eat the whole bottom of the short portrait sheet — that big
+	# blank/overflowing area was the source of the top/bottom cramming. (Sprint 8 — decompress)
+	var strip_h := _inventory_strip_height()
+	for panel in [cargo_inventory_panel, vehicle_inventory_panel]:
+		if panel is Control and is_instance_valid(panel):
+			(panel as Control).size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			(panel as Control).size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+			(panel as Control).size_flags_stretch_ratio = 1.0
+			(panel as Control).custom_minimum_size.y = strip_h
+			(panel as Control).clip_contents = true
+	for scroll in [cargo_grid_scroll, vehicle_grid_scroll]:
+		if scroll is ScrollContainer and is_instance_valid(scroll):
+			(scroll as ScrollContainer).size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			(scroll as ScrollContainer).size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+			(scroll as ScrollContainer).size_flags_stretch_ratio = 1.0
+			(scroll as ScrollContainer).custom_minimum_size.y = strip_h
+			(scroll as ScrollContainer).horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+			(scroll as ScrollContainer).vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+			(scroll as ScrollContainer).clip_contents = true
+	# A little breathing room above each inventory header so it isn't jammed under the action row.
+	for spacer_name in ["CargoInventorySpacer", "VehicleInventorySpacer"]:
+		var sp := find_child(spacer_name, true, false) as Control
+		if is_instance_valid(sp):
+			sp.custom_minimum_size.y = 14 if is_portrait else 8
 	
 	for hbox in [
 		store_cargo_btn.get_parent() if is_instance_valid(store_cargo_btn) else null,
@@ -236,8 +607,12 @@ func _tune_inventory_panels_layout() -> void:
 		expand_vehicle_btn.get_parent() if is_instance_valid(expand_vehicle_btn) else null
 	]:
 		if is_instance_valid(hbox) and hbox is BoxContainer:
-			hbox.vertical = is_portrait
-			hbox.add_theme_constant_override("separation", 12 if is_portrait else 4)
+			# Portrait is a full-width but SHORT bottom sheet (the map stays above it), so keep the
+			# action rows on one horizontal line — stacking them vertically was burning the scarce
+			# height. The controls are shrunk (72px) and their min-widths reduced so a row fits the
+			# full width. (Sprint 7, task 3)
+			hbox.vertical = false
+			hbox.add_theme_constant_override("separation", 8 if is_portrait else 4)
 
 	if is_instance_valid(owned_tabs):
 		owned_tabs.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -254,8 +629,8 @@ func _style_tab_container(tc: TabContainer) -> void:
 		return
 	var dsm = get_node_or_null("/root/DeviceStateManager")
 	var is_portrait = dsm.get_is_portrait() if dsm else (get_viewport_rect().size.y > get_viewport_rect().size.x)
-	var tab_h = 100 if is_portrait else 40
-	var font_size = 22 if is_portrait else 14
+	var tab_h = 60 if is_portrait else 40
+	var font_size = 18 if is_portrait else 14
 
 	tc.add_theme_font_size_override("font_size", font_size)
 	
@@ -281,7 +656,7 @@ func _style_buy_menu_ui() -> void:
 	_style_form_controls()
 	# Make the "no warehouse yet" state feel like a real menu instead of raw text.
 	_ensure_info_card_wrapper()
-	_style_primary_button(buy_button, Color(0.35, 0.65, 1.0, 1.0))
+	_style_primary_button(buy_button, UITheme.ACCENT_BRASS)
 	_style_secondary_button(back_button)
 	_style_secondary_button(expand_cargo_btn)
 	_style_secondary_button(expand_vehicle_btn)
@@ -322,19 +697,20 @@ func _ensure_background_layers() -> void:
 		h_margin = int(max(vp_size.x * 0.05, 48))
 		v_margin = int(max(vp_size.y * 0.04, 24))
 	elif is_portrait:
-		h_margin = int(max(vp_size.x * 0.03, 12))
-		v_margin = int(max(vp_size.y * 0.02, 12))
+		# Trimmed from 3%/2% — the combined frame + content padding was reading as too heavy an edge.
+		h_margin = int(max(vp_size.x * 0.015, 8))
+		v_margin = int(max(vp_size.y * 0.012, 8))
 	else:
-		h_margin = 10
-		v_margin = 10
+		h_margin = 8
+		v_margin = 8
 
-	var content_padding: int = 8 if is_landscape_mobile else 18
+	var content_padding: int = 8 if is_landscape_mobile else 10
 
 	# Background
 	if not (is_instance_valid(_bg_rect) and _bg_rect.is_inside_tree()):
 		var bg := ColorRect.new()
 		bg.name = "WarehouseBackground"
-		bg.color = Color(0.02, 0.03, 0.04, 1.0)
+		bg.color = UITheme.METAL_DARK
 		bg.anchor_left = 0
 		bg.anchor_top = 0
 		bg.anchor_right = 1
@@ -359,19 +735,12 @@ func _ensure_background_layers() -> void:
 		frame.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		frame.z_index = -50
 		var sb := StyleBoxFlat.new()
-		# Slightly lighter than background so the content area pops.
-		sb.bg_color = Color(0.06, 0.07, 0.09, 0.95)
-		sb.border_color = Color(0.35, 0.42, 0.55, 0.9)
-		sb.border_width_left = 1
-		sb.border_width_right = 1
-		sb.border_width_top = 1
-		sb.border_width_bottom = 1
-		sb.corner_radius_top_left = 12
-		sb.corner_radius_top_right = 12
-		sb.corner_radius_bottom_left = 12
-		sb.corner_radius_bottom_right = 12
-		sb.shadow_color = Color(0, 0, 0, 0.6)
-		sb.shadow_size = 10
+		sb.bg_color = UITheme.METAL_BASE
+		sb.border_color = UITheme.METAL_EDGE
+		sb.set_border_width_all(1)
+		sb.set_corner_radius_all(12)
+		sb.shadow_color = Color(0, 0, 0, 0.5)
+		sb.shadow_size = 8
 		frame.add_theme_stylebox_override("panel", sb)
 		add_child(frame)
 		# Keep frame behind MainVBox (which is expected to be child index > 0).
@@ -403,8 +772,8 @@ func _style_containers() -> void:
 		body_vbox.mouse_filter = Control.MOUSE_FILTER_PASS
 	
 	# Apply massive header text to section labels
-	var header_font_size = 32 if is_portrait else (dsm.get_scaled_base_font_size(18) if dsm else 18)
-	var label_font_size = 24 if is_portrait else (dsm.get_scaled_base_font_size(14) if dsm else 14)
+	var header_font_size = 22 if is_portrait else (18)
+	var label_font_size = 18 if is_portrait else (14)
 	
 	# Scale overview labels specifically
 	for lbl in [summary_label, overview_cargo_label, overview_vehicle_label, cargo_usage_label]:
@@ -418,7 +787,7 @@ func _style_containers() -> void:
 			for child in tab.get_children():
 				if child is Label:
 					child.add_theme_font_size_override("font_size", header_font_size)
-					child.add_theme_color_override("font_color", Color(0.85, 0.90, 1.0, 1.0))
+					child.add_theme_color_override("font_color", UITheme.TEXT_PRIMARY)
 					child.size_flags_vertical = 0 # Don't let labels expand, keep them as headers
 
 	if is_instance_valid(top_bar_hbox):
@@ -435,22 +804,15 @@ func _style_containers() -> void:
 		back_button.add_theme_constant_override("hseparation", 16)
 
 func _style_panel_surface(ctrl: Control) -> void:
-	# Apply a consistent panel surface style to containers that draw a panel.
 	if not is_instance_valid(ctrl):
 		return
 	var sb := StyleBoxFlat.new()
-	sb.bg_color = Color(0.08, 0.09, 0.12, 0.96)
-	sb.border_color = Color(0.38, 0.46, 0.60, 0.9)
-	sb.border_width_left = 1
-	sb.border_width_right = 1
-	sb.border_width_top = 1
-	sb.border_width_bottom = 1
-	sb.corner_radius_top_left = 10
-	sb.corner_radius_top_right = 10
-	sb.corner_radius_bottom_left = 10
-	sb.corner_radius_bottom_right = 10
-	sb.shadow_color = Color(0, 0, 0, 0.35)
-	sb.shadow_size = 6
+	sb.bg_color = UITheme.METAL_DARK
+	sb.border_color = UITheme.METAL_EDGE
+	sb.set_border_width_all(1)
+	sb.set_corner_radius_all(UITheme.RADIUS_LG)
+	sb.shadow_color = Color(0, 0, 0, 0.3)
+	sb.shadow_size = 4
 	ctrl.add_theme_stylebox_override("panel", sb)
 
 func _style_form_controls() -> void:
@@ -473,43 +835,42 @@ func _style_option_button(ob: OptionButton) -> void:
 	var is_portrait = dsm.get_is_portrait() if dsm else (get_viewport_rect().size.y > get_viewport_rect().size.x)
 	var mode = dsm.get_layout_mode() if dsm else 0
 	var is_landscape_mobile = (mode == 1)  # MOBILE_LANDSCAPE
-	var btn_h = 120 if is_portrait else (44 if is_landscape_mobile else 50)
-	var btn_min_w = 200 if is_portrait else (80 if is_landscape_mobile else 100)
+	var btn_h = 72 if is_portrait else (44 if is_landscape_mobile else 50)
+	# Keep the min-width small; the dropdown is SIZE_EXPAND_FILL so it grows to fill available space.
+	# A large min (was 200 in portrait) forced the store/retrieve rows wider than the screen — the
+	# retrieve row has two dropdowns — so the whole menu clipped off both edges. (Sprint 7, task 3)
+	var btn_min_w = 90 if is_portrait else (80 if is_landscape_mobile else 100)
 	ob.custom_minimum_size = Vector2(btn_min_w, btn_h)
 	ob.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	var font_size = 26 if is_portrait else (dsm.get_scaled_base_font_size(16) if dsm else 16)
+	# CRITICAL: OptionButton defaults to fit_to_longest_item = true, so once populated it grows to its
+	# widest cargo name and blows the row past the screen edge (overflow appears the moment items load).
+	# Disable it and clip instead so the dropdown honours SIZE_EXPAND_FILL and shares the row width.
+	# (Sprint 7, task 3 — root cause of the "fit for a frame then overflow" on device.)
+	ob.fit_to_longest_item = false
+	ob.clip_text = true
+	var font_size = 26 if is_portrait else (16)
 	ob.add_theme_font_size_override("font_size", font_size)
-	ob.add_theme_color_override("font_color", Color(0.96, 0.98, 1.0, 1.0))
-	ob.add_theme_color_override("font_color_disabled", Color(0.60, 0.62, 0.68, 1.0))
+	ob.add_theme_color_override("font_color", UITheme.TEXT_PRIMARY)
+	ob.add_theme_color_override("font_color_disabled", UITheme.TEXT_MUTED)
 
 	var normal := StyleBoxFlat.new()
-	normal.bg_color = Color(0.12, 0.14, 0.18, 1.0)
-	normal.border_color = Color(0.55, 0.68, 0.88, 0.95)
-	normal.border_width_left = 1
-	normal.border_width_right = 1
-	normal.border_width_top = 1
-	normal.border_width_bottom = 1
-	normal.corner_radius_top_left = 6
-	normal.corner_radius_top_right = 6
-	normal.corner_radius_bottom_left = 6
-	normal.corner_radius_bottom_right = 6
-	normal.shadow_color = Color(0, 0, 0, 0.35)
-	normal.shadow_size = 3
+	normal.bg_color = UITheme.METAL_BASE
+	normal.border_color = UITheme.METAL_EDGE
+	normal.set_border_width_all(1)
+	normal.set_corner_radius_all(UITheme.RADIUS_MD)
 	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
 		normal.set_content_margin(side, 10)
 
 	var hover := normal.duplicate()
-	hover.bg_color = Color(0.16, 0.18, 0.24, 1.0)
-	hover.border_color = Color(0.70, 0.82, 1.0, 1.0)
+	hover.bg_color = UITheme.METAL_HOVER
+	hover.border_color = UITheme.ACCENT_BRASS
 
 	var pressed := normal.duplicate()
-	pressed.bg_color = Color(0.10, 0.11, 0.15, 1.0)
-	pressed.border_color = Color(0.45, 0.58, 0.78, 1.0)
+	pressed.bg_color = UITheme.METAL_ACTIVE
 
 	var disabled := normal.duplicate()
-	disabled.bg_color = Color(0.10, 0.10, 0.12, 1.0)
-	disabled.border_color = Color(0.25, 0.28, 0.34, 1.0)
-	disabled.shadow_size = 0
+	disabled.bg_color = UITheme.METAL_DARK
+	disabled.border_color = UITheme.METAL_EDGE
 
 	ob.add_theme_stylebox_override("normal", normal)
 	ob.add_theme_stylebox_override("hover", hover)
@@ -527,34 +888,25 @@ func _style_popup_menu(pm: PopupMenu) -> void:
 		return
 	var dsm = get_node_or_null("/root/DeviceStateManager")
 	var is_portrait = dsm.get_is_portrait() if dsm else (get_viewport_rect().size.y > get_viewport_rect().size.x)
-	var font_size = 32 if is_portrait else (dsm.get_scaled_base_font_size(18) if dsm else 18)
+	var font_size = 32 if is_portrait else (18)
 	pm.add_theme_font_size_override("font_size", font_size)
 	pm.add_theme_constant_override("v_separation", 32 if is_portrait else 8)
-	pm.add_theme_color_override("font_color", Color(0.96, 0.98, 1.0, 1.0))
-	pm.add_theme_color_override("font_hover_color", Color(1, 1, 1, 1))
-	pm.add_theme_color_override("font_disabled_color", Color(0.60, 0.62, 0.68, 1.0))
+	pm.add_theme_color_override("font_color", UITheme.TEXT_PRIMARY)
+	pm.add_theme_color_override("font_hover_color", UITheme.TEXT_PRIMARY)
+	pm.add_theme_color_override("font_disabled_color", UITheme.TEXT_MUTED)
 
 	var panel := StyleBoxFlat.new()
-	panel.bg_color = Color(0.08, 0.09, 0.12, 0.98)
-	panel.border_color = Color(0.55, 0.68, 0.88, 0.9)
-	panel.border_width_left = 1
-	panel.border_width_right = 1
-	panel.border_width_top = 1
-	panel.border_width_bottom = 1
-	panel.corner_radius_top_left = 6
-	panel.corner_radius_top_right = 6
-	panel.corner_radius_bottom_left = 6
-	panel.corner_radius_bottom_right = 6
-	panel.shadow_color = Color(0, 0, 0, 0.65)
-	panel.shadow_size = 10
+	panel.bg_color = UITheme.METAL_BASE
+	panel.border_color = UITheme.METAL_EDGE
+	panel.set_border_width_all(1)
+	panel.set_corner_radius_all(UITheme.RADIUS_MD)
+	panel.shadow_color = Color(0, 0, 0, 0.5)
+	panel.shadow_size = 8
 	pm.add_theme_stylebox_override("panel", panel)
 
 	var hover := StyleBoxFlat.new()
-	hover.bg_color = Color(0.20, 0.28, 0.40, 1.0)
-	hover.corner_radius_top_left = 6
-	hover.corner_radius_top_right = 6
-	hover.corner_radius_bottom_left = 6
-	hover.corner_radius_bottom_right = 6
+	hover.bg_color = UITheme.METAL_HOVER
+	hover.set_corner_radius_all(UITheme.RADIUS_MD)
 	pm.add_theme_stylebox_override("hover", hover)
 
 func _style_line_edit(le: LineEdit) -> void:
@@ -564,31 +916,30 @@ func _style_line_edit(le: LineEdit) -> void:
 	var is_portrait = dsm.get_is_portrait() if dsm else (get_viewport_rect().size.y > get_viewport_rect().size.x)
 	var mode = dsm.get_layout_mode() if dsm else 0
 	var is_landscape_mobile = (mode == 1)  # MOBILE_LANDSCAPE
-	var btn_h = 120 if is_portrait else (44 if is_landscape_mobile else 50)
+	var btn_h = 72 if is_portrait else (44 if is_landscape_mobile else 50)
+	# The scene sets a 240px min width, which forces the spawn row wider than a portrait screen. The
+	# field is expanded to fill instead, so cap the min so the row can shrink to fit. (Sprint 7, task 3)
 	var min_w = le.custom_minimum_size.x
 	if is_landscape_mobile:
 		min_w = min(min_w, 160)  # Cap width to prevent horizontal overflow in landscape
+	elif is_portrait:
+		min_w = min(min_w, 120)
 	le.custom_minimum_size = Vector2(min_w, btn_h)
-	var font_size = 22 if is_portrait else (dsm.get_scaled_base_font_size(16) if dsm else 16)
+	le.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var font_size = 22 if is_portrait else (16)
 	le.add_theme_font_size_override("font_size", font_size)
-	le.add_theme_color_override("font_color", Color(0.96, 0.98, 1.0, 1.0))
-	le.add_theme_color_override("placeholder_color", Color(0.70, 0.74, 0.82, 0.85))
+	le.add_theme_color_override("font_color", UITheme.TEXT_PRIMARY)
+	le.add_theme_color_override("placeholder_color", UITheme.TEXT_MUTED)
 	var sb := StyleBoxFlat.new()
-	sb.bg_color = Color(0.10, 0.12, 0.16, 1.0)
-	sb.border_color = Color(0.55, 0.68, 0.88, 0.75)
-	sb.border_width_left = 1
-	sb.border_width_right = 1
-	sb.border_width_top = 1
-	sb.border_width_bottom = 1
-	sb.corner_radius_top_left = 12
-	sb.corner_radius_top_right = 12
-	sb.corner_radius_bottom_left = 12
-	sb.corner_radius_bottom_right = 12
+	sb.bg_color = UITheme.METAL_BASE
+	sb.border_color = UITheme.METAL_EDGE
+	sb.set_border_width_all(1)
+	sb.set_corner_radius_all(UITheme.RADIUS_MD)
 	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
 		sb.set_content_margin(side, 18)
 	le.add_theme_stylebox_override("normal", sb)
 	var focus := sb.duplicate()
-	focus.border_color = Color(0.75, 0.88, 1.0, 1.0)
+	focus.border_color = UITheme.ACCENT_BRASS
 	le.add_theme_stylebox_override("focus", focus)
 
 func _style_quantity_control(qc: Control) -> void:
@@ -598,7 +949,7 @@ func _style_quantity_control(qc: Control) -> void:
 	var is_portrait = dsm.get_is_portrait() if dsm else (get_viewport_rect().size.y > get_viewport_rect().size.x)
 	var mode = dsm.get_layout_mode() if dsm else 0
 	var is_landscape_mobile = (mode == 1)  # MOBILE_LANDSCAPE
-	var h = 120 if is_portrait else (44 if is_landscape_mobile else 50)
+	var h = 72 if is_portrait else (44 if is_landscape_mobile else 50)
 	qc.custom_minimum_size.y = h
 	# QuantityWidget handles its own internal styling, just ensure it has height.
 
@@ -609,7 +960,7 @@ func _style_spin_box(sb: SpinBox) -> void:
 	var is_portrait = dsm.get_is_portrait() if dsm else (get_viewport_rect().size.y > get_viewport_rect().size.x)
 	var mode = dsm.get_layout_mode() if dsm else 0
 	var is_landscape_mobile = (mode == 1)  # MOBILE_LANDSCAPE
-	var btn_h = 120 if is_portrait else (44 if is_landscape_mobile else 50)
+	var btn_h = 72 if is_portrait else (44 if is_landscape_mobile else 50)
 	sb.custom_minimum_size = Vector2(0, btn_h)
 	# SpinBox's internal LineEdit draws the background; style it for contrast.
 	var le: LineEdit = sb.get_line_edit()
@@ -642,18 +993,12 @@ func _ensure_info_card_wrapper() -> void:
 	card.custom_minimum_size = Vector2(0, 160)
 
 	var panel_sb := StyleBoxFlat.new()
-	panel_sb.bg_color = Color(0.06, 0.07, 0.09, 0.92)
-	panel_sb.border_color = Color(0.35, 0.45, 0.60, 0.9)
-	panel_sb.border_width_left = 1
-	panel_sb.border_width_right = 1
-	panel_sb.border_width_top = 1
-	panel_sb.border_width_bottom = 1
-	panel_sb.corner_radius_top_left = 10
-	panel_sb.corner_radius_top_right = 10
-	panel_sb.corner_radius_bottom_left = 10
-	panel_sb.corner_radius_bottom_right = 10
-	panel_sb.shadow_color = Color(0, 0, 0, 0.55)
-	panel_sb.shadow_size = 6
+	panel_sb.bg_color = UITheme.METAL_BASE
+	panel_sb.border_color = UITheme.METAL_EDGE
+	panel_sb.set_border_width_all(1)
+	panel_sb.set_corner_radius_all(UITheme.RADIUS_LG)
+	panel_sb.shadow_color = Color(0, 0, 0, 0.4)
+	panel_sb.shadow_size = 4
 	card.add_theme_stylebox_override("panel", panel_sb)
 
 	var margin := MarginContainer.new()
@@ -680,9 +1025,9 @@ func _style_info_label(lbl: Label) -> void:
 	lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	lbl.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	var font_size = dsm.get_scaled_base_font_size(28) if dsm else 34
+	var font_size = 28
 	lbl.add_theme_font_size_override("font_size", font_size)
-	lbl.add_theme_color_override("font_color", Color(0.92, 0.95, 1.0, 1.0))
+	lbl.add_theme_color_override("font_color", UITheme.TEXT_PRIMARY)
 	lbl.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.55))
 	lbl.add_theme_constant_override("shadow_outline_size", 0)
 	lbl.add_theme_constant_override("shadow_offset_x", 0)
@@ -695,8 +1040,10 @@ func _style_primary_button(btn: Button, accent: Color) -> void:
 	var is_portrait = dsm.get_is_portrait() if dsm else (get_viewport_rect().size.y > get_viewport_rect().size.x)
 	var mode = dsm.get_layout_mode() if dsm else 0
 	var is_landscape_mobile = (mode == 1)  # MOBILE_LANDSCAPE
-	var btn_h = 130 if is_portrait else (48 if is_landscape_mobile else 54)
-	btn.custom_minimum_size = Vector2(280 if is_portrait else (140 if is_landscape_mobile else 180), btn_h)
+	var btn_h = 72 if is_portrait else (48 if is_landscape_mobile else 54)
+	# Portrait min-width kept small (was 280) so buttons don't force the action rows — and the whole
+	# bottom sheet — wider than the 800px screen. The dropdowns EXPAND_FILL to take the slack. (Sprint 7)
+	btn.custom_minimum_size = Vector2(140 if is_portrait else (140 if is_landscape_mobile else 180), btn_h)
 	btn.focus_mode = Control.FOCUS_ALL
 
 	var normal := StyleBoxFlat.new()
@@ -722,18 +1069,18 @@ func _style_primary_button(btn: Button, accent: Color) -> void:
 	pressed.shadow_size = 2
 
 	var disabled := normal.duplicate()
-	disabled.bg_color = Color(0.12, 0.12, 0.14, 1.0)
-	disabled.border_color = Color(0.22, 0.22, 0.26, 1.0)
+	disabled.bg_color = UITheme.METAL_DARK
+	disabled.border_color = UITheme.METAL_EDGE
 	disabled.shadow_size = 0
 
 	btn.add_theme_stylebox_override("normal", normal)
 	btn.add_theme_stylebox_override("hover", hover)
 	btn.add_theme_stylebox_override("pressed", pressed)
 	btn.add_theme_stylebox_override("disabled", disabled)
-	btn.add_theme_color_override("font_color", Color(0.96, 0.98, 1.0, 1.0))
-	btn.add_theme_color_override("font_color_hover", Color(1, 1, 1, 1))
-	btn.add_theme_color_override("font_color_pressed", Color(0.90, 0.94, 1.0, 1.0))
-	var font_size = 28 if is_portrait else (dsm.get_scaled_base_font_size(18) if dsm else 18)
+	btn.add_theme_color_override("font_color", UITheme.TEXT_PRIMARY)
+	btn.add_theme_color_override("font_color_hover", UITheme.TEXT_PRIMARY)
+	btn.add_theme_color_override("font_color_pressed", UITheme.TEXT_PRIMARY)
+	var font_size = 28 if is_portrait else (18)
 	btn.add_theme_font_size_override("font_size", font_size)
 
 func _style_secondary_button(btn: Button) -> void:
@@ -747,19 +1094,19 @@ func _style_secondary_button(btn: Button) -> void:
 
 	if btn == back_button:
 		# Specifically scale the back button to be chunky too
-		btn.custom_minimum_size = Vector2(280 if is_portrait else (120 if is_landscape_mobile else 140), 110 if is_portrait else (40 if is_landscape_mobile else 50))
-		btn.add_theme_font_size_override("font_size", 24 if is_portrait else 16)
+		btn.custom_minimum_size = Vector2(140 if is_portrait else (120 if is_landscape_mobile else 140), 72 if is_portrait else (40 if is_landscape_mobile else 50))
+		btn.add_theme_font_size_override("font_size", 20 if is_portrait else 16)
 		return
 
-	var btn_h = 130 if is_portrait else (48 if is_landscape_mobile else 54)
-	var btn_w = 280 if is_portrait else (100 if is_landscape_mobile else 140)
+	var btn_h = 72 if is_portrait else (48 if is_landscape_mobile else 54)
+	var btn_w = 140 if is_portrait else (100 if is_landscape_mobile else 140)
 	btn.custom_minimum_size = Vector2(btn_w, btn_h)
 	btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL # Allow button to fight for space
 	btn.mouse_filter = Control.MOUSE_FILTER_STOP # Buttons should catch input
 	btn.add_theme_font_size_override("font_size", 24 if is_portrait else 16)
 	var normal := StyleBoxFlat.new()
-	normal.bg_color = Color(0.12, 0.13, 0.16, 1.0)
-	normal.border_color = Color(0.32, 0.36, 0.44, 1.0)
+	normal.bg_color = UITheme.METAL_BASE
+	normal.border_color = UITheme.METAL_EDGE
 	normal.border_width_left = 1
 	normal.border_width_right = 1
 	normal.border_width_top = 1
@@ -770,23 +1117,23 @@ func _style_secondary_button(btn: Button) -> void:
 	normal.corner_radius_bottom_right = 6
 
 	var hover := normal.duplicate()
-	hover.bg_color = Color(0.16, 0.17, 0.21, 1.0)
-	hover.border_color = Color(0.45, 0.50, 0.62, 1.0)
+	hover.bg_color = UITheme.METAL_HOVER
+	hover.border_color = UITheme.METAL_EDGE
 
 	var pressed := normal.duplicate()
-	pressed.bg_color = Color(0.10, 0.10, 0.12, 1.0)
-	pressed.border_color = Color(0.28, 0.32, 0.40, 1.0)
+	pressed.bg_color = UITheme.METAL_ACTIVE
+	pressed.border_color = UITheme.METAL_EDGE
 
 	var disabled := normal.duplicate()
-	disabled.bg_color = Color(0.10, 0.10, 0.11, 1.0)
-	disabled.border_color = Color(0.20, 0.20, 0.22, 1.0)
+	disabled.bg_color = UITheme.METAL_DARK
+	disabled.border_color = UITheme.METAL_EDGE
 
 	btn.add_theme_stylebox_override("normal", normal)
 	btn.add_theme_stylebox_override("hover", hover)
 	btn.add_theme_stylebox_override("pressed", pressed)
 	btn.add_theme_stylebox_override("disabled", disabled)
-	btn.add_theme_color_override("font_color", Color(0.92, 0.95, 1.0, 1.0))
-	btn.add_theme_color_override("font_color_disabled", Color(0.60, 0.62, 0.68, 1.0))
+	btn.add_theme_color_override("font_color", UITheme.TEXT_PRIMARY)
+	btn.add_theme_color_override("font_color_disabled", UITheme.TEXT_MUTED)
 
 func _set_expand_buttons_enabled(enabled: bool) -> void:
 	# Central helper so we can uniformly toggle & log state
@@ -829,6 +1176,25 @@ func initialize_with_data(data_or_id: Variant, extra_arg: Variant = null) -> voi
 	_try_load_warehouse_for_settlement()
 	_populate_dropdowns() # initial (may be empty until data arrives)
 
+## When opened without a convoy present (e.g. from the convoy-independent settlement overview, Sprint 5),
+## there's no destination convoy to retrieve cargo/vehicles into — gate those controls and explain why.
+## Buying, viewing, expanding, and spawning a convoy from the warehouse all remain available.
+## A convoy is "present" only when _convoy_data carries a real convoy_id (the overview passes a
+## settlement-context payload with no convoy_id, so is_empty() is not a reliable test here).
+func _apply_convoy_presence_state() -> void:
+	var has_convoy := _convoy_data is Dictionary and String(_convoy_data.get("convoy_id", "")) != ""
+	if has_convoy:
+		return # selection-driven enable/disable logic governs the retrieve controls
+	var note := "Bring a convoy here to retrieve cargo or vehicles into it."
+	if is_instance_valid(retrieve_cargo_btn):
+		retrieve_cargo_btn.disabled = true
+		retrieve_cargo_btn.tooltip_text = note
+	if is_instance_valid(retrieve_vehicle_btn):
+		retrieve_vehicle_btn.disabled = true
+		retrieve_vehicle_btn.tooltip_text = note
+	if is_instance_valid(cargo_retrieve_vehicle_dd):
+		cargo_retrieve_vehicle_dd.disabled = true
+
 func _update_ui(convoy: Dictionary = {}):
 	# MenuBase passes an authoritative convoy snapshot when opened by convoy_id.
 	# Consume it so we can resolve settlement/type/price reliably.
@@ -858,6 +1224,7 @@ func _update_ui(convoy: Dictionary = {}):
 			summary_label.text = _format_warehouse_summary(_warehouse)
 		# Now that we have warehouse details, repopulate dropdowns that depend on it
 		_populate_dropdowns()
+		_apply_convoy_presence_state()
 		_update_expand_buttons()
 		_update_upgrade_labels()
 		_update_cargo_usage_label()
@@ -1151,6 +1518,11 @@ func _on_hub_error(_domain: String, _code: String, message: String, _inline: boo
 		return
 	if is_instance_valid(buy_button):
 		buy_button.disabled = false
+	# DF+/premium-gated failures (e.g. warehouse purchase without DF+) are handled
+	# centrally by MainScreen, which routes them to the upgrade flow / a clean DF+
+	# message. Skip here so we don't stack a second dialog over it.
+	if ErrorTranslator.has_method("is_premium_required") and ErrorTranslator.is_premium_required(message):
+		return
 	# Route error to modal using ErrorTranslator; avoid printing raw into menu
 	# Optionally filter by domain; for now surface all.
 	_show_error_modal(message)
@@ -1766,7 +2138,7 @@ func _update_cargo_usage_label() -> void:
 func _update_overview_bars() -> void:
 	var dsm = get_node_or_null("/root/DeviceStateManager")
 	var is_portrait = dsm.get_is_portrait() if dsm else (get_viewport_rect().size.y > get_viewport_rect().size.x)
-	var bar_h = 60 if is_portrait else 24
+	var bar_h = 28 if is_portrait else 24
 	if is_instance_valid(overview_cargo_bar):
 		overview_cargo_bar.custom_minimum_size.y = bar_h
 	if is_instance_valid(overview_vehicle_bar):
@@ -1793,38 +2165,79 @@ func _update_overview_bars() -> void:
 	if display_used_cargo > 0.0 and display_used_cargo < one_percent_cargo:
 		display_used_cargo = one_percent_cargo
 	if is_instance_valid(overview_cargo_bar):
+		overview_cargo_bar.visible = true
 		overview_cargo_bar.max_value = cap_cargo
 		overview_cargo_bar.value = clamp(display_used_cargo, 0.0, cap_cargo)
 	if is_instance_valid(overview_cargo_label):
 		overview_cargo_label.text = "Cargo Usage: %s / %s L" % [str(int(used_cargo)), str(int(cap_cargo))]
-	# Vehicle bar (derive from counts if capacity key exists, else hide)
+	# Vehicle slots: a segmented indicator (one block per slot) instead of a continuous bar — slot
+	# counts are small integers, so discrete segments read better than a fractional bar.
 	var veh_list: Array = []
 	if _warehouse.has("vehicle_storage"):
 		veh_list = _warehouse.get("vehicle_storage", [])
 	elif _warehouse.has("vehicle_inventory"):
 		veh_list = _warehouse.get("vehicle_inventory", [])
-	var veh_used := float(veh_list.size())
-	var veh_cap := float(_warehouse.get("vehicle_storage_capacity", max(veh_used, 1)))
+	var veh_used := int(veh_list.size())
+	var veh_cap := int(_warehouse.get("vehicle_storage_capacity", max(veh_used, 1)))
 	if veh_cap <= 0:
-		veh_cap = max(veh_used, 1.0)
-	var display_veh_used := veh_used
-	var one_percent_veh := veh_cap * 0.01
-	if display_veh_used > 0.0 and display_veh_used < one_percent_veh:
-		display_veh_used = one_percent_veh
+		veh_cap = max(veh_used, 1)
+	# The scene ProgressBar is retired in favour of the segments; hide it if still present.
 	if is_instance_valid(overview_vehicle_bar):
-		overview_vehicle_bar.max_value = veh_cap
-		overview_vehicle_bar.value = clamp(display_veh_used, 0.0, veh_cap)
+		overview_vehicle_bar.visible = false
+	_update_vehicle_segments(veh_used, veh_cap)
 	if is_instance_valid(overview_vehicle_label):
-		overview_vehicle_label.text = "Vehicles: %s / %s" % [str(int(veh_used)), str(int(veh_cap))]
+		overview_vehicle_label.text = "Vehicles: %s / %s" % [str(veh_used), str(veh_cap)]
+
+## Rebuilds the vehicle-slot segments: one block per slot, filled blocks = stored vehicles. When more
+## vehicles are stored than the reported capacity (an over-capacity backend state, e.g. 2 stored / 1
+## slot) the extra blocks are drawn in the critical colour so the overflow is visible, not hidden.
+func _update_vehicle_segments(used: int, cap: int) -> void:
+	var container := _ensure_vehicle_segments()
+	if container == null:
+		return
+	for c in container.get_children():
+		c.queue_free()
+	var total: int = max(max(cap, used), 1)
+	for i in range(total):
+		var seg := Panel.new()
+		seg.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		seg.custom_minimum_size.y = 16
+		var sb := StyleBoxFlat.new()
+		sb.set_corner_radius_all(UITheme.RADIUS_SM)
+		if i < used and i < cap:
+			sb.bg_color = UITheme.ACCENT_BRASS      # filled slot, within capacity
+		elif i < used:
+			sb.bg_color = UITheme.STATUS_CRIT       # filled beyond capacity (overflow)
+		else:
+			sb.bg_color = UITheme.METAL_DARK        # empty slot
+			sb.border_color = UITheme.METAL_EDGE
+			sb.set_border_width_all(1)
+		seg.add_theme_stylebox_override("panel", sb)
+		container.add_child(seg)
+
+## Creates (once) the segments HBox and slots it where the vehicle ProgressBar sat, so it lines up
+## next to the "Vehicles:" label. Cached in _vehicle_segments.
+func _ensure_vehicle_segments() -> HBoxContainer:
+	if is_instance_valid(_vehicle_segments):
+		return _vehicle_segments
+	if not is_instance_valid(overview_vehicle_bar):
+		return null
+	var parent := overview_vehicle_bar.get_parent()
+	if parent == null:
+		return null
+	var hb := HBoxContainer.new()
+	hb.name = "VehicleSegments"
+	hb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	hb.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	hb.add_theme_constant_override("separation", 4)
+	parent.add_child(hb)
+	parent.move_child(hb, overview_vehicle_bar.get_index() + 1)
+	_vehicle_segments = hb
+	return hb
 
 func _render_cargo_grid() -> void:
 	if not is_instance_valid(cargo_grid):
 		return
-	# Set columns dynamically: fewer in landscape mobile to prevent horizontal overflow
-	var _dsm = get_node_or_null("/root/DeviceStateManager")
-	var _mode = _dsm.get_layout_mode() if _dsm else 0
-	var _is_lm = (_mode == 1)  # MOBILE_LANDSCAPE
-	cargo_grid.columns = 3 if _is_lm else 4
 	# Clear existing
 	for c in cargo_grid.get_children():
 		c.queue_free()
@@ -1849,6 +2262,8 @@ func _render_cargo_grid() -> void:
 		_set_inventory_panel_empty_state(cargo_inventory_panel, "CargoInventoryEmptyPanel", "No cargo stored yet.")
 		return
 	_set_inventory_panel_empty_state(cargo_inventory_panel, "CargoInventoryEmptyPanel", "", true)
+	# Single row so the strip pans horizontally instead of wrapping into a tall block.
+	cargo_grid.columns = max(1, wh_items_display.size())
 	_adjust_inventory_panel_height(cargo_inventory_panel, cargo_grid_scroll, wh_items_display.size(), 4)
 	for wi in wh_items_display:
 		if wi is Dictionary:
@@ -1858,31 +2273,22 @@ func _render_cargo_grid() -> void:
 			var is_portrait = dsm.get_is_portrait() if dsm else (get_viewport_rect().size.y > get_viewport_rect().size.x)
 			var mode = dsm.get_layout_mode() if dsm else 0
 			var is_landscape_mobile = (mode == 1)  # MOBILE_LANDSCAPE
-			var item_h = 140 if is_portrait else 72
-			var item_w = 200 if not is_landscape_mobile else 140
-			var font_size = dsm.get_scaled_base_font_size(22) if dsm else (42 if is_portrait else 22)
+			var item_h = 140 if is_portrait else (100 if is_landscape_mobile else 160)
+			var item_w = 140 if is_portrait else (140 if is_landscape_mobile else 160)
+			var font_size = 22
 			
-			var panel := PanelContainer.new()
-			panel.custom_minimum_size = Vector2(item_w, item_h)
-			panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-			var vb := VBoxContainer.new()
-			vb.alignment = BoxContainer.ALIGNMENT_CENTER
-			var label := Label.new()
-			label.text = "%s x%d" % [item_name, qty]
-			label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-			label.add_theme_font_size_override("font_size", font_size)
-			vb.add_child(label)
-			panel.add_child(vb)
-			cargo_grid.add_child(panel)
+			var card_script = load("res://Scripts/UI/warehouse_item_card.gd")
+			if card_script:
+				var card = card_script.new()
+				card.custom_minimum_size = Vector2(item_w, item_h)
+				cargo_grid.add_child(card)
+				card.setup(wi)
+				if not card.transfer_requested.is_connected(_on_cargo_card_selected):
+					card.transfer_requested.connect(_on_cargo_card_selected)
 
 func _render_vehicle_grid() -> void:
 	if not is_instance_valid(vehicle_grid):
 		return
-	# Set columns dynamically: fewer in landscape mobile to prevent horizontal overflow
-	var _dsm = get_node_or_null("/root/DeviceStateManager")
-	var _mode = _dsm.get_layout_mode() if _dsm else 0
-	var _is_lm = (_mode == 1)  # MOBILE_LANDSCAPE
-	vehicle_grid.columns = 3 if _is_lm else 4
 	for c in vehicle_grid.get_children():
 		c.queue_free()
 	if not (_warehouse is Dictionary):
@@ -1897,6 +2303,8 @@ func _render_vehicle_grid() -> void:
 		_set_inventory_panel_empty_state(vehicle_inventory_panel, "VehicleInventoryEmptyPanel", "No vehicles stored yet.")
 		return
 	_set_inventory_panel_empty_state(vehicle_inventory_panel, "VehicleInventoryEmptyPanel", "", true)
+	# Single row so the strip pans horizontally instead of wrapping into a tall block.
+	vehicle_grid.columns = max(1, wh_vehicles.size())
 	_adjust_inventory_panel_height(vehicle_inventory_panel, vehicle_grid_scroll, wh_vehicles.size(), 4)
 	for v in wh_vehicles:
 		if v is Dictionary:
@@ -1905,22 +2313,20 @@ func _render_vehicle_grid() -> void:
 			var is_portrait = dsm.get_is_portrait() if dsm else (get_viewport_rect().size.y > get_viewport_rect().size.x)
 			var mode = dsm.get_layout_mode() if dsm else 0
 			var is_landscape_mobile = (mode == 1)  # MOBILE_LANDSCAPE
-			var item_h = 140 if is_portrait else 72
-			var item_w = 200 if not is_landscape_mobile else 140
-			var font_size = dsm.get_scaled_base_font_size(22) if dsm else (42 if is_portrait else 22)
+			var item_h = 140 if is_portrait else (100 if is_landscape_mobile else 160)
+			var item_w = 140 if is_portrait else (140 if is_landscape_mobile else 160)
+			var font_size = 22
 
-			var panel := PanelContainer.new()
-			panel.custom_minimum_size = Vector2(item_w, item_h)
-			panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-			var vb := VBoxContainer.new()
-			vb.alignment = BoxContainer.ALIGNMENT_CENTER
-			var label := Label.new()
-			label.text = vehicle_name
-			label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-			label.add_theme_font_size_override("font_size", font_size)
-			vb.add_child(label)
-			panel.add_child(vb)
-			vehicle_grid.add_child(panel)
+			var card_script = load("res://Scripts/UI/warehouse_item_card.gd")
+			if card_script:
+				var card = card_script.new()
+				card.custom_minimum_size = Vector2(item_w, item_h)
+				vehicle_grid.add_child(card)
+				v["name"] = vehicle_name
+				v["quantity"] = 1
+				card.setup(v)
+				if not card.transfer_requested.is_connected(_on_vehicle_card_selected):
+					card.transfer_requested.connect(_on_vehicle_card_selected)
 
 func _set_inventory_panel_empty_state(panel_ctrl: Control, empty_panel_name: String, empty_message: String, show_inventory_panel: bool = false) -> void:
 	# When inventories are empty, the ScrollContainer panels in the scene expand
@@ -1956,16 +2362,10 @@ func _set_inventory_panel_empty_state(panel_ctrl: Control, empty_panel_name: Str
 		p.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		p.custom_minimum_size = Vector2(0, 48)
 		var sb := StyleBoxFlat.new()
-		sb.bg_color = Color(0.08, 0.09, 0.12, 0.96)
-		sb.border_color = Color(0.38, 0.46, 0.60, 0.6)
-		sb.border_width_left = 1
-		sb.border_width_right = 1
-		sb.border_width_top = 1
-		sb.border_width_bottom = 1
-		sb.corner_radius_top_left = 10
-		sb.corner_radius_top_right = 10
-		sb.corner_radius_bottom_left = 10
-		sb.corner_radius_bottom_right = 10
+		sb.bg_color = UITheme.METAL_DARK
+		sb.border_color = UITheme.METAL_EDGE
+		sb.set_border_width_all(1)
+		sb.set_corner_radius_all(UITheme.RADIUS_LG)
 		p.add_theme_stylebox_override("panel", sb)
 		var m := MarginContainer.new()
 		m.add_theme_constant_override("margin_left", 12)
@@ -1976,7 +2376,7 @@ func _set_inventory_panel_empty_state(panel_ctrl: Control, empty_panel_name: Str
 		l.text = empty_message
 		l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		l.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
-		l.add_theme_color_override("font_color", Color(0.82, 0.86, 0.92, 1.0))
+		l.add_theme_color_override("font_color", UITheme.TEXT_MUTED)
 		l.add_theme_font_size_override("font_size", 16)
 		m.add_child(l)
 		p.add_child(m)
@@ -1991,17 +2391,15 @@ func _set_inventory_panel_empty_state(panel_ctrl: Control, empty_panel_name: Str
 				(margin.get_child(0) as Label).text = empty_message
 
 func _adjust_inventory_panel_height(panel_ctrl: Control, scroll_ctrl: ScrollContainer, item_count: int, columns: int) -> void:
-	# Clamp the inventory panel height to its content so we don't get a giant blank area.
+	# Inventory is a fixed-height horizontal strip (one card row — see _tune_inventory_panels_layout).
+	# Re-clamp here after each render so a rebuild can't re-expand the panel back into the sheet.
 	if not (is_instance_valid(panel_ctrl) and is_instance_valid(scroll_ctrl)):
 		return
-	var dsm = get_node_or_null("/root/DeviceStateManager")
-	var is_portrait = dsm.get_is_portrait() if dsm else (get_viewport_rect().size.y > get_viewport_rect().size.x)
-	
-	scroll_ctrl.custom_minimum_size = Vector2(scroll_ctrl.custom_minimum_size.x, 240 if is_portrait else 180)
-	
-	# Allow the container to expand as much as possible
-	scroll_ctrl.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	panel_ctrl.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	var strip_h := _inventory_strip_height()
+	scroll_ctrl.custom_minimum_size = Vector2(scroll_ctrl.custom_minimum_size.x, strip_h)
+	scroll_ctrl.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+	panel_ctrl.custom_minimum_size.y = strip_h
+	panel_ctrl.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
 
 # Enforce SpinBox max based on selected cargo quantities
 func _update_store_qty_limit() -> void:

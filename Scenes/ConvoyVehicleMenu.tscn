@@ -63,19 +63,10 @@ visible = false
 	size_flags_vertical = 3
 	tabs_visible = false
 
-	[node name="Overview" type="ScrollContainer" parent="MainVBox/VehicleTabContainer"]
+	[node name="Summary" type="ScrollContainer" parent="MainVBox/VehicleTabContainer"]
 	layout_mode = 2
 
-	[node name="OverviewVBox" type="VBoxContainer" parent="MainVBox/VehicleTabContainer/Overview"]
-	layout_mode = 2
-	size_flags_horizontal = 3
-	size_flags_vertical = 3
-
-	[node name="Stats" type="ScrollContainer" parent="MainVBox/VehicleTabContainer"]
-	visible = false
-	layout_mode = 2
-
-	[node name="StatsVBox" type="VBoxContainer" parent="MainVBox/VehicleTabContainer/Stats"]
+	[node name="SummaryVBox" type="VBoxContainer" parent="MainVBox/VehicleTabContainer/Summary"]
 	layout_mode = 2
 	size_flags_horizontal = 3
 	size_flags_vertical = 3

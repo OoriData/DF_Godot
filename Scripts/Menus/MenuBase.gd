@@ -24,6 +24,102 @@ var auto_apply_oori_background: bool = true
 ## The node will be detached from the tree and re-attached on return, preserving all UI state.
 var persistence_enabled: bool = false
 
+# ── Shared loadout-card visual language ──────────────────────────────────────
+# Self-contained helpers (no dependency on per-menu scaling hooks) so any menu can
+# render parts as consistent "loadout cards". A single accent color per vehicle
+# system keeps cards grouped by type across the Parts and Service tabs.
+func _card_is_mobile() -> bool:
+	if OS.has_feature("mobile") or OS.has_feature("web_android") or OS.has_feature("web_ios") or DisplayServer.get_name() in ["Android", "iOS"]:
+		return true
+	if is_inside_tree():
+		var s := get_viewport_rect().size
+		if s.y > s.x:
+			return true
+	return false
+
+func _slot_accent(slot_name: String) -> Color:
+	match slot_name.to_lower():
+		"engine", "ice", "motor":
+			return Color(0.62, 0.77, 0.35) # green
+		"battery", "cell":
+			return Color(0.36, 0.79, 0.65) # teal
+		"tune", "ecu", "chip":
+			return Color(0.94, 0.78, 0.29) # amber
+		"transmission", "trans", "gearbox", "drivetrain":
+			return Color(0.49, 0.62, 0.85) # blue
+		"tires", "tire", "wheels", "wheel":
+			return Color(0.74, 0.55, 0.85) # purple
+		"chassis", "frame", "suspension":
+			return Color(0.83, 0.56, 0.42) # coral
+		_:
+			return Color(0.55, 0.60, 0.70) # neutral
+
+
+# Rounded card surface used by every slot/cart/candidate card.
+func _make_card_style(filled: bool, accent: Color) -> StyleBoxFlat:
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color(UITheme.METAL_BASE, 0.92) if filled else Color(UITheme.METAL_DARK, 0.85)
+	sb.set_corner_radius_all(8)
+	sb.set_content_margin_all(12 if _card_is_mobile() else 10)
+	if filled:
+		sb.border_width_left = 3
+		sb.border_color = accent
+	else:
+		sb.set_border_width_all(1)
+		sb.border_color = Color(1, 1, 1, 0.10)
+	return sb
+
+# Small rounded badge carrying the slot's initial, tinted by its accent.
+func _make_slot_badge(slot_name: String, accent: Color, is_empty: bool) -> Control:
+	var badge := PanelContainer.new()
+	badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var bsb := StyleBoxFlat.new()
+	bsb.bg_color = Color(accent.r, accent.g, accent.b, 0.16 if is_empty else 0.28)
+	bsb.set_corner_radius_all(6)
+	badge.add_theme_stylebox_override("panel", bsb)
+	var sz := 28 if _card_is_mobile() else 24
+	badge.custom_minimum_size = Vector2(sz, sz)
+	var lbl := Label.new()
+	lbl.text = (slot_name.substr(0, 1)).to_upper() if slot_name != "" else "?"
+	lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	lbl.add_theme_font_size_override("font_size", 13)
+	lbl.add_theme_color_override("font_color", accent if not is_empty else UITheme.TEXT_MUTED)
+	badge.add_child(lbl)
+	return badge
+
+# Build the card container for the current orientation, attach it to parent,
+# and return the Container that cards should be added to directly.
+# Portrait  → 2-col GridContainer added straight to parent.
+# Landscape → HBoxContainer inside a horizontal ScrollContainer.
+func _make_slot_container(parent: Control) -> Container:
+	var is_port := is_inside_tree() and get_viewport_rect().size.y > get_viewport_rect().size.x
+	if is_port:
+		var grid := GridContainer.new()
+		grid.columns = 2
+		grid.add_theme_constant_override("h_separation", 8)
+		grid.add_theme_constant_override("v_separation", 8)
+		grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		parent.add_child(grid)
+		return grid
+	else:
+		var hscroll := ScrollContainer.new()
+		hscroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+		hscroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+		hscroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		hscroll.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		parent.add_child(hscroll)
+		var hbox := HBoxContainer.new()
+		hbox.add_theme_constant_override("separation", 8)
+		hbox.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+		hbox.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+		hscroll.add_child(hbox)
+		return hbox
+
+# Min card width for a landscape horizontal-scroll strip.
+func _landscape_card_width() -> int:
+	return 190 if _card_is_mobile() else 220
+
 func _ensure_store_subscription() -> void:
 	var store = get_node_or_null("/root/GameStore")
 	if store and store.has_signal("convoys_changed"):
@@ -90,17 +186,9 @@ func _apply_oori_background() -> void:
 		
 	var bg = TextureRect.new()
 	bg.name = "OoriBackground"
-	bg.texture = load("res://Assets/Themes/Oori Backround.png")
-	if bg.texture == null:
-		printerr("[MenuBase] ERROR: Failed to load background texture at res://Assets/Themes/Oori Backround.png")
-		return
-		
-	bg.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	bg.stretch_mode = TextureRect.STRETCH_TILE
-	bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	
 	add_child(bg)
+	UITheme.apply_oori_bg(bg)
 	
 	# Ensure the texture is behind the main VBox but on top of legacy layers
 	var ContentNode = get_node_or_null("MainVBox")
@@ -157,22 +245,29 @@ func _on_user_changed(_user: Dictionary) -> void:
 	# Virtual: override in subclasses to update UI on money/user changes
 	pass
 
-## Centralized logic to ensure consistent side buffers in portrait mode.
+## Centralized logic to ensure a consistent minimum side buffer so menu content never sits flush
+## against the screen edge (glass / rounded corners / notch). Horizontal padding is enforced in BOTH
+## orientations at UITheme.SPACE_LG (Sprint 7, task 5). Vertical padding stays generous in portrait
+## but tight in landscape, where viewport height is scarce.
 func _apply_standard_margins() -> void:
 	var main_vbox = get_node_or_null("MainVBox")
 	if not is_instance_valid(main_vbox):
 		return
-		
+
 	var dsm = get_node_or_null("/root/DeviceStateManager")
 	var is_portrait = dsm.get_is_portrait() if is_instance_valid(dsm) else false
-	
-	if is_portrait:
-		# Standard 14px buffer for portrait elements from the screen edge.
-		# This prevents UI elements from being flush against the glass.
-		main_vbox.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT, Control.PRESET_MODE_MINSIZE, 14)
-	else:
-		# Landscape/Desktop: usually edge-to-edge content is preferred for horizontal density
-		main_vbox.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT, Control.PRESET_MODE_MINSIZE, 0)
+
+	# Anchor to the full rect, then inset. SPACE_LG (16px) is the minimum HORIZONTAL buffer on every
+	# device so content never touches the glass. Vertical insets are left exactly as before (portrait
+	# 14px, landscape edge-to-edge) so this change only affects side margins and never reduces the
+	# menu's usable height.
+	var side := float(UITheme.SPACE_LG)
+	var vert := 14.0 if is_portrait else 0.0
+	main_vbox.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT, Control.PRESET_MODE_MINSIZE, 0)
+	main_vbox.offset_left = side
+	main_vbox.offset_right = -side
+	main_vbox.offset_top = vert
+	main_vbox.offset_bottom = -vert
 
 func _on_convoys_changed(_convoys: Array) -> void:
 	# Only refresh if this menu is visible and has a convoy context.
@@ -185,15 +280,13 @@ func _update_navigation_bar_visibility(convoy: Dictionary) -> void:
 	var journey_data = convoy.get("journey")
 	var has_journey = journey_data != null and not journey_data.is_empty()
 	
-	# Look for the navigation bar in common paths
-	var nav_bar = get_node_or_null("MainVBox/BottomBarPanel/BottomMenuButtonsHBox")
-	if not is_instance_valid(nav_bar):
-		nav_bar = find_child("BottomMenuButtonsHBox", true, false)
-		
-	if is_instance_valid(nav_bar):
-		var settlement_btn = nav_bar.get_node_or_null("SettlementMenuButton")
-		if is_instance_valid(settlement_btn):
-			settlement_btn.visible = not has_journey
+	# Check MenuManager first (new centralized location)
+	var menu_mgr := get_tree().get_root().get_node_or_null("MenuManager")
+	if is_instance_valid(menu_mgr) and menu_mgr.has_method("set_nav_button_visible"):
+		menu_mgr.set_nav_button_visible("convoy_settlement_submenu", not has_journey)
+	
+	# Legacy BottomBarPanel/BottomMenuButtonsHBox fallback removed (Sprint 5) — that node no longer
+	# exists in any scene; nav-button visibility is owned solely by MenuManager.set_nav_button_visible.
 
 func _refresh_from_store() -> void:
 	print("[MenuBase] _refresh_from_store executing for: ", name)
@@ -274,7 +367,7 @@ func style_back_button(btn: Button) -> void:
 	if dsm and dsm.has_method("get_is_portrait"):
 		is_portrait = dsm.get_is_portrait()
 		is_mobile = dsm.is_mobile
-		font_size = dsm.get_scaled_base_font_size(18)
+		font_size = 18
 	else:
 		var win_size = get_viewport_rect().size if is_inside_tree() else Vector2(0, 0)
 		is_portrait = win_size.y > win_size.x
@@ -284,12 +377,12 @@ func style_back_button(btn: Button) -> void:
 	btn.add_theme_font_size_override("font_size", font_size)
 	
 	var sb = StyleBoxFlat.new()
-	sb.bg_color = Color(0.18, 0.22, 0.32, 0.95)
+	sb.bg_color = Color(UITheme.METAL_BASE, 0.95)
 	sb.border_width_left = 2
 	sb.border_width_right = 2
 	sb.border_width_top = 2
 	sb.border_width_bottom = 2
-	sb.border_color = Color(0.40, 0.50, 0.70, 0.9)
+	sb.border_color = Color(UITheme.METAL_EDGE, 0.9)
 	sb.corner_radius_top_left = 8
 	sb.corner_radius_top_right = 8
 	sb.corner_radius_bottom_left = 8
@@ -297,11 +390,11 @@ func style_back_button(btn: Button) -> void:
 	btn.add_theme_stylebox_override("normal", sb)
 	
 	var sb_hover = sb.duplicate() as StyleBoxFlat
-	sb_hover.bg_color = Color(0.25, 0.30, 0.45, 1.0)
+	sb_hover.bg_color = Color(UITheme.METAL_HOVER, 1.0)
 	btn.add_theme_stylebox_override("hover", sb_hover)
 	
 	var sb_pressed = sb.duplicate() as StyleBoxFlat
-	sb_pressed.bg_color = Color(0.12, 0.15, 0.22, 1.0)
+	sb_pressed.bg_color = Color(UITheme.METAL_DARK, 1.0)
 	btn.add_theme_stylebox_override("pressed", sb_pressed)
 
 ## Style a button to match the convoy navigation bar buttons (light grey, black text).
@@ -362,181 +455,11 @@ func setup_convoy_navigation_bar(back_button_node: Node) -> void:
 	if not is_instance_valid(back_button_node):
 		return
 	
-	var parent = back_button_node.get_parent()
-	var index = back_button_node.get_index()
-	
-	# --- Device/layout detection ---
-	var dsm = get_node_or_null("/root/DeviceStateManager")
-	var is_portrait := false
-	var use_mobile := false
-	
-	if is_instance_valid(dsm):
-		if dsm.has_method("get_is_portrait"):
-			is_portrait = dsm.get_is_portrait()
-		if dsm.get("is_mobile") != null:
-			use_mobile = dsm.is_mobile
-		elif OS.has_feature("mobile") or OS.has_feature("web_android") or OS.has_feature("web_ios"):
-			use_mobile = true
+	# Simply hide the back button. The static navigation bar is now managed by MenuManager.
+	# We no longer reparent siblings (context buttons) as per user request to keep them in the menu view.
+	if back_button_node is Control:
+		back_button_node.visible = false
 	else:
-		if is_inside_tree():
-			var win_size = get_viewport_rect().size
-			is_portrait = win_size.y > win_size.x
-			use_mobile = is_portrait or OS.has_feature("mobile")
-			
-	var base_font_size: int = 28 if is_portrait else 18
-	var font_size: int = base_font_size
-	if is_instance_valid(dsm) and dsm.has_method("get_scaled_base_font_size"):
-		font_size = dsm.get_scaled_base_font_size(base_font_size)
-	
-	# --- Create PanelContainer (bar background) matching convoy_menu.gd ---
-	var bottom_panel = PanelContainer.new()
-	bottom_panel.name = "BottomBarPanel"
-	
-	var bar_style = StyleBoxFlat.new()
-	bar_style.bg_color = Color(0.18, 0.18, 0.18, 0.85)
-	bar_style.corner_radius_top_left = 6
-	bar_style.corner_radius_top_right = 6
-	bar_style.border_width_top = 1
-	bar_style.border_color = Color(0.28, 0.28, 0.28)
-	# Content margins match standard portrait buffers
-	var bar_margin := 14.0 if is_portrait else (6.0 if use_mobile else 0.0)
-	bar_style.content_margin_top = bar_margin
-	bar_style.content_margin_bottom = bar_margin
-	bar_style.content_margin_left = bar_margin
-	bar_style.content_margin_right = bar_margin
-	bottom_panel.add_theme_stylebox_override("panel", bar_style)
-	
-	# NOTE: Don't add bottom_panel to tree yet - insertion point depends on
-	# whether back_button has siblings (handled at the end of this method).
-	
-	# --- HFlowContainer for the buttons (matches scene: HFlowContainer, centered, 10px gaps) ---
-	var hbox = HFlowContainer.new()
-	hbox.name = "BottomMenuButtonsHBox"
-	hbox.add_theme_constant_override("h_separation", 10)
-	hbox.add_theme_constant_override("v_separation", 10)
-	hbox.alignment = FlowContainer.ALIGNMENT_CENTER
-	bottom_panel.add_child(hbox)
-	
-	# --- Button configs ---
-	var btn_configs = [
-		{"name": "VehicleMenuButton", "text": "Vehicles", "signal": "open_vehicle_menu_requested", "type": "convoy_vehicle_submenu"},
-		{"name": "JourneyMenuButton", "text": "Journey", "signal": "open_journey_menu_requested", "type": "convoy_journey_submenu"},
-		{"name": "SettlementMenuButton", "text": "Settlement", "signal": "open_settlement_menu_requested", "type": "convoy_settlement_submenu"},
-		{"name": "CargoMenuButton", "text": "Cargo", "signal": "open_cargo_menu_requested", "type": "convoy_cargo_submenu"}
-	]
-	
-	# Button height matching convoy_menu._update_mobile_dependent_layout
-	var btn_min_h := 140.0 if is_portrait else (85.0 if use_mobile else 50.0)
-	# Button corner radius and padding matching convoy_menu._style_menu_button
-	var corner_r := 6 if use_mobile else 4
-	var v_pad := 8.0 if use_mobile else 4.0
-	
-	# Color constants matching convoy_menu.gd
-	var COLOR_MENU_BUTTON_GREY_BG := Color("b0b0b0")
-	var COLOR_BOX_FONT := Color("000000")
-	
-	for config in btn_configs:
-		var btn = Button.new()
-		btn.name = config["name"]
-		btn.text = config["text"]
-		btn.custom_minimum_size = Vector2(110, btn_min_h)
-		btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		btn.add_theme_font_size_override("font_size", font_size)
-		
-		var is_active_menu = self.get_meta("menu_type", "") == config.get("type", "")
-		
-		# --- Style matching convoy_menu._style_menu_button exactly ---
-		var sb_normal := StyleBoxFlat.new()
-		if is_active_menu:
-			# subtle yellow shade
-			sb_normal.bg_color = Color(0.72, 0.72, 0.65)
-		else:
-			sb_normal.bg_color = COLOR_MENU_BUTTON_GREY_BG
-			
-		sb_normal.corner_radius_top_left = corner_r
-		sb_normal.corner_radius_top_right = corner_r
-		sb_normal.corner_radius_bottom_left = corner_r
-		sb_normal.corner_radius_bottom_right = corner_r
-		sb_normal.border_width_left = 1
-		sb_normal.border_width_right = 1
-		sb_normal.border_width_top = 1
-		sb_normal.border_width_bottom = 3 if is_active_menu else 1
-		
-		if is_active_menu:
-			sb_normal.border_color = Color(0.85, 0.75, 0.2, 0.9)
-		else:
-			sb_normal.border_color = COLOR_BOX_FONT.darkened(0.2)
-			
-		sb_normal.shadow_size = 4
-		sb_normal.shadow_color = Color(0, 0, 0, 0.4)
-		sb_normal.content_margin_top = v_pad
-		sb_normal.content_margin_bottom = v_pad
-		
-		var sb_hover := sb_normal.duplicate() as StyleBoxFlat
-		if is_active_menu:
-			sb_hover.bg_color = sb_normal.bg_color.lightened(0.1)
-		else:
-			sb_hover.bg_color = COLOR_MENU_BUTTON_GREY_BG.lightened(0.1)
-		
-		var sb_pressed := sb_normal.duplicate() as StyleBoxFlat
-		if is_active_menu:
-			sb_pressed.bg_color = sb_normal.bg_color.darkened(0.15)
-		else:
-			sb_pressed.bg_color = COLOR_MENU_BUTTON_GREY_BG.darkened(0.15)
-			
-		sb_pressed.shadow_size = 2
-		sb_pressed.shadow_color = Color(0, 0, 0, 0.25)
-		
-		btn.add_theme_stylebox_override("normal", sb_normal)
-		btn.add_theme_stylebox_override("hover", sb_hover)
-		btn.add_theme_stylebox_override("pressed", sb_pressed)
-		
-		btn.add_theme_color_override("font_color", COLOR_BOX_FONT)
-		if is_active_menu:
-			btn.add_theme_color_override("font_hover_color", COLOR_BOX_FONT)
-			btn.add_theme_color_override("font_pressed_color", COLOR_BOX_FONT.lightened(0.2))
-		
-		# Connect signal to emit the respective menu navigation signal with _last_convoy_data
-		btn.pressed.connect(func():
-			if is_active_menu:
-				emit_signal("return_to_convoy_overview_requested", _last_convoy_data)
-			else:
-				emit_signal(config["signal"], _last_convoy_data)
-		)
-		
-		hbox.add_child(btn)
-	
-	# If the back button has siblings (e.g. vehicle menu's BottomRow with Manifest/Apply),
-	# reparent those siblings into our flow container and replace the entire old container.
-	var siblings_to_reparent: Array[Node] = []
-	for child in parent.get_children():
-		if child != back_button_node:
-			siblings_to_reparent.append(child)
-	
-	if not siblings_to_reparent.is_empty() and parent != get_node_or_null("MainVBox"):
-		# Parent is a wrapper container (e.g. BottomRow HBox) - replace it entirely
-		var grandparent = parent.get_parent()
-		var parent_index = parent.get_index()
-		
-		# Reparent siblings into the nav bar's flow container
-		for sibling in siblings_to_reparent:
-			parent.remove_child(sibling)
-			hbox.add_child(sibling)
-		
-		# Insert the nav bar where the old container was
-		grandparent.add_child(bottom_panel)
-		grandparent.move_child(bottom_panel, parent_index)
-		
-		# Remove the old container (it still contains just the back button)
-		grandparent.remove_child(parent)
-		parent.remove_child(back_button_node)
-		back_button_node.queue_free()
-		parent.queue_free()
-	else:
-		# Simple case: back button is a direct child of MainVBox - insert nav bar at same position
-		parent.add_child(bottom_panel)
-		parent.move_child(bottom_panel, index)
-		parent.remove_child(back_button_node)
 		back_button_node.queue_free()
 
 ## Sets up a standardized top banner with a clickable convoy name and menu title.
@@ -555,19 +478,16 @@ func setup_convoy_top_banner(title_node: Control, menu_name_suffix: String, brea
 	
 	var banner_style = StyleBoxFlat.new()
 	if use_dark_bg:
-		# Subtle vertical gradient: dark grey to slightly darker grey
-		banner_style.bg_color = Color(0.15, 0.16, 0.18, 0.95)
-		# Depth with shadow
+		banner_style.bg_color = UITheme.METAL_BASE
 		banner_style.shadow_color = Color(0, 0, 0, 0.5)
 		banner_style.shadow_size = 4
 		banner_style.shadow_offset = Vector2(0, 2)
 	else:
-		banner_style.bg_color = Color(0, 0, 0, 0) # Transparent
+		banner_style.bg_color = Color(0, 0, 0, 0)
 		banner_style.shadow_size = 0
 
-	banner_style.border_width_bottom = 4
-	# Oori Accent Blue - Solid
-	banner_style.border_color = Color(0.25, 0.55, 0.85, 1.0) 
+	banner_style.border_width_bottom = 3
+	banner_style.border_color = UITheme.ACCENT_VERDIGRIS
 
 	
 	banner_style.content_margin_top = 10
@@ -592,13 +512,12 @@ func setup_convoy_top_banner(title_node: Control, menu_name_suffix: String, brea
 	# Premium Button Styling (Tactile and clearly a button)
 	var btn_normal = StyleBoxFlat.new()
 	# Rich dark background with slight transparency
-	btn_normal.bg_color = Color(0.22, 0.24, 0.28, 0.9) 
+	btn_normal.bg_color = Color(UITheme.METAL_BASE, 0.9) 
 	btn_normal.border_width_left = 2
 	btn_normal.border_width_top = 2
 	btn_normal.border_width_right = 2
 	btn_normal.border_width_bottom = 2
-	# Oori Accent Blue / Gold-ish border
-	btn_normal.border_color = Color(0.45, 0.55, 0.75, 0.7) 
+	btn_normal.border_color = UITheme.ACCENT_BRASS
 	
 	btn_normal.content_margin_left = 14
 	btn_normal.content_margin_right = 14
@@ -615,12 +534,12 @@ func setup_convoy_top_banner(title_node: Control, menu_name_suffix: String, brea
 	btn_normal.shadow_offset = Vector2(0, 2)
 
 	var btn_hover = btn_normal.duplicate()
-	btn_hover.bg_color = Color(0.28, 0.32, 0.38, 1.0)
-	btn_hover.border_color = Color(0.6, 0.75, 1.0, 0.9) # Brighten border on hover
+	btn_hover.bg_color = Color(UITheme.METAL_HOVER, 1.0)
+	btn_hover.border_color = UITheme.ACCENT_BRASS
 	
 	var btn_pressed = btn_normal.duplicate()
 	btn_pressed.bg_color = Color(0.15, 0.16, 0.18, 1.0)
-	btn_pressed.border_color = Color(0.3, 0.4, 0.6, 0.8)
+	btn_pressed.border_color = UITheme.ACCENT_BRASS
 	btn_pressed.shadow_size = 1
 	btn_pressed.shadow_offset = Vector2(0, 1)
 	
@@ -629,19 +548,14 @@ func setup_convoy_top_banner(title_node: Control, menu_name_suffix: String, brea
 	_top_banner_convoy_button.add_theme_stylebox_override("pressed", btn_pressed)
 	_top_banner_convoy_button.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
 	
-	_top_banner_convoy_button.add_theme_color_override("font_color", Color(0.95, 0.95, 0.6)) # Warm gold
+	_top_banner_convoy_button.add_theme_color_override("font_color", UITheme.ACCENT_BRASS)
 	_top_banner_convoy_button.add_theme_color_override("font_hover_color", Color(1.0, 1.0, 1.0))
 	_top_banner_convoy_button.add_theme_color_override("font_pressed_color", Color(0.8, 0.8, 0.8))
 
 	
-	# Scale font size based on device
-	var dsm = get_node_or_null("/root/DeviceStateManager")
+	# Fixed logical font sizes; the canvas scale handles per-device sizing.
 	var title_fs = 28
 	var suffix_fs = 22
-	if is_instance_valid(dsm) and dsm.has_method("get_scaled_base_font_size"):
-		title_fs = dsm.get_scaled_base_font_size(28)
-		suffix_fs = dsm.get_scaled_base_font_size(22)
-		
 	_top_banner_convoy_button.add_theme_font_size_override("font_size", title_fs)
 	
 	_top_banner_convoy_button.pressed.connect(func():

@@ -31,8 +31,7 @@ func _is_mobile() -> bool:
 	return OS.has_feature("mobile") or DisplayServer.get_name() in ["Android", "iOS"] or _is_portrait()
 
 func _get_font_size(base: int) -> int:
-	var boost = 2.2 if _is_portrait() else (1.7 if _is_mobile() else 1.2)
-	return int(base * boost)
+	return base  # UIScaleManager owns all scaling; never multiply here (avoids double-scale)
 
 func open_centered() -> void:
 	print("[DiscordLinkPopup] open_centered called | LOUD LOG")

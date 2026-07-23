@@ -231,11 +231,11 @@ static func build_price_presenter(item_data_source: Dictionary, mode: String, qu
 		var denom := 2.0 if mode == "sell" else 1.0
 		var total_container_value_display: float = (price_components.container_unit_price / denom) * float(quantity)
 		var total_resource_value_display: float = (resource_unit_value / denom) * float(quantity)
-		var is_mission_cargo := false
-		if mode == "sell" and selected_item and (selected_item is Dictionary):
-			var sid: Dictionary = selected_item as Dictionary
-			is_mission_cargo = sid.has("mission_vendor_name") and not String(sid.get("mission_vendor_name", "")).is_empty() and String(sid.get("mission_vendor_name", "")) != "Unknown Vendor"
-		if total_resource_value_display > 0.01 and is_mission_cargo:
+		var is_delivery_cargo := false
+		if selected_item is Dictionary:
+			# A cargo item is grouped as delivery cargo by the VendorCargoAggregator if it has a recipient
+			is_delivery_cargo = selected_item.has("mission_vendor_name") and not String(selected_item.get("mission_vendor_name", "")).is_empty() and String(selected_item.get("mission_vendor_name", "")) != "Unknown Vendor"
+		if total_resource_value_display > 0.01 and is_delivery_cargo:
 			bb += "  [color=gray](Item: %s + Resources: %s)[/color]\n" % [
 				NumberFormat.fmt_float(total_container_value_display, 2),
 				NumberFormat.fmt_float(total_resource_value_display, 2),
