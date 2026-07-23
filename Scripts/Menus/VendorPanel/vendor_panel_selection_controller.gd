@@ -132,6 +132,16 @@ static func handle_new_item_selection(panel: Object, p_selected_item: Variant) -
 
 		panel._update_transaction_panel()
 		panel._update_install_button_state()
+		# Vendor stock parts carry no price; fetch the full priced detail by cargo_id (cached in
+		# MechanicsService, the same source the Mechanics/Cargo menus read) so the footer/inspector
+		# can show the real price. Independent of convoy vehicles — pricing must work with none.
+		if panel.selected_item and panel.selected_item.has("item_data"):
+			var idata_price: Dictionary = panel.selected_item.item_data
+			var uid_price := str(idata_price.get("cargo_id", idata_price.get("part_id", "")))
+			if uid_price != "" and panel._looks_like_part(idata_price) \
+					and is_instance_valid(panel._mechanics_service) \
+					and panel._mechanics_service.has_method("ensure_cargo_details"):
+				panel._mechanics_service.ensure_cargo_details(uid_price)
 		# Fire backend compatibility checks for this item against all convoy vehicles (to align with Mechanics)
 		if panel.selected_item and panel.selected_item.has("item_data") and panel.convoy_data and panel.convoy_data.has("vehicle_details_list"):
 			var idata3: Dictionary = panel.selected_item.item_data

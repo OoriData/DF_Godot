@@ -5,6 +5,10 @@ func _init() -> void:
 
 # Signals
 signal changes_committed(convoy_id: String, vehicle_id: String, swaps: Array, estimated_cost: float)
+## Emitted whenever the per-vehicle upgrade counts are recomputed. When Mechanics is embedded in the
+## convoy vehicle menu our own VehicleOptionButton is hidden, so the parent listens to this to refresh
+## the [N ↑] prefixes on ITS visible vehicle dropdown (via get_upgrade_count_for_vehicle_id).
+signal upgrade_counts_changed
 
 # UI refs
 @onready var title_label: Label = get_node_or_null("MainVBox/TitleLabel")
@@ -17,9 +21,14 @@ signal changes_committed(convoy_id: String, vehicle_id: String, swaps: Array, es
 @onready var back_button: Button = $MainVBox/BottomBar/BackButton
 @onready var apply_button: Button = $MainVBox/TabsRow/ContextButtons/ApplyButton
 @onready var bottom_bar: HBoxContainer = $MainVBox/BottomBar
-@onready var _overlay: ColorRect = $ColorRect
+@onready var _overlay: ColorRect = get_node_or_null("ColorRect")
 
 var _custom_tab_buttons: Array[Button] = []
+
+# Loadout-card container ref (Parts tab). Portrait = GridContainer (2 col);
+# landscape = HBoxContainer inside a horizontal ScrollContainer.
+# Installed slots first, empty (but swappable) slots ordered to the bottom.
+var _slot_grid: Container = null
 
 # State
 var _convoy: Dictionary = {}
@@ -31,7 +40,8 @@ var _pending_swaps: Array = []
 var _slot_vendor_availability: Dictionary = {}
 var _slot_inventory_availability: Dictionary = {} # highlights when convoy cargo has compatible upgrade
 var _compat_cache: Dictionary = {} # key: vehicle_id||part_cargo_id -> payload
-var _current_swap_ctx: Dictionary = {} # { dialog: AcceptDialog, vehicle_id: String, row_map: { part_cargo_id: HBoxContainer } }
+var _compat_prefetch_token: int = 0 # bumped to cancel an in-flight staggered all-vehicle prefetch
+var _current_swap_ctx: Dictionary = {} # { dialog: Control (overlay), vehicle_id: String, row_map: { part_cargo_id: HBoxContainer } }
 var _cargo_to_slot: Dictionary = {} # cargo_id -> slot_name for vendor candidates
 var _all_vendor_candidates_cache: Array = [] # cached vendor part candidates at current settlement
 var _install_price_cache: Dictionary = {} # key: vehicle_id||part_uid -> float
@@ -54,10 +64,10 @@ func _is_mobile() -> bool:
 	return false
 
 func _get_font_size(base: int) -> int:
-	var win_size = get_viewport_rect().size if is_inside_tree() else Vector2(0, 0)
-	var is_portrait = win_size.y > win_size.x
-	var boost = 2.5 if is_portrait else (1.6 if _is_mobile() else 1.2)
-	return int(base * boost)
+	return base  # UIScaleManager owns all scaling; never multiply here
+
+# Loadout-card visual language (_slot_accent / _make_card_style / _make_slot_badge
+# / _make_slot_container) lives in MenuBase so both tabs stay in sync.
 
 func _looks_like_uuid(s: String) -> bool:
 	# Very small heuristic to recognize UUIDs without regex.
@@ -216,7 +226,7 @@ func _extract_vendor_id(v: Dictionary) -> String:
 	var id_keys := ["vendor_id", "vendorId", "vendorID", "vend_id", "vendor_uuid", "uuid", "id", "_id"]
 	for k in id_keys:
 		if v.has(k) and v.get(k) != null:
-			var s := String(v.get(k, ""))
+			var s := _safe_str(v.get(k), "")
 			if s != "":
 				return s
 	# Fallback: scan values for a UUID-like string.
@@ -247,9 +257,9 @@ func _extract_vendor_inventory(v: Dictionary) -> Array:
 func _resolve_display_part_for_item(item: Dictionary) -> Dictionary:
 	if not (item is Dictionary):
 		return {}
-	var cid_any: String = String(item.get("cargo_id", ""))
+	var cid_any: String = _safe_str(item.get("cargo_id"), "")
 	if cid_any == "":
-		cid_any = String(item.get("part_id", ""))
+		cid_any = _safe_str(item.get("part_id"), "")
 	# Prefer nested part when available (copy and attach cargo_id)
 	if item.has("parts") and (item.get("parts") is Array):
 		var parts_arr: Array = item.get("parts")
@@ -308,7 +318,13 @@ func _estimate_install_price(vehicle_id: String, part: Dictionary) -> float:
 
 func _format_price_label(vendor_price: float, install_price: float) -> String:
 	var total := vendor_price + install_price
-	return "Part $%s + Installation $%s = $%s" % ["%.2f" % vendor_price, "%.2f" % install_price, "%.2f" % total]
+	if install_price > 0.0:
+		return "%s + %s install\n= %s total" % [
+			NumberFormat.format_money(int(vendor_price)),
+			NumberFormat.format_money(int(install_price)),
+			NumberFormat.format_money(int(total))
+		]
+	return NumberFormat.format_money(int(vendor_price))
 
 
 func _make_breakdown_text(vehicle_id: String, part: Dictionary, install_price: float, use_server: bool) -> String:
@@ -364,7 +380,7 @@ func _update_all_breakdown_labels() -> void:
 func _update_row_price_from_cache(row: HBoxContainer) -> void:
 	if not is_instance_valid(row):
 		return
-	var price_lbl: Label = row.get_node_or_null("PriceLabel")
+	var price_lbl: Label = row.find_child("PriceLabel", true, false)
 	if not is_instance_valid(price_lbl):
 		return
 	var vendor_price := 0.0
@@ -399,7 +415,7 @@ func _update_row_price_from_cache(row: HBoxContainer) -> void:
 	# If this row represents an inventory part, only show installation cost; otherwise show full vendor breakdown
 	var src := String(row.get_meta("source", "")) if row.has_meta("source") else ""
 	if src != "vendor":
-		price_lbl.text = "Installation " + NumberFormat.format_money(install_price)
+		price_lbl.text = "%s install" % NumberFormat.format_money(int(install_price)) if install_price > 0.0 else "Free"
 	else:
 		var price_text := _format_price_label(vendor_price, install_price)
 		price_lbl.text = price_text
@@ -412,7 +428,7 @@ func _update_row_price_from_cache(row: HBoxContainer) -> void:
 func _refresh_pending_prices_for_part(vehicle_id: String, part_uid: String) -> void:
 	# If any pending entries match this part and vehicle, refresh the pending UI
 	for s in _pending_swaps:
-		var vid := String(s.get("vehicle_id", ""))
+		var vid := _safe_str(s.get("vehicle_id"), "")
 		if vid != vehicle_id:
 			continue
 		var to_p: Dictionary = s.get("to_part", {})
@@ -421,8 +437,8 @@ func _refresh_pending_prices_for_part(vehicle_id: String, part_uid: String) -> v
 			return
 
 func _maybe_cache_install_price_from_payload(payload: Dictionary) -> void:
-	var vehicle_id := String(payload.get("vehicle_id", ""))
-	var part_uid := String(payload.get("part_cargo_id", ""))
+	var vehicle_id := _safe_str(payload.get("vehicle_id"), "")
+	var part_uid := _safe_str(payload.get("part_cargo_id"), "")
 	if vehicle_id == "" or part_uid == "":
 		return
 	var data_any = payload.get("data")
@@ -440,13 +456,13 @@ func _maybe_cache_install_price_from_payload(payload: Dictionary) -> void:
 		var part_slot := ""
 		var part_val_log := 0.0
 		if data_any is Dictionary:
-			if (data_any as Dictionary).has("name"): part_name = String((data_any as Dictionary).get("name", ""))
-			if (data_any as Dictionary).has("slot"): part_slot = String((data_any as Dictionary).get("slot", ""))
+			if (data_any as Dictionary).has("name"): part_name = _safe_str((data_any as Dictionary).get("name"), "")
+			if (data_any as Dictionary).has("slot"): part_slot = _safe_str((data_any as Dictionary).get("slot"), "")
 			if (data_any as Dictionary).has("value"): part_val_log = float((data_any as Dictionary).get("value", 0.0))
 		elif data_any is Array and (data_any as Array).size() > 0 and (data_any[0] is Dictionary):
 			var d0: Dictionary = data_any[0]
-			if d0.has("name"): part_name = String(d0.get("name", ""))
-			if d0.has("slot"): part_slot = String(d0.get("slot", ""))
+			if d0.has("name"): part_name = _safe_str(d0.get("name"), "")
+			if d0.has("slot"): part_slot = _safe_str(d0.get("slot"), "")
 			if d0.has("value"): part_val_log = float(d0.get("value", 0.0))
 		# Fall back to current chooser row_map if open
 		if part_name == "" or part_slot == "" or part_val_log == 0.0:
@@ -456,8 +472,8 @@ func _maybe_cache_install_price_from_payload(payload: Dictionary) -> void:
 					var row2_any: Variant = row_map2.get(part_uid, null)
 					if is_instance_valid(row2_any) and row2_any is HBoxContainer and (row2_any as HBoxContainer).has_meta("part_dict"):
 						var pd: Dictionary = (row2_any as HBoxContainer).get_meta("part_dict", {})
-						if part_name == "" and pd.has("name"): part_name = String(pd.get("name", ""))
-						if part_slot == "" and pd.has("slot"): part_slot = String(pd.get("slot", ""))
+						if part_name == "" and pd.has("name"): part_name = _safe_str(pd.get("name"), "")
+						if part_slot == "" and pd.has("slot"): part_slot = _safe_str(pd.get("slot"), "")
 						if part_val_log == 0.0 and pd.has("value") and pd.get("value") != null:
 							part_val_log = float(pd.get("value", 0.0))
 		_log_cost_audit("server_install_price", {
@@ -507,67 +523,134 @@ func _part_delta_summary(from_part: Dictionary, to_part: Dictionary) -> String:
 			bits.append("%s %s%.0f" % [labels.get(k, k), sym, num])
 	return ", ".join(bits)
 
-func _create_styled_part_row(part: Dictionary, slot_name: String, item_index: int) -> HBoxContainer:
-	var outer_row := HBoxContainer.new()
-	outer_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	outer_row.mouse_filter = Control.MOUSE_FILTER_PASS
-	outer_row.set_meta("slot_name", slot_name) # Keep meta for styling
-
-	var bg_panel := PanelContainer.new()
-	bg_panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	bg_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
-
-	var sb := StyleBoxFlat.new()
-	if item_index % 2 == 0:
-		sb.bg_color = Color(0.13, 0.15, 0.19, 0.8)
+# Build a single loadout card for a slot. Filled slots get the accent bar + part
+# name + stat summary; empty slots render dimmed with an "Install…" action.
+# The card keeps meta "slot_name" and a child Button named "SwapButton" so the
+# vendor compatibility-highlight helpers can still find and restyle it.
+func _create_slot_card(part: Dictionary, slot_name: String, is_empty: bool, pending_part: Dictionary = {}) -> Control:
+	var has_pending := not pending_part.is_empty()
+	var accent := _slot_accent(slot_name)
+	var filled := not is_empty
+	var base_bg: Color
+	if has_pending:
+		base_bg = Color(0.16, 0.14, 0.08, 0.92)
+	elif filled:
+		base_bg = Color(0.13, 0.16, 0.20, 0.92)
 	else:
-		sb.bg_color = Color(0.10, 0.12, 0.16, 0.8)
-	var row_margin := 12 if _is_mobile() else 6
-	sb.set_content_margin_all(row_margin)
-	bg_panel.add_theme_stylebox_override("panel", sb)
-	
-	outer_row.add_child(bg_panel)
+		base_bg = Color(0.10, 0.11, 0.14, 0.85)
 
-	var content_row := HBoxContainer.new()
-	content_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	content_row.add_theme_constant_override("separation", 10)
-	bg_panel.add_child(content_row)
+	var card := PanelContainer.new()
+	card.set_meta("slot_name", slot_name)
+	card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	card.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	card.mouse_filter = Control.MOUSE_FILTER_PASS
+	var sb := _make_card_style(filled or has_pending, UITheme.ACCENT_BRASS if has_pending else accent)
+	card.add_theme_stylebox_override("panel", sb)
 
-	var name_label = Label.new()
-	var part_name_text = "  — None installed —" if String(part.get("name", "None")) == "None" else "  " + String(part.get("name", "Unknown Part"))
-	name_label.text = part_name_text
+	var vb := VBoxContainer.new()
+	vb.add_theme_constant_override("separation", 6)
+	card.add_child(vb)
+
+	# Header: badge + slot name
+	var header := HBoxContainer.new()
+	header.add_theme_constant_override("separation", 8)
+	vb.add_child(header)
+	header.add_child(_make_slot_badge(slot_name, UITheme.ACCENT_BRASS if has_pending else accent, is_empty and not has_pending))
+
+	var slot_lbl := Label.new()
+	slot_lbl.text = slot_name.capitalize().replace("_", " ")
+	slot_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	slot_lbl.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	slot_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD
+	slot_lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	slot_lbl.add_theme_font_size_override("font_size", _get_font_size(15))
+	slot_lbl.add_theme_color_override("font_color",
+		UITheme.ACCENT_BRASS if has_pending else (accent if filled else Color(0.60, 0.63, 0.70)))
+	header.add_child(slot_lbl)
+
+	# "In Cart" chip (pending only)
+	if has_pending:
+		var chip := Label.new()
+		chip.text = "In Cart"
+		chip.add_theme_font_size_override("font_size", _get_font_size(11))
+		chip.add_theme_color_override("font_color", UITheme.TEXT_ON_LIGHT)
+		var chip_sb := StyleBoxFlat.new()
+		chip_sb.bg_color = UITheme.ACCENT_BRASS
+		chip_sb.set_corner_radius_all(UITheme.RADIUS_SM)
+		chip_sb.content_margin_left = 6; chip_sb.content_margin_right = 6
+		chip_sb.content_margin_top = 2; chip_sb.content_margin_bottom = 2
+		chip.add_theme_stylebox_override("normal", chip_sb)
+		header.add_child(chip)
+
+	# Part name row
+	var name_row := HBoxContainer.new()
+	name_row.add_theme_constant_override("separation", 6)
+	vb.add_child(name_row)
+
+	var name_label := Label.new()
+	if has_pending:
+		name_label.text = _safe_str(pending_part.get("name"), "Unknown Part")
+	elif is_empty:
+		name_label.text = "Empty"
+	else:
+		name_label.text = _safe_str(part.get("name"), "Unknown Part")
 	name_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	name_label.clip_text = true
-	name_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	name_label.add_theme_font_size_override("font_size", _get_font_size(16))
-	content_row.add_child(name_label)
+	name_label.autowrap_mode = TextServer.AUTOWRAP_WORD
+	name_label.add_theme_font_size_override("font_size", _get_font_size(14))
+	name_label.add_theme_color_override("font_color",
+		UITheme.ACCENT_BRASS if has_pending else (Color(0.50, 0.53, 0.60) if is_empty else Color(0.94, 0.95, 0.97)))
+	name_row.add_child(name_label)
 
-	var change_btn = Button.new()
-	var win_size_row = get_viewport_rect().size if is_inside_tree() else Vector2(0, 0)
-	var is_portrait_row = win_size_row.y > win_size_row.x
+	# Stat summary
+	var stat_source := pending_part if has_pending else (part if filled else {})
+	if not stat_source.is_empty():
+		var summary := _part_summary(stat_source)
+		if summary != "":
+			var stat_lbl := Label.new()
+			stat_lbl.text = summary
+			stat_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD
+			stat_lbl.add_theme_font_size_override("font_size", _get_font_size(12))
+			stat_lbl.add_theme_color_override("font_color",
+				Color(0.85, 0.78, 0.45) if has_pending else Color(0.70, 0.85, 1.0))
+			vb.add_child(stat_lbl)
+
+	# Action button
+	var change_btn := Button.new()
 	change_btn.name = "SwapButton"
-	change_btn.text = "Swap…"
-	var btn_h = 80 if is_portrait_row else (64 if _is_mobile() else 44)
-	change_btn.custom_minimum_size = Vector2(140 if _is_mobile() else 80, btn_h)
-	change_btn.add_theme_font_size_override("font_size", _get_font_size(14))
-	change_btn.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	if has_pending:
+		change_btn.text = "Change…"
+	elif is_empty:
+		change_btn.text = "Install…"
+	else:
+		change_btn.text = "Swap…"
+	change_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	change_btn.custom_minimum_size = Vector2(0, 56 if _is_mobile() else 32)
+	change_btn.add_theme_font_size_override("font_size", _get_font_size(13))
 	_style_swap_button(change_btn, slot_name)
 	change_btn.pressed.connect(_on_swap_part_pressed.bind(slot_name, part))
-	content_row.add_child(change_btn)
+	vb.add_child(change_btn)
 
-	# Hover effect
-	outer_row.mouse_entered.connect(func(): sb.bg_color = sb.bg_color.lightened(0.1))
-	outer_row.mouse_exited.connect(func():
-		sb.bg_color = Color(0.13, 0.15, 0.19, 0.8) if item_index % 2 == 0 else Color(0.10, 0.12, 0.16, 0.8)
-	)
+	# Hover
+	card.mouse_entered.connect(func(): sb.bg_color = base_bg.lightened(0.08))
+	card.mouse_exited.connect(func(): sb.bg_color = base_bg)
 
-	return outer_row
+	return card
+
+# Returns the pending to_part for the current vehicle + slot, or {} if none.
+func _pending_part_for_slot(slot_name: String) -> Dictionary:
+	var vehicle_id := ""
+	if _selected_vehicle_idx >= 0 and _selected_vehicle_idx < _vehicles.size():
+		vehicle_id = _safe_str(_vehicles[_selected_vehicle_idx].get("vehicle_id"), "")
+	for s in _pending_swaps:
+		if _safe_str(s.get("slot"), "") == slot_name and _safe_str(s.get("vehicle_id"), "") == vehicle_id:
+			return s.get("to_part", {})
+	return {}
 
 # Unique ID helpers for deduping pending swaps
 func _get_part_unique_id(part: Dictionary) -> String:
-	var id: String = String(part.get("cargo_id", ""))
+	var id: String = _safe_str(part.get("cargo_id"), "")
 	if id == "":
-		id = String(part.get("part_id", ""))
+		id = _safe_str(part.get("part_id"), "")
 	return id
 
 func _is_part_id_already_pending(id: String) -> bool:
@@ -583,6 +666,24 @@ func _is_part_id_already_pending(id: String) -> bool:
 func _is_part_already_pending(part: Dictionary) -> bool:
 	return _is_part_id_already_pending(_get_part_unique_id(part))
 
+# Chooser gating: is this candidate already represented in the cart for the CURRENT context?
+# Inventory parts are single-use, so being pending anywhere blocks re-selection. Vendor parts may
+# repeat across vehicles, so they only read as "In Cart" when they're the pending pick for THIS
+# vehicle's slot — letting the same vendor part be carted for other vehicles too.
+func _is_candidate_in_cart_for_context(part_uid: String, source: String, vehicle_id: String, slot_name: String) -> bool:
+	if part_uid == "":
+		return false
+	if source != "vendor":
+		return _is_part_id_already_pending(part_uid)
+	for s in _pending_swaps:
+		if _safe_str(s.get("vehicle_id"), "") != vehicle_id:
+			continue
+		if _safe_str(s.get("slot"), "") != slot_name:
+			continue
+		if _get_part_unique_id(s.get("to_part", {})) == part_uid:
+			return true
+	return false
+
 func _ready():
 	if is_instance_valid(back_button):
 		back_button.pressed.connect(func(): emit_signal("back_requested"))
@@ -593,8 +694,8 @@ func _ready():
 		apply_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		# Use standard convoy nav style for consistency with outer tabs
 		style_convoy_nav_button(apply_button)
-		# Match tab height
-		var tab_h = 80 if _is_portrait() else (64 if _is_mobile() else 44)
+		# Match tab height (trimmed in landscape so the strip leaves more room for part cards)
+		var tab_h = 80 if _is_portrait() else (56 if _is_mobile() else 44)
 		apply_button.custom_minimum_size.y = tab_h
 
 	if is_instance_valid(vehicle_option_button):
@@ -610,6 +711,12 @@ func _ready():
 	_rename_pending_tab_to_cart()
 	_setup_custom_tabs()
 	_refresh_apply_state()
+	# Reflow the Parts card container (2-col grid vs. horizontal strip) when the device rotates
+	# mid-session — the direction is otherwise fixed at build time until the vehicle is re-picked.
+	# (Sprint 7)
+	var dsm := get_node_or_null("/root/DeviceStateManager")
+	if is_instance_valid(dsm) and dsm.has_signal("layout_mode_changed") and not dsm.layout_mode_changed.is_connected(_on_layout_mode_changed):
+		dsm.layout_mode_changed.connect(_on_layout_mode_changed)
 	# Listen for compatibility checks directly from APICalls.
 	if is_instance_valid(_api) and _api.has_signal("part_compatibility_checked") and not _api.part_compatibility_checked.is_connected(_on_part_compatibility_ready):
 		_api.part_compatibility_checked.connect(_on_part_compatibility_ready)
@@ -672,7 +779,7 @@ func _setup_custom_tabs() -> void:
 	if is_instance_valid(tab_scroll):
 		tab_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
 		tab_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-		tab_scroll.custom_minimum_size.y = 80 if _is_portrait() else (64 if _is_mobile() else 44)
+		tab_scroll.custom_minimum_size.y = 80 if _is_portrait() else (56 if _is_mobile() else 44)
 		tab_scroll.mouse_filter = Control.MOUSE_FILTER_PASS
 		
 	# Clear any existing buttons just in case
@@ -693,11 +800,13 @@ func _setup_custom_tabs() -> void:
 		btn.toggle_mode = true
 		btn.add_theme_font_size_override("font_size", _get_font_size(14)) # Slightly smaller for inner tabs
 		
-		btn.custom_minimum_size = Vector2(140 if is_portrait else 110, 0)
-		
-		# Match Oori design (copied from ConvoyVehicleMenu)
+		# Match the tab strip height (comfortable touch target, trimmed in landscape).
+		var tab_btn_h := 80 if is_portrait else (56 if _is_mobile() else 44)
+		btn.custom_minimum_size = Vector2(140 if is_portrait else 110, tab_btn_h)
+
+		# Oori token styling (matches ConvoyVehicleMenu's tabs; darker fill since these are nested).
 		var normal_style = StyleBoxFlat.new()
-		normal_style.bg_color = Color(0.12, 0.12, 0.15, 0.9) # Slightly darker for nested
+		normal_style.bg_color = Color(UITheme.METAL_DARK, 0.9) # Slightly darker for nested
 		normal_style.corner_radius_top_left = 6
 		normal_style.corner_radius_top_right = 6
 		normal_style.corner_radius_bottom_left = 6
@@ -706,19 +815,19 @@ func _setup_custom_tabs() -> void:
 		normal_style.border_width_right = 1
 		normal_style.border_width_top = 1
 		normal_style.border_width_bottom = 1
-		normal_style.border_color = Color(0.25, 0.3, 0.35, 0.6)
+		normal_style.border_color = Color(UITheme.METAL_EDGE, 0.6)
 		normal_style.content_margin_left = 12
 		normal_style.content_margin_right = 12
-		
+
 		var pressed_style = normal_style.duplicate()
-		pressed_style.bg_color = Color(0.2, 0.3, 0.45, 0.9)
-		pressed_style.border_color = Color(0.4, 0.5, 0.7, 0.9)
-		
+		pressed_style.bg_color = Color(UITheme.METAL_ACTIVE, 0.9)
+		pressed_style.border_color = UITheme.ACCENT_BRASS
+
 		btn.add_theme_stylebox_override("normal", normal_style)
 		btn.add_theme_stylebox_override("pressed", pressed_style)
 		btn.add_theme_stylebox_override("hover", normal_style.duplicate())
-		btn.add_theme_color_override("font_color", Color(0.6, 0.6, 0.6, 1.0))
-		btn.add_theme_color_override("font_pressed_color", Color(1.0, 1.0, 1.0, 1.0))
+		btn.add_theme_color_override("font_color", UITheme.TEXT_MUTED)
+		btn.add_theme_color_override("font_pressed_color", UITheme.TEXT_PRIMARY)
 		
 		# Connect press
 		btn.pressed.connect(func():
@@ -738,11 +847,11 @@ func _update_custom_tab_buttons(active_index: int) -> void:
 		btn.set_pressed_no_signal(i == active_index)
 		
 		if i == active_index:
-			btn.add_theme_color_override("font_color", Color(1.0, 1.0, 1.0, 1.0))
+			btn.add_theme_color_override("font_color", UITheme.TEXT_PRIMARY)
 			var pressed_style = btn.get_theme_stylebox("pressed")
 			btn.add_theme_stylebox_override("normal", pressed_style)
 		else:
-			btn.add_theme_color_override("font_color", Color(0.6, 0.6, 0.6, 1.0))
+			btn.add_theme_color_override("font_color", UITheme.TEXT_MUTED)
 			var normal_style = btn.get_theme_stylebox("hover") # Use the base style
 			btn.add_theme_stylebox_override("normal", normal_style)
 
@@ -786,9 +895,8 @@ func _close_open_swap_dialog() -> void:
 	if _current_swap_ctx.is_empty():
 		return
 	var dlg = _current_swap_ctx.get("dialog", null)
-	# Check validity BEFORE type to avoid 'Left operand of "is" is a previously freed instance'
-	if is_instance_valid(dlg) and dlg is AcceptDialog:
-		(dlg as AcceptDialog).queue_free()
+	if is_instance_valid(dlg):
+		dlg.queue_free()
 	_current_swap_ctx.clear()
 
 func initialize_with_data(data_or_id: Variant, extra_arg: Variant = null) -> void:
@@ -804,21 +912,21 @@ func initialize_with_data(data_or_id: Variant, extra_arg: Variant = null) -> voi
 		var pre: Dictionary = (data_or_id as Dictionary)._mechanic_prefill
 		var part: Dictionary = pre.get("part", {})
 		var qty: int = int(pre.get("quantity", 1))
-		var vendor_id: String = String(pre.get("vendor_id", ""))
+		var vendor_id: String = _safe_str(pre.get("vendor_id"), "")
 		if not part.is_empty():
 			# Choose a target vehicle: prefer first compatible one if slot present
 			var chosen_vehicle_idx := 0
-			var slot_name: String = String(part.get("slot", ""))
+			var slot_name: String = _safe_str(part.get("slot"), "")
 			if slot_name == "" and part.has("parts") and part.get("parts") is Array and not (part.get("parts") as Array).is_empty():
 				var p0: Dictionary = (part.get("parts") as Array)[0]
-				slot_name = String(p0.get("slot", ""))
+				slot_name = _safe_str(p0.get("slot"), "")
 			# Find a vehicle that has this slot
 			if slot_name != "" and not _vehicles.is_empty():
 				for i in range(_vehicles.size()):
 					var v: Dictionary = _vehicles[i]
 					var has_slot := false
 					for ip in v.get("parts", []):
-						if String(ip.get("slot", "")) == slot_name:
+						if _safe_str(ip.get("slot"), "") == slot_name:
 							has_slot = true
 							break
 					if has_slot:
@@ -831,7 +939,7 @@ func initialize_with_data(data_or_id: Variant, extra_arg: Variant = null) -> voi
 			var from_part: Dictionary = {}
 			if slot_name != "" and _selected_vehicle_idx >= 0 and _selected_vehicle_idx < _vehicles.size():
 				for ip2 in _vehicles[_selected_vehicle_idx].get("parts", []):
-					if String(ip2.get("slot", "")) == slot_name:
+					if _safe_str(ip2.get("slot"), "") == slot_name:
 						from_part = ip2
 						break
 			# Add requested quantity times; prevent duplicates via internal dedupe
@@ -857,7 +965,7 @@ func _update_ui(convoy: Dictionary) -> void:
 		var new_vehicles2 = convoy.get("vehicle_details_list", convoy.get("vehicles", []))
 		if not new_vehicles2.is_empty():
 			_convoy = convoy.duplicate(true)
-			convoy_id = String(_convoy.get("convoy_id", _convoy.get("id", "")))
+			convoy_id = _safe_str(_convoy.get("convoy_id") if _convoy.get("convoy_id") != null else _convoy.get("id"), "")
 			_vehicles = new_vehicles2
 		return
 	
@@ -869,9 +977,9 @@ func _update_ui(convoy: Dictionary) -> void:
 
 	print("[MechanicsMenu] _update_ui processing. VDL size=", new_vehicles.size())
 	_convoy = convoy.duplicate(true)
-	convoy_id = String(_convoy.get("convoy_id", _convoy.get("id", "")))
+	convoy_id = _safe_str(_convoy.get("convoy_id") if _convoy.get("convoy_id") != null else _convoy.get("id"), "")
 	if is_instance_valid(title_label):
-		var nm: String = String(_convoy.get("convoy_name", _convoy.get("name", "Convoy")))
+		var nm: String = _safe_str(_convoy.get("convoy_name") if _convoy.get("convoy_name") != null else _convoy.get("name"), "Convoy")
 		title_label.text = "Mechanic — %s" % nm
 
 	# Support both detailed and shallow convoy payloads.
@@ -893,8 +1001,11 @@ func _update_ui(convoy: Dictionary) -> void:
 	if is_instance_valid(vehicle_option_button):
 		vehicle_option_button.select(idx)
 	_on_vehicle_selected(idx)
+	# Warm backend compatibility for the OTHER vehicles too, so their dropdown [N ↑] counts are
+	# backend-accurate on open rather than relying on the local heuristic until each is selected.
+	_start_vendor_compat_checks_for_all_vehicles()
 	_refresh_apply_state()
-	
+
 	if _awaiting_swap_completion:
 		_awaiting_swap_completion = false
 		if is_instance_valid(_hub) and _hub.has_signal("user_refresh_requested"):
@@ -902,6 +1013,7 @@ func _update_ui(convoy: Dictionary) -> void:
 
 
 func reset_view() -> void:
+	_compat_prefetch_token += 1 # cancel any in-flight all-vehicle compat prefetch
 	_convoy = {}
 	_vehicles = []
 	_selected_vehicle_idx = -1
@@ -951,6 +1063,9 @@ func _exit_tree() -> void:
 		_api.part_compatibility_checked.disconnect(_on_part_compatibility_ready)
 	if is_instance_valid(_hub) and _hub.has_signal("vendor_updated") and _hub.vendor_updated.is_connected(_on_hub_vendor_updated):
 		_hub.vendor_updated.disconnect(_on_hub_vendor_updated)
+	var dsm := get_node_or_null("/root/DeviceStateManager")
+	if is_instance_valid(dsm) and dsm.has_signal("layout_mode_changed") and dsm.layout_mode_changed.is_connected(_on_layout_mode_changed):
+		dsm.layout_mode_changed.disconnect(_on_layout_mode_changed)
 
 # Allow parent to set the selected vehicle index directly (to keep tabs in sync)
 func set_selected_vehicle_index(idx: int) -> void:
@@ -970,8 +1085,8 @@ func _on_hub_convoy_updated(updated_convoy: Dictionary) -> void:
 	# Best-effort: if a service emitted an updated convoy dict, refresh UI immediately.
 	if _convoy.is_empty() or updated_convoy.is_empty():
 		return
-	var target_id := String(_convoy.get("convoy_id", ""))
-	if target_id == "" or String(updated_convoy.get("convoy_id", "")) != target_id:
+	var target_id := _safe_str(_convoy.get("convoy_id"), "")
+	if target_id == "" or _safe_str(updated_convoy.get("convoy_id"), "") != target_id:
 		return
 	# If the swap chooser is open, avoid rebuilding UI (it would close the dialog and/or drop placeholder slot rows).
 	# We'll pick up refreshed data on the next explicit selection change or after the dialog closes.
@@ -991,6 +1106,7 @@ func _on_hub_convoy_updated(updated_convoy: Dictionary) -> void:
 	if _vehicles.size() > 0:
 		var idx: int = int(clamp(_selected_vehicle_idx, 0, _vehicles.size() - 1))
 		_on_vehicle_selected(idx if _selected_vehicle_idx >= 0 else 0)
+		_start_vendor_compat_checks_for_all_vehicles()
 	_refresh_apply_state()
 	
 	if _awaiting_swap_completion:
@@ -1010,7 +1126,7 @@ func _on_hub_vendor_updated(_vendor: Dictionary) -> void:
 		if not (it is Dictionary):
 			continue
 		var d: Dictionary = it
-		var cid := String(d.get("cargo_id", d.get("part_id", d.get("id", ""))))
+		var cid := _safe_str(d.get("cargo_id") if d.get("cargo_id") != null else (d.get("part_id") if d.get("part_id") != null else d.get("id")), "")
 		if cid != "":
 			inv_ids.append(cid)
 	inv_ids.sort()
@@ -1026,6 +1142,11 @@ func _on_hub_vendor_updated(_vendor: Dictionary) -> void:
 		# IMPORTANT: do not clear highlights to false; start checks and recompute-from-cache.
 		_start_vendor_compat_checks_for_vehicle(_vehicles[_selected_vehicle_idx])
 		_refresh_slot_vendor_availability()
+	# Fresh vendor stock can add upgrade candidates for every vehicle — warm the non-selected ones
+	# too so their dropdown counts reflect the new stock without needing a manual selection.
+	_start_vendor_compat_checks_for_all_vehicles()
+	# Fresh vendor stock can add upgrade candidates; refresh the dropdown counts for all vehicles.
+	_update_dropdown_upgrade_counts()
 
 func _populate_vehicle_dropdown():
 	vehicle_option_button.clear()
@@ -1038,8 +1159,102 @@ func _populate_vehicle_dropdown():
 	vehicle_option_button.disabled = false
 	for i in range(_vehicles.size()):
 		var v = _vehicles[i]
-		var label = "%s (%s)" % [v.get("name", "Vehicle %d" % (i+1)), v.get("make_model", "")] 
-		vehicle_option_button.add_item(label, i)
+		vehicle_option_button.add_item(_vehicle_dropdown_label(v, i), i)
+
+## Build the dropdown label for a vehicle, appending the count of slots that have a compatible
+## upgrade available (convoy cargo or vendor stock) so the player can see at a glance which
+## vehicles have upgrades waiting before drilling in. Count uses the same criterion as the Parts
+## tab's slot rows (_slot_has_swappable_candidate), so it matches what they'll see inside.
+func _vehicle_dropdown_label(v: Dictionary, i: int) -> String:
+	var base := "%s (%s)" % [v.get("name", "Vehicle %d" % (i + 1)), v.get("make_model", "")]
+	var upgrades := _count_available_upgrades(v)
+	# Prefix the count so it stays visible even when the collapsed OptionButton clips the
+	# (often long) make/model at the right edge.
+	if upgrades > 0:
+		return "[%d ↑]  %s" % [upgrades, base]
+	return base
+
+## Number of slot cards the Parts tab will render for this vehicle — i.e. the count of the vehicle's
+## own installed slots that have a compatible swappable upgrade available (convoy cargo or the current
+## settlement's vendors). This is deliberately the SAME set the Parts tab builds (via
+## _swappable_slot_entries), so the [N ↑] dropdown badge always equals the number of cards the player
+## sees inside. Backend compat is used when cached; otherwise it falls back to the local slot/
+## requirement heuristic, so a count is available before the async checks land and firms up via
+## _update_dropdown_upgrade_counts() when they do.
+func _count_available_upgrades(v: Dictionary) -> int:
+	if typeof(v) != TYPE_DICTIONARY or v.is_empty():
+		return 0
+	var count := _swappable_slot_entries(v).size()
+	if debug_part_compat_ui:
+		print("[PartCompatUI] upgrade count vehicle=", _safe_str(v.get("name"), "?"),
+			" slot_cards=", count, " vendor_cands=", _all_vendor_candidates_cache.size())
+	return count
+
+## Single source of truth for the Parts tab grid AND the dropdown [N ↑] count: the slot cards to show
+## for a vehicle. One entry per installed part whose slot has a compatible swappable candidate
+## available (convoy cargo or vendor stock). Entries are ordered installed-first, then empty slots,
+## matching the Parts tab render order. Each entry: {part, slot, is_empty}. Only iterates THIS
+## vehicle's installed parts — never the cross-vehicle/vendor slot union — so the count can't include
+## slots the vehicle doesn't physically have (which would render no card and cause a count mismatch).
+func _swappable_slot_entries(vehicle_data: Dictionary) -> Array:
+	var entries: Array = []
+	if typeof(vehicle_data) != TYPE_DICTIONARY or vehicle_data.is_empty():
+		return entries
+	var installed_parts: Array = []
+	if vehicle_data.has("parts") and vehicle_data.parts is Array:
+		installed_parts.append_array(vehicle_data.parts)
+	if installed_parts.is_empty():
+		return entries
+	# Group by slot
+	var by_slot: Dictionary = {}
+	for p in installed_parts:
+		var slot := _detect_slot_for_item(p)
+		if slot == "":
+			slot = "other"
+		if not by_slot.has(slot):
+			by_slot[slot] = []
+		by_slot[slot].append(p)
+	var slots_sorted: Array = by_slot.keys()
+	slots_sorted.sort()
+
+	# Keep only slots that have a swappable candidate. Empty slots always sort to the bottom.
+	var installed_entries: Array = []
+	var empty_entries: Array = []
+	for slot_name in slots_sorted:
+		if not _slot_has_swappable_candidate(vehicle_data, slot_name):
+			continue
+		for part in by_slot[slot_name]:
+			var is_empty := _safe_str(part.get("name"), "None") == "None"
+			var entry := {"part": part, "slot": slot_name, "is_empty": is_empty}
+			if is_empty:
+				empty_entries.append(entry)
+			else:
+				installed_entries.append(entry)
+	entries.append_array(installed_entries)
+	entries.append_array(empty_entries)
+	return entries
+
+## Refresh the upgrade counts in the dropdown labels in place (preserving the current selection)
+## once backend compatibility results arrive and firm up the local heuristic.
+func _update_dropdown_upgrade_counts() -> void:
+	# Our own dropdown is hidden in embedded mode, but still valid — update it when shown.
+	if is_instance_valid(vehicle_option_button) and not _vehicles.is_empty():
+		for i in range(_vehicles.size()):
+			if i >= vehicle_option_button.item_count:
+				break
+			vehicle_option_button.set_item_text(i, _vehicle_dropdown_label(_vehicles[i], i))
+	# Notify the parent menu (embedded case) so it can decorate its own visible vehicle dropdown.
+	upgrade_counts_changed.emit()
+
+## Public accessor for the parent convoy vehicle menu (embedded mode): how many slots have a
+## compatible upgrade available for the vehicle with this id. Same criterion as the [N ↑] prefix.
+func get_upgrade_count_for_vehicle_id(vid: String) -> int:
+	if vid == "":
+		return 0
+	for v in _vehicles:
+		if v is Dictionary and _safe_str((v as Dictionary).get("vehicle_id"), "") == vid:
+			return _count_available_upgrades(v as Dictionary)
+	return 0
 
 func _on_vehicle_selected(index: int):
 	if index < 0 or index >= _vehicles.size():
@@ -1056,50 +1271,119 @@ func _on_vehicle_selected(index: int):
 	# Fire UI-side vendor compatibility checks immediately for this vehicle for better logs/feedback
 	_start_vendor_compat_checks_for_vehicle(_vehicles[index])
 	# (Probe removed: compatibility checks are driven via MechanicsService/APICalls)
+	# By now vendor candidates are collected for this settlement, so counts are meaningful.
+	_update_dropdown_upgrade_counts()
+
+## Orientation changed mid-session — re-run the tab strip sizing and rebuild the Parts/Cart tabs so
+## the Parts card container switches between the portrait 2-col grid (vertical scroll) and the
+## landscape horizontal strip. Highlights are restored from caches, so this fires no network calls.
+## (Sprint 7)
+func _on_layout_mode_changed(_mode: int = -1, _screen_size: Vector2 = Vector2.ZERO, _is_mobile_val: bool = false) -> void:
+	if not is_inside_tree():
+		return
+	if is_instance_valid(apply_button):
+		apply_button.custom_minimum_size.y = 80 if _is_portrait() else (56 if _is_mobile() else 44)
+	_setup_custom_tabs()
+	if _selected_vehicle_idx >= 0 and _selected_vehicle_idx < _vehicles.size():
+		_rebuild_parts_tab(_vehicles[_selected_vehicle_idx])
+		_refresh_slot_inventory_availability()
+		_refresh_slot_vendor_availability()
+		_rebuild_pending_tab()
 
 
 func _rebuild_parts_tab(vehicle_data: Dictionary):
 	_clear_parts_ui()
-	var installed_parts: Array = []
-	if vehicle_data.has("parts") and vehicle_data.parts is Array:
-		installed_parts.append_array(vehicle_data.parts)
-	if installed_parts.is_empty():
+	var has_installed_parts := vehicle_data.has("parts") and vehicle_data.parts is Array and not (vehicle_data.parts as Array).is_empty()
+	if not has_installed_parts:
 		_show_info(parts_vbox, "No installed parts detected.")
 		return
-	# Group by slot
-	var by_slot: Dictionary = {}
-	for p in installed_parts:
-		var slot := _detect_slot_for_item(p)
-		if slot == "":
-			slot = "other"
-		if not by_slot.has(slot):
-			by_slot[slot] = []
-		by_slot[slot].append(p)
-	var slots_sorted: Array = by_slot.keys()
-	slots_sorted.sort()
 
-	var part_row_index = 0
-	for slot_name in slots_sorted:
-		# Skip any slot that has no swappable candidates in inventory or vendor stock.
-		# This ensures that every visible part row corresponds to a slot where a swap is possible.
-		if not _slot_has_swappable_candidate(vehicle_data, slot_name):
+	# Shared source of truth with the dropdown [N ↑] count: the exact slot cards to render.
+	# Entries are already ordered installed-first, then empty slots, and each carries an is_empty flag.
+	var entries := _swappable_slot_entries(vehicle_data)
+
+	# Switch the outer scroll container's direction based on orientation, then
+	# build the matching card container. This avoids nested ScrollContainers, which
+	# clip each other and compete for touch events in Godot 4.
+	var landscape := not _is_portrait()
+	if is_instance_valid(parts_scroll):
+		if landscape:
+			parts_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+			parts_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+		else:
+			parts_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+			parts_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+	if landscape:
+		var hbox := HBoxContainer.new()
+		hbox.add_theme_constant_override("separation", 8)
+		hbox.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+		hbox.size_flags_vertical = Control.SIZE_EXPAND_FILL
+		parts_vbox.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+		parts_vbox.add_child(hbox)
+		_slot_grid = hbox
+	else:
+		var grid := GridContainer.new()
+		grid.columns = 2
+		grid.add_theme_constant_override("h_separation", 8)
+		grid.add_theme_constant_override("v_separation", 8)
+		grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		parts_vbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		parts_vbox.add_child(grid)
+		_slot_grid = grid
+
+	var card_min_w := _landscape_card_width() if landscape else 0
+	for e in entries:
+		var pending := _pending_part_for_slot(e["slot"])
+		var card := _create_slot_card(e["part"], e["slot"], bool(e["is_empty"]), pending)
+		if card_min_w > 0:
+			card.custom_minimum_size.x = card_min_w
+			card.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+		_slot_grid.add_child(card)
+
+	if entries.is_empty():
+		_show_info(parts_vbox, "No swappable parts available here.")
+
+# All slot cards in the grid (cards carry meta "slot_name").
+func _all_slot_cards() -> Array:
+	var out: Array = []
+	if is_instance_valid(_slot_grid):
+		for c in _slot_grid.get_children():
+			if c is Control and (c as Control).has_meta("slot_name"):
+				out.append(c)
+	return out
+
+# Swap out individual slot cards that need a pending-preview update without
+# rebuilding the entire grid (avoids cache-consistency issues of a full rebuild).
+func _refresh_pending_previews():
+	if not is_instance_valid(_slot_grid):
+		return
+	if _selected_vehicle_idx < 0 or _selected_vehicle_idx >= _vehicles.size():
+		return
+	var vehicle_data: Dictionary = _vehicles[_selected_vehicle_idx]
+	var landscape := not _is_portrait()
+	var card_min_w := _landscape_card_width() if landscape else 0
+
+	for child in _slot_grid.get_children():
+		if not (child is Control) or not (child as Control).has_meta("slot_name"):
 			continue
-		var header = Label.new()
-		header.text = slot_name.capitalize().replace("_", " ")
-		var is_portrait = (get_viewport_rect().size.y > get_viewport_rect().size.x) if is_inside_tree() else false
-		header.add_theme_font_size_override("font_size", _get_font_size(24 if is_portrait else 18))
-		header.add_theme_color_override("font_color", Color.YELLOW)
-		parts_vbox.add_child(header)
-
-		for part in by_slot[slot_name]:
-			var row = _create_styled_part_row(part, slot_name, part_row_index)
-			parts_vbox.add_child(row)
-			part_row_index += 1
-		
-		# Add a separator between slot groups
-		var sep = HSeparator.new()
-		sep.custom_minimum_size.y = 8
-		parts_vbox.add_child(sep)
+		var slot_name: String = (child as Control).get_meta("slot_name")
+		var pending := _pending_part_for_slot(slot_name)
+		# Determine the currently-installed part for this slot from vehicle data
+		var installed_part := {}
+		for p in vehicle_data.get("parts", []):
+			if _detect_slot_for_item(p) == slot_name:
+				installed_part = p
+				break
+		var is_empty_slot := _safe_str(installed_part.get("name"), "None") == "None"
+		var new_card := _create_slot_card(installed_part, slot_name, is_empty_slot, pending)
+		if card_min_w > 0:
+			new_card.custom_minimum_size.x = card_min_w
+			new_card.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+		var idx := child.get_index()
+		_slot_grid.remove_child(child)
+		child.queue_free()
+		_slot_grid.add_child(new_card)
+		_slot_grid.move_child(new_card, idx)
 
 func _refresh_slot_vendor_availability():
 	# Compute vendor availability WITHOUT clearing to false first; clearing causes visible flicker
@@ -1165,7 +1449,7 @@ func _refresh_slot_vendor_availability():
 			if typeof(s_loc_val) == TYPE_STRING:
 				slot_name = String(s_loc_val)
 			if slot_name == "" and _cargo_to_slot.has(cid):
-				slot_name = String(_cargo_to_slot.get(cid, ""))
+				slot_name = _safe_str(_cargo_to_slot.get(cid), "")
 			if slot_name == "" or not slot_set2.has(slot_name):
 				continue
 			slot_has_candidate[slot_name] = true
@@ -1231,7 +1515,7 @@ func _refresh_slot_inventory_availability() -> void:
 	if _selected_vehicle_idx < 0 or _selected_vehicle_idx >= _vehicles.size():
 		return
 	var vsel: Dictionary = _vehicles[_selected_vehicle_idx]
-	var vid: String = String(vsel.get("vehicle_id", ""))
+	var vid: String = _safe_str(vsel.get("vehicle_id"), "")
 	# Build slot list from selected vehicle (installed parts and any slot markers in cargo items)
 	var slot_set: Dictionary = {}
 	var slots: Array = []
@@ -1274,7 +1558,7 @@ func _refresh_slot_inventory_availability() -> void:
 				if _detect_slot_for_item(item) != s:
 					continue
 				# Compatibility API requires a cargo instance id.
-				var cid_val: String = String(item.get("cargo_id", ""))
+				var cid_val: String = _safe_str(item.get("cargo_id"), "")
 				if cid_val == "":
 					continue
 				# Prefer backend compatibility cache when available
@@ -1311,12 +1595,10 @@ func _refresh_slot_inventory_availability() -> void:
 		_restyle_swap_buttons_for_slot(s)
 
 func _restyle_swap_buttons_for_slot(slot_name: String) -> void:
-	for child in parts_vbox.get_children():
-		if not is_instance_valid(child):
-			continue
-		if child is HBoxContainer and child.has_meta("slot_name") and String(child.get_meta("slot_name")) == slot_name:
-			# The button is nested inside the styled row; find it by name.
-			var swap_btn: Button = child.find_child("SwapButton", true, false) as Button
+	for card in _all_slot_cards():
+		if String(card.get_meta("slot_name", "")) == slot_name:
+			# The button is nested inside the card; find it by name.
+			var swap_btn: Button = card.find_child("SwapButton", true, false) as Button
 			if is_instance_valid(swap_btn):
 				_style_swap_button(swap_btn, slot_name)
 
@@ -1365,13 +1647,13 @@ func _start_vendor_compat_checks_for_vehicle(vehicle: Dictionary) -> void:
 				if data_any is Array:
 					var arr: Array = data_any
 					if arr.size() > 0 and (arr[0] is Dictionary) and (arr[0] as Dictionary).has("slot"):
-						slot_name = String((arr[0] as Dictionary).get("slot", ""))
+						slot_name = _safe_str((arr[0] as Dictionary).get("slot"), "")
 					if slot_name == "" and _cargo_to_slot.has(cid):
-						slot_name = String(_cargo_to_slot.get(cid, ""))
+						slot_name = _safe_str(_cargo_to_slot.get(cid), "")
 				elif data.has("fitment") and data.fitment is Dictionary and data.fitment.has("slot"):
-					slot_name = String(data.fitment.get("slot", ""))
+					slot_name = _safe_str(data.fitment.get("slot"), "")
 				elif _cargo_to_slot.has(cid):
-					slot_name = String(_cargo_to_slot.get(cid, ""))
+					slot_name = _safe_str(_cargo_to_slot.get(cid), "")
 				if slot_name != "":
 					# Ensure placeholder row exists after any UI rebuilds.
 					_ensure_slot_row(slot_name)
@@ -1384,15 +1666,59 @@ func _start_vendor_compat_checks_for_vehicle(vehicle: Dictionary) -> void:
 				print("[PartCompatUI] REQUEST vehicle=", vehicle_id, " part_cargo_id=", cid)
 			_mechanics_service.check_part_compatibility(vehicle_id, cid)
 
+## Eagerly warm the per-vehicle compatibility cache for EVERY vehicle in the convoy so the vehicle
+## dropdown's [N ↑] upgrade counts firm up from the backend on open, instead of only after each
+## vehicle is manually selected. Dispatch is STAGGERED (one vehicle per short tick) so we never
+## fire the whole convoy's worth of requests in a single frame — each tick's burst is the same
+## size as the selected-vehicle path already produces. The currently-selected vehicle is skipped
+## (it is already warmed by _on_vehicle_selected/_on_hub_vendor_updated), and
+## _start_vendor_compat_checks_for_vehicle() dedups against _compat_cache so already-warmed
+## (vehicle, part) pairs cost nothing. Safe to call repeatedly.
+func _start_vendor_compat_checks_for_all_vehicles() -> void:
+	if _vehicles.size() <= 1:
+		return # nothing beyond the selected vehicle to prefetch
+	_compat_prefetch_token += 1 # cancel any prefetch already in flight and start fresh
+	_prefetch_vehicles_staggered(_compat_prefetch_token)
+
+func _prefetch_vehicles_staggered(token: int) -> void:
+	for i in range(_vehicles.size()):
+		# Bail if the menu was rebuilt/reset/closed (token bumped or detached) while we yielded.
+		if token != _compat_prefetch_token or not is_inside_tree() or i >= _vehicles.size():
+			return
+		if i == _selected_vehicle_idx:
+			continue # already warmed by the selection path
+		var v: Variant = _vehicles[i]
+		if v is Dictionary and not (v as Dictionary).is_empty():
+			_start_vendor_compat_checks_for_vehicle(v as Dictionary)
+			# Spread the next vehicle's requests across frames to avoid a burst.
+			await get_tree().create_timer(0.12).timeout
+	# Results land asynchronously; refresh the dropdown counts once the sweep has been dispatched.
+	if token == _compat_prefetch_token and is_inside_tree():
+		_update_dropdown_upgrade_counts()
+
 func _style_swap_button(btn: Button, slot_name: String):
 	if not is_instance_valid(btn):
 		return
 
-	# Reset to a neutral, non-highlighted style. All visible rows already
-	# represent swappable slots, so we no longer need special button coloring.
-	btn.remove_theme_stylebox_override("normal")
-	btn.remove_theme_color_override("font_color")
-	btn.tooltip_text = ""
+	# Glow the Swap button green when this slot has a compatible upgrade available (convoy cargo or
+	# vendor stock), so the player can spot upgradeable slots at a glance. Availability firms up as
+	# backend compat results land, so this is re-applied via _restyle_swap_buttons_for_slot().
+	var has_upgrade := bool(_slot_vendor_availability.get(slot_name, false)) or bool(_slot_inventory_availability.get(slot_name, false))
+	if has_upgrade:
+		var sb := StyleBoxFlat.new()
+		sb.bg_color = UITheme.STATUS_GOOD
+		sb.set_corner_radius_all(6)
+		sb.content_margin_left = 10
+		sb.content_margin_right = 10
+		sb.content_margin_top = 4
+		sb.content_margin_bottom = 4
+		btn.add_theme_stylebox_override("normal", sb)
+		btn.add_theme_color_override("font_color", Color.WHITE)
+		btn.tooltip_text = "An upgrade is available for this slot"
+	else:
+		btn.remove_theme_stylebox_override("normal")
+		btn.remove_theme_color_override("font_color")
+		btn.tooltip_text = ""
 
 func _rebuild_pending_tab():
 	for c in pending_vbox.get_children():
@@ -1426,24 +1752,23 @@ func _rebuild_pending_tab():
 			panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
 			outer_row.add_child(panel)
 
+			var entry_accent := _slot_accent(_safe_str(e.get("slot"), ""))
+			var base_bg := Color(0.13, 0.16, 0.20, 0.92) if item_index % 2 == 0 else Color(0.10, 0.12, 0.16, 0.9)
 			var sb = StyleBoxFlat.new()
-			if item_index % 2 == 0:
-				sb.bg_color = Color(0.13, 0.15, 0.19, 0.8)
-			else:
-				sb.bg_color = Color(0.10, 0.12, 0.16, 0.8)
+			sb.bg_color = base_bg
+			sb.set_corner_radius_all(8)
+			sb.border_width_left = 3
+			sb.border_color = entry_accent
 			var row_margin := 14 if _is_mobile() else 8
 			sb.set_content_margin_all(row_margin)
 			panel.add_theme_stylebox_override("panel", sb)
 
 			# Hover effect
 			outer_row.mouse_entered.connect(func():
-				sb.bg_color = sb.bg_color.lightened(0.1)
+				sb.bg_color = base_bg.lightened(0.1)
 			)
 			outer_row.mouse_exited.connect(func():
-				if item_index % 2 == 0:
-					sb.bg_color = Color(0.13, 0.15, 0.19, 0.8)
-				else:
-					sb.bg_color = Color(0.10, 0.12, 0.16, 0.8)
+				sb.bg_color = base_bg
 			)
 
 			var row_hb = HBoxContainer.new()
@@ -1457,9 +1782,9 @@ func _rebuild_pending_tab():
 			row_hb.add_child(left_vb)
 
 			var title_lbl = Label.new()
-			var from_n = String(e.get("from_name", "Old"))
-			var to_n = String(e.get("to_name", "New"))
-			var slot_title = String(e.get("slot","slot")).capitalize()
+			var from_n = _safe_str(e.get("from_name"), "Old")
+			var to_n = _safe_str(e.get("to_name"), "New")
+			var slot_title = _safe_str(e.get("slot"), "slot").capitalize()
 			title_lbl.text = "%s: %s → %s" % [slot_title, from_n, to_n]
 			title_lbl.add_theme_font_size_override("font_size", _get_font_size(14))
 			title_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD
@@ -1470,7 +1795,7 @@ func _rebuild_pending_tab():
 			var sref_any = e.get("swap_ref", {})
 			var src_str := ""
 			if sref_any is Dictionary:
-				src_str = String((sref_any as Dictionary).get("source", ""))
+				src_str = _safe_str((sref_any as Dictionary).get("source"), "")
 			src_lbl.text = "Source: %s" % ("Vendor" if src_str == "vendor" else "Inventory")
 			src_lbl.add_theme_font_size_override("font_size", _get_font_size(12))
 			if src_str == "vendor":
@@ -1486,7 +1811,7 @@ func _rebuild_pending_tab():
 			var removable_flag := bool(e.get("removable", false))
 			# Costs line
 			var costs_lbl = Label.new()
-			var is_vendor := sref_any is Dictionary and String((sref_any as Dictionary).get("source", "")) == "vendor"
+			var is_vendor := sref_any is Dictionary and _safe_str((sref_any as Dictionary).get("source"), "") == "vendor"
 			if is_vendor:
 				costs_lbl.text = _format_price_label(_vendor_price, install_cost)
 			else:
@@ -1566,26 +1891,37 @@ func _rebuild_pending_tab():
 		install_label.add_theme_font_size_override("font_size", _get_font_size(16))
 		pending_vbox.add_child(install_label)
 	_refresh_apply_state()
+	_refresh_pending_previews()
 
 func _effective_part_cost_for_entry(e: Dictionary) -> float:
-	# Player pays intrinsic part value only when acquiring from vendor. Inventory parts are free (already owned).
+	# Vendor parts cost the VENDOR'S SALE PRICE (unit_price), NOT the part's intrinsic value — the two
+	# differ (e.g. value 12000 vs unit_price 18000), and the server charges the sale price. Install cost
+	# still uses part.value (25%); only the purchase component uses the sale price. Inventory parts are free.
 	var sref_any = e.get("swap_ref", {})
 	if not (sref_any is Dictionary):
 		return 0.0
 	var sref: Dictionary = sref_any
-	if String(sref.get("source", "")) != "vendor":
+	if _safe_str(sref.get("source"), "") != "vendor":
 		return 0.0
-	return _get_part_value(sref.get("to_part", {}))
+	# The swap captured the vendor sale price at add time; prefer it, then to_part.unit_price, then value.
+	var stored_price := float(sref.get("price", 0.0))
+	if stored_price > 0.0:
+		return stored_price
+	var to_p: Dictionary = sref.get("to_part", {})
+	var up: Variant = to_p.get("unit_price", null)
+	if up != null and float(up) > 0.0:
+		return float(up)
+	return _get_part_value(to_p)
 
 func _effective_price_for_swap(s: Dictionary) -> float:
 	# Scheduling heuristic: order vendor swaps by intrinsic value (cheaper first) to minimize cumulative install.
-	if String(s.get("source", "")) != "vendor":
+	if _safe_str(s.get("source"), "") != "vendor":
 		return 0.0
 	return _get_part_value(s.get("to_part", {}))
 
 func _extract_vehicle_stats_by_id(vehicle_id: String) -> Dictionary:
 	for v in _vehicles:
-		if String(v.get("vehicle_id", "")) == vehicle_id:
+		if _safe_str(v.get("vehicle_id"), "") == vehicle_id:
 			return _extract_vehicle_stats(v)
 	return {
 		"top_speed": 0.0,
@@ -1658,9 +1994,8 @@ func _make_stat_overview_panel(vehicle_id: String, before_stats: Dictionary, aft
 	sb.border_color = Color(0.4, 0.45, 0.5, 1.0)
 	sb.border_width_left = 1
 	sb.border_width_bottom = 1
-	sb.set_content_margin_all(8)
-	sb.corner_radius_top_left = 4
-	sb.corner_radius_top_right = 4
+	sb.set_content_margin_all(10)
+	sb.set_corner_radius_all(8)
 	panel.add_theme_stylebox_override("panel", sb)
 	panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 
@@ -1671,8 +2006,8 @@ func _make_stat_overview_panel(vehicle_id: String, before_stats: Dictionary, aft
 	# Header with vehicle name
 	var vname := "Vehicle"
 	for v in _vehicles:
-		if String(v.get("vehicle_id", "")) == vehicle_id:
-			vname = String(v.get("name", v.get("make_model", "Vehicle")))
+		if _safe_str(v.get("vehicle_id"), "") == vehicle_id:
+			vname = _safe_str(v.get("name") if v.get("name") != null else v.get("make_model"), "Vehicle")
 			break
 	var hdr = Label.new()
 	hdr.text = "%s — Changes Overview" % vname
@@ -1716,11 +2051,13 @@ func _make_stat_overview_panel(vehicle_id: String, before_stats: Dictionary, aft
 				NumberFormat.format_money(abs(delta)),
 			]
 		else:
+			var after_clamped := maxf(after, 0.0)
+			var after_str := "<1" if (after_clamped > 0.0 and after_clamped < 1.0) else NumberFormat.fmt_float(after_clamped, 0)
 			var sign_str2 := "+" if delta > 0.0 else ("" if delta == 0.0 else "-")
 			values_lbl.text = "%s%s%s (%s%s)" % [
 				NumberFormat.fmt_float(before, 0),
 				arrow,
-				NumberFormat.fmt_float(after, 0),
+				after_str,
 				sign_str2,
 				NumberFormat.fmt_float(abs(delta), 0),
 			]
@@ -1754,7 +2091,7 @@ func _to_float(v: Variant, default_val: float = 0.0) -> float:
 
 func _get_vehicle_value(vid: String) -> float:
 	for v in _vehicles:
-		if String(v.get("vehicle_id", "")) == vid:
+		if _safe_str(v.get("vehicle_id"), "") == vid:
 			return float(v.get("value", 0.0))
 	return 0.0
 
@@ -1805,7 +2142,7 @@ func _compute_pending_schedules() -> Dictionary:
 	# Returns { vehicle_id: [ { swap_ref, slot, from_name, to_name, vendor_price, install_cost, part_value, removable } ... ] }
 	var per_vehicle: Dictionary = {}
 	for s in _pending_swaps:
-		var vid := String(s.get("vehicle_id", ""))
+		var vid := _safe_str(s.get("vehicle_id"), "")
 		if vid == "":
 			continue
 		if not per_vehicle.has(vid):
@@ -1863,7 +2200,7 @@ func _compute_pending_schedules() -> Dictionary:
 				install_cost = _round_install(vehicle_value_mod + part_value_mod)
 				_log_cost_audit("schedule_step", {
 					"vehicle_id": vid,
-					"slot": String(s.get("slot","slot")),
+					"slot": _safe_str(s.get("slot"), "slot"),
 					"vehicle_value_pre": cur_val,
 					"to_value": to_val,
 					"from_value": from_val,
@@ -1877,9 +2214,9 @@ func _compute_pending_schedules() -> Dictionary:
 			cur_val = _round_bankers(cur_val + delta_val)
 			var entry := {
 				"swap_ref": s,
-				"slot": String(s.get("slot","slot")),
-				"from_name": String(s.get("from_part", {}).get("name", "Old")),
-				"to_name": String(to_p.get("name", "New")),
+				"slot": _safe_str(s.get("slot"), "slot"),
+				"from_name": _safe_str(s.get("from_part", {}).get("name"), "Old"),
+				"to_name": _safe_str(to_p.get("name"), "New"),
 				"vendor_price": float(s.get("price", 0.0)),
 				"install_cost": float(install_cost),
 				"part_value": float(pv), # absolute new part value
@@ -1923,98 +2260,124 @@ func _on_swap_part_pressed(slot_name: String, current_part: Dictionary):
 		vehicle = {}
 	_debug_swap_open_dump(slot_name, current_part, vehicle)
 
-	var chooser = AcceptDialog.new()
-	chooser.title = "Swap: " + slot_name.capitalize().replace("_", " ")
-	
-	var win_size = DisplayServer.window_get_size()
-	
-	# Scale dialog natively using our font helpers
-	var dlg_font = _get_font_size(20 if _is_mobile() else 14)
-	chooser.get_label().add_theme_font_size_override("font_size", dlg_font)
-	var ok_btn = chooser.get_ok_button()
-	if is_instance_valid(ok_btn):
-		ok_btn.add_theme_font_size_override("font_size", dlg_font)
-		ok_btn.custom_minimum_size.y = 80 if _is_mobile() else 40
+	# Full-screen overlay (no native window — stays within the game viewport)
+	var overlay := Control.new()
+	overlay.name = "SwapOverlay"
+	overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	overlay.mouse_filter = Control.MOUSE_FILTER_STOP
 
-	var target_w = min(1100, win_size.x - 32)
-	var target_h = min(900, win_size.y - 64)
-	chooser.min_size = Vector2(target_w, target_h)
-	
-	var root = VBoxContainer.new()
+	var backdrop := ColorRect.new()
+	backdrop.color = Color(0.0, 0.0, 0.0, 0.72)
+	backdrop.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	backdrop.mouse_filter = Control.MOUSE_FILTER_STOP
+	overlay.add_child(backdrop)
+
+	# Dialog panel — anchored with inset so it never overflows the screen
+	var portrait := _is_portrait()
+	var panel_margin := 16 if portrait else 24
+	var dialog_panel := PanelContainer.new()
+	dialog_panel.set_anchor(SIDE_LEFT,   0.0)
+	dialog_panel.set_anchor(SIDE_RIGHT,  1.0)
+	dialog_panel.set_anchor(SIDE_TOP,    0.0)
+	dialog_panel.set_anchor(SIDE_BOTTOM, 1.0)
+	dialog_panel.set_offset(SIDE_LEFT,   panel_margin)
+	dialog_panel.set_offset(SIDE_RIGHT,  -panel_margin)
+	dialog_panel.set_offset(SIDE_TOP,    panel_margin)
+	dialog_panel.set_offset(SIDE_BOTTOM, -panel_margin)
+	var panel_sb := StyleBoxFlat.new()
+	panel_sb.bg_color = UITheme.METAL_BASE
+	panel_sb.border_color = UITheme.METAL_EDGE
+	panel_sb.set_border_width_all(1)
+	panel_sb.set_corner_radius_all(UITheme.RADIUS_LG)
+	panel_sb.set_content_margin_all(0)
+	dialog_panel.add_theme_stylebox_override("panel", panel_sb)
+	overlay.add_child(dialog_panel)
+
+	var root := VBoxContainer.new()
 	root.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	root.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	root.add_theme_constant_override("separation", 16 if _is_mobile() else 12)
-	
-	# Add some margin to the root VBox
-	var margin_container = MarginContainer.new()
-	margin_container.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	margin_container.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	var m = 16 if _is_mobile() else 8
-	margin_container.add_theme_constant_override("margin_left", m)
-	margin_container.add_theme_constant_override("margin_right", m)
-	margin_container.add_theme_constant_override("margin_top", m)
-	margin_container.add_theme_constant_override("margin_bottom", m)
-	margin_container.add_child(root)
-	chooser.add_child(margin_container)
+	root.add_theme_constant_override("separation", UITheme.SPACE_MD)
+	dialog_panel.add_child(root)
 
-	var veh_id: String = str(vehicle.get("vehicle_id", ""))
-	_current_swap_ctx = {"dialog": chooser, "vehicle_id": veh_id, "row_map": {}}
+	var inner_margin := MarginContainer.new()
+	inner_margin.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	inner_margin.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	var im := UITheme.SPACE_LG if portrait else UITheme.SPACE_MD
+	inner_margin.add_theme_constant_override("margin_left",   im)
+	inner_margin.add_theme_constant_override("margin_right",  im)
+	inner_margin.add_theme_constant_override("margin_top",    im)
+	inner_margin.add_theme_constant_override("margin_bottom", im)
+	root.add_child(inner_margin)
 
-	# Header: current part summary
-	var header = HBoxContainer.new()
-	header.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	var hdr_left = VBoxContainer.new()
-	hdr_left.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	var title_lbl = Label.new()
-	title_lbl.text = "Slot: " + slot_name.capitalize().replace("_", " ")
-	title_lbl.add_theme_font_size_override("font_size", _get_font_size(26 if _is_mobile() else 20))
-	title_lbl.add_theme_color_override("font_color", Color(1.0, 0.85, 0.35))
-	
-	var current_lbl = Label.new()
-	current_lbl.text = "Current: " + String(current_part.get("name", "None")) + " " + _part_summary(current_part)
+	var content_vb := VBoxContainer.new()
+	content_vb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	content_vb.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	content_vb.add_theme_constant_override("separation", UITheme.SPACE_MD)
+	inner_margin.add_child(content_vb)
+
+	# Title bar: slot name + close button
+	var title_row := HBoxContainer.new()
+	title_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var title_lbl := Label.new()
+	title_lbl.text = "Swap: " + slot_name.capitalize().replace("_", " ")
+	title_lbl.add_theme_font_size_override("font_size", 28 if portrait else 20)
+	title_lbl.add_theme_color_override("font_color", UITheme.ACCENT_BRASS)
+	title_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	title_row.add_child(title_lbl)
+	var close_btn := Button.new()
+	close_btn.text = "✕"
+	close_btn.flat = true
+	close_btn.custom_minimum_size = Vector2(56 if portrait else 40, 56 if portrait else 40)
+	close_btn.add_theme_font_size_override("font_size", 22 if portrait else 16)
+	close_btn.add_theme_color_override("font_color", UITheme.TEXT_MUTED)
+	title_row.add_child(close_btn)
+	content_vb.add_child(title_row)
+
+	# Subtitle: current part
+	var current_lbl := Label.new()
+	current_lbl.text = "Current: " + _safe_str(current_part.get("name"), "None") + " " + _part_summary(current_part)
 	current_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD
-	current_lbl.add_theme_font_size_override("font_size", _get_font_size(18 if _is_mobile() else 14))
-	current_lbl.modulate = Color(0.8, 0.8, 0.8)
-	
-	hdr_left.add_child(title_lbl)
-	hdr_left.add_child(current_lbl)
-	header.add_child(hdr_left)
-	root.add_child(header)
-	
-	root.add_child(HSeparator.new())
+	current_lbl.add_theme_font_size_override("font_size", 22 if portrait else 16)
+	current_lbl.add_theme_color_override("font_color", UITheme.TEXT_MUTED)
+	content_vb.add_child(current_lbl)
 
-	# Lists: Compatible first, then Incompatible
-	var scroll = ScrollContainer.new()
+	content_vb.add_child(HSeparator.new())
+
+	# Scrollable list area
+	var scroll := ScrollContainer.new()
 	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	root.add_child(scroll)
-	
-	var lists_vb = VBoxContainer.new()
+	content_vb.add_child(scroll)
+
+	var lists_vb := VBoxContainer.new()
 	lists_vb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	lists_vb.add_theme_constant_override("separation", 20 if _is_mobile() else 14)
+	lists_vb.add_theme_constant_override("separation", UITheme.SPACE_LG)
 	scroll.add_child(lists_vb)
 
-	var compatible_box = VBoxContainer.new()
+	var compatible_box := VBoxContainer.new()
 	compatible_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	compatible_box.add_theme_constant_override("separation", 8)
-	var comp_header = Label.new()
+	compatible_box.add_theme_constant_override("separation", UITheme.SPACE_SM)
+	var comp_header := Label.new()
 	comp_header.text = "Compatible Replacements"
-	comp_header.add_theme_color_override("font_color", Color.YELLOW)
-	comp_header.add_theme_font_size_override("font_size", _get_font_size(24 if _is_mobile() else 16))
+	comp_header.add_theme_color_override("font_color", UITheme.ACCENT_BRASS)
+	comp_header.add_theme_font_size_override("font_size", 24 if portrait else 16)
 	compatible_box.add_child(comp_header)
 	lists_vb.add_child(compatible_box)
 
 	lists_vb.add_child(HSeparator.new())
 
-	var incompatible_box = VBoxContainer.new()
+	var incompatible_box := VBoxContainer.new()
 	incompatible_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	incompatible_box.add_theme_constant_override("separation", 8)
-	var incomp_header = Label.new()
+	incompatible_box.add_theme_constant_override("separation", UITheme.SPACE_SM)
+	var incomp_header := Label.new()
 	incomp_header.text = "Not Compatible"
-	incomp_header.add_theme_color_override("font_color", Color(0.8, 0.4, 0.4))
-	incomp_header.add_theme_font_size_override("font_size", _get_font_size(24 if _is_mobile() else 16))
+	incomp_header.add_theme_color_override("font_color", UITheme.DANGER)
+	incomp_header.add_theme_font_size_override("font_size", 24 if portrait else 16)
 	incompatible_box.add_child(incomp_header)
 	lists_vb.add_child(incompatible_box)
+
+	var veh_id: String = str(vehicle.get("vehicle_id", ""))
+	_current_swap_ctx = {"dialog": overlay, "vehicle_id": veh_id, "row_map": {}}
 
 	# Stash containers for dynamic re-parenting when backend results arrive
 	_current_swap_ctx["compatible_box"] = compatible_box
@@ -2052,17 +2415,21 @@ func _on_swap_part_pressed(slot_name: String, current_part: Dictionary):
 		var item_index = 0
 		for entry in all_candidates:
 			var cand: Dictionary = entry.get("part", {})
-			var source: String = String(entry.get("source", "inventory"))
+			var source: String = _safe_str(entry.get("source"), "inventory")
 			var price: float = float(entry.get("price", 0.0))
-			var vendor_id_for_entry: String = String(entry.get("vendor_id", ""))
+			var vendor_id_for_entry: String = _safe_str(entry.get("vendor_id"), "")
 			var comp_ok := (_detect_slot_for_item(cand) == slot_name)
-			
+
 			var row = _make_candidate_row(cand, current_part, source, price, comp_ok, item_index)
 			item_index += 1
 			
 			var id2: String = str(cand.get("cargo_id", ""))
 			if id2 == "":
 				id2 = str(cand.get("part_id", ""))
+			# Already carted for THIS vehicle's slot? Vendor parts stay selectable for other vehicles;
+			# inventory parts are single-use so they read "In Cart" everywhere. Computed at loop level
+			# so both the "In Cart" label branch and the Select-button gate below can read it.
+			var in_cart_ctx := _is_candidate_in_cart_for_context(id2, source, veh_id, slot_name)
 			if id2 != "":
 				_current_swap_ctx["row_map"][id2] = row
 				var cache_key := "%s||%s" % [str(vehicle.get("vehicle_id", "")), id2]
@@ -2073,7 +2440,7 @@ func _on_swap_part_pressed(slot_name: String, current_part: Dictionary):
 				row.set_meta("part_uid", id2)
 				
 				# Set delta label vs current part
-				var delta_lbl: Label = row.get_node_or_null("DeltaLabel")
+				var delta_lbl: Label = row.find_child("DeltaLabel", true, false)
 				if is_instance_valid(delta_lbl):
 					var ds = _part_delta_summary(current_part, cand)
 					if ds != "":
@@ -2082,24 +2449,23 @@ func _on_swap_part_pressed(slot_name: String, current_part: Dictionary):
 						delta_lbl.text = _part_summary(cand)
 				_update_row_price_from_cache(row)
 				
-				# If already pending in cart
-				if _is_part_id_already_pending(id2):
+				if in_cart_ctx:
 					var compat_lbl_pending: Label = row.get_node_or_null("CompatLabel")
 					if is_instance_valid(compat_lbl_pending):
 						compat_lbl_pending.text = "In Cart"
 						compat_lbl_pending.add_theme_color_override("font_color", Color(0.95, 0.85, 0.4))
-					var select_btn_pending: Button = row.get_node_or_null("SelectBtn")
+					var select_btn_pending: Button = row.find_child("SelectBtn", true, false)
 					if is_instance_valid(select_btn_pending):
 						select_btn_pending.text = "In Cart"
 						select_btn_pending.disabled = true
 			
 			# Select Button setup
 			if comp_ok:
-				var select_btn: Button = row.get_node_or_null("SelectBtn")
-				if is_instance_valid(select_btn) and not _is_part_id_already_pending(id2):
+				var select_btn: Button = row.find_child("SelectBtn", true, false)
+				if is_instance_valid(select_btn) and not in_cart_ctx:
 					select_btn.pressed.connect(func():
 						_add_pending_swap(slot_name, current_part, cand, source, price, vendor_id_for_entry)
-						chooser.queue_free()
+						_close_open_swap_dialog()
 						_rebuild_pending_tab()
 					)
 				if row.get_parent() == null:
@@ -2107,21 +2473,49 @@ func _on_swap_part_pressed(slot_name: String, current_part: Dictionary):
 			else:
 				var reason = _compat_reason(vehicle, slot_name, cand)
 				row.tooltip_text = reason
-				var select_btn_in: Button = row.get_node_or_null("SelectBtn")
+				var select_btn_in: Button = row.find_child("SelectBtn", true, false)
 				if is_instance_valid(select_btn_in):
 					select_btn_in.disabled = true
 				if row.get_parent() == null:
 					incompatible_box.add_child(row)
 
-	get_tree().root.add_child(chooser)
-	chooser.popup_centered_ratio(0.85)
-	chooser.connect("confirmed", Callable(chooser, "queue_free"))
-	chooser.connect("canceled", Callable(chooser, "queue_free"))
-	chooser.connect("close_requested", Callable(chooser, "queue_free"))
-	chooser.connect("tree_exiting", func(): _current_swap_ctx.clear())
+	var _do_close := func():
+		if is_instance_valid(overlay):
+			overlay.queue_free()
+		_current_swap_ctx.clear()
+
+	close_btn.pressed.connect(_do_close)
+	backdrop.gui_input.connect(func(event: InputEvent):
+		if event is InputEventMouseButton and (event as InputEventMouseButton).pressed:
+			_do_close.call()
+	)
+	overlay.connect("tree_exiting", func(): _current_swap_ctx.clear())
+
+	add_child(overlay)
+
 	# Hide incompatible list if empty
 	if incompatible_box.get_child_count() <= 1:
 		incompatible_box.visible = false
+
+# True ONLY when this cargo item's part is explicitly flagged non-removable. Unknown/missing → false
+# (don't hide). The attach endpoint only installs REMOVABLE parts, so non-removable owned parts can't
+# be installed from cargo — they must be bought fresh from a vendor.
+func _is_item_non_removable(item: Dictionary) -> bool:
+	var rv: Variant = item.get("removable", null)
+	if rv == null and item.has("parts") and (item.get("parts") is Array) and not (item.get("parts") as Array).is_empty():
+		var p0: Variant = (item.get("parts") as Array)[0]
+		if p0 is Dictionary:
+			rv = (p0 as Dictionary).get("removable", null)
+	if rv == null:
+		return false
+	if rv is bool:
+		return not rv
+	if rv is int:
+		return int(rv) == 0
+	if rv is String:
+		var s_rv := String(rv).to_lower()
+		return s_rv == "false" or s_rv == "0" or s_rv == "no"
+	return false
 
 func _collect_candidate_parts_for_slot(slot_name: String) -> Array:
 	var out: Array = []
@@ -2136,8 +2530,11 @@ func _collect_candidate_parts_for_slot(slot_name: String) -> Array:
 			if s != slot_name:
 				continue
 			# Compatibility API requires a cargo instance id.
-			var cid := String(item.get("cargo_id", ""))
+			var cid := _safe_str(item.get("cargo_id"), "")
 			if cid == "":
+				continue
+			# Attach (install-from-cargo) only accepts removable parts; hide non-removable owned parts.
+			if _is_item_non_removable(item):
 				continue
 			out.append(item)
 	return out
@@ -2146,7 +2543,7 @@ func _slot_has_swappable_candidate(vehicle_data: Dictionary, slot_name: String) 
 	# Returns true if there is at least one candidate part (inventory or vendor)
 	# for this slot that is actually compatible. Slots whose only candidates are
 	# known to be "Not Compatible" will be omitted from the main list.
-	var vehicle_id := String(vehicle_data.get("vehicle_id", ""))
+	var vehicle_id := _safe_str(vehicle_data.get("vehicle_id"), "")
 	var any_candidate := false
 	var any_compatible := false
 
@@ -2170,7 +2567,7 @@ func _slot_has_swappable_candidate(vehicle_data: Dictionary, slot_name: String) 
 		if not (item is Dictionary):
 			continue
 		any_candidate = true
-		var cid := String((item as Dictionary).get("cargo_id", ""))
+		var cid := _safe_str((item as Dictionary).get("cargo_id"), "")
 		var compat_known := false
 		if vehicle_id != "" and cid != "":
 			var ck := "%s||%s" % [vehicle_id, cid]
@@ -2195,7 +2592,7 @@ func _slot_has_swappable_candidate(vehicle_data: Dictionary, slot_name: String) 
 		if cand.is_empty():
 			continue
 		any_candidate = true
-		var cid2 := String(cand.get("cargo_id", cand.get("part_id", "")))
+		var cid2 := _safe_str(cand.get("cargo_id") if cand.get("cargo_id") != null else cand.get("part_id"), "")
 		var compat_known2 := false
 		if vehicle_id != "" and cid2 != "":
 			var ck2 := "%s||%s" % [vehicle_id, cid2]
@@ -2241,7 +2638,7 @@ func _collect_all_vendor_part_candidates() -> Array:
 	var vendors: Array = _extract_settlement_vendors(settlement_match)
 	# Avoid spamming: only dump one debug line-set per location+vendor-count when no candidates are found.
 	var debug_sig := "%s:%s:%s" % [
-		String(settlement_match.get("settlement_id", settlement_match.get("id", ""))),
+		_safe_str(settlement_match.get("settlement_id") if settlement_match.get("settlement_id") != null else settlement_match.get("id"), ""),
 		str(int(roundf(float(_convoy.get("x", -99999.0))))),
 		str(int(roundf(float(_convoy.get("y", -99999.0)))))
 	]
@@ -2377,7 +2774,7 @@ func _get_settlement_at_convoy_coords() -> Dictionary:
 						# Try to resolve settlement id back to a full settlement dict.
 						for s in settlements:
 							if s is Dictionary:
-								var sid := String((s as Dictionary).get("settlement_id", (s as Dictionary).get("id", "")))
+								var sid := _safe_str((s as Dictionary).get("settlement_id") if (s as Dictionary).get("settlement_id") != null else (s as Dictionary).get("id"), "")
 								if sid != "" and sid == String(s0):
 									return s
 						# Unable to resolve; return empty so caller can handle.
@@ -2431,40 +2828,26 @@ func _get_vendor_id_at_convoy_location() -> String:
 	return ""
 
 func _ensure_slot_row(slot_name: String) -> void:
-	# If the UI has no row for this slot, create a placeholder row to enable swapping
-	var has_any := false
-	for child in parts_vbox.get_children():
-		if child is HBoxContainer and child.has_meta("slot_name") and String(child.get_meta("slot_name")) == slot_name:
-			has_any = true
-			break
-	if has_any:
+	# If the grid has no card for this slot, append an empty placeholder card so the
+	# slot becomes swappable. Appending keeps empty slots at the bottom of the grid.
+	if not is_instance_valid(_slot_grid):
 		return
-	# Insert a header if missing
-	var header_present := false
-	for child in parts_vbox.get_children():
-		if child is Label and String(child.text).to_lower() == slot_name.replace("_", " ").to_lower():
-			header_present = true
-			break
-	if not header_present:
-		var header = Label.new()
-		header.text = slot_name.capitalize().replace("_", " ")
-		# Scale dynamically added slot headers
-		var is_portrait = (get_viewport_rect().size.y > get_viewport_rect().size.x) if is_inside_tree() else false
-		var font_sz = _get_font_size(24 if is_portrait else 18) if has_method("_get_font_size") else 16
-		header.add_theme_font_size_override("font_size", font_sz)
-		header.add_theme_color_override("font_color", Color.YELLOW)
-		parts_vbox.add_child(header)
-	# Add placeholder row
-	var current_part := {"name": "None", "slot": slot_name}
-	# Find the current total number of rows to get the correct index for styling
-	var current_row_count = 0
-	for child in parts_vbox.get_children():
-		# Only count actual part rows, not headers or separators
-		if child is HBoxContainer:
-			current_row_count += 1
-	
-	var row = _create_styled_part_row(current_part, slot_name, current_row_count)
-	parts_vbox.add_child(row)
+	# Gate: only surface a vendor-driven empty slot when at least one candidate is compatible with THIS
+	# vehicle. Vendor stock alone (e.g. turbochargers, which require an ICE engine) must not force the
+	# slot onto vehicles that can't accept it — `_slot_vendor_availability` is keyed by slot only, so
+	# availability otherwise bleeds across vehicles and shows empty slots with nothing selectable inside.
+	if _selected_vehicle_idx >= 0 and _selected_vehicle_idx < _vehicles.size():
+		if not _slot_has_swappable_candidate(_vehicles[_selected_vehicle_idx], slot_name):
+			return
+	for card in _all_slot_cards():
+		if String(card.get_meta("slot_name", "")) == slot_name:
+			return
+	var placeholder := {"name": "None", "slot": slot_name}
+	var new_card := _create_slot_card(placeholder, slot_name, true)
+	if not _is_portrait():
+		new_card.custom_minimum_size.x = _landscape_card_width()
+		new_card.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+	_slot_grid.add_child(new_card)
 
 func _extract_unit_price(d: Dictionary) -> float:
 	# Mirrors Vendor panel logic to derive a per-unit price
@@ -2489,13 +2872,26 @@ func _extract_price_from_dict(d: Dictionary) -> float:
 	return _extract_unit_price(d)
 
 func _add_pending_swap(slot_name: String, from_part: Dictionary, to_part: Dictionary, source: String, price: float, vendor_id: String = ""):
-	# Prevent adding the same cargo item twice across vehicles/slots
-	if _is_part_already_pending(to_part):
-		print("[MechanicsMenu] Skipping add: part already in cart ", _get_part_unique_id(to_part))
-		return
 	var vehicle_id := ""
 	if _selected_vehicle_idx >= 0 and _selected_vehicle_idx < _vehicles.size():
-		vehicle_id = String(_vehicles[_selected_vehicle_idx].get("vehicle_id", ""))
+		vehicle_id = _safe_str(_vehicles[_selected_vehicle_idx].get("vehicle_id"), "")
+
+	# Inventory parts are physical and single-use — the same owned part can't be committed to two
+	# slots/vehicles, so block a repeat anywhere in the cart. Vendor parts are buyable in quantity,
+	# so the same vendor part MAY be carted for multiple vehicles (the cart totals per vehicle).
+	if source != "vendor" and _is_part_already_pending(to_part):
+		print("[MechanicsMenu] Skipping add: inventory part already in cart ", _get_part_unique_id(to_part))
+		return
+
+	# One part per (vehicle, slot): re-picking a slot that already holds a pending item on THIS
+	# vehicle replaces the previous choice (a slot fits a single part). Entries for other vehicles
+	# are untouched, so the cart can hold parts for multiple vehicles at once, organized per vehicle.
+	if slot_name != "":
+		for i in range(_pending_swaps.size() - 1, -1, -1):
+			var existing: Dictionary = _pending_swaps[i]
+			if _safe_str(existing.get("vehicle_id"), "") == vehicle_id and _safe_str(existing.get("slot"), "") == slot_name:
+				_pending_swaps.remove_at(i)
+
 	_pending_swaps.append({
 		"slot": slot_name,
 		"from_part": from_part.duplicate(true),
@@ -2520,22 +2916,17 @@ func _on_apply_pressed():
 		return
 	if _selected_vehicle_idx < 0 or _selected_vehicle_idx >= _vehicles.size():
 		return
-	var vehicle_id = String(_vehicles[_selected_vehicle_idx].get("vehicle_id", ""))
-	# Build schedule using the same rules as the pending view
+	var vehicle_id = _safe_str(_vehicles[_selected_vehicle_idx].get("vehicle_id"), "")
+	# Build schedule using the same rules as the pending view. The cart can hold parts for MULTIPLE
+	# vehicles, so gather EVERY vehicle's scheduled swaps (in schedule order) — otherwise parts on
+	# vehicles other than the selected one silently never apply.
 	var schedules := _compute_pending_schedules()
-	var schedule_for_vehicle: Array = schedules.get(vehicle_id, [])
-	# Extract the ordered swaps in schedule order
 	var ordered_swaps: Array = []
 	var total_cost: float = 0.0
-	for e in schedule_for_vehicle:
-		var s = e.get("swap_ref")
-		ordered_swaps.append(s)
-		var part_cost := _effective_part_cost_for_entry(e)
-		total_cost += part_cost + float(e.get("install_cost", 0.0))
-	# Keep swaps for other vehicles in their original order at the end
-	for s in _pending_swaps:
-		if String(s.get("vehicle_id", "")) != vehicle_id:
-			ordered_swaps.append(s)
+	for vid_key in schedules.keys():
+		for e in schedules[vid_key]:
+			ordered_swaps.append(e.get("swap_ref"))
+			total_cost += _effective_part_cost_for_entry(e) + float(e.get("install_cost", 0.0))
 	# Try to discover vendor_id at the current settlement for mechanic work
 	var vendor_id := _get_vendor_id_at_convoy_location()
 
@@ -2543,8 +2934,9 @@ func _on_apply_pressed():
 	emit_signal("changes_committed", convoy_id, vehicle_id, ordered_swaps, total_cost)
 	# Fire backend API calls now via MechanicsService
 	if is_instance_valid(_mechanics_service) and _mechanics_service.has_method("apply_swaps"):
-		print("[MechanicsMenu][Apply] Applying ", ordered_swaps.size(), " swap(s) vend=", vendor_id, " vehicle=", vehicle_id, " convoy=", convoy_id, " total=$", "%.2f" % total_cost)
-		_mechanics_service.apply_swaps(convoy_id, vehicle_id, ordered_swaps, vendor_id)
+		print("[MechanicsMenu][Apply] Applying ", ordered_swaps.size(), " swap(s) across ", schedules.size(), " vehicle(s) vend=", vendor_id, " convoy=", convoy_id, " total=$", "%.2f" % total_cost)
+		# Pass "" as the vehicle filter so ALL carted vehicles' swaps apply (each swap carries its own vehicle_id).
+		_mechanics_service.apply_swaps(convoy_id, "", ordered_swaps, vendor_id)
 		
 		# Speculative refresh: Request user data update immediately so money updates even if convoy signal lags.
 		if is_instance_valid(_hub) and _hub.has_signal("user_refresh_requested"):
@@ -2561,6 +2953,8 @@ func _on_apply_pressed():
 	_rebuild_pending_tab()
 
 func _make_candidate_row(part: Dictionary, from_part: Dictionary, _source: String, _price: float, compatible: bool, item_index: int = 0) -> HBoxContainer:
+	var portrait := _is_portrait()
+
 	var outer_row := HBoxContainer.new()
 	outer_row.name = "CandidateRow"
 	outer_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -2570,20 +2964,24 @@ func _make_candidate_row(part: Dictionary, from_part: Dictionary, _source: Strin
 	bg_panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	bg_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
 
+	var cand_slot := _detect_slot_for_item(from_part)
+	if cand_slot == "":
+		cand_slot = _detect_slot_for_item(part)
+	var cand_accent := _slot_accent(cand_slot)
+	var cand_base_bg := UITheme.METAL_BASE if item_index % 2 == 0 else UITheme.METAL_DARK
 	var sb := StyleBoxFlat.new()
-	if item_index % 2 == 0:
-		sb.bg_color = Color(0.13, 0.15, 0.19, 0.8)
-	else:
-		sb.bg_color = Color(0.10, 0.12, 0.16, 0.8)
-	var row_margin := 14 if _is_mobile() else 6
-	sb.set_content_margin_all(row_margin)
-	sb.set_corner_radius_all(6)
+	sb.bg_color = cand_base_bg
+	sb.set_content_margin_all(UITheme.SPACE_LG if portrait else UITheme.SPACE_SM)
+	sb.set_corner_radius_all(UITheme.RADIUS_MD)
+	if compatible:
+		sb.border_width_left = UITheme.BORDER_ACCENT
+		sb.border_color = cand_accent
 	bg_panel.add_theme_stylebox_override("panel", sb)
 	outer_row.add_child(bg_panel)
 
 	var content_row := HBoxContainer.new()
 	content_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	content_row.add_theme_constant_override("separation", 12)
+	content_row.add_theme_constant_override("separation", UITheme.SPACE_MD)
 	bg_panel.add_child(content_row)
 
 	# Track part data
@@ -2593,36 +2991,40 @@ func _make_candidate_row(part: Dictionary, from_part: Dictionary, _source: Strin
 	if str(mid_val) != "":
 		outer_row.set_meta("cargo_id", str(mid_val))
 
-	# Name + Summary (Standardized with Vehicle Menu style)
-	var name_vb = VBoxContainer.new()
+	# Name + stats column
+	var name_vb := VBoxContainer.new()
 	name_vb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	name_vb.add_theme_constant_override("separation", 2)
-	
-	var name_lbl = Label.new()
+	name_vb.add_theme_constant_override("separation", UITheme.SPACE_XS)
+
+	var name_lbl := Label.new()
 	name_lbl.name = "NameLabel"
 	name_lbl.text = _safe_str(part.get("name"), "Part")
-	name_lbl.add_theme_font_size_override("font_size", _get_font_size(16))
+	name_lbl.add_theme_font_size_override("font_size", 22 if portrait else 16)
+	name_lbl.add_theme_color_override("font_color", UITheme.TEXT_PRIMARY)
 	name_lbl.clip_text = true
 	name_vb.add_child(name_lbl)
-	
-	var delta_lbl = Label.new()
+
+	var delta_lbl := Label.new()
 	delta_lbl.name = "DeltaLabel"
 	delta_lbl.text = _part_summary(part)
 	delta_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD
-	delta_lbl.add_theme_color_override("font_color", Color(0.7, 0.85, 1.0))
-	delta_lbl.add_theme_font_size_override("font_size", _get_font_size(12))
+	delta_lbl.add_theme_color_override("font_color", UITheme.ACCENT_VERDIGRIS)
+	delta_lbl.add_theme_font_size_override("font_size", 18 if portrait else 13)
 	name_vb.add_child(delta_lbl)
 	content_row.add_child(name_vb)
 
-	# Price Label (Fixed width, right aligned)
-	var price_lbl = Label.new()
+	# Price label
+	var price_lbl := Label.new()
 	price_lbl.name = "PriceLabel"
-	price_lbl.custom_minimum_size.x = 180 if _is_mobile() else 140
+	price_lbl.custom_minimum_size.x = 110 if portrait else 80
+	price_lbl.size_flags_horizontal = Control.SIZE_SHRINK_END
 	price_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-	price_lbl.add_theme_color_override("font_color", Color(0.85, 1.0, 0.85))
-	price_lbl.add_theme_font_size_override("font_size", _get_font_size(14))
+	price_lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	price_lbl.autowrap_mode = TextServer.AUTOWRAP_OFF
+	price_lbl.add_theme_color_override("font_color", UITheme.ACCENT_BRASS)
+	price_lbl.add_theme_font_size_override("font_size", 18 if portrait else 13)
 	content_row.add_child(price_lbl)
-	
+
 	# Store metas for updates
 	var part_price := float(_price)
 	if part_price <= 0.0:
@@ -2631,20 +3033,32 @@ func _make_candidate_row(part: Dictionary, from_part: Dictionary, _source: Strin
 		part_price = _get_part_value(part)
 	outer_row.set_meta("vendor_price", part_price)
 	outer_row.set_meta("source", _source)
-	
-	# Action Button (Standardized with Vehicle Menu size)
-	var select_btn = Button.new()
+
+	# Select button
+	var select_btn := Button.new()
 	select_btn.name = "SelectBtn"
-	select_btn.text = "Select" if compatible else "NO"
-	select_btn.custom_minimum_size = Vector2(140 if _is_mobile() else 80, 64 if _is_mobile() else 36)
-	select_btn.add_theme_font_size_override("font_size", _get_font_size(14))
+	select_btn.text = "Select" if compatible else "—"
+	select_btn.custom_minimum_size = Vector2(120 if portrait else 80, 64 if portrait else 44)
+	select_btn.add_theme_font_size_override("font_size", 20 if portrait else 14)
+	if compatible:
+		var btn_sb := StyleBoxFlat.new()
+		btn_sb.bg_color = Color(0.176, 0.290, 0.196)
+		btn_sb.set_border_width_all(UITheme.BORDER_THIN)
+		btn_sb.border_color = UITheme.ACCENT_VERDIGRIS
+		btn_sb.set_corner_radius_all(UITheme.RADIUS_MD)
+		btn_sb.content_margin_left = 14; btn_sb.content_margin_right = 14
+		btn_sb.content_margin_top = 8; btn_sb.content_margin_bottom = 8
+		var btn_hover := btn_sb.duplicate(); btn_hover.bg_color = Color(0.224, 0.357, 0.247)
+		var btn_pressed := btn_sb.duplicate(); btn_pressed.bg_color = Color(0.137, 0.235, 0.157)
+		for s in [["normal", btn_sb], ["hover", btn_hover], ["pressed", btn_pressed], ["focus", btn_hover]]:
+			select_btn.add_theme_stylebox_override(s[0], s[1])
+		select_btn.add_theme_color_override("font_color", Color(0.85, 0.93, 0.86))
+		select_btn.add_theme_color_override("font_hover_color", Color(1, 1, 1))
 	content_row.add_child(select_btn)
 
 	# Hover effect
-	outer_row.mouse_entered.connect(func(): sb.bg_color = sb.bg_color.lightened(0.1))
-	outer_row.mouse_exited.connect(func():
-		sb.bg_color = Color(0.13, 0.15, 0.19, 0.8) if item_index % 2 == 0 else Color(0.10, 0.12, 0.16, 0.8)
-	)
+	outer_row.mouse_entered.connect(func(): sb.bg_color = cand_base_bg.lightened(0.07))
+	outer_row.mouse_exited.connect(func(): sb.bg_color = cand_base_bg)
 
 	return outer_row
 
@@ -2665,10 +3079,10 @@ func _update_row_from_compat_payload(payload: Dictionary) -> void:
 	if not is_instance_valid(row):
 		return
 	
-	var btn: Button = row.get_node_or_null("SelectBtn")
-	var delta_lbl: Label = row.get_node_or_null("DeltaLabel")
-	var name_lbl: Label = row.get_node_or_null("NameLabel")
-	var price_lbl: Label = row.get_node_or_null("PriceLabel")
+	var btn: Button = row.find_child("SelectBtn", true, false)
+	var delta_lbl: Label = row.find_child("DeltaLabel", true, false)
+	var name_lbl: Label = row.find_child("NameLabel", true, false)
+	var price_lbl: Label = row.find_child("PriceLabel", true, false)
 	
 	var data: Dictionary = payload.get("data", {}) if payload.get("data") is Dictionary else {}
 	var status_code := int(payload.get("status", 0))
@@ -2686,7 +3100,7 @@ func _update_row_from_compat_payload(payload: Dictionary) -> void:
 	elif data.has("fitment") and data.get("fitment") is Dictionary:
 		var fit = data.get("fitment")
 		compatible = bool(fit.get("compatible"))
-		reason = String(fit.get("reason", ""))
+		reason = _safe_str(fit.get("reason"), "")
 		part_data = data 
 	
 	# Update part stats if present in payload
@@ -2694,6 +3108,12 @@ func _update_row_from_compat_payload(payload: Dictionary) -> void:
 		var old_part = row.get_meta("part_dict", {})
 		for k in part_data.keys():
 			old_part[k] = part_data[k]
+		# The compat payload describes the part DEFINITION and carries cargo_id=null; merging it
+		# wholesale wipes the cargo INSTANCE id needed to actually buy/attach the part. `cid` is the
+		# part_cargo_id this compat check was queried with — the server-recognized cargo instance id —
+		# so re-assert it here (this dict is the same one the cart's swap later stores).
+		if cid != "":
+			old_part["cargo_id"] = cid
 		row.set_meta("part_dict", old_part)
 		
 		if is_instance_valid(name_lbl):
@@ -2729,9 +3149,9 @@ func _update_row_from_compat_payload(payload: Dictionary) -> void:
 
 	# Update button and tooltips
 	if status_code >= 400:
-		var detail_text := String(data.get("detail", ""))
+		var detail_text := _safe_str(data.get("detail"), "")
 		if detail_text == "" and data.has("fitment") and data.fitment is Dictionary:
-			detail_text = String(data.fitment.get("reason", ""))
+			detail_text = _safe_str(data.fitment.get("reason"), "")
 		
 		if is_instance_valid(delta_lbl) and detail_text != "":
 			delta_lbl.text = detail_text
@@ -2878,6 +3298,7 @@ func _debug_swap_open_dump(slot_name: String, current_part: Dictionary, vehicle:
 	}, "Vendor Candidates")
 
 func _clear_parts_ui():
+	_slot_grid = null
 	for c in parts_vbox.get_children():
 		c.queue_free()
 
@@ -2918,16 +3339,16 @@ func _on_part_compatibility_ready(payload: Dictionary) -> void:
 		if data.has("fitment") and data.get("fitment") is Dictionary:
 			var fit: Dictionary = data.get("fitment")
 			ok = bool(fit.get("compatible", false))
-			slot_name = String(fit.get("slot", ""))
+			slot_name = _safe_str(fit.get("slot"), "")
 		elif data.has("compatible"):
 			ok = bool(data.get("compatible"))
 			# fallback slot field directly on data
 			if data.has("slot"):
-				slot_name = String(data.get("slot", ""))
+				slot_name = _safe_str(data.get("slot"), "")
 			if slot_name == "":
 				# fallback: try local id->slot map (cargo_id)
 				var cidl: String = str(payload.get("part_cargo_id", ""))
-				slot_name = String(_cargo_to_slot.get(cidl, ""))
+				slot_name = _safe_str(_cargo_to_slot.get(cidl), "")
 		else:
 			# If payload is HTTP 200 but data is an Array of part details, treat as compatible
 			var status_code := int(payload.get("status", 0))
@@ -2935,10 +3356,10 @@ func _on_part_compatibility_ready(payload: Dictionary) -> void:
 				ok = true
 				var d_any = payload.get("data")
 				if d_any is Array and (d_any as Array).size() > 0 and (d_any[0] is Dictionary) and d_any[0].has("slot"):
-					slot_name = String(d_any[0].get("slot", ""))
+					slot_name = _safe_str(d_any[0].get("slot"), "")
 				if slot_name == "":
 					var cidl2: String = str(payload.get("part_cargo_id", ""))
-					slot_name = String(_cargo_to_slot.get(cidl2, ""))
+					slot_name = _safe_str(_cargo_to_slot.get(cidl2), "")
 		if ok and slot_name != "":
 			# Ensure a UI row exists for slots that aren't currently present on the vehicle
 			_ensure_slot_row(slot_name)
@@ -2947,6 +3368,8 @@ func _on_part_compatibility_ready(payload: Dictionary) -> void:
 				_restyle_swap_buttons_for_slot(slot_name)
 			# Also refresh inventory-based highlights in case this payload pertains to a convoy cargo item
 			_refresh_slot_inventory_availability()
+	# Backend result may change the upgrade count for the vehicle this payload targets; refresh labels.
+	_update_dropdown_upgrade_counts()
 
 func _on_mechanic_vendor_slot_availability(vehicle_id: String, slot_availability: Dictionary) -> void:
 	# Only apply for the currently selected vehicle

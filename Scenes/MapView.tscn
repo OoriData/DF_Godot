@@ -37,6 +37,7 @@ terrain_tilemap = NodePath("../MapContainer/SubViewport/TerrainTileMap")
 texture_filter = 1
 mouse_filter = 2
 texture = SubResource("ViewportTexture_k7gy6")
+expand_mode = 1
 stretch_mode = 5
 metadata/_edit_use_anchors_ = true
 
@@ -53,6 +54,8 @@ tile_set = ExtResource("3_vvi3b")
 
 [node name="ConvoyLabelContainer" type="Node2D" parent="MapContainer/SubViewport"]
 script = ExtResource("3_t5xx3")
+
+[node name="ConvoyIconContainer" type="Node2D" parent="MapContainer/SubViewport"]
 
 [node name="ConvoyConnectorLinesContainer" type="Node2D" parent="MapContainer/SubViewport"]
 

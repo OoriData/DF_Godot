@@ -49,8 +49,7 @@ func _is_mobile() -> bool:
 	return OS.has_feature("mobile") or DisplayServer.get_name() in ["Android", "iOS"] or _is_portrait()
 
 func _get_font_size(base: int) -> int:
-	var boost = 2.2 if _is_portrait() else (1.7 if _is_mobile() else 1.2)
-	return int(base * boost)
+	return base  # UIScaleManager owns all scaling; never multiply here (avoids double-scale)
 
 func open_centered() -> void:
 	print("[AccountLinksPopup] open_centered called | LOUD LOG")
@@ -326,12 +325,15 @@ func _build_ui() -> void:
 	panel.add_theme_stylebox_override("panel", panel_style)
 	
 	_overlay.add_child(panel)
-	var win_size = DisplayServer.window_get_size()
+	# Use the LOGICAL viewport size (content-scaled), NOT DisplayServer.window_get_size() which returns
+	# PHYSICAL pixels — on a high-DPI phone that sized the panel ~2× the viewport, so it overflowed all
+	# edges and only the dark panel background showed with the content pushed off-screen.
+	var win_size := get_viewport().get_visible_rect().size
 	var win_w: int
 	var win_h: int
 	if is_port:
-		win_w = win_size.x - 16
-		win_h = win_size.y - 180
+		win_w = int(win_size.x) - 16
+		win_h = int(win_size.y) - 180
 		panel.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
 		panel.offset_top += 70 # Shift down to clear nav bar
 		panel.offset_bottom += 70

@@ -1,9 +1,10 @@
-[gd_scene load_steps=5 format=3 uid="uid://dpsk1w1gqj3h7"]
+[gd_scene load_steps=6 format=3 uid="uid://dpsk1w1gqj3h7"]
 
 [ext_resource type="Script" path="res://Scripts/Menus/vendor_trade_panel.gd" id="1_script"]
 [ext_resource type="PackedScene" path="res://Scenes/UI/ToastNotification.tscn" id="2_toast"]
 [ext_resource type="Script" path="res://Scripts/UI/responsive_list_adapter.gd" id="3_resp"]
 [ext_resource type="Script" path="res://Scripts/UI/quantity_widget.gd" id="4_qty_widget"]
+[ext_resource type="Script" path="res://Scripts/Menus/VendorPanel/vendor_item_list.gd" id="5_itemlist"]
 
 [sub_resource type="StyleBoxFlat" id="StyleBoxFlat_loading"]
 bg_color = Color(0, 0, 0, 0.5)
@@ -59,11 +60,23 @@ popup/item_3/id = 3
 popup/item_4/text = "Distance to Recipient"
 popup/item_4/id = 4
 
+[node name="ModeToggle" type="HBoxContainer" parent="HBoxContainer/LeftPanel"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_constants/separation = 0
+
+[node name="ModeFlipButton" type="Button" parent="HBoxContainer/LeftPanel/ModeToggle"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 0
+text = "Buy ⇄"
+
 [node name="TradeModeTabContainer" type="TabContainer" parent="HBoxContainer/LeftPanel"]
 unique_name_in_owner = true
 layout_mode = 2
 size_flags_vertical = 3
 tab_alignment = 1
+tabs_visible = false
 
 [node name="ResponsiveListAdapter" type="Node" parent="HBoxContainer/LeftPanel/TradeModeTabContainer"]
 script = ExtResource("3_resp")
@@ -78,11 +91,12 @@ layout_mode = 2
 layout_mode = 2
 text = "Vendor's Wares"
 
-[node name="VendorItemTree" type="Tree" parent="HBoxContainer/LeftPanel/TradeModeTabContainer/Buy"]
+[node name="VendorItemTree" type="ScrollContainer" parent="HBoxContainer/LeftPanel/TradeModeTabContainer/Buy"]
 unique_name_in_owner = true
 layout_mode = 2
+size_flags_horizontal = 3
 size_flags_vertical = 3
-hide_root = true
+script = ExtResource("5_itemlist")
 
 [node name="ResponsiveListAdapter" type="Node" parent="HBoxContainer/LeftPanel/TradeModeTabContainer/Buy"]
 script = ExtResource("3_resp")
@@ -98,11 +112,12 @@ visible = false
 layout_mode = 2
 text = "Convoy's Cargo"
 
-[node name="ConvoyItemTree" type="Tree" parent="HBoxContainer/LeftPanel/TradeModeTabContainer/Sell"]
+[node name="ConvoyItemTree" type="ScrollContainer" parent="HBoxContainer/LeftPanel/TradeModeTabContainer/Sell"]
 unique_name_in_owner = true
 layout_mode = 2
+size_flags_horizontal = 3
 size_flags_vertical = 3
-hide_root = true
+script = ExtResource("5_itemlist")
 
 [node name="ResponsiveListAdapter" type="Node" parent="HBoxContainer/LeftPanel/TradeModeTabContainer/Sell"]
 script = ExtResource("3_resp")
@@ -258,35 +273,51 @@ visible = false
 
 [node name="CapacityBars" type="VBoxContainer" parent="HBoxContainer/RightPanel"]
 layout_mode = 2
-theme_override_constants/separation = 6
+theme_override_constants/separation = 8
 
-[node name="VolumeLabel" type="Label" parent="HBoxContainer/RightPanel/CapacityBars"]
+[node name="VolumeRow" type="HBoxContainer" parent="HBoxContainer/RightPanel/CapacityBars"]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="VolumeLabel" type="Label" parent="HBoxContainer/RightPanel/CapacityBars/VolumeRow"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(72, 0)
 layout_mode = 2
 text = "Volume"
 horizontal_alignment = 0
+vertical_alignment = 1
 
-
-[node name="ConvoyVolumeBar" type="ProgressBar" parent="HBoxContainer/RightPanel/CapacityBars"]
+[node name="ConvoyVolumeBar" type="ProgressBar" parent="HBoxContainer/RightPanel/CapacityBars/VolumeRow"]
 unique_name_in_owner = true
 layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 4
 min_value = 0.0
 max_value = 100.0
 value = 0.0
-show_percentage = true
+show_percentage = false
 
-[node name="MassLabel" type="Label" parent="HBoxContainer/RightPanel/CapacityBars"]
+[node name="MassRow" type="HBoxContainer" parent="HBoxContainer/RightPanel/CapacityBars"]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="MassLabel" type="Label" parent="HBoxContainer/RightPanel/CapacityBars/MassRow"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(72, 0)
 layout_mode = 2
 text = "Mass"
 horizontal_alignment = 0
+vertical_alignment = 1
 
-
-[node name="ConvoyWeightBar" type="ProgressBar" parent="HBoxContainer/RightPanel/CapacityBars"]
+[node name="ConvoyWeightBar" type="ProgressBar" parent="HBoxContainer/RightPanel/CapacityBars/MassRow"]
 unique_name_in_owner = true
 layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 4
 min_value = 0.0
 max_value = 100.0
 value = 0.0
-show_percentage = true
+show_percentage = false
 
 [node name="ActionButton" type="Button" parent="HBoxContainer/RightPanel"]
 unique_name_in_owner = true

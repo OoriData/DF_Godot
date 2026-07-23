@@ -24,8 +24,7 @@ func _is_mobile() -> bool:
 	return OS.has_feature("mobile") or DisplayServer.get_name() in ["Android", "iOS"] or _is_portrait()
 
 func _get_font_size(base: int) -> int:
-	var boost = 2.5 if _is_portrait() else (1.8 if _is_mobile() else 1.2)
-	return int(base * boost)
+	return base
 
 func _apply_mobile_scaling() -> void:
 	if not is_inside_tree(): return

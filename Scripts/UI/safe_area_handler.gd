@@ -33,14 +33,15 @@ func _update_safe_area():
 	var right = margins.size.x
 	var bottom = margins.size.y
 
-	# Add extra padding in portrait to avoid Dynamic Island / notch
-	if win_sz.y > win_sz.x and top > 0:
-		top += 14 # Push it down slightly further (logical pixels)
-
-	# Ensure minimum padding to keep UI from sticking completely to edges even without safe area
-	if win_sz.y > win_sz.x:
-		left = max(left, 8.0)
-		right = max(right, 8.0)
+	# Full-bleed model: the root container no longer indents the layout, so the map and the
+	# chrome backgrounds reach the physical edges (no black bars). Safe-area insets are now
+	# applied per element at the CONTENT level — the top bar (UserInfoDisplay._update_safe_margins)
+	# and the nav bar (MenuManager._update_static_nav_bar_ui) inset their buttons to the safe
+	# area while their backgrounds bleed to the edges.
+	left = 0.0
+	right = 0.0
+	top = 0.0
+	bottom = 0.0
 
 	# Set margins
 	add_theme_constant_override("margin_left", int(left))

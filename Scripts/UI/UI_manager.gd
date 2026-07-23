@@ -1,5 +1,13 @@
 extends CanvasLayer
 
+@onready var _settings_service: Node = get_node_or_null("/root/MapSettingsService")
+@onready var _user_service: Node = get_node_or_null("/root/UserService")
+@onready var _hub: Node = get_node_or_null("/root/SignalHub")
+
+const _debug_map_menu: bool = true
+
+
+
 # References to label containers managed by UIManager
 # These should be children of the Node this script is attached to.
 # The global UI scale is now managed by the UIScaleManager singleton.
@@ -28,6 +36,10 @@ var settlement_label_settings: LabelSettings
 @export var font_scaling_base_tile_size: float = 32.0 # 24 * 1.33
 ## Exponent for font scaling (1.0 = linear, <1.0 less aggressive shrink/grow).
 @export var font_scaling_exponent: float = 0.6 
+
+@export_group("Zoom Smoothing")
+## How fast label panels lerp to the new zoom scale. Higher = snappier. ~8 feels smooth, ~20 is near-instant.
+@export var zoom_lerp_speed: float = 10.0
 
 @export_group("Label Offsets")
 ## Base horizontal offset from the convoy's center for its label panel. Scaled.
@@ -75,6 +87,9 @@ var settlement_label_settings: LabelSettings
 @export var label_anti_collision_y_shift: float = 5.0 
 ## Radius around convoy icons to keep settlement labels out of.
 @export var settlement_convoy_keepout_radius: float = 24.0
+## Clearance (px) kept between a settlement label and the previewed journey route line, so labels
+## nudge off the route instead of hiding segments. Only applies while a route preview is active.
+@export var settlement_route_keepout_px: float = 14.0
 ## Padding from the viewport edges (in pixels) used to clamp label panels.
 @export var label_map_edge_padding: float = 5.0 
 
@@ -117,11 +132,18 @@ var _all_settlement_data_cache: Array
 var _convoy_id_to_color_map_cache: Dictionary
 var _convoy_data_by_id_cache: Dictionary # New cache for quick lookup
 var _selected_convoy_ids_cache: Array # Stored as strings
-var _current_map_zoom_cache: float = 1.0 # Cache for current map zoom level
+var _current_map_zoom_cache: float = 1.0 # Cache for current map zoom level (the real/target zoom)
+var _display_zoom: float = 1.0            # Smoothed zoom used for panel scale — lerps toward _current_map_zoom_cache
+var _last_map_canvas_xf: Transform2D = Transform2D() # last map canvas transform, to detect camera pan/zoom per-frame
+var _current_hover_info_cache: Dictionary = {} # Cache for hover state
 var _current_map_screen_rect_for_clamping: Rect2
 
 var _active_settlement_panels: Dictionary = {} # { "tile_coord_str": PanelNode }
 var _pinned_settlement_coords: Array[Vector2i] = []
+
+# Set each draw pass — used by overlay and dimming logic.
+var _coords_to_targeting_convoys: Dictionary = {}  # Vector2i → Array[String convoy_id]
+var _focused_convoy_ids_last: Array[String] = []   # focused convoy IDs from last draw pass
 
 # Z-index for label containers within MapContainer, relative to MapDisplay and ConvoyNodes
 const LABEL_CONTAINER_Z_INDEX = 2
@@ -136,9 +158,21 @@ var _preview_route_y: Array = []
 # Default preview color (fallback) – actual will be per selected convoy color
 var _preview_color: Color = Color(1.0, 0.6, 0.0, 0.85)
 var _preview_line_width: float = 3.5
+# Opacity multiplier for the preview line. 1.0 while the journey menu itself is the active
+# menu; dimmed to PREVIEW_FAINT_ALPHA when the player navigates to a *different* menu tab while
+# a route is still plotted (the journey menu is persistent, so the preview survives the switch).
+# The preview is cleared entirely once all menus fully close (see _on_menu_visibility_changed).
+const PREVIEW_FAINT_ALPHA: float = 0.3
+var _preview_alpha_mul: float = 1.0
 var _high_contrast_enabled: bool = false
+var _preview_settlement_coords: Variant = null
 
 var _convoy_label_manager_initialized: bool = false
+
+# Settlement overlay: draws callout tails and tile icons (settlement_overlay_draw.gd)
+var _settlement_overlay: Node = null  # tails + outlines (z_index -1, behind panels)
+var _pin_overlay: Node = null          # focus pins only  (z_index 10, in front of panels)
+var _grid_overlay: Node = null         # coordinate grid lines (child of terrain tilemap)
 
 func _ready():
 	await get_tree().process_frame
@@ -199,6 +233,9 @@ func _ready():
 
 	_current_map_screen_rect_for_clamping = get_viewport().get_visible_rect() # Initialize
 
+	# Create the settlement overlay draw node (tails + tile icons)
+	_ensure_settlement_overlay()
+
 	# Programmatically assign the convoy_label_container to the ConvoyLabelManager
 	if is_instance_valid(convoy_label_manager) and convoy_label_manager.has_method("set_convoy_label_container"):
 		if is_instance_valid(convoy_label_container):
@@ -230,6 +267,9 @@ func _ready():
 	if is_instance_valid(menu_manager):
 		if not menu_manager.is_connected("menu_opened", Callable(self, "_on_menu_manager_menu_opened")):
 			menu_manager.menu_opened.connect(_on_menu_manager_menu_opened)
+		# All-menus-closed is the only signal that should fully drop a pending preview line.
+		if menu_manager.has_signal("menu_visibility_changed") and not menu_manager.is_connected("menu_visibility_changed", Callable(self, "_on_menu_visibility_changed")):
+			menu_manager.menu_visibility_changed.connect(_on_menu_visibility_changed)
 	else:
 		printerr("UIManager: MenuManager autoload not found; cannot attach journey preview listeners.")
 
@@ -245,6 +285,52 @@ func _ready():
 		_apply_accessibility_visuals()
 		if not settings_mgr.is_connected("setting_changed", Callable(self, "_on_setting_changed")):
 			settings_mgr.setting_changed.connect(_on_setting_changed)
+
+	# --- Map Settings Overlay Signal Integration ---
+	if is_instance_valid(_hub) and _hub.has_signal("map_overlay_settings_changed"):
+		if not _hub.map_overlay_settings_changed.is_connected(_on_map_overlay_settings_changed):
+			_hub.map_overlay_settings_changed.connect(_on_map_overlay_settings_changed)
+
+
+func _process(delta: float) -> void:
+	# Redraw labels each frame while EITHER the zoom is still lerping OR the camera is panning, so the
+	# label edge-clamp follows fluidly instead of snapping only once the camera settles.
+	var zoom_converging: bool = not is_equal_approx(_display_zoom, _current_map_zoom_cache)
+	var camera_moved: bool = false
+	if is_instance_valid(terrain_tilemap):
+		var xf: Transform2D = terrain_tilemap.get_global_transform_with_canvas()
+		if not xf.is_equal_approx(_last_map_canvas_xf):
+			_last_map_canvas_xf = xf
+			camera_moved = true
+	if not zoom_converging and not camera_moved:
+		return
+	if zoom_converging:
+		# Smoothly lerp the display zoom toward the real zoom so panel scales animate continuously.
+		_display_zoom = lerp(_display_zoom, _current_map_zoom_cache, clampf(delta * zoom_lerp_speed, 0.0, 1.0))
+		# Snap to target when close enough to avoid infinite micro-animation.
+		if absf(_display_zoom - _current_map_zoom_cache) < 0.0005:
+			_display_zoom = _current_map_zoom_cache
+	# Redraw settlement labels (re-clamps them to the safe rect every frame while moving).
+	_draw_interactive_labels(_current_hover_info_cache)
+	# Redraw convoy labels with smoothed zoom.
+	if is_instance_valid(convoy_label_manager) \
+			and convoy_label_manager.has_method("update_drawing_parameters") \
+			and is_instance_valid(terrain_tilemap) \
+			and is_instance_valid(terrain_tilemap.tile_set):
+		var ts = terrain_tilemap.tile_set.tile_size
+		convoy_label_manager.update_drawing_parameters(ts.x, ts.y, _display_zoom, 1.0, 0.0, 0.0)
+	if is_instance_valid(convoy_label_manager) and convoy_label_manager.has_method("update_convoy_labels"):
+		convoy_label_manager.update_convoy_labels(
+			_all_convoy_data_cache,
+			_convoy_id_to_color_map_cache,
+			_current_hover_info_cache,
+			_selected_convoy_ids_cache,
+			_convoy_label_user_positions,
+			_dragging_panel_node,
+			_dragged_convoy_id_actual_str,
+			_get_label_safe_screen_rect(),
+		)
+
 
 func _print_ui_tree(node: Node, indent: int):
 	var prefix = "  ".repeat(indent)
@@ -324,10 +410,11 @@ func update_ui_elements(
 	_convoy_data_by_id_cache.clear()
 	if _all_convoy_data_cache is Array:
 		for convoy_data_item in _all_convoy_data_cache:
-			if convoy_data_item is Dictionary and convoy_data_item.has("convoy_id"):
+			if convoy_data_item is Dictionary and str(convoy_data_item.get("convoy_id")) != "":
 				_convoy_data_by_id_cache[str(convoy_data_item.get("convoy_id"))] = convoy_data_item
 
 	_current_map_zoom_cache = current_map_zoom # Cache the zoom level
+	_current_hover_info_cache = current_hover_info # Cache hover info for redraw logic
 
 	# One-time init for ConvoyLabelManager so it can use the same font scaling constants.
 	if not _convoy_label_manager_initialized and is_instance_valid(convoy_label_manager) and convoy_label_manager.has_method("initialize_font_settings"):
@@ -364,7 +451,7 @@ func update_ui_elements(
 			and is_instance_valid(terrain_tilemap) \
 			and is_instance_valid(terrain_tilemap.tile_set):
 		var ts = terrain_tilemap.tile_set.tile_size
-		convoy_label_manager.update_drawing_parameters(ts.x, ts.y, current_map_zoom, 1.0, 0.0, 0.0)
+		convoy_label_manager.update_drawing_parameters(ts.x, ts.y, _display_zoom, 1.0, 0.0, 0.0)
 	# Delegate convoy label updates to ConvoyLabelManager.
 	if is_instance_valid(convoy_label_manager) and convoy_label_manager.has_method("update_convoy_labels"):
 		convoy_label_manager.update_convoy_labels(
@@ -375,7 +462,7 @@ func update_ui_elements(
 			_convoy_label_user_positions,
 			_dragging_panel_node,
 			_dragged_convoy_id_actual_str,
-			_current_map_screen_rect_for_clamping,
+			_get_label_safe_screen_rect(),
 		)
 	# Request redraw for connector lines
 	if is_instance_valid(convoy_connector_lines_container):
@@ -386,7 +473,56 @@ func update_ui_elements(
 		var clamp_rect_local_to_settlement_container = container_global_transform_settlement.affine_inverse() * _current_map_screen_rect_for_clamping
 		for panel_node in settlement_label_container.get_children():
 			if panel_node is Panel:
-				_clamp_panel_position_optimized(panel_node, clamp_rect_local_to_settlement_container)
+				pass # Intentionally disabled: let settlement panels pan off-screen naturally
+				# _clamp_panel_position_optimized(panel_node, clamp_rect_local_to_settlement_container)
+
+var _overlay_settings_panel_cache: Node = null
+
+## The left-anchored map overlay gear box (MapOverlaySettingsPanel), cached. Used to keep map labels
+## from hiding behind it.
+func _get_overlay_settings_panel() -> Node:
+	if is_instance_valid(_overlay_settings_panel_cache):
+		return _overlay_settings_panel_cache
+	if is_inside_tree():
+		_overlay_settings_panel_cache = get_tree().get_root().find_child("MapOverlaySettingsPanel", true, false)
+	return _overlay_settings_panel_cache
+
+## The map's screen rect with its LEFT edge pushed right past the overlay gear box (screen space), so
+## any label clamped to it can't hide behind the box OR clip the left screen edge. Right/top/bottom are
+## the map rect, so the right edge still prevents right-side clipping.
+func _get_label_safe_screen_rect() -> Rect2:
+	var r: Rect2 = _current_map_screen_rect_for_clamping
+	var panel := _get_overlay_settings_panel()
+	if is_instance_valid(panel) and panel.has_method("get_tab_global_rect"):
+		var box: Rect2 = panel.call("get_tab_global_rect")
+		if box.size.x > 0.0:
+			var box_right := box.position.x + box.size.x
+			if box_right > r.position.x:
+				var inset: float = minf(box_right - r.position.x, r.size.x)
+				r.position.x += inset
+				r.size.x = maxf(0.0, r.size.x - inset)
+	return r
+
+## Keep an on-screen settlement label from clipping off the map's side edge or hiding behind the gear
+## box. Off-screen settlements (tile not within the map rect) are left alone so they pan away naturally.
+## Horizontal-only, matching the reported "labels clipping the side" issue.
+func _clamp_settlement_panel_x(panel: Panel, tile_center_local: Vector2) -> void:
+	if not is_instance_valid(panel) or not is_instance_valid(settlement_label_container):
+		return
+	var inv := settlement_label_container.get_global_transform_with_canvas().affine_inverse()
+	var full_local: Rect2 = inv * _current_map_screen_rect_for_clamping
+	if not full_local.has_point(tile_center_local):
+		return # settlement off-screen — leave it
+	var safe_local: Rect2 = inv * _get_label_safe_screen_rect()
+	if safe_local.size.x <= 0.0:
+		return
+	var sz: Vector2 = panel.size
+	if sz.x <= 0.0 or sz.y <= 0.0:
+		sz = panel.get_minimum_size()
+	var scaled_x := sz.x * panel.scale.x
+	var min_x := safe_local.position.x + label_map_edge_padding
+	var max_x := maxf(min_x, safe_local.end.x - scaled_x - label_map_edge_padding)
+	panel.position.x = clampf(panel.position.x, min_x, max_x)
 
 func _clamp_panel_position_optimized(panel: Panel, precalculated_clamp_rect_local_to_container: Rect2):
 	# Helper to clamp a panel's position to the viewport boundaries using a precalculated clamping rectangle in the panel's parent container's local space.
@@ -447,36 +583,191 @@ func toggle_settlement_pin(coords: Vector2i):
 
 func clear_all_settlement_pins():
 	_pinned_settlement_coords.clear()
+	_force_draw_interactive_labels_deferred()
+
+func is_settlement_pinned(coords: Vector2i) -> bool:
+	return _pinned_settlement_coords.has(coords)
+
+func add_settlement_pin(coords: Vector2i) -> void:
+	# Idempotent add (unlike toggle_settlement_pin). Redraws so the label appears immediately.
+	if not _pinned_settlement_coords.has(coords):
+		_pinned_settlement_coords.append(coords)
+		_force_draw_interactive_labels_deferred()
+
+func remove_settlement_pin(coords: Vector2i) -> void:
+	# Idempotent remove. Redraws so the label disappears immediately.
+	if _pinned_settlement_coords.has(coords):
+		_pinned_settlement_coords.erase(coords)
+		_force_draw_interactive_labels_deferred()
 
 func _draw_interactive_labels(current_hover_info: Dictionary):
 	if is_instance_valid(_dragging_panel_node):
-		pass # Let's assume main.gd already checked this or UIManager will handle it.
+		pass # Let's assume UIManager will handle it.
 	var drawn_settlement_tile_coords_this_update: Array[Vector2i] = []
-	var all_drawn_label_rects_this_update: Array[Rect2] = [] # This will be used by SettlementLabelManager and ConvoyLabelManager internally or passed to them
+	var all_drawn_label_rects_this_update: Array[Rect2] = []
 	var convoy_ids_to_display: Array[String] = []
 	var settlement_coords_to_display: Array[Vector2i] = []
+	var coords_to_targeting_convoys: Dictionary = {}
+	var coords_to_cargo_names: Dictionary = {}  # Vector2i -> Array[String] of cargo headed there
+	var warehouse_ids_cache: Array[String] = _get_player_warehouse_settlement_ids()
+
+	var add_settlement_target = func(coords: Vector2i, convoy_id_str: String = ""):
+		if not settlement_coords_to_display.has(coords):
+			settlement_coords_to_display.append(coords)
+		if convoy_id_str != "":
+			if not coords_to_targeting_convoys.has(coords):
+				coords_to_targeting_convoys[coords] = []
+			if not coords_to_targeting_convoys[coords].has(convoy_id_str):
+				coords_to_targeting_convoys[coords].append(convoy_id_str)
+
+	# Retrieve current overlay settings
+	var show_all_settlements: bool = true
+	var show_active_dests: bool = true
+	var show_local_sett_dests: bool = true
+	var show_all_convoy_dests: bool = false
+
+	var show_warehouses: bool = true
 	
+	if is_instance_valid(_settings_service):
+		# Read EFFECTIVE settings (honors the journey-planning marker override) rather than the raw
+		# member vars, so planning suppresses settlement/warehouse/convoy-destination markers.
+		var eff: Dictionary = _settings_service.get_settings_dict()
+		show_all_settlements = bool(eff.get("settlement_labels", false))
+		show_active_dests = bool(eff.get("active_delivery_destinations", false))
+		show_local_sett_dests = bool(eff.get("settlement_delivery_destinations", false))
+		show_all_convoy_dests = bool(eff.get("all_convoy_destinations", false))
+		show_warehouses = bool(eff.get("warehouse_labels", false))
+
+	# --- Strategy 3: Progressive Zoom LOD ---
+	var is_far_zoom: bool = _current_map_zoom_cache < 0.6
+	
+	# --- Strategy 1: Smart Focus (Selected + Hovered) ---
+	var focused_convoy_ids: Array[String] = []
+	if not _selected_convoy_ids_cache.is_empty():
+		for fcid in _selected_convoy_ids_cache:
+			focused_convoy_ids.append(str(fcid))
+
+	if current_hover_info.get('type') == 'convoy':
+		var hover_id = str(current_hover_info.get('id', ''))
+		if hover_id != '' and not focused_convoy_ids.has(hover_id):
+			focused_convoy_ids.append(hover_id)
+
+	_focused_convoy_ids_last = focused_convoy_ids
+
+	if is_far_zoom:
+		# ONLY hide generic settlements on far zoom, but leave the active/local targets visible!
+		show_all_settlements = false
+		show_warehouses = false # Minimalist map
+
 	# Include pinned settlements
 	for pinned_coords in _pinned_settlement_coords:
-		if not settlement_coords_to_display.has(pinned_coords):
-			settlement_coords_to_display.append(pinned_coords)
+		add_settlement_target.call(pinned_coords)
 
 	# Include preview route destination
 	if _is_preview_active and _preview_route_x.size() > 0:
 		var end_tile_coords := Vector2i(int(_preview_route_x.back()), int(_preview_route_y.back()))
-		if not settlement_coords_to_display.has(end_tile_coords):
-			settlement_coords_to_display.append(end_tile_coords)
+		var targeting_cid = ""
+		if not focused_convoy_ids.is_empty():
+			targeting_cid = focused_convoy_ids[0]
+		add_settlement_target.call(end_tile_coords, targeting_cid)
 
-	# Draw Settlement Labels (for selected convoys' start/end, then hovered settlement)
-	if not _selected_convoy_ids_cache.is_empty():
+	# Include destination preview settlement
+	if _preview_settlement_coords is Vector2i:
+		add_settlement_target.call(_preview_settlement_coords)
+
+	# Show ALL Discovered Settlements (if setting is enabled)
+	if show_all_settlements and _all_settlement_data_cache is Array:
+		for s in _all_settlement_data_cache:
+			if s is Dictionary:
+				var coords = Vector2i(int(s.get("x", 0)), int(s.get("y", 0)))
+				add_settlement_target.call(coords)
+
+	# Show Warehouse Indicators (if setting is enabled)
+	if show_warehouses:
+		if _all_settlement_data_cache is Array:
+			for s in _all_settlement_data_cache:
+				if s is Dictionary:
+					var sett_id = str(s.get("sett_id", s.get("id", "")))
+					if sett_id != "" and warehouse_ids_cache.has(sett_id):
+						var coords = Vector2i(int(s.get("x", 0)), int(s.get("y", 0)))
+						add_settlement_target.call(coords)
+
+	# Active Convoy Targets: cargo destinations in focused convoy(s)
+	if show_active_dests and not focused_convoy_ids.is_empty():
 		for convoy_data in _all_convoy_data_cache:
 			if convoy_data is Dictionary:
 				var convoy_id = convoy_data.get('convoy_id')
 				var convoy_id_str = str(convoy_id)
-				if convoy_id != null and _selected_convoy_ids_cache.has(convoy_id_str):
-					var journey_data: Dictionary = convoy_data.get('journey')
-					if journey_data is Dictionary:
+				if convoy_id != null and focused_convoy_ids.has(convoy_id_str):
+					var dests = _get_convoy_cargo_destination_coords(convoy_data, coords_to_cargo_names)
+					for d in dests:
+						add_settlement_target.call(d, convoy_id_str)
 
+	# Local Settlement Targets: departing routes from focused convoy's current city, hovered settlement, or pinned settlements
+	if show_local_sett_dests:
+		# A. From focused convoys
+		if not focused_convoy_ids.is_empty():
+			for convoy_data in _all_convoy_data_cache:
+				if convoy_data is Dictionary:
+					var convoy_id = convoy_data.get('convoy_id')
+					var convoy_id_str = str(convoy_id)
+					if convoy_id != null and focused_convoy_ids.has(convoy_id_str):
+						var cx = float(convoy_data.get("x", -999.0))
+						var cy = float(convoy_data.get("y", -999.0))
+						var local_sett = _find_closest_settlement(cx, cy, 2.5)
+						if local_sett is Dictionary:
+							var dests = _get_settlement_departing_destinations(local_sett, coords_to_cargo_names)
+							for d in dests:
+								add_settlement_target.call(d)
+
+		# B. From currently hovered settlement
+		if current_hover_info.get('type') == 'settlement':
+			var hovered_coords = current_hover_info.get('coords')
+			if hovered_coords is Vector2i:
+				var local_sett = _find_settlement_at_tile(hovered_coords.x, hovered_coords.y)
+				if local_sett is Dictionary:
+					var dests = _get_settlement_departing_destinations(local_sett, coords_to_cargo_names)
+					for d in dests:
+						add_settlement_target.call(d)
+
+		# C. From pinned settlements
+		for pinned_coords in _pinned_settlement_coords:
+			var local_sett = _find_settlement_at_tile(pinned_coords.x, pinned_coords.y)
+			if local_sett is Dictionary:
+				var dests = _get_settlement_departing_destinations(local_sett, coords_to_cargo_names)
+				for d in dests:
+					add_settlement_target.call(d)
+
+	# All Convoy Targets: destinations of ALL active player convoy journeys and cargo
+	if show_all_convoy_dests and _all_convoy_data_cache is Array:
+		for convoy_data in _all_convoy_data_cache:
+			if convoy_data is Dictionary:
+				var convoy_id = convoy_data.get('convoy_id')
+				var convoy_id_str = str(convoy_id)
+				if convoy_id_str != "":
+					# 1. Cargo destinations of this convoy
+					var dests = _get_convoy_cargo_destination_coords(convoy_data, coords_to_cargo_names)
+					for d in dests:
+						add_settlement_target.call(d, convoy_id_str)
+						
+					# 2. Active journey destination
+					var journey_data = convoy_data.get('journey')
+					if journey_data is Dictionary:
+						var rx = journey_data.get('route_x')
+						var ry = journey_data.get('route_y')
+						if rx is Array and ry is Array and rx.size() > 0 and rx.size() == ry.size():
+							var end_coords = Vector2i(int(rx[rx.size() - 1]), int(ry[ry.size() - 1]))
+							add_settlement_target.call(end_coords, convoy_id_str)
+
+	# Active Convoy Route Targets: start/end coordinates of focused convoy routes
+	if not focused_convoy_ids.is_empty():
+		for convoy_data in _all_convoy_data_cache:
+			if convoy_data is Dictionary:
+				var convoy_id = convoy_data.get('convoy_id')
+				var convoy_id_str = str(convoy_id)
+				if convoy_id != null and focused_convoy_ids.has(convoy_id_str):
+					var journey_data = convoy_data.get('journey')
+					if journey_data is Dictionary:
 						var raw_route_x = journey_data.get('route_x')
 						var route_x_coords: Array = []
 						if raw_route_x is Array:
@@ -493,23 +784,21 @@ func _draw_interactive_labels(current_hover_info: Dictionary):
 							var start_tile_x: int = floori(float(route_x_coords[0]))
 							var start_tile_y: int = floori(float(route_y_coords[0]))
 							var start_tile_coords := Vector2i(start_tile_x, start_tile_y)
-							if not settlement_coords_to_display.has(start_tile_coords):
-								settlement_coords_to_display.append(start_tile_coords)
+							add_settlement_target.call(start_tile_coords, convoy_id_str)
 
 							if route_x_coords.size() > 0:
 								var end_tile_x: int = floori(float(route_x_coords.back()))
 								var end_tile_y: int = floori(float(route_y_coords.back()))
 								var end_tile_coords := Vector2i(end_tile_x, end_tile_y)
-								if end_tile_coords != start_tile_coords and \
-								   not settlement_coords_to_display.has(end_tile_coords):
-									settlement_coords_to_display.append(end_tile_coords)
+								if end_tile_coords != start_tile_coords:
+									add_settlement_target.call(end_tile_coords, convoy_id_str)
 
 	# Ensure hovered settlement coords are added
 	if current_hover_info.get('type') == 'settlement':
 		var hovered_tile_coords = current_hover_info.get('coords')
 		if hovered_tile_coords is Vector2i and hovered_tile_coords.x >= 0 and hovered_tile_coords.y >= 0:
-			if not settlement_coords_to_display.has(hovered_tile_coords):
-				settlement_coords_to_display.append(hovered_tile_coords)
+			add_settlement_target.call(hovered_tile_coords)
+
 
 	# Determine Convoy Labels to Display (Selected then Hovered)
 	# Always include hovered convoy ID if present
@@ -534,7 +823,9 @@ func _draw_interactive_labels(current_hover_info: Dictionary):
 	for settlement_coord_to_draw in settlement_coords_to_display:
 		var settlement_coord_str = "%s_%s" % [settlement_coord_to_draw.x, settlement_coord_to_draw.y]
 		var settlement_data_for_panel = _find_settlement_at_tile(settlement_coord_to_draw.x, settlement_coord_to_draw.y)
-		if not settlement_data_for_panel: continue
+		if not settlement_data_for_panel: 
+			print("[UIManager] WARNING: Could not find settlement data for resolved target coordinate: ", settlement_coord_to_draw)
+			continue
 
 		var panel_node: Panel
 		if _active_settlement_panels.has(settlement_coord_str):
@@ -554,11 +845,19 @@ func _draw_interactive_labels(current_hover_info: Dictionary):
 			_active_settlement_panels[settlement_coord_str] = panel_node
 			settlement_label_container.add_child(panel_node)
 
-		_update_settlement_panel_content(panel_node, settlement_data_for_panel)
+		var targeting_convoys = coords_to_targeting_convoys.get(settlement_coord_to_draw, [])
+		var cargo_names: Array = coords_to_cargo_names.get(settlement_coord_to_draw, [])
+		# A delivery destination (has cargo headed to it) is never a "plain" label.
+		var is_plain := cargo_names.is_empty() and _is_plain_settlement_label(
+			settlement_coord_to_draw, settlement_data_for_panel, targeting_convoys,
+			show_all_settlements, current_hover_info, warehouse_ids_cache
+		)
+		_update_settlement_panel_content(panel_node, settlement_data_for_panel, targeting_convoys, cargo_names, is_plain)
 		panel_node.visible = true
 		# print("UIManager:_draw_interactive_labels - Positioning/Clamping settlement panel for coords: ", settlement_coord_to_draw, " at pos: ", panel_node.position) # DEBUG
 		_position_settlement_panel(panel_node, settlement_data_for_panel, all_drawn_label_rects_this_update)
-		_clamp_panel_position(panel_node)
+		# Intentionally disabled: let settlement panels pan off-screen naturally
+		# _clamp_panel_position(panel_node)
 		
 		var current_settlement_panel_actual_size = panel_node.size
 		if current_settlement_panel_actual_size.x <= 0 or current_settlement_panel_actual_size.y <= 0:
@@ -582,9 +881,99 @@ func _draw_interactive_labels(current_hover_info: Dictionary):
 			if is_instance_valid(panel_to_hide): panel_to_hide.queue_free() # Or just hide
 			_active_settlement_panels.erase(existing_coord_str)
 
+	# Persist targeting map for overlay + dimming.
+	_coords_to_targeting_convoys = coords_to_targeting_convoys
+
+	# --- Dimming: determine which panels are "related" to the current focus ---
+	_apply_settlement_panel_dimming(
+		focused_convoy_ids,
+		current_hover_info,
+		coords_to_targeting_convoys,
+		drawn_settlement_tile_coords_this_update
+	)
+
 	# Request redraw for connector lines (this part is fine)
 	if is_instance_valid(convoy_connector_lines_container):
 		convoy_connector_lines_container.queue_redraw()
+
+	# Refresh settlement tails + tile outlines overlay
+	_refresh_settlement_overlay(drawn_settlement_tile_coords_this_update)
+
+	# Refresh coordinate grid overlay (independent of settlement labels)
+	_refresh_grid_overlay()
+
+## Dim settlement panels that are unrelated to the current focus (selected/hovered convoy or settlement).
+## Related panels stay at full opacity; unrelated ones fade to DIM_ALPHA.
+func _apply_settlement_panel_dimming(
+		focused_ids: Array[String],
+		hover_info: Dictionary,
+		targeting_map: Dictionary,
+		drawn_coords: Array
+) -> void:
+	const DIM_ALPHA: float = 0.25
+	const FULL_ALPHA: float = 1.0
+
+	var hover_type: String  = hover_info.get("type", "")
+	var hover_coords: Variant = hover_info.get("coords", null)
+	var is_settlement_hovered: bool = hover_type == "settlement" and hover_coords is Vector2i
+
+	# No focus at all → restore everything to its base brightness (plain labels stay
+	# translucent when "Settlement Labels" is on; everything else goes full opacity).
+	if focused_ids.is_empty() and not is_settlement_hovered:
+		for coord_str in _active_settlement_panels.keys():
+			var p: Panel = _active_settlement_panels[coord_str]
+			if is_instance_valid(p):
+				var base_a: float = p.get_meta("plain_alpha", 1.0)
+				p.modulate = Color(1.0, 1.0, 1.0, base_a)
+		return
+
+	# Build the set of "related" coords.
+	var related: Dictionary = {}  # Vector2i → true (used as a set)
+
+	# 1. Settlements targeted by any focused convoy.
+	for coord in targeting_map.keys():
+		var ids: Array = targeting_map[coord]
+		for fid in focused_ids:
+			if ids.has(fid):
+				related[coord] = true
+				break
+
+	# 2. Settlement the focused convoy is currently sitting on.
+	for convoy_data in _all_convoy_data_cache:
+		if not convoy_data is Dictionary:
+			continue
+		var cid: String = str(convoy_data.get("convoy_id", ""))
+		if not focused_ids.has(cid):
+			continue
+		var cx: float = float(convoy_data.get("x", -999.0))
+		var cy: float = float(convoy_data.get("y", -999.0))
+		var sett = _find_closest_settlement(cx, cy, 2.5)
+		if sett is Dictionary:
+			related[Vector2i(int(sett.get("x", 0)), int(sett.get("y", 0)))] = true
+
+	# 3. Hovered settlement + its route-mates.
+	if is_settlement_hovered:
+		related[hover_coords] = true
+		var hovered_ids: Array = targeting_map.get(hover_coords, [])
+		for coord in targeting_map.keys():
+			var ids: Array = targeting_map[coord]
+			for tid in ids:
+				if hovered_ids.has(tid):
+					related[coord] = true
+					break
+
+	# Apply modulate to every visible panel.
+	for coord_str in _active_settlement_panels.keys():
+		var p: Panel = _active_settlement_panels[coord_str]
+		if not is_instance_valid(p) or not p.visible:
+			continue
+		var parts: PackedStringArray = coord_str.split("_")
+		if parts.size() != 2:
+			continue
+		var coord := Vector2i(parts[0].to_int(), parts[1].to_int())
+		var base_a: float = p.get_meta("plain_alpha", FULL_ALPHA)
+		p.modulate = Color(1.0, 1.0, 1.0, base_a if related.has(coord) else minf(base_a, DIM_ALPHA))
+
 
 # The following functions related to convoy panels will be moved to ConvoyLabelManager.gd:
 # _create_convoy_panel
@@ -622,7 +1011,493 @@ func _create_settlement_panel() -> Panel:
 func _force_draw_interactive_labels_deferred() -> void:
 	call_deferred("_draw_interactive_labels", {})
 
-func _update_settlement_panel_content(panel: Panel, settlement_info: Dictionary):
+## A "plain" label is a generic discovered-city label shown only because the
+## "Settlement Labels" overlay is on. Delivery targets, warehouses, pinned, and
+## hovered settlements are NOT plain (they keep full size + opacity).
+func _is_plain_settlement_label(
+		coords: Vector2i,
+		sett_info: Dictionary,
+		targeting_convoys: Array,
+		show_all_settlements: bool,
+		hover_info: Dictionary,
+		warehouse_ids: Array
+) -> bool:
+	if not show_all_settlements:
+		return false
+	if not targeting_convoys.is_empty():
+		return false
+	if _pinned_settlement_coords.has(coords):
+		return false
+	if hover_info.get('type') == 'settlement' and hover_info.get('coords') == coords:
+		return false
+	var sid := str(sett_info.get("sett_id", sett_info.get("id", "")))
+	if sid != "" and warehouse_ids.has(sid):
+		return false
+	return true
+
+
+# -------------------------------------------------------------------
+# Coordinate grid overlay
+# -------------------------------------------------------------------
+
+func _ensure_grid_overlay() -> void:
+	if is_instance_valid(_grid_overlay):
+		return
+	if not is_instance_valid(terrain_tilemap):
+		return
+	var script = load("res://Scripts/UI/map_grid_overlay.gd")
+	if script == null:
+		printerr("[UIManager] Could not load map_grid_overlay.gd")
+		return
+	_grid_overlay = Node2D.new()
+	_grid_overlay.set_script(script)
+	_grid_overlay.z_index = 0  # above terrain tiles, beneath labels/convoys
+	# Child of the tilemap so local coords match TileMapLayer.map_to_local().
+	terrain_tilemap.add_child(_grid_overlay)
+
+## Pushes current grid parameters to the grid overlay. Safe to call every frame;
+## the overlay only redraws when something visible actually changed.
+func _refresh_grid_overlay() -> void:
+	var enabled: bool = is_instance_valid(_settings_service) and _settings_service.grid_lines
+	if not enabled:
+		if is_instance_valid(_grid_overlay) and _grid_overlay.has_method("update_grid"):
+			_grid_overlay.update_grid(false, Vector2.ZERO, 0, 0, Vector2.ONE, _display_zoom)
+		return
+	if not is_instance_valid(terrain_tilemap):
+		return
+	_ensure_grid_overlay()
+	if not is_instance_valid(_grid_overlay):
+		return
+	var tile_size: Vector2 = Vector2(32.0, 32.0)
+	if is_instance_valid(terrain_tilemap.tile_set):
+		tile_size = Vector2(terrain_tilemap.tile_set.tile_size)
+	var used: Rect2i = terrain_tilemap.get_used_rect()
+	if used.size.x <= 0 or used.size.y <= 0:
+		_grid_overlay.update_grid(false, Vector2.ZERO, 0, 0, tile_size, _display_zoom)
+		return
+	# map_to_local returns the cell center; shift to the cell's top-left corner.
+	var origin: Vector2 = terrain_tilemap.map_to_local(used.position) - tile_size * 0.5
+	_grid_overlay.update_grid(true, origin, used.size.x, used.size.y, tile_size, _display_zoom)
+
+
+# -------------------------------------------------------------------
+# Settlement overlay helpers (callout tails + tile icons)
+# -------------------------------------------------------------------
+
+func _ensure_settlement_overlay() -> void:
+	if is_instance_valid(_settlement_overlay):
+		return
+	if not is_instance_valid(settlement_label_container):
+		return
+	var script = load("res://Scripts/UI/settlement_overlay_draw.gd")
+	if script == null:
+		printerr("[UIManager] Could not load settlement_overlay_draw.gd")
+		return
+	_settlement_overlay = Node2D.new()
+	_settlement_overlay.set_script(script)
+	_settlement_overlay.z_index = -1  # behind panels — tails + outlines only
+	settlement_label_container.add_child(_settlement_overlay)
+
+	_pin_overlay = Node2D.new()
+	_pin_overlay.set_script(script)
+	_pin_overlay.z_index = 10  # in front of panels — pins only
+	settlement_label_container.add_child(_pin_overlay)
+
+
+## Collect tail + outline data from all visible panels and push to the overlay node.
+## Called at the end of _draw_interactive_labels after all panels are positioned.
+func _refresh_settlement_overlay(drawn_coords: Array) -> void:
+	_ensure_settlement_overlay()
+	if not is_instance_valid(_settlement_overlay):
+		return
+	if not is_instance_valid(terrain_tilemap):
+		_settlement_overlay.clear_frame()
+		if is_instance_valid(_pin_overlay):
+			_pin_overlay.clear_frame()
+		return
+
+	var tile_size: Vector2 = Vector2(32.0, 32.0)
+	if is_instance_valid(terrain_tilemap) and is_instance_valid(terrain_tilemap.tile_set):
+		tile_size = Vector2(terrain_tilemap.tile_set.tile_size)
+
+	var tail_list: Array    = []
+	var outline_list: Array = []
+
+	# --- Build panel-based tails and outlines ---
+	for coords in drawn_coords:
+		var coord_str := "%s_%s" % [coords.x, coords.y]
+		var panel: Panel = _active_settlement_panels.get(coord_str)
+		if not is_instance_valid(panel) or not panel.visible:
+			continue
+
+		var sett_info = _find_settlement_at_tile(coords.x, coords.y)
+		if not sett_info is Dictionary:
+			continue
+
+		var tile_center: Vector2 = terrain_tilemap.map_to_local(coords)
+		var panel_scale: float   = panel.scale.x  # uniform scale = 1/zoom
+
+		# --- Tail ---
+		var actual_size: Vector2 = panel.size
+		if actual_size.x <= 0 or actual_size.y <= 0:
+			actual_size = panel.get_minimum_size()
+		var scaled_size: Vector2         = actual_size * panel.scale
+		var panel_bottom_center: Vector2 = panel.position + Vector2(scaled_size.x * 0.5, scaled_size.y)
+		var bg_color: Color              = panel.get_meta("bg_color", settlement_panel_background_color)
+		bg_color.a *= panel.modulate.a
+
+		tail_list.append({
+			"panel_bottom_center": panel_bottom_center,
+			"tile_center":         tile_center,
+			"bg_color":            bg_color,
+			"panel_scale":         panel_scale,
+		})
+
+		# --- Tile outline ---
+		var outline_col: Color = panel.get_meta("outline_color", Color.TRANSPARENT)
+		if outline_col == Color.TRANSPARENT:
+			outline_col = Color(1.0, 1.0, 1.0, 0.55)
+		outline_col.a *= panel.modulate.a
+		outline_list.append({
+			"tile_center": tile_center,
+			"color":       outline_col,
+		})
+
+	# --- Focus pins — built from persistent state, not hover ---
+	# Pins mark the origin of the current focus so the user always knows what's highlighted.
+	# Sources (all persistent, not hover-dependent):
+	#   1. Selected convoys  (_selected_convoy_ids_cache)
+	#   2. Pinned convoys    (convoy_label_manager._pinned_convoy_ids via accessor)
+	#   3. Pinned settlements (_pinned_settlement_coords)
+	# Hover adds a temporary extra pin on top.
+	var focus_pins: Array = []
+
+	# Collect all persistent focused convoy IDs (selected + pinned).
+	var persistent_convoy_ids: Dictionary = {}  # id → true (set)
+	if _selected_convoy_ids_cache is Array:
+		for cid in _selected_convoy_ids_cache:
+			persistent_convoy_ids[str(cid)] = true
+	if is_instance_valid(convoy_label_manager) and convoy_label_manager.has_method("get_pinned_convoy_ids"):
+		for cid in convoy_label_manager.get_pinned_convoy_ids():
+			persistent_convoy_ids[str(cid)] = true
+
+	# Pin at each focused convoy's current tile.
+	for convoy_data in _all_convoy_data_cache:
+		if not convoy_data is Dictionary:
+			continue
+		var cid: String = str(convoy_data.get("convoy_id", ""))
+		if not persistent_convoy_ids.has(cid):
+			continue
+		var cx: float = float(convoy_data.get("x", -999.0))
+		var cy: float = float(convoy_data.get("y", -999.0))
+		if cx < 0.0 or cy < 0.0:
+			continue
+		var convoy_col: Color = _convoy_id_to_color_map_cache.get(cid, Color.WHITE)
+		focus_pins.append({
+			"tile_center": terrain_tilemap.map_to_local(Vector2i(floori(cx), floori(cy))),
+			"color":       convoy_col,
+		})
+
+	# Pin at each pinned settlement.
+	for pinned_coords in _pinned_settlement_coords:
+		focus_pins.append({
+			"tile_center": terrain_tilemap.map_to_local(pinned_coords),
+			"color":       Color(1.0, 1.0, 1.0, 0.95),
+		})
+
+	# Hover adds a temporary pin (hovered convoy or settlement) on top.
+	var hover_type: String    = _current_hover_info_cache.get("type", "")
+	var hover_coords: Variant = _current_hover_info_cache.get("coords", null)
+	if hover_type == "settlement" and hover_coords is Vector2i:
+		focus_pins.append({
+			"tile_center": terrain_tilemap.map_to_local(hover_coords),
+			"color":       Color(1.0, 1.0, 1.0, 0.95),
+		})
+	elif hover_type == "convoy":
+		var hid: String = str(_current_hover_info_cache.get("id", ""))
+		if not hid.is_empty() and not persistent_convoy_ids.has(hid):
+			# Only add hover pin if not already shown as a persistent pin.
+			for convoy_data in _all_convoy_data_cache:
+				if not convoy_data is Dictionary: continue
+				if str(convoy_data.get("convoy_id", "")) != hid: continue
+				var cx: float = float(convoy_data.get("x", -999.0))
+				var cy: float = float(convoy_data.get("y", -999.0))
+				if cx >= 0.0 and cy >= 0.0:
+					var hcol: Color = _convoy_id_to_color_map_cache.get(hid, Color.WHITE)
+					focus_pins.append({
+						"tile_center": terrain_tilemap.map_to_local(Vector2i(floori(cx), floori(cy))),
+						"color":       hcol,
+					})
+				break
+
+	# --- Route arcs: focused convoy → cargo destinations; pinned settlement → departing destinations ---
+	var arc_list: Array = []
+
+	# Arcs from each focused/selected convoy.
+	for convoy_data in _all_convoy_data_cache:
+		if not convoy_data is Dictionary:
+			continue
+		var cid: String = str(convoy_data.get("convoy_id", ""))
+		if not persistent_convoy_ids.has(cid):
+			continue
+		var cx: float = float(convoy_data.get("x", -999.0))
+		var cy: float = float(convoy_data.get("y", -999.0))
+		if cx < 0.0 or cy < 0.0:
+			continue
+		var src: Vector2    = terrain_tilemap.map_to_local(Vector2i(floori(cx), floori(cy)))
+		var convoy_col: Color = _convoy_id_to_color_map_cache.get(cid, Color.WHITE)
+		var arc_col: Color    = Color(convoy_col.r, convoy_col.g, convoy_col.b, 0.55)
+		for dest_coords in _get_convoy_cargo_destination_coords(convoy_data):
+			arc_list.append({
+				"from":  src,
+				"to":    terrain_tilemap.map_to_local(dest_coords),
+				"color": arc_col,
+			})
+
+	# Arcs from each pinned settlement.
+	for pinned_coords in _pinned_settlement_coords:
+		var sett = _find_settlement_at_tile(pinned_coords.x, pinned_coords.y)
+		if not sett is Dictionary:
+			continue
+		var src: Vector2 = terrain_tilemap.map_to_local(pinned_coords)
+		for dest_coords in _get_settlement_departing_destinations(sett):
+			arc_list.append({
+				"from":  src,
+				"to":    terrain_tilemap.map_to_local(dest_coords),
+				"color": Color(1.0, 1.0, 1.0, 0.45),
+			})
+
+	# Tails + outlines + arcs go behind panels; pins go in front.
+	_settlement_overlay.update_frame(tail_list, outline_list, _current_map_zoom_cache, tile_size, [], arc_list)
+	if is_instance_valid(_pin_overlay):
+		_pin_overlay.update_frame([], [], _current_map_zoom_cache, tile_size, focus_pins)
+
+
+func _on_map_overlay_settings_changed(_settings: Dictionary) -> void:
+	if _debug_map_menu:
+		print("[UIManager] Map overlay settings updated. Forcing redraw.")
+	_force_draw_interactive_labels_deferred()
+
+func _find_settlement_by_name(s_name: String) -> Variant:
+	if s_name.is_empty() or not _all_settlement_data_cache: return null
+	
+	var target_name = s_name.strip_edges()
+	if "(" in target_name:
+		target_name = target_name.split("(")[0].strip_edges()
+		
+	# 1. Direct search by settlement name
+	for s in _all_settlement_data_cache:
+		if s is Dictionary:
+			if str(s.get("name", "")).strip_edges().to_lower() == target_name.to_lower():
+				return s
+				
+	# 2. Fallback search by checking vendor name
+	for s in _all_settlement_data_cache:
+		if s is Dictionary:
+			var vendors = s.get("vendors", [])
+			if vendors is Array:
+				for v in vendors:
+					if v is Dictionary:
+						if str(v.get("name", "")).strip_edges().to_lower() == target_name.to_lower():
+							return s
+							
+	# 3. Partial match as last resort
+	for s in _all_settlement_data_cache:
+		if s is Dictionary:
+			var s_n := str(s.get("name", "")).strip_edges().to_lower()
+			if s_n in target_name.to_lower() or target_name.to_lower() in s_n:
+				return s
+				
+	return null
+
+func _find_settlement_by_id(s_id: String) -> Variant:
+	if s_id.is_empty() or not _all_settlement_data_cache: return null
+	# 1. Direct search by settlement id or sett_id
+	for s in _all_settlement_data_cache:
+		if s is Dictionary:
+			var sid = str(s.get("sett_id", s.get("id", "")))
+			if sid == s_id:
+				return s
+	
+	# 2. Fallback search by checking if s_id is a vendor ID belonging to any settlement
+	for s in _all_settlement_data_cache:
+		if s is Dictionary:
+			var vendors = s.get("vendors", [])
+			if vendors is Array:
+				for v in vendors:
+					if v is Dictionary:
+						var vid = str(v.get("vendor_id", v.get("id", "")))
+						if vid == s_id:
+							return s
+	return null
+
+func _get_player_warehouse_settlement_ids() -> Array[String]:
+	var ids: Array[String] = []
+	if is_instance_valid(_user_service) and _user_service.has_method("get_user"):
+		var user = _user_service.get_user()
+		if user is Dictionary:
+			var warehouses = user.get("warehouses", [])
+			if warehouses is Array:
+				for w in warehouses:
+					if w is Dictionary:
+						var sett_id = str(w.get("sett_id", ""))
+						if sett_id != "":
+							ids.append(sett_id)
+	return ids
+
+func _resolve_cargo_destination_coords(item: Dictionary) -> Variant:
+	# 1. Gather all possible ID fields
+	var id_fields := ["recipient", "recipient_settlement_id", "settlement_id", "sett_id", "mission_vendor_id", "recipient_vendor_id", "destination_vendor_id", "dest_vendor_id", "distributor"]
+	for k in id_fields:
+		var raw_val = item.get(k)
+		if raw_val is Dictionary: # e.g. "recipient": { "settlement_id": "..." }
+			var r_sid = raw_val.get("recipient_settlement_id", raw_val.get("sett_id", raw_val.get("settlement_id", "")))
+			if str(r_sid) != "":
+				var s = _find_settlement_by_id(str(r_sid))
+				if s is Dictionary:
+					return Vector2i(int(s.get("x", 0)), int(s.get("y", 0)))
+			var r_name = raw_val.get("name", "")
+			if str(r_name) != "":
+				var s = _find_settlement_by_name(str(r_name))
+				if s is Dictionary:
+					return Vector2i(int(s.get("x", 0)), int(s.get("y", 0)))
+		elif raw_val != null and str(raw_val).strip_edges() != "" and str(raw_val) != "00000000-0000-0000-0000-000000000000":
+			var s = _find_settlement_by_id(str(raw_val).strip_edges())
+			if s is Dictionary:
+				return Vector2i(int(s.get("x", 0)), int(s.get("y", 0)))
+
+	# 2. Gather all possible Name fields
+	var name_fields := ["recipient_settlement_name", "destination_settlement_name", "destination", "destination_name", "dest_settlement"]
+	for k in name_fields:
+		var rsn = item.get(k, "")
+		if str(rsn) != "":
+			var s = _find_settlement_by_id(str(rsn)) # Some names might accidentally be UUIDs
+			if s is Dictionary:
+				return Vector2i(int(s.get("x", 0)), int(s.get("y", 0)))
+			s = _find_settlement_by_name(str(rsn))
+			if s is Dictionary:
+				return Vector2i(int(s.get("x", 0)), int(s.get("y", 0)))
+
+	return null
+
+## Best display name for a cargo/delivery item dict.
+func _cargo_item_display_name(item: Dictionary) -> String:
+	for k in ["name", "base_name", "specific_name", "cargo_name"]:
+		var v = item.get(k, "")
+		if str(v).strip_edges() != "":
+			return str(v).strip_edges()
+	return ""
+
+## Records a cargo name against a destination coord in `names_out` (deduplicated).
+func _record_cargo_name(names_out: Dictionary, coords: Vector2i, item: Dictionary) -> void:
+	var nm := _cargo_item_display_name(item)
+	if nm == "":
+		return
+	if not names_out.has(coords):
+		names_out[coords] = []
+	if not names_out[coords].has(nm):
+		names_out[coords].append(nm)
+
+func _get_convoy_cargo_destination_coords(convoy: Dictionary, names_out: Dictionary = {}) -> Array[Vector2i]:
+	var dest_coords: Array[Vector2i] = []
+	var inspect_item = func(item: Dictionary, _source_name: String):
+		var coords = _resolve_cargo_destination_coords(item)
+		if coords != null:
+			if not dest_coords.has(coords):
+				dest_coords.append(coords)
+			_record_cargo_name(names_out, coords, item)
+
+	# Scan convoy-level cargo
+	var inv = convoy.get("cargo_inventory", [])
+	if inv is Array:
+		for it in inv:
+			if it is Dictionary:
+				inspect_item.call(it, "convoy_root_cargo_inventory")
+				
+	# Scan vehicle cargo
+	var vehicles = convoy.get("vehicle_details_list", convoy.get("vehicles", []))
+	if vehicles is Array:
+		for i in range(vehicles.size()):
+			var v = vehicles[i]
+			if v is Dictionary:
+				var v_name = "Vehicle " + str(i)
+				for it in v.get("cargo_items", []):
+					if it is Dictionary: inspect_item.call(it, v_name + "_cargo_items")
+				for it in v.get("cargo_inventory", []):
+					if it is Dictionary: inspect_item.call(it, v_name + "_cargo_inventory")
+				for it in v.get("cargo", []):
+					if it is Dictionary: inspect_item.call(it, v_name + "_cargo")
+				for it in v.get("cargo_items_typed", []):
+					if it is Dictionary: inspect_item.call(it, v_name + "_typed")
+	return dest_coords
+
+func _get_settlement_departing_destinations(settlement: Dictionary, names_out: Dictionary = {}) -> Array[Vector2i]:
+	var dest_coords: Array[Vector2i] = []
+	var sett_id = str(settlement.get("sett_id", settlement.get("id", "")))
+	var sett_name = str(settlement.get("name", sett_id))
+
+	var inspect_cargo_array = func(cargo: Array, source_name: String):
+		for item in cargo:
+			if item is Dictionary:
+				var is_delivery = CargoItem.DeliveryCargoItem._looks_like_delivery_dict(item)
+				if is_delivery:
+					# Available vendor contracts have no destination in the backend payload —
+					# the destination is only known after pickup. So we mark the origin
+					# settlement itself as the target ("missions available here").
+					var coords = _resolve_cargo_destination_coords(item)
+					if coords == null:
+						coords = Vector2i(int(settlement.get("x", 0)), int(settlement.get("y", 0)))
+					if not dest_coords.has(coords):
+						dest_coords.append(coords)
+					_record_cargo_name(names_out, coords, item)
+
+	if _debug_map_menu:
+		print("[UIManager] _get_settlement_departing_destinations: scanning '%s' (id=%s)" % [sett_name, sett_id])
+
+	# 1. Direct cargo keys on the settlement dictionary itself
+	for key in ["cargo_inventory", "cargo", "cargo_items", "cargo_items_typed", "contracts", "missions"]:
+		var cargo = settlement.get(key)
+		if cargo is Array and not cargo.is_empty():
+			inspect_cargo_array.call(cargo, "settlement key: " + key)
+
+	# 2. Inspect cargo stored in the vendors of this settlement
+	var vendors = settlement.get("vendors", [])
+	if vendors is Array:
+		for v in vendors:
+			if v is Dictionary:
+				var v_name = str(v.get("name", "Unknown Vendor"))
+				for key in ["cargo_inventory", "cargo", "cargo_items", "cargo_items_typed", "contracts", "missions"]:
+					var cargo = v.get(key)
+					if cargo is Array and not cargo.is_empty():
+						inspect_cargo_array.call(cargo, "vendor (" + v_name + ") key: " + key)
+
+	# 3. Inspect cargo stored in the player's warehouse at this settlement
+	if sett_id != "" and is_instance_valid(_user_service) and _user_service.has_method("get_user"):
+		var user = _user_service.get_user()
+		if user is Dictionary:
+			var warehouses = user.get("warehouses", [])
+			if warehouses is Array:
+				for w in warehouses:
+					if w is Dictionary:
+						var w_sett_id = str(w.get("sett_id", ""))
+						if w_sett_id == sett_id:
+							for key in ["cargo_inventory", "cargo", "cargo_items", "cargo_items_typed"]:
+								var cargo = w.get(key)
+								if cargo is Array and not cargo.is_empty():
+									inspect_cargo_array.call(cargo, "warehouse key: " + key)
+
+	if _debug_map_menu:
+		print("[UIManager] _get_settlement_departing_destinations: '%s' → %d destinations found" % [sett_name, dest_coords.size()])
+	return dest_coords
+
+
+## When "Settlement Labels" (show all discovered cities) is on, most labels are generic
+## "plain" labels. These are rendered smaller + translucent so the map stays readable; the
+## relevant ones (delivery targets, warehouses, pinned, hovered) keep full size/opacity.
+const PLAIN_LABEL_SCALE: float = 0.7
+const PLAIN_LABEL_ALPHA: float = 0.55
+
+func _update_settlement_panel_content(panel: Panel, settlement_info: Dictionary, targeting_convoys: Array = [], cargo_names: Array = [], is_plain: bool = false):
 	if not is_instance_valid(panel): return
 	var label_node: Label = panel.get_meta("label_node_ref")
 	var style_box: StyleBoxFlat = panel.get_meta("style_box_ref")
@@ -633,8 +1508,11 @@ func _update_settlement_panel_content(panel: Panel, settlement_info: Dictionary)
 	var current_settlement_panel_padding_h: float = base_settlement_panel_padding_h
 	var current_settlement_panel_padding_v: float = base_settlement_panel_padding_v
 	
-	var zoom_factor = max(0.0001, _current_map_zoom_cache)
-	panel.scale = Vector2(1.0 / zoom_factor, 1.0 / zoom_factor)
+	var zoom_factor: float = max(0.0001, _display_zoom)
+	var label_scale: float = PLAIN_LABEL_SCALE if is_plain else 1.0
+	panel.scale = Vector2(label_scale / zoom_factor, label_scale / zoom_factor)
+	# Base opacity used by the dimming pass: plain labels start translucent.
+	panel.set_meta("plain_alpha", PLAIN_LABEL_ALPHA if is_plain else 1.0)
 	var settlement_name_local: String = settlement_info.get('name', 'N/A')
 	if settlement_name_local == 'N/A': return
 	if not is_instance_valid(settlement_label_settings.font):
@@ -642,8 +1520,73 @@ func _update_settlement_panel_content(panel: Panel, settlement_info: Dictionary)
 	settlement_label_settings.font_size = current_settlement_font_size
 	var settlement_type = settlement_info.get('sett_type', '')
 	var settlement_emoji = SETTLEMENT_EMOJIS.get(settlement_type, '')
-	label_node.text = settlement_emoji + ' ' + settlement_name_local if not settlement_emoji.is_empty() else settlement_name_local
+	
+	var final_text = settlement_emoji + ' ' + settlement_name_local if not settlement_emoji.is_empty() else settlement_name_local
+	
+	# Prepend warehouse indicator (🏭) if player owns a warehouse here
+	var sett_id = str(settlement_info.get("sett_id", settlement_info.get("id", "")))
+	var has_warehouse = false
+	if sett_id != "" and _get_player_warehouse_settlement_ids().has(sett_id):
+		final_text = "🏭 " + final_text
+		has_warehouse = true
+
+	# Pinned labels double as the "preview" button (tap → settlement overview). A trailing chevron
+	# signals the label is tappable; the tap itself is hit-tested in MapInteractionManager.
+	var sett_coords := Vector2i(int(settlement_info.get('x', -1)), int(settlement_info.get('y', -1)))
+	if _pinned_settlement_coords.has(sett_coords):
+		final_text += "  ›"
+
+	# Append the cargo headed to this destination (first item + "(+N more)").
+	if not cargo_names.is_empty():
+		var cargo_line: String = "📦 " + str(cargo_names[0])
+		var extra: int = cargo_names.size() - 1
+		if extra > 0:
+			cargo_line += " (+%d more)" % extra
+		final_text += "\n" + cargo_line
+		label_node.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	else:
+		label_node.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+
+	label_node.text = final_text
 	style_box.bg_color = settlement_panel_background_color
+	panel.set_meta("sett_type", settlement_type) # used by overlay draw for tile icon
+	
+	# Apply border accent from the owning convoy's color.
+	# Prioritise a focused/selected convoy; fall back to the first targeting convoy.
+	var convoy_accent_color: Color = Color.TRANSPARENT
+	if not targeting_convoys.is_empty():
+		var chosen_id: String = targeting_convoys[0]
+		for cid in targeting_convoys:
+			if _focused_convoy_ids_last.has(cid):
+				chosen_id = cid
+				break
+		convoy_accent_color = _convoy_id_to_color_map_cache.get(chosen_id, Color(0.9, 0.9, 0.9, 0.8))
+
+	panel.set_meta("outline_color", convoy_accent_color)  # used by tile outline overlay
+
+	if not targeting_convoys.is_empty():
+		var bw: int = 3 if not _focused_convoy_ids_last.is_empty() else 2
+		style_box.border_width_left   = bw
+		style_box.border_width_right  = bw
+		style_box.border_width_top    = bw
+		style_box.border_width_bottom = bw
+		style_box.border_color = convoy_accent_color
+	elif has_warehouse:
+		style_box.border_width_left = 2
+		style_box.border_width_right = 2
+		style_box.border_width_top = 2
+		style_box.border_width_bottom = 2
+		style_box.border_color = Color(0.25, 0.55, 0.95, 0.8) # Premium interactive blue glow
+		style_box.bg_color = Color(0.12, 0.16, 0.24, 0.9)     # Deep glassmorphic tech-blue
+	else:
+		style_box.border_width_left = 0
+		style_box.border_width_right = 0
+		style_box.border_width_top = 0
+		style_box.border_width_bottom = 0
+
+	# Store final resolved bg color so the callout tail can match it.
+	panel.set_meta("bg_color", style_box.bg_color)
+
 	style_box.corner_radius_top_left = floori(current_settlement_panel_corner_radius)
 	style_box.corner_radius_top_right = floori(current_settlement_panel_corner_radius)
 	style_box.corner_radius_bottom_left = floori(current_settlement_panel_corner_radius)
@@ -683,6 +1626,16 @@ func _position_settlement_panel(panel: Panel, settlement_info: Dictionary, _exis
 	var tile_center = terrain_tilemap.map_to_local(Vector2i(tile_x, tile_y))
 	var current_settlement_offset_above_center: float = base_settlement_offset_above_tile_center
 	
+	# Dynamically shift the label higher if any convoy is parked on this exact tile
+	if _all_convoy_data_cache:
+		for convoy_data in _all_convoy_data_cache:
+			if convoy_data is Dictionary:
+				var cx = convoy_data.get('x', -1)
+				var cy = convoy_data.get('y', -1)
+				if cx == tile_x and cy == tile_y:
+					current_settlement_offset_above_center += 45.0 # Extra vertical clearance
+					break
+	
 	var scaled_size = panel_actual_size * panel.scale
 	
 	# Position label above the tile center, centered horizontally
@@ -705,7 +1658,11 @@ func _position_settlement_panel(panel: Panel, settlement_info: Dictionary, _exis
 		# Check against convoy icons
 		var overlaps_convoys := _settlement_panel_overlaps_convoy(panel_rect)
 
-		if not overlaps_labels and not overlaps_convoys:
+		# Check against the previewed journey route line (no-op unless a preview is active), so the
+		# label doesn't sit on top of the route and hide segments.
+		var overlaps_route := _settlement_panel_overlaps_route(panel_rect)
+
+		if not overlaps_labels and not overlaps_convoys and not overlaps_route:
 			break # Found a clear spot
 
 		# Adjust position if there's an overlap
@@ -715,6 +1672,10 @@ func _position_settlement_panel(panel: Panel, settlement_info: Dictionary, _exis
 		# Nudge away from the settlement icon (upwards is negative y)
 		panel.position.y = panel_desired_y - (nudge_factor * label_anti_collision_y_shift * sign_dir)
 		attempt += 1
+
+	# Finally, keep the label from clipping off the map's side edge or hiding behind the overlay gear
+	# box (only when the settlement itself is on-screen — off-screen ones pan away naturally).
+	_clamp_settlement_panel_x(panel, tile_center)
 
 func _rect_overlaps_circle(r: Rect2, c: Vector2, radius: float) -> bool:
 	var closest_x = clamp(c.x, r.position.x, r.position.x + r.size.x)
@@ -742,18 +1703,76 @@ func _settlement_panel_overlaps_convoy(panel_rect: Rect2) -> bool:
 
 		if _rect_overlaps_circle(panel_rect, convoy_center_pos, settlement_convoy_keepout_radius):
 			return true
-			
+
+	return false
+
+## True if the panel_rect comes within settlement_route_keepout_px of the active preview route
+## polyline. Route points are tile coords converted to the same tile-center local space the panel
+## and the convoy check use ((tile + 0.5) * tile_size). No-op unless a route preview is active.
+func _settlement_panel_overlaps_route(panel_rect: Rect2) -> bool:
+	if not _is_preview_active:
+		return false
+	if _preview_route_x.size() < 2 or _preview_route_x.size() != _preview_route_y.size():
+		return false
+	if not is_instance_valid(terrain_tilemap) or not is_instance_valid(terrain_tilemap.tile_set):
+		return false
+	var tile_size = terrain_tilemap.tile_set.tile_size
+	var grown := panel_rect.grow(settlement_route_keepout_px)
+	var prev := Vector2(
+		(float(_preview_route_x[0]) + 0.5) * tile_size.x,
+		(float(_preview_route_y[0]) + 0.5) * tile_size.y
+	)
+	for i in range(1, _preview_route_x.size()):
+		var cur := Vector2(
+			(float(_preview_route_x[i]) + 0.5) * tile_size.x,
+			(float(_preview_route_y[i]) + 0.5) * tile_size.y
+		)
+		if _segment_hits_rect(prev, cur, grown):
+			return true
+		prev = cur
+	return false
+
+## Exact segment-vs-AABB test: either endpoint inside the rect, or the segment crosses any rect edge.
+func _segment_hits_rect(a: Vector2, b: Vector2, r: Rect2) -> bool:
+	if r.has_point(a) or r.has_point(b):
+		return true
+	var tl := r.position
+	var tr := r.position + Vector2(r.size.x, 0.0)
+	var br := r.position + r.size
+	var bl := r.position + Vector2(0.0, r.size.y)
+	if Geometry2D.segment_intersects_segment(a, b, tl, tr) != null:
+		return true
+	if Geometry2D.segment_intersects_segment(a, b, tr, br) != null:
+		return true
+	if Geometry2D.segment_intersects_segment(a, b, br, bl) != null:
+		return true
+	if Geometry2D.segment_intersects_segment(a, b, bl, tl) != null:
+		return true
 	return false
 
 func _find_settlement_at_tile(tile_x: int, tile_y: int) -> Variant:
 	if not _all_settlement_data_cache: return null # Guard against null cache
 	for settlement_data_entry in _all_settlement_data_cache:
 		if settlement_data_entry is Dictionary:
-			var s_tile_x = settlement_data_entry.get('x', -1)
-			var s_tile_y = settlement_data_entry.get('y', -1)
+			var s_tile_x = int(round(float(settlement_data_entry.get('x', -1))))
+			var s_tile_y = int(round(float(settlement_data_entry.get('y', -1))))
 			if s_tile_x == tile_x and s_tile_y == tile_y:
 				return settlement_data_entry
 	return null
+
+func _find_closest_settlement(cx: float, cy: float, max_dist: float = 1.5) -> Variant:
+	if not _all_settlement_data_cache: return null
+	var closest_sett = null
+	var min_dist = max_dist
+	for s in _all_settlement_data_cache:
+		if s is Dictionary:
+			var sx = float(s.get("x", -999.0))
+			var sy = float(s.get("y", -999.0))
+			var dist = sqrt((sx - cx)*(sx - cx) + (sy - cy)*(sy - cy))
+			if dist < min_dist:
+				min_dist = dist
+				closest_sett = s
+	return closest_sett
 
 
 func _on_menu_manager_menu_opened(menu_node: Node, menu_type: String):
@@ -764,6 +1783,23 @@ func _on_menu_manager_menu_opened(menu_node: Node, menu_type: String):
 		if menu_node.has_signal("route_preview_ended") and not menu_node.is_connected("route_preview_ended", Callable(self, "_on_preview_route_ended")):
 			menu_node.route_preview_ended.connect(_on_preview_route_ended)
 
+	# Full opacity on the journey menu itself; faint on any other menu while a route is
+	# still plotted (the journey menu is persistent, so its preview line survives a switch).
+	if _is_preview_active:
+		_set_preview_alpha_mul(1.0 if menu_type == "convoy_journey_submenu" else PREVIEW_FAINT_ALPHA)
+
+func _on_menu_visibility_changed(is_open: bool, _menu_name: String) -> void:
+	# Menus fully closed (not a tab switch — those don't toggle visibility) → drop the preview.
+	if not is_open and _is_preview_active:
+		_on_preview_route_ended()
+
+func _set_preview_alpha_mul(value: float) -> void:
+	if is_equal_approx(_preview_alpha_mul, value):
+		return
+	_preview_alpha_mul = value
+	if is_instance_valid(convoy_connector_lines_container):
+		convoy_connector_lines_container.queue_redraw()
+
 func _on_preview_route_started(route_data: Dictionary):
 	# route_data expected to contain nested 'journey' with route_x / route_y arrays.
 	var journey_dict = route_data.get("journey", {})
@@ -773,6 +1809,8 @@ func _on_preview_route_started(route_data: Dictionary):
 		_preview_route_x = rx.duplicate()
 		_preview_route_y = ry.duplicate()
 		_is_preview_active = true
+		# A preview always starts from the journey menu, which is the active menu at that moment.
+		_preview_alpha_mul = 1.0
 		# Determine convoy color (if convoy_id provided) to match node color
 		var convoy_id_val = route_data.get("convoy_id")
 		if convoy_id_val == null and route_data.has("journey"):
@@ -788,6 +1826,7 @@ func _on_preview_route_started(route_data: Dictionary):
 
 func _on_preview_route_ended():
 	_is_preview_active = false
+	_preview_alpha_mul = 1.0
 	_preview_route_x.clear()
 	_preview_route_y.clear()
 	if is_instance_valid(convoy_connector_lines_container):
@@ -806,19 +1845,48 @@ func _on_connector_lines_container_draw():
 	var base_sep_px: float = max(1.0, min(tile_size_vec.x, tile_size_vec.y) * 0.32) # slightly more separation between lanes
 
 	if _all_convoy_data_cache is Array:
+		# --- Strategy 3: Progressive Zoom LOD ---
+		var is_far_zoom: bool = _current_map_zoom_cache < 0.6
+		
+		# --- Strategy 1: Smart Focus Line Filter ---
+		# The focused/selected convoy's journey LINE always draws — it's decoupled from the "Delivery
+		# Targets" (active_delivery_destinations) toggle, which now only gates the destination arcs/markers.
+		# all_convoy_destinations still controls whether EVERY convoy's route line shows.
+		var show_all_lines: bool = false
+		if is_instance_valid(_settings_service):
+			var eff_lines: Dictionary = _settings_service.get_settings_dict()
+			show_all_lines = bool(eff_lines.get("all_convoy_destinations", false))
+			
+		var focused_convoy_ids: Array[String] = []
+		for cid in _selected_convoy_ids_cache:
+			focused_convoy_ids.append(str(cid))
+		if _current_hover_info_cache.get('type') == 'convoy':
+			var hover_id = str(_current_hover_info_cache.get('id', ''))
+			if hover_id != '' and not focused_convoy_ids.has(hover_id):
+				focused_convoy_ids.append(hover_id)
+
 		# Pass 1: collect segment membership across all convoys
 		for convoy_collect in _all_convoy_data_cache:
 			if not (convoy_collect is Dictionary and convoy_collect.has("journey")):
 				continue
+			
+			var cid_c: String = str(convoy_collect.get("convoy_id", ""))
+			if cid_c == "":
+				continue
+				
+			# Apply Zoom LOD and Smart Focus filter
+			if is_far_zoom:
+				continue # Draw no lines when far out
+			if not show_all_lines:
+				if not focused_convoy_ids.has(cid_c):
+					continue # Non-focused routes need "all convoy destinations"; focused convoy's line always draws.
+
 			var j_collect = convoy_collect.get("journey")
 			if not (j_collect is Dictionary and j_collect.has("route_x") and j_collect.has("route_y")):
 				continue
 			var rx_c: Array = j_collect["route_x"]
 			var ry_c: Array = j_collect["route_y"]
 			if rx_c.size() < 2 or ry_c.size() != rx_c.size():
-				continue
-			var cid_c: String = str(convoy_collect.get("convoy_id", ""))
-			if cid_c == "":
 				continue
 			for si in range(rx_c.size() - 1):
 				var a := Vector2i(int(rx_c[si]), int(ry_c[si]))
@@ -855,15 +1923,23 @@ func _on_connector_lines_container_draw():
 		for convoy in _all_convoy_data_cache:
 			if not (convoy is Dictionary and convoy.has("journey")):
 				continue
+			var cid: String = str(convoy.get("convoy_id", ""))
+			if cid == "":
+				continue
+				
+			# Apply Zoom LOD and Smart Focus filter
+			if is_far_zoom:
+				continue 
+			if not show_all_lines:
+				if not focused_convoy_ids.has(cid):
+					continue # Non-focused routes need "all convoy destinations"; focused convoy's line always draws.
+
 			var journey = convoy["journey"]
 			if not (journey is Dictionary and journey.has("route_x") and journey.has("route_y")):
 				continue
 			var route_x: Array = journey["route_x"]
 			var route_y: Array = journey["route_y"]
 			if route_x.size() < 2 or route_y.size() != route_x.size():
-				continue
-			var cid: String = str(convoy.get("convoy_id", ""))
-			if cid == "":
 				continue
 
 			# Compute pixel-space points for the route
@@ -1066,17 +2142,21 @@ func _on_connector_lines_container_draw():
 
 		if preview_offset_points.size() >= 2:
 			var preview_outline_w = max(0.0, _preview_line_width + route_line_outline_extra_width)
+			# Dim the whole preview (underlay + line + marker) when shown faintly behind another menu.
+			var underlay_col := Color(1, 1, 1, 0.95 * _preview_alpha_mul)
+			var line_col := _preview_color
+			line_col.a *= _preview_alpha_mul
 			# White underlay for preview path (larger outline)
-			convoy_connector_lines_container.draw_polyline(preview_offset_points, Color(1,1,1,0.95), preview_outline_w)
+			convoy_connector_lines_container.draw_polyline(preview_offset_points, underlay_col, preview_outline_w)
 			# Colored overlay matching convoy color
-			convoy_connector_lines_container.draw_polyline(preview_offset_points, _preview_color, _preview_line_width)
-			
+			convoy_connector_lines_container.draw_polyline(preview_offset_points, line_col, _preview_line_width)
+
 			# Destination Marker
 			var dest_pt = preview_offset_points[preview_offset_points.size() - 1]
 			var marker_radius = _preview_line_width * 1.5
 			var outline_radius = marker_radius + (route_line_outline_extra_width * 0.75)
-			convoy_connector_lines_container.draw_circle(dest_pt, outline_radius, Color(1,1,1,0.95))
-			convoy_connector_lines_container.draw_circle(dest_pt, marker_radius, _preview_color)
+			convoy_connector_lines_container.draw_circle(dest_pt, outline_radius, underlay_col)
+			convoy_connector_lines_container.draw_circle(dest_pt, marker_radius, line_col)
 
 func set_convoy_user_position(convoy_id_str: String, position: Vector2):
 	_convoy_label_user_positions[convoy_id_str] = position

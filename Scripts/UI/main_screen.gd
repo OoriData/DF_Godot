@@ -37,6 +37,8 @@ func initialize(p_map_view: Control, p_camera_controller: Node, p_interaction_ma
 			map_interaction_manager.convoy_menu_requested.connect(_on_convoy_menu_requested)
 		if map_interaction_manager.has_signal("settlement_clicked") and not map_interaction_manager.is_connected("settlement_clicked", Callable(self, "_on_settlement_clicked")):
 			map_interaction_manager.settlement_clicked.connect(_on_settlement_clicked)
+		if map_interaction_manager.has_signal("settlement_preview_requested") and not map_interaction_manager.is_connected("settlement_preview_requested", Callable(self, "_on_settlement_preview_requested")):
+			map_interaction_manager.settlement_preview_requested.connect(_on_settlement_preview_requested)
 
 	# TEST: Remove the modal scrim (dim layer) to see if it's contributing to the darkness
 	var scrim = get_node_or_null("SafeRegionContainer/ModalLayer/Scrim")
@@ -98,7 +100,6 @@ var _press_start_time: int = 0
 # --- Options snapshot (from SettingsManager) ---
 var _opt_invert_pan := false
 var _opt_invert_zoom := false
-var _opt_gestures_enabled := true
 var _opt_click_closes_menus := true
 var _opt_menu_ratio_open := 0.5
 
@@ -149,6 +150,9 @@ func _force_map_ui_refresh_after(delay_sec: float) -> void:
 
 # --- Journey preview camera fitting ---
 var _active_journey_menu: Node = null
+# Map overlay panel + settings service, toggled into a clean "planning" state during route preview.
+var _map_overlay_panel: Control = null
+@onready var _map_settings_service: Node = get_node_or_null("/root/MapSettingsService")
 
 func _dbg_menu(tag: String, data: Dictionary = {}):
 	if not debug_menu_camera:
@@ -163,6 +167,22 @@ func _ready():
 	# Defer the initial camera setup to ensure the UI layout is stable.
 	call_deferred("_initial_camera_and_ui_setup")
 	call_deferred("_connect_deferred_signals")
+
+	# Fill the full-screen background layer with the Oori tile so the
+	# notch / status-bar area (above the TopBar content margin) is never black.
+	var bg_layer = get_node_or_null("BackgroundLayer")
+	if bg_layer is TextureRect:
+		UITheme.apply_oori_bg(bg_layer)
+
+	# Add Map Overlay Settings floating tab
+	var map_overlay_panel_script = load("res://Scripts/UI/map_overlay_settings_panel.gd")
+	if map_overlay_panel_script:
+		var overlay_panel = map_overlay_panel_script.new()
+		overlay_panel.name = "MapOverlaySettingsPanel"
+		$SafeRegionContainer/MainContainer/MainContent/MapAndMenuContainer.add_child(overlay_panel)
+		_map_overlay_panel = overlay_panel
+
+
 
 	# Connect to the MenuManager's signal that indicates when a menu is opened or closed.
 	var menu_manager = get_node_or_null("/root/MenuManager")
@@ -211,6 +231,12 @@ func _ready():
 			hub.error_occurred.connect(_on_signal_hub_error_occurred)
 		if not hub.is_connected("auto_sell_receipt_ready", Callable(self, "_on_auto_sell_receipt_ready")):
 			hub.auto_sell_receipt_ready.connect(_on_auto_sell_receipt_ready)
+		if hub.has_signal("map_camera_focus_settlement_requested") and not hub.is_connected("map_camera_focus_settlement_requested", Callable(self, "_on_map_camera_focus_settlement_requested")):
+			hub.map_camera_focus_settlement_requested.connect(_on_map_camera_focus_settlement_requested)
+		if hub.has_signal("map_camera_return_to_convoy_requested") and not hub.is_connected("map_camera_return_to_convoy_requested", Callable(self, "_on_map_camera_return_to_convoy_requested")):
+			hub.map_camera_return_to_convoy_requested.connect(_on_map_camera_return_to_convoy_requested)
+		if hub.has_signal("settlement_menu_pin_requested") and not hub.is_connected("settlement_menu_pin_requested", Callable(self, "_on_settlement_menu_pin_requested")):
+			hub.settlement_menu_pin_requested.connect(_on_settlement_menu_pin_requested)
 
 	# Connect to Layout Mode Changes
 	var dsm = get_node_or_null("/root/DeviceStateManager")
@@ -236,6 +262,9 @@ func _on_menu_opened(menu_node: Node, menu_type: String) -> void:
 func _on_menu_closed(menu_node_was_active: Node, menu_type: String) -> void:
 	if menu_type != "convoy_journey_submenu":
 		return
+	# Safety net: if the journey menu closes mid-preview (route_preview_ended may not fire), make sure
+	# the overlay panel and map markers are restored rather than left suppressed.
+	_set_journey_planning_active(false)
 	if is_instance_valid(menu_node_was_active):
 		if menu_node_was_active.has_signal("route_preview_started") and menu_node_was_active.is_connected("route_preview_started", Callable(self, "_on_journey_route_preview_started")):
 			menu_node_was_active.disconnect("route_preview_started", Callable(self, "_on_journey_route_preview_started"))
@@ -254,7 +283,17 @@ func _deferred_reset_camera_after_journey_menu() -> void:
 	if map_camera_controller.has_method("reset_camera_to_map_bounds"):
 		map_camera_controller.reset_camera_to_map_bounds()
 
+## Toggle the map into a clean "journey planning" state: hide the overlay options panel and suppress
+## all marker overlays (settlements, warehouses, other convoy destinations) so only the convoy and the
+## previewed route/destination remain. Restored when planning ends.
+func _set_journey_planning_active(active: bool) -> void:
+	if is_instance_valid(_map_overlay_panel) and _map_overlay_panel.has_method("set_planning_active"):
+		_map_overlay_panel.set_planning_active(active)
+	if is_instance_valid(_map_settings_service) and _map_settings_service.has_method("set_planning_override"):
+		_map_settings_service.set_planning_override(active)
+
 func _on_journey_route_preview_started(route_data: Dictionary) -> void:
+	_set_journey_planning_active(true)
 	# When the route loads, zoom/center to show the full line.
 	if not is_instance_valid(map_camera_controller):
 		return
@@ -272,6 +311,7 @@ func _deferred_fit_route_preview(route_data: Dictionary) -> void:
 		map_camera_controller.smooth_fit_route_preview(route_data, 0.75, 0.92)
 
 func _on_journey_route_preview_ended() -> void:
+	_set_journey_planning_active(false)
 	# Route preview is done (e.g. confirm/cancel/back). If we temporarily fit off-map,
 	# return to normal clamped bounds.
 	if not is_instance_valid(map_camera_controller):
@@ -307,18 +347,21 @@ func _on_main_screen_size_changed():
 
 	_update_camera_viewport_rect_on_resize()
 	_update_onboarding_layer_rect_to_map()
+	_update_new_convoy_dialog_layout()
 
 func _on_layout_mode_changed(mode, screen_size, is_mobile):
 	# Directly handle layout mode flips (Portrait <-> Landscape)
 	_update_menu_container_anchors()
 	if _menu_anim_in_progress == false and is_instance_valid(menu_container) and menu_container.visible:
 		_refresh_menu_layout()
-	
+
 	# Wait for Godot layout to recalculate UI bounds before updating camera
 	await get_tree().process_frame
 
 	_update_camera_viewport_rect_on_resize()
 	_update_onboarding_layer_rect_to_map()
+	_update_new_convoy_dialog_layout()
+	_diag_dump_offscreen("layout_mode_changed")
 
 func _refresh_menu_layout():
 	# Update Target Width
@@ -351,10 +394,11 @@ func _refresh_menu_layout():
 
 	_update_camera_occlusion_from_menu()
 	
-	# Reposition camera to keep convoy focused if possible
+	# Reposition camera to keep convoy focused if possible (refresh to live coords — the cached snapshot
+	# goes stale if the convoy moved while the menu was open, e.g. the tutorial warp).
 	if not _last_focused_convoy_data.is_empty() and is_instance_valid(map_camera_controller):
 		if map_camera_controller.has_method("focus_on_convoy"):
-			map_camera_controller.focus_on_convoy(_last_focused_convoy_data)
+			map_camera_controller.focus_on_convoy(_refresh_convoy_data_from_store(_last_focused_convoy_data))
 
 
 func _update_menu_container_anchors():
@@ -384,22 +428,18 @@ func _update_menu_container_style():
 	style.content_margin_right = 0
 	style.content_margin_top = 0
 	style.content_margin_bottom = 0
-			
+
 	menu_container.add_theme_stylebox_override("panel", style)
-	
+
 	# Apply background texture if not already present
 	var bg = menu_container.get_node_or_null("OoriBackground")
 	if not is_instance_valid(bg):
 		bg = TextureRect.new()
 		bg.name = "OoriBackground"
-		bg.texture = load("res://Assets/Themes/Oori Backround.png")
-		if is_instance_valid(bg.texture):
-			bg.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-			bg.stretch_mode = TextureRect.STRETCH_TILE
-			bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
-			bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-			menu_container.add_child(bg)
-			menu_container.move_child(bg, 0)
+		bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		menu_container.add_child(bg)
+		menu_container.move_child(bg, 0)
+	UITheme.apply_oori_bg(bg)
 
 func _on_map_view_size_changed():
 	# Called when MapView is resized (e.g., due to menu open/close or container resize)
@@ -408,7 +448,8 @@ func _on_map_view_size_changed():
 
 # Call this after the main screen is visible and unpaused to ensure camera is correct
 func force_camera_update():
-	await get_tree().process_frame  # Wait for layout to settle
+	await get_tree().process_frame  # Wait first frame for layout to start settling
+	await get_tree().process_frame  # Wait second frame to ensure global transforms are fully updated
 	_update_camera_viewport_rect_on_resize()
 
 func _update_camera_viewport_rect_on_resize():
@@ -416,9 +457,10 @@ func _update_camera_viewport_rect_on_resize():
 		# Use the actual MapDisplay (TextureRect) rect, not the root map_view rect.
 		# The root control can include extra UI chrome; using it causes camera/map edge mismatch.
 		var map_rect = _get_map_display_rect()
+		print("[RESIZE] map_rect=%s" % str(map_rect))
 		map_camera_controller.update_map_viewport_rect(map_rect)
-		
-		# CRITICAL: Re-sync occlusion after viewport size update. 
+
+		# CRITICAL: Re-sync occlusion after viewport size update.
 		# If we just rotated, the previous occlusion might have been clamped against
 		# the OLD orientation's bounds. Re-sending it now ensures it's correctly applied
 		# to the NEW bounds.
@@ -582,21 +624,18 @@ func _on_map_view_gui_input(event: InputEvent):
 			map_camera_controller.pan(delta)
 			get_viewport().set_input_as_handled()
 	elif event is InputEventMagnifyGesture:
-		if _opt_gestures_enabled:
-			var f: float = float(event.factor)
-			var z: float = f if not _opt_invert_zoom else (1.0 / max(0.0001, f))
-			# Magnify gesture provides local position relative to map_view, convert to global first
-			var global_center3: Vector2 = map_view.get_global_transform() * event.position
-			var center3 := _to_subviewport_screen(global_center3)
-			map_camera_controller.zoom_at_screen_pos(z, center3)
+		var f: float = float(event.factor)
+		var z: float = f if not _opt_invert_zoom else (1.0 / max(0.0001, f))
+		# Magnify gesture provides local position relative to map_view, convert to global first
+		var global_center3: Vector2 = map_view.get_global_transform() * event.position
+		var center3 := _to_subviewport_screen(global_center3)
+		map_camera_controller.zoom_at_screen_pos(z, center3)
 		get_viewport().set_input_as_handled()
 	elif event is InputEventPanGesture:
-		# The camera's pan function expects a screen-space delta
-		if _opt_gestures_enabled:
-			var d: Vector2 = event.delta
-			if not _opt_invert_pan:
-				d = -d
-			map_camera_controller.pan(d)
+		var d: Vector2 = event.delta
+		if not _opt_invert_pan:
+			d = -d
+		map_camera_controller.pan(d)
 		get_viewport().set_input_as_handled()
 
 
@@ -607,9 +646,11 @@ func _is_portrait() -> bool:
 	return viewport_sz.y > viewport_sz.x
 
 func _get_menu_ratios() -> Vector2:
-	# Portrait: Use 40-60% of screen height
+	# Portrait: Use 55-72% of screen height.
+	# The map strip remains visible above (~28-45%) while the trade panel has room to breathe.
+	# Previously 40-60%; bumped to give vendor/convoy panels more vertical space on mobile portrait.
 	if _is_portrait():
-		return Vector2(0.4, 0.6)
+		return Vector2(0.55, 0.72)
 	# Landscape: Use 35-85% of screen width (Increased by 10% from 0.25-0.75)
 	else:
 		return Vector2(0.35, 0.85)
@@ -620,20 +661,70 @@ func _get_bottom_safe_margin() -> float:
 		return 0.0
 		
 	var sm = get_node_or_null("/root/ui_scale_manager")
-	if is_instance_valid(sm) and sm.has_method("get_logical_safe_margins"):
-		var margins = sm.get_logical_safe_margins()
-		return max(24.0, margins.size.y)
+	var scale = 1.0
+	if is_instance_valid(sm):
+		if sm.has_method("get_global_ui_scale"):
+			scale = sm.get_global_ui_scale()
 		
-	# Fallback
+		if sm.has_method("get_logical_safe_margins"):
+			var margins = sm.get_logical_safe_margins()
+			return max(24.0, margins.size.y)
+		
+	# Fallback: Convert physical to logical
 	var safe_area = DisplayServer.get_display_safe_area()
 	var window_size = DisplayServer.window_get_size()
 	if safe_area.size.y > 0 and safe_area.end.y < window_size.y:
-		return max(34.0, float(window_size.y - safe_area.end.y))
+		var phys_bottom = float(window_size.y - safe_area.end.y)
+		return max(34.0, phys_bottom / scale)
 	return 34.0
+
+var _debug_layout_overflow: bool = true
+
+func _diag_dump_offscreen(reason: String) -> void:
+	if not _debug_layout_overflow:
+		return
+	# Use a short timer instead of await-frames so this is safe to call from call_deferred.
+	get_tree().create_timer(0.15).timeout.connect(func(): _diag_run_dump(reason))
+
+func _diag_run_dump(reason: String) -> void:
+	var vp := get_viewport()
+	if not is_instance_valid(vp):
+		return
+	var view_w: float = vp.get_visible_rect().size.x
+	var view_h: float = vp.get_visible_rect().size.y
+	print("[LAYOUT-OVERFLOW] ===== reason=", reason, " =====")
+	print("[LAYOUT-OVERFLOW] viewport_logical=", vp.get_visible_rect().size, " window=", DisplayServer.window_get_size(), " csf=", get_window().content_scale_factor)
+	var rows: Array = []
+	_diag_walk(get_tree().root, view_w, view_h, rows)
+	if rows.is_empty():
+		print("[LAYOUT-OVERFLOW] none — no controls cross horizontal edges")
+	else:
+		for r in rows:
+			print("[LAYOUT-OVERFLOW] ", r)
+	print("[LAYOUT-OVERFLOW] ===== end =====")
+
+func _diag_walk(node: Node, view_w: float, _view_h: float, rows: Array, depth: int = 0) -> void:
+	if node is Control and (node as Control).is_visible_in_tree():
+		var c := node as Control
+		var gr := c.get_global_rect()
+		var off_left := gr.position.x < -0.5
+		var off_right := gr.end.x > view_w + 0.5
+		if off_left or off_right:
+			var tag := ""
+			if off_left: tag += " <OFF-LEFT %.0f>" % gr.position.x
+			if off_right: tag += " <OFF-RIGHT end=%.0f over=%.0f>" % [gr.end.x, gr.end.x - view_w]
+			rows.append("%s%s [%s] rect=(x=%.0f w=%.0f) minW=%.0f flagsH=%d%s" % [
+				"  ".repeat(depth), c.name, c.get_class(), gr.position.x, gr.size.x,
+				c.get_combined_minimum_size().x, c.size_flags_horizontal, tag])
+	for ch in node.get_children():
+		_diag_walk(ch, view_w, _view_h, rows, depth + 1)
 
 func _on_menu_visibility_changed(is_open: bool, _menu_name: String):
 	# Overlay behavior: map stays full size; slide menu over it.
 	if not is_instance_valid(menu_container): return
+	if is_open:
+		# Diagnostic: after layout settles, report any UI crossing screen edges.
+		_diag_dump_offscreen("menu_opened:" + str(_menu_name))
 	_update_menu_container_anchors()
 	
 	var viewport_sz = get_viewport_rect().size
@@ -753,6 +844,8 @@ func _slide_menu_open(convoy_data: Dictionary):
 	# Acquire convoy data if missing (ensure deterministic centering on selected convoy).
 	if convoy_data.is_empty():
 		convoy_data = _get_primary_convoy_data()
+	# Use live coordinates in case the cached snapshot's position is stale (e.g. post-warp).
+	convoy_data = _refresh_convoy_data_from_store(convoy_data)
 	# Smoothly focus using FINAL occlusion target so convoy ends centered in reduced visible map view.
 	if is_instance_valid(map_camera_controller):
 		var total_occlusion_px = _menu_target_width
@@ -796,16 +889,29 @@ func _slide_menu_open(convoy_data: Dictionary):
 
 func _slide_menu_close(convoy_data: Dictionary):
 	if not is_instance_valid(menu_container): return
+	# Re-resolve live coordinates: the passed dict is the cached _last_focused_convoy_data snapshot from
+	# menu-open, which is stale if the convoy moved while the menu was open (e.g. the tutorial warp). Without
+	# this the close tween pans the camera back to the convoy's old tile.
+	convoy_data = _refresh_convoy_data_from_store(convoy_data)
 	_kill_menu_anim_tween()
 	_menu_anim_in_progress = true
-	if convoy_data.is_empty():
-		convoy_data = _get_primary_convoy_data()
+	# NOTE: Do NOT fabricate a primary convoy here. If no convoy was genuinely
+	# focused (e.g. an automatic/initialization close emitted on map load), we must
+	# not pull the camera toward an arbitrary convoy — that was the cause of the
+	# "camera glued to the top of the map on load" bug. Only recenter when a real
+	# selection exists.
 	_dbg_menu("slide_close_start", {"convoy_empty": convoy_data.is_empty(), "cam_pos_pre": (map_camera_controller.camera_node.position if (is_instance_valid(map_camera_controller) and map_camera_controller.has_method("camera_node")) else "<none>")})
 	var start_w := _current_menu_occlusion_px
 	if start_w <= 0.0:
 		start_w = _menu_target_width
-	_close_anim_convoy = convoy_data
 	_close_anim_start_width = start_w
+	# Recenter on the genuinely-selected convoy with a SINGLE smooth tween (final
+	# occlusion = 0, since the menu is fully retracting). This replaces the old
+	# per-frame focus_on_convoy() hard-set in _close_anim_step that ran every
+	# animation frame, fought user panning, and snapped the camera at min zoom.
+	if is_instance_valid(map_camera_controller) and not convoy_data.is_empty():
+		if map_camera_controller.has_method("smooth_focus_on_convoy_with_final_occlusion"):
+			map_camera_controller.smooth_focus_on_convoy_with_final_occlusion(convoy_data, 0.0, MENU_ANIM_DURATION, _is_portrait())
 	_menu_anim_tween = create_tween()
 	_menu_anim_tween.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
 	_menu_anim_tween.parallel().tween_method(Callable(self, "_close_anim_step"), 0.0, 1.0, MENU_ANIM_DURATION)
@@ -824,7 +930,6 @@ func _slide_menu_close(convoy_data: Dictionary):
 		_clear_pinned_convoy_label(false)
 	)
 
-var _close_anim_convoy: Dictionary = {}
 var _close_anim_start_width: float = 0.0
 
 func _close_anim_step(progress: float):
@@ -837,9 +942,9 @@ func _close_anim_step(progress: float):
 	else:
 		menu_container.offset_left = -w
 	_update_camera_occlusion_from_menu()
-	if is_instance_valid(map_camera_controller) and not _close_anim_convoy.is_empty():
-		if map_camera_controller.has_method("focus_on_convoy"):
-			map_camera_controller.focus_on_convoy(_close_anim_convoy)
+	# Camera recentering is handled by a single smooth tween started in
+	# _slide_menu_close(); we intentionally do NOT re-focus the camera here every
+	# frame. _close_anim_step now only animates the menu/occlusion geometry.
 	_dbg_menu("close_step", {"p": progress, "w": w})
 
 # Update camera controller with current animated occlusion width
@@ -881,7 +986,9 @@ func _get_primary_convoy_data() -> Dictionary:
 		if active_menu and active_menu.has_meta("menu_data"):
 			var md = active_menu.get_meta("menu_data")
 			if typeof(md) == TYPE_DICTIONARY and not md.is_empty():
-				return md
+				# The meta is a snapshot from menu-open; re-resolve to live coords so callers that focus the
+				# camera (e.g. return-to-convoy) don't pan to a stale pre-warp position.
+				return _refresh_convoy_data_from_store(md)
 			elif typeof(md) == TYPE_STRING:
 				var resolved := _resolve_convoy_dict_from_id(String(md))
 				if not resolved.is_empty():
@@ -893,6 +1000,24 @@ func _get_primary_convoy_data() -> Dictionary:
 		if convoys is Array and not convoys.is_empty():
 			return convoys[0] # TODO: Replace with actual selection logic if needed
 	return {}
+
+# Return a LIVE copy of a convoy dict from GameStore, matched by convoy_id. Cached convoy snapshots
+# (the menu's `menu_data` meta and `_last_focused_convoy_data`) are captured when a menu OPENS and are
+# never updated afterwards, so their top-level x/y go stale the moment the convoy moves — most visibly
+# when the tutorial warps the convoy from (0,0) to its start city while a menu is open. Camera focus
+# reads x/y via get_convoy_world_position(), so focusing on a stale snapshot pans to the old tile. This
+# re-resolves the current position from the store; falls back to the input dict if the id isn't found.
+# Safe: the store dict and the snapshot both lack the runtime interpolation fields
+# (`_current_segment_start_idx` etc., added only on the map-node duplicate), so focus behavior is
+# unchanged apart from using fresh coordinates.
+func _refresh_convoy_data_from_store(convoy_data: Dictionary) -> Dictionary:
+	if convoy_data == null or convoy_data.is_empty():
+		return convoy_data
+	var convoy_id := String(convoy_data.get("convoy_id", convoy_data.get("id", "")))
+	if convoy_id == "":
+		return convoy_data
+	var fresh := _resolve_convoy_dict_from_id(convoy_id)
+	return fresh if not fresh.is_empty() else convoy_data
 
 # Helper: resolve a convoy Dictionary from a convoy_id String using GameStore
 func _resolve_convoy_dict_from_id(convoy_id: String) -> Dictionary:
@@ -1011,6 +1136,33 @@ func _on_store_map_changed(_tiles: Array, _settlements: Array):
 
 func _on_auto_sell_receipt_ready(receipt_data: Variant) -> void:
 	print("[AutoSell] main_screen received auto_sell_receipt_ready signal")
+	
+	# NEW: Suppress receipt modal if tutorial is active to avoid interfering with onboarding.
+	var tutorial_manager := get_node_or_null("/root/TutorialManager")
+	var is_active = is_instance_valid(tutorial_manager) and tutorial_manager.has_method("is_tutorial_active") and tutorial_manager.is_tutorial_active()
+	
+	# Also check store metadata in case TutorialManager hasn't started yet (e.g. for brand new users).
+	var store = get_node_or_null("/root/GameStore")
+	var tutorial_stage := -1
+	if is_instance_valid(store):
+		var user = store.get_user()
+		var md = user.get("metadata", {})
+		if md is Dictionary and md.has("tutorial"):
+			tutorial_stage = int(md["tutorial"])
+		else:
+			# Fallback: if no metadata, check if they are at spawn (Tutorial City) or have no convoys.
+			var convoys = store.get_convoys()
+			var has_any = convoys is Array and convoys.size() > 0
+			var at_spawn = false
+			if has_any and convoys[0] is Dictionary:
+				at_spawn = abs(float(convoys[0].get("x", 0.0))) < 0.1 and abs(float(convoys[0].get("y", 0.0))) < 0.1
+			if not has_any or at_spawn:
+				tutorial_stage = 1
+	
+	if is_active or (tutorial_stage >= 1 and tutorial_stage < 8):
+		print("[AutoSell] main_screen: Tutorial active or stage %d; suppressing receipt modal." % tutorial_stage)
+		return
+
 	if not (receipt_data is Dictionary) or receipt_data.get("items", []).is_empty():
 		return
 	
@@ -1055,12 +1207,36 @@ func _on_signal_hub_error_occurred(_domain: String, _code: String, message: Stri
 	if display_message.is_empty():
 		return # Ignored error
 
+	# DF+/premium-gated failures (e.g. buying a warehouse without DF+) route to the
+	# upgrade flow instead of the generic error modal. Where a live purchase flow
+	# exists (Steam) we open the PremiumUpgradeModal; otherwise we show the clean DF+
+	# message via the standard dialog (no raw "unexpected error" detail).
+	if ErrorTranslator.is_premium_required(message):
+		if _try_show_premium_upgrade():
+			return
+		_show_error_dialog(display_message)
+		return
+
 	_show_error_dialog(display_message, message)
 
 func _on_api_fetch_error(message: String):
 	# Fallback/Legacy handler if anything still wires directly to APICalls (should be none)
 	# Reuse the new handler logic
 	_on_signal_hub_error_occurred("API", "FETCH_ERROR", message, ErrorTranslator.is_inline_error(message))
+
+## Opens the premium upgrade modal when a working purchase flow is available.
+## Returns true if the modal was shown. Only Steam has a live purchase flow today,
+## so other platforms return false and the caller falls back to a clean DF+ message.
+func _try_show_premium_upgrade() -> bool:
+	var steam := get_node_or_null("/root/SteamManager")
+	var steam_ok: bool = is_instance_valid(steam) and steam.has_method("is_steam_running") and steam.is_steam_running()
+	if not steam_ok:
+		return false
+	var mm := get_node_or_null("/root/MenuManager")
+	if is_instance_valid(mm) and mm.has_method("open_premium_upgrade_menu"):
+		mm.open_premium_upgrade_menu()
+		return true
+	return false
 
 func _show_error_dialog(message: String, raw_message: String = ""):
 	if not is_instance_valid(_error_dialog_scene):
@@ -1107,12 +1283,10 @@ func _show_new_convoy_dialog():
 				print("[Onboarding] Instantiating NewConvoyDialog scene…")
 			_new_convoy_dialog = scene.instantiate()
 		# The host for the modal dialog is the full-screen CenterContainer from the scene file.
-		modal_layer = get_node_or_null("SafeRegionContainer/ModalLayer")
-		var host: Node = modal_layer.get_node_or_null("DialogHost") if is_instance_valid(modal_layer) else null
-		if not is_instance_valid(host):
-			printerr("[Onboarding] CRITICAL: ModalLayer or its DialogHost child not found in MainScreen.tscn!")
+		if not is_instance_valid(modal_layer):
+			printerr("[Onboarding] CRITICAL: ModalLayer not found in MainScreen.tscn!")
 			return
-		host.add_child(_new_convoy_dialog)
+		modal_layer.add_child(_new_convoy_dialog)
 		if onboarding_log_enabled:
 			print("[Onboarding] NewConvoyDialog added to ModalLayer.")
 		# Connect signals
@@ -1125,10 +1299,12 @@ func _show_new_convoy_dialog():
 		if onboarding_log_enabled:
 			print("[Onboarding] Opening NewConvoyDialog…")
 		if is_instance_valid(modal_layer): modal_layer.show()
+		_update_new_convoy_dialog_layout()
 		_new_convoy_dialog.call_deferred("open")
 	else:
 		printerr("[Onboarding] WARN: Dialog missing 'open' method; forcing visible true.")
 		if is_instance_valid(modal_layer): modal_layer.show()
+		_update_new_convoy_dialog_layout()
 		_new_convoy_dialog.visible = true
 
 func show_returning_player_tips() -> bool:
@@ -1210,7 +1386,7 @@ func _maybe_show_returning_player_tips() -> void:
 func _build_inline_new_convoy_dialog() -> Control:
 	var dlg := PanelContainer.new()
 	dlg.name = "NewConvoyDialog"
-	dlg.custom_minimum_size = Vector2(420, 180)
+	dlg.custom_minimum_size = Vector2(1000, 480)
 	# Build structure before attaching script and adding to tree
 	var v := VBoxContainer.new()
 	v.name = "VBox"
@@ -1218,18 +1394,23 @@ func _build_inline_new_convoy_dialog() -> Control:
 	v.grow_horizontal = Control.GROW_DIRECTION_BOTH
 	v.grow_vertical = Control.GROW_DIRECTION_BOTH
 	v.alignment = BoxContainer.ALIGNMENT_CENTER
+	v.add_theme_constant_override("separation", 40)
 	dlg.add_child(v)
 
 	var title := Label.new()
 	title.name = "Title"
 	title.text = "Welcome to Desolate Frontiers!  \nLets start by naming your first convoy."
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	title.add_theme_font_size_override("font_size", 48)
 	v.add_child(title)
 
 	var name_edit := LineEdit.new()
 	name_edit.name = "NameEdit"
 	name_edit.placeholder_text = "Convoy name"
 	name_edit.max_length = 40
+	name_edit.alignment = HORIZONTAL_ALIGNMENT_CENTER
+	name_edit.custom_minimum_size = Vector2(0, 80)
+	name_edit.add_theme_font_size_override("font_size", 32)
 	v.add_child(name_edit)
 
 	var error_label := Label.new()
@@ -1237,21 +1418,27 @@ func _build_inline_new_convoy_dialog() -> Control:
 	error_label.visible = false
 	error_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	error_label.modulate = Color(1, 0.6, 0.6)
+	error_label.add_theme_font_size_override("font_size", 28)
 	v.add_child(error_label)
 
 	var buttons := HBoxContainer.new()
 	buttons.name = "Buttons"
 	buttons.alignment = BoxContainer.ALIGNMENT_CENTER
+	buttons.add_theme_constant_override("separation", 30)
 	v.add_child(buttons)
 
 	var cancel_btn := Button.new()
 	cancel_btn.name = "CancelButton"
 	cancel_btn.text = "Cancel"
+	cancel_btn.custom_minimum_size = Vector2(240, 80)
+	cancel_btn.add_theme_font_size_override("font_size", 32)
 	buttons.add_child(cancel_btn)
 
 	var create_btn := Button.new()
 	create_btn.name = "CreateButton"
 	create_btn.text = "Create"
+	create_btn.custom_minimum_size = Vector2(240, 80)
+	create_btn.add_theme_font_size_override("font_size", 32)
 	buttons.add_child(create_btn)
 
 	# Attach behavior script
@@ -1340,6 +1527,58 @@ func _hide_new_convoy_dialog():
 		# We don't nullify here if it's persistent, but we should ensure layer check
 		_maybe_hide_modal_layer()
 
+func _update_new_convoy_dialog_layout():
+	if not is_instance_valid(_new_convoy_dialog):
+		return
+
+	# The .tscn forces a 1000x480 minimum that overflows narrow (portrait) viewports and, centered, sits
+	# behind the on-screen keyboard. Clear the minimum and TOP-anchor the dialog so the keyboard (bottom)
+	# and the bottom/side nav can never cover the name field or Create button. (Sprint 8)
+	_new_convoy_dialog.custom_minimum_size = Vector2.ZERO
+	var vp: Vector2 = get_viewport_rect().size
+	var portrait := _is_portrait()
+	var margin := 24.0
+	var target_w: float = min(720.0, max(280.0, vp.x - margin * 2.0))
+
+	# Compact the contents in landscape so the whole card fits in the upper strip above the (taller,
+	# wider) landscape keyboard. Title wraps within the constrained width in both orientations.
+	var title := _new_convoy_dialog.get_node_or_null("VBox/Title")
+	if title is Label:
+		(title as Label).autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		(title as Label).add_theme_font_size_override("font_size", 48 if portrait else 30)
+	var vbox := _new_convoy_dialog.get_node_or_null("VBox")
+	if vbox is VBoxContainer:
+		(vbox as VBoxContainer).add_theme_constant_override("separation", 40 if portrait else 16)
+	var name_edit := _new_convoy_dialog.get_node_or_null("VBox/NameEdit")
+	if name_edit is LineEdit:
+		(name_edit as LineEdit).add_theme_font_size_override("font_size", 32 if portrait else 24)
+		(name_edit as LineEdit).custom_minimum_size = Vector2(0, 80 if portrait else 60)
+	var create_btn := _new_convoy_dialog.get_node_or_null("VBox/Buttons/CreateButton")
+	if create_btn is Button:
+		(create_btn as Button).add_theme_font_size_override("font_size", 32 if portrait else 24)
+		(create_btn as Button).custom_minimum_size = Vector2(240, 80 if portrait else 60)
+
+	# Top-anchored, horizontally centered; PanelContainer grows downward to fit its content.
+	_new_convoy_dialog.set_anchors_preset(Control.PRESET_TOP_LEFT)
+	_new_convoy_dialog.anchor_left = 0.5
+	_new_convoy_dialog.anchor_right = 0.5
+	_new_convoy_dialog.anchor_top = 0.0
+	_new_convoy_dialog.anchor_bottom = 0.0
+	_new_convoy_dialog.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	_new_convoy_dialog.grow_vertical = Control.GROW_DIRECTION_END
+	# Sit just below the top bar so its title isn't hidden behind it (device feedback); the top anchor
+	# still keeps it clear of the keyboard / bottom nav.
+	var parent_ctrl := _new_convoy_dialog.get_parent() as Control
+	var top_bar := get_node_or_null("SafeRegionContainer/MainContainer/TopBar") as Control
+	var top_inset := 0.0
+	if is_instance_valid(top_bar) and top_bar.is_visible_in_tree() and is_instance_valid(parent_ctrl):
+		top_inset = max(0.0, top_bar.get_global_rect().end.y - parent_ctrl.get_global_rect().position.y)
+	var top_y := top_inset + (margin if portrait else margin * 0.5)
+	_new_convoy_dialog.offset_left = -target_w * 0.5
+	_new_convoy_dialog.offset_right = target_w * 0.5
+	_new_convoy_dialog.offset_top = top_y
+	_new_convoy_dialog.offset_bottom = top_y
+
 func _maybe_hide_modal_layer():
 	var modal_layer: Control = get_node_or_null("SafeRegionContainer/ModalLayer")
 	var host: Node = modal_layer.get_node_or_null("DialogHost") if is_instance_valid(modal_layer) else null
@@ -1351,6 +1590,10 @@ func _maybe_hide_modal_layer():
 		if child is Control and child.visible and not child.is_queued_for_deletion():
 			has_visible_dialog = true
 			break
+	
+	# Also check the new convoy dialog since it's now a direct child of ModalLayer
+	if not has_visible_dialog and is_instance_valid(_new_convoy_dialog) and _new_convoy_dialog.visible:
+		has_visible_dialog = true
 	
 	if not has_visible_dialog:
 		modal_layer.hide()
@@ -1415,13 +1658,12 @@ func _apply_settings_snapshot():
 		return
 	_opt_invert_pan = bool(sm.get_value("controls.invert_pan", _opt_invert_pan))
 	_opt_invert_zoom = bool(sm.get_value("controls.invert_zoom", _opt_invert_zoom))
-	_opt_gestures_enabled = bool(sm.get_value("controls.gestures_enabled", _opt_gestures_enabled))
 	_opt_click_closes_menus = bool(sm.get_value("ui.click_closes_menus", _opt_click_closes_menus))
 	_opt_menu_ratio_open = float(sm.get_value("ui.menu_open_ratio", _opt_menu_ratio_open))
 
 func _on_setting_changed(key: String, _value: Variant) -> void:
 	match key:
-		"controls.invert_pan", "controls.invert_zoom", "controls.gestures_enabled", "ui.click_closes_menus":
+		"controls.invert_pan", "controls.invert_zoom", "ui.click_closes_menus":
 			_apply_settings_snapshot()
 		"ui.menu_open_ratio":
 			_apply_settings_snapshot()
@@ -1439,9 +1681,56 @@ func _apply_menu_ratio_if_open():
 func _on_settlement_clicked(coords: Vector2i):
 	if onboarding_log_enabled:
 		print("[MainScreen] Settlement clicked at coords:", coords)
+	# Tap the tile (or a not-yet-pinned label) to toggle its pin. Once pinned, tapping the floating
+	# label opens the overview preview — that arrives separately via _on_settlement_preview_requested.
 	if is_instance_valid(ui_manager):
 		ui_manager.toggle_settlement_pin(coords)
 		_force_map_ui_refresh()
+
+func _on_settlement_preview_requested(coords: Vector2i) -> void:
+	# Sprint 5: tapping a pinned settlement label opens the convoy-independent overview (browse vendors
+	# + warehouse access), for any settlement — including ones the convoy isn't at.
+	var settlement := _find_settlement_at_coords(coords)
+	if settlement.is_empty():
+		# Couldn't resolve the snapshot — fall back to a plain pin toggle so the tap isn't lost.
+		if is_instance_valid(ui_manager):
+			ui_manager.toggle_settlement_pin(coords)
+			_force_map_ui_refresh()
+		return
+	var menu_manager = get_node_or_null("/root/MenuManager")
+	if is_instance_valid(menu_manager) and menu_manager.has_method("open_settlement_overview_menu"):
+		menu_manager.open_settlement_overview_menu(settlement)
+
+func _find_settlement_at_coords(coords: Vector2i) -> Dictionary:
+	var store = get_node_or_null("/root/GameStore")
+	if not is_instance_valid(store) or not store.has_method("get_settlements"):
+		return {}
+	for s in store.get_settlements():
+		if s is Dictionary:
+			var sx := int(roundf(float((s as Dictionary).get("x", -999999.0))))
+			var sy := int(roundf(float((s as Dictionary).get("y", -999999.0))))
+			if sx == coords.x and sy == coords.y:
+				return s as Dictionary
+	return {}
+
+# Settlement menu keeps the current settlement's label pinned while open. We only remove the pin
+# on close if WE added it — never clobber a settlement the player pinned manually.
+var _menu_pinned_settlement_coords = null # Vector2i or null
+
+func _on_settlement_menu_pin_requested(coords: Vector2i, enabled: bool) -> void:
+	if not is_instance_valid(ui_manager):
+		return
+	if enabled:
+		if ui_manager.has_method("is_settlement_pinned") and ui_manager.is_settlement_pinned(coords):
+			# Player already pinned this settlement — leave it; don't claim ownership.
+			_menu_pinned_settlement_coords = null
+		else:
+			ui_manager.add_settlement_pin(coords)
+			_menu_pinned_settlement_coords = coords
+	else:
+		if _menu_pinned_settlement_coords != null and ui_manager.has_method("remove_settlement_pin"):
+			ui_manager.remove_settlement_pin(_menu_pinned_settlement_coords)
+		_menu_pinned_settlement_coords = null
 
 func _on_convoy_menu_requested(convoy_data: Dictionary):
 	# Ensure layout has settled and camera sees final rect
@@ -1455,6 +1744,129 @@ func _on_convoy_menu_requested(convoy_data: Dictionary):
 	if map_camera_controller.has_method("smooth_focus_on_convoy"):
 		_dbg_menu("focus_request_applied", {})
 		map_camera_controller.smooth_focus_on_convoy(convoy_data, MENU_CAMERA_FOCUS_DURATION)
+
+
+func _on_map_camera_focus_settlement_requested(settlement_name: String) -> void:
+	print("[MainScreen] Received focus request for settlement/destination: '", settlement_name, "'")
+	if not is_instance_valid(map_camera_controller):
+		printerr("[MainScreen] map_camera_controller is invalid!")
+		return
+	var store = get_node_or_null("/root/GameStore")
+	if not is_instance_valid(store) or not store.has_method("get_settlements"):
+		printerr("[MainScreen] GameStore not found or lacks get_settlements!")
+		return
+		
+	var settlements = store.get_settlements()
+	var target_name = settlement_name.strip_edges()
+	
+	# Parse out the settlement name if it contains paren details (e.g. "Oasis (Oasis Dealership)")
+	if "(" in target_name:
+		target_name = target_name.split("(")[0].strip_edges()
+	
+	print("[MainScreen] Normalized target name to: '", target_name, "'")
+	
+	var found_settlement: Dictionary = {}
+	
+	# 1. Try direct settlement name match (case-insensitive)
+	for s in settlements:
+		if s is Dictionary:
+			var s_name := str(s.get("name", "")).strip_edges()
+			if s_name.to_lower() == target_name.to_lower():
+				found_settlement = s
+				print("[MainScreen] Found settlement directly matching name: '", s_name, "'")
+				break
+				
+	# 2. Try match by vendor name or ID within any settlement
+	if found_settlement.is_empty():
+		for s in settlements:
+			if s is Dictionary and s.has("vendors") and s.vendors is Array:
+				for v in s.vendors:
+					if v is Dictionary:
+						var v_name := str(v.get("name", "")).strip_edges()
+						var v_id := str(v.get("vendor_id", v.get("id", ""))).strip_edges()
+						if v_name.to_lower() == target_name.to_lower() or v_id.to_lower() == target_name.to_lower():
+							found_settlement = s
+							print("[MainScreen] Found settlement '", s.get("name", ""), "' matching vendor name/ID: '", target_name, "'")
+							break
+				if not found_settlement.is_empty():
+					break
+					
+	# 3. Last resort: Try partial matching of the name
+	if found_settlement.is_empty():
+		for s in settlements:
+			if s is Dictionary:
+				var s_name := str(s.get("name", "")).strip_edges()
+				if s_name.to_lower() in target_name.to_lower() or target_name.to_lower() in s_name.to_lower():
+					found_settlement = s
+					print("[MainScreen] Found settlement by partial match: '", s_name, "'")
+					break
+
+	if not found_settlement.is_empty():
+		var sx := int(found_settlement.get("x", 0))
+		var sy := int(found_settlement.get("y", 0))
+		var pos := Vector2.ZERO
+		if "tilemap_ref" in map_camera_controller and is_instance_valid(map_camera_controller.tilemap_ref):
+			pos = map_camera_controller.tilemap_ref.map_to_local(Vector2i(sx, sy))
+		elif map_camera_controller.has_method("_get_cell_size"):
+			var sz: Vector2 = map_camera_controller.call("_get_cell_size")
+			pos = Vector2(sx * sz.x, sy * sz.y)
+		else:
+			pos = Vector2(sx * 256, sy * 256)
+		
+		# Apply layout-based overlay occlusion shifts so it centers in the visible map view, not screen center
+		var zoom := 1.0
+		if "camera_node" in map_camera_controller and is_instance_valid(map_camera_controller.camera_node):
+			zoom = max(map_camera_controller.camera_node.zoom.x, 0.0001)
+
+		var shift := Vector2.ZERO
+		if "_overlay_occlusion_px_x" in map_camera_controller and map_camera_controller._overlay_occlusion_px_x > 0.0:
+			var occlusion_world_w: float = map_camera_controller._overlay_occlusion_px_x / zoom
+			shift.x += occlusion_world_w * 0.5
+		if "_overlay_occlusion_px_y" in map_camera_controller and map_camera_controller._overlay_occlusion_px_y > 0.0:
+			var occlusion_world_h: float = map_camera_controller._overlay_occlusion_px_y / zoom
+			shift.y += occlusion_world_h * 0.5
+		pos += shift
+
+		# Display the label for the settlement during this time
+		if is_instance_valid(ui_manager):
+			ui_manager.set("_preview_settlement_coords", Vector2i(sx, sy))
+			if ui_manager.has_method("_force_draw_interactive_labels_deferred"):
+				ui_manager.call("_force_draw_interactive_labels_deferred")
+			elif ui_manager.has_method("_draw_interactive_labels"):
+				ui_manager.call("_draw_interactive_labels", {})
+
+		print("[MainScreen] Focusing map camera (with occlusion shift ", shift, ") on tile coordinates (", sx, ", ", sy, ") -> world pos: ", pos)
+		if map_camera_controller.has_method("smooth_focus_on_world_pos"):
+			map_camera_controller.smooth_focus_on_world_pos(pos, MENU_CAMERA_FOCUS_DURATION)
+		else:
+			printerr("[MainScreen] smooth_focus_on_world_pos method not found in map_camera_controller!")
+	else:
+		printerr("[MainScreen] Could not resolve settlement for destination '", settlement_name, "'!")
+
+func _on_map_camera_return_to_convoy_requested() -> void:
+	print("[MainScreen] _on_map_camera_return_to_convoy_requested: Received return request.")
+	if is_instance_valid(ui_manager):
+		print("[MainScreen] _on_map_camera_return_to_convoy_requested: Resetting _preview_settlement_coords to null on ui_manager.")
+		ui_manager.set("_preview_settlement_coords", null)
+		if ui_manager.has_method("_force_draw_interactive_labels_deferred"):
+			ui_manager.call("_force_draw_interactive_labels_deferred")
+		elif ui_manager.has_method("_draw_interactive_labels"):
+			ui_manager.call("_draw_interactive_labels", {})
+
+	if not is_instance_valid(map_camera_controller):
+		printerr("[MainScreen] _on_map_camera_return_to_convoy_requested: map_camera_controller is INVALID!")
+		return
+		
+	var convoy_data = _get_primary_convoy_data()
+	print("[MainScreen] _on_map_camera_return_to_convoy_requested: Retrieved primary convoy data: ", convoy_data)
+	if not convoy_data.is_empty():
+		if map_camera_controller.has_method("smooth_focus_on_convoy"):
+			print("[MainScreen] _on_map_camera_return_to_convoy_requested: Focusing camera smoothly on convoy.")
+			map_camera_controller.smooth_focus_on_convoy(convoy_data, MENU_CAMERA_FOCUS_DURATION)
+		else:
+			printerr("[MainScreen] _on_map_camera_return_to_convoy_requested: map_camera_controller has NO smooth_focus_on_convoy method!")
+	else:
+		printerr("[MainScreen] _on_map_camera_return_to_convoy_requested: convoy_data is EMPTY, cannot focus camera on convoy!")
 
 
 # Called when the map_ready_for_focus signal is emitted from main.gd
@@ -1524,7 +1936,10 @@ func set_map_interactive(is_interactive: bool):
 func _to_subviewport_screen(global_pos: Vector2) -> Vector2:
 	if not is_instance_valid(map_view):
 		return global_pos
-	var map_display: TextureRect = map_view.get_node_or_null("MapContainer/MapDisplay")
+	# MapDisplay is reparented by main.gd to be a direct child of map_view; try both paths.
+	var map_display: TextureRect = map_view.get_node_or_null("MapDisplay")
+	if not is_instance_valid(map_display):
+		map_display = map_view.get_node_or_null("MapContainer/MapDisplay")
 	var sub_viewport: SubViewport = map_view.get_node_or_null("MapContainer/SubViewport")
 	if not is_instance_valid(map_display) or not is_instance_valid(sub_viewport):
 		return global_pos
@@ -1540,7 +1955,9 @@ func _to_subviewport_screen(global_pos: Vector2) -> Vector2:
 func _get_map_display_rect() -> Rect2:
 	if not is_instance_valid(map_view):
 		return Rect2()
-	var map_display: TextureRect = map_view.get_node_or_null("MapContainer/MapDisplay")
+	var map_display = map_view.get_node_or_null("MapDisplay")
+	if not is_instance_valid(map_display):
+		map_display = map_view.get_node_or_null("MapContainer/MapDisplay")
 	if is_instance_valid(map_display):
 		return map_display.get_global_rect()
 	return map_view.get_global_rect()

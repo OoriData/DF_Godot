@@ -41,6 +41,10 @@ func resolve(target: Dictionary) -> Dictionary:
 			var r = _resolve_vendor_trade_panel(target)
 			_print_resolve_result(kind, r)
 			return r
+		"settlement_hub_vendor_card":
+			var r = await _resolve_settlement_hub_vendor_card(target)
+			_print_resolve_result(kind, r)
+			return r
 		"button_with_text":
 			var r = _resolve_button_with_text(target)
 			_print_resolve_result(kind, r)
@@ -77,7 +81,7 @@ func resolve(target: Dictionary) -> Dictionary:
 		"journey_top_mission_destination":
 			# New specialized resolver: pick the first mission destination button (has leading '['cargo']').
 			# Falls back to the first destination button if no mission cargo present yet.
-			var r := _resolve_journey_top_mission_destination(target)
+			var r = await _resolve_journey_top_mission_destination(target)
 			_print_resolve_result(kind, r)
 			return r
 		_:
@@ -86,14 +90,21 @@ func resolve(target: Dictionary) -> Dictionary:
 func _print_resolve_result(kind: String, r: Dictionary) -> void:
 	if r.get("ok", false):
 		var node: Node = r.get("node")
-		print("[TutorialResolver] OK kind=", kind, " node=", (node.get_path() if node else NodePath("<null>")), " rect=", r.get("rect"))
+		var node_trans: Transform2D = Transform2D.IDENTITY
+		if node is CanvasItem:
+			node_trans = (node as CanvasItem).get_global_transform()
+		print("[TutorialResolver] OK kind=", kind, " node=", (node.get_path() if node else NodePath("<null>")), " rect=", r.get("rect"), " trans=", node_trans)
 	else:
 		print("[TutorialResolver] FAIL kind=", kind, " reason=", r.get("reason", ""))
 
-func _rect_for_control(ctrl: Control, local_rect: Rect2 = Rect2()) -> Rect2:
-	if ctrl == null:
+func _rect_for_control(ctrl, local_rect: Rect2 = Rect2()) -> Rect2:
+	# NOTE: `ctrl` is intentionally untyped. A previously-freed node passes `!= null` but fails a typed
+	# `Control` parameter's coercion, crashing at the call boundary with "previously freed ... not a
+	# subclass". Menu switches free nodes mid-flight while a retry timer may still hold a stale reference,
+	# so guard with is_instance_valid here and return an empty rect (→ resolution fails → caller retries).
+	if not is_instance_valid(ctrl) or not (ctrl is Control):
 		return Rect2()
-	var base := ctrl.get_global_rect()
+	var base := (ctrl as Control).get_global_rect()
 	if local_rect.size != Vector2.ZERO or local_rect.position != Vector2.ZERO:
 		return Rect2(base.position + local_rect.position, local_rect.size)
 	return base
@@ -109,9 +120,72 @@ func _resolve_node_path(target: Dictionary) -> Dictionary:
 	return { ok = true, node = node, rect = rect }
 
 func _get_settlement_menu() -> Node:
-	return get_tree().get_root().find_child("ConvoySettlementMenu", true, false)
+	# Prioritize the active menu from MenuManager to avoid stale instances
+	var mm := get_tree().get_root().get_node_or_null("MenuManager")
+	if is_instance_valid(mm) and mm.get("current_active_menu") != null:
+		var active = mm.get("current_active_menu")
+		if is_instance_valid(active) and active.name.contains("ConvoySettlementMenu") and not active.is_queued_for_deletion():
+			return active
+			
+	# Fallback search, but filter out queued for deletion
+	var root := get_tree().get_root()
+	var candidates = root.find_children("ConvoySettlementMenu", "Control", true, false)
+	for c in candidates:
+		if is_instance_valid(c) and not c.is_queued_for_deletion() and c.is_visible_in_tree():
+			return c
+	return null
+
+func _get_settlement_overview_menu() -> Node:
+	# Prioritize the active menu from MenuManager to avoid stale instances
+	var mm := get_tree().get_root().get_node_or_null("MenuManager")
+	if is_instance_valid(mm) and mm.get("current_active_menu") != null:
+		var active = mm.get("current_active_menu")
+		if is_instance_valid(active) and active.name.contains("SettlementOverviewMenu") and not active.is_queued_for_deletion():
+			return active
+	var root := get_tree().get_root()
+	var candidates = root.find_children("SettlementOverviewMenu", "Control", true, false)
+	for c in candidates:
+		if is_instance_valid(c) and not c.is_queued_for_deletion() and c.is_visible_in_tree():
+			return c
+	return null
+
+# Highlight a vendor card in the settlement overview hub, matched by vendor name substring
+# (e.g. token "Dealership" -> the "Tutorial City Dealership" card). Resolver kind contains "vendor"
+# so TutorialManager re-polls it, following the card across the hub's rebuilds.
+func _resolve_settlement_hub_vendor_card(target: Dictionary) -> Dictionary:
+	var token := String(target.get("token", target.get("text_contains", "")))
+	var hub := _get_settlement_overview_menu()
+	if hub == null:
+		return { ok = false, node = null, rect = Rect2(), reason = "settlement-hub-missing" }
+	if not hub.has_method("get_vendor_card_node_by_name_contains"):
+		return { ok = false, node = hub, rect = _rect_for_control(hub), reason = "hub-missing-card-helper" }
+	var card: Control = hub.call("get_vendor_card_node_by_name_contains", token)
+	if not is_instance_valid(card):
+		return { ok = false, node = hub, rect = _rect_for_control(hub), reason = "vendor-card-not-found:" + token }
+	# Wait for the hub slide + card-grid layout to settle before measuring, so the highlight does not
+	# flash at the card's pre-animation position. Advance frames until the rect is stable twice running.
+	var rect := _rect_for_control(card)
+	var prev := Rect2()
+	for _i in range(16):
+		if not is_instance_valid(card) or card.is_queued_for_deletion():
+			return { ok = false, node = hub, rect = _rect_for_control(hub), reason = "vendor-card-freed-mid-settle" }
+		rect = _rect_for_control(card)
+		if rect.has_area() and rect.position.length_squared() >= 1.0 and rect == prev:
+			break
+		prev = rect
+		await get_tree().process_frame
+	if not rect.has_area() or rect.position.length_squared() < 1.0:
+		return { ok = false, node = card, rect = rect, reason = "unstable-vendor-card-rect" }
+	return { ok = true, node = card, rect = rect }
 
 func _get_journey_menu() -> Node:
+	# Prioritize active menu from MenuManager
+	var mm := get_tree().get_root().get_node_or_null("MenuManager")
+	if is_instance_valid(mm) and mm.get("current_active_menu") != null:
+		var active = mm.get("current_active_menu")
+		if is_instance_valid(active) and active.name.contains("ConvoyJourneyMenu") and not active.is_queued_for_deletion():
+			return active
+			
 	return get_tree().get_root().find_child("ConvoyJourneyMenu", true, false)
 
 func _find_node_by_script(start_node: Node, script_path: String) -> Node:
@@ -162,36 +236,47 @@ func _resolve_button_with_text(target: Dictionary) -> Dictionary:
 	if token.is_empty():
 		return { ok = false, node = null, rect = Rect2(), reason = "no-token" }
 
-	# Special-case: when searching for the Settlement button, prefer the ConvoyMenu's
-	# explicit button node to avoid ambiguous matches and ensure stable rects.
-	if token.to_lower().find("settlement") != -1:
-		var convoy_menu := get_tree().get_root().find_child("ConvoyMenu", true, false)
-		if convoy_menu:
-			var btn_path := "MainVBox/ScrollContainer/ContentVBox/MenuButtons/SettlementMenuButton"
-			var btn_node := convoy_menu.get_node_or_null(btn_path)
-			if btn_node == null:
-				# Fallback: search by name anywhere under ConvoyMenu
-				btn_node = convoy_menu.find_child("SettlementMenuButton", true, false)
-			if btn_node and btn_node is Button:
-				var rect_direct := _rect_for_control(btn_node)
-				# Guard against unstable/zero rects immediately after menu instantiation
-				if not rect_direct.has_area() or rect_direct.position.length_squared() < 1.0:
-					return { ok = false, node = btn_node, rect = rect_direct, reason = "unstable-layout-direct" }
-				return { ok = true, node = btn_node, rect = rect_direct }
+	# Navigation buttons are now managed by the MenuManager autoload.
+	# We should prioritize searching there before falling back to scene roots.
+	var menu_mgr := get_tree().get_root().get_node_or_null("MenuManager")
+	if is_instance_valid(menu_mgr):
+		var nav_btn: Button = null
+		if token.to_lower().find("settlement") != -1:
+			if menu_mgr.has_method("get_nav_button_by_name"):
+				nav_btn = menu_mgr.get_nav_button_by_name("SettlementMenuButton")
+			else:
+				nav_btn = menu_mgr.find_child("SettlementMenuButton", true, false)
+		elif token.to_lower().find("journey") != -1:
+			if menu_mgr.has_method("get_nav_button_by_name"):
+				nav_btn = menu_mgr.get_nav_button_by_name("JourneyMenuButton")
+			else:
+				nav_btn = menu_mgr.find_child("JourneyMenuButton", true, false)
+		elif token.to_lower().find("cargo") != -1:
+			if menu_mgr.has_method("get_nav_button_by_name"):
+				nav_btn = menu_mgr.get_nav_button_by_name("CargoMenuButton")
+			else:
+				nav_btn = menu_mgr.find_child("CargoMenuButton", true, false)
+		elif token.to_lower().find("vehicle") != -1:
+			if menu_mgr.has_method("get_nav_button_by_name"):
+				nav_btn = menu_mgr.get_nav_button_by_name("VehicleMenuButton")
+			else:
+				nav_btn = menu_mgr.find_child("VehicleMenuButton", true, false)
+			
+		if is_instance_valid(nav_btn) and nav_btn.visible and nav_btn.is_visible_in_tree():
+			var rect_direct := _rect_for_control(nav_btn)
+			if rect_direct.has_area() and rect_direct.position.length_squared() >= 1.0:
+				return { ok = true, node = nav_btn, rect = rect_direct }
 
-	# Special-case: Journey button in ConvoyMenu bottom bar
-	if token.to_lower().find("journey") != -1:
-		var convoy_menu2 := get_tree().get_root().find_child("ConvoyMenu", true, false)
-		if convoy_menu2:
-			# Path from ConvoyMenu.tscn
-			var journey_btn: Button = convoy_menu2.get_node_or_null("MainVBox/BottomBarPanel/BottomMenuButtonsHBox/JourneyMenuButton")
-			if not is_instance_valid(journey_btn):
-				journey_btn = convoy_menu2.find_child("JourneyMenuButton", true, false)
-			if is_instance_valid(journey_btn):
-				var rj := _rect_for_control(journey_btn)
-				if not rj.has_area() or rj.position.length_squared() < 1.0:
-					return { ok = false, node = journey_btn, rect = rj, reason = "unstable-journey-btn-rect" }
-				return { ok = true, node = journey_btn, rect = rj }
+	# Special-case: Convoy Dropdown Toggle Button (has no text property, uses RichTextLabel)
+	if token.to_lower().find("convoy") != -1:
+		var convoy_panel := get_tree().get_root().find_child("ConvoyListPanel", true, false)
+		if is_instance_valid(convoy_panel):
+			var toggle_btn := convoy_panel.get_node_or_null("ToggleButton")
+			if is_instance_valid(toggle_btn) and toggle_btn.is_visible_in_tree():
+				var r := _rect_for_control(toggle_btn)
+				if r.has_area():
+					return { ok = true, node = toggle_btn, rect = r }
+
 	# Search common menu roots
 	var roots := [
 		get_tree().get_root().find_child("ConvoySettlementMenu", true, false),
@@ -226,7 +311,7 @@ func _resolve_button_with_text(target: Dictionary) -> Dictionary:
 		var n: Node = queue.pop_back()
 		if n is Button:
 			var b: Button = n
-			if b.is_visible_in_tree() and b.text.findn(token) != -1:
+			if b.is_visible_in_tree() and (b.text.findn(token) != -1 or b.name.findn(token) != -1):
 				var rect := b.get_global_rect()
 				if rect.position.y < best_y:
 					best_y = rect.position.y
@@ -245,7 +330,7 @@ func _resolve_button_with_text(target: Dictionary) -> Dictionary:
 func _find_button_with_text(root: Node, token: String) -> Button:
 	if root is Button:
 		var b: Button = root
-		if b.text.findn(token) != -1:
+		if b.text.findn(token) != -1 or b.name.findn(token) != -1:
 			return b
 	for c in root.get_children():
 		var found := _find_button_with_text(c, token)
@@ -258,14 +343,17 @@ func _resolve_vendor_tree_item_by_text(target: Dictionary) -> Dictionary:
 	var panel := _get_vendor_trade_panel()
 	if panel == null:
 		return { ok = false, node = null, rect = Rect2(), reason = "vendor-panel-missing" }
-	var tree: Tree = panel.get_node_or_null("%VendorItemTree")
-	if tree == null:
+	# %VendorItemTree is now a VendorItemList (custom inline-expand list) exposing a
+	# global-rect lookup by row name.
+	var list: Control = panel.get_node_or_null("%VendorItemTree")
+	if list == null:
 		return { ok = false, node = panel, rect = _rect_for_control(panel), reason = "vendor-tree-missing" }
-	var item := _find_tree_item_contains(tree, token)
-	if item == null:
-		return { ok = false, node = tree, rect = _rect_for_control(tree), reason = "tree-item-not-found:" + token }
-	var area := tree.get_item_area_rect(item, 0)
-	return { ok = true, node = tree, rect = _rect_for_control(tree, area) }
+	if not list.has_method("find_row_rect_by_text"):
+		return { ok = false, node = list, rect = _rect_for_control(list), reason = "vendor-list-no-rect" }
+	var r: Rect2 = list.find_row_rect_by_text(token)
+	if not r.has_area():
+		return { ok = false, node = list, rect = _rect_for_control(list), reason = "tree-item-not-found:" + token }
+	return { ok = true, node = list, rect = r }
 
 func _find_tree_item_contains(tree: Tree, token: String) -> TreeItem:
 	var root := tree.get_root()
@@ -307,8 +395,19 @@ func _resolve_vendor_action_button(target: Dictionary) -> Dictionary:
 # Highlights the convoy name button inside the settlement menu (TitleLabel) if present;
 # otherwise falls back to the global ConvoyMenuButton in the MainScreen top bar.
 func _resolve_convoy_return_button(_target: Dictionary) -> Dictionary:
-	# Primary: settlement menu title button
 	var settlement_menu := get_tree().get_root().find_child("ConvoySettlementMenu", true, false)
+	# Primary (single-vendor mode): the back control is a PanelContainer named "BackToSettlementButton"
+	# with the "‹ <settlement> / <vendor>" text, mounted inside the active vendor panel's control row.
+	# It doesn't look like a button, so highlighting it is what makes the back path discoverable.
+	if is_instance_valid(settlement_menu):
+		var back_ctrl := settlement_menu.find_child("BackToSettlementButton", true, false)
+		if is_instance_valid(back_ctrl) and back_ctrl is Control and (back_ctrl as Control).is_visible_in_tree():
+			var back_rect := _rect_for_control(back_ctrl)
+			if back_rect.has_area() and back_rect.position.length_squared() >= 1.0:
+				return { ok = true, node = back_ctrl, rect = back_rect }
+			return { ok = false, node = back_ctrl, rect = back_rect, reason = "unstable-back-btn-rect" }
+
+	# Fallback: settlement menu title button (legacy top-banner path).
 	if is_instance_valid(settlement_menu):
 		var title_btn: Button = settlement_menu.get_node_or_null("MainVBox/TopBarHBox/TitleLabel")
 		if is_instance_valid(title_btn):
@@ -316,6 +415,24 @@ func _resolve_convoy_return_button(_target: Dictionary) -> Dictionary:
 			if rect.has_area():
 				return { ok = true, node = title_btn, rect = rect }
 			return { ok = false, node = title_btn, rect = rect, reason = "unstable-title-btn-rect" }
+
+	# Resume path: no vendor back button means we're not in a single-vendor menu (e.g. the player restarted
+	# and reopened the plain convoy menu). If a convoy submenu is open, the way back to the hub is the shared
+	# Settlement nav button, so highlight that instead of the convoy dropdown (which would just toggle the
+	# menu). This lets Level 2's return-to-hub step guide the player Convoy dropdown -> Settlement -> hub.
+	var menu_mgr := get_tree().get_root().get_node_or_null("MenuManager")
+	if is_instance_valid(menu_mgr):
+		var active_menu = menu_mgr.get("current_active_menu")
+		var active_type := String(active_menu.get_meta("menu_type", "")) if is_instance_valid(active_menu) else ""
+		# Only when a nav bar is up but we're not already at the hub (settlement_hub would have advanced).
+		if active_type in ["convoy_overview", "convoy_vehicle_submenu", "convoy_journey_submenu", "convoy_cargo_submenu", "warehouse_submenu"]:
+			var settle_btn: Button = null
+			if menu_mgr.has_method("get_nav_button_by_name"):
+				settle_btn = menu_mgr.get_nav_button_by_name("SettlementMenuButton")
+			if is_instance_valid(settle_btn) and settle_btn.is_visible_in_tree():
+				var srect := _rect_for_control(settle_btn)
+				if srect.has_area() and srect.position.length_squared() >= 1.0:
+					return { ok = true, node = settle_btn, rect = srect }
 
 	# Fallback: top bar convoy menu button
 	var main_screen := get_tree().get_root().find_child("MainScreen", true, false)
@@ -330,16 +447,40 @@ func _resolve_convoy_return_button(_target: Dictionary) -> Dictionary:
 	return { ok = false, node = null, rect = Rect2(), reason = "convoy-return-button-not-found" }
 
 func _resolve_top_up_button(_target: Dictionary) -> Dictionary:
+	# Prefer the settlement overview hub's Top Up (relocated there in Sprint 5.5). Fall back to the
+	# single-vendor settlement menu only for any legacy path that still hosts the button.
+	var hub := _get_settlement_overview_menu()
+	if is_instance_valid(hub) and hub.has_method("get_top_up_button_node"):
+		var hbtn: Control = hub.call("get_top_up_button_node")
+		if is_instance_valid(hbtn):
+			var hrect := _rect_for_control(hbtn)
+			if hrect.has_area() and hrect.position.length_squared() >= 1.0:
+				return { ok = true, node = hbtn, rect = hrect }
 	var menu := _get_settlement_menu()
 	if not is_instance_valid(menu):
 		return { ok = false, node = null, rect = Rect2(), reason = "settlement-menu-missing" }
 	
+	# Try preferred path first
 	var btn: Button = menu.get_node_or_null("MainVBox/TopBarHBox/TopUpButton")
+	
+	# Fallback to unique name
 	if not is_instance_valid(btn):
-		return { ok = false, node = menu, rect = _rect_for_control(menu), reason = "top-up-button-not-found" }
+		btn = menu.get_node_or_null("%TopUpButton")
+		
+	# Final fallback: search children
+	if not is_instance_valid(btn):
+		btn = menu.find_child("TopUpButton", true, false)
+
+	if not is_instance_valid(btn):
+		# DIAGNOSTIC: Print structure if missing
+		var top_bar = menu.get_node_or_null("MainVBox/TopBarHBox")
+		var children_str = "N/A"
+		if is_instance_valid(top_bar):
+			children_str = str(top_bar.get_children().map(func(c): return c.name))
+		return { ok = false, node = menu, rect = _rect_for_control(menu), reason = "top-up-button-not-found. children=" + children_str }
 	
 	var rect := _rect_for_control(btn)
-	if not rect.has_area():
+	if not rect.has_area() or rect.position.length_squared() < 1.0:
 		return { ok = false, node = btn, rect = rect, reason = "unstable-layout" }
 	
 	return { ok = true, node = btn, rect = rect }
@@ -368,17 +509,24 @@ func _resolve_journey_destination_button(target: Dictionary) -> Dictionary:
 	var needle := token.to_lower()
 
 	for child in content_vbox.get_children():
-		if child is Button:
-			var b := child as Button
-			if b.text == "Back": continue # Skip back button
+		if child is Control:
+			var c := child as Control
+			# Skip headers or separators (usually Labels/Separators without mouse input)
+			if c.mouse_filter == Control.MOUSE_FILTER_IGNORE: continue
+			# Skip the explicit "Back" button if it's a Button node
+			if c is Button and c.text == "Back": continue 
 
-			if token.is_empty(): # if no token, find first button that is not "Back"
-				found_button = b
+			if token.is_empty(): # if no token, find first interactive control
+				found_button = c
 				break
 			
-			var txt := String(b.text).to_lower()
-			if txt.find(needle) != -1:
-				found_button = b
+			var txt := ""
+			if "text" in c: txt = str(c.text)
+			elif c.has_node("Label"): txt = c.get_node("Label").text
+			elif c.get_child_count() > 0 and "text" in c.get_child(0): txt = c.get_child(0).text
+			
+			if txt.to_lower().find(needle) != -1:
+				found_button = c
 				break
 	
 	if not is_instance_valid(found_button):
@@ -395,34 +543,30 @@ func _resolve_journey_confirm_button(_target: Dictionary) -> Dictionary:
 	if not is_instance_valid(menu):
 		return { ok = false, node = null, rect = Rect2(), reason = "journey-menu-missing" }
 	
-	var btn: Button = null
-	# Preferred: explicit helper exposed by ConvoyJourneyMenu script
-	if menu.has_method("get_confirm_button_node"):
-		btn = menu.call("get_confirm_button_node")
-		if is_instance_valid(btn):
-			print("[TutorialResolver] Confirm helper returned node:", (btn as Node).get_path())
-	# Fallback: search for a Button with exact text "Confirm Journey"
+	# Look for the confirm button — it's often created dynamically inside a confirmation panel
+	var btn: Control = menu.get_node_or_null("MainVBox/ConfirmButton")
 	if not is_instance_valid(btn):
+		btn = menu.find_child("ConfirmButton", true, false)
+	
+	# Fallback: find any node that might be acting as a confirm button if named differently
+	if not is_instance_valid(btn):
+		btn = menu.find_child("*Confirm*", true, false)
+
+	if not is_instance_valid(btn) or not btn.is_visible_in_tree():
+		# Last ditch: try searching for a button with text
 		var found := _find_button_with_text(menu, "Confirm Journey")
 		if is_instance_valid(found):
 			btn = found
-			print("[TutorialResolver] Confirm button found by text search. Path:", (btn as Node).get_path())
-	if not is_instance_valid(btn):
-		return { ok = false, node = menu, rect = _rect_for_control(menu), reason = "journey-confirm-button-not-found" }
 
+	if not is_instance_valid(btn) or not btn.is_visible_in_tree():
+		return { ok = false, node = menu, rect = _rect_for_control(menu), reason = "confirm-button-not-found-or-hidden" }
+	
 	var rect := _rect_for_control(btn)
-	print("[TutorialResolver] Confirm button rect before settle:", rect)
-	if not rect.has_area() or rect.position.length_squared() < 1.0:
-		# Give layout one frame to settle, then retry once
-		await get_tree().process_frame
-		rect = _rect_for_control(btn)
-		print("[TutorialResolver] Confirm button rect after settle:", rect)
 	if not rect.has_area():
-		return { ok = false, node = btn, rect = rect, reason = "unstable-layout" }
-
+		return { ok = false, node = btn, rect = rect, reason = "unstable-confirm-rect" }
+	
 	return { ok = true, node = btn, rect = rect }
 
-# New: resolve first mission destination (button text starts with '[') or fallback to first destination button.
 func _resolve_journey_top_mission_destination(_target: Dictionary) -> Dictionary:
 	var menu := _get_journey_menu()
 	if not is_instance_valid(menu):
@@ -432,32 +576,53 @@ func _resolve_journey_top_mission_destination(_target: Dictionary) -> Dictionary
 	if not is_instance_valid(content_vbox):
 		return { ok = false, node = menu, rect = _rect_for_control(menu), reason = "journey-menu-content-missing" }
 
-	# Pick the first VISIBLE mission destination button (text starts with '['cargo']').
-	# Fallback to the first VISIBLE destination button (excluding "Back").
-	var mission_btn: Button = null
-	var first_visible_btn: Button = null
+	# Pick the first VISIBLE mission destination (starts with '[') or fallback to first visible option.
+	var mission_btn: Control = null
+	var first_visible_btn: Control = null
+	var interactive_count := 0
+	
 	for child in content_vbox.get_children():
-		if child is Button:
-			var b := child as Button
-			if b.text == "Back":
+		if not is_instance_valid(child) or child.is_queued_for_deletion():
+			continue
+		if child is Control:
+			var c := child as Control
+			if not c.is_visible_in_tree() or c.mouse_filter == Control.MOUSE_FILTER_IGNORE:
 				continue
-			# Ignore hidden or not yet laid out buttons
-			if not b.is_visible_in_tree():
+			
+			# Skip "Back" buttons
+			if c is Button and c.text == "Back":
 				continue
+				
+			interactive_count += 1
 			if first_visible_btn == null:
-				first_visible_btn = b
-			var txt := String(b.text)
+				first_visible_btn = c
+			
+			var txt := ""
+			if "text" in c: txt = str(c.text)
+			else:
+				for grand_child in c.get_children():
+					if grand_child is Label:
+						txt = grand_child.text
+						break
+
 			if txt.begins_with("[") and txt.find("]") != -1:
-				mission_btn = b
+				mission_btn = c
 				break
 
 	var chosen := mission_btn if mission_btn != null else first_visible_btn
 	if chosen == null:
-		return { ok = false, node = content_vbox, rect = _rect_for_control(content_vbox), reason = "no-destination-buttons" }
+		return { ok = false, node = content_vbox, rect = _rect_for_control(content_vbox), reason = "no-destinations-found. count=" + str(content_vbox.get_child_count()) }
 
 	var rect := _rect_for_control(chosen)
+	if not rect.has_area() or rect.position.length_squared() < 1.0:
+		# Settle wait
+		await get_tree().process_frame
+		if is_instance_valid(chosen) and not chosen.is_queued_for_deletion():
+			rect = _rect_for_control(chosen)
+
 	if not rect.has_area():
 		return { ok = false, node = chosen, rect = rect, reason = "unstable-destination-rect" }
+	
 	return { ok = true, node = chosen, rect = rect }
 
 func _resolve_auto(target: Dictionary) -> Dictionary:

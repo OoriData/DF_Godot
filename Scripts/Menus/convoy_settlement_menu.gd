@@ -16,13 +16,29 @@ const OORI_RED = Color("#8a2b2b")
 # %NodeName syntax is used for nodes with "unique_name_in_owner" enabled.
 # $Path/To/Node is used for direct or indirect children without unique names.
 @onready var title_label: Button = $MainVBox/TopBarHBox/TitleLabel
-@onready var top_up_button: Button = $MainVBox/TopBarHBox/TopUpButton
+# Top Up button removed in Sprint 5 (moved to the Convoy Menu). Kept as a null ref so the banner
+# layout code that still guards on `is_instance_valid(top_up_button)` compiles and cleanly skips.
+var top_up_button: Button = null
 @onready var top_bar_hbox: HBoxContainer = $MainVBox/TopBarHBox
 @onready var vendor_tab_container = %VendorTabContainer
+# Mobile-only vendor-type selector; replaces the overflowing tab strip on phones.
+@onready var vendor_selector: OptionButton = get_node_or_null("%VendorSelector")
 # The node 'SettlementInfoTab' is renamed to 'Settlement Info' by its 'name' property in the scene file.
 # The SettlementInfoTab has been removed. All tabs are now dynamically generated.
 @onready var back_button: Button = $MainVBox/BackButton
 var warehouse_button: Button = null
+var _top_bar_reorganized: bool = false
+var _top_bar_spacer: Control = null # flex spacer in the banner row; expands in landscape/desktop, hidden in portrait
+var _banner_hbox: HBoxContainer = null # the real BannerHBox (inside TopBannerPanel) that hosts the nav buttons
+var _map_label_coords = null # Vector2i of the settlement whose map label we pinned while this menu is open
+
+# Single-vendor mode (Sprint 5): when opened from the settlement overview hub the menu shows ONE vendor
+# and hides the tab strip / vendor selector. Empty string ⇒ legacy all-vendors behavior.
+var _single_vendor_id: String = ""
+var _current_vendor_name: String = ""
+# The back/title control ("‹ Vendor name") is seated INTO the active vendor panel's control row so the
+# banner + control row collapse into one [‹ Vendor][Buy|Sell][Sort] row.
+var _single_vendor_title: Control = null
 
 # This will be populated by MenuManager with the specific convoy's data.
 var _convoy_data: Dictionary
@@ -41,14 +57,6 @@ var _pending_ui_state: Dictionary = {}
 @onready var _convoy_service: Node = get_node_or_null("/root/ConvoyService")
 @onready var _api: Node = get_node_or_null("/root/APICalls")
 
-# Cached computed top-up plan
-var _top_up_plan: Dictionary = {
-	"total_cost": 0.0,
-	"allocations": [], # Array of {res, vendor_id, vendor_name, price, quantity, subtotal}
-	"resources": {}, # resource_type -> {total_quantity, total_cost}
-	"planned_list": [] # ordered list (unique) of resource types included
-}
-
 # This function is called by MenuManager to pass the convoy data when the menu is opened.
 func initialize_with_data(data_or_id: Variant, extra_arg: Variant = null) -> void:
 	print("ConvoySettlementMenu: initialize_with_data called.")
@@ -57,6 +65,8 @@ func initialize_with_data(data_or_id: Variant, extra_arg: Variant = null) -> voi
 	if not _pending_focus_intent.is_empty() and String(_pending_focus_intent.get("target", "")) == "settlement_vendor":
 		# Retry budget for cases where vendor inventories arrive late.
 		_pending_focus_retry_attempts_left = 24
+		# Opened from the overview hub → single-vendor mode (one tab, no tab strip / selector).
+		_single_vendor_id = String(_pending_focus_intent.get("vendor_id", ""))
 	if data_or_id is Dictionary:
 		var d: Dictionary = data_or_id as Dictionary
 		convoy_id = String(d.get("convoy_id", d.get("id", "")))
@@ -101,30 +111,10 @@ func _ready():
 	else:
 		printerr("ConvoySettlementMenu: BackButton node not found.")
 	
-	# Connect top up button
-	if is_instance_valid(top_up_button):
-		if not top_up_button.is_connected("pressed", Callable(self, "_on_top_up_button_pressed")):
-			top_up_button.pressed.connect(_on_top_up_button_pressed)
-		_update_top_up_button()
-		_style_top_bar_button(top_up_button)
+	# Top Up moved to the Convoy Menu (Sprint 5) — no button to wire here anymore.
 
-	if is_instance_valid(top_bar_hbox):
-		var existing_btn: Button = top_bar_hbox.get_node_or_null("WarehouseButton")
-		if existing_btn == null:
-			var warehouse_btn := Button.new()
-			warehouse_btn.name = "WarehouseButton"
-			warehouse_btn.text = "Warehouse"
-			warehouse_btn.tooltip_text = "View or buy a Warehouse in this settlement"
-			warehouse_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-			top_bar_hbox.add_child(warehouse_btn)
-
-			warehouse_btn.pressed.connect(_on_warehouse_button_pressed)
-
-		# Cache reference for later enable/disable
-		warehouse_button = top_bar_hbox.get_node_or_null("WarehouseButton")
-		if is_instance_valid(warehouse_button):
-			warehouse_button.disabled = false
-			_style_top_bar_button(warehouse_button)
+	# Warehouse button removed in Sprint 5 — warehouse access now lives on the settlement overview hub.
+	# `warehouse_button` stays null; all later guards on is_instance_valid(warehouse_button) cleanly skip.
 
 	# Setup standardized top banner
 	if is_instance_valid(title_label):
@@ -134,12 +124,16 @@ func _ready():
 	if is_instance_valid(title_label):
 		_style_top_bar_button(title_label)
 
+	# Consolidate everything onto the single banner row (breadcrumb + settlement + dropdown + Top Up),
+	# then size it for the current orientation. Reorg first so sizing operates on the final node set.
+	_reorganize_top_bar()
+	_apply_top_bar_sizing()
+
 	# Subscribe to canonical snapshots (store 'convoys_changed' handled by MenuBase)
 	if is_instance_valid(_store):
 		if _store.has_signal("map_changed") and not _store.map_changed.is_connected(_on_store_map_changed):
 			_store.map_changed.connect(_on_store_map_changed)
-		if _store.has_signal("user_changed") and not _store.user_changed.is_connected(_on_store_user_changed):
-			_store.user_changed.connect(_on_store_user_changed)
+		# (user_changed subscription removed with Top Up — that control now lives on the Convoy Menu.)
 
 	# Also listen directly to APICalls transaction outcomes so we can trigger timely refreshes
 	# Phase 4: UI no longer listens to APICalls transaction signals. Authoritative
@@ -148,6 +142,11 @@ func _ready():
 	if is_instance_valid(vendor_tab_container):
 		if not vendor_tab_container.tab_changed.is_connected(_on_vendor_tab_changed):
 			vendor_tab_container.tab_changed.connect(_on_vendor_tab_changed)
+
+	if is_instance_valid(vendor_selector):
+		if not vendor_selector.item_selected.is_connected(_on_vendor_selector_selected):
+			vendor_selector.item_selected.connect(_on_vendor_selector_selected)
+		_style_vendor_selector()
 
 	var dsm = get_node_or_null("/root/DeviceStateManager")
 	if is_instance_valid(dsm):
@@ -166,7 +165,8 @@ func _on_layout_mode_changed(_mode: int, _size: Vector2, _is_mobile_val: bool) -
 		_style_top_bar_button(title_label)
 	if is_instance_valid(warehouse_button):
 		_style_top_bar_button(warehouse_button)
-	
+	_apply_top_bar_sizing()
+
 	_style_vendor_tabs()
 	
 	# Regenerate UI completely on layout change to ensure correct bounds.
@@ -207,7 +207,15 @@ func _display_settlement_info():
 	if not is_instance_valid(_store) or not _store.has_method("get_tiles"):
 		_display_error("GameStore not available. Cannot load settlement data.")
 		return
-	
+
+	# Single-vendor guard: right after a mission/delivery-item purchase (e.g. Mountain Urchins) a settlement
+	# snapshot can arrive that momentarily lacks our vendor. Rebuilding on it would _clear_tabs() and then
+	# build nothing (the vendors-present check below fails), blanking the vendor — the "vendor disappears"
+	# bug. If we already show the vendor and the incoming snapshot doesn't include it, keep the current tab.
+	if _single_vendor_id != "" and _has_active_vendor_tab() and not _snapshot_has_vendor(_single_vendor_id):
+		print("[ConvoySettlementMenu] Skip rebuild — snapshot missing single vendor '%s'; keeping current tab." % _single_vendor_id)
+		return
+
 	# Store the title of the currently selected tab before clearing everything.
 	# This allows us to restore the selection if the menu is re-initialized.
 	var previous_tab_title = ""
@@ -259,14 +267,30 @@ func _display_settlement_info():
 		if is_instance_valid(warehouse_button):
 			warehouse_button.disabled = false
 		_settlement_data = target_tile.settlements[0] # Assuming we display info for the first settlement.
+		_activate_settlement_map_label()
 
 		if _settlement_data.has("vendors") and _settlement_data.vendors is Array and not _settlement_data.vendors.is_empty():
 			# print("ConvoySettlementMenu: Found ", _settlement_data.vendors.size(), " vendors in settlement.") # Debug line
 
 			for vendor in _settlement_data.vendors:
 				var vid = vendor.get("vendor_id", "NO_ID")
+				# Single-vendor mode: only build the chosen vendor's tab.
+				if _single_vendor_id != "" and String(vid) != _single_vendor_id:
+					continue
 				print("[DIAGNOSTIC] ConvoySettlementMenu building vendor tab for: ", vid)
+				# Show the vendor TYPE in the back/title (e.g. "Depot", "Mega-Dealership") — the settlement
+				# name prefix is redundant here and clips. Mirrors the tab-title shortening.
+				var _vn := String(vendor.get("name", ""))
+				var _sn := String(_settlement_data.get("name", ""))
+				_current_vendor_name = _vn.replace(_sn + " ", "").strip_edges() if _sn != "" else _vn
+				if _current_vendor_name == "":
+					_current_vendor_name = _vn
 				_create_vendor_tab(vendor)
+
+			# In single-vendor mode the tab strip is meaningless — hide it and refresh the banner title.
+			if _single_vendor_id != "" and is_instance_valid(vendor_tab_container) and vendor_tab_container.has_method("set_tabs_visible"):
+				vendor_tab_container.set_tabs_visible(false)
+				_apply_single_vendor_banner()
 
 			# Tutorial Helper: If the tutorial is on Level 1, proactively select the Dealership tab
 			# when this menu is first displayed. This avoids hardcoding tutorial logic that
@@ -289,12 +313,14 @@ func _display_settlement_info():
 			
 			# After creating vendor tabs compute top up plan
 			_update_top_up_button()
+			_update_settlement_banner_button()
 
 	else:
 		# No settlement on this tile (likely in transit). Show convoy name and disable settlement-only controls.
 		if is_instance_valid(warehouse_button):
 			warehouse_button.disabled = true
 			warehouse_button.tooltip_text = "Warehouse unavailable while in transit."
+		_update_settlement_banner_button()
 		_display_error("No settlement found at convoy coordinates: (%d, %d)" % [current_convoy_x, current_convoy_y])
 
 	if not _pending_ui_state.is_empty():
@@ -303,6 +329,40 @@ func _display_settlement_info():
 		print("[DIAGNOSTIC] ConvoySettlementMenu: Applying cached state after tabs built.")
 		apply_ui_state(cached)
 
+
+func _has_active_vendor_tab() -> bool:
+	return is_instance_valid(vendor_tab_container) and vendor_tab_container.get_tab_count() > 0
+
+## Does the current-tile settlement in the latest store snapshot contain the given vendor_id?
+func _snapshot_has_vendor(vid: String) -> bool:
+	if vid == "" or not is_instance_valid(_store) or not _store.has_method("get_tiles"):
+		return false
+	var cx: int = roundi(float(_convoy_data.get("x", -1.0)))
+	var cy: int = roundi(float(_convoy_data.get("y", -1.0)))
+	if cx < 0 or cy < 0:
+		return false
+	var tiles: Array = _store.get_tiles()
+	if cy >= tiles.size():
+		return false
+	var row: Variant = tiles[cy]
+	if not (row is Array) or cx >= (row as Array).size():
+		return false
+	var tile: Variant = (row as Array)[cx]
+	if not (tile is Dictionary) or not (tile as Dictionary).has("settlements"):
+		return false
+	var setts: Variant = (tile as Dictionary).get("settlements")
+	if not (setts is Array) or (setts as Array).is_empty():
+		return false
+	var sett: Variant = (setts as Array)[0]
+	if not (sett is Dictionary) or not (sett as Dictionary).has("vendors"):
+		return false
+	var vendors: Variant = (sett as Dictionary).get("vendors")
+	if not (vendors is Array):
+		return false
+	for v in (vendors as Array):
+		if v is Dictionary and String((v as Dictionary).get("vendor_id", "")) == vid:
+			return true
+	return false
 
 func _on_store_convoys_changed(all_convoys_data: Array) -> void:
 	_apply_convoy_snapshot_update(all_convoys_data)
@@ -439,8 +499,32 @@ func _update_ui(convoy: Dictionary) -> void:
 		call_deferred("_display_settlement_info")
 	else:
 		_update_top_up_button()
+		# Single-vendor mode has only the active tab, which _refresh_all_vendor_panels deliberately skips —
+		# so its convoy cargo would never refresh on a snapshot update. Refresh it directly here.
+		if _single_vendor_id != "":
+			_refresh_active_vendor_panel()
+
+## Push the latest convoy/settlement snapshot into the active vendor panel (used in single-vendor mode,
+## where no tab-switch ever triggers the lazy refresh path).
+func _refresh_active_vendor_panel() -> void:
+	var panel: Node = _get_active_vendor_panel()
+	if not is_instance_valid(panel) or not panel.has_method("refresh_data"):
+		return
+	var vendor_data := _find_vendor_by_name(String(panel.name))
+	if vendor_data.is_empty():
+		return
+	panel.refresh_data(
+		vendor_data.duplicate(true),
+		_convoy_data.duplicate(true),
+		_settlement_data.duplicate(true),
+		_all_settlement_data.duplicate(true)
+	)
 
 func _clear_tabs():
+	# The single-vendor title is seated INSIDE a panel's control row; detach it first so it survives the
+	# panel being freed below (it's re-seated by _position_single_vendor_title after the rebuild).
+	if is_instance_valid(_single_vendor_title) and is_instance_valid(_single_vendor_title.get_parent()):
+		_single_vendor_title.get_parent().remove_child(_single_vendor_title)
 	# Remove all dynamically added vendor tabs, starting from the end.
 	if not is_instance_valid(vendor_tab_container):
 		printerr("ConvoySettlementMenu: vendor_tab_container is invalid in _clear_tabs().")
@@ -614,6 +698,12 @@ func _refresh_all_vendor_panels():
 func _on_vendor_tab_changed(tab_idx: int) -> void:
 	if not is_instance_valid(vendor_tab_container):
 		return
+	# Keep the mobile dropdown in sync with programmatic/tutorial tab changes (select() emits nothing → no loop).
+	if is_instance_valid(vendor_selector) and vendor_selector.visible and tab_idx >= 0 and tab_idx < vendor_selector.item_count:
+		if vendor_selector.selected != tab_idx:
+			vendor_selector.select(tab_idx)
+	# The active panel changed → re-home the shared dropdown into the new panel's control row.
+	call_deferred("_mount_vendor_selector_for_layout")
 	var tab_content = vendor_tab_container.get_tab_control(tab_idx)
 	if is_instance_valid(tab_content) and tab_content.has_meta("needs_refresh") and tab_content.get_meta("needs_refresh"):
 		tab_content.set_meta("needs_refresh", false)
@@ -636,382 +726,12 @@ func _find_vendor_by_name(vendor_name: String) -> Dictionary:
 	return {}
 
 
-# --- Top Up Feature ---
-
-const TOP_UP_RESOURCES := ["fuel", "water", "food"]
-
-func _update_top_up_button():
-	if not is_instance_valid(top_up_button):
-		return
-	if _settlement_data.is_empty() or not _settlement_data.has("vendors"):
-		top_up_button.text = "Top Up (No Vendors)"
-		top_up_button.disabled = true
-		top_up_button.tooltip_text = "No vendors present in this settlement."
-		return
-	if _convoy_data.is_empty():
-		top_up_button.text = "Top Up (No Convoy)"
-		top_up_button.disabled = true
-		top_up_button.tooltip_text = "Convoy data unavailable."
-		return
-
-	# Calculate full plan first to see if we need it
-	var full_plan = _calculate_top_up_plan()
-	var needed_cost = full_plan.get("total_cost", 0.0)
-	
-	if full_plan.get("planned_list", []).is_empty():
-		top_up_button.text = "Top Up (Full)"
-		top_up_button.disabled = true
-		top_up_button.tooltip_text = "Fuel, Water and Food are already at maximum levels."
-		return
-
-	var user_money: float = 0.0
-	if is_instance_valid(_user_service) and _user_service.has_method("get_user"):
-		var user_data: Dictionary = _user_service.get_user()
-		user_money = float(user_data.get("money", 0.0))
-
-	var is_partial = false
-	if user_money < needed_cost:
-		# User cannot afford full top up. Calculate partial plan with budget.
-		_top_up_plan = _calculate_top_up_plan(user_money)
-		is_partial = true
-	else:
-		_top_up_plan = full_plan
-
-	var planned_list: Array = _top_up_plan.get("planned_list", [])
-	var total_cost: float = _top_up_plan.get("total_cost", 0.0)
-	
-	# If even partial plan is empty (cannot afford anything), disable
-	if planned_list.is_empty() or total_cost <= 0.0001:
-		top_up_button.text = "Top Up"
-		top_up_button.disabled = true
-		top_up_button.tooltip_text = "Insufficient funds to purchase any resources."
-		return
-
-	if is_partial:
-		top_up_button.text = "Top Up (Partial)"
-	else:
-		top_up_button.text = "Top Up"
-	
-	top_up_button.disabled = false 
-
-	# Build tooltip breakdown (group by resource, showing each vendor line)
-	var breakdown_lines: Array = []
-	var allocations_by_res: Dictionary = {}
-	for alloc in _top_up_plan.allocations:
-		var r = String(alloc.get("res",""))
-		if r == "":
-			continue
-		if not allocations_by_res.has(r):
-			allocations_by_res[r] = []
-		allocations_by_res[r].append(alloc)
-	for r in allocations_by_res.keys():
-		var group:Array = allocations_by_res[r]
-		group.sort_custom(func(a,b): return float(a.price) < float(b.price))
-		var res_total_qty:int = 0
-		var res_total_cost:float = 0.0
-		breakdown_lines.append(r.capitalize() + ":")
-		for g in group:
-			var qty_i = int(g.get("quantity",0))
-			var price_i = float(g.get("price",0.0))
-			var vendor_name = String(g.get("vendor_name","?"))
-			var sub_i = float(qty_i) * price_i
-			res_total_qty += qty_i
-			res_total_cost += sub_i
-			breakdown_lines.append("  %s: %d @ $%.2f = $%.0f" % [vendor_name, qty_i, price_i, sub_i])
-		breakdown_lines.append("  Subtotal %s: %d = $%.0f" % [r, res_total_qty, res_total_cost])
-	
-	breakdown_lines.append("Total: $%.0f" % total_cost)
-	if is_partial:
-		var missing = max(0.0, needed_cost - user_money)
-		breakdown_lines.append("Partial Top Up (Need $%.0f more for full)." % missing)
-	
-	top_up_button.tooltip_text = "Top Up Plan:\n" + "\n".join(breakdown_lines)
-
-func _calculate_top_up_plan(budget: float = -1.0) -> Dictionary:
-	var plan: Dictionary = {"total_cost": 0.0, "allocations": [], "resources": {}, "planned_list": []}
-	if _settlement_data.is_empty() or not _settlement_data.has("vendors"):
-		return plan
-	var convoy := _convoy_data
-	if convoy.is_empty():
-		return plan
-
-	# Budget/weight constraints
-	var remaining_budget: float = budget
-	var budget_limited := budget >= 0.0
-	if not budget_limited:
-		remaining_budget = 999999999.0
-	var remaining_weight := float(convoy.get("total_remaining_capacity", 999999.0))
-	var weight_limited := remaining_weight <= 0.001
-	var resource_weights: Dictionary = convoy.get("resource_weights", {})
-
-	# Build per-resource state with cheapest-vendor priority for that resource.
-	# Then allocate in a leveling loop (always buy for the lowest fill%), which naturally
-	# distributes purchases evenly instead of fully topping up one resource first.
-	var state_by_res: Dictionary = {}
-	for res: String in TOP_UP_RESOURCES:
-		var max_amount: float = float(convoy.get("max_" + res, 0.0))
-		if max_amount <= 0.001:
-			continue
-		var current_amount: float = float(convoy.get(res, 0.0))
-		var needed_exact: float = max(max_amount - current_amount, 0.0)
-		var needed_remaining: int = int(floor(needed_exact + 0.0001))
-		if needed_remaining <= 0:
-			continue
-
-		var price_key: String = String(res) + "_price"
-		var vendor_candidates: Array = []
-		for v in _settlement_data.get("vendors", []):
-			if v.has(price_key) and v[price_key] != null and v.has(res):
-				var stock_available := int(v.get(res, 0))
-				var price := float(v.get(price_key, 0.0))
-				if stock_available > 0 and price > 0.0:
-					vendor_candidates.append({"vendor": v, "price": price, "stock": stock_available})
-		vendor_candidates.sort_custom(func(a, b): return float(a.price) < float(b.price))
-		if vendor_candidates.is_empty():
-			continue
-
-		var weight_per_unit: float = float(resource_weights.get(res, 1.0))
-		if weight_per_unit <= 0.0:
-			weight_per_unit = 1.0
-
-		state_by_res[res] = {
-			"res": res,
-			"max": max_amount,
-			"current": current_amount,
-			"needed": needed_remaining,
-			"vendors": vendor_candidates,
-			"vendor_idx": 0,
-			"vendor_stock_left": int(vendor_candidates[0].stock),
-			"weight_per_unit": weight_per_unit,
-		}
-
-	if state_by_res.is_empty():
-		return plan
-
-	var planned_set: Dictionary = {}
-	# Keyed by "res|vendor_id" so we can merge allocations and avoid 1-unit spam.
-	var alloc_index_by_key: Dictionary = {}
-	var last_picked_res: String = ""
-	var safety := 0
-	while true:
-		safety += 1
-		if safety > 10000:
-			break
-
-		if budget_limited and remaining_budget < 0.01:
-			break
-		if not weight_limited and remaining_weight <= 0.001:
-			break
-
-		# Build list of resources that can still accept at least 1 unit.
-		var active: Array = []
-		for res: String in TOP_UP_RESOURCES:
-			if not state_by_res.has(res):
-				continue
-			var s: Dictionary = state_by_res[res]
-			if int(s.get("needed", 0)) <= 0:
-				continue
-			var vendors: Array = s.get("vendors", [])
-			var vidx: int = int(s.get("vendor_idx", 0))
-			if vidx >= vendors.size():
-				continue
-			var price := float(vendors[vidx].price)
-			if budget_limited and remaining_budget < price:
-				continue
-			if not weight_limited:
-				var wpu := float(s.get("weight_per_unit", 1.0))
-				if remaining_weight < wpu:
-					continue
-			active.append(res)
-		if active.is_empty():
-			break
-
-		# Compute min fill percentage among active resources.
-		var min_fill := 999.0
-		for res: String in active:
-			var s: Dictionary = state_by_res[res]
-			var fill := 1.0
-			var max_amount := float(s.get("max", 0.0))
-			if max_amount > 0.001:
-				fill = float(s.get("current", 0.0)) / max_amount
-			if fill < min_fill:
-				min_fill = fill
-
-		# Collect all resources tied for min fill (within epsilon), and rotate tie-breaking.
-		var eps := 0.000001
-		var tied: Array = []
-		for res: String in active:
-			var s: Dictionary = state_by_res[res]
-			var max_amount := float(s.get("max", 0.0))
-			var fill := 1.0
-			if max_amount > 0.001:
-				fill = float(s.get("current", 0.0)) / max_amount
-			if abs(fill - min_fill) <= eps:
-				tied.append(res)
-		if tied.is_empty():
-			break
-
-		var pick_res := String(tied[0])
-		if tied.size() > 1 and last_picked_res != "":
-			var last_idx := tied.find(last_picked_res)
-			if last_idx != -1:
-				pick_res = String(tied[(last_idx + 1) % tied.size()])
-		last_picked_res = pick_res
-
-		var s_pick: Dictionary = state_by_res[pick_res]
-		var max_pick := float(s_pick.get("max", 0.0))
-		if max_pick <= 0.001:
-			break
-
-		# Find the next higher fill among active resources so we can buy in chunks.
-		var next_fill := 1.0
-		var found_next := false
-		for res: String in active:
-			var s: Dictionary = state_by_res[res]
-			var max_amount := float(s.get("max", 0.0))
-			if max_amount <= 0.001:
-				continue
-			var fill := float(s.get("current", 0.0)) / max_amount
-			if fill > (min_fill + eps):
-				if not found_next or fill < next_fill:
-					next_fill = fill
-					found_next = true
-		if not found_next:
-			next_fill = 1.0
-
-		var units_to_target := int(ceil(max(0.0, (next_fill - min_fill)) * max_pick))
-		if units_to_target <= 0:
-			units_to_target = 1
-
-		# Ensure vendor pointer is on a valid candidate with stock.
-		var vendors: Array = s_pick.get("vendors", [])
-		var vidx: int = int(s_pick.get("vendor_idx", 0))
-		var stock_left: int = int(s_pick.get("vendor_stock_left", 0))
-		while vidx < vendors.size() and stock_left <= 0:
-			vidx += 1
-			if vidx < vendors.size():
-				stock_left = int(vendors[vidx].stock)
-		s_pick.vendor_idx = vidx
-		s_pick.vendor_stock_left = stock_left
-		state_by_res[pick_res] = s_pick
-		if vidx >= vendors.size():
-			continue
-
-		var price: float = float(vendors[vidx].price)
-		var weight_per_unit: float = float(s_pick.get("weight_per_unit", 1.0))
-		var take_qty: int = min(units_to_target, int(s_pick.get("needed", 0)))
-		take_qty = min(take_qty, stock_left)
-		if budget_limited:
-			take_qty = min(take_qty, int(floor(remaining_budget / price)))
-		if not weight_limited and remaining_weight < 999998:
-			take_qty = min(take_qty, int(floor(remaining_weight / weight_per_unit)))
-		if take_qty <= 0:
-			continue
-
-		var vdict: Dictionary = vendors[vidx].vendor
-		var vendor_id := str(vdict.get("vendor_id", ""))
-		var vendor_name := str(vdict.get("name", "Vendor"))
-		var subtotal := float(take_qty) * price
-
-		var alloc_key: String = String(pick_res) + "|" + String(vendor_id)
-		if alloc_index_by_key.has(alloc_key):
-			var idx: int = int(alloc_index_by_key.get(alloc_key, -1))
-			if idx >= 0 and idx < plan.allocations.size():
-				var existing: Dictionary = plan.allocations[idx]
-				existing.quantity = int(existing.get("quantity", 0)) + int(take_qty)
-				existing.subtotal = float(existing.get("subtotal", 0.0)) + float(subtotal)
-				# Keep vendor_name/price stable; refresh just in case.
-				existing.vendor_name = vendor_name
-				existing.price = price
-				plan.allocations[idx] = existing
-			else:
-				alloc_index_by_key.erase(alloc_key)
-				plan.allocations.append({
-					"res": pick_res,
-					"vendor_id": vendor_id,
-					"vendor_name": vendor_name,
-					"price": price,
-					"quantity": take_qty,
-					"subtotal": subtotal
-				})
-				alloc_index_by_key[alloc_key] = plan.allocations.size() - 1
-		else:
-			plan.allocations.append({
-				"res": pick_res,
-				"vendor_id": vendor_id,
-				"vendor_name": vendor_name,
-				"price": price,
-				"quantity": take_qty,
-				"subtotal": subtotal
-			})
-			alloc_index_by_key[alloc_key] = plan.allocations.size() - 1
-		plan.total_cost += subtotal
-		remaining_budget -= subtotal
-		if not weight_limited:
-			remaining_weight -= float(take_qty) * weight_per_unit
-
-		# Update state for the picked resource.
-		s_pick.current = float(s_pick.get("current", 0.0)) + float(take_qty)
-		s_pick.needed = int(s_pick.get("needed", 0)) - take_qty
-		s_pick.vendor_stock_left = stock_left - take_qty
-		state_by_res[pick_res] = s_pick
-
-		# Aggregate totals for UI/tooltip.
-		if not plan.resources.has(pick_res):
-			plan.resources[pick_res] = {"total_quantity": 0, "total_cost": 0.0}
-		plan.resources[pick_res].total_quantity += int(take_qty)
-		plan.resources[pick_res].total_cost += subtotal
-		planned_set[pick_res] = true
-
-	# Preserve a stable resource ordering for any UI consumption.
-	for res in TOP_UP_RESOURCES:
-		if planned_set.has(res):
-			plan.planned_list.append(res)
-	return plan
-
-func _on_top_up_button_pressed():
-	if _top_up_plan.is_empty() or _top_up_plan.get("resources", {}).is_empty():
-		return
-	var convoy_uuid = str(_convoy_data.get("convoy_id", ""))
-	if convoy_uuid.is_empty():
-		return
-	if not is_instance_valid(_api):
-		return
-	# Execute purchases individually (one PATCH per resource) based on current plan snapshot.
-	for alloc in _top_up_plan.allocations:
-		var res = alloc.get("res", "")
-		var vendor_id = str(alloc.get("vendor_id", ""))
-		var send_qty:int = int(alloc.get("quantity", 0))
-		if res == "" or vendor_id.is_empty() or send_qty <= 0:
-			continue
-		print("[TopUp] Purchasing %d %s from vendor %s (price=%.2f) convoy=%s" % [send_qty, res, vendor_id, float(alloc.get("price",0.0)), convoy_uuid])
-		# Raw resources use dedicated API call
-		_api.buy_resource(vendor_id, convoy_uuid, String(res), float(send_qty))
-	# Immediately trigger authoritative refreshes via services; UI updates via Store/Hub
-	if is_instance_valid(_convoy_service) and _convoy_service.has_method("refresh_single"):
-		_convoy_service.refresh_single(convoy_uuid)
-	if is_instance_valid(_user_service) and _user_service.has_method("refresh_user"):
-		_user_service.refresh_user()
-	# Disable button until data refresh comes back
-	if is_instance_valid(top_up_button):
-		top_up_button.disabled = true
-		top_up_button.text = "Top Up (Processing...)"
-
-	# Display a summary banner on the active vendor panel
-	var res_summary_parts: Array = []
-	for res_type in _top_up_plan.get("resources", {}):
-		var r_data: Dictionary = _top_up_plan.resources[res_type]
-		res_summary_parts.append("%d %s" % [int(r_data.total_quantity), res_type.capitalize()])
-	
-	var summary_msg := "Successfully Topped Up: %s for %s" % [", ".join(res_summary_parts), NumberFormat.format_money(_top_up_plan.get("total_cost", 0.0))]
-	var active_panel = get_active_vendor_panel_node()
-	if is_instance_valid(active_panel) and active_panel.has_method("show_transaction_feedback"):
-		active_panel.show_transaction_feedback(summary_msg, "success")
-
-
-func _on_store_user_changed(_user: Dictionary) -> void:
-	# Money changes affect top-up affordability/tooltips.
-	_update_top_up_button()
+# --- Top Up (relocated) ---
+# The Top Up control moved to the base Convoy Menu in Sprint 5 (convoy_menu.gd + TopUpPlanner).
+# The button no longer exists in this scene, so this is a no-op kept only so the existing refresh
+# call sites stay valid. Safe to delete once those calls are removed.
+func _update_top_up_button() -> void:
+	pass
 
 
 func _get_settlement_name_from_convoy_coords() -> String:
@@ -1107,7 +827,7 @@ func _style_top_bar_button(button: Button) -> void:
 	var dsm = get_node_or_null("/root/DeviceStateManager")
 	var fs = 18
 	if is_instance_valid(dsm):
-		fs = dsm.get_scaled_base_font_size(18)
+		fs = 18
 	button.add_theme_font_size_override("font_size", fs)
 
 	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
@@ -1115,6 +835,67 @@ func _style_top_bar_button(button: Button) -> void:
 		hover.set_content_margin(side, hover.get_content_margin(side) + 2)
 		pressed.set_content_margin(side, pressed.get_content_margin(side) + 2)
 		disabled.set_content_margin(side, disabled.get_content_margin(side) + 2)
+
+func _current_layout_mode() -> int:
+	var dsm = get_node_or_null("/root/DeviceStateManager")
+	if is_instance_valid(dsm) and dsm.has_method("get_layout_mode"):
+		return int(dsm.get_layout_mode()) # 0=DESKTOP, 1=MOBILE_LANDSCAPE, 2=MOBILE_PORTRAIT
+	return 0
+
+func _apply_top_bar_sizing() -> void:
+	# Nav bar row (all viewports): [< Convoy] [🏭] [Top Up] — EQUAL THIRDS. Each element expands to an
+	# equal share of the bar so it reads as a balanced, uniform strip. The vendor dropdown is NOT here
+	# (mobile mounts it into the panel control row; desktop uses the tab strip).
+	var mode: int = _current_layout_mode()
+	var nav_h: float = 72.0 if mode == 2 else (56.0 if mode == 1 else 48.0)
+
+	# Convoy breadcrumb — equal third, centered text, clips the end if too long.
+	if is_instance_valid(_top_banner_convoy_button):
+		_top_banner_convoy_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		_top_banner_convoy_button.size_flags_stretch_ratio = 1.0
+		_top_banner_convoy_button.clip_text = true
+		_top_banner_convoy_button.alignment = HORIZONTAL_ALIGNMENT_CENTER
+		_top_banner_convoy_button.custom_minimum_size = Vector2(0, nav_h)
+
+	# Warehouse — equal third, icon centered.
+	if is_instance_valid(warehouse_button):
+		warehouse_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		warehouse_button.size_flags_stretch_ratio = 1.0
+		warehouse_button.clip_text = false
+		warehouse_button.custom_minimum_size = Vector2(0, nav_h)
+
+	# Spacer not used in equal-thirds layout.
+	if is_instance_valid(_top_bar_spacer):
+		_top_bar_spacer.visible = false
+
+	# Top Up — equal third, centered text.
+	if is_instance_valid(top_up_button):
+		top_up_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		top_up_button.size_flags_stretch_ratio = 1.0
+		top_up_button.clip_text = true
+		top_up_button.custom_minimum_size = Vector2(0, nav_h)
+
+	# Mobile mounts the dropdown into the active panel control row; desktop hides it.
+	# Deferred so the active panel is ready when we reparent into it.
+	call_deferred("_mount_vendor_selector_for_layout")
+
+func _style_top_bar_background(panel: Node) -> void:
+	# Subtle solid bar behind the nav buttons so leftover spacing sits on a clean surface instead of
+	# the patterned map background. Keeps the verdigris bottom rail the banner already had.
+	if not (panel is PanelContainer):
+		return
+	if panel.has_meta("top_bar_bg_styled"):
+		return
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color(0.090, 0.098, 0.110, 0.92) # near-METAL_DARK, slightly translucent
+	sb.border_width_bottom = 3
+	sb.border_color = Color("#5aa192") # ACCENT_VERDIGRIS rail
+	sb.content_margin_left = 8
+	sb.content_margin_right = 8
+	sb.content_margin_top = 6
+	sb.content_margin_bottom = 6
+	panel.add_theme_stylebox_override("panel", sb)
+	panel.set_meta("top_bar_bg_styled", true)
 
 func _style_back_button(button: Button) -> void:
 	if not is_instance_valid(button):
@@ -1128,7 +909,7 @@ func _style_back_button(button: Button) -> void:
 	if is_instance_valid(dsm):
 		is_portrait = dsm.get_is_portrait()
 		is_mobile = dsm.is_mobile
-		fs = dsm.get_scaled_base_font_size(24 if is_portrait else 20)
+		fs = 24 if is_portrait else 20
 	else:
 		var win_size = get_viewport_rect().size if is_inside_tree() else Vector2(0, 0)
 		is_portrait = win_size.y > win_size.x
@@ -1181,7 +962,7 @@ func _style_vendor_tabs() -> void:
 	
 	if is_instance_valid(dsm):
 		is_portrait = dsm.get_is_portrait()
-		fs = dsm.get_scaled_base_font_size(18)
+		fs = 18
 		
 	# Focus on horizontal expansion for mobile
 	if is_portrait:
@@ -1215,6 +996,359 @@ func _style_vendor_tabs() -> void:
 	tab_bar.add_theme_stylebox_override("tab_unselected", bg_normal)
 	tab_bar.add_theme_stylebox_override("tab_selected", bg_selected)
 
+	# On mobile, the tab strip can't fit long vendor names — drive selection via a dropdown instead.
+	_sync_vendor_selector()
+
+func _sync_vendor_selector() -> void:
+	if not is_instance_valid(vendor_selector) or not is_instance_valid(vendor_tab_container):
+		return
+	# Single-vendor mode: no switching, so the selector is never shown.
+	if _single_vendor_id != "":
+		vendor_selector.visible = false
+		return
+	var dsm = get_node_or_null("/root/DeviceStateManager")
+	var is_mobile := false
+	if is_instance_valid(dsm):
+		var mode = dsm.get_layout_mode()
+		is_mobile = (mode == 1 or mode == 2) # MOBILE_LANDSCAPE or MOBILE_PORTRAIT
+	var tab_count: int = vendor_tab_container.get_tab_count()
+	var has_vendor_tabs: bool = tab_count > 0
+	if tab_count == 1:
+		var only_ctrl = vendor_tab_container.get_tab_control(0)
+		if only_ctrl is Label and only_ctrl.name == "InfoMessage":
+			has_vendor_tabs = false
+	if not (is_mobile and has_vendor_tabs):
+		# Desktop, or nothing to show: dropdown hidden, the tab strip is the selector.
+		vendor_selector.visible = false
+		if not is_mobile and has_vendor_tabs and vendor_tab_container.has_method("set_tabs_visible"):
+			vendor_tab_container.set_tabs_visible(true)
+		return
+	# Mobile with real vendor tabs: hide the tab bar, drive selection from the dropdown.
+	if vendor_tab_container.has_method("set_tabs_visible"):
+		vendor_tab_container.set_tabs_visible(false)
+	vendor_selector.clear()
+	for i in range(tab_count):
+		vendor_selector.add_item(String(vendor_tab_container.get_tab_title(i)), i)
+	var cur: int = vendor_tab_container.current_tab
+	if cur >= 0 and cur < tab_count:
+		vendor_selector.select(cur)
+	vendor_selector.visible = true
+
+func _on_vendor_selector_selected(idx: int) -> void:
+	if is_instance_valid(vendor_tab_container) and idx >= 0 and idx < vendor_tab_container.get_tab_count():
+		if vendor_tab_container.current_tab != idx:
+			vendor_tab_container.current_tab = idx # fires tab_changed → _on_vendor_tab_changed
+
+func _style_vendor_selector() -> void:
+	if not is_instance_valid(vendor_selector):
+		return
+	vendor_selector.alignment = HORIZONTAL_ALIGNMENT_LEFT
+	# Default OptionButton reserves width for the LONGEST item (huge dead space for short names like
+	# "Depot"). Size to the CURRENT selection instead so the button hugs its text.
+	vendor_selector.fit_to_longest_item = false
+	vendor_selector.add_theme_font_size_override("font_size", 22)
+	# The dropdown popup renders in its own window and does NOT inherit content_scale_factor,
+	# so its items look tiny on mobile — give it an explicit, touch-readable size. We also override
+	# the panel stylebox with BALANCED margins: the inherited theme panel had a large top margin,
+	# which left dead space above the (small) items and pushed them to the bottom of the popup.
+	var popup: PopupMenu = vendor_selector.get_popup()
+	if is_instance_valid(popup):
+		popup.add_theme_font_size_override("font_size", 28)
+		popup.add_theme_constant_override("v_separation", 10)
+		var pstyle := StyleBoxFlat.new()
+		pstyle.bg_color = OORI_DARK_GREY
+		pstyle.set_border_width_all(1)
+		pstyle.border_color = OORI_GREY
+		pstyle.set_corner_radius_all(6)
+		pstyle.content_margin_left = 16
+		pstyle.content_margin_right = 16
+		pstyle.content_margin_top = 8
+		pstyle.content_margin_bottom = 8
+		popup.add_theme_stylebox_override("panel", pstyle)
+	# Filter-control language — matches the panel's Sort / Buy-Sell controls: a recessed METAL_DARK
+	# well with a verdigris trim border, so it reads as a state selector and NOT as an action button
+	# (Top Up / Warehouse). Verdigris = the design system's digital/state cue.
+	var trim := UITheme.METAL_EDGE.lerp(UITheme.ACCENT_VERDIGRIS, 0.55)
+	var normal := StyleBoxFlat.new()
+	normal.bg_color = UITheme.METAL_DARK # #1a1a1f — recessed well
+	normal.set_border_width_all(1)
+	normal.border_color = trim
+	normal.set_corner_radius_all(6)
+	normal.content_margin_left = 14
+	normal.content_margin_right = 14
+	normal.content_margin_top = 12
+	normal.content_margin_bottom = 12
+	var hover := normal.duplicate()
+	hover.bg_color = UITheme.METAL_DARK.lerp(UITheme.ACCENT_VERDIGRIS, 0.18)
+	hover.border_color = UITheme.ACCENT_VERDIGRIS
+	var pressed := normal.duplicate()
+	pressed.bg_color = UITheme.METAL_DARK.lerp(Color.BLACK, 0.2)
+	vendor_selector.add_theme_stylebox_override("normal", normal)
+	vendor_selector.add_theme_stylebox_override("hover", hover)
+	vendor_selector.add_theme_stylebox_override("pressed", pressed)
+	vendor_selector.add_theme_stylebox_override("focus", normal)
+	vendor_selector.add_theme_color_override("font_color", OORI_WHITE)
+	vendor_selector.add_theme_color_override("font_hover_color", Color(1, 1, 1))
+	vendor_selector.add_theme_color_override("font_pressed_color", OORI_WHITE)
+
+func _get_active_vendor_panel() -> Node:
+	if not is_instance_valid(vendor_tab_container):
+		return null
+	var cur: int = vendor_tab_container.current_tab
+	if cur < 0 or cur >= vendor_tab_container.get_tab_count():
+		return null
+	return vendor_tab_container.get_tab_control(cur)
+
+func _mount_vendor_selector_for_layout() -> void:
+	# Single-vendor mode re-homes the back/title control into the (possibly rebuilt) panel control row.
+	_position_single_vendor_title()
+	# The vendor-type dropdown belongs ON THE SAME control row as Buy/Sell + Sort, which live inside
+	# the active VendorTradePanel. On mobile (portrait OR landscape) we mount the (single, shared)
+	# selector into the active panel's control row → [Vendor ▾][Buy ⇄][Sort ▾]. On desktop the tab
+	# strip is the selector and the dropdown stays hidden.
+	if not is_instance_valid(vendor_selector):
+		return
+	var is_mobile: bool = (_current_layout_mode() != 0) # 0 == DESKTOP
+	if not is_mobile:
+		# Desktop: park the selector back in the nav bar (it's hidden there by _sync_vendor_selector).
+		var bhb: HBoxContainer = _banner_hbox if is_instance_valid(_banner_hbox) else top_bar_hbox
+		if is_instance_valid(bhb) and vendor_selector.get_parent() != bhb:
+			if is_instance_valid(vendor_selector.get_parent()):
+				vendor_selector.get_parent().remove_child(vendor_selector)
+			bhb.add_child(vendor_selector)
+			if is_instance_valid(top_up_button) and top_up_button.get_parent() == bhb:
+				bhb.move_child(vendor_selector, top_up_button.get_index())
+		return
+	var panel: Node = _get_active_vendor_panel()
+	if is_instance_valid(panel) and panel.has_method("mount_external_vendor_selector"):
+		panel.mount_external_vendor_selector(vendor_selector)
+
+func _reorganize_top_bar() -> void:
+	# One-shot restructure: collapse the breadcrumb + settlement-name + vendor dropdown + Top Up
+	# onto the single banner row. Order in the HBox:
+	#   [< Convoy]  [Settlement]  [spacer]  [Vendor ▾]  [Top Up]
+	# Orientation sizing is applied separately by _apply_top_bar_sizing().
+	if _top_bar_reorganized:
+		return
+	if not is_instance_valid(_top_banner_convoy_button):
+		return
+	var banner_hbox: Node = _top_banner_convoy_button.get_parent()
+	if not (banner_hbox is HBoxContainer):
+		return
+	var bhb: HBoxContainer = banner_hbox
+	_banner_hbox = bhb
+	bhb.alignment = BoxContainer.ALIGNMENT_BEGIN
+	bhb.add_theme_constant_override("separation", 8)
+
+	# Slim the convoy breadcrumb so it no longer dominates the bar. Left-align + tight padding so the
+	# text hugs the start and a long convoy name just clips at the END (instead of floating centered
+	# in a wide button with big dead space on both sides).
+	_top_banner_convoy_button.add_theme_font_size_override("font_size", 16)
+	_top_banner_convoy_button.clip_text = true
+	_top_banner_convoy_button.alignment = HORIZONTAL_ALIGNMENT_LEFT
+	for sb_name in ["normal", "hover", "pressed", "focus"]:
+		var sb := _top_banner_convoy_button.get_theme_stylebox(sb_name)
+		if sb is StyleBoxFlat:
+			var tight: StyleBoxFlat = sb.duplicate()
+			tight.content_margin_left = 10
+			tight.content_margin_right = 10
+			tight.content_margin_top = 4
+			tight.content_margin_bottom = 4
+			_top_banner_convoy_button.add_theme_stylebox_override(sb_name, tight)
+	# The static "| SETTLEMENT" suffix is redundant — the settlement name carries that meaning.
+	if is_instance_valid(_top_banner_suffix_label):
+		_top_banner_suffix_label.visible = false
+
+	# Order: [< Convoy][🏭] grouped left, [spacer], [Top Up] as the right-side action.
+	# Warehouse sits right after the breadcrumb (no gap between the name and the warehouse icon).
+	if is_instance_valid(warehouse_button):
+		var wh_parent: Node = warehouse_button.get_parent()
+		if is_instance_valid(wh_parent):
+			wh_parent.remove_child(warehouse_button)
+		bhb.add_child(warehouse_button)
+		_style_top_bar_button(warehouse_button)
+
+	# Flex spacer after the title group — absorbs slack so Top Up pins right and the leftover space
+	# is one clean region on the bar background (not a hole in the middle).
+	_top_bar_spacer = Control.new()
+	_top_bar_spacer.name = "TopBarSpacer"
+	bhb.add_child(_top_bar_spacer)
+
+	# Give the bar its own subtle background so button spacing reads as intentional negative space
+	# instead of the patterned map showing through.
+	_style_top_bar_background(bhb.get_parent())
+
+	# Vendor dropdown (parked here; mobile moves it into the panel control row, desktop hides it).
+	if is_instance_valid(vendor_selector):
+		var vs_parent: Node = vendor_selector.get_parent()
+		if is_instance_valid(vs_parent):
+			vs_parent.remove_child(vendor_selector)
+		bhb.add_child(vendor_selector)
+
+	# Top Up pinned to the far right.
+	if is_instance_valid(top_up_button):
+		var tu_parent: Node = top_up_button.get_parent()
+		if is_instance_valid(tu_parent):
+			tu_parent.remove_child(top_up_button)
+		bhb.add_child(top_up_button)
+
+	# The old breakout row is now unused.
+	var secondary: Node = $MainVBox.get_node_or_null("SecondaryBannerPanel")
+	if is_instance_valid(secondary):
+		secondary.visible = false
+
+	_top_bar_reorganized = true
+	_update_settlement_banner_button()
+
+func _update_settlement_banner_button() -> void:
+	# Icon-only Warehouse button (🏭 — matches the map's warehouse-label glyph). The settlement
+	# NAME is no longer shown here; instead the settlement's own map label is activated while this
+	# menu is open (see _set_settlement_map_label_active).
+	if not is_instance_valid(warehouse_button):
+		return
+	warehouse_button.text = ""
+	# Center the icon in the (wide, equal-third) button — buttons default the icon to the left edge.
+	warehouse_button.icon_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	warehouse_button.vertical_icon_alignment = VERTICAL_ALIGNMENT_CENTER
+	warehouse_button.alignment = HORIZONTAL_ALIGNMENT_CENTER
+	if warehouse_button.icon == null:
+		var wh_icon = load("res://Assets/Icons/warehouse.svg")
+		if wh_icon != null:
+			warehouse_button.icon = wh_icon
+			warehouse_button.expand_icon = true
+			warehouse_button.add_theme_constant_override("icon_max_width", 44)
+			warehouse_button.add_theme_color_override("icon_normal_color", OORI_WHITE)
+			warehouse_button.add_theme_color_override("icon_hover_color", Color(1, 1, 1))
+			warehouse_button.add_theme_color_override("icon_pressed_color", OORI_YELLOW)
+	var sname: String = ""
+	if _settlement_data is Dictionary:
+		sname = String(_settlement_data.get("name", ""))
+	warehouse_button.tooltip_text = ("Open Warehouse — %s" % sname) if sname != "" else "Open Warehouse"
+
+func _apply_single_vendor_banner() -> void:
+	# Single-vendor mode: collapse the top banner into the control row. The back/title (vendor name) is
+	# seated as the first element of the panel's [‹ Vendor][Buy|Sell][Sort] row; the banner is hidden.
+	_hide_single_vendor_banner()
+	if not is_instance_valid(_single_vendor_title):
+		_single_vendor_title = _build_single_vendor_title()
+	_update_single_vendor_title_text()
+	call_deferred("_position_single_vendor_title")
+
+## Two-line clickable title that doubles as the back control: a small "‹ <settlement>" hint over the
+## vendor TYPE (bold, wraps to a 2nd line for long names). Seated in the merged control row.
+func _build_single_vendor_title() -> Control:
+	var root := PanelContainer.new()
+	root.name = "BackToSettlementButton"
+	root.mouse_filter = Control.MOUSE_FILTER_STOP
+	root.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+	root.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+	root.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	root.tooltip_text = "Back to settlement overview"
+	var sb := StyleBoxEmpty.new()
+	sb.content_margin_left = UITheme.SPACE_SM
+	sb.content_margin_right = UITheme.SPACE_MD
+	sb.content_margin_top = UITheme.SPACE_SM
+	sb.content_margin_bottom = UITheme.SPACE_SM
+	root.add_theme_stylebox_override("panel", sb)
+	root.gui_input.connect(func(ev: InputEvent) -> void:
+		var hit := (ev is InputEventMouseButton and (ev as InputEventMouseButton).pressed and (ev as InputEventMouseButton).button_index == MOUSE_BUTTON_LEFT)
+		hit = hit or (ev is InputEventScreenTouch and (ev as InputEventScreenTouch).pressed)
+		if hit:
+			_on_back_to_overview_pressed()
+	)
+	var vb := VBoxContainer.new()
+	vb.add_theme_constant_override("separation", 0)
+	vb.custom_minimum_size.x = 150.0
+	vb.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	root.add_child(vb)
+
+	var hint := Label.new()
+	hint.name = "BackHintLabel"
+	hint.add_theme_font_size_override("font_size", 11)
+	hint.add_theme_color_override("font_color", UITheme.ACCENT_BRASS)
+	hint.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	vb.add_child(hint)
+
+	var type_l := Label.new()
+	type_l.name = "VendorTypeLabel"
+	type_l.add_theme_font_size_override("font_size", 16)
+	type_l.add_theme_color_override("font_color", OORI_WHITE)
+	type_l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	type_l.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	vb.add_child(type_l)
+	return root
+
+func _update_single_vendor_title_text() -> void:
+	if not is_instance_valid(_single_vendor_title):
+		return
+	var sname := ""
+	if _settlement_data is Dictionary:
+		sname = String(_settlement_data.get("name", ""))
+	var hint := _single_vendor_title.find_child("BackHintLabel", true, false) as Label
+	if is_instance_valid(hint):
+		hint.text = "‹ %s" % sname if sname != "" else "‹ Settlement"
+	var type_l := _single_vendor_title.find_child("VendorTypeLabel", true, false) as Label
+	if is_instance_valid(type_l):
+		type_l.text = _current_vendor_name if _current_vendor_name != "" else "Vendor"
+
+## Hide the menu's top banner — its row is reclaimed by the merged control row.
+func _hide_single_vendor_banner() -> void:
+	if is_instance_valid(_top_banner_convoy_button):
+		_top_banner_convoy_button.visible = false
+	if is_instance_valid(_top_banner_suffix_label):
+		_top_banner_suffix_label.visible = false
+	var bhb: HBoxContainer = _banner_hbox if is_instance_valid(_banner_hbox) else top_bar_hbox
+	if is_instance_valid(bhb):
+		var panel: Node = bhb.get_parent()
+		if panel is Control:
+			(panel as Control).visible = false
+
+## Seat the title/back control as the first element of the active vendor panel's control row.
+func _position_single_vendor_title() -> void:
+	if _single_vendor_id == "" or not is_instance_valid(_single_vendor_title):
+		return
+	var panel: Node = _get_active_vendor_panel()
+	if is_instance_valid(panel) and panel.has_method("mount_external_title"):
+		panel.mount_external_title(_single_vendor_title)
+
+func _on_back_to_overview_pressed() -> void:
+	# back_requested is wired (MenuBase → MenuManager) to go_back, which pops the stack to the overview.
+	emit_signal("back_requested")
+
+func _activate_settlement_map_label() -> void:
+	# Pin the current settlement's map label so its name is visible on the map while this menu is open
+	# (replaces the old in-header settlement-name button). Reuses the UIManager pin system via SignalHub.
+	if not (_settlement_data is Dictionary):
+		return
+	var sx: int = int(roundf(float(_settlement_data.get("x", -9999.0))))
+	var sy: int = int(roundf(float(_settlement_data.get("y", -9999.0))))
+	if sx <= -9999 or sy <= -9999:
+		return
+	var coords := Vector2i(sx, sy)
+	if _map_label_coords == coords:
+		return
+	# If we had a different settlement pinned, release it first.
+	_deactivate_settlement_map_label()
+	_map_label_coords = coords
+	var hub = get_node_or_null("/root/SignalHub")
+	if is_instance_valid(hub) and hub.has_signal("settlement_menu_pin_requested"):
+		hub.emit_signal("settlement_menu_pin_requested", coords, true)
+
+func _deactivate_settlement_map_label() -> void:
+	if _map_label_coords == null:
+		return
+	var hub = get_node_or_null("/root/SignalHub")
+	if is_instance_valid(hub) and hub.has_signal("settlement_menu_pin_requested"):
+		hub.emit_signal("settlement_menu_pin_requested", _map_label_coords, false)
+	_map_label_coords = null
+
+func _exit_tree() -> void:
+	_deactivate_settlement_map_label()
+	# Free the title if it's currently detached (between rebuilds) so it doesn't leak.
+	if is_instance_valid(_single_vendor_title) and not is_instance_valid(_single_vendor_title.get_parent()):
+		_single_vendor_title.queue_free()
+	super._exit_tree()
+
 
 # --- Custom Tooltip Override ---
 # Godot will call _make_custom_tooltip on the Control that has the tooltip_text set (this script's node),
@@ -1229,25 +1363,6 @@ func get_vendor_tab_bar() -> Node:
 	if is_instance_valid(vendor_tab_container) and vendor_tab_container.has_method("get_tab_bar"):
 		return vendor_tab_container.get_tab_bar()
 	return null
-
-# Find the rect of a vendor tab whose title contains the given substring (case-insensitive)
-func get_vendor_tab_rect_by_title_contains(substr: String) -> Rect2:
-	if not is_instance_valid(vendor_tab_container):
-		return Rect2()
-	var bar = get_vendor_tab_bar()
-	if bar == null:
-		return Rect2()
-	var needle := substr.to_lower()
-	for i in range(vendor_tab_container.get_tab_count()):
-		var title := String(vendor_tab_container.get_tab_title(i))
-		if title.to_lower().find(needle) != -1:
-			if bar.has_method("get_tab_rect"):
-				var local_r: Rect2 = bar.get_tab_rect(i)
-				var bar_global := (bar as Control).get_global_rect()
-				return Rect2(bar_global.position + local_r.position, local_r.size)
-			# Fallback to whole bar rect if API not present
-			return (bar as Control).get_global_rect()
-	return Rect2()
 
 # Select a vendor tab by title contains; returns true if selection changed
 func select_vendor_tab_by_title_contains(substr: String) -> bool:

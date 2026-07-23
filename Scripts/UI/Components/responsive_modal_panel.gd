@@ -124,7 +124,7 @@ func _setup_panel_style() -> void:
 	var is_portrait = (mode == 2) # MOBILE_PORTRAIT
 	
 	# Apply global dynamic font sizing automatically
-	var dyn_font_sz = _dsm.get_scaled_base_font_size(16)
+	var dyn_font_sz = 16
 	var curr_theme = _panel.theme
 	if curr_theme == null:
 		curr_theme = Theme.new()
@@ -144,15 +144,7 @@ func _setup_background_texture() -> void:
 		print("[ResponsiveModalPanel] Applying ModalBackground to ", name)
 		bg = TextureRect.new()
 		bg.name = "ModalBackground"
-		bg.texture = load("res://Assets/Themes/Oori Backround.png")
-		if bg.texture == null:
-			printerr("[ResponsiveModalPanel] ERROR: Failed to load background texture")
-			return
-		bg.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-		bg.stretch_mode = TextureRect.STRETCH_TILE
-		bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		_panel.add_child(bg)
 		_panel.move_child(bg, 0)
-	
-	# Keep it covering the whole panel area
 	bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	UITheme.apply_oori_bg(bg)

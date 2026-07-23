@@ -55,6 +55,7 @@ layout_mode = 2
 layout_mode = 2
 size_flags_vertical = 3
 horizontal_scroll_mode = 0
+vertical_scroll_mode = 0
 
 [node name="ContentVBox" type="VBoxContainer" parent="MainVBox/ScrollContainer"]
 layout_mode = 2
@@ -62,8 +63,10 @@ size_flags_horizontal = 3
 size_flags_vertical = 3
 theme_override_constants/separation = 6
 
-[node name="ResourceStatsHBox" type="HBoxContainer" parent="MainVBox/ScrollContainer/ContentVBox"]
+[node name="ResourceStatsHBox" type="BoxContainer" parent="MainVBox/ScrollContainer/ContentVBox"]
 layout_mode = 2
+theme_override_constants/separation = 8
+vertical = true
 
 [node name="WaterBox" type="Control" parent="MainVBox/ScrollContainer/ContentVBox/ResourceStatsHBox"]
 custom_minimum_size = Vector2(0, 50)
@@ -145,6 +148,7 @@ layout_mode = 2
 
 [node name="PerformanceStatsHBox" type="HBoxContainer" parent="MainVBox/ScrollContainer/ContentVBox"]
 layout_mode = 2
+theme_override_constants/separation = 4
 
 [node name="SpeedBox" type="PanelContainer" parent="MainVBox/ScrollContainer/ContentVBox/PerformanceStatsHBox"]
 custom_minimum_size = Vector2(0, 50)
@@ -197,7 +201,7 @@ vertical_alignment = 1
 [node name="HSeparator3" type="HSeparator" parent="MainVBox/ScrollContainer/ContentVBox"]
 layout_mode = 2
 
-[node name="CargoBarsHBox" type="HBoxContainer" parent="MainVBox/ScrollContainer/ContentVBox"]
+[node name="CargoBarsHBox" type="VBoxContainer" parent="MainVBox/ScrollContainer/ContentVBox"]
 layout_mode = 2
 theme_override_constants/separation = 12
 
@@ -339,8 +343,8 @@ theme_override_constants/separation = 4
 layout_mode = 2
 size_flags_horizontal = 3
 theme_override_constants/h_separation = 2
-theme_override_constants/v_separation = 2
-columns = 999
+theme_override_constants/v_separation = 6
+columns = 1
 
 [node name="VendorNoItemsLabel" type="Label" parent="MainVBox/ScrollContainer/ContentVBox/VendorPreviewPanel/VendorPreviewVBox/VendorContentPanel/VendorContentScroll/ContentWrapper"]
 visible = false
@@ -356,35 +360,3 @@ vertical_alignment = 1
 size_flags_horizontal = 3
 custom_minimum_size = Vector2(0, 48)
 
-[node name="BottomBarPanel" type="PanelContainer" parent="MainVBox"]
-layout_mode = 2
-
-[node name="BottomMenuButtonsHBox" type="HFlowContainer" parent="MainVBox/BottomBarPanel"]
-layout_mode = 2
-theme_override_constants/h_separation = 10
-theme_override_constants/v_separation = 10
-alignment = 1
-
-[node name="VehicleMenuButton" type="Button" parent="MainVBox/BottomBarPanel/BottomMenuButtonsHBox"]
-layout_mode = 2
-text = "Vehicles"
-custom_minimum_size = Vector2(110, 34)
-size_flags_horizontal = 3
-
-[node name="JourneyMenuButton" type="Button" parent="MainVBox/BottomBarPanel/BottomMenuButtonsHBox"]
-layout_mode = 2
-text = "Journey"
-custom_minimum_size = Vector2(110, 34)
-size_flags_horizontal = 3
-
-[node name="SettlementMenuButton" type="Button" parent="MainVBox/BottomBarPanel/BottomMenuButtonsHBox"]
-layout_mode = 2
-text = "Settlement"
-custom_minimum_size = Vector2(110, 34)
-size_flags_horizontal = 3
-
-[node name="CargoMenuButton" type="Button" parent="MainVBox/BottomBarPanel/BottomMenuButtonsHBox"]
-layout_mode = 2
-text = "Cargo"
-custom_minimum_size = Vector2(110, 34)
-size_flags_horizontal = 3

@@ -116,20 +116,32 @@ func _compare_and_report() -> void:
 	
 	_log("Comparing snapshot (" + str(last_cargo.size()) + " items) with current (" + str(current_cargo.size()) + " items)")
 	
-	var sold_items = _find_missing_items(last_cargo, current_cargo)
-	
+	var missing_items = _find_missing_items(last_cargo, current_cargo)
+
+	# The delivery receipt must list only genuine deliveries: items that had a delivery
+	# recipient and/or reward and have left the inventory. Consumed supplies (fuel,
+	# water, food) and installed/removed parts also leave inventory but are NOT
+	# deliveries — they carry a null delivery_reward and no recipient, and previously
+	# showed up as "To: Unknown Recipient | Reward: <null>" rows. Filter them out here.
+	var sold_items := []
+	var total_credits := 0.0
+	var skipped_non_delivery := 0
+	for item in missing_items:
+		var recipient := _resolve_recipient_name(item)
+		var reward = item.get("delivery_reward")
+		var has_reward: bool = reward != null and str(reward).strip_edges() != "" and str(reward) != "null"
+		if not has_reward and recipient == "Unknown Recipient":
+			# Not a delivery (no reward, no resolvable recipient) — exclude from receipt.
+			skipped_non_delivery += 1
+			continue
+		item["resolved_recipient"] = recipient
+		if has_reward:
+			total_credits += float(reward)
+		sold_items.append(item)
+
 	if not sold_items.is_empty():
-		var total_credits = 0.0
-		for item in sold_items:
-			var reward = item.get("delivery_reward")
-			if reward != null:
-				total_credits += float(reward)
-			
-			# Resolve recipient name for each item
-			item["resolved_recipient"] = _resolve_recipient_name(item)
-		
-		_log("DETECTION: Found " + str(sold_items.size()) + " auto-sold items! Total Credits: " + str(total_credits))
-		
+		_log("DETECTION: Found %d auto-sold deliveries! Total Credits: %s (filtered %d non-delivery item(s))" % [sold_items.size(), str(total_credits), skipped_non_delivery])
+
 		if is_instance_valid(_hub):
 			var receipt_payload = {
 				"items": sold_items,
@@ -137,8 +149,8 @@ func _compare_and_report() -> void:
 			}
 			_hub.auto_sell_receipt_ready.emit(receipt_payload)
 	else:
-		_log("No items missing. Nothing auto-sold.")
-	
+		_log("No auto-sold deliveries detected (filtered %d non-delivery item(s))." % skipped_non_delivery)
+
 	_save_snapshot()
 
 func _resolve_recipient_name(item: Dictionary) -> String:

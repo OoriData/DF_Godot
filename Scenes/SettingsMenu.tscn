@@ -77,7 +77,12 @@ corner_radius_bottom_left = 8
 corner_radius_bottom_right = 8
 
 [sub_resource type="StyleBoxFlat" id="StyleBoxFlat_ToggleButton"]
-bg_color = Color(1, 1, 1, 0.05)
+bg_color = Color(0, 0, 0, 0.35)
+border_width_left = 1
+border_width_top = 1
+border_width_right = 1
+border_width_bottom = 1
+border_color = Color(1, 1, 1, 0.08)
 corner_radius_top_left = 8
 corner_radius_top_right = 8
 corner_radius_bottom_left = 8
@@ -88,7 +93,7 @@ content_margin_right = 12
 content_margin_bottom = 8
 
 [sub_resource type="StyleBoxFlat" id="StyleBoxFlat_ToggleButton_Hover"]
-bg_color = Color(1, 1, 1, 0.1)
+bg_color = Color(0, 0, 0, 0.5)
 border_width_left = 1
 border_width_top = 1
 border_width_right = 1
@@ -199,7 +204,7 @@ unique_name_in_owner = true
 layout_mode = 2
 theme_override_styles/normal = SubResource("StyleBoxFlat_ToggleButton")
 theme_override_styles/hover = SubResource("StyleBoxFlat_ToggleButton_Hover")
-theme_override_styles/pressed = SubResource("StyleBoxFlat_ToggleButton_Hover")
+theme_override_styles/pressed = SubResource("StyleBoxFlat_ToggleButton")
 theme_override_styles/focus = SubResource("StyleBoxFlat_ToggleButton_Hover")
 text = "Fullscreen"
 
@@ -215,15 +220,6 @@ theme_override_constants/separation = 6
 [node name="UITitle" type="Label" parent="Root/Container/Panel/Margin/ContentVBox/Scroll/VBox/UISec"]
 layout_mode = 2
 text = "UI"
-
-[node name="DynamicScaleCheck" type="CheckButton" parent="Root/Container/Panel/Margin/ContentVBox/Scroll/VBox/UISec"]
-unique_name_in_owner = true
-layout_mode = 2
-theme_override_styles/normal = SubResource("StyleBoxFlat_ToggleButton")
-theme_override_styles/hover = SubResource("StyleBoxFlat_ToggleButton_Hover")
-theme_override_styles/pressed = SubResource("StyleBoxFlat_ToggleButton_Hover")
-theme_override_styles/focus = SubResource("StyleBoxFlat_ToggleButton_Hover")
-text = "Dynamic Scaling (Auto)"
 
 [node name="UIScaleRow" type="HBoxContainer" parent="Root/Container/Panel/Margin/ContentVBox/Scroll/VBox/UISec"]
 unique_name_in_owner = true
@@ -274,7 +270,7 @@ unique_name_in_owner = true
 layout_mode = 2
 theme_override_styles/normal = SubResource("StyleBoxFlat_ToggleButton")
 theme_override_styles/hover = SubResource("StyleBoxFlat_ToggleButton_Hover")
-theme_override_styles/pressed = SubResource("StyleBoxFlat_ToggleButton_Hover")
+theme_override_styles/pressed = SubResource("StyleBoxFlat_ToggleButton")
 theme_override_styles/focus = SubResource("StyleBoxFlat_ToggleButton_Hover")
 text = "Invert Pan"
 
@@ -283,18 +279,10 @@ unique_name_in_owner = true
 layout_mode = 2
 theme_override_styles/normal = SubResource("StyleBoxFlat_ToggleButton")
 theme_override_styles/hover = SubResource("StyleBoxFlat_ToggleButton_Hover")
-theme_override_styles/pressed = SubResource("StyleBoxFlat_ToggleButton_Hover")
+theme_override_styles/pressed = SubResource("StyleBoxFlat_ToggleButton")
 theme_override_styles/focus = SubResource("StyleBoxFlat_ToggleButton_Hover")
 text = "Invert Zoom"
 
-[node name="GesturesCheck" type="CheckButton" parent="Root/Container/Panel/Margin/ContentVBox/Scroll/VBox/ControlsSec"]
-unique_name_in_owner = true
-layout_mode = 2
-theme_override_styles/normal = SubResource("StyleBoxFlat_ToggleButton")
-theme_override_styles/hover = SubResource("StyleBoxFlat_ToggleButton_Hover")
-theme_override_styles/pressed = SubResource("StyleBoxFlat_ToggleButton_Hover")
-theme_override_styles/focus = SubResource("StyleBoxFlat_ToggleButton_Hover")
-text = "Enable Touch Gestures"
 
 [node name="HSeparator3" type="HSeparator" parent="Root/Container/Panel/Margin/ContentVBox/Scroll/VBox"]
 layout_mode = 2
@@ -313,7 +301,7 @@ unique_name_in_owner = true
 layout_mode = 2
 theme_override_styles/normal = SubResource("StyleBoxFlat_ToggleButton")
 theme_override_styles/hover = SubResource("StyleBoxFlat_ToggleButton_Hover")
-theme_override_styles/pressed = SubResource("StyleBoxFlat_ToggleButton_Hover")
+theme_override_styles/pressed = SubResource("StyleBoxFlat_ToggleButton")
 theme_override_styles/focus = SubResource("StyleBoxFlat_ToggleButton_Hover")
 text = "High Contrast Labels"
 

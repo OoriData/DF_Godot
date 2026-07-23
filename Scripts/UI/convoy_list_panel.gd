@@ -88,28 +88,46 @@ func _on_toggle_button_pressed() -> void:
 			convoys = _store.get_convoys()
 		
 		var item_count = convoys.size() if not convoys.is_empty() else 1 # 1 for "No convoys" label
-		
-		var win_size = DisplayServer.window_get_size()
-		var is_portrait = win_size.y > win_size.x
+
+		# Work in LOGICAL pixels (viewport rect), not DisplayServer.window_get_size() which
+		# returns physical pixels and mismatches the Control coordinates used below.
+		var viewport_size = get_viewport_rect().size
+		var is_portrait = _get_is_portrait()
 		var is_mobile = _is_mobile()
-		var item_h = 100 if is_portrait else (64 if is_mobile else 32)
-		var separation = 16 if is_portrait else (12 if is_mobile else 4)
-		
+		var item_h = 100 if is_portrait else (64 if is_mobile else 52) # Taller desktop items (52px instead of 32px)
+		var separation = 16 if is_portrait else (12 if is_mobile else 8) # Spacing (8px instead of 4px)
+
 		# Calculate total height: items + separations + top/bottom padding
 		var total_content_h = (item_count * item_h) + (max(0, item_count - 1) * separation) + 60
-		
+
 		# Clamp height to reasonable limits
-		var max_h = 800 if is_portrait else (600 if is_mobile else 300)
-		var min_h = 100 if is_portrait else (80 if is_mobile else 50)
-		var popup_height = clamp(total_content_h, min_h, max_h)
-		
-		convoy_popup.size = Vector2(toggle_button.size.x, popup_height)
+		var max_h = 800 if is_portrait else (600 if is_mobile else 500) # Increased max height on desktop
+		var min_h = 100 if is_portrait else (80 if is_mobile else 80)
+
+		var button_rect = toggle_button.get_global_rect()
+		# Never let the drawer run past the bottom edge — the ScrollContainer takes over.
+		var available_h = viewport_size.y - button_rect.end.y - 8.0
+		max_h = min(max_h, max(float(min_h), available_h))
+		var popup_height = clamp(float(total_content_h), float(min_h), float(max_h))
+
+		# Portrait: the toggle button is only ~160px wide — far too narrow to read a convoy
+		# name + destination. Widen the drawer well beyond the button and clamp to screen.
+		# Landscape/desktop buttons are already wide, so they keep their own width.
+		var popup_width = toggle_button.size.x
+		if is_portrait:
+			popup_width = clamp(viewport_size.x * 0.7, 300.0, 460.0)
+		popup_width = min(popup_width, viewport_size.x - 16.0)
+
+		convoy_popup.size = Vector2(popup_width, popup_height)
 
 		# Use popup(Rect2i) for robust positioning in Godot 4.
-		# This positions the popup relative to the viewport, using global coordinates.
-		var button_rect = toggle_button.get_global_rect()
-		# Position the popup to start at the bottom-left of the button.
-		var popup_position = Vector2(button_rect.position.x, button_rect.end.y)
+		# Anchor to the button's bottom-left, but shift left if a wider drawer would overflow
+		# the right edge, then keep an 8px gutter from the left.
+		var popup_x = button_rect.position.x
+		if popup_x + popup_width > viewport_size.x - 8.0:
+			popup_x = viewport_size.x - 8.0 - popup_width
+		popup_x = max(popup_x, 8.0)
+		var popup_position = Vector2(popup_x, button_rect.end.y)
 		convoy_popup.popup(Rect2i(popup_position, convoy_popup.size))
 
 		# Update button display to show it's open
@@ -154,10 +172,17 @@ func populate_convoy_list(convoys_data: Array) -> void:
 	for child in list_item_container.get_children():
 		child.queue_free()
 
+	var is_portrait = _get_is_portrait()
+	var is_mobile = _is_mobile()
+
 	if convoys_data.is_empty():
 		var no_convoys_label = Label.new()
 		no_convoys_label.text = "No convoys available."
 		no_convoys_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		var no_convoys_font_size = _get_font_size(16)
+		if not is_portrait and not is_mobile:
+			no_convoys_font_size = 22 # Larger empty state on desktop
+		no_convoys_label.add_theme_font_size_override("font_size", no_convoys_font_size)
 		list_item_container.add_child(no_convoys_label)
 		return
 
@@ -172,10 +197,7 @@ func populate_convoy_list(convoys_data: Array) -> void:
 		var item_button = Button.new()
 		item_button.name = "ConvoyButton_%s" % str(convoy_id)
 		
-		var win_size = DisplayServer.window_get_size()
-		var is_portrait = win_size.y > win_size.x
-		var is_mobile = _is_mobile()
-		var item_h = 100 if is_portrait else (64 if is_mobile else 32)
+		var item_h = 100 if is_portrait else (64 if is_mobile else 52) # Taller desktop items
 		
 		item_button.custom_minimum_size = Vector2(0, item_h)
 		item_button.clip_contents = true
@@ -203,7 +225,10 @@ func populate_convoy_list(convoys_data: Array) -> void:
 		var name_label = Label.new()
 		name_label.text = convoy_name
 		name_label.add_theme_color_override("font_color", Color(1.0, 1.0, 1.0)) # Bright White
-		name_label.add_theme_font_size_override("font_size", _get_font_size(16))
+		var name_font_size = _get_font_size(16)
+		if not is_portrait and not is_mobile:
+			name_font_size = 23 # Large convoy name font on desktop
+		name_label.add_theme_font_size_override("font_size", name_font_size)
 		name_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 		name_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		if is_portrait:
@@ -237,15 +262,21 @@ func populate_convoy_list(convoys_data: Array) -> void:
 				
 				var dest_label = Label.new()
 				dest_label.text = "to %s" % dest_name
-				dest_label.add_theme_color_override("font_color", Color(0.16, 0.71, 0.96)) # Cyan
-				dest_label.add_theme_font_size_override("font_size", _get_font_size(15))
+				dest_label.add_theme_color_override("font_color", UITheme.TEXT_MUTED) # Destination = secondary text
+				var dest_font_size = _get_font_size(15)
+				if not is_portrait and not is_mobile:
+					dest_font_size = 21 # Large destination font on desktop
+				dest_label.add_theme_font_size_override("font_size", dest_font_size)
 				# Removed text_overrun_behavior to prevent it from collapsing in portrait
 				journey_row.add_child(dest_label)
 				
 				var prog_label = Label.new()
 				prog_label.text = "(%.0f%%)" % progress_percentage
 				prog_label.add_theme_color_override("font_color", Color(1.0, 0.9, 0.4)) # Light Yellow
-				prog_label.add_theme_font_size_override("font_size", _get_font_size(14))
+				var prog_font_size = _get_font_size(14)
+				if not is_portrait and not is_mobile:
+					prog_font_size = 20 # Large progress font on desktop
+				prog_label.add_theme_font_size_override("font_size", prog_font_size)
 				journey_row.add_child(prog_label)
 
 		# Oori Button Styling
@@ -308,10 +339,20 @@ func _is_mobile() -> bool:
 		return dsm.is_mobile
 	return OS.has_feature("mobile") or OS.has_feature("web_android") or OS.has_feature("web_ios") or DisplayServer.get_name() in ["Android", "iOS"]
 
+func _get_is_portrait() -> bool:
+	# Use DeviceStateManager (logical orientation) rather than DisplayServer.window_get_size(),
+	# which returns PHYSICAL pixels and is meaningless next to the logical Control coordinates
+	# used for popup sizing/positioning (Law of Logical Pixels).
+	var dsm = get_node_or_null("/root/DeviceStateManager")
+	if is_instance_valid(dsm) and dsm.has_method("get_is_portrait"):
+		return dsm.get_is_portrait()
+	var win_size = get_viewport_rect().size if is_inside_tree() else Vector2(0, 0)
+	return win_size.y > win_size.x
+
 func _get_font_size(base: int) -> int:
 	var dsm = get_node_or_null("/root/DeviceStateManager")
 	if is_instance_valid(dsm):
-		return dsm.get_scaled_base_font_size(base)
+		return base
 	
 	var win_size = get_viewport_rect().size if is_inside_tree() else Vector2(0, 0)
 	var is_portrait = win_size.y > win_size.x
@@ -349,8 +390,11 @@ func _update_button_layout() -> void:
 		is_portrait = win_size.y > win_size.x
 
 	if is_portrait:
-		# Chunky Portrait Scaling
-		toggle_button.custom_minimum_size = Vector2(400, 110)
+		# Chunky Portrait Scaling. Width is kept well under the 800px logical portrait
+		# width so the whole top bar (username + Options + Feedback + money + selector)
+		# fits a single row — otherwise the bar's min width exceeds 800px and MainContainer
+		# (grow_horizontal = BOTH) balloons, pushing the entire UI off both screen edges.
+		toggle_button.custom_minimum_size = Vector2(160, 110)
 		rtl.add_theme_font_size_override("normal_font_size", _get_font_size(19))
 		rtl.offset_top = 34
 	elif _is_mobile():
@@ -360,9 +404,9 @@ func _update_button_layout() -> void:
 		rtl.offset_top = 16
 	else:
 		# Desktop
-		toggle_button.custom_minimum_size = Vector2(260, 34)
-		rtl.add_theme_font_size_override("normal_font_size", 19)
-		rtl.offset_top = 3
+		toggle_button.custom_minimum_size = Vector2(300, 56) # Taller premium button height on desktop
+		rtl.add_theme_font_size_override("normal_font_size", 25) # Larger text font size
+		rtl.offset_top = 10 # Adjusted vertical centering offset
 		
 	var btn_style = StyleBoxFlat.new()
 	btn_style.bg_color = OORI_GREY
@@ -458,7 +502,12 @@ func _update_toggle_button_display(is_open: bool) -> void:
 			if dest_name.is_empty():
 				dest_name = _get_settlement_name(dest_x, dest_y)
 			if not dest_name.is_empty():
-				status_text = " [font_size=%d][color=#29b6f6]to %s[/color][/font_size]" % [_get_font_size(15), dest_name]
+				var status_font_size = _get_font_size(15)
+				var dsm = get_node_or_null("/root/DeviceStateManager")
+				var is_portrait_mode = dsm.get_is_portrait() if is_instance_valid(dsm) else (get_viewport_rect().size.y > get_viewport_rect().size.x if is_inside_tree() else false)
+				if not is_portrait_mode and not _is_mobile():
+					status_font_size = 21 # Larger desktop status text
+				status_text = " [font_size=%d][color=#%s]to %s[/color][/font_size]" % [status_font_size, UITheme.TEXT_MUTED.to_html(false), dest_name]
 		
 		display_text = "%s%s %s" % [convoy_name, status_text, arrow]
 	
@@ -469,7 +518,7 @@ func _update_toggle_button_display(is_open: bool) -> void:
 	if is_instance_valid(rtl) and rtl is RichTextLabel:
 		rtl.text = styled_text
 	else:
-		toggle_button.text = display_text.replace("[color=gray]", "").replace("[/color]", "").replace("[color=#29b6f6]", "")
+		toggle_button.text = display_text.replace("[color=gray]", "").replace("[/color]", "").replace("[color=#%s]" % UITheme.TEXT_MUTED.to_html(false), "")
 
 ## Highlights a specific convoy in the list.
 ## Call this from main.gd when a convoy is selected on the map.
@@ -482,6 +531,6 @@ func highlight_convoy_in_list(selected_convoy_id_str: String) -> void:
 		if child is Button: # Or your custom item type
 			# A more robust way is to check the name or metadata set during creation
 			if child.name == "ConvoyButton_%s" % selected_convoy_id_str:
-				child.modulate = Color.LIGHT_SKY_BLUE # Highlight color
+				child.modulate = UITheme.ACCENT_BRASS # Active/selected highlight tint
 			else:
 				child.modulate = Color.WHITE # Reset others

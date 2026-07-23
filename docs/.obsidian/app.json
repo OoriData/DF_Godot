@@ -1,0 +1,7 @@
+{
+  "fontSize": 16,
+  "useMarkdownLinks": true,
+  "newLinkFormat": "relative",
+  "attachmentFolderPath": ".attachments",
+  "showLineNumber": true
+}

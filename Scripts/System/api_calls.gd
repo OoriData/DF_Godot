@@ -73,6 +73,8 @@ signal google_account_linked(result: Dictionary)     # { ok, error_code, message
 signal bug_report_submitted(result: Dictionary)
 
 var BASE_URL: String = 'http://127.0.0.1:1337' # default (overridden via config/env)
+var active_env: String = "dev" # "dev" or "prod"
+
 # Allow override via configuration and environment (cannot be const due to runtime lookup)
 func _init():
 	_load_base_url_from_config()
@@ -92,7 +94,7 @@ func _load_base_url_from_config() -> void:
 	if direct != "":
 		BASE_URL = direct
 		return
-	var active_env := String(cfg.get_value("api", "active_env", "dev")).to_lower()
+	active_env = String(cfg.get_value("api", "active_env", "dev")).to_lower()
 	var dev := String(cfg.get_value("api", "base_url_dev", BASE_URL))
 	var prod := String(cfg.get_value("api", "base_url_prod", BASE_URL))
 	match active_env:
@@ -107,6 +109,7 @@ var _http_request_map: HTTPRequest  # Dedicated non-queued requester for map dat
 var _http_request_route: HTTPRequest # Dedicated requester for route finding (non-queued)
 var _map_request_start_ms: int = 0
 var _last_map_url: String = ""
+var _map_dump_done: bool = false
 var _map_request_inflight: bool = false
 var _http_request_mech_pool: Array = [] # ephemeral HTTPRequest nodes for part compatibility checks
 var convoys_in_transit: Array = []  # This will store the latest parsed list of convoys (either user's or all)
@@ -366,32 +369,59 @@ func set_user_id(p_user_id: String) -> void:
 func set_auth_session_token(token: String) -> void:
 	_auth_bearer_token = token
 	_auth_token_expiry = _decode_jwt_expiry(token)
-	_log_info("[APICalls] Auth session set (len=" + str(token.length()) + ", exp=" + str(_auth_token_expiry) + ")")
+	_log_info("[APICalls] Auth session set (len=" + str(token.length()) + ", exp=" + str(_auth_token_expiry) + ") for env=" + active_env)
 	var cfg := ConfigFile.new()
-	cfg.set_value("auth", "session_token", token)
-	cfg.set_value("auth", "token_expiry", _auth_token_expiry)
+	cfg.load(SESSION_CFG_PATH) # Load existing to preserve device login history and other environments
+	var section := "auth_" + active_env
+	cfg.set_value(section, "session_token", token)
+	cfg.set_value(section, "token_expiry", _auth_token_expiry)
 	cfg.save(SESSION_CFG_PATH)
 
 func clear_auth_session_token() -> void:
 	_auth_bearer_token = ""
 	_auth_token_expiry = 0
 	var cfg := ConfigFile.new()
-	cfg.set_value("auth", "session_token", "")
-	cfg.set_value("auth", "token_expiry", 0)
+	cfg.load(SESSION_CFG_PATH)
+	var section := "auth_" + active_env
+	cfg.set_value(section, "session_token", "")
+	cfg.set_value(section, "token_expiry", 0)
 	cfg.save(SESSION_CFG_PATH)
-	_log_info("[APICalls] Auth session cleared.")
+	_log_info("[APICalls] Auth session cleared for env: " + active_env)
 
 func _load_auth_session_token() -> void:
 	var cfg := ConfigFile.new()
 	var err := cfg.load(SESSION_CFG_PATH)
 	if err != OK:
 		return
-	var token: String = String(cfg.get_value("auth", "session_token", ""))
-	var expiry: int = int(cfg.get_value("auth", "token_expiry", 0))
+	
+	var section := "auth_" + active_env
+	var token: String = ""
+	var expiry: int = 0
+	
+	if cfg.has_section(section):
+		token = String(cfg.get_value(section, "session_token", ""))
+		expiry = int(cfg.get_value(section, "token_expiry", 0))
+	elif cfg.has_section("auth"):
+		# Legacy fallback: migrate non-debug tokens to the current env, or clean up if it's a debug token in prod
+		var legacy_token = String(cfg.get_value("auth", "session_token", ""))
+		var is_legacy_debug := (legacy_token == "DEBUG_TOKEN" or legacy_token == "DEBUG_BYPASS_TOKEN")
+		if active_env == "dev" or not is_legacy_debug:
+			token = legacy_token
+			expiry = int(cfg.get_value("auth", "token_expiry", 0))
+			cfg.set_value(section, "session_token", token)
+			cfg.set_value(section, "token_expiry", expiry)
+			cfg.erase_section("auth")
+			cfg.save(SESSION_CFG_PATH)
+			print("[APICalls] Migrated legacy auth session to %s" % section)
+		else:
+			cfg.erase_section("auth")
+			cfg.save(SESSION_CFG_PATH)
+			print("[APICalls] Ignored and cleared legacy debug auth session while in prod env.")
+			
 	if token != "":
 		_auth_bearer_token = token
 		_auth_token_expiry = expiry
-		print("[APICalls] Loaded persisted session token (len=%d, exp=%d)" % [token.length(), expiry])
+		print("[APICalls] Loaded persisted session token for %s (len=%d, exp=%d)" % [active_env, token.length(), expiry])
 
 func is_first_login_on_device(p_user_id: String) -> bool:
 	if p_user_id == "":
@@ -437,10 +467,13 @@ func _apply_auth_header(headers: PackedStringArray) -> PackedStringArray:
 			out.append("Authorization: Bearer %s" % _auth_bearer_token)
 	return out
 func is_auth_token_valid() -> bool:
+	# A debug/bypass token should never be considered valid in the production environment
+	if active_env == "prod" and (_auth_bearer_token == "DEBUG_TOKEN" or _auth_bearer_token == "DEBUG_BYPASS_TOKEN"):
+		return false
 	return _auth_bearer_token != "" and not _is_auth_token_expired()
 
 func _is_auth_token_expired() -> bool:
-	if _auth_bearer_token == "":
+	if _auth_bearer_token == "" or _auth_bearer_token == "DEBUG_BYPASS_TOKEN" or _auth_bearer_token == "DEBUG_TOKEN":
 		return false
 	return _auth_token_expiry <= Time.get_unix_time_from_system()
 
@@ -1536,21 +1569,10 @@ func warehouse_expand_v2(warehouse_id: String, cargo_units: int, vehicle_units: 
 		"body": "",
 	})
 	_log_debug("[APICalls][warehouse_expand_v2] Enqueued URL=" + url)
-	# Also enqueue JSON fallback immediately (optional) if first returns no change we can trigger manually
-	var body_dict := {
-		"warehouse_id": warehouse_id,
-		"cargo_capacity_upgrade": cargo_u,
-		"vehicle_capacity_upgrade": vehicle_u
-	}
-	var body_json := JSON.stringify(body_dict)
-	_diag_enqueue("warehouse_expand_v2_fallback_json", {
-		"url": "%s/warehouse/expand" % BASE_URL,
-		"headers": _apply_auth_header(['accept: application/json', 'content-type: application/json']),
-		"purpose": RequestPurpose.NONE,
-		"method": HTTPClient.METHOD_PATCH,
-		"body": body_json,
-	})
-	_log_debug("[APICalls][warehouse_expand_v2] (Queued JSON fallback second) body=" + body_json + " queue_len=" + str(_request_queue.size()))
+	# NOTE: The /warehouse/expand endpoint reads *query params*, so the query-string PATCH above is the
+	# one that applies the upgrade. We previously ALSO fired a JSON-body PATCH as a "fallback" — but the
+	# endpoint has no body params, so FastAPI rejected it with 422 on every single upgrade (pure log
+	# noise, and a latent double-charge risk if the backend ever accepted bodies). Removed. (Sprint 8)
 
 func _diagnose_param_types(d: Dictionary) -> Dictionary:
 	var out: Dictionary = {}
@@ -2347,6 +2369,19 @@ func _on_request_completed(result: int, response_code: int, _headers: PackedStri
 
 	if _current_debug_tag == "bug_report":
 		_log_info("[APICalls][BugReport] complete result=%d code=%d body_bytes=%d preview=%s" % [result, response_code, body.size(), resp_preview])
+	var _mech_tag := _current_debug_tag in ["add_vehicle_part", "attach_vehicle_part", "detach_vehicle_part"]
+	# Instant money update after a mechanic purchase/install: the response body embeds the user's
+	# post-transaction money. Push it to the store immediately so the UI reflects the charge right away
+	# instead of waiting for the follow-up /user/get that's queued behind these PATCH requests.
+	if _mech_tag and result == HTTPRequest.RESULT_SUCCESS and response_code >= 200 and response_code < 300 and body.size() > 0:
+		var mech_json: Variant = JSON.parse_string(body.get_string_from_utf8())
+		if mech_json is Dictionary and (mech_json as Dictionary).has("money"):
+			var mstore := get_node_or_null('/root/GameStore') if is_inside_tree() else null
+			if is_instance_valid(mstore) and mstore.has_method("set_user") and mstore.has_method("get_user"):
+				var cur_user: Dictionary = mstore.get_user()
+				var merged: Dictionary = cur_user.duplicate(true)
+				merged["money"] = (mech_json as Dictionary).get("money")
+				mstore.set_user(merged)
 	if _current_patch_signal_name == "warehouse_convoy_spawned":
 		_log_info("[APICalls][SpawnConvoy] completion result=%d http_code=%d body_bytes=%d" % [result, response_code, body.size()])
 	var request_purpose_at_start = _current_request_purpose
@@ -2987,6 +3022,62 @@ func _on_map_request_completed(result: int, response_code: int, _headers: Packed
 	var client_ms_total := t_store_end - t_decode_start
 	print('[APICalls][MAP] Deserialized map ok: rows=%d cols=%d http_ms=%d decode_ms=%d store_ms=%d client_ms_total=%d size=%d url=%s' % [rows, cols, http_ms, decode_ms, store_ms, client_ms_total, body.size(), _last_map_url])
 	emit_signal('map_data_received', deserialized)
+	_debug_dump_map_to_file(deserialized)
+
+func _debug_dump_map_to_file(data: Dictionary) -> void:
+	# One-shot per session. Writes the raw payload as a .json attachment plus a small
+	# Markdown summary note kept light enough to be a healthy node in the Obsidian graph.
+	if _map_dump_done:
+		return
+	_map_dump_done = true
+	var dir_path := "res://docs/99_Reference/data_dumps/"
+	var json_path := dir_path + "Map_example.json"
+	var md_path := dir_path + "Map_example.md"
+	var json_str := JSON.stringify(data, "\t")
+	# Count cargo items with recipient set for the header summary
+	var cargo_total := 0
+	var cargo_with_recipient := 0
+	for row in data.get("tiles", []):
+		for tile in row:
+			for sett in tile.get("settlements", []):
+				for vendor in sett.get("vendors", []):
+					for cargo in vendor.get("cargo_inventory", []):
+						cargo_total += 1
+						var rec = cargo.get("recipient", "")
+						if rec != "" and rec != null:
+							cargo_with_recipient += 1
+	# Raw payload -> .json attachment (heavy; not a graph note)
+	var jf := FileAccess.open(json_path, FileAccess.WRITE)
+	if not jf:
+		printerr("[APICalls][MAP][DEBUG] Failed to open %s for writing (err=%d)" % [json_path, FileAccess.get_open_error()])
+		return
+	jf.store_string(json_str)
+	jf.close()
+	# Lightweight summary -> .md note (small, graph-friendly)
+	var rows_n: int = data.get("tiles", []).size()
+	var cols_n: int = (data.get("tiles", [[]])[0] as Array).size() if rows_n > 0 else 0
+	var size_mb := json_str.length() / (1024.0 * 1024.0)
+	var md_content := """# Map Example Dump
+*Auto-generated by Godot debug dump — `APICalls._debug_dump_map_to_file()`*
+
+## Summary
+- **Tiles**: %d × %d
+- **Total vendor cargo items**: %d
+- **Cargo with `recipient` set**: %d  ← _should be > 0 if DF_Lib update is live_
+
+## Raw payload
+Full JSON (~%.1f MB): [`Map_example.json`](Map_example.json)
+
+Top-level keys: `%s`. Structure: each tile → `settlements` → `vendors` → `cargo_inventory`.
+See [Schema](../../01_Architecture/Schema.md) and [MapSystem/Data](../../03_Systems/MapSystem/Data.md).
+""" % [rows_n, cols_n, cargo_total, cargo_with_recipient, size_mb, ", ".join(PackedStringArray(data.keys()))]
+	var mf := FileAccess.open(md_path, FileAccess.WRITE)
+	if mf:
+		mf.store_string(md_content)
+		mf.close()
+		print("[APICalls][MAP][DEBUG] Map dump written: %s + %s  (cargo_with_recipient=%d/%d)" % [json_path, md_path, cargo_with_recipient, cargo_total])
+	else:
+		printerr("[APICalls][MAP][DEBUG] Failed to open %s for writing (err=%d)" % [md_path, FileAccess.get_open_error()])
 func _decode_jwt_expiry(token: String) -> int:
 	if token == "":
 		return 0

@@ -1,0 +1,119 @@
+---
+type: ui-ux
+tags:
+  - ui
+  - ux
+  - codex/menumanager
+created: 2026-05-18
+---
+
+# MenuManager
+
+The `MenuManager` is the central orchestrator for all full-screen UI navigation in *Desolate Frontiers*. It manages menu lifecycles, navigation history (the stack), and UI state persistence.
+
+## Key Responsibilities
+
+1. **Navigation Orchestration**: Opens and closes menus while ensuring only one "active" menu is visible at a time.
+2. **State Management**:
+   - Maintains a `menu_stack` for "back" functionality.
+   - Stores `_menu_states` (e.g., scroll positions) for menus that don't use node persistence.
+3. **Persistence Cache**: Stores live menu nodes (`_persistent_menu_cache`) that should survive navigation (like the Journey or Vehicle menus) to avoid re-instantiation overhead.
+4. **Transition Animations**: Handles directional sliding (horizontal for sub-menus, vertical for the Overview) to provide a polished, premium feel.
+5. **Static Bottom Navigation**: Manages the common navigation bar (`StaticBottomNav`) that stays visible across all convoy-related menus.
+
+### Opening & Transition Flow
+
+```mermaid
+graph TD
+    Request[Call open_menu] --> CheckCache{In Persistent Cache?}
+    
+    CheckCache -->|Yes| Restore[Reparent existing node]
+    CheckCache -->|No| Create[Instantiate new .tscn]
+    
+    Restore --> Direction{Navigation Type?}
+    Create --> Direction
+    
+    Direction -->|Sub-menu Sibling| SlideH[Horizontal Slide: Tweens]
+    Direction -->|Overview Open| SlideD[Vertical Slide: Swipe Down]
+    Direction -->|Overview Close| SlideU[Vertical Slide: Swipe Up]
+    
+    SlideH --> Clean[Cleanup old menu nodes]
+    SlideD --> Clean
+    SlideU --> Clean
+    
+    Clean --> Ready[Emit menu_opened signal]
+```
+
+---
+
+## Architecture & Integration
+
+### Registering a Host
+The `MenuManager` requires a host container to display menus. This is typically done in the `GameRoot` or main scene:
+
+```gdscript
+# res://Scenes/MainScreen.tscn
+func _ready():
+    MenuManager.register_menu_container($MainUI/MenuContent)
+```
+
+### Menu Types & Ordering
+Menus are categorized to determine their slide direction. `MENU_ORDER` index determines horizontal slide direction (lower index = left of higher index).
+
+| Menu Type | Index | Slide Behavior |
+|---|---|---|
+| `convoy_overview` | — | Vertical swipe (covers submenus) |
+| `convoy_vehicle_submenu` | 0 | Horizontal |
+| `convoy_journey_submenu` | 1 | Horizontal |
+| `convoy_cargo_submenu` | 2 | Horizontal |
+| `settlement_hub` | 3 | Horizontal (convoy-present overview hub) |
+| `convoy_settlement_submenu` | 4 | Horizontal (single-vendor trade screen) |
+| `warehouse_submenu` | 5 | Horizontal |
+| `mechanics_submenu` | 6 | Horizontal |
+| `settlement_overview` | — | No nav bar; used for map-preview opens (no convoy) |
+
+`_nav_slot_for_type()` maps both `settlement_hub` and `convoy_settlement_submenu` to the **Settlement** nav button so it stays highlighted across both screens.
+
+---
+
+## Transition Logic
+
+The `MenuManager` uses a `Tween`-based animation system:
+- **Horizontal Slide**: When switching between sub-menus (e.g., Vehicles to Cargo), the new menu slides in from the right (or left), and the old one slides out.
+- **Vertical Swipe**: When opening the Convoy Overview, it swipes **down** from the top, covering the current sub-menu. When closing, it swipes **up**, revealing the sub-menu underneath.
+
+---
+
+## Persistent Menu Cache
+
+To enable persistence for a menu:
+1. Set `persistence_enabled = true` in your `MenuBase` script.
+2. The `MenuManager` will now `reparent()` the menu instead of `queue_free()` when navigating away.
+3. When returning to the same `convoy_id`, the existing node is restored instantly with its exact UI state.
+
+---
+
+## API Summary
+
+- `open_convoy_menu(data)`: Opens the main convoy overview.
+- `open_convoy_vehicle_menu(data)`: Opens the vehicle sub-menu.
+- `open_settlement_overview_menu(settlement_or_convoy)`: Opens the settlement hub. Accepts a convoy dict (resolves settlement from coords) or a bare settlement dict (map-preview mode).
+- `open_convoy_settlement_menu_with_focus(convoy, vendor_id)`: Opens the single-vendor trade screen focused on one vendor.
+- `_on_overview_open_vendor(convoy, vendor_id)`: Internal — wires the hub's `open_vendor_requested` signal to the single-vendor open.
+- `go_back()`: Navigates to the previous item in the stack.
+- `close_all_menus()`: Wipes the stack and hides the UI.
+- `menu_opened(menu_node, menu_type)`: Signal emitted on any menu open.
+- `menu_visibility_changed(is_open, menu_name)`: Signal emitted for high-level visibility state.
+
+---
+
+## Ghost Menu Bug Fix (June 2026)
+
+**Symptom:** A faint copy of the outgoing menu (e.g. Convoy Overview content) was visible behind the newly opened menu, appearing as a transparent ghost.
+
+**Root cause:** The outgoing menu node was only disposed inside the tween's *chained callback*. When the player navigated again before the 0.42 s animation finished, `_switch_tween.kill()` cancelled the tween — and its callback — leaving the old menu node orphaned in the scene tree. Transparent menu backgrounds made it render through as a ghost.
+
+**Fix:** Added `_pending_switch_old_menu: Control` and `_pending_switch_old_persistent: bool` tracking variables, and a `_finalize_switch_old_menu(node, is_persistent)` helper that either detaches (cache) or `queue_free()`s the outgoing menu. At the start of every `_start_menu_switch_animation()` call, any leftover pending menu is flushed before the new animation begins, so rapid navigation cannot orphan a menu.
+
+> [!IMPORTANT]
+> If you add a new tween-based transition path, call `_finalize_switch_old_menu` inside **both** the normal completion callback and the flush guard at the top of `_start_menu_switch_animation`. Never rely solely on the tween callback to dispose a menu node.

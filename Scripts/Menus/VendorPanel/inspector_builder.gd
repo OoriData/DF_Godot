@@ -23,8 +23,23 @@ static func get_stat_value(item_data_source: Dictionary, key: String) -> Variant
 				return fps
 	return null
 
+static func _find_vendor_trade_panel(node: Node) -> Node:
+	if not is_instance_valid(node):
+		return null
+	var scr = node.get_script()
+	if scr and scr.resource_path.ends_with("vendor_trade_panel.gd"):
+		return node
+	for child in node.get_children():
+		var res = _find_vendor_trade_panel(child)
+		if res:
+			return res
+	return null
+
 static func _make_panel(title: String, rows: Array) -> PanelContainer:
 	var panel := PanelContainer.new()
+	# Sit at the top and (when the parent is an HBox in landscape) share width evenly.
+	panel.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+	panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	var sb := StyleBoxFlat.new()
 	sb.bg_color = Color(0.18, 0.20, 0.24, 0.9)
 	sb.border_color = Color(0.45, 0.50, 0.58, 0.9)
@@ -52,12 +67,16 @@ static func _make_panel(title: String, rows: Array) -> PanelContainer:
 	var hdr_sz := 16
 	var txt_sz := 13
 	if is_instance_valid(dsm):
-		hdr_sz = dsm.get_scaled_base_font_size(16)
-		txt_sz = dsm.get_scaled_base_font_size(13)
 		var mode = dsm.get_layout_mode()
 		if mode == 2: # MOBILE_PORTRAIT
-			hdr_sz = int(hdr_sz * 1.1)
-			txt_sz = int(txt_sz * 1.1)
+			hdr_sz = 18
+			txt_sz = 14
+		elif mode == 1: # MOBILE_LANDSCAPE
+			hdr_sz = 16
+			txt_sz = 13
+		else: # DESKTOP
+			hdr_sz = 26
+			txt_sz = 20
 
 	var hdr := Label.new()
 	hdr.text = title
@@ -77,17 +96,145 @@ static func _make_panel(title: String, rows: Array) -> PanelContainer:
 		k.modulate = Color(0.92, 0.94, 1.0, 0.95)
 		k.size_flags_horizontal = Control.SIZE_FILL
 		k.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-		var v := Label.new()
-		v.text = str(r.get("v", ""))
-		v.add_theme_font_size_override("font_size", txt_sz)
-		v.modulate = Color(0.86, 0.92, 1.0, 1)
-		v.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		v.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-		v.autowrap_mode = TextServer.AUTOWRAP_WORD
+		
+		var v: Control
+		if str(r.get("k", "")) == "Destination":
+			var btn := Button.new()
+			btn.text = "Preview: " + str(r.get("v", ""))
+			btn.add_theme_font_size_override("font_size", txt_sz)
+			btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			btn.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+			
+			var is_mobile_layout: bool = false
+			if is_instance_valid(dsm):
+				var mode = dsm.get_layout_mode()
+				is_mobile_layout = (mode == 1 or mode == 2)
+			
+			if is_mobile_layout:
+				btn.custom_minimum_size = Vector2(0, 70)
+			else:
+				btn.custom_minimum_size = Vector2(0, 40)
+			
+			# Let's style the button nicely to match premium UI
+			btn.flat = false
+			var sb_normal := StyleBoxFlat.new()
+			sb_normal.bg_color = Color(0.25, 0.28, 0.35, 0.8)
+			sb_normal.border_color = Color(0.55, 0.60, 0.70, 0.8)
+			sb_normal.border_width_left = 1
+			sb_normal.border_width_right = 1
+			sb_normal.border_width_top = 1
+			sb_normal.border_width_bottom = 1
+			sb_normal.corner_radius_top_left = 4
+			sb_normal.corner_radius_top_right = 4
+			sb_normal.corner_radius_bottom_left = 4
+			sb_normal.corner_radius_bottom_right = 4
+			btn.add_theme_stylebox_override("normal", sb_normal)
+			
+			var sb_hover = sb_normal.duplicate()
+			sb_hover.bg_color = Color(0.32, 0.36, 0.45, 0.9)
+			btn.add_theme_stylebox_override("hover", sb_hover)
+			
+			var sb_pressed = sb_normal.duplicate()
+			sb_pressed.bg_color = Color(0.18, 0.20, 0.25, 0.9)
+			btn.add_theme_stylebox_override("pressed", sb_pressed)
+
+			# Connect the pressed signal
+			var dest_val = str(r.get("v", ""))
+			btn.pressed.connect(func():
+				print("[VendorInspectorBuilder] Clicked Destination Button: '", dest_val, "'")
+				var hub = Engine.get_main_loop().root.get_node_or_null("SignalHub")
+				if is_instance_valid(hub) and hub.has_signal("map_camera_focus_settlement_requested"):
+					var root = Engine.get_main_loop().root
+					var trade_panel = _find_vendor_trade_panel(root)
+					if is_instance_valid(trade_panel):
+						print("[VendorInspectorBuilder] Successfully located active VendorTradePanel. Setting _is_previewing_destination = true.")
+						trade_panel._is_previewing_destination = true
+					else:
+						printerr("[VendorInspectorBuilder] FAILED to locate active VendorTradePanel in scene tree!")
+					print("[VendorInspectorBuilder] Emitting map_camera_focus_settlement_requested: '", dest_val, "'")
+					hub.emit_signal("map_camera_focus_settlement_requested", dest_val)
+				else:
+					printerr("[VendorInspectorBuilder] SignalHub or 'map_camera_focus_settlement_requested' signal is missing!")
+			)
+			v = btn
+		elif str(r.get("k", "")) == "Description":
+			# Full description can be long, so surface it behind a button that opens a popup rather than
+			# inflating the row list. Mirrors the Destination button's styling.
+			var dbtn := Button.new()
+			dbtn.text = "View ›"
+			dbtn.add_theme_font_size_override("font_size", txt_sz)
+			dbtn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			dbtn.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+			var is_mobile_desc: bool = false
+			if is_instance_valid(dsm):
+				var dmode = dsm.get_layout_mode()
+				is_mobile_desc = (dmode == 1 or dmode == 2)
+			dbtn.custom_minimum_size = Vector2(0, 70 if is_mobile_desc else 40)
+			dbtn.flat = false
+			var db_sb := StyleBoxFlat.new()
+			db_sb.bg_color = Color(0.25, 0.28, 0.35, 0.8)
+			db_sb.border_color = Color(0.55, 0.60, 0.70, 0.8)
+			db_sb.border_width_left = 1
+			db_sb.border_width_right = 1
+			db_sb.border_width_top = 1
+			db_sb.border_width_bottom = 1
+			db_sb.corner_radius_top_left = 4
+			db_sb.corner_radius_top_right = 4
+			db_sb.corner_radius_bottom_left = 4
+			db_sb.corner_radius_bottom_right = 4
+			dbtn.add_theme_stylebox_override("normal", db_sb)
+			var db_hover = db_sb.duplicate()
+			db_hover.bg_color = Color(0.32, 0.36, 0.45, 0.9)
+			dbtn.add_theme_stylebox_override("hover", db_hover)
+			var db_pressed = db_sb.duplicate()
+			db_pressed.bg_color = Color(0.18, 0.20, 0.25, 0.9)
+			dbtn.add_theme_stylebox_override("pressed", db_pressed)
+			var desc_text := str(r.get("v", ""))
+			var desc_title := str(r.get("title", "Description"))
+			dbtn.pressed.connect(func(): show_description_popup(desc_text, desc_title))
+			v = dbtn
+		else:
+			var lbl := Label.new()
+			lbl.text = str(r.get("v", ""))
+			lbl.add_theme_font_size_override("font_size", txt_sz)
+			lbl.modulate = Color(0.86, 0.92, 1.0, 1)
+			lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			lbl.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+			lbl.autowrap_mode = TextServer.AUTOWRAP_WORD
+			v = lbl
+			
 		line.add_child(k)
 		line.add_child(v)
 		vb.add_child(line)
 	return panel
+
+## Vehicle description text, mirroring the summary page's source precedence. "" when none/placeholder.
+static func vehicle_description(src: Dictionary) -> String:
+	for k in ["description", "base_desc", "current_desc", "desc"]:
+		var val: Variant = src.get(k)
+		if val != null:
+			var s := str(val).strip_edges()
+			if s != "" and s != "No description." and s != "No detailed description.":
+				return s
+	return ""
+
+## Popup shown by the vendor inspector's Description button. A self-contained AcceptDialog added to the
+## scene root and freed on close — mirrors how the Destination button reaches the tree from this static
+## builder. content_scale_factor handles sizing; autowrap keeps long copy readable.
+static func show_description_popup(text: String, title: String) -> void:
+	var root = Engine.get_main_loop().root
+	if not is_instance_valid(root):
+		return
+	var dlg := AcceptDialog.new()
+	dlg.title = title if title.strip_edges() != "" else "Description"
+	dlg.dialog_text = text
+	dlg.dialog_autowrap = true
+	dlg.min_size = Vector2i(360, 200)
+	dlg.exclusive = false
+	root.add_child(dlg)
+	dlg.confirmed.connect(dlg.queue_free)
+	dlg.canceled.connect(dlg.queue_free)
+	dlg.popup_centered()
 
 static func rebuild_info_sections(item_info_rich_text: RichTextLabel, item_data_source: Dictionary, selected_item: Variant, current_mode: String, convoy_data: Dictionary, compat_cache: Dictionary, perf_log_enabled: bool = false) -> void:
 	var parent_node: Node = null
@@ -99,6 +246,8 @@ static func rebuild_info_sections(item_info_rich_text: RichTextLabel, item_data_
 	if parent_node is BoxContainer:
 		parent_node.alignment = BoxContainer.ALIGNMENT_BEGIN
 		
+	# Landscape replaces these verbose section panels with a compact one-line stat summary
+	# (built by the panel itself and hidden here), so they only render in portrait/desktop.
 	var container: Node = parent_node.get_node_or_null("InfoSectionsContainer")
 	if container == null:
 		container = VBoxContainer.new()
@@ -106,6 +255,7 @@ static func rebuild_info_sections(item_info_rich_text: RichTextLabel, item_data_
 		container.mouse_filter = Control.MOUSE_FILTER_PASS
 		container.add_theme_constant_override("separation", 6)
 		container.alignment = BoxContainer.ALIGNMENT_BEGIN
+		container.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		parent_node.add_child(container)
 		var idx: int = parent_node.get_children().find(item_info_rich_text)
 		if idx != -1:
@@ -216,6 +366,8 @@ static func rebuild_info_sections(item_info_rich_text: RichTextLabel, item_data_
 				break
 
 	if dest_name != "" and dest_name != "Unknown Vendor":
+		# Show just the settlement name — drop the "(vendor)" parenthetical so it stops clipping edges.
+		dest_name = VendorItemList.strip_vendor_paren(dest_name)
 		if perf_log_enabled:
 			print("[VendorInspectorBuilder] Building Destination row with value='", dest_name, "'")
 		rows_summary.append({"k": "Destination", "v": dest_name})
@@ -225,14 +377,16 @@ static func rebuild_info_sections(item_info_rich_text: RichTextLabel, item_data_
 			"fuel_efficiency": "Efficiency",
 			"offroad_capability": "Off-road",
 			"weight_capacity": "Weight Capacity",
-			"cargo_capacity": "Volume Capacity"
+			"cargo_capacity": "Volume Capacity",
+			"passenger_seats": "Seats"
 		}
 		var unit_map = {
 			"top_speed": "",
 			"fuel_efficiency": "",
 			"offroad_capability": "",
 			"weight_capacity": "kg",
-			"cargo_capacity": "m³"
+			"cargo_capacity": "m³",
+			"passenger_seats": ""
 		}
 		for key in stat_map:
 			var v: Variant = null
@@ -241,15 +395,23 @@ static func rebuild_info_sections(item_info_rich_text: RichTextLabel, item_data_
 				"top_speed":
 					v = item_data_source.get("top_speed", item_data_source.get("base_top_speed"))
 				"fuel_efficiency":
-					v = item_data_source.get("fuel_efficiency", item_data_source.get("base_fuel_efficiency"))
-					if v == null:
-						v = item_data_source.get("efficiency")
+					# Use the first NON-ZERO among efficiency/base_efficiency (as on owned vehicles) then the
+					# legacy fuel fields. Vendor stock reports a computed efficiency of 0 that would otherwise
+					# shadow the real base_efficiency, so a 0 must fall through rather than win. All-zero → omit.
+					v = null
+					for ek in ["efficiency", "base_efficiency", "fuel_efficiency", "base_fuel_efficiency"]:
+						var ev: Variant = item_data_source.get(ek)
+						if ev != null and not ((ev is int or ev is float) and float(ev) == 0.0):
+							v = ev
+							break
 				"offroad_capability":
 					v = item_data_source.get("offroad_capability", item_data_source.get("base_offroad_capability"))
 				"weight_capacity":
 					v = item_data_source.get("weight_capacity", item_data_source.get("base_weight_capacity"))
 				"cargo_capacity":
 					v = item_data_source.get("cargo_capacity", item_data_source.get("base_cargo_capacity"))
+				"passenger_seats":
+					v = item_data_source.get("passenger_seats", item_data_source.get("base_passenger_seats"))
 				_:
 					v = item_data_source.get(key)
 			if v != null:
@@ -262,6 +424,22 @@ static func rebuild_info_sections(item_info_rich_text: RichTextLabel, item_data_
 				if not str(unit).is_empty():
 					val_str += " " + unit
 				rows_summary.append({"k": stat_map[key], "v": val_str})
+		# Descriptive info fields, mirroring the vehicle summary page. Each shows only when the vendor
+		# payload actually carries it — make_model/color/shape are commonly null on vendor stock, and the
+		# summary page skips empties the same way, so absent fields simply don't render.
+		var mk_v: Variant = item_data_source.get("make_model")
+		if mk_v != null and str(mk_v).strip_edges() != "":
+			rows_summary.append({"k": "Make/Model", "v": str(mk_v).strip_edges()})
+		var col_v: Variant = item_data_source.get("color")
+		if col_v != null and str(col_v).strip_edges() != "":
+			rows_summary.append({"k": "Color", "v": str(col_v).strip_edges().capitalize()})
+		var shp_v: Variant = item_data_source.get("shape")
+		if shp_v != null and str(shp_v).strip_edges() != "":
+			rows_summary.append({"k": "Shape", "v": str(shp_v).strip_edges().capitalize().replace("_", " ")})
+		# Description → rendered as a popup button by _make_panel (keeps long copy out of the row list).
+		var veh_desc: String = vehicle_description(item_data_source)
+		if veh_desc != "":
+			rows_summary.append({"k": "Description", "v": veh_desc, "title": String(item_data_source.get("name", "Vehicle"))})
 	elif is_part:
 		# Show capacity/resource-related part modifiers from top-level or first part in parts array.
 		var stat_fields = [

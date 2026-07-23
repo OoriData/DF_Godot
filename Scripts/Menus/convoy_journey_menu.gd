@@ -3,6 +3,8 @@ signal find_route_requested(convoy_data, destination_data)
 signal route_preview_started(route_data)
 signal route_preview_ended
 
+const ItemsData = preload("res://Scripts/Data/Items.gd")
+
 func _init():
 	persistence_enabled = true
 
@@ -50,12 +52,24 @@ const RouteSelectionMenuScene = preload("res://Scenes/RouteSelectionMenu.tscn")
 
 var _is_request_in_flight: bool = false
 var _loading_label: Label = null
+var _loading_bar: ProgressBar = null
+var _loading_container: VBoxContainer = null
+var _loading_anim_time: float = 0.0
 var _last_requested_destination: Dictionary = {}
 
 # New confirmation panel references (created dynamically)
 var _confirmation_panel: VBoxContainer = null
 var _confirm_button: Control = null
-var _change_destination_button: Button = null
+var _change_destination_button: Control = null
+
+# --- Planning chrome (persistent, created once in _ready) ---
+# Sub-header sits between the top banner and the scroll container; the sticky
+# footer sits below the scroll container so the action buttons never scroll away.
+var _sub_header: PanelContainer = null
+var _sub_header_title: Label = null
+var _sub_header_subtitle: Label = null
+var _sticky_footer: PanelContainer = null
+var _footer_hbox: HBoxContainer = null
 
 # --- Route Cycling and Severity ---
 var _current_route_choice_index: int = 0
@@ -93,6 +107,16 @@ func _ready():
 		setup_convoy_top_banner(title_label, "Journey", false, false)
 	else:
 		printerr("ConvoyJourneyMenu: CRITICAL - TitleLabel node NOT found.")
+
+	# Build the persistent planning chrome (sub-header + sticky footer). Hidden
+	# until a route confirmation preview is shown.
+	_build_planning_chrome()
+
+	# Rebuild the confirmation layout when the device rotates so it switches between
+	# the portrait stack and the landscape two-column form.
+	var dsm = get_node_or_null("/root/DeviceStateManager")
+	if is_instance_valid(dsm) and dsm.has_signal("layout_mode_changed") and not dsm.layout_mode_changed.is_connected(_on_layout_mode_changed):
+		dsm.layout_mode_changed.connect(_on_layout_mode_changed)
 
 
 	# Canonical route lifecycle + convoy update events.
@@ -160,8 +184,11 @@ func _notification(what):
 		pass
 
 
-func _process(_delta: float):
-	pass
+func _process(delta: float):
+	# Indeterminate pulse for the route-plotting loading bar (mirrors login_screen.gd).
+	if is_instance_valid(_loading_bar) and _loading_bar.visible:
+		_loading_anim_time += delta
+		_loading_bar.value = 50.0 + sin(_loading_anim_time * 5.0) * 50.0
 
 func _physics_process(_delta: float):
 	pass
@@ -186,8 +213,11 @@ func _update_ui(convoy: Dictionary) -> void:
 	set_menu_title_suffix("Journey Details" if has_journey else "Journey Planner")
 
 
-	# If a confirmation preview is open, don't clobber it on background refresh.
-	if is_instance_valid(_confirmation_panel) and _confirmation_panel.visible:
+	# If a confirmation preview is open during PLANNING, don't clobber it on background
+	# refresh. Once a journey is actually active, the planning preview is obsolete — always
+	# fall through and rebuild the in-transit details (which include the Cancel Journey
+	# button) so a stale confirmation panel can't hide them.
+	if not has_journey and is_instance_valid(_confirmation_panel) and _confirmation_panel.visible:
 		# After a Top Up, rebuild projections using the updated convoy snapshot.
 		if _pending_confirmation_refresh_after_top_up:
 			_pending_confirmation_refresh_after_top_up = false
@@ -197,6 +227,10 @@ func _update_ui(convoy: Dictionary) -> void:
 		return
 
 	# Deterministic rebuild: prevent duplicated panels/buttons from accumulating.
+	# The confirmation panel is being torn down here, so hide its chrome too
+	# (planner list and in-transit details have no sub-header/footer).
+	_confirmation_panel = null
+	_set_planning_chrome_visible(false)
 	for child in content_vbox.get_children():
 		child.queue_free()
 
@@ -214,7 +248,7 @@ func _update_ui(convoy: Dictionary) -> void:
 	# ---- Styled container for in-transit details ----
 	var details_panel := PanelContainer.new()
 	var sb := StyleBoxFlat.new()
-	sb.bg_color = Color(0.10, 0.12, 0.16, 0.94)
+	sb.bg_color = Color(UITheme.METAL_BASE, 0.94)
 	if sb.has_method("set_border_width_all"):
 		sb.set_border_width_all(1)
 	else:
@@ -222,7 +256,7 @@ func _update_ui(convoy: Dictionary) -> void:
 		sb.border_width_right = 1
 		sb.border_width_top = 1
 		sb.border_width_bottom = 1
-	sb.border_color = Color(0.25, 0.30, 0.38)
+	sb.border_color = UITheme.METAL_EDGE
 	sb.corner_radius_top_left = 6
 	sb.corner_radius_top_right = 6
 	sb.corner_radius_bottom_left = 6
@@ -236,12 +270,18 @@ func _update_ui(convoy: Dictionary) -> void:
 	# --- ETA headline (centered) ---
 	var journey_data: Dictionary = journey_raw as Dictionary
 	var eta_str = journey_data.get("eta")
-	var eta_val := preload("res://Scripts/System/date_time_util.gd").format_timestamp_display(eta_str, true)
+	var _dt_util = preload("res://Scripts/System/date_time_util.gd")
+	# Long trips (> 24h total) always show the arrival DATE — otherwise an in-progress multi-day journey
+	# that happens to arrive "today" (local) would collapse to a bare clock time.
+	var _dep_unix: int = _dt_util.to_unix_utc(journey_data.get("departure_time"))
+	var _eta_unix: int = _dt_util.to_unix_utc(eta_str)
+	var _long_trip: bool = _dep_unix > 0 and _eta_unix > 0 and (_eta_unix - _dep_unix) > 86400
+	var eta_val: String = _dt_util.format_timestamp_display(eta_str, true, not _long_trip)
 	var eta_headline := Label.new()
 	eta_headline.text = "ETA: %s" % eta_val
 	eta_headline.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	var is_portrait = DeviceStateManager.get_is_portrait()
-	eta_headline.add_theme_font_size_override("font_size", DeviceStateManager.get_scaled_base_font_size(35 if is_portrait else 29))
+	eta_headline.add_theme_font_size_override("font_size", 35 if is_portrait else 29)
 	eta_headline.add_theme_color_override("font_color", Color(0.92, 0.97, 1))
 	details_vbox.add_child(eta_headline)
 
@@ -258,7 +298,7 @@ func _update_ui(convoy: Dictionary) -> void:
 	loc_grid.add_theme_constant_override("h_separation", 14)
 	loc_grid.add_theme_constant_override("v_separation", 8 if is_portrait else 6)
 	details_vbox.add_child(loc_grid)
-	var loc_label_fs := DeviceStateManager.get_scaled_base_font_size(22) if DeviceStateManager.is_mobile else 22
+	var loc_label_fs := 22
 	# Current
 	var curr_title := Label.new()
 	curr_title.text = "📍 Current"
@@ -320,8 +360,8 @@ func _update_ui(convoy: Dictionary) -> void:
 	var progress_bar = ProgressBar.new()
 	progress_bar.custom_minimum_size = Vector2(0, 40 if is_portrait else 20)
 	progress_bar.value = progress_percentage
-	progress_bar.add_theme_font_size_override("font_size", DeviceStateManager.get_scaled_base_font_size(22))
-	# Match ConvoyMenu: background 2a2a2a with light border; fill uses Color("29b6f6")
+	progress_bar.add_theme_font_size_override("font_size", 22)
+	# Match ConvoyMenu: background 2a2a2a with light border; fill uses UITheme.ACCENT_VERDIGRIS
 	var bg_style := StyleBoxFlat.new()
 	bg_style.bg_color = Color("2a2a2a")
 	bg_style.border_width_left = 1
@@ -333,18 +373,22 @@ func _update_ui(convoy: Dictionary) -> void:
 	bg_style.shadow_size = 2
 	bg_style.shadow_offset = Vector2(0, 2)
 	var fill_style := StyleBoxFlat.new()
-	fill_style.bg_color = Color("29b6f6")
+	fill_style.bg_color = UITheme.ACCENT_VERDIGRIS
 	fill_style.border_width_left = 1
 	fill_style.border_width_right = 1
 	fill_style.border_width_top = 1
 	fill_style.border_width_bottom = 1
-	fill_style.border_color = Color("29b6f6").darkened(0.2)
+	fill_style.border_color = UITheme.ACCENT_VERDIGRIS.darkened(0.2)
 	progress_bar.add_theme_stylebox_override("background", bg_style)
 	progress_bar.add_theme_stylebox_override("fill", fill_style)
 	details_vbox.add_child(progress_bar)
 
-	# Cancel Journey button (in details mode)
-	if journey_data.has("journey_id"):
+	# Cancel Journey button (in details mode). Always present while a journey is active —
+	# we're already past the `if not has_journey: return` guard above, so gating this on the
+	# presence of one specific key wrongly hid the button whenever a convoy snapshot rendered
+	# as in-transit but happened to omit `journey_id`. The id is resolved defensively (dict →
+	# GameStore) at click time instead.
+	if not journey_data.is_empty():
 		var cancel_container = PanelContainer.new()
 		var csb = StyleBoxFlat.new()
 		csb.bg_color = Color(0.4, 0.1, 0.1, 0.9) # Danger red
@@ -379,7 +423,7 @@ func _update_ui(convoy: Dictionary) -> void:
 						# Show a blocking overlay while cancellation propagates
 						_show_blocking_overlay("Canceling journey…")
 						var convoy_id_local := str(convoy_data_received.get("convoy_id"))
-						var journey_id_local := str(journey_data.get("journey_id", ""))
+						var journey_id_local := _resolve_active_journey_id(journey_data, convoy_id_local)
 						if journey_id_local.is_empty():
 							printerr("ConvoyJourneyMenu: Cannot cancel; missing journey_id")
 							_hide_blocking_overlay()
@@ -396,10 +440,27 @@ func _update_ui(convoy: Dictionary) -> void:
 		var c_lbl = Label.new()
 		c_lbl.text = "Cancel Journey"
 		c_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		c_lbl.add_theme_font_size_override("font_size", DeviceStateManager.get_scaled_base_font_size(29) if DeviceStateManager.is_mobile else 22)
+		c_lbl.add_theme_font_size_override("font_size", 29 if DeviceStateManager.is_mobile else 22)
 		c_lbl.add_theme_color_override("font_color", Color(1, 0.92, 0.92))
 		cancel_container.add_child(c_lbl)
 		details_vbox.add_child(cancel_container)
+
+# Resolve the active journey's id defensively: prefer the passed journey dict, then fall
+# back to the freshest convoy snapshot in GameStore. Guards the Cancel Journey flow against
+# a convoy snapshot that renders as in-transit but happens to omit the journey_id key.
+func _resolve_active_journey_id(journey_data: Dictionary, convoy_id_local: String = "") -> String:
+	var jid := str(journey_data.get("journey_id", ""))
+	if not jid.is_empty():
+		return jid
+	var cid := convoy_id_local if convoy_id_local != "" else str(convoy_data_received.get("convoy_id", ""))
+	if cid == "" or not is_instance_valid(_store) or not _store.has_method("get_convoys"):
+		return ""
+	for c in _store.get_convoys():
+		if c is Dictionary and str((c as Dictionary).get("convoy_id", "")) == cid:
+			var j: Variant = (c as Dictionary).get("journey")
+			if j is Dictionary:
+				return str((j as Dictionary).get("journey_id", ""))
+	return ""
 
 func _populate_destination_list():
 	if DeviceStateManager.is_mobile:
@@ -407,9 +468,12 @@ func _populate_destination_list():
 
 	# Reset planner loading state for a clean rebuild.
 	_settlement_poll_attempts = 0
-	# Clear potential prior loading state
+	# Clear potential prior loading state. content_vbox children are freed by the caller, so
+	# just drop the stale refs here (don't queue_free again).
 	_is_request_in_flight = false
 	_loading_label = null
+	_loading_bar = null
+	_loading_container = null
 	_last_requested_destination = {}
 
 	if not is_instance_valid(_store) or not _store.has_method("get_settlements"):
@@ -500,8 +564,8 @@ func _populate_destination_list():
 	
 
 
-	# Find any mission-specific destinations by resolving recipient IDs to settlement names.
-	var mission_destinations: Dictionary = {}
+	# Find any delivery-specific destinations by resolving recipient IDs to settlement names.
+	var delivery_destinations: Dictionary = {}
 	
 	print("[ConvoyJourneyMenu] Convoy Data Keys: ", convoy_data_received.keys())
 	
@@ -542,17 +606,14 @@ func _populate_destination_list():
 					var rsn = str(cargo_item.get("recipient_settlement_name"))
 					if not rsn.is_empty():
 						# Exact match logic
-						if mission_destinations.has(rsn):
+						if delivery_destinations.has(rsn):
 							match_found = true
 						# Check if this name is a valid settlement
 						elif vendor_to_settlement_map.values().has(rsn):
-							mission_destinations[rsn] = cargo_item.get("name", "Delivery Cargo")
+							delivery_destinations[rsn] = cargo_item.get("name", "Delivery Cargo")
 							match_found = true
 				
 				if match_found: continue
-
-				if match_found:
-					continue
 
 				# Gather all candidate keys that might identify the destination
 				var candidate_keys = []
@@ -607,8 +668,8 @@ func _populate_destination_list():
 									break
 
 					if resolved_settlement != "":
-						if not mission_destinations.has(resolved_settlement):
-							mission_destinations[resolved_settlement] = cargo_item.get("name", "Delivery Cargo")
+						if not delivery_destinations.has(resolved_settlement):
+							delivery_destinations[resolved_settlement] = cargo_item.get("name", "Delivery Cargo")
 						match_found = true
 						print("[ConvoyJourneyMenu] MATCH FOUND for cargo '%s': resolved to '%s' via key '%s'" % [cargo_item.get("name"), resolved_settlement, val])
 						break
@@ -620,7 +681,13 @@ func _populate_destination_list():
 					continue
 				
 				# Validation / Debug for loose items
-				if cargo_item.get("is_mission", false) or (cargo_item.get("mission_id", "") != ""):
+				var is_delivery_cargo = false
+				if ItemsData and ItemsData.DeliveryCargoItem:
+					is_delivery_cargo = ItemsData.DeliveryCargoItem._looks_like_delivery_dict(cargo_item)
+				else:
+					is_delivery_cargo = cargo_item.get("recipient") != null or cargo_item.get("delivery_reward", 0.0) > 0.0
+				
+				if is_delivery_cargo:
 					# Valid mission item but destination unknown.
 					pass
 
@@ -651,23 +718,23 @@ func _populate_destination_list():
 		var distance = convoy_pos.distance_to(settlement_pos)
 		potential_destinations.append({"data": settlement_data, "distance": distance})
 
-	# Sort destinations: mission destinations first, then by distance.
+	# Sort destinations: delivery destinations first, then by distance.
 	potential_destinations.sort_custom(func(a, b):
 		var a_name = a.data.get("name", "")
 		var b_name = b.data.get("name", "")
-		var a_is_mission = mission_destinations.has(a_name)
-		var b_is_mission = mission_destinations.has(b_name)
+		var a_is_delivery = delivery_destinations.has(a_name)
+		var b_is_delivery = delivery_destinations.has(b_name)
 		
-		if a_is_mission != b_is_mission:
-			return a_is_mission # true (mission) comes before false
+		if a_is_delivery != b_is_delivery:
+			return a_is_delivery # true (delivery) comes before false
 
-		# If both are missions or both are not, sort by distance
+		# If both are deliveries or both are not, sort by distance
 		return a.distance < b.distance
 	)
 	
-	print("[ConvoyJourneyMenu] Mission Destinations Found: ", mission_destinations.keys())
+	print("[ConvoyJourneyMenu] Delivery Destinations Found: ", delivery_destinations.keys())
 	for d in potential_destinations:
-		if mission_destinations.has(d.data.get("name", "")):
+		if delivery_destinations.has(d.data.get("name", "")):
 			print("[ConvoyJourneyMenu] Priority Dest: %s" % d.data.get("name"))
 
 	for destination_entry in potential_destinations:
@@ -678,20 +745,20 @@ func _populate_destination_list():
 		var emoji := _get_settlement_emoji(settlement_data)
 		var display_name: String = (emoji + " " + settlement_name) if emoji != "" else settlement_name
 		var button_text = "%s (%.1f units)" % [display_name, distance]
-		if mission_destinations.has(settlement_name):
-			var cargo_name = mission_destinations[settlement_name]
+		if delivery_destinations.has(settlement_name):
+			var cargo_name = delivery_destinations[settlement_name]
 			button_text = "[%s] %s" % [cargo_name, button_text]
 
 		# Create a tap-detecting container for mobile scrolling support
 		var item_container = PanelContainer.new()
 		var sb = StyleBoxFlat.new()
-		sb.bg_color = Color(0.12, 0.14, 0.18, 0.9)
+		sb.bg_color = Color(UITheme.METAL_BASE, 0.9)
 		sb.corner_radius_top_left = 6
 		sb.corner_radius_top_right = 6
 		sb.corner_radius_bottom_left = 6
 		sb.corner_radius_bottom_right = 6
 		sb.set_border_width_all(1)
-		sb.border_color = Color(0.25, 0.3, 0.38)
+		sb.border_color = UITheme.METAL_EDGE
 		sb.content_margin_left = 14
 		sb.content_margin_right = 14
 		sb.content_margin_top = 10
@@ -710,23 +777,33 @@ func _populate_destination_list():
 			if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
 				if event.pressed:
 					if item_container.get_meta("disabled", false): return
+					# Clear any highlight a prior scroll gesture left stuck on other rows
+					# so only the row under the finger is ever highlighted.
+					_clear_destination_highlights()
 					item_container.set_meta("tap_start_pos", event.global_position)
-					sb.bg_color = Color(0.2, 0.25, 0.3, 1.0) # Pressed highlight
+					sb.bg_color = Color(UITheme.METAL_ACTIVE, 1.0) # Pressed highlight
 				else:
 					if item_container.get_meta("disabled", false): return
-					sb.bg_color = Color(0.12, 0.14, 0.18, 0.9) # Reset
+					sb.bg_color = Color(UITheme.METAL_BASE, 0.9) # Reset
 					var start_pos = item_container.get_meta("tap_start_pos", event.global_position)
 					var move_dist = (event.global_position - start_pos).length()
 					# If finger moved less than 10px, it's a click
 					if move_dist < 10:
 						_on_destination_button_pressed(settlement_data)
 						get_viewport().set_input_as_handled()
+			elif event is InputEventMouseMotion and (event.button_mask & MOUSE_BUTTON_MASK_LEFT):
+				# Press became a drag (the list is being scrolled), not a tap — drop the
+				# highlight immediately so it doesn't stick when the release is consumed
+				# by the scroll gesture.
+				var start_pos = item_container.get_meta("tap_start_pos", event.global_position)
+				if (event.global_position - start_pos).length() >= 10:
+					sb.bg_color = Color(UITheme.METAL_BASE, 0.9)
 		)
 
 		var lbl = Label.new()
 		lbl.text = button_text
 		lbl.mouse_filter = Control.MOUSE_FILTER_PASS
-		lbl.add_theme_font_size_override("font_size", DeviceStateManager.get_scaled_base_font_size(26) if is_portrait else DeviceStateManager.get_scaled_base_font_size(22))
+		lbl.add_theme_font_size_override("font_size", 26 if is_portrait else 22)
 		item_container.add_child(lbl)
 		
 		content_vbox.add_child(item_container)
@@ -826,6 +903,175 @@ func _set_btn_disabled(btn: Control, disabled: bool):
 	else:
 		btn.set_meta("disabled", disabled)
 		btn.modulate.a = 0.5 if disabled else 1.0
+
+# Build a touch-friendly tap button (PanelContainer + Label) with press feedback.
+# Returns the container; the label is stored under meta "label" for _set_btn_text.
+func _make_touch_button(text: String, base_color: Color, pressed_color: Color, on_tap: Callable, font_size: int = 24) -> PanelContainer:
+	var cont := PanelContainer.new()
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = base_color
+	sb.set_corner_radius_all(6)
+	sb.content_margin_left = 16
+	sb.content_margin_right = 16
+	sb.content_margin_top = 10
+	sb.content_margin_bottom = 10
+	cont.add_theme_stylebox_override("panel", sb)
+	cont.mouse_filter = Control.MOUSE_FILTER_PASS
+	cont.gui_input.connect(func(event):
+		if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
+			if event.pressed:
+				if cont.get_meta("disabled", false): return
+				cont.set_meta("tap_start_pos", event.global_position)
+				sb.bg_color = pressed_color
+			else:
+				if cont.get_meta("disabled", false): return
+				sb.bg_color = base_color
+				var start_pos = cont.get_meta("tap_start_pos", event.global_position)
+				if (event.global_position - start_pos).length() < 10:
+					on_tap.call()
+					get_viewport().set_input_as_handled()
+	)
+	var lbl := Label.new()
+	lbl.text = text
+	lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	lbl.add_theme_font_size_override("font_size", font_size)
+	cont.add_child(lbl)
+	cont.set_meta("label", lbl)
+	return cont
+
+# Create the sub-header (with "‹ Change" button) and the sticky footer once.
+# Both are hidden until a confirmation preview is shown.
+func _build_planning_chrome() -> void:
+	if not is_instance_valid(main_vbox) or not is_instance_valid(scroll_container):
+		return
+
+	# --- Sub-header: change button + destination title + subtitle ---
+	_sub_header = PanelContainer.new()
+	_sub_header.name = "JourneySubHeader"
+	var shsb := StyleBoxFlat.new()
+	shsb.bg_color = Color(UITheme.METAL_DARK, 0.95)
+	shsb.border_width_bottom = 1
+	shsb.border_color = UITheme.METAL_EDGE
+	shsb.content_margin_left = 14
+	shsb.content_margin_right = 14
+	shsb.content_margin_top = 8
+	shsb.content_margin_bottom = 8
+	_sub_header.add_theme_stylebox_override("panel", shsb)
+
+	var sh_hbox := HBoxContainer.new()
+	sh_hbox.add_theme_constant_override("separation", 12)
+	_sub_header.add_child(sh_hbox)
+
+	var change_btn := _make_touch_button("‹ Change", Color(UITheme.METAL_BASE, 0.9), Color(UITheme.METAL_HOVER, 1.0), func(): _on_change_destination_pressed(), 22)
+	change_btn.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	sh_hbox.add_child(change_btn)
+	_change_destination_button = change_btn as Control
+
+	var title_vbox := VBoxContainer.new()
+	title_vbox.add_theme_constant_override("separation", 2)
+	title_vbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	title_vbox.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	sh_hbox.add_child(title_vbox)
+
+	_sub_header_title = Label.new()
+	_sub_header_title.add_theme_font_size_override("font_size", 32 if DeviceStateManager.get_is_portrait() else 26)
+	_sub_header_title.add_theme_color_override("font_color", UITheme.TEXT_PRIMARY)
+	title_vbox.add_child(_sub_header_title)
+
+	_sub_header_subtitle = Label.new()
+	_sub_header_subtitle.add_theme_font_size_override("font_size", 20)
+	_sub_header_subtitle.add_theme_color_override("font_color", UITheme.TEXT_MUTED)
+	title_vbox.add_child(_sub_header_subtitle)
+
+	main_vbox.add_child(_sub_header)
+	main_vbox.move_child(_sub_header, scroll_container.get_index())
+	_sub_header.visible = false
+
+	# --- Sticky footer: holds the action buttons outside the scroll area ---
+	_sticky_footer = PanelContainer.new()
+	_sticky_footer.name = "JourneyStickyFooter"
+	var fsb := StyleBoxFlat.new()
+	fsb.bg_color = Color(UITheme.METAL_DARK, 1.0)
+	fsb.border_width_top = 1
+	fsb.border_color = UITheme.METAL_EDGE
+	fsb.content_margin_left = 12
+	fsb.content_margin_right = 12
+	fsb.content_margin_top = 8
+	fsb.content_margin_bottom = 8
+	_sticky_footer.add_theme_stylebox_override("panel", fsb)
+
+	_footer_hbox = HBoxContainer.new()
+	_footer_hbox.add_theme_constant_override("separation", 8)
+	_footer_hbox.alignment = BoxContainer.ALIGNMENT_CENTER
+	_sticky_footer.add_child(_footer_hbox)
+
+	main_vbox.add_child(_sticky_footer)
+	main_vbox.move_child(_sticky_footer, scroll_container.get_index() + 1)
+	_sticky_footer.visible = false
+
+# Toggle sub-header + sticky footer together. Shown only during route confirmation.
+func _set_planning_chrome_visible(show_chrome: bool) -> void:
+	if is_instance_valid(_sub_header):
+		_sub_header.visible = show_chrome
+	if is_instance_valid(_sticky_footer):
+		_sticky_footer.visible = show_chrome
+
+# On device rotation, re-size the sub-header and rebuild any open confirmation
+# preview so the resource/cargo layout matches the new orientation.
+func _on_layout_mode_changed(_mode: int = -1, _size: Vector2 = Vector2.ZERO, _is_mobile_val: bool = false) -> void:
+	if is_instance_valid(_sub_header_title):
+		_sub_header_title.add_theme_font_size_override("font_size", 32 if DeviceStateManager.get_is_portrait() else 26)
+	if is_instance_valid(_confirmation_panel) and _confirmation_panel.visible:
+		if not _route_choices_cache.is_empty() and _current_route_choice_index >= 0 and _current_route_choice_index < _route_choices_cache.size():
+			_show_confirmation_panel(_route_choices_cache[_current_route_choice_index])
+
+# Update the sub-header title/subtitle from the current route preview.
+func _update_sub_header(distance_miles: float, eta_fmt: String) -> void:
+	if not is_instance_valid(_sub_header_title):
+		return
+	var dest_name := str(_destination_data.get("name", "Unknown"))
+	var route_total: int = max(1, _all_route_choices.size())
+	if route_total > 1:
+		_sub_header_title.text = "%s  •  Route %d of %d" % [dest_name, _current_route_choice_index + 1, route_total]
+	else:
+		_sub_header_title.text = dest_name
+	_sub_header_subtitle.text = "%s miles  •  ETA: %s" % [NumberFormat.fmt_float(distance_miles, 1), eta_fmt]
+
+# Rebuild the sticky footer buttons (Top Up / Next Route / Confirm) for a route.
+func _build_footer(route_data: Dictionary) -> void:
+	if not is_instance_valid(_footer_hbox):
+		return
+	for c in _footer_hbox.get_children():
+		c.queue_free()
+	top_up_button = null
+	_next_route_button = null
+	_confirm_button = null
+
+	# Top Up — only when parked at a settlement that has vendors.
+	_current_settlement_data = _find_current_settlement()
+	if not _current_settlement_data.is_empty():
+		var tu := _make_touch_button("Top Up", Color(UITheme.METAL_BASE, 0.9), Color(UITheme.METAL_HOVER, 1.0), func(): _on_top_up_button_pressed())
+		tu.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		_footer_hbox.add_child(tu)
+		top_up_button = tu as Control
+
+	# Next Route — only when more than one route choice exists.
+	if _route_choices_cache.size() > 1:
+		var nx := _make_touch_button("Next Route", Color(0.25, 0.25, 0.25, 0.9), Color(0.4, 0.4, 0.4, 1.0), func(): _cycle_route(1))
+		nx.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		_footer_hbox.add_child(nx)
+		_next_route_button = nx as Control
+
+	# Confirm — always present; given extra width so it reads as the primary action.
+	var cf := _make_touch_button("Confirm Journey", Color(0.1, 0.4, 0.2, 0.9), Color(0.2, 0.6, 0.3, 1.0), func(): _on_confirm_journey_pressed(route_data))
+	cf.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	cf.size_flags_stretch_ratio = 2.0
+	_footer_hbox.add_child(cf)
+	_confirm_button = cf as Control
+
+	if is_instance_valid(top_up_button):
+		_update_top_up_button()
+	_apply_severity_styling()
 
 func _on_title_label_gui_input(event: InputEvent):
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
@@ -1161,60 +1407,28 @@ func _show_confirmation_panel(route_data: Dictionary):
 	# Clear panel for rebuild
 	for child in _confirmation_panel.get_children():
 		child.queue_free()
-	# ---------------- Title & Basic Info ----------------
-	var _add_sep = func():
-		var s = HSeparator.new()
-		if DeviceStateManager.get_is_portrait(): s.add_theme_constant_override("separation", 10)
-		_confirmation_panel.add_child(s)
-
-	var header_vbox = VBoxContainer.new()
-	header_vbox.add_theme_constant_override("separation", 14 if DeviceStateManager.is_mobile else 2)
-	_confirmation_panel.add_child(header_vbox)
-
-	var title = Label.new()
-	title.text = "Confirm Journey (%d / %d)" % [_current_route_choice_index + 1, max(1, _all_route_choices.size())]
-	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	title.add_theme_font_size_override("font_size", 56 if DeviceStateManager.is_mobile else 35)
-	title.add_theme_color_override("font_color", Color(0.9, 0.95, 1.0))
-	header_vbox.add_child(title)
-
+	# ---------------- Basic Info (drives the persistent sub-header) ----------------
 	var journey = route_data.get("journey", {})
 	var tiles = (journey.get("route_x", []) as Array).size()
 	var distance_miles = tiles * 30.0
 	var eta_minutes = route_data.get("delta_t", 0.0)
 	var eta_fmt = _format_travel_time(eta_minutes)
-	
-	var sub_info = Label.new()
-	sub_info.text = "%s • %s miles • ETA: %s" % [_destination_data.get("name", "Unknown"), NumberFormat.fmt_float(distance_miles, 1), eta_fmt]
-	sub_info.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	sub_info.add_theme_color_override("font_color", Color(0.7, 0.75, 0.8))
-	header_vbox.add_child(sub_info)
 
-	_add_sep.call()
+	# Title/route count/ETA now live in the sticky sub-header instead of the scroll body.
+	_update_sub_header(distance_miles, eta_fmt)
 
-	# --- Resource Section ---
-	var resources_section = VBoxContainer.new()
-	_confirmation_panel.add_child(resources_section)
-	
-	var res_header_hbox = HBoxContainer.new()
-	resources_section.add_child(res_header_hbox)
-	
-	var res_icon = Label.new()
-	res_icon.text = "📦"
-	res_header_hbox.add_child(res_icon)
-	
-	var res_title = Label.new()
-	res_title.text = "Projected Resource Usage"
-	res_title.add_theme_font_size_override("font_size", 42 if DeviceStateManager.is_mobile else 26)
-	res_title.add_theme_color_override("font_color", Color(0.8, 0.85, 0.95))
-	res_header_hbox.add_child(res_title)
+	var is_portrait := DeviceStateManager.get_is_portrait()
+	var cell_fs := 22 if is_portrait else 18
+	var head_fs := 16 if is_portrait else 13
 
+	# ---------------- Data computation ----------------
+	# Resources
 	var fuel_needed: float = 0.0
 	for fk in route_data.get("fuel_expenses", {}):
 		fuel_needed += _coerce_number(route_data.get("fuel_expenses", {})[fk])
 	var water_needed: float = _coerce_number(route_data.get("water_expense", 0.0))
 	var food_needed: float = _coerce_number(route_data.get("food_expense", 0.0))
-	
+
 	var fuel_have: float = _coerce_number(convoy_data_received.get("fuel", 0.0))
 	var fuel_max: float = _coerce_number(convoy_data_received.get("max_fuel", 0.0))
 	var water_have: float = _coerce_number(convoy_data_received.get("water", 0.0))
@@ -1235,175 +1449,7 @@ func _show_confirmation_panel(route_data: Dictionary):
 	var resource_warning: bool = (fuel_status == "warn" or water_status == "warn" or food_status == "warn")
 	var resource_critical: bool = (fuel_status == "critical" or water_status == "critical" or food_status == "critical")
 
-	var res_panel = PanelContainer.new()
-	var main_sb = StyleBoxFlat.new()
-	main_sb.bg_color = Color(0.08, 0.1, 0.12, 0.8)
-	main_sb.set_border_width_all(1)
-	main_sb.border_color = Color(0.2, 0.25, 0.3)
-	main_sb.corner_radius_top_left = 6
-	main_sb.corner_radius_top_right = 6
-	main_sb.corner_radius_bottom_left = 6
-	main_sb.corner_radius_bottom_right = 6
-	res_panel.add_theme_stylebox_override("panel", main_sb)
-	resources_section.add_child(res_panel)
-
-	var panel_vbox = VBoxContainer.new()
-	panel_vbox.add_theme_constant_override("separation", 0)
-	res_panel.add_child(panel_vbox)
-
-	# -- Table Header Background --
-	var header_bar = PanelContainer.new()
-	var hsb = StyleBoxFlat.new()
-	hsb.bg_color = Color(0.15, 0.18, 0.22, 1.0)
-	hsb.corner_radius_top_left = 6
-	hsb.corner_radius_top_right = 6
-	header_bar.add_theme_stylebox_override("panel", hsb)
-	panel_vbox.add_child(header_bar)
-
-	var col_widths = [0, 85, 110, 110]
-	var _create_col_label = func(text: String, alignment: int, min_w: float) -> Label:
-		var lbl = Label.new()
-		lbl.text = text
-		if min_w > 0: lbl.custom_minimum_size.x = min_w
-		lbl.horizontal_alignment = alignment
-		if alignment == HORIZONTAL_ALIGNMENT_LEFT:
-			lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		return lbl
-
-	if DeviceStateManager.get_is_portrait():
-		header_bar.visible = false
-	else:
-		var header_hbox = HBoxContainer.new()
-		header_hbox.add_theme_constant_override("separation", 16)
-		header_bar.add_child(header_hbox)
-		
-		var header_labels = ["Resource", "Need", "Have (Capacity)", "Remaining"]
-		for i in range(header_labels.size()):
-			var hl = _create_col_label.call(header_labels[i], (HORIZONTAL_ALIGNMENT_RIGHT if i > 0 else HORIZONTAL_ALIGNMENT_LEFT), col_widths[i])
-			hl.add_theme_color_override("font_color", Color(0.6, 0.7, 0.8))
-			hl.add_theme_font_size_override("font_size", DeviceStateManager.get_scaled_base_font_size(21))
-			header_hbox.add_child(hl)
-
-	# -- Rows VBox --
-	var res_list = VBoxContainer.new()
-	res_list.add_theme_constant_override("separation", 2)
-	panel_vbox.add_child(res_list)
-
-	var _add_res_row = func(label: String, unit: String, need: float, have: float, max_v: float, status: String):
-		var row_panel = PanelContainer.new()
-		var bg_style = StyleBoxFlat.new()
-		bg_style.set_corner_radius_all(2)
-		
-		match status:
-			"critical":
-				bg_style.bg_color = Color(0.6, 0.1, 0.1, 0.15)
-				bg_style.set_border_width_all(1)
-				bg_style.border_color = Color(1.0, 1.0, 1.0, 0.8)
-			"warn":
-				bg_style.bg_color = Color(0.6, 0.4, 0.1, 0.15)
-				bg_style.set_border_width_all(1)
-				bg_style.border_color = Color(1.0, 0.8, 0.4, 0.5)
-			_:
-				bg_style.bg_color = Color(0,0,0,0)
-				
-		row_panel.add_theme_stylebox_override("panel", bg_style)
-		res_list.add_child(row_panel)
-		
-		var name_text = label
-		if status == "critical": name_text = "⚠️ " + label
-		var remaining = have - need
-		var have_text = NumberFormat.fmt_float(have, 2)
-		if max_v > 0: have_text += " / " + NumberFormat.fmt_float(max_v, 0)
-		
-		var rem_text = NumberFormat.fmt_float(remaining, 2) + unit
-		if remaining < 0: rem_text = "Short " + NumberFormat.fmt_float(abs(remaining), 2) + unit
-
-		if DeviceStateManager.get_is_portrait(): # Spacious Portrait Card Layout
-			var m_cont = MarginContainer.new()
-			m_cont.add_theme_constant_override("margin_left", 12)
-			m_cont.add_theme_constant_override("margin_right", 12)
-			m_cont.add_theme_constant_override("margin_top", 8)
-			m_cont.add_theme_constant_override("margin_bottom", 8)
-			row_panel.add_child(m_cont)
-			
-			var vbox = VBoxContainer.new()
-			vbox.add_theme_constant_override("separation", 6)
-			m_cont.add_child(vbox)
-			
-			var title_hbox = HBoxContainer.new()
-			vbox.add_child(title_hbox)
-			
-			var title_lbl = Label.new()
-			title_lbl.text = name_text
-			title_lbl.add_theme_font_size_override("font_size", DeviceStateManager.get_scaled_base_font_size(29))
-			if status == "critical": title_lbl.add_theme_color_override("font_color", Color(1, 0.4, 0.4))
-			elif status == "warn": title_lbl.add_theme_color_override("font_color", Color(1, 0.8, 0.4))
-			title_hbox.add_child(title_lbl)
-			
-			# Stats in a 3-column grid to use width effectively
-			var stats_grid = GridContainer.new()
-			stats_grid.columns = 3
-			stats_grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-			stats_grid.add_theme_constant_override("h_separation", 20)
-			vbox.add_child(stats_grid)
-			
-			var _add_stat = func(pfx: String, val: String, color: Color):
-				var sv = VBoxContainer.new()
-				sv.add_theme_constant_override("separation", 0)
-				var pl = Label.new()
-				pl.text = pfx
-				pl.add_theme_font_size_override("font_size", DeviceStateManager.get_scaled_base_font_size(19))
-				pl.add_theme_color_override("font_color", Color(0.6, 0.6, 0.6))
-				sv.add_child(pl)
-				var vl = Label.new()
-				vl.text = val
-				vl.add_theme_font_size_override("font_size", DeviceStateManager.get_scaled_base_font_size(24))
-				vl.add_theme_color_override("font_color", color)
-				sv.add_child(vl)
-				stats_grid.add_child(sv)
-			
-			_add_stat.call("NEED", NumberFormat.fmt_float(need, 2) + unit, Color(0.9, 0.9, 0.9))
-			_add_stat.call("HAVE", have_text + unit, Color(0.9, 0.9, 0.9))
-			
-			var rem_color = Color(0.5, 1.0, 0.5)
-			if remaining < 0: rem_color = Color(1, 0.4, 0.4)
-			elif status == "warn": rem_color = Color(1, 0.8, 0.4)
-			_add_stat.call("REMAINING", rem_text, rem_color)
-		else:
-			# Existing Landscape Layout
-			var row_hbox = HBoxContainer.new()
-			row_hbox.add_theme_constant_override("separation", 20 if DeviceStateManager.is_mobile else 16)
-			row_panel.add_child(row_hbox)
-			
-			var icon_lbl = _create_col_label.call(name_text, HORIZONTAL_ALIGNMENT_LEFT, col_widths[0])
-			if status == "critical": icon_lbl.add_theme_color_override("font_color", Color(1, 0.4, 0.4))
-			elif status == "warn": icon_lbl.add_theme_color_override("font_color", Color(1, 0.8, 0.4))
-			row_hbox.add_child(icon_lbl)
-			
-			row_hbox.add_child(_create_col_label.call(NumberFormat.fmt_float(need, 2) + unit, HORIZONTAL_ALIGNMENT_RIGHT, col_widths[1]))
-			row_hbox.add_child(_create_col_label.call(have_text + unit, HORIZONTAL_ALIGNMENT_RIGHT, col_widths[2]))
-			
-			var rem_lbl = _create_col_label.call(rem_text, HORIZONTAL_ALIGNMENT_RIGHT, col_widths[3])
-			if remaining < 0: rem_lbl.add_theme_color_override("font_color", Color(1, 0.4, 0.4))
-			elif status == "warn": rem_lbl.add_theme_color_override("font_color", Color(1, 0.8, 0.4))
-			row_hbox.add_child(rem_lbl)
-
-	_add_res_row.call("⛽ Fuel", "L", fuel_needed, fuel_have, fuel_max, fuel_status)
-	_add_res_row.call("💧 Water", "L", water_needed, water_have, water_max, water_status)
-	_add_res_row.call("🍖 Food", "", food_needed, food_have, food_max, food_status)
-
-	if resource_critical or resource_warning:
-		var warn_lbl = Label.new()
-		warn_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD
-		warn_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		var text_pfx = "[CRITICAL] " if resource_critical else "[WARNING] "
-		var text_msg = "Insufficient reserves for journey." if resource_critical else "High consumption on reserves."
-		warn_lbl.text = text_pfx + text_msg
-		warn_lbl.add_theme_color_override("font_color", Color(1, 0.4, 0.4) if resource_critical else Color(1, 0.8, 0.4))
-		warn_lbl.add_theme_font_size_override("font_size", 42 if DeviceStateManager.is_mobile else 26)
-		panel_vbox.add_child(warn_lbl)
-
-	# --- Vehicle Energy ---
+	# Energy
 	var kwh_expenses: Dictionary = _resolve_kwh_expenses(route_data)
 	var vehicles: Array = _get_vehicle_list()
 	var energy_entries: Array = []
@@ -1424,75 +1470,7 @@ func _show_confirmation_panel(route_data: Dictionary):
 				any_critical = true
 		energy_entries.append({"name": str(v.get('name', 'Vehicle')), "used": (cap_val if is_ic and used > cap_val else used), "capacity": cap_val, "raw_used": used, "status": status, "is_ic": is_ic})
 
-	if not energy_entries.is_empty():
-		panel_vbox.add_child(HSeparator.new())
-		var energy_flow = FlowContainer.new()
-		energy_flow.add_theme_constant_override("h_separation", 24)
-		energy_flow.add_theme_constant_override("v_separation", 12)
-		panel_vbox.add_child(energy_flow)
-		
-		for e in energy_entries:
-			var item_vbox = VBoxContainer.new()
-			item_vbox.add_theme_constant_override("separation", 2)
-			
-			if DeviceStateManager.get_is_portrait():
-				# Portrait: Name and numbers on top, bar below
-				var top_hbox = HBoxContainer.new()
-				item_vbox.add_child(top_hbox)
-				
-				var icon_lbl = Label.new()
-				icon_lbl.text = "❗" if e.status == "critical" else ("🪫" if e.status == "discharged" else "🔋")
-				top_hbox.add_child(icon_lbl)
-				
-				var name_lbl = Label.new()
-				name_lbl.text = e.name
-				name_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-				if e.status == "critical": name_lbl.add_theme_color_override("font_color", Color(1, 0.4, 0.4))
-				top_hbox.add_child(name_lbl)
-				
-				var nums_lbl = Label.new()
-				nums_lbl.text = "%s/%s kWh" % [NumberFormat.fmt_float(e.used, 1), NumberFormat.fmt_float(e.capacity, 1)]
-				nums_lbl.add_theme_color_override("font_color", Color(0.8, 0.8, 0.8))
-				nums_lbl.add_theme_font_size_override("font_size", DeviceStateManager.get_scaled_base_font_size(19))
-				top_hbox.add_child(nums_lbl)
-				
-				var bar = ProgressBar.new()
-				bar.max_value = e.capacity
-				bar.value = e.used
-				bar.custom_minimum_size = Vector2(0, 18)
-				bar.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-				if bar.has_method("set_show_percentage"): bar.set("show_percentage", false)
-				item_vbox.add_child(bar)
-				
-				# Ensure it takes significant width in portrait flow
-				item_vbox.custom_minimum_size.x = 260
-			else:
-				# Existing landscape-ish style
-				var title_hbox = HBoxContainer.new()
-				var icon_lbl = Label.new()
-				icon_lbl.text = "❗" if e.status == "critical" else ("🪫" if e.status == "discharged" else "🔋")
-				title_hbox.add_child(icon_lbl)
-				var name_lbl = Label.new()
-				name_lbl.text = e.name
-				if e.status == "critical": name_lbl.add_theme_color_override("font_color", Color(1, 0.4, 0.4))
-				title_hbox.add_child(name_lbl)
-				item_vbox.add_child(title_hbox)
-				
-				var bar = ProgressBar.new()
-				bar.max_value = e.capacity
-				bar.value = e.used
-				bar.custom_minimum_size = Vector2(140, 14)
-				if bar.has_method("set_show_percentage"): bar.set("show_percentage", false)
-				item_vbox.add_child(bar)
-				
-				var nums_lbl = Label.new()
-				nums_lbl.text = "%s / %s kWh" % [NumberFormat.fmt_float(e.used, 1), NumberFormat.fmt_float(e.capacity, 1)]
-				nums_lbl.add_theme_color_override("font_color", Color(0.8, 0.8, 0.8))
-				item_vbox.add_child(nums_lbl)
-			
-			energy_flow.add_child(item_vbox)
-
-	# --- Delivery Manifest ---
+	# Manifest
 	var dest_name = _destination_data.get("name", "")
 	var dest_settlement_id = str(_destination_data.get("id", ""))
 	if dest_settlement_id == "": dest_settlement_id = str(_destination_data.get("settlement_id", ""))
@@ -1506,7 +1484,11 @@ func _show_confirmation_panel(route_data: Dictionary):
 	var manifest_items = []
 	var total_earnings = 0.0
 	var _is_for_destination = func(item: Dictionary) -> bool:
-		if str(item.get("recipient_settlement_name", "")) == dest_name: return true
+		# Match by recipient settlement NAME — but only for real deliveries. Guard the empty case: an
+		# unresolved dest_name must not match cargo that also has no recipient ("" == "" would otherwise
+		# pass every non-delivery item, showing the whole convoy cargo list instead of this stop's).
+		var rsn := str(item.get("recipient_settlement_name", ""))
+		if rsn != "" and dest_name != "" and rsn == dest_name: return true
 		var r = str(item.get("recipient", ""))
 		var ids = [r]
 		if item.has("recipient_vendor_id"): ids.append(str(item.get("recipient_vendor_id")))
@@ -1531,68 +1513,218 @@ func _show_confirmation_panel(route_data: Dictionary):
 				manifest_items.append({"name": item.get("name", "Cargo"), "qty": qty, "value": reward})
 				total_earnings += reward
 
-	if not manifest_items.is_empty():
-		_add_sep.call()
-		var m_header_hbox = HBoxContainer.new()
-		_confirmation_panel.add_child(m_header_hbox)
-		var m_icon = Label.new()
-		m_icon.text = "📜"
-		m_header_hbox.add_child(m_icon)
-		var m_title = Label.new()
-		m_title.text = "Delivery Manifest"
-		m_title.add_theme_font_size_override("font_size", 42 if DeviceStateManager.is_mobile else 26)
-		m_title.add_theme_color_override("font_color", Color(0.8, 0.95, 0.85))
-		m_header_hbox.add_child(m_title)
+	# ---------------- Shared rendering helpers ----------------
+	var _section_label = func(text: String) -> Label:
+		var l := Label.new()
+		l.text = text
+		l.add_theme_font_size_override("font_size", 20 if is_portrait else 15)
+		l.add_theme_color_override("font_color", UITheme.TEXT_MUTED)
+		return l
 
-		var m_panel = PanelContainer.new()
-		var msb = main_sb.duplicate()
-		msb.bg_color = Color(0.08, 0.12, 0.1, 0.8)
-		msb.border_color = Color(0.2, 0.35, 0.25)
-		m_panel.add_theme_stylebox_override("panel", msb)
-		_confirmation_panel.add_child(m_panel)
-		
-		var m_vbox = VBoxContainer.new()
-		m_vbox.add_theme_constant_override("separation", 4)
-		
-		if DeviceStateManager.get_is_portrait() and manifest_items.size() > 3:
-			var manifest_scroll = ScrollContainer.new()
-			manifest_scroll.custom_minimum_size.y = 160
-			manifest_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-			m_panel.add_child(manifest_scroll)
-			manifest_scroll.add_child(m_vbox)
+	var _mk_card = func(border_col: Color, bg_col: Color) -> PanelContainer:
+		var p := PanelContainer.new()
+		var sb := StyleBoxFlat.new()
+		sb.bg_color = bg_col
+		sb.set_border_width_all(1)
+		sb.border_color = border_col
+		sb.set_corner_radius_all(6)
+		sb.content_margin_left = 10
+		sb.content_margin_right = 10
+		sb.content_margin_top = 8
+		sb.content_margin_bottom = 8
+		p.add_theme_stylebox_override("panel", sb)
+		return p
+
+	# ---------------- Resource block (compact 4-column table) ----------------
+	var res_block := VBoxContainer.new()
+	res_block.add_theme_constant_override("separation", 4)
+	res_block.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	res_block.add_child(_section_label.call("Resources"))
+	var res_card: PanelContainer = _mk_card.call(UITheme.METAL_EDGE, Color(UITheme.METAL_DARK, 0.85))
+	res_block.add_child(res_card)
+	var res_grid := GridContainer.new()
+	res_grid.columns = 4
+	# Landscape places this table beside the cargo block in a half-width column. If the name
+	# column expands to fill, it shoves Need/Have/After to the far right edge, leaving a wide
+	# dead gap between each resource and its numbers. Pack the table tight to the left instead;
+	# portrait keeps the full-width table (reads well on a narrow single column).
+	res_grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL if is_portrait else Control.SIZE_SHRINK_BEGIN
+	res_grid.add_theme_constant_override("h_separation", 12)
+	res_grid.add_theme_constant_override("v_separation", 6)
+	res_card.add_child(res_grid)
+	var _name_col_flag := Control.SIZE_EXPAND_FILL if is_portrait else Control.SIZE_FILL
+
+	var _head_cell = func(text: String, expand: bool):
+		var l := Label.new()
+		l.text = text
+		l.add_theme_font_size_override("font_size", head_fs)
+		l.add_theme_color_override("font_color", UITheme.TEXT_MUTED)
+		if expand:
+			l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		else:
-			m_panel.add_child(m_vbox)
-		
+			l.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+			l.size_flags_horizontal = Control.SIZE_FILL
+		return l
+	res_grid.add_child(_head_cell.call("", is_portrait))
+	res_grid.add_child(_head_cell.call("Need", false))
+	res_grid.add_child(_head_cell.call("Have / Cap", false))
+	res_grid.add_child(_head_cell.call("After", false))
+
+	var _res_row = func(emoji_name: String, need_s: String, have_s: String, after_s: String, status: String):
+		var status_col := UITheme.TEXT_PRIMARY
+		if status == "critical": status_col = Color(1, 0.45, 0.45)
+		elif status == "warn": status_col = Color(1, 0.82, 0.45)
+		var nm := Label.new()
+		nm.text = ("⚠️ " if status == "critical" else "") + emoji_name
+		nm.add_theme_font_size_override("font_size", cell_fs)
+		nm.size_flags_horizontal = _name_col_flag
+		nm.add_theme_color_override("font_color", status_col)
+		res_grid.add_child(nm)
+		var _val = func(text: String, c: Color):
+			var l := Label.new()
+			l.text = text
+			l.add_theme_font_size_override("font_size", cell_fs)
+			l.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+			l.size_flags_horizontal = Control.SIZE_FILL
+			l.add_theme_color_override("font_color", c)
+			res_grid.add_child(l)
+		_val.call(need_s, UITheme.TEXT_PRIMARY)
+		_val.call(have_s, UITheme.TEXT_PRIMARY)
+		var after_col := Color(0.5, 1.0, 0.5)
+		if status == "critical": after_col = Color(1, 0.45, 0.45)
+		elif status == "warn": after_col = Color(1, 0.82, 0.45)
+		_val.call(after_s, after_col)
+
+	var _fmt_have = func(have: float, max_v: float) -> String:
+		var s := NumberFormat.fmt_float(have, 0)
+		if max_v > 0: s += " / " + NumberFormat.fmt_float(max_v, 0)
+		return s
+	var _fmt_after = func(have: float, need: float, unit: String) -> String:
+		var rem := have - need
+		if rem < 0: return "Short " + NumberFormat.fmt_float(abs(rem), 1) + unit
+		return NumberFormat.fmt_float(rem, 1) + unit
+
+	_res_row.call("⛽ Fuel", NumberFormat.fmt_float(fuel_needed, 1) + "L", _fmt_have.call(fuel_have, fuel_max), _fmt_after.call(fuel_have, fuel_needed, "L"), fuel_status)
+	_res_row.call("💧 Water", NumberFormat.fmt_float(water_needed, 1) + "L", _fmt_have.call(water_have, water_max), _fmt_after.call(water_have, water_needed, "L"), water_status)
+	_res_row.call("🍖 Food", NumberFormat.fmt_float(food_needed, 1), _fmt_have.call(food_have, food_max), _fmt_after.call(food_have, food_needed, ""), food_status)
+
+	if resource_critical or resource_warning:
+		var warn_lbl := Label.new()
+		warn_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD
+		warn_lbl.text = ("⚠️ Insufficient reserves for journey." if resource_critical else "⚠️ High consumption on reserves.")
+		warn_lbl.add_theme_color_override("font_color", Color(1, 0.45, 0.45) if resource_critical else Color(1, 0.82, 0.45))
+		warn_lbl.add_theme_font_size_override("font_size", 20 if is_portrait else 15)
+		res_block.add_child(warn_lbl)
+
+	# ---------------- Energy block (compact horizontal bars) ----------------
+	var energy_block: VBoxContainer = null
+	if not energy_entries.is_empty():
+		energy_block = VBoxContainer.new()
+		energy_block.add_theme_constant_override("separation", 4)
+		energy_block.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		energy_block.add_child(_section_label.call("Vehicle energy"))
+		var en_card: PanelContainer = _mk_card.call(UITheme.METAL_EDGE, Color(UITheme.METAL_DARK, 0.85))
+		energy_block.add_child(en_card)
+		var en_vbox := VBoxContainer.new()
+		en_vbox.add_theme_constant_override("separation", 6)
+		en_card.add_child(en_vbox)
+		for e in energy_entries:
+			var row := HBoxContainer.new()
+			row.add_theme_constant_override("separation", 8)
+			var icon := Label.new()
+			icon.text = "❗" if e.status == "critical" else ("🪫" if e.status == "discharged" else "🔋")
+			icon.add_theme_font_size_override("font_size", cell_fs)
+			row.add_child(icon)
+			var nm := Label.new()
+			nm.text = e.name
+			nm.add_theme_font_size_override("font_size", cell_fs)
+			nm.custom_minimum_size.x = 110 if is_portrait else 90
+			if e.status == "critical": nm.add_theme_color_override("font_color", Color(1, 0.45, 0.45))
+			row.add_child(nm)
+			var bar := ProgressBar.new()
+			bar.max_value = e.capacity
+			bar.value = e.used
+			bar.custom_minimum_size = Vector2(0, 10)
+			bar.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			bar.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+			if bar.has_method("set_show_percentage"): bar.set("show_percentage", false)
+			row.add_child(bar)
+			var nums := Label.new()
+			nums.text = "%s/%s kWh" % [NumberFormat.fmt_float(e.used, 1), NumberFormat.fmt_float(e.capacity, 1)]
+			nums.add_theme_font_size_override("font_size", 18 if is_portrait else 14)
+			nums.add_theme_color_override("font_color", UITheme.TEXT_MUTED)
+			row.add_child(nums)
+			en_vbox.add_child(row)
+
+	# ---------------- Manifest block ----------------
+	var manifest_block: VBoxContainer = null
+	if not manifest_items.is_empty():
+		manifest_block = VBoxContainer.new()
+		manifest_block.add_theme_constant_override("separation", 4)
+		manifest_block.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		manifest_block.add_child(_section_label.call("Delivery cargo"))
+		var m_card: PanelContainer = _mk_card.call(Color(0.2, 0.35, 0.25), Color(0.08, 0.12, 0.1, 0.85))
+		manifest_block.add_child(m_card)
+		var m_vbox := VBoxContainer.new()
+		m_vbox.add_theme_constant_override("separation", 3)
+		# Portrait with a long manifest: cap height and scroll just the list.
+		if is_portrait and manifest_items.size() > 4:
+			var m_scroll := ScrollContainer.new()
+			m_scroll.custom_minimum_size.y = 150
+			m_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+			m_card.add_child(m_scroll)
+			m_vbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			m_scroll.add_child(m_vbox)
+		else:
+			m_card.add_child(m_vbox)
 		for m_item in manifest_items:
-			var row = HBoxContainer.new()
-			var n_lbl = Label.new()
-			n_lbl.text = "• %s (x%d)" % [m_item.name, m_item.qty]
+			var row := HBoxContainer.new()
+			var n_lbl := Label.new()
+			n_lbl.text = "• %s ×%d" % [m_item.name, int(m_item.qty)]
 			n_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-			n_lbl.add_theme_color_override("font_color", Color(0.85, 0.9, 0.85))
+			n_lbl.add_theme_font_size_override("font_size", cell_fs)
+			n_lbl.add_theme_color_override("font_color", Color(0.82, 0.88, 0.82))
 			row.add_child(n_lbl)
-			var v_lbl = Label.new()
+			var v_lbl := Label.new()
 			v_lbl.text = NumberFormat.format_money(m_item.value)
+			v_lbl.add_theme_font_size_override("font_size", cell_fs)
 			v_lbl.add_theme_color_override("font_color", Color(0.5, 1.0, 0.5))
 			row.add_child(v_lbl)
 			m_vbox.add_child(row)
-			if DeviceStateManager.get_is_portrait():
-				n_lbl.add_theme_font_size_override("font_size", DeviceStateManager.get_scaled_base_font_size(22))
-				v_lbl.add_theme_font_size_override("font_size", DeviceStateManager.get_scaled_base_font_size(22))
-				row.custom_minimum_size.y = 40
-			
 		m_vbox.add_child(HSeparator.new())
-		var t_row = HBoxContainer.new()
-		var t_lbl = Label.new()
-		t_lbl.text = "Estimated Earnings:"
+		var t_row := HBoxContainer.new()
+		var t_lbl := Label.new()
+		t_lbl.text = "Est. earnings"
 		t_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		t_lbl.add_theme_font_size_override("font_size", cell_fs)
+		t_lbl.add_theme_color_override("font_color", Color(0.6, 0.66, 0.62))
 		t_row.add_child(t_lbl)
-		var t_val = Label.new()
+		var t_val := Label.new()
 		t_val.text = NumberFormat.format_money(total_earnings)
+		t_val.add_theme_font_size_override("font_size", 28 if is_portrait else 22)
 		t_val.add_theme_color_override("font_color", Color(0.4, 1.0, 0.4))
-		t_val.add_theme_font_size_override("font_size", 45 if DeviceStateManager.is_mobile else 29)
 		t_row.add_child(t_val)
 		m_vbox.add_child(t_row)
 
+	# ---------------- Layout assembly ----------------
+	if is_portrait:
+		# Single column: resources, energy, cargo stacked.
+		_confirmation_panel.add_child(res_block)
+		if energy_block != null:
+			_confirmation_panel.add_child(energy_block)
+		if manifest_block != null:
+			_confirmation_panel.add_child(manifest_block)
+	else:
+		# Wide panel: resources | cargo side by side, energy full width below.
+		var top_row := HBoxContainer.new()
+		top_row.add_theme_constant_override("separation", 12)
+		top_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		top_row.add_child(res_block)
+		if manifest_block != null:
+			top_row.add_child(manifest_block)
+		_confirmation_panel.add_child(top_row)
+		if energy_block != null:
+			_confirmation_panel.add_child(energy_block)
 
 	# Severity state from combined energy + resource evaluation
 	if any_critical or resource_critical:
@@ -1601,156 +1733,21 @@ func _show_confirmation_panel(route_data: Dictionary):
 		_severity_state = "safety"
 	else:
 		_severity_state = "none"
-	var buttons_hbox = FlowContainer.new()
-	buttons_hbox.alignment = FlowContainer.ALIGNMENT_CENTER
-	_confirmation_panel.add_child(buttons_hbox)
-	
-	# --- Top Up Integration ---
-	_current_settlement_data = _find_current_settlement()
-	if not _current_settlement_data.is_empty():
-		var top_up_container = PanelContainer.new()
-		top_up_container.name = "TopUpContainer"
-		var tsb = StyleBoxFlat.new()
-		tsb.bg_color = Color(0.2, 0.25, 0.3, 0.9)
-		tsb.corner_radius_top_left = 6
-		tsb.corner_radius_top_right = 6
-		tsb.corner_radius_bottom_left = 6
-		tsb.corner_radius_bottom_right = 6
-		tsb.content_margin_left = 20
-		tsb.content_margin_right = 20
-		tsb.content_margin_top = 10
-		tsb.content_margin_bottom = 10
-		top_up_container.add_theme_stylebox_override("panel", tsb)
-		
-		if DeviceStateManager.get_is_portrait():
-			top_up_container.custom_minimum_size = Vector2(180, 90)
-		elif DeviceStateManager.is_mobile:
-			top_up_container.custom_minimum_size = Vector2(140, 64)
-		
-		top_up_container.mouse_filter = Control.MOUSE_FILTER_PASS
-		top_up_container.gui_input.connect(func(event):
-			if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
-				if event.pressed:
-					if top_up_container.get_meta("disabled", false): return
-					top_up_container.set_meta("tap_start_pos", event.global_position)
-					tsb.bg_color = Color(0.3, 0.4, 0.5, 1.0)
-				else:
-					if top_up_container.get_meta("disabled", false): return
-					tsb.bg_color = Color(0.2, 0.25, 0.3, 0.9)
-					var start_pos = top_up_container.get_meta("tap_start_pos", event.global_position)
-					if (event.global_position - start_pos).length() < 10:
-						_on_top_up_button_pressed()
-						get_viewport().set_input_as_handled()
-		)
-		
-		var t_lbl = Label.new()
-		t_lbl.text = "Top Up"
-		t_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		t_lbl.add_theme_font_size_override("font_size", DeviceStateManager.get_scaled_base_font_size(24))
-		top_up_container.add_child(t_lbl)
-		top_up_container.set_meta("label", t_lbl) # Store for text updates
-		buttons_hbox.add_child(top_up_container)
-		
-		# Set as top_up_button for reference (even though it's technically a container now)
-		top_up_button = top_up_container as Control
-	else:
-		top_up_button = null
-	# --------------------------
-	if _route_choices_cache.size() > 1:
-		var next_container = PanelContainer.new()
-		var nsb = StyleBoxFlat.new()
-		nsb.bg_color = Color(0.25, 0.25, 0.25, 0.9)
-		nsb.corner_radius_top_left = 6
-		nsb.corner_radius_top_right = 6
-		nsb.corner_radius_bottom_left = 6
-		nsb.corner_radius_bottom_right = 6
-		nsb.content_margin_left = 20
-		nsb.content_margin_right = 20
-		nsb.content_margin_top = 10
-		nsb.content_margin_bottom = 10
-		next_container.add_theme_stylebox_override("panel", nsb)
-		
-		if DeviceStateManager.get_is_portrait():
-			next_container.custom_minimum_size = Vector2(180, 90)
-		elif DeviceStateManager.is_mobile:
-			next_container.custom_minimum_size = Vector2(140, 64)
-		
-		next_container.mouse_filter = Control.MOUSE_FILTER_PASS
-		next_container.gui_input.connect(func(event):
-			if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
-				if event.pressed:
-					if next_container.get_meta("disabled", false): return
-					next_container.set_meta("tap_start_pos", event.global_position)
-					nsb.bg_color = Color(0.4, 0.4, 0.4, 1.0)
-				else:
-					if next_container.get_meta("disabled", false): return
-					nsb.bg_color = Color(0.25, 0.25, 0.25, 0.9)
-					var start_pos = next_container.get_meta("tap_start_pos", event.global_position)
-					if (event.global_position - start_pos).length() < 10:
-						_cycle_route(1)
-						get_viewport().set_input_as_handled()
-		)
-		
-		var n_lbl = Label.new()
-		n_lbl.text = "Next Route"
-		n_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		n_lbl.add_theme_font_size_override("font_size", DeviceStateManager.get_scaled_base_font_size(24))
-		next_container.add_child(n_lbl)
-		next_container.set_meta("label", n_lbl) # Store for text updates
-		buttons_hbox.add_child(next_container)
-		
-		_next_route_button = next_container as Control
 
-	var confirm_container = PanelContainer.new()
-	var csb = StyleBoxFlat.new()
-	csb.bg_color = Color(0.1, 0.4, 0.2, 0.9) # Greenish for success
-	csb.corner_radius_top_left = 6
-	csb.corner_radius_top_right = 6
-	csb.corner_radius_bottom_left = 6
-	csb.corner_radius_bottom_right = 6
-	csb.content_margin_left = 20
-	csb.content_margin_right = 20
-	csb.content_margin_top = 10
-	csb.content_margin_bottom = 10
-	confirm_container.add_theme_stylebox_override("panel", csb)
-	
-	if DeviceStateManager.get_is_portrait():
-		confirm_container.custom_minimum_size = Vector2(240, 90)
-	elif DeviceStateManager.is_mobile:
-		confirm_container.custom_minimum_size = Vector2(140, 64)
-	
-	confirm_container.mouse_filter = Control.MOUSE_FILTER_PASS
-	confirm_container.gui_input.connect(func(event):
-		if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
-			if event.pressed:
-				if confirm_container.get_meta("disabled", false): return
-				confirm_container.set_meta("tap_start_pos", event.global_position)
-				csb.bg_color = Color(0.2, 0.6, 0.3, 1.0)
-			else:
-				if confirm_container.get_meta("disabled", false): return
-				csb.bg_color = Color(0.1, 0.4, 0.2, 0.9)
-				var start_pos = confirm_container.get_meta("tap_start_pos", event.global_position)
-				if (event.global_position - start_pos).length() < 10:
-					_on_confirm_journey_pressed(route_data)
-					get_viewport().set_input_as_handled()
-	)
-	
-	var c_lbl = Label.new()
-	c_lbl.text = "Confirm Journey"
-	c_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	c_lbl.add_theme_font_size_override("font_size", DeviceStateManager.get_scaled_base_font_size(24))
-	confirm_container.add_child(c_lbl)
-	confirm_container.set_meta("label", c_lbl) # Store for text updates
-	buttons_hbox.add_child(confirm_container)
-	_confirm_button = confirm_container as Variant
-	_apply_severity_styling()
+	# Action buttons live in the persistent sticky footer (built fresh each time so
+	# Top Up / Next Route visibility tracks the current settlement and route count).
+	_build_footer(route_data)
+
 	# ---------------- BODY END ----------------
 	_confirmation_panel.visible = true
+	_set_planning_chrome_visible(true)
 
 func _on_change_destination_pressed():
 	# Hide confirmation, re-show destination list
 	if is_instance_valid(_confirmation_panel):
 		_confirmation_panel.visible = false
+	# Returning to the destination list: hide the confirmation sub-header + footer.
+	_set_planning_chrome_visible(false)
 	_pending_confirmation_refresh_after_top_up = false
 	# Stop preview line
 	emit_signal("route_preview_ended")
@@ -1815,6 +1812,17 @@ func _on_journey_canceled(updated_convoy: Dictionary):
 		set_menu_title_suffix("Journey Planner")
 
 
+# Reset the pressed-highlight on every destination row back to the normal color.
+# Guards against highlights left stuck when a scroll gesture consumes the release.
+func _clear_destination_highlights() -> void:
+	if not is_instance_valid(content_vbox):
+		return
+	for child in content_vbox.get_children():
+		if child is PanelContainer:
+			var box := (child as PanelContainer).get_theme_stylebox("panel")
+			if box is StyleBoxFlat:
+				(box as StyleBoxFlat).bg_color = Color(UITheme.METAL_BASE, 0.9)
+
 func _disable_destination_buttons():
 	for child in content_vbox.get_children():
 		if child.has_meta("tap_start_pos"):
@@ -1850,17 +1858,55 @@ func _enable_destination_buttons():
 		_set_btn_disabled(_next_route_button, false)
 
 func _show_loading_indicator(text: String):
-	if _loading_label == null:
+	# Status text + an indeterminate animated bar (pulsed in _process) so route plotting
+	# reads as active work rather than a frozen label. Mirrors login_screen.gd's pattern.
+	if not is_instance_valid(_loading_container):
+		_loading_container = VBoxContainer.new()
+		_loading_container.name = "LoadingIndicator"
+		_loading_container.add_theme_constant_override("separation", 10)
+		_loading_container.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+
 		_loading_label = Label.new()
 		_loading_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		_loading_label.autowrap_mode = TextServer.AUTOWRAP_WORD
-		content_vbox.add_child(_loading_label)
-	_loading_label.text = text
+		_loading_container.add_child(_loading_label)
+
+		_loading_bar = ProgressBar.new()
+		_loading_bar.min_value = 0.0
+		_loading_bar.max_value = 100.0
+		_loading_bar.value = 0.0
+		_loading_bar.show_percentage = false
+		_loading_bar.custom_minimum_size = Vector2(0, 8)
+		_loading_bar.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		_style_loading_bar(_loading_bar)
+		_loading_container.add_child(_loading_bar)
+
+		content_vbox.add_child(_loading_container)
+	# Pin to the top and scroll there — otherwise it's appended below the (long, scrolled)
+	# destination list and never seen while routes are being plotted.
+	content_vbox.move_child(_loading_container, 0)
+	if is_instance_valid(scroll_container):
+		scroll_container.scroll_vertical = 0
+	_loading_anim_time = 0.0
+	if is_instance_valid(_loading_label):
+		_loading_label.text = text
+
+func _style_loading_bar(bar: ProgressBar) -> void:
+	var bg := StyleBoxFlat.new()
+	bg.bg_color = Color(UITheme.METAL_DARK, 0.9)
+	bg.set_corner_radius_all(4)
+	var fill := StyleBoxFlat.new()
+	fill.bg_color = UITheme.ACCENT_VERDIGRIS
+	fill.set_corner_radius_all(4)
+	bar.add_theme_stylebox_override("background", bg)
+	bar.add_theme_stylebox_override("fill", fill)
 
 func _clear_loading_indicator():
-	if _loading_label and is_instance_valid(_loading_label):
-		_loading_label.queue_free()
+	if is_instance_valid(_loading_container):
+		_loading_container.queue_free()
+	_loading_container = null
 	_loading_label = null
+	_loading_bar = null
 
 func _show_error_message(msg: String):
 	var err_label = Label.new()
@@ -1880,7 +1926,7 @@ func _make_stat_card(title: String, value_text: String, bg_color: Color) -> Pane
 		sb.border_width_right = 1
 		sb.border_width_top = 1
 		sb.border_width_bottom = 1
-	sb.border_color = Color(0.28,0.34,0.44)
+	sb.border_color = UITheme.METAL_EDGE
 	sb.corner_radius_top_left = 6
 	sb.corner_radius_top_right = 6
 	sb.corner_radius_bottom_left = 6
@@ -1892,7 +1938,7 @@ func _make_stat_card(title: String, value_text: String, bg_color: Color) -> Pane
 	card.add_child(vb)
 	var cap := Label.new()
 	cap.text = title
-	cap.add_theme_color_override("font_color", Color(0.75,0.84,0.95))
+	cap.add_theme_color_override("font_color", UITheme.TEXT_MUTED)
 	cap.add_theme_font_size_override("font_size", 30 if DeviceStateManager.is_mobile else 19)
 	vb.add_child(cap)
 	var val := Label.new()
@@ -2440,7 +2486,7 @@ func _style_top_up_button():
 		return
 	# --- Button StyleBoxes (Cloned) ---
 	var normal = StyleBoxFlat.new()
-	normal.bg_color = Color(0.15, 0.15, 0.18, 1.0)
+	normal.bg_color = Color(UITheme.METAL_BASE, 1.0)
 	normal.corner_radius_top_left = 6
 	normal.corner_radius_top_right = 6
 	normal.corner_radius_bottom_left = 6
@@ -2449,17 +2495,17 @@ func _style_top_up_button():
 	normal.border_width_right = 2
 	normal.border_width_top = 2
 	normal.border_width_bottom = 2
-	normal.border_color = Color(0.40, 0.60, 0.90)
+	normal.border_color = UITheme.ACCENT_BRASS
 	normal.shadow_color = Color(0,0,0,0.6)
 	normal.shadow_size = 3
 
 	var hover = normal.duplicate()
-	hover.bg_color = Color(0.22, 0.22, 0.28, 1.0)
-	hover.border_color = Color(0.55, 0.75, 1.0)
+	hover.bg_color = Color(UITheme.METAL_HOVER, 1.0)
+	hover.border_color = UITheme.ACCENT_BRASS.lightened(0.15)
 
 	var pressed = normal.duplicate()
-	pressed.bg_color = Color(0.10, 0.10, 0.14, 1.0)
-	pressed.border_color = Color(0.30, 0.50, 0.80)
+	pressed.bg_color = Color(UITheme.METAL_DARK, 1.0)
+	pressed.border_color = UITheme.ACCENT_BRASS.darkened(0.2)
 
 	var disabled = normal.duplicate()
 	disabled.bg_color = Color(0.08, 0.08, 0.09, 1.0)
@@ -2482,7 +2528,7 @@ func _style_top_up_button():
 	tooltip_panel.corner_radius_top_right = 4
 	tooltip_panel.corner_radius_bottom_left = 4
 	tooltip_panel.corner_radius_bottom_right = 4
-	tooltip_panel.border_color = Color(0.60, 0.60, 0.70)
+	tooltip_panel.border_color = UITheme.METAL_EDGE
 	tooltip_panel.border_width_left = 1
 	tooltip_panel.border_width_right = 1
 	tooltip_panel.border_width_top = 1
@@ -2494,9 +2540,9 @@ func _style_top_up_button():
 	top_up_button.add_theme_stylebox_override("tooltip_panel", tooltip_panel)
 
 	# --- Font & Colors ---
-	top_up_button.add_theme_color_override("font_color", Color(0.92, 0.96, 1.0))
+	top_up_button.add_theme_color_override("font_color", UITheme.TEXT_PRIMARY)
 	top_up_button.add_theme_color_override("font_color_hover", Color(1.0, 1.0, 1.0))
-	top_up_button.add_theme_color_override("font_color_pressed", Color(0.85, 0.90, 1.0))
+	top_up_button.add_theme_color_override("font_color_pressed", UITheme.TEXT_PRIMARY)
 	top_up_button.add_theme_color_override("font_color_disabled", Color(0.55, 0.55, 0.60))
 	top_up_button.add_theme_font_size_override("font_size", 29)
 
