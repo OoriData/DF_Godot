@@ -61,3 +61,13 @@ ios/*
 !ios/plugins/**/*.a
 !ios/plugins/**/*.xcframework
 !ios/plugins/**/*.gdip
+
+# Steam ContentBuilder: staged/exported game builds and the steamcmd runtime
+# it downloads on first run. These are regenerated every release (see
+# docs/04_Technical/Deployment.md §5) and are way over GitHub's 100MB limit.
+# Keep only the .vdf build scripts.
+steamworks_sdk/tools/ContentBuilder/content/**
+steamworks_sdk/tools/ContentBuilder/output/**
+steamworks_sdk/tools/ContentBuilder/builder_osx/**
+steamworks_sdk/tools/ContentBuilder/builder_linux/**
+steamworks_sdk/tools/ContentBuilder/builder/**
