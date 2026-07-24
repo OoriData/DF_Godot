@@ -72,6 +72,12 @@ func _apply_runtime_side_effect(key: String, value: Variant) -> void:
 		"display.fullscreen":
 			var mode := DisplayServer.WINDOW_MODE_FULLSCREEN if bool(value) else DisplayServer.WINDOW_MODE_WINDOWED
 			DisplayServer.window_set_mode(mode, 0)
+			# The logical scale is derived from the window size, which just changed. Recompute
+			# it (deferred, so the new window geometry has settled) — otherwise the UI keeps the
+			# previous mode's scale and lays out offset after toggling fullscreen.
+			var usm := get_node_or_null("/root/ui_scale_manager")
+			if is_instance_valid(usm) and usm.has_method("reapply_scale"):
+				usm.call_deferred("reapply_scale")
 		"ui.scale":
 			var sm := get_node_or_null("/root/ui_scale_manager")
 			if is_instance_valid(sm) and sm.has_method("set_global_ui_scale"):
