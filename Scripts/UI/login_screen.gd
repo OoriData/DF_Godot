@@ -104,6 +104,10 @@ func _ready() -> void:
 
 	# Apply portrait layout before first frame
 	_apply_portrait_layout()
+	# In exported/Steam builds the viewport can still be settling on the first frame — the
+	# cause of the "only the background shows, no login buttons" boot state. Re-run once it
+	# has settled so the centered button column is sized against the real viewport.
+	call_deferred("_apply_portrait_layout")
 
 	# Focus the first button
 	if is_instance_valid(_discord_button):
