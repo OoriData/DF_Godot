@@ -1,10 +1,13 @@
 ---
 type: note
 tags:
-  - codex/readme
+  - kind/index
+  - status/unverified
 aliases:
   - "Desolate Frontiers Documentation"
 created: 2026-05-18
+updated: 2026-07-28
+status: unverified
 ---
 
 # Desolate Frontiers Documentation
@@ -72,6 +75,8 @@ Welcome to the technical documentation for *Desolate Frontiers*. This folder is 
 - [**Diagnostics & Troubleshooting**](04_Technical/Diagnostics.md): Logging, watchdogs, and network debugging.
 - [**Refresh Scheduler**](04_Technical/RefreshScheduler.md): Polling heartbeat — interval, suspend/resume, adding services.
 - [**Error Handling System**](04_Technical/ErrorSystem.md): ErrorTranslator pipeline, inline vs. modal errors.
+- [**Bug Reporting & Feedback**](04_Technical/BugReporting.md): The Feedback button → screenshot/log capture → `POST /bug-report` pipeline, the payload contract, and where the button is currently *unreachable* (login, tutorial) during the beta.
+- [**User Settings**](04_Technical/UserSettings.md): SettingsManager keys and defaults, and the display/fullscreen contract (**always change the window mode via `display.fullscreen`, never `DisplayServer` directly**).
 - [**Dependency Graph**](04_Technical/Dependencies.md): Visual mapping of singleton relationships.
 - [**API Reference**](04_Technical/API_Reference.md): Backend endpoints and JSON contracts.
 - [**Deployment & Environment**](04_Technical/Deployment.md): Build targets and CI/CD pipelines.
@@ -90,4 +95,5 @@ Welcome to the technical documentation for *Desolate Frontiers*. This folder is 
 ## Project Management
 - [**TODO**](TODO.md): The flowing state of active/pending work — current sprint, device-test gate, backlog, and upcoming initiatives.
 - [**Sprint History**](SprintHistory.md): Completed-work archive — full root-cause narratives for Sprints 1–10 and closed backlog items (split out of the TODO so it stays forward-looking).
+- [**Documentation Audit**](DocumentationAudit.md): Structural review of this doc set *as a knowledge graph* — connectivity, reachability, staleness metadata, and a phased remediation plan. Feeds the Systems Audit initiative.
 

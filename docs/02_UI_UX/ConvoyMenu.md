@@ -1,11 +1,14 @@
 ---
 type: ui-ux
 tags:
-  - ui
-  - codex/convoy-menu
+  - layer/ui
+  - kind/deep-dive
+  - status/unverified
 aliases:
   - "Convoy Menu"
 created: 2026-05-18
+updated: 2026-07-28
+status: unverified
 ---
 
 # Convoy Menu
@@ -147,5 +150,5 @@ The user's sort preference is persisted to `SettingsManager` under the key `ui.c
 ## Primary Files
 
 - **Script**: `Scripts/Menus/convoy_menu.gd`
-- **Scene**: `Scenes/Menus/ConvoyMenu.tscn`
+- **Scene**: `Scenes/ConvoyMenu.tscn`
 - **Related**: [VendorPanelOverview](VendorPanel/VendorPanelOverview.md), [MenuBase Contract](MenuBase.md), [Items & Missions](../03_Systems/ItemsAndMissions.md)

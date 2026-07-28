@@ -1,12 +1,15 @@
 ---
 type: system
 tags:
-  - system
-  - system/tutorial
-  - codex/architecture
+  - layer/service
+  - kind/deep-dive
+  - concept/onboarding
+  - status/unverified
 aliases:
   - "Architecture: The Step Loop"
 created: 2026-05-18
+updated: 2026-07-16
+status: unverified
 ---
 
 # Architecture: The Step Loop

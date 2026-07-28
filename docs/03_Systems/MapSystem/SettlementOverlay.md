@@ -1,12 +1,14 @@
 ---
 type: system
 tags:
-  - system
-  - system/map
-  - codex/visuals
+  - layer/service
+  - kind/deep-dive
+  - status/unverified
 aliases:
   - "Settlement Overlay System"
 created: 2026-05-29
+updated: 2026-07-22
+status: unverified
 ---
 
 # Settlement Overlay System

@@ -1,11 +1,14 @@
 ---
 type: system
 tags:
-  - system
-  - codex/readme
+  - layer/service
+  - kind/index
+  - status/unverified
 aliases:
   - "Game Systems"
 created: 2026-05-18
+updated: 2026-07-28
+status: unverified
 ---
 
 # Game Systems
@@ -25,17 +28,16 @@ This section covers the core simulation and gameplay mechanics of *Desolate Fron
 ## Technical Mapping
 
 ### Map & Navigation
-- **Visuals**: [convoy_visuals_manager.gd](../../../Scripts/Map/convoy_visuals_manager.gd), [ConvoyNode.tscn](../../../Scenes/ConvoyNode.tscn)
-- **Input & Interaction**: [map_interaction_manager.gd](../../../Scripts/Map/map_interaction_manager.gd), [map_camera_controller.gd](../../../Scripts/Map/map_camera_controller.gd)
-- **Primary Scene**: [MapView.tscn](../../../Scenes/MapView.tscn)
+- **Visuals**: [convoy_visuals_manager.gd](../../Scripts/Map/convoy_visuals_manager.gd), [ConvoyNode.tscn](../../Scenes/ConvoyNode.tscn)
+- **Input & Interaction**: [map_interaction_manager.gd](../../Scripts/Map/map_interaction_manager.gd), [map_camera_controller.gd](../../Scripts/Map/map_camera_controller.gd)
+- **Primary Scene**: [MapView.tscn](../../Scenes/MapView.tscn)
 
 ### Simulation & Mechanics
 - **State Management**: [State & Cursor](StateManagement.md)
-- **Settlement Economy**: [Warehouse & Bulk Services](SettlementEconomy.md)
-- **Mechanics Service**: [Mechanics Service](MechanicsService.md)
-- **Convoy Service**: [Convoy Service](ConvoyService.md)
-- **Route Service**: [Route Service](RouteService.md)
+- **All domain services**: [Autoload Register](../04_Technical/AutoloadOrder.md) — every service, what it
+  actually owns, and its init order. *(Replaced four per-service stubs on 2026-07-28; they described
+  logic that did not exist — see [DocumentationAudit § F11](../DocumentationAudit.md#f11--autoload-coverage-is-inverse-to-importance).)*
 
 ### Onboarding
-- **Tutorial Manager**: [tutorial_manager.gd](../../../Scripts/UI/tutorial_manager.gd)
-- **Target Resolver**: [tutorial_target_resolver.gd](../../../Scripts/UI/target_resolver.gd)
+- **Tutorial Manager**: [tutorial_manager.gd](../../Scripts/UI/tutorial_manager.gd)
+- **Target Resolver**: [tutorial_target_resolver.gd](../../Scripts/UI/target_resolver.gd)

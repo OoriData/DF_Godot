@@ -1,12 +1,14 @@
 ---
 type: ui-ux
 tags:
-  - ui
-  - codex/vehicle-menu
+  - layer/ui
+  - kind/deep-dive
+  - status/unverified
 aliases:
   - "Convoy Vehicle Menu"
 created: 2026-05-19
-updated: 2026-06-24
+updated: 2026-07-10
+status: unverified
 ---
 
 # Convoy Vehicle Menu

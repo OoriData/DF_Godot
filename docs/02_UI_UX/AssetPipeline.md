@@ -1,12 +1,14 @@
 ---
 type: ui-ux
 tags:
-  - ui
-  - ux
-  - codex/assetpipeline
+  - layer/ui
+  - kind/deep-dive
+  - status/unverified
 aliases:
   - "Asset Pipeline & Standards"
 created: 2026-05-18
+updated: 2026-05-18
+status: unverified
 ---
 
 # Asset Pipeline & Standards
@@ -61,3 +63,8 @@ The map system uses a unified `tile_set.tres` located in `Assets/tiles/`.
 
 - **Launch Images**: Must follow Apple/Android specific aspect ratio requirements.
 - **App Store Icons**: Ensure no transparency is present in the final App Store icon (Apple requirement).
+
+## Related
+
+- **See also:** [DesignSystem](DesignSystem.md) — the visual tokens these assets serve
+- **Constrained by:** [ui_system](ui_system.md) — scaling model — why UI art needs no per-DPI variants

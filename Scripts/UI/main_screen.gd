@@ -1888,6 +1888,11 @@ func _on_map_ready_for_focus():
 				print("[MainScreen] map_rect is too small; waiting one more frame for layout stabilization...")
 			await get_tree().process_frame
 			map_rect = _get_map_display_rect()
+			# Still degenerate after the retry — dump the ancestor chain so the control that is
+			# claiming the height can be identified from a log alone (the "blank screen, only the
+			# background art" state). See docs/TODO.md Sprint 12 · S12-7.
+			if map_rect.size.x < 10 or map_rect.size.y < 10:
+				_diag_dump_map_ancestor_sizes("map_rect_degenerate")
 
 		map_camera_controller.update_map_viewport_rect(map_rect)
 		if map_camera_controller.has_method("fit_camera_to_tilemap"):
@@ -1952,6 +1957,44 @@ func _to_subviewport_screen(global_pos: Vector2) -> Vector2:
 	)
 
 # Helper: get the rect we should use for camera viewport sizing (MapDisplay if present, else full map_view)
+## Walks MapDisplay → root printing each ancestor's rect and *minimum* size, plus the direct
+## children of any Container along the way. A degenerate map rect always means some sibling above
+## the map claimed the height as a MINIMUM size; this names it instead of leaving it to guesswork.
+func _diag_dump_map_ancestor_sizes(reason: String) -> void:
+	if not _debug_layout_overflow:
+		return
+	var vp_sz := get_viewport_rect().size
+	print("[MAP-RECT-DIAG] ===== reason=", reason, " viewport_logical=", vp_sz,
+		" csf=", get_window().content_scale_factor, " =====")
+	var node: Node = null
+	if is_instance_valid(map_view):
+		node = map_view.get_node_or_null("MapDisplay")
+		if not is_instance_valid(node):
+			node = map_view.get_node_or_null("MapContainer/MapDisplay")
+	if not is_instance_valid(node):
+		print("[MAP-RECT-DIAG] MapDisplay not found; map_view valid=", is_instance_valid(map_view))
+		return
+	var depth := 0
+	while is_instance_valid(node):
+		if node is Control:
+			var c := node as Control
+			print("[MAP-RECT-DIAG] %s%s [%s] rect=%s min=%s combined_min=%s flagsV=%d vis=%s" % [
+				"  ".repeat(depth), c.name, c.get_class(), str(c.get_global_rect()),
+				str(c.custom_minimum_size), str(c.get_combined_minimum_size()),
+				c.size_flags_vertical, str(c.visible)])
+			# For a Container, the offender is one of its children's minimums — list them.
+			if c is Container:
+				for child in c.get_children():
+					if child is Control:
+						var cc := child as Control
+						print("[MAP-RECT-DIAG] %s  · %s [%s] rect=%s combined_min=%s flagsV=%d vis=%s" % [
+							"  ".repeat(depth), cc.name, cc.get_class(), str(cc.get_global_rect()),
+							str(cc.get_combined_minimum_size()), cc.size_flags_vertical, str(cc.visible)])
+		node = node.get_parent()
+		depth += 1
+	print("[MAP-RECT-DIAG] ===== end =====")
+
+
 func _get_map_display_rect() -> Rect2:
 	if not is_instance_valid(map_view):
 		return Rect2()

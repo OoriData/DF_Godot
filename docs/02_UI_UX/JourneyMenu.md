@@ -1,11 +1,14 @@
 ---
 type: ui-ux
 tags:
-  - ui
-  - codex/journey-menu
+  - layer/ui
+  - kind/deep-dive
+  - status/unverified
 aliases:
   - "Convoy Journey Menu"
 created: 2026-05-19
+updated: 2026-06-24
+status: unverified
 ---
 
 # Convoy Journey Menu
@@ -76,6 +79,6 @@ Destination rows are tap containers (`MOUSE_FILTER_PASS` so the list still scrol
 - **Clear-on-drag**: an `InputEventMouseMotion` branch drops the highlight as soon as the press moves ≥10px (a scroll, not a tap).
 
 ## Connected Systems
-- [Route Service](../03_Systems/RouteService.md)
+- [Autoload Register § RouteService](../04_Technical/AutoloadOrder.md) — note: routing maths is **server-side**; the service is a passthrough
 - [Map System Overview](../03_Systems/MapSystem/MapSystemOverview.md)
 - [Responsive UI / Scaling](ui_system.md)

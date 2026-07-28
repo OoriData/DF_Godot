@@ -1,3 +1,15 @@
+---
+type: reference
+tags:
+  - kind/index
+  - status/unverified
+aliases:
+  - "Data Examples — Reference Payloads"
+created: 2026-07-28
+updated: 2026-07-16
+status: unverified
+---
+
 # Data Examples — Reference Payloads
 
 Real snapshots of common backend payloads and in-game data structures, captured for understanding object **shapes** when working on services, models, or UI.
@@ -10,7 +22,7 @@ Real snapshots of common backend payloads and in-game data structures, captured 
 | File | Domain object | Shape | Related doc |
 |---|---|---|---|
 | [`Map_example.md`](Map_example.md) + [`Map_example.json`](Map_example.json) | Full world map (tiles → settlements → vendors → cargo) | summary note + raw `.json` attachment | [MapSystem/Data](../../03_Systems/MapSystem/Data.md) · [Schema](../../01_Architecture/Schema.md) |
-| [`convoy_data_example.json`](convoy_data_example.json) | Convoy (processed) | `list[1]` dict | [Schema](../../01_Architecture/Schema.md) · [ConvoyService](../../03_Systems/ConvoyService.md) |
+| [`convoy_data_example.json`](convoy_data_example.json) | Convoy (processed) | `list[1]` dict | [Schema](../../01_Architecture/Schema.md) · [Autoload Register](../../04_Technical/AutoloadOrder.md) |
 | [`raw_convoy_data.json`](raw_convoy_data.json) | Convoy (raw, pre-processing) | `list[1]` dict | [DataFlow](../../01_Architecture/DataFlow.md) |
 | [`vehicle_example.json`](vehicle_example.json) | Vehicle (parts, cargo, make_model) | dict | [VehicleMenu](../../02_UI_UX/VehicleMenu.md) |
 | [`cargo_example.json`](cargo_example.json) | Cargo items | `list[6]` dicts | [ItemsAndMissions](../../03_Systems/ItemsAndMissions.md) |
@@ -23,6 +35,7 @@ Real snapshots of common backend payloads and in-game data structures, captured 
 ## Regenerating
 
 - **Map** — `Map_example.json` (raw payload) + `Map_example.md` (light summary note) are auto-written **together, once per session** by `APICalls._debug_dump_map_to_file()` ([`Scripts/System/api_calls.gd`](../../../Scripts/System/api_calls.gd)) on the first map load in dev. The note carries tile dimensions, total vendor-cargo count, and a `recipient`-field sanity check.
+  - `Map_example.md` is overwritten from a hardcoded template with **no frontmatter** every time this fires, so it's excluded from the frontmatter check in `tools/docs_check.py` (`AUTO_GENERATED`). Don't hand-add frontmatter to it — the next dev session with debug dumps on will silently erase it.
 - The other dumps were captured manually from live API responses.
 
 ## Notes

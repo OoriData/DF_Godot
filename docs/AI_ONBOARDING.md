@@ -1,10 +1,14 @@
 ---
 type: note
 tags:
-  - codex/ai_onboarding
+  - kind/process
+  - concept/scaling
+  - status/unverified
 aliases:
   - "AI Agent Onboarding: Quick-Start Guide"
 created: 2026-05-18
+updated: 2026-07-28
+status: unverified
 ---
 
 # AI Agent Onboarding: Quick-Start Guide
@@ -19,6 +23,7 @@ Welcome, Agent. To maintain the architectural integrity and visual standards of 
     - Font sizes are **fixed logical values** set once (e.g. `add_theme_font_size_override("font_size", 16)`). **Never** multiply a font size at runtime. `TextScale` and `DeviceStateManager.get_scaled_base_font_size()` are **deleted** — do not recreate them.
     - For heavier-weight text, use `FontVariation.variation_embolden` on a `FontVariation` resource. Do not import a separate bold font file.
     - `DeviceStateManager` is for orientation/platform queries only (`get_is_portrait()`, `get_layout_mode()`, `is_mobile`). It no longer has any font-scaling role.
+    - **Corollary — `ui.scale` shrinks the logical viewport, it does not magnify content.** `target_w = 1920 / ui.scale`, so at `ui.scale = 2.0` a 1920px desktop window is only **960 logical px wide**. A panel sized in **fixed logical px** therefore grows as a *share of the screen* as the slider rises — the cause of several PC-only "this panel eats the screen" reports. Size share-of-screen panels as a fraction of `get_viewport_rect().size`, or give fixed-px panels a max-fraction cap. Mobile/portrait are immune (`ui.scale` is ignored there), which is why these bugs look PC-only. Full contract: [ui_system.md § Desktop scaling contract](02_UI_UX/ui_system.md#desktop-scaling-contract-and-why-fixed-width-panels-drift).
 2.  **The Law of Unidirectional Data**:
     - Data flows: `API → Service → GameStore → SignalHub → UI`.
     - The UI **never** calls `APICalls` directly. It only listens to the `SignalHub` and reads from the `GameStore` snapshots.

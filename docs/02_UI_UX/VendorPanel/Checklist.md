@@ -1,13 +1,14 @@
 ---
 type: ui-ux
 tags:
-  - ui
-  - ux
-  - ui/vendor
-  - codex/checklist
+  - layer/ui
+  - kind/deep-dive
+  - status/unverified
 aliases:
   - "Maintenance Checklist"
 created: 2026-05-18
+updated: 2026-05-18
+status: unverified
 ---
 
 # Maintenance Checklist
@@ -37,3 +38,8 @@ Use this guide when modifying Vendor Panel behavior to prevent common regression
 - [ ] **Quantity Reset**: Does the quantity spinbox only reset to 1 when you change the logical selection?
 - [ ] **Math Check**: Does the "Max" button correctly account for *all* constraints (Money, Weight, and Volume)?
 - [ ] **Flicker Test**: Rapidly click Buy/Sell. Is there any unintended UI "jumping"?
+
+## Related
+
+- **See also:** [VendorPanelOverview](VendorPanelOverview.md) — architecture behind these checks
+- **See also:** [Lifecycle](Lifecycle.md) — the refresh order this checklist protects

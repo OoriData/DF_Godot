@@ -1,12 +1,15 @@
 ---
 type: system
 tags:
-  - system
-  - system/map
-  - codex/data
+  - layer/protocol
+  - kind/deep-dive
+  - concept/binary-protocol
+  - status/unverified
 aliases:
   - "Data: Payload & Parsing"
 created: 2026-05-18
+updated: 2026-07-17
+status: unverified
 ---
 
 # Data: Payload & Parsing

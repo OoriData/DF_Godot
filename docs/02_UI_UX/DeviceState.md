@@ -1,12 +1,15 @@
 ---
 type: ui-ux
 tags:
-  - ui
-  - ux
-  - codex/devicestate
+  - layer/ui
+  - kind/deep-dive
+  - concept/scaling
+  - status/unverified
 aliases:
   - "Device State & Orientation Management"
 created: 2026-05-18
+updated: 2026-06-02
+status: unverified
 ---
 
 # Device State & Orientation Management
@@ -56,3 +59,8 @@ Handles hardware notches and islands.
 
 ## Debugging Orientation
 You can simulate orientation shifts in the Godot Editor by resizing the game window. The `DeviceStateManager` will automatically trigger the scale shift when the aspect ratio crosses the 1.0 threshold.
+
+## Related
+
+- **Constrained by:** [ui_system](ui_system.md) — `DeviceStateManager` is orientation-only; scaling belongs to `UIScaleManager`
+- **See also:** [UIAudit](UIAudit.md) — per-element responsive behaviour

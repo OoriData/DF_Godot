@@ -1,12 +1,14 @@
 ---
 type: technical
 tags:
-  - technical
-  - reference
-  - codex/signalhub
+  - layer/autoload
+  - kind/deep-dive
+  - status/unverified
 aliases:
   - "SignalHub Event Bus"
 created: 2026-05-19
+updated: 2026-05-18
+status: unverified
 ---
 
 # SignalHub Event Bus
@@ -203,3 +205,9 @@ Follow the standard cookbook pattern:
 1. Define the signal with explicit parameters at the top of `signal_hub.gd`.
 2. Document the signal in this file under the appropriate domain category.
 3. Keep parameter types simple (prefer native types like `Array`, `Dictionary`, or `Variant` over custom class references) to prevent cyclical compilation dependencies.
+
+## Related
+
+- **See also:** [DataFlow](../01_Architecture/DataFlow.md) — where these signals sit in the pipeline
+- **See also:** [AutoloadOrder](AutoloadOrder.md) — emitters, in load order
+- **Constrained by:** [Architecture](../01_Architecture/Architecture.md) — the event-bus pattern

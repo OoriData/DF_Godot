@@ -1,10 +1,13 @@
 ---
 type: note
 tags:
-  - codex/project_map
+  - kind/index
+  - status/unverified
 aliases:
   - "Project Map (Feature to File)"
 created: 2026-05-18
+updated: 2026-06-25
+status: unverified
 ---
 
 # Project Map (Feature to File)

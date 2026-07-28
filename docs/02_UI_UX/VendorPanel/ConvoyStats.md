@@ -1,13 +1,14 @@
 ---
 type: ui-ux
 tags:
-  - ui
-  - ux
-  - ui/vendor
-  - codex/convoystats
+  - layer/ui
+  - kind/deep-dive
+  - status/unverified
 aliases:
   - "Convoy Stats: Capacity & Math"
 created: 2026-05-18
+updated: 2026-05-18
+status: unverified
 ---
 
 # Convoy Stats: Capacity & Math
@@ -53,3 +54,8 @@ This system is covered by comprehensive GUT tests to prevent math regressions:
 
 ## Controllers
 - `vendor_panel_convoy_stats_controller.gd`
+
+## Related
+
+- **See also:** [VendorPanelOverview](VendorPanelOverview.md)
+- **See also:** [Transactions](Transactions.md) — capacity limits that gate Max

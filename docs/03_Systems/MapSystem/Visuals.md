@@ -1,12 +1,14 @@
 ---
 type: system
 tags:
-  - system
-  - system/map
-  - codex/visuals
+  - layer/service
+  - kind/deep-dive
+  - status/unverified
 aliases:
   - "Visuals: Convoys & Labels"
 created: 2026-05-18
+updated: 2026-07-28
+status: unverified
 ---
 
 # Visuals: Convoys & Labels
@@ -45,7 +47,7 @@ Map labels are built to stay readable at all zoom levels and prevent UI clutter.
 
 ## Settlement Overlay
 
-A separate overlay system annotates settlement tiles with callout tails, tile outlines, focus pins, and route arcs. See [[SettlementOverlay]] for full details.
+A separate overlay system annotates settlement tiles with callout tails, tile outlines, focus pins, and route arcs. See [SettlementOverlay](SettlementOverlay.md) for full details.
 
 **Key points:**
 - Drawn by `settlement_overlay_draw.gd` (a `Node2D` with a custom `_draw()` implementation).
@@ -58,4 +60,4 @@ A separate overlay system annotates settlement tiles with callout tails, tile ou
 - `convoy_visuals_manager.gd`
 - `convoy_label_manager.gd`
 - `settlement_overlay_draw.gd`
-- [ConvoyNode.gd](../../../Scripts/Map/ConvoyNode.gd)
+- [ConvoyNode.gd](../../../Scripts/Map/convoy_node.gd)

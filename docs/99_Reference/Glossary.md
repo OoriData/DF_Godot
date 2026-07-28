@@ -1,18 +1,25 @@
 ---
 type: reference
 tags:
-  - reference
-  - codex/glossary
+  - kind/reference
+  - status/unverified
 aliases:
   - "Project Glossary"
 created: 2026-05-18
+updated: 2026-07-13
+status: unverified
 ---
 
 # Project Glossary
 
 A central reference for domain-specific and technical terminology used in *Desolate Frontiers*. This document is intended for both humans and AI agents to quickly locate relevant logic.
 
+> [!NOTE]
+> **This is the section index for `99_Reference/`.** Every doc in the folder must be reachable from
+> here. CI enforces it — `tools/docs_check.py`.
+
 - [**AI Agent Guidelines**](../04_Technical/AI_Guidelines.md): Essential standards for AI-assisted coding.
+- [**Data Examples**](data_dumps/README.md): Indexed JSON/markdown snapshots of real backend payloads — map, convoy, vehicle, cargo, parts, vendor, tutorial — with the shape and related doc for each.
 
 ## Domain Terms
 

@@ -1,11 +1,14 @@
 ---
 type: system
 tags:
-  - system
-  - codex/mechanics
+  - layer/service
+  - kind/deep-dive
+  - status/unverified
 aliases:
   - "Mechanics & Parts System"
 created: 2026-05-18
+updated: 2026-07-21
+status: unverified
 ---
 
 # Mechanics & Parts System
@@ -91,3 +94,9 @@ The vehicle `OptionButton` labels are prefixed with `[N ↑]`, where **N is the 
 - Labels are refreshed **in place** (`_update_dropdown_upgrade_counts()`, preserving selection) when: a vehicle is selected, vendor stock loads (`vendor_updated`), and each `part_compatibility_checked` result arrives — so counts firm up from the heuristic to the backend answer for the selected vehicle.
 - **Eager all-vehicle prefetch:** on open (and when vendor stock loads), `_start_vendor_compat_checks_for_all_vehicles()` warms the backend compatibility cache for the **non-selected** vehicles too, so *their* `[N ↑]` counts firm up from the backend without waiting for the player to select each one. The compat endpoint creates a fresh `HTTPRequest` per call with no in-flight dedup, so the sweep is **staggered** (one vehicle per ~0.12 s tick, guarded by a bump-able `_compat_prefetch_token` that cancels an in-flight sweep on rebuild/reset); the currently-selected vehicle is skipped (already warmed by the selection path) and `_start_vendor_compat_checks_for_vehicle()` dedups against `_compat_cache`, so re-warming is free.
 - Vehicles with 0 available upgrades show no prefix. A `[PartCompatUI] upgrade count …` diagnostic (gated behind `debug_part_compat_ui`) logs the candidate-slot / compatible / vendor-candidate counts.
+
+## Related
+
+- **Implemented in:** [AutoloadOrder](../04_Technical/AutoloadOrder.md) — `MechanicsService` — compatibility prefetch and probe sessions
+- **See also:** [MechanicsMenu](../02_UI_UX/MechanicsMenu.md) — the UI over this model
+- **See also:** [ItemsAndMissions](ItemsAndMissions.md) — the shared item model

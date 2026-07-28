@@ -29,10 +29,14 @@
             "id": "ee883a010a050212",
             "type": "leaf",
             "state": {
-              "type": "empty",
-              "state": {},
+              "type": "markdown",
+              "state": {
+                "file": "TODO.md",
+                "mode": "source",
+                "source": false
+              },
               "icon": "lucide-file",
-              "title": "New tab"
+              "title": "TODO"
             }
           },
           {
@@ -63,8 +67,7 @@
               "title": "Deployment"
             }
           }
-        ],
-        "currentTab": 2
+        ]
       }
     ],
     "direction": "vertical"
@@ -209,8 +212,11 @@
       "bases:Create new base": false
     }
   },
-  "active": "c77d26f99864e1af",
+  "active": "ee883a010a050212",
   "lastOpenFiles": [
+    "DocumentationAudit.md",
+    "04_Technical/BugReporting.md",
+    "04_Technical/Deployment.md",
     "_mockups/vendor_portrait_concepts.html",
     "_mockups/vendor_landscape_v2.html",
     "_mockups/vendor_consolidated_v2.html",
@@ -226,7 +232,6 @@
     "99_Reference/data_dumps/raw_convoy_data.json",
     "99_Reference/data_dumps/part_example.json",
     "99_Reference/data_dumps/part_compat_example.txt",
-    "99_Reference/data_dumps/dump_3920_convoy_c2092202-e2eb-484c-a4b9-38706f8a5ed5.json",
     "99_Reference/data_dumps/README.md",
     "99_Reference/data_dumps/Map_example.md",
     "99_Reference/Glossary.md",
@@ -240,13 +245,11 @@
     "04_Technical/Identity.md",
     "04_Technical/ErrorSystem.md",
     "04_Technical/Diagnostics.md",
-    "04_Technical/Deployment.md",
     "04_Technical/Dependencies.md",
     "04_Technical/DF_Lib.md",
     "04_Technical/CargoDestinationButtonImplementation.md",
     "04_Technical/AutoloadOrder.md",
     "04_Technical/AppleAuth.md",
-    "04_Technical/API_Reference.md",
     "Pasted image 20260521131852.png"
   ]
 }

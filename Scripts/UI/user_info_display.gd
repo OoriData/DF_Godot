@@ -282,6 +282,12 @@ func _update_safe_margins() -> void:
 	# Inset the bar CONTENT (buttons/labels) to the safe area so nothing sits under the
 	# notch or rounded corners, while the OoriBackground keeps bleeding to the physical
 	# edges (no black bars). The bar's panel stylebox content margins are the lever.
+	# Only ever mutate OUR OWN override (installed by _apply_base_styling). Without this check a
+	# call that lands before styling — e.g. the initial _on_ui_scale_changed() in _ready() — would
+	# fetch and mutate the SHARED theme stylebox, applying this bar's notch inset to every
+	# PanelContainer in the app.
+	if not has_theme_stylebox_override("panel"):
+		return
 	var style = get_theme_stylebox("panel")
 	if not (style is StyleBoxFlat):
 		return
@@ -366,9 +372,19 @@ func _on_user_refresh_requested() -> void:
 	_update_display()
 
 func _on_ui_scale_changed(_new_scale: float) -> void:
-	# Font scaling is now handled globally by content_scale_factor.
-	# We no longer need to manually override font sizes here.
-	pass
+	# Font scaling is handled globally by content_scale_factor — nothing to do for fonts.
+	#
+	# But the safe-area margins are computed by DIVIDING a physical inset by that very scale
+	# (UIScaleManager.get_logical_safe_margins), so a scale change invalidates them. This handler
+	# used to be an empty `pass`, which meant whatever margin was computed during boot was latched
+	# forever. In exported/Steam builds the boot scale can be the `_MIN_SAFE_FACTOR` floor for a
+	# frame, turning a ~47px notch inset into ~940 logical px of `content_margin_top` — the top bar
+	# then claims the entire viewport height, pushing the map off-screen with zero height, and all
+	# that renders is the bar's own Oori tile. That is the "blank screen except the background art"
+	# report. Recompute on every scale change so a bad boot value can never stick.
+	_update_mobile_sizing()
+	_update_safe_margins()
+	queue_redraw()
 
 
 func _configure_options_dropdown() -> void:

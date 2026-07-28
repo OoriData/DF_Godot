@@ -1,12 +1,15 @@
 ---
 type: system
 tags:
-  - system
-  - system/tutorial
-  - codex/target-resolution
+  - layer/service
+  - kind/deep-dive
+  - concept/onboarding
+  - status/unverified
 aliases:
   - "Tutorial Target Resolution"
 created: 2026-05-19
+updated: 2026-05-18
+status: unverified
 ---
 
 # Tutorial Target Resolution

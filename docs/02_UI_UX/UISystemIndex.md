@@ -1,30 +1,29 @@
 ---
 type: ui-ux
 tags:
-  - ui
-  - ux
-  - codex/readme
+  - layer/ui
+  - kind/index
+  - status/archive
 aliases:
   - "UI & UX System"
 created: 2026-05-18
+updated: 2026-07-28
+status: archive
 ---
 
-# UI & UX System
+# UI & UX System — retired
 
-> [!NOTE]
-> This index has been consolidated into the **[UI Element Audit](UIAudit.md)**, which is now the single entry point for all UI documentation, element inventory, script mapping, implementation patterns, and known issues.
+> [!IMPORTANT]
+> **This index is retired. Go to the [UI Element Audit](UIAudit.md).**
+>
+> `UIAudit.md` is the section index for `02_UI_UX/` and the single entry point for all UI
+> documentation: element inventory, layer map, script mapping, implementation patterns, and links to
+> every per-menu doc.
 
-## Quick Links
+This stub exists only so that older links and commit references do not 404. It carries no content of
+its own and should not be added to.
 
-| What you need | Go to |
-|---|---|
-| Full element inventory + layer map | [UIAudit.md → Layer Map](UIAudit.md#layer-map-z-order-top-to-bottom) |
-| Script mapping (main.gd, MenuManager, etc.) | [UIAudit.md → Quick Reference](UIAudit.md#quick-reference) |
-| Implementation patterns (Convoy Context, Mobile-First) | [UIAudit.md → Implementation Patterns](UIAudit.md#implementation-patterns) |
-| Adding a new menu | [UIAudit.md → Adding a New Menu](UIAudit.md#adding-a-new-menu) |
-| Per-menu docs (Cargo, Journey, etc.) | [UIAudit.md → Related Documentation](UIAudit.md#related-documentation) |
-| Known issues / tech debt / in-flight work | [TODO.md](../TODO.md) |
-| Scaling / responsive rules | [ui_system.md](ui_system.md) |
-| Visual design tokens | [DesignSystem.md](DesignSystem.md) |
-| MenuBase contract | [MenuBase.md](MenuBase.md) |
-| Navigation & transitions | [MenuManager.md](MenuManager.md) |
+## Related
+
+- **Replaced by:** [UIAudit.md](UIAudit.md)
+- **See also:** [DocumentationAudit.md § F3](../DocumentationAudit.md#f3--seven-entry-points-no-contract-between-them) — why this was retired

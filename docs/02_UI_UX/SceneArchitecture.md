@@ -1,12 +1,14 @@
 ---
 type: ui-ux
 tags:
-  - ui
-  - ux
-  - codex/scenearchitecture
+  - layer/ui
+  - kind/deep-dive
+  - status/unverified
 aliases:
   - "Scene & Layer Architecture"
 created: 2026-05-18
+updated: 2026-05-21
+status: unverified
 ---
 
 # Scene & Layer Architecture
@@ -51,3 +53,8 @@ Menus are not fixed scenes; they are dynamically instanced and animated into the
 2. **Inherit from `MenuBase`**: Any full-screen menu must extend `MenuBase` to get standard transition support and automatic background styling.
 3. **Don't Hardcode Z-Index**: Use the established layer hierarchy in `MainScreen` to ensure your UI doesn't appear under the map or over critical tutorial highlights.
 4. **Mouse Filters**: Root UI nodes should generally have `Mouse Filter = Stop`, while decorative or pass-through layers should be set to `Ignore`.
+
+## Related
+
+- **See also:** [UIAudit](UIAudit.md) — the full layer map and z-order
+- **See also:** [MenuManager](MenuManager.md) — how menus slide into `MenuContainer`

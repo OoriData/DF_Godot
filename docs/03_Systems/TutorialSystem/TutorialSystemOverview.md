@@ -1,12 +1,15 @@
 ---
 type: system
 tags:
-  - system
-  - system/tutorial
-  - codex/readme
+  - layer/service
+  - kind/deep-dive
+  - concept/onboarding
+  - status/unverified
 aliases:
   - "Tutorial System: Modular Overhaul"
 created: 2026-05-18
+updated: 2026-07-16
+status: unverified
 ---
 
 # Tutorial System: Modular Overhaul

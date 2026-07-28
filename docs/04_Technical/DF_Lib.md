@@ -1,12 +1,15 @@
 ---
 type: technical
 tags:
-  - technical
-  - codex/df_lib
-  - codex/deployment
+  - layer/protocol
+  - kind/deep-dive
+  - concept/binary-protocol
+  - status/unverified
 aliases:
   - "DF_Lib: Shared Binary Protocol Library"
 created: 2026-07-17
+updated: 2026-07-17
+status: unverified
 ---
 
 # DF_Lib: Shared Binary Protocol Library

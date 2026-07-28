@@ -1,13 +1,14 @@
 ---
 type: ui-ux
 tags:
-  - ui
-  - ux
-  - ui/vendor
-  - codex/lifecycle
+  - layer/ui
+  - kind/deep-dive
+  - status/unverified
 aliases:
   - "Lifecycle: Refresh & Selection Stability"
 created: 2026-05-18
+updated: 2026-05-18
+status: unverified
 ---
 
 # Lifecycle: Refresh & Selection Stability
@@ -51,3 +52,8 @@ To prevent UI race conditions, the panel follows a strict "Atomic" sequence duri
 - `vendor_panel_refresh_controller.gd`
 - `vendor_panel_refresh_scheduler_controller.gd`
 - `selection_manager.gd`
+
+## Related
+
+- **See also:** [VendorPanelOverview](VendorPanelOverview.md)
+- **See also:** [Checklist](Checklist.md) — regression checks for this sequence

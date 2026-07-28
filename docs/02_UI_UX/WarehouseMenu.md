@@ -1,11 +1,14 @@
 ---
 type: ui-ux
 tags:
-  - ui
-  - codex/warehouse-menu
+  - layer/ui
+  - kind/deep-dive
+  - status/unverified
 aliases:
   - "Warehouse Menu"
 created: 2026-05-18
+updated: 2026-07-28
+status: unverified
 ---
 
 # Warehouse Menu
@@ -146,7 +149,7 @@ A deferred `_post_ready_expand_diag()` check also runs after scene stabilization
 ## Primary Files
 
 - **Script**: `Scripts/Menus/warehouse_menu.gd`
-- **Scene**: `Scenes/Menus/WarehouseMenu.tscn`
+- **Scene**: `Scenes/WarehouseMenu.tscn`
 - **Service**: `Scripts/System/Services/warehouse_service.gd`
 - **Gauge**: `Scripts/UI/radial_progress_gauge.gd`
-- **Related**: [MenuBase Contract](MenuBase.md), [UISystemIndex](UISystemIndex.md)
+- **Related**: [MenuBase Contract](MenuBase.md), [UI Element Audit](UIAudit.md)

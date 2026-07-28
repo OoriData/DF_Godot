@@ -1,12 +1,14 @@
 ---
 type: system
 tags:
-  - system
-  - system/map
-  - codex/interactions
+  - layer/service
+  - kind/deep-dive
+  - status/unverified
 aliases:
   - "Interactions: Clicks & Taps"
 created: 2026-05-18
+updated: 2026-05-18
+status: unverified
 ---
 
 # Interactions: Clicks & Taps
@@ -47,3 +49,9 @@ MIM automatically detects the platform and adjusts behavior:
 
 ## Controllers
 - `map_interaction_manager.gd`
+
+## Related
+
+- **See also:** [Camera](Camera.md) — pan/zoom target
+- **See also:** [SettlementOverlay](SettlementOverlay.md) — tap-to-reveal label behaviour
+- **See also:** [MapSystemOverview](MapSystemOverview.md)

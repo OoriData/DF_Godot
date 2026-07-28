@@ -1,13 +1,14 @@
 ---
 type: ui-ux
 tags:
-  - ui
-  - ux
-  - ui/vendor
-  - codex/readme
+  - layer/ui
+  - kind/deep-dive
+  - status/unverified
 aliases:
   - "Vendor Trade Panel: High-Level Overview"
 created: 2026-05-18
+updated: 2026-06-23
+status: unverified
 ---
 
 # Vendor Trade Panel: High-Level Overview

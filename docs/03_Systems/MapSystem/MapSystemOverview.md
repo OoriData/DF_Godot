@@ -1,12 +1,14 @@
 ---
 type: system
 tags:
-  - system
-  - system/map
-  - codex/readme
+  - layer/service
+  - kind/deep-dive
+  - status/unverified
 aliases:
   - "Map System: High-Level Overview"
 created: 2026-05-18
+updated: 2026-05-29
+status: unverified
 ---
 
 # Map System: High-Level Overview

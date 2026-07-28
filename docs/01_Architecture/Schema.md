@@ -1,11 +1,14 @@
 ---
 type: architecture
 tags:
-  - architecture
-  - codex/schema
+  - layer/service
+  - kind/reference
+  - status/unverified
 aliases:
   - "Data Schema: Core Contracts"
 created: 2026-05-18
+updated: 2026-07-17
+status: unverified
 ---
 
 # Data Schema: Core Contracts

@@ -1,11 +1,14 @@
 ---
 type: technical
 tags:
-  - technical
-  - codex/refresh-scheduler
+  - layer/autoload
+  - kind/deep-dive
+  - status/unverified
 aliases:
   - "Refresh Scheduler"
 created: 2026-05-18
+updated: 2026-05-18
+status: unverified
 ---
 
 # Refresh Scheduler

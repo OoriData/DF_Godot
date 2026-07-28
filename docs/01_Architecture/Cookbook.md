@@ -1,11 +1,14 @@
 ---
 type: architecture
 tags:
-  - architecture
-  - codex/cookbook
+  - layer/service
+  - kind/deep-dive
+  - status/unverified
 aliases:
   - "Developer Cookbook"
 created: 2026-05-18
+updated: 2026-05-28
+status: unverified
 ---
 
 # Developer Cookbook

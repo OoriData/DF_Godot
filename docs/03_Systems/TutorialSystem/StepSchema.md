@@ -1,12 +1,15 @@
 ---
 type: system
 tags:
-  - system
-  - system/tutorial
-  - codex/stepschema
+  - layer/service
+  - kind/deep-dive
+  - concept/onboarding
+  - status/unverified
 aliases:
   - "Step Schema: The Tutorial Contract"
 created: 2026-05-18
+updated: 2026-07-16
+status: unverified
 ---
 
 # Step Schema: The Tutorial Contract
@@ -60,3 +63,9 @@ The `target` object can use several strategies to find UI elements:
 Some actions require additional data in the `target` object:
 - **`await_supply_purchase`**: May include a `checklist` of items the player needs to buy.
 - **`set_stage_and_finish`**: Tells the backend to advance the player's account to the next global level.
+
+## Related
+
+- **See also:** [TargetResolution](TargetResolution.md) — how a step's target string becomes a node
+- **See also:** [Controllers](Controllers.md)
+- **See also:** [TutorialSystemOverview](TutorialSystemOverview.md) — **steps are hardcoded in `_build_level_steps()`**, not loaded from JSON

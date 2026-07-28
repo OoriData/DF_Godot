@@ -1,12 +1,14 @@
 ---
 type: system
 tags:
-  - system
-  - system/map
-  - codex/camera
+  - layer/service
+  - kind/deep-dive
+  - status/unverified
 aliases:
   - "Camera: Navigation & Focus"
 created: 2026-05-18
+updated: 2026-06-26
+status: unverified
 ---
 
 # Camera: Navigation & Focus
@@ -78,3 +80,9 @@ MCC is optimized for mobile touch interaction:
 
 ## Controllers
 - `map_camera_controller.gd`
+
+## Related
+
+- **See also:** [Rendering](Rendering.md) — SubViewport sizing that clamping depends on
+- **See also:** [Interactions](Interactions.md) — the input layer that drives the camera
+- **See also:** [MapSystemOverview](MapSystemOverview.md)

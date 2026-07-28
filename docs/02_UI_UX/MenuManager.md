@@ -1,10 +1,14 @@
 ---
 type: ui-ux
 tags:
-  - ui
-  - ux
-  - codex/menumanager
+  - layer/ui
+  - kind/deep-dive
+  - status/unverified
+aliases:
+  - "MenuManager"
 created: 2026-05-18
+updated: 2026-07-01
+status: unverified
 ---
 
 # MenuManager
@@ -117,3 +121,9 @@ To enable persistence for a menu:
 
 > [!IMPORTANT]
 > If you add a new tween-based transition path, call `_finalize_switch_old_menu` inside **both** the normal completion callback and the flush guard at the top of `_start_menu_switch_animation`. Never rely solely on the tween callback to dispose a menu node.
+
+## Related
+
+- **See also:** [MenuBase](MenuBase.md) — the contract every managed menu implements
+- **See also:** [SceneArchitecture](SceneArchitecture.md) — where the menu container sits in the tree
+- **Implemented in:** [AutoloadOrder](../04_Technical/AutoloadOrder.md) — `MenuManager`, autoload #19

@@ -1,3 +1,16 @@
+---
+type: system
+tags:
+  - layer/service
+  - kind/deep-dive
+  - status/unverified
+aliases:
+  - "Map Menu System: Design & Architecture"
+created: 2026-05-21
+updated: 2026-06-26
+status: unverified
+---
+
 # Map Menu System: Design & Architecture
 
 The **Map Menu System** provides the user interface and logic to toggle spatial overlays and label systems on the main map. It allows players to manage map-specific settings and visual layers (such as delivery targets, warehouse locations, and labels) using a clean, unidirectional data flow that integrates seamlessly with existing systems.
@@ -156,3 +169,9 @@ To maintain a highly premium look and feel, the Map Menu will implement:
 
 ### Tab button — texture icon
 `map_overlay_settings_panel.gd` uses `Assets/Icons/gear.svg` (loaded as `CompressedTexture2D`, assigned to `_tab_button.icon`) rather than an emoji glyph. U+2699 (⚙) does not fall back to the `NotoColorEmoji` font reliably on mobile — the BMP symbols block misses the fallback that supplementary-plane emoji (🎯📦🚚) hit cleanly. The SVG pattern matches the warehouse button precedent in `convoy_settlement_menu.gd`.
+
+## Related
+
+- **Implemented in:** [AutoloadOrder](../../04_Technical/AutoloadOrder.md) — `MapSettingsService` holds the toggle state
+- **See also:** [SettlementOverlay](SettlementOverlay.md) — the layers these toggles control
+- **Live status:** [TODO](../../TODO.md) — S12-4 — the gear panel's desktop sizing

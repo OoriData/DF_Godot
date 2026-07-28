@@ -1,12 +1,16 @@
 ---
 type: ui-ux
 tags:
-  - ui
-  - ux
-  - codex/ui_audit
+  - layer/ui
+  - kind/index
+  - concept/scaling
+  - status/current
 aliases:
   - "UI Element Audit"
 created: 2026-05-21
+updated: 2026-07-28
+verified_against_code: 2026-07-28
+status: current
 ---
 
 # UI Element Audit — Desolate Frontiers
@@ -22,10 +26,14 @@ This document catalogs every UI element in the project: its scene file, owning s
 
 ## Related Documentation
 
+> [!NOTE]
+> **This table is the section index for `02_UI_UX/`.** Every doc in the folder must appear here (or in a
+> sub-overview linked from here, as `VendorPanel/` is). CI enforces it — `tools/docs_check.py`.
+
 | Doc | Contents |
 |---|---|
-| [UISystemIndex](UISystemIndex.md) | High-level UI system overview and script mapping |
 | [SceneArchitecture](SceneArchitecture.md) | Viewport layer diagram and MainScreen hierarchy |
+| [AssetPipeline](AssetPipeline.md) | Asset directory layout, texture import settings, font standards |
 | [MenuBase Contract](MenuBase.md) | Lifecycle, signals, Oori background, and margin rules |
 | [MenuManager](MenuManager.md) | Navigation stack, transitions, persistence cache |
 | [DesignSystem](DesignSystem.md) | Color palette, typography, touch targets, animation rules |
@@ -67,14 +75,18 @@ This document catalogs every UI element in the project: its scene file, owning s
 - Fluid labels: `SIZE_EXPAND_FILL` + `AUTOWRAP` on all text that might overflow
 - Logical pixels: use `get_viewport_rect().size` not `DisplayServer.window_get_size()`
 
-**Adding a New Menu**
+### Adding a New Menu
+
 1. Create scene in `Scenes/`, script in `Scripts/Menus/` extending `MenuBase`
 2. Preload in `menu_manager.gd` and add an `open_*` method
 3. Add `menu_type` label to `MENU_ORDER` if it needs slide transitions
 4. Wire navigation signals in `_show_menu()` under the `is_convoy_submenu` block
-5. Add entry to [UISystemIndex.md](UISystemIndex.md) Available Menus and [UIAudit.md](UIAudit.md) Audit Status
+5. Add the menu to the [Related Documentation](#related-documentation) table below, and to
+   [PROJECT_MAP.md](../PROJECT_MAP.md) if it is a feature entry point
 
 ---
+
+## Layer Map (Z-Order, Top to Bottom)
 
 ```
 SettingsMenu (CanvasLayer, layer=100)         ← floats above everything
@@ -483,9 +495,35 @@ The Vendor system has its own dedicated sub-documentation set in `docs/02_UI_UX/
 ### Tab button icon
 The expand/collapse tab uses `Assets/Icons/gear.svg` loaded as a `CompressedTexture2D` and assigned to `_tab_button.icon`. A text fallback (`"⚙️"`) is used if the asset is missing. Emoji was tried first (U+2699 + U+FE0F) but U+2699 sits in the BMP symbols block and does not reliably fall back to the `NotoColorEmoji` fallback font on mobile, unlike the supplementary-plane toggle icons (🎯📦🚚).
 
+### Sizing (audited 2026-07-28)
+
+| Axis | Where | Value |
+|---|---|---|
+| Width — portrait | `_get_panel_width()` line 46 | `viewport.x * 0.75` — a **fraction**, scales correctly |
+| Width — mobile landscape | same | `520.0` fixed logical px |
+| Width — **desktop** | same | **`440.0` fixed logical px, no fraction cap** |
+| Height — all | `_content_panel.size_flags_vertical` line 219 | `SIZE_EXPAND_FILL` inside a full-height `HBoxContainer` → **always full screen height** |
+| Tab (collapsed) | `_get_tab_width()` line 54 | `80.0` portrait / `55.0` otherwise |
+
+The panel is anchored flush to the **left screen edge**, full height (`_build_ui()` lines 156-178), with
+a `ScrollContainer` fallback so rows scroll rather than clip on short screens.
+
 ### Known Issues / Gaps
 - ❌ Added to `MapAndMenuContainer` directly by `main_screen.gd` — not in scene tree, hard to inspect
 - ✅ `_get_font_size()` double-scaling fixed 2026-06-26 — now returns `base` unchanged (Law of Logical Pixels)
+- ❌ **Takes a large proportion of the screen on PC** *(reported 2026-07-28, open — TODO Sprint 12 · S12-4)*.
+  Desktop is the one branch whose width is a **fixed logical px value (440)** rather than a viewport
+  fraction, and the desktop `ui.scale` slider **shrinks the logical viewport** rather than magnifying
+  content — so the same 440px is ≈ 23 % of the width at `ui.scale = 1.0` and ≈ 46 % at 2.0. Combined with
+  the unconditional full-screen height above, the expanded panel reads as a full-height slab of a quarter
+  to half the screen. Mobile/portrait are unaffected because `ui.scale` is ignored there, which is why
+  the report is PC-only. Full mechanism:
+  [ui_system.md § Desktop scaling contract](ui_system.md#desktop-scaling-contract-and-why-fixed-width-panels-drift).
+- ⚠️ `_is_portrait()` / `_is_mobile()` (lines 23-33) read `get_viewport_rect().size` while
+  `DeviceStateManager` reads `DisplayServer.window_get_size()` — two sources of truth for orientation.
+  See the warning in [ui_system.md](ui_system.md).
+- ⚠️ Note the naming: the script's own `set_planning_active()` doc comment calls this the **"overlay
+  options panel"**. Bug reports using that phrase mean *this* panel, not the settings menu.
 
 ---
 
@@ -518,7 +556,7 @@ RouteSelectionMenu (Control, full-rect)
 ```
 
 ### Known Issues / Gaps
-- ❌ Not in the `UISystemIndex.md` or `DocumentationHome.md` — previously undocumented scene
+- ❌ Not in `DocumentationHome.md` — previously undocumented scene
 - ❌ `ColumnsHBox.vertical = true` is set in the scene — always stacked, no landscape split-column adaptation
 - ❌ No `MenuBase` — extends `Control` directly; no Oori background or standard margins
 

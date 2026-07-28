@@ -1,11 +1,14 @@
 ---
 type: technical
 tags:
-  - technical
-  - codex/push-notifications
+  - layer/autoload
+  - kind/deep-dive
+  - status/unverified
 aliases:
   - "Push Notification Manager"
 created: 2026-05-19
+updated: 2026-05-18
+status: unverified
 ---
 
 # Push Notification Manager

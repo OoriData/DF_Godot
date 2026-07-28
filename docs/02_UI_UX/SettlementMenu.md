@@ -1,12 +1,14 @@
 ---
 type: ui-ux
 tags:
-  - ui
-  - codex/settlement-menu
+  - layer/ui
+  - kind/deep-dive
+  - status/unverified
 aliases:
   - "Settlement Menu System"
 created: 2026-05-19
-updated: 2026-06-30
+updated: 2026-07-01
+status: unverified
 ---
 
 # Settlement Menu System

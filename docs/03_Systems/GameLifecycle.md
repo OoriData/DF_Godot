@@ -1,11 +1,14 @@
 ---
 type: system
 tags:
-  - system
-  - codex/gamelifecycle
+  - layer/service
+  - kind/deep-dive
+  - status/unverified
 aliases:
   - "Game Lifecycle & State Machines"
 created: 2026-05-18
+updated: 2026-05-18
+status: unverified
 ---
 
 # Game Lifecycle & State Machines
@@ -108,3 +111,8 @@ graph TD
     Persist --> Eval
 ```
 
+## Related
+
+- **See also:** [Identity](../04_Technical/Identity.md) — the auth state machine in detail
+- **See also:** [DataFlow](../01_Architecture/DataFlow.md) — what moves between these states
+- **See also:** [TutorialSystemOverview](TutorialSystem/TutorialSystemOverview.md) — onboarding gates first launch

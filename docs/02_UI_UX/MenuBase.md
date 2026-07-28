@@ -1,13 +1,14 @@
 ---
 type: ui-ux
 tags:
-  - ui
-  - ux
-  - codex/menubase
+  - layer/ui
+  - kind/deep-dive
+  - status/unverified
 aliases:
   - "MenuBase Contract"
 created: 2026-05-18
-updated: 2026-05-21
+updated: 2026-07-10
+status: unverified
 ---
 
 # MenuBase Contract
@@ -293,3 +294,10 @@ func apply_ui_state(state: Dictionary) -> void:
 - **Visibility Guards**: `_on_convoys_changed` skips updates if the menu is hidden. No special guard is needed in subclass implementations of `_update_ui`.
 - **No Direct Navigation**: Menus emit signals — they never call `MenuManager` directly. This keeps the dependency graph one-directional.
 - **`extra` arg pattern**: `MenuManager` stores a second argument in `_next_menu_extra_arg` before calling `open_*` functions. It is passed through `initialize_with_data(data, extra_arg)` to `MenuBase.extra`. Subclasses read `self.extra` in `_update_ui` to handle deep links (e.g. jump-to-vehicle, jump-to-cargo-item).
+
+## Related
+
+- **Constrained by:** [ui_system](ui_system.md) — scaling rules that override any layout choice here
+- **See also:** [MenuManager](MenuManager.md) — owns open/close lifecycle and the shared nav bar
+- **See also:** [UIAudit](UIAudit.md) — inventory of every menu built on this contract
+- **Live status:** [TODO](../TODO.md)

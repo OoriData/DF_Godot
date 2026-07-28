@@ -1,12 +1,14 @@
 ---
 type: system
 tags:
-  - system
-  - system/map
-  - codex/rendering
+  - layer/service
+  - kind/deep-dive
+  - status/unverified
 aliases:
   - "Rendering: TileMaps & Fog of War"
 created: 2026-05-18
+updated: 2026-07-28
+status: unverified
 ---
 
 # Rendering: TileMaps & Fog of War
@@ -18,7 +20,7 @@ The map uses Godot 4's `TileMapLayer` nodes to efficiently render thousands of h
 The map is rendered into a `SubViewport` (`MapContainer/SubViewport`) and displayed through a `TextureRect` (`MapDisplay`) whose texture is that SubViewport's `ViewportTexture`. At startup `main.gd` reparents `MapDisplay` to the `MapView` root and stretches it to `PRESET_FULL_RECT` so it fills the visible window.
 
 > [!important] `MapDisplay` must use `expand_mode = EXPAND_IGNORE_SIZE`
-> A `TextureRect` left on the default `EXPAND_KEEP_SIZE` adopts its texture's native size as its **minimum size**. Because the SubViewport texture is large (e.g. `2650×1790`), that minimum would force the whole `MapView` (and its container chain) to that size — larger than the actual window — clipping the map and breaking camera clamping. `IGNORE_SIZE` lets the control shrink to the real window. The MCC then syncs `SubViewport.size` to this control via `update_map_viewport_rect()`, keeping render size, display size, and clamp math in agreement. See [[Camera]] for the full incident write-up.
+> A `TextureRect` left on the default `EXPAND_KEEP_SIZE` adopts its texture's native size as its **minimum size**. Because the SubViewport texture is large (e.g. `2650×1790`), that minimum would force the whole `MapView` (and its container chain) to that size — larger than the actual window — clipping the map and breaking camera clamping. `IGNORE_SIZE` lets the control shrink to the real window. The MCC then syncs `SubViewport.size` to this control via `update_map_viewport_rect()`, keeping render size, display size, and clamp math in agreement. See [Camera](Camera.md) for the full incident write-up.
 
 ## Layer Stack
 

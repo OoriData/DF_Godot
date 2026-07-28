@@ -1,11 +1,15 @@
 ---
 type: technical
 tags:
-  - technical
-  - codex/error-system
+  - layer/autoload
+  - kind/deep-dive
+  - concept/errors
+  - status/unverified
 aliases:
   - "Error Handling System"
 created: 2026-05-18
+updated: 2026-07-28
+status: unverified
 ---
 
 # Error Handling System
@@ -114,7 +118,7 @@ If no key matches, the error is logged as `"Unhandled API Error (add to ErrorTra
 |---|---|
 | `Scripts/System/error_translator.gd` | Translation map and `is_inline_error()` helper |
 | `Scripts/UI/main_screen.gd` | `_on_signal_hub_error_occurred()`, `_show_error_dialog()` |
-| `Scenes/UI/ErrorDialog.tscn` | The blocking modal UI |
+| `Scenes/ErrorDialog.tscn` | The blocking modal UI |
 | `Scripts/System/Services/signal_hub.gd` | `error_occurred` signal definition |
 
 - **Related**: [Architecture Overview](../01_Architecture/Architecture.md), [Diagnostics](Diagnostics.md)

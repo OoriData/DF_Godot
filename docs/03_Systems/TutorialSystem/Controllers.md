@@ -1,12 +1,15 @@
 ---
 type: system
 tags:
-  - system
-  - system/tutorial
-  - codex/controllers
+  - layer/service
+  - kind/deep-dive
+  - concept/onboarding
+  - status/unverified
 aliases:
   - "Level Controllers: Custom Logic"
 created: 2026-05-18
+updated: 2026-07-16
+status: unverified
 ---
 
 # Level Logic: Actions & Watchers
@@ -62,3 +65,8 @@ func _on_supply_check(_all_convoys: Array) -> void:
     immediately — restart always resumes at `_step = 0`, so a level's first step must be reachable from the map root.
 - **Content identity, not indices**: Resolve highlights by vendor name / button text, never a fixed rect or tab
     index — the hub reflows hard between portrait, landscape, and desktop and rebuilds on `layout_mode_changed`.
+
+## Related
+
+- **See also:** [TutorialSystemOverview](TutorialSystemOverview.md)
+- **See also:** [StepSchema](StepSchema.md) — the step shape controllers consume

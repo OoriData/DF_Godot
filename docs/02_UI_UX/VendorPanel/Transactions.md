@@ -1,13 +1,14 @@
 ---
 type: ui-ux
 tags:
-  - ui
-  - ux
-  - ui/vendor
-  - codex/transactions
+  - layer/ui
+  - kind/deep-dive
+  - status/unverified
 aliases:
   - "Transactions: Pricing & Projections"
 created: 2026-05-18
+updated: 2026-07-28
+status: unverified
 ---
 
 # Transactions: Pricing & Projections
@@ -89,4 +90,10 @@ Those menus call `MechanicsService.ensure_cargo_details()` as part of their own 
 ## Controllers
 - `vendor_panel_transaction_controller.gd`
 - `vendor_trade_vm.gd`
-- `Scripts/System/Utils/price_util.gd`
+- `Scripts/Menus/VendorPanel/price_util.gd`
+
+## Related
+
+- **See also:** [VendorPanelOverview](VendorPanelOverview.md)
+- **See also:** [ConvoyStats](ConvoyStats.md) — the weight/volume constraints Max respects
+- **See also:** [ErrorSystem](../../04_Technical/ErrorSystem.md) — how failed transactions surface

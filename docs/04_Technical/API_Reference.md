@@ -1,11 +1,14 @@
 ---
 type: technical
 tags:
-  - technical
-  - codex/api_reference
+  - layer/backend
+  - kind/reference
+  - status/unverified
 aliases:
   - "Backend API Reference"
 created: 2026-05-18
+updated: 2026-05-18
+status: unverified
 ---
 
 # Backend API Reference
@@ -88,3 +91,9 @@ Dry-run test to see if a part can be installed on a vehicle.
 
 ### `PATCH /vehicle/part/attach` / `detach`
 Commits a part modification to a vehicle.
+
+## Related
+
+- **See also:** [NetworkLayer](NetworkLayer.md) — how these requests are queued and authenticated
+- **See also:** [DF_Lib](DF_Lib.md) — the binary `/map` payload, which is *not* JSON
+- **See also:** [Schema](../01_Architecture/Schema.md) — the objects these endpoints return

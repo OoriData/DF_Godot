@@ -1,12 +1,14 @@
 ---
 type: ui-ux
 tags:
-  - ui
-  - technical
-  - codex/convoy-cargo-menu
+  - layer/ui
+  - kind/deep-dive
+  - status/unverified
 aliases:
   - "Convoy Cargo Menu"
 created: 2026-05-19
+updated: 2026-07-28
+status: unverified
 ---
 
 # Convoy Cargo Menu
@@ -110,6 +112,6 @@ As part of the [Cargo Destination Button Plan](../04_Technical/CargoDestinationB
 ## Primary Files
 
 - **Script**: `Scripts/Menus/convoy_cargo_menu.gd`
-- **Scene**: `Scenes/Menus/ConvoyCargoMenu.tscn`
+- **Scene**: `Scenes/ConvoyCargoMenu.tscn`
 - **Model**: `Scripts/Data/Items.gd`
 - **Related**: [Convoy Menu](ConvoyMenu.md), [Items & Missions](../03_Systems/ItemsAndMissions.md), [Destination Implementation](../04_Technical/CargoDestinationButtonImplementation.md)

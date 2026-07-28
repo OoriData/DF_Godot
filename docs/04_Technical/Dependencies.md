@@ -1,11 +1,14 @@
 ---
 type: technical
 tags:
-  - technical
-  - codex/dependencies
+  - layer/autoload
+  - kind/deep-dive
+  - status/unverified
 aliases:
   - "Autoload Dependency Graph"
 created: 2026-05-18
+updated: 2026-05-18
+status: unverified
 ---
 
 # Autoload Dependency Graph
@@ -84,3 +87,9 @@ If you find yourself needing to call a Service from `APICalls` or a UI Manager f
 
 - **Bad**: `convoy_service.gd` calls `MenuManager.close_all_menus()`
 - **Good**: `convoy_service.gd` calls `SignalHub.convoy_lost.emit()`. `MenuManager` connects to this signal and closes the menus.
+
+## Related
+
+- **See also:** [AutoloadOrder](AutoloadOrder.md) — the authoritative register and load order
+- **See also:** [SignalHub](SignalHub.md) — the events that couple these singletons
+- **Constrained by:** [Architecture](../01_Architecture/Architecture.md)

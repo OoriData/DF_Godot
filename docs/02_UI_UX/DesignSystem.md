@@ -1,12 +1,14 @@
 ---
 type: ui-ux
 tags:
-  - ui
-  - ux
-  - codex/designsystem
+  - layer/ui
+  - kind/deep-dive
+  - status/unverified
 aliases:
   - "UI Design System"
 created: 2026-05-18
+updated: 2026-06-25
+status: unverified
 ---
 
 # UI Design System
@@ -98,3 +100,9 @@ Three visual tiers distinguish how interactive controls behave. Never style them
   - **Overview**: Swipes vertically (Down to open, Up to close).
 - **Hover Effects**: All interactive buttons should have a subtle scale up (`1.05x`) or color shift on hover.
 - **Micro-interactions**: Use `Tween` for smooth opacity fades when UI elements appear/disappear.
+
+## Related
+
+- **Implemented in:** [AutoloadOrder](../04_Technical/AutoloadOrder.md) — `UITheme` holds the authoritative colour/spacing constants
+- **See also:** [UIAudit](UIAudit.md) — where each token is actually applied
+- **Live status:** [TODO](../TODO.md) — UITheme migration status and spacing-consistency backlog

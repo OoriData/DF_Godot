@@ -1,12 +1,14 @@
 ---
 type: ui-ux
 tags:
-  - ui
-  - codex/mechanics-menu
+  - layer/ui
+  - kind/deep-dive
+  - status/unverified
 aliases:
   - "Mechanics Menu"
 created: 2026-05-19
-updated: 2026-06-24
+updated: 2026-07-10
+status: unverified
 ---
 
 # Mechanics Menu
@@ -113,6 +115,6 @@ When embedded as the Service tab inside `ConvoyVehicleMenu`:
 
 ## Connected Systems
 - [Mechanics System](../03_Systems/Mechanics.md)
-- [Mechanics Service](../03_Systems/MechanicsService.md)
+- [Autoload Register § MechanicsService](../04_Technical/AutoloadOrder.md) — compatibility prefetch and probe sessions
 - [Vehicle Menu](VehicleMenu.md)
 - [MenuBase Contract](MenuBase.md)

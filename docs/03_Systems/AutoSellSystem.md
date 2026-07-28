@@ -1,11 +1,14 @@
 ---
 type: system
 tags:
-  - system
-  - codex/autosell
+  - layer/service
+  - kind/deep-dive
+  - status/unverified
 aliases:
   - "Auto-Sell System"
 created: 2026-05-18
+updated: 2026-05-18
+status: unverified
 ---
 
 # Auto-Sell System

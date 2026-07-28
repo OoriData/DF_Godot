@@ -1,11 +1,14 @@
 ---
 type: system
 tags:
-  - system
-  - codex/itemsandmissions
+  - layer/service
+  - kind/deep-dive
+  - status/unverified
 aliases:
   - "Items & Mission Domain"
 created: 2026-05-18
+updated: 2026-05-28
+status: unverified
 ---
 
 # Items & Mission Domain
@@ -133,3 +136,8 @@ Delivery items carry a `delivery_reward` field that specifies the credits awarde
 > [!NOTE]
 > A `delivery_reward` of `null` is handled defensively — `AutoSellService._compare_and_report()` guards with `if reward != null` before adding to the total.
 
+## Related
+
+- **See also:** [Schema](../01_Architecture/Schema.md) — Cargo and Part object definitions
+- **See also:** [AutoSellSystem](AutoSellSystem.md) — delivery detection at journey end
+- **See also:** [Glossary](../99_Reference/Glossary.md) — item terminology, incl. Jerry Cans vs Water Jerry Cans

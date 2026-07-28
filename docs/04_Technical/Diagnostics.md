@@ -1,11 +1,15 @@
 ---
 type: technical
 tags:
-  - technical
-  - codex/diagnostics
+  - layer/autoload
+  - kind/deep-dive
+  - concept/errors
+  - status/unverified
 aliases:
   - "Diagnostics & Troubleshooting"
 created: 2026-05-18
+updated: 2026-05-19
+status: unverified
 ---
 
 # Diagnostics & Troubleshooting
@@ -91,3 +95,9 @@ If elements are clipping on mobile:
 | **401 Unauthorized** | JWT session expired or `session.cfg` is corrupt. | Call `APICalls.logout()` and re-authenticate. |
 | **404 Not Found (Transact)** | API endpoint mismatch (Client/Server version). | `APICalls` has built-in fallbacks (e.g., retrying `/vendor/buy` as `/vehicle/buy`). Check logs for `[Fallback]`. |
 | **UI Stutter** | Too many labels or map anti-collision math. | Check `ConvoyLabelManager.debug_logging = true`. |
+
+## Related
+
+- **See also:** [ErrorSystem](ErrorSystem.md) — how errors reach the player
+- **See also:** [BugReporting](BugReporting.md) — log capture in the feedback payload
+- **Implemented in:** [AutoloadOrder](AutoloadOrder.md) — `Logger` — levels and the in-memory ring buffer

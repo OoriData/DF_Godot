@@ -51,6 +51,13 @@ var _debug_scale: bool = true
 var _last_win_size: Vector2i = Vector2i.ZERO
 var _last_factor: float = -1.0
 
+## False while the last computed factor had to be rescued by `_MIN_SAFE_FACTOR` — i.e. the window
+## reported a bogus size and the scale is not trustworthy yet. Only matters to callers that
+## *divide* by the scale: `get_logical_safe_margins()` turns a ~47px physical notch inset into
+## ~940 logical px at the 0.05 floor, and a consumer that latches that value (the top bar did)
+## keeps it forever. Read via `is_scale_settled()`.
+var _scale_settled: bool = false
+
 
 func _ready():
 	# Pull the persisted desktop zoom before the first apply (SettingsManager is an
@@ -118,6 +125,10 @@ func _apply_logical_resolution() -> void:
 	# Using the physical width also auto-compensates for HiDPI: on a Retina display the
 	# physical width is larger, so the factor is larger, keeping apparent size stable.
 	var factor: float = win_sz.x / target_w
+	# A factor that had to be rescued by the floor is NOT a real scale — it means the window
+	# reported a bogus size this frame. Remember that, so consumers that DIVIDE by the scale
+	# (get_logical_safe_margins) don't bake a 20x-inflated inset from it. See _scale_settled.
+	_scale_settled = factor >= _MIN_SAFE_FACTOR
 	if factor < _MIN_SAFE_FACTOR:
 		factor = _MIN_SAFE_FACTOR
 
@@ -182,9 +193,32 @@ func get_max_safe_scale() -> float:
 	return float(win_sz.x) / min_logical
 
 
+## True once a real (non-rescued) scale factor has been applied. Callers that divide by the scale
+## should treat a false here as "no safe-area data yet" and re-ask on `scale_changed`.
+func is_scale_settled() -> bool:
+	return _scale_settled
+
+
+## Physical safe-area insets converted to LOGICAL pixels.
+## Rect2(position = (left, top), size = (right, bottom)).
+##
+## DANGER — this DIVIDES by `content_scale_factor`. During an exported/Steam boot the window can
+## report a bogus size for a frame, pinning the factor at the `_MIN_SAFE_FACTOR` (0.05) floor; a
+## ~47px macOS menu-bar/notch inset then converts to ~940 *logical* px. A consumer that writes that
+## into a `custom_minimum_size` or a stylebox `content_margin` and never recomputes ends up with a
+## chrome element that eats the whole screen. Two guards below:
+##   1. Return zero margins until the scale is settled (never emit a value derived from the floor).
+##   2. Cap each inset at a sane fraction of the logical viewport — a safe area is a notch, never
+##      a third of the screen — so an unforeseen bad divisor still can't produce a screen-eater.
+## Consumers must ALSO re-query on `scale_changed`, or they will latch the zero from guard (1).
+const _MAX_SAFE_INSET_FRACTION := 0.2
+
 func get_logical_safe_margins() -> Rect2:
-	var safe_area := DisplayServer.get_display_safe_area()
 	var margins := Rect2()
+	if not _scale_settled:
+		return margins
+
+	var safe_area := DisplayServer.get_display_safe_area()
 	var screen_size := DisplayServer.screen_get_size()
 	var scale := get_global_ui_scale()
 
@@ -196,5 +230,13 @@ func get_logical_safe_margins() -> Rect2:
 	margins.position.y = safe_area.position.y / scale
 	margins.size.x = (screen_size.x - safe_area.end.x) / scale
 	margins.size.y = (screen_size.y - safe_area.end.y) / scale
+
+	var logical: Vector2 = get_viewport().get_visible_rect().size
+	var max_x: float = maxf(0.0, logical.x * _MAX_SAFE_INSET_FRACTION)
+	var max_y: float = maxf(0.0, logical.y * _MAX_SAFE_INSET_FRACTION)
+	margins.position.x = clampf(margins.position.x, 0.0, max_x)
+	margins.position.y = clampf(margins.position.y, 0.0, max_y)
+	margins.size.x = clampf(margins.size.x, 0.0, max_x)
+	margins.size.y = clampf(margins.size.y, 0.0, max_y)
 
 	return margins
