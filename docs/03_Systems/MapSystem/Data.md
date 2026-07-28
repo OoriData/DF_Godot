@@ -4,12 +4,13 @@ tags:
   - layer/protocol
   - kind/deep-dive
   - concept/binary-protocol
-  - status/unverified
+  - status/current
 aliases:
   - "Data: Payload & Parsing"
 created: 2026-05-18
 updated: 2026-07-17
-status: unverified
+verified_against_code: 2026-07-28
+status: current
 ---
 
 # Data: Payload & Parsing

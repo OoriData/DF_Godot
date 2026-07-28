@@ -3,12 +3,13 @@ type: note
 tags:
   - kind/process
   - concept/scaling
-  - status/unverified
+  - status/current
 aliases:
   - "AI Agent Onboarding: Quick-Start Guide"
 created: 2026-05-18
 updated: 2026-07-28
-status: unverified
+verified_against_code: 2026-07-28
+status: current
 ---
 
 # AI Agent Onboarding: Quick-Start Guide

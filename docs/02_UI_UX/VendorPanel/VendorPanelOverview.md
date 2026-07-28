@@ -3,12 +3,13 @@ type: ui-ux
 tags:
   - layer/ui
   - kind/deep-dive
-  - status/unverified
+  - status/current
 aliases:
   - "Vendor Trade Panel: High-Level Overview"
 created: 2026-05-18
 updated: 2026-06-23
-status: unverified
+verified_against_code: 2026-07-28
+status: current
 ---
 
 # Vendor Trade Panel: High-Level Overview

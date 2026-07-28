@@ -3,12 +3,13 @@ type: system
 tags:
   - layer/service
   - kind/deep-dive
-  - status/unverified
+  - status/current
 aliases:
   - "Settlement Overlay System"
 created: 2026-05-29
 updated: 2026-07-22
-status: unverified
+verified_against_code: 2026-07-28
+status: current
 ---
 
 # Settlement Overlay System

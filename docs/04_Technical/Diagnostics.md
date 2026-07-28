@@ -4,12 +4,13 @@ tags:
   - layer/autoload
   - kind/deep-dive
   - concept/errors
-  - status/unverified
+  - status/current
 aliases:
   - "Diagnostics & Troubleshooting"
 created: 2026-05-18
 updated: 2026-05-19
-status: unverified
+verified_against_code: 2026-07-28
+status: current
 ---
 
 # Diagnostics & Troubleshooting

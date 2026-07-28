@@ -2,12 +2,13 @@
 type: reference
 tags:
   - kind/index
-  - status/unverified
+  - status/current
 aliases:
   - "Data Examples — Reference Payloads"
-created: 2026-07-28
+created: 2026-06-25
 updated: 2026-07-16
-status: unverified
+verified_against_code: 2026-07-28
+status: current
 ---
 
 # Data Examples — Reference Payloads

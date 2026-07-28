@@ -3,12 +3,13 @@ type: system
 tags:
   - layer/service
   - kind/deep-dive
-  - status/unverified
+  - status/current
 aliases:
   - "Mechanics & Parts System"
 created: 2026-05-18
 updated: 2026-07-21
-status: unverified
+verified_against_code: 2026-07-28
+status: current
 ---
 
 # Mechanics & Parts System

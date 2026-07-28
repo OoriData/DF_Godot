@@ -4,12 +4,13 @@ tags:
   - layer/protocol
   - kind/deep-dive
   - concept/binary-protocol
-  - status/unverified
+  - status/current
 aliases:
   - "DF_Lib: Shared Binary Protocol Library"
 created: 2026-07-17
 updated: 2026-07-17
-status: unverified
+verified_against_code: 2026-07-28
+status: current
 ---
 
 # DF_Lib: Shared Binary Protocol Library

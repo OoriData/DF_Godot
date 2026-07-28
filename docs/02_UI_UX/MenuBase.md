@@ -3,12 +3,13 @@ type: ui-ux
 tags:
   - layer/ui
   - kind/deep-dive
-  - status/unverified
+  - status/current
 aliases:
   - "MenuBase Contract"
 created: 2026-05-18
 updated: 2026-07-10
-status: unverified
+verified_against_code: 2026-07-28
+status: current
 ---
 
 # MenuBase Contract
@@ -195,7 +196,7 @@ Anchors `MainVBox` to the full rect, then insets it so content never touches the
 Apply consistent button styles — `style_back_button` produces a dark navy rounded button; `style_convoy_nav_button` produces a light grey button matching the static nav bar.
 
 ### `_update_navigation_bar_visibility(convoy)`
-Calls `MenuManager.set_nav_button_visible("convoy_settlement_submenu", not has_journey)` to hide the Settlement nav button when the convoy is on a journey. Falls back to a local `BottomMenuButtonsHBox` node for legacy scenes.
+Calls `MenuManager.set_nav_button_visible("convoy_settlement_submenu", not has_journey)` to hide the Settlement nav button when the convoy is on a journey. *(Corrected 2026-07-28: no `BottomMenuButtonsHBox` fallback exists — that legacy node was removed in Sprint 5. `MenuManager` owns nav-button visibility exclusively; `MenuBase.gd:288` documents the removal in-line.)*
 
 ---
 

@@ -4,12 +4,13 @@ tags:
   - layer/ui
   - kind/deep-dive
   - concept/scaling
-  - status/unverified
+  - status/current
 aliases:
   - "Device State & Orientation Management"
 created: 2026-05-18
 updated: 2026-06-02
-status: unverified
+verified_against_code: 2026-07-28
+status: current
 ---
 
 # Device State & Orientation Management
@@ -38,14 +39,16 @@ graph TD
 ```
 
 > [!NOTE]
-> As of the June 2026 scaling refactor, `DeviceStateManager` no longer scales fonts. The old `get_font_multiplier()` / `get_scaled_base_font_size()` methods were removed. The single `content_scale_size` set by `UIScaleManager` scales all text via the canvas; DeviceStateManager only reports orientation/mode for layout decisions.
+> As of the June 2026 scaling refactor, `DeviceStateManager` no longer scales fonts. The old `get_font_multiplier()` / `get_scaled_base_font_size()` methods were removed. `UIScaleManager` scales all text via **`content_scale_factor` only** — it explicitly zeroes `content_scale_size` (`UI_scale_manager.gd:143`: *"content_scale_size with a zero axis is silently ignored by Godot, which is why it never worked here"*). DeviceStateManager only reports orientation/mode for layout decisions. *(Corrected 2026-07-28 — this note previously credited `content_scale_size` with the scaling.)*
 
 ## Key Components
 
 ### 1. DeviceStateManager (`device_state_manager.gd`)
 The primary listener for window/hardware events. 
 - **Responsibility**: Detects if the device is in portrait or landscape mode.
-- **Signals**: Emits `orientation_changed(mode)` to trigger the rest of the chain.
+- **Signals**: Emits `layout_mode_changed(mode: LayoutMode, screen_size: Vector2, is_mobile: bool)`
+  (`device_state_manager.gd:10`) to trigger the rest of the chain. *(Corrected 2026-07-28 — previously
+  named `orientation_changed(mode)`, which does not exist.)*
 
 ### 2. UIScaleManager (`ui_scale_manager.gd`)
 The authority on viewport scaling.

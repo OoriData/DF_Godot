@@ -3,12 +3,13 @@ type: architecture
 tags:
   - layer/service
   - kind/deep-dive
-  - status/unverified
+  - status/current
 aliases:
   - "Developer Cookbook"
 created: 2026-05-18
 updated: 2026-05-28
-status: unverified
+verified_against_code: 2026-07-28
+status: current
 ---
 
 # Developer Cookbook
@@ -20,8 +21,12 @@ This document provides step-by-step recipes for common development tasks in *Des
 1. **Create the Scene**: Create a new `.tscn` with a `MarginContainer` or `Panel` as the root.
 2. **Attach Script**: Inherit from `MenuBase`.
 3. **Setup Layout**: Add a `VBoxContainer`. Call `setup_convoy_top_banner("Menu Title")` in your `_initialize_menu` method.
-4. **Register**: Add the scene path to `MenuManager.gd` in the `_menu_registry` dictionary.
-5. **Open**: Call `MenuManager.open_menu("your_menu_key", convoy_data)`.
+4. **Register**: `MenuManager` has no generic registry — each menu gets its own `open_<menu>_menu()`
+   function. Preload the scene at the top of `menu_manager.gd` and add
+   `func open_your_menu(convoy_data = null): ...` alongside the existing ones (e.g.
+   `open_convoy_menu`, `open_warehouse_menu`, `menu_manager.gd:321-368`). If it needs slide
+   transitions, add its `menu_type` label to `MENU_ORDER` (`menu_manager.gd:18-26`).
+5. **Open**: Call your new `MenuManager.open_your_menu(convoy_data)`.
 
 ---
 
@@ -62,7 +67,8 @@ This document provides step-by-step recipes for common development tasks in *Des
    ```bash
    Godot.app/Contents/MacOS/Godot --headless --path . -s res://Scripts/Debug/wiring_smoke_test.gd
    ```
-2. **Verify**: Ensure "SignalHub Wires: OK" and "Store Initialization: OK" appear in the console.
+2. **Verify**: Look for `[wiring_smoke_test] PASS` in the console (`[wiring_smoke_test] FAIL` on a
+   wiring break — `Scripts/Debug/wiring_smoke_test.gd:157,160`).
 
 ---
 
@@ -101,7 +107,9 @@ Every major menu uses a per-instance boolean flag to gate verbose `print()` call
    if MyNewItem._looks_like_my_item(raw):
        return MyNewItem.new(raw)
    ```
-3. **Add UI grouping**: In `ConvoyCargoMenu._build_cargo_sections()`, add a new section header for the new type (similar to "Delivery Cargo" for `DeliveryCargoItem`).
+3. **Add UI grouping**: In `convoy_cargo_menu.gd`, call `_add_category_section()` with your new
+   category title (`convoy_cargo_menu.gd:1248`, e.g. `_add_category_section(vbox, "Delivery Cargo",
+   aggregated_deliveries)` at line 1661); it renders each row via `_build_cargo_row()` (line 867).
 4. **Update the Schema**: Add a row to the Cargo Object table in [Schema.md](Schema.md) documenting the new key.
 
 ---

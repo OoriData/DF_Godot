@@ -3,12 +3,13 @@ type: architecture
 tags:
   - layer/service
   - kind/reference
-  - status/unverified
+  - status/current
 aliases:
   - "Data Schema: Core Contracts"
 created: 2026-05-18
 updated: 2026-07-17
-status: unverified
+verified_against_code: 2026-07-28
+status: current
 ---
 
 # Data Schema: Core Contracts
