@@ -12,11 +12,13 @@ status: unverified
 
 This document serves as the flowing state of things needed in the project, and what resources are needed for each task.
 
-> **Status (2026-07-28):** Sprints 1–10 are complete / code-complete. Outstanding work is now three
+> **Status (2026-07-29):** Sprints 1–10 are complete / code-complete. Outstanding work is now four
 > buckets: (1) the **device-test round 2** pass (checklist below), (2) **Sprint 11 — QOL bug batch**
-> (2026-07-22, mostly uncoded), and (3) **Sprint 12 — Steam beta batch** (NEW, 2026-07-28) covering
+> (2026-07-22, mostly uncoded), (3) **Sprint 12 — Steam beta batch** (2026-07-28) covering
 > desktop/PC layout ratios, vendor-panel widescreen fit, always-available feedback, a fullscreen
-> shortcut, and a "connect an existing account" branch at first Steam launch. After those, the project
+> shortcut, and a "connect an existing account" branch at first Steam launch, and (4) **Sprint 13 —
+> play-test batch** (NEW, 2026-07-29): pre-login performance, the vendor buy/stock/"Processing" trio,
+> input-settings gaps, and a total Android login failure. After those, the project
 > pivots to the **systems audit & research initiative** (below) to re-baseline the docs against the code.
 >
 > **Full completed-sprint detail** (Sprints 1–10, all root-cause narratives, device round 1 results,
@@ -146,9 +148,22 @@ now backs it. **None are coded yet.** IDs (`S12-n`) are for cross-referencing fr
   `_make_panels_responsive()` has no desktop path) are documented in full, with file:line, as **D1–D3** in
   [VendorPanel/ResponsiveRefactor § Desktop](02_UI_UX/VendorPanel/ResponsiveRefactor.md). The shared
   scaling mechanism is [ui_system § Desktop scaling contract](02_UI_UX/ui_system.md#desktop-scaling-contract-and-why-fixed-width-panels-drift).
-  **Suggested shape (confirm ceiling with the user before hard-coding):** add a real `DESKTOP` branch to
-  `_get_menu_ratios()` plus an **absolute** max width in logical px, and let the vendor columns rebalance
-  (or cap total content width and centre it) above that width.
+  **Proposed numbers (2026-07-29 — reporter delegated the call: "propose these changes, I trust your
+  judgement and I'll give feedback as needed"). These are a starting point to react to on screen, not a
+  finished spec:**
+  - `_get_menu_ratios()` (`main_screen.gd:648-656`) currently has **only** a portrait and a landscape
+    branch — desktop silently takes the landscape `Vector2(0.35, 0.85)`, i.e. up to **85 % of a 21:9
+    monitor**. Add a third branch: **`Vector2(0.35, 0.62)`** for desktop. 62 % keeps the map meaningfully
+    visible (the stated goal of the whole layout system) while still giving the vendor panel more absolute
+    width than it has on any mobile device.
+  - Add an **absolute ceiling of ~1100 logical px** on the open menu width, applied *after* the ratio. Past
+    that, extra monitor width goes to the map, not the panel. Rationale: at `ui.scale 1.0` a 1920-wide
+    desktop is 1920 logical px, so 1100 ≈ 57 % — a comfortable reading measure — and because the cap is
+    absolute it cannot be re-broken by the `ui.scale` mechanism described in the § Desktop scaling
+    contract (which is what makes the *ratio* alone insufficient).
+  - Inside the panel, **cap total content width and centre it** rather than letting three columns stretch.
+    Long label/value rows past ~1100 px read as two disconnected halves.
+  All three numbers should be single named constants, not inline literals, so feedback is a one-line edit.
   `Scripts/UI/main_screen.gd`, `Scripts/Menus/vendor_trade_panel.gd`, `Scenes/VendorTradePanel.tscn`.
 
 - [ ] **S12-4 · Overlay options panel eats a large proportion of the screen on PC** *(P1 — PC only; Mac
@@ -159,6 +174,14 @@ now backs it. **None are coded yet.** IDs (`S12-n`) are for cross-referencing fr
   ≈46 % at 2.0). Compounded by `_content_panel.size_flags_vertical = SIZE_EXPAND_FILL` (line 219), so it's
   always full screen height. Full mechanism + math:
   [ui_system § Desktop scaling contract](02_UI_UX/ui_system.md#desktop-scaling-contract-and-why-fixed-width-panels-drift).
+  **Proposed numbers (2026-07-29 — reporter delegated the call; react on screen and I'll adjust):**
+  - Replace the flat `440.0` desktop return in `_get_panel_width()` (`:46-53`) with
+    **`clamp(win_size.x * 0.24, 380.0, 520.0)`** — expressed as a fraction like every other branch, so
+    `ui.scale` shrinking the logical viewport can no longer turn it into ~46 % of the screen, with a floor
+    so it stays usable and a ceiling so it never dominates a wide monitor.
+  - Drop `_content_panel.size_flags_vertical = SIZE_EXPAND_FILL` (`:219`) in favour of
+    **`SIZE_SHRINK_CENTER` with a max height of ~70 % of the viewport**. Six toggle rows do not need full
+    screen height, and full-height is most of what makes the panel feel like it "eats the screen."
   **Before coding, capture the PC numbers** — `UI_scale_manager.gd:143` prints
   `[UIScale] win=… factor=… target_w=… vp=…` on every apply and `main_screen.gd:696` prints
   `[LAYOUT-OVERFLOW]`. Those two lines from the Windows build identify which cause dominates without guessing.
@@ -254,7 +277,8 @@ now backs it. **None are coded yet.** IDs (`S12-n`) are for cross-referencing fr
   `_check_or_prompt_new_convoy_from_store()` → `_show_new_convoy_dialog()`; meanwhile
   `GameScreenManager` re-triggers `refresh_all()` on `user_changed`. Independent of S12-7 (the bad map
   rect appears *before* the first dialog call), but it burns a request per iteration against
-  `/user/get` and re-lays-out the modal every time. Make the prompt idempotent — no-op when the dialog
+  `/user/get` and re-lays-out the modal every time. **Likely the main driver of S13-1's pre-login lag —
+  fix this first and re-measure before touching the login background viewport.** Make the prompt idempotent — no-op when the dialog
   is already open. `Scripts/UI/main_screen.gd`, `Scripts/UI/game_screen_manager.gd`,
   `Scripts/System/Services/convoy_service.gd`.
   - Two smaller defects found alongside, same file family:
@@ -302,8 +326,13 @@ now backs it. **None are coded yet.** IDs (`S12-n`) are for cross-referencing fr
   settings menu (`settings_menu.gd:4, 247, 258`), which writes `display.fullscreen` and lands in
   `settings_manager.gd:72-79`. Two further notes from the research:
   - It uses `DisplayServer.WINDOW_MODE_FULLSCREEN` (**exclusive**), not
-    `WINDOW_MODE_EXCLUSIVE_FULLSCREEN`'s borderless sibling — worth confirming which the beta wants on
-    Windows, since exclusive mode is the harder one to escape from if the UI is mis-laid-out.
+    `WINDOW_MODE_EXCLUSIVE_FULLSCREEN`'s borderless sibling. **✅ Answered 2026-07-29: keep exclusive
+    fullscreen** — but the reporter added *"we don't even have a way to toggle/change it,"* so **verify the
+    existing `FullscreenCheck` checkbox actually works before adding the shortcut.** The wiring looks
+    correct on paper (`settings_menu.gd:258` → `settings_manager.gd:72-79`), but S13-2 found that this
+    panel is **built once and never re-synced** — so the checkbox can display the wrong state, and a click
+    that appears to do nothing is the expected symptom of that bug. **Fix S13-2 first**, then re-test the
+    checkbox; the shortcut may be the only thing genuinely missing.
   - The handler already calls `ui_scale_manager.reapply_scale()` **deferred** after the mode switch
     (`settings_manager.gd:76-79`) because the logical scale is derived from window size; **any new
     shortcut must route through the same setting**, not call `DisplayServer` directly, or the UI will
@@ -330,13 +359,317 @@ now backs it. **None are coded yet.** IDs (`S12-n`) are for cross-referencing fr
     [Identity.md § Account Linking & Merging](04_Technical/Identity.md).
   **Suggested shape:** surface an "I already have an account" branch at the point of first Steam sign-in
   (or as step 0 of the tutorial), reusing `AccountLinksPopup` / the merge flow rather than building a new
-  path. **Open question for the user:** should this *link Steam onto the existing account* (merge, keeping
-  the old progress) or *log in as the existing account* (discard the just-created Steam account)? The
-  merge path is the one that already exists in code.
+  path.
+  **✅ Answered 2026-07-29 — use the merge path.** The reporter confirms *"we have extensive account
+  consolidation that's already set up"* and asked that the existing machinery be used rather than a new
+  flow. So: **link Steam onto the existing account, keeping the old progress** — the 409-conflict merge
+  path that already exists, not a "log in as the other account and discard" branch.
+  ⚠️ **Do a read-the-code pass on consolidation before designing the UI.** The reporter's instruction was
+  *"check the docs for info on this, or start a research sprint to see how we do it and update the docs."*
+  [Identity.md § Account Linking & Merging](04_Technical/Identity.md) is the doc of record and is
+  `status: unverified` — so verify it against `account_links_popup.gd` / `account_merge_modal.gd` /
+  `api_calls.gd`'s `/auth/merge/preview` + `/auth/merge/commit` (`:1044`, `:1094`) and set
+  `verified_against_code:` as part of this item. That verification is a prerequisite for the UI work, and
+  it feeds the **systems audit initiative** below rather than being throwaway effort.
   `Scripts/UI/login_screen.gd`, `Scripts/UI/account_links_popup.gd`, `Scripts/UI/account_merge_modal.gd`,
   `Scripts/UI/tutorial_manager.gd`.
   (Docs: [Identity.md § First launch on Steam](04_Technical/Identity.md#first-launch-on-steam--the-missing-i-already-have-an-account-branch),
   [TutorialSystemOverview.md](03_Systems/TutorialSystem/TutorialSystemOverview.md).)
+
+---
+
+# Sprint 13 — play-test batch (NEW, 2026-07-29)
+
+From a desktop + Android play-test pass. Every entry was **researched against current code** before
+being written down; each carries the verified mechanism (or the specific unknown to measure first), the
+files, and — where the report and the code disagree — what the code actually says. **None are coded yet.**
+IDs are `S13-n`.
+
+> **Answers from the reporter (2026-07-29) are folded into each entry below.** Three items changed shape
+> as a result: **S13-8 is shelved** (the test phone was offline — not a code bug), **S13-5 is a
+> responsiveness item, not a data bug** (stock corrects on reopening the vendor), and **S13-7's design is
+> now settled** — the backend auto-fills vehicles, so the client only needs a truthful *preview*, and it
+> should fill **large vehicles first**.
+>
+> **Still worth reading before triaging:** S13-5 and S13-7 are the cargo twins of two already-solved
+> vehicle bugs. The "sold vehicle reappears" saga was fixed with a re-strip list (`_sold_vehicle_ids` /
+> `_strip_sold_vehicles`, `vendor_trade_panel.gd:2547-2585`) and per-item capacity has never been
+> modelled. Reuse those shapes rather than inventing new ones.
+
+## Performance
+
+- [ ] **S13-1 · Fullscreen lag while stuck pre-login / in the background-art limbo** *(P1 — **macOS**,
+  confirmed 2026-07-29: severe enough to stutter unrelated video playback on the same machine)* — reported
+  as: in fullscreen, before login completes (or in the "only the background art" state), the machine lags
+  badly. **The macOS confirmation reorders the suspects** — S12-7's blank screen is Windows-only and
+  S12-8's request loop burns network, not GPU, so a symptom that degrades *other applications'* rendering
+  points squarely at cause (1) below: a second full-screen render target with MSAA, redrawn every frame.
+  Treat (1) as the fix and (2)/(3) as contributors. Three verified contributors:
+  1. **The login screen renders a second full-screen viewport every frame, forever.**
+     `login_screen.gd::_setup_map_background()` (`:694-700`) creates a `SubViewport` with
+     `render_target_update_mode = UPDATE_ALWAYS`, `msaa_2d = MSAA_2X`, sized to the **whole viewport**
+     (`:700`, re-synced on resize at `:746`), containing a 140×90 `TileMapLayer` (`_bg_map_size`, `:67`).
+     `_update_map_background()` (`:869-890`) moves the camera **every frame** (drift + wobble), so nothing
+     can ever be cached or culled. Cost scales with window area — which is exactly why it only bites in
+     fullscreen. It is only torn down at `game_screen_manager.gd:75-76` (`login_screen.queue_free()` on
+     `initial_data_ready`), so in the limbo state where that signal never arrives, it renders indefinitely
+     **on top of** MainScreen's own map viewport.
+  2. **The S12-8 request loop.** `_show_new_convoy_dialog()` firing hundreds of times per session —
+     each iteration a `/user/get` request plus a full modal re-layout — is the same 0-convoy state being
+     described here. It costs network and CPU, not GPU, so it can't be the whole story on macOS.
+  3. **S12-7 (blank screen)** is the *Windows* form of the same limbo. On macOS the login screen simply
+     never gets torn down because `initial_data_ready` never fires, which is enough to reproduce (1)
+     indefinitely without S12-7 being involved at all.
+  **Suggested shape:** drop the login background to `UPDATE_WHEN_VISIBLE`, cap `_bg_viewport.size` (render
+  at a fraction of the window and let `STRETCH_KEEP_ASPECT_COVERED` upscale — it is already modulated to
+  26 % alpha at `:690`, so resolution is nearly free to lose), drop `msaa_2d` entirely (MSAA on a 26 %-alpha
+  blurred backdrop buys nothing), and set `render_target_update_mode = UPDATE_DISABLED` the moment
+  `set_loading_mode(true, …)` is called rather than waiting for `queue_free()`. Consider also capping the
+  frame rate on the login screen (`Engine.max_fps`) — a drifting backdrop does not need 120 Hz, and a cap
+  is the single change most likely to stop the machine-wide stutter.
+  **Measure first (macOS, fullscreen):** compare fullscreen vs. windowed FPS on the login screen. If the
+  gap tracks window area, it is the viewport and the size cap alone fixes it.
+  `Scripts/UI/login_screen.gd`, `Scripts/UI/game_screen_manager.gd`.
+
+## Input / settings
+
+- [ ] **S13-2 · Settings menu shows stale control values after a logout/login — pan toggle "flips on its
+  own"** *(P2 — root cause found)* — reported as the panning setting changing periodically, "the setting
+  isn't incorrect, it just flips between logging in and such." Reporter confirmed 2026-07-29 that the
+  **displayed value** is what moves, which rules out the input-path sign theory and points at the menu.
+  **Verified root cause — the settings panel is built once and never re-synced:**
+  - `user_info_display.gd::_on_settings_button_pressed()` (`:541-556`) lazily instantiates
+    `SettingsMenu.tscn` **once**, stores it in `_settings_menu_instance`, and parents it to
+    `get_tree().root`. Every later open calls only `.show()` plus `_apply_mobile_optimizations()` — it
+    refreshes **layout** but never **values**.
+  - `settings_menu.gd` reads `SettingsManager` exactly once, in `_ready()` → `_init_values()` (`:27`,
+    `:235-251`). There is **no** `visibility_changed` handler and no re-read on show (grep confirms
+    neither exists).
+  - The instance survives logout: `game_screen_manager.gd::logout_to_login()` (`:108-140`) recreates
+    `LoginScreen` but **never frees `MainScreen`** — so `UserInfoDisplay` and its settings-menu instance
+    persist across accounts, still displaying the values captured when it was first opened.
+  So after a logout/login (or any change made while the menu was closed) the checkboxes can disagree with
+  the stored settings — and the first click then writes the *checkbox's* stale-derived value back through
+  `set_and_save()` (`:259-264`), which is the "it flipped by itself" the reporter is seeing.
+  **Fix:** call `_init_values()` on show — either from `_on_settings_button_pressed()` before `.show()`, or
+  (better, so every caller benefits) from a `NOTIFICATION_VISIBILITY_CHANGED` handler in
+  `settings_menu.gd`. Small and self-contained.
+  **Two related defects to fix in the same pass:**
+  - **Reset Defaults silently clears pan/zoom inversion.** `_on_reset_defaults()` (`:294-307`) writes
+    `controls.invert_pan = false`; a user resetting to fix UI scale loses their pan preference with no
+    warning. Consider scoping Reset to the section, or confirming first.
+  - **The four pan paths don't share a sign convention** — worth normalising while the file is open, even
+    though it is no longer the suspected cause here. `main_screen.gd` inverts `delta` in four places
+    (screen-drag `:571-577`, mouse-motion `:619-625`, `InputEventPanGesture` `:634-638`, plus the
+    wheel/magnify zoom pair at `:606-616` and `:626-632`), and a macOS trackpad `InputEventPanGesture`
+    does **not** carry the same sign convention as `InputEventMouseMotion.relative`. If direction ever
+    differs between trackpad and mouse with the checkbox unchanged, this is why.
+  `Scripts/UI/user_info_display.gd`, `Scripts/Menus/settings_menu.gd`, `Scripts/UI/main_screen.gd`.
+  (Related: **TD-03** — `SettingsMenu` living outside `MenuManager` is what makes this lifecycle possible.)
+
+- [ ] **S13-3 · Zoom sensitivity setting — desktop only** *(P3, new feature)* — **scope locked
+  2026-07-29: desktop only; mobile pinch is explicitly out of scope for now.** Zoom step is a single
+  hard-coded `@export var camera_zoom_factor_increment: float = 1.1` (`map_camera_controller.gd:11`),
+  consumed by the wheel handlers in `main_screen.gd:606-616`. Note that on desktop **two** paths matter:
+  the mouse wheel (`:606-616`, which uses the increment) and `InputEventMagnifyGesture` (`:626-632`, the
+  macOS trackpad pinch, which passes the OS factor straight through and would ignore an increment-only
+  setting). Both must honour the slider or it will read as broken on a MacBook. Touch pinch (`:555-566`)
+  is left alone per the scope decision.
+  **Suggested shape:** add `controls.zoom_sensitivity` (float, default `1.0`, range ~0.25–3.0) to
+  `settings_manager.gd`'s `data` dict, cache it in `main_screen.gd::_apply_settings_snapshot()`
+  (`:1655-1662`) alongside `_opt_invert_zoom`, add its key to the `_on_setting_changed()` match
+  (`:1664-1670`), and apply it as an **exponent** — `pow(factor, sensitivity)` — so wheel and magnify
+  scale consistently and `1.0` is exactly today's behaviour. Slider goes in the Controls section of
+  `SettingsMenu.tscn` next to Invert Zoom; hide the row on mobile (`DeviceStateManager.is_mobile`) so a
+  no-op control never ships to phones. **Whatever value it lands on must be re-read on menu reopen — see
+  S13-2**, or the new slider inherits the same stale-display bug on day one.
+  `Scripts/System/settings_manager.gd`, `Scripts/Menus/settings_menu.gd`, `Scenes/SettingsMenu.tscn`,
+  `Scripts/UI/main_screen.gd`, `Scripts/Map/map_camera_controller.gd`.
+
+- [ ] **S13-4 · "Toggle journey lines" should be a persisted setting** *(P3)* — the convoy route/connector
+  polylines are drawn unconditionally in `UI_manager.gd` (`:2049-2051` for real journeys, `:2150-2152` for
+  the route preview); there is **no** toggle for them today. The six existing map overlays all go through
+  one well-formed pipeline that this should join, not bypass: a field + `update_setting()` case in
+  `map_settings_service.gd` (`:12-17`, `:43-66` — which persists via `SettingsManager` as
+  `map.<name>` and broadcasts `map_overlay_settings_changed`), a default in `settings_manager.gd:22-27`,
+  a `_add_toggle_row()` + `toggled` connection in `map_overlay_settings_panel.gd` (`:265-301`), a line in
+  `_sync_toggles_with_service()` (`:360-367`), and consumption in
+  `UI_manager.gd::_on_map_overlay_settings_changed`.
+  **Design locked 2026-07-29:** the toggle lives in the **map overlay gear panel** (not Settings) and
+  governs **all convoys' journey lines**; the **selected convoy's** line shows **automatically** while it
+  is on a journey, regardless of the toggle. So this is not a global on/off — it is
+  `show_all_journey_lines`, with the selected/active convoy's route unconditionally drawn. Consequences
+  for implementation:
+  - The consumer in `UI_manager.gd` (`:2049-2051`) must branch per convoy: draw if
+    `setting == true` **or** the convoy is the selected one. The selection state is already available —
+    the same function tests `p_selected_convoy_ids` / `_pinned_convoy_ids` for label visibility
+    (`convoy_label_manager.gd:429`), so reuse that notion of "selected" rather than inventing a second one.
+  - Because the selected convoy is always drawn, `set_planning_override()` (`:80-88`) should **pass these
+    through** like `grid_lines` rather than suppressing them — the route preview lines (`:2150-2152`) are
+    a separate path and already handled.
+  - Default: recommend **off** for all-convoys (matching the other six overlays, which all default
+    `false`), since the selected convoy's line still appears. Confirm if you'd rather it default on.
+  `Scripts/System/Services/map_settings_service.gd`, `Scripts/UI/map_overlay_settings_panel.gd`,
+  `Scripts/System/settings_manager.gd`, `Scripts/UI/UI_manager.gd`.
+
+## Vendor / trading
+
+- [ ] **S13-5 · Vendor stock doesn't decrement *immediately* after a purchase** *(P2 — downgraded
+  2026-07-29: reporter confirmed it corrects on leaving and re-entering the vendor, so this is a
+  **responsiveness** bug, not data loss. "I just want it responsive.")* — bought 7 × Industrial Robotic
+  Arms; the vendor's quantity did not go down until the panel was reopened. **That the reopen fixes it is
+  diagnostic:** the authoritative `/vendor/get` refresh is correct, so the defect is entirely in the
+  optimistic path — and it narrows the two candidates below to whichever fails *before* the refresh lands.
+  The optimistic path exists but is **shallow and name-keyed**:
+  `_optimistically_update_vendor_stock(item_name, delta)`
+  (`vendor_trade_panel.gd:2501-2545`) looks the item up by its **display name** across the `vendor_items`
+  buckets and writes **only** `entry["total_quantity"]`. Two independent failure modes, and the existing
+  diagnostics tell you which:
+  - **Lookup miss** — the name in `_pending_tx.item.name` doesn't match the bucket key (aggregated rows
+    are keyed by display name, which the aggregator can decorate). The function already prints
+    `[VendorPanel][DIAG] FAILED: item '…' not found in any bucket. Buckets searched: …` (`:2545`) —
+    that line settles it in one purchase.
+  - **Re-aggregation resurrects it** — even on a successful decrement, the underlying
+    `vendor_data.cargo_inventory` and `entry["items"]` are left untouched, so any rebuild off the
+    **lagging `/map` snapshot** restores the original quantity. This is precisely the sold-vehicle saga,
+    which was fixed by remembering the id and re-stripping on every rebuild
+    (`_sold_vehicle_ids` / `_strip_sold_vehicles`, `:2547-2585`); cargo has **no** equivalent.
+  **Suggested shape:** switch the decrement to key off `cargo_id` (which `dispatch_buy` already has —
+  `vendor_panel_transaction_controller.gd:264-266`) rather than the display name, mutate the underlying
+  inventory rows too, and add a cargo counterpart to `_strip_sold_vehicles` so a `/map`-driven rebuild
+  can't undo it before the authoritative `/vendor/get` lands.
+  `Scripts/Menus/vendor_trade_panel.gd`, `Scripts/Menus/VendorPanel/vendor_panel_transaction_controller.gd`,
+  `Scripts/Menus/VendorPanel/cargo_aggregator.gd`.
+  (Related: the `/map`-snapshot-lag mechanism is [DataBoundaries.md](04_Technical/DataBoundaries.md).)
+
+- [ ] **S13-6 · Buy button stuck on "Processing…" after a failed purchase** *(P1)* — the button text and
+  `disabled` state are set in `vendor_panel_transaction_controller.gd:200-204` and restored **only** by
+  `VendorPanelRefreshController.on_api_transaction_error()` (`:78-115`) or a successful result. Two
+  verified holes:
+  - **The error handler early-returns before restoring the button.** `:80-81` is
+    `if not panel.is_visible_in_tree(): return` — placed *above* the money/capacity revert and the
+    button restore at `:96-101`. Any panel that isn't visible when the error lands (orientation change,
+    menu swap, tutorial overlay) keeps `disabled = true` and `"Processing…"` when it comes back.
+  - **There is no watchdog.** `_pending_tx.started_ms` is written (`:190`) and **never read anywhere in
+    the repo** — grep confirms exactly one occurrence. So a request that errors without emitting, times
+    out, or returns a 200 with a failure body leaves `_transaction_in_progress = true` forever, and
+    `on_action_button_pressed()` (`:120-121`) then rejects every subsequent press silently.
+  **Suggested shape:** move the button/flag restore **above** the visibility guard (state repair must be
+  unconditional; only the *toast* should be visibility-gated), and add a timeout using the already-recorded
+  `started_ms` that reverts the projection and re-enables the button. `_pending_tx.started_ms` becoming a
+  live field is the point of the fix, not incidental.
+  `Scripts/Menus/VendorPanel/vendor_panel_refresh_controller.gd`,
+  `Scripts/Menus/VendorPanel/vendor_panel_transaction_controller.gd`, `Scripts/Menus/vendor_trade_panel.gd`.
+
+- [ ] **S13-7 · "Max" over-buys because it models the convoy as one pooled container** *(P1 — design
+  settled 2026-07-29)* — reported as the purchase overflow not working: maxing out an item sometimes won't
+  split across the vehicles.
+  **Division of responsibility (confirmed by the reporter):** the **backend already auto-fills vehicles**
+  as much as they can hold. The client is not responsible for placing cargo — only for **predicting how
+  much will actually fit**, and today it does that with pooled arithmetic. So this is a *preview accuracy*
+  fix, not a packing feature.
+  **Verified cause:** `on_max_button_pressed()` (`vendor_panel_transaction_controller.gd:9-116`) computes
+  its weight/volume ceilings from **convoy aggregates** —
+  `remaining_volume = _convoy_total_volume - _convoy_used_volume` (`:103-108`), themselves derived from
+  `total_cargo_capacity` / `total_free_space` (`vendor_panel_convoy_stats_controller.gd:22-36`). Pooled
+  capacity is a fine approximation **only while items are small relative to a vehicle** — which is exactly
+  the reporter's observation: *"a lot of times they are aligned, but with big items and multi-vehicle
+  convoys it won't."* The unit that breaks it is **indivisibility**: a single item cannot be split across
+  two vehicles, so 40 m³ of free space spread over four vehicles cannot accept one 15 m³ item.
+  Two aggravators in the same function: `max_quantity = max(1, max_quantity)` (`:115`) forces a quantity of
+  **1 even when nothing fits at all**, and both `unit_weight` and `unit_volume` silently fall back to `0.0`
+  (`:80-101`), which disables that constraint entirely (`:105-108` guard on `> 0.0`) rather than failing loud.
+  **Suggested shape — greedy simulation, large vehicles first** (the reporter's stated priority: *"we should
+  prioritize large vehicles being filled first"*):
+  1. Build a per-vehicle free-space list from `convoy_data.vehicle_details_list` — per-vehicle
+     `cargo_capacity` / `weight_capacity` are already read in `inspector_builder.gd:379-412`, and the
+     per-vehicle used totals are already summed at `vendor_panel_convoy_stats_controller.gd:47-54`.
+  2. Sort **descending by free volume** and place units one at a time into the first vehicle that fits
+     (first-fit over a largest-first ordering). Count how many placed → that is the true max.
+  3. When the answer is 0, **disable Buy with a reason** ("no single vehicle has room for this item")
+     instead of offering a quantity of 1 that the server will reject.
+  ⚠️ **Backend alignment is part of this item, not a prerequisite.** The client simulation and the server's
+  auto-fill must use the **same ordering**, or the preview will still disagree at the margin — and the
+  reporter has asked for largest-first, which may mean changing the *server's* order too, not just
+  matching it. Confirm the server's current fill order and align both to largest-free-first.
+  Backend repo `~/Work/desolate_frontiers`.
+  `Scripts/Menus/VendorPanel/vendor_panel_transaction_controller.gd`,
+  `Scripts/Menus/VendorPanel/vendor_panel_convoy_stats_controller.gd`.
+
+## Android
+
+- [ ] **S13-8 · 🅿️ SHELVED — Android "can't log in" was almost certainly an offline test device**
+  *(shelved 2026-07-29 by the reporter: "I think I'm offline on this new testing phone — we can shelf this
+  until I re-test." Re-open only if it reproduces on a device with confirmed connectivity.)* — kept because
+  the diagnosis is worth not re-deriving: every request failed with `HTTPRequest` **result code 3 =
+  `RESULT_CANT_RESOLVE`** — `/auth/me`, `/map/get`, `/auth/discord/url` (×4) **and** the `/bug-report`
+  POST (`HTTP 0`). A resolve failure across *every* endpoint means the device never reached a TCP
+  connection, so no auth code was ever implicated, and `permissions/internet=true` is set on **both**
+  Android presets (`export_presets.cfg`, Android preset line 834 / Play Store line 1060) — never the
+  manifest. **On re-test:** load `https://df-api.oori.dev:1337/auth/me` in the device's own browser first.
+  If that fails too, it is the device's network; nothing in the game is broken.
+  - ✅ **Split out and still worth doing regardless — see S13-12.** The real client-side defect the logs
+    exposed was not the network failure but that every one of those lines printed as
+    `Unhandled API Error (add to ErrorTranslator)`.
+
+- [ ] **S13-12 · `HTTPRequest` result codes are missing from `ErrorTranslator`** *(P2 — split out of
+  S13-8, 2026-07-29; independent of whether the Android device was offline)* — a network-level failure
+  currently surfaces to the player as raw internals. Every line in the Android log read
+  `Unhandled API Error (add to ErrorTranslator): … Request failed with HTTPRequest result code: 3`, and
+  the bug-report path produced `Bug report submit failed (HTTP 0): Unknown error.` The result codes are a
+  small fixed enum and the messages write themselves — `RESULT_CANT_RESOLVE` / `RESULT_CANT_CONNECT` /
+  `RESULT_CONNECTION_ERROR` / `RESULT_TIMEOUT` all collapse to "Can't reach the server — check your
+  connection", and `RESULT_TLS_HANDSHAKE_ERROR` deserves its own message. This is the highest
+  value-per-line item in the sprint: it turns every future network outage — on any platform — from an
+  unhandled-error log line into a sentence the player understands.
+  `Scripts/System/error_translator.gd`, `Scripts/System/api_calls.gd`.
+  (Docs: [ErrorSystem.md](04_Technical/ErrorSystem.md), [Diagnostics.md](04_Technical/Diagnostics.md).)
+
+- [ ] **S13-9 · Android export config noise: Apple plugin + Steam both load on Android** *(P3 — not the
+  cause of S13-8, but it pollutes every Android log)* — two startup errors precede the network failures
+  and neither should occur on Android:
+  - `GDExtension: No "arm64" library found for … GodotApplePlugins/godot_apple_plugins.gdextension` —
+    the Apple plugin has no Android library and shouldn't be loaded there. Fix in the `.gdextension`
+    (platform-scoped entries) or exclude the addon from the Android presets' export filter.
+  - `[SteamManager] steam_appid.txt not found` → `Steam failed to initialize: steamInit returned false`.
+    Harmless (it fails closed) but it means `SteamManager` runs its init on mobile at all. It should
+    no-op behind an `OS.has_feature("pc")`-style guard so the errors stop being logged as errors.
+    Note this interacts with the existing Steam-vs-iOS rule — see
+    [Deployment § GodotSteam disabled-at-rest](04_Technical/Deployment.md) before touching the plugin's
+    enabled state (a Godot restart silently re-enables GodotSteam).
+  `export_presets.cfg`, `addons/GodotApplePlugins/godot_apple_plugins.gdextension`,
+  `Scripts/System/steam_manager.gd`.
+
+## Polish
+
+- [ ] **S13-10 · Small animation when a settlement label is pinned** *(P4, new feature)* — pinning is a
+  pure state flip today: `UI_manager.gd:577-583` toggles membership in `_pinned_settlement_coords` and the
+  label simply appears on the next `_draw_interactive_labels()` pass. There is a natural place to hang a
+  tween: `UI_manager::_process()` (`:295-320`) **already redraws labels every frame while the camera moves
+  or the zoom lerps** and already smooths zoom via `_display_zoom` / `zoom_lerp_speed`. **Suggested shape:**
+  store a pin timestamp per coord, drive a short scale/alpha ease from it in the existing draw path, and
+  keep `_process` awake while any pin animation is in flight (add the condition to the early-out at
+  `:301-302`). Do **not** add a `Tween` on the label node — labels are rebuilt every frame by that draw
+  path, so a node tween would be discarded. `Scripts/UI/UI_manager.gd`.
+
+- [ ] **S13-11 · Journey confirmation screen shows a duration but no arrival clock time** *(P3 — screen
+  pinpointed 2026-07-29: the **journey confirmation** screen, not the convoy selector)* — **exact
+  location found:** `convoy_journey_menu.gd::_show_confirmation_panel()` reads
+  `eta_minutes = route_data.get("delta_t", 0.0)` (`:1414`), formats it through `_format_travel_time()`
+  (`:1188-1196` → `"18.5 h"` / `"2d 3.5h"`) and passes that single string to `_update_sub_header()`
+  (`:1418`). So the sticky sub-header carries **distance + duration** and no wall-clock arrival.
+  **Suggested shape:** the journey hasn't departed yet, so arrival = `Time.get_unix_time_from_system() +
+  eta_minutes * 60`. Feed that through the existing
+  `DateTimeUtil.format_timestamp_display(ts, include_remaining_time)` (`date_time_util.gd:103`) — the same
+  helper already used by the active-journey ETA row (`convoy_journey_menu.gd:279`) and the map labels
+  (`convoy_label_manager.gd:310-318`), so the confirmation screen will match the wording the player sees
+  once the journey starts. Show **both** (`"18.5 h · arrives 4:15 PM"`); the duration is what makes routes
+  comparable, the clock time is what makes it plannable. Note `format_timestamp_display` already
+  day-qualifies long trips (`omit_date_if_today`), which matters here — a `2d 3.5h` route must not display
+  a bare time-of-day. `Scripts/Menus/convoy_journey_menu.gd`, `Scripts/System/date_time_util.gd`.
+  - Worth doing in the same pass: `route_selection_menu.gd:98-99` sets
+    `eta_value.text = str(_route_data.get("eta", "N/A"))` — a **raw, unformatted** value straight into the
+    label, the only ETA display in the project that bypasses `DateTimeUtil`.
 
 ---
 
