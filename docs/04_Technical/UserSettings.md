@@ -9,7 +9,7 @@ tags:
 aliases:
   - "User Settings & Preferences"
 created: 2026-05-19
-updated: 2026-07-28
+updated: 2026-07-29
 verified_against_code: 2026-07-28
 status: current
 ---
@@ -60,6 +60,10 @@ Audited against `SettingsManager.data` on 2026-07-28. **`data` is the authoritat
   `_apply_runtime_side_effect()` calls `ui_scale_manager.reapply_scale()` **deferred**, after the new
   geometry settles. Bypassing it leaves the UI at the previous mode's scale and laid out offset —
   the exact failure mode that comment exists to prevent (`settings_manager.gd:76-79`).
+
+> [!NOTE]
+> Scaling statements here mirror
+> [AI_ONBOARDING § The Law of Logical Pixels](../AI_ONBOARDING.md) — that page wins on conflict.
 
 ## Key Files
 - **Settings Store**: `Scripts/System/settings_manager.gd`

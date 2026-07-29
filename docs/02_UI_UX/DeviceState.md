@@ -8,7 +8,7 @@ tags:
 aliases:
   - "Device State & Orientation Management"
 created: 2026-05-18
-updated: 2026-06-02
+updated: 2026-07-29
 verified_against_code: 2026-07-28
 status: current
 ---
@@ -40,6 +40,10 @@ graph TD
 
 > [!NOTE]
 > As of the June 2026 scaling refactor, `DeviceStateManager` no longer scales fonts. The old `get_font_multiplier()` / `get_scaled_base_font_size()` methods were removed. `UIScaleManager` scales all text via **`content_scale_factor` only** — it explicitly zeroes `content_scale_size` (`UI_scale_manager.gd:143`: *"content_scale_size with a zero axis is silently ignored by Godot, which is why it never worked here"*). DeviceStateManager only reports orientation/mode for layout decisions. *(Corrected 2026-07-28 — this note previously credited `content_scale_size` with the scaling.)*
+
+> [!NOTE]
+> Scaling statements here mirror
+> [AI_ONBOARDING § The Law of Logical Pixels](../AI_ONBOARDING.md) — that page wins on conflict.
 
 ## Key Components
 

@@ -7,7 +7,7 @@ tags:
 aliases:
   - "AI Agent Coding Guidelines"
 created: 2026-05-18
-updated: 2026-05-21
+updated: 2026-07-29
 verified_against_code: 2026-07-28
 status: current
 ---
@@ -122,6 +122,23 @@ status: unverified                 # current | unverified | drifting | archive
   backfill it in bulk — that destroys the only signal the field carries.
 - **`status: drifting`** is the right answer when you notice a doc is wrong but can't fix it now. It is
   more useful than silence.
+
+### Code-drift detection (automatic)
+
+`docs_check.py` reads the code files each doc cites — **full paths *and* bare `` `foo.gd` `` names** —
+and compares each one's last commit date against that doc's `verified_against_code`. If the code moved
+*after* the doc was verified, the doc is flagged `codedrift` and jumps to the top of `--backlog`.
+
+This is the sharp signal; the `STALE_DAYS` clock (**30 days**) is the blunt backstop for docs whose code
+hasn't moved but whose claims may still have rotted.
+
+- **It only sees committed state** — deliberate, so local and CI agree.
+- **Ambiguous bare filenames are skipped**, never guessed. A wrong resolution would produce a
+  confidently false warning, which is worse than a missed one.
+<!-- docs-check:ignore-codepaths start -->
+- **Citing the file is what buys you the coverage.** A doc that names no source file can never be
+  code-drift-flagged. Cite `Scripts/Menus/foo.gd` (or at least `foo.gd`) in the docs you want watched.
+<!-- docs-check:ignore-codepaths end -->
 
 ### Tags
 

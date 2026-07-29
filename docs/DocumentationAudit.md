@@ -6,7 +6,7 @@ tags:
 aliases:
   - "Documentation Audit"
 created: 2026-07-28
-updated: 2026-07-28
+updated: 2026-07-29
 verified_against_code: 2026-07-28
 status: current
 ---
@@ -528,15 +528,35 @@ link count.
 
 **Exit criterion met:** zero dead ends, zero orphans, `--strict` enabled in CI.
 
-### Phase 3 — Consolidation (~8 h, stops future drift)
+### Phase 3 — Consolidation (in progress 2026-07-28)
 
-10. **F7** — `DataBoundaries.md` (highest remaining value), then `Scaling.md` / `Auth.md` / `SteamAndPC.md`.
-11. **F5** — issue IDs as the join key; `UIAudit` issue blocks → citations.
-12. **F6** — split `TODO.md`; research bodies migrate to topical docs.
-13. **F8** — canonical anchors + marked mirrors for the 9 scaling restatements.
-14. **F12** — trim `AI_ONBOARDING`; promote the debugging protocol.
+10. ✅ **F7 (partial)** — [DataBoundaries.md](04_Technical/DataBoundaries.md) written: the field-level
+    JSON-vs-binary map, decoded straight from `tools.gd`, incl. the `base_fuel_efficiency` divergence and
+    the client-side `sett_type` enum risk. **The other three proposed MOCs were dropped** — the Autoload
+    Register (Phase 2) absorbed the "which service owns this?" need that motivated `Scaling`/`Auth`, and
+    `SteamAndPC` duplicates `Deployment.md` §4–7. Building them would have produced link lists, not content.
+11. ✅ **F5 (modified)** — 16 backlog items now carry stable IDs (`BUG-01`…`DOC-01`), documented at the
+    Backlog header as the join key. **Scope deliberately narrowed:** the original plan — replace all
+    `UIAudit` "Known Issues" blocks with citations — would have destroyed real content. Those blocks are
+    a *mix* of live status (belongs in TODO), permanent structural facts (belongs in UIAudit), and
+    incident narratives (valuable). Only the **duplicated status** lines were converted to ID citations;
+    structural notes stayed. The thesis was proven twice in the process — two blocks described bugs
+    already fixed: a legacy `BottomMenuButtonsHBox` (removed Sprint 5, 0 occurrences) and
+    `discord_link_popup`/`account_links_popup` font boosts (both migrated). Both corrected.
+12. ✅ **F6 (verified lossless)** — the S12 research bodies were **already** mirrored into their topical
+    docs during the original Sprint 12 research (`ui_system` §Desktop scaling contract + §Never latch,
+    `ResponsiveRefactor` D1–D3). TODO was carrying pure duplicates, so the trim removed no unique content.
+    Verified mechanically: all 12 distinctive facts confirmed present in a non-TODO doc before trimming.
+    `TODO.md` is **6 % smaller** and now holds status + actionable steps, with mechanism by reference.
+13. ✅ **F8** — the 9 scaling restatements now carry explicit **Mirror** banners naming
+    `AI_ONBOARDING § Law of Logical Pixels` (canonical rule) and `ui_system` (canonical mechanism) as
+    winning on conflict — `MechanicsMenu`, `VehicleMenu`, `DeviceState`, `UserSettings`.
+14. ✅ **F12** — [DebuggingVisualBugs.md](04_Technical/DebuggingVisualBugs.md) promoted out of
+    `AI_ONBOARDING` so `UIAudit` / `ui_system` / TODO items can cite it, and the duplicate copy in
+    `DocumentationHome` collapsed to a link. Two bloated Pro Tips moved to their topical docs.
+    `AI_ONBOARDING` is **27 % smaller by word count** (1534 → 1114) with nothing lost.
 
-**Exit criterion:** exactly one canonical location per law and per issue.
+**Exit criterion:** exactly one canonical location per law and per issue. *(Laws: done. Issues: F5/F6 remain.)*
 
 ---
 

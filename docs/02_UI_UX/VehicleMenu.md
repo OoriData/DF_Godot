@@ -7,7 +7,7 @@ tags:
 aliases:
   - "Convoy Vehicle Menu"
 created: 2026-05-19
-updated: 2026-07-10
+updated: 2026-07-29
 verified_against_code: 2026-07-28
 status: current
 ---
@@ -160,6 +160,11 @@ Left column (ratio 2.0)      │  Right column (ratio 3.0)
 ---
 
 ## Scaling Rule
+
+> [!NOTE]
+> **Mirror.** Canonical rule: [AI_ONBOARDING § The Law of Logical Pixels](../AI_ONBOARDING.md).
+> Canonical mechanism: [ui_system](ui_system.md). **Those pages win on conflict** — if this
+> section disagrees with them, fix it here and leave them alone.
 
 `_get_font_size()` returns `base` unchanged — no orientation boosts, no multipliers. `UIScaleManager` owns all scaling via a global `content_scale_factor`. This applies to `convoy_vehicle_menu.gd`, `mechanics_menu.gd` (Service tab), `route_selection_menu.gd`, and `settings_menu.gd` — all were migrated to this rule as of June 2026. See [Responsive UI / Scaling](ui_system.md).
 

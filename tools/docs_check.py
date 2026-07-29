@@ -25,6 +25,7 @@ Checks (E = error, W = warning):
     W  orphan     doc has no inbound links
     W  deadend    doc has no outbound links
     W  stale      verified_against_code older than STALE_DAYS (or absent)
+    W  codedrift  cited code changed AFTER the doc was last verified
 """
 
 from __future__ import annotations
@@ -33,6 +34,7 @@ import argparse
 import datetime as dt
 import os
 import re
+import subprocess
 import sys
 from collections import defaultdict
 
@@ -40,7 +42,7 @@ from collections import defaultdict
 
 DOCS = "docs"
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-STALE_DAYS = 90
+STALE_DAYS = 30  # this project moves fast; 30d keeps the queue honest
 
 # Section indexes. A doc in one of these directories must be reachable from its
 # index, either directly or through a sub-overview the index links to.
@@ -100,6 +102,8 @@ CODEPATH_RE = re.compile(
     r"`((?:Scripts|Scenes|Tests|Assets|tools)/[A-Za-z0-9_/\.-]+\."
     r"(?:gd|tscn|tres|json|sh|py|cfg))(?::\d+(?:-\d+)?)?`"
 )
+# Bare filename citations — `convoy_menu.gd`. Resolved via repo_basename_index().
+BARE_CODEFILE_RE = re.compile(r"`([A-Za-z0-9_]+\.(?:gd|tscn|tres|py|sh))`")
 LINK_RE = re.compile(r"\[([^\]]*)\]\(([^)]+)\)")
 HEADING_RE = re.compile(r"^#{1,6}\s+(.*)$", re.M)
 FENCE_RE = re.compile(r"```.*?```", re.S)
@@ -145,6 +149,68 @@ def parse_frontmatter(text: str) -> dict | None:
             val = val.strip().strip('"\'')
             out[key] = val if val else []
     return out
+
+
+def repo_basename_index() -> dict[str, str]:
+    """Map `foo.gd` -> `Scripts/…/foo.gd` for tracked source files.
+
+    Docs cite bare filenames far more often than full paths (49 docs vs 43 at last
+    count), so code-drift detection would miss over half the graph without this.
+    Ambiguous basenames are dropped rather than guessed — a wrong resolution would
+    produce a confidently false drift warning, which is worse than a missed one.
+    `addons/` is excluded: vendored third-party code isn't ours to track.
+    """
+    try:
+        out = subprocess.run(
+            ["git", "ls-files", "*.gd", "*.tscn", "*.tres", "*.py", "*.sh"],
+            cwd=REPO_ROOT, capture_output=True, text=True, timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return {}
+    if out.returncode != 0:
+        return {}
+
+    seen: dict[str, list[str]] = defaultdict(list)
+    for path in out.stdout.split():
+        if path.startswith("addons/"):
+            continue
+        seen[os.path.basename(path)].append(path)
+    return {name: paths[0] for name, paths in seen.items() if len(paths) == 1}
+
+
+def git_last_commit_times(paths: set[str]) -> dict[str, int]:
+    """Unix timestamp of the last commit touching each path — in ONE git call.
+
+    Walks history newest-first with --name-only and records the first (= newest)
+    commit each path appears in. Doing this per-file would be hundreds of
+    subprocesses; this is one, and history here is small enough to walk whole.
+
+    Only committed state is considered. Uncommitted edits are invisible on
+    purpose: this must give the same answer on your machine and in CI.
+    """
+    if not paths:
+        return {}
+    try:
+        out = subprocess.run(
+            ["git", "log", "--format=__C__%ct", "--name-only"],
+            cwd=REPO_ROOT, capture_output=True, text=True, timeout=60,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return {}
+    if out.returncode != 0:
+        return {}
+
+    newest: dict[str, int] = {}
+    ts = 0
+    for line in out.stdout.splitlines():
+        if line.startswith("__C__"):
+            try:
+                ts = int(line[5:])
+            except ValueError:
+                ts = 0
+        elif line and line in paths and line not in newest:
+            newest[line] = ts
+    return newest
 
 
 def find_docs() -> list[str]:
@@ -335,6 +401,54 @@ class DocsCheck:
             if not self.outbound.get(doc):
                 self.warn("deadend", doc, "no outbound links (add a '## Related' footer)")
 
+    def check_code_drift(self) -> dict[str, list[str]]:
+        """Flag docs whose cited code changed *after* the doc was last verified.
+
+        This is the sharp signal the STALE_DAYS clock only approximates: a doc can
+        be 3 days old and already wrong because the file it describes moved
+        yesterday. Returns {doc: [code paths that moved since verification]}.
+
+        Docs with no `verified_against_code` are skipped — already covered by the
+        stale check, and flagging them twice adds noise, not information.
+        """
+        basenames = repo_basename_index()
+        cited: dict[str, set[str]] = {}
+        every_path: set[str] = set()
+        for doc in self.docs:
+            paths = set()
+            for ref in CODEPATH_RE.findall(self.body[doc]):
+                if ref.startswith(EXTERNAL_PREFIXES):
+                    continue
+                if os.path.exists(os.path.join(REPO_ROOT, ref)):
+                    paths.add(ref)
+            # Bare `foo.gd` citations resolve through the basename index.
+            for bare in BARE_CODEFILE_RE.findall(self.body[doc]):
+                resolved = basenames.get(bare)
+                if resolved:
+                    paths.add(resolved)
+            if paths:
+                cited[doc] = paths
+                every_path |= paths
+
+        commit_times = git_last_commit_times(every_path)
+        drifted: dict[str, list[str]] = {}
+        for doc, paths in cited.items():
+            fm = self.fm.get(doc) or {}
+            raw = fm.get("verified_against_code")
+            if not raw:
+                continue
+            try:
+                verified_ts = int(dt.datetime.fromisoformat(str(raw)).timestamp()) + 86400
+            except ValueError:
+                continue
+            moved = sorted(p for p in paths
+                           if commit_times.get(p, 0) > verified_ts)
+            if moved:
+                drifted[doc] = moved
+                shown = ", ".join(moved[:3]) + (f" (+{len(moved) - 3} more)" if len(moved) > 3 else "")
+                self.warn("codedrift", doc, f"cited code changed since verification: {shown}")
+        return drifted
+
     def check_staleness(self) -> list[tuple[int, int, str, str]]:
         """Warn on docs not verified against code recently. Returns the backlog."""
         today = dt.date.today()
@@ -355,8 +469,10 @@ class DocsCheck:
             if age > STALE_DAYS:
                 backlog.append((age, inbound, doc, str(raw)))
                 self.warn("stale", doc, f"verified {age} days ago ({raw})")
-        # most-trusted first: inbound count descending, then age
-        backlog.sort(key=lambda r: (-r[1], -r[0]))
+        # Code-drift outranks age: a doc whose source demonstrably moved is a
+        # known problem, not a maybe. Within each group, most-depended-on first.
+        drifted = getattr(self, "drifted", {})
+        backlog.sort(key=lambda r: (0 if r[2] in drifted else 1, -r[1], -r[0]))
         return backlog
 
     # ── driver ───────────────────────────────────────────────────────────────
@@ -369,6 +485,7 @@ class DocsCheck:
         self.check_index_coverage()
         self.check_autoload_register()
         self.check_graph_shape()
+        self.drifted = self.check_code_drift()
         return self.check_staleness()
 
 

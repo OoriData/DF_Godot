@@ -7,7 +7,7 @@ tags:
 aliases:
   - "Technical Reference"
 created: 2026-05-18
-updated: 2026-07-28
+updated: 2026-07-29
 verified_against_code: 2026-07-28
 status: current
 ---
@@ -29,12 +29,14 @@ This section covers the underlying infrastructure, identity management, and qual
 - **[User Settings](UserSettings.md)**: SettingsManager, config persistence, and text scaling.
 - **[Autoload Order](AutoloadOrder.md)**: Dependency management and initialization sequence.
 - **[Diagnostics & Troubleshooting](Diagnostics.md)**: Logging, watchdogs, and network debugging.
+- **[Debugging a Visual/Layout Bug](DebuggingVisualBugs.md)**: The four-step protocol for layout bugs — pinpoint, reproduce in-editor, measure after animations settle, rule out structure. Plus the scaling-specific traps.
 - **[Refresh Scheduler](RefreshScheduler.md)**: Polling heartbeat — interval, suspend/resume, and how to add a new service.
 - **[Error Handling System](ErrorSystem.md)**: ErrorTranslator pipeline, inline vs. modal errors, and how to add new translations.
 - **[Bug Reporting & Feedback](BugReporting.md)**: Feedback button → screenshot + log capture → `POST /bug-report`; payload contract and the current availability gaps (login screen, tutorial overlay).
 - **[Dependency Graph](Dependencies.md)**: Visual mapping of singleton relationships.
 - **[API Reference](API_Reference.md)**: Backend endpoints and JSON contracts.
 - **[DF_Lib: Shared Binary Protocol Library](DF_Lib.md)**: The separate repo/package that defines the `/map` binary wire format — versioning, publish/deploy workflow, and why a backend field rename can silently break the client without touching either repo's "obviously relevant" code.
+- **[Data Boundaries](DataBoundaries.md)**: Field-level map of the JSON-vs-binary seam — exactly which fields cross which boundary, the known key-name divergences, and how to diagnose a stat that reads blank or `0` everywhere.
 - **[Deployment & Environment](Deployment.md)**: Build targets and CI/CD pipelines.
 - **[Identity & Auth](Identity.md)**: Account linking, merging, and session management.
 - **[Apple Auth](AppleAuth.md)**: Specific notes on iOS/macOS authentication providers.
@@ -68,7 +70,8 @@ This section covers the underlying infrastructure, identity management, and qual
   python3 tools/docs_check.py --backlog  # docs most in need of re-verification
   ```
 - Validates link + anchor resolution, code-path existence, frontmatter, tag vocabulary, and section-index
-  coverage. Rules: [AI_Guidelines § 6](AI_Guidelines.md). Rationale: [DocumentationAudit](../DocumentationAudit.md).
+  coverage. Also flags **code drift** — docs whose cited source files were committed *after* the doc's
+  `verified_against_code` date — and staleness past 30 days. Rules: [AI_Guidelines § 6](AI_Guidelines.md). Rationale: [DocumentationAudit](../DocumentationAudit.md).
 
 ### CI/CD
 The project is configured to run these tests automatically in the pipeline to prevent regressions in core transport and utility logic.

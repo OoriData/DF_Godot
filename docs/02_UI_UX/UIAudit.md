@@ -8,7 +8,7 @@ tags:
 aliases:
   - "UI Element Audit"
 created: 2026-05-21
-updated: 2026-07-28
+updated: 2026-07-29
 verified_against_code: 2026-07-28
 status: current
 ---
@@ -173,9 +173,9 @@ MapView (Control, fills MapAndMenuContainer)
 ### Known Issues / Gaps
 - ❌ Extends `PanelContainer` directly — not under `MenuBase` or `MenuManager` lifecycle
 - ❌ `custom_minimum_size.y = 80` hardcoded in `.tscn` as `offset_bottom = 68` (vestigial but overridden by script)
-- ❌ `main_screen.gd` connects to this via fragile `find_child("ConvoyMenuButton", true, false)`
-- ❌ No signal emitted when height changes — `MapView` has no formal notification
-- ❌ Contains duplicate Oori color palette `const` values (also in `convoy_list_panel.gd`, `menu_base.gd`)
+- ❌ `main_screen.gd` connects to this via fragile `find_child("ConvoyMenuButton", true, false)` — **TD-05** in [TODO](../TODO.md)
+- ❌ No signal emitted when height changes — `MapView` has no formal notification. **TD-04** in [TODO](../TODO.md)
+- ❌ Duplicate Oori palette `const` values — tracked as **TD-01** in [TODO](../TODO.md)
 - ❌ Options dropdown uses `add_theme_font_size_override` with manual mobile multiplier (`int(16 * 2.2)`)
 - ⚠️ **Min-width drives every menu's width (Sprint 7).** The TopBar is a child of `SafeRegionContainer`, so its combined *minimum* width sets the floor for `MainContainer` and everything under it — including the sliding menu sheet. At font 26 the username + Options + Feedback + money + convoy chips summed to ~833px, forcing the whole app 33px past the 800px portrait viewport (menus clipped symmetrically off both edges). Fixed by dropping those fonts to 20px and halving the `LeftPadding`/`RightPadding` to 8px. **If a portrait menu clips off both edges, check this bar's min-width first.**
 
@@ -218,8 +218,8 @@ Each button (`Button`) is named `ConvoyButton_{convoy_id}` and contains:
 
 ### Known Issues / Gaps
 - ❌ `convoy_list_panel.gd:92` calls `DisplayServer.window_get_size()` — violates logical pixel rule
-- ❌ Contains duplicate Oori color palette `const` values
-- ⚠️ `_get_font_size()` double-scaling migration: **menus** ✅ done (`convoy_vehicle_menu`, `convoy_cargo_menu`, `mechanics_menu`, `route_selection_menu`, `settings_menu`, `map_overlay_settings_panel`). **Modals** ✅ `auto_sell_receipt_modal`, `returning_player_tips_modal` fixed 2026-07-01. **Remaining popups still boost**: `discord_link_popup`, `account_links_popup` (2.2× portrait). `UIScaleManager` is the intended sole scaling authority. Check with `grep -nA2 _get_font_size <script>`.
+- ❌ Duplicate Oori palette `const` values — tracked as **TD-01** in [TODO](../TODO.md)
+- ⚠️ **`convoy_list_panel.gd:352-360` still multiplies font sizes** (`boost = 1.3 portrait / 1.1 mobile`), feeding ~8 call sites — the double-scaling anti-pattern. *(Corrected 2026-07-28: this line previously named `discord_link_popup` / `account_links_popup` as the remaining offenders; both are migrated to `return base`. The real survivors are this file, `tutorial_overlay.gd`, and `responsive_list_adapter.gd`.)* Live status: [TODO — Systems Audit](../TODO.md). Rule: [AI_ONBOARDING § Law of Logical Pixels](../AI_ONBOARDING.md).
 - ❌ `ToggleButton` in `.tscn` has `custom_minimum_size = Vector2(280, 80)` but script overrides to 300×56 or 400×110
 
 ---
@@ -257,7 +257,7 @@ Each button (`Button`) is named `ConvoyButton_{convoy_id}` and contains:
 ### Known Issues / Gaps
 - ❌ Light grey button style on dark menu panel creates strong visual contrast — intentional?
 - ❌ No shadow/depth on the nav bar itself relative to the menu content
-- ❌ `SettlementMenuButton` is hidden when convoy is on a journey via `MenuBase._update_navigation_bar_visibility()` — but `ConvoyMenu.tscn` also has a *separate, legacy* `BottomMenuButtonsHBox` with its own buttons (see §4)
+- `SettlementMenuButton` is hidden when the convoy is on a journey via `MenuBase._update_navigation_bar_visibility()`. *(Corrected 2026-07-28: the trailing claim that `ConvoyMenu.tscn` also carries a legacy `BottomMenuButtonsHBox` is **false** — that node has 0 occurrences in the scene and the fallback was removed in Sprint 5, per `MenuBase.gd:288`.)*
 
 > [!NOTE]
 > **Landscape button fill (Sprint 7).** The four buttons are `SIZE_EXPAND_FILL`, but `_update_static_nav_bar_ui` used to inset the bar content by the screen's horizontal safe-area (notch) margin in *all* orientations — in landscape the menu is a side panel nowhere near the notch, so that inset squeezed the buttons into the centre with dead space on both sides. The horizontal safe inset now applies in **portrait only**; landscape uses `bar_margin`, so the buttons fill the panel width.

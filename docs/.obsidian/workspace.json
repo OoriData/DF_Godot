@@ -40,20 +40,6 @@
             }
           },
           {
-            "id": "30bc8b06c8bb7e87",
-            "type": "leaf",
-            "state": {
-              "type": "markdown",
-              "state": {
-                "file": "DocumentationHome.md",
-                "mode": "source",
-                "source": false
-              },
-              "icon": "lucide-file",
-              "title": "DocumentationHome"
-            }
-          },
-          {
             "id": "c77d26f99864e1af",
             "type": "leaf",
             "state": {
@@ -67,7 +53,8 @@
               "title": "Deployment"
             }
           }
-        ]
+        ],
+        "currentTab": 1
       }
     ],
     "direction": "vertical"
@@ -212,8 +199,13 @@
       "bases:Create new base": false
     }
   },
-  "active": "ee883a010a050212",
+  "active": "c77d26f99864e1af",
   "lastOpenFiles": [
+    "claude.md",
+    "DocumentationHome.md",
+    "TODO.md",
+    "04_Technical/DebuggingVisualBugs.md",
+    "04_Technical/DataBoundaries.md",
     "DocumentationAudit.md",
     "04_Technical/BugReporting.md",
     "04_Technical/Deployment.md",
@@ -221,10 +213,8 @@
     "_mockups/vendor_landscape_v2.html",
     "_mockups/vendor_consolidated_v2.html",
     "_mockups",
-    "TODO.md",
     "SprintHistory.md",
     "PROJECT_MAP.md",
-    "DocumentationHome.md",
     "AI_ONBOARDING.md",
     "99_Reference/data_dumps/vendor_example.json",
     "99_Reference/data_dumps/vehicle_example.json",
@@ -247,9 +237,6 @@
     "04_Technical/Diagnostics.md",
     "04_Technical/Dependencies.md",
     "04_Technical/DF_Lib.md",
-    "04_Technical/CargoDestinationButtonImplementation.md",
-    "04_Technical/AutoloadOrder.md",
-    "04_Technical/AppleAuth.md",
     "Pasted image 20260521131852.png"
   ]
 }

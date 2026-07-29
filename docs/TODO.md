@@ -6,7 +6,7 @@ tags:
 aliases:
   - "TODO — Active Work"
 created: 2026-05-21
-updated: 2026-07-28
+updated: 2026-07-29
 status: unverified
 ---
 
@@ -140,65 +140,36 @@ now backs it. **None are coded yet.** IDs (`S12-n`) are for cross-referencing fr
 
 ## Layout / desktop ratios
 
-- [ ] **S12-1 · Vendor page doesn't use a big desktop screen well** *(P1)* — the menu-width ratio and the
-  vendor 3-column split are both tuned for a narrow sheet, so on a wide monitor the vendor page is
-  simultaneously **too wide overall** and **badly proportioned inside**. Three verified causes:
-  1. **No desktop branch in the menu-width ratio.** `main_screen.gd:648 _get_menu_ratios()` returns only
-     two cases — portrait `(0.55, 0.72)` of height, and *everything else* `(0.35, 0.85)` of width.
-     Desktop is lumped in with mobile landscape. With `ui.menu_open_ratio` defaulting to `0.5`
-     (`settings_manager.gd`), the lerp lands on **0.60 × full width** — 1152 logical px on a 1920
-     logical viewport, and it keeps growing with the monitor because there is **no absolute max clamp**
-     (`main_screen.gd:374-377` clamps a 320px *minimum* and an 85% *relative* maximum only).
-  2. **The 3-column split doesn't rebalance.** `VendorTradePanel.tscn` hard-codes
-     `LeftPanel` `size_flags_stretch_ratio = 0.3` (line 41), `MiddlePanel` `0.35` (line 133), and
-     `RightPanel` `custom_minimum_size = (320, 0)` (line 217). The transaction column stays pinned at
-     320 logical px while the other two absorb every extra pixel, so on a wide menu the list and
-     inspector sprawl while the buy/sell controls stay a thin strip.
-  3. **`_make_panels_responsive()` has no desktop path.** `vendor_trade_panel.gd:1117-1145` only
-     restructures for `MOBILE_PORTRAIT` and `MOBILE_LANDSCAPE`; `DESKTOP` falls through to the raw
-     `.tscn` layout on purpose ("plenty of room" — line 1123). That assumption is what has expired.
+- [ ] **S12-1 · Vendor page doesn't use a big desktop screen well** *(P1)* — on a wide monitor the vendor
+  page is simultaneously **too wide overall** and **badly proportioned inside**. Three verified causes
+  (menu sheet has no desktop branch / no absolute max width · the 3-column split can't rebalance ·
+  `_make_panels_responsive()` has no desktop path) are documented in full, with file:line, as **D1–D3** in
+  [VendorPanel/ResponsiveRefactor § Desktop](02_UI_UX/VendorPanel/ResponsiveRefactor.md). The shared
+  scaling mechanism is [ui_system § Desktop scaling contract](02_UI_UX/ui_system.md#desktop-scaling-contract-and-why-fixed-width-panels-drift).
   **Suggested shape (confirm ceiling with the user before hard-coding):** add a real `DESKTOP` branch to
   `_get_menu_ratios()` plus an **absolute** max width in logical px, and let the vendor columns rebalance
   (or cap total content width and centre it) above that width.
   `Scripts/UI/main_screen.gd`, `Scripts/Menus/vendor_trade_panel.gd`, `Scenes/VendorTradePanel.tscn`.
-  (Docs: [VendorPanel/ResponsiveRefactor.md § Desktop](02_UI_UX/VendorPanel/ResponsiveRefactor.md),
-  [ui_system.md](02_UI_UX/ui_system.md).)
 
 - [ ] **S12-4 · Overlay options panel eats a large proportion of the screen on PC** *(P1 — PC only; Mac
-  and mobile "fine for the most part")* — the "overlay options panel" is the gear-tab map-overlay panel
-  (`Scripts/UI/map_overlay_settings_panel.gd`; the script itself uses that exact name at its
-  `set_planning_active()` doc comment). Two verified causes, both PC-specific:
-  1. **Fixed logical width, no viewport-fraction cap.** `_get_panel_width()` (line 46) returns
-     `win.x * 0.75` in portrait, `520.0` on mobile landscape, and a **flat `440.0`** on desktop — the
-     only branch that is not expressed as a fraction of the screen.
-  2. **`ui.scale` shrinks the logical viewport out from under it.** `UI_scale_manager.gd:110` computes
-     `target_w = target_w / _user_scale`, and `_user_scale` is clamped to `0.5..4.0` (lines 62, 169) and
-     is **desktop-only** (mobile/portrait use the fixed target width, which is why Mac-at-default and
-     mobile look fine). At `ui.scale = 1.0` the panel is 440/1920 ≈ **23 %** of the width; at 2.0 the
-     logical viewport is 960 wide and the same panel is ≈ **46 %**.
-  Compounding it: `_content_panel.size_flags_vertical = SIZE_EXPAND_FILL` (line 219) inside a
-  full-height HBox, so the expanded panel is **always full screen height** — there is no content-hug or
-  max-height. Net effect on PC: a full-height slab of 23–46 % of the width.
-  **Before coding, capture the PC numbers** — `UI_scale_manager.gd:143` already prints
-  `[UIScale] win=… factor=… target_w=… vp=… screen=… screen_size=…` on every apply, and
-  `main_screen.gd:696` prints a `[LAYOUT-OVERFLOW]` dump. Those two lines from the Windows build
-  identify which of the two causes dominates without guessing.
+  and mobile "fine for the most part")* — the gear-tab map-overlay panel
+  (`Scripts/UI/map_overlay_settings_panel.gd`). Two verified causes: a **flat `440.0` desktop width** with
+  no viewport-fraction cap (`_get_panel_width()`, line 46 — the only branch not expressed as a fraction),
+  and **`ui.scale` shrinking the logical viewport out from under it** (23 % of width at `ui.scale 1.0`,
+  ≈46 % at 2.0). Compounded by `_content_panel.size_flags_vertical = SIZE_EXPAND_FILL` (line 219), so it's
+  always full screen height. Full mechanism + math:
+  [ui_system § Desktop scaling contract](02_UI_UX/ui_system.md#desktop-scaling-contract-and-why-fixed-width-panels-drift).
+  **Before coding, capture the PC numbers** — `UI_scale_manager.gd:143` prints
+  `[UIScale] win=… factor=… target_w=… vp=…` on every apply and `main_screen.gd:696` prints
+  `[LAYOUT-OVERFLOW]`. Those two lines from the Windows build identify which cause dominates without guessing.
   `Scripts/UI/map_overlay_settings_panel.gd`, `Scripts/UI/UI_scale_manager.gd`.
   (Docs: [UIAudit § 9 Map Overlay Settings Panel](02_UI_UX/UIAudit.md#9-map-overlay-settings-panel).)
-  - ⚠️ **Related latent defect found during this research (not the reported bug, fix alongside):**
-    `device_state_manager.gd:28` picks the layout mode from `DisplayServer.window_get_size()` —
-    **physical pixels** — while `main_screen.gd:642 _is_portrait()` and
-    `map_overlay_settings_panel.gd:32 _is_portrait()` use `get_viewport_rect().size` — **logical
-    pixels**. Two sources of truth for the same question. This directly violates the documented rule
-    "Never use `DisplayServer.window_get_size()` for layout math"
-    ([ui_system.md § Logical Scaling vs. Physical Pixels](02_UI_UX/ui_system.md)). They agree today
-    only because `content_scale_factor` is a uniform multiplier, but any non-uniform stretch, HiDPI
-    quirk, or letterboxing makes them disagree.
-  - ⚠️ **Doc drift fixed while researching (2026-07-28):** `ui_system.md` claimed `ui.scale` defaults to
-    **1.4**. The real default is **1.0** (`settings_manager.gd:11`); the `1.4` is a dead fallback
-    argument at `settings_menu.gd:247` that can never fire because the key always exists in `data`.
-    Doc corrected — but **the dead `1.4` is still in the code** and should be reconciled to `1.0` so the
-    intent is unambiguous.
+  - ⚠️ **Fix alongside — physical-vs-logical split brain:** `device_state_manager.gd:28` reads
+    `DisplayServer.window_get_size()` (physical) while `main_screen.gd` / `map_overlay_settings_panel.gd`
+    `_is_portrait()` use `get_viewport_rect().size` (logical). Documented at
+    [ui_system § Known violation](02_UI_UX/ui_system.md#never-latch-a-value-you-derived-by-dividing-by-the-scale).
+  - ⚠️ **Code cleanup:** the dead `ui.scale` fallback of `1.4` at `settings_menu.gd:247` should be
+    reconciled to the real default `1.0`. Detail: [ui_system](02_UI_UX/ui_system.md).
 
 ## Vendor menu
 
@@ -439,36 +410,42 @@ reported as Windows-specific, so the Mac editor is a smoke test only, not the ga
 
 Not blocking the sprints above. Pull into a sprint when the relevant file is open.
 
+> [!NOTE]
+> **IDs are the join key.** Reference docs cite these (`BUG-01`, `TD-04`, …) instead of restating the
+> issue — see [AI_Guidelines § 6](04_Technical/AI_Guidelines.md). Duplicated status is duplicated
+> staleness: two UIAudit blocks were found describing bugs that had already been fixed. **Never delete
+> an ID** — mark it done and leave it, so existing citations keep resolving.
+
 ## Bugs
 
-- **Right-side map panel clips off the screen edge (landscape)** — a settlement-preview / vendor **UI panel** (rows like `S / Wa / Cargo…`, with green category buttons) that floats on the right of the map clips off the **right** screen edge. Distinct from the map-label clipping fixed in Sprint 9 A5 (that was *labels*; this is a screen-space panel). Needs a pinpoint of which panel it is (tap it — vendor vs settlement preview) and then a safe-area / max-width fit. Spotted during the 2026-07-21 device pass.
-- **Convoy name label (P5)** — floats unanchored above the panel; integrate as a styled header. `convoy_menu.gd` TitleLabel.
-- **Resource-bar text contrast (P6)** — low contrast at high fill; add outline or bump font weight. `convoy_menu.gd` ResourceStatsHBox.
-- **HSeparators near-invisible (P8)** — on dark bg, replace with section labels or themed dividers.
+- **BUG-01 · Right-side map panel clips off the screen edge (landscape)** — a settlement-preview / vendor **UI panel** (rows like `S / Wa / Cargo…`, with green category buttons) that floats on the right of the map clips off the **right** screen edge. Distinct from the map-label clipping fixed in Sprint 9 A5 (that was *labels*; this is a screen-space panel). Needs a pinpoint of which panel it is (tap it — vendor vs settlement preview) and then a safe-area / max-width fit. Spotted during the 2026-07-21 device pass.
+- **BUG-02 · Convoy name label (P5)** — floats unanchored above the panel; integrate as a styled header. `convoy_menu.gd` TitleLabel.
+- **BUG-03 · Resource-bar text contrast (P6)** — low contrast at high fill; add outline or bump font weight. `convoy_menu.gd` ResourceStatsHBox.
+- **BUG-04 · HSeparators near-invisible (P8)** — on dark bg, replace with section labels or themed dividers.
 
 ## Polish / UX
 
-- **Vendor action buttons live on the selected item** — move all action buttons (buy / sell / etc.) into the selected item's row/inspector in the vendor menu, rather than a separate/global control area. `vendor_trade_panel.gd` / `vendor_item_list.gd`.
-- **Global spacing consistency (P9)** — `UITheme.SPACE_*` tokens exist but adoption is incomplete.
-- **Settlement vendor browse (map preview)** — full read-only inventory list when viewing a settlement without a convoy. Currently shows name + "deals in" summary only. Follow-up to Sprint 5.5.
-- **Convoy stats backend verification** — breakdown modal (`convoy_menu.gd`) shows computed aggregate (min for speed/offroad, average for efficiency) alongside the backend total. Backend formula not yet confirmed — verify on device.
+- **UX-01 · Vendor action buttons live on the selected item** — move all action buttons (buy / sell / etc.) into the selected item's row/inspector in the vendor menu, rather than a separate/global control area. `vendor_trade_panel.gd` / `vendor_item_list.gd`.
+- **UX-02 · Global spacing consistency (P9)** — `UITheme.SPACE_*` tokens exist but adoption is incomplete.
+- **UX-03 · Settlement vendor browse (map preview)** — full read-only inventory list when viewing a settlement without a convoy. Currently shows name + "deals in" summary only. Follow-up to Sprint 5.5.
+- **UX-04 · Convoy stats backend verification** — breakdown modal (`convoy_menu.gd`) shows computed aggregate (min for speed/offroad, average for efficiency) alongside the backend total. Backend formula not yet confirmed — verify on device.
 
 ## Tech Debt
 
-- Duplicate Oori palette `const`s in `user_info_display.gd`, `convoy_settlement_menu.gd`, `convoy_list_panel.gd` — migrate to `UITheme.*`.
-- Modals use hardcoded absolute center offsets — `auto_sell_receipt_modal`, `returning_player_tips_modal`, `premium_upgrade_modal`; replace with `CenterContainer`.
-- `SettingsMenu` opened outside `MenuManager` (CanvasLayer layer=100) — lifecycle inconsistency.
-- `UserInfoDisplay` height changes not signaled → stale `offset_top` on submenus.
-- `main_screen.gd` wires convoy button via fragile `find_child()`.
-- S/M/L UI-scale preference silently overridden in portrait.
+- **TD-01** · Duplicate Oori palette `const`s in `user_info_display.gd`, `convoy_settlement_menu.gd`, `convoy_list_panel.gd` — migrate to `UITheme.*`.
+- **TD-02** · Modals use hardcoded absolute center offsets — `auto_sell_receipt_modal`, `returning_player_tips_modal`, `premium_upgrade_modal`; replace with `CenterContainer`.
+- **TD-03** · `SettingsMenu` opened outside `MenuManager` (CanvasLayer layer=100) — lifecycle inconsistency.
+- **TD-04** · `UserInfoDisplay` height changes not signaled → stale `offset_top` on submenus.
+- **TD-05** · `main_screen.gd` wires convoy button via fragile `find_child()`.
+- **TD-06** · S/M/L UI-scale preference silently overridden in portrait.
 
 ## Testing
 
-- **Tutorial-flow smoke coverage** — `Scripts/Debug/wiring_smoke_test.gd` only asserts autoload wiring today. Extend it toward tutorial-flow coverage (step build, resolver resolution per level) so a hub/menu rename can't silently break onboarding. Sprint 8 shipped on a manual portrait/landscape/desktop pass instead.
+- **TEST-01 · Tutorial-flow smoke coverage** — `Scripts/Debug/wiring_smoke_test.gd` only asserts autoload wiring today. Extend it toward tutorial-flow coverage (step build, resolver resolution per level) so a hub/menu rename can't silently break onboarding. Sprint 8 shipped on a manual portrait/landscape/desktop pass instead.
 
 ## Docs / data hygiene
 
-- **Data dumps are stale but intentionally kept — do NOT purge.** Reviewed 2026-07-21: `docs/99_Reference/data_dumps/{cargo,vendor,vehicle,part}_example.json` are point-in-time (Feb 2026, pre-`base_efficiency` rename), but the README already caveats them, they're indexed, and they still document object **shape** correctly. `tutorial_steps.json` is likewise explicitly documented as "shape only." The lightweight improvement, if desired, is to **regenerate** the four stale JSONs from prod (needs `~/Work/desolate_frontiers` + adminer tunnel), not delete them. `dump_3920_convoy_…json` is the only deletion candidate, and only once the vendor-efficiency investigation is fully closed.
+- **DOC-01 · Data dumps are stale but intentionally kept — do NOT purge.** Reviewed 2026-07-21: `docs/99_Reference/data_dumps/{cargo,vendor,vehicle,part}_example.json` are point-in-time (Feb 2026, pre-`base_efficiency` rename), but the README already caveats them, they're indexed, and they still document object **shape** correctly. `tutorial_steps.json` is likewise explicitly documented as "shape only." The lightweight improvement, if desired, is to **regenerate** the four stale JSONs from prod (needs `~/Work/desolate_frontiers` + adminer tunnel), not delete them. `dump_3920_convoy_…json` is the only deletion candidate, and only once the vendor-efficiency investigation is fully closed.
 
 ## Migration Status (UITheme adoption)
 
