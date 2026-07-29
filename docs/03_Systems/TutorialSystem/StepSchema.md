@@ -4,20 +4,21 @@ tags:
   - layer/service
   - kind/deep-dive
   - concept/onboarding
-  - status/unverified
+  - status/current
 aliases:
   - "Step Schema: The Tutorial Contract"
 created: 2026-05-18
 updated: 2026-07-16
-status: unverified
+verified_against_code: 2026-07-28
+status: current
 ---
 
 # Step Schema: The Tutorial Contract
 
 > [!IMPORTANT]
 > **Steps are hardcoded GDScript dictionaries, not a JSON file.** They live in
-> `tutorial_manager.gd::_build_level_steps()`. The old `res://Data/tutorial_steps.json` loader is disabled and
-> `tutorial_steps.json` does not exist. The JSON-style listing below only documents the **shape** of each step
+> `tutorial_manager.gd::_build_level_steps()` (line 319). The old `res://Other/tutorial_steps.json`
+> loader is disabled (`tutorial_manager.gd:1937-1941`, commented out). The JSON-style listing below only documents the **shape** of each step
 > dictionary — edit the function, not a data file. (Post–Sprint 8 hub rework: the `await_dealership_tab` /
 > `await_market_tab` tab actions and the `tab_title_contains` resolver are **retired** — the hub flow resolves
 > vendors by content identity, not tab index.)
@@ -61,7 +62,10 @@ The `target` object can use several strategies to find UI elements:
 
 ## Advanced Actions
 Some actions require additional data in the `target` object:
-- **`await_supply_purchase`**: May include a `checklist` of items the player needs to buy.
+- **`await_supply_purchase`**: The step dict itself carries no `checklist` field — the on-screen
+  checklist is built at runtime by the watcher from its own state dict (e.g.
+  `_supply_checklist_state`, `tutorial_manager.gd:63`) as progress is detected.
+  *(Corrected 2026-07-28 — see [Controllers](Controllers.md).)*
 - **`set_stage_and_finish`**: Tells the backend to advance the player's account to the next global level.
 
 ## Related

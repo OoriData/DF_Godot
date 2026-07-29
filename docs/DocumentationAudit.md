@@ -97,7 +97,7 @@ are only enforced if the doc you are reading tells you they apply.
 ```markdown
 ## Related
 - **Constrained by:** [ui_system.md](../02_UI_UX/ui_system.md) — scaling rules that override layout choices here
-- **Implemented in:** `Scripts/Menus/menu_base.gd`
+- **Implemented in:** `Scripts/Menus/MenuBase.gd`
 - **See also:** [MenuManager.md](MenuManager.md) — owns open/close lifecycle
 - **Live status:** [TODO.md](../TODO.md)
 ```

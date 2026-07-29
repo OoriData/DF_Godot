@@ -4,12 +4,13 @@ tags:
   - layer/service
   - kind/deep-dive
   - concept/onboarding
-  - status/unverified
+  - status/current
 aliases:
   - "Level Controllers: Custom Logic"
 created: 2026-05-18
 updated: 2026-07-16
-status: unverified
+verified_against_code: 2026-07-28
+status: current
 ---
 
 # Level Logic: Actions & Watchers
@@ -38,8 +39,10 @@ For each `action`, the manager:
 ```gdscript
 # In _build_level_steps(): the step just names the action + target.
 { "id": "l2_buy_supplies", "action": "await_supply_purchase", "lock": "soft",
-  "target": { "resolver": "vendor_trade_panel" },
-  "checklist": ["2 MRE Boxes", "2 Water Jerry Cans"] }
+  "target": { "resolver": "vendor_trade_panel" } }
+# The checklist itself is NOT a step-dict field — it's built at runtime from
+# _supply_checklist_state (tutorial_manager.gd:63,1419-1421) as the watcher progresses,
+# e.g. [{"text": "MRE Boxes (1 / 2)", "completed": false}, ...]. Corrected 2026-07-28.
 
 # In the `match action:` dispatch, the action wires its watcher:
 "await_supply_purchase":

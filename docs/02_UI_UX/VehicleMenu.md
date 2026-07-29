@@ -3,12 +3,13 @@ type: ui-ux
 tags:
   - layer/ui
   - kind/deep-dive
-  - status/unverified
+  - status/current
 aliases:
   - "Convoy Vehicle Menu"
 created: 2026-05-19
 updated: 2026-07-10
-status: unverified
+verified_against_code: 2026-07-28
+status: current
 ---
 
 # Convoy Vehicle Menu
@@ -42,15 +43,19 @@ The menu uses a `TabContainer` (`VehicleTabContainer`) with **custom pill button
 
 ## Custom Tab Buttons
 
-Built in `_setup_custom_tabs()`. Each tab gets a `Button` node in `TabHBox`:
+Built in `_setup_custom_tabs()`. Each tab gets a `Button` node in `TabHBox`. Min height and strip
+height are driven by one shared `tab_strip_h` variable (`convoy_vehicle_menu.gd:240`), which is a real
+**three-tier** split, not two:
 
-| Property | Portrait | Landscape |
-|---|---|---|
-| Font size | 20px | 20px |
-| Min height | 80px | 60px |
-| Min width | 160px | 120px |
-| Vertical padding | 14px top/bottom | 10px top/bottom |
-| Strip height (`TabScroll`) | 92px | 72px |
+| Property | Portrait | Mobile Landscape | Desktop |
+|---|---|---|---|
+| Font size | 20px | 20px | 20px |
+| Min height / Strip height (`TabScroll`) | 80px | 56px | 44px |
+| Min width | 160px | 120px | 120px |
+| Vertical padding | 14px top/bottom | 10px top/bottom | 10px top/bottom |
+
+*(Table corrected 2026-07-28 — strip/min-height values had drifted, and the doc's two-column Portrait/
+Landscape format was collapsing a real three-tier breakpoint.)*
 
 Active tab: `bg_color = Color(0.25, 0.35, 0.55, 0.9)`, blue border. Inactive: dark `Color(0.15, 0.15, 0.18, 0.9)`, dim border.
 

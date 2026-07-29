@@ -3,12 +3,13 @@ type: system
 tags:
   - layer/service
   - kind/deep-dive
-  - status/unverified
+  - status/current
 aliases:
   - "Interactions: Clicks & Taps"
 created: 2026-05-18
 updated: 2026-05-18
-status: unverified
+verified_against_code: 2026-07-28
+status: current
 ---
 
 # Interactions: Clicks & Taps
@@ -34,7 +35,9 @@ graph TD
 To determine what the player clicked, MIM must map the global screen coordinate back to the map:
 1. **Viewport Inversion**: The global position is mapped into the `SubViewport` local space.
 2. **Camera Inversion**: Using `camera.get_canvas_transform().affine_inverse()`, the position is projected into World Space pixels.
-3. **Tile Mapping**: Finally, `tilemap.local_to_map(world_pos)` provides the integer `(x, y)` coordinate on the hex grid.
+3. **Tile Mapping**: Finally, `tilemap.local_to_map(world_pos)` provides the integer `(x, y)` coordinate
+   on the map's square tile grid. *(Corrected 2026-07-28 — "hex grid" was fabricated; see
+   [TerrainMath](TerrainMath.md).)*
 
 ## Hit Detection (Hit-Box Math)
 MIM uses "Radius-Squared" checks for efficiency:

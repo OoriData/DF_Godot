@@ -4,12 +4,13 @@ tags:
   - layer/service
   - kind/deep-dive
   - concept/onboarding
-  - status/unverified
+  - status/current
 aliases:
   - "Tutorial Target Resolution"
 created: 2026-05-19
 updated: 2026-05-18
-status: unverified
+verified_against_code: 2026-07-28
+status: current
 ---
 
 # Tutorial Target Resolution

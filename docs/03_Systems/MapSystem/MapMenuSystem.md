@@ -3,12 +3,13 @@ type: system
 tags:
   - layer/service
   - kind/deep-dive
-  - status/unverified
+  - status/current
 aliases:
   - "Map Menu System: Design & Architecture"
 created: 2026-05-21
 updated: 2026-06-26
-status: unverified
+verified_against_code: 2026-07-28
+status: current
 ---
 
 # Map Menu System: Design & Architecture
@@ -92,16 +93,20 @@ Inherits from `MenuBase`. Placed in `Scripts/Menus/map_menu.gd`.
 - **Core Methods**:
   - `initialize_with_data(data_or_id: Variant, extra_arg: Variant = null)`: Overridden from `MenuBase`. Sets active convoy context.
   - `_update_ui(convoy: Dictionary)`: Evaluates whether the convoy is in a settlement tile to enable/disable the "Current Settlement Deliveries" toggle.
-  - `_on_toggle_pressed(setting_name: String, value: bool)`: Updates `MapSettingsService` and logs the action under the `_debug_map_menu` flag.
+  - Each `CheckButton.toggled` signal connects to its **own** named handler (`_on_active_dest_toggled`,
+    `_on_curr_sett_dest_toggled`, `_on_all_convoy_dest_toggled`, `_on_settlement_labels_toggled`,
+    `_on_warehouse_labels_toggled` — `map_menu.gd:85-97,154-160`), not a single generic
+    `_on_toggle_pressed(setting_name, value)`. *(Corrected 2026-07-28.)* Each calls
+    `MapSettingsService.update_setting()` with its own setting name.
 
 ### B. The MapSettingsService (`map_settings_service.gd`)
 A lightweight, global autoloaded state container.
 
-- **State Interface**:
-  - `active_delivery_destinations: bool = true`
-  - `settlement_delivery_destinations: bool = true`
-  - `settlement_labels: bool = true`
-  - `warehouse_labels: bool = true`
+- **State Interface** (all default `false` — `map_settings_service.gd:12-16`, corrected 2026-07-28):
+  - `active_delivery_destinations: bool = false`
+  - `settlement_delivery_destinations: bool = false`
+  - `settlement_labels: bool = false`
+  - `warehouse_labels: bool = false`
   - `all_convoy_destinations: bool = false`
 - **Actions**:
   - `update_setting(setting_name: String, value: bool)`: Mutates local state and emits `map_overlay_settings_changed` through `SignalHub`.
@@ -151,7 +156,7 @@ if active_dest_enabled:
 The Map Menu integration relies on these unified signal paths:
 
 1. **Toggle Switch in MapMenu**:
-   `CheckButton.toggled(value)` ➔ `MapMenu._on_toggle_pressed(...)` ➔ `MapSettingsService.update_setting(...)`
+   `CheckButton.toggled(value)` ➔ `MapMenu._on_<toggle>_toggled(...)` (one of five named handlers) ➔ `MapSettingsService.update_setting(...)`
 2. **State Broadcaster**:
    `MapSettingsService.update_setting(...)` ➔ `SignalHub.map_overlay_settings_changed.emit(settings_dict)`
 3. **View Synchronization**:

@@ -3,12 +3,13 @@ type: system
 tags:
   - layer/service
   - kind/deep-dive
-  - status/unverified
+  - status/current
 aliases:
   - "Camera: Navigation & Focus"
 created: 2026-05-18
 updated: 2026-06-26
-status: unverified
+verified_against_code: 2026-07-28
+status: current
 ---
 
 # Camera: Navigation & Focus
@@ -31,7 +32,9 @@ graph TD
 ```
 
 ## Viewport Clamping (The Safety Rail)
-The MCC ensures that the camera center never moves so far that the player sees the "gray void" outside the hex grid.
+The MCC ensures that the camera center never moves so far that the player sees the "gray void" outside
+the map's square tile grid. *(Corrected 2026-07-28 — "hex grid" was fabricated; see
+[TerrainMath](TerrainMath.md).)*
 - **Dynamic Limits**: Limits are re-calculated every time the zoom level changes.
 - **Occlusion Awareness**: If a UI menu is open (covering the right 40% of the screen), the camera "biases" its center so the visible portion of the map remains centered in the remaining 60%.
 - **Loose Mode**: Used during journey planning to allow the camera to temporarily move outside bounds to show a full route.
@@ -75,7 +78,11 @@ if is_portrait and portrait_extra_zoom_out > 1.0:
 
 ## Mobile & Touch
 MCC is optimized for mobile touch interaction:
-- **Pinch-to-Zoom**: Handled by the `InputEventPinchGesture` which MCC translates into delta-zoom steps.
+- **Pinch-to-Zoom**: **Not** Godot's built-in `InputEventPinchGesture` — implemented manually in
+  `main_screen.gd` by tracking two simultaneous `InputEventScreenTouch` points and their
+  frame-to-frame distance (`_last_pinch_distance`), computing a zoom factor from the distance ratio
+  around the touches' midpoint. *(Corrected 2026-07-28 — MCC itself does not handle this; `main_screen.gd`
+  computes the zoom-at-point call MCC then applies.)*
 - **Friction/Inertia**: MCC relies on the `MainScreen` input router to provide smooth, decelerating pan deltas for that "premium" mobile feel.
 
 ## Controllers

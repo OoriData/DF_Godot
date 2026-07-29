@@ -3,12 +3,13 @@ type: ui-ux
 tags:
   - layer/ui
   - kind/deep-dive
-  - status/unverified
+  - status/current
 aliases:
   - "Mechanics: Compatibility & Install"
 created: 2026-05-18
 updated: 2026-05-18
-status: unverified
+verified_against_code: 2026-07-28
+status: current
 ---
 
 # Mechanics: Compatibility & Install
@@ -44,7 +45,7 @@ To avoid redundant API calls and UI stutter, the panel maintains a local `_compa
 
 ## Controllers
 - `vendor_panel_compat_controller.gd`
-- `MechanicsService.gd` (Autoload)
+- `Scripts/System/Services/mechanics_service.gd` (Autoload — see [Autoload Register](../../04_Technical/AutoloadOrder.md))
 
 ## Related
 

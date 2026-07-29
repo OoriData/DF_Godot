@@ -3,12 +3,13 @@ type: ui-ux
 tags:
   - layer/ui
   - kind/deep-dive
-  - status/unverified
+  - status/current
 aliases:
   - "Mechanics Menu"
 created: 2026-05-19
 updated: 2026-07-10
-status: unverified
+verified_against_code: 2026-07-28
+status: current
 ---
 
 # Mechanics Menu

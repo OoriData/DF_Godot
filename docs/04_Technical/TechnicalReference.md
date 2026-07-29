@@ -3,12 +3,13 @@ type: technical
 tags:
   - layer/autoload
   - kind/index
-  - status/unverified
+  - status/current
 aliases:
   - "Technical Reference"
 created: 2026-05-18
 updated: 2026-07-28
-status: unverified
+verified_against_code: 2026-07-28
+status: current
 ---
 
 # Technical Reference
@@ -81,5 +82,9 @@ Active feature work lives here. Once a feature is shipped and stable, the implem
 > [!IMPORTANT]
 > Do not reference these docs as ground truth for how the system works — they describe *intended* behaviour, not necessarily the current state. Check the actual source file first.
 
-- [**Cargo Destination Button**](CargoDestinationButtonImplementation.md): Adding a clickable destination button in the convoy cargo inspector that pans the map camera to the delivery settlement.
+*(Empty as of 2026-07-28.)* [**Cargo Destination Button**](CargoDestinationButtonImplementation.md) was
+verified fully shipped this session — every function, signal, and state var it describes matches source
+exactly (`inspector_builder.gd`, `vendor_trade_panel.gd`, `main_screen.gd`, `UI_manager.gd`). Removed from
+this list per the policy above; the doc itself is unmoved and now reads as a stable reference, not a
+plan.
 

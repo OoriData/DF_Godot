@@ -3,12 +3,13 @@ type: ui-ux
 tags:
   - layer/ui
   - kind/deep-dive
-  - status/unverified
+  - status/current
 aliases:
   - "Transactions: Pricing & Projections"
 created: 2026-05-18
 updated: 2026-07-28
-status: unverified
+verified_against_code: 2026-07-28
+status: current
 ---
 
 # Transactions: Pricing & Projections

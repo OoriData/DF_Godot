@@ -3,12 +3,13 @@ type: technical
 tags:
   - layer/autoload
   - kind/deep-dive
-  - status/unverified
+  - status/current
 aliases:
   - "Refresh Scheduler"
 created: 2026-05-18
 updated: 2026-05-18
-status: unverified
+verified_against_code: 2026-07-28
+status: current
 ---
 
 # Refresh Scheduler

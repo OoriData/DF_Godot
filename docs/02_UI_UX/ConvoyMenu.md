@@ -3,12 +3,13 @@ type: ui-ux
 tags:
   - layer/ui
   - kind/deep-dive
-  - status/unverified
+  - status/current
 aliases:
   - "Convoy Menu"
 created: 2026-05-18
 updated: 2026-07-28
-status: unverified
+verified_against_code: 2026-07-28
+status: current
 ---
 
 # Convoy Menu
@@ -77,10 +78,15 @@ Because `SignalHub` sometimes emits shallow convoy dictionaries (missing capacit
 
 ```gdscript
 func _is_convoy_payload_complete(c: Dictionary) -> bool:
-    var has_capacity := c.has("total_cargo_capacity") or c.has("max_cargo_volume")
-    var has_resource_max := c.has("max_fuel") or c.has("max_water")
+    if c.is_empty():
+        return false
+    var has_capacity := c.has("total_cargo_capacity") or c.has("total_weight_capacity") \
+        or c.has("max_cargo_volume") or c.has("max_cargo_weight")
+    var has_resource_max := c.has("max_fuel") or c.has("max_water") or c.has("max_food")
     return has_capacity and has_resource_max
 ```
+*(Snippet corrected 2026-07-28 to match `convoy_menu.gd:201-208` exactly — the doc's version had
+drifted: missing the empty-payload guard and two of the four capacity-key checks.)*
 
 If the payload is incomplete, it calls `ConvoyService.refresh_single(convoy_id)` once to fetch the full snapshot. This is tracked with `_requested_full_convoy_id` to prevent duplicate requests.
 
@@ -122,13 +128,17 @@ func _queue_vendor_preview_update() -> void:
 
 ## Portrait / Landscape Responsiveness
 
-`_update_mobile_dependent_layout()` is called on `NOTIFICATION_RESIZED`. Key breakpoints:
+`_update_mobile_dependent_layout()` is called on `NOTIFICATION_RESIZED`. Key breakpoints
+(`convoy_menu.gd:528-539`):
 
 | Layout | `VENDOR_ITEM_BUTTON_HEIGHT` | `VENDOR_ITEM_BUTTON_MIN_WIDTH` |
 |---|---|---|
-| Desktop | 72px | 190px |
-| Mobile Landscape | 100px | 220px |
-| Mobile Portrait | 280px | 340px |
+| Desktop | 70px | 160px |
+| Mobile Landscape | 80px | 180px |
+| Mobile Portrait | 100px | 200px |
+
+*(Table corrected 2026-07-28 — every value had drifted from source; the class-var initializers at
+`:44-45` (72/190) are only pre-layout defaults, overwritten on the first `_update_mobile_dependent_layout()` call.)*
 
 The vendor item grid always targets **2 rows** of horizontal scrolling, with column count calculated as `ceil(item_count / 2.0)`.
 

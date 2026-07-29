@@ -4,12 +4,13 @@ tags:
   - layer/service
   - kind/deep-dive
   - concept/onboarding
-  - status/unverified
+  - status/current
 aliases:
   - "Architecture: The Step Loop"
 created: 2026-05-18
 updated: 2026-07-16
-status: unverified
+verified_against_code: 2026-07-28
+status: current
 ---
 
 # Architecture: The Step Loop

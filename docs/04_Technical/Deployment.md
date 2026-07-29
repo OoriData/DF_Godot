@@ -4,12 +4,13 @@ tags:
   - layer/backend
   - kind/deep-dive
   - platform/steam
-  - status/unverified
+  - status/current
 aliases:
   - "Deployment & Environment"
 created: 2026-05-18
 updated: 2026-07-23
-status: unverified
+verified_against_code: 2026-07-28
+status: current
 ---
 
 # Deployment & Environment

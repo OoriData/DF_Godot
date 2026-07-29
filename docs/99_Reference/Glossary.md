@@ -2,12 +2,13 @@
 type: reference
 tags:
   - kind/reference
-  - status/unverified
+  - status/current
 aliases:
   - "Project Glossary"
 created: 2026-05-18
 updated: 2026-07-13
-status: unverified
+verified_against_code: 2026-07-28
+status: current
 ---
 
 # Project Glossary
@@ -95,7 +96,7 @@ A central reference for domain-specific and technical terminology used in *Desol
 - **ErrorTranslator**: Autoload that maps raw API error strings to user-friendly messages. Three modes: ignore, inline (toast), or modal dialog.
   - *Doc*: [ErrorSystem](../04_Technical/ErrorSystem.md)
 - **Logger**: Centralised logging with ring-buffer support.
-  - *File*: `Scripts/System/Logger.gd` (Autoload)
+  - *File*: `Scripts/System/logger.gd` (Autoload)
   - *Doc*: [Diagnostics](../04_Technical/Diagnostics.md)
 - **Queue Watchdog**: A self-healing timer inside `APICalls` that unsticks the HTTP request queue if it freezes.
   - *Logic*: `Scripts/System/api_calls.gd` → `QueueWatchdogTimer`
@@ -121,8 +122,13 @@ A central reference for domain-specific and technical terminology used in *Desol
   - *Logic*: `MainScreen._current_menu_occlusion_px`
 - **Safe Area / SafeRegionContainer**: Screen zones that avoid hardware notches and rounded corners. All top-level UI elements must be descendants of `SafeRegionContainer`.
   - *Component*: `Scripts/UI/safe_area_handler.gd`
-- **MSDF Fonts**: Multi-channel Signed Distance Field font rendering. Stays sharp at any zoom. Required for all map labels and scaling UI.
-  - *Asset*: `Assets/main_font.tres` (MSDF must be enabled in import settings)
+- **MSDF Fonts**: Multi-channel Signed Distance Field font rendering. Stays sharp at any zoom range,
+  which matters only for **map labels** (they zoom with `Camera2D`) — ordinary UI text doesn't need it
+  because `content_scale_factor` handles crispness at every window size.
+  - *Asset*: `Assets/main_font.tres` (built on `Assets/Lexend Light.ttf`)
+  - ⚠️ **Not actually enabled today** (verified 2026-07-28): the font import has
+    `multichannel_signed_distance_field=false`. This entry describes the intended design, not current
+    state — see [AI_Guidelines § 3](../04_Technical/AI_Guidelines.md).
 - **Debounce Timer**: A short `Timer` (typically 100ms) used to collapse multiple simultaneous signal firings into a single redraw. Pattern: `if not _timer.is_stopped(): return`.
 - **`_debug_*` Flag**: A per-menu boolean (`var _debug_convoy_menu: bool = true`) that gates all verbose `print()` calls. Flip to `false` to silence. See [Cookbook](../01_Architecture/Cookbook.md) for full pattern.
 - **`_diag_*` Method**: A secondary diagnostic signal handler connected alongside the real one. Used for heavy wiring verification. Example: `WarehouseMenu._diag_expand_cargo_pressed()`.
