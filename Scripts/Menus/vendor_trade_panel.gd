@@ -95,7 +95,11 @@ var _pending_tx: Dictionary = {
 	"selection_tree": "",
 	"money_delta": 0.0,
 	"weight_delta": 0.0,
-	"volume_delta": 0.0
+	"volume_delta": 0.0,
+	"started_ms": 0,
+	# VendorTransactionWatchdog token for the request in flight; 0 when nothing is pending. The
+	# watchdog itself lives outside this node so a freed panel can't take the timeout with it (S13-6).
+	"watchdog_token": 0
 }
 
 # After a successful transaction, we "commit" the projection for the current selection
@@ -297,6 +301,11 @@ func _clear_pending_tx() -> void:
 	_pending_tx.money_delta = 0.0
 	_pending_tx.weight_delta = 0.0
 	_pending_tx.volume_delta = 0.0
+	_pending_tx.started_ms = 0
+	# Retire the watchdog entry too — clearing the pending tx without this would leave the registry
+	# holding a transaction nobody is waiting for, and it would fire a spurious timeout later (S13-6).
+	VendorTransactionWatchdog.resolve(int(_pending_tx.get("watchdog_token", 0)), "cleared")
+	_pending_tx.watchdog_token = 0
 
 func _extract_capacity_stats_from_convoy(convoy: Dictionary) -> Dictionary:
 	# Returns used/total for volume + weight when the keys exist.
@@ -525,13 +534,10 @@ func _get_refresh_t0_ms() -> int:
 var _active_convoy_id: String = ""
 var _active_vendor_id: String = ""
 
-# Vehicle_ids sold from this vendor during this panel session (used as a set). The vehicle list is
-# ultimately sourced from the lagging binary /map settlements snapshot, which a full re-aggregation
-# (authoritative /vendor/get refresh, or the settlement menu's refresh_data on map_changed) can
-# re-inject a moment after we optimistically removed a just-bought vehicle — making it reappear.
-# A sold vehicle instance is gone permanently (vehicle_ids are unique per instance), so we re-strip
-# these ids on every vendor-list rebuild until the panel is re-initialized for a fresh vendor context.
-var _sold_vehicle_ids: Dictionary = {}
+# Optimistic vendor-stock deltas (bought vehicles removed, cargo quantities adjusted) used to live here
+# as `_sold_vehicle_ids`. They now live in VendorOptimisticStock, keyed by vendor_id — a panel-instance
+# member cannot survive the panel being destroyed and re-instantiated, which is exactly what happened
+# between transactions (S13-13) and is what threw the cargo decrement away (S13-5).
 
 var _latest_settlements: Array = []
 
@@ -1059,6 +1065,62 @@ func _ready() -> void:
 	_consolidate_control_row()
 	_make_panels_responsive()
 	_apply_text_readability_fixes()
+	_start_transaction_watchdog()
+
+## Ticks the S13-6 watchdog: our own stalled transaction, plus any left orphaned by a freed panel.
+## Runs on every panel because the registry it sweeps is global — that is how a transaction whose
+## dispatching panel no longer exists still gets noticed by whichever panel is alive.
+func _start_transaction_watchdog() -> void:
+	var t := Timer.new()
+	t.name = "TransactionWatchdogTimer"
+	t.wait_time = 2.0
+	t.autostart = true
+	t.process_mode = Node.PROCESS_MODE_ALWAYS # keep ticking while a modal/tutorial pauses the tree
+	t.timeout.connect(_on_transaction_watchdog_tick)
+	add_child(t)
+
+func _on_transaction_watchdog_tick() -> void:
+	# 1. Our own request. This is what `_pending_tx.started_ms` was always for — it was written on every
+	#    dispatch and read nowhere, so a reply that never came left _transaction_in_progress = true
+	#    forever and on_action_button_pressed() silently rejected every later press.
+	var started_ms: int = int(_pending_tx.get("started_ms", 0))
+	if _transaction_in_progress and started_ms > 0 \
+			and Time.get_ticks_msec() - started_ms >= VendorTransactionWatchdog.TIMEOUT_MS:
+		_recover_from_stalled_transaction()
+		return
+
+	# 2. Orphans left by a panel that was freed before its reply landed — the worst S13-13 variant, where
+	#    the purchase succeeded server-side and nothing in the UI ever acknowledged it. Only entries whose
+	#    dispatching panel is gone are returned, so we can't steal a sibling tab's recovery.
+	var expired: Array = VendorTransactionWatchdog.sweep_orphans()
+	if expired.is_empty():
+		return
+	show_transaction_feedback("Couldn't confirm the last transaction — refreshing.", "error")
+	var cid := str((convoy_data if convoy_data is Dictionary else {}).get("convoy_id", _active_convoy_id))
+	var vid := _current_vendor_id()
+	if cid != "" and vid != "":
+		_request_authoritative_refresh(cid, vid)
+
+func _recover_from_stalled_transaction() -> void:
+	print("[VendorPanel][DIAG] watchdog RECOVER on instance_id=%d — reverting stalled transaction" % get_instance_id())
+	if bool(_transaction_in_progress):
+		if is_instance_valid(convoy_money_label) and convoy_money_label.visible and (convoy_data is Dictionary) and (convoy_data as Dictionary).has("money"):
+			convoy_money_label.text = NumberFormat.format_money(float((convoy_data as Dictionary).get("money", 0.0)), "")
+		_refresh_capacity_bars(-float(_pending_tx.get("volume_delta", 0.0)), -float(_pending_tx.get("weight_delta", 0.0)))
+	_transaction_in_progress = false
+	if is_instance_valid(action_button):
+		action_button.disabled = false
+		action_button.text = "Buy" if str(current_mode) == "buy" else "Sell"
+	if is_instance_valid(max_button):
+		max_button.disabled = false
+	if show_loading_overlay and is_instance_valid(loading_panel):
+		_hide_loading()
+	_clear_pending_tx() # also resolves our watchdog token
+	show_transaction_feedback("That transaction timed out. Please try again.", "error")
+	var cid := str((convoy_data if convoy_data is Dictionary else {}).get("convoy_id", _active_convoy_id))
+	var vid := _current_vendor_id()
+	if cid != "" and vid != "":
+		_request_authoritative_refresh(cid, vid)
 
 func _consolidate_control_row() -> void:
 	# The flip button (Buy ⇄) and the Sort dropdown lived on two separate sparse rows, leaving a
@@ -1776,7 +1838,10 @@ func _populate_vendor_list() -> void:
 		return
 	var vd_for_agg := _vendor_data_with_price_fallback(vendor_data)
 	var buckets := VendorCargoAggregatorScript.build_vendor_buckets(vd_for_agg, perf_log_enabled, Callable(self, "_get_vendor_name_for_recipient"))
-	_strip_sold_vehicles(buckets)
+	# Every refresh path funnels through here, so this is the one place that has to re-apply pending
+	# optimistic deltas — otherwise a rebuild off the lagging /map snapshot restores the pre-transaction
+	# stock (S13-5). No-op once the authoritative payload has cleared them.
+	VendorOptimisticStock.apply_to_buckets(_current_vendor_id(), buckets, "REAPPLY")
 	self.vendor_items = buckets
 	var has_delivery_cargo = not buckets.get("delivery", {}).is_empty()
 	vendor_item_tree.add_category("Delivery Cargo", buckets.get("delivery", {}), _cargo_sort_metric)
@@ -2498,64 +2563,46 @@ func _on_part_compatibility_ready(payload: Dictionary) -> void:
 # Returns the price per unit for the given item, depending on buy/sell mode.
  
 
-func _optimistically_update_vendor_stock(item_name: String, qty_delta: int) -> void:
-	print("[VendorPanel][DIAG] _optimistically_update_vendor_stock starting for '%s'" % item_name)
+## The vendor this panel is currently showing. Prefers the live vendor_data, falls back to the id
+## captured when the refresh was requested (vendor_data is briefly null mid-refresh).
+func _current_vendor_id() -> String:
+	if vendor_data is Dictionary:
+		var vid := str((vendor_data as Dictionary).get("vendor_id", ""))
+		if vid != "":
+			return vid
+	return _active_vendor_id
+
+
+# Decrement (buy) or increment (sell) a vendor cargo row so the change is visible before the
+# authoritative /vendor/get refresh lands. The delta is recorded in VendorOptimisticStock — OUTSIDE this
+# node — and re-applied by _populate_vendor_list() on every rebuild, so neither a panel re-instantiation
+# nor a re-aggregation off the lagging /map snapshot can restore the pre-transaction number (S13-5).
+func _optimistically_update_vendor_stock(item_name: String, qty_delta: int, cargo_id: String = "") -> void:
+	var vid := _current_vendor_id()
+	if vid == "":
+		print("[VendorPanel][DIAG] FAILED: no vendor_id — cannot record optimistic stock delta for '%s'" % item_name)
+		return
 	if vendor_items == null or not (vendor_items is Dictionary):
 		print("[VendorPanel][DIAG] FAILED: vendor_items is null or invalid")
 		return
-	
-	var target_name := item_name.strip_edges()
-	print("[VendorPanel][DIAG] Searching buckets for '%s'..." % target_name)
-	
-	var found := false
-	for bucket_key in (vendor_items as Dictionary):
-		var bucket: Variant = (vendor_items as Dictionary).get(bucket_key)
-		if bucket is Dictionary:
-			# Try exact match and stripped match
-			var entry: Dictionary = {}
-			if (bucket as Dictionary).has(target_name):
-				entry = (bucket as Dictionary).get(target_name)
-			else:
-				# Search for a stripped match if exact match fails
-				for k in (bucket as Dictionary).keys():
-					if str(k).strip_edges() == target_name:
-						entry = (bucket as Dictionary).get(k)
-						break
-			
-			if not entry.is_empty():
-				var old_qty: int = int(entry.get("total_quantity", 0))
-				entry["total_quantity"] = max(0, old_qty + qty_delta)
-				found = true
-				print("[VendorPanel][DIAG] SUCCESS: updated '%s' in bucket '%s': %d -> %d" % [target_name, bucket_key, old_qty, int(entry["total_quantity"])])
-				
-				# Also update the underlying item_data quantity if it's a raw resource
-				var item_data: Variant = entry.get("item_data")
-				if item_data is Dictionary and (item_data as Dictionary).get("is_raw_resource", false):
-					(item_data as Dictionary)["quantity"] = entry["total_quantity"]
-					# Update the top-level vendor_data if applicable
-					if vendor_data is Dictionary:
-						if target_name.begins_with("Fuel"): vendor_data["fuel"] = entry["total_quantity"]
-						elif target_name.begins_with("Water"): vendor_data["water"] = entry["total_quantity"]
-						elif target_name.begins_with("Food"): vendor_data["food"] = entry["total_quantity"]
-				break
-	
-	if found:
+	VendorOptimisticStock.record_cargo(vid, cargo_id, item_name, qty_delta)
+	# Only THIS transaction's delta — the live buckets already carry every earlier one, and
+	# _update_vendor_ui() below re-renders them rather than re-aggregating. (apply_to_buckets(), which
+	# applies the running total, belongs solely to the freshly-aggregated rebuild path.)
+	if VendorOptimisticStock.apply_single_delta(vendor_items as Dictionary, cargo_id, item_name, qty_delta, "APPLY") > 0:
 		_update_vendor_ui(true, false)
-	else:
-		print("[VendorPanel][DIAG] FAILED: item '%s' not found in any bucket. Buckets searched: %s" % [target_name, (vendor_items as Dictionary).keys()])
+
 
 # Remove a just-purchased vehicle from the vendor immediately. Vehicles are keyed by vehicle_id
 # in the "vehicles" bucket (unlike cargo, which is keyed by name), so _optimistically_update_vendor_stock
 # can't touch them. We drop the row from the cached bucket AND from the raw vendor_data.vehicle_inventory
-# so both a cached rebuild (_update_vendor_ui → _populate_list_from_agg) and a full re-aggregation of this
-# same vendor_data (_populate_vendor_list, e.g. on an orientation-change refresh) keep it gone until the
-# authoritative /vendor/get refresh lands.
+# so a cached rebuild (_update_vendor_ui → _populate_list_from_agg) keeps it gone; the id is also
+# recorded outside the panel so a full re-aggregation — or a rebuilt panel — re-strips it.
 func _optimistically_remove_vendor_vehicle(vehicle_id: String) -> void:
 	if vehicle_id == "":
 		return
 	print("[VendorPanel][DIAG] _optimistically_remove_vendor_vehicle id=%s" % vehicle_id)
-	# Remember it so every later rebuild re-strips it (see _sold_vehicle_ids / _strip_sold_vehicles).
-	_sold_vehicle_ids[vehicle_id] = true
+	VendorOptimisticStock.record_vehicle_removed(_current_vendor_id(), vehicle_id)
 	if vendor_items is Dictionary and (vendor_items as Dictionary).has("vehicles"):
 		var vb: Variant = (vendor_items as Dictionary).get("vehicles")
 		if vb is Dictionary and (vb as Dictionary).has(vehicle_id):
@@ -2570,18 +2617,6 @@ func _optimistically_remove_vendor_vehicle(vehicle_id: String) -> void:
 				kept.append(v)
 			(vendor_data as Dictionary)["vehicle_inventory"] = kept
 	_update_vendor_ui(true, false)
-
-# Remove any vehicles sold this session from a freshly-built bucket set, so a re-aggregation off the
-# lagging /map snapshot can't resurrect a just-bought vehicle. No-op once _sold_vehicle_ids is empty.
-func _strip_sold_vehicles(buckets: Dictionary) -> void:
-	if _sold_vehicle_ids.is_empty():
-		return
-	var vb: Variant = buckets.get("vehicles")
-	if not (vb is Dictionary):
-		return
-	for sold_id in _sold_vehicle_ids.keys():
-		if (vb as Dictionary).has(sold_id):
-			(vb as Dictionary).erase(sold_id)
 
 func _on_api_transaction_result(result: Dictionary) -> void:
 	print("[VendorPanel][DIAG] _on_api_transaction_result ENTERED on instance_id=%d" % get_instance_id())
@@ -2606,7 +2641,9 @@ func _on_api_transaction_result(result: Dictionary) -> void:
 		if str(current_mode) == "buy" and VendorTradeVM.is_vehicle_item(pend_item):
 			_optimistically_remove_vendor_vehicle(str(pend_item.get("vehicle_id", "")))
 		else:
-			_optimistically_update_vendor_stock(item_name, stock_delta)
+			# Key off cargo_id — the same handle dispatch_buy used (transaction controller :265). Two
+			# vendor rows can share a display name; the name is only the fallback now (S13-5).
+			_optimistically_update_vendor_stock(item_name, stock_delta, str(pend_item.get("cargo_id", "")))
 		
 		# Ensure projection is committed if it hasn't been yet
 		_commit_projection_from_pending_tx()

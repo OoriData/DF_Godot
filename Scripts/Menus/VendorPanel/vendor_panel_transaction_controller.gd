@@ -188,6 +188,12 @@ static func on_action_button_pressed(panel: Object) -> void:
 	panel._pending_tx.start_used_weight = float(panel._convoy_used_weight)
 	panel._pending_tx.start_used_volume = float(panel._convoy_used_volume)
 	panel._pending_tx.started_ms = Time.get_ticks_msec()
+	# S13-6: register with the out-of-panel watchdog so this request has a bounded lifetime even if the
+	# reply never arrives — or arrives after this panel has been freed.
+	panel._pending_tx.watchdog_token = VendorTransactionWatchdog.begin(
+		vendor_id, convoy_id, str(panel.current_mode),
+		str(item_data_source.get("name", "?")), quantity, panel.get_instance_id()
+	)
 	panel._pending_tx.money_delta = -total_price if str(panel.current_mode) == "buy" else total_price
 	panel._pending_tx.weight_delta = w_delta if str(panel.current_mode) == "buy" else -w_delta
 	panel._pending_tx.volume_delta = v_delta if str(panel.current_mode) == "buy" else -v_delta

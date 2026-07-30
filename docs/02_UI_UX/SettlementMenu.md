@@ -3,12 +3,12 @@ type: ui-ux
 tags:
   - layer/ui
   - kind/deep-dive
-  - status/current
+  - status/drifting
 aliases:
   - "Settlement Menu System"
 created: 2026-05-19
-updated: 2026-07-01
-verified_against_code: 2026-07-28
+updated: 2026-07-30
+verified_against_code: 2026-07-30
 status: current
 ---
 
@@ -69,8 +69,36 @@ When opened with a `vendor_id` focus the menu:
 - Replaces the convoy breadcrumb banner with a compact **"‹ Settlement"** back button stacked above the vendor name (`_apply_single_vendor_banner`).
 - `back_requested` → `MenuManager.go_back()` pops the stack back to the hub.
 
+### Refresh vs. Rebuild — the tab lifecycle contract
+
+> **This menu owns the `VendorTradePanel` instances.** Freeing one mid-transaction drops the API reply on
+> a dead node, which is how a purchase could succeed server-side with nothing in the UI acknowledging it.
+> The rules below exist for that reason (S13-13).
+
+`_display_settlement_info()` is reached from five places — `_ready`, `initialize_with_data`,
+`MenuBase._update_ui`, every `GameStore.map_changed` snapshot, and every `layout_mode_changed`. It used
+to `_clear_tabs()` and re-instantiate on **all** of them. Now:
+
+| Rule | Mechanism |
+|---|---|
+| One pass per frame | every caller goes through `_queue_display_settlement_info()`; `call_deferred()` alone does **not** de-duplicate, which used to build two panels per menu open |
+| Rebuild only on a real vendor change | `_desired_vendor_ids()` vs `_mounted_vendor_ids()` (each tab's `vendor_id` node meta); equal ⇒ refresh in place and return |
+| Never free a panel mid-transaction | `_defer_rebuild_for_active_transaction()`, capped at 10 s |
+| Rotation re-lays out, never re-instantiates | each panel handles its own `layout_mode_changed` |
+
+Diagnostic line for the skip path: `[VendorPanel][DIAG] settlement rebuild SKIPPED — vendor set unchanged`.
+
 ### Cargo Refresh
-`_refresh_active_vendor_panel()` is called from `_update_ui` so the single visible panel's convoy cargo refreshes on snapshot updates (the generic `_refresh_all_vendor_panels` skips tabs that aren't active).
+`_refresh_active_vendor_panel()` is called from `_update_ui` **and from the skip path above**, so the
+single visible panel's convoy cargo refreshes on snapshot updates (the generic `_refresh_all_vendor_panels`
+only marks non-active tabs dirty for a lazy refresh on tab change). It **no-ops while that panel has a
+transaction in flight** — a `/map`-sourced re-aggregation would otherwise discard the optimistic
+projection the panel is currently showing.
+
+> ⚠️ Both this function and `_on_vendor_tab_changed()` still resolve the vendor by **node name**
+> (`_find_vendor_by_name(panel.name)`) even though `_create_vendor_tab()` stores a `vendor_id` meta.
+> Godot uniquifies duplicate sibling names, so two identically-named vendors would break the lookup.
+> Tracked as **S13-14** in [TODO](../TODO.md).
 
 ---
 

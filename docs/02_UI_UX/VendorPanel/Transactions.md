@@ -3,12 +3,12 @@ type: ui-ux
 tags:
   - layer/ui
   - kind/deep-dive
-  - status/current
+  - status/drifting
 aliases:
   - "Transactions: Pricing & Projections"
 created: 2026-05-18
-updated: 2026-07-28
-verified_against_code: 2026-07-28
+updated: 2026-07-30
+verified_against_code: 2026-07-30
 status: current
 ---
 
@@ -27,11 +27,13 @@ graph TD
     Math --> Project[Update Money & Capacity Bars]
     end
     
-    Project --> Dispatch[VendorService: API Call]
-    Dispatch --> Result{Success?}
+    Project --> Register[Watchdog: register token]
+    Register --> Dispatch[VendorService: API Call]
+    Dispatch --> Result{Reply?}
     
-    Result -->|Yes| Refresh[Request Authoritative Refresh]
-    Result -->|No| Revert[Revert Projection & Show Error]
+    Result -->|Success| Stock[Record vendor-stock delta] --> Refresh[Request Authoritative Refresh]
+    Result -->|Error| Revert[Revert Projection & Restore Buttons]
+    Result -->|Never| Timeout[Watchdog: 20s → revert & re-enable]
 ```
 
 ## Max Quantity Logic
@@ -42,12 +44,62 @@ The "Max" button uses complex constraints depending on the mode:
     2. Player Affordability (Money).
     3. Remaining Convoy **Volume** Capacity.
     4. Remaining Convoy **Weight** Capacity.
+    5. Remaining **raw-resource headroom** (`max_fuel - fuel`, etc.) for bulk fuel/water/food.
+
+> ⚠️ These are **pooled** convoy aggregates, which over-estimates for large items — a single item cannot
+> split across two vehicles. Tracked as **S13-7** in [TODO](../../TODO.md).
 
 ## Optimistic Projections
-To make the UI feel responsive, the panel "projects" the result of a transaction immediately:
-- The **Money Label** is updated locally.
-- The **Capacity Bars** (Volume/Weight) slide to their expected new positions.
-- If the API call fails, the `on_api_transaction_error` path reverts these changes to match the current `GameStore` state.
+
+To make the UI feel responsive, the panel projects the result of a transaction immediately. There are
+**three** projections, and they do not live in the same place:
+
+| Projection | Where the state lives | Reverted by |
+|---|---|---|
+| **Money label** | the panel (`_pending_tx.money_delta`) | `on_api_transaction_error`, watchdog timeout |
+| **Capacity bars** (volume/weight) | the panel (`_pending_tx.*_delta`) | `on_api_transaction_error`, watchdog timeout |
+| **Vendor stock** (the row's quantity) | **`VendorOptimisticStock` — outside the panel** | superseded by authoritative `/vendor/get` |
+
+### Vendor stock lives outside the panel — and why
+
+`vendor_optimistic_stock.gd` is a `static` registry keyed by `vendor_id`. A panel-instance member could
+not survive the panel being destroyed and re-instantiated, which used to happen between transactions
+(see [Lifecycle § Panel Instance Lifecycle](Lifecycle.md#panel-instance-lifecycle--who-creates-and-destroys-the-panel)).
+The observed symptom was a 300 → 155 buy followed by a sell that started from **300 again**.
+
+- **Matching is by `cargo_id` first**, display name second. Vendor buckets are keyed by *name*
+  (`cargo_aggregator.gd::_aggregate_vendor_item`) but the dispatch uses `cargo_id`; two rows can share a
+  name. The name fallback is still required for the virtual `Fuel/Water/Food (Bulk)` rows, which have no
+  `cargo_id`.
+- **Deltas accumulate**, so two buys before the refresh lands are both reflected.
+- **Cleared** the moment authoritative `/vendor/get` data arrives (both `on_hub_vendor_panel_ready` and
+  `on_vendor_panel_data_ready`), with a 30 s TTL as the backstop.
+
+> ⚠️ **Two application modes — picking the wrong one double-counts.** `_update_vendor_ui()` re-renders the
+> **cached** bucket set (`_populate_list_from_agg`) rather than re-aggregating, so those buckets already
+> carry every earlier delta.
+>
+> - `apply_single_delta()` — one increment. Use immediately after a transaction, on live buckets.
+> - `apply_to_buckets()` — the running total. Use **only** in `_populate_vendor_list()`, on a bucket set
+>   freshly aggregated from server data that carries no projections yet.
+>
+> Using the accumulated total on live buckets re-applies the whole history each time: buying 5 then 4 out
+> of 120 produced 115 then **106** instead of 111.
+
+### Error and timeout repair
+
+- `on_api_transaction_error()` repairs state **unconditionally** — projection revert,
+  `_transaction_in_progress = false`, button text/`disabled`, loading overlay. Only the **toast** is
+  gated on `is_visible_in_tree()`. The guard used to sit above the repair, so a panel that was hidden
+  when the error landed came back stuck on a disabled "Processing…" button forever.
+- `_pending_tx.started_ms` is read by the transaction watchdog (20 s), which reverts the projection and
+  re-enables the buttons if no reply ever arrives. See
+  [Lifecycle § The two watchdogs](Lifecycle.md#the-two-watchdogs--dont-confuse-them).
+
+> **Selection is cleared after every transaction** — `show_transaction_feedback()` sets
+> `selected_item = null`, on success as well as error, so buying the same item twice needs a reselect.
+> Deliberate ("clear panel" request), but it contradicts the refresh path's effort to *restore*
+> selection. Tracked as **S13-15**.
 
 ## Price Math
 - **Unit Price**: Calculated via `PriceUtil` and `VendorTradeVM`. It handles various backend schema keys (`unit_price`, `value`, `delivery_reward`).
@@ -92,6 +144,8 @@ Those menus call `MechanicsService.ensure_cargo_details()` as part of their own 
 - `vendor_panel_transaction_controller.gd`
 - `vendor_trade_vm.gd`
 - `Scripts/Menus/VendorPanel/price_util.gd`
+- `Scripts/Menus/VendorPanel/vendor_optimistic_stock.gd` — vendor-stock deltas, outlives the panel
+- `Scripts/Menus/VendorPanel/vendor_transaction_watchdog.gd` — request-lifetime bound, outlives the panel
 
 ## Related
 

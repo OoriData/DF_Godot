@@ -34,6 +34,8 @@ static func request_authoritative_refresh(panel: Object, convoy_id: String, vend
 
 static func on_api_transaction_result(panel: Object, result: Dictionary) -> void:
 	print("[VendorPanel][DIAG] RefreshController.on_api_transaction_result entered for instance_id=%d" % panel.get_instance_id())
+	VendorTransactionWatchdog.resolve(int(panel._pending_tx.get("watchdog_token", 0)), "result")
+	panel._pending_tx["watchdog_token"] = 0
 	if panel.perf_log_enabled:
 		print("DEBUG: _on_api_transaction_result called with result: ", result)
 		if int(panel._txn_t0_ms) >= 0:
@@ -76,9 +78,13 @@ static func on_api_transaction_result(panel: Object, result: Dictionary) -> void
 
 
 static func on_api_transaction_error(panel: Object, error_message: String) -> void:
-	# This panel is only interested in errors that happen while it's visible.
-	if not panel.is_visible_in_tree():
-		return
+	# S13-6: state repair below is UNCONDITIONAL. This used to early-return on
+	# `not panel.is_visible_in_tree()` *above* the revert and the button restore, so any panel that
+	# happened to be hidden when the error landed (orientation change, menu swap, tutorial overlay) came
+	# back with `disabled = true` and "Processing..." stuck on it forever. Only the toast — the one part
+	# that genuinely makes no sense off-screen — is visibility-gated now, at the bottom.
+	VendorTransactionWatchdog.resolve(int(panel._pending_tx.get("watchdog_token", 0)), "error")
+	panel._pending_tx["watchdog_token"] = 0
 
 	if panel.perf_log_enabled and int(panel._txn_t0_ms) >= 0:
 		var now_ms: int = Time.get_ticks_msec()
@@ -102,10 +108,12 @@ static func on_api_transaction_error(panel: Object, error_message: String) -> vo
 	if panel.show_loading_overlay and is_instance_valid(panel.loading_panel):
 		panel._hide_loading()
 
-	# Show toast if available.
-	var friendly_message: String = ErrorTranslator.translate(error_message)
-	if not friendly_message.is_empty() and is_instance_valid(panel.toast_notification) and panel.toast_notification.has_method("show_message"):
-		panel.toast_notification.call("show_message", friendly_message)
+	# Show toast if available. Visibility-gated on purpose: a toast on an off-screen panel is noise,
+	# but the state repair above must have happened regardless (S13-6).
+	if panel.is_visible_in_tree():
+		var friendly_message: String = ErrorTranslator.translate(error_message)
+		if not friendly_message.is_empty() and is_instance_valid(panel.toast_notification) and panel.toast_notification.has_method("show_message"):
+			panel.toast_notification.call("show_message", friendly_message)
 
 	# Refresh authoritative data.
 	if panel.vendor_data and panel.convoy_data:
@@ -117,6 +125,10 @@ static func on_api_transaction_error(panel: Object, error_message: String) -> vo
 static func on_hub_vendor_panel_ready(panel: Object, data: Dictionary) -> void:
 	if data == null or not (data is Dictionary):
 		return
+
+	# Authoritative /vendor/get payload — the server's numbers already include anything we projected
+	# optimistically, so drop the pending deltas or the next rebuild would apply them twice (S13-5).
+	VendorOptimisticStock.clear_vendor(str(data.get("vendor_id", "")))
 
 	panel.vendor_data = data
 
@@ -286,6 +298,8 @@ static func on_vendor_panel_data_ready(panel: Object, vendor_panel_data: Diction
 	panel._refresh_timer = null
 	if panel.show_loading_overlay:
 		panel._hide_loading() # Hide loading indicator on data arrival with fade
+	# Authoritative payload for this vendor — retire the optimistic deltas it supersedes (S13-5).
+	VendorOptimisticStock.clear_vendor(incoming_vid)
 	panel.vendor_data = vendor_panel_data.get("vendor_data")
 	var incoming_convoy: Variant = vendor_panel_data.get("convoy_data")
 	if incoming_convoy is Dictionary and panel.has_method("_try_set_convoy_data"):

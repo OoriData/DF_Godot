@@ -6,7 +6,7 @@ tags:
 aliases:
   - "TODO — Active Work"
 created: 2026-05-21
-updated: 2026-07-29
+updated: 2026-07-30
 status: unverified
 ---
 
@@ -391,6 +391,12 @@ IDs are `S13-n`.
 > now settled** — the backend auto-fills vehicles, so the client only needs a truthful *preview*, and it
 > should fill **large vehicles first**.
 >
+> **⭐ Then a captured diagnostic log (2026-07-29) turned up S13-13, which was not in the original
+> report:** the vendor panel is destroyed and re-instantiated on *every map snapshot*, including while a
+> purchase is in flight — two of three logged buys never received their API result at all. It is the
+> parent cause of S13-5 and of the worst S13-6 variant, so **fix S13-13 first**; the two may partly
+> resolve with it.
+>
 > **Still worth reading before triaging:** S13-5 and S13-7 are the cargo twins of two already-solved
 > vehicle bugs. The "sold vehicle reappears" saga was fixed with a re-strip list (`_sold_vehicle_ids` /
 > `_strip_sold_vehicles`, `vendor_trade_panel.gd:2547-2585`) and per-item capacity has never been
@@ -507,42 +513,75 @@ IDs are `S13-n`.
   - Because the selected convoy is always drawn, `set_planning_override()` (`:80-88`) should **pass these
     through** like `grid_lines` rather than suppressing them — the route preview lines (`:2150-2152`) are
     a separate path and already handled.
-  - Default: recommend **off** for all-convoys (matching the other six overlays, which all default
-    `false`), since the selected convoy's line still appears. Confirm if you'd rather it default on.
+  - Default: **off** for all-convoys (confirmed 2026-07-29), matching the other six overlays, which all
+    default `false`. The selected convoy's line still appears regardless.
   `Scripts/System/Services/map_settings_service.gd`, `Scripts/UI/map_overlay_settings_panel.gd`,
   `Scripts/System/settings_manager.gd`, `Scripts/UI/UI_manager.gd`.
 
 ## Vendor / trading
 
-- [ ] **S13-5 · Vendor stock doesn't decrement *immediately* after a purchase** *(P2 — downgraded
+- [x] **S13-5 · Vendor stock doesn't decrement *immediately* after a purchase** *(P2 — **CODED
+  2026-07-30, awaiting on-device verification**; downgraded
   2026-07-29: reporter confirmed it corrects on leaving and re-entering the vendor, so this is a
   **responsiveness** bug, not data loss. "I just want it responsive.")* — bought 7 × Industrial Robotic
   Arms; the vendor's quantity did not go down until the panel was reopened. **That the reopen fixes it is
   diagnostic:** the authoritative `/vendor/get` refresh is correct, so the defect is entirely in the
   optimistic path — and it narrows the two candidates below to whichever fails *before* the refresh lands.
-  The optimistic path exists but is **shallow and name-keyed**:
-  `_optimistically_update_vendor_stock(item_name, delta)`
-  (`vendor_trade_panel.gd:2501-2545`) looks the item up by its **display name** across the `vendor_items`
-  buckets and writes **only** `entry["total_quantity"]`. Two independent failure modes, and the existing
-  diagnostics tell you which:
-  - **Lookup miss** — the name in `_pending_tx.item.name` doesn't match the bucket key (aggregated rows
-    are keyed by display name, which the aggregator can decorate). The function already prints
-    `[VendorPanel][DIAG] FAILED: item '…' not found in any bucket. Buckets searched: …` (`:2545`) —
-    that line settles it in one purchase.
-  - **Re-aggregation resurrects it** — even on a successful decrement, the underlying
-    `vendor_data.cargo_inventory` and `entry["items"]` are left untouched, so any rebuild off the
-    **lagging `/map` snapshot** restores the original quantity. This is precisely the sold-vehicle saga,
-    which was fixed by remembering the id and re-stripping on every rebuild
-    (`_sold_vehicle_ids` / `_strip_sold_vehicles`, `:2547-2585`); cargo has **no** equivalent.
-  **Suggested shape:** switch the decrement to key off `cargo_id` (which `dispatch_buy` already has —
-  `vendor_panel_transaction_controller.gd:264-266`) rather than the display name, mutate the underlying
-  inventory rows too, and add a cargo counterpart to `_strip_sold_vehicles` so a `/map`-driven rebuild
-  can't undo it before the authoritative `/vendor/get` lands.
+  **🔬 DIAGNOSED 2026-07-29 from a captured `[VendorPanel][DIAG]` log — one of the two suspected causes is
+  now RULED OUT and the other is CONFIRMED:**
+  - **Name lookup works — not the problem.** The log shows
+    `SUCCESS: updated 'Industrial Bio-Lubricants' in bucket 'delivery': 300 -> 155`. The decrement fires
+    and lands. Ignore the "lookup miss" theory.
+  - **Re-aggregation resurrection — confirmed, and worse than assumed.** A later sell of 30 on the *same*
+    item in the *same* vendor session logged `SUCCESS: … 'delivery': 300 -> 330`. The baseline is **300
+    both times** — the panel had thrown away the 155 and gone back to the stale `/map` value. Expected
+    after a 145 buy and a 30 sell: 185. The panel is not merely failing to refresh; it is **rebuilt from
+    scratch between transactions** (see S13-13 — the `_ready` line prints ten times in this one log).
+  **Mechanism:** `_optimistically_update_vendor_stock()` (`vendor_trade_panel.gd:2501-2545`) writes **only**
+  `entry["total_quantity"]` on the in-memory bucket, leaving `vendor_data.cargo_inventory` and
+  `entry["items"]` untouched. That edit lives on **the panel instance**, so when S13-13 destroys and
+  recreates the panel, the decrement dies with it and re-aggregation restores the stale `/map` number.
+  This is precisely the sold-vehicle saga, fixed there by remembering the id and re-stripping on every
+  rebuild (`_sold_vehicle_ids` / `_strip_sold_vehicles`, `:2547-2585`); cargo has **no** equivalent.
+  **Suggested shape:** fix **S13-13 first** — if the panel stops being recreated, this may resolve on its
+  own and the rest becomes belt-and-braces. Then: key the decrement off `cargo_id` (which `dispatch_buy`
+  already has — `vendor_panel_transaction_controller.gd:264-266`) rather than the display name, mutate the
+  underlying inventory rows too, and add a cargo counterpart to `_strip_sold_vehicles` **stored outside the
+  panel instance** (the panel is not a safe place to keep state that must survive a rebuild).
+  **✅ Implemented 2026-07-30** — new `Scripts/Menus/VendorPanel/vendor_optimistic_stock.gd`
+  (`VendorOptimisticStock`), a `static` registry keyed by `vendor_id` that lives **outside every panel
+  instance**, so a rebuild cannot take the decrement with it:
+  - `record_cargo(vendor_id, cargo_id, name, delta)` on each transaction result; deltas **accumulate**,
+    so two buys before the refresh lands are both reflected. Matching is by **`cargo_id` first**
+    (the same handle `dispatch_buy` uses), display name only as a fallback — needed anyway for the
+    virtual `Fuel/Water/Food (Bulk)` rows, which carry no `cargo_id`.
+  - `apply_to_buckets()` is called from `_populate_vendor_list()`, the one choke point every refresh path
+    funnels through — so a re-aggregation off the lagging `/map` snapshot can no longer restore the
+    pre-transaction number. Logged as `[VendorPanel][DIAG] optimistic REAPPLY …`.
+  - `clear_vendor()` fires the moment authoritative `/vendor/get` data lands (both the
+    `vendor_panel_ready` hub path and `on_vendor_panel_data_ready`), so a delta is never double-counted;
+    a 30 s TTL is the backstop if that payload never arrives.
+  - `_sold_vehicle_ids` / `_strip_sold_vehicles` were the panel-local version of exactly this and are now
+    folded into the same registry — the vehicle case had the identical rebuild-loses-it flaw.
+  **🐛 Follow-up fix 2026-07-30 — successive purchases double-counted.** First on-device pass: the vendor
+  updated, but buying 5 of 120 gave 115 and then buying 4 more gave **106, not 111**. Cause was in the new
+  code, not the old: `apply_to_buckets()` applies the **running total**, which is right for a freshly
+  aggregated bucket set but wrong immediately after a transaction — `_update_vendor_ui()` re-renders the
+  **cached** buckets (`_populate_list_from_agg`, `:1739`) instead of re-aggregating, so those buckets
+  already carry every earlier delta. Applying −9 to a row already showing 115 gives 106. Split into two
+  entry points: `apply_single_delta()` (one increment, used by `_optimistically_update_vendor_stock`) and
+  `apply_to_buckets()` (running total, used only by `_populate_vendor_list`). Both share `_apply_delta()`;
+  the only difference is which number they hand it.
+  `Scripts/Menus/VendorPanel/vendor_optimistic_stock.gd` (new),
   `Scripts/Menus/vendor_trade_panel.gd`, `Scripts/Menus/VendorPanel/vendor_panel_transaction_controller.gd`,
+  `Scripts/Menus/VendorPanel/vendor_panel_refresh_controller.gd`,
   `Scripts/Menus/VendorPanel/cargo_aggregator.gd`.
   (Related: the `/map`-snapshot-lag mechanism is [DataBoundaries.md](04_Technical/DataBoundaries.md).)
 
-- [ ] **S13-6 · Buy button stuck on "Processing…" after a failed purchase** *(P1)* — the button text and
+- [x] **S13-6 · Buy button stuck on "Processing…" after a failed purchase** *(P1 — **DONE, confirmed
+  improved on device 2026-07-30**; the stuck button no longer reproduces. A separate friction the reporter
+  noticed in the same pass — having to reselect the item to buy again — is deliberate existing behavior,
+  split out as **S13-15**)* — the button text and
   `disabled` state are set in `vendor_panel_transaction_controller.gd:200-204` and restored **only** by
   `VendorPanelRefreshController.on_api_transaction_error()` (`:78-115`) or a successful result. Two
   verified holes:
@@ -554,10 +593,31 @@ IDs are `S13-n`.
     the repo** — grep confirms exactly one occurrence. So a request that errors without emitting, times
     out, or returns a 200 with a failure body leaves `_transaction_in_progress = true` forever, and
     `on_action_button_pressed()` (`:120-121`) then rejects every subsequent press silently.
+  - **A third variant, confirmed in the 2026-07-29 log: the panel is gone before the reply lands.** Two of
+    three purchases never reached `_on_api_transaction_result` at all because the panel was `queue_free()`d
+    mid-flight — see **S13-13**. The button isn't stuck in that case (the whole panel is replaced), but the
+    outcome is worse: the purchase succeeds server-side with no acknowledgement anywhere in the UI. The
+    watchdog belongs somewhere that **survives the panel** for this reason.
   **Suggested shape:** move the button/flag restore **above** the visibility guard (state repair must be
   unconditional; only the *toast* should be visibility-gated), and add a timeout using the already-recorded
   `started_ms` that reverts the projection and re-enables the button. `_pending_tx.started_ms` becoming a
   live field is the point of the fix, not incidental.
+  **✅ Implemented 2026-07-30:**
+  - **The visibility guard moved.** `on_api_transaction_error()` now repairs state — projection revert,
+    `_transaction_in_progress = false`, button text/`disabled`, loading overlay — **unconditionally**, and
+    only the toast is wrapped in `is_visible_in_tree()`. A panel hidden when the error landed no longer
+    comes back stuck.
+  - **The watchdog lives outside the panel**, in new
+    `Scripts/Menus/VendorPanel/vendor_transaction_watchdog.gd` (`VendorTransactionWatchdog`, `static`
+    registry) — exactly because the worst variant is the panel being freed before the reply.
+    `begin()` on dispatch stores the token in `_pending_tx.watchdog_token`; `resolve()` runs on result,
+    on error, and from `_clear_pending_tx()`. A 2 s `Timer` on each live panel drives `sweep()`, which
+    returns anything unresolved past **20 s**. Because the registry is global, a panel that never
+    dispatched the transaction still reports an entry **orphaned by a freed panel**.
+  - On timeout the owning panel reverts the projection, re-enables Buy/Max, clears `_transaction_in_progress`,
+    toasts, and requests authoritative data; an orphan toasts *"Couldn't confirm the last transaction —
+    refreshing"* and pulls `/vendor/get` rather than guessing the outcome.
+  `Scripts/Menus/VendorPanel/vendor_transaction_watchdog.gd` (new),
   `Scripts/Menus/VendorPanel/vendor_panel_refresh_controller.gd`,
   `Scripts/Menus/VendorPanel/vendor_panel_transaction_controller.gd`, `Scripts/Menus/vendor_trade_panel.gd`.
 
@@ -595,6 +655,104 @@ IDs are `S13-n`.
   Backend repo `~/Work/desolate_frontiers`.
   `Scripts/Menus/VendorPanel/vendor_panel_transaction_controller.gd`,
   `Scripts/Menus/VendorPanel/vendor_panel_convoy_stats_controller.gd`.
+
+- [x] **S13-13 · The vendor panel is destroyed and rebuilt constantly — including mid-transaction, losing
+  the result** *(P1 — **DONE, VERIFIED ON DEVICE 2026-07-30**; found 2026-07-29 in the
+  `[VendorPanel][DIAG]` log; **parent cause of S13-5 and of one S13-6 variant**)* — the log shows
+  `[VendorPanel][DIAG] _ready instance_id=…` **ten times** in a
+  single vendor session, and — the damning part — **three `Action Button Pressed: buy` lines but only one
+  `_on_api_transaction_result`**:
+
+  ```
+  Action Button Pressed: buy on instance_id=459209185875 for 156 x Industrial Bio-Lubricants
+  _ready instance_id=753011788863          ← panel replaced; 156-unit buy has no owner
+  _ready instance_id=791582607749
+  Action Button Pressed: buy on instance_id=791582607749 for 154 x Industrial Bio-Lubricants
+  _ready instance_id=877515511484          ← replaced again; 154-unit buy has no owner
+  ```
+
+  Two of the three purchases dispatched their API call and then had their panel `queue_free()`d before the
+  response arrived. The result signal lands on a dead node: **no optimistic stock update, no success toast,
+  no button restore, no error path** — the request itself still hits the server, so the player is left with
+  a purchase that happened and a UI that never acknowledged it.
+  **Verified cause — vendor tabs are rebuilt wholesale on two unconditional triggers:**
+  - `convoy_settlement_menu.gd::_on_store_map_changed()` (`:371-374`) calls
+    `call_deferred("_display_settlement_info")` on **every** map snapshot, with no check for whether
+    anything relevant actually changed. `_display_settlement_info()` (`:205-225`) calls `_clear_tabs()`
+    (`:523-537`, which `queue_free()`s every tab control) and then re-runs `_create_vendor_tab()` (`:376-410`,
+    a fresh `VendorTradePanel.instantiate()`). A map refresh is requested after **every transaction**
+    (`vendor_trade_panel.gd` emits `user_refresh_requested` at the end of `_on_api_transaction_result`), so
+    trading is itself what triggers the rebuild that discards the trade's own optimistic state.
+  - The layout-change path does the same: `:172` `call_deferred("_display_settlement_info")` with the
+    comment *"Regenerate UI completely on layout change"* — so every resize/rotation also destroys the panel.
+  There is already a **narrow** guard for a related symptom — `:215-217` skips the rebuild when the incoming
+  snapshot is missing the single vendor (the "vendor disappears" bug) — which shows the rebuild-on-snapshot
+  pattern has bitten before and was patched at the symptom rather than the cause.
+  **Suggested shape:** stop rebuilding on data updates. `_refresh_all_vendor_panels()` already exists and is
+  the correct path — `_display_settlement_info()` should only run when the **set of vendors actually
+  changes** (compare vendor ids against the current tabs and no-op when equal), not on every snapshot.
+  Additionally, **never destroy a panel with a transaction in flight**: `_transaction_in_progress` is
+  already tracked (`vendor_trade_panel.gd:76`), so `_clear_tabs()` can defer, and the S13-6 watchdog gives a
+  bounded worst case. The layout-change rebuild should become a re-layout, not a re-instantiate.
+  **✅ Open question ANSWERED 2026-07-30 from the captured log itself** (still on disk at
+  `~/Library/Application Support/Godot/app_userdata/Desolate Frontiers/logs/godot.log`) — **one vendor,
+  each rebuild ran twice.** Every one of the ten `_ready` lines is preceded by
+  `building vendor tab for: 99abc0ac-46bd-4e3e-8961-b3eee769cbf3` and
+  `_create_vendor_tab created tab with title: 'Depot'` — the same single Dallas Depot vendor, never a
+  second one. **The second trigger was `initialize_with_data()`**: `super.initialize_with_data()` runs
+  `MenuBase._refresh_from_store` → `_update_ui` → `call_deferred("_display_settlement_info")`, and then
+  the very next line called `_display_settlement_info()` **synchronously**. `call_deferred` does not
+  de-duplicate, so both ran — one pass building a panel and the next immediately freeing it and building
+  another. That also corrects the entry's premise: in this log the rebuild trigger was **menu open /
+  navigation** (5 opens × 2), not `map_changed` — every `_display_settlement_info` call correlates with a
+  `MenuManager` cached-menu restore, not a snapshot.
+  **✅ Implemented 2026-07-30** in `convoy_settlement_menu.gd`:
+  - All five call sites now go through `_queue_display_settlement_info()`, which coalesces a same-frame
+    burst into one pass — this alone halves the rebuilds.
+  - `_display_settlement_info()` no longer calls `_clear_tabs()` up-front. It compares
+    `_desired_vendor_ids()` against `_mounted_vendor_ids()` (read from each tab's `vendor_id` meta) and,
+    when equal, refreshes in place and returns — logging
+    `[VendorPanel][DIAG] settlement rebuild SKIPPED — vendor set unchanged`.
+  - `_defer_rebuild_for_active_transaction()` holds a genuine rebuild off while any mounted panel has
+    `_transaction_in_progress`, capped at 10 s so a lost reply can't wedge the menu.
+  - `_refresh_active_vendor_panel()` no-ops during an in-flight transaction (a `/map`-sourced
+    re-aggregation would discard the optimistic projection).
+  - The rotation path is now a re-layout: each `VendorTradePanel` already re-applies its own orientation
+    sizing from its own `layout_mode_changed` handler.
+  **✅ On-device result 2026-07-30:** one `_ready instance_id=` for the whole vendor session, followed by
+  seven `settlement rebuild SKIPPED — vendor set unchanged (1 tab(s): 75f17dd0-…)` across hub round-trips
+  and rotations, and **zero** further `_ready` lines. Was ten `_ready` lines in the same flow.
+  `Scripts/Menus/convoy_settlement_menu.gd`, `Scripts/Menus/vendor_trade_panel.gd`.
+
+- [ ] **S13-14 · The settlement menu still resolves vendor panels by *node name*, not `vendor_id`**
+  *(P3 — NEW, noticed 2026-07-30 while implementing S13-13; deliberately left out of that change to keep
+  its scope to lifecycle)* — `_create_vendor_tab()` stores the id as a node meta
+  (`vendor_panel_instance.set_meta("vendor_id", …)`), but two consumers still round-trip through the
+  display name instead: `_refresh_active_vendor_panel()` and `_on_vendor_tab_changed()` both do
+  `_find_vendor_by_name(String(panel.name))`, and `_find_vendor_by_name()` matches `vendor.name` exactly.
+  Two failure modes: Godot **uniquifies duplicate sibling node names** (a settlement with two identically
+  named vendors gets a panel called `Depot2`, which matches no vendor and silently returns `{}` → that
+  tab never refreshes); and any server-side rename of a vendor breaks the lookup until the tab is rebuilt.
+  Neither is hit by the single-vendor Dallas Depot flow that S13-13 was verified against, which is why it
+  isn't urgent. **Shape:** read `panel.get_meta("vendor_id")` and add `_find_vendor_by_id()`; the meta is
+  already populated and S13-13's `_mounted_vendor_ids()` now depends on it, so the two would agree.
+  `Scripts/Menus/convoy_settlement_menu.gd`.
+
+- [ ] **S13-15 · Buying clears the selection, so buying the same item twice needs a reselect**
+  *(P3 — NEW, reported 2026-07-30 while verifying S13-6: "I just have to reselect the item if I want to
+  buy more." Not a regression — this is **deliberate existing behavior**, so it needs a design call, not
+  a bug fix)* — `show_transaction_feedback()` (`vendor_trade_panel.gd`) ends with
+  `_last_selected_restore_id = ""` and `selected_item = null`, commented *"Clear selection to fulfill
+  user's 'clear panel' request"*. It runs on **success as well as error**, so every completed purchase
+  drops the selection and the quantity spinbox, and buying 5 more of the same item costs two extra taps.
+  Note the refresh path deliberately does the opposite — `process_panel_payload_ready()` goes to real
+  trouble to *restore* selection across a rebuild (`_restore_selection`, refresh controller `:207-218`),
+  so the two behaviors currently disagree about whether selection should survive a transaction.
+  **Options, cheapest first:** (a) clear on error only — one-line change, keeps the "panel resets after a
+  failure" intent; (b) keep the selection and reset only the quantity to 1; (c) keep both and rely on the
+  optimistic stock number (now correct after S13-5) to show the purchase landed. Worth deciding against
+  the original "clear panel" request before changing it — someone asked for this.
+  `Scripts/Menus/vendor_trade_panel.gd` (`show_transaction_feedback`).
 
 ## Android
 
