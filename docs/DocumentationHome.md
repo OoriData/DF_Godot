@@ -6,7 +6,7 @@ tags:
 aliases:
   - "Desolate Frontiers Documentation"
 created: 2026-05-18
-updated: 2026-07-29
+updated: 2026-07-31
 verified_against_code: 2026-07-28
 status: current
 ---
@@ -78,8 +78,12 @@ Welcome to the technical documentation for *Desolate Frontiers*. This folder is 
 - [**Diagnostics & Troubleshooting**](04_Technical/Diagnostics.md): Logging, watchdogs, and network debugging.
 - [**Refresh Scheduler**](04_Technical/RefreshScheduler.md): Polling heartbeat — interval, suspend/resume, adding services.
 - [**Error Handling System**](04_Technical/ErrorSystem.md): ErrorTranslator pipeline, inline vs. modal errors.
-- [**Bug Reporting & Feedback**](04_Technical/BugReporting.md): The Feedback button → screenshot/log capture → `POST /bug-report` pipeline, the payload contract, and where the button is currently *unreachable* (login, tutorial) during the beta.
-- [**User Settings**](04_Technical/UserSettings.md): SettingsManager keys and defaults, and the display/fullscreen contract (**always change the window mode via `display.fullscreen`, never `DisplayServer` directly**).
+- [**Bug Reporting & Feedback**](04_Technical/BugReporting.md): The Feedback button → screenshot/log capture → `POST /bug-report` pipeline and the payload contract. **Reachability was fixed 2026-07-31 (S12-5)** — `GlobalFeedbackOverlay` (a `CanvasLayer` at `layer = 200`, `PROCESS_MODE_ALWAYS`) makes it available at login, mid-tutorial, and behind modals. ⚠️ That doc is `status: drifting`; it still describes those four gaps as open.
+- [**User Settings**](04_Technical/UserSettings.md): SettingsManager keys and defaults, and the display/fullscreen contract (**always change the window mode via `display.fullscreen`, never `DisplayServer` directly**). Includes the keyboard shortcut (`F11` · `Alt+Enter` · `Cmd+Ctrl+F`), which is **not** an InputMap action and so will not appear in the editor's Input Map panel.
+- [**GDScript Verification**](04_Technical/GDScriptVerification.md): How to actually prove an edit compiles — the editor pass vs. the targeted load probe, what each one misses, and why `treat_warnings_as_errors` does not exist in Godot 4.6. **Read before claiming "compile-clean".**
+- [**Data Boundaries**](04_Technical/DataBoundaries.md): The JSON-vs-binary seam. Where to look when a stat reads blank or `0` everywhere and both "not backend" and "not frontend" are true.
+- [**SignalHub**](04_Technical/SignalHub.md): The broadcast bus at the end of the unidirectional data path (`API → Service → GameStore → SignalHub → UI`).
+- [**Network Layer**](04_Technical/NetworkLayer.md): `APICalls` request queue, retry/backoff, and auth header application.
 - [**Dependency Graph**](04_Technical/Dependencies.md): Visual mapping of singleton relationships.
 - [**API Reference**](04_Technical/API_Reference.md): Backend endpoints and JSON contracts.
 - [**Deployment & Environment**](04_Technical/Deployment.md): Build targets and CI/CD pipelines.

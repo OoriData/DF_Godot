@@ -7,7 +7,7 @@ tags:
 aliases:
   - "AI Agent Onboarding: Quick-Start Guide"
 created: 2026-05-18
-updated: 2026-07-29
+updated: 2026-07-31
 verified_against_code: 2026-07-28
 status: current
 ---
@@ -56,6 +56,11 @@ Welcome, Agent. To maintain the architectural integrity and visual standards of 
 
 ## 🗺️ Navigation Map
 - **Find a Feature**: Check the [Project Map](PROJECT_MAP.md).
+- **Prove your edit compiles**: [GDScript Verification](04_Technical/GDScriptVerification.md) — **run this
+  before saying "compile-clean".** Two checks that do not substitute for each other: the editor pass
+  (resolves autoloads and `class_name`, but only sees scripts something loads — a brand-new file is
+  invisible to it) and the targeted load probe (sees exactly the files you name). Note `inference_on_variant`
+  defaults to **Error**, so `var x := <something Variant>` is a hard parse error, not a warning.
 - **Which service/autoload owns this?**: [Autoload Register](04_Technical/AutoloadOrder.md) — all 27, CI-checked against `project.godot`. A lookup, not a grep.
 - **Understand an Object**: Check the [Data Schema](01_Architecture/Schema.md) — includes User, Settlement, Vendor, and Journey objects.
 - **A layout looks broken**: [Debugging a Visual/Layout Bug](04_Technical/DebuggingVisualBugs.md) — **read before instrumenting**.
@@ -111,6 +116,24 @@ Full authoring contract (frontmatter, approved tags, index coverage, suppression
 - When a menu isn't updating, check its `_debug_*` flag first. 9 times out of 10 the `process_mode` or a missed `is_connected` guard is the root cause.
 - `money` from the API can be a `String`. Always read user money from `GameStore.get_user()["money"]` which is normalised to `int`.
 - **Item names — "Jerry Cans" ≠ "Water Jerry Cans".** These are **two distinct cargo types**: plain *Jerry Cans* hold **fuel**, *Water Jerry Cans* hold **water**. The Level 2 tutorial supply step must ask for **Water Jerry Cans** specifically — never write bare "Jerry Cans" there, and never loosen a match to just `jerry` (require both `water` and `jerry`). Details in [Tutorial System](03_Systems/TutorialSystem/TutorialSystemOverview.md#content-gotcha-jerry-cans--water-jerry-cans) and the [Glossary](99_Reference/Glossary.md#items--cargo).
+- **The tree is PAUSED during login, and `MainScreen` is disabled.** `GameScreenManager._ready()` sets
+  `get_tree().paused = true`, `main_screen.visible = false`, **and**
+  `main_screen.process_mode = PROCESS_MODE_DISABLED`, all held until `initial_data_ready`. So anything
+  that must work before sign-in has **two** requirements: it needs `PROCESS_MODE_ALWAYS` (the default
+  `INHERIT` is frozen by that pause, which silently kills `_process`, `_input`, **and**
+  `_unhandled_key_input`), and it must not live under `MainScreen`. This caught both halves of S12-5 and
+  S12-6 — in each case the code was correct and simply never ran. If a pre-login feature "does nothing",
+  check these two before debugging its logic.
+- **`NOTIFICATION_VISIBILITY_CHANGED` does not exist on `CanvasLayer`.** It is a `CanvasItem` constant,
+  so using it in a `CanvasLayer` script (`SettingsMenu`, `ResponsiveModalPanel`, and every modal that
+  extends it) is a **hard parse error**, not a silent no-op. `CanvasLayer` exposes a
+  `visibility_changed` **signal** instead — connect that.
+- **Map hit-tests have TWO call sites, and they drift.** `map_interaction_manager.gd` handles touch
+  (`_handle_tap_interaction`) and mouse (`_handle_lmb_interactions`) in **separate branches** that
+  independently call the same `_get_*_at_screen_pos()` helpers. Behavior added to one is **not** inherited
+  by the other, and the result is a bug that reproduces on exactly one input method — the desktop
+  pinned-label preview was live for months because only the touch branch checked the pin state. When you
+  change what a map click *does*, grep for both branches and update them together.
 - **A vendor/vehicle stat that's blank or 0 everywhere may be a third-repo bug, not this repo.**
   The vendor panel reads stats from the **binary `/map` payload**, whose wire format lives in a
   separate package — so the JSON API can be perfectly correct while the binary packer silently
