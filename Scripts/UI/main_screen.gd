@@ -18,6 +18,9 @@ var ui_manager: Node = null
 @onready var menu_container = $SafeRegionContainer/MainContainer/MainContent/MapAndMenuContainer/MenuContainer
 @onready var top_bar = $SafeRegionContainer/MainContainer/TopBar
 var _new_convoy_dialog: Control = null
+# S12-8: guards _show_new_convoy_dialog() against the refresh loop that re-invoked it hundreds of
+# times per session. Cleared by _hide_new_convoy_dialog() so a later legitimate prompt still opens.
+var _new_convoy_dialog_open: bool = false
 const NEW_CONVOY_DIALOG_SCENE_PATH := "res://Scenes/NewConvoyDialog.tscn"
 @export var new_convoy_dialog_scene: PackedScene = null
 const ERROR_DIALOG_SCENE_PATH := "res://Scenes/ErrorDialog.tscn"
@@ -1271,6 +1274,22 @@ func _show_error_dialog(message: String, raw_message: String = ""):
 func _show_new_convoy_dialog():
 	if onboarding_log_enabled:
 		print("[Onboarding] _show_new_convoy_dialog invoked.")
+
+	# S12-8: this is re-entered continuously for a 0-convoy account. `ConvoyService.refresh_all()` ->
+	# USER_CONVOYS sets both user and convoys, so `user_changed` AND `convoys_changed` both fire ->
+	# `_check_or_prompt_new_convoy_from_store()`; meanwhile GameScreenManager re-triggers
+	# `refresh_all()` on `user_changed`. Logs showed hundreds of invocations per session, each one
+	# re-showing the modal layer, re-laying-out the dialog and costing a `/user/get`.
+	#
+	# The guard is an explicit flag, NOT `_new_convoy_dialog.visible`: `open` is invoked via
+	# `call_deferred` below, so `visible` is still false for the rest of the current frame and a
+	# visibility check would let every same-frame repeat through — which is exactly the burst shape
+	# the logs show.
+	if _new_convoy_dialog_open and is_instance_valid(_new_convoy_dialog):
+		if onboarding_log_enabled:
+			print("[Onboarding] _show_new_convoy_dialog: already open — ignoring repeat.")
+		return
+
 	var modal_layer: Control = get_node_or_null("SafeRegionContainer/ModalLayer")
 	if not is_instance_valid(_new_convoy_dialog):
 		var scene_res: Resource = new_convoy_dialog_scene if new_convoy_dialog_scene != null else load(NEW_CONVOY_DIALOG_SCENE_PATH)
@@ -1295,6 +1314,8 @@ func _show_new_convoy_dialog():
 		if _new_convoy_dialog.has_signal("canceled"):
 			_new_convoy_dialog.connect("canceled", Callable(self, "_on_new_convoy_canceled"))
 	modal_layer = get_node_or_null("SafeRegionContainer/ModalLayer")
+	# Set before the deferred open so a same-frame repeat is caught by the guard above.
+	_new_convoy_dialog_open = true
 	if _new_convoy_dialog.has_method("open"):
 		if onboarding_log_enabled:
 			print("[Onboarding] Opening NewConvoyDialog…")
@@ -1519,6 +1540,9 @@ func _update_onboarding_layer_rect_to_map() -> void:
 		_onboarding_layer.clip_contents = true
 
 func _hide_new_convoy_dialog():
+	# Cleared unconditionally (not inside the validity check) so a freed dialog can't strand the flag
+	# true and permanently suppress a later legitimate prompt.
+	_new_convoy_dialog_open = false
 	if is_instance_valid(_new_convoy_dialog):
 		if _new_convoy_dialog.has_method("close"):
 			_new_convoy_dialog.close()

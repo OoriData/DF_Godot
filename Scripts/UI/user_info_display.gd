@@ -497,7 +497,19 @@ func _on_connect_accounts_pressed() -> void:
 
 
 func _on_bug_report_pressed() -> void:
-	# Capture screenshot BEFORE any window/popup appears.
+	# S12-5: delegate to the always-available GlobalFeedbackOverlay so both entry points drive one
+	# window. The copy this function used to build itself inherited PROCESS_MODE_INHERIT and so was
+	# frozen whenever the tree was paused; the overlay's is PROCESS_MODE_ALWAYS.
+	var scene_root := get_tree().current_scene
+	if is_instance_valid(scene_root) and scene_root.has_method("get_feedback_overlay"):
+		var overlay = scene_root.get_feedback_overlay()
+		if is_instance_valid(overlay) and overlay.has_method("open_bug_report"):
+			overlay.open_bug_report()
+			return
+
+	# Fallback: keep the original local path working if the overlay is unavailable (e.g. this
+	# display is hosted outside GameScreenManager). Reporting a bug must never itself fail.
+	push_warning("UserInfoDisplay: GlobalFeedbackOverlay unavailable; using local bug report window.")
 	var png_bytes := PackedByteArray()
 	# Wait until the frame is rendered so the viewport image is valid.
 	await RenderingServer.frame_post_draw
@@ -514,6 +526,7 @@ func _on_bug_report_pressed() -> void:
 			push_error("Failed to load bug_report_window.gd")
 			return
 		_bug_report_window = script.new()
+		_bug_report_window.process_mode = Node.PROCESS_MODE_ALWAYS
 		get_tree().root.add_child(_bug_report_window)
 
 	if _bug_report_window.has_method("set_screenshot_png_bytes"):

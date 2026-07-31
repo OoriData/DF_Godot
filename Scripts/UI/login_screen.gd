@@ -123,6 +123,10 @@ func _ready() -> void:
 	_add_version_label()
 
 func set_loading_mode(active: bool, message: String = "") -> void:
+	if is_instance_valid(_bg_viewport):
+		# The limbo state (auth stuck / initial_data_ready never arriving) can hold this
+		# screen indefinitely — don't wait for queue_free() to stop redrawing every frame.
+		_bg_viewport.render_target_update_mode = SubViewport.UPDATE_DISABLED if active else SubViewport.UPDATE_WHEN_VISIBLE
 	if active:
 		if message != "":
 			status_label.text = message
@@ -694,10 +698,11 @@ func _setup_map_background() -> void:
 	_bg_viewport = SubViewport.new()
 	_bg_viewport.name = "MapBackgroundViewport"
 	_bg_viewport.transparent_bg = true
-	_bg_viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
+	_bg_viewport.render_target_update_mode = SubViewport.UPDATE_WHEN_VISIBLE
 	_bg_viewport.gui_disable_input = true
-	_bg_viewport.msaa_2d = Viewport.MSAA_2X
-	_bg_viewport.size = get_viewport_rect().size
+	# No MSAA: this backdrop is already blurred by a 26% alpha modulate (below), so
+	# antialiasing buys nothing and costs a full-screen-sized multisample buffer.
+	_bg_viewport.size = _compute_bg_viewport_size()
 
 	_bg_root = Node2D.new()
 	_bg_root.name = "Root"
@@ -743,8 +748,20 @@ func _make_bg_camera_current() -> void:
 func _on_viewport_size_changed() -> void:
 	if _bg_viewport == null:
 		return
-	_bg_viewport.size = get_viewport_rect().size
+	_bg_viewport.size = _compute_bg_viewport_size()
 	_apply_portrait_layout()
+
+# Render the backdrop at a fraction of the actual window size and let
+# STRETCH_KEEP_ASPECT_COVERED upscale it — resolution is nearly free to lose on a
+# 26%-alpha blurred backdrop, and cost otherwise scales with window area, which is why
+# this only bites in fullscreen on a large monitor.
+const _BG_RENDER_SCALE := 0.5
+const _BG_MIN_SIZE := Vector2i(480, 270)
+
+func _compute_bg_viewport_size() -> Vector2i:
+	var win_size := get_viewport_rect().size
+	var scaled := Vector2i(win_size * _BG_RENDER_SCALE)
+	return Vector2i(max(scaled.x, _BG_MIN_SIZE.x), max(scaled.y, _BG_MIN_SIZE.y))
 
 func _build_tile_lookup(tile_set: TileSet) -> void:
 	_bg_tile_name_to_entry.clear()

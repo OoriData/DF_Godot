@@ -21,6 +21,17 @@ This document serves as the flowing state of things needed in the project, and w
 > input-settings gaps, and a total Android login failure. After those, the project
 > pivots to the **systems audit & research initiative** (below) to re-baseline the docs against the code.
 >
+> **Update 2026-07-31 — eight items coded in one pass, none device-verified.** Closed: **S12-5**
+> (feedback everywhere), **S12-6** (fullscreen shortcut), **S12-8** (onboarding loop + the
+> `ResponsiveListAdapter` defect), **S13-1** (login-screen viewport cost), **S13-2** (stale settings
+> menu), **S13-12** (`HTTPRequest` result codes), the **desktop pinned-label preview arrow** (which is
+> what the mis-titled "settlement warehouse inspection" entry actually was — the warehouse path was
+> never broken), and Sprint 11's **pan-invert** item (a duplicate of S13-2).
+> ⚠️ **All eight are compile-checked and headless-tested only.** Four carry named, unmet verification
+> requirements — the S12-6 window-mode switch, S12-5's placement/hit-testing, and S12-8 + S13-1, which
+> both need a **0-convoy account**. S13-1's FPS measurement remains untaken, so how much pre-login lag
+> S12-8 accounted for is still unknown. Read each entry's ⚠️ block before assuming any of them is done.
+>
 > **Full completed-sprint detail** (Sprints 1–10, all root-cause narratives, device round 1 results,
 > closed backlog items) now lives in **[SprintHistory.md](SprintHistory.md)** — moved out of this file
 > 2026-07-22 to keep the TODO forward-looking. This file keeps only the summary table + active/pending work.
@@ -85,12 +96,69 @@ and desktop where relevant, per the project's device-test rule.
     no buy button. Wiring an off-Steam upgrade path (App Store / Play IAP, or a web/Discord link) is a
     separate product+backend task, in the same bucket as the vehicle-cap enforcement below.
 
-- [ ] **Settlement warehouse inspection broken (regression)** — the ability to **inspect a settlement
-  for warehouses** no longer works. Was functional previously; something in the Sprint 5.5 hub pivot or a
-  later menu refactor likely broke the entry point. Needs a pinpoint: which control/flow used to open the
-  warehouse view from a settlement, and what now no-ops. `Scripts/Menus/warehouse_menu.gd`,
+- [x] **Pinned map label → settlement preview arrow does nothing on desktop (label just vanishes)**
+  *(P1 — ✅ CODE-COMPLETE 2026-07-31, compile-checked, pending desktop verification. ⚠️ **RE-SCOPED
+  2026-07-31: this entry previously described the wrong bug** — see the closed warehouse entry below.)* —
+  **Reporter description:** *"After a settlement gets pinned, we should be able to hit an arrow that opens
+  the settlement preview page. This works on mobile but on desktop the label just disappears."*
+  **Verified root cause — one missing branch, in the mouse path only.** The "arrow" is not a Button: it is
+  a trailing `"  ›"` appended to the pinned label's text (`UI_manager.gd:1532-1536`), and the panel is
+  `MOUSE_FILTER_IGNORE` (`:997-999`), so the whole panel is hit-tested manually by
+  `_get_settlement_panel_at_screen_pos()` (`map_interaction_manager.gd:390-434`). **Two call sites hit-test
+  it; only the touch one checked the pin state:**
+  - **Touch** — `_handle_tap_interaction()` (`:365-375`): pinned → `settlement_preview_requested`,
+    otherwise → `settlement_clicked` (which pins it). Correct.
+  - **Mouse** — `_handle_lmb_interactions()` (`:777-782`): emitted `settlement_clicked`
+    **unconditionally**. That routes to `UI_manager::toggle_settlement_pin()` (`:570-582`), so clicking the
+    chevron on an already-pinned label **un-pinned it** — and since the label was only being drawn
+    *because* it was pinned, it vanished on the next `_draw_interactive_labels()` pass. Exactly the
+    reported symptom. `settlement_preview_requested` was emitted from **one** line in the whole repo
+    (`:372`), so no mouse path could ever open the preview.
+  **✅ Fix 2026-07-31** — mirrored the pinned check into the LMB branch, so both input paths share the
+  same two-state behaviour (unpinned click pins; pinned click previews).
+  **Ruled out during the investigation** (recorded so it isn't re-derived): no mouse-motion/exit handler
+  clears pins (`handle_map_input:214-219` only stores the motion event; `_update_hover:535` never touches
+  `_pinned_settlement_coords`); the hover-clear at `:344-346` is inside the touch path and clears
+  `_current_hover_info`, not pins; and hit-test sizing is identical for both paths (same 12-world-unit
+  grow at `:423`) — the mobile radius bump at `:108-110` affects tile/convoy hover, not the panel rect.
+  `Scripts/Map/map_interaction_manager.gd`, `Scripts/UI/UI_manager.gd`, `Scripts/UI/main_screen.gd`.
+  (Related: **UX-03** — the settlement preview's read-only vendor browse.)
+
+- [x] **Settlement warehouse inspection broken (regression)** — *(✅ **CLOSED 2026-07-31 — NOT A CODE BUG.**
+  The original premise was wrong; the reporter's actual symptom is the pinned-label item directly above.
+  Kept per the never-delete-an-ID rule.)* — the ability to **inspect a settlement for warehouses** was
+  reported as no longer working, presumed broken by the Sprint 5.5 hub pivot.
+  **What the research actually found:**
+  - **The canonical path is wired end-to-end.** Convoy overview → Settlement nav → **Settlement Overview
+    Hub** → **Warehouse card** (`settlement_overview_menu.gd::_make_warehouse_card`, built in
+    `_build_resources_and_warehouse_row`, `:540-606`) → `_on_warehouse_pressed()` (`:728-739`) emits
+    `open_warehouse_menu_requested` → `menu_manager.gd:696-698` connects it (for both `settlement_overview`
+    **and** `settlement_hub` menu types) → `open_warehouse_menu()` (`:352-355`) → `WarehouseMenu.tscn`.
+    The card's `gui_input` is connected unconditionally — not gated behind a dead condition.
+  - `warehouse_menu.gd`'s `@onready` node paths all resolve against `Scenes/WarehouseMenu.tscn`, and the
+    `WarehouseService` autoload (`project.godot:39`) exposes every method the menu calls.
+  - **No commit since 2026-07-28 touched** `menu_manager.gd`, `settlement_overview_menu.gd`, or
+    `warehouse_menu.gd` — `ddb9ba0` and `4ca65a6` only touched `convoy_settlement_menu.gd` / vendor files.
+  - **✅ A real stale doc was found and fixed** (2026-07-31): [UIAudit § Warehouse Menu](02_UI_UX/UIAudit.md)
+    said *"Opens from: Settlement menu → 'Warehouse' button"* — the **pre-Sprint-5** button, deliberately
+    removed (`convoy_settlement_menu.gd:134-135`, *"Warehouse button removed in Sprint 5"*). Anyone
+    following that line would look for a control that no longer exists and reasonably call it broken.
+    **This is the leading explanation for the report.**
+  **✅ Resolved by asking, not by coding.** The pinpoint-first question ("which control, and did it not
+  appear / not respond / open empty?") returned a description of an entirely different screen — the map's
+  pinned settlement label, not the hub's warehouse card. **The hub warehouse path was never broken.** Worth
+  recording as a cheap win for the pinpoint-first rule: the research below would have been wasted effort
+  had it been followed by a speculative fix.
+  **If a warehouse-specific failure ever does surface**, the next suspect is not the wiring but
+  `_resolve_settlement_from_convoy()` (`settlement_overview_menu.gd:74-98`) failing to resolve
+  `_settlement` for a particular convoy/tile shape — set `_debug_settlement_overview = true` (`:17`) and
+  capture the log. `Scripts/Menus/warehouse_menu.gd`,
   `Scripts/System/Services/warehouse_service.gd`, `settlement_overview_menu.gd` /
   `convoy_settlement_menu.gd`.
+  - **Cleanup noticed alongside (not the bug):** `convoy_settlement_menu.gd` still declares and emits
+    `open_warehouse_menu_requested` (`:3`, `:730-744`) and `menu_manager.gd:692-693` still wires it, but
+    `warehouse_button` is permanently `null` (`:29`), so nothing can ever trigger it. Dead path — fold
+    into the **dead-code sweep** in the systems-audit initiative.
 
 - [ ] **Convoy icon ↔ convoy label anti-collision** — the convoy **label** can overlap the convoy
   **icon** on the map; add anti-collision so the label offsets clear of its own icon (analogous to the
@@ -110,13 +178,18 @@ and desktop where relevant, per the project's device-test rule.
     together, or one will keep re-breaking the other. See
     [ui_system.md § Desktop scaling contract](02_UI_UX/ui_system.md#desktop-scaling-contract-and-why-fixed-width-panels-drift).
 
-- [ ] **Pan direction (invert-pan) inconsistent across sessions** — panning feels like it flips between
-  normal and inverted between sessions. Suspect the `controls.invert_pan` setting isn't persisting
-  reliably, or `main_screen._apply_settings_snapshot()` reads it before `SettingsManager` has loaded from
-  disk (default fallback races the load). Check the save path in `settings_manager.gd` (key
-  `controls.invert_pan`, default `false`) and the read at `main_screen.gd:1635`
-  (`_opt_invert_pan = bool(sm.get_value("controls.invert_pan", _opt_invert_pan))`) — confirm the value is
-  written to disk on toggle and re-read after load, not left at a stale in-memory default.
+- [x] **Pan direction (invert-pan) inconsistent across sessions** *(✅ DUPLICATE of **S13-2** — both
+  suspicions here were investigated 2026-07-31 and **ruled out**; fixed by S13-2's change, pending the
+  same device test)* — panning felt like it flipped between normal and inverted between sessions.
+  - **Persistence is fine.** `settings_manager.gd::set_and_save()` (`:37-41`) writes to
+    `user://settings.cfg` **synchronously on every toggle**, and `load_settings()` (`:55-60`) runs from
+    `_ready()` (`:30-32`). Nothing is left in a stale in-memory default.
+  - **There is no load race.** `SettingsManager` is an autoload, so its `_ready()` — and therefore the
+    disk load — completes before the main scene's `_apply_settings_snapshot()` ever runs.
+  - **The real mechanism was the display, not the value**, which is exactly S13-2: the settings panel was
+    built once and never re-synced, so its checkbox could disagree with the stored setting, and the next
+    click wrote that *stale checkbox state* back through `set_and_save()`. That is the "flips on its own"
+    both reports describe. Fixed by S13-2's `visibility_changed` → `_init_values()` re-read.
   `Scripts/System/settings_manager.gd`, `Scripts/UI/main_screen.gd`, `Scripts/Menus/settings_menu.gd`.
 
 ## Backend (Python — `~/Work/desolate_frontiers`)
@@ -269,7 +342,8 @@ now backs it. **None are coded yet.** IDs (`S12-n`) are for cross-referencing fr
     `[MAP-RECT-DIAG]` dump names the control still claiming the height.
   - **Related, found in the same logs, still open** — see S12-8 below.
 
-- [ ] **S12-8 · `_show_new_convoy_dialog()` runs in an unbounded loop for a 0-convoy account** *(P2)* —
+- [x] **S12-8 · `_show_new_convoy_dialog()` runs in an unbounded loop for a 0-convoy account**
+  *(P2 — ✅ CODE-COMPLETE 2026-07-31, compile-checked; ⚠️ needs a 0-convoy account to verify — see below)* —
   the same Steam logs show `[Onboarding] _show_new_convoy_dialog invoked.` **hundreds of times**, each
   one calling `modal_layer.show()`, `_update_new_convoy_dialog_layout()` and
   `_new_convoy_dialog.call_deferred("open")`. The loop: `ConvoyService.refresh_all()` → `USER_CONVOYS`
@@ -289,11 +363,38 @@ now backs it. **None are coded yet.** IDs (`S12-n`) are for cross-referencing fr
     - Backend: `/user/get` for a 0-convoy account returns **no convoy-list key at all**, producing
       `[WARN] APICalls USER_CONVOYS: user payload missing convoy list keys` on every poll. The client
       already treats it as "no convoys", but the shape should be an empty array, not a missing key.
-      Backend repo `~/Work/desolate_frontiers`.
+      Backend repo `~/Work/desolate_frontiers`. **⏳ Still open — backend, not touched in this pass.**
+  **✅ Implemented 2026-07-31 (client half):**
+  - **The prompt is idempotent.** New `_new_convoy_dialog_open` flag on `main_screen.gd`;
+    `_show_new_convoy_dialog()` returns early when it is already set, and `_hide_new_convoy_dialog()`
+    clears it (both the create and cancel handlers route through that function, so a later legitimate
+    prompt still opens).
+  - **The guard is a flag, not `_new_convoy_dialog.visible`** — which would not have worked. `open` is
+    invoked via `call_deferred`, so `visible` stays false for the remainder of the current frame, and a
+    visibility check would have let every *same-frame* repeat through. Same-frame bursts are exactly the
+    shape the captured log shows, so the obvious version of this fix would have looked correct and
+    stopped almost nothing. The flag is set **before** the deferred open for the same reason.
+  - The flag is cleared **unconditionally** at the top of `_hide_new_convoy_dialog()`, outside the
+    `is_instance_valid()` check, so a freed dialog cannot strand it `true` and permanently suppress the
+    prompt — a worse failure than the loop it replaces.
+  - **`ResponsiveListAdapter` is no longer destroyed.** `convoy_list_panel.gd::populate_convoy_list()`
+    now frees only `Control` children. The adapter ships in `ConvoyListPanel.tscn` as a plain `Node`
+    child of `ConvoyItemsContainer`, and list items are all `Control`s, so the type test cleanly
+    separates them — no name matching needed. Nothing in the script ever recreated it (grep finds **zero**
+    references to it anywhere in `convoy_list_panel.gd`), which is why the loss was permanent.
+  ⚠️ **Verification needs a 0-convoy account** — this whole entry only manifests in that state, which is
+  neither reproducible headless nor on an account with convoys. **Pass:** `[Onboarding]
+  _show_new_convoy_dialog invoked.` appears **once**, followed by any number of the new
+  `already open — ignoring repeat.` lines, instead of hundreds of full invocations.
+  ⚠️ **Re-measure S13-1 after this lands.** That entry names this loop as contributor (2) and asks for a
+  re-measure once it is fixed; the two were implemented in the same session but **the measurement has not
+  been taken**, so how much of the pre-login lag this accounts for is still unknown.
 
 ## Beta support / platform
 
-- [ ] **S12-5 · Feedback / Report-Bug must be reachable at ALL times during beta** *(P1)* — today it is
+- [x] **S12-5 · Feedback / Report-Bug must be reachable at ALL times during beta** *(P1 — ✅ CODE-COMPLETE
+  2026-07-31, compile-checked + headless smoke-tested; ⚠️ **interaction/placement NOT yet verified on a
+  real screen** — see the caveats at the end of this entry)* — today it is
   reachable only from the main game screen, and it is blocked in exactly the two places bugs are most
   likely to be found. Four verified blockers:
   1. **Login.** The button lives in `UserInfoDisplay` (`Scenes/UserInfoDisplay.tscn:58 ReportBugButton`),
@@ -316,11 +417,48 @@ now backs it. **None are coded yet.** IDs (`S12-n`) are for cross-referencing fr
   without user metadata. Only the *entry point* needs work, not the pipeline.
   **Suggested shape:** promote the button to a small always-on-top `CanvasLayer` above the tutorial
   overlay (and add it to `LoginScreen`), with `PROCESS_MODE_ALWAYS` on both the button and the window.
+  **✅ Implemented 2026-07-31** — new `Scripts/UI/global_feedback_overlay.gd` (`GlobalFeedbackOverlay`),
+  a `CanvasLayer` at **`layer = 200`** with `PROCESS_MODE_ALWAYS`, owning a small bottom-left "Feedback"
+  button and the single shared `BugReportWindow`. One node answers all four blockers:
+  - **(1) Login** — solved *without* touching `login_screen.gd`, contrary to the suggested shape. The
+    overlay is owned by **`GameScreenManager`** (`_ensure_feedback_overlay()`, called immediately after
+    it sets `get_tree().paused = true`), not by `MainScreen` — which is the whole problem, since
+    MainScreen is `visible = false` **and** `PROCESS_MODE_DISABLED` for the entire login. A global
+    overlay covers the login screen for free, so no second button is needed there.
+  - **(2) Paused tree** — `PROCESS_MODE_ALWAYS` on the overlay, the button, **and** the lazily-created
+    `BugReportWindow`. The old window took the default `PROCESS_MODE_INHERIT`, which is exactly why it
+    would have opened frozen.
+  - **(3) Tutorial** — `layer = 200` beats `ResponsiveModalPanel`'s `100` and the link popups' `101`, and
+    the tutorial overlay is parented into MainScreen's onboarding layer (a plain `Control`), so it draws
+    on canvas layer **0**. Godot delivers GUI input to CanvasLayers in **decreasing layer order**, so this
+    button is hit-tested *before* the tutorial's `MOUSE_FILTER_STOP` shields — no hole needs punching in
+    `tutorial_overlay.gd`, which is therefore untouched.
+  - **(4) Modal/error states** — same mechanism as (3).
+  - **The top-bar button still works and is unchanged visually.** `user_info_display._on_bug_report_pressed()`
+    now **delegates** to the overlay via `GameScreenManager.get_feedback_overlay()`, so both entry points
+    drive **one** window instead of two independently-owned ones. Its original local path is retained as a
+    fallback (with a `push_warning`) for the case where this display is hosted outside `GameScreenManager`
+    — reporting a bug must never itself fail.
+  - The floating button hides itself while the report window is open, since layer 200 would otherwise
+    float it over the very dialog it opened.
+  ⚠️ **What is NOT verified.** Headless proves it constructs with zero script errors and that all touched
+  files compile (probe + editor pass). It cannot prove **placement or hit-testing**. Specifically unproven:
+  that the bottom-left position clears the mobile bottom nav bar and the map's gear tab at every
+  orientation; that `get_logical_safe_margins()` is non-zero by the time `_reposition()` first runs (it
+  returns **zero margins until the scale settles** — the S12-7 hardening — so a first-frame call gets no
+  inset, which is safe but unpadded); and that input genuinely reaches the button through a tutorial
+  shield. **Run the S12-5 recipe below before closing.**
+  ⚠️ **Redundant entry point on the main screen** — there are now two Feedback affordances there (top bar
+  + floating). Deliberate, to avoid changing the familiar top bar unprompted. If that reads as clutter,
+  the cheap follow-up is hiding `%ReportBugButton` and letting the floating one be the sole entry point.
+  `Scripts/UI/global_feedback_overlay.gd` (new), `Scripts/UI/game_screen_manager.gd`,
   `Scripts/UI/user_info_display.gd`, `Scripts/UI/bug_report_window.gd`, `Scripts/UI/login_screen.gd`,
-  `Scripts/UI/game_screen_manager.gd`, `Scripts/UI/tutorial_overlay.gd`.
+  `Scripts/UI/tutorial_overlay.gd`.
   (Docs: [BugReporting.md](04_Technical/BugReporting.md) — written 2026-07-28 for this item.)
 
-- [ ] **S12-6 · Easy enter/exit fullscreen on PC** *(P2)* — there is **no keyboard shortcut**. Confirmed:
+- [x] **S12-6 · Easy enter/exit fullscreen on PC** *(P2 — ✅ CODE-COMPLETE 2026-07-31, shortcut matching
+  unit-tested headless (11/11); ⚠️ **the actual mode switch + re-layout is NOT verified on a real
+  window** — see caveats)* — there was **no keyboard shortcut**. Confirmed:
   `project.godot` has **no `[input]` section at all**, so no custom action exists, and a repo-wide search
   finds no `KEY_F11` / `KEY_ESCAPE` handler. The only control is the `FullscreenCheck` checkbox in the
   settings menu (`settings_menu.gd:4, 247, 258`), which writes `display.fullscreen` and lands in
@@ -341,6 +479,34 @@ now backs it. **None are coded yet.** IDs (`S12-n`) are for cross-referencing fr
   handled once at a global level, which flips `display.fullscreen` via `SettingsManager.set_and_save()`
   so persistence and `reapply_scale()` come for free. `project.godot`,
   `Scripts/System/settings_manager.gd`, `Scripts/Menus/settings_menu.gd`.
+  **✅ Implemented 2026-07-31**, with one deliberate deviation from the suggested shape:
+  - **No `[input]` action; `project.godot` is untouched.** `_unhandled_key_input()` on
+    `SettingsManager` matches the keys directly. Hand-authored `InputEventKey` resource literals in
+    `project.godot` are fragile, and the binding set is platform-conditional. The trade-off is that the
+    shortcut does **not** appear in the editor's Input Map panel — recorded here so it is findable.
+  - **Handled on `SettingsManager`, not `main_screen.gd`**, because that node is
+    `PROCESS_MODE_DISABLED` during login; this autoload already owns `display.fullscreen` and its side
+    effect. It needed **`process_mode = PROCESS_MODE_ALWAYS`** or the login-time pause would have gated
+    its input callback (same trap as S12-5 blocker 2). Safe — it has no `_process`/`_physics_process`.
+  - **Routes through `set_and_save()`** as the entry required, so persistence and the deferred
+    `reapply_scale()` are inherited rather than reimplemented. `DisplayServer` is never touched here.
+  - **Bindings:** `F11` (all platforms), `Alt+Enter` / `Alt+KP_Enter` (Windows/Linux), `Cmd+Ctrl+F`
+    (macOS). Exclusive fullscreen is retained per the 2026-07-29 answer.
+  - **The checkbox now tracks the shortcut live.** `settings_menu.gd` subscribes to
+    `SettingsManager.setting_changed` and updates via `set_pressed_no_signal()` (so the
+    `toggled` → `set_and_save` path cannot re-enter). Without this, S13-2's fix would only have
+    resynced on *reopen*, leaving the checkbox stale while the menu sat open.
+  **✅ Verified headless — 11/11** on the matching logic, including the four that must fire and, more
+  importantly, the six that must **not**: plain `Enter`, plain `F`, `F10`, `Shift+Enter`, and both
+  `Cmd+F` and `Ctrl+F` alone (each is *Find* — only the combination is the toggle). Plus a round-trip
+  asserting `toggle_fullscreen()` flips and restores the stored value.
+  ⚠️ **NOT verified: the actual window-mode switch and the re-layout after it.** `_apply_runtime_side_effect()`
+  early-returns on headless (`settings_manager.gd:69-70`), so the `DisplayServer` call and the
+  `reapply_scale()` that follows it were never exercised — and that re-layout is precisely the failure
+  mode the entry warns about. **Also still unverified: whether the existing `FullscreenCheck` checkbox
+  works**, which the entry asks to confirm *before* trusting the shortcut. Its wiring reads correctly and
+  S13-2 removed the stale-display explanation for "a click that appears to do nothing", but that is
+  reasoning, not a test. Both need the S12-6 recipe below on a real window.
   (Docs: [UserSettings.md § Display & fullscreen](04_Technical/UserSettings.md).)
 
 - [ ] **S12-3 · Offer "connect an existing account" at the start of the tutorial (Steam)** *(P2)* — a new
@@ -404,8 +570,9 @@ IDs are `S13-n`.
 
 ## Performance
 
-- [ ] **S13-1 · Fullscreen lag while stuck pre-login / in the background-art limbo** *(P1 — **macOS**,
-  confirmed 2026-07-29: severe enough to stutter unrelated video playback on the same machine)* — reported
+- [x] **S13-1 · Fullscreen lag while stuck pre-login / in the background-art limbo** *(P1 — ✅ CODE-COMPLETE
+  2026-07-31, compile-checked; ⚠️ **the fullscreen-vs-windowed FPS measurement was NOT taken** — see below;
+  **macOS**, confirmed 2026-07-29: severe enough to stutter unrelated video playback on the same machine)* — reported
   as: in fullscreen, before login completes (or in the "only the background art" state), the machine lags
   badly. **The macOS confirmation reorders the suspects** — S12-7's blank screen is Windows-only and
   S12-8's request loop burns network, not GPU, so a symptom that degrades *other applications'* rendering
@@ -435,12 +602,34 @@ IDs are `S13-n`.
   is the single change most likely to stop the machine-wide stutter.
   **Measure first (macOS, fullscreen):** compare fullscreen vs. windowed FPS on the login screen. If the
   gap tracks window area, it is the viewport and the size cap alone fixes it.
+  **✅ Implemented 2026-07-31** — all three GPU-side changes to `_setup_map_background()`, targeting
+  contributor (1), which the macOS "stutters other applications" symptom pointed at:
+  - **`UPDATE_ALWAYS` → `UPDATE_WHEN_VISIBLE`** (`:697`), and `set_loading_mode(true, …)` now sets
+    **`UPDATE_DISABLED`** outright (restoring `UPDATE_WHEN_VISIBLE` on `false`). This is the part that
+    addresses the *limbo* case specifically: the entry's own diagnosis is that the screen is never
+    `queue_free()`d when `initial_data_ready` never arrives, so tearing down on that signal was never
+    going to help. The backdrop now stops rendering the moment the screen goes into loading state.
+  - **MSAA removed** (was `MSAA_2X`) — a full-screen-sized multisample buffer bought nothing on a
+    backdrop already modulated to 26 % alpha at `:691`.
+  - **Render resolution capped** — new `_compute_bg_viewport_size()` renders at `_BG_RENDER_SCALE = 0.5`
+    of the window (floor `480×270`) and lets the existing `STRETCH_KEEP_ASPECT_COVERED` upscale it, so
+    cost no longer scales with full window area. Applied at both creation and `_on_viewport_size_changed()`.
+  ⚠️ **`Engine.max_fps` was deliberately NOT capped.** The entry floats it as "the single change most
+  likely to stop the machine-wide stutter", but it is a **global** engine setting; setting it from the
+  login screen means owning a restore on every exit path from a screen this entry says can be left in
+  limbo. Worth doing if the above proves insufficient — as a deliberate decision, not a silent omission.
+  ⚠️ **Unverified: the actual FPS gap.** The prescribed measurement (fullscreen vs. windowed FPS on the
+  login screen, to confirm the gap tracks window area) **was not taken** — it needs a live macOS
+  fullscreen session, which the headless compile-check cannot provide. The fix is reasoned from the
+  entry's verified mechanism, not measured. **Take that measurement before closing**, and note that
+  contributors (2) (the S12-8 request loop) and (3) remain untouched, so a residual CPU-side stutter
+  would point there rather than at this change being wrong.
   `Scripts/UI/login_screen.gd`, `Scripts/UI/game_screen_manager.gd`.
 
 ## Input / settings
 
-- [ ] **S13-2 · Settings menu shows stale control values after a logout/login — pan toggle "flips on its
-  own"** *(P2 — root cause found)* — reported as the panning setting changing periodically, "the setting
+- [x] **S13-2 · Settings menu shows stale control values after a logout/login — pan toggle "flips on its
+  own"** *(P2 — ✅ CODE-COMPLETE 2026-07-31, compile-checked, pending device test)* — reported as the panning setting changing periodically, "the setting
   isn't incorrect, it just flips between logging in and such." Reporter confirmed 2026-07-29 that the
   **displayed value** is what moves, which rules out the input-path sign theory and points at the menu.
   **Verified root cause — the settings panel is built once and never re-synced:**
@@ -470,6 +659,18 @@ IDs are `S13-n`.
     wheel/magnify zoom pair at `:606-616` and `:626-632`), and a macOS trackpad `InputEventPanGesture`
     does **not** carry the same sign convention as `InputEventMouseMotion.relative`. If direction ever
     differs between trackpad and mouse with the checkbox unchanged, this is why.
+  **✅ Implemented 2026-07-31** — `settings_menu.gd` connects its own `visibility_changed` in `_ready()`
+  to `_on_visibility_changed()`, which re-runs `_init_values()` whenever the panel becomes visible. Chosen
+  over patching `_on_settings_button_pressed()` so every caller benefits, per the entry's own preference.
+  - ⚠️ **`NOTIFICATION_VISIBILITY_CHANGED` does not exist here** — this entry (and the obvious instinct)
+    suggested it, but `SettingsMenu` extends **`CanvasLayer`**, and that constant belongs to `CanvasItem`.
+    Using it is a hard parse error (`Identifier "NOTIFICATION_VISIBILITY_CHANGED" not declared in the
+    current scope`), caught by the load probe. `CanvasLayer` exposes a `visibility_changed` **signal**
+    instead, which is what the fix uses.
+  - **The dead `1.4` fallback is reconciled** (was flagged under S12-4's cleanup note): `_init_values()`
+    read `SM.get_value("ui.scale", 1.4)` while `settings_manager.gd:11` defaults to `1.0`. Now `1.0`.
+  - **Not done in this pass:** the Reset-Defaults scoping question and the four-pan-path sign convention
+    normalisation. Both are listed above and remain open; neither is implicated in the reported symptom.
   `Scripts/UI/user_info_display.gd`, `Scripts/Menus/settings_menu.gd`, `Scripts/UI/main_screen.gd`.
   (Related: **TD-03** — `SettingsMenu` living outside `MenuManager` is what makes this lifecycle possible.)
 
@@ -1084,8 +1285,8 @@ IDs are `S13-n`.
     exposed was not the network failure but that every one of those lines printed as
     `Unhandled API Error (add to ErrorTranslator)`.
 
-- [ ] **S13-12 · `HTTPRequest` result codes are missing from `ErrorTranslator`** *(P2 — split out of
-  S13-8, 2026-07-29; independent of whether the Android device was offline)* — a network-level failure
+- [x] **S13-12 · `HTTPRequest` result codes are missing from `ErrorTranslator`** *(P2 — ✅ CODE-COMPLETE
+  2026-07-31, compile-checked; split out of S13-8, 2026-07-29)* — a network-level failure
   currently surfaces to the player as raw internals. Every line in the Android log read
   `Unhandled API Error (add to ErrorTranslator): … Request failed with HTTPRequest result code: 3`, and
   the bug-report path produced `Bug report submit failed (HTTP 0): Unknown error.` The result codes are a
@@ -1094,6 +1295,25 @@ IDs are `S13-n`.
   connection", and `RESULT_TLS_HANDSHAKE_ERROR` deserves its own message. This is the highest
   value-per-line item in the sprint: it turns every future network outage — on any platform — from an
   unhandled-error log line into a sentence the player understands.
+  **✅ Implemented 2026-07-31.** Four new `ERROR_MAP` entries matching the substring `api_calls.gd:2542`
+  already embeds (`"...Request failed with HTTPRequest result code: %s. URL: ..."`).
+  - ⚠️ **The enum is not numbered the way it looks.** `RESULT_CHUNKED_BODY_SIZE_MISMATCH = 1` sits between
+    `RESULT_SUCCESS` and `RESULT_CANT_CONNECT`, shifting everything after it. Verified against Godot 4.6:
+    `CANT_CONNECT=2`, `CANT_RESOLVE=3`, `CONNECTION_ERROR=4`, `TLS_HANDSHAKE_ERROR=5`, `TIMEOUT=10`.
+    2/3/4 collapse to *"Can't reach the server — check your internet connection."*; 10 gets its own
+    timeout message; **5 was already mapped and its message was already right** — by luck, not by
+    derivation (see the corrected comment below).
+  - **Keys carry a trailing period** (`"result code: 2."`) because `translate()` matches by substring:
+    without it, `"result code: 1"` would also match `10`. Code 5's pre-existing key is left un-suffixed to
+    avoid perturbing a mapping already in the field.
+  - **Corrected a wrong enum comment** at `api_calls.gd:2357`: `result == 5 # 5 = RESULT_SSL_HANDSHAKE_ERROR`
+    — that name does not exist in Godot 4.x (it is `RESULT_TLS_HANDSHAKE_ERROR`) though `5` happened to be
+    the right integer. Now written as the named constant, so the transient-retry set is legible and can't
+    drift from the enum.
+  - **The bug-report path reported nothing usable.** `api_calls.gd:2519-2520` produced
+    `Bug report submit failed (HTTP 0): Unknown error.` — a network failure has no response body to parse,
+    so `_get_error_message()` had nothing to work with. It now substitutes the result-code string when
+    `response_code == 0`, which routes it through the same four new mappings.
   `Scripts/System/error_translator.gd`, `Scripts/System/api_calls.gd`.
   (Docs: [ErrorSystem.md](04_Technical/ErrorSystem.md), [Diagnostics.md](04_Technical/Diagnostics.md).)
 
@@ -1197,10 +1417,13 @@ reported as Windows-specific, so the Mac editor is a smoke test only, not the ga
   with a menu open, **(d)** with an error modal up. In each case the window opens, is **interactive**
   (not frozen by `get_tree().paused`), and submits. The pre-login report should arrive with no user
   metadata but must not error.
-- [ ] **S12-6 · Fullscreen shortcut** *(Windows + Mac)* — press the shortcut to enter fullscreen and again
-  to leave. The UI must re-lay-out correctly both ways (no offset — this is the failure mode
+- [ ] **S12-6 · Fullscreen shortcut** *(Windows + Mac)* — **the bindings are `F11` (both platforms),
+  `Alt+Enter` on Windows/Linux, and `Cmd+Ctrl+F` on macOS.** Press to enter fullscreen and again to
+  leave. The UI must re-lay-out correctly both ways (no offset — this is the failure mode
   `reapply_scale()` exists to prevent), the settings-menu checkbox must reflect the new state, and the
-  state must survive a restart.
+  state must survive a restart. **Also check the negatives:** plain `Enter` in a text field must not
+  toggle, and `Cmd+F` / `Ctrl+F` alone must not either (both are Find). Matching logic is unit-tested
+  11/11 headless; what is **untested** is the `DisplayServer` switch and the `reapply_scale()` after it.
 - [ ] **S12-7 · Blank screen on first Steam launch** *(EXPORTED STEAM BUILD ONLY — the editor cannot
   prove this)* — export, launch via Steam with a Steam account **not** linked to a DF account. The top
   bar and map must render normally. Then check `user://logs/godot*.log`: `[RESIZE] map_rect` must have a
@@ -1208,6 +1431,57 @@ reported as Windows-specific, so the Mac editor is a smoke test only, not the ga
   block**. *Old:* `map_rect=[P: (0.0, 1610.136), S: (2133.0, 0.0)]` — zero height, pushed below a
   1338-tall viewport, leaving only the top bar's Oori tile on screen. If it still fails, the new
   `[MAP-RECT-DIAG]` dump names the control claiming the height — paste it into the issue.
+
+**2026-07-31 batch — verification recipes** *(written with the code; none of these have been run)*
+
+Ordered by risk. The first four are a ~5-minute desktop pass and cover the changes most likely to be
+wrong; the rest need specific setup and can wait.
+
+- [ ] **① Feedback button placement + reachability (S12-5)** *(desktop first, then portrait + landscape)* —
+  **highest blast radius: this button now renders on *every* screen in the game**, so a placement
+  mistake is visible everywhere. Launch and look at the login screen **before signing in**: a small
+  "Feedback" button sits bottom-left. Tap it — the window must **open and be interactive** (typing works;
+  it is not frozen by `get_tree().paused`) and submit without error (it arrives with no user metadata,
+  which is expected). Then in-game check it does **not** cover the mobile bottom nav bar, the map's gear
+  tab, or a menu's own controls, in **both orientations**. Then mid-tutorial on a step with a highlight,
+  and again with a menu open and with an error modal up — it must stay clickable in all of them.
+  *Old:* no feedback affordance existed at login, and the window would have opened frozen.
+  **Known-and-accepted:** two Feedback affordances now exist on the main screen (top bar + floating).
+  Say so if that reads as clutter — hiding `%ReportBugButton` is a one-line follow-up.
+- [ ] **② Fullscreen shortcut (S12-6)** — see the S12-6 recipe directly above; run it now that the
+  shortcut exists. **Watch specifically for the UI laying out offset after the switch** — that is the
+  untested half. Confirm the settings checkbox flips **while the menu is open** (S12-6 wires
+  `setting_changed` live), not only after a reopen.
+- [ ] **③ Pinned map label → preview arrow, on DESKTOP** *(the originally-reported bug)* — click a
+  settlement label on the map to **pin** it (a `›` chevron appears), then **click it again**. It must
+  **open the settlement preview**. *Old:* the second click un-pinned it and the label simply vanished,
+  and no mouse path could ever reach the preview. Re-check on touch that pinning still behaves as before
+  (this changed the mouse branch only, but both now share one rule).
+- [ ] **④ Settings menu shows live values (S13-2)** — open Settings, note **Invert Pan**; close it;
+  **log out and back in** (or change the setting elsewhere); reopen Settings. The checkbox must match the
+  **stored** value, not the one captured when the menu was first built. Then toggle it once and confirm
+  panning direction actually changes and **survives a restart**. *Old:* the stale checkbox wrote its own
+  wrong value back on the next click — the "it flipped on its own" report.
+  `_debug_settings_menu` is `true`, so `[SettingsMenu] _init_values: invert_pan loaded as …` prints on
+  **every** open — use it as the proof, then consider flipping the flag off.
+- [ ] **⑤ Onboarding loop (S12-8)** *(needs a **0-convoy account** — will not reproduce otherwise)* —
+  sign in and read `user://logs/`. **Pass:** `[Onboarding] _show_new_convoy_dialog invoked.` appears
+  **once**, followed by any number of `already open — ignoring repeat.` lines. *Old:* hundreds of full
+  invocations, each costing a `/user/get`. Confirm the dialog still opens normally, and that cancelling
+  and re-triggering it **opens again** (the guard must not latch).
+- [ ] **⑥ Pre-login lag (S13-1)** *(macOS, fullscreen, same 0-convoy account)* — **take the measurement
+  the entry asks for and never got:** compare login-screen FPS fullscreen vs. windowed. The original
+  symptom was severe enough to stutter unrelated video playback, so check that too. Because ⑤ landed in
+  the same session, attribute carefully — remaining CPU-side stutter points at the request loop,
+  remaining GPU-side at the viewport.
+- [ ] **⑦ Network error messages (S13-12)** *(airplane mode / Wi-Fi off)* — with the app running, kill
+  connectivity and trigger any request. The player must see **"Can't reach the server — check your
+  internet connection."**, not `Unhandled API Error (add to ErrorTranslator)`. Then submit a bug report
+  while offline: it must report the same, not `Bug report submit failed (HTTP 0): Unknown error.`
+- [ ] **⑧ Convoy list touch targets (S12-8, second defect)** *(mobile)* — open the convoy list, close and
+  reopen it **several times**. Row touch-target sizing must stay correct on every open. *Old:* the
+  `ResponsiveListAdapter` was destroyed on the first populate and never recreated, so sizing silently
+  stopped being applied for the rest of the session.
 
 ---
 

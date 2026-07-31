@@ -4,14 +4,24 @@ tags:
   - layer/autoload
   - kind/deep-dive
   - concept/errors
-  - status/current
+  - status/drifting
 aliases:
   - "Bug Reporting & Feedback"
 created: 2026-07-28
-updated: 2026-07-28
+updated: 2026-07-31
 verified_against_code: 2026-07-28
-status: current
+status: drifting
 ---
+
+> [!WARNING]
+> **Drifting as of 2026-07-31 — the four availability blockers below have been FIXED (S12-5).**
+> This document still describes the pre-fix state: it says the only entry point is
+> `UserInfoDisplay.ReportBugButton`, and lists the login / paused-tree / tutorial / modal gaps as open.
+> Since then, `Scripts/UI/global_feedback_overlay.gd` (`GlobalFeedbackOverlay`) was added — a
+> `CanvasLayer` at `layer = 200` with `PROCESS_MODE_ALWAYS`, owned by `GameScreenManager`, providing a
+> floating Feedback button and the single shared `BugReportWindow`. The top-bar button now delegates to
+> it. **The "transport is already global" analysis below remains accurate and is still the reason a
+> pre-login report works.** Re-verify and clear this banner when the doc is next updated.
 
 # Bug Reporting & Feedback
 

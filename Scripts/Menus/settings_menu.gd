@@ -28,11 +28,27 @@ func _ready():
 	_init_values()
 	_wire_events()
 	_add_version_label()
+	visibility_changed.connect(_on_visibility_changed)
+	# S12-6: the fullscreen shortcut can fire while this menu is open. S13-2's re-read only runs on
+	# show, so without this the checkbox would sit stale until the menu was closed and reopened.
+	if SM.has_signal("setting_changed"):
+		SM.setting_changed.connect(_on_external_setting_changed)
 	
 	_update_layout()
 	get_viewport().size_changed.connect(_update_layout)
 
 	_apply_oori_background()
+
+func _on_visibility_changed() -> void:
+	if visible and is_instance_valid(SM):
+		_init_values()
+
+
+## Reflects a setting changed from outside this menu (currently the S12-6 fullscreen shortcut).
+## Uses set_pressed_no_signal so the write-back through `toggled` -> `set_and_save` can't re-enter.
+func _on_external_setting_changed(key: String, value: Variant) -> void:
+	if key == "display.fullscreen" and is_instance_valid(c_fullscreen):
+		c_fullscreen.set_pressed_no_signal(bool(value))
 
 func _apply_oori_background() -> void:
 	var panel = %Panel
@@ -242,7 +258,7 @@ func _init_values():
 	if is_instance_valid(sm_scale) and sm_scale.has_method("get_max_safe_scale"):
 		s_ui_scale.max_value = sm_scale.get_max_safe_scale()
 	
-	s_ui_scale.value = float(SM.get_value("ui.scale", 1.4))
+	s_ui_scale.value = float(SM.get_value("ui.scale", 1.0))
 
 	c_fullscreen.button_pressed = bool(SM.get_value("display.fullscreen", false))
 	c_invert_pan.button_pressed = bool(SM.get_value("controls.invert_pan", false))

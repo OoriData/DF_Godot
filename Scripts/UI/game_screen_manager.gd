@@ -6,6 +6,7 @@ class_name GameScreenManager
 @onready var main_screen: Control = $MainScreen
 
 var current_user_id: String = ""
+var _feedback_overlay: Node = null
 
 const LOGIN_SCREEN_SCENE_PATH := "res://Scenes/LoginScreen.tscn"
 
@@ -27,7 +28,32 @@ func _ready():
 	login_screen.visible = true
 	login_screen.process_mode = Node.PROCESS_MODE_ALWAYS # Allow login screen to work while paused
 	get_tree().paused = true # Pause the main game tree
+
+	# S12-5: the Feedback entry point must survive the pause set on the line above, and the login
+	# screen it is now reachable from. Owned here rather than by MainScreen because MainScreen is
+	# hidden and PROCESS_MODE_DISABLED for the whole of login.
+	_ensure_feedback_overlay()
+
 	print("GameScreenManager: Ready. Showing Login Screen.")
+
+
+func _ensure_feedback_overlay() -> void:
+	if is_instance_valid(_feedback_overlay):
+		return
+	var script: Script = load("res://Scripts/UI/global_feedback_overlay.gd")
+	if script == null:
+		push_error("GameScreenManager: failed to load global_feedback_overlay.gd")
+		return
+	_feedback_overlay = script.new()
+	_feedback_overlay.name = "GlobalFeedbackOverlay"
+	add_child(_feedback_overlay)
+
+
+## Shared entry point so the top bar's own Feedback button opens this one window rather than
+## building a second, pause-frozen copy.
+func get_feedback_overlay() -> Node:
+	_ensure_feedback_overlay()
+	return _feedback_overlay
 
 
 func _on_login_successful(user_id: String) -> void:

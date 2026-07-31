@@ -8,7 +8,7 @@ tags:
 aliases:
   - "UI Element Audit"
 created: 2026-05-21
-updated: 2026-07-29
+updated: 2026-07-31
 verified_against_code: 2026-07-28
 status: current
 ---
@@ -409,7 +409,7 @@ SettlementOverviewMenu (Control, MenuBase)
 | **Script** | `Scripts/Menus/warehouse_menu.gd` |
 | **Extends** | `MenuBase` |
 | **Menu Type Key** | `warehouse_submenu` |
-| **Opens from** | Settlement menu → "Warehouse" button |
+| **Opens from** | Settlement Overview Hub → **Warehouse card** (the `ConvoySettlementMenu` "Warehouse" button was removed in Sprint 5) |
 | **Full Doc** | [WarehouseMenu.md](WarehouseMenu.md) |
 
 ### States

@@ -28,8 +28,49 @@ var data := {
 }
 
 func _ready() -> void:
+	# S12-6: the fullscreen shortcut must work on the login screen too, and GameScreenManager holds
+	# `get_tree().paused = true` for the whole of login — which would otherwise gate _unhandled_key_input
+	# on this autoload. Safe to set: this node has no _process/_physics_process.
+	process_mode = Node.PROCESS_MODE_ALWAYS
 	load_settings()
 	_apply_boot_settings()
+
+
+## S12-6 — global fullscreen shortcut.
+##
+## Handled here rather than in `main_screen.gd` because that node is `PROCESS_MODE_DISABLED` during
+## login, and this autoload already owns `display.fullscreen` and its runtime side effect.
+##
+## Deliberately raw key matching rather than an InputMap action: `project.godot` ships no `[input]`
+## section, and hand-authored InputEventKey resource literals there are fragile and invisible to
+## platform conditionals. Everything routes through `set_and_save()` so persistence **and** the
+## deferred `reapply_scale()` in `_apply_runtime_side_effect()` come for free — calling
+## `DisplayServer` directly here would leave the UI laid out at the previous mode's scale.
+func _unhandled_key_input(event: InputEvent) -> void:
+	if not (event is InputEventKey):
+		return
+	var key_event := event as InputEventKey
+	if not key_event.pressed or key_event.echo:
+		return
+	if not _is_fullscreen_shortcut(key_event):
+		return
+	toggle_fullscreen()
+	get_viewport().set_input_as_handled()
+
+
+func _is_fullscreen_shortcut(event: InputEventKey) -> bool:
+	match event.keycode:
+		KEY_F11:
+			return true
+		KEY_ENTER, KEY_KP_ENTER:
+			return event.alt_pressed # Windows/Linux convention
+		KEY_F:
+			return event.meta_pressed and event.ctrl_pressed # macOS convention (Cmd+Ctrl+F)
+	return false
+
+
+func toggle_fullscreen() -> void:
+	set_and_save("display.fullscreen", not bool(get_value("display.fullscreen", false)))
 
 func get_value(key: String, default: Variant = null) -> Variant:
 	return data.get(key, default)

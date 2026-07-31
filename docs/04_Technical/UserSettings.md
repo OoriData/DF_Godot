@@ -9,8 +9,8 @@ tags:
 aliases:
   - "User Settings & Preferences"
 created: 2026-05-19
-updated: 2026-07-29
-verified_against_code: 2026-07-28
+updated: 2026-07-31
+verified_against_code: 2026-07-31
 status: current
 ---
 
@@ -42,18 +42,31 @@ Audited against `SettingsManager.data` on 2026-07-28. **`data` is the authoritat
 | `map.*` (6 keys) | `false` | mirrored by `MapSettingsService` / the overlay options panel |
 
 > [!NOTE]
-> `settings_menu.gd:247` reads `SM.get_value("ui.scale", 1.4)`. That `1.4` is **dead** — the key always
-> exists in `data`, so the effective default is `1.0`. Reconciling it is tracked in
-> [TODO.md § Sprint 12](../TODO.md).
+> **Resolved 2026-07-31.** `settings_menu.gd` previously read `SM.get_value("ui.scale", 1.4)`; that `1.4`
+> was **dead** (the key always exists in `data`, so the effective default was always `1.0`) and is now
+> written as `1.0`. Reconciled alongside **S13-2**.
 
 ## Display & fullscreen
 
-`display.fullscreen` is the **only** fullscreen control in the project. Verified 2026-07-28:
+`display.fullscreen` is the **only** fullscreen *setting* in the project — every control below writes to
+it rather than touching `DisplayServer`. Verified 2026-07-28, **updated 2026-07-31 for S12-6**:
 
-- **There is no keyboard shortcut.** `project.godot` has no `[input]` section at all, so no custom action
-  exists, and no `KEY_F11` / `KEY_ESCAPE` handler exists anywhere in `Scripts/`. The single entry point
-  is the `FullscreenCheck` checkbox in the settings menu (`settings_menu.gd:4`, `:247`, `:258`).
-  Adding a shortcut is tracked as **TODO Sprint 12 · S12-6**.
+- **Two entry points, one setting:**
+  - The `FullscreenCheck` checkbox in the settings menu (`settings_menu.gd:4`, `:247`, `:258`).
+  - **A keyboard shortcut (added 2026-07-31, S12-6):** `F11` on all platforms, `Alt+Enter` /
+    `Alt+KP_Enter` on Windows/Linux, and `Cmd+Ctrl+F` on macOS. Handled by
+    `SettingsManager._unhandled_key_input()` → `_is_fullscreen_shortcut()` → `toggle_fullscreen()`.
+- **The shortcut is *not* an InputMap action, and `project.godot` still has no `[input]` section.** The
+  keys are matched directly on the `InputEventKey`. This is deliberate — hand-authored `InputEventKey`
+  literals in `project.godot` are fragile and the binding set is platform-conditional — but it does mean
+  **the shortcut will not appear in the editor's Input Map panel**, so grep `_is_fullscreen_shortcut`
+  rather than looking there.
+- **`SettingsManager` runs at `PROCESS_MODE_ALWAYS`** so the shortcut still works pre-login, where
+  `GameScreenManager` holds `get_tree().paused = true`. It is handled on that autoload rather than
+  `main_screen.gd` because MainScreen is `PROCESS_MODE_DISABLED` for the whole of login.
+- **The checkbox tracks external changes.** `settings_menu.gd` subscribes to
+  `SettingsManager.setting_changed` and applies them with `set_pressed_no_signal()`, so a shortcut press
+  while the menu is open updates the checkbox without re-entering `toggled` → `set_and_save`.
 - The mode used is `DisplayServer.WINDOW_MODE_FULLSCREEN` (**exclusive**), not the borderless variant.
 - **Anything that changes the window mode must go through this setting, not `DisplayServer` directly.**
   The logical UI scale is derived from window size (`factor = window_width / target_width`), so
