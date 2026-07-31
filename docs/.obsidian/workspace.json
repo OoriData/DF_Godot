@@ -6,7 +6,7 @@
       {
         "id": "16f98d6698797a56",
         "type": "tabs",
-        "dimension": 50.695825049701796,
+        "dimension": 39.92537313432835,
         "children": [
           {
             "id": "1ae821d75f551279",
@@ -23,7 +23,7 @@
       {
         "id": "c97ffac0088dc79b",
         "type": "tabs",
-        "dimension": 49.30417495029821,
+        "dimension": 60.07462686567165,
         "children": [
           {
             "id": "ee883a010a050212",
@@ -65,8 +65,7 @@
               "title": "Release Notes 1.13.4"
             }
           }
-        ],
-        "currentTab": 2
+        ]
       }
     ],
     "direction": "vertical"
@@ -211,11 +210,12 @@
       "bases:Create new base": false
     }
   },
-  "active": "2d2e9bbb761c9c79",
+  "active": "ee883a010a050212",
   "lastOpenFiles": [
+    "04_Technical/GDScriptVerification.md",
+    "TODO.md",
     "claude.md",
     "DocumentationHome.md",
-    "TODO.md",
     "04_Technical/DebuggingVisualBugs.md",
     "04_Technical/DataBoundaries.md",
     "DocumentationAudit.md",
@@ -248,7 +248,6 @@
     "04_Technical/ErrorSystem.md",
     "04_Technical/Diagnostics.md",
     "04_Technical/Dependencies.md",
-    "04_Technical/DF_Lib.md",
     "Pasted image 20260521131852.png"
   ]
 }

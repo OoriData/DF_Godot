@@ -6,7 +6,7 @@ tags:
 aliases:
   - "TODO — Active Work"
 created: 2026-05-21
-updated: 2026-07-30
+updated: 2026-07-31
 status: unverified
 ---
 
@@ -520,8 +520,8 @@ IDs are `S13-n`.
 
 ## Vendor / trading
 
-- [x] **S13-5 · Vendor stock doesn't decrement *immediately* after a purchase** *(P2 — **CODED
-  2026-07-30, awaiting on-device verification**; downgraded
+- [x] **S13-5 · Vendor stock doesn't decrement *immediately* after a purchase** *(P2 — **DONE, VERIFIED
+  ON DEVICE 2026-07-30** by the reporter after the successive-purchase fix below; downgraded
   2026-07-29: reporter confirmed it corrects on leaving and re-entering the vendor, so this is a
   **responsiveness** bug, not data loss. "I just want it responsive.")* — bought 7 × Industrial Robotic
   Arms; the vendor's quantity did not go down until the panel was reopened. **That the reopen fixes it is
@@ -621,8 +621,9 @@ IDs are `S13-n`.
   `Scripts/Menus/VendorPanel/vendor_panel_refresh_controller.gd`,
   `Scripts/Menus/VendorPanel/vendor_panel_transaction_controller.gd`, `Scripts/Menus/vendor_trade_panel.gd`.
 
-- [ ] **S13-7 · "Max" over-buys because it models the convoy as one pooled container** *(P1 — design
-  settled 2026-07-29)* — reported as the purchase overflow not working: maxing out an item sometimes won't
+- [x] **S13-7 · "Max" over-buys because it models the convoy as one pooled container** *(P1 — **CODED
+  both sides 2026-07-30; backend deployed, client awaiting on-device verification**; design settled
+  2026-07-29)* — reported as the purchase overflow not working: maxing out an item sometimes won't
   split across the vehicles.
   **Division of responsibility (confirmed by the reporter):** the **backend already auto-fills vehicles**
   as much as they can hold. The client is not responsible for placing cargo — only for **predicting how
@@ -653,8 +654,59 @@ IDs are `S13-n`.
   reporter has asked for largest-first, which may mean changing the *server's* order too, not just
   matching it. Confirm the server's current fill order and align both to largest-free-first.
   Backend repo `~/Work/desolate_frontiers`.
+  **✅ Open question ANSWERED 2026-07-30 — the server had no fill order at all.** The player's "buy" is
+  `PATCH /vendor/cargo/buy` → `vendor_api.py:363` → **`Vendor.sell_cargo()`**
+  (`chassis/df_obj/vendor_cls.py:444-548`, note the inverted naming: the *vendor* sells). Its distribution
+  loop was a plain `for vehicle in convoy.vehicles`, and `Convoy.vehicles` (`convoy_cls.py:105-108`) is
+  just `[v for v in self._vehicles]` — **raw DB row order, never sorted**. So "match the server's order"
+  was not an option: there was no order to match. Two further findings that reshaped the fix:
+  - **Its admission check is pooled too** (`:478-481`, `convoy.total_free_space` /
+    `total_remaining_capacity`) — the *same* pooled arithmetic this entry faults the client for. The
+    client was not disagreeing with the server; both were wrong in the same way.
+  - **It never actually rejected the indivisible case — it overfilled.** Split out as **S13-16**.
+    This is why simulating the old server faithfully would have meant shipping a preview that advertised
+    the overfill as capacity.
+  **✅ Backend half implemented 2026-07-30** (`chassis/df_obj/vendor_cls.py:505-541`): the loop now runs
+  `sorted(convoy.vehicles, key=lambda v: v.free_space, reverse=True)` and allocates with a floor
+  (`vehicle.free_space // unit_volume`, `vehicle.remaining_capacity // unit_weight`) instead of
+  `max(1, int(estimated_quantity))`, so a vehicle is never handed a unit that does not fit. The
+  pre-existing post-loop `remaining_quantity > 0` check now does real work: the indivisible case raises
+  `Not enough space or weight capacity across all vehicles…` → HTTP 400, inside the endpoint's DB
+  transaction, so no money is deducted. Verified by executing the loop's **extracted source text**
+  against duck-typed vehicles (the backend's own import chain needs container-only deps and cannot be
+  imported on the dev Mac): 4×10 L free buying 2×15 L → cleanly rejected, zero overfill (previously
+  accepted, two vehicles driven negative); a 100 L vehicle listed *after* a 20 L one is still filled
+  first; ordinary single-vehicle buys unchanged. **Not yet run against the backend's own test suite or
+  deployed.**
+  **✅ Backend deployed 2026-07-30** by the reporter.
+  **✅ Client half implemented 2026-07-30**, once the deploy made a capacity-truthful preview correct:
+  - New `Scripts/Menus/VendorPanel/cargo_fill_planner.gd` (`CargoFillPlanner`) — `build_vehicle_spaces()`
+    reads per-vehicle room off `convoy_data.vehicle_details_list` using the same field precedence as the
+    per-vehicle capacity bars (`convoy_menu.gd:2862-2867`: prefer `total_cargo_volume` /
+    `total_cargo_weight`, fall back to the server's `free_space` / `remaining_capacity`), and `plan()`
+    walks vehicles **largest-free-volume first**, each taking
+    `min(floor(free_vol / unit_vol), floor(free_wt / unit_wt), still needed)` — a line-for-line mirror of
+    the deployed allocator. Free space is clamped at 0 so a vehicle left over-filled by the old code
+    (**S13-16**) contributes nothing instead of a negative.
+  - `on_max_button_pressed()` now treats stock / money / bulk-resource headroom as **ceilings** and runs
+    the plan to get what actually fits. Logged as
+    `[VendorPanel][DIAG] max plan: ceiling=N fits=M across K vehicle(s) -> [...]`.
+  - **`max(1, max_quantity)` is gone.** When nothing fits, Max reports **0** and toasts the reason
+    (*"No single vehicle has room for one of these."*, or the distinct stock/money/resource cases);
+    Buy disables itself at 0 via the S13-15 change rather than offering a quantity the server refuses.
+  - **Bulk resources keep the pooled path** — a litre of fuel *is* divisible across containers, so
+    per-vehicle packing would be wrong for them.
+  - The silent `0.0` fallbacks for `unit_weight` / `unit_volume` no longer disappear: the constraint is
+    still skipped, but `explain_unknowns()` logs `max plan: unit volume unknown — that constraint was
+    NOT applied`. A convoy with no `vehicle_details_list` logs `max plan SKIPPED` and falls through on
+    the ceilings rather than claiming nothing fits.
+  Verified headless against the **same three scenarios the backend allocator was checked with**, plus
+  three client-specific ones (weight-bound, legacy over-filled vehicle, unknown unit volume) — six of six
+  agree, including the two that matter most: 4×10 L free with a 15 L item → **0**, and a large vehicle
+  listed *second* still filled first.
+  `Scripts/Menus/VendorPanel/cargo_fill_planner.gd` (new),
   `Scripts/Menus/VendorPanel/vendor_panel_transaction_controller.gd`,
-  `Scripts/Menus/VendorPanel/vendor_panel_convoy_stats_controller.gd`.
+  backend `chassis/df_obj/vendor_cls.py`.
 
 - [x] **S13-13 · The vendor panel is destroyed and rebuilt constantly — including mid-transaction, losing
   the result** *(P1 — **DONE, VERIFIED ON DEVICE 2026-07-30**; found 2026-07-29 in the
@@ -724,7 +776,7 @@ IDs are `S13-n`.
   and rotations, and **zero** further `_ready` lines. Was ten `_ready` lines in the same flow.
   `Scripts/Menus/convoy_settlement_menu.gd`, `Scripts/Menus/vendor_trade_panel.gd`.
 
-- [ ] **S13-14 · The settlement menu still resolves vendor panels by *node name*, not `vendor_id`**
+- [x] **S13-14 · The settlement menu still resolves vendor panels by *node name*, not `vendor_id`**
   *(P3 — NEW, noticed 2026-07-30 while implementing S13-13; deliberately left out of that change to keep
   its scope to lifecycle)* — `_create_vendor_tab()` stores the id as a node meta
   (`vendor_panel_instance.set_meta("vendor_id", …)`), but two consumers still round-trip through the
@@ -736,9 +788,17 @@ IDs are `S13-n`.
   Neither is hit by the single-vendor Dallas Depot flow that S13-13 was verified against, which is why it
   isn't urgent. **Shape:** read `panel.get_meta("vendor_id")` and add `_find_vendor_by_id()`; the meta is
   already populated and S13-13's `_mounted_vendor_ids()` now depends on it, so the two would agree.
+  **✅ Implemented 2026-07-30** — new `_find_vendor_by_id()` plus a `_vendor_data_for_panel(panel)` helper
+  that reads the `vendor_id` meta and falls back to `_find_vendor_by_name(panel.name)` only when the meta
+  is absent or the id is missing from the snapshot (logged as
+  `[VendorPanel][DIAG] vendor_id '…' not in snapshot — falling back to name '…'`). Both consumers —
+  `_refresh_active_vendor_panel()` and `_on_vendor_tab_changed()` — now go through it, so they agree with
+  `_mounted_vendor_ids()`. `_find_vendor_by_name()` is retained solely as that fallback.
+  Behaviour-identical in the single-vendor Dallas Depot flow (panel name == vendor name there), so this
+  cannot perturb the S13-5 retest.
   `Scripts/Menus/convoy_settlement_menu.gd`.
 
-- [ ] **S13-15 · Buying clears the selection, so buying the same item twice needs a reselect**
+- [x] **S13-15 · Buying clears the selection, so buying the same item twice needs a reselect**
   *(P3 — NEW, reported 2026-07-30 while verifying S13-6: "I just have to reselect the item if I want to
   buy more." Not a regression — this is **deliberate existing behavior**, so it needs a design call, not
   a bug fix)* — `show_transaction_feedback()` (`vendor_trade_panel.gd`) ends with
@@ -752,7 +812,261 @@ IDs are `S13-n`.
   failure" intent; (b) keep the selection and reset only the quantity to 1; (c) keep both and rely on the
   optimistic stock number (now correct after S13-5) to show the purchase landed. Worth deciding against
   the original "clear panel" request before changing it — someone asked for this.
-  `Scripts/Menus/vendor_trade_panel.gd` (`show_transaction_feedback`).
+  **✅ Decided and implemented 2026-07-30** — the reporter's call was a variant of (b): *"we probably
+  don't need to clear… after a failure don't change the quantity so the user can adjust if needed."*
+  So **selection is never cleared for cargo**, and the two paths that disagreed now agree:
+  - **Success** → selection kept, quantity reset to the widget's `min_value` (**0**, per the scene;
+    `quantity_widget.gd` exposes `min_value = 0.0` and the `.tscn` keeps it). Buying 5 more is one tap on
+    the quantity box, not a reselect.
+  - **Failure** → **nothing is touched at all**: selection *and* the typed quantity both survive, so the
+    player can adjust down and retry. This also covers the watchdog's error toasts
+    (`vendor_trade_panel.gd:1098`, `:1119`), which route through the same function.
+  - **Vehicles are the one exception** and still clear — a bought vehicle is gone from the vendor, so
+    there is nothing left to stay selected on.
+  Two supporting changes were required for the reset to actually hold:
+  - `vendor_panel_selection_controller.gd:117` clamped a same-selection quantity to a hard floor of
+    **1**, which sprang the box straight back to 1 on the refresh that follows a purchase. It now clamps
+    to the widget's own `min_value`.
+  - `_update_transaction_panel()` now clears `can_transact` when a non-vehicle quantity is `<= 0`, so
+    Buy **disables visibly** at 0 instead of silently no-opping (`on_action_button_pressed()` already
+    returned early at `<= 0`, so this is presentation, not a new guard).
+  `Scripts/Menus/vendor_trade_panel.gd` (`show_transaction_feedback`, `_update_transaction_panel`),
+  `Scripts/Menus/VendorPanel/vendor_panel_selection_controller.gd`.
+
+- [x] **S13-16 · 🐍 BACKEND — the server silently over-fills vehicles past their cargo capacity**
+  *(P2 — NEW, found 2026-07-30 while researching S13-7's fill order; **fixed in the same pass as S13-7's
+  backend half, NOT yet deployed**. Backend repo `~/Work/desolate_frontiers`, not this one)* — in
+  `sell_cargo()` (vendor→convoy, i.e. the player buying),
+  the per-vehicle allocation is
+  `quantity_for_vehicle = max(1, int(estimated_quantity)) if estimated_quantity > 0 else 0`
+  (`chassis/df_obj/vendor_cls.py:526`). The `max(1, …)` forces **at least one unit** into any vehicle with
+  *any* free space at all, however small — a vehicle with 1 L free is handed a 15 L item because
+  `estimated_quantity = 0.067 > 0`. `Vehicle.add_cargo()` (`chassis/df_obj/vehicle_cls.py:620`) performs
+  **no capacity validation whatsoever**, so the unit is accepted and `free_space`
+  (`cargo_capacity - total_cargo_volume`, `:466`) goes **negative**. The admission check at `:478-481` is
+  pooled (`convoy.total_free_space`, `convoy.total_remaining_capacity`), so it cannot catch this either.
+  Net effect: the indivisible-item case is not rejected, it is *absorbed* — the convoy ends up over
+  capacity and the discrepancy only surfaces later as impossible-looking vehicle stats. This is a
+  correctness bug in its own right and it is also **why S13-7's preview cannot be made truthful by
+  simulation alone**: any client model that respects per-vehicle capacity will predict *fewer* units than
+  the server actually accepts. Fixing S13-7 properly likely means fixing this first.
+  **✅ Fixed 2026-07-30** alongside S13-7's backend half — the allocation is now a floor
+  (`free_space // unit_volume`, `remaining_capacity // unit_weight`) rather than
+  `max(1, int(estimated_quantity))`, so no vehicle is handed a unit that does not fit and the post-loop
+  `remaining_quantity > 0` check raises a clean 400 instead. `Vehicle.add_cargo()` was left as-is (still
+  no validation of its own) — the caller is now the guard. **Adding a defensive capacity check inside
+  `add_cargo()` is deliberately NOT done here** (every other caller would need auditing first); worth its
+  own item if this class of bug recurs. **Deployed to production 2026-07-30** and confirmed in the
+  running container (`docker exec df-api grep -c "sorted(convoy.vehicles" …` → `1`). Still not run
+  against the backend's own test suite.
+  `chassis/df_obj/vendor_cls.py:505-546`, `chassis/df_obj/vehicle_cls.py:620`.
+
+- [x] **S13-18 · Convoys already over-filled by the old server code will refuse new cargo after the
+  S13-16 deploy** *(P3 — NEW, noticed 2026-07-30 while writing up S13-16's deploy risk. Pre-deploy
+  check, not a code defect. **Checked and closed 2026-07-31, no migration.**)* — S13-16's old
+  `max(1, int(...))` allocation drove `free_space` **negative** on real vehicles, and that state is
+  **persisted** (`free_space` is derived from `cargo_capacity - total_cargo_volume`, `vehicle_cls.py:466`,
+  so an over-stuffed vehicle stays over-stuffed in the DB). After the fix, such a vehicle is correctly
+  skipped by the distribution loop (`int(negative // unit_volume)` is negative → `quantity_for_vehicle` is
+  not `> 0`), so a player holding one may see purchases refused with *"Not enough space or weight capacity
+  across all vehicles"* until they unload it — even though the vendor and the convoy's pooled numbers look
+  fine. This is correct behaviour meeting bad legacy data, and it is **player-visible**, so it wanted a
+  decision before deploy, not after.
+  **✅ Checked 2026-07-31** — queried prod (via Adminer through `adminer-tunnel.sh`, `df_v0_6_0_*` tables;
+  direct `asyncpg` from a laptop can't reach the DO-managed Postgres instance, it's firewalled to trusted
+  sources) for `total_cargo_volume > cargo_capacity` / `total_cargo_weight > weight_capacity`, reproducing
+  the derived properties by hand since neither is a stored column. Of 557 vehicles, 24 are over capacity
+  (15 by volume, 13 by weight); 21 belong to real convoys, across **11 convoys and 10 users** — the other
+  3 are vendor-held or orphaned and unrelated to this bug (tracked separately, see **S13-21**). Hand-checked
+  the worst offenders' cargo manifests: fully explained by the known mechanism, nothing new. `Harpuji`,
+  `Xplore`, and `Voyage` (one convoy) each got handed a single whole Water IBC (2100 L / 2208 kg) despite
+  having only 700–1000 L of total capacity — a direct instance of the bug's own "15 L item forced into 1 L
+  of free space" example, just with a bigger indivisible unit. `BULL REX` and `Dragoon Strix` show the same
+  mechanism compounded across many water-cargo purchases over time. **Decision: leave the data as-is.** 10
+  affected users — largely from the pre-release testing period — is a small enough blast radius that
+  migrating live player cargo isn't worth the risk, especially since S13-19's client-side clamp already
+  makes the resulting error message explain itself (`describe_shortfall()`), and the condition self-heals
+  the moment the player unloads anything from the affected vehicle. No migration planned.
+  Backend repo `~/Work/desolate_frontiers`.
+
+- [x] **S13-17 · The GDScript compile-check recipe was undocumented (and half-understood)** *(P3 — NEW,
+  found 2026-07-30 while compile-checking S13-14)* — nothing in `docs/` recorded how a "compile-clean"
+  claim is actually produced; `SprintHistory.md:110` just asserts "Compile-clean (standard +
+  warnings-as-errors)" with no method. **✅ Written up 2026-07-30 in
+  [GDScript Verification](04_Technical/GDScriptVerification.md)** (linked from
+  [TechnicalReference § Testing & QA](04_Technical/TechnicalReference.md#testing--qa) and
+  [PROJECT_MAP](PROJECT_MAP.md)). Re-measuring against Godot `4.6.stable` **corrected the original
+  diagnosis** — worth knowing, because the wrong version is intuitive:
+  - `debug/gdscript/warnings/treat_warnings_as_errors` **is not a Godot 4.6 setting at all**. It reads
+    back as absent, and an A/B run with it set to `true` behaved identically. Severity is per-warning
+    (`0`/`1`/`2`); the repo ships no `[debug]` section, so engine defaults apply.
+  - The `:=`-from-Variant canary fires because **`inference_on_variant` defaults to `2` (Error)** — a
+    plain parse error, unrelated to any warnings-as-errors mechanism. `inferred_declaration` defaults to
+    `0` (Ignore) and never fires.
+  - The editor pass **does** catch that canary — the original "zero output" reading was a coverage gap,
+    not a mode difference. The pass sees the autoload dependency graph plus scenes the editor happens to
+    reopen; a file nothing references (e.g. `Scripts/Debug/wiring_smoke_test.gd`) is invisible to it even
+    with `class_name` and `--quit-after 1000`. That is the real reason the targeted probe is still
+    needed.
+  - Load the probe's targets on the **first frame** (`_process`), not in `_init()` — autoload identifiers
+    are not compiler-visible that early, and `_init()` yields false `Identifier not found:
+    ErrorTranslator` failures on healthy scripts. Fixed, the probe runs in ~2 s and the editor pass in
+    ~15 s warm.
+  - Confirmed as first written: `load()` returns a **non-null placeholder** for a failed script, so a
+    null check is not a pass/fail signal; and `unused_variable` (default `1`) never fails a load, with
+    `_`-prefixing suppressing it outright.
+
+- [x] **S13-19 · Pooled capacity bar says "fits at 96%", server refuses the purchase** *(P1 — NEW,
+  reported from a live bug report 2026-07-30 (GitHub issue #90): 13 × Bauxite Ore rejected with
+  `Not enough space or weight capacity across all vehicles`, while the panel showed the convoy at 96%.
+  **Directly caused by S13-7's backend half landing without a complete client guard**)* — two separate
+  gaps, both mine:
+  - **The S13-7 planner was wired to the Max button only.** `CargoFillPlanner` was called from
+    `on_max_button_pressed()` and nowhere else, so a **manually typed** quantity was never checked
+    against per-vehicle packing. Buy stayed enabled and the server rejected it.
+  - **The capacity bars are pooled** (`total_free_space / total_cargo_capacity`,
+    `vendor_panel_convoy_stats_controller.gd:22-28`), so they report a reassuring percentage in exactly
+    the cases where indivisibility makes the purchase impossible.
+  Before S13-16 the server silently over-filled and accepted these, so the mismatch was invisible; the
+  (correct) new allocator turned every latent pooled-vs-per-vehicle disagreement into a user-facing
+  error dialog. **✅ Implemented 2026-07-30 — option (a), client-side prevention:**
+  - `plan_fit(panel, wanted)` and `selection_unit_dims(panel)` extracted in
+    `vendor_panel_transaction_controller.gd` so Max, the spinbox cap and the footer all plan through
+    **one** code path. Returns `{}` for un-plannable cases (vehicles, bulk resources, missing
+    per-vehicle data) and callers then fall back to the pooled ceilings rather than blocking a buy on
+    absent data.
+  - `_update_transaction_panel()` validates the **typed** quantity every time it changes, disables Buy,
+    and replaces the price line with the reason.
+  - The spinbox `max_value` is capped at what fits (`vendor_panel_selection_controller.gd`), so the
+    impossible number can't be entered in the first place. Floor of 1, never 0, so the box stays usable.
+  - `CargoFillPlanner.plan()` now also reports `blocked_by` (`"volume"` / `"weight"`),
+    `best_free_volume` and `best_free_weight`; `describe_shortfall()` turns those into
+    *"Only 3 of 13 fit — only 10 kg spare in any vehicle"*. **Naming the binding dimension matters
+    here**: ore is dense, so the Bauxite case is almost certainly weight-bound while the player is
+    reading a volume bar.
+  - The Buy button shows `Only N fit` / `Won't fit` when disabled. It previously read `"Sell"`
+    unconditionally when disabled, which was simply wrong in buy mode.
+  **🐛 Follow-up fix 2026-07-30 — the whole guard was inert on first test ("Max still puts the whole
+  order in").** `build_vehicle_spaces()` read **only** `convoy_data["vehicle_details_list"]`, but the API
+  emits **`vehicles`** (backend `Convoy.to_JSONable_dict`, `convoy_cls.py:244`). Missing key → no spaces →
+  `plan_fit()` returned `{}` → every caller fell back to the pooled ceilings, so Max, the spinbox cap and
+  the footer warning were *all* silently disabled at once. Every other consumer in this repo already used
+  the fallback chain (`mechanics_menu.gd:102`, `convoy_menu.gd:2653`,
+  `warehouse_menu.gd:2732-2750`); this one didn't. Fixed with a shared `vehicle_rows()` helper
+  (`vehicle_details_list` → `vehicles` → `vehicle_list`), and per-vehicle room now prefers the server's
+  **own** `free_space` / `remaining_capacity` — the exact values `Vendor.sell_cargo()` allocates against —
+  falling back to capacity-minus-used only when those are absent. The abort path now **logs loudly**
+  (`plan_fit ABORTED — no per-vehicle rows in convoy_data (keys: …)`) because a silent empty plan is not
+  a safe failure: it reverts to the over-offering behaviour this item exists to fix.
+  Verified headless on four shapes (volume-bound none-fit, partial fit, weight-bound "Bauxite shape",
+  and all-fit → blank message), plus five data-shape cases: the raw API `vehicles` shape, the augmented
+  `vehicle_details_list` shape, weight-bound via `remaining_capacity`, a negative `free_space` (S13-16
+  legacy) clamped to 0, and a convoy with no vehicle rows at all. **Still pooled and unaddressed: the capacity bars themselves** — they
+  remain a whole-convoy percentage. The footer now contradicts them when packing fails, which is the
+  cheap fix; making the bars per-vehicle is a separate design question.
+  **✅ Cap explanation added 2026-07-30** — capping `max_value` made the ceiling *silent*: tapping `+`
+  past it simply did nothing. `QuantityWidget` now emits `clamped_at_max(requested, applied)` whenever a
+  request exceeds `max_value` — deliberately fired **even when the number doesn't move**, since "already
+  at the ceiling" is exactly the case needing an explanation. The panel answers with a 3 s line in place
+  of the price: *"Cargo can't be split across vehicles — 3 is all that fits."*, or *"The vendor only has
+  N."* when stock rather than packing is the binding limit. A token supersedes stale hint timers so
+  repeated taps don't let an old timer wipe a newer message. Only programmatic writes that are already
+  ≤ max exist elsewhere (Max, the S13-15 reset, the selection clamp), so the signal never fires
+  spuriously.
+  `Scripts/Menus/VendorPanel/cargo_fill_planner.gd`,
+  `Scripts/Menus/VendorPanel/vendor_panel_transaction_controller.gd`,
+  `Scripts/Menus/VendorPanel/vendor_panel_selection_controller.gd`,
+  `Scripts/Menus/vendor_trade_panel.gd`, `Scripts/UI/quantity_widget.gd`.
+
+- [x] **S13-20 · A purchase that doesn't fit now offers the quantity that does** *(P3 — design question
+  raised 2026-07-30 alongside S13-19; **decided and implemented 2026-07-30**, backend NOT yet deployed)* —
+  S13-19 prevents the impossible purchase client-side, which was option (a). Option (b) was **silent
+  server-side partial fulfilment**: ask for 13, receive the 9 that fit, pay for 9.
+  **✅ Decided: option (c) — keep all-or-nothing, but make the refusal actionable.** The server reports
+  how many units *would* have fitted; the client turns that into a one-tap retry at that quantity. "Buy"
+  still means "buy" — the player confirms the smaller order at its real price instead of it being
+  substituted behind their back.
+  **Why silent partial fulfilment was rejected** (recorded so it isn't re-litigated cold):
+  - **It is not a server-only change.** Four client sites assume received == requested:
+    the success toast is built from `_pending_tx`, not the response (`vendor_trade_panel.gd`
+    `_on_api_transaction_result`); the optimistic vendor-stock decrement; the projection commit; and
+    `item_purchased`, which is emitted **at dispatch** (`vendor_panel_transaction_controller.gd:327`)
+    and gates the **L2 tutorial supply step** (`tutorial_manager.gd:1599-1612`). Ask for 2 Water Jerry
+    Cans, receive 1, and the tutorial advances on cargo the player does not have.
+  - **The window it would cover is narrow.** `vendor_interaction_validation` requires the convoy to be
+    on the vendor's tile, so no journey progress can change it mid-trade; the buy response *is* the
+    authoritative post-transaction convoy and is applied directly; and `_should_accept_convoy_snapshot`
+    rejects a late poll snapshot that would reinstate stale free space. What actually over-offers is the
+    client guard's own escape hatches — `plan_fit()` returning `{}` when per-vehicle rows are missing,
+    unknown unit dims, and unit-dimension derivation drift — i.e. cases where the panel is *already*
+    misinforming the player. Silently substituting a different order on top of a wrong preview is worse
+    than a clean 400, which at least forces a refresh.
+  - Money would also have had to move: pricing must happen after placement, `Cargo.split` re-rounds
+    resource contents (`round(resource * proportion)`) so the price of 3-split-from-13 is not 3/13 of the
+    whole, and it opens a second product question (is *affordability* partial too?).
+  **✅ Backend implemented 2026-07-30** (`chassis/df_obj/vendor_cls.py`): the distribution loop was
+  lifted out of `sell_cargo()` into module-level **`plan_cargo_placement()`**, which returns
+  `(placement, fittable)` and mutates nothing. `sell_cargo()` plans **before** any check can refuse the
+  sale and appends a ` [fits:N/M]` marker to all three refusals (pooled volume, pooled weight,
+  per-vehicle). Deciding and doing share one function on purpose: `fittable` is a *promise* — the player
+  is offered it as a retry quantity — so a separately-derived estimate would be free to drift and
+  promise a number the retry then refuses. Placement now executes from the plan, after the
+  `fittable < quantity` raise, so nothing is half-placed on the way out; the money deduction above it is
+  still rolled back by the endpoint's DB transaction (`vendor_api.py`), which the refactor does not touch.
+  Verified by executing the extracted function's **source text** against duck-typed vehicles (the
+  backend's import chain needs container-only deps and cannot be imported on the dev Mac) side-by-side
+  with a re-implementation of the previously-deployed inline loop: **8 shapes, placement-for-placement
+  identical**, including the S13-7 case (4×10 L free, 15 L item → 0), the weight-bound Bauxite shape
+  (→ 4 of 13), a legacy negative-`free_space` vehicle (**S13-18**), and large-vehicle-listed-second.
+  Plus a check that planning mutates nothing. **Not run against the backend's own test suite.**
+  **✅ Client implemented 2026-07-30:**
+  - `CargoFillPlanner.parse_server_fit_marker()` reads the marker and **strips it** — `ErrorTranslator`
+    matches on substrings, so the raw text survives translation. It lives beside the allocator mirror
+    because it is the other half of the same wire contract. The strip happens **before**
+    `VendorPanelRefreshController.on_api_transaction_error()`, not after: that function toasts the
+    message too, so stripping later would still have shown `[fits:3/13]` to the player from there. It
+    gained a `suppress_toast` flag (default `false`) so the offer's own line replaces that toast rather
+    than stacking with it — state repair stays unconditional (**S13-6**).
+  - `vendor_trade_panel.gd` gained `_server_fit` — `{cargo_id, convoy_id, fits, requested}`. On a refusal
+    with `0 < fits < requested` the spinbox cap is raised to `fits`, the value is set to `fits`, and the
+    footer reads *"Only 3 of 13 fit — tap Buy to take 3."* Buy re-enables showing the real price for 3.
+  - **The server's number outranks the local planner.** `_update_transaction_panel()` skips the S13-19
+    fit block at or below the vouched quantity, and the spinbox cap in
+    `vendor_panel_selection_controller.gd` never drops below it — otherwise the refresh that follows a
+    refusal would let the same wrong local plan clamp the offer away before the player could tap it.
+    That precedence is the point: the server measured freshly-read convoy state, this panel's copy is the
+    likelier stale party. Scoped to one cargo_id **and** one convoy, and spent on the next success.
+  Verified headless on 14 cases: all three backend refusal strings verbatim, marker-strip, that each
+  stripped message still maps to its existing `ErrorTranslator` entry, un-marked and unrelated errors
+  passed through untouched, the two shapes the offer must decline (`fits:0`, `fits==requested`), and a
+  malformed marker.
+  ⚠️ **Deploy ordering is safe either way** — an un-marked refusal is passed straight through to the old
+  behaviour, and the marker is inert on an old client (it would only appear in the message text).
+  Backend `chassis/df_obj/vendor_cls.py` (`plan_cargo_placement`, `sell_cargo`),
+  `Scripts/Menus/VendorPanel/cargo_fill_planner.gd`, `Scripts/Menus/vendor_trade_panel.gd`,
+  `Scripts/Menus/VendorPanel/vendor_panel_selection_controller.gd`,
+  `Scripts/Menus/VendorPanel/vendor_panel_refresh_controller.gd`.
+
+- [ ] **S13-21 · `Vehicle.add_cargo()` still has no capacity validation outside the (now-fixed) vendor
+  purchase path** *(P3 — NEW, found 2026-07-31 while auditing S13-18's legacy over-capacity data)* —
+  S13-16 fixed the allocator in `Vendor.sell_cargo()` so a purchase can no longer force cargo into a
+  vehicle without room, but `Vehicle.add_cargo()` itself (`vehicle_cls.py:620`) still performs **no
+  validation of its own** — it never did; that was always the caller's job, and S13-16 only fixed one
+  caller. At least three other call sites still hand it cargo unchecked and are reachable by normal
+  play today: manually moving cargo between vehicles in a convoy (`convoy_cls.py:320`, a routine
+  player-facing action), redistributing a scrapped vehicle's salvaged parts onto whichever remaining
+  vehicle has the lightest load (`vendor_cls.py:854-855` —
+  `min(receiving_vehicles, key=lambda v: (v.load_percentage, v.free_space))`, no capacity check on the
+  result), and part install/removal cargo (`vendor_cls.py:780`, `vendor_cls.py:823`,
+  `engine/routers/vehicle_api.py:227`). S13-18's audit turned up 2 of its 24 over-capacity vehicles
+  (a vendor-held one and an orphaned one) sitting **outside** `sell_cargo()`'s reach entirely, meaning
+  something already exercises this gap, though which path (or something else) produced those two specific
+  vehicles wasn't investigated. Same fix shape as S13-16 would apply — skip/clamp when the destination
+  can't take the whole unit — but this is a live, player-triggerable way to recreate the exact class of bug
+  S13-18 was just cleaned up for, not stale data.
+  `chassis/df_obj/vehicle_cls.py:620`, `chassis/df_obj/convoy_cls.py:320`,
+  `chassis/df_obj/vendor_cls.py:780,823,854-855`, `engine/routers/vehicle_api.py:227`.
+  Backend repo `~/Work/desolate_frontiers`.
 
 ## Android
 
@@ -931,6 +1245,15 @@ Not blocking the sprints above. Pull into a sprint when the relevant file is ope
 - **TD-06** · S/M/L UI-scale preference silently overridden in portrait.
 
 ## Testing
+
+- **TEST-02 · ~31 pre-existing `unused_variable` violations block a warnings gate** *(NEW, 2026-07-30,
+  measured while writing [GDScript Verification](04_Technical/GDScriptVerification.md))* — promoting
+  `debug/gdscript/warnings/unused_variable` to `2` for one probe run produced 31 `SCRIPT ERROR` lines
+  from **existing** unused locals, several of them in autoloads, which breaks compilation before the
+  probe reaches its targets. Files seen: `convoy_menu.gd`, `mechanics_menu.gd`, `warehouse_menu.gd`
+  (5 sites), `tutorial_manager.gd`, `premium_upgrade_modal.gd`, `vendor_trade_panel.gd`. Until these are
+  cleaned (delete or `_`-prefix), a repo-wide warnings gate — in CI or locally — cannot be turned on.
+  Low priority; the cleanup is mechanical and each site is named in the probe output.
 
 - **TEST-01 · Tutorial-flow smoke coverage** — `Scripts/Debug/wiring_smoke_test.gd` only asserts autoload wiring today. Extend it toward tutorial-flow coverage (step build, resolver resolution per level) so a hub/menu rename can't silently break onboarding. Sprint 8 shipped on a manual portrait/landscape/desktop pass instead.
 

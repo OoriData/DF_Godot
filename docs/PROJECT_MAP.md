@@ -6,7 +6,7 @@ tags:
 aliases:
   - "Project Map (Feature to File)"
 created: 2026-05-18
-updated: 2026-06-25
+updated: 2026-07-31
 verified_against_code: 2026-07-28
 status: current
 ---
@@ -62,6 +62,7 @@ Use this map to quickly find where specific features or behaviors are implemente
 | :--- | :--- |
 | **Updating Autoloads** | `project.godot` (Autoload section) |
 | **Running Tests** | `Tests/`, `Scripts/Debug/wiring_smoke_test.gd` |
+| **Compile-checking an edit** | [GDScript Verification](04_Technical/GDScriptVerification.md) — editor pass + load probe; neither alone is sufficient |
 | **Visual Styling** | `Assets/Themes/`, [DesignSystem.md](02_UI_UX/DesignSystem.md) |
 | **AI Standards** | `docs/04_Technical/AI_Guidelines.md` |
 | **Updating the UI Audit** | [UIAudit.md](02_UI_UX/UIAudit.md) — update the structural map after any UI *scene/script* change; log bugs & polish in [TODO.md](TODO.md) |

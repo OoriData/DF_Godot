@@ -7,8 +7,8 @@ tags:
 aliases:
   - "Maintenance Checklist"
 created: 2026-05-18
-updated: 2026-07-30
-verified_against_code: 2026-07-30
+updated: 2026-07-31
+verified_against_code: 2026-07-31
 status: current
 ---
 
@@ -42,7 +42,12 @@ Use this guide when modifying Vendor Panel behavior to prevent common regression
 
 ## Post-Flight Checklist
 - [ ] **Quantity Reset**: Does the quantity spinbox only reset to 1 when you change the logical selection?
-- [ ] **Math Check**: Does the "Max" button correctly account for *all* constraints (Money, Weight, Volume, and raw-resource headroom)?
+- [ ] **Math Check**: Does the "Max" button correctly account for *all* constraints (Money, raw-resource
+      headroom, and **per-vehicle packing** — not pooled weight/volume)? Test with an item that is large
+      relative to one vehicle: pooled maths says it fits, packing says it doesn't.
+- [ ] **Fit offer**: When the server refuses a buy, does the quantity box drop to the number it says
+      fits, with Buy re-enabled and the footer explaining? No `[fits:N/M]` text may ever reach the
+      screen — see [Transactions § When the server refuses anyway](Transactions.md#when-the-server-refuses-anyway-the-fit-offer).
 - [ ] **Flicker Test**: Rapidly click Buy/Sell. Is there any unintended UI "jumping"?
 - [ ] **Panel identity**: Grep the log for `[VendorPanel][DIAG] _ready instance_id=`. There must be **one
       per vendor per settlement visit** — not one per map snapshot, menu reopen, or rotation. Re-entering
@@ -53,9 +58,10 @@ Use this guide when modifying Vendor Panel behavior to prevent common regression
 - [ ] **Hidden-panel error**: Tap Buy, immediately switch menus so the panel is hidden when the reply
       lands, then come back. The button must read "Buy", not a disabled "Processing…".
 
-> **Note:** selection is *deliberately cleared* after every transaction (`show_transaction_feedback`),
-> so "does the selection survive a Buy?" is currently **no** by design — tracked as **S13-15**. The
-> refresh path does restore selection across a rebuild; the two disagree.
+> **Note:** the selection now *survives* a transaction — only the quantity resets, and only on success
+> (a bought vehicle is the exception, since it leaves the vendor). So "does the selection survive a
+> Buy?" should be **yes**, and a *failed* buy must leave the typed quantity alone so it can be adjusted
+> and retried. See [Transactions § Error and timeout repair](Transactions.md#error-and-timeout-repair).
 
 ## Related
 

@@ -5,6 +5,10 @@ extends HBoxContainer
 class_name QuantityWidget
 
 signal value_changed(new_value: float)
+## Emitted when someone asked for MORE than `max_value` and the request was clamped away.
+## Without this the ceiling is silent — the player taps + and nothing happens, with no reason given
+## (S13-19). `requested` is what they asked for, `applied` is the capped value they got.
+signal clamped_at_max(requested: float, applied: float)
 
 @export var min_value: float = 0.0
 @export var max_value: float = 99.0
@@ -113,6 +117,10 @@ func set_value(new_val: float) -> void:
 		_value_label.text = str(int(value))
 	if value != old_val:
 		value_changed.emit(value)
+	# Fires whether or not the number moved: tapping + while already at the ceiling changes nothing,
+	# and that is precisely the case the player needs told about.
+	if new_val > max_value:
+		clamped_at_max.emit(new_val, value)
 
 func _on_minus() -> void:
 	set_value(value - step)

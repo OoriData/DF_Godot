@@ -8,7 +8,7 @@ tags:
 aliases:
   - "Error Handling System"
 created: 2026-05-18
-updated: 2026-07-28
+updated: 2026-07-31
 verified_against_code: 2026-07-28
 status: current
 ---
@@ -86,6 +86,25 @@ All other errors are matched against a priority-ordered dictionary. Matches are 
 ```
 
 If no key matches, the error is logged as `"Unhandled API Error (add to ErrorTranslator): ..."` and the user sees a generic message. In debug builds, the raw detail is appended.
+
+### Machine-readable data in an error message: strip it *before* translating
+
+Substring matching means anything the server appends to a message **survives translation and reaches the
+player**. A prefix-format entry will even paste it into the friendly text verbatim.
+
+The one live case is the vendor buy refusal, which carries ` [fits:N/M]` — how many units would have fit
+— so the client can offer the smaller order (see
+[Transactions § When the server refuses anyway](../02_UI_UX/VendorPanel/Transactions.md#when-the-server-refuses-anyway-the-fit-offer)).
+`CargoFillPlanner.parse_server_fit_marker()` removes it and returns the numbers.
+
+If you add another such marker, two rules:
+
+- **Parse and strip at the entry point of the error path**, not just before the call you happen to be
+  looking at. A single message can reach the player from more than one place — this one is toasted by
+  `VendorPanelRefreshController.on_api_transaction_error()` *and* rendered by the panel, so stripping in
+  only one of them still leaked it.
+- **Keep the message translatable with the marker gone.** The stripped text must still match its
+  `ERROR_MAP` key, or the player gets the unknown-error fallback instead.
 
 ---
 

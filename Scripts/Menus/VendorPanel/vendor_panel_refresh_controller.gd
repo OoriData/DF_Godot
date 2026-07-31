@@ -77,7 +77,10 @@ static func on_api_transaction_result(panel: Object, result: Dictionary) -> void
 		panel._schedule_refresh()
 
 
-static func on_api_transaction_error(panel: Object, error_message: String) -> void:
+## `suppress_toast` (S13-20) silences ONLY the toast at the bottom, for the one case where the caller
+## is about to show something more useful in its place — the "only 3 of 13 fit, tap Buy to take 3"
+## offer. Everything else here still runs: state repair is unconditional (S13-6).
+static func on_api_transaction_error(panel: Object, error_message: String, suppress_toast: bool = false) -> void:
 	# S13-6: state repair below is UNCONDITIONAL. This used to early-return on
 	# `not panel.is_visible_in_tree()` *above* the revert and the button restore, so any panel that
 	# happened to be hidden when the error landed (orientation change, menu swap, tutorial overlay) came
@@ -110,7 +113,7 @@ static func on_api_transaction_error(panel: Object, error_message: String) -> vo
 
 	# Show toast if available. Visibility-gated on purpose: a toast on an off-screen panel is noise,
 	# but the state repair above must have happened regardless (S13-6).
-	if panel.is_visible_in_tree():
+	if panel.is_visible_in_tree() and not suppress_toast:
 		var friendly_message: String = ErrorTranslator.translate(error_message)
 		if not friendly_message.is_empty() and is_instance_valid(panel.toast_notification) and panel.toast_notification.has_method("show_message"):
 			panel.toast_notification.call("show_message", friendly_message)

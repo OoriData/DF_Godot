@@ -7,8 +7,8 @@ tags:
 aliases:
   - "Technical Reference"
 created: 2026-05-18
-updated: 2026-07-29
-verified_against_code: 2026-07-28
+updated: 2026-07-31
+verified_against_code: 2026-07-30
 status: current
 ---
 
@@ -43,6 +43,20 @@ This section covers the underlying infrastructure, identity management, and qual
 ---
 
 ## Testing & QA
+
+### Verifying GDScript Changes
+- **Doc**: [GDScript Verification](GDScriptVerification.md) — the two-check recipe behind any
+  "compile-clean" claim, and why one check is not enough.
+- **Execution**:
+  ```bash
+  GODOT=/Users/aidan/Applications/Godot.app/Contents/MacOS/Godot
+  "$GODOT" --headless --editor --quit-after 250 > /tmp/ed.log 2>&1   # structural, ~15 s warm
+  grep -inE "parse error|compile error|could not resolve|failed to load script" /tmp/ed.log
+  ```
+- The editor pass only sees scripts something loads (autoload graph + reopened scenes) — a new,
+  unreferenced file is invisible to it. Name your edited files explicitly in the load probe instead.
+- `treat_warnings_as_errors` **is not a Godot 4.6 setting**; warning severity is per-warning
+  (`0`/`1`/`2`). Promoting one for a run, plus the canary and cleanup discipline, is in the doc.
 
 ### Headless Smoke Test
 - **Script**: [wiring_smoke_test.gd](../../Scripts/Debug/wiring_smoke_test.gd)

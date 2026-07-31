@@ -673,7 +673,7 @@ func _refresh_active_vendor_panel() -> void:
 	if panel.get("_transaction_in_progress") == true:
 		print("[VendorPanel][DIAG] settlement refresh SKIPPED for active panel — transaction in flight")
 		return
-	var vendor_data := _find_vendor_by_name(String(panel.name))
+	var vendor_data := _vendor_data_for_panel(panel)
 	if vendor_data.is_empty():
 		return
 	panel.refresh_data(
@@ -871,9 +871,8 @@ func _on_vendor_tab_changed(tab_idx: int) -> void:
 	if is_instance_valid(tab_content) and tab_content.has_meta("needs_refresh") and tab_content.get_meta("needs_refresh"):
 		tab_content.set_meta("needs_refresh", false)
 		if tab_content.has_method("refresh_data"):
-			var full_vendor_name = tab_content.name
-			var vendor_data = _find_vendor_by_name(full_vendor_name)
-			if vendor_data:
+			var vendor_data := _vendor_data_for_panel(tab_content)
+			if not vendor_data.is_empty():
 				tab_content.refresh_data(
 					vendor_data.duplicate(true),
 					_convoy_data.duplicate(true),
@@ -887,6 +886,34 @@ func _find_vendor_by_name(vendor_name: String) -> Dictionary:
 			if vendor.get("name", "") == vendor_name:
 				return vendor
 	return {}
+
+
+## S13-14: resolve the vendor row for a mounted panel by its `vendor_id` meta, which _create_vendor_tab
+## always sets and _mounted_vendor_ids() already depends on. The node name can't be trusted for this:
+## Godot uniquifies duplicate sibling names, so a settlement with two identically named vendors gets a
+## panel called "Depot2" that matches no vendor at all, and any server-side rename breaks the lookup
+## until the tab is rebuilt. Name matching stays as a fallback for a tab built without the meta.
+func _find_vendor_by_id(vendor_id: String) -> Dictionary:
+	if vendor_id == "":
+		return {}
+	if _settlement_data and _settlement_data.has("vendors"):
+		for vendor in _settlement_data.vendors:
+			if vendor is Dictionary and String((vendor as Dictionary).get("vendor_id", "")) == vendor_id:
+				return vendor
+	return {}
+
+
+## The settlement's vendor row for a mounted vendor panel: by id, falling back to display name.
+func _vendor_data_for_panel(panel: Node) -> Dictionary:
+	if not is_instance_valid(panel):
+		return {}
+	var vid := String(panel.get_meta("vendor_id", ""))
+	var vendor_data := _find_vendor_by_id(vid)
+	if not vendor_data.is_empty():
+		return vendor_data
+	if vid != "":
+		print("[VendorPanel][DIAG] vendor_id '%s' not in snapshot — falling back to name '%s'" % [vid, String(panel.name)])
+	return _find_vendor_by_name(String(panel.name))
 
 
 # --- Top Up (relocated) ---

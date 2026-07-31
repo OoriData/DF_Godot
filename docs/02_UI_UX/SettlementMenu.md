@@ -3,11 +3,11 @@ type: ui-ux
 tags:
   - layer/ui
   - kind/deep-dive
-  - status/drifting
+  - status/current
 aliases:
   - "Settlement Menu System"
 created: 2026-05-19
-updated: 2026-07-30
+updated: 2026-07-31
 verified_against_code: 2026-07-30
 status: current
 ---
@@ -95,10 +95,14 @@ only marks non-active tabs dirty for a lazy refresh on tab change). It **no-ops 
 transaction in flight** — a `/map`-sourced re-aggregation would otherwise discard the optimistic
 projection the panel is currently showing.
 
-> ⚠️ Both this function and `_on_vendor_tab_changed()` still resolve the vendor by **node name**
-> (`_find_vendor_by_name(panel.name)`) even though `_create_vendor_tab()` stores a `vendor_id` meta.
-> Godot uniquifies duplicate sibling names, so two identically-named vendors would break the lookup.
-> Tracked as **S13-14** in [TODO](../TODO.md).
+Both this function and `_on_vendor_tab_changed()` resolve the vendor through
+`_vendor_data_for_panel(panel)`, which reads the `vendor_id` node meta that `_create_vendor_tab()` sets
+and looks it up with `_find_vendor_by_id()` — the same handle `_mounted_vendor_ids()` uses, so the two
+always agree. `_find_vendor_by_name()` survives only as a fallback for a tab mounted without the meta;
+taking it logs `[VendorPanel][DIAG] vendor_id '…' not in snapshot — falling back to name '…'`. Resolving
+by node name was the old behaviour and was unsafe because Godot uniquifies duplicate sibling names, so a
+settlement with two identically named vendors produced a `Depot2` panel that matched no vendor at all
+(**S13-14**).
 
 ---
 
