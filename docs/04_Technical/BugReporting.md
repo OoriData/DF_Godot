@@ -4,42 +4,41 @@ tags:
   - layer/autoload
   - kind/deep-dive
   - concept/errors
-  - status/drifting
+  - status/current
 aliases:
   - "Bug Reporting & Feedback"
 created: 2026-07-28
-updated: 2026-07-31
-verified_against_code: 2026-07-28
-status: drifting
+updated: 2026-08-04
+verified_against_code: 2026-07-31
+status: current
 ---
-
-> [!WARNING]
-> **Drifting as of 2026-07-31 — the four availability blockers below have been FIXED (S12-5).**
-> This document still describes the pre-fix state: it says the only entry point is
-> `UserInfoDisplay.ReportBugButton`, and lists the login / paused-tree / tutorial / modal gaps as open.
-> Since then, `Scripts/UI/global_feedback_overlay.gd` (`GlobalFeedbackOverlay`) was added — a
-> `CanvasLayer` at `layer = 200` with `PROCESS_MODE_ALWAYS`, owned by `GameScreenManager`, providing a
-> floating Feedback button and the single shared `BugReportWindow`. The top-bar button now delegates to
-> it. **The "transport is already global" analysis below remains accurate and is still the reason a
-> pre-login report works.** Re-verify and clear this banner when the doc is next updated.
 
 # Bug Reporting & Feedback
 
 The in-game **Feedback** button captures a screenshot, gathers recent logs and client metadata, and
 POSTs a report to the backend (which creates the tracking issue server-side). This is the primary
 telemetry channel for the beta, so **availability matters as much as the payload** — see
-[Availability](#availability--the-beta-blocker) below.
+[Availability](#availability) below.
 
 ## Pipeline
 
+**Two entry points, one window.** Both funnel into `GlobalFeedbackOverlay.open_bug_report()`.
+
 ```
-UserInfoDisplay.ReportBugButton  (Scenes/UserInfoDisplay.tscn:58)
-        │  pressed → call_deferred("_on_bug_report_pressed")
+(a) GlobalFeedbackOverlay floating button          ← available on EVERY screen
+    Scripts/UI/global_feedback_overlay.gd
+        │  CanvasLayer, layer = 200, PROCESS_MODE_ALWAYS
+        │  created by GameScreenManager._ensure_feedback_overlay()  (:40)
+        │
+(b) UserInfoDisplay.ReportBugButton                ← top bar, main screen only
+    Scenes/UserInfoDisplay.tscn:58
+        │  pressed → _on_bug_report_pressed()  (user_info_display.gd:499)
+        │  delegates via GameScreenManager.get_feedback_overlay()  (:54)
         ▼
-user_info_display.gd::_on_bug_report_pressed()          (:483)
+GlobalFeedbackOverlay::open_bug_report()                (:88)
         │  await RenderingServer.frame_post_draw      ← capture BEFORE any popup appears
         │  viewport texture → Image → save_png_to_buffer()
-        │  lazily instantiates BugReportWindow as a child of get_tree().root
+        │  lazily instantiates BugReportWindow (PROCESS_MODE_ALWAYS) under get_tree().root
         ▼
 BugReportWindow  (Scripts/UI/bug_report_window.gd, extends ResponsiveModalPanel)
         │  user fills Summary / Steps / Context, ticks consent
@@ -53,6 +52,13 @@ signal bug_report_submitted  →  BugReportWindow::_on_bug_report_submitted()
 
 The screenshot is deliberately taken **before** the window is created — the whole point is to capture
 what the player was looking at, not the report form.
+
+> [!NOTE]
+> **The top-bar button delegates rather than building its own window.** Before S12-5 it lazily created a
+> *separate* `BugReportWindow`; two independently-owned windows meant the one you got depended on which
+> button you pressed, and only one of them had `PROCESS_MODE_ALWAYS`. `user_info_display.gd` retains its
+> original local path as a **fallback** (guarded by a `push_warning`) for the case where the display is
+> hosted outside `GameScreenManager` — reporting a bug must never itself fail.
 
 ## Payload
 
@@ -70,43 +76,61 @@ Built by `_build_payload()`. Only `title` / `summary` / `description` / `steps` 
 | `meta` | `_collect_metadata()` (`:518`) | `client_time_unix`, `os.{name,version}`, `user.id` |
 | `client_warnings` | Accumulated | e.g. "Screenshot too large; omitted." |
 
-## Availability — the beta blocker
+## Availability
 
-> [!WARNING]
-> **Open, tracked as [TODO.md](../TODO.md) Sprint 12 · S12-5 (2026-07-28).** The requirement for the beta
-> is that Feedback is reachable *at any point*. Today it is reachable only from the running main game
-> screen — and it is blocked in the two places bugs are most likely to be found.
+The beta requirement is that Feedback is reachable **at any point** — it was previously reachable only
+from the running main game screen, i.e. blocked in the two places bugs are most likely to be found.
+**Resolved 2026-07-31 (S12-5)** by `GlobalFeedbackOverlay`. One node closes all four gaps:
 
-**The transport is already global. Only the entry point is gated.** Two findings that make the fix
-cheaper than it looks:
+| # | Former blocker | How it is answered now |
+|---|---|---|
+| 1 | **Login.** The button lived inside `MainScreen`, which is `visible = false`, `PROCESS_MODE_DISABLED`, and behind `get_tree().paused = true` until `initial_data_ready` (`game_screen_manager.gd:26-30`). | The overlay is owned by **`GameScreenManager`**, not `MainScreen`, so it is outside everything that gets disabled. **No affordance was added to `LoginScreen`** — a global overlay covers it for free. |
+| 2 | **Paused tree.** `BugReportWindow` took the default `PROCESS_MODE_INHERIT`, so it would open frozen. | `PROCESS_MODE_ALWAYS` on the overlay, the button, **and** the lazily-created window. |
+| 3 | **Tutorial.** The overlay gates input with full-screen `MOUSE_FILTER_STOP` shields and sets itself to `STOP` in HARD mode (`tutorial_overlay.gd:138-157`, `:441`, `:822-825`). | `layer = 200` beats `ResponsiveModalPanel`'s `100` and the link popups' `101`; the tutorial overlay is parented into MainScreen's onboarding layer, so it draws on canvas layer **0**. Godot delivers GUI input to CanvasLayers in **decreasing layer order**, so the button is hit-tested first. **`tutorial_overlay.gd` needed no change** — no hole was punched in the shields. |
+| 4 | **Modals / error dialogs.** Same shape as (3). | Same mechanism as (3). |
+
+**The transport was already global — only the entry point was ever gated.** Both findings still hold and
+are why a pre-login report works at all:
 
 - `_apply_auth_header()` (`api_calls.gd:458-468`) appends `Authorization` **only when a token exists**,
   so a pre-login submit is a well-formed unauthenticated POST rather than an error.
-- `_collect_metadata()` reads the user from `GameStore` **best-effort** — a missing user yields
+- `_collect_metadata()` (`:518`) reads the user from `GameStore` **best-effort** — a missing user yields
   `user.id = ""`, not a crash. A pre-login report arrives without user metadata and is otherwise intact.
 
-Blockers to remove:
+> [!CAUTION]
+> **Verified structurally, not visually.** Headless testing confirms the overlay constructs, sits at
+> `layer = 200` with `PROCESS_MODE_ALWAYS` on both nodes, and lays out to a non-degenerate bottom-left
+> rect inside the viewport. It **cannot** prove placement against real chrome (mobile bottom nav bar, the
+> map's gear tab) in both orientations, nor that input actually reaches the button through a live tutorial
+> shield. Those are the S12-5 device-test rows in [TODO.md](../TODO.md).
 
-| # | Blocker | Where |
-|---|---|---|
-| 1 | **Login.** The button lives inside `MainScreen`, which is `visible = false`, `PROCESS_MODE_DISABLED`, and behind `get_tree().paused = true` until `initial_data_ready`. `LoginScreen` has no feedback affordance. | `game_screen_manager.gd:26-29` |
-| 2 | **Paused tree.** `BugReportWindow` is created with the default `PROCESS_MODE_INHERIT`, so it would be frozen even if opened pre-login. Needs `PROCESS_MODE_ALWAYS` — the pattern `LoginScreen` already uses. | `user_info_display.gd:495-501` |
-| 3 | **Tutorial.** The overlay gates input with full-screen shield `Control`s at `MOUSE_FILTER_STOP`, and sets itself to `STOP` in HARD mode. Every step blocks the top bar. | `tutorial_overlay.gd:138-157`, `:441`, `:822-825` |
-| 4 | **Modals / error dialogs.** Same shape as (3) — anything that dims and captures input hides the button. | — |
+> [!NOTE]
+> **Two Feedback affordances now exist on the main screen** — the top-bar button and the floating one.
+> Deliberate, to avoid changing familiar UI unprompted. Hiding `%ReportBugButton` and letting the
+> floating button be the sole entry point is a one-line follow-up if the redundancy reads as clutter.
 
-Suggested shape: promote the button to a small always-on-top `CanvasLayer` that outranks the tutorial
-overlay, add an equivalent on `LoginScreen`, and set `PROCESS_MODE_ALWAYS` on both the button and the
-window.
+## Offline submissions
+
+A report submitted with no connectivity has **no response body to parse**, so it used to surface as
+`Bug report submit failed (HTTP 0): Unknown error.` Since 2026-07-31 (S13-12), `api_calls.gd` substitutes
+the `HTTPRequest.Result` code when `response_code == 0`, which routes the failure through the normal
+translation map and yields *"Can't reach the server — check your internet connection."* Codes and the
+enum-numbering trap: [ErrorSystem § Network / transport failures](ErrorSystem.md).
 
 ## Key Files
 
-- **Button + capture**: `Scripts/UI/user_info_display.gd` (`_on_bug_report_pressed`)
+- **Global entry point**: `Scripts/UI/global_feedback_overlay.gd` (`open_bug_report`, screenshot capture)
+- **Overlay owner**: `Scripts/UI/game_screen_manager.gd` (`_ensure_feedback_overlay`, `get_feedback_overlay`)
+- **Top-bar button**: `Scripts/UI/user_info_display.gd` (`_on_bug_report_pressed` — delegates, with a local fallback)
 - **Form + payload**: `Scripts/UI/bug_report_window.gd`
 - **Transport**: `Scripts/System/api_calls.gd` (`submit_bug_report`, `POST /bug-report`)
 - **Log source**: `Scripts/System/logger.gd` (`get_recent_lines`)
 
 ## Connected Systems
 
-- [UI Element Audit § 1 UserInfoDisplay](../02_UI_UX/UIAudit.md) — where the button sits in the top bar
+- [UI Element Audit § 1 UserInfoDisplay](../02_UI_UX/UIAudit.md) — where the top-bar button sits
 - [Diagnostics & Troubleshooting](Diagnostics.md) — the logger the report drains
+- [Error Handling System](ErrorSystem.md) — shares the `HTTP 0` transport path above
 - [API Reference](API_Reference.md) — endpoint contracts
+- [AI_ONBOARDING § Pro Tips](../AI_ONBOARDING.md) — the paused-tree / `PROCESS_MODE_ALWAYS` rule that
+  blocker 2 is an instance of

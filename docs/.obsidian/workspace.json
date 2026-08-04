@@ -6,7 +6,7 @@
       {
         "id": "16f98d6698797a56",
         "type": "tabs",
-        "dimension": 39.92537313432835,
+        "dimension": 58.20079522862823,
         "children": [
           {
             "id": "1ae821d75f551279",
@@ -23,7 +23,7 @@
       {
         "id": "c97ffac0088dc79b",
         "type": "tabs",
-        "dimension": 60.07462686567165,
+        "dimension": 41.79920477137177,
         "children": [
           {
             "id": "ee883a010a050212",
@@ -210,10 +210,10 @@
       "bases:Create new base": false
     }
   },
-  "active": "ee883a010a050212",
+  "active": "1ae821d75f551279",
   "lastOpenFiles": [
-    "04_Technical/GDScriptVerification.md",
     "TODO.md",
+    "04_Technical/GDScriptVerification.md",
     "claude.md",
     "DocumentationHome.md",
     "04_Technical/DebuggingVisualBugs.md",

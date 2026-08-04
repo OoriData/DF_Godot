@@ -9,8 +9,8 @@ tags:
 aliases:
   - "Identity System"
 created: 2026-05-18
-updated: 2026-07-28
-verified_against_code: 2026-07-28
+updated: 2026-08-04
+verified_against_code: 2026-07-31
 status: current
 ---
 
@@ -71,6 +71,43 @@ graph TD
 2. **Conflict Handling**: If a 409 occurs, the `AccountMergeModal` is triggered to handle data consolidation.
 3. **Completion**: All paths lead to a session resync and a `user_id_resolved` signal.
 
+### `SteamLinkPopup` — the concrete Steam-side implementation
+
+*(Documented 2026-07-31. This 296-line script had no coverage anywhere in `docs/` despite being the
+component that performs Steam linking and owns the 409 handoff — the exact machinery S12-3 below is
+asked to reuse.)*
+
+`Scripts/UI/steam_link_popup.gd` (`SteamLinkPopup`, a `CanvasLayer` at `layer = 101` — deliberately the
+same layer as `AccountMergeModal`, above `AccountLinksPopup`'s `100`).
+
+| Step | What happens |
+|---|---|
+| Input | A **`LineEdit` where the player types their Steam ID by hand.** Only the *persona name* is auto-filled, and only when `SteamManager` is live (`get_steam_username()`). |
+| Dispatch | `_on_link_pressed()` disables the button, sets status "Linking…", then calls `APICalls.link_steam_account(sid, persona)`. |
+| Result | `steam_account_linked(result)` → `_on_steam_link_result()`. |
+| `ok` | Shows the linked ID, emits **`SignalHub.user_refresh_requested`** so other surfaces (e.g. `AccountLinksPopup`) re-read identity, then **auto-closes after a 2 s timer**. |
+| `400` | *"Invalid Steam ID or already linked to this account."* |
+| **`409`** | `_open_merge_modal(result["conflict"])` — **hides itself**, instantiates `account_merge_modal.gd`, wires `merge_done` / `cancelled`, and calls `open_with_conflict(conflict)`. |
+
+Two implementation details worth knowing before extending it:
+
+- **The result signal is connected per-attempt and disconnected in the handler.** `_on_link_pressed()`
+  guards with `is_connected()` before connecting, and `_on_steam_link_result()` disconnects first thing.
+  Retrying after a failed link would otherwise accumulate handlers and fire the result N times.
+- **The popup hides rather than closes during a merge**, and is re-`show()`n if the merge modal fails to
+  load. So a merge cancellation returns the player to the link form, not to nothing.
+
+> [!NOTE]
+> **The manual Steam-ID entry is the notable design constraint for S12-3.** A first-launch "I already
+> have an account" branch that reused this popup as-is would ask a brand-new Steam player to find and
+> type their own Steam ID — plausible for an Options-menu power-user flow, poor as onboarding. The
+> transport (`link_steam_account` + the 409 merge path) is reusable; **the input affordance is the part
+> that needs designing.** `SteamManager.get_steam_id()` already exists and is the obvious substitute — it
+> returns `str(getSteamID())`, and `link_steam_account(steam_id: String, …)` takes a `String`, so the
+> types line up with no conversion. **Keep a manual-entry fallback though:** `get_steam_id()` returns an
+> **empty string** when Steam is not initialised, and `link_steam_account()` rejects an empty id with its
+> own synthetic `400` (`api_calls.gd:707-710`) rather than reaching the server.
+
 ## First launch on Steam — the missing "I already have an account" branch
 
 > [!WARNING]
@@ -98,9 +135,12 @@ Options → Connect Accounts (`user_info_display.gd:386`, `:437`), which opens *
 `AccountMergeModal` → merge preview → `commit_merge` → session resync flow diagrammed above. Any fix
 should reuse that flow rather than adding a parallel one.
 
-**Open product question before implementing:** should the branch **link Steam onto the existing account**
-(merge, preserving prior progress) or **sign in as the existing account** (discarding the just-created
-Steam account)? The merge path is the one that already exists in code.
+**✅ Product question ANSWERED 2026-07-29 — use the merge path.** The question was whether to **link Steam
+onto the existing account** (preserving prior progress) or **sign in as the existing account** (discarding
+the just-created Steam one). The decision is **merge**: link Steam onto the existing account and keep the
+old progress, reusing the 409-conflict machinery rather than building a parallel flow. See
+[TODO.md § S12-3](../TODO.md) for the decision record; the concrete component to build on is
+[`SteamLinkPopup`](#steamlinkpopup--the-concrete-steam-side-implementation) above.
 
 ## Persistent Storage
 

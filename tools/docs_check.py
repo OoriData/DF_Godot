@@ -390,6 +390,26 @@ class DocsCheck:
                 self.err("autoload", AUTOLOAD_REGISTER,
                          f"'{name}' is in project.godot [autoload] but not in the register")
 
+        # Membership alone is not what the register promises. It states the table is in load
+        # order, and load order is load-bearing: "later entries may depend on earlier ones."
+        # A membership-only check let six entries sit in the wrong band undetected (found
+        # 2026-07-31), so the numbered rows are compared positionally as well.
+        rows = re.findall(r"^\|\s*(\d+)\s*\|\s*`([A-Za-z_]+)`", body, re.M)
+        listed = [(int(n), nm) for n, nm in rows]
+        for idx, (num, nm) in enumerate(listed, start=1):
+            if num != idx:
+                self.err("autoload", AUTOLOAD_REGISTER,
+                         f"register row '{nm}' is numbered {num} but is the {idx}th row")
+                return
+        if [nm for _, nm in listed] != names:
+            for i, (expected, actual) in enumerate(
+                    zip(names, [nm for _, nm in listed]), start=1):
+                if expected != actual:
+                    self.err("autoload", AUTOLOAD_REGISTER,
+                             f"load-order mismatch at position {i}: project.godot has "
+                             f"'{expected}', register has '{actual}'")
+                    return
+
     def check_graph_shape(self) -> None:
         for doc in self.docs:
             if doc in ROOT_EXEMPT and doc != "DocumentationAudit.md":
@@ -454,6 +474,11 @@ class DocsCheck:
         today = dt.date.today()
         backlog = []
         for doc in self.docs:
+            if self.is_archived(doc):
+                # A tombstone carries no content of its own, so there is nothing to verify
+                # against code. Consistent with check_index_coverage/check_graph_shape, which
+                # already exempt archived docs.
+                continue
             fm = self.fm[doc] or {}
             raw = fm.get("verified_against_code")
             inbound = len(self.inbound.get(doc, ()))

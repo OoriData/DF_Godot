@@ -8,8 +8,8 @@ tags:
 aliases:
   - "Responsive UI System"
 created: 2026-05-18
-updated: 2026-07-28
-verified_against_code: 2026-07-28
+updated: 2026-08-04
+verified_against_code: 2026-07-31
 status: current
 ---
 
@@ -33,11 +33,11 @@ After significant debugging of horizontal UI clipping on mobile devices, the UI 
    - **Desktop Target**: **1920px**, optionally divided by the user's desktop UI-scale slider (`ui.scale`, default **1.0**) for a manual zoom. Narrow desktop windows (< 1200px) fall back to a 1200px target.
 
 > [!NOTE]
-> **Corrected 2026-07-28.** This line previously documented the `ui.scale` default as **1.4**. The real
-> default is **1.0** (`Scripts/System/settings_manager.gd` `data["ui.scale"]`). The `1.4` comes from a
-> dead fallback argument — `settings_menu.gd:247` reads `SM.get_value("ui.scale", 1.4)`, but the key is
-> always present in `SettingsManager.data`, so that fallback can never fire. The code still carries the
-> stale `1.4`; reconciling it is tracked in [TODO.md § Sprint 12](../TODO.md).
+> **Corrected 2026-07-28; code reconciled 2026-07-31.** This line previously documented the `ui.scale`
+> default as **1.4**. The real default is **1.0** (`Scripts/System/settings_manager.gd`
+> `data["ui.scale"]`). The `1.4` came from a dead fallback argument — `settings_menu.gd` read
+> `SM.get_value("ui.scale", 1.4)`, but the key is always present in `SettingsManager.data`, so that
+> fallback could never fire. **The code now reads `1.0`**, so doc and source agree.
 
 ### Desktop scaling contract (and why fixed-width panels drift)
 
@@ -75,6 +75,30 @@ happens to look correct, and `settings.cfg` is per-machine so the two desktops r
    the screen at high `ui.scale`.
 3. Anything that spans an axis with `SIZE_EXPAND_FILL` inside a full-rect parent is **full-screen on that
    axis, at every scale** — say so deliberately or add a max size.
+
+#### The slider's own ceiling — and two constants that look alike
+
+The desktop slider's maximum comes from `get_max_safe_scale()`, **not** from a fixed number:
+
+```
+max_scale = window_width / MIN_LOGICAL_WIDTH        # 1150.0
+          = window_width / (MIN_LOGICAL_WIDTH*0.5)  # portrait: narrow screens need to go lower
+```
+
+`UI_scale_manager.gd` separately clamps `ui.scale` to **0.5 … 4.0**, so the effective ceiling is the
+lower of the two. On a wide monitor `get_max_safe_scale()` is large — a 3440px window yields ~3.0 — which
+is why the slider's top end reaches settings that visibly break fixed-logical-px panels (the open Sprint 11
+slider item).
+
+> [!NOTE]
+> **`1150` and `1200` are different constants and are easy to conflate.**
+>
+> | Constant | Value | Role |
+> |---|---|---|
+> | `TARGET_WIDTH_DESKTOP_SMALL` | `1200.0` | The *target* used when the window is narrower than 1200px |
+> | `MIN_LOGICAL_WIDTH` | `1150.0` | The *floor* the zoom slider may shrink the logical width to, below which layouts start to overlap |
+>
+> They are unrelated despite the near-identical values: one selects a target, the other bounds a slider.
 
 **Diagnostics that already exist — use them instead of guessing.** Both print unconditionally in exported
 builds:
@@ -117,9 +141,25 @@ is a consumer that **writes the bad value somewhere sticky and never recomputes*
 > each control's `combined_minimum_size` when that degenerate rect survives a retry, so the culprit
 > can be named from a log alone.
 
+> [!CAUTION]
+> **`get_logical_safe_margins()` returns a `Rect2` that is not a rectangle.** It is four insets packed
+> into one:
+>
+> | Field | Actually means |
+> |---|---|
+> | `position.x` | **left** inset |
+> | `position.y` | **top** inset |
+> | `size.x` | **right** inset — *not* a width |
+> | `size.y` | **bottom** inset — *not* a height |
+>
+> Treating `size` as a size silently places things off-screen on any device with a notch, and looks
+> perfectly correct on a device without one — so the mistake survives desktop testing. To pad away from
+> the bottom-left, you want `position.x` and `size.y`.
+
 **Rules:**
 1. `get_logical_safe_margins()` returns **zero margins until `is_scale_settled()`** and clamps every
-   inset to ≤ 20 % of the logical viewport. A safe area is a notch, never a third of the screen.
+   inset to ≤ 20 % of the logical viewport (`_MAX_SAFE_INSET_FRACTION`). A safe area is a notch, never a
+   third of the screen.
 2. **Because of rule 1, every consumer MUST re-query on `UIScaleManager.scale_changed`** — otherwise
    it latches the zero instead of the giant. Most already do via their own `size_changed` hooks
    (`map_overlay_settings_panel`, `menu_manager`); `UserInfoDisplay` now does too.

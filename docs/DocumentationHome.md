@@ -6,7 +6,7 @@ tags:
 aliases:
   - "Desolate Frontiers Documentation"
 created: 2026-05-18
-updated: 2026-07-31
+updated: 2026-08-04
 verified_against_code: 2026-07-28
 status: current
 ---
@@ -78,7 +78,7 @@ Welcome to the technical documentation for *Desolate Frontiers*. This folder is 
 - [**Diagnostics & Troubleshooting**](04_Technical/Diagnostics.md): Logging, watchdogs, and network debugging.
 - [**Refresh Scheduler**](04_Technical/RefreshScheduler.md): Polling heartbeat — interval, suspend/resume, adding services.
 - [**Error Handling System**](04_Technical/ErrorSystem.md): ErrorTranslator pipeline, inline vs. modal errors.
-- [**Bug Reporting & Feedback**](04_Technical/BugReporting.md): The Feedback button → screenshot/log capture → `POST /bug-report` pipeline and the payload contract. **Reachability was fixed 2026-07-31 (S12-5)** — `GlobalFeedbackOverlay` (a `CanvasLayer` at `layer = 200`, `PROCESS_MODE_ALWAYS`) makes it available at login, mid-tutorial, and behind modals. ⚠️ That doc is `status: drifting`; it still describes those four gaps as open.
+- [**Bug Reporting & Feedback**](04_Technical/BugReporting.md): The Feedback button → screenshot/log capture → `POST /bug-report` pipeline and the payload contract. **Reachability was fixed 2026-07-31 (S12-5)** — `GlobalFeedbackOverlay` (a `CanvasLayer` at `layer = 200`, `PROCESS_MODE_ALWAYS`) makes it available at login, mid-tutorial, and behind modals.
 - [**User Settings**](04_Technical/UserSettings.md): SettingsManager keys and defaults, and the display/fullscreen contract (**always change the window mode via `display.fullscreen`, never `DisplayServer` directly**). Includes the keyboard shortcut (`F11` · `Alt+Enter` · `Cmd+Ctrl+F`), which is **not** an InputMap action and so will not appear in the editor's Input Map panel.
 - [**GDScript Verification**](04_Technical/GDScriptVerification.md): How to actually prove an edit compiles — the editor pass vs. the targeted load probe, what each one misses, and why `treat_warnings_as_errors` does not exist in Godot 4.6. **Read before claiming "compile-clean".**
 - [**Data Boundaries**](04_Technical/DataBoundaries.md): The JSON-vs-binary seam. Where to look when a stat reads blank or `0` everywhere and both "not backend" and "not frontend" are true.

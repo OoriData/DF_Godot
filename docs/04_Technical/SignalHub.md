@@ -7,8 +7,8 @@ tags:
 aliases:
   - "SignalHub Event Bus"
 created: 2026-05-19
-updated: 2026-05-18
-verified_against_code: 2026-07-28
+updated: 2026-08-04
+verified_against_code: 2026-07-31
 status: current
 ---
 
@@ -27,6 +27,41 @@ graph TD
 
 > [!IMPORTANT]
 > **The Decoupling Rule**: UI components must **never** connect directly to services or make direct calls to `APICalls`. They should connect to `SignalHub` signals and read state from `GameStore`.
+
+### The rule governs *state*, not *request acknowledgements*
+
+*(Measured 2026-07-31. Stated because the rule above reads as absolute, and nine UI scripts do not follow
+it — a reader who takes it literally will conclude the codebase is broken, which is the wrong conclusion.)*
+
+`APICalls` declares **41 signals**; `SignalHub` republishes **30 domain events**. The gap is not an
+oversight. These UI scripts connect straight to `APICalls`:
+
+| Script | Signals it takes directly |
+|---|---|
+| `login_screen.gd`, `account_links_popup.gd`, `account_merge_modal.gd`, `steam_link_popup.gd` | auth / linking / merge results |
+| `bug_report_window.gd`, `error_dialog.gd` | `bug_report_submitted`, `fetch_error` |
+| `convoy_menu.gd`, `vendor_trade_panel.gd` | `cargo_data_received`, `part_compatibility_checked` |
+| `convoy_journey_menu.gd` | `journey_canceled`, `fetch_error` |
+
+**Every one is a one-shot request → response acknowledgement that never lands in `GameStore`.** There is
+no store snapshot for "did my compatibility probe succeed" or "was my Steam link accepted"; there is no
+state to read back, so there is nothing for `SignalHub` to broadcast a *change* of. Routing them through
+the hub would add a hop without adding decoupling.
+
+So the practical rule is:
+
+- **Persistent state** (map, convoys, user, vendors, warehouses) → **always** via `GameStore` +
+  `SignalHub`. Connecting a menu to `APICalls` for these is a real violation.
+- **One-shot acknowledgements** (auth, linking/merge, bug-report submit, compat probes, on-demand detail
+  fetches, action acks) → direct `APICalls` connection is the established pattern.
+- **`fetch_error` is the ambiguous one.** `SignalHub` bridges it into `error_occurred`
+  ([ErrorSystem](ErrorSystem.md)), *and* two UI scripts also listen to it directly. Prefer the bridged
+  path; a direct listener bypasses `ErrorTranslator` and will show raw backend text.
+
+Two habits worth copying from the identity popups when you do connect directly: guard with
+`is_connected()` before connecting, and **disconnect inside the handler** — a retry after a failure
+otherwise accumulates handlers and fires the result N times (see
+[Identity § SteamLinkPopup](Identity.md#steamlinkpopup--the-concrete-steam-side-implementation)).
 
 ---
 
@@ -64,6 +99,35 @@ In `_on_api_fetch_error(message)`:
 - **Emitted by**: `GameStore.set_map()` (bridged from `APICalls` map fetch)
 - **Listeners**: `MapCameraController`, `AutoSellService`, `ConvoyCargoMenu`, `ConvoyMenu`
 - **Purpose**: Signals that the map coordinates and flat list of settlements have refreshed. Allows components to re-cache local search dictionaries (e.g. for mission destination lookups).
+
+#### `map_camera_focus_settlement_requested(settlement_name: String)`
+- **Emitted by**: `inspector_builder.gd` — the "show me this place" affordance on a delivery destination
+- **Listener**: `main_screen.gd::_on_map_camera_focus_settlement_requested()`
+- **Purpose**: Pans the map camera to a settlement **by display name**, not by coords — the inspector
+  knows a delivery's recipient name, not its tile. `main_screen` resolves the name against the snapshot.
+
+#### `map_camera_return_to_convoy_requested()`
+- **Emitted by**: the settlement-preview surfaces, to undo the focus above
+- **Listener**: `main_screen.gd::_on_map_camera_return_to_convoy_requested()`
+- **Purpose**: Returns the camera to the selected convoy **and clears
+  `ui_manager._preview_settlement_coords`** — so it is a state reset, not only a camera move. Firing a
+  focus without an eventual return leaves that preview state set.
+
+#### `settlement_menu_pin_requested(coords: Vector2i, enabled: bool)`
+- **Emitted by**: `convoy_settlement_menu.gd`
+- **Listener**: `main_screen.gd::_on_settlement_menu_pin_requested()`
+- **Purpose**: Lets a **menu** drive the map's pinned-label state, which is otherwise owned by map input
+  (`UIManager.toggle_settlement_pin()`). Carries an explicit `enabled` flag rather than toggling, so a
+  menu can assert the state it wants without knowing the current one. See
+  [Interactions § Pinned settlement labels](../03_Systems/MapSystem/Interactions.md).
+
+#### `map_overlay_settings_changed(settings: Dictionary)`
+- **Emitted by**: `MapSettingsService.update_setting()` — the gear-panel overlay toggles
+- **Listeners**: `UI_manager.gd`, `map_overlay_settings_panel.gd` (re-syncs its own checkboxes)
+- **Purpose**: Broadcasts the whole overlay settings dict on any change. **This is the pipeline any new
+  map overlay toggle should join** — field + `update_setting()` case in `map_settings_service.gd`,
+  default in `settings_manager.gd`, a `_add_toggle_row()` in the panel, and consumption in `UI_manager`.
+  (Adding one is TODO S13-4.)
 
 ---
 
