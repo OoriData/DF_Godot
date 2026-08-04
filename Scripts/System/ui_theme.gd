@@ -51,6 +51,26 @@ const SPACE_XL  := 24
 const SPACE_XXL := 32
 
 # ---------------------------------------------------------------------------
+# Open-menu size bands — the fraction of the viewport an open menu may occupy.
+#
+# `ui.menu_open_ratio` (0..1) is a LERP POSITION between the MIN and MAX of the band for the
+# current orientation, not a screen fraction. main_screen.gd::_get_menu_ratios reads these, and
+# settings_menu.gd resolves them for its readout, so the slider shows the real screen fraction
+# rather than the raw lerp position. Keeping both consumers on one constant is the point: the
+# readout previously showed the lerp position, which is why a displayed "50%" was really 60% of
+# the screen and the number could not be reasoned about.
+#
+# Landscape band set 2026-08-04 from on-screen calibration by the reporter, who picked 15% and 80%
+# off the old lerp-position readout — lerp(0.35, 0.85, 0.15) = 0.425 and lerp(.., 0.80) = 0.75.
+# Portrait is DELIBERATELY UNCHANGED: those numbers were found in a desktop landscape session, and
+# portrait is a bottom sheet measured against HEIGHT, where 42.5% would be too short to be useful.
+# ---------------------------------------------------------------------------
+const MENU_RATIO_LANDSCAPE_MIN := 0.425  ## Was 0.35 — of viewport WIDTH
+const MENU_RATIO_LANDSCAPE_MAX := 0.75   ## Was 0.85 — of viewport WIDTH
+const MENU_RATIO_PORTRAIT_MIN  := 0.55   ## Of viewport HEIGHT
+const MENU_RATIO_PORTRAIT_MAX  := 0.72   ## Of viewport HEIGHT
+
+# ---------------------------------------------------------------------------
 # Corner radii — softened, hand-rebuilt feel (not pristine sci-fi)
 # ---------------------------------------------------------------------------
 const RADIUS_SM := 4

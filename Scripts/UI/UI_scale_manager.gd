@@ -28,6 +28,15 @@ const TARGET_WIDTH_DESKTOP_SMALL := 1200.0
 ## Smallest logical width we allow the desktop zoom slider to produce.
 const MIN_LOGICAL_WIDTH := 1150.0
 
+## Hard bounds on the user-facing desktop zoom (Sprint 11 "drop the top ~90% of the range",
+## values chosen on screen by the reporter 2026-08-04). The old ceiling was `get_max_safe_scale()`
+## alone — window_width / MIN_LOGICAL_WIDTH, i.e. ~3.0 on a 3440 monitor — and everything past the
+## low band produced broken/oversized layout. These are the authoritative bounds: the settings
+## slider reads its range from `get_effective_max_scale()` so the control and the engine clamp can
+## never disagree, which is what let a stored 3.65 run while the slider showed something else.
+const MIN_USER_SCALE := 0.75
+const MAX_USER_SCALE := 1.30
+
 ## Never let content_scale_factor collapse the UI to an invisible point. If the window
 ## reports a near-zero size for a frame — which happens in exported/Steam builds during
 ## boot, window placement, or a monitor (DPI) change — factor ≈ 0 shrinks every Control
@@ -176,21 +185,46 @@ func get_global_ui_scale() -> float:
 
 
 ## Called by SettingsManager when the desktop UI scale slider changes.
+##
+## Clamps to exactly the range the settings slider offers (see get_effective_max_scale). Any other
+## clamp here would let a stored value take effect that the slider cannot represent — which is how
+## a `ui.scale` of 3.65 ran while the control showed its own ceiling instead (S13-23).
 func set_global_ui_scale(value: float) -> void:
-	_user_scale = clampf(value, 0.5, 4.0)
+	_user_scale = clampf(value, MIN_USER_SCALE, get_effective_max_scale())
 	_apply_logical_resolution()
 
 
 ## Upper bound for the desktop zoom slider: the scale that would shrink the logical
 ## width down to MIN_LOGICAL_WIDTH, below which the layout starts to overlap.
+##
+## Derived from the BASE TARGET WIDTH, not the physical window width. `_apply_logical_resolution`
+## sets `target_w = _base_target_width(win) / _user_scale` and then `factor = win.x / target_w`, so
+## the resulting logical viewport width is exactly `target_w` — the window width cancels out. The
+## real constraint is therefore `_base_target_width / _user_scale >= MIN_LOGICAL_WIDTH`, which does
+## not involve the window size at all.
+##
+## This previously returned `win.x / MIN_LOGICAL_WIDTH`, which grew without limit on wide monitors —
+## ~3.0 on a 3440 display, where the honest ceiling is 1920/1150 ≈ 1.67 regardless of monitor. That
+## is a direct contributor to the Sprint 11 "top ~90% of the range is broken" report: the slider
+## offered scales that could never have been safe.
 func get_max_safe_scale() -> float:
-	var win_sz := get_window().size
-	var is_portrait := win_sz.y > win_sz.x
+	var win_sz := Vector2(get_window().size)
 	var min_logical := MIN_LOGICAL_WIDTH
-	if is_portrait:
+	if _is_portrait(win_sz):
 		# Portrait must allow a much smaller logical width for narrow screens.
 		min_logical = MIN_LOGICAL_WIDTH * 0.5
-	return float(win_sz.x) / min_logical
+	return _base_target_width(win_sz) / min_logical
+
+
+## The ceiling the settings slider offers AND the ceiling set_global_ui_scale enforces — one value,
+## so the control can never display a scale the engine won't apply (or vice versa).
+##
+## MAX_USER_SCALE is the product cap. get_max_safe_scale() still matters *below* it: on a narrow
+## window (e.g. 1200px, ceiling ≈ 1.04) even 1.30 would push the logical width under
+## MIN_LOGICAL_WIDTH and overlap the layout. Never returns less than MIN_USER_SCALE, so the slider
+## always has a usable range rather than collapsing to a single point on a tiny window.
+func get_effective_max_scale() -> float:
+	return clampf(get_max_safe_scale(), MIN_USER_SCALE, MAX_USER_SCALE)
 
 
 ## True once a real (non-rescued) scale factor has been applied. Callers that divide by the scale

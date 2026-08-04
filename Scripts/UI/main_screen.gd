@@ -648,15 +648,18 @@ func _is_portrait() -> bool:
 	var viewport_sz = get_viewport_rect().size
 	return viewport_sz.y > viewport_sz.x
 
+## The (min, max) fraction of the viewport an open menu may occupy, for the current orientation.
+## `_opt_menu_ratio_open` (the settings slider, 0..1) lerps between the two.
+##
+## Bands live in UITheme so the settings readout resolves the same numbers this does — see
+## UITheme's "Open-menu size bands" block for why (the readout used to show the raw lerp position).
 func _get_menu_ratios() -> Vector2:
-	# Portrait: Use 55-72% of screen height.
-	# The map strip remains visible above (~28-45%) while the trade panel has room to breathe.
-	# Previously 40-60%; bumped to give vendor/convoy panels more vertical space on mobile portrait.
+	# Portrait: fraction of screen HEIGHT. The map strip stays visible above while the trade panel
+	# has room to breathe.
 	if _is_portrait():
-		return Vector2(0.55, 0.72)
-	# Landscape: Use 35-85% of screen width (Increased by 10% from 0.25-0.75)
-	else:
-		return Vector2(0.35, 0.85)
+		return Vector2(UITheme.MENU_RATIO_PORTRAIT_MIN, UITheme.MENU_RATIO_PORTRAIT_MAX)
+	# Landscape: fraction of screen WIDTH.
+	return Vector2(UITheme.MENU_RATIO_LANDSCAPE_MIN, UITheme.MENU_RATIO_LANDSCAPE_MAX)
 
 func _get_bottom_safe_margin() -> float:
 	var is_mobile = OS.has_feature("mobile") or OS.has_feature("web_android") or OS.has_feature("web_ios") or DisplayServer.get_name() in ["Android", "iOS"]

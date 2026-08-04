@@ -9,7 +9,7 @@ aliases:
   - "Responsive UI System"
 created: 2026-05-18
 updated: 2026-08-04
-verified_against_code: 2026-07-31
+verified_against_code: 2026-08-04
 status: current
 ---
 
@@ -78,17 +78,43 @@ happens to look correct, and `settings.cfg` is per-machine so the two desktops r
 
 #### The slider's own ceiling — and two constants that look alike
 
-The desktop slider's maximum comes from `get_max_safe_scale()`, **not** from a fixed number:
+**Rewritten 2026-08-04 (S13-23). The previous description of this is obsolete in two ways** — the old
+formula was wrong, and the `0.5 … 4.0` clamp is gone. Both are recorded here because the stale versions
+are still quoted in older notes.
+
+One function is authoritative for **both** the slider's range and the engine's clamp:
 
 ```
-max_scale = window_width / MIN_LOGICAL_WIDTH        # 1150.0
-          = window_width / (MIN_LOGICAL_WIDTH*0.5)  # portrait: narrow screens need to go lower
+get_effective_max_scale() = clamp(get_max_safe_scale(), MIN_USER_SCALE, MAX_USER_SCALE)
+                                                        # 0.75          1.30
 ```
 
-`UI_scale_manager.gd` separately clamps `ui.scale` to **0.5 … 4.0**, so the effective ceiling is the
-lower of the two. On a wide monitor `get_max_safe_scale()` is large — a 3440px window yields ~3.0 — which
-is why the slider's top end reaches settings that visibly break fixed-logical-px panels (the open Sprint 11
-slider item).
+`set_global_ui_scale()` clamps to exactly that range, and `settings_menu.gd` reads its slider bounds from
+it. **They must never be derived independently.** When they were, a stored `ui.scale` of `3.65` ran while
+the slider displayed its own (lower) ceiling — the control could neither show the truth nor walk it back.
+
+`get_max_safe_scale()` still applies **below** the product cap, for narrow windows:
+
+```
+max_safe = base_target_width(win) / MIN_LOGICAL_WIDTH        # 1150.0
+         = base_target_width(win) / (MIN_LOGICAL_WIDTH*0.5)  # portrait
+```
+
+> [!WARNING]
+> **This formula was previously `window_width / MIN_LOGICAL_WIDTH` — that was a bug (fixed 2026-08-04).**
+> The logical viewport width after a scale is `base_target_width / _user_scale`; the window width
+> *cancels out* of `factor = win.x / target_w`. So the real constraint never involved the window size.
+> The old form grew without bound on wide monitors — **~3.0 on a 3440px display, where the honest
+> ceiling is `1920/1150 ≈ 1.67` regardless of monitor** — which is a direct contributor to the Sprint 11
+> "the top ~90% of the range is broken" report: the slider was offering scales that could never be safe.
+
+The practical ceilings now: **1.30** on any window ≥ 1200px wide (the product cap binds first), and
+**≈1.04** on a narrower one (`1200/1150`, where the layout floor binds first).
+
+**A value stored outside the product bounds is normalised once, on the next Settings open** — but only
+against `MIN_USER_SCALE … MAX_USER_SCALE`, *never* against `get_effective_max_scale()`. Writing back the
+window-derived ceiling would silently destroy a legitimate `1.30` preference just because Settings was
+opened on a narrow window. That distinction is the whole reason the two functions exist separately.
 
 > [!NOTE]
 > **`1150` and `1200` are different constants and are easy to conflate.**
@@ -99,6 +125,38 @@ slider item).
 > | `MIN_LOGICAL_WIDTH` | `1150.0` | The *floor* the zoom slider may shrink the logical width to, below which layouts start to overlap |
 >
 > They are unrelated despite the near-identical values: one selects a target, the other bounds a slider.
+
+#### `ui.menu_open_ratio` is a lerp position, not a screen fraction
+
+The most misread value in the settings menu. The stored `0..1` is **not** the share of the screen an open
+menu takes — it is the position between the `MIN` and `MAX` of the band for the current orientation:
+
+```
+ratio_pct = lerp(band.min, band.max, ui.menu_open_ratio)   # main_screen.gd::_get_menu_ratios
+menu_size = (portrait ? viewport.y : viewport.x) * ratio_pct
+```
+
+Bands live in **`UITheme`** (`MENU_RATIO_*`), read by both `main_screen.gd` and `settings_menu.gd`:
+
+| Orientation | Measured against | MIN | MAX |
+|---|---|---|---|
+| Landscape / desktop | viewport **width** | `0.425` | `0.75` |
+| Portrait | viewport **height** | `0.55` | `0.72` |
+
+> [!IMPORTANT]
+> **The settings sliders carry no numeric readout, by design (2026-08-04).** One was added mid-session
+> as a calibration aid and removed once the bands were set. If you add one back, resolve the lerp
+> position through `UITheme` before displaying it — the first version showed the raw stored value, so a
+> displayed "50%" was really **60% of the screen**. That is not a rounding quibble: it made the control
+> impossible to reason about, and the calibration numbers taken off it had to be converted afterwards.
+> **Any figure quoted from a screenshot of that readout is a lerp position, not a screen fraction.**
+
+**Landscape band history:** `0.35 … 0.85` until 2026-08-04, narrowed to `0.425 … 0.75` from on-screen
+calibration (the reporter picked `15%` and `80%` off the then-current lerp-position readout, which
+resolve to exactly those two fractions). Portrait was deliberately left alone — those numbers came from a
+desktop landscape session, and portrait is a bottom sheet measured against height, where `42.5%` would be
+too short to be useful. `main_screen.gd:379` still carries a hard `full_w * 0.85` backstop; with a `0.75`
+maximum it no longer binds, and it is kept only as a safety net.
 
 **Diagnostics that already exist — use them instead of guessing.** Both print unconditionally in exported
 builds:

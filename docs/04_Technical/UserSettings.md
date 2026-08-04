@@ -9,8 +9,8 @@ tags:
 aliases:
   - "User Settings & Preferences"
 created: 2026-05-19
-updated: 2026-07-31
-verified_against_code: 2026-07-31
+updated: 2026-08-04
+verified_against_code: 2026-08-04
 status: current
 ---
 
@@ -32,8 +32,8 @@ Audited against `SettingsManager.data` on 2026-07-28. **`data` is the authoritat
 
 | Key | Default | Runtime side effect on save |
 |---|---|---|
-| `ui.scale` | `1.0` | `ui_scale_manager.set_global_ui_scale()` — desktop manual zoom only |
-| `ui.menu_open_ratio` | `0.5` | read by `main_screen.gd` when (re)laying out the menu sheet |
+| `ui.scale` | `1.0` | `ui_scale_manager.set_global_ui_scale()` — desktop manual zoom only. **Bounded `0.75 … 1.30`** (`MIN_USER_SCALE` / `MAX_USER_SCALE`); see the note below |
+| `ui.menu_open_ratio` | `0.5` | read by `main_screen.gd` when (re)laying out the menu sheet. **A lerp position between the `UITheme.MENU_RATIO_*` band ends, NOT a screen fraction** |
 | `ui.cargo_sort_metric` | `0` | read by `vendor_trade_panel.gd`; index into `CargoSorter.SortMetric` |
 | `access.high_contrast` | `false` | — |
 | `display.fullscreen` | `false` | `DisplayServer.window_set_mode()` **+ deferred `reapply_scale()`** |
@@ -45,6 +45,21 @@ Audited against `SettingsManager.data` on 2026-07-28. **`data` is the authoritat
 > **Resolved 2026-07-31.** `settings_menu.gd` previously read `SM.get_value("ui.scale", 1.4)`; that `1.4`
 > was **dead** (the key always exists in `data`, so the effective default was always `1.0`) and is now
 > written as `1.0`. Reconciled alongside **S13-2**.
+
+> [!IMPORTANT]
+> **`ui.scale` bounds, and why a stored value may not be the one in force (2026-08-04, S13-23).**
+> The old `0.5 … 4.0` clamp is gone. `ui_scale_manager.get_effective_max_scale()` is now the single
+> source for **both** the settings slider's range and `set_global_ui_scale()`'s clamp — deriving them
+> independently is what allowed a stored `3.65` to run while the slider displayed a lower ceiling.
+> - Product bounds: `MIN_USER_SCALE = 0.75`, `MAX_USER_SCALE = 1.30`.
+> - `get_max_safe_scale()` binds *below* the cap on narrow windows (≈`1.04` under 1200px wide).
+> - A value outside the **product** bounds is normalised once on the next Settings open. It is
+>   deliberately **not** normalised to the window-derived ceiling — that would destroy a legitimate
+>   `1.30` preference merely because Settings was opened on a small window.
+>
+> **The two sliders carry no numeric readout.** One existed briefly on 2026-08-04 as a calibration aid
+> and was removed once the bands were set. Full rationale and the band table:
+> [ui_system § `ui.menu_open_ratio` is a lerp position](../02_UI_UX/ui_system.md#uimenu_open_ratio-is-a-lerp-position-not-a-screen-fraction).
 
 ## Display & fullscreen
 

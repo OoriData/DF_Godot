@@ -6,7 +6,7 @@ tags:
 aliases:
   - "TODO — Active Work"
 created: 2026-05-21
-updated: 2026-07-31
+updated: 2026-08-04
 status: unverified
 ---
 
@@ -164,8 +164,29 @@ and desktop where relevant, per the project's device-test rule.
   **icon** on the map; add anti-collision so the label offsets clear of its own icon (analogous to the
   A5 edge/gear clamp and A4 route-nudge already in `UI_manager`/`convoy_label_manager`). Distinct from A5
   (edge/gear clamp) and A4 (route nudge). `Scripts/UI/convoy_label_manager.gd`.
+  - ⚠️ **Superseded by research — see S13-17.** The premise "add anti-collision" is wrong: the icon
+    keepout already exists (`convoy_label_manager.gd:530-561`, radius `:62`). It under-covers the arrow
+    and the escape search is too weak. Fix both label systems in one pass under **S13-17**, not here.
 
-- [ ] **UI-scale slider: drop the top ~90% of the range** — the desktop UI-scale slider goes far too high;
+- [x] **UI-scale slider: drop the top ~90% of the range** *(✅ CODE-COMPLETE 2026-08-04, 17/17 headless,
+  pending an on-screen look)* — **bounds set on screen by the reporter: min `0.75`, max `1.30`.** Now
+  `UITheme`-adjacent constants `MIN_USER_SCALE` / `MAX_USER_SCALE` on `UI_scale_manager.gd`, with a single
+  `get_effective_max_scale()` feeding **both** the slider range and `set_global_ui_scale()`'s clamp — the
+  old `0.5 … 4.0` clamp is gone. Deriving those two independently is what allowed S13-23.
+  - **A real bug was found in `get_max_safe_scale()` while doing this.** It returned
+    `window_width / MIN_LOGICAL_WIDTH`, but the logical viewport width after a scale is
+    `base_target_width / _user_scale` — the window width **cancels out** of `factor = win.x / target_w`.
+    So the ceiling grew without bound on wide monitors (**~3.0 on a 3440px display, where the honest
+    limit is `1920/1150 ≈ 1.67` on any monitor**). That is a direct cause of this item's own "the top of
+    the range produces broken/oversized UI" report — the slider was offering scales that could never have
+    been safe. Now derived from `_base_target_width()`.
+  - A stored value outside the product bounds is normalised **once** on the next Settings open, against
+    `MIN_USER_SCALE … MAX_USER_SCALE` only — never against the window-derived ceiling, which would destroy
+    a legitimate `1.30` preference just for opening Settings on a narrow window.
+  (Docs: [ui_system § The slider's own ceiling](02_UI_UX/ui_system.md#the-sliders-own-ceiling--and-two-constants-that-look-alike) — rewritten; the old description was wrong on both counts.)
+
+- [x] ~~**UI-scale slider: drop the top ~90% of the range**~~ *(original text retained below for the
+  `file:line` references)* — the desktop UI-scale slider goes far too high;
   the top of the range produces broken/oversized UI. Cap the usable maximum much lower. Today
   `settings_menu.gd:243` sets `s_ui_scale.max_value = get_max_safe_scale()` (which is
   `window_width / MIN_LOGICAL_WIDTH` — very large on desktop) and `UI_scale_manager.gd` clamps to
@@ -1269,6 +1290,105 @@ IDs are `S13-n`.
   `chassis/df_obj/vendor_cls.py:780,823,854-855`, `engine/routers/vehicle_api.py:227`.
   Backend repo `~/Work/desolate_frontiers`.
 
+- [x] **S13-22 · Neither settings slider has a numeric readout — "the values don't show up as I adjust
+  them"** *(P2 — NEW, reported 2026-08-04; ✅ CODE-COMPLETE 2026-08-04, compile-checked + load-probed,
+  pending an on-screen look)* — reported while running verification recipe ④. **Not** the S13-2 stale-value
+  bug that recipe describes; a separate, previously unrecorded defect.
+  **Verified root cause — the readout was never built.** `SettingsMenu.tscn` composes both rows as
+  exactly two children: `UIScaleRow` = `[Label "UI Scale"][UIScaleSlider]` (`:224-238`) and
+  `MenuWidthRow` = `[Label "Menu Width Ratio"][MenuWidthRatioSlider]` (`:240-254`). **No node in the
+  scene displays either value**, and `settings_menu.gd` never wrote a number anywhere. So the slider
+  handle moved and nothing else changed — exactly as reported.
+  **Compounded on UI Scale by there being no visual effect either:** `_on_ui_scale_value_changed()` was
+  a bare `pass` (`settings_menu.gd:325`) because `content_scale_factor` is too heavy to apply per-frame,
+  so the scale only lands on `drag_ended`. Mid-drag there was neither a number nor a re-layout — nothing
+  at all to indicate the control was live.
+  **✅ Fix 2026-08-04, then REVERTED the same day — see the closing note.** Added `UIScaleValue` /
+  `MenuWidthValue` Labels to the two rows and a `_update_slider_readouts()` driven from both sliders'
+  `value_changed` plus `_init_values()`, so the number tracked the handle live.
+  - **Second defect fixed in the same pass:** `_init_values()` assigned `s_ui_scale.value` /
+    `s_menu_ratio.value` directly. Since S13-2 made that function re-run on **every** menu open, each
+    open fired `value_changed` → `set_and_save`, writing the stored value back to disk. Worse, the
+    assignment happens *after* `max_value` is narrowed to `get_max_safe_scale()`, so on a window small
+    enough to clamp the stored scale, the **clamped value was silently persisted** — a real setting loss.
+    Both assignments are now `set_value_no_signal()`. **This half is permanent** and outlived the
+    readout — it is a real setting-loss bug, unrelated to display.
+  **🔄 Readouts REMOVED 2026-08-04 at the reporter's request, once they had served their purpose.** They
+  were the instrument used to calibrate the UI-scale and menu-width bands (S13-24, and the Sprint 11
+  slider item); with those bands now set the numbers were clutter. **Removing them does *not* reinstate
+  any bug** — verified 13/13 headless: the S13-23 commit paths, the `0.75 … 1.30` bounds and the
+  out-of-bounds normalisation all still hold with the Labels gone. What remains from this entry is the
+  `set_value_no_signal()` fix above and the knowledge, now documented, that the slider value is a lerp
+  position.
+  ⚠️ **The lerp-position trap outlived the readout.** `main_screen.gd:374,737` lerp
+  `_opt_menu_ratio_open` between `_get_menu_ratios()`'s ends, so the stored `0..1` is **not** a screen
+  fraction. **Any figure quoted from a screenshot of the old readout is a lerp position** and needs
+  converting. Bands are now `UITheme.MENU_RATIO_*`; see the doc link on S13-24.
+  `Scenes/SettingsMenu.tscn`, `Scripts/Menus/settings_menu.gd`.
+
+- [x] **S13-23 · UI Scale slider silently discards most changes, and can't represent a scale above the
+  window's ceiling — the "bar resets but the scale never changed, so I kept cranking it" bug**
+  *(P1 — NEW, reported 2026-08-04; ✅ CODE-COMPLETE 2026-08-04, 10/10 headless regression tests, pending
+  an on-screen look)* — reported as: *"after adjusting the UI scale and returning to the settings, the bar
+  resets to its position but the UI scale didn't change. Allowing the user to further increase the scale
+  and break the game."* **Two independent root causes, both verified.**
+  **(1) `drag_ended`'s `changed` flag was the only commit gate.** `_on_ui_scale_drag_ended(changed)` ran
+  `if changed: set_and_save(...)`. Godot's `Slider` computes that argument as *"did the value move between
+  `drag_started` and `drag_ended`"* — and a **click on the track jumps the value on the press**, i.e.
+  *before* the baseline (`grab.uvalue`) is captured. So a click-to-set reports **`changed == false`** and
+  the new value was **thrown away**. Arrow keys and the mouse wheel are worse: they emit `value_changed`
+  and **no `drag_ended` at all**, so they never had a commit path either. Only a grabber drag that
+  physically moved ever persisted. On the next open `_init_values()` re-read the stored value and the
+  handle snapped back — precisely "the bar resets and the scale never changed."
+  **(2) The slider could not represent a stored scale above `get_max_safe_scale()`.** That ceiling is
+  `window_width / 1150` — **1.67 on a 1920 window**, 2.23 at 2560, 2.99 at 3440 — recomputed from the
+  *current* window on every open. **The reporter's live `user://settings.cfg` holds `ui.scale=3.65`**
+  (read 2026-08-04; `ui_scale_manager` clamps to 4.0, so it was in force). The handle therefore pinned to
+  max — a far lower position than the scale actually running — and dragging "up" from there committed a
+  value *smaller* than 3.65, shrinking the UI. That is the mechanism behind "further increase the scale
+  and break the game": the control could neither show the truth nor walk it back.
+  **✅ Fix 2026-08-04:**
+  - New `_commit_ui_scale()` is the single commit point. It compares against the **stored** value instead
+    of trusting any signal argument, so every input path — grabber drag, track click, arrow keys, wheel —
+    persists exactly once, and a genuine no-op still skips the heavy re-layout.
+  - `drag_ended`'s `changed` argument is now **explicitly ignored** (commented as to why, so it doesn't
+    get "tidied" back in). A new `_ui_scale_dragging` flag, set on `drag_started`, keeps `value_changed`
+    from applying `content_scale_factor` on every frame of a drag — the reason the deferred-commit design
+    existed in the first place.
+  - `max_value` is now `maxf(get_max_safe_scale(), stored_scale)`. A slider that cannot display the scale
+    in force is worse than one showing an out-of-range number: admitting the real value keeps it honest
+    and, when the scale is already too large, **always draggable back down**. That is the recovery path
+    out of a broken-scale state, which previously did not exist short of editing `settings.cfg`.
+  ⚠️ **Not yet confirmed on a real screen.** Headless covers the commit matrix, not whether the re-layout
+  after a commit looks right. **Note the reporter's saved scale is still `3.65`** — first launch after
+  this lands should show the slider reading `3.65x` with room to drag down.
+  🔗 **This gated the Sprint 11 "UI-scale slider" item — now unblocked and closed** (bounds `0.75`/`1.30`
+  set 2026-08-04). Any ceiling chosen before this fix would have been tuned against a control that
+  discarded most inputs. S12-1/S12-4 remain open.
+  `Scripts/Menus/settings_menu.gd`, `Scripts/UI/UI_scale_manager.gd`.
+
+- [x] **S13-24 · Menu-width slider band narrowed to the calibrated range** *(P2 — NEW,
+  2026-08-04; ✅ CODE-COMPLETE, 12/12 headless, pending an on-screen look)* — follow-on from S13-22. The
+  reporter calibrated on screen and asked for **min 15%, max 80%** — read off the then-new readout, which
+  displayed the raw **lerp position**, not the screen fraction. Converted:
+  `lerp(0.35, 0.85, 0.15) = 0.425` and `lerp(0.35, 0.85, 0.80) = 0.75`.
+  - **Landscape band `0.35 … 0.85` → `0.425 … 0.75`** of viewport width. **Portrait deliberately
+    unchanged** (`0.55 … 0.72` of *height*) — the calibration came from a desktop landscape session, and
+    a bottom sheet at 42.5% of height would be too short to be useful.
+  - **Bands moved to `UITheme` (`MENU_RATIO_*`)**, read by both `main_screen.gd::_get_menu_ratios()` and
+    `settings_menu.gd`, so the control and the layout cannot drift apart.
+  - The readout was briefly changed to resolve the true screen fraction, then **removed entirely later
+    the same day** along with the UI-scale one (see S13-22). Showing the lerp position had meant a
+    displayed "50%" was really 60% of the screen — which is exactly why the reporter could not say
+    whether their numbers were screen fractions or slider positions when asked. Net effect on their saved
+    `0.47`: **58.5% → 57.8%** of width, i.e. visually unchanged; only the *ends* of the range moved.
+  - `main_screen.gd:379`'s hard `full_w * 0.85` backstop no longer binds at a 0.75 max; kept as a net.
+  ⚠️ **Calibrated while `ui.scale` was 3.65** (logical viewport ≈ 526px), so the proportions may read
+  differently now that the scale is capped at 1.30. Re-check on screen and adjust the two `UITheme`
+  constants — it is a one-line edit each, by design.
+  `Scripts/System/ui_theme.gd`, `Scripts/UI/main_screen.gd`, `Scripts/Menus/settings_menu.gd`.
+  (Docs: [ui_system § `ui.menu_open_ratio` is a lerp position](02_UI_UX/ui_system.md#uimenu_open_ratio-is-a-lerp-position-not-a-screen-fraction).)
+
 ## Android
 
 - [ ] **S13-8 · 🅿️ SHELVED — Android "can't log in" was almost certainly an offline test device**
@@ -1363,6 +1483,106 @@ IDs are `S13-n`.
     `eta_value.text = str(_route_data.get("eta", "N/A"))` — a **raw, unformatted** value straight into the
     label, the only ETA display in the project that bypasses `DateTimeUtil`.
 
+- [ ] **S13-17 · Map labels layer over the convoy icon — the anti-collision exists but under-covers**
+  *(P2 — reported 2026-08-04 with a screenshot: a settlement label ("Chicago" + `📦 Mail`) sits under a
+  convoy arrow. **Researched against current code 2026-08-04, nothing coded.** Absorbs the Sprint 11
+  "Convoy icon ↔ convoy label anti-collision" bullet and the *"nudge is vertical-only"* caveat on
+  device-test **A4**.)*
+
+  **The feature is not missing.** Both label systems already run an icon/route keepout every draw. This
+  is a coverage + search-quality bug in code that is already there, so the fix is tuning and structure,
+  not new machinery:
+
+  | System | Placement + escape search | Icon keepout |
+  |---|---|---|
+  | Settlement labels | `UI_manager.gd::_position_settlement_panel` `:1612-1678` (loop `:1646-1674`) | `_settlement_panel_overlaps_convoy` `:1687-1707`, radius `settlement_convoy_keepout_radius = 24.0` (`:89`) |
+  | Convoy labels | `convoy_label_manager.gd::_position_convoy_panel` `:411-524` (loop `:499-524`) | `_panel_overlaps_icon_or_route` `:530-561`, radius `_icon_keepout_radius_px = 18.0` (`:62`) |
+
+  Five defects found, roughly in order of how much each explains the screenshot. **(1)–(3) are the
+  headline; (4)–(5) are cheap fixes worth folding into the same pass.**
+
+  1. **The escape search is vertical-only, fixed-step, and its exhaustion state is the *worst* position.**
+     `UI_manager.gd:1646-1674` tries ≤20 offsets of `±label_anti_collision_y_shift` (`= 5.0`, `:87`),
+     escalating by `ceil((attempt+1)/2)` — so the whole search covers **±50 world px** and never moves the
+     label sideways (the convoy-label version at least flips sides every 4 attempts,
+     `convoy_label_manager.gd:518-523`). Clearing a 24px keepout circle from a label whose half-height is
+     already ~25 world px needs ~49px — the search range is *marginal at zoom 1 and insufficient below
+     it*, because the panel is counter-scaled (`panel.scale = label_scale / zoom`, `:1513`) so its
+     **world** height grows as you zoom out while the 5px step stays constant. Worse: the last iteration
+     *sets* `attempt 19`'s position and exits without testing it, so an exhausted search leaves the label
+     **50px below its desired spot — pushed down onto the tile and the icon**, i.e. the failure mode makes
+     the collision worse than doing nothing. Same shape in `convoy_label_manager.gd:503-524`, which
+     additionally uses `position.y += sign * shift` with an alternating sign, so it oscillates between
+     **two** Y values per side instead of escalating.
+  2. **The keepout circle is smaller than the arrow it is supposed to model.** The convoy icon is a
+     world-space rotated triangle (`convoy_node.gd:14-18`, `:180-221`): tip at
+     `(30 + 4.5) × 0.7 = 24.15` px from center, rear `9.45`, half-width `13.65` — then multiplied by a
+     **throb of 1.0–1.2** every frame (`:22`, `:175-176`). So the true reach is **~24–29 px forward** and
+     ~16px sideways, against a `24.0` keepout for settlement labels and `18.0` for convoy labels. The
+     forward tip is outside the keepout circle *whenever the throb is above ~1.0*, and the convoy-label
+     radius under-covers in every direction. A single symmetric radius also can't express the arrow's
+     forward bias — an oriented capsule/AABB along `icon_sprite.rotation` would.
+  3. **The two label systems are blind to each other.** `_draw_interactive_labels` seeds
+     `all_drawn_label_rects_this_update` empty (`:607`) and fills it with **settlement panels only**
+     (`:858`, `:866`); convoy labels are positioned afterwards (`:447` → `:456-466`) against their own
+     separate rect list. So a settlement label and a convoy label can land on top of each other and
+     neither loop will ever see it. **This is cheap to fix**: `SettlementLabelContainer`,
+     `ConvoyLabelContainer` and `ConvoyIconContainer` are identity-transform siblings under
+     `MapContainer/SubViewport` (`Scenes/MapView.tscn:47-58`), so all three coordinate spaces are already
+     the same — the rects can be shared as-is, no transform needed.
+  4. **The horizontal clamp runs *after* collision resolution and can push the label back into one.**
+     `_clamp_settlement_panel_x()` is the last call in `_position_settlement_panel` (`:1678`), and
+     `ConvoyLabelManager._clamp_label_within_bounds_if_convoy_visible()` is likewise applied post-hoc.
+     Neither re-tests. The A5 edge/gear clamp (Sprint 9) can therefore silently undo the A4 nudge.
+  5. **The "convoy parked here" clearance bump is exact-tile-match only.** `:1630-1637` adds `45.0` px of
+     lift only when `cx == tile_x and cy == tile_y`. A convoy on an **adjacent** tile — which is what the
+     screenshot shows — gets nothing, even though at the tileset's tile size one tile is smaller than the
+     arrow's own length.
+
+  **Suggested shape** (one pass over both systems):
+  - Extract the keepout into one shared helper that models the icon as an **oriented** shape at max throb
+    (or simply raise both radii to ≥30 and accept the slack), and feed it the same
+    `_all_convoy_data_cache` both systems already hold.
+  - Replace both escape searches with a **scored candidate list** — N/NE/E/SE/S/SW/W/NW at 2–3 distances,
+    stepped in units of the panel's *own scaled height* rather than a constant world px — and **keep the
+    best-scoring candidate** when nothing is fully clear, instead of falling out of the loop at the last
+    tried offset.
+  - Share one rect list across settlement + convoy labels for the frame (see (3)).
+  - Re-test the collision **after** the X clamp, or clamp first and search within the clamped band.
+
+  **Verify before coding** (two cheap checks that change the fix):
+  - `Assets/tiles/tile_set.tres` declares **no** `tile_size`, so Godot's **16×16** default applies. If
+    that holds, the arrow is ~1.5 tiles long and `base_settlement_offset_above_tile_center = 13.0`
+    (`:50`) puts the label less than one tile above the tile centre — the geometry is inherently tight and
+    the radii in (2) matter more than they look. Confirm the effective tile size in-editor first.
+  - Convoy icons draw at `z_index = 10` (`convoy_visuals_manager.gd:5`) while both label containers sit at
+    `LABEL_CONTAINER_Z_INDEX = 2` (`UI_manager.gd:149`), so the icon always paints **over** the label.
+    That is why the overlap reads as "the arrow is on top of the text" and not as a hidden convoy. If
+    perfect avoidance proves impossible at tight zooms, restacking is the fallback lever — but fix the
+    search first; z-order only decides who wins the overlap, not whether it happens.
+
+  **Repro / device test:** on the map with `settlement_labels` on, put a convoy on a tile **adjacent to**
+  (not on) a labelled settlement that is also a cargo destination, so the label carries the extra `📦`
+  line and is at its tallest. Zoom out one or two steps. Expected after the fix: the label dodges — up,
+  down **or sideways** — and never sits under the arrow; the label must also still clear the screen edges
+  and the gear box (A5) and stay off the route line during planning (A4), which are the two behaviors most
+  at risk of regressing.
+
+  `Scripts/UI/UI_manager.gd`, `Scripts/UI/convoy_label_manager.gd`, `Scripts/Map/convoy_node.gd`
+  (icon geometry constants, read-only).
+
+  - **Noticed while researching, not part of this bug — the convoy icon's runtime interpolation is dead
+    code.** `_current_segment_start_idx` / `_progress_in_segment` are **read** in four places
+    (`convoy_node.gd:99-100`, `map_camera_controller.gd:496-497`, `convoy_label_manager.gd:544`,
+    `convoy_visuals_manager.gd:165`) and **written nowhere in the repo**. So `ConvoyNode._update_visuals()`
+    always takes its fallback branch (`:135-139`), and `augment_convoy_data_with_offsets()`'s lane
+    separation for convoys sharing a route segment (`convoy_visuals_manager.gd:164-211`) always resolves
+    to `Vector2.ZERO` — that feature has never run. Harmless for S13-17 (the backend snaps convoys to
+    integer route waypoints — `chassis/df_obj/convoy_cls.py:715` — so tile-centre math is correct today),
+    but it means `convoy_label_manager.gd:548-552` always falls through to
+    `_infer_route_segment_index_near_convoy()`. Fold into the **dead-code sweep** in the systems-audit
+    initiative, or resurrect deliberately if smooth convoy movement is wanted.
+
 ---
 
 # Device-test round 2 — the closeout gate
@@ -1374,7 +1594,7 @@ orientation, do the gesture, confirm **new** vs **old**. Round 1 results (2026-0
 **Batch A — map / route** *(during a live convoy on the map)*
 - [ ] **A1 · Labels tap-only** *(touch; portrait + landscape)* — pan-drag across settlements: labels must **not** flash under the finger; a settlement label reveals **only on an explicit tap**.
 - [ ] **A3 · Hub vendor cards fit** *(mobile-landscape only)* — open a settlement with 3–4 vendors: all cards pack into one row, shorter, **no clip below the nav bar**, no scroll. (Re-check portrait/desktop unchanged.)
-- [ ] **A4 · Labels dodge the route** *(portrait + landscape)* — start journey planning near labeled settlements: labels **nudge vertically off** the route line; topmost labels stay on-screen. *Known limit:* nudge is vertical-only.
+- [ ] **A4 · Labels dodge the route** *(portrait + landscape)* — start journey planning near labeled settlements: labels **nudge vertically off** the route line; topmost labels stay on-screen. *Known limit:* nudge is vertical-only — root-caused under **S13-17**, which also covers labels landing on the convoy icon.
 - [x] **A5 · Map labels clip the side edges / hide behind the gear box** — ✅ device-verified 2026-07-21 (`4c70729`). Detail in [SprintHistory.md](SprintHistory.md).
 
 **Batch B — vendor / mechanics**
@@ -1437,7 +1657,16 @@ reported as Windows-specific, so the Mac editor is a smoke test only, not the ga
 Ordered by risk. The first four are a ~5-minute desktop pass and cover the changes most likely to be
 wrong; the rest need specific setup and can wait.
 
-- [ ] **① Feedback button placement + reachability (S12-5)** *(desktop first, then portrait + landscape)* —
+> **Results of the first pass — 2026-08-04.** ① and ③ **pass, device-verified.** ② is **blocked on
+> Windows access** (the fullscreen problem was reported there and the reporter cannot test Windows at
+> present) — the **macOS half is still runnable** and remains the open half of S12-6. ④ turned up a
+> **different, previously unrecorded defect** — the two sliders have no numeric readout at all — logged
+> and fixed as **S13-22** below; the S13-2 stale-value check that ④ actually describes is **still
+> unrun.** ⑤–⑧ not yet attempted.
+
+- [x] **① Feedback button placement + reachability (S12-5)** — ✅ **DEVICE-VERIFIED 2026-08-04.** Reporter
+  confirms the button works. Closes the placement/hit-testing gap S12-5 flagged as its unproven half.
+  Original recipe retained below.
   **highest blast radius: this button now renders on *every* screen in the game**, so a placement
   mistake is visible everywhere. Launch and look at the login screen **before signing in**: a small
   "Feedback" button sits bottom-left. Tap it — the window must **open and be interactive** (typing works;
@@ -1448,16 +1677,19 @@ wrong; the rest need specific setup and can wait.
   *Old:* no feedback affordance existed at login, and the window would have opened frozen.
   **Known-and-accepted:** two Feedback affordances now exist on the main screen (top bar + floating).
   Say so if that reads as clutter — hiding `%ReportBugButton` is a one-line follow-up.
-- [ ] **② Fullscreen shortcut (S12-6)** — see the S12-6 recipe directly above; run it now that the
-  shortcut exists. **Watch specifically for the UI laying out offset after the switch** — that is the
-  untested half. Confirm the settings checkbox flips **while the menu is open** (S12-6 wires
-  `setting_changed` live), not only after a reopen.
-- [ ] **③ Pinned map label → preview arrow, on DESKTOP** *(the originally-reported bug)* — click a
-  settlement label on the map to **pin** it (a `›` chevron appears), then **click it again**. It must
-  **open the settlement preview**. *Old:* the second click un-pinned it and the label simply vanished,
-  and no mouse path could ever reach the preview. Re-check on touch that pinning still behaves as before
-  (this changed the mouse branch only, but both now share one rule).
-- [ ] **④ Settings menu shows live values (S13-2)** — open Settings, note **Invert Pan**; close it;
+- [ ] **② Fullscreen shortcut (S12-6)** — 🚧 **BLOCKED ON WINDOWS 2026-08-04.** The reporter has no
+  Windows machine available to test against, and that is where the fullscreen problem was seen. **The
+  macOS half is not blocked** and is the runnable part: press `F11` / `Cmd+Ctrl+F`, confirm the mode
+  switches, **the UI does not lay out offset afterwards** (the untested half — this is what
+  `reapply_scale()` exists to prevent), the settings checkbox flips **while the menu is open**, and the
+  state survives a restart. Do the Mac pass now; hold the Windows pass until a machine is available.
+- [x] **③ Pinned map label → preview arrow, on DESKTOP** — ✅ **DEVICE-VERIFIED 2026-08-04.** Reporter
+  confirms the pinned label behaves correctly. Closes the originally-reported Sprint 11 bug.
+- [ ] **④ Settings menu shows live values (S13-2)** — ⚠️ **STILL UNRUN 2026-08-04.** The 2026-08-04 pass
+  reported *"the settings values are not showing up as I adjust the numbers"*, which is **the sliders
+  having no readout** (now S13-22), **not** the stale-checkbox behaviour this recipe tests. The
+  invert-pan re-read below has still never been exercised — run it. Steps:
+  open Settings, note **Invert Pan**; close it;
   **log out and back in** (or change the setting elsewhere); reopen Settings. The checkbox must match the
   **stored** value, not the one captured when the menu was first built. Then toggle it once and confirm
   panning direction actually changes and **survives a restart**. *Old:* the stale checkbox wrote its own

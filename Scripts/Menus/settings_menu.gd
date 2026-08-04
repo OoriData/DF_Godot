@@ -12,6 +12,11 @@ extends CanvasLayer
 
 var _debug_settings_menu: bool = true
 
+## True only between the UI scale slider's drag_started and drag_ended. Every other input path
+## (track click, arrow keys, mouse wheel) must commit from value_changed instead — see
+## _on_ui_scale_drag_ended for why drag_ended's `changed` flag cannot be trusted.
+var _ui_scale_dragging: bool = false
+
 var SM: Node
 var API: Node
 
@@ -253,22 +258,46 @@ func _init_values():
 	s_menu_ratio.max_value = 1.0
 	s_menu_ratio.step = 0.01
 	
-	# Fetch safe max scale to prevent broken UI
+	# Bounds come from ui_scale_manager so this control offers exactly what the engine will apply —
+	# the two disagreeing is what let a stored 3.65 run while the slider showed its own ceiling
+	# (S13-23). Nothing is derived locally.
 	var sm_scale = get_node_or_null("/root/ui_scale_manager")
-	if is_instance_valid(sm_scale) and sm_scale.has_method("get_max_safe_scale"):
-		s_ui_scale.max_value = sm_scale.get_max_safe_scale()
-	
-	s_ui_scale.value = float(SM.get_value("ui.scale", 1.0))
+	if is_instance_valid(sm_scale) and sm_scale.has_method("get_effective_max_scale"):
+		s_ui_scale.min_value = sm_scale.MIN_USER_SCALE
+		s_ui_scale.max_value = sm_scale.get_effective_max_scale()
+
+		# One-time normalisation against the PRODUCT bounds only. A value saved before those bounds
+		# existed (the reporter's was 3.65) is not a preference any window can honour, so persisting
+		# the clamp once clears it instead of leaving it on disk indefinitely.
+		# Deliberately NOT normalised to get_effective_max_scale(): that ceiling is window-derived,
+		# and writing it back would destroy a legitimate 1.30 preference merely because Settings was
+		# opened on a narrow window — exactly the silent-clamp bug this file already had once.
+		var raw := float(SM.get_value("ui.scale", 1.0))
+		var normalised: float = clampf(raw, sm_scale.MIN_USER_SCALE, sm_scale.MAX_USER_SCALE)
+		if not is_equal_approx(raw, normalised):
+			if _debug_settings_menu: print("[SettingsMenu] ui.scale out of bounds: ", raw, " -> ", normalised)
+			SM.set_and_save("ui.scale", normalised)
+
+	# What is actually in force: set_global_ui_scale applies the same window ceiling, so showing the
+	# clamped figure is the honest reading — not a display-only truncation.
+	var stored_scale := clampf(float(SM.get_value("ui.scale", 1.0)),
+		s_ui_scale.min_value, s_ui_scale.max_value)
+
+	# set_value_no_signal, not `.value =`: this runs again on every reopen (S13-2), and a plain
+	# assignment fires value_changed -> set_and_save, writing the stored value back to disk on each
+	# open. Worse, assigning after max_value was narrowed above silently PERSISTS the clamped value.
+	s_ui_scale.set_value_no_signal(stored_scale)
 
 	c_fullscreen.button_pressed = bool(SM.get_value("display.fullscreen", false))
 	c_invert_pan.button_pressed = bool(SM.get_value("controls.invert_pan", false))
 	if _debug_settings_menu: print("[SettingsMenu] _init_values: invert_pan loaded as ", SM.get_value("controls.invert_pan", false))
 	c_invert_zoom.button_pressed = bool(SM.get_value("controls.invert_zoom", false))
-	s_menu_ratio.value = float(SM.get_value("ui.menu_open_ratio", 0.5))
+	s_menu_ratio.set_value_no_signal(float(SM.get_value("ui.menu_open_ratio", 0.5)))
 	c_high_contrast.button_pressed = bool(SM.get_value("access.high_contrast", false))
 
 func _wire_events():
 	s_ui_scale.value_changed.connect(_on_ui_scale_value_changed)
+	s_ui_scale.drag_started.connect(_on_ui_scale_drag_started)
 	s_ui_scale.drag_ended.connect(_on_ui_scale_drag_ended)
 
 	c_fullscreen.toggled.connect(func(b): SM.set_and_save("display.fullscreen", b))
@@ -322,14 +351,39 @@ func _on_reset_defaults():
 	_init_values()
 
 
-func _on_ui_scale_value_changed(_v: float):
-	# Optional: We could apply a "preview" scale here without saving,
-	# but content_scale_factor is quite heavy. Let's stick to debounced or drag_ended.
-	pass
+func _on_ui_scale_drag_started() -> void:
+	_ui_scale_dragging = true
 
-func _on_ui_scale_drag_ended(changed: bool):
-	if changed:
-		SM.set_and_save("ui.scale", s_ui_scale.value)
+
+func _on_ui_scale_value_changed(_v: float):
+	# Applying the scale is deferred to the end of a *drag* — content_scale_factor is heavy.
+	# But not dragging => keyboard, mouse wheel, or a click on the track. None of those produce a
+	# drag_ended that reports `changed`, so they must commit here or they are silently discarded.
+	if not _ui_scale_dragging:
+		_commit_ui_scale()
+
+
+func _on_ui_scale_drag_ended(_changed: bool) -> void:
+	_ui_scale_dragging = false
+	# The `changed` argument is deliberately IGNORED. Godot's Slider computes it as "did the value
+	# move between drag_started and drag_ended", and a click on the track jumps the value on the
+	# *press* — before the baseline is captured — so a click-to-set reports changed == false and the
+	# old `if changed:` guard threw the new value away. The slider then snapped back to the stored
+	# value on the next open: "the bar resets and the UI scale never changed."
+	_commit_ui_scale()
+
+
+## Single commit point for the UI scale. Compares against the STORED value rather than trusting any
+## signal argument, so every input path (grabber drag, track click, arrow keys, wheel) persists
+## exactly once and a no-op never triggers a needless full re-layout.
+func _commit_ui_scale() -> void:
+	if not is_instance_valid(SM):
+		return
+	var stored := float(SM.get_value("ui.scale", 1.0))
+	if is_equal_approx(stored, s_ui_scale.value):
+		return
+	if _debug_settings_menu: print("[SettingsMenu] ui.scale commit: ", stored, " -> ", s_ui_scale.value)
+	SM.set_and_save("ui.scale", s_ui_scale.value)
 
 func _on_logout_pressed():
 	if is_instance_valid(API) and API.has_method("logout"):
