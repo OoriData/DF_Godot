@@ -1,12 +1,15 @@
 ---
 type: ui-ux
 tags:
-  - ui
-  - codex/mechanics-menu
+  - layer/ui
+  - kind/deep-dive
+  - status/current
 aliases:
   - "Mechanics Menu"
 created: 2026-05-19
-updated: 2026-06-24
+updated: 2026-07-29
+verified_against_code: 2026-07-28
+status: current
 ---
 
 # Mechanics Menu
@@ -107,12 +110,17 @@ When embedded as the Service tab inside `ConvoyVehicleMenu`:
 
 ## Scaling Rule
 
+> [!NOTE]
+> **Mirror.** Canonical rule: [AI_ONBOARDING § The Law of Logical Pixels](../AI_ONBOARDING.md).
+> Canonical mechanism: [ui_system](ui_system.md). **Those pages win on conflict** — if this
+> section disagrees with them, fix it here and leave them alone.
+
 `_get_font_size()` returns `base` unchanged — no orientation boosts. `UIScaleManager` owns all scaling. Previously this function multiplied by `2.5×` (portrait) / `1.6×` (mobile-landscape) / `1.2×` (desktop), double-scaling every font on top of `UIScaleManager`'s `content_scale_factor`. Fixed June 2026. See [Responsive UI / Scaling](ui_system.md).
 
 ---
 
 ## Connected Systems
 - [Mechanics System](../03_Systems/Mechanics.md)
-- [Mechanics Service](../03_Systems/MechanicsService.md)
+- [Autoload Register § MechanicsService](../04_Technical/AutoloadOrder.md) — compatibility prefetch and probe sessions
 - [Vehicle Menu](VehicleMenu.md)
 - [MenuBase Contract](MenuBase.md)

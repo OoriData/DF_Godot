@@ -1,13 +1,15 @@
 ---
 type: ui-ux
 tags:
-  - ui
-  - ux
-  - ui/vendor
-  - codex/ui_inspector
+  - layer/ui
+  - kind/deep-dive
+  - status/current
 aliases:
   - "UI Components: Trees & Inspector"
 created: 2026-05-18
+updated: 2026-05-18
+verified_against_code: 2026-07-28
+status: current
 ---
 
 # UI Components: Trees & Inspector
@@ -52,3 +54,8 @@ The middle column is built dynamically based on the selected item type. This avo
 - `vendor_panel_inspector_controller.gd`
 - `inspector_builder.gd`
 - `tree_builder.gd`
+
+## Related
+
+- **See also:** [VendorPanelOverview](VendorPanelOverview.md)
+- **See also:** [Schema](../../01_Architecture/Schema.md) — the object fields the inspector renders

@@ -73,7 +73,15 @@ const ERROR_MAP: Dictionary = {
 	"Failed to parse": "Received an unexpected response from the server. Please try again.",
 	"HTTPRequest initiation failed": "Could not connect to the game server. Please check your internet connection.",
 	"Network error": "A network error occurred. Please check your internet connection and try again.",
-	"result code: 5": "A secure connection error occurred. This often happens if your internet connection is unstable or your device clock is out of sync.",
+	# HTTPRequest.Result codes (Godot 4.6 enum), as embedded by api_calls.gd's
+	# "...HTTPRequest result code: %s. URL: ..." message. Trailing period disambiguates
+	# single-digit codes from codes that start with the same digit (e.g. "2" vs "10" would
+	# otherwise substring-match on "result code: 1").
+	"result code: 2.": "Can't reach the server — check your internet connection.", # RESULT_CANT_CONNECT
+	"result code: 3.": "Can't reach the server — check your internet connection.", # RESULT_CANT_RESOLVE
+	"result code: 4.": "Can't reach the server — check your internet connection.", # RESULT_CONNECTION_ERROR
+	"result code: 5": "A secure connection error occurred. This often happens if your internet connection is unstable or your device clock is out of sync.", # RESULT_TLS_HANDSHAKE_ERROR
+	"result code: 10.": "The request timed out. Please check your internet connection and try again.", # RESULT_TIMEOUT
 }
 
 # A list of technical error substrings that should NOT be shown to the user.

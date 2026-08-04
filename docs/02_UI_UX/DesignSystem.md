@@ -1,12 +1,15 @@
 ---
 type: ui-ux
 tags:
-  - ui
-  - ux
-  - codex/designsystem
+  - layer/ui
+  - kind/deep-dive
+  - status/current
 aliases:
   - "UI Design System"
 created: 2026-05-18
+updated: 2026-06-25
+verified_against_code: 2026-07-28
+status: current
 ---
 
 # UI Design System
@@ -37,7 +40,11 @@ created: 2026-05-18
 Two temperatures, never muddied on the same element: **warm** (brass / cappuccino) = industrial & economic; **cool** (verdigris) = living & digital.
 
 ### Status Thresholds (resource/capacity bars)
-- Good/full → verdigris `#5aa192`; Caution/low → brass `#f3d54e`; Critical/empty → red `#8a2b2b`. Use `UITheme.status_for_ratio(ratio)`.
+- `UITheme.status_for_ratio(ratio)` returns `STATUS_GOOD` / `STATUS_WARN` / `STATUS_CRIT` —
+  **Material-bright colors, not the brand palette**: Good/full → `#66bb6a`, Caution/low → `#ffee58`,
+  Critical/empty → `#ef5350` (`ui_theme.gd:33-35,68-73`). *Corrected 2026-07-28 — this doc previously
+  claimed the brand accents (verdigris/brass/red); `ui_theme.gd`'s own comment says the divergence is
+  deliberate: "kept Material-bright on purpose — functional readability wins over brand tint."*
 
 ### Text Colors
 - **Primary**: `UITheme.TEXT_PRIMARY` (`#dbe2e9`) — with outline for readability on the map.
@@ -98,3 +105,9 @@ Three visual tiers distinguish how interactive controls behave. Never style them
   - **Overview**: Swipes vertically (Down to open, Up to close).
 - **Hover Effects**: All interactive buttons should have a subtle scale up (`1.05x`) or color shift on hover.
 - **Micro-interactions**: Use `Tween` for smooth opacity fades when UI elements appear/disappear.
+
+## Related
+
+- **Implemented in:** [AutoloadOrder](../04_Technical/AutoloadOrder.md) — `UITheme` holds the authoritative colour/spacing constants
+- **See also:** [UIAudit](UIAudit.md) — where each token is actually applied
+- **Live status:** [TODO](../TODO.md) — UITheme migration status and spacing-consistency backlog

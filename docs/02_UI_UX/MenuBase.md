@@ -1,13 +1,15 @@
 ---
 type: ui-ux
 tags:
-  - ui
-  - ux
-  - codex/menubase
+  - layer/ui
+  - kind/deep-dive
+  - status/current
 aliases:
   - "MenuBase Contract"
 created: 2026-05-18
-updated: 2026-05-21
+updated: 2026-07-10
+verified_against_code: 2026-07-28
+status: current
 ---
 
 # MenuBase Contract
@@ -194,7 +196,7 @@ Anchors `MainVBox` to the full rect, then insets it so content never touches the
 Apply consistent button styles — `style_back_button` produces a dark navy rounded button; `style_convoy_nav_button` produces a light grey button matching the static nav bar.
 
 ### `_update_navigation_bar_visibility(convoy)`
-Calls `MenuManager.set_nav_button_visible("convoy_settlement_submenu", not has_journey)` to hide the Settlement nav button when the convoy is on a journey. Falls back to a local `BottomMenuButtonsHBox` node for legacy scenes.
+Calls `MenuManager.set_nav_button_visible("convoy_settlement_submenu", not has_journey)` to hide the Settlement nav button when the convoy is on a journey. *(Corrected 2026-07-28: no `BottomMenuButtonsHBox` fallback exists — that legacy node was removed in Sprint 5. `MenuManager` owns nav-button visibility exclusively; `MenuBase.gd:288` documents the removal in-line.)*
 
 ---
 
@@ -293,3 +295,10 @@ func apply_ui_state(state: Dictionary) -> void:
 - **Visibility Guards**: `_on_convoys_changed` skips updates if the menu is hidden. No special guard is needed in subclass implementations of `_update_ui`.
 - **No Direct Navigation**: Menus emit signals — they never call `MenuManager` directly. This keeps the dependency graph one-directional.
 - **`extra` arg pattern**: `MenuManager` stores a second argument in `_next_menu_extra_arg` before calling `open_*` functions. It is passed through `initialize_with_data(data, extra_arg)` to `MenuBase.extra`. Subclasses read `self.extra` in `_update_ui` to handle deep links (e.g. jump-to-vehicle, jump-to-cargo-item).
+
+## Related
+
+- **Constrained by:** [ui_system](ui_system.md) — scaling rules that override any layout choice here
+- **See also:** [MenuManager](MenuManager.md) — owns open/close lifecycle and the shared nav bar
+- **See also:** [UIAudit](UIAudit.md) — inventory of every menu built on this contract
+- **Live status:** [TODO](../TODO.md)

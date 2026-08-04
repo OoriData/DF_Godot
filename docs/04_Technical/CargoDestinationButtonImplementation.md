@@ -1,12 +1,15 @@
 ---
 type: technical
 tags:
-  - technical
-  - codex/cargodestinationbuttonimplementation
+  - layer/autoload
+  - kind/deep-dive
+  - status/current
 aliases:
   - "Implementing the Cargo Destination Button"
 created: 2026-05-18
-updated: 2026-05-19
+updated: 2026-05-18
+verified_against_code: 2026-07-28
+status: current
 ---
 
 # Cargo Destination Preview & Camera Navigation
@@ -93,3 +96,8 @@ Detailed developer-facing print lines are active to trace interaction:
 *   `[MainScreen] Focusing map camera (with occlusion shift <vector>) -> world pos: <pos>`
 *   `[VendorTradePanel] _reset_destination_preview_if_active: Emitting map_camera_return_to_convoy_requested to SignalHub`
 *   `[MainScreen] _on_map_camera_return_to_convoy_requested: Focusing camera smoothly on convoy.`
+
+## Related
+
+- **See also:** [ConvoyCargoMenu](../02_UI_UX/ConvoyCargoMenu.md) — the menu this lands in
+- **See also:** [TechnicalReference](TechnicalReference.md) — archive policy for shipped implementation plans

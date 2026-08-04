@@ -168,9 +168,15 @@ func populate_convoy_list(convoys_data: Array) -> void:
 		printerr("ConvoyListPanel: populate_convoy_list - list_item_container node not found or invalid. Check unique name in scene.")
 		return
 
-	# Clear existing items
+	# Clear existing items.
+	# S12-8: only Control children are list items. `ConvoyItemsContainer` also ships with a
+	# `ResponsiveListAdapter` (a plain Node, see ConvoyListPanel.tscn) that provides mobile
+	# touch-target sizing for this list. Freeing every child destroyed it on the first populate —
+	# nothing ever recreated it, so the sizing silently stopped being applied for the rest of the
+	# session. Logs showed it present on the first populate and gone on every later one.
 	for child in list_item_container.get_children():
-		child.queue_free()
+		if child is Control:
+			child.queue_free()
 
 	var is_portrait = _get_is_portrait()
 	var is_mobile = _is_mobile()

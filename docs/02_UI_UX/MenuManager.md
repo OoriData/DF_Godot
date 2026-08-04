@@ -1,10 +1,15 @@
 ---
 type: ui-ux
 tags:
-  - ui
-  - ux
-  - codex/menumanager
+  - layer/ui
+  - kind/deep-dive
+  - status/current
+aliases:
+  - "MenuManager"
 created: 2026-05-18
+updated: 2026-07-01
+verified_against_code: 2026-07-28
+status: current
 ---
 
 # MenuManager
@@ -60,16 +65,19 @@ func _ready():
 ### Menu Types & Ordering
 Menus are categorized to determine their slide direction. `MENU_ORDER` index determines horizontal slide direction (lower index = left of higher index).
 
+*(Table corrected 2026-07-28 against `menu_manager.gd:18-26` — indices were previously off by one, and
+Cargo was listed third instead of last.)*
+
 | Menu Type | Index | Slide Behavior |
 |---|---|---|
-| `convoy_overview` | — | Vertical swipe (covers submenus) |
-| `convoy_vehicle_submenu` | 0 | Horizontal |
-| `convoy_journey_submenu` | 1 | Horizontal |
-| `convoy_cargo_submenu` | 2 | Horizontal |
-| `settlement_hub` | 3 | Horizontal (convoy-present overview hub) |
-| `convoy_settlement_submenu` | 4 | Horizontal (single-vendor trade screen) |
+| `convoy_overview` | 0 | Vertical swipe (covers submenus) |
+| `convoy_vehicle_submenu` | 1 | Horizontal |
+| `convoy_journey_submenu` | 2 | Horizontal — Nav bar order: Vehicles \| Journey \| Settlement \| Cargo |
+| `settlement_hub` | 3 | Horizontal (convoy-present overview hub — takes the old vendor-menu transition slot) |
+| `convoy_settlement_submenu` | 4 | Horizontal (single-vendor trade screen — one level deeper than the hub) |
 | `warehouse_submenu` | 5 | Horizontal |
 | `mechanics_submenu` | 6 | Horizontal |
+| `convoy_cargo_submenu` | 7 | Horizontal |
 | `settlement_overview` | — | No nav bar; used for map-preview opens (no convoy) |
 
 `_nav_slot_for_type()` maps both `settlement_hub` and `convoy_settlement_submenu` to the **Settlement** nav button so it stays highlighted across both screens.
@@ -98,7 +106,7 @@ To enable persistence for a menu:
 - `open_convoy_menu(data)`: Opens the main convoy overview.
 - `open_convoy_vehicle_menu(data)`: Opens the vehicle sub-menu.
 - `open_settlement_overview_menu(settlement_or_convoy)`: Opens the settlement hub. Accepts a convoy dict (resolves settlement from coords) or a bare settlement dict (map-preview mode).
-- `open_convoy_settlement_menu_with_focus(convoy, vendor_id)`: Opens the single-vendor trade screen focused on one vendor.
+- `open_convoy_settlement_menu_with_focus(convoy_data: Dictionary, focus_intent: Dictionary)` (`menu_manager.gd:346`): Opens the single-vendor trade screen; `focus_intent` carries the vendor/route focus target, not a bare vendor ID.
 - `_on_overview_open_vendor(convoy, vendor_id)`: Internal — wires the hub's `open_vendor_requested` signal to the single-vendor open.
 - `go_back()`: Navigates to the previous item in the stack.
 - `close_all_menus()`: Wipes the stack and hides the UI.
@@ -117,3 +125,9 @@ To enable persistence for a menu:
 
 > [!IMPORTANT]
 > If you add a new tween-based transition path, call `_finalize_switch_old_menu` inside **both** the normal completion callback and the flush guard at the top of `_start_menu_switch_animation`. Never rely solely on the tween callback to dispose a menu node.
+
+## Related
+
+- **See also:** [MenuBase](MenuBase.md) — the contract every managed menu implements
+- **See also:** [SceneArchitecture](SceneArchitecture.md) — where the menu container sits in the tree
+- **Implemented in:** [AutoloadOrder](../04_Technical/AutoloadOrder.md) — `MenuManager`, autoload #19

@@ -1,12 +1,16 @@
 ---
 type: system
 tags:
-  - system
-  - system/tutorial
-  - codex/readme
+  - layer/service
+  - kind/deep-dive
+  - concept/onboarding
+  - status/current
 aliases:
   - "Tutorial System: Modular Overhaul"
 created: 2026-05-18
+updated: 2026-07-16
+verified_against_code: 2026-07-28
+status: current
 ---
 
 # Tutorial System: Modular Overhaul
@@ -16,8 +20,9 @@ The Tutorial System guides new players through the core loops of *Desolate Front
 ## Mental Model
 The system is built on three pillars:
 1.  **The Content**: Step definitions (id, instructional copy, action, target). These are **hardcoded in
-    `tutorial_manager.gd::_build_level_steps()`** — *not* an external JSON. The old `res://Data/tutorial_steps.json`
-    loader is disabled (it drifted out of sync); edit the function, not a data file.
+    `tutorial_manager.gd::_build_level_steps()`** (line 319) — *not* an external JSON. The old
+    `res://Other/tutorial_steps.json` loader is disabled (`tutorial_manager.gd:1937-1941`, commented out
+    as drifted out of sync); edit the function, not a data file.
 2.  **The Highlight**: A full-screen overlay that masks the UI, creating a "hole" over the target element to focus the player's attention.
 3.  **The Watcher**: Level-specific logic that listens to `SignalHub` to determine when a step is successfully completed.
 
@@ -54,7 +59,7 @@ graph TD
 
 The **Level 2 supply-purchase step** (`l2_buy_supplies`, `action = "await_supply_purchase"`) must prompt the player for **Water Jerry Cans specifically** — the copy reads *"Purchase 2 MRE Boxes and 2 Water Jerry Cans."* Do **not** write "Jerry Cans" in this step; a player buying plain (fuel) Jerry Cans has bought the wrong thing and must not complete the step.
 
-The completion watcher enforces this: it counts an item toward the "water" total only when the lowercased name contains **both** `water` **and** `jerry` (`tutorial_manager.gd` ~L1405 in `_on_supply_check`, and ~L1606 in the purchase handler). When editing this level:
+The completion watcher enforces this: it counts an item toward the "water" total only when the lowercased name contains **both** `water` **and** `jerry` (`tutorial_manager.gd:1385` in `_on_supply_check()`, and `:1602` in `_on_vendor_item_purchased()`, the instant-override path). When editing this level:
 - Keep the step copy explicit about **Water** Jerry Cans.
 - Never loosen the match to bare `jerry` — that would let plain fuel Jerry Cans satisfy a water requirement.
 

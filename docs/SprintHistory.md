@@ -1,11 +1,14 @@
 ---
 type: note
 tags:
-  - codex/history
+  - kind/process
+  - status/unverified
 aliases:
   - "Sprint History"
   - "Completed Sprint Detail"
 created: 2026-07-22
+updated: 2026-07-28
+status: unverified
 ---
 
 # Sprint History — Completed Work Archive
@@ -169,7 +172,7 @@ Compile-clean (standard + warnings-as-errors).
   and uses a smaller landscape left margin so the panel uses the empty strip left of the map.
 - [x] **Supply step "not updating" — kept the strict Water-Jerry-Cans match** — the vendor stocks BOTH plain
   `Jerry Cans` (fuel) and `Water Jerry Cans` (water); the water total must require **both** `water` AND `jerry`
-  (never bare `jerry`). See [[reference_jerry_cans_vs_water]]. Added `[Tutorial][DIAG] supply cargo item=…`
+  (never bare `jerry`). See [Tutorial content gotcha](03_Systems/TutorialSystem/TutorialSystemOverview.md#content-gotcha-jerry-cans--water-jerry-cans) *(agent memory: `reference_jerry_cans_vs_water`)*. Added `[Tutorial][DIAG] supply cargo item=…`
   logging in `_on_supply_check`.
 
 **Device-feedback polish (round 5) — 2026-07-10:**
@@ -209,14 +212,14 @@ Compile-clean (standard + warnings-as-errors).
   shared bottom nav bar doesn't exist. Fix: a **resume anchor** (`await_convoy_menu` action) prepended to L2
   and L5. It auto-advances with no prompt when a convoy submenu is already active, and on a restart highlights
   the always-present **convoy dropdown** and waits for any convoy menu to open. See
-  [[reference_tutorial_resume_step_zero]].
+  *(agent memory: `reference_tutorial_resume_step_zero`)*.
 
 **Device-feedback polish (round 9, camera focuses old convoy spot) — 2026-07-14:**
 - [x] **Camera pans to the pre-warp location on tutorial exit** — the camera focuses on the convoy using
   `_last_focused_convoy_data`, a snapshot captured at **menu-open**. During L5 the backend warps the convoy from
   (0,0) to its start city, so that snapshot's `x`/`y` are stale. Fix: new
   `main_screen.gd::_refresh_convoy_data_from_store()` re-resolves the convoy by `convoy_id` from GameStore (live
-  coords) right before every camera-focus call. See [[reference_convoy_focus_stale_snapshot]].
+  coords) right before every camera-focus call. See *(agent memory: `reference_convoy_focus_stale_snapshot`)*.
 
 **Device-feedback polish (round 10, flashing panel) — 2026-07-16 (`511d2d5`), device-verified:**
 - [x] **Tutorial text box flashed to near-full-screen for one frame** — two root causes in `tutorial_overlay.gd`:
@@ -224,7 +227,7 @@ Compile-clean (standard + warnings-as-errors).
   for one frame → reports a wrapped-at-zero-width min HEIGHT of hundreds of px. Fixed by making checklist rows
   **single-line + ellipsis**. (2) In portrait, `_relayout_panel` clamped the panel's right edge to the menu's left
   edge, but portrait menus are full-width **bottom sheets** that slide in **horizontally**. Fixed by skipping the
-  menu-edge clamp in portrait. See [[reference_tutorial_overlay_panel_positioning]].
+  menu-edge clamp in portrait. See *(agent memory: `reference_tutorial_overlay_panel_positioning`)*.
 
 > **Dropped from Sprint 8 scope:** the map-pin teaching step. The tutorial keeps its current entry flow (convoy
 > dropdown → Settlement nav); it does not teach map-label pinning.
@@ -282,17 +285,17 @@ Compile-clean (standard + warnings-as-errors).
 - [x] **Vendor efficiency = 0** — ✅ **RESOLVED on device (2026-07-21).** Vendor vehicle stats now show real
   efficiency — the `/map` payload deploy landed. See the
   [DF_Lib case study](04_Technical/DF_Lib.md#case-study-the-vanishing-vehicle-efficiency-stat) and memory
-  [[reference_vendor_efficiency_binary_serializer]].
+  [DF_Lib case study](04_Technical/DF_Lib.md#case-study-the-vanishing-vehicle-efficiency-stat) *(agent memory: `reference_vendor_efficiency_binary_serializer`)*.
 
 ### Sprint 10 — Closeout QOL — ✅ CODE-COMPLETE 2026-07-22
 
 - [x] **`discord_popup.gd` font double-scale** — `_get_font_size` flattened to `return base`
   (`Scripts/UI/discord_popup.gd`), the last holdout of the font-scale migration. Also removed a leftover visible
-  `_debug_lbl` (viewport/size diagnostic) + `| LOUD LOG` console prints. Closes [[project_font_scale_migration]].
+  `_debug_lbl` (viewport/size diagnostic) + `| LOUD LOG` console prints. Closes *(agent memory: `project_font_scale_migration`)*.
 - [x] **Dead tutorial tab handlers** — removed the `await_dealership_tab`/`await_market_tab` match arms, their two
   entries in `lock_tabs_for_actions`, and `_hint_dealership_tab` (`tutorial_manager.gd`). Kept
   `_lock_vendor_tabs`/`_on_vendor_tab_selected` (still live for `await_vehicle_purchase`/`await_supply_purchase`/
-  `await_urchin_purchase`) and the `VendorTabContainer`. See [[reference_tutorial_steps_in_code]].
+  `await_urchin_purchase`) and the `VendorTabContainer`. See *(agent memory: `reference_tutorial_steps_in_code`)*.
 - [x] **(Follow-up) Second-layer tutorial-tab orphans** — removed the now-dead
   `tutorial_manager.gd::_watch_for_tab_selected` + `_check_for_tab_selected_poll`, the `_is_polling_for_tab`
   polling branch in `_process` (the whole `_process` override went), its resets in `_advance`/`_exit_tree`, the
@@ -343,4 +346,4 @@ Kept for provenance. The **round 2** checklist (the live gate) stays in [TODO.md
 - ✅ **Dead tutorial tab handlers + second-layer orphans** — Sprint 10. See above.
 - ✅ **Sold-out vendor items linger in the list** — Sprint 10. See above.
 - ✅ **Vendor efficiency = 0** — Sprint 9 external blocker; resolved via `/map` deploy. See
-  [[reference_vendor_efficiency_binary_serializer]].
+  [DF_Lib case study](04_Technical/DF_Lib.md#case-study-the-vanishing-vehicle-efficiency-stat) *(agent memory: `reference_vendor_efficiency_binary_serializer`)*.

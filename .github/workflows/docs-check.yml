@@ -1,0 +1,39 @@
+name: Docs Check
+
+# Structural linter for the documentation knowledge graph.
+# Asserts the invariants defined in docs/DocumentationAudit.md — link and anchor
+# resolution, code-path existence, frontmatter, tag vocabulary, index coverage.
+# Warnings (dead ends, staleness) are reported but do not fail the build.
+
+on:
+  push:
+    paths:
+      - 'docs/**'
+      - 'tools/docs_check.py'
+      - '.github/workflows/docs-check.yml'
+  pull_request:
+    paths:
+      - 'docs/**'
+      - 'tools/docs_check.py'
+      - '.github/workflows/docs-check.yml'
+  workflow_dispatch:
+
+jobs:
+  docs-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      # Structural errors always fail. Dead ends and orphans reached zero on
+      # 2026-07-28 (audit Phase 2) — --strict keeps them there. Staleness is
+      # reported separately below and never fails the build.
+      - name: Validate documentation graph
+        run: python3 tools/docs_check.py --warnings --strict
+
+      - name: Drift backlog (informational)
+        if: always()
+        run: python3 tools/docs_check.py --backlog

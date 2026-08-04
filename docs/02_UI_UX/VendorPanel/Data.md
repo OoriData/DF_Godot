@@ -1,13 +1,15 @@
 ---
 type: ui-ux
 tags:
-  - ui
-  - ux
-  - ui/vendor
-  - codex/data
+  - layer/ui
+  - kind/deep-dive
+  - status/current
 aliases:
   - "Data Management: Aggregation & Selection"
 created: 2026-05-18
+updated: 2026-06-23
+verified_against_code: 2026-07-28
+status: current
 ---
 
 # Data Management: Aggregation & Selection

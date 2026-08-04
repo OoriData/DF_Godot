@@ -18,6 +18,9 @@ var ui_manager: Node = null
 @onready var menu_container = $SafeRegionContainer/MainContainer/MainContent/MapAndMenuContainer/MenuContainer
 @onready var top_bar = $SafeRegionContainer/MainContainer/TopBar
 var _new_convoy_dialog: Control = null
+# S12-8: guards _show_new_convoy_dialog() against the refresh loop that re-invoked it hundreds of
+# times per session. Cleared by _hide_new_convoy_dialog() so a later legitimate prompt still opens.
+var _new_convoy_dialog_open: bool = false
 const NEW_CONVOY_DIALOG_SCENE_PATH := "res://Scenes/NewConvoyDialog.tscn"
 @export var new_convoy_dialog_scene: PackedScene = null
 const ERROR_DIALOG_SCENE_PATH := "res://Scenes/ErrorDialog.tscn"
@@ -645,15 +648,18 @@ func _is_portrait() -> bool:
 	var viewport_sz = get_viewport_rect().size
 	return viewport_sz.y > viewport_sz.x
 
+## The (min, max) fraction of the viewport an open menu may occupy, for the current orientation.
+## `_opt_menu_ratio_open` (the settings slider, 0..1) lerps between the two.
+##
+## Bands live in UITheme so the settings readout resolves the same numbers this does — see
+## UITheme's "Open-menu size bands" block for why (the readout used to show the raw lerp position).
 func _get_menu_ratios() -> Vector2:
-	# Portrait: Use 55-72% of screen height.
-	# The map strip remains visible above (~28-45%) while the trade panel has room to breathe.
-	# Previously 40-60%; bumped to give vendor/convoy panels more vertical space on mobile portrait.
+	# Portrait: fraction of screen HEIGHT. The map strip stays visible above while the trade panel
+	# has room to breathe.
 	if _is_portrait():
-		return Vector2(0.55, 0.72)
-	# Landscape: Use 35-85% of screen width (Increased by 10% from 0.25-0.75)
-	else:
-		return Vector2(0.35, 0.85)
+		return Vector2(UITheme.MENU_RATIO_PORTRAIT_MIN, UITheme.MENU_RATIO_PORTRAIT_MAX)
+	# Landscape: fraction of screen WIDTH.
+	return Vector2(UITheme.MENU_RATIO_LANDSCAPE_MIN, UITheme.MENU_RATIO_LANDSCAPE_MAX)
 
 func _get_bottom_safe_margin() -> float:
 	var is_mobile = OS.has_feature("mobile") or OS.has_feature("web_android") or OS.has_feature("web_ios") or DisplayServer.get_name() in ["Android", "iOS"]
@@ -1271,6 +1277,22 @@ func _show_error_dialog(message: String, raw_message: String = ""):
 func _show_new_convoy_dialog():
 	if onboarding_log_enabled:
 		print("[Onboarding] _show_new_convoy_dialog invoked.")
+
+	# S12-8: this is re-entered continuously for a 0-convoy account. `ConvoyService.refresh_all()` ->
+	# USER_CONVOYS sets both user and convoys, so `user_changed` AND `convoys_changed` both fire ->
+	# `_check_or_prompt_new_convoy_from_store()`; meanwhile GameScreenManager re-triggers
+	# `refresh_all()` on `user_changed`. Logs showed hundreds of invocations per session, each one
+	# re-showing the modal layer, re-laying-out the dialog and costing a `/user/get`.
+	#
+	# The guard is an explicit flag, NOT `_new_convoy_dialog.visible`: `open` is invoked via
+	# `call_deferred` below, so `visible` is still false for the rest of the current frame and a
+	# visibility check would let every same-frame repeat through — which is exactly the burst shape
+	# the logs show.
+	if _new_convoy_dialog_open and is_instance_valid(_new_convoy_dialog):
+		if onboarding_log_enabled:
+			print("[Onboarding] _show_new_convoy_dialog: already open — ignoring repeat.")
+		return
+
 	var modal_layer: Control = get_node_or_null("SafeRegionContainer/ModalLayer")
 	if not is_instance_valid(_new_convoy_dialog):
 		var scene_res: Resource = new_convoy_dialog_scene if new_convoy_dialog_scene != null else load(NEW_CONVOY_DIALOG_SCENE_PATH)
@@ -1295,6 +1317,8 @@ func _show_new_convoy_dialog():
 		if _new_convoy_dialog.has_signal("canceled"):
 			_new_convoy_dialog.connect("canceled", Callable(self, "_on_new_convoy_canceled"))
 	modal_layer = get_node_or_null("SafeRegionContainer/ModalLayer")
+	# Set before the deferred open so a same-frame repeat is caught by the guard above.
+	_new_convoy_dialog_open = true
 	if _new_convoy_dialog.has_method("open"):
 		if onboarding_log_enabled:
 			print("[Onboarding] Opening NewConvoyDialog…")
@@ -1519,6 +1543,9 @@ func _update_onboarding_layer_rect_to_map() -> void:
 		_onboarding_layer.clip_contents = true
 
 func _hide_new_convoy_dialog():
+	# Cleared unconditionally (not inside the validity check) so a freed dialog can't strand the flag
+	# true and permanently suppress a later legitimate prompt.
+	_new_convoy_dialog_open = false
 	if is_instance_valid(_new_convoy_dialog):
 		if _new_convoy_dialog.has_method("close"):
 			_new_convoy_dialog.close()
@@ -1888,6 +1915,11 @@ func _on_map_ready_for_focus():
 				print("[MainScreen] map_rect is too small; waiting one more frame for layout stabilization...")
 			await get_tree().process_frame
 			map_rect = _get_map_display_rect()
+			# Still degenerate after the retry — dump the ancestor chain so the control that is
+			# claiming the height can be identified from a log alone (the "blank screen, only the
+			# background art" state). See docs/TODO.md Sprint 12 · S12-7.
+			if map_rect.size.x < 10 or map_rect.size.y < 10:
+				_diag_dump_map_ancestor_sizes("map_rect_degenerate")
 
 		map_camera_controller.update_map_viewport_rect(map_rect)
 		if map_camera_controller.has_method("fit_camera_to_tilemap"):
@@ -1952,6 +1984,44 @@ func _to_subviewport_screen(global_pos: Vector2) -> Vector2:
 	)
 
 # Helper: get the rect we should use for camera viewport sizing (MapDisplay if present, else full map_view)
+## Walks MapDisplay → root printing each ancestor's rect and *minimum* size, plus the direct
+## children of any Container along the way. A degenerate map rect always means some sibling above
+## the map claimed the height as a MINIMUM size; this names it instead of leaving it to guesswork.
+func _diag_dump_map_ancestor_sizes(reason: String) -> void:
+	if not _debug_layout_overflow:
+		return
+	var vp_sz := get_viewport_rect().size
+	print("[MAP-RECT-DIAG] ===== reason=", reason, " viewport_logical=", vp_sz,
+		" csf=", get_window().content_scale_factor, " =====")
+	var node: Node = null
+	if is_instance_valid(map_view):
+		node = map_view.get_node_or_null("MapDisplay")
+		if not is_instance_valid(node):
+			node = map_view.get_node_or_null("MapContainer/MapDisplay")
+	if not is_instance_valid(node):
+		print("[MAP-RECT-DIAG] MapDisplay not found; map_view valid=", is_instance_valid(map_view))
+		return
+	var depth := 0
+	while is_instance_valid(node):
+		if node is Control:
+			var c := node as Control
+			print("[MAP-RECT-DIAG] %s%s [%s] rect=%s min=%s combined_min=%s flagsV=%d vis=%s" % [
+				"  ".repeat(depth), c.name, c.get_class(), str(c.get_global_rect()),
+				str(c.custom_minimum_size), str(c.get_combined_minimum_size()),
+				c.size_flags_vertical, str(c.visible)])
+			# For a Container, the offender is one of its children's minimums — list them.
+			if c is Container:
+				for child in c.get_children():
+					if child is Control:
+						var cc := child as Control
+						print("[MAP-RECT-DIAG] %s  · %s [%s] rect=%s combined_min=%s flagsV=%d vis=%s" % [
+							"  ".repeat(depth), cc.name, cc.get_class(), str(cc.get_global_rect()),
+							str(cc.get_combined_minimum_size()), cc.size_flags_vertical, str(cc.visible)])
+		node = node.get_parent()
+		depth += 1
+	print("[MAP-RECT-DIAG] ===== end =====")
+
+
 func _get_map_display_rect() -> Rect2:
 	if not is_instance_valid(map_view):
 		return Rect2()

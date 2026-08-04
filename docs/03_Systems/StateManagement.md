@@ -1,11 +1,16 @@
 ---
 type: system
 tags:
-  - system
-  - codex/state
+  - layer/service
+  - kind/deep-dive
+  - concept/persistence
+  - status/current
 aliases:
   - "Local State & Cursor"
 created: 2026-05-19
+updated: 2026-05-18
+verified_against_code: 2026-07-28
+status: current
 ---
 
 # Local Reactive State & Cursor

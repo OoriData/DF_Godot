@@ -1,13 +1,15 @@
 ---
 type: ui-ux
 tags:
-  - ui
-  - ux
-  - ui/vendor
-  - codex/refactor
+  - layer/ui
+  - kind/deep-dive
+  - status/current
 aliases:
   - "Vendor Menu Responsive Refactor: Audit & Requirements"
 created: 2026-06-05
+updated: 2026-07-28
+verified_against_code: 2026-07-28
+status: current
 ---
 
 # Vendor Menu Responsive Refactor — Audit & Requirements
@@ -53,9 +55,28 @@ MainVBox (VBox)
 | L3 | Large wasted dead zones while controls are squeezed into a thin strip | content not using vertical space; fixed column heights |
 | L4 | Top Up / Warehouse span full width, dwarfing the trade content | P4 |
 
-### Desktop (the "works" reference)
+### Desktop (formerly the "works" reference — no longer true on wide monitors)
 - 3-column layout is legible only because there's horizontal room — this is the only viewport the current design was built for.
 - Residual: vendor-type tabs are still a flat overflow-prone strip; Buy/Sell tabs sit cramped under the Sort row.
+
+> [!WARNING]
+> **Re-audited 2026-07-28 — desktop is now a defect, not the reference.** The refactor shipped portrait
+> and landscape paths and deliberately left desktop on the raw `.tscn`
+> (`vendor_trade_panel.gd:1123` — *"DESKTOP → native 3-column layout (plenty of room)"*). On a large
+> monitor that assumption has expired. Tracked as **TODO Sprint 12 · S12-1**. Three compounding causes:
+>
+> | # | Cause | Where |
+> |---|---|---|
+> | D1 | **Menu sheet has no desktop branch and no absolute max width.** `_get_menu_ratios()` returns portrait `(0.55, 0.72)` and *everything else* `(0.35, 0.85)` — desktop is lumped in with mobile landscape. With `ui.menu_open_ratio` defaulting to `0.5`, the lerp lands on **0.60 × full width**, and it keeps growing with the monitor: the only clamps are a 320px *minimum* and an 85 % *relative* maximum. | `Scripts/UI/main_screen.gd:648`, `:374-377` |
+> | D2 | **The columns can't rebalance.** `LeftPanel` `stretch_ratio = 0.3`, `MiddlePanel` `0.35`, `RightPanel` `custom_minimum_size = (320, 0)`. The transaction column is pinned at 320 logical px while the other two absorb every extra pixel — so extra width makes the layout *less* balanced, not more. | `Scenes/VendorTradePanel.tscn:41, 133, 217` |
+> | D3 | **No desktop path in `_make_panels_responsive()`.** It restructures only for `MOBILE_PORTRAIT` and `MOBILE_LANDSCAPE`; `DESKTOP` falls through untouched. | `Scripts/Menus/vendor_trade_panel.gd:1117-1145` |
+>
+> D1 is shared with the map overlay panel and the UI-scale slider — see
+> [ui_system.md § Desktop scaling contract](../ui_system.md#desktop-scaling-contract-and-why-fixed-width-panels-drift)
+> before changing any of them.
+>
+> Note that **R1 (no horizontal scrolling, ever)** is not violated here — the desktop failure is the
+> opposite one: too much width, distributed badly.
 
 ### Cross-cutting
 1. **No responsive reflow** — one fixed desktop layout for all three viewports (same root issue the Convoy refactor addressed).

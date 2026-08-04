@@ -1,11 +1,16 @@
 ---
 type: technical
 tags:
-  - technical
-  - codex/auth
+  - layer/autoload
+  - kind/deep-dive
+  - concept/auth
+  - status/current
 aliases:
   - "Multi-Provider Auth Handshakes"
 created: 2026-05-19
+updated: 2026-05-18
+verified_against_code: 2026-07-28
+status: current
 ---
 
 # Multi-Provider Authentication

@@ -1,12 +1,15 @@
 ---
 type: system
 tags:
-  - system
-  - system/map
-  - codex/visuals
+  - layer/service
+  - kind/deep-dive
+  - status/current
 aliases:
   - "Visuals: Convoys & Labels"
 created: 2026-05-18
+updated: 2026-07-28
+verified_against_code: 2026-07-28
+status: current
 ---
 
 # Visuals: Convoys & Labels
@@ -37,15 +40,18 @@ Convoys do not teleport between tiles. Instead, they smoothly interpolate their 
 2. **LERP**: The `ConvoyNode` calculates the World Space positions of the start and end tiles of the current segment and uses `lerp()` to find its current pixel position.
 3. **Lane Offsetting**: When multiple convoys occupy the same road segment, the `ConvoyVisualsManager` applies a lateral "Lane Offset" to prevent icons from overlapping.
 
-## Map Labels (MSDF)
+## Map Labels
 Map labels are built to stay readable at all zoom levels and prevent UI clutter.
-- **MSDF (Multi-Channel Signed Distance Field)**: We use MSDF fonts so text remains sharp even when zoomed in 500% or out 50%.
+- **MSDF (Multi-Channel Signed Distance Field)**: the intended design — labels zoom with `Camera2D`
+  across a wide range, which is exactly the case MSDF exists for. ⚠️ *Corrected 2026-07-28: not actually
+  enabled today* — `Assets/Lexend Light.ttf` imports with `multichannel_signed_distance_field=false`.
+  Treat this as aspirational until that changes; see [AI_Guidelines § 3](../../04_Technical/AI_Guidelines.md).
 - **Anti-Collision**: `convoy_label_manager.gd` calculates the screen-space bounding boxes of all labels. If two labels overlap, it applies a vertical offset (stacking) to keep them both readable.
 - **Scaling**: Labels dynamically scale based on camera zoom to avoid overwhelming the map view at high altitudes.
 
 ## Settlement Overlay
 
-A separate overlay system annotates settlement tiles with callout tails, tile outlines, focus pins, and route arcs. See [[SettlementOverlay]] for full details.
+A separate overlay system annotates settlement tiles with callout tails, tile outlines, focus pins, and route arcs. See [SettlementOverlay](SettlementOverlay.md) for full details.
 
 **Key points:**
 - Drawn by `settlement_overlay_draw.gd` (a `Node2D` with a custom `_draw()` implementation).
@@ -58,4 +64,4 @@ A separate overlay system annotates settlement tiles with callout tails, tile ou
 - `convoy_visuals_manager.gd`
 - `convoy_label_manager.gd`
 - `settlement_overlay_draw.gd`
-- [ConvoyNode.gd](../../../Scripts/Map/ConvoyNode.gd)
+- [ConvoyNode.gd](../../../Scripts/Map/convoy_node.gd)

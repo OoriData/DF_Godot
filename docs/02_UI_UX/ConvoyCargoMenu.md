@@ -1,12 +1,15 @@
 ---
 type: ui-ux
 tags:
-  - ui
-  - technical
-  - codex/convoy-cargo-menu
+  - layer/ui
+  - kind/deep-dive
+  - status/current
 aliases:
   - "Convoy Cargo Menu"
 created: 2026-05-19
+updated: 2026-07-28
+verified_against_code: 2026-07-28
+status: current
 ---
 
 # Convoy Cargo Menu
@@ -83,10 +86,15 @@ To prevent rapid-fire data refreshes from abruptly closing active inspector pane
 
 `_is_mobile()` checks both platform features and whether the viewport is vertical (`y > x`).
 Key mobile structural overrides:
-- Option and toggle buttons expand from **44px** to **100px** height.
-- Fonts scale up to **2.8x** to combat high-DPI sizing limits on phones.
+- Option and toggle buttons scale from **44px** (desktop) → **50px** (mobile landscape) → **70px**
+  (portrait) height (`convoy_cargo_menu.gd:214,299`).
+- **Fonts do NOT scale at runtime.** `_get_font_size(base)` is a flat `return base`
+  (`convoy_cargo_menu.gd:187-188`) — `UIScaleManager`'s `content_scale_factor` handles all sizing.
+  *Corrected 2026-07-28: this doc previously claimed a "2.8x" mobile font boost, which is the
+  double-scaling anti-pattern the Law of Logical Pixels forbids. The code was already fixed; the doc
+  had not been.*
 - Separations and vertical padding expand to create comfortable touch targets.
-- Grids adapt to two columns, and horizontal scroll limits are strictly disabled to prevent drifting.
+- Grids adapt to two columns, and horizontal scroll is disabled (`SCROLL_MODE_DISABLED`) to prevent drifting.
 
 ---
 
@@ -110,6 +118,6 @@ As part of the [Cargo Destination Button Plan](../04_Technical/CargoDestinationB
 ## Primary Files
 
 - **Script**: `Scripts/Menus/convoy_cargo_menu.gd`
-- **Scene**: `Scenes/Menus/ConvoyCargoMenu.tscn`
+- **Scene**: `Scenes/ConvoyCargoMenu.tscn`
 - **Model**: `Scripts/Data/Items.gd`
 - **Related**: [Convoy Menu](ConvoyMenu.md), [Items & Missions](../03_Systems/ItemsAndMissions.md), [Destination Implementation](../04_Technical/CargoDestinationButtonImplementation.md)

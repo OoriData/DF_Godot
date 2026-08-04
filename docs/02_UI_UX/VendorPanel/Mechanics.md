@@ -1,13 +1,15 @@
 ---
 type: ui-ux
 tags:
-  - ui
-  - ux
-  - ui/vendor
-  - codex/mechanics
+  - layer/ui
+  - kind/deep-dive
+  - status/current
 aliases:
   - "Mechanics: Compatibility & Install"
 created: 2026-05-18
+updated: 2026-05-18
+verified_against_code: 2026-07-28
+status: current
 ---
 
 # Mechanics: Compatibility & Install
@@ -43,4 +45,9 @@ To avoid redundant API calls and UI stutter, the panel maintains a local `_compa
 
 ## Controllers
 - `vendor_panel_compat_controller.gd`
-- `MechanicsService.gd` (Autoload)
+- `Scripts/System/Services/mechanics_service.gd` (Autoload — see [Autoload Register](../../04_Technical/AutoloadOrder.md))
+
+## Related
+
+- **See also:** [VendorPanelOverview](VendorPanelOverview.md)
+- **See also:** [Mechanics](../../03_Systems/Mechanics.md) — the part-compatibility model

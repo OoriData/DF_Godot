@@ -108,13 +108,33 @@ static func handle_new_item_selection(panel: Object, p_selected_item: Variant) -
 			print("DEBUG: stock_qty for selected_item:", stock_qty)
 		if stock_qty <= 0:
 			stock_qty = 1
-		panel.quantity_spinbox.max_value = max(1, stock_qty)
+		var qty_cap: int = max(1, stock_qty)
+		# S13-7: cap the spinbox at what will actually FIT per-vehicle, so an impossible quantity can't
+		# be entered in the first place — pooled capacity says "fits" in cases where packing doesn't.
+		# Only when the purchase is plannable: plan_fit() returns {} if per-vehicle data is missing, and
+		# we then leave the stock ceiling alone rather than block a legitimate purchase on absent data.
+		# Floor of 1 (not 0) so the box stays usable; _update_transaction_panel disables Buy and shows
+		# the reason when even one won't fit.
+		if str(panel.current_mode) == "buy":
+			var fit_plan: Dictionary = VendorPanelTransactionController.plan_fit(panel, qty_cap)
+			if not fit_plan.is_empty():
+				qty_cap = maxi(1, int(fit_plan.get("quantity", qty_cap)))
+			# S13-20: never cap below a quantity the SERVER has vouched for. The refresh that follows a
+			# refusal re-enters here, and the local plan that got it wrong the first time would
+			# otherwise clamp the offered retry away before the player can tap Buy.
+			if panel.has_method("server_fit_for_selection"):
+				qty_cap = maxi(qty_cap, int(panel.call("server_fit_for_selection")))
+		panel.quantity_spinbox.max_value = qty_cap
 		if panel.perf_log_enabled:
 			print("DEBUG: quantity_spinbox.max_value set to:", panel.quantity_spinbox.max_value)
 		if not is_same_selection:
 			panel.quantity_spinbox.value = 1
 		else:
-			panel.quantity_spinbox.value = clampi(int(panel.quantity_spinbox.value), 1, int(panel.quantity_spinbox.max_value))
+			# S13-15: clamp to the widget's own min, not a hard 1. A successful purchase now resets the
+			# quantity to min (0) while KEEPING the selection, and the refresh that follows re-enters
+			# here with is_same_selection = true — a floor of 1 would spring the box straight back to 1
+			# and undo the reset.
+			panel.quantity_spinbox.value = clampi(int(panel.quantity_spinbox.value), int(panel.quantity_spinbox.min_value), int(panel.quantity_spinbox.max_value))
 		if panel.perf_log_enabled:
 			print("DEBUG: quantity_spinbox.value set to:", panel.quantity_spinbox.value)
 

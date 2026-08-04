@@ -1,12 +1,16 @@
 ---
 type: technical
 tags:
-  - technical
-  - codex/df_lib
-  - codex/deployment
+  - layer/protocol
+  - kind/deep-dive
+  - concept/binary-protocol
+  - status/current
 aliases:
   - "DF_Lib: Shared Binary Protocol Library"
 created: 2026-07-17
+updated: 2026-07-29
+verified_against_code: 2026-07-28
+status: current
 ---
 
 # DF_Lib: Shared Binary Protocol Library
@@ -81,3 +85,4 @@ If the byte layout itself changes (a field added/removed/resized, not just renam
 - **Godot binary mirror**: [tools.gd](../../Scripts/System/tools.gd)
 - **Backend consumer**: `~/Work/desolate_frontiers/engine/routers/map_api.py`, `~/Work/desolate_frontiers/chassis/df_obj/vehicle_cls.py` (separate repo)
 - **Client parsing pipeline doc**: [Map System: Data (Payload & Parsing)](../03_Systems/MapSystem/Data.md)
+- **Field-level boundary map**: [Data Boundaries](DataBoundaries.md) — which fields cross which pipe, and the known key-name divergences

@@ -1,11 +1,15 @@
 ---
 type: technical
 tags:
-  - technical
-  - codex/network
+  - layer/backend
+  - kind/deep-dive
+  - status/current
 aliases:
   - "Network Queue & Auth Bypass"
 created: 2026-05-19
+updated: 2026-05-18
+verified_against_code: 2026-07-28
+status: current
 ---
 
 # Network Queue & Auth Bypass

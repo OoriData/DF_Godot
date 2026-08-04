@@ -437,9 +437,15 @@ static func rebuild_info_sections(item_info_rich_text: RichTextLabel, item_data_
 		if shp_v != null and str(shp_v).strip_edges() != "":
 			rows_summary.append({"k": "Shape", "v": str(shp_v).strip_edges().capitalize().replace("_", " ")})
 		# Description → rendered as a popup button by _make_panel (keeps long copy out of the row list).
-		var veh_desc: String = vehicle_description(item_data_source)
-		if veh_desc != "":
-			rows_summary.append({"k": "Description", "v": veh_desc, "title": String(item_data_source.get("name", "Vehicle"))})
+		# Desktop already has the dedicated "Description (Click to Expand)" toggle
+		# (VendorPanelInspectorController.update_vehicle -> description_toggle_button), so this row
+		# would be a duplicate affordance there. Portrait/landscape keep it.
+		var dsm_desc = Engine.get_main_loop().root.get_node_or_null("DeviceStateManager")
+		var is_desktop_layout: bool = is_instance_valid(dsm_desc) and dsm_desc.get_layout_mode() == 0 # DESKTOP
+		if not is_desktop_layout:
+			var veh_desc: String = vehicle_description(item_data_source)
+			if veh_desc != "":
+				rows_summary.append({"k": "Description", "v": veh_desc, "title": String(item_data_source.get("name", "Vehicle"))})
 	elif is_part:
 		# Show capacity/resource-related part modifiers from top-level or first part in parts array.
 		var stat_fields = [

@@ -1,11 +1,17 @@
 ---
 type: technical
 tags:
-  - technical
-  - codex/appleauth
+  - layer/autoload
+  - kind/deep-dive
+  - concept/auth
+  - platform/ios
+  - status/current
 aliases:
   - "Apple Authentication Plan"
 created: 2026-05-18
+updated: 2026-07-28
+verified_against_code: 2026-07-28
+status: current
 ---
 
 # Apple Authentication Plan
@@ -226,7 +232,9 @@ Add/extend tests around `APICalls`:
 Likely locations:
 
 - `Tests/test_api_calls.gd`
-- new `Tests/test_apple_auth.gd` (recommended)
+<!-- docs-check:ignore-codepaths start -->
+- new `Tests/test_apple_auth.gd` — **recommended, not yet written** (no such file today)
+<!-- docs-check:ignore-codepaths end -->
 
 ## 9.2 UI behavior tests
 
@@ -306,3 +314,7 @@ Apple auth is complete when all are true:
 5. Discord/Steam flows are unaffected.
 6. Auth errors are user-readable and logged for diagnosis.
 
+## Related
+
+- **See also:** [Identity](Identity.md) — account linking and the merge flow
+- **See also:** [MultiProviderAuth](MultiProviderAuth.md) — the other providers

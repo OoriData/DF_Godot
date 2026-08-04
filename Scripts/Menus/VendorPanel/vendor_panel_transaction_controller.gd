@@ -6,6 +6,64 @@ const INTRINSIC_RESOURCE_CONTAINER_PART_ID := "7d1c1f56-e215-4b16-89f9-dca416a2d
 # Transaction logic extracted from vendor_trade_panel.gd.
 # Owns max-quantity constraints, optimistic projection, and buy/sell dispatch.
 
+## S13-7 — per-unit volume/weight for the panel's current selection.
+## Returns {} when this item is not per-vehicle planned: vehicles have no quantity, and bulk
+## resources (fuel/water/food) are divisible across containers so pooled maths is correct for them.
+## `unit_volume` / `unit_weight` may still be 0.0 meaning "unknown" — the planner skips those.
+static func selection_unit_dims(panel: Object) -> Dictionary:
+	if not panel.selected_item or not (panel.selected_item is Dictionary):
+		return {}
+	var sel: Dictionary = panel.selected_item
+	var item_any: Variant = sel.get("item_data")
+	if not (item_any is Dictionary):
+		return {}
+	var item: Dictionary = item_any
+	if VendorTradeVM.is_vehicle_item(item) or bool(item.get("is_raw_resource", false)):
+		return {}
+
+	var unit_weight: float = 0.0
+	var tq: int = int(sel.get("total_quantity", 0))
+	var tw: float = float(sel.get("total_weight", 0.0))
+	if tq > 0 and tw > 0.0:
+		unit_weight = tw / float(tq)
+	if unit_weight <= 0.0:
+		if item.has("unit_weight"):
+			unit_weight = float(item.get("unit_weight", 0.0))
+		elif item.has("weight") and item.has("quantity") and float(item.get("quantity", 0.0)) > 0.0:
+			unit_weight = float(item.get("weight", 0.0)) / float(item.get("quantity", 1.0))
+
+	var unit_volume: float = 0.0
+	var tv: float = float(sel.get("total_volume", 0.0))
+	if tq > 0 and tv > 0.0:
+		unit_volume = tv / float(tq)
+	if unit_volume <= 0.0:
+		if item.has("unit_volume"):
+			unit_volume = float(item.get("unit_volume", 0.0))
+		elif item.has("volume") and item.has("quantity") and float(item.get("quantity", 0.0)) > 0.0:
+			unit_volume = float(item.get("volume", 0.0)) / float(item.get("quantity", 1.0))
+
+	return {"unit_volume": unit_volume, "unit_weight": unit_weight}
+
+
+## S13-7 — how many of `wanted` units actually fit, planned per vehicle.
+## Returns {} when the purchase can't be planned (wrong item kind, no per-vehicle data, not buying),
+## in which case callers must fall back to the pooled ceilings rather than assume nothing fits.
+static func plan_fit(panel: Object, wanted: int) -> Dictionary:
+	if wanted <= 0 or str(panel.current_mode) != "buy":
+		return {}
+	var dims: Dictionary = selection_unit_dims(panel)
+	if dims.is_empty():
+		return {}
+	var convoy: Dictionary = panel.convoy_data if (panel.convoy_data is Dictionary) else {}
+	var spaces: Array = CargoFillPlanner.build_vehicle_spaces(convoy)
+	if spaces.is_empty():
+		# Loud on purpose. An empty plan makes every S13-19 guard inert and Max silently reverts to
+		# pooled maths — which is exactly how the "Max still loads the whole order" regression hid.
+		print("[VendorPanel][DIAG] plan_fit ABORTED — no per-vehicle rows in convoy_data (keys: %s)" % str(convoy.keys()))
+		return {}
+	return CargoFillPlanner.plan(spaces, float(dims["unit_volume"]), float(dims["unit_weight"]), wanted)
+
+
 static func on_max_button_pressed(panel: Object) -> void:
 	if not panel.selected_item:
 		return
@@ -67,6 +125,10 @@ static func on_max_button_pressed(panel: Object) -> void:
 	var weight_limit: int = 99999999
 	var volume_limit: int = 99999999
 	var resource_limit: int = 99999999
+	# S13-7: set for discrete cargo, which is planned per-vehicle below instead of pooled.
+	var use_per_vehicle_plan: bool = false
+	var plan_unit_volume: float = 0.0
+	var plan_unit_weight: float = 0.0
 	if not is_vehicle:
 		if bool(item_data_source.get("is_raw_resource", false)) and panel.convoy_data and (panel.convoy_data is Dictionary):
 			var cd: Dictionary = panel.convoy_data
@@ -100,20 +162,64 @@ static func on_max_button_pressed(panel: Object) -> void:
 			elif item_data_source.has("volume") and item_data_source.has("quantity") and float(item_data_source.get("quantity", 0.0)) > 0.0:
 				unit_volume = float(item_data_source.get("volume", 0.0)) / float(item_data_source.get("quantity", 1.0))
  
-		var remaining_weight: float = max(0.0, float(panel._convoy_total_weight) - float(panel._convoy_used_weight))
-		var remaining_volume: float = max(0.0, float(panel._convoy_total_volume) - float(panel._convoy_used_volume))
-		if unit_weight > 0.0 and float(panel._convoy_total_weight) > 0.0:
-			weight_limit = int(floor(remaining_weight / unit_weight))
-		if unit_volume > 0.0 and float(panel._convoy_total_volume) > 0.0:
-			volume_limit = int(floor(remaining_volume / unit_volume))
- 
+		# Bulk resources are divisible across containers, so pooled arithmetic is right for them and
+		# the per-vehicle simulation below is skipped. Discrete cargo is the case pooled math breaks.
+		if bool(item_data_source.get("is_raw_resource", false)):
+			var remaining_weight: float = max(0.0, float(panel._convoy_total_weight) - float(panel._convoy_used_weight))
+			var remaining_volume: float = max(0.0, float(panel._convoy_total_volume) - float(panel._convoy_used_volume))
+			if unit_weight > 0.0 and float(panel._convoy_total_weight) > 0.0:
+				weight_limit = int(floor(remaining_weight / unit_weight))
+			if unit_volume > 0.0 and float(panel._convoy_total_volume) > 0.0:
+				volume_limit = int(floor(remaining_volume / unit_volume))
+		else:
+			plan_unit_volume = unit_volume
+			plan_unit_weight = unit_weight
+			use_per_vehicle_plan = true
+
 	var max_quantity: int = vendor_stock
 	max_quantity = min(max_quantity, afford_limit)
 	max_quantity = min(max_quantity, weight_limit)
 	max_quantity = min(max_quantity, volume_limit)
 	max_quantity = min(max_quantity, resource_limit)
-	max_quantity = max(1, max_quantity)
+
+	# S13-7: everything above is a ceiling (stock, money, bulk-resource headroom). What actually FITS
+	# is a packing question — a unit cannot straddle two vehicles, so pooled free space over-counts.
+	# Simulate the server's own allocator to get the true number.
+	if use_per_vehicle_plan:
+		var unknowns: String = CargoFillPlanner.explain_unknowns(plan_unit_volume, plan_unit_weight)
+		if unknowns != "":
+			print("[VendorPanel][DIAG] max plan: %s" % unknowns)
+		var plan: Dictionary = plan_fit(panel, max_quantity)
+		if plan.is_empty():
+			# Nothing to plan against (no per-vehicle data). Fall through on the ceilings rather than
+			# claiming nothing fits — wrong in the permissive direction matches the old behaviour, and
+			# the server still has the final say.
+			print("[VendorPanel][DIAG] max plan SKIPPED — no per-vehicle data on convoy_data")
+		else:
+			var fits: int = int(plan.get("quantity", 0))
+			print("[VendorPanel][DIAG] max plan: ceiling=%d fits=%d blocked_by='%s' -> %s" % [
+				max_quantity, fits, str(plan.get("blocked_by", "")), str(plan.get("placements", []))
+			])
+			max_quantity = fits
+
+	# S13-7: this used to be max(1, max_quantity), which offered a quantity of 1 even when nothing
+	# fitted at all — the server then rejected it. Report 0 honestly instead; _update_transaction_panel
+	# disables Buy at 0 (S13-15), and the toast below says why.
 	panel.quantity_spinbox.value = max_quantity
+	if max_quantity <= 0 and panel.has_method("show_transaction_feedback"):
+		panel.show_transaction_feedback(_no_room_reason(vendor_stock, afford_limit, resource_limit), "error")
+
+
+## Why Max came back with nothing. Distinguishes "you can't afford one" and "the vendor has none"
+## from the case this item exists to explain: it fits nowhere as a single whole unit.
+static func _no_room_reason(vendor_stock: int, afford_limit: int, resource_limit: int) -> String:
+	if vendor_stock <= 0:
+		return "The vendor has none of these left."
+	if afford_limit <= 0:
+		return "You can't afford one of these."
+	if resource_limit <= 0:
+		return "Your convoy has no room for more of this resource."
+	return "No single vehicle has room for one of these."
 
 
 static func on_action_button_pressed(panel: Object) -> void:
@@ -188,6 +294,12 @@ static func on_action_button_pressed(panel: Object) -> void:
 	panel._pending_tx.start_used_weight = float(panel._convoy_used_weight)
 	panel._pending_tx.start_used_volume = float(panel._convoy_used_volume)
 	panel._pending_tx.started_ms = Time.get_ticks_msec()
+	# S13-6: register with the out-of-panel watchdog so this request has a bounded lifetime even if the
+	# reply never arrives — or arrives after this panel has been freed.
+	panel._pending_tx.watchdog_token = VendorTransactionWatchdog.begin(
+		vendor_id, convoy_id, str(panel.current_mode),
+		str(item_data_source.get("name", "?")), quantity, panel.get_instance_id()
+	)
 	panel._pending_tx.money_delta = -total_price if str(panel.current_mode) == "buy" else total_price
 	panel._pending_tx.weight_delta = w_delta if str(panel.current_mode) == "buy" else -w_delta
 	panel._pending_tx.volume_delta = v_delta if str(panel.current_mode) == "buy" else -v_delta

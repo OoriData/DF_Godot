@@ -1,12 +1,16 @@
 ---
 type: technical
 tags:
-  - technical
-  - codex/deployment
+  - layer/backend
+  - kind/deep-dive
+  - platform/steam
+  - status/current
 aliases:
   - "Deployment & Environment"
 created: 2026-05-18
 updated: 2026-07-23
+verified_against_code: 2026-07-28
+status: current
 ---
 
 # Deployment & Environment
@@ -155,3 +159,9 @@ build files must go up via SteamPipe (`steamcmd` on macOS, or `SteamPipeGUI.exe`
 
 Never commit API keys or signing certs. They live in **GitHub Actions Secrets** and the
 `OoriData/mobile-signing-certs` match repo, injected at build time.
+
+## Related
+
+- **See also:** [TechnicalReference](TechnicalReference.md) — test suites run by the pipeline
+- **See also:** [Identity](Identity.md) — Steam sign-in on desktop builds
+- **Live status:** [TODO](../TODO.md) — Sprint 12 — Steam beta batch

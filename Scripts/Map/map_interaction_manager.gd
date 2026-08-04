@@ -778,7 +778,15 @@ func _handle_lmb_interactions(event: InputEventMouseButton, p_camera: Camera2D) 
 			if hit_panel_coords.x >= 0:
 				if debug_logging:
 					print("[MIM] LMB on settlement label panel at:", hit_panel_coords)
-				emit_signal("settlement_clicked", hit_panel_coords)
+				# Mirror of the touch branch in _handle_tap_interaction(): an already-pinned
+				# label acts as the "preview" button (the "›" chevron drawn at
+				# UI_manager.gd:1532). Without this check the click fell through to
+				# settlement_clicked → toggle_settlement_pin(), which UN-pinned the label and
+				# made it vanish on the next label redraw — never opening the preview.
+				if is_instance_valid(ui_manager) and ui_manager.has_method("is_settlement_pinned") and ui_manager.is_settlement_pinned(hit_panel_coords):
+					emit_signal("settlement_preview_requested", hit_panel_coords)
+				else:
+					emit_signal("settlement_clicked", hit_panel_coords)
 				return true
 
 			# --- Handle Click on Settlement Tile (fresh hit test at click position) ---

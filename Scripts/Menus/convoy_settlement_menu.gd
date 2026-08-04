@@ -52,6 +52,22 @@ var _pending_focus_retry_attempts_left: int = 0
 var _pending_focus_retry_in_flight: bool = false
 var _pending_ui_state: Dictionary = {}
 
+# --- S13-13: vendor tab lifecycle ---
+# _display_settlement_info() used to be called straight from five places, two of which fire in the same
+# frame on every menu open (the synchronous call in initialize_with_data + the deferred one queued by
+# MenuBase._refresh_from_store → _update_ui). Because call_deferred does not de-duplicate, that built the
+# vendor panel twice per open — the "_ready lines arrive in pairs" in the 2026-07-29 diagnostic log.
+# Every caller now goes through _queue_display_settlement_info(), which collapses a same-frame burst
+# into one pass (Law of Debounced Updates).
+var _display_refresh_queued: bool = false
+# Rebuilding while an API transaction is in flight queue_free()s the panel that owns the reply, so the
+# result lands on a dead node. We hold the rebuild off until it settles, with a hard cap so a reply that
+# never arrives can't wedge the menu.
+const REBUILD_TX_DEFER_S: float = 0.25
+const REBUILD_TX_DEFER_MAX_MS: int = 10000
+var _rebuild_blocked_since_ms: int = -1
+var _rebuild_defer_timer_active: bool = false
+
 @onready var _store: Node = get_node_or_null("/root/GameStore")
 @onready var _user_service: Node = get_node_or_null("/root/UserService")
 @onready var _convoy_service: Node = get_node_or_null("/root/ConvoyService")
@@ -77,9 +93,11 @@ func initialize_with_data(data_or_id: Variant, extra_arg: Variant = null) -> voi
 	# Delegate initial UI to MenuBase; it will apply store snapshot when possible
 	super.initialize_with_data(data_or_id, extra_arg)
 	
-	# Execute display logic if ready; otherwise it will be handled in _ready()
+	# Execute display logic if ready; otherwise it will be handled in _ready().
+	# Queued, not direct: super.initialize_with_data() above already funnels through
+	# MenuBase._refresh_from_store → _update_ui, which queues the same pass. (S13-13)
 	if is_node_ready():
-		_display_settlement_info()
+		_queue_display_settlement_info()
 	
 	# Best-effort: apply focus after the UI is built.
 	if not _pending_focus_intent.is_empty():
@@ -153,8 +171,9 @@ func _ready():
 		if not dsm.is_connected("layout_mode_changed", _on_layout_mode_changed):
 			dsm.layout_mode_changed.connect(_on_layout_mode_changed)
 
-	# Build initial UI now that @onready vars are set.
-	_display_settlement_info()
+	# Build initial UI now that @onready vars are set. Queued so it coalesces with the pass
+	# initialize_with_data() queues moments later (S13-13) — _convoy_data is usually still empty here.
+	_queue_display_settlement_info()
 
 	_style_vendor_tabs()
 
@@ -168,9 +187,11 @@ func _on_layout_mode_changed(_mode: int, _size: Vector2, _is_mobile_val: bool) -
 	_apply_top_bar_sizing()
 
 	_style_vendor_tabs()
-	
-	# Regenerate UI completely on layout change to ensure correct bounds.
-	call_deferred("_display_settlement_info")
+
+	# Re-layout, not re-instantiate (S13-13). The vendor set can't change on a rotation, so this pass
+	# takes the "already mounted" branch and refreshes in place; each VendorTradePanel re-applies its own
+	# orientation sizing from its own layout_mode_changed handler (vendor_trade_panel.gd:686).
+	_queue_display_settlement_info()
 
 
 
@@ -222,7 +243,10 @@ func _display_settlement_info():
 	if is_instance_valid(vendor_tab_container) and vendor_tab_container.get_tab_count() > 0 and vendor_tab_container.current_tab >= 0:
 		previous_tab_title = vendor_tab_container.get_tab_title(vendor_tab_container.current_tab)
 
-	_clear_tabs()
+	# NOTE (S13-13): tabs are deliberately NOT cleared here. Clearing up-front is what made every
+	# snapshot / rotation / reopen destroy and re-instantiate the vendor panel. The rebuild now happens
+	# only in the branch below that has actually established a different vendor set; the error paths
+	# clear via _display_error() → _clear_tabs().
 
 	# Get the convoy's current tile coordinates by rounding its float position.
 	# The 'x' and 'y' in convoy_data are interpolated floats. We need integer tile coordinates.
@@ -256,14 +280,17 @@ func _display_settlement_info():
 				vendor_tab_container.remove_child(tab_control)
 				tab_control.queue_free()
 
-		# When at a settlement, make sure tab headers are visible and warehouse enabled
+		# When at a settlement, make sure tab headers are visible and warehouse enabled.
+		# Single-vendor mode has exactly one meaningless tab and keeps the strip hidden — this pass now
+		# runs on every snapshot, not only on a rebuild, so it must not un-hide it (S13-13).
+		var want_tab_strip: bool = (_single_vendor_id == "")
 		if is_instance_valid(vendor_tab_container):
 			if vendor_tab_container.has_method("set_tabs_visible"):
-				vendor_tab_container.set_tabs_visible(true)
+				vendor_tab_container.set_tabs_visible(want_tab_strip)
 			else:
 				var bar = get_vendor_tab_bar()
 				if bar is Control:
-					bar.visible = true
+					bar.visible = want_tab_strip
 		if is_instance_valid(warehouse_button):
 			warehouse_button.disabled = false
 		_settlement_data = target_tile.settlements[0] # Assuming we display info for the first settlement.
@@ -271,6 +298,26 @@ func _display_settlement_info():
 
 		if _settlement_data.has("vendors") and _settlement_data.vendors is Array and not _settlement_data.vendors.is_empty():
 			# print("ConvoySettlementMenu: Found ", _settlement_data.vendors.size(), " vendors in settlement.") # Debug line
+
+			# S13-13: the vendors we'd build vs. the ones already mounted. When they match, the panels are
+			# still correct — pushing them fresh data is enough, and destroying them would take their
+			# in-flight transaction and optimistic stock with them.
+			var desired_vendor_ids: PackedStringArray = _desired_vendor_ids(_settlement_data.vendors)
+			if not desired_vendor_ids.is_empty() and desired_vendor_ids == _mounted_vendor_ids():
+				print("[VendorPanel][DIAG] settlement rebuild SKIPPED — vendor set unchanged (%d tab(s): %s)" % [desired_vendor_ids.size(), ", ".join(desired_vendor_ids)])
+				_refresh_mounted_vendor_panels()
+				_update_single_vendor_title_text()
+				_position_single_vendor_title()
+				_update_settlement_banner_button()
+				_apply_pending_ui_state()
+				return
+
+			# A genuinely different vendor set — rebuild. Hold off while a purchase/sale is in flight so
+			# the reply can't land on a freed panel.
+			if _defer_rebuild_for_active_transaction():
+				return
+
+			_clear_tabs()
 
 			for vendor in _settlement_data.vendors:
 				var vid = vendor.get("vendor_id", "NO_ID")
@@ -310,10 +357,15 @@ func _display_settlement_info():
 						break
 
 			_style_vendor_tabs()
-			
+
 			# After creating vendor tabs compute top up plan
 			_update_top_up_button()
 			_update_settlement_banner_button()
+		else:
+			# Settlement with no vendors. _clear_tabs() no longer runs up-front (S13-13), so drop any tabs
+			# left over from the settlement we were previously showing.
+			if _has_active_vendor_tab() and not _defer_rebuild_for_active_transaction():
+				_clear_tabs()
 
 	else:
 		# No settlement on this tile (likely in transit). Show convoy name and disable settlement-only controls.
@@ -323,11 +375,116 @@ func _display_settlement_info():
 		_update_settlement_banner_button()
 		_display_error("No settlement found at convoy coordinates: (%d, %d)" % [current_convoy_x, current_convoy_y])
 
-	if not _pending_ui_state.is_empty():
-		var cached = _pending_ui_state
-		_pending_ui_state = {}
-		print("[DIAGNOSTIC] ConvoySettlementMenu: Applying cached state after tabs built.")
-		apply_ui_state(cached)
+	_apply_pending_ui_state()
+
+
+func _apply_pending_ui_state() -> void:
+	if _pending_ui_state.is_empty():
+		return
+	var cached = _pending_ui_state
+	_pending_ui_state = {}
+	print("[DIAGNOSTIC] ConvoySettlementMenu: Applying cached state after tabs built.")
+	apply_ui_state(cached)
+
+
+# --- S13-13: rebuild gating -------------------------------------------------------------------
+# _display_settlement_info() is reached from five places (initial _ready, initialize_with_data,
+# MenuBase._update_ui, every GameStore map snapshot, every layout change). It used to _clear_tabs() and
+# re-instantiate VendorTradePanel unconditionally on all of them. The helpers below make it rebuild only
+# when the vendor set actually changed, and never while a transaction is in flight.
+
+## Collapse a same-frame burst of rebuild requests into a single pass. call_deferred() on its own does
+## not de-duplicate, which is what produced two panels per menu open.
+func _queue_display_settlement_info() -> void:
+	if _display_refresh_queued:
+		return
+	_display_refresh_queued = true
+	call_deferred("_run_queued_display_settlement_info")
+
+
+func _run_queued_display_settlement_info() -> void:
+	_display_refresh_queued = false
+	_display_settlement_info()
+
+
+## Vendor ids, in tab order, that the current settlement snapshot says we should be showing.
+## Returns empty when any id is missing — an unidentifiable vendor can't be matched, so we rebuild.
+func _desired_vendor_ids(vendors: Array) -> PackedStringArray:
+	var ids := PackedStringArray()
+	for vendor in vendors:
+		if not (vendor is Dictionary):
+			return PackedStringArray()
+		var vid := String((vendor as Dictionary).get("vendor_id", ""))
+		# Single-vendor mode builds one tab; mirror that filter exactly or the sets never match.
+		if _single_vendor_id != "" and vid != _single_vendor_id:
+			continue
+		if vid == "":
+			return PackedStringArray()
+		ids.append(vid)
+	return ids
+
+
+## Vendor ids, in tab order, of the panels currently mounted in the tab container.
+func _mounted_vendor_ids() -> PackedStringArray:
+	var ids := PackedStringArray()
+	if not is_instance_valid(vendor_tab_container):
+		return ids
+	for i in range(vendor_tab_container.get_tab_count()):
+		var ctrl: Node = vendor_tab_container.get_tab_control(i)
+		if not is_instance_valid(ctrl):
+			return PackedStringArray()
+		var vid := String(ctrl.get_meta("vendor_id", ""))
+		if vid == "":
+			# A placeholder InfoMessage label, or a tab built before ids were tracked. Force a rebuild.
+			return PackedStringArray()
+		ids.append(vid)
+	return ids
+
+
+## Push the latest snapshot into panels we're keeping, using the existing lazy-refresh contract:
+## inactive tabs are only marked dirty (refreshed on tab change), the active one is refreshed directly.
+func _refresh_mounted_vendor_panels() -> void:
+	_refresh_all_vendor_panels()
+	if _single_vendor_id != "":
+		_refresh_active_vendor_panel()
+
+
+## True when any mounted vendor panel has an API transaction in flight.
+func _tab_transaction_in_flight() -> bool:
+	if not is_instance_valid(vendor_tab_container):
+		return false
+	for i in range(vendor_tab_container.get_tab_count()):
+		var ctrl: Node = vendor_tab_container.get_tab_control(i)
+		if is_instance_valid(ctrl) and ctrl.get("_transaction_in_progress") == true:
+			return true
+	return false
+
+
+## Returns true when the caller must abandon this rebuild: a purchase/sale is in flight and freeing its
+## panel would drop the reply on a dead node (no optimistic update, no toast, no button restore — the
+## worst S13-6 variant). Re-queues itself until the transaction settles, capped by REBUILD_TX_DEFER_MAX_MS
+## so a reply that never arrives can't wedge the menu permanently.
+func _defer_rebuild_for_active_transaction() -> bool:
+	if not _tab_transaction_in_flight():
+		_rebuild_blocked_since_ms = -1
+		return false
+	var now_ms: int = Time.get_ticks_msec()
+	if _rebuild_blocked_since_ms < 0:
+		_rebuild_blocked_since_ms = now_ms
+	elif now_ms - _rebuild_blocked_since_ms >= REBUILD_TX_DEFER_MAX_MS:
+		push_warning("ConvoySettlementMenu: rebuild held %d ms by an in-flight transaction; rebuilding anyway." % (now_ms - _rebuild_blocked_since_ms))
+		print("[VendorPanel][DIAG] settlement rebuild DEFER EXPIRED — rebuilding with a transaction still in flight")
+		_rebuild_blocked_since_ms = -1
+		return false
+	print("[VendorPanel][DIAG] settlement rebuild DEFERRED — transaction in flight")
+	if not _rebuild_defer_timer_active and is_inside_tree():
+		_rebuild_defer_timer_active = true
+		var t := get_tree().create_timer(REBUILD_TX_DEFER_S)
+		t.timeout.connect(func() -> void:
+			_rebuild_defer_timer_active = false
+			_queue_display_settlement_info()
+		)
+	return true
 
 
 func _has_active_vendor_tab() -> bool:
@@ -371,7 +528,7 @@ func _on_store_convoys_changed(all_convoys_data: Array) -> void:
 func _on_store_map_changed(_tiles: Array, all_settlements_data: Array) -> void:
 	# Cache latest settlements and re-display based on current convoy coords.
 	_all_settlement_data = all_settlements_data
-	call_deferred("_display_settlement_info")
+	_queue_display_settlement_info()
 
 func _create_vendor_tab(vendor_data: Dictionary):
 	var vendor_name = vendor_data.get("name", "Unnamed Vendor")
@@ -496,7 +653,7 @@ func _update_ui(convoy: Dictionary) -> void:
 	var new_y = int(round(float(_convoy_data.get("y", -9999))))
 
 	if old_x != new_x or old_y != new_y or (is_instance_valid(vendor_tab_container) and vendor_tab_container.get_tab_count() == 0):
-		call_deferred("_display_settlement_info")
+		_queue_display_settlement_info()
 	else:
 		_update_top_up_button()
 		# Single-vendor mode has only the active tab, which _refresh_all_vendor_panels deliberately skips —
@@ -510,7 +667,13 @@ func _refresh_active_vendor_panel() -> void:
 	var panel: Node = _get_active_vendor_panel()
 	if not is_instance_valid(panel) or not panel.has_method("refresh_data"):
 		return
-	var vendor_data := _find_vendor_by_name(String(panel.name))
+	# S13-13: a refresh re-aggregates the vendor list from the lagging /map snapshot. Doing that under an
+	# in-flight transaction throws away the optimistic projection the panel is currently showing; the
+	# authoritative /vendor/get refresh that follows the reply will bring the real numbers.
+	if panel.get("_transaction_in_progress") == true:
+		print("[VendorPanel][DIAG] settlement refresh SKIPPED for active panel — transaction in flight")
+		return
+	var vendor_data := _vendor_data_for_panel(panel)
 	if vendor_data.is_empty():
 		return
 	panel.refresh_data(
@@ -708,9 +871,8 @@ func _on_vendor_tab_changed(tab_idx: int) -> void:
 	if is_instance_valid(tab_content) and tab_content.has_meta("needs_refresh") and tab_content.get_meta("needs_refresh"):
 		tab_content.set_meta("needs_refresh", false)
 		if tab_content.has_method("refresh_data"):
-			var full_vendor_name = tab_content.name
-			var vendor_data = _find_vendor_by_name(full_vendor_name)
-			if vendor_data:
+			var vendor_data := _vendor_data_for_panel(tab_content)
+			if not vendor_data.is_empty():
 				tab_content.refresh_data(
 					vendor_data.duplicate(true),
 					_convoy_data.duplicate(true),
@@ -724,6 +886,34 @@ func _find_vendor_by_name(vendor_name: String) -> Dictionary:
 			if vendor.get("name", "") == vendor_name:
 				return vendor
 	return {}
+
+
+## S13-14: resolve the vendor row for a mounted panel by its `vendor_id` meta, which _create_vendor_tab
+## always sets and _mounted_vendor_ids() already depends on. The node name can't be trusted for this:
+## Godot uniquifies duplicate sibling names, so a settlement with two identically named vendors gets a
+## panel called "Depot2" that matches no vendor at all, and any server-side rename breaks the lookup
+## until the tab is rebuilt. Name matching stays as a fallback for a tab built without the meta.
+func _find_vendor_by_id(vendor_id: String) -> Dictionary:
+	if vendor_id == "":
+		return {}
+	if _settlement_data and _settlement_data.has("vendors"):
+		for vendor in _settlement_data.vendors:
+			if vendor is Dictionary and String((vendor as Dictionary).get("vendor_id", "")) == vendor_id:
+				return vendor
+	return {}
+
+
+## The settlement's vendor row for a mounted vendor panel: by id, falling back to display name.
+func _vendor_data_for_panel(panel: Node) -> Dictionary:
+	if not is_instance_valid(panel):
+		return {}
+	var vid := String(panel.get_meta("vendor_id", ""))
+	var vendor_data := _find_vendor_by_id(vid)
+	if not vendor_data.is_empty():
+		return vendor_data
+	if vid != "":
+		print("[VendorPanel][DIAG] vendor_id '%s' not in snapshot — falling back to name '%s'" % [vid, String(panel.name)])
+	return _find_vendor_by_name(String(panel.name))
 
 
 # --- Top Up (relocated) ---

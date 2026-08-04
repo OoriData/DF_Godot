@@ -1,10 +1,14 @@
 ---
 type: note
 tags:
-  - codex/readme
+  - kind/index
+  - status/current
 aliases:
   - "Desolate Frontiers Documentation"
 created: 2026-05-18
+updated: 2026-08-04
+verified_against_code: 2026-07-28
+status: current
 ---
 
 # Desolate Frontiers Documentation
@@ -36,7 +40,9 @@ Welcome to the technical documentation for *Desolate Frontiers*. This folder is 
 > Start with the [**UI Element Audit**](02_UI_UX/UIAudit.md) for any UI task — it contains the layer map, script mapping, per-element inventory, implementation patterns, and all known issues.
 
 > [!WARNING]
-> **Debugging a "crammed / clipping / broken / colliding" layout?** Read the [**Debugging a Visual/Layout Bug**](AI_ONBOARDING.md) protocol *first*. In short: make the user point at the exact element and axis before you instrument anything; reproduce in-editor (on-device builds go stale until re-exported); measure only **after** slide-in animations settle (mid-animation sizes are garbage); and rule out structural causes — a stray per-menu back button, or a missing `ScrollContainer` — before tuning fonts/margins. Menus use the shared `MenuManager` bottom nav bar (not their own back button) and wrap scrollable bodies in a `ScrollContainer` so they can't clip.
+> **Debugging a "crammed / clipping / broken / colliding" layout?** Read the
+> [**Debugging a Visual/Layout Bug**](04_Technical/DebuggingVisualBugs.md) protocol *first* — it is
+> the canonical version of this checklist.
 
 - [**UI Element Audit**](02_UI_UX/UIAudit.md) ⭐ — **Start here for all UI work.** Full inventory of every element, layer map, script mapping, implementation patterns, known issues, and links to every per-menu doc.
 
@@ -72,6 +78,12 @@ Welcome to the technical documentation for *Desolate Frontiers*. This folder is 
 - [**Diagnostics & Troubleshooting**](04_Technical/Diagnostics.md): Logging, watchdogs, and network debugging.
 - [**Refresh Scheduler**](04_Technical/RefreshScheduler.md): Polling heartbeat — interval, suspend/resume, adding services.
 - [**Error Handling System**](04_Technical/ErrorSystem.md): ErrorTranslator pipeline, inline vs. modal errors.
+- [**Bug Reporting & Feedback**](04_Technical/BugReporting.md): The Feedback button → screenshot/log capture → `POST /bug-report` pipeline and the payload contract. **Reachability was fixed 2026-07-31 (S12-5)** — `GlobalFeedbackOverlay` (a `CanvasLayer` at `layer = 200`, `PROCESS_MODE_ALWAYS`) makes it available at login, mid-tutorial, and behind modals.
+- [**User Settings**](04_Technical/UserSettings.md): SettingsManager keys and defaults, and the display/fullscreen contract (**always change the window mode via `display.fullscreen`, never `DisplayServer` directly**). Includes the keyboard shortcut (`F11` · `Alt+Enter` · `Cmd+Ctrl+F`), which is **not** an InputMap action and so will not appear in the editor's Input Map panel.
+- [**GDScript Verification**](04_Technical/GDScriptVerification.md): How to actually prove an edit compiles — the editor pass vs. the targeted load probe, what each one misses, and why `treat_warnings_as_errors` does not exist in Godot 4.6. **Read before claiming "compile-clean".**
+- [**Data Boundaries**](04_Technical/DataBoundaries.md): The JSON-vs-binary seam. Where to look when a stat reads blank or `0` everywhere and both "not backend" and "not frontend" are true.
+- [**SignalHub**](04_Technical/SignalHub.md): The broadcast bus at the end of the unidirectional data path (`API → Service → GameStore → SignalHub → UI`).
+- [**Network Layer**](04_Technical/NetworkLayer.md): `APICalls` request queue, retry/backoff, and auth header application.
 - [**Dependency Graph**](04_Technical/Dependencies.md): Visual mapping of singleton relationships.
 - [**API Reference**](04_Technical/API_Reference.md): Backend endpoints and JSON contracts.
 - [**Deployment & Environment**](04_Technical/Deployment.md): Build targets and CI/CD pipelines.
@@ -90,4 +102,5 @@ Welcome to the technical documentation for *Desolate Frontiers*. This folder is 
 ## Project Management
 - [**TODO**](TODO.md): The flowing state of active/pending work — current sprint, device-test gate, backlog, and upcoming initiatives.
 - [**Sprint History**](SprintHistory.md): Completed-work archive — full root-cause narratives for Sprints 1–10 and closed backlog items (split out of the TODO so it stays forward-looking).
+- [**Documentation Audit**](DocumentationAudit.md): Structural review of this doc set *as a knowledge graph* — connectivity, reachability, staleness metadata, and a phased remediation plan. Feeds the Systems Audit initiative.
 

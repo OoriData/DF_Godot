@@ -282,6 +282,12 @@ func _update_safe_margins() -> void:
 	# Inset the bar CONTENT (buttons/labels) to the safe area so nothing sits under the
 	# notch or rounded corners, while the OoriBackground keeps bleeding to the physical
 	# edges (no black bars). The bar's panel stylebox content margins are the lever.
+	# Only ever mutate OUR OWN override (installed by _apply_base_styling). Without this check a
+	# call that lands before styling — e.g. the initial _on_ui_scale_changed() in _ready() — would
+	# fetch and mutate the SHARED theme stylebox, applying this bar's notch inset to every
+	# PanelContainer in the app.
+	if not has_theme_stylebox_override("panel"):
+		return
 	var style = get_theme_stylebox("panel")
 	if not (style is StyleBoxFlat):
 		return
@@ -366,9 +372,19 @@ func _on_user_refresh_requested() -> void:
 	_update_display()
 
 func _on_ui_scale_changed(_new_scale: float) -> void:
-	# Font scaling is now handled globally by content_scale_factor.
-	# We no longer need to manually override font sizes here.
-	pass
+	# Font scaling is handled globally by content_scale_factor — nothing to do for fonts.
+	#
+	# But the safe-area margins are computed by DIVIDING a physical inset by that very scale
+	# (UIScaleManager.get_logical_safe_margins), so a scale change invalidates them. This handler
+	# used to be an empty `pass`, which meant whatever margin was computed during boot was latched
+	# forever. In exported/Steam builds the boot scale can be the `_MIN_SAFE_FACTOR` floor for a
+	# frame, turning a ~47px notch inset into ~940 logical px of `content_margin_top` — the top bar
+	# then claims the entire viewport height, pushing the map off-screen with zero height, and all
+	# that renders is the bar's own Oori tile. That is the "blank screen except the background art"
+	# report. Recompute on every scale change so a bad boot value can never stick.
+	_update_mobile_sizing()
+	_update_safe_margins()
+	queue_redraw()
 
 
 func _configure_options_dropdown() -> void:
@@ -481,7 +497,19 @@ func _on_connect_accounts_pressed() -> void:
 
 
 func _on_bug_report_pressed() -> void:
-	# Capture screenshot BEFORE any window/popup appears.
+	# S12-5: delegate to the always-available GlobalFeedbackOverlay so both entry points drive one
+	# window. The copy this function used to build itself inherited PROCESS_MODE_INHERIT and so was
+	# frozen whenever the tree was paused; the overlay's is PROCESS_MODE_ALWAYS.
+	var scene_root := get_tree().current_scene
+	if is_instance_valid(scene_root) and scene_root.has_method("get_feedback_overlay"):
+		var overlay = scene_root.get_feedback_overlay()
+		if is_instance_valid(overlay) and overlay.has_method("open_bug_report"):
+			overlay.open_bug_report()
+			return
+
+	# Fallback: keep the original local path working if the overlay is unavailable (e.g. this
+	# display is hosted outside GameScreenManager). Reporting a bug must never itself fail.
+	push_warning("UserInfoDisplay: GlobalFeedbackOverlay unavailable; using local bug report window.")
 	var png_bytes := PackedByteArray()
 	# Wait until the frame is rendered so the viewport image is valid.
 	await RenderingServer.frame_post_draw
@@ -498,6 +526,7 @@ func _on_bug_report_pressed() -> void:
 			push_error("Failed to load bug_report_window.gd")
 			return
 		_bug_report_window = script.new()
+		_bug_report_window.process_mode = Node.PROCESS_MODE_ALWAYS
 		get_tree().root.add_child(_bug_report_window)
 
 	if _bug_report_window.has_method("set_screenshot_png_bytes"):

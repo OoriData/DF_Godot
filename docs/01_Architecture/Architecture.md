@@ -1,11 +1,15 @@
 ---
 type: architecture
 tags:
-  - architecture
-  - codex/architecture
+  - layer/service
+  - kind/deep-dive
+  - status/current
 aliases:
   - "Architecture Overview"
 created: 2026-05-18
+updated: 2026-05-18
+verified_against_code: 2026-07-28
+status: current
 ---
 
 # Architecture Overview

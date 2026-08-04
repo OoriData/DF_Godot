@@ -1,11 +1,15 @@
 ---
 type: architecture
 tags:
-  - architecture
-  - codex/dataflow
+  - layer/service
+  - kind/deep-dive
+  - status/current
 aliases:
   - "Data Flow Architecture"
 created: 2026-05-18
+updated: 2026-05-18
+verified_against_code: 2026-07-28
+status: current
 ---
 
 # Data Flow Architecture
@@ -98,3 +102,9 @@ If you are adding a new feature (e.g., "Missions"), follow these steps:
 4. **Update SignalHub**: Add a `missions_changed` signal to `SignalHub.gd`.
 5. **Hook to Scheduler**: If missions should update periodically, call `MissionService.refresh()` from `RefreshScheduler._on_convoy_refresh_timeout()`.
 6. **Subscribe in UI**: Your menu can now connect to `SignalHub.missions_changed` to update its view.
+
+## Related
+
+- **Constrained by:** [Architecture](Architecture.md) — the service-oriented, event-driven design this pipeline implements
+- **See also:** [SignalHub](../04_Technical/SignalHub.md) — the event catalogue this flows through
+- **See also:** [AutoloadOrder](../04_Technical/AutoloadOrder.md) — `GameStore` and every service in load order
