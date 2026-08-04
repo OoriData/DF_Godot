@@ -1915,11 +1915,23 @@ func _on_map_ready_for_focus():
 				print("[MainScreen] map_rect is too small; waiting one more frame for layout stabilization...")
 			await get_tree().process_frame
 			map_rect = _get_map_display_rect()
-			# Still degenerate after the retry — dump the ancestor chain so the control that is
-			# claiming the height can be identified from a log alone (the "blank screen, only the
-			# background art" state). See docs/TODO.md Sprint 12 · S12-7.
-			if map_rect.size.x < 10 or map_rect.size.y < 10:
-				_diag_dump_map_ancestor_sizes("map_rect_degenerate")
+
+		# There are TWO ways a chrome element claiming a huge minimum size shows up here, and only
+		# one of them is degenerate. A rect that is merely OFFSET — full size, but pushed far down
+		# and/or right — renders as "the whole UI is shoved into the corner with the background tile
+		# behind it" and sailed through the size check above for months (the second form of S12-7).
+		# Dump the ancestor chain for both, so the control claiming the space is named in the log
+		# instead of inferred. See docs/TODO.md Sprint 12 · S12-7.
+		# Thresholds: a healthy top bar is ~80-160 logical px even with a mobile notch, and
+		# MapDisplay is full-bleed, so its left edge is 0.
+		var vp_sz := get_viewport_rect().size
+		var max_top: float = maxf(220.0, vp_sz.y * 0.15)
+		var max_left: float = maxf(40.0, vp_sz.x * 0.03)
+		if map_rect.size.x < 10 or map_rect.size.y < 10:
+			_diag_dump_map_ancestor_sizes("map_rect_degenerate")
+		elif map_rect.position.y > max_top or map_rect.position.x > max_left:
+			_diag_dump_map_ancestor_sizes("map_rect_offset pos=%s limit=(%.1f, %.1f)" % [
+				str(map_rect.position), max_left, max_top])
 
 		map_camera_controller.update_map_viewport_rect(map_rect)
 		if map_camera_controller.has_method("fit_camera_to_tilemap"):

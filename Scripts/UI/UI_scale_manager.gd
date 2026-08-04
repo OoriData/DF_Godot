@@ -236,15 +236,30 @@ func is_scale_settled() -> bool:
 ## Physical safe-area insets converted to LOGICAL pixels.
 ## Rect2(position = (left, top), size = (right, bottom)).
 ##
-## DANGER — this DIVIDES by `content_scale_factor`. During an exported/Steam boot the window can
+## `DisplayServer.get_display_safe_area()` returns an ABSOLUTE rect in virtual-desktop coordinates,
+## NOT an inset. Its origin is the safe region's position on the whole multi-monitor desktop, so the
+## inset is only recoverable by subtracting the origin of the screen the window is on. Miss that and
+## a screen that isn't at the desktop origin reports its own position as a "notch": on this project's
+## dev Mac the built-in display sits at (908, 2880) with an external monitor above-left of it, and
+## `get_display_safe_area()` returns `[P: (908, 2946), S: (3456, 2168)]`. Read as an inset and divided
+## by a 1.35 factor that is 673 logical px of left notch and 2182 px of top notch; clamped by
+## `_MAX_SAFE_INSET_FRACTION` it was still 512 left / 321 top, which the top bar wrote into its
+## stylebox `content_margin` — the entire UI shoved down-and-right with the background tile showing
+## through the gap. That is the *second* form of S12-7, and the reason it looked "exported builds
+## only": the editor places the game window on the editor's screen (at the desktop origin, insets 0)
+## while the exported app opens on the built-in display. See docs/TODO.md Sprint 12 · S12-7.
+##
+## DANGER — this also DIVIDES by `content_scale_factor`. During an exported/Steam boot the window can
 ## report a bogus size for a frame, pinning the factor at the `_MIN_SAFE_FACTOR` (0.05) floor; a
-## ~47px macOS menu-bar/notch inset then converts to ~940 *logical* px. A consumer that writes that
-## into a `custom_minimum_size` or a stylebox `content_margin` and never recomputes ends up with a
-## chrome element that eats the whole screen. Two guards below:
-##   1. Return zero margins until the scale is settled (never emit a value derived from the floor).
-##   2. Cap each inset at a sane fraction of the logical viewport — a safe area is a notch, never
+## ~47px inset then converts to ~940 *logical* px. A consumer that writes that into a
+## `custom_minimum_size` or a stylebox `content_margin` and never recomputes ends up with a chrome
+## element that eats the whole screen. Three guards below:
+##   1. Desktop returns zero — no desktop OS places a window under its menu bar / taskbar, so there
+##      is no safe area to respect and nothing to get wrong.
+##   2. Return zero margins until the scale is settled (never emit a value derived from the floor).
+##   3. Cap each inset at a sane fraction of the logical viewport — a safe area is a notch, never
 ##      a third of the screen — so an unforeseen bad divisor still can't produce a screen-eater.
-## Consumers must ALSO re-query on `scale_changed`, or they will latch the zero from guard (1).
+## Consumers must ALSO re-query on `scale_changed`, or they will latch the zero from guard (2).
 const _MAX_SAFE_INSET_FRACTION := 0.2
 
 func get_logical_safe_margins() -> Rect2:
@@ -252,18 +267,30 @@ func get_logical_safe_margins() -> Rect2:
 	if not _scale_settled:
 		return margins
 
+	# Guard 1. Windows/macOS/Linux never place a window under the menu bar, taskbar or Dock — the
+	# window frame already excludes them — so the correct desktop inset is zero on every edge. The
+	# platform `get_display_safe_area()` there is just `screen_get_usable_rect()`, which carries the
+	# screen's desktop position and no notch information at all.
+	if not _is_mobile():
+		return margins
+
+	var scr: int = get_window().current_screen
 	var safe_area := DisplayServer.get_display_safe_area()
-	var screen_size := DisplayServer.screen_get_size()
+	var screen_pos := DisplayServer.screen_get_position(scr)
+	var screen_size := DisplayServer.screen_get_size(scr)
 	var scale := get_global_ui_scale()
 
 	if scale <= 0.001:
 		return margins
 
-	# Convert physical margins to logical pixels.
-	margins.position.x = safe_area.position.x / scale
-	margins.position.y = safe_area.position.y / scale
-	margins.size.x = (screen_size.x - safe_area.end.x) / scale
-	margins.size.y = (screen_size.y - safe_area.end.y) / scale
+	# Convert to logical pixels. The safe rect and the screen rect share one coordinate space, so the
+	# inset on each edge is their difference — subtracting `screen_pos` is what removes the screen's
+	# own desktop position from the result. (Mobile has a single screen at (0, 0), so this is a no-op
+	# there; it is what keeps the same expression correct if this ever runs on a desktop screen.)
+	margins.position.x = (safe_area.position.x - screen_pos.x) / scale
+	margins.position.y = (safe_area.position.y - screen_pos.y) / scale
+	margins.size.x = ((screen_pos.x + screen_size.x) - safe_area.end.x) / scale
+	margins.size.y = ((screen_pos.y + screen_size.y) - safe_area.end.y) / scale
 
 	var logical: Vector2 = get_viewport().get_visible_rect().size
 	var max_x: float = maxf(0.0, logical.x * _MAX_SAFE_INSET_FRACTION)
