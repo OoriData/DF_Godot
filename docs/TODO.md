@@ -164,9 +164,9 @@ and desktop where relevant, per the project's device-test rule.
   **icon** on the map; add anti-collision so the label offsets clear of its own icon (analogous to the
   A5 edge/gear clamp and A4 route-nudge already in `UI_manager`/`convoy_label_manager`). Distinct from A5
   (edge/gear clamp) and A4 (route nudge). `Scripts/UI/convoy_label_manager.gd`.
-  - ⚠️ **Superseded by research — see S13-17.** The premise "add anti-collision" is wrong: the icon
+  - ⚠️ **Superseded by research — see S13-25.** The premise "add anti-collision" is wrong: the icon
     keepout already exists (`convoy_label_manager.gd:530-561`, radius `:62`). It under-covers the arrow
-    and the escape search is too weak. Fix both label systems in one pass under **S13-17**, not here.
+    and the escape search is too weak. Fix both label systems in one pass under **S13-25**, not here.
 
 - [x] **UI-scale slider: drop the top ~90% of the range** *(✅ CODE-COMPLETE 2026-08-04, 17/17 headless,
   pending an on-screen look)* — **bounds set on screen by the reporter: min `0.75`, max `1.30`.** Now
@@ -1483,7 +1483,7 @@ IDs are `S13-n`.
     `eta_value.text = str(_route_data.get("eta", "N/A"))` — a **raw, unformatted** value straight into the
     label, the only ETA display in the project that bypasses `DateTimeUtil`.
 
-- [ ] **S13-17 · Map labels layer over the convoy icon — the anti-collision exists but under-covers**
+- [ ] **S13-25 · Map labels layer over the convoy icon — the anti-collision exists but under-covers**
   *(P2 — reported 2026-08-04 with a screenshot: a settlement label ("Chicago" + `📦 Mail`) sits under a
   convoy arrow. **Researched against current code 2026-08-04, nothing coded.** Absorbs the Sprint 11
   "Convoy icon ↔ convoy label anti-collision" bullet and the *"nudge is vertical-only"* caveat on
@@ -1577,7 +1577,7 @@ IDs are `S13-n`.
     `convoy_visuals_manager.gd:165`) and **written nowhere in the repo**. So `ConvoyNode._update_visuals()`
     always takes its fallback branch (`:135-139`), and `augment_convoy_data_with_offsets()`'s lane
     separation for convoys sharing a route segment (`convoy_visuals_manager.gd:164-211`) always resolves
-    to `Vector2.ZERO` — that feature has never run. Harmless for S13-17 (the backend snaps convoys to
+    to `Vector2.ZERO` — that feature has never run. Harmless for S13-25 (the backend snaps convoys to
     integer route waypoints — `chassis/df_obj/convoy_cls.py:715` — so tile-centre math is correct today),
     but it means `convoy_label_manager.gd:548-552` always falls through to
     `_infer_route_segment_index_near_convoy()`. Fold into the **dead-code sweep** in the systems-audit
@@ -1657,12 +1657,19 @@ reported as Windows-specific, so the Mac editor is a smoke test only, not the ga
 Ordered by risk. The first four are a ~5-minute desktop pass and cover the changes most likely to be
 wrong; the rest need specific setup and can wait.
 
-> **Results of the first pass — 2026-08-04.** ① and ③ **pass, device-verified.** ② is **blocked on
-> Windows access** (the fullscreen problem was reported there and the reporter cannot test Windows at
-> present) — the **macOS half is still runnable** and remains the open half of S12-6. ④ turned up a
-> **different, previously unrecorded defect** — the two sliders have no numeric readout at all — logged
-> and fixed as **S13-22** below; the S13-2 stale-value check that ④ actually describes is **still
-> unrun.** ⑤–⑧ not yet attempted.
+> **Results — 2026-08-04. ①②③④⑦ all pass; only ⑤⑥⑧ remain, and every one is blocked on setup this
+> machine cannot provide.** ① and ③ verified in the first pass. ② passed on **macOS**, including the
+> `reapply_scale()` re-layout that was its genuinely untested half; **Windows remains untested** (no
+> machine). ④ passed, closing **S13-2**. ⑦ closed — the fault was environmental, not a client defect.
+>
+> ④ also turned up two previously unrecorded defects along the way, both since fixed and confirmed on
+> screen: **S13-22** (no slider readout — the readouts were added, used to calibrate the bands, then
+> removed at the reporter's request) and **S13-23** (the UI-scale slider discarded every input except a
+> grabber drag, and could not represent a stored scale above the window ceiling — the reporter's live
+> value was `3.65`). That work also closed the Sprint 11 **UI-scale slider** item and produced **S13-24**.
+>
+> **Still blocked:** ⑤ and ⑥ need a **0-convoy account**; ⑧ needs a **mobile device**; S12-7 needs an
+> **exported Steam build**; S12-6's Windows half needs a **Windows machine**.
 
 - [x] **① Feedback button placement + reachability (S12-5)** — ✅ **DEVICE-VERIFIED 2026-08-04.** Reporter
   confirms the button works. Closes the placement/hit-testing gap S12-5 flagged as its unproven half.
@@ -1677,25 +1684,20 @@ wrong; the rest need specific setup and can wait.
   *Old:* no feedback affordance existed at login, and the window would have opened frozen.
   **Known-and-accepted:** two Feedback affordances now exist on the main screen (top bar + floating).
   Say so if that reads as clutter — hiding `%ReportBugButton` is a one-line follow-up.
-- [ ] **② Fullscreen shortcut (S12-6)** — 🚧 **BLOCKED ON WINDOWS 2026-08-04.** The reporter has no
-  Windows machine available to test against, and that is where the fullscreen problem was seen. **The
-  macOS half is not blocked** and is the runnable part: press `F11` / `Cmd+Ctrl+F`, confirm the mode
-  switches, **the UI does not lay out offset afterwards** (the untested half — this is what
-  `reapply_scale()` exists to prevent), the settings checkbox flips **while the menu is open**, and the
-  state survives a restart. Do the Mac pass now; hold the Windows pass until a machine is available.
+- [x] **② Fullscreen shortcut (S12-6)** — ✅ **macOS VERIFIED 2026-08-04**; 🚧 **Windows still untested**
+  (no machine available, and that is where the original problem was seen). The Mac pass covered the half
+  that was genuinely unproven — the `DisplayServer` mode switch and the `reapply_scale()` re-layout after
+  it — so the remaining Windows risk is platform-specific behaviour, not the shortcut logic. Re-run the
+  S12-6 recipe on Windows when a machine is available before closing S12-6 outright.
 - [x] **③ Pinned map label → preview arrow, on DESKTOP** — ✅ **DEVICE-VERIFIED 2026-08-04.** Reporter
   confirms the pinned label behaves correctly. Closes the originally-reported Sprint 11 bug.
-- [ ] **④ Settings menu shows live values (S13-2)** — ⚠️ **STILL UNRUN 2026-08-04.** The 2026-08-04 pass
-  reported *"the settings values are not showing up as I adjust the numbers"*, which is **the sliders
-  having no readout** (now S13-22), **not** the stale-checkbox behaviour this recipe tests. The
-  invert-pan re-read below has still never been exercised — run it. Steps:
-  open Settings, note **Invert Pan**; close it;
-  **log out and back in** (or change the setting elsewhere); reopen Settings. The checkbox must match the
-  **stored** value, not the one captured when the menu was first built. Then toggle it once and confirm
-  panning direction actually changes and **survives a restart**. *Old:* the stale checkbox wrote its own
-  wrong value back on the next click — the "it flipped on its own" report.
-  `_debug_settings_menu` is `true`, so `[SettingsMenu] _init_values: invert_pan loaded as …` prints on
-  **every** open — use it as the proof, then consider flipping the flag off.
+- [x] **④ Settings menu shows live values (S13-2)** — ✅ **VERIFIED 2026-08-04.** Stale-value behaviour
+  confirmed fixed on screen. **Closes S13-2**, and with it the Sprint 11 "pan direction inconsistent
+  across sessions" duplicate. The 2026-08-04 settings work (S13-22/23/24 + the Sprint 11 slider cap) was
+  confirmed in the same pass.
+  - 🧹 **Leftover:** `_debug_settings_menu` is still `true` in `settings_menu.gd:13`, so
+    `[SettingsMenu] _init_values: invert_pan loaded as …` and the `ui.scale commit:` lines print on every
+    open. They were the proof for this test; now that it has passed, flip the flag to `false`.
 - [ ] **⑤ Onboarding loop (S12-8)** *(needs a **0-convoy account** — will not reproduce otherwise)* —
   sign in and read `user://logs/`. **Pass:** `[Onboarding] _show_new_convoy_dialog invoked.` appears
   **once**, followed by any number of `already open — ignoring repeat.` lines. *Old:* hundreds of full
@@ -1706,10 +1708,13 @@ wrong; the rest need specific setup and can wait.
   symptom was severe enough to stutter unrelated video playback, so check that too. Because ⑤ landed in
   the same session, attribute carefully — remaining CPU-side stutter points at the request loop,
   remaining GPU-side at the viewport.
-- [ ] **⑦ Network error messages (S13-12)** *(airplane mode / Wi-Fi off)* — with the app running, kill
-  connectivity and trigger any request. The player must see **"Can't reach the server — check your
-  internet connection."**, not `Unhandled API Error (add to ErrorTranslator)`. Then submit a bug report
-  while offline: it must report the same, not `Bug report submit failed (HTTP 0): Unknown error.`
+- [x] **⑦ Network error messages (S13-12)** — ✅ **CLOSED 2026-08-04.** Reporter: *"network was my issue,
+  solved."* The connectivity fault was environmental, not a client defect, and is resolved. **Note the
+  scope limit:** this closes the reported symptom, not a deliberate airplane-mode exercise of
+  `ErrorTranslator`'s `HTTPRequest` result-code mapping. If that mapping is ever suspected again, the
+  original recipe is: kill Wi-Fi, trigger any request, expect *"Can't reach the server — check your
+  internet connection."* rather than `Unhandled API Error (add to ErrorTranslator)`, then submit a bug
+  report offline and expect the same instead of `Bug report submit failed (HTTP 0): Unknown error.`
 - [ ] **⑧ Convoy list touch targets (S12-8, second defect)** *(mobile)* — open the convoy list, close and
   reopen it **several times**. Row touch-target sizing must stay correct on every open. *Old:* the
   `ResponsiveListAdapter` was destroyed on the first populate and never recreated, so sizing silently
