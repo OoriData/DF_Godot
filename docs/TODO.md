@@ -314,8 +314,54 @@ now backs it. **None are coded yet.** IDs (`S12-n`) are for cross-referencing fr
 
 ## Blank screen on Steam
 
+> [!IMPORTANT]
+> **S12-7 root cause was found and fixed 2026-08-04 — see S12-7b below.** The narrative in S12-7
+> identified the right *mechanism* (a value divided by `content_scale_factor` and latched into a
+> stylebox `content_margin`) but the wrong *input*: the inflated inset was never a macOS notch. It
+> was the **screen's position on the virtual desktop**, misread as an inset. Read S12-7b first;
+> S12-7's "~47px notch ÷ 0.05 floor" arithmetic is superseded.
+
+- [x] **S12-7b · The inflated safe-area inset is the screen's desktop ORIGIN, not a notch**
+  *(P0 — ✅ FIXED + VERIFIED 2026-08-04)* — the surviving form of this bug was not a blank screen but
+  the **whole UI shoved down-and-right**, background tile showing through the gap, top bar buttons and
+  gear box starting ~20 % across. Same cause, capped by the S12-7 clamp instead of running away.
+  - **Root cause.** `DisplayServer.get_display_safe_area()` returns an **absolute rect in
+    virtual-desktop coordinates**, not an inset. On desktop it is simply `screen_get_usable_rect()`.
+    `get_logical_safe_margins()` read `safe_area.position` as if it were an inset. On the dev Mac the
+    built-in display sits at desktop origin `(908, 2880)` because an external monitor is arranged
+    above-left of it, so `get_display_safe_area()` returns `[P: (908, 2946), S: (3456, 2168)]` — and
+    `908 / 1.35 = 673` logical px of phantom "left notch", `2946 / 1.35 = 2182` px of "top notch".
+    The `_MAX_SAFE_INSET_FRACTION` clamp cut those to **512 left / 321.2 top**, which
+    `UserInfoDisplay._update_safe_margins()` wrote into the top bar stylebox as
+    `content_margin_top = 4 + 321.2`.
+  - **Proof (arithmetic, not inference).** Predicted top-bar height `4 + 321.2 + ~60 = 385.2`; the
+    export log reads `[RESIZE] map_rect=[P: (0.0, 385.0), S: (2560.0, 1220.0)]`. Left inset 512
+    logical × 1.35 = 691 physical of a 3456-wide window = 20 %, matching the screenshot's offset for
+    the top bar, the gear box and the Feedback button alike.
+  - **"Exported builds only" was a red herring.** The real variable is **which display the window
+    lands on**. Editor Run places the game window on the editor's screen (at the desktop origin →
+    insets 0 → healthy); the exported `.app` opens on the built-in display (origin `(908, 2880)` →
+    broken). This also reconciles every earlier contradictory report — Windows multi-monitor, "macOS
+    too", "works now" — as one bug with a monitor-arrangement trigger. A single-monitor machine can
+    never reproduce it.
+  - **Fix.** `UI_scale_manager.gd::get_logical_safe_margins()` — (1) desktop returns **zero margins**
+    (no desktop OS places a window under its menu bar / taskbar / Dock, so the correct inset is zero
+    on every edge, and this also retires the bogus ~49 px macOS menu-bar inset the old code produced
+    on a single-monitor Mac); (2) the mobile path now subtracts `screen_get_position()` from the safe
+    rect, so an inset is a true difference between two rects in the same coordinate space rather than
+    an absolute position. The `_MAX_SAFE_INSET_FRACTION` clamp stays as a backstop and is no longer
+    load-bearing.
+  - **Diagnostic gap closed.** `main_screen.gd::_diag_dump_map_ancestor_sizes()` only fired on a
+    *degenerate* (zero-size) map rect, so this offset form — a full-size rect merely pushed down —
+    produced no `[MAP-RECT-DIAG]` block at all. It now also fires when the rect is implausibly
+    offset (`position.y > max(220, 15 % vp)` or `position.x > max(40, 3 % vp)`).
+  - **Verified**: probe against the live `ui_scale_manager` autoload with the window forced onto
+    screen 0 — old formula `left=512.0 top=288.0`, new `left=0.0 top=0.0 right=0.0 bottom=0.0`.
+    Editor pass + load probe (positive-control canary) clean.
+  `Scripts/UI/UI_scale_manager.gd`, `Scripts/UI/main_screen.gd`.
+
 - [x] **S12-7 · First Steam launch shows only the background art** *(P0 — 🔧 FIX CODED 2026-07-28,
-  ⚠️ NOT YET VERIFIED AGAINST AN EXPORTED STEAM BUILD)* — reported as: logging in with Steam for the
+  ⚠️ SUPERSEDED BY S12-7b — root cause corrected 2026-08-04)* — reported as: logging in with Steam for the
   first time (no Steam account associated with a DF account) leaves the screen blank apart from the
   tiled background pattern. **Exported build only — does not reproduce in the editor** (confirmed: a
   local windowed run against the same 0-convoy account produced a healthy
