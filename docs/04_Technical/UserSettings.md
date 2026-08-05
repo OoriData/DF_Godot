@@ -9,7 +9,7 @@ tags:
 aliases:
   - "User Settings & Preferences"
 created: 2026-05-19
-updated: 2026-08-04
+updated: 2026-08-05
 verified_against_code: 2026-08-04
 status: current
 ---
@@ -30,10 +30,18 @@ The Settings system acts as the local storage mechanism for non-gameplay configu
 Audited against `SettingsManager.data` on 2026-07-28. **`data` is the authoritative default list** — a
 `get_value(key, fallback)` fallback for a key that appears here can never fire.
 
+> [!IMPORTANT]
+> **`ui.scale` and `ui.menu_open_ratio` are PINNED as of 2026-08-05 and their UI is hidden.** They are
+> listed in `SettingsManager.PINNED_KEYS`, so `load_settings()` **skips them when restoring from disk** —
+> `data` keeps the defaults below no matter what `user://settings.cfg` contains. The sliders are hidden
+> (`UISec` in `SettingsMenu.tscn`, `visible = false`); that is cosmetic, the disk skip is what pins them.
+> Stored values are left on disk untouched, so un-pinning restores each user's preference.
+> Temporary, pending [TODO S13-26](../TODO.md) — read that entry before removing either half.
+
 | Key | Default | Runtime side effect on save |
 |---|---|---|
 | `ui.scale` | `1.0` | `ui_scale_manager.set_global_ui_scale()` — desktop manual zoom only. **Bounded `0.75 … 1.30`** (`MIN_USER_SCALE` / `MAX_USER_SCALE`); see the note below |
-| `ui.menu_open_ratio` | `0.5` | read by `main_screen.gd` when (re)laying out the menu sheet. **A lerp position between the `UITheme.MENU_RATIO_*` band ends, NOT a screen fraction** |
+| `ui.menu_open_ratio` | `0.81` | read by `main_screen.gd` when (re)laying out the menu sheet. **A lerp position between the `UITheme.MENU_RATIO_*` band ends, NOT a screen fraction** — `0.81` resolves to **0.688 of viewport width** on landscape/desktop (≈1321 logical px at `ui.scale 1.0`) and 0.688 of viewport *height* in portrait. Was `0.5`; re-calibrated on screen 2026-08-05 against desktop landscape. Declared in **two** places that must agree — `settings_manager.gd` and `settings_menu.gd::_on_reset_defaults()` |
 | `ui.cargo_sort_metric` | `0` | read by `vendor_trade_panel.gd`; index into `CargoSorter.SortMetric` |
 | `access.high_contrast` | `false` | — |
 | `display.fullscreen` | `false` | `DisplayServer.window_set_mode()` **+ deferred `reapply_scale()`** |

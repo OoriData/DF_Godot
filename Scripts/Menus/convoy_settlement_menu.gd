@@ -67,6 +67,20 @@ const REBUILD_TX_DEFER_S: float = 0.25
 const REBUILD_TX_DEFER_MAX_MS: int = 10000
 var _rebuild_blocked_since_ms: int = -1
 var _rebuild_defer_timer_active: bool = false
+## S13-27: set on an orientation change to force a rebuild even when the vendor set is unchanged.
+##
+## VendorTradePanel picks its structure (3-column / 2-pane / stacked) ONCE in `_ready()`, and
+## `_make_panels_responsive()` is a one-shot with `has_meta` guards and no inverse — so a panel built
+## in landscape stays 2-pane after a rotation to portrait. Measured on device 2026-08-05: its
+## `HBoxContainer` keeps a 1104 px minimum width inside an 800 px portrait sheet, and because that node
+## is `grow_horizontal = GROW_DIRECTION_BOTH` it overflows symmetrically (152 px off each edge) and gets
+## clipped. Re-instantiating is the only path that re-runs `_ready()`, hence this flag.
+##
+## Deliberately routed through the SAME rebuild branch as a vendor-set change, so it inherits
+## `_defer_rebuild_for_active_transaction()` — the S13-13 protection that keeps a purchase reply from
+## landing on a freed panel. Never clear this before the rebuild actually runs: the deferral path
+## re-queues, and clearing early would drop the pending relayout.
+var _force_vendor_rebuild: bool = false
 
 @onready var _store: Node = get_node_or_null("/root/GameStore")
 @onready var _user_service: Node = get_node_or_null("/root/UserService")
@@ -188,9 +202,13 @@ func _on_layout_mode_changed(_mode: int, _size: Vector2, _is_mobile_val: bool) -
 
 	_style_vendor_tabs()
 
-	# Re-layout, not re-instantiate (S13-13). The vendor set can't change on a rotation, so this pass
-	# takes the "already mounted" branch and refreshes in place; each VendorTradePanel re-applies its own
-	# orientation sizing from its own layout_mode_changed handler (vendor_trade_panel.gd:686).
+	# S13-27: a rotation DOES require re-instantiating the vendor panels. The panel's own
+	# layout_mode_changed handler only re-applies font sizes and control heights
+	# (`vendor_trade_panel.gd::_update_layout_scaling`) — it cannot restructure the columns, because
+	# `_make_panels_responsive()` is a one-shot guarded by `has_meta` and has no inverse. So the
+	# "refresh in place" branch leaves a landscape 2-pane layout mounted in a portrait sheet.
+	# The flag forces the rebuild branch, which still defers around an in-flight transaction (S13-13).
+	_force_vendor_rebuild = true
 	_queue_display_settlement_info()
 
 
@@ -303,7 +321,11 @@ func _display_settlement_info():
 			# still correct — pushing them fresh data is enough, and destroying them would take their
 			# in-flight transaction and optimistic stock with them.
 			var desired_vendor_ids: PackedStringArray = _desired_vendor_ids(_settlement_data.vendors)
-			if not desired_vendor_ids.is_empty() and desired_vendor_ids == _mounted_vendor_ids():
+			# S13-27: an orientation change must fall through to the rebuild even when the vendor set
+			# matches — the mounted panels carry the previous orientation's structure.
+			if _force_vendor_rebuild and not desired_vendor_ids.is_empty():
+				print("[VendorPanel][DIAG] settlement rebuild FORCED — orientation changed")
+			elif not desired_vendor_ids.is_empty() and desired_vendor_ids == _mounted_vendor_ids():
 				print("[VendorPanel][DIAG] settlement rebuild SKIPPED — vendor set unchanged (%d tab(s): %s)" % [desired_vendor_ids.size(), ", ".join(desired_vendor_ids)])
 				_refresh_mounted_vendor_panels()
 				_update_single_vendor_title_text()
@@ -317,6 +339,9 @@ func _display_settlement_info():
 			if _defer_rebuild_for_active_transaction():
 				return
 
+			# The rebuild is now certain to run, so a pending forced relayout is satisfied. Cleared here
+			# rather than at the branch above so the deferral path keeps re-queuing with the flag set.
+			_force_vendor_rebuild = false
 			_clear_tabs()
 
 			for vendor in _settlement_data.vendors:

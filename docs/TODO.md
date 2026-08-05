@@ -6,7 +6,7 @@ tags:
 aliases:
   - "TODO — Active Work"
 created: 2026-05-21
-updated: 2026-08-04
+updated: 2026-08-05
 status: unverified
 ---
 
@@ -259,6 +259,11 @@ now backs it. **None are coded yet.** IDs (`S12-n`) are for cross-referencing fr
     Long label/value rows past ~1100 px read as two disconnected halves.
   All three numbers should be single named constants, not inline literals, so feedback is a one-line edit.
   `Scripts/UI/main_screen.gd`, `Scripts/Menus/vendor_trade_panel.gd`, `Scenes/VendorTradePanel.tscn`.
+  - ⚠️ **Blocked on / must ship with S13-26** (Sprint 13 · Polish). Everything proposed here is a
+    *maximum* (the 0.62 ratio, the ~1100 px cap); S13-26 is the missing *minimum*, and it found that the
+    desktop 3-column layout has no lower bound at all — `MiddlePanel` collapses to 1 px while `RightPanel`
+    refuses to shrink below ~346. Narrowing the sheet per this item **without** S13-26's width breakpoint
+    would make the crammed/overlapping failure more frequent, not less.
 
 - [ ] **S12-4 · Overlay options panel eats a large proportion of the screen on PC** *(P1 — PC only; Mac
   and mobile "fine for the most part")* — the gear-tab map-overlay panel
@@ -287,6 +292,10 @@ now backs it. **None are coded yet.** IDs (`S12-n`) are for cross-referencing fr
     [ui_system § Known violation](02_UI_UX/ui_system.md#never-latch-a-value-you-derived-by-dividing-by-the-scale).
   - ⚠️ **Code cleanup:** the dead `ui.scale` fallback of `1.4` at `settings_menu.gd:247` should be
     reconciled to the real default `1.0`. Detail: [ui_system](02_UI_UX/ui_system.md).
+  - ⚠️ **Read S13-26 (Sprint 13 · Polish) first — it is the general case of this bug.** The
+    proposed `clamp(win.x * 0.24, 380, 520)` here is a *maximum*; S13-26 documents the missing *minimum*
+    and the measured evidence that `ui.scale` and `ui.menu_open_ratio` multiply into a 3.06× swing in
+    available logical width with no content floor anywhere in the chain.
 
 ## Vendor menu
 
@@ -1628,6 +1637,326 @@ IDs are `S13-n`.
     but it means `convoy_label_manager.gd:548-552` always falls through to
     `_infer_route_segment_index_near_convoy()`. Fold into the **dead-code sweep** in the systems-audit
     initiative, or resurrect deliberately if smooth convoy movement is wanted.
+
+- [ ] **S13-26 · UI scale × menu-width ratio multiply into a layout budget that has no content floor**
+  *(P1 — reported 2026-08-05 with a before/after screenshot pair. **Researched against current code
+  2026-08-05, nothing coded.** Supersedes the "should we scrap the UI setting system?" question with a
+  concrete answer: **no — the settings are not the defect.** This is the general form of **S12-1** and
+  **S12-4**; fix this and both of those become special cases. Shares the mechanism documented at
+  [ui_system § Desktop scaling contract](02_UI_UX/ui_system.md#desktop-scaling-contract-and-why-fixed-width-panels-drift).)*
+
+  **What the screenshots show.** Same vendor panel, same window, two settings combinations. In the broken
+  one the item list is **clipped on its left edge** (rows read "levard", "Bus", "Corona", "cenary" —
+  the tails of Boulevard / IQ.Bus / KR Corona / Mercenary), and simultaneously the inspector column
+  overlaps the Transaction column, so "Bloom" renders as a one-letter-per-line strip behind it. Clipped
+  on the left *and* overflowing on the right at the same time is the signature of a symmetric grow, not
+  of a panel that is merely too narrow — which is what identifies the mechanism below.
+
+  **Root-cause chain (four links, all verified):**
+
+  1. **`ui.scale` shrinks the logical viewport; it does not magnify content.** `UI_scale_manager.gd:126`
+     — `target_w = _base_target_width(win) / _user_scale`, and `_base_target_width` returns a flat
+     `1920.0` for any window ≥ 1200 physical px (`:169-171`). So on desktop the logical viewport width is
+     **`1920 / ui.scale`, independent of the monitor**: 2560 px at `0.75`, 1920 at `1.0`, 1477 at `1.30`.
+  2. **The menu sheet is a fraction of that already-shrunken viewport.** `main_screen.gd:373-375` /
+     `:739-741` — `_menu_target_width = viewport.x * lerp(0.425, 0.75, ui.menu_open_ratio)`.
+  3. **The two knobs are independent and multiplicative.** Neither slider knows the other exists. Sheet
+     width in logical px, across the full reachable space:
+
+     | `ui.scale` | logical viewport | ratio slider 0 (`0.425`) | slider 0.5 — default (`0.5875`) | slider 1 (`0.75`) |
+     |---|---|---|---|---|
+     | 0.75 | 2560 | 1088 | 1504 | 1920 |
+     | 1.00 | 1920 | **816** | 1128 | 1440 |
+     | 1.30 | 1477 | **628** | 868 | 1108 |
+
+     **628 → 1920 logical px is a 3.06× range**, and the defaults sit comfortably mid-table — which is
+     why this reads as "works fine, then suddenly breaks" rather than as a constant fault.
+  4. **One column refuses to shrink, so the squeeze lands entirely on the other two — and nothing
+     clamps the sheet against the total.** `Scenes/VendorTradePanel.tscn:215-217` — `RightPanel` has
+     `size_flags_horizontal = 0` (SHRINK_BEGIN, **does not expand or shrink**) and
+     `custom_minimum_size = Vector2(320, 0)`. `LeftPanel` (`:38-41`, ratio 0.3) and `MiddlePanel`
+     (`:130-133`, ratio 0.35) are both `EXPAND_FILL` and split only what is left over.
+
+     **Measured headlessly 2026-08-05** (instantiate `VendorTradePanel.tscn`, 6 frames, read
+     `get_combined_minimum_size()` — desktop 3-column layout, **empty / no vendor data**):
+
+     | Node | measured min.x | declared `custom_minimum_size.x` | `size_flags_horizontal` |
+     |---|---|---|---|
+     | `LeftPanel` | 119 | 0 | 3 (EXPAND_FILL) |
+     | `MiddlePanel` | **1** | 0 | 3 (EXPAND_FILL) |
+     | `RightPanel` | **346** | 320 | **0 (SHRINK_BEGIN)** |
+     | `VSeparator` ×2 | 4 each | 0 | — |
+     | separation ×4 | 10 each | — | — |
+     | **`HBoxContainer` total** | **514** | | |
+
+     Two things fall out of this that inference did **not** predict, and both change the fix:
+     - **`RightPanel`'s effective minimum is 346, not the 320 in the scene file.** Its own children
+       exceed the declared value (the two `Vector2(72, 0)` labels at `:284`/`:306` plus their bars and
+       separations). Editing the `320` literal alone would not move the floor.
+     - **`MiddlePanel` collapses to 1 px.** It is the only column with no floor of its own, so every
+       pixel the sheet lacks is taken out of the inspector. **That — not overflow — is why "Bloom"
+       renders one letter per line:** `ItemNameLabel` is `autowrap_mode = 3` (`:140-146`) in a column
+       squeezed toward zero.
+
+     When the total does exceed the sheet, `HBoxContainer` — `anchors_preset = 15` with
+     **`grow_horizontal = 2` (GROW_DIRECTION_BOTH)** (`:28-36`) — grows past its anchor rect
+     **symmetrically**, left edge negative and right edge overshooting. `MenuContainer` has
+     `clip_contents = true` (`Scenes/MainScreen.tscn:97-99`), slicing the left overflow (the
+     "levard"/"Bus"/"Corona" rows); `RightPanel` has its own `clip_contents = true` (`:216`). Clipped on
+     the left *and* overflowing on the right simultaneously is the signature of that symmetric grow.
+
+  > [!WARNING]
+  > **The 514 figure is the EMPTY-state floor — a lower bound, not the number that matters.** All three
+  > columns grow with content: a populated `LeftPanel` item list holding names like *"Heavy-Duty
+  > Drop-Side Flatbed"* has a much larger minimum than 119. **514 is below every cell in the table
+  > above (worst case 628), so the empty panel does not overflow at any reachable setting** — the
+  > populated one in the screenshot demonstrably does. **The populated floor is unmeasured and is the
+  > single number the breakpoint thresholds must be derived from.** An earlier revision of this entry
+  > asserted a floor of "~880 px" by inference; that was never measured and should not be quoted.
+
+  **Why the existing guards miss it.** All three are real, and none of them is the one needed:
+  - `main_screen.gd:744` clamps `_menu_target_width` up to **320.0** — far below any real content floor,
+    so it has never fired on a case that mattered.
+  - `main_screen.gd:748` caps at `full_w * 0.85` — a *maximum*, and with the `0.75` band ceiling
+    (S13-24) it no longer binds at all.
+  - `get_max_safe_scale()` (`UI_scale_manager.gd:210-216`) bounds the scale against `MIN_LOGICAL_WIDTH`
+    (1150) — **the viewport, not the sheet.** A 1477 px viewport passes that check while the sheet cut
+    out of it is 628 px. The floor is being enforced one layer above where the layout actually lives.
+
+  **The structural reason this keeps recurring.** Law 1 fixes font sizes in *logical* px. Text-derived
+  minimum widths are therefore **constants**, while the logical viewport is a **variable** the user
+  controls. Any "make the UI bigger" knob on a `content_scale_factor` model necessarily spends the
+  layout budget. `ui.scale = 1.30` is mathematically identical to running at a **1477 px window** — so a
+  layout that cannot survive a 1477 px window cannot survive that setting, on any monitor.
+
+  **Recommendation — keep both sliders; move the breakpoint.** Scrapping the settings would remove the
+  symptom by removing two features that both answer real needs (desktop/HiDPI legibility; the
+  map-visibility-vs-panel-room tension that is central to this game's layout), and would leave the
+  fragility in place — the same fixed-px floor already bites on small windows and mobile landscape,
+  where there is no slider to blame. Three parts, in dependency order:
+
+  1. **Breakpoint on available logical width, not on device class.** `_make_panels_responsive()`
+     (`vendor_trade_panel.gd:1196-1224`) selects its layout from `DeviceStateManager.get_layout_mode()`,
+     which is derived from `DisplayServer.window_get_size()` — **physical** px (`device_state_manager.gd:28`).
+     So a desktop window is `DESKTOP` forever and always gets the 3-column layout, however narrow the
+     sheet has become. **The two collapsed layouts that would fix this already exist and already work** —
+     `_apply_landscape_two_pane()` (`:1278`) and `_apply_portrait_stack()` (`:1226`), both of which
+     explicitly drop the 320 px column (`:1327`, `:1259`). They are merely gated on the wrong input.
+     Re-gate on the width the panel is actually handed (roughly: ≥ 1000 → 3-column, 640–1000 → 2-pane,
+     < 640 → stacked), keeping orientation as an override for portrait. Highest value, lowest cost — this
+     is re-pointing existing tested code, not new machinery.
+  2. **Clamp the sheet against the panel's real minimum.** After `_menu_target_width` is computed
+     (`main_screen.gd:375` and `:741` — **both sites**, they are duplicated), raise it to the active
+     menu's `get_combined_minimum_size().x`. Replaces the dead `320.0` floor. Note the trade-off
+     honestly: this lets the sheet exceed the user's ratio preference rather than break. With (1) in
+     place it should rarely fire, which is the argument for doing (1) first — as a standalone fix it
+     would silently override the slider on every wide panel.
+  3. **Guard rail — make the sliders aware of each other's product.** Derive the ratio band's minimum as
+     `max(MENU_RATIO_LANDSCAPE_MIN, MIN_MENU_LOGICAL_PX / viewport.x)` in `_get_menu_ratios()`
+     (`:656-662`), so the two knobs cannot multiply below the floor no matter how they are set. Cheap,
+     and it keeps the failure out of the settings menu instead of catching it at draw time.
+
+  > [!IMPORTANT]
+  > **SHIPPED MITIGATION 2026-08-05 — both settings are PINNED and their UI is hidden.** This does not
+  > fix anything below; it removes the user's ability to reach the broken combinations while the real
+  > fix is scheduled. **Undo all three when this item is fixed:**
+  > 1. `settings_manager.gd::PINNED_KEYS` (`["ui.scale", "ui.menu_open_ratio"]`) — `load_settings()`
+  >    skips these keys, so `data` keeps its defaults regardless of what is on disk. **This is the part
+  >    that actually pins them.** Hiding the sliders alone would have left an existing install with a
+  >    stored `ui.scale = 3.65` (the real S13-23 case) holding that value *and* having lost the only
+  >    control that could correct it — strictly worse than shipping the sliders.
+  > 2. `Scenes/SettingsMenu.tscn` — `UISec` and `HSeparator2` are `visible = false`. The whole "UI"
+  >    section is hidden (it contained only these two rows, so hiding just the rows would have left an
+  >    orphan heading). **Nodes are hidden, not deleted**, so every `@onready` / `%UIScaleSlider`
+  >    reference in `settings_menu.gd` still resolves — no null-guard work was needed.
+  > 3. Defaults were re-calibrated on screen the same day: `ui.scale` stays `1.0`;
+  >    **`ui.menu_open_ratio` `0.5` → `0.81`** (= 0.688 of viewport width ≈ **1321 logical px**, *wider*
+  >    than the old default's 1128, so the shipped configuration sits further from the floor than
+  >    before). Declared in **two** places that must agree — `settings_manager.gd` and
+  >    `settings_menu.gd::_on_reset_defaults()`.
+  >
+  > Stored values are left on disk untouched, so un-pinning restores each user's own preference.
+  > **Verified 2026-08-05** by loading a synthetic `settings.cfg` containing `ui.scale = 3.65` /
+  > `ui.menu_open_ratio = 0.02` through the real `load_settings()`: both resolved to the pinned
+  > defaults while a non-pinned key (`controls.invert_pan = true`) still restored correctly.
+  > ⚠️ **Not yet checked on screen:** `0.81` also moves **mobile portrait** (same stored key, different
+  > band — `0.55…0.72` against *height*, so 63.5 % → 68.8 % of screen height). It was calibrated in a
+  > desktop landscape session only.
+
+  **Scoping — the three parts are NOT the same size, and (1) is bigger than it looks.**
+  `_make_panels_responsive()` is called **exactly once, from `_ready()`** (`vendor_trade_panel.gd:1083`;
+  the only two references in the repo are that call and the definition). It is a **boot-time one-shot**,
+  and both collapsed layouts are written to match: `_apply_portrait_stack()` (`:1229`) and
+  `_apply_landscape_two_pane()` (`:1283`) early-out on a `has_meta` flag, **reparent** nodes into newly
+  created containers (`PortraitStack`, `LandscapeRightPane`, `LandscapeRightPaneWrap`, plus
+  `_wrap_list_in_well`'s wrapper), and have **no inverse**. That is correct for a trigger that never
+  changes — a phone does not become a desktop — but the trigger here is a width the user changes live
+  with a slider.
+  - ✅ **Good news: the transforms are not destructive.** `_slim_transaction_footer` (`:1476`) and
+    `_slim_portrait_inspector` (`:1482`) only set `visible = false`; nothing is `queue_free()`d, so the
+    state is fully recoverable.
+  - ⚠️ **The cost is making them reversible + adding a re-layout trigger that does not exist.** Three
+    options, in rising order of quality: (a) free and re-instantiate the panel on a breakpoint crossing
+    — simplest, but loses selection/scroll state and re-runs `_ready()`; (b) write an inverse for each
+    transform (un-reparent, restore visibility, clear the meta flags); (c) express all three layouts
+    declaratively so switching is a flag change. Then hook `scale_changed` / `size_changed`, debounced
+    per Law 5.
+
+  **Suggested sequencing.** (2) and (3) are localized numeric guards — two call sites and one function,
+  no structural change — and **together they stop the breakage on their own**, at the cost of letting
+  the sheet override the user's ratio slightly at extreme settings. (1) is the architectural fix and
+  should be scheduled **with S12-1**, which already scopes desktop responsive work on this exact panel;
+  done together the reversibility work is paid for once.
+
+  **Verify before coding — the one measurement still missing:**
+  - **Get the POPULATED floor.** This is the only blocking unknown, and the diagnostic already exists:
+    `main_screen.gd:695-726` prints `[LAYOUT-OVERFLOW]` with each offending control's
+    `get_combined_minimum_size().x`, and `UI_scale_manager.gd:157` prints `[UIScale] win=… factor=…
+    target_w=… vp=…`. Open the vendor panel **against a well-stocked vendor** (the reported one — New
+    York Mega-Dealership — is ideal; long names like *"Heavy-Duty Drop-Side Flatbed"* are what drive
+    `LeftPanel`'s minimum) at `ui.scale 1.30` / ratio slider 0, and read the two lines. Derive the
+    breakpoints in (1) from that, not from the 514 empty-state figure.
+  - **The headless probe is reusable** for the empty-state half — instantiate `VendorTradePanel.tscn`
+    under a `SceneTree` script, wait ~6 frames, print `get_combined_minimum_size()` per column
+    (`--headless -s`). Autoloads register fine; the panel's `_ready()` runs without live data. Worth
+    re-running after the fix as a cheap regression check on the floor.
+
+  **Scope check — done 2026-08-05, and it narrows the blast radius.** Two separate questions:
+  - *Do other menus carry comparable fixed minimums?* **Mostly no.** `ConvoyMenu` (120), `ConvoyVehicleMenu`
+    (150/80), `WarehouseMenu` (240) and `ConvoyListPanel` (280) are all well under any reachable sheet
+    width, so they are unlikely to trip this on their own. **The exception is
+    `Scenes/SettingsMenu.tscn:144` — `Panel` is `custom_minimum_size = Vector2(800, 600)`** on an
+    `anchors_preset = 8` (CENTER) node, i.e. the same symmetric grow from the centre. 800 logical px is
+    54 % of a `ui.scale 1.30` desktop viewport and **exactly 100 %** of the 800 px portrait viewport,
+    with no margin left for its parent. Not confirmed to break — check it on screen.
+  - *Do they share the structural fragility?* **Yes, repo-wide.** `MainVBox` in `ConvoyCargoMenu`,
+    `ConvoyJourneyMenu`, `ConvoyMenu`, `ConvoySettlementMenu` and `ConvoyVehicleMenu` is
+    `anchors_preset = 15` + `grow_horizontal = 2` inside the same `clip_contents` sheet — the identical
+    symmetric-grow-then-clip path. They are safe today only because their content minimums are small,
+    not because the structure protects them. Fix (2) covers all of them at once.
+
+  ⚠️ **Do not fix S12-1 or S12-4 separately from this.** S12-1's proposed absolute ~1100 px menu cap and
+  S12-4's `clamp(win.x * 0.24, 380, 520)` are both *maxima*; this item is the missing *minimum*. Applied
+  in isolation they would narrow the sheet further and make this worse.
+
+  `Scripts/UI/main_screen.gd`, `Scripts/Menus/vendor_trade_panel.gd`, `Scripts/System/device_state_manager.gd`,
+  `Scripts/System/ui_theme.gd`, `Scenes/VendorTradePanel.tscn`, `Scripts/UI/UI_scale_manager.gd` (read-only).
+  (Docs to update once coded: [ui_system § Desktop scaling contract](02_UI_UX/ui_system.md#desktop-scaling-contract-and-why-fixed-width-panels-drift),
+  [VendorPanel/ResponsiveRefactor](02_UI_UX/VendorPanel/ResponsiveRefactor.md).)
+
+- [ ] **S13-27 · Rotating the phone with the vendor panel open doesn't restructure it — you must close
+  and reopen** *(P2 — mobile only, reported 2026-08-05. **Researched against current code 2026-08-05,
+  nothing coded — deliberately.** Scoped down from the original report: **exactly one panel is
+  affected**, not menus in general. Same underlying work as **S13-26** part (1); fix them together.)*
+
+  > [!IMPORTANT]
+  > **✅ CODE-COMPLETE 2026-08-05 (compile-checked; ⚠️ NOT device-tested).** Initially deferred, then
+  > fixed once an on-device `[LAYOUT-OVERFLOW]` capture confirmed the mechanism and gave the missing
+  > numbers. **The guarded-rebuild option was taken**, and the S13-13 protection it needed already
+  > existed — `_defer_rebuild_for_active_transaction()` (`convoy_settlement_menu.gd:467-487`) already
+  > holds a rebuild off while a purchase is in flight, re-queuing every `REBUILD_TX_DEFER_S` (0.25 s)
+  > up to a 10 s cap. Routing the orientation rebuild through the **same branch** as a vendor-set
+  > change inherits that protection instead of re-implementing it.
+  >
+  > **Change (3 edits, all in `convoy_settlement_menu.gd`):**
+  > 1. New `_force_vendor_rebuild` flag (declared beside the other rebuild state, `:68-82`).
+  > 2. `_on_layout_mode_changed` sets it before `_queue_display_settlement_info()` — replacing the
+  >    "re-layout, not re-instantiate" comment, whose premise ("each VendorTradePanel re-applies its own
+  >    orientation sizing") was true only for *font sizes*, never for structure.
+  > 3. `_display_settlement_info()` skips the "vendor set unchanged → refresh in place" shortcut when
+  >    the flag is set, and clears it **after** `_defer_rebuild_for_active_transaction()` returns false —
+  >    so a deferred rebuild keeps re-queuing with the flag intact rather than dropping the relayout.
+  >
+  > `VendorTradePanel.tscn` is mounted from exactly one place (`convoy_settlement_menu.gd:6`), so this
+  > covers every instance. **Cost, accepted:** a rotation discards the panel's selected item, scroll
+  > position and optimistic stock, because a fresh `_ready()` is the only thing that re-runs
+  > `_make_panels_responsive()`. The real fix (reversible transforms, no rebuild) is S13-26 part (1).
+
+  **On-device confirmation (2026-08-05) — this is also the populated floor S13-26 needed.** A
+  `[LAYOUT-OVERFLOW]` capture on a 1290×2796 phone, rotating with the vendor panel open:
+
+  ```
+  reason=layout_mode_changed  viewport_logical=(800.0, 1733.95)  window=(1290, 2796)  csf=1.6125
+    HBoxContainer  rect=(x=-152 w=1104)  minW=1104  <OFF-LEFT -152> <OFF-RIGHT end=952 over=152>
+      LeftPanel    rect=(x=-152 w=594)   minW=594
+  ```
+
+  - **The populated content floor is 1104 logical px** — against the **514** measured on the empty
+    panel, so content more than doubles it. `LeftPanel` alone is **594** populated vs **119** empty.
+    **Use 1104, not 514, to derive S13-26's breakpoints.**
+  - The overflow is **symmetric** (152 px off each edge of an 800 px sheet), which is the
+    `grow_horizontal = GROW_DIRECTION_BOTH` behaviour S13-26 predicted — now observed rather than inferred.
+  - It confirms the panel kept its **landscape 2-pane** structure in a portrait sheet: `LeftPanel` is
+    still a live child of a laid-out `HBoxContainer`, where `_apply_portrait_stack()` would have moved it
+    into `PortraitStack` and set `hbox.visible = false`.
+  - Portrait can never fit the un-restructured layout: the portrait sheet is the **full viewport width,
+    800 px**, against a 1104 px floor.
+
+  > [!CAUTION]
+  > **A first draft of this entry claimed "no menu script connects to `layout_mode_changed`". That was
+  > WRONG** — it came from a `grep | head -20` that silently truncated at 20 of 65 matches. **Every menu
+  > connects**: `settlement_overview_menu:111`, `warehouse_menu:120`, `convoy_settlement_menu:171`,
+  > `convoy_journey_menu:118`, `convoy_menu:459`, `map_menu:76`, `vendor_trade_panel:885`,
+  > `convoy_cargo_menu:352`, `mechanics_menu:718`, `convoy_vehicle_menu:203`, plus `menu_manager:271`.
+  > The wiring is not the defect. Do not re-derive this from a truncated grep.
+
+  **The signal path is fully intact.** `device_state_manager.gd:20` wires `size_changed` →
+  `_update_state()` → emits on a real mode change (`:45-47`), and every menu has a connected
+  `_on_layout_mode_changed` handler. **The defect is in what individual handlers *do*.**
+
+  **Verified per menu:**
+  - ✅ **`warehouse_menu._on_layout_mode_changed()` (`:547-555`) re-runs its whole layout** —
+    `_apply_column_responsiveness()`, `_style_buy_menu_ui()`, `_tune_inventory_panels_layout()`,
+    `_update_ui()`, and both grid renders. This menu should already rotate correctly.
+  - ❌ **`vendor_trade_panel._on_layout_mode_changed()` (`:707-708`) calls only
+    `_update_layout_scaling()`**, which sets **font sizes and control heights only** (`:710-830`). It
+    never calls `_make_panels_responsive()` — and calling it would not help, because
+    `_apply_portrait_stack()` (`:1229`) and `_apply_landscape_two_pane()` (`:1283`) early-out on their
+    `has_meta` guards. **So the vendor panel rescales its text on rotation but never restructures its
+    columns — a confirmed instance of the reported symptom.**
+  - ❓ The remaining menus' handlers are not yet audited one by one.
+
+  **Why there is no safe quick fix for the vendor panel.** The transforms reparent deeply and would each
+  need an inverse: `_apply_portrait_stack` moves LeftPanel/RightPanel into a new `PortraitStack` VBox and
+  hides the HBox; `_apply_landscape_two_pane` moves MiddlePanel/RightPanel into `LandscapeRightPane`
+  inside a `LandscapeRightPaneWrap`; `_reorg_landscape_transaction` (`:1412-1439`) re-homes
+  `TransactionQuantityContainer` + `ActionButton` into a generated `TxActionRow`; `_style_footer_module`
+  (`:1441+`) wraps `RightPanel` in another `PanelContainer`. Rebuilding from a pristine duplicate is
+  equally blocked: the panel's `@onready` / `%UniqueName` references are resolved once at `_ready()` and
+  would all dangle after a subtree swap. **This is the same work as S13-26 part (1)** — see its
+  § Scoping for the three options. Not a release-day change.
+
+  **Handler audit (2026-08-05) — everything except the vendor panel already re-lays-out correctly:**
+
+  | Menu | `_on_layout_mode_changed` does | Verdict |
+  |---|---|---|
+  | `warehouse_menu` `:547` | `_apply_column_responsiveness` + `_style_buy_menu_ui` + `_tune_inventory_panels_layout` + `_update_ui` + both grid renders | ✅ |
+  | `convoy_menu` `:520` | `_update_mobile_dependent_layout()` + `_queue_vendor_preview_update()` | ✅ |
+  | `convoy_cargo_menu` `:1430` | re-sizes sort control + `_populate_cargo_list()` | ✅ |
+  | `convoy_vehicle_menu` `:543` | re-sizes dropdown + `_setup_custom_tabs()` + `_display_vehicle_details()` | ✅ |
+  | `convoy_settlement_menu` `:180` | re-styles chrome, then **delegates structure to the vendor panel's own handler** (`:190-193`) | ⚠️ delegates |
+  | **`vendor_trade_panel` `:707`** | **`_update_layout_scaling()` only — font sizes + control heights** | ❌ |
+
+  **⚠️ DEVICE TEST REQUIRED — the fix is compile-checked only** (rotation cannot be exercised
+  in-editor). In order of what would actually bite:
+  1. **Rotate with a settlement vendor tab open, both ways.** Expected: the columns re-flow without
+     closing the menu, and `[LAYOUT-OVERFLOW]` reports nothing for `HBoxContainer`. The log should print
+     `settlement rebuild FORCED — orientation changed`.
+  2. **Rotate while a buy is in flight** — the S13-13 risk this design is built around. Expected:
+     `settlement rebuild DEFERRED — transaction in flight`, the purchase still resolves, and the
+     relayout lands after it. Confirm the flag is not dropped by the deferral (the layout must still
+     correct itself once the transaction settles).
+  3. **Double rotation (P→L→P) quickly**, and a rotation **during** the menu's open animation.
+  4. **Rotate while the settlement menu is cached but not visible** (open it, navigate away, rotate,
+     come back). The menu sets `persistence_enabled = true`, so it is restored from
+     `_persistent_menu_cache` **without** re-running `_ready()` — the forced rebuild is what should
+     correct it, but it now runs on a detached node, which is the least-exercised path in this change.
+  5. Multi-vendor settlements *and* single-vendor mode (`_single_vendor_id != ""`), which take different
+     branches through the same rebuild.
+
+  `Scripts/Menus/vendor_trade_panel.gd` (the fix), `Scripts/Menus/convoy_settlement_menu.gd` (mount
+  path), `Scripts/System/device_state_manager.gd` + `Scripts/Menus/menu_manager.gd` (read-only —
+  verified correct, do not re-diagnose).
 
 ---
 

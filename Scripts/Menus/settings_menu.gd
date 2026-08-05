@@ -339,7 +339,7 @@ func _wire_events():
 func _on_reset_defaults():
 	var defaults := {
 		"ui.scale": 1.0,
-		"ui.menu_open_ratio": 0.5, # Match new default
+		"ui.menu_open_ratio": 0.81, # MUST match settings_manager.gd's default (calibrated 2026-08-05)
 		"ui.click_closes_menus": false,
 		"access.high_contrast": false,
 		"display.fullscreen": false,

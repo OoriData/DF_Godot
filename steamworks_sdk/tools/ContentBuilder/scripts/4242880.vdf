@@ -1,7 +1,7 @@
 "AppBuild"
 {
 	"AppID" "4242880" // your AppID
-	"Desc" "Desolate Frontiers 0.5.0" // internal description for this build
+	"Desc" "Desolate Frontiers 0.5.3" // internal description for this build
 	"verbose" "0" // spew more build details in console
 	"preview" "0" // make this a preview build only, nothing is uploaded
 
