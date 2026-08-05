@@ -9,7 +9,11 @@ var _save_path: String = SAVE_PATH
 
 var data := {
 	"ui.scale": 1.0,
-	"ui.menu_open_ratio": 0.5, # Midpoint of the 25%-75% range
+	# LERP POSITION in the orientation's band (UITheme.MENU_RATIO_*), NOT a screen fraction.
+	# 0.81 → landscape/desktop lerp(0.425, 0.75) = 0.688 of viewport WIDTH (≈1321 logical px at
+	# ui.scale 1.0); portrait lerp(0.55, 0.72) = 0.688 of viewport HEIGHT. Calibrated on screen
+	# 2026-08-05 against desktop landscape. See docs/02_UI_UX/ui_system.md § ui.menu_open_ratio.
+	"ui.menu_open_ratio": 0.81,
 	"ui.cargo_sort_metric": 0, # Default cargo sort mode
 
 	"access.high_contrast": false,
@@ -93,10 +97,24 @@ func save_settings() -> void:
 		cfg.set_value(SECTION, k, data[k])
 	cfg.save(_save_path)
 
+## Keys PINNED to their `data` defaults for this release — never restored from disk.
+##
+## Their controls are hidden (the `UISec` section in `SettingsMenu.tscn`), but **hiding a control
+## does not neutralise a value already saved in `user://settings.cfg`.** An existing install with
+## `ui.scale = 3.65` (a real reported case — S13-23) would keep the broken scale *and* lose the only
+## control that could correct it, which is strictly worse than shipping the sliders. Skipping the
+## disk restore here is what actually pins them; the hidden UI is just cosmetic.
+##
+## Stored values are left on disk untouched, so removing a key here restores that user's preference
+## exactly as it was. Un-pin once TODO S13-26 gives the layout a real content floor.
+const PINNED_KEYS: PackedStringArray = ["ui.scale", "ui.menu_open_ratio"]
+
 func load_settings() -> void:
 	var cfg := ConfigFile.new()
 	if cfg.load(_save_path) == OK:
 		for k in data.keys():
+			if k in PINNED_KEYS:
+				continue
 			if cfg.has_section_key(SECTION, k):
 				data[k] = cfg.get_value(SECTION, k, data[k])
 
