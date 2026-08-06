@@ -6,7 +6,7 @@ tags:
 aliases:
   - "TODO — Active Work"
 created: 2026-05-21
-updated: 2026-08-05
+updated: 2026-08-06
 status: unverified
 ---
 
@@ -794,6 +794,41 @@ IDs are `S13-n`.
     default `false`. The selected convoy's line still appears regardless.
   `Scripts/System/Services/map_settings_service.gd`, `Scripts/UI/map_overlay_settings_panel.gd`,
   `Scripts/System/settings_manager.gd`, `Scripts/UI/UI_manager.gd`.
+
+- [ ] **S13-28 · Warehouse "spawn convoy" name field is hidden behind the on-screen keyboard** *(P2 —
+  mobile only, reported 2026-08-05. Not coded, not yet root-caused against a device capture.)* — in the
+  warehouse menu's **Vehicles** tab, tapping the convoy-name field raises the on-screen keyboard, which
+  covers the field the user is typing into (and the **Spawn** button beside it). The user must be able to
+  see the text box above the keyboard.
+
+  **Why this surface and not the onboarding dialog.** The *other* new-convoy entry point — the onboarding
+  `_new_convoy_dialog` — was already fixed for exactly this in Sprint 8:
+  `main_screen.gd::_update_new_convoy_dialog_layout()` (`:1557-1607`) clears the scene's forced minimum
+  size and **top-anchors** the card so the keyboard (bottom) can never cover it. The warehouse path never
+  got that treatment. The field is `SpawnNameInput`, a `LineEdit` in
+  `MainVBox/Body/OwnedTabs/Vehicles/SpawnHBox` (`warehouse_menu.gd:35`), and in portrait the warehouse is
+  a **full-width but deliberately short bottom sheet** with the map above it (`_apply_column_responsiveness`,
+  `warehouse_menu.gd:600-615`) — so the row sits low on the screen by design, right where the keyboard lands.
+
+  **Nothing in the project reads the keyboard height.** `grep -rn "keyboard" Scripts` returns only comments
+  — no `DisplayServer.virtual_keyboard_get_height()` call exists anywhere. Whatever shape the fix takes,
+  it is new machinery, and it is worth putting it somewhere reusable (a small helper) rather than in
+  `warehouse_menu.gd` alone: any other `LineEdit` in a bottom-anchored sheet has the same latent bug.
+
+  **Options, roughly in ascending cost:**
+  1. Poll `DisplayServer.virtual_keyboard_get_height()` on `focus_entered` and either lift the sheet or add
+     bottom padding equal to the keyboard height. Height is reported in **pixels**, so divide by the
+     content-scale factor before applying it to logical layout (see the `csf` note under **S13-27**).
+  2. Scroll the field into view — needs the Vehicles tab to become scrollable first; today `Vehicles` is a
+     plain `VBoxContainer` (`WarehouseMenu.tscn:226`) and only the inventory grid below it scrolls.
+  3. Follow the Sprint 8 precedent: move convoy creation into a top-anchored modal instead of an inline row.
+
+  **⚠️ Device test required** — the keyboard does not appear in-editor. Check **portrait and landscape**
+  (the landscape keyboard is shorter but the sheet is also shorter), and confirm the sheet returns to its
+  normal position on `focus_exited` / keyboard dismiss.
+
+  `Scripts/Menus/warehouse_menu.gd` (`:35-36`, `:600-615`, `:1776-1800`), `Scenes/WarehouseMenu.tscn`
+  (`SpawnHBox`), `Scripts/UI/main_screen.gd:1557-1607` (read-only — the working precedent).
 
 ## Vendor / trading
 
@@ -1957,6 +1992,56 @@ IDs are `S13-n`.
   `Scripts/Menus/vendor_trade_panel.gd` (the fix), `Scripts/Menus/convoy_settlement_menu.gd` (mount
   path), `Scripts/System/device_state_manager.gd` + `Scripts/Menus/menu_manager.gd` (read-only —
   verified correct, do not re-diagnose).
+
+- [ ] **S13-29 · While one convoy is being viewed, hide every *other* convoy's label and icon** *(P2 —
+  all platforms, requested 2026-08-05. Not coded. Code paths located, behaviour not yet observed on
+  device.)* — with a convoy menu open the map should show **only that convoy**: other convoys' labels and
+  map icons hide until the menu closes.
+
+  **The "focused convoy" concept already exists — both halves of it.** Nothing new needs inventing for
+  *which* convoy is in focus; the gap is what the two renderers do with it.
+  - `convoy_visuals_manager.gd:21` tracks `_focused_convoy_id`, set from `menu_focus_requested`
+    (`:86-90`) and cleared on menu close (`:93-97`).
+  - `main_screen.gd:768` pins the same convoy's label on menu open (`_set_pinned_convoy_label_from_data`,
+    `:803-812`) and releases it when the close tween finishes (`:936`).
+
+  **Icons — this is the real gap.** `update_convoy_nodes_on_map()`
+  (`convoy_visuals_manager.gd:217-269`) instantiates/updates a `ConvoyNode` for **every** convoy in the
+  data, unconditionally. `_focused_convoy_id` is consumed in exactly one place — `is_focused` at `:241`,
+  which only adds `+20` to `z_index`. So focus today means "draw this one on top", never "draw only this
+  one". The change is small and lands in that same loop.
+
+  **Labels — mostly already restricted; two leaks.** `update_convoy_labels()` builds
+  `convoy_ids_to_display` from pinned (`:701-703`) + selected (`:706-709`) + hovered (`:712-717`), so
+  non-focused convoys are already excluded *unless*:
+  1. **another convoy is also selected** — the pin is additive, it does not replace `p_selected_convoy_ids`; and
+  2. **hover still adds a label with the menu open** — relevant on desktop, where the mouse sits over the
+     map while a menu is up.
+  Suppressing both while a convoy is pinned is the fix; do **not** rewrite the display-set logic.
+
+  **Decide before coding:**
+  - **Hide or fade?** The request says hide. A short fade-out reads less like the map broke, and the
+    label panels already animate — worth a look, but hide is the default.
+  - **Journey lines / route polylines are *not* covered here** — they are drawn per-convoy in
+    `UI_manager.gd` (`:2049-2051`) and are the subject of **S13-4**, whose locked design is
+    "selected convoy always draws". If other convoys' icons vanish but their route lines stay, that will
+    look wrong; land the two together, or explicitly accept the mismatch.
+  - **Does this cover the settlement/vendor menus too, or convoy menus only?** `_focused_convoy_id` is
+    set from any menu that emits `menu_focus_requested`, so the answer falls out of that signal — confirm
+    it is the one you want before wiring visibility to it.
+
+  **Interaction with S13-25** — fewer on-screen labels reduces the overlap pressure that entry describes,
+  but does not resolve it: S13-25 is about labels colliding with the convoy icon, which still happens for
+  the one convoy left visible. Neither entry substitutes for the other.
+
+  **⚠️ Verify on device, both orientations**: open a convoy menu on a map with several nearby convoys;
+  others' icons **and** labels go; close the menu and **every one comes back** (the restore path is where
+  this will break — the visuals manager rebuilds from `_refresh_visuals()`, the labels from a separate
+  update). Also check the tutorial, which drives menus programmatically.
+
+  `Scripts/Map/convoy_visuals_manager.gd` (`:21`, `:86-97`, `:217-269`),
+  `Scripts/UI/convoy_label_manager.gd` (`:697-718`), `Scripts/UI/main_screen.gd` (`:768`, `:803-823`,
+  `:936`), `Scripts/UI/UI_manager.gd` (only if journey lines come along).
 
 ---
 
