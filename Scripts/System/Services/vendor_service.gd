@@ -58,6 +58,13 @@ func _on_vendor_data_received(vendor_data: Dictionary) -> void:
 	if data is Dictionary:
 		var vid := str(data.get("vendor_id", data.get("id", "")))
 		print("[VendorService] vendor_data_received vendor_id=", vid, " keys=", data.keys())
+		# S15-7: capture authoritative item detail HERE, at the point the payload provably arrives,
+		# rather than in a panel's signal handler. A settlement with several vendors has one panel
+		# instance per tab, each with its own `_active_vendor_id` guard, so whether any given instance
+		# records the payload depends on tab state and lifecycle — observed on device as a vendor whose
+		# /vendor/get response landed while the cache stayed empty, leaving Buy gated forever.
+		# `_last_vendor_data` below is a single slot and thrashes between vendors; this is keyed per id.
+		VendorAuthoritativeCache.store(data)
 		_last_vendor_data = (data as Dictionary).duplicate(true)
 		_last_vendor_updated_ms = Time.get_ticks_msec()
 	var logger := get_node_or_null("/root/Logger")

@@ -8,8 +8,8 @@ tags:
 aliases:
   - "DF_Lib: Shared Binary Protocol Library"
 created: 2026-07-17
-updated: 2026-07-29
-verified_against_code: 2026-07-28
+updated: 2026-08-06
+verified_against_code: 2026-08-06
 status: current
 ---
 
@@ -17,6 +17,11 @@ status: current
 
 > [!WARNING]
 > **A field rename in the backend's JSON schema does NOT automatically reach the binary map wire format.** The two are hand-synced across three separate repos. See the [Case Study](#case-study-the-vanishing-vehicle-efficiency-stat) below before assuming "the JSON looks right" means a stat will render correctly everywhere.
+>
+> **This has now happened three times** (efficiency → `0`, vehicle price → chassis-only, cargo price →
+> `0`). The failure is silent by construction: `dict.get(missing_key, 0)` raises nothing. Before editing
+> any `to_JSONable_dict()`, read [Testing the contract](#testing-the-contract-added-2026-08-06) — there is
+> now a test that names the offending key for you.
 
 ## What it is
 
@@ -56,6 +61,77 @@ Every other stat in that same struct (`base_top_speed`, `base_offroad_capability
 int(vehicle.get('base_efficiency', vehicle.get('base_fuel_efficiency', 0)) or 0),
 ```
 
+## Case study 2: the under-quoted vehicle price
+
+**Symptom (reported by players, 2026-08-06):** *"users do not have the money to purchase a vehicle."* The
+vendor panel listed a vehicle at a price the player could afford; the purchase came back `400` —
+`Convoy does not have enough money ($23362) to buy the vehicle ($45750)`. The player retried five times.
+
+**Root cause:** the same mechanism as the efficiency case, but with a *different signature*. `serialize_vehicle`
+packed `base_value` — the bare chassis price — while the server charges the computed
+`Vehicle.value = base_value + part_modifiers['total_part_value']`
+(`chassis/df_obj/vehicle_cls.py:430`, enforced in `vendor_cls.py:694`). Installed parts routinely exceed
+the chassis price, so the quote was roughly half the real one.
+
+**Why it survived so long:** the efficiency bug produced a **`0`**, which reads as obviously broken. This
+one produced a **plausible smaller number**. There is no visual tell — the panel, the inspector and the
+confirm dialog all agreed with each other, because they all read the same wrong field. The only
+disagreement was with the server, and only at purchase time. Note also that
+`VendorTradeVM.vehicle_price()` *prefers* a `value` key and only falls back to `base_value`, so the code
+was already written for the correct field — the binary payload simply never carried it.
+
+**Resolution — fixed in the client, NOT in df_lib.** A one-line packer change was written and tested:
+
+```python
+int(vehicle.get('value', vehicle.get('base_value', 0)) or 0),   # written, tested, REVERTED
+```
+
+Same slot, same width, so it needed no Godot change and would have fixed every already-shipped build
+via the deploy alone. It was **reverted anyway**, deliberately: it required publishing df_lib and
+redeploying the backend, and the client can compensate without either. `df_lib` remains at **0.3.3**
+packing `base_value`.
+
+The client fix instead prices vehicles from `/vendor/get` and refuses to enable Buy until it has —
+*display from the index, act on the record* ([The Index and the Record](IndexAndRecord.md), `S15-7`).
+That fix is strictly more general: it also covers the index simply being **stale**, which no packer
+change can address.
+
+**The trade, recorded so it isn't rediscovered:** a df_lib deploy reaches players already on a shipped
+build with no app update; the client fix reaches them only on the next release. If this bug class ever
+needs a same-day hotfix, the packer route is the fast one. Status: `S15-1` in [TODO.md](../TODO.md).
+
+## Testing the contract (added 2026-08-06)
+
+Both bugs above shipped because **nothing tested the producer against the packer**. `df_lib`'s own
+round-trip test fed the packer hand-written dicts that used *stale key names*, so it exercised the
+fallback branches — a backend rename could not fail it. Two suites now close that:
+
+| Suite | Repo | What it pins |
+|---|---|---|
+| `test/test_map_serialization_contract.py` | `~/Work/desolate_frontiers` | Starts from **real model objects**. Derives the packer's expected input keys from `map_struct.py`'s own source via AST, then diffs against the live `to_JSONable_dict()`. |
+
+It also pins the `base_value` / `value` divergence as a *deliberate* one, so that making the packer
+write `value` fails the suite — the signal to tell the client side its compensation is now redundant,
+rather than a test to quietly delete.
+
+The second is the one that matters for this bug class. Because the key list is derived from source rather
+than hand-maintained, **new fields are covered the day they are added**. Run it after any change to a
+`to_JSONable_dict()`:
+
+```bash
+cd ~/Work/desolate_frontiers && python3 -m pytest test/test_map_serialization_contract.py -q
+```
+
+It was mutation-verified — reverting each historical bug makes it fail — rather than assumed to work
+because it was green. Two gaps it surfaced are recorded as `S15-2` (cargo carries no price on the binary
+path) and `S15-3` (four vehicle fields no model attribute ever produces).
+
+> [!WARNING]
+> **Neither suite can catch a `tools.gd` divergence.** Both are Python↔Python; production decoding is the
+> hand-written GDScript mirror, an independent second implementation of the same layout. A layout error
+> introduced there would leave every test green. Closing that needs a golden-bytes fixture decoded by
+> both — see `S15-5`.
+
 ## The lesson: when a backend field is renamed
 
 If a field on `Vehicle`, `Cargo`, `Vendor`, or `Settlement` is renamed/added/removed in the backend's `to_JSONable_dict()`, check **both**:
@@ -86,3 +162,4 @@ If the byte layout itself changes (a field added/removed/resized, not just renam
 - **Backend consumer**: `~/Work/desolate_frontiers/engine/routers/map_api.py`, `~/Work/desolate_frontiers/chassis/df_obj/vehicle_cls.py` (separate repo)
 - **Client parsing pipeline doc**: [Map System: Data (Payload & Parsing)](../03_Systems/MapSystem/Data.md)
 - **Field-level boundary map**: [Data Boundaries](DataBoundaries.md) — which fields cross which pipe, and the known key-name divergences
+- **Usage contract**: [The Index and the Record](IndexAndRecord.md) — when to read `/map` vs `/vendor/get`, and why a correct packer still isn't enough to make the index safe to transact against

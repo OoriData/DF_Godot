@@ -6,7 +6,7 @@ tags:
 aliases:
   - "Desolate Frontiers Documentation"
 created: 2026-05-18
-updated: 2026-08-04
+updated: 2026-08-06
 verified_against_code: 2026-07-28
 status: current
 ---
@@ -69,6 +69,8 @@ Welcome to the technical documentation for *Desolate Frontiers*. This folder is 
 
 > [!WARNING]
 > **A vendor/vehicle/settlement stat that's blank or 0 everywhere is not necessarily a backend or frontend bug.** The vendor panel and map render vehicles/settlements from the **binary `/map` payload**, whose wire format is defined in a *third*, separate repo ([DF_Lib](04_Technical/DF_Lib.md)) and hand-mirrored in `tools.gd`. A field renamed in the backend's JSON serializer can leave the JSON API fully correct while the binary packer still reads the old key name and silently packs `0`. Before concluding "not backend / not frontend", check whether `df_lib/pylib/map_struct.py` still references the old field name. See the [DF_Lib doc's case study](04_Technical/DF_Lib.md#case-study-the-vanishing-vehicle-efficiency-stat).
+>
+> **And it is not always blank or `0`.** The vendor-price bug (`S15-1`) packed a real neighbouring field and produced a *believable* smaller number — every client surface agreed, and only the server disagreed, at purchase time. If the UI offers an action the server then refuses, suspect this seam first: [The Index and the Record](04_Technical/IndexAndRecord.md).
 
 ---
 
@@ -82,6 +84,7 @@ Welcome to the technical documentation for *Desolate Frontiers*. This folder is 
 - [**User Settings**](04_Technical/UserSettings.md): SettingsManager keys and defaults, and the display/fullscreen contract (**always change the window mode via `display.fullscreen`, never `DisplayServer` directly**). Includes the keyboard shortcut (`F11` · `Alt+Enter` · `Cmd+Ctrl+F`), which is **not** an InputMap action and so will not appear in the editor's Input Map panel.
 - [**GDScript Verification**](04_Technical/GDScriptVerification.md): How to actually prove an edit compiles — the editor pass vs. the targeted load probe, what each one misses, and why `treat_warnings_as_errors` does not exist in Godot 4.6. **Read before claiming "compile-clean".**
 - [**Data Boundaries**](04_Technical/DataBoundaries.md): The JSON-vs-binary seam. Where to look when a stat reads blank or `0` everywhere and both "not backend" and "not frontend" are true.
+- [**The Index and the Record**](04_Technical/IndexAndRecord.md): `/map` vs `/vendor/get` — which endpoint a screen is allowed to *display* from and which it must *act* on. **Display from the index, act on the record.** The rule that stops the UI offering a purchase the server will refuse, plus the three-state price-trust gate.
 - [**SignalHub**](04_Technical/SignalHub.md): The broadcast bus at the end of the unidirectional data path (`API → Service → GameStore → SignalHub → UI`).
 - [**Network Layer**](04_Technical/NetworkLayer.md): `APICalls` request queue, retry/backoff, and auth header application.
 - [**Dependency Graph**](04_Technical/Dependencies.md): Visual mapping of singleton relationships.

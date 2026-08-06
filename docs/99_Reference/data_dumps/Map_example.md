@@ -3,8 +3,8 @@
 
 ## Summary
 - **Tiles**: 120 × 200
-- **Total vendor cargo items**: 1058
-- **Cargo with `recipient` set**: 1058  ← _should be > 0 if DF_Lib update is live_
+- **Total vendor cargo items**: 1060
+- **Cargo with `recipient` set**: 1060  ← _should be > 0 if DF_Lib update is live_
 
 ## Raw payload
 Full JSON (~4.4 MB): [`Map_example.json`](Map_example.json)

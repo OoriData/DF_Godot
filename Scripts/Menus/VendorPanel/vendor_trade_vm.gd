@@ -156,6 +156,34 @@ static func vehicle_price(vehicle_data: Dictionary) -> float:
 
 	return PriceUtil.get_vehicle_price(vehicle_data)
 
+## S15-7 — how much do we trust this item's price?
+##
+## TRUSTED means it came from /vendor/get, i.e. it is the number the transaction endpoint will charge.
+## Anything else came from the binary /map index, which is a browsing snapshot: stale by design, and it
+## has twice carried a *different* number than the buy endpoint (chassis-only `base_value` for vehicles,
+## `base_price = 0` for cargo). Displaying an index price is fine. Letting someone BUY against one is
+## how the panel came to offer a $23k vehicle the server refused at $45,750.
+##
+## Three states, not two, because "we haven't fetched yet" and "we fetched and this row wasn't in it"
+## need different handling. Collapsing them into one boolean leaves a row that vanished server-side
+## stuck on "Confirming price…" forever, since nothing will ever arrive to confirm it.
+enum PriceTrust {
+	PENDING,  ## No authoritative payload for this vendor yet. Transient — one is normally in flight.
+	TRUSTED,  ## Priced from /vendor/get (or a vendor-level field the binary payload carries correctly).
+	STALE,    ## The vendor's payload HAS landed and this row is not in it — the index is out of date.
+}
+
+static func price_trust(item_data_source: Dictionary, vendor_id: String) -> PriceTrust:
+	# Raw resources price off vendor-level fields (`fuel_price` and friends) that the binary payload
+	# does carry correctly, so there is nothing to wait for.
+	if item_data_source.get("is_raw_resource", false):
+		return PriceTrust.TRUSTED
+	if bool(item_data_source.get(VendorAuthoritativeCache.AUTHORITATIVE_FLAG, false)):
+		return PriceTrust.TRUSTED
+	if VendorAuthoritativeCache.has_vendor(vendor_id):
+		return PriceTrust.STALE
+	return PriceTrust.PENDING
+
 static func is_vehicle_item(d: Dictionary) -> bool:
 	if not (d.has("vehicle_id") and d.get("vehicle_id") != null):
 		return false

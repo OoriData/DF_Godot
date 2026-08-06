@@ -32,6 +32,33 @@ This document serves as the flowing state of things needed in the project, and w
 > both need a **0-convoy account**. S13-1's FPS measurement remains untaken, so how much pre-login lag
 > S12-8 accounted for is still unknown. Read each entry's ⚠️ block before assuming any of them is done.
 >
+> **Update 2026-08-06 — Sprint 14 added: bug-reporting pipeline audit.** A full trace of the feedback
+> path (client → transport → backend → GitHub) plus a read of six months of production reports. Headline:
+> **anyone can already report a bug — no player needs a GitHub account or token** — but the server-side
+> credential is a *personal* PAT expiring 2027-02-14 (**S14-1**), stored screenshots die on every redeploy
+> (**S14-2**), and the full feedback form has produced **zero** real reports in six months while the
+> one-tap error dialog produced all 22 (**S14-6**, **S14-7**). None coded.
+>
+> **Update 2026-08-06 — Sprint 15 added: binary map wire-format contract.** From a live player report
+> that vehicles were "listed as the incorrect amount". The vendor panel quoted **chassis-only** prices
+> while `/vendor/vehicle/buy` charged chassis **+ installed parts** (**S15-1**) — fixed in `df_lib`,
+> **pending publish + redeploy**, and no Godot change is needed. Building the test that should have
+> caught it (**S15-5**) turned up a second live instance of the same bug class: every cargo item in the
+> binary map carries `base_price = 0` (**S15-2**). **This bug class no longer looks like "a stat reads
+> blank or 0"** — S15-1 produced a *believable wrong number*, which is why it survived to production.
+>
+> **Resolved client-side and device-verified the same day (S15-7), no backend deploy.** The standing rule
+> that came out of it — **display from the index, act on the record** — is now a corollary of Law 2 and
+> documented in [The Index and the Record](04_Technical/IndexAndRecord.md). Chasing it also uncovered
+> **S15-8**, a pre-existing defect that silently re-enabled the Buy button after every guard had
+> disabled it, defeating several *older* safeguards too.
+>
+> **Sprint closed 2026-08-06. The `df_lib` fix (S15-1) was REVERTED — `df_lib` stays at 0.3.3 and no
+> deploy is pending.** S15-2 and S15-3 closed with it; S15-4 deferred on measured headroom (it is the one
+> item the client work does *not* cover). Net result: the binary index permanently under-quotes vehicle
+> prices and carries no cargo price **by accepted design**, and the client compensates. Any new consumer
+> of map data must do the same — that compensation is panel-local, not automatic.
+>
 > **Full completed-sprint detail** (Sprints 1–10, all root-cause narratives, device round 1 results,
 > closed backlog items) now lives in **[SprintHistory.md](SprintHistory.md)** — moved out of this file
 > 2026-07-22 to keep the TODO forward-looking. This file keeps only the summary table + active/pending work.
@@ -2042,6 +2069,279 @@ IDs are `S13-n`.
   `Scripts/Map/convoy_visuals_manager.gd` (`:21`, `:86-97`, `:217-269`),
   `Scripts/UI/convoy_label_manager.gd` (`:697-718`), `Scripts/UI/main_screen.gd` (`:768`, `:803-823`,
   `:936`), `Scripts/UI/UI_manager.gd` (only if journey lines come along).
+
+---
+
+# Sprint 14 — Bug-reporting pipeline audit (NEW, 2026-08-06)
+
+Full trace of the feedback path — client entry points → transport → backend → GitHub — plus a read of
+what has actually landed in production since Feb 2026. Prompted by the question *"can anyone report a
+bug, or does this depend on my GitHub token?"* IDs (`S14-n`) are for cross-referencing. **None are
+coded yet.** Pipeline reference: [BugReporting.md](04_Technical/BugReporting.md).
+
+> **Answer to the prompting question: anyone can already report a bug.** No player needs a GitHub
+> account or token. The client ships **zero** GitHub credentials (repo-wide grep), `_apply_auth_header()`
+> (`Scripts/System/api_calls.gd:458`) no-ops when no token exists, and the issue is created entirely
+> server-side. Production confirms it end-to-end — see the evidence block below. What the audit *did*
+> find is that the server-side credential is a **personal** PAT (S14-1) and that the form almost nobody
+> uses is not where the real reports come from (S14-5).
+
+**Production evidence (read 2026-08-06, `OoriData/DF_Godot`, label `User Reported`).** Recorded here so
+the sprint isn't re-derived from scratch:
+
+| Measure | Value |
+|---|---|
+| Issues created | **26**, spanning 2026-02-14 → 2026-08-06 |
+| Distinct reporter identities | **7** — Discord, Steam **and** Apple subjects, plus **one anonymous / pre-login report** |
+| `[Auto]` (error-dialog one-tap) | **22** |
+| Manual (full feedback form) | **4** — all from a single identity, all titled `test` / `test 2` / `asd` |
+| Reports carrying `app_version` | **0 of 26** |
+
+The anonymous row is the useful one: it proves the S12-5 pre-login path works on a real client, which
+[BugReporting.md § Availability](04_Technical/BugReporting.md#availability) could previously only claim
+structurally.
+
+## Backend / infra (Python — `~/Work/desolate_frontiers`)
+
+- [ ] **S14-1 · The server's GitHub token is a personal PAT that expires 2027-02-14** *(P1)* — the whole
+  pipeline authenticates to GitHub with `DF_BUG_REPORT_GITHUB_TOKEN`, resolved from
+  `op://Oori DevOps/DF Bug Report GitHub Token/credential` (`op.env:57`, `op_prod.env:54`) and injected
+  by `containerization/compose.df_api.yml:61`. **Verified against the GitHub API 2026-08-06:** it is a
+  **fine-grained PAT owned by the user `Aidan-Reese`**, expiring **2027-02-14**. Consequences:
+  every issue is authored as that user (so GitHub authorship carries no reporter information — the
+  reporter is only in the body's `auth_subject` line), and when the token expires, is revoked, or its
+  owner's access changes, `_create_github_issue()` raises **502 "GitHub token invalid or expired"** for
+  **every player at once**, with no alerting and no client-side distinction from a normal outage.
+  **Fix:** move to a **GitHub App installation token** or an org-owned machine account, so the credential
+  belongs to `OoriData` rather than a person. Until then, put the 2027-02-14 expiry on a calendar —
+  this is the single point of failure for all beta telemetry.
+  `engine/routers/bug_report_api.py:526` (`_create_github_issue`), `trunk/df_config.py:80`.
+
+- [ ] **S14-2 · Bug-report screenshots are ephemeral — the storage dir has no volume mount** *(P1)* —
+  `DF_BUG_REPORT_STORAGE_DIR=/home/df-API/bug_reports` (`op_prod.env:63`) is written **inside the
+  container**, but `containerization/compose.df_api.yml:10` mounts only `/etc/letsencrypt`. Every
+  `compose up --build` therefore destroys every stored screenshot, leaving a permanently broken image in
+  the issue that referenced it. **Confirmed, not theorised:** the screenshot URL embedded in issue **#75**
+  (2026-05-19) still carries a **valid** HMAC signature — it returns **404, not 403** — i.e. the request
+  is authorised and the file is simply gone. **Fix:** add a named volume or host bind for the storage dir
+  in the compose service, and note the requirement in `containerization/containerization.md:35`, which
+  currently says only "must be writable by the container user."
+
+- [ ] **S14-3 · Rate limiting is IP-first, which penalises CGNAT'd mobile players** *(P3)* — the limiter
+  (`bug_report_api.py:148`) allows `BUG_REPORT_RATE_LIMIT_IP_COUNT = 5` reports per IP per 600s, and the
+  per-user bucket (10) applies **only when an auth header is present** — it never relaxes the IP cap.
+  Mobile carriers place many players behind one address, so during a bad build, real reports from
+  distinct users get 429'd because a stranger on the same carrier NAT reported first. **Fix:** when a
+  valid `auth_subject` is present, key the limit on the subject and skip (or greatly raise) the IP
+  bucket; keep the strict IP cap only for anonymous submissions.
+
+- [ ] **S14-4 · `POST /bug-report` is unauthenticated and public** *(P3 — accepted risk, recorded
+  deliberately)* — the endpoint is intentionally open (that is what makes pre-login reporting work, and
+  it should stay open), but the consequence is that anyone who finds
+  `df-api.oori.dev:1337/bug-report` can create issues in the repo **through the PAT in S14-1**, bounded
+  only by the 5-per-IP-per-10-min limit, which is trivially distributed. Low risk while the URL is
+  undiscovered; the mitigation is **S14-1** (shrink the credential's blast radius to a purpose-scoped
+  App) rather than closing the endpoint. Revisit if the issue tracker ever sees spam.
+
+## Client (Godot)
+
+- [ ] **S14-5 · No report has ever carried an app version** *(P1 — smallest fix in the sprint, largest
+  triage win)* — `project.godot:14` declares `config/version="0.5.6"`, and the backend schema already
+  accepts `app_version` and `platform` (`bug_report_api.py:73-74`, surfaced in the issue's Context
+  block at `:437-439`). But `_collect_metadata()` (`Scripts/UI/bug_report_window.gd:518`) sends only
+  `client_time_unix`, `os.{name,version}` and `user.id`, and the error-dialog payload
+  (`Scripts/UI/error_dialog.gd:123`) sends the same three. **All 26 production issues read
+  `app_version: NONE`** — every report to date is version-blind, so no bug can be tied to a build.
+  **Fix:** add `app_version` from `ProjectSettings.get_setting("application/config/version")` and
+  `platform` from `OS.get_name()` to both metadata builders. No backend change needed — the fields are
+  already parsed and rendered.
+
+- [ ] **S14-6 · The error dialog files ordinary business-rule rejections as bugs** *(P2)* — 22 of the 26
+  production issues are `[Auto]` reports from `Scripts/UI/error_dialog.gd:16`, and the recent ones are
+  not defects: *"You do not have enough money for this transaction"*, *"There is not enough space in your
+  convoy for this…"*, *"This purchase exceeds your convoy's space or weight…"*. These are 4xx
+  business-rule refusals working as designed. The button is a **single tap with no confirmation and no
+  form** (`_submit_quick_bug_report()`, `:77`), so a player who reads any error as "something went wrong"
+  files an issue. Each one arrives with no summary, no repro and no screenshot, so triage cost is
+  entirely on the reader. **Suggested shape:** only offer *Report Bug* on genuine failures — transport
+  errors and 5xx — and for translated business-rule messages either drop the button or route it to the
+  full form so the player must say what they expected. `Scripts/System/error_translator.gd` already
+  distinguishes the mapped/translated cases, so the signal to branch on exists.
+  **Interaction with S14-7:** do not silently remove the fast path; it is currently the *only* thing
+  producing real reports.
+
+- [ ] **S14-7 · The full feedback form has produced zero real reports in six months** *(P2 —
+  investigate before building anything new)* — of 26 production issues, exactly **4** came from
+  `BugReportWindow`, and all four are the author's own smoke tests (`test`, `test 2`, `asd`, the newest
+  from 2026-05-19). Every genuine player report arrived via the one-tap error dialog. So the S12-5 work
+  made the form *reachable* everywhere, but nothing yet shows a player completing it. Candidate causes,
+  cheapest first: the floating button reads as chrome and is never pressed; the form's **required
+  consent checkbox plus required summary** (`bug_report_window.gd:387`) is too much friction on a phone;
+  submissions fail silently on mobile networks (the client surfaces failures only in the window's status
+  label, `:536`); or genuinely nobody has needed it. **Do the measurement before redesigning** — S14-5
+  plus a server-side count of 4xx rejections on `/bug-report` would distinguish "never attempted" from
+  "attempted and rejected", which point at opposite fixes.
+
+- [ ] **S14-8 · An oversized screenshot is dropped with no client warning** *(P4)* — in
+  `_build_screenshot_payload()` (`Scripts/UI/bug_report_window.gd:498-499`), when a screenshot is still
+  over `MAX_SCREENSHOT_BYTES` **after** the downscale to `MAX_SCREENSHOT_DIM`, the function returns `{}`
+  without appending to `warnings` — unlike the decode-failure branch three lines above (`:485`), which
+  does append *"Screenshot too large; omitted."* The report then arrives with no screenshot and no
+  explanation of why, which reads as a silent capture bug. One-line fix: append the same warning.
+
+---
+
+# Sprint 15 — Binary map wire-format contract (NEW, 2026-08-06)
+
+Prompted by a live player report: *"users do not have the money to purchase a vehicle — vehicles are
+being listed as the incorrect amount."* The vendor panel quoted a price the buy endpoint then refused.
+Root cause was **not** in this repo. IDs (`S15-n`) are for cross-referencing. Field map:
+[DataBoundaries.md](04_Technical/DataBoundaries.md); mechanism + publish chain:
+[DF_Lib.md](04_Technical/DF_Lib.md).
+
+> **The shape of this bug class, now seen three times.** `df_lib`'s packer reads a key by name from the
+> backend's `to_JSONable_dict()` output. If the model renames that key, or never emitted it, `.get(key, 0)`
+> packs a **plausible zero** and nothing anywhere raises. The JSON path picks the rename up automatically,
+> so `/vendor/get` stays perfectly correct while the binary `/map` path — which is what the vendor panel
+> actually renders — quietly carries wrong data.
+>
+> **The price case broke the "blank or 0" heuristic** this doc set had been using to spot it. The wrong
+> value was neither blank nor zero: it was a *believable* smaller number (chassis price without parts),
+> so it looked like working software right up to the 400 at purchase time.
+
+- [x] **S15-1 · Vendor vehicle prices were quoted chassis-only** *(P1 — fixed in `df_lib`, NOT yet
+  deployed)* — `serialize_vehicle` packed `base_value` (bare chassis) into the price slot, but
+  `Vendor.sell_vehicle()` charges `vehicle.value` = `base_value + part_modifiers['total_part_value']`
+  (`~/Work/desolate_frontiers/chassis/df_obj/vehicle_cls.py:430`, checked at `vendor_cls.py:694`).
+  Installed parts routinely outweigh the chassis — the sample vehicle in
+  `docs/99_Reference/data_dumps/vehicle_example.json` carries **$116,600** of parts — so a player with
+  $23,362 was shown a price they could afford and refused at **$45,750**.
+  **Fix applied** in `~/Work/DF_Lib/pylib/map_struct.py`: the slot now packs `value` with `base_value`
+  kept only as a legacy fallback. Same width, same position, **no wire-format change**, so already-shipped
+  Godot builds are corrected by the deploy alone — `VendorTradeVM.vehicle_price()`
+  ([vendor_trade_vm.gd](../Scripts/Menus/VendorPanel/vendor_trade_vm.gd), `:150`) finds no `value` key on
+  binary-derived dicts and falls back to `base_value`, which now holds the true price.
+  ⚠️ **Takes effect only after `df_lib` 0.3.4 is published, pinned in `constraints.txt`, and the backend
+  is redeployed** — the local edit changes nothing on its own. Chain:
+  [DF_Lib § version/publish/deploy](04_Technical/DF_Lib.md#version--publish--deploy-workflow).
+
+  **CLOSED 2026-08-06 — WON'T DO. The df_lib change was REVERTED; `df_lib` stays at 0.3.3 packing
+  `base_value`.** Superseded by `S15-7`, which fixes the player-facing bug client-side and needs no
+  publish or redeploy. The `DF_Lib` working tree is clean; nothing is pending there.
+
+  Two things recorded so this isn't re-derived:
+  - **The divergence is now permanent and deliberate.** The binary index under-quotes every vehicle by
+    the worth of its installed parts, forever. Anything reading map vehicle prices must compensate the
+    way the vendor panel does — see [The Index and the Record](04_Technical/IndexAndRecord.md). The
+    backend contract test pins this as intentional, so re-introducing the packer fix fails the suite
+    (that failure is the signal to retire the client compensation, not to delete the test).
+  - **The trade, if this ever needs a same-day hotfix:** a df_lib deploy reaches players already on a
+    shipped build with **no app update**; `S15-7` reaches them only on the next release. The revert is
+    the right call for a bug that is already fixed client-side, not a general rule.
+
+- [x] **S15-2 · Every cargo item in the binary map ships `base_price = 0` and `distributor = null`**
+  *(CLOSED 2026-08-06 — no longer reachable by a player)* — the wire defect below is still real, but
+  `S15-7` removed its impact: every consumer of a map-derived cargo price lives in the vendor panel
+  (`price_util.gd:16`, `vendor_trade_vm.gd:130`, `vendor_item_list.gd:656`, `cargo_sorter.gd:94`), and
+  the panel now hydrates cargo from `/vendor/get` — filling in the real `unit_price`/`price`, which
+  `PriceUtil` checks *before* `base_price` — and blocks Buy until it has. Verified on device 2026-08-06.
+  **Reopen if a new surface starts reading cargo prices straight from `GameStore.get_settlements()`**;
+  the compensation is panel-local, not automatic. Original finding: `serialize_cargo` reads `base_price` and
+  `distributor`; `Cargo.to_JSONable_dict()` emits **`base_unit_price` / `unit_price` / `price`** and
+  **`distributor_id`**. Neither key the packer wants exists, so both pack as defaults. Confirmed in the
+  captured payload at `docs/99_Reference/data_dumps/vendor_example.json`:
+  `{'name': 'Jerry Cans', 'base_price': 0, 'distributor': None}`. The binary path therefore carries **no
+  cargo price at all** — and it is the vendor panel's price source whenever the panel re-aggregates from
+  the `/map` snapshot. Likely masked in play whenever the authoritative `/vendor/get` payload is present,
+  exactly as S15-1 was, which is probably why it has never produced a clean report.
+  **Fix:** decide which key is canonical (`unit_price` vs `price` vs `base_unit_price`) before changing
+  the packer — this is a semantic choice, not a rename.
+
+- [x] **S15-3 · Four vehicle fields are structurally always zero** *(CLOSED 2026-08-06 — WON'T DO)* —
+  closed for a different reason than S15-1/S15-2: these were never *wrong*, they were always **inert**.
+  No model attribute produces them and no client code displays them, so nothing was ever misled. Cost is
+  12 wasted bytes per vehicle. Removing them is a **byte-layout change** requiring a lockstep `tools.gd`
+  update — not worth it on its own. Fold into any future format change. Original finding:
+  `ap`, `base_max_ap` and `base_towing_capacity`; **`Vehicle` has no such attributes at all** (only a
+  docstring mention of ap/max_ap). That is 12 bytes per vehicle of guaranteed zeroes in every `/map`
+  response. `tools.gd:71` decodes `wear` and no client code ever reads it.
+  **Decide:** either the model grows these fields or the format drops them. Dropping them **is** a
+  layout change and needs `tools.gd` updated in lockstep.
+
+- [ ] **S15-4 · One overpriced vendor can 500 the entire `/map` route** *(deferred 2026-08-06 — P2 → P4,
+  NOT fixed by the client work)* — ⚠️ **This one is not covered by `S15-7`.** It is a server-side
+  availability hazard; no client change can prevent it. It is deferred on **measured headroom**, not on
+  being resolved. Maxima across every vendor in the live map dump:
+
+  | field | max observed | ceiling | headroom |
+  |---|---|---|---|
+  | `fuel_price` | 20 | 32,767 | 1,638× |
+  | `water_price` | 25 | 32,767 | 1,311× |
+  | `food_price` | 20 | 32,767 | 1,638× |
+  | `repair_price` | 30 | 32,767 | 1,092× |
+  | `money` | 1,000 | 2,147,483,647 | 2,147,484× |
+
+  So it cannot fire at current balance. **Revisit before any economy change that inflates prices or
+  vendor float** — the failure mode is not graceful degradation, it is `struct.error` inside the `/map`
+  route, taking the map down for **every player at once**. Details:
+  are packed `s16` and `money` is `i32` (`~/Work/DF_Lib/pylib/datastruct.py`, `VENDOR_HEADER_FORMAT`).
+  Verified: `fuel_price=40000` raises `struct.error: 'h' format requires -32768 <= number <= 32767`, and
+  `money=3e9` raises the `i32` equivalent. `serialize_map()` runs **inline** in the `/map` route
+  (`engine/routers/map_api.py:72`), so a single out-of-range vendor takes the map down for **every
+  player**, not just that vendor. **Fix:** widen the fields (layout change → lockstep `tools.gd` update)
+  or clamp-and-warn (no format change, ships immediately).
+
+- [x] **S15-5 · Producer/packer contract test** *(done 2026-08-06)* — the gap that let S15-1 and the
+  earlier efficiency bug ship was that **nothing tested the producer against the packer**. `df_lib`'s own
+  round-trip test fed the packer hand-written dicts using *stale key names* (`base_fuel_efficiency`,
+  `_vehicle_inventory`), so it exercised the fallback branches and a model rename could never fail it.
+  Added `~/Work/desolate_frontiers/test/test_map_serialization_contract.py` — starts from **real model
+  objects**, and derives the packer's expected input keys from the packer's own source via AST, so new
+  fields are covered the day they are added. 11 tests. `KNOWN_GAPS` records S15-2 and S15-3 and fails in
+  **both** directions — a new gap fails, and closing a listed one also fails until it is removed.
+  Mutation-verified against both historical bugs rather than assumed to work.
+  *(A companion `test_field_completeness.py` in `DF_Lib` was written and then removed with the S15-1
+  revert — it asserted the reverted packer behaviour. The recurrence guard above is the one that
+  matters, and it lives in the backend repo, so no deploy is involved in keeping it.)*
+  ⚠️ Note the remaining hole: these are Python↔Python. Production decoding is `tools.gd`, an independent
+  second implementation, and **nothing pins the two together** — see the P1 proposal in
+  [DataBoundaries § Diagnosing](04_Technical/DataBoundaries.md#diagnosing-a-suspect-field).
+
+- [x] **S15-7 · Client-side fix: display from the index, act on the record** *(done 2026-08-06,
+  device-verified)* — the durable fix, and **it needs no backend deploy**: `/vendor/get` already returns
+  the correct computed `value`. Three parts:
+  1. **Retain the authoritative payload.** [`VendorAuthoritativeCache`](../Scripts/System/vendor_authoritative_cache.gd)
+     keeps `/vendor/get` item detail and refills the gaps every time the settlement menu re-feeds the
+     panel from the lagging `/map` snapshot (~1×/s in a live session). **Adds missing keys only** — never
+     overwrites one the snapshot supplied, because `/map` is the fresher source for stock counts and
+     `VendorOptimisticStock` deltas apply downstream.
+  2. **Gate the action, not the display.** `VendorTradeVM.price_trust()` returns `PENDING` / `TRUSTED` /
+     `STALE`; buy is blocked unless `TRUSTED`. The price still renders from the index, so nothing looks
+     empty. Three states rather than a boolean: a row that vanished server-side would otherwise sit on
+     "Confirming price…" forever.
+  3. **Self-healing fetch.** The panel re-requests `/vendor/get` (4 s debounce per vendor) whenever it
+     finds itself pricing without authoritative data, so it no longer depends on which path opened it.
+
+  ⚠️ **Reaches players only in a new client build** (Steam + stores). Everyone on the current build stays
+  affected until then — `S15-1` is the only fix that helps them without an app update.
+  Contract + diagnosis: [The Index and the Record](04_Technical/IndexAndRecord.md).
+
+- [x] **S15-8 · Selecting an item silently re-enabled a disabled Buy button** *(P1, pre-existing, fixed
+  2026-08-06)* — `vendor_panel_selection_controller.gd` called `_update_transaction_panel()` (`:153`),
+  which evaluates every guard and sets `disabled = not can_transact`, then set
+  `action_button.disabled = false` **unconditionally** ~25 lines later. Every guard was undone on every
+  selection. **This predates the price work and defeated more than it:** S13-7's per-vehicle fit guard
+  ("Only N fit"), S13-15's quantity ≤ 0 guard, and the raw-resource price guard all computed
+  `can_transact = false` and were then overruled. Removed; `_update_transaction_panel()` owns that
+  button. Worth auditing any other `action_button.disabled = false` written outside it.
+
+- [ ] **S15-6 · Backend test fixtures are broken on `main`** *(P3, upstream)* — `legendary` became a
+  required `Part.__init__` argument in `desolate_frontiers@b398de0` and no fixture was updated, so
+  `test/conftest.py` and `test/test_vehicle.py` both raised `TypeError` before reaching any assertion.
+  Repaired both (one line each) while building S15-5. `test_vehicle.py::test_vehicle_serialization` now
+  gets further and fails on a *separate* staleness: its hand-maintained `expected_json_dict`
+  (`test/test_vehicle.py:73`) is missing exactly one key, `oe_part_classes`. Left unfixed — the correct
+  expected value is a call about that fixture.
 
 ---
 

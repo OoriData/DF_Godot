@@ -210,8 +210,9 @@
       "bases:Create new base": false
     }
   },
-  "active": "1ae821d75f551279",
+  "active": "ee883a010a050212",
   "lastOpenFiles": [
+    "04_Technical/IndexAndRecord.md",
     "TODO.md",
     "04_Technical/GDScriptVerification.md",
     "claude.md",
@@ -247,7 +248,6 @@
     "04_Technical/Identity.md",
     "04_Technical/ErrorSystem.md",
     "04_Technical/Diagnostics.md",
-    "04_Technical/Dependencies.md",
     "Pasted image 20260521131852.png"
   ]
 }

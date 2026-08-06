@@ -566,6 +566,41 @@ var _pending_cargo_recipient_lookups: Dictionary = {} # cargo_id -> aggregated i
 # Throttles noisy price-fallback diagnostics (vendor_id -> true)
 var _price_fallback_diag_seen: Dictionary = {}
 
+# S15-7 buy-gate diagnostic. Prints only when the composed state CHANGES, so it is one line per
+# transition rather than one per redraw (_update_transaction_panel runs on every store tick).
+# Kept (not temporary): `value=<none>` with a believable price on screen is the whole bug class in one
+# line, and it is the fastest way to tell "still loading" from "the index is lying".
+var _s15_7_last_diag: String = ""
+
+# S15-7 self-healing authoritative fetch: vendor_id -> ticks_msec of our last request.
+var _s15_7_auth_request_ms: Dictionary = {}
+const S15_7_AUTH_RETRY_MS: int = 4000
+
+
+## S15-7: ask for this vendor's authoritative detail if we're pricing without it.
+##
+## The panel already requests one in initialize(), but that only fires when the panel was opened with
+## both a vendor_id AND a convoy_id in hand — and a panel reached by another path, or one whose first
+## request was answered before its hub connection existed, would price off the /map index forever with
+## nothing ever retrying. The buy gate then sits at PENDING permanently, which is exactly the stuck
+## state observed on device.
+##
+## Debounced per vendor so this cannot storm the queue from _update_transaction_panel, which re-runs on
+## every store tick. APICalls coalesces duplicate VENDOR_DATA requests on top of this.
+func _ensure_authoritative_requested(vendor_id: String) -> void:
+	if vendor_id == "":
+		return
+	var now_ms: int = Time.get_ticks_msec()
+	if _s15_7_auth_request_ms.has(vendor_id) and now_ms - int(_s15_7_auth_request_ms[vendor_id]) < S15_7_AUTH_RETRY_MS:
+		return
+	_s15_7_auth_request_ms[vendor_id] = now_ms
+	if is_instance_valid(_vendor_service) and _vendor_service.has_method("request_vendor"):
+		if perf_log_enabled:
+			print("[VendorPanel][S15-7] no authoritative detail for vendor ", vendor_id, " — requesting /vendor/get")
+		_vendor_service.request_vendor(vendor_id)
+	else:
+		printerr("[VendorPanel][S15-7] VendorService unavailable; cannot confirm prices for vendor ", vendor_id)
+
 # Throttle one-time map cache debug
 var _map_cache_diag_printed: bool = false
 
@@ -1789,7 +1824,9 @@ func _populate_list_from_agg(list: VendorItemList, agg: Dictionary) -> void:
 # --- Data Initialization ---
 func initialize(p_vendor_data, p_convoy_data, p_current_settlement_data, p_all_settlement_data_global) -> void:
 	print("[DIAGNOSTIC] VendorTradePanel initialize called for: ", self.name)
-	self.vendor_data = p_vendor_data
+	# S15-7: a re-opened vendor is seeded from the /map snapshot. If we still hold authoritative detail
+	# for it from earlier in the session, use it rather than showing index numbers until the refresh lands.
+	self.vendor_data = VendorAuthoritativeCache.hydrate(p_vendor_data)
 	self.convoy_data = p_convoy_data
 	self.current_settlement_data = p_current_settlement_data
 	self.all_settlement_data_global = p_all_settlement_data_global
@@ -1816,7 +1853,10 @@ func initialize(p_vendor_data, p_convoy_data, p_current_settlement_data, p_all_s
 
 # Add this method to support UI refreshes without re-initializing signals or state
 func refresh_data(p_vendor_data, p_convoy_data, p_current_settlement_data, p_all_settlement_data_global) -> void:
-	self.vendor_data = p_vendor_data
+	# S15-7: this is usually a /map-snapshot re-feed from the settlement menu, which fires on every
+	# store update and used to discard the authoritative /vendor/get detail we already had. Refill the
+	# gaps before anything reads prices off it. Adds only missing keys — never overrides the snapshot.
+	self.vendor_data = VendorAuthoritativeCache.hydrate(p_vendor_data)
 	self.convoy_data = p_convoy_data
 	self.current_settlement_data = p_current_settlement_data
 	self.all_settlement_data_global = p_all_settlement_data_global
@@ -2440,6 +2480,30 @@ func _update_transaction_panel() -> void:
 	# lazily by cargo_id (same path the Mechanics menu uses) and merged into the selection when
 	# available, so the presenter below computes a real total.
 	_ensure_selection_priced()
+
+	# S15-7: display from the index, act on the record. In buy mode the item came from the vendor, and
+	# until the authoritative /vendor/get detail has landed for it we are pricing off the /map snapshot
+	# — which is stale by design and has twice carried a different number than the buy endpoint. Keep
+	# showing the price (an empty row is worse), but don't let it be transacted against.
+	var price_trust: VendorTradeVM.PriceTrust = VendorTradeVM.PriceTrust.TRUSTED
+	if str(current_mode) == "buy":
+		var vid_for_trust: String = str((vendor_data if vendor_data is Dictionary else {}).get("vendor_id", ""))
+		price_trust = VendorTradeVM.price_trust(item_data_source, vid_for_trust)
+		if price_trust != VendorTradeVM.PriceTrust.TRUSTED:
+			can_transact = false
+		if price_trust == VendorTradeVM.PriceTrust.PENDING:
+			_ensure_authoritative_requested(vid_for_trust)
+		if perf_log_enabled:
+			var diag: String = "[VendorPanel][S15-7] trust=%s vid='%s' item='%s' has_flag=%s has_vendor=%s value=%s base_value=%s" % [
+				["PENDING", "TRUSTED", "STALE"][int(price_trust)], vid_for_trust,
+				str(item_data_source.get("name", "?")),
+				str(item_data_source.has(VendorAuthoritativeCache.AUTHORITATIVE_FLAG)),
+				str(VendorAuthoritativeCache.has_vendor(vid_for_trust)),
+				str(item_data_source.get("value", "<none>")),
+				str(item_data_source.get("base_value", "<none>"))]
+			if diag != _s15_7_last_diag:
+				_s15_7_last_diag = diag
+				print(diag)
 	var quantity = int(quantity_spinbox.value) if is_instance_valid(quantity_spinbox) else 1
 	# S13-15: the quantity now resets to 0 after a successful purchase (selection is kept), so Buy has to
 	# disable visibly instead of silently no-opping — on_action_button_pressed() already returns early at
@@ -2535,6 +2599,14 @@ func _update_transaction_panel() -> void:
 			# simply wrong in buy mode.)
 			if fit_button_text != "":
 				action_button.text = fit_button_text
+			elif price_trust == VendorTradeVM.PriceTrust.PENDING:
+				# Normally a few hundred ms after the panel opens, so this reads as a brief settle
+				# rather than an error state.
+				action_button.text = "Confirming price…"
+			elif price_trust == VendorTradeVM.PriceTrust.STALE:
+				# The vendor's real inventory came back and this row wasn't in it — someone else bought
+				# it, or the /map snapshot is simply behind. Never leave this looking like a load.
+				action_button.text = "No longer available"
 			else:
 				action_button.text = "Buy" if str(current_mode) == "buy" else "Sell"
 
@@ -2567,6 +2639,12 @@ func _ensure_selection_priced() -> void:
 	if not (idata is Dictionary) or (idata as Dictionary).is_empty():
 		return
 	var d: Dictionary = idata
+
+	# S15-7: the selection holds a reference INTO the aggregated buckets, so an authoritative payload
+	# that lands outside a refresh cycle never reaches it — the list would have to be rebuilt first.
+	# Fill it here instead, which is also what clears the buy gate. Missing keys only.
+	VendorAuthoritativeCache.hydrate_item(str((vendor_data if vendor_data is Dictionary else {}).get("vendor_id", "")), d)
+
 	if VendorTradeVM.contextual_unit_price(d, str(current_mode)) > 0.0:
 		return
 	var cid: String = str(d.get("cargo_id", d.get("part_id", "")))

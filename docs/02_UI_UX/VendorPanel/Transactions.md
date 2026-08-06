@@ -7,7 +7,7 @@ tags:
 aliases:
   - "Transactions: Pricing & Projections"
 created: 2026-05-18
-updated: 2026-07-31
+updated: 2026-08-06
 verified_against_code: 2026-07-31
 status: current
 ---
@@ -159,6 +159,33 @@ The observed symptom was a 300 → 155 buy followed by a sell that started from 
 ## Price Math
 - **Unit Price**: Calculated via `PriceUtil` and `VendorTradeVM`. It handles various backend schema keys (`unit_price`, `value`, `delivery_reward`).
 - **Total Price**: Unit Price × Quantity.
+
+### The buy gate — you may display an index price, but never transact against one
+
+`VendorTradeVM.price_trust(item, vendor_id)` runs on every buy-mode item before the action button is
+enabled. **Three** states, not a boolean:
+
+| State | Meaning | Button |
+|---|---|---|
+| `PENDING` | No `/vendor/get` captured for this vendor yet | disabled — *"Confirming price…"* |
+| `TRUSTED` | Priced from `/vendor/get`, or a raw resource (vendor-level price fields the binary carries correctly) | enabled |
+| `STALE` | The payload landed and this row was **not** in it | disabled — *"No longer available"* |
+
+Collapsing `PENDING` and `STALE` into one flag leaves a row that vanished server-side stuck on
+"Confirming price…" forever, since nothing will ever arrive to confirm it. The price still renders from
+the index throughout, so nothing looks empty — only the *action* waits.
+
+If the gate sits at `PENDING`, the panel re-requests `/vendor/get` itself (4 s debounce per vendor), so
+it no longer depends on which path opened the panel.
+
+> [!WARNING]
+> **`_update_transaction_panel()` owns `action_button.disabled`.** It sets `disabled = not can_transact`
+> after evaluating *every* guard — affordability, quantity, per-vehicle fit, price trust. Setting
+> `action_button.disabled = false` anywhere else silently undoes all of them. That was a real defect
+> (`S15-8`): the selection controller re-enabled it on every selection, defeating the fit guard
+> (S13-7), the quantity guard (S13-15) and the raw-resource price guard as well.
+
+Why any of this is necessary: [The Index and the Record](../../04_Technical/IndexAndRecord.md).
 
 ## Vendor Part Pricing — Lazy Fetch (Critical Architecture Note)
 
