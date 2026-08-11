@@ -7,7 +7,7 @@ tags:
 aliases:
   - "Data Management: Aggregation & Selection"
 created: 2026-05-18
-updated: 2026-06-23
+updated: 2026-08-06
 verified_against_code: 2026-07-28
 status: current
 ---
@@ -15,6 +15,16 @@ status: current
 # Data Management: Aggregation & Selection
 
 The Vendor Panel transforms raw backend JSON snapshots into structured UI "Buckets" using the **`VendorCargoAggregator`**.
+
+> [!IMPORTANT]
+> **The panel is fed from TWO sources, and only one of them is safe to transact against.** The
+> settlement menu re-feeds it from the binary `/map` snapshot on every store update (~1×/s live), while
+> `/vendor/get` supplies the authoritative record. The index carries *thinner and sometimes different*
+> numbers — chassis-only vehicle prices, `base_price = 0` on cargo.
+> **[`VendorAuthoritativeCache`](../../../Scripts/System/vendor_authoritative_cache.gd)** retains the
+> record and refills the gaps on every rebuild, **adding missing keys only** so it never overwrites the
+> snapshot's fresher stock counts. Full contract:
+> [The Index and the Record](../../04_Technical/IndexAndRecord.md) (`S15-7`).
 
 ## The Aggregation Process
 

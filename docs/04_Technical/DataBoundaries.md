@@ -8,16 +8,20 @@ tags:
 aliases:
   - "Data Boundaries: Which Fields Cross Where"
 created: 2026-07-28
-updated: 2026-07-29
-verified_against_code: 2026-07-28
+updated: 2026-08-06
+verified_against_code: 2026-08-06
 status: current
 ---
 
 # Data Boundaries: Which Fields Cross Where
 
 **The same game object reaches the client through two different pipes, carrying different field names.**
-This page maps that seam. It exists because the project's most expensive bug class lives here — a stat
-that reads blank or `0` everywhere while both the backend and the client are individually correct.
+This page maps that seam. It exists because the project's most expensive bug class lives here — a value
+that is wrong everywhere while both the backend and the client are individually correct.
+
+That wrongness is usually a blank or `0`, but **not always**: it can be a fully plausible number that
+only reveals itself when the server rejects the action the client offered
+([`base_value` vs `value`](#base_value-vs-value--the-under-quoted-vehicle-price)).
 
 > [!IMPORTANT]
 > **Read this before concluding "not a backend issue" or "not a frontend issue."** Both can be true at
@@ -26,6 +30,10 @@ that reads blank or `0` everywhere while both the backend and the client are ind
 Companion docs: [DF_Lib](DF_Lib.md) explains the *mechanism* and the version/publish workflow;
 [MapSystem/Data](../03_Systems/MapSystem/Data.md) covers the client-side parsing pipeline. This page is
 the **field-level map** neither of those provides.
+
+**If your question is "which endpoint should I read?" rather than "which fields cross?", you want
+[The Index and the Record](IndexAndRecord.md)** — the usage contract for `/map` vs `/vendor/get`, and the
+rule that keeps this bug class from reaching players: *display from the index, act on the record*.
 
 ---
 
@@ -72,11 +80,22 @@ garbage — see [Diagnosing](#diagnosing-a-suspect-field).
 `base_weight_capacity`(u32) · `base_towing_capacity`(u32) · `ap`(u16) · `base_max_ap`(u16) ·
 `base_value`(u32) · `vendor_id`(36s) · `warehouse_id`(36s)
 
+> **Slot 12 is the bare chassis `base_value`, NOT the price the server charges.** `/vendor/vehicle/buy`
+> charges `Vehicle.value` = `base_value + total_part_value`, and installed parts often outweigh the
+> chassis — a listed $23k vehicle was refused at $45,750 (`S15-1`). A df_lib fix to pack `value` into
+> this same slot was written and tested, then **reverted**: it needed a publish + backend redeploy, and
+> the client compensates instead. **Do not treat this slot as a purchase price.** Contract:
+> [The Index and the Record](IndexAndRecord.md).
+
 ### Cargo — `deserialize_cargo()`
 
 `cargo_id`(36s) · `name`(64s) · `base_desc`(512s) · `quantity`(u32) · `volume`(u32) · `weight`(u32) ·
-`capacity`(f32) · `fuel`(f32) · `water`(f32) · `food`(f32) · `base_price`(u32) · `delivery_reward`(u32) ·
-`distributor`(36s) · `vehicle_id`(36s) · `warehouse_id`(36s) · `vendor_id`(36s) · `recipient`(36s)
+`capacity`(f32) · `fuel`(f32) · `water`(f32) · `food`(f32) · **`base_price`**(u32) · `delivery_reward`(u32) ·
+**`distributor`**(36s) · `vehicle_id`(36s) · `warehouse_id`(36s) · `vendor_id`(36s) · `recipient`(36s)
+
+> [!WARNING]
+> **`base_price` and `distributor` are always `0` / `null` on this path** — see
+> [the cargo case below](#base_price-and-distributor--cargo-has-no-price-on-the-binary-path) (`S15-2`).
 
 ### Vendor — `deserialize_vendor()`
 
@@ -122,11 +141,62 @@ Order matters and **zero must fall through rather than win** — the legacy bina
 vendor vehicle carrying `0`, so a naive `has()` check picks it up and shadows the real value. Both call
 sites document this in-line; don't "simplify" either into a plain `get()`.
 
+### `base_value` vs `value` — the under-quoted vehicle price
+
+**The case that broke the "blank or `0`" heuristic.** The packer read the bare chassis `base_value`
+while `/vendor/vehicle/buy` charges `Vehicle.value` = `base_value + total_part_value`. The number on
+screen was neither blank nor zero — it was a *believable smaller* price, so it looked like working
+software until the purchase came back `400`. Narrative:
+[DF_Lib § case study 2](DF_Lib.md#case-study-2-the-under-quoted-vehicle-price). Status: `S15-1`.
+
+| Path | Key emitted | Value |
+|---|---|---|
+| Binary `/map` → `tools.gd` | `base_value` | chassis only — **under-quotes by the worth of installed parts** |
+| JSON `/vendor/get`, owned vehicles | `value` | correct — what the buy endpoint charges |
+
+Parts are not a rounding error: the sample vehicle in `docs/99_Reference/data_dumps/vehicle_example.json`
+carries **$116,600** of them against a far smaller chassis.
+
+**This divergence is live and deliberate.** The client compensates rather than the wire being fixed:
+the vendor panel retains `/vendor/get` detail and blocks Buy until it has it (`S15-7`). The same is
+true of the cargo case below. If you are writing a *new* consumer of map data, that compensation is
+not automatic — read [The Index and the Record](IndexAndRecord.md) first.
+
+### `base_price` and `distributor` — cargo has no price on the binary path
+
+**Open (`S15-2`), same class as the two above.** `serialize_cargo` reads `base_price` and `distributor`;
+`Cargo.to_JSONable_dict()` emits **`base_unit_price` / `unit_price` / `price`** and **`distributor_id`**.
+Neither key exists, so both pack as defaults on every cargo item ever sent. Confirmed in the captured
+payload `docs/99_Reference/data_dumps/vendor_example.json`:
+
+```
+{'name': 'Jerry Cans', 'base_price': 0, 'delivery_reward': 0, 'distributor': None}
+```
+
+`PriceUtil`'s key chain ends at `base_price`, so a binary-derived cargo dict yields **no usable price**.
+Expect this to be masked whenever the authoritative `/vendor/get` payload is what the panel currently
+holds — the same masking that hid the vehicle price bug. Fixing it means first deciding which key is
+canonical; that is a semantic choice, not a rename.
+
+### Structurally-dead vehicle fields
+
+`wear`, `ap`, `base_max_ap`, `base_towing_capacity` are packed and decoded, and **`Vehicle` has no such
+attributes at all** — they have never carried a value. 12 bytes per vehicle. `tools.gd:71` decodes `wear`;
+no client code reads it. Don't spend debugging time on "why is wear always 0" — nothing produces it
+(`S15-3`).
+
 ---
 
 ## Diagnosing a suspect field
 
-When a stat is blank or `0` **everywhere**, in order:
+**Not just blank or `0`.** The original heuristic for this page was "a stat reads blank or zero
+everywhere". The vehicle-price bug (`S15-1`) shipped *because* it didn't look like that: the packer read
+a real, populated, adjacent field and produced a smaller but entirely believable number. Widen the
+trigger to **any value the binary path disagrees with the JSON path about** — especially a number the
+server later rejects (a price, a capacity, a limit). If the client offers an action and the server
+refuses it, suspect this seam before suspecting the server's rules.
+
+When a stat is blank, `0`, or plausibly wrong **everywhere**, in order:
 
 1. **Which path feeds this UI?** Vendor panel vehicle stats and anything from `GameStore.get_settlements()`
    = **binary**. Transaction calls and owned-convoy detail = **JSON**. Getting this wrong sends you to the
@@ -140,6 +210,23 @@ When a stat is blank or `0` **everywhere**, in order:
    updating `tools.gd` in lockstep.
 
 The tell for a layout desync is *garbage in every field after a certain point*, not a single blank stat.
+
+**Shortcut — run the contract test first.** Steps 2–3 are now automated in the backend repo:
+
+```bash
+cd ~/Work/desolate_frontiers && python3 -m pytest test/test_map_serialization_contract.py -q
+```
+
+`test_producer_emits_every_key_the_packer_reads` derives the packer's expected input keys from
+`map_struct.py`'s own source (AST) and diffs them against the live `to_JSONable_dict()`, naming any key
+the packer reads that the model doesn't emit. That is the whole bug class in one assertion. Known,
+accepted gaps live in its `KNOWN_GAPS` table, which fails in both directions so they can't rot.
+
+> [!NOTE]
+> **This still can't catch a `tools.gd` divergence.** Both that test and `df_lib`'s own suite are
+> Python↔Python; production decoding is the hand-written GDScript mirror. A golden-bytes fixture shared
+> by both repos — decode the same bytes in Python and in GDScript, assert the same values — is the
+> open proposal for closing it (`S15-5`).
 
 ---
 
@@ -156,6 +243,13 @@ Checklist for a backend field change on `Vehicle`, `Cargo`, `Vendor`, or `Settle
       subsequent field reads garbage.
 - [ ] Is there a client-side **enum table** for it (like `sett_type`)? Update by hand.
 - [ ] Add a fallback chain at the consumer if both key names will coexist in the wild.
+- [ ] **Run the contract test** (`~/Work/desolate_frontiers`, `test/test_map_serialization_contract.py`).
+      It derives the packer's key list from source, so a rename fails it immediately with the key named.
+      If you deliberately leave a gap, add it to `KNOWN_GAPS` **with the reason** — the test also fails
+      when a listed gap is closed, so the list can't quietly go stale.
+- [ ] Is the field a **number the server validates** (price, capacity, limit)? Then a silent `0` or a
+      stale value doesn't just render wrong — it makes the client offer an action the server will
+      refuse. Treat those as P1, not cosmetic.
 
 ---
 

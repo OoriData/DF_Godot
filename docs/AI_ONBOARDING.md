@@ -7,7 +7,7 @@ tags:
 aliases:
   - "AI Agent Onboarding: Quick-Start Guide"
 created: 2026-05-18
-updated: 2026-07-31
+updated: 2026-08-06
 verified_against_code: 2026-07-28
 status: current
 ---
@@ -28,6 +28,7 @@ Welcome, Agent. To maintain the architectural integrity and visual standards of 
 2.  **The Law of Unidirectional Data**:
     - Data flows: `API → Service → GameStore → SignalHub → UI`.
     - The UI **never** calls `APICalls` directly. It only listens to the `SignalHub` and reads from the `GameStore` snapshots.
+    - **Corollary — display from the index, act on the record.** The same object reaches the client from **two** sources: the binary `/map` payload (an *index* — the whole world in one request, thin, and **stale by design**) and the per-object JSON endpoints like `/vendor/get` (the *record* — live and complete). Rendering a list from the index is correct. Letting a player **transact** against an index number is not: the index lags legitimately, *and* its packer has three times carried a different number than the transaction endpoint. Any value the server validates — a price, a capacity, a limit — must be confirmed against the record before the action is offered, or the UI will promise something that cannot happen (`S15-1`: a $23,000 vehicle the server refused at $45,750). Full contract, including the three-state trust gate and the two traps that cost real debugging time: [The Index and the Record](04_Technical/IndexAndRecord.md).
 3.  **The Law of Thin Panels**:
     - Complex UI logic must live in a **Controller** (e.g., `Scripts/Menus/VendorPanel/`).
     - The `.gd` script attached to a Scene should only handle wiring and signal redirection.
@@ -64,7 +65,8 @@ Welcome, Agent. To maintain the architectural integrity and visual standards of 
 - **Which service/autoload owns this?**: [Autoload Register](04_Technical/AutoloadOrder.md) — all 27, CI-checked against `project.godot`. A lookup, not a grep.
 - **Understand an Object**: Check the [Data Schema](01_Architecture/Schema.md) — includes User, Settlement, Vendor, and Journey objects.
 - **A layout looks broken**: [Debugging a Visual/Layout Bug](04_Technical/DebuggingVisualBugs.md) — **read before instrumenting**.
-- **A stat reads blank or 0 everywhere**: [Data Boundaries](04_Technical/DataBoundaries.md) — likely the JSON-vs-binary seam, i.e. a *third* repo.
+- **A stat reads blank, 0, or plausibly wrong everywhere** — or **the server refuses an action the UI offered**: [Data Boundaries](04_Technical/DataBoundaries.md) — likely the JSON-vs-binary seam, i.e. a *third* repo.
+- **Which endpoint should this screen read — `/map` or `/vendor/get`?**: [The Index and the Record](04_Technical/IndexAndRecord.md) — the usage contract, and why acting on the index is never safe.
 - **Debug a Request**: Check [Diagnostics](04_Technical/Diagnostics.md).
 - **Debug a Signal**: Check the "Debug a Missing Signal" recipe in [Cookbook](01_Architecture/Cookbook.md).
 - **Understand the Error Pipeline**: Check [ErrorSystem](04_Technical/ErrorSystem.md).
@@ -134,11 +136,27 @@ Full authoring contract (frontmatter, approved tags, index coverage, suppression
   by the other, and the result is a bug that reproduces on exactly one input method — the desktop
   pinned-label preview was live for months because only the touch branch checked the pin state. When you
   change what a map click *does*, grep for both branches and update them together.
-- **A vendor/vehicle stat that's blank or 0 everywhere may be a third-repo bug, not this repo.**
+- **A vendor/vehicle value that's wrong everywhere may be a third-repo bug, not this repo.**
   The vendor panel reads stats from the **binary `/map` payload**, whose wire format lives in a
-  separate package — so the JSON API can be perfectly correct while the binary packer silently
-  packs `0`. Field-level map + diagnosis steps:
+  separate package — so the JSON API can be perfectly correct while the binary packer silently packs
+  a default. `dict.get(renamed_key, 0)` raises nothing, anywhere. Field-level map + diagnosis steps:
   [Data Boundaries](04_Technical/DataBoundaries.md). Mechanism: [DF_Lib](04_Technical/DF_Lib.md).
+  - **Don't screen for "blank or 0" alone.** That heuristic missed the vendor-price bug (`S15-1`), where
+    the packer read a real neighbouring field and produced a *believable* smaller number. Every surface
+    agreed with every other surface, because they all read the same wrong field; only the **server**
+    disagreed, and only at purchase time.
+  - **So: if the client offers an action and the server refuses it, suspect this seam before suspecting
+    the server's rules.** A price, capacity, or limit that the server validates is P1 here, not cosmetic —
+    it doesn't merely render wrong, it makes the UI promise something that cannot happen. The standing
+    rule that prevents it: [display from the index, act on the record](04_Technical/IndexAndRecord.md).
+  - **`value=<none>` on a vendor item, with a believable price on screen, IS the bug.** That price is
+    `base_value` — the index number, not the charged one. Turn on the panel's `perf_log_enabled` and read
+    the `[VendorPanel][S15-7]` line before theorising.
+  - **Before editing any backend `to_JSONable_dict()`**, run the contract test — it names the offending
+    key rather than making you find it:
+    ```bash
+    cd ~/Work/desolate_frontiers && python3 -m pytest test/test_map_serialization_contract.py -q
+    ```
 - **iPhone missing from the remote-deploy device list is almost always the Steam plugin, not
   hardware.** GodotSteam ships no iOS library, and a Godot restart silently re-enables it, so this
   recurs after *every* restart. Confirm the OS side first

@@ -8,8 +8,8 @@ tags:
 aliases:
   - "Bug Reporting & Feedback"
 created: 2026-07-28
-updated: 2026-08-04
-verified_against_code: 2026-07-31
+updated: 2026-08-06
+verified_against_code: 2026-08-06
 status: current
 ---
 
@@ -116,6 +116,21 @@ A report submitted with no connectivity has **no response body to parse**, so it
 the `HTTPRequest.Result` code when `response_code == 0`, which routes the failure through the normal
 translation map and yields *"Can't reach the server — check your internet connection."* Codes and the
 enum-numbering trap: [ErrorSystem § Network / transport failures](ErrorSystem.md).
+
+## Known issues
+
+Audited end-to-end 2026-08-06, including six months of production reports. Open items are tracked as
+**Sprint 14** in [TODO.md](../TODO.md) — `S14-1` … `S14-8`. The two that change how you read this page:
+
+- The GitHub credential the backend posts with is a **personal** fine-grained PAT, not an org-owned one,
+  and it expires 2027-02-14 (`S14-1`). Issue *authorship* therefore carries no reporter information —
+  the reporter is the `auth_subject` line in the issue body.
+- Screenshots are written to a container path with **no volume mount**, so they do not survive a redeploy
+  (`S14-2`). A signed screenshot URL returning `404` rather than `403` is this, not a signing failure.
+
+One finding confirms this page rather than correcting it: production contains a report submitted with
+**no auth subject at all**, so the pre-login path in [Availability](#availability) is now proven on a
+real client, not merely structurally. The placement and hit-testing caveats below still stand.
 
 ## Key Files
 

@@ -175,8 +175,12 @@ static func handle_new_item_selection(panel: Object, p_selected_item: Variant) -
 						if not panel._compat_cache.has(key):
 							panel._mechanics_service.check_part_compatibility(vid2, uid)
 
-		if is_instance_valid(panel.action_button):
-			panel.action_button.disabled = false
+		# S15-7: do NOT unconditionally enable the action button here. _update_transaction_panel()
+		# above (:153) owns its state and has already set `disabled = not can_transact` after
+		# evaluating every guard — affordability, quantity <= 0, per-vehicle fit, and the buy-price
+		# trust gate. Re-enabling it afterwards silently undid all of them, so a row the panel had
+		# just decided was not transactable came back clickable. Selecting an item is not itself a
+		# reason to believe the item can be bought.
 		if is_instance_valid(panel.max_button):
 			panel.max_button.disabled = false
 	else:

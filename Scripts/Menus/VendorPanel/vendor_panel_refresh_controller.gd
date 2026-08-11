@@ -133,6 +133,10 @@ static func on_hub_vendor_panel_ready(panel: Object, data: Dictionary) -> void:
 	# optimistically, so drop the pending deltas or the next rebuild would apply them twice (S13-5).
 	VendorOptimisticStock.clear_vendor(str(data.get("vendor_id", "")))
 
+	# S15-7: `data`'s items are already stamped authoritative — VendorService.store()d this payload on
+	# arrival, in place, before emitting. Capture deliberately does NOT happen here: this handler is
+	# per-panel-instance and guarded by `_active_vendor_id`, so in a multi-vendor settlement it is not
+	# guaranteed to run for the vendor whose payload just landed.
 	panel.vendor_data = data
 
 	# Sync convoy snapshot from store (if possible)
@@ -151,7 +155,14 @@ static func on_hub_vendor_panel_ready(panel: Object, data: Dictionary) -> void:
 		if ss is Array and not ss.is_empty():
 			panel._set_latest_settlements_snapshot(ss)
 
+	# S15-7: try_process_refresh() no-ops unless a refresh is in flight, so a payload that arrives on
+	# its own (a VendorService broadcast the panel didn't ask for) would update our data and never
+	# re-render — leaving the buy gate closed on a price we now know. Nudge the transaction panel in
+	# that case. Deliberately not a full repopulate: no list rebuild, so no selection flicker.
+	var will_process: bool = bool(panel._refresh_in_flight) or bool(panel._awaiting_panel_data)
 	try_process_refresh(panel)
+	if not will_process and panel.has_method("_update_transaction_panel"):
+		panel._update_transaction_panel()
 
 static func try_process_refresh(panel: Object) -> void:
 	if not (panel._refresh_in_flight or panel._awaiting_panel_data):

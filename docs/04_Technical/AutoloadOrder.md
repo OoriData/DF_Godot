@@ -8,7 +8,7 @@ aliases:
   - "Autoload Order"
   - "Autoload Register"
 created: 2026-05-18
-updated: 2026-08-04
+updated: 2026-08-06
 verified_against_code: 2026-07-31
 status: current
 ---
@@ -76,7 +76,7 @@ reverse is not safe.
 | 10 | `MapSettingsService` | `…/Services/map_settings_service.gd` | 107 | **Map overlay toggles.** `update_setting()`, `set_planning_override()`, `get_settings_dict()` — the gear-panel state. | [MapMenuSystem](../03_Systems/MapSystem/MapMenuSystem.md) |
 | 11 | `ConvoyService` | `…/Services/convoy_service.gd` | 163 | `refresh_all()` / `refresh_single()` / `create_new_convoy()`, convoy model conversion, and the **per-convoy colour map** (`get_color_for`). *No rename or disband — those do not exist.* | — |
 | 12 | `UserService` | `…/Services/user_service.gd` | 52 | `request_user()` / `refresh_user()` / `get_user()`. Passthrough. | [Identity](Identity.md) |
-| 13 | `VendorService` | `…/Services/vendor_service.gd` | 115 | `request_vendor` / `request_vendor_panel` / `request_vendor_preview` / `request_vehicle`, plus last-vendor caching and `to_model()`. *No bulk-fuel logic.* | [VendorPanel](../02_UI_UX/VendorPanel/VendorPanelOverview.md) |
+| 13 | `VendorService` | `…/Services/vendor_service.gd` | 122 | `request_vendor` / `request_vendor_panel` / `request_vendor_preview` / `request_vehicle`, `to_model()`, and **authoritative capture**: fills `VendorAuthoritativeCache` on every `/vendor/get` arrival (S15-7) — deliberately here rather than in a panel handler, since per-tab panel instances are not guaranteed to see a given payload. *No bulk-fuel logic.* | [VendorPanel](../02_UI_UX/VendorPanel/VendorPanelOverview.md) |
 | 14 | `MechanicsService` | `…/Services/mechanics_service.gd` | 448 | **Part-compatibility prefetch.** Probe sessions (`start/end_mechanics_probe_session`), `warm_mechanics_data_for_convoy()`, vendor cache, cargo enrichment. *No durability or repair math.* | [Mechanics](../03_Systems/Mechanics.md) |
 | 15 | `RouteService` | `…/Services/route_service.gd` | **59** | `request_choices()` / `start_journey()` / `cancel_journey()` / `to_models()`. **Pure passthrough** — all pathfinding, ETA, and consumption maths are **server-side**. | [JourneyMenu](../02_UI_UX/JourneyMenu.md) |
 | 16 | `RefreshScheduler` | `…/Services/refresh_scheduler.gd` | 88 | **Polling heartbeat.** `enable_polling()` and the interval timer that drives periodic refreshes. | [RefreshScheduler](RefreshScheduler.md) |
