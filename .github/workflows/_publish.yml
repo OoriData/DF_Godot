@@ -75,6 +75,7 @@ jobs:
           releaseFiles: build/android/Desolate_Frontiers.aab
           track: internal
           status: draft
+          changesNotSentForReview: true
 
   apple-stores:
     if: inputs.publish_apple
