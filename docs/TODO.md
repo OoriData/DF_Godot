@@ -6,7 +6,7 @@ tags:
 aliases:
   - "TODO — Active Work"
 created: 2026-05-21
-updated: 2026-08-06
+updated: 2026-08-11
 status: unverified
 ---
 
@@ -58,6 +58,16 @@ This document serves as the flowing state of things needed in the project, and w
 > item the client work does *not* cover). Net result: the binary index permanently under-quotes vehicle
 > prices and carries no cargo price **by accepted design**, and the client compensates. Any new consumer
 > of map data must do the same — that compensation is panel-local, not automatic.
+>
+> **🔴 Update 2026-08-10 — Sprint 16 added: a P0 Play-review blocker, and it is the top of the queue.**
+> Google's review of the Play submission hit an immediate **Google Sign-In failure** on the login screen —
+> `10: [28444] Developer console is not set up correctly` (**S16-1**). This is a Google Cloud Console
+> registration problem, **not a Godot bug**: no client code is expected to change. The leading cause is
+> **Play App Signing** — Play re-signs our `.aab` with its own key, so the SHA-1 a reviewer's install
+> presents is not the one we signed with, which is why this fails for Play installs and passes on every
+> sideload we test. A second live candidate is that the app spans **two Cloud projects** (the web client
+> ID and the Firebase project are different numbers) and the fingerprints may be registered against the
+> wrong one. Uninvestigated in-console; all verification steps are in the entry.
 >
 > **Full completed-sprint detail** (Sprints 1–10, all root-cause narratives, device round 1 results,
 > closed backlog items) now lives in **[SprintHistory.md](SprintHistory.md)** — moved out of this file
@@ -2342,6 +2352,102 @@ Root cause was **not** in this repo. IDs (`S15-n`) are for cross-referencing. Fi
   gets further and fails on a *separate* staleness: its hand-maintained `expected_json_dict`
   (`test/test_vehicle.py:73`) is missing exactly one key, `oe_part_classes`. Left unfixed — the correct
   expected value is a call about that fixture.
+
+---
+
+# Sprint 16 — Google Play review blocker: Android Google Sign-In (NEW, 2026-08-10)
+
+Raised from a screenshot taken **during Google's review of the Play submission**. The login screen renders
+correctly and all three provider buttons are present, but *Continue with Google* fails immediately with:
+
+```
+Google sign-in failed: During begin sign in, failure response from one tap:
+10: [28444] Developer console is not set up correctly.
+```
+
+**This is a console/registration problem, not a Godot problem.** No client code change is expected. It is
+filed at P0 because it is a reviewer-visible failure of an advertised feature on the submitted build.
+
+- [ ] **S16-1 · 🔴 P0 BLOCKER — Google Sign-In returns `DEVELOPER_ERROR` (10 / `[28444]`) on the
+  Play-delivered build** *(reported 2026-08-10, uncoded, uninvestigated in-console)* —
+
+  **What the error actually is.** Status `10` is Google Play Services' `DEVELOPER_ERROR`; `[28444]` is the
+  one-tap backend's sub-code. It is returned *before* any account picker is shown, and it means exactly
+  one thing: **GMS could not match the calling app's `(package name, signing-certificate SHA-1)` pair to
+  an OAuth client of type *Android* inside the same Google Cloud project that owns the web client ID the
+  app passed as `serverClientId`.** It is never a network fault, never a backend fault, and never a
+  credentials fault.
+
+  **What the code is doing, and why it is already correct.** The Android path is **Credential Manager**,
+  not the legacy `GoogleSignInClient` — `addons/GodotGoogleSignIn/export_plugin.gd:35-40` pulls
+  `androidx.credentials:credentials(-play-services-auth):1.3.0` and
+  `com.google.android.libraries.identity.googleid:googleid:1.1.1`, i.e. the `GetGoogleIdOption` flow.
+  `google_auth_service.gd:41` hands that flow `web_client_id` from `app_config.cfg`, and `:61` calls
+  `signInWithNonce()`. **Passing the *web* client ID there is correct and must not be "fixed" to an
+  Android client ID** — the backend verifies the returned token's `aud` against the same value
+  (`~/Work/desolate_frontiers/engine/routers/auth_api.py:2039`, `id_token.verify_oauth2_token(..., GOOGLE_CLIENT_ID)`).
+  Swapping it would move the failure from GMS to the server. The Android OAuth client is a *separate*
+  registration that has to exist alongside it; it is never named in code.
+
+  **Two candidate root causes, both visible from this repo. Check (a) first.**
+
+  - **(a) Play App Signing — the SHA-1 at runtime is not the one we signed with.** *(most likely; it
+    explains "fails for the reviewer" precisely)* `_build-google-play.yml:39` signs the `.aab` with
+    `ANDROID_KEYSTORE_BASE64` (our **upload** key) and `_publish.yml:71-76` ships it to track `internal`.
+    Google Play then **re-signs the artifact with its own app signing key** before delivering it. So the
+    certificate a reviewer's install presents to GMS is the **Play app signing key**, whose SHA-1 is
+    unrelated to our keystore's. If only the upload-key (or debug-key) SHA-1 is registered, Google
+    Sign-In works on every sideloaded build and fails on every Play-delivered one — which is the reported
+    symptom exactly. Note the failure is *invisible to us locally* for that same reason: our own test
+    installs are signed with a key that may well be registered.
+  - **(b) The SHA-1s may be registered against the wrong Cloud project.** There are **two** projects in
+    play here and they are not the same one. `app_config.cfg:19` `web_client_id` belongs to project
+    **`118896332657`**; `android/build/google-services.json` is Firebase project **`1092229061459`**
+    (`desolate-frontiers-638ed`). The Android OAuth client has to live in **`118896332657`** — the
+    project that owns the web client ID — because that is the project GMS resolves against. SHA-1s added
+    to the Firebase project would look correct in the Firebase UI and change nothing.
+    - Supporting clue, *not* the mechanism: that `google-services.json` has **`"oauth_client": []`** —
+      empty — so the Firebase project currently has **no** Android OAuth client registered for
+      `com.ooridata.desolate_frontiers` either. Be precise about why this is only a clue: the
+      Credential Manager path **does not read `google-services.json`** (it takes the client ID at
+      runtime); the file is present for FCM, which is why `build.gradle:5` applies
+      `com.google.gms.google-services`. Regenerating it will not fix sign-in on its own.
+
+  **Verification, in order (all console work — nothing to build):**
+  1. Play Console → *Test and release → Setup → App integrity → App signing key certificate* → copy the
+     **SHA-1** (and SHA-256). This is the fingerprint that must be registered. Copy the **Upload key
+     certificate** SHA-1 from the same page as well.
+  2. Cloud Console, project **`118896332657`** → *APIs & Services → Credentials* → confirm an OAuth
+     client of type **Android** exists with package `com.ooridata.desolate_frontiers` and the **app
+     signing key** SHA-1 from step 1. Expect this to be missing or to carry the wrong fingerprint — that
+     is the bug.
+  3. Add the missing client(s). Register **three** fingerprints so all install paths work:
+     **app signing key** (Play installs — the reviewer's path), **upload key** (locally-signed release
+     APKs), and the **debug keystore** (`~/.android/debug.keystore`, per
+     `editor_settings-4.6.tres:48`) for editor remote-deploy. Separate Android clients, same package,
+     same project.
+  4. Wait ~5 minutes for propagation, then **reproduce against the internal track — install the build
+     from Play, not a sideloaded APK.** A sideload cannot prove this fixed; it is signed with the wrong
+     key by definition.
+
+  **Explicitly ruled out, so nobody re-derives them:**
+  - *Not* `S13-8`'s network failure — that was `RESULT_CANT_RESOLVE` on every endpoint. Here GMS
+    answered, so the device had connectivity and the plugin loaded, initialized, and dispatched.
+  - *Not* the plugin wiring — `google_auth_service.gd:107` only ever prints a string GMS handed back.
+    Reaching `_on_sign_in_failed` at all proves `initialize()` (`:41`) and `signInWithNonce()` (`:61`)
+    both ran.
+  - *Not* the backend — no ID token was ever minted, so `/auth/google` was never called.
+  - *Not* `permissions/internet` — already `true` on both Android presets (see `S13-8`).
+
+  **Follow-ups once it is confirmed:**
+  - Record the registered fingerprints and the two-project split in
+    [Deployment.md](04_Technical/Deployment.md) (whose Android row, line 58, currently stops at "promote
+    in Play Console"). This is the second Android release trap after the GodotSteam one and it will
+    recur on any keystore rotation.
+  - Decide whether the two Cloud projects should be merged or the split documented. Today the pairing is
+    load-bearing and written down nowhere.
+  - ⚠️ `keytool` could not be run on this machine to print the debug SHA-1 locally (**no Java runtime
+    installed**). Play Console is the authoritative source for the two that matter anyway.
 
 ---
 
